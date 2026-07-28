@@ -24,33 +24,33 @@
       />
       <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">subagent</span>
       <span class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent">{{ subagentAgent }}</span>
-      <!-- slug + model：仅收起态显示（展开时 header 精简为 icon + "subagent" + agent） -->
-      <template v-if="subagentSlug && !toolExpanded">
-        <span class="text-neutral-faint">·</span>
-        <span class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent">{{ subagentSlug }}</span>
+      <!-- slug + model：展开时 invisible 保留空间，摘要行高度不变 -->
+      <template v-if="subagentSlug">
+        <span class="text-neutral-faint" :class="{ invisible: toolExpanded }">·</span>
+        <span class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent" :class="{ invisible: toolExpanded }">{{ subagentSlug }}</span>
       </template>
-      <template v-if="subagentModel && !toolExpanded">
-        <span class="text-neutral-dim font-mono text-[length:var(--text-xs)]">&nbsp;(</span>
-        <span class="font-mono text-[length:var(--text-xs)] text-accent">{{ subagentModel }}</span>
-        <span v-if="subagentThinkingLevel" class="text-neutral-dim font-mono text-[length:var(--text-xs)]">&nbsp;· thinking {{ subagentThinkingLevel }})</span>
-        <span v-else class="text-neutral-dim font-mono text-[length:var(--text-xs)])">)</span>
+      <template v-if="subagentModel">
+        <span class="text-neutral-dim font-mono text-[length:var(--text-xs)]" :class="{ invisible: toolExpanded }">&nbsp;(</span>
+        <span class="font-mono text-[length:var(--text-xs)] text-accent" :class="{ invisible: toolExpanded }">{{ subagentModel }}</span>
+        <span v-if="subagentThinkingLevel" class="text-neutral-dim font-mono text-[length:var(--text-xs)]" :class="{ invisible: toolExpanded }">&nbsp;· thinking {{ subagentThinkingLevel }})</span>
+        <span v-else class="text-neutral-dim font-mono text-[length:var(--text-xs)]" :class="{ invisible: toolExpanded }">)</span>
       </template>
       <!-- 终态指示已移除（统一交互模式：无末尾 icon） -->
     </div>
-    <!-- task 首行预览（收起态可见，dim） -->
-    <div v-if="subagentTaskPreview" class="mt-0.5 pl-4 truncate text-[length:var(--text-sm)] text-neutral-dim">
+    <!-- task 首行预览（展开时 invisible 保留空间） -->
+    <div v-if="subagentTaskPreview" class="mt-0.5 pl-4 truncate text-[length:var(--text-sm)] text-neutral-dim" :class="{ invisible: toolExpanded }">
       {{ subagentTaskPreview }}
     </div>
     <template v-if="toolExpanded">
       <!-- 展开体：task 完整内容 + background 状态行（异步执行看不到过程） -->
       <div v-if="subagentTask || bgStatusText" class="group/result relative mt-1">
         <Button
-          v-if="subagentTask"
+          v-if="subagentCopyContent"
           variant="ghost"
           size="icon"
           class="absolute top-0 left-1 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover/result:opacity-100"
           :title="t('panel.message.copy')"
-          @click.stop="copy(subagentTask, `subagent-${tool.id}`)"
+          @click.stop="copy(subagentCopyContent, `subagent-${tool.id}`)"
         >
           <Check v-if="copied === `subagent-${tool.id}`" class="size-3 text-success" />
           <CopyIcon v-else class="size-3" />
@@ -94,9 +94,9 @@ const props = defineProps<{
 const isFailed = computed(() => props.tool.status === 'error')
 const isRunning = computed(() => props.tool.status === 'running')
 
-/** tool 折叠：默认收起，仅 failed 强制展开（错误须直视，不可收起）。 */
+/** tool 折叠：默认收起，failed 不再强制展开（摘要行已含错误状态色）。 */
 const toolCollapsed = ref(true)
-const toolExpanded = computed(() => isFailed.value || !toolCollapsed.value)
+const toolExpanded = computed(() => !toolCollapsed.value)
 
 function toggleTool(): void {
   toolCollapsed.value = !toolCollapsed.value
@@ -179,6 +179,14 @@ const bgStatusText = computed(() => {
   if (bgResponse.value?.message) return bgResponse.value.message
   if (bgResponse.value?.status === 'running') return 'running detached · will notify on completion'
   return ''
+})
+
+/** 复制用内容：task + bgStatus 统一输出 */
+const subagentCopyContent = computed(() => {
+  const parts: string[] = []
+  if (subagentTask.value) parts.push(subagentTask.value)
+  if (bgStatusText.value) parts.push(`background: ${bgStatusText.value}`)
+  return parts.join('\n')
 })
 </script>
 

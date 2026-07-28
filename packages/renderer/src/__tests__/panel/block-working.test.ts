@@ -4,8 +4,8 @@
  * 覆盖（plan.md U1–U8 + U12/U13）：
  * - thinking：working 态强制展开且不可手动收（设计稿「无背景下划线展开」）
  * - tool：默认 1 行收起（streaming/running 也收起，header 含 toolName+argPath+状态指示），
- *         点击展开详情。仅 failed 强制展开（错误须直视）。
- * - 失败 tool 整块红框 + 强制展开
+ *         点击展开详情。failed 也默认收起（摘要行已含错误状态色）。
+ * - 失败 tool 中性灰默认 + hover 染 warn，需手动点击展开
  * - end_not_received：默认收起，点击可 toggle
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/block-working.test.ts
@@ -140,7 +140,7 @@ describe('Block working 态 · tool 块', () => {
     expect(detailLines.length).toBe(0)
   })
 
-  it('U8: 失败 tool 强制展开 + error output 直显（Demo H：无鲜红框，AlertTriangle ICON）', () => {
+  it('U8: 失败 tool 默认收起，手动点击展开后显示 error output（Demo H：无鲜红框，AlertTriangle ICON）', async () => {
     const wrapper = mount(Block, {
       props: { type: 'tool', tool: makeTool({ status: 'error', output: 'command failed' }), working: false },
     })
@@ -150,7 +150,11 @@ describe('Block working 态 · tool 块', () => {
     // header 含 svg 图标（AlertTriangle ICON，lucide 渲染为 svg）
     const alertIcon = wrapper.find('[data-lucide="alert-triangle"], svg')
     expect(alertIcon.exists()).toBe(true)
-    // error output 强制展开（失败态强制可见，不可收起）
+    // failed 不再强制展开，默认收起
+    expect(wrapper.text()).not.toContain('command failed')
+    // 手动点击展开后 error output 可见（displayContent 兜底 tool.error）
+    const header = wrapper.find('.cursor-pointer')
+    await header.trigger('click')
     expect(wrapper.text()).toContain('command failed')
   })
 })

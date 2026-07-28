@@ -17,20 +17,19 @@
         :title="thinkingExpanded ? t('panel.message.collapseReasoning') : t('panel.message.expandReasoning')"
         @click="toggleThinking"
       >
-        <!-- 摘要行：flex 布局，clickable toggle -->
-        <div class="flex items-center gap-1.5">
+        <!-- 摘要行：flex 布局，min-h 锁定高度避免展开时跳动 -->
+        <div class="flex items-center gap-1.5 min-h-[1.5rem]">
           <component :is="BLOCK_ICON_LUCIDE.thinking" class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" />
           <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">{{ t('panel.message.thinkingBlock') }}</span>
-          <span v-if="!working" class="text-neutral-faint">·</span>
-          <span class="flex-1 min-w-0 truncate text-[length:var(--text-sm)] text-neutral-dim">{{ previewText }}</span>
+          <span v-if="!working" class="text-neutral-faint" :class="thinkingExpanded ? 'invisible' : ''">·</span>
+          <span class="flex-1 min-w-0 truncate text-[length:var(--text-sm)] text-neutral-dim" :class="thinkingExpanded ? 'invisible' : ''">{{ previewText }}</span>
         </div>
-        <!-- 展开内容：pl-4 纯缩进，mt-1 与摘要行分隔，无 border/背景 -->
-        <div v-if="thinkingExpanded" class="think-content-expanded mt-1 pl-4 text-[length:var(--text-sm)] leading-[1.7] text-neutral-dim">
-          <!-- copy 按钮浮在内容右上角（hover 显） -->
+        <!-- 展开内容区：copy 按钮在左上角，始终可见 -->
+        <div v-if="thinkingExpanded" class="group/result relative mt-1 pl-4 text-[length:var(--text-sm)] leading-[1.7] text-neutral-dim">
           <Button
             variant="ghost"
             size="icon"
-            class="think-copy-btn absolute top-0 right-0 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover/think:opacity-100"
+            class="absolute top-0 left-0 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover/result:opacity-100"
             :title="t('panel.message.copy')"
             @click.stop="content && copy(content, `thinking-${thinkingId ?? 'block'}`)"
           >
@@ -75,27 +74,27 @@
           <span v-if="workflowFields.action" class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-xs)] text-neutral-mid">{{ workflowFields.action }}</span>
           <!-- name（accent） -->
           <span v-if="workflowFields.name" class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent">{{ workflowFields.name }}</span>
-          <!-- slug（accent，· 分隔，仅收起态） -->
-          <template v-if="workflowFields.slug && !toolExpanded">
-            <span class="text-neutral-faint">·</span>
-            <span class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent">{{ workflowFields.slug }}</span>
+          <!-- slug（accent，· 分隔，展开时 invisible 保留空间） -->
+          <template v-if="workflowFields.slug">
+            <span class="text-neutral-faint" :class="{ invisible: toolExpanded }">·</span>
+            <span class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent" :class="{ invisible: toolExpanded }">{{ workflowFields.slug }}</span>
           </template>
-          <!-- runId 前 8 位（dim，仅收起态） -->
-          <span v-if="workflowFields.runId && !toolExpanded" class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-xs)] text-neutral-dim">{{ workflowFields.runId }}</span>
+          <!-- runId 前 8 位（dim，展开时 invisible 保留空间） -->
+          <span v-if="workflowFields.runId" class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-xs)] text-neutral-dim" :class="{ invisible: toolExpanded }">{{ workflowFields.runId }}</span>
         </div>
-        <!-- args.task 首行预览（run action） -->
-        <div v-if="workflowArgsTaskPreview" class="mt-0.5 pl-4 truncate text-[length:var(--text-sm)] text-neutral-dim">
+        <!-- args.task 首行预览（展开时 invisible 保留空间） -->
+        <div v-if="workflowArgsTaskPreview" class="mt-0.5 pl-4 truncate text-[length:var(--text-sm)] text-neutral-dim" :class="{ invisible: toolExpanded }">
           {{ workflowArgsTaskPreview }}
         </div>
         <template v-if="toolExpanded">
           <!-- workflow 详情区：copy 按钮在左上角 + list-tree GUI 组件（来自 details.__gui__） -->
-          <div v-if="result" class="group/result relative mt-1 text-[length:var(--text-sm)] leading-snug text-neutral-mid select-text">
+          <div v-if="displayContent || guiComponent" class="group/result relative mt-1 text-[length:var(--text-sm)] leading-snug text-neutral-mid select-text">
             <Button
               variant="ghost"
               size="icon"
               class="absolute top-0 left-0 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover/result:opacity-100"
               :title="t('panel.message.copy')"
-              @click.stop="copy(result, `tool-${tool!.id}`)"
+              @click.stop="copy(copyContent, `tool-${tool!.id}`)"
             >
               <Check v-if="copied === `tool-${tool!.id}`" class="size-3 text-success" />
               <CopyIcon v-else class="size-3" />
@@ -103,7 +102,7 @@
             <div class="pl-4">
               <GuiComponentRenderer v-if="guiComponent" :component="guiComponent" />
               <AnsiText v-else-if="outputRaw" :content="outputRaw" />
-              <span v-else class="whitespace-pre-wrap">{{ result }}</span>
+              <span v-else class="whitespace-pre-wrap">{{ displayContent }}</span>
             </div>
           </div>
         </template>
@@ -122,64 +121,67 @@
           <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
           <component :is="headerBlockIcon" v-else class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
           <span class="shrink-0 normal-case tracking-normal">{{ toolName }}</span>
-          <span v-if="argPath && !toolExpanded" class="min-w-0 normal-case tracking-normal text-neutral-dim truncate">· {{ argPath }}</span>
-          <Button
-            v-if="isBash && !isRunning && sessionId"
-            variant="ghost"
-            size="icon"
-            data-testid="tool-run-in-terminal"
-            class="ml-auto size-5 shrink-0 rounded-sm p-0 text-neutral-dim hover:text-accent"
-            :title="t('panel.terminal.runInTerminal')"
-            @click.stop="runInTerminal"
-          >
-            <TerminalIcon class="size-3" />
-          </Button>
+          <span v-if="argPath" class="min-w-0 normal-case tracking-normal text-neutral-dim truncate" :class="{ invisible: toolExpanded && isBashTool }">· {{ argPath }}</span>
         </div>
         <template v-if="toolExpanded">
-          <!-- 补充细节条：失败错误摘要 + 行数/字符数 + 耗时。对齐 subagent 展开体信息架构 -->
-          <div v-if="metaItems.length" class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[length:var(--text-xs)]">
-            <span
-              v-for="(item, idx) in metaItems"
-              :key="idx"
-              :class="{
-                'text-neutral-mid font-semibold': item.tone === 'danger',
-                'text-neutral-mid': item.tone === 'info',
-                'text-neutral-dim': item.tone === 'muted',
-              }"
-            >{{ item.text }}</span>
-          </div>
-          <!-- 结果区：左上角 action 组（copy 始终在；failed+bash 时加「在终端运行」recovery），hover 显示 -->
-          <div v-if="result" class="group/result relative mt-1">
-            <div class="absolute top-0 left-0 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/result:opacity-100">
+          <!-- 内容区：统一 group 包裹，copy 按钮浮在左上角复制全部内容 -->
+          <div v-if="displayContent || guiComponent" class="group/content relative mt-1">
+            <!-- copy 按钮：hover 显示，复制 copyContent（bash=命令+输出，其余=输出） -->
+            <div class="absolute top-0 left-0 z-10 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/content:opacity-100">
               <Button
                 variant="ghost"
                 size="icon"
                 class="size-5 rounded-sm text-neutral-dim hover:text-neutral-fg"
                 :title="t('panel.message.copy')"
-                @click.stop="copy(result, `tool-${tool!.id}`)"
+                @click.stop="copy(copyContent, `tool-${tool!.id}`)"
               >
                 <Check v-if="copied === `tool-${tool!.id}`" class="size-3 text-success" />
                 <CopyIcon v-else class="size-3" />
               </Button>
-              <Button
-                v-if="isFailed && isBash && sessionId"
-                variant="ghost"
-                size="icon"
-                data-testid="tool-failed-run-in-terminal"
-                class="size-5 rounded-sm text-neutral-dim hover:text-warn"
-                :title="t('panel.terminal.runInTerminal')"
-                @click.stop="runInTerminal"
-              >
-                <TerminalIcon class="size-3" />
-              </Button>
             </div>
-            <div
-              class="tool-result font-mono text-[length:var(--text-sm)] leading-snug whitespace-pre-wrap pl-4 select-text"
-              :class="isFailed ? 'text-neutral-mid hover:border-warn hover:text-neutral-fg' : 'text-neutral-mid'"
-            >
-              <GuiComponentRenderer v-if="guiComponent" :component="guiComponent" />
-              <AnsiText v-else-if="outputRaw" :content="outputRaw" />
-              <span v-else>{{ result }}</span>
+            <!-- bash 整体容器：命令+输出共用 border+bg -->
+            <div v-if="isBashTool" class="border border-neutral-faint rounded-sm bg-surface-2">
+              <div v-if="argPath" class="pl-4 py-1.5 font-mono text-[length:var(--text-sm)] text-neutral-fg border-b border-neutral-faint">
+                {{ argPath }}
+              </div>
+              <div class="tool-result font-mono text-[length:var(--text-sm)] leading-snug whitespace-pre-wrap pl-4 py-1.5 select-text text-neutral-mid">
+                <AnsiText v-if="outputRaw" :content="outputRaw" />
+                <span v-else>{{ displayContent }}</span>
+              </div>
+            </div>
+            <!-- 非 bash：meta 条 + 输出 -->
+            <template v-else>
+              <div v-if="filteredMetaItems.length" class="flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-4 font-mono text-[length:var(--text-xs)]">
+                <span
+                  v-for="(item, idx) in filteredMetaItems"
+                  :key="idx"
+                  :class="{
+                    'text-neutral-mid font-semibold': item.tone === 'danger',
+                    'text-neutral-mid': item.tone === 'info',
+                    'text-neutral-dim': item.tone === 'muted',
+                  }"
+                >{{ item.text }}</span>
+              </div>
+              <div
+                class="tool-result font-mono text-[length:var(--text-sm)] leading-snug whitespace-pre-wrap pl-4 select-text"
+                :class="isFailed ? 'text-neutral-mid hover:border-warn hover:text-neutral-fg' : 'text-neutral-mid'"
+              >
+                <GuiComponentRenderer v-if="guiComponent" :component="guiComponent" />
+                <AnsiText v-else-if="outputRaw" :content="outputRaw" />
+                <span v-else>{{ displayContent }}</span>
+              </div>
+            </template>
+            <!-- bash meta 条（耗时等，内容区内） -->
+            <div v-if="isBashTool && filteredMetaItems.length" class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-4 font-mono text-[length:var(--text-xs)]">
+              <span
+                v-for="(item, idx) in filteredMetaItems"
+                :key="idx"
+                :class="{
+                  'text-neutral-mid font-semibold': item.tone === 'danger',
+                  'text-neutral-mid': item.tone === 'info',
+                  'text-neutral-dim': item.tone === 'muted',
+                }"
+              >{{ item.text }}</span>
             </div>
           </div>
         </template>
@@ -191,7 +193,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, Copy as CopyIcon, Terminal as TerminalIcon } from '@lucide/vue'
+import { Check, Copy as CopyIcon } from '@lucide/vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import { extractGui } from '@xyz-agent/extension-protocol'
 import type { ToolCall } from '@xyz-agent/shared'
@@ -203,7 +205,6 @@ import BlockSubagent from './BlockSubagent.vue'
 import { BLOCK_ICON_LUCIDE, RUNNING_LOADER_SVG, getBlockIcon } from './block-icon'
 import { formatDuration } from './format-utils'
 import { Button } from '@/components/ui/button'
-import { useRunInTerminal } from '@/composables/panel/useRunInTerminal'
 import { useToolMeta } from '@/composables/panel/useToolMeta'
 import { useCopy } from '@/composables/effects/useCopy'
 
@@ -257,7 +258,17 @@ const isRunning = computed(() => props.tool?.status === 'running')
  *  诚实态，区别于 running（实时进行中）和 error（明确失败）——未收到结果不代表失败。 */
 const isUnfinished = computed(() => props.tool?.status === 'end_not_received')
 const toolName = computed(() => props.tool?.toolName ?? 'tool')
+const isBashTool = computed(() => toolName.value === 'bash')
 const result = computed(() => props.tool?.output)
+/** 展示用内容：output 优先，failed 时兜底 tool.error（如 read ENOENT 输出为空但 error 有值） */
+const displayContent = computed(() => result.value || (isFailed.value ? (props.tool?.error ?? '') : ''))
+/** 复制用内容：bash 包含命令+输出，其余同 displayContent */
+const copyContent = computed(() => {
+  if (isBashTool.value && argPath.value) {
+    return displayContent.value ? `${argPath.value}\n${displayContent.value}` : argPath.value
+  }
+  return displayContent.value
+})
 /** 原始 ANSI 文本（未经 stripAnsi）。有此字段时用 AnsiText 渲染着色，无则回退 output 纯文本。 */
 const outputRaw = computed(() => props.tool?.outputRaw)
 
@@ -267,6 +278,12 @@ const { metaItems } = useToolMeta({
   toolName,
   isFailed,
   formatDuration,
+})
+
+/** bash 展开后去掉行数统计（命令+output 已完整展示，行数无参考价值） */
+const filteredMetaItems = computed(() => {
+  if (!isBashTool.value) return metaItems.value
+  return metaItems.value.filter((item) => !item.text.endsWith('行'))
 })
 
 /* ── 块类型路由：subagent / workflow / hidden ── */
@@ -351,12 +368,11 @@ const guiComponent = computed<GuiComponent | undefined>(() => {
 })
 
 /**
- * tool 折叠：默认 1 行收起（含 streaming/running 态——改前 working/running 强制展开，
- * 改后 header 行已含摘要+状态指示，1 行即可观察进度，点击才展开详情）。
- * 仅 failed 强制展开（错误须直视，不可收起）。
+ * tool 折叠：默认 1 行收起（含 streaming/running 态——header 行已含摘要+状态指示，
+ * 1 行即可观察进度，点击才展开详情）。failed 不再强制展开（摘要行已含错误状态色）。
  */
 const toolCollapsed = ref(true)
-const toolExpanded = computed(() => isFailed.value || props.forceExpand || !toolCollapsed.value)
+const toolExpanded = computed(() => props.forceExpand || !toolCollapsed.value)
 
 function toggleTool(): void {
   if (props.forceExpand) return
@@ -379,13 +395,6 @@ const argPath = computed(() => {
   return ''
 })
 
-// Phase 5 联动 2：bash 工具块「在终端运行」按钮（isBash + runInTerminal 从 useRunInTerminal 拆出）
-const { isBash, runInTerminal } = useRunInTerminal({
-  toolName,
-  argPath,
-  sessionId: computed(() => props.sessionId),
-  isRunning,
-})
 
 /** Demo H：failed 红框已删（blockClass 不再返回 border-danger/bg-danger-soft）。
  *  failed 块改中性灰默认 + hover 染 warn（scoped .tool-header / .tool-result hover 处理）。

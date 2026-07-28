@@ -248,7 +248,7 @@ describe('BlockSubagent: running / failed / unfinished 态', () => {
     expect(wrapper.find('.animate-loader-spin').exists()).toBe(true)
   })
 
-  it('failed 态强制展开（错误须直视）', () => {
+  it('failed 态默认收起，手动点击展开后 task 完整内容可见', async () => {
     const wrapper = mount(BlockSubagent, {
       props: {
         tool: makeSubagent({
@@ -257,10 +257,14 @@ describe('BlockSubagent: running / failed / unfinished 态', () => {
         }),
       },
     })
-    // failed 强制展开：task 完整体直接可见
-    expect(wrapper.find('.subagent-task-full').exists()).toBe(true)
+    // failed 不再强制展开，默认收起
+    expect(wrapper.find('.subagent-task-full').exists()).toBe(false)
     // header 中性灰
     expect(wrapper.find('.text-neutral-mid').exists()).toBe(true)
+    // 手动点击展开后 task 完整体可见
+    await wrapper.find('[data-testid="subagent-block"] > div').trigger('click')
+    expect(wrapper.find('.subagent-task-full').exists()).toBe(true)
+    expect(wrapper.find('.subagent-task-full').text()).toContain('failed task')
   })
 
   it('unfinished 态不渲染终态指示（终态 icon 已移除）', () => {

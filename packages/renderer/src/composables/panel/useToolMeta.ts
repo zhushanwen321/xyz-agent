@@ -19,8 +19,6 @@ export interface MetaItem {
   text: string
 }
 
-/** 错误摘要截断长度（细节条单行不撑爆） */
-const ERROR_SUMMARY_LIMIT = 40
 /** 字符数格式化阈值（>= 此值显示为 XK chars） */
 const CHAR_K_THRESHOLD = 1000
 /** 有输出统计意义的工具（行数/字符数） */
@@ -43,21 +41,12 @@ export function useToolMeta(params: {
   const metaItems = computed<MetaItem[]>(() => {
     const items: MetaItem[] = []
     const tool = params.tool.value
-    // 失败态首项：错误定性（从 error/output 首行提取一句话）
-    if (params.isFailed.value) {
-      const errText = (tool?.error ?? tool?.output ?? '').trim()
-      if (errText) {
-        const firstLine = errText.split('\n')[0].trim()
-        items.push({
-          tone: 'danger',
-          text: firstLine.length > ERROR_SUMMARY_LIMIT ? `${firstLine.slice(0, ERROR_SUMMARY_LIMIT)}…` : firstLine,
-        })
-      }
-    }
+    // 失败态错误摘要已移至内容区（displayContent 兜底 tool.error），meta 不再重复展示
     // 工具特化：行数/字符数（仅 read/bash 等输出有统计意义的工具）
+    // failed 时跳过——行数/字符数无参考价值
     const name = params.toolName.value
     const output = tool?.output ?? ''
-    if (OUTPUT_META_TOOLS.has(name) && output.trim()) {
+    if (!params.isFailed.value && OUTPUT_META_TOOLS.has(name) && output.trim()) {
       const lineCount = output.split('\n').length
       items.push({ tone: 'muted', text: `${lineCount} 行` })
       // read/cat 额外显示字符数（文件内容大小有参考价值）
