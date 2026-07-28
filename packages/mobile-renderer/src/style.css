@@ -1,0 +1,322 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   xyz-agent Design Tokens · v3 冷蓝暗色（ADR-0018）
+   ────────────────────────────────────────────────────────────
+   SSOT: docs/page-design/design-tokens.md
+   暗色为真默认（ADR-0021-B 裁决）。亮色变体待 settingsStore 接入，
+   design-tokens 仅给出部分亮色值，未给全前不臆造落地。
+   命名遵循 SSOT：--fg/--muted/--subtle/--border（非旧 --text* / --divider，
+   ADR-0018 已裁决归一，见 design-tokens.md「已知裂缝」）。
+   ============================================================ */
+
+:root {
+  /* ── 背景层级 ──────────────────────────────────────────────
+     2026-07-09 提亮校准（对标 VS Code Dark）。
+     2026-07-12 拉大层级间距：原相邻 token 亮度差 <3%（bg→surface 仅 Δ8），
+     侧边栏与对话流肉眼不可辨。surface 以上整体上推，bg→surface 拉到 Δ13（≈5%），
+     每层 ≥Δ5 肉眼可辨。bg / bg-input 保持不变（锚点 + 输入坑凹陷语义）。 */
+  --bg: #1a1b1f;                /* 画布底层（锚点，不变） */
+  --surface: #272830;           /* 面板/卡片（原 #222329，+5 拉大与 bg 间距） */
+  --surface-hover: #363740;     /* 面板悬停（原 #2d2e36，+9 最高） */
+  --surface-2: #2e2f38;         /* 二级表面 Card-Elevated（原 #282930，+6） */
+  --bg-elevated: #313239;       /* 浮起面板/激活面板底色（原 #2a2b32，+7） */
+  --bg-input: #1e1f24;          /* 输入区底色（不变，Δ4 from bg 凹陷） */
+
+  /* ── 文字 ───────────────────────────────────────────────── */
+  --fg: #f7f8fc;                /* 主文字 */
+  --muted: #a8a8b5;             /* 次级文字 */
+  --subtle: #82828f;            /* 三级文字/占位 */
+
+  /* ── 边框/分隔 ─────────────────────────────────────────── */
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.15);
+
+  /* ── 主色（冷蓝）───────────────────────────────────────── */
+  --accent: #4f8ef7;
+  --accent-hover: #6ba3ff;
+  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
+  --accent-ring: rgba(79, 142, 247, 0.30); /* 选中态内描边（Card-Active），见 design-system §2 */
+
+  /* ── 状态色 ─────────────────────────────────────────────── */
+  --success: #22c55e;
+  --warning: #f5a524;
+  --danger: #ef4444;
+  --info: #38bdf8;
+  /* reasoning 紫：思考块色相（draft-message-stream §4 + composer 思考等级） */
+  --reasoning: #a78bfa;
+  /* reasoning 软底：think badge / slash chip 背景（统一 12% 基准，与状态色 soft 对齐） */
+  --reasoning-soft: color-mix(in oklch, var(--reasoning) 12%, transparent);
+  /* 状态色软底（12% 基准，color-mix 派生：palette 切换 / 亮暗主题自动跟随） */
+  --info-soft: color-mix(in oklch, var(--info) 12%, transparent);
+  --success-soft: color-mix(in oklch, var(--success) 12%, transparent);
+  --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
+  --warning-soft: color-mix(in oklch, var(--warning) 12%, transparent);
+
+  /* ── 字体 ───────────────────────────────────────────────── */
+  --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+
+  /* ── 圆角 ───────────────────────────────────────────────── */
+  --radius-sm: 3px;             /* 输入框/标签 */
+  --radius: 8px;                /* 按钮/卡片（默认）*/
+  --radius-lg: 12px;            /* 面板/弹层 */
+
+  /* ── 间距（4px 栅格）───────────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* ── 阴影 ───────────────────────────────────────────────── */
+  --shadow-1: 0 0 0 1px rgba(0, 0, 0, 0.2);          /* 描边 */
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.4);         /* 浮层 */
+  --shadow-glow: 0 0 0 3px rgba(79, 142, 247, 0.25); /* 聚焦环 */
+
+  /* ── 动效 ───────────────────────────────────────────────── */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration: 200ms;
+  --duration-slow: 320ms;
+
+  /* ── shadcn-vue 命名空间别名 ────────────────────────────
+     xyz-ui / 本地 components/ui（shadcn copy）依赖 shadcn 命名约定
+     （--primary/--secondary/--destructive 等），v3 用 --accent/--surface
+     体系。此处把 shadcn 别名映射到 v3 等价语义，不引入新色值。
+     —— 不覆盖既有 v3 token，只补 shadcn 需要的新名。见 design-tokens.md
+     「shadcn 命名映射」节。
+     已知语义分歧（维持 v3，不破 W01）：
+       • --accent：v3=主色蓝 / shadcn=hover 软底 → 维持主色蓝，
+         ghost·outline 的 hover:bg-accent 沿用主色蓝（既有状态）
+       • --muted：v3=次级文字色 / shadcn=背景色 → 维持文字色 */
+  --primary: var(--accent);            /* default Button 底 = 主色蓝 */
+  --primary-foreground: var(--fg);     /* 蓝底白字 */
+  --secondary: var(--surface);         /* secondary Button 底 */
+  --secondary-foreground: var(--fg);
+  --destructive: var(--danger);        /* destructive Button 底 */
+  --destructive-foreground: var(--fg);
+  --muted-foreground: var(--muted);     /* shadcn 次级文字（-foreground 后缀）*/
+  --accent-foreground: var(--fg);      /* ghost hover 蓝底配字 */
+  --background: var(--bg);             /* bg-background / ring-offset-background */
+  --foreground: var(--fg);             /* text-foreground */
+  --popover: var(--surface);           /* bg-popover */
+  --popover-foreground: var(--fg);
+  --input: var(--border);              /* border-input */
+  --ring: var(--accent);               /* ring-ring（focus，主色）*/
+}
+
+/* ============================================================
+   亮色主题槽位（data-theme 切换）
+   settings store.setSystem({theme}) 同步 <html data-theme>（暗为默认 :root）。
+   值源自 design-tokens.md「色彩 — 亮色」+ v3/settings/draft-system.html §token。
+   --accent-soft / --accent-ring 用 color-mix 派生（draft 已验证方案）：
+   跟随当前 --accent 自动适配明暗，无需逐主题手写。
+   ============================================================ */
+[data-theme="light"] {
+  /* ── 背景层级（亮色：bg 最浅 → surface 纯白 → surface-2 略灰 → hover 更灰）── */
+  --bg: #f8f9fb;
+  --surface: #ffffff;
+  --surface-2: #f1f3f6;
+  --surface-hover: #e9ecef;
+  --bg-elevated: #ffffff;   /* 浮起面板用纯白 + shadow-2 区分层级，避免亮色叠灰显脏 */
+  --bg-input: #f1f3f6;      /* 输入区沉于 surface，对齐 surface-2 同层级 */
+
+  /* ── 文字（亮色下 muted/subtle 明度对调：muted 深、subtle 浅）── */
+  --fg: #0d0d0f;
+  --muted: #5a5a65;
+  --subtle: #8a8a95;
+
+  /* ── 边框/分隔（亮色边框用黑半透，比暗色略强保证可见）── */
+  --border: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.14);
+
+  /* ── 主色（亮色加深保证白底对比度；hover 提亮一档）── */
+  --accent: #2563eb;
+  --accent-hover: #3b82f6;
+  --accent-soft: color-mix(in oklch, var(--accent) 13%, transparent);
+  --accent-ring: color-mix(in oklch, var(--accent) 30%, transparent);
+
+  /* ── 状态色 / 字体 / 圆角 / 间距 / 阴影 / 动效：亮暗共用（同色相，不单独覆盖）── */
+}
+
+/* ============================================================
+   配色主题槽位（data-theme-preset 切换）
+   settings store.setSystem({themePreset}) 同步 <html data-theme-preset>。
+   仅覆盖 --accent / --accent-hover；--accent-soft / --accent-ring 经
+   color-mix 自动跟随（L113-114），无需逐主题手写。
+   dark 态用 :root[data-theme-preset]（:root 即 dark 默认）；
+   light 态用 [data-theme=light][data-theme-preset] 加深派生。
+   cold-blue 与 :root 默认 accent 一致（ redundantly 覆盖确保显式）。
+   ============================================================ */
+
+:root[data-theme-preset="warm-teal"] {
+  --accent: oklch(60% 0.08 195);
+  --accent-hover: oklch(68% 0.08 195);
+}
+
+[data-theme="light"][data-theme-preset="warm-teal"] {
+  --accent: color-mix(in oklch, oklch(60% 0.08 195) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(68% 0.08 195) 82%, black 18%);
+}
+
+:root[data-theme-preset="cold-teal"] {
+  --accent: oklch(62% 0.10 190);
+  --accent-hover: oklch(70% 0.10 190);
+}
+
+[data-theme="light"][data-theme-preset="cold-teal"] {
+  --accent: color-mix(in oklch, oklch(62% 0.10 190) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(70% 0.10 190) 82%, black 18%);
+}
+
+:root[data-theme-preset="neutral"] {
+  --accent: oklch(55% 0.01 250);
+  --accent-hover: oklch(63% 0.01 250);
+}
+
+[data-theme="light"][data-theme-preset="neutral"] {
+  --accent: color-mix(in oklch, oklch(55% 0.01 250) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(63% 0.01 250) 82%, black 18%);
+}
+
+:root[data-theme-preset="sharp"] {
+  --accent: oklch(45% 0.01 250);
+  --accent-hover: oklch(55% 0.01 250);
+}
+
+[data-theme="light"][data-theme-preset="sharp"] {
+  --accent: color-mix(in oklch, oklch(45% 0.01 250) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(55% 0.01 250) 82%, black 18%);
+}
+
+:root[data-theme-preset="warm-neutral"] {
+  --accent: oklch(55% 0.04 80);
+  --accent-hover: oklch(63% 0.04 80);
+}
+
+[data-theme="light"][data-theme-preset="warm-neutral"] {
+  --accent: color-mix(in oklch, oklch(55% 0.04 80) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(63% 0.04 80) 82%, black 18%);
+}
+
+:root[data-theme-preset="cold-blue"] {
+  --accent: #4f8ef7;
+  --accent-hover: #6ba3ff;
+}
+
+[data-theme="light"][data-theme-preset="cold-blue"] {
+  --accent: color-mix(in oklch, #4f8ef7 82%, black 18%);
+  --accent-hover: color-mix(in oklch, #6ba3ff 82%, black 18%);
+}
+
+:root[data-theme-preset="terracotta"] {
+  --accent: oklch(60% 0.13 28);
+  --accent-hover: oklch(68% 0.13 28);
+}
+
+[data-theme="light"][data-theme-preset="terracotta"] {
+  --accent: color-mix(in oklch, oklch(60% 0.13 28) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(68% 0.13 28) 82%, black 18%);
+}
+
+:root[data-theme-preset="rose"] {
+  --accent: oklch(62% 0.14 350);
+  --accent-hover: oklch(70% 0.14 350);
+}
+
+[data-theme="light"][data-theme-preset="rose"] {
+  --accent: color-mix(in oklch, oklch(62% 0.14 350) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(70% 0.14 350) 82%, black 18%);
+}
+
+:root[data-theme-preset="amber"] {
+  --accent: oklch(64% 0.15 65);
+  --accent-hover: oklch(72% 0.15 65);
+}
+
+[data-theme="light"][data-theme-preset="amber"] {
+  --accent: color-mix(in oklch, oklch(64% 0.15 65) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(72% 0.15 65) 82%, black 18%);
+}
+
+:root[data-theme-preset="blue"] {
+  --accent: oklch(58% 0.15 250);
+  --accent-hover: oklch(66% 0.15 250);
+}
+
+[data-theme="light"][data-theme-preset="blue"] {
+  --accent: color-mix(in oklch, oklch(58% 0.15 250) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(66% 0.15 250) 82%, black 18%);
+}
+
+:root[data-theme-preset="violet"] {
+  --accent: oklch(58% 0.15 280);
+  --accent-hover: oklch(66% 0.15 280);
+}
+
+[data-theme="light"][data-theme-preset="violet"] {
+  --accent: color-mix(in oklch, oklch(58% 0.15 280) 82%, black 18%);
+  --accent-hover: color-mix(in oklch, oklch(66% 0.15 280) 82%, black 18%);
+}
+
+/* ============================================================
+   字体大小槽位（data-font-size 切换，D17）
+   settings store.setSystem({fontSize}) 同步 <html data-font-size>。
+   默认 medium（:root 之外，依赖 data-font-size 属性，applySystemToDom 始终写入）。
+   仅调整根 font-size，组件内 rem/tailwind text-[px] 不受影响，避免大面积布局抖动。
+   ============================================================ */
+:root[data-font-size="small"] {
+  font-size: 14px;
+}
+
+:root[data-font-size="medium"] {
+  font-size: 15px;
+}
+
+:root[data-font-size="large"] {
+  font-size: 16px;
+}
+
+/* ============================================================
+   基础重置（style.css 只放 token + base reset，组件样式走 Tailwind）
+   ============================================================ */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ============================================================
+   Reduced motion（PRODUCT.md Accessibility：prefers-reduced-motion 兜底）
+   用户系统开启「减少动态效果」时，所有动画/过渡降级为瞬时。
+   覆盖 5 个无限循环动画（blink / pulse-accent / working-pulse /
+   steer-breathe / spin）及所有 transition。
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
