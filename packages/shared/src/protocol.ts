@@ -43,6 +43,13 @@ export type ClientMessageType =
   | 'session.create' | 'session.delete' | 'session.deleteByCwd' | 'config.sessions' | 'session.switch' | 'session.history' | 'session.getFullHistory' | 'session.getCommands' | 'session.getContext'
   | 'session.compact' | 'session.rename' | 'session.fork'
   | 'session.handoff' | 'session.abortHandoff'
+  // runtime-message-bus（slice:runtime-message-bus，wave:protocol-seq）：
+  // session.subscribe 订阅某 session 的 live 事件流（bus.publish 推送的带 seq 消息），
+  // reply { snapshot, lastSeq, gap? }（见 ReplyPayloadMap）。
+  // session.unsubscribe 取消订阅，reply message.status ack。
+  // 本 wave 仅收录 ClientMessageType 联合条目，request payload 形状（ClientMessageMap）
+  // 留给 runtime-wiring wave 按 DM4 SubscriptionState 决策后补登记。
+  | 'session.subscribe' | 'session.unsubscribe'
   | 'session.getSubagents' | 'session.getSubagentHistory'
   | 'session.getWorkflows' | 'session.getAgentCallHistory' | 'session.getAgentCallFilePath'
   | 'session.workflowAction' | 'session.subagentAction'
@@ -992,7 +999,14 @@ export type ServerMessageMap = ServerMessageMapBase & {
  */
 export interface ServerMessage<T extends ServerMessageType = ServerMessageType> {
   type: T
+  /** RPC reply 关联 ID（renderer 在 ClientMessage 生成 UUID，runtime reply 原样回填）。
+   *  与 seq 互斥（见 D7）：同一条消息要么是 RPC reply（带 id）要么是 server-push live（带 seq），
+   *  runtime routeInbound 先判 id 再判 seq。 */
   id?: string
+  /** server-push live 事件的单调序号（per-session，bus.publish 分配，DM3/D5）。
+   *  与 id 互斥（见 D7）：subscribe 后 renderer 用 lastSeenSeq 做 gap 检测与 reconcile backfill。
+   *  类型层不强制 id/seq union（避免破坏现有构造侧默认泛型赋值），互斥由 runtime 保证。 */
+  seq?: number
   payload: ServerMessageMap[T]
 }
 
@@ -1157,6 +1171,15 @@ export interface ReplyPayloadMap {
   'session.handoff': void         // reply message.status
   // session.abortHandoff：取消进行中 handoff，reply message.status ack（与 message.abort 同模式）。
   'session.abortHandoff': void    // reply message.status
+  // session.subscribe（runtime-message-bus wave:protocol-seq）：订阅某 session 的 live 事件流。
+  // payload 消费型——renderer 读 snapshot 做 reconcile（订阅时刻 bus ring 内当前事件序列，
+  // 元素为带 seq 的 ServerMessage），记 lastSeq 作为后续 gap 检测基线；gap=true 标记本次
+  // snapshot 因 ring 容量溢出存在缺口（renderer 需全量重拉而非增量 backfill）。
+  'session.subscribe': { snapshot: ServerMessage[]; lastSeq: number; gap?: boolean }
+  // session.unsubscribe（runtime-message-bus wave:protocol-seq）：取消订阅，ack 型。
+  // 与 session.handoff/session.abortHandoff/message.abort 同模式，renderer register<void>
+  // 不读 reply payload，取消订阅的副作用由后续 live 事件停发体现。
+  'session.unsubscribe': void     // reply message.status
   'session.rename': void          // reply session.renamed
   'session.setThinkingLevel': void // reply session.thinkingLevelSet
   'session.subagentAction': void  // reply session.subagentActionDone
