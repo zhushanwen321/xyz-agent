@@ -753,3 +753,93 @@ describe('P2-s2 auth replay orchestration (TC-W1.1~W1.8)', () => {
     expect(cb.onConnect).toHaveBeenCalledTimes(1)
   })
 })
+
+// ── P2-s2 w2: replyAuth ReplayMeta 序列化专项（TC-W2.1~W2.4） ──────────
+//
+// 本 wave 验证 replyAuth 签名扩展（w1 已落地，commit 97f1b17cd）的 ReplayMeta 序列化行为：
+// - TC-W2.1 全字段填充：auth.ok payload 含 bootId/serverSeq/resumed/replayedCount/seqReset
+// - TC-W2.2 undefined 忽略：冷启动最小 payload 只含 serverVersion/clientId/resumed
+// - TC-W2.3 readyState 守卫：ws 非 OPEN 时 replyAuth 不发送
+// - TC-W2.4 开放模式不调 replyAuth（零回归）
+
+describe('P2-s2 replyAuth ReplayMeta serialization (TC-W2.1~W2.4)', () => {
+  it('TC-W2.1: replyAuth ReplayMeta 全字段填充：auth.ok payload 含 5 个 meta 字段 + serverVersion/clientId', async () => {
+    const { cm } = await setupAuthMode({
+      onAuthSuccess: () => ({ resume: true, messages: ['m1'], seqReset: false, replayedCount: 1, bootId: 'boot-123', serverSeq: 10 }),
+    })
+    const ws = makeMockWs()
+    connect(cm, ws)
+    await sendAuth(ws, { token: 'real', clientId: 'c1' })
+
+    // auth.ok 是 ws.send 第一条（messages[0]='m1' 是第二条）
+    const authOkRaw = vi.mocked(ws.send).mock.calls[0][0] as string
+    const parsed = JSON.parse(authOkRaw)
+    expect(parsed.type).toBe('auth.ok')
+    // 现状字段不丢
+    expect(parsed.payload.serverVersion).toBe('1.0.0')
+    expect(parsed.payload.clientId).toBe('c1')
+    // 全部 5 个 meta 字段
+    expect(parsed.payload.bootId).toBe('boot-123')
+    expect(parsed.payload.serverSeq).toBe(10)
+    expect(parsed.payload.resumed).toBe(true)
+    expect(parsed.payload.replayedCount).toBe(1)
+    expect(parsed.payload.seqReset).toBe(false)
+  })
+
+  it('TC-W2.2: replyAuth ReplayMeta undefined 字段被 JSON.stringify 忽略（冷启动最小 payload）', async () => {
+    // 无 onAuthSuccess → handleAuthMessage 走 else 分支 replyAuth({resumed:false})
+    const { ConnectionManager } = await import('../src/transport/connection-manager.js')
+    const cb = makeCallbacks()
+    const fixedTm = {
+      load: () => ({ enabled: true as const, token: 'real' }),
+      generate: () => 'real',
+      verify: () => true,
+      persist: () => {},
+    }
+    const cm = new ConnectionManager(0, cb, { tokenManager: fixedTm, serverVersion: '1.0.0' })
+
+    const ws = makeMockWs()
+    connect(cm, ws)
+    await sendAuth(ws, { token: 'real', clientId: 'c1' })
+
+    // auth.ok payload 只含 serverVersion/clientId/resumed（bootId/serverSeq/replayedCount/seqReset undefined 被忽略）
+    const authOkRaw = vi.mocked(ws.send).mock.calls[0][0] as string
+    const parsed = JSON.parse(authOkRaw)
+    expect(Object.keys(parsed.payload).sort()).toEqual(['clientId', 'resumed', 'serverVersion'])
+    expect(parsed.payload.resumed).toBe(false)
+  })
+
+  it('TC-W2.3: replyAuth readyState 检查：ws 非 OPEN 时不发送（避免 send 抛错）', async () => {
+    const { cm } = await setupAuthMode({
+      onAuthSuccess: () => ({ resume: false, messages: [], seqReset: false, replayedCount: 0, bootId: 'b', serverSeq: 0 }),
+    })
+    const ws = makeMockWs()
+    connect(cm, ws)
+    // 认证过程中将 ws.readyState 置为 CLOSING（模拟 await onAuthSuccess 期间断开）
+    ws.readyState = WebSocket.CLOSING
+    await sendAuth(ws, { token: 'real', clientId: 'c1' })
+
+    // ws.send 未被调用（readyState 非 OPEN，replyAuth 守卫短路）
+    expect(ws.send).not.toHaveBeenCalled()
+    // 不抛错（replyAuth 内 if(ws.readyState===WS_OPEN) 守卫，send 未触达）
+    expect(ws.close).not.toHaveBeenCalledWith(4001, expect.anything())
+  })
+
+  it('TC-W2.4: 开放模式不调 replyAuth（零回归确认）', async () => {
+    const { ConnectionManager } = await import('../src/transport/connection-manager.js')
+    const cb = makeCallbacks() as ConnectionCallbacks & { onAuthSuccess: ReturnType<typeof vi.fn> }
+    cb.onAuthSuccess = vi.fn().mockResolvedValue({ resume: false, messages: [], seqReset: false, replayedCount: 0, bootId: 'b', serverSeq: 0 })
+    // 无 tokenFile → 开放模式
+    const cm = new ConnectionManager(0, cb, { tokenManager: createTokenManager({}) })
+
+    const ws = makeMockWs()
+    connect(cm, ws)
+
+    // ws.send 从未被调用（开放模式无 auth 握手，不产生 auth.ok）
+    expect(ws.send).not.toHaveBeenCalled()
+    // onConnect 被调一次（推全量，但 replyAuth 本身不调）
+    expect(cb.onConnect).toHaveBeenCalledTimes(1)
+    // onAuthSuccess 未被调
+    expect(cb.onAuthSuccess).not.toHaveBeenCalled()
+  })
+})
