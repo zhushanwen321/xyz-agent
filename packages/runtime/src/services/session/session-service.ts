@@ -298,9 +298,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return last.id as string
   }
 
-  async sendMessage(sessionId: string, content: string): Promise<{ blocked: boolean; rejected?: boolean }> { return this.dispatcher.sendMessage(sessionId, content) }
-  async sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean; rejected?: boolean }> {
-    return this.dispatcher.sendSubagentMessage(sessionId, agent, task, content)
+  async sendMessage(sessionId: string, content: string, clientId?: string, deviceName?: string): Promise<{ blocked: boolean; rejected?: boolean }> { return this.dispatcher.sendMessage(sessionId, content, clientId, deviceName) }
+  async sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string, clientId?: string, deviceName?: string): Promise<{ blocked: boolean; rejected?: boolean }> {
+    return this.dispatcher.sendSubagentMessage(sessionId, agent, task, content, clientId, deviceName)
   }
   async abort(sessionId: string): Promise<void> { return this.dispatcher.abort(sessionId) }
   async steerMessage(sessionId: string, content: string): Promise<void> { return this.dispatcher.steerMessage(sessionId, content) }
@@ -650,6 +650,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const session = this.sessions.get(sessionId)
     if (!session) return
     session.isGenerating = false
+    // P5 lease：turn-end（agent_end）释放 lease（spec D7①）。leaseManager 经组合根 setLeaseManager 注入，
+    // 未注入时 no-op（向后兼容）。release 广播 session.idle{reason:'turn_end'}。
+    this.leaseManager?.release(sessionId, 'turn_end')
     this.tryPersistLabel(session)
     // W4：写 session_end 终态。aborted→stopped（与 abort 路径一致），error→error，其余→done
     const outcome = stopReason === 'error' ? 'error'

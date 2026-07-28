@@ -320,6 +320,9 @@ describe('RuntimeServer message.send with subagent field', () => {
   expect(sendMessageMock).toHaveBeenCalledWith(
     'sess-normal',
     'Hello, this is a regular chat message',
+    // P5 lease：clientId + deviceName 透传给 dispatcher（lease acquire + busy 定向投递）。
+    'local',
+    '',
   )
   })
 })

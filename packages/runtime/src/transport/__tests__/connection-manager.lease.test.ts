@@ -26,7 +26,7 @@ async function setup(opts: { enabled: boolean }): Promise<{
     onMessage: vi.fn().mockResolvedValue(undefined),
     onDisconnect: vi.fn(),
   }
-  const tokenManager = createTokenManager(opts.enabled ? { token: 'real' } : {})
+  const tokenManager = createTokenManager(opts.enabled ? { tokenFile: '/tmp/xyz-agent-p5-lease-test-token' } : {})
   const cm = new ConnectionManager(port, {
     onConnect: (ws, clientId) => cb.onConnect(ws, clientId),
     onMessage: (msg, ws, clientId) => cb.onMessage(msg, ws, clientId),

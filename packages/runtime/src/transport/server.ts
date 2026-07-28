@@ -216,6 +216,8 @@ export class RuntimeServer implements IMessageBroker {
       clearExtensionTimeoutsForSession: (sessionId) => this.clearExtensionTimeoutsForSession(sessionId),
       broadcast: (msg) => this.broker.broadcast(msg),
       clearSessionBuffer: (sessionId) => this.broker.clearSessionBuffer(sessionId),
+      // P5 lease：取 clientId 连接的 deviceName（message.send 透传 dispatcher）。
+      getDeviceName: (clientId) => this.conn.clients.get(clientId)?.deviceName,
     })
     this.extensionHandler = new ExtensionMessageHandler({
       ...messaging,

@@ -112,6 +112,12 @@ export interface EventInterpreterOptions {
    * 详见 ADR-0035「ping 可行性验证」。
    */
   pingPi?: () => Promise<Record<string, unknown> | undefined> | undefined
+  /**
+   * P5 lease：pingTick 成功时调（组合根注入 leaseManager.renew）。
+   * 续租挂 ping 成功路径（spec D4）：pi 健康响应 → 续 lease 30s。失败时不调（lease 自然过期）。
+   * 只传 sessionId——renew 内部从 session.busyOwnerId 反查 owner（M4）。
+   */
+  onLeaseRenew?: (sessionId: string) => void
 }
 
 /** 可能改文件的工具（baseline diff 触发判定，与原 event-adapter 一致）。 */
@@ -617,6 +623,14 @@ export class EventInterpreter {
       // 健康响应 → 清零（AC-8b：中途成功后需重新累积 2 次才 WARN）
       this.pingFailCount = 0
       this.pingWarned = false
+      // P5 lease：ping 成功续租（spec D4）。renew 只传 sessionId，内部反查 busyOwnerId（M4）。
+      // 无 owner 时 renew return false（不误续），故无副作用。
+      try {
+        this.opts.onLeaseRenew?.(this.sessionId)
+      // eslint-disable-next-line taste/no-silent-catch -- 续租失败不应中断 ping 探测（lease 自然过期兜底）
+      } catch (e) {
+        console.warn('[event-interpreter] onLeaseRenew failed:', e)
+      }
       return
     }
     this.pingFailCount += 1

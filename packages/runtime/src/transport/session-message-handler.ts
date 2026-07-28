@@ -21,6 +21,11 @@ export interface SessionHandlerContext extends MessageHandlerContext {
    * session 销毁时调，移除整桶不推进 evictedWatermark（ES6：session 已删，客户端清分区不再期待其消息）。
    */
   clearSessionBuffer(sessionId: string): void
+  /**
+   * P5 lease：取某 clientId 连接的设备名（message.send 透传给 dispatcher lease acquire + session.busy 广播）。
+   * 可选——未注入时 deviceName 兜底 ''。
+   */
+  getDeviceName?(clientId: string): string | undefined
 }
 
 export class SessionMessageHandler {
@@ -35,7 +40,7 @@ export class SessionMessageHandler {
     'message.send', 'message.abort', 'message.steer', 'message.follow_up',
   ]
 
-  async handleSessionMessage(msg: ClientMessage, ws: WsType, _clientId: string): Promise<void> {
+  async handleSessionMessage(msg: ClientMessage, ws: WsType, clientId: string): Promise<void> {
     switch (msg.type) {
       case 'session.create': {
         try {
@@ -191,9 +196,12 @@ export class SessionMessageHandler {
       }
       case 'message.send': {
         const { sessionId, content, subagent } = msg.payload
+        // P5 lease：透传 clientId + deviceName 给 dispatcher（lease acquire + busy 定向投递用）。
+        // deviceName 从连接池取（ctx.getClient 拿 ws 后无法直接取 deviceName，故经 sessionService 取连接 ctx）。
+        const deviceName = this.ctx.getDeviceName?.(clientId) ?? ''
         const result = subagent
-          ? await this.ctx.sessionService.sendSubagentMessage(sessionId, subagent.agent, subagent.task, content)
-          : await this.ctx.sessionService.sendMessage(sessionId, content)
+          ? await this.ctx.sessionService.sendSubagentMessage(sessionId, subagent.agent, subagent.task, content, clientId, deviceName)
+          : await this.ctx.sessionService.sendMessage(sessionId, content, clientId, deviceName)
         // D(round7-must-fix-3): hook 拦截时 dispatcher 已广播 message.error（错误气泡），
         // 此处必须走 error envelope（带 msg.id）让 renderer pending.reject，不得 reply success。
         // 否则 renderer 见 msg.id 且非 error → pending.resolve → composer 清空，与错误气泡矛盾。

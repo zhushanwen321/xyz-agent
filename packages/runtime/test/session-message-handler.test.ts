@@ -58,7 +58,7 @@ describe('SessionMessageHandler — error envelope 回归', () => {
   describe('message.send', () => {
     it('blocked (hook拦截/prompt失败) → sendError(message_blocked) + 不 reply success', async () => {
       const { cap, handler } = makeHandler({ sendMessage: vi.fn().mockResolvedValue({ blocked: true }) })
-      await handler.handleSessionMessage(msg('message.send', { sessionId: 's1', content: 'hi' }), WS)
+      await handler.handleSessionMessage(msg('message.send', { sessionId: 's1', content: 'hi' }), WS, 'local')
       expect(cap.errors).toHaveLength(1)
       expect(cap.errors[0]).toMatchObject({ id: 'm1', code: 'message_blocked', details: { sessionId: 's1' } })
       expect(cap.replies).toHaveLength(0) // 关键：不得 reply success，否则 pending.resolve 误判成功
@@ -66,7 +66,7 @@ describe('SessionMessageHandler — error envelope 回归', () => {
 
     it('未 blocked → reply message.status sent', async () => {
       const { cap, handler } = makeHandler()
-      await handler.handleSessionMessage(msg('message.send', { sessionId: 's1', content: 'hi' }), WS)
+      await handler.handleSessionMessage(msg('message.send', { sessionId: 's1', content: 'hi' }), WS, 'local')
       expect(cap.replies[0]).toMatchObject({ id: 'm1', type: 'message.status', payload: { status: 'sent' } })
       expect(cap.errors).toHaveLength(0)
     })
@@ -75,12 +75,12 @@ describe('SessionMessageHandler — error envelope 回归', () => {
   describe('message.steer', () => {
     it('失败 → sendError(steer_failed)', async () => {
       const { cap, handler } = makeHandler({ steerMessage: vi.fn().mockRejectedValue(new Error('no active pi')) })
-      await handler.handleSessionMessage(msg('message.steer', { sessionId: 's1', content: 'x' }), WS)
+      await handler.handleSessionMessage(msg('message.steer', { sessionId: 's1', content: 'x' }), WS, 'local')
       expect(cap.errors[0]).toMatchObject({ id: 'm1', code: 'steer_failed', details: { sessionId: 's1' } })
     })
     it('成功 → reply queued... 实为 steered', async () => {
       const { cap, handler } = makeHandler()
-      await handler.handleSessionMessage(msg('message.steer', { sessionId: 's1', content: 'x' }), WS)
+      await handler.handleSessionMessage(msg('message.steer', { sessionId: 's1', content: 'x' }), WS, 'local')
       expect(cap.replies[0].payload).toMatchObject({ status: 'steered' })
     })
   })
@@ -88,7 +88,7 @@ describe('SessionMessageHandler — error envelope 回归', () => {
   describe('message.follow_up', () => {
     it('失败 → sendError(follow_up_failed)', async () => {
       const { cap, handler } = makeHandler({ followUpMessage: vi.fn().mockRejectedValue(new Error('boom')) })
-      await handler.handleSessionMessage(msg('message.follow_up', { sessionId: 's1', content: 'x' }), WS)
+      await handler.handleSessionMessage(msg('message.follow_up', { sessionId: 's1', content: 'x' }), WS, 'local')
       expect(cap.errors[0]).toMatchObject({ code: 'follow_up_failed', details: { sessionId: 's1' } })
     })
   })
@@ -119,7 +119,7 @@ describe('SessionMessageHandler — error envelope 回归', () => {
         getSummary: vi.fn().mockReturnValue(undefined),
         ensureActive: vi.fn().mockRejectedValue(enoent),
       })
-      await handler.handleSessionMessage(msg('session.switch', { sessionId: 's1' }), WS)
+      await handler.handleSessionMessage(msg('session.switch', { sessionId: 's1' }), WS, 'local')
       expect(cap.errors[0]).toMatchObject({ code: 'file_not_found', id: 'm1' })
     })
     it('普通失败 → sendError(not_found)', async () => {
@@ -127,7 +127,7 @@ describe('SessionMessageHandler — error envelope 回归', () => {
         getSummary: vi.fn().mockReturnValue(undefined),
         ensureActive: vi.fn().mockRejectedValue(new Error('other')),
       })
-      await handler.handleSessionMessage(msg('session.switch', { sessionId: 's1' }), WS)
+      await handler.handleSessionMessage(msg('session.switch', { sessionId: 's1' }), WS, 'local')
       expect(cap.errors[0].code).toBe('not_found')
     })
   })
@@ -135,21 +135,21 @@ describe('SessionMessageHandler — error envelope 回归', () => {
   describe('session.workflowAction + session.subagentAction（扩展 slash command 转发）', () => {
     it('workflowAction 成功 → reply session.workflowActionDone', async () => {
       const { cap, handler } = makeHandler({ workflowAction: vi.fn().mockResolvedValue(undefined) })
-      await handler.handleSessionMessage(msg('session.workflowAction', { sessionId: 's1', action: 'abort', runId: 'wf-1' }), WS)
+      await handler.handleSessionMessage(msg('session.workflowAction', { sessionId: 's1', action: 'abort', runId: 'wf-1' }), WS, 'local')
       expect(cap.replies[0]).toMatchObject({ id: 'm1', type: 'session.workflowActionDone', payload: { sessionId: 's1', action: 'abort', runId: 'wf-1' } })
       expect(cap.errors).toHaveLength(0)
     })
 
     it('subagentAction 成功 → reply session.subagentActionDone', async () => {
       const { cap, handler } = makeHandler({ subagentAction: vi.fn().mockResolvedValue(undefined) })
-      await handler.handleSessionMessage(msg('session.subagentAction', { sessionId: 's1', action: 'cancel', subagentId: 'bg-1' }), WS)
+      await handler.handleSessionMessage(msg('session.subagentAction', { sessionId: 's1', action: 'cancel', subagentId: 'bg-1' }), WS, 'local')
       expect(cap.replies[0]).toMatchObject({ id: 'm1', type: 'session.subagentActionDone', payload: { sessionId: 's1', action: 'cancel', subagentId: 'bg-1' } })
       expect(cap.errors).toHaveLength(0)
     })
 
     it('subagentAction 失败 → 抛出（由 server.ts 外层 catch 转 sendError，handler 内不包裹）', async () => {
       const { cap, handler } = makeHandler({ subagentAction: vi.fn().mockRejectedValue(new Error('session not active')) })
-      await expect(handler.handleSessionMessage(msg('session.subagentAction', { sessionId: 's1', action: 'cancel', subagentId: 'bg-1' }), WS)).rejects.toThrow('session not active')
+      await expect(handler.handleSessionMessage(msg('session.subagentAction', { sessionId: 's1', action: 'cancel', subagentId: 'bg-1' }), WS, 'local')).rejects.toThrow('session not active')
       // handler 内不 sendError 也不 reply（由 server.ts 外层 catch 处理）
       expect(cap.replies).toHaveLength(0)
     })

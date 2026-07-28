@@ -80,6 +80,11 @@ function makeHandler() {
     broadcastSkillDirs: vi.fn(),
     broadcastAgentDirs: vi.fn(),
     broadcastExtensionDirs: vi.fn(),
+    // P5 lease/presence ctx 方法（settings handler 不调用，给 stub 满足 MessageHandlerContext 接口）。
+    getClientId: vi.fn(() => 'local'),
+    getClient: vi.fn(() => undefined),
+    broadcastExcept: vi.fn(),
+    sendToClient: vi.fn(),
   }
 
   const handler = new SettingsMessageHandler(ctx)

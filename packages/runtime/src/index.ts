@@ -236,6 +236,9 @@ export async function main(opts?: { host?: string; port?: number; tokenFile?: st
         if (!client) return undefined
         return client.getState()
       },
+      // P5 lease：pingTick 成功续租（spec D4 挂 ping 成功路径）。renew 只传 sessionId，
+      // 内部从 session.busyOwnerId 反查 owner（M4）。sessionService 在 setLeaseManager 后持有 leaseManager。
+      onLeaseRenew: (sid) => sessionService.getLeaseManager()?.renew(sid),
     })
     // EventAdapter：纯翻译器，把翻译结果喂给 interpreter 编排。
     return new EventAdapter(sessionId, (events) => interpreter.interpret(events))

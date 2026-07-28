@@ -67,6 +67,7 @@ describe('W1/L4: session.create/fork model 未配置返回 MODEL_NOT_CONFIGURED'
     await handler.handleSessionMessage(
       msg('session.create', { cwd: '/repo', label: 'repo' }),
       WS,
+      'local',
     )
     expect(cap.errors).toHaveLength(1)
     expect(cap.errors[0]).toMatchObject({
@@ -90,6 +91,7 @@ describe('W1/L4: session.create/fork model 未配置返回 MODEL_NOT_CONFIGURED'
     await handler.handleSessionMessage(
       msg('session.fork', { srcSessionId: 'src1', fromPiEntryId: 'entry1', includeFrom: true }),
       WS,
+      'local',
     )
     expect(cap.errors).toHaveLength(1)
     expect(cap.errors[0]).toMatchObject({ id: 'm1', code: MODEL_NOT_CONFIGURED })
@@ -102,9 +104,10 @@ describe('W1/L4: session.create/fork model 未配置返回 MODEL_NOT_CONFIGURED'
     // 非 MODEL_NOT_CONFIGURED 错误应向上抛出（不被 handler 吞掉）
     await expect(
       handler.handleSessionMessage(
-        msg('session.create', { cwd: '/repo', label: 'repo' }),
-        WS,
-      ),
+      msg('session.create', { cwd: '/repo', label: 'repo' }),
+      WS,
+      'local',
+    ),
     ).rejects.toThrow('pi spawn failed')
     // handler 自身不 sendError（由 server.ts 统一 catch 处理）
     expect(cap.errors).toHaveLength(0)
