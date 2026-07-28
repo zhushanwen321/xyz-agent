@@ -270,14 +270,14 @@ describe('BlockSubagent: running / failed / unfinished 态', () => {
     expect(wrapper.text()).toContain('未收到结果')
   })
 
-  it('根 div 是 trace-subagent（去卡片化，底部 dashed 分割）', () => {
+  it('根 div 是 trace-subagent（纯缩进无边框）', () => {
     const wrapper = mount(BlockSubagent, {
       props: { tool: makeSubagent() },
     })
     const root = wrapper.find('.trace-subagent')
     expect(root.exists()).toBe(true)
-    expect(root.classes()).toContain('border-b')
-    expect(root.classes()).toContain('border-dashed')
+    expect(root.classes()).not.toContain('border-b')
+    expect(root.classes()).not.toContain('border-dashed')
     expect(root.classes()).not.toContain('border-danger')
     expect(root.classes()).not.toContain('bg-danger-soft')
   })
