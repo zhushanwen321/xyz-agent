@@ -38,8 +38,11 @@ import { TerminalService } from './services/terminal/terminal-service.js'
 import { QuotaService } from './services/quota-service.js'
 import { FileService } from './services/file-service.js'
 import { HandoffService } from './services/handoff-service.js'
-// MessageBus（wave:bus-core）：per-session 消息广播核心。本 wave 仅导出，
-// 不在组合根接线（runtime-wiring wave 会把 ws 实例适配为 BusClient 并接入）。
+// MessageBus（wave:bus-core 产物）：per-session 消息广播核心。
+// wave:runtime-wiring 在组合根创建单例并注入到 SessionService（session 级消息双写走 bus.publish）+
+// RuntimeServer（subscribe/unsubscribe RPC handler + ConnectionManager.onClose → unsubscribeAll）。
+// 保留 re-export 供外部消费（renderer-subscribe wave 等可能 import 类型）。
+import { MessageBus } from './services/message-bus/message-bus.js'
 export { MessageBus } from './services/message-bus/message-bus.js'
 export type { BusClient, SessionBusState } from './services/message-bus/types.js'
 import { getAppVersion } from './services/plugin-service/plugin-version-checker.js'
@@ -94,6 +97,13 @@ async function main(): Promise<void> {
 
   // Transport layer
   const server = new RuntimeServer(port, projectRoot)
+
+  // MessageBus 单例（wave:runtime-wiring）：per-session 消息广播核心。
+  // 在 server 构造后、setServices 前创建并注入——server 的 ConnectionManager.onDisconnect
+  // 回调经 setMessageBus 拿到引用，setServices 装配 sessionHandler 时读 server.messageBus。
+  // 默认 ring 容量 1000（bus-core DEFAULT_RING_CAPACITY，D4 决策）。
+  const messageBus = new MessageBus()
+  server.setMessageBus(messageBus)
 
   // ── Phase 1: create all service instances (no cross-service deps at construction time) ──
 
@@ -299,6 +309,10 @@ async function main(): Promise<void> {
   // 注入 PresetService 供 getLaunchPresetOptions 委托（spawn pi 时按 launch preset 构建 args）。
   // 与 setConfigService 同模式（pi-launch-presets 设计 §8.1 + §4.3）。
   sessionService.setPresetService(presetService)
+  // 注入 MessageBus（wave:runtime-wiring）：session 级消息（带 sessionId payload）双写走 bus.publish
+  //（bus 负责 per-session seq 分配 + ring buffer + 订阅者广播），session 销毁时 removeSessionEntry
+  // 调 bus.clearSession。与 setConfigService 同模式（setter 注入，避免破坏 SessionService 测试构造点）。
+  sessionService.setMessageBus(messageBus)
 
   // ── SkillRegistry（W1）：全局 + 项目级 skill 缓存 + chokidar 文件监听 ──
   // 构造在 sessionService 之后（依赖其 getActiveSessionIds/getSessionCwd 窄接口）。

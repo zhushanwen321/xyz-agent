@@ -26,11 +26,15 @@ const HEARTBEAT_TIMEOUT_MS = 45_000
  * - onMessage：收到合法 ClientMessage，交 server 路由（返回 Promise，错误由调用方 catch）。
  * - onConnect：新连接建立，交 broker 推送 initial state。
  * - sendError：连接级解析/兜底错误回复（注入 broker.sendError，避免 ConnectionManager 依赖 broker）。
+ * - onDisconnect：连接关闭（wave:runtime-wiring）：交 server 调 bus.unsubscribeAll(ws) 清理该 ws
+ *   的所有 session 订阅。可选：未注入时只做连接池清理（向后兼容）。
  */
 export interface ConnectionCallbacks {
   onConnect(ws: WsType): void
   onMessage(msg: ClientMessage, ws: WsType): Promise<void>
   sendError(ws: WsType, code: string, message: string, id?: string, details?: ErrorDetails): void
+  /** ws 断开回调（wave:runtime-wiring）：触发 MessageBus.unsubscribeAll 清理订阅。 */
+  onDisconnect?(ws: WsType): void
 }
 
 export class ConnectionManager {
@@ -97,6 +101,10 @@ export class ConnectionManager {
     ws.on('close', () => {
       this.clients.delete(ws)
       this.clearHeartbeat(ws)
+      // wave:runtime-wiring：ws 断开时清理该 ws 的所有 session 订阅（MessageBus.unsubscribeAll）。
+      // 经回调注入避免 ConnectionManager 直接依赖 MessageBus（保持传输层与 service 层解耦）。
+      // onDisconnect 可选（向后兼容：未注入时只做连接池清理）。
+      this.callbacks.onDisconnect?.(ws)
       console.log(`[runtime] client disconnected (total: ${this.clients.size})`)
     })
     ws.on('error', (err) => {

@@ -47,8 +47,7 @@ export type ClientMessageType =
   // session.subscribe 订阅某 session 的 live 事件流（bus.publish 推送的带 seq 消息），
   // reply { snapshot, lastSeq, gap? }（见 ReplyPayloadMap）。
   // session.unsubscribe 取消订阅，reply message.status ack。
-  // 本 wave 仅收录 ClientMessageType 联合条目，request payload 形状（ClientMessageMap）
-  // 留给 runtime-wiring wave 按 DM4 SubscriptionState 决策后补登记。
+  // wave:runtime-wiring 已在 ClientMessageMap 补登记 request payload 形状（见下方）。
   | 'session.subscribe' | 'session.unsubscribe'
   | 'session.getSubagents' | 'session.getSubagentHistory'
   | 'session.getWorkflows' | 'session.getAgentCallHistory' | 'session.getAgentCallFilePath'
@@ -264,6 +263,17 @@ export interface ClientMessageMap {
   // session.subagentAction：subagent 生命周期操作（当前只 cancel，对称 workflowAction 的扩展 slash command 转发）。
   // runtime 经 client.prompt("/subagents <action> <subagentId>") 调扩展（不经 LLM）。
   'session.subagentAction': { sessionId: string; action: 'cancel'; subagentId: string }
+  // session.subscribe（runtime-message-bus wave:runtime-wiring 补登记，对应 IF6 契约）：
+  // renderer 切换/创建 session 时调用，触发 bus.subscribe 注册订阅 + 拉 ring snapshot。
+  // fromSeq 可选：重连场景带 lastSeenSeq，bus 返回 seq > fromSeq 的增量
+  // （若 ring 内已淘汰 fromSeq 之前的消息则返回全量 snapshot + reply 标记 gap=true）。
+  // reply 'session.subscribe' { snapshot: ServerMessage[]; lastSeq: number; gap?: boolean }。
+  'session.subscribe': { sessionId: string; fromSeq?: number }
+  // session.unsubscribe（runtime-message-bus wave:runtime-wiring 补登记，对应 IF7 契约）：
+  // renderer 切走 session 时调用（可选），触发 bus.unsubscribe 减少不活跃 session 的 live push 开销。
+  // 不调也安全——ws 断开时 ConnectionManager.onClose → bus.unsubscribeAll 兜底。
+  // reply 'session.unsubscribe' undefined（ack 型，ReplyPayloadMap 已定 void）。
+  'session.unsubscribe': { sessionId: string }
   // message.send：images 是 Cmd+V 富呈现通路的图片数据（base64，不含 data: 前缀）。
   // runtime 适配层（rpc-client）补 type:'image' 组装成 pi 的 ImageContent。
   // 不带 type 字段（type 是 pi 私有，runtime 适配层负责补）。
@@ -519,6 +529,12 @@ export type ServerMessageType =
   | 'model.list' | 'model.switched'
   | 'session.thinkingLevelSet'
   | 'session.state_changed'
+  // wave:runtime-wiring：session.subscribe 的 RPC reply type（payload 消费型，含 snapshot/lastSeq/gap）。
+  // 与 ClientMessageType 的 'session.subscribe'（request）同名——request/reply 同名是本项目惯用模式
+  //（见 session.compact→session.compacted 等多数用不同名，但 session.subscribe 因其「订阅」语义
+  // request 与 reply 同名更直观：renderer register<{snapshot,lastSeq,gap}> 按 id resolve）。
+  // session.unsubscribe 的 reply 走 message.status（ack 型，见 ReplyPayloadMap :1192 注释），不在此登记。
+  | 'session.subscribe'
   | 'pong' | 'error'
   | 'extension.ui_request' | 'extension.ui_timeout' | 'extension.error'
   | 'extension.discovered' | 'extension.installCancelled'
@@ -680,6 +696,11 @@ export interface ServerMessageMapBase {
   // session 通道推送（runtime session-service / index.ts 生产，W04 收紧）
   'session.compacting': { sessionId: string }
   'session.compacted': { sessionId: string; status: 'compacted'; error?: string }
+  // session.subscribe（wave:runtime-wiring）：session.subscribe RPC 的 reply payload（IF6 契约）。
+  // snapshot：订阅时刻 bus ring 内当前事件序列（元素为带 seq 的 ServerMessage），renderer 据此 reconcile。
+  // lastSeq：当前 per-session seq 计数器值，renderer 记为 lastSeenSeq 做 gap 检测基线。
+  // gap：fromSeq 早于 ring 最旧 seq（旧消息已被 FIFO 淘汰）时 true，renderer 需全量重拉而非增量 backfill。
+  'session.subscribe': { snapshot: ServerMessage[]; lastSeq: number; gap?: boolean }
   // session.commands：pi 扩展命令列表（fetchAndBroadcastCommands 广播）
   // sourceInfo 透传自 pi get_commands 的 RpcSlashCommand（SKILL.md / extension 文件路径等），可选（旧消费方向后兼容）
   'session.commands': { sessionId: string; commands: Array<{ name: string; description?: string; source: string; sourceInfo?: CommandSourceInfo }> }
