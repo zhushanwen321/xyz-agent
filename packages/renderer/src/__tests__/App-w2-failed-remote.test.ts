@@ -62,6 +62,8 @@ vi.mock('@/components/remote/RemoteConnectModal.vue', () => ({
 vi.mock('@/components/shell/AppShell.vue', () => ({ default: { name: 'AppShell', template: '<div />' } }))
 vi.mock('@/components/ui/ToastContainer.vue', () => ({ default: { name: 'ToastContainer', template: '<div />' } }))
 vi.mock('@/composables/effects/useForkNoticeEffect', () => ({ bindForkNoticeEffect: () => {} }))
+// stub pending-batch 全局效果（P3 D3，App setup 调用，依赖 pinia/extension-ui store）
+vi.mock('@/composables/effects/usePendingRequestsBatchEffect', () => ({ bindPendingRequestsBatchEffect: () => {} }))
 
 import { mount } from '@vue/test-utils'
 import App from '@/App.vue'

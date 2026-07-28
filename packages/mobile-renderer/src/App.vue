@@ -1,20 +1,99 @@
 <script setup lang="ts">
-// w1 最小 stub（spec P4 w1-skeleton）。
-// w2 接 i18n + copy 业务层后，App.vue 将改为连接态门控（s2 的 MobileShell / MobileConnectScreen）。
+/**
+ * App.vue —— mobile-renderer 根组件（spec P4 §四 D9 + C2）。
+ *
+ * 连接态门控（useConnection.state ref）：
+ *  - 'connected' → MobileShell（已连远程 server，进入主界面）
+ *  - 其他 → MobileConnectScreen（未连接 / 连接中失败 / 无 token）
+ *
+ * 连接流程：
+ *  1. onMounted 读 location.hash：命中连接信息（#token= 或 ws:// 等）→ parse-connect-info 解析
+ *     → saveProfile + activateRemote → init（useConnection 走远程分支 connect）
+ *  2. 无 hash token：检查 isRemoteMode（已有存档 profile）→ init（直接连存档）
+ *  3. 无存档：渲染 MobileConnectScreen，用户粘贴连接信息 → MobileConnectScreen emit connected → init
+ *
+ * token 失效（4001 close code）：ws-client 转 failed 态（failReason=auth），App 渲染 MobileConnectScreen，
+ * 用户重新粘贴（connection-config 仍保留 profile，可重新 activateRemote 覆盖 token）。
+ */
+import { onMounted, ref, watch } from 'vue'
+import { useConnection } from '@/composables/useConnection'
+import { parseConnectionInfo } from '@/lib/remote/parse-connect-info'
+import { saveProfile, activateRemote, isRemoteMode, deactivateRemote } from '@/lib/remote/connection-config'
+import type { RemoteServerProfile } from '@/lib/remote/types'
+import MobileShell from '@/components/shell/MobileShell.vue'
+import MobileConnectScreen from '@/components/remote/MobileConnectScreen.vue'
+
+const { state, init } = useConnection()
+
+/** 是否已尝试自动连接（防止 onMounted + watch 重复 init） */
+const initAttempted = ref(false)
+
+/** 从 location.hash 或粘贴文本解析连接信息并激活远程模式 */
+function parseAndActivate(raw: string): RemoteServerProfile | null {
+  const parsed = parseConnectionInfo(raw)
+  if (parsed.error === 'unrecognized' || !parsed.url) return null
+  const profile = saveProfile({
+    name: hostOf(parsed.url),
+    url: parsed.url,
+    token: parsed.token ?? '',
+    networkKind: parsed.networkKind ?? 'public',
+  })
+  activateRemote(profile.id)
+  return profile
+}
+
+/** 从 url 提取 host（name 用），失败回退 url 原文 */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
+}
+
+onMounted(async () => {
+  // 1. location.hash 直达（spec D9：浏览器访问 #token=... 自动连接）
+  const hash = window.location.hash.replace(/^#/, '')
+  if (hash.length > 0) {
+    // hash 可能是 token=xxx（http-url 格式由 parseConnectionInfo 处理），也可能含完整连接信息
+    // 用 location.href 让 parseConnectionInfo 按 http-url 格式解析（含 hash token）
+    const profile = parseAndActivate(window.location.href)
+    if (profile) {
+      initAttempted.value = true
+      await init()
+      return
+    }
+  }
+
+  // 2. 无 hash token：检查是否已有远程存档（isRemoteMode）
+  if (isRemoteMode()) {
+    initAttempted.value = true
+    await init()
+    return
+  }
+
+  // 3. 无存档：渲染 MobileConnectScreen（initAttempted 保持 false，state=disconnected）
+})
+
+/** MobileConnectScreen 连接成功回调 */
+async function onConnected(): Promise<void> {
+  initAttempted.value = true
+  await init()
+}
+
+// 失败态（auth 失败 4001 / 网络失败）：清远程模式回 MobileConnectScreen 让用户重连
+// （state='failed' 时 App 渲染 MobileConnectScreen，但 connection-config 仍保留 profile；
+// 用户可重新粘贴覆盖 token，或点断开 deactivateRemote 清存档）
+watch(state, (newState) => {
+  if (newState === 'failed') {
+    // auth 失败时清存档（token 失效），让用户重新粘贴
+    deactivateRemote()
+  }
+})
 </script>
 
 <template>
-  <div class="mobile-app-root">mobile-renderer</div>
+  <!-- 连接门控：connected → MobileShell，否则 → MobileConnectScreen -->
+  <MobileShell v-if="state === 'connected'" />
+  <MobileConnectScreen v-else @connected="onConnected" />
 </template>
-
-<style scoped>
-.mobile-app-root {
-  min-height: 100dvh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--fg);
-  background: var(--bg);
-  font-family: var(--font-sans);
-}
-</style>
