@@ -30,10 +30,10 @@
       <div class="flex min-w-0 flex-1 items-center gap-1.5">
         <!-- S9：Terminal 图标前缀增强 shell prompt 语义（灰阶 neutral-ico，§13.2-D） -->
         <Terminal class="size-3 shrink-0 text-neutral-ico" />
-        <span class="min-w-0 flex-1 truncate font-mono text-[var(--text-xs)] leading-snug text-fg">{{ bash?.command || t('panel.message.bashUnknownCommand') }}</span>
+        <span class="min-w-0 flex-1 truncate font-mono text-[length:var(--text-xs)] leading-snug text-fg">{{ bash?.command || t('panel.message.bashUnknownCommand') }}</span>
         <span
           v-if="bash?.excludeFromContext"
-          class="shrink-0 rounded-sm border border-border px-1 py-0.5 text-[var(--text-2xs)] leading-none text-neutral-dim"
+          class="shrink-0 rounded-sm border border-border px-1 py-0.5 text-[length:var(--text-2xs)] leading-none text-neutral-dim"
           data-testid="bash-no-context-tag"
         >{{ t('panel.message.bashNoContext') }}</span>
       </div>
@@ -42,7 +42,7 @@
              animate-loader-spin，accent 蓝），替代 main 的 Loader2 animate-spin -->
         <span
           v-if="isStreaming"
-          class="flex items-center gap-1 text-[var(--text-xs)] leading-none text-accent"
+          class="flex items-center gap-1 text-[length:var(--text-xs)] leading-none text-accent"
           data-testid="bash-streaming-spinner"
         >
           <!-- eslint-disable-next-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
@@ -52,17 +52,17 @@
              灰阶化：timeout/cancelled 改 neutral-dim（§13.2-D，非终端语义色） -->
         <span
           v-else-if="isTimeout"
-          class="font-mono text-[var(--text-xs)] leading-none text-neutral-dim"
+          class="font-mono text-[length:var(--text-xs)] leading-none text-neutral-dim"
           data-testid="bash-status-tag"
         >{{ t('panel.message.bashTimeout') }}</span>
         <span
           v-else-if="isCancelled"
-          class="font-mono text-[var(--text-xs)] leading-none text-neutral-dim"
+          class="font-mono text-[length:var(--text-xs)] leading-none text-neutral-dim"
           data-testid="bash-status-tag"
         >{{ t('panel.message.bashCancelled') }}</span>
         <span
           v-else
-          class="font-mono text-[var(--text-xs)] leading-none"
+          class="font-mono text-[length:var(--text-xs)] leading-none"
           :class="exitCodeClass"
           data-testid="bash-status-tag"
         >exit {{ bash?.exitCode }}</span>
@@ -70,7 +70,7 @@
           v-if="isStreaming"
           variant="ghost"
           size="sm"
-          class="h-auto p-0 text-[var(--text-xs)] text-neutral-dim hover:text-neutral-fg"
+          class="h-auto p-0 text-[length:var(--text-xs)] text-neutral-dim hover:text-neutral-fg"
           data-testid="bash-cancel-btn"
           @click="onCancel"
         >{{ t('panel.message.bashCancel') }}</Button>
@@ -84,7 +84,7 @@
     -->
     <div
       v-if="!isStreaming && hasOutput"
-      class="max-h-[var(--bash-output-max-height)] overflow-auto px-2 py-1 font-mono text-[var(--text-xs)] leading-relaxed text-neutral-mid"
+      class="max-h-[var(--bash-output-max-height)] overflow-auto px-2 py-1 font-mono text-[length:var(--text-xs)] leading-relaxed text-neutral-mid"
       data-testid="bash-output"
     >
       <pre class="whitespace-pre font-mono">{{ bash?.output }}</pre>
@@ -92,13 +92,13 @@
            灰阶化（§13.2-D）：截断标记改 neutral-dim italic -->
       <div
         v-if="bash?.truncated"
-        class="mt-1 text-[var(--text-2xs)] italic leading-none text-neutral-dim"
+        class="mt-1 text-[length:var(--text-2xs)] italic leading-none text-neutral-dim"
         data-testid="bash-output-truncated"
       >{{ t('panel.message.bashOutputTruncated') }}</div>
     </div>
     <p
       v-else-if="!isStreaming && !hasOutput"
-      class="text-[var(--text-xs)] leading-snug text-neutral-dim"
+      class="text-[length:var(--text-xs)] leading-snug text-neutral-dim"
       data-testid="bash-output-empty"
     >{{ t('panel.message.bashNoOutput') }}</p>
   </div>

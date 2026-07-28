@@ -21,15 +21,15 @@
         <span class="think-label-float inline-flex h-[1.7em] items-center gap-1.5 whitespace-nowrap float-left">
           <ChevronRight class="size-[14px] shrink-0 text-neutral-dim transition-transform" :class="thinkingExpanded ? 'rotate-90 text-accent' : ''" />
           <component :is="BLOCK_ICON_LUCIDE.thinking" class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" />
-          <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">{{ t('panel.message.thinkingBlock') }}</span>
+          <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">{{ t('panel.message.thinkingBlock') }}</span>
           <!-- · 分隔符：仅非 working 态显示。working（streaming）态内容直接跟在"思考"后，更紧凑 -->
           <span v-if="!working" class="text-neutral-faint">·</span>
         </span>
         <!-- 内容 block：从最左占满，第一行环绕 float label，第二行起回到容器左缘 -->
-        <div v-if="!thinkingExpanded" class="think-content-collapsed truncate text-[var(--text-sm)] text-neutral-dim">
+        <div v-if="!thinkingExpanded" class="think-content-collapsed truncate text-[length:var(--text-sm)] text-neutral-dim">
           {{ previewText }}
         </div>
-        <div v-else class="think-content-expanded text-[var(--text-sm)] leading-[1.7] text-neutral-dim">
+        <div v-else class="think-content-expanded text-[length:var(--text-sm)] leading-[1.7] text-neutral-dim">
           <!-- copy 按钮浮在内容右上角（hover 显） -->
           <Button
             variant="ghost"
@@ -49,7 +49,7 @@
 
     <!-- 中间产出 text 块（draft §4 Output Text 中间：折进执行流程，下划线行，markdown 渲染）。
          streaming 光标已移到 Turn.vue trace 末尾（保证永远在最后一行，不受 contentBlocks 时序影响）。 -->
-    <div v-else-if="type === 'text'" class="border-b border-dashed border-border pb-2 text-[var(--text-sm)] leading-relaxed text-neutral-mid">
+    <div v-else-if="type === 'text'" class="border-b border-dashed border-border pb-2 text-[length:var(--text-sm)] leading-relaxed text-neutral-mid">
       <MarkdownRenderer :content="content ?? ''" :session-id="sessionId ?? undefined" />
     </div>
 
@@ -66,7 +66,7 @@
       <div v-else-if="isWorkflow" class="trace-workflow border-b border-dashed border-border pl-3.5 pb-2.5 mb-0.5" data-testid="workflow-block">
         <div
           data-testid="tool-block-header"
-          class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[var(--text-base)] font-medium transition-opacity hover:opacity-80"
+          class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[length:var(--text-base)] font-medium transition-opacity hover:opacity-80"
           :class="isFailed ? 'text-neutral-mid' : 'text-neutral-fg'"
           :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
           @click="toggleTool"
@@ -75,23 +75,23 @@
           <!-- running 态 loader（双环 + accent），其余走 list-checks ICON -->
           <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
           <component :is="BLOCK_ICON_LUCIDE.workflow" v-else class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
-          <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">{{ t('panel.message.workflow') }}</span>
+          <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">{{ t('panel.message.workflow') }}</span>
           <!-- action（muted） -->
-          <span v-if="workflowFields.action" class="shrink-0 whitespace-nowrap font-mono text-[var(--text-xs)] text-neutral-mid">{{ workflowFields.action }}</span>
+          <span v-if="workflowFields.action" class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-xs)] text-neutral-mid">{{ workflowFields.action }}</span>
           <!-- name（accent） -->
-          <span v-if="workflowFields.name" class="shrink-0 whitespace-nowrap font-mono text-[var(--text-sm)] text-accent">{{ workflowFields.name }}</span>
+          <span v-if="workflowFields.name" class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent">{{ workflowFields.name }}</span>
           <!-- slug（accent，· 分隔） -->
           <template v-if="workflowFields.slug">
             <span class="text-neutral-faint">·</span>
-            <span class="shrink-0 whitespace-nowrap font-mono text-[var(--text-sm)] text-accent">{{ workflowFields.slug }}</span>
+            <span class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent">{{ workflowFields.slug }}</span>
           </template>
           <!-- runId 前 8 位（dim） -->
-          <span v-if="workflowFields.runId" class="shrink-0 whitespace-nowrap font-mono text-[var(--text-xs)] text-neutral-dim">{{ workflowFields.runId }}</span>
+          <span v-if="workflowFields.runId" class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-xs)] text-neutral-dim">{{ workflowFields.runId }}</span>
           <!-- 终态指示：完成（Check）。workflow 无 isUnfinished（action=run 由 notifyDone 推送终态），failed 维持现状 -->
           <Check v-if="!isFailed && !isRunning" class="ml-0.5 size-3 shrink-0 text-neutral-mid" />
         </div>
         <!-- args.task 首行预览（run action） -->
-        <div v-if="workflowArgsTaskPreview" class="mt-0.5 pl-5 truncate text-[var(--text-sm)] text-neutral-dim">
+        <div v-if="workflowArgsTaskPreview" class="mt-0.5 pl-5 truncate text-[length:var(--text-sm)] text-neutral-dim">
           {{ workflowArgsTaskPreview }}
         </div>
         <!-- onboarding 气泡（首次出现 workflow 块时；dismiss 后 localStorage 永久记忆，v-if 自隐）。
@@ -99,7 +99,7 @@
         <OnboardingHint hint-key="workflow" :text="t('panel.message.onboardingWorkflow')" />
         <template v-if="toolExpanded">
           <!-- workflow 详情区：copy 按钮在左上角 + list-tree GUI 组件（来自 details.__gui__） -->
-          <div v-if="result" class="group/result relative mt-1 text-[var(--text-sm)] leading-snug text-neutral-mid select-text">
+          <div v-if="result" class="group/result relative mt-1 text-[length:var(--text-sm)] leading-snug text-neutral-mid select-text">
             <Button
               variant="ghost"
               size="icon"
@@ -123,7 +123,7 @@
       <div v-else>
         <div
           data-testid="tool-block-header"
-          class="tool-header flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[var(--text-sm)] font-medium transition-opacity hover:opacity-80"
+          class="tool-header flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[length:var(--text-sm)] font-medium transition-opacity hover:opacity-80"
           :class="toolStatusClass"
           :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
           @click="toggleTool"
@@ -156,7 +156,7 @@
         </div>
         <template v-if="toolExpanded">
           <!-- 补充细节条：失败错误摘要 + 行数/字符数 + 耗时。对齐 subagent 展开体信息架构 -->
-          <div v-if="metaItems.length" class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[var(--text-xs)]">
+          <div v-if="metaItems.length" class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[length:var(--text-xs)]">
             <span
               v-for="(item, idx) in metaItems"
               :key="idx"
@@ -193,7 +193,7 @@
               </Button>
             </div>
             <div
-              class="tool-result font-mono text-[var(--text-sm)] leading-snug whitespace-pre-wrap border-l-2 border-neutral-faint pl-6 select-text"
+              class="tool-result font-mono text-[length:var(--text-sm)] leading-snug whitespace-pre-wrap border-l-2 border-neutral-faint pl-6 select-text"
               :class="isFailed ? 'text-neutral-mid hover:border-warn hover:text-neutral-fg' : 'text-neutral-mid'"
             >
               <GuiComponentRenderer v-if="guiComponent" :component="guiComponent" />

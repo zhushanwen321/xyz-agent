@@ -57,7 +57,7 @@
                无 user 时整行省略（首条 assistant 边缘 turn）。 -->
           <div v-if="turn.user" class="flex min-w-0 items-center gap-1.5">
             <User class="size-3 shrink-0 text-neutral-ico" />
-            <span class="flex-1 truncate pr-6 text-[var(--text-xs)] leading-tight text-neutral-fg">
+            <span class="flex-1 truncate pr-6 text-[length:var(--text-xs)] leading-tight text-neutral-fg">
               {{ summarizeTurnForRail(turn) || ' ' }}
             </span>
           </div>
@@ -77,7 +77,7 @@
               :class="agentIconClass(turn)"
             />
             <span
-              class="flex-1 truncate pr-6 text-[var(--text-xs)] leading-tight transition-colors"
+              class="flex-1 truncate pr-6 text-[length:var(--text-xs)] leading-tight transition-colors"
               :class="hasFailedTool(turn) ? 'text-neutral-mid hover:text-neutral-fg' : 'text-neutral-mid'"
             >
               {{ summarizeAssistantForRail(turn) || t('panel.message.railInProgress') }}

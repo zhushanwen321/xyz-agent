@@ -18,7 +18,7 @@
          inline svg 改用 @lucide/vue ImageIcon（与 DetailPane 降级占位同图标，前端规范 #2 禁 emoji）。 -->
     <span
       v-else
-      class="image-fallback-badge mr-1 inline-flex items-center gap-1 rounded-sm bg-[var(--success-soft)] px-1.5 py-px font-mono text-[var(--text-sm)] font-medium leading-[1.4] text-success"
+      class="image-fallback-badge mr-1 inline-flex items-center gap-1 rounded-sm bg-[var(--success-soft)] px-1.5 py-px font-mono text-[length:var(--text-sm)] font-medium leading-[1.4] text-success"
       style="vertical-align: middle"
     >
       <ImageIcon class="size-[12px] shrink-0" />

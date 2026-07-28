@@ -40,7 +40,7 @@ const cardClass = computed(() => {
   >
     <div
       v-if="header"
-      class="flex items-center gap-1.5 border-b border-border px-3 py-2 font-mono text-[var(--text-xs)] font-semibold uppercase tracking-[0.04em] text-neutral-mid"
+      class="flex items-center gap-1.5 border-b border-border px-3 py-2 font-mono text-[length:var(--text-xs)] font-semibold uppercase tracking-[0.04em] text-neutral-mid"
     >
       <template v-if="isStringHeader">
         <span>{{ header }}</span>

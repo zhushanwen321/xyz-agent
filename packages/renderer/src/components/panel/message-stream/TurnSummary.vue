@@ -5,7 +5,7 @@
   -->
   <div
     v-if="summaryText"
-    class="turn-summary pt-3 text-[var(--text-base)] leading-7 transition-colors duration-200"
+    class="turn-summary pt-3 text-[length:var(--text-base)] leading-7 transition-colors duration-200"
     :class="isStreaming ? 'text-neutral-mid' : 'text-neutral-fg'"
   >
     <MarkdownRenderer :content="summaryText" :session-id="sessionId" />
@@ -55,7 +55,7 @@
           >
             <Check v-if="copied === aiMdKey" class="size-3 text-success" />
             <Copy v-else class="size-3" />
-            <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[var(--text-2xs)] font-bold leading-[10px] text-accent-foreground">MD</span>
+            <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[length:var(--text-2xs)] font-bold leading-[10px] text-accent-foreground">MD</span>
           </Button>
         </HoverCardContent>
       </HoverCard>
@@ -74,7 +74,7 @@
               @click="onFork(lastAssistant)"
             >
               <GitFork class="size-3" />
-              <span class="as-fork-kbd absolute -right-0.5 -top-0.5 rounded-[3px] bg-surface-2 px-1 font-mono text-[var(--text-2xs)] font-medium text-neutral-dim">{{ formatKbd('g') }}</span>
+              <span class="as-fork-kbd absolute -right-0.5 -top-0.5 rounded-[3px] bg-surface-2 px-1 font-mono text-[length:var(--text-2xs)] font-medium text-neutral-dim">{{ formatKbd('g') }}</span>
             </Button>
           </HoverCardTrigger>
           <HoverCardContent side="top" align="center" :side-offset="6" class="min-w-0 p-1">
@@ -87,7 +87,7 @@
               @click="onForkAsk(lastAssistant)"
             >
               <GitFork class="size-3 fill-current" />
-              <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[var(--text-2xs)] font-bold leading-[10px] text-accent-foreground">MSG</span>
+              <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[length:var(--text-2xs)] font-bold leading-[10px] text-accent-foreground">MSG</span>
             </Button>
           </HoverCardContent>
         </HoverCard>
@@ -116,7 +116,7 @@
               @click="onHandoffAsk(lastAssistant)"
             >
               <Upload class="size-3 fill-current" />
-              <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[var(--text-2xs)] font-bold leading-[10px] text-accent-foreground">MSG</span>
+              <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[length:var(--text-2xs)] font-bold leading-[10px] text-accent-foreground">MSG</span>
             </Button>
           </HoverCardContent>
         </HoverCard>

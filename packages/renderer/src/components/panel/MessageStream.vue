@@ -21,7 +21,7 @@
          Virtualizer 在 :data 为空时 scrollSize=0，空态放 Virtualizer 外层 absolute inset-0 即可。 -->
     <div v-if="renderItems.length === 0" class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center">
       <Sparkles class="size-6 text-accent opacity-70" />
-      <p class="text-[var(--text-base)] text-neutral-mid">{{ t('panel.message.startConversation') }}</p>
+      <p class="text-[length:var(--text-base)] text-neutral-mid">{{ t('panel.message.startConversation') }}</p>
     </div>
 
     <!-- <Virtualizer> 取代手写 spacer + visibleItems absolute 循环。
@@ -62,7 +62,7 @@
         <!-- 结构化 GUI 组件（extension GUI 协议 E5：customMessage 的 details.__gui__）。 -->
         <div
           v-else-if="extractGuiComponent(item.message)"
-          class="py-1 pl-1 font-mono text-[var(--text-sm)] leading-snug text-neutral-fg"
+          class="py-1 pl-1 font-mono text-[length:var(--text-sm)] leading-snug text-neutral-fg"
         >
           <GuiComponentRenderer :component="extractGuiComponent(item.message)!" />
         </div>
@@ -95,7 +95,7 @@
     >
       <span class="h-px flex-1 bg-border" />
       <Loader2 class="size-3 shrink-0 animate-spin text-neutral-mid" />
-      <span class="min-w-0 truncate text-[var(--text-xs)] leading-snug text-neutral-mid">{{ t('panel.message.compressing') }}</span>
+      <span class="min-w-0 truncate text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ t('panel.message.compressing') }}</span>
       <span class="h-px flex-1 bg-border" />
     </div>
 
@@ -109,11 +109,11 @@
     >
       <span class="h-px flex-1 bg-border" />
       <Loader2 class="size-3 shrink-0 animate-spin text-neutral-mid" />
-      <span class="min-w-0 truncate text-[var(--text-xs)] leading-snug text-neutral-mid">{{ t('panel.message.handing') }}</span>
+      <span class="min-w-0 truncate text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ t('panel.message.handing') }}</span>
       <Button
         variant="ghost"
         size="sm"
-        class="h-auto p-0 text-[var(--text-xs)] text-neutral-mid hover:text-neutral-fg"
+        class="h-auto p-0 text-[length:var(--text-xs)] text-neutral-mid hover:text-neutral-fg"
         data-testid="handoff-cancel-btn"
         @click="onAbortHandoff"
       >{{ t('panel.message.cancel') }}</Button>
@@ -123,7 +123,7 @@
     <!-- dispatching 空窗期占位（非虚拟化，absolute 定位到列表末尾 + compacting + handoff 占位高度）。 -->
     <div
       v-if="isDispatching && !hasWorkingTurn"
-      class="absolute left-5 right-5 flex items-center gap-2 py-2 pl-1 text-[var(--text-sm)] text-neutral-mid"
+      class="absolute left-5 right-5 flex items-center gap-2 py-2 pl-1 text-[length:var(--text-sm)] text-neutral-mid"
       :style="{ top: dispatchingTop + 'px' }"
     >
       <Loader2 class="size-3 animate-spin text-accent" />

@@ -21,7 +21,7 @@ const dotClass = (status?: 'done' | 'pending') => {
     <div
       v-for="(tab, i) in tabs"
       :key="i"
-      class="tab-bar__tab flex items-center gap-1 rounded-t-sm px-2.5 py-1 font-mono text-[var(--text-xs)] text-neutral-dim transition-colors hover:text-neutral-mid"
+      class="tab-bar__tab flex items-center gap-1 rounded-t-sm px-2.5 py-1 font-mono text-[length:var(--text-xs)] text-neutral-dim transition-colors hover:text-neutral-mid"
       :class="{ 'bg-accent-soft text-accent': tab.active }"
     >
       <span

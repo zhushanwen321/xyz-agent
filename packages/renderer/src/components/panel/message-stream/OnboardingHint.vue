@@ -15,7 +15,7 @@
     class="onboarding-hint mt-1 flex items-start gap-1.5 rounded bg-accent-soft px-2.5 py-1.5 max-w-[280px]"
     :data-testid="`onboarding-${hintKey}`"
   >
-    <span class="flex-1 text-[var(--text-xs)] leading-relaxed text-neutral-fg">{{ text }}</span>
+    <span class="flex-1 text-[length:var(--text-xs)] leading-relaxed text-neutral-fg">{{ text }}</span>
     <Button
       variant="ghost"
       size="icon"

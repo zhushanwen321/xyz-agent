@@ -8,7 +8,7 @@
   <div class="system-notice flex min-w-0 items-center gap-2 py-1">
     <span class="h-px flex-1 bg-border" />
     <component :is="icon" class="size-3 shrink-0 text-neutral-mid" />
-    <span class="min-w-0 truncate text-[var(--text-xs)] leading-snug text-neutral-mid">{{ text }}</span>
+    <span class="min-w-0 truncate text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ text }}</span>
     <span class="h-px flex-1 bg-border" />
   </div>
 </template>

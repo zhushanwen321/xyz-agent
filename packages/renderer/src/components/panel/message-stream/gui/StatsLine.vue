@@ -18,7 +18,7 @@ const valueClass = (severity?: StatItem['severity']) => {
 </script>
 
 <template>
-  <div class="stats-line flex flex-wrap items-center gap-0 font-mono text-[var(--text-sm)]" data-testid="gui-stats-line">
+  <div class="stats-line flex flex-wrap items-center gap-0 font-mono text-[length:var(--text-sm)]" data-testid="gui-stats-line">
     <div
       v-for="(item, i) in items"
       :key="i"
