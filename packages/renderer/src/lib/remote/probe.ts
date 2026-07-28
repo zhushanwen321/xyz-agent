@@ -46,9 +46,19 @@ export interface AuthPayload {
   /**
    * 已确认消息序号（断线续传用）。
    * probe 是握手预检，不带 lastSeq（undefined，spec D10 + IF13）；
-   * 字段保留以与 protocol ClientMessageMap.auth 形状一致。
+   * ws-client 正式 connect 时若 lastSeq>0（同页面生命周期内的重连）才携带（P2-s4 IF6）。
    */
   lastSeq?: number
+  /**
+   * 服务端 bootId（与 lastSeq 成对，同页面生命周期重连同 server 判定，P2-s4 DM2）。
+   * probe 不带；ws-client 重连时 lastSeq>0 才携带。来自上一次 auth.ok 的 bootId。
+   */
+  bootId?: string
+  /**
+   * 已订阅 session id 列表（限定 server 回放范围，P2-s4 DM2/IF1）。
+   * probe 不带；ws-client 重连时 lastSeq>0 才携带。由 useConnection 经 setSubscribedSessions 注入。
+   */
+  subscribedSessions?: string[]
 }
 
 /**
@@ -68,8 +78,11 @@ export type ProbeConnectResult =
  *
  * - id：`auth_<uuid>`（与 runtime ConnectionManager 首消息 on('message') 流程对齐，
  *   便于 ws-client 的 reply 路由用同一 id 收窄 auth.ok reply）。
- * - payload：{ token, clientId, deviceName } —— **不带 lastSeq**（spec D10：probe 是握手
- *   预检不参与断线续传；lastSeq 仍保留在 AuthPayload 类型上以兼容正式 connect 复用此函数）。
+ * - payload：{ token, clientId, deviceName } + 可选 lastSeq/bootId/subscribedSessions（P2-s4 IF2/DM2）。
+ *   **probe 调用时不带** lastSeq/bootId/subscribedSessions（spec D10：probe 是握手
+ *   预检不参与断线续传）；**ws-client 正式 connect 调用时**若 lastSeq>0（同页面生命周期内的重连）
+ *   才携带 lastSeq+bootId+subscribedSessions（P2-s4 IF6）。三字段按条件展开——undefined 不入 wire
+ *   payload，保持 wire 格式干净（probe 调用零回归）。
  *
  * 纯函数：相同输入产生结构等价输出（id 随机），无副作用，便于单测 + ws-client 复用。
  */
@@ -81,11 +94,17 @@ export function buildAuthMessage(payload: AuthPayload): {
   return {
     type: 'auth',
     id: `auth_${generateAuthId()}`,
-    // 显式省略 lastSeq：probe 不带续传序号（spec D10 + IF13）
+    // 按条件展开：deviceName/lastSeq/bootId/subscribedSessions undefined 时不入 wire payload
+    // （probe 不传后三字段 → wire 格式与改造前逐字节一致，零回归；ws-client 传时才出现）
     payload: {
       token: payload.token,
       clientId: payload.clientId,
       ...(payload.deviceName !== undefined ? { deviceName: payload.deviceName } : {}),
+      ...(payload.lastSeq !== undefined ? { lastSeq: payload.lastSeq } : {}),
+      ...(payload.bootId !== undefined ? { bootId: payload.bootId } : {}),
+      ...(payload.subscribedSessions !== undefined
+        ? { subscribedSessions: payload.subscribedSessions }
+        : {}),
     },
   }
 }

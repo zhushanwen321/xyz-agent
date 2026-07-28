@@ -31,8 +31,22 @@
  * 13. RTT 窗口生命周期：connect 开头 / onclose 任何分支 / disconnect 三处 resetRtt（清窗口 + pending）。
  *     getRttStats() 返回窗口快照 {min,max,avg,p50,last,count}（空窗口 count=0 其余 undefined）。
  *
+ * [wave3 seq 可靠投递] 新增不变量（P2-s4 spec §6.1，远程模式 currentAuthOpts !== null 时生效）：
+ * 14. 模块级 lastSeq/serverBootId/subscribedSessions 三状态（DM1，普通变量非 ref，与 currentAuthOpts 同级）：
+ *     - lastSeq：最后收到的广播 seq（初始 0）。onmessage intercept 放行后、pong 之前更新（updateLastSeq
+ *       守卫 seq>0 且有限才存，ERR1）。reply（auth.ok/pong）无 seq 不更新。
+ *     - serverBootId：auth.ok{bootId} 返回时保存（非空字符串才存）。重连 auth 成对携带。
+ *     - subscribedSessions：setSubscribedSessions 注入（去重排序），重连 auth 携带限定回放范围。
+ *     三状态跨重连保留（disconnect 不清——重连需带回）；仅 seqReset/__resetForTest 清。
+ * 15. onopen 远程模式发 auth 时，lastSeq>0（同页面生命周期内的重连）携带 lastSeq+bootId+subscribedSessions
+ *     成对三字段（IF6，扩展 buildAuthMessage 签名）；首次连接/冷启动 lastSeq=0 不带（全量 initial state）。
+ * 16. intercept 的 auth.ok 成功分支消费 P2-s2 扩展字段（IF4/DM3）：保存 bootId、serverSeq 基线对齐
+ *     （>lastSeq 才更新）、seqReset=true → 清 lastSeq=0 + window.location.reload()（D6 哲学，renderer
+ *     无全局 reset 能力，reload 是构造性正确路径；ERR2 守卫 typeof window）。非浏览器环境降级仅清 lastSeq。
+ *
  * 依赖方向：依赖 remote/probe（buildAuthMessage）；暴露 connect/disconnect/send/getState/onMessage
- * + failReason/isRemote 只读 ref（远程化扩展）+ getRttStats（RTT 快照）。
+ * + failReason/isRemote 只读 ref（远程化扩展）+ getRttStats（RTT 快照）
+ * + setSubscribedSessions/getSeqState（seq 状态注入与快照）。
  */
 import { ref, readonly } from 'vue'
 import type { Ref, DeepReadonly } from 'vue'
@@ -149,6 +163,33 @@ let authId: string | null = null
  */
 let authTimedOut = false
 
+// ── seq 状态（wave3 P2-s4 可靠投递）─────────────────────────
+/**
+ * 最后收到的广播 seq（同页面生命周期内的重连凭此回放缺失段）。
+ *
+ * 生命周期（DM1）：
+ * - 初始 0（首次连接/冷启动不带，走全量 initial state）。
+ * - onmessage 每条带 seq 的广播消息更新（intercept 放行后、pong 之前；取最后一条即最大值，
+ *   因 seq 全局单调递增）。reply（auth.ok/pong）无 seq 不更新。
+ * - auth.ok{serverSeq:N} 基线对齐：N>lastSeq 时更新（auth 后基线对齐）。
+ * - auth.ok{seqReset:true} → 清 0（防 reload 前残余）。
+ * - 跨重连保留（disconnect 不清——重连需带回）；仅 seqReset/__resetForTest 清。
+ * 非持久化（spec D5：localStorage 有害，reload 后 stores 全空带旧 lastSeq 得残缺状态）。
+ */
+let lastSeq: number = 0
+/**
+ * 服务端 bootId（auth.ok 返回，重连同页面生命周期判定）。
+ * 初始 null；auth.ok{bootId:'b1'} 保存；重连 auth 携带 lastSeq+bootId 成对。
+ * server 侧 connection-manager 比对 bootId 不一致 → 回 seqReset=true（P2-s2 ERR3）。
+ */
+let serverBootId: string | null = null
+/**
+ * 当前已订阅 session id 列表（useConnection 经 setSubscribedSessions 注入，IF1）。
+ * 重连 auth 携带此列表限定 server 回放范围（只回放订阅 session 的增量，P2 FC2）。
+ * setter 内部去重 + 排序保证幂等。空数组合法（无订阅）。本地模式不被 auth 消费。
+ */
+let subscribedSessions: string[] = []
+
 // ── RTT 状态（wave2）────────────────────────────────────────
 /**
  * RTT 滑动窗口（最近 RTT_WINDOW_SIZE 条样本，ms）。普通数组非 ref（getRttStats 计算快照，无需响应式）。
@@ -225,6 +266,41 @@ export function getRttStats(): RttStats {
 }
 
 /**
+ * 注入当前已订阅的 session id 列表（wave3 P2-s4 IF1）。
+ *
+ * useConnection 在 session 创建/attach/删除/detach 时调用，把当前已订阅的 session id 列表
+ * 注入 ws-client。重连时 auth 消息携带此列表（限定 server 回放范围，只回放订阅 session 的增量）。
+ *
+ * - 内部去重 + 排序保证幂等（重复调用同值无副作用）。
+ * - 空数组合法（无订阅）。
+ * - 本地模式（currentAuthOpts===null）调用无副作用（值不被 auth 消费，但保存供切远程模式后用）。
+ */
+export function setSubscribedSessions(sessionIds: string[]): void {
+  // 去重 + 排序保证幂等（Set 去重 + localeCompare 稳定排序）
+  subscribedSessions = Array.from(new Set(sessionIds)).sort((a, b) => a.localeCompare(b))
+}
+
+/**
+ * 返回当前 seq 状态快照（wave3 P2-s4，仅测试用）。
+ *
+ * 模块级 lastSeq/serverBootId/subscribedSessions 无响应式需求（仅 ws-client 内部消费），
+ * 但单测（TC18/TC21/TC25）需断言其值——故暴露只读快照。
+ *
+ * @internal 仅测试用，生产代码不应消费。
+ */
+export function getSeqState(): {
+  lastSeq: number
+  serverBootId: string | null
+  subscribedSessions: string[]
+  } {
+  return {
+    lastSeq,
+    serverBootId,
+    subscribedSessions: [...subscribedSessions],
+  }
+}
+
+/**
  * 设置为 restarting 态（收到 IPC runtime-restarting 时调，useConnection 编排）。
  * 断开当前 WS（死端口）并停止自动重连——等主进程拉起新实例后推新端口再 connect。
  */
@@ -291,7 +367,14 @@ export function connect(url: string, opts?: ConnectOpts): void {
     if (gen !== wsGeneration) return // 旧 WS 残余回调，忽略
     if (currentAuthOpts !== null) {
       // ── 远程模式：onopen 发 auth + 启动超时，不翻转 connected（spec D2）──
-      const authMsg = buildAuthMessage(currentAuthOpts)
+      // wave3 P2-s4 IF6：lastSeq>0（同页面生命周期内的重连）时携带 lastSeq+bootId+subscribedSessions
+      // 成对三字段（限定 server 回放范围）；首次连接/冷启动 lastSeq=0 不带（全量 initial state）。
+      const authMsg = buildAuthMessage({
+        ...currentAuthOpts,
+        ...(lastSeq > 0
+          ? { lastSeq, bootId: serverBootId ?? undefined, subscribedSessions }
+          : {}),
+      })
       authId = authMsg.id
       authTimedOut = false
       try {
@@ -328,6 +411,10 @@ export function connect(url: string, opts?: ConnectOpts): void {
       const msg = JSON.parse(event.data) as ServerMessage
       // intercept 优先：远程模式 auth 握手期消化 auth 回复 + 丢弃握手期业务消息
       if (intercept(msg)) return
+      // seq 断点更新（wave3 P2-s4 IF3）：intercept 放行后（auth 已完成或本地模式），
+      // 在 pong RTT 配对之前更新 lastSeq。reply（auth.ok/pong）无 seq（undefined）不更新。
+      // 业务广播消息带 seq → lastSeq 取最后一条（全局单调递增即最大值）。
+      updateLastSeq(msg.seq)
       // RTT 配对（auth 已完成或本地模式）：pong 是传输层 reply，统一在 RTT 层消化不进 messageHandler。
       // id 匹配 pending ping → 记录 RTT；id 不匹配（stray/broadcast pong）→ 忽略。
       if (msg.type === ('pong' as ServerMessage['type'])) {
@@ -445,6 +532,10 @@ export function __resetForTest(): void {
   reconnectStartedAt = null
   authId = null
   authTimedOut = false
+  // wave3 P2-s4：复位 seq 状态（与 RTT 窗口同级，保证用例隔离）
+  lastSeq = 0
+  serverBootId = null
+  subscribedSessions = []
   resetRtt()
   clearTimers()
   if (ws) {
@@ -457,6 +548,20 @@ export function __resetForTest(): void {
 }
 
 // ── 内部 ────────────────────────────────────────────────────
+
+/**
+ * 更新 lastSeq 断点（wave3 P2-s4 IF3/ERR1）。
+ *
+ * onmessage intercept 放行后调用（auth 已完成或本地模式）。守卫：
+ * - typeof seq==='number' && seq>0 && Number.isFinite(seq) → 更新 lastSeq=seq
+ * - 否则（undefined/0/负数/NaN/非数字）→ 忽略（ERR1 降级，畸形 seq 不污染断点）
+ *
+ * seq 全局单调递增，取每条消息的 seq 即取最大值。reply（auth.ok/pong）无 seq 不更新。
+ */
+function updateLastSeq(seq: number | undefined): void {
+  if (typeof seq !== 'number' || !Number.isFinite(seq) || seq <= 0) return
+  lastSeq = seq
+}
 
 /**
  * 拦截 auth 握手消息（远程模式 onmessage 最前调用，返回 true=消化不进 messageHandler）。
@@ -475,6 +580,36 @@ function intercept(msg: ServerMessage): boolean {
       // auth 成功：清超时 + 翻转 connected（spec D2：connected = WS open + auth.ok）
       clearAuthTimer()
       authId = null
+      // wave3 P2-s4 DM3/IF4：消费 auth.ok payload 的 bootId/serverSeq/seqReset（P2-s2 已交付字段）
+      const p = msg.payload as {
+        bootId?: string
+        serverSeq?: number
+        seqReset?: boolean
+      }
+      // 保存 bootId（供下次重连同页面生命周期携带，非空字符串才存）
+      if (typeof p.bootId === 'string' && p.bootId !== '') {
+        serverBootId = p.bootId
+      }
+      // 基线对齐：serverSeq > lastSeq 时更新（auth 后基线对齐，避免第一条广播 seq 被误判乱序）
+      if (typeof p.serverSeq === 'number' && p.serverSeq > lastSeq) {
+        lastSeq = p.serverSeq
+      }
+      // seqReset：server 判定不可回放（bootId 不一致或 lastSeq<evictedWatermark）→ 清 lastSeq + reload
+      if (p.seqReset === true) {
+        // 先清 lastSeq=0（防 reload 前残余 onmessage 写回旧值，DM3 不变量）
+        lastSeq = 0
+        console.warn('[ws] seqReset received, reloading page for full resync')
+        // ERR2 守卫：非浏览器环境（SSR/无 location）降级为仅清 lastSeq 不 reload
+        if (
+          typeof window !== 'undefined' &&
+          typeof window.location !== 'undefined' &&
+          typeof window.location.reload === 'function'
+        ) {
+          window.location.reload()
+        } else {
+          console.error('[ws] seqReset received but location.reload unavailable')
+        }
+      }
       state.value = 'connected'
       reconnectAttempts = 0
       reconnectStartedAt = null
