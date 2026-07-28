@@ -5,7 +5,7 @@
   -->
   <div
     v-if="summaryText"
-    class="turn-summary pt-3 text-[13.5px] leading-7 transition-colors duration-200"
+    class="turn-summary pt-3 text-[var(--text-base)] leading-7 transition-colors duration-200"
     :class="isStreaming ? 'text-neutral-mid' : 'text-neutral-fg'"
   >
     <MarkdownRenderer :content="summaryText" :session-id="sessionId" />
@@ -35,7 +35,7 @@
       >
         <Check v-if="copied === aiMdKey" class="size-3 text-success" />
         <Copy v-else class="size-3" />
-        <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[10px] font-bold leading-[10px] text-accent-foreground">MD</span>
+        <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[var(--text-2xs)] font-bold leading-[10px] text-accent-foreground">MD</span>
       </Button>
       <!-- fork 按钮组 -->
       <span v-if="!isSubagentVirtualId(sessionId)" class="as-sep mx-1 h-3.5 w-px shrink-0 bg-border" />
@@ -49,7 +49,7 @@
         @click="onFork(lastAssistant)"
       >
         <GitFork class="size-3" />
-        <span class="text-[11px]">{{ t('panel.message.forkBackgroundLabel') }}</span>
+        <span class="text-[var(--text-xs)]">{{ t('panel.message.forkBackgroundLabel') }}</span>
         <span class="as-fork-kbd rounded-[3px] bg-surface-2 px-1 font-mono text-[9px] font-medium text-neutral-dim">{{ formatKbd('g') }}</span>
       </Button>
       <Button
@@ -62,7 +62,7 @@
         @click="onForkAsk(lastAssistant)"
       >
         <GitFork class="size-3.5 fill-current" />
-        <span class="text-[11px]">{{ t('panel.message.forkAskLabel') }}</span>
+        <span class="text-[var(--text-xs)]">{{ t('panel.message.forkAskLabel') }}</span>
         <span class="as-fork-kbd rounded-[3px] bg-accent/20 px-1 font-mono text-[9px] font-medium text-accent">{{ formatKbd('shift+g') }}</span>
       </Button>
       <!-- handoff 按钮组 -->

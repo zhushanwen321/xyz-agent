@@ -16,12 +16,12 @@
     >
       <ChevronRight class="size-3 shrink-0 text-neutral-mid transition-transform" :class="collapsed ? '' : 'rotate-90'" />
       <FileEdit class="size-3.5 shrink-0 text-info" />
-      <span class="text-[12px] font-medium text-neutral-fg">{{ t('panel.changeset.title') }}</span>
-      <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-neutral-dim">{{ fileChanges.length }}</span>
+      <span class="text-[var(--text-sm)] font-medium text-neutral-fg">{{ t('panel.changeset.title') }}</span>
+      <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[var(--text-2xs)] text-neutral-dim">{{ fileChanges.length }}</span>
       <!-- 状态 badge -->
-      <span class="rounded-sm px-1.5 py-0.5 text-[10px]" :class="statusClass">{{ statusLabel }}</span>
+      <span class="rounded-sm px-1.5 py-0.5 text-[var(--text-2xs)]" :class="statusClass">{{ statusLabel }}</span>
       <!-- 行数汇总 -->
-      <span v-if="totalAdd > 0 || totalDel > 0" class="ml-auto flex items-center gap-1.5 text-[10px] tabular-nums">
+      <span v-if="totalAdd > 0 || totalDel > 0" class="ml-auto flex items-center gap-1.5 text-[var(--text-2xs)] tabular-nums">
         <span class="text-success">+{{ totalAdd }}</span>
         <span class="text-danger">-{{ totalDel }}</span>
       </span>
@@ -32,15 +32,15 @@
       <div
         v-for="c in fileChanges"
         :key="c.filePath"
-        class="group/cs-file flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[12px] transition-colors hover:bg-surface-hover"
+        class="group/cs-file flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[var(--text-sm)] transition-colors hover:bg-surface-hover"
         data-testid="change-set-file"
         :title="t('panel.changeset.viewDiff', { path: c.filePath })"
         @click="onClickFile(c.filePath)"
       >
-        <span class="shrink-0 rounded-sm px-1 py-0.5 font-mono text-[10px] font-semibold" :class="changeBadgeClass(c.status)">{{ changeLabel(c.status) }}</span>
+        <span class="shrink-0 rounded-sm px-1 py-0.5 font-mono text-[var(--text-2xs)] font-semibold" :class="changeBadgeClass(c.status)">{{ changeLabel(c.status) }}</span>
         <span class="flex-1 truncate font-mono text-neutral-fg">{{ c.filePath }}</span>
         <ExternalLink class="size-3 shrink-0 text-neutral-dim opacity-0 transition-opacity group-hover/cs-file:opacity-100 group-focus-within/cs-file:opacity-100" />
-        <span v-if="c.addLines !== undefined || c.delLines !== undefined" class="shrink-0 flex items-center gap-1 text-[10px] tabular-nums">
+        <span v-if="c.addLines !== undefined || c.delLines !== undefined" class="shrink-0 flex items-center gap-1 text-[var(--text-2xs)] tabular-nums">
           <span v-if="c.addLines !== undefined" class="text-success">+{{ c.addLines }}</span>
           <span v-if="c.delLines !== undefined" class="text-danger">-{{ c.delLines }}</span>
         </span>

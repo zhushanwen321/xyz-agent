@@ -62,6 +62,13 @@
   --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
 
+  /* 字号 scale（组件级，data-font-size 是全局缩放，两者正交） */
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+
   /* ── 圆角 ───────────────────────────────────────────────── */
   --radius-sm: 3px;             /* 输入框/标签 */
   --radius: 8px;                /* 按钮/卡片（默认）*/

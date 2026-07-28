@@ -10,9 +10,9 @@
       v-if="isEditingThisUser"
       class="w-full max-w-[76%] rounded-[14px] border border-accent bg-bg-input p-2 shadow-[0_0_0_3px_color-mix(in_oklch,var(--accent)_22%,transparent)]"
     >
-      <Textarea v-model="draftText" class="min-h-[64px] border-0 bg-transparent px-1 text-[13.5px] leading-[1.55] focus-visible:ring-0" />
+      <Textarea v-model="draftText" class="min-h-[64px] border-0 bg-transparent px-1 text-[var(--text-base)] leading-[1.55] focus-visible:ring-0" />
       <div class="mt-1.5 flex items-center justify-between px-1">
-        <span class="text-[11px] text-neutral-dim">{{ t('panel.message.editAfterReplace') }}</span>
+        <span class="text-[var(--text-xs)] text-neutral-dim">{{ t('panel.message.editAfterReplace') }}</span>
         <div class="flex gap-1.5">
           <Button variant="ghost" size="sm" class="h-7" @click="cancelEdit">{{ t('panel.message.cancel') }}</Button>
           <Button variant="default" size="sm" class="h-7 gap-1" :disabled="!draftText.trim()" @click="submitEdit">
@@ -24,10 +24,10 @@
     <!-- pending 气泡（draft-composer-states S7）：steer/followup 已入队未投递 -->
     <div
       v-else-if="isPendingUser"
-      class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-dashed px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-neutral-fg whitespace-pre-wrap"
+      class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-dashed px-[13px] py-[9px] text-[var(--text-base)] leading-[1.55] text-neutral-fg whitespace-pre-wrap"
       :class="pendingBubbleClass"
     >
-      <span class="mb-1 flex items-center gap-1.5 font-mono text-[10px] font-semibold tracking-wider"
+      <span class="mb-1 flex items-center gap-1.5 font-mono text-[var(--text-2xs)] font-semibold tracking-wider"
         :class="pendingLabelClass"
       >
         <span class="size-[6px] animate-pulse-accent rounded-full" :class="pendingDotClass" />
@@ -38,12 +38,12 @@
     <!-- 展示态气泡 -->
     <div
       v-else
-      class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-border-strong bg-surface-hover px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-neutral-fg"
+      class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-border-strong bg-surface-hover px-[13px] py-[9px] text-[var(--text-base)] leading-[1.55] text-neutral-fg"
     >
       <template v-for="(seg, i) in userSegments" :key="i">
         <span
           v-if="seg.type === 'skill'"
-          class="mr-1 inline-flex cursor-pointer items-center gap-1 rounded-sm bg-[var(--reasoning-soft)] px-1.5 py-px font-mono text-[12px] font-medium leading-[1.4] text-reasoning transition-colors hover:bg-[color-mix(in_oklch,var(--reasoning)_32%,transparent)]"
+          class="mr-1 inline-flex cursor-pointer items-center gap-1 rounded-sm bg-[var(--reasoning-soft)] px-1.5 py-px font-mono text-[var(--text-sm)] font-medium leading-[1.4] text-reasoning transition-colors hover:bg-[color-mix(in_oklch,var(--reasoning)_32%,transparent)]"
           style="vertical-align: middle"
           role="button"
           tabindex="0"
@@ -57,7 +57,7 @@
         </span>
         <span
           v-else-if="seg.type === 'file'"
-          class="mr-1 inline-flex cursor-pointer items-center gap-1 rounded-sm bg-[var(--success-soft)] px-1.5 py-px font-mono text-[12px] font-medium leading-[1.4] text-success transition-colors hover:bg-[color-mix(in_oklch,var(--success)_32%,transparent)]"
+          class="mr-1 inline-flex cursor-pointer items-center gap-1 rounded-sm bg-[var(--success-soft)] px-1.5 py-px font-mono text-[var(--text-sm)] font-medium leading-[1.4] text-success transition-colors hover:bg-[color-mix(in_oklch,var(--success)_32%,transparent)]"
           style="vertical-align: middle"
           role="button"
           tabindex="0"

@@ -36,7 +36,7 @@ const fillClass = computed(() => {
 </script>
 
 <template>
-  <div class="progress-bar flex flex-col gap-1.5 font-mono text-[12px]" data-testid="gui-progress-bar">
+  <div class="progress-bar flex flex-col gap-1.5 font-mono text-[var(--text-sm)]" data-testid="gui-progress-bar">
     <div class="flex items-center justify-between">
       <span v-if="label" class="text-neutral-mid">{{ label }}</span>
       <span class="font-medium tabular-nums text-neutral-fg">

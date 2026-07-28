@@ -21,16 +21,16 @@
     <!-- 渲染失败：提示 + 折叠源码（用 div toggle 替代原生 <details>，遵循禁原生交互元素规范） -->
     <!-- 仅在无上次成功 SVG 时单独显示错误占位；有上次 SVG 则下方渲染区仍展示旧图（流式增量不全屏消失） -->
     <div v-else-if="status === 'error' && !svg" class="md-mermaid__error">
-      <div class="flex items-center gap-1.5 text-[12px] text-danger">
+      <div class="flex items-center gap-1.5 text-[var(--text-sm)] text-danger">
         <AlertTriangle class="size-3.5" />
         <span>{{ t('panel.mermaid.renderFailed') }}</span>
       </div>
-      <Button variant="ghost" size="sm" class="mt-0.5 h-6 px-1 text-[11px] text-neutral-dim hover:text-neutral-mid" @click="showSource = !showSource">
+      <Button variant="ghost" size="sm" class="mt-0.5 h-6 px-1 text-[var(--text-xs)] text-neutral-dim hover:text-neutral-mid" @click="showSource = !showSource">
         <ChevronRight class="size-3 transition-transform" :class="showSource ? 'rotate-90' : ''" />
         <span>{{ t('panel.mermaid.viewSource') }}</span>
       </Button>
       <div v-if="showSource" class="mt-1 flex items-start gap-1.5">
-        <pre class="max-h-[200px] flex-1 overflow-auto rounded bg-surface-2 p-2 font-mono text-[11px] leading-relaxed text-neutral-mid">{{ source }}</pre>
+        <pre class="max-h-[200px] flex-1 overflow-auto rounded bg-surface-2 p-2 font-mono text-[var(--text-xs)] leading-relaxed text-neutral-mid">{{ source }}</pre>
         <Button variant="ghost" size="icon" class="size-6 shrink-0 text-neutral-dim hover:text-neutral-fg" :title="t('panel.mermaid.copySource')" @click="copySource">
           <Check v-if="copied" class="size-3 text-success" />
           <Copy v-else class="size-3" />
@@ -62,7 +62,7 @@
             <Button variant="ghost" size="icon" class="size-7 text-neutral-mid hover:text-neutral-fg" :title="t('panel.mermaid.originalSize')" @click="resetOneToOne">
               <Minimize class="size-3.5" />
             </Button>
-            <span class="ml-1.5 font-mono text-[11px] text-neutral-dim">{{ zoomLabel }}</span>
+            <span class="ml-1.5 font-mono text-[var(--text-xs)] text-neutral-dim">{{ zoomLabel }}</span>
           </div>
           <DialogClose as-child>
             <Button variant="ghost" size="icon" class="size-7 text-neutral-mid hover:text-neutral-fg" :title="t('panel.mermaid.close')">

@@ -13,7 +13,7 @@
     <Button
       variant="ghost"
       size="sm"
-      class="turn-meta h-auto w-fit items-center justify-start gap-2.5 self-start px-1 py-1 font-sans text-[12px] font-medium transition-colors duration-[var(--duration-fast)] ease-[var(--ease)]"
+      class="turn-meta h-auto w-fit items-center justify-start gap-2.5 self-start px-1 py-1 font-sans text-[var(--text-sm)] font-medium transition-colors duration-[var(--duration-fast)] ease-[var(--ease)]"
       :class="[
         !turn.hasFoldable
           ? 'cursor-default hover:text-neutral-mid'
@@ -24,7 +24,7 @@
     >
       <!-- streaming 态：spinner（更显眼的流式生成指示），替代原脉冲点。仅文本流式生成时转（A 类） -->
       <Loader2 v-if="isStreaming" class="size-3 shrink-0 animate-spin text-accent" />
-      <span class="text-[12px] font-medium">
+      <span class="text-[var(--text-sm)] font-medium">
         <span class="lbl" :class="sessionActive ? 'text-accent' : 'text-neutral-mid'">{{ sessionActive ? t('panel.message.thinking') : t('panel.message.worked') }}</span>
         <span class="elapsed font-mono font-medium tracking-[0.01em] text-neutral-fg">{{ elapsed }}</span>
       </span>
@@ -35,10 +35,10 @@
         :class="isExpanded(turnIndex) ? 'rotate-90 text-accent' : ''"
       />
       <!-- H 设计 badge 灰阶化：bg-surface-2 text-neutral-mid 替代 bg-reasoning-soft/bg-info-soft -->
-      <span v-if="thinkCount > 0" class="badge badge-think inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.02em] text-neutral-mid">
+      <span v-if="thinkCount > 0" class="badge badge-think inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-1 font-mono text-[var(--text-2xs)] font-semibold tracking-[0.02em] text-neutral-mid">
         <Brain class="size-2.5" />{{ t('panel.message.thinkCount', { count: thinkCount }) }}
       </span>
-      <span v-if="toolCount > 0" class="badge badge-tool inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.02em] text-neutral-mid">
+      <span v-if="toolCount > 0" class="badge badge-tool inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-1 font-mono text-[var(--text-2xs)] font-semibold tracking-[0.02em] text-neutral-mid">
         <Wrench class="size-2.5" />{{ t('panel.message.toolCount', { count: toolCount }) }}
       </span>
     </Button>

@@ -9,7 +9,7 @@
   -->
   <div class="trace-subagent border-b border-dashed border-border pl-3.5 pb-2.5 mb-0.5" data-testid="subagent-block">
     <div
-      class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[13.5px] font-medium transition-opacity hover:opacity-80"
+      class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[var(--text-base)] font-medium transition-opacity hover:opacity-80"
       :class="subagentHeaderColor"
       :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
       @click="toggleTool"
@@ -26,25 +26,25 @@
         class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover"
         :class="isFailed ? 'hover:text-warn' : ''"
       />
-      <span class="subagent-tag mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[10.5px] font-semibold uppercase tracking-[0.08em] text-neutral-fg">subagent</span>
-      <span class="shrink-0 whitespace-nowrap font-mono text-[12px] text-accent">{{ subagentAgent }}</span>
+      <span class="subagent-tag mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">subagent</span>
+      <span class="shrink-0 whitespace-nowrap font-mono text-[var(--text-sm)] text-accent">{{ subagentAgent }}</span>
       <template v-if="subagentSlug">
         <span class="text-neutral-faint">·</span>
-        <span class="shrink-0 whitespace-nowrap font-mono text-[12px] text-accent">{{ subagentSlug }}</span>
+        <span class="shrink-0 whitespace-nowrap font-mono text-[var(--text-sm)] text-accent">{{ subagentSlug }}</span>
       </template>
       <!-- model + thinkingLevel（仅当 model 存在时显示括号；thinkingLevel 仅当存在时追加） -->
       <template v-if="subagentModel">
-        <span class="text-neutral-dim font-mono text-[11.5px]">&nbsp;(</span>
-        <span class="font-mono text-[11.5px] text-accent">{{ subagentModel }}</span>
-        <span v-if="subagentThinkingLevel" class="text-neutral-dim font-mono text-[11.5px]">&nbsp;· thinking {{ subagentThinkingLevel }})</span>
-        <span v-else class="text-neutral-dim font-mono text-[11.5px]">)</span>
+        <span class="text-neutral-dim font-mono text-[var(--text-xs)]">&nbsp;(</span>
+        <span class="font-mono text-[var(--text-xs)] text-accent">{{ subagentModel }}</span>
+        <span v-if="subagentThinkingLevel" class="text-neutral-dim font-mono text-[var(--text-xs)]">&nbsp;· thinking {{ subagentThinkingLevel }})</span>
+        <span v-else class="text-neutral-dim font-mono text-[var(--text-xs)]">)</span>
       </template>
       <!-- 终态指示：完成（Check）/ 未收到结果（text）。failed 不加额外标记（维持现状） -->
       <Check v-if="!isFailed && !isRunning && !isUnfinished" class="ml-0.5 size-3 shrink-0 text-neutral-mid" />
       <span v-else-if="isUnfinished" class="ml-0.5 whitespace-nowrap text-neutral-dim">{{ t('panel.message.noResult') }}</span>
     </div>
     <!-- task 首行预览（收起态可见，dim） -->
-    <div v-if="subagentTaskPreview" class="mt-0.5 pl-5 truncate text-[12px] text-neutral-dim">
+    <div v-if="subagentTaskPreview" class="mt-0.5 pl-5 truncate text-[var(--text-sm)] text-neutral-dim">
       {{ subagentTaskPreview }}
     </div>
     <template v-if="toolExpanded">
@@ -64,12 +64,12 @@
         <!-- task 完整内容（无标题，surface-2 代码块样式，pre-wrap 保留换行） -->
         <div
           v-if="subagentTask"
-          class="subagent-task-full ml-5 whitespace-pre-wrap rounded-sm border border-border bg-surface-2 px-2.5 py-1.5 text-[12px] leading-[1.65] text-neutral-mid"
+          class="subagent-task-full ml-5 whitespace-pre-wrap rounded-sm border border-border bg-surface-2 px-2.5 py-1.5 text-[var(--text-sm)] leading-[1.65] text-neutral-mid"
         >{{ subagentTask }}</div>
         <!-- background 状态行（来自 output.bgResponse，带状态点 blink 动画） -->
         <div
           v-if="bgStatusText"
-          class="ml-5 mt-1.5 flex items-center gap-2 rounded-sm border border-border bg-surface-2 px-2.5 py-1.5 font-mono text-[11.5px] text-neutral-dim"
+          class="ml-5 mt-1.5 flex items-center gap-2 rounded-sm border border-border bg-surface-2 px-2.5 py-1.5 font-mono text-[var(--text-xs)] text-neutral-dim"
         >
           <span class="inline-block size-1.5 animate-blink rounded-full bg-accent"></span>
           background · {{ bgStatusText }}

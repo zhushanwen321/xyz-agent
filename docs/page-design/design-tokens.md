@@ -59,6 +59,19 @@
 /* display 与 body 同用 --font-sans（tech-utility 取向，开发者工具直觉） */
 ```
 
+## 字号 scale（补全，2026-07-28 W2）
+
+> 组件级字号 SSOT。所有 `text-[Npx]` utility 优先用 `text-[var(--text-X)]` 引用本 scale，
+> 禁止 `.5px` 字号（`text-[12.5px]` 等）—— snap 到最近 scale step。
+
+| Token | 值 | 用途 |
+|-------|-----|------|
+| `--text-2xs` | `10px` | 极小字（bash truncation / runId / dirPath） |
+| `--text-xs` | `11px` | 小字（tag / meta / mono detail） |
+| `--text-sm` | `12px` | 次级正文（task preview / bash content / label） |
+| `--text-base` | `13px` | block header 统一字号（消除 13.5px 漂移） |
+| `--text-md` | `14px` | 正文（user message body） |
+
 ## 圆角（C 原仅 3/12，补 8 中间档）
 
 | Token | 值 | 用途 |
