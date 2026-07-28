@@ -171,7 +171,9 @@ async function serveFile(
   await new Promise<void>((resolveP, rejectP) => {
     const stream = createReadStream(filePath)
     let errored = false
-    stream.on('data', (chunk: Buffer) => {
+    // createReadStream 未设 encoding，chunk 实为 Buffer；但 ReadStream 的 data 事件签名
+    // 声明为 string | Buffer（setEncoding 后会变 string），故按签名收敛类型，res.write 两者皆受。
+    stream.on('data', (chunk: string | Buffer) => {
       // res.write 返回 false 表示背压（写入缓冲满），此处忽略背压（HTTP res 缓冲足够）
       res.write(chunk)
     })

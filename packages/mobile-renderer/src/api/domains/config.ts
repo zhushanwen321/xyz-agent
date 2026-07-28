@@ -90,9 +90,13 @@ export function discoverModels(req: {
 }
 
 // ── 订阅-推送（sendInitialState 主动推 + 运行时广播）──
-export function onProviders(handler: (providers: ProviderInfo[]) => void): () => void {
+/**
+ * P6 D3 config CAS：handler 第二参 version 是当前 models.json version（广播/reply 携带）。
+ * 调用方据此时同步缓存到 settings store，作为下次 setProvider 的 expectedVersion。
+ */
+export function onProviders(handler: (providers: ProviderInfo[], version?: number) => void): () => void {
   return events.onGlobalType('config.providers', (msg) => {
-    handler(msg.payload.providers)
+    handler(msg.payload.providers, msg.payload.version)
   })
 }
 
@@ -151,17 +155,26 @@ export function setExtensionDirs(dirs: string[]): Promise<void> {
   return command('config.setExtensionDirs', { dirs })
 }
 
-export function setProvider(providerId: string, data: SetProviderData): Promise<void> {
-  return command('config.setProvider', { providerId, ...data })
+/**
+ * P6 D3 config CAS：setProvider 携带 expectedVersion（客户端缓存的当前 config version）。
+ * 服务端对比 currentVersion，不等则 reject（error code='version_conflict'），相等则成功并 version++。
+ * expectedVersion 从 settings store 的 configVersion 取（onProviders 推送时缓存）。
+ */
+export function setProvider(providerId: string, data: SetProviderData, expectedVersion: number): Promise<void> {
+  return command('config.setProvider', { providerId, expectedVersion, ...data })
 }
 
 // W3 默认模型持久化：动作-ack，状态变更经 onDefaults 订阅推回（runtime 广播 config.defaults）。
+// P6 D3：setDefaultModel 改 settings.json（独立文件），不纳入 config CAS（无 expectedVersion）。
 export function setDefaultModel(provider: string, modelId: string): Promise<void> {
   return command('config.setDefaultModel', { provider, modelId })
 }
 
-export function deleteProvider(providerId: string): Promise<void> {
-  return command('config.deleteProvider', { providerId })
+/**
+ * P6 D3 config CAS：deleteProvider 同 setProvider 携带 expectedVersion。
+ */
+export function deleteProvider(providerId: string, expectedVersion: number): Promise<void> {
+  return command('config.deleteProvider', { providerId, expectedVersion })
 }
 
 export function setSkill(skill: SkillInfo): Promise<void> {

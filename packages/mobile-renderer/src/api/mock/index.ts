@@ -517,7 +517,8 @@ export const config = {
     return { success: true, models: [], error: undefined }
   },
   // 订阅型（handler 类型与 real domains 对齐：facade 三元要求两侧同构）
-  onProviders: (h: (providers: ProviderInfo[]) => void) => providersSub.subscribe(h),
+  // P6 D3 config CAS：onProviders 第二参 version（mock 不模拟冲突，广播仅推 providers，version 透传 undefined）。
+  onProviders: (h: (providers: ProviderInfo[], version?: number) => void) => providersSub.subscribe(h),
   onSkills: (h: (skills: SkillInfo[]) => void) => skillsSub.subscribe(h),
   onAgents: (h: (agents: AgentInfo[]) => void) => agentsSub.subscribe(h),
   onDefaults: (h: (defaultModel: string) => void) => defaultsSub.subscribe(h),
@@ -525,7 +526,8 @@ export const config = {
   onAgentDirs: (h: (dirs: SkillDirConfig[]) => void) => agentDirsSub.subscribe(h),
   onExtensionDirs: (h: (dirs: SkillDirConfig[]) => void) => extensionDirsSub.subscribe(h),
   // 动作型：mock 同构——更新 fixture 后经订阅广播推回（与 real sendInitialState/广播一致）
-  async setProvider(providerId: string, data: SetProviderData) {
+  // P6 D3 config CAS：setProvider/deleteProvider 第三参 expectedVersion（mock 不模拟冲突，接受忽略）。
+  async setProvider(providerId: string, data: SetProviderData, _expectedVersion: number) {
     await sleep(TIMING.ack)
     const target = fixtureProviders.find((p) => p.id === providerId)
     if (target) {
@@ -541,7 +543,7 @@ export const config = {
     }
     broadcastProviders()
   },
-  async deleteProvider(providerId: string) {
+  async deleteProvider(providerId: string, _expectedVersion: number) {
     await sleep(TIMING.ack)
     const idx = fixtureProviders.findIndex((p) => p.id === providerId)
     if (idx >= 0) fixtureProviders.splice(idx, 1)

@@ -64,7 +64,11 @@ async function init(): Promise<void> {
 
   const store = useSettingsStore()
 
-  unsubs.push(config.onProviders((p) => { store.providers = p }))
+  // P6 D3 config CAS：广播携带 version，同步缓存到 store（下次 setProvider 的 expectedVersion）。
+  unsubs.push(config.onProviders((p, version) => {
+    store.providers = p
+    if (typeof version === 'number') store.configVersion = version
+  }))
   // models 与 providers 同源（sendInitialState 同 step 推、provider 增删同广播），故常驻订阅
   unsubs.push(modelApi.onModels((m) => { store.models = m }))
   unsubs.push(config.onSkills((s) => { store.skills = s }))
