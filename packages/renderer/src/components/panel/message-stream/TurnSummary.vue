@@ -12,14 +12,6 @@
     <!-- streaming 光标：行内闪烁竖条，紧跟 summary 末尾 -->
     <span v-if="isStreaming" class="streaming-cursor ml-0.5 inline-block h-3.5 w-[7px] rounded-[1px] bg-accent align-middle animate-blink" />
     <!--
-      onboarding 气泡（首次出现 fork 按钮时；dismiss 后 localStorage 永久记忆，v-if 自隐）。
-      放 action group 上方，作为「action group 的注释」，引导用户视线到 hover 才出现的按钮。
-      仅非 subagent session 渲染（fork 仅在此场景存在）。包 wrapper div 控制外边距，不依赖 class 覆盖。
-    -->
-    <div v-if="lastAssistant && !isSubagentVirtualId(sessionId)" class="mt-2">
-      <OnboardingHint hint-key="fork" :text="t('panel.message.onboardingFork')" />
-    </div>
-    <!--
       hover actions（3 个 split-button：copy / fork / handoff）。
       每个 split-button 主按钮 click = 主操作；hover 浮出第二选项（带 MD/MSG badge）。
       非 subagent session：copy / fork / handoff（3 组，sep 分隔）。
@@ -141,7 +133,6 @@ import { usePlatformShortcut } from '@/composables/usePlatformShortcut'
 import { isSubagentVirtualId } from '@/stores/subagent'
 import { useTurnActions } from '@/composables/panel/useTurnActions'
 import MarkdownRenderer from './MarkdownRenderer.vue'
-import OnboardingHint from './OnboardingHint.vue'
 
 const props = defineProps<{
   turn: MessageTurn

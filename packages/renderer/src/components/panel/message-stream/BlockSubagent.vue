@@ -52,9 +52,6 @@
     <div v-if="subagentTaskPreview" class="mt-0.5 pl-5 truncate text-[length:var(--text-sm)] text-neutral-dim">
       {{ subagentTaskPreview }}
     </div>
-    <!-- onboarding 气泡（首次出现 subagent 块时；dismiss 后 localStorage 永久记忆，v-if 自隐）。
-         放 task preview 下方、展开体之前，收起/展开态都贴近 header，作为「块的注释」。 -->
-    <OnboardingHint hint-key="subagent" :text="t('panel.message.onboardingSubagent')" />
     <template v-if="toolExpanded">
       <!-- 展开体：task 完整内容 + background 状态行（异步执行看不到过程） -->
       <div v-if="subagentTask || bgStatusText" class="group/result relative mt-1">
@@ -93,7 +90,6 @@ import { useI18n } from 'vue-i18n'
 import { Copy as CopyIcon, ChevronRight, Check, CircleDashed } from '@lucide/vue'
 import type { ToolCall } from '@xyz-agent/shared'
 import { BLOCK_ICON_LUCIDE, RUNNING_LOADER_SVG } from './block-icon'
-import OnboardingHint from './OnboardingHint.vue'
 import { Button } from '@/components/ui/button'
 import { useCopy } from '@/composables/effects/useCopy'
 
