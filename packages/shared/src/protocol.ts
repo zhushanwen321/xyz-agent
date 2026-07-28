@@ -333,8 +333,11 @@ export interface ClientMessageMap {
   'config.setDefaultBaseBranch': { baseBranch: string }
   /** config.getDefaultBaseBranch：读取默认基分支配置（前端读取）。 */
   'config.getDefaultBaseBranch': Record<string, never>
-  /** auth：客户端首次连接携带 token + clientId 完成认证（wave1 远程化）。 */
-  auth: { token: string; clientId: string; deviceName?: string; lastSeq?: number }
+  /**
+   * auth：客户端首次连接携带 token + clientId 完成认证（wave1 远程化）。
+   * P2-s2 扩展重连凭据：lastSeq/bootId 成对携带（同页面生命周期重连），subscribedSessions 限定回放范围。
+   */
+  auth: { token: string; clientId: string; deviceName?: string; lastSeq?: number; bootId?: string; subscribedSessions?: string[] }
   /** file.signUrl：请求一个临时可访问的文件签名 URL（wave1 远程化预留）。 */
   'file.signUrl': { path: string }
 }
@@ -751,8 +754,20 @@ export interface ServerMessageMapBase {
     details?: Record<string, unknown>
     display?: boolean
   }
-  /** auth.ok：客户端认证通过后服务端回复（wave1 远程化），含服务端版本 + 已确认 clientId。 */
-  'auth.ok': { serverVersion: string; clientId: string }
+  /**
+   * auth.ok：客户端认证通过后服务端回复（wave1 远程化），含服务端版本 + 已确认 clientId。
+   * P2-s2 扩展 ReplayMeta（全可选）：bootId/serverSeq 供客户端下次重连带回；
+   * resumed=true 走增量回放（replayedCount 是回放段数）；seqReset=true 客户端应清 seq + reload。
+   */
+  'auth.ok': {
+    serverVersion: string
+    clientId: string
+    bootId?: string
+    serverSeq?: number
+    resumed?: boolean
+    replayedCount?: number
+    seqReset?: boolean
+  }
   /** file.signUrl:result：file.signUrl 请求的回复，含临时可访问 URL + 过期时间戳（ms）。 */
   'file.signUrl:result': { url: string; expiresAt: number }
 }

@@ -48,6 +48,51 @@ export interface ConnectionCtx {
   connectedAt: number
 }
 
+// ── P2-s2 auth replay 编排类型（spec §四时序图） ────────────────────────────
+// 三个值对象跨 connection-manager ↔ server.ts 边界：
+// - AuthReplayInput：handleAuthMessage 解析 auth payload 后传给 onAuthSuccess 的入参。
+// - ReplayDecision：server 注入的 onAuthSuccess 返回，connection-manager 据此编排。
+// - ReplayMeta：replyAuth 的 auth.ok payload 子集（bootId/serverSeq/resumed/replayedCount/seqReset 全可选）。
+
+/**
+ * onAuthSuccess 入参（从 auth payload 解析后组装）。
+ * - lastSeq/bootId undefined = 冷启动或旧客户端（不携带重连凭据）。
+ * - subscribedSessions 缺省 []：服务端只回放这些 session 桶的增量（spec D2.1）。
+ */
+export interface AuthReplayInput {
+  lastSeq?: number
+  bootId?: string
+  subscribedSessions: string[]
+}
+
+/**
+ * onAuthSuccess 返回值（connection-manager 编排依据）。
+ * - resume=true → 直发 messages（已序列化字符串，零再序列化）跳过 onConnect。
+ * - resume=false → 调 onConnect 推全量（含 seqReset 场景）。
+ * - bootId/serverSeq 用于 replyAuth 携带（客户端下次重连带回）。
+ */
+export interface ReplayDecision {
+  resume: boolean
+  messages: string[]
+  seqReset: boolean
+  replayedCount: number
+  bootId: string
+  serverSeq: number
+}
+
+/**
+ * replyAuth 的 auth.ok payload 子集（spec §2.2）。
+ * 所有字段可选——开放模式现状不回 auth.ok，认证模式按 decision 透传。
+ * 客户端旧逻辑只读 serverVersion/clientId，新字段缺省不破坏（JSON 宽松忽略 undefined）。
+ */
+export interface ReplayMeta {
+  bootId?: string
+  serverSeq?: number
+  resumed: boolean
+  replayedCount?: number
+  seqReset?: boolean
+}
+
 /**
  * 连接事件回调（由 RuntimeServer 注入）。
  * - onMessage：收到合法 ClientMessage，交 server 路由（返回 Promise，错误由调用方 catch）。
@@ -58,6 +103,13 @@ export interface ConnectionCallbacks {
   onConnect(ws: WsType): void
   onMessage(msg: ClientMessage, ws: WsType): Promise<void>
   sendError(ws: WsType, code: string, message: string, id?: string, details?: ErrorDetails): void
+  /**
+   * P2-s2：认证成功后调（仅认证模式，server.ts 注入实现调 broker.getReplayPlan）。
+   * - 入参 AuthReplayInput：从 auth payload 解析的 lastSeq/bootId/subscribedSessions。
+   * - 返回 ReplayDecision：connection-manager 据此决定 resume（直发回放段）/reset（推全量）。
+   * 可选——未注入时（开放模式）handleConnection 不走此路径。
+   */
+  onAuthSuccess?(ws: WsType, clientId: string, input: AuthReplayInput): Promise<ReplayDecision>
 }
 
 export interface ConnectionManagerOptions {
@@ -239,9 +291,13 @@ export class ConnectionManager {
     this.pending.delete(ws)
   }
 
-  /** 处理 pending 连接的首条消息（须为 auth）。认证成功升级为正式连接，否则关闭。 */
-  private handleAuthMessage(ws: WsType, data: unknown): void {
-    let msg: { type?: string; id?: string; payload?: { token?: unknown; clientId?: unknown; deviceName?: unknown } }
+  /**
+   * 处理 pending 连接的首条消息（须为 auth）。认证成功升级为正式连接，否则关闭。
+   * P2-s2 改 async：onAuthSuccess 是 Promise（broker.getReplayPlan 接口留异步扩展空间）。
+   * once('message') 回调内 fire-and-forget 调用本方法（不 await 返回值），错误在此方法内部完全消化（ES1）。
+   */
+  private async handleAuthMessage(ws: WsType, data: unknown): Promise<void> {
+    let msg: { type?: string; id?: string; payload?: { token?: unknown; clientId?: unknown; deviceName?: unknown; lastSeq?: unknown; bootId?: unknown; subscribedSessions?: unknown } }
     try {
       msg = JSON.parse(String(data))
     } catch {
@@ -264,14 +320,59 @@ export class ConnectionManager {
       ws.close(WS_CLOSE_UNAUTHORIZED, 'unauthorized')
       return
     }
-    // 认证成功：清理 pending/timer，踢同 clientId 旧连接，入正式池，回 auth.ok。
+    // P2-s2：解析重连凭据（lastSeq/bootId/subscribedSessions）。ES2：类型校验失败降级为 undefined/[]，
+    // 不 close 连接（宽容处理旧客户端/协议漂移，走冷启动全量路径）。
+    const input: AuthReplayInput = {
+      lastSeq: typeof payload.lastSeq === 'number' ? payload.lastSeq : undefined,
+      bootId: typeof payload.bootId === 'string' ? payload.bootId : undefined,
+      subscribedSessions: Array.isArray(payload.subscribedSessions) && payload.subscribedSessions.every((s) => typeof s === 'string')
+        ? payload.subscribedSessions as string[]
+        : [],
+    }
+    // 认证成功：清理 pending/timer，踢同 clientId 旧连接，入正式池。
     this.cleanupPendingAuth(ws)
     this.kickExistingClient(clientId, ws)
     const ctx: ConnectionCtx = { ws, clientId, deviceName, connectedAt: Date.now() }
     this.clients.set(clientId, ctx)
     console.log(`[runtime] client authenticated (clientId: ${clientId}, total: ${this.clients.size})`)
-    this.replyAuth(ws, msg.id, clientId)
-    this.callbacks.onConnect(ws)
+
+    // P2-s2 回放编排：onAuthSuccess 存在时调 broker.getReplayPlan 决定 resume/reset。
+    // ES1：onAuthSuccess 抛错（broker 异常/逻辑错误）→ cleanupPendingAuth + close 4001（与认证失败一致）。
+    if (this.callbacks.onAuthSuccess) {
+      let decision: ReplayDecision
+      try {
+        decision = await this.callbacks.onAuthSuccess(ws, clientId, input)
+      } catch (e) {
+        console.error('[runtime] onAuthSuccess failed, closing connection:', e)
+        this.cleanupPendingAuth(ws)
+        this.clients.delete(clientId)
+        ws.close(WS_CLOSE_UNAUTHORIZED, 'replay_failed')
+        return
+      }
+      // replyAuth 携带 ReplayMeta（bootId/serverSeq/resumed/replayedCount/seqReset）。
+      this.replyAuth(ws, msg.id, clientId, {
+        resumed: decision.resume,
+        seqReset: decision.seqReset,
+        replayedCount: decision.replayedCount,
+        bootId: decision.bootId,
+        serverSeq: decision.serverSeq,
+      })
+      if (decision.resume) {
+        // resume 路径：直发回放段（已序列化字符串，零再序列化），跳过 onConnect。
+        // ES3：ws.send 前 check readyState（ws 可能在 await 期间已关闭）。
+        for (const data of decision.messages) {
+          if (ws.readyState === WS_OPEN) ws.send(data)
+        }
+      } else {
+        // reset/冷启动路径：调 onConnect 推全量 initial state（含 seqReset 场景，推了无害）。
+        this.callbacks.onConnect(ws)
+      }
+    } else {
+      // onAuthSuccess 未注入（理论上认证模式必注入，兜底降级冷启动）。
+      this.replyAuth(ws, msg.id, clientId, { resumed: false })
+      this.callbacks.onConnect(ws)
+    }
+
     this.resetHeartbeat(ws)
     this.attachMessageHandler(ws, clientId)
     this.attachLifecycleHandlers(ws, clientId)
@@ -290,12 +391,15 @@ export class ConnectionManager {
     }
   }
 
-  /** 认证通过后回复 auth.ok（含服务端版本 + 确认 clientId）。 */
-  private replyAuth(ws: WsType, id: string | undefined, clientId: string): void {
+  /**
+   * 认证通过后回复 auth.ok（含服务端版本 + 确认 clientId + P2-s2 ReplayMeta）。
+   * ReplayMeta 字段全可选，JSON.stringify 自动忽略 undefined（向后兼容旧客户端只读 serverVersion/clientId）。
+   */
+  private replyAuth(ws: WsType, id: string | undefined, clientId: string, meta: ReplayMeta): void {
     const payload = JSON.stringify({
       type: 'auth.ok',
       id,
-      payload: { serverVersion: this.serverVersion, clientId },
+      payload: { serverVersion: this.serverVersion, clientId, ...meta },
     })
     if (ws.readyState === WS_OPEN) ws.send(payload)
   }

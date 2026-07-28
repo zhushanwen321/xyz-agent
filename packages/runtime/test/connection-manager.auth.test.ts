@@ -156,7 +156,8 @@ describe('ConnectionManager wave1 auth (TC2: auth happy path)', () => {
     const parsed = JSON.parse(sent)
     expect(parsed.type).toBe('auth.ok')
     expect(parsed.id).toBe('req1')
-    expect(parsed.payload).toEqual({ serverVersion: '9.9.9', clientId: 'client-A' })
+    // P2-s2：cb 未注入 onAuthSuccess → 走 else 分支 replyAuth({resumed:false})，payload 含 resumed。
+    expect(parsed.payload).toEqual({ serverVersion: '9.9.9', clientId: 'client-A', resumed: false })
 
     // 入池 + onConnect
     expect(cm.clients.get('client-A')?.deviceName).toBe('mac')
@@ -535,5 +536,220 @@ describe('ConnectionManager wave1 auth (TC9: regression baseline)', () => {
     broker.broadcast({ type: 'app.info', id: 'p', payload: { appVersion: '1', piVersion: '1' } } as never)
     expect(vi.mocked(ws1.send)).toHaveBeenCalledTimes(1)
     expect(vi.mocked(ws2.send)).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ── P2-s2: auth replay orchestration（spec §四时序图） ────────────────
+//
+// 8 个 testCases 覆盖 onAuthSuccess 回调注入后的三分支编排：
+// - TC-W1.1 冷启动（无 lastSeq）→ onConnect 推全量 + auth.ok{resumed:false}
+// - TC-W1.2 resume → 直发回放段 + 跳过 onConnect + auth.ok{resumed:true,replayedCount}
+// - TC-W1.3 seqReset → onConnect 推全量 + auth.ok{seqReset:true}
+// - TC-W1.4 回放段顺序与 decision.messages 一致
+// - TC-W1.5 subscribedSessions 透传给 onAuthSuccess
+// - TC-W1.6 开放模式零回归（onAuthSuccess 不被调）
+// - TC-W1.7 onAuthSuccess 抛错兜底 close 4001
+// - TC-W1.8 auth payload 类型错误降级冷启动
+
+/** 构造认证模式 ConnectionManager + 可控 onAuthSuccess mock。 */
+async function setupAuthMode(options?: {
+  onAuthSuccess?: (input: { lastSeq?: number; bootId?: string; subscribedSessions: string[] }) =>
+    { resume: boolean; messages: string[]; seqReset: boolean; replayedCount: number; bootId: string; serverSeq: number }
+}) {
+  const { ConnectionManager } = await import('../src/transport/connection-manager.js')
+  const cb = makeCallbacks() as ConnectionCallbacks & {
+    onConnect: ReturnType<typeof vi.fn>
+    onMessage: ReturnType<typeof vi.fn>
+    sendError: ReturnType<typeof vi.fn>
+    onAuthSuccess: ReturnType<typeof vi.fn>
+  }
+  if (options?.onAuthSuccess) {
+    cb.onAuthSuccess = vi.fn(async (_ws: WebSocket, _clientId: string, input: { lastSeq?: number; bootId?: string; subscribedSessions: string[] }) =>
+      options.onAuthSuccess!(input),
+    )
+  }
+  const fixedTm = {
+    load: () => ({ enabled: true as const, token: 'real' }),
+    generate: () => 'real',
+    verify: () => true,
+    persist: () => {},
+  }
+  const cm = new ConnectionManager(0, cb, { tokenManager: fixedTm, serverVersion: '1.0.0' })
+  return { cm, cb }
+}
+
+/** 发送 auth 消息并 flush microtask（handleAuthMessage 是 async）。 */
+async function sendAuth(ws: WebSocket & MockWsInternals, payload: Record<string, unknown>, id = 'r'): Promise<void> {
+  emit(ws, 'message', Buffer.from(JSON.stringify({ type: 'auth', id, payload })))
+  // handleAuthMessage 是 async（await onAuthSuccess），需 flush microtask 队列让 Promise 完成。
+  // fake timers 下需多次 microtask flush（await 链可能有多个 then）。
+  for (let i = 0; i < 5; i++) await Promise.resolve()
+}
+
+describe('P2-s2 auth replay orchestration (TC-W1.1~W1.8)', () => {
+  it('TC-W1.1: 冷启动（无 lastSeq）→ onConnect 推全量 + auth.ok{resumed:false}', async () => {
+    const { cm, cb } = await setupAuthMode({
+      onAuthSuccess: () => ({ resume: false, messages: [], seqReset: false, replayedCount: 0, bootId: 'b1', serverSeq: 0 }),
+    })
+    const ws = makeMockWs()
+    connect(cm, ws)
+    await sendAuth(ws, { token: 'real', clientId: 'c1' })
+
+    // onAuthSuccess 入参：lastSeq/bootId undefined，subscribedSessions []
+    expect(cb.onAuthSuccess).toHaveBeenCalledTimes(1)
+    const callArgs = vi.mocked(cb.onAuthSuccess).mock.calls[0]
+    expect(callArgs[2]).toEqual({ lastSeq: undefined, bootId: undefined, subscribedSessions: [] })
+
+    // onConnect 被调一次（推全量）
+    expect(cb.onConnect).toHaveBeenCalledTimes(1)
+    expect(cb.onConnect).toHaveBeenCalledWith(ws)
+
+    // auth.ok payload：resumed===false（冷启动）
+    const sent = vi.mocked(ws.send).mock.calls[0][0] as string
+    const parsed = JSON.parse(sent)
+    expect(parsed.payload.resumed).toBe(false)
+  })
+
+  it('TC-W1.2: resume → 直发回放段 + 跳过 onConnect + auth.ok{resumed:true,replayedCount}', async () => {
+    const { cm, cb } = await setupAuthMode({
+      onAuthSuccess: () => ({ resume: true, messages: ['msg-seq6', 'msg-seq7'], seqReset: false, replayedCount: 2, bootId: 'b1', serverSeq: 7 }),
+    })
+    const ws = makeMockWs()
+    connect(cm, ws)
+    await sendAuth(ws, { token: 'real', clientId: 'c1', lastSeq: 5, bootId: 'b1', subscribedSessions: ['sA'] })
+
+    // onConnect 未被调（resume 跳过全量推送）
+    expect(cb.onConnect).not.toHaveBeenCalled()
+
+    // ws.send 序列：[auth.ok, 'msg-seq6', 'msg-seq7']
+    const calls = vi.mocked(ws.send).mock.calls.map((c) => c[0])
+    expect(calls).toHaveLength(3)
+    const authOk = JSON.parse(calls[0] as string)
+    expect(authOk.payload.resumed).toBe(true)
+    expect(authOk.payload.replayedCount).toBe(2)
+    expect(calls[1]).toBe('msg-seq6')
+    expect(calls[2]).toBe('msg-seq7')
+  })
+
+  it('TC-W1.3: seqReset → onConnect 推全量 + auth.ok{seqReset:true}', async () => {
+    const { cm, cb } = await setupAuthMode({
+      onAuthSuccess: () => ({ resume: false, messages: [], seqReset: true, replayedCount: 0, bootId: 'b2', serverSeq: 0 }),
+    })
+    const ws = makeMockWs()
+    connect(cm, ws)
+    await sendAuth(ws, { token: 'real', clientId: 'c1', lastSeq: 1, bootId: 'stale' })
+
+    // onConnect 被调一次（推全量）
+    expect(cb.onConnect).toHaveBeenCalledTimes(1)
+
+    // auth.ok payload.seqReset === true
+    const sent = vi.mocked(ws.send).mock.calls[0][0] as string
+    const parsed = JSON.parse(sent)
+    expect(parsed.payload.seqReset).toBe(true)
+    expect(parsed.payload.resumed).toBe(false)
+  })
+
+  it('TC-W1.4: 回放段顺序与 decision.messages 严格一致 + 跳过 onConnect', async () => {
+    const { cm, cb } = await setupAuthMode({
+      onAuthSuccess: () => ({ resume: true, messages: ['m1', 'm2', 'm3'], seqReset: false, replayedCount: 3, bootId: 'b', serverSeq: 3 }),
+    })
+    const ws = makeMockWs()
+    connect(cm, ws)
+    await sendAuth(ws, { token: 'real', clientId: 'c1' })
+
+    // onConnect 未被调
+    expect(cb.onConnect).not.toHaveBeenCalled()
+
+    // ws.send 序列：auth.ok 后紧跟 m1, m2, m3（顺序与 messages 索引一致）
+    const calls = vi.mocked(ws.send).mock.calls.map((c) => c[0] as string)
+    expect(calls).toHaveLength(4)
+    expect(JSON.parse(calls[0]).type).toBe('auth.ok')
+    expect(calls.slice(1)).toEqual(['m1', 'm2', 'm3'])
+  })
+
+  it('TC-W1.5: subscribedSessions 透传给 onAuthSuccess；缺省时 []', async () => {
+    const { cm, cb } = await setupAuthMode({
+      onAuthSuccess: () => ({ resume: false, messages: [], seqReset: false, replayedCount: 0, bootId: 'b', serverSeq: 0 }),
+    })
+    const ws = makeMockWs()
+    connect(cm, ws)
+    await sendAuth(ws, { token: 'real', clientId: 'c1', subscribedSessions: ['sA', 'sB'] })
+
+    // onAuthSuccess 入参 input.subscribedSessions === ['sA','sB']
+    const input = vi.mocked(cb.onAuthSuccess).mock.calls[0][2] as { subscribedSessions: string[] }
+    expect(input.subscribedSessions).toEqual(['sA', 'sB'])
+
+    // 第二个连接：subscribedSessions 缺省 → []
+    const ws2 = makeMockWs()
+    connect(cm, ws2)
+    await sendAuth(ws2, { token: 'real', clientId: 'c2' })
+    const input2 = vi.mocked(cb.onAuthSuccess).mock.calls[1][2] as { subscribedSessions: string[] }
+    expect(input2.subscribedSessions).toEqual([])
+  })
+
+  it('TC-W1.6: 开放模式（tokenManager 未启用）保持现状不调 onAuthSuccess/replyAuth', async () => {
+    const { ConnectionManager } = await import('../src/transport/connection-manager.js')
+    const cb = makeCallbacks() as ConnectionCallbacks & { onAuthSuccess: ReturnType<typeof vi.fn> }
+    cb.onAuthSuccess = vi.fn().mockResolvedValue({ resume: false, messages: [], seqReset: false, replayedCount: 0, bootId: 'b', serverSeq: 0 })
+    // 无 tokenFile → 开放模式
+    const cm = new ConnectionManager(0, cb, { tokenManager: createTokenManager({}) })
+
+    const ws = makeMockWs()
+    connect(cm, ws)
+
+    // 开放模式：立即入池 + onConnect 被调
+    expect(cm.clients.has('local')).toBe(true)
+    expect(cb.onConnect).toHaveBeenCalledTimes(1)
+    // onAuthSuccess 未被调（开放模式不走认证编排）
+    expect(cb.onAuthSuccess).not.toHaveBeenCalled()
+    // ws.send 不产生 auth.ok（开放模式无 auth 握手）
+    expect(ws.send).not.toHaveBeenCalled()
+  })
+
+  it('TC-W1.7: onAuthSuccess 抛错兜底 close 4001 replay_failed（ES1）', async () => {
+    const { ConnectionManager } = await import('../src/transport/connection-manager.js')
+    const cb = makeCallbacks() as ConnectionCallbacks & { onAuthSuccess: ReturnType<typeof vi.fn> }
+    cb.onAuthSuccess = vi.fn().mockRejectedValue(new Error('broker down'))
+    const fixedTm = {
+      load: () => ({ enabled: true as const, token: 'real' }),
+      generate: () => 'real',
+      verify: () => true,
+      persist: () => {},
+    }
+    const cm = new ConnectionManager(0, cb, { tokenManager: fixedTm })
+    const internal = cm as unknown as { pending: Set<unknown>; authTimers: Map<unknown, unknown> }
+
+    const ws = makeMockWs()
+    connect(cm, ws)
+    await sendAuth(ws, { token: 'real', clientId: 'c1' })
+
+    // ws.close 被调，code=4001
+    expect(ws.close).toHaveBeenCalledWith(4001, expect.stringContaining('replay_failed'))
+    // cleanupPendingAuth 已执行（pending 清空）
+    expect(internal.pending.size).toBe(0)
+    // clients Map 不含 c1（onAuthSuccess 失败回滚 clients.set）
+    expect(cm.clients.has('c1')).toBe(false)
+    // onConnect 未被调（编排中断）
+    expect(cb.onConnect).not.toHaveBeenCalled()
+  })
+
+  it('TC-W1.8: auth payload 类型错误降级冷启动（ES2）', async () => {
+    const { cm, cb } = await setupAuthMode({
+      onAuthSuccess: () => ({ resume: false, messages: [], seqReset: false, replayedCount: 0, bootId: 'b', serverSeq: 0 }),
+    })
+    const ws = makeMockWs()
+    connect(cm, ws)
+    // lastSeq='abc'（字符串）/ bootId=123（数字）/ subscribedSessions='sA'（非数组）
+    await sendAuth(ws, { token: 'real', clientId: 'c1', lastSeq: 'abc', bootId: 123, subscribedSessions: 'sA' })
+
+    // 不 close 连接
+    expect(ws.close).not.toHaveBeenCalled()
+    // onAuthSuccess 入参：类型校验失败降级为 undefined/[]
+    const input = vi.mocked(cb.onAuthSuccess).mock.calls[0][2] as { lastSeq?: number; bootId?: string; subscribedSessions: string[] }
+    expect(input.lastSeq).toBeUndefined()
+    expect(input.bootId).toBeUndefined()
+    expect(input.subscribedSessions).toEqual([])
+    // 走冷启动全量路径
+    expect(cb.onConnect).toHaveBeenCalledTimes(1)
   })
 })
