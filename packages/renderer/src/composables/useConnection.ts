@@ -28,6 +28,7 @@ import {
 } from '../lib/ipc'
 import { BASE_PORT, DEV_PORT_OFFSET } from '@xyz-agent/shared'
 import type { ServerMessage } from '@xyz-agent/shared'
+import { isRemoteMode, getActiveProfile, getClientId, getDeviceName } from '../lib/remote/connection-config'
 import * as transport from '../api/transport'
 import * as pending from '../api/pending'
 import * as events from '../api/events'
@@ -232,6 +233,25 @@ export function useConnection() {
       return
     }
 
+    // 远程模式：连远程 server（auth 握手），不走本地 IPC 端口发现、不注册 runtime 崩溃监听
+    // （远程无本地 runtime 进程，IPC 监听空转 + restartRuntime 无 supervisor 无效）。
+    // isRemoteMode() 内部 short-circuit mode==='remote' && getActiveProfile()!==null，
+    // 进入分支时 profile 必非空（同步代码无 await 间隙，TOCTOU 风险极低 → profile! 非空断言安全）。
+    // 直接调 connect(url, {auth}) 而非 connectWs(url)：connectWs 不传 auth opts 会让首连退化本地模式，
+    // 远程首连必须显式传 auth（ws-client connect 据此设 currentAuthOpts + isRemote，重连复用）。
+    if (isRemoteMode()) {
+      const profile = getActiveProfile()
+      lastConnectedUrl = profile!.url
+      connect(profile!.url, {
+        auth: {
+          token: profile!.token,
+          clientId: getClientId(),
+          deviceName: getDeviceName(),
+        },
+      })
+      return
+    }
+
     // 监听 runtime 端口推送（runtime 重启成功后推新端口 → 断开重连）
     removeRuntimePortListener = onRuntimePort((newPort) => {
       if (newPort && state.value !== 'disconnected') {
@@ -271,11 +291,27 @@ export function useConnection() {
   }
 
   /**
-   * 手动重试（用户从「runtime 不可用」状态条点重试触发）。
-   * 委托 IPC runtime-restart → 主进程 supervisor.restartRuntime。
-   * supervisor 重启成功会广播 runtime-port（onRuntimePort 监听自动重连）。
+   * 手动重试（用户从「runtime 不可用」/远程 failed 状态条点重试触发）。
+   *
+   * 分模式：
+   * - 远程：disconnect() + connect(activeProfile, {auth})（重连，非 IPC restart）。
+   *   远程无本地 supervisor，restartRuntime IPC 无效；断开重连让 ws-client 重新走 auth 握手。
+   * - 本地：委托 IPC runtime-restart → 主进程 supervisor.restartRuntime。
+   *   supervisor 重启成功会广播 runtime-port（onRuntimePort 监听自动重连），逐字节不变。
    */
   async function retryRuntime(): Promise<void> {
+    if (isRemoteMode()) {
+      const profile = getActiveProfile()
+      disconnect()
+      connect(profile!.url, {
+        auth: {
+          token: profile!.token,
+          clientId: getClientId(),
+          deviceName: getDeviceName(),
+        },
+      })
+      return
+    }
     await restartRuntime()
   }
 
