@@ -219,8 +219,10 @@ export interface ClientMessageMap {
   'message.steer': { sessionId: string; content: string }
   'message.follow_up': { sessionId: string; content: string }
   'config.getProviders': Record<string, never>
-  'config.setProvider': { providerId: string } & SetProviderData
-  'config.deleteProvider': { providerId: string }
+  // P6 D3 config CAS：setProvider/deleteProvider 携带 expectedVersion（客户端缓存的当前 version）。
+  // 不等则 reply error{code:'version_conflict', currentVersion}，相等则成功并 version++。
+  'config.setProvider': { providerId: string; expectedVersion: number } & SetProviderData
+  'config.deleteProvider': { providerId: string; expectedVersion: number }
   'config.setToolPermissions': { permissions: Record<string, string> }
   'config.discoverModels': { baseUrl: string; apiKey?: string; providerType?: string; providerId?: string }
   // W3 默认模型持久化：前端设置全局默认模型，runtime 调 configService.setDefaultModel 写 settings.json。
@@ -495,7 +497,7 @@ export type ServerMessageType =
  */
 export interface ServerMessageMapBase {
   // ── sendInitialState 推送 / domain 订阅（精确）──
-  'config.providers': { providers: ProviderInfo[] }
+  'config.providers': { providers: ProviderInfo[]; version?: number }
   'config.skills': { skills: SkillInfo[] }
   'config.agents': { agents: AgentInfo[] }
   /** discovery.json 加载路径广播（ADR-0020 §1，目录级管道配置） */
@@ -778,7 +780,7 @@ export interface ServerMessageMapBase {
   // config.providerUpdated：setProvider/deleteProvider reply（settings-message-handler.ts:37/51/65）。
   // 三种 shape：setProvider 成功 { saved: true }；deleteProvider { providerId, deleted: true }；
   // setProvider 首启用 fallback { providerId }（统一并集，字段均 optional 除共性外）。
-  'config.providerUpdated': { providerId?: string; saved?: boolean; deleted?: boolean }
+  'config.providerUpdated': { providerId?: string; saved?: boolean; deleted?: boolean; newVersion?: number }
   // config.skillUpdated：setSkill reply（settings-message-handler.ts:86 reply { skill, success: true }）。
   'config.skillUpdated': { skill: SkillInfo; success: boolean }
   // config.skillDeleted：deleteSkill reply（settings-message-handler.ts:93 reply { skillId, success: true }）。

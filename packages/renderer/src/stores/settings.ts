@@ -81,6 +81,12 @@ export const useSettingsStore = defineStore('settings', () => {
   const systemPromptConfig = ref<{ config: SystemPromptConfig; corrupted: boolean } | null>(null)
   /** 终端配置（Phase 6，config.terminalConfig 广播同步）。null=尚未加载。 */
   const terminalConfig = ref<{ config: TerminalConfig; corrupted: boolean } | null>(null)
+  /**
+   * P6 D3 config CAS：当前 models.json version（config.providers 广播/reply 携带）。
+   * setProvider/deleteProvider 调用时作为 expectedVersion 回传；version_conflict 后由广播刷新。
+   * 初始 0（未收到广播前的默认值，与服务端旧文件 default 0 对齐）。
+   */
+  const configVersion = ref(0)
 
   // ── Actions（纯写入；订阅生命周期在 useSettings composable）──
 
@@ -204,6 +210,7 @@ export const useSettingsStore = defineStore('settings', () => {
     defaultModel,
     systemPromptConfig,
     terminalConfig,
+    configVersion,
     // actions（纯写入）
     setSystem,
     setSkillDirs,

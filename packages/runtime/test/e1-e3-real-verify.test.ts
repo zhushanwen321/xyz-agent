@@ -56,7 +56,8 @@ describe.skipIf(!existsSync(DEV_MODELS))('E1-E3 real 层持久化验证', () => 
   it('E1: setProvider 改 api 类型 → models.json 落盘 pi 终值', () => {
     const before = configService.listProviders().find(p => p.id === firstProviderId)!
     const newApi = before.api === 'anthropic-messages' ? 'openai-completions' : 'anthropic-messages'
-    configService.setProvider(firstProviderId, { type: newApi })
+    // P6 D3 CAS：传当前 version 作 expectedVersion
+    configService.setProvider(firstProviderId, { type: newApi }, configService.getConfigVersion())
 
     const afterProvider = configService.listProviders().find(p => p.id === firstProviderId)!
     expect(afterProvider.api).toBe(newApi)
@@ -67,7 +68,7 @@ describe.skipIf(!existsSync(DEV_MODELS))('E1-E3 real 层持久化验证', () => 
   })
 
   it('E2: setProvider 改 enabled → models.json 落盘 enabled', () => {
-    configService.setProvider(firstProviderId, { enabled: false })
+    configService.setProvider(firstProviderId, { enabled: false }, configService.getConfigVersion())
 
     const afterProvider = configService.listProviders().find(p => p.id === firstProviderId)!
     expect(afterProvider.enabled).toBe(false)
@@ -76,8 +77,8 @@ describe.skipIf(!existsSync(DEV_MODELS))('E1-E3 real 层持久化验证', () => 
     const raw = readModels()
     expect(raw.providers[firstProviderId]?.enabled).toBe(false)
 
-    // 恢复
-    configService.setProvider(firstProviderId, { enabled: true })
+    // 恢复（P6 D3 CAS：version 已自增，getConfigVersion 取最新）
+    configService.setProvider(firstProviderId, { enabled: true }, configService.getConfigVersion())
   })
 
   it('E3: setDefaultModel → settings.json 落盘 defaultProvider/defaultModel', () => {

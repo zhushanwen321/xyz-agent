@@ -40,7 +40,7 @@ function makeBaseServices(mgr: ExtensionTimeoutManager): BrokerServices {
   return {
     sessionService: { listPersistedSessions: () => [] },
     configService: {
-      listProviders: () => [],
+      listProviders: () => [], getConfigVersion: () => 0,
       getDefaultModel: () => null,
       loadSkills: () => [],
       loadAgents: () => [],

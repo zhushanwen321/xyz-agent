@@ -36,7 +36,7 @@ function poolOf(...entries: Array<[string, WebSocket]>): ClientPool {
 const mockServices = {
   sessionService: { listPersistedSessions: () => [] },
   configService: {
-    listProviders: () => [], getDefaultModel: () => null, loadSkills: () => [], loadAgents: () => [],
+    listProviders: () => [], getConfigVersion: () => 0, getDefaultModel: () => null, loadSkills: () => [], loadAgents: () => [],
     getSkillDirs: () => [], getAgentDirs: () => [], getExtensionDirs: () => [],
     getSystemPromptConfig: () => ({ config: {}, corrupted: false }),
     getTerminalConfig: () => ({ config: {}, corrupted: false }),

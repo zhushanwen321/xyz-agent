@@ -49,7 +49,7 @@ function makeMockWs(opts: { throws?: boolean } = {}): WebSocket {
 const mockServices = {
   sessionService: { listPersistedSessions: () => [] },
   configService: {
-    listProviders: () => [],
+    listProviders: () => [], getConfigVersion: () => 0,
     getDefaultModel: () => null,
     loadSkills: () => [],
     loadAgents: () => [],

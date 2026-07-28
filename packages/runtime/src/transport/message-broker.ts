@@ -334,7 +334,8 @@ export class ServerMessageBroker implements IMessageBroker {
   private buildProviderListMsgs(): ServerMessage[] {
     const providers = this.services.configService.listProviders()
     return [
-      { type: 'config.providers', id: this.nextPushId(), payload: { providers } },
+      // P6 D3：广播携带 config version（客户端缓存用于下次 setProvider 的 expectedVersion）。
+      { type: 'config.providers', id: this.nextPushId(), payload: { providers, version: this.services.configService.getConfigVersion() } },
       { type: 'model.list', id: this.nextPushId(), payload: { models: this.services.modelService.aggregateModels(providers) } },
     ]
   }

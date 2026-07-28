@@ -532,7 +532,7 @@ describe('ConnectionManager wave1 auth (TC9: regression baseline)', () => {
       { clients },
       {
         sessionService: { listPersistedSessions: () => [] },
-        configService: { listProviders: () => [], getDefaultModel: () => null, loadSkills: () => [], loadAgents: () => [], getSkillDirs: () => [], getAgentDirs: () => [] },
+        configService: { listProviders: () => [], getConfigVersion: () => 0, getDefaultModel: () => null, loadSkills: () => [], loadAgents: () => [], getSkillDirs: () => [], getAgentDirs: () => [] },
         modelService: { aggregateModels: () => [] },
         pluginService: undefined,
         extensionService: undefined,

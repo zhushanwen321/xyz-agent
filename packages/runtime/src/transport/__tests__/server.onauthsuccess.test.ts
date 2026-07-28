@@ -55,7 +55,7 @@ describe('RuntimeServer onAuthSuccess injection (P2-s2-w2)', () => {
       { clients: new Map() },
       {
         sessionService: { listPersistedSessions: () => [] },
-        configService: { listProviders: () => [], getDefaultModel: () => null, loadSkills: () => [], loadAgents: () => [], getSkillDirs: () => [], getAgentDirs: () => [], getExtensionDirs: () => [], getSystemPromptConfig: () => ({ config: {}, corrupted: false }), getTerminalConfig: () => ({ config: {}, corrupted: false }) },
+        configService: { listProviders: () => [], getConfigVersion: () => 0, getDefaultModel: () => null, loadSkills: () => [], loadAgents: () => [], getSkillDirs: () => [], getAgentDirs: () => [], getExtensionDirs: () => [], getSystemPromptConfig: () => ({ config: {}, corrupted: false }), getTerminalConfig: () => ({ config: {}, corrupted: false }) },
         modelService: { aggregateModels: () => [] },
         pluginService: undefined,
         extensionService: undefined,

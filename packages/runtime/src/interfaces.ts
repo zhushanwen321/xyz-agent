@@ -214,6 +214,8 @@ export type { ISessionServiceInternal } from './services/session/session-interna
 export interface IConfigService {
   listProviders(): ProviderInfo[]
   getDefaultModel(): { provider: string; modelId: string } | null
+  /** P6 D3 config CAS：当前 models.json version（旧文件 default 0）。广播 config.providers 时携带。 */
+  getConfigVersion(): number
   setDefaultModel(provider: string, modelId: string): void
   setProvider(providerId: string, data: {
     name?: string
@@ -222,8 +224,8 @@ export interface IConfigService {
     baseUrl?: string
     models?: Array<string | { id: string; name?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null> }>
     enabled?: boolean
-  }): { newDefault?: { provider: string; modelId: string } }
-  deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } }
+  }, expectedVersion: number): { newDefault?: { provider: string; modelId: string }; newVersion: number }
+  deleteProvider(providerId: string, expectedVersion: number): { removed: boolean; newDefault?: { provider: string; modelId: string }; newVersion: number }
   getProvider(providerId: string): { apiKey?: string; name?: string; type?: string; baseUrl?: string; models?: unknown[]; enabled?: boolean } | undefined
   updateToolPermissions(permissions: Record<string, string>): void
   // ── Skill/Agent 加载路径（ADR-0020 §1 discovery.json SSOT）──

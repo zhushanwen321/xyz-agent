@@ -47,7 +47,7 @@ function singlePool(ws: WebSocket): ClientPool {
 const mockServices = {
   sessionService: { listPersistedSessions: () => [] },
   configService: {
-    listProviders: () => [],
+    listProviders: () => [], getConfigVersion: () => 0,
     getDefaultModel: () => null,
     loadSkills: () => [],
     loadAgents: () => [],

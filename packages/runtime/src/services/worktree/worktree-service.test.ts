@@ -79,6 +79,7 @@ function mockConfigService(worktreeRootDir = '/home/user/worktrees') {
     // 其他方法 stub
     listProviders: vi.fn(() => []),
     getDefaultModel: vi.fn(() => null),
+    getConfigVersion: vi.fn(() => 0),
     setDefaultModel: vi.fn(),
     setProvider: vi.fn(),
     deleteProvider: vi.fn(),
