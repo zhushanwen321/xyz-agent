@@ -22,7 +22,8 @@
           <ChevronRight class="size-[14px] shrink-0 text-neutral-dim transition-transform" :class="thinkingExpanded ? 'rotate-90 text-accent' : ''" />
           <component :is="BLOCK_ICON_LUCIDE.thinking" class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" />
           <span class="text-[12.5px] font-medium text-neutral-mid">{{ t('panel.message.thinkingBlock') }}</span>
-          <span class="text-neutral-faint">·</span>
+          <!-- · 分隔符：仅非 working 态显示。working（streaming）态内容直接跟在"思考"后，更紧凑 -->
+          <span v-if="!working" class="text-neutral-faint">·</span>
         </span>
         <!-- 内容 block：从最左占满，第一行环绕 float label，第二行起回到容器左缘 -->
         <div v-if="!thinkingExpanded" class="think-content-collapsed truncate text-[12px] text-neutral-dim">
