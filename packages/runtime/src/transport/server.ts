@@ -17,7 +17,7 @@ import type { FileService } from '../services/file-service.js'
 import type { SkillRegistry } from '../services/skill-registry.js'
 import { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
 import { ConnectionManager } from './connection-manager.js'
-import type { ConnectionManagerOptions } from './connection-manager.js'
+import type { ConnectionManagerOptions, AuthReplayInput, ReplayDecision } from './connection-manager.js'
 import { ServerMessageBroker } from './message-broker.js'
 import { BridgeHandler } from './bridge-handler.js'
 import { SettingsMessageHandler } from './settings-message-handler.js'
@@ -107,7 +107,42 @@ export class RuntimeServer implements IMessageBroker {
       onConnect: (ws) => this.broker.sendInitialState(ws),
       onMessage: (msg, ws) => this.handleMessage(msg, ws),
       sendError: (ws, code, message, id, details) => this.broker.sendError(ws, code, message, id, details),
+      // P2-s2：认证成功后调 broker.getReplayPlan 决定 resume/reset/冷启动。
+      // this.broker 在 setServices 构造（lazy），onAuthSuccess 运行时读取（auth 发生在 start 后，
+      // start 在 setServices 后调用，故 this.broker 必已初始化）。
+      onAuthSuccess: (_ws, _clientId, input) => this.handleAuthReplay(input),
     }, connOpts ?? {})
+  }
+
+  /**
+   * P2-s2：onAuthSuccess 回调实现（connection-manager 认证成功后调用）。
+   * 调 broker.getReplayPlan 决定 resume（增量回放）/reset（全量重推）；冷启动（无 lastSeq/bootId）
+   * 直接返回 resume:false 不调 getReplayPlan（推全量 initial state，无 seqReset 标志）。
+   *
+   * @returns ReplayDecision：connection-manager 据此 replyAuth + 直发回放段/调 onConnect。
+   */
+  private async handleAuthReplay(input: AuthReplayInput): Promise<ReplayDecision> {
+    const bootId = this.broker.getBootId()
+    const serverSeq = this.broker.getSeq()
+    // 冷启动判定（ES5：lastSeq/bootId 缺失 → 推全量，无 seqReset 标志）。
+    // 不调 getReplayPlan（无重连凭据，回放无意义）。
+    if (input.lastSeq === undefined || input.bootId === undefined) {
+      return { resume: false, messages: [], seqReset: false, replayedCount: 0, bootId, serverSeq }
+    }
+    // resume/reset 判定：broker.getReplayPlan 内部判 bootId 不匹配 / lastSeq<watermark → reset。
+    const plan = this.broker.getReplayPlan(input.lastSeq, input.bootId, input.subscribedSessions)
+    if (plan.kind === 'resume') {
+      return {
+        resume: true,
+        messages: plan.messages,
+        seqReset: false,
+        replayedCount: plan.messages.length,
+        bootId,
+        serverSeq,
+      }
+    }
+    // reset：客户端 lastSeq 失效（bootId 不匹配或被驱逐），推全量 + seqReset 标志。
+    return { resume: false, messages: [], seqReset: true, replayedCount: 0, bootId, serverSeq }
   }
 
   setServices(session: ISessionService, config: IConfigService, model: IModelService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService, workspace?: WorkspaceService, appInfo?: { appVersion: string; piVersion: string }, skillRegistry?: SkillRegistry, worktree?: IWorktreeService, terminal?: ITerminalService): void {

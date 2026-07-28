@@ -222,6 +222,14 @@ export class ServerMessageBroker implements IMessageBroker {
   }
 
   /**
+   * 当前已分配的最大 seq（只读，P2-s2 auth.ok 携带 serverSeq 用）。
+   * 客户端下次重连带回作 lastSeq；未广播过任何消息时返回 0。
+   */
+  getSeq(): number {
+    return this.seqCounter.current
+  }
+
+  /**
    * 取某 session 的缓冲桶（测试断言用 / 调试用）。
    * 桶不存在返回 undefined（无消息入过桶或已被 clearSessionBuffer 删除）。
    */

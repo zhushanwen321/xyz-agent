@@ -25,4 +25,13 @@ export class SeqCounter {
   assignSeq(): number {
     return ++this.seq
   }
+
+  /**
+   * 当前已分配的最大 seq（只读，不推进）。
+   * 用于 auth.ok 携带 serverSeq（P2-s2：客户端下次重连带回作 lastSeq）。
+   * 未调过 assignSeq 时返回 0（初始值，broker 未广播过任何消息）。
+   */
+  get current(): number {
+    return this.seq
+  }
 }
