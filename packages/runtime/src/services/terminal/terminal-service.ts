@@ -23,6 +23,16 @@ import { execFileSync } from 'node:child_process'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { ITerminalService } from '../ports/terminal-service.js'
 import { TERMINAL_UNAVAILABLE } from '../../utils/errors.js'
+import { SessionBuffer } from '../../transport/session-buffer.js'
+
+// ── P2-s3 terminal scrollback 容量常量（spec §五） ────────────────────────────
+// 复用 P2-s1 的 SessionBuffer 类（双限 ring buffer），但在 terminal-service 内持
+// 独立 Map 实例（与 broker.sessionBuffers 物理隔离，见 D6）。终端 chunk 平均字节
+// 远大于 chat event，故字节上限 256KB（远小于 broker 的 8MB）；条数固定 1000 不开
+// 放 env（防误调造成无限增长）。
+const DEFAULT_SCROLLBACK_MAX_COUNT = 1000
+// eslint-disable-next-line no-magic-numbers -- 256KB = 256 * 1024，spec §五默认
+const DEFAULT_SCROLLBACK_MAX_BYTES = 256 * 1024
 
 // node-pty 是 native 模块，@xyz-agent/runtime 单独 npm 全局安装时若宿主机缺
 // build-essential，加载会抛 MODULE_NOT_FOUND。此处用「懒加载动态 import + 哨兵」
@@ -98,6 +108,28 @@ function nextPushId(): string {
 export class TerminalService implements ITerminalService {
   private readonly ptyMap = new Map<string, import('node-pty').IPty>()
 
+  /**
+   * P2-s3：per-session terminal scrollback ring buffer 池（spec §五）。
+   *
+   * 与 broker.sessionBuffers 物理隔离（D6）——两个独立 Map 实例 + 独立容量参数：
+   * - broker 桶：8MB，为带 seq 的 chat event 回放设计；terminal.data 被 D3 排除规则
+   *   挡在 broker 桶外（message-broker.ts broadcast 中 msg.type !== 'terminal.data'）。
+   * - 本桶：256KB（默认），为无 seq 的终端 scrollback 回灌设计；不维护 evictedWatermark，
+   *   不参与 seq 回放体系（D2：回灌消息不带 seq、不入 broker 桶）。
+   *
+   * 复用 SessionBuffer 类（双限 LRU 驱逐已验证），onEvict 传 no-op（terminal scrollback
+   * 无 watermark 概念，驱逐只需删数据，不需推进全局 watermark）。
+   *
+   * 桶数受 XYZ_AGENT_MAX_SESSIONS 上限保护——kill/destroyPty 调 clearScrollback 清桶。
+   */
+  private readonly scrollbacks = new Map<string, SessionBuffer>()
+
+  /**
+   * scrollback 字节上限（构造期一次性解析 env，与 broker.maxBytesPerSession 同模式）。
+   * env XYZ_AGENT_TERMINAL_SCROLLBACK_BYTES 覆盖默认 256KB。
+   */
+  private readonly scrollbackMaxBytes = Number(process.env.XYZ_AGENT_TERMINAL_SCROLLBACK_BYTES ?? DEFAULT_SCROLLBACK_MAX_BYTES)
+
   constructor(private deps: TerminalServiceDeps) {}
 
   async spawn(sid: string, cwd: string | undefined, cols: number, rows: number): Promise<void> {
@@ -135,13 +167,24 @@ export class TerminalService implements ITerminalService {
 
     this.ptyMap.set(sid, proc)
 
-    // PTY 输出 → 广播 terminal.data（高频流）
+    // PTY 输出 → 广播 terminal.data（高频流）+ 追加到 scrollback buffer（P2-s3）
     proc.onData((data) => {
-      this.deps.broadcast({
+      const msg: ServerMessage = {
         type: 'terminal.data',
         id: nextPushId(),
         payload: { sessionId: sid, data },
-      })
+      }
+      // 先广播保证实时性（broadcast 内部 stringify 打全局 seq）
+      this.deps.broadcast(msg)
+      // 再追加到 scrollback（D2：存不带 seq 的副本，回灌零再序列化）。
+      // 独立 stringify 一次（broadcast 不返回序列化产物，terminal-service 拿不到）；
+      // append 失败（理论不抛，JSON.stringify 扁平消息无环形引用风险）best-effort 不影响已广播。
+      try {
+        this.getOrCreateScrollback(sid).append(0, JSON.stringify(msg))
+      // eslint-disable-next-line taste/no-silent-catch -- scrollback 是 best-effort 历史缓存，失败不能影响实时 PTY 输出链路
+      } catch (e) {
+        console.error(`[terminal] scrollback append failed: sid=${sid}`, serializeError(e))
+      }
     })
 
     // PTY 退出 → 广播 terminal.exit + 清理 ptyMap
@@ -205,6 +248,9 @@ export class TerminalService implements ITerminalService {
       // best-effort：重复 kill 或进程已退出时抛错，onExit 回调幂等清理 ptyMap + 广播 terminal.exit
       console.error(`[terminal] kill failed: sid=${sid}`, serializeError(e))
     }
+    // P2-s3：kill 清除 scrollback（D4：用户主动 kill 视为放弃该 session 历史）。
+    // 注意 onExit 回调不调 clearScrollback（PTY 自然退出时保留 exit 前输出供重新 attach）。
+    this.clearScrollback(sid)
     // onExit 回调会清理 ptyMap + 广播 terminal.exit
   }
 
@@ -228,7 +274,47 @@ export class TerminalService implements ITerminalService {
       console.error(`[terminal] destroyPty kill failed: sid=${sid}`, serializeError(e))
     }
     this.ptyMap.delete(sid)
+    // P2-s3：session 销毁清除 scrollback（D4：session 已删，buffer 不该残留）。
+    this.clearScrollback(sid)
     // session 销毁不广播 terminal.exit（前端已在 session.deleted 清理分区）
+  }
+
+  // ── P2-s3 terminal scrollback（spec §五） ──────────────────────────────────
+
+  /**
+   * 惰性取/建该 session 的 scrollback buffer（spec §五 IF3）。
+   *
+   * 首次 PTY onData 才建桶（session 无 PTY 输出不占内存）。onEvict 传 no-op：
+   * terminal scrollback 不维护 evictedWatermark（与 broker 不同——broker 用 onEvict
+   * 推进全局 watermark 做 seq 回放判定；scrollback 无 seq、不参与 seq 回放体系，D2）。
+   * 条数上限固定 DEFAULT_SCROLLBACK_MAX_COUNT，字节上限用构造期解析的 scrollbackMaxBytes。
+   */
+  private getOrCreateScrollback(sid: string): SessionBuffer {
+    let buf = this.scrollbacks.get(sid)
+    if (!buf) {
+      // onEvict no-op：scrollback 驱逐只需删数据，不需回调通知（无 watermark 概念）。
+      // eslint-disable-next-line @typescript-eslint/no-empty-function -- SessionBuffer 构造要求 onEvict 回调，scrollback 无需动作
+      buf = new SessionBuffer(DEFAULT_SCROLLBACK_MAX_COUNT, this.scrollbackMaxBytes, () => {})
+      this.scrollbacks.set(sid, buf)
+    }
+    return buf
+  }
+
+  /**
+   * 清除该 session 的 scrollback buffer（spec §五 IF3）。
+   * kill（用户主动 kill）和 destroyPty（session 销毁）调用；PTY onExit 不调用（D4）。
+   * 桶不存在时 Map.delete 是 no-op，不抛异常。
+   */
+  private clearScrollback(sid: string): void {
+    this.scrollbacks.delete(sid)
+  }
+
+  /**
+   * 返回该 session scrollback buffer 当前条数（只读测试钩子，spec §五 W1CT1）。
+   * 桶不存在返回 0。只暴露 size 不暴露内部 SessionBuffer 实例，避免测试耦合实现细节。
+   */
+  getScrollbackSize(sid: string): number {
+    return this.scrollbacks.get(sid)?.size ?? 0
   }
 
   /**

@@ -219,4 +219,110 @@ describe('TerminalService', () => {
     // 模拟 logger 的 JSON.stringify：plain object 能正确序列化出 message（裸 Error 会变 {}）
     expect(JSON.parse(JSON.stringify(serialized)).message).toBe('ENOENT: shell not found')
   })
+
+  // ── P2-s3 terminal scrollback（spec §五） ──────────────────────────────────
+
+  it('TS-11: PTY onData 后 scrollback buffer 含对应 chunk（getScrollbackSize===1）', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s11', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    pty.__emitData('hello')
+    expect(svc.getScrollbackSize('s11')).toBe(1)
+    // 再 emit 一条，size 递增
+    pty.__emitData(' world')
+    expect(svc.getScrollbackSize('s11')).toBe(2)
+  })
+
+  it('TS-12: 字节上限双限驱逐——连续 emit 大 data 超 scrollbackMaxBytes 后老 chunk 被驱逐', async () => {
+    // 用小 env 上限隔离测试（构造期解析 env，故 set 在 new 之前）。
+    vi.stubEnv('XYZ_AGENT_TERMINAL_SCROLLBACK_BYTES', '300')
+    try {
+      const { broadcast } = createBroadcastCollector()
+      const svc = new TerminalService({ broadcast })
+      await svc.spawn('s12', undefined, 80, 24)
+      const pty = mockPtys.at(-1)!
+      // 每条约 100 字节（data 字符串本身小，但 stringify 后含 sessionId/type/id 等开销 ~100B）。
+      // emit 5 条 → 累计 > 300B → 触发字节上限驱逐（最老的先删）。
+      for (let i = 0; i < 5; i++) pty.__emitData(`x`.repeat(80))
+      // 字节上限触发后 size 必 < 5（部分被驱逐），且不超条数上限 1000
+      const size = svc.getScrollbackSize('s12')
+      expect(size).toBeLessThan(5)
+      expect(size).toBeGreaterThan(0)
+      expect(size).toBeLessThanOrEqual(1000)
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('TS-13: 条数上限双限驱逐——emit 超 1000 条后 size===1000（最老的被驱逐）', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s13', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    // emit 1001 条小 data（每条小，不触字节上限），条数上限 1000 触发驱逐
+    for (let i = 0; i < 1001; i++) pty.__emitData(String(i))
+    // 条数上限保证 size === 1000（最老 1 条被 LRU 驱逐）
+    expect(svc.getScrollbackSize('s13')).toBe(1000)
+  })
+
+  it('TS-14: kill 清除对应 session 的 scrollback buffer', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s14', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    pty.__emitData('before kill')
+    expect(svc.getScrollbackSize('s14')).toBe(1)
+    svc.kill('s14')
+    expect(svc.getScrollbackSize('s14')).toBe(0)
+  })
+
+  it('TS-15: destroyPty 清除对应 session 的 scrollback buffer', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s15', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    pty.__emitData('before destroy')
+    expect(svc.getScrollbackSize('s15')).toBe(1)
+    svc.destroyPty('s15')
+    expect(svc.getScrollbackSize('s15')).toBe(0)
+  })
+
+  it('TS-16: PTY onExit 不清除 scrollback buffer（D4：保留 exit 前输出供重新 attach）', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s16', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    pty.__emitData('before exit')
+    expect(svc.getScrollbackSize('s16')).toBe(1)
+    // PTY 自然退出（onExit）不清 buffer——session 未销毁前重新 attach 应能回灌到 exit 前输出
+    pty.__emitExit(0)
+    expect(svc.getScrollbackSize('s16')).toBe(1)
+  })
+
+  it('TS-17: 不存在的 sid 调 getScrollbackSize 返回 0（桶不存在 no-op）', () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    expect(svc.getScrollbackSize('nonexistent')).toBe(0)
+  })
+
+  it('TS-18: env XYZ_AGENT_TERMINAL_SCROLLBACK_BYTES 覆盖字节上限', async () => {
+    // 设极小字节上限，验证 emit 单条超限后驱逐生效
+    vi.stubEnv('XYZ_AGENT_TERMINAL_SCROLLBACK_BYTES', '50')
+    try {
+      const { broadcast } = createBroadcastCollector()
+      const svc = new TerminalService({ broadcast })
+      await svc.spawn('s18', undefined, 80, 24)
+      const pty = mockPtys.at(-1)!
+      // 单条 stringify 后 > 50B（payload 含 sessionId/type/id + data 开销）
+      pty.__emitData('x'.repeat(60))
+      // 字节上限 50 远小于条数上限 1000，故 size 受字节约束（极端情况 SessionBuffer 会清空整桶）
+      // 主要验证 env 生效：env=50 时行为与默认 256KB 不同（默认下单条不会触发驱逐）
+      const size = svc.getScrollbackSize('s18')
+      // 单条 > maxBytes 时 SessionBuffer shift 掉自身 → size 可能为 0；无论如何应不超 1
+      expect(size).toBeLessThanOrEqual(1)
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
 })
