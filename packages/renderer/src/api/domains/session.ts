@@ -7,7 +7,7 @@
  * 注：ServerMessage(id) → pending.resolve 的回灌由 features 层 dispatcher 串联（Wave 3）。
  *      mock 模式下不走本域（api/index 切到 mock 门面）。
  */
-import type { SessionSummary, SessionGroup, SubagentRecord, WorkflowRunRecord, Message, BatchDeleteResult } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup, SubagentRecord, WorkflowRunRecord, Message, BatchDeleteResult, ServerMessage } from '@xyz-agent/shared'
 import { command } from '../request'
 
 /**
@@ -204,4 +204,33 @@ export function handoff(sessionId: string, reply?: string): Promise<void> {
  */
 export function abortHandoff(sessionId: string): Promise<void> {
   return command('session.abortHandoff', { sessionId })
+}
+
+/**
+ * 订阅指定 session 的 live 事件流（runtime-message-bus slice，wave:protocol-seq + wave:runtime-wiring）。
+ *
+ * runtime 在订阅时刻返回 bus ring 内当前事件序列（snapshot，含已发生但 renderer 未消费的带 seq 消息），
+ * renderer 用 snapshot 做 reconcile（回放历史到 events 通道）+ 记 lastSeq 作为后续 gap 检测基线。
+ * gap=true 标记本次 snapshot 因 ring 容量溢出存在缺口（renderer 需全量重拉而非增量 backfill）。
+ *
+ * fromSeq：可选，指定起始 seq 回拉（gap 检测触发 reconcile 时传当前缺失的 seq）。
+ * 首次订阅不传（runtime 从 ring 末尾开始）。
+ *
+ * 返回类型由 ReplyPayloadMap['session.subscribe'] 自动推导（payload 消费型）。
+ */
+export async function subscribe(
+  sessionId: string,
+  fromSeq?: number,
+): Promise<{ snapshot: ServerMessage[]; lastSeq: number; gap?: boolean }> {
+  return command('session.subscribe', { sessionId, fromSeq })
+}
+
+/**
+ * 取消订阅指定 session 的 live 事件流（runtime-message-bus slice）。
+ *
+ * ack 型（reply message.status，ReplyPayloadMap['session.unsubscribe']=void）。
+ * 取消订阅的副作用由后续 live 事件停发体现——renderer 不读 reply payload。
+ */
+export function unsubscribe(sessionId: string): Promise<void> {
+  return command('session.unsubscribe', { sessionId })
 }
