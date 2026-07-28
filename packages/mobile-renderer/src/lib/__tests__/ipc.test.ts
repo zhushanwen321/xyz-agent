@@ -16,8 +16,16 @@ import {
   openExternal,
   browserCreate,
   browserNavigate,
+  browserHide,
+  browserShow,
+  browserFocus,
+  browserBack,
+  browserForward,
+  browserSetZoom,
   browserGetZoom,
   browserGetSelection,
+  browserSetRect,
+  browserDestroy,
   onBrowserState,
 } from '../ipc'
 
@@ -68,5 +76,22 @@ describe('mobile-renderer lib/ipc.ts no-op（spec P4 D8）', () => {
   it('browserGetZoom 恒 resolve 1.0，browserGetSelection 恒 resolve 空选区', async () => {
     await expect(browserGetZoom('s1')).resolves.toBe(1.0)
     await expect(browserGetSelection('s1')).resolves.toEqual({ text: '', url: '' })
+  })
+
+  it('browser drawer 剩余方法（Hide/Show/Focus/Back/Forward/SetZoom/SetRect/Destroy）恒 resolve undefined（w3 全方法覆盖）', async () => {
+    await expect(browserHide('s1')).resolves.toBeUndefined()
+    await expect(browserShow('s1')).resolves.toBeUndefined()
+    await expect(browserFocus('s1')).resolves.toBeUndefined()
+    await expect(browserBack('s1')).resolves.toBeUndefined()
+    await expect(browserForward('s1')).resolves.toBeUndefined()
+    await expect(browserSetZoom('s1', 1.5)).resolves.toBeUndefined()
+    await expect(browserSetRect('s1', { x: 0, y: 0, width: 100, height: 100 })).resolves.toBeUndefined()
+    await expect(browserDestroy('s1')).resolves.toBeUndefined()
+  })
+
+  it('onFullscreenChanged 返回 no-op 取消函数，调用不抛错（w3 全方法覆盖）', () => {
+    const unsub = onFullscreenChanged(() => {})
+    expect(typeof unsub).toBe('function')
+    expect(() => unsub()).not.toThrow()
   })
 })
