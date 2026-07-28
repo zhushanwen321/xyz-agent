@@ -122,6 +122,11 @@ const isBranchOpen = computed({
   get: () => flow.state.value === 'branch-popover',
   set: (v) => { if (!v) flow.closeOverlay(); else flow.openBranchPopover() },
 })
+/** preset popover 展开绑定（preset 互斥 wave）：与 dir/branch 同模式共享 flow 单实例状态机互斥 */
+const isPresetOpen = computed({
+  get: () => flow.state.value === 'preset-popover',
+  set: (v) => { if (!v) flow.closeOverlay(); else flow.openPresetPopover() },
+})
 /** 创建分支 modal 渲染绑定（#7）：state===branch-modal 时挂载 CreateBranchModal（Dialog teleport 到 body） */
 const isBranchModalOpen = computed(() => flow.state.value === 'branch-modal')
 
@@ -217,7 +222,7 @@ function onPresetSelect(payload: { presetId: string }): void {
                 <span class="font-mono">{{ dirLabel }}</span>
               </Button>
             </PopoverTrigger>
-            <PopoverContent side="top" class="w-[320px] p-0">
+            <PopoverContent side="top" :collision-padding="8" class="w-[320px] p-0">
               <DirSelectPopover
                 :current-cwd="currentCwd ?? null"
                 @select="onSelectWorkspace"
@@ -238,7 +243,7 @@ function onPresetSelect(payload: { presetId: string }): void {
                 <span class="font-mono">{{ branch || t('newTask.landing.gitRepo') }}</span>
               </Button>
             </PopoverTrigger>
-            <PopoverContent side="top" :avoid-collisions="false" class="w-[420px] p-0">
+            <PopoverContent side="top" :collision-padding="8" class="w-[420px] p-0">
               <BranchSelectPopover
                 :mode="flow.mode?.value === 'bare-workspace' ? 'bare-workspace' : 'plain-repo'"
                 :cwd="cwd ?? ''"
@@ -256,6 +261,7 @@ function onPresetSelect(payload: { presetId: string }): void {
           <PresetSelectChip
             :session-id="composerSid"
             :launch-preset-id="flow.currentSession.value?.launchPresetId"
+            v-model:preset-open="isPresetOpen"
             @select="onPresetSelect"
           />
         </div>

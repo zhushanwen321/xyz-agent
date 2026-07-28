@@ -72,6 +72,87 @@
       </div>
     </div>
 
+    <!-- 卡 2：提示音（系统原生声音选择 + 试听） -->
+    <div class="rounded-md border border-border bg-bg">
+      <div class="px-4 pb-3 pt-3">
+        <h3 class="text-[13px] font-medium text-fg">{{ t('settings.system.soundTitle') }}</h3>
+      </div>
+      <div class="border-t border-border">
+        <!-- 成功音 -->
+        <div class="flex items-center justify-between px-4 py-3">
+          <Label class="text-[12px] text-fg">{{ t('settings.system.successSound') }}</Label>
+          <Select
+            :model-value="system.successSound || SOUND_DEFAULT"
+            @update:model-value="onSuccessSoundChange"
+          >
+            <SelectTrigger class="h-8 w-[200px] px-2 text-[12px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem :value="SOUND_DEFAULT">
+                {{ t('settings.system.soundDefault') }}
+                <template #action>
+                  <SoundPreviewButton
+                    :loading="previewingKey === 'success:default'"
+                    :title="t('settings.system.soundPreview')"
+                    :data-testid="`preview-success-default`"
+                    @click="previewSound('success', getDefaultSound(currentPlatform, 'success'), 'default')"
+                  />
+                </template>
+              </SelectItem>
+              <SelectItem v-for="s in soundList" :key="s.id" :value="s.id">
+                {{ s.name }}
+                <template #action>
+                  <SoundPreviewButton
+                    :loading="previewingKey === `success:${s.id}`"
+                    :title="t('settings.system.soundPreview')"
+                    :data-testid="`preview-success-${s.id}`"
+                    @click="previewSound('success', s.id, s.id)"
+                  />
+                </template>
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <!-- 失败音 -->
+        <div class="flex items-center justify-between border-t border-border px-4 py-3">
+          <Label class="text-[12px] text-fg">{{ t('settings.system.errorSound') }}</Label>
+          <Select
+            :model-value="system.errorSound || SOUND_DEFAULT"
+            @update:model-value="onErrorSoundChange"
+          >
+            <SelectTrigger class="h-8 w-[200px] px-2 text-[12px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem :value="SOUND_DEFAULT">
+                {{ t('settings.system.soundDefault') }}
+                <template #action>
+                  <SoundPreviewButton
+                    :loading="previewingKey === 'error:default'"
+                    :title="t('settings.system.soundPreview')"
+                    :data-testid="`preview-error-default`"
+                    @click="previewSound('error', getDefaultSound(currentPlatform, 'error'), 'default')"
+                  />
+                </template>
+              </SelectItem>
+              <SelectItem v-for="s in soundList" :key="s.id" :value="s.id">
+                {{ s.name }}
+                <template #action>
+                  <SoundPreviewButton
+                    :loading="previewingKey === `error:${s.id}`"
+                    :title="t('settings.system.soundPreview')"
+                    :data-testid="`preview-error-${s.id}`"
+                    @click="previewSound('error', s.id, s.id)"
+                  />
+                </template>
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+    </div>
+
     <!-- 卡 2：配色主题 -->
     <div class="rounded-md border border-border bg-bg">
       <div class="px-4 pb-3 pt-3">
@@ -160,7 +241,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { storeToRefs } from 'pinia'
 import { Button } from '@/components/ui/button'
@@ -168,7 +249,14 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { useCommandStore } from '@/stores/command'
+import { listSystemSounds } from '@/lib/ipc'
+import { playByName } from '@/composables/useCompletionSound'
+import { getDefaultSound, detectPlatform } from '@/composables/sound-defaults'
+import SoundPreviewButton from './SoundPreviewButton.vue'
 import type { SystemSettings } from '@/stores/settings'
+
+/** 系统声音清单项（id=播放标识，name=显示名） */
+interface SoundInfo { id: string; name: string }
 
 defineProps<{
   system: SystemSettings
@@ -179,6 +267,87 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+// ── 系统提示音 ──
+
+/** 当前平台可用的系统声音清单（onMounted 拉取） */
+const soundList = ref<SoundInfo[]>([])
+
+/** 当前平台标识（用于 resolve 试听「系统默认」项的平台默认声音名） */
+const currentPlatform = detectPlatform()
+
+/**
+ * SelectItem 选中「系统默认」时的 sentinel value。
+ * reka-ui 禁止 SelectItem value=""（空串是 Select 清空选择的保留值），
+ * 故用此 sentinel 占位，change 时映射回空串存入 settings（空串=用平台默认）。
+ *
+ * 注意：此 sentinel 字符串不得与任何系统声音 id 冲突（系统声音 id 是系统原生名如
+ * 'Glass' / 'complete' / 'Windows Notify System Generic'，绝不会是 '__default__'）。
+ * 若未来新增自定义声音 id 命名空间，需避开此保留值。
+ */
+const SOUND_DEFAULT = '__default__'
+
+/** successSound Select change handler：sentinel → 空串（settings 存空串语义） */
+function onSuccessSoundChange(value: unknown): void {
+  const v = typeof value === 'string' ? value : ''
+  emit('update', { successSound: v === SOUND_DEFAULT ? '' : v })
+}
+
+/** errorSound Select change handler：sentinel → 空串 */
+function onErrorSoundChange(value: unknown): void {
+  const v = typeof value === 'string' ? value : ''
+  emit('update', { errorSound: v === SOUND_DEFAULT ? '' : v })
+}
+
+/** 试听 loading 持续时间（ms）：afplay 启动几乎瞬时，给 loading 态一个最小可见窗口 */
+const PREVIEW_LOADING_MS = 300
+
+/**
+ * 正在试听的声音复合 key（`<kind>:<soundId | 'default'>`），用于该项 loading 态。
+ * 复合 key 区分 success/error 两个 Select 各自的「系统默认」与具体声音项，
+ * 任意时刻只允许一个试听（点新的会覆盖旧的 key）。
+ */
+const previewingKey = ref<string | null>(null)
+
+onMounted(async () => {
+  // 拉当前平台可用声音清单（existsSync 过滤后的精选）。经 lib/ipc 门面（B1），
+  // web/mock 环境无 IPC 返回空清单，下拉只剩「系统默认」一项。
+  try {
+    const result = await listSystemSounds()
+    if (result.sounds.length) soundList.value = result.sounds
+  } catch (err) {
+    // 清单拉取失败不致命：下拉只剩「系统默认」一项
+    console.error('[settings] listSystemSounds failed:', err)
+  }
+})
+
+/**
+ * 试听提示音（下拉项内 per-item 试听）。
+ *
+ * 设计变更：原方案是「选完声音后点外部试听按钮」，现改为「下拉列表每项右侧带试听按钮」，
+ * 用户可直接对比试听每个候选声音，不必先选中。外部独立试听按钮已移除（同时消除试听时
+ * 按钮文案变化「试听/试听中」导致的布局位移问题）。
+ *
+ * @param kind    'success' 成功音 / 'error' 失败音（用于区分两个 Select）
+ * @param name    实际播放的声音名（系统默认项传 getDefaultSound 解析出的平台默认）
+ * @param trackId 用于 loading 复合 key 的项标识（'default' 或具体声音 id）
+ */
+async function previewSound(kind: 'success' | 'error', name: string, trackId: string): Promise<void> {
+  if (!name) return // 未知平台无默认，静默
+  // 防重入：正在播放时拒绝新点击（SoundPreviewButton 的 pointer-events-none 是视觉兜底，
+  // 这里是逻辑兜底——防止键盘/快速连点触发的重叠播放）
+  if (previewingKey.value) return
+  const key = `${kind}:${trackId}`
+  previewingKey.value = key
+  try {
+    await playByName(name)
+  } finally {
+    // 播放是 fire-and-forget，给个短延迟让 loading 态可见（afplay 启动几乎瞬时）
+    setTimeout(() => {
+      if (previewingKey.value === key) previewingKey.value = null
+    }, PREVIEW_LOADING_MS)
+  }
+}
 
 // ── 快捷键重录 ──
 

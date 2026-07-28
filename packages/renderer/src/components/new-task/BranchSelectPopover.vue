@@ -184,7 +184,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
   <div
     ref="root"
     data-testid="branch-select-popover"
-    class="w-[420px] overflow-hidden rounded-md border border-border-strong bg-bg-elevated shadow-2 outline-none"
+    class="w-[420px] overflow-hidden"
     @keydown="onKeydown"
   >
     <!-- Tab 栏隐藏：按模式裁剪后每模式只有一个 panel（bare→worktree，plain→branch），无需 tab 切换器 -->

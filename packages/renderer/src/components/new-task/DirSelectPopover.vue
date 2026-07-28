@@ -131,7 +131,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
   <div
     ref="root"
     data-testid="dir-select-popover"
-    class="w-[320px] max-h-[420px] overflow-hidden rounded-md border border-border-strong bg-bg-elevated shadow-2 outline-none"
+    class="w-[320px] max-h-[420px] overflow-hidden"
     @keydown="onKeydown"
   >
     <!-- 搜索 input（sticky 顶部，spec §3.2） -->

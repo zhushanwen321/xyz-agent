@@ -95,7 +95,7 @@ afterEach(() => {
 })
 
 describe('PiPresetsPage 首屏冒烟', () => {
-  it('内置预设渲染 builtin 标签 + disabled 输入', async () => {
+  it('内置预设渲染 builtin 标签 + 默认标签 + 摘要行（折叠态）', async () => {
     const store = usePresetStore()
     store.setPresets([builtinPreset()])
     store.setDefaultPresetId('builtin:full')
@@ -107,10 +107,11 @@ describe('PiPresetsPage 首屏冒烟', () => {
     expect(wrapper.text()).toContain('内置')
     // 默认标签
     expect(wrapper.text()).toContain('默认')
-    // 名称输入 disabled
-    const inputs = wrapper.findAll('input')
-    const nameInput = inputs[0]
-    expect(nameInput.attributes('disabled')).toBeDefined()
+    // 折叠态显示摘要行（mode 概览，summaryAll = "全部可用"）
+    expect(wrapper.text()).toContain('全部可用')
+    // 折叠态：内置预设默认折叠，编辑区 input 不在 DOM（CollapsibleContent 未展开）
+    // disabled 保护由 service 层 PresetGuardError + 前端 :disabled 双重保障，展开后可见
+    expect(wrapper.findAll('input').length).toBe(0)
   })
 
   it('自定义预设名称输入可编辑', async () => {
@@ -135,6 +136,28 @@ describe('PiPresetsPage 首屏冒烟', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('暂无预设')
+  })
+
+  it('异步加载后：自定义预设自动展开、内置预设折叠（expandedIds 竞态回归防护）', async () => {
+    // 模拟生产场景：mount 时 store 空，onMounted → loadPresets → list RPC 返回预设
+    // 回归 bug：expandedIds 曾在 setup eager 初始化（此时 presets 空）→ 自定义预设也折叠
+    const store = usePresetStore()
+    // store 初始为空（不预填），让 loadPresets 走 list RPC
+    presetMock.list.mockResolvedValue([builtinPreset(), customPreset()])
+
+    wrapper = mount(PiPresetsPage)
+    await flushPromises()
+    // loadPresets 已完成，store 现在有 2 个预设
+
+    // 内置预设折叠（编辑区 input 不在 DOM）—— 内置预设当作文档扫视
+    // 自定义预设展开（编辑区 input 在 DOM）—— 自定义预设是工作区，默认展开可编辑
+    const inputs = wrapper.findAll('input')
+    // 自定义预设展开 → name + id 两个 input 可见；内置折叠 → 无 input
+    // 若 expandedIds 竞态 bug 存在，两个都折叠 → inputs.length === 0
+    expect(inputs.length).toBeGreaterThanOrEqual(2)
+    // 自定义预设的 name input 可编辑（非 disabled）
+    const nameInput = inputs[0]
+    expect(nameInput.attributes('disabled')).toBeUndefined()
   })
 })
 
