@@ -61,7 +61,6 @@ export default {
     workflowRunning: '运行中',
     workflowFailed: '失败',
     copyMarkdown: '复制为 Markdown',
-    moreActions: '更多操作',
     forkBackground: 'fork 后台（从该回复分叉新会话，留在当前线）',
     forkAsk: 'fork 提问（在新分支追问，与主线隔离）',
     forkFailed: 'fork 后台失败：{error}',
@@ -94,6 +93,12 @@ export default {
     bashNoContext: '不进上下文',
     bashCancel: '取消',
     bashUnknownCommand: '(未知命令)',
+    // 渐进 onboarding 气泡（critique 第 3 轮 Nielsen 第 10 项 Help & Documentation）：
+    // 首次遇到 subagent/workflow 块或 fork 按钮时，块内嵌一行解释。
+    onboardingSubagent: '这是子 agent 的执行块。它在后台独立工作，过程不实时显示，完成后会在这里汇报结果。',
+    onboardingWorkflow: '这是工作流块。agent 调用了预定义的多步骤自动化流程，完成后显示结果。',
+    onboardingFork: 'fork = 从这条回复分叉新会话。后台 fork 留在当前线；提问 fork 在新分支追问。handoff 则是把对话历史打包到新 session。',
+    onboardingDismiss: '不再提示',
   },
   git: {
     title: 'Git',

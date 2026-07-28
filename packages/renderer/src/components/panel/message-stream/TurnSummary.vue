@@ -12,133 +12,125 @@
     <!-- streaming 光标：行内闪烁竖条，紧跟 summary 末尾 -->
     <span v-if="isStreaming" class="streaming-cursor ml-0.5 inline-block h-3.5 w-[7px] rounded-[1px] bg-accent align-middle animate-blink" />
     <!--
-      hover actions（W3 精简：可见 affordance ≤4）。
-      非 subagent session：copy / fork-bg / fork-ask / ⋯ overflow（copy-MD + handoff + handoff-ask）。
-      subagent session：仅 copy + copy-MD（2 个平铺，不走 overflow，避免单项菜单）。
+      onboarding 气泡（首次出现 fork 按钮时；dismiss 后 localStorage 永久记忆，v-if 自隐）。
+      放 action group 上方，作为「action group 的注释」，引导用户视线到 hover 才出现的按钮。
+      仅非 subagent session 渲染（fork 仅在此场景存在）。包 wrapper div 控制外边距，不依赖 class 覆盖。
+    -->
+    <div v-if="lastAssistant && !isSubagentVirtualId(sessionId)" class="mt-2">
+      <OnboardingHint hint-key="fork" :text="t('panel.message.onboardingFork')" />
+    </div>
+    <!--
+      hover actions（3 个 split-button：copy / fork / handoff）。
+      每个 split-button 主按钮 click = 主操作；hover 浮出第二选项（带 MD/MSG badge）。
+      非 subagent session：copy / fork / handoff（3 组，sep 分隔）。
+      subagent session：仅 copy split-button（含 copy-MD hover 选项，无 fork/handoff）。
     -->
     <div
       v-if="lastAssistant"
       class="mt-1.5 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/ai:opacity-100 group-focus-within/ai:opacity-100"
     >
-      <Button
-        variant="ghost"
-        size="icon"
-        class="size-6 text-neutral-dim hover:text-neutral-fg"
-        :title="t('panel.message.copy')"
-        @click="copy(summaryText, aiCopyKey)"
-      >
-        <Check v-if="copied === aiCopyKey" class="size-3 text-success" />
-        <Copy v-else class="size-3" />
-      </Button>
-      <!-- subagent session：仅 copy + copy-MD，无 fork/handoff/overflow -->
-      <Button
-        v-if="isSubagentVirtualId(sessionId)"
-        variant="ghost"
-        size="icon"
-        class="relative size-6 text-neutral-dim hover:text-neutral-fg"
-        data-testid="copy-markdown-btn"
-        :title="t('panel.message.copyMarkdown')"
-        @click="copy(assistantToMarkdown(lastAssistant), aiMdKey)"
-      >
-        <Check v-if="copied === aiMdKey" class="size-3 text-success" />
-        <Copy v-else class="size-3" />
-        <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[var(--text-2xs)] font-bold leading-[10px] text-accent-foreground">MD</span>
-      </Button>
-      <!-- 非 subagent session：fork 组 + overflow -->
-      <template v-else>
+      <!-- copy split-button：主=复制纯文本，hover=复制为 Markdown（MD badge） -->
+      <HoverCard :open-delay="150" :close-delay="100">
+        <HoverCardTrigger as-child>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="size-6 text-neutral-dim hover:text-neutral-fg"
+            data-testid="copy-btn"
+            :title="t('panel.message.copy')"
+            @click="copy(summaryText, aiCopyKey)"
+          >
+            <Check v-if="copied === aiCopyKey" class="size-3 text-success" />
+            <Copy v-else class="size-3" />
+          </Button>
+        </HoverCardTrigger>
+        <HoverCardContent side="top" align="center" :side-offset="6" class="min-w-0 p-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            class="relative size-6 text-neutral-dim hover:text-neutral-fg"
+            data-testid="copy-markdown-btn"
+            :title="t('panel.message.copyMarkdown')"
+            @click="copy(assistantToMarkdown(lastAssistant), aiMdKey)"
+          >
+            <Check v-if="copied === aiMdKey" class="size-3 text-success" />
+            <Copy v-else class="size-3" />
+            <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[var(--text-2xs)] font-bold leading-[10px] text-accent-foreground">MD</span>
+          </Button>
+        </HoverCardContent>
+      </HoverCard>
+      <!-- subagent session：仅 copy split-button，无 fork/handoff -->
+      <template v-if="!isSubagentVirtualId(sessionId)">
         <span class="as-sep mx-1 h-3.5 w-px shrink-0 bg-border" />
-        <Button
-          variant="ghost"
-          size="icon"
-          class="fork-btn relative size-6 text-neutral-dim hover:bg-accent-soft hover:text-accent"
-          data-testid="fork-background-btn"
-          :title="t('panel.message.forkBackground')"
-          @click="onFork(lastAssistant)"
-        >
-          <GitFork class="size-3" />
-          <span class="as-fork-kbd absolute -right-0.5 -top-0.5 rounded-[3px] bg-surface-2 px-1 font-mono text-[var(--text-2xs)] font-medium text-neutral-dim">{{ formatKbd('g') }}</span>
-        </Button>
-        <!--
-          fork-ask：与 fork-bg 同 ghost icon-only 样式（critique P3：同族图标同尺寸，
-          仅靠 kbd（shift+g）和 title 区分）。
-        -->
-        <Button
-          variant="ghost"
-          size="icon"
-          class="fork-ask-btn relative size-6 text-neutral-dim hover:bg-accent-soft hover:text-accent"
-          data-testid="fork-ask-btn"
-          :title="t('panel.message.forkAsk')"
-          @click="onForkAsk(lastAssistant)"
-        >
-          <GitFork class="size-3 fill-current" />
-          <span class="as-fork-kbd absolute -right-0.5 -top-0.5 rounded-[3px] bg-surface-2 px-1 font-mono text-[var(--text-2xs)] font-medium text-neutral-dim">{{ formatKbd('shift+g') }}</span>
-        </Button>
-        <span class="as-sep mx-1 h-3.5 w-px shrink-0 bg-border" />
-        <!-- ⋯ overflow：copy-MD / handoff / handoff-ask -->
-        <Popover v-model:open="overflowOpen">
-          <PopoverTrigger as-child>
+        <!-- fork split-button：主=fork 后台，hover=fork 提问（MSG badge，fill-current 区分） -->
+        <HoverCard :open-delay="150" :close-delay="100">
+          <HoverCardTrigger as-child>
             <Button
               variant="ghost"
               size="icon"
-              class="size-6 text-neutral-dim hover:text-neutral-fg"
-              data-testid="more-actions-btn"
-              :title="t('panel.message.moreActions')"
-              :aria-label="t('panel.message.moreActions')"
+              class="fork-btn relative size-6 text-neutral-dim hover:bg-accent-soft hover:text-accent"
+              data-testid="fork-background-btn"
+              :title="t('panel.message.forkBackground')"
+              @click="onFork(lastAssistant)"
             >
-              <MoreHorizontal class="size-3.5" />
+              <GitFork class="size-3" />
+              <span class="as-fork-kbd absolute -right-0.5 -top-0.5 rounded-[3px] bg-surface-2 px-1 font-mono text-[var(--text-2xs)] font-medium text-neutral-dim">{{ formatKbd('g') }}</span>
             </Button>
-          </PopoverTrigger>
-          <PopoverContent align="end" :side-offset="6">
-            <div class="flex flex-col py-1">
-              <PopoverActionItem
-                test-id="copy-markdown-btn"
-                @click="overflowCopyMarkdown"
-              >
-                <template #icon>
-                  <Check v-if="copied === aiMdKey" class="text-success" />
-                  <Copy v-else />
-                </template>
-                {{ t('panel.message.copyMarkdown') }}
-              </PopoverActionItem>
-              <PopoverActionItem
-                test-id="handoff-btn"
-                :class="{ 'opacity-50 pointer-events-none': isHandingOff }"
-                @click="overflowHandoff"
-              >
-                <template #icon>
-                  <Upload />
-                </template>
-                {{ t('panel.message.handoff') }}
-              </PopoverActionItem>
-              <PopoverActionItem
-                test-id="handoff-ask-btn"
-                :class="{ 'opacity-50 pointer-events-none': isHandingOff }"
-                @click="overflowHandoffAsk"
-              >
-                <template #icon>
-                  <Upload class="fill-current" />
-                </template>
-                {{ t('panel.message.handoffAsk') }}
-              </PopoverActionItem>
-            </div>
-          </PopoverContent>
-        </Popover>
+          </HoverCardTrigger>
+          <HoverCardContent side="top" align="center" :side-offset="6" class="min-w-0 p-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              class="fork-ask-btn relative size-6 text-neutral-dim hover:bg-accent-soft hover:text-accent"
+              data-testid="fork-ask-btn"
+              :title="t('panel.message.forkAsk')"
+              @click="onForkAsk(lastAssistant)"
+            >
+              <GitFork class="size-3 fill-current" />
+              <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[var(--text-2xs)] font-bold leading-[10px] text-accent-foreground">MSG</span>
+            </Button>
+          </HoverCardContent>
+        </HoverCard>
+        <span class="as-sep mx-1 h-3.5 w-px shrink-0 bg-border" />
+        <!-- handoff split-button：主=交接并新开，hover=交接并备注（MSG badge，fill-current 区分） -->
+        <HoverCard :open-delay="150" :close-delay="100">
+          <HoverCardTrigger as-child>
+            <Button
+              variant="ghost"
+              size="icon"
+              :class="['handoff-btn relative size-6 text-neutral-dim hover:text-neutral-fg', { 'opacity-50 pointer-events-none': isHandingOff }]"
+              data-testid="handoff-btn"
+              :title="t('panel.message.handoff')"
+              @click="onHandoff()"
+            >
+              <Upload class="size-3.5 fill-current" />
+            </Button>
+          </HoverCardTrigger>
+          <HoverCardContent side="top" align="center" :side-offset="6" class="min-w-0 p-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              :class="['handoff-ask-btn relative size-6 text-neutral-dim hover:text-neutral-fg', { 'opacity-50 pointer-events-none': isHandingOff }]"
+              data-testid="handoff-ask-btn"
+              :title="t('panel.message.handoffAsk')"
+              @click="onHandoffAsk(lastAssistant)"
+            >
+              <Upload class="size-3 fill-current" />
+              <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[var(--text-2xs)] font-bold leading-[10px] text-accent-foreground">MSG</span>
+            </Button>
+          </HoverCardContent>
+        </HoverCard>
       </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, Copy, GitFork, MoreHorizontal, Upload } from '@lucide/vue'
+import { Check, Copy, GitFork, Upload } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-  PopoverActionItem,
-} from '@/components/ui/popover'
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
 import type { Message } from '@xyz-agent/shared'
 import { normalizeContent } from '@xyz-agent/shared'
@@ -149,6 +141,7 @@ import { usePlatformShortcut } from '@/composables/usePlatformShortcut'
 import { isSubagentVirtualId } from '@/stores/subagent'
 import { useTurnActions } from '@/composables/panel/useTurnActions'
 import MarkdownRenderer from './MarkdownRenderer.vue'
+import OnboardingHint from './OnboardingHint.vue'
 
 const props = defineProps<{
   turn: MessageTurn
@@ -174,31 +167,6 @@ const isHandingOff = computed(() => chat.isHandingOff(props.sessionId))
 const { copied, copy } = useCopy()
 const aiCopyKey = computed(() => `ai-${props.turn.index}`)
 const aiMdKey = computed(() => `md-${props.turn.index}`)
-
-/** overflow 菜单受控开关：选中后立即关闭 */
-const overflowOpen = ref(false)
-
-/**
- * overflow 项动作：先关菜单再执行。
- * 仅在 `v-if="lastAssistant"` 内调用，故 lastAssistant 此处必非空——
- * runtime guard 兼顾 TS 收窄（template 内的 v-if narrowing 不跨闭包生效）。
- */
-function overflowCopyMarkdown(): void {
-  overflowOpen.value = false
-  if (!props.lastAssistant) return
-  copy(assistantToMarkdown(props.lastAssistant), aiMdKey.value)
-}
-
-function overflowHandoff(): void {
-  overflowOpen.value = false
-  onHandoff()
-}
-
-function overflowHandoffAsk(): void {
-  overflowOpen.value = false
-  if (!props.lastAssistant) return
-  onHandoffAsk(props.lastAssistant)
-}
 
 /**
  * 收尾 summary：仅最后一条 assistant.content。

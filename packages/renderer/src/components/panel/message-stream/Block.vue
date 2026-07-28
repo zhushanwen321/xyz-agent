@@ -94,6 +94,9 @@
         <div v-if="workflowArgsTaskPreview" class="mt-0.5 pl-5 truncate text-[var(--text-sm)] text-neutral-dim">
           {{ workflowArgsTaskPreview }}
         </div>
+        <!-- onboarding 气泡（首次出现 workflow 块时；dismiss 后 localStorage 永久记忆，v-if 自隐）。
+             位置与 subagent 块对称：task preview 下方、展开体之前。 -->
+        <OnboardingHint hint-key="workflow" :text="t('panel.message.onboardingWorkflow')" />
         <template v-if="toolExpanded">
           <!-- workflow 详情区：copy 按钮在左上角 + list-tree GUI 组件（来自 details.__gui__） -->
           <div v-if="result" class="group/result relative mt-1 text-[var(--text-sm)] leading-snug text-neutral-mid select-text">
@@ -216,6 +219,7 @@ import AnsiText from './gui/AnsiText.vue'
 import GuiComponentRenderer from './GuiComponentRenderer.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import BlockSubagent from './BlockSubagent.vue'
+import OnboardingHint from './OnboardingHint.vue'
 import { BLOCK_ICON_LUCIDE, RUNNING_LOADER_SVG, getBlockIcon } from './block-icon'
 import { formatDuration } from './format-utils'
 import { Button } from '@/components/ui/button'

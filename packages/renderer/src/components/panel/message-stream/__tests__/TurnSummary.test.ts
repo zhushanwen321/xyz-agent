@@ -47,7 +47,14 @@ function mountSummary(props: {
     },
     global: {
       plugins: [createPinia()],
-      stubs: { MarkdownRenderer: true },
+      // HoverCard 子组件 stub 成内联渲染（绕开 reka-ui HoverCardPortal 在 happy-dom 不渲染，
+      // 详见 DetailPane.test.ts 同范式）；使 split-button 的 hover 第二选项在测试 DOM 内可定位。
+      stubs: {
+        MarkdownRenderer: true,
+        HoverCard: { template: '<div class="hover-card-stub"><slot /></div>' },
+        HoverCardTrigger: { template: '<div class="hover-card-trigger-stub"><slot /></div>' },
+        HoverCardContent: { template: '<div class="hover-card-content-stub"><slot /></div>' },
+      },
     },
   })
 }
@@ -95,7 +102,7 @@ describe('W4TC4: TurnSummary hover actions', () => {
     // hover actions 容器存在（opacity-0 group-hover:opacity-100）
     const actionsDiv = wrapper.find('.turn-summary .mt-1\\.5')
     expect(actionsDiv.exists()).toBe(true)
-    // 容器内有多个 button（复制/MD/fork/handoff）
+    // 容器内有多个 button（3 个 split-button：copy / fork / handoff 各主按钮 + hover 第二选项）
     const buttons = actionsDiv.findAll('button')
     expect(buttons.length).toBeGreaterThanOrEqual(4)
   })
@@ -107,37 +114,54 @@ describe('W4TC4: TurnSummary hover actions', () => {
     expect(wrapper.find('[data-testid="fork-ask-btn"]').exists()).toBe(false)
   })
 
-  it('fork-background-btn 存在（data-testid）', () => {
+  it('copy-btn 主按钮存在（data-testid）', () => {
+    const wrapper = mountSummary()
+    const btn = wrapper.find('[data-testid="copy-btn"]')
+    expect(btn.exists()).toBe(true)
+  })
+
+  it('copy-markdown-btn 作为 copy split-button 的 hover 第二选项存在', () => {
+    const wrapper = mountSummary()
+    // copy-MD 现在是 copy split-button 的 HoverCard 内容（hover 浮层第二选项）
+    const btn = wrapper.find('[data-testid="copy-markdown-btn"]')
+    expect(btn.exists()).toBe(true)
+  })
+
+  it('fork-background-btn 主按钮存在（data-testid）', () => {
     const wrapper = mountSummary()
     // fork 按钮存在
     const btn = wrapper.find('[data-testid="fork-background-btn"]')
     expect(btn.exists()).toBe(true)
   })
 
-  it('fork-ask-btn 存在（data-testid）', () => {
+  it('fork-ask-btn 作为 fork split-button 的 hover 第二选项存在', () => {
     const wrapper = mountSummary()
     const btn = wrapper.find('[data-testid="fork-ask-btn"]')
     expect(btn.exists()).toBe(true)
   })
 
-  it('handoff-btn 在 overflow 菜单内（打开 more-actions 后可见）', async () => {
+  it('handoff-btn 主按钮存在（data-testid）', () => {
     const wrapper = mountSummary()
-    // handoff 现收进 Popover overflow，关闭态 content unmount；先打开 trigger
-    await wrapper.find('[data-testid="more-actions-btn"]').trigger('click')
-    // PopoverPortal teleport 到 document.body
-    const btn = document.body.querySelector('[data-testid="handoff-btn"]')
-    expect(btn).toBeTruthy()
+    // handoff 现为 split-button 主按钮（始终可见，不再藏 overflow）
+    const btn = wrapper.find('[data-testid="handoff-btn"]')
+    expect(btn.exists()).toBe(true)
   })
 
-  it('handoff-ask-btn 在 overflow 菜单内（打开 more-actions 后可见）', async () => {
+  it('handoff-ask-btn 作为 handoff split-button 的 hover 第二选项存在', () => {
     const wrapper = mountSummary()
-    await wrapper.find('[data-testid="more-actions-btn"]').trigger('click')
-    const btn = document.body.querySelector('[data-testid="handoff-ask-btn"]')
-    expect(btn).toBeTruthy()
+    const btn = wrapper.find('[data-testid="handoff-ask-btn"]')
+    expect(btn.exists()).toBe(true)
+  })
+
+  it('不再渲染 ⋯ overflow（more-actions-btn）', () => {
+    const wrapper = mountSummary()
+    // 重构后 3 个 split-button 替代原 4 可见 + overflow 结构，⋯ 按钮移除
+    expect(wrapper.find('[data-testid="more-actions-btn"]').exists()).toBe(false)
   })
 
   it('fork/handoff 按钮在 subagent session 隐藏', () => {
     const wrapper = mountSummary({ sessionId: 'subagent:main1:sub1' })
+    // subagent session 仅 copy split-button，无 fork/handoff
     expect(wrapper.find('[data-testid="fork-background-btn"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="fork-ask-btn"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="handoff-btn"]').exists()).toBe(false)

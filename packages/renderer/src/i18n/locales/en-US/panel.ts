@@ -61,7 +61,6 @@ export default {
     workflowRunning: 'Running',
     workflowFailed: 'Failed',
     copyMarkdown: 'Copy as Markdown',
-    moreActions: 'More actions',
     forkBackground: 'Fork to background (branch from this reply, stay on current line)',
     forkAsk: 'Fork to ask (ask in a new branch, isolated from main line)',
     forkFailed: 'Fork to background failed: {error}',
@@ -94,6 +93,12 @@ export default {
     bashNoContext: 'no context',
     bashCancel: 'Cancel',
     bashUnknownCommand: '(unknown command)',
+    // Progressive onboarding hints (critique round 3 Nielsen #10 Help & Documentation):
+    // shown inline the first time a subagent/workflow block or fork button appears.
+    onboardingSubagent: 'This is a sub-agent block. It works independently in the background; the process is not shown live, and results appear here when done.',
+    onboardingWorkflow: 'This is a workflow block. The agent invoked a predefined multi-step automated flow; results appear when complete.',
+    onboardingFork: 'Fork = branch a new session from this reply. Background fork stays on the current line; ask fork follows up in a new branch. Handoff packs the conversation history into a new session.',
+    onboardingDismiss: "Don't show again",
   },
   git: {
     title: 'Git',
