@@ -468,7 +468,7 @@ fi
 PREFLIGHT_CHECKER="scripts/preflight-check.sh"
 
 if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_PREFLIGHT_CHECK" != "1" ]; then
-    if echo "$STAGED_FILES" | grep -qE "^apps/electron/electron-builder\.yml$|^packages/runtime/tsup\.config\.ts$|^resources/pi/"; then
+    if echo "$STAGED_FILES" | grep -qE "^apps/electron/electron-builder\.yml$|^packages/runtime/tsup\.config\.ts$|^resources/pi/[^/]+$"; then
         print_section "[打包配置预检查]"
         echo -e "${BLUE}[INFO] 打包配置有变更，运行 preflight 检查...${NC}"
 
