@@ -1,38 +1,29 @@
 /**
- * W2 测试：selectSession 切换 session 后 subagent/workflow 列表按 per-session 分区刷新。
+ * wave:remove-bandaids 测试：selectSession 不再主动拉 subagent/workflow 列表。
  *
- * 核心验证（行为结果，非 spy）：
- * - selectSession 后 subagentStore 该 sid 分区被填充（不只是 loadSubagents 被调）
- * - selectSession 后 workflowStore 该 sid 分区被填充
- * - 切到不同 session 后各分区独立（ADR-0036 Map 分区派：A 分区保留，B 分区新建）
+ * 历史：W2 测试验证 selectSession 切换 session 后 subagentStore/workflowStore 该 sid 分区被填充
+ * （selectSession 主动调 loadSubagents/loadWorkflows）。wave:remove-bandaids 删除该兜底——
+ * subagents 由 useChat.ensureStreamSubscription → subscribeSession → applySnapshot 的 stateSnapshot
+ * dispatch 提供（routeInbound 兜底 applyRecords）；workflows 经 streamRing 内 session.workflowUpdate
+ * 增量信号 → triggerWorkflowReload → loadWorkflows RPC（store 方法保留）。
+ *
+ * 本测试反转原断言：验证 selectSession 不再调 getSubagents/getWorkflows（由 useSubagentListSync/
+ * useWorkflowListSync 的 focusedSessionId watch + tab 激活首拉，以及 subscribe reconcile 提供）。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/select-session-pull.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import type { SubagentRecord, WorkflowRunRecord } from '@xyz-agent/shared'
-
-// session A / session B 返回不同的 fixture，验证切 session 后数据确实变化
-const subagentsA: SubagentRecord[] = [
-  { subagentId: 'sub-A1', sessionFile: null, agent: 'reviewer', slug: 'review-a', task: 'A', status: 'done' },
-]
-const subagentsB: SubagentRecord[] = [
-  { subagentId: 'sub-B1', sessionFile: null, agent: 'worker', slug: 'work-b', task: 'B', status: 'running' },
-]
-const workflowsA: WorkflowRunRecord[] = [
-  { runId: 'wf-A', scriptName: 'flow-a', status: 'done', startedAt: '', agentCalls: [], stateFilePath: '' },
-]
-const workflowsB: WorkflowRunRecord[] = [
-  { runId: 'wf-B', scriptName: 'flow-b', status: 'running', startedAt: '', agentCalls: [], stateFilePath: '' },
-]
 
 vi.mock('@/api/domains/session', () => ({
   switchSession: vi.fn().mockResolvedValue(undefined),
   getCommands: vi.fn().mockResolvedValue({ commands: [] }),
   getContext: vi.fn().mockResolvedValue({}),
   getHistory: vi.fn().mockResolvedValue([]),
-  getSubagents: vi.fn(async (sid: string) => (sid === 'sess-A' ? subagentsA : subagentsB)),
-  getWorkflows: vi.fn(async (sid: string) => (sid === 'sess-A' ? workflowsA : workflowsB)),
+  // getSubagents/getWorkflows 仍被 store 方法和 sync composables 调用——保留 mock，
+  // 但 selectSession 不应直接调它们（用 spy 断言 call count 在 selectSession 前后不变）。
+  getSubagents: vi.fn().mockResolvedValue([]),
+  getWorkflows: vi.fn().mockResolvedValue([]),
   getAgentCallHistory: vi.fn().mockResolvedValue([]),
 }))
 
@@ -49,59 +40,43 @@ vi.mock('@/api/events', () => ({
   dispatchSession: vi.fn(),
 }))
 
-// file tree 依赖（selectSession 会调 loadTree）
+// file tree 依赖（selectSession 会调 loadTree——保留，文件树不在 stateSnapshot 覆盖范围）
 vi.mock('@/api/domains/file', () => ({ tree: vi.fn().mockResolvedValue({}) }))
 vi.mock('@/api/domains/git', () => ({ status: vi.fn().mockResolvedValue({}) }))
 
+import { session as sessionApi } from '@/api'
 import { useSidebar } from '@/composables/features/useSidebar'
-import { useSubagentStore } from '@/stores/subagent'
-import { useWorkflowStore } from '@/stores/workflow'
 
 beforeEach(() => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
 })
 
-describe('W2: selectSession 后 subagent/workflow 列表按 per-session 分区刷新', () => {
-  it('selectSession(sess-A) 后 subagentStore sess-A 分区含 session A 的数据', async () => {
+describe('wave:remove-bandaids: selectSession 不再主动拉 subagent/workflow 列表', () => {
+  it('selectSession(sess-A) 不调 getSubagents（subagents 经 subscribe stateSnapshot 提供）', async () => {
     const sidebar = useSidebar()
-    const subagentStore = useSubagentStore()
-
     await sidebar.selectSession('sess-A')
 
-    expect(subagentStore.getRecordsBySession('sess-A')).toHaveLength(1)
-    expect(subagentStore.getRecordsBySession('sess-A')[0].subagentId).toBe('sub-A1')
-    expect(subagentStore.getRecordsBySession('sess-A')[0].agent).toBe('reviewer')
+    // selectSession 不再主动调 getSubagents（store 方法保留，由 useSubagentListSync
+    // focusedSessionId watch + subscribe reconcile 提供）
+    expect(sessionApi.getSubagents).not.toHaveBeenCalled()
   })
 
-  it('selectSession(sess-A) 后 workflowStore sess-A 分区含 session A 的数据', async () => {
+  it('selectSession(sess-A) 不调 getWorkflows（workflows 经 streamRing workflowUpdate 增量信号→RPC 闭环）', async () => {
     const sidebar = useSidebar()
-    const workflowStore = useWorkflowStore()
-
     await sidebar.selectSession('sess-A')
 
-    expect(workflowStore.getRecordsBySession('sess-A')).toHaveLength(1)
-    expect(workflowStore.getRecordsBySession('sess-A')[0].runId).toBe('wf-A')
-    expect(workflowStore.getRecordsBySession('sess-A')[0].scriptName).toBe('flow-a')
+    // selectSession 不再主动调 getWorkflows（store 方法保留，由 useWorkflowListSync
+    // focusedSessionId watch + session.workflowUpdate 增量信号触发）
+    expect(sessionApi.getWorkflows).not.toHaveBeenCalled()
   })
 
-  it('切到 session B 后各分区独立（ADR-0036：A 分区保留，B 分区新建）', async () => {
+  it('切到 session B 也不主动拉（多次切换一致性）', async () => {
     const sidebar = useSidebar()
-    const subagentStore = useSubagentStore()
-    const workflowStore = useWorkflowStore()
-
     await sidebar.selectSession('sess-A')
-    expect(subagentStore.getRecordsBySession('sess-A')[0].subagentId).toBe('sub-A1')
-    expect(workflowStore.getRecordsBySession('sess-A')[0].runId).toBe('wf-A')
-
     await sidebar.selectSession('sess-B')
-    // A 分区数据保留（切走不清，ADR-0036 正确范式）
-    expect(subagentStore.getRecordsBySession('sess-A')[0].subagentId).toBe('sub-A1')
-    expect(workflowStore.getRecordsBySession('sess-A')[0].runId).toBe('wf-A')
-    // B 分区写入 session B 的数据
-    expect(subagentStore.getRecordsBySession('sess-B')[0].subagentId).toBe('sub-B1')
-    expect(subagentStore.getRecordsBySession('sess-B')[0].agent).toBe('worker')
-    expect(workflowStore.getRecordsBySession('sess-B')[0].runId).toBe('wf-B')
-    expect(workflowStore.getRecordsBySession('sess-B')[0].scriptName).toBe('flow-b')
+
+    expect(sessionApi.getSubagents).not.toHaveBeenCalled()
+    expect(sessionApi.getWorkflows).not.toHaveBeenCalled()
   })
 })

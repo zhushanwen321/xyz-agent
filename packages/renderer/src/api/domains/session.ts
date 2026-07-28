@@ -209,9 +209,14 @@ export function abortHandoff(sessionId: string): Promise<void> {
 /**
  * 订阅指定 session 的 live 事件流（runtime-message-bus slice，wave:protocol-seq + wave:runtime-wiring）。
  *
- * runtime 在订阅时刻返回 bus ring 内当前事件序列（snapshot，含已发生但 renderer 未消费的带 seq 消息），
- * renderer 用 snapshot 做 reconcile（回放历史到 events 通道）+ 记 lastSeq 作为后续 gap 检测基线。
- * gap=true 标记本次 snapshot 因 ring 容量溢出存在缺口（renderer 需全量重拉而非增量 backfill）。
+ * runtime 在订阅时刻返回：
+ * - snapshot：bus ring 内当前事件序列（含已发生但 renderer 未消费的带 seq 消息），renderer 用其
+ *   回放流式历史到 events 通道。
+ * - stateSnapshot（wave:remove-bandaids）：4 个 state topic（commands/context/subagents/workflows）
+ *   的 last-value 数组，renderer 一次性把当前状态灌入对应 store（替代 selectSession/submitFirstMessage
+ *   内的主动拉取 RPC 兜底）。与 snapshot 独立——stateSnapshot 不受 fromSeq 增量过滤影响。
+ * - lastSeq：当前 per-session seq 计数器，renderer 记为 lastSeenSeq 做 gap 检测基线。
+ * - gap：fromSeq 早于 ring 最旧 seq（旧消息已被 FIFO 淘汰）时 true，renderer 需全量重拉而非增量 backfill。
  *
  * fromSeq：可选，指定起始 seq 回拉（gap 检测触发 reconcile 时传当前缺失的 seq）。
  * 首次订阅不传（runtime 从 ring 末尾开始）。
@@ -221,7 +226,7 @@ export function abortHandoff(sessionId: string): Promise<void> {
 export async function subscribe(
   sessionId: string,
   fromSeq?: number,
-): Promise<{ snapshot: ServerMessage[]; lastSeq: number; gap?: boolean }> {
+): Promise<{ snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; lastSeq: number; gap?: boolean }> {
   return command('session.subscribe', { sessionId, fromSeq })
 }
 

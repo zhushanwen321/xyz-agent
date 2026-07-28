@@ -191,10 +191,11 @@ describe('wave:runtime-wiring · TC3/TC4/TC5 session.subscribe/unsubscribe RPC',
     return { handler, ctx, reply, sendError, messageBus }
   }
 
-  it('TC3: session.subscribe 调 bus.subscribe + reply { snapshot, lastSeq, gap:false }', async () => {
+  it('TC3: session.subscribe 调 bus.subscribe + reply { snapshot, stateSnapshot, lastSeq, gap:false }', async () => {
     const snapshot = [{ type: 'pong', seq: 1, payload: {} }, { type: 'pong', seq: 2, payload: {} }] as ServerMessage[]
+    const stateSnapshot = [{ type: 'session.commands', seq: 1, payload: { sessionId: 's1', commands: [] } }] as ServerMessage[]
     const { handler, reply, messageBus } = createHandlerWithMocks({
-      subscribe: vi.fn(() => ({ snapshot: [...snapshot], lastSeq: 2 })),
+      subscribe: vi.fn(() => ({ snapshot: [...snapshot], stateSnapshot: [...stateSnapshot], lastSeq: 2 })),
     })
     const ws = createMockWs()
     const msg = { type: 'session.subscribe', id: 'rpc-1', payload: { sessionId: 's1' } } as unknown as ClientMessage
@@ -202,32 +203,35 @@ describe('wave:runtime-wiring · TC3/TC4/TC5 session.subscribe/unsubscribe RPC',
 
     expect(messageBus.subscribe).toHaveBeenCalledTimes(1)
     expect(messageBus.subscribe).toHaveBeenCalledWith('s1', ws)
-    expect(reply).toHaveBeenCalledWith(ws, 'rpc-1', 'session.subscribe', { snapshot, lastSeq: 2, gap: false })
+    expect(reply).toHaveBeenCalledWith(ws, 'rpc-1', 'session.subscribe', { snapshot, stateSnapshot, lastSeq: 2, gap: false })
   })
 
-  it('TC4: session.subscribe 带 fromSeq 增量过滤（fromSeq=1, oldestSeq=1 → 无 gap，过滤 seq>1）', async () => {
+  it('TC4: session.subscribe 带 fromSeq 增量过滤（fromSeq=1, oldestSeq=1 → 无 gap，过滤 seq>1；stateSnapshot 不受影响）', async () => {
     // ring 中有 seq 1,2,3；fromSeq=1 表示已处理到 1，应返 seq>1 的 [2,3]，gap=false
     const snapshot = [
       { type: 'pong', seq: 1, payload: {} },
       { type: 'pong', seq: 2, payload: {} },
       { type: 'pong', seq: 3, payload: {} },
     ] as ServerMessage[]
+    const stateSnapshot = [{ type: 'context.update', seq: 1, payload: { sessionId: 's1', usagePercent: 50 } }] as ServerMessage[]
     const { handler, reply } = createHandlerWithMocks({
-      subscribe: vi.fn(() => ({ snapshot: [...snapshot], lastSeq: 3 })),
+      subscribe: vi.fn(() => ({ snapshot: [...snapshot], stateSnapshot: [...stateSnapshot], lastSeq: 3 })),
     })
     const ws = createMockWs()
     const msg = { type: 'session.subscribe', id: 'rpc-2', payload: { sessionId: 's1', fromSeq: 1 } } as unknown as ClientMessage
     await handler.handleSessionMessage(msg, ws as never)
 
-    // 过滤后 snapshot 只含 seq>1
+    // 过滤后 snapshot 只含 seq>1；stateSnapshot 是 last-value 不受 fromSeq 影响
     const replyCall = reply.mock.calls[0]
     expect(replyCall[0]).toBe(ws)
     expect(replyCall[1]).toBe('rpc-2')
     expect(replyCall[2]).toBe('session.subscribe')
-    const payload = replyCall[3] as { snapshot: ServerMessage[]; lastSeq: number; gap: boolean }
+    const payload = replyCall[3] as { snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; lastSeq: number; gap: boolean }
     expect(payload.gap).toBe(false)
     expect(payload.lastSeq).toBe(3)
     expect(payload.snapshot.map(m => m.seq)).toEqual([2, 3])
+    // stateSnapshot 全量透传（不被 fromSeq 过滤）
+    expect(payload.stateSnapshot).toEqual(stateSnapshot)
   })
 
   it('TC4: session.subscribe fromSeq < oldestSeq（gap 检测，返全量 + gap:true）', async () => {
@@ -237,29 +241,31 @@ describe('wave:runtime-wiring · TC3/TC4/TC5 session.subscribe/unsubscribe RPC',
       { type: 'pong', seq: 2, payload: {} },
     ] as ServerMessage[]
     const { handler, reply } = createHandlerWithMocks({
-      subscribe: vi.fn(() => ({ snapshot: [...snapshot], lastSeq: 2 })),
+      subscribe: vi.fn(() => ({ snapshot: [...snapshot], stateSnapshot: [], lastSeq: 2 })),
     })
     const ws = createMockWs()
     const msg = { type: 'session.subscribe', id: 'rpc-3', payload: { sessionId: 's1', fromSeq: 0 } } as unknown as ClientMessage
     await handler.handleSessionMessage(msg, ws as never)
 
-    const payload = reply.mock.calls[0][3] as { snapshot: ServerMessage[]; lastSeq: number; gap: boolean }
+    const payload = reply.mock.calls[0][3] as { snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; lastSeq: number; gap: boolean }
     expect(payload.gap).toBe(true)
     // 全量返（不过滤）
     expect(payload.snapshot.map(m => m.seq)).toEqual([1, 2])
+    expect(payload.stateSnapshot).toEqual([])
   })
 
   it('TC4 边界：bus.subscribe 返空 snapshot + fromSeq=0 → gap=false（无旧消息可淘汰）', async () => {
     // 空 ring：oldestSeq=0（snapshot[0]?.seq ?? 0），fromSeq=0 不 < 0，gap=false
     const { handler, reply } = createHandlerWithMocks({
-      subscribe: vi.fn(() => ({ snapshot: [], lastSeq: 0 })),
+      subscribe: vi.fn(() => ({ snapshot: [], stateSnapshot: [], lastSeq: 0 })),
     })
     const ws = createMockWs()
     const msg = { type: 'session.subscribe', id: 'rpc-4', payload: { sessionId: 's1', fromSeq: 0 } } as unknown as ClientMessage
     await handler.handleSessionMessage(msg, ws as never)
-    const payload = reply.mock.calls[0][3] as { snapshot: ServerMessage[]; gap: boolean }
+    const payload = reply.mock.calls[0][3] as { snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; gap: boolean }
     expect(payload.gap).toBe(false)
     expect(payload.snapshot).toEqual([])
+    expect(payload.stateSnapshot).toEqual([])
   })
 
   it('TC5: session.unsubscribe 调 bus.unsubscribe + reply message.status ack', async () => {

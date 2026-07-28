@@ -4,7 +4,7 @@
  * wave:runtime-message-bus::protocol-seq 的类型一致性测试，验证：
  *  - TC1: ServerMessage 支持可选 seq 字段（DM3/D7，与 id 互斥）
  *  - TC2: ClientMessageType 联合含 'session.subscribe' / 'session.unsubscribe'
- *  - TC3: ReplyPayloadMap['session.subscribe'] 形状 = { snapshot, lastSeq, gap? }
+ *  - TC3: ReplyPayloadMap['session.subscribe'] 形状 = { snapshot, stateSnapshot, lastSeq, gap? }
  *  - TC4: ReplyPayloadMap['session.unsubscribe'] 是 ack 型（void）
  *
  * 模式与 __tests__/protocol.test.ts 一致：编译期 AssertHasKey/AssertExtends
@@ -41,7 +41,7 @@ type _Assert_Reply_subscribe = AssertHasKey<ReplyPayloadMap, 'session.subscribe'
 type SubscribeReply = ReplyPayloadMap['session.subscribe']
 type _Assert_SubscribeReply_shape = AssertExtends<
   SubscribeReply,
-  { snapshot: ServerMessage[]; lastSeq: number; gap?: boolean }
+  { snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; lastSeq: number; gap?: boolean }
 >
 
 // TC4: ReplyPayloadMap['session.unsubscribe'] 存在 + 是 void（ack 型）
@@ -85,25 +85,31 @@ describe('TC2: ClientMessageType 含 session.subscribe/unsubscribe', () => {
 })
 
 describe('TC3: ReplyPayloadMap[session.subscribe] 形状', () => {
-  it('空 snapshot + lastSeq=0 可构造（订阅空 bus 的边界）', () => {
+  it('空 snapshot + stateSnapshot + lastSeq=0 可构造（订阅空 bus 的边界）', () => {
     const reply: ReplyPayloadMap['session.subscribe'] = {
       snapshot: [],
+      stateSnapshot: [],
       lastSeq: 0,
     }
     expect(reply.snapshot).toHaveLength(0)
+    expect(reply.stateSnapshot).toHaveLength(0)
     expect(reply.lastSeq).toBe(0)
     expect(reply.gap).toBeUndefined()
   })
 
-  it('带 snapshot + gap=true 可构造（ring 溢出缺口标记）', () => {
+  it('带 snapshot + stateSnapshot + gap=true 可构造（ring 溢出缺口标记）', () => {
     const event: ServerMessage = { type: 'pong', seq: 5, payload: {} }
+    const stateEvent: ServerMessage = { type: 'session.commands', seq: 4, payload: { sessionId: 's1', commands: [] } }
     const reply: ReplyPayloadMap['session.subscribe'] = {
       snapshot: [event],
+      stateSnapshot: [stateEvent],
       lastSeq: 5,
       gap: true,
     }
     expect(reply.snapshot).toHaveLength(1)
     expect(reply.snapshot[0].seq).toBe(5)
+    expect(reply.stateSnapshot).toHaveLength(1)
+    expect(reply.stateSnapshot[0].type).toBe('session.commands')
     expect(reply.lastSeq).toBe(5)
     expect(reply.gap).toBe(true)
   })

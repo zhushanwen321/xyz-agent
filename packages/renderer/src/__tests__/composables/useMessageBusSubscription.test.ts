@@ -59,26 +59,32 @@ function msgWithSeq(seq: number, type = 'message.chunk'): ServerMessage {
 }
 
 describe('TC1: subscribeSession 调 RPC + applySnapshot + 更新 lastSeenSeq', () => {
-  it('首次 subscribe：snapshot 逐条 dispatchSession + 记 lastSeenSeq + 标记 subscribed', async () => {
+  it('首次 subscribe：snapshot + stateSnapshot 逐条 dispatchSession + 记 lastSeenSeq + 标记 subscribed', async () => {
     const snapshot = [msgWithSeq(1), msgWithSeq(2)]
-    apiMock.subscribe.mockResolvedValue({ snapshot, lastSeq: 2 })
+    const stateSnapshot = [
+      { type: 'session.commands', seq: 2, payload: { sessionId: 's1', commands: [] } } as ServerMessage,
+      { type: 'context.update', seq: 2, payload: { sessionId: 's1', usagePercent: 50 } } as ServerMessage,
+    ]
+    apiMock.subscribe.mockResolvedValue({ snapshot, stateSnapshot, lastSeq: 2 })
 
     await subscribeSession('s1')
 
     // RPC 被调一次，未传 fromSeq（首次订阅）
     expect(apiMock.subscribe).toHaveBeenCalledTimes(1)
     expect(apiMock.subscribe).toHaveBeenCalledWith('s1', undefined)
-    // snapshot 逐条 dispatchSession（按顺序）
-    expect(eventsMock.dispatchSession).toHaveBeenCalledTimes(2)
+    // snapshot 逐条 dispatchSession（按顺序），随后 stateSnapshot 逐条 dispatchSession
+    expect(eventsMock.dispatchSession).toHaveBeenCalledTimes(4)
     expect(eventsMock.dispatchSession).toHaveBeenNthCalledWith(1, 's1', snapshot[0])
     expect(eventsMock.dispatchSession).toHaveBeenNthCalledWith(2, 's1', snapshot[1])
+    expect(eventsMock.dispatchSession).toHaveBeenNthCalledWith(3, 's1', stateSnapshot[0])
+    expect(eventsMock.dispatchSession).toHaveBeenNthCalledWith(4, 's1', stateSnapshot[1])
     // state 记录正确
     const state = getSubscriptionState('s1')
     expect(state).toEqual({ lastSeenSeq: 2, subscribed: true })
   })
 
-  it('空 snapshot：不 dispatch，lastSeenSeq=0，仍标记 subscribed', async () => {
-    apiMock.subscribe.mockResolvedValue({ snapshot: [], lastSeq: 0 })
+  it('空 snapshot + 空 stateSnapshot：不 dispatch，lastSeenSeq=0，仍标记 subscribed', async () => {
+    apiMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 })
 
     await subscribeSession('s1')
 
@@ -89,7 +95,7 @@ describe('TC1: subscribeSession 调 RPC + applySnapshot + 更新 lastSeenSeq', (
   it('lastSeq 小于 snapshot 末尾 seq（ring 溢出）：取 max 作基线', async () => {
     // snapshot 含 seq=5，但 lastSeq=3（runtime 标记 ring 溢出，gap=true）
     const snapshot = [msgWithSeq(5)]
-    apiMock.subscribe.mockResolvedValue({ snapshot, lastSeq: 3, gap: true })
+    apiMock.subscribe.mockResolvedValue({ snapshot, stateSnapshot: [], lastSeq: 3, gap: true })
 
     await subscribeSession('s1')
 
@@ -97,12 +103,25 @@ describe('TC1: subscribeSession 调 RPC + applySnapshot + 更新 lastSeenSeq', (
     expect(getSubscriptionState('s1')!.lastSeenSeq).toBe(5)
     expect(getSubscriptionState('s1')!.subscribed).toBe(true)
   })
+
+  it('stateSnapshot 含高 seq 消息：lastSeenSeq 纳入 stateSnapshot max（防基线回退）', async () => {
+    // snapshot 被 fromSeq 过滤后空，但 stateSnapshot 含 seq=7 的 commands（last-value 高 seq）
+    const stateSnapshot = [
+      { type: 'session.commands', seq: 7, payload: { sessionId: 's1', commands: [] } } as ServerMessage,
+    ]
+    apiMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot, lastSeq: 5 })
+
+    await subscribeSession('s1')
+
+    // 基线取 max(5, 7)=7，stateSnapshot 的高 seq 不丢
+    expect(getSubscriptionState('s1')!.lastSeenSeq).toBe(7)
+  })
 })
 
 describe('TC2: 重复 subscribe 幂等（已 subscribed 不重复 RPC）', () => {
   it('连续两次 subscribeSession：第二次 no-op（不调 RPC、不重放 snapshot）', async () => {
     const snapshot = [msgWithSeq(1), msgWithSeq(2)]
-    apiMock.subscribe.mockResolvedValue({ snapshot, lastSeq: 2 })
+    apiMock.subscribe.mockResolvedValue({ snapshot, stateSnapshot: [], lastSeq: 2 })
 
     await subscribeSession('s1')
     await subscribeSession('s1')
@@ -116,7 +135,7 @@ describe('TC2: 重复 subscribe 幂等（已 subscribed 不重复 RPC）', () =>
 
 describe('TC7: clearSubscription 清除 SubscriptionState', () => {
   it('subscribe 后 clear：state 变 undefined', async () => {
-    apiMock.subscribe.mockResolvedValue({ snapshot: [msgWithSeq(1)], lastSeq: 1 })
+    apiMock.subscribe.mockResolvedValue({ snapshot: [msgWithSeq(1)], stateSnapshot: [], lastSeq: 1 })
 
     await subscribeSession('s1')
     expect(getSubscriptionState('s1')).toBeDefined()
@@ -133,7 +152,7 @@ describe('TC7: clearSubscription 清除 SubscriptionState', () => {
 
 describe('updateLastSeenSeq', () => {
   it('已订阅 session：更新 lastSeenSeq', async () => {
-    apiMock.subscribe.mockResolvedValue({ snapshot: [], lastSeq: 5 })
+    apiMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
     await subscribeSession('s1')
     expect(getSubscriptionState('s1')!.lastSeenSeq).toBe(5)
 

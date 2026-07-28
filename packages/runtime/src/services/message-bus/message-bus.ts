@@ -4,7 +4,8 @@
  * 职责：维护每个 session 的环形缓冲（streamRing）+ 状态快照（stateSnapshot）+
  * 订阅者集合（subscribers）。publish 时分配 per-session 单调 seq、写 ring、
  * 更新 state 快照、广播给所有订阅者；subscribe 时返回当前 ring 全量快照 +
- * 最新 seq；unsubscribe / unsubscribeAll / clearSession 维护订阅生命周期。
+ * state 快照（last-value）+ 最新 seq；unsubscribe / unsubscribeAll / clearSession
+ * 维护订阅生命周期。
  *
  * 双向不变量（由 sessions 与 wsSubscriptions 两 Map 显式维护，测试覆盖）：
  *   ws ∈ sessions[sid].subscribers  ⟺  sid ∈ wsSubscriptions[ws]
@@ -112,22 +113,37 @@ export class MessageBus {
   }
 
   /**
-   * 订阅 session：加入 subscribers + 反查表，返回当前 ring 全量快照 + 最新 seq。
+   * 订阅 session：加入 subscribers + 反查表，返回当前 ring 全量快照 + state 快照 + 最新 seq。
    *
    * 步骤：
    * 1. lazy 创建 session（首次 subscribe 也建 entry——保证 lastSeq 从 0 起）。
    * 2. subscribers.add(ws) + wsSubscriptions[ws].add(sid)（双向不变量）。
-   * 3. 返回 { snapshot: [...streamRing]（浅拷贝，防外部修改内部 ring）, lastSeq: seqCounter }。
+   * 3. 返回：
+   *    - snapshot：[...streamRing]（浅拷贝，防外部修改内部 ring），流式消息历史。
+   *    - stateSnapshot：[...stateSnapshot.values()]（4 个 state topic 的 last-value 拷贝）。
+   *      wave:remove-bandaids 新增——让 renderer subscribe 后一次性把 commands/context/subagents/
+   *      workflows 的当前状态灌入对应 store（reconcile），替代 selectSession/submitFirstMessage
+   *      内的主动拉取 RPC 兜底。stateSnapshot 与 snapshot 独立：snapshot 受 subscribe RPC 的 fromSeq
+   *      增量过滤影响（runtime-wiring session-message-handler），stateSnapshot 是 last-value 语义不受影响。
+   *    - lastSeq：seqCounter（已 publish 的消息数）。
    *
    * @param sessionId 目标 session
    * @param ws 订阅者（BusClient，满足 readyState + send 契约）
-   * @returns snapshot 是 ring 当前全量拷贝；lastSeq 是当前 seqCounter（已 publish 的消息数）
+   * @returns snapshot/stateSnapshot 均为当前状态的浅拷贝；lastSeq 是当前 seqCounter
    */
-  subscribe(sessionId: string, ws: BusClient): { snapshot: ServerMessage[]; lastSeq: number } {
+  subscribe(sessionId: string, ws: BusClient): {
+    snapshot: ServerMessage[]
+    stateSnapshot: ServerMessage[]
+    lastSeq: number
+  } {
     const state = this.getOrCreateSession(sessionId)
     state.subscribers.add(ws)
     this.getOrCreateWsSubs(ws).add(sessionId)
-    return { snapshot: [...state.streamRing], lastSeq: state.seqCounter }
+    return {
+      snapshot: [...state.streamRing],
+      stateSnapshot: [...state.stateSnapshot.values()],
+      lastSeq: state.seqCounter,
+    }
   }
 
   /**

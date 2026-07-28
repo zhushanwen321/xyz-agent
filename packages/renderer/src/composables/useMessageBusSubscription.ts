@@ -3,8 +3,8 @@
  *
  * 职责（DM4 + IF8 + ES3）：
  * - 维护 per-session 的 SubscriptionState（lastSeenSeq + subscribed 标记）
- * - subscribeSession：调 sessionApi.subscribe RPC → 把返回的 snapshot 依次 dispatch 到 events
- *   通道（reconcile 回放历史）→ 记 lastSeenSeq → 标记 subscribed
+ * - subscribeSession：调 sessionApi.subscribe RPC → 把返回的 snapshot + stateSnapshot 依次 dispatch
+ *   到 events 通道（reconcile 回放历史 + 灌入 state last-value）→ 记 lastSeenSeq → 标记 subscribed
  * - getSubscriptionState：routeInbound 用此判是否启用 gap 检测
  * - clearSubscription：session 销毁时清理（useChat.disposeSession 调用）
  * - updateLastSeenSeq：live push 收到合法递进 seq 时更新基线
@@ -51,10 +51,12 @@ const subscriptionStates = new Map<string, SubscriptionState>()
  *
  * 流程：
  *   1. 幂等守卫：state.subscribed=true 直接 return（重复 subscribe 不重复 RPC、不重放 snapshot）
- *   2. 调 sessionApi.subscribe(sessionId, fromSeq) → reply { snapshot, lastSeq, gap? }
+ *   2. 调 sessionApi.subscribe(sessionId, fromSeq) → reply { snapshot, stateSnapshot, lastSeq, gap? }
  *   3. applySnapshot：snapshot 内每条 ServerMessage 依次 events.dispatchSession（回放历史，
- *      与 live push 同一通道消费）
- *   4. 记 lastSeenSeq=lastSeq（后续 gap 检测基线）+ 标记 subscribed=true
+ *      与 live push 同一通道消费）；stateSnapshot（state topic last-value）同样 dispatchSession，
+ *      让 routeInbound 兜底分支据此把 commands/context/subagents 灌入对应 store
+ *      （wave:remove-bandaids：替代 selectSession/submitFirstMessage 主动拉取兜底）
+ *   4. 记 lastSeenSeq=lastSeq（后续 gap 检测基线，含 stateSnapshot 消息 max seq）+ 标记 subscribed=true
  *
  * @param sessionId 目标 session
  * @param fromSeq 可选，gap reconcile 时指定起始 seq 回拉缺失段（首次订阅不传）
@@ -69,7 +71,7 @@ export async function subscribeSession(sessionId: string, fromSeq?: number): Pro
   const existing = subscriptionStates.get(sessionId)
   if (existing?.subscribed && fromSeq === undefined) return
 
-  let reply: { snapshot: ServerMessage[]; lastSeq: number; gap?: boolean }
+  let reply: { snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; lastSeq: number; gap?: boolean }
   try {
     reply = await sessionApi.subscribe(sessionId, fromSeq)
   } catch (e) {
@@ -91,13 +93,27 @@ export async function subscribeSession(sessionId: string, fromSeq?: number): Pro
     events.dispatchSession(sessionId, msg)
   }
 
+  // stateSnapshot（wave:remove-bandaids）：4 个 state topic（commands/context/subagents/workflows）
+  // 的 last-value 数组，逐条 dispatchSession 让 routeInbound 兜底分支据此更新对应 store
+  // （commandStore/contextStore/subagentStore）。这是替代 selectSession/submitFirstMessage 内
+  // 主动拉取 RPC 兜底的核心路径——subscribe 时刻一次性把当前状态灌入 stores。
+  // stateSnapshot 与 snapshot 独立（snapshot 受 fromSeq 增量过滤，stateSnapshot 是 last-value 不受影响），
+  // 可能与 snapshot 末尾消息重叠（同一 state topic 消息既在 ring 末尾又在 stateSnapshot），重复 dispatch
+  // 由订阅端幂等兜底（与 snapshot 重叠同 R2 策略）。
+  for (const msg of reply.stateSnapshot) {
+    events.dispatchSession(sessionId, msg)
+  }
+
   // 记基线 + 标记 subscribed（后续 routeInbound 启用 gap 检测）。
   // lastSeq 可能小于已 dispatch 的某条 snapshot seq（ring 溢出场景）或小于 routeInbound 已更新
   // 的 lastSeenSeq（reconcile 期间 live 消息已推进基线），取 max 保证基线不回退。
+  // stateSnapshot 内消息的 seq 也纳入 max 计算——state topic 消息同样占用 bus seqCounter，
+  // 其 seq 可能大于 snapshot 末尾 seq（snapshot 被 fromSeq 过滤后），需一并考虑防基线回退。
   const existingNow = subscriptionStates.get(sessionId)
   const prevLastSeen = existingNow?.lastSeenSeq ?? 0
   const maxSnapshotSeq = reply.snapshot.reduce((max, m) => (typeof m.seq === 'number' && m.seq > max ? m.seq : max), 0)
-  const lastSeenSeq = Math.max(reply.lastSeq, maxSnapshotSeq, prevLastSeen)
+  const maxStateSnapshotSeq = reply.stateSnapshot.reduce((max, m) => (typeof m.seq === 'number' && m.seq > max ? m.seq : max), 0)
+  const lastSeenSeq = Math.max(reply.lastSeq, maxSnapshotSeq, maxStateSnapshotSeq, prevLastSeen)
   subscriptionStates.set(sessionId, { lastSeenSeq, subscribed: true })
 }
 

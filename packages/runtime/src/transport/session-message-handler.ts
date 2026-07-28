@@ -256,9 +256,11 @@ export class SessionMessageHandler {
       }
       case 'session.subscribe': {
         // wave:runtime-wiring（IF6）：订阅某 session 的 live 事件流。
-        // 调 bus.subscribe 注册当前 ws 为订阅者 + 拉 ring 全量 snapshot + 最新 seq。
+        // 调 bus.subscribe 注册当前 ws 为订阅者 + 拉 ring 全量 snapshot + stateSnapshot + 最新 seq。
         // fromSeq 可选（重连场景）：若提供且 < ring 最旧 seq（旧消息已被 FIFO 淘汰）→ gap=true
         // 返全量 snapshot；否则过滤 snapshot 只返 seq > fromSeq 的（增量 backfill）。
+        // stateSnapshot（wave:remove-bandaids）是 4 个 state topic 的 last-value，不受 fromSeq
+        // 增量过滤影响（last-value 语义无历史概念），renderer 始终拿到最新状态 reconcile。
         const { sessionId, fromSeq } = msg.payload
         const bus = this.ctx.messageBus
         if (!bus) {
@@ -278,7 +280,12 @@ export class SessionMessageHandler {
             snapshot = snapshot.filter(m => (m.seq ?? 0) > fromSeq)
           }
         }
-        return this.ctx.reply(ws, msg.id, 'session.subscribe', { snapshot, lastSeq: result.lastSeq, gap })
+        return this.ctx.reply(ws, msg.id, 'session.subscribe', {
+          snapshot,
+          stateSnapshot: result.stateSnapshot,
+          lastSeq: result.lastSeq,
+          gap,
+        })
       }
       case 'session.unsubscribe': {
         // wave:runtime-wiring（IF7）：取消订阅某 session 的 live 事件流。

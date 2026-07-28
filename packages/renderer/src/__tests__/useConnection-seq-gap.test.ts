@@ -70,7 +70,7 @@ vi.mock('@/api/events', () => eventsMock)
 
 // ── api mock：session.subscribe（subscribeSession reconcile 用）─────
 const apiMock = vi.hoisted(() => ({
-  subscribe: vi.fn().mockResolvedValue({ snapshot: [], lastSeq: 0 }),
+  subscribe: vi.fn().mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 }),
 }))
 vi.mock('@/api', () => ({
   session: { subscribe: apiMock.subscribe },
@@ -124,7 +124,7 @@ beforeEach(() => {
   resetSubscriptionStates()
   vi.clearAllMocks()
   mockStateRef = ref('disconnected')
-  apiMock.subscribe.mockResolvedValue({ snapshot: [], lastSeq: 0 })
+  apiMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 })
 })
 
 /** 构造带 seq 的 server-push 消息（无 id，live 通道） */
@@ -134,7 +134,7 @@ function liveMsg(seq: number, type = 'message.chunk', sid = 's1'): ServerMessage
 
 describe('TC3: gap 检测 seq<=lastSeenSeq 丢弃', () => {
   it('seq === lastSeenSeq：不 dispatch（重复）', async () => {
-    apiMock.subscribe.mockResolvedValue({ snapshot: [], lastSeq: 5 })
+    apiMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
     await subscribeSession('s1')
     expect(getSubscriptionState('s1')!.lastSeenSeq).toBe(5)
 
@@ -146,7 +146,7 @@ describe('TC3: gap 检测 seq<=lastSeenSeq 丢弃', () => {
   })
 
   it('seq < lastSeenSeq：不 dispatch（乱序/回退）', async () => {
-    apiMock.subscribe.mockResolvedValue({ snapshot: [], lastSeq: 5 })
+    apiMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
     await subscribeSession('s1')
 
     pushInbound(liveMsg(3))
@@ -158,7 +158,7 @@ describe('TC3: gap 检测 seq<=lastSeenSeq 丢弃', () => {
 
 describe('TC5: seq === lastSeenSeq+1 正常递进（不 reconcile）', () => {
   it('seq=6, lastSeenSeq=5：dispatch + 更新基线，不调 subscribe', async () => {
-    apiMock.subscribe.mockResolvedValue({ snapshot: [], lastSeq: 5 })
+    apiMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
     await subscribeSession('s1')
 
     pushInbound(liveMsg(6))
@@ -173,7 +173,7 @@ describe('TC5: seq === lastSeenSeq+1 正常递进（不 reconcile）', () => {
 
 describe('TC4: gap 检测 seq>lastSeenSeq+1 触发 reconcile', () => {
   it('seq=8, lastSeenSeq=5：触发 subscribeSession(s1, 7) + 当前 msg 仍 dispatch', async () => {
-    apiMock.subscribe.mockResolvedValue({ snapshot: [], lastSeq: 5 })
+    apiMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
     await subscribeSession('s1')
     vi.clearAllMocks()
 
@@ -245,7 +245,7 @@ describe('TC8: routeInbound 的 id 路径不受 seq 影响（D7 互斥）', () =
   })
 
   it('已 subscribe session 收到带 id+seq 的 reply：pending 走 id 路径，seq 分支不影响（D7 互斥）', async () => {
-    apiMock.subscribe.mockResolvedValue({ snapshot: [], lastSeq: 5 })
+    apiMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
     await subscribeSession('s1')
 
     // 带 id 的 reply（无 seq）→ pending.resolve，dispatch 仍发生（兼容：reply 也可能含 sessionId）
@@ -263,7 +263,7 @@ describe('TC8: routeInbound 的 id 路径不受 seq 影响（D7 互斥）', () =
 
 describe('updateLastSeenSeq 与 routeInbound 协同', () => {
   it('routeInbound 收到正常递进 seq 后更新基线，下一条 seq<=新基线 丢弃', async () => {
-    apiMock.subscribe.mockResolvedValue({ snapshot: [], lastSeq: 5 })
+    apiMock.subscribe.mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 5 })
     await subscribeSession('s1')
 
     pushInbound(liveMsg(6)) // 正常递进 → 基线变 6

@@ -15,6 +15,7 @@
  * - TC8：双向不变量——sessions[sid].subscribers ↔ wsSubscriptions[ws] 一致。
  * - TC9：publish 到非 OPEN（readyState!==1）ws 不发。
  * - TC10：state topic typeKey 覆盖（同 typeKey 新消息覆盖旧）。
+ * - TC11：subscribe 返回 stateSnapshot（wave:remove-bandaids，4 个 state topic last-value）。
  * - ES1：clearSession 对不存在 session no-op（幂等）。
  * - ES2：unsubscribe / unsubscribeAll 对未订阅 ws no-op（幂等）。
  * - ES4：publish 时单个 ws.send 抛错——不影响其它 ws 与 publish。
@@ -103,7 +104,7 @@ describe('MessageBus', () => {
     expect(JSON.parse(ws2.sent[0])).toEqual(msg)
   })
 
-  // ── TC3：subscribe 返回 ring snapshot + lastSeq ──────────────────────
+  // ── TC3：subscribe 返回 ring snapshot + stateSnapshot + lastSeq ──────────────────────
   it('TC3: subscribe returns ring snapshot (shallow copy) + lastSeq', () => {
     const bus = new MessageBus()
     const sid = 's1'
@@ -313,16 +314,21 @@ describe('MessageBus', () => {
     bus.publish(sid, cmd2)
 
     // 两条都进 ring（流式不丢）
-    const { snapshot } = bus.subscribe(sid, createMockClient())
+    const { snapshot, stateSnapshot } = bus.subscribe(sid, createMockClient())
     expect(snapshot).toHaveLength(2)
 
-    // stateSnapshot 的覆盖语义验证：经 clearSession 不直接暴露 stateSnapshot，
-    // 这里验证 publish 不会因 state topic 报错且 ring 正常（stateSnapshot 内部维护，
-    // 完整初始化合并语义在 runtime-wiring wave）。
+    // stateSnapshot 覆盖语义：同 typeKey（'commands'）只保留最新（cmd2），
+    // 长度 = 已 publish 的不同 typeKey 数（此处仅 'commands' 1 个）。
+    expect(stateSnapshot).toHaveLength(1)
+    expect(stateSnapshot[0]).toBe(cmd2)
+
     // 核心：state topic 与非 state topic 混合 publish 都正常工作。
     const ctxMsg = createMockMessage('context.update', { usagePercent: 50 })
     bus.publish(sid, ctxMsg)
-    expect(bus.subscribe(sid, createMockClient()).snapshot).toHaveLength(3)
+    const sub3 = bus.subscribe(sid, createMockClient())
+    expect(sub3.snapshot).toHaveLength(3)
+    // stateSnapshot 增至 2 个 typeKey（commands + context）
+    expect(sub3.stateSnapshot).toHaveLength(2)
   })
 
   it('TC10b: non-state topics do not enter stateSnapshot (no typeKey match)', () => {
@@ -330,10 +336,67 @@ describe('MessageBus', () => {
     const sid = 's1'
     // message.text_delta 不在占位映射 → stateTypeKey 返回 null
     bus.publish(sid, createMockMessage('message.text_delta', { text: 'hi' }))
-    // 仅验证 publish 正常、ring 正常（非 state topic 不影响 ring 行为）
-    const { snapshot, lastSeq } = bus.subscribe(sid, createMockClient())
+    const { snapshot, stateSnapshot, lastSeq } = bus.subscribe(sid, createMockClient())
     expect(snapshot).toHaveLength(1)
+    // 非 state topic 不进 stateSnapshot
+    expect(stateSnapshot).toHaveLength(0)
     expect(lastSeq).toBe(1)
+  })
+
+  // ── TC11：subscribe 返回 stateSnapshot（wave:remove-bandaids）──────────────────────
+  it('TC11: subscribe returns stateSnapshot with 4 state topics last-value (independent from snapshot)', () => {
+    const bus = new MessageBus()
+    const sid = 's1'
+    // 4 个 state topic 各 publish 多次（最后值是最新的）+ 一条非 state 消息
+    const cmds = createMockMessage('session.commands', { commands: [{ name: 'cmd' }] })
+    const ctx = createMockMessage('context.update', { usagePercent: 42 })
+    const subs = createMockMessage('session.subagents', { subagents: [{ subagentId: 's1' }] })
+    const wfs = createMockMessage('session.workflows', { workflows: [{ runId: 'w1' }] })
+    const streamMsg = createMockMessage('message.text_delta', { text: 'stream' })
+    bus.publish(sid, createMockMessage('session.commands', { commands: [] })) // 旧 commands，应被覆盖
+    bus.publish(sid, cmds)
+    bus.publish(sid, ctx)
+    bus.publish(sid, subs)
+    bus.publish(sid, wfs)
+    bus.publish(sid, streamMsg)
+
+    const { snapshot, stateSnapshot, lastSeq } = bus.subscribe(sid, createMockClient())
+
+    // snapshot 含全部 6 条（流式不丢）
+    expect(snapshot).toHaveLength(6)
+    expect(lastSeq).toBe(6)
+    // stateSnapshot 含 4 个 state topic 的最新值（按 typeKey 去重，旧 commands 已被 cmds 覆盖）
+    expect(stateSnapshot).toHaveLength(4)
+    // 按 type 检索（不依赖数组顺序）
+    const findByType = (type: string): ServerMessage =>
+      stateSnapshot.find((m) => m.type === type)!
+    expect(findByType('session.commands')).toBe(cmds) // 最新 commands
+    expect(findByType('context.update')).toBe(ctx)
+    expect(findByType('session.subagents')).toBe(subs)
+    expect(findByType('session.workflows')).toBe(wfs)
+    // streamMsg 不在 stateSnapshot（非 state topic）
+    expect(stateSnapshot.find((m) => m.type === 'message.text_delta')).toBeUndefined()
+  })
+
+  it('TC11b: subscribe stateSnapshot is a shallow copy (mutating it does not affect internal Map)', () => {
+    const bus = new MessageBus()
+    const sid = 's1'
+    bus.publish(sid, createMockMessage('session.commands', { commands: [] }))
+    const { stateSnapshot } = bus.subscribe(sid, createMockClient())
+    stateSnapshot.pop() // 外部修改
+
+    // 内部 Map 不受影响：再次 subscribe 仍拿到 1 个 typeKey
+    const sub2 = bus.subscribe(sid, createMockClient())
+    expect(sub2.stateSnapshot).toHaveLength(1)
+  })
+
+  it('TC11c: subscribe on never-published session returns empty stateSnapshot', () => {
+    const bus = new MessageBus()
+    // 从未 publish 的 session：stateSnapshot 为空数组
+    const { snapshot, stateSnapshot, lastSeq } = bus.subscribe('fresh', createMockClient())
+    expect(snapshot).toHaveLength(0)
+    expect(stateSnapshot).toHaveLength(0)
+    expect(lastSeq).toBe(0)
   })
 
   // ── ES1：clearSession 对不存在 session no-op（幂等）──────────────────────

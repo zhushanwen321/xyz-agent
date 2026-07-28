@@ -698,9 +698,14 @@ export interface ServerMessageMapBase {
   'session.compacted': { sessionId: string; status: 'compacted'; error?: string }
   // session.subscribe（wave:runtime-wiring）：session.subscribe RPC 的 reply payload（IF6 契约）。
   // snapshot：订阅时刻 bus ring 内当前事件序列（元素为带 seq 的 ServerMessage），renderer 据此 reconcile。
+  // stateSnapshot：4 个 state topic（commands/context/subagents/workflows）的 last-value 数组拷贝
+  //   （wave:remove-bandaids 新增）。让 renderer subscribe 后一次性把 commands/context/subagents 的
+  //   当前状态灌入对应 store（dispatch 到 events 通道 → routeInbound 兜底分支 applyRecords），
+  //   替代 selectSession/submitFirstMessage 内的主动拉取 RPC 兜底。stateSnapshot 与 snapshot 独立：
+  //   snapshot 受 subscribe RPC 的 fromSeq 增量过滤影响，stateSnapshot 是 last-value 语义不受影响。
   // lastSeq：当前 per-session seq 计数器值，renderer 记为 lastSeenSeq 做 gap 检测基线。
   // gap：fromSeq 早于 ring 最旧 seq（旧消息已被 FIFO 淘汰）时 true，renderer 需全量重拉而非增量 backfill。
-  'session.subscribe': { snapshot: ServerMessage[]; lastSeq: number; gap?: boolean }
+  'session.subscribe': { snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; lastSeq: number; gap?: boolean }
   // session.commands：pi 扩展命令列表（fetchAndBroadcastCommands 广播）
   // sourceInfo 透传自 pi get_commands 的 RpcSlashCommand（SKILL.md / extension 文件路径等），可选（旧消费方向后兼容）
   'session.commands': { sessionId: string; commands: Array<{ name: string; description?: string; source: string; sourceInfo?: CommandSourceInfo }> }
@@ -1196,7 +1201,9 @@ export interface ReplyPayloadMap {
   // payload 消费型——renderer 读 snapshot 做 reconcile（订阅时刻 bus ring 内当前事件序列，
   // 元素为带 seq 的 ServerMessage），记 lastSeq 作为后续 gap 检测基线；gap=true 标记本次
   // snapshot 因 ring 容量溢出存在缺口（renderer 需全量重拉而非增量 backfill）。
-  'session.subscribe': { snapshot: ServerMessage[]; lastSeq: number; gap?: boolean }
+  // stateSnapshot（wave:remove-bandaids）：4 个 state topic 的 last-value 数组拷贝，让 renderer
+  // subscribe 后一次性把 commands/context/subagents 的当前状态灌入对应 store，替代主动拉取兜底。
+  'session.subscribe': { snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; lastSeq: number; gap?: boolean }
   // session.unsubscribe（runtime-message-bus wave:protocol-seq）：取消订阅，ack 型。
   // 与 session.handoff/session.abortHandoff/message.abort 同模式，renderer register<void>
   // 不读 reply payload，取消订阅的副作用由后续 live 事件停发体现。
