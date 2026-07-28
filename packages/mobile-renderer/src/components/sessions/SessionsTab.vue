@@ -12,6 +12,7 @@ import { ref } from 'vue'
 import type { SessionsView } from './types'
 import MobileSessionList from './MobileSessionList.vue'
 import MobileChatView from '@/components/chat/MobileChatView.vue'
+import MobileNewSession from './MobileNewSession.vue'
 
 const view = ref<SessionsView>('list')
 const selectedId = ref<string | null>(null)
@@ -26,9 +27,17 @@ function onBack(): void {
 }
 
 function onNewSession(): void {
-  // s3-w2 接入 MobileNewSession（new 态）；w1 暂留入口（emit 已触发，view 转 new 由 w2 接入组件后启用）
-  // w1：直接转 new 态占位（MobileNewSession 在 w2 接入，w1 new 态显示提示）
   view.value = 'new'
+}
+
+function onCreated(sessionId: string): void {
+  // MobileNewSession create 成功 → 进 chat 态
+  selectedId.value = sessionId
+  view.value = 'chat'
+}
+
+function onCancelNew(): void {
+  view.value = 'list'
 }
 </script>
 
@@ -45,13 +54,11 @@ function onNewSession(): void {
       :session-id="selectedId"
       @back="onBack"
     />
-    <!-- new 态：s3-w2 接入 MobileNewSession，w1 占位 -->
-    <div
+    <!-- new 态：MobileNewSession（手动路径输入，spec D4） -->
+    <MobileNewSession
       v-else-if="view === 'new'"
-      class="flex h-full items-center justify-center p-6 text-center text-sm text-muted"
-      data-testid="mobile-new-session-placeholder"
-    >
-      new session（s3-w2 接入）
-    </div>
+      @created="onCreated"
+      @cancel="onCancelNew"
+    />
   </div>
 </template>
