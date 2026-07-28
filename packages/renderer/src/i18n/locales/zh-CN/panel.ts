@@ -66,6 +66,7 @@ export default {
     handoffAsk: '交接并备注（输入内容将作为新 session 的首条消息）',
     handoffFailed: '交接失败：{error}',
     handing: '正在交接…',
+    handoffStarted: '正在生成交接文档…',
     editReplace: '编辑（替换并重新发送）',
     editAfterReplace: '编辑后替换并重新发送',
     cancel: '取消',

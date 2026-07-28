@@ -127,6 +127,10 @@ export function ensureStreamSubscription(
     // session.* → 跨 store 协调（sessionStore.updateLabel/updateSessionState/setCompacting），
     // 保留在 useChat（stores 间禁止互相 import）。
     switch (msg.type) {
+      case 'session.handoffStarted':
+        // B1：handoff 开始时在对话流中插入 system 消息，让用户知道 handoff 已启动
+        chat.appendSystemNotice(sid, t('panel.message.handoffStarted'))
+        break
       case 'session.compacting':
         // #6：compact 生命周期开始（runtime server-push，走 session 通道）
         chat.setCompacting(sid, true)

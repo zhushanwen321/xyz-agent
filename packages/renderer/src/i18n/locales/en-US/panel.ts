@@ -66,6 +66,7 @@ export default {
     handoffAsk: 'Hand off with note (your text becomes the first message in the new session)',
     handoffFailed: 'Handoff failed: {error}',
     handing: 'Handing off…',
+    handoffStarted: 'Generating handoff document…',
     editReplace: 'Edit (replace and resend)',
     editAfterReplace: 'Edit then replace and resend',
     cancel: 'Cancel',
