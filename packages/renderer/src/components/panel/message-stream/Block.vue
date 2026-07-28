@@ -21,11 +21,11 @@
         <div class="flex items-center gap-1.5">
           <component :is="BLOCK_ICON_LUCIDE.thinking" class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" />
           <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">{{ t('panel.message.thinkingBlock') }}</span>
-          <span v-if="!working && !thinkingExpanded" class="text-neutral-faint">·</span>
-          <span v-if="!thinkingExpanded" class="flex-1 min-w-0 truncate text-[length:var(--text-sm)] text-neutral-dim">{{ previewText }}</span>
+          <span v-if="!working" class="text-neutral-faint">·</span>
+          <span class="flex-1 min-w-0 truncate text-[length:var(--text-sm)] text-neutral-dim">{{ previewText }}</span>
         </div>
-        <!-- 展开内容：pl-4 纯缩进，无 border/背景 -->
-        <div v-if="thinkingExpanded" class="think-content-expanded pl-4 text-[length:var(--text-sm)] leading-[1.7] text-neutral-dim">
+        <!-- 展开内容：pl-4 纯缩进，mt-1 与摘要行分隔，无 border/背景 -->
+        <div v-if="thinkingExpanded" class="think-content-expanded mt-1 pl-4 text-[length:var(--text-sm)] leading-[1.7] text-neutral-dim">
           <!-- copy 按钮浮在内容右上角（hover 显） -->
           <Button
             variant="ghost"
