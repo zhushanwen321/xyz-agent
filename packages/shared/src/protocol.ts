@@ -410,6 +410,7 @@ export type WorktreeEnvelopeCode = WorktreeErrorCode | WorktreeUnknownErrorCode
 
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'config.sessions' | 'session.history' | 'session.fullHistory'
+  | 'session.deleting'
   | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice'
   | 'session.subagents' | 'session.subagentHistory'
   | 'session.workflows' | 'session.agentCallHistory' | 'session.agentCallFilePath'
@@ -708,7 +709,12 @@ export interface ServerMessageMapBase {
   // session 是 SessionSummary（session-message-handler.ts:36/56 reply { session }）。
   'session.created': { session: SessionSummary }
   // session.deleted：session.delete reply（session-message-handler.ts:72 reply { sessionId: delSid }）。
+  // P6 D6：用法从 reply 扩展为 reply（发起方点对点）+ broadcastExcept（排除发起方给其他客户端）。
+  // payload 不变（{ sessionId }），向后兼容旧客户端。
   'session.deleted': { sessionId: string }
+  // session.deleting：P6 D6 新增广播（session.delete 前预告，让客户端先收 panel）。
+  // byClientId = 发起删除的客户端 id（区别于 session.busy 的 clientId=lease 持有者，刻意区分命名）。
+  'session.deleting': { sessionId: string; byClientId: string }
   // session.renamed：session.rename reply（session-message-handler.ts:162 reply { sessionId, name }）。
   'session.renamed': { sessionId: string; name: string }
   // session.forkNotice：session.fork 成功后的广播（FR-12 修订 PR2），通知 srcSession 所在 panel

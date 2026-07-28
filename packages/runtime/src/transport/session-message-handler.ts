@@ -103,11 +103,26 @@ export class SessionMessageHandler {
       case 'session.delete': {
         const delSid = msg.payload.sessionId
         this.ctx.clearExtensionTimeoutsForSession(delSid)
+        // P6 D6 两步广播：deleting 预告（全量广播，含发起方）让客户端先收 panel + 清 store 分区准备。
+        // 在 sessionService.delete 之前广播——客户端收到 deleting 时 session 还在，panel 卸载安全。
+        // byClientId = 发起删除的客户端（与 session.busy 的 clientId=lease 持有者语义不同，刻意区分）。
+        this.ctx.broadcast({
+          type: 'session.deleting',
+          id: this.ctx.nextPushId(),
+          payload: { sessionId: delSid, byClientId: clientId },
+        })
         await this.ctx.sessionService.delete(delSid)
         // P2-s1-w2：session 销毁清 ring buffer 桶（ES6 不推进 watermark——session 已删，
         // 客户端收到 session.deleted 清分区，不该再期待该 session 消息）。
         this.ctx.clearSessionBuffer(delSid)
         this.ctx.reply(ws, msg.id, 'session.deleted', { sessionId: delSid })
+        // P6 D6：broadcastExcept 排除发起方——发起方已通过 reply 收到 deleted，不重复收广播（避免双投递）。
+        // 其他客户端收广播 session.deleted 触发 cleanupSession 清 store 分区（防内存泄漏）。
+        this.ctx.broadcastExcept(clientId, {
+          type: 'session.deleted',
+          id: this.ctx.nextPushId(),
+          payload: { sessionId: delSid },
+        })
         return this.ctx.broadcastSessionList()
       }
       case 'config.sessions':

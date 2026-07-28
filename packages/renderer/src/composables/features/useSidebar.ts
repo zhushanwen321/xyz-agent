@@ -37,6 +37,7 @@ import { useExtensionUIStore } from '@/stores/extension-ui'
 import { useChat } from '@/composables/features/useChat'
 import { invalidateStatusCache } from '@/composables/features/useSessionDerivations'
 import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
+import { registerSessionDeleteHandlers } from '@/composables/useConnection'
 import { consumePendingOpen } from '@/composables/features/useSideDrawer'
 import { clearUnread } from '@/composables/useSessionMarkers'
 import { registerAppCommands } from '@/composables/features/useAppCommands'
@@ -336,6 +337,21 @@ export function useSidebar() {
    */
   async function deleteSession(id: string): Promise<void> {
     await sessionApi.remove(id)
+    // P6 D6：清理逻辑抽离到 cleanupSession（发起方 reply 路径与其他客户端广播路径复用）。
+    await cleanupSession(id)
+  }
+
+  /**
+   * P6 D6：session 删除后的统一清理（发起方 reply 路径 + 其他客户端广播路径复用）。
+   *
+   * 含 panel 解绑 + clearBoundPanelOverlays + removeFromList + 跨 store clearSession +
+   * chat evict/dispose + invalidateStatusCache + triggerSessionCleanups + active 切换。
+   * 幂等：重复调对已清的 store 是 no-op（clearSession/evict 对不存在 id 不报错）。
+   * 之所以含 active 切换：两条路径都需要（发起方删 active 后切下一个；其他客户端若 active 是该 sid 也需切）。
+   *
+   * 不含 sessionApi.remove（只有发起方需要调 RPC，广播路径 session 已在服务端删了）。
+   */
+  async function cleanupSession(id: string): Promise<void> {
     const wasActive = session.activeId === id
     // 删除的 session 若绑定到 panel，清空 panel 绑定，避免悬空引用指向已删 session。
     const boundPanel = panel.findPanelBySession(id)
@@ -388,6 +404,24 @@ export function useSidebar() {
         navigation.push({ view: 'chat' })
       }
     }
+  }
+
+  /**
+   * P6 D6：收到广播 session.deleting（预告）→ soft close panel（panel unmount，暂不清 store）。
+   * 其他客户端收到 deleting 时 session 还在，先卸载 panel 避免 deleted 到达时 panel 操作 404。
+   * 幂等：panel 已卸载时 findPanelBySession 返回 undefined，no-op。
+   */
+  function handleSessionDeleting(id: string): void {
+    const boundPanel = panel.findPanelBySession(id)
+    if (boundPanel) panel.loadSession(boundPanel.id, null)
+  }
+
+  /**
+   * P6 D6：收到广播 session.deleted → cleanupSession（清 store 分区，防其他客户端内存泄漏）。
+   * 幂等：cleanupSession 对已清 store 是 no-op。
+   */
+  async function handleSessionDeleted(id: string): Promise<void> {
+    await cleanupSession(id)
   }
 
   /** 进入 Overview：push view:'overview'（ADR-0022，sidebar 持久，main 被覆盖） */
@@ -500,6 +534,12 @@ export function useSidebar() {
    * hasConnectedBefore 与 appBootstrapped 同为模块级，跨 useSidebar 实例共享。
    */
   async function onConnected(): Promise<void> {
+    // P6 D6：注册 session.delete 广播处理器（routeInbound 收到 deleting/deleted 广播时全局调用）。
+    // 注册幂等（覆盖旧 handler），每次连接重置一次 handler（闭包捕获最新 store 实例）。
+    registerSessionDeleteHandlers({
+      onDeleting: (sid) => handleSessionDeleting(sid),
+      onDeleted: (sid) => { void handleSessionDeleted(sid) },
+    })
     if (!hasConnectedBefore) {
       hasConnectedBefore = true
       await initApp()

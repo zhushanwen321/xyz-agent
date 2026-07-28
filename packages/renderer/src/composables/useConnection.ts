@@ -57,6 +57,24 @@ function handleSessionExited(sessionId: string, payload: { code: number | null; 
   useToast().error(t('connection.runtimeExited', { reason: shortReason }))
 }
 
+// ── P6 D6 session.delete 两步广播：全局兜底处理 ──────────────────
+// session.deleting（预告，soft close panel）/ session.deleted（确认，cleanupSession）
+// 是广播消息（broadcastExcept 排除发起方），含 sessionId 走 dispatchSession，
+// 但其他客户端可能无订阅者（panel 未开该 session），故 routeInbound 全局兜底调用注册的 handler。
+// useSidebar 在 onConnected 注册 cleanupSession + softClosePanel，避免 useConnection 依赖 useSidebar。
+interface SessionDeleteHandlers {
+  onDeleting: (sessionId: string) => void
+  onDeleted: (sessionId: string) => void
+}
+let sessionDeleteHandlers: SessionDeleteHandlers | null = null
+/**
+ * 注册 session.delete 广播处理器（useSidebar.onConnected 调用）。
+ * routeInbound 收到 session.deleting/deleted 广播时全局调用，不依赖 panel 订阅。
+ */
+export function registerSessionDeleteHandlers(handlers: SessionDeleteHandlers): void {
+  sessionDeleteHandlers = handlers
+}
+
 export type ConnectionStatus =
   | 'disconnected'
   | 'connecting'
@@ -120,6 +138,15 @@ function routeInbound(msg: ServerMessage): void {
     // 通道订阅（首次 send 前可能无订阅者 → dispatchSession no-op → 错误丢弃）。
     if (msg.type === 'session.exited') {
       handleSessionExited(sid, msg.payload as { code: number | null; reason: string })
+    }
+    // P6 D6 session.delete 两步广播：全局兜底（不依赖 panel 订阅）。
+    // session.deleting：soft close panel（预告，暂不清 store）。
+    // session.deleted：cleanupSession（清 store 分区，防其他客户端内存泄漏）。
+    // 发起方不收广播 deleted（broadcastExcept 排除），只走 reply → pending.resolve → deleteSession。
+    if (msg.type === 'session.deleting') {
+      sessionDeleteHandlers?.onDeleting(sid)
+    } else if (msg.type === 'session.deleted') {
+      sessionDeleteHandlers?.onDeleted(sid)
     }
     // P5 lease：session.busy/idle 更新 session store 占用状态（UI 标题旁占用指示器）。
     // busy：lease acquire 成功，payload 含 clientId（busyOwnerId）；idle：lease 释放，清除占用。
