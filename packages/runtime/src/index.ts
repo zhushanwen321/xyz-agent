@@ -38,6 +38,10 @@ import { TerminalService } from './services/terminal/terminal-service.js'
 import { QuotaService } from './services/quota-service.js'
 import { FileService } from './services/file-service.js'
 import { HandoffService } from './services/handoff-service.js'
+// MessageBus（wave:bus-core）：per-session 消息广播核心。本 wave 仅导出，
+// 不在组合根接线（runtime-wiring wave 会把 ws 实例适配为 BusClient 并接入）。
+export { MessageBus } from './services/message-bus/message-bus.js'
+export type { BusClient, SessionBusState } from './services/message-bus/types.js'
 import { getAppVersion } from './services/plugin-service/plugin-version-checker.js'
 import { FsExecutor } from './infra/fs-executor.js'
 import { RecentWorkspacesStore } from './services/workspace/recent-workspaces-store.js'
