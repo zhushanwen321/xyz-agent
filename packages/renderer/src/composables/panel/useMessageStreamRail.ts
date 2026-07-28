@@ -100,7 +100,14 @@ export function useMessageStreamRail(deps: UseMessageStreamRailDeps): {
   function updateActiveTurnIndex(): void {
     const v = deps.vlistRef.value
     if (!v) return
-    activeTurnIndex.value = v.findItemIndex(v.scrollOffset)
+    const renderIdx = v.findItemIndex(v.scrollOffset)
+    // findItemIndex 返回 renderItems 空间下标（含 system 条目），
+    // 需映射回 railTurns 空间（仅 turn），与 onJump 的映射对称。
+    // 若 renderItems[renderIdx] 是 system 项，保持上次 activeTurnIndex 不变。
+    const item = renderItems.value[renderIdx]
+    if (item?.kind === 'turn') {
+      activeTurnIndex.value = railTurns.value.findIndex((t) => t === item.turn)
+    }
   }
 
   /**

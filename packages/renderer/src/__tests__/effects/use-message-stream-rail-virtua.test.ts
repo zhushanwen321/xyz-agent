@@ -117,6 +117,29 @@ describe('useMessageStreamRail · W2TC2: 传 mock vlistRef（virtua 路径）', 
     expect(rail.activeTurnIndex.value).toBe(2)
   })
 
+  it('updateActiveTurnIndex 把 renderItems 空间下标映射回 railTurns 空间（system 穿插场景）', () => {
+    // renderItems = [turn0, system, turn1, system, turn2]：railTurns = [turn0, turn1, turn2]
+    // findItemIndex 返回 4（renderItems 空间，指向 turn2）→ 映射回 railTurns 空间下标 2
+    // 未修复时 activeTurnIndex 会是 4（> railTurns.length=3），TurnRail 的 topPct 计算会越界。
+    const renderItems: RenderItem[] = [
+      turnItem(1),
+      { kind: 'system', message: { id: 's1', role: 'system', content: 'x' } as never },
+      turnItem(2),
+      { kind: 'system', message: { id: 's2', role: 'system', content: 'y' } as never },
+      turnItem(3),
+    ]
+    const findItemIndex = vi.fn(() => 4)
+    const mock = createMockVlist({ scrollOffset: 800, findItemIndex })
+    const vlistRef = ref<VirtualizerHandle | null>(mock)
+    const { rail } = mountRail({ renderItems, vlistRef })
+
+    rail.updateActiveTurnIndex()
+
+    expect(findItemIndex).toHaveBeenCalledWith(800)
+    // railTurns 空间下标：turn2 是 railTurns[2]，不是 renderItems[4]
+    expect(rail.activeTurnIndex.value).toBe(2)
+  })
+
   it('onJump rail idx 映射回 renderItems 下标（系统提示行穿插场景）', () => {
     // renderItems = [system, turn1, system, turn2, turn3]：railTurns=[turn1,turn2,turn3]
     // rail idx=2（turn3）→ renderItems 下标=4
