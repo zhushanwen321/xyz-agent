@@ -12,13 +12,45 @@
         <Loader2 class="size-4 animate-spin text-subtle" />
         <span class="text-[12.5px] text-subtle">{{ t('connection.restarting') }}</span>
       </template>
-      <!-- runtime 重启用尽，需手动重试 -->
+      <!-- runtime 重启用尽 / 远程失败（按 failReason × isRemote 分化文案与按钮） -->
       <template v-else-if="connectionState === 'failed'">
-        <AlertCircle class="size-5 text-danger" />
-        <span class="text-[12.5px] text-muted">{{ t('connection.failed') }}</span>
-        <Button variant="default" size="sm" data-testid="runtime-retry-btn" @click="onRetry">
-          {{ t('connection.retry') }}
-        </Button>
+        <!-- 远程 auth 失败：token 错误或被重置 → 重新连接 + 修改连接信息 -->
+        <template v-if="failReason === 'auth'">
+          <AlertCircle class="size-5 text-danger" />
+          <span class="text-[12.5px] text-muted">{{ t('connection.failedAuth') }}</span>
+          <div class="flex gap-2">
+            <Button variant="default" size="sm" data-testid="failed-reconnect-btn" @click="onRetry">
+              {{ t('connection.retry') }}
+            </Button>
+            <Button variant="ghost" size="sm" data-testid="failed-edit-connection-btn" @click="onEditConnection">
+              {{ t('connection.editConnection') }}
+            </Button>
+          </div>
+        </template>
+        <!-- 远程被挤下线：此设备已在其他窗口连接 → 强制接管（断开重连挤回对方） -->
+        <template v-else-if="failReason === 'replaced'">
+          <AlertCircle class="size-5 text-danger" />
+          <span class="text-[12.5px] text-muted">{{ t('connection.failedReplaced') }}</span>
+          <Button variant="default" size="sm" data-testid="failed-force-takeover-btn" @click="onRetry">
+            {{ t('connection.forceTakeover') }}
+          </Button>
+        </template>
+        <!-- 远程网络失败：检查 Tailscale/服务器是否在线 → 重试（断开重连，非 IPC restart） -->
+        <template v-else-if="isRemote">
+          <AlertCircle class="size-5 text-danger" />
+          <span class="text-[12.5px] text-muted">{{ t('connection.failedRemoteNetwork') }}</span>
+          <Button variant="default" size="sm" data-testid="failed-remote-retry-btn" @click="onRetry">
+            {{ t('connection.retry') }}
+          </Button>
+        </template>
+        <!-- 本地失败（failReason=null 或 network+!isRemote）：现状分支逐字节不变 -->
+        <template v-else>
+          <AlertCircle class="size-5 text-danger" />
+          <span class="text-[12.5px] text-muted">{{ t('connection.failed') }}</span>
+          <Button variant="default" size="sm" data-testid="runtime-retry-btn" @click="onRetry">
+            {{ t('connection.retry') }}
+          </Button>
+        </template>
       </template>
       <!-- 默认连接中（connecting/disconnected/reconnecting） -->
       <span v-else class="text-[12.5px] text-subtle">{{ t('connection.connecting') }}</span>
@@ -28,23 +60,33 @@
     <!-- L0 Shell 挂载点。traffic light 安全区在 AsideRegion 内（padding-top:52px，spec §三）。 -->
     <AppShell />
   </template>
+  <!-- 远程连接配置 modal（failed(auth) 分支点 [修改连接信息] 触发打开；T4 stub 占位） -->
+  <RemoteConnectModal v-if="showRemoteModal" standalone @close="showRemoteModal = false" />
   <ToastContainer />
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Loader2, AlertCircle } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import AppShell from '@/components/shell/AppShell.vue'
 import ToastContainer from '@/components/ui/ToastContainer.vue'
 import { Button } from '@/components/ui/button'
+import RemoteConnectModal from '@/components/remote/RemoteConnectModal.vue'
 import { useConnection } from '@/composables/useConnection'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { bindForkNoticeEffect } from '@/composables/effects/useForkNoticeEffect'
+// ws-client 单例只读 ref：failReason/isRemote 远程化扩展（wave1 ae71e6540）。
+// App 直接读 ws-client 模块而非 useConnection 返回值——useConnection 不暴露这俩 ref，
+// 且 App-w8 测试 mock useConnection 不影响此处模块 import（解耦测试契约）。
+import { getFailReason, getIsRemote } from '@/lib/ws-client'
 
 // 应用挂载即初始化连接（mock 模式 200ms 直进 connected；真 runtime 走端口发现）。
 const { t } = useI18n()
 const { state: connectionState, init, teardown, retryRuntime } = useConnection()
+// failed 分支按 (failReason, isRemote) 分化文案+按钮（远程 auth/replaced/network 三态 + 本地不变）。
+const failReason = getFailReason()
+const isRemote = getIsRemote()
 // 启动编排（#1/#3）：连接建立后自动进 new-task landing（首次）或恢复最近 session。
 // useConnection.init 是 fire-and-forget（connect 异步），return 时连接未握手指；state==='connected'
 // 是「连接成功」唯一可靠信号——watch 它触发 onConnected，appBootstrapped 守卫保证 HMR/重连幂等。
@@ -64,10 +106,21 @@ watch(connectionState, (s) => {
   if (s === 'connected') void onConnected()
 })
 
-/** 用户点击「重试」：委托 IPC runtime-restart → 主进程 supervisor.restartRuntime。
- *  重启成功后 supervisor 广播 runtime-port，onRuntimePort 监听自动重连 → 回到 connected。 */
+/** 远程连接配置 modal 开关（failed(auth) 分支点 [修改连接信息] 触发）。
+ *  RemoteConnectModal 是 T4 stub（占位），本 wave 仅接线挂载点。 */
+const showRemoteModal = ref(false)
+
+/** 用户点击「重试」/「重新连接」/「强制接管」：委托 retryRuntime。
+ *  useConnection.retryRuntime 已分模式（wave1 c52820b1e）：
+ *  - 远程：disconnect + connect(activeProfile, {auth})（断开重连，非 IPC restart）
+ *  - 本地：IPC runtime-restart → 主进程 supervisor.restartRuntime（逐字节不变） */
 function onRetry(): void {
   void retryRuntime()
+}
+
+/** 用户点击「修改连接信息」：打开 RemoteConnectModal（T4 stub）编辑远程 profile。 */
+function onEditConnection(): void {
+  showRemoteModal.value = true
 }
 
 onBeforeUnmount(() => teardown())
