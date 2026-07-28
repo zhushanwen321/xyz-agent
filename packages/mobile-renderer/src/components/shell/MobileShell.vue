@@ -15,10 +15,19 @@ import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BottomTabBar from './BottomTabBar.vue'
 import SessionsTab from '@/components/sessions/SessionsTab.vue'
+import FilesTab from '@/components/files/FilesTab.vue'
 import type { MobileTab } from './types'
 
 const { t } = useI18n()
 const activeTab = ref<MobileTab>('sessions')
+
+/** 当前选中 session id（从 SessionsTab 选中态透传，供 FilesTab 读文件树）。null = 未选中。 */
+const currentSessionId = ref<string | null>(null)
+
+/** SessionsTab 选中 session → 透传 currentSessionId（供 Files tab 读该 session 的文件树）。 */
+function onSessionSelected(sessionId: string): void {
+  currentSessionId.value = sessionId
+}
 </script>
 
 <template>
@@ -35,10 +44,18 @@ const activeTab = ref<MobileTab>('sessions')
     <!-- Content（flex-1 overflow-hidden，KeepAlive 三 tab content） -->
     <main class="mobile-content flex-1 overflow-hidden" data-testid="mobile-content">
       <KeepAlive>
-        <SessionsTab v-if="activeTab === 'sessions'" key="sessions" data-testid="mobile-tab-content-sessions" />
-        <section v-else-if="activeTab === 'files'" key="files" data-testid="mobile-tab-content-files" class="h-full p-4 text-sm text-muted">
-          files
-        </section>
+        <SessionsTab
+          v-if="activeTab === 'sessions'"
+          key="sessions"
+          data-testid="mobile-tab-content-sessions"
+          @select="onSessionSelected"
+        />
+        <FilesTab
+          v-else-if="activeTab === 'files'"
+          key="files"
+          data-testid="mobile-tab-content-files"
+          :session-id="currentSessionId"
+        />
         <section v-else key="settings" data-testid="mobile-tab-content-settings" class="h-full p-4 text-sm text-muted">
           settings
         </section>

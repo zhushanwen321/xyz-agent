@@ -17,9 +17,13 @@ import MobileNewSession from './MobileNewSession.vue'
 const view = ref<SessionsView>('list')
 const selectedId = ref<string | null>(null)
 
+const emit = defineEmits<{ select: [sessionId: string] }>()
+
 function onSelect(sessionId: string): void {
   selectedId.value = sessionId
   view.value = 'chat'
+  // 透传给 MobileShell（供 Files tab 读该 session 的文件树）
+  emit('select', sessionId)
 }
 
 function onBack(): void {

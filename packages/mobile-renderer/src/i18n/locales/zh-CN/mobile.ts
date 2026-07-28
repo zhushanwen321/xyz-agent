@@ -15,6 +15,10 @@ export default {
     new: '新建',
     empty: '暂无会话，点 + 新建',
   },
+  files: {
+    empty: '文件树为空或加载中。',
+    selectSession: '请在「会话」标签页选择会话以查看其文件。',
+  },
   chat: {
     back: '返回',
     empty: '发送消息开始对话',

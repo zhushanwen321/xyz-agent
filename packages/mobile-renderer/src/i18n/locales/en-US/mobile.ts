@@ -15,6 +15,10 @@ export default {
     new: 'New',
     empty: 'No sessions yet. Tap + to create.',
   },
+  files: {
+    empty: 'File tree is empty or still loading.',
+    selectSession: 'Select a session in the Sessions tab to view its files.',
+  },
   chat: {
     back: 'Back',
     empty: 'Send a message to start',
