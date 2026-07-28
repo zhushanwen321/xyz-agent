@@ -160,13 +160,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     private readonly sessionStore: ISessionStore,
     private readonly gitInfoReader: IGitInfoReader,
     private readonly workspaceService: WorkspaceService,
+    messageBus?: MessageBus,
   ) {
     // 打包模式:extension 在 Resources 根;开发模式:在 repo root(apps/electron/ 父目录)
     this.extensionPath = getExtensionFilePath(this.projectRoot, isPackaged())
 
     // 子模块注入 this(Facade 半构造时仅存引用,其方法在 Facade 完全构造后才被调用)
     this.lifecycle = new SessionLifecycle(this, this.pm, this.configStore, this.sessionStore, this.workspaceService)
-    this.dispatcher = new MessageDispatcher(this, this.pm, this.broker, this.workspaceService)
+    this.dispatcher = new MessageDispatcher(this, this.pm, this.broker, this.workspaceService, messageBus)
     this.scanner = new SessionScanner(this, this.sessionStore, this.gitInfoReader)
 
     // 进程崩溃清理:协调 adapter detach / Map 删 / 列表刷新 / session.exited 广播

@@ -253,6 +253,8 @@ async function main(): Promise<void> {
     // 与 GitExecutor 同为 git 域 infra，但语义不同（窄查询 vs 通用 exec）——故独立 port（services/ports/git-info.ts）。
     new GitInfoReader(),
     workspaceService,
+    // messageBus：注入 dispatcher 的 session 级事件双写（dispatcher 内部 bus?.publish after broker.broadcast）。
+    messageBus,
   )
 
   // HandoffService：fast-handoff 编排层。依赖 sessionService（create/sendMessage/abort/getHistory/getSession）
