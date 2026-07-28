@@ -25,11 +25,11 @@
           <!-- · 分隔符：仅非 working 态显示。working（streaming）态内容直接跟在"思考"后，更紧凑 -->
           <span v-if="!working" class="text-neutral-faint">·</span>
         </span>
-        <!-- 内容 block：从最左占满，第一行环绕 float label，第二行起回到容器左缘 -->
+        <!-- 内容 block：从最左占满，第一行环绕 float label，第二行起缩进到 chevron 之后（pl-5） -->
         <div v-if="!thinkingExpanded" class="think-content-collapsed truncate text-[length:var(--text-sm)] text-neutral-dim">
           {{ previewText }}
         </div>
-        <div v-else class="think-content-expanded text-[length:var(--text-sm)] leading-[1.7] text-neutral-dim">
+        <div v-else class="think-content-expanded pl-5 text-[length:var(--text-sm)] leading-[1.7] text-neutral-dim">
           <!-- copy 按钮浮在内容右上角（hover 显） -->
           <Button
             variant="ghost"
