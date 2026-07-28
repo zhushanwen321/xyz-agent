@@ -68,7 +68,7 @@ describe('terminal-service node-pty 缺失降级', () => {
     expect(() => svc.write('s1', 'x')).toThrow(
       expect.objectContaining({ code: 'terminal_unavailable' }),
     )
-    expect(() => svc.resize('s1', 80, 24)).toThrow(
+    expect(() => svc.resize('s1', 80, 24, 'local', 'local')).toThrow(
       expect.objectContaining({ code: 'terminal_unavailable' }),
     )
     expect(() => svc.kill('s1')).toThrow(
@@ -103,7 +103,7 @@ describe('terminal-service node-pty 缺失降级', () => {
     const svc = new TerminalService({ broadcast: () => {} })
 
     expect(() => svc.write('s1', 'x')).not.toThrow()
-    expect(() => svc.resize('s1', 80, 24)).not.toThrow()
+    expect(() => svc.resize('s1', 80, 24, 'local', 'local')).not.toThrow()
     expect(() => svc.kill('s1')).not.toThrow()
     expect(() => svc.destroyPty('s1')).not.toThrow()
   })

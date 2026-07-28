@@ -19,10 +19,16 @@ import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType, TerminalEnvelopeCode } from '@xyz-agent/shared'
 import type { MessageHandlerContext } from './message-context.js'
 import type { ITerminalService } from '../services/ports/terminal-service.js'
+import { ResizeLockedError } from '../services/terminal/terminal-service.js'
 
 /** Terminal handler 依赖的 context（messaging + terminalService）。 */
 export interface TerminalHandlerContext extends MessageHandlerContext {
   terminalService: ITerminalService
+  /**
+   * P6 D7 resize owner：取某 clientId 连接的设备名（resize 时记录 ownerDevice）。
+   * 可选——未注入时 ownerDevice 兜底 ''（向后兼容无 P5 连接池的场景）。
+   */
+  getDeviceName?(clientId: string): string | undefined
 }
 
 /** 具有 code 字段的业务错误形状（TerminalService 抛出的扁平错误）。 */
@@ -43,7 +49,7 @@ export class TerminalMessageHandler {
     'terminal.attach',
   ]
 
-  async handleTerminalMessage(msg: ClientMessage, ws: WsType): Promise<void> {
+  async handleTerminalMessage(msg: ClientMessage, ws: WsType, clientId: string): Promise<void> {
     switch (msg.type) {
       case 'terminal.spawn': {
         const { sessionId, cwd, cols, rows } = msg.payload
@@ -65,10 +71,18 @@ export class TerminalMessageHandler {
       }
       case 'terminal.resize': {
         const { sessionId, cols, rows } = msg.payload
+        // P6 D7：透传 clientId + ownerDevice 给 resize（先到先得 owner 模型）。
+        const ownerDevice = this.ctx.getDeviceName?.(clientId) ?? ''
         try {
-          this.ctx.terminalService.resize(sessionId, cols, rows)
+          this.ctx.terminalService.resize(sessionId, cols, rows, clientId, ownerDevice)
           return this.ctx.reply(ws, msg.id, 'terminal.ack', {})
         } catch (e) {
+          // P6 D7：ResizeLockedError → reply error{code:'resize_locked', owner, ownerDevice}，
+          // 前端提示「{ownerDevice} 正在控制终端大小」。用 sendError 的 details 槽携带 owner/ownerDevice。
+          if (e instanceof ResizeLockedError) {
+            this.ctx.sendError(ws, 'resize_locked', e.message, msg.id, { owner: e.owner, ownerDevice: e.ownerDevice })
+            return
+          }
           return this.sendTerminalError(ws, msg.id, e)
         }
       }

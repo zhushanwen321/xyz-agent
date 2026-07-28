@@ -87,6 +87,12 @@ export class RuntimeServer implements IMessageBroker {
   private workspaceMessageHandler!: WorkspaceMessageHandler
   private worktreeMessageHandler?: WorktreeMessageHandler
   private terminalMessageHandler?: TerminalMessageHandler
+  /**
+   * P6 D7：terminal service 引用（onDisconnect 时 clearResizeOwner 用）。
+   * terminalMessageHandler 在 setServices 后创建，但 handler 的 ctx 是 private，
+   * 故单独持有 terminalService 引用供 onDisconnect 直接调 clearResizeOwner。
+   */
+  private terminalService?: ITerminalService
 
   /**
    * D1: 中央分发表。此前是 55 行 switch，每个 case 纯转发、零逻辑。
@@ -108,7 +114,11 @@ export class RuntimeServer implements IMessageBroker {
       onConnect: (ws, _clientId) => this.broker.sendInitialState(ws),
       onMessage: (msg, ws, clientId) => this.handleMessage(msg, ws, clientId),
       // P5 onDisconnect：连接下线回调（presence-client slice 接 presence 重推；本 wave 空实现避免 server 持 presence 依赖）。
-      onDisconnect: (_ws, _clientId) => { /* presence 重推在 connection-manager 内部触发 onPresenceUpdate */ },
+      // P6 D7：terminal resize owner 清理——释放断开客户端持有的 resize 锁（防永久持锁）。
+      // this.terminalService 在 setServices 后赋值（运行时必已初始化）。
+      onDisconnect: (_ws, clientId) => {
+        this.terminalService?.clearResizeOwner(clientId)
+      },
       // P5 presence：connection-manager broadcastPresence 触发时广播 presence.update（全量列表）。
       onPresenceUpdate: (connections) => this.broker.broadcast({ type: 'presence.update', payload: { connections } }),
       sendError: (ws, code, message, id, details) => this.broker.sendError(ws, code, message, id, details),
@@ -280,7 +290,12 @@ export class RuntimeServer implements IMessageBroker {
       this.terminalMessageHandler = new TerminalMessageHandler({
         ...messaging,
         terminalService: terminal,
+        // P6 D7 resize owner：取 clientId 连接的 deviceName（resize 记录 ownerDevice 用）。
+        // 复用 session-handler 同源 getDeviceName（conn.clients.get(clientId)?.deviceName）。
+        getDeviceName: (clientId) => this.conn.clients.get(clientId)?.deviceName,
       })
+      // P6 D7：持有引用供 onDisconnect 调 clearResizeOwner。
+      this.terminalService = terminal
     }
 
     // ── Build the central dispatch table (D1) ───────────────────────
@@ -302,7 +317,7 @@ export class RuntimeServer implements IMessageBroker {
       ...(fileHandler ? fileHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, _clientId: string) => fileHandler.handleFileMessage(msg, ws)] as const) : []),
       ...(workspaceHandler ? workspaceHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, _clientId: string) => workspaceHandler.handleWorkspaceMessage(msg, ws)] as const) : []),
       ...(worktreeHandler ? worktreeHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, _clientId: string) => worktreeHandler.handleWorktreeMessage(msg, ws)] as const) : []),
-      ...(terminalHandler ? terminalHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, _clientId: string) => terminalHandler.handleTerminalMessage(msg, ws)] as const) : []),
+      ...(terminalHandler ? terminalHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, clientId: string) => terminalHandler.handleTerminalMessage(msg, ws, clientId)] as const) : []),
     ] as Array<[ClientMessageType, (msg: ClientMessage, ws: WsType, clientId: string) => Promise<unknown> | unknown]>)
   }
 

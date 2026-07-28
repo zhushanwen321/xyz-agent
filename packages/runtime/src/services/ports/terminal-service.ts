@@ -40,8 +40,22 @@ export interface ITerminalService {
   spawn(sid: string, cwd: string | undefined, cols: number, rows: number): Promise<void>
   /** 向 PTY 写入字节（用户输入或联动 2 填命令）。sid 无 PTY 时 no-op。 */
   write(sid: string, data: string): void
-  /** 调整 PTY 尺寸（xterm fit addon 触发）。sid 无 PTY 时 no-op。 */
-  resize(sid: string, cols: number, rows: number): void
+  /**
+   * 调整 PTY 尺寸（xterm fit addon 触发）。sid 无 PTY 时 no-op（不记录 owner）。
+   *
+   * P6 D7 resize owner（先到先得）：若 session 已有 owner 且 clientId !== owner.clientId →
+   * 抛 ResizeLockedError{owner, ownerDevice}（handler 转 reply error{code:'resize_locked'}）；
+   * 否则 set/更新 owner + proc.resize。同 clientId 重复 resize 直接 resize（owner 不变）。
+   *
+   * @param clientId 发起 resize 的客户端 id（P5 透传）
+   * @param ownerDevice 发起客户端的设备名（P5 ConnectionCtx.deviceName，reply 字段用）
+   */
+  resize(sid: string, cols: number, rows: number, clientId: string, ownerDevice: string): void
+  /**
+   * P6 D7：清理某 clientId 持有的所有 session resize owner（onDisconnect 调用）。
+   * 遍历 resizeOwners 删 owner.clientId===clientId 的条目，释放崩溃/断开客户端持有的 resize 锁。
+   */
+  clearResizeOwner(clientId: string): void
   /** 主动 kill PTY（terminal 工具栏 kill 按钮）。sid 无 PTY 时 no-op。 */
   kill(sid: string): void
   /**

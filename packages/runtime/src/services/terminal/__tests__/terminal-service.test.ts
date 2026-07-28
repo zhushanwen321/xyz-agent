@@ -122,7 +122,8 @@ describe('TerminalService', () => {
     const { broadcast } = createBroadcastCollector()
     const svc = new TerminalService({ broadcast })
     await svc.spawn('s3', undefined, 80, 24)
-    svc.resize('s3', 120, 40)
+    // P6 D7：resize 加 clientId/ownerDevice 参数
+    svc.resize('s3', 120, 40, 'local', 'local')
     expect(mockPtys.at(-1)!.resize).toHaveBeenCalledWith(120, 40)
   })
 
@@ -171,7 +172,7 @@ describe('TerminalService', () => {
     const svc = new TerminalService({ broadcast })
     expect(() => svc.kill('nonexistent')).not.toThrow()
     expect(() => svc.write('nonexistent', 'x')).not.toThrow()
-    expect(() => svc.resize('nonexistent', 80, 24)).not.toThrow()
+    expect(() => svc.resize('nonexistent', 80, 24, 'local', 'local')).not.toThrow()
     expect(() => svc.destroyPty('nonexistent')).not.toThrow()
   })
 

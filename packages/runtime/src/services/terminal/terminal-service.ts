@@ -86,6 +86,34 @@ function terminalError(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
 }
 
+/**
+ * P6 D7 terminal resize owner 记录（先到先得模型）。
+ * per-session 单 owner：第一个 resize 的客户端持有，其他客户端 resize 被拒（ResizeLockedError）。
+ * owner 释放时机：该客户端断开连接（onDisconnect → clearResizeOwner）。
+ * 字段名 ownerDevice（R1-m1 统一，非 resizeOwnerDevice）。
+ */
+export interface ResizeOwner {
+  clientId: string
+  ownerDevice: string
+}
+
+/**
+ * P6 D7 resize owner 冲突错误。
+ * resize 时 session 已有 owner 且 clientId !== owner.clientId 抛出。
+ * handler 捕获后 reply error{code:'resize_locked', owner, ownerDevice}，
+ * 前端提示「{ownerDevice} 正在控制终端大小」。
+ */
+export class ResizeLockedError extends Error {
+  readonly code = 'resize_locked' as const
+  constructor(
+    public readonly owner: string,
+    public readonly ownerDevice: string,
+  ) {
+    super(`terminal resize locked by ${ownerDevice} (${owner})`)
+    this.name = 'ResizeLockedError'
+  }
+}
+
 /** 把 Error 序列化为 plain object，避免 logger 的 JSON.stringify 把 Error 实例变成 {}。
  *  Error 的 message/stack 在原型链上（非 own-enumerable），JSON.stringify 丢掉它们，
  *  导致 catch 块直接打印错误实例时日志只剩 {}，看不出真实错误。 */
@@ -109,6 +137,14 @@ function nextPushId(): string {
 
 export class TerminalService implements ITerminalService {
   private readonly ptyMap = new Map<string, import('node-pty').IPty>()
+
+  /**
+   * P6 D7：per-session terminal resize owner 记录（先到先得模型）。
+   * key=sessionId，value=ResizeOwner{clientId, ownerDevice}。
+   * 第一个 resize 的客户端持有 owner，其他 clientId resize 被拒（ResizeLockedError）。
+   * 释放时机：onDisconnect → clearResizeOwner(clientId) 遍历清理；destroyPty(sid) 清该 sid 条目。
+   */
+  private readonly resizeOwners = new Map<string, ResizeOwner>()
 
   /**
    * P2-s3：per-session terminal scrollback ring buffer 池（spec §五）。
@@ -224,17 +260,37 @@ export class TerminalService implements ITerminalService {
     }
   }
 
-  resize(sid: string, cols: number, rows: number): void {
+  resize(sid: string, cols: number, rows: number, clientId: string, ownerDevice: string): void {
     if (ptyLoadAttempted && !pty) {
       throw terminalError(TERMINAL_UNAVAILABLE, 'node-pty not installed, terminal features disabled')
     }
     const proc = this.ptyMap.get(sid)
-    if (!proc) return
+    if (!proc) return // no-op：PTY 未就绪或已退出（不记录 owner——无 PTY 谈不上 resize）
+    // P6 D7 resize owner（先到先得）：已有 owner 且 clientId !== owner.clientId → 拒绝。
+    const existing = this.resizeOwners.get(sid)
+    if (existing && existing.clientId !== clientId) {
+      throw new ResizeLockedError(existing.clientId, existing.ownerDevice)
+    }
+    // 无 owner 或同 clientId → set/更新 owner（同 clientId 重复 resize 覆盖 ownerDevice，幂等）。
+    this.resizeOwners.set(sid, { clientId, ownerDevice })
     try {
       proc.resize(cols, rows)
     } catch (e) {
       // best-effort：进程已退出时 resize 抛错属预期竞态，下次 spawn 会重建，不传播
       console.error(`[terminal] resize failed: sid=${sid}`, serializeError(e))
+    }
+  }
+
+  /**
+   * P6 D7：清理某 clientId 持有的所有 session resize owner（onDisconnect 调用）。
+   * 遍历 resizeOwners 删 owner.clientId===clientId 的条目，释放崩溃/断开客户端持有的 resize 锁。
+   * session 数受 MAX_SESSIONS 上限（默认 10），O(N) 遍历无性能影响（无反向索引 clientId→sessions）。
+   */
+  clearResizeOwner(clientId: string): void {
+    for (const [sid, owner] of this.resizeOwners) {
+      if (owner.clientId === clientId) {
+        this.resizeOwners.delete(sid)
+      }
     }
   }
 
@@ -303,6 +359,8 @@ export class TerminalService implements ITerminalService {
     this.ptyMap.delete(sid)
     // P2-s3：session 销毁清除 scrollback（D4：session 已删，buffer 不该残留）。
     this.clearScrollback(sid)
+    // P6 D7：session 销毁清该 sid 的 resize owner（PTY 没了，owner 无意义）。
+    this.resizeOwners.delete(sid)
     // session 销毁不广播 terminal.exit（前端已在 session.deleted 清理分区）
   }
 
