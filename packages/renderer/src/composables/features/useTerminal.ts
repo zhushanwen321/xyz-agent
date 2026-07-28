@@ -33,6 +33,10 @@ import { useSessionEvents } from '@/composables/features/useSessionEvents'
 import { useTerminalWriteQueueStore } from '@/stores/terminal-write-queue'
 import { terminalApi } from '@/api/domains/terminal'
 import { useReconnectEpoch } from '@/lib/terminal-reconnect-signal'
+import { useToast } from '@/composables/useToast'
+import i18n from '@/i18n'
+
+const t = i18n.global.t
 
 /** terminal per-session 状态分区。reactive 容器（ADR-0036 契约）。 */
 interface TerminalPartition {
@@ -139,12 +143,34 @@ export function useTerminal(sessionIdRef: Ref<string | null>) {
     void terminalApi.write(sid, data)
   }
 
-  /** 调整尺寸（xterm fit addon 触发）。 */
+  /**
+   * 调整尺寸（xterm fit addon 触发）。
+   *
+   * P6 D7 DoD #6：resize 被其它客户端持锁拒绝时提示用户。runtime reply
+   * error{code:'resize_locked', details:{detail:{owner, ownerDevice}}}，useConnection
+   * dispatcher 把 details.detail 对象展开到 reject 的 Error 上（enriched），故此处
+   * catch 到的 error 形如 { code:'resize_locked', owner, ownerDevice }。
+   * 消费 ownerDevice → toast「{device} 正在控制终端大小」（ownerDevice 为空串兜底通用文案）。
+   * 参考 P5 send.rejected busy toast 模式（useChat.ts）。
+   */
   function resizeTerminal(cols: number, rows: number): void {
     const sid = sessionIdRef.value
     if (!sid) return
     state.update((s) => { s.cols = cols; s.rows = rows })
-    void terminalApi.resize(sid, cols, rows)
+    void terminalApi.resize(sid, cols, rows).catch((e: unknown) => {
+      const err = e as { code?: string; ownerDevice?: string; message?: string }
+      if (err && err.code === 'resize_locked') {
+        const { warning } = useToast()
+        const device = typeof err.ownerDevice === 'string' && err.ownerDevice.length > 0
+          ? err.ownerDevice
+          : ''
+        warning(device
+          ? t('composable.resizeLocked', { device })
+          : t('composable.resizeLockedUnknown'))
+        return
+      }
+      // 其它错误（timeout / terminal_failed / ...）best-effort 不卡 UI（resize 是高频低风险操作）。
+    })
   }
 
   /** kill PTY（工具栏 kill 按钮）。 */

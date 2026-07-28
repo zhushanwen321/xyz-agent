@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { defineComponent, h, ref } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { useToast } from '@/composables/useToast'
 import type { UseTerminalReturn } from '@/composables/features/useTerminal'
 
 // ── mock terminalApi（隔离 RPC）────────────────────────────────────────────
@@ -108,6 +109,86 @@ describe('useTerminal 编排逻辑', () => {
     const terminal = wrapper.vm.terminal as UseTerminalReturn
     terminal.killTerminal()
     expect(terminalApiMock.kill).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+})
+
+/**
+ * P6 D7 DoD #6：resize 被其它客户端持锁拒绝时 toast 提示「{device} 正在控制终端大小」。
+ *
+ * runtime reply error{code:'resize_locked', details:{detail:{owner, ownerDevice}}}，
+ * useConnection dispatcher 把 details.detail 对象展开到 reject 的 Error 上（enriched），
+ * 故 useTerminal.resizeTerminal catch 到的 error 形如 { code:'resize_locked', owner, ownerDevice }。
+ *
+ * 这组测试模拟该 reject 形态，断言 toast 推送 + 文案含 ownerDevice（DoD #6）。
+ */
+describe('useTerminal resize_locked 提示 (P6 D7 DoD #6)', () => {
+  it('RL-1: resize 返回 resize_locked → toast 含 ownerDevice「{device} 正在控制终端大小」', async () => {
+    // 模拟 useConnection dispatcher 展开后的 reject Error（code + ownerDevice）
+    const resizeLockedErr = Object.assign(new Error('resize locked'), {
+      code: 'resize_locked',
+      owner: 'client-A',
+      ownerDevice: 'iPad',
+    })
+    terminalApiMock.resize.mockRejectedValueOnce(resizeLockedErr)
+
+    const Host = makeHost('s1')
+    const wrapper = mount(Host)
+    const terminal = wrapper.vm.terminal as UseTerminalReturn
+    const { toasts } = useToast()
+    const before = toasts.value.length
+
+    terminal.resizeTerminal(120, 40)
+    await flushPromises()
+
+    // toast 推送 +1
+    expect(toasts.value.length).toBe(before + 1)
+    const latest = toasts.value[toasts.value.length - 1]!
+    expect(latest.type).toBe('warning')
+    // 文案含 ownerDevice（DoD #6：「{device} 正在控制终端大小」）
+    expect(latest.message).toContain('iPad')
+    wrapper.unmount()
+  })
+
+  it('RL-2: ownerDevice 缺失（空串）→ toast 回退通用文案，不显示空设备名', async () => {
+    const resizeLockedErr = Object.assign(new Error('resize locked'), {
+      code: 'resize_locked',
+      owner: 'client-A',
+      ownerDevice: '',
+    })
+    terminalApiMock.resize.mockRejectedValueOnce(resizeLockedErr)
+
+    const Host = makeHost('s1')
+    const wrapper = mount(Host)
+    const terminal = wrapper.vm.terminal as UseTerminalReturn
+    const { toasts } = useToast()
+    const before = toasts.value.length
+
+    terminal.resizeTerminal(100, 30)
+    await flushPromises()
+
+    expect(toasts.value.length).toBe(before + 1)
+    const latest = toasts.value[toasts.value.length - 1]!
+    // 通用文案（不含空 device 占位回显）
+    expect(latest.message).toContain('终端大小')
+    wrapper.unmount()
+  })
+
+  it('RL-3: 非 resize_locked 错误（如 timeout）→ 不推 toast（best-effort 不卡高频 resize）', async () => {
+    const timeoutErr = Object.assign(new Error('request timeout'), { code: 'timeout' })
+    terminalApiMock.resize.mockRejectedValueOnce(timeoutErr)
+
+    const Host = makeHost('s1')
+    const wrapper = mount(Host)
+    const terminal = wrapper.vm.terminal as UseTerminalReturn
+    const { toasts } = useToast()
+    const before = toasts.value.length
+
+    terminal.resizeTerminal(100, 30)
+    await flushPromises()
+
+    // 非 resize_locked 不推 toast（不刷屏高频 resize 的瞬时错误）
+    expect(toasts.value.length).toBe(before)
     wrapper.unmount()
   })
 })
