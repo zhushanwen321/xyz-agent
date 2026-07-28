@@ -43,6 +43,14 @@ export interface IManagedSessionView {
    * 与 isGenerating 对称：不进 toSummary（前端状态摘要只看 isGenerating 推 active/idle）。
    */
   isCompacting: boolean
+  /**
+   * P5 lease：持有 lease 的 clientId（无 lease 时 undefined）。与 leaseExpiresAt 成对。
+   * LeaseManager.acquire 成功时设，release/release 清 undefined。toSummary 透传到 SessionSummary。
+   * 审查 M1：不引入 leaseFence（fence 推迟到真正消费方，P5-P7 无消费方）。
+   */
+  busyOwnerId?: string
+  /** P5 lease：lease TTL 到期时间（unix ms，无 lease 时 undefined）。续租挂 pingTick 成功路径。 */
+  leaseExpiresAt?: number
   thinkingLevel?: string
   sessionFilePath?: string
   /**

@@ -267,6 +267,50 @@ export class ServerMessageBroker implements IMessageBroker {
     this.send(ws, { type, id, payload })
   }
 
+  /**
+   * P5 lease/presence：定向投递给指定 clientId（点对点，不打 seq、不入 P2 ring buffer 桶）。
+   *
+   * 与 broadcast 的差异：①只发一个目标 client（按 clientId 从连接池取 ctx.ws）；
+   * ②不调 seqCounter.assignSeq（定向投递非广播，与 reply/send 同语义）；③不入 session 桶
+   * （定向投递不参与 resume 回放——send.rejected 是发起方瞬时反馈，重连无意义）。
+   * 目标 clientId 不存在或 ws 已关闭时 no-op 不抛错（fire-and-forget，ES3 同 broadcast）。
+   *
+   * 用于 send.rejected（发起方专属 reply）等定向投递场景。
+   */
+  sendToClient(clientId: string, msg: ServerMessage): void {
+    const ctx = this.pool.clients.get(clientId)
+    if (!ctx) return // 目标不在线：no-op（定向投递是 fire-and-forget，离线丢失可接受）
+    this.send(ctx.ws, msg)
+  }
+
+  /**
+   * P5 lease/presence：广播给除 excludeClientId 外的所有客户端（点对点集合，不打 seq、不入桶）。
+   *
+   * 与 broadcast 的差异：①跳过 excludeClientId；②不打 seq、不入 session 桶（同 sendToClient 语义）。
+   * 单 client send 失败不中断其余（M6 同 broadcast）。用于 session.busy（排除发起方）等定向广播。
+   */
+  broadcastExcept(excludeClientId: string, msg: ServerMessage): void {
+    let payload: string
+    try {
+      payload = JSON.stringify(msg)
+    } catch (e) {
+      // 序列化失败整次丢弃（同 broadcast 取舍）：定向广播是 fire-and-forget，失败仅记日志。
+      console.error('[broadcastExcept] payload serialization failed — entire broadcast dropped:', e)
+      return
+    }
+    for (const [clientId, ctx] of this.pool.clients) {
+      if (clientId === excludeClientId) continue
+      const ws = ctx.ws
+      if (ws.readyState !== WS_OPEN) continue
+      try {
+        ws.send(payload)
+      // eslint-disable-next-line taste/no-silent-catch -- broadcast 是 fire-and-forget 推送，单 client 失败不能影响其余 client
+      } catch {
+        // 单 client 已断连/异常，跳过继续广播给其余 client
+      }
+    }
+  }
+
   // ── Shared payload builders ─────────────────────────────────────
   // broadcast helpers 与 sendInitialState 此前各自重建同一组 provider/skill/agent/dir/model
   // payload（两份「initial/config state」表示）。现抽取私有 builder：只负责 load + 构造

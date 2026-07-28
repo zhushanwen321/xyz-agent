@@ -294,6 +294,9 @@ export class RuntimeServer implements IMessageBroker {
   sendError(ws: WsType, code: string, message: string, id?: string, details?: ErrorDetails): void {
     this.broker.sendError(ws, code, message, id, details)
   }
+  // P5 lease/presence：定向投递委托（点对点，不打 seq 不入桶）。
+  sendToClient(clientId: string, msg: ServerMessage): void { this.broker.sendToClient(clientId, msg) }
+  broadcastExcept(excludeClientId: string, msg: ServerMessage): void { this.broker.broadcastExcept(excludeClientId, msg) }
 
   // ── Message routing ───────────────────────────────────────────
 

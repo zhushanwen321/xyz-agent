@@ -56,7 +56,14 @@ function makeMockPm(): IProcessManager & { destroyAll: ReturnType<typeof vi.fn> 
 }
 
 function makeMockBroker(): IMessageBroker {
-  return { broadcast: vi.fn() }
+  return {
+    broadcast: vi.fn(),
+    send: vi.fn(),
+    sendError: vi.fn(),
+    // P5 lease/presence 定向投递（shutdown 测试不涉及，给 no-op stub 满足接口）。
+    sendToClient: vi.fn(),
+    broadcastExcept: vi.fn(),
+  }
 }
 
 function makeMockConfigStore(): IConfigStore {

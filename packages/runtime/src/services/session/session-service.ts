@@ -728,6 +728,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       forkEntryId: s.forkEntryId,
       handedOffTo: s.handedOffTo,
       sessionFile: s.sessionFilePath,
+      // P5 lease 透传（R1-C2：与 isBareWorkspace 透传范式一致，冷启动 config.sessions 段带 lease 状态）。
+      busyOwnerId: s.busyOwnerId,
+      leaseExpiresAt: s.leaseExpiresAt,
     }
   }
 

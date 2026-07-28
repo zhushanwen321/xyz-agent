@@ -30,6 +30,18 @@ export interface CommandSourceInfo {
   baseDir?: string
 }
 
+/**
+ * P5 presence：单个在线连接的描述（presence.update / auth.ok.presence 共用）。
+ * - isOperating：该 clientId 当前持有某 session 的 lease（busyOwnerId===clientId）。
+ *   前端据此在在线设备列表显示「正在操作」指示器。
+ */
+export interface PresenceConnection {
+  clientId: string
+  deviceName: string
+  activeSessionId: string | null
+  isOperating: boolean
+}
+
 // ── ClientMessageType（保持向后兼容）──────────────────────────
 
 export type ClientMessageType =
@@ -77,6 +89,8 @@ export type ClientMessageType =
   | 'config.setTimeout' | 'config.getTimeout'
   | 'config.setDefaultBaseBranch' | 'config.getDefaultBaseBranch'
   | 'auth' | 'file.signUrl'
+  // P5 lease/presence：客户端切 panel 上报活跃 session（presence.update 依赖）；resume 路径主动拉 presence。
+  | 'session.setActive' | 'presence.list'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -340,6 +354,10 @@ export interface ClientMessageMap {
   auth: { token: string; clientId: string; deviceName?: string; lastSeq?: number; bootId?: string; subscribedSessions?: string[] }
   /** file.signUrl：请求一个临时可访问的文件签名 URL（wave1 远程化预留）。 */
   'file.signUrl': { path: string }
+  /** P5 session.setActive：客户端切 panel 时上报活跃 session（presence.update 依赖 activeSessionId）。sessionId=null 表示在看非 session 视图（如 settings）。 */
+  'session.setActive': { sessionId: string | null }
+  /** P5 presence.list：resume 路径（短断线无 auth.ok）主动拉 presence 全量列表。 */
+  'presence.list': Record<string, never>
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -432,6 +450,9 @@ export type ServerMessageType =
   | 'message.stream_error'
   | 'message.stream_warn'
   | 'send.rejected'
+  // P5 lease/presence：session.busy/idle 是 lease 状态广播（session 级，入 P2 ring buffer 桶）；
+  // presence.update 是连接列表全量广播（全局，不入桶，resume 路径丢失可接受——客户端 auth.ok 带 presence 或 presence.list RPC 补）。
+  | 'session.busy' | 'session.idle' | 'presence.update'
   | 'message.file_changes'
   | 'message.changeSetInvalidated'
   | 'message.customStart'
@@ -454,6 +475,8 @@ export type ServerMessageType =
   | 'config.worktreeTimeout'
   | 'config.defaultBaseBranch'
   | 'auth.ok' | 'file.signUrl:result'
+  // P5 presence RPC reply：session.setActive ack（空 payload，前端按 id 匹配）；presence.list reply 全量列表。
+  | 'session.setActive:result' | 'presence.list:result'
 
 /**
  * # ServerMessageMap —— Runtime → Client payload 类型映射
@@ -511,7 +534,24 @@ export interface ServerMessageMapBase {
   // send.rejected：runtime 预检拦截（busy 时发送），防御性反馈通道（D-006）。
   // 语义：操作拒绝，区别于 message.error（流终止）。不进对话流，不翻流式态。
   // useChat 收到后回滚 pendingSend + toast。
-  'send.rejected': { sessionId: string; reason: 'busy'; message: string }
+  // 【P5 C4 投递语义变更】send.rejected 从 broker.broadcast 改为 ctx.reply（发起方专属点对点，不广播）。
+  // 其他客户端的 busy 感知由新增的 session.busy 广播承担。判别联合 reason='busy' 时 busyOwnerId/
+  // busyOwnerDevice/leaseExpiresAt 必填（非全可选，避免类型歧义），前端 if(payload.reason==='busy') 收窄。
+  'send.rejected': { sessionId: string; message: string } & {
+    reason: 'busy'
+    busyOwnerId: string
+    busyOwnerDevice: string
+    leaseExpiresAt: number
+  }
+  // P5 session.busy：lease acquire 成功后广播，让其他客户端更新 session 占用指示器（设备名 + 剩余秒数）。
+  // session 级消息（带 sessionId）→ 入 P2 ring buffer 桶，resume 路径可靠回放。
+  'session.busy': { sessionId: string; clientId: string; deviceName: string; expiresAt: number }
+  // P5 session.idle：lease 释放后广播（四释放路径：turn_end/lease_expired/aborted/send_failed）。
+  // 前端清除占用指示器。session 级消息 → 入 P2 桶可靠回放。
+  'session.idle': { sessionId: string; reason: 'turn_end' | 'lease_expired' | 'aborted' | 'send_failed' }
+  // P5 presence.update：连接列表全量广播（上线/下线/setActive/lease 变化触发）。全局消息无 sessionId，
+  // 不入 P2 ring buffer 桶（resume 路径会丢——客户端重连后 auth.ok 带 presence 或主动调 presence.list 补）。
+  'presence.update': { connections: PresenceConnection[] }
   // session.exited：pi 进程异常退出（区别于 message.error 的「单次消息失败」）。
   // 前端 routeInbound 收到后标记 session 为 dead 态 + 插入 error 消息 + toast。
   // reason: 人类可读的错误原因（含 stderr 尾部截断），供诊断面板展开显示。
@@ -765,6 +805,9 @@ export interface ServerMessageMapBase {
    * auth.ok：客户端认证通过后服务端回复（wave1 远程化），含服务端版本 + 已确认 clientId。
    * P2-s2 扩展 ReplayMeta（全可选）：bootId/serverSeq 供客户端下次重连带回；
    * resumed=true 走增量回放（replayedCount 是回放段数）；seqReset=true 客户端应清 seq + reload。
+   * 【R1-M2/P5 累积结构】P5 在 P2 字段（bootId/serverSeq/resumed/seqReset/replayedCount）基础上
+   * 追加 presence? 字段（顺带推 presence 全量列表省首次 round-trip）。runtime 构造 auth.ok 必须同时
+   * 填 P2 字段（否则 P2 回放逻辑失效：客户端拿不到 serverSeq 基线、bootId 无法比对）。
    */
   'auth.ok': {
     serverVersion: string
@@ -774,9 +817,15 @@ export interface ServerMessageMapBase {
     resumed?: boolean
     replayedCount?: number
     seqReset?: boolean
+    /** P5 presence 全量列表（顺带推，省首次 round-trip）。缺省 = 未启用 presence（旧客户端忽略）。 */
+    presence?: PresenceConnection[]
   }
   /** file.signUrl:result：file.signUrl 请求的回复，含临时可访问 URL + 过期时间戳（ms）。 */
   'file.signUrl:result': { url: string; expiresAt: number }
+  /** P5 session.setActive:result：setActive ack（空 payload，前端 command() 按 id 匹配 resolve）。 */
+  'session.setActive:result': Record<string, never>
+  /** P5 presence.list:result：presence 全量列表 reply（同 presence.update.connections，resume 路径补拉）。 */
+  'presence.list:result': { connections: PresenceConnection[] }
 }
 
 /**
@@ -943,6 +992,10 @@ export interface ReplyPayloadMap {
   // wave1 远程化：auth 回 auth.ok；file.signUrl 回 file.signUrl:result。
   'auth': ServerMessageMap['auth.ok']
   'file.signUrl': ServerMessageMap['file.signUrl:result']
+  // P5：session.setActive 回 session.setActive:result（ack 空 payload）；
+  // presence.list 回 presence.list:result（全量 presence 列表）。
+  'session.setActive': ServerMessageMap['session.setActive:result']
+  'presence.list': ServerMessageMap['presence.list:result']
 }
 
 /**

@@ -56,6 +56,17 @@ export interface IMessageBroker {
   broadcast(msg: ServerMessage): void
   /** D10/P0-B: 第 5 参数从 sessionId(string) 改为 details(ErrorDetails)，sessionId 进 details.sessionId。 */
   sendError(ws: unknown, code: string, message: string, id?: string, details?: { sessionId?: string; [key: string]: unknown }): void
+  /**
+   * P5 lease/presence：定向投递给指定 clientId（点对点，不打 seq、不入 P2 ring buffer 桶——
+   * 与 reply/send 同语义，非广播）。目标 clientId 不存在或 ws 已关闭时 no-op 不抛错（fire-and-forget）。
+   * 用于 send.rejected（发起方专属 reply）等定向投递。
+   */
+  sendToClient(clientId: string, msg: ServerMessage): void
+  /**
+   * P5 lease/presence：广播给除 excludeClientId 外的所有客户端（点对点集合，不打 seq、不入桶）。
+   * 用于 session.busy（排除发起方，发起方已 reply send.rejected）等定向广播。
+   */
+  broadcastExcept(excludeClientId: string, msg: ServerMessage): void
 }
 
 // ── IEventAdapter ─────────────────────────────────────────────────

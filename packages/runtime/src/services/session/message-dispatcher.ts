@@ -94,7 +94,16 @@ export class MessageDispatcher {
         console.warn(`[message-dispatcher] preemptive reject (busy), sid=${sessionId}`)
         this.broker.broadcast({
           type: 'send.rejected',
-          payload: { sessionId, reason: 'busy', message: 'Agent 正在处理' },
+          payload: {
+            sessionId,
+            reason: 'busy',
+            message: 'Agent 正在处理',
+            // P5 判别联合 reason='busy' 必填字段（w3 改造前临时填占位值保持 tsc 通过）。
+            // w3 将改为 ctx.reply + ctx.broadcastExcept(session.busy)，届时由 leaseManager 提供 owner/device/expiresAt。
+            busyOwnerId: activeSession.busyOwnerId ?? 'unknown',
+            busyOwnerDevice: 'unknown',
+            leaseExpiresAt: activeSession.leaseExpiresAt ?? Date.now(),
+          },
         })
         return { blocked: true, rejected: true }
       }
