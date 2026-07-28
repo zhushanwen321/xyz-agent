@@ -216,10 +216,15 @@ async function scenarioV1DisconnectReplay() {
 }
 
 /**
- * V2: 审批挂起 → 客户端断开 → 冷启动新客户端 → sendInitialState 含 extension.pendingRequestsBatch 段。
+ * V2: 冷启动新客户端 → sendInitialState 含 extension.pendingRequestsBatch 段。
  *
- * 降级说明：完整的「pi 挂起审批 → 冷启动补发 r1 → 响应 → pi 继续」需真 pi 交互（超本脚本范围），
- * 此处验 sendInitialState 第 14 段推送通路（即使无真 pi 挂起请求，段仍推送空数组）。
+ * 严格断言（原为降级——只校验 type 存在、容忍畸形 payload；恢复为严格）：
+ *   1. type extension.pendingRequestsBatch 段存在
+ *   2. payload.requests 是数组（结构校验，message-broker.ts:499）
+ *   3. 冷启动无 session/pi 时 requests.length === 0（P3 spec §2.1 T1「孤儿请求」审计点：
+ *      无 pending 状态时不应有孤儿请求随 initial state 反复推给新连接）
+ *
+ * 完整的「pi 挂起审批 → 冷启动补发 r1 → 响应 → pi 继续」需真 pi 交互（超本脚本范围），
  * 审批唤醒的契约级固化见 AC7 vitest（message-broker.pending-replay.test.ts）。
  */
 async function scenarioV2ColdStartPendingBatch() {
@@ -227,17 +232,30 @@ async function scenarioV2ColdStartPendingBatch() {
   const cold = await connectAndAuth({ clientId: 'client-v2-coldstart' })
   if (!cold.authOk) return { ok: false, actual: '冷启动 auth 失败', expected: '冷启动 auth.ok' }
   // connectAndAuth 已等 500ms 收 initial state
-  const hasBatch = cold.messages.some((m) => m.type === 'extension.pendingRequestsBatch')
   const batchMsg = cold.messages.find((m) => m.type === 'extension.pendingRequestsBatch')
-  const requestsLen = batchMsg && batchMsg.payload && Array.isArray(batchMsg.payload.requests)
-    ? batchMsg.payload.requests.length
-    : -1
+  if (!batchMsg) {
+    return {
+      ok: false,
+      actual: 'sendInitialState 未含 extension.pendingRequestsBatch 段；收到类型: ' + cold.messages.map((m) => m.type).slice(0, 8).join(','),
+      expected: 'sendInitialState 第 14 段推送 extension.pendingRequestsBatch',
+    }
+  }
+  // 严格结构断言（P3 spec §2.1 T1 审计 + message-broker.ts:499）：payload.requests 必须是数组。
+  // 仅校验 type 存在会让畸形 payload（缺 requests 字段）也 PASS——这是降级，恢复严格。
+  if (!batchMsg.payload || !Array.isArray(batchMsg.payload.requests)) {
+    return {
+      ok: false,
+      actual: 'pendingRequestsBatch payload 形变：requests 非数组（payload=' + JSON.stringify(batchMsg.payload).slice(0, 200) + '）',
+      expected: 'payload.requests 为数组（message-broker.ts:499 payload: { requests }）',
+    }
+  }
+  // 冷启动无 session/pi 时 requests 必为空数组——直接验证 P3 spec §2.1 T1 的「孤儿请求」审计点：
+  // 无 pending 状态时不应有孤儿请求随 initial state 反复推给新连接。
+  const requestsLen = batchMsg.payload.requests.length
   return {
-    ok: hasBatch,
-    actual: hasBatch
-      ? 'sendInitialState 含 extension.pendingRequestsBatch 段（requests.length=' + requestsLen + '）'
-      : 'sendInitialState 未含 extension.pendingRequestsBatch 段；收到类型: ' + cold.messages.map((m) => m.type).slice(0, 8).join(','),
-    expected: 'sendInitialState 第 14 段推送 extension.pendingRequestsBatch（无真 pi 时 requests 为空数组）',
+    ok: requestsLen === 0,
+    actual: 'sendInitialState 含 extension.pendingRequestsBatch 段（requests.length=' + requestsLen + '）',
+    expected: '冷启动无 session 时 requests.length === 0（无孤儿请求，spec §2.1 T1）',
   }
 }
 
