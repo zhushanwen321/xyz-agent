@@ -20,6 +20,8 @@
  * 日志：直接用 console.*（initLogger 已 patch 全局，tee 到文件，见架构约定 #4）。
  */
 import { execFileSync } from 'node:child_process'
+import type { WebSocket as WsType } from 'ws'
+import { WebSocket } from 'ws'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { ITerminalService } from '../ports/terminal-service.js'
 import { TERMINAL_UNAVAILABLE } from '../../utils/errors.js'
@@ -254,8 +256,33 @@ export class TerminalService implements ITerminalService {
     // onExit 回调会清理 ptyMap + 广播 terminal.exit
   }
 
-  attach(_sid: string): void {
-    // 预留：流量控制（高频 terminal.data 拥塞时仅推活跃 sid）。当前 no-op。
+  /**
+   * 通知 PTY 当前有活跃视图并回灌该 session 的 scrollback 历史（spec §五 IF1）。
+   *
+   * P2-s3 实化：ws 传入且 readyState===OPEN 时，取该 session 的 scrollback buffer，
+   * 按 entries 升序逐条 ws.send(已序列化字符串)（D2：零再序列化）。
+   *
+   * 点对点（D3）：只投递给传入的 ws，不广播其他客户端（其他客户端未开该 tab）。
+   * 回灌消息形态同实时 terminal.data 但不带全局 seq、不入 broker session 桶。
+   *
+   * no-op 边界：ws 未传（兜底）/ 桶不存在（sid 无 PTY 输出）/ readyState 非 OPEN → 静默跳过。
+   * send 用 try/catch 守卫 TOCTOU（连接在 readyState 检查后、send 前关闭），单条失败跳过继续。
+   */
+  attach(sid: string, ws?: WsType): void {
+    if (!ws) return // ws undefined 兜底 no-op（保持向后兼容）
+    const buf = this.scrollbacks.get(sid)
+    if (!buf) return // 桶不存在（sid 从未 spawn 或已清除）no-op
+    // 逐条 ws.send：entries 已按 seq 升序（w1 append 顺序即升序），保 chunk 边界完整。
+    // readyState 守卫 + try/catch：WS_OPEN 挡绝大多数情况，残余 TOCTOU 由 catch 兜底。
+    for (const entry of buf.entries) {
+      if (ws.readyState !== WebSocket.OPEN) break // 连接已关闭，后续条目也无意义，提前退出
+      try {
+        ws.send(entry.data)
+      // eslint-disable-next-line taste/no-silent-catch -- 点对点回灌 best-effort，单条失败（TOCTOU 断连）跳过继续，attach 幂等可重试
+      } catch (e) {
+        console.error(`[terminal] scrollback replay send failed: sid=${sid}`, serializeError(e))
+      }
+    }
   }
 
   destroyPty(sid: string): void {

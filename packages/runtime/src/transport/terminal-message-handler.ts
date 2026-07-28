@@ -84,7 +84,8 @@ export class TerminalMessageHandler {
       case 'terminal.attach': {
         const { sessionId } = msg.payload
         try {
-          this.ctx.terminalService.attach(sessionId)
+          // P2-s3：透传 ws 给 attach，触发点对点 scrollback 历史回灌（spec §五 IF2）。
+          this.ctx.terminalService.attach(sessionId, ws)
           return this.ctx.reply(ws, msg.id, 'terminal.ack', {})
         } catch (e) {
           return this.sendTerminalError(ws, msg.id, e)

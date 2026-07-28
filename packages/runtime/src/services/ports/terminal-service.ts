@@ -45,10 +45,19 @@ export interface ITerminalService {
   /** 主动 kill PTY（terminal 工具栏 kill 按钮）。sid 无 PTY 时 no-op。 */
   kill(sid: string): void
   /**
-   * 通知 PTY 当前有活跃视图（terminal tab 打开）。
-   * 预留给流量控制（高频 terminal.data 拥塞时仅推活跃 sid）。当前实现 no-op。
+   * 通知 PTY 当前有活跃视图（terminal tab 打开）并回灌该 session 的 scrollback 历史。
+   *
+   * P2-s3：ws 传入时把该 session scrollback buffer 内已序列化的 terminal.data 字符串
+   * 按升序逐条 ws.send 给该单一连接（点对点，不广播其他客户端）。回灌消息形态同实时
+   * terminal.data 但不带全局 seq、不入 broker session 桶（D2/D3）。
+   *
+   * ws 可选——未传（兜底）或 sid 无缓冲桶时 no-op（保持原流量控制预留契约兼容）。
+   * send 前 readyState 守卫：连接已关闭时跳过（best-effort，不重试）。
+   *
+   * @param sid terminal session id
+   * @param ws 发起 attach 的连接（点对点回灌目标）；undefined 时 no-op
    */
-  attach(sid: string): void
+  attach(sid: string, ws?: import('ws').WebSocket): void
   /**
    * 销毁指定 session 的 PTY（session 销毁时调用）。
    * kill 进程 + 移除 ptyMap 条目。sid 无 PTY 时 no-op。

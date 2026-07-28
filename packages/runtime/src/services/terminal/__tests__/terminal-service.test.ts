@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { ServerMessage } from '@xyz-agent/shared'
+import { WebSocket } from 'ws'
 
 // ── mock node-pty ─────────────────────────────────────────────────────────
 // vi.mock 工厂被 hoisting 提升到文件顶，不能直接引用模块级变量。
@@ -74,6 +75,15 @@ function createBroadcastCollector() {
 /** 从消息列表找指定 type。 */
 function findMsg(msgs: ServerMessage[], type: string): ServerMessage | undefined {
   return msgs.find((m) => m.type === type)
+}
+
+/**
+ * P2-s3：构造 mock ws（attach 回灌测试用）。
+ * 只 mock attach 路径用到的两个字段：send（vi.fn 收集调用）+ readyState（默认 OPEN）。
+ * 不需完整 WebSocket mock——attach 实现只读这两个字段。
+ */
+function createMockWs(readyState: number = WebSocket.OPEN): { send: ReturnType<typeof vi.fn>; readyState: number } {
+  return { send: vi.fn(), readyState }
 }
 
 beforeEach(() => {
@@ -324,5 +334,95 @@ describe('TerminalService', () => {
     } finally {
       vi.unstubAllEnvs()
     }
+  })
+
+  // ── P2-s3-w2 attach 回灌（spec §五 IF1/IF2） ────────────────────────────────
+
+  it('TS-19: attach 回灌内容与顺序正确（按 buffer 内升序逐条 ws.send）', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s19', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    pty.__emitData('a')
+    pty.__emitData('b')
+    const ws = createMockWs()
+    svc.attach('s19', ws)
+    // 按 emit 顺序回灌两条
+    expect(ws.send).toHaveBeenCalledTimes(2)
+    const first = JSON.parse((ws.send.mock.calls[0] as string[])[0])
+    const second = JSON.parse((ws.send.mock.calls[1] as string[])[0])
+    expect(first.type).toBe('terminal.data')
+    expect(first.payload.data).toBe('a')
+    expect(second.payload.data).toBe('b')
+  })
+
+  it('TS-20: attach 点对点——只投递给传入的 ws，不广播/不影响其他 ws', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s20', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    pty.__emitData('x')
+    const wsA = createMockWs()
+    const wsB = createMockWs()
+    svc.attach('s20', wsA)
+    // wsA 收到回灌，wsB 从未被调用（点对点，D3）
+    expect(wsA.send).toHaveBeenCalledTimes(1)
+    expect(wsB.send).not.toHaveBeenCalled()
+  })
+
+  it('TS-21: attach 时 ws undefined 是 no-op（不抛错，向后兼容兜底）', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s21', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    pty.__emitData('x')
+    // ws undefined 不抛错、无 send（防御兜底，handler 必传 ws 但 port 接口允许 undefined）
+    expect(() => svc.attach('s21', undefined)).not.toThrow()
+  })
+
+  it('TS-22: attach 时 buffer 为空（session 有 PTY 但无输出）是 no-op', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s22', undefined, 80, 24)
+    // 未 emit 任何 data，buffer 桶虽可能未创建（懒创建）或为空
+    const ws = createMockWs()
+    svc.attach('s22', ws)
+    expect(ws.send).not.toHaveBeenCalled()
+  })
+
+  it('TS-23: attach 时 buffer 不存在（sid 从未 spawn）是 no-op', () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    const ws = createMockWs()
+    // 从未 spawn 的 sid，桶不存在
+    expect(() => svc.attach('nonexistent', ws)).not.toThrow()
+    expect(ws.send).not.toHaveBeenCalled()
+  })
+
+  it('TS-24: attach 回灌时 ws 已关闭（readyState !== OPEN）跳过 send 不抛错', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s24', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    pty.__emitData('x')
+    // readyState=CLOSED 模拟连接已关闭
+    const closedWs = createMockWs(WebSocket.CLOSED)
+    expect(() => svc.attach('s24', closedWs)).not.toThrow()
+    expect(closedWs.send).not.toHaveBeenCalled()
+  })
+
+  it('TS-25: 回灌的消息不带 seq 字段（D2：点对点回灌不入全局 seq 体系）', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s25', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    pty.__emitData('x')
+    const ws = createMockWs()
+    svc.attach('s25', ws)
+    const sent = JSON.parse((ws.send.mock.calls[0] as string[])[0])
+    // 回灌消息只有 type/id/payload，无 seq 字段（与实时 broadcast 打 seq 区分，D2）
+    expect(sent).not.toHaveProperty('seq')
+    expect(sent.type).toBe('terminal.data')
+    expect(sent.payload.data).toBe('x')
   })
 })
