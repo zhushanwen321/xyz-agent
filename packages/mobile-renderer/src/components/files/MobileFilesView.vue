@@ -3,10 +3,9 @@
  * MobileFilesView —— 移动端只读文件树（spec P4 §3.2 + D6 + C1）。
  *
  * 读 useFileTreeStore tree（fileApi.tree(sessionId) 填充）渲染缩进树节点 + 展开/折叠。
- * 点击文件节点 emit select(path)。无新建/删除/重命名按钮（AC7 只读断言）。
+ * 点击文件节点调 fileTreeStore.selectFile(path)（驱动 DetailPane 经 useDetailPane watch 加载内容）
+ * 并 emit select(path)（让 FilesTab 切到 detail 视图）。无新建/删除/重命名按钮（AC7 只读断言）。
  * 不引入桌面 FileView/FileTreeRow（含右键/拖拽/新建删除，spec D6 砍）。
- *
- * P4 简化：只渲染树 + 展开/折叠，文件内容 detail 留 P9（spec §十.2）。
  *
  * 数据加载（对齐 renderer FileView.vue）：onMounted + watch(sessionId) 调 useFileTree().loadTree(sid)
  * 触发 fileApi.tree RPC。MobileShell 不挂载桌面 Sidebar，故不能依赖 Sidebar 的 selectSession 触发加载，
@@ -54,6 +53,8 @@ function toggle(path: string): void {
 }
 
 function onSelect(path: string): void {
+  // 写入 store.selectedPath → useDetailPane watch 触发 DetailPane 加载该文件内容（spec D6 文件内容查看）。
+  fileTreeStore.selectFile(path)
   emit('select', path)
 }
 </script>

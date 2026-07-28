@@ -99,4 +99,42 @@ describe('MobileShell + BottomTabBar（P4-s2-w1 AC4）', () => {
     expect(wrapper.find('[data-testid="mobile-tab-content-settings"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="mobile-tab-settings"]').attributes('aria-selected')).toBe('true')
   })
+
+  // KeepAlive 回归测试（spec §3.3：切换 tab 不卸载其他 tab 的组件，避免重新订阅 WS）。
+  // MobileShell 用 <KeepAlive> 包裹 v-if/v-else-if/v-else 三 tab content。Vue 的 KeepAlive
+  // 按组件 type 缓存实例：切走时组件 deactivated（不 unmount），切回时 activated（保留本地状态）。
+  // 此测试锁定该行为——若未来误改成裸 v-if（去 KeepAlive）或破坏 KeepAlive 包裹，会 fail。
+  it('KeepAlive 保留 tab 组件本地状态：Files tab 选中文件后切 settings 再回 files，detail 态保留', async () => {
+    const { useFileTreeStore } = await import('@/stores/fileTree')
+    const { useSessionStore } = await import('@/stores/session')
+    const sessionStore = useSessionStore()
+    sessionStore.setGroups([
+      {
+        cwd: '/proj',
+        sessions: [{ id: 's1', label: 'feat', cwd: '/proj', state: 'idle' } as never],
+      },
+    ])
+    const fileTreeStore = useFileTreeStore()
+    fileTreeStore.setTree('s1', [{ path: '/proj/readme.md', name: 'readme.md', type: 'file' }])
+
+    const wrapper = mount(MobileShell)
+    // sessions tab：选 session → 透传 currentSessionId
+    await wrapper.find('[data-testid="mobile-session-item-s1"]').trigger('click')
+    // 切 files tab：点文件 → FilesTab 进 detail 态（showDetail=true）
+    await wrapper.find('[data-testid="mobile-tab-files"]').trigger('click')
+    await wrapper.find('[data-testid="mobile-file-node-/proj/readme.md"]').trigger('click')
+    expect(wrapper.find('[data-testid="mobile-file-detail"]').exists()).toBe(true)
+
+    // 切 settings tab（FilesTab 应被 KeepAlive 缓存，不 unmount）
+    await wrapper.find('[data-testid="mobile-tab-settings"]').trigger('click')
+    expect(wrapper.find('[data-testid="mobile-tab-content-settings"]').exists()).toBe(true)
+    // detail 此时不在 DOM（被 deactivated 缓存），但 sessions tab content 也不在
+    expect(wrapper.find('[data-testid="mobile-file-detail"]').exists()).toBe(false)
+
+    // 切回 files tab：KeepAlive 恢复 FilesTab 实例 → detail 态保留（showDetail 仍 true）
+    await wrapper.find('[data-testid="mobile-tab-files"]').trigger('click')
+    expect(wrapper.find('[data-testid="mobile-file-detail"]').exists()).toBe(true)
+    // 文件树态不复现（detail 态未被重置）
+    expect(wrapper.find('[data-testid="mobile-files-view"]').exists()).toBe(false)
+  })
 })

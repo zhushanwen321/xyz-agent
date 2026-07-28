@@ -30,6 +30,8 @@ COPY_MAP=(
   "composables:composables"
   "components/ui:components/ui"
   "components/panel/message-stream:components/panel/message-stream"
+  "components/panel/detail-renderers:components/panel/detail-renderers"
+  "components/panel/DetailPane.vue:components/panel/DetailPane.vue"
   "components/panel/thinking-levels.ts:components/panel/thinking-levels.ts"
   "components/sidebar:components/sidebar"
   "components/new-task:components/new-task"

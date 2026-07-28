@@ -18,6 +18,7 @@ export default {
   files: {
     empty: 'File tree is empty or still loading.',
     selectSession: 'Select a session in the Sessions tab to view its files.',
+    back: 'Back to file tree',
   },
   chat: {
     back: 'Back',
