@@ -128,6 +128,15 @@ export class PluginService implements IPluginService {
     this.deps.sessionService = sessionService
   }
 
+  /**
+   * P7 lease fallback：后置注入 leaseManager（组合根 index.ts 在 PluginService 构造后
+   * 才创建 LeaseManager，时序晚于 PluginService）。resolver 持有 deps 引用，此处 mutate
+   * 对 resolver 可见。未注入时 resolver 跳过 lease fallback（零回归）。
+   */
+  setLeaseManager(leaseManager: { getBusySession(clientId: string): { sessionId: string } | undefined }): void {
+    this.deps.leaseManager = leaseManager
+  }
+
   async initialize(): Promise<void> {
     if (this.initialized) return
 

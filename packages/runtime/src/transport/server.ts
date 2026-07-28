@@ -319,6 +319,15 @@ export class RuntimeServer implements IMessageBroker {
   /** P5 presence：触发 presence 全量重推（lease 变化/setActive/上下线经 connection-manager 调）。 */
   broadcastPresence(): void { this.conn.broadcastPresence() }
 
+  /**
+   * P7 plugin per-client active session：暴露 ConnectionManager 引用，供组合根 index.ts
+   * 注入到 PluginService.deps.connectionManager（resolver 读 activeSessions Map）。
+   * 仅用于 P7 resolver 注入路径，不鼓励其他用途（封装边界）。
+   */
+  getConnectionManager(): ConnectionManager {
+    return this.conn
+  }
+
   // ── Message routing ───────────────────────────────────────────
 
   private async handleMessage(msg: ClientMessage, ws: WsType, clientId: string): Promise<void> {

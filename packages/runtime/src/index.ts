@@ -166,6 +166,10 @@ export async function main(opts?: { host?: string; port?: number; tokenFile?: st
     configDir,
     pluginInstaller,
     broadcastFn: (type, payload) => server.broadcast({ type: type as 'config.sessions', id: `push_${Date.now()}`, payload } as import('@xyz-agent/shared').ServerMessage),
+    // P7 per-client active session：注入 connectionManager（server 在 PluginService 构造前已存在）。
+    // resolver 读 P5 activeSessions Map（getActiveSession(clientId)）。leaseManager 创建时序晚（下方），
+    // 经 pluginService.setLeaseManager 后置注入。
+    connectionManager: server.getConnectionManager(),
   })
 
   // ── R1 重构：EventAdapter（infra 纯翻译）+ EventInterpreter（service 编排）──
@@ -265,6 +269,8 @@ export async function main(opts?: { host?: string; port?: number; tokenFile?: st
   // reaper 每 5s 扫过期 lease（spec D7②），进程退出时 clear（与 recentWorkspacesStore flush timer 同模式）。
   const leaseManager = new LeaseManager(sessionService, server)
   sessionService.setLeaseManager(leaseManager)
+  // P7 lease fallback：leaseManager 创建时序晚于 PluginService，经 setter 后置注入到 resolver。
+  pluginService.setLeaseManager(leaseManager)
   // P5 presence：lease 变化（acquire/release）触发 presence 重推（spec D9 触发点 4：isOperating 变化）。
   // sessionService 转发给 dispatcher + handleTurnEndSideEffects，回调调 conn.broadcastPresence。
   sessionService.setPresenceRefreshCallback(() => server.broadcastPresence())

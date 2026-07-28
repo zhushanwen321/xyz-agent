@@ -98,8 +98,8 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
       if (!s) return undefined
       return { id: s.id, label: s.label, cwd: s.cwd, status: s.status, createdAt: 0, lastActiveAt: s.lastActiveAt }
     },
-    getActiveSession: () => {
-      const active = ctx.activeSessionResolver.resolve()
+    getActiveSession: (clientId?: string) => {
+      const active = ctx.activeSessionResolver.resolve(clientId)
       if (!active) return undefined
       return { id: active.id, label: active.label, cwd: active.cwd, status: active.status, createdAt: 0, lastActiveAt: active.lastActiveAt }
     },
@@ -178,12 +178,12 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
   registerAgentRpcHandlers(rpcServer, {
     getModel: () => {
       if (!deps.sessionService) return ''
-      const active = ctx.activeSessionResolver.resolve()
+      const active = ctx.activeSessionResolver.resolve(undefined)
       return active?.modelId ?? ''
     },
     setModel: async (model: string) => {
       if (!deps.sessionService) return
-      const active = ctx.activeSessionResolver.resolve()
+      const active = ctx.activeSessionResolver.resolve(undefined)
       if (!active) return
       const parts = model.split('/')
       if (parts.length < MIN_MODEL_PARTS) return
@@ -199,12 +199,12 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
     },
     getThinkingLevel: () => {
       if (!deps.sessionService) return 'off'
-      const active = ctx.activeSessionResolver.resolve()
+      const active = ctx.activeSessionResolver.resolve(undefined)
       return active?.thinkingLevel ?? 'off'
     },
     setThinkingLevel: async (level: string) => {
       if (!deps.sessionService) return
-      const active = ctx.activeSessionResolver.resolve()
+      const active = ctx.activeSessionResolver.resolve(undefined)
       if (!active) return
       if (deps.modelService) {
         await deps.modelService.setThinkingLevel(active.id, level)
