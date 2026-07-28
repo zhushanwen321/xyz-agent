@@ -40,6 +40,17 @@ export interface MessageHandlerContext {
    * 某些 reply 的 type 是动态变量（非字面量），调用方需显式断言 type 为具体 ServerMessageType。
    */
   reply<T extends ServerMessageType>(ws: WsType, id: string | undefined, type: T, payload: ServerMessageMap[T]): void
+  /**
+   * P5 lease/presence：当前请求的 clientId（由 server 在路由时绑定）。
+   * 用于 message-dispatcher 的 lease acquire（区分发起方与 owner）。
+   */
+  getClientId(): string
+  /** P5：按 clientId 取连接的 ws（不在池返回 undefined）。 */
+  getClient(clientId: string): WsType | undefined
+  /** P5：广播给除当前 clientId 外的所有连接（点对点集合，用于 session.busy 排除发起方）。 */
+  broadcastExcept(excludeClientId: string, msg: ServerMessage): void
+  /** P5：定向投递给指定 clientId（用于 send.rejected 发起方专属 reply 等价路径）。 */
+  sendToClient(clientId: string, msg: ServerMessage): void
 }
 
 /**

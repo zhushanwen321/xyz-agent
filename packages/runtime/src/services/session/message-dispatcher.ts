@@ -34,6 +34,16 @@ export class MessageDispatcher {
   }
 
   /**
+   * P5 lease：注入 LeaseManager（SessionService.setLeaseManager 转发调用）。
+   * w2 阶段仅持有引用，w3 改造 sendPrompt/abort 时消费（acquire/release）。
+   * 未注入时 sendPrompt 仍走旧的 isGenerating 预检路径（向后兼容）。
+   */
+  private leaseManager: import('./lease-manager.js').LeaseManager | null = null
+  setLeaseManager(lm: import('./lease-manager.js').LeaseManager): void {
+    this.leaseManager = lm
+  }
+
+  /**
    * 返回 { blocked: true } 表示消息被 BeforeSend hook 拦截（已广播 message.error 错误气泡），
    * 调用方（session-message-handler）必须据此走 error envelope（带请求 id）让 renderer
    * pending.reject，不得 reply success（round7 must-fix #3：避免「composer 清空 + 错误气泡」矛盾态）。

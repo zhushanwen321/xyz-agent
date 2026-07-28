@@ -30,7 +30,7 @@ export interface SettingsHandlerContext extends MessageHandlerContext {
 export class SettingsMessageHandler {
   constructor(private ctx: SettingsHandlerContext) {}
 
-  async handleSettingsMessage(msg: ClientMessage, ws: WsType): Promise<boolean> {
+  async handleSettingsMessage(msg: ClientMessage, ws: WsType, _clientId?: string): Promise<boolean> {
     switch (msg.type) {
       case 'config.getProviders':
         this.ctx.reply(ws, msg.id, 'config.providers', { providers: this.ctx.configService.listProviders() })

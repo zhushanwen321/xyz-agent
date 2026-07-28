@@ -98,10 +98,17 @@ export interface ReplayMeta {
  * - onMessage：收到合法 ClientMessage，交 server 路由（返回 Promise，错误由调用方 catch）。
  * - onConnect：新连接建立（认证通过/开放模式），交 broker 推送 initial state。
  * - sendError：连接级解析/兜底错误回复（注入 broker.sendError，避免 ConnectionManager 依赖 broker）。
+ *
+ * P5 lease/presence：onConnect/onMessage 签名扩展为 (ws, clientId)，透传 clientId 到上层
+ * （busyOwner 定向投递的前提）。onDisconnect 新增（审查 C3：现状无此回调，close 在
+ * attachLifecycleHandlers 内联处理），供 presence 推送（连接下线重推）与 P6 terminal resize
+ * owner 清理订阅。本地模式 clientId='local' 同样触发。
  */
 export interface ConnectionCallbacks {
-  onConnect(ws: WsType): void
-  onMessage(msg: ClientMessage, ws: WsType): Promise<void>
+  onConnect(ws: WsType, clientId: string): void
+  onMessage(msg: ClientMessage, ws: WsType, clientId: string): Promise<void>
+  /** P5 新增：连接关闭/错误时调（ws 一致性检查通过后），clientId 是该连接的身份。 */
+  onDisconnect(ws: WsType, clientId: string): void
   sendError(ws: WsType, code: string, message: string, id?: string, details?: ErrorDetails): void
   /**
    * P2-s2：认证成功后调（仅认证模式，server.ts 注入实现调 broker.getReplayPlan）。
@@ -256,7 +263,7 @@ export class ConnectionManager {
       const ctx: ConnectionCtx = { ws, clientId: 'local', deviceName: '', connectedAt: Date.now() }
       this.clients.set(ctx.clientId, ctx)
       console.log(`[runtime] client connected (total: ${this.clients.size})`)
-      this.callbacks.onConnect(ws)
+      this.callbacks.onConnect(ws, 'local')
       this.resetHeartbeat(ws)
       this.attachMessageHandler(ws, 'local')
       this.attachLifecycleHandlers(ws, 'local')
@@ -365,12 +372,12 @@ export class ConnectionManager {
         }
       } else {
         // reset/冷启动路径：调 onConnect 推全量 initial state（含 seqReset 场景，推了无害）。
-        this.callbacks.onConnect(ws)
+        this.callbacks.onConnect(ws, clientId)
       }
     } else {
       // onAuthSuccess 未注入（理论上认证模式必注入，兜底降级冷启动）。
       this.replyAuth(ws, msg.id, clientId, { resumed: false })
-      this.callbacks.onConnect(ws)
+      this.callbacks.onConnect(ws, clientId)
     }
 
     this.resetHeartbeat(ws)
@@ -409,12 +416,11 @@ export class ConnectionManager {
    * 复刻原 handleConnection 的 ws.on('message') 语义：解析 → 重置心跳 → 路由（错误兜底）。
    */
   private attachMessageHandler(ws: WsType, clientId: string): void {
-    void clientId // 暂未按 clientId 分流；保留参数以便后续 per-client 行为扩展（当前不扩展）
     ws.on('message', (data) => {
       try {
         const msg: ClientMessage = JSON.parse(data.toString())
         this.resetHeartbeat(ws)
-        this.callbacks.onMessage(msg, ws).catch((err) => {
+        this.callbacks.onMessage(msg, ws, clientId).catch((err) => {
           console.error('[runtime] unhandled error in handleMessage:', err)
           try {
             this.callbacks.sendError(ws, 'handler_error', toErrorMessage(err), msg.id)
@@ -433,19 +439,39 @@ export class ConnectionManager {
   private attachLifecycleHandlers(ws: WsType, clientId: string): void {
     ws.on('close', () => {
       const ctx = this.clients.get(clientId)
-      if (ctx && ctx.ws === ws) this.clients.delete(clientId)
+      const isCurrent = ctx && ctx.ws === ws
+      if (isCurrent) this.clients.delete(clientId)
       this.pending.delete(ws)
       this.clearHeartbeat(ws)
       this.clearAuthTimer(ws)
       console.log(`[runtime] client disconnected (total: ${this.clients.size})`)
+      // P5 onDisconnect：仅当关闭的是当前连接（非被踢占的旧连接）才回调，避免误通知新连接下线。
+      // 踢占场景：kickExistingClient 关闭旧 ws 时 clientId 已被新 ws 占用（ctx.ws!==ws），跳过回调。
+      if (isCurrent) {
+        try {
+          this.callbacks.onDisconnect(ws, clientId)
+        // eslint-disable-next-line taste/no-silent-catch -- onDisconnect 是 presence 推送等副作用，失败不应阻断 close 清理
+        } catch (e) {
+          console.error('[runtime] onDisconnect callback error:', e)
+        }
+      }
     })
     ws.on('error', (err) => {
       console.error('[runtime] ws error:', err)
       const ctx = this.clients.get(clientId)
-      if (ctx && ctx.ws === ws) this.clients.delete(clientId)
+      const isCurrent = ctx && ctx.ws === ws
+      if (isCurrent) this.clients.delete(clientId)
       this.pending.delete(ws)
       this.clearHeartbeat(ws)
       this.clearAuthTimer(ws)
+      if (isCurrent) {
+        try {
+          this.callbacks.onDisconnect(ws, clientId)
+        // eslint-disable-next-line taste/no-silent-catch -- 同 close 路径
+        } catch (e) {
+          console.error('[runtime] onDisconnect callback error:', e)
+        }
+      }
     })
   }
 

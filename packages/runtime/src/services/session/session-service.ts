@@ -194,6 +194,22 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     this.onSessionDelete = handler
   }
 
+  /**
+   * P5 lease：注入 LeaseManager（组合根在 SessionService 构造后调用）。
+   * 转发给内部 dispatcher（acquire/release）。interpreter（renew/release）经 getLeaseManager
+   * 由 adapterFactory 闭包取（interpreter 在 session 创建时构造，那时 leaseManager 已注入）。
+   * 经 setter 注入（与 setModelContextWindowResolver 同模式）避免构造参数环。
+   */
+  private leaseManager: import('./lease-manager.js').LeaseManager | null = null
+  setLeaseManager(lm: import('./lease-manager.js').LeaseManager): void {
+    this.leaseManager = lm
+    this.dispatcher.setLeaseManager(lm)
+  }
+  /** 取注入的 LeaseManager（adapterFactory 闭包构造 interpreter 时取，供 pingTick renew + turn-end release）。 */
+  getLeaseManager(): import('./lease-manager.js').LeaseManager | null {
+    return this.leaseManager
+  }
+
   // ── ISessionService:纯委托(lifecycle / dispatcher / scanner)─────
 
   async create(cwd?: string, label?: string, options?: { hidden?: boolean }): Promise<SessionSummary> {
@@ -735,6 +751,24 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   getSession(sessionId: string): IManagedSessionView | undefined { return this.sessions.get(sessionId) }
+  /**
+   * P5 lease：部分更新 session 的 lease 字段。patch 值 undefined 即清字段（release 路径清 lease）。
+   * session 不存在时 no-op（acquire 前已 ensureActive 保证存在，此处防御性）。
+   * 单写者仍是 Facade（LeaseManager 经 ISessionServiceInternal 调用，不直接持有 Map）。
+   */
+  updateSession(sessionId: string, patch: Partial<Pick<IManagedSessionView, 'busyOwnerId' | 'leaseExpiresAt'>>): void {
+    const session = this.sessions.get(sessionId)
+    if (!session) return
+    if ('busyOwnerId' in patch) session.busyOwnerId = patch.busyOwnerId
+    if ('leaseExpiresAt' in patch) session.leaseExpiresAt = patch.leaseExpiresAt
+  }
+  /**
+   * P5 lease：遍历所有活跃 session（供 LeaseManager.sweepExpired 扫过期 + getBusySession 反查 owner）。
+   * 返回 sessions Map.values() 迭代器（只读遍历，不改 Map）。
+   */
+  allSessions(): IterableIterator<IManagedSessionView> {
+    return this.sessions.values()
+  }
   removeSessionEntry(sessionId: string): void {
     this.sessions.delete(sessionId)
     // R3：所有删除路径（lifecycle.delete 主动删 + onSessionExit 进程异常退）汇聚于此，

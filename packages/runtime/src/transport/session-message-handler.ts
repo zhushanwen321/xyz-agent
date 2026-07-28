@@ -35,7 +35,7 @@ export class SessionMessageHandler {
     'message.send', 'message.abort', 'message.steer', 'message.follow_up',
   ]
 
-  async handleSessionMessage(msg: ClientMessage, ws: WsType): Promise<void> {
+  async handleSessionMessage(msg: ClientMessage, ws: WsType, _clientId: string): Promise<void> {
     switch (msg.type) {
       case 'session.create': {
         try {

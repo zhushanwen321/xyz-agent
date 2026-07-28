@@ -75,6 +75,17 @@ export interface ISessionServiceInternal {
   getSession(sessionId: string): IManagedSessionView | undefined
   /** 从 Map 删除条目（仅删条目，不 detach adapter / 不 destroy 进程）。 */
   removeSessionEntry(sessionId: string): void
+  /**
+   * P5 lease：部分更新 session 的 lease 字段（busyOwnerId/leaseExpiresAt）。
+   * patch 值 undefined 即清字段（release 路径）。session 不存在时 no-op。
+   * 供 LeaseManager.acquire/renew/release 调用——单写者仍是 Facade（LeaseManager 经此接口改字段）。
+   */
+  updateSession(sessionId: string, patch: Partial<Pick<IManagedSessionView, 'busyOwnerId' | 'leaseExpiresAt'>>): void
+  /**
+   * P5 lease：遍历所有活跃 session（sessions Map.values() 迭代器）。
+   * 供 LeaseManager.sweepExpired（扫过期 lease）+ getBusySession（反查 clientId 持有的 session）。
+   */
+  allSessions(): IterableIterator<IManagedSessionView>
 
   // ── scanner 使用 ──
   /** 当前活跃会话的 summary 列表（已含 git 信息）。 */

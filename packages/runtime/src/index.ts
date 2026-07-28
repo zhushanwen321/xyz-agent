@@ -22,6 +22,7 @@ import { PiExtensionSettings } from './infra/pi/pi-extension-settings.js'
 import { EventAdapter } from './infra/pi/event-adapter.js'
 import { FileChangeDiffAdapter } from './infra/pi/file-change-diff-adapter.js'
 import { EventInterpreter } from './services/session/event-interpreter.js'
+import { LeaseManager, REAPER_INTERVAL_MS } from './services/session/lease-manager.js'
 import { join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
 import * as fs from 'node:fs'
@@ -256,6 +257,20 @@ export async function main(opts?: { host?: string; port?: number; tokenFile?: st
 
   // ── Phase 3: wire cross-service runtime deps ──
   pluginService.setSessionService(sessionService)
+  // P5 lease：实例化 LeaseManager（注入 sessionService 内部接口 + server broker）+ reaper 定时器。
+  // sessionService 经 setter 持有 leaseManager（转发给 dispatcher + adapterFactory 闭包取）。
+  // reaper 每 5s 扫过期 lease（spec D7②），进程退出时 clear（与 recentWorkspacesStore flush timer 同模式）。
+  const leaseManager = new LeaseManager(sessionService, server)
+  sessionService.setLeaseManager(leaseManager)
+  const leaseReaperTimer = setInterval(() => {
+    try {
+      leaseManager.sweepExpired()
+    // eslint-disable-next-line taste/no-silent-catch -- reaper 是后台清理，异常不应中断进程
+    } catch (e) {
+      console.error('[runtime] lease reaper sweep failed:', e)
+    }
+  }, REAPER_INTERVAL_MS)
+  leaseReaperTimer.unref?.()
   // wave2 远程化：FileEndpoint（HTTP /file + signUrl HMAC）。依赖 sessionService（取活跃 cwd 作白名单前缀）
   // + tokenManager（与 WS 认证同源签名），故在此 Phase 创建（sessionService 刚 new 完）。
   // server 构造时 sessionService 尚未存在，故 fileEndpoint 经 setFileEndpoint 延迟绑定：
@@ -384,6 +399,8 @@ export async function main(opts?: { host?: string; port?: number; tokenFile?: st
     try {
       recentWorkspacesStore.flushAll()
       recentWorkspacesStore.stopFlushTimer()
+      // P5 lease：清 reaper 定时器（与 recentWorkspacesStore flush timer 同模式，防句柄泄漏）。
+      clearInterval(leaseReaperTimer)
       // R1：关闭 SkillRegistry 的 chokidar watcher（global + project），防句柄泄漏阻塞退出。
       skillRegistry.dispose()
       await server.stop()

@@ -35,6 +35,7 @@ import type { WorkspaceService } from '../services/workspace/workspace-service.j
 import type { IWorktreeService } from '../services/ports/worktree-service.js'
 import type { ITerminalService } from '../services/ports/terminal-service.js'
 import { toErrorMessage } from '../utils/errors.js'
+import { sessionContext } from '../infra/async-context.js'
 
 export class RuntimeServer implements IMessageBroker {
   private projectRoot: string
@@ -94,7 +95,7 @@ export class RuntimeServer implements IMessageBroker {
    * - ping/file.read 走内联（无对应 handler），settings 走兜底（return false 表示未认领）。
    * 注意：handler 内部的 switch 保留——它们提供编译期类型收窄 + 含真实领域逻辑。
    */
-  private routes!: Map<ClientMessageType, (msg: ClientMessage, ws: WsType) => Promise<unknown> | unknown>
+  private routes!: Map<ClientMessageType, (msg: ClientMessage, ws: WsType, clientId: string) => Promise<unknown> | unknown>
 
   constructor(port: number, projectRoot?: string, connOpts?: ConnectionManagerOptions) {
     this.projectRoot = projectRoot ?? process.cwd()
@@ -104,8 +105,10 @@ export class RuntimeServer implements IMessageBroker {
     // fileEndpoint 由本类持引用，setServices 时注入 FileMessageHandler（RPC 侧 signUrl）。
     this.fileEndpoint = connOpts?.fileEndpoint
     this.conn = new ConnectionManager(port, {
-      onConnect: (ws) => this.broker.sendInitialState(ws),
-      onMessage: (msg, ws) => this.handleMessage(msg, ws),
+      onConnect: (ws, _clientId) => this.broker.sendInitialState(ws),
+      onMessage: (msg, ws, clientId) => this.handleMessage(msg, ws, clientId),
+      // P5 onDisconnect：连接下线回调（presence-client slice 接 presence 重推；本 wave 空实现避免 server 持 presence 依赖）。
+      onDisconnect: (_ws, _clientId) => { /* presence 推送在 presence-client slice 接入 */ },
       sendError: (ws, code, message, id, details) => this.broker.sendError(ws, code, message, id, details),
       // P2-s2：认证成功后调 broker.getReplayPlan 决定 resume/reset/冷启动。
       // this.broker 在 setServices 构造（lazy），onAuthSuccess 运行时读取（auth 发生在 start 后，
@@ -180,6 +183,12 @@ export class RuntimeServer implements IMessageBroker {
       send: (ws, msg) => this.broker.send(ws, msg),
       sendError: (ws, code, message, id, details) => this.broker.sendError(ws, code, message, id, details),
       reply: (ws, id, type, payload) => this.broker.reply(ws, id, type, payload),
+      // P5 lease/presence：getClientId 从 ALS 取当前请求 clientId（handleMessage 入口 sessionContext.run 注入）。
+      // getClient/broadcastExcept/sendToClient 经 broker 访问连接池（按 clientId 而非 ws）。
+      getClientId: () => sessionContext.getStore()?.clientId ?? 'local',
+      getClient: (clientId) => this.conn.clients.get(clientId)?.ws,
+      broadcastExcept: (excludeClientId, msg) => this.broker.broadcastExcept(excludeClientId, msg),
+      sendToClient: (clientId, msg) => this.broker.sendToClient(clientId, msg),
     }
     this.settingsHandler = new SettingsMessageHandler({
       ...messaging,
@@ -276,15 +285,15 @@ export class RuntimeServer implements IMessageBroker {
     this.routes = new Map([
       ['ping', (msg, ws) => this.broker.reply(ws, msg.id, 'pong', {})],
       ['session.compact', (msg, ws) => this.sessionHandler.handleSessionCompact(msg as Extract<ClientMessage, { type: 'session.compact' }>, ws)],
-      ...this.sessionHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.sessionHandler.handleSessionMessage(msg, ws)] as const),
-      ...this.extensionHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.extensionHandler.handleExtensionMessage(msg, ws)] as const),
-      ...this.pluginMessageHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.pluginMessageHandler.handlePluginMessage(msg, ws)] as const),
-      ...(gitHandler ? gitHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => gitHandler.handleGitMessage(msg, ws)] as const) : []),
-      ...(fileHandler ? fileHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => fileHandler.handleFileMessage(msg, ws)] as const) : []),
-      ...(workspaceHandler ? workspaceHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => workspaceHandler.handleWorkspaceMessage(msg, ws)] as const) : []),
-      ...(worktreeHandler ? worktreeHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => worktreeHandler.handleWorktreeMessage(msg, ws)] as const) : []),
-      ...(terminalHandler ? terminalHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => terminalHandler.handleTerminalMessage(msg, ws)] as const) : []),
-    ] as Array<[ClientMessageType, (msg: ClientMessage, ws: WsType) => Promise<unknown> | unknown]>)
+      ...this.sessionHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, clientId: string) => this.sessionHandler.handleSessionMessage(msg, ws, clientId)] as const),
+      ...this.extensionHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, _clientId: string) => this.extensionHandler.handleExtensionMessage(msg, ws)] as const),
+      ...this.pluginMessageHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, _clientId: string) => this.pluginMessageHandler.handlePluginMessage(msg, ws)] as const),
+      ...(gitHandler ? gitHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, _clientId: string) => gitHandler.handleGitMessage(msg, ws)] as const) : []),
+      ...(fileHandler ? fileHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, _clientId: string) => fileHandler.handleFileMessage(msg, ws)] as const) : []),
+      ...(workspaceHandler ? workspaceHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, _clientId: string) => workspaceHandler.handleWorkspaceMessage(msg, ws)] as const) : []),
+      ...(worktreeHandler ? worktreeHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, _clientId: string) => worktreeHandler.handleWorktreeMessage(msg, ws)] as const) : []),
+      ...(terminalHandler ? terminalHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, _clientId: string) => terminalHandler.handleTerminalMessage(msg, ws)] as const) : []),
+    ] as Array<[ClientMessageType, (msg: ClientMessage, ws: WsType, clientId: string) => Promise<unknown> | unknown]>)
   }
 
   // ── IMessageBroker 委托（index.ts 把 server 当 broker 注入 PluginService/SessionService）──
@@ -300,15 +309,25 @@ export class RuntimeServer implements IMessageBroker {
 
   // ── Message routing ───────────────────────────────────────────
 
-  private async handleMessage(msg: ClientMessage, ws: WsType): Promise<void> {
+  private async handleMessage(msg: ClientMessage, ws: WsType, clientId: string): Promise<void> {
+    // P5 ALS 注入（审查 P7 D6 反向需求）：把当前请求 clientId 注入异步上下文，
+    // 供深层 handler（如 P7 plugin RPC）经 sessionContext.getStore()?.clientId 取值，无需显式参数透传。
+    return this.alsRun(clientId, () => this.routeMessage(msg, ws, clientId))
+  }
+
+  private alsRun<T>(clientId: string, fn: () => Promise<T>): Promise<T> {
+    return sessionContext.run({ clientId }, fn)
+  }
+
+  private async routeMessage(msg: ClientMessage, ws: WsType, clientId: string): Promise<void> {
     try {
       const route = this.routes.get(msg.type)
       if (route) {
-        await route(msg, ws)
+        await route(msg, ws, clientId)
         return
       }
       // Settings 是兜底 handler：它内部 switch 命中返回 true，未命中返回 false（→ unknown_type）。
-      if (!await this.settingsHandler.handleSettingsMessage(msg, ws)) {
+      if (!await this.settingsHandler.handleSettingsMessage(msg, ws, clientId)) {
         const rawMsg = msg as { type: string; payload?: { sessionId?: string } }
         this.broker.sendError(ws, 'unknown_type', `Unknown message type: ${rawMsg.type}`, msg.id, { sessionId: rawMsg.payload?.sessionId })
       }

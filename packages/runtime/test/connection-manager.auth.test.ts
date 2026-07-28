@@ -71,15 +71,18 @@ function emit(ws: WebSocket & MockWsInternals, event: string, ...args: unknown[]
 function makeCallbacks(): ConnectionCallbacks & {
   onConnect: ReturnType<typeof vi.fn>
   onMessage: ReturnType<typeof vi.fn>
+  onDisconnect: ReturnType<typeof vi.fn>
   sendError: ReturnType<typeof vi.fn>
 } {
   return {
     onConnect: vi.fn(),
     onMessage: vi.fn().mockResolvedValue(undefined),
+    onDisconnect: vi.fn(),
     sendError: vi.fn(),
   } as unknown as ConnectionCallbacks & {
     onConnect: ReturnType<typeof vi.fn>
     onMessage: ReturnType<typeof vi.fn>
+    onDisconnect: ReturnType<typeof vi.fn>
     sendError: ReturnType<typeof vi.fn>
   }
 }
@@ -104,10 +107,10 @@ describe('ConnectionManager wave1 auth (TC1: open mode zero-regression)', () => 
     const ws = makeMockWs()
     connect(cm, ws)
 
-    // 立即入池（clientId='local'）+ onConnect 被调
+    // 立即入池（clientId='local'）+ onConnect 被调（P5 透传 clientId）
     expect(cm.clients.size).toBe(1)
     expect(cm.clients.has('local')).toBe(true)
-    expect(cb.onConnect).toHaveBeenCalledWith(ws)
+    expect(cb.onConnect).toHaveBeenCalledWith(ws, 'local')
 
     // 后续普通消息经 onMessage 路由（心跳重置 + 回调）
     emit(ws, 'message', Buffer.from(JSON.stringify({ type: 'ping', id: 'm1' })))
@@ -161,7 +164,7 @@ describe('ConnectionManager wave1 auth (TC2: auth happy path)', () => {
 
     // 入池 + onConnect
     expect(cm.clients.get('client-A')?.deviceName).toBe('mac')
-    expect(cb.onConnect).toHaveBeenCalledWith(ws)
+    expect(cb.onConnect).toHaveBeenCalledWith(ws, 'client-A')
 
     // 认证定时器已清理（推进 6s 不应触发 close）
     vi.advanceTimersByTime(6000)
@@ -602,7 +605,7 @@ describe('P2-s2 auth replay orchestration (TC-W1.1~W1.8)', () => {
 
     // onConnect 被调一次（推全量）
     expect(cb.onConnect).toHaveBeenCalledTimes(1)
-    expect(cb.onConnect).toHaveBeenCalledWith(ws)
+    expect(cb.onConnect).toHaveBeenCalledWith(ws, 'c1')
 
     // auth.ok payload：resumed===false（冷启动）
     const sent = vi.mocked(ws.send).mock.calls[0][0] as string
