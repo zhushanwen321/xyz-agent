@@ -75,15 +75,13 @@
           <span v-if="workflowFields.action" class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-xs)] text-neutral-mid">{{ workflowFields.action }}</span>
           <!-- name（accent） -->
           <span v-if="workflowFields.name" class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent">{{ workflowFields.name }}</span>
-          <!-- slug（accent，· 分隔） -->
-          <template v-if="workflowFields.slug">
+          <!-- slug（accent，· 分隔，仅收起态） -->
+          <template v-if="workflowFields.slug && !toolExpanded">
             <span class="text-neutral-faint">·</span>
             <span class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent">{{ workflowFields.slug }}</span>
           </template>
-          <!-- runId 前 8 位（dim） -->
-          <span v-if="workflowFields.runId" class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-xs)] text-neutral-dim">{{ workflowFields.runId }}</span>
-          <!-- 终态指示：完成（Check）。workflow 无 isUnfinished（action=run 由 notifyDone 推送终态），failed 维持现状 -->
-          <Check v-if="!isFailed && !isRunning" class="ml-0.5 size-3 shrink-0 text-neutral-mid" />
+          <!-- runId 前 8 位（dim，仅收起态） -->
+          <span v-if="workflowFields.runId && !toolExpanded" class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-xs)] text-neutral-dim">{{ workflowFields.runId }}</span>
         </div>
         <!-- args.task 首行预览（run action） -->
         <div v-if="workflowArgsTaskPreview" class="mt-0.5 pl-4 truncate text-[length:var(--text-sm)] text-neutral-dim">
@@ -124,15 +122,7 @@
           <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
           <component :is="headerBlockIcon" v-else class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
           <span class="shrink-0 normal-case tracking-normal">{{ toolName }}</span>
-          <span v-if="argPath" class="min-w-0 normal-case tracking-normal text-neutral-dim truncate">· {{ argPath }}</span>
-          <!-- 状态指示：completed 显 Check（中性），failed 由 AlertTriangle 表达不重复，running 由 loader 表达。
-               unfinished（end_not_received）显 CircleDashed + 文字（中性 mid 色阶，过 WCAG AA）——非 Check（未完成）
-               也非 warn（未收到≠失败，可能是 WS 断连后会恢复）。文字用 text-neutral-mid 而非 dim（dim 3.56:1 不过 AA）。 -->
-          <Check v-if="!isFailed && !isRunning && !isUnfinished && result" class="ml-0.5 size-3 shrink-0 text-neutral-mid" />
-          <template v-else-if="isUnfinished">
-            <CircleDashed class="ml-0.5 size-3 shrink-0 text-neutral-mid" />
-            <span class="ml-0.5 normal-case tracking-normal whitespace-nowrap text-neutral-mid">{{ t('panel.message.noResult') }}</span>
-          </template>
+          <span v-if="argPath && !toolExpanded" class="min-w-0 normal-case tracking-normal text-neutral-dim truncate">· {{ argPath }}</span>
           <Button
             v-if="isBash && !isRunning && sessionId"
             variant="ghost"
@@ -201,7 +191,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, CircleDashed, Copy as CopyIcon, Terminal as TerminalIcon } from '@lucide/vue'
+import { Check, Copy as CopyIcon, Terminal as TerminalIcon } from '@lucide/vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import { extractGui } from '@xyz-agent/extension-protocol'
 import type { ToolCall } from '@xyz-agent/shared'

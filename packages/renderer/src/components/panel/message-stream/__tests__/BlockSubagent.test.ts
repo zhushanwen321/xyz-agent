@@ -263,11 +263,13 @@ describe('BlockSubagent: running / failed / unfinished 态', () => {
     expect(wrapper.find('.text-neutral-mid').exists()).toBe(true)
   })
 
-  it('unfinished 态渲染 panel.message.noResult 文案', () => {
+  it('unfinished 态不渲染终态指示（终态 icon 已移除）', () => {
     const wrapper = mount(BlockSubagent, {
       props: { tool: makeSubagent({ status: 'end_not_received' }) },
     })
-    expect(wrapper.text()).toContain('未收到结果')
+    // 终态指示（Check/CircleDashed/未收到结果文字）已移除，unfinished 态不再显示额外文案
+    expect(wrapper.text()).not.toContain('未收到结果')
+    expect(wrapper.find('.trace-subagent').exists()).toBe(true)
   })
 
   it('根 div 是 trace-subagent（纯缩进无边框）', () => {

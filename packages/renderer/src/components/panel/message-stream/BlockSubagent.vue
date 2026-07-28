@@ -24,25 +24,18 @@
       />
       <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">subagent</span>
       <span class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent">{{ subagentAgent }}</span>
-      <template v-if="subagentSlug">
+      <!-- slug + model：仅收起态显示（展开时 header 精简为 icon + "subagent" + agent） -->
+      <template v-if="subagentSlug && !toolExpanded">
         <span class="text-neutral-faint">·</span>
         <span class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent">{{ subagentSlug }}</span>
       </template>
-      <!-- model + thinkingLevel（仅当 model 存在时显示括号；thinkingLevel 仅当存在时追加） -->
-      <template v-if="subagentModel">
+      <template v-if="subagentModel && !toolExpanded">
         <span class="text-neutral-dim font-mono text-[length:var(--text-xs)]">&nbsp;(</span>
         <span class="font-mono text-[length:var(--text-xs)] text-accent">{{ subagentModel }}</span>
         <span v-if="subagentThinkingLevel" class="text-neutral-dim font-mono text-[length:var(--text-xs)]">&nbsp;· thinking {{ subagentThinkingLevel }})</span>
-        <span v-else class="text-neutral-dim font-mono text-[length:var(--text-xs)]">)</span>
+        <span v-else class="text-neutral-dim font-mono text-[length:var(--text-xs)])">)</span>
       </template>
-      <!-- 终态指示：完成（Check）/ 未收到结果（CircleDashed + text）。failed 不加额外标记（维持现状）。
-           unfinished 用 text-neutral-mid（6.78:1 过 AA），不用 dim（3.56:1 不过 AA，critique 第 3 轮）。
-           CircleDashed（中性灰，非 Check 非 warn）表达"状态不确定/未收到"。 -->
-      <Check v-if="!isFailed && !isRunning && !isUnfinished" class="ml-0.5 size-3 shrink-0 text-neutral-mid" />
-      <template v-else-if="isUnfinished">
-        <CircleDashed class="ml-0.5 size-3 shrink-0 text-neutral-mid" />
-        <span class="ml-0.5 whitespace-nowrap text-neutral-mid">{{ t('panel.message.noResult') }}</span>
-      </template>
+      <!-- 终态指示已移除（统一交互模式：无末尾 icon） -->
     </div>
     <!-- task 首行预览（收起态可见，dim） -->
     <div v-if="subagentTaskPreview" class="mt-0.5 pl-4 truncate text-[length:var(--text-sm)] text-neutral-dim">
@@ -83,7 +76,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Copy as CopyIcon, Check, CircleDashed } from '@lucide/vue'
+import { Copy as CopyIcon } from '@lucide/vue'
 import type { ToolCall } from '@xyz-agent/shared'
 import { BLOCK_ICON_LUCIDE, RUNNING_LOADER_SVG } from './block-icon'
 import { Button } from '@/components/ui/button'
@@ -100,9 +93,6 @@ const props = defineProps<{
 
 const isFailed = computed(() => props.tool.status === 'error')
 const isRunning = computed(() => props.tool.status === 'running')
-/** 流结束未收到 tool_call_end（进程崩溃/WS 断连/event-adapter 乱序丢消息）。
- *  诚实态，区别于 running（实时进行中）和 error（明确失败）——未收到结果不代表失败。 */
-const isUnfinished = computed(() => props.tool.status === 'end_not_received')
 
 /** tool 折叠：默认收起，仅 failed 强制展开（错误须直视，不可收起）。 */
 const toolCollapsed = ref(true)
