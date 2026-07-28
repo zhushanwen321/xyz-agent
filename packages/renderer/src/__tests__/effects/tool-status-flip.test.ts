@@ -1,7 +1,7 @@
 /**
  * toolcall status 翻转 UI 回归测试。
  *
- * 验证：tool.status running→completed 后，DOM 上 .animate-working-pulse 消失 + Check 图标出现。
+ * 验证：tool.status running→completed 后，DOM 上 .animate-loader-spin 消失（统一交互模式：无终态 icon）。
  * 覆盖三层链路：
  * - 方案 a：mount Block，改 props.tool.status（叶子组件单元回归）
  * - 方案 b：mount Turn，改 turn.assistants[0].toolCalls[0].status（单 turn 链路回归）
@@ -27,6 +27,56 @@ const NOW = Date.now()
 vi.mock('@/composables/features/useChat', () => ({
   useChat: () => ({ loadMoreHistory: vi.fn(), hasMoreHistory: () => false }),
 }))
+
+// mock virtua/vue：passthrough Virtualizer（渲染所有子项，绕过 happy-dom 无 RO/viewportSize=0 的窗口化限制）。
+// [cw wave w3 历史 skip，已恢复]：原本 c-multi / c-full-cycle 因 virtua 在 happy-dom 下 viewportSize=0
+//   skip——未被 :keepMounted 钉扎的非末位 turn 不进渲染窗口 → DOM 找不到 turn-xray。现通过本 mock 恢复覆盖。
+//   virtua 窗口化本身有独立单测（use-virtua-follow / use-message-stream-rail-virtua）覆盖；
+//   本测只验证 tool status 翻转链路（真 store + 真 applyMessageEvent + 多 turn 非末位翻转），不依赖窗口化行为。
+// vi.mock 为文件级（hoist），只影响本文件的 import，不影响其他测试文件。
+vi.mock('virtua/vue', async () => {
+  const { defineComponent, h } = await import('vue')
+  const PassthroughVirtualizer = defineComponent({
+    name: 'Virtualizer',
+    props: {
+      data: { type: Array, required: true },
+      // 声明但不消费的 props（保持与真实 Virtualizer 接口一致，避免 Vue warn 未声明 prop 告警）
+      itemSize: { type: Number, default: 0 },
+      shift: { type: Boolean, default: false },
+      keepMounted: { type: Array, default: () => [] },
+      startMargin: { type: Number, default: 0 },
+    },
+    setup(props, { slots, expose }) {
+      // 暴露一个最小 mock handle 满足 VirtualizerHandle 接口（MessageStream 的 vlistRef 绑定）。
+      // c-multi / c-full-cycle 不断言滚动几何，数值随便填（vlistBottom computed 有 null/scrollSize=0 guard）。
+      // 注意：用 setup ctx 的 expose（非 defineExpose——后者是 <script setup> 编译宏，本文件 defineComponent 不可用）。
+      expose({
+        scrollSize: 1000,
+        scrollOffset: 0,
+        viewportSize: 1000,
+        cache: {},
+        findItemIndex: () => 0,
+        getItemOffset: () => 0,
+        getItemSize: () => 100,
+        scrollToIndex: () => {},
+        scrollTo: () => {},
+        scrollBy: () => {},
+      })
+      // 透传默认 slot：把每个 data item + index 喂给子项（与真实 Virtualizer 的 #default slot 一致）。
+      // 包一层 div 接住 slot 返回的 vnode 数组，避免取 [0] 索引和类型纠结；多一层 div 不影响断言
+      // （断言用 [data-testid="turn-xray"] 查 Turn stub）。
+      return () =>
+        h(
+          'div',
+          { 'data-testid': 'virtualizer-mock' },
+          props.data.map((item: unknown, index: number) =>
+            h('div', { 'data-virtua-index': index }, slots.default?.({ item, index })),
+          ),
+        )
+    },
+  })
+  return { Virtualizer: PassthroughVirtualizer }
+})
 
 function makeTool(over: Partial<ToolCall> = {}): ToolCall {
   return {
@@ -180,12 +230,11 @@ describe('方案 c: mount MessageStream（真 store + 真虚拟滚动层）— t
     wrapper.unmount()
   })
 
-  it.skip('c-multi: 多 turn，running tool 在非末位 turn —— 验证虚拟窗口非末项 turn 翻转', async () => {
-    // [cw wave w3] skip：MessageStream.vue 已切到 virtua <Virtualizer>。本测断言「非末位非 streaming turn
-    //   仍在 DOM」依赖手写虚拟滚动的末项钉扎 + scrollTop=0 全窗口行为；virta 在 happy-dom 无真实
-    //   ResizeObserver/布局时 viewportSize=0，未被 :keepMounted 钉扎的项（a1 非 streaming 非 editing）
-    //   不进渲染窗口 → DOM 找不到 turn-xray。这不是真实回归（virta 在真实 Chromium 有 RO 会正常窗口化），
-    //   是 happy-dom 测试环境限制。tool status 翻转的链路覆盖由方案 a（Block）/ b（Turn）/ c(leaf) 保持。
+  it('c-multi: 多 turn，running tool 在非末位 turn —— 验证虚拟窗口非末项 turn 翻转', async () => {
+    // [cw wave w3 历史 skip，已恢复]：原本因 virtua 在 happy-dom 下 viewportSize=0 skip——未被 :keepMounted
+    //   钉扎的非末位 turn 不进渲染窗口 → DOM 找不到 turn-xray。现通过 mock virtua/vue 的 Virtualizer 为
+    //   passthrough 组件恢复覆盖——virtua 窗口化有独立单测，本测只验证 tool status 翻转链路
+    //   （真 store + 真 applyMessageEvent + 多 turn 非末位翻转）。
     const chat = useChatStore()
     const sid = 'sess-c-multi'
     const history: Message[] = []
@@ -240,10 +289,11 @@ describe('方案 c: mount MessageStream（真 store + 真虚拟滚动层）— t
     wrapper.unmount()
   })
 
-  it.skip('c-full-cycle: message.start→tool_start→tool_end→message.complete(full working→done) 真实生命周期', async () => {
-    // [cw wave w3] skip：同 c-multi 理由。message.complete 后 a1 不再 streaming → virta :keepMounted
-    //   释放该 idx → happy-dom（viewportSize=0）下 Virtualizer 卸载 a1 → turn-xray 消失，无法断言
-    //   tool status。真实回归覆盖由方案 a/b（mount Block/Turn，不依赖 virtua 窗口）保持。
+  it('c-full-cycle: message.start→tool_start→tool_end→message.complete(full working→done) 真实生命周期', async () => {
+    // [cw wave w3 历史 skip，已恢复]：同 c-multi 理由——message.complete 后 a1 不再 streaming，真实 virtua
+    //   :keepMounted 释放该 idx，happy-dom（viewportSize=0）下会卸载 a1 致 turn-xray 消失。现通过 mock
+    //   virtua/vue 的 Virtualizer 为 passthrough 组件恢复覆盖——virtua 窗口化有独立单测，本测只验证
+    //   tool status 翻转真实生命周期（真 store + 真 applyMessageEvent 走 message.complete 路径）。
     const chat = useChatStore()
     const sid = 'sess-cycle'
     chat.hydrate(sid, [
@@ -278,29 +328,27 @@ describe('方案 c: mount MessageStream（真 store + 真虚拟滚动层）— t
 
 /* ─────────────────────── 方案 a：mount Block，改 props.tool.status ─────────────────────── */
 describe('方案 a: mount Block 组件 — 翻转 props.tool.status', () => {
-  it('running→completed：双环 loader 消失，Check 图标出现', async () => {
+  it('running→completed：双环 loader 消失，无终态 icon（统一交互模式）', async () => {
     const tool = makeTool({ status: 'running' })
     const wrapper = mount(Block, {
       props: { type: 'tool', tool, sessionId: 's1' },
     })
 
-    // running 态：双环 loader 存在（Demo H，替代旧脉冲点）
+    // running 态：双环 loader 存在
     expect(wrapper.findAll('.animate-loader-spin').length).toBeGreaterThan(0)
-    expect(wrapper.find('svg.lucide-check').exists()).toBe(false)
 
-    // 翻转 status → completed（且有 output，满足 Block.vue `!isFailed && !isRunning && !isUnfinished && result`）
-    // 注意：result = props.tool.output，需要 output 才会显示 Check（否则走 noResult 分支）
+    // 翻转 status → completed
     await wrapper.setProps({ tool: { ...tool, status: 'completed', output: 'file content' } })
 
-    // 断言：loader 消失，Check 出现
+    // 断言：loader 消失，无终态 Check icon（统一交互模式：无末尾 icon）
     expect(wrapper.findAll('.animate-loader-spin')).toHaveLength(0)
-    expect(wrapper.find('svg.lucide-check').exists()).toBe(true)
+    expect(wrapper.find('svg.lucide-check').exists()).toBe(false)
   })
 })
 
 /* ─────────────────────── 方案 b：mount Turn，改 turn prop 内 tool ─────────────────────── */
 describe('方案 b: mount Turn 组件 — 翻转 turn.assistants[0].toolCalls[0].status', () => {
-  it('running→completed：Turn 内 Block 双环 loader 消失，Check 出现', async () => {
+  it('running→completed：Turn 内 Block 双环 loader 消失，无终态 icon', async () => {
     const tool = makeTool({ status: 'running' })
     const assistant = makeAssistantWithTool(tool)
     const turn = makeTurn(assistant, /* isStreaming */ false)
@@ -315,7 +363,7 @@ describe('方案 b: mount Turn 组件 — 翻转 turn.assistants[0].toolCalls[0]
     await wrapper.find('button.turn-meta').trigger('click')
     await nextTick()
 
-    // running 态断言：双环 loader 存在（Demo H，Block running 态）
+    // running 态断言：双环 loader 存在
     expect(wrapper.findAll('.animate-loader-spin').length).toBeGreaterThan(0)
 
     // 翻转 status：构造新的 turn prop（不可变更新，模拟 store commitMessages 路径）
@@ -325,10 +373,8 @@ describe('方案 b: mount Turn 组件 — 翻转 turn.assistants[0].toolCalls[0]
     await wrapper.setProps({ turn: turn2 })
     await nextTick()
 
-    // 断言：loader 消失，Check 出现
+    // 断言：loader 消失，无终态 Check icon（统一交互模式：无末尾 icon）
     expect(wrapper.findAll('.animate-loader-spin')).toHaveLength(0)
-    // 至少有一个 Check 图标（assistant 区复制按钮也有 Check，但 tool 块的 Check 在 trace 内）
-    expect(wrapper.findAll('svg.lucide-check').length).toBeGreaterThan(0)
   })
 })
 
