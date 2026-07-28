@@ -172,6 +172,19 @@ export function useSidebar() {
 
     await sessionApi.switchSession(id)
     session.activeId = id
+    // P5 presence：上报活跃 session（runtime 据此更新 presence.update 的 activeSessionId）。
+    // setActive 失败不阻断切 session（presence 是瞬态，下次切/上下线会重推）。
+    // try/catch 防御：部分测试 mock 的 sessionApi 未实现 setActive（vitest 严格 mock 代理），
+    // 访问未导出成员会抛错，此处兜底吞掉（presence 是瞬态增强，不应阻断 selectSession 主流程）。
+    try {
+      const setActive = (sessionApi as unknown as { setActive?: (id: string | null) => Promise<void> }).setActive
+      if (typeof setActive === 'function') {
+        setActive(id).catch(() => { /* presence 瞬态，失败不阻断 */ })
+      }
+    // eslint-disable-next-line taste/no-silent-catch -- setActive 未实现（vitest 严格 mock 代理）时跳过，presence 是瞬态增强
+    } catch {
+      /* setActive 未实现（mock），跳过 */
+    }
     // 清除未读标记：用户主动查看该 session，不再显示未读 badge
     clearUnread(id)
     // W3 H3：更新 LRU recency（在 evictIfNeeded 之前，确保当前 session 不被驱逐，R3/R4 修复）

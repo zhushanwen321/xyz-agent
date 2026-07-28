@@ -1,5 +1,6 @@
 export default {
   agentProcessing: 'Agent 正在处理',
+  deviceProcessing: '{device} 正在处理（剩余 {seconds}s）',
   sendFailed: '消息发送失败：{msg}',
   supplementSendFailed: '补充消息发送失败：{msg}',
   nextTurnSendFailed: '下轮消息发送失败：{msg}',

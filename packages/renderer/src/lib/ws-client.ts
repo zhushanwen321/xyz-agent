@@ -585,6 +585,15 @@ function intercept(msg: ServerMessage): boolean {
         bootId?: string
         serverSeq?: number
         seqReset?: boolean
+        // P5 presence：auth.ok 顺带带 presence 全量列表（spec D10）。
+        presence?: unknown[]
+      }
+      // P5 presence：auth.ok 带 presence 时，合成 presence.update 喂给 messageHandler（routeInbound）。
+      // auth.ok 本身被 intercept 消化（return true）不进 routeInbound，故 presence 经此合成消息
+      // 进入全局通道，让 useConnection/presence store 消费（与 presence.update 同一处理路径）。
+      // presence 缺省（旧 runtime / 未启用）时不合成，零回归。
+      if (Array.isArray(p.presence) && messageHandler) {
+        messageHandler({ type: 'presence.update', payload: { connections: p.presence } } as ServerMessage)
       }
       // 保存 bootId（供下次重连同页面生命周期携带，非空字符串才存）
       if (typeof p.bootId === 'string' && p.bootId !== '') {

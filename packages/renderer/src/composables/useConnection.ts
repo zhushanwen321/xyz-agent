@@ -28,7 +28,7 @@ import {
   restartRuntime,
 } from '../lib/ipc'
 import { BASE_PORT, DEV_PORT_OFFSET } from '@xyz-agent/shared'
-import type { ServerMessage } from '@xyz-agent/shared'
+import type { ServerMessage, PresenceConnection } from '@xyz-agent/shared'
 import { isRemoteMode, getActiveProfile, getClientId, getDeviceName } from '../lib/remote/connection-config'
 import * as transport from '../api/transport'
 import * as pending from '../api/pending'
@@ -37,6 +37,7 @@ import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
 import { usePanelStore } from '../stores/panel'
 import { useExtensionUIStore } from '../stores/extension-ui'
+import { usePresenceStore } from '../stores/presence'
 import { useToast } from './useToast'
 import { handleCompletion } from './useCompletionNotify'
 
@@ -120,6 +121,14 @@ function routeInbound(msg: ServerMessage): void {
     if (msg.type === 'session.exited') {
       handleSessionExited(sid, msg.payload as { code: number | null; reason: string })
     }
+    // P5 lease：session.busy/idle 更新 session store 占用状态（UI 标题旁占用指示器）。
+    // busy：lease acquire 成功，payload 含 clientId（busyOwnerId）；idle：lease 释放，清除占用。
+    if (msg.type === 'session.busy') {
+      const p = msg.payload as { clientId: string; expiresAt?: number }
+      useSessionStore().setSessionBusy(sid, p.clientId, p.expiresAt)
+    } else if (msg.type === 'session.idle') {
+      useSessionStore().clearSessionBusy(sid)
+    }
     // message.complete：后台完成时提示音 + 未读标记
     if (msg.type === 'message.complete') {
       const payload = msg.payload as { sessionId?: string; stopReason?: string }
@@ -130,6 +139,15 @@ function routeInbound(msg: ServerMessage): void {
     }
   } else {
     events.dispatchGlobal(msg)
+    // P5 presence：presence.update 是全局消息（无 sessionId），全量替换 presence store。
+    // 来源：connection-manager broadcastPresence（上下线/setActive/lease 变化）+ ws-client 合成
+    // （auth.ok presence 字段）。spec D9 全量替换语义。
+    if (msg.type === 'presence.update') {
+      const payload = msg.payload as { connections?: PresenceConnection[] }
+      if (Array.isArray(payload.connections)) {
+        usePresenceStore().setConnections(payload.connections)
+      }
+    }
     // L9：session 级消息（type 以 session./message. 开头）缺失 sessionId 时 warn，
     // 让 runtime bug 可见（违反规则 #7 隔离要求应有 fail-fast 信号，而非静默降级到 global 丢弃）
     if (msg.type.startsWith('session.') || msg.type.startsWith('message.')) {

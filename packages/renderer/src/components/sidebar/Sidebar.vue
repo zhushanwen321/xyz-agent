@@ -150,6 +150,9 @@
         </template>
       </div>
 
+      <!-- P5 presence：在线设备列表（多设备时显示，spec §4.2 最小实现） -->
+      <PresenceList />
+
       <!-- 用户区（footer）· 齿轮图标打开 Settings（settings/spec.md §1） -->
       <div class="mt-auto flex items-center gap-2 rounded-md px-2 py-2 text-[12px] text-muted">
         <span class="size-5 shrink-0 rounded-full bg-gradient-to-br from-accent to-info" />
@@ -197,6 +200,7 @@ import SubagentList from './SubagentList.vue'
 import WorkflowList from './WorkflowList.vue'
 import WorkflowDetail from './WorkflowDetail.vue'
 import RenameSessionDialog from './RenameSessionDialog.vue'
+import PresenceList from './PresenceList.vue'
 import { useFileTreeStore } from '@/stores/fileTree'
 import { usePanelStore } from '@/stores/panel'
 import { useSubagentStore } from '@/stores/subagent'

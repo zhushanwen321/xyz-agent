@@ -22,6 +22,7 @@ import type {
   SkillDirConfig, FileNode, RecommendedExtension, SubagentRecord, WorkflowRunRecord,
   SystemPromptConfig,
   TerminalConfig,
+  PresenceConnection,
 } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from './data'
@@ -260,6 +261,15 @@ export const session = {
     }
     // 模拟 runtime session 激活后的 server-push（session.commands + context.update）
     pushSessionState(id)
+  },
+
+  // P5 presence：mock setActive/listPresence（local mock 无多客户端，setActive no-op，listPresence 返回自己）。
+  async setActive(_sessionId: string | null): Promise<void> {
+    await sleep(TIMING.switchCmd)
+  },
+  async listPresence(): Promise<PresenceConnection[]> {
+    await sleep(TIMING.switchCmd)
+    return [{ clientId: 'local', deviceName: '本机', activeSessionId: null, isOperating: false }]
   },
 
   /** 拉取 session 扩展命令（与 real domain 同接口，mock 返回 MOCK_COMMANDS） */

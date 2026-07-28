@@ -1,5 +1,6 @@
 export default {
   agentProcessing: 'Agent is processing',
+  deviceProcessing: '{device} is processing ({seconds}s remaining)',
   sendFailed: 'Failed to send message: {msg}',
   supplementSendFailed: 'Failed to send supplement: {msg}',
   nextTurnSendFailed: 'Failed to send next turn: {msg}',
