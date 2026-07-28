@@ -99,9 +99,54 @@ describe('MessageBus', () => {
 
     expect(ws1.sent).toHaveLength(1)
     expect(ws2.sent).toHaveLength(1)
-    // 广播内容是 JSON.stringify(message)
-    expect(JSON.parse(ws1.sent[0])).toEqual(msg)
-    expect(JSON.parse(ws2.sent[0])).toEqual(msg)
+    // 广播内容是 JSON.stringify(message)，现在含 seq
+    const received1 = JSON.parse(ws1.sent[0])
+    const received2 = JSON.parse(ws2.sent[0])
+    expect(received1.seq).toBe(1)
+    expect(received1.type).toBe('message.text_delta')
+    expect(received2.seq).toBe(1)
+    expect(received2.type).toBe('message.text_delta')
+  })
+
+  // ── TC1c：多条 publish 的 seq 递增 ──────────────────────
+  it('publish 分配 per-session seq，多条递增', () => {
+    const bus = new MessageBus(10)
+    const ws = createMockClient()
+    bus.subscribe('s1', ws)
+    bus.publish('s1', createMockMessage('a'))
+    bus.publish('s1', createMockMessage('b'))
+    bus.publish('s1', createMockMessage('c'))
+    expect(JSON.parse(ws.sent[0]).seq).toBe(1)
+    expect(JSON.parse(ws.sent[1]).seq).toBe(2)
+    expect(JSON.parse(ws.sent[2]).seq).toBe(3)
+  })
+
+  // ── TC1d：不同 session 的 seq 独立递增 ──────────────────────
+  it('不同 session 的 seq 独立递增', () => {
+    const bus = new MessageBus(10)
+    const ws = createMockClient()
+    bus.subscribe('a', ws)
+    bus.subscribe('b', ws)
+    bus.publish('a', createMockMessage('x'))
+    bus.publish('b', createMockMessage('y'))
+    bus.publish('a', createMockMessage('z'))
+    // session-a: seq 1, 2; session-b: seq 1
+    // ws.sent[0] = a:x seq1, ws.sent[1] = b:y seq1, ws.sent[2] = a:z seq2
+    expect(JSON.parse(ws.sent[0]).seq).toBe(1) // session a, first
+    expect(JSON.parse(ws.sent[1]).seq).toBe(1) // session b, first
+    expect(JSON.parse(ws.sent[2]).seq).toBe(2) // session a, second
+  })
+
+  // ── TC1e：subscribe snapshot 中消息带 seq ──────────────────────
+  it('subscribe 返回的 snapshot 中消息带 seq', () => {
+    const bus = new MessageBus(10)
+    const ws = createMockClient()
+    bus.publish('s1', createMockMessage('a'))
+    bus.publish('s1', createMockMessage('b'))
+    const result = bus.subscribe('s1', ws)
+    expect(result.snapshot[0].seq).toBe(1)
+    expect(result.snapshot[1].seq).toBe(2)
+    expect(result.lastSeq).toBe(2)
   })
 
   // ── TC3：subscribe 返回 ring snapshot + stateSnapshot + lastSeq ──────────────────────

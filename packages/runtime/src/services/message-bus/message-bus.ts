@@ -11,8 +11,8 @@
  *   ws ∈ sessions[sid].subscribers  ⟺  sid ∈ wsSubscriptions[ws]
  *
  * 不接线真实 WebSocket——BusClient 是最小契约（readyState + send），测试用 mock 注入。
- * 不改协议——seq 是 per-session 内部分配器，不写入 ServerMessage（无协议字段），
- * 经 subscribe 的 lastSeq 暴露给调用方（runtime-wiring wave 用于增量同步）。
+ * seq 是 per-session 内部分配器，publish 时写入 ServerMessage.seq（protocol.ts 已定义可选字段），
+ * 供 renderer routeInbound 做 gap 检测和去重。
  *
  * 错误路径：
  * - ES1：clearSession 对不存在 session no-op（幂等）。
@@ -88,6 +88,7 @@ export class MessageBus {
   publish(sessionId: string, message: ServerMessage): void {
     const state = this.getOrCreateSession(sessionId)
     state.seqCounter += 1
+    message.seq = state.seqCounter
     state.streamRing.push(message)
     // ring FIFO：超容量则淘汰最旧（shift）。不会阻塞 publish。
     while (state.streamRing.length > this.ringCapacity) {
