@@ -361,3 +361,30 @@ close code `4000`（heartbeat timeout）：45 秒内无消息往来，runtime �
 ### 7.8 Origin 被拒
 
 浏览器控制台看到 WS 握手被拒（HTTP 404 `origin not allowed`）：`XYZ_AGENT_ALLOWED_ORIGINS` 设置了白名单但客户端 origin 不在列表中。把客户端 origin 加入白名单（如 `https://xyz.example.com`），或留空该变量以关闭校验（仅受信网络下可接受）。
+
+## 8. pi 与连接生命周期语义
+
+> 远程化后客户端随时可能断开（移动端进电梯/切网络/APP 进后台）。pi 与 WS 连接解耦——理解下面三条语义有助于正确部署与运维。详见 [P3 spec](../../.xyz-harness/2026-07-26-remote-p3/spec.md)。
+
+### 8.1 重启/升级 runtime 会中断进行中的 turn
+
+runtime 进程关停（systemctl restart / docker restart / 升级二进制）时，所有正在运行的 pi 子进程会被一并清理（`server.ts` stop → `sessionService.destroyAll` → `pm.destroyAll`）。
+
+- **不丢失**：session 对话历史（JSONL 持久化在磁盘，`~/.xyz-agent/pi/sessions/`）。重启后点开任意 session 即 restore 热恢复继续。
+- **丢失**：正在生成的那个 turn（被 `stopped` 终态标记）。用户需重新发送被中断的消息。
+- **设计取舍**：不做 detached 保活（孤儿子进程的管理负担转嫁部署层，systemd/Docker 重启时用户预期进程清理）。中断的 session 写 `stopped` sidecar，重启后可识别。
+
+### 8.2 审批挂起时客户端离线——不超时，重连即唤醒
+
+pi 等待审批/输入/选择（extension 交互式 UI）时若所有客户端离线，pi 会**无限期挂起等待**，不设超时。
+
+- 任一客户端重连（含冷启动/页面 reload）后，runtime 主动补发挂起的审批请求（`sendInitialState` 第 14 段 `extension.pendingRequestsBatch`），客户端弹出审批 UI。
+- **短断线**（重连同连接）：由 P2 ring buffer 回放补齐断线期间的 `extension.ui_request` 广播。
+- **不设超时的理由**：单用户自托管场景「用户自己的审批自己负责」，超时自动回默认响应（confirm→false）是危险默认值。`MAX_SESSIONS`（默认 10）已限总量，挂起 session 占坑可控。
+
+### 8.3 排队消息（follow_up）在 pi 内存，runtime 重启即丢
+
+pi 原生的 `follow_up` 消息队列存在 pi 进程内存中，runtime 不复制。
+
+- runtime 重启 → pi 进程清理 → **排队中的消息丢失**（已收到回复的消息不受影响，已落 JSONL）。
+- **设计取舍**：runtime 复制一份队列会引入双写一致性问题，不值。边界场景（kill 时有排队）接受丢失。
