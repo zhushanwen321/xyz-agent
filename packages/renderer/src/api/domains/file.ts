@@ -46,3 +46,24 @@ export async function read(
   const reply = await command('file.read', payload)
   return { content: reply.content, truncated: reply.truncated }
 }
+
+/**
+ * 请求临时可访问的文件签名 URL（远程模式 DetailPane 图片用，spec §十 D8）。
+ *
+ * 行为：
+ * - 调 RPC `file.signUrl`（P0 §5 已实施），runtime 返相对 URL `/file?path=...&sig=...&expires=...`
+ *   + expiresAt（ms）。调用方拼 httpOrigin（wsUrlToHttpOrigin(wsUrl)）后为完整可访问 URL。
+ * - TTL 5 分钟不缓存：每次打开预览现签（P0 §5.1 语义）；`<img>` 自身 HTTP cache
+ *   （`Cache-Control: private, max-age=300`）兜底重复访问。
+ * - 无 sessionId（file.signUrl 无 session 语义，签名 URL 自带白名单守门）。
+ * - 失败走 error envelope（routeInbound 透传 code 到 Error.code），调用方 try/catch 降级。
+ *
+ * @param path 文件绝对路径（cwd + 相对路径 resolve 后，runtime realpath 校验白名单）
+ * @returns { url: 相对形式 '/file?...'; expiresAt: 过期 ms 时间戳 }
+ */
+export async function signUrl(
+  path: string,
+): Promise<{ url: string; expiresAt: number }> {
+  const reply = await command('file.signUrl', { path })
+  return { url: reply.url, expiresAt: reply.expiresAt }
+}

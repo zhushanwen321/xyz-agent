@@ -211,7 +211,7 @@
           data-testid="detail-image"
         >
           <img
-            v-if="imageUrl"
+            v-if="imageUrl && !imageLoadFailed"
             :src="imageUrl"
             :alt="fileName"
             class="max-h-full max-w-full object-contain"
@@ -244,7 +244,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { FileText, Loader2, AlertCircle, Image as ImageIcon, Copy, Check, Quote } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -254,6 +254,7 @@ import { useCopy } from '@/composables/effects/useCopy'
 import { useComposerInjectionStore } from '@/stores/composer-injection'
 import { extToLang } from '@/composables/logic/file-type'
 import { resolvePreviewPath } from '@/lib/path-utils'
+import { useDetailImage } from '@/composables/panel/useDetailImage'
 import MarkdownRenderer from '@/components/panel/message-stream/MarkdownRenderer.vue'
 import CodeBlock from '@/components/panel/detail-renderers/CodeBlock.vue'
 import DiffView from '@/components/panel/detail-renderers/DiffView.vue'
@@ -295,37 +296,16 @@ const absolutePath = computed(() => {
 const lang = computed(() => extToLang(state.value.path ?? ''))
 
 /**
- * 图片加载失败标志（local-file:// 403 白名单/文件损坏时 onerror 置 true，降级占位）。
- * 切文件时重置。
+ * 图片 URL 加载（spec §十 D8 远程图片资源化，逻辑内聚在 useDetailImage composable）。
+ * - 本地模式：local-file://（零改动，spec §十二 兼容性契约）
+ * - 远程模式：signUrl 现签 + httpOrigin 拼 src（TTL 5min 不缓存，watch(path) 防竞态）
+ * - 失败/竞态 → imageUrl=null 走占位（imageLoadFailed 标志）
  */
-const imageLoadFailed = ref(false)
-
-/**
- * 图片 URL：按路径类型解析为绝对路径后拼成 local-file:// 协议 URL。
- * - main.ts:142 的 protocol.handle('local-file') 拦截，白名单含 homedir()（cwd 通常在其下）
- * - encodeURIComponent 处理中文/空格路径（main.ts:143 decodeURIComponent 还原）
- * - 无 cwd 或加载失败 → null（模板走占位分支）
- */
-const imageUrl = computed(() => {
-  if (imageLoadFailed.value) return null
-  const cwd = sessionCwd(props.sessionId)
-  if (!cwd || !state.value.path) return null
-  const absPath = resolvePreviewPath(cwd, state.value.path).absolute
-  return `local-file:///${encodeURIComponent(absPath)}`
+const { imageUrl, imageLoadFailed, onImageError } = useDetailImage({
+  state,
+  sessionCwd,
+  sessionId: () => props.sessionId,
 })
-
-/** img onerror：白名单 403 / 文件损坏 → 标记失败降级占位 */
-function onImageError(): void {
-  imageLoadFailed.value = true
-}
-
-// 切文件时重置图片失败标志（新文件应重新尝试加载）
-watch(
-  () => state.value.path,
-  () => {
-    imageLoadFailed.value = false
-  },
-)
 
 function onToggleView(mode: DetailViewMode): void {
   void toggleView(mode)
