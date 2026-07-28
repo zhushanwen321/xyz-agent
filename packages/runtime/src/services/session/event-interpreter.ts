@@ -565,6 +565,12 @@ export class EventInterpreter {
    *
    * 幂等：若已有循环在跑（如上一 turn 未正常 stop），先清。每次 turn-start 重置
    * 失败计数与 warned，确保跨 turn 独立计数（本 turn 第 1 次失败 = 新一轮，不继承上 turn）。
+   *
+   * [P3 spec D6 / AC6] watchdog 与审批挂起共存：pi 等待 extension 响应时 RPC 读循环仍处理
+   * stdin，ping get_state 可穿透（见本文件 :110-114 pingPi 设计权衡）——故审批挂起不会误触
+   * 发 onSilentAbort。此「不误 abort」语义已由
+   * services/session/__tests__/event-interpreter.watchdog.test.ts 固化为防回归契约（TC-AC6 审批
+   * 挂起 + TC-AC6b 真死对照基线）。修改 ping 阈值/逻辑时须同步该测试。
    */
   private startPingLoop(): void {
     this.stopPingLoop()
