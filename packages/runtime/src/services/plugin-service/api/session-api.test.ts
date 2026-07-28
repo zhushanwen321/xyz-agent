@@ -1,18 +1,22 @@
 /**
- * ActiveSessionResolver 行为测试（P7 per-clientId）。
+ * ActiveSessionResolver + session RPC handler 行为测试（P7 per-clientId）。
  *
- * 覆盖 spec §六测试计划：resolve per-clientId（Map 命中/多客户端隔离）、
- * lease fallback（第二级）、全局 fallback（第三级，D7 例外）、null（第四级）、
- * per-key TTL cache（命中/过期/隔离/clear）、setActive(null) 边界（ERR2）。
+ * 覆盖 spec §六测试计划：
+ * - resolve per-clientId（Map 命中/多客户端隔离）、lease fallback（第二级）、
+ *   全局 fallback（第三级，D7 例外）、null（第四级）、per-key TTL cache、setActive(null) 边界。
+ * - plugin RPC handler 用 ALS 取 clientId 透传（D6）、sendMessage(undefined) throw（ERR1）、
+ *   agent handler ALS 透传（SC2）、协议层不变（D5，review）。
  *
- * mock 策略：sessionService（getSummary/listPersistedSessions）、connectionManager
- * （getActiveSession）、leaseManager（getBusySession）用 inline 对象 mock（resolver
- * 纯逻辑无 IO，手工 mock 最清晰，符合 lease-manager.test.ts 既有风格）。
+ * mock 策略：resolver 测试用 inline 对象 mock sessionService/connectionManager/leaseManager；
+ * handler 测试用 mock PluginRpcServer（捕获 registerMethod 的 handler）+ mock SessionHandlers（spy）。
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { ActiveSessionResolver } from './session-api.js'
+import type { Mock } from 'vitest'
+import { ActiveSessionResolver, registerSessionRpcHandlers } from './session-api.js'
+import { sessionContext } from '../../../infra/async-context.js'
 import type { SessionSummary, SessionGroup } from '@xyz-agent/shared'
 import type { IPluginServiceDeps } from '../plugin-types.js'
+import type { SessionHandlers } from './session-api.js'
 
 /** 构造一个 SessionSummary（最小字段）。 */
 function summary(id: string, status: SessionSummary['status'] = 'idle'): SessionSummary {
@@ -275,3 +279,147 @@ describe('ActiveSessionResolver (P7 per-clientId)', () => {
     expect(resolver.resolve(undefined)).toBeUndefined()
   })
 })
+
+// ═══════════════════════════════════════════════════════════════
+// w2: plugin session RPC handler（ALS 取 clientId 透传 + sendMessage throw）
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * mock PluginRpcServer：捕获 registerMethod 注册的 handler，供测试直接调用。
+ * 避开真实 PluginRpcServer 的 Worker/dispatch 机制（handler 测试只需验 handler 行为）。
+ */
+function mockRpcServer(): {
+  server: { registerMethod: (method: string, handler: (p: Record<string, unknown>) => Promise<unknown>) => void }
+  handlers: Map<string, (p: Record<string, unknown>) => Promise<unknown>>
+} {
+  const handlers = new Map<string, (p: Record<string, unknown>) => Promise<unknown>>()
+  const server = {
+    registerMethod: (method: string, handler: (p: Record<string, unknown>) => Promise<unknown>) => {
+      handlers.set(method, handler)
+    },
+  }
+  return { server, handlers }
+}
+
+/** 构造 mock SessionHandlers（spy getActiveSession/sendMessage 返回值可控）。 */
+function mockHandlers(opts: {
+  active?: SessionInfoLike | undefined
+  sendMessage?: Mock
+  getActive?: Mock
+} = {}): { handlers: SessionHandlers; spies: { getActive: Mock; sendMessage: Mock } } {
+  const getActive = opts.getActive ?? vi.fn(() => opts.active)
+  const sendMessage = opts.sendMessage ?? vi.fn(async () => {})
+  return {
+    handlers: {
+      listSessions: async () => [],
+      getSession: async () => undefined,
+      getActiveSession: getActive,
+      sendMessage,
+    },
+    spies: { getActive, sendMessage },
+  }
+}
+
+/** SessionInfo 最小形状（handler 测试用）。 */
+type SessionInfoLike = { id: string; label: string; cwd: string; status: string; createdAt: number; lastActiveAt: number }
+
+describe('plugin.sessions RPC handler (P7 ALS clientId 透传)', () => {
+  // TC-w2-1: getActive handler 用 ALS 取 clientId 透传
+  it('TC-w2-1: sessionContext.run({clientId}) 内 getActive handler 透传 clientId 给 deps', async () => {
+    const { server, handlers } = mockRpcServer()
+    const { handlers: sessionHandlers } = mockHandlers({ active: undefined })
+    registerSessionRpcHandlers(server as unknown as Parameters<typeof registerSessionRpcHandlers>[0], sessionHandlers)
+    const getActiveSpy = (sessionHandlers.getActiveSession as unknown as Mock)
+
+    await sessionContext.run({ clientId: 'A' }, async () => {
+      await handlers.get('plugin.sessions.getActive')!({ pluginId: 'p' })
+    })
+
+    expect(getActiveSpy).toHaveBeenCalledWith('A')
+  })
+
+  // TC-w2-2: 无 ALS store 时透传 undefined（全局 fallback，D7 例外）
+  it('TC-w2-2: 不在 sessionContext.run 内 getActive handler 透传 undefined（走全局 fallback）', async () => {
+    const { server, handlers } = mockRpcServer()
+    const { handlers: sessionHandlers } = mockHandlers({ active: undefined })
+    registerSessionRpcHandlers(server as unknown as Parameters<typeof registerSessionRpcHandlers>[0], sessionHandlers)
+    const getActiveSpy = (sessionHandlers.getActiveSession as unknown as Mock)
+
+    // 不在 run 内（ALS 无 store）
+    await handlers.get('plugin.sessions.getActive')!({ pluginId: 'p' })
+
+    expect(getActiveSpy).toHaveBeenCalledWith(undefined)
+  })
+
+  // TC-w2-3: sendMessage(undefined) 无 active session 时 throw
+  it('TC-w2-3: sendMessage(sessionId 缺失) + resolver 返回 undefined → throw no_active_session，未调 sendMessage', async () => {
+    const { server, handlers } = mockRpcServer()
+    const { handlers: sessionHandlers, spies } = mockHandlers({ active: undefined })
+    registerSessionRpcHandlers(server as unknown as Parameters<typeof registerSessionRpcHandlers>[0], sessionHandlers)
+
+    await expect(
+      sessionContext.run({ clientId: 'A' }, async () => {
+        await handlers.get('plugin.sessions.sendMessage')!({ pluginId: 'p', role: 'user', content: 'hi' })
+      }),
+    ).rejects.toThrow('no_active_session')
+
+    expect(spies.getActive).toHaveBeenCalledWith('A')
+    expect(spies.sendMessage).not.toHaveBeenCalled()
+  })
+
+  // TC-w2-4: sendMessage(undefined) 解析 active session 后用该 sessionId
+  it('TC-w2-4: sendMessage(sessionId 缺失) + resolver 返回 session → 用解析的 sessionId 调 sendMessage', async () => {
+    const active: SessionInfoLike = { id: 'sessionX', label: 'X', cwd: '/c', status: 'idle', createdAt: 0, lastActiveAt: 0 }
+    const { server, handlers } = mockRpcServer()
+    const { handlers: sessionHandlers, spies } = mockHandlers({ active })
+    registerSessionRpcHandlers(server as unknown as Parameters<typeof registerSessionRpcHandlers>[0], sessionHandlers)
+
+    await sessionContext.run({ clientId: 'A' }, async () => {
+      await handlers.get('plugin.sessions.sendMessage')!({ pluginId: 'p', role: 'user', content: 'hi' })
+    })
+
+    expect(spies.getActive).toHaveBeenCalledWith('A')
+    expect(spies.sendMessage).toHaveBeenCalledWith('sessionX', 'user', 'hi')
+  })
+
+  // TC-w2-5: sendMessage 明确传 sessionId 时不调 resolver
+  it('TC-w2-5: sendMessage(sessionId 明确) → 不调 getActiveSession，直接用传入 sessionId', async () => {
+    const { server, handlers } = mockRpcServer()
+    const { handlers: sessionHandlers, spies } = mockHandlers({ active: undefined })
+    registerSessionRpcHandlers(server as unknown as Parameters<typeof registerSessionRpcHandlers>[0], sessionHandlers)
+
+    await handlers.get('plugin.sessions.sendMessage')!({ pluginId: 'p', sessionId: 'explicit-session', role: 'system', content: 'go' })
+
+    expect(spies.getActive).not.toHaveBeenCalled()
+    expect(spies.sendMessage).toHaveBeenCalledWith('explicit-session', 'system', 'go')
+  })
+
+  // TC-w2-6: ALS 透传在 run 外重置（验证 ALS 边界——run 外 getStore 为 undefined）
+  it('TC-w2-6: sessionContext.run 外 getStore 返回 undefined（ALS 边界，验证透传不泄漏）', () => {
+    expect(sessionContext.getStore()).toBeUndefined()
+    let insideStore: string | undefined
+    sessionContext.run({ clientId: 'B' }, () => {
+      insideStore = sessionContext.getStore()?.clientId
+    })
+    expect(insideStore).toBe('B')
+    // run 结束后 store 重置
+    expect(sessionContext.getStore()).toBeUndefined()
+  })
+
+  // TC-w2-7: 协议层不变——sendMessage handler 接受 {sessionId?, role, content}，getActive 无参（createSessionApi 代理签名 review）
+  it('TC-w2-7: handler 协议层不变——sendMessage 接受 {sessionId?,role,content}，getActive 不需 sessionId 参数（D5 协议透明）', async () => {
+    const { server, handlers } = mockRpcServer()
+    const { handlers: sessionHandlers } = mockHandlers({ active: undefined })
+    registerSessionRpcHandlers(server as unknown as Parameters<typeof registerSessionRpcHandlers>[0], sessionHandlers)
+
+    // getActive handler 不需任何业务参数（只读 ALS clientId）
+    await handlers.get('plugin.sessions.getActive')!({ pluginId: 'p' })
+    // sendMessage handler 接受可选 sessionId + role + content（协议层与改造前一致）
+    await handlers.get('plugin.sessions.sendMessage')!({ pluginId: 'p', sessionId: 's', role: 'user', content: 'c' })
+
+    // 协议契约：handler 不要求客户端传 clientId（clientId 从 ALS 隐式取，对插件透明）
+    expect(handlers.has('plugin.sessions.getActive')).toBe(true)
+    expect(handlers.has('plugin.sessions.sendMessage')).toBe(true)
+  })
+})
+

@@ -16,6 +16,7 @@ import type { SessionInfo, Disposable } from '../plugin-types.js'
 import type { IPluginServiceDeps } from '../plugin-types.js'
 import type { SessionSummary } from '../../../../../shared/src/session.js'
 import { registerHandler, dispatchHandler } from '../handler-registry.js'
+import { sessionContext } from '../../../infra/async-context.js'
 
 // eslint-disable-next-line no-magic-numbers -- 2 seconds TTL for active session cache
 const ACTIVE_SESSION_CACHE_TTL_MS = 2 * 1000
@@ -145,15 +146,28 @@ export function registerSessionRpcHandlers(
     return deps.getSession(sessionId)
   })
 
-   
-  rpcServer.registerMethod('plugin.sessions.getActive', async (_params) => {
-    return deps.getActiveSession()
+
+  rpcServer.registerMethod('plugin.sessions.getActive', async () => {
+    // P7 D6：从 ALS 取当前请求 clientId（WS handler 入口 sessionContext.run 注入）透传给 resolver。
+    // ALS 无 store（hook/定时器/生命周期，D7 例外）→ clientId undefined → resolver 全局 fallback。
+    const { clientId } = sessionContext.getStore() ?? {}
+    return deps.getActiveSession(clientId)
   })
 
   rpcServer.registerMethod('plugin.sessions.sendMessage', async (params) => {
-    const sessionId = params.sessionId as string | undefined
+    let sessionId = params.sessionId as string | undefined
     const role = params.role as string
     const content = params.content as string
+    // sessionId 缺失时从 ALS 取 clientId → resolver 解析 active session。
+    // 解析失败（四级 fallback 都 miss）→ throw（plugin 代码自行处理，建议先 getActive 确认）。
+    if (!sessionId) {
+      const { clientId } = sessionContext.getStore() ?? {}
+      const active = await deps.getActiveSession(clientId)
+      if (!active) {
+        throw new Error('no_active_session')
+      }
+      sessionId = active.id
+    }
     await deps.sendMessage(sessionId, role, content)
   })
 }

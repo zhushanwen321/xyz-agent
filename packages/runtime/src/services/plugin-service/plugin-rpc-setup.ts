@@ -13,6 +13,7 @@ import type { SessionDataStore } from './session-data-store.js'
 import { registerToolRpcHandlers } from './tool-api.js'
 import { registerHookRpcHandlers } from './hook-api.js'
 import { registerSessionRpcHandlers, ActiveSessionResolver } from './api/session-api.js'
+import { sessionContext } from '../../infra/async-context.js'
 import { registerConfigRpcHandlers, toConfigKey, fromConfigKey, isConfigKey } from './api/config-api.js'
 import { registerStorageRpcHandlers, storageHandlersFrom } from './api/storage-api.js'
 import { registerNotifyRpcHandler, notifyHandlersFrom, broadcastPluginNotification } from './api/notify-api.js'
@@ -175,15 +176,19 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
   })
 
   // ── Agent RPC handlers ──────────────────────────────────
+  // P7 D6/SC2：agent 域 handler 与 sessions handler 同属主线程 plugin RPC，统一从 ALS 取 clientId
+  // 透传给 resolver（per-client 一致性）。ALS 无 store（hook/定时器/生命周期，D7 例外）→ undefined
+  // → resolver 全局 fallback。
+  const activeClientId = (): string | undefined => sessionContext.getStore()?.clientId
   registerAgentRpcHandlers(rpcServer, {
     getModel: () => {
       if (!deps.sessionService) return ''
-      const active = ctx.activeSessionResolver.resolve(undefined)
+      const active = ctx.activeSessionResolver.resolve(activeClientId())
       return active?.modelId ?? ''
     },
     setModel: async (model: string) => {
       if (!deps.sessionService) return
-      const active = ctx.activeSessionResolver.resolve(undefined)
+      const active = ctx.activeSessionResolver.resolve(activeClientId())
       if (!active) return
       const parts = model.split('/')
       if (parts.length < MIN_MODEL_PARTS) return
@@ -199,12 +204,12 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
     },
     getThinkingLevel: () => {
       if (!deps.sessionService) return 'off'
-      const active = ctx.activeSessionResolver.resolve(undefined)
+      const active = ctx.activeSessionResolver.resolve(activeClientId())
       return active?.thinkingLevel ?? 'off'
     },
     setThinkingLevel: async (level: string) => {
       if (!deps.sessionService) return
-      const active = ctx.activeSessionResolver.resolve(undefined)
+      const active = ctx.activeSessionResolver.resolve(activeClientId())
       if (!active) return
       if (deps.modelService) {
         await deps.modelService.setThinkingLevel(active.id, level)
