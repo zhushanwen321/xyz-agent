@@ -506,7 +506,7 @@ export type WorktreeEnvelopeCode = WorktreeErrorCode | WorktreeUnknownErrorCode
 
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'session.deletedByCwd' | 'config.sessions' | 'session.history' | 'session.fullHistory'
-  | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.handoffComplete' | 'session.handoffAborted'
+  | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.handoffStarted' | 'session.handoffComplete' | 'session.handoffAborted'
   | 'session.subagents' | 'session.subagentHistory'
   | 'session.workflows' | 'session.agentCallHistory' | 'session.agentCallFilePath'
   | 'session.workflowUpdate' | 'session.workflowActionDone' | 'session.subagentActionDone'
@@ -872,9 +872,13 @@ export interface ServerMessageMapBase {
     branchName?: string
     preview?: string
   }
+  // session.handoffStarted：handoff 开始时广播到源 session 对话流（B1 修复）。
+  // 时机：runHandoff 发送 handoff prompt 给源 session pi 之前。
+  // 前端据此在对话流中显示「正在生成 handoff 文档...」提示，让用户知道 handoff 已启动。
+  'session.handoffStarted': { sessionId: string }
   // session.handoffComplete：fast-handoff 完成后的广播（FR-fast-handoff，agent-driven 模式）。
   // 时机：源 session 的 pi 跑完 handoff turn（HANDOFF_PROMPT_TEMPLATE）→ runtime 从 agent_end 提取
-  // 文档文本 → 新建空白 session → 用 newClient.prompt(doc) 把文档注入新 session 触发新 turn 之后。
+  // 文档文本 → 新建空白 session → 用 wrapWithXmlTag(doc) + reply 注入新 session 触发新 turn 之后。
   // agent-driven 模式下 doc 由 runtime 直接发给新 session pi（wave1 已实现），不再经广播回传前端——
   // 广播 payload 仅通知前端复位源 session handingOff + 刷新列表 + 跳转新 session（selectSession 内部
   // 自带 hydrate + 订阅 + 命令/上下文兜底拉取，前端不再手动 ensureStreamSubscription/send）。

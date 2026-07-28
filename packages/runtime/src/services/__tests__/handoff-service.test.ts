@@ -14,7 +14,7 @@ import {
   HANDOFF_EXIT_POLL_MS,
   extractFinalTextFromAgentEnd,
 } from '../handoff-service.js'
-import { HANDOFF_PROMPT_TEMPLATE, REPLY_MAX_LENGTH, buildHandoffPrompt } from '../handoff-prompt.js'
+import { HANDOFF_PROMPT_TEMPLATE, REPLY_MAX_LENGTH, buildHandoffPrompt, sanitizeReply } from '../handoff-prompt.js'
 import type { IMessageBroker } from '../../interfaces.js'
 import type { SessionService } from '../session/session-service.js'
 import type { IPiEngine } from '../ports/pi-engine.js'
@@ -124,7 +124,7 @@ describe('HandoffService', () => {
     service = new HandoffService({ sessionService, broker, broadcastSessionList, nextPushId })
   })
 
-  it('TC1: runHandoff 主路径 — agent_end 提取 doc，新建 session 注入 doc，广播无 doc/reply', async () => {
+  it('TC1: runHandoff 主路径 — agent_end 提取 doc，新建 session 注入 wrapWithXmlTag(doc)，广播无 doc/reply', async () => {
     const runPromise = service.runHandoff('src-1')
 
     // 等一微任务让 ensureActive + onEvent + prompt 注册完成
@@ -132,7 +132,7 @@ describe('HandoffService', () => {
 
     expect(srcClient.onEvent).toHaveBeenCalled()
     expect(srcClient.prompt).toHaveBeenCalledTimes(1)
-    expect(srcClient.prompt).toHaveBeenCalledWith(expect.stringContaining(HANDOFF_PROMPT_TEMPLATE))
+    expect(srcClient.prompt).toHaveBeenCalledWith(HANDOFF_PROMPT_TEMPLATE)
 
     // emit agent_end with text content
     srcClient.emit({
@@ -143,8 +143,13 @@ describe('HandoffService', () => {
 
     await runPromise
 
-    // new session 注入 doc
-    expect(newClient.prompt).toHaveBeenCalledWith('doc content')
+    // B2：new session 注入 wrapWithXmlTag(doc, srcLabel)
+    expect(newClient.prompt).toHaveBeenCalledTimes(1)
+    const injectedPrompt = newClient.prompt.mock.calls[0][0] as string
+    expect(injectedPrompt).toContain('<handoff_document source="src"')
+    expect(injectedPrompt).toContain('doc content')
+    expect(injectedPrompt).toContain('</handoff_document>')
+    expect(injectedPrompt).toContain('立即执行文档里尚未完成的下一项')
     // 广播
     expect(broadcastSessionList).toHaveBeenCalled()
     expect(broker.broadcast).toHaveBeenCalledWith(
@@ -161,10 +166,13 @@ describe('HandoffService', () => {
     // payload 不含 doc / reply 字段（DM3 协议变更）
     // W5：也不含多余的 sessionId（协议类型只有 srcSessionId/newSessionId/sourceLabel，
     // sessionId 会被前端 routeInbound 误当路由字段）
-    const call = vi.mocked(broker.broadcast).mock.calls[0]![0] as { payload: Record<string, unknown> }
-    expect(call.payload).not.toHaveProperty('doc')
-    expect(call.payload).not.toHaveProperty('reply')
-    expect(call.payload).not.toHaveProperty('sessionId')
+    // B1：broker.broadcast 被调用两次：handoffStarted（含sessionId）+ handoffComplete（不含）
+    const handoffCompleteCall = vi.mocked(broker.broadcast).mock.calls.find(
+      (c: any[]) => c[0].type === 'session.handoffComplete',
+    )![0] as { payload: Record<string, unknown> }
+    expect(handoffCompleteCall.payload).not.toHaveProperty('doc')
+    expect(handoffCompleteCall.payload).not.toHaveProperty('reply')
+    expect(handoffCompleteCall.payload).not.toHaveProperty('sessionId')
 
     // listener 已清理（detach 调用 → _listeners 空 → inflight 清空）
     expect(srcClient._listeners.size).toBe(0)
@@ -176,15 +184,14 @@ describe('HandoffService', () => {
     await again
   })
 
-  it('TC2: reply 追加到 prompt；广播无 reply 字段', async () => {
+  it('TC2: reply 不追加到源 session prompt，而是追加到新 session 注入', async () => {
     const runPromise = service.runHandoff('src-1', 'focus on tests')
     await new Promise((r) => setTimeout(r, 0))
 
-    expect(srcClient.prompt).toHaveBeenCalledWith(
+    // B3：buildHandoffPrompt 不再接受 reply 参数，源 session prompt 只含模板
+    expect(srcClient.prompt).toHaveBeenCalledWith(HANDOFF_PROMPT_TEMPLATE)
+    expect(srcClient.prompt).not.toHaveBeenCalledWith(
       expect.stringContaining('focus on tests'),
-    )
-    expect(srcClient.prompt).toHaveBeenCalledWith(
-      expect.stringContaining(HANDOFF_PROMPT_TEMPLATE),
     )
 
     srcClient.emit({
@@ -198,7 +205,59 @@ describe('HandoffService', () => {
     expect(call.payload).not.toHaveProperty('reply')
   })
 
-  it('TC3: agent_end 末条 content 无 text → rejects（empty），create 未调，未广播', async () => {
+  it('TC2b: reply 追加到新 session 注入（wrapWithXmlTag 之后）', async () => {
+    const runPromise = service.runHandoff('src-1', 'focus on tests')
+    await new Promise((r) => setTimeout(r, 0))
+
+    srcClient.emit({
+      type: 'agent_end',
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: 'doc content' }], stopReason: 'stop' }],
+      willRetry: false,
+    })
+    await runPromise
+
+    // B2+B3：new session 注入 wrapWithXmlTag(doc) + reply
+    expect(newClient.prompt).toHaveBeenCalledTimes(1)
+    const injectedPrompt = newClient.prompt.mock.calls[0][0] as string
+    expect(injectedPrompt).toContain('<handoff_document source="src"')
+    expect(injectedPrompt).toContain('doc content')
+    expect(injectedPrompt).toContain('</handoff_document>')
+    // reply 追加到末尾
+    expect(injectedPrompt).toContain('focus on tests')
+    // reply 在 xml tag 之后
+    const xmlCloseIndex = injectedPrompt.indexOf('</handoff_document>')
+    const replyIndex = injectedPrompt.indexOf('focus on tests')
+    expect(replyIndex).toBeGreaterThan(xmlCloseIndex)
+  })
+
+  it('TC2c: B1 handoffStarted 在 prompt 之前广播', async () => {
+    const runPromise = service.runHandoff('src-1')
+    await new Promise((r) => setTimeout(r, 0))
+
+    // B1：handoffStarted 应在 prompt 之前广播
+    expect(broker.broadcast).toHaveBeenCalledTimes(1)
+    expect(broker.broadcast).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'session.handoffStarted',
+      payload: { sessionId: 'src-1' },
+    }))
+    // prompt 应在 broadcast 之后调用
+    expect(srcClient.prompt).toHaveBeenCalledTimes(1)
+
+    srcClient.emit({
+      type: 'agent_end',
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: 'd' }], stopReason: 'stop' }],
+      willRetry: false,
+    })
+    await runPromise
+
+    // 完成后应有 handoffComplete
+    expect(broker.broadcast).toHaveBeenCalledTimes(2)
+    expect(broker.broadcast).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'session.handoffComplete',
+    }))
+  })
+
+  it('TC3: agent_end 末条 content 无 text → rejects（empty），create 未调，只广播 handoffStarted', async () => {
     const runPromise = service.runHandoff('src-1')
     await new Promise((r) => setTimeout(r, 0))
 
@@ -216,7 +275,11 @@ describe('HandoffService', () => {
 
     await expect(runPromise).rejects.toThrow('empty')
     expect(sessionService.create).not.toHaveBeenCalled()
-    expect(broker.broadcast).not.toHaveBeenCalled()
+    // B1：handoff 开始时广播 handoffStarted，但 empty 后不应广播 handoffComplete
+    expect(broker.broadcast).toHaveBeenCalledTimes(1)
+    expect(broker.broadcast).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'session.handoffStarted',
+    }))
   })
 
   it('TC4: timeout — 不 emit agent_end，advance timer → rejects（timeout），create 未调', async () => {
@@ -254,7 +317,7 @@ describe('HandoffService', () => {
     await first
   })
 
-  it('TC6: abortHandoff — abort 调用，runHandoff rejects（abort），未广播，返回 true', async () => {
+  it('TC6: abortHandoff — abort 调用，runHandoff rejects（abort），只广播 handoffStarted，返回 true', async () => {
     const runPromise = service.runHandoff('src-1')
     await new Promise((r) => setTimeout(r, 0))
 
@@ -262,7 +325,11 @@ describe('HandoffService', () => {
 
     expect(srcClient.abort).toHaveBeenCalledTimes(1)
     await expect(runPromise).rejects.toThrow('abort')
-    expect(broker.broadcast).not.toHaveBeenCalled()
+    // B1：handoff 开始时广播 handoffStarted，但 abort 后不应广播 handoffComplete
+    expect(broker.broadcast).toHaveBeenCalledTimes(1)
+    expect(broker.broadcast).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'session.handoffStarted',
+    }))
   })
 
   it('TC7: abortHandoff 幂等 — inflight 空时 no-op，abort 未调，返回 false', async () => {
@@ -302,7 +369,11 @@ describe('HandoffService', () => {
 
       await expectPromise
       // 远未到 timeout（10 分钟），证明 exit 探测命中而非超时
-      expect(broker.broadcast).not.toHaveBeenCalled()
+      // B1：handoff 开始时广播 handoffStarted，但 exit 后不应广播 handoffComplete
+      expect(broker.broadcast).toHaveBeenCalledTimes(1)
+      expect(broker.broadcast).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'session.handoffStarted',
+      }))
     } finally {
       vi.useRealTimers()
     }
@@ -383,39 +454,30 @@ describe('HandoffService', () => {
   })
 
   describe('buildHandoffPrompt', () => {
-    it('TC10a: reply 含换行 + 超长 → sanitize 后追加 focus 后缀（无 \\n，长度 ≤ REPLY_MAX_LENGTH）', () => {
-      const longReply = 'line1\nline2\rline3\n' + 'x'.repeat(6000)
-      const result = buildHandoffPrompt(longReply)
-      expect(result).toContain('The next session will focus on:')
-      expect(result).toContain(HANDOFF_PROMPT_TEMPLATE)
-      // 结果不含原始换行（sanitize 后的 focus 后缀无 CR/LF）
-      const suffix = result.slice(result.indexOf('The next session will focus on:'))
-      expect(suffix).not.toMatch(/[\r\n]/)
-      // sanitize 部分（前缀 + 空格之后的全部内容）长度受控
-      const FOCUS_PREFIX = 'The next session will focus on: '
-      const focusContent = suffix.slice(FOCUS_PREFIX.length)
-      expect(focusContent.length).toBeLessThanOrEqual(REPLY_MAX_LENGTH)
-      expect(focusContent).not.toMatch(/[\r\n]/)
-    })
-
-    it('TC10b: reply=undefined → 纯 template 无 focus 后缀', () => {
-      const result = buildHandoffPrompt(undefined)
+    it('TC10a: 返回纯模板，不含 reply', () => {
+      const result = buildHandoffPrompt()
       expect(result).toBe(HANDOFF_PROMPT_TEMPLATE)
       expect(result).not.toContain('focus on:')
     })
 
-    it('TC10c: S3 reply 含 tab/NUL 等控制字符 → sanitize 全部 strip + 折叠空白（不进 prompt）', () => {
+    it('TC10b: sanitizeReply 处理换行 + 超长', () => {
+      const longReply = 'line1\nline2\rline3\n' + 'x'.repeat(6000)
+      const result = sanitizeReply(longReply)
+      // 结果不含原始换行
+      expect(result).not.toMatch(/[\r\n]/)
+      // 长度受控
+      expect(result.length).toBeLessThanOrEqual(REPLY_MAX_LENGTH)
+    })
+
+    it('TC10c: S3 reply 含 tab/NUL 等控制字符 → sanitize 全部 strip + 折叠空白', () => {
       // \t=tab, \0=NUL, \x0b=vertical tab, \x1b=ESC, \x7f=DEL——均属 C0 控制字符集 + DEL，
       // 须被 strip 成空格再折叠，避免畸形空白注入 prompt。
       const dirty = 'a\tb\x00c\x0bd\x1be\x7ff\t\t\tg'
-      const result = buildHandoffPrompt(dirty)
-      const suffix = result.slice(result.indexOf('The next session will focus on:'))
-      const FOCUS_PREFIX = 'The next session will focus on: '
-      const focusContent = suffix.slice(FOCUS_PREFIX.length)
+      const result = sanitizeReply(dirty)
       // 控制字符全部被替换 / 折叠：结果只剩字母 + 单空格分隔
-      expect(focusContent).toBe('a b c d e f g')
-      expect(focusContent).not.toMatch(/[\x00-\x1F\x7F]/)
-      expect(focusContent).not.toMatch(/\s{2,}/)
+      expect(result).toBe('a b c d e f g')
+      expect(result).not.toMatch(/[\x00-\x1F\x7F]/)
+      expect(result).not.toMatch(/\s{2,}/)
     })
   })
 })

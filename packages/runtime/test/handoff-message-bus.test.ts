@@ -185,8 +185,12 @@ describe('Handoff + MessageBus integration (BLOCKER-1)', () => {
 
     await runPromise
 
-    // newClient.prompt 已被调用（doc 注入）
-    expect(newClient.prompt).toHaveBeenCalledWith('handoff doc')
+    // newClient.prompt 已被调用（wrapWithXmlTag(doc) 注入）
+    expect(newClient.prompt).toHaveBeenCalledTimes(1)
+    const injectedPrompt = newClient.prompt.mock.calls[0][0] as string
+    expect(injectedPrompt).toContain('<handoff_document source="')
+    expect(injectedPrompt).toContain('handoff doc')
+    expect(injectedPrompt).toContain('</handoff_document>')
 
     // 模拟 EventInterpreter 产生的流式事件：message_start + text_delta
     // 使用 makeMsg 构造合法的 ServerMessage
@@ -371,8 +375,12 @@ describe('Handoff + MessageBus integration (BLOCKER-1)', () => {
 
     await runPromise
 
-    // ── Step 3: newClient.prompt(doc) 已被调用 ──
-    expect(newClient.prompt).toHaveBeenCalledWith('handoff doc content')
+    // ── Step 3: newClient.prompt(wrapWithXmlTag(doc)) 已被调用 ──
+    expect(newClient.prompt).toHaveBeenCalledTimes(1)
+    const injectedPrompt = newClient.prompt.mock.calls[0][0] as string
+    expect(injectedPrompt).toContain('<handoff_document source="src"')
+    expect(injectedPrompt).toContain('handoff doc content')
+    expect(injectedPrompt).toContain('</handoff_document>')
 
     // ── Step 4: 模拟 newClient 产生流式事件（EventInterpreter 输出）──
     // 这些事件经 send 回调进 bus.publish(NEW_ID, msg)

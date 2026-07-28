@@ -24,7 +24,8 @@ import type { IMessageBroker } from '../interfaces.js'
 import type { SessionService } from './session/session-service.js'
 import type { IPiEngine } from './ports/pi-engine.js'
 import type { PiAgentEndEvent, PiAgentEndMessage } from '../infra/pi/pi-protocol.js'
-import { buildHandoffPrompt } from './handoff-prompt.js'
+import { buildHandoffPrompt, sanitizeReply } from './handoff-prompt.js'
+import { wrapWithXmlTag } from './handoff-formatter.js'
 
 interface HandoffServiceOpts {
   sessionService: SessionService
@@ -222,10 +223,18 @@ export class HandoffService {
       })
     })
 
+    // B1：广播 handoffStarted 到源 session 对话流，让用户知道 handoff 已启动
+    this.opts.broker.broadcast({
+      type: 'session.handoffStarted',
+      id: this.opts.nextPushId(),
+      payload: { sessionId: srcSessionId },
+    })
+
     let doc: string
     try {
       // 6. fire-and-forget 发送 handoff prompt（await 只确认 pi 收到 ack，不等 turn 完成）
-      await srcClient.prompt(buildHandoffPrompt(reply))
+      // B3：buildHandoffPrompt 不再接受 reply 参数，reply 改为新 session 开场消息
+      await srcClient.prompt(buildHandoffPrompt())
 
       // 7. 等结果（agent_end resolve / timeout 或 abort reject）
       doc = await agentEndPromise
@@ -242,8 +251,14 @@ export class HandoffService {
     this.opts.sessionService.markHandedOff(srcSessionId, newId)
 
     // 11. 注入 doc 触发新 session turn（fire-and-forget：await 只确认 pi 收到 ack）
+    // B2：用 wrapWithXmlTag 包装 doc，让新 session 能识别 handoff 文档边界
+    // B3：reply 作为开场消息追加到 doc 之后（sanitize 后）
     const newClient = await this.opts.sessionService.ensureActive(newId)
-    await newClient.prompt(doc)
+    const wrappedDoc = wrapWithXmlTag(doc, srcLabel)
+    const finalPrompt = reply
+      ? `${wrappedDoc}\n\n${sanitizeReply(reply)}`
+      : wrappedDoc
+    await newClient.prompt(finalPrompt)
 
     // 12-13. 广播（先 sessionList 再 handoffComplete，保证重连恢复）。
     // DM3 协议变更：payload 移除 doc 和 reply 字段（doc 已注入新 session，无需广播）。

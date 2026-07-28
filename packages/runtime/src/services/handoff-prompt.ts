@@ -53,13 +53,14 @@ export function sanitizeReply(reply: string): string {
 /**
  * 构建 handoff turn prompt。
  *
- * reply 存在（非空字符串）时 sanitize 后在末尾追加定制后缀，
- * 告知 agent 下一 session 的关注点；reply 为 undefined / 空串时
- * 返回纯模板。
+ * [HISTORICAL] reply 不再拼接到 prompt 末尾。
+ * 旧实现把 reply 当成 "The next session will focus on: {reply}" 追加到 prompt，
+ * 导致 agent 把用户的开场消息（如 "hi"）当成 handoff 文档的主题词，
+ * 生成的文档围绕 "hi" 展开而非真正的对话内容。
+ *
+ * 修复：prompt 只含模板（指导 agent 生成文档），reply 由 HandoffService
+ * 在新 session 注入时作为独立的开场消息追加（wrapWithXmlTag 之后）。
  */
-export function buildHandoffPrompt(reply?: string): string {
-  if (!reply) return HANDOFF_PROMPT_TEMPLATE
-  const sanitized = sanitizeReply(reply)
-  if (!sanitized) return HANDOFF_PROMPT_TEMPLATE
-  return `${HANDOFF_PROMPT_TEMPLATE}\n\nThe next session will focus on: ${sanitized}`
+export function buildHandoffPrompt(): string {
+  return HANDOFF_PROMPT_TEMPLATE
 }
