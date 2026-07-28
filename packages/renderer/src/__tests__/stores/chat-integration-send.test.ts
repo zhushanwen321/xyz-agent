@@ -47,6 +47,11 @@ vi.mock('@/api', () => ({
     read: vi.fn(() => Promise.resolve({ content: '', truncated: false })),
   },
   session: {},
+  config: {
+    getGlobalSkills: vi.fn().mockResolvedValue([]),
+    getProjectSkills: vi.fn().mockResolvedValue([]),
+    onSkillCacheInvalidated: () => () => {},
+  },
 }))
 
 // mount(Composer) 用例：mock 较深依赖（useChat 保留真实，验证 send 全链行为）

@@ -14,6 +14,10 @@ export default {
   workflowOpFailed: 'Workflow operation failed: {msg}',
   newTaskFailed: 'Failed to create task: {msg}',
   deleteSessionFailed: 'Failed to delete session: {msg}',
+  deleteFolderFailed: 'Failed to delete folder sessions: {msg}',
+  // S7：用 vue-i18n 复数（'|' 分隔单/复数，调用方 t(key, count, { count, error })），
+  // 替换原 '(s)' hack；带 error 占位符让用户感知首个失败原因（S3）。
+  deleteFolderPartialFailed: '{count} session failed to delete: {error} | {count} sessions failed to delete: {error}',
   renameFailed: 'Rename failed: {msg}',
   retry: 'Retry',
   update: {
@@ -36,6 +40,7 @@ export default {
   sessionList: {
     empty: 'No sessions',
     newSession: 'New session',
+    deleteFolderConfirm: 'Delete all sessions in this folder?',
   },
   forkGroup: {
     title: 'Branches',

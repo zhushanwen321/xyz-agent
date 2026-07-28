@@ -323,8 +323,11 @@ async function main(): Promise<void> {
   //   1. skillRegistry.onChange → onSkillChange（skill 变动触发）
   //   2. sessionService message.complete 广播 → onMessageComplete（running session 生成完成消费 pending 队）
   const reloadOrchestrator = new ReloadOrchestrator({ sessionService })
-  skillRegistry.onChange((affectedSessionIds) => {
-    void reloadOrchestrator.onSkillChange(affectedSessionIds)
+  skillRegistry.onChange((event) => {
+    // 既有链路：pi reload（只用 affectedSessionIds 字段）
+    void reloadOrchestrator.onSkillChange(event.affectedSessionIds)
+    // 新增链路：广播 config.skillCacheInvalidated 让 landing 缓存失效重拉
+    server.broadcastSkillCacheInvalidated(event.scope, event.cwd)
   })
   sessionService.setOnMessageComplete((sid) => {
     void reloadOrchestrator.onMessageComplete(sid)

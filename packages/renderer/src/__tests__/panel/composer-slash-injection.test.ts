@@ -47,6 +47,11 @@ vi.mock('@/api', () => ({
     getMentionCandidates: vi.fn().mockResolvedValue([]),
     getFileCandidates: vi.fn().mockResolvedValue([]),
   },
+  config: {
+    getGlobalSkills: vi.fn().mockResolvedValue([]),
+    getProjectSkills: vi.fn().mockResolvedValue([]),
+    onSkillCacheInvalidated: () => () => {},
+  },
 }))
 
 // ── mock chat/session/settings store：最小 stub（Composer 构造期读取 active/isStreaming 等不报错）──

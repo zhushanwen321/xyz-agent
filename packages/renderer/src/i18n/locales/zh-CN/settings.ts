@@ -271,6 +271,12 @@ export default {
     fontMedium: '中',
     fontLarge: '大',
     completionSound: '后台完成提示音',
+    soundTitle: '提示音',
+    successSound: '成功音',
+    errorSound: '失败音',
+    soundPreview: '试听',
+    soundPreviewing: '试听中…',
+    soundDefault: '系统默认',
     shortcutTitle: '快捷键',
     shortcutName: '命令',
     shortcutKey: '快捷键',
@@ -364,6 +370,20 @@ export default {
     defaultOff: '默认禁用',
     noExtensions: '暂无扩展',
     builtinExtensionHint: '提示：3 个内置扩展（xyz-agent-extension / xyz-system-prompt-extension / xyz-client-msg-id-mapper）始终加载，不受扩展策略影响。',
+    // ── 折叠卡片摘要行（预设默认折叠态显示的一行 mode 概览）──
+    summaryAll: '全部可用',
+    summaryNone: '全部禁用',
+    summaryAllowlist: '白名单 {count} 项',
+    summaryDenylist: '黑名单 {count} 项',
+    summarySeparator: ' · ',
+    expand: '展开',
+    collapse: '收起',
+    // ── mode 与清单关系的语义说明（列表上方 hint）──
+    allowlistHint: '仅勾选的工具/扩展可用，其余禁用',
+    denylistHint: '未勾选的工具/扩展可用，勾选的禁用',
+    allListHint: '当前策略下全部可用',
+    noneListHint: '当前策略下全部禁用',
+    readonlyBadge: '只读',
   },
   // ── Worktree 页（WorktreePage）──
   worktree: {

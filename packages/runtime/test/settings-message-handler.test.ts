@@ -42,6 +42,12 @@ function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; delete
     setThinkingLevel: vi.fn().mockResolvedValue(undefined),
     discoverModelsFromApi: overrides.discover ?? vi.fn().mockResolvedValue([{ id: 'm1' }]),
   }
+  const skillRegistry = {
+    getGlobalSkills: vi.fn().mockReturnValue([]),
+    getProjectSkills: vi.fn().mockResolvedValue([]),
+    rebuildGlobal: vi.fn().mockResolvedValue(undefined),
+    invalidateAllProjects: vi.fn(),
+  }
   const ctx = {
     send: vi.fn(),
     reply: vi.fn((_ws: unknown, id: string, type: string, payload: Record<string, unknown>) => replies.push({ id, type, payload })),
@@ -49,11 +55,13 @@ function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; delete
     configService,
     sessionService: {},
     modelService,
+    skillRegistry,
     projectRoot: '/proj',
     nextPushId: vi.fn().mockReturnValue('p1'),
     broadcast: vi.fn((m: ServerMessage) => broadcasts.push(m)),
     broadcastProviderList: vi.fn(),
     broadcastSkillList: vi.fn(),
+    broadcastSkillCacheInvalidated: vi.fn(),
     broadcastAgentList: vi.fn(),
     broadcastSkillDirs: vi.fn(),
     broadcastAgentDirs: vi.fn(),
@@ -220,6 +228,31 @@ describe('SettingsMessageHandler', () => {
       await handler.handleSettingsMessage(msg('config.discoverModels', { baseUrl: 'http://x', providerId: 'p1' }), WS)
       await vi.waitFor(() => expect(replies.length).toBeGreaterThan(0))
       expect(ctx.modelService.discoverModelsFromApi).toHaveBeenCalledWith('http://x', 'resolved-key', undefined)
+    })
+  })
+
+  // ── W2：config.setSkillDirs 触发 SkillRegistry 重建链 + 广播失效信号 ──
+  // TC5 等效渲染 gate：断言广播消息被构造（broadcastSkillCacheInvalidated('project') 被调用）
+  //   + rebuildGlobal/invalidateAllProjects 被调（重建链触发）+ broadcastSkillDirs/SkillList 仍服务 settings 弹窗。
+  describe('config.setSkillDirs（W2 重建链 + 广播失效信号）', () => {
+    it('TC5: 触发 rebuildGlobal → invalidateAllProjects → broadcastSkillCacheInvalidated("project")，并保留 broadcastSkillDirs/SkillList', async () => {
+      const { ctx, replies, handler } = makeHandler()
+      await handler.handleSettingsMessage(msg('config.setSkillDirs', { dirs: ['~/.pi/agent/skills', '~/.claude/skills'] }), WS)
+      // rebuildGlobal 是 fire-and-forget（.then 微任务），用 waitFor 等链路完成
+      await vi.waitFor(() => expect(ctx.skillRegistry.invalidateAllProjects).toHaveBeenCalled())
+
+      // 写 discovery.skillDirs
+      expect(ctx.configService.setSkillDirs).toHaveBeenCalledWith(['~/.pi/agent/skills', '~/.claude/skills'])
+      // reply 配置回执
+      expect(replies[0]).toMatchObject({ type: 'config.skillDirs' })
+      // 重建链：rebuildGlobal（重扫 globalCache + 重挂 watcher）+ invalidateAllProjects（清 projectCache）
+      expect(ctx.skillRegistry.rebuildGlobal).toHaveBeenCalledOnce()
+      expect(ctx.skillRegistry.invalidateAllProjects).toHaveBeenCalledOnce()
+      // 渲染 gate：广播失效信号（'project' scope，让前端 useProjectSkills 失效重拉）
+      expect(ctx.broadcastSkillCacheInvalidated).toHaveBeenCalledWith('project')
+      // settings 弹窗链路保留：broadcastSkillDirs + broadcastSkillList（服务 settingsStore）
+      expect(ctx.broadcastSkillDirs).toHaveBeenCalledOnce()
+      expect(ctx.broadcastSkillList).toHaveBeenCalledOnce()
     })
   })
 })

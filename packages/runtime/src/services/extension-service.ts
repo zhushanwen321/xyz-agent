@@ -65,11 +65,14 @@ type _AssertBuiltinExtOrder<
       : never
     : never
   : never
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+// 索引按 BUILTIN_EXTENSION_FILES 元组顺序：0=主扩展 / 1=系统提示 / 2=消息 ID 映射器
+const _BUILTIN_EXT_AGENT_EXT_IDX = 0
+const _BUILTIN_EXT_SYS_PROMPT_IDX = 1
+const _BUILTIN_EXT_MSG_MAPPER_IDX = 2
 type _AssertBuiltinExtOrderCheck = _AssertBuiltinExtOrder<
-  (typeof BUILTIN_EXTENSION_FILES)[0],
-  (typeof BUILTIN_EXTENSION_FILES)[1],
-  (typeof BUILTIN_EXTENSION_FILES)[2]
+  (typeof BUILTIN_EXTENSION_FILES)[typeof _BUILTIN_EXT_AGENT_EXT_IDX],
+  (typeof BUILTIN_EXTENSION_FILES)[typeof _BUILTIN_EXT_SYS_PROMPT_IDX],
+  (typeof BUILTIN_EXTENSION_FILES)[typeof _BUILTIN_EXT_MSG_MAPPER_IDX]
 >
 
 // ── Error classes ─────────────────────────────────────────────────

@@ -102,6 +102,7 @@
             @new-session="onNewSession"
             @rename="onRenameSession"
             @delete="onDeleteSession"
+            @delete-folder="onDeleteFolder"
             @stop-branch="onStopBranch"
           />
         </template>
@@ -227,63 +228,39 @@ const fileTreeStore = useFileTreeStore()
 const panelStore = usePanelStore()
 const subagentStore = useSubagentStore()
 const workflowStore = useWorkflowStore()
-const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, focusedSessionId, focusedSession, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant } = useSidebar()
+const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, deleteFolder, focusedSessionId, focusedSession, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant } = useSidebar()
 const { abort: abortSession } = useChat()
 const { derivedStatus } = useSessionDerivations()
 const openSettings = inject<() => void>('openSettings', () => {})
 
-/** pi 版本号（runtime 启动时经 app.info 推送；xyz-agent 版本走构建时 __APP_VERSION__） */
+/** pi 版本（runtime 启动时经 app.info 推送）+ xyz-agent 版本（vite define 注入） */
 const piVersion = ref('')
-/** xyz-agent 版本（vite define 构建时注入，见 renderer/vite.config.ts） */
 const appVersion = __APP_VERSION__
-
-/** Dialog 状态 */
 const renameOpen = ref(false)
 const targetSessionId = ref('')
-
-/** 当前是否处于 Overview view（按钮转 accent 态，spec §Overview 入口） */
 const isOverviewActive = computed(() => navigation.current.view === 'overview')
-
-/** 当前焦点 session（文件视图头部展示，跟随 panel focus） */
 const currentSession = focusedSession
 
-/**
- * 文件 tab 计数（当前 session 文件树顶层节点数）。
- * W4 重写：文件视图从「改动文件列表」改为「完整文件树浏览器」，
- * 计数改为读 fileTreeStore 该 session 的顶层节点数（W4 UC-1 浏览完整结构）。
- */
+/** tab 计数（fileTree / subagent / workflow） */
 const fileCount = computed(() => {
   const sid = focusedSessionId.value
   if (!sid) return 0
   return fileTreeStore.getTree(sid)?.length ?? 0
 })
-
-/** subagent tab 计数（当前 session 的 subagent 数量，读 store 分区） */
 const subagentCount = computed(() => subagentStore.recordsOf(focusedSessionId.value ?? '').value.length)
-
-/** subagent running 态数量（badge 精确化：仅 running>0 亮蓝点） */
 const subagentRunningCount = computed(
   () => subagentStore.recordsOf(focusedSessionId.value ?? '').value.filter((r) => r.status === 'running').length,
 )
-
-/** subagent 列表（store records 分区的响应式视图解包，供 template 直接用） */
 const subagentList = computed(() => subagentStore.recordsOf(focusedSessionId.value ?? '').value)
-
-/** workflow tab 计数（当前 session 的 workflow 数量，读 store 分区） */
 const workflowCount = computed(() => workflowStore.recordsOf(focusedSessionId.value ?? '').value.length)
-
-/** workflow running/paused 态数量（badge 精确化：仅活跃态>0 亮蓝点） */
 const workflowRunningCount = computed(
   () =>
     workflowStore
       .recordsOf(focusedSessionId.value ?? '')
       .value.filter((r) => r.status === 'running' || r.status === 'paused').length,
 )
-
-/** workflow 列表（store records 分区的响应式视图解包，供 template 直接用） */
 const workflowList = computed(() => workflowStore.recordsOf(focusedSessionId.value ?? '').value)
-
-/** 当前查看的 workflow record（视图 2 详情态，null 时显示视图 1 列表） */
+/** workflow 详情态（null 时显示列表） */
 const currentWorkflow = computed(() =>
   focusedSessionId.value ? workflowStore.getCurrentWorkflow(panelStore.activePanelId, focusedSessionId.value) : null,
 )
@@ -352,10 +329,25 @@ async function onDeleteSession(id: string): Promise<void> {
   }
 }
 
-/**
- * 停止后台分支 session（FR-19，ForkGroup 两段式确认后 emit stopBranch）。
- * 调 useChat.abort 中断该分支的活跃回合——abort 乐观清 dispatching，收口靠 runtime 广播。
- */
+/** 删除指定 cwd 下所有 session（folder 批量删除）。部分失败 toast 带 error；全成功不提示。 */
+async function onDeleteFolder(cwd: string): Promise<void> {
+  try {
+    const res = await deleteFolder(cwd)
+    if (res.failed.length > 0) {
+      const firstError = res.failed[0]?.error ?? ''
+      toastError(
+        t('sidebar.deleteFolderPartialFailed', res.failed.length, {
+          named: { count: res.failed.length, error: firstError },
+        }),
+      )
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    toastError(t('sidebar.deleteFolderFailed', { msg }))
+  }
+}
+
+/** 停止后台分支 session（ForkGroup 两段式确认后 emit stopBranch）。 */
 function onStopBranch(id: string): void {
   void abortSession(id)
 }

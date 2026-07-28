@@ -601,6 +601,7 @@ export class ConfigService implements IConfigService {
   // ── System prompt config（FR-6/FR-7，ADR-0038）──
   // 独立文件 system-prompt.json（不复用 config.json）：replace/append 两段提示词配置，
   // 插件读此文件热生效（replace 启动期注入、append 每轮 before_agent_start 注入）。
+  // 默认值 / 合并纯逻辑见 config-merge-helpers.ts。
 
   private systemPromptPath(): string {
     return join(this.configStore.getConfigDir(), 'system-prompt.json')
@@ -668,6 +669,7 @@ export class ConfigService implements IConfigService {
   // ── Terminal config（Phase 6 settings）──
   // 独立文件 terminal.json（不复用 config.json）：shell/字体/scrollback 等终端偏好。
   // 仅对新 spawn 的 PTY 生效（已启动的 PTY 不动态切换 shell），由 TerminalService.resolveShell 读取。
+  // 默认值 / 合并纯逻辑见 config-merge-helpers.ts。
 
   private terminalPath(): string {
     return join(this.configStore.getConfigDir(), 'terminal.json')

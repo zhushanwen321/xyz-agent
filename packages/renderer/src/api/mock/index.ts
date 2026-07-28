@@ -22,7 +22,9 @@ import type {
   SkillDirConfig, FileNode, RecommendedExtension, SubagentRecord, WorkflowRunRecord,
   SystemPromptConfig,
   TerminalConfig,
+  BatchDeleteResult,
   ProviderSource, ProviderImportPreview, ProviderImportResult, ProviderImportedItem,
+  SkillCacheInvalidatedPayload,
 } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from './data'
@@ -292,6 +294,28 @@ export const session = {
     delete fixtureMessages[sessionId]
     // 模拟 runtime delete 后 broadcastSessionList
     pushSessionList()
+  },
+
+  /**
+   * Mock：folder 维度批量删除（与 real session.removeByCwd 同构）。
+   * best-effort 聚合 deleted/failed——mock 永远成功（fixture 删除不抛），failed 始终空。
+   */
+  async removeByCwd(cwd: string): Promise<BatchDeleteResult> {
+    await sleep(TIMING.ack)
+    const targets = fixtureSessions.filter((s) => s.cwd === cwd)
+    const deleted: string[] = []
+    for (const s of targets) {
+      // 与 remove() 一致：findIndex 守卫 idx===-1，避免 splice(-1) 误删末尾元素。
+      // targets 是 filter 快照（迭代安全），splice 在原 fixtureSessions 上原地删。
+      const idx = fixtureSessions.findIndex((x) => x.id === s.id)
+      if (idx === -1) continue
+      fixtureSessions.splice(idx, 1)
+      delete fixtureMessages[s.id]
+      deleted.push(s.id)
+    }
+    // 模拟 runtime deleteByCwd 后单次 broadcastSessionList
+    pushSessionList()
+    return { cwd, deleted, failed: [] }
   },
 
   /** 设置思考等级（mock：持久到 fixture session.thinkingLevel，runtime 确认属后续联调） */
@@ -626,6 +650,9 @@ export const config = {
   onAgents: (h: (agents: AgentInfo[]) => void) => agentsSub.subscribe(h),
   onDefaults: (h: (defaultModel: string) => void) => defaultsSub.subscribe(h),
   onSkillDirs: (h: (dirs: SkillDirConfig[]) => void) => skillDirsSub.subscribe(h),
+  // Wave3：skill 缓存失效信号订阅。mock 模式无真实文件系统 watcher（不广播失效信号），
+  // 返回 no-op unsubscribe 保持与 real domains 签名同构（facade 三元要求）。
+  onSkillCacheInvalidated: (_h: (payload: SkillCacheInvalidatedPayload) => void) => () => {},
   onAgentDirs: (h: (dirs: SkillDirConfig[]) => void) => agentDirsSub.subscribe(h),
   onExtensionDirs: (h: (dirs: SkillDirConfig[]) => void) => extensionDirsSub.subscribe(h),
   // 动作型：mock 同构——更新 fixture 后经订阅广播推回（与 real sendInitialState/广播一致）

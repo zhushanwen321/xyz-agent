@@ -32,6 +32,9 @@ import { buildLinuxUpdaterScript, buildUpdaterScript, buildWinInstallerArgs } fr
 import { UpdateError, UpdateUnsupportedError } from './types.js'
 import type { UpdateScriptRef } from './types.js'
 
+/** updater 脚本文件权限（rwxr-xr-x）：写盘 + chmod 共用，确保 detached bash 可执行。 */
+const UPDATER_SCRIPT_MODE = 0o755
+
 /** 平台升级器接口 */
 export interface PlatformUpdater {
   /**
@@ -76,8 +79,8 @@ export class MacUpdater implements PlatformUpdater {
       targetVersion: release.version,
     })
     mkdirSync(UPDATE_DIR, { recursive: true })
-    writeFileSync(UPDATER_SCRIPT_PATH, script, { mode: 0o755 })
-    chmodSync(UPDATER_SCRIPT_PATH, 0o755)
+    writeFileSync(UPDATER_SCRIPT_PATH, script, { mode: UPDATER_SCRIPT_MODE })
+    chmodSync(UPDATER_SCRIPT_PATH, UPDATER_SCRIPT_MODE)
     spawn('bash', [UPDATER_SCRIPT_PATH], { detached: true, stdio: 'ignore' }).unref()
     return { kind: 'detached-script', scriptPath: UPDATER_SCRIPT_PATH }
   }
@@ -127,8 +130,8 @@ export class LinuxAppImageUpdater implements PlatformUpdater {
       targetVersion: release.version,
     })
     mkdirSync(UPDATE_DIR, { recursive: true })
-    writeFileSync(LINUX_UPDATER_SCRIPT_PATH, script, { mode: 0o755 })
-    chmodSync(LINUX_UPDATER_SCRIPT_PATH, 0o755)
+    writeFileSync(LINUX_UPDATER_SCRIPT_PATH, script, { mode: UPDATER_SCRIPT_MODE })
+    chmodSync(LINUX_UPDATER_SCRIPT_PATH, UPDATER_SCRIPT_MODE)
     spawn('bash', [LINUX_UPDATER_SCRIPT_PATH], { detached: true, stdio: 'ignore' }).unref()
     return { kind: 'detached-script', scriptPath: LINUX_UPDATER_SCRIPT_PATH }
   }

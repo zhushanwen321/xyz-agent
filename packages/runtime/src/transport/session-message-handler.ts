@@ -26,8 +26,8 @@ export class SessionMessageHandler {
 
   /** D1: 本 handler 认领的 ClientMessageType 清单（session.compact 单独路由，故不在此列）。 */
   readonly handles: ClientMessageType[] = [
-    'session.create', 'session.delete', 'config.sessions', 'session.switch', 'session.history', 'session.getFullHistory', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork',
-    'session.handoff',
+    'session.create', 'session.delete', 'session.deleteByCwd', 'config.sessions', 'session.switch', 'session.history', 'session.getFullHistory', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork',
+    'session.handoff', 'session.abortHandoff',
     'session.getSubagents', 'session.getSubagentHistory',
     'session.getWorkflows', 'session.getAgentCallHistory', 'session.getAgentCallFilePath',
     'session.workflowAction', 'session.subagentAction',
@@ -120,6 +120,23 @@ export class SessionMessageHandler {
         this.ctx.clearExtensionTimeoutsForSession(delSid)
         await this.ctx.sessionService.delete(delSid)
         this.ctx.reply(ws, msg.id, 'session.deleted', { sessionId: delSid })
+        return this.ctx.broadcastSessionList()
+      }
+      case 'session.deleteByCwd': {
+        // deleteByCwd 是 best-effort 聚合（永远 resolve），clearExtensionTimeoutsForSession
+        // 只对 result.deleted 调用（失败的 session 未真正删除，不需清 timeout）。
+        // 与 session.delete 的「先清 timeout 再 delete」顺序相反——批量需先拿到聚合结果才知道清谁。
+        const cwd = msg.payload?.cwd
+        // cwd 非空字符串校验：与 extension-message-handler 的 invalid_payload 范式对齐。
+        // 不走「reply 空 BatchDeleteResult 成功」——那会让前端误判删除成功，掩盖参数错误。
+        if (!cwd || typeof cwd !== 'string') {
+          return this.ctx.sendError(ws, 'invalid_payload', 'session.deleteByCwd requires a non-empty "cwd" string', msg.id)
+        }
+        const result = await this.ctx.sessionService.deleteByCwd(cwd)
+        for (const id of result.deleted) {
+          this.ctx.clearExtensionTimeoutsForSession(id)
+        }
+        this.ctx.reply(ws, msg.id, 'session.deletedByCwd', result)
         return this.ctx.broadcastSessionList()
       }
       case 'config.sessions':

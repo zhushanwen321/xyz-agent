@@ -9,6 +9,8 @@
     <div>
       <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
         {{ t('settings.preset.toolMode') }}
+        <!-- 只读徽章：内置预设 disabled 时显示，替代旧 opacity-50 的隐式只读视觉 -->
+        <span v-if="disabled" class="ml-1.5 rounded-sm bg-surface px-1 py-0.5 text-[9px] font-normal normal-case tracking-normal text-neutral-dim">{{ t('settings.preset.readonlyBadge') }}</span>
       </Label>
       <div class="flex items-center gap-1.5">
         <Button
@@ -24,32 +26,42 @@
           {{ m.label }}
         </Button>
       </div>
-      <!-- allowlist/denylist Checkbox 列表 -->
-      <div v-if="preset.toolMode === 'allowlist' || preset.toolMode === 'denylist'" class="mt-2 flex flex-wrap gap-2">
-        <Label
-          v-for="tool in BUILTIN_TOOLS"
-          :key="tool"
-          class="flex cursor-pointer items-center gap-1.5 rounded-sm border border-border px-2 py-1 hover:bg-surface"
-          :class="{ 'opacity-50': disabled }"
-        >
-          <Checkbox
-            :model-value="isToolChecked(tool)"
-            :disabled="disabled"
-            @update:model-value="(checked) => onToolToggle(tool, checked === true)"
-          />
-          <span class="text-[11px] text-neutral-fg">{{ tool }}</span>
-          <span
-            class="text-[9px]"
-            :class="isDefaultEnabled(tool) ? 'text-success' : 'text-neutral-dim'"
-          >{{ isDefaultEnabled(tool) ? t('settings.preset.defaultOn') : t('settings.preset.defaultOff') }}</span>
-        </Label>
+      <!-- allowlist/denylist：先一行策略语义说明（denylist 勾选=禁用，与 allowlist 相反），再 checkbox 列表 -->
+      <div v-if="preset.toolMode === 'allowlist' || preset.toolMode === 'denylist'" class="mt-2">
+        <p class="mb-2 text-[10px] text-neutral-dim">
+          {{ preset.toolMode === 'allowlist' ? t('settings.preset.allowlistHint') : t('settings.preset.denylistHint') }}
+        </p>
+        <div class="flex flex-wrap gap-2">
+          <Label
+            v-for="tool in BUILTIN_TOOLS"
+            :key="tool"
+            class="flex items-center gap-1.5 rounded-sm border border-border px-2 py-1"
+            :class="disabled ? 'cursor-default' : 'cursor-pointer hover:bg-surface'"
+          >
+            <Checkbox
+              :model-value="isToolChecked(tool)"
+              :disabled="disabled"
+              @update:model-value="(checked) => onToolToggle(tool, checked === true)"
+            />
+            <span class="text-[11px] text-neutral-fg">{{ tool }}</span>
+            <span
+              class="text-[9px]"
+              :class="isDefaultEnabled(tool) ? 'text-success' : 'text-neutral-dim'"
+            >{{ isDefaultEnabled(tool) ? t('settings.preset.defaultOn') : t('settings.preset.defaultOff') }}</span>
+          </Label>
+        </div>
       </div>
+      <!-- all/none：无可勾选清单，显式说明当前策略语义（旧版直接不渲染，用户不知道策略含义） -->
+      <p v-else class="mt-2 text-[10px] italic text-neutral-dim">
+        {{ preset.toolMode === 'all' ? t('settings.preset.allListHint') : t('settings.preset.noneListHint') }}
+      </p>
     </div>
 
     <!-- 扩展模式 -->
     <div>
       <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
         {{ t('settings.preset.extensionMode') }}
+        <span v-if="disabled" class="ml-1.5 rounded-sm bg-surface px-1 py-0.5 text-[9px] font-normal normal-case tracking-normal text-neutral-dim">{{ t('settings.preset.readonlyBadge') }}</span>
       </Label>
       <div class="flex items-center gap-1.5">
         <Button
@@ -65,25 +77,32 @@
           {{ m.label }}
         </Button>
       </div>
-      <!-- allowlist/denylist Checkbox 列表 -->
-      <div v-if="preset.extensionMode === 'allowlist' || preset.extensionMode === 'denylist'" class="mt-2 flex flex-wrap gap-2">
-        <div v-if="!availableExtensions.length" class="text-[11px] text-neutral-mid">
-          {{ t('settings.preset.noExtensions') }}
+      <div v-if="preset.extensionMode === 'allowlist' || preset.extensionMode === 'denylist'" class="mt-2">
+        <p class="mb-2 text-[10px] text-neutral-dim">
+          {{ preset.extensionMode === 'allowlist' ? t('settings.preset.allowlistHint') : t('settings.preset.denylistHint') }}
+        </p>
+        <div class="flex flex-wrap gap-2">
+          <div v-if="!availableExtensions.length" class="text-[11px] text-neutral-mid">
+            {{ t('settings.preset.noExtensions') }}
+          </div>
+          <Label
+            v-for="ext in availableExtensions"
+            :key="ext"
+            class="flex items-center gap-1.5 rounded-sm border border-border px-2 py-1"
+            :class="disabled ? 'cursor-default' : 'cursor-pointer hover:bg-surface'"
+          >
+            <Checkbox
+              :model-value="isExtChecked(ext)"
+              :disabled="disabled"
+              @update:model-value="(checked) => onExtToggle(ext, checked === true)"
+            />
+            <span class="text-[11px] text-neutral-fg">{{ ext }}</span>
+          </Label>
         </div>
-        <Label
-          v-for="ext in availableExtensions"
-          :key="ext"
-          class="flex cursor-pointer items-center gap-1.5 rounded-sm border border-border px-2 py-1 hover:bg-surface"
-          :class="{ 'opacity-50': disabled }"
-        >
-          <Checkbox
-            :model-value="isExtChecked(ext)"
-            :disabled="disabled"
-            @update:model-value="(checked) => onExtToggle(ext, checked === true)"
-          />
-          <span class="text-[11px] text-neutral-fg">{{ ext }}</span>
-        </Label>
       </div>
+      <p v-else class="mt-2 text-[10px] italic text-neutral-dim">
+        {{ preset.extensionMode === 'all' ? t('settings.preset.allListHint') : t('settings.preset.noneListHint') }}
+      </p>
     </div>
   </div>
 </template>

@@ -48,7 +48,10 @@ const GITHUB_HEADERS = {
 const FETCH_TIMEOUT_MS = 10_000
 
 /** 缓存有效期（1h） */
-const CACHE_TTL_MS = 60 * 60 * 1000
+const SECONDS_PER_MINUTE = 60
+const MINUTES_PER_HOUR = 60
+const MS_PER_SECOND = 1000
+const CACHE_TTL_MS = SECONDS_PER_MINUTE * MINUTES_PER_HOUR * MS_PER_SECOND
 
 /**
  * 严格版本号校验（strip 前导 v 后）——拒绝 rc/beta 等后缀。
