@@ -49,7 +49,10 @@ function makeMocks(opts: {
   session?: Partial<IManagedSessionView>
   promptError?: Error
   withLeaseManager?: boolean
-  acquireResult?: { kind: 'acquired'; expiresAt: number } | { kind: 'busy'; owner: string; expiresAt: number }
+  acquireResult?:
+    | { kind: 'acquired'; expiresAt: number }
+    | { kind: 'busy'; owner: string; expiresAt: number }
+    | { kind: 'not_found' }
   ownerDeviceName?: string
 } = {}) {
   const session = makeMockSession(opts.session ?? {})
@@ -199,6 +202,23 @@ describe('MessageDispatcher P5 lease（隐式 acquire + 定向 busy 拒绝 + 释
     await dispatcher.abort('s1')
 
     expect(releaseSpy).toHaveBeenCalledWith('s1', 'aborted')
+  })
+
+  // TC6: lease acquire 返回 not_found（session 不存在，防御性拒绝）
+  it('TC6: lease not_found 时 broadcast message.error + 不调 prompt + return blocked', async () => {
+    const { dispatcher, promptFn, broadcasts, leaseManager } = makeMocks({
+      withLeaseManager: true,
+      acquireResult: { kind: 'not_found' },
+    })
+
+    const result = await dispatcher.sendMessage('s1', 'hello', 'clientA', 'Mac')
+
+    expect(result).toEqual({ blocked: true, rejected: true })
+    expect(leaseManager.acquire).toHaveBeenCalledWith('s1', 'clientA', 'Mac')
+    // 广播 message.error（让前端对话流看到错误气泡）
+    expect(broadcasts.some((m) => m.type === 'message.error')).toBe(true)
+    // 未调 prompt（不向不存在的 session 发消息）
+    expect(promptFn).not.toHaveBeenCalled()
   })
 
   // 向后兼容：无 leaseManager 走旧 isGenerating 预检

@@ -110,6 +110,33 @@ describe('LeaseManager（P5 lease 状态机）', () => {
     expect(ORPHAN_PI_OWNER).toBe('<orphan-pi>')
   })
 
+  // TC10: not_found 防御（session 不存在时不静默 acquire）
+  it('TC10a: session 不存在时 acquire 返回 not_found（不静默创建 lease）', () => {
+    // mockSvc() 无 sessions → getSession('missing') 返回 undefined
+    const { svc, sessions } = mockSvc([])
+    const broker = mockBroker()
+    const lm = new LeaseManager(svc, broker, { ttlMs: 30000 })
+
+    const res = lm.acquire('missing', 'clientA', 'Mac')
+
+    expect(res).toEqual({ kind: 'not_found' })
+    // sessions Map 仍空（未创建 lease 条目，updateSession 对不存在 session 是 no-op）
+    expect(sessions.size).toBe(0)
+  })
+
+  it('TC10b: not_found 后再 acquire 同一不存在 session 仍返回 not_found（不累积状态）', () => {
+    const { svc } = mockSvc([])
+    const broker = mockBroker()
+    const lm = new LeaseManager(svc, broker, { ttlMs: 30000 })
+
+    const res1 = lm.acquire('ghost', 'clientA', 'Mac')
+    const res2 = lm.acquire('ghost', 'clientB', 'Phone')
+
+    expect(res1).toEqual({ kind: 'not_found' })
+    expect(res2).toEqual({ kind: 'not_found' })
+    // 不应误判为 busy（未写入 busyOwnerId，clientB 不该看到 clientA 持锁）
+  })
+
   // TC5: renew
   it('TC5a: renew owner 有值时续租成功返回 true', () => {
     const { svc } = mockSvc([mockSession({ id: 's1', busyOwnerId: 'clientA', leaseExpiresAt: 5000 })])

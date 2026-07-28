@@ -135,6 +135,17 @@ export class MessageDispatcher {
       // 否则降级走旧 isGenerating 预检（向后兼容 leaseManager 未注入的旧调用/测试）。
       if (this.leaseManager && clientId) {
         const lease = this.leaseManager.acquire(sessionId, clientId, deviceName ?? '')
+        // not_found 防御：session 不存在于 sessions Map（竞态/调用方 bug）。
+        // ensureActive 理论上已保证存在，此处兜底拒绝，避免误以为已持锁继续 sendPrompt。
+        if (lease.kind === 'not_found') {
+          console.warn(`[message-dispatcher] lease acquire rejected (session not found), sid=${sessionId}`)
+          const errMsg = 'Session not found'
+          this.broker.broadcast({
+            type: 'message.error',
+            payload: { sessionId, message: errMsg },
+          })
+          return { blocked: true, rejected: true }
+        }
         if (lease.kind === 'busy') {
           console.warn(`[message-dispatcher] preemptive reject (lease busy), sid=${sessionId}, owner=${lease.owner}`)
           // D6：只对发起方 reply send.rejected（判别联合 busy 分支，含 owner/device/expiresAt）。

@@ -27,10 +27,11 @@ export const ORPHAN_PI_OWNER = '<orphan-pi>'
 /** lease 释放原因（spec D7 四路径 + M3 send_failed）。 */
 export type LeaseReleaseReason = 'turn_end' | 'lease_expired' | 'aborted' | 'send_failed'
 
-/** acquire 返回值：成功获取/续租 或 被占用（含 owner 供前端显示）。 */
+/** acquire 返回值：成功获取/续租 / 被占用（含 owner 供前端显示）/ session 不存在（防御性拒绝）。 */
 export type AcquireResult =
   | { kind: 'acquired'; expiresAt: number }
   | { kind: 'busy'; owner: string; expiresAt: number }
+  | { kind: 'not_found' }
 
 /**
  * reaper 定时器间隔（spec D7②：5s 扫描过期 lease）。
@@ -57,19 +58,24 @@ export class LeaseManager {
   /**
    * 隐式获取/续租 lease。
    *
+   * session 不存在时防御性返回 not_found（不静默 acquire）：
+   * - ensureActive 在 dispatcher acquire 之前调用，正常路径 session 必存在；
+   *   但 acquire 是按 sessionId 查的公共方法，竞态/调用方 bug/未来新调用方可能传入不存在的 id，
+   *   此时若返回 acquired 会让调用方误以为已持锁（updateSession 对不存在的 session 是 no-op，
+   *   lease 实际未写入），后续逻辑基于「已 acquire」假设继续执行会产生不一致状态。
+   *   防御性拒绝让调用方显式处理（dispatcher 走 message.error 拒绝本次发送）。
+   *
    * 同时检查 busyOwnerId 与 isGenerating（R4-M3）：
    * - 任一为 true 且 owner≠当前 clientId → 返回 busy（owner 是 busyOwnerId 或 '<orphan-pi>'）。
    * - 无 owner（两字段都 false）或同 owner（同 clientId 重复发，如 follow_up）→ acquire/renew。
    *
-   * @returns acquired（设 lease 字段，expiresAt=now+ttl）/ busy（含 owner + expiresAt 供前端显示）
+   * @returns acquired（设 lease 字段，expiresAt=now+ttl）/ busy（含 owner + expiresAt 供前端显示）/ not_found
    */
   acquire(sessionId: string, clientId: string, _deviceName: string): AcquireResult {
     const session = this.svc.getSession(sessionId)
     if (!session) {
-      // session 不存在（ensureActive 应保证存在）：视为无 owner 直接 acquire（updateSession no-op）。
-      const expiresAt = Date.now() + this.ttlMs
-      this.svc.updateSession(sessionId, { busyOwnerId: clientId, leaseExpiresAt: expiresAt })
-      return { kind: 'acquired', expiresAt }
+      // 防御性拒绝：session 不存在，不静默 acquire（避免调用方误以为已持锁）。
+      return { kind: 'not_found' }
     }
     const occupied = session.busyOwnerId || session.isGenerating
     if (occupied && session.busyOwnerId !== clientId) {
