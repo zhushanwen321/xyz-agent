@@ -42,6 +42,9 @@ export default {
     token: 'Token',
     disconnect: 'Disconnect',
     theme: 'Theme',
+    themeDark: 'Dark',
+    themeLight: 'Light',
+    notConnected: 'Not connected. Paste connection info on the connect screen.',
     deviceName: 'Device name',
   },
 }

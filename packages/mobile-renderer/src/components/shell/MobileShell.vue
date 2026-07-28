@@ -16,6 +16,7 @@ import { useI18n } from 'vue-i18n'
 import BottomTabBar from './BottomTabBar.vue'
 import SessionsTab from '@/components/sessions/SessionsTab.vue'
 import FilesTab from '@/components/files/FilesTab.vue'
+import SettingsTab from '@/components/settings/SettingsTab.vue'
 import type { MobileTab } from './types'
 
 const { t } = useI18n()
@@ -56,9 +57,11 @@ function onSessionSelected(sessionId: string): void {
           data-testid="mobile-tab-content-files"
           :session-id="currentSessionId"
         />
-        <section v-else key="settings" data-testid="mobile-tab-content-settings" class="h-full p-4 text-sm text-muted">
-          settings
-        </section>
+        <SettingsTab
+          v-else
+          key="settings"
+          data-testid="mobile-tab-content-settings"
+        />
       </KeepAlive>
     </main>
 

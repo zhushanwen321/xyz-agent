@@ -42,6 +42,9 @@ export default {
     token: 'Token',
     disconnect: '断开连接',
     theme: '主题',
+    themeDark: '深色',
+    themeLight: '浅色',
+    notConnected: '未连接，请在连接页粘贴连接信息。',
     deviceName: '设备名',
   },
 }

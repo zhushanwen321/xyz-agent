@@ -265,9 +265,18 @@ export async function main(opts?: { host?: string; port?: number; tokenFile?: st
   server.setFileEndpoint(fileEndpoint)
   // wave4 远程化：server CLI --serve-web <dist> 模式注入静态 Web handler（SPA 资源 + 客户端路由 fallback）。
   // 与 setFileEndpoint 同模式：start() 前注入即生效；serveWeb 缺省（Electron 默认）时不注入，零回归。
+  // P4 D10/§5.1：serve-web 支持「desktop:mobile」冒号分隔双 dist 格式——/ 走桌面、/m/ 走移动（同源托管）。
+  //   无冒号 → 单 dist（P0 行为零回归，DM1/R1）；有冒号 → createDualStaticWebHandler 双 dist 路由。
   if (serveWeb) {
-    const { createStaticWebHandler } = await import('./server/static-web.js')
-    server.setStaticHandler(createStaticWebHandler(serveWeb))
+    const { createStaticWebHandler, createDualStaticWebHandler } = await import('./server/static-web.js')
+    const colonIdx = serveWeb.indexOf(':')
+    if (colonIdx > 0) {
+      const desktopDist = serveWeb.slice(0, colonIdx)
+      const mobileDist = serveWeb.slice(colonIdx + 1)
+      server.setStaticHandler(createDualStaticWebHandler(desktopDist, mobileDist))
+    } else {
+      server.setStaticHandler(createStaticWebHandler(serveWeb))
+    }
   }
   // GitService：composition root 注入 infra executor（数组参数防注入）+ sessionService（取 cwd）。
   // 经 server.setServices 注入到 GitMessageHandler（git.* 路由）。

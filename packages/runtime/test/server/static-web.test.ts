@@ -18,7 +18,7 @@ import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { createStaticWebHandler } from '../../src/server/static-web.js'
+import { createStaticWebHandler, createDualStaticWebHandler } from '../../src/server/static-web.js'
 
 function makeReq(method: string, url: string): IncomingMessage {
   return { method, url } as unknown as IncomingMessage
@@ -169,3 +169,62 @@ describe('W4-TC6: createStaticWebHandler safe join + SPA', () => {
     }
   })
 })
+
+describe('P4-s4-w2: createDualStaticWebHandler 双 dist 路由（/ desktop vs /m/ mobile）', () => {
+  let desktopDist: string
+  let mobileDist: string
+
+  beforeEach(async () => {
+    desktopDist = await fs.mkdtemp(join(tmpdir(), 'dual-desktop-'))
+    mobileDist = await fs.mkdtemp(join(tmpdir(), 'dual-mobile-'))
+    await fs.writeFile(join(desktopDist, 'index.html'), '<html>DESKTOP-SPA</html>')
+    await fs.writeFile(join(desktopDist, 'app.js'), 'console.log("desktop")')
+    await fs.writeFile(join(mobileDist, 'index.html'), '<html>MOBILE-SPA</html>')
+    await fs.writeFile(join(mobileDist, 'app.js'), 'console.log("mobile")')
+  })
+  afterEach(async () => {
+    await fs.rm(desktopDist, { recursive: true, force: true })
+    await fs.rm(mobileDist, { recursive: true, force: true })
+  })
+
+  it('w2-TC6: / 走 desktop、/m/ 走 mobile、资源路径各归各 dist', async () => {
+    const handler = createDualStaticWebHandler(desktopDist, mobileDist)
+    // / → desktop index.html
+    let res = makeRes()
+    await handler(makeReq('GET', '/'), res)
+    expect(res.body).toBe('<html>DESKTOP-SPA</html>')
+    // /app.js → desktop app.js
+    res = makeRes()
+    await handler(makeReq('GET', '/app.js'), res)
+    expect(res.body).toBe('console.log("desktop")')
+    // /m/ → mobile index.html
+    res = makeRes()
+    await handler(makeReq('GET', '/m/'), res)
+    expect(res.body).toBe('<html>MOBILE-SPA</html>')
+    // /m/app.js → mobile app.js（去 /m/ 前缀）
+    res = makeRes()
+    await handler(makeReq('GET', '/m/app.js'), res)
+    expect(res.body).toBe('console.log("mobile")')
+  })
+
+  it('w2-TC7: /m/nonexistent → SPA fallback 到 mobile dist index.html', async () => {
+    const handler = createDualStaticWebHandler(desktopDist, mobileDist)
+    const res = makeRes()
+    await handler(makeReq('GET', '/m/nonexistent/route'), res)
+    expect(res.statusCode).toBe(200)
+    expect(res.body).toBe('<html>MOBILE-SPA</html>')
+  })
+
+  it('w2-TC9: 路径穿越 → 403 Forbidden（dual handler 复用 safe-join 守门）', async () => {
+    const handler = createDualStaticWebHandler(desktopDist, mobileDist)
+    // desktop 侧穿越
+    let res = makeRes()
+    await handler(makeReq('GET', '/../../etc/passwd'), res)
+    expect(res.statusCode).toBe(403)
+    // mobile 侧穿越（/m/../ 应被 normalize 守门，不越界到 desktop）
+    res = makeRes()
+    await handler(makeReq('GET', '/m/../../etc/passwd'), res)
+    expect([403, 404]).toContain(res.statusCode)
+  })
+})
+

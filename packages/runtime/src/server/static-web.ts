@@ -57,6 +57,43 @@ export interface StaticWebHandler {
   (req: IncomingMessage, res: ServerResponse): Promise<void>
 }
 
+/** mobile-renderer 同源托管的 URL 前缀（spec P4 §5.1：/m/ 走 mobile dist）。 */
+const MOBILE_PREFIX = '/m/'
+
+/**
+ * 创建双 dist 静态 Web handler（P4 D10/§5.1 同源托管）。
+ *
+ * URL 前缀路由：
+ *  - `/m/...`（去前缀后）→ mobileDist
+ *  - 其他 → desktopDist
+ *
+ * 两路各自复用单 dist 的 safe-join + SPA fallback 语义（createStaticWebHandler 内部逻辑），
+ * 故本 handler 仅做前缀分流：/m/ 请求 rewrite url（去 /m/ 前缀）后交给 mobile handler，
+ * 其余直接交 desktop handler。safe-join/normalize/穿越守门由各单 handler 自行保证。
+ *
+ * 设计：不改动 createStaticWebHandler（P0 单 dist 路径零回归，DM1/R1），新 export 独立组合。
+ *
+ * @param desktopDist 桌面 renderer dist 绝对/相对路径
+ * @param mobileDist  mobile-renderer dist 绝对/相对路径
+ */
+export function createDualStaticWebHandler(desktopDist: string, mobileDist: string): StaticWebHandler {
+  const desktopHandler = createStaticWebHandler(desktopDist)
+  const mobileHandler = createStaticWebHandler(mobileDist)
+
+  return async function dualStaticWebHandler(req, res): Promise<void> {
+    const reqUrl = req.url ?? '/'
+    const pathOnly = reqUrl.split('?')[0].split('#')[0]
+    // /m/ 前缀 → mobile dist（去 /m/ 前缀后交 mobile handler，保持其 SPA fallback 语义）
+    if (pathOnly === '/m' || pathOnly.startsWith(MOBILE_PREFIX)) {
+      const rewritten = '/' + pathOnly.slice(MOBILE_PREFIX.length)
+      await mobileHandler({ ...req, url: rewritten } as IncomingMessage, res)
+      return
+    }
+    // 其他 → desktop dist
+    await desktopHandler(req, res)
+  }
+}
+
 /**
  * 创建静态 Web handler。
  *
