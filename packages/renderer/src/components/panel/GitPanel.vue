@@ -26,8 +26,8 @@
     />
     <!-- 头部：分支 + 四态 pill + stats -->
     <div class="flex items-center gap-2">
-      <GitBranch class="size-3 shrink-0 text-subtle" />
-      <span class="truncate font-mono text-[11px] text-subtle">{{ result.branch ?? 'detached' }}</span>
+      <GitBranch class="size-3 shrink-0 text-neutral-dim" />
+      <span class="truncate font-mono text-[11px] text-neutral-dim">{{ result.branch ?? 'detached' }}</span>
       <span
         class="ml-auto rounded-sm px-1.5 py-0.5 text-[10px] font-medium"
         :class="pillClass"
@@ -38,7 +38,7 @@
       </span>
       <Button
         variant="ghost"
-        class="size-6 shrink-0 rounded-sm p-0 text-subtle hover:text-fg"
+        class="size-6 shrink-0 rounded-sm p-0 text-neutral-dim hover:text-neutral-fg"
         :disabled="pending"
         :title="t('panel.git.refresh')"
         @click="refresh"
@@ -63,7 +63,7 @@
           class="w-4 shrink-0 text-center font-mono text-[10px] font-semibold"
           :class="statusBadgeClass(f.status)"
         >{{ statusBadge(f.status) }}</span>
-        <span class="min-w-0 flex-1 truncate text-subtle">{{ f.path }}</span>
+        <span class="min-w-0 flex-1 truncate text-neutral-dim">{{ f.path }}</span>
         <Button
           variant="ghost"
           data-testid="git-inject-file"
@@ -190,7 +190,7 @@ const pillClass = computed(
       {
         clean: 'bg-success-soft text-success',
         staged: 'bg-success-soft text-success',
-        dirty: 'bg-warning-soft text-warning',
+        dirty: 'bg-warn-soft text-warn',
         conflict: 'bg-danger-soft text-danger',
       } satisfies Record<GitState, string>
     )[state.value],
@@ -208,11 +208,11 @@ function statusBadgeClass(status: GitFileStatus['status']): string {
   return (
     {
       added: 'text-success',
-      modified: 'text-warning',
+      modified: 'text-warn',
       deleted: 'text-danger',
       unmerged: 'text-danger font-bold',
       renamed: 'text-accent',
-      untracked: 'text-subtle',
+      untracked: 'text-neutral-dim',
     } satisfies Record<GitFileStatus['status'], string>
   )[status]
 }

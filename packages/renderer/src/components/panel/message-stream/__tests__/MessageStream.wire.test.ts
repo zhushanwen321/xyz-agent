@@ -1,7 +1,7 @@
 /**
  * w4 wave 接线层测试（实际用例：TC-w4-1/2/3/3b/4/6/7/8/9）。
  *
- * 覆盖：Turn.vue 接入 useTurnExpansion（w1）+ mergeConsecutiveBlocks（w2）+ merged 卡片渲染，
+ * 覆盖：Turn.vue 接入 useTurnExpansion（w1）+ 连续同类块独立渲染（合并功能已移除），
  *       MessageStream.vue 挂载 TurnRail（w3）+ 事件路由。
  *
  * 策略（任务指引「务实优先」）：
@@ -17,12 +17,14 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { computed, nextTick, ref, defineComponent, h } from 'vue'
+import { computed, nextTick, ref, shallowRef, defineComponent, h } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
+import type { VirtualizerHandle } from 'virtua/vue'
 import Turn from '../Turn.vue'
 import TurnRail from '../TurnRail.vue'
 import MessageStream from '../../MessageStream.vue'
 import { useMessageStreamRail } from '@/composables/panel/useMessageStreamRail'
+import { createMockVlist } from '@/__tests__/effects/_virtua-mock-helper'
 import { useTurnExpansionStore } from '@/stores/turn-expansion'
 import { useChatStore } from '@/stores/chat'
 import type { MessageTurn, RenderItem } from '@/composables/logic/messageTurns'
@@ -186,8 +188,8 @@ describe('Turn.vue 接线 useTurnExpansion（w1）', () => {
     expect(wrapperB.find('.trace').exists()).toBe(false)
   })
 
-  it('TC-w4-8: 连续同类 tool 调用 → 折成 1 个 merged 卡片（w2 mergeConsecutiveBlocks 接线）', async () => {
-    // 构造 3 个连续 toolCall（同类型，非失败）→ merge 成 1 个 merged 组
+  it('TC-w4-8: 连续同类 tool 调用 → 每个 block 独立渲染（不再合并）', async () => {
+    // 构造 3 个连续 toolCall（同类型，非失败）→ 不再合并，3 个独立 Block
     const tc1 = makeToolCall('tc1')
     const tc2 = makeToolCall('tc2')
     const tc3 = makeToolCall('tc3')
@@ -210,20 +212,11 @@ describe('Turn.vue 接线 useTurnExpansion（w1）', () => {
     // 展开 trace（complete 态需手动展开）
     await wrapper.find('.turn-meta').trigger('click')
     expect(wrapper.find('.trace').exists()).toBe(true)
-    // merged 卡片存在（3 个连续 tool 折成 1 个）
-    const mergedCards = wrapper.findAll('[data-testid="merged-block-card"]')
-    expect(mergedCards).toHaveLength(1)
-    // 卡片汇总文案含「3 个同类操作」（zh-CN i18n mergedTools）
-    expect(mergedCards[0].text()).toContain('3 个同类操作')
-    // 默认折叠（items 列表不显示）—— trace-blk 在卡片外是 0 个（全合并了）
-    expect(wrapper.findAll('.trace > * .trace-blk')).toHaveLength(0)
-    // 点击 merged 卡片的 header（含 @click 的 .cursor-pointer 子元素，非根 .merged-card）
-    // → toggle expanded → 展开 items（3 个 Block）
-    // 注：MergedBlockCard 把 @click 绑在 header 子 div 上（非根元素），故需精确定位 header 触发，
-    //   不能 mergedCards[0].trigger('click')（根元素 click 不冒泡到子元素 handler）。
-    await mergedCards[0].find('.cursor-pointer').trigger('click')
-    const items = mergedCards[0].findAll('.trace-blk')
-    expect(items).toHaveLength(3)
+    // 不存在 merged 卡片（合并功能已移除）
+    expect(wrapper.findAll('[data-testid="merged-block-card"]')).toHaveLength(0)
+    // 3 个连续 tool 各自独立渲染（3 个 Block / trace-blk）
+    const blocks = wrapper.findAll('.trace-blk')
+    expect(blocks).toHaveLength(3)
   })
 })
 
@@ -249,19 +242,19 @@ describe('MessageStream rail 接线（TurnRail props 契约 + useMessageStreamRa
    * mount 一个 host 组件，setup 内调 useMessageStreamRail（composable 内 onMounted/onScopeDispose
    * 需 active component instance，用 host 组件包裹避免「no active effect scope」warning）。
    * 返回 rail composable 返回值 + host wrapper（unmount 触发 onScopeDispose 清理）。
+   *
+   * [cw wave w4] vlistRef 必填：默认注入 createMockVlist()，virtua 路径专用。
    */
   function mountRail(opts: {
     sessionId?: string
     renderItems?: RenderItem[]
     scrollEl?: HTMLElement | null
-    offsetOf?: (idx: number) => number
-    topOffset?: number
+    vlistRef?: ReturnType<typeof shallowRef<VirtualizerHandle | null>>
   } = {}): { rail: ReturnType<typeof useMessageStreamRail>; wrapper: ReturnType<typeof mount> } {
     const sessionId = computed(() => opts.sessionId ?? 's-rail-test')
     const renderItemsRef = ref<RenderItem[]>(opts.renderItems ?? makeRenderItems())
     const scrollElRef = ref<HTMLElement | null>(opts.scrollEl ?? null)
-    const offsetOfFn = opts.offsetOf ?? ((idx: number) => idx * 100)
-    const topOffset = computed(() => opts.topOffset ?? 0)
+    const vlistRef = opts.vlistRef ?? shallowRef<VirtualizerHandle | null>(createMockVlist())
     let rail!: ReturnType<typeof useMessageStreamRail>
     const Host = defineComponent({
       setup() {
@@ -269,8 +262,7 @@ describe('MessageStream rail 接线（TurnRail props 契约 + useMessageStreamRa
           sessionId,
           renderItems: renderItemsRef,
           scrollEl: scrollElRef,
-          offsetOf: offsetOfFn,
-          topOffset,
+          vlistRef,
         })
         return () => h('div')
       },
@@ -331,16 +323,27 @@ describe('MessageStream rail 接线（TurnRail props 契约 + useMessageStreamRa
     wrapper.unmount()
   })
 
-  it('TC-w4-6: onJump(idx) → scrollEl.scrollTop = offsetOf(renderIdx) + topOffset（不抛错）', () => {
-    // 模拟 scrollEl（happy-dom HTMLElement 支持 scrollTop 赋值）
+  it('TC-w4-6a: [cw wave w4] vlistRef.value=null（首帧未挂载）→ onJump no-op 不抛错', () => {
+    // vlistRef 必填但 value 可能为 null（首帧 / session 切换 dispose）：onJump 早返回 no-op。
     const scrollEl = document.createElement('div')
-    const { rail, wrapper } = mountRail({ scrollEl, topOffset: 10 })
-    // onJump(1) → railTurns[1]=index=2 → renderItems 下标 1 → scrollTop = 1*100 + 10
+    const vlistRef = shallowRef<VirtualizerHandle | null>(null)
+    const { rail, wrapper } = mountRail({ scrollEl, vlistRef })
+    expect(() => rail.onJump(1)).not.toThrow()
+    expect(() => rail.onJump(2)).not.toThrow()
+    wrapper.unmount()
+  })
+
+  it('TC-w4-6b: [cw wave w3] virtua 路径（传 vlistRef）onJump(idx) → vlistRef.scrollToIndex(renderIdx, {align:"start"})', () => {
+    // virta 路径：rail.onJump 用 v.scrollToIndex 替代 scrollEl.scrollTop 写入（design §4.1/§3.3）
+    const scrollToIndex = vi.fn()
+    const vlistRef = shallowRef<VirtualizerHandle | null>(createMockVlist({ scrollToIndex }))
+    const { rail, wrapper } = mountRail({ vlistRef })
+    // onJump(1) → railTurns[1]=index=2 → renderItems 下标 1（makeRenderItems：turn/index=1,2,3 各占 0,1,2）
     rail.onJump(1)
-    expect(scrollEl.scrollTop).toBe(110)
-    // onJump(2) → renderItems 下标 2 → scrollTop = 2*100 + 10
+    expect(scrollToIndex).toHaveBeenCalledWith(1, { align: 'start' })
+    // onJump(2) → renderItems 下标 2
     rail.onJump(2)
-    expect(scrollEl.scrollTop).toBe(210)
+    expect(scrollToIndex).toHaveBeenLastCalledWith(2, { align: 'start' })
     wrapper.unmount()
   })
 })
@@ -355,8 +358,8 @@ describe('MessageStream rail 接线（TurnRail props 契约 + useMessageStreamRa
  * 真实 mount 可行性：MessageStream.vue 的重依赖（useChat/useSidebar）已 mock；
  * useChat mock 补 loadMoreHistory/hasMoreHistory（useLoadMoreHistory 经 useChat 读这俩）。
  * 用 chat store setMessages 注入消息让 renderItems/railTurns 非空，TurnRail v-if 命中渲染。
- * attachTo: document.body 让 scrollEl 真挂 DOM（useChatScroll 的 watch(scrollEl) + onScrollUpdate
- * 需 DOM 测量；不 attach 的话 scrollEl 在 happy-dom 空间里 clientHeight=0，虚拟化窗口为空）。
+ * attachTo: document.body 让 scrollEl 真挂 DOM（virtua <Virtualizer> 需真实布局测量才能窗口化渲染；
+ * 不 attach 的话 scrollEl 在 happy-dom 空间里 clientHeight=0，虚拟化窗口为空）。
  * ────────────────────────────────────────────────────────────── */
 describe('MessageStream.vue 首屏冒烟（mount 真组件，验 TurnRail 接线）', () => {
   /** 构造 2 turn 的消息序列（user/assistant 交替）让 toRenderItems 产出 2 个 turn。 */

@@ -26,7 +26,7 @@
       <Button
         variant="ghost"
         size="icon"
-        class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg"
+        class="nav-btn h-[22px] w-[26px] rounded-md text-neutral-dim hover:bg-surface-hover hover:text-neutral-fg"
         :title="sidebar.collapsed ? t('panel.header.toggleSidebarExpand') : t('panel.header.toggleSidebarCollapse')"
         :aria-label="t('panel.header.toggleSidebarAria')"
         @click="sidebar.toggleCollapsed()"
@@ -37,7 +37,7 @@
       <Button
         variant="ghost"
         size="icon"
-        class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-subtle"
+        class="nav-btn h-[22px] w-[26px] rounded-md text-neutral-dim hover:bg-surface-hover hover:text-neutral-fg disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-neutral-dim"
         :disabled="!navigation.canBack"
         :title="t('panel.header.back')"
         :aria-label="t('panel.header.back')"
@@ -48,7 +48,7 @@
       <Button
         variant="ghost"
         size="icon"
-        class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-subtle"
+        class="nav-btn h-[22px] w-[26px] rounded-md text-neutral-dim hover:bg-surface-hover hover:text-neutral-fg disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-neutral-dim"
         :disabled="!navigation.canForward"
         :title="t('panel.header.forward')"
         :aria-label="t('panel.header.forward')"
@@ -63,7 +63,7 @@
       v-if="viewingSubagent"
       variant="ghost"
       size="icon"
-      class="shrink-0 gap-1 rounded-md text-muted hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
+      class="shrink-0 gap-1 rounded-md text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg [-webkit-app-region:no-drag]"
       :title="t('panel.header.backToMain')"
       data-testid="subagent-back-btn"
       @click="emit('back')"
@@ -72,7 +72,7 @@
     </Button>
     <span
       v-if="viewingSubagent"
-      class="min-w-0 shrink truncate text-[12px] font-medium text-fg"
+      class="min-w-0 shrink truncate text-[12px] font-medium text-neutral-fg"
       :title="subagentLabel"
     >{{ subagentLabel }}</span>
     <component
@@ -89,14 +89,14 @@
     <nav v-if="!viewingSubagent" class="flex min-w-0 shrink items-center gap-1 [-webkit-app-region:no-drag]">
       <ol class="flex min-w-0 items-center gap-1 text-[12px]">
         <li class="flex min-w-0 items-center gap-1.5">
-          <Folder class="size-3 shrink-0 opacity-70 text-subtle" />
+          <Folder class="size-3 shrink-0 opacity-70 text-neutral-dim" />
           <span
-            class="truncate font-mono text-[12px] font-semibold text-fg"
+            class="truncate font-mono text-[12px] font-semibold text-neutral-fg"
             :title="`${t('panel.header.workingDir')}：${sessionDir}`"
           >{{ dirName }}</span>
         </li>
         <template v-if="gitBranch">
-          <li aria-hidden="true" class="text-subtle opacity-50">
+          <li aria-hidden="true" class="text-neutral-dim opacity-50">
             <ChevronRight class="size-3 shrink-0" />
           </li>
           <li class="min-w-0">
@@ -117,7 +117,7 @@
         v-if="displayFile"
         variant="ghost"
         data-testid="panel-session-file"
-        class="h-5 shrink-0 gap-1 rounded px-1 font-mono text-[11px] text-subtle hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
+        class="h-5 shrink-0 gap-1 rounded px-1 font-mono text-[11px] text-neutral-dim hover:bg-surface-hover hover:text-neutral-fg [-webkit-app-region:no-drag]"
         :title="t('panel.header.copySessionFile')"
         @click="copy(displayFile, 'file')"
       >
@@ -131,7 +131,7 @@
         v-if="!showChrome"
         variant="ghost"
         size="icon"
-        class="size-[26px] rounded-md text-muted hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
+        class="size-[26px] rounded-md text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg [-webkit-app-region:no-drag]"
         data-testid="drawer-toggle"
         :title="t('panel.sideDrawer.title')"
         @click="emit('toggleDrawer')"
@@ -146,7 +146,7 @@
         v-if="gitIndicator?.hasRepo"
         variant="ghost"
         size="icon"
-        class="relative size-[26px] rounded-md text-muted hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
+        class="relative size-[26px] rounded-md text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg [-webkit-app-region:no-drag]"
         :title="t('panel.header.gitStatus')"
         @click="emit('openGit')"
       >
@@ -154,7 +154,7 @@
         <span
           v-if="gitIndicator.hasChanges"
           class="absolute right-1 top-1 size-1.5 rounded-full"
-          :class="gitIndicator.conflict ? 'bg-danger' : 'bg-warning'"
+          :class="gitIndicator.conflict ? 'bg-danger' : 'bg-warn'"
           aria-hidden="true"
         />
       </Button>

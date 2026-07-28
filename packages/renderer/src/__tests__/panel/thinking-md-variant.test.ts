@@ -92,24 +92,28 @@ describe('W2: Block thinking 块走 MarkdownRenderer（不再纯文本插值）'
   it('thinking 内容 **粗体** → 渲染为 <strong> 元素（非字面星号）', async () => {
     mockMarkdownSegments('<p>这是<strong>粗体</strong>内容</p>')
     const { default: Block } = await import('@/components/panel/message-stream/Block.vue')
+    // working=false + collapsed=false 才会渲染 .trace-think-body（MarkdownRenderer）
+    // working=true 时内容在 header 行内联显示（plain text），不走 MarkdownRenderer
     const wrapper = mount(Block, {
-      props: { type: 'thinking', content: '这是**粗体**内容', working: true },
+      props: { type: 'thinking', content: '这是**粗体**内容', working: false, collapsed: false },
     })
     await nextTick()
     await nextTick()
     // 关键断言：thinking 内容走 markdown 渲染后，<strong> 元素存在于 DOM
-    // 当前实现是 <p>{{content}}</p> 纯文本插值，** 是字面字符，无 <strong>（红灯）
     expect(wrapper.find('strong').exists()).toBe(true)
     expect(wrapper.text()).toContain('粗体')
-    // 字面 ** 不应出现在渲染后的文本中
-    expect(wrapper.text()).not.toContain('**')
+    // 展开后预览文本用 invisible 隐藏（占位不显示），原始 ** 仍在 DOM 但不可见
+    // 检查 preview span 有 invisible class（而非断言 ** 不在文本中）
+    const previewSpan = wrapper.find('.text-neutral-dim.invisible')
+    expect(previewSpan.exists()).toBe(true)
   })
 
   it('thinking 内容无全局 italic（md 结构 + italic 可读性差）', async () => {
     mockMarkdownSegments('<p>test</p>')
     const { default: Block } = await import('@/components/panel/message-stream/Block.vue')
+    // working=false + collapsed=false 才渲染 .trace-think-body
     const wrapper = mount(Block, {
-      props: { type: 'thinking', content: 'test', working: true },
+      props: { type: 'thinking', content: 'test', working: false, collapsed: false },
     })
     await nextTick()
     await nextTick()

@@ -9,7 +9,7 @@
   <div class="flex flex-col gap-4">
     <!-- 新建按钮 -->
     <div class="flex items-center justify-between">
-      <p class="text-[12px] text-muted">{{ t('settings.preset.pageDesc') }}</p>
+      <p class="text-[12px] text-neutral-mid">{{ t('settings.preset.pageDesc') }}</p>
       <Button size="dense" class="rounded-sm text-[12px]" @click="onCreate">
         <Plus class="size-3.5" />
         {{ t('settings.preset.new') }}
@@ -29,7 +29,7 @@
     </div>
 
     <!-- 空态 -->
-    <div v-if="!presets.length" class="py-8 text-center text-[12px] text-muted">
+    <div v-if="!presets.length" class="py-8 text-center text-[12px] text-neutral-mid">
       {{ t('settings.preset.empty') }}
     </div>
 
@@ -47,11 +47,11 @@
         <CollapsibleTrigger as-child>
           <Button
             variant="ghost"
-            class="h-auto flex-1 justify-start gap-2 rounded-sm px-2 text-fg hover:bg-surface"
+            class="h-auto flex-1 justify-start gap-2 rounded-sm px-2 text-neutral-fg hover:bg-surface"
             :title="isExpanded(p.id) ? t('settings.preset.collapse') : t('settings.preset.expand')"
           >
             <ChevronDown
-              class="size-3.5 shrink-0 text-subtle transition-transform duration-200"
+              class="size-3.5 shrink-0 text-neutral-dim transition-transform duration-200"
               :class="isExpanded(p.id) ? 'rotate-180' : ''"
             />
             <div class="min-w-0 flex-1 flex flex-col gap-0.5">
@@ -59,7 +59,7 @@
                 <span class="truncate text-[13px] font-medium">{{ p.name }}</span>
                 <span
                   v-if="p.builtin"
-                  class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-subtle"
+                  class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-neutral-dim"
                 >{{ t('settings.preset.builtin') }}</span>
                 <span
                   v-if="p.id === defaultPresetId"
@@ -67,9 +67,9 @@
                 >{{ t('settings.preset.default') }}</span>
               </div>
               <!-- 折叠态摘要行：一行 mode 概览（如「工具访问策略: 全部可用 · 扩展访问策略: 白名单 3 项」） -->
-              <span class="truncate text-[11px] text-muted">{{ summaryText(p) }}</span>
+              <span class="truncate text-[11px] text-neutral-mid">{{ summaryText(p) }}</span>
               <!-- 展开态额外显示描述（折叠态由摘要代替，避免行数过多） -->
-              <span v-if="p.description && isExpanded(p.id)" class="truncate text-[11px] text-subtle">{{ p.description }}</span>
+              <span v-if="p.description && isExpanded(p.id)" class="truncate text-[11px] text-neutral-dim">{{ p.description }}</span>
             </div>
           </Button>
         </CollapsibleTrigger>
@@ -79,7 +79,7 @@
             v-if="p.id !== defaultPresetId"
             variant="ghost"
             size="dense"
-            class="rounded-sm text-[11px] text-subtle hover:text-fg"
+            class="rounded-sm text-[11px] text-neutral-dim hover:text-neutral-fg"
             @click="onSetDefault(p.id)"
           >
             <Star class="size-3.5" />
@@ -90,7 +90,7 @@
             v-if="p.builtin"
             variant="ghost"
             size="dense"
-            class="rounded-sm text-[11px] text-subtle hover:text-fg"
+            class="rounded-sm text-[11px] text-neutral-dim hover:text-neutral-fg"
             :disabled="restoring.has(p.id)"
             @click="onRestore(p)"
           >
@@ -102,7 +102,7 @@
             v-if="!p.builtin"
             variant="ghost"
             size="dense"
-            class="rounded-sm text-[11px] text-subtle hover:text-danger"
+            class="rounded-sm text-[11px] text-neutral-dim hover:text-danger"
             @click="confirmDeleteId = p.id"
           >
             <Trash2 class="size-3.5" />
@@ -119,7 +119,7 @@
                改 v-model 会失去 debounce 能力（每次 keystroke 立即触发 RPC）。 -->
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <Label class="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-muted">
+              <Label class="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
                 {{ t('settings.preset.name') }}
               </Label>
               <Input
@@ -131,7 +131,7 @@
               />
             </div>
             <div>
-              <Label class="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-muted">
+              <Label class="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
                 {{ t('settings.preset.id') }}
               </Label>
               <Input
@@ -143,7 +143,7 @@
           </div>
           <!-- 描述（受控写法 + debounce，同 name 字段，见上文注释） -->
           <div>
-            <Label class="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-muted">
+            <Label class="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
               {{ t('settings.preset.description') }}
             </Label>
             <Input
@@ -162,7 +162,7 @@
     </Collapsible>
 
     <!-- 3 个内置扩展提示 -->
-    <p class="text-[11px] text-subtle">
+    <p class="text-[11px] text-neutral-dim">
       {{ t('settings.preset.builtinExtensionHint') }}
     </p>
 

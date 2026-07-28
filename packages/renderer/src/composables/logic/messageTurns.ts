@@ -13,7 +13,7 @@
  * - 遇到 system 消息 → 产出独立 SystemNotice 项（不并入 turn）
  * - streaming 中的 turn（最后一条 assistant status==='streaming'）→ working 态，默认展开 trace
  */
-import { normalizeContent } from '@xyz-agent/shared'
+import { normalizeContent, SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES } from '@xyz-agent/shared'
 import type { Message, ThinkingBlock, ToolCall } from '@xyz-agent/shared'
 
 /** 一个渲染回合：起点 user + 其后的 assistant 消息序列 */
@@ -46,16 +46,32 @@ export function renderKey(item: RenderItem): string {
  * 把扁平 messages 按 turn 分组，system 消息作独立项穿插。
  * 纯函数：相同输入产生相同输出，不依赖响应式。
  */
+/** 不在对话流渲染的 customType（完成通知——agent 收到后会被唤醒在后续 turn 处理，
+ *  对用户是噪声，结果由 agent 后续 turn 体现）。消息仍进 chat store 供 fork/compact/replay，
+ *  agent 仍能读到；此处仅过滤渲染，不丢消息（AGENTS.md 规则 7.5）。 */
+const HIDDEN_NOTIFY_CUSTOM_TYPES = new Set(['subagent-bg-notify', 'workflow-result'])
+
 /** 过滤掉不在对话流展示的消息（ADR-0035：按 pi CustomMessage.display 字段过滤）。
  *  extension 经 pi sendMessage 注入 custom message 时声明 display（pi 协议必填 boolean）：
  *  - display:false = 隐藏（goal/todo extension 的 <goal_context>/<todo_context> 上下文提示，
  *    对 AI 有用但对用户是噪声，状态已由 Tasks tab 展示）
  *  - display:true = 用区别样式渲染（workflow-result / subagent-bg-notify）
+ *  此外，完成通知类 customType（subagent-bg-notify / workflow-result）即使 display:true
+ *  也过滤——用户选择「不展示通知」，通知信号驱动 agent 后续 turn，结果在新 turn 体现，
+ *  通知本身对用户是噪声（triggerTurn:true 唤醒 agent，runtime 仍正常广播 session.workflows
+ *  信号，仅 renderer 层不渲染）。
  *  过滤在渲染层做（本函数），不影响 chat store 的完整 messages——fork/compact/replay
  *  需完整历史（AGENTS.md 规则 7.5）。判断用 `!== false`：仅 false 隐藏，undefined/true 显示
  *  （undefined 来自无 customType 的普通消息或旧数据，安全保留）。 */
 export function filterDisplayableMessages(messages: Message[]): Message[] {
-  return messages.filter((m) => m.display !== false)
+  return messages.filter((m) => {
+    if (m.display === false) return false
+    // 完成通知不渲染（消息仍进 store 供 fork/compact/replay，agent 仍能读到）
+    if (typeof m.customType === 'string' && HIDDEN_NOTIFY_CUSTOM_TYPES.has(m.customType)) {
+      return false
+    }
+    return true
+  })
 }
 
 export function groupTurns(messages: Message[]): MessageTurn[] {
@@ -153,10 +169,22 @@ export function hasFailedTool(turn: MessageTurn): boolean {
  * - text: ref 是 content 字符串（整条 assistant 的纯文本，因 pi agent-loop 每 turn
  *   只 emit 一次 assistant message_start，text_delta 全部 append 到同一 content 字段）
  * - thinking/tool: ref 指向对应数组的元素对象
+ * - agentgraph: subagent/workflow 的 tool_call（图结构重型操作，独立醒目展示，永不合并）。
+ *   数据结构仍是 ToolCall，但 kind 单列为 agentgraph，使其作为独立 kind 渲染（Block.vue 内部按 toolName 路由 subagent/workflow 分支），不与普通 tool 复用展示。
  */
 export interface OrderedBlock {
-  kind: 'thinking' | 'tool' | 'text'
+  kind: 'thinking' | 'tool' | 'text' | 'agentgraph'
   ref: ThinkingBlock | ToolCall | string
+}
+
+/**
+ * 判断 toolName 是否属于 agentgraph（subagent/workflow）。
+ * agentgraph 是数据层一等公民——subagent/workflow 是图结构重型操作，应独立醒目展示，
+ * 不与普通 tool 合并也不相互合并。识别依据是 toolName（SUBAGENT/WORKFLOW SSOT），
+ * 与 Block.vue 的 isSubagent/isWorkflow 判断同源。
+ */
+function isAgentgraphToolName(toolName: string): boolean {
+  return SUBAGENT_TOOL_NAMES.has(toolName) || WORKFLOW_TOOL_NAMES.has(toolName)
 }
 
 /**
@@ -184,16 +212,23 @@ export function expandAssistantBlocks(msg: Message): OrderedBlock[] {
         if (th) result.push({ kind: 'thinking', ref: th })
       } else if (b.type === 'toolCall') {
         const tc = msg.toolCalls?.find((t) => t.id === b.refId)
-        if (tc) result.push({ kind: 'tool', ref: tc })
+        if (tc) {
+          // subagent/workflow 是图结构重型操作 → agentgraph kind（独立展示，不合并）
+          const kind = isAgentgraphToolName(tc.toolName) ? 'agentgraph' : 'tool'
+          result.push({ kind, ref: tc })
+        }
       }
     }
     return result
   }
-  // 降级：无 contentBlocks，旧顺序 text→thinking→tool
+  // 降级：无 contentBlocks，旧顺序 text→thinking→tool（同步识别 agentgraph）
   const fallback: OrderedBlock[] = []
   const text = normalizeContent(msg.content)
   if (text.trim()) fallback.push({ kind: 'text', ref: text })
   for (const th of msg.thinking ?? []) fallback.push({ kind: 'thinking', ref: th })
-  for (const tc of msg.toolCalls ?? []) fallback.push({ kind: 'tool', ref: tc })
+  for (const tc of msg.toolCalls ?? []) {
+    const kind = isAgentgraphToolName(tc.toolName) ? 'agentgraph' : 'tool'
+    fallback.push({ kind, ref: tc })
+  }
   return fallback
 }

@@ -20,7 +20,7 @@
          onMounted 拉取 installed 状态；install 后 watch(extensions) 刷新。-->
     <section v-if="recommended.length" class="rounded-md border border-border bg-bg">
       <div class="border-b border-border px-3 py-2">
-        <h3 class="text-[12px] font-medium text-fg">{{ t('settings.extension.recommendedTitle') }}</h3>
+        <h3 class="text-[12px] font-medium text-neutral-fg">{{ t('settings.extension.recommendedTitle') }}</h3>
       </div>
       <div class="flex flex-col gap-0.5 p-2">
         <div
@@ -29,8 +29,8 @@
           class="flex items-center gap-3 rounded-sm px-2 py-2 hover:bg-surface"
         >
           <div class="min-w-0 flex-1 flex flex-col gap-0.5">
-            <span class="truncate text-[12px] font-medium text-fg">{{ r.name }}</span>
-            <span class="truncate text-[11px] text-muted">{{ r.description }}</span>
+            <span class="truncate text-[12px] font-medium text-neutral-fg">{{ r.name }}</span>
+            <span class="truncate text-[11px] text-neutral-mid">{{ r.description }}</span>
           </div>
           <!-- 已安装：disabled + Check 图标；未安装：点击调 install(npm:pkgName) -->
           <Button
@@ -56,7 +56,7 @@
           v-for="tab in tabs"
           :key="tab.id"
           class="h-auto rounded-sm px-2.5 py-1 text-[12px]"
-          :class="activeTab === tab.id ? 'bg-surface-hover text-fg' : 'text-muted hover:text-fg'"
+          :class="activeTab === tab.id ? 'bg-surface-hover text-neutral-fg' : 'text-neutral-mid hover:text-neutral-fg'"
           @click="activeTab = tab.id"
         >{{ tab.label }}</Button>
       </div>
@@ -87,10 +87,10 @@
     <!-- 候选内联展开（dir/git 多步第二步，§6.3 点3：安装区下方直接展开） -->
     <section v-if="discovered" class="rounded-md border border-border bg-bg">
       <div class="flex items-center justify-between border-b border-border px-3 py-2">
-        <h3 class="text-[12px] font-medium text-fg">{{ t('settings.extension.discoverResultTitle', { count: discovered.candidates.length }) }}</h3>
-        <Button variant="ghost" class="h-auto px-2 py-0.5 text-[11px] text-subtle" @click="onCancelInstall">{{ t('settings.extension.cancel') }}</Button>
+        <h3 class="text-[12px] font-medium text-neutral-fg">{{ t('settings.extension.discoverResultTitle', { count: discovered.candidates.length }) }}</h3>
+        <Button variant="ghost" class="h-auto px-2 py-0.5 text-[11px] text-neutral-dim" @click="onCancelInstall">{{ t('settings.extension.cancel') }}</Button>
       </div>
-      <div v-if="!discovered.candidates.length" class="py-4 text-center text-[11px] text-muted">{{ t('settings.extension.noCandidates') }}</div>
+      <div v-if="!discovered.candidates.length" class="py-4 text-center text-[11px] text-neutral-mid">{{ t('settings.extension.noCandidates') }}</div>
       <div v-else class="flex flex-col gap-0.5 p-2">
         <Label
           v-for="c in discovered.candidates"
@@ -111,18 +111,18 @@
           />
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2">
-              <span class="truncate text-[12px] text-fg">{{ c.name }}</span>
-              <span class="rounded-sm bg-surface px-1 py-0.5 font-mono text-[10px] text-subtle">{{ c.dirName }}</span>
-              <span class="font-mono text-[10px] text-subtle">v{{ c.version }}</span>
+              <span class="truncate text-[12px] text-neutral-fg">{{ c.name }}</span>
+              <span class="rounded-sm bg-surface px-1 py-0.5 font-mono text-[10px] text-neutral-dim">{{ c.dirName }}</span>
+              <span class="font-mono text-[10px] text-neutral-dim">v{{ c.version }}</span>
             </div>
-            <span class="truncate text-[11px] text-muted">{{ c.description }}</span>
+            <span class="truncate text-[11px] text-neutral-mid">{{ c.description }}</span>
           </div>
         </Label>
       </div>
       <div v-if="discovered.candidates.length" class="flex items-center justify-between gap-2 border-t border-border px-3 py-2">
         <div class="flex items-center gap-2">
-          <span class="text-[11px] text-subtle">{{ t('settings.extension.selectedCount', { selected: selected.size, total: discovered.candidates.length }) }}</span>
-          <Button variant="ghost" size="dense" class="h-auto px-1.5 py-0.5 text-[11px] text-subtle hover:text-fg" @click="toggleSelectAll">
+          <span class="text-[11px] text-neutral-dim">{{ t('settings.extension.selectedCount', { selected: selected.size, total: discovered.candidates.length }) }}</span>
+          <Button variant="ghost" size="dense" class="h-auto px-1.5 py-0.5 text-[11px] text-neutral-dim hover:text-neutral-fg" @click="toggleSelectAll">
             {{ isAllSelected ? t('settings.extension.unselectAll') : t('settings.extension.selectAll') }}
           </Button>
         </div>
@@ -136,23 +136,23 @@
     <!-- 已安装列表 -->
     <section>
       <div class="mb-2 flex items-center gap-2">
-        <h3 class="text-[12px] font-medium text-fg">{{ t('settings.extension.installedTitle') }}</h3>
-        <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-subtle">{{ extensions.length }}</span>
+        <h3 class="text-[12px] font-medium text-neutral-fg">{{ t('settings.extension.installedTitle') }}</h3>
+        <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-neutral-dim">{{ extensions.length }}</span>
       </div>
 
-      <div v-if="!extensions.length" class="py-8 text-center text-[12px] text-muted">{{ t('settings.extension.noExtensions') }}</div>
+      <div v-if="!extensions.length" class="py-8 text-center text-[12px] text-neutral-mid">{{ t('settings.extension.noExtensions') }}</div>
 
       <div v-for="ext in extensions" :key="ext.name" class="flex items-center gap-3 rounded-md border border-border bg-bg px-3 py-2.5">
         <div class="flex min-w-0 flex-1 flex-col gap-0.5">
           <div class="flex items-center gap-2">
-            <span class="truncate text-[12px] font-medium text-fg">{{ ext.name }}</span>
-            <span class="rounded-sm bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">v{{ ext.version }}</span>
+            <span class="truncate text-[12px] font-medium text-neutral-fg">{{ ext.name }}</span>
+            <span class="rounded-sm bg-surface px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim">v{{ ext.version }}</span>
             <!-- 来源标签 -->
             <span v-if="ext.source === 'user-installed'" class="rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent">{{ t('settings.extension.sourceUser') }}</span>
           </div>
-          <span class="truncate text-[11px] text-muted">{{ ext.description }}</span>
+          <span class="truncate text-[11px] text-neutral-mid">{{ ext.description }}</span>
           <div v-if="ext.tools?.length" class="mt-1 flex flex-wrap gap-1">
-            <span v-for="t in ext.tools" :key="t" class="rounded-sm bg-surface px-1 py-0.5 font-mono text-[10px] text-subtle">{{ t }}</span>
+            <span v-for="t in ext.tools" :key="t" class="rounded-sm bg-surface px-1 py-0.5 font-mono text-[10px] text-neutral-dim">{{ t }}</span>
           </div>
           <!-- 自动升级开关（仅 user-installed 扩展显示） -->
           <div v-if="ext.source === 'user-installed'" class="mt-1.5 flex items-center gap-2">
@@ -163,7 +163,7 @@
               :aria-label="t('settings.extension.autoUpgrade')"
               @update:model-value="onSetAutoUpgrade(ext, $event)"
             />
-            <span class="text-[11px] text-muted">{{ t('settings.extension.autoUpgrade') }}</span>
+            <span class="text-[11px] text-neutral-mid">{{ t('settings.extension.autoUpgrade') }}</span>
           </div>
         </div>
         <!-- 启用开关：Switch 原语。乐观更新——点击立即改 store（开关即时滑动），API 失败回滚。 -->
@@ -178,7 +178,7 @@
         <Button
           v-if="ext.source === 'user-installed'"
           variant="ghost"
-          class="size-7 shrink-0 rounded-sm p-0 text-subtle hover:bg-accent-soft hover:text-accent [&_svg]:size-3.5"
+          class="size-7 shrink-0 rounded-sm p-0 text-neutral-dim hover:bg-accent-soft hover:text-accent [&_svg]:size-3.5"
           :title="t('settings.extension.upgradeTitle')"
           :disabled="upgrading.has(ext.name)"
           @click="onUpgrade(ext.name)"
@@ -189,7 +189,7 @@
         <!-- 卸载按钮 -->
         <Button
           variant="ghost"
-          class="size-7 shrink-0 rounded-sm p-0 text-subtle hover:bg-danger-soft hover:text-danger [&_svg]:size-3.5"
+          class="size-7 shrink-0 rounded-sm p-0 text-neutral-dim hover:bg-danger-soft hover:text-danger [&_svg]:size-3.5"
           :title="t('settings.extension.uninstallTitle')"
           @click="confirmTarget = ext.name"
         >

@@ -9,14 +9,14 @@
     <span
       v-for="item in items"
       :key="item.id"
-      class="group inline-flex max-w-[180px] shrink-0 items-center gap-1 rounded-sm bg-surface-2 px-1.5 py-0.5 text-[11px] text-muted"
+      class="group inline-flex max-w-[180px] shrink-0 items-center gap-1 rounded-sm bg-surface-2 px-1.5 py-0.5 text-[11px] text-neutral-mid"
       :class="item.type === 'image' ? 'text-reasoning' : ''"
     >
-      <component :is="iconFor(item)" class="size-3 shrink-0" :class="item.type === 'image' ? 'text-reasoning' : 'text-subtle'" />
+      <component :is="iconFor(item)" class="size-3 shrink-0" :class="item.type === 'image' ? 'text-reasoning' : 'text-neutral-dim'" />
       <span class="truncate">{{ item.name }}</span>
       <Button
         variant="ghost"
-        class="ml-0.5 grid size-4 shrink-0 place-items-center rounded-sm p-0 text-subtle transition-colors hover:bg-danger-soft hover:text-danger"
+        class="ml-0.5 grid size-4 shrink-0 place-items-center rounded-sm p-0 text-neutral-dim transition-colors hover:bg-danger-soft hover:text-danger"
         :title="t('panel.contextChips.removeFromContext')"
         @click.stop="onRemove(item.id)"
       >

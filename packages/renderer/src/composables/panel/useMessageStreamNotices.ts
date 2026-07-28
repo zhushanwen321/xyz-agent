@@ -43,8 +43,8 @@ export const HANDOFF_NOTICE_HEIGHT = 46
 export interface MessageStreamNoticesDeps {
   /** 当前 session id（响应式，状态查询键） */
   sessionId: ComputedRef<string>
-  /** 虚拟列表总高度（renderItems 末项底部） */
-  totalHeight: ComputedRef<number>
+  /** virtua 末项底部绝对 px（vlist.scrollSize），所有 abs 子项 top 的基线。 */
+  vlistBottom: ComputedRef<number>
   /** load-more 预留顶部偏移（所有 abs 子项 top 基线） */
   topOffset: ComputedRef<number>
   /** 最后一个 turn 是否正在流式生成（dispatching 占位条件之一 + 滚动跟随）。
@@ -91,9 +91,10 @@ export function useMessageStreamNotices(deps: MessageStreamNoticesDeps): {
   /** 容器传入的 hasWorkingTurn getter 包成 ComputedRef（useNoticeStack 需要 ComputedRef 依赖）。 */
   const hasWorkingTurn = computed(() => deps.hasWorkingTurn())
 
-  /** 末尾瞬时块的垂直堆叠定位（M2，委托 useNoticeStack）：消除占位叠加的重复计算。 */
+  /** 末尾瞬时块的垂直堆叠定位（M2，委托 useNoticeStack）：消除占位叠加的重复计算。
+   *  [cw wave w4] vlistBottom 必填（virtua 单一滚动 owner，末项底部统一由 vlistBottom 提供）。 */
   const { handoffNoticeTop, dispatchingTop, forkNoticeBaseTop } = useNoticeStack({
-    totalHeight: deps.totalHeight,
+    vlistBottom: deps.vlistBottom,
     topOffset: deps.topOffset,
     isCompacting,
     isDispatching,

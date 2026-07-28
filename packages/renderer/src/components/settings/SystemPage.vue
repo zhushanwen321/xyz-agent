@@ -7,12 +7,12 @@
     <!-- 卡 1：语言与外观 -->
     <div class="rounded-md border border-border bg-bg">
       <div class="px-4 pb-3 pt-3">
-        <h3 class="text-[13px] font-medium text-fg">{{ t('settings.system.languageAppearance') }}</h3>
+        <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.system.languageAppearance') }}</h3>
       </div>
       <div class="border-t border-border">
         <!-- 语言 -->
         <div class="flex items-center justify-between px-4 py-3">
-          <Label class="text-[12px] text-fg">{{ t('settings.system.language') }}</Label>
+          <Label class="text-[12px] text-neutral-fg">{{ t('settings.system.language') }}</Label>
           <Select
             :model-value="system.locale"
             @update:model-value="emit('update', { locale: $event as SystemSettings['locale'] })"
@@ -28,7 +28,7 @@
         </div>
         <!-- 外观模式 -->
         <div class="flex items-center justify-between border-t border-border px-4 py-3">
-          <Label class="text-[12px] text-fg">{{ t('settings.system.appearance') }}</Label>
+          <Label class="text-[12px] text-neutral-fg">{{ t('settings.system.appearance') }}</Label>
           <Select
             :model-value="system.theme"
             @update:model-value="emit('update', { theme: $event as SystemSettings['theme'] })"
@@ -45,7 +45,7 @@
         </div>
         <!-- 字体大小 -->
         <div class="flex items-center justify-between border-t border-border px-4 py-3">
-          <Label class="text-[12px] text-fg">{{ t('settings.system.fontSize') }}</Label>
+          <Label class="text-[12px] text-neutral-fg">{{ t('settings.system.fontSize') }}</Label>
           <Select
             :model-value="system.fontSize ?? 'medium'"
             @update:model-value="emit('update', { fontSize: $event as SystemSettings['fontSize'] })"
@@ -62,7 +62,7 @@
         </div>
         <!-- 后台完成提示音 -->
         <div class="flex items-center justify-between border-t border-border px-4 py-3">
-          <Label class="text-[12px] text-fg">{{ t('settings.system.completionSound') }}</Label>
+          <Label class="text-[12px] text-neutral-fg">{{ t('settings.system.completionSound') }}</Label>
           <Switch
             data-testid="setting-completion-sound"
             :checked="system.completionSound ?? true"
@@ -75,12 +75,12 @@
     <!-- 卡 2：提示音（系统原生声音选择 + 试听） -->
     <div class="rounded-md border border-border bg-bg">
       <div class="px-4 pb-3 pt-3">
-        <h3 class="text-[13px] font-medium text-fg">{{ t('settings.system.soundTitle') }}</h3>
+        <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.system.soundTitle') }}</h3>
       </div>
       <div class="border-t border-border">
         <!-- 成功音 -->
         <div class="flex items-center justify-between px-4 py-3">
-          <Label class="text-[12px] text-fg">{{ t('settings.system.successSound') }}</Label>
+          <Label class="text-[12px] text-neutral-fg">{{ t('settings.system.successSound') }}</Label>
           <Select
             :model-value="system.successSound || SOUND_DEFAULT"
             @update:model-value="onSuccessSoundChange"
@@ -116,7 +116,7 @@
         </div>
         <!-- 失败音 -->
         <div class="flex items-center justify-between border-t border-border px-4 py-3">
-          <Label class="text-[12px] text-fg">{{ t('settings.system.errorSound') }}</Label>
+          <Label class="text-[12px] text-neutral-fg">{{ t('settings.system.errorSound') }}</Label>
           <Select
             :model-value="system.errorSound || SOUND_DEFAULT"
             @update:model-value="onErrorSoundChange"
@@ -156,10 +156,10 @@
     <!-- 卡 2：配色主题 -->
     <div class="rounded-md border border-border bg-bg">
       <div class="px-4 pb-3 pt-3">
-        <h3 class="text-[13px] font-medium text-fg">{{ t('settings.system.themePresetTitle') }}</h3>
+        <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.system.themePresetTitle') }}</h3>
       </div>
       <div class="border-t border-border px-4 py-3">
-        <p class="mb-2 text-[11px] uppercase tracking-wider text-muted">{{ t('settings.system.presetMuted') }}</p>
+        <p class="mb-2 text-[11px] uppercase tracking-wider text-neutral-mid">{{ t('settings.system.presetMuted') }}</p>
         <div class="mb-3 flex flex-wrap gap-2">
           <Button
             variant="ghost"
@@ -172,10 +172,10 @@
             @click="emit('update', { themePreset: sw.id })"
           >
             <span class="size-4 rounded-full" :style="{ background: sw.color }" />
-            <span class="text-fg">{{ sw.label }}</span>
+            <span class="text-neutral-fg">{{ sw.label }}</span>
           </Button>
         </div>
-        <p class="mb-2 text-[11px] uppercase tracking-wider text-muted">{{ t('settings.system.presetColorful') }}</p>
+        <p class="mb-2 text-[11px] uppercase tracking-wider text-neutral-mid">{{ t('settings.system.presetColorful') }}</p>
         <div class="flex flex-wrap gap-2">
           <Button
             variant="ghost"
@@ -188,7 +188,7 @@
             @click="emit('update', { themePreset: sw.id })"
           >
             <span class="size-4 rounded-full" :style="{ background: sw.color }" />
-            <span class="text-fg">{{ sw.label }}</span>
+            <span class="text-neutral-fg">{{ sw.label }}</span>
           </Button>
         </div>
       </div>
@@ -197,8 +197,8 @@
     <!-- 卡 3：快捷键（可重录 + 重置） -->
     <div class="rounded-md border border-border bg-bg">
       <div class="px-4 pb-3 pt-3">
-        <h3 class="text-[13px] font-medium text-fg">{{ t('settings.system.shortcutTitle') }}</h3>
-        <p class="mt-0.5 text-[10px] text-subtle">{{ t('settings.system.shortcutRecordingHint') }}</p>
+        <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.system.shortcutTitle') }}</h3>
+        <p class="mt-0.5 text-[10px] text-neutral-dim">{{ t('settings.system.shortcutRecordingHint') }}</p>
       </div>
       <div class="border-t border-border">
         <div
@@ -206,7 +206,7 @@
           :key="cmd.id"
           class="flex items-center justify-between border-b border-border px-4 py-2.5 last:border-b-0"
         >
-          <span class="text-[12px] text-fg">{{ t(`settings.command.${cmd.id}`) }}</span>
+          <span class="text-[12px] text-neutral-fg">{{ t(`settings.command.${cmd.id}`) }}</span>
           <div class="flex items-center gap-2">
             <!-- 录态：闪烁提示 -->
             <span
@@ -216,9 +216,9 @@
             <!-- 正常态：显示快捷键 kbd -->
             <kbd
               v-else-if="cmd.shortcut"
-              class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle"
+              class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim"
             >{{ cmd.shortcut }}</kbd>
-            <span v-else class="text-[11px] text-subtle">-</span>
+            <span v-else class="text-[11px] text-neutral-dim">-</span>
             <!-- 重录按钮 -->
             <Button
               variant="ghost"
@@ -230,7 +230,7 @@
             <Button
               v-if="commandStore.shortcutOverrides[cmd.id]"
               variant="ghost"
-              class="h-auto rounded-sm px-1.5 py-0.5 text-[10px] text-subtle hover:bg-transparent hover:text-danger"
+              class="h-auto rounded-sm px-1.5 py-0.5 text-[10px] text-neutral-dim hover:bg-transparent hover:text-danger"
               @click="resetShortcut(cmd.id)"
             >{{ t('settings.system.shortcutReset') }}</Button>
           </div>

@@ -9,19 +9,19 @@
       <span class="grid size-12 place-items-center rounded-xl bg-accent text-2xl font-bold text-white">x</span>
       <!-- runtime 重启中 -->
       <template v-if="connectionState === 'restarting'">
-        <Loader2 class="size-4 animate-spin text-subtle" />
-        <span class="text-[12.5px] text-subtle">{{ t('connection.restarting') }}</span>
+        <Loader2 class="size-4 animate-spin text-neutral-dim" />
+        <span class="text-[12.5px] text-neutral-dim">{{ t('connection.restarting') }}</span>
       </template>
       <!-- runtime 重启用尽，需手动重试 -->
       <template v-else-if="connectionState === 'failed'">
         <AlertCircle class="size-5 text-danger" />
-        <span class="text-[12.5px] text-muted">{{ t('connection.failed') }}</span>
+        <span class="text-[12.5px] text-neutral-mid">{{ t('connection.failed') }}</span>
         <Button variant="default" size="sm" data-testid="runtime-retry-btn" @click="onRetry">
           {{ t('connection.retry') }}
         </Button>
       </template>
       <!-- 默认连接中（connecting/disconnected/reconnecting） -->
-      <span v-else class="text-[12.5px] text-subtle">{{ t('connection.connecting') }}</span>
+      <span v-else class="text-[12.5px] text-neutral-dim">{{ t('connection.connecting') }}</span>
     </div>
   </div>
   <template v-else>

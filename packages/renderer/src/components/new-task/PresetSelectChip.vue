@@ -185,7 +185,7 @@ watch(() => store.defaultPresetId, (newDefault) => {
       <Button
         data-testid="chip-preset"
         variant="ghost"
-        class="h-auto gap-1.5 px-2 py-1 text-[12px] text-muted hover:bg-surface-hover hover:text-fg [&_svg]:size-3.5"
+        class="h-auto gap-1.5 px-2 py-1 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg [&_svg]:size-3.5"
         :class="{ '!text-accent': selectedPresetId && selectedPresetId === store.defaultPresetId }"
       >
         <SlidersHorizontal class="shrink-0" />
@@ -202,14 +202,14 @@ watch(() => store.defaultPresetId, (newDefault) => {
            历史背景：曾用 bg-surface-2 给头部加深色块，视觉上像粗边框/双层条带，与 dir/branch 头部
            透明背景不一致，故去掉对齐。 -->
       <div
-        class="flex items-center justify-between border-b border-border px-3 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-subtle"
+        class="flex items-center justify-between border-b border-border px-3 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-neutral-dim"
       >
         <span>{{ t('newTask.presetSelect.title') }}</span>
       </div>
       <!-- 预设列表（PopoverListItem：与 DirSelect/BranchSelect 列表项统一选择态视觉范式——
            selected 走 surface-2 + accent inset ring + 尾部 Check，不再用 RadioGroup 自绘圆点。
            取舍：一致性优先于 RadioGroup 的标准 ↑↓ 键盘导航；单选语义靠 selected + click 实现） -->
-      <div v-if="store.presets.length === 0" class="px-2.5 py-3 text-[12px] text-subtle">
+      <div v-if="store.presets.length === 0" class="px-2.5 py-3 text-[12px] text-neutral-dim">
         {{ emptyHint }}
       </div>
       <PopoverListItem
@@ -221,8 +221,8 @@ watch(() => store.defaultPresetId, (newDefault) => {
         @click="onSelectPreset(preset)"
       >
         <span class="flex min-w-0 flex-1 flex-col items-start gap-0.5">
-          <span class="truncate text-fg">{{ preset.name }}</span>
-          <span v-if="preset.description" class="truncate text-[11px] text-subtle">
+          <span class="truncate text-neutral-fg">{{ preset.name }}</span>
+          <span v-if="preset.description" class="truncate text-[11px] text-neutral-dim">
             {{ preset.description }}
           </span>
         </span>
@@ -235,8 +235,8 @@ watch(() => store.defaultPresetId, (newDefault) => {
           data-testid="checkbox-set-default"
           @update:model-value="onToggleDefault"
         />
-        <span class="text-[12px] text-muted">{{ t('newTask.presetSelect.setAsDefault') }}</span>
-        <span v-if="isDefaultChecked" class="text-[10px] text-subtle">· {{ t('newTask.presetSelect.alreadyDefault') }}</span>
+        <span class="text-[12px] text-neutral-mid">{{ t('newTask.presetSelect.setAsDefault') }}</span>
+        <span v-if="isDefaultChecked" class="text-[10px] text-neutral-dim">· {{ t('newTask.presetSelect.alreadyDefault') }}</span>
       </div>
     </PopoverContent>
   </Popover>
@@ -247,13 +247,13 @@ watch(() => store.defaultPresetId, (newDefault) => {
       <Button
         data-testid="chip-preset-locked"
         variant="ghost"
-        class="h-auto cursor-default gap-1.5 px-2 py-1 text-[12px] text-subtle hover:bg-transparent hover:text-subtle [&_svg]:size-3.5"
+        class="h-auto cursor-default gap-1.5 px-2 py-1 text-[12px] text-neutral-dim hover:bg-transparent hover:text-neutral-dim [&_svg]:size-3.5"
       >
         <Lock class="shrink-0" />
         <span class="font-mono">{{ lockedPresetName }}</span>
       </Button>
     </HoverCardTrigger>
-    <HoverCardContent side="top" class="max-w-[280px] px-2.5 py-1.5 text-[11px] text-muted">
+    <HoverCardContent side="top" class="max-w-[280px] px-2.5 py-1.5 text-[11px] text-neutral-mid">
       {{ lockedTooltip }}
     </HoverCardContent>
   </HoverCard>

@@ -16,7 +16,7 @@
   -->
   <div class="fork-notice flex items-center gap-2 rounded-[var(--radius)] border border-border bg-info-soft px-[11px] py-[7px] animate-notice-in">
     <GitFork class="size-3.5 shrink-0 text-info" />
-    <span class="min-w-0 flex-1 text-[12.5px] leading-snug text-fg">
+    <span class="min-w-0 flex-1 text-[length:var(--text-sm)] leading-snug text-neutral-fg">
       {{ prefix }}<span v-if="label" class="font-[550]">{{ label }}</span>
     </span>
     <!-- 查看链接：sessionDeleted 时降级为纯文本 span（不可点，无交互语义） -->
@@ -25,7 +25,7 @@
       v-if="!sessionDeleted"
       variant="ghost"
       size="sm"
-      class="h-auto shrink-0 p-0 text-[12px] text-accent hover:bg-accent-soft hover:text-accent-hover"
+      class="h-auto shrink-0 p-0 text-[length:var(--text-sm)] text-accent hover:bg-accent-soft hover:text-accent-hover"
       data-testid="fork-notice-view"
       @click="emit('view')"
     >
@@ -33,7 +33,7 @@
     </Button>
     <span
       v-else
-      class="shrink-0 text-[12px] text-subtle"
+      class="shrink-0 text-[length:var(--text-sm)] text-neutral-dim"
       data-testid="fork-notice-view"
     >
       {{ t(viewLabelKey) }}
@@ -42,7 +42,7 @@
     <Button
       variant="ghost"
       size="icon"
-      class="size-5 shrink-0 text-subtle hover:bg-surface-hover hover:text-fg"
+      class="size-5 shrink-0 text-neutral-dim hover:bg-surface-hover hover:text-neutral-fg"
       :title="t('panel.forkNotice.dismiss')"
       @click="emit('dismiss')"
     >

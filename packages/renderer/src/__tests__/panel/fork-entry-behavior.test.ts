@@ -78,6 +78,11 @@ function mountTurn(turn: MessageTurn, sessionId = 's1') {
         Block: true,
         ChangeSetCard: true,
         MarkdownRenderer: true,
+        // HoverCard 子组件 stub 成内联渲染（绕开 reka-ui HoverCardPortal 在 happy-dom 不渲染）；
+        // fork-ask-btn 现作为 fork split-button 的 hover 第二选项住在 HoverCardContent 内。
+        HoverCard: { template: '<div><slot /></div>' },
+        HoverCardTrigger: { template: '<div><slot /></div>' },
+        HoverCardContent: { template: '<div><slot /></div>' },
       },
     },
   })
@@ -125,11 +130,13 @@ describe('U7 首屏冒烟：streaming 态每条 assistant 有 fork 后台 + fork
     expect(forkBackgroundBtns.length).toBe(1)
     const forkAskBtns = wrapper.findAll('[data-testid="fork-ask-btn"]')
     expect(forkAskBtns.length).toBe(1)
-    // fork 按钮与复制按钮在同一容器（action 行）
-    const actionRow = forkBackgroundBtns[0]?.element.parentElement
-    expect(actionRow?.querySelector('[data-testid="fork-ask-btn"]')).toBeTruthy()
+    // fork 按钮与复制按钮在同一容器（action 行）。重构后 fork-bg 是 fork split-button 的 trigger，
+    // trigger Button 被多层 HoverCard stub div 包裹，需向上找到承载 3 个 split-button 的 action 行。
+    const actionRow = wrapper.find('.turn-summary .mt-1\\.5')
+    expect(actionRow.exists()).toBe(true)
+    expect(actionRow.find('[data-testid="fork-ask-btn"]').exists()).toBe(true)
     // 同行还应有复制按钮（Copy icon button）
-    expect(actionRow?.querySelectorAll('button').length).toBeGreaterThanOrEqual(4)
+    expect(actionRow.findAll('button').length).toBeGreaterThanOrEqual(4)
   })
 })
 

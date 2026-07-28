@@ -11,22 +11,22 @@
     <!-- corrupted 提示条：getTerminalConfig 返回 corrupted=true 时显示 -->
     <div
       v-if="corrupted"
-      class="flex items-start gap-2 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-[12px] text-fg"
+      class="flex items-start gap-2 rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-[12px] text-neutral-fg"
     >
-      <AlertTriangle class="mt-px size-4 flex-shrink-0 text-warning" />
+      <AlertTriangle class="mt-px size-4 flex-shrink-0 text-warn" />
       <span>{{ t('settings.terminal.corruptedHint') }}</span>
     </div>
 
     <!-- 单卡片：终端配置表单 -->
     <div class="rounded-md border border-border bg-bg">
       <div class="px-4 pb-3 pt-3">
-        <h3 class="text-[13px] font-medium text-fg">{{ t('settings.terminal.title') }}</h3>
+        <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.terminal.title') }}</h3>
       </div>
       <div class="border-t border-border px-4 py-3">
         <div class="flex flex-col gap-4">
           <!-- shell -->
           <div class="flex flex-col gap-1.5">
-            <Label class="text-[11px] text-subtle" for="terminal-shell-input">
+            <Label class="text-[11px] text-neutral-dim" for="terminal-shell-input">
               {{ t('settings.terminal.shell') }}
             </Label>
             <Input
@@ -41,7 +41,7 @@
 
           <!-- shellArgs -->
           <div class="flex flex-col gap-1.5">
-            <Label class="text-[11px] text-subtle" for="terminal-shell-args-input">
+            <Label class="text-[11px] text-neutral-dim" for="terminal-shell-args-input">
               {{ t('settings.terminal.shellArgs') }}
             </Label>
             <Input
@@ -56,7 +56,7 @@
 
           <!-- fontSize -->
           <div class="flex flex-col gap-1.5">
-            <Label class="text-[11px] text-subtle" for="terminal-font-size-input">
+            <Label class="text-[11px] text-neutral-dim" for="terminal-font-size-input">
               {{ t('settings.terminal.fontSize') }}
             </Label>
             <Input
@@ -72,7 +72,7 @@
 
           <!-- fontFamily -->
           <div class="flex flex-col gap-1.5">
-            <Label class="text-[11px] text-subtle" for="terminal-font-family-input">
+            <Label class="text-[11px] text-neutral-dim" for="terminal-font-family-input">
               {{ t('settings.terminal.fontFamily') }}
             </Label>
             <Input
@@ -87,7 +87,7 @@
 
           <!-- scrollback -->
           <div class="flex flex-col gap-1.5">
-            <Label class="text-[11px] text-subtle" for="terminal-scrollback-input">
+            <Label class="text-[11px] text-neutral-dim" for="terminal-scrollback-input">
               {{ t('settings.terminal.scrollback') }}
             </Label>
             <Input
@@ -103,7 +103,7 @@
 
           <!-- cursorStyle -->
           <div class="flex flex-col gap-1.5">
-            <Label class="text-[11px] text-subtle" for="terminal-cursor-style-select">
+            <Label class="text-[11px] text-neutral-dim" for="terminal-cursor-style-select">
               {{ t('settings.terminal.cursorStyle') }}
             </Label>
             <Select v-model="cursorStyle">
@@ -120,7 +120,7 @@
 
           <!-- bell -->
           <div class="flex items-center justify-between">
-            <Label class="text-[11px] text-subtle" for="terminal-bell-switch">
+            <Label class="text-[11px] text-neutral-dim" for="terminal-bell-switch">
               {{ t('settings.terminal.bell') }}
             </Label>
             <Switch

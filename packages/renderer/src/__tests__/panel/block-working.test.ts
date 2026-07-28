@@ -4,8 +4,8 @@
  * 覆盖（plan.md U1–U8 + U12/U13）：
  * - thinking：working 态强制展开且不可手动收（设计稿「无背景下划线展开」）
  * - tool：默认 1 行收起（streaming/running 也收起，header 含 toolName+argPath+状态指示），
- *         点击展开详情。仅 failed 强制展开（错误须直视）。
- * - 失败 tool 整块红框 + 强制展开
+ *         点击展开详情。failed 也默认收起（摘要行已含错误状态色）。
+ * - 失败 tool 中性灰默认 + hover 染 warn，需手动点击展开
  * - end_not_received：默认收起，点击可 toggle
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/block-working.test.ts
@@ -44,16 +44,17 @@ function makeTool(over: Partial<ToolCall> = {}): ToolCall {
 }
 
 describe('Block working 态 · thinking 块', () => {
-  it('U1: working=true → 正文展开（非收起预览）', () => {
+  it('U1: working=true → 内容在 header 行内联显示（plain text，非 .trace-think-body）', () => {
     const wrapper = mount(Block, {
       props: { type: 'thinking', content: LONG_THINKING, working: true },
       global: { stubs: { MarkdownRenderer: mdStub } },
     })
-    // thinking 展开态容器（.trace-think-body）存在 = 展开
-    expect(wrapper.find('.trace-think-body').exists()).toBe(true)
-    expect(wrapper.text()).toContain(LONG_THINKING)
-    // 收起预览（含 …）不应出现
-    expect(wrapper.text()).not.toContain('…')
+    // streaming 进行中：内容在 header 行内联显示（截断预览），无独立 body div
+    expect(wrapper.find('.stub-md-render').exists()).toBe(false)
+    // 内容以截断形式出现在 header 行（previewText 截断到 60 字符）
+    expect(wrapper.text()).toContain(LONG_THINKING.slice(0, 60))
+    // 收起预览前缀 · 不应出现（streaming 态用无前缀的内联预览）
+    expect(wrapper.text()).not.toContain('·')
   })
 
   it('U2: working=false → 仅预览行（截断 60 字符）', () => {
@@ -62,12 +63,12 @@ describe('Block working 态 · thinking 块', () => {
       global: { stubs: { MarkdownRenderer: mdStub } },
     })
     // 展开态容器不存在 = 收起
-    expect(wrapper.find('.trace-think-body').exists()).toBe(false)
+    expect(wrapper.find('.stub-md-render').exists()).toBe(false)
     // 预览截断标志出现
     expect(wrapper.text()).toContain('…')
   })
 
-  it('U3: working=true 点击 header 不切换折叠态', async () => {
+  it('U3: working=true 点击 header 不切换折叠态（内容仍在 header 行内联）', async () => {
     const wrapper = mount(Block, {
       props: { type: 'thinking', content: LONG_THINKING, working: true },
       global: { stubs: { MarkdownRenderer: mdStub } },
@@ -75,8 +76,9 @@ describe('Block working 态 · thinking 块', () => {
     const header = wrapper.find('.cursor-pointer')
     expect(header.exists()).toBe(true)
     await header.trigger('click')
-    // 正文仍展开（working 强制，点击无效）
-    expect(wrapper.find('.trace-think-body').exists()).toBe(true)
+    // working 态点击无效：.trace-think-body 仍不存在，内容仍在 header 行内联
+    expect(wrapper.find('.stub-md-render').exists()).toBe(false)
+    expect(wrapper.text()).toContain(LONG_THINKING.slice(0, 60))
   })
 
   it('U4: working=false 点击 header 可 toggle', async () => {
@@ -85,11 +87,11 @@ describe('Block working 态 · thinking 块', () => {
       global: { stubs: { MarkdownRenderer: mdStub } },
     })
     const header = wrapper.find('.cursor-pointer')
-    expect(wrapper.find('.trace-think-body').exists()).toBe(false) // 初始收起
+    expect(wrapper.find('.stub-md-render').exists()).toBe(false) // 初始收起
     await header.trigger('click')
-    expect(wrapper.find('.trace-think-body').exists()).toBe(true) // 展开后正文出现
+    expect(wrapper.find('.stub-md-render').exists()).toBe(true) // 展开后正文出现
     await header.trigger('click')
-    expect(wrapper.find('.trace-think-body').exists()).toBe(false) // 再收起
+    expect(wrapper.find('.stub-md-render').exists()).toBe(false) // 再收起
   })
 })
 
@@ -122,31 +124,37 @@ describe('Block working 态 · tool 块', () => {
     expect(wrapper.text()).toContain('done')
   })
 
-  it('U7: working=false running 默认 1 行收起，header 含「进行中」脉冲指示', () => {
+  it('U7: working=false running 默认 1 行收起，header 含双环 loader 指示（Demo H）', () => {
     const wrapper = mount(Block, {
       props: { type: 'tool', tool: makeTool({ status: 'running', output: undefined }), working: false },
     })
-    // header 行含工具名 + 参数 + 进行中指示（1 行即可观察进度）
+    // header 行含工具名 + 参数 + 双环 loader（1 行即可观察进度）
     expect(wrapper.text()).toContain('edit')
     expect(wrapper.text()).toContain('src/App.vue')
-    expect(wrapper.text()).toContain('进行中')
+    // Demo H：running 态双环 loader（animate-loader-spin + text-accent），无旧脉冲点
+    expect(wrapper.find('.animate-loader-spin').exists()).toBe(true)
+    expect(wrapper.find('.animate-working-pulse').exists()).toBe(false)
     // 详情区默认收起（running 不再强制展开）
     // output undefined 不会渲染 result 区，验证 argPath 详情行不在 DOM（mt-1.font-mono 是展开体）
     const detailLines = wrapper.findAll('.mt-1.font-mono')
     expect(detailLines.length).toBe(0)
   })
 
-  it('U8: 失败 tool 整块红框 + 强制展开（header XCircle 图标 + error output 直显）', () => {
+  it('U8: 失败 tool 默认收起，手动点击展开后显示 error output（Demo H：无鲜红框，AlertTriangle ICON）', async () => {
     const wrapper = mount(Block, {
       props: { type: 'tool', tool: makeTool({ status: 'error', output: 'command failed' }), working: false },
     })
-    // 红框容器（danger 边框 class，blockClass 给整块加红框）
-    const failedBlock = wrapper.find('.border-danger')
-    expect(failedBlock.exists()).toBe(true)
-    // header 含 XCircle 图标（失败指示，lucide 渲染为 svg）
-    const xcircleIcon = wrapper.find('[data-lucide="x-circle"], svg')
-    expect(xcircleIcon.exists()).toBe(true)
-    // error output 强制展开（失败态强制可见，不可收起）
+    // Demo H：鲜红框已删（无 border-danger / bg-danger-soft）
+    expect(wrapper.find('.border-danger').exists()).toBe(false)
+    expect(wrapper.find('.bg-danger-soft').exists()).toBe(false)
+    // header 含 svg 图标（AlertTriangle ICON，lucide 渲染为 svg）
+    const alertIcon = wrapper.find('[data-lucide="alert-triangle"], svg')
+    expect(alertIcon.exists()).toBe(true)
+    // failed 不再强制展开，默认收起
+    expect(wrapper.text()).not.toContain('command failed')
+    // 手动点击展开后 error output 可见（displayContent 兜底 tool.error）
+    const header = wrapper.find('.cursor-pointer')
+    await header.trigger('click')
     expect(wrapper.text()).toContain('command failed')
   })
 })

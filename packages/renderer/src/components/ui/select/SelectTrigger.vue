@@ -22,14 +22,14 @@ const delegatedProps = reactiveOmit(props, 'class')
     v-bind="delegatedProps"
     :class="
       cn(
-        'flex w-full items-center justify-between gap-1 whitespace-nowrap rounded-md border border-border bg-surface-2 px-3 py-2 text-[13px] text-fg outline-none transition-colors placeholder:text-muted focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent-ring disabled:cursor-not-allowed disabled:opacity-50 data-[placeholder]:text-muted',
+        'flex w-full items-center justify-between gap-1 whitespace-nowrap rounded-md border border-border bg-surface-2 px-3 py-2 text-[13px] text-neutral-fg outline-none transition-colors placeholder:text-neutral-mid focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent-ring disabled:cursor-not-allowed disabled:opacity-50 data-[placeholder]:text-neutral-mid',
         props.class,
       )
     "
   >
     <slot />
     <SelectIcon as-child>
-      <ChevronDown class="size-3.5 shrink-0 text-subtle opacity-50 transition-transform duration-200" />
+      <ChevronDown class="size-3.5 shrink-0 text-neutral-dim opacity-50 transition-transform duration-200" />
     </SelectIcon>
   </SelectTrigger>
 </template>

@@ -25,10 +25,13 @@
   --bg-elevated: #313239;       /* 浮起面板/激活面板底色（原 #2a2b32，+7） */
   --bg-input: #1e1f24;          /* 输入区底色（不变，Δ4 from bg 凹陷） */
 
-  /* ── 文字 ───────────────────────────────────────────────── */
-  --fg: #f7f8fc;                /* 主文字 */
-  --muted: #a8a8b5;             /* 次级文字 */
-  --subtle: #82828f;            /* 三级文字/占位 */
+  /* ── 文字（neutral 谱系，DM1 落地）───────────────────────── */
+  --neutral-fg: #e5e7eb;        /* 主文字 */
+  --neutral-mid: #9ca3af;       /* 次级文字 */
+  --neutral-dim: #6b7280;       /* 三级文字/占位 */
+  --neutral-faint: #4b5563;     /* 极弱文字/禁用 */
+  --neutral-ico: #8b8d94;       /* 默认图标色 */
+  --neutral-ico-hover: #e5e7eb; /* 图标 hover 色 */
 
   /* ── 边框/分隔 ─────────────────────────────────────────── */
   --border: rgba(255, 255, 255, 0.08);
@@ -42,7 +45,7 @@
 
   /* ── 状态色 ─────────────────────────────────────────────── */
   --success: #22c55e;
-  --warning: #f5a524;
+  --warn: #b08a3e;
   --danger: #ef4444;
   --info: #38bdf8;
   /* reasoning 紫：思考块色相（draft-message-stream §4 + composer 思考等级） */
@@ -53,11 +56,18 @@
   --info-soft: color-mix(in oklch, var(--info) 12%, transparent);
   --success-soft: color-mix(in oklch, var(--success) 12%, transparent);
   --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
-  --warning-soft: color-mix(in oklch, var(--warning) 12%, transparent);
+  --warn-soft: color-mix(in oklch, var(--warn) 14%, transparent);
 
   /* ── 字体 ───────────────────────────────────────────────── */
   --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+
+  /* 字号 scale（组件级，data-font-size 是全局缩放，两者正交） */
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
 
   /* ── 圆角 ───────────────────────────────────────────────── */
   --radius-sm: 3px;             /* 输入框/标签 */
@@ -100,17 +110,17 @@
          ghost·outline 的 hover:bg-accent 沿用主色蓝（既有状态）
        • --muted：v3=次级文字色 / shadcn=背景色 → 维持文字色 */
   --primary: var(--accent);            /* default Button 底 = 主色蓝 */
-  --primary-foreground: var(--fg);     /* 蓝底白字 */
+  --primary-foreground: var(--neutral-fg);     /* 蓝底白字 */
   --secondary: var(--surface);         /* secondary Button 底 */
-  --secondary-foreground: var(--fg);
+  --secondary-foreground: var(--neutral-fg);
   --destructive: var(--danger);        /* destructive Button 底 */
-  --destructive-foreground: var(--fg);
-  --muted-foreground: var(--muted);     /* shadcn 次级文字（-foreground 后缀）*/
-  --accent-foreground: var(--fg);      /* ghost hover 蓝底配字 */
+  --destructive-foreground: var(--neutral-fg);
+  --muted-foreground: var(--neutral-mid);     /* shadcn 次级文字（-foreground 后缀）*/
+  --accent-foreground: var(--neutral-fg);      /* ghost hover 蓝底配字 */
   --background: var(--bg);             /* bg-background / ring-offset-background */
-  --foreground: var(--fg);             /* text-foreground */
+  --foreground: var(--neutral-fg);             /* text-foreground */
   --popover: var(--surface);           /* bg-popover */
-  --popover-foreground: var(--fg);
+  --popover-foreground: var(--neutral-fg);
   --input: var(--border);              /* border-input */
   --ring: var(--accent);               /* ring-ring（focus，主色）*/
 }
@@ -131,10 +141,13 @@
   --bg-elevated: #ffffff;   /* 浮起面板用纯白 + shadow-2 区分层级，避免亮色叠灰显脏 */
   --bg-input: #f1f3f6;      /* 输入区沉于 surface，对齐 surface-2 同层级 */
 
-  /* ── 文字（亮色下 muted/subtle 明度对调：muted 深、subtle 浅）── */
-  --fg: #0d0d0f;
-  --muted: #5a5a65;
-  --subtle: #8a8a95;
+  /* ── 文字（neutral 谱系，亮色：mid 深、dim 浅，与暗色明度对调）── */
+  --neutral-fg: #0d0d0f;
+  --neutral-mid: #5a5a65;
+  --neutral-dim: #8a8a95;
+  --neutral-faint: #c0c0c8;
+  --neutral-ico: #6a6a75;
+  --neutral-ico-hover: #0d0d0f;
 
   /* ── 边框/分隔（亮色边框用黑半透，比暗色略强保证可见）── */
   --border: rgba(0, 0, 0, 0.08);
@@ -145,6 +158,10 @@
   --accent-hover: #3b82f6;
   --accent-soft: color-mix(in oklch, var(--accent) 13%, transparent);
   --accent-ring: color-mix(in oklch, var(--accent) 30%, transparent);
+
+  /* ── warn（亮色加深保证白底对比度）── */
+  --warn: #8a6a2e;
+  --warn-soft: color-mix(in oklch, var(--warn) 14%, transparent);
 
   /* ── 状态色 / 字体 / 圆角 / 间距 / 阴影 / 动效：亮暗共用（同色相，不单独覆盖）── */
 }
@@ -304,7 +321,7 @@ body,
 
 body {
   background: var(--bg);
-  color: var(--fg);
+  color: var(--neutral-fg);
   font-family: var(--font-sans);
   overflow: hidden;
   user-select: none;

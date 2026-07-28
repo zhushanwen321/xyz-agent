@@ -48,7 +48,7 @@ const ariaLabel = computed(() =>
     :aria-busy="loading"
     :class="loading
       ? '!h-4 !w-4 !gap-0 !p-0 pointer-events-none text-accent'
-      : '!h-4 !w-4 !gap-0 !p-0 text-subtle hover:!bg-transparent hover:text-accent'"
+      : '!h-4 !w-4 !gap-0 !p-0 text-neutral-dim hover:!bg-transparent hover:text-accent'"
     @click="$emit('click')"
   >
     <Loader2 v-if="loading" class="size-3 animate-spin" />

@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils'
 
 /**
  * SelectItem —— 下拉项。选中态显示 check，配色与项目其他 popover 列表项一致。
- * 文字用 text-fg（非 text-muted）：下拉项需保证可读对比度，muted 在暗底偏淡。
+ * 文字用 text-neutral-fg（非 text-neutral-mid）：下拉项需保证可读对比度，muted 在暗底偏淡。
  */
 const props = defineProps<SelectItemProps & { class?: HTMLAttributes['class'] }>()
 const emits = defineEmits<SelectItemEmits>()
@@ -21,7 +21,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
     v-bind="forwarded"
     :class="
       cn(
-        'group/item relative flex w-full cursor-pointer select-none items-center gap-2 rounded-sm py-1.5 pl-2.5 pr-8 text-[13px] text-fg outline-none transition-colors data-[highlighted]:bg-surface-hover data-[highlighted]:text-fg data-[state=checked]:text-accent',
+        'relative flex w-full cursor-pointer select-none items-center gap-2 rounded-sm py-1.5 pl-2.5 pr-8 text-[13px] text-neutral-fg outline-none transition-colors data-[highlighted]:bg-surface-hover data-[highlighted]:text-neutral-fg data-[state=checked]:text-accent',
         props.class,
       )
     "
