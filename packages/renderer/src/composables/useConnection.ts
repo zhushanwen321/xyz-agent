@@ -14,7 +14,8 @@
  * 依赖方向：useConnection → ws-client + ipc + shared（BASE_PORT/DEV_PORT_OFFSET）
  */
 import { watch } from 'vue'
-import { connect, disconnect, getState, setRestarting, setFailed } from '../lib/ws-client'
+import { connect, disconnect, getState, setRestarting, setFailed, setSubscribedSessions } from '../lib/ws-client'
+import { bumpReconnectEpoch } from '../lib/terminal-reconnect-signal'
 import i18n from '@/i18n'
 
 const t = i18n.global.t
@@ -186,12 +187,34 @@ let lastConnectedUrl: string | null = null
 /** visibilitychange handler 引用（teardown 时 removeEventListener 用） */
 let visibilityHandler: (() => void) | null = null
 
+/**
+ * 同步当前已订阅 session 列表到 ws-client（wave3 P2-s4 IF1，spec §6.1/FC2）。
+ *
+ * 把当前打开的 panel 承载的 sessionId 列表注入 ws-client.setSubscribedSessions，
+ * 重连时 auth 携带此列表限定 server 回放范围（只回放订阅 session 的增量）。
+ * 列表来源：usePanelStore().panels（已打开/可见的 panel 对应的 session 即已订阅），
+ * 不用 sessionStore.all（未打开 panel 的 session 无 terminal 消费者，回放其 terminal.data 无意义）。
+ *
+ * 调用点：(1) init 末尾（初始注入）；(2) 首次连接成功；(3) 重连成功（确保重连 auth 携带最新订阅）。
+ */
+function syncSubscribedSessions(): void {
+  const panels = usePanelStore().panels
+  const sessionIds = panels
+    .map((p) => p.sessionId)
+    .filter((s): s is string => typeof s === 'string' && s.length > 0)
+  setSubscribedSessions(sessionIds)
+}
+
 export function useConnection() {
   const state = getState()
 
   async function init(): Promise<void> {
     // 入站消息分发器在任何模式下都安装（mock 模式仅收到 pong，无副作用）
     ensureDispatcher()
+
+    // wave3 P2-s4：初始注入当前已订阅 session 列表（供首连/重连 auth 携带，限定 server 回放范围）。
+    // 后续 panel 变化由 watch(getState()) 的连接成功分支重新 sync（重连时拿最新 panel 列表）。
+    syncSubscribedSessions()
 
     // W4：安装 visibilitychange 监听（幂等——visibilityHandler 守卫防重复注册）。
     // 用户从其它标签页 / 系统切回应用（visibilityState 变 visible）且当前未连接时，
@@ -223,6 +246,20 @@ export function useConnection() {
     const stopStateWatch = watch(getState(), (newState, oldState) => {
       if (oldState === 'connected' && newState !== 'connected') {
         pending.rejectAll(new Error(t('connection.disconnectedError')))
+      }
+      // wave3 P2-s4：重连成功检测——从非 connected（且非首次 connecting）翻回 connected。
+      // oldState==='connecting' 是首次连接（不算重连，不 bump 清缓冲）；oldState 为
+      // disconnected/reconnecting/failed → connected 才是重连（bump 信号触发 useTerminal 清 scrollback）。
+      if (
+        newState === 'connected' &&
+        (oldState === 'disconnected' || oldState === 'reconnecting')
+      ) {
+        bumpReconnectEpoch()
+        syncSubscribedSessions()
+      }
+      // 首次连接成功（任意→connected）也注入订阅（供下次重连 auth 携带）
+      if (newState === 'connected' && oldState === 'connecting') {
+        syncSubscribedSessions()
       }
     })
     removeStateWatch = stopStateWatch

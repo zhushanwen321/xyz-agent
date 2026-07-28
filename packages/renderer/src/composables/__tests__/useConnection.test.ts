@@ -63,6 +63,8 @@ vi.mock('../../lib/ws-client', () => ({
   getState: (): DeepReadonly<Ref<string>> => readonly(stateRef) as unknown as DeepReadonly<Ref<string>>,
   setRestarting: setRestartingSpy,
   setFailed: setFailedSpy,
+  // wave3 P2-s4：syncSubscribedSessions（init 调）需 setSubscribedSessions 在 mock 中导出
+  setSubscribedSessions: vi.fn(),
 }))
 
 // ── Mock ipc ──

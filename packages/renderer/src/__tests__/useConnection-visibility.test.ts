@@ -30,6 +30,8 @@ vi.mock('@/lib/ws-client', () => ({
   getState: () => mockStateRef,
   setRestarting: vi.fn(),
   setFailed: vi.fn(),
+  // wave3 P2-s4：syncSubscribedSessions（init 调）需 setSubscribedSessions 在 mock 中导出
+  setSubscribedSessions: vi.fn(),
 }))
 
 // ── ipc mock：全部返回空（init 会调 getRuntimePort 等）──────────────
@@ -66,6 +68,10 @@ vi.mock('@/api/events', () => ({
 // ── useToast mock：handleSessionExited 会调 ──────────────────────────
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ error: vi.fn() }),
+}))
+// wave3 P2-s4：syncSubscribedSessions（init 调）读 usePanelStore().panels，需 mock 避免无 active pinia。
+vi.mock('@/stores/panel', () => ({
+  usePanelStore: () => ({ panels: [], activePanelId: 'root', focusedSessionId: null }),
 }))
 
 import { useConnection } from '@/composables/useConnection'

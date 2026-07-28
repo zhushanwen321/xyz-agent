@@ -18,14 +18,21 @@
  * - PTY 未活 → 入 pendingWrites，等 terminal.alive flush
  * 解决 TerminalView 首次打开时 spawn 异步、命令写入的时序问题。
  *
- * 依赖方向：useSessionScopedState + useSessionEvents + terminalApi（@/api）。
+ * [wave3 seq 回放去重] 重连清缓冲（spec §6.3）：WS 重连后 server 全量回灌 terminal.data
+ * 会与断线前本地累积的 scrollback 重复显示。useTerminal setup 内 watch 全局重连信号
+ *（useReconnectEpoch），信号变化时清当前 sid 分区 scrollback（保留 reactive 容器 +
+ * ptyAlive/cols/rows 不动）。信号由 useConnection 重连成功时 bumpReconnectEpoch 触发。
+ *
+ * 依赖方向：useSessionScopedState + useSessionEvents + terminalApi（@/api）
+ * + terminal-reconnect-signal（重连信号 watch）。
  * 必须在组件 setup 同步调用（依赖 useSessionEvents 的 onBeforeUnmount）。
  */
-import { reactive, type Ref } from 'vue'
+import { reactive, watch, type Ref } from 'vue'
 import { useSessionScopedState } from '@/composables/useSessionScopedState'
 import { useSessionEvents } from '@/composables/features/useSessionEvents'
 import { useTerminalWriteQueueStore } from '@/stores/terminal-write-queue'
 import { terminalApi } from '@/api/domains/terminal'
+import { useReconnectEpoch } from '@/lib/terminal-reconnect-signal'
 
 /** terminal per-session 状态分区。reactive 容器（ADR-0036 契约）。 */
 interface TerminalPartition {
@@ -90,6 +97,29 @@ export function useTerminal(sessionIdRef: Ref<string | null>) {
       s.ptyAlive = false
     })
     writeQueue.markExited(sid)
+  })
+
+  /**
+   * 清指定 session 分区的 scrollback（wave3 P2-s4 IF5，spec §6.3）。
+   *
+   * splice(0) 清空数组保留 reactive 容器（下游 computed 依赖不丢）。不清 ptyAlive/cols/rows
+   *（这些是 PTY 状态非缓冲数据，重连后 PTY 重新 spawn 会重置）。
+   *
+   * 触发点：(1) 全局重连信号 watch（下方）—— WS 重连成功后清当前 sid 分区，防 server 回灌
+   * 与本地缓冲重复显示；(2) 测试直接调用断言。
+   */
+  function clearScrollback(sessionId: string): void {
+    state.updateFor(sessionId, (s) => {
+      s.scrollback.splice(0)
+    })
+  }
+
+  // wave3 P2-s4：watch 全局重连信号，重连成功时清当前 sid 分区 scrollback。
+  // 信号由 useConnection 重连成功（getState 非 connected→connected）bumpReconnectEpoch 触发。
+  // watch 跟随 setup 的 effect scope（组件卸载自动清理，与 useSessionEvents 同模式）。
+  watch(useReconnectEpoch(), () => {
+    const sid = sessionIdRef.value
+    if (sid) clearScrollback(sid)
   })
 
   /** 创建 PTY（TerminalView mount 且 !ptyAlive 时调）。cwd 取 session.cwd。 */
