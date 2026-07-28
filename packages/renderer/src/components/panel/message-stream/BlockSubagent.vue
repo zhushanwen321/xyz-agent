@@ -39,8 +39,9 @@
         <span v-if="subagentThinkingLevel" class="text-neutral-dim font-mono text-[11.5px]">&nbsp;· thinking {{ subagentThinkingLevel }})</span>
         <span v-else class="text-neutral-dim font-mono text-[11.5px]">)</span>
       </template>
-      <!-- failed / unfinished 态指示（替代旧的完成态 Check） -->
-      <span v-if="isUnfinished" class="ml-0.5 whitespace-nowrap text-neutral-dim">{{ t('panel.message.noResult') }}</span>
+      <!-- 终态指示：完成（Check）/ 未收到结果（text）。failed 不加额外标记（维持现状） -->
+      <Check v-if="!isFailed && !isRunning && !isUnfinished" class="ml-0.5 size-3 shrink-0 text-neutral-mid" />
+      <span v-else-if="isUnfinished" class="ml-0.5 whitespace-nowrap text-neutral-dim">{{ t('panel.message.noResult') }}</span>
     </div>
     <!-- task 首行预览（收起态可见，dim） -->
     <div v-if="subagentTaskPreview" class="mt-0.5 pl-5 truncate text-[12px] text-neutral-dim">

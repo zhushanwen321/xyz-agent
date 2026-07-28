@@ -191,8 +191,8 @@ describe('BlockSubagent: 展开体（task 完整 + background 状态行）', () 
     const text = wrapper.text()
     expect(text).toContain('background ·')
     expect(text).toContain('detached, will notify on completion')
-    // 状态点 blink 动画 class
-    expect(wrapper.find('.subagent-status-dot').exists()).toBe(true)
+    // 状态点 blink 动画：当前用 Tailwind 内置 animate-blink（非自定义 .subagent-status-dot class）
+    expect(wrapper.find('.animate-blink').exists()).toBe(true)
   })
 
   it('output.bgResponse 无 message 但 status=running 时回退默认文案', async () => {

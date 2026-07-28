@@ -86,6 +86,8 @@
           </template>
           <!-- runId 前 8 位（dim） -->
           <span v-if="workflowFields.runId" class="shrink-0 whitespace-nowrap font-mono text-[11px] text-neutral-dim">{{ workflowFields.runId }}</span>
+          <!-- 终态指示：完成（Check）。workflow 无 isUnfinished（action=run 由 notifyDone 推送终态），failed 维持现状 -->
+          <Check v-if="!isFailed && !isRunning" class="ml-0.5 size-3 shrink-0 text-neutral-mid" />
         </div>
         <!-- args.task 首行预览（run action） -->
         <div v-if="workflowArgsTaskPreview" class="mt-0.5 pl-5 truncate text-[12px] text-neutral-dim">
