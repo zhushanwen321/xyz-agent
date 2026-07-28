@@ -400,8 +400,9 @@ export type WorktreeErrorCode =
   | 'SETUP_FAILED'      // .bare/custom-hooks/setup-worktree.sh 失败（detail: {exitCode, stderr}）
   | 'GIT_FAILED'        // git worktree add 失败（detail: {exitCode, stderr}）
   | 'INVALID_BRANCH'    // 分支名非法（INVALID_BRANCH_REGEX 拦截，含路径遍历防护）
-/** handler 对未知错误归一的兜底字面量（非 WorktreeService 主动抛出，单列让 renderer switch 可穷尽） */
-export type WorktreeUnknownErrorCode = 'worktree_failed'
+/** handler 对未知错误归一的兜底字面量（非 WorktreeService 主动抛出，单列让 renderer switch 可穷尽）。
+ * 含 P6 D11 的 worktree_busy（mutex 排队超时，由 handler 捕获 TimeoutError 转换，非 WorktreeService 主动抛出）。 */
+export type WorktreeUnknownErrorCode = 'worktree_failed' | 'worktree_busy'
 /** envelope code 字段的完整联合（业务码 + 兜底） */
 export type WorktreeEnvelopeCode = WorktreeErrorCode | WorktreeUnknownErrorCode
 

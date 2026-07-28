@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { WorktreeService, type WorktreeServiceDeps } from './worktree-service.js'
+import { TimeoutError } from '../../infra/async-mutex.js'
 
 // ── mock helpers ─────────────────────────────────────────────
 
@@ -540,5 +541,121 @@ describe('WorktreeService setup 脚本', () => {
     await expect(
       service.create({ branch: 'feat/test', workspaceHint: '/project' }),
     ).rejects.toMatchObject({ code: 'SETUP_FAILED' })
+  })
+})
+
+// ── P6 D5：worktree in-flight 去重（mutex 串行化）测试 ─────────
+
+/** 简单 delay helper。 */
+function delayMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+describe('WorktreeService.create() per-key mutex (P6 D5)', () => {
+  it('TC1/AC13: 并发两个 create 同分支同 cwd——第二个等第一个完成后报 WORKTREE_EXISTS', async () => {
+    // 用有状态 existsSync：初始目录不存在（让第一个 create 成功创建），创建后变存在（第二个看到已存在）。
+    const createdPaths = new Set<string>()
+    const existingPaths = new Set<string>(['/project/.bare'])
+    const fs = mockFs(existingPaths)
+    // 包装 existsSync：第一次查目标目录返回 false（让第一个创建），创建后返回 true（第二个看到已存在）。
+    fs.existsSync = vi.fn((p: string) => {
+      if (createdPaths.has(p)) return true
+      return existingPaths.has(p)
+    })
+    const gitExecutor = mockGitExecutor()
+    // 让 worktree add 有延迟（占用 mutex 一会），确保第二个排队
+    gitExecutor.exec = vi.fn(async (cwd: string, command: string, args?: string[]) => {
+      if (command === 'worktree' && args?.[0] === 'add') {
+        await delayMs(30)
+        // 模拟 git 创建了目录
+        const newWtPath = args?.[3] ?? ''
+        if (newWtPath) createdPaths.add(newWtPath)
+      }
+      return { stdout: '', stderr: '', exitCode: 0 }
+    })
+
+    const deps: WorktreeServiceDeps = {
+      gitExecutor,
+      shellRunner: mockShellRunner(),
+      gitInfoReader: mockGitInfoReader(),
+      configService: mockConfigService(),
+      fs,
+    }
+    const service = new WorktreeService(deps)
+
+    // 并发同 branch 两次 create
+    const p1 = service.create({ branch: 'feat-x', workspaceHint: '/project' })
+    const p2 = service.create({ branch: 'feat-x', workspaceHint: '/project' })
+    const results = await Promise.allSettled([p1, p2])
+
+    // 第一个成功，第二个报 WORKTREE_EXISTS（串行化后看到目录已存在）
+    expect(results[0].status).toBe('fulfilled')
+    expect(results[1].status).toBe('rejected')
+    if (results[1].status === 'rejected') {
+      expect(results[1].reason).toMatchObject({ code: 'WORKTREE_EXISTS' })
+    }
+  })
+
+  it('TC2/AC14: 并发两个 create 不同分支互不阻塞', async () => {
+    const existingPaths = new Set<string>(['/project/.bare'])
+    const fs = mockFs(existingPaths)
+    const gitExecutor = mockGitExecutor()
+    // worktree add 各延迟 30ms，验证不同分支并发
+    gitExecutor.exec = vi.fn(async (cwd: string, command: string, args?: string[]) => {
+      if (command === 'worktree' && args?.[0] === 'add') await delayMs(30)
+      return { stdout: '', stderr: '', exitCode: 0 }
+    })
+
+    const deps: WorktreeServiceDeps = {
+      gitExecutor,
+      shellRunner: mockShellRunner(),
+      gitInfoReader: mockGitInfoReader(),
+      configService: mockConfigService(),
+      fs,
+    }
+    const service = new WorktreeService(deps)
+
+    const start = Date.now()
+    const results = await Promise.allSettled([
+      service.create({ branch: 'feat-a', workspaceHint: '/project' }),
+      service.create({ branch: 'feat-b', workspaceHint: '/project' }),
+    ])
+    const elapsed = Date.now() - start
+
+    // 两个都成功
+    expect(results[0].status).toBe('fulfilled')
+    expect(results[1].status).toBe('fulfilled')
+    // 并发：总耗时 < 60ms（串行会 ≈60ms+，两个 30ms 并发应 ≈30ms）
+    expect(elapsed).toBeLessThan(55)
+  })
+
+  it('TC3/AC15: worktree mutex 排队超时拒绝——create 超时抛 TimeoutError', async () => {
+    const existingPaths = new Set<string>(['/project/.bare'])
+    const fs = mockFs(existingPaths)
+    const gitExecutor = mockGitExecutor()
+    // worktree add 延迟 200ms（远超 mutexTimeoutMs=20）
+    gitExecutor.exec = vi.fn(async (cwd: string, command: string, args?: string[]) => {
+      if (command === 'worktree' && args?.[0] === 'add') await delayMs(200)
+      return { stdout: '', stderr: '', exitCode: 0 }
+    })
+
+    const deps: WorktreeServiceDeps = {
+      gitExecutor,
+      shellRunner: mockShellRunner(),
+      gitInfoReader: mockGitInfoReader(),
+      configService: mockConfigService(),
+      fs,
+      mutexTimeoutMs: 20,
+    }
+    const service = new WorktreeService(deps)
+
+    // 第一次慢（占用 mutex 200ms），第二次排队 20ms 超时
+    const p1 = service.create({ branch: 'feat-slow', workspaceHint: '/project' })
+    const p2 = service.create({ branch: 'feat-slow', workspaceHint: '/project' })
+
+    // 第二次 reject TimeoutError
+    await expect(p2).rejects.toBeInstanceOf(TimeoutError)
+    // 第一次正常完成
+    await p1
   })
 })
