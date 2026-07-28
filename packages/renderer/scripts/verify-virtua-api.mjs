@@ -13,10 +13,7 @@
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { resolve, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = dirname(__filename)
 const require = createRequire(import.meta.url)
 
 // 解析 virtua 包根目录（从 renderer 包视角 require.resolve）
