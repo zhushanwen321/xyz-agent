@@ -51,6 +51,16 @@ export class MessageDispatcher {
   setPresenceRefreshCallback(cb: () => void): void {
     this.presenceRefresh = cb
   }
+  /**
+   * P5 lease：按 clientId 反查连接的 deviceName（组合根注入 conn.clients.get(clientId)?.deviceName）。
+   * busy 拒绝时需要 owner 的设备名（spec D6：session.busy/send.rejected 的 deviceName 应是 owner A 的，
+   * 而非发起方 B）。dispatcher 自身无连接池上下文（acquire 只回 owner clientId），故经此回调反查。
+   * 未注入时兜底 ''（向后兼容 lease-core slice 测试）。
+   */
+  private deviceNameLookup: ((clientId: string) => string | undefined) | null = null
+  setDeviceNameLookup(cb: (clientId: string) => string | undefined): void {
+    this.deviceNameLookup = cb
+  }
 
   /**
    * 返回 { blocked: true } 表示消息被 BeforeSend hook 拦截（已广播 message.error 错误气泡），
@@ -58,7 +68,7 @@ export class MessageDispatcher {
    * pending.reject，不得 reply success（round7 must-fix #3：避免「composer 清空 + 错误气泡」矛盾态）。
    *
    * P5 lease：clientId/deviceName 用于 lease acquire + busy 定向投递（reply send.rejected 给发起方 +
-   * broadcastExcept session.busy 给其他客户端）。缺省（leaseManager 未注入或旧调用方）走旧 isGenerating 预检。
+   * broadcast session.busy 给所有客户端，含发起方）。缺省（leaseManager 未注入或旧调用方）走旧 isGenerating 预检。
    */
   async sendMessage(sessionId: string, content: string, clientId?: string, deviceName?: string): Promise<{ blocked: boolean; rejected?: boolean }> {
     return this.sendPrompt(sessionId, content, () => content, clientId, deviceName)
@@ -129,6 +139,10 @@ export class MessageDispatcher {
           console.warn(`[message-dispatcher] preemptive reject (lease busy), sid=${sessionId}, owner=${lease.owner}`)
           // D6：只对发起方 reply send.rejected（判别联合 busy 分支，含 owner/device/expiresAt）。
           // 审查 C4：投递语义从 broadcast 改为 sendToClient（发起方专属点对点）。
+          // 审查 Major1：deviceName 必须是 owner（lease.owner=A）的设备名，而非发起方 B 的。
+          // dispatcher 无 owner deviceName 上下文（acquire 只回 owner clientId），故经
+          // deviceNameLookup 回调按 lease.owner 反查连接池 owner 的 deviceName。未注入/owner 离线兜底 ''。
+          const ownerDeviceName = this.deviceNameLookup?.(lease.owner) ?? ''
           this.broker.sendToClient(clientId, {
             type: 'send.rejected',
             payload: {
@@ -136,14 +150,19 @@ export class MessageDispatcher {
               reason: 'busy',
               message: lease.owner === clientId ? '本设备正在处理' : '其他设备正在处理',
               busyOwnerId: lease.owner,
-              busyOwnerDevice: deviceName ?? '',
+              busyOwnerDevice: ownerDeviceName,
               leaseExpiresAt: lease.expiresAt,
             },
           })
-          // D6：广播 session.busy 让其他客户端更新 presence/占用指示器（排除发起方，发起方已 reply）。
-          this.broker.broadcastExcept(clientId, {
+          // D6：广播 session.busy 让其他客户端更新 presence/占用指示器。
+          // 审查 Major2：spec §五要求 lease 消息（busy/idle）必须可靠——走 broker.broadcast（打 seq + 入
+          // session 桶），而非 broadcastExcept（不入桶）。短断线 resume 的客户端才能从 ring buffer 回放
+          // 收到 session.busy，否则 session 视图 busy 状态不完整。
+          // 发起方 B 也会收到 session.busy 广播，但 B 已先收到 send.rejected（点对点），session.busy 对 B
+          // 是冗余但无害（B 的 store 会 setSessionBusy，与 send.rejected 的 toast 不冲突）。
+          this.broker.broadcast({
             type: 'session.busy',
-            payload: { sessionId, clientId: lease.owner, deviceName: deviceName ?? '', expiresAt: lease.expiresAt },
+            payload: { sessionId, clientId: lease.owner, deviceName: ownerDeviceName, expiresAt: lease.expiresAt },
           })
           return { blocked: true, rejected: true }
         }

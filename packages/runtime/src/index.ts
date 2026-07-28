@@ -274,6 +274,10 @@ export async function main(opts?: { host?: string; port?: number; tokenFile?: st
   // P5 presence：lease 变化（acquire/release）触发 presence 重推（spec D9 触发点 4：isOperating 变化）。
   // sessionService 转发给 dispatcher + handleTurnEndSideEffects，回调调 conn.broadcastPresence。
   sessionService.setPresenceRefreshCallback(() => server.broadcastPresence())
+  // P5 lease（审查 Major1）：注入 deviceName 反查回调——busy 拒绝时 dispatcher 据 lease.owner 反查
+  // 连接池取 owner（A）的设备名，而非发起方（B）的设备名（spec D6：session.busy/send.rejected 的
+  // deviceName 应是 owner 的）。复用 session-handler 同源 conn.clients.get(id)?.deviceName。
+  sessionService.setDeviceNameLookup((clientId) => server.getClientDeviceName(clientId))
   const leaseReaperTimer = setInterval(() => {
     try {
       leaseManager.sweepExpired()

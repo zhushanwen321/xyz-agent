@@ -33,6 +33,7 @@ import { isRemoteMode, getActiveProfile, getClientId, getDeviceName } from '../l
 import * as transport from '../api/transport'
 import * as pending from '../api/pending'
 import * as events from '../api/events'
+import { session as sessionApi } from '@/api'
 import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
 import { usePanelStore } from '../stores/panel'
@@ -250,6 +251,29 @@ function syncSubscribedSessions(): void {
   setSubscribedSessions(sessionIds)
 }
 
+/**
+ * P5 presence（审查 Major3）：远程模式连接成功后主动调 presence.list RPC 拉一次全量 presence。
+ *
+ * spec §五要求 resume 路径（短断线，无 auth.ok 的 presence 字段）主动拉一次 presence——短断线 resume
+ * 的客户端 presence store 仍是断线前的旧列表（resume 不走 onConnect，auth.ok 只在冷启动带 presence 兜底）。
+ * 此前 renderer 无任何 listPresence 调用点，导致 resume 后 presence 不刷新。
+ *
+ * 取舍：远程模式每次连接成功都调一次（冷启动有 auth.ok.presence 兜底，resume 有 listPresence 兜底，
+ * 两者幂等——setConnections 全量替换）。本地模式（isRemoteMode()===false）不调（本地单客户端无多端 presence 需求）。
+ * 失败仅 warn，不阻断连接主流程（presence 是辅助视图，拉取失败可由后续 presence.update 广播自愈）。
+ */
+function refreshPresenceOnConnect(): void {
+  if (!isRemoteMode()) return
+  // fire-and-forget：连接成功后异步拉取，不阻塞 init；失败 warn 不传播。
+  sessionApi.listPresence()
+    .then((connections) => {
+      usePresenceStore().setConnections(connections)
+    })
+    .catch((e) => {
+      console.warn('[useConnection] listPresence on connect failed (non-blocking):', e)
+    })
+}
+
 export function useConnection() {
   const state = getState()
 
@@ -301,10 +325,14 @@ export function useConnection() {
       ) {
         bumpReconnectEpoch()
         syncSubscribedSessions()
+        // P5 presence（审查 Major3）：重连成功后主动拉 presence（resume 路径兜底）。
+        refreshPresenceOnConnect()
       }
       // 首次连接成功（任意→connected）也注入订阅（供下次重连 auth 携带）
       if (newState === 'connected' && oldState === 'connecting') {
         syncSubscribedSessions()
+        // P5 presence（审查 Major3）：首次连接成功也拉一次 presence（冷启动兜底，与 auth.ok.presence 幂等）。
+        refreshPresenceOnConnect()
       }
     })
     removeStateWatch = stopStateWatch

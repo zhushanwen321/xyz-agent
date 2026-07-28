@@ -411,4 +411,41 @@ describe('ServerMessageBroker 分桶 + 回放（P2-s1-w2）', () => {
     expect(JSON.parse(sent1).seq).toBe(JSON.parse(sent2).seq)
     expect(JSON.parse(sent1).seq).toBe(1)
   })
+
+  // ── 审查 Major2：lease 消息（session.busy / session.idle）必须可靠（spec §五）──
+  // session.busy/session.idle 是 session 级（带 sessionId），经 broker.broadcast 时必须
+  // 打 seq + 入 session 桶，短断线 resume 的客户端才能从 ring buffer 回放收到，否则
+  // session 视图 busy 状态不完整。本测试验证两条 lease 消息入桶且可经 getReplayPlan 回放。
+
+  it('Major2: session.busy + session.idle 经 broadcast 入 session 桶，打 seq 且可 resume 回放', async () => {
+    const { ServerMessageBroker } = await import('../message-broker.js')
+    const ws = makeMockWs()
+    const broker = new ServerMessageBroker(singlePool(ws), mockServices)
+
+    // 模拟 dispatcher（busy）+ lease-manager（idle）广播的两条 lease 消息。
+    broker.broadcast(sessionMsg('session.busy', 's1', { clientId: 'clientA', deviceName: 'Mac', expiresAt: 9999 }))
+    broker.broadcast(sessionMsg('session.idle', 's1', { reason: 'turn_end' }))
+
+    // 两条都入 s1 桶（spec §五：lease 消息必须可靠）
+    const buf = broker.getSessionBuffer('s1')!
+    expect(buf).toBeDefined()
+    expect(buf.size).toBe(2)
+    const types = buf.entries.map((e) => JSON.parse(e.data).type)
+    expect(types).toEqual(['session.busy', 'session.idle'])
+    // seq 单调递增
+    expect(buf.entries.map((e) => e.seq)).toEqual([1, 2])
+
+    // 客户端广播也打 seq
+    const sentBusy = JSON.parse(vi.mocked(ws.send).mock.calls[0][0] as string)
+    expect(sentBusy.type).toBe('session.busy')
+    expect(sentBusy.seq).toBe(1)
+
+    // 短断线 resume：lastSeq=0 → 回放包含两条 lease 消息
+    const plan = broker.getReplayPlan(0, broker.getBootId(), ['s1'])
+    expect(plan.kind).toBe('resume')
+    if (plan.kind !== 'resume') return
+    expect(plan.messages).toHaveLength(2)
+    expect(JSON.parse(plan.messages[0]).type).toBe('session.busy')
+    expect(JSON.parse(plan.messages[1]).type).toBe('session.idle')
+  })
 })

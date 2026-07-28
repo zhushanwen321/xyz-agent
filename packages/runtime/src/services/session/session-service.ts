@@ -213,6 +213,13 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     this.dispatcher.setPresenceRefreshCallback(cb)
     this.presenceRefresh = cb
   }
+  /**
+   * P5 lease：注入 deviceName 反查回调（按 clientId 取连接的 deviceName）。
+   * 转发给 dispatcher（busy 拒绝时反查 owner 的 deviceName）。组合根注入 conn.clients.get(id)?.deviceName。
+   */
+  setDeviceNameLookup(cb: (clientId: string) => string | undefined): void {
+    this.dispatcher.setDeviceNameLookup(cb)
+  }
   private presenceRefresh: (() => void) | null = null
   /** 取注入的 LeaseManager（adapterFactory 闭包构造 interpreter 时取，供 pingTick renew + turn-end release）。 */
   getLeaseManager(): import('./lease-manager.js').LeaseManager | null {

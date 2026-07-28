@@ -50,6 +50,7 @@ function makeMocks(opts: {
   promptError?: Error
   withLeaseManager?: boolean
   acquireResult?: { kind: 'acquired'; expiresAt: number } | { kind: 'busy'; owner: string; expiresAt: number }
+  ownerDeviceName?: string
 } = {}) {
   const session = makeMockSession(opts.session ?? {})
   const promptFn = opts.promptError
@@ -76,6 +77,10 @@ function makeMocks(opts: {
     getBusySession: vi.fn(() => undefined),
   } as unknown as LeaseManager
   if (opts.withLeaseManager) dispatcher.setLeaseManager(leaseManager)
+  // Major1：注入 deviceName 反查——模拟连接池按 clientId 返回 deviceName。
+  // ownerDeviceName 选项控制 owner（lease.owner）的设备名；其余 clientId 返回 undefined（兜底 ''）。
+  const ownerDevice = opts.ownerDeviceName
+  dispatcher.setDeviceNameLookup((cid) => (cid === 'clientA' ? ownerDevice : undefined))
 
   return { dispatcher, session, promptFn, client, broker, sent, broadcasts, leaseManager, releaseSpy, svc }
 }
@@ -84,10 +89,11 @@ describe('MessageDispatcher P5 lease（隐式 acquire + 定向 busy 拒绝 + 释
   beforeEach(() => vi.clearAllMocks())
 
   // TC1: busy 定向拒绝
-  it('TC1: lease busy 时 sendToClient send.rejected 给发起方 + broadcastExcept session.busy，不调 prompt', async () => {
-    const { dispatcher, promptFn, sent, broadcasts, leaseManager } = makeMocks({
+  it('TC1: lease busy 时 sendToClient send.rejected 给发起方 + broadcast session.busy，不调 prompt', async () => {
+    const { dispatcher, promptFn, sent, broadcasts, leaseManager, broker } = makeMocks({
       withLeaseManager: true,
       acquireResult: { kind: 'busy', owner: 'clientA', expiresAt: 5000 },
+      ownerDeviceName: 'Mac',
     })
 
     const result = await dispatcher.sendMessage('s1', 'hello', 'clientB', 'Phone')
@@ -100,10 +106,62 @@ describe('MessageDispatcher P5 lease（隐式 acquire + 定向 busy 拒绝 + 释
       type: 'send.rejected',
       payload: { sessionId: 's1', reason: 'busy', busyOwnerId: 'clientA', leaseExpiresAt: 5000 },
     })
-    // 广播 session.busy（broadcastExcept 排除 B）
+    // 广播 session.busy（走 broker.broadcast，入 ring buffer）
     expect(broadcasts).toContainEqual(expect.objectContaining({ type: 'session.busy' }))
     // 未调 prompt
     expect(promptFn).not.toHaveBeenCalled()
+    // Major2：session.busy 必须经 broker.broadcast（入 P2 桶），而非 broadcastExcept（不入桶）。
+    expect(broker.broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: 'session.busy' }))
+    expect(broker.broadcastExcept).not.toHaveBeenCalled()
+  })
+
+  // TC1b（Major1）：send.rejected.busyOwnerDevice 必须是 owner(A='Mac') 的设备名，而非发起方(B='Phone')。
+  it('TC1b: send.rejected.busyOwnerDevice 是 owner 的设备名（A=Mac），不是发起方（B=Phone）', async () => {
+    const { dispatcher, sent } = makeMocks({
+      withLeaseManager: true,
+      acquireResult: { kind: 'busy', owner: 'clientA', expiresAt: 5000 },
+      ownerDeviceName: 'Mac',
+    })
+
+    await dispatcher.sendMessage('s1', 'hello', 'clientB', 'Phone')
+
+    expect(sent['clientB'][0]).toMatchObject({
+      type: 'send.rejected',
+      payload: { busyOwnerId: 'clientA', busyOwnerDevice: 'Mac' },
+    })
+    // 显式断言不是发起方 B 的设备名
+    expect((sent['clientB'][0] as { payload: { busyOwnerDevice: string } }).payload.busyOwnerDevice).not.toBe('Phone')
+  })
+
+  // TC1c（Major1）：session.busy 广播的 deviceName 是 owner(A='Mac') 的设备名，不是发起方(B='Phone')。
+  it('TC1c: session.busy 的 deviceName 是 owner 的设备名（A=Mac），不是发起方（B=Phone）', async () => {
+    const { dispatcher, broadcasts } = makeMocks({
+      withLeaseManager: true,
+      acquireResult: { kind: 'busy', owner: 'clientA', expiresAt: 5000 },
+      ownerDeviceName: 'Mac',
+    })
+
+    await dispatcher.sendMessage('s1', 'hello', 'clientB', 'Phone')
+
+    const busyMsg = broadcasts.find((m) => m.type === 'session.busy')
+    expect(busyMsg).toBeDefined()
+    expect(busyMsg).toMatchObject({ payload: { clientId: 'clientA', deviceName: 'Mac' } })
+    expect((busyMsg as { payload: { deviceName: string } }).payload.deviceName).not.toBe('Phone')
+  })
+
+  // TC1d（Major1）：deviceNameLookup 未注入时（owner 离线/旧调用）busyOwnerDevice 兜底 ''。
+  it('TC1d: deviceNameLookup 未注入/owner 离线时 busyOwnerDevice 兜底空串', async () => {
+    const { dispatcher, sent } = makeMocks({
+      withLeaseManager: true,
+      acquireResult: { kind: 'busy', owner: 'clientX', expiresAt: 5000 },
+      // 不传 ownerDeviceName → lookup 对 clientX 返回 undefined → 兜底 ''
+    })
+
+    await dispatcher.sendMessage('s1', 'hello', 'clientB', 'Phone')
+
+    expect(sent['clientB'][0]).toMatchObject({
+      payload: { busyOwnerId: 'clientX', busyOwnerDevice: '' },
+    })
   })
 
   // TC2: 无 owner acquire 成功

@@ -333,6 +333,13 @@ export class RuntimeServer implements IMessageBroker {
   broadcastExcept(excludeClientId: string, msg: ServerMessage): void { this.broker.broadcastExcept(excludeClientId, msg) }
   /** P5 presence：触发 presence 全量重推（lease 变化/setActive/上下线经 connection-manager 调）。 */
   broadcastPresence(): void { this.conn.broadcastPresence() }
+  /**
+   * P5 lease（审查 Major1）：按 clientId 反查连接的 deviceName。
+   * dispatcher busy 拒绝时据此取 owner 的设备名（spec D6）。复用 session-handler 同源实现。
+   */
+  getClientDeviceName(clientId: string): string | undefined {
+    return this.conn.clients.get(clientId)?.deviceName
+  }
 
   /**
    * P7 plugin per-client active session：暴露 ConnectionManager 引用，供组合根 index.ts
