@@ -38,7 +38,7 @@ interface MockWsInternals {
  * 未来若 handleConnection 改注册顺序（如先 lifecycle 后 message），此处需复查——考虑改 once
  * 触发后从 list 移除以贴近真实 ws 语义。
  */
-function makeMockWs(): WebSocket & MockWsInternals {
+function makeMockWs(): WebSocket & MockWsInternals & { readyState: number } {
   const handlers = new Map<string, ((...args: unknown[]) => void)[]>()
   const ws = {
     readyState: WebSocket.OPEN,
@@ -51,7 +51,7 @@ function makeMockWs(): WebSocket & MockWsInternals {
       registerHandler(handlers, event, handler)
     }),
   }
-  return { ...ws, handlers } as unknown as WebSocket & MockWsInternals
+  return { ...ws, handlers } as unknown as WebSocket & MockWsInternals & { readyState: number }
 }
 
 function registerHandler(map: Map<string, ((...args: unknown[]) => void)[]>, event: string, handler: (...args: unknown[]) => void): void {
@@ -73,6 +73,13 @@ function makeCallbacks(): ConnectionCallbacks & {
   onMessage: ReturnType<typeof vi.fn>
   onDisconnect: ReturnType<typeof vi.fn>
   sendError: ReturnType<typeof vi.fn>
+  /**
+   * onAuthSuccess 默认不实例化（保留 undefined）——connection-manager 在 onAuthSuccess 缺省时
+   * 走 else 分支 replyAuth({resumed:false})（见 connection-manager.ts:435），多个 happy-path
+   * 用例依赖此缺省。需要时由调用方 cb.onAuthSuccess = vi.fn(...) 注入，类型声明为可选 Mock。
+   */
+  onAuthSuccess?: ReturnType<typeof vi.fn>
+  onPresenceUpdate?: ReturnType<typeof vi.fn>
 } {
   return {
     onConnect: vi.fn(),
@@ -84,6 +91,8 @@ function makeCallbacks(): ConnectionCallbacks & {
     onMessage: ReturnType<typeof vi.fn>
     onDisconnect: ReturnType<typeof vi.fn>
     sendError: ReturnType<typeof vi.fn>
+    onAuthSuccess?: ReturnType<typeof vi.fn>
+    onPresenceUpdate?: ReturnType<typeof vi.fn>
   }
 }
 
@@ -564,12 +573,7 @@ async function setupAuthMode(options?: {
     { resume: boolean; messages: string[]; seqReset: boolean; replayedCount: number; bootId: string; serverSeq: number }
 }) {
   const { ConnectionManager } = await import('../src/transport/connection-manager.js')
-  const cb = makeCallbacks() as ConnectionCallbacks & {
-    onConnect: ReturnType<typeof vi.fn>
-    onMessage: ReturnType<typeof vi.fn>
-    sendError: ReturnType<typeof vi.fn>
-    onAuthSuccess: ReturnType<typeof vi.fn>
-  }
+  const cb = makeCallbacks()
   if (options?.onAuthSuccess) {
     cb.onAuthSuccess = vi.fn(async (_ws: WebSocket, _clientId: string, input: { lastSeq?: number; bootId?: string; subscribedSessions: string[] }) =>
       options.onAuthSuccess!(input),
@@ -604,7 +608,7 @@ describe('P2-s2 auth replay orchestration (TC-W1.1~W1.8)', () => {
 
     // onAuthSuccess 入参：lastSeq/bootId undefined，subscribedSessions []
     expect(cb.onAuthSuccess).toHaveBeenCalledTimes(1)
-    const callArgs = vi.mocked(cb.onAuthSuccess).mock.calls[0]
+    const callArgs = vi.mocked(cb.onAuthSuccess!).mock.calls[0]
     expect(callArgs[2]).toEqual({ lastSeq: undefined, bootId: undefined, subscribedSessions: [] })
 
     // onConnect 被调一次（推全量）
@@ -683,20 +687,20 @@ describe('P2-s2 auth replay orchestration (TC-W1.1~W1.8)', () => {
     await sendAuth(ws, { token: 'real', clientId: 'c1', subscribedSessions: ['sA', 'sB'] })
 
     // onAuthSuccess 入参 input.subscribedSessions === ['sA','sB']
-    const input = vi.mocked(cb.onAuthSuccess).mock.calls[0][2] as { subscribedSessions: string[] }
+    const input = vi.mocked(cb.onAuthSuccess!).mock.calls[0][2] as { subscribedSessions: string[] }
     expect(input.subscribedSessions).toEqual(['sA', 'sB'])
 
     // 第二个连接：subscribedSessions 缺省 → []
     const ws2 = makeMockWs()
     connect(cm, ws2)
     await sendAuth(ws2, { token: 'real', clientId: 'c2' })
-    const input2 = vi.mocked(cb.onAuthSuccess).mock.calls[1][2] as { subscribedSessions: string[] }
+    const input2 = vi.mocked(cb.onAuthSuccess!).mock.calls[1][2] as { subscribedSessions: string[] }
     expect(input2.subscribedSessions).toEqual([])
   })
 
   it('TC-W1.6: 开放模式（tokenManager 未启用）保持现状不调 onAuthSuccess/replyAuth', async () => {
     const { ConnectionManager } = await import('../src/transport/connection-manager.js')
-    const cb = makeCallbacks() as ConnectionCallbacks & { onAuthSuccess: ReturnType<typeof vi.fn> }
+    const cb = makeCallbacks()
     cb.onAuthSuccess = vi.fn().mockResolvedValue({ resume: false, messages: [], seqReset: false, replayedCount: 0, bootId: 'b', serverSeq: 0 })
     // 无 tokenFile → 开放模式
     const cm = new ConnectionManager(0, cb, { tokenManager: createTokenManager({}) })
@@ -715,7 +719,7 @@ describe('P2-s2 auth replay orchestration (TC-W1.1~W1.8)', () => {
 
   it('TC-W1.7: onAuthSuccess 抛错兜底 close 4001 replay_failed（ES1）', async () => {
     const { ConnectionManager } = await import('../src/transport/connection-manager.js')
-    const cb = makeCallbacks() as ConnectionCallbacks & { onAuthSuccess: ReturnType<typeof vi.fn> }
+    const cb = makeCallbacks()
     cb.onAuthSuccess = vi.fn().mockRejectedValue(new Error('broker down'))
     const fixedTm = {
       load: () => ({ enabled: true as const, token: 'real' }),
@@ -752,7 +756,7 @@ describe('P2-s2 auth replay orchestration (TC-W1.1~W1.8)', () => {
     // 不 close 连接
     expect(ws.close).not.toHaveBeenCalled()
     // onAuthSuccess 入参：类型校验失败降级为 undefined/[]
-    const input = vi.mocked(cb.onAuthSuccess).mock.calls[0][2] as { lastSeq?: number; bootId?: string; subscribedSessions: string[] }
+    const input = vi.mocked(cb.onAuthSuccess!).mock.calls[0][2] as { lastSeq?: number; bootId?: string; subscribedSessions: string[] }
     expect(input.lastSeq).toBeUndefined()
     expect(input.bootId).toBeUndefined()
     expect(input.subscribedSessions).toEqual([])
@@ -834,7 +838,7 @@ describe('P2-s2 replyAuth ReplayMeta serialization (TC-W2.1~W2.4)', () => {
 
   it('TC-W2.4: 开放模式不调 replyAuth（零回归确认）', async () => {
     const { ConnectionManager } = await import('../src/transport/connection-manager.js')
-    const cb = makeCallbacks() as ConnectionCallbacks & { onAuthSuccess: ReturnType<typeof vi.fn> }
+    const cb = makeCallbacks()
     cb.onAuthSuccess = vi.fn().mockResolvedValue({ resume: false, messages: [], seqReset: false, replayedCount: 0, bootId: 'b', serverSeq: 0 })
     // 无 tokenFile → 开放模式
     const cm = new ConnectionManager(0, cb, { tokenManager: createTokenManager({}) })

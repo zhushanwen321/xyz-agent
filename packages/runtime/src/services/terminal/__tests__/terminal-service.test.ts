@@ -81,9 +81,11 @@ function findMsg(msgs: ServerMessage[], type: string): ServerMessage | undefined
  * P2-s3：构造 mock ws（attach 回灌测试用）。
  * 只 mock attach 路径用到的两个字段：send（vi.fn 收集调用）+ readyState（默认 OPEN）。
  * 不需完整 WebSocket mock——attach 实现只读这两个字段。
+ * attach 入参要求完整 WsType，但实现仅触及 send/readyState，
+ * 故经 as unknown as WebSocket 收口（TS 官方推荐的 partial→full 转换）。
  */
-function createMockWs(readyState: number = WebSocket.OPEN): { send: ReturnType<typeof vi.fn>; readyState: number } {
-  return { send: vi.fn(), readyState }
+function createMockWs(readyState: number = WebSocket.OPEN): WebSocket & { send: ReturnType<typeof vi.fn> } {
+  return { send: vi.fn(), readyState } as unknown as WebSocket & { send: ReturnType<typeof vi.fn> }
 }
 
 beforeEach(() => {

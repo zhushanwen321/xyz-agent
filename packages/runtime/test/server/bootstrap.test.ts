@@ -81,7 +81,7 @@ describe('W4-TC2: printStartup 输出 + token 安全', () => {
     expect(consoleErrorSpy).not.toHaveBeenCalled()
     expect(consoleWarnSpy).not.toHaveBeenCalled()
     // 但 token 必须出现在 stdout（终端可见）
-    expect(stdoutSpy.mock.calls.some(c => String(c[0]).includes('top-secret-token'))).toBe(true)
+    expect(stdoutSpy.mock.calls.some((c: [first: unknown, ...rest: unknown[]]) => String(c[0]).includes('top-secret-token'))).toBe(true)
   })
 
   it('TC2.3: 开放模式（token undefined）→ "open mode (no token)" 行', () => {

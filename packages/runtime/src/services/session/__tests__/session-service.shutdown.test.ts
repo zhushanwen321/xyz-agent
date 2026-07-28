@@ -14,7 +14,7 @@
  * 经 public initializeManagedSession 注入 session（避开 lifecycle.create 完整 spawn 链），
  * 直接调 destroyAll 验真实编排逻辑（不 mock 被测方法）。
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, type Mocked } from 'vitest'
 import { SessionService } from '../session-service.js'
 import type { IPiEngine, IProcessManager } from '../../ports/pi-engine.js'
 import type { IMessageBroker, IEventAdapter, IExtensionService } from '../../../interfaces.js'
@@ -27,7 +27,7 @@ import type { ServerMessage } from '@xyz-agent/shared'
 
 // ── mock 依赖工厂 ────────────────────────────────────────────────
 
-function makeMockAdapter(): IEventAdapter & { detach: ReturnType<typeof vi.fn>; attach: ReturnType<typeof vi.fn> } {
+function makeMockAdapter(): Mocked<IEventAdapter> {
   return {
     attach: vi.fn(),
     detach: vi.fn(),
@@ -39,7 +39,7 @@ function makeMockClient(): IPiEngine {
   return { onEvent: () => () => {}, getCommands: async () => [] } as unknown as IPiEngine
 }
 
-function makeMockPm(): IProcessManager & { destroyAll: ReturnType<typeof vi.fn> } {
+function makeMockPm(): Mocked<IProcessManager> {
   const clients = new Map<string, IPiEngine>()
   return {
     createSession: vi.fn(async (id: string) => {
@@ -47,11 +47,14 @@ function makeMockPm(): IProcessManager & { destroyAll: ReturnType<typeof vi.fn> 
       clients.set(id, c)
       return c
     }),
+    destroySession: vi.fn(async () => {}),
     getClient: vi.fn((id: string) => clients.get(id)),
     hasClient: vi.fn(() => true),
+    rekey: vi.fn(),
     onSessionExit: vi.fn(() => () => {}),
     destroyAll: vi.fn(async () => { clients.clear() }),
     getSessionIdByClient: vi.fn(() => undefined),
+    getPiVersion: vi.fn(async () => 'unknown'),
   }
 }
 

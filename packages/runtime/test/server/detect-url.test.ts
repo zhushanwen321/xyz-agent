@@ -33,7 +33,8 @@ import { detectUrls } from '../../src/server/detect-url.js'
 const mockNetworkInterfaces = vi.mocked(networkInterfaces)
 const mockExecFile = vi.mocked(execFile)
 
-// 模拟网卡地址结构（与 node:os NetworkInterfaceInfo 对齐）
+// 模拟网卡地址结构：detect-url 仅消费 address/family/internal（见 detect-url.ts:183-207），
+// 其余 NetworkInterfaceInfo 字段（netmask/mac/cidr）与探测无关，测试无需构造。
 interface MockAddr {
   address: string
   family: string
@@ -41,7 +42,8 @@ interface MockAddr {
 }
 
 function setInterfaces(ifaces: Record<string, MockAddr[]>): void {
-  mockNetworkInterfaces.mockReturnValue(ifaces)
+  // MockAddr 是 NetworkInterfaceInfo 的子集，经 unknown 收口为 networkInterfaces() 的完整返回类型。
+  mockNetworkInterfaces.mockReturnValue(ifaces as unknown as ReturnType<typeof networkInterfaces>)
 }
 
 function setExecFileResult(result: { stdout?: string; error?: Error } | null): void {

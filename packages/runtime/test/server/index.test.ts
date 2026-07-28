@@ -40,7 +40,7 @@ vi.mock('@xyz-agent/shared/paths', () => ({
 }))
 
 import { main } from '../../src/index.js'
-import { createTokenManager, type TokenManager } from '../../src/transport/token.js'
+import { createTokenManager, type TokenManager, type LoadedToken } from '../../src/transport/token.js'
 import { printStartup } from '../../src/server/bootstrap.js'
 import { fetchPiBinary } from '../../src/server/pi-fetch.js'
 import { detectUrls } from '../../src/server/detect-url.js'
@@ -243,15 +243,15 @@ describe('W4-TC8: 命令分发（run 流程）', () => {
     setArgv(['--help'])
     await expect(run()).rejects.toThrow(/__EXIT_0__/)
     expect(exitMock).toHaveBeenCalledWith(0)
-    expect(stdoutSpy.mock.calls.some(c => String(c[0]).includes('xyz-agent-runtime'))).toBe(true)
-    expect(stdoutSpy.mock.calls.some(c => String(c[0]).includes('--host'))).toBe(true)
+    expect(stdoutSpy.mock.calls.some((c: [first: unknown, ...rest: unknown[]]) => String(c[0]).includes('xyz-agent-runtime'))).toBe(true)
+    expect(stdoutSpy.mock.calls.some((c: [first: unknown, ...rest: unknown[]]) => String(c[0]).includes('--host'))).toBe(true)
   })
 
   it('TC8.2: --version → stdout 输出版本 + exit(0)', async () => {
     setArgv(['--version'])
     await expect(run()).rejects.toThrow(/__EXIT_0__/)
     expect(exitMock).toHaveBeenCalledWith(0)
-    expect(stdoutSpy.mock.calls.some(c => String(c[0]).includes('v0.9.0'))).toBe(true)
+    expect(stdoutSpy.mock.calls.some((c: [first: unknown, ...rest: unknown[]]) => String(c[0]).includes('v0.9.0'))).toBe(true)
   })
 
   it('TC8.3: --reset-token → tm.generate + persist + exit(0)', async () => {
@@ -266,34 +266,34 @@ describe('W4-TC8: 命令分发（run 流程）', () => {
     expect(mockTm.generate).toHaveBeenCalled()
     expect(mockTm.persist).toHaveBeenCalledWith('new-token-123')
     // 新 token 经 stdout 输出
-    expect(stdoutSpy.mock.calls.some(c => String(c[0]).includes('new-token-123'))).toBe(true)
+    expect(stdoutSpy.mock.calls.some((c: [first: unknown, ...rest: unknown[]]) => String(c[0]).includes('new-token-123'))).toBe(true)
   })
 
   it('TC8.4: --show-token enabled → stdout 输出 token + exit(0)', async () => {
     const mockTm = makeMockTokenManager({
-      load: vi.fn(() => ({ enabled: true, token: 'existing-token' })),
+      load: vi.fn((): LoadedToken => ({ enabled: true, token: 'existing-token' })),
     })
     mockCreateTokenManager.mockReturnValue(mockTm)
     setArgv(['--show-token'])
     await expect(run()).rejects.toThrow(/__EXIT_0__/)
     expect(exitMock).toHaveBeenCalledWith(0)
-    expect(stdoutSpy.mock.calls.some(c => String(c[0]).includes('existing-token'))).toBe(true)
+    expect(stdoutSpy.mock.calls.some((c: [first: unknown, ...rest: unknown[]]) => String(c[0]).includes('existing-token'))).toBe(true)
   })
 
   it('TC8.5: --show-token open mode → stdout 输出 "open mode" + exit(0)', async () => {
     const mockTm = makeMockTokenManager({
-      load: vi.fn(() => ({ enabled: false })),
+      load: vi.fn((): LoadedToken => ({ enabled: false })),
     })
     mockCreateTokenManager.mockReturnValue(mockTm)
     setArgv(['--show-token'])
     await expect(run()).rejects.toThrow(/__EXIT_0__/)
     expect(exitMock).toHaveBeenCalledWith(0)
-    expect(stdoutSpy.mock.calls.some(c => String(c[0]).includes('open mode'))).toBe(true)
+    expect(stdoutSpy.mock.calls.some((c: [first: unknown, ...rest: unknown[]]) => String(c[0]).includes('open mode'))).toBe(true)
   })
 
   it('TC8.6: 正常启动 → 首启 token 生成 + detectUrls + printStartup + main 调用', async () => {
     const mockTm = makeMockTokenManager({
-      load: vi.fn(() => ({ enabled: false })),
+      load: vi.fn((): LoadedToken => ({ enabled: false })),
       generate: vi.fn(() => 'startup-token'),
       persist: vi.fn(),
     })
@@ -323,7 +323,7 @@ describe('W4-TC8: 命令分发（run 流程）', () => {
 
   it('TC8.7: 正常启动 + 已有 token → 不生成新 token，复用 existing', async () => {
     const mockTm = makeMockTokenManager({
-      load: vi.fn(() => ({ enabled: true, token: 'existing-token-456' })),
+      load: vi.fn((): LoadedToken => ({ enabled: true, token: 'existing-token-456' })),
       generate: vi.fn(),
       persist: vi.fn(),
     })
@@ -345,7 +345,7 @@ describe('W4-TC8: 命令分发（run 流程）', () => {
 
   it('TC8.8: pi setup 失败 → stderr 输出但不阻塞启动', async () => {
     const mockTm = makeMockTokenManager({
-      load: vi.fn(() => ({ enabled: false })),
+      load: vi.fn((): LoadedToken => ({ enabled: false })),
       generate: vi.fn(() => 'tok'),
       persist: vi.fn(),
     })
@@ -359,14 +359,14 @@ describe('W4-TC8: 命令分发（run 流程）', () => {
     await run()
 
     // pi 失败信息经 stderr
-    expect(stderrSpy.mock.calls.some(c => String(c[0]).includes('pi setup failed'))).toBe(true)
+    expect(stderrSpy.mock.calls.some((c: [first: unknown, ...rest: unknown[]]) => String(c[0]).includes('pi setup failed'))).toBe(true)
     // main 仍被调用（不阻塞）
     expect(mockMain).toHaveBeenCalled()
   })
 
   it('TC8.9: --serve-web <dist> → main 收到 serveWeb 参数', async () => {
     const mockTm = makeMockTokenManager({
-      load: vi.fn(() => ({ enabled: false })),
+      load: vi.fn((): LoadedToken => ({ enabled: false })),
       generate: vi.fn(() => 'tok'),
       persist: vi.fn(),
     })
@@ -384,7 +384,7 @@ describe('W4-TC8: 命令分发（run 流程）', () => {
 
   it('TC8.10: printHelp 输出含所有选项说明', () => {
     printHelp()
-    const output = stdoutSpy.mock.calls.map(c => String(c[0])).join('')
+    const output = stdoutSpy.mock.calls.map((c: [first: unknown, ...rest: unknown[]]) => String(c[0])).join('')
     expect(output).toContain('--host')
     expect(output).toContain('--port')
     expect(output).toContain('--token-file')

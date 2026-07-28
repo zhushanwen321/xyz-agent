@@ -21,7 +21,7 @@ async function makeCm(sessionService?: Partial<ISessionServiceInternal>) {
     onMessage: vi.fn().mockResolvedValue(undefined),
     onDisconnect: vi.fn(),
     sendError: vi.fn(),
-    onPresenceUpdate: (connections) => presenceUpdates.push(connections),
+    onPresenceUpdate: (connections: PresenceConnection[]) => presenceUpdates.push(connections),
   // port 0 仅供构造（不 start），测试只调方法。
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any, {})

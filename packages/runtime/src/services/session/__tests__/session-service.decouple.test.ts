@@ -16,7 +16,7 @@
  * 「全部 ws 断开」用 broker 的 pool clients 清空模拟（零客户端广播 = no-op，但 seq 仍入 buffer）。
  * pi 存活的权威 owner 是 SessionService.sessions Map + pm.hasClient。
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, type Mocked } from 'vitest'
 import { WebSocket } from 'ws'
 import { SessionService } from '../session-service.js'
 import { ServerMessageBroker } from '../../../transport/message-broker.js'
@@ -32,7 +32,7 @@ import type { ServerMessage } from '@xyz-agent/shared'
 
 // ── mock 依赖工厂 ────────────────────────────────────────────────
 
-function makeMockAdapter(): IEventAdapter & { detach: ReturnType<typeof vi.fn> } {
+function makeMockAdapter(): Mocked<IEventAdapter> {
   return { attach: vi.fn(), detach: vi.fn() }
 }
 
@@ -44,7 +44,7 @@ function makeMockPiClient(): IPiEngine {
   } as unknown as IPiEngine
 }
 
-function makeMockPm(): IProcessManager & { hasClient: ReturnType<typeof vi.fn>; getClient: ReturnType<typeof vi.fn> } {
+function makeMockPm(): Mocked<IProcessManager> {
   const clients = new Map<string, IPiEngine>()
   return {
     createSession: vi.fn(async (id: string) => {
@@ -52,11 +52,14 @@ function makeMockPm(): IProcessManager & { hasClient: ReturnType<typeof vi.fn>; 
       clients.set(id, c)
       return c
     }),
+    destroySession: vi.fn(async () => {}),
     getClient: vi.fn((id: string) => clients.get(id)),
     hasClient: vi.fn(() => true),
+    rekey: vi.fn(),
     onSessionExit: vi.fn(() => () => {}),
     destroyAll: vi.fn(async () => {}),
     getSessionIdByClient: vi.fn(() => undefined),
+    getPiVersion: vi.fn(async () => 'unknown'),
   }
 }
 
