@@ -65,8 +65,8 @@
           <Label class="text-[12px] text-neutral-fg">{{ t('settings.system.completionSound') }}</Label>
           <Switch
             data-testid="setting-completion-sound"
-            :checked="system.completionSound ?? true"
-            @update:checked="emit('update', { completionSound: $event })"
+            :model-value="system.completionSound ?? true"
+            @update:model-value="emit('update', { completionSound: $event === true })"
           />
         </div>
       </div>
