@@ -1,3 +1,4 @@
+ 
 export default {
   title: 'Settings',
   close: 'Close',
@@ -25,6 +26,8 @@ export default {
     presetDesc: 'Manage Pi launch parameter presets and tool/extension access policies',
     worktree: 'Worktree',
     worktreeDesc: 'Configure worktree creation parameters and setup scripts',
+    update: 'Update',
+    updateDesc: 'Configure auto-update and proxy settings',
   },
   // ── SystemPrompt page (SystemPromptPage) ──
   systemPrompt: {
@@ -271,12 +274,6 @@ export default {
     fontMedium: 'Medium',
     fontLarge: 'Large',
     completionSound: 'Completion sound',
-    soundTitle: 'Notification sounds',
-    successSound: 'Success sound',
-    errorSound: 'Error sound',
-    soundPreview: 'Preview',
-    soundPreviewing: 'Previewing…',
-    soundDefault: 'System default',
     shortcutTitle: 'Shortcuts',
     shortcutName: 'Command',
     shortcutKey: 'Shortcut',
@@ -375,13 +372,6 @@ export default {
     summaryAllowlist: 'Allowlist {count} item(s)',
     summaryDenylist: 'Denylist {count} item(s)',
     summarySeparator: ' · ',
-    expand: 'Expand',
-    collapse: 'Collapse',
-    allowlistHint: 'Only checked items are available; unchecked are disabled',
-    denylistHint: 'Unchecked items are available; checked are disabled',
-    allListHint: 'All available under current policy',
-    noneListHint: 'All disabled under current policy',
-    readonlyBadge: 'Read-only',
   },
   // ── Worktree page (WorktreePage) ──
   worktree: {
@@ -411,6 +401,31 @@ export default {
     defaultBaseBranchPlaceholder: 'origin/main',
     saved: 'Worktree settings saved',
     saveFailed: 'Save failed',
+  },
+  // ── Update proxy page (UpdatePage) ──
+  update: {
+    sectionTitle: 'Proxy Configuration',
+    sectionDesc: 'Configure network proxy for GitHub access',
+    proxyMode: 'Proxy Mode',
+    proxyModeSystem: 'System Proxy (auto-detect)',
+    proxyModeManual: 'Manual Configuration',
+    proxyModeDisabled: 'Disable Proxy',
+    httpProxy: 'HTTP Proxy',
+    httpProxyPlaceholder: 'e.g. http://127.0.0.1:7890',
+    httpProxyRequired: 'HTTP proxy is required',
+    invalidUrl: 'Invalid URL format',
+    httpsProxy: 'HTTPS Proxy',
+    httpsProxyPlaceholder: 'e.g. http://127.0.0.1:7890',
+    testProxy: 'Test Proxy',
+    testProxyTooltipDisabled: 'Proxy disabled, cannot test',
+    testing: 'Testing...',
+    testSuccess: 'Proxy connection successful',
+    testFailed: 'Proxy connection failed: {msg}',
+    testDisabled: 'Proxy disabled, skipping test',
+    save: 'Save',
+    saving: 'Saving...',
+    saved: 'Proxy configuration saved',
+    saveFailed: 'Save failed: {msg}',
   },
   // ── Compat editor (CompatEditor / CompatField) ──
   compat: {

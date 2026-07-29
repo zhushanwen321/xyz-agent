@@ -303,6 +303,23 @@ export function openUpdateFallbackUrl(url: string): Promise<void> {
   return api?.openUpdateFallbackUrl(url) ?? Promise.resolve()
 }
 
+// ── 代理配置 ────────────────────────────────────────────────────────
+
+/** 获取当前代理配置。无 IPC 时返回默认配置 */
+export function getProxyConfig(): Promise<import('@xyz-agent/shared').IProxyConfig> {
+  return api?.getProxyConfig() ?? Promise.resolve({ mode: 'system' })
+}
+
+/** 保存代理配置。无 IPC 时 no-op */
+export function setProxyConfig(config: import('@xyz-agent/shared').IProxyConfig): Promise<void> {
+  return api?.setProxyConfig(config) ?? Promise.resolve()
+}
+
+/** 测试代理连接。无 IPC 时返回成功（跳过测试） */
+export function testProxy(config: import('@xyz-agent/shared').IProxyConfig): Promise<{ success: boolean; message?: string }> {
+  return api?.testProxy(config) ?? Promise.resolve({ success: true, message: 'No IPC available' })
+}
+
 // ── 系统提示音（跨平台：mac afplay / linux paplay / win 返 wav base64）─────────
 // main 侧 sound-handlers.ts 处理平台分发。win 返 wav base64 由 renderer 用 new Audio() 播。
 // 无 IPC（web/mock）时 listSystemSounds 返回空清单，playSystemSound 静默 no-op。
@@ -316,7 +333,7 @@ export async function listSystemSounds(): Promise<{
 }
 
 /**
- * 按名字播放系统提示音。mac/linux 由 main spawn 播；win 返回 wav base64 由调用方播。
+ * 按名字播放系统提示音。mac/linux 由 main spawn 播；win 返 wav base64 由调用方播。
  * name 为空或未知时：若提供 kind，main 回落到平台默认（W3）；否则静默 resolve。
  * 失败静默（提示音失败不阻塞对话流）。
  *

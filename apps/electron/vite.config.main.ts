@@ -13,6 +13,11 @@ import { builtinModules } from 'node:module'
 // builtinModules 仅返回不带前缀的模块名（如 'stream'、'fs'），需手动拼 'node:' 前缀。
 const nodeExternals = [
   'electron',
+  // undici：Electron 内置 Node 运行时已自带 undici（fetch 底层依赖），
+  // 且本仓库把它作为根依赖安装。标记为 external 让 main bundle 运行时 require 解析
+  // 已安装的 undici，而非打进 bundle——避免重复打包、减小体积，并保证 ProxyAgent 等
+  // named export 在运行时可用（gateway/update-handlers 用它构造代理 dispatcher）。
+  'undici',
   // builtinModules 不含 'node:' 前缀；为兼容 `import 'node:fs'` 与 `import 'fs'` 两种写法，
   // 同时映射带前缀和不带前缀两种形式。
   ...builtinModules.flatMap((m) => [m, `node:${m}`]),

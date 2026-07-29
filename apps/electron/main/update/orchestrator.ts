@@ -21,7 +21,7 @@
  * - 并发保护：module-level updating 标志，performUpdate 进行中时拒绝重入（避免重复 spawn 脚本）
  * - win spawn-installer 延迟 1.5s 再 spawn，给 handler 的 app.quit 留时间避免文件锁冲突
  *
- * 依赖方向：orchestrator → download-asset + platform-updater + constants + types + @xyz-agent/shared
+ * 依赖方向：orchestrator → download-asset + platform-updater + proxy-config + constants + types + @xyz-agent/shared
  */
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -29,6 +29,7 @@ import type { LatestReleaseInfo, ReleaseAsset, UpdateStage } from '@xyz-agent/sh
 import { downloadAsset } from './download-asset.js'
 import { createPlatformUpdater } from './platform-updater.js'
 import { UPDATE_DIR, UPDATE_RESULT_FILE } from './constants.js'
+import { readProxyConfig } from './proxy-config.js'
 import { UpdateError, UpdateUnsupportedError } from './types.js'
 import type { UpdateScriptRef } from './types.js'
 
@@ -90,18 +91,60 @@ export async function performUpdate(
     // 2. 写 update-result.json status='replacing'（self-healer 启动时检测中断）
     //    replacing 标记是 self-healer 检测中断的关键信号，写入失败必须中止升级
     //    （否则崩溃后 self-healer 无法识别需要回滚）。这里不 catch，让异常上抛。
-    mkdirSync(UPDATE_DIR, { recursive: true })
-    writeUpdateResult('replacing', release.version)
+    try {
+      mkdirSync(UPDATE_DIR, { recursive: true })
+      writeUpdateResult('replacing', release.version)
+    } catch (writeErr) {
+      // 权限错误分类
+      if (writeErr instanceof Error && (writeErr.message.includes('EACCES') || writeErr.message.includes('permission'))) {
+        throw new UpdateError(
+          'permission denied when writing update status',
+          'replacing',
+          'UPDATE_PERMISSION_DENIED',
+        )
+      }
+      // 磁盘空间不足
+      if (writeErr instanceof Error && (writeErr.message.includes('ENOSPC') || writeErr.message.includes('disk space'))) {
+        throw new UpdateError(
+          'insufficient disk space for update status file',
+          'downloading',
+          'UPDATE_DISK_SPACE',
+        )
+      }
+      throw writeErr
+    }
 
     // 3. 下载 + 校验（downloadAsset 内部已校验 sha256/size）
+    //    [C1] 读取 proxy-config.json（统一由 ./proxy-config.ts SSOT 负责），
+    //    把代理配置传给 downloadAsset，让下载链路真正接入代理
+    //    （downloadAsset 内部据此构造 undici ProxyAgent dispatcher）。
+    //    proxyConfig 读取失败（文件损坏等）不阻断升级：降级为默认 mode='system'（直连/环境变量）。
     opts.onProgress('downloading', 0)
-    const { filePath } = await downloadAsset(asset, (percent) => opts.onProgress('downloading', percent))
+    const proxyConfig = readProxyConfig()
+    const { filePath } = await downloadAsset(
+      asset,
+      (percent) => opts.onProgress('downloading', percent),
+      proxyConfig,
+    )
     opts.onProgress('verifying', PROGRESS_COMPLETE)
 
     // 4. 平台分发（生成脚本 + 触发替换）
     opts.onProgress('replacing', 0)
     const updater = createPlatformUpdater()
-    const ref = updater.prepareUpdate(filePath, release)
+    let ref: UpdateScriptRef
+    try {
+      ref = updater.prepareUpdate(filePath, release)
+    } catch (prepErr) {
+      // 权限错误分类
+      if (prepErr instanceof Error && (prepErr.message.includes('EACCES') || prepErr.message.includes('permission'))) {
+        throw new UpdateError(
+          'permission denied during update preparation',
+          'replacing',
+          'UPDATE_PERMISSION_DENIED',
+        )
+      }
+      throw prepErr
+    }
     opts.onProgress('replacing', PROGRESS_COMPLETE)
 
     // 5. 据 ref.kind 决定返回值
