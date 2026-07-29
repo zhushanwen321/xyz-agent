@@ -117,8 +117,8 @@
           </div>
           <Switch
             data-testid="setting-auto-rename-session"
-            :checked="autoRenameEnabled"
-            @update:checked="onSaveAutoRename"
+            :model-value="autoRenameEnabled"
+            @update:model-value="onSaveAutoRename"
           />
         </div>
       </div>
