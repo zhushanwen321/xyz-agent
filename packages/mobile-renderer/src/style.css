@@ -320,3 +320,22 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ============================================================
+   触屏双击缩放延迟消除（WCAG 1.4.4 配套：去掉 user-scalable=no 后补）
+   viewport 不再用 maximum-scale/user-scalable=no（违反 WCAG 1.4.4，
+   视障用户无法放大文字）。改用 touch-action: manipulation 仅作用于可点元素，
+   消除浏览器 300ms 双击缩放侦测延迟 + 禁用元素级双击缩放，
+   但不影响 pinch-to-zoom 整页放大（无障碍放大保留）。
+   ============================================================ */
+button,
+a,
+[role="button"],
+[role="tab"],
+[role="menuitem"],
+[role="option"],
+input[type="checkbox"],
+input[type="radio"],
+label {
+  touch-action: manipulation;
+}

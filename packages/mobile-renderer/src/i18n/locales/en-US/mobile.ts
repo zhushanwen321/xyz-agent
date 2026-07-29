@@ -47,6 +47,7 @@ export default {
     theme: 'Theme',
     themeDark: 'Dark',
     themeLight: 'Light',
+    themeToggleFailed: 'Failed to switch theme, please try again',
     notConnected: 'Not connected. Paste connection info on the connect screen.',
     deviceName: 'Device name',
   },

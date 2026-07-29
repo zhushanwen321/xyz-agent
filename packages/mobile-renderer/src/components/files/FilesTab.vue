@@ -12,17 +12,31 @@
  *
  * MobileShell 持有 currentSessionId（从 SessionsTab 选中态透传），传入本组件。
  */
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import MobileFilesView from './MobileFilesView.vue'
 import MobileFileDetail from './MobileFileDetail.vue'
+import { useFileTreeStore } from '@/stores/fileTree'
 
-defineProps<{ sessionId: string | null }>()
+const props = defineProps<{ sessionId: string | null }>()
 
 const { t } = useI18n()
+const fileTreeStore = useFileTreeStore()
 
 /** 是否进入文件详情态（点文件后切到 MobileFileDetail）。默认 false（文件树态）。 */
 const showDetail = ref(false)
+
+/** 切 session 时重置详情态 + 清全局 selectedPath。
+ *  必要：showDetail 是本地 ref，KeepAlive 复用同实例；fileTreeStore.selectedPath 是
+ *  跨 session 全局焦点（store 不按 session 隔离 selectedPath）。不重置会显示
+ *  MobileFileDetail + 上一 session 的 selectedPath（脏态）。 */
+watch(
+  () => props.sessionId,
+  () => {
+    showDetail.value = false
+    fileTreeStore.selectFile(null)
+  },
+)
 
 function onSelectFile(): void {
   showDetail.value = true

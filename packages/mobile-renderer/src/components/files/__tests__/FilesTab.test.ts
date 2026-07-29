@@ -37,4 +37,25 @@ describe('FilesTab（P4-s4-w1 Files tab 接入 shell）', () => {
     expect(wrapper.text()).toContain('src')
     expect(wrapper.text()).toContain('readme.md')
   })
+
+  it('切 session 时重置 showDetail + 清全局 selectedPath（避免上一 session 脏态）', async () => {
+    const { useFileTreeStore } = await import('@/stores/fileTree')
+    const store = useFileTreeStore()
+    store.setTree('s1', [{ path: '/p/a.md', name: 'a.md', type: 'file' }])
+    store.setTree('s2', [{ path: '/p/b.md', name: 'b.md', type: 'file' }])
+
+    const wrapper = mount(FilesTab, { props: { sessionId: 's1' } })
+    // 点文件进 detail 态（MobileFilesView 写 store.selectedPath + emit select）
+    await wrapper.find('[data-testid="mobile-file-node-/p/a.md"]').trigger('click')
+    expect(wrapper.find('[data-testid="mobile-file-detail"]').exists()).toBe(true)
+    // setup store 经 pinia 访问时 ref 自动解包，故直接读 store.selectedPath（无 .value）
+    expect(store.selectedPath).toBe('/p/a.md')
+
+    // 切 session：showDetail 应回 false，selectedPath 应清空（不再渲染旧 session 的 detail）
+    await wrapper.setProps({ sessionId: 's2' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="mobile-files-view"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="mobile-file-detail"]').exists()).toBe(false)
+    expect(store.selectedPath).toBeNull()
+  })
 })

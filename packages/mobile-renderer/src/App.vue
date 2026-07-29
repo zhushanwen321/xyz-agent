@@ -59,10 +59,13 @@ function hostOf(url: string): string {
 
 onMounted(async () => {
   // 1. location.hash 直达（spec D9：浏览器访问 #token=... 自动连接）
+  //    注意：parseConnectionInfo 只识别 4 种格式（deep-link/http-url/ws-url/url-token-lines），
+  //    纯 #token=abc 不在其中。因此这里传 window.location.href（完整 URL，含真实 host），
+  //    让 parseConnectionInfo 走 http-url 分支：host 取页面所在 host、token 取 hash 参数。
+  //    即连「托管本页的服务器」——符合移动端「页面与 WS 同源托管」的部署模型（spec D10）。
+  //    「推导成 ws://localhost:1421」仅在 dev 服务器本就监听 localhost 时发生，属正确行为。
   const hash = window.location.hash.replace(/^#/, '')
   if (hash.length > 0) {
-    // hash 可能是 token=xxx（http-url 格式由 parseConnectionInfo 处理），也可能含完整连接信息
-    // 用 location.href 让 parseConnectionInfo 按 http-url 格式解析（含 hash token）
     const profile = parseAndActivate(window.location.href)
     if (profile) {
       initAttempted.value = true

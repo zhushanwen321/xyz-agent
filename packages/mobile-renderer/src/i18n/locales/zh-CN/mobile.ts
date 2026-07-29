@@ -47,6 +47,7 @@ export default {
     theme: '主题',
     themeDark: '深色',
     themeLight: '浅色',
+    themeToggleFailed: '切换主题失败，请重试',
     notConnected: '未连接，请在连接页粘贴连接信息。',
     deviceName: '设备名',
   },

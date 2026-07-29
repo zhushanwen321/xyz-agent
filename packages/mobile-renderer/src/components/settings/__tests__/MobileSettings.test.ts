@@ -5,7 +5,8 @@
  *  - 有 profile 时显示 host/token/deviceName + 断开按钮
  *  - 无 profile 时显示 notConnected 提示
  *  - theme toggle 调 setSystem({theme}) 且 DOM data-theme 生效
- *  - 断开按钮调 deactivateRemote（isRemoteMode 变 false）
+ *  - 断开按钮调 deactivateRemote（isRemoteMode 变 false）+ location.reload
+ *    （reload 必要：App 连接门控只 watch ws-client state，不读 localStorage）
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
@@ -22,6 +23,10 @@ vi.mock('@/api', async () => {
   }
 })
 
+// location.reload mock：onDisconnect 调 location.reload 切回连接页（jsdom 下真 reload 无意义）
+const reloadMock = vi.fn()
+vi.stubGlobal('location', { ...window.location, reload: reloadMock })
+
 import MobileSettings from '../MobileSettings.vue'
 import {
   saveProfile,
@@ -36,6 +41,7 @@ beforeEach(() => {
   localStorage.clear()
   __resetForTest()
   updateSystemMock.mockClear()
+  reloadMock.mockClear()
 })
 
 describe('MobileSettings（P4-s4-w2 AC10/AC11）', () => {
@@ -73,7 +79,7 @@ describe('MobileSettings（P4-s4-w2 AC10/AC11）', () => {
     expect(updateSystemMock).toHaveBeenCalledWith({ theme: 'light' })
   })
 
-  it('断开按钮调 deactivateRemote（isRemoteMode 变 false）', async () => {
+  it('断开按钮调 deactivateRemote（isRemoteMode 变 false）+ location.reload 切回连接页', async () => {
     const profile = saveProfile({
       name: 'host1',
       url: 'ws://1.2.3.4:7777',
@@ -88,5 +94,18 @@ describe('MobileSettings（P4-s4-w2 AC10/AC11）', () => {
     expect(isRemoteMode()).toBe(false)
     // 确认 deactivateRemote 被调用（connection-mode 写 local）
     void deactivateRemote
+    // reload 必须触发：否则 App 连接门控只 watch ws-client state（不读 localStorage），
+    // state 仍 connected，MobileShell 不卸载，用户无法回连接页（BLOCKER 修复回归断言）
+    expect(reloadMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('theme toggle 失败时 toast 反馈（不静默）', async () => {
+    updateSystemMock.mockRejectedValueOnce(new Error('boom'))
+    const wrapper = mount(MobileSettings)
+    await wrapper.find('[data-testid="mobile-settings-theme-toggle"]').trigger('click')
+    // ToastContainer 挂载在 App（mount 单组件无容器），断言 toast store 非空即可
+    const { useToast } = await import('@/composables/useToast')
+    expect(useToast().toasts.value.length).toBeGreaterThan(0)
+    expect(useToast().toasts.value[0].type).toBe('error')
   })
 })

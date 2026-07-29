@@ -6,7 +6,12 @@
  *  - 连接信息：getActiveProfile() host/token 显示 + getDeviceName() 只读
  *  - theme 切换：读 useSettingsStore().system.theme，调 setSystem({theme}) 切换 dark/light
  *    （store applySystemToDom 写 document.documentElement data-theme）
- *  - 断开按钮：deactivateRemote() 清 connection-mode=local（用户需手动重连或重新粘贴连接信息）
+ *  - 断开按钮：deactivateRemote() 清 connection-mode=local + location.reload()
+ *    （与 renderer/mobile Landing.vue onDisconnectRemote 对齐）。
+ *    reload 必要性：App.vue 连接门控 watch useConnection().state（ws-client 来源），
+ *    不读 localStorage；单 deactivateRemote 不改 state，App 仍渲染 MobileShell、
+ *    WS 仍占用。reload 后 isRemoteMode()===false，App onMounted 走「无存档」分支
+ *    渲染 MobileConnectScreen（reload 自然断开 WS）。
  *
  * deviceName 只读不编辑（slice C2 定 P4 简化，setDeviceName 留 P9）。
  * theme 只 dark/light toggle（system 模式留桌面端，P4 移动简化）。
@@ -14,10 +19,12 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/settings'
+import { useToast } from '@/composables/useToast'
 import { getActiveProfile, getDeviceName, deactivateRemote } from '@/lib/remote/connection-config'
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
+const toast = useToast()
 
 const profile = computed(() => getActiveProfile())
 const deviceName = computed(() => getDeviceName())
@@ -26,17 +33,20 @@ const theme = computed(() => settingsStore.system.theme)
 /** theme toggle：dark ↔ light（system 归到 dark，P4 移动简化） */
 async function toggleTheme(): Promise<void> {
   const next = theme.value === 'dark' ? 'light' : 'dark'
-  // setSystem 乐观更新 + applySystemToDom（写 data-theme），失败回滚（store 已实现）
+  // setSystem 乐观更新 + applySystemToDom（写 data-theme），失败回滚（store 已实现）。
+  // catch 不静默：toast 反馈让用户感知失败（与其他组件错误反馈一致）。
   try {
     await settingsStore.setSystem({ theme: next })
   } catch {
-    // 持久化失败 toast 由调用方/上层处理（store 已回滚 state+DOM）；P4 简化静默
+    toast.error(t('mobile.settings.themeToggleFailed'))
   }
 }
 
-/** 断开远程：清 connection-mode=local（profile 保留，可重新粘贴重连） */
+/** 断开远程：清 connection-mode=local（profile 保留，可重新粘贴重连）+ reload 切回连接页。
+ *  reload 必要性见文件头注释（App 连接门控只 watch ws-client state，不读 localStorage）。 */
 function onDisconnect(): void {
   deactivateRemote()
+  location.reload()
 }
 </script>
 
