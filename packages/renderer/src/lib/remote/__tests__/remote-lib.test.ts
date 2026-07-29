@@ -14,6 +14,7 @@ import {
 import {
   getClientId,
   getDeviceName,
+  setDeviceName,
   isRemoteMode,
   getActiveProfile,
   listProfiles,
@@ -170,6 +171,22 @@ describe('connection-config', () => {
       // 有存储值则返回存储值
       localStorage.setItem('xyz-agent:device-name', '我的 Mac')
       expect(getDeviceName()).toBe('我的 Mac')
+    })
+  })
+
+  describe('setDeviceName', () => {
+    it('TC14b: 写入后 getDeviceName 读回 trim 后的值', () => {
+      setDeviceName('  MyBook  ')
+      expect(localStorage.getItem('xyz-agent:device-name')).toBe('MyBook')
+      expect(getDeviceName()).toBe('MyBook')
+    })
+
+    it('TC14c: 空串视为恢复 UA 推导 → 删 key（与 getDeviceName 对称）', () => {
+      localStorage.setItem('xyz-agent:device-name', 'OldName')
+      setDeviceName('   ')
+      expect(localStorage.getItem('xyz-agent:device-name')).toBeNull()
+      // 缺省回落 UA 推导
+      expect(['Mac', 'Windows', 'Linux']).toContain(getDeviceName())
     })
   })
 

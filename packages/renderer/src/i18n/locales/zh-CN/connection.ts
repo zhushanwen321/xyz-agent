@@ -19,6 +19,7 @@ export default {
   disconnectedError: '连接已断开',
   remoteConnect: {
     title: '远程连接',
+    subtitle: '粘贴连接字符串，或手动填写服务器信息',
     tabs: {
       paste: '粘贴',
       manual: '手动',
@@ -36,6 +37,8 @@ export default {
       portLabel: '端口',
       tokenLabel: 'Token',
       tokenPlaceholder: '鉴权 token',
+      deviceNameLabel: '设备名',
+      deviceNamePlaceholder: '本机在在线设备列表中的显示名',
       connect: '连接',
     },
     saved: {
@@ -43,6 +46,9 @@ export default {
       online: '在线',
       offline: '离线',
       activate: '连接',
+      rename: '重命名',
+      renameConfirm: '确认',
+      renameCancel: '取消',
     },
     probe: {
       authFailed: '认证失败：token 错误或为空',

@@ -30,6 +30,7 @@ const connMock = vi.hoisted(() => ({
   isRemoteMode: vi.fn(() => false),
   getClientId: vi.fn(() => 'cid'),
   getDeviceName: vi.fn(() => 'Mac'),
+  setDeviceName: vi.fn(),
   deactivateRemote: vi.fn(),
 }))
 vi.mock('@/lib/remote/connection-config', () => connMock)
@@ -61,13 +62,13 @@ describe('W1 TC11: host 为空连接按钮 disabled', () => {
 })
 
 describe('W1 TC12: url 拼接规则', () => {
-  it('host=1.2.3.4 port=8080 → url=ws://1.2.3.4:8080', async () => {
+  it('host=1.2.3.4（默认 port 3210，对齐 runtime BASE_PORT）→ url=ws://1.2.3.4:3210', async () => {
     const w = mount(RemoteManualTab)
     await w.find('[data-testid="manual-host"]').setValue('1.2.3.4')
-    // port 默认 8080
+    // port 默认 3210（与 packages/shared BASE_PORT 一致）
     await w.find('[data-testid="manual-connect-btn"]').trigger('click')
     await flushPromises()
-    expect(probeConnectMock).toHaveBeenCalledWith('ws://1.2.3.4:8080', '')
+    expect(probeConnectMock).toHaveBeenCalledWith('ws://1.2.3.4:3210', '')
   })
 
   it('host=ws://example.com port=9090 → url=ws://example.com:9090（保留 scheme + 补 port）', async () => {
@@ -104,5 +105,23 @@ describe('W1 TC13: 连接成功 saveProfile+activateRemote+reload', () => {
     expect(saved.token).toBe('tok123')
     expect(connMock.activateRemote).toHaveBeenCalledWith('pid-1')
     expect(reloadSpy).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('W1 TC13b: 设备名字段预填 + 提交时写回 setDeviceName', () => {
+  it('deviceName Input 初始值预填 getDeviceName()=Mac', () => {
+    connMock.getDeviceName.mockReturnValue('Mac')
+    const w = mount(RemoteManualTab)
+    expect((w.find('[data-testid="manual-device-name"]').element as HTMLInputElement).value).toBe('Mac')
+  })
+
+  it('改设备名后点连接 → setDeviceName 写入新值（auth 握手经 getDeviceName 读取）', async () => {
+    connMock.getDeviceName.mockReturnValue('Mac')
+    const w = mount(RemoteManualTab)
+    await w.find('[data-testid="manual-host"]').setValue('1.2.3.4')
+    await w.find('[data-testid="manual-device-name"]').setValue('MyBook')
+    await w.find('[data-testid="manual-connect-btn"]').trigger('click')
+    await flushPromises()
+    expect(connMock.setDeviceName).toHaveBeenCalledWith('MyBook')
   })
 })

@@ -99,3 +99,42 @@ describe('W1 TC16: 点击 profile activateRemote+reload（不重 probe）', () =
     expect(probeOnlineMock).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('W1 TC16b: 双击名称行内重命名（spec §7.4）', () => {
+  it('双击 profile 名称 → 显 inline rename Input，名称行隐藏', async () => {
+    connMock.listProfiles.mockReturnValue([mkProfile('p1', 'ws://1.2.3.4:8080')])
+    const w = mount(RemoteSavedTab)
+    await flushPromises()
+    expect(w.find('[data-testid="rename-input"]').exists()).toBe(false)
+    await w.find('[data-testid="profile-name"]').trigger('dblclick')
+    expect(w.find('[data-testid="rename-input"]').exists()).toBe(true)
+    expect(w.find('[data-testid="profile-name"]').exists()).toBe(false)
+  })
+
+  it('改草稿后点确认 → saveProfile upsert 传新 name（保留 url/id）', async () => {
+    connMock.listProfiles.mockReturnValue([mkProfile('p1', 'ws://1.2.3.4:8080')])
+    const w = mount(RemoteSavedTab)
+    await flushPromises()
+    await w.find('[data-testid="profile-name"]').trigger('dblclick')
+    await w.find('[data-testid="rename-input"]').setValue('MyServer')
+    await w.find('[data-testid="rename-confirm"]').trigger('click')
+    expect(connMock.saveProfile).toHaveBeenCalledTimes(1)
+    const saved = connMock.saveProfile.mock.calls[0]![0] as { id: string; name: string; url: string }
+    expect(saved.id).toBe('p1')
+    expect(saved.name).toBe('MyServer')
+    expect(saved.url).toBe('ws://1.2.3.4:8080')
+    // 确认后退出编辑态，名称行恢复
+    expect(w.find('[data-testid="rename-input"]').exists()).toBe(false)
+    expect(w.find('[data-testid="profile-name"]').text()).toContain('MyServer')
+  })
+
+  it('点取消 → 不写 saveProfile，退出编辑态', async () => {
+    connMock.listProfiles.mockReturnValue([mkProfile('p1', 'ws://1.2.3.4:8080')])
+    const w = mount(RemoteSavedTab)
+    await flushPromises()
+    await w.find('[data-testid="profile-name"]').trigger('dblclick')
+    await w.find('[data-testid="rename-cancel"]').trigger('click')
+    expect(connMock.saveProfile).not.toHaveBeenCalled()
+    expect(w.find('[data-testid="rename-input"]').exists()).toBe(false)
+  })
+})

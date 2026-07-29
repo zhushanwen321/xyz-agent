@@ -54,7 +54,7 @@ function onClose(): void {
       <DialogHeader>
         <DialogTitle>{{ t('connection.remoteConnect.title') }}</DialogTitle>
         <DialogDescription>
-          {{ t('connection.remoteConnect.title') }}
+          {{ t('connection.remoteConnect.subtitle') }}
         </DialogDescription>
       </DialogHeader>
 

@@ -19,6 +19,7 @@ export default {
   disconnectedError: 'Connection lost',
   remoteConnect: {
     title: 'Remote connect',
+    subtitle: 'Paste a connection string, or fill in the server info manually',
     tabs: {
       paste: 'Paste',
       manual: 'Manual',
@@ -36,6 +37,8 @@ export default {
       portLabel: 'Port',
       tokenLabel: 'Token',
       tokenPlaceholder: 'auth token',
+      deviceNameLabel: 'Device name',
+      deviceNamePlaceholder: 'Display name shown in the online device list',
       connect: 'Connect',
     },
     saved: {
@@ -43,6 +46,9 @@ export default {
       online: 'online',
       offline: 'offline',
       activate: 'Connect',
+      rename: 'Rename',
+      renameConfirm: 'Confirm',
+      renameCancel: 'Cancel',
     },
     probe: {
       authFailed: 'Authentication failed: token is wrong or empty',

@@ -32,6 +32,8 @@ export default {
     remoteConnect: 'Remote connect',
     existingWorktrees: 'Existing worktrees',
     noWorktrees: 'No existing worktrees',
+    manualPathPlaceholder: 'Enter a server path, e.g. ~/projects/xyz-agent',
+    manualPathConfirm: 'Confirm',
   },
   createWorktree: {
     title: 'New worktree',

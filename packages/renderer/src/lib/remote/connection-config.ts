@@ -133,6 +133,19 @@ export function getDeviceName(): string {
 }
 
 /**
+ * 写设备名（modal 手动 tab 字段改动回写，spec §二.1 / §7.3）。
+ * 空串视为「恢复 UA 推导兜底」→ 删 key（下次 getDeviceName 重新推导），与 getDeviceName 对称。
+ */
+export function setDeviceName(name: string): void {
+  const trimmed = name.trim()
+  if (trimmed) {
+    safeSet(KEY_DEVICE_NAME, trimmed)
+  } else {
+    safeRemove(KEY_DEVICE_NAME)
+  }
+}
+
+/**
  * 当前是否远程模式。
  * = connectionMode==='remote' && getActiveProfile()!==null（ES6 短路：active id 指向不存在 profile 时返 false）。
  */

@@ -32,6 +32,8 @@ export default {
     remoteConnect: '远程连接',
     existingWorktrees: '已有 worktree',
     noWorktrees: '暂无已有 worktree',
+    manualPathPlaceholder: '输入服务器路径，如 ~/projects/xyz-agent',
+    manualPathConfirm: '确认',
   },
   createWorktree: {
     title: '新建 worktree',

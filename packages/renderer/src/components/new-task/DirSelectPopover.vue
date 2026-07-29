@@ -20,6 +20,7 @@ import { ref, computed, onMounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Folder, FolderPlus, Globe } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
 import { PopoverListItem, PopoverActionItem } from '@/components/ui/popover'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useFlatListNav } from '@/composables/logic/useFlatListNav'
@@ -44,6 +45,11 @@ const workspaceStore = useWorkspaceStore()
 
 const search = ref('')
 const root = ref<HTMLElement | null>(null)
+/**
+ * 远程模式手动路径草稿（spec §九.2：搜索框下方独立 input + 确认按钮）。
+ * 远程无本地 OS 文件夹可打开，手动输入服务器绝对路径是主入口（~ 由服务端 expand）。
+ */
+const manualPath = ref('')
 
 /** W1（MAX_RECORDS 10→6）：popover 列表展示上限，与 runtime RecentWorkspacesStore.MAX_RECORDS 对齐
  *  双保险：即便 runtime 返超量也只显 6 项 */
@@ -156,6 +162,16 @@ function onSearchEnter(e: KeyboardEvent): void {
   }
 }
 
+/**
+ * 手动路径确认（spec §九.2：独立 input + 确认按钮，提交走与选中 record 相同的 cwd 设置路径）。
+ * 草稿 trim 后非空才 emit('select')；~ 由服务端 expand（与 local-file:// expandLocalFilePath 同语义）。
+ */
+function submitManualPath(): void {
+  const cwd = manualPath.value.trim()
+  if (!cwd) return
+  emit('select', { cwd })
+}
+
 // 键盘导航收敛到 logic/useFlatListNav（与 BranchSelectPopover 共用）。
 const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
   getTotal: () => filtered.value.length + ACTION_ITEM_COUNT,
@@ -180,6 +196,26 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         class="h-8 bg-surface-2 text-[13px]"
         @keydown.enter="onSearchEnter"
       />
+      <!-- 远程模式手动路径输入行（spec §九.2：独立 input + 确认按钮，搜索框下方）。
+           远程无本地 OS 文件夹可打开，手动输入服务器绝对路径是主入口。 -->
+      <div v-if="isRemote" data-testid="manual-path-row" class="mt-2 flex items-center gap-2">
+        <Input
+          v-model="manualPath"
+          data-testid="manual-path-input"
+          :placeholder="t('newTask.dirSelect.manualPathPlaceholder')"
+          class="h-8 flex-1 bg-surface-2 text-[13px]"
+          @keydown.enter="submitManualPath"
+        />
+        <Button
+          variant="default"
+          size="sm"
+          data-testid="manual-path-confirm"
+          class="h-8 shrink-0"
+          @click="submitManualPath"
+        >
+          {{ t('newTask.dirSelect.manualPathConfirm') }}
+        </Button>
+      </div>
     </div>
 
     <div class="max-h-[360px] overflow-y-auto py-1">

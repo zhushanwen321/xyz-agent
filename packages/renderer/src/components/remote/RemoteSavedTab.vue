@@ -14,9 +14,10 @@
  */
 import { ref, reactive, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Folder } from '@lucide/vue'
+import { Folder, Check, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { listProfiles, activateRemote } from '@/lib/remote/connection-config'
+import { Input } from '@/components/ui/input'
+import { listProfiles, activateRemote, saveProfile } from '@/lib/remote/connection-config'
 import { probeOnline } from '@/lib/remote/probe'
 import type { RemoteServerProfile } from '@/lib/remote/types'
 
@@ -32,6 +33,10 @@ const profiles = ref<RemoteServerProfile[]>([])
 const onlineMap = reactive<Map<string, boolean>>(new Map())
 /** 激活中 profile id（点击后到 reload 前短暂态，防重点） */
 const activatingId = ref<string | null>(null)
+/** 正在重命名的 profile id（spec §7.4：双击名称行内编辑） */
+const editingId = ref<string | null>(null)
+/** 重命名草稿 label（编辑态 Input v-model 绑定） */
+const draftName = ref('')
 
 onMounted(async () => {
   profiles.value = listProfiles()
@@ -48,13 +53,50 @@ onMounted(async () => {
 
 /**
  * 激活 profile：activateRemote + location.reload（不重 probe，已保存 token 可信）。
- * 防重入：activatingId 非空时 return。
+ * 防重入：activatingId 非空时 return；编辑态（editingId 非空）不激活（避免编辑中误点列表项触发 reload）。
  */
 function activate(profile: RemoteServerProfile): void {
   if (activatingId.value !== null) return
+  if (editingId.value !== null) return
   activatingId.value = profile.id
   activateRemote(profile.id)
   location.reload()
+}
+
+/**
+ * 进入行内重命名（spec §7.4：双击名称 → inline Input + 确认/取消）。
+ * 防御：editingId 非空时不重入（同时只编辑一个）。
+ */
+function startRename(profile: RemoteServerProfile): void {
+  editingId.value = profile.id
+  draftName.value = profile.name
+}
+
+/** 取消重命名：清编辑态（不写存储） */
+function cancelRename(): void {
+  editingId.value = null
+  draftName.value = ''
+}
+
+/**
+ * 确认重命名：saveProfile upsert by url（复用原 id，覆盖 name），更新本地快照 name 字段。
+ * 空草稿视为取消。落库后刷新快照该项 name，使列表即时反映新名称。
+ */
+function confirmRename(profile: RemoteServerProfile): void {
+  const name = draftName.value.trim()
+  editingId.value = null
+  draftName.value = ''
+  if (!name || name === profile.name) return
+  saveProfile({
+    id: profile.id,
+    name,
+    url: profile.url,
+    token: profile.token,
+    networkKind: profile.networkKind,
+    ...(profile.lastConnectedAt !== undefined ? { lastConnectedAt: profile.lastConnectedAt } : {}),
+  })
+  // 同步本地快照（避免重新读 localStorage + 重跑 probeOnline）
+  profile.name = name
 }
 </script>
 
@@ -76,7 +118,7 @@ function activate(profile: RemoteServerProfile): void {
       variant="ghost"
       data-testid="saved-profile-item"
       :data-profile-id="p.id"
-      :disabled="activatingId !== null && activatingId !== p.id"
+      :disabled="(activatingId !== null && activatingId !== p.id) || editingId !== null"
       class="h-auto flex items-center gap-2 rounded-md border border-border px-3 py-2 text-left transition-colors hover:bg-surface-hover"
       @click="activate(p)"
     >
@@ -90,11 +132,52 @@ function activate(profile: RemoteServerProfile): void {
       />
       <Folder class="size-4 shrink-0 text-subtle" />
       <span class="flex min-w-0 flex-1 flex-col items-start">
-        <span class="truncate text-[13px] text-fg">{{ p.name }}</span>
-        <span class="truncate font-mono text-[11px] text-muted">{{ p.url }}</span>
+        <!-- 重命名态：inline Input + 确认/取消（spec §7.4 双击名称行内编辑） -->
+        <span v-if="editingId === p.id" class="flex w-full items-center gap-1" @click.stop>
+          <Input
+            v-model="draftName"
+            data-testid="rename-input"
+            class="h-7 flex-1 bg-surface-2 text-[13px]"
+            @click.stop
+            @keydown.enter="confirmRename(p)"
+            @keydown.esc="cancelRename"
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            data-testid="rename-confirm"
+            :aria-label="t('connection.remoteConnect.saved.renameConfirm')"
+            class="h-7 w-7 shrink-0 p-0"
+            @click.stop="confirmRename(p)"
+          >
+            <Check class="size-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            data-testid="rename-cancel"
+            :aria-label="t('connection.remoteConnect.saved.renameCancel')"
+            class="h-7 w-7 shrink-0 p-0"
+            @click.stop="cancelRename"
+          >
+            <X class="size-3.5" />
+          </Button>
+        </span>
+        <!-- 默认态：名称（双击进重命名） + url -->
+        <span v-else class="flex w-full flex-col items-start">
+          <span
+            class="truncate text-[13px] text-fg"
+            data-testid="profile-name"
+            :title="t('connection.remoteConnect.saved.rename')"
+            @dblclick.stop="startRename(p)"
+          >
+            {{ p.name }}
+          </span>
+          <span class="truncate font-mono text-[11px] text-muted">{{ p.url }}</span>
+        </span>
       </span>
       <span
-        v-if="onlineMap.has(p.id)"
+        v-if="editingId !== p.id && onlineMap.has(p.id)"
         class="text-[11px] text-muted"
       >
         {{ onlineMap.get(p.id) ? t('connection.remoteConnect.saved.online') : t('connection.remoteConnect.saved.offline') }}

@@ -20,7 +20,7 @@ import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { probeConnect } from '@/lib/remote/probe'
 import { classifyNetworkKind } from '@/lib/remote/parse-connect-info'
-import { saveProfile, activateRemote } from '@/lib/remote/connection-config'
+import { saveProfile, activateRemote, getDeviceName, setDeviceName } from '@/lib/remote/connection-config'
 import type { NetworkKind } from '@/lib/remote/types'
 
 defineEmits<{
@@ -29,12 +29,20 @@ defineEmits<{
 
 const { t } = useI18n()
 
-/** 默认 port（与 Input modelValue 类型对齐，用 string） */
-const DEFAULT_PORT = '8080'
+/**
+ * 默认 port：对齐 runtime/server CLI 默认端口（packages/shared BASE_PORT=3210），
+ * 避免连本地 dev server 时用户还得手改端口。
+ */
+const DEFAULT_PORT = '3210'
 
 const host = ref('')
 const port = ref(DEFAULT_PORT)
 const token = ref('')
+/**
+ * 设备名（预填 getDeviceName，改动写回 xyz-agent:device-name，spec §7.3）。
+ * probeConnect/useConnection 的 auth 握手经 getDeviceName() 读取此处已持久化的值。
+ */
+const deviceName = ref(getDeviceName())
 /** probeConnect 进行中 */
 const probing = ref(false)
 /** 最近一次探测失败归一结果（auth/network/timeout），null=未失败 */
@@ -96,6 +104,8 @@ async function connect(): Promise<void> {
   if (probing.value) return
   const target = url.value
   if (!target) return
+  // 持久化 deviceName 改动（probeConnect / useConnection 的 auth 握手经 getDeviceName() 读取，spec §7.3）
+  setDeviceName(deviceName.value)
   probing.value = true
   probeError.value = null
   try {
@@ -161,6 +171,17 @@ function hostLabel(urlStr: string): string {
         v-model="token"
         data-testid="manual-token"
         :placeholder="t('connection.remoteConnect.manual.tokenPlaceholder')"
+        class="h-9 bg-surface-2 text-[13px]"
+      />
+    </div>
+
+    <!-- deviceName（可选，预填 getDeviceName，提交时写回 xyz-agent:device-name） -->
+    <div class="flex flex-col gap-1">
+      <Label class="text-[12px] font-normal text-muted">{{ t('connection.remoteConnect.manual.deviceNameLabel') }}</Label>
+      <Input
+        v-model="deviceName"
+        data-testid="manual-device-name"
+        :placeholder="t('connection.remoteConnect.manual.deviceNamePlaceholder')"
         class="h-9 bg-surface-2 text-[13px]"
       />
     </div>

@@ -184,6 +184,8 @@ components/remote/
 
 三字段：服务器 URL（`ws://`/`wss://` 校验）、Token（非空）、设备名（可选，预填 `getDeviceName()`，改动写回 `xyz-agent:device-name`）。helper-box 按 networkKind 给 URL 格式提示（demo 04 C 原文案）。
 
+> **实现说明（2026-07-28 修订）**：实际实现采用 **host / port / token / deviceName 四字段分输入**（等效于单一 URL 字段——host 已含 `ws://`/`wss://` 前缀时原样保留并补 port，否则拼 `ws://${host}:${port}`，见 `RemoteManualTab.vue` 的 `url` computed）。原因：host/port 分字段 UX 更友好（端口独立可编辑、默认值 3210 对齐 `BASE_PORT`）。`ws(s)://` 校验由拼接逻辑保证（无前缀必拼 `ws://`，有前缀原样保留）。deviceName 提交时经 `setDeviceName` 写回 `xyz-agent:device-name`，auth 握手经 `getDeviceName()` 读取（透传链路完整）。
+
 ### 7.4 已保存 tab
 
 - 列表项：server 图标 + 名称 + `url · 网络类型` + 在线徽章（● 在线绿 / ● 离线灰）+ hover 删除。重命名（demo D 提及）P1 做最简：双击名称行内编辑。
@@ -236,6 +238,8 @@ reload 方案下 demo E 的「拉 initial state…」进度行不单独呈现（
    - 隐藏「打开文件夹」（pickDirectory 开的是**本地** OS dialog，语义错误）
    - 「最近工作区」保留不动（records 走 WS，天然是服务器数据）
    - 搜索框下方加**手动路径输入**行：input（placeholder `输入服务器路径，如 ~/projects/xyz-agent`）+ 确认按钮，提交走与选中 record 相同的 cwd 设置路径（`~` 由服务端 expand，与 `local-file://` 的 `expandLocalFilePath` 同语义）
+
+> **实现说明（2026-07-28 修订）**：按 spec 原文落地——远程模式在搜索框下方渲染独立的「手动路径 Input + 确认按钮」行（`data-testid="manual-path-row"`），与搜索框职责分离（搜索=在已有 records 里过滤；手动路径=输入新服务器路径）。搜索框的 Enter 快捷路径作为「R5 mitigation」保留兼容（有 records 命中选中 filtered[0]，无命中把 search 当手动路径），与独立输入行并存不冲突。i18n key：`newTask.dirSelect.manualPathPlaceholder` / `.manualPathConfirm`。
 3. **连接成功自动预选**：reload 后 initApp 的 presetCwd 分支——远程模式无本地 preset，改为：records 非空 → landing cwd 预选 records[0]（demo E「chip 自动填入」的落地）；为空 → chip 保持「选择工作区」空态。
 
 ## 十、DetailPane 图片签名 URL（`DetailPane.vue:309-315`）
@@ -250,18 +254,31 @@ reload 方案下 demo E 的「拉 initial state…」进度行不单独呈现（
 
 ## 十一、i18n key 清单（zh-CN / en-US 同步）
 
+> **命名说明（2026-07-28 修订）**：实现实际采用的 key 命名与设计稿初版（`fieldUrl`/`tabPaste`/`pasteLabel` 等）有偏离，本表已更新为**实现真实使用的 key 集**（运行时无风险，与双侧 locale-sync 闸门一致）。`locale-sync-check.test.ts` 验 zh-CN/en-US 每个子模块 key 集合完全相等，`remote-connect-i18n.test.ts` 聚焦 `connection.remoteConnect` 子树。新增 key（subtitle/deviceName/rename/manualPath）按 spec 设计意图命名，逐步向设计稿收敛。
+
+实际 locale 文件 key（`connection.ts` + `newTask.ts`）：
+
 | key | 用途 |
 |---|---|
-| `dirSelect.remoteConnect` | 已存在（复用） |
-| `dirSelect.remoteNotSupported` | **删除**（孤儿） |
-| `dirSelect.manualPathPlaceholder` / `.manualPathConfirm` | 手动路径输入 |
-| `remoteConnect.title` / `.subtitle` / `.tabPaste` / `.tabManual` / `.tabSaved` | modal 壳 |
-| `remoteConnect.pasteLabel` / `.detected` / `.unrecognized` / `.previewUrl` / `.previewToken` / `.previewNetwork` / `.helpTitle` / `.helpBody` | 粘贴 tab |
-| `remoteConnect.fieldUrl` / `.fieldToken` / `.fieldDeviceName` / `.urlHint` | 手动 tab |
-| `remoteConnect.online` / `.offline` / `.addServer` / `.lastUsed` / `.rename` | 已保存 tab |
-| `remoteConnect.connect` / `.cancel` / `.connecting` / `.stepHandshake` / `.stepAuth` / `.errorAuth` / `.errorNetwork` / `.footerSwitchHint` | 连接流程 |
-| `remoteMode.banner` / `.switchServer` / `.disconnect` / `.latency` | Landing 状态条 |
-| `connection.failedAuth` / `.failedReplaced` / `.failedRemoteNetwork` / `.editConnection` / `.forceTakeover` | App.vue failed 变体 |
+| `newTask.dirSelect.remoteConnect` | 已存在（popover 动作项文案，复用） |
+| `newTask.dirSelect.manualPathPlaceholder` / `.manualPathConfirm` | 远程模式手动路径输入行 + 确认按钮（§九.2） |
+| `connection.remoteConnect.title` / `.subtitle` | modal 壳标题/副标题（subtitle = 粘贴连接字符串或手动填写） |
+| `connection.remoteConnect.tabs.paste` / `.tabs.manual` / `.tabs.saved` | 三 tab 切换 |
+| `connection.remoteConnect.paste.placeholder` / `.paste.connect` / `.paste.hintUnrecognized` / `.paste.clipboardDetected` | 粘贴 tab |
+| `connection.remoteConnect.manual.hostLabel` / `.manual.hostPlaceholder` / `.manual.portLabel` / `.manual.tokenLabel` / `.manual.tokenPlaceholder` / `.manual.deviceNameLabel` / `.manual.deviceNamePlaceholder` / `.manual.connect` | 手动 tab（host/port/token/deviceName 四字段，§7.3 实现说明） |
+| `connection.remoteConnect.saved.emptyHint` / `.saved.online` / `.saved.offline` / `.saved.activate` / `.saved.rename` / `.saved.renameConfirm` / `.saved.renameCancel` | 已保存 tab（rename 三 key 为双击行内编辑，§7.4） |
+| `connection.remoteConnect.probe.authFailed` / `.probe.networkFailed` / `.probe.timeout` / `.probe.probing` | 探测三态文案 + 进行中态 |
+| `connection.remoteConnect.hostLabel` / `.rttLabel` / `.switchBtn` / `.disconnectBtn` | Landing 状态条 host/延迟/切换/断开（实现命名，设计稿原文为 `remoteMode.banner` 等） |
+| `connection.failedAuth` / `.failedReplaced` / `.failedRemoteNetwork` / `.editConnection` / `.forceTakeover` | App.vue failed 变体（已落地） |
+| `connection.failed` / `.retry` / `.disconnected` / `.connecting` / `.connected` / `.reconnecting` / `.restarting` | 连接状态既有 key（本地+远程共用） |
+
+> **设计稿 vs 实现的命名映射**（文档参考，不强制改 key）：
+> - `remoteConnect.tabPaste/Manual/Saved` → 实现 `remoteConnect.tabs.paste/manual/saved`
+> - `remoteConnect.fieldUrl/fieldToken/fieldDeviceName/urlHint` → 实现 `remoteConnect.manual.hostLabel/portLabel/tokenLabel/deviceNameLabel`
+> - `remoteConnect.pasteLabel/detected/unrecognized/previewUrl/...` → 实现 `remoteConnect.paste.placeholder/clipboardDetected/hintUnrecognized`
+> - `remoteConnect.connecting/stepHandshake/stepAuth/errorAuth/errorNetwork/footerSwitchHint` → 实现 `remoteConnect.probe.probing/authFailed/networkFailed/timeout`（探测三态，进度行未单独建模）
+> - `remoteMode.banner/switchServer/disconnect/latency` → 实现 `connection.remoteConnect.hostLabel/switchBtn/disconnectBtn/rttLabel`
+> - `remoteConnect.online/offline/lastUsed/addServer/rename` → 实现 `connection.remoteConnect.saved.online/offline/rename/renameConfirm/renameCancel`
 
 ## 十二、兼容性契约（本地模式零回归清单）
 

@@ -50,9 +50,11 @@ vi.mock('@/composables/features/useDetailPane', () => ({
 // 远程模式判定 mock（各 describe 设定）
 let remoteMode = false
 let activeProfileUrl = 'ws://myserver.tail.ts.net:3210'
+// isRemoteMode()=true 但 getActiveProfile() 返回 null（active-server-id 指向的 profile 被外部清掉）
+let profileIsNull = false
 vi.mock('@/lib/remote/connection-config', () => ({
   isRemoteMode: () => remoteMode,
-  getActiveProfile: () => (remoteMode ? { id: 'srv1', name: 's', url: activeProfileUrl, token: 't', networkKind: 'tail' } : null),
+  getActiveProfile: () => (remoteMode && !profileIsNull ? { id: 'srv1', name: 's', url: activeProfileUrl, token: 't', networkKind: 'tail' } : null),
 }))
 
 // signUrl mock（各用例控制返值/pending/reject）
@@ -82,6 +84,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   remoteMode = false
   activeProfileUrl = 'ws://myserver.tail.ts.net:3210'
+  profileIsNull = false
   signUrlMock.mockReset()
   // 重置 state 到非图片初始态（各用例按需改 path/kind）
   mockState.value = {
@@ -279,5 +282,18 @@ describe('DetailPane 远程图片 signUrl（TC2/TC3/TC4）', () => {
     // 占位区含 loadFailed 文案（i18n panel.detail.loadFailed）
     const placeholder = wrapper.find('[data-testid="detail-image"]')
     expect(placeholder.text()).toBeTruthy()
+  })
+
+  it('TC6: isRemoteMode=true 但 getActiveProfile()=null → imageUrl=null 跳过 signUrl', async () => {
+    remoteMode = true
+    profileIsNull = true
+    signUrlMock.mockResolvedValue({ url: '/file?should-not-call', expiresAt: 0 })
+    const wrapper = mountDetailPane()
+    await setImgState('x.png')
+
+    // profile 为 null 时直接 imageUrl=null 跳过 signUrl RPC（不浪费注定失败的请求）
+    expect(signUrlMock).not.toHaveBeenCalled()
+    const img = wrapper.find('[data-testid="detail-image"] img')
+    expect(img.exists()).toBe(false)
   })
 })

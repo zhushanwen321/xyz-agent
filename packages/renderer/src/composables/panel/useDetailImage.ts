@@ -86,7 +86,14 @@ export function useDetailImage(options: UseDetailImageOptions) {
     if (isRemoteMode()) {
       // 远程模式：signUrl 现签 + httpOrigin 拼完整 src
       const profile = getActiveProfile()
-      const httpOrigin = profile ? wsUrlToHttpOrigin(profile.url) : ''
+      // null 边界：isRemoteMode()=true 但 active-server-id 指向的 profile 被外部清掉 →
+      // httpOrigin='' 会拼出裸相对路径 img src，按 renderer origin 加载必败。
+      // 直接 null 跳过 signUrl RPC（降级占位），不浪费一次注定失败的请求。
+      if (!profile) {
+        imageUrl.value = null
+        return
+      }
+      const httpOrigin = wsUrlToHttpOrigin(profile.url)
       const myReqId = ++signUrlReqId
       try {
         const result = await signUrl(absPath)

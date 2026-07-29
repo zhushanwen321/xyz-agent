@@ -117,3 +117,39 @@ describe('W2 TC6: 本地模式 Enter 无 records 命中不 emit select', () => {
     expect(w.emitted('select')).toBeFalsy()
   })
 })
+
+describe('W2 TC7: 远程模式独立手动路径输入行（spec §九.2）', () => {
+  it('isRemoteMode=true → 手动路径行 + input + 确认按钮存在', () => {
+    remoteMode = true
+    setupStore([])
+    const w = mount(DirSelectPopover, { props: { currentCwd: null } })
+    expect(w.find('[data-testid="manual-path-row"]').exists()).toBe(true)
+    expect(w.find('[data-testid="manual-path-input"]').exists()).toBe(true)
+    expect(w.find('[data-testid="manual-path-confirm"]').exists()).toBe(true)
+  })
+
+  it('isRemoteMode=false → 手动路径行不存在', () => {
+    remoteMode = false
+    setupStore([])
+    const w = mount(DirSelectPopover, { props: { currentCwd: null } })
+    expect(w.find('[data-testid="manual-path-row"]').exists()).toBe(false)
+  })
+
+  it('输入路径点确认按钮 → emit select {cwd}（独立于搜索框）', async () => {
+    remoteMode = true
+    setupStore([])
+    const w = mount(DirSelectPopover, { props: { currentCwd: null } })
+    await w.find('[data-testid="manual-path-input"]').setValue('/remote/server/path')
+    await w.find('[data-testid="manual-path-confirm"]').trigger('click')
+    expect(w.emitted('select')).toEqual([[{ cwd: '/remote/server/path' }]])
+  })
+
+  it('手动路径 input Enter 也 emit select', async () => {
+    remoteMode = true
+    setupStore([])
+    const w = mount(DirSelectPopover, { props: { currentCwd: null } })
+    await w.find('[data-testid="manual-path-input"]').setValue('~/projects/xyz-agent')
+    await w.find('[data-testid="manual-path-input"]').trigger('keydown', { key: 'Enter' })
+    expect(w.emitted('select')).toEqual([[{ cwd: '~/projects/xyz-agent' }]])
+  })
+})
