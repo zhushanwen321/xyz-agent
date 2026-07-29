@@ -38,6 +38,7 @@ ROOT_FORBIDDEN_PATTERNS = [
     re.compile(r"^closeout\.json$"),
     re.compile(r"^test\.json$"),
     re.compile(r"^plan\.(json|md)$"),            # 根目录散落的 plan.md/plan.json
+    re.compile(r"^review-.*\.md$"),               # 根目录散落的审查报告 review-*.md（应归档到 .xyz-harness/）
 ]
 
 # 禁止的备份/临时后缀（全路径匹配，不只根目录）

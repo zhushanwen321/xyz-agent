@@ -81,6 +81,11 @@ screenshot.png
 /retrospect.json
 /closeout.json
 /test.json
+# cw/agent 产生的根目录审查报告（review-*.md），应归档到 .xyz-harness/ 而非散落项目根。
+/review-*.md
+
+# 手动测试残留的假数据目录（测试代码用 tmpdir()，不读根目录 session-data/）
+/session-data/
 
 # === 备份/临时后缀兜底 ===
 *.bak
