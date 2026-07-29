@@ -77,7 +77,7 @@ describe('SessionMessageHandler —— session.abortHandoff 路由', () => {
     expect(cap.broadcasts[0]).toMatchObject({
       type: 'session.handoffAborted',
       id: 'push-1',
-      payload: { sessionId: 's1' },
+      payload: { srcSessionId: 's1' },
     })
     // reply message.status{aborted}
     expect(cap.replies).toHaveLength(1)

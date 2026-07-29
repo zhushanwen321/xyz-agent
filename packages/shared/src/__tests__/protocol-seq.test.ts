@@ -17,14 +17,15 @@ import type {
   ClientMessageType,
   ReplyPayloadMap,
   ServerMessage,
+  ServerMessageMap,
 } from '../protocol'
 
 // ── 编译期类型断言辅助（同 protocol.test.ts 模式）────────────────
 // 条件类型求值结果都是 never，仅在编译期校验「key 存在 / 子类型关系成立」；
 // 若断言不成立，tsc 会因 never 赋值报错。
 
-type AssertHasKey<T, K extends keyof T> = never
-type AssertExtends<A, B> = A extends B ? never : never
+type AssertHasKey<T, K extends keyof T> = true
+type AssertExtends<A, B> = A extends B ? true : ['ERROR: A does not extend B', A, B]
 
 // TC1: ServerMessage.seq 字段存在且为 number|undefined
 type _Assert_ServerMessage_seq = AssertHasKey<ServerMessage, 'seq'>
@@ -47,6 +48,11 @@ type _Assert_SubscribeReply_shape = AssertExtends<
 // TC4: ReplyPayloadMap['session.unsubscribe'] 存在 + 是 void（ack 型）
 type _Assert_Reply_unsubscribe = AssertHasKey<ReplyPayloadMap, 'session.unsubscribe'>
 type _Assert_UnsubscribeReply_void = AssertExtends<ReplyPayloadMap['session.unsubscribe'], void>
+
+// TC5: handoff broadcast 类型在 ServerMessageMap 中注册（编译期断言）
+type _Assert_HandoffStarted = AssertHasKey<ServerMessageMap, 'session.handoffStarted'>
+type _Assert_HandoffComplete = AssertHasKey<ServerMessageMap, 'session.handoffComplete'>
+type _Assert_HandoffAborted = AssertHasKey<ServerMessageMap, 'session.handoffAborted'>
 
 // ── 运行期测试（payload 可赋值 + 字段可读）────────────────────────
 

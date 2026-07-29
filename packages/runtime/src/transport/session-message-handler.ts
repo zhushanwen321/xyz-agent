@@ -152,7 +152,7 @@ export class SessionMessageHandler {
             this.ctx.broadcast({
               type: 'session.handoffAborted',
               id: this.ctx.nextPushId(),
-              payload: { sessionId },
+              payload: { srcSessionId: sessionId },
             })
           }
           // 无论 aborted 与否都 reply ack（RPC ack 让 renderer pending resolve）

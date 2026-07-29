@@ -75,12 +75,8 @@ export function createHandoffController(): HandoffController {
       clearHandingOffTimer(sessionId)
       handingOffTimers.set(sessionId, setTimeout(() => {
         handingOffTimers.delete(sessionId)
-        // 超时未收到 handoffComplete → 清 handingOff（setHandingOff(false) 内部会再清一次 timer，幂等）
-        if (handingOffSessions.value.has(sessionId)) {
-          const after = new Set(handingOffSessions.value)
-          after.delete(sessionId)
-          handingOffSessions.value = after
-        }
+        // 超时未收到 handoffComplete → 清 handingOff（clearHandingOffTimer 是幂等的，timer 已从 Map 移除）
+        setHandingOff(sessionId, false)
       }, HANDING_OFF_TIMEOUT_MS))
     } else {
       clearHandingOffTimer(sessionId)

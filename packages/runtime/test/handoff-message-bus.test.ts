@@ -440,5 +440,7 @@ describe('Handoff + MessageBus integration (BLOCKER-1)', () => {
     expect((result.snapshot[0]!.payload as { delta?: string }).delta).toBe('chunk-3')
     expect((result.snapshot[4]!.payload as { delta?: string }).delta).toBe('chunk-7')
     expect(result.lastSeq).toBe(8) // seq 仍然单调递增到 8
+    // ring 溢出时 gap 标记为 true（旧消息已被 FIFO 淘汰）
+    expect(result.gap).toBe(true)
   })
 })

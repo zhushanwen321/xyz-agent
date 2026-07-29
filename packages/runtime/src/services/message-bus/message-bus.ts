@@ -136,14 +136,19 @@ export class MessageBus {
     snapshot: ServerMessage[]
     stateSnapshot: ServerMessage[]
     lastSeq: number
+    gap?: boolean
   } {
     const state = this.getOrCreateSession(sessionId)
     state.subscribers.add(ws)
     this.getOrCreateWsSubs(ws).add(sessionId)
+    // gap：ring 溢出时（seqCounter > streamRing.length）旧消息已被 FIFO 淘汰，
+    // renderer 需全量重拉而非增量 backfill。
+    const gap = state.seqCounter > state.streamRing.length ? true : undefined
     return {
       snapshot: [...state.streamRing],
       stateSnapshot: [...state.stateSnapshot.values()],
       lastSeq: state.seqCounter,
+      gap,
     }
   }
 

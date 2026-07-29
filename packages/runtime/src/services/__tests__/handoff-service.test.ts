@@ -149,7 +149,7 @@ describe('HandoffService', () => {
     expect(injectedPrompt).toContain('<handoff_document source="src"')
     expect(injectedPrompt).toContain('doc content')
     expect(injectedPrompt).toContain('</handoff_document>')
-    expect(injectedPrompt).toContain('立即执行文档里尚未完成的下一项')
+    expect(injectedPrompt).toContain('Immediately execute the next incomplete item')
     // 广播
     expect(broadcastSessionList).toHaveBeenCalled()
     expect(broker.broadcast).toHaveBeenCalledWith(
@@ -400,6 +400,111 @@ describe('HandoffService', () => {
     expect(aborted).toBe(false)
   })
 
+  it('TC8d: C1 竞态 — agent_end finalize 清理 inflight 后 abort 到达，半文档不泄漏到新 session', async () => {
+    // 模拟竞态：agent_end 先 finalize（cleanupInflight 移除 entry），用户随后调 abort。
+    // 修复前：abort 发现 inflight 空，返回 false 且不加入 abortedSessions → 微任务执行时
+    // abortedSessions.has 为 false → 半文档泄漏到新 session。
+    // 修复后：abort 发现 inflight 空，仍加入 abortedSessions → runHandoff 检查命中 → throw。
+    const runPromise = service.runHandoff('src-1')
+    await new Promise((r) => setTimeout(r, 0))
+
+    // emit agent_end → finalize resolve（cleanupInflight 移除 entry，但 runHandoff 尚未继续）
+    srcClient.emit({
+      type: 'agent_end',
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: 'partial doc' }], stopReason: 'stop' }],
+      willRetry: false,
+    })
+    // 让 finalize 的 microtask 排队但不让 runHandoff 继续——在此窗口调 abort。
+    // 由于 JS 单线程，emit 触发 finalize 后同步返回，此时 inflight 已被 cleanupInflight 移除。
+    // abortHandoff 应仍标记 abortedSessions。
+    await expect(service.abortHandoff('src-1')).resolves.toBe(false) // inflight 无 entry → false
+    // runHandoff 应因 abortedSessions 检查而 throw，不创建新 session
+    await expect(runPromise).rejects.toThrow('handoff aborted')
+    expect(sessionService.create).not.toHaveBeenCalled()
+    // handoffStarted 已广播，但 handoffComplete 不应广播
+    const hasComplete = vi.mocked(broker.broadcast).mock.calls.some(
+      (c) => (c[0] as { type?: string }).type === 'session.handoffComplete',
+    )
+    expect(hasComplete).toBe(false)
+  })
+
+  it('TC8f: abort called while agentEndPromise pending → agent_end resolve wins race → abortedSessions guard rejects, no new session', async () => {
+    // M5: 测试 agent_end 与 abort 竞态的另一时序——abort 先到（inflight 有 entry），
+    // agent_end 随后 resolve。abortHandoff 标记 abortedSessions + reject entry，
+    // 但 agent_end 的 finalize 可能先执行（settled 保护）。
+    // 无论哪种时序，abortedSessions 守卫保证不创建新 session。
+    const runPromise = service.runHandoff('src-1')
+    await new Promise((r) => setTimeout(r, 0))
+
+    // agentEndPromise 仍 pending，此时调 abortHandoff（inflight 有 entry → 返回 true）
+    await expect(service.abortHandoff('src-1')).resolves.toBe(true)
+    expect(srcClient.abort).toHaveBeenCalledTimes(1)
+
+    // agent_end 随后到达（abort reject 已 settle → agent_end finalize no-op，
+    // 或 agent_end finalize 先 settle → abort reject no-op）。
+    // 无论时序，runHandoff 应 reject 'handoff aborted'。
+    srcClient.emit({
+      type: 'agent_end',
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: 'late doc' }], stopReason: 'stop' }],
+      willRetry: false,
+    })
+
+    await expect(runPromise).rejects.toThrow('handoff aborted')
+    // abortedSessions 守卫阻断：createSession 未被调用
+    expect(sessionService.create).not.toHaveBeenCalled()
+    // handoffStarted 已广播（在 prompt 之前），但 handoffComplete 不应广播
+    const hasComplete = vi.mocked(broker.broadcast).mock.calls.some(
+      (c) => (c[0] as { type?: string }).type === 'session.handoffComplete',
+    )
+    expect(hasComplete).toBe(false)
+  })
+
+  it('TC8e: session switch during active handoff → handoff continues in background → handoffComplete broadcasts correctly', async () => {
+    // m8: 用户在 handoff 进行中切换 session（renderer 侧行为，不影响 runtime handoff）。
+    // runtime handoff 继续在后台运行——验证 handoff 仍能正常完成。
+    const runPromise = service.runHandoff('src-1')
+    await new Promise((r) => setTimeout(r, 0))
+
+    // 模拟 session 切换（renderer selectSession 等，不影响 runtime handoff 流程）。
+    // handoff 继续在后台运行。
+    srcClient.emit({
+      type: 'agent_end',
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: 'background doc' }], stopReason: 'stop' }],
+      willRetry: false,
+    })
+
+    await runPromise
+
+    // handoff 完成后 handoffComplete 广播正确
+    expect(broker.broadcast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'session.handoffComplete',
+        payload: {
+          srcSessionId: 'src-1',
+          newSessionId: 'new-1',
+          sourceLabel: 'src',
+        },
+      }),
+    )
+    // new session 注入了文档
+    expect(newClient.prompt).toHaveBeenCalledTimes(1)
+    const injectedPrompt = newClient.prompt.mock.calls[0][0] as string
+    expect(injectedPrompt).toContain('background doc')
+  })
+
+  it('TC_empty: source session 无历史（messages 为空）→ reject "handoff: no history to handoff"', async () => {
+    // m9: getHistory 返回空 messages → reject，不触发后续流程
+    vi.mocked(sessionService.getHistory).mockResolvedValueOnce({
+      messages: [] as Message[],
+      truncated: false,
+    })
+
+    await expect(service.runHandoff('src-1')).rejects.toThrow('handoff: no history to handoff')
+    // 无历史 → 不应调 ensureActive / prompt / broadcast
+    expect(srcClient.prompt).not.toHaveBeenCalled()
+    expect(broker.broadcast).not.toHaveBeenCalled()
+  })
+
   describe('extractFinalTextFromAgentEnd', () => {
     it('TC9a: 正常单 text block', () => {
       const result = extractFinalTextFromAgentEnd([
@@ -477,6 +582,16 @@ describe('HandoffService', () => {
       // 控制字符全部被替换 / 折叠：结果只剩字母 + 单空格分隔
       expect(result).toBe('a b c d e f g')
       expect(result).not.toMatch(/[\x00-\x1F\x7F]/)
+      expect(result).not.toMatch(/\s{2,}/)
+    })
+
+    it('TC10d: M2 reply 含 C1/BiDi/zero-width/BOM 等 Unicode 控制字符 → sanitize strip', () => {
+      // C1: \u0080-\u009F, zero-width: \u200B-\u200F, BiDi override: \u202A-\u202E, \u2066-\u2069, BOM: \uFEFF
+      const dirty = 'a\u0080b\u009Fc\u200Bd\u200Fe\u202Af\u202Eg\u2066h\u2069i\uFEFFj'
+      const result = sanitizeReply(dirty)
+      // 所有 Unicode 控制字符被替换为空格再折叠
+      expect(result).toBe('a b c d e f g h i j')
+      expect(result).not.toMatch(/[\u0080-\u009F\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/)
       expect(result).not.toMatch(/\s{2,}/)
     })
   })

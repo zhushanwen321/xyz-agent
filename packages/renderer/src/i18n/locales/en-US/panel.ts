@@ -67,6 +67,7 @@ export default {
     handoff: 'Hand off & new session (conversation history packed into a new session)',
     handoffAsk: 'Hand off with note (your text becomes the first message in the new session)',
     handoffFailed: 'Handoff failed: {error}',
+    handoffAbortFailed: 'Abort handoff failed: {error}. Handoff is still running.',
     editReplace: 'Edit (replace and resend)',
     editAfterReplace: 'Edit then replace and resend',
     cancel: 'Cancel',

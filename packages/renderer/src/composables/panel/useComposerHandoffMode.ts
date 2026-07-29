@@ -168,6 +168,9 @@ export function useComposerHandoffMode(
       toastError(t('panel.message.handoffFailed', { error: msg }))
     } finally {
       deps.setSending(false)
+      // 设计选择（与 fork handleForkSend 对称）：失败时也 exitHandoffMode。
+      // 用户丢失 staging context（model override chip 消失），但保持行为一致——
+      // fork 失败同样 exitForkMode，避免残留在错误 staging 态。用户可重新进入 handoff 模式。
       exitHandoffMode()
     }
     return true

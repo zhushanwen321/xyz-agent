@@ -332,7 +332,12 @@ export class HandoffService {
    */
   async abortHandoff(srcSessionId: string): Promise<boolean> {
     const entry = this.inflight.get(srcSessionId)
-    if (!entry) return false
+    if (!entry) {
+      // 竞态窗口：agent_end 先 finalize（cleanupInflight 移除 entry），abort 随后到达。
+      // 仍标记 aborted，让 runHandoff 的 abortedSessions 检查阻断半文档泄漏到新 session。
+      this.abortedSessions.add(srcSessionId)
+      return false
+    }
     // 标记 aborted（跨 inflight 生命周期）：即使 agent_end 已先 resolve（竞态），runHandoff
     // 在创建新 session 前检查此 Set 会 throw 阻断。不加此标记则 abort 在 settled 后变 no-op，
     // 半截文档仍会到新 session。

@@ -16,8 +16,10 @@
  * （调用方注入 focusedSessionId ref，内部自行获取 stores/api）。
  */
 import type { Ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { session as sessionApi } from '@/api'
 import { useChatStore } from '@/stores/chat'
+import { useToast } from '@/composables/useToast'
 import { triggerEnterHandoffMode } from '@/composables/panel/useHandoffModeChannel'
 
 /**
@@ -28,6 +30,8 @@ import { triggerEnterHandoffMode } from '@/composables/panel/useHandoffModeChann
  */
 export function useHandoffActions(focusedSessionId: Ref<string | null>) {
   const chat = useChatStore()
+  const { t } = useI18n()
+  const { error: toastError } = useToast()
 
   /**
    * 触发 handoff：runtime 让源 session 跑 handoff turn 生成文档 → runtime 从 agent_end 提取 text
@@ -61,14 +65,19 @@ export function useHandoffActions(focusedSessionId: Ref<string | null>) {
    * 取消进行中的 handoff（乐观清 handingOff 反馈 + 委托 abortHandoff RPC 中断 handoff inflight）。
    * runtime abort（client.abort + 清 listener/timer）后不会广播 session.handoffComplete
    * （onTurnEnd 检测 aborted 跳过新建），故乐观清 handingOff（与 fork 的 abort 对称）。
-   * RPC 失败静默——UI 已清，无进一步回滚空间。
+   * RPC 失败时恢复 handingOff 状态 + toast 通知用户——handoff turn 仍在跑，UI 需保持「正在交接」。
    */
   async function abortHandoff(sessionId: string): Promise<void> {
     chat.setHandingOff(sessionId, false)
-    await sessionApi.abortHandoff(sessionId).catch((e) => {
-      // RPC 失败留诊断线索：abort 没成功时 handoff turn 仍会跑完，可能稍后跳新 session（用户以为已取消）。
+    try {
+      await sessionApi.abortHandoff(sessionId)
+    } catch (e) {
+      // RPC 失败 → 恢复 handingOff（handoff turn 仍在跑，稍后 handoffComplete 会跳新 session）
+      chat.setHandingOff(sessionId, true)
+      const msg = e instanceof Error ? e.message : String(e)
+      toastError(t('panel.message.handoffAbortFailed', { error: msg }))
       console.warn('[handoff] abortHandoff RPC failed, handoff turn may continue:', e)
-    })
+    }
   }
 
   /**

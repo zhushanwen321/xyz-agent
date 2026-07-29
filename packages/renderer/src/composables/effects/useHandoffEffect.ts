@@ -38,10 +38,10 @@ export function bindHandoffEffect(): void {
     const payload = (msg as ServerMessage<'session.handoffComplete'>).payload
     const { srcSessionId, newSessionId } = payload
     chat.setHandingOff(srcSessionId, false)
-    void loadSessions().catch((e) => {
-      console.warn('[handoff-effect] loadSessions failed:', e)
-    }).then(() => {
-      // return（非 void）：让 selectSession 的 rejection 传播到下方 .catch 兜底，
+    // loadSessions 内部已有 try/catch 不会 reject，无需外层 .catch（死代码）。
+    // selectSession 可能 reject（switchSession 网络抖动），保留 .catch 兜底。
+    void loadSessions().then(() => {
+      // return（非 void）：让 selectSession 的 rejection 传播到 .catch 兜底，
       // 否则 void 会吞掉被 reject 的 promise → unhandledRejection（wave2 回归修复）。
       return selectSession(newSessionId)
     }).catch((e) => {
@@ -52,7 +52,7 @@ export function bindHandoffEffect(): void {
   // handoffAborted：用户取消或 abort 失败兜底，复位源 session handingOff。
   offs.push(events.onGlobalType('session.handoffAborted', (msg) => {
     const payload = (msg as ServerMessage<'session.handoffAborted'>).payload
-    chat.setHandingOff(payload.sessionId, false)
+    chat.setHandingOff(payload.srcSessionId, false)
   }))
 
   onScopeDispose(() => { for (const off of offs) off() })

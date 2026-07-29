@@ -140,7 +140,7 @@ import ContextChipsBar from './ContextChipsBar.vue'
 import RetryIndicator from './RetryIndicator.vue'
 import QueueBubble from './QueueBubble.vue'
 import { useChat } from '@/composables/features/useChat'
-import { useSidebar } from '@/composables/features/useSidebar'
+import { useHandoffActions } from '@/composables/features/useHandoffActions'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useProjectSkills, useGlobalSkills } from '@/composables/features/useProjectSkills'
 import { useChatStore } from '@/stores/chat'
@@ -180,11 +180,11 @@ const isActive = computed(() => {
   return chatStore.isActive(props.sessionId)
 })
 
-// handoff 编排真源：setup 同步取一次（对齐 fork 模式 useComposerForkMode.ts:61）。不能在 deps.handoff
-// 闭包内「发送时才调」useSidebar()——handleHandoffSend 是 async，闭包在 await 后微任务里调 useSidebar()
-// 无 active effect scope → onScopeDispose 不注册 → session.list 订阅 refCount 泄漏（违反 CLAUDE.md 规则 #2）。
-// abortHandoff 同源取（对称 handoff，供 StagingAction.abort 取消进行中的 handoff）。
-const { handoff: handoffAction, abortHandoff: abortHandoffAction } = useSidebar()
+// handoff 编排真源：直接 import useHandoffActions（不实例化 useSidebar，避免全量依赖链：session.list
+// broadcast listener、10+ store、fork actions 等）。focusedSessionId 用于 lastAssistantOfFocused（⌘H
+// 全局快捷键），此处 Composer 只用 handoff/abortHandoff（显式传 sessionId），focusedSessionId 用
+// computed 派生即可（与 useSidebar 内部 focusedSessionId 等价）。
+const { handoff: handoffAction, abortHandoff: abortHandoffAction } = useHandoffActions(computed(() => props.sessionId))
 
 // 模型 + 思考等级状态（含 landing 态延迟 apply）—— 见 useComposerModelThinking
 const {

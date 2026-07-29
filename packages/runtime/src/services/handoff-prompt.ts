@@ -44,7 +44,9 @@ The handoff document is the only output the next session will receive as its fir
  */
 export function sanitizeReply(reply: string): string {
   return reply
-    .replace(/[\x00-\x1F\x7F]/g, ' ') // 控制字符 → 空格（含 CR/LF/tab/零宽等）
+    // 控制字符 → 空格：C0 (U+0000-U+001F) + DEL (U+007F) + C1 (U+0080-U+009F)
+    // + zero-width (U+200B-U+200F) + BiDi override (U+202A-U+202E, U+2066-U+2069) + BOM (U+FEFF)
+    .replace(/[\x00-\x1F\x7F\u0080-\u009F\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, ' ')
     .replace(/\s+/g, ' ') // 折叠连续空白（防畸形空白 prompt injection）
     .trim()
     .slice(0, REPLY_MAX_LENGTH)

@@ -899,8 +899,8 @@ export interface ServerMessageMapBase {
   // session.handoffAborted：fast-handoff 中断后的广播（agent-driven 模式 wave2）。
   // 时机：用户取消进行中的 handoff（或 abort 兜底）→ runtime 调 handoffService.abortHandoff
   // （内部 client.abort + 清 inflight）→ 广播此帧让前端复位源 session 的 handingOff 态。
-  // sessionId：被中断的源 session id（与 handoffComplete 的 srcSessionId 同义，单字段简化）。
-  'session.handoffAborted': { sessionId: string }
+  // srcSessionId：被中断的源 session id（与 handoffComplete 的 srcSessionId 同义，统一字段名）。
+  'session.handoffAborted': { srcSessionId: string }
   // session.history：session.history / session.switch 的成功 reply（session-message-handler.ts:83/96/111）。
   // session optional——switch 路径带 SessionSummary（已 restore 的 session），getHistory 路径不带。
   // historyTruncated：历史超上限截断标志（前端据此提示「历史已截断」）。
