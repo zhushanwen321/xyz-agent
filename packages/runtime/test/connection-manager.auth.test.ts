@@ -854,3 +854,137 @@ describe('P2-s2 replyAuth ReplayMeta serialization (TC-W2.1~W2.4)', () => {
     expect(cb.onAuthSuccess).not.toHaveBeenCalled()
   })
 })
+
+// ── P2 replay orchestration direct tests (TC-ORCH.1~ORCH.3) ──────────────
+//
+// P2 审查发现 gap：connection-manager.ts:446-468 的 auth 回放编排本身（replyAuth 先发 →
+// 按 decision.messages 顺序 ws.send / 或调 onConnect）虽被 TC-W1.* 间接覆盖，
+// 但缺直接面向「编排顺序」契约的单测。本 wave 用统一的「发送/回调序列」断言模型，
+// 对 resume/reset/fresh 三分支各一条编排专项测试，断言 handleAuthMessage 内的确切调用顺序：
+//   1. replyAuth 的 auth.ok 始终第一个发（auth.ok 先于 messages 先于/与 onConnect 同批）
+//   2. resume：auth.ok 后紧跟 for(data of decision.messages) ws.send(data)，onConnect 不被调
+//   3. reset/fresh：auth.ok 后仅 onConnect（messages 为空也发 auth.ok），无任何 messages ws.send
+//
+// 实现：用 spy 记录调用顺序（'send:<idx>' / 'onConnect'）到一个数组，断言数组精确匹配。
+// 这把「replyAuth 内 ws.send vs onConnect 调用 vs messages 循环 ws.send」三者时序钉死，
+// 任何未来重构打乱顺序（如把 onConnect 移到 replyAuth 之前，或 messages 反向遍历）都立即红。
+
+/**
+ * 对 ws.send + onConnect 装上顺序捕获 spy，返回一个 push 标签的 recorder。
+ * - 每次 ws.send 记为 'send:<序号>'（不依赖内容，便于稳定断言顺序）
+ * - 每次 onConnect 记为 'onConnect'
+ * 返回数组本身供直接断言（引用透传，send/onConnect 调用即 push）。
+ *
+ * 注意：ws.send 已在 makeMockWs 内是 vi.fn()，这里 wrap 成顺序 recorder 不破坏其 mock.calls
+ * （仍可经 vi.mocked(ws.send).mock.calls 读原始 payload，TC-W2.* 依赖）。
+ */
+function recordOrchestration(
+  ws: ReturnType<typeof makeMockWs>,
+  cb: ReturnType<typeof makeCallbacks>,
+): string[] {
+  const order: string[] = []
+  let sendIdx = 0
+  const originalSend = ws.send
+  ws.send = vi.fn((...args: unknown[]) => {
+    order.push(`send:${sendIdx++}`)
+    return (originalSend as (...a: unknown[]) => unknown)(...args)
+  })
+  const originalOnConnect = cb.onConnect
+  cb.onConnect = vi.fn((...args: unknown[]) => {
+    order.push('onConnect')
+    return (originalOnConnect as (...a: unknown[]) => void)(...args)
+  })
+  return order
+}
+
+describe('P2 replay orchestration direct tests (TC-ORCH.1~ORCH.3: replyAuth → messages/onConnect order)', () => {
+  it('TC-ORCH.1 (resume): replyAuth 发 auth.ok 后按序 ws.send(decision.messages 每条)，跳过 onConnect', async () => {
+    const { cm, cb } = await setupAuthMode({
+      onAuthSuccess: () => ({
+        resume: true,
+        messages: ['replay-A', 'replay-B', 'replay-C'],
+        seqReset: false,
+        replayedCount: 3,
+        bootId: 'boot-resume',
+        serverSeq: 9,
+      }),
+    })
+    const ws = makeMockWs()
+    const order = recordOrchestration(ws, cb)
+    connect(cm, ws)
+    // lastSeq 匹配 → broker 返回 resume=true + 3 条已序列化 messages
+    await sendAuth(ws, { token: 'real', clientId: 'c1', lastSeq: 6, bootId: 'boot-resume' })
+
+    // 编排顺序契约：先 auth.ok（send:0），随后 messages 严格按数组顺序（send:1=A, send:2=B, send:3=C）。
+    // onConnect 全程不被调（resume 跳过全量推送）——order 数组末尾不含 'onConnect'。
+    expect(order).toEqual(['send:0', 'send:1', 'send:2', 'send:3'])
+    // 显式断言无 onConnect（resume 分支核心契约——防止重构误把 onConnect 加回 resume 路径）
+    expect(cb.onConnect).not.toHaveBeenCalled()
+
+    // 顺序契约的载荷侧验证：send:0 是 auth.ok，send:1~3 严格等于 messages 数组顺序
+    const calls = vi.mocked(ws.send).mock.calls.map((c) => c[0])
+    expect(calls).toHaveLength(4)
+    expect(JSON.parse(calls[0] as string).type).toBe('auth.ok')
+    expect(calls[1]).toBe('replay-A')
+    expect(calls[2]).toBe('replay-B')
+    expect(calls[3]).toBe('replay-C')
+  })
+
+  it('TC-ORCH.2 (reset): replyAuth 发 auth.ok 后调 onConnect（重发 initial state），无 messages ws.send', async () => {
+    const { cm, cb } = await setupAuthMode({
+      // lastSeq 落后于 evictedWatermark → broker 返回 seqReset=true + 空 messages
+      onAuthSuccess: () => ({
+        resume: false,
+        messages: [],
+        seqReset: true,
+        replayedCount: 0,
+        bootId: 'boot-reset',
+        serverSeq: 0,
+      }),
+    })
+    const ws = makeMockWs()
+    const order = recordOrchestration(ws, cb)
+    connect(cm, ws)
+    await sendAuth(ws, { token: 'real', clientId: 'c1', lastSeq: 1, bootId: 'stale' })
+
+    // 编排顺序契约：[auth.ok, onConnect] —— auth.ok 先于 onConnect，messages 为空不产生额外 ws.send。
+    expect(order).toEqual(['send:0', 'onConnect'])
+    // onConnect 被调一次（reset 分支重发全量 initial state）
+    expect(cb.onConnect).toHaveBeenCalledTimes(1)
+    expect(cb.onConnect).toHaveBeenCalledWith(ws, 'c1')
+    // reset 分支：仅 auth.ok 一条 ws.send，messages 循环零迭代
+    const calls = vi.mocked(ws.send).mock.calls.map((c) => c[0])
+    expect(calls).toHaveLength(1)
+    expect(JSON.parse(calls[0] as string).type).toBe('auth.ok')
+  })
+
+  it('TC-ORCH.3 (fresh): 无 lastSeq 首次连接 → replyAuth 发 auth.ok 后调 onConnect（推全量）', async () => {
+    const { cm, cb } = await setupAuthMode({
+      // 首次连接（无 lastSeq）→ broker 返回 resume=false（冷启动全量）
+      onAuthSuccess: () => ({
+        resume: false,
+        messages: [],
+        seqReset: false,
+        replayedCount: 0,
+        bootId: 'boot-fresh',
+        serverSeq: 0,
+      }),
+    })
+    const ws = makeMockWs()
+    const order = recordOrchestration(ws, cb)
+    connect(cm, ws)
+    // 无 lastSeq / bootId（首次连接，客户端不带重连凭据）
+    await sendAuth(ws, { token: 'real', clientId: 'c1' })
+
+    // 编排顺序契约同 reset：[auth.ok, onConnect]——auth.ok 先发，随后 onConnect 推全量。
+    expect(order).toEqual(['send:0', 'onConnect'])
+    expect(cb.onConnect).toHaveBeenCalledTimes(1)
+    // fresh 分支：onAuthSuccess 收到的 lastSeq 为 undefined（证明走的是冷启动判定）
+    const input = vi.mocked(cb.onAuthSuccess!).mock.calls[0][2] as { lastSeq?: number }
+    expect(input.lastSeq).toBeUndefined()
+    // 仅 auth.ok 一条 ws.send
+    const calls = vi.mocked(ws.send).mock.calls.map((c) => c[0])
+    expect(calls).toHaveLength(1)
+    expect(JSON.parse(calls[0] as string).type).toBe('auth.ok')
+  })
+})
