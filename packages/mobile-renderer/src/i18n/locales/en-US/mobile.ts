@@ -14,6 +14,7 @@ export default {
   session: {
     new: 'New',
     empty: 'No sessions yet. Tap + to create.',
+    switchFailed: 'Failed to switch session: {msg}',
   },
   files: {
     empty: 'File tree is empty or still loading.',
@@ -35,6 +36,7 @@ export default {
     submit: 'Create and start',
     cancel: 'Cancel',
     errorCreate: 'Failed to create session: {msg}',
+    errorSend: 'Failed to send the first message: {msg}',
   },
   settings: {
     title: 'Settings',

@@ -63,12 +63,13 @@ packages/
   mobile-renderer/                # 新建
     src/
       main.ts                     # 入口（无 Electron IPC 注册，无 local-file:// 协议）
-      App.vue                     # 连接态门控 → MobileShell / ConnectingScreen
+      App.vue                     # 连接态门控 → MobileShell / MobileConnectScreen
       components/
         shell/
           MobileShell.vue         # 底部 tab 布局入口
           BottomTabBar.vue        # Sessions / Files / Settings 三 tab
-          ConnectingScreen.vue    # 连接中态
+          # 注：ConnectingScreen 已合并到 MobileConnectScreen（同一组件处理所有连接前态：
+          # connecting/failed/无 token 粘贴框）。独立 ConnectingScreen 是冗余设计，未创建。
         chat/
           MobileChatView.vue      # chat 主视图（复用 message-stream）
           MobileComposer.vue      # 输入框 + 发送按钮（简化版）

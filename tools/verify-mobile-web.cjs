@@ -2,6 +2,14 @@
 /**
  * verify-mobile-web.cjs — P4 mobile-web feature 端到端验证（plan T10 + DoD #2）。
  *
+ * 【门禁语义说明】本脚本为 **WS 协议级验证**，不是完整 UI 端到端：
+ *   - 覆盖 mobile-renderer 依赖的全部 server 契约（连通性 / auth.ok / sendInitialState /
+ *     session.create / file.tree），runtime 真起 + WS auth 握手 + RPC 往返。
+ *   - 完整 UI 端到端（连接 → 新建 session → chat 渲染 → 文件树展开 的真实浏览器交互）
+ *     需手工 Playwright 验证（spec R4：CI 跑 Playwright 不稳定，接受此权衡）。
+ *   - UI 交互（DOM 渲染、tab 切换、用户输入）的机器固化靠 vitest 组件测试
+ *     （App.test.ts / MobileShell.test.ts / MobileSessionList.test.ts 等）。
+ *
  * 验证 runtime --serve-web 托管的 mobile-renderer 全链路：
  *   1. 连通性：runtime 启动后 /health ok，--serve-web 注入的静态 handler 服务 mobile index.html。
  *   2. auth.ok：WS auth 握手成功，返回 auth.ok（含 serverSeq/bootId 等 ReplayMeta）。
@@ -11,19 +19,13 @@
  *
  * 用法：node tools/verify-mobile-web.cjs
  * 退出码：
- *   0 = 全部 PASS / 友好降级（无 runtime dist 或无 mobile dist 时 exit 0 + 提示需构建）
+ *   0 = 全部 PASS；或 **SKIPPED (no dist)** 友好降级（无 runtime dist 或无 mobile dist 时
+ *       exit 0 + 明确标注 SKIPPED + 提示构建命令）。spec R4 已接受 dist 缺失时 exit 0 的权衡，
+ *       但输出必须诚实标注 SKIPPED，而非静默 PASS。
  *   1 = 有 dist 但任一场景 FAIL（打印哪步失败 + 预期/实际对比）
  *
- * 降级说明（对齐 verify-pi-decouple.cjs）：
- *   - 完整 Playwright 连浏览器跑 UI（连接 → 新建 session → chat → 文件树展开）在 CI 不稳定（spec R4），
- *     故本脚本降级为 WS 协议级验证（runtime 真起 + WS auth + RPC），覆盖 mobile-renderer 依赖的全部
- *     server 契约（连通性 / auth.ok / sendInitialState / session.create / file.tree）。
- *   - UI 交互（DOM 渲染、tab 切换、用户输入）的机器固化靠 vitest 组件测试（App.test.ts /
- *     MobileShell.test.ts / MobileFilesView.test.ts），本脚本补 WS 端到端证据。
- *   - 无 runtime dist 或无 mobile dist 时友好降级（exit 0），保证骨架可执行不腐化。
- *
  * 依赖：runtime dist（packages/runtime/dist/server.cjs）+ mobile-renderer dist（packages/mobile-renderer/dist）。
- *   两者均缺失或任一缺失 → 降级 exit 0（提示构建命令）。
+ *   两者均缺失或任一缺失 → 降级 exit 0（输出标注 SKIPPED + 提示构建命令）。
  */
 'use strict'
 
@@ -62,13 +64,15 @@ function checkArtifacts() {
 
 const missingArtifacts = checkArtifacts()
 if (missingArtifacts.length > 0) {
-  log('构建产物缺失：')
+  // SKIPPED (no dist)：诚实标注门禁未执行（非静默 PASS）。spec R4 接受 dist 缺失时 exit 0，
+  // 但输出必须让门禁语义诚实——日志显式标 SKIPPED 并列缺失产物。
+  log('SKIPPED (no dist)：构建产物缺失，WS 协议级验证未执行。')
   for (const m of missingArtifacts) log('  - ' + m)
-  log('请先构建：')
+  log('请先构建后再跑本脚本：')
   log('  cd packages/runtime && npm run build')
   log('  cd packages/mobile-renderer && npm run build')
-  log('本脚本提供本地真环境验证，不阻塞 CI（mobile-web feature 的 UI 固化见 vitest 组件测试）。')
-  log('友好降级：exit 0。')
+  log('注：mobile-web feature 的 UI 交互固化见 vitest 组件测试；本脚本补 WS 端到端证据，需 dist 在场。')
+  log('友好降级（spec R4 权衡）：exit 0（不阻塞 CI）。')
   process.exit(0)
 }
 

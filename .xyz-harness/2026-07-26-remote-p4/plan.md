@@ -66,7 +66,7 @@
 **文件**（新建）：
 - `mobile-renderer/src/components/shell/MobileShell.vue`：`h-[100dvh] flex flex-col` 布局，含 Header + Content + BottomTabBar
 - `mobile-renderer/src/components/shell/BottomTabBar.vue`：Sessions / Files / Settings 三 tab，`h-[56px]` + safe-area-inset-bottom
-- `mobile-renderer/src/components/shell/ConnectingScreen.vue`：连接中态
+- 注：**ConnectingScreen 不单独创建**——所有连接前态（connecting/failed/无 token 粘贴框）合并由 `MobileConnectScreen.vue`（T7）处理。App.vue 连接态门控：connected → MobileShell，否则 → MobileConnectScreen（覆盖 connecting/failed/无存档三态）。独立 ConnectingScreen 是冗余设计，spec §二已同步标注。
 - `mobile-renderer/src/App.vue`：连接态门控（已连接 → MobileShell；未连接 → MobileConnectScreen）
 
 **测试**（`MobileShell.test.ts` 新建）：

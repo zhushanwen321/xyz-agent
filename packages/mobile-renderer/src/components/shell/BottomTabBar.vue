@@ -8,7 +8,7 @@
  *
  * s2 版本：tab 点击切换 activeTab（DOM 断言 AC4）。s3/s4 填充真实 tab content。
  */
-import { MessageSquare, FolderCog, Settings } from '@lucide/vue'
+import { MessageSquare, Folder, Settings } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import type { MobileTab } from './types'
 
@@ -19,7 +19,7 @@ const { t } = useI18n()
 
 const tabs: ReadonlyArray<{ id: MobileTab; label: string; icon: typeof MessageSquare; testId: string }> = [
   { id: 'sessions', label: t('mobile.shell.tabSessions'), icon: MessageSquare, testId: 'mobile-tab-sessions' },
-  { id: 'files', label: t('mobile.shell.tabFiles'), icon: FolderCog, testId: 'mobile-tab-files' },
+  { id: 'files', label: t('mobile.shell.tabFiles'), icon: Folder, testId: 'mobile-tab-files' },
   { id: 'settings', label: t('mobile.shell.tabSettings'), icon: Settings, testId: 'mobile-tab-settings' },
 ]
 

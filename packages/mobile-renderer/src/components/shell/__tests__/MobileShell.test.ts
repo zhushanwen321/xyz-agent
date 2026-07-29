@@ -9,14 +9,30 @@
  * s3-w1 更新：sessions tab content 从占位文本改为 SessionsTab（读 session store），需 setActivePinia。
  * s4-w1 更新：files tab content 从占位文本改为 FilesTab（接 currentSessionId），新增 files 分支集成测试。
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import type { FileNode } from '@xyz-agent/shared'
 import MobileShell from '../MobileShell.vue'
 
+// Mock useSidebar：SessionsTab onMounted 调 loadSessions + onSelect 调 selectSession，
+// 避免 MobileShell 集成测试触发真实 RPC（ws-client 未连接）。
+// selectSession 直接 resolve，让 onSelect emit select（透传 currentSessionId 给 FilesTab）。
+const { loadSessionsMock, selectSessionMock } = vi.hoisted(() => ({
+  loadSessionsMock: vi.fn(() => Promise.resolve()),
+  selectSessionMock: vi.fn((_id: string) => Promise.resolve()),
+}))
+vi.mock('@/composables/features/useSidebar', () => ({
+  useSidebar: () => ({
+    loadSessions: loadSessionsMock,
+    selectSession: selectSessionMock,
+  }),
+}))
+
 beforeEach(() => {
   setActivePinia(createPinia())
+  loadSessionsMock.mockClear()
+  selectSessionMock.mockClear()
 })
 
 describe('MobileShell + BottomTabBar（P4-s2-w1 AC4）', () => {
@@ -83,8 +99,11 @@ describe('MobileShell + BottomTabBar（P4-s2-w1 AC4）', () => {
     fileTreeStore.setTree('s1', tree)
 
     const wrapper = mount(MobileShell)
-    // sessions tab 默认态：点击 session 项 → SessionsTab emit select → currentSessionId 透传
+    // sessions tab 默认态：点击 session 项 → SessionsTab onSelect（async selectSession）→ emit select
     await wrapper.find('[data-testid="mobile-session-item-s1"]').trigger('click')
+    // onSelect 是 async（await selectSession 后才 emit select），等其 settle
+    await vi.dynamicImportSettled()
+    await new Promise((r) => setTimeout(r, 0))
     // 切到 files tab
     await wrapper.find('[data-testid="mobile-tab-files"]').trigger('click')
     // files tab 应渲染 MobileFilesView（currentSessionId 透传成功）
@@ -120,6 +139,9 @@ describe('MobileShell + BottomTabBar（P4-s2-w1 AC4）', () => {
     const wrapper = mount(MobileShell)
     // sessions tab：选 session → 透传 currentSessionId
     await wrapper.find('[data-testid="mobile-session-item-s1"]').trigger('click')
+    // onSelect 是 async（await selectSession 后才 emit select），等其 settle
+    await vi.dynamicImportSettled()
+    await new Promise((r) => setTimeout(r, 0))
     // 切 files tab：点文件 → FilesTab 进 detail 态（showDetail=true）
     await wrapper.find('[data-testid="mobile-tab-files"]').trigger('click')
     await wrapper.find('[data-testid="mobile-file-node-/proj/readme.md"]').trigger('click')

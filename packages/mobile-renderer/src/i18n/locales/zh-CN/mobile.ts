@@ -14,6 +14,7 @@ export default {
   session: {
     new: '新建',
     empty: '暂无会话，点 + 新建',
+    switchFailed: '切换会话失败：{msg}',
   },
   files: {
     empty: '文件树为空或加载中。',
@@ -35,6 +36,7 @@ export default {
     submit: '创建并开始',
     cancel: '取消',
     errorCreate: '创建会话失败：{msg}',
+    errorSend: '发送首条消息失败：{msg}',
   },
   settings: {
     title: '设置',

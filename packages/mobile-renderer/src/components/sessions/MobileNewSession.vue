@@ -5,6 +5,10 @@
  * prompt composer（Textarea）+ 手动路径 Input（placeholder「输入服务器路径，如 ~/projects/xyz-agent」）
  * + 确认按钮。提交走 sessionApi.create(cwd=路径) → emit created(sessionId)。
  *
+ * [MAJOR-3] create 后发送首条消息（prompt）—— 对齐 renderer useNewTaskFlow.submitFirstMessage
+ *   （create 后 chat.send(newSid, textToSegments(trimmed))）。原实现只 create 不 send，
+ *   用户输入的 prompt 丢失，session 是空壳。create 成功后 appendSession 到 store 刷新列表。
+ *
  * 不调 dir.list RPC（spec D4/审查 M6，dir.list 在 P9）。~ 由服务端 expand。
  * 复用 P1 手动路径输入语义（input + 确认，与 DirSelectPopover 远程模式手动输入同语义）。
  */
@@ -16,6 +20,10 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import * as sessionApi from '@/api/domains/session'
 import { useToast } from '@/composables/useToast'
+import { useSidebar } from '@/composables/features/useSidebar'
+import { useChat } from '@/composables/features/useChat'
+import { useSessionStore } from '@/stores/session'
+import { textToSegments } from '@xyz-agent/shared'
 
 const emit = defineEmits<{
   created: [sessionId: string]
@@ -24,6 +32,9 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const { error } = useToast()
+const { loadSessions } = useSidebar()
+const { send } = useChat()
+const sessionStore = useSessionStore()
 
 const prompt = ref('')
 const cwd = ref('')
@@ -39,6 +50,19 @@ async function handleSubmit(): Promise<void> {
   try {
     // sessionApi.create(cwd) —— #1 cwd 透传，~ 由服务端 expand（spec D4）
     const session = await sessionApi.create(cwdTrimmed)
+    // [MAJOR-3] create 成功后立即 appendSession 到 store，让列表即时显示新 session
+    sessionStore.appendSession(session)
+    // [MAJOR-3] 发送首条消息（prompt）—— 对齐 renderer useNewTaskFlow.submitFirstMessage。
+    // sessionApi.create 只建 session（签名 create(cwd?, label?) 不含 prompt），prompt 必须
+    // 显式 send 才能进入对话流，否则 session 是空壳。失败不阻断进 chat 态（用户可重发）。
+    try {
+      await send(session.id, textToSegments(promptTrimmed))
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      error(t('mobile.newSession.errorSend', { msg }))
+    }
+    // loadSessions 刷新列表（runtime 广播权威分组 + label 回填）—— fire-and-forget
+    void loadSessions()
     emit('created', session.id)
   } catch (e) {
     // ES2：create 失败（cwd 不存在/无权限）显示错误，不 emit created，用户可改路径重试
