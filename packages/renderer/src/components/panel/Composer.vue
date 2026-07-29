@@ -34,38 +34,21 @@
         @dragleave.prevent="onDragLeave"
         @drop.prevent="onDrop"
       >
-        <!-- Fork 模式标识 chip（FR-13）：顶部 accent chip 提示「将发到新分支 · 与主线隔离」+ × 退出 -->
+        <!-- Staging 模式标识 chip（fork/handoff 统一）：顶部 accent chip 提示当前 staging 类型 + × 退出。
+             经 useComposerStaging.activeStaging 统一渲染（ADR-0044），退出调 staging.exit() -->
         <div
-          v-if="fork.forkMode.value"
+          v-if="staging.activeStaging.value"
           class="composer-mode-chip mx-2.5 mt-2 flex items-center gap-1.5 rounded-md bg-[var(--accent-soft)] px-2 py-1 text-[11px] font-medium text-[var(--accent)]"
-          data-testid="composer-mode-chip"
+          :data-testid="staging.activeStaging.value.type === 'fork' ? 'composer-mode-chip' : 'composer-handoff-chip'"
         >
-          <GitFork class="size-3" />
-          <span class="flex-1">{{ t('panel.composer.forkChip') }}</span>
+          <component :is="staging.activeStaging.value.visual.chipIcon" class="size-3" />
+          <span class="flex-1">{{ t(staging.activeStaging.value.visual.chipLabelKey) }}</span>
           <Button
             variant="ghost"
             size="icon"
             class="size-4 rounded-sm p-0 text-[var(--accent)] hover:bg-[var(--accent)] hover:text-white"
-            :title="t('panel.composer.forkExit')"
-            @click="fork.exitForkMode"
-          >
-            <X class="size-3" />
-          </Button>
-        </div>
-        <!-- Handoff 模式标识 chip（fast-handoff）：顶部 accent chip 提示「将交接到新 session」+ × 退出 -->
-        <div
-          v-if="handoff.handoffMode.value"
-          class="composer-mode-chip mx-2.5 mt-2 flex items-center gap-1.5 rounded-md bg-[var(--accent-soft)] px-2 py-1 text-[11px] font-medium text-[var(--accent)]"
-          data-testid="composer-handoff-chip"
-        >
-          <Upload class="size-3" />
-          <span class="flex-1">{{ t('panel.composer.handoffChip') }}</span>
-          <Button
-            variant="ghost"
-            size="icon"
-            class="size-4 rounded-sm p-0 text-[var(--accent)] hover:bg-[var(--accent)] hover:text-white"
-            :title="t('panel.composer.handoffExit')"
-            @click="handoff.exitHandoffMode"
+            :title="staging.activeStaging.value.type === 'fork' ? t('panel.composer.forkExit') : t('panel.composer.handoffExit')"
+            @click="staging.exit"
           >
             <X class="size-3" />
           </Button>
@@ -106,7 +89,7 @@
           size="icon"
           class="stop-btn ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-surface-hover text-neutral-mid hover:bg-danger-soft hover:text-danger"
           :title="t('panel.composer.stop')"
-          @click="onAbort"
+          @click="onStopClick"
         >
           <Square class="size-[13px]" />
         </Button>
@@ -130,7 +113,7 @@
           size="icon"
           class="ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-[var(--accent)] text-white transition-colors enabled:hover:bg-[var(--accent-hover)] disabled:bg-transparent disabled:text-[var(--neutral-dim)]"
           :disabled="!canSend"
-          :title="canSend ? `${fork.forkMode.value ? t('panel.composer.forkSend') : handoff.handoffMode.value ? t('panel.composer.handoffSend') : t('panel.composer.send')} · ⏎` : t('panel.composer.sendHint')"
+          :title="canSend ? `${staging.activeStaging.value ? (staging.activeStaging.value.type === 'fork' ? t('panel.composer.forkSend') : t('panel.composer.handoffSend')) : t('panel.composer.send')} · ⏎` : t('panel.composer.sendHint')"
           @click="onSend"
         >
           <ArrowUp class="size-[15px]" />
@@ -145,7 +128,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowUp, Loader2, Square, X, GitFork, Upload } from '@lucide/vue'
+import { ArrowUp, Loader2, Square, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import ComposerInput from './ComposerInput.vue'
 import AddMenuPopover from './AddMenuPopover.vue'
@@ -171,7 +154,9 @@ import { useComposerContextChips } from '@/composables/panel/useComposerContextC
 import { useComposerDragDrop } from '@/composables/panel/useComposerDragDrop'
 import { useComposerRestore } from '@/composables/panel/useComposerRestore'
 import { useComposerSubmit } from '@/composables/panel/useComposerSubmit'
+import { useComposerSend } from '@/composables/panel/useComposerSend'
 import { useComposerHandoffMode } from '@/composables/panel/useComposerHandoffMode'
+import { useComposerStaging } from '@/composables/panel/useComposerStaging'
 import { useComposerModeVisual } from '@/composables/panel/useComposerModeVisual'
 import { useComposerBash } from '@/composables/panel/useComposerBash'
 
@@ -198,7 +183,8 @@ const isActive = computed(() => {
 // handoff 编排真源：setup 同步取一次（对齐 fork 模式 useComposerForkMode.ts:61）。不能在 deps.handoff
 // 闭包内「发送时才调」useSidebar()——handleHandoffSend 是 async，闭包在 await 后微任务里调 useSidebar()
 // 无 active effect scope → onScopeDispose 不注册 → session.list 订阅 refCount 泄漏（违反 CLAUDE.md 规则 #2）。
-const { handoff: handoffAction } = useSidebar()
+// abortHandoff 同源取（对称 handoff，供 StagingAction.abort 取消进行中的 handoff）。
+const { handoff: handoffAction, abortHandoff: abortHandoffAction } = useSidebar()
 
 // 模型 + 思考等级状态（含 landing 态延迟 apply）—— 见 useComposerModelThinking
 const {
@@ -253,9 +239,8 @@ watch(
       // browsing 态 getText() 返回历史条目，存用户实际输入
       drafts.set(oldId, isBrowsing.value ? (draft.value || '') : (inputRef.value?.getText() ?? ''))
     }
-    // 切 session 退出 fork/handoff 模式，避免来源残留指向错误 session
-    if (fork.forkMode.value) fork.exitForkMode()
-    if (handoff.handoffMode.value) handoff.exitHandoffMode()
+    // 切 session 退出活跃 staging 模式（fork/handoff），避免来源残留指向错误 session
+    staging.exit()
     resetBrowsing()
     if (newId) {
       const saved = drafts.get(newId)
@@ -308,22 +293,27 @@ const fork = useComposerForkMode(sessionIdRef, {
   getStagingConfig,
 })
 
-// Handoff 模式（fast-handoff）—— 见 useComposerHandoffMode。与 fork 互斥。复用上方 setup 顶部同步取到的 handoffAction。
+// Handoff 模式（fast-handoff）—— 见 useComposerHandoffMode。复用上方 setup 顶部同步取到的 handoffAction。
 const handoff = useComposerHandoffMode(sessionIdRef, {
   inputRef,
   setSending: (value) => { isSending.value = value },
   clearInput,
   restoreInput,
+  // 互斥：进 handoff 前退出 fork（保留原 deps.exitForkMode；进入 fork 时互斥由 useComposerStaging.enter 编排）
   exitForkMode: fork.exitForkMode,
   handoff: (srcSessionId, reply, staging) => handoffAction(srcSessionId, reply, staging),
+  abortHandoff: (sessionId) => abortHandoffAction(sessionId),
   enterStagingMode,
   exitStagingMode,
   getStagingConfig,
 })
-// 双向互斥（fork↔handoff）两处落点：① 这里 watch 进 fork 退 handoff（fork composable 不感知 handoff）；
-// ② useComposerHandoffMode.enterHandoffMode 内进 handoff 退 fork（见 deps.exitForkMode）。
-watch(() => fork.forkMode.value, (isFork) => {
-  if (isFork && handoff.handoffMode.value) handoff.exitHandoffMode()
+
+// Composer Staging 聚合路由（ADR-0044）：fork/handoff 各自包装成 StagingAction，经 useComposerStaging
+// 统一编排 activeStaging + 互斥 enter + send/handleEsc/abortIfInProgress 路由。消除原散落的双向 watch +
+// onSend 分流 if-else。
+const staging = useComposerStaging({
+  fork: fork.asStagingAction(),
+  handoff: handoff.asStagingAction(),
 })
 
 const hasInput = computed(() => draft.value.trim().length > 0)
@@ -341,81 +331,52 @@ const { onSteer, onFollowUp, onAbort } = useComposerSubmit({
   clearInput, restoreInput, steer, followUp, abort,
 })
 
+/**
+ * stop 按钮点击：先尝试取消进行中的 staging 操作（handoff inflight），否则普通 LLM turn abort。
+ * 在 Composer 包一层而非改 useComposerSubmit——避免影响其他消费方（onAbort 语义保持「取消 LLM turn」）。
+ */
+async function onStopClick(): Promise<void> {
+  // staging 操作进行中（handoff inflight）→ 取消 staging（abortHandoff 乐观清 handingOff + RPC 中断）
+  if (props.sessionId && await staging.abortIfInProgress(props.sessionId)) return
+  // 否则普通 LLM turn abort
+  await onAbort()
+}
+
 /** 忙时（流式/派发/发送中/压缩中）—— canSend 与 canHandoffSend 共用，避免重复守卫 */
 const isBusy = computed(() => isActive.value || isSending.value || isCompacting.value)
 const canSend = computed(() => hasInput.value && !isBusy.value)
 
-// composer-box 视觉派生（boxClass / placeholder 四级链：fork > handoff > bash > 默认）—— 见 useComposerModeVisual
+// composer-box 视觉派生（boxClass / placeholder：staging 活跃 > bash > 默认）—— 见 useComposerModeVisual。
+// staging 视觉从 activeStaging.visual 派生（非活跃回退空串/null），让 useComposerModeVisual 不再感知 fork/handoff 具体类型。
 const { boxClass, placeholder } = useComposerModeVisual({
-  forkBoxClass: fork.forkBoxClass,
-  handoffBoxClass: handoff.handoffBoxClass,
-  forkPlaceholder: fork.forkPlaceholder,
-  handoffPlaceholder: handoff.handoffPlaceholder,
+  stagingBoxClass: computed(() => staging.activeStaging.value?.visual.boxClass.value ?? ''),
+  stagingPlaceholder: computed(() => staging.activeStaging.value?.visual.placeholder.value ?? null),
   isActive,
   hasInput,
   isSending,
   isBashMode,
 })
-/**
- * 发送分流（优先级）：fork > handoff > landing（含 bash 检测）> bash(!/!!) > /compact > send。
- * landing 与 active 两条路径合并：landing 走 submitFirstMessage，active 走 trySendBash / /compact / send。
- * 失败均 restoreSegments 回滚草稿（W8）。
- */
-async function onSend(): Promise<void> {
-  // handoff 模式允许空输入；忙时一律拦截（isBusy 复用 canSend 同守卫）。模式发送：同步守卫开关再 await。
-  const canHandoffSend = handoff.handoffMode.value && !isBusy.value
-  if (!canSend.value && !canHandoffSend) return
-  const text = draft.value
-  if (fork.forkMode.value && await fork.handleForkSend(text)) return
-  if (handoff.handoffMode.value && await handoff.handleHandoffSend(text)) return
-  const segments = inputRef.value?.getSegments() ?? [] // 先快照（clearInput 会清空 DOM）
-  if (props.variant === 'landing') {
-    // landing bash 分流：提取 !/!! 前缀（empty=空命令不提交；not-bash=走普通首发）
-    const bashExtract = composerBash.extractBashCommand(text)
-    if (bashExtract.type === 'empty') return
-    clearInput()
-    isSending.value = true
-    try {
-      // B6：preset 透传走 flow.pendingPreset，不在此读 store 第二真源
-      const bashCommand = bashExtract.type === 'command' ? bashExtract : undefined
-      await flow.submitFirstMessage(segments, localThinkingLevel.value, bashCommand)
-    } catch (e) {
-      restoreSegments(segments)
-      toastError(t('panel.panel.taskFailed', { error: e instanceof Error ? e.message : String(e) }))
-    } finally {
-      isSending.value = false
-    }
-    return
-  }
-  // active 态：bash 分流（!/!! 前缀，必须在 /compact 前）+ /compact + 普通发送
-  if (await composerBash.trySendBash(text)) return
-  const trimmed = text.trim()
-  if (trimmed === '/compact' || trimmed.startsWith('/compact ')) {
-    const customInstructions = trimmed.startsWith('/compact ')
-      ? trimmed.slice('/compact '.length).trim() || undefined
-      : undefined
-    clearInput()
-    await compact(props.sessionId!, customInstructions)
-    return
-  }
-  clearInput()
-  isSending.value = true
-  try {
-    await send(props.sessionId!, segments)
-  } catch (e) {
-    restoreSegments(segments)
-    toastError(t('panel.panel.sendFailed', { error: e instanceof Error ? e.message : String(e) }))
-  } finally {
-    isSending.value = false
-  }
-}
+/** 发送分流（onSend）—— staging > landing（含 bash 检测）> bash(!/!!) > /compact > send。见 useComposerSend */
+const { onSend } = useComposerSend({
+  staging: { hasActiveStaging: staging.hasActiveStaging, send: staging.send, activeStaging: staging.activeStaging },
+  getStagingConfig,
+  canSend, isBusy,
+  draft, inputRef,
+  sessionIdRef, variantRef: computed(() => props.variant),
+  composerBash,
+  clearInput, restoreSegments,
+  isSending,
+  flow, localThinkingLevel,
+  send, compact,
+  toastError, t,
+})
 
 /** 键盘：⏎ 发送/steer，Alt+⏎ follow-up，⇧⏎ 换行，↑/↓ 翻历史。命令浮层 open 时优先路由到浮层。 */
 function onKeydown(e: KeyboardEvent): void {
   if (cmdOpen.value && commandPopoverRef.value?.handleKeydown(e)) return
   if (e.isComposing) return // IME 组合中不拦截（与 useContenteditableInput 守卫一致）
-  if (fork.handleForkEsc(e)) return // Fork 模式 Esc 退出（仅 composer 聚焦时到达，不与全局 Esc 冲突）
-  if (handoff.handleHandoffEsc(e)) return // Handoff 模式 Esc 退出（对称 fork，互斥下不会同时活跃）
+  // Staging Esc 路由：经 useComposerStaging.handleEsc → activeStaging.handleEsc（fork/handoff 互斥下不会同时活跃）
+  if (staging.handleEsc(e)) return
   // shift/ctrl/alt/meta + 方向键是选区扩展/按词移动/段首段尾跳转，放行原生行为（不拦截）
   const bareArrow = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey
   if (bareArrow && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {

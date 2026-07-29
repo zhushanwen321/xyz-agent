@@ -17,8 +17,11 @@
  */
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Upload } from '@lucide/vue'
 import { useToast } from '@/composables/useToast'
+import { useChatStore } from '@/stores/chat'
 import { useHandoffModeChannel } from '@/composables/panel/useHandoffModeChannel'
+import type { StagingAction } from '@/composables/panel/staging-types'
 import type ComposerInput from '@/components/panel/ComposerInput.vue'
 
 /** useComposerHandoffMode 返回类型（从函数内联类型提取为命名 interface，便于复用 + 阅读） */
@@ -36,6 +39,11 @@ export interface ComposerHandoffModeReturn {
   handleHandoffEsc: (e: KeyboardEvent) => boolean
   /** handoff 模式发送：调 handoff(srcId, text) + exitHandoffMode，返回 true 表示已消费；否则返回 false */
   handleHandoffSend: (text: string) => Promise<boolean>
+  /**
+   * 包装成 StagingAction（handoff 实现），供 useComposerStaging 注册消费。
+   * 不改变现有 handoffMode/enterHandoffMode 等 expose 契约（仅追加 adapter，对齐 ADR-0044）。
+   */
+  asStagingAction: () => StagingAction
 }
 
 /** handoff 发送副作用依赖（由 Composer 注入，避免重复持有 draft/isSending 真源） */
@@ -52,6 +60,8 @@ interface HandoffDeps {
   exitForkMode: () => void
   /** handoff 编排（features 层跨 api + stores）：handleHandoffSend 调用触发 handoff（runtime agent-driven） */
   handoff: (srcSessionId: string, reply?: string, staging?: { modelOverride?: string; thinkingOverride?: string }) => Promise<void>
+  /** 取消进行中的 handoff（与 handoff 对称注入，来自 useHandoffActions）：StagingAction.abort 委托 */
+  abortHandoff: (sessionId: string) => Promise<void>
   /** Staging Mode（ADR-0043）：进入暂存态（快照模型/thinking） */
   enterStagingMode: () => void
   /** Staging Mode：退出暂存态（清空快照，恢复常规态） */
@@ -70,8 +80,11 @@ export function useComposerHandoffMode(
 ): ComposerHandoffModeReturn {
   const { t } = useI18n()
   const { error: toastError } = useToast()
+  const chat = useChatStore()
   // handoff 编排经 deps 注入（Composer 从 useSidebar 取，避免本 composable 重复实例化 useSidebar）。
   const handoffAction = deps.handoff
+  // 取消进行中的 handoff 同样经 deps 注入（与 handoff 对称，来自 useHandoffActions）。
+  const abortHandoffAction = deps.abortHandoff
 
   /** handoff 模式开关：true 时 composer 顶部显 mode-chip + 视觉，发送走 handoff */
   const handoffMode = ref(false)
@@ -170,6 +183,46 @@ export function useComposerHandoffMode(
     },
   }
 
+  /**
+   * 包装成 StagingAction（handoff 实现，ADR-0044）。
+   *
+   * adapter 层：把 handoffMode/enterHandoffMode/exitHandoffMode/handleHandoffSend/
+   * handleHandoffEsc/handoffBoxClass/handoffPlaceholder 收敛为单一策略对象，
+   * 供 useComposerStaging 聚合路由。与 fork 差异：handoff 有 B 阶段（isInProgress + abort）。
+   */
+  function asStagingAction(): StagingAction {
+    return {
+      type: 'handoff',
+      isActive: computed(() => handoffMode.value),
+      enter: (source) => {
+        // source 实际是 HandoffSource（仅 srcSessionId），由 useComposerStaging.enter('handoff', source) 调用方保证。
+        enterHandoffMode((source as { srcSessionId: string }).srcSessionId)
+      },
+      exit: () => exitHandoffMode(),
+      /**
+       * send 直接调 handleHandoffSend(text)，忽略传入的 staging 参数。
+       * 原因：handleHandoffSend 内部已调 deps.getStagingConfig() 取模型/thinking 快照配置，
+       * 其数据源与 useComposerModelThinking.getStagingConfig 相同，外部传参与内部自取等价
+       * （与 fork 的 asStagingAction.send 对称）。
+       */
+      send: async (text) => { await handleHandoffSend(text) },
+      allowsEmptySend: true,
+      handleEsc: handleHandoffEsc,
+      // handoff turn 在源 session 跑，isInProgress 读 chatStore.isHandingOff(srcSessionId)。
+      // 仅在 handoffSource 有值时读（避免 landing/未进入态误判）。
+      isInProgress: computed(() =>
+        handoffSource.value ? chat.isHandingOff(handoffSource.value.srcSessionId) : false,
+      ),
+      abort: abortHandoffAction,
+      visual: {
+        boxClass: handoffBoxClass,
+        placeholder: handoffPlaceholder,
+        chipLabelKey: 'panel.composer.handoffChip',
+        chipIcon: Upload,
+      },
+    }
+  }
+
   return {
     handoffMode,
     handoffModeRef,
@@ -179,5 +232,6 @@ export function useComposerHandoffMode(
     handoffPlaceholder,
     handleHandoffEsc,
     handleHandoffSend,
+    asStagingAction,
   }
 }

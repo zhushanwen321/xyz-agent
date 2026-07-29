@@ -119,6 +119,18 @@ export function extractFinalTextFromAgentEnd(messages: PiAgentEndMessage[] | und
 export class HandoffService {
   /** per-session 进行中状态。同一 session 不可并发 handoff。 */
   private readonly inflight = new Map<string, InflightHandoff>()
+  /**
+   * 已 abort 的 session id 集合（跨 inflight 生命周期）。
+   *
+   * 背景：abort 与 pi agent_end 是竞态。agent_end 可能在 abort 的 reject 到达前先触发 finalize('resolve', doc)
+   * （settled 标志让后续 abort reject 变 no-op），runHandoff 拿到部分文档继续创建新 session——
+   * 用户点了取消却看到半截文档到了新 session。
+   *
+   * 修复：abortHandoff 把 srcSessionId 加入此 Set。runHandoff 在拿到 doc 后、创建新 session 前
+   * 检查此 Set，命中则 throw 'handoff aborted' 阻断后续（不 create / 不注入 / 不广播 complete）。
+   * 检查后立即 delete（避免 Set 无限增长 + 同 session 下次 handoff 正常工作）。
+   */
+  private readonly abortedSessions = new Set<string>()
   private readonly opts: HandoffServiceOpts
 
   constructor(opts: HandoffServiceOpts) {
@@ -155,6 +167,11 @@ export class HandoffService {
     if (this.inflight.has(srcSessionId)) {
       throw new Error(`handoff already in progress for session ${srcSessionId}`)
     }
+
+    // 1.5 清理上次 handoff 残留的 aborted 标记。上次 abort 若在 agentEndPromise reject 路径
+    // 结束（未走到 8.5 检查点），abortedSessions 会残留 → 本次正常 handoff 在 8.5 误判 throw。
+    // 此处清理保证每次 runHandoff 从干净状态开始（inflight 守卫已确保上次 handoff 不在跑）。
+    this.abortedSessions.delete(srcSessionId)
 
     // 2. 获取对话历史（兼容离线 session，走文件尾读）—— 仅用于判空
     const { messages } = await this.opts.sessionService.getHistory(srcSessionId)
@@ -249,6 +266,15 @@ export class HandoffService {
       this.cleanupInflight(srcSessionId)
     }
 
+    // 8.5 abort 阻断检查（跨 finalize/inflight 生命周期）。
+    // agent_end 与 abort 竞态时 agent_end 可能先 resolve（settled 让 abort reject 变 no-op），
+    // 此时 doc 是部分文档。检查 abortedSessions：用户已表达取消意图，不再创建新 session / 注入 / 广播。
+    // 检查后立即 delete（避免 Set 增长 + 同 session 下次 handoff 不受影响）。
+    if (this.abortedSessions.has(srcSessionId)) {
+      this.abortedSessions.delete(srcSessionId)
+      throw new Error('handoff aborted')
+    }
+
     // 9. 新建空白 session（复用源 cwd）
     // Staging Mode（ADR-0043）：透传 modelOverride/thinkingOverride 让承接 session 用用户当前选定模型/思考等级，
     // 而非全局默认。源 session 的 handoff turn 已用自身模型跑完，不受此 override 影响。
@@ -307,6 +333,10 @@ export class HandoffService {
   async abortHandoff(srcSessionId: string): Promise<boolean> {
     const entry = this.inflight.get(srcSessionId)
     if (!entry) return false
+    // 标记 aborted（跨 inflight 生命周期）：即使 agent_end 已先 resolve（竞态），runHandoff
+    // 在创建新 session 前检查此 Set 会 throw 阻断。不加此标记则 abort 在 settled 后变 no-op，
+    // 半截文档仍会到新 session。
+    this.abortedSessions.add(srcSessionId)
     try {
       await entry.srcClient.abort()
     } catch (e) {

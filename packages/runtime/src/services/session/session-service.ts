@@ -918,7 +918,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   /** 初始化 ManagedSession:建 adapter、注册监听、入 Map、查 commands。 */
   async initializeManagedSession(
     id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string, hidden?: boolean,
-    parentSession?: string, forkEntryId?: string,
+    parentSession?: string, forkEntryId?: string, modelOverride?: string,
   ): Promise<IManagedSessionView> {
     const send = (msg: ServerMessage) => {
       // wave:runtime-wiring：session 级消息（payload 带 sessionId）双写走 bus.publish。
@@ -941,10 +941,15 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // #8 G1：传 cwd 给 EventAdapter（write added/modified 判定 + agent_end git 对账用）
     const adapter = this.adapterFactory(id, send, cwd)
     adapter.attach(client)
-    const modelRef = this.configStore.getDefaultModel()
+    // Staging Mode（ADR-0043）：modelOverride 优先写入 session 元数据，让前端 composer chip
+    // 正确显示用户选定的模型（create/fork/handoff 路径透传 effectiveModel）。pi 进程的模型
+    // 已由 createSession 时 client options.model 设定，此处只补齐元数据层缺口。
+    // 无 override 时 fallback 全局默认（与原行为一致）。
+    const defaultModelRef = this.configStore.getDefaultModel()
+    const fallbackModelId = defaultModelRef ? `${defaultModelRef.provider}/${defaultModelRef.modelId}` : ''
     const session: ManagedSession = {
       id, cwd, label,
-      modelId: modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '',
+      modelId: modelOverride ?? fallbackModelId,
       createdAt: Date.now(), lastActiveAt: Date.now(),
       tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false, isBashRunning: false, bashRunToken: undefined,
       adapter, sessionFilePath,

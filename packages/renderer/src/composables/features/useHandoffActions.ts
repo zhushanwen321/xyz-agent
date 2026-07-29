@@ -9,7 +9,8 @@
  *   （runtime 让源 session 跑 handoff turn 生成文档），无 fromMessageId 参数。
  * - fork 完成后留原线 + forkNotice 反馈行；handoff 完成后跳转到新 session（useHandoffEffect
  *   订阅 session.handoffComplete → selectSession(newSessionId)），无反馈行组件。
- * - handoff 进行中显「正在交接…」瞬时提示（isHandingOff，chat store handingOffSessions Set）。
+ * - handoff 进行中状态记录在 chat store（isHandingOff，handingOffSessions Set），供 LRU 豁免、
+ *   clearIndependentTransient 等逻辑控制；取消入口在 composer stop 按钮（后续读 isHandingOff 路由 abort）。
  *
  * 拆分原因：与 useForkActions 对称，独立 composable 职责内聚。参照 useForkActions 范式
  * （调用方注入 focusedSessionId ref，内部自行获取 stores/api）。
