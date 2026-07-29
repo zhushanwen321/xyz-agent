@@ -26,7 +26,13 @@
  *   ③ 无 clientId（无 lease / 无 resolver）→ 全局 active fallback（零回归）。
  *
  * 用法：node tools/verify-plugin-active.cjs   [VERIFY_DEBUG=1 打印中间值]
- * 退出码：0 = 全部 PASS / 降级（无 tsx 或源码时 exit 0 + 提示），1 = 任一步 FAIL
+ *       （等价：tsx tools/verify-plugin-active.cjs）
+ * 退出码：0 = 全部 PASS，1 = 任一步 FAIL（含 tsx/源码加载失败——不再 exit(0) 假绿）
+ *
+ * 加载机制：脚本以 `node ...cjs` 启动时若检测到 tsx 未注册，自动用 `node --import tsx`
+ * 重执行自身一次（spawn 子进程透传 stdio + exit code）。tsx 注册后动态 import('.ts') 才能
+ * 真正解析 TS 源码（Node v24 内建 strip-only 模式不解析 .js 后缀 import + parameter property，
+ * 会让 loadRealModules 抛错）。直接以 `tsx ...cjs` 启动则跳过重执行。
  *
  * 与 vitest 的关系：本脚本用 tsx 跑真实源码（非编译产物），是 vitest 单测的补充——
  * 单测覆盖模块级行为（session-api.test.ts TC-w4-* / plugin-rpc-client.test.ts / bridge-interop.test.ts），
@@ -34,11 +40,49 @@
  */
 'use strict'
 
+const { spawn } = require('node:child_process')
+const fs = require('node:fs')
 const path = require('node:path')
 
 const REPO_ROOT = path.resolve(__dirname, '..')
 const RUNTIME_SRC = path.join(REPO_ROOT, 'packages', 'runtime', 'src')
 const TSX = path.join(REPO_ROOT, 'node_modules', '.bin', 'tsx')
+
+// tsx 注册探针：尝试 import 一个生产 .ts 模块；成功说明 tsx loader 已生效。
+// 不用环境变量标记（不可靠：用户可能预置），改用真实 import 探测。
+async function isTsxActive() {
+  try {
+    await import('file://' + RUNTIME_SRC + '/services/plugin-service/plugin-types.ts')
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 若 tsx 未注册，用 `node --import tsx` 重执行自身一次，透传 stdio + exit code。
+ * 直接以 `tsx ...cjs` 启动时探测即通过，跳过重执行。
+ */
+async function ensureTsxThenRun() {
+  if (await isTsxActive()) return true
+  if (!fs.existsSync(TSX)) {
+    console.error(`tsx 未找到: ${TSX}（本脚本用 tsx 加载 runtime 真实源码模块）`)
+    console.error('安装依赖后重试：pnpm install（或 npm i tsx -D）。')
+    return false
+  }
+  // 重执行：node --import tsx <self>。子进程 stdio 继承，exit code 透传。
+  const child = spawn(process.execPath, ['--import', 'tsx', __filename], {
+    stdio: 'inherit',
+    env: { ...process.env, __VERIFY_PLUGIN_ACTIVE_REEXEC__: '1' },
+  })
+  return new Promise((resolve) => {
+    child.on('exit', (code) => process.exit(code ?? 1))
+    child.on('error', (e) => {
+      console.error('[verify-plugin-active] re-exec 失败:', e.message)
+      resolve(false)
+    })
+  })
+}
 
 const failures = []
 const passes = []
@@ -203,21 +247,23 @@ async function runPluginGetActive(chain, mods, invokeParams) {
 }
 
 async function main() {
-  // 前置：tsx 可用性（本脚本依赖 tsx 加载 .ts 源码）
-  const fs = require('node:fs')
-  if (!fs.existsSync(TSX)) {
-    console.error(`tsx 未找到: ${TSX}（本脚本用 tsx 加载 runtime 真实源码模块）`)
-    console.error('友好降级：exit 0（透传链机器固化见 vitest: session-api.test.ts / plugin-rpc-client.test.ts / bridge-interop.test.ts）')
-    process.exit(0)
+  // 前置：确保 tsx 已注册（否则动态 import('.ts') 无法解析 TS 源码）。
+  // ensureTsxActive 失败（tsx 不可用或重执行失败）→ exit 1（真 FAIL，不假绿）。
+  const ready = await ensureTsxThenRun()
+  if (!ready) {
+    console.error('verify-plugin-active: tsx 未就绪，无法加载真实源码（exit 1，不降级假绿）')
+    process.exit(1)
   }
 
   let mods
   try {
     mods = await loadRealModules()
   } catch (e) {
+    // 真实失败：tsx 已注册但源码模块加载仍出错（源码语法/import 错误等）→ exit 1。
     console.error(`加载真实源码模块失败: ${e.message}`)
-    console.error('友好降级：exit 0（透传链机器固化见 vitest）')
-    process.exit(0)
+    console.error(e.stack)
+    console.error('verify-plugin-active: 源码加载失败（exit 1，不降级假绿）')
+    process.exit(1)
   }
 
   // ── 场景 ①：A/B per-client 各自 resolve 到自己的 active session ──────────

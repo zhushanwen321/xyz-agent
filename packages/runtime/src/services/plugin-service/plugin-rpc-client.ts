@@ -38,8 +38,17 @@ export class PluginRpcClient {
    * 不注入，主线程走 ALS / 全局 fallback。
    *
    * 注意：Worker Thread 内 plugin 同步调用（非 await 跨 tick）在此值有效期内发起的
-   * RPC 都会带上 clientId。Worker 是单 plugin 串行执行工具（同一时刻只跑一个
-   * plugin.tool.execute），故模块级单值在 Worker 内安全（无需 ALS）。
+   * RPC 都会带上 clientId。currentClientId 是模块级单值——安全性依赖：
+   * plugin.tool.execute 的唯一来源是 pi 的 bridge_request 事件，单个 pi 进程在单个
+   * session 的工具执行循环中串行调用（一个工具完成才下一个）。因此同一 Worker 上
+   * 同一 plugin 的 tool.execute 不会真正并发，模块级单值在此正常路径安全（无需 ALS）。
+   *
+   * 理论残留风险（不改逻辑，仅诚实标注）：trusted Worker 可承载多插件
+   *（MAX_PLUGINS_PER_TRUSTED_WORKER=10），plugin-bootstrap 的 parentPort
+   * message 处理是 fire-and-forget（无队列/single-flight）。若不同 session 的 pi 共享
+   * 同一 trusted Worker 且同插件并发触发 tool execute，极罕见的跨 session 并发可能
+   * 串台（prevClientId save/restore 仅对嵌套安全，对真并发不安全）。正常单 session
+   * 路径概率极低故不处理；如需严格保证可加 single-flight 队列。
    */
   private currentClientId: string | undefined
 
