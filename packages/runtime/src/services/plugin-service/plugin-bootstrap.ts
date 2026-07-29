@@ -133,7 +133,7 @@ export async function handleMessage(msg: HostToWorkerMessage): Promise<void> {
 
 async function handleIncomingRequest(request: RpcRequest): Promise<void> {
   if (request.method === 'plugin.tool.execute') {
-    const { pluginId, toolName, arguments: args, sessionId, toolCallId } = request.params as Record<string, unknown>
+    const { pluginId, toolName, arguments: args, sessionId, toolCallId, clientId } = request.params as Record<string, unknown>
     const toolKey = `${pluginId}:${toolName}`
     const handler = toolHandlers.get(toolKey)
     if (!handler) {
@@ -143,6 +143,14 @@ async function handleIncomingRequest(request: RpcRequest): Promise<void> {
       })
       return
     }
+    // P7 长期方案 A：捕获 bridge invoke 带来的 clientId 作为 Worker 执行上下文。
+    // 工具执行期内 plugin 调 api.sessions.getActive 等 RPC 回主线程时，PluginRpcClient
+    // 自动注入该 clientId 到 params，主线程 handler 据此 per-client resolve，
+    // 绕开 ALS 跨独立 I/O tick 断裂。finally 复位避免泄漏到下一个工具执行。
+    const prevClientId = rpcClient.getCurrentClientId()
+    rpcClient.setCurrentClientId(
+      typeof clientId === 'string' && clientId.length > 0 ? clientId : undefined,
+    )
     try {
       const result = await handler({
         arguments: args as Record<string, unknown>,
@@ -156,6 +164,8 @@ async function handleIncomingRequest(request: RpcRequest): Promise<void> {
         code: PluginRpcErrorCodes.INTERNAL_ERROR,
         message: `Tool execution error: ${msg}`,
       })
+    } finally {
+      rpcClient.setCurrentClientId(prevClientId)
     }
   } else {
     postRpcResponse(request.id, undefined, {

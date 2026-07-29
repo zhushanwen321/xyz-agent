@@ -47,11 +47,24 @@ export class BridgeToolCache {
   }
 }
 
+/**
+ * 反查 bridge 工具执行发起方 clientId。
+ *
+ * P7 长期方案 A：bridge.tool.execute 由 pi 的 bridge_request 事件触发（独立 I/O tick，
+ * 不在任何 WS 请求的 ALS 作用域内）。此时 pi 正在为某个 session 跑 turn，该 session 的
+ * lease owner（busyOwnerId）就是发起方 clientId。据此把 clientId 塞进 invoke params，
+ * 经 Worker RPC 显式透传回主线程 handler，绕开 ALS 跨独立 tick 断裂（P7 核心缺陷）。
+ *
+ * @returns session 的 lease owner clientId，或 undefined（无 lease / 无 sessionId / 无 resolver）
+ */
+export type ClientIdResolver = (sessionId: string | undefined) => string | undefined
+
 export async function handleBridgeToolExecute(
   request: BridgeToolExecuteRequest,
   toolRegistry: Map<string, ToolEntry>,
   host: PluginHost,
   rpcServer: PluginRpcServer,
+  clientIdResolver?: ClientIdResolver,
 ): Promise<BridgeToolExecuteResponse> {
   const entry = Array.from(toolRegistry.values())
     .find(e => e.schema.name === request.toolName)
@@ -64,6 +77,11 @@ export async function handleBridgeToolExecute(
     return { content: 'Plugin worker crashed', isError: true }
   }
 
+  // P7 长期方案 A：从 session lease owner 反查 clientId，显式塞进 invoke params。
+  // Worker 收到后存为执行上下文，RPC 回主线程时带回，handler 据此 per-client resolve。
+  // 解析失败（无 lease / 无 resolver）→ undefined，resolver 全局 fallback（零回归）。
+  const clientId = clientIdResolver?.(request.sessionId)
+
   try {
     const result = await rpcServer.invoke(
       handle.workerId,
@@ -74,6 +92,7 @@ export async function handleBridgeToolExecute(
         arguments: request.parameters,
         sessionId: request.sessionId,
         toolCallId: request.toolCallId,
+        clientId,
       },
       TOOL_EXECUTE_TIMEOUT_MS,
     )

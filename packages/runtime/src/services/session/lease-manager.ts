@@ -152,4 +152,19 @@ export class LeaseManager {
     }
     return undefined
   }
+
+  /**
+   * 反查 session 当前 lease owner 的 clientId（P7 长期方案 A 用）。
+   *
+   * bridge.tool.execute 由 pi 的 bridge_request 事件触发——此时 pi 正在为某个
+   * session 跑 turn，该 session 的 lease owner（busyOwnerId）就是发起方 clientId。
+   * bridge-interop 据此把 clientId 塞进 invoke params，经 Worker RPC 显式透传回主线程，
+   * 绕开 ALS 跨独立 I/O tick 断裂（P7 核心缺陷）。
+   *
+   * @returns 该 session 的 busyOwnerId，或 undefined（无 lease / session 不存在）。
+   */
+  getLeaseOwner(sessionId: string): string | undefined {
+    const session = this.svc.getSession(sessionId)
+    return session?.busyOwnerId
+  }
 }

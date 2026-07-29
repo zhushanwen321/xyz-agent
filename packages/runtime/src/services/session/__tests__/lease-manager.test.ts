@@ -8,6 +8,7 @@
  * - TC6: release 清 lease 字段 + 广播 session.idle（不动 isGenerating）
  * - TC7: TTL 过期 sweepExpired（advance 31s 释放 / 29s 不释放）
  * - TC8: getBusySession 反查 clientId
+ * - TC10: getLeaseOwner 反查 session lease owner（P7 长期方案 A：bridge-interop 用）
  *
  * 运行：cd packages/runtime && npx vitest run src/services/session/__tests__/lease-manager.test.ts
  */
@@ -259,6 +260,20 @@ describe('LeaseManager（P5 lease 状态机）', () => {
 
     expect(lm.getBusySession('clientA')).toEqual({ sessionId: 's1' })
     expect(lm.getBusySession('clientB')).toBeUndefined()
+  })
+
+  // TC10: getLeaseOwner（P7 长期方案 A：bridge-interop 反查发起方 clientId）
+  it('TC10: getLeaseOwner 反查 session 的 lease owner clientId', () => {
+    const { svc } = mockSvc([
+      mockSession({ id: 's1', busyOwnerId: 'clientA' }),
+      mockSession({ id: 's2', busyOwnerId: undefined }), // 无 lease
+    ])
+    const broker = mockBroker()
+    const lm = new LeaseManager(svc, broker, { ttlMs: 30000 })
+
+    expect(lm.getLeaseOwner('s1')).toBe('clientA')
+    expect(lm.getLeaseOwner('s2')).toBeUndefined() // 无 lease
+    expect(lm.getLeaseOwner('nonexistent')).toBeUndefined() // session 不存在
   })
 
   // env TTL

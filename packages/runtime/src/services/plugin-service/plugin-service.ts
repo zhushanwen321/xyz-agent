@@ -133,7 +133,10 @@ export class PluginService implements IPluginService {
    * 才创建 LeaseManager，时序晚于 PluginService）。resolver 持有 deps 引用，此处 mutate
    * 对 resolver 可见。未注入时 resolver 跳过 lease fallback（零回归）。
    */
-  setLeaseManager(leaseManager: { getBusySession(clientId: string): { sessionId: string } | undefined }): void {
+  setLeaseManager(leaseManager: {
+    getBusySession(clientId: string): { sessionId: string } | undefined
+    getLeaseOwner(sessionId: string): string | undefined
+  }): void {
     this.deps.leaseManager = leaseManager
   }
 
@@ -406,9 +409,18 @@ export class PluginService implements IPluginService {
 
   /**
    * 处理 bridge 发起的工具执行请求（ADR-0012 契约不变）。委托 bridge-interop。
+   *
+   * P7 长期方案 A：注入 clientIdResolver——从 session lease owner（busyOwnerId）反查
+   * 发起方 clientId，塞进 invoke params 经 Worker RPC 透传，绕开 ALS 跨独立 tick 断裂。
    */
   async handleBridgeToolExecute(request: BridgeToolExecuteRequest): Promise<BridgeToolExecuteResponse> {
-    return handleBridgeToolExecute(request, this.toolRegistry, this.host, this.rpcServer)
+    return handleBridgeToolExecute(
+      request,
+      this.toolRegistry,
+      this.host,
+      this.rpcServer,
+      (sessionId) => this.deps.leaseManager?.getLeaseOwner(sessionId ?? ''),
+    )
   }
 
   handleBridgeEvent(eventName: string, data: unknown, sessionId: string): void {

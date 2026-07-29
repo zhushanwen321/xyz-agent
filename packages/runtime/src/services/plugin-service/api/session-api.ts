@@ -13,10 +13,32 @@
 import type { PluginRpcServer } from '../plugin-rpc-server.js'
 import type { PluginRpcClient } from '../plugin-rpc-client.js'
 import type { SessionInfo, Disposable } from '../plugin-types.js'
+import { CLIENT_ID_PARAM_KEY } from '../plugin-types.js'
 import type { IPluginServiceDeps } from '../plugin-types.js'
 import type { SessionSummary } from '../../../../../shared/src/session.js'
 import { registerHandler, dispatchHandler } from '../handler-registry.js'
 import { sessionContext } from '../../../infra/async-context.js'
+
+/**
+ * 解析当前 plugin RPC 调用的发起方 clientId（P7 长期方案 A）。
+ *
+ * ALS 跨独立 I/O tick 断裂的解法：plugin 工具执行经 pi bridge_request 事件触发（独立
+ * I/O tick，不在任何 WS 请求的 ALS 作用域内）。bridge-interop 从 session lease owner
+ * 反查 clientId 塞进 invoke params → Worker 存为执行上下文 → RPC 回主线程时注入到
+ * params[CLIENT_ID_PARAM_KEY]。handler 据此显式取 clientId per-client resolve。
+ *
+ * 优先级：
+ * ① params 显式 clientId（Worker 注入，plugin 工具执行路径）—— 真相源
+ * ② ALS sessionContext.getStore()?.clientId（WS 请求同步链路内的 plugin 操作）
+ * ③ undefined（hook/定时器/生命周期触发）→ resolver 全局 fallback（D7 例外，零回归）
+ *
+ * @param params Worker RPC 请求 params（可能含 CLIENT_ID_PARAM_KEY）
+ */
+export function resolveClientId(params: Record<string, unknown> | undefined): string | undefined {
+  const explicit = params?.[CLIENT_ID_PARAM_KEY]
+  if (typeof explicit === 'string' && explicit.length > 0) return explicit
+  return sessionContext.getStore()?.clientId
+}
 
 // eslint-disable-next-line no-magic-numbers -- 2 seconds TTL for active session cache
 const ACTIVE_SESSION_CACHE_TTL_MS = 2 * 1000
@@ -147,10 +169,11 @@ export function registerSessionRpcHandlers(
   })
 
 
-  rpcServer.registerMethod('plugin.sessions.getActive', async () => {
-    // P7 D6：从 ALS 取当前请求 clientId（WS handler 入口 sessionContext.run 注入）透传给 resolver。
-    // ALS 无 store（hook/定时器/生命周期，D7 例外）→ clientId undefined → resolver 全局 fallback。
-    const { clientId } = sessionContext.getStore() ?? {}
+  rpcServer.registerMethod('plugin.sessions.getActive', async (params) => {
+    // P7 长期方案 A：优先用 params 显式 clientId（Worker 经执行上下文注入，绕开 ALS
+    // 跨独立 I/O tick 断裂）；ALS 作为 fallback（WS 请求同步链路内的 plugin 操作）。
+    // 两者都无（hook/定时器/生命周期，D7 例外）→ clientId undefined → resolver 全局 fallback。
+    const clientId = resolveClientId(params)
     return deps.getActiveSession(clientId)
   })
 
@@ -158,10 +181,10 @@ export function registerSessionRpcHandlers(
     let sessionId = params.sessionId as string | undefined
     const role = params.role as string
     const content = params.content as string
-    // sessionId 缺失时从 ALS 取 clientId → resolver 解析 active session。
-    // 解析失败（四级 fallback 都 miss）→ throw（plugin 代码自行处理，建议先 getActive 确认）。
+    // sessionId 缺失时解析 active session：优先用 params 显式 clientId（长期方案 A），
+    // ALS 作 fallback。解析失败（四级 fallback 都 miss）→ throw（plugin 代码自行处理）。
     if (!sessionId) {
-      const { clientId } = sessionContext.getStore() ?? {}
+      const clientId = resolveClientId(params)
       const active = await deps.getActiveSession(clientId)
       if (!active) {
         throw new Error('no_active_session')

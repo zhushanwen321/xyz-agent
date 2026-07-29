@@ -12,8 +12,7 @@ import type { StatusBarItemOptions, IPluginServiceDeps } from './plugin-types.js
 import type { SessionDataStore } from './session-data-store.js'
 import { registerToolRpcHandlers } from './tool-api.js'
 import { registerHookRpcHandlers } from './hook-api.js'
-import { registerSessionRpcHandlers, ActiveSessionResolver } from './api/session-api.js'
-import { sessionContext } from '../../infra/async-context.js'
+import { registerSessionRpcHandlers, ActiveSessionResolver, resolveClientId } from './api/session-api.js'
 import { registerConfigRpcHandlers, toConfigKey, fromConfigKey, isConfigKey } from './api/config-api.js'
 import { registerStorageRpcHandlers, storageHandlersFrom } from './api/storage-api.js'
 import { registerNotifyRpcHandler, notifyHandlersFrom, broadcastPluginNotification } from './api/notify-api.js'
@@ -176,19 +175,19 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
   })
 
   // ── Agent RPC handlers ──────────────────────────────────
-  // P7 D6/SC2：agent 域 handler 与 sessions handler 同属主线程 plugin RPC，统一从 ALS 取 clientId
-  // 透传给 resolver（per-client 一致性）。ALS 无 store（hook/定时器/生命周期，D7 例外）→ undefined
-  // → resolver 全局 fallback。
-  const activeClientId = (): string | undefined => sessionContext.getStore()?.clientId
+  // P7 长期方案 A：agent 域 handler 与 sessions handler 同属主线程 plugin RPC，统一用
+  // resolveClientId(params)——优先 params 显式 clientId（Worker 经执行上下文注入，绕开 ALS
+  // 跨独立 I/O tick 断裂），ALS 作 fallback（WS 请求同步链路）。ALS 无 store（hook/定时器/
+  // 生命周期，D7 例外）→ undefined → resolver 全局 fallback。
   registerAgentRpcHandlers(rpcServer, {
-    getModel: () => {
+    getModel: (clientId?) => {
       if (!deps.sessionService) return ''
-      const active = ctx.activeSessionResolver.resolve(activeClientId())
+      const active = ctx.activeSessionResolver.resolve(clientId)
       return active?.modelId ?? ''
     },
-    setModel: async (model: string) => {
+    setModel: async (model: string, clientId?) => {
       if (!deps.sessionService) return
-      const active = ctx.activeSessionResolver.resolve(activeClientId())
+      const active = ctx.activeSessionResolver.resolve(clientId)
       if (!active) return
       const parts = model.split('/')
       if (parts.length < MIN_MODEL_PARTS) return
@@ -202,14 +201,14 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
         await deps.sessionService.switchModel(active.id, provider, modelId)
       }
     },
-    getThinkingLevel: () => {
+    getThinkingLevel: (clientId?) => {
       if (!deps.sessionService) return 'off'
-      const active = ctx.activeSessionResolver.resolve(activeClientId())
+      const active = ctx.activeSessionResolver.resolve(clientId)
       return active?.thinkingLevel ?? 'off'
     },
-    setThinkingLevel: async (level: string) => {
+    setThinkingLevel: async (level: string, clientId?) => {
       if (!deps.sessionService) return
-      const active = ctx.activeSessionResolver.resolve(activeClientId())
+      const active = ctx.activeSessionResolver.resolve(clientId)
       if (!active) return
       if (deps.modelService) {
         await deps.modelService.setThinkingLevel(active.id, level)
@@ -220,7 +219,7 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
     getActiveTools: () => {
       return Array.from(toolRegistry.values()).map(e => e.schema.name)
     },
-  })
+  }, resolveClientId)
 
   // ── Workspace RPC handlers ──────────────────────────────
   registerWorkspaceRpcHandlers(rpcServer, {

@@ -7,13 +7,21 @@
  * - plugin RPC handler 用 ALS 取 clientId 透传（D6）、sendMessage(undefined) throw（ERR1）、
  *   agent handler ALS 透传（SC2）、协议层不变（D5，review）。
  *
+ * P7 长期方案 A 测试（核心缺陷修复）：
+ * - resolveClientId：优先 params 显式 clientId（Worker 注入），ALS 作 fallback；
+ *   ALS 无 store + params 无 clientId → undefined。
+ * - Worker→主线程 RPC dispatch 路径：handler 在 ALS 作用域外被调用（模拟独立 I/O tick），
+ *   仅靠 params[CLIENT_ID_PARAM_KEY] 透传 clientId——证明 ALS 断裂已修复。
+ *
  * mock 策略：resolver 测试用 inline 对象 mock sessionService/connectionManager/leaseManager；
  * handler 测试用 mock PluginRpcServer（捕获 registerMethod 的 handler）+ mock SessionHandlers（spy）。
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { Mock } from 'vitest'
-import { ActiveSessionResolver, registerSessionRpcHandlers } from './session-api.js'
+import { ActiveSessionResolver, registerSessionRpcHandlers, resolveClientId } from './session-api.js'
 import { sessionContext } from '../../../infra/async-context.js'
+import { CLIENT_ID_PARAM_KEY } from '../plugin-types.js'
+import { PluginRpcServer } from '../plugin-rpc-server.js'
 import type { SessionSummary, SessionGroup } from '@xyz-agent/shared'
 import type { IPluginServiceDeps } from '../plugin-types.js'
 import type { SessionHandlers } from './session-api.js'
@@ -45,11 +53,13 @@ function mockDeps(opts: {
   persistedGroups?: SessionGroup[]
   activeSessionsMap?: Map<string, string | null | undefined>
   busySessionsMap?: Map<string, string>
+  leaseOwnersBySession?: Map<string, string>
 } = {}): IPluginServiceDeps {
   const summaries: Record<string, SessionSummary> = opts.summaries ?? {}
   const persistedGroups = opts.persistedGroups ?? []
   const activeSessionsMap = opts.activeSessionsMap ?? new Map<string, string | null | undefined>()
   const busySessionsMap = opts.busySessionsMap ?? new Map<string, string>()
+  const leaseOwnersBySession = opts.leaseOwnersBySession ?? new Map<string, string>()
   return {
     sessionService: {
       getSummary: (id: string) => summaries[id],
@@ -63,6 +73,7 @@ function mockDeps(opts: {
         const sid = busySessionsMap.get(clientId)
         return sid ? { sessionId: sid } : undefined
       },
+      getLeaseOwner: (sessionId: string) => leaseOwnersBySession.get(sessionId),
     },
   }
 }
@@ -266,6 +277,7 @@ describe('ActiveSessionResolver (P7 per-clientId)', () => {
     deps.leaseManager = {
       getBusySession: (clientId: string) =>
         clientId === 'A' ? { sessionId: 'lateSession' } : undefined,
+      getLeaseOwner: () => undefined,
     }
 
     // resolver 持有 deps 引用，立刻看到注入的 leaseManager → lease fallback 命中
@@ -414,12 +426,202 @@ describe('plugin.sessions RPC handler (P7 ALS clientId 透传)', () => {
 
     // getActive handler 不需任何业务参数（只读 ALS clientId）
     await handlers.get('plugin.sessions.getActive')!({ pluginId: 'p' })
-    // sendMessage handler 接受可选 sessionId + role + content（协议层与改造前一致）
+    // sendMessage handler 接收可选 sessionId + role + content（协议层与改造前一致）
     await handlers.get('plugin.sessions.sendMessage')!({ pluginId: 'p', sessionId: 's', role: 'user', content: 'c' })
 
     // 协议契约：handler 不要求客户端传 clientId（clientId 从 ALS 隐式取，对插件透明）
     expect(handlers.has('plugin.sessions.getActive')).toBe(true)
     expect(handlers.has('plugin.sessions.sendMessage')).toBe(true)
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════
+// w3: resolveClientId + Worker→主线程 RPC dispatch 路径（P7 长期方案 A）
+//
+// 这组测试证明 ALS 跨独立 I/O tick 断裂的核心缺陷已修复：
+// plugin 工具执行经 pi bridge_request 事件触发（独立 tick，不在任何 WS 请求的 ALS 作用域内），
+// clientId 经 bridge invoke params → Worker 执行上下文 → RPC params[CLIENT_ID_PARAM_KEY]
+// 显式透传回主线程 handler，handler 据此 per-client resolve——不再依赖 ALS。
+// ═══════════════════════════════════════════════════════════════
+
+describe('resolveClientId (P7 长期方案 A: params 优先, ALS fallback)', () => {
+  // TC-w3-1: params 显式 clientId 优先（即使 ALS 无 store）
+  it('TC-w3-1: params[CLIENT_ID_PARAM_KEY] 命中时返回该 clientId，无视 ALS（独立 I/O tick 场景）', () => {
+    // 不在 sessionContext.run 内（ALS 无 store）——模拟 pi 事件回调的独立 tick
+    expect(sessionContext.getStore()).toBeUndefined()
+
+    const clientId = resolveClientId({ [CLIENT_ID_PARAM_KEY]: 'client-from-worker' })
+
+    expect(clientId).toBe('client-from-worker')
+  })
+
+  // TC-w3-2: params 无显式 clientId 时 fallback 到 ALS
+  it('TC-w3-2: params 无 CLIENT_ID_PARAM_KEY 时 fallback 到 ALS getStore', () => {
+    let resolved: string | undefined
+    sessionContext.run({ clientId: 'als-client' }, () => {
+      resolved = resolveClientId({ pluginId: 'p' })
+    })
+    expect(resolved).toBe('als-client')
+  })
+
+  // TC-w3-3: params 无 + ALS 无 → undefined（hook/定时器/生命周期，D7 例外）
+  it('TC-w3-3: params 无 + ALS 无 store → undefined（全局 fallback）', () => {
+    expect(sessionContext.getStore()).toBeUndefined()
+    expect(resolveClientId({ pluginId: 'p' })).toBeUndefined()
+    expect(resolveClientId(undefined)).toBeUndefined()
+  })
+
+  // TC-w3-4: params 显式 clientId 优先于 ALS（两者都有时 params 胜出）
+  it('TC-w3-4: params clientId 与 ALS clientId 同时存在时 params 优先', () => {
+    let resolved: string | undefined
+    sessionContext.run({ clientId: 'als-client' }, () => {
+      resolved = resolveClientId({ [CLIENT_ID_PARAM_KEY]: 'explicit-client' })
+    })
+    expect(resolved).toBe('explicit-client')
+  })
+
+  // TC-w3-5: params clientId 为空字符串时忽略（fallback ALS）
+  it('TC-w3-5: params[CLIENT_ID_PARAM_KEY] 为空字符串时视为无，fallback ALS', () => {
+    let resolved: string | undefined
+    sessionContext.run({ clientId: 'als-client' }, () => {
+      resolved = resolveClientId({ [CLIENT_ID_PARAM_KEY]: '' })
+    })
+    expect(resolved).toBe('als-client')
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════
+// w4: Worker→主线程 RPC dispatch 真实路径（PluginRpcServer.dispatch，非 mock 同步直调）
+//
+// 模拟真实链路：Worker postMessage RPC 请求 → plugin-host worker.on('message') →
+// rpcServer.dispatch → handler。关键：dispatch 在独立 tick（setTimeout/postMessage 回调）
+// 触发，不在任何 sessionContext.run 作用域内——这正是 ALS 断裂的场景。clientId 必须靠
+// params[CLIENT_ID_PARAM_KEY] 透传。
+// ═══════════════════════════════════════════════════════════════
+
+describe('Worker→主线程 RPC dispatch 真实路径 (P7 长期方案 A: ALS 断裂修复)', () => {
+  beforeEach(() => {
+    // 上面 ActiveSessionResolver block 的 beforeEach 调了 vi.useFakeTimers() 但未恢复，
+    // 此处显式切回 real timers——本 block 不依赖定时器，但需保证不受 fake timers 污染。
+    vi.useRealTimers()
+  })
+
+  /**
+   * 用真实 PluginRpcServer + 模拟 Worker port。
+   *
+   * 关键属性：dispatch 在「不在任何 sessionContext.run 内」的调用栈执行——这正是 ALS 断裂
+   * 的场景（pi 事件回调的独立 tick）。若 handler 依赖 ALS，clientId 会是 undefined。
+   * clientId 必须靠 params[CLIENT_ID_PARAM_KEY] 显式透传——本组测试验证此修复。
+   */
+  function setupRealDispatch(handlers: SessionHandlers): {
+    rpcServer: PluginRpcServer
+    /** 模拟 Worker 发 RPC 请求（dispatch 在 sessionContext.run 作用域外调用） */
+    sendWorkerRpc: (method: string, params: Record<string, unknown>) => Promise<unknown>
+    lastResponse: () => unknown
+  } {
+    const rpcServer = new PluginRpcServer()
+    registerSessionRpcHandlers(rpcServer, handlers)
+
+    let capturedResponse: unknown = undefined
+    // Worker port：捕获 dispatch 回复给 Worker 的 RPC 响应。
+    const workerPort = {
+      postMessage(message: unknown) {
+        const m = message as { type: string; response?: unknown }
+        if (m.type === 'rpc' && m.response) {
+          capturedResponse = m.response
+        }
+      },
+    }
+    rpcServer.registerWorker('w1', workerPort)
+
+    const sendWorkerRpc = (method: string, params: Record<string, unknown>): Promise<unknown> => {
+      // 模拟 Worker 发来的 RPC 请求（扁平格式，与 PluginRpcClient.request 一致）。
+      // 直接调 dispatch——它是一个普通 async 方法调用，调用栈不在任何 sessionContext.run 内，
+      // 真实复现「pi 事件回调独立 tick 触发 worker.on('message') → dispatch」的 ALS 断裂场景。
+      const workerRequest = { type: 'rpc', jsonrpc: '2.0', id: 1, method, params }
+      return rpcServer.dispatch('w1', workerRequest as never).then(() => capturedResponse)
+    }
+
+    return { rpcServer, sendWorkerRpc, lastResponse: () => capturedResponse }
+  }
+
+  // TC-w4-1: getActive handler 在独立 tick（无 ALS）经 dispatch 调用，
+  // 仅靠 params[CLIENT_ID_PARAM_KEY] 透传 clientId——证明 ALS 断裂已修复。
+  it('TC-w4-1: dispatch 在独立 tick（无 ALS）+ params 含 CLIENT_ID_PARAM_KEY → handler 收到正确 clientId', async () => {
+    const getActive = vi.fn(() => undefined)
+    const handlers: SessionHandlers = {
+      listSessions: async () => [],
+      getSession: async () => undefined,
+      getActiveSession: getActive,
+      sendMessage: async () => {},
+    }
+    const { sendWorkerRpc } = setupRealDispatch(handlers)
+
+    // 不在 sessionContext.run 内（ALS 无 store）——模拟 pi 事件回调独立 tick
+    expect(sessionContext.getStore()).toBeUndefined()
+    await sendWorkerRpc('plugin.sessions.getActive', { pluginId: 'p', [CLIENT_ID_PARAM_KEY]: 'client-A' })
+
+    expect(getActive).toHaveBeenCalledWith('client-A')
+  })
+
+  // TC-w4-2: 多客户端隔离——A/B 各自的 Worker RPC 携带各自 clientId，
+  // handler 分别 resolve（A→sessionX, B→sessionY）。
+  it('TC-w4-2: A/B 各自 dispatch（独立 tick）→ handler 分别收到 client-A / client-B（per-client 隔离）', async () => {
+    const seenClientIds: (string | undefined)[] = []
+    const handlers: SessionHandlers = {
+      listSessions: async () => [],
+      getSession: async () => undefined,
+      getActiveSession: (clientId?) => {
+        seenClientIds.push(clientId)
+        return undefined
+      },
+      sendMessage: async () => {},
+    }
+    const { sendWorkerRpc } = setupRealDispatch(handlers)
+
+    await sendWorkerRpc('plugin.sessions.getActive', { pluginId: 'p', [CLIENT_ID_PARAM_KEY]: 'client-A' })
+    await sendWorkerRpc('plugin.sessions.getActive', { pluginId: 'p', [CLIENT_ID_PARAM_KEY]: 'client-B' })
+
+    expect(seenClientIds).toEqual(['client-A', 'client-B'])
+  })
+
+  // TC-w4-3: dispatch 在独立 tick + params 无 clientId + ALS 无 store → handler 收到 undefined（全局 fallback）
+  it('TC-w4-3: dispatch 在独立 tick + 无 clientId 透传 → handler 收到 undefined（全局 fallback，零回归）', async () => {
+    const getActive = vi.fn(() => undefined)
+    const handlers: SessionHandlers = {
+      listSessions: async () => [],
+      getSession: async () => undefined,
+      getActiveSession: getActive,
+      sendMessage: async () => {},
+    }
+    const { sendWorkerRpc } = setupRealDispatch(handlers)
+
+    // ALS 无 store + params 无 CLIENT_ID_PARAM_KEY（模拟 hook/定时器触发的 plugin 操作）
+    expect(sessionContext.getStore()).toBeUndefined()
+    await sendWorkerRpc('plugin.sessions.getActive', { pluginId: 'p' })
+
+    expect(getActive).toHaveBeenCalledWith(undefined)
+  })
+
+  // TC-w4-4: sendMessage(undefined) 在独立 tick 经 dispatch + params clientId 解析 active session
+  it('TC-w4-4: sendMessage(sessionId 缺失) 在独立 tick + params clientId → 用解析的 sessionId 调 sendMessage', async () => {
+    const active: SessionInfoLike = { id: 'sessionX', label: 'X', cwd: '/c', status: 'idle', createdAt: 0, lastActiveAt: 0 }
+    const sendMessage = vi.fn(async () => {})
+    const getActive = vi.fn(() => active)
+    const handlers: SessionHandlers = {
+      listSessions: async () => [],
+      getSession: async () => undefined,
+      getActiveSession: getActive as SessionHandlers['getActiveSession'],
+      sendMessage,
+    }
+    const { sendWorkerRpc } = setupRealDispatch(handlers)
+
+    await sendWorkerRpc('plugin.sessions.sendMessage', {
+      pluginId: 'p', role: 'user', content: 'hi', [CLIENT_ID_PARAM_KEY]: 'client-A',
+    })
+
+    expect(getActive).toHaveBeenCalledWith('client-A')
+    expect(sendMessage).toHaveBeenCalledWith('sessionX', 'user', 'hi')
   })
 })
 

@@ -14,44 +14,55 @@
  *
  * Phase 2 中 get/set 模型和思考级别为 stub 实现（返回/接受假数据）。
  * Phase 3 中对接 IPiEngine（pi 的 setModel 等）。
+ *
+ * P7 长期方案 A：registerAgentRpcHandlers 经 clientIdResolver 从 dispatch params 解析
+ * clientId（优先 Worker 注入的显式 clientId，ALS 作 fallback），透传给 handler → resolver，
+ * 与 sessions 域一致——绕开 ALS 跨独立 I/O tick 断裂。
  */
 
 import type { PluginRpcServer } from '../plugin-rpc-server.js'
 import type { PluginRpcClient } from '../plugin-rpc-client.js'
 
-/** Agent 服务依赖（主线程侧） */
+/** Agent 服务依赖（主线程侧）。各方法接收当前调用的 clientId（P7 per-client resolve）。 */
 export interface AgentHandlers {
-  getModel(): string | Promise<string>
-  setModel(model: string): void | Promise<void>
-  getThinkingLevel(): string | Promise<string>
-  setThinkingLevel(level: string): void | Promise<void>
-  getActiveTools(): string[] | Promise<string[]>
+  getModel(clientId?: string): string | Promise<string>
+  setModel(model: string, clientId?: string): void | Promise<void>
+  getThinkingLevel(clientId?: string): string | Promise<string>
+  setThinkingLevel(level: string, clientId?: string): void | Promise<void>
+  getActiveTools(clientId?: string): string[] | Promise<string[]>
 }
+
+/**
+ * 从 dispatch params 解析 clientId 的契约（P7 长期方案 A）。
+ * 优先 params 显式 clientId（Worker 注入），ALS 作 fallback。
+ */
+export type ClientIdResolver = (params: Record<string, unknown> | undefined) => string | undefined
 
 export function registerAgentRpcHandlers(
   rpcServer: PluginRpcServer,
   deps: AgentHandlers,
+  clientIdResolver?: ClientIdResolver,
 ): void {
   rpcServer.registerMethod('plugin.agent.setModel', async (params) => {
     const model = params.model as string
-    await deps.setModel(model)
+    await deps.setModel(model, clientIdResolver?.(params))
   })
 
-  rpcServer.registerMethod('plugin.agent.getModel', async () => {
-    return deps.getModel()
+  rpcServer.registerMethod('plugin.agent.getModel', async (params) => {
+    return deps.getModel(clientIdResolver?.(params))
   })
 
-  rpcServer.registerMethod('plugin.agent.getThinkingLevel', async () => {
-    return deps.getThinkingLevel()
+  rpcServer.registerMethod('plugin.agent.getThinkingLevel', async (params) => {
+    return deps.getThinkingLevel(clientIdResolver?.(params))
   })
 
   rpcServer.registerMethod('plugin.agent.setThinkingLevel', async (params) => {
     const level = params.level as string
-    await deps.setThinkingLevel(level)
+    await deps.setThinkingLevel(level, clientIdResolver?.(params))
   })
 
-  rpcServer.registerMethod('plugin.agent.getActiveTools', async () => {
-    return deps.getActiveTools()
+  rpcServer.registerMethod('plugin.agent.getActiveTools', async (params) => {
+    return deps.getActiveTools(clientIdResolver?.(params))
   })
 }
 
