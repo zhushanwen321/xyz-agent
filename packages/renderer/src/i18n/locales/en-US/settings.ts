@@ -367,6 +367,11 @@ export default {
     defaultOff: 'Default Off',
     noExtensions: 'No extensions',
     builtinExtensionHint: 'Note: 3 built-in extensions (xyz-agent-extension / xyz-system-prompt-extension / xyz-client-msg-id-mapper) are always loaded and not affected by extension policies.',
+    summaryAll: 'All available',
+    summaryNone: 'All disabled',
+    summaryAllowlist: 'Allowlist {count} item(s)',
+    summaryDenylist: 'Denylist {count} item(s)',
+    summarySeparator: ' · ',
   },
   // ── Worktree page (WorktreePage) ──
   worktree: {

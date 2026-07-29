@@ -367,6 +367,11 @@ export default {
     defaultOff: '默认禁用',
     noExtensions: '暂无扩展',
     builtinExtensionHint: '提示：3 个内置扩展（xyz-agent-extension / xyz-system-prompt-extension / xyz-client-msg-id-mapper）始终加载，不受扩展策略影响。',
+    summaryAll: '全部可用',
+    summaryNone: '全部禁用',
+    summaryAllowlist: '白名单 {count} 项',
+    summaryDenylist: '黑名单 {count} 项',
+    summarySeparator: ' · ',
   },
   // ── Worktree 页（WorktreePage）──
   worktree: {
