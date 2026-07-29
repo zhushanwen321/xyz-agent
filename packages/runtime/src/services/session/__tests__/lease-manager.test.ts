@@ -34,11 +34,12 @@ function mockSvc(sessions: IManagedSessionView[] = []): { svc: ISessionServiceIn
   for (const s of sessions) map.set(s.id, s)
   const svc = {
     getSession: (id: string) => map.get(id),
-    updateSession: (id: string, patch: Partial<Pick<IManagedSessionView, 'busyOwnerId' | 'leaseExpiresAt'>>) => {
+    updateSession: (id: string, patch: Partial<Pick<IManagedSessionView, 'busyOwnerId' | 'leaseExpiresAt' | 'lastOwnerId'>>) => {
       const s = map.get(id)
       if (!s) return
       if ('busyOwnerId' in patch) s.busyOwnerId = patch.busyOwnerId
       if ('leaseExpiresAt' in patch) s.leaseExpiresAt = patch.leaseExpiresAt
+      if ('lastOwnerId' in patch) s.lastOwnerId = patch.lastOwnerId
     },
     allSessions: () => map.values(),
   } as unknown as ISessionServiceInternal
@@ -112,6 +113,52 @@ describe('LeaseManager（P5 lease 状态机）', () => {
     expect(ORPHAN_PI_OWNER).toBe('<orphan-pi>')
   })
 
+  // cr-fix orphan-pi 续租：lease 被 reaper 释放（busyOwnerId=undefined）但 pi 仍在 turn
+  //（isGenerating=true），原 owner 再发 follow_up 时不应被自己阻塞，应视为续租。
+  it('TC4b: orphan-pi 场景下原 owner（lastOwnerId 匹配）acquire 视为续租（不被自己阻塞）', () => {
+    const { svc } = mockSvc([mockSession({
+      id: 's1', isGenerating: true, busyOwnerId: undefined, lastOwnerId: 'clientA',
+    })])
+    const broker = mockBroker()
+    const lm = new LeaseManager(svc, broker, { ttlMs: 30000 })
+
+    vi.setSystemTime(10000)
+    const res = lm.acquire('s1', 'clientA', 'Mac')
+
+    // 视为续租：返回 acquired 而非 busy + <orphan-pi>
+    expect(res).toEqual({ kind: 'acquired', expiresAt: 40000 })
+    expect(svc.getSession('s1')?.busyOwnerId).toBe('clientA')
+    expect(svc.getSession('s1')?.leaseExpiresAt).toBe(40000)
+  })
+
+  it('TC4c: orphan-pi 场景下非原 owner（lastOwnerId 不匹配）acquire 仍 busy 拒绝', () => {
+    const { svc } = mockSvc([mockSession({
+      id: 's1', isGenerating: true, busyOwnerId: undefined, lastOwnerId: 'clientA',
+    })])
+    const broker = mockBroker()
+    const lm = new LeaseManager(svc, broker, { ttlMs: 30000 })
+
+    const res = lm.acquire('s1', 'clientB', 'Phone')
+
+    // 非原 owner：仍 busy 拒绝（orphan pi 占用，deviceB 不能抢）
+    expect(res).toEqual({ kind: 'busy', owner: ORPHAN_PI_OWNER, expiresAt: 0 })
+    expect(svc.getSession('s1')?.busyOwnerId).toBeUndefined()
+  })
+
+  it('TC4d: orphan-pi 续租仅在 isGenerating=true 时生效（pi 已结束 turn 时不续租，正常 acquire）', () => {
+    // isGenerating=false + lastOwnerId 匹配：无 occupied，走正常 acquire 分支（非续租路径）
+    const { svc } = mockSvc([mockSession({
+      id: 's1', isGenerating: false, busyOwnerId: undefined, lastOwnerId: 'clientA',
+    })])
+    const broker = mockBroker()
+    const lm = new LeaseManager(svc, broker, { ttlMs: 30000 })
+
+    vi.setSystemTime(1000)
+    const res = lm.acquire('s1', 'clientA', 'Mac')
+
+    expect(res).toEqual({ kind: 'acquired', expiresAt: 31000 })
+  })
+
   // TC10: not_found 防御（session 不存在时不静默 acquire）
   it('TC10a: session 不存在时 acquire 返回 not_found（不静默创建 lease）', () => {
     // mockSvc() 无 sessions → getSession('missing') 返回 undefined
@@ -173,6 +220,32 @@ describe('LeaseManager（P5 lease 状态机）', () => {
     expect(svc.getSession('s1')?.isGenerating).toBe(true) // 不动 isGenerating
     expect(broker.broadcasts).toHaveLength(1)
     expect(broker.broadcasts[0]).toEqual({ type: 'session.idle', payload: { sessionId: 's1', reason: 'turn_end' } })
+  })
+
+  // cr-fix orphan-pi 续租：release 时把原 busyOwnerId 快照到 lastOwnerId，
+  // 供后续 acquire 判定 orphan-pi 续租（lease 被 reaper 释放但 pi 仍在 turn）。
+  it('TC6b: release 把原 busyOwnerId 快照到 lastOwnerId（供 orphan-pi 续租判定）', () => {
+    const { svc } = mockSvc([mockSession({ id: 's1', busyOwnerId: 'clientA', leaseExpiresAt: 5000 })])
+    const broker = mockBroker()
+    const lm = new LeaseManager(svc, broker, { ttlMs: 30000 })
+
+    lm.release('s1', 'lease_expired')
+
+    expect(svc.getSession('s1')?.busyOwnerId).toBeUndefined()
+    expect(svc.getSession('s1')?.lastOwnerId).toBe('clientA') // 原 owner 快照
+  })
+
+  it('TC6c: release 对无 owner 的 session 不覆盖 lastOwnerId（幂等，保留上一任 owner）', () => {
+    const { svc } = mockSvc([mockSession({
+      id: 's1', busyOwnerId: undefined, lastOwnerId: 'clientA', // 已 release 过一次
+    })])
+    const broker = mockBroker()
+    const lm = new LeaseManager(svc, broker, { ttlMs: 30000 })
+
+    lm.release('s1', 'lease_expired')
+
+    // busyOwnerId 已空，不覆盖 lastOwnerId（避免 undefined 覆盖上一任 owner）
+    expect(svc.getSession('s1')?.lastOwnerId).toBe('clientA')
   })
 
   // TC7: TTL 过期

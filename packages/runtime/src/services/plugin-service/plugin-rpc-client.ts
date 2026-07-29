@@ -48,7 +48,9 @@ export class PluginRpcClient {
    * message 处理是 fire-and-forget（无队列/single-flight）。若不同 session 的 pi 共享
    * 同一 trusted Worker 且同插件并发触发 tool execute，极罕见的跨 session 并发可能
    * 串台（prevClientId save/restore 仅对嵌套安全，对真并发不安全）。正常单 session
-   * 路径概率极低故不处理；如需严格保证可加 single-flight 队列。
+   * 路径概率极低故不处理；如需严格保证可加 single-flight 队列。cr-fix 已在
+   * plugin-bootstrap.handleIncomingRequest 加运行时并发守卫：toolExecuteInFlight
+   * 标记检测到并发 tool.execute 时 console.warn（不阻断），便于运维定位。
    */
   private currentClientId: string | undefined
 

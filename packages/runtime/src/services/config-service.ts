@@ -210,6 +210,14 @@ export class ConfigService implements IConfigService {
   }, expectedVersion: number): { newDefault?: { provider: string; modelId: string }; newVersion: number } {
     // P6 D3 config CAS：先校验 expectedVersion，不等抛 VersionConflictError（handler 转 version_conflict）。
     // 必须在 upsert 前校验——避免冲突时仍写入 providers（version 自增只在成功路径触发）。
+    //
+    // cr-fix CAS 原子性说明（readModels 校验 → upsertProvider 写 providers → bumpModelsVersion 写 version
+    // 三步独立）：此 CAS 安全性依赖 IConfigStore 实现的全同步语义——readModels/upsertProvider/
+    // bumpModelsVersion 均为同步函数（无 await），底层 JsonStore.read/writeModels/atomicWrite 全同步
+    //（readFileSync + writeFileSync + renameSync），updateSettingsSync 同步 RMW。Node 单线程下同步代码
+    // 不被 event loop 中断，三步之间无其他代码插入，故「第二读仍是第一读快照」成立，CAS 有效。
+    // 若未来 configStore 改为异步（如引入 fs/promises 或 lazy flush），此 CAS 会失效——届时需把
+    // check + upsert + bumpVersion 合并成 configStore 层单次同步 RMW（upsertProviderWithCas）。
     const currentVersion = this.configStore.readModels().version ?? 0
     if (currentVersion !== expectedVersion) {
       throw new VersionConflictError(currentVersion)
@@ -284,6 +292,8 @@ export class ConfigService implements IConfigService {
 
   deleteProvider(providerId: string, expectedVersion: number): { removed: boolean; newDefault?: { provider: string; modelId: string }; newVersion: number } {
     // P6 D3 config CAS：先校验 expectedVersion（与 setProvider 同模式）。
+    // cr-fix CAS 原子性说明同 setProvider：依赖 configStore 全同步语义（readModels/removeProvider/
+    // bumpModelsVersion 均同步，Node 单线程不交错）。详见 setProvider 注释。
     const currentVersion = this.configStore.readModels().version ?? 0
     if (currentVersion !== expectedVersion) {
       throw new VersionConflictError(currentVersion)

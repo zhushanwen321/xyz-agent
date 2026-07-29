@@ -42,6 +42,27 @@ const loadedModules = new Map<string, PluginModule>()
 /** Worker 本地 tool handler 注册表 */
 const toolHandlers = new Map<string, ToolExecuteHandler>()
 
+/**
+ * cr-fix P7 并发守卫：当前是否有 tool.execute 在进行中。
+ *
+ * currentClientId 是 PluginRpcClient 的模块级单值，其 save/restore
+ *（prevClientId = getCurrent(); setCurrent(); ...finally setCurrent(prev)）
+ * 仅对「嵌套」安全（内层 restore 回外层），对「真并发」不安全。
+ *
+ * 业务正常路径：单个 pi 进程在单个 session 的工具执行循环中串行调用（一个工具完成才下一个），
+ * 故同一 Worker 上同插件的 tool.execute 不会真正并发，模块级单值安全。
+ *
+ * 残留风险：trusted Worker 可承载多插件（MAX_PLUGINS_PER_TRUSTED_WORKER=10），parentPort
+ * message 处理是 fire-and-forget（无 single-flight 队列）。若不同 session 的 pi 共享同一
+ * trusted Worker 且同插件并发触发 tool execute，prevClientId save/restore 可能把 session A
+ * 的 clientId 注入 session B 的 RPC。此场景概率极低（业务实际单 pi 单 session 串行），
+ * 故采用「warn 不阻断」方案而非 single-flight 队列（最小改动）。
+ *
+ * 此 flag 在 handleIncomingRequest 入口检测：若上一个 tool.execute 未完成就来了第二个，
+ * warn 提示运维/排查（不阻断执行，避免误杀正常嵌套调用）。
+ */
+let toolExecuteInFlight = false
+
 /** 注册 tool handler（由 tool-api.ts 调用） */
 export function registerToolHandler(toolKey: string, handler: ToolExecuteHandler): void {
   toolHandlers.set(toolKey, handler)
@@ -143,6 +164,18 @@ async function handleIncomingRequest(request: RpcRequest): Promise<void> {
       })
       return
     }
+    // cr-fix P7 并发守卫：若上一个 tool.execute 尚未完成（await handler 未返回），说明
+    // 同 Worker 收到了并发 tool.execute。此时 currentClientId 的 save/restore 对真并发不安全
+    //（可能把上一个 session 的 clientId 注入本次 RPC）。warn 提示，不阻断——业务实际单 pi 单
+    // session 串行，此场景概率极低；若频繁出现需引入 single-flight 队列串行化。
+    if (toolExecuteInFlight) {
+      console.warn(
+        `[plugin-bootstrap] concurrent plugin.tool.execute detected on worker (toolKey=${toolKey}, sessionId=${sessionId ?? 'n/a'}). ` +
+        'currentClientId save/restore is not safe under true concurrency; cross-session clientId bleed possible. ' +
+        'Business path is single-pi-single-session serial; if this warns frequently, add a single-flight queue.',
+      )
+    }
+    toolExecuteInFlight = true
     // P7 长期方案 A：捕获 bridge invoke 带来的 clientId 作为 Worker 执行上下文。
     // 工具执行期内 plugin 调 api.sessions.getActive 等 RPC 回主线程时，PluginRpcClient
     // 自动注入该 clientId 到 params，主线程 handler 据此 per-client resolve，
@@ -166,6 +199,7 @@ async function handleIncomingRequest(request: RpcRequest): Promise<void> {
       })
     } finally {
       rpcClient.setCurrentClientId(prevClientId)
+      toolExecuteInFlight = false
     }
   } else {
     postRpcResponse(request.id, undefined, {

@@ -95,6 +95,19 @@ export class LeaseManager {
     }
     const occupied = session.busyOwnerId || session.isGenerating
     if (occupied && session.busyOwnerId !== clientId) {
+      // cr-fix orphan-pi 续租：lease 已被 reaper 释放（busyOwnerId=undefined）但 pi 仍在 turn
+      //（isGenerating=true）。若 lastOwnerId 指向当前 clientId，说明 lease 是被自己持有的、
+      // 因 ping 漏续被 reaper 误释放——此时同设备用户再发 follow_up 不应被自己阻塞，
+      // 视为续租（renew）而非 busy 拒绝。把 lease 交还给原 owner，恢复正常 follow_up 流程。
+      if (
+        session.isGenerating
+        && session.busyOwnerId === undefined
+        && session.lastOwnerId === clientId
+      ) {
+        const expiresAt = Date.now() + this.ttlMs
+        this.svc.updateSession(sessionId, { busyOwnerId: clientId, leaseExpiresAt: expiresAt })
+        return { kind: 'acquired', expiresAt }
+      }
       // 被占用且 owner≠当前 clientId → 拒绝。孤儿 pi（isGenerating 但无 owner）返回 <orphan-pi>。
       const owner = session.busyOwnerId ?? ORPHAN_PI_OWNER
       const expiresAt = session.leaseExpiresAt ?? 0
@@ -120,8 +133,18 @@ export class LeaseManager {
   /**
    * 释放 lease（四路径）。清 busyOwnerId/leaseExpiresAt 为 undefined（不动 isGenerating——
    * isGenerating 由 pi turn-end/abort 路径独立复位，两者独立）+ 广播 session.idle。
+   *
+   * cr-fix orphan-pi 续租：release 前把原 busyOwnerId 快照写入 lastOwnerId。
+   * reaper 把过期 lease release('lease_expired') 时清空 busyOwnerId，但 pi turn 未必同步结束
+   *（orphan pi）。原 owner 再发 follow_up 时 acquire 据此 lastOwnerId 判定为续租而非 busy 拒绝。
+   * 仅 busyOwnerId 有值时才快照——避免把 undefined 覆盖掉上一任 owner（release 幂等场景）。
    */
   release(sessionId: string, reason: LeaseReleaseReason): void {
+    const session = this.svc.getSession(sessionId)
+    // 快照原 owner 供 orphan-pi 续租判定（acquire 读 lastOwnerId）。session 不存在时跳过（防御）。
+    if (session?.busyOwnerId !== undefined) {
+      this.svc.updateSession(sessionId, { lastOwnerId: session.busyOwnerId })
+    }
     this.svc.updateSession(sessionId, { busyOwnerId: undefined, leaseExpiresAt: undefined })
     this.broker.broadcast({ type: 'session.idle', payload: { sessionId, reason } })
   }

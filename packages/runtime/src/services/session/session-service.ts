@@ -868,12 +868,16 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * P5 lease：部分更新 session 的 lease 字段。patch 值 undefined 即清字段（release 路径清 lease）。
    * session 不存在时 no-op（acquire 前已 ensureActive 保证存在，此处防御性）。
    * 单写者仍是 Facade（LeaseManager 经 ISessionServiceInternal 调用，不直接持有 Map）。
+   *
+   * cr-fix orphan-pi 续租：lastOwnerId 是 release 时从 busyOwnerId 快照的「上一任 owner」，
+   * acquire 据此判定 orphan-pi（lease 被 reaper 释放但 pi 仍在 turn）场景下原 owner 的续租。
    */
-  updateSession(sessionId: string, patch: Partial<Pick<IManagedSessionView, 'busyOwnerId' | 'leaseExpiresAt'>>): void {
+  updateSession(sessionId: string, patch: Partial<Pick<IManagedSessionView, 'busyOwnerId' | 'leaseExpiresAt' | 'lastOwnerId'>>): void {
     const session = this.sessions.get(sessionId)
     if (!session) return
     if ('busyOwnerId' in patch) session.busyOwnerId = patch.busyOwnerId
     if ('leaseExpiresAt' in patch) session.leaseExpiresAt = patch.leaseExpiresAt
+    if ('lastOwnerId' in patch) session.lastOwnerId = patch.lastOwnerId
   }
   /**
    * P5 lease：遍历所有活跃 session（供 LeaseManager.sweepExpired 扫过期 + getBusySession 反查 owner）。

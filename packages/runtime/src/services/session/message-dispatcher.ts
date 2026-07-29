@@ -147,6 +147,11 @@ export class MessageDispatcher {
       if (activeSession.isCompacting || activeSession.isBashRunning) {
         console.warn(`[message-dispatcher] preemptive reject (compacting/bash), sid=${sessionId}`)
         this.rejectBusy(sessionId, clientId, 'compacting', activeSession)
+        // cr-fix 防御性 release：此拒绝路径发生在下方 lease acquire 之前，此刻本 session 无 lease
+        // 可释放（release 对无 busyOwnerId 的 session 是 no-op，幂等安全）。保留这行是为对冲
+        // 顺序耦合脆弱性——未来若把 lease acquire 提前到预检之前，拒绝路径不调 release 会让
+        // lease 持有到 TTL（90s）锁死 session。release 内部已处理「session 不存在 / 无 owner」。
+        this.leaseManager?.release(sessionId, 'aborted')
         return { blocked: true, rejected: true }
       }
       // P5 lease：leaseManager 已注入且 clientId 提供时走 lease acquire（隐式 acquire + 定向 busy 拒绝）。
@@ -162,6 +167,10 @@ export class MessageDispatcher {
             type: 'message.error',
             payload: { sessionId, message: errMsg },
           })
+          // cr-fix 防御性 release：acquire 返回 not_found 表示未持锁（session 不存在），此刻无 lease
+          // 可释放——release 对不存在的 session 是 no-op（幂等安全）。保留此行对冲顺序耦合脆弱性：
+          // 未来若重排让 acquire 在更早处对已存在 session 持锁，拒绝路径漏 release 会锁死到 TTL。
+          this.leaseManager?.release(sessionId, 'aborted')
           return { blocked: true, rejected: true }
         }
         if (lease.kind === 'busy') {
@@ -193,6 +202,11 @@ export class MessageDispatcher {
             type: 'session.busy',
             payload: { sessionId, clientId: lease.owner, deviceName: ownerDeviceName, expiresAt: lease.expiresAt },
           })
+          // cr-fix 顺序约束说明：此处【故意不调 release】。acquire 返回 busy 表示「lease.owner
+          //（别的设备/客户端）持锁」，本调用方未获取 lease（busyOwnerId 仍是 lease.owner，非本 clientId）。
+          // release 的语义是「释放自己的锁」——对别人持有的锁调 release 会误清 lease.owner 的 lease。
+          // 顺序约束：busy 是 acquire 的同步返回（本路径从未持锁），无需 release；只有 acquired 路径
+          // 才需在后续失败（client.prompt 抛错）时 release（见下方 send_failed 路径）。
           return { blocked: true, rejected: true }
         }
         // lease acquired/renewed → 继续 sendPrompt
@@ -202,6 +216,11 @@ export class MessageDispatcher {
         // 降级路径：leaseManager 未注入或无 clientId，走旧 isGenerating 预检（向后兼容）。
         console.warn(`[message-dispatcher] preemptive reject (busy, legacy), sid=${sessionId}`)
         this.rejectBusy(sessionId, clientId, 'busy', activeSession)
+        // cr-fix 防御性 release（与上方 compacting/bash 拒绝路径对称）：此分支条件
+        // `!this.leaseManager || !clientId` 决定了 lease 路径未走，此刻无 lease 可释放
+        //（leaseManager 可能注入但 clientId 缺失，acquire 不会执行）。release 幂等 no-op 安全。
+        // 保留是为防御未来重排：若条件改写让 acquire 先于此分支执行，需释放否则锁死。
+        this.leaseManager?.release(sessionId, 'aborted')
         return { blocked: true, rejected: true }
       }
       activeSession.lastActiveAt = Date.now()
@@ -229,6 +248,16 @@ export class MessageDispatcher {
       if (activeSession) activeSession.isGenerating = false
       // 【审查 M3】acquire 后 sendPrompt 失败立即释放 lease，避免 lease 持有 30s 锁死 session
       // （失败后 isGenerating 已复位，但 lease 不释放会让其他客户端被 busy 拒绝 30s）。
+      //
+      // cr-fix 时序说明（release 触发 session.idle 广播 vs message.error 广播顺序无保证）：
+      // release 先广播 session.idle（清占用指示器），紧接着 broadcast message.error（聊天流错误气泡）。
+      // 两条消息经 broker 顺序入 session 桶，但前端处理路径相互独立——经调研确认无时序不一致 bug：
+      // - session.idle → useConnection 调 useSessionStore().clearSessionBusy(sid)，仅改 session-list
+      //   store 的 busyOwnerId/leaseExpiresAt（标题旁占用指示器 UI）。
+      // - message.error → chat-message-effects 调 finalizeSession('error')，仅收口 chat messages store
+      //   的 streaming assistant entity（错误化 + 清 pendingSend + 清 timer）。
+      // 两者操作不同的 store（session-list vs chat-messages），互不读写对方状态，故无论到达顺序
+      // 前端终态一致：session 标空闲 + 聊天气泡错误化。无需特殊处理（不改 release 为静默清字段）。
       this.leaseManager?.release(sessionId, 'send_failed')
       this.presenceRefresh?.()
       this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: errMsg } })
