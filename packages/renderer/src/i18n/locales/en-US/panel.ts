@@ -172,6 +172,10 @@ export default {
     noTasks: 'No tasks',
     tasksHint: 'Shows after goal/todo created',
     unreadMessages: '{count} new messages while drawer was open',
+    workflowDag: {
+      pendingTitle: 'Pending',
+      empty: 'No execution nodes',
+    },
   },
   browserPane: {
     back: 'Back',

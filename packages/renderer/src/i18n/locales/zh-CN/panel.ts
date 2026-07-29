@@ -172,6 +172,10 @@ export default {
     noTasks: '暂无任务',
     tasksHint: 'goal/todo 创建后显示',
     unreadMessages: '抽屉打开期间有 {count} 条新消息',
+    workflowDag: {
+      pendingTitle: '待执行',
+      empty: '暂无执行节点',
+    },
   },
   browserPane: {
     back: '后退',

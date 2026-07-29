@@ -123,14 +123,8 @@ import { ChevronLeft, Loader2, Pause, Play, Square, Check } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
+import { callDotClass, phaseDotClass, formatTokens, formatDuration } from '@/composables/workflow/format'
 import type { WorkflowRunRecord, WorkflowAgentCall } from '@xyz-agent/shared'
-
-/** token 数超过此阈值显示 k 单位 */
-const TOKEN_K_THRESHOLD = 1000
-/** 毫秒 → 秒 */
-const MS_PER_SECOND = 1000
-/** 秒 → 分 */
-const SECONDS_PER_MINUTE = 60
 
 const { t } = useI18n()
 
@@ -185,33 +179,5 @@ function aggregatePhaseStatus(calls: WorkflowAgentCall[]): 'completed' | 'runnin
   if (calls.some((c) => c.status === 'running')) return 'running'
   if (calls.every((c) => c.status === 'completed' || c.status === 'failed')) return 'completed'
   return 'pending'
-}
-
-function phaseDotClass(status: 'completed' | 'running' | 'pending'): string {
-  switch (status) {
-    case 'completed': return 'bg-success'
-    case 'running': return 'bg-accent'
-    default: return 'bg-neutral-dim opacity-40'
-  }
-}
-
-function callDotClass(status: WorkflowAgentCall['status']): string {
-  switch (status) {
-    case 'completed': return 'bg-success'
-    case 'failed': return 'bg-danger'
-    case 'running': return 'bg-accent'
-    default: return 'bg-neutral-dim opacity-40'
-  }
-}
-
-function formatTokens(tokens: number, unit: string): string {
-  if (tokens >= TOKEN_K_THRESHOLD) return `${(tokens / TOKEN_K_THRESHOLD).toFixed(1)}k ${unit}`
-  return `${tokens} ${unit}`
-}
-
-function formatDuration(ms: number): string {
-  const seconds = Math.floor(ms / MS_PER_SECOND)
-  if (seconds >= SECONDS_PER_MINUTE) return `${Math.floor(seconds / SECONDS_PER_MINUTE)}m${seconds % SECONDS_PER_MINUTE}s`
-  return `${seconds}s`
 }
 </script>
