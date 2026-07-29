@@ -1,10 +1,21 @@
 #!/usr/bin/env python3
-"""
-检查目录规范：
+r"""
+检查目录规范（pre-commit）：
 1. 禁止创建 demos/ 或 impeccable/ 目录（demo 统一放 docs/page-design/）
 2. 禁止 symlink 指向外部绝对路径（白名单：../ 相对路径 symlink 允许）
+3. 禁止 cw v1 工作流临时产物出现在根目录（应归档到 .xyz-harness/）
+4. 禁止备份/临时后缀文件进版本管理（*.bak/*.tmp/*.swp/*.orig/*~）
+5. 禁止非 ASCII 路径（中文目录名等）进版本管理
+
+设计原则 [HISTORICAL]：所有检查只针对 git staged 文件，不做全项目扫描。
+- staged 扫描已能拦截 `git add -f`（强制 add 后文件即 staged），全项目扫描
+  会误报磁盘残留（如 .impeccable/ 文件物理留在磁盘靠 .gitignore 兜底，不应报错）。
+- 全项目扫描收益低、误报风险高，违反「不过度设计」。
+- 事故背景：100 个临时产物（.cw-*.json / wave-* / plan.* / .bak 等）曾被 git add
+  进版本管理，.gitignore 兜底后仍有历史遗留。本检查是 .gitignore 之外的防呆层。
 """
 import os
+import re
 import sys
 import subprocess
 
@@ -14,18 +25,44 @@ FORBIDDEN_DIR_NAMES = {"demos", "impeccable"}
 # symlink 白名单：允许的相对路径前缀
 SYMLINK_ALLOWED_PREFIXES = ("../", "./")
 
+# 根目录禁止的 cw v1 工作流临时产物文件名模式（正则，对根目录相对路径匹配）。
+# 这些是 cw 跑完的运行时/归档产物，应放 .xyz-harness/，不是源码。
+# 注意：.cw/（带尾斜杠）是 tracked 测试脚本目录，不在此列。
+ROOT_FORBIDDEN_PATTERNS = [
+    re.compile(r"^\.cw-.*\.(json|md)$"),        # .cw-clarify-*.json / .cw-slice*.json 等
+    re.compile(r"^wave-.*\.(json|md)$"),         # wave-plan.json / wave-test-2.json 等
+    re.compile(r"^(clarify|clarify-.*)\.json$"),
+    re.compile(r"^design-review\.json$"),
+    re.compile(r"^exec-review\.json$"),
+    re.compile(r"^retrospect\.json$"),
+    re.compile(r"^closeout\.json$"),
+    re.compile(r"^test\.json$"),
+    re.compile(r"^plan\.(json|md)$"),            # 根目录散落的 plan.md/plan.json
+]
+
+# 禁止的备份/临时后缀（全路径匹配，不只根目录）
+FORBIDDEN_SUFFIXES = (".bak", ".tmp", ".swp", ".orig", "~")
+
 
 def get_staged_files():
-    """获取 git staged 的文件列表"""
+    """获取 git staged 的文件列表。
+
+    使用 -z（NUL 分隔）避免 git 对非 ASCII 路径的引号转义，
+    否则中文路径会变成 '"packages/\\346\\265\\213..."' 导致后续检查失效。
+    """
     result = subprocess.run(
-        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
+        ["git", "diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR"],
         capture_output=True, text=True
     )
-    return [f for f in result.stdout.strip().split("\n") if f]
+    return [f for f in result.stdout.split("\0") if f]
 
 
 def check_forbidden_dirs(staged_files):
-    """检查是否创建了禁止的目录"""
+    """检查是否创建了禁止的目录。
+
+    对路径段同时匹配原始名和去前导点后的名（.impeccable → impeccable），
+    否则 dotfile 目录（如 packages/renderer/src/.impeccable/）会漏检。
+    """
     errors = []
     forbidden_dirs_found = set()
 
@@ -34,6 +71,10 @@ def check_forbidden_dirs(staged_files):
         for part in parts:
             if part in FORBIDDEN_DIR_NAMES:
                 forbidden_dirs_found.add(part)
+            # dotfile 目录：.impeccable / .demos 等，去前导点后匹配
+            stripped = part.lstrip(".")
+            if stripped in FORBIDDEN_DIR_NAMES and stripped != part:
+                forbidden_dirs_found.add(part)
 
     if forbidden_dirs_found:
         errors.append(
@@ -41,6 +82,78 @@ def check_forbidden_dirs(staged_files):
             f"  所有 demo/HTML 统一放 docs/page-design/"
         )
 
+    return errors
+
+
+def check_root_temp_artifacts(staged_files):
+    """检查 cw v1 工作流临时产物是否出现在根目录。
+
+    这些文件（.cw-*.json / wave-*.json / plan.* 等）是 cw 跑完的运行时产物，
+    应归档到 .xyz-harness/。根目录散落会污染项目根，且易被误判为源码。
+    只检查根目录（路径不含路径分隔符）的新增/修改文件。
+    """
+    errors = []
+    found = set()
+    for filepath in staged_files:
+        # 只检查根目录文件（无路径分隔符 = 直接在仓库根）
+        if os.sep in filepath:
+            continue
+        for pattern in ROOT_FORBIDDEN_PATTERNS:
+            if pattern.match(filepath):
+                found.add(filepath)
+                break
+    if found:
+        sample = ", ".join(sorted(found)[:5])
+        suffix = f" 等 {len(found)} 个" if len(found) > 5 else ""
+        errors.append(
+            f"根目录禁止 cw v1 工作流临时产物: {sample}{suffix}\n"
+            f"  wave-*/.cw-*/plan.*/clarify.json 等应归档到 .xyz-harness/，不应散落项目根"
+        )
+    return errors
+
+
+def check_backup_suffixes(staged_files):
+    """检查备份/临时后缀文件是否进版本管理。
+
+    *.bak/*.tmp/*.swp/*.orig/*~ 是编辑器/工具的临时产物，不应追踪。
+    """
+    errors = []
+    found = []
+    for filepath in staged_files:
+        for suffix in FORBIDDEN_SUFFIXES:
+            if filepath.endswith(suffix):
+                found.append(filepath)
+                break
+    if found:
+        sample = ", ".join(found[:5])
+        suffix = f" 等 {len(found)} 个" if len(found) > 5 else ""
+        errors.append(
+            f"禁止备份/临时后缀文件: {sample}{suffix}\n"
+            f"  *.bak/*.tmp/*.swp/*.orig/*~ 是临时产物，不应进版本管理"
+        )
+    return errors
+
+
+def check_ascii_paths(staged_files):
+    """检查路径是否全 ASCII。
+
+    非 ASCII 路径（如中文目录名「重新跑/」）在跨平台/CI 环境易出问题，
+    且不符合项目目录命名规范。只对 staged 文件检查，不扫全项目。
+    """
+    errors = []
+    found = []
+    for filepath in staged_files:
+        try:
+            filepath.encode("ascii")
+        except UnicodeEncodeError:
+            found.append(filepath)
+    if found:
+        sample = ", ".join(found[:5])
+        suffix = f" 等 {len(found)} 个" if len(found) > 5 else ""
+        errors.append(
+            f"禁止非 ASCII 路径: {sample}{suffix}\n"
+            f"  目录/文件名必须全 ASCII（中文目录名跨平台/CI 易出问题）"
+        )
     return errors
 
 
@@ -114,6 +227,9 @@ def main():
 
     staged_files = get_staged_files()
     errors.extend(check_forbidden_dirs(staged_files))
+    errors.extend(check_root_temp_artifacts(staged_files))
+    errors.extend(check_backup_suffixes(staged_files))
+    errors.extend(check_ascii_paths(staged_files))
     errors.extend(check_symlinks(staged_files))
 
     if errors:
