@@ -16,7 +16,7 @@
           <Label class="text-[12px] text-fg">{{ t('settings.update.proxyMode') }}</Label>
           <Select
             :model-value="localConfig.mode"
-            @update:model-value="onModeChange"
+            @update:model-value="(v) => onModeChange(String(v))"
           >
             <SelectTrigger class="h-8 w-[200px] px-2 text-[12px]">
               <SelectValue />
@@ -60,7 +60,8 @@
         <Button
           variant="ghost"
           size="sm"
-          :disabled="testing"
+          :disabled="testing || localConfig.mode === 'disabled'"
+          :title="localConfig.mode === 'disabled' ? t('settings.update.testProxyTooltipDisabled') : undefined"
           class="gap-1.5 text-[12px]"
           data-testid="btn-test-proxy"
           @click="onTestProxy"
@@ -76,12 +77,18 @@
         <span
           v-if="testResult !== null"
           class="text-[11px]"
-          :class="testResult.success ? 'text-success' : 'text-danger'"
+          :class="{
+            'text-success': testResult.status === 'success',
+            'text-danger': testResult.status === 'failed',
+            'text-muted': testResult.status === 'skipped',
+          }"
           data-testid="test-proxy-result"
         >
-          {{ testResult.success
+          {{ testResult.status === 'success'
             ? t('settings.update.testSuccess')
-            : t('settings.update.testFailed', { msg: testResult.message ?? '' })
+            : testResult.status === 'skipped'
+              ? (testResult.message ?? '')
+              : t('settings.update.testFailed', { msg: testResult.message ?? '' })
           }}
         </span>
 
@@ -95,7 +102,7 @@
         >
           <Save v-if="!saving" class="size-3.5" />
           <Loader2 v-else class="size-3.5 animate-spin" />
-          <span>{{ saving ? t('settings.update.save') + '...' : t('settings.update.save') }}</span>
+          <span>{{ saving ? t('settings.update.saving') : t('settings.update.save') }}</span>
         </Button>
       </div>
     </div>
@@ -131,7 +138,8 @@ const testing = ref(false)
 /** 保存中 */
 const saving = ref(false)
 /** 测试结果（null=未测试） */
-const testResult = ref<{ success: boolean; message?: string } | null>(null)
+type TestResult = { status: 'success' } | { status: 'failed'; message?: string } | { status: 'skipped'; message?: string }
+const testResult = ref<TestResult | null>(null)
 
 // ── Lifecycle ──
 
@@ -152,13 +160,25 @@ onMounted(loadConfig)
 
 // ── Actions ──
 
-/** 模式切换 */
-function onModeChange(value: unknown) {
-  const mode = value as IProxyConfig['mode']
-  if (!mode || !['system', 'manual', 'disabled'].includes(mode)) return
-  localConfig.mode = mode
+/** 代理模式枚举（与 SelectItem value 一一对应）。 */
+const PROXY_MODES = ['system', 'manual', 'disabled'] as const
+type ProxyMode = (typeof PROXY_MODES)[number]
+
+/** 运行时守卫：把 Select 的字符串 value 收敛为 ProxyMode 字面量联合（无需 as 断言）。 */
+function isProxyMode(value: string): value is ProxyMode {
+  return (PROXY_MODES as readonly string[]).includes(value)
+}
+
+/**
+ * 模式切换。
+ * Select 的 SelectItem value 恒为字符串，但 reka-ui 事件载荷是 AcceptableValue，
+ * 故在绑定处 String() 收敛为 string；这里再用 isProxyMode 守卫收敛为字面量联合。
+ */
+function onModeChange(value: string) {
+  if (!isProxyMode(value)) return
+  localConfig.mode = value
   // 切换到非手动模式时清空手动配置
-  if (mode !== 'manual') {
+  if (value !== 'manual') {
     localConfig.httpProxy = ''
     localConfig.httpsProxy = ''
   }
@@ -168,6 +188,12 @@ function onModeChange(value: unknown) {
 
 /** 测试代理 */
 async function onTestProxy() {
+  // disabled 模式不发起测试：代理未启用，测试无意义，直接给出提示而非误导性的成功
+  if (localConfig.mode === 'disabled') {
+    testResult.value = { status: 'skipped', message: t('settings.update.testDisabled') }
+    return
+  }
+
   testing.value = true
   testResult.value = null
 
@@ -177,10 +203,13 @@ async function onTestProxy() {
       httpProxy: localConfig.httpProxy || undefined,
       httpsProxy: localConfig.httpsProxy || undefined,
     }
-    testResult.value = await testProxy(config)
+    const res = await testProxy(config)
+    testResult.value = res.success
+      ? { status: 'success' }
+      : { status: 'failed', message: res.message }
   } catch (err) {
     testResult.value = {
-      success: false,
+      status: 'failed',
       message: err instanceof Error ? err.message : String(err),
     }
   } finally {
@@ -193,7 +222,7 @@ async function onSave() {
   // 基本前端校验
   if (localConfig.mode === 'manual') {
     if (!localConfig.httpProxy) {
-      toastError(t('settings.update.httpProxy') + ' is required')
+      toastError(t('settings.update.httpProxyRequired'))
       return
     }
     // 验证 URL 格式
@@ -201,7 +230,7 @@ async function onSave() {
       new URL(localConfig.httpProxy)
       if (localConfig.httpsProxy) new URL(localConfig.httpsProxy)
     } catch {
-      toastError(t('settings.update.testFailed', { msg: 'Invalid URL format' }))
+      toastError(t('settings.update.invalidUrl'))
       return
     }
   }

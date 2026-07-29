@@ -11,7 +11,8 @@
 import * as configDomain from './config'
 import * as extensionDomain from './extension'
 import { command } from '../request'
-import type { ServerMessageMap } from '@xyz-agent/shared'
+import type { ServerMessageMap, IProxyConfig } from '@xyz-agent/shared'
+import { getProxyConfig as getProxyConfigIpc, setProxyConfig as setProxyConfigIpc, testProxy as testProxyIpc } from '@/lib/ipc'
 
 export interface SystemSettings {
   locale: 'zh-CN' | 'en-US'
@@ -105,20 +106,19 @@ export async function getDefaultBaseBranch(): Promise<DefaultBaseBranchReply> {
 // 代理配置通过 Electron IPC 直接与 main 进程通信（不走 runtime WS），
 // 因为升级模块运行在 main 进程中。
 // 使用 lib/ipc.ts 适配层，符合 renderer 对 electronAPI 的唯一适配点规范。
-import { getProxyConfig as getProxyConfigIpc, setProxyConfig as setProxyConfigIpc, testProxy as testProxyIpc } from '@/lib/ipc'
 
 /** 读取代理配置。 */
-export async function getProxyConfig(): Promise<import('@xyz-agent/shared').IProxyConfig> {
+export async function getProxyConfig(): Promise<IProxyConfig> {
   return getProxyConfigIpc()
 }
 
 /** 保存代理配置。 */
-export async function setProxyConfig(config: import('@xyz-agent/shared').IProxyConfig): Promise<void> {
+export async function setProxyConfig(config: IProxyConfig): Promise<void> {
   await setProxyConfigIpc(config)
 }
 
 /** 测试代理连接。 */
-export async function testProxy(config: import('@xyz-agent/shared').IProxyConfig): Promise<{ success: boolean; message?: string }> {
+export async function testProxy(config: IProxyConfig): Promise<{ success: boolean; message?: string }> {
   return testProxyIpc(config)
 }
 

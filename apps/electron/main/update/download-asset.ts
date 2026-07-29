@@ -74,6 +74,41 @@ const DOWNLOAD_TIMEOUT_MS = 3_600_000
  */
 const IDLE_TIMEOUT_MS = 30_000
 
+/**
+ * 读取 Node 错误的 errno code（如 'ENOSPC'、'EACCES'）。
+ *
+ * 原生 Node fs 错误把 code 放在 `err.code`；fetch/undici 抛出的错误有时会把
+ * 底层原因包到 `err.cause` 里（cause.code）。两者都查，命中其一即返回。
+ * 不能用 `err.code` 直接判断：传入值可能非 NodeJS.ErrnoException（无 code 字段）。
+ */
+function getNodeErrnoCode(err: unknown): string | undefined {
+  if (!(err instanceof Error)) return undefined
+  // 先看 err.code（原生 Node fs 错误）
+  const directCode = (err as NodeJS.ErrnoException).code
+  if (directCode) return directCode
+  // 再看 cause.code（fetch/undici 包裹的底层原因）
+  const cause = (err as { cause?: unknown }).cause
+  if (cause instanceof Error) {
+    return (cause as NodeJS.ErrnoException).code
+  }
+  return undefined
+}
+
+/**
+ * 返回 temp 文件当前真实落盘字节数；读取失败时回退到内存计数器。
+ *
+ * pipe 写盘是缓冲异步的，内存计数器可能比真实文件偏大或偏小。
+ * 续传必须用真实落盘字节，否则 Range 起点会越过已写内容造成重叠/空洞。
+ */
+function getPersistedBytes(tempPath: string, fallback: number): number {
+  try {
+    return statSync(tempPath).size
+  } catch (err) {
+    console.warn('[download] stat temp for resume failed:', err)
+    return fallback
+  }
+}
+
 /** ms → s 换算因子（用于错误消息里的超时秒数展示）。 */
 const MS_PER_SECOND = 1000
 
@@ -125,13 +160,19 @@ export async function downloadAsset(
     // 有断点续传状态，检查临时文件是否存在
     if (existsSync(tempPath)) {
       const stat = statSync(tempPath)
-      if (stat.size === resumeState.downloadedBytes) {
-        // 临时文件大小与状态一致，从断点继续下载
+      // [B-4] 续传判定放宽为「temp 落盘字节 <= state 记录值」即从 stat.size 续传。
+      // 旧实现严格相等会在崩溃时刻不巧时误判 mismatch 重下：
+      //   - 正常进度保存用内存 downloaded 计数器（偏大，pipe 未完全 flush）
+      //   - 可恢复错误保存用 statSync 真实字节（偏小）
+      // 两种口径不一致 → stat.size 与 state.downloadedBytes 经常差几 KB → 重下丢数据。
+      // 现在统一：只要 temp 不大于 state，就以更准确的 stat.size 为续传起点。
+      // 只有 temp 异常大于 state（残文件被外部追加等）才作废重下。
+      if (stat.size <= resumeState.downloadedBytes) {
         downloadedBytes = stat.size
-        console.log(`[download] resuming from ${downloadedBytes} bytes`)
+        console.log(`[download] resuming from ${downloadedBytes} bytes (state ${resumeState.downloadedBytes})`)
       } else {
-        // 临时文件大小与状态不一致，重新下载
-        console.log(`[download] resume state mismatch, restarting download`)
+        // temp 比 state 记录的大很多，异常 → 重新下载
+        console.log(`[download] resume state mismatch (temp ${stat.size} > state ${resumeState.downloadedBytes}), restarting download`)
         clearResumeState()
       }
     } else {
@@ -212,7 +253,9 @@ export async function downloadAsset(
         }
         // [M6] PROXY_ERROR 只保留代理特征字符串判断（如代理认证失败 407），
         // 不再泛化匹配 'proxy' 子串以避免误判。代理认证失败是代理场景的强信号。
-        if (fetchErr.message.includes('407') || fetchErr.message.includes('Proxy Authentication')) {
+        // [W-6] 裸 '407' 子串会误命中时间戳/端口号等。精确匹配 HTTP 407 状态描述
+        // 短语（含分隔边界），并保留 'Proxy Authentication' 文案兜底。
+        if (/^407\b|[\s(]407\b|Proxy Authentication/i.test(fetchErr.message)) {
           throw new UpdateError(
             `proxy error: ${fetchErr.message}`,
             'downloading',
@@ -301,14 +344,19 @@ export async function downloadAsset(
           // [M3] 保存断点续传状态：每超过上次保存点 SAVE_INTERVAL_BYTES 字节才落盘。
           // 旧实现 `downloaded % 1MB === 0` 在续传场景（起点非 1MB 整数倍）几乎
           // 永不命中，中途崩溃 state 仍是旧值。
+          // [B-4] 统一保存口径：这里也用真实落盘字节（statSync）而非内存 downloaded 计数器。
+          // 原先进度保存用 downloaded（偏大，pipe 未完全 flush）、可恢复错误保存用
+          // statSync（偏小）→ 两口径不一致 → 续传判定 mismatch 重下。现在两处统一，
+          // 配合放宽的续传判定（stat.size <= state）形成正确续传闭环。
           if (downloaded - lastSavedBytes >= SAVE_INTERVAL_BYTES) {
+            const persisted = getPersistedBytes(tempPath, downloaded)
             saveResumeState({
-              downloadedBytes: downloaded,
+              downloadedBytes: persisted,
               totalBytes: total,
               tempPath,
               finalPath,
             })
-            lastSavedBytes = downloaded
+            lastSavedBytes = persisted
           }
         })
         nodeStream.pipe(writeStream)
@@ -319,41 +367,29 @@ export async function downloadAsset(
     } catch (err) {
       // [LEAK FIX] destroy writeStream 释放底层 fd，避免错误路径泄漏文件描述符。
       writeStream.destroy()
-      // 先判定错误是否「可恢复」（超时/网络中断）：可恢复错误保留 temp 文件 +
-      // resumeState，让下次能续传；不可恢复错误（磁盘错误等）才清理。
+      // 超时判定（用于错误分类：UPDATE_NETWORK_TIMEOUT vs 其他），不影响是否保留 temp。
       const isTimeout = err instanceof Error && (
         err.name === 'AbortError' ||
         err.message.includes('aborted') ||
         err.message.includes('timeout')
       )
-      const isRecoverable = isTimeout ||
-        (err instanceof UpdateError && (
-          err.errorCode === 'UPDATE_NETWORK_TIMEOUT' ||
-          err.errorCode === 'UPDATE_NETWORK_FAILED'
-        )) ||
-        // 通用流错误（连接重置等）默认可恢复
-        (err instanceof Error && (
-          err.message.includes('ECONNRESET') ||
-          err.message.includes('ECONNABORTED') ||
-          err.message.includes('ETIMEDOUT')
-        ))
-      const isDiskError = err instanceof Error && (
-        err.message.includes('ENOSPC') || err.message.includes('disk space')
-      )
+      // [W-6] 磁盘错误判定：优先用 Node errno code（ENOSPC）精确匹配，
+      // 子串 'disk space' 仅作非英文 OS message 的 fallback。
+      const errno = getNodeErrnoCode(err)
+      const isDiskError = errno === 'ENOSPC' ||
+        (err instanceof Error && err.message.toLowerCase().includes('disk space'))
 
-      if (isRecoverable && !isDiskError) {
-        // [M2] 可恢复错误（超时/网络中断）：保留 temp 文件 + resumeState，下次可续传。
-        // 旧实现先 saveResumeState 紧接着 unlinkSync，存了又删，断点续传在超时场景
-        // （本功能最首要场景）等于失效。
-        // [m6] 保存的真实落盘字节数用 statSync(tempPath).size 而非内存 downloaded
-        // 计数器——pipe 写盘是缓冲异步的，downloaded 是已接收字节，可能大于真实文件。
-        let persistedBytes = downloaded
-        try {
-          persistedBytes = statSync(tempPath).size
-        } catch (statErr) {
-          // 文件不存在等异常：保守沿用内存计数器
-          console.warn('[download] stat temp for resume failed:', statErr)
-        }
+      // [B-2] 默认 Error 视为可恢复——保留 temp + state 让下次续传。
+      // 旧实现用白名单子串匹配（ECONNRESET/ETIMEDOUT + NETWORK_* code）判 isRecoverable，
+      // 但国内网络常见错误不命中：undici 流中断 UND_ERR_SOCKET/UND_ERR_BODY_TIMEOUT
+      // （message 形如 'other side closed'）、代理中途 407/TLS 错误经流 reject，
+      // message 都不含上述子串 → 走 else 删 temp。这恰恰在最需要续传的「流中途断开」
+      // 场景丢数据，违背 PR 核心目标。
+      // 现在反转默认值：只有明确命中 isDiskError 才删 temp；其余一律保留。
+      // sha256 mismatch 不受影响（它在校验段单独删 temp，不进 stream catch）。
+      if (!isDiskError) {
+        // 保留 temp + 用真实落盘字节存 state，下次可续传。
+        const persistedBytes = getPersistedBytes(tempPath, downloaded)
         saveResumeState({
           downloadedBytes: persistedBytes,
           totalBytes: total,
@@ -362,19 +398,12 @@ export async function downloadAsset(
         })
         console.log(`[download] recoverable error, kept temp file for resume (${persistedBytes} bytes)`)
       } else {
-        // [M2] 不可恢复错误（磁盘错误/sha256 等）：删除 temp 文件 + 清理 state，
-        // 避免残文件污染下次下载。注意 sha256 mismatch 校验在下载完成后另算，
-        // 不在此处；此处覆盖磁盘错误等无法续传的情况。
-        saveResumeState({
-          downloadedBytes: downloaded,
-          totalBytes: total,
-          tempPath,
-          finalPath,
-        })
+        // 磁盘空间不足：删 temp + 清 state（无法续传）。
+        // [W-5] 此路径不再 saveResumeState——马上就 clear 了，save 纯属浪费。
         try { unlinkSync(tempPath) } catch (unlinkErr) { console.warn('[download] stream cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
         clearResumeState()
       }
-      // 流式传输错误分类：区分磁盘空间不足和其他错误
+      // 流式传输错误分类（throw 什么 errorCode）；与是否保留 temp 无关。
       if (isDiskError) {
         throw new UpdateError(
           'insufficient disk space',
@@ -449,8 +478,11 @@ export async function downloadAsset(
   try {
     renameSync(tempPath, finalPath)
   } catch (renameErr) {
-    // 权限错误分类
-    if (renameErr instanceof Error && (renameErr.message.includes('EACCES') || renameErr.message.includes('permission'))) {
+    // 权限错误分类。[W-6] 优先用 errno code（EACCES/EPERM）精确匹配，
+    // 子串 'permission' 仅作非英文 OS message 的 fallback。
+    const renameErrno = getNodeErrnoCode(renameErr)
+    if (renameErrno === 'EACCES' || renameErrno === 'EPERM' ||
+        (renameErr instanceof Error && renameErr.message.toLowerCase().includes('permission'))) {
       throw new UpdateError(
         'permission denied during file replacement',
         'replacing',
