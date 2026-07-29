@@ -252,7 +252,7 @@ describe('message-dispatcher bus integration', () => {
 
   it('compact start → bus.publish(session.compacting)', async () => {
     const { dispatcher, messageBus, compactFn } = makeMocks()
-    compactFn.mockResolvedValue(undefined)
+    compactFn.mockResolvedValue({ summary: '', tokensBefore: 0, estimatedTokensAfter: 0 })
     await dispatcher.compact('s1')
     const compactingCall = messageBus.publish.mock.calls.find(
       (c: any[]) => c[1].type === 'session.compacting',
