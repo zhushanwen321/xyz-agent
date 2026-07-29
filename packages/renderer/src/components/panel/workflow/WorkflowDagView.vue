@@ -2,7 +2,7 @@
   <!--
     展示组件 · workflow DAG 纵向分层流程图（视图 A）。
     消费 w1 的 ExecutionLayer[]：同层=并发（横向并排），不同层=串行（纵向分层）。
-    点击非 pending 节点 → emit('select-agent-call', sessionId)，由父组件切 Panel。
+    点击非 pending 节点 → emit('select-agent-call', { agentCallSessionId })，由父组件切 Panel。
   -->
   <div class="flex flex-col gap-4 px-1 py-1" data-testid="workflow-dag-view">
     <!-- 分层节点 -->
@@ -125,14 +125,19 @@ defineProps<{
   pendingNodes: WorkflowAgentCall[]
 }>()
 
+/** select-agent-call 事件载荷契约：单个 payload 对象（规则 #1）。 */
+interface SelectAgentCallPayload {
+  agentCallSessionId: string
+}
+
 const emit = defineEmits<{
-  'select-agent-call': [agentCallSessionId: string]
+  'select-agent-call': [payload: SelectAgentCallPayload]
 }>()
 
 /** 节点点击：pending 不可点（无 sessionId），非 pending 且有 sessionId 才 emit。 */
 function onNodeClick(node: WorkflowAgentCall): void {
   if (node.status !== 'pending' && node.sessionId) {
-    emit('select-agent-call', node.sessionId)
+    emit('select-agent-call', { agentCallSessionId: node.sessionId })
   }
 }
 </script>

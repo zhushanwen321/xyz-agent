@@ -90,7 +90,7 @@ const openedRunIds = computed<string[]>(() => {
  * 管理 workflow drawer 二级 tab 的打开/关闭状态（per-session 隔离，模块级单例）。
  *
  * [W3] 无参：状态为模块级单例（对齐 useSideDrawer），所有调用方共享同一分区 Map。
- * 保留 focusedSessionId 参数（可选，已忽略）仅为 W1 测试向后兼容；生产代码调 useWorkflowDrawerTabs()。
+ * 分区键来自 panelStore.focusedSessionId（模块级 focusedSessionId computed）。
  *
  * @returns
  *   - openedRunIds：当前 session 下打开的 runId 列表，按打开时间 DESC 排序（最近打开在前）
@@ -98,13 +98,12 @@ const openedRunIds = computed<string[]>(() => {
  *   - closeWorkflow(runId)：关闭某 run 的二级 tab（delete）
  *   - isWorkflowOpened(runId)：查询某 run 的 tab 是否打开
  */
-export function useWorkflowDrawerTabs(_focusedSessionId?: unknown): {
+export function useWorkflowDrawerTabs(): {
   openedRunIds: ComputedRef<string[]>;
   openWorkflow: (runId: string) => void;
   closeWorkflow: (runId: string) => void;
   isWorkflowOpened: (runId: string) => boolean;
-} {
-  void _focusedSessionId; // 模块级单例，分区键来自 panelStore.focusedSessionId（忽略调用方传入的 ref）
+  } {
   return {
     openedRunIds,
     openWorkflow,

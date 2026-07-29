@@ -348,9 +348,12 @@ const tabs = computed<TabMeta[]>(() => {
     });
   }
   // Workflow tab 条件 push：当前 session 有 workflow 记录才显示（drawer 内嵌 WorkflowDrawerPane）
+  // 用 getRecordsBySession（非响应式 getter，直接读 recordsBySession.value.get）替代 recordsOf，
+  // 避免 recordsOf 在 computed 内构造一次性 ComputedRef 的冗余分配；
+  // 访问 recordsBySession.value 仍建立响应式依赖，记录增删时 tab 显隐自动更新。
   if (
     props.sessionId &&
-    workflowStore.recordsOf(props.sessionId).value.length > 0
+    workflowStore.getRecordsBySession(props.sessionId).length > 0
   ) {
     base.push({
       key: "workflow",

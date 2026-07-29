@@ -134,13 +134,13 @@
         v-if="viewMode === 'dag'"
         :layers="layersData.layers"
         :pending-nodes="layersData.pendingNodes"
-        @select-agent-call="onSelectAgentCall"
+        @select-agent-call="handleSelectAgentCall"
       />
       <WorkflowGanttView
         v-else
         :layers="layersData.layers"
         :pending-nodes="layersData.pendingNodes"
-        @select-agent-call="onSelectAgentCall"
+        @select-agent-call="handleSelectAgentCall"
       />
     </ScrollArea>
   </div>
@@ -233,17 +233,35 @@ const { onSelectAgentCall, onWorkflowAction } = useSidebarSubagentActions(
   toRef(props, "sessionId")
 );
 
+/** select-agent-call 事件载荷契约：单个 payload 对象（规则 #1）。 */
+interface SelectAgentCallPayload {
+  agentCallSessionId: string
+}
+
+/**
+ * select-agent-call 事件适配器：从 payload 对象解构 agentCallSessionId，
+ * 再交给 onSelectAgentCall（其签名接受 string | undefined）。
+ */
+function handleSelectAgentCall(payload: SelectAgentCallPayload): void {
+  const { agentCallSessionId } = payload;
+  void onSelectAgentCall(agentCallSessionId);
+}
+
 /** run 缺失时 scriptName 回退取 runId 前缀长度 */
 const RUNID_FALLBACK_SLICE = 8;
 
 // ── 二级 tab 关闭：关闭后切到相邻 tab（避免 activeRunId 悬空）──
 function onCloseTab(runId: string): void {
   const idx = openedRunIds.value.indexOf(runId);
+  // 删除前先算好目标：优先下一个兄弟（保持「切到下一个」的现有行为），否则上一个，全空则 null。
+  // 不依赖删除后数组的位置索引（openedRunIds 顺序/排序若变化也不受影响）。
+  const siblingIds = openedRunIds.value;
+  const targetRunId =
+    siblingIds[idx + 1] ?? siblingIds[idx - 1] ?? null;
   closeWorkflow(runId);
-  // 关闭后若 activeRunId 是被关的，切到相邻（优先下一个，否则上一个）
-  const remaining = openedRunIds.value;
+  // 仅当被关的是当前活跃 tab 时才切换，避免覆盖用户已手动切换的 activeRunId
   if (activeRunId.value === runId) {
-    activeRunId.value = remaining[idx] ?? remaining[idx - 1] ?? null;
+    activeRunId.value = targetRunId;
   }
 }
 
@@ -265,7 +283,10 @@ function runScriptName(runId: string): string {
 /** pause/resume 切换（按 currentRun.status） */
 function onToggleRun(): void {
   if (!currentRun.value) return;
-  const action = currentRun.value.status === "running" ? "pause" : "resume";
+  const status = currentRun.value.status;
+  // 防御：仅 running/paused 可切换。状态过期（如 done）时 no-op，避免误发 resume 导致 API 报错。
+  if (status !== "running" && status !== "paused") return;
+  const action = status === "running" ? "pause" : "resume";
   void onWorkflowAction({ action, runId: currentRun.value.runId });
 }
 

@@ -318,13 +318,14 @@ describe("W3 TC5: 横条 4 态配色", () => {
 
 // ── TC6: 点击 emit ─────────────────────────────────────────
 describe("W3 TC6: 点击横条 emit select-agent-call", () => {
-  it("点 completed 横条 emit select-agent-call，载荷为 sessionId", async () => {
+  it("点 completed 横条 emit select-agent-call，载荷为 { agentCallSessionId } 单 payload 对象", async () => {
     const wrapper = mountView();
     const bar = wrapper.findAll('[data-testid="workflow-gantt-bar"]')[0];
     await bar.trigger("click");
     const emitted = wrapper.emitted("select-agent-call");
     expect(emitted).toBeTruthy();
-    expect(emitted![0]).toEqual(["sess-0"]);
+    // 规则 #1：emit 单 payload 对象（与 WorkflowDagView 一致），而非裸字符串
+    expect(emitted![0]).toEqual([{ agentCallSessionId: "sess-0" }]);
   });
 
   it("无 sessionId 的非 pending 节点横条 aria-disabled，点击不 emit", async () => {

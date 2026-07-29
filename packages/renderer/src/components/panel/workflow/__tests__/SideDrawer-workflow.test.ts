@@ -63,11 +63,12 @@ vi.mock("@/stores/chat", () => ({
   useChatStore: () => ({ getMessages: () => [] }),
 }));
 
-// ── mock useWorkflowStore：受控 recordsOf（TC10 非空、对照用例空）──
+// ── mock useWorkflowStore：受控 getRecordsBySession（TC10 非空、对照用例空）──
+// SideDrawer 的 workflow tab 条件分支读 getRecordsBySession（非响应式 getter，直接返数组长度判断）。
 const mockRecords = ref<unknown[]>([]);
 vi.mock("@/stores/workflow", () => ({
   useWorkflowStore: () => ({
-    recordsOf: (_sid: string) => mockRecords,
+    getRecordsBySession: (_sid: string) => mockRecords.value,
   }),
 }));
 

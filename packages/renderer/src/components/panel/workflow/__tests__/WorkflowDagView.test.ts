@@ -116,13 +116,13 @@ describe('W2 TC2: 状态配色（4 种状态）', () => {
 
 // ── TC3: 点击 emit ─────────────────────────────────────────
 describe('W2 TC3: 点击 completed 节点 emit select-agent-call', () => {
-  it('点 completed 节点 emit select-agent-call，载荷为 sessionId', async () => {
+  it('点 completed 节点 emit select-agent-call，载荷为对象 { agentCallSessionId }', async () => {
     const wrapper = mountView()
     const completedNode = wrapper.findAll('[data-testid="workflow-dag-node"]')[0]
     await completedNode.trigger('click')
     const emitted = wrapper.emitted('select-agent-call')
     expect(emitted).toBeTruthy()
-    expect(emitted![0]).toEqual(['sess-0'])
+    expect(emitted![0]).toEqual([{ agentCallSessionId: 'sess-0' }])
   })
 })
 

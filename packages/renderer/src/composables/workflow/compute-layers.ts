@@ -44,8 +44,13 @@ export interface ComputeLayersResult {
 }
 
 /**
- * 时间解析。new Date(iso).getTime()，若 iso 为空或解析结果 isNaN 返回 -1
- * （-1 让节点在升序排序中沉底，并独占一层不参与重叠判定）。
+ * 时间解析。new Date(iso).getTime()，若 iso 为空或解析结果 isNaN 返回 -1。
+ *
+ * -1 的语义（注意两处用法对 -1 的处理不同）：
+ * - 排序（见 computeLayers 内 sort）：-1 会被重映射为 +∞，从而在升序中沉底
+ *   （-1 本身不会沉底，因为它是「最小」值；必须重映射为 +∞ 才能排到末尾）。
+ * - 重叠判定：直接使用 -1，配合「-1 早返回独占一层」规避与正常时间戳误判重叠。
+ * 两套口径互不冲突：排序路径走 +∞，判定路径走 -1。
  *
  * export 供 W3 Gantt 视图复用（统一时间解析口径）。
  */
@@ -93,7 +98,11 @@ export function computeLayers(nodes: WorkflowAgentCall[]): ComputeLayersResult {
     return { layers: [], pendingNodes: [] }
   }
 
-  // 分离 pending 节点（无 startedAt）——不参与分层
+  // 分离 pending 节点（无 startedAt）——不参与分层。
+  // 前置条件：此处依赖 pi-subagent-workflow 在 append trace 节点时，对 status==='running'
+  // 一定会写入 startedAt（running 即已启动，必有启动时间）。因此 running 节点不会落入
+  // `!n.startedAt` 分支被误判为 pending，而是进入 activeNodes 走 computeEnd（running 分支返回 Date.now()）。
+  // 若未来上游不再保证该不变量，running 节点会错误进入 pendingNodes（而非当 running 渲染）。
   const pendingNodes: WorkflowAgentCall[] = []
   const activeNodes: WorkflowAgentCall[] = []
   for (const n of nodes) {

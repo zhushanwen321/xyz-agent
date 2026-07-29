@@ -3,14 +3,14 @@
     展示组件 · workflow 时间轴 Gantt 视图（视图 D，W3 wave）。
     与 WorkflowDagView 相同 props/emit 契约，后续容器组件 toggle 切换。
     横条长度 = 执行时长，重叠 = 并发，running 节点每秒重算右端（NOW 随推进）。
-    点击非 pending 横条 → emit('select-agent-call', sessionId)。
+    点击非 pending 横条 → emit('select-agent-call', { agentCallSessionId })。
   -->
   <div class="flex flex-col gap-2 px-1 py-1" data-testid="workflow-gantt-view">
     <!-- 有时间数据：渲染时间轴 + 行 + NOW 线 -->
     <div v-if="hasTimed" class="relative flex flex-col gap-1">
       <!-- 时间轴标签行：开始 / 结束（占位对齐左侧 label 列宽） -->
-      <div class="flex items-center gap-2 font-mono text-[10px] text-neutral-dim" data-testid="workflow-gantt-axis">
-        <span class="w-[112px] shrink-0" />
+      <div class="flex items-center font-mono text-[10px] text-neutral-dim" :style="{ gap: `${GAP_REM}rem` }" data-testid="workflow-gantt-axis">
+        <span class="shrink-0" :style="{ width: `${LABEL_COL_PX}px` }" />
         <span class="flex flex-1 justify-between">
           <span>{{ t('panel.sideDrawer.workflowDag.ganttAxisStart') }}</span>
           <span>{{ t('panel.sideDrawer.workflowDag.ganttAxisEnd') }}</span>
@@ -21,11 +21,13 @@
       <div
         v-for="node in flatNodes"
         :key="node.id"
-        class="flex items-center gap-2"
+        class="flex items-center"
+        :style="{ gap: `${GAP_REM}rem` }"
       >
-        <!-- 左侧 label 列：固定宽度 ~112px，状态点 + agent 名 -->
+        <!-- 左侧 label 列：固定宽度（LABEL_COL_PX），状态点 + agent 名 -->
         <div
-          class="flex w-[112px] shrink-0 items-center gap-1.5 overflow-hidden"
+          class="flex shrink-0 items-center gap-1.5 overflow-hidden"
+          :style="{ width: `${LABEL_COL_PX}px` }"
           :title="node.agent"
         >
           <span class="size-1.5 shrink-0 rounded-full" :class="callDotClass(node.status)" />
@@ -56,11 +58,11 @@
         </div>
       </div>
 
-      <!-- NOW 线：有 running 节点时竖线 = 当前时刻（取 running 区间右端最大值） -->
+      <!-- NOW 线：有 running 节点时竖线 = 当前时刻（left = label 列宽 + gap + track 内百分比，对齐 track 左端起算） -->
       <span
         v-if="nowLeftPct !== null"
         class="pointer-events-none absolute bottom-0 top-[18px] w-px bg-accent"
-        :style="{ left: `calc(112px + 0.5rem + ${nowLeftPct}% )` }"
+        :style="{ left: `calc(${LABEL_COL_PX}px + ${GAP_REM}rem + ${nowLeftPct}%)` }"
         aria-hidden="true"
         data-testid="workflow-gantt-now-line"
       />
@@ -137,8 +139,13 @@ const props = defineProps<{
   pendingNodes: WorkflowAgentCall[]
 }>()
 
+/** select-agent-call 事件载荷契约：单个 payload 对象（规则 #1，与 WorkflowDagView 一致）。 */
+interface SelectAgentCallPayload {
+  agentCallSessionId: string
+}
+
 const emit = defineEmits<{
-  'select-agent-call': [agentCallSessionId: string]
+  'select-agent-call': [payload: SelectAgentCallPayload]
 }>()
 
 const { t } = useI18n()
@@ -148,6 +155,8 @@ const PERCENT_MULTIPLIER = 100 // 分数 → 百分比换算系数
 const PERCENT_MAX = 100 // 百分比上界（NOW 线越界判断 / span===0 时横条占满）
 const MIN_BAR_WIDTH_PCT = 2 // 横条最小宽度百分比（极短任务仍可见，防被 span 压成 0）
 const GANTT_TICK_MS = 1000 // running 横条重算 tick 间隔（每秒推进 NOW）
+const LABEL_COL_PX = 112 // 左侧 label 列固定宽度（px，与 axis 占位 / label 列 / NOW 线偏移三处共享）
+const GAP_REM = 0.5 // label 列与 track 之间的横向间距（rem，对应 tailwind gap-2 = 0.5rem）
 
 /** 把所有 layer 节点拍平，得到全部有时间节点。 */
 const flatNodes = computed<WorkflowAgentCall[]>(() =>
@@ -206,22 +215,19 @@ function barGeometry(node: WorkflowAgentCall): { left: string; width: string } {
   return { left: `${leftPct}%`, width: `${widthPct}%` }
 }
 
-/** NOW 线位置：取所有 running 节点 end 的最大值（= Date.now()），换算成 track 内百分比。 */
+/**
+ * NOW 线位置：换算成 track 内百分比。
+ *
+ * 复用 timeRange.maxT（已经是全局最大 end）：running 节点的 computeEnd === Date.now()，
+ * 在同一刻度内所有 running 节点 end 相等，故 maxT === Date.now() === 任意 running 节点 end。
+ * 无需再遍历 running 节点重新取最大值（与 barGeometry 共享 timeRange，避免几何口径重复）。
+ */
 const nowLeftPct = computed<number | null>(() => {
   void nowTick.value
   if (!hasRunning.value) return null
-  const { minT, span } = timeRange.value
+  const { minT, maxT, span } = timeRange.value
   if (span <= 0) return null
-  // running 的 end = Date.now()，取最大值即当前时刻
-  let nowEnd = Number.NEGATIVE_INFINITY
-  for (const n of flatNodes.value) {
-    if (n.status === 'running') {
-      const e = computeEnd(n)
-      if (e > nowEnd) nowEnd = e
-    }
-  }
-  if (!Number.isFinite(nowEnd)) return null
-  const pct = ((nowEnd - minT) / span) * PERCENT_MULTIPLIER
+  const pct = ((maxT - minT) / span) * PERCENT_MULTIPLIER
   return pct < 0 || pct > PERCENT_MAX ? null : pct
 })
 
@@ -231,6 +237,9 @@ function barClass(node: WorkflowAgentCall): string {
     case 'completed': return 'bg-success'
     case 'failed': return 'bg-danger'
     case 'running': return 'animate-pulse bg-accent'
+    // 防御性保留：compute-layers 把无 startedAt 的 pending 节点路由到 pendingNodes，
+    // 不会进入 layers/flatNodes 的轨道，故此处 default（pending）分支正常不可达。
+    // 保留是为防上游契约变更导致 pending 节点误入轨道时仍有兜底配色（避免裸色横条）。
     default: return 'bg-neutral-faint'
   }
 }
@@ -248,7 +257,7 @@ function isClickable(node: WorkflowAgentCall): boolean {
 }
 
 function onNodeClick(node: WorkflowAgentCall): void {
-  if (isClickable(node)) emit('select-agent-call', node.sessionId!)
+  if (isClickable(node)) emit('select-agent-call', { agentCallSessionId: node.sessionId! })
 }
 
 // ── setInterval 生命周期（严格复用 useTurnElapsed.ts 范式，RK1）──
