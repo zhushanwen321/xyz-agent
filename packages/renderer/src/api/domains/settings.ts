@@ -60,6 +60,8 @@ type BareSetupScriptReply = ServerMessageMap['config.bareSetupScript']
 type WorktreeTimeoutReply = ServerMessageMap['config.worktreeTimeout']
 /** 默认基分支配置 reply 类型。 */
 type DefaultBaseBranchReply = ServerMessageMap['config.defaultBaseBranch']
+/** 自动重命名 session 配置 reply 类型。 */
+type AutoRenameEnabledReply = ServerMessageMap['config.autoRenameEnabled']
 
 /** 设置 worktree 专用目录（持久化到 settings.json）。 */
 export async function setWorktreeRootDir(dir: string): Promise<WorktreeRootDirReply> {
@@ -109,6 +111,16 @@ export async function setDefaultBaseBranch(baseBranch: string): Promise<DefaultB
 /** 读取默认基分支配置。 */
 export async function getDefaultBaseBranch(): Promise<DefaultBaseBranchReply> {
   return command('config.getDefaultBaseBranch', {})
+}
+
+/** 设置自动重命名 session 开关。 */
+export async function setAutoRenameEnabled(enabled: boolean): Promise<AutoRenameEnabledReply> {
+  return command('config.setAutoRenameEnabled', { enabled })
+}
+
+/** 读取自动重命名 session 配置。 */
+export async function getAutoRenameEnabled(): Promise<AutoRenameEnabledReply> {
+  return command('config.getAutoRenameEnabled', {})
 }
 
 // ── 代理配置（update:getProxyConfig / update:setProxyConfig / update:testProxy）──

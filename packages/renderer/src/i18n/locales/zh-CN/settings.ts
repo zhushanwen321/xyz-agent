@@ -399,6 +399,8 @@ export default {
     defaultBaseBranch: '默认基分支',
     defaultBaseBranchHint: '创建 worktree 时的默认基础分支',
     defaultBaseBranchPlaceholder: 'origin/main',
+    autoRenameSession: '自动重命名会话',
+    autoRenameSessionHint: '首个消息后自动生成会话标题（需安装 pi-rename-session 扩展，下个新会话生效）',
     saved: 'Worktree 配置已保存',
     saveFailed: '保存失败',
   },

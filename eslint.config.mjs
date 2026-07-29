@@ -116,4 +116,17 @@ export default [
       'max-lines-per-function': 'off',
     },
   },
+  // [HISTORICAL] i18n settings 字典（zh-CN/en-US 镜像）是 settings 全文案的 SSOT，
+  // 每新增一个设置项需双语同步追加。auto-rename-session 开关追加后行数微超 500（501 行），
+  // 属唯一聚合中心、结构内聚（扁平 key），强行拆分需设计 per-section 文件组织，
+  // 收益不抵成本。短期 max-lines override 避免阻塞。
+  {
+    files: [
+      'packages/renderer/src/i18n/locales/zh-CN/settings.ts',
+      'packages/renderer/src/i18n/locales/en-US/settings.ts',
+    ],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
 ];

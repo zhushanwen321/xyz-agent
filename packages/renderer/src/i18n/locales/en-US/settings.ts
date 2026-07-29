@@ -399,6 +399,8 @@ export default {
     defaultBaseBranch: 'Default Base Branch',
     defaultBaseBranchHint: 'Default base branch when creating worktrees',
     defaultBaseBranchPlaceholder: 'origin/main',
+    autoRenameSession: 'Auto Rename Session',
+    autoRenameSessionHint: 'Auto-generate session title after first message (requires pi-rename-session extension, applies to next new session)',
     saved: 'Worktree settings saved',
     saveFailed: 'Save failed',
   },
