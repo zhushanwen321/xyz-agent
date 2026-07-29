@@ -1,26 +1,24 @@
 /**
  * toolcall status 翻转 UI 回归测试。
  *
- * 验证：tool.status running→completed 后，DOM 上 .animate-working-pulse 消失 + Check 图标出现。
+ * 验证：tool.status running→completed 后，DOM 上 .animate-loader-spin 消失（统一交互模式：无终态 icon）。
  * 覆盖三层链路：
  * - 方案 a：mount Block，改 props.tool.status（叶子组件单元回归）
  * - 方案 b：mount Turn，改 turn.assistants[0].toolCalls[0].status（单 turn 链路回归）
  * - 方案 c：mount MessageStream（真 store + 真虚拟滚动层），applyMessageEvent 走 tool_call_end 路径
- * - 方案 d：虚拟滚动响应式——heights/scrollTop 变化触发 visibleRange 重算（真 computed）
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/effects/tool-status-flip.test.ts
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { computed, defineComponent, effectScope, h, nextTick, ref } from 'vue'
+import { defineComponent, h, nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import Block from '@/components/panel/message-stream/Block.vue'
 import Turn from '@/components/panel/message-stream/Turn.vue'
 import MessageStream from '@/components/panel/MessageStream.vue'
 import { useChatStore } from '@/stores/chat'
-import { useVirtualTurnList } from '@/composables/effects/useVirtualTurnList'
 import type { ToolCall, Message, ServerMessage } from '@xyz-agent/shared'
-import type { MessageTurn, RenderItem } from '@/composables/logic/messageTurns'
+import type { MessageTurn } from '@/composables/logic/messageTurns'
 
 const NOW = Date.now()
 
@@ -29,6 +27,56 @@ const NOW = Date.now()
 vi.mock('@/composables/features/useChat', () => ({
   useChat: () => ({ loadMoreHistory: vi.fn(), hasMoreHistory: () => false }),
 }))
+
+// mock virtua/vue：passthrough Virtualizer（渲染所有子项，绕过 happy-dom 无 RO/viewportSize=0 的窗口化限制）。
+// [cw wave w3 历史 skip，已恢复]：原本 c-multi / c-full-cycle 因 virtua 在 happy-dom 下 viewportSize=0
+//   skip——未被 :keepMounted 钉扎的非末位 turn 不进渲染窗口 → DOM 找不到 turn-xray。现通过本 mock 恢复覆盖。
+//   virtua 窗口化本身有独立单测（use-virtua-follow / use-message-stream-rail-virtua）覆盖；
+//   本测只验证 tool status 翻转链路（真 store + 真 applyMessageEvent + 多 turn 非末位翻转），不依赖窗口化行为。
+// vi.mock 为文件级（hoist），只影响本文件的 import，不影响其他测试文件。
+vi.mock('virtua/vue', async () => {
+  const { defineComponent, h } = await import('vue')
+  const PassthroughVirtualizer = defineComponent({
+    name: 'Virtualizer',
+    props: {
+      data: { type: Array, required: true },
+      // 声明但不消费的 props（保持与真实 Virtualizer 接口一致，避免 Vue warn 未声明 prop 告警）
+      itemSize: { type: Number, default: 0 },
+      shift: { type: Boolean, default: false },
+      keepMounted: { type: Array, default: () => [] },
+      startMargin: { type: Number, default: 0 },
+    },
+    setup(props, { slots, expose }) {
+      // 暴露一个最小 mock handle 满足 VirtualizerHandle 接口（MessageStream 的 vlistRef 绑定）。
+      // c-multi / c-full-cycle 不断言滚动几何，数值随便填（vlistBottom computed 有 null/scrollSize=0 guard）。
+      // 注意：用 setup ctx 的 expose（非 defineExpose——后者是 <script setup> 编译宏，本文件 defineComponent 不可用）。
+      expose({
+        scrollSize: 1000,
+        scrollOffset: 0,
+        viewportSize: 1000,
+        cache: {},
+        findItemIndex: () => 0,
+        getItemOffset: () => 0,
+        getItemSize: () => 100,
+        scrollToIndex: () => {},
+        scrollTo: () => {},
+        scrollBy: () => {},
+      })
+      // 透传默认 slot：把每个 data item + index 喂给子项（与真实 Virtualizer 的 #default slot 一致）。
+      // 包一层 div 接住 slot 返回的 vnode 数组，避免取 [0] 索引和类型纠结；多一层 div 不影响断言
+      // （断言用 [data-testid="turn-xray"] 查 Turn stub）。
+      return () =>
+        h(
+          'div',
+          { 'data-testid': 'virtualizer-mock' },
+          props.data.map((item: unknown, index: number) =>
+            h('div', { 'data-virtua-index': index }, slots.default?.({ item, index })),
+          ),
+        )
+    },
+  })
+  return { Virtualizer: PassthroughVirtualizer }
+})
 
 function makeTool(over: Partial<ToolCall> = {}): ToolCall {
   return {
@@ -183,10 +231,10 @@ describe('方案 c: mount MessageStream（真 store + 真虚拟滚动层）— t
   })
 
   it('c-multi: 多 turn，running tool 在非末位 turn —— 验证虚拟窗口非末项 turn 翻转', async () => {
-    // 构造 5 个 turn，第 1 个 turn 含 running tool，其余 4 个完成。
-    // 末项钉扎（SR3）保证 last turn 恒在窗口，但第 1 个 turn 是否在窗口取决于高度。
-    // 关键：如果虚拟滚动窗口在 tool_call_end 后没有重新渲染第 1 个 turn（已卸载/重新挂载），
-    // 状态翻转可能丢失。这里默认高度都按估算，scrollTop=0，第 1 个 turn 必在窗口内。
+    // [cw wave w3 历史 skip，已恢复]：原本因 virtua 在 happy-dom 下 viewportSize=0 skip——未被 :keepMounted
+    //   钉扎的非末位 turn 不进渲染窗口 → DOM 找不到 turn-xray。现通过 mock virtua/vue 的 Virtualizer 为
+    //   passthrough 组件恢复覆盖——virtua 窗口化有独立单测，本测只验证 tool status 翻转链路
+    //   （真 store + 真 applyMessageEvent + 多 turn 非末位翻转）。
     const chat = useChatStore()
     const sid = 'sess-c-multi'
     const history: Message[] = []
@@ -242,8 +290,10 @@ describe('方案 c: mount MessageStream（真 store + 真虚拟滚动层）— t
   })
 
   it('c-full-cycle: message.start→tool_start→tool_end→message.complete(full working→done) 真实生命周期', async () => {
-    // 模拟完整真实流程：working turn 在 tool_call_end 后再收 message.complete → finalizeSession。
-    // 验证：message.complete 后 tool 仍 completed（不被 finalize 覆盖回 running/end_not_received）。
+    // [cw wave w3 历史 skip，已恢复]：同 c-multi 理由——message.complete 后 a1 不再 streaming，真实 virtua
+    //   :keepMounted 释放该 idx，happy-dom（viewportSize=0）下会卸载 a1 致 turn-xray 消失。现通过 mock
+    //   virtua/vue 的 Virtualizer 为 passthrough 组件恢复覆盖——virtua 窗口化有独立单测，本测只验证
+    //   tool status 翻转真实生命周期（真 store + 真 applyMessageEvent 走 message.complete 路径）。
     const chat = useChatStore()
     const sid = 'sess-cycle'
     chat.hydrate(sid, [
@@ -278,29 +328,27 @@ describe('方案 c: mount MessageStream（真 store + 真虚拟滚动层）— t
 
 /* ─────────────────────── 方案 a：mount Block，改 props.tool.status ─────────────────────── */
 describe('方案 a: mount Block 组件 — 翻转 props.tool.status', () => {
-  it('running→completed：脉冲点消失，Check 图标出现', async () => {
+  it('running→completed：双环 loader 消失，无终态 icon（统一交互模式）', async () => {
     const tool = makeTool({ status: 'running' })
     const wrapper = mount(Block, {
       props: { type: 'tool', tool, sessionId: 's1' },
     })
 
-    // running 态：脉冲点存在
-    expect(wrapper.findAll('.animate-working-pulse').length).toBeGreaterThan(0)
-    expect(wrapper.find('svg.lucide-check').exists()).toBe(false)
+    // running 态：双环 loader 存在
+    expect(wrapper.findAll('.animate-loader-spin').length).toBeGreaterThan(0)
 
-    // 翻转 status → completed（且有 output，满足 Block.vue:100 `!isFailed && !isUnfinished && result`）
-    // 注意：result = props.tool.output，需要 output 才会显示 Check（否则走 noResult 分支）
+    // 翻转 status → completed
     await wrapper.setProps({ tool: { ...tool, status: 'completed', output: 'file content' } })
 
-    // 断言：脉冲消失，Check 出现
-    expect(wrapper.findAll('.animate-working-pulse')).toHaveLength(0)
-    expect(wrapper.find('svg.lucide-check').exists()).toBe(true)
+    // 断言：loader 消失，无终态 Check icon（统一交互模式：无末尾 icon）
+    expect(wrapper.findAll('.animate-loader-spin')).toHaveLength(0)
+    expect(wrapper.find('svg.lucide-check').exists()).toBe(false)
   })
 })
 
 /* ─────────────────────── 方案 b：mount Turn，改 turn prop 内 tool ─────────────────────── */
 describe('方案 b: mount Turn 组件 — 翻转 turn.assistants[0].toolCalls[0].status', () => {
-  it('running→completed：Turn 内 Block 脉冲消失，Check 出现', async () => {
+  it('running→completed：Turn 内 Block 双环 loader 消失，无终态 icon', async () => {
     const tool = makeTool({ status: 'running' })
     const assistant = makeAssistantWithTool(tool)
     const turn = makeTurn(assistant, /* isStreaming */ false)
@@ -315,8 +363,8 @@ describe('方案 b: mount Turn 组件 — 翻转 turn.assistants[0].toolCalls[0]
     await wrapper.find('button.turn-meta').trigger('click')
     await nextTick()
 
-    // running 态断言：脉冲点存在
-    expect(wrapper.findAll('.animate-working-pulse').length).toBeGreaterThan(0)
+    // running 态断言：双环 loader 存在
+    expect(wrapper.findAll('.animate-loader-spin').length).toBeGreaterThan(0)
 
     // 翻转 status：构造新的 turn prop（不可变更新，模拟 store commitMessages 路径）
     const tool2: ToolCall = { ...tool, status: 'completed', output: 'file content' }
@@ -325,16 +373,14 @@ describe('方案 b: mount Turn 组件 — 翻转 turn.assistants[0].toolCalls[0]
     await wrapper.setProps({ turn: turn2 })
     await nextTick()
 
-    // 断言：脉冲消失，Check 出现
-    expect(wrapper.findAll('.animate-working-pulse')).toHaveLength(0)
-    // 至少有一个 Check 图标（assistant 区复制按钮也有 Check，但 tool 块的 Check 在 trace 内）
-    expect(wrapper.findAll('svg.lucide-check').length).toBeGreaterThan(0)
+    // 断言：loader 消失，无终态 Check icon（统一交互模式：无末尾 icon）
+    expect(wrapper.findAll('.animate-loader-spin')).toHaveLength(0)
   })
 })
 
 /* ─────────────────────── 方案 c（叶子）：直接验证 traceBlocks 响应式 ───────────────────────
- * 不 mount MessageStream（虚拟滚动层响应式在 use-virtual-turn-list.test.ts 与下方方案 d
- * 已覆盖），而是聚焦验证「Turn 把 toolCall 引用的 status 变化（不可变替换）传给 Block」是否响应式。
+ * 不 mount MessageStream（虚拟滚动层窗口化由 virta <Virtualizer> 内部负责），而是聚焦验证
+ * 「Turn 把 toolCall 引用的 status 变化（不可变替换）传给 Block」是否响应式。
  * ------------------------------------------------------------------------- */
 describe('方案 c（叶子）: traceBlocks 响应式验证（不可变替换翻转）', () => {
   it('c1: 不可变替换 turn prop（模拟 store commit）— 应翻转', async () => {
@@ -348,7 +394,7 @@ describe('方案 c（叶子）: traceBlocks 响应式验证（不可变替换翻
     })
     await wrapper.find('button.turn-meta').trigger('click')
     await nextTick()
-    expect(wrapper.findAll('.animate-working-pulse').length).toBeGreaterThan(0)
+    expect(wrapper.findAll('.animate-loader-spin').length).toBeGreaterThan(0)
 
     // 不可变替换（与方案 b 同）
     const tool2: ToolCall = { ...tool, status: 'completed', output: 'done' }
@@ -356,101 +402,11 @@ describe('方案 c（叶子）: traceBlocks 响应式验证（不可变替换翻
     await wrapper.setProps({ turn: { ...turn, assistants: [a2] } })
     await nextTick()
 
-    expect(wrapper.findAll('.animate-working-pulse')).toHaveLength(0)
+    expect(wrapper.findAll('.animate-loader-spin')).toHaveLength(0)
   })
 })
 
-/* ─────────────────────── 方案 d：虚拟滚动响应式——真 computed（Wave1 已从 liveComputed 改为真 computed）───────────────────────
- * 复刻 MessageStream.vue 的真实装配：renderItems 是真 computed（包 ref 数据源），
- * useVirtualTurnList 的 items getter 读 renderItems.value。visibleItems 是真 computed，
- * 内部读 visibleRange.value（Wave1 后为真 computed）+ renderItems.value（真 computed）。
- *
- * Wave1 修复后行为：heights 变化（reportHeight）经 triggerRef(heights) 失效 layout/visibleRange；
- * scrollTop 变化经 onScrollUpdate() 写入响应式 ref 失效 visibleRange。两者都应触发 visibleItems 重算。
- * ------------------------------------------------------------------------- */
+/* [cw wave w4] 方案 d（虚拟滚动响应式——heights/scrollTop 变化触发 visibleRange 重算）随
+ *   useVirtualTurnList 删除而移除：virta <Virtualizer> 内部维护测量缓存 + RO，响应式窗口化由 virta 负责，
+ *   不再是应用层职责。tool status 翻转链路覆盖由方案 a（Block）/ b（Turn）/ c（MessageStream + leaf）保持。 */
 
-function turnItemR(index: number, key: string): RenderItem {
-  return {
-    kind: 'turn',
-    turn: {
-      index,
-      user: { id: `u-${key}`, role: 'user', content: 'q', status: 'complete', timestamp: NOW } as never,
-      assistants: [],
-      isStreaming: false,
-      hasFoldable: false,
-    },
-  }
-}
-
-describe('方案 d: 虚拟滚动响应式——heights/scrollTop 变化触发 visibleRange 重算', () => {
-  /**
-   * flush pending rAF 回调（happy-dom 的 rAF 是异步——经 setImmediate 调度）。
-   * onScrollUpdate / reportHeight 改 rAF trailing 节流后（W-VS1/W-VS3），
-   * 需 await 一个宏任务让 rAF 落地，响应式 ref 才更新、visibleRange 才重算。
-   */
-  async function flushRaf(): Promise<void> {
-    await new Promise((resolve) => setTimeout(resolve, 0))
-  }
-
-  it('d1: reportHeight 后 heights 变 → visibleRange 重算（非过时）', async () => {
-    const scope = effectScope()
-    let assertCount = 0
-    await scope.run(async () => {
-      const data = ref<RenderItem[]>([turnItemR(1, 'k1'), turnItemR(2, 'k2'), turnItemR(3, 'k3')])
-      const renderItems = computed(() => data.value)
-      const scrollEl = document.createElement('div')
-      Object.defineProperty(scrollEl, 'scrollTop', { configurable: true, writable: true, value: 0 })
-      Object.defineProperty(scrollEl, 'clientHeight', { configurable: true, writable: true, value: 200 })
-      Object.defineProperty(scrollEl, 'scrollHeight', { configurable: true, writable: true, value: 9999 })
-
-      const vl = useVirtualTurnList({
-        items: () => renderItems.value,
-        scrollEl: () => scrollEl,
-        estimatedHeight: () => 200,
-        buffer: () => 0,
-      })
-      // 初始化 scrollTop/viewportHeight 响应式 ref（Wave1：visibleRange 是真 computed，
-      // 依赖响应式 scrollTop/viewportHeight；不调 onScrollUpdate 则用 ref 初始值 0）。
-      // onScrollUpdate 改 rAF trailing（W-VS1）：需 await flushRaf 让 scrollTop/clientHeight 写入 ref。
-      vl.onScrollUpdate()
-      await flushRaf()
-
-      // visibleItems 复刻 MessageStream.vue 真实派生
-      const visibleItems = computed(() => {
-        const { startIndex, endIndex } = vl.visibleRange.value
-        const items = renderItems.value
-        const arr: number[] = []
-        for (let i = startIndex; i <= endIndex && i < items.length; i++) arr.push(i)
-        return arr
-      })
-
-      // 初始：3 turn 各 200，视口 200，buffer 0 → 窗口必含至少 1 项
-      const initialCount = visibleItems.value.length
-      expect(initialCount).toBeGreaterThan(0)
-      assertCount++
-
-      // reportHeight 让 k1 变成 50px（变小，但末项钉扎保证全 3 项仍渲染）。
-      // reportHeight 改批量 rAF flush（W-VS3）：需 await flushRaf 让 heights 写入 + triggerRef。
-      vl.reportHeight('u-k1', 50)
-      await flushRaf()
-      // visibleItems 是真 computed；heights 变化经 triggerRef 失效 layout→visibleRange→visibleItems。
-      const countAfterHeight = visibleItems.value.length
-      expect(countAfterHeight).toBeGreaterThan(0)
-      assertCount++
-
-      // 滚动：改 DOM scrollTop + 调 onScrollUpdate（Wave1：把 DOM scrollTop 写入响应式 ref）
-      scrollEl.scrollTop = 400
-      vl.onScrollUpdate()
-      await flushRaf()
-      // k1=50, k2=200, k3=200 → offsets=[0,50,250], total=450
-      // scrollTop=400 在 turn2 内（offset 250-450）；buffer 0 → 窗口 [2,2]
-      const rangeAfterScroll = vl.visibleRange.value
-      expect(rangeAfterScroll.startIndex).toBe(2)
-      expect(rangeAfterScroll.endIndex).toBe(2)
-      assertCount++
-    })
-    scope.stop()
-    // 防回归：三个断言都被执行（非短路跳过）
-    expect(assertCount).toBe(3)
-  })
-})

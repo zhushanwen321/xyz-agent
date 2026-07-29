@@ -21,7 +21,7 @@
       <div class="max-h-[280px] overflow-y-auto py-1">
         <div v-for="group in groups" :key="group.provider" class="py-1">
           <div
-            class="px-2.5 pb-1 pt-2 font-mono text-[10px] uppercase tracking-[0.08em] text-subtle"
+            class="px-2.5 pb-1 pt-2 font-mono text-[10px] uppercase tracking-[0.08em] text-neutral-dim"
           >
             {{ group.provider }}
           </div>
@@ -29,7 +29,7 @@
             v-for="model in group.models"
             :key="model.id"
             variant="ghost"
-            class="flex w-full items-center gap-2 rounded-none px-2.5 py-[7px] text-[13px] text-muted hover:bg-surface-hover hover:text-fg"
+            class="flex w-full items-center gap-2 rounded-none px-2.5 py-[7px] text-[13px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
             :class="isSelected(model.id) && SELECTED_ITEM_CLASS"
             @click="onSelect(model.id, group.provider)"
           >
@@ -42,7 +42,7 @@
         </div>
         <div
           v-if="groups.length === 0"
-          class="px-2.5 py-3 text-center text-[12px] text-subtle"
+          class="px-2.5 py-3 text-center text-[12px] text-neutral-dim"
         >
           {{ t('panel.modelSelect.noMatch') }}
         </div>

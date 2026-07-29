@@ -20,8 +20,8 @@ import { computed, type ComputedRef } from 'vue'
 
 /** 容器侧定位依赖（getter 注入，避免本 composable 反向依赖虚拟滚动/状态计算） */
 export interface NoticeStackDeps {
-  /** 虚拟列表总高度（renderItems 末项底部） */
-  totalHeight: ComputedRef<number>
+  /** virtua 末项底部绝对 px（vlist.scrollSize），所有 abs 子项 top 的基线。 */
+  vlistBottom: ComputedRef<number>
   /** load-more 预留顶部偏移（所有 abs 子项 top 基线） */
   topOffset: ComputedRef<number>
   /** 是否正在压缩（compacting notice 占位高度参与基线计算） */
@@ -54,9 +54,17 @@ export function useNoticeStack(deps: NoticeStackDeps): {
    *  useForkNoticeStream 据此按 FORK_NOTICE_HEIGHT 垂直堆叠多条通知。 */
   forkNoticeBaseTop: ComputedRef<number>
 } {
+  /**
+   * 末项底部基线 px：直接读 vlistBottom（virtua scrollSize）。
+   * [cw wave w4] 删 totalHeight 旧路径：virtua 是单一滚动 owner，末项底部统一由 vlistBottom 提供。
+   */
+  function resolveBase(): number {
+    return deps.vlistBottom.value
+  }
+
   /** 列表末尾 + topOffset + compacting 占位（handoff 块的基线） */
   const handoffNoticeTop = computed(() => {
-    let top = deps.totalHeight.value + deps.topOffset.value
+    let top = resolveBase() + deps.topOffset.value
     if (deps.isCompacting.value) top += deps.compactNoticeHeight
     return top
   })

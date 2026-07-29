@@ -388,6 +388,31 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 - **事故关联**（spawn 脚本权限）：`ShellRunner.execute` 原用 `spawn(scriptPath, args)` 直接 spawn 脚本，依赖文件 +x 权限位。git 跟踪的脚本默认 644（无 x 位）→ EACCES。修复为 `spawn('bash', [scriptPath, ...args])`（不依赖 +x）。这是独立 bug，但与「路径」无关——记在 `shell-runner.ts` 的 [HISTORICAL] 注释中。教训：执行外部脚本用 bash 包装，不依赖文件权限位。
 - **检查方法**：`grep -rn "xyz-agent-workspace\|/Users/zhushanwen" packages/runtime/src/` 应只在注释/示例中出现，不得在逻辑代码中出现硬编码绝对路径。
 
+### 17. 跨层机制排查必须穷尽所有层（pi extension ↔ xyz-agent runtime）[HISTORICAL]
+
+**分层架构里，每层只看自己视角，「我这层没做」≠「没发生」。涉及 pi extension ↔ xyz-agent runtime 的跨层机制排查，必须穷尽所有可能发起方，不能只看 xyz-agent runtime 侧就下结论。**
+
+**事故背景**：排查「background subagent 完成后主 agent 是否续跑」。前次 explorer 只看 xyz-agent runtime（event-interpreter / session-service / message-dispatcher），发现 `handleSubagentBgNotify` 只更新 subagent 状态、不调 steer/followUp/prompt，据此下结论「主 agent 不续跑」。基于此错误结论，差点把修复方案设计成「加守卫跳过有 background 任务的 message.complete，不新增触发点」——净效果是**从「早响」变成「永不响」**（subagent 完成后没有任何 message.complete 会触发提示）。
+
+**真相**：续跑机制由 **pi 进程内部的 extension**（pi-subagent-workflow notifier）发起，xyz-agent runtime 完全不参与：
+- pi-subagent-workflow 在 subagent 完成时调 `pi.sendMessage({customType:'subagent-bg-notify', ...}, {triggerTurn:true, deliverAs:'steer'})`
+- pi 核心（session loop）收到 `triggerTurn:true` 后开新一轮 turn（steer 抢占当前 streaming，followUp 排队）
+- 主 agent 续跑 → 产出 → 最终 `message.complete`（此时 subagent 已 done，hasBackgroundWork===false，守卫放行自然响）
+
+xyz-agent runtime 只是旁观转发：它看到 pi 又开始流 `message_start`，与用户手动发消息触发的 turn 无法区分。`triggerTurn`/`deliverAs` 是 pi 私有协议，xyz-agent 从未实现——因为它不需要，pi 自己做了。
+
+**为什么前次 explorer 会错判**：只看 xyz-agent runtime 的「通知到达后 xyz-agent 做什么」，没看「通知到达 xyz-agent 之前 pi 已经自己做了什么」。这是分层架构的典型陷阱——每层的代码都在自己职责内自洽，但跨层机制的发起方/执行方分布在不同进程/扩展中，单一层视角必然遗漏。
+
+**排查跨层机制的强制步骤**：
+1. xyz-agent runtime 侧（event-interpreter / session-service / message-dispatcher / session-message-handler）：这些只是「旁观 + 转发 + UI 同步」，不主动编排 pi 行为
+2. pi extension 机制（运行在 pi 进程内）：`@zhushanwen/pi-subagent-workflow` / `pi-subagents` 等扩展的 notifier / hook 才是续跑/编排的发起方。源码在 `~/.xyz-agent/pi/agent/npm/node_modules/@zhushanwen/pi-*/src/`
+3. pi 私有协议（`triggerTurn`/`deliverAs`/`before_agent_start` 等）：`packages/shared/src/message.ts` 的注释会提到这些语义（如「triggerTurn:true 唤醒父 agent 接力处理结果」），但 xyz-agent 不实现它们
+4. 设计文档：`docs/page-design/v3/` 下常有 extension adaptation 文档（如 `subagent-panel/workflow-extension-adaptation.md`）说明跨层协议
+
+**判断「是 xyz-agent 职责还是 pi 职责」的依据**：如果一个行为涉及 pi 的 session loop / turn 调度 / LLM 调用，它的发起方几乎一定在 pi 进程内（extension 或 pi 核心），xyz-agent runtime 只是通过 RPC/事件流与 pi 交互，不会自己编排 pi 的 turn。xyz-agent 的职责是 UI 状态同步 + 用户命令转发，不是 pi 行为编排。
+
+**教训记录**：2026-07-27 completion-sound-bg-guard wave，前次 explorer 误判续跑机制，差点导致「永不响」错方案。幸亏用户坚称「主 agent 会续跑」与 explorer 结论冲突，触发二次排查（穷尽 pi extension 源码 + 设计文档）才定位真相。教训：当用户的领域知识与 explorer 结论冲突时，**优先怀疑 explorer 排查范围不全**，而非怀疑用户。explorer 单次排查的盲点（尤其跨层机制）比用户对自家产品的认知更容易出错。
+
 ## 测试规范 [HISTORICAL]
 
 > **执行测试或设计测试计划前，先读 [TEST-STRATEGY.md](TEST-STRATEGY.md)（分层策略/mock 策略/回归基线 SSOT）+ [docs/testing/](docs/testing/) 对应功能文档**（各页面组件的 MOCK/非MOCK 测试步骤 + Playwright E2E 调用链 + 每步期望输入输出 + 已知坑）。docs/testing/ 00 总览是入口篇。复用已有 testid 清单/调用链/fixture 数据/历史踩坑经验，不从零重新探索——这些文档记录了 mock 回显双匹配、thinking 收起态 v-if 时序、initApp 预填 cwd 等仅靠读组件代码无法发现的运行时行为。

@@ -1,235 +1,49 @@
 <template>
   <!--
-    展示组件 · 回合（message-stream 单个 turn，draft-message-stream §1）。
-    结构：user 气泡（靠右，可编辑分叉）+ assistant 区。
-    assistant 区 = turn-meta（已工作按钮 / 工作中态）+ 折叠 trace（thinking/tool/中间 text）+ 收尾 summary。
-    - user 气泡下方 hover：复制（常驻）+ 编辑（仅 AI 停止，编辑=fork 新会话）
-    - 收尾 summary 下方 hover：复制 + 复制为 MD + fork（modal 确认后 clone+fork 到另一 panel）
-
-    Output Text 中间/收尾拆分（draft §4）：多 assistant 回合，非最后一条 content 折进 trace，
-    仅最后一条作收尾 summary 恒显。
+    编排器 · Turn（message-stream 单个回合，W4 拆分后）。
+    组合 UserBubble + TurnMeta + TurnSummary 三个子组件。
+    保留：trace 区 Block 编排 + ChangeSetCard。
+    [cw wave w3] 不再自持 root ref + 高度上报——virta 内部 RO 测高（design §4.4）。
   -->
-  <!-- rootEl：单 turn 容器。gap-3.5 = turn 内 user→assistant 间距（一轮对话内部紧凑）；
-       pb-5 = turn 底部留白（turn 间距 + 末条到 composer），与 MessageStream scrollEl 的 pt-5 对齐
-       到统一 20px——使每条 user 气泡上方间距全一致（首条靠 scrollEl pt-5，其余靠此处 pb-5）。 -->
-  <div ref="rootEl" class="flex flex-col gap-3.5 pb-5">
-    <!-- user 区：编辑态切 textarea，展示态气泡 + hover actions -->
-    <div v-if="turn.user" class="group/user flex flex-col items-end gap-1">
-      <!-- 编辑态：编辑后 fork 新会话 -->
-      <div
-        v-if="isEditingThisUser"
-        class="w-full max-w-[76%] rounded-[14px] border border-accent bg-bg-input p-2 shadow-[0_0_0_3px_color-mix(in_oklch,var(--accent)_22%,transparent)]"
-      >
-        <Textarea v-model="draftText" class="min-h-[64px] border-0 bg-transparent px-1 text-[13.5px] leading-[1.55] focus-visible:ring-0" />
-        <div class="mt-1.5 flex items-center justify-between px-1">
-          <span class="text-[11px] text-subtle">{{ t('panel.message.editAfterReplace') }}</span>
-          <div class="flex gap-1.5">
-            <Button variant="ghost" size="sm" class="h-7" @click="cancelEdit">{{ t('panel.message.cancel') }}</Button>
-            <Button variant="default" size="sm" class="h-7 gap-1" :disabled="!draftText.trim()" @click="submitEdit">
-              <ArrowRight class="size-3.5" /> {{ t('panel.composer.send') }}
-            </Button>
-          </div>
-        </div>
-      </div>
-      <!-- 展示态气泡：右下尖角（user content 走 markdown 渲染；slash 命令前缀渲染为 chip） -->
-      <!-- 软换行由 markdown.ts breaks:true 转 <br> 实现（不再用 whitespace-pre-wrap）。
-           [HISTORICAL] 曾用 pre-wrap 兑现换行，但会把块级元素间 \n 渲染成空行（见 markdown.ts）。
-           例外：pending 气泡用 <span> 纯文本预览（未投递不走 markdown），仍需 pre-wrap 保留换行。 -->
-      <!-- pending 气泡（draft-composer-states S7）：steer/followup 已入队未投递，
-           虚线边框（1px，对齐设计稿）+ 脉冲圆点 + WHO 标 + 配色（steer 蓝 / followUp 青），投递后转普通气泡。 -->
-      <div
-        v-else-if="isPendingUser"
-        class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-dashed px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-fg whitespace-pre-wrap"
-        :class="pendingBubbleClass"
-      >
-        <span class="mb-1 flex items-center gap-1.5 font-mono text-[10px] font-semibold tracking-wider"
-          :class="pendingLabelClass"
-        >
-          <span class="size-[6px] animate-pulse-accent rounded-full" :class="pendingDotClass" />
-          {{ pendingLabel }}
-        </span>
-        <span>{{ normalizeContent(turn.user.content) }}</span>
-      </div>
-      <div
-        v-else
-        class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-border-strong bg-surface-hover px-[13px] py-[9px] text-[13.5px] leading-[1.55] text-fg"
-      >
-        <!-- user 气泡内容：遍历 content Segment[] 渲染 badge + 文本（ADR-0037）。
-             skill segment → 紫色 badge（star icon + skill 名），点击打开 drawer Doc tab；
-             text segment → MarkdownRenderer 渲染。
-             assistant/system content 是 string，不走此分支（下方 userSegments 为空时不渲染 badge） -->
-        <template v-for="(seg, i) in userSegments" :key="i">
-          <!-- skill badge：inline span + role=button（不用 Button as-child，
-               避免 buttonVariants 注入 h-9 px-4 py-2 撑大 badge + button 默认 type=submit 卡死）。
-               显示层只显 skill 名（icon+紫色已传达类型，/skill: 前缀对用户是冗余），
-               点击仍传完整 /skill:name 给 openCommandDoc（CommandDocPanel 靠前缀路由）。 -->
-          <span
-            v-if="seg.type === 'skill'"
-            class="mr-1 inline-flex cursor-pointer items-center gap-1 rounded-sm bg-[var(--reasoning-soft)] px-1.5 py-px font-mono text-[12px] font-medium leading-[1.4] text-reasoning transition-colors hover:bg-[color-mix(in_oklch,var(--reasoning)_32%,transparent)]"
-            style="vertical-align: middle"
-            role="button"
-            tabindex="0"
-            :title="t('panel.message.viewCommandDoc')"
-            @click.stop="openCommandDoc(`/skill:${seg.name}`)"
-            @keydown.enter.stop.prevent="openCommandDoc(`/skill:${seg.name}`)"
-            @keydown.space.stop.prevent="openCommandDoc(`/skill:${seg.name}`)"
-          >
-            <component :is="SLASH_ICON_COMPONENTS.star" class="size-[12px] shrink-0" />
-            <span>{{ seg.name }}</span>
-          </span>
-          <!-- FR-7: file badge — 绿色（复用 --success token），路径末段 + 行范围后缀（D2），
-               tooltip 全路径，点击打开 drawer Detail 预览。结构同 skill badge（inline span + role=button） -->
-          <span
-            v-else-if="seg.type === 'file'"
-            class="mr-1 inline-flex cursor-pointer items-center gap-1 rounded-sm bg-[var(--success-soft)] px-1.5 py-px font-mono text-[12px] font-medium leading-[1.4] text-success transition-colors hover:bg-[color-mix(in_oklch,var(--success)_32%,transparent)]"
-            style="vertical-align: middle"
-            role="button"
-            tabindex="0"
-            :data-testid="`msg-file-badge-${i}`"
-            :title="seg.path"
-            @click.stop="openFileDetail(seg.path)"
-            @keydown.enter.stop.prevent="openFileDetail(seg.path)"
-            @keydown.space.stop.prevent="openFileDetail(seg.path)"
-          >
-            <FileText class="size-[12px] shrink-0" />
-            <span>{{ fileBasename(seg.path) }}{{ formatLineRange(seg.lineRange) }}</span>
-          </span>
-          <!-- image segment → ImageThumb 缩略图（local-file:// 直载，加载失败降级绿色 badge）。
-               独立子组件：避免 Turn.vue template 超 400 行上限。AGENTS.md #7.5：send 后图片在
-               user 气泡内持续可见（对话流状态可重开恢复）。 -->
-          <ImageThumb
-            v-else-if="seg.type === 'image'"
-            :path="seg.path"
-            :display-name="seg.displayName"
-          />
-          <!-- handoff badge：紫色（复用 --reasoning token，与 skill 同族），展示来源 session 名称。
-               handoff 是 runtime 编排产出的结构化片段，非用户手动输入。 -->
-          <span
-            v-else-if="seg.type === 'handoff'"
-            class="mr-1 inline-flex items-center gap-1 rounded-sm bg-[var(--reasoning-soft)] px-1.5 py-px font-mono text-[12px] font-medium leading-[1.4] text-reasoning"
-            style="vertical-align: middle"
-            :data-testid="`msg-handoff-badge-${i}`"
-            :title="`handoff from ${seg.sourceLabel}`"
-          >
-            <ArrowRightLeft class="size-[12px] shrink-0" />
-            <span>{{ seg.sourceLabel }}</span>
-          </span>
-          <MarkdownRenderer v-else-if="seg.type === 'text' && seg.text" :content="seg.text" :session-id="sessionId" />
-        </template>
-        <!-- 非 Segment[] content（system/custom 退化场景）：纯文本渲染兜底 -->
-        <MarkdownRenderer v-if="!userSegments.length && typeof turn.user.content === 'string'" :content="turn.user.content" :session-id="sessionId" />
-      </div>
-      <!-- hover actions：复制常驻 hover；编辑仅 AI 停止（非活跃态）时显示。
-           pending 气泡不显示 actions（未投递，复制/编辑无意义）。 -->
-      <div
-        v-if="!isEditingThisUser && !isPendingUser"
-        class="flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/user:opacity-100 group-focus-within/user:opacity-100"
-      >
-        <Button
-          variant="ghost"
-          size="icon"
-          class="size-6 text-subtle hover:text-fg"
-          :title="t('panel.message.copy')"
-          @click="copy(normalizeContent(turn.user.content), userCopyKey)"
-        >
-          <Check v-if="copied === userCopyKey" class="size-3 text-success" />
-          <Copy v-else class="size-3" />
-        </Button>
-        <Button
-          v-if="canEdit && !isSessionEditable"
-          variant="ghost"
-          size="icon"
-          class="size-6 text-subtle hover:text-fg"
-          :title="t('panel.message.editReplace')"
-          @click="startEdit"
-        >
-          <Pencil class="size-3" />
-        </Button>
-      </div>
-    </div>
+  <div class="flex flex-col gap-3.5 pb-5" :data-testid="`turn-${turn.index}`">
+    <!-- user 区：UserBubble 子组件 -->
+    <UserBubble
+      v-if="turn.user"
+      :turn="turn"
+      :session-id="sessionId"
+      :can-edit="canEdit"
+      :is-session-editable="isSessionEditable"
+      @edit-state-change="emit('edit-state-change', $event)"
+    />
 
-    <!-- assistant 区：背景融为一体，透明无边框 -->
-    <!-- group/ai 定义在 assistant 区根容器：fork-row（每条 assistant 上方）与 turn-summary
-         （收尾文案）是兄弟节点，共享此 group 上下文。hover 任一 assistant 内容均令 fork
-         按钮 + summary 复制组浮现（spec §2 层①可发现性）。
-         [P1] 原 group/ai 定义在 turn-summary 上，fork-row 是其兄弟 → group-hover/ai 永不触发。 -->
+    <!-- assistant 区 -->
     <div class="group/ai flex flex-col gap-0 self-stretch">
-      <!--
-        turn-meta：有 assistant 回复即显示（回合级耗时 + working 指示），左对齐收缩（self-start，
-        对齐设计稿 align-self:flex-start —— 按钮宽度=内容宽度，hover 背景不撑满整行）。
-        顺序：working 态行首脉冲点 → 「已工作/工作中 Xs」→ chevron（完成态有可折叠内容时）→ badge
-        - chevron 折叠入口在 elapsed 之后、badge 之前（紧贴耗时，语义为「展开详情」入口）
-        - working 态：行首 spinner + 禁用点击（trace 由 sessionActive 强制展开）
-        - 完成态 + 无 foldable：无 chevron，纯展示耗时
-      -->
-      <!-- turn-meta + hr 包在同一 sticky wrapper：working 态贴顶时两者一起固定，
-           与完成态共用同一条 hr（完成态 wrapper 无 sticky 无底色，纯结构占位）。
-           底色在 wrapper 上（block 撑满全宽）而非 Button（w-fit 太窄遮不住整行），
-           用 --panel-bg（Panel 注入，随 panel 状态变化）不透明遮挡滚动文字。 -->
-      <div
-        v-if="turn.assistants.length > 0"
-        :class="sessionActive ? 'sticky top-0 z-[1] bg-[var(--panel-bg,var(--surface))]' : ''"
-      >
-      <Button
-        variant="ghost"
-        size="sm"
-        class="turn-meta h-auto w-fit items-center justify-start gap-2.5 self-start px-1 py-1 font-sans text-[12px] font-medium transition-colors duration-[var(--duration-fast)] ease-[var(--ease)]"
-        :class="[
-          !turn.hasFoldable
-            ? 'cursor-default hover:text-muted'
-            : 'cursor-pointer hover:text-fg',
-        ]"
-        :disabled="sessionActive || !turn.hasFoldable"
-        @click="toggle(props.turn.index)"
-      >
-        <!-- streaming 态：spinner（更显眼的流式生成指示），替代原脉冲点。仅文本流式生成时转（A 类） -->
-        <Loader2 v-if="isStreaming" class="size-3 shrink-0 animate-spin text-accent" />
-        <span class="text-[12px] font-medium">
-          <span class="lbl" :class="sessionActive ? 'text-accent' : 'text-muted'">{{ sessionActive ? t('panel.message.thinking') : t('panel.message.worked') }}</span>
-          <span class="elapsed font-mono font-medium tracking-[0.01em] text-fg">{{ elapsed }}</span>
-        </span>
-        <!-- chevron 紧跟耗时（展开/收起 trace 入口），在 badge 之前 -->
-        <ChevronRight
-          v-if="turn.hasFoldable && !sessionActive"
-          class="chev size-[9px] text-subtle transition-transform duration-[var(--duration)] ease-[var(--ease)]"
-          :class="isExpanded(props.turn.index) ? 'rotate-90 text-accent' : ''"
-        />
-        <span v-if="thinkCount > 0" class="badge badge-think inline-flex items-center gap-1 rounded-full bg-reasoning-soft px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.02em] text-reasoning">
-          <Brain class="size-2.5" />{{ t('panel.message.thinkCount', { count: thinkCount }) }}
-        </span>
-        <span v-if="toolCount > 0" class="badge badge-tool inline-flex items-center gap-1 rounded-full bg-info-soft px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.02em] text-info">
-          <Wrench class="size-2.5" />{{ t('panel.message.toolCount', { count: toolCount }) }}
-        </span>
-      </Button>
-      <hr class="border-0 border-t border-border" />
-      </div>
+      <!-- turn-meta：TurnMeta 子组件（展开态直接读 useTurnExpansion 共享 store，无需 expanded prop） -->
+      <TurnMeta
+        :turn="turn"
+        :session-active="sessionActive"
+        :is-streaming="isStreaming"
+        :think-count="thinkCount"
+        :tool-count="toolCount"
+        :elapsed="elapsed"
+        :turn-index="turn.index"
+        :session-id="sessionId"
+      />
 
-      <!-- [W2 fast-fork] fork 入口已合并到下方 summary action 行（与复制/复制MD 同行，spec §2 层① + draft-fast-fork.html）。
-           每条 assistant 的独立 fork-row 已移除——主场景单 assistant，fork 按钮在 summary 下方即可。
-           trace 内非末位 assistant 的 fork 入口（方案 a）留待多 assistant 场景需求明确后再加。 -->
-
-      <!-- 折叠 trace：working 或 expanded 时展开。
-           块按 contentBlocks 真实时序渲染（draft §4：7 类块按真实时序排列）。
-           - streaming 态：所有块按时序展开，trace 末尾追加独立光标行（永远在最后一行）
-           - complete 态：末位 assistant 的 text 块跳过（已在底部 summary），其余按时序 -->
+      <!-- 折叠 trace：working 或 expanded 时展开 -->
       <Transition :css="false" @before-leave="onTraceBeforeLeave" @leave="onTraceLeave" @enter="onTraceEnter">
         <div v-if="showTrace" class="trace mt-1 mb-1 flex flex-col">
-          <template v-for="(assistant, aIdx) in turn.assistants" :key="assistant.id">
-            <template v-for="(blk, bIdx) in traceBlocksByAssistant[aIdx]" :key="`${assistant.id}-${blk.kind}-${blk.type}-${bIdx}`">
-              <!-- single 块：原 Block 渲染（与改造前逻辑一致，ref 取 blk.block.ref） -->
+            <template v-for="(assistant, aIdx) in turn.assistants" :key="assistant.id">
+            <template v-for="(blk, bIdx) in traceBlocksByAssistant[aIdx]" :key="`${assistant.id}-${blk.kind}-${bIdx}`">
+              <!-- 单块独立渲染：每个 block 直接输出（不再合并同类块）。
+                   agentgraph（subagent/workflow）数据结构同 tool（ref 是 ToolCall），按 tool 提取 ref；
+                   type 透传 'agentgraph'，Block.vue 内部靠 toolName 路由 subagent/workflow 分支。 -->
               <Block
-                v-if="blk.kind === 'single'"
-                :type="blk.block.kind"
-                :content="blk.block.kind === 'text' ? (blk.block.ref as string) : blk.block.kind === 'thinking' ? (blk.block.ref as ThinkingBlock).content : undefined"
-                :tool="blk.block.kind === 'tool' ? (blk.block.ref as ToolCall) : undefined"
-                :collapsed="blk.block.kind === 'thinking' ? (blk.block.ref as ThinkingBlock).collapsed : undefined"
-                :working="sessionActive"
-                :session-id="sessionId"
-              />
-              <!-- merged 卡片（w2）：连续同类 thinking/tool 折叠成可展开卡，渲染逻辑下沉 MergedBlockCard。 -->
-              <MergedBlockCard
-                v-else
-                :blk="blk"
+                :type="blk.kind"
+                :content="blk.kind === 'text' ? (blk.ref as string) : blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).content : undefined"
+                :tool="blk.kind === 'tool' || blk.kind === 'agentgraph' ? (blk.ref as ToolCall) : undefined"
+                :thinking-id="blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).id : undefined"
+                :collapsed="blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).collapsed : undefined"
                 :working="sessionActive"
                 :session-id="sessionId"
               />
@@ -238,118 +52,15 @@
         </div>
       </Transition>
 
-      <!-- hr 已移入上方 turn-meta sticky wrapper（working/完成态共用，避免 streaming 时双线） -->
+      <!-- 收尾 summary：TurnSummary 子组件 -->
+      <TurnSummary
+        :turn="turn"
+        :session-id="sessionId"
+        :is-streaming="isStreaming"
+        :last-assistant="lastAssistant"
+      />
 
-      <!-- 收尾 summary：streaming 和 complete 态都渲染（draft §4 收尾位固定不折叠，作回合焦点）。
-           streaming 态末位 text 在此实时展示 + 末尾光标；complete 态光标消失仅文本。
-           traceBlocks 对末位 assistant 始终跳过 text 块——text 从头到尾只在此位渲染，
-           消除停止时从 trace(12.5px/muted) → summary(13.5px/fg) 的样式跳变。
-           字号/行高/字体 streaming 与 complete 一致；streaming 时颜色用 muted（偏淡），complete 用 fg。 -->
-      <div
-        v-if="summaryText"
-        class="turn-summary pt-3 text-[13.5px] leading-7 transition-colors duration-200"
-        :class="isStreaming ? 'text-muted' : 'text-fg'"
-      >
-        <MarkdownRenderer :content="summaryText" :session-id="sessionId" />
-        <!-- streaming 光标：行内闪烁竖条，紧跟 summary 末尾。
-             原 trace 末尾独立 streaming-tail 移入此处（text 已在 summary 位，光标跟随 text）。
-             w-[7px] / rounded-[1px] 为设计精确值（与 h-3.5=14px 配出 2:1 细竖条比例 + 1px 微圆角），
-             非魔数——改宽度需同步 h-3.5 比例。 -->
-        <span v-if="isStreaming" class="streaming-cursor ml-0.5 inline-block h-3.5 w-[7px] rounded-[1px] bg-accent align-middle animate-blink" />
-        <!-- hover actions：复制 / 复制为 MD（常驻）+ fork（仅 AI 停止时）。
-           与 user 区一致（Turn.vue:76,90）：容器不守 isSessionActive，fork 单独守卫。 -->
-        <div
-          v-if="lastAssistant"
-          class="mt-1.5 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/ai:opacity-100 group-focus-within/ai:opacity-100"
-        >
-          <Button
-            variant="ghost"
-            size="icon"
-            class="size-6 text-subtle hover:text-fg"
-            :title="t('panel.message.copy')"
-            @click="copy(summaryText, aiCopyKey)"
-          >
-            <Check v-if="copied === aiCopyKey" class="size-3 text-success" />
-            <Copy v-else class="size-3" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            class="relative size-6 text-subtle hover:text-fg"
-            :title="t('panel.message.copyMarkdown')"
-            @click="copy(assistantToMarkdown(lastAssistant), aiMdKey)"
-          >
-            <Check v-if="copied === aiMdKey" class="size-3 text-success" />
-            <Copy v-else class="size-3" />
-            <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[10px] font-bold leading-[10px] text-accent-foreground">MD</span>
-          </Button>
-          <!-- fork 按钮与复制同组（spec §2 层① + draft-fast-fork.html）。
-               两组用 as-sep 分隔：[复制 复制MD] | [fork 后台 fork 提问]。
-               fork 后台（GitFork 线性 + 文字）：低频，空白 fork 留后台。
-               fork 提问（GitFork 实心 + accent-soft 强调底 + 文字）：高频，进 composer fork 模式。
-               差异靠：实心 vs 线性图标 + 强调底色 + 文字标签 + kbd 快捷键。 -->
-          <span v-if="!isSubagentVirtualId(sessionId)" class="as-sep mx-1 h-3.5 w-px shrink-0 bg-border" />
-          <Button
-            v-if="!isSubagentVirtualId(sessionId)"
-            variant="ghost"
-            size="sm"
-            class="fork-btn h-6 gap-1 px-1.5 text-accent hover:bg-accent-soft hover:text-accent-hover"
-            data-testid="fork-background-btn"
-            :disabled="isForking"
-            :title="t('panel.message.forkBackground')"
-            @click="handleFork(lastAssistant)"
-          >
-            <GitFork class="size-3" />
-            <span class="text-[11px]">{{ t('panel.message.forkBackgroundLabel') }}</span>
-            <span class="as-fork-kbd rounded-[3px] bg-surface-2 px-1 font-mono text-[9px] font-medium text-subtle">{{ formatKbd('g') }}</span>
-          </Button>
-          <Button
-            v-if="!isSubagentVirtualId(sessionId)"
-            variant="ghost"
-            size="sm"
-            class="fork-ask-btn h-6 gap-1 bg-accent-soft px-1.5 font-semibold text-accent hover:bg-accent hover:text-accent-foreground"
-            data-testid="fork-ask-btn"
-            :disabled="isForking"
-            :title="t('panel.message.forkAsk')"
-            @click="onForkAsk(lastAssistant)"
-          >
-            <GitFork class="size-3.5 fill-current" />
-            <span class="text-[11px]">{{ t('panel.message.forkAskLabel') }}</span>
-            <span class="as-fork-kbd rounded-[3px] bg-accent/20 px-1 font-mono text-[9px] font-medium text-accent">{{ formatKbd('shift+g') }}</span>
-          </Button>
-          <!-- handoff 按钮组（fast-handoff）：与 fork 同组，用 as-sep 分隔。
-               handoff 后台（Upload 线性）：从末条 assistant 打包文档到新 session，完成后跳转。
-               handoff 备注（Upload 实心 + accent 圆点徽章）：进 composer handoff 模式，可附 focus 说明。 -->
-          <span v-if="!isSubagentVirtualId(sessionId)" class="as-sep mx-1 h-3.5 w-px shrink-0 bg-border" />
-          <Button
-            v-if="!isSubagentVirtualId(sessionId)"
-            variant="ghost"
-            size="icon"
-            class="handoff-btn size-6 text-subtle hover:bg-accent-soft hover:text-accent"
-            data-testid="handoff-btn"
-            :disabled="isHandingOff"
-            :title="t('panel.message.handoff')"
-            @click="onHandoff()"
-          >
-            <Upload class="size-3" />
-          </Button>
-          <Button
-            v-if="!isSubagentVirtualId(sessionId)"
-            variant="ghost"
-            size="icon"
-            class="handoff-ask-btn relative size-6 text-subtle hover:bg-accent-soft hover:text-accent"
-            data-testid="handoff-ask-btn"
-            :disabled="isHandingOff"
-            :title="t('panel.message.handoffAsk')"
-            @click="onHandoffAsk(lastAssistant)"
-          >
-            <Upload class="size-3.5 fill-current" />
-            <span class="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-accent" />
-          </Button>
-        </div>
-      </div>
-
-      <!-- 变更集卡（W10，ADR-0024）：最后一条 assistant 有 fileChanges 时渲染 -->
+      <!-- 变更集卡（W10，ADR-0024） -->
       <ChangeSetCard
         v-if="changeSetFileChanges.length > 0"
         class="mt-2"
@@ -362,49 +73,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { ArrowRight, ArrowRightLeft, Brain, Check, ChevronRight, Copy, FileText, GitFork, Loader2, Pencil, Upload, Wrench } from '@lucide/vue'
-import { Button } from '@/components/ui/button'
-import { Textarea } from '@/components/ui/textarea'
-import type { MessageTurn } from '@/composables/logic/messageTurns'
+import { computed } from 'vue'
+import type { MessageTurn, OrderedBlock } from '@/composables/logic/messageTurns'
 import { countThinking, countToolCalls, expandAssistantBlocks } from '@/composables/logic/messageTurns'
-import { mergeConsecutiveBlocks, type MergedBlock } from '@/composables/logic/mergeBlocks'
-import type { ThinkingBlock, ToolCall, Segment } from '@xyz-agent/shared'
-import { normalizeContent } from '@xyz-agent/shared'
-import { rebuildSegmentsWithEditedText } from '@/lib/utils'
-import { assistantToMarkdown } from '@/composables/logic/messageFormat'
+import type { ThinkingBlock, ToolCall } from '@xyz-agent/shared'
 import ChangeSetCard from './ChangeSetCard.vue'
-import { useCopy } from '@/composables/effects/useCopy'
-import { useChat } from '@/composables/features/useChat'
-import { useChatStore } from '@/stores/chat'
-import { useSideDrawer } from '@/composables/features/useSideDrawer'
-import { usePlatformShortcut } from '@/composables/usePlatformShortcut'
-import { useFileTreeStore } from '@/stores/fileTree'
-import { isSubagentVirtualId } from '@/stores/subagent'
-import { useTurnElapsed } from '@/composables/panel/useTurnElapsed'
-import { useTurnActions } from '@/composables/panel/useTurnActions'
-import { useTurnExpansion } from '@/composables/panel/useTurnExpansion'
-import { useResizeReport } from '@/composables/effects/useResizeReport'
-import { useStickGuard, useTraceTransition } from '@/composables/effects/useStickGuard'
-import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
+import UserBubble from './UserBubble.vue'
+import TurnMeta from './TurnMeta.vue'
+import TurnSummary from './TurnSummary.vue'
 import Block from './Block.vue'
-import ImageThumb from './ImageThumb.vue'
-import MarkdownRenderer from './MarkdownRenderer.vue'
-import MergedBlockCard from './MergedBlockCard.vue'
+import { useChatStore } from '@/stores/chat'
+import { useTurnElapsed } from '@/composables/panel/useTurnElapsed'
+import { useTurnExpansion } from '@/composables/panel/useTurnExpansion'
+import { useStickGuard, useTraceTransition } from '@/composables/effects/useStickGuard'
 
 const props = withDefaults(
   defineProps<{
     turn: MessageTurn
-    /** Turn 所在 session（fork 源，双 panel standby 场景不能依赖全局 activeId） */
     sessionId: string
-    /** 该 user 是否可编辑（仅当前 session 最后一条 user，避免编辑中间 user 丢失其后对话） */
     canEdit?: boolean
-    /** 该 turn 所属 session 是否「对话进行中」（session 级信号，CW wave session-active-ssot T4）。
-     *  含 streaming/ask-user(subagent waiting)/working(后台 subagent/workflow)/pending/compacting/retrying。
-     *  驱动 sticky 贴顶、折叠 disabled、trace 展开、thinking 文案等「对话进行中」相关 UI。
-     *  缺省（undefined）回退到 turn.isStreaming（向后兼容：历史调用方/test 不传时仍按流式态渲染）。
-     *  default:undefined 显式禁用 Vue boolean prop 的缺省 false 强转（否则 `??`/`=== undefined` 回退失效）。 */
     isSessionActive?: boolean
   }>(),
   { isSessionActive: undefined },
@@ -412,123 +99,25 @@ const props = withDefaults(
 
 /**
  * B9：编辑状态变化通知父组件。
- * Turn 内部编辑状态（editingUserId）对 MessageStream 不可见，但被编辑 turn 滚出视口会卸载
- * 丢失 draftText（SR5）。父组件据此调 virtualList.pinEditing(idx) 钉住该 turn 在窗口内。
  */
 const emit = defineEmits<{
   'edit-state-change': [{ editing: boolean }]
 }>()
 
-const { t } = useI18n()
 const chat = useChatStore()
-const { editAndResend } = useChat()
-/** 最后一条 assistant（收尾 summary + MD 复制 + fork/handoff 的目标消息；useTurnActions 守卫用） */
+
+/** 最后一条 assistant */
 const lastAssistant = computed(() => {
   const as = props.turn.assistants
   return as[as.length - 1] ?? null
 })
-/** fork/handoff hover action handler（后台 fork / fork 提问 / 后台 handoff / handoff 备注）下沉 useTurnActions。 */
-const { onForkAsk, handleFork, isForking, onHandoff, onHandoffAsk } = useTurnActions({
-  sessionId: computed(() => props.sessionId),
-  lastAssistant,
-})
-
-const { open: openDrawer } = useSideDrawer()
-const { formatKbd } = usePlatformShortcut()
-const fileTreeStore = useFileTreeStore()
-
-/** [m2] 本 session 是否正在交接（防 handoff 按钮重复点击触发第二次 api 调用；fork 按钮不加 disabled）。 */
-const isHandingOff = computed(() => chat.isHandingOff(props.sessionId))
 
 /**
- * 虚拟滚动高度测量（W4）：rootEl + ResizeObserver 上报自身高度给 useVirtualTurnList。
- * key 用 turn 首消息 id（与 heights Map 键一致）。非虚拟列表环境下 inject 不到 registry，
- * useResizeReport 内部优雅降级为 no-op。
- */
-const rootEl = ref<HTMLElement | null>(null)
-useResizeReport(rootEl, () => props.turn.user?.id ?? props.turn.assistants[0]?.id ?? '')
-
-/** 点击用户气泡 skill badge → 打开 drawer Doc tab 展示 SKILL.md */
-function openCommandDoc(commandName: string): void {
-  openDrawer('doc', { commandName })
-}
-
-/**
- * 点击用户气泡 file badge → 打开 drawer Detail tab 预览该文件（FR-7）。
- * fileTreeStore.selectFile 设 selectedPath（DetailPane watch 自动加载），drawer 切 detail tab。
- */
-function openFileDetail(path: string): void {
-  fileTreeStore.selectFile(path)
-  openDrawer('detail')
-}
-
-/** file badge 行范围后缀（D2 格式）：单行 L<n>，多行 L<s>-L<e>，无范围空串 */
-function formatLineRange(lineRange?: [number, number]): string {
-  if (!lineRange) return ''
-  const [s, e] = lineRange
-  return s === e ? `:L${s}` : `:L${s}-L${e}`
-}
-
-/** file badge 显示名：路径末段（basename），tooltip 用全路径 */
-function fileBasename(path: string): string {
-  const parts = path.split('/')
-  return parts[parts.length - 1] ?? path
-}
-
-/**
- * user message 的 content segments（ADR-0037）。
- * content 是 string | Segment[] 联合类型——user message 是 Segment[]，
- * 遍历渲染 badge（skill segment）+ 文本（text segment）。
- * 非 Segment[]（异常/退化）返回空数组，模板兜底走纯文本渲染。
- */
-const userSegments = computed<Segment[]>(() => {
-  const content = props.turn.user?.content
-  if (Array.isArray(content)) return content
-  return []
-})
-
-/**
- * [W7] 本 turn 所属 session 是否活跃（流式/派发空窗期）——per-session，替代全局 isGenerating。
- * standby panel 的 Turn 不会被 active panel 的流式态误伤；编辑/fork 仅在本 session 活跃时禁用。
- * 注意：这是「编辑权限」门控（活跃期禁止编辑），与 isSessionActive prop（对话进行中信号）不同。
- */
-const isSessionEditable = computed(() => chat.isActive(props.sessionId))
-
-/**
- * CW wave session-active-ssot T4 —— isWorking 拆分为两个信号：
- *
- * - isStreaming（turn 级）：文本正在流式生成。来源 turn.isStreaming（原 turn.isWorking 的流式语义）。
- *   服务：Loader 转圈、streaming 光标、summary 文案颜色、计时器、滚动跟随（A 类，5 处）。
- * - sessionActive（session 级）：对话进行中（含 streaming/ask-user/subagent/compacting 等）。
- *   来源 isSessionActive prop（MessageStream 读 derivedStatus 注入），无 prop 时回退到 turn.isStreaming
- *   （向后兼容：历史调用方/test 不传 prop 时仍按流式态渲染）。服务：sticky 贴顶、折叠 disabled、
- *   trace 展开、thinking 文案、完成自动收起（B/C 类，6 处）。
- *
- * ask-user 等待期关键差异：message.complete 让 isStreaming=false（Loader 不转/光标不闪），
- * 但对话仍在进行（sessionActive=true，trace 展开/折叠 disabled/贴顶）——对话流不收起（M3 修复）。
+ * isStreaming（turn 级）：文本正在流式生成。
+ * sessionActive（session 级）：对话进行中（含 streaming/ask-user/subagent/compacting 等）。
  */
 const isStreaming = computed(() => props.turn.isStreaming)
-// prop 未传入时回退到 turn.isStreaming（向后兼容）。
-// withDefaults 显式 default:undefined 禁用 Vue boolean prop 的缺省 false 强转，保证 `??` 回退生效。
 const sessionActive = computed(() => props.isSessionActive ?? props.turn.isStreaming)
-
-/**
- * pending user 气泡（draft-composer-states S7）：steer/followup 已入队 pi 但未投递。
- * isPendingUser 判定 status==='pending'；pending 配色/文案按 sendMode 区分（steer 蓝/followUp 青）。
- */
-const isPendingUser = computed(
-  () => !!props.turn.user && props.turn.user.status === 'pending',
-)
-/** steer → accent 蓝（追加当前回合）；follow-up → info 青（回合后新轮）。draft §pending-bubble 同族 */
-const isSteerMode = computed(() => props.turn.user?.sendMode === 'steer')
-const pendingBubbleClass = computed(() =>
-  isSteerMode.value
-    ? 'border-[var(--accent)] bg-accent-soft'
-    : 'border-info bg-info-soft',
-)
-const pendingLabelClass = computed(() => (isSteerMode.value ? 'text-accent' : 'text-info'))
-const pendingDotClass = computed(() => (isSteerMode.value ? 'bg-accent' : 'bg-info'))
-const pendingLabel = computed(() => (isSteerMode.value ? t('panel.queue.steerLabel') : t('panel.queue.followupLabel')))
 
 const thinkCount = computed(() => countThinking(props.turn))
 const toolCount = computed(() => countToolCalls(props.turn))
@@ -538,16 +127,12 @@ const toolCount = computed(() => countToolCalls(props.turn))
  * 删除本地 expanded ref：折叠态由 composable 统一管（rail toggle / expandAll / collapseAll 共享）。
  * isExpanded 读 reactive Map 建立响应式依赖，toggle/collapse mutate 时下游失效重算。
  */
-const { isExpanded, toggle, collapse } = useTurnExpansion(computed(() => props.sessionId))
+const { isExpanded, collapse } = useTurnExpansion(computed(() => props.sessionId))
 /** 对话进行中（含 ask-user）或手动 expanded 时展开 trace（B 类：sessionActive 驱动） */
 const showTrace = computed(() => sessionActive.value || isExpanded(props.turn.index))
 
 /**
- * 工作耗时 live 计时（提取至 useTurnElapsed composable，纯计时关注点）。
- * T4 拆分两个信号：
- * - 计时器 start/stop 看 isStreaming（文本流式生成耗时，ask-user 等待不算生成耗时）。
- * - 完成自动收起看 sessionActive（对话真正结束才复位 expanded 成一行 meta）：
- *   ask-user 期间 message.complete 让 isStreaming false 但 session 仍 waiting，不应收起。
+ * 工作耗时 live 计时。
  */
 const { elapsed } = useTurnElapsed(
   () => props.turn.assistants,
@@ -558,19 +143,10 @@ const { elapsed } = useTurnElapsed(
   },
 )
 
-/**
- * stickToBottom 守卫暂停 + trace 折叠 transition hooks。
- *
- * 背景：对话完成时 trace 折叠，浏览器 clamp scrollTop 大幅减小被 onScroll 误判为用户上滑 →
- * stickToBottom 翻 false → scrollToBottom 被 guard 拦截 → 界面停中间。transition 期间暂停该
- * 误判分支（wheel 上滑仍立即翻 false，纯用户信号优先）。
- *
- * useStickGuard inject MessageStream provide 的 pause/resume（优雅降级：非 MessageStream 环境返回 null）。
- * useTraceTransition 封装三个 height 过渡 JS hooks（提取至 composable，行数规范）。详见 composable 注释。
- */
+/** trace 折叠 transition hooks */
 const { onTraceBeforeLeave, onTraceLeave, onTraceEnter } = useTraceTransition(useStickGuard())
 
-/** 变更集卡（W10）：最后一条 assistant 的 fileChanges + store 里的变更集状态 */
+/** 变更集卡（W10） */
 const changeSetFileChanges = computed(() => lastAssistant.value?.fileChanges ?? [])
 const changeSetStatus = computed(() => {
   const msg = lastAssistant.value
@@ -578,84 +154,25 @@ const changeSetStatus = computed(() => {
   return chat.getChangeSetStatus(props.sessionId, msg.id)
 })
 
-/** 复制反馈：复用 useCopy composable（单一真相源） */
-const { copied, copy } = useCopy()
-const userCopyKey = computed(() => `user-${props.turn.user?.id ?? props.turn.index}`)
-const aiCopyKey = computed(() => `ai-${props.turn.index}`)
-const aiMdKey = computed(() => `md-${props.turn.index}`)
+/** 本 session 是否可编辑 */
+const isSessionEditable = computed(() => chat.isActive(props.sessionId))
 
-/* ── 编辑（= fork）：编辑 user 消息后 fork 新会话 ── */
-const editingUserId = ref<string | null>(null)
-const draftText = ref('')
-const isEditingThisUser = computed(
-  () => !!props.turn.user && editingUserId.value === props.turn.user.id,
-)
-
-/**
- * B9：编辑状态变化 → 通知父组件（MessageStream 据此 pinEditing 钉住该 turn 在视口内，
- * 防滚出视口卸载丢失 draftText）。watch isEditingThisUser：startEdit→true，cancel/submit→false。
- */
-watch(isEditingThisUser, (editing) => {
-  emit('edit-state-change', { editing })
-})
-
-function startEdit(): void {
-  if (!props.turn.user) return
-  editingUserId.value = props.turn.user.id
-  draftText.value = normalizeContent(props.turn.user.content)
-}
-
-function cancelEdit(): void {
-  editingUserId.value = null
-}
-
-async function submitEdit(): Promise<void> {
-  const user = props.turn.user
-  if (!user) return
-  const text = draftText.value.trim()
-  if (!text) return
-  editingUserId.value = null
-  // 从原 user message 保留 image segments（编辑文本不改图：draftText 仅含 normalizeContent
-  // 拍平的文本，image 段拍平为 [图片 N] 占位，编辑后需从原 content 重新挂回真实 image 段）。
-  // M2：保持原 segment 顺序（rebuildSegmentsWithEditedText 实现见 lib/utils.ts）。
-  const segments = rebuildSegmentsWithEditedText(user.content, text)
-  // 原地替换语义（非 fork）：截断该 user（含）及其后 → appendUser 新 segments → 重新发送
-  await editAndResend(props.sessionId, user.id, segments)
-}
-
-/* ── fork / handoff 入口（FR-6,7,8,11 / fast-handoff）：handler 下沉 useTurnActions ── */
-
-/**
- * 收尾 summary：仅最后一条 assistant.content（draft §4：收尾位固定不折叠，作回合焦点）。
- * streaming 和 complete 态都渲染（模板 v-if="summaryText"，无 isWorking 守卫）。
- * streaming 态末位 text 在此实时展示（traceBlocks 跳过末位 text 块避免重复）。
- */
-const summaryText = computed(() => {
-  const as = props.turn.assistants
-  const last = as[as.length - 1]
-  if (!last?.content) return ''
-  const text = normalizeContent(last.content)
-  return text.trim() ? text : ''
-})
-
-/** 最后一条 assistant 的索引（streaming 光标 / complete 跳过末位 text 用） */
+/** 最后一条 assistant 的索引 */
 const lastAssistantIdx = computed(() => props.turn.assistants.length - 1)
 
 /**
  * trace 内每个 assistant 的有序块（缓存，避免 v-for 内每次 render 重算）。
- * - 末位 assistant：先 filter 掉 text 块（text 在底部 summary 位渲染，TR-w4-2：filter 在 merge 之前，
- *   避免 text 被并入 merged 组后再过滤破坏时序），再 mergeConsecutiveBlocks 折叠连续同类块。
- * - 非末位 assistant：全部块按时序（中间 text 作为过程性信息保留），同样 merge 连续 thinking/tool。
- * 消除停止时 text 从 trace(12.5px/muted) → summary(13.5px/fg) 的样式跳变。
+ * - 末位 assistant：filter 掉 text 块（text 在底部 summary 位渲染，避免重复输出）。
+ * - 非末位 assistant：全部块按时序（中间 text 作为过程性信息保留）。
+ * 每个 block 独立渲染（不再合并连续同类块）。
  * streaming 时每 token 触发 re-render，computed 缓存避免对每个 assistant 重跑 expandAssistantBlocks。
  */
-const traceBlocksByAssistant = computed<MergedBlock[][]>(() => {
+const traceBlocksByAssistant = computed<OrderedBlock[][]>(() => {
   return props.turn.assistants.map((a, i) => {
     const blocks = expandAssistantBlocks(a)
-    const filtered = i === lastAssistantIdx.value
+    return i === lastAssistantIdx.value
       ? blocks.filter((b) => b.kind !== 'text')
       : blocks
-    return mergeConsecutiveBlocks(filtered)
   })
 })
 </script>

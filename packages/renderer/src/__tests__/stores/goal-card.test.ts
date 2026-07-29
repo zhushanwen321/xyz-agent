@@ -106,7 +106,7 @@ describe('GoalCard 首屏渲染', () => {
       props: { goal: makeBlockedGoal(), sessionId: 's1' },
     })
     const card = wrapper.find('[data-testid="goal-card"]')
-    expect(card.classes()).toContain('border-warning')
+    expect(card.classes()).toContain('border-warn')
 
     const resumeBtn = wrapper.find('[data-testid="goal-resume-btn"]')
     expect(resumeBtn.exists()).toBe(true)

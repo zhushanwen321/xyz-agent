@@ -1,3 +1,4 @@
+ 
 export default {
   title: 'Settings',
   close: 'Close',

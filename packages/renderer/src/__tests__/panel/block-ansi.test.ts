@@ -63,6 +63,7 @@ describe('Block ANSI 兜底渲染', () => {
 
   it('details.__gui__ 存在 → 优先用 GuiComponentRenderer 渲染 card（data-testid="gui-card" 存在）', async () => {
     const tool = makeTool({
+      toolName: 'read',
       output: 'done',
       details: {
         __gui__: {

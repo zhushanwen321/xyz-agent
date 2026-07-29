@@ -28,7 +28,7 @@ interface ModeVisualDeps {
   /** 是否发送中 —— 发送中 composer-box 半透明。Composer 持 ref，模式 composable 持 computed，故取并集 */
   isSending: Ref<boolean> | ComputedRef<boolean>
   /**
-   * bash 模式（composer-bash-execute）：draft 以 `!` 前缀触发，warning 边框 + bash placeholder。
+   * bash 模式（composer-bash-execute）：draft 以 `!` 前缀触发，accent 边框 + bash placeholder。
    * 与 fork/handoff 模式不同，bash 不是「模式开关」而是 draft 派生的瞬时态，优先级低于 fork/handoff
    * （fork/handoff 模式时 bash 视觉不叠加），高于默认态。
    */
@@ -49,12 +49,17 @@ export function useComposerModeVisual(deps: ModeVisualDeps): {
    * composer-box class：fork/handoff 模式 > bash 模式 > 流式 steer 呼吸 > 普通聚焦 ring；发送中叠半透明。
    * bash 模式优先级低于 fork/handoff（fork/handoff 是显式模式开关，bash 仅 draft 前缀派生），
    * 避免在 fork/handoff 模式下被 bash 前缀输入覆盖视觉。
+   *
+   * 灰阶化（main-fusion W4 / §13.2-E）：bash 模式视觉从 main 的 --warning（鲜橙，且 token 已被
+   * W1 重命名为 --warn，原 --warning 不再生效——merge 带入的遗留失效 class）改为 --accent 边 +
+   * --accent-soft 外发光，与 fork/handoff 模式同视觉语言（accent=命令模式强调）。语义对齐：
+   * bash 是用户主动发起的命令执行，accent 强调与 fork/handoff 一致，不走 warning 的告警语义。
    */
   const boxClass = computed<Array<string | false>>(() => [
     deps.forkBoxClass.value
       || deps.handoffBoxClass.value
       || (deps.isBashMode?.value
-        ? 'composer-bash-mode border-[var(--warning)] shadow-[0_0_0_2px_var(--warning-soft)]'
+        ? 'composer-bash-mode border-[var(--accent)] shadow-[0_0_0_3px_var(--accent-ring,rgba(79,142,247,0.30))]'
         : deps.isActive.value
           ? 'border-[var(--accent)] shadow-[0_0_0_3px_rgba(79,142,247,0.25)] animate-steer-breathe'
           : deps.hasInput.value

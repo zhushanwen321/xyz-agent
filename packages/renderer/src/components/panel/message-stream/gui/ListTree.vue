@@ -48,7 +48,7 @@ const depthPadding = () => ({ paddingLeft: `${currentDepth() * INDENT_PX}px` })
 </script>
 
 <template>
-  <div class="list-tree font-mono text-[12px] leading-relaxed" data-testid="gui-list-tree">
+  <div class="list-tree font-mono text-[length:var(--text-sm)] leading-relaxed" data-testid="gui-list-tree">
     <template v-for="(item, i) in items" :key="i">
       <div class="list-tree__item flex items-center gap-1.5" :style="depthPadding()">
         <span class="list-tree__icon flex w-3.5 shrink-0 justify-center">
@@ -59,10 +59,10 @@ const depthPadding = () => ({ paddingLeft: `${currentDepth() * INDENT_PX}px` })
             :class="statusClass(item.status)"
           />
         </span>
-        <span class="text-muted">{{ item.label }}</span>
+        <span class="text-neutral-mid">{{ item.label }}</span>
         <span
           v-if="item.status"
-          class="list-tree__status text-[10px]"
+          class="list-tree__status text-[length:var(--text-2xs)]"
           :class="statusClass(item.status)"
         >{{ STATUS_LABEL[item.status] }}</span>
       </div>

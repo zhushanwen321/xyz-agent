@@ -6,15 +6,15 @@
     所有业务逻辑在父组件 useQuotaConfigure 中，本组件纯展示 + 事件转发。
   -->
   <div class="border-t border-border pt-4" data-testid="coding-plan-section">
-    <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">
+    <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
       {{ t('settings.providerEdit.quotaSection') }}
     </Label>
 
     <!-- 类型选择下拉框（始终显示：手动指定 Coding Plan 类型，不再完全依赖自动匹配） -->
     <div class="mb-2">
-      <Label class="mb-1 block text-[10px] text-muted">
+      <Label class="mb-1 block text-[10px] text-neutral-mid">
         {{ t('settings.providerEdit.quotaType') }}
-        <span class="normal-case text-subtle">{{ t('settings.providerEdit.quotaTypeHint') }}</span>
+        <span class="normal-case text-neutral-dim">{{ t('settings.providerEdit.quotaTypeHint') }}</span>
       </Label>
       <Select
         :model-value="fetcherId"
@@ -35,9 +35,9 @@
 
     <!-- 启用开关 -->
     <div class="flex items-center justify-between py-1.5">
-      <span class="text-[12px] text-fg">
+      <span class="text-[12px] text-neutral-fg">
         {{ t('settings.providerEdit.quotaEnable') }}
-        <span class="text-[10px] text-subtle">{{ t('settings.providerEdit.quotaEnableHint') }}</span>
+        <span class="text-[10px] text-neutral-dim">{{ t('settings.providerEdit.quotaEnableHint') }}</span>
       </span>
       <Switch
         :model-value="enabled"
@@ -50,7 +50,7 @@
     <!-- API Key 类：凭证状态 + 专属 API Key 输入（可选）+ 操作按钮 -->
     <template v-if="!isCookieAuth">
       <div class="flex items-center justify-between py-1">
-        <span class="text-[11px] text-muted">{{ t('settings.providerEdit.quotaAuthMethod') }}</span>
+        <span class="text-[11px] text-neutral-mid">{{ t('settings.providerEdit.quotaAuthMethod') }}</span>
         <span v-if="apiKeySet" class="flex items-center gap-1 text-[11px] text-success">
           <CheckCircle2 class="size-3" />
           {{ t('settings.providerEdit.quotaCredentialOk') }}
@@ -65,9 +65,9 @@
         留空 = 复用上方填写的 provider API Key。
       -->
       <div class="mt-1.5">
-        <Label class="mb-1 block text-[10px] text-muted">
+        <Label class="mb-1 block text-[10px] text-neutral-mid">
           {{ t('settings.providerEdit.quotaApiKey') }}
-          <span class="normal-case text-subtle">{{ t('settings.providerEdit.quotaApiKeyHint') }}</span>
+          <span class="normal-case text-neutral-dim">{{ t('settings.providerEdit.quotaApiKeyHint') }}</span>
         </Label>
         <div class="flex gap-1.5">
           <Input
@@ -80,7 +80,7 @@
           />
           <Button
             variant="secondary"
-            class="gap-1 px-2 py-1 text-[11px] text-muted"
+            class="gap-1 px-2 py-1 text-[11px] text-neutral-mid"
             :disabled="configuring"
             data-testid="quota-save-apikey-btn"
             @click="$emit('saveApiKey')"
@@ -95,7 +95,7 @@
       <div v-if="enabled" class="mt-2 flex gap-1.5">
         <Button
           variant="secondary"
-          class="gap-1 px-2 py-1 text-[11px] text-muted [&_svg]:size-3"
+          class="gap-1 px-2 py-1 text-[11px] text-neutral-mid [&_svg]:size-3"
           :disabled="testStatus === 'loading'"
           data-testid="quota-test-btn"
           @click="$emit('testQuery')"
@@ -111,9 +111,9 @@
     <template v-else>
       <div class="mt-2">
         <div class="mb-1 flex items-center justify-between">
-          <span class="text-[11px] text-fg">Cookie</span>
+          <span class="text-[11px] text-neutral-fg">Cookie</span>
           <span v-if="cookieSet" class="text-[10px] text-success">{{ t('settings.providerEdit.quotaCookieSet') }}</span>
-          <span v-else class="text-[10px] text-subtle">{{ t('settings.providerEdit.quotaCookieNotSet') }}</span>
+          <span v-else class="text-[10px] text-neutral-dim">{{ t('settings.providerEdit.quotaCookieNotSet') }}</span>
         </div>
         <Textarea
           :model-value="cookieInput"
@@ -124,7 +124,7 @@
         />
       </div>
       <!-- 帮助链接 -->
-      <p v-if="helpUrl" class="mt-1.5 flex items-start gap-1 text-[10px] text-subtle">
+      <p v-if="helpUrl" class="mt-1.5 flex items-start gap-1 text-[10px] text-neutral-dim">
         <ExternalLink class="mt-0.5 size-3 shrink-0" />
         <span>{{ helpText || '' }}
           <a
@@ -139,7 +139,7 @@
       <div class="mt-2 flex gap-1.5">
         <Button
           variant="secondary"
-          class="gap-1 px-2 py-1 text-[11px] text-muted [&_svg]:size-3"
+          class="gap-1 px-2 py-1 text-[11px] text-neutral-mid [&_svg]:size-3"
           :disabled="configuring || !cookieInput.trim()"
           data-testid="quota-save-cookie-btn"
           @click="$emit('saveCookie')"
@@ -150,7 +150,7 @@
         <Button
           v-if="enabled"
           variant="secondary"
-          class="gap-1 px-2 py-1 text-[11px] text-muted [&_svg]:size-3"
+          class="gap-1 px-2 py-1 text-[11px] text-neutral-mid [&_svg]:size-3"
           :disabled="testStatus === 'loading'"
           data-testid="quota-test-btn"
           @click="$emit('testQuery')"
@@ -167,7 +167,7 @@
       <div class="flex items-center gap-1.5 text-[11px] text-success">
         <CheckCircle2 class="size-3" />
         {{ t('settings.providerEdit.quotaTestSuccess') }}
-        <span v-if="lastFetchAt" class="text-subtle">· {{ formatTimeAgo(lastFetchAt) }}</span>
+        <span v-if="lastFetchAt" class="text-neutral-dim">· {{ formatTimeAgo(lastFetchAt) }}</span>
       </div>
       <div class="mt-2 rounded-sm border border-border bg-bg-input p-2.5">
         <div
@@ -175,12 +175,12 @@
           :key="idx"
           class="flex items-center justify-between py-0.5 text-[11px]"
         >
-          <span class="font-mono text-[10px] uppercase tracking-wide text-muted">{{ windowLabels[idx] }}</span>
-          <span v-if="win.pct !== null" class="font-semibold tabular-nums text-fg">
+          <span class="font-mono text-[10px] uppercase tracking-wide text-neutral-mid">{{ windowLabels[idx] }}</span>
+          <span v-if="win.pct !== null" class="font-semibold tabular-nums text-neutral-fg">
             {{ Math.round(win.pct) }}%
-            <span v-if="win.resetSec !== null" class="ml-1 font-normal text-subtle">· {{ formatResetSec(win.resetSec) }}</span>
+            <span v-if="win.resetSec !== null" class="ml-1 font-normal text-neutral-dim">· {{ formatResetSec(win.resetSec) }}</span>
           </span>
-          <span v-else class="text-subtle">∞</span>
+          <span v-else class="text-neutral-dim">∞</span>
         </div>
       </div>
     </div>

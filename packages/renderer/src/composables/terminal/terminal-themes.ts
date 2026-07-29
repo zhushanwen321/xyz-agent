@@ -25,7 +25,7 @@ export const darkTerminalTheme: ITheme = {
   black: '#1a1b1f',           // = bg
   red: '#ef4444',             // --danger
   green: '#22c55e',           // --success
-  yellow: '#f5a524',          // --warning
+  yellow: '#f5a524',          // ANSI xterm yellow（独立于 design token 体系）
   blue: '#4f8ef7',            // --accent
   magenta: '#a78bfa',         // --reasoning（紫）
   cyan: '#38bdf8',            // --info

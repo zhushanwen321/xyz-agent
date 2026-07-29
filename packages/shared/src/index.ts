@@ -97,3 +97,6 @@ export type {
   ProviderImportedItem,
   ProviderImportResult,
 } from './migration'
+// 系统提示音默认映射 SSOT（main + renderer 共享，纯数据/类型无 node 依赖）
+export type { SoundPlatform, SoundKind } from './sound-defaults'
+export { DEFAULT_SUCCESS_PLATFORM, DEFAULT_ERROR_PLATFORM, getDefaultSound } from './sound-defaults'

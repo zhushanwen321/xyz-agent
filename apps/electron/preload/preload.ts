@@ -149,6 +149,18 @@ export interface ElectronAPI {
   setProxyConfig(config: import('@xyz-agent/shared').IProxyConfig): Promise<void>
   /** 测试代理连接 */
   testProxy(config: import('@xyz-agent/shared').IProxyConfig): Promise<{ success: boolean; message?: string }>
+  // ── 系统提示音（跨平台：mac afplay / linux paplay / win 返 wav base64）──
+  /** 列出当前平台可用的系统提示音（existsSync 过滤后的精选清单） */
+  listSystemSounds(): Promise<{ platform: string; sounds: Array<{ id: string; name: string }> }>
+  /**
+   * 播放系统提示音。mac/linux 由 main spawn 命令播放；win 返回 wav base64
+   * 由 renderer 用 new Audio() 播（wav 是 Chromium 原生格式）。
+   * 失败静默 resolve（提示音失败不阻塞对话流）。
+   *
+   * @param name 声音 id；不在当前平台精选清单内时，若提供 kind 则回落到平台默认（W3 跨平台失效兜底）
+   * @param kind 逻辑分类（成功/失败），用于跨平台失效时回落到对应默认；试听已知声音可不传
+   */
+  playSystemSound(name: string, kind?: 'success' | 'error'): Promise<{ audioData?: string; mimeType?: string }>
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -269,4 +281,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getProxyConfig: () => ipcRenderer.invoke('update:getProxyConfig'),
   setProxyConfig: (config) => ipcRenderer.invoke('update:setProxyConfig', config),
   testProxy: (config) => ipcRenderer.invoke('update:testProxy', config),
+  // ── 系统提示音 ──────────────────────────────────────────────
+  listSystemSounds: () => ipcRenderer.invoke('sound:list'),
+  playSystemSound: (name: string, kind?: 'success' | 'error') => ipcRenderer.invoke('sound:play', name, kind),
 } satisfies ElectronAPI)

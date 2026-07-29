@@ -51,7 +51,11 @@ MAX_SCRIPT_LINES = 300
 # [HISTORICAL] MainPanel.vue 的 .main-panel { box-shadow: var(--shadow-1), var(--shadow-2) }
 # 是 float-panel 双 shadow 叠加（spec §一），Tailwind 单 box-shadow 工具类无法表达多值叠加。
 # 属于 AGENTS.md §3 明确允许的 escape hatch（Tailwind 无法表达的场景），加白名单避免误报。
-STYLE_SCOPED_WHITELIST: list[str] = ['shell/MainPanel.vue']
+# [HISTORICAL] UpdateButton.vue 的 release-notes 排版样式（h1/h2/p/ul 的 margin + scrollbar-width）
+# 复用 MarkdownRenderer 的核心 markdown 排版，是 Tailwind 无法表达的 :deep() 后代选择器组 +
+# Firefox 专有 scrollbar-width 属性。属 AGENTS.md §3 escape hatch（与 MarkdownRenderer 同模式）。
+# 待后续抽取轻量只读 MarkdownView 组件后再移出白名单。
+STYLE_SCOPED_WHITELIST: list[str] = ['shell/MainPanel.vue', 'sidebar/UpdateButton.vue']
 
 # CSS 选择器检测正则
 RE_STYLE_SELECTOR = re.compile(r'^[.\w\-]+[\s,]*\{')
@@ -255,6 +259,11 @@ def check_vue_file(content: str, relative_path: str) -> tuple[int, list[str]]:
             # escape hatch，不算自定义样式。回看 6 行（含当前）覆盖典型多行选择器组。
             selector_group = '\n'.join(lines[max(0, i - 6):i])
             if RE_VUE_TRANSITION_CLASS.search(selector_group):
+                continue
+            # [HISTORICAL] pseudo-element 选择器（::before/::after/::placeholder 等）是合法
+            # escape hatch——Tailwind 无法表达 ::after { content: ... }。符合 AGENTS.md
+            # 三层结构的 escape hatch 定义。
+            if '::' in line:
                 continue
             issues.append(f"  [第{i}行] 禁止编写自定义 CSS（特殊动画除外）")
             issues.append("    请使用 Tailwind 工具类替代")

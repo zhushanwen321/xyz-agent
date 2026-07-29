@@ -23,8 +23,8 @@ const FORK_NOTICE_HEIGHT = 40
 
 /** 容器侧定位依赖（getter 注入，避免本 composable 反向依赖虚拟滚动/状态计算） */
 export interface ForkNoticeStreamDeps {
-  /** 虚拟列表总高度（renderItems 末项底部） */
-  totalHeight: ComputedRef<number>
+  /** virtua 末项底部绝对 px（vlist.scrollSize），所有 abs 子项 top 的基线。 */
+  vlistBottom: ComputedRef<number>
   /** load-more 预留顶部偏移（所有 abs 子项 top 基线） */
   topOffset: ComputedRef<number>
   /** 是否正在压缩（compacting notice 占位高度参与基线计算） */
@@ -76,10 +76,14 @@ export function useForkNoticeStream(
    *
    * [M2] 若注入 injectedBaseTop（来自 useNoticeStack），直接采用——消除占位叠加的三处重复计算
    * （handoffNoticeTop / dispatchingTop / 此 baseTop，reviewer m4）。未注入时兜底内部计算。
+   *
+   * [cw wave w4] 基线优先级简化为 injectedBaseTop > vlistBottom（删 totalHeight 旧路径）。
+   * MessageStream.vue 注入 injectedBaseTop 短路；未注入时 base = vlistBottom（virtua 单一滚动 owner）。
    */
   const forkNoticeBaseTop = computed(() => {
     if (deps.injectedBaseTop) return deps.injectedBaseTop.value
-    let top = deps.totalHeight.value + deps.topOffset.value
+    const base = deps.vlistBottom.value
+    let top = base + deps.topOffset.value
     if (deps.isCompacting.value) top += deps.compactNoticeHeight
     if (deps.isHandingOff?.value) top += deps.handoffNoticeHeight ?? deps.compactNoticeHeight
     if (deps.isDispatching.value && !deps.hasWorkingTurn.value) top += deps.compactNoticeHeight

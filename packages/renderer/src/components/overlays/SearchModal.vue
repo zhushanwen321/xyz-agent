@@ -40,7 +40,7 @@
 
         <!-- 输入区：唤起即 focus（Dialog 默认聚焦首个可聚焦元素） -->
         <div class="flex items-center gap-2.5 border-b border-border px-4 py-3">
-          <Search class="size-[18px] flex-shrink-0 text-subtle" />
+          <Search class="size-[18px] flex-shrink-0 text-neutral-dim" />
           <Input
             ref="inputRef"
             v-model="query"
@@ -57,7 +57,7 @@
           <div
             v-if="loading"
             data-testid="search-loading"
-            class="flex items-center justify-center gap-2 px-6 py-6 text-[12px] text-subtle"
+            class="flex items-center justify-center gap-2 px-6 py-6 text-[12px] text-neutral-dim"
           >
             <Loader2 class="size-3.5 animate-spin" />
             <span>{{ t('search.searching') }}</span>
@@ -72,10 +72,10 @@
               class="py-1"
             >
               <div
-                class="flex items-center gap-2 px-4 pb-1 pt-2 font-mono text-[10px] uppercase tracking-wider text-subtle"
+                class="flex items-center gap-2 px-4 pb-1 pt-2 font-mono text-[10px] uppercase tracking-wider text-neutral-dim"
               >
                 <span>{{ s.label }}</span>
-                <span class="text-subtle">{{ s.items.length }}</span>
+                <span class="text-neutral-dim">{{ s.items.length }}</span>
               </div>
               <div
                 v-for="it in s.items"
@@ -92,16 +92,16 @@
                 <component
                   :is="ICON[it.type]"
                   class="size-4 flex-shrink-0"
-                  :class="it.idx === selIdx ? 'text-accent' : 'text-subtle'"
+                  :class="it.idx === selIdx ? 'text-accent' : 'text-neutral-dim'"
                 />
                 <span class="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span class="truncate text-[13.5px] text-fg">
+                  <span class="truncate text-[13.5px] text-neutral-fg">
                     <template v-for="(seg, i) in segments(it.title, query.trim())" :key="i">
                       <mark v-if="seg.hit" class="bg-transparent font-semibold text-accent">{{ seg.text }}</mark>
                       <template v-else>{{ seg.text }}</template>
                     </template>
                   </span>
-                  <span class="truncate font-mono text-[11px] text-subtle">
+                  <span class="truncate font-mono text-[11px] text-neutral-dim">
                     <template v-for="(seg, i) in segments(it.sub, query.trim())" :key="i">
                       <mark v-if="seg.hit" class="bg-transparent font-semibold text-accent">{{ seg.text }}</mark>
                       <template v-else>{{ seg.text }}</template>
@@ -110,7 +110,7 @@
                 </span>
                 <Clock
                   v-if="!query.trim()"
-                  class="size-[13px] flex-shrink-0 text-subtle"
+                  class="size-[13px] flex-shrink-0 text-neutral-dim"
                 />
               </div>
             </div>
@@ -122,15 +122,15 @@
             data-testid="search-empty"
             class="flex flex-col items-center gap-2 px-6 py-10 text-center"
           >
-            <Search class="size-7 text-subtle" />
+            <Search class="size-7 text-neutral-dim" />
             <!-- recents 库空（空查询 + 无最近/建议）：首用引导 -->
-            <p v-if="!query.trim()" class="text-[14px] text-fg">{{ t('search.startHint') }}</p>
+            <p v-if="!query.trim()" class="text-[14px] text-neutral-fg">{{ t('search.startHint') }}</p>
             <!-- 查询无结果（非空 query 无命中）：带引号提示 -->
             <template v-else>
-              <p class="text-[14px] text-fg">
+              <p class="text-[14px] text-neutral-fg">
                 {{ t('search.noResult', { query: query.trim() }) }}
               </p>
-              <p class="text-[12px] text-subtle">{{ t('search.tryOther') }}</p>
+              <p class="text-[12px] text-neutral-dim">{{ t('search.tryOther') }}</p>
             </template>
           </div>
         </div>

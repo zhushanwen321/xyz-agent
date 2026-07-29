@@ -28,7 +28,7 @@
   <div v-if="parsed.hunks.length" class="diff-view bg-bg-input font-mono text-[12px] leading-[1.5]">
     <div v-for="(hunk, hi) in parsed.hunks" :key="hi" class="diff-hunk">
       <!-- hunk 头：@@ -a,b +c,d @@ -->
-      <div class="diff-hunk-header px-2 py-0.5 text-subtle">
+      <div class="diff-hunk-header px-2 py-0.5 text-neutral-dim">
         {{ hunk.lines[0]?.content }}
       </div>
       <!-- 行列表。data-line 标记 newNo（有值行），供 DetailPane 选区反推行号（FR-4 diff 模式） -->
@@ -40,14 +40,14 @@
         :data-line="line.newNo ?? ''"
       >
         <!-- 行号槽：oldNo / newNo。newNo 可点击注入该行 file 引用（FR-5） -->
-        <span class="w-10 shrink-0 select-none px-1 text-right text-subtle/60">{{ line.oldNo ?? '' }}</span>
+        <span class="w-10 shrink-0 select-none px-1 text-right text-neutral-dim/60">{{ line.oldNo ?? '' }}</span>
         <span
           v-if="line.newNo !== undefined"
-          class="w-10 shrink-0 cursor-pointer select-none px-1 text-right text-subtle/60 transition-colors hover:text-accent"
+          class="w-10 shrink-0 cursor-pointer select-none px-1 text-right text-neutral-dim/60 transition-colors hover:text-accent"
           :title="t('panel.detail.injectFileRef')"
           @click="onLineClick(line)"
         >{{ line.newNo }}</span>
-        <span v-else class="w-10 shrink-0 select-none px-1 text-right text-subtle/60"></span>
+        <span v-else class="w-10 shrink-0 select-none px-1 text-right text-neutral-dim/60"></span>
         <!-- +/- 符号槽 -->
         <span class="w-4 shrink-0 select-none text-center" :class="signClass(line)">{{ sign(line) }}</span>
         <!-- 代码内容：shiki 高亮片段 v-html，降级纯文本。
@@ -57,7 +57,7 @@
         <span
           v-if="line.html"
           class="diff-code min-w-0 flex-1 whitespace-pre-wrap break-all"
-          :class="line.type === 'context' ? 'text-fg/80' : ''"
+          :class="line.type === 'context' ? 'text-neutral-fg/80' : ''"
           v-html="line.html"
         />
         <!-- eslint-enable vue/no-v-html -->
@@ -79,8 +79,8 @@
   </div>
   <!-- 空 patch（无 hunk） -->
   <div v-else class="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
-    <GitCompare class="size-6 text-subtle opacity-40" />
-    <p class="text-[11px] text-subtle opacity-55">{{ t('panel.detail.noDiff') }}</p>
+    <GitCompare class="size-6 text-neutral-dim opacity-40" />
+    <p class="text-[11px] text-neutral-dim opacity-55">{{ t('panel.detail.noDiff') }}</p>
   </div>
 </template>
 
@@ -155,7 +155,7 @@ function sign(line: RenderedLine): string {
 function signClass(line: RenderedLine): string {
   if (line.type === 'add') return 'text-success'
   if (line.type === 'del') return 'text-danger'
-  return 'text-subtle/40'
+  return 'text-neutral-dim/40'
 }
 function lineRowClass(line: RenderedLine): string {
   if (line.type === 'add') return 'bg-diff-add-bg'
@@ -166,7 +166,7 @@ function lineRowClass(line: RenderedLine): string {
 function textContentClass(line: RenderedLine): string {
   if (line.type === 'add') return 'text-success/90'
   if (line.type === 'del') return 'text-danger/90'
-  return 'text-fg/80'
+  return 'text-neutral-fg/80'
 }
 /**
  * 字符级 diff segment 着色：

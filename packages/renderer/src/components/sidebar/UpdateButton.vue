@@ -24,7 +24,7 @@
           <span class="absolute right-0 top-0 size-[5px] rounded-full bg-danger" data-testid="update-badge" />
         </Button>
       </HoverCardTrigger>
-      <HoverCardContent side="top" class="release-notes-content max-h-[360px] w-[360px] overflow-auto p-4 text-[12px] text-fg">
+      <HoverCardContent side="top" class="release-notes-content max-h-[360px] w-[360px] overflow-auto p-4 text-[12px] text-neutral-fg">
         <div class="mb-2 text-[13px] font-semibold text-accent">{{ t('sidebar.update.newVersion') }}</div>
         <!--
           不复用 MarkdownRenderer 组件：该组件位于 panel/message-stream 下，强依赖 fileSearch/fileTree/
@@ -40,7 +40,7 @@
     <!-- downloading / verifying：spinner + 进度条 + 百分比 -->
     <span
       v-else-if="state.state === 'downloading' || state.state === 'verifying'"
-      class="inline-flex items-center gap-1 text-[10px] text-muted"
+      class="inline-flex items-center gap-1 text-[10px] text-neutral-mid"
       data-testid="update-progress"
     >
       <Loader2 class="size-3 animate-spin" />
@@ -64,7 +64,7 @@
     <!-- replacing：spinner（替换文件阶段，无百分比） -->
     <span
       v-else-if="state.state === 'replacing'"
-      class="inline-flex items-center gap-1 text-[10px] text-muted"
+      class="inline-flex items-center gap-1 text-[10px] text-neutral-mid"
       data-testid="update-replacing"
     >
       <Loader2 class="size-3 animate-spin" />
@@ -95,7 +95,7 @@
           <span>{{ t('sidebar.update.error') }}</span>
         </Button>
       </HoverCardTrigger>
-      <HoverCardContent side="top" class="w-[280px] p-3 text-[11px] text-muted">
+      <HoverCardContent side="top" class="w-[280px] p-3 text-[11px] text-neutral-mid">
         {{ state.errorMessage }}
       </HoverCardContent>
     </HoverCard>

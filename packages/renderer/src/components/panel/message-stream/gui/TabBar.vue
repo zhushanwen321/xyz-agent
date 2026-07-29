@@ -11,7 +11,7 @@ defineProps<{
 
 const dotClass = (status?: 'done' | 'pending') => {
   if (status === 'done') return 'bg-success'
-  if (status === 'pending') return 'bg-subtle opacity-50'
+  if (status === 'pending') return 'bg-neutral-dim opacity-50'
   return ''
 }
 </script>
@@ -21,7 +21,7 @@ const dotClass = (status?: 'done' | 'pending') => {
     <div
       v-for="(tab, i) in tabs"
       :key="i"
-      class="tab-bar__tab flex items-center gap-1 rounded-t-sm px-2.5 py-1 font-mono text-[11px] text-subtle transition-colors hover:text-muted"
+      class="tab-bar__tab flex items-center gap-1 rounded-t-sm px-2.5 py-1 font-mono text-[length:var(--text-xs)] text-neutral-dim transition-colors hover:text-neutral-mid"
       :class="{ 'bg-accent-soft text-accent': tab.active }"
     >
       <span

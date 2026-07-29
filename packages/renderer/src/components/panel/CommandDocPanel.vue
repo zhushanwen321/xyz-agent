@@ -13,27 +13,27 @@
     <!-- 元信息头：icon + 命令名 + source 标签 + skill 命令的 sourcePath -->
     <header class="flex items-center gap-2 border-b border-border px-3 py-2.5">
       <component :is="iconComponent" class="size-4 shrink-0 text-reasoning" />
-      <span class="font-mono text-[13px] font-medium text-fg">{{ command.name }}</span>
-      <span class="ml-auto rounded-sm bg-surface-hover px-1.5 py-0.5 text-[10px] text-muted">{{ sourceLabel }}</span>
+      <span class="font-mono text-[13px] font-medium text-neutral-fg">{{ command.name }}</span>
+      <span class="ml-auto rounded-sm bg-surface-hover px-1.5 py-0.5 text-[10px] text-neutral-mid">{{ sourceLabel }}</span>
     </header>
     <!-- 文档体：skill 命令渲染完整 SKILL.md；非 skill 渲染 description 信息卡 -->
     <div class="min-h-0 flex-1 overflow-auto p-3">
       <template v-if="skill">
         <!-- skill 完整文档（SKILL.md 经 markdown 渲染） -->
-        <div v-if="skill.description" class="mb-3 text-[13px] text-muted">{{ skill.description }}</div>
+        <div v-if="skill.description" class="mb-3 text-[13px] text-neutral-mid">{{ skill.description }}</div>
         <MarkdownRenderer v-if="skill.content" :content="skill.content" :session-id="sessionId ?? undefined" />
-        <div v-else class="py-6 text-center text-[12px] text-subtle">{{ t('panel.command.noDocBody') }}</div>
+        <div v-else class="py-6 text-center text-[12px] text-neutral-dim">{{ t('panel.command.noDocBody') }}</div>
         <!-- skill 元信息：sourcePath / tools / triggers -->
         <div v-if="skill.sourcePath" class="mt-4 border-t border-border pt-3">
-          <p class="text-[11px] text-subtle">{{ t('panel.command.path') }}</p>
-          <p class="mt-0.5 break-all font-mono text-[11px] text-muted">{{ skill.sourcePath }}</p>
+          <p class="text-[11px] text-neutral-dim">{{ t('panel.command.path') }}</p>
+          <p class="mt-0.5 break-all font-mono text-[11px] text-neutral-mid">{{ skill.sourcePath }}</p>
         </div>
       </template>
       <!-- 非 skill 命令：信息卡 -->
       <div v-else class="flex h-full flex-col items-start gap-2 py-2">
-        <p v-if="command.description" class="text-[13px] leading-[1.6] text-fg">{{ command.description }}</p>
-        <p v-else class="text-[12px] text-subtle">{{ t('panel.command.noDescription') }}</p>
-        <p class="mt-1 text-[11px] text-subtle">
+        <p v-if="command.description" class="text-[13px] leading-[1.6] text-neutral-fg">{{ command.description }}</p>
+        <p v-else class="text-[12px] text-neutral-dim">{{ t('panel.command.noDescription') }}</p>
+        <p class="mt-1 text-[11px] text-neutral-dim">
           {{ command.kind === 'extension' ? t('panel.command.commandType') : command.kind === 'builtin' ? t('panel.command.builtinCommand') : t('panel.command.title') }}，
           {{ t('panel.command.noFullDoc') }}。
         </p>
@@ -42,8 +42,8 @@
   </section>
   <!-- 无选中命令 → 空态（SideDrawer v-else 兜底，此处理论上不达，但防御性保留） -->
   <div v-else class="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
-    <p class="text-[12px] text-subtle">{{ t('panel.sideDrawer.noDoc') }}</p>
-    <p class="text-[11px] text-subtle opacity-50">{{ t('panel.sideDrawer.docHint') }}</p>
+    <p class="text-[12px] text-neutral-dim">{{ t('panel.sideDrawer.noDoc') }}</p>
+    <p class="text-[11px] text-neutral-dim opacity-50">{{ t('panel.sideDrawer.docHint') }}</p>
   </div>
 </template>
 
