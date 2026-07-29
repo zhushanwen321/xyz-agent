@@ -124,7 +124,10 @@ export class UpdateError extends Error {
   /**
    * 获取用户友好的错误信息。
    *
-   * 根据 errorCode 从 UPDATE_ERROR_MESSAGES 映射表中获取详细的错误描述和解决建议。
+   * 根据 errorCode 从 UPDATE_ERROR_MESSAGES 映射表中获取错误描述和解决建议，
+   * 但 stage 始终以构造时传入的 this.stage 为准——映射表里的 stage 只是「该错误码
+   * 的典型阶段」，并不一定等于实际发生阶段（例如 rename 失败被归为
+   * UPDATE_INTEGRITY_FAILED 但发生在 replacing 阶段，而非 verifying）。
    * 如果 errorCode 未定义或不在映射表中，返回基础错误信息。
    */
   toUserFriendly(): UpdateErrorInfo {
@@ -133,7 +136,7 @@ export class UpdateError extends Error {
       return {
         code: this.errorCode,
         message: info.message,
-        stage: info.stage,
+        stage: this.stage,
         suggestion: info.suggestion,
       }
     }

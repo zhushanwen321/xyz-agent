@@ -24,8 +24,10 @@
  * 依赖方向：orchestrator → download-asset + platform-updater + constants + types + @xyz-agent/shared
  */
 import { spawn } from 'node:child_process'
-import { mkdirSync, writeFileSync } from 'node:fs'
-import type { LatestReleaseInfo, ReleaseAsset, UpdateStage } from '@xyz-agent/shared'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import type { LatestReleaseInfo, ReleaseAsset, IProxyConfig, UpdateStage } from '@xyz-agent/shared'
+import { getDataDir } from '@xyz-agent/shared/paths'
 import { downloadAsset } from './download-asset.js'
 import { createPlatformUpdater } from './platform-updater.js'
 import { UPDATE_DIR, UPDATE_RESULT_FILE } from './constants.js'
@@ -114,8 +116,16 @@ export async function performUpdate(
     }
 
     // 3. 下载 + 校验（downloadAsset 内部已校验 sha256/size）
+    //    [C1] 读取 proxy-config.json，把代理配置传给 downloadAsset，
+    //    让下载链路真正接入代理（downloadAsset 内部据此构造 undici ProxyAgent dispatcher）。
+    //    proxyConfig 读取失败（文件损坏等）不阻断升级：降级为默认 mode='system'（直连/环境变量）。
     opts.onProgress('downloading', 0)
-    const { filePath } = await downloadAsset(asset, (percent) => opts.onProgress('downloading', percent))
+    const proxyConfig = readProxyConfig()
+    const { filePath } = await downloadAsset(
+      asset,
+      (percent) => opts.onProgress('downloading', percent),
+      proxyConfig,
+    )
     opts.onProgress('verifying', PROGRESS_COMPLETE)
 
     // 4. 平台分发（生成脚本 + 触发替换）
@@ -206,6 +216,105 @@ function writeUpdateResult(status: string, version: string, error?: string): voi
   const data = { status, version, at: new Date().toISOString(), error }
   // eslint-disable-next-line no-magic-numbers -- 2 = JSON 缩进空格数（人类可读）
   writeFileSync(UPDATE_RESULT_FILE, JSON.stringify(data, null, 2))
+}
+
+/**
+ * 代理配置文件路径（与 gateway/update-handlers 保持一致：`<dataDir>/proxy-config.json`）。
+ *
+ * [NOTE] 这里在 update 层独立推导路径而非 import gateway 层的 getProxyConfigPath，
+ * 是为了维持依赖方向单向（gateway → update，update 不应反向依赖 gateway）。
+ * 路径约定是跨层契约，改动需两处同步。
+ */
+const PROXY_CONFIG_FILE = join(getDataDir(), 'proxy-config.json')
+
+/**
+ * 代理配置落盘结构（与 gateway/update-handlers.writeProxyConfig 对称）。
+ *
+ * [M4] 凭证（user:pass）不与 URL 明文同字段存储：URL 只存 `protocol://host:port`，
+ * 凭证经 safeStorage 加密后存到 credentials（base64）。读取时还原回完整 URL。
+ * credentials 为可选——无凭证或旧格式文件无此字段。
+ */
+interface IStoredProxyConfig {
+  mode: IProxyConfig['mode']
+  httpProxy?: string
+  httpsProxy?: string
+  /** 加密后的凭证（base64），key 为 'http' / 'https' */
+  credentials?: Record<string, string>
+}
+
+/**
+ * 读取代理配置并还原完整代理 URL（含凭证）。
+ *
+ * 落盘格式见 {@link IStoredProxyConfig}：URL 已剥离凭证、凭证单独加密存储。
+ * 这里对称地解密并把 `user:pass` 拼回 URL，供 downloadAsset 构造 ProxyAgent。
+ *
+ * 容错策略（任意一步失败都降级为默认 system 配置，不阻断升级）：
+ *   - 文件不存在 / JSON 解析失败 → { mode: 'system' }
+ *   - safeStorage 不可用或解密失败 → 该字段凭证缺失（URL 仍可用，只是无认证）
+ *
+ * [NOTE] 动态 import('electron')：orchestrator 是纯逻辑层（设计上不依赖 electron app
+ * 生命周期，便于单测）。safeStorage 是 electron API，这里用动态 import 避免把 electron
+ * 变成静态硬依赖；测试环境未 mock electron 时会 reject，被 catch 降级处理。
+ */
+function readProxyConfig(): IProxyConfig {
+  if (!existsSync(PROXY_CONFIG_FILE)) {
+    return { mode: 'system' }
+  }
+
+  let stored: IStoredProxyConfig
+  try {
+    stored = JSON.parse(readFileSync(PROXY_CONFIG_FILE, 'utf-8')) as IStoredProxyConfig
+  } catch {
+    return { mode: 'system' }
+  }
+
+  const config: IProxyConfig = { mode: stored.mode ?? 'system' }
+  if (stored.httpProxy) config.httpProxy = stored.httpProxy
+  if (stored.httpsProxy) config.httpsProxy = stored.httpsProxy
+
+  // 还原凭证（异步 safeStorage 改为同步链路：用顶层 dynamic import 的结果）
+  if (stored.credentials) {
+    rehydrateCredentials(config, stored.credentials)
+  }
+  return config
+}
+
+/**
+ * 把加密凭证解密后拼回 config 的 httpProxy/httpsProxy URL。
+ *
+ * 单独成函数便于隔离 electron 依赖错误：动态 import 失败时静默降级（凭证缺失）。
+ */
+function rehydrateCredentials(config: IProxyConfig, credentials: Record<string, string>): void {
+  let safeStorageApi: { decryptString: (b: Buffer) => string } | null = null
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- orchestrator 纯逻辑层需规避静态依赖 electron；safeStorage 仅运行时可用，require 失败时降级
+    const electron = require('electron') as { safeStorage?: { decryptString: (b: Buffer) => string } }
+    if (electron.safeStorage && typeof electron.safeStorage.decryptString === 'function') {
+      safeStorageApi = electron.safeStorage
+    }
+  } catch {
+    safeStorageApi = null
+  }
+
+  const rehydrate = (urlStr: string | undefined, key: string): string | undefined => {
+    if (!urlStr) return urlStr
+    const enc = credentials[key]
+    if (!enc || !safeStorageApi) return urlStr
+    try {
+      const cred = safeStorageApi.decryptString(Buffer.from(enc, 'base64'))
+      // 把 user:pass 拼回 protocol://host:port → protocol://user:pass@host:port
+      const u = new URL(urlStr)
+      const [username, password] = cred.split(':')
+      u.username = username
+      if (password !== undefined) u.password = password
+      return u.toString()
+    } catch {
+      return urlStr
+    }
+  }
+
+  config.httpProxy = rehydrate(config.httpProxy, 'http')
+  config.httpsProxy = rehydrate(config.httpsProxy, 'https')
 }
 
 /** 升级编排器单例（注入 IpcHandlerDeps） */

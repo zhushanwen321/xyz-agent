@@ -27,6 +27,7 @@ import { createHash } from 'node:crypto'
 import { createWriteStream, createReadStream, mkdirSync, renameSync, statSync, unlinkSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { Readable } from 'node:stream'
+import { ProxyAgent } from 'undici'
 import type { ReleaseAsset, IProxyConfig } from '@xyz-agent/shared'
 import { UPDATE_DIR } from './constants.js'
 import { UpdateError, UpdateIntegrityError } from './types.js'
@@ -52,13 +53,50 @@ interface IResumeState {
 const RESUME_STATE_FILE = path.join(UPDATE_DIR, 'resume-state.json')
 
 /**
- * 下载超时 watchdog：覆盖 fetch + 流式传输全过程。
+ * 下载总超时 watchdog：覆盖 fetch + 流式传输全过程（兜底上限）。
  *
  * 1 小时（3600s）覆盖慢速网络下的 170MB+ Electron 产物。
  * 国内网络环境下，下载 GitHub CDN 的大文件可能需要 10-20 分钟，
  * 1小时超时留足余量，避免误杀正常下载。
+ *
+ * 仅靠总超时不足以应对国内网络典型故障（连接建立后中途停滞）——
+ * 那种场景下流仍在「等字节」但实际已挂死，要等满 1 小时。
+ * 配合 IDLE_TIMEOUT_MS 做空闲检测：长时间无新数据即主动中断。
  */
 const DOWNLOAD_TIMEOUT_MS = 3_600_000
+
+/**
+ * 空闲超时：流式传输过程中连续 N ms 没有收到新数据字节即中断。
+ *
+ * 国内网络典型故障是「连接建立后中途停滞」，仅靠总超时要等满 1 小时
+ * 等同挂死。30s 无新数据基本可判定连接已无效，主动 abort 后上层
+ * 可走断点续传重连，远比挂死 1 小时体验好。
+ */
+const IDLE_TIMEOUT_MS = 30_000
+
+/** ms → s 换算因子（用于错误消息里的超时秒数展示）。 */
+const MS_PER_SECOND = 1000
+
+/** HTTP 206 Partial Content：服务器接受 Range 请求、返回断点续传数据。 */
+const HTTP_PARTIAL_CONTENT = 206
+
+/**
+ * 断点续传状态保存阈值：每超过上次保存点 N 字节才落盘一次。
+ *
+ * 替代旧的 `downloaded % 1MB === 0` 整除判断——后者在续传场景
+ * （downloaded 从非 1MB 整数倍起步）几乎永远不再命中，导致中途崩溃
+ * state 仍是旧值。改用阈值比较保证进度稳步落盘且不过频写文件。
+ */
+// eslint-disable-next-line no-magic-numbers -- 1MB 的字节数，语义即常量名
+const SAVE_INTERVAL_BYTES = 1024 * 1024
+
+/**
+ * totalBytes 一致性校验容差：续传时新请求拿到的 content-length 与
+ * 记录的 totalBytes 差异超此阈值，视为 release 文件已变更（残文件过期），
+ * 作废重下。允许小容差以容忍 CDN 行为差异。
+ */
+const TOTAL_BYTES_TOLERANCE = 1024
+
 const PROGRESS_MAX = 100
 
 /**
@@ -103,7 +141,9 @@ export async function downloadAsset(
     }
   }
 
-  // 3. fetch + 流式传输共用同一个 AbortController 60s 超时 watchdog。
+  // 3. fetch + 流式传输共用同一个 AbortController，配两个 watchdog：
+  //    - timer: 总超时 DOWNLOAD_TIMEOUT_MS（兜底上限，3600s）
+  //    - idleTimer: 空闲超时 IDLE_TIMEOUT_MS（30s 无新数据字节即中断）
   //    [NOTE] clearTimeout 必须在流式传输真正完成（writeStream finish/close）
   //    或出错后才执行 —— 若像旧实现那样在 fetch resolve 后的 finally 里 clear，
   //    60s 只会约束初始 HTTP 响应；后续流式字节传输（pipe）将无超时，慢速/卡住
@@ -111,48 +151,68 @@ export async function downloadAsset(
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS)
   let response: Response
+  // dispatcher 声明在外层，确保外层 finally 能访问到做 close（连接池清理）。
+  let dispatcher: ProxyAgent | undefined
   try {
     // 构建 fetch 选项，支持代理配置和断点续传
-    const fetchOptions: RequestInit = {
+    // [NOTE] dispatcher 是 undici 扩展字段，global RequestInit 在当前 TS lib 下未声明，
+    // 用 as 适配（与 update-handlers.ts 的 testProxy 同源逻辑，保持一致）。
+    const fetchOptions: RequestInit & { dispatcher?: ProxyAgent } = {
       signal: controller.signal,
     }
-    
+
     // 如果有断点续传，添加 Range 请求头
     if (downloadedBytes > 0) {
       fetchOptions.headers = {
         'Range': `bytes=${downloadedBytes}-`,
       }
     }
-    
-    // 如果配置了代理，使用代理
-    if (proxyConfig && proxyConfig.mode === 'manual') {
-      // 注意：Node.js 的 fetch 不直接支持代理，需要使用 undici 或其他库
-      // 这里先记录代理配置，后续可以集成 undici 的 ProxyAgent
-      console.log('[download] using proxy:', proxyConfig)
+
+    // 解析代理 dispatcher：manual 用配置的代理 URL，system 读环境变量，disabled 直连。
+    // 逻辑与 gateway 层 resolveDispatcher 一致（packages/electron/main/gateway/update-handlers.ts）。
+    if (proxyConfig && proxyConfig.mode !== 'disabled') {
+      const proxyUrl = proxyConfig.mode === 'manual'
+        ? (proxyConfig.httpsProxy ?? proxyConfig.httpProxy)
+        : (process.env.HTTPS_PROXY ?? process.env.https_proxy ??
+           process.env.HTTP_PROXY ?? process.env.http_proxy)
+      if (proxyUrl) {
+        try {
+          dispatcher = new ProxyAgent(proxyUrl)
+          fetchOptions.dispatcher = dispatcher
+        } catch (err) {
+          // ProxyAgent 构造失败（URL 非法等）→ 降级直连并告警，不阻断下载
+          console.warn('[download] proxy agent init failed, fallback to direct:', err)
+        }
+      }
     }
-    
-    // 执行 fetch，捕获网络错误并分类
+
+    // 执行 fetch（dispatcher 存在时真正走代理），捕获网络错误并分类
     try {
-      response = await fetch(asset.downloadUrl, fetchOptions)
+      response = await fetch(asset.downloadUrl, fetchOptions as RequestInit)
     } catch (fetchErr) {
       // 网络错误分类：区分超时、连接失败、代理错误
       if (fetchErr instanceof Error) {
         if (fetchErr.name === 'AbortError') {
           throw new UpdateError(
-            `download timeout after ${DOWNLOAD_TIMEOUT_MS / 1000}s`,
+            `download timeout after ${DOWNLOAD_TIMEOUT_MS / MS_PER_SECOND}s`,
             'downloading',
             'UPDATE_NETWORK_TIMEOUT',
           )
         }
+        // [M6] ECONNABORTED 是通用连接中断，与代理无关——误归为 PROXY_ERROR 会
+        // 误导用户去查代理。归入 NETWORK_FAILED（连接中断）。
         if (fetchErr.message.includes('ECONNREFUSED') || fetchErr.message.includes('ENOTFOUND') ||
-            fetchErr.message.includes('ECONNRESET') || fetchErr.message.includes('ETIMEDOUT')) {
+            fetchErr.message.includes('ECONNRESET') || fetchErr.message.includes('ETIMEDOUT') ||
+            fetchErr.message.includes('ECONNABORTED')) {
           throw new UpdateError(
             `network connection failed: ${fetchErr.message}`,
             'downloading',
             'UPDATE_NETWORK_FAILED',
           )
         }
-        if (fetchErr.message.includes('proxy') || fetchErr.message.includes('ECONNABORTED')) {
+        // [M6] PROXY_ERROR 只保留代理特征字符串判断（如代理认证失败 407），
+        // 不再泛化匹配 'proxy' 子串以避免误判。代理认证失败是代理场景的强信号。
+        if (fetchErr.message.includes('407') || fetchErr.message.includes('Proxy Authentication')) {
           throw new UpdateError(
             `proxy error: ${fetchErr.message}`,
             'downloading',
@@ -177,16 +237,59 @@ export async function downloadAsset(
     }
 
     // 4. 流式写到 .downloading 临时文件，同时累加进度（共用上面的 controller/timer）
-    const total = Number(response.headers.get('content-length') ?? 0) + downloadedBytes
-    let downloaded = downloadedBytes
-    // 如果是断点续传，使用追加模式打开文件
-    const writeStream = createWriteStream(tempPath, { flags: downloadedBytes > 0 ? 'a' : 'w' })
+    //
+    // [C3] Range 续传响应分类：发了 Range: bytes=N- 后必须区分
+    //   - 206 Partial Content：续传成功，content-length 是剩余部分大小，
+    //     total = content-length + downloadedBytes，writeStream 用追加模式 'a'。
+    //   - 200 OK：服务器/CDN 忽略 Range（整文件回源）。若仍按续传处理，
+    //     content-length 是整个文件大小，total 会多算 downloadedBytes；
+    //     且 writeStream 追加模式会把完整内容拼到残文件后 → 文件损坏。
+    //     因此回退到完整下载：重置 downloadedBytes=0，total 用 content-length，
+    //     writeStream 用覆盖模式 'w'。
+    const requestedRange = downloadedBytes > 0
+    const resumeAccepted = requestedRange && response.status === HTTP_PARTIAL_CONTENT
+    const contentLength = Number(response.headers.get('content-length') ?? 0)
+    // 续传成功用追加模式 + 累加 total；否则覆盖写（200 回退或全新下载）
+    const writeFlags: 'a' | 'w' = resumeAccepted ? 'a' : 'w'
+    const total = resumeAccepted ? contentLength + downloadedBytes : contentLength
+
+    // [m5] totalBytes 一致性校验：续传成功（206）时，对比新算出的 total 与
+    // 上次记录的 totalBytes。差异超容差说明 release 文件已变更（残文件过期），
+    // 作废重下，避免把不同版本的内容拼接到一起。注意只在 resumeAccepted
+    // 分支校验——200 回退场景 total 计算方式本就不同，不参与此校验。
+    if (resumeAccepted && resumeState && Math.abs(total - resumeState.totalBytes) > TOTAL_BYTES_TOLERANCE) {
+      console.log(`[download] total bytes changed (expected ${resumeState.totalBytes}, got ${total}), restarting`)
+      await response.body?.cancel().catch(() => {})
+      // 残文件过期：清理后递归重下（从头开始）
+      try { unlinkSync(tempPath) } catch (e) { console.warn('[download] stale temp cleanup failed:', e) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
+      clearResumeState()
+      return downloadAsset(asset, onProgress, proxyConfig)
+    }
+
+    // 续传起点（206 = downloadedBytes；200 回退/全新 = 0）
+    let downloaded = resumeAccepted ? downloadedBytes : 0
+    // 如果是断点续传（206），使用追加模式打开文件；否则覆盖写
+    const writeStream = createWriteStream(tempPath, { flags: writeFlags })
     // response.body 是 web ReadableStream；转 node Readable 以 pipe。
     const nodeStream = Readable.fromWeb(response.body as unknown as import('stream/web').ReadableStream)
+    // [M1] idle timeout：长时间无新数据字节即中断。每次收到 chunk 重置。
+    let idleTimer: NodeJS.Timeout | undefined = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS)
+    // [M3] 记录上次保存进度（续传起点），超过 SAVE_INTERVAL_BYTES 才落盘（替代整除判断）
+    let lastSavedBytes = downloaded
+    const clearTimers = () => {
+      clearTimeout(timer)
+      if (idleTimer) {
+        clearTimeout(idleTimer)
+        idleTimer = undefined
+      }
+    }
     try {
       await new Promise<void>((resolve, reject) => {
         nodeStream.on('data', (chunk: Buffer) => {
           downloaded += chunk.length
+          // [M1] 收到新数据重置 idle timer（只要有字节流动就不算挂死）
+          if (idleTimer) clearTimeout(idleTimer)
+          idleTimer = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS)
           // [NOTE] total=0（chunked 传输无 content-length）时不报进度：
           // onProgress 签名是 0-100 百分比，无总量时无法计算百分比；
           // 前端 useAppUpdate 的 state.percent 期望 0-100，传负值会 UI 异常。
@@ -195,14 +298,17 @@ export async function downloadAsset(
             const percent = Math.min(PROGRESS_MAX, Math.round((downloaded / total) * PROGRESS_MAX))
             onProgress(percent)
           }
-          // 保存断点续传状态（每 1MB 保存一次，避免频繁写文件）
-          if (downloaded % (1024 * 1024) === 0) {
+          // [M3] 保存断点续传状态：每超过上次保存点 SAVE_INTERVAL_BYTES 字节才落盘。
+          // 旧实现 `downloaded % 1MB === 0` 在续传场景（起点非 1MB 整数倍）几乎
+          // 永不命中，中途崩溃 state 仍是旧值。
+          if (downloaded - lastSavedBytes >= SAVE_INTERVAL_BYTES) {
             saveResumeState({
               downloadedBytes: downloaded,
               totalBytes: total,
               tempPath,
               finalPath,
             })
+            lastSavedBytes = downloaded
           }
         })
         nodeStream.pipe(writeStream)
@@ -213,21 +319,75 @@ export async function downloadAsset(
     } catch (err) {
       // [LEAK FIX] destroy writeStream 释放底层 fd，避免错误路径泄漏文件描述符。
       writeStream.destroy()
-      // 保存断点续传状态（下载中断时保存当前进度）
-      saveResumeState({
-        downloadedBytes: downloaded,
-        totalBytes: total,
-        tempPath,
-        finalPath,
-      })
-      // 清理半下载文件
-      try { unlinkSync(tempPath) } catch (unlinkErr) { console.warn('[download] stream cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
+      // 先判定错误是否「可恢复」（超时/网络中断）：可恢复错误保留 temp 文件 +
+      // resumeState，让下次能续传；不可恢复错误（磁盘错误等）才清理。
+      const isTimeout = err instanceof Error && (
+        err.name === 'AbortError' ||
+        err.message.includes('aborted') ||
+        err.message.includes('timeout')
+      )
+      const isRecoverable = isTimeout ||
+        (err instanceof UpdateError && (
+          err.errorCode === 'UPDATE_NETWORK_TIMEOUT' ||
+          err.errorCode === 'UPDATE_NETWORK_FAILED'
+        )) ||
+        // 通用流错误（连接重置等）默认可恢复
+        (err instanceof Error && (
+          err.message.includes('ECONNRESET') ||
+          err.message.includes('ECONNABORTED') ||
+          err.message.includes('ETIMEDOUT')
+        ))
+      const isDiskError = err instanceof Error && (
+        err.message.includes('ENOSPC') || err.message.includes('disk space')
+      )
+
+      if (isRecoverable && !isDiskError) {
+        // [M2] 可恢复错误（超时/网络中断）：保留 temp 文件 + resumeState，下次可续传。
+        // 旧实现先 saveResumeState 紧接着 unlinkSync，存了又删，断点续传在超时场景
+        // （本功能最首要场景）等于失效。
+        // [m6] 保存的真实落盘字节数用 statSync(tempPath).size 而非内存 downloaded
+        // 计数器——pipe 写盘是缓冲异步的，downloaded 是已接收字节，可能大于真实文件。
+        let persistedBytes = downloaded
+        try {
+          persistedBytes = statSync(tempPath).size
+        } catch (statErr) {
+          // 文件不存在等异常：保守沿用内存计数器
+          console.warn('[download] stat temp for resume failed:', statErr)
+        }
+        saveResumeState({
+          downloadedBytes: persistedBytes,
+          totalBytes: total,
+          tempPath,
+          finalPath,
+        })
+        console.log(`[download] recoverable error, kept temp file for resume (${persistedBytes} bytes)`)
+      } else {
+        // [M2] 不可恢复错误（磁盘错误/sha256 等）：删除 temp 文件 + 清理 state，
+        // 避免残文件污染下次下载。注意 sha256 mismatch 校验在下载完成后另算，
+        // 不在此处；此处覆盖磁盘错误等无法续传的情况。
+        saveResumeState({
+          downloadedBytes: downloaded,
+          totalBytes: total,
+          tempPath,
+          finalPath,
+        })
+        try { unlinkSync(tempPath) } catch (unlinkErr) { console.warn('[download] stream cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
+        clearResumeState()
+      }
       // 流式传输错误分类：区分磁盘空间不足和其他错误
-      if (err instanceof Error && (err.message.includes('ENOSPC') || err.message.includes('disk space'))) {
+      if (isDiskError) {
         throw new UpdateError(
           'insufficient disk space',
           'downloading',
           'UPDATE_DISK_SPACE',
+        )
+      }
+      // 超时（含 idle/total abort）：映射为 UPDATE_NETWORK_TIMEOUT
+      if (isTimeout) {
+        throw new UpdateError(
+          `download timeout (idle ${IDLE_TIMEOUT_MS / MS_PER_SECOND}s or total ${DOWNLOAD_TIMEOUT_MS / MS_PER_SECOND}s)`,
+          'downloading',
+          'UPDATE_NETWORK_TIMEOUT',
         )
       }
       // 如果已经是 UpdateError（来自上面的网络错误分类），直接抛出
@@ -239,14 +399,21 @@ export async function downloadAsset(
         'downloading',
         'UPDATE_NETWORK_FAILED',
       )
+    } finally {
+      // [M1] 流式传输已结束（成功 finish 或抛错）才停两个 watchdog。
+      clearTimers()
     }
 
     // 5. 下载完成，清除断点续传状态
     clearResumeState()
 
   } finally {
-    // 流式传输已结束（成功 finish 或抛错）才停 watchdog。
+    // 外层兜底：fetch 阶段异常也确保 total timer 被清理。
     clearTimeout(timer)
+    // ProxyAgent 持有连接池，下载结束（成功/失败）后显式关闭避免句柄泄漏。
+    if (dispatcher) {
+      await dispatcher.close().catch(() => {}) // best-effort 连接池清理，失败不影响下载结果
+    }
   }
 
   // 6. 校验：sha256 优先，缺失降级 size，再缺失拒绝
@@ -319,8 +486,9 @@ export async function hashFileSha256(filePath: string): Promise<string> {
  */
 function saveResumeState(state: IResumeState): void {
   try {
-    writeFileSync(RESUME_STATE_FILE, JSON.stringify(state, null, 2))
+    writeFileSync(RESUME_STATE_FILE, JSON.stringify(state, null, 2)) // eslint-disable-line no-magic-numbers -- JSON 缩进 2 空格
   } catch (err) {
+    // best-effort：resume state 只是续传优化，写入失败不应中断下载，下次重头下即可
     console.warn('[download] save resume state failed:', err)
   }
 }
@@ -352,6 +520,7 @@ function clearResumeState(): void {
       unlinkSync(RESUME_STATE_FILE)
     }
   } catch (err) {
+    // best-effort：清理失败只留下残留 state 文件，下次下载会因 mismatch 自动重下，无副作用
     console.warn('[download] clear resume state failed:', err)
   }
 }

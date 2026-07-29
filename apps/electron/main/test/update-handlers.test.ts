@@ -14,7 +14,10 @@
  *
  * 运行：cd apps/electron/main && npx vitest run test/update-handlers.test.ts
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { LatestReleaseInfo } from '@xyz-agent/shared'
 
 // 捕获注册的 handler（key=channel, value=handler fn）
@@ -205,11 +208,15 @@ describe('W3: update-handlers IPC update:perform (W3TC10)', () => {
 
     const handler = handlers.get('update:perform')!
     await expect(handler({}, { release: FIXTURE })).rejects.toThrow(/download failed/)
-    // update:error 事件携带 stage + message
+    // update:error 事件携带 stage + message + errorCode + suggestion。
+    // UpdateError('download failed', 'downloading') 未传 errorCode，toUserFriendly() 走
+    // fallback：code 缺省 'UPDATE_INTEGRITY_FAILED'、message 用传入的 'download failed'、
+    // stage 用 this.stage、suggestion 用默认 '请重试或联系技术支持'（见 types.ts:143-148）。
     expect(sendSpy).toHaveBeenCalledWith('update:error', {
       stage: 'downloading',
       message: 'download failed',
-      errorCode: undefined,
+      errorCode: 'UPDATE_INTEGRITY_FAILED',
+      suggestion: '请重试或联系技术支持',
     })
     // 失败时不安排 quit
     expect(capturedQuitTimer).toBeNull()
@@ -222,11 +229,14 @@ describe('W3: update-handlers IPC update:perform (W3TC10)', () => {
     registerWithOrchestrator({ performUpdate } as never)
 
     const handler = handlers.get('update:perform')!
-    await expect(handler({}, { release: FIXTURE })).rejects.toThrow(/deb not supported/)
+    // errorCode 命中 UPDATE_ERROR_MESSAGES 映射表，toUserFriendly() 返回标准化的本地化
+    // message '当前平台不支持自动更新'（types.ts:86-90），而非构造时传入的英文。
+    await expect(handler({}, { release: FIXTURE })).rejects.toThrow(/当前平台不支持自动更新/)
     expect(sendSpy).toHaveBeenCalledWith('update:error', {
       stage: 'replacing',
-      message: 'deb not supported',
+      message: '当前平台不支持自动更新',
       errorCode: 'UPDATE_UNSUPPORTED_PLATFORM',
+      suggestion: '请手动下载最新版本',
     })
   })
 
@@ -257,9 +267,24 @@ describe('W3: update-handlers IPC update:perform (W3TC10)', () => {
 
 // ── 代理配置 IPC ───────────────────────────────────────────────
 describe('update-handlers: proxy config IPC', () => {
+  // [ISOLATION] getProxyConfig 读 getDataDir()/proxy-config.json，而 getDataDir() 默认
+  // 指向真实 ~/.xyz-agent。本机 ~/.xyz-agent/proxy-config.json 含 manual 配置，
+  // 会导致「文件不存在」的默认值测试失败。把 XYZ_AGENT_DATA_DIR 指向临时目录隔离。
+  let prevDataDir: string | undefined
+
   beforeEach(() => {
     handlers.clear()
     vi.clearAllMocks()
+    prevDataDir = process.env.XYZ_AGENT_DATA_DIR
+    process.env.XYZ_AGENT_DATA_DIR = mkdtempSync(join(tmpdir(), 'xyz-proxy-test-'))
+  })
+
+  afterEach(() => {
+    if (prevDataDir === undefined) {
+      delete process.env.XYZ_AGENT_DATA_DIR
+    } else {
+      process.env.XYZ_AGENT_DATA_DIR = prevDataDir
+    }
   })
 
   it('update:getProxyConfig 返回默认配置（文件不存在）', async () => {

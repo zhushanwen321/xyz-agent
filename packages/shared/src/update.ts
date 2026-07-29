@@ -72,14 +72,3 @@ export interface IProxyConfig {
   /** 手动模式下的 HTTPS 代理地址（如 http://127.0.0.1:7890） */
   httpsProxy?: string
 }
-
-/**
- * 升级网络配置接口。
- * 统一管理下载超时和代理配置。
- */
-export interface IUpdateNetworkConfig {
-  /** 下载超时时间（毫秒） */
-  downloadTimeoutMs: number
-  /** 代理配置 */
-  proxy: IProxyConfig
-}
