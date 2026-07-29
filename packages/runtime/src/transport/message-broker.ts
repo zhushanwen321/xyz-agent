@@ -129,7 +129,12 @@ export class ServerMessageBroker implements IMessageBroker {
     // 取舍：减少 N×stringify 主线程开销（大 payload 广播时显著）换取 per-client 失败隔离性损失。
     // 失败时显眼告警（[broadcast] 前缀，便于运维日志检索排查）。
     } catch (e) {
-      console.error('[broadcast] payload serialization failed — entire broadcast dropped for all clients:', e)
+      // WARNING 6（审查静默丢弃）：整个广播对所有客户端静默丢弃，对 session.busy/idle 等关键
+      // lease 消息可能完全无运维可观测线索。补充结构化上下文（消息 type + payload.sessionId
+      // 如有），便于运营排查丢失的关键消息。仍是 error 级别（比 warn 更显眼，与原有取舍一致）。
+      const failedType = msg.type
+      const failedSid = (msg.payload as { sessionId?: string } | null | undefined)?.sessionId
+      console.error(`[broadcast] payload serialization failed — entire broadcast dropped for all clients (type=${failedType}${failedSid ? `, sessionId=${failedSid}` : ''}):`, e)
       return
     }
     // P2-s1-w2：per-session 分桶入桶（spec §3.1）。
@@ -299,7 +304,10 @@ export class ServerMessageBroker implements IMessageBroker {
       payload = JSON.stringify(msg)
     } catch (e) {
       // 序列化失败整次丢弃（同 broadcast 取舍）：定向广播是 fire-and-forget，失败仅记日志。
-      console.error('[broadcastExcept] payload serialization failed — entire broadcast dropped:', e)
+      // WARNING 6：补充 type/sessionId 结构化上下文，便于排查定向广播（如 session.busy）静默丢失。
+      const failedType = msg.type
+      const failedSid = (msg.payload as { sessionId?: string } | null | undefined)?.sessionId
+      console.error(`[broadcastExcept] payload serialization failed — entire broadcast dropped (type=${failedType}${failedSid ? `, sessionId=${failedSid}` : ''}):`, e)
       return
     }
     for (const [clientId, ctx] of this.pool.clients) {

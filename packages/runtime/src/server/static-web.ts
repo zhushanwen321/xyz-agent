@@ -188,6 +188,12 @@ async function serveFile(
       if (!res.headersSent) {
         res.statusCode = 500
         res.end('Internal Server Error')
+      } else {
+        // WARNING 5（审查流错误未结束响应）：header 已隐式 flush（res.write 触发）时
+        // 上面的 headersSent 分支被跳过。仅 rejectP(err) 会让 res 处于半发送挂起状态，
+        // 客户端 socket 永久等待。对齐 file-endpoint.ts:290-298 的模式调 res.destroy(err)
+        // 终止底层 socket，让客户端收到截断响应而非永久挂起。
+        res.destroy(err)
       }
       rejectP(err)
     })

@@ -413,7 +413,10 @@ export class RuntimeServer implements IMessageBroker {
       }
     } catch (e) {
       const message = toErrorMessage(e)
-      const sessionId = ('sessionId' in msg.payload ? msg.payload.sessionId : undefined) as string | undefined
+      // 空安全提取 sessionId：多个 ClientMessage 类型 payload 是 void/Record<string,never>，
+      // 运行时 msg.payload 可能为 undefined（如 preset.setDefault/config.setProvider/extension.cancelInstall），
+      // 此时 `'sessionId' in undefined` 会抛 TypeError 掩盖 handler 的原始错误。先判空再 `in`。
+      const sessionId = (msg.payload && typeof msg.payload === 'object' && 'sessionId' in msg.payload ? msg.payload.sessionId : undefined) as string | undefined
       // L4 增强：error 自带 code（如 MODEL_NOT_CONFIGURED）时透传，前端据此差异化引导；否则回退 handler_error。
       const code = (e as Error & { code?: string }).code ?? 'handler_error'
       this.broker.sendError(ws, code, message, msg.id, sessionId ? { sessionId } : undefined)

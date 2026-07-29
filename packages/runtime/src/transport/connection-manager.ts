@@ -36,6 +36,8 @@ const MAX_PENDING = 20
 const WS_CLOSE_UNAUTHORIZED = 4001
 /** WS close code：同 clientId 新连接到来，旧连接被踢占。 */
 const WS_CLOSE_REPLACED = 4002
+/** WS close code：服务端关闭（标准 1000 正常关闭）。stop() 时关闭 pending/已认证连接用。 */
+const WS_CLOSE_NORMAL = 1000
 
 /**
  * 单连接的运行时上下文（wave1 远程化）。
@@ -344,6 +346,15 @@ export class ConnectionManager {
   private handleConnection(ws: WsType): void {
     const loaded = this.tokenManager.load()
     if (!loaded.enabled) {
+      // 开放模式 loopback 守卫（审查 BLOCKER 2）：与 file-endpoint.ts:212-219 的 /file 防护对齐。
+      // 当 token 文件缺失（开放模式）+ bindHost 非 loopback（如 XYZ_AGENT_HOST=0.0.0.0）时，
+      // 任何网络客户端可无 token 连接获完全 WS 访问——这是配置错误（远程暴露必须配 token）。
+      // 故此处拒绝 WS 连接，与 /file 端点的「开放模式 + 非 loopback 拒绝」语义一致。
+      if (!this.isLoopbackBind()) {
+        console.warn(`[runtime] open mode (no token) requires loopback bind, but host=${this.opts.host ?? '127.0.0.1'} — refusing WS connection`)
+        ws.close(WS_CLOSE_UNAUTHORIZED, 'open_mode_requires_loopback')
+        return
+      }
       // 开放模式（旧路径零回归）：clientId 固定 'local'，立即入正式池 + 推 initial state + 心跳。
       const ctx: ConnectionCtx = { ws, clientId: 'local', deviceName: '', connectedAt: Date.now() }
       this.clients.set(ctx.clientId, ctx)
@@ -428,6 +439,14 @@ export class ConnectionManager {
     this.kickExistingClient(clientId, ws)
     const ctx: ConnectionCtx = { ws, clientId, deviceName, connectedAt: Date.now() }
     this.clients.set(clientId, ctx)
+    // WARNING 3（审查 auth-timer 竞态）：在 await onAuthSuccess 之前立即绑 lifecycle handler + 心跳。
+    // 此前顺序是 await → replyAuth/replay → attachLifecycleHandlers，await 期间 ws 没绑 close handler，
+    // 若对端此时关闭，close 事件无 handler → clients.delete/onDisconnect 不运行 → ctx 泄漏 +
+    // presence/lease 清理跳过。提前绑定后 close 事件能正确触发清理；后续 replyAuth/ws.send 均已
+    // check readyState（WS_OPEN），对已关闭 ws 是 no-op，安全。attachMessageHandler 仍延后到
+    // replyAuth 之后（不应在 auth 回复前受理业务消息）。
+    this.attachLifecycleHandlers(ws, clientId)
+    this.resetHeartbeat(ws)
     console.log(`[runtime] client authenticated (clientId: ${clientId}, total: ${this.clients.size})`)
 
     // P2-s2 回放编排：onAuthSuccess 存在时调 broker.getReplayPlan 决定 resume/reset。
@@ -467,9 +486,8 @@ export class ConnectionManager {
       this.callbacks.onConnect(ws, clientId)
     }
 
-    this.resetHeartbeat(ws)
     this.attachMessageHandler(ws, clientId)
-    this.attachLifecycleHandlers(ws, clientId)
+    // WARNING 3：attachLifecycleHandlers/resetHeartbeat 已在 clients.set 后（await 前）绑定，此处不重复。
     // P5 presence：认证成功上线触发 presence 重推（通知其他客户端新设备在线）。
     this.broadcastPresence()
   }
@@ -591,7 +609,18 @@ export class ConnectionManager {
     if (timer) { clearTimeout(timer); this.authTimers.delete(ws) }
   }
 
-  /** 关闭：清理心跳/认证计时器 + 关闭 WS / HTTP。 */
+  /**
+   * 判定当前监听 host 是否为 loopback（审查 BLOCKER 2）。
+   * 与 file-endpoint.ts 的 loopback 判断逻辑一致：host 是 127.0.0.1 / ::1 / localhost 之一。
+   * opts.host 缺省时默认 127.0.0.1（loopback），与 start() 的 host 解析口径对齐。
+   * 用于开放模式守卫——非 loopback 绑定 + 开放模式 = 配置错误，拒绝 WS 连接。
+   */
+  private isLoopbackBind(): boolean {
+    const host = this.opts.host ?? '127.0.0.1'
+    return host === '127.0.0.1' || host === '::1' || host === 'localhost'
+  }
+
+  /** 关闭：清理心跳/认证计时器 + 关闭 pending/已认证 ws + 关闭 WS / HTTP。 */
   async stop(): Promise<void> {
     for (const timer of this.heartbeatTimers.values()) {
       clearTimeout(timer)
@@ -601,6 +630,28 @@ export class ConnectionManager {
       clearTimeout(timer)
     }
     this.authTimers.clear()
+    // WARNING 4（审查 pending ws 泄漏）：stop() 此前只清计时器 + wss.close()，
+    // 但未迭代 pending 关闭未认证 ws。计时器被清后 pending 连接永不超时，
+    // 作为打开 socket 泄漏到 TCP 超时。此处显式关闭所有 pending ws，同步清空 pending 集合。
+    for (const ws of this.pending) {
+      try {
+        ws.close(WS_CLOSE_UNAUTHORIZED, 'server_shutdown')
+      // eslint-disable-next-line taste/no-silent-catch -- stop 路径不能因单个 ws.close 失败中断其余清理
+      } catch {
+        // ws 可能已关闭/异常，跳过
+      }
+    }
+    this.pending.clear()
+    // 同步关闭已认证连接（clients Map），避免它们依赖已销毁的 httpServer。
+    for (const ctx of this.clients.values()) {
+      try {
+        ctx.ws.close(WS_CLOSE_NORMAL, 'server_shutdown')
+      // eslint-disable-next-line taste/no-silent-catch -- 同上，单个失败不阻断其余清理
+      } catch {
+        // ws 可能已关闭/异常，跳过
+      }
+    }
+    this.clients.clear()
     this.wss.close()
     return new Promise((resolve) => { this.httpServer.close(() => resolve()) })
   }
