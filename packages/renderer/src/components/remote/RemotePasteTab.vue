@@ -22,10 +22,6 @@ import { probeConnect } from '@/lib/remote/probe'
 import { saveProfile, activateRemote } from '@/lib/remote/connection-config'
 import type { NetworkKind } from '@/lib/remote/types'
 
-defineEmits<{
-  (e: 'connected'): void
-}>()
-
 const { t } = useI18n()
 
 /** textarea 值（任意文本，由 parseConnectionInfo 实时识别） */

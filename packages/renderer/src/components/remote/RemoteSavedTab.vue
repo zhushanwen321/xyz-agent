@@ -8,6 +8,13 @@
  *
  * 空列表显示提示（ES5 降级：probeOnline 全失败也只显灰点不阻塞点击）。
  *
+ * CR-fix WARNING4：
+ * - 三态在线指示：probe pending 时显脉冲灰点（unknown 语义），避免 reactive<Map>.get 返 undefined
+ *   视觉等同 offline（灰点）造成「未探测」与「离线」语义混淆。
+ * - 列表项容器 Button 改 as="div"：重命名态 Input + 确认/取消 Button 嵌套在 Button 内
+ *   违反 HTML 规范（button 不可嵌 interactive content），浏览器会强制重排 DOM。as="div" 底层
+ *   渲染成 div，click/键盘仍可用（role=button + tabindex + keydown.enter/space）。
+ *
  * 依赖：listProfiles/activateRemote（s1）+ probeOnline（s1）。
  * 约束：用 xyz-ui Button，禁原生元素/emoji/硬编码颜色；template≤400/script≤300。
  * 禁 Promise.all（用 Promise.allSettled）。
@@ -21,15 +28,14 @@ import { listProfiles, activateRemote, saveProfile } from '@/lib/remote/connecti
 import { probeOnline } from '@/lib/remote/probe'
 import type { RemoteServerProfile } from '@/lib/remote/types'
 
-defineEmits<{
-  (e: 'connected'): void
-}>()
-
 const { t } = useI18n()
 
 /** profile 列表快照（onMounted 一次性读，不做响应式 watch） */
 const profiles = ref<RemoteServerProfile[]>([])
-/** 在线状态 Map（key=profile.id，value=在线 true/离线 false，probeOnline 后台探测填） */
+/**
+ * 在线状态 Map（key=profile.id，value=在线 true/离线 false，probeOnline 后台探测填）。
+ * reactive<Map>：probe 完成前 .has(id)===false（unknown 三态），完成后 .get(id) 返 true/false。
+ */
 const onlineMap = reactive<Map<string, boolean>>(new Map())
 /** 激活中 profile id（点击后到 reload 前短暂态，防重点） */
 const activatingId = ref<string | null>(null)
@@ -50,6 +56,15 @@ onMounted(async () => {
   // allSettled 永远 resolve，此处仅消费结果确保没 rejected 被吞（probeOnline 内部已 try/catch）
   void results
 })
+
+/**
+ * 单 profile 是否禁用交互（任意项激活中或当前编辑态）。
+ * as="div" 后 Button 的 disabled prop 不再生效（div 无 disabled 属性），改为 class 控制视觉
+ * + click handler 内 guard（activate 已判 editingId/activatingId）。
+ */
+function isItemDisabled(p: RemoteServerProfile): boolean {
+  return (activatingId.value !== null && activatingId.value !== p.id) || editingId.value !== null
+}
 
 /**
  * 激活 profile：activateRemote + location.reload（不重 probe，已保存 token 可信）。
@@ -111,23 +126,35 @@ function confirmRename(profile: RemoteServerProfile): void {
       {{ t('connection.remoteConnect.saved.emptyHint') }}
     </p>
 
-    <!-- profile 列表项（用 Button 组件，禁原生 button） -->
+    <!-- profile 列表项（CR-fix WARNING4：Button as="div" 避重命名态 Input/Button 嵌套违反 HTML 规范） -->
     <Button
       v-for="p in profiles"
       :key="p.id"
+      as="div"
       variant="ghost"
+      role="button"
+      tabindex="0"
       data-testid="saved-profile-item"
       :data-profile-id="p.id"
-      :disabled="(activatingId !== null && activatingId !== p.id) || editingId !== null"
-      class="h-auto flex items-center gap-2 rounded-md border border-border px-3 py-2 text-left transition-colors hover:bg-surface-hover"
+      :aria-disabled="isItemDisabled(p) || undefined"
+      :class="[
+        'h-auto flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-left transition-colors hover:bg-surface-hover',
+        isItemDisabled(p) ? 'pointer-events-none opacity-50' : '',
+      ]"
       @click="activate(p)"
+      @keydown.enter.prevent="activate(p)"
+      @keydown.space.prevent="activate(p)"
     >
-      <!-- 在线/离线小圆点（绿/灰语义色） -->
+      <!-- 在线/离线小圆点（三态：online=绿 / offline=灰稳态 / unknown=灰脉冲，CR-fix WARNING4 A） -->
       <span
         data-testid="profile-online-dot"
         :class="[
           'size-2 shrink-0 rounded-full',
-          onlineMap.get(p.id) === true ? 'bg-success' : 'bg-subtle',
+          onlineMap.get(p.id) === true
+            ? 'bg-success'
+            : onlineMap.get(p.id) === false
+              ? 'bg-subtle'
+              : 'bg-subtle animate-pulse',
         ]"
       />
       <Folder class="size-4 shrink-0 text-subtle" />

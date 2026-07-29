@@ -7,7 +7,12 @@
  * 失败按三态显示红色错误。host 为空 → 连接按钮 disabled。
  *
  * url 拼接（Q2）：host 已含 ws://|wss:// 前缀 → 直接用 + 补 port；否则拼 `ws://${host}:${port}`。
- * port 默认 '8080'。token 空 → 不 disable（probeConnect 空短路返 auth，UI 显示 auth 错误，ES2）。
+ * port 默认 '3210'（对齐 runtime BASE_PORT）。token 空 → 不 disable（probeConnect 空短路返 auth，
+ * UI 显示 auth 错误，ES2）。
+ *
+ * CR-fix WARNING5：
+ * - port 校验：Input v-model 是字符串，未校验时用户输入 "3210abc" 会拼成 ws://host:3210abc，
+ *   new WebSocket 抛 SyntaxError 被归为 network 错误（误导）。port 必须匹配 /^\d+$/ 才可点连接。
  *
  * 依赖：probeConnect（s1）+ saveProfile/activateRemote（s1）+ classifyNetworkKind（s1）。
  * 约束：用 xyz-ui Input/Button，禁原生元素/emoji/硬编码颜色；template≤400/script≤300。
@@ -22,10 +27,6 @@ import { probeConnect } from '@/lib/remote/probe'
 import { classifyNetworkKind } from '@/lib/remote/parse-connect-info'
 import { saveProfile, activateRemote, getDeviceName, setDeviceName } from '@/lib/remote/connection-config'
 import type { NetworkKind } from '@/lib/remote/types'
-
-defineEmits<{
-  (e: 'connected'): void
-}>()
 
 const { t } = useI18n()
 
@@ -48,8 +49,15 @@ const probing = ref(false)
 /** 最近一次探测失败归一结果（auth/network/timeout），null=未失败 */
 const probeError = ref<'auth' | 'network' | 'timeout' | null>(null)
 
-/** host 非空才可点连接（Q2：host 为空 disabled） */
-const canConnect = computed(() => host.value.trim().length > 0 && !probing.value)
+/**
+ * port 校验（CR-fix WARNING5）：Input v-model 是字符串，必须匹配纯数字（^\d+$）才视为有效。
+ * 非法值（如 "3210abc"）会让拼接的 ws://host:3210abc 在 new WebSocket 抛 SyntaxError，
+ * 被 catch 归为 network 错误，文案误导。空字符串也视为无效（host 已必填，port 同样必填）。
+ */
+const isPortValid = computed(() => /^\d+$/.test(port.value.trim()))
+
+/** host 非空 + port 合法才可点连接（Q2：host 为空 disabled；CR-fix：port 非法 disabled） */
+const canConnect = computed(() => host.value.trim().length > 0 && isPortValid.value && !probing.value)
 
 /**
  * url 拼接（Q2）：

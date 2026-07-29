@@ -397,6 +397,9 @@ export function connect(url: string, opts?: ConnectOpts): void {
       }, AUTH_TIMEOUT_MS)
     } else {
       // ── 本地模式：现状逐字节不变，onopen 即 connected ──
+      // CR-fix WARNING3：connected 翻转时重置 failReasonRef——防 failed 态残留 failReason 泄漏
+      // （本地模式 failReason 恒 null，但 failed→connected 循环时旧值可能残留）。
+      failReasonRef.value = null
       state.value = 'connected'
       reconnectAttempts = 0
       // 连接成功 → 重置重连计时窗口（下次掉线重新开始计数）
@@ -588,6 +591,26 @@ function intercept(msg: ServerMessage): boolean {
         // P5 presence：auth.ok 顺带带 presence 全量列表（spec D10）。
         presence?: unknown[]
       }
+      // seqReset：server 判定不可回放（bootId 不一致或 lastSeq<evictedWatermark）→ 清 lastSeq + reload。
+      // CR-fix BLOCKER2：必须最先判 + 提前 return true——reload 是异步的（JS 继续执行），若放在
+      // presence 合成 + state 翻转之后，会多做无用功（presence 合成喂给即将销毁的页面）+ 触发
+      // state.value='connected' → useConnection watch → onConnected 多余 IO。提前 return 跳过后续副作用。
+      if (p.seqReset === true) {
+        // 先清 lastSeq=0（防 reload 前残余 onmessage 写回旧值，DM3 不变量）
+        lastSeq = 0
+        console.warn('[ws] seqReset received, reloading page for full resync')
+        // ERR2 守卫：非浏览器环境（SSR/无 location）降级为仅清 lastSeq 不 reload
+        if (
+          typeof window !== 'undefined' &&
+          typeof window.location !== 'undefined' &&
+          typeof window.location.reload === 'function'
+        ) {
+          window.location.reload()
+        } else {
+          console.error('[ws] seqReset received but location.reload unavailable')
+        }
+        return true
+      }
       // P5 presence：auth.ok 带 presence 时，合成 presence.update 喂给 messageHandler（routeInbound）。
       // auth.ok 本身被 intercept 消化（return true）不进 routeInbound，故 presence 经此合成消息
       // 进入全局通道，让 useConnection/presence store 消费（与 presence.update 同一处理路径）。
@@ -603,22 +626,10 @@ function intercept(msg: ServerMessage): boolean {
       if (typeof p.serverSeq === 'number' && p.serverSeq > lastSeq) {
         lastSeq = p.serverSeq
       }
-      // seqReset：server 判定不可回放（bootId 不一致或 lastSeq<evictedWatermark）→ 清 lastSeq + reload
-      if (p.seqReset === true) {
-        // 先清 lastSeq=0（防 reload 前残余 onmessage 写回旧值，DM3 不变量）
-        lastSeq = 0
-        console.warn('[ws] seqReset received, reloading page for full resync')
-        // ERR2 守卫：非浏览器环境（SSR/无 location）降级为仅清 lastSeq 不 reload
-        if (
-          typeof window !== 'undefined' &&
-          typeof window.location !== 'undefined' &&
-          typeof window.location.reload === 'function'
-        ) {
-          window.location.reload()
-        } else {
-          console.error('[ws] seqReset received but location.reload unavailable')
-        }
-      }
+      // CR-fix WARNING3：connected 翻转时重置 failReasonRef——防 failed 态残留的 failReason
+      // （如远程 'auth'）泄漏到本次 connected。下次 failed 若调用方传 undefined（如本地 IPC
+      // runtime-failed），旧值会误导 App.vue 分化 UI（本地 runtime-failed 误显远程 auth/replaced）。
+      failReasonRef.value = null
       state.value = 'connected'
       reconnectAttempts = 0
       reconnectStartedAt = null

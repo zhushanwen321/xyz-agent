@@ -437,6 +437,12 @@ export function useSidebar() {
    * cleanupSessionState（复用 deleteSession 提取的清理逻辑）。wasActiveInFolder
    * 在调 WS 前快照，循环结束后统一回退（不依赖 removeFromList 中间态）。
    * 返回 BatchDeleteResult——caller（Sidebar.onDeleteFolder）读 res.failed 决定 toast。
+   *
+   * CR-fix WARNING6：循环前若 activeId 命中 deleted 集合，立即清 activeId=null。
+   * 否则循环中 cleanupSessionState → removeFromList 删首个命中项时会回退 activeId=list[0]，
+   * 而 list[0] 可能同属 deleted 集合 → 后续迭代读到指向已删/将删 id 的中间态 activeId
+   * （响应式消费者如 focusedSessionId 派生会看到悬空 sid）。循环后再由 wasActiveInFolder
+   * 分支 selectSession(list[0]) 统一切到幸存项（此时 list 已无 deleted 项，list[0] 稳定）。
    */
   async function deleteFolder(cwd: string): Promise<BatchDeleteResult> {
     // 用已派生的 session.list（单一真源 groups → list，与下文回退 session.list[0] 同源），
@@ -445,6 +451,11 @@ export function useSidebar() {
       .filter((s) => s.cwd === cwd)
       .some((s) => s.id === session.activeId)
     const res = await sessionApi.removeByCwd(cwd)
+    // CR-fix WARNING6：循环前清 activeId（若命中 deleted），避免循环中 removeFromList 回退到
+    // 同属 deleted 的 list[0] 造成中间态悬空。循环后 wasActiveInFolder 分支统一 selectSession。
+    if (wasActiveInFolder) {
+      session.activeId = null
+    }
     for (const sid of res.deleted) {
       cleanupSessionState(sid)
     }

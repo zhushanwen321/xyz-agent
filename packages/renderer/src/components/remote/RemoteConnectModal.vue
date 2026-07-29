@@ -39,8 +39,8 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-/** Tabs 当前激活值（默认 paste，spec §七 粘贴是最常用入口） */
-const activeTab = ref('paste')
+/** Tabs 当前激活值（默认 paste，spec §七 粘贴是最常用入口）。显式联合类型约束取值。 */
+const activeTab = ref<'paste' | 'manual' | 'saved'>('paste')
 
 /** 关闭：回传 close 语义，父组件 @close 设 showRemoteModal=false */
 function onClose(): void {

@@ -1,10 +1,13 @@
 /**
  * useConnection 重连编排测试（wave3 P2-s4 TC28，spec §6.1/§6.3）。
  *
- * 验证 useConnection 的 watch(getState()) 重连检测：
- * - 首次连接（connecting→connected）：setSubscribedSessions 被调，bumpReconnectEpoch 不调
+ * 验证 useConnection 的 watch(getState()) 连接检测（CR-fix BLOCKER1 合并首连/重连分支后）：
+ * - 首次连接（connecting→connected）：bumpReconnectEpoch + setSubscribedSessions 均被调（bump 幂等无害）
  * - 重连（disconnected/reconnecting→connected）：bumpReconnectEpoch 被调 + setSubscribedSessions 被调
  * - panels 的 sessionId 列表传入 setSubscribedSessions
+ *
+ * 合并后语义：任意 → connected 都跑 bump + sync + presence，避免 flush:'pre' 同 tick
+ * 多状态变化时 oldState 漂移导致漏判。
  *
  * Vue watch 异步：每次 mockStateRef 赋值后 await nextTick 让 watch 回调跑完再断言。
  *
@@ -94,7 +97,7 @@ vi.mock('@/lib/remote/connection-config', () => ({
 import { nextTick } from 'vue'
 import { useConnection } from '@/composables/useConnection'
 
-describe('TC28: useConnection 重连编排（bumpReconnectEpoch + setSubscribedSessions）', () => {
+describe('TC28: useConnection 连接编排（bumpReconnectEpoch + setSubscribedSessions）', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockStateRef.value = 'disconnected'
@@ -104,7 +107,7 @@ describe('TC28: useConnection 重连编排（bumpReconnectEpoch + setSubscribedS
     vi.stubEnv('VITE_MOCK', '')
   })
 
-  it('首次连接 connecting→connected：setSubscribedSessions 被调，bumpReconnectEpoch 不调', async () => {
+  it('首次连接 connecting→connected：bumpReconnectEpoch + setSubscribedSessions 均被调（CR-fix 合并后 bump 幂等）', async () => {
     const { init, teardown } = useConnection()
     await init()
 
@@ -112,13 +115,13 @@ describe('TC28: useConnection 重连编排（bumpReconnectEpoch + setSubscribedS
     mockStateRef.value = 'connecting'
     await nextTick()
     mockBumpReconnectEpoch.mockClear()
+    mockSetSubscribedSessions.mockClear()
     mockStateRef.value = 'connected'
     await nextTick()
 
-    // 首次连接成功：setSubscribedSessions 被调（注入订阅供下次重连用）
-    expect(mockSetSubscribedSessions).toHaveBeenCalled()
-    // bumpReconnectEpoch 不被调（首次连接非重连，不清 scrollback）
-    expect(mockBumpReconnectEpoch).not.toHaveBeenCalled()
+    // 首次连接成功（CR-fix BLOCKER1 后）：bump + sync 都调（bump 幂等，首连场景 useTerminal 无 scrollback 可清，no-op）
+    expect(mockSetSubscribedSessions).toHaveBeenCalledTimes(1)
+    expect(mockBumpReconnectEpoch).toHaveBeenCalledTimes(1)
     teardown()
   })
 

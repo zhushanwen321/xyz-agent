@@ -334,22 +334,19 @@ export function useConnection() {
       if (oldState === 'connected' && newState !== 'connected') {
         pending.rejectAll(new Error(t('connection.disconnectedError')))
       }
-      // wave3 P2-s4：重连成功检测——从非 connected（且非首次 connecting）翻回 connected。
-      // oldState==='connecting' 是首次连接（不算重连，不 bump 清缓冲）；oldState 为
-      // disconnected/reconnecting/failed → connected 才是重连（bump 信号触发 useTerminal 清 scrollback）。
-      if (
-        newState === 'connected' &&
-        (oldState === 'disconnected' || oldState === 'reconnecting')
-      ) {
+      // 任意 → connected（首连 + 重连）统一处理 sync + presence + bump。
+      //
+      // CR-fix BLOCKER1：原先按 oldState 拆两条 if（disconnected/reconnecting→connected 视为重连调 bump；
+      // connecting→connected 视为首连不 bump），但 Vue watch flush:'pre' 可能在同一 tick 合并多次状态
+      // 变化（如 disconnected→connecting→connected），oldState 直接是上一次状态（如 connected），导致两条
+      // if 都不命中 → bump + sync + presence 三者全丢。合并为单一条件避免漏判。
+      //
+      // bump 无条件调（首连也 bump 无害——bumpReconnectEpoch 只让 useTerminal 清 scrollback，首连场景
+      // 本就无 scrollback，清空 no-op）。sync/presence 两类连接都需要：首连注入订阅供下次重连 auth 携带，
+      // 重连刷新订阅（panel 可能变）+ 拉 presence（resume 路径 auth.ok 不带 presence 兜底）。
+      if (newState === 'connected' && oldState !== 'connected') {
         bumpReconnectEpoch()
         syncSubscribedSessions()
-        // P5 presence（审查 Major3）：重连成功后主动拉 presence（resume 路径兜底）。
-        refreshPresenceOnConnect()
-      }
-      // 首次连接成功（任意→connected）也注入订阅（供下次重连 auth 携带）
-      if (newState === 'connected' && oldState === 'connecting') {
-        syncSubscribedSessions()
-        // P5 presence（审查 Major3）：首次连接成功也拉一次 presence（冷启动兜底，与 auth.ok.presence 幂等）。
         refreshPresenceOnConnect()
       }
     })
