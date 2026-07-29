@@ -61,6 +61,10 @@ screenshot.png
 .impeccable/
 /**/.impeccable/
 
+# .v3-audit/ 一次性 v3 重建审计档案（已清理，results/handoffs/verify 等过程产物，
+# 代码引用已改为指向 git 历史）。防止再次创建。
+.v3-audit/
+
 # === cw v1 工作流临时产物（根目录散落，应放 .xyz-harness/ 归档）===
 # .cw-*.json/.md 是 cw 跑完手动归档的中间产物，不是源码；.cw/（带斜杠）是 tracked 测试脚本，不忽略。
 /.cw-*.json
