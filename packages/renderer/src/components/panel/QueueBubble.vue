@@ -29,12 +29,12 @@
     >
       <span class="size-[7px] shrink-0 animate-pulse-accent rounded-full bg-accent" />
       <span class="shrink-0 font-mono text-[10px] font-semibold tracking-wider text-accent">{{ t('panel.queue.pending') }}</span>
-      <span class="min-w-0 flex-1 truncate text-muted">
+      <span class="min-w-0 flex-1 truncate text-neutral-mid">
         <template v-if="totalCount > 1">{{ t('panel.queue.itemCount', { count: totalCount }) }} · </template>{{ summary }}
       </span>
       <ChevronRight
         v-if="canToggle"
-        class="size-[11px] shrink-0 text-subtle transition-transform duration-[var(--duration-fast)] ease-[var(--ease)]"
+        class="size-[11px] shrink-0 text-neutral-dim transition-transform duration-[var(--duration-fast)] ease-[var(--ease)]"
         :class="expanded ? 'rotate-90' : ''"
       />
     </Button>
@@ -54,7 +54,7 @@
         />
         {{ singleGroup.key === 'followUp' ? t('panel.queue.followupLabel') : t('panel.queue.steerLabel') }}
       </span>
-      <p class="mt-0.5 text-fg">{{ singleGroup.items[0] }}</p>
+      <p class="mt-0.5 text-neutral-fg">{{ singleGroup.items[0] }}</p>
     </div>
 
     <!-- 展开态：双组分栏逐条列表（多条折叠态点 head 展开后显示） -->
@@ -69,20 +69,20 @@
             class="font-mono text-[10px] font-semibold tracking-wider"
             :class="group.key === 'followUp' ? 'text-info' : 'text-accent'"
           >{{ group.key === 'followUp' ? 'FOLLOWUP' : 'STEERING' }}</span>
-          <span class="text-[10px] text-subtle">
+          <span class="text-[10px] text-neutral-dim">
             {{ group.key === 'followUp' ? t('panel.queue.followupFirst') : t('panel.queue.steerFirst') }}
           </span>
         </div>
         <div
           v-for="(item, i) in group.items"
           :key="`${group.key}-${i}`"
-          class="flex items-start gap-2 px-3 py-1 text-fg"
+          class="flex items-start gap-2 px-3 py-1 text-neutral-fg"
         >
-          <span class="shrink-0 font-mono text-[10px] text-subtle">{{ i + 1 }}</span>
+          <span class="shrink-0 font-mono text-[10px] text-neutral-dim">{{ i + 1 }}</span>
           <span class="min-w-0 flex-1 break-words">{{ item }}</span>
         </div>
       </div>
-      <div class="border-t border-[color-mix(in_oklch,var(--accent)_18%,transparent)] px-3 py-1 text-[10px] text-subtle">
+      <div class="border-t border-[color-mix(in_oklch,var(--accent)_18%,transparent)] px-3 py-1 text-[10px] text-neutral-dim">
         {{ t('panel.queue.effectOrder') }}
       </div>
     </template>

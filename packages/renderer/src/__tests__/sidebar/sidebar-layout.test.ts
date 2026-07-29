@@ -24,7 +24,7 @@ describe('D2: SubagentList slug 降级', () => {
       task: 'Review the auth module',
     } as SubagentRecord]
     const wrapper = mount(SubagentList, { props: { subagents: records } })
-    // slug 曾以独立 span 渲染在 agent name 右侧（font-mono text-[10px] text-muted）
+    // slug 曾以独立 span 渲染在 agent name 右侧（font-mono text-[10px] text-neutral-mid）
     // 改后 slug 不再独立展示（降级为卡片 title tooltip）
     const allMonoSpans = wrapper.findAll('span.font-mono')
     const slugSpans = allMonoSpans.filter((s) => s.text().includes('cr-abc123'))
@@ -84,7 +84,7 @@ describe('D3: WorkflowDetail model 降级', () => {
 
   it('model 出现在摘要行（与 tokens/turns/duration 并列）', () => {
     const wrapper = mount(WorkflowDetail, { props: { workflow: makeWorkflow() } })
-    // 摘要行：pl-[19px] 的 meta 行（font-mono text-[10px] text-subtle）
+    // 摘要行：pl-[19px] 的 meta 行（font-mono text-[10px] text-neutral-dim）
     const summaryLines = wrapper.findAll('.pl-\\[19px\\]')
     const allSummaryText = summaryLines.map((s) => s.text()).join(' ')
     expect(allSummaryText).toContain('claude-sonnet-4-5')

@@ -12,9 +12,9 @@
     <!-- corrupted 提示条：getSystemPrompt 返回 corrupted=true 时显示 -->
     <div
       v-if="corrupted"
-      class="flex items-start gap-2 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-[12px] text-fg"
+      class="flex items-start gap-2 rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-[12px] text-neutral-fg"
     >
-      <AlertTriangle class="mt-px size-4 flex-shrink-0 text-warning" />
+      <AlertTriangle class="mt-px size-4 flex-shrink-0 text-warn" />
       <span>{{ t('settings.systemPrompt.corruptedHint') }}</span>
     </div>
 
@@ -22,8 +22,8 @@
     <div class="rounded-md border border-border bg-bg">
       <div class="flex items-center justify-between px-4 pb-3 pt-3">
         <div class="min-w-0">
-          <h3 class="text-[13px] font-medium text-fg">{{ t('settings.systemPrompt.replaceTitle') }}</h3>
-          <p class="mt-0.5 text-[11px] text-subtle">{{ t('settings.systemPrompt.replaceSubtitle') }}</p>
+          <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.systemPrompt.replaceTitle') }}</h3>
+          <p class="mt-0.5 text-[11px] text-neutral-dim">{{ t('settings.systemPrompt.replaceSubtitle') }}</p>
         </div>
         <Switch
           :data-testid="'system-prompt-replace-switch'"
@@ -32,8 +32,8 @@
         />
       </div>
       <div class="border-t border-border px-4 py-3">
-        <p class="mb-2 text-[11px] leading-relaxed text-muted">{{ t('settings.systemPrompt.replaceWarning') }}</p>
-        <Label class="mb-1 block text-[11px] text-subtle" for="system-prompt-replace-input">
+        <p class="mb-2 text-[11px] leading-relaxed text-neutral-mid">{{ t('settings.systemPrompt.replaceWarning') }}</p>
+        <Label class="mb-1 block text-[11px] text-neutral-dim" for="system-prompt-replace-input">
           {{ t('settings.systemPrompt.replaceLabel') }}
         </Label>
         <Textarea
@@ -45,7 +45,7 @@
           class="min-h-[120px] resize-y font-mono text-[12px]"
         />
         <div class="mt-1 flex items-center justify-between">
-          <span class="font-mono text-[10px] text-subtle">{{ replacePrompt.length }}/{{ maxLength }}</span>
+          <span class="font-mono text-[10px] text-neutral-dim">{{ replacePrompt.length }}/{{ maxLength }}</span>
           <Button
             data-testid="system-prompt-replace-save"
             size="dense"
@@ -69,14 +69,14 @@
             {{ t('settings.systemPrompt.defaultToggle') }}
           </Button>
           <div v-if="showDefaultPrompt" class="mt-2">
-            <p class="mb-2 text-[10px] leading-relaxed text-subtle">
+            <p class="mb-2 text-[10px] leading-relaxed text-neutral-dim">
               {{ t('settings.systemPrompt.defaultHint') }}
             </p>
             <Button
               data-testid="system-prompt-default-copy"
               variant="ghost"
               size="sm"
-              class="mb-2 h-auto gap-1 px-0 py-0 text-[11px] text-subtle hover:bg-transparent hover:text-fg [&_svg]:size-3"
+              class="mb-2 h-auto gap-1 px-0 py-0 text-[11px] text-neutral-dim hover:bg-transparent hover:text-neutral-fg [&_svg]:size-3"
               @click="copyDefaultPrompt"
             >
               <Copy />
@@ -84,7 +84,7 @@
             </Button>
             <pre
               data-testid="system-prompt-default-content"
-              class="max-h-[240px] select-text overflow-auto whitespace-pre-wrap break-words rounded-sm bg-surface-2 p-3 font-mono text-[11px] leading-relaxed text-fg"
+              class="max-h-[240px] select-text overflow-auto whitespace-pre-wrap break-words rounded-sm bg-surface-2 p-3 font-mono text-[11px] leading-relaxed text-neutral-fg"
             >{{ DEFAULT_PI_SYSTEM_PROMPT }}</pre>
           </div>
         </div>
@@ -95,8 +95,8 @@
     <div class="rounded-md border border-border bg-bg">
       <div class="flex items-center justify-between px-4 pb-3 pt-3">
         <div class="min-w-0">
-          <h3 class="text-[13px] font-medium text-fg">{{ t('settings.systemPrompt.appendTitle') }}</h3>
-          <p class="mt-0.5 text-[11px] text-subtle">{{ t('settings.systemPrompt.appendSubtitle') }}</p>
+          <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.systemPrompt.appendTitle') }}</h3>
+          <p class="mt-0.5 text-[11px] text-neutral-dim">{{ t('settings.systemPrompt.appendSubtitle') }}</p>
         </div>
         <Switch
           :data-testid="'system-prompt-append-switch'"
@@ -105,8 +105,8 @@
         />
       </div>
       <div class="border-t border-border px-4 py-3">
-        <p class="mb-2 text-[11px] leading-relaxed text-muted">{{ t('settings.systemPrompt.appendHint') }}</p>
-        <Label class="mb-1 block text-[11px] text-subtle" for="system-prompt-append-input">
+        <p class="mb-2 text-[11px] leading-relaxed text-neutral-mid">{{ t('settings.systemPrompt.appendHint') }}</p>
+        <Label class="mb-1 block text-[11px] text-neutral-dim" for="system-prompt-append-input">
           {{ t('settings.systemPrompt.appendLabel') }}
         </Label>
         <Textarea
@@ -119,7 +119,7 @@
         />
         <div class="mt-1 flex items-center justify-between">
           <!-- append 走 hook 不经 argv，无 32k/16000 硬上限约束，故只显示字符数不显示上限（R3）。 -->
-          <span class="font-mono text-[10px] text-subtle">{{ appendPrompt.length }} {{ t('settings.systemPrompt.charCount') }}</span>
+          <span class="font-mono text-[10px] text-neutral-dim">{{ appendPrompt.length }} {{ t('settings.systemPrompt.charCount') }}</span>
           <Button
             data-testid="system-prompt-append-save"
             size="dense"

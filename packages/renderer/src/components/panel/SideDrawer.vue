@@ -26,7 +26,7 @@
             :key="t.key"
             variant="ghost"
             class="size-7 shrink-0 justify-center rounded-sm p-0"
-            :class="activeTab === t.key ? 'bg-accent-soft text-accent' : 'text-muted'"
+            :class="activeTab === t.key ? 'bg-accent-soft text-accent' : 'text-neutral-mid'"
             :title="t.label"
             :data-testid="`drawer-tab-${t.key}`"
             @click="emit('set-tab', t.key)"
@@ -38,7 +38,7 @@
         <Button
           variant="ghost"
           class="size-7 shrink-0 rounded-sm p-0"
-          :class="docked ? 'text-accent' : 'text-subtle'"
+          :class="docked ? 'text-accent' : 'text-neutral-dim'"
           :title="docked ? t('panel.sideDrawer.unpin') : t('panel.sideDrawer.pin')"
           @click="emit('toggle-dock')"
         >
@@ -47,7 +47,7 @@
         </Button>
         <Button
           variant="ghost"
-          class="size-7 shrink-0 rounded-sm p-0 text-subtle hover:text-fg"
+          class="size-7 shrink-0 rounded-sm p-0 text-neutral-dim hover:text-neutral-fg"
           :title="t('panel.sideDrawer.close')"
           @click="emit('close')"
         >
@@ -60,8 +60,8 @@
           data-testid="drawer-unread-badge"
           :title="t('panel.sideDrawer.unreadMessages', { count: unreadCount })"
         >
-          <span class="size-1.5 animate-pulse rounded-full bg-fg" />
-          <span class="font-mono text-[10px] text-fg">{{ unreadCount > 9 ? '9+' : unreadCount }}</span>
+          <span class="size-1.5 animate-pulse rounded-full bg-neutral-fg" />
+          <span class="font-mono text-[10px] text-neutral-fg">{{ unreadCount > 9 ? '9+' : unreadCount }}</span>
         </div>
       </header>
 
@@ -105,14 +105,14 @@
         >
           <div
             v-if="activeLinesMeta.unknown"
-            class="mb-1 rounded-sm border border-border bg-surface px-1.5 py-0.5 text-[10px] text-muted"
+            class="mb-1 rounded-sm border border-border bg-surface px-1.5 py-0.5 text-[10px] text-neutral-mid"
           >
             {{ t('panel.sideDrawer.unknownWidget') }}：{{ activeLinesMeta.key }}
           </div>
           <code
             v-for="(line, i) in activeLines"
             :key="i"
-            class="block whitespace-pre-wrap break-all font-mono text-[11px] leading-[1.45] text-fg/90"
+            class="block whitespace-pre-wrap break-all font-mono text-[11px] leading-[1.45] text-neutral-fg/90"
             >{{ line }}</code
           >
         </div>
@@ -121,9 +121,9 @@
           v-else
           class="flex h-full flex-col items-center justify-center gap-2 p-4 text-center"
         >
-          <component :is="activeTabMeta.icon" class="size-6 text-subtle opacity-40" />
-          <p class="text-[12px] text-subtle opacity-70">{{ activeTabMeta.emptyText }}</p>
-          <p class="text-[11px] text-subtle opacity-50">{{ activeTabMeta.emptyHint }}</p>
+          <component :is="activeTabMeta.icon" class="size-6 text-neutral-dim opacity-40" />
+          <p class="text-[12px] text-neutral-dim opacity-70">{{ activeTabMeta.emptyText }}</p>
+          <p class="text-[11px] text-neutral-dim opacity-50">{{ activeTabMeta.emptyHint }}</p>
         </div>
       </div>
 
@@ -138,13 +138,13 @@
           :key="entry.statusKey"
           class="flex items-center gap-1.5 font-mono text-[10px]"
         >
-          <span class="shrink-0 text-subtle">{{ entry.statusKey }}</span>
+          <span class="shrink-0 text-neutral-dim">{{ entry.statusKey }}</span>
           <!-- textRaw 有 ANSI 着色 → AnsiText 渲染保留颜色；否则纯文本兜底。
                容器承载 truncate（min-w-0 + overflow-hidden + ellipsis），避免与 AnsiText 内部 whitespace-pre-wrap 冲突。 -->
           <div v-if="entry.textRaw" class="min-w-0 flex-1 overflow-hidden">
-            <AnsiText :content="entry.textRaw" class="block truncate text-muted" />
+            <AnsiText :content="entry.textRaw" class="block truncate text-neutral-mid" />
           </div>
-          <span v-else class="min-w-0 flex-1 truncate text-muted">{{ entry.text }}</span>
+          <span v-else class="min-w-0 flex-1 truncate text-neutral-mid">{{ entry.text }}</span>
         </div>
       </footer>
     </aside>

@@ -1,11 +1,13 @@
 /**
  * Turn.vue 首屏冒烟测试（fast-handoff wave）。
  *
- * 验证 Turn 渲染核心交互元素存在于 DOM（AGENTS #5：每用例含用户可见断言）：
- * - handoff 按钮（data-testid="handoff-btn"）
- * - fork 按钮（data-testid="fork-background-btn" / "fork-ask-btn"）
- * - handoff 按钮 disabled 守卫（isHandingOff）
- * - fork 按钮 disabled 守卫（isForking）
+ * W4 拆分后 Turn.vue 是编排器：fork/handoff 按钮下沉到 TurnSummary 子组件。
+ * 冒烟验证：
+ * - TurnSummary 子组件在有 assistant 时渲染（承载 handoff/fork 按钮的 hover actions）
+ * - TurnSummary 在无 assistant 时不渲染
+ *
+ * fork/handoff 按钮的 data-testid / disabled 守卫单测在 TurnSummary 维度覆盖（shallowMount 下
+ * Turn 内是 stub，断言 testid 无意义）。Turn.vue 维度只校验编排器挂载了正确的子组件。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/components/Turn.smoke.test.ts
  */
@@ -81,11 +83,6 @@ vi.mock('@/composables/panel/useTurnElapsed', () => ({
   useTurnElapsed: () => ({ elapsed: { value: '5s' } }),
 }))
 
-// ── mock useResizeReport ──
-vi.mock('@/composables/effects/useResizeReport', () => ({
-  useResizeReport: vi.fn(),
-}))
-
 // ── mock useStickGuard / useTraceTransition ──
 vi.mock('@/composables/effects/useStickGuard', () => ({
   useStickGuard: () => null,
@@ -124,45 +121,51 @@ describe('Turn.vue 冒烟', () => {
     vi.clearAllMocks()
   })
 
-  it('handoff 按钮渲染', () => {
+  it('TurnSummary 子组件渲染（承载 handoff 按钮）', () => {
     const wrapper = shallowMount(Turn, {
       props: { turn: makeTurn(), sessionId: 'test-session' },
     })
-    expect(wrapper.find('[data-testid="handoff-btn"]').exists()).toBe(true)
+    // W4 编排器：handoff 按钮下沉到 TurnSummary 子组件，shallowMount 下以 stub 出现
+    expect(wrapper.findComponent({ name: 'TurnSummary' }).exists()).toBe(true)
   })
 
-  it('fork 按钮渲染（后台 + 提问）', () => {
+  it('TurnSummary 子组件渲染（承载 fork 按钮组）', () => {
     const wrapper = shallowMount(Turn, {
       props: { turn: makeTurn(), sessionId: 'test-session' },
     })
-    expect(wrapper.find('[data-testid="fork-background-btn"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="fork-ask-btn"]').exists()).toBe(true)
+    // W4 编排器：fork 按钮（后台 + 提问）下沉到 TurnSummary 子组件
+    expect(wrapper.findComponent({ name: 'TurnSummary' }).exists()).toBe(true)
   })
 
-  it('handoff 按钮 disabled（isHandingOff）', () => {
+  it('TurnSummary 接收 lastAssistant（handoff/fork 守卫的数据源）', () => {
     chatStoreMock.isHandingOff.mockReturnValue(true)
+    const turn = makeTurn()
+    const wrapper = shallowMount(Turn, {
+      props: { turn, sessionId: 'test-session' },
+    })
+    // handoff disabled 守卫（isHandingOff）由 TurnSummary 内部消费 chatStore，Turn 只传 lastAssistant
+    const summary = wrapper.findComponent({ name: 'TurnSummary' })
+    expect(summary.exists()).toBe(true)
+    expect(summary.props('lastAssistant')).toEqual(turn.assistants[0])
+  })
+
+  it('TurnSummary 渲染时 lastAssistant 已传入（fork isForking 防重复守卫的数据依赖）', () => {
     const wrapper = shallowMount(Turn, {
       props: { turn: makeTurn(), sessionId: 'test-session' },
     })
-    const btn = wrapper.find('[data-testid="handoff-btn"]')
-    expect(btn.attributes('disabled')).toBeDefined()
+    // isForking 守卫在 TurnSummary 内部，Turn.vue 冒烟只校验子组件挂载 + lastAssistant 透传
+    const summary = wrapper.findComponent({ name: 'TurnSummary' })
+    expect(summary.exists()).toBe(true)
+    expect(summary.props('lastAssistant')).toBeTruthy()
   })
 
-  it('fork 按钮 isForking 防重复守卫（存在性断言）', () => {
-    const wrapper = shallowMount(Turn, {
-      props: { turn: makeTurn(), sessionId: 'test-session' },
-    })
-    // isForking 初始 false，fork 按钮渲染在 DOM 中（handleFork 内部守卫 isForking 重入）
-    const btn = wrapper.find('[data-testid="fork-background-btn"]')
-    expect(btn.exists()).toBe(true)
-  })
-
-  it('无 assistant 时 fork/handoff 按钮不渲染', () => {
+  it('无 assistant 时 TurnSummary 收到 null lastAssistant（fork/handoff 按钮在子组件内不渲染）', () => {
     const wrapper = shallowMount(Turn, {
       props: { turn: makeTurn({ assistants: [] }), sessionId: 'test-session' },
     })
-    expect(wrapper.find('[data-testid="handoff-btn"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="fork-background-btn"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="fork-ask-btn"]').exists()).toBe(false)
+    const summary = wrapper.findComponent({ name: 'TurnSummary' })
+    expect(summary.exists()).toBe(true)
+    // lastAssistant=null → TurnSummary 内部 v-if lastAssistant 守卫不渲染 fork/handoff 按钮
+    expect(summary.props('lastAssistant')).toBeNull()
   })
 })

@@ -7,7 +7,7 @@
   -->
   <div
     ref="elRef"
-    class="composer-input relative min-h-[60px] max-h-[120px] overflow-y-auto px-3.5 pb-1 pt-[11px] text-[13px] leading-[1.55] text-fg outline-none"
+    class="composer-input relative min-h-[60px] max-h-[120px] overflow-y-auto px-3.5 pb-1 pt-[11px] text-[13px] leading-[1.55] text-neutral-fg outline-none"
     :class="{ 'is-empty': isEmpty, 'is-focused': isFocused }"
     :contenteditable="!disabled"
     :data-placeholder="placeholder"
@@ -175,7 +175,7 @@ onMounted(() => {
   position: absolute;
   inset: 0;
   padding: inherit;
-  color: var(--subtle);
+  color: var(--neutral-dim);
   pointer-events: none;
 }
 

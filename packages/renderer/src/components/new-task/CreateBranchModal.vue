@@ -121,7 +121,7 @@ function onCancel(): void {
           </p>
         </div>
 
-        <p class="text-[12px] text-subtle">{{ t('newTask.createBranch.onlyHeadHint') }}</p>
+        <p class="text-[12px] text-neutral-dim">{{ t('newTask.createBranch.onlyHeadHint') }}</p>
 
         <!-- 提交失败错误（D-7 留 modal 显错） -->
         <p v-if="errorMsg" data-testid="error-msg" class="text-[12px] text-danger">

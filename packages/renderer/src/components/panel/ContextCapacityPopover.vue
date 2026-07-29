@@ -14,7 +14,7 @@
         :class="
           cn(
             'h-7 gap-1 rounded-sm px-2 text-[11px] transition-colors',
-            isHigh ? 'text-warning hover:text-warning' : 'text-subtle hover:text-muted',
+            isHigh ? 'text-warn hover:text-warn' : 'text-neutral-dim hover:text-neutral-mid',
           )
         "
         :title="t('panel.context.capacity')"
@@ -33,7 +33,7 @@
     >
       <!-- head -->
       <div
-        class="flex items-center justify-between border-b border-border bg-white/[0.015] px-2.5 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-subtle"
+        class="flex items-center justify-between border-b border-border bg-white/[0.015] px-2.5 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-neutral-dim"
       >
         <span>{{ t('panel.context.capacity') }}</span>
         <span>{{ stats.modelId ?? '—' }}</span>
@@ -48,19 +48,19 @@
       <!-- stats -->
       <div class="grid grid-cols-2 gap-x-3.5 gap-y-2 px-2.5 py-2.5">
         <div class="flex flex-col gap-0.5">
-          <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-subtle">{{ t('panel.context.used') }}</span>
-          <span class="font-sans text-[14px] font-semibold tabular-nums text-fg">{{ usedDisplay }}</span>
+          <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-neutral-dim">{{ t('panel.context.used') }}</span>
+          <span class="font-sans text-[14px] font-semibold tabular-nums text-neutral-fg">{{ usedDisplay }}</span>
         </div>
         <div class="flex flex-col gap-0.5">
-          <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-subtle">{{ t('panel.context.total') }}</span>
-          <span class="font-sans text-[14px] font-semibold tabular-nums text-fg">{{ hasPercent ? totalDisplay : t('panel.context.unknown') }}</span>
+          <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-neutral-dim">{{ t('panel.context.total') }}</span>
+          <span class="font-sans text-[14px] font-semibold tabular-nums text-neutral-fg">{{ hasPercent ? totalDisplay : t('panel.context.unknown') }}</span>
         </div>
         <div class="flex flex-col gap-0.5">
-          <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-subtle">{{ t('panel.context.usageRate') }}</span>
-          <span class="font-sans text-[14px] font-semibold tabular-nums text-fg">{{ hasPercent ? `${stats.percent}%` : '—' }}</span>
+          <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-neutral-dim">{{ t('panel.context.usageRate') }}</span>
+          <span class="font-sans text-[14px] font-semibold tabular-nums text-neutral-fg">{{ hasPercent ? `${stats.percent}%` : '—' }}</span>
         </div>
         <div class="flex flex-col gap-0.5">
-          <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-subtle">{{ t('panel.context.cacheHit') }}</span>
+          <span class="font-mono text-[10px] uppercase tracking-[0.05em] text-neutral-dim">{{ t('panel.context.cacheHit') }}</span>
           <span
             :class="cn('font-sans text-[14px] font-semibold tabular-nums', cacheHitClass)"
           >{{ stats.cacheHit != null ? `${stats.cacheHit}%` : '—' }}</span>
@@ -72,13 +72,13 @@
         <div class="mx-2.5 h-px bg-border" />
         <div class="px-2.5 pt-2">
           <!-- section label + provider tag -->
-          <div class="flex items-center gap-1.5 font-mono text-[9.5px] uppercase tracking-[0.06em] text-subtle">
+          <div class="flex items-center gap-1.5 font-mono text-[9.5px] uppercase tracking-[0.06em] text-neutral-dim">
             <span>Coding Plan</span>
             <span
               v-if="matchedPresetLabel"
               :class="cn(
                 'rounded-sm px-1 py-px text-[9px] font-semibold tracking-[0.03em]',
-                quotaDanger ? 'bg-danger-soft text-danger' : quotaWarning ? 'bg-warning-soft text-warning' : 'bg-accent-soft text-accent',
+                quotaDanger ? 'bg-danger-soft text-danger' : quotaWarning ? 'bg-warn-soft text-warn' : 'bg-accent-soft text-accent',
               )"
             >{{ matchedPresetLabel }}</span>
           </div>
@@ -96,34 +96,34 @@
               class="grid items-center py-0.5"
               style="grid-template-columns: 32px 1fr 32px 52px; column-gap: 8px; font-size: 11px; line-height: 1.4;"
             >
-              <span class="font-sans text-[10.5px] text-muted">{{ windowLabels[win.idx] }}</span>
+              <span class="font-sans text-[10.5px] text-neutral-mid">{{ windowLabels[win.idx] }}</span>
               <div class="relative h-1 overflow-hidden rounded-full bg-surface-2">
                 <div
-                  :class="cn('h-full rounded-full transition-all', win.pct >= DANGER_THRESHOLD ? 'bg-danger' : win.pct >= HIGH_THRESHOLD ? 'bg-warning' : 'bg-gradient-to-r from-accent to-accent-hover')"
+                  :class="cn('h-full rounded-full transition-all', win.pct >= DANGER_THRESHOLD ? 'bg-danger' : win.pct >= HIGH_THRESHOLD ? 'bg-warn' : 'bg-gradient-to-r from-accent to-accent-hover')"
                   :style="{ width: `${win.pct}%` }"
                 />
               </div>
               <span
                 :class="cn(
                   'text-right font-semibold tabular-nums',
-                  win.pct >= DANGER_THRESHOLD ? 'text-danger' : win.pct >= HIGH_THRESHOLD ? 'text-warning' : 'text-fg',
+                  win.pct >= DANGER_THRESHOLD ? 'text-danger' : win.pct >= HIGH_THRESHOLD ? 'text-warn' : 'text-neutral-fg',
                 )"
               >{{ win.pct }}%</span>
-              <span class="truncate text-right font-mono text-[9.5px] tabular-nums text-subtle">
+              <span class="truncate text-right font-mono text-[9.5px] tabular-nums text-neutral-dim">
                 {{ formatReset(win.resetSec) }}
               </span>
             </div>
           </template>
 
           <!-- 无数据时的占位 -->
-          <div v-else class="py-1.5 text-center text-[10.5px] text-subtle">
+          <div v-else class="py-1.5 text-center text-[10.5px] text-neutral-dim">
             {{ isPending ? t('panel.context.quotaQuerying') : t('panel.context.noQuotaData') }}
           </div>
         </div>
       </template>
 
       <!-- footer -->
-      <div class="flex items-center justify-between border-t border-border px-2.5 py-1.5 font-mono text-[10px] text-subtle">
+      <div class="flex items-center justify-between border-t border-border px-2.5 py-1.5 font-mono text-[10px] text-neutral-dim">
         <span v-if="matchedProviderId && lastFetchAt">
           {{ formatLastFetch(lastFetchAt) }}
         </span>
@@ -295,14 +295,14 @@ const isDanger = computed(() => stats.value.percent > DANGER_THRESHOLD)
 
 const barClass = computed(() => {
   if (isDanger.value) return 'bg-danger'
-  if (isHigh.value) return 'bg-warning'
+  if (isHigh.value) return 'bg-warn'
   return 'bg-gradient-to-r from-accent to-accent-hover'
 })
 
 const cacheHitClass = computed(() => {
   const hit = stats.value.cacheHit
-  if (hit == null) return 'text-subtle'
-  return hit < CACHE_LOW_THRESHOLD ? 'text-warning' : 'text-success'
+  if (hit == null) return 'text-neutral-dim'
+  return hit < CACHE_LOW_THRESHOLD ? 'text-warn' : 'text-success'
 })
 
 </script>

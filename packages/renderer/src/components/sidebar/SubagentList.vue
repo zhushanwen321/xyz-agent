@@ -12,8 +12,8 @@
       class="flex flex-col items-center justify-center gap-2 py-10 text-center"
       data-testid="subagent-list-loading"
     >
-      <Loader2 class="size-4 animate-spin text-subtle opacity-60" />
-      <p class="text-[11px] text-subtle opacity-60">{{ t('sidebar.subagentList.loading') }}</p>
+      <Loader2 class="size-4 animate-spin text-neutral-dim opacity-60" />
+      <p class="text-[11px] text-neutral-dim opacity-60">{{ t('sidebar.subagentList.loading') }}</p>
     </div>
     <!-- 错误态（M1：loadSubagents 失败，可重试） -->
     <div
@@ -22,7 +22,7 @@
       data-testid="subagent-list-error"
     >
       <AlertCircle class="size-5 text-danger opacity-60" />
-      <p class="text-[11px] text-muted">{{ t('sidebar.subagentList.loadFailed', { error: loadError }) }}</p>
+      <p class="text-[11px] text-neutral-mid">{{ t('sidebar.subagentList.loadFailed', { error: loadError }) }}</p>
       <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="subagent-list-retry" @click="emit('retry')">{{ t('sidebar.subagentList.retry') }}</Button>
     </div>
     <!-- 列表 -->
@@ -49,7 +49,7 @@
               class="size-2 shrink-0 rounded-full"
               :class="statusDotClass(record.status)"
             />
-            <span class="min-w-0 flex-1 truncate text-[12px] font-medium leading-[1.35] text-fg">
+            <span class="min-w-0 flex-1 truncate text-[12px] font-medium leading-[1.35] text-neutral-fg">
               {{ record.agent }}
             </span>
             <!-- cancel 按钮（running 态显示，inline 两段式确认） -->
@@ -59,8 +59,8 @@
               size="icon"
               :data-testid="cancellingId === record.subagentId ? 'subagent-action-cancel-confirm' : 'subagent-action-cancel'"
               :class="cancellingId === record.subagentId
-                ? 'size-5 rounded-sm border border-danger bg-danger text-fg'
-                : 'size-5 text-subtle hover:text-danger'"
+                ? 'size-5 rounded-sm border border-danger bg-danger text-neutral-fg'
+                : 'size-5 text-neutral-dim hover:text-danger'"
               :title="cancellingId === record.subagentId ? t('sidebar.subagentList.cancelConfirm') : t('sidebar.subagentList.cancel')"
               @click.stop="onCancelClick(record.subagentId)"
             >
@@ -70,14 +70,14 @@
           </div>
 
           <!-- 摘要 -->
-          <div class="mt-1 flex items-center gap-2 pl-[21px] font-mono text-[10px] text-subtle">
+          <div class="mt-1 flex items-center gap-2 pl-[21px] font-mono text-[10px] text-neutral-dim">
             <span v-if="record.turns !== undefined">{{ record.turns }} {{ t('sidebar.subagentList.turnsUnit') }}</span>
             <span v-if="record.totalTokens !== undefined">· {{ formatTokens(record.totalTokens, t('sidebar.subagentList.tokUnit')) }}</span>
             <span v-if="record.elapsedSeconds !== undefined">· {{ formatElapsed(record.elapsedSeconds) }}</span>
           </div>
 
           <!-- 任务描述 -->
-          <div class="mt-0.5 truncate pl-[21px] text-[11px] leading-[1.3] text-muted">
+          <div class="mt-0.5 truncate pl-[21px] text-[11px] leading-[1.3] text-neutral-mid">
             {{ record.task }}
           </div>
         </div>
@@ -90,9 +90,9 @@
       class="flex flex-col items-center justify-center gap-2 py-10 text-center"
       data-testid="subagent-list-empty"
     >
-      <Bot class="size-7 text-subtle opacity-40" />
-      <p class="text-[11px] text-subtle opacity-55">{{ t('sidebar.subagentList.empty') }}</p>
-      <p class="text-[10px] text-subtle opacity-40">{{ t('sidebar.subagentList.emptyHint') }}</p>
+      <Bot class="size-7 text-neutral-dim opacity-40" />
+      <p class="text-[11px] text-neutral-dim opacity-55">{{ t('sidebar.subagentList.empty') }}</p>
+      <p class="text-[10px] text-neutral-dim opacity-40">{{ t('sidebar.subagentList.emptyHint') }}</p>
     </div>
   </div>
 </template>
@@ -151,7 +151,7 @@ function statusDotClass(status: SubagentStatus): string {
       // running 走 spinner 不会到这里，故 crashed 用 bg-danger 不会与 running 混淆。
       return 'bg-danger'
     case 'cancelled':
-      return 'bg-subtle opacity-50'
+      return 'bg-neutral-dim opacity-50'
     default:
       return 'bg-accent'
   }

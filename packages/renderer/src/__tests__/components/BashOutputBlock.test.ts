@@ -1,16 +1,17 @@
 /**
- * BashOutputBlock 组件测试（composer-bash-execute W3 TK8 + W4 RO 上报 + 视觉降级）。
+ * BashOutputBlock 组件测试（composer-bash-execute W3 TK8 + 视觉降级 + 灰阶化）。
  *
  * 验证：
  * - complete 态 exit 0 → command + output + 「exit 0」success 标签
- * - streaming 态 → spinner + 取消按钮；点击取消触发 abortBash
- * - exit N(>0) → 「exit N」danger 标签
+ * - streaming 态 → 双环 loader-spin + 取消按钮；点击取消触发 abortBash
+ * - exit N(>0) → 「exit N」warn 标签（灰阶化：哑光金替代 danger 红，bash exit N 非致命）
  * - excludeFromContext=true → no context 标记
- * - cancelled=true → 「cancelled」标签
+ * - cancelled=true → 「cancelled」neutral-dim 标签
  * - output='' → 「(no output)」
- * - W4T1：注册 useResizeReport 且 RO 回调上报的 key 是 `s-${message.id}`（带 s- 前缀，
- *   与 useVirtualTurnList itemKey 的 system 项格式一致）
  * - W4T2：视觉对齐 trace block 极简风（根 div 无 border/rounded-md/bg-surface-hover，有 py-2）
+ *
+ * [cw wave w4] 删除 useResizeReport 旧路径用例（W4T1 RO 上报 + W4T1b registry 降级）：
+ * w3 切到 virtua 后 BashOutputBlock 不再注册 useResizeReport（virtua ListItem 内部 RO 接管测高）。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/components/BashOutputBlock.test.ts
  */
@@ -18,7 +19,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import type { Message } from '@xyz-agent/shared'
-import { TURN_RESIZE_REGISTRY_KEY } from '@/composables/effects/useResizeReport'
 
 // Mock useChat.abortBash（BashOutputBlock 取消按钮的唯一外部依赖）
 const mockAbortBash = vi.fn()
@@ -72,7 +72,7 @@ describe('BashOutputBlock', () => {
     expect(tag.classes()).toContain('text-success')
   })
 
-  it('streaming 态 → spinner + 取消按钮存在；点击取消触发 abortBash', async () => {
+  it('streaming 态 → 双环 loader-spin + 取消按钮存在；点击取消触发 abortBash', async () => {
     const msg = makeMessage({
       status: 'streaming',
       bashExecution: {
@@ -86,15 +86,21 @@ describe('BashOutputBlock', () => {
       },
     })
     const wrapper = mountBlock(msg)
-    // streaming 不渲染 status-tag（spinner 无 testid），取消按钮存在
+    // streaming 不渲染 status-tag（spinner 无 status-tag testid），取消按钮存在
     expect(wrapper.find('[data-testid="bash-status-tag"]').exists()).toBe(false)
+    // 灰阶化（§13.2-D）：streaming 态用本分支双环 loader-spin（animate-loader-spin + text-accent），
+    // 替代 main 的 Loader2 animate-spin
+    const spinner = wrapper.find('[data-testid="bash-streaming-spinner"]')
+    expect(spinner.exists()).toBe(true)
+    expect(spinner.classes()).toContain('text-accent')
+    expect(spinner.find('.animate-loader-spin').exists()).toBe(true)
     const cancelBtn = wrapper.find('[data-testid="bash-cancel-btn"]')
     expect(cancelBtn.exists()).toBe(true)
     await cancelBtn.trigger('click')
     expect(mockAbortBash).toHaveBeenCalledWith('sess-1')
   })
 
-  it('exitCode=2 → 「exit 2」标签（danger 类）', () => {
+  it('exitCode=2 → 「exit 2」标签（warn 类，灰阶化：哑光金替代 danger 红）', () => {
     const msg = makeMessage({
       bashExecution: {
         command: 'false',
@@ -109,7 +115,7 @@ describe('BashOutputBlock', () => {
     const wrapper = mountBlock(msg)
     const tag = wrapper.find('[data-testid="bash-status-tag"]')
     expect(tag.text()).toBe('exit 2')
-    expect(tag.classes()).toContain('text-danger')
+    expect(tag.classes()).toContain('text-warn')
   })
 
   it('excludeFromContext=true → 显示 no context 标记', () => {
@@ -145,7 +151,7 @@ describe('BashOutputBlock', () => {
     expect(tag.exists()).toBe(true)
     // i18n 文案随 locale（zh-CN 「已取消」/en-US 「cancelled」），断言非空即可
     expect(tag.text().length).toBeGreaterThan(0)
-    expect(tag.classes()).toContain('text-muted')
+    expect(tag.classes()).toContain('text-neutral-dim')
   })
 
   it('output 为空且非 streaming → 显示 (no output)', () => {
@@ -213,7 +219,7 @@ describe('BashOutputBlock', () => {
     expect(tag.exists()).toBe(true)
     // 超时态走 bashTimeout（zh-CN「已超时」），不应是已取消（zh-CN「已取消」）
     expect(tag.text().length).toBeGreaterThan(0)
-    expect(tag.classes()).toContain('text-muted')
+    expect(tag.classes()).toContain('text-neutral-dim')
     // 验证走的是 timeout 分支而非 cancelled 分支：两个文案 key 不同 → 文案不同
     expect(tag.text()).not.toBe('已取消')
   })
@@ -305,7 +311,7 @@ describe('BashOutputBlock streaming → complete 过渡（PR#116 review gap2）'
     expect(output.text()).toContain('PASS  src/foo.test.ts')
   })
 
-  it('gap2: streaming → 更新到 complete 但 exit N(>0) → exit 标签显示 danger 类', async () => {
+  it('gap2: streaming → 更新到 complete 但 exit N(>0) → exit 标签显示 warn 类（灰阶化）', async () => {
     const streamingMsg = makeMessage({
       status: 'streaming',
       bashExecution: {
@@ -337,83 +343,26 @@ describe('BashOutputBlock streaming → complete 过渡（PR#116 review gap2）'
     })
     await wrapper.setProps({ message: failedMsg })
 
-    // 过渡后：cancel 消失 + exit 2 danger 标签 + output
+    // 过渡后：cancel 消失 + exit 2 warn 标签（灰阶化：哑光金替代 danger）+ output
     expect(wrapper.find('[data-testid="bash-cancel-btn"]').exists()).toBe(false)
     const tag = wrapper.find('[data-testid="bash-status-tag"]')
     expect(tag.exists()).toBe(true)
     expect(tag.text()).toBe('exit 2')
-    expect(tag.classes()).toContain('text-danger')
+    expect(tag.classes()).toContain('text-warn')
     expect(wrapper.find('[data-testid="bash-output"]').exists()).toBe(true)
   })
 })
 
-// ── W4：RO 上报 + 视觉降级 ──────────────────────────────────────────
+// ── W4：视觉降级 ───────────────────────────────────────────────────
 //
-// useResizeReport 通过 provide(TURN_RESIZE_REGISTRY_KEY) inject 拿 registry；
-// 测试需 provide 一个 mock registry（含 reportHeight spy）。
-// happy-dom 不提供 ResizeObserver，需 stub 一个能记录 observe 的最小实现，
-// 测试可拿到实例后手动触发回调以验证 key。
+// [cw wave w4] useResizeReport 旧路径已删除（W4T1 RO 上报 + W4T1b registry 降级 用例随之移除）：
+// w3 切到 virtua 后 BashOutputBlock 不再注册 useResizeReport，virtua ListItem 内部 RO 接管测高。
+// 仅保留视觉降级用例（W4T2 极简风根 div class 断言）。
 
-describe('BashOutputBlock W4 — RO 上报 + 视觉降级', () => {
+describe('BashOutputBlock W4 — 视觉降级', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     mockAbortBash.mockReset()
-  })
-
-  function mountWithRegistry(message: Message, reportHeight: (key: string, h: number) => void) {
-    return mount(BashOutputBlock, {
-      props: { message, sessionId: 'sess-1' },
-      global: {
-        plugins: [],
-        provide: {
-          [TURN_RESIZE_REGISTRY_KEY as symbol]: { reportHeight },
-        },
-      },
-    })
-  }
-
-  it('W4T1: RO 回调触发后 reportHeight 被调用且第一参数 = `s-${message.id}`（带 s- 前缀，匹配 itemKey system 格式）', async () => {
-    // 用构造器 spy：拦截 new ResizeObserver，记录回调与元素，手动 trigger 高度
-    const captured: Array<{ cb: (entries: ResizeObserverEntry[]) => void; el: HTMLElement | null }> = []
-    vi.stubGlobal('ResizeObserver', class {
-      constructor(cb: (entries: ResizeObserverEntry[]) => void) {
-        captured.push({ cb, el: null })
-      }
-      observe(el: HTMLElement): void {
-        captured[captured.length - 1]!.el = el
-      }
-      unobserve(): void { /* noop */ }
-      disconnect(): void { /* noop */ }
-    })
-
-    const reportHeight = vi.fn()
-    const msg = makeMessage({ id: 'bash-789' })
-    const wrapper = mountWithRegistry(msg, reportHeight)
-
-    // 等待 watch immediate 触发 observe
-    await wrapper.vm.$nextTick()
-
-    expect(captured.length).toBeGreaterThanOrEqual(1)
-    const ro = captured[0]!
-    expect(ro.el).not.toBeNull()
-    const el = ro.el as HTMLElement
-    // 模拟浏览器 RO 高度回调（borderBoxSize[0].blockSize 路径，280px 模拟长输出真实高度）
-    ro.cb([{
-      target: el,
-      borderBoxSize: [{ blockSize: 280 } as ResizeObserverSize],
-      contentRect: {} as DOMRectReadOnly,
-    }] as unknown as ResizeObserverEntry[])
-
-    expect(reportHeight).toHaveBeenCalledTimes(1)
-    // ⚠️ key 必须带 s- 前缀：与 useVirtualTurnList itemKey 的 system 项格式 `s-${id}` 一致，
-    // 否则高度写不进 heights Map → 仍走 200px 估算 → 长输出 item offset 算错 → 视觉重叠
-    expect(reportHeight).toHaveBeenCalledWith('s-bash-789', 280)
-    wrapper.unmount()
-  })
-
-  it('W4T1b: 未 provide registry（非虚拟列表环境）→ useResizeReport 优雅降级，不抛错', () => {
-    // 不 provide registry（如纯展示场景）→ useResizeReport inject 拿到 null → no-op
-    expect(() => mountBlock(makeMessage())).not.toThrow()
   })
 
   it('W4T2: 根 div 无 border / rounded-md / bg-surface-hover class（对齐 trace block 极简风）', () => {

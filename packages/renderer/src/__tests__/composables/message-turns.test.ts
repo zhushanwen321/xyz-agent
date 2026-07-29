@@ -11,6 +11,7 @@
  * - B3：无 contentBlocks（降级）→ 旧顺序 text→thinking→tool
  * - B4：contentBlocks 引用不存在的 thinking/toolCall id → 跳过（防御异常数据）
  * - B5：空 contentBlocks + 无内容 → 空数组
+ * - B6/B7：subagent/workflow toolCall → kind=agentgraph（contentBlocks 路径 + 降级路径）
  *
  * 运行：npx vitest run src/__tests__/composables/message-turns.test.ts
  */
@@ -40,14 +41,38 @@ describe('filterDisplayableMessages —— 按 display 字段过滤（FR-5 / AC-
     expect(filtered.map((m) => m.id)).toEqual(['u1', 'a1'])
   })
 
-  it('display:true 的 custom message 保留（workflow-result / subagent-bg-notify）', () => {
+  // [FEAT] 完成通知（subagent-bg-notify / workflow-result）不渲染——用户选择「不展示通知」，
+  // 通知触发 agent 后续 turn（triggerTurn:true）处理结果，结果由新 turn 体现，通知本身是噪声。
+  // 即使 display:true 也过滤；消息仍进 store 供 fork/compact/replay（filter 不丢消息）。
+  it('subagent-bg-notify customType 的消息被过滤（即使 display:true）', () => {
     const messages: Message[] = [
-      makeMsg({ id: 'w1', role: 'system', customType: 'workflow-result', display: true, content: 'done' }),
+      makeMsg({ id: 'u1', role: 'user', content: 'hi' }),
       makeMsg({ id: 'n1', role: 'system', customType: 'subagent-bg-notify', display: true, content: '子代理完成' }),
-      makeMsg({ id: 'g1', role: 'system', customType: 'goal-context', display: false, content: '隐藏' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'ok' }),
     ]
     const filtered = filterDisplayableMessages(messages)
-    expect(filtered.map((m) => m.id)).toEqual(['w1', 'n1'])
+    expect(filtered.map((m) => m.id)).toEqual(['u1', 'a1'])
+  })
+
+  it('workflow-result customType 的消息被过滤（即使 display:true）', () => {
+    const messages: Message[] = [
+      makeMsg({ id: 'u1', role: 'user', content: 'hi' }),
+      makeMsg({ id: 'w1', role: 'system', customType: 'workflow-result', display: true, content: 'done' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'ok' }),
+    ]
+    const filtered = filterDisplayableMessages(messages)
+    expect(filtered.map((m) => m.id)).toEqual(['u1', 'a1'])
+  })
+
+  it('普通 customType 消息（display:true）仍保留', () => {
+    const messages: Message[] = [
+      makeMsg({ id: 'u1', role: 'user', content: 'hi' }),
+      // 非 HIDDEN_NOTIFY_CUSTOM_TYPES 的 customType，display:true → 保留
+      makeMsg({ id: 'x1', role: 'system', customType: 'future-extension-notify', display: true, content: '显示' }),
+      makeMsg({ id: 'a1', role: 'assistant', content: 'ok' }),
+    ]
+    const filtered = filterDisplayableMessages(messages)
+    expect(filtered.map((m) => m.id)).toEqual(['u1', 'x1', 'a1'])
   })
 
   it('display:undefined 保留（普通消息无 display 字段，按 !== false 判断安全）', () => {
@@ -156,5 +181,47 @@ describe('expandAssistantBlocks —— 单条 assistant 内部块按时序展开
   it('B5: 空 contentBlocks + 无内容 → 空数组', () => {
     const msg = makeMsg({ content: '', contentBlocks: [] })
     expect(expandAssistantBlocks(msg)).toEqual([])
+  })
+
+  /* ── agentgraph 识别：subagent/workflow toolCall 解为 kind='agentgraph'（IF3）── */
+
+  it('B6: 有 contentBlocks 时 subagent/workflow toolCall → kind=agentgraph（contentBlocks 路径）', () => {
+    // subagent/workflow 是图结构重型操作，按 toolName 识别为 agentgraph（不是普通 tool）
+    const msg = makeMsg({
+      content: 'done',
+      toolCalls: [
+        { id: 'sa1', toolName: 'subagent', input: {}, status: 'completed', startTime: 0 },
+        { id: 'wf1', toolName: 'workflow', input: {}, status: 'completed', startTime: 0 },
+        { id: 'grep1', toolName: 'grep', input: {}, status: 'completed', startTime: 0 },
+      ],
+      contentBlocks: [
+        { type: 'text', refId: 'text' },
+        { type: 'toolCall', refId: 'sa1' },
+        { type: 'toolCall', refId: 'wf1' },
+        { type: 'toolCall', refId: 'grep1' },
+      ],
+    })
+    const result = expandAssistantBlocks(msg)
+    // subagent + workflow → agentgraph；grep → 普通 tool
+    expect(result.map((b) => b.kind)).toEqual(['text', 'agentgraph', 'agentgraph', 'tool'])
+    // ref 仍是 ToolCall（数据结构不变，仅 kind 不同）
+    const saRef = result[1].ref as { id: string; toolName: string }
+    expect(saRef.id).toBe('sa1')
+    expect(saRef.toolName).toBe('subagent')
+  })
+
+  it('B7: 无 contentBlocks（降级）时 subagent/workflow toolCall → kind=agentgraph（fallback 路径同步识别）', () => {
+    // 降级路径（无 contentBlocks）同样按 toolName 识别 agentgraph，与 contentBlocks 路径一致
+    const msg = makeMsg({
+      content: '文本',
+      toolCalls: [
+        { id: 'sa1', toolName: 'subagent', input: {}, status: 'completed', startTime: 0 },
+        { id: 'grep1', toolName: 'grep', input: {}, status: 'completed', startTime: 0 },
+      ],
+      // 无 contentBlocks → 走降级路径
+    })
+    const result = expandAssistantBlocks(msg)
+    // 降级顺序 text→tool：subagent 标 agentgraph，grep 标 tool
+    expect(result.map((b) => b.kind)).toEqual(['text', 'agentgraph', 'tool'])
   })
 })

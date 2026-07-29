@@ -8,7 +8,7 @@ const props = defineProps<{ class?: HTMLAttributes['class'] }>()
 <template>
   <td
     :class="cn(
-      'px-3 py-2 align-middle text-fg [&:has([role=checkbox])]:pr-0',
+      'px-3 py-2 align-middle text-neutral-fg [&:has([role=checkbox])]:pr-0',
       props.class,
     )"
   >

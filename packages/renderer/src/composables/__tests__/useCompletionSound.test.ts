@@ -1,84 +1,100 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
-// Mock Web Audio API 用 class 使 new AudioContext() 正常工作
-const mockStop = vi.fn()
-const mockStart = vi.fn()
-const mockConnect = vi.fn()
-const mockExponentialRampToValueAtTime = vi.fn()
-const mockSetValueAtTime = vi.fn()
-const mockResume = vi.fn()
-const mockCreateOscillator = vi.fn()
-const mockCreateGain = vi.fn()
+// Mock window.electronAPI.playSystemSound
+const mockPlaySystemSound = vi.fn<(name: string) => Promise<{ audioData?: string; mimeType?: string }>>()
+mockPlaySystemSound.mockResolvedValue({}) // mac/linux 默认空对象（main spawn 播）
 
-let audioCtxState = 'running'
+// Mock HTMLAudioElement.play（win 路径用 new Audio）
+const mockAudioPlay = vi.fn().mockResolvedValue(undefined)
 
-class MockAudioContext {
-  get state() { return audioCtxState }
-  currentTime = 0
-  destination = {}
-  createOscillator = mockCreateOscillator
-  createGain = mockCreateGain
-  resume = mockResume
-}
-
-mockCreateOscillator.mockImplementation(() => ({
-  type: 'sine',
-  frequency: {
-    value: 0,
-    setValueAtTime: mockSetValueAtTime,
-    exponentialRampToValueAtTime: mockExponentialRampToValueAtTime,
-  },
-  connect: mockConnect,
-  start: mockStart,
-  stop: mockStop,
-}))
-
-mockCreateGain.mockImplementation(() => ({
-  gain: {
-    value: 0,
-    setValueAtTime: mockSetValueAtTime,
-    exponentialRampToValueAtTime: mockExponentialRampToValueAtTime,
-  },
-  connect: mockConnect,
-}))
-
-// @ts-expect-error mock AudioContext
-globalThis.AudioContext = MockAudioContext
-
-let playSuccess: () => void
-let playError: () => void
-
-beforeEach(async () => {
-  vi.clearAllMocks()
-  audioCtxState = 'running'
-  // 清除模块缓存以重置 audioCtx singleton
-  vi.resetModules()
-  const mod = await import('../useCompletionSound')
-  playSuccess = mod.playSuccess
-  playError = mod.playError
+// Audio 必须是 constructor（new Audio()）→ vi.fn 包裹普通 function
+const mockAudioCtor = vi.fn(function (this: { play: typeof mockAudioPlay }) {
+  this.play = mockAudioPlay
 })
 
+beforeEach(() => {
+  vi.clearAllMocks()
+  mockPlaySystemSound.mockResolvedValue({})
+  // @ts-expect-error 测试桩：注入 electronAPI
+  globalThis.window = globalThis.window || {}
+  // @ts-expect-error 测试桩
+  globalThis.window.electronAPI = {
+    playSystemSound: mockPlaySystemSound,
+  }
+  // @ts-expect-error 测试桩：mock Audio 为 constructor
+  globalThis.Audio = mockAudioCtor as unknown as typeof Audio
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+// helpers：动态 import 拿最新模块状态
+async function loadModule() {
+  const mod = await import('../useCompletionSound')
+  return { playSuccess: mod.playSuccess, playError: mod.playError, playByName: mod.playByName }
+}
+
 describe('useCompletionSound', () => {
-  it('playSuccess 调用 createOscillator，频率 523Hz', () => {
-    playSuccess()
-    expect(mockCreateOscillator).toHaveBeenCalled()
-    expect(mockSetValueAtTime).toHaveBeenCalledWith(523, expect.any(Number))
+  it('playSuccess 调用 electronAPI.playSystemSound', async () => {
+    const { playSuccess } = await loadModule()
+    await playSuccess()
+    expect(mockPlaySystemSound).toHaveBeenCalledTimes(1)
+    // W3：playSuccess 转发 kind='success'（main 据此回落平台默认）
+    expect(mockPlaySystemSound).toHaveBeenCalledWith(expect.any(String), 'success')
   })
 
-  it('playError 调用 createOscillator，频率 220Hz', () => {
-    playError()
-    expect(mockCreateOscillator).toHaveBeenCalled()
-    expect(mockSetValueAtTime).toHaveBeenCalledWith(220, expect.any(Number))
+  it('playError 调用 electronAPI.playSystemSound', async () => {
+    const { playError } = await loadModule()
+    await playError()
+    expect(mockPlaySystemSound).toHaveBeenCalledTimes(1)
+    // W3：playError 转发 kind='error'
+    expect(mockPlaySystemSound).toHaveBeenCalledWith(expect.any(String), 'error')
   })
 
-  it('playError 使用 exponentialRampToValueAtTime 做频率下滑', () => {
-    playError()
-    expect(mockExponentialRampToValueAtTime).toHaveBeenCalled()
+  it('playByName 传入指定名字时透传给 IPC', async () => {
+    const { playByName } = await loadModule()
+    await playByName('Hero')
+    // playByName 现转发可选 kind（W3）；不传时为 undefined
+    expect(mockPlaySystemSound).toHaveBeenCalledWith('Hero', undefined)
   })
 
-  it('AudioContext suspended 时调用 resume', () => {
-    audioCtxState = 'suspended'
-    playSuccess()
-    expect(mockResume).toHaveBeenCalled()
+  it('playByName 传 kind 时透传给 IPC（W3 跨平台失效兜底用）', async () => {
+    const { playByName } = await loadModule()
+    await playByName('Hero', 'success')
+    expect(mockPlaySystemSound).toHaveBeenCalledWith('Hero', 'success')
+  })
+
+  it('electronAPI 不存在时不抛错（安全降级）', async () => {
+    // @ts-expect-error 测试桩：移除 electronAPI
+    delete globalThis.window.electronAPI
+    const { playSuccess } = await loadModule()
+    await expect(playSuccess()).resolves.toBeUndefined()
+  })
+
+  it('playSystemSound 抛错时不传播（提示音失败不阻塞对话流）', async () => {
+    mockPlaySystemSound.mockRejectedValueOnce(new Error('ipc down'))
+    const { playSuccess } = await loadModule()
+    await expect(playSuccess()).resolves.toBeUndefined()
+  })
+
+  it('win 路径：main 返回 audioData 时 new Audio 播放', async () => {
+    mockPlaySystemSound.mockResolvedValueOnce({
+      audioData: 'dGVzdA==', // 'test' base64
+      mimeType: 'audio/wav',
+    })
+    const { playByName } = await loadModule()
+    await playByName('Windows Notify System Generic')
+    expect(mockAudioCtor).toHaveBeenCalledTimes(1)
+    // 验证 dataURI 构造正确
+    expect(mockAudioCtor).toHaveBeenCalledWith('data:audio/wav;base64,dGVzdA==')
+    expect(mockAudioPlay).toHaveBeenCalledTimes(1)
+  })
+
+  it('win 路径：Audio.play 被 autoplay 拒绝时不抛错', async () => {
+    mockPlaySystemSound.mockResolvedValueOnce({ audioData: 'dGVzdA==', mimeType: 'audio/wav' })
+    mockAudioPlay.mockRejectedValueOnce(new Error('autoplay blocked'))
+    const { playByName } = await loadModule()
+    await expect(playByName('Windows Notify System Generic')).resolves.toBeUndefined()
   })
 })

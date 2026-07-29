@@ -407,7 +407,7 @@ describe('AskUserOverlay · v3 样式对齐 demo v3', () => {
     expect(optDesc.exists()).toBe(true)
     expect(optDesc.attributes('class')).toContain('text-[12px]')
     // 弱化：subtle 色
-    expect(optDesc.attributes('class')).toContain('text-subtle')
+    expect(optDesc.attributes('class')).toContain('text-neutral-dim')
   })
 
   it('U7 补充: 请求头存在——单问题标题提到 head 行', () => {

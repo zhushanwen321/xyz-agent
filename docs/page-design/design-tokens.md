@@ -23,9 +23,12 @@
 | `--surface-2` | `#2e2f38` | 二级表面（Card-Elevated） | 2026-07-12 拉距（原 07-09 `#282930`，+6） |
 | `--bg-elevated` | `#313239` | 浮起面板/激活面板底色 | 2026-07-12 拉距（原 07-09 `#2a2b32`，+7） |
 | `--bg-input` | `#1e1f24` | 输入区底色（Input/Textarea/Composer zone） | 2026-07-09 提亮（原 `#101013`）。07-12 不变（Δ4 from bg 凹陷语义） |
-| `--fg` | `#f7f8fc` | 主文字 | 2026-07-09 提亮（原 `#f0f0f5`） |
-| `--muted` | `#a8a8b5` | 次级文字 | 2026-07-09 提亮（原 `#8a8a95`） |
-| `--subtle` | `#82828f` | 三级文字/占位 | 2026-07-09 修复 a11y（原 `#5a5a65`，对比度 2.85→4.5:1） |
+| `--neutral-fg` | `#e5e7eb` | 主文字 | 2026-07-26 W1 重命名（原 `--fg` `#f7f8fc`，调低至冷中性 #e5e7eb 对齐 neutral 谱系） |
+| `--neutral-mid` | `#9ca3af` | 次级文字 | 2026-07-26 W1 重命名（原 `--muted` `#a8a8b5`） |
+| `--neutral-dim` | `#6b7280` | 三级文字/占位 | 2026-07-26 W1 重命名（原 `--subtle` `#82828f`） |
+| `--neutral-faint` | `#4b5563` | 极弱文字/禁用态 | 2026-07-26 W1 新增（neutral 谱系第四阶） |
+| `--neutral-ico` | `#8b8d94` | 默认图标色 | 2026-07-26 W1 新增（图标独立于文字色相，避免文字灰与图标灰混用） |
+| `--neutral-ico-hover` | `#e5e7eb` | 图标 hover 色 | 2026-07-26 W1 新增（hover 回升至 fg 级） |
 | `--border` | `rgba(255,255,255,0.08)` | 分隔线 | 2026-07-09 提亮（原 0.06，提亮 bg 后可见度不足） |
 | `--border-strong` | `rgba(255,255,255,0.15)` | 强调分隔 | 2026-07-09 提亮（原 0.12） |
 | `--accent` | `#4f8ef7` | 主色/链接/聚焦 | C 原始 |
@@ -38,7 +41,7 @@
 | Token | 值 | 用途 | 来源 |
 |-------|-----|------|------|
 | `--success` | `#22c55e` | 成功 | C + D 一致 |
-| `--warning` | `#f5a524` | 警告 | 补全 |
+| `--warn` | `#b08a3e` | 警告 | 2026-07-26 W1 重命名调值（原 `--warning` `#f5a524`，降饱和至哑光金 #b08a3e，褪鲜橙） |
 | `--danger` | `#ef4444` | 错误/危险 | 补全 |
 | `--info` | `#38bdf8` | 信息/提示 | 补全 |
 | `--reasoning` | `#a78bfa` | 思考块色相（draft-message-stream §4 + composer 思考等级） | 补全（v3 重建 Wave 1） |
@@ -46,7 +49,7 @@
 | `--info-soft` | `color-mix(in oklch, var(--info) 12%, transparent)` | 信息/提示软底（badge/提示条背景，12% 基准） | 补全（状态色 soft 归一） |
 | `--success-soft` | `color-mix(in oklch, var(--success) 12%, transparent)` | 成功软底（badge/changeset resolved 背景，12% 基准） | 补全（状态色 soft 归一） |
 | `--danger-soft` | `color-mix(in oklch, var(--danger) 12%, transparent)` | 错误/危险软底（失败块/badge 背景，12% 基准） | 补全（状态色 soft 归一） |
-| `--warning-soft` | `color-mix(in oklch, var(--warning) 12%, transparent)` | 警告软底（badge/提示条背景，12% 基准） | 补全（状态色 soft 归一） |
+| `--warn-soft` | `color-mix(in oklch, var(--warn) 14%, transparent)` | 警告软底（badge/提示条背景，14% 基准） | 2026-07-26 W1 重命名（原 `--warning-soft` 12%，提到 14% 补偿哑光金的视觉重量不足） |
 
 ## 字体
 
@@ -55,6 +58,19 @@
 --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;  /* D 继承 */
 /* display 与 body 同用 --font-sans（tech-utility 取向，开发者工具直觉） */
 ```
+
+## 字号 scale（补全，2026-07-28 W2）
+
+> 组件级字号 SSOT。所有 `text-[Npx]` utility 优先用 `text-[var(--text-X)]` 引用本 scale，
+> 禁止 `.5px` 字号（`text-[12.5px]` 等）—— snap 到最近 scale step。
+
+| Token | 值 | 用途 |
+|-------|-----|------|
+| `--text-2xs` | `10px` | 极小字（bash truncation / runId / dirPath） |
+| `--text-xs` | `11px` | 小字（tag / meta / mono detail） |
+| `--text-sm` | `12px` | 次级正文（task preview / bash content / label） |
+| `--text-base` | `13px` | block header 统一字号（消除 13.5px 漂移） |
+| `--text-md` | `14px` | 正文（user message body） |
 
 ## 圆角（C 原仅 3/12，补 8 中间档）
 
@@ -100,9 +116,14 @@
 | `--surface-hover` | `#e9ecef` | draft-system light（原「待确认」，draft 已给值） |
 | `--bg-elevated` | `#ffffff` | 补全：浮起面板用纯白（同 surface）+ `--shadow-2` 区分层级，避免亮色再叠灰显脏 |
 | `--bg-input` | `#f1f3f6` | 补全：输入区沉于 surface，对齐 surface-2（同色相同层级） |
-| `--fg` | `#0d0d0f` | draft-system light |
-| `--muted` | `#5a5a65` | draft-system light |
-| `--subtle` | `#8a8a95` | draft-system light（原「待确认」，draft 已给值；亮色下 subtle/muted 明度对调：muted 深、subtle 浅） |
+| `--neutral-fg` | `#0d0d0f` | 2026-07-26 W1 重命名（原 `--fg`） |
+| `--neutral-mid` | `#5a5a65` | 2026-07-26 W1 重命名（原 `--muted`） |
+| `--neutral-dim` | `#8a8a95` | 2026-07-26 W1 重命名（原 `--subtle`；亮色下 dim/mid 明度对调：mid 深、dim 浅） |
+| `--neutral-faint` | `#c0c0c8` | 2026-07-26 W1 新增 |
+| `--neutral-ico` | `#6a6a75` | 2026-07-26 W1 新增 |
+| `--neutral-ico-hover` | `#0d0d0f` | 2026-07-26 W1 新增 |
+| `--warn` | `#8a6a2e` | 2026-07-26 W1 重命名调值（原 `--warning`，亮色加深保证白底对比度） |
+| `--warn-soft` | `color-mix(in oklch, var(--warn) 14%, transparent)` | 2026-07-26 W1 重命名（原 `--warning-soft`） |
 | `--border` | `rgba(0,0,0,0.08)` | draft-system light |
 | `--border-strong` | `rgba(0,0,0,0.14)` | draft-system light（原「待确认」，draft 已给值） |
 | `--accent` | `#2563eb` | 加深保证对比度（palette 切换时由 data-palette 覆盖，themePreset 暂未实装） |
@@ -138,19 +159,19 @@
 
 | shadcn token | → v3 | 说明 |
 |---|---|---|
-| `--primary` / `--primary-foreground` | `--accent` / `--fg` | default Button 底=主色蓝 |
-| `--secondary` / `--secondary-foreground` | `--surface` / `--fg` | secondary Button 底=面板色 |
-| `--destructive` / `--destructive-foreground` | `--danger` / `--fg` | destructive Button 底=危险红 |
-| `--muted-foreground` | `--muted` | shadcn 次级文字（-foreground 后缀）|
-| `--accent-foreground` | `--fg` | ghost hover 配字 |
-| `--background` / `--foreground` | `--bg` / `--fg` | 画布/主文字 |
-| `--popover` / `--popover-foreground` | `--surface` / `--fg` | 弹层面板 |
+| `--primary` / `--primary-foreground` | `--accent` / `--neutral-fg` | default Button 底=主色蓝 |
+| `--secondary` / `--secondary-foreground` | `--surface` / `--neutral-fg` | secondary Button 底=面板色 |
+| `--destructive` / `--destructive-foreground` | `--danger` / `--neutral-fg` | destructive Button 底=危险红 |
+| `--muted-foreground` | `--neutral-mid` | shadcn 次级文字（-foreground 后缀）|
+| `--accent-foreground` | `--neutral-fg` | ghost hover 配字 |
+| `--background` / `--foreground` | `--bg` / `--neutral-fg` | 画布/主文字 |
+| `--popover` / `--popover-foreground` | `--surface` / `--neutral-fg` | 弹层面板 |
 | `--input` | `--border` | input 边框 |
 | `--ring` | `--accent` | focus ring（主色）|
 
 **已知命名冲突（维持 v3，不覆盖）**：
 - `--accent`：v3=主色蓝（强调/品牌，19 处业务代码 + tailwind config 锁定）；shadcn=hover 软底（中性）。语义相反，维持 v3 主色蓝（W01 零回归）。副作用：ghost/outline Button 的 `hover:bg-accent` hover 成主色蓝（既有状态，非本修复引入）。
-- `--muted`：v3=次级文字色（#a8a8b5，2026-07-09 提亮后）；shadcn=背景色。维持 v3。副作用：`bg-muted`（仅 `DropdownMenuSeparator` 1px 分隔线用）渲染为 v3 灰——视觉正确。
+- `--neutral-mid`：v3=次级文字色（#9ca3af，2026-07-26 W1 重命名调值后）；shadcn=背景色。维持 v3。副作用：`bg-neutral-mid`（仅 `DropdownMenuSeparator` 1px 分隔线用）渲染为 v3 灰——视觉正确。
 
 两项冲突是 shadcn 命名与 v3 命名的根本不兼容，纯 token 别名无法消除；维持 v3 语义保证 W01 零回归，副作用可接受。若未来要 ghost hover 中性化，需在 button variant 改用 `hover:bg-surface-hover`（改组件，非 token 层）。
 

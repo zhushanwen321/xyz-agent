@@ -19,6 +19,7 @@
 import { git as gitApi } from '@/api'
 import {
   transition,
+  openOverlay,
   useNewTaskFlowState,
   type GitInfo,
 } from './useNewTaskFlowState'
@@ -66,10 +67,9 @@ export function useNewTaskBranch(
       transitionUnchecked('idle')
       throw new Error('NewTaskFlow: 非 git 目录不可打开分支选择')
     }
-    // overlay 互斥：已开 dir-popover 时先归 landing。dir-popover→landing 在 ALLOWED 表内合法，
-    // 走 transition（带守卫）而非直置后门——保持状态变更统一走守卫表，杜绝绕过。
-    if (state.value === 'dir-popover') transition('landing')
-    transition('branch-popover')
+    // overlay 互斥由 openOverlay 统一处理（已开任意 overlay 时先归 landing 再开 branch-popover）。
+    // git 守卫已在上方处理，此处只管互斥 + 开 popover。
+    openOverlay('branch-popover')
   }
 
   /**

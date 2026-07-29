@@ -53,3 +53,7 @@ screenshot.png
 
 # CW v1 subagent dispatch payloads (临时入参文件，派发完即废弃)
 .cw-rsu-*.json
+
+# impeccable skill 产生的 UI critique 报告（临时审查产物，非源码）。
+# AGENTS.md 规则 13 禁止 impeccable/ 目录进版本管理；历史遗留的 4 个已 git rm --cached 清理。
+.impeccable/

@@ -131,7 +131,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
   <div
     ref="root"
     data-testid="dir-select-popover"
-    class="w-[320px] max-h-[420px] overflow-hidden rounded-md border border-border-strong bg-bg-elevated shadow-2 outline-none"
+    class="w-[320px] max-h-[420px] overflow-hidden"
     @keydown="onKeydown"
   >
     <!-- 搜索 input（sticky 顶部，spec §3.2） -->
@@ -150,8 +150,8 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         data-testid="empty-state"
         class="flex flex-col items-center gap-2 px-4 py-6 text-center"
       >
-        <Folder class="size-5 text-subtle" />
-        <p class="text-[12px] text-muted">{{ t('newTask.dirSelect.noRecent') }}</p>
+        <Folder class="size-5 text-neutral-dim" />
+        <p class="text-[12px] text-neutral-mid">{{ t('newTask.dirSelect.noRecent') }}</p>
       </div>
 
       <!-- 列表项（非空态）：默认只显目录名，同名时追加 (parent) 消歧 -->
@@ -165,10 +165,10 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         @mouseenter="activeIndex = i"
       >
         <template #icon>
-          <Folder class="shrink-0 text-subtle" />
+          <Folder class="shrink-0 text-neutral-dim" />
         </template>
         <span class="flex min-w-0 flex-1 flex-col items-start">
-          <span class="truncate text-fg">{{ displayLabel(ws) }}</span>
+          <span class="truncate text-neutral-fg">{{ displayLabel(ws) }}</span>
         </span>
       </PopoverListItem>
 
@@ -183,7 +183,7 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         @mouseenter="activeIndex = openDirIdx"
       >
         <template #icon>
-          <FolderPlus class="shrink-0 text-subtle" />
+          <FolderPlus class="shrink-0 text-neutral-dim" />
         </template>
         {{ t('newTask.dirSelect.openFolder') }}
       </PopoverActionItem>

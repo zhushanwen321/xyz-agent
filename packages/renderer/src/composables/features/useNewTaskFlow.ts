@@ -36,6 +36,7 @@ import {
   useNewTaskFlowState,
   useNewTaskFlowController,
   transition,
+  openOverlay,
   OVERLAY_STATES,
   ACTIVE_STATES,
   type GitInfo,
@@ -423,6 +424,16 @@ export function useNewTaskFlow() {
     transition('completed')
   }
 
+  /**
+   * openPresetPopover —— 点 PresetSelectChip 打开 preset popover（landing→preset-popover）。
+   *
+   * overlay 互斥由 openOverlay 统一处理（已开任意 overlay 时先归 landing 再开 preset-popover）。
+   * preset 不涉及 git 守卫（任何 landing 态均可开），故内联在主 controller 而非拆独立 composable。
+   */
+  function openPresetPopover(): void {
+    openOverlay('preset-popover')
+  }
+
   return {
     state,
     currentSession,
@@ -441,6 +452,7 @@ export function useNewTaskFlow() {
     setPendingPreset,
     openDirPopover: dirSelect.openDirPopover,
     openBranchPopover: branch.openBranchPopover,
+    openPresetPopover,
     selectWorkspace: dirSelect.selectWorkspace,
     openDirDialog: dirSelect.openDirDialog,
     selectBranch: branch.selectBranch,

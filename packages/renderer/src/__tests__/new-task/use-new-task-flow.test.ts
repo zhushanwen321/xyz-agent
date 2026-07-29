@@ -400,6 +400,52 @@ describe('useNewTaskFlow 状态机', () => {
     })
   })
 
+  describe('overlay 互斥（openOverlay 统一入口，preset↔dir/branch 双向）', () => {
+    // [HISTORICAL] 2026-07-27 事故：preset popover 接入 flow.state 时，openPresetPopover 处理了
+    // dir/branch→preset 方向的互斥（先归 landing），但 openDirPopover/openBranchPopover 没更新去处理
+    // preset-popover 来源 → 用户打开 preset popover 后点 dir chip 撞 preset-popover→dir-popover 非法转换
+    // → state 被打回 idle → 后续首发提交撞 guard 报「非 landing 态」。修复：抽 openOverlay(target) 统一
+    // 互斥入口（当前在任意 overlay 态时先归 landing 再开 target），用 OVERLAY_STATES 集合判断，新增
+    // overlay 态自动生效。本用例锁死 preset↔dir 双向互斥。
+    it('preset-popover 打开时点 dir chip → dir-popover 正常切换（不撞非法转换）', async () => {
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      expect(flow.state.value).toBe('landing')
+
+      // 打开 preset popover
+      flow.openPresetPopover()
+      expect(flow.state.value).toBe('preset-popover')
+
+      // 从 preset-popover 切到 dir-popover（回归点：曾撞非法转换打回 idle）
+      expect(() => flow.openDirPopover()).not.toThrow()
+      expect(flow.state.value).toBe('dir-popover') // 关键：正常切换，未被非法转换打回 idle
+    })
+
+    it('dir-popover 打开时点 preset chip → preset-popover 正常切换', async () => {
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      flow.openDirPopover()
+      expect(flow.state.value).toBe('dir-popover')
+
+      // 从 dir-popover 切到 preset-popover（反向也要通）
+      expect(() => flow.openPresetPopover()).not.toThrow()
+      expect(flow.state.value).toBe('preset-popover')
+    })
+
+    it('互斥切换后保持 landing 可首发提交（state 未被打回 idle）', async () => {
+      const flow = useNewTaskFlow()
+      await flow.startFlow()
+      flow.openPresetPopover()
+      flow.openDirPopover()
+      // 回归点：曾因非法转换 state=idle，导致 submitFirstMessage guard 误报
+      expect(flow.state.value).not.toBe('idle')
+      expect(flow.state.value).toBe('dir-popover')
+      // closeOverlay 回 landing，提交 guard 不报
+      flow.closeOverlay()
+      expect(flow.state.value).toBe('landing')
+    })
+  })
+
   describe('landing 态 branch 不可达（T4.4）', () => {
     it('landing 态 currentSession=null→gitInfo 恒 null→branch chip 隐藏 + openBranchPopover 守卫不可达', async () => {
       // 即便历史 session 是 git 目录，landing 态 currentSession=null → gitInfo 派生 null

@@ -37,28 +37,28 @@
           :key="item.id"
           variant="ghost"
           class="flex w-full items-center gap-2 rounded-none px-2.5 py-1.5 text-left text-[12px] leading-[1.4] transition-colors"
-          :class="i === activeIndex ? 'bg-accent-soft text-accent' : 'text-muted hover:bg-surface-hover hover:text-fg'"
+          :class="i === activeIndex ? 'bg-accent-soft text-accent' : 'text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg'"
           @click="onSelect(item)"
           @mouseenter="activeIndex = i"
         >
           <component
             :is="iconFor(item)"
             class="size-[15px] shrink-0"
-            :class="i === activeIndex ? 'text-accent' : 'text-subtle'"
+            :class="i === activeIndex ? 'text-accent' : 'text-neutral-dim'"
           />
           <!-- file 类型：两行（basename 主 + 父目录路径暗色小字），区分同名文件 + 知道文件位置 -->
           <div v-if="props.type === 'file'" class="min-w-0 flex-1">
-            <div class="truncate font-mono text-[12px]" :class="i === activeIndex ? 'text-accent' : 'text-fg'">{{ item.name }}</div>
-            <div v-if="item.dirPath" class="truncate font-mono text-[10px] leading-tight text-subtle">{{ item.dirPath }}</div>
+            <div class="truncate font-mono text-[12px]" :class="i === activeIndex ? 'text-accent' : 'text-neutral-fg'">{{ item.name }}</div>
+            <div v-if="item.dirPath" class="truncate font-mono text-[10px] leading-tight text-neutral-dim">{{ item.dirPath }}</div>
           </div>
           <!-- slash 类型：保持单行（命令名 + 右侧 description/kind 提示词）。
                skill 只显名字（icon+紫色已传达类型，/skill: 前缀对用户冗余）；
                普通 slash 保留 / 前缀（命令调用语义）。item.name 是完整路由名（含前缀），
                item.displayName 是显示名（skill 去前缀）——onSelect 传 name 保证路由正确。 -->
           <template v-else>
-            <span class="shrink-0 font-mono" :class="i === activeIndex ? 'text-accent' : 'text-fg'">{{ item.displayName ?? item.name }}</span>
-            <span v-if="item.description" class="ml-auto shrink-0 truncate max-w-[520px] text-subtle">{{ item.description }}</span>
-            <span v-else class="ml-auto shrink-0 font-mono text-[10px] text-subtle">{{ item.kind }}</span>
+            <span class="shrink-0 font-mono" :class="i === activeIndex ? 'text-accent' : 'text-neutral-fg'">{{ item.displayName ?? item.name }}</span>
+            <span v-if="item.description" class="ml-auto shrink-0 truncate max-w-[520px] text-neutral-dim">{{ item.description }}</span>
+            <span v-else class="ml-auto shrink-0 font-mono text-[10px] text-neutral-dim">{{ item.kind }}</span>
           </template>
         </Button>
       </div>

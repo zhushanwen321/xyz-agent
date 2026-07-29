@@ -69,7 +69,7 @@ let renderSeq = 0
 // ── H2 流式 markdown 渲染 rAF trailing 节流（perf-streaming-md-throttle）──
 // 每个 text_delta/thinking_delta token 触发 watch → renderMarkdownSegments 全量重解析（md.render
 // + 每块 codeToHtml 同步阻塞主线程）。rAF trailing 把一帧内多次 content/localFiles 变化合并为
-// 单次渲染，消除流式卡顿。复用 M4 useChatScroll 的 rAF 节流模式（延迟求值守卫）。
+// 单次渲染，消除流式卡顿。rAF trailing 节流模式与 useVirtuaFollow.followIfStuck 同款（延迟求值守卫）。
 let rafId: number | null = null
 let pendingContent = ''
 let pendingFilePaths: Set<string> = new Set()
@@ -257,7 +257,7 @@ onScopeDispose(() => {
   font-weight: 600;
   line-height: 1.3;
   margin: 1em 0 0.5em;
-  color: var(--fg);
+  color: var(--neutral-fg);
 }
 .md-render :deep(h1) { font-size: 1.3em; }
 .md-render :deep(h2) { font-size: 1.18em; }
@@ -295,14 +295,14 @@ onScopeDispose(() => {
 }
 /* 编号颜色与正文一致（旧 --subtle 让编号变灰，与正文 fg 脱节） */
 .md-render :deep(li)::marker {
-  color: var(--fg);
+  color: var(--neutral-fg);
 }
 
 .md-render :deep(blockquote) {
   border-left: 2px solid var(--border-strong);
   padding-left: 0.85em;
   margin: 0.6em 0;
-  color: var(--muted);
+  color: var(--neutral-mid);
 }
 
 .md-render :deep(a) {
@@ -355,7 +355,7 @@ onScopeDispose(() => {
 .md-render :deep(.md-codeblock__lang) {
   font-family: var(--font-mono);
   font-size: 0.72em;
-  color: var(--subtle);
+  color: var(--neutral-dim);
   text-transform: lowercase;
   letter-spacing: 0.02em;
 }
@@ -371,11 +371,11 @@ onScopeDispose(() => {
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-sm);
-  color: var(--muted);
+  color: var(--neutral-mid);
   transition: color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease);
 }
 .md-render :deep(.md-codeblock__copy:hover) {
-  color: var(--fg);
+  color: var(--neutral-fg);
   background: var(--surface-hover);
 }
 /* 复制 icon：默认 Copy（用 inline SVG mask），已复制态用 .is-copied 切换为 Check。
@@ -437,7 +437,7 @@ onScopeDispose(() => {
 .md-render :deep(th) {
   background: var(--surface-2);
   font-weight: 600;
-  color: var(--fg);
+  color: var(--neutral-fg);
 }
 
 .md-render :deep(hr) {
@@ -478,17 +478,17 @@ onScopeDispose(() => {
   color: var(--reasoning);
 }
 .md-render--thinking :deep(li)::marker {
-  color: var(--subtle);
+  color: var(--neutral-dim);
 }
 .md-render--thinking :deep(blockquote) {
-  color: var(--subtle);
+  color: var(--neutral-dim);
   border-left-color: var(--border-strong);
 }
 .md-render--thinking :deep(blockquote) p {
-  color: var(--subtle);
+  color: var(--neutral-dim);
 }
 .md-render--thinking :deep(strong) {
-  color: var(--fg);
+  color: var(--neutral-fg);
   font-weight: 600;
 }
 </style>

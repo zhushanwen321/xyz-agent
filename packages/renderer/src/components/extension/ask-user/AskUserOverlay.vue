@@ -244,7 +244,7 @@ function onSubmit(): void {
       <!-- 单问题：标题提到 head 行，单行 truncate -->
       <span
         v-if="questions.length <= 1"
-        class="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] font-medium text-fg"
+        class="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] font-medium text-neutral-fg"
         data-testid="ask-user-question-text"
       >
         {{ activeQuestion?.question }}
@@ -258,8 +258,8 @@ function onSubmit(): void {
           :class="[
             'rounded-sm px-2.5 py-1 text-[12px] font-normal transition-colors',
             i === activeIdx
-              ? 'bg-accent-soft font-medium text-fg'
-              : 'text-subtle hover:text-muted',
+              ? 'bg-accent-soft font-medium text-neutral-fg'
+              : 'text-neutral-dim hover:text-neutral-mid',
           ]"
           :data-testid="`ask-user-tab-${i}`"
           @click="activeIdx = i"
@@ -283,7 +283,7 @@ function onSubmit(): void {
         <p
           v-if="activeQuestion.context"
           data-testid="ask-user-context"
-          class="rounded bg-[var(--reasoning-soft)] px-2.5 py-1.5 text-[12px] leading-1.5 text-text-muted"
+          class="rounded bg-[var(--reasoning-soft)] px-2.5 py-1.5 text-[12px] leading-1.5 text-neutral-mid"
         >
           {{ activeQuestion.context }}
         </p>
@@ -291,7 +291,7 @@ function onSubmit(): void {
         <!-- 多问题时的问题文本（单问题已在 head 行） -->
         <p
           v-if="questions.length > 1"
-          class="py-0.5 text-[13px] font-medium text-fg"
+          class="py-0.5 text-[13px] font-medium text-neutral-fg"
           data-testid="ask-user-question-text-multi"
         >
           {{ activeQuestion.question }}
@@ -337,12 +337,12 @@ function onSubmit(): void {
               <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                 <span
                   data-testid="ask-user-option-label"
-                  class="text-[13px] font-normal leading-1.5 text-fg"
+                  class="text-[13px] font-normal leading-1.5 text-neutral-fg"
                 >{{ opt.label }}</span>
                 <span
                   v-if="opt.description"
                   data-testid="ask-user-option-desc"
-                  class="text-[12px] leading-1.5 text-subtle"
+                  class="text-[12px] leading-1.5 text-neutral-dim"
                 >{{ opt.description }}</span>
               </div>
             </div>
@@ -379,7 +379,7 @@ function onSubmit(): void {
             ]"
           />
           <div class="flex min-w-0 flex-1 flex-col">
-            <span class="text-[13px] font-normal leading-1.5 text-fg">{{ t('extensionUI.other') }}</span>
+            <span class="text-[13px] font-normal leading-1.5 text-neutral-fg">{{ t('extensionUI.other') }}</span>
             <!-- 选中时展开输入框（独立成行，自动聚焦）。
                  @keydown.stop 阻止冒泡到卡片容器；Enter 单独处理前进到下一题 -->
             <Input
@@ -407,7 +407,7 @@ function onSubmit(): void {
 
         <!-- 附加评论 -->
         <div v-if="activeQuestion.allowComment" class="flex flex-col gap-0.5">
-          <span class="pl-0.5 text-[11px] text-subtle">{{ t('extensionUI.additionalComment') }}</span>
+          <span class="pl-0.5 text-[11px] text-neutral-dim">{{ t('extensionUI.additionalComment') }}</span>
           <Input
             v-model="states[qKey(activeQuestion)].comment"
             :placeholder="t('extensionUI.commentPlaceholder')"

@@ -18,22 +18,22 @@
       <span
         class="size-[7px] shrink-0 rounded-full"
         :class="{
-          'bg-subtle': phase === 'idle',
+          'bg-neutral-dim': phase === 'idle',
           'bg-accent animate-pulse-accent': phase === 'running',
           'bg-success': phase === 'done',
         }"
       />
-      <span class="text-[12px] font-semibold text-fg">{{ state.title }}</span>
-      <span class="font-mono text-[11px] text-subtle">{{ state.step }}</span>
+      <span class="text-[12px] font-semibold text-neutral-fg">{{ state.title }}</span>
+      <span class="font-mono text-[11px] text-neutral-dim">{{ state.step }}</span>
       <ChevronRight
-        class="ml-auto size-3 shrink-0 text-subtle transition-transform duration-[var(--duration)] ease-[var(--ease)]"
+        class="ml-auto size-3 shrink-0 text-neutral-dim transition-transform duration-[var(--duration)] ease-[var(--ease)]"
         :class="collapsed ? '' : 'rotate-90'"
       />
     </div>
 
     <!-- 完成态：自动收起为单行 inline（状态驱动，非用户折叠） -->
     <div v-if="phase === 'done' && !collapsed" class="flex items-center gap-2.5 px-3 pb-2">
-      <span class="text-[11px] text-muted">{{ t('panel.progress.allDone') }}</span>
+      <span class="text-[11px] text-neutral-mid">{{ t('panel.progress.allDone') }}</span>
       <div class="h-1 flex-1 overflow-hidden rounded bg-white/[0.06]">
         <div class="h-full rounded bg-success" style="width: 100%" />
       </div>
@@ -56,9 +56,9 @@
           :key="todo.id"
           class="flex items-center gap-2 py-[3px] text-[12px] leading-[1.4]"
           :class="{
-            'text-subtle': todo.status === 'done',
-            'text-fg': todo.status === 'active',
-            'text-muted': todo.status === 'pending',
+            'text-neutral-dim': todo.status === 'done',
+            'text-neutral-fg': todo.status === 'active',
+            'text-neutral-mid': todo.status === 'pending',
           }"
         >
           <span
@@ -71,10 +71,10 @@
           >
             <Check v-if="todo.status === 'done'" class="size-[9px]" />
           </span>
-          <span :class="{ 'line-through decoration-subtle': todo.status === 'done' }">
+          <span :class="{ 'line-through decoration-neutral-dim': todo.status === 'done' }">
             {{ todo.label }}
           </span>
-          <span class="ml-auto font-mono text-[10px] text-subtle">
+          <span class="ml-auto font-mono text-[10px] text-neutral-dim">
             {{ todo.pct != null ? `${todo.pct}%` : statusLabel(todo.status) }}
           </span>
         </div>
