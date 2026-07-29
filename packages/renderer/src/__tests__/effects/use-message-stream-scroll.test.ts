@@ -1,20 +1,25 @@
 /**
  * useMessageStreamScroll 单测 —— MessageStream 的滚动触发编排。
  *
- * 重点覆盖 fix-finish-scroll L2 新增的「对话完成滚动」watch：
- *   watch(isSessionActive, (nw, old) => { if (old && !nw) scrollToBottom('auto') })
+ * [cw wave w3 / IF4] scrollToBottom 签名从 `(behavior, force?)` 改为 `(force?) => void`：
+ * MessageStream.vue 传入 followIfStuck / followToBottom 联合（virta 单一 scrollTop owner）。
+ * 本测 mock scrollToBottom 断言 force 参数：MS4/MS6 force=true（onMounted 强制），
+ * 其余 force=undefined（默认走 stickToBottom guard）。
+ *
+ * 重点覆盖 fix-finish-scroll L2 的「对话完成滚动」watch：
+ *   watch(isSessionActive, (nw, old) => { if (old && !nw) scrollToBottom() })
  *
  * 背景：对话完成时 trace 自动折叠（useTurnElapsed.onComplete 驱动 expanded=false）致末尾 turn
- * 高度骤减，浏览器 clamp scrollTop + ResizeObserver 异步触发 scrollToBottom 有时间窗，期间界面
- * 停中间。此处与 trace 折叠同源（都看 isSessionActive）显式补一次 scrollToBottom，消除空窗期。
+ * 高度骤减，virta $fixScrollJump 异步触发 followIfStuck 有时间窗，期间界面停中间。
+ * 此处与 trace 折叠同源（都看 isSessionActive）显式补一次 follow，消除空窗期。
  *
  * 覆盖：
- * - MS1：isSessionActive true→false（对话真正结束）→ scrollToBottom('auto') 被调用一次
+ * - MS1：isSessionActive true→false（对话真正结束）→ scrollToBottom() 被调用一次（force=undefined）
  * - MS2：isSessionActive false→true（新对话开始）→ 不调用 scrollToBottom（防误触发）
  * - MS3：isSessionActive 恒 true（ask-user respond 后仍进行中）→ 不调用
- * - MS4：挂载即滚到底（onMounted → scrollToBottom('auto', true)，force=true，与 stick guard 无关）
- * - MS5：消息条数变化 → scrollToBottom('auto')（既有触发源回归）
- * - MS6：完成滚动用 force=false（尊重 stickToBottom guard，用户上滑时不强行拉回）
+ * - MS4：挂载即滚到底（onMounted → scrollToBottom(true)，force=true，与 stick guard 无关）
+ * - MS5：消息条数变化 → scrollToBottom()（既有触发源回归，force=undefined）
+ * - MS6：完成滚动用 force=undefined（尊重 stickToBottom guard，用户上滑时不强行拉回）
  *
  * 测试基建：useMessageStreamScroll 内部用 onMounted + watch，必须在组件 setup 作用域调用，
  * 故用 @vue/test-utils 挂载一个 Host 组件（setup 内调 composable，refs 经闭包从测试传入）。
@@ -110,7 +115,7 @@ describe('useMessageStreamScroll · 对话完成滚动 watch（fix-finish-scroll
     await nextTick()
 
     expect(holder.scrollToBottom).toHaveBeenCalledTimes(1)
-    expect(holder.scrollToBottom).toHaveBeenCalledWith('auto')
+    expect(holder.scrollToBottom).toHaveBeenCalledWith()
     wrapper.unmount()
   })
 
@@ -152,17 +157,17 @@ describe('useMessageStreamScroll · 既有触发源回归（防 L2 改动破坏�
   })
 
   // MS4：挂载即滚到底（force=true，展示最新内容，不受 stickToBottom guard）。
-  it('MS4: 挂载触发 scrollToBottom("auto", true)（onMounted，force=true）', async () => {
+  it('MS4: 挂载触发 scrollToBottom(true)（onMounted，force=true）', async () => {
     const holder = makeDepsHolder()
     const wrapper = mountScroll(holder)
     await nextTick()
 
-    expect(holder.scrollToBottom).toHaveBeenCalledWith('auto', true)
+    expect(holder.scrollToBottom).toHaveBeenCalledWith(true)
     wrapper.unmount()
   })
 
-  // MS5：消息条数变化 → scrollToBottom('auto')（既有触发源，L2 改动不应破坏）。
-  it('MS5: currentMessages.length 变化 → scrollToBottom("auto")', async () => {
+  // MS5：消息条数变化 → scrollToBottom()（既有触发源，L2 改动不应破坏）。
+  it('MS5: currentMessages.length 变化 → scrollToBottom()（force 默认）', async () => {
     const holder = makeDepsHolder()
     const wrapper = mountScroll(holder)
     await nextTick()
@@ -175,13 +180,13 @@ describe('useMessageStreamScroll · 既有触发源回归（防 L2 改动破坏�
     ]
     await nextTick()
 
-    expect(holder.scrollToBottom).toHaveBeenCalledWith('auto')
+    expect(holder.scrollToBottom).toHaveBeenCalledWith()
     wrapper.unmount()
   })
 
-  // MS6：完成滚动用 force=false（默认），尊重 stickToBottom guard（用户上滑时不强行拉回）。
-  // 这与 MessageStream.vue 实际传参一致（不传 force → 默认 false）。
-  it('MS6: 完成滚动的 scrollToBottom 不传 force（默认 false，尊重 guard）', async () => {
+  // MS6：完成滚动用 force=undefined（默认），尊重 stickToBottom guard（用户上滑时不强行拉回）。
+  // 这与 MessageStream.vue 实际传参一致（不传 force → 默认 followIfStuck 走 guard）。
+  it('MS6: 完成滚动的 scrollToBottom 不传 force（默认 undefined，尊重 guard）', async () => {
     const holder = makeDepsHolder({ isSessionActive: true })
     const wrapper = mountScroll(holder)
     await nextTick()
@@ -190,9 +195,9 @@ describe('useMessageStreamScroll · 既有触发源回归（防 L2 改动破坏�
     holder.isSessionActive.value = false
     await nextTick()
 
-    // 只传一个参数（behavior），force 走默认值（生产代码同此），不强制拉回上滑用户
-    expect(holder.scrollToBottom).toHaveBeenCalledWith('auto')
-    expect(holder.scrollToBottom.mock.calls[0]).toHaveLength(1)
+    // 零参数（force 走默认值 undefined → followIfStuck 走 stickToBottom guard），不强制拉回上滑用户
+    expect(holder.scrollToBottom).toHaveBeenCalledWith()
+    expect(holder.scrollToBottom.mock.calls[0]).toHaveLength(0)
     wrapper.unmount()
   })
 })

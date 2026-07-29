@@ -14,15 +14,15 @@
       <!-- 头部：当前 session 标签 + 分支（左）× showIgnored 开关（右），同一行。
            D-020/D-004：忽略项开关从过滤框下方上移至此（与会话名同行：会话名左、忽略项右）。 -->
       <div v-if="sessionLabel" class="flex items-center gap-2 px-2 py-1.5">
-        <div class="min-w-0 flex-1 truncate font-mono text-[10px] text-muted">
-          <span class="text-fg">{{ sessionLabel }}</span>
+        <div class="min-w-0 flex-1 truncate font-mono text-[10px] text-neutral-mid">
+          <span class="text-neutral-fg">{{ sessionLabel }}</span>
           <span v-if="branch" class="opacity-60"> · </span>
           <span v-if="branch" class="text-accent">{{ branch }}</span>
         </div>
         <Button
           variant="ghost"
           class="h-5 shrink-0 gap-1 rounded-sm px-1.5 text-[10px]"
-          :class="store.showIgnored ? 'text-accent' : 'text-subtle'"
+          :class="store.showIgnored ? 'text-accent' : 'text-neutral-dim'"
           :title="store.showIgnored ? t('sidebar.fileView.hideIgnored') : t('sidebar.fileView.showIgnored')"
           data-testid="file-show-ignored-toggle"
           @click="onToggleShowIgnored"
@@ -38,7 +38,7 @@
         <!-- 图标按 input(h-6=24px) 高度居中：top-3(12px)=input 中心，再 -translate-y-1/2。
              不能用 top-1/2：容器有 pb-1.5(底部6px) 无顶部 padding，容器 box 高 30px，
              top-1/2=15px 会让图标相对整个容器居中而偏低 3px（padding/2）。 -->
-        <Search class="pointer-events-none absolute left-4 top-3 size-3 -translate-y-1/2 text-subtle" />
+        <Search class="pointer-events-none absolute left-4 top-3 size-3 -translate-y-1/2 text-neutral-dim" />
         <Input
           :model-value="store.filterText"
           class="h-6 pl-6 pr-2 text-[11px]"
@@ -54,8 +54,8 @@
         class="flex flex-col items-center justify-center gap-2 py-10 text-center"
         data-testid="file-loading"
       >
-        <Loader2 class="size-4 animate-spin text-subtle opacity-60" />
-        <p class="text-[11px] text-subtle opacity-60">{{ t('sidebar.fileView.loadingTree') }}</p>
+        <Loader2 class="size-4 animate-spin text-neutral-dim opacity-60" />
+        <p class="text-[11px] text-neutral-dim opacity-60">{{ t('sidebar.fileView.loadingTree') }}</p>
       </div>
 
       <!-- 错误态（loadTree 失败，可重试） -->
@@ -65,7 +65,7 @@
         data-testid="file-error"
       >
         <AlertCircle class="size-5 text-danger opacity-60" />
-        <p class="text-[11px] text-muted">{{ t('sidebar.fileView.loadFailed', { reason: rootState.reason ?? 'unknown' }) }}</p>
+        <p class="text-[11px] text-neutral-mid">{{ t('sidebar.fileView.loadFailed', { reason: rootState.reason ?? 'unknown' }) }}</p>
         <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="file-retry" @click="retry">{{ t('sidebar.fileView.retry') }}</Button>
       </div>
 
@@ -75,8 +75,8 @@
         class="flex flex-col items-center justify-center gap-2 py-10 text-center"
         data-testid="file-empty"
       >
-        <component :is="hasFilter ? SearchX : FolderOpen" class="size-5 text-subtle opacity-50" />
-        <p class="text-[11px] text-subtle opacity-55">{{ hasFilter ? t('sidebar.fileView.noMatch') : t('sidebar.fileView.noFile') }}</p>
+        <component :is="hasFilter ? SearchX : FolderOpen" class="size-5 text-neutral-dim opacity-50" />
+        <p class="text-[11px] text-neutral-dim opacity-55">{{ hasFilter ? t('sidebar.fileView.noMatch') : t('sidebar.fileView.noFile') }}</p>
       </div>
 
       <!-- 文件树（visibleNodes = 过滤后的顶层节点） -->

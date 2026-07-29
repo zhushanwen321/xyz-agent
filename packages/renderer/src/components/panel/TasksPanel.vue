@@ -26,10 +26,10 @@
     <!-- todo section（有 todos 时显） -->
     <section v-if="todos.length > 0" class="todo-section flex flex-col gap-1.5">
       <header class="flex items-center justify-between px-0.5">
-        <span class="text-[11px] font-medium uppercase tracking-wide text-subtle">
+        <span class="text-[11px] font-medium uppercase tracking-wide text-neutral-dim">
           {{ t('panel.panel.tasks.todoListTitle') }}
         </span>
-        <span class="font-mono text-[11px] tabular-nums text-muted">{{ done }}/{{ total }}</span>
+        <span class="font-mono text-[11px] tabular-nums text-neutral-mid">{{ done }}/{{ total }}</span>
       </header>
       <ul class="todo-list flex flex-col">
         <li
@@ -46,7 +46,7 @@
             <!-- in_progress 脉冲点（复用全局 animate-pulse-strong：opacity+scale 呼吸） -->
             <span
               v-if="todo.status === 'in_progress'"
-              class="size-[5px] animate-pulse-strong rounded-full bg-warning"
+              class="size-[5px] animate-pulse-strong rounded-full bg-warn"
             />
             <!-- completed 勾选 -->
             <Check v-else-if="todo.status === 'completed'" class="size-2.5" />
@@ -71,8 +71,8 @@
       v-if="!goal && todos.length === 0"
       class="flex flex-1 flex-col items-center justify-center gap-2 py-8 text-center"
     >
-      <CheckSquare class="size-6 text-subtle opacity-40" />
-      <p class="text-[12px] text-subtle">{{ t('panel.sideDrawer.tasksHint') }}</p>
+      <CheckSquare class="size-6 text-neutral-dim opacity-40" />
+      <p class="text-[12px] text-neutral-dim">{{ t('panel.sideDrawer.tasksHint') }}</p>
     </div>
   </div>
 </template>
@@ -114,13 +114,13 @@ const total = computed(() => todoCount.value.total)
 
 /** todo item 容器 class（completed 加删除线，cancelled 置灰） */
 function todoItemClass(todo: TodoItem): string {
-  if (todo.status === 'completed') return 'text-subtle line-through'
+  if (todo.status === 'completed') return 'text-neutral-dim line-through'
   if (todo.status === 'cancelled') return 'opacity-50'
-  return 'text-fg'
+  return 'text-neutral-fg'
 }
 
 /** todo checkbox class（三态）：
- * · pending → 空心圆（border-subtle）
+ * · pending → 空心圆（border-neutral-dim）
  * · in_progress → warning 软底圆（内部脉冲点）
  * · completed → success 实心圆 + 勾选
  * · cancelled → subtle 空心圆（淡化） */
@@ -129,11 +129,11 @@ function todoCheckboxClass(todo: TodoItem): string {
     case 'completed':
       return 'border-success bg-success text-bg'
     case 'in_progress':
-      return 'border-warning bg-warning-soft'
+      return 'border-warn bg-warn-soft'
     case 'cancelled':
-      return 'border-subtle'
+      return 'border-neutral-dim'
     default:
-      return 'border-subtle'
+      return 'border-neutral-dim'
   }
 }
 </script>

@@ -22,7 +22,7 @@
         data-testid="sidebar-session-icon"
         :data-icon="markedDone ? 'archived' : iconConfig.icon"
         class="mt-[2px] size-[14px] shrink-0"
-        :class="[markedDone ? 'text-subtle' : iconConfig.color, markedDone ? '' : iconConfig.animation]"
+        :class="[markedDone ? 'text-neutral-dim' : iconConfig.color, markedDone ? '' : iconConfig.animation]"
       />
       <!-- 未读 badge：6px accent 圆点，absolute 定位在状态图标左上角 -->
       <span
@@ -35,14 +35,14 @@
       <div
         class="truncate text-[12px] leading-[1.35]"
         :class="[
-          active ? 'text-accent' : 'text-fg',
+          active ? 'text-accent' : 'text-neutral-fg',
           markedDone ? 'opacity-60' : '',
         ]"
       >
         {{ session.label }}
       </div>
       <div
-        class="mt-0.5 truncate font-mono text-[10px] leading-[1.3] text-subtle"
+        class="mt-0.5 truncate font-mono text-[10px] leading-[1.3] text-neutral-dim"
         data-testid="sidebar-session-dirname"
       >
         <!-- 分支血缘元信息（spec §8.5 审查 1-C2：分支 session 自身显示「↑ fork 自 <父名>」）。
@@ -53,7 +53,7 @@
         <template v-else>{{ dirName }}</template>
       </div>
     </div>
-    <span class="shrink-0 pt-1 font-mono text-[10px] leading-[1.35] text-subtle">
+    <span class="shrink-0 pt-1 font-mono text-[10px] leading-[1.35] text-neutral-dim">
       {{ timeLabel }}
     </span>
     <!-- hover 操作按钮（重命名/删除）放卡片右下角，不再遮盖右上角的时间展示。
@@ -68,7 +68,7 @@
         variant="ghost"
         size="icon"
         data-testid="mark-done-btn"
-        class="size-[22px] rounded-sm border border-border-strong bg-surface text-muted hover:bg-surface-hover hover:text-fg"
+        class="size-[22px] rounded-sm border border-border-strong bg-surface text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
         :class="markedDone ? 'border-accent bg-accent/10 text-success' : ''"
         :title="markedDone ? t('sidebar.sessionItem.unmarkDone') : t('sidebar.sessionItem.markDone')"
         @click.stop="onMarkDone"
@@ -79,7 +79,7 @@
         v-if="!confirming"
         variant="ghost"
         size="icon"
-        class="size-[22px] rounded-sm border border-border-strong bg-surface text-muted hover:bg-surface-hover hover:text-fg"
+        class="size-[22px] rounded-sm border border-border-strong bg-surface text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
         :title="t('sidebar.sessionItem.rename')"
         @click.stop="emit('rename', session.id)"
       >
@@ -89,8 +89,8 @@
         variant="ghost"
         size="icon"
         :class="confirming
-          ? 'size-[22px] rounded-sm border border-danger bg-danger text-fg'
-          : 'size-[22px] rounded-sm border border-border-strong bg-surface text-muted hover:bg-surface-hover hover:text-danger'"
+          ? 'size-[22px] rounded-sm border border-danger bg-danger text-neutral-fg'
+          : 'size-[22px] rounded-sm border border-border-strong bg-surface text-neutral-mid hover:bg-surface-hover hover:text-danger'"
         :title="confirming ? t('sidebar.sessionItem.deleteConfirm') : t('sidebar.sessionItem.delete')"
         @click.stop="onRemoveClick"
       >

@@ -12,8 +12,8 @@
       class="flex flex-col items-center justify-center gap-2 py-10 text-center"
       data-testid="workflow-list-loading"
     >
-      <Loader2 class="size-4 animate-spin text-subtle opacity-60" />
-      <p class="text-[11px] text-subtle opacity-60">{{ t('sidebar.workflowList.loading') }}</p>
+      <Loader2 class="size-4 animate-spin text-neutral-dim opacity-60" />
+      <p class="text-[11px] text-neutral-dim opacity-60">{{ t('sidebar.workflowList.loading') }}</p>
     </div>
     <!-- 错误态（M1：loadWorkflows 失败，可重试） -->
     <div
@@ -22,7 +22,7 @@
       data-testid="workflow-list-error"
     >
       <AlertCircle class="size-5 text-danger opacity-60" />
-      <p class="text-[11px] text-muted">{{ t('sidebar.workflowList.loadFailed', { error: loadError }) }}</p>
+      <p class="text-[11px] text-neutral-mid">{{ t('sidebar.workflowList.loadFailed', { error: loadError }) }}</p>
       <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="workflow-list-retry" @click="emit('retry')">{{ t('sidebar.workflowList.retry') }}</Button>
     </div>
     <!-- 列表 -->
@@ -48,10 +48,10 @@
               class="size-2 shrink-0 rounded-full"
               :class="statusDotClass(record.status, record.reason)"
             />
-            <span class="min-w-0 flex-1 truncate text-[12px] font-medium leading-[1.35] text-fg">
+            <span class="min-w-0 flex-1 truncate text-[12px] font-medium leading-[1.35] text-neutral-fg">
               {{ record.scriptName }}
             </span>
-            <span v-if="record.slug" class="shrink-0 font-mono text-[10px] text-muted">
+            <span v-if="record.slug" class="shrink-0 font-mono text-[10px] text-neutral-mid">
               {{ record.slug }}
             </span>
             <!-- 操作按钮：running 态 Pause+Abort，paused 态 Resume+Abort。
@@ -60,7 +60,7 @@
               <Button
                 variant="ghost"
                 size="icon"
-                class="size-5 text-subtle hover:text-fg"
+                class="size-5 text-neutral-dim hover:text-neutral-fg"
                 :title="record.status === 'running' ? t('sidebar.workflowList.pause') : t('sidebar.workflowList.resume')"
                 :data-testid="`workflow-action-${record.status === 'running' ? 'pause' : 'resume'}`"
                 @click.stop="emit('action', { action: record.status === 'running' ? 'pause' : 'resume', runId: record.runId })"
@@ -74,8 +74,8 @@
                 size="icon"
                 :data-testid="abortingId === record.runId ? 'workflow-action-abort-confirm' : 'workflow-action-abort'"
                 :class="abortingId === record.runId
-                  ? 'size-5 border border-danger bg-danger text-fg'
-                  : 'size-5 text-subtle hover:text-danger'"
+                  ? 'size-5 border border-danger bg-danger text-neutral-fg'
+                  : 'size-5 text-neutral-dim hover:text-danger'"
                 :title="abortingId === record.runId ? t('sidebar.workflowList.terminateConfirm') : t('sidebar.workflowList.terminate')"
                 @click.stop="onAbortClick(record.runId)"
               >
@@ -94,13 +94,13 @@
                 :style="{ width: `${progressPercent(record)}%` }"
               />
             </div>
-            <span class="shrink-0 font-mono text-[10px] text-subtle">
+            <span class="shrink-0 font-mono text-[10px] text-neutral-dim">
               {{ t('sidebar.workflowList.agentsLabel', { done: completedAgentCount(record), total: record.agentCalls.length }) }}
             </span>
           </div>
 
           <!-- 第三行：摘要（耗时 · token） -->
-          <div class="mt-1 flex items-center gap-2 pl-[21px] font-mono text-[10px] text-subtle">
+          <div class="mt-1 flex items-center gap-2 pl-[21px] font-mono text-[10px] text-neutral-dim">
             <span v-if="record.startedAt">{{ formatElapsedFromIso(record.startedAt, record.completedAt) }}</span>
             <span v-if="record.usedTokens !== undefined">· {{ formatTokens(record.usedTokens, t('sidebar.workflowList.tokUnit')) }}</span>
           </div>
@@ -114,9 +114,9 @@
       class="flex flex-col items-center justify-center gap-2 py-10 text-center"
       data-testid="workflow-list-empty"
     >
-      <Workflow class="size-7 text-subtle opacity-40" />
-      <p class="text-[11px] text-subtle opacity-55">{{ t('sidebar.workflowList.empty') }}</p>
-      <p class="text-[10px] text-subtle opacity-40">{{ t('sidebar.workflowList.emptyHint') }}</p>
+      <Workflow class="size-7 text-neutral-dim opacity-40" />
+      <p class="text-[11px] text-neutral-dim opacity-55">{{ t('sidebar.workflowList.empty') }}</p>
+      <p class="text-[10px] text-neutral-dim opacity-40">{{ t('sidebar.workflowList.emptyHint') }}</p>
     </div>
   </div>
 </template>
@@ -176,7 +176,7 @@ function statusDotClass(status: WorkflowRunStatus, reason?: WorkflowDoneReason):
     case 'done':
       return reason === 'completed' ? 'bg-success' : 'bg-danger'
     case 'paused':
-      return 'bg-warning'
+      return 'bg-warn'
     default:
       return 'bg-accent'
   }
@@ -187,7 +187,7 @@ function progressBarClass(record: WorkflowRunRecord): string {
   if (record.status === 'done') {
     return record.reason === 'completed' ? 'bg-success' : 'bg-danger'
   }
-  if (record.status === 'paused') return 'bg-warning'
+  if (record.status === 'paused') return 'bg-warn'
   return 'bg-accent'
 }
 

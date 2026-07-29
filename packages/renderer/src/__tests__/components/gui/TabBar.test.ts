@@ -27,7 +27,7 @@ describe('TabBar', () => {
     // done tab 有绿点
     expect(tabs[1].find('.tab-bar__dot').classes()).toContain('bg-success')
     // pending tab 有灰点
-    expect(tabs[2].find('.tab-bar__dot').classes()).toContain('bg-subtle')
+    expect(tabs[2].find('.tab-bar__dot').classes()).toContain('bg-neutral-dim')
   })
 
   it('无 active 无 status 的 tab 只渲染 label 文本', () => {

@@ -17,11 +17,11 @@
     :class="cardClass"
     data-testid="goal-card"
   >
-    <!-- blocked 渐变背景层（warning-soft → surface，余光可捕获）。
+    <!-- blocked 渐变背景层（warn-soft → surface，余光可捕获）。
          Tailwind 任意值渐变 + CSS 变量，主题切换自动跟随。 -->
     <div
       v-if="isBlocked"
-      class="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,var(--warning-soft)_0%,var(--surface)_70%)]"
+      class="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,var(--warn-soft)_0%,var(--surface)_70%)]"
       aria-hidden="true"
     />
 
@@ -35,7 +35,7 @@
         >
           <component :is="statusIcon" class="size-3.5" />
         </span>
-        <span class="min-w-0 flex-1 truncate font-mono text-[12px] font-semibold text-fg">
+        <span class="min-w-0 flex-1 truncate font-mono text-[12px] font-semibold text-neutral-fg">
           {{ displaySlug }}
         </span>
         <span
@@ -49,7 +49,7 @@
       <!-- objective 两行截断（undefined 时不渲染） -->
       <p
         v-if="goal.objective"
-        class="line-clamp-2 text-[12px] leading-[1.5] text-muted"
+        class="line-clamp-2 text-[12px] leading-[1.5] text-neutral-mid"
         :title="goal.objective"
       >
         {{ goal.objective }}
@@ -62,7 +62,7 @@
           :key="bar.label"
           class="flex items-center gap-2"
         >
-          <span class="w-10 shrink-0 font-mono text-[10px] text-subtle">{{ bar.label }}</span>
+          <span class="w-10 shrink-0 font-mono text-[10px] text-neutral-dim">{{ bar.label }}</span>
           <div class="h-1 flex-1 overflow-hidden rounded-sm bg-bg-input">
             <div
               class="h-full rounded-sm transition-[width] duration-300"
@@ -70,7 +70,7 @@
               :style="{ width: bar.percent }"
             />
           </div>
-          <span class="shrink-0 font-mono text-[10px] tabular-nums text-muted">{{ bar.value }}</span>
+          <span class="shrink-0 font-mono text-[10px] tabular-nums text-neutral-mid">{{ bar.value }}</span>
         </div>
       </div>
 
@@ -85,7 +85,7 @@
         v-if="isBlocked"
         variant="default"
         size="sm"
-        class="mt-1 h-7 self-start gap-1 border-warning bg-warning text-[11px] text-bg hover:brightness-110"
+        class="mt-1 h-7 self-start gap-1 border-warn bg-warn text-[11px] text-bg hover:brightness-110"
         data-testid="goal-resume-btn"
         @click="onResume"
       >
@@ -139,7 +139,7 @@ const isBlocked = computed(() => resolvedStatus.value === 'blocked')
  */
 const cardClass = computed(() => {
   const s = resolvedStatus.value
-  if (s === 'blocked') return 'border-warning bg-surface'
+  if (s === 'blocked') return 'border-warn bg-surface'
   if (s === 'complete') return 'border-success bg-surface'
   if (s === 'budget_limited' || s === 'time_limited') return 'border-danger bg-surface'
   return 'border-border bg-surface'
@@ -165,20 +165,20 @@ const statusIcon = computed<Component | null>(() => {
 
 const statusIconClass = computed(() => {
   const s = resolvedStatus.value
-  if (s === 'blocked') return 'text-warning'
+  if (s === 'blocked') return 'text-warn'
   if (s === 'complete') return 'text-success'
   if (s === 'budget_limited' || s === 'time_limited') return 'text-danger'
-  if (s === 'paused') return 'text-subtle'
+  if (s === 'paused') return 'text-neutral-dim'
   return 'text-accent'
 })
 
 /** status 徽章 class（soft 底 + 实色字） */
 const badgeClass = computed(() => {
   const s = resolvedStatus.value
-  if (s === 'blocked') return 'bg-warning-soft text-warning'
+  if (s === 'blocked') return 'bg-warn-soft text-warn'
   if (s === 'complete') return 'bg-success-soft text-success'
   if (s === 'budget_limited' || s === 'time_limited') return 'bg-danger-soft text-danger'
-  if (s === 'paused') return 'bg-surface-hover text-muted'
+  if (s === 'paused') return 'bg-surface-hover text-neutral-mid'
   return 'bg-accent-soft text-accent'
 })
 
@@ -270,10 +270,10 @@ const progressBars = computed<ProgressBarItem[]>(() => {
  */
 function resolveFillClass(severity: 'ok' | 'warn' | 'danger' | undefined, ratio: number): string {
   if (severity === 'ok') return 'bg-success'
-  if (severity === 'warn') return 'bg-warning'
+  if (severity === 'warn') return 'bg-warn'
   if (severity === 'danger') return 'bg-danger'
   if (ratio >= SEVERITY_THRESHOLD_DANGER) return 'bg-danger'
-  if (ratio >= SEVERITY_THRESHOLD_WARN) return 'bg-warning'
+  if (ratio >= SEVERITY_THRESHOLD_WARN) return 'bg-warn'
   return 'bg-accent'
 }
 

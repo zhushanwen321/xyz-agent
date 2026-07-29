@@ -19,12 +19,17 @@ import { ref, readonly } from 'vue'
 import type { Ref, DeepReadonly } from 'vue'
 import type { SessionSummary } from '@xyz-agent/shared'
 
-/** NewTaskFlow 态枚举（②§5）。worktree-modal 为 W2 wave 新增（创建 worktree modal）。 */
+/**
+ * NewTaskFlow 态枚举（②§5）。worktree-modal 为 W2 wave 新增（创建 worktree modal）。
+ * preset-popover 为 preset 互斥 wave 新增（landing 态 PresetSelectChip popover）——
+ * 与 dir/branch popover 同属 overlay 互斥组，打开时关闭其他 popover。
+ */
 export type NewTaskFlowState =
   | 'idle'
   | 'landing'
   | 'dir-popover'
   | 'branch-popover'
+  | 'preset-popover'
   | 'dir-dialog'
   | 'branch-modal'
   | 'worktree-modal'
@@ -50,6 +55,7 @@ export interface GitInfo {
 export const OVERLAY_STATES: ReadonlySet<NewTaskFlowState> = new Set([
   'dir-popover',
   'branch-popover',
+  'preset-popover',
   'dir-dialog',
   'branch-modal',
   'worktree-modal',
@@ -65,6 +71,7 @@ export const ACTIVE_STATES: ReadonlySet<NewTaskFlowState> = new Set([
   'landing',
   'dir-popover',
   'branch-popover',
+  'preset-popover',
   'dir-dialog',
   'branch-modal',
   'worktree-modal',
@@ -76,9 +83,10 @@ export const ACTIVE_STATES: ReadonlySet<NewTaskFlowState> = new Set([
  */
 const ALLOWED: Record<NewTaskFlowState, NewTaskFlowState[]> = {
   idle: ['landing'],
-  landing: ['dir-popover', 'branch-popover', 'worktree-modal', 'completed', 'cancelled'],
+  landing: ['dir-popover', 'branch-popover', 'preset-popover', 'worktree-modal', 'completed', 'cancelled'],
   'dir-popover': ['landing', 'dir-dialog', 'cancelled'],
   'branch-popover': ['landing', 'branch-modal', 'worktree-modal', 'cancelled'],
+  'preset-popover': ['landing', 'cancelled'],
   'dir-dialog': ['landing', 'dir-popover', 'cancelled'],
   'branch-modal': ['landing', 'cancelled'],
   'worktree-modal': ['landing', 'cancelled'],
@@ -128,6 +136,35 @@ export function transition(target: NewTaskFlowState): void {
     throw new Error(`NewTaskFlow 非法状态转换: ${from} → ${target}`)
   }
   state.value = target
+}
+
+/**
+ * openOverlay —— 统一的 overlay 互斥入口（landing 态打开任意 overlay）。
+ *
+ * 语义：当前已在任意 overlay 态（dir/branch/preset-popover 等）时，先归 landing（所有 overlay→landing
+ * 在 ALLOWED 内合法），再 transition 到 target。当前在 landing 时直接 transition。
+ *
+ * 幂等早退（W6）：当前已在 target 态时直接返回，避免 landing→target 短暂闪烁（overlay 被卸载重建）。
+ *
+ * 前置条件（W7）：调用方必须处于 landing 或任意 overlay 态。从 idle 调用会 throw（ALLOWED['idle']
+ * 只允许 'landing'）——这是有意的：overlay 入口（openDirPopover/openBranchPopover/openPresetPopover/
+ * openWorktreeModal）只应在 flow 已启动（startFlow 后 state=landing）时调用，从 idle 调用说明上游漏了
+ * startFlow，throw 暴露该 bug 而非静默走 transition('landing') 绕过 startFlow 的初始化副作用。
+ *
+ * 存在意义：消除 openDirPopover / openBranchPopover / openPresetPopover 各自手写"其他 overlay 态"
+ * 互斥分支的重复与遗漏风险——曾经各处只列举当时的其他态，新增 overlay 态（如 preset-popover）时
+ * 漏改某处就会撞非法转换（preset→dir 回归事故）。改用 OVERLAY_STATES 集合判断，新增 overlay 态只需
+ * 加进集合（OVERLAY_STATES / ALLOWED），各 openXxx 自动生效。
+ *
+ * 注意：target 必须是 landing 可直达的 overlay 态（ALLOWED['landing'] 含之），否则 transition 抛错。
+ * 调用方若需来源守卫（如 openBranchPopover 的 git 守卫），在调 openOverlay 前自行处理。
+ */
+export function openOverlay(target: NewTaskFlowState): void {
+  if (state.value === target) return // 幂等：已在 target，早退防 landing→target 闪烁
+  if (OVERLAY_STATES.has(state.value)) {
+    transition('landing')
+  }
+  transition(target)
 }
 
 /**

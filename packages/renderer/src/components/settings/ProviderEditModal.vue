@@ -12,11 +12,11 @@
     <DialogContent hide-close class="flex max-h-[85vh] max-w-[780px] flex-col overflow-hidden p-0">
       <!-- 标题栏。DialogTitle/DialogDescription 给 reka-ui a11y context（视觉用自绘 span） -->
       <div class="flex items-center justify-between border-b border-border px-5 py-4">
-        <DialogTitle class="text-[15px] font-semibold text-fg">{{ provider ? t('settings.providerEdit.editTitle') : t('settings.providerEdit.addTitle') }}</DialogTitle>
+        <DialogTitle class="text-[15px] font-semibold text-neutral-fg">{{ provider ? t('settings.providerEdit.editTitle') : t('settings.providerEdit.addTitle') }}</DialogTitle>
         <DialogDescription class="sr-only">{{ t('settings.providerEdit.dialogDescription') }}</DialogDescription>
         <Button
           variant="ghost"
-          class="size-7 shrink-0 rounded-sm p-0 text-muted hover:bg-surface-hover hover:text-fg"
+          class="size-7 shrink-0 rounded-sm p-0 text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
           :aria-label="t('settings.close')"
           @click="requestClose"
         >
@@ -29,13 +29,13 @@
         <div class="flex w-[340px] shrink-0 flex-col gap-4 border-r border-border p-5">
           <!-- 名称 -->
           <div>
-            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">{{ t('settings.providerEdit.fieldName') }}</Label>
+            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">{{ t('settings.providerEdit.fieldName') }}</Label>
             <Input v-model="form.name" :placeholder="t('settings.providerEdit.fieldNamePlaceholder')" />
           </div>
 
           <!-- 类型 -->
           <div>
-            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">
+            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
               {{ t('settings.providerEdit.fieldType') }} <span class="normal-case tracking-normal">{{ t('settings.providerEdit.fieldTypeHint') }}</span>
             </Label>
             <Select v-model="form.api">
@@ -55,13 +55,13 @@
 
           <!-- Base URL -->
           <div>
-            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">{{ t('settings.providerEdit.fieldBaseUrl') }}</Label>
+            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">{{ t('settings.providerEdit.fieldBaseUrl') }}</Label>
             <Input v-model="form.baseUrl" placeholder="https://api.anthropic.com" />
           </div>
 
           <!-- API Key -->
           <div>
-            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">
+            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
               {{ t('settings.providerEdit.fieldApiKey') }} <span class="normal-case tracking-normal">{{ t('settings.providerEdit.apiKeyHint') }}</span>
             </Label>
             <div class="flex items-center gap-2">
@@ -73,7 +73,7 @@
               />
               <Button
                 variant="ghost"
-                class="size-8 shrink-0 rounded-sm p-0 text-subtle hover:bg-surface-hover hover:text-fg"
+                class="size-8 shrink-0 rounded-sm p-0 text-neutral-dim hover:bg-surface-hover hover:text-neutral-fg"
                 :aria-label="showKey ? t('settings.providerEdit.hideKey') : t('settings.providerEdit.showKey')"
                 @click="showKey = !showKey"
               >
@@ -84,7 +84,7 @@
               <Button
                 v-if="provider?.apiKeySet && form.apiKey !== '__CLEAR__'"
                 variant="ghost"
-                class="size-8 shrink-0 rounded-sm p-0 text-subtle hover:bg-danger-soft hover:text-danger"
+                class="size-8 shrink-0 rounded-sm p-0 text-neutral-dim hover:bg-danger-soft hover:text-danger"
                 :aria-label="t('settings.providerEdit.clearKey')"
                 :title="t('settings.providerEdit.clearKey')"
                 @click="clearApiKey"
@@ -93,14 +93,14 @@
               </Button>
             </div>
             <!-- apiKey 编辑语义说明（D18）：留空保存=不改；已配置时提示清除按钮的作用 -->
-            <p class="mt-1 text-[10px] text-subtle">
+            <p class="mt-1 text-[10px] text-neutral-dim">
               {{ t('settings.providerEdit.apiKeyNoteKeep') }}{{ provider?.apiKeySet ? t('settings.providerEdit.apiKeyNoteClear') : '' }}
             </p>
           </div>
 
           <!-- authHeader 开关（W3 D7）：是否把 apiKey 写入 Authorization header -->
           <div class="flex items-center justify-between">
-            <Label class="text-[11px] font-semibold uppercase tracking-wider text-muted">
+            <Label class="text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
               {{ t('settings.providerEdit.fieldAuthHeader') }} <span class="normal-case tracking-normal">{{ t('settings.providerEdit.authHeaderHint') }}</span>
             </Label>
             <Switch
@@ -113,7 +113,7 @@
 
           <!-- headers 编辑区（W3 D7）：key-value 行编辑 + 添加/删除 -->
           <div data-testid="headers-editor">
-            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">
+            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
               {{ t('settings.providerEdit.customHeaders') }} <span class="normal-case tracking-normal">{{ t('settings.providerEdit.customHeadersHint') }}</span>
             </Label>
             <div class="flex flex-col gap-1.5">
@@ -136,7 +136,7 @@
                 />
                 <Button
                   variant="ghost"
-                  class="size-8 shrink-0 rounded-sm p-0 text-subtle hover:bg-transparent hover:text-danger [&_svg]:size-3.5"
+                  class="size-8 shrink-0 rounded-sm p-0 text-neutral-dim hover:bg-transparent hover:text-danger [&_svg]:size-3.5"
                   :aria-label="t('settings.providerEdit.removeHeader')"
                   @click="removeHeader(i)"
                 >
@@ -185,7 +185,7 @@
           <div class="flex flex-wrap gap-2">
             <Button
               variant="secondary"
-              class="gap-1.5 px-2.5 py-1.5 text-[12px] text-muted [&_svg]:size-3.5"
+              class="gap-1.5 px-2.5 py-1.5 text-[12px] text-neutral-mid [&_svg]:size-3.5"
               :disabled="testing || discovering"
               @click="testConnection"
             >
@@ -195,7 +195,7 @@
             </Button>
             <Button
               variant="secondary"
-              class="gap-1.5 px-2.5 py-1.5 text-[12px] text-muted [&_svg]:size-3.5"
+              class="gap-1.5 px-2.5 py-1.5 text-[12px] text-neutral-mid [&_svg]:size-3.5"
               :disabled="discovering || testing"
               @click="autoDiscover"
             >
@@ -211,7 +211,7 @@
             <AlertCircle v-else class="size-3.5" />
             {{ testResult === 'ok' ? t('settings.providerEdit.testOk', { count: localModels.length }) : t('settings.providerEdit.testFail') }}
           </div>
-          <div v-if="discoverResult" class="text-[12px] text-muted">{{ discoverResult }}</div>
+          <div v-if="discoverResult" class="text-[12px] text-neutral-mid">{{ discoverResult }}</div>
         </div>
 
         <!-- 右：模型清单（抽到 ModelListSection 子组件，保持主模板 ≤400 行） -->

@@ -12,10 +12,10 @@
     >
       <!-- modal-head -->
       <div class="modal-head flex h-[44px] flex-none items-center gap-2.5 border-b border-border px-3.5">
-        <span class="text-[14px] font-semibold tracking-tight text-fg">{{ t('settings.title') }}</span>
+        <span class="text-[14px] font-semibold tracking-tight text-neutral-fg">{{ t('settings.title') }}</span>
         <div class="ml-auto flex items-center gap-2">
           <DialogClose
-            class="grid size-7 place-items-center rounded-sm text-muted transition-colors hover:bg-surface-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            class="grid size-7 place-items-center rounded-sm text-neutral-mid transition-colors hover:bg-surface-hover hover:text-neutral-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             :title="t('settings.closeEsc')"
           >
             <X class="size-4" />
@@ -35,8 +35,8 @@
             class="h-auto justify-start gap-2.5 rounded-md px-2.5 py-2 text-[13px]"
             :class="
               item.id === activeMenu
-                ? 'bg-surface-hover text-fg ring-1 ring-inset ring-accent hover:bg-surface-hover hover:text-fg'
-                : 'text-muted hover:bg-surface-hover hover:text-fg'
+                ? 'bg-surface-hover text-neutral-fg ring-1 ring-inset ring-accent hover:bg-surface-hover hover:text-neutral-fg'
+                : 'text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg'
             "
             :data-testid="`settings-nav-${item.id}`"
             @click="activeMenu = item.id"
@@ -45,7 +45,7 @@
             <span>{{ t(item.labelKey) }}</span>
             <span
               v-if="getItemCount(item.id)"
-              class="ml-auto rounded-full bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle"
+              class="ml-auto rounded-full bg-surface px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim"
             >{{ getItemCount(item.id) }}</span>
           </Button>
         </nav>
@@ -53,8 +53,8 @@
         <!-- 右详情 -->
         <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
           <div class="border-b border-border px-6 pb-4 pt-5">
-            <h2 class="text-[20px] font-semibold tracking-tight text-fg">{{ t(currentMenu.labelKey) }}</h2>
-            <p class="mt-0.5 text-[13px] text-muted">{{ t(currentMenu.descKey) }}</p>
+            <h2 class="text-[20px] font-semibold tracking-tight text-neutral-fg">{{ t(currentMenu.labelKey) }}</h2>
+            <p class="mt-0.5 text-[13px] text-neutral-mid">{{ t(currentMenu.descKey) }}</p>
           </div>
           <ScrollArea class="min-h-0 flex-1">
             <div class="px-6 py-4">

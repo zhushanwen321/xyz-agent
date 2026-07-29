@@ -25,7 +25,7 @@
       @open-auto-focus.prevent
     >
       <!-- 标题行：basename + 匹配数 -->
-      <div class="border-b border-border px-2.5 py-1.5 text-[11px] text-subtle">
+      <div class="border-b border-border px-2.5 py-1.5 text-[length:var(--text-xs)] text-neutral-dim">
         {{ t('panel.ambiguous.title', { basename, count: candidates.length }) }}
       </div>
       <!-- 候选列表 -->
@@ -34,16 +34,16 @@
           v-for="(node, i) in candidates"
           :key="node.path"
           variant="ghost"
-          class="flex w-full items-center gap-2 rounded-none px-2.5 py-1.5 text-left text-[12px] leading-[1.4] transition-colors"
-          :class="i === activeIndex ? 'bg-accent-soft text-accent' : 'text-muted hover:bg-surface-hover hover:text-fg'"
+          class="flex w-full items-center gap-2 rounded-none px-2.5 py-1.5 text-left text-[length:var(--text-sm)] leading-[1.4] transition-colors"
+          :class="i === activeIndex ? 'bg-accent-soft text-accent' : 'text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg'"
           @click="onSelect(node)"
           @mouseenter="activeIndex = i"
         >
-          <FileIcon class="size-[15px] shrink-0" :class="i === activeIndex ? 'text-accent' : 'text-subtle'" />
+          <FileIcon class="size-[15px] shrink-0" :class="i === activeIndex ? 'text-accent' : 'text-neutral-dim'" />
           <!-- 两行：basename 主行 + 父目录路径暗行（区分同名文件位置） -->
           <div class="min-w-0 flex-1">
-            <div class="truncate font-mono text-[12px]" :class="i === activeIndex ? 'text-accent' : 'text-fg'">{{ node.name }}</div>
-            <div v-if="dirPathOf(node.path)" class="truncate font-mono text-[10px] leading-tight text-subtle">{{ dirPathOf(node.path) }}</div>
+            <div class="truncate font-mono text-[length:var(--text-sm)]" :class="i === activeIndex ? 'text-accent' : 'text-neutral-fg'">{{ node.name }}</div>
+            <div v-if="dirPathOf(node.path)" class="truncate font-mono text-[length:var(--text-2xs)] leading-tight text-neutral-dim">{{ dirPathOf(node.path) }}</div>
           </div>
         </Button>
       </div>

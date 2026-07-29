@@ -13,19 +13,19 @@
   <div class="overview flex h-full w-full flex-col overflow-hidden p-6">
     <!-- 工具栏：标题 + 计数 + 新建（筛选/排序 DEFERRED 不渲染入口，G3-002 hide） -->
     <header class="mb-3.5 flex items-center gap-2.5">
-      <h1 class="text-[18px] font-semibold tracking-tight text-fg">{{ t('overview.title') }}</h1>
-      <span class="rounded-full bg-surface px-2 py-0.5 font-mono text-[11px] text-muted">
+      <h1 class="text-[18px] font-semibold tracking-tight text-neutral-fg">{{ t('overview.title') }}</h1>
+      <span class="rounded-full bg-surface px-2 py-0.5 font-mono text-[11px] text-neutral-mid">
         {{ t('overview.sessionCount', { count: session.list.length }) }}
       </span>
       <Button
         variant="ghost"
         size="sm"
-        class="ml-auto gap-1.5 text-[12px] text-muted hover:bg-surface-hover hover:text-fg"
+        class="ml-auto gap-1.5 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
         @click="onNew"
       >
-        <Plus class="size-[15px] text-subtle" />
+        <Plus class="size-[15px] text-neutral-dim" />
         <span>{{ t('overview.newSession') }}</span>
-        <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">{{ formatKbd('n') }}</kbd>
+        <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim">{{ formatKbd('n') }}</kbd>
       </Button>
     </header>
 
@@ -50,8 +50,8 @@
         v-else
         class="flex flex-col items-center justify-center gap-3.5 rounded-lg border border-dashed border-border-strong p-14 text-center"
       >
-        <LayoutGrid class="size-9 text-subtle" />
-        <p class="text-[15px] text-muted">{{ t('overview.emptyTitle') }}</p>
+        <LayoutGrid class="size-9 text-neutral-dim" />
+        <p class="text-[15px] text-neutral-mid">{{ t('overview.emptyTitle') }}</p>
         <Button class="gap-1.5 text-[13px] font-semibold" @click="onNew">
           <Plus class="size-[14px]" />
           {{ t('overview.emptyHint') }}

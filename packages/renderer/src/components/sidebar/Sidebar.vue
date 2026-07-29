@@ -13,10 +13,10 @@
     <div class="sidebar__inner flex h-full w-[300px] flex-col pl-0.5">
       <!-- Brand -->
       <div class="flex items-center gap-2 px-2 pb-3.5">
-        <span class="grid size-[22px] shrink-0 place-items-center rounded-md bg-accent text-[11px] font-bold text-fg">x</span>
+        <span class="grid size-[22px] shrink-0 place-items-center rounded-md bg-accent text-[11px] font-bold text-neutral-fg">x</span>
         <div class="flex flex-col leading-tight">
-          <span class="text-[13px] font-semibold text-fg">xyz-agent</span>
-          <span class="text-[10px] text-muted">v{{ appVersion }}<template v-if="piVersion"> · pi v{{ piVersion }}</template></span>
+          <span class="text-[13px] font-semibold text-neutral-fg">xyz-agent</span>
+          <span class="text-[10px] text-neutral-mid">v{{ appVersion }}<template v-if="piVersion"> · pi v{{ piVersion }}</template></span>
         </div>
         <!-- 升级状态指示器（useAppUpdate 单例 state，idle/checking 不渲染） -->
         <UpdateButton class="ml-auto" />
@@ -26,21 +26,21 @@
       <nav class="flex flex-col gap-px px-1">
         <Button
           variant="ghost"
-          class="group h-auto justify-start gap-2.5 rounded-md px-2 py-1.5 text-[12px] text-muted hover:bg-surface-hover hover:text-fg"
+          class="group h-auto justify-start gap-2.5 rounded-md px-2 py-1.5 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
           @click="onNewSession"
         >
-          <Plus class="size-[15px] text-subtle transition-colors group-hover:text-muted" />
+          <Plus class="size-[15px] text-neutral-dim transition-colors group-hover:text-neutral-mid" />
           <span class="flex-1 text-left">{{ t('sidebar.newTask') }}</span>
-          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">{{ formatKbd('n') }}</kbd>
+          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim">{{ formatKbd('n') }}</kbd>
         </Button>
         <Button
           variant="ghost"
-          class="group h-auto justify-start gap-2.5 rounded-md px-2 py-1.5 text-[12px] text-muted hover:bg-surface-hover hover:text-fg"
+          class="group h-auto justify-start gap-2.5 rounded-md px-2 py-1.5 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
           @click="searchModal.open()"
         >
-          <Search class="size-[15px] text-subtle transition-colors group-hover:text-muted" />
+          <Search class="size-[15px] text-neutral-dim transition-colors group-hover:text-neutral-mid" />
           <span class="flex-1 text-left">{{ t('sidebar.search') }}</span>
-          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">{{ formatKbd('k') }}</kbd>
+          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim">{{ formatKbd('k') }}</kbd>
         </Button>
       </nav>
 
@@ -53,19 +53,19 @@
           'group mb-1 h-auto justify-start gap-2.5 rounded-md px-2 py-1.5 text-[12px]',
           isOverviewActive
             ? 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent'
-            : 'text-muted hover:bg-surface-hover hover:text-fg',
+            : 'text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg',
         )"
         @click="goOverview"
       >
         <LayoutGrid
           class="size-[15px] transition-colors"
-          :class="isOverviewActive ? 'text-accent' : 'text-subtle group-hover:text-muted'"
+          :class="isOverviewActive ? 'text-accent' : 'text-neutral-dim group-hover:text-neutral-mid'"
         />
         <span class="flex-1 text-left">{{ t('sidebar.overview') }}</span>
         <span
           v-if="session.list.length"
           class="font-mono text-[10px]"
-          :class="isOverviewActive ? 'text-accent' : 'text-subtle'"
+          :class="isOverviewActive ? 'text-accent' : 'text-neutral-dim'"
         >{{ session.list.length }}</span>
       </Button>
 
@@ -90,7 +90,7 @@
             data-testid="session-list-error"
           >
             <AlertCircle class="size-5 text-danger opacity-60" />
-            <p class="text-[11px] text-muted">{{ t('sidebar.sessionListLoadFailed', { error: session.listLoadError }) }}</p>
+            <p class="text-[11px] text-neutral-mid">{{ t('sidebar.sessionListLoadFailed', { error: session.listLoadError }) }}</p>
             <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="session-list-retry" @click="onRetryLoadSessions">{{ t('sidebar.retry') }}</Button>
           </div>
           <SessionList
@@ -147,19 +147,19 @@
             class="flex flex-col items-center justify-center gap-2 py-10 text-center"
             data-testid="file-view-no-session"
           >
-            <FolderOpen class="size-5 text-subtle opacity-40" />
-            <p class="text-[11px] text-subtle opacity-55">{{ t('sidebar.selectSessionHint') }}</p>
+            <FolderOpen class="size-5 text-neutral-dim opacity-40" />
+            <p class="text-[11px] text-neutral-dim opacity-55">{{ t('sidebar.selectSessionHint') }}</p>
           </div>
         </template>
       </div>
 
       <!-- 用户区（footer）· 齿轮图标打开 Settings（settings/spec.md §1） -->
-      <div class="mt-auto flex items-center gap-2 rounded-md px-2 py-2 text-[12px] text-muted">
+      <div class="mt-auto flex items-center gap-2 rounded-md px-2 py-2 text-[12px] text-neutral-mid">
         <span class="size-5 shrink-0 rounded-full bg-gradient-to-br from-accent to-info" />
-        <span class="flex-1 truncate text-fg">{{ t('sidebar.developer') }}</span>
+        <span class="flex-1 truncate text-neutral-fg">{{ t('sidebar.developer') }}</span>
         <Button
           variant="ghost"
-          class="grid size-6 shrink-0 place-items-center rounded-sm p-0 text-subtle transition-colors hover:bg-surface-hover hover:text-fg [&_svg]:size-[14px]"
+          class="grid size-6 shrink-0 place-items-center rounded-sm p-0 text-neutral-dim transition-colors hover:bg-surface-hover hover:text-neutral-fg [&_svg]:size-[14px]"
           :title="t('sidebar.settingsTitle')"
           @click="openSettings()"
         >

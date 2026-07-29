@@ -114,7 +114,7 @@ function sourceLabel(source: string): string {
       </DialogHeader>
 
       <!-- 加载中 -->
-      <div v-if="loading" class="flex items-center gap-2 py-8 text-[12px] text-muted">
+      <div v-if="loading" class="flex items-center gap-2 py-8 text-[12px] text-neutral-mid">
         <Loader2 class="size-4 animate-spin" />
         {{ t('settings.loadPaths.importFromAgents.loading') }}
       </div>
@@ -134,7 +134,7 @@ function sourceLabel(source: string): string {
         <div
           v-if="preview.parseError"
           data-testid="preview-parse-error"
-          class="flex items-start gap-1.5 rounded-md border border-warning/30 bg-warning-soft px-3 py-2 text-[12px] text-warning"
+          class="flex items-start gap-1.5 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-[12px] text-warn"
         >
           <AlertTriangle class="size-4 shrink-0 mt-0.5" />
           <span>{{ t('settings.provider.importPreview.parseError', { message: preview.parseError }) }}</span>
@@ -144,7 +144,7 @@ function sourceLabel(source: string): string {
         <div
           v-if="preview.warnings?.length"
           data-testid="preview-top-warnings"
-          class="flex items-start gap-1.5 rounded-md border border-warning/30 bg-warning-soft px-3 py-2 text-[12px] text-warning"
+          class="flex items-start gap-1.5 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-[12px] text-warn"
         >
           <AlertTriangle class="size-4 shrink-0 mt-0.5" />
           <ul class="flex flex-col gap-0.5">
@@ -153,7 +153,7 @@ function sourceLabel(source: string): string {
         </div>
 
         <!-- 空列表（无 parseError 也无 providers） -->
-        <div v-if="!preview.providers.length" class="py-8 text-center text-[12px] text-muted">
+        <div v-if="!preview.providers.length" class="py-8 text-center text-[12px] text-neutral-mid">
           {{ t('settings.providerEdit.noModels') }}
         </div>
 
@@ -173,15 +173,15 @@ function sourceLabel(source: string): string {
               :aria-label="p.name"
               @update:model-value="onToggle(p.id, $event)"
             />
-            <span class="font-mono text-fg">{{ p.id }}</span>
-            <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-muted">{{ p.protocol }}</span>
-            <span class="text-subtle">{{ t('settings.provider.modelsCount', { count: p.modelCount }) }}</span>
+            <span class="font-mono text-neutral-fg">{{ p.id }}</span>
+            <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-neutral-mid">{{ p.protocol }}</span>
+            <span class="text-neutral-dim">{{ t('settings.provider.modelsCount', { count: p.modelCount }) }}</span>
 
             <!-- API Key 未提取警告 -->
             <span
               v-if="!p.apiKeyExtracted"
               data-testid="key-warning"
-              class="flex items-center gap-0.5 text-warning"
+              class="flex items-center gap-0.5 text-warn"
               :title="t('settings.provider.importPreview.keyNotExtracted')"
             >
               <KeyRound class="size-3.5" />
@@ -191,7 +191,7 @@ function sourceLabel(source: string): string {
             <span
               v-if="p.conflict === 'duplicate-id'"
               data-testid="conflict-badge"
-              class="rounded-sm bg-warning-soft px-1.5 py-0.5 text-[10px] text-warning"
+              class="rounded-sm bg-warn-soft px-1.5 py-0.5 text-[10px] text-warn"
             >
               {{ t('settings.provider.importPreview.conflict') }}
             </span>
@@ -203,20 +203,20 @@ function sourceLabel(source: string): string {
               variant="ghost"
               size="dense"
               data-testid="warnings-toggle"
-              class="h-5 px-1 text-[11px] text-muted hover:text-fg"
+              class="h-5 px-1 text-[11px] text-neutral-mid hover:text-neutral-fg"
               @click="toggleWarnings(p.id)"
             >
               <component :is="expandedWarnings.has(p.id) ? ChevronDown : ChevronRight" class="size-3" />
               {{ t('settings.provider.importPreview.warnings') }} ({{ p.warnings.length }})
             </Button>
-            <ul v-if="expandedWarnings.has(p.id)" class="mt-1 list-disc pl-4 text-[11px] text-warning">
+            <ul v-if="expandedWarnings.has(p.id)" class="mt-1 list-disc pl-4 text-[11px] text-warn">
               <li v-for="(w, i) in p.warnings" :key="i">{{ w }}</li>
             </ul>
           </div>
         </div>
 
         <!-- 底部统计 -->
-        <div class="flex flex-wrap gap-3 pt-1 text-[11px] text-muted">
+        <div class="flex flex-wrap gap-3 pt-1 text-[11px] text-neutral-mid">
           <span>{{ t('settings.provider.importPreview.statImportable', { count: statImportable }) }}</span>
           <span>{{ t('settings.provider.importPreview.statConflict', { count: statConflict }) }}</span>
           <span>{{ t('settings.provider.importPreview.statKeyMissing', { count: statKeyMissing }) }}</span>

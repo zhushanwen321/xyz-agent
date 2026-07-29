@@ -20,13 +20,19 @@ export async function activate(api: any) {
       if (response?.tools) {
         bridgeState = 'Syncing'
         for (const tool of response.tools) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi API callbacks are loosely typed
-          api.registerTool(tool.name, tool.description, tool.parameters, async (params: any, extra: any) => {
-            if (bridgeState !== 'Ready') return { content: 'Plugin system initializing', isError: true }
-            return api.extension_ui_request({
-              method: 'bridge:tool_execute', toolName: tool.name,
-              toolCallId: extra?.toolCallId, params, sessionId: extra?.sessionId,
-            })
+          api.registerTool({
+            name: tool.name,
+            label: tool.name,
+            description: tool.description,
+            parameters: tool.parameters,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- pi API callbacks are loosely typed
+            execute: async (toolCallId: string, params: any, _signal: any, _onUpdate: any, ctx: any) => {
+              if (bridgeState !== 'Ready') return { content: 'Plugin system initializing', isError: true }
+              return api.extension_ui_request({
+                method: 'bridge:tool_execute', toolName: tool.name,
+                toolCallId, params, sessionId: ctx?.sessionId,
+              })
+            },
           })
         }
         for (const cmd of response.commands || []) {

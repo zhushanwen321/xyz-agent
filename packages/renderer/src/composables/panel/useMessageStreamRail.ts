@@ -3,7 +3,7 @@
  *
  * 职责：
  * - railTurns：派生 renderItems 中所有 turn（rail 节点列表数据源）。
- * - activeTurnIndex：按 scrollTop 比例推算当前激活 turn 下标（viewport indicator 跟随滚动）。
+ * - activeTurnIndex：按 virta scrollOffset 精确定位当前激活 turn 下标（viewport indicator 跟随滚动）。
  * - panelRightEdge：ResizeObserver 跟踪 panel 根 section 右边缘（rail 横向定位贴面板左侧）。
  * - 事件路由：onJump（滚动定位）/ onToggle / onExpandAll / onCollapseAll，全部经 useTurnExpansion
  *   与 Turn.vue 共享同一 session 展开态（同一 session Map key）。
@@ -14,6 +14,7 @@
  * 提取至此（composables/panel 既有范式）：MessageStream.vue script setup ≤300 行规范 + rail 关注点单一可复用。
  */
 import { computed, onMounted, onScopeDispose, ref, type ComputedRef, type Ref } from 'vue'
+import type { VirtualizerHandle } from 'virtua/vue'
 import type { MessageTurn, RenderItem } from '@/composables/logic/messageTurns'
 import { useTurnExpansion } from '@/composables/panel/useTurnExpansion'
 import { useTurnExpansionStore } from '@/stores/turn-expansion'
@@ -31,12 +32,11 @@ export interface UseMessageStreamRailDeps {
   sessionId: ComputedRef<string>
   /** 完整渲染项列表（turn + system 穿插），railTurns 派生自此。 */
   renderItems: ComputedRef<RenderItem[]>
-  /** 滚动容器 el（读 scrollTop/scrollHeight 算 activeTurnIndex + closest('section') 算 panelRightEdge）。 */
+  /** 滚动容器 el（closest('section') 算 panelRightEdge + ResizeObserver 横向重定位）。 */
   scrollEl: Ref<HTMLElement | null>
-  /** 虚拟列表 offsetOf(idx) —— rail jump 定位用（renderItems 下标 → absolute top px）。 */
-  offsetOf: (idx: number) => number
-  /** 顶部预留高度（load-more 占位），rail jump top = offsetOf(idx) + topOffset。 */
-  topOffset: ComputedRef<number>
+  /** [cw wave w4] virtua VirtualizerHandle ref（单一 virtua 路径：rail jump/active 都走 virta API）。
+   *  vlistRef 必填：onJump 调 scrollToIndex，updateActiveTurnIndex 调 findItemIndex。 */
+  vlistRef: Ref<VirtualizerHandle | null>
 }
 
 export function useMessageStreamRail(deps: UseMessageStreamRailDeps): {
@@ -50,7 +50,7 @@ export function useMessageStreamRail(deps: UseMessageStreamRailDeps): {
   onJump: (idx: number) => void
   onToggle: (idx: number) => void
 } {
-  const { sessionId, renderItems, scrollEl, offsetOf, topOffset } = deps
+  const { sessionId, renderItems, scrollEl } = deps
 
   /** rail 状态接入 useTurnExpansion（与 Turn.vue 共享同一 session Map）。 */
   const { toggle } = useTurnExpansion(sessionId)
@@ -94,34 +94,39 @@ export function useMessageStreamRail(deps: UseMessageStreamRailDeps): {
   const panelRightEdge = ref(0)
 
   /**
-   * 按 scrollTop 比例推算当前激活 turn 下标。
-   * railTurns 为空时跳过（模板 v-if turns.length>0 守卫，但 computed ref 仍需防除零）。
+   * 按 virtua scrollOffset 精确定位当前激活 turn 下标（viewport indicator 跟随滚动）。
+   * [cw wave w4] 单一 virtua 路径：vlistRef.findItemIndex(scrollOffset) 反查当前可见首项。
    */
   function updateActiveTurnIndex(): void {
-    const el = scrollEl.value
-    if (!el || railTurns.value.length === 0) return
-    const max = el.scrollHeight - el.clientHeight || 1
-    const ratio = el.scrollTop / max
-    activeTurnIndex.value = Math.min(
-      railTurns.value.length - 1,
-      Math.max(0, Math.floor(ratio * railTurns.value.length)),
-    )
+    const v = deps.vlistRef.value
+    if (!v) return
+    const renderIdx = v.findItemIndex(v.scrollOffset)
+    // findItemIndex 返回 renderItems 空间下标（含 system 条目），
+    // 需映射回 railTurns 空间（仅 turn），与 onJump 的映射对称。
+    // 若 renderItems[renderIdx] 是 system 项，保持上次 activeTurnIndex 不变。
+    const item = renderItems.value[renderIdx]
+    if (item?.kind === 'turn') {
+      activeTurnIndex.value = railTurns.value.findIndex((t) => t === item.turn)
+    }
   }
 
   /**
-   * rail jump：滚动到对应 turn 的 absolute offset（+ topOffset 预留 load-more 空间）。
+   * rail jump：滚动到对应 turn 的 renderItems 下标。
    * idx 是 railTurns 数组下标，需映射回 renderItems 下标（系统提示行穿插使两者不一致）。
    * railTurns[idx] 已持有目标 turn 对象，直接用引用相等 findIndex（无需 O(n) 累计 turnCount）。
+   *
+   * [cw wave w4] 单一 virtua 路径：vlistRef.scrollToIndex(renderIdx, {align:'start'})。
    */
   function onJump(idx: number): void {
-    if (!scrollEl.value) return
     const targetTurn = railTurns.value[idx]
     if (!targetTurn) return
     const renderIdx = renderItems.value.findIndex(
       (item) => item.kind === 'turn' && item.turn === targetTurn,
     )
     if (renderIdx < 0) return
-    scrollEl.value.scrollTop = offsetOf(renderIdx) + topOffset.value
+    const v = deps.vlistRef.value
+    if (!v) return
+    v.scrollToIndex(renderIdx, { align: 'start' })
   }
 
   /** rail toggle：切该 turn 的展开态。

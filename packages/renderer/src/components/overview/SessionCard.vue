@@ -26,7 +26,7 @@
         class="mt-[2px] size-[15px] shrink-0"
         :class="[iconConfig.color, iconConfig.animation]"
       />
-      <span class="min-w-0 flex-1 truncate text-[14px] font-semibold text-fg">
+      <span class="min-w-0 flex-1 truncate text-[14px] font-semibold text-neutral-fg">
         {{ session.label }}
       </span>
       <span
@@ -40,13 +40,13 @@
     <!-- 摘要：末条 assistant 文本（2 行 ellipsis）。空 session 不渲染，留白让头部呼吸。 -->
     <p
       v-if="summary"
-      class="line-clamp-2 text-[12px] leading-[1.5] text-muted"
+      class="line-clamp-2 text-[12px] leading-[1.5] text-neutral-mid"
     >
       {{ summary }}
     </p>
 
     <!-- 指标行：改动/回合计数 + 时间（右对齐）。靠间距与顶部 border 分隔（draft 同款）。 -->
-    <div class="mt-auto flex items-center gap-3.5 border-t border-border pt-2.5 font-mono text-[11px] text-subtle">
+    <div class="mt-auto flex items-center gap-3.5 border-t border-border pt-2.5 font-mono text-[11px] text-neutral-dim">
       <span v-if="hasMetrics" class="flex items-center gap-1">
         <FilePen class="size-[11px]" />
         <span class="text-success">{{ addCount }}</span>

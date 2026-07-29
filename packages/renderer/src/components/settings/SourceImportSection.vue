@@ -10,11 +10,11 @@
     共享池检测：候选 dir 与 existingDirs normalize 后相等 → 标「已通过共享池生效」，默认不勾选。
   -->
   <section data-testid="import-from-agents" class="rounded-md border border-border bg-bg">
-    <h4 class="px-3 py-2 text-[12px] font-medium text-fg">
+    <h4 class="px-3 py-2 text-[12px] font-medium text-neutral-fg">
       {{ t('settings.loadPaths.importFromAgents.title') }}
     </h4>
 
-    <div v-if="loading" class="border-t border-border px-3 py-2 text-[11px] text-muted">
+    <div v-if="loading" class="border-t border-border px-3 py-2 text-[11px] text-neutral-mid">
       {{ t('settings.loadPaths.importFromAgents.loading') }}
     </div>
 
@@ -29,7 +29,7 @@
     <template v-else>
       <p
         v-if="kind === 'agent'"
-        class="border-t border-border px-3 py-1.5 text-[11px] text-subtle"
+        class="border-t border-border px-3 py-1.5 text-[11px] text-neutral-dim"
       >
         {{ t('settings.loadPaths.importFromAgents.agentOnlyClaudeHint') }}
       </p>
@@ -47,13 +47,13 @@
           :aria-label="t('settings.loadPaths.enableDir', { path: item.dir })"
           @update:model-value="onToggle(item.source, $event)"
         />
-        <span class="text-fg">{{ sourceLabel(item.source) }}</span>
-        <span class="font-mono text-muted">{{ item.dir }}</span>
-        <span v-if="!item.installed" class="text-subtle">
+        <span class="text-neutral-fg">{{ sourceLabel(item.source) }}</span>
+        <span class="font-mono text-neutral-mid">{{ item.dir }}</span>
+        <span v-if="!item.installed" class="text-neutral-dim">
           {{ t('settings.loadPaths.importFromAgents.notInstalled') }}
         </span>
-        <span v-else class="text-muted">{{ countLabel(item) }}</span>
-        <span v-if="isShared(item.dir)" class="text-subtle">
+        <span v-else class="text-neutral-mid">{{ countLabel(item) }}</span>
+        <span v-if="isShared(item.dir)" class="text-neutral-dim">
           {{ t('settings.loadPaths.importFromAgents.sharedPoolActive') }}
         </span>
       </div>

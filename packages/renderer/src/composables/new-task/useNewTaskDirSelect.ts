@@ -16,7 +16,7 @@ import { pickDirectory } from '@/lib/ipc'
 import { workspace as workspaceApi } from '@/api'
 import { worktreeApi } from '@/api/domains/worktree'
 import { useWorkspaceStore } from '@/stores/workspace'
-import { transition, useNewTaskFlowState } from './useNewTaskFlowState'
+import { transition, openOverlay, useNewTaskFlowState } from './useNewTaskFlowState'
 import type { WorktreeListReply } from '@/api/domains/worktree'
 
 /**
@@ -35,7 +35,7 @@ export function useNewTaskDirSelect(
   mode: ReturnType<typeof ref<WorkspaceMode>>
   worktreeItems: ReturnType<typeof ref<WorktreeListReply['items']>>
 } {
-  const { state, pendingCwd } = useNewTaskFlowState()
+  const { pendingCwd } = useNewTaskFlowState()
   const workspaceStore = useWorkspaceStore()
 
   /**
@@ -80,25 +80,23 @@ export function useNewTaskDirSelect(
     { immediate: true },
   )
 
-  /** landing→dir-popover（点 directory chip）。overlay 互斥：已开 branch-popover 时先归 landing 再开。 */
+  /**
+   * landing→dir-popover（点 directory chip）。
+   * overlay 互斥由 openOverlay 统一处理（已开任意 overlay 时先归 landing 再开 dir-popover）。
+   */
   function openDirPopover(): void {
-    // overlay 互斥：已开 branch-popover 时先归 landing。branch-popover→landing 在 ALLOWED 表内合法，
-    // 走 transition（带守卫）而非直置后门——保持状态变更统一走守卫表，杜绝绕过。
-    if (state.value === 'branch-popover') transition('landing')
-    transition('dir-popover')
+    openOverlay('dir-popover')
   }
 
   /**
    * openWorktreeModal —— 点「新建 worktree…」动作项打开 CreateWorktreeModal（W2 wave）。
    *
-   * 来源态：dir-popover（DirSelectPopover 动作项）。overlay 互斥下先归 landing 再开 modal，
-   * 与 openDirPopover 同模式（branch-popover→landing→dir-popover）。landing→worktree-modal
-   * 在 ALLOWED 表内合法，状态变更统一走守卫表。
+   * 来源态：dir-popover（DirSelectPopover 动作项）。overlay 互斥由 openOverlay 统一处理。
+   * landing→worktree-modal 在 ALLOWED 表内合法，状态变更统一走守卫表。
    * CreateWorktreeModal 由 Landing 按 state==='worktree-modal' 挂载，内部自管五态机。
    */
   function openWorktreeModal(): void {
-    if (state.value === 'dir-popover') transition('landing')
-    transition('worktree-modal')
+    openOverlay('worktree-modal')
   }
 
   /**

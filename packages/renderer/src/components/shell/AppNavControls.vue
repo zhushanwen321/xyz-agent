@@ -23,7 +23,7 @@
     <Button
       variant="ghost"
       size="icon"
-      class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg [-webkit-app-region:no-drag]"
+      class="nav-btn h-[22px] w-[26px] rounded-md text-neutral-dim hover:bg-surface-hover hover:text-neutral-fg [-webkit-app-region:no-drag]"
       :title="sidebar.collapsed ? t('shell.expandSidebar') : t('shell.collapseSidebar')"
       :aria-label="t('shell.toggleSidebar')"
       @click="sidebar.toggleCollapsed()"
@@ -34,7 +34,7 @@
     <Button
       variant="ghost"
       size="icon"
-      class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-subtle [-webkit-app-region:no-drag]"
+      class="nav-btn h-[22px] w-[26px] rounded-md text-neutral-dim hover:bg-surface-hover hover:text-neutral-fg disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-neutral-dim [-webkit-app-region:no-drag]"
       :disabled="!navigation.canBack"
       :title="t('shell.goBack')"
       :aria-label="t('shell.goBack')"
@@ -45,7 +45,7 @@
     <Button
       variant="ghost"
       size="icon"
-      class="nav-btn h-[22px] w-[26px] rounded-md text-subtle hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-subtle [-webkit-app-region:no-drag]"
+      class="nav-btn h-[22px] w-[26px] rounded-md text-neutral-dim hover:bg-surface-hover hover:text-neutral-fg disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-neutral-dim [-webkit-app-region:no-drag]"
       :disabled="!navigation.canForward"
       :title="t('shell.goForward')"
       :aria-label="t('shell.goForward')"
