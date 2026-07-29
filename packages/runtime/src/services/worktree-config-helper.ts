@@ -1,10 +1,17 @@
 /**
- * Worktree 偏好读写 helper（从 config-service.ts 抽出，控 max-lines 500）。
+ * Worktree 偏好 + auto-rename 标志文件 helper（从 config-service.ts 抽出，控 max-lines 500）。
  *
- * 职责边界：worktree/git-cwt-anywhere 相关偏好（root dir / setup 脚本 / 超时 /
- * 默认 base branch）独立于 provider/skill/agent 配置，全部落在 app config.json 的
- * 顶层字段。本模块只负责字段级读写 + 校验，不关心 config.json 的落盘细节（由注入的
- * load/save 回调负责，避免循环依赖 + 不暴露 ConfigService 的私有方法可见性）。
+ * 本模块含两类职责，落盘路径不同，注意区分：
+ *
+ * 1. worktree/git-cwt-anywhere 偏好（root dir / setup 脚本 / 超时 / 默认 base branch）：
+ *    经注入的 AppConfigAccessors 读写，落在 app config.json 顶层字段。本模块只负责
+ *    字段级读写 + 校验，不关心 config.json 的落盘细节（由 load/save 回调负责，避免
+ *    循环依赖 + 不暴露 ConfigService 的私有方法可见性）。
+ *
+ * 2. auto-rename 标志文件（getAutoRenameEnabled / setAutoRenameEnabled /
+ *    getAutoRenameEnabledPath）：不经 AppConfigAccessors、不落 config.json，而是直接
+ *    读写 ${PI_CODING_AGENT_DIR}/auto-rename-enabled 独立标志文件（与 pi extension 契约
+ *    对齐：文件存在=开，不存在=关）。
  *
  * 抽出原因：config-service.ts 因本次 PR 新增 migration 委托方法触顶 max-lines(500)。
  * worktree 偏好是 config-service 内最内聚、对外接口稳定（IConfigService 已声明）的块，

@@ -20,6 +20,10 @@ describe('auto-rename enabled 标志文件', () => {
     rmSync(tmpRoot, { recursive: true, force: true })
   })
 
+  it('getAutoRenameEnabledPath 解析到 <XYZ_AGENT_DATA_DIR>/pi/agent/auto-rename-enabled', () => {
+    expect(getAutoRenameEnabledPath()).toBe(join(tmpRoot, 'pi', 'agent', 'auto-rename-enabled'))
+  })
+
   it('文件不存在时 getAutoRenameEnabled 返回 false（默认关闭）', () => {
     expect(getAutoRenameEnabled()).toBe(false)
   })
