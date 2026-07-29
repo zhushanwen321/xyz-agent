@@ -114,7 +114,7 @@ export interface EventInterpreterOptions {
   pingPi?: () => Promise<Record<string, unknown> | undefined> | undefined
   /**
    * P5 lease：pingTick 成功时调（组合根注入 leaseManager.renew）。
-   * 续租挂 ping 成功路径（spec D4）：pi 健康响应 → 续 lease 30s。失败时不调（lease 自然过期）。
+   * 续租挂 ping 成功路径（spec D4）：pi 健康响应 → 续 lease 90s（TTL > 2×ping 间隔，见 lease-manager 注释）。失败时不调（lease 自然过期）。
    * 只传 sessionId——renew 内部从 session.busyOwnerId 反查 owner（M4）。
    */
   onLeaseRenew?: (sessionId: string) => void

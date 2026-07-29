@@ -1,9 +1,11 @@
 /**
- * useTerminal 重连清 scrollback 测试（wave3 P2-s4 TC26/TC27，spec §6.3）。
+ * useTerminal 重连清 scrollback + 重新 attach 测试（wave3 P2-s4 TC26/TC27，spec §6.3）。
  *
  * 覆盖：
  * - TC26: clearScrollback 清当前分区 scrollback（保留 reactive 容器 + ptyAlive/cols/rows 不变）
  * - TC27: bumpReconnectEpoch 触发 useTerminal 自清当前 sid 分区 scrollback
+ * - TC28: 重连清空后若 terminal 活跃（ptyAlive=true）→ 重新 attach 触发服务端回灌（spec §6.3
+ *   「重新 attach → 服务端回灌全量」+ §七改善表「重连后切到 terminal tab → attach 回灌补齐」）
  *
  * clearScrollback 是 useTerminal 内部方法（不暴露在 return）——通过宿主组件 setup 内
  * expose 拿到引用，或通过 reconnect 信号间接验证（TC27）。
@@ -144,5 +146,52 @@ describe('TC27: reconnect 信号触发自清', () => {
     const before = epoch.value
     bumpReconnectEpoch()
     expect(epoch.value).toBe(before + 1)
+  })
+})
+
+// ──────────────────────────────────────────────────────────
+// TC28: 重连清空后若 terminal 活跃（ptyAlive=true）→ 重新 attach（spec §6.3 + §七改善表）
+// ──────────────────────────────────────────────────────────
+describe('TC28: 重连后若 terminal 活跃则重新 attach 触发服务端回灌', () => {
+  it('ptyAlive=true 时 bump 后清 scrollback 并重新 attach', async () => {
+    const { Host } = makeHost('s1')
+    const wrapper = mount(Host)
+    const terminal = wrapper.vm.terminal as ReturnType<typeof useTerminal>
+
+    // 模拟 PTY 已 spawn（TerminalView mount 后 spawn 成功的服务端反馈）
+    terminal.current.value.ptyAlive = true
+    // 积累 scrollback（断线前输出）
+    terminal.current.value.scrollback.push('line1', 'line2')
+    expect(terminalApiMock.attach).not.toHaveBeenCalled()
+
+    // bump（模拟重连）：watch 触发清空 + 重新 attach
+    bumpReconnectEpoch()
+    await wrapper.vm.$nextTick()
+
+    // scrollback 清空（断线前缓冲与回灌重复显示规避）
+    expect(terminal.current.value.scrollback).toEqual([])
+    // 重新 attach 触发服务端回灌全量 scrollback（spec §6.3「重新 attach → 服务端回灌全量」）
+    expect(terminalApiMock.attach).toHaveBeenCalledWith('s1')
+    expect(terminalApiMock.attach).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('ptyAlive=false（未打开过 terminal tab）时 bump 后清 scrollback 但不 attach', async () => {
+    const { Host } = makeHost('s1')
+    const wrapper = mount(Host)
+    const terminal = wrapper.vm.terminal as ReturnType<typeof useTerminal>
+
+    // PTY 未 spawn（用户没打开过 terminal tab）
+    terminal.current.value.ptyAlive = false
+    terminal.current.value.scrollback.push('a', 'b')
+
+    bumpReconnectEpoch()
+    await wrapper.vm.$nextTick()
+
+    // scrollback 仍清空（清空逻辑不依赖 ptyAlive）
+    expect(terminal.current.value.scrollback).toEqual([])
+    // 不 attach——未打开过 terminal tab，attach 会浪费资源（无 PTY session 可回灌）
+    expect(terminalApiMock.attach).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
 })

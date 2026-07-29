@@ -18,10 +18,17 @@
  * - PTY 未活 → 入 pendingWrites，等 terminal.alive flush
  * 解决 TerminalView 首次打开时 spawn 异步、命令写入的时序问题。
  *
- * [wave3 seq 回放去重] 重连清缓冲（spec §6.3）：WS 重连后 server 全量回灌 terminal.data
- * 会与断线前本地累积的 scrollback 重复显示。useTerminal setup 内 watch 全局重连信号
- *（useReconnectEpoch），信号变化时清当前 sid 分区 scrollback（保留 reactive 容器 +
- * ptyAlive/cols/rows 不动）。信号由 useConnection 重连成功时 bumpReconnectEpoch 触发。
+ * [wave3 seq 回放去重] 重连清缓冲 + 重新 attach（spec §6.3 + §七改善表）：WS 重连后 server
+ * 全量回灌 terminal.data 会与断线前本地累积的 scrollback 重复显示。useTerminal setup 内 watch
+ * 全局重连信号（useReconnectEpoch），信号变化时：
+ *   1. 清当前 sid 分区 scrollback（保留 reactive 容器 + ptyAlive/cols/rows 不动）
+ *   2. 若该 session 的 terminal 处于活跃态（ptyAlive=true，即用户之前打开过 terminal 且 PTY
+ *      已 spawn）→ 重新 attachTerminal() 触发服务端回灌全量 scrollback（spec §6.3「重新 attach
+ *      → 服务端回灌全量」+ §七「重连后切到 terminal tab → attach 回灌补齐」）。
+ * 不无条件 attach：若用户未打开过 terminal tab（PTY 未 spawn），attach 会浪费资源（无对应
+ * PTY session，服务端 scrollback ring buffer 无关紧要）。判断依据 ptyAlive（PTY 是否存活）
+ * ——这是 TerminalView mount 后 spawn 成功的服务端反馈，是「terminal 确实被用户使用」的可靠信号。
+ * 信号由 useConnection 重连成功时 bumpReconnectEpoch 触发。
  *
  * 依赖方向：useSessionScopedState + useSessionEvents + terminalApi（@/api）
  * + terminal-reconnect-signal（重连信号 watch）。
@@ -123,7 +130,16 @@ export function useTerminal(sessionIdRef: Ref<string | null>) {
   // watch 跟随 setup 的 effect scope（组件卸载自动清理，与 useSessionEvents 同模式）。
   watch(useReconnectEpoch(), () => {
     const sid = sessionIdRef.value
-    if (sid) clearScrollback(sid)
+    if (!sid) return
+    clearScrollback(sid)
+    // 重新 attach 触发服务端回灌全量 scrollback（spec §6.3 + §七改善表）。
+    // 仅在该 session 的 terminal 活跃时 attach——ptyAlive=true 表示 PTY 已 spawn（TerminalView
+    // mount 后 spawn 成功的服务端反馈），是「terminal 确实被用户使用」的可靠信号。未打开过
+    // terminal tab 时 PTY 未 spawn，attach 无意义（无 PTY session 可回灌，浪费资源）。
+    // 注意：attachTerminal 读 sessionIdRef.value（即上方 sid），此处复用同一调用路径。
+    if (state.current.value.ptyAlive) {
+      attachTerminal()
+    }
   })
 
   /** 创建 PTY（TerminalView mount 且 !ptyAlive 时调）。cwd 取 session.cwd。 */

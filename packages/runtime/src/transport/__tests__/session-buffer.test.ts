@@ -150,4 +150,53 @@ describe('SessionBuffer（模块隔离）', () => {
     buf.append(2, 'b')
     expect(onEvict).not.toHaveBeenCalled()
   })
+
+  // ── 字节口径：Buffer.byteLength（真实 UTF-8 字节，非 .length UTF-16 code unit）──────────
+
+  it('bytes 按 Buffer.byteLength(utf8) 计算：CJK「你好」length=2 但 byteLength=6', () => {
+    const buf = new SessionBuffer(100, 1024, () => {})
+    const data = '你好' // .length=2，UTF-8 字节=6
+    expect(data.length).toBe(2) // sanity：确认 JS 字符串 length 是 code unit 数
+    buf.append(1, data)
+
+    // 修复前（data.length）：bytes=2（偏松，env 名是字节语义但用 code unit 计数）
+    // 修复后（Buffer.byteLength）：bytes=6（真实 UTF-8 字节）
+    expect(buf.bytes).toBe(Buffer.byteLength(data, 'utf8'))
+    expect(buf.bytes).toBe(6)
+    expect(buf.bytes).not.toBe(data.length)
+  })
+
+  it('bytes 按 Buffer.byteLength(utf8) 计算：emoji 😀 length=2 但 byteLength=4', () => {
+    const buf = new SessionBuffer(100, 1024, () => {})
+    const data = '😀' // .length=2（代理对），UTF-8 字节=4
+    expect(data.length).toBe(2) // sanity
+    buf.append(1, data)
+
+    expect(buf.bytes).toBe(Buffer.byteLength(data, 'utf8'))
+    expect(buf.bytes).toBe(4)
+  })
+
+  it('字节驱逐用 byteLength 口径：CJK 消息超 maxBytes 按 UTF-8 字节驱逐', () => {
+    const evicted: number[] = []
+    // maxBytes=5：单条「你好」byteLength=6 > 5 → append 后立即驱逐自身（兜底防护）
+    const buf = new SessionBuffer(100, 5, (s) => evicted.push(s))
+    buf.append(1, '你好') // byteLength=6 > 5
+
+    // 该条刚 push，bytes=6 > 5 触发驱逐，shift 删自身 → entries 空、bytes=0
+    expect(buf.entries).toHaveLength(0)
+    expect(buf.bytes).toBe(0)
+    expect(evicted).toEqual([1])
+  })
+
+  it('字节驱逐边界：ASCII 与 CJK 混合，byteLength 累加正确', () => {
+    const evicted: number[] = []
+    // maxBytes=7：'ab'(2) + '你好'(6) = 8 > 7 → 删 'ab' → 剩 '你好'(6) <= 7 ok
+    const buf = new SessionBuffer(100, 7, (s) => evicted.push(s))
+    buf.append(1, 'ab') // byteLength=2，bytes=2
+    buf.append(2, '你好') // byteLength=6，bytes=8 > 7 → 删 seq=1 → bytes=6
+
+    expect(buf.entries.map((e) => e.seq)).toEqual([2])
+    expect(buf.bytes).toBe(6)
+    expect(evicted).toEqual([1])
+  })
 })

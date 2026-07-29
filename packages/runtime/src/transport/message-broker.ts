@@ -136,11 +136,15 @@ export class ServerMessageBroker implements IMessageBroker {
     // 三条排除规则（CT-W2.4 不变式，不可绕过）：
     //   (1) 无 sid 的全局消息（config.*/model.*/workspace.*）不入桶（ES1，靠 initial state 兜底）；
     //   (2) terminal.data 不入 session 桶（D3，走独立 scrollback，P2-s3）——唯一 type 名硬编码；
-    //   (3) 巨消息（payload.length > maxBytesPerSession）不入桶（ES4，避免清空整桶，不推进 watermark）。
+    //   (3) 巨消息（byteLength > maxBytesPerSession）不入桶（ES4，避免清空整桶，不推进 watermark）。
     // 入桶读 sequencedSeq（w1 assignSeq 已分配值），SessionBuffer 不得再调 seqCounter.assignSeq
     // （w1 retrospect 约定：多入口调 assignSeq 会破坏全局单调性）。
+    // 字节口径：用 Buffer.byteLength(payload, 'utf8') 而非 payload.length（UTF-16 code unit 计数）。
+    // env 名 XYZ_AGENT_REPLAY_MAX_BYTES_PER_SESSION 是字节语义，CJK/emoji 的 .length 显著小于真实
+    // UTF-8 字节数（如「你好」length=2 但 byteLength=6），用 .length 会让内存上限语义偏松。性能可接受
+    // （广播频率不高，每条消息一次 Buffer.byteLength 调用）。与 SessionBuffer.bytes 累加口径一致。
     const sid = (msg.payload as { sessionId?: string } | null)?.sessionId
-    if (sid && msg.type !== 'terminal.data' && payload.length <= this.maxBytesPerSession) {
+    if (sid && msg.type !== 'terminal.data' && Buffer.byteLength(payload, 'utf8') <= this.maxBytesPerSession) {
       let buf = this.sessionBuffers.get(sid)
       if (!buf) {
         buf = new SessionBuffer(this.maxCountPerSession, this.maxBytesPerSession, (s) => {

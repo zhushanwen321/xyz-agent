@@ -18,8 +18,24 @@
 import type { IMessageBroker } from '../../interfaces.js'
 import type { ISessionServiceInternal } from './session-internal.js'
 
-/** lease TTL 默认 30s（spec D4）。env XYZ_AGENT_LEASE_TTL_MS 可覆盖（XYZ_ 前缀已在 ENV_WHITELIST）。 */
-const DEFAULT_LEASE_TTL_MS = 30_000
+/**
+ * lease TTL 默认 90s（spec §3.7「审批挂起期间 lease 不过期」）。
+ *
+ * **TTL 与 PING_INTERVAL_MS 的关系约束（必须满足）**：TTL > 2 × PING_INTERVAL_MS（60s）。
+ * 原因：续租信号挂 event-interpreter pingTick（turn 内每 60s 一次 get_state），setInterval
+ * 首次回调在间隔后（即首次续租最早在 turn-start 后 60s）。若 TTL ≤ 60s，turn 开始后到首次
+ * ping 之间 lease 会先被 reaper（每 5s 扫）释放，广播 session.idle，UI 误显示 idle。
+ *
+ * 取 90s 的余量设计：ping 60s 续租 → 90s TTL 保证首次 ping（最晚 turn-start+60s）前 lease
+ * 不过期（90 > 60），且 ping 偶发失败一次后还有 30s 余量等下次 ping 补续（90 - 60 = 30）。
+ *
+ * 原 30s 是基于「崩溃检测窗口 = TTL = 30s」的设想，但忽略了 ping 首次回调在间隔后（非立即），
+ * 30s < 60s 必然导致正常 turn 内 lease 被 reaper 误释放。详见 P5 spec §3.7 + MAJOR bug 报告。
+ *
+ * env XYZ_AGENT_LEASE_TTL_MS 可覆盖（XYZ_ 前缀已在 ENV_WHITELIST）。覆盖时仍须满足
+ * TTL > 2 × PING_INTERVAL_MS 约束（否则重蹈 30s bug）。
+ */
+const DEFAULT_LEASE_TTL_MS = 90_000
 
 /** 孤儿 pi 的 owner 标识（isGenerating=true 但 lease 已过期，前端显示「Agent 正在处理（无主）」）。 */
 export const ORPHAN_PI_OWNER = '<orphan-pi>'
@@ -40,7 +56,7 @@ export type AcquireResult =
 export const REAPER_INTERVAL_MS = 5_000
 
 export interface LeaseManagerOptions {
-  /** lease TTL（ms），缺省读 env XYZ_AGENT_LEASE_TTL_MS 或 30000。 */
+  /** lease TTL（ms），缺省读 env XYZ_AGENT_LEASE_TTL_MS 或 90000。 */
   ttlMs?: number
 }
 

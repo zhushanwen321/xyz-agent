@@ -209,6 +209,45 @@ describe('LeaseManager（P5 lease 状态机）', () => {
     expect(REAPER_INTERVAL_MS).toBe(5000)
   })
 
+  // TC7d: TTL > 2 × PING_INTERVAL_MS 联调（MAJOR 修复：原 TTL=30s < ping 60s 导致 lease 误释放）
+  // 续租信号挂 event-interpreter pingTick（每 60s 一次），setInterval 首次回调在间隔后
+  // （turn-start+60s 才首次续租）。TTL 必须 > ping 间隔，否则 turn 开始到首次 ping 之间
+  // lease 被 reaper 误释放。default TTL=90s 满足约束（90 > 60）。
+  it('TC7d: default TTL=90s 时 turn 内 advance 到 ping 首次续租前（89s）lease 不过期（MAJOR 修复回归）', () => {
+    const { svc } = mockSvc([mockSession({ id: 's1' })])
+    const broker = mockBroker()
+    // default TTL（不传 ttlMs → 读常量 90_000）
+    const lm = new LeaseManager(svc, broker)
+
+    vi.setSystemTime(1000)
+    lm.acquire('s1', 'clientA', 'Mac') // leaseExpiresAt = 1000 + 90000 = 91000
+    expect(svc.getSession('s1')?.busyOwnerId).toBe('clientA')
+
+    // advance 到 turn-start+89s（ping 首次续租最早在 turn-start+60s，此处 89s < TTL=90s）
+    // 修复前（TTL=30s）：89s 远超 30s，lease 必被 reaper 释放 → busyOwnerId 为空（bug）
+    // 修复后（TTL=90s）：89s < 91s（leaseExpiresAt），lease 仍有效
+    vi.setSystemTime(90000) // advance 89s
+    const expiredAt89s = lm.sweepExpired()
+    expect(expiredAt89s).toEqual([])
+    expect(svc.getSession('s1')?.busyOwnerId).toBe('clientA') // lease 仍持有
+  })
+
+  it('TC7e: default TTL=90s 时 advance 超过 TTL（91s）+ reaper 扫描后 lease 过期释放', () => {
+    const { svc } = mockSvc([mockSession({ id: 's1' })])
+    const broker = mockBroker()
+    const lm = new LeaseManager(svc, broker) // default TTL=90000
+
+    vi.setSystemTime(1000)
+    lm.acquire('s1', 'clientA', 'Mac') // leaseExpiresAt = 91000
+
+    // advance 到 leaseExpiresAt 之后（91001 > 91000）
+    vi.setSystemTime(91001)
+    const expired = lm.sweepExpired()
+
+    expect(expired).toEqual(['s1'])
+    expect(svc.getSession('s1')?.busyOwnerId).toBeUndefined()
+  })
+
   // TC8: getBusySession
   it('TC8: getBusySession 反查 clientId 持有的 session', () => {
     const { svc } = mockSvc([

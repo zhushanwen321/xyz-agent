@@ -25,7 +25,7 @@
 | D1 | **clientId 透传** | P0 的 `ConnectionCallbacks(ws)` 签名扩展为 `(ws, clientId)`；handler ctx 新增 `getClientId()` / `getClient(clientId)` / `broadcastExcept(clientId, msg)` / `sendToClient(clientId, msg)` | P0 D5 保守不动 handler 签名是为降低 P0 风险（避免大面积签名级联）；P5 是第一个真正消费 clientId 的阶段，必须打通透传链。透传链涉及 6 层签名（见 §3.1），但每层都是机械加参数 |
 | D2 | **lease 数据结构** | session 级别：`IManagedSessionView` 新增 `busyOwnerId?: string`（持有 lease 的 clientId）/ `leaseExpiresAt?: number`（unix ms，TTL 到期时间）。无 lease 时两字段 undefined | 字段可选，向后兼容现有消费方（不持 lease 的 session 视图与现状一致）。**审查 M1 修正：不引入 leaseFence**（fence 推迟到真正消费方） |
 | D3 | **【审查 M1 删除】fencing token 推迟** | ~~fencing token~~ **不引入**。P5-P7 无任何 fence 消费方（P6 config CAS 用独立 version 字段，不用 fence）。按 YAGNI，fence 推迟到未来真正需要「跨客户端严格因果序」或「带版本校验的写入保护」时再设计 | feature-map §4.2 原文「seq 不能复用为 fencing token，P5 需独立设计」——审查发现这是「为可能的未来铺路」，但 P5-P7 都不做因果序，fence 建了无人用。推迟到真有消费方时再设计，避免引入无人使用的复杂度（单调计数器、字段、协议扩展、客户端持久化预期）。feature-map §十二.5 的长期方案标注「fence 推迟」 |
-| D4 | **lease TTL 与续租** | **TTL = 30s**（`XYZ_AGENT_LEASE_TTL_MS`，default 30000）；**续租信号 = ADR-0035 ping loop 的 pingTick 成功路径**（turn 内每 60s 一次 `get_state`，成功 → `renew(sessionId)`，续 30s）；token delta / tool-call-start/end 这些更细粒度事件**不挂续租**（避免 event-interpreter 改动面过大） | 30s TTL 比 turn 内 60s ping 间隔短——是有意的：若 ping 失败一次（60s 内没有任何成功 ping），lease 已过期，runtime 自动释放，其他客户端可抢占。这是「崩溃检测窗口 = TTL = 30s」的设计意图，ping 间隔 60s 是健康探测，TTL 30s 是 lease 寿命，两者解耦。续租挂 ping 不挂 token delta：token delta 高频（每秒多次）会浪费 renew 调用；ping 60s 一次 + 30s TTL 已足够区分「正常 turn」与「客户端失联」 |
+| D4 | **lease TTL 与续租** | **TTL = 90s**（`XYZ_AGENT_LEASE_TTL_MS`，default 90000）；**续租信号 = ADR-0035 ping loop 的 pingTick 成功路径**（turn 内每 60s 一次 `get_state`，成功 → `renew(sessionId)`，续 90s）；token delta / tool-call-start/end 这些更细粒度事件**不挂续租**（避免 event-interpreter 改动面过大） | **TTL 必须 > 2 × PING_INTERVAL_MS（60s）**：setInterval 首次回调在间隔后（非立即），首次续租最早在 turn-start+60s。若 TTL ≤ 60s，turn 开始后到首次 ping 之间 lease 会被 reaper 误释放。取 90s 余量：首次 ping（最晚 turn-start+60s）前 lease 不过期（90>60），且 ping 偶发失败一次后还有 30s 余量等下次 ping 补续（90-60=30）。原 30s 基于「崩溃检测窗口 = TTL = 30s」设想，忽略了 ping 首次回调在间隔后——30s<60s 必然导致正常 turn 内 lease 被 reaper 误释放（MAJOR bug，已修）。详见 §3.7。续租挂 ping 不挂 token delta：token delta 高频（每秒多次）会浪费 renew 调用；ping 60s 一次 + 90s TTL 已足够区分「正常 turn」与「客户端失联」 |
 | D5 | **lease 获取语义** | **隐式 acquire**：客户端发 `message.send`（pi prompt），message-dispatcher 检查 `activeSession.busyOwnerId`：① 无 owner → 当前客户端自动 acquire lease（设 busyOwnerId/leaseExpiresAt）→ 继续 sendPrompt；② 有 owner 且 ≠ 当前 clientId → reject（D6）；③ 有 owner 且 = 当前 clientId（同客户端重复发，如 follow_up）→ renew 后继续 | 不引入显式 `lease.acquire` RPC——pi 操作是隐式互斥的自然时机，多一个 RPC 反而增加客户端复杂度。隐式 acquire 把 lease 与 sendPrompt 原子绑定，语义干净 |
 | D6 | **busy 拒绝语义（投递语义变更）** | 客户端 B 发消息，session 已被 A 持有 → **只对 B 定向 reply** `send.rejected { sessionId, reason:'busy', busyOwnerId:A, busyOwnerDevice:'Mac', leaseExpiresAt:T }`；**同时广播** `session.busy { sessionId, clientId:A, deviceName:'Mac', expiresAt:T }` 给所有客户端 | **【审查 C4 修正】现状 send.rejected 是 `broker.broadcast`（message-dispatcher.ts:95-98），P5 改为 `ctx.reply` 只发发起方——这是投递语义变更（广播→点对点），需在 protocol.ts 注释更新**。send.rejected 扩展 busyOwnerId/busyOwnerDevice/leaseExpiresAt 让 B 的 UI 显示「Mac 正在占用，剩余 X 秒」。session.busy 是新增广播类型让其他客户端更新 presence UI。**send.rejected 用判别联合**：`reason==='busy'` 时必有 busyOwnerId/busyOwnerDevice/leaseExpiresAt（非全可选，避免类型歧义） |
 | D7 | **lease 释放** | 四路径释放：① **turn-end 正常释放**（event-interpreter `agent_end` / `turn_end` → release，reason 'turn_end'）；② **TTL 超时自动释放**（reaper 定时器每 5s 扫描 `leaseExpiresAt < now` 的 session，release + 广播 `session.idle { sessionId, reason:'lease_expired' }`）；③ **abort 释放**（任一客户端发 `message.abort`，message-dispatcher abort 路径 :161-194 补 release，reason 'aborted'）；④ **【审查 M3 新增】sendPrompt 失败释放**（message-dispatcher :118-128 catch 块【R3-m3 行号修正】，补 `leaseManager.release(sessionId, 'send_failed')`，reason 'send_failed'）。**release 广播 `session.idle { sessionId, reason }`** | 四路径覆盖所有 lease 终结场景，含 acquire 后 sendPrompt 失败（M3 修复：避免失败后 lease 持有 30s 锁死 session）。reaper 5s 扫描间隔决定「TTL 过期后多久被清理」（最多 5s 延迟），可接受 |
@@ -167,7 +167,7 @@ P0 D5 保守保留 `ConnectionCallbacks(ws)` 签名。P5 扩展为 `(ws, clientI
 
 ```ts
 class LeaseManager {
-  private readonly ttlMs: number  // D4 30000
+  private readonly ttlMs: number  // D4 90000（TTL > 2 × PING_INTERVAL_MS，见 §3.7）
 
   acquire(sessionId: string, clientId: string, deviceName: string): Lease {
     const session = sessionService.getSession(sessionId)
@@ -236,8 +236,11 @@ if (lease.kind === 'busy') {
     sessionId, reason: 'busy', message: `${lease.owner === clientId ? '本设备' : '其他设备'}正在处理`,
     busyOwnerId: lease.owner, busyOwnerDevice: ..., leaseExpiresAt: lease.expiresAt,
   })
-  // D6：广播 session.busy 让其他客户端更新 presence UI（排除发起方，发起方已 reply）
-  ctx.broadcastExcept(clientId, { type: 'session.busy', payload: { sessionId, clientId: lease.owner, deviceName: ..., expiresAt: lease.expiresAt } })
+  // D6：广播 session.busy 让其他客户端更新 presence UI。
+  // **【文档修正】用 broker.broadcast（非 broadcastExcept）**：session.busy 是 session 级可靠消息，
+  // 入 P2 ring buffer 桶（断线重连回放覆盖，§五）。发起方同时收到 send.rejected（reply）+
+  // session.busy（broadcast）冗余但无害（前端两路各自消费，无重复副作用）。dispatcher 实现已有注释。
+  this.broker.broadcast({ type: 'session.busy', payload: { sessionId, clientId: lease.owner, deviceName: ..., expiresAt: lease.expiresAt } })
   return { blocked: true, rejected: true }
 }
 // lease acquired/renewed → 继续 sendPrompt
@@ -310,7 +313,9 @@ runtime 重启后所有内存态归零（lease、presence、activeSessions Map�
 
 ### 3.7 【R4-m5】审批挂起期间 lease 不过期（交叉声明）
 
-P3 D2（审批无限期挂起）+ P5 D4（lease TTL 30s + ping 续租）表面看冲突，但实际兼容：pi 等审批时 ping loop 持续（P3 D6 确认 ping 在审批挂起时穿透）→ leaseManager.renew 持续被调 → lease 持续续租 → 不会因审批等待过期。**此处显式声明此边界保证**（P3/P5 分散的事实集中说明）。
+P3 D2（审批无限期挂起）+ P5 D4（lease TTL 90s + ping 续租）表面看冲突，但实际兼容：pi 等审批时 ping loop 持续（P3 D6 确认 ping 在审批挂起时穿透）→ leaseManager.renew 持续被调 → lease 持续续租 → 不会因审批等待过期。**此处显式声明此边界保证**（P3/P5 分散的事实集中说明）。
+>
+> **TTL 与 ping 间隔的约束（MAJOR 修复）**：TTL 必须 > 2 × PING_INTERVAL_MS（60s）。setInterval 首次回调在间隔后，首次续租最早在 turn-start+60s。若 TTL ≤ 60s，turn 开始到首次 ping 之间 lease 会被 reaper 误释放。90s TTL 满足约束（90>60）且留 30s 失败余量。原 30s 违反此约束（30<60），正常 turn 内 lease 必掉，已修为 90s（见 D4）。
 
 ### 3.5 【审查 M1 删除】客户端 fence 持久化
 
@@ -376,7 +381,7 @@ lease 相关消息（`session.busy`/`session.idle`/`presence.update`）**打 seq
 
 | feature-map §8.4 P1 原文要求 | 本设计落点 |
 |---|---|
-| 升级为带 TTL 的租约锁 | D4 TTL=30s + D7 reaper 5s 扫描 |
+| 升级为带 TTL 的租约锁 | D4 TTL=90s（TTL > 2×ping 间隔，见 §3.7）+ D7 reaper 5s 扫描 |
 | ~~fencing token~~ | **【审查 M1】推迟到真正消费方，P5 不引入 fence** |
 | `session.lease = { owner, fence, ttl, renewedAt }` | D2 IManagedSessionView 字段（`busyOwnerId/leaseExpiresAt`，**无 leaseFence**） |
 | 广播 `session.busy { sessionId, clientId, deviceName }` | D6 + 二.2 协议（**无 fence 字段**） |
@@ -402,7 +407,7 @@ lease 相关消息（`session.busy`/`session.idle`/`presence.update`）**打 seq
 | broker 定向 API | message-broker 测试扩展 | sendToClient/broadcastExcept 行为；排除自己/排除不存在的 clientId |
 | lease acquire/renew/release | lease-manager 单测 | acquire 冲突返回 busy；renew 只传 sessionId（busyOwnerId 反查）；release 清 busyOwnerId/leaseExpiresAt |
 | lease TTL 过期 | lease-manager 测试 + vi.useFakeTimers | advance 31s → sweepExpired 返回该 session；advance 29s → 不释放 |
-| message-dispatcher busy 拒绝 | message-dispatcher 测试扩展 | A 持有 lease，B 发消息：B 收到 reply send.rejected（含 busyOwnerId）；其他客户端收到 session.busy 广播；A 不收到 send.rejected（D6 排除发起方） |
+| message-dispatcher busy 拒绝 | message-dispatcher 测试扩展 | A 持有 lease，B 发消息：B 收到 reply send.rejected（含 busyOwnerId）；所有客户端（含 B）收到 session.busy 广播（走 broker.broadcast 入 P2 桶可靠投递，§3.3）；A 不收到 send.rejected（send.rejected 是发起方 B 专属 reply，§2.2 R1-M3） |
 | presence 推送 | connection-manager + presence 测试 | 连接上线/下线/切换 active 触发 presence.update 全量推送；auth.ok 含 presence 字段 |
 | 续租挂 ping loop | event-interpreter 测试扩展 | mock pingTick 成功 → leaseManager.renew 被调；pingTick 失败 → 不续租（lease 自然过期） |
 | turn-end 释放 | event-interpreter 测试扩展 | agent_end → leaseManager.release('turn_end') 被调 |
@@ -418,5 +423,5 @@ lease 相关消息（`session.busy`/`session.idle`/`presence.update`）**打 seq
 2. **【审查 M3 已决】lease acquire 失败路径 release**：sendPrompt catch 块（message-dispatcher :118-128【R3-m3】）补 `leaseManager.release(sessionId, 'send_failed')`。lease 与 isGenerating 的关系：保持双字段独立——isGenerating 是 turn 进行态，busyOwnerId 是 lease 持有态。acquire 后 sendPrompt 失败时 isGenerating=false + lease 立即释放（M3 修复），不再出现「锁死 30s」场景。
 3. **【审查 M4 已决】renew clientId 来源**：renew(sessionId) 只传 sessionId，内部从 session.busyOwnerId 反查。busyOwnerId 为空时 return false（防误续）。
 4. **`session.setActive` RPC 必要性**：presence.update 的 activeSessionId 字段需要客户端主动上报。保留 session.setActive RPC（轻量，语义清晰）——替代方案「runtime 从 send.rejected 推断」只能知道正在操作的 session，不知道正在查看但未操作的 session。
-5. **reaper 5s 间隔 vs TTL 30s 的延迟**：lease 过期后最多 5s 才被 reaper 清理。若 5s 内原 owner 重连，会发现自己的 lease 已被释放——这是设计意图（崩溃检测窗口 30s + 清理延迟 5s）。原 owner 重连后重新 acquire 即可（D5 隐式 acquire）。
+5. **reaper 5s 间隔 vs TTL 90s 的延迟**：lease 过期后最多 5s 才被 reaper 清理。若 5s 内原 owner 重连，会发现自己的 lease 已被释放——崩溃检测窗口 = TTL（90s）+ 清理延迟 5s。原 owner 重连后重新 acquire 即可（D5 隐式 acquire）。TTL=90s 是为满足「TTL > 2×ping 间隔」约束（§3.7），非崩溃检测窗口本身——崩溃检测窗口随 TTL 变长，但 pi 卡死场景由 ADR-0035 ping 连续 3 次失败（180s）触发 abort 兜底，与 lease TTL 解耦。
 6. **presence 全量推送的频率**：每次连接上下线/切 session/lease 变化都全量推。单用户自托管连接数 ≤10，全量 payload < 2KB，可接受。未来多用户再改增量 diff。

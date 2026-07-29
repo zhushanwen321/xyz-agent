@@ -166,8 +166,8 @@ describe('ServerMessageBroker 分桶 + 回放（P2-s1-w2）', () => {
     expect(bufA.size).toBe(3)
     // watermark 推进到被驱逐的 seq=1
     expect(broker.getEvictedWatermark()).toBe(1)
-    // bytes 已扣减驱逐条（= 剩 3 条长度之和）
-    const expectedBytes = bufA.entries.reduce((sum, e) => sum + e.data.length, 0)
+    // bytes 已扣减驱逐条（= 剩 3 条 Buffer.byteLength 之和；ASCII 内容 byteLength === length）
+    const expectedBytes = bufA.entries.reduce((sum, e) => sum + Buffer.byteLength(e.data, 'utf8'), 0)
     expect(bufA.bytes).toBe(expectedBytes)
   })
 
@@ -222,6 +222,48 @@ describe('ServerMessageBroker 分桶 + 回放（P2-s1-w2）', () => {
     const bufA2 = broker.getSessionBuffer('A')!
     expect(bufA2).toBeDefined()
     expect(bufA2.size).toBe(1)
+  })
+
+  // ── TC-W2.5b: 巨消息豁免用真实 UTF-8 字节口径（非 .length）──────────────
+
+  it('TC-W2.5b: 巨消息豁免按 Buffer.byteLength 判定，CJK/emoji 内容不因 .length 偏松误入桶', async () => {
+    // 构造一条含 CJK 的消息：.length 较小但 UTF-8 字节 > maxBytes。
+    // maxBytes=120：CJK 巨消息的 .length 可能 <= 120 但 byteLength > 120 → 应被豁免（修复后）。
+    // 修复前（payload.length 判定）：CJK 消息 .length <= 120 会误入桶，内存上限语义偏松。
+    vi.stubEnv('XYZ_AGENT_REPLAY_MAX_BYTES_PER_SESSION', '120')
+    const { ServerMessageBroker } = await import('../message-broker.js')
+    const ws = makeMockWs()
+    const broker = new ServerMessageBroker(singlePool(ws), mockServices)
+
+    // 50 个中文字符「你好」（重复）：.length≈100（含 envelope），但 UTF-8 字节 ≈ 200+。
+    // '你好'.repeat(50) = 100 个 code unit，envelope 约 +77 → .length ≈ 177 > 120（此例 .length 也超）。
+    // 改用更精准的对照：25 个「你好」= 50 code unit，envelope ~77 → .length ≈ 127 > 120，
+    // 但 byteLength 中 50 个中文 = 150 字节 + envelope ASCII ~77 = 227 字节。
+    const cjkBig = sessionMsg('message.text_delta', 'A', { text: '你好'.repeat(25) })
+    const cjkBigStr = JSON.stringify({ ...cjkBig, seq: 1 })
+    // 确认 byteLength > 120（真实字节超限），且确认 byteLength !== .length（CJK 偏差存在）
+    expect(Buffer.byteLength(cjkBigStr, 'utf8')).toBeGreaterThan(120)
+    expect(Buffer.byteLength(cjkBigStr, 'utf8')).toBeGreaterThan(cjkBigStr.length)
+
+    broker.broadcast(cjkBig)
+    // 巨消息（byteLength > maxBytes）不入桶
+    expect(broker.getSessionBuffer('A')).toBeUndefined()
+    // ws.send 仍发出（广播不受影响）
+    expect(sentMessages(ws)).toHaveLength(1)
+  })
+
+  it('TC-W2.5c: 入桶后 buf.bytes 按真实 UTF-8 字节累加（CJK「你好」入桶 bytes=6 非 2）', async () => {
+    const { ServerMessageBroker } = await import('../message-broker.js')
+    const ws = makeMockWs()
+    const broker = new ServerMessageBroker(singlePool(ws), mockServices)
+
+    broker.broadcast(sessionMsg('message.text_delta', 'A', { text: '你好' }))
+    const bufA = broker.getSessionBuffer('A')!
+    // 整条 envelope 的 byteLength（含 CJK payload）
+    const entry = bufA.entries[0]
+    expect(bufA.bytes).toBe(Buffer.byteLength(entry.data, 'utf8'))
+    // bytes 严格大于 data.length（CJK 让 byteLength > code unit count）
+    expect(bufA.bytes).toBeGreaterThan(entry.data.length)
   })
 
   // ── TC-W2.6: terminal.data 打 seq 但不入 session 桶 ──────────────
