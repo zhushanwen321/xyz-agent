@@ -10,7 +10,6 @@ interface MessageStreamScrollDeps {
    */
   lastRenderTurn: ComputedRef<{ isStreaming: boolean } | null>
   isCompacting: ComputedRef<boolean>
-  isHandingOff: ComputedRef<boolean>
   /**
    * session 级「对话进行中」信号（含 ask-user waiting / subagent working 等非 streaming 态）。
    * 驱动完成滚动 watch：true→false（对话真正结束）时触发一次 scrollToBottom。
@@ -32,7 +31,7 @@ interface MessageStreamScrollDeps {
  * useMessageStreamScroll —— MessageStream 的滚动触发编排（消息/notice 变化 → follow 到底）。
  *
  * 从 MessageStream.vue 拆出（vue_rules_checker.py 的 script setup ≤300 行规范）。
- * 聚合四类触发滚动：消息条数变化、流式文本追加、notice（压缩中/正在交接）显隐、对话完成。
+ * 聚合四类触发滚动：消息条数变化、流式文本追加、notice（压缩中）显隐、对话完成。
  * 挂载时初始滚到底 + 切换 session 的滚动不在本 composable（后者涉及 vlistRef + session :key 重建）。
  *
  * 受 stickToBottom guard 保护（scrollToBottom 默认 force=false）：用户上滑脱离锚定时不强行拉回。
@@ -68,13 +67,13 @@ export function useMessageStreamScroll(deps: MessageStreamScrollDeps): void {
     },
   )
 
-  // notice（压缩中/正在交接）显隐时滚动到底：notice 是 absolute 定位的非消息元素，
+  // notice（压缩中）显隐时滚动到底：notice 是 absolute 定位的非消息元素，
   // 不触发 messages.length / content.length / ResizeObserver 三个既有滚动源。
-  // 显隐由 store 状态（isCompacting/isHandingOff）驱动，此处监听状态变化主动滚。
+  // 显隐由 store 状态（isCompacting）驱动，此处监听状态变化主动滚。
   // 受 stickToBottom guard 保护（scrollToBottom 默认 force=false）：用户上滑脱离锚定时不强行拉回，
   // 与现有流式滚动（上方 watch）语义一致。
   watch(
-    () => deps.isCompacting.value || deps.isHandingOff.value,
+    () => deps.isCompacting.value,
     (show) => {
       if (show) deps.scrollToBottom()
     },

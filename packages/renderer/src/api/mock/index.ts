@@ -375,6 +375,21 @@ export const session = {
   async abortHandoff(_sessionId: string): Promise<void> {
     await sleep(TIMING.ack)
   },
+
+  /**
+   * Mock subscribe（runtime-message-bus wave:renderer-subscribe）：与 real session.subscribe 同接口。
+   * mock 模式无真实 bus ring，返回空 snapshot + stateSnapshot + lastSeq=0（无历史可回放）。
+   * 不抛错——保持与 real domain 签名同构（facade 三元要求），renderer 的 reconcile 路径在 mock 下走空 snapshot + stateSnapshot。
+   */
+  async subscribe(_sessionId: string, _fromSeq?: number): Promise<{ snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; lastSeq: number; gap?: boolean }> {
+    await sleep(TIMING.ack)
+    return { snapshot: [], stateSnapshot: [], lastSeq: 0 }
+  },
+
+  /** Mock unsubscribe（对称 subscribe，ack 型 stub resolve 即可） */
+  async unsubscribe(_sessionId: string): Promise<void> {
+    await sleep(TIMING.ack)
+  },
 }
 
 /**

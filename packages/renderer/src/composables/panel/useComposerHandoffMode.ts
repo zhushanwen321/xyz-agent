@@ -17,8 +17,11 @@
  */
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Upload } from '@lucide/vue'
 import { useToast } from '@/composables/useToast'
+import { useChatStore } from '@/stores/chat'
 import { useHandoffModeChannel } from '@/composables/panel/useHandoffModeChannel'
+import type { StagingAction } from '@/composables/panel/staging-types'
 import type ComposerInput from '@/components/panel/ComposerInput.vue'
 
 /** useComposerHandoffMode 返回类型（从函数内联类型提取为命名 interface，便于复用 + 阅读） */
@@ -36,6 +39,11 @@ export interface ComposerHandoffModeReturn {
   handleHandoffEsc: (e: KeyboardEvent) => boolean
   /** handoff 模式发送：调 handoff(srcId, text) + exitHandoffMode，返回 true 表示已消费；否则返回 false */
   handleHandoffSend: (text: string) => Promise<boolean>
+  /**
+   * 包装成 StagingAction（handoff 实现），供 useComposerStaging 注册消费。
+   * 不改变现有 handoffMode/enterHandoffMode 等 expose 契约（仅追加 adapter，对齐 ADR-0044）。
+   */
+  asStagingAction: () => StagingAction
 }
 
 /** handoff 发送副作用依赖（由 Composer 注入，避免重复持有 draft/isSending 真源） */
@@ -50,8 +58,16 @@ interface HandoffDeps {
   restoreInput: (text: string) => void
   /** 互斥：进入 handoff 模式时退出 fork 模式（forkSource 残留指向错误 session） */
   exitForkMode: () => void
-  /** handoff 编排（features 层跨 api + stores）：handleHandoffSend 调用触发 /skill:handoff */
-  handoff: (srcSessionId: string, reply?: string) => Promise<void>
+  /** handoff 编排（features 层跨 api + stores）：handleHandoffSend 调用触发 handoff（runtime agent-driven） */
+  handoff: (srcSessionId: string, reply?: string, staging?: { modelOverride?: string; thinkingOverride?: string }) => Promise<void>
+  /** 取消进行中的 handoff（与 handoff 对称注入，来自 useHandoffActions）：StagingAction.abort 委托 */
+  abortHandoff: (sessionId: string) => Promise<void>
+  /** Staging Mode（ADR-0043）：进入暂存态（快照模型/thinking） */
+  enterStagingMode: () => void
+  /** Staging Mode：退出暂存态（清空快照，恢复常规态） */
+  exitStagingMode: () => void
+  /** Staging Mode：获取暂存配置（供 handoff 发送时透传给新 session） */
+  getStagingConfig: () => { modelOverride?: string; thinkingOverride?: string }
 }
 
 /**
@@ -64,8 +80,11 @@ export function useComposerHandoffMode(
 ): ComposerHandoffModeReturn {
   const { t } = useI18n()
   const { error: toastError } = useToast()
+  const chat = useChatStore()
   // handoff 编排经 deps 注入（Composer 从 useSidebar 取，避免本 composable 重复实例化 useSidebar）。
   const handoffAction = deps.handoff
+  // 取消进行中的 handoff 同样经 deps 注入（与 handoff 对称，来自 useHandoffActions）。
+  const abortHandoffAction = deps.abortHandoff
 
   /** handoff 模式开关：true 时 composer 顶部显 mode-chip + 视觉，发送走 handoff */
   const handoffMode = ref(false)
@@ -75,6 +94,8 @@ export function useComposerHandoffMode(
   function enterHandoffMode(srcSessionId: string): void {
     // 互斥：进 handoff 前退出 fork 模式（避免 forkSource 残留 + 两个模式同时活跃）
     deps.exitForkMode()
+    // Staging Mode（ADR-0043）：快照当前模型/thinking，进入暂存态
+    deps.enterStagingMode()
     handoffSource.value = { srcSessionId }
     handoffMode.value = true
     // 聚焦输入框，让用户立即键入 focus 备注
@@ -84,6 +105,8 @@ export function useComposerHandoffMode(
   function exitHandoffMode(): void {
     handoffMode.value = false
     handoffSource.value = null
+    // Staging Mode：退出暂存态，chip 恢复读源 session 模型
+    deps.exitStagingMode()
   }
 
   // 跨组件触发通道：Sidebar 全局快捷键（⌘J → enterHandoffModeFromLastAssistant）经 signal
@@ -120,8 +143,8 @@ export function useComposerHandoffMode(
   }
 
   /**
-   * handoff 模式发送：调 handoff(srcSessionId, text)（pi 跑 /skill:handoff 打包末条 assistant 文档到新 session）。
-   * reply=text 拼到 /skill:handoff 后作 args（用户备注）。
+   * handoff 模式发送：调 handoff(srcSessionId, text)（runtime 让源 session 跑 handoff turn 提取末条 assistant 文档到新 session）。
+   * reply=text sanitize 后拼到 handoff prompt 末尾告知 agent 下一 session 关注点（用户备注）。
    * 成功后退出 handoff 模式（等 session.handoffComplete 广播跳转）；
    * 失败时 restoreInput 保草稿 + toast 反馈。
    * @param text 当前 draft（作 handoff reply 备注）
@@ -130,12 +153,14 @@ export function useComposerHandoffMode(
   async function handleHandoffSend(text: string): Promise<boolean> {
     if (!handoffMode.value || !handoffSource.value) return false
     const { srcSessionId } = handoffSource.value
-    // reply 备注可选：空文本也允许（pi 跑 /skill:handoff 无 args）。空则 undefined 不传 reply。
+    // reply 备注可选：空文本也允许（runtime handoff turn 无 reply 时只发 template）。空则 undefined 不传 reply。
     const reply = text.trim() || undefined
     deps.clearInput()
     deps.setSending(true)
     try {
-      await handoffAction(srcSessionId, reply)
+      // Staging Mode（ADR-0043）：透传暂存的模型/thinking 配置给新 session
+      const staging = deps.getStagingConfig()
+      await handoffAction(srcSessionId, reply, staging)
     } catch (e) {
       // handoff 触发失败 → restoreInput 保草稿（与 fork handleForkSend 对称）
       deps.restoreInput(text)
@@ -143,6 +168,9 @@ export function useComposerHandoffMode(
       toastError(t('panel.message.handoffFailed', { error: msg }))
     } finally {
       deps.setSending(false)
+      // 设计选择（与 fork handleForkSend 对称）：失败时也 exitHandoffMode。
+      // 用户丢失 staging context（model override chip 消失），但保持行为一致——
+      // fork 失败同样 exitForkMode，避免残留在错误 staging 态。用户可重新进入 handoff 模式。
       exitHandoffMode()
     }
     return true
@@ -158,6 +186,46 @@ export function useComposerHandoffMode(
     },
   }
 
+  /**
+   * 包装成 StagingAction（handoff 实现，ADR-0044）。
+   *
+   * adapter 层：把 handoffMode/enterHandoffMode/exitHandoffMode/handleHandoffSend/
+   * handleHandoffEsc/handoffBoxClass/handoffPlaceholder 收敛为单一策略对象，
+   * 供 useComposerStaging 聚合路由。与 fork 差异：handoff 有 B 阶段（isInProgress + abort）。
+   */
+  function asStagingAction(): StagingAction {
+    return {
+      type: 'handoff',
+      isActive: computed(() => handoffMode.value),
+      enter: (source) => {
+        // source 实际是 HandoffSource（仅 srcSessionId），由 useComposerStaging.enter('handoff', source) 调用方保证。
+        enterHandoffMode((source as { srcSessionId: string }).srcSessionId)
+      },
+      exit: () => exitHandoffMode(),
+      /**
+       * send 直接调 handleHandoffSend(text)，忽略传入的 staging 参数。
+       * 原因：handleHandoffSend 内部已调 deps.getStagingConfig() 取模型/thinking 快照配置，
+       * 其数据源与 useComposerModelThinking.getStagingConfig 相同，外部传参与内部自取等价
+       * （与 fork 的 asStagingAction.send 对称）。
+       */
+      send: async (text) => { await handleHandoffSend(text) },
+      allowsEmptySend: true,
+      handleEsc: handleHandoffEsc,
+      // handoff turn 在源 session 跑，isInProgress 读 chatStore.isHandingOff(srcSessionId)。
+      // 仅在 handoffSource 有值时读（避免 landing/未进入态误判）。
+      isInProgress: computed(() =>
+        handoffSource.value ? chat.isHandingOff(handoffSource.value.srcSessionId) : false,
+      ),
+      abort: abortHandoffAction,
+      visual: {
+        boxClass: handoffBoxClass,
+        placeholder: handoffPlaceholder,
+        chipLabelKey: 'panel.composer.handoffChip',
+        chipIcon: Upload,
+      },
+    }
+  }
+
   return {
     handoffMode,
     handoffModeRef,
@@ -167,5 +235,6 @@ export function useComposerHandoffMode(
     handoffPlaceholder,
     handleHandoffEsc,
     handleHandoffSend,
+    asStagingAction,
   }
 }
