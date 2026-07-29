@@ -242,8 +242,6 @@ export class RuntimeServer implements IMessageBroker {
       sessionService: this.sessionService,
       extensionService: this.extensionService,
       extensionTimeoutMgr: this.extensionTimeoutMgr,
-      broadcast: (msg) => this.broker.broadcast(msg),
-      nextPushId: () => this.broker.nextPushId(),
     })
     this.pluginMessageHandler = new PluginMessageHandler({
       ...messaging,
@@ -386,11 +384,11 @@ export class RuntimeServer implements IMessageBroker {
   // ── Extension timeout delegation ─────────────────────────────────
 
   registerExtensionTimeout(sessionId: string, requestId: string, method: string, payload: Record<string, unknown>): void {
-    // 只注册 timer + 委托：超时后的扩展响应编排（默认值 / RPC / 广播）已下沉到
-    // extensionHandler.handleExtensionTimeout，不再让 transport 层承载扩展响应业务逻辑。
-    this.extensionTimeoutMgr.registerTimeout(sessionId, requestId, method, () => {
-      this.extensionHandler.handleExtensionTimeout(sessionId, requestId, method)
-    })
+    // 注册 session-scoped 请求跟踪 + 缓存 pending 请求。
+    // [2026-07-28] 交互式 method 不再超时（block 等待用户决策），registerTimeout 的 onTimeout
+    // 回调已为 dead 占位（永不被调用），故此处不再传业务回调。超时编排链（handleExtensionTimeout
+    // / markTimedOut / ui_timeout 广播）已随 ExtensionTimeoutManager 死代码清理统一移除。
+    this.extensionTimeoutMgr.registerTimeout(sessionId, requestId, method, () => {})
     // 缓存 pending 请求（ask-user 等阻塞式请求），session 重新激活时推送
     this.extensionTimeoutMgr.cachePendingRequest(sessionId, requestId, method, payload)
   }

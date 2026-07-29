@@ -183,6 +183,8 @@ describe('FileEndpoint wave2 (TC1: HMAC round-trip via real HTTP)', () => {
     expect(res.statusCode).toBe(200)
     expect(res.headers['content-type']).toBe('image/png')
     expect(res.body).toEqual(pngBytes)
+    // Cache-Control 与签名 TTL 一致（300s）+ private（禁共享代理缓存含签名 URL 的响应）
+    expect(res.headers['cache-control']).toBe('private, max-age=300')
   })
 })
 

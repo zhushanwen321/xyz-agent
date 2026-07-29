@@ -3,9 +3,16 @@
  * verify-pi-decouple.cjs — P3 pi 与连接生命周期解耦端到端验证（spec §六，AGENTS 规则 #4）。
  *
  * 真起 runtime 子进程，覆盖 P3 解耦语义两场景（spec §三表 + P3-s2 split w2）：
- *   V1: 断线 → turn 期间断开 → 重连带 lastSeq 回放链路连通（pi 存活，事件入 buffer）
+ *   V1: 断线 → 重连带 lastSeq 回放链路连通性（仅验回放链路连通，非完整端到端）。
+ *       降级原因：完整的「断线期间事件入 buffer + 重连回放完整 turn」需真 pi 推消息（超本脚本范围）。
+ *       端到端契约（pi 存活 + buffer 入队）固化在 vitest AC5（session-service.decouple.test.ts），
+ *       本脚本 V1 只验 auth.ok 含 ReplayMeta 的回放链路连通性（对齐 verify-replay R1）。
  *   V2: 审批挂起 → 客户端断开 → 冷启动新客户端 → sendInitialState 含
- *       extension.pendingRequestsBatch 段（审批唤醒补发通路）
+ *       extension.pendingRequestsBatch 段（审批唤醒补发通路，验冷启动 pending 补发）
+ *
+ * 语义诚实性（2026-07-28）：V1 是 spec 已知降级——真 pi 推消息的端到端契约在 vitest AC5，
+ *   本脚本 V1 不模拟该路径，仅固化「重连 auth 握手 + ReplayMeta 透传」连通性。
+ *   V2 验冷启动 pendingRequestsBatch 补发通路（runtime 端可独立完成，无需真 pi 推审批）。
  *
  * 用法：node tools/verify-pi-decouple.cjs
  * 退出码：

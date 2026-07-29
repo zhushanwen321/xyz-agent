@@ -279,7 +279,13 @@ export function createFileEndpoint(opts: FileEndpointOptions): FileEndpoint {
       //    （TOCTOU）或 IO 错误；headers 未发则 500，已发则 res.destroy 终止（防 uncaught throw）。
       //    注：Content-Length 已据 stat 写入，流中途错误会导致 body 与长度不符——destroy 让
       //    客户端收截断响应，比无监听（流静默失败）更安全可观测。
-      res.writeHead(HTTP_OK, { 'Content-Type': mime, 'Content-Length': st.size })
+      //    Cache-Control: private（禁止共享代理/CDN 缓存含签名 URL 的响应）+ max-age 与签名 TTL
+      //    一致（300s）——签名过期后旧缓存命中会 410，故缓存生命周期不得长于签名 TTL。
+      res.writeHead(HTTP_OK, {
+        'Content-Type': mime,
+        'Content-Length': st.size,
+        'Cache-Control': `private, max-age=${SIGN_URL_TTL_SEC}`,
+      })
       const stream = createReadStream(real)
       stream.on('error', (err: NodeJS.ErrnoException) => {
         console.error('[runtime] /file stream error:', err)

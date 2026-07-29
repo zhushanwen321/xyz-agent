@@ -47,6 +47,11 @@ export interface KeyedMutex {
    * @returns fn 的返回值
    */
   run<T>(key: string, fn: () => Promise<T>, timeoutMs?: number): Promise<T>
+  /**
+   * 测试钩子：暴露内部 chains Map 供泄漏测试断言（`chains.get(key) === undefined` 等）。
+   * 非公共 API，仅用于单测验证「无排队时 Map 自动清理」不变量；生产代码不应调用。
+   */
+  readonly _chainsForTest: Map<string, MutexChain>
 }
 
 /** 内部：每个 key 的 chain 尾部 promise（下一个 run 要 await 的）。 */
@@ -86,12 +91,16 @@ export function createKeyedMutex(): KeyedMutex {
       // fn 执行阶段：prev 已完成（chain 轮到当前），执行 fn。fn 的 reject 原样传播（不吞错）。
       return await fn()
     } finally {
-      // resolveChain 推进 chain（无论 fn resolve/reject，下一个排队者不再 await 已完成的 prev）。
+      // resolveChain 推进 chain（无论 fn resolve/reject/超时，下一个排队者不再 await 已完成的 prev）。
       resolveChain!()
       // 清理：若当前 chain 还是 next（无人排队），删 key 防泄漏。
+      // 若已有下一个排队者写入 next2，chains.get(key).promise === next2 ≠ next，此处不删——
+      // 但 Map 持有的是 next2（不是 next），next 仅有本 run 引用，resolve 后即可 GC，不泄漏。
+      // 关键不变量：Map 永远只持有「最新尾部 promise」（最后一个排队者的 next），
+      // 该尾部最终由其 owner run 的 finally 清理（owner 完成时再次 === 判断命中 delete）。
       if (chains.get(key)?.promise === next) chains.delete(key)
     }
   }
 
-  return { run }
+  return { run, _chainsForTest: chains }
 }

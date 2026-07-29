@@ -121,4 +121,25 @@ describe('createKeyedMutex (P6 D1)', () => {
     await expect(p1).resolves.toBe('done1')
     await expect(p2).resolves.toBe('done2')
   })
+
+  it('TC6: run 超时且无后续排队时，内部 chains Map 清理该 key（无泄漏）', async () => {
+    // 覆盖超时后的清理路径：fn1 长占 key，fn2 排队超时（无 fn3 接力）。
+    // fn2 的 finally 应判 chains.get(key)?.promise === fn2.next 命中并 delete，否则 Map 残留泄漏。
+    const mutex = createKeyedMutex()
+    // _chainsForTest 是测试钩子，暴露内部 chains Map 供泄漏断言（生产代码不应依赖）
+    const chains = mutex._chainsForTest
+
+    // fn1 占用 key 200ms，fn2 排队 timeout=20ms 必超时（fn1 尚未完成）
+    const p1 = mutex.run('leak-check', async () => { await delay(200); return 'f1' })
+    const p2 = mutex.run('leak-check', async () => 'f2', 20)
+
+    // fn2 超时拒绝（排队阶段被 race 拒绝，fn 体未执行）
+    await expect(p2).rejects.toBeInstanceOf(TimeoutError)
+    // 关键断言：fn2 超时后，其 next 是最新尾部（无 fn3 接力），finally 应 delete 该 key。
+    // 此时 fn1 仍在跑，但其 next_fn1 不是最新尾部（fn2 排队时已覆写为 next_fn2），
+    // 故 chains.get('leak-check') 应为 undefined（fn2 的 delete 已生效）。
+    expect(chains.has('leak-check')).toBe(false)
+
+    await p1
+  })
 })

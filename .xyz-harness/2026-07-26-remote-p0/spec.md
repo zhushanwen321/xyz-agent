@@ -230,12 +230,16 @@ LimitNOFILE=65536
 ```
 packages/runtime/src/server/
   index.ts        # CLI 入口（bin: xyz-agent-runtime）：parseArgs → 编排
-  token.ts        # token 生成/读写/重置（0600）
   detect-url.ts   # 可达 URL 探测（§8.3）
   bootstrap.ts    # 引导输出排版（对齐 demo 01）+ QR
   pi-fetch.ts     # pi 二进制首启下载
   static-web.ts   # --serve-web 静态托管（可选）
 ```
+
+> 注：`token.ts`（token 生成/读写/重置，0600）实际位于 `packages/runtime/src/transport/token.ts`，而非 `server/`。
+> 实现取舍：token 生成/HMAC 逻辑被 server CLI 与 transport 层的 `/file` 签名 URL 端点（`file-endpoint.ts`）
+> 共同复用，置于 `transport/` 便于 `server/index.ts` 主入口与 server CLI 共同 import，避免 `server/` 反向
+> 依赖 `transport/`。§8.4 token 生命周期的行为契约不变（生成 0600、reset、空文件降级）。
 
 tsup 第 4 entry：`server: src/server/index.ts` → `dist/runtime/server.cjs`（与 index.cjs 同 outDir，随 Electron 产物一起打包但不执行，体积可忽略；npm 包 `bin` 指向它）。**新增依赖 `qrcode-terminal` 必须同步加入 `tsup.config.ts` noExternal**（AGENTS 规则 #12）。
 

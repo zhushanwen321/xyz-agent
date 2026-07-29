@@ -20,6 +20,7 @@ import { describe, it, expect, vi, beforeEach, type Mocked } from 'vitest'
 import { WebSocket } from 'ws'
 import { SessionService } from '../session-service.js'
 import { ServerMessageBroker } from '../../../transport/message-broker.js'
+import { ExtensionTimeoutManager } from '../../extension-timeout-manager.js'
 import type { ClientPool, BrokerServices } from '../../../transport/message-broker.js'
 import type { ConnectionCtx } from '../../../transport/connection-manager.js'
 import type { IPiEngine, IProcessManager } from '../../ports/pi-engine.js'
@@ -54,7 +55,9 @@ function makeMockPm(): Mocked<IProcessManager> {
     }),
     destroySession: vi.fn(async () => {}),
     getClient: vi.fn((id: string) => clients.get(id)),
-    hasClient: vi.fn(() => true),
+    // hasClient 必须读真实 clients Map——若恒 true 则测试退化为「断言 mock 返回值」，
+    // 失去对「断开后 pi 存活」语义的保护（即使未来误加「最后客户端断开清 pi」逻辑，mock 仍绿）。
+    hasClient: vi.fn((id: string) => clients.has(id)),
     rekey: vi.fn(),
     onSessionExit: vi.fn(() => () => {}),
     destroyAll: vi.fn(async () => {}),
@@ -78,7 +81,10 @@ function makeMockSessionStore(): ISessionStore {
 }
 
 function makeMockGitInfoReader(): IGitInfoReader {
-  return { readGitInfo: () => null } as unknown as IGitInfoReader
+  return {
+    readGitInfo: () => undefined,
+    pruneStaleCache: () => {},
+  } as unknown as IGitInfoReader
 }
 
 function makeMockWorkspaceService(): WorkspaceService {
@@ -162,15 +168,20 @@ describe('P3 s2 AC5: 全客户端断开 pi 存活', () => {
     )
     expect(service.hasSession('s-survive')).toBe(true)
     expect(pm.hasClient('s-survive')).toBe(true)
+    // pi 存活的权威证据是 pm 的 clients Map 实际含该 session（非 mock 返回值）。
+    // 清空 broker pool（WS 连接池）不应影响 pm 的 clients Map——两者是独立的数据结构。
+    expect(pm.getClient('s-survive')).toBe(client)
 
     // ② 模拟「全部 ws 断开」：清空 broker pool 的 clients Map（零客户端）
     pool.clients.clear()
     expect(pool.clients.size).toBe(0)
 
-    // ③ 断开后 pi 仍存活：sessions Map 不变，pm.hasClient 恒 true
+    // ③ 断开后 pi 仍存活：sessions Map 不变，pm 的 clients Map 也不变（pi 进程未终止）
     expect(service.hasSession('s-survive')).toBe(true)
     expect(service.getActiveSessionIds()).toEqual(['s-survive'])
+    // hasClient 读真实 Map——pool.clients 清空后 pm 的 Map 仍含该 session 才是「pi 存活」的真证据
     expect(pm.hasClient('s-survive')).toBe(true)
+    expect(pm.getClient('s-survive')).toBe(client)
 
     // ④ 零客户端 broadcast 为 no-op 不抛错（pi 继续跑，事件翻译广播）
     expect(() =>
@@ -228,5 +239,86 @@ describe('P3 s2 AC5: 全客户端断开 pi 存活', () => {
     // 断言：断开后 pi 仍存活，未触发 onSessionExit 清理路径
     expect(service.hasSession('s-survive2')).toBe(true)
     expect(service.getActiveSummaries()).toHaveLength(1)
+  })
+})
+
+// ── TC-AC7c 集成：孤儿 pending 清理经 index.ts 接线（onSessionExit→removeSessionEntry→onSessionDelete→clearForSession）──
+//
+// 单元级 TC-AC7c（message-broker.pending-replay.test.ts）直接调 mgr.clearForSession 验缓存清理契约，
+// 但未覆盖 index.ts:385-389 的 setOnSessionDelete 回调把 clearExtensionTimeoutsForSession 串到
+// session-service 的 onSessionExit→removeSessionEntry→onSessionDelete 链路。本集成测试用真实
+// SessionService + 真实 ExtensionTimeoutManager，mock pm 仅捕获 onSessionExit 回调以便手动触发，
+// 断言 mgr.getAllPendingRequests() 为空（证明 onSessionDelete→clearForSession 接线完整）。
+
+/** pm 工厂：捕获 onSessionExit 回调，供测试手动触发进程退出（模拟 pi 崩溃）。 */
+function makePmWithExitCapture(): {
+  pm: Mocked<IProcessManager>
+  fireExit: (sessionId: string, code: number | null, stderr: string) => void
+} {
+  const clients = new Map<string, IPiEngine>()
+  let exitCb: ((sessionId: string, code: number | null, stderr: string) => void) | null = null
+  const pm = {
+    createSession: vi.fn(async (id: string) => {
+      const c = makeMockPiClient()
+      clients.set(id, c)
+      return c
+    }),
+    destroySession: vi.fn(async () => {}),
+    getClient: vi.fn((id: string) => clients.get(id)),
+    hasClient: vi.fn((id: string) => clients.has(id)),
+    rekey: vi.fn(),
+    onSessionExit: vi.fn((cb: (sessionId: string, code: number | null, stderr: string) => void) => {
+      exitCb = cb
+      return () => { exitCb = null }
+    }),
+    destroyAll: vi.fn(async () => {}),
+    getSessionIdByClient: vi.fn(() => undefined),
+    getPiVersion: vi.fn(async () => 'unknown'),
+  } as unknown as Mocked<IProcessManager>
+  return {
+    pm,
+    fireExit: (sessionId, code, stderr) => { exitCb?.(sessionId, code, stderr) },
+  }
+}
+
+describe('P3 SC4 集成: onSessionExit → clearForSession 接线（孤儿 pending 清理）', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('TC-AC7c-integration: pi 退出触发 onSessionExit → onSessionDelete → mgr.clearForSession → 孤儿 pending 被清', async () => {
+    // 真实 broker + 真实 mgr + 真实 SessionService；pm 仅捕获 exit 回调
+    const broker = new ServerMessageBroker(poolWith(makeMockWs()), mockServices)
+    const mgr = new ExtensionTimeoutManager()
+    const { pm, fireExit } = makePmWithExitCapture()
+    const service = new SessionService(
+      pm,
+      broker,
+      () => makeMockAdapter(),
+      '/mock-root',
+      makeMockExtensionService(),
+      makeMockConfigStore(),
+      makeMockSessionStore(),
+      makeMockGitInfoReader(),
+      makeMockWorkspaceService(),
+    )
+    // 复刻 index.ts:385-389 接线：onSessionDelete → clearForSession（孤儿 pending 清理链）
+    service.setOnSessionDelete((sid) => { mgr.clearForSession(sid) })
+
+    // 建立 session + 缓存一条 pending UI 请求（模拟 ask-user 挂起）
+    const client = await pm.createSession('s-orphan', '/mock/cwd')
+    await service.initializeManagedSession('s-orphan', client, '/mock/cwd', 'label')
+    mgr.cachePendingRequest('s-orphan', 'r1', 'select', { title: '审批' })
+    expect(mgr.getAllPendingRequests()).toHaveLength(1)
+
+    // 触发 pi 进程退出（onSessionExit 链路：session-service 构造函数注册的回调 → removeSessionEntry
+    // → onSessionDelete → setOnSessionDelete 回调 → mgr.clearForSession）
+    fireExit('s-orphan', 1, 'boom')
+
+    // session 已从 sessions Map 移除
+    expect(service.hasSession('s-orphan')).toBe(false)
+    // 孤儿 pending 被清——证明 onSessionDelete→clearForSession 接线完整（index.ts:385-389 语义）
+    expect(mgr.getAllPendingRequests()).toEqual([])
+    expect(mgr.getPendingRequests('s-orphan')).toEqual([])
   })
 })

@@ -6,26 +6,21 @@
  * - clearTimeout 单条清理
  * - clearForSession（含 bridgeRequestIds 清理 + 跨 session 隔离）
  * - [2026-07-16] 交互式 method（select/confirm/input/editor/ask-user）不再触发 onTimeout
+ * - [2026-07-28] 死代码清理后无定时器，onTimeout 永不被调用（签名占位保留）
  * - 重复 register 不再产生定时器
  * - isBridgeRequest / removeBridgeRequest
  *
- * 用 vi.useFakeTimers() 控制 setTimeout（manager 内部用真实 setTimeout + 300s 超时）。
- *
  * 运行：pnpm --filter @xyz-agent/runtime run test -- test/extension-timeout-manager.test.ts
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { ExtensionTimeoutManager } from '../src/services/extension-timeout-manager.js'
 
 describe('ExtensionTimeoutManager', () => {
-  beforeEach(() => vi.useFakeTimers())
-  afterEach(() => vi.useRealTimers())
-
-  it('registerTimeout(method="notify") 不建 timer（早退）', () => {
+  it('registerTimeout(method="notify") 早退，不登记 session 跟踪', () => {
     const mgr = new ExtensionTimeoutManager()
     const onTimeout = vi.fn()
     mgr.registerTimeout('s1', 'r1', 'notify', onTimeout)
-    // 远超 5min 超时
-    vi.advanceTimersByTime(mgr.TIMEOUT_MS + 1)
+    // notify 早退：onTimeout 永不被调用（占位回调）
     expect(onTimeout).not.toHaveBeenCalled()
   })
 
@@ -34,17 +29,15 @@ describe('ExtensionTimeoutManager', () => {
     const onTimeout = vi.fn()
     mgr.registerTimeout('s1', 'r1', 'bridge:something', onTimeout)
     expect(mgr.isBridgeRequest('r1')).toBe(true)
-    vi.advanceTimersByTime(mgr.TIMEOUT_MS + 1)
-    // bridge 请求靠跨进程序列驱动，不建本地 timer
+    // bridge 请求靠跨进程序列驱动，onTimeout 永不被调用
     expect(onTimeout).not.toHaveBeenCalled()
   })
 
-  it('registerTimeout(交互式 method) 仅 session 跟踪，不再建 timer/触发 onTimeout', () => {
+  it('registerTimeout(交互式 method) 仅 session 跟踪，不触发 onTimeout', () => {
     const mgr = new ExtensionTimeoutManager()
     const onTimeout = vi.fn()
     mgr.registerTimeout('s1', 'r1', 'select', onTimeout)
-    // [2026-07-16] 交互式 method 统一不超时，block 等待用户决策
-    vi.advanceTimersByTime(mgr.TIMEOUT_MS + 1)
+    // [2026-07-16] 交互式 method 统一不超时，block 等待用户决策；onTimeout 占位不调用
     expect(onTimeout).not.toHaveBeenCalled()
   })
 
@@ -53,7 +46,6 @@ describe('ExtensionTimeoutManager', () => {
     const onTimeout = vi.fn()
     mgr.registerTimeout('s1', 'r1', 'select', onTimeout)
     mgr.clearTimeout('r1')
-    vi.advanceTimersByTime(mgr.TIMEOUT_MS)
     expect(onTimeout).not.toHaveBeenCalled()
   })
 
@@ -67,7 +59,6 @@ describe('ExtensionTimeoutManager', () => {
 
     mgr.clearForSession('s1')
 
-    vi.advanceTimersByTime(mgr.TIMEOUT_MS)
     expect(onTimeout1).not.toHaveBeenCalled() // 交互式 method 本就不触发
     expect(mgr.isBridgeRequest('r2')).toBe(false) // s1 bridge 请求已清
     expect(onTimeout2).not.toHaveBeenCalled() // 交互式 method 本就不触发
@@ -85,7 +76,6 @@ describe('ExtensionTimeoutManager', () => {
     mgr.registerTimeout('s1', 'r1', 'select', oldCb)
     mgr.registerTimeout('s1', 'r1', 'select', newCb) // 覆盖
 
-    vi.advanceTimersByTime(mgr.TIMEOUT_MS)
     expect(oldCb).not.toHaveBeenCalled()
     expect(newCb).not.toHaveBeenCalled()
   })

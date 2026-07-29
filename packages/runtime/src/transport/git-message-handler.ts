@@ -131,6 +131,8 @@ export class GitMessageHandler {
   private sendGitError(ws: WsType, id: string | undefined, sessionId: string | undefined, e: unknown): void {
     // P6 D11：git mutex 排队超时 → reply error code git_busy（让客户端 UI 提示「git 操作繁忙」）。
     if (e instanceof TimeoutError) {
+      // details===undefined（sessionId 缺省）表示 landing 态错误（git.checkoutCwd 无绑定 session）：
+      // 前端消费时不应路由到特定 session panel，而是走全局 toast；带 sessionId 时则归集到对应 session。
       this.ctx.sendError(ws, 'git_busy', e.message, id, sessionId ? { sessionId } : undefined)
       return
     }
