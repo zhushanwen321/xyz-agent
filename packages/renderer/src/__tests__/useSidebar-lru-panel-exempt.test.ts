@@ -29,6 +29,7 @@ vi.mock('@/composables/features/useChat', () => ({
     disposeSession: useChatDisposeMock,
     setHistoryTruncated: setHistoryTruncatedMock,
   }),
+  ensureStreamSubscription: vi.fn(),
 }))
 
 const loadSubagentsMock = vi.hoisted(() => vi.fn())
@@ -53,7 +54,7 @@ const getHistoryMock = vi.hoisted(() => vi.fn(() => Promise.resolve({ messages: 
 const getCommandsMock = vi.hoisted(() => vi.fn(() => Promise.resolve({ commands: [] })))
 const getContextMock = vi.hoisted(() => vi.fn(() => Promise.resolve({})))
 vi.mock('@/api', () => ({
-  chat: { getHistory: getHistoryMock },
+  chat: { getHistory: getHistoryMock, streamSubscribe: vi.fn(() => () => {}) },
   extension: {},
   session: {
     create: vi.fn(() => Promise.resolve(makeSummary('mock'))),

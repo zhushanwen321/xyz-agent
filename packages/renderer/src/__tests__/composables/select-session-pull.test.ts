@@ -1,14 +1,11 @@
 /**
- * wave:remove-bandaids 测试：selectSession 不再主动拉 subagent/workflow 列表。
+ * selectSession 测试：ensureStreamSubscription 统一注册 events handler + subscribe。
  *
- * 历史：W2 测试验证 selectSession 切换 session 后 subagentStore/workflowStore 该 sid 分区被填充
- * （selectSession 主动调 loadSubagents/loadWorkflows）。wave:remove-bandaids 删除该兜底——
- * subagents 由 useChat.ensureStreamSubscription → subscribeSession → applySnapshot 的 stateSnapshot
- * dispatch 提供（routeInbound 兜底 applyRecords）；workflows 经 streamRing 内 session.workflowUpdate
- * 增量信号 → triggerWorkflowReload → loadWorkflows RPC（store 方法保留）。
- *
- * 本测试反转原断言：验证 selectSession 不再调 getSubagents/getWorkflows（由 useSubagentListSync/
- * useWorkflowListSync 的 focusedSessionId watch + tab 激活首拉，以及 subscribe reconcile 提供）。
+ * [HISTORICAL] 2026-07-29 handoff 回复丢失事故：旧实现 selectSession 只调 subscribeSession
+ * （拉 snapshot）但不注册 events.on handler，导致 snapshot 回放的事件被 dispatchSession
+ * 静默丢弃。handoff 场景中新 session 的 pi 回复已进 bus ring buffer，但 selectSession 拉
+ * snapshot 后 dispatchSession 无 handler 消费 → 回复永久丢失。改用 ensureStreamSubscription
+ * 统一两步（对齐 fork 路径 useForkActions.ts:108）。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/select-session-pull.test.ts
  */
@@ -20,18 +17,32 @@ vi.mock('@/api/domains/session', () => ({
   getCommands: vi.fn().mockResolvedValue({ commands: [] }),
   getContext: vi.fn().mockResolvedValue({}),
   getHistory: vi.fn().mockResolvedValue([]),
-  // getSubagents/getWorkflows 仍被 store 方法和 sync composables 调用——保留 mock，
-  // 但 selectSession 不应直接调它们（用 spy 断言 call count 在 selectSession 前后不变）。
   getSubagents: vi.fn().mockResolvedValue([]),
   getWorkflows: vi.fn().mockResolvedValue([]),
   getAgentCallHistory: vi.fn().mockResolvedValue([]),
 }))
 
-// 门面重定向：store 经 @/api 导入 session，需指向上面 mock 的命名空间
+// chat 域 mock：streamSubscribe 捕获 handler 注册
+const { chatStreamSubscribeMock } = vi.hoisted(() => ({
+  chatStreamSubscribeMock: vi.fn(() => () => {}),
+}))
+vi.mock('@/api/domains/chat', () => ({
+  send: vi.fn().mockResolvedValue(undefined),
+  abort: vi.fn().mockResolvedValue(undefined),
+  steer: vi.fn().mockResolvedValue(undefined),
+  followUp: vi.fn().mockResolvedValue(undefined),
+  compact: vi.fn().mockResolvedValue(undefined),
+  getHistory: vi.fn().mockResolvedValue({ messages: [], historyTruncated: false }),
+  getFullHistory: vi.fn().mockResolvedValue([]),
+  streamSubscribe: chatStreamSubscribeMock,
+}))
+
+// 门面重定向：store 经 @/api 导入 session/chat，需指向上面 mock 的命名空间
 vi.mock('@/api', async (importActual) => {
   const actual = await importActual<typeof import('@/api')>()
   const session = await import('@/api/domains/session')
-  return { ...actual, session }
+  const chat = await import('@/api/domains/chat')
+  return { ...actual, session, chat }
 })
 
 vi.mock('@/api/events', () => ({
@@ -52,22 +63,23 @@ vi.mock('@/composables/useMessageBusSubscription', () => ({
 vi.mock('@/api/domains/file', () => ({ tree: vi.fn().mockResolvedValue({}) }))
 vi.mock('@/api/domains/git', () => ({ status: vi.fn().mockResolvedValue({}) }))
 
-import { session as sessionApi } from '@/api'
+import { session as sessionApi, chat as chatApi } from '@/api'
 import { subscribeSession } from '@/composables/useMessageBusSubscription'
 import { useSidebar } from '@/composables/features/useSidebar'
+import { resetChatModuleState } from '@/composables/features/useChat'
 
 beforeEach(() => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
+  // 清空模块级 streamSubscriptions Map（ensureStreamSubscription 的幂等守卫依赖它）
+  resetChatModuleState()
 })
 
-describe('wave:remove-bandaids: selectSession 不再主动拉 subagent/workflow 列表', () => {
+describe('selectSession: ensureStreamSubscription 统一注册 events handler + subscribe', () => {
   it('selectSession(sess-A) 不调 getSubagents（subagents 经 subscribe stateSnapshot 提供）', async () => {
     const sidebar = useSidebar()
     await sidebar.selectSession('sess-A')
 
-    // selectSession 不再主动调 getSubagents（store 方法保留，由 useSubagentListSync
-    // focusedSessionId watch + subscribe reconcile 提供）
     expect(sessionApi.getSubagents).not.toHaveBeenCalled()
   })
 
@@ -75,8 +87,6 @@ describe('wave:remove-bandaids: selectSession 不再主动拉 subagent/workflow 
     const sidebar = useSidebar()
     await sidebar.selectSession('sess-A')
 
-    // selectSession 不再主动调 getWorkflows（store 方法保留，由 useWorkflowListSync
-    // focusedSessionId watch + session.workflowUpdate 增量信号触发）
     expect(sessionApi.getWorkflows).not.toHaveBeenCalled()
   })
 
@@ -89,32 +99,37 @@ describe('wave:remove-bandaids: selectSession 不再主动拉 subagent/workflow 
     expect(sessionApi.getWorkflows).not.toHaveBeenCalled()
   })
 
-  it('selectSession 调 subscribeSession 回流 commands/context', async () => {
+  it('selectSession 调 subscribeSession 回流 commands/context（经 ensureStreamSubscription 内部）', async () => {
     const sidebar = useSidebar()
     await sidebar.selectSession('sess-A')
 
-    // selectSession 切会话后应调 subscribeSession，触发 stateSnapshot dispatch 回流 stores
+    // ensureStreamSubscription 内部 fire-and-forget 调 subscribeSession
     expect(subscribeSession).toHaveBeenCalledWith('sess-A')
   })
 
-  it('多次切会话每次都调 subscribeSession（幂等，不产生额外 RPC）', async () => {
+  it('selectSession 注册 events.on handler（经 ensureStreamSubscription → chatApi.streamSubscribe）', async () => {
     const sidebar = useSidebar()
     await sidebar.selectSession('sess-A')
-    await sidebar.selectSession('sess-B')
+
+    // ensureStreamSubscription 内部同步调 chatApi.streamSubscribe 注册 handler
+    // 这是修复 handoff 回复丢失的关键：handler 注册后 snapshot 回放才能消费
+    expect(chatApi.streamSubscribe).toHaveBeenCalledWith('sess-A', expect.any(Function))
+  })
+
+  it('多次切同一 session 不重复注册（幂等守卫）', async () => {
+    const sidebar = useSidebar()
+    await sidebar.selectSession('sess-A')
     await sidebar.selectSession('sess-A')
 
-    // 三次切换各调一次 subscribeSession（内部幂等守卫：已 subscribed 且 fromSeq 未指定时跳过 RPC）
-    expect(subscribeSession).toHaveBeenCalledTimes(3)
-    expect(subscribeSession).toHaveBeenCalledWith('sess-A')
-    expect(subscribeSession).toHaveBeenCalledWith('sess-B')
+    // ensureStreamSubscription 内部 streamSubscriptions.has(sid) 守卫，已注册跳过
+    expect(chatApi.streamSubscribe).toHaveBeenCalledTimes(1)
   })
 
   it('subscribeSession 失败不阻塞切会话', async () => {
     vi.mocked(subscribeSession).mockRejectedValueOnce(new Error('subscribe failed'))
     const sidebar = useSidebar()
-    // 不应抛出——subscribeSession 失败被 catch 消化
+    // 不应抛出——subscribeSession 失败被 ensureStreamSubscription 内部 catch 消化
     await expect(sidebar.selectSession('sess-A')).resolves.toBeUndefined()
-    // switchSession 仍应被调用（切会话逻辑完成）
     expect(sessionApi.switchSession).toHaveBeenCalledWith('sess-A')
   })
 })

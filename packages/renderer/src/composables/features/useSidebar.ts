@@ -33,12 +33,11 @@ import { useFileTreeStore } from '@/stores/fileTree'
 import { useSubagentStore, clearSubagentTombstones } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useExtensionUIStore } from '@/stores/extension-ui'
-import { useChat } from '@/composables/features/useChat'
+import { useChat, ensureStreamSubscription } from '@/composables/features/useChat'
 import { invalidateStatusCache } from '@/composables/features/useSessionDerivations'
 import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
 import { consumePendingOpen } from '@/composables/features/useSideDrawer'
 import { clearUnread } from '@/composables/useSessionMarkers'
-import { subscribeSession } from '@/composables/useMessageBusSubscription'
 import { registerAppCommands } from '@/composables/features/useAppCommands'
 import { useForkActions } from '@/composables/features/useForkActions'
 import { useHandoffActions } from '@/composables/features/useHandoffActions'
@@ -165,10 +164,17 @@ export function useSidebar() {
    * landing 态覆盖：initApp/点新建后停在 landing，此时点侧栏历史会话须 cancelFlow,
    * 否则 state 残留 landing → isLandingView 仍 true → composer 被误抑制（new-task 渲染撕裂）。
    *
-   * commands/context/subagents 由 subscribeSession → stateSnapshot dispatch 提供：
-   * selectSession 直接调 subscribeSession(sid)（幂等，已 subscribed 时跳过 RPC），
-   * stateSnapshot 回流更新 commandStore/contextStore/subagentStore/workflowStore。
-   * useChat.ensureStreamSubscription（send 路径）仍保留作为发消息时的兜底 subscribe。
+   * commands/context/subagents 由 ensureStreamSubscription → subscribeSession → stateSnapshot dispatch 提供：
+   * selectSession 调 ensureStreamSubscription(sid)（幂等：已注册时跳过），它内部同步注册 events.on
+   * handler（消费 message 点 session 前缀事件）+ fire-and-forget subscribeSession（拉 snapshot 回放 +
+   * stateSnapshot 回流更新 commandStore/contextStore/subagentStore/workflowStore）。
+   * events.on 同步注册先于 subscribeSession 的 async snapshot 回放，保证回放事件到达 handler。
+   *
+   * [HISTORICAL] 2026-07-29 handoff 回复丢失事故：旧实现只调 subscribeSession（拉 snapshot）但不注册
+   * events.on handler，导致 snapshot 回放的事件被 dispatchSession 静默丢弃。handoff 场景中新 session 的
+   * pi 回复已进 bus ring buffer，但 selectSession → subscribeSession 拉 snapshot 后 dispatchSession 无
+   * handler 消费 → 回复永久丢失，UI 卡"进行中…"。改用 ensureStreamSubscription 统一两步（对齐 fork 路径
+   * useForkActions.ts:108 的正确范式）。
    * workflows 经 streamRing 内 session.workflowUpdate 增量信号 → triggerWorkflowReload → loadWorkflows
    * RPC（store 自身方法保留），与 useWorkflowListSync focusedSessionId watch 首拉互补覆盖。
    */
@@ -181,15 +187,10 @@ export function useSidebar() {
     session.activeId = id
     // 清除未读标记：用户主动查看该 session，不再显示未读 badge
     clearUnread(id)
-    // subscribeSession 回流 commands/context/subagents/workflows stateSnapshot（wave:fix-message-bus-seq）。
-    // subscribeSession 内部幂等（已 subscribed 且 fromSeq 未指定时跳过 RPC），重复调用安全。
-    // 失败时不阻塞切会话（subscribeSession 内部已 console.warn 消化，不抛出）。
-    try {
-      await subscribeSession(id)
-    } catch (e) {
-      // subscribeSession 失败不阻塞切会话（内部已有 console.warn，此处兜底记录）
-      console.warn('[selectSession] subscribeSession failed:', e)
-    }
+    // ensureStreamSubscription：同步注册 events.on handler + fire-and-forget subscribeSession。
+    // 内部幂等（streamSubscriptions.has(sid) 守卫，已注册跳过）。失败时 subscribeSession 内部
+    // console.warn 消化，不阻塞切会话。
+    ensureStreamSubscription(id, chat, session)
     // W3 H3：更新 LRU recency（在 evictIfNeeded 之前，确保当前 session 不被驱逐，R3/R4 修复）
     chat.touchLru(id)
     syncSessionToPanel(id)
