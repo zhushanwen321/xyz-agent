@@ -1,0 +1,58 @@
+{
+  "testCases": [
+    {
+      "id": "TC1",
+      "status": "active",
+      "name": "断点续传状态存储测试",
+      "scenario": "验证断点续传状态正确存储在 resume-state.json 中",
+      "input": "调用 saveResumeState 函数",
+      "expected": "resume-state.json 中包含断点续传状态",
+      "type": "unit"
+    },
+    {
+      "id": "TC2",
+      "status": "active",
+      "name": "断点续传下载测试",
+      "scenario": "验证断点续传功能：下载中断后，重新下载时从断点继续",
+      "input": "模拟下载中断，然后重新调用 downloadAsset 函数",
+      "expected": "下载从断点继续，而不是重新开始",
+      "type": "integration"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "T1",
+      "status": "active",
+      "type": "impl",
+      "files": ["apps/electron/main/update/download-asset.ts"],
+      "steps": ["添加 IResumeState 接口", "添加 saveResumeState 函数", "添加 loadResumeState 函数"],
+      "dependsOn": []
+    },
+    {
+      "id": "T2",
+      "status": "active",
+      "type": "impl",
+      "files": ["apps/electron/main/update/download-asset.ts"],
+      "steps": ["修改 downloadAsset 函数支持断点续传"],
+      "dependsOn": ["T1"]
+    }
+  ],
+  "files": [
+    {
+      "id": "F1",
+      "status": "active",
+      "path": "apps/electron/main/update/download-asset.ts",
+      "action": "modify",
+      "description": "添加断点续传功能"
+    }
+  ],
+  "contracts": [
+    {
+      "id": "C1",
+      "status": "active",
+      "name": "IResumeState",
+      "type": "interface",
+      "definition": "interface IResumeState { downloadedBytes: number; totalBytes: number; tempPath: string; finalPath: string; }"
+    }
+  ]
+}
