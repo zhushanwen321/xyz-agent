@@ -342,6 +342,10 @@ export interface IConfigService {
   getDefaultBaseBranch(): string
   /** 写入默认基分支到 config.json.defaultBaseBranch。 */
   setDefaultBaseBranch(baseBranch: string): void
+  /** 读取是否启用 session 自动重命名（标志文件存在=开），默认 false。 */
+  getAutoRenameEnabled(): boolean
+  /** 设置 session 自动重命名开关（true 创建标志文件 / false 删除）。 */
+  setAutoRenameEnabled(enabled: boolean): void
 }
 
 // ── IExtensionService ──────────────────────────────────────────────
