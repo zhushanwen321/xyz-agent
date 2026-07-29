@@ -89,7 +89,9 @@ export function ensureStreamSubscription(
   if (streamSubscriptions.has(sid)) return
   const unsub = chatApi.streamSubscribe(sid, (msg) => {
     // [send.rejected] 防御性反馈通道（D-006 独立类型，不进对话流）
-    // P5 lease：判别联合 reason==='busy' 收窄，toast 升级为「{deviceName} 正在处理（剩余 Xs）」。
+    // P5 lease：toast 升级为「{deviceName} 正在处理（剩余 Xs）」。
+    // 注：send.rejected.reason 为单值 'busy'（非判别联合），此处 if 作运行时 defensive check（协议层
+    // 类型不可信，payload 字段以宽松 optional 断言 + typeof 守卫消费，防御脏数据/协议漂移）。
     if (msg.type === 'send.rejected') {
       const payload = msg.payload as {
         sessionId: string
@@ -101,7 +103,7 @@ export function ensureStreamSubscription(
       }
       chat.clearPendingSend(sid)
       const { error } = useToast()
-      // 判别联合收窄：reason==='busy' 时用 busyOwnerDevice + leaseExpiresAt 算剩余秒数。
+      // defensive check：reason==='busy' 时用 busyOwnerDevice + leaseExpiresAt 算剩余秒数。
       if (payload.reason === 'busy' && payload.busyOwnerDevice) {
         const remainingMs = typeof payload.leaseExpiresAt === 'number'
           ? payload.leaseExpiresAt - Date.now()

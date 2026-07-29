@@ -41,6 +41,8 @@ export interface CommandSourceInfo {
  * P5 presence：单个在线连接的描述（presence.update / auth.ok.presence 共用）。
  * - isOperating：该 clientId 当前持有某 session 的 lease（busyOwnerId===clientId）。
  *   前端据此在在线设备列表显示「正在操作」指示器。
+ *   瞬态字段：由 runtime 实时计算（基于内存 lease 状态），resume 后可能与 session.busy（入 P2 桶可靠回放）
+ *   的占用态短暂不一致——权威态以 session.busy/idle 为准（isOperating 仅作设备列表的即时指示）。
  */
 export interface PresenceConnection {
   clientId: string
@@ -290,6 +292,8 @@ export interface ClientMessageMap {
   'config.getProviders': Record<string, never>
   // P6 D3 config CAS：setProvider/deleteProvider 携带 expectedVersion（客户端缓存的当前 version）。
   // 不等则 reply error{code:'version_conflict', currentVersion}，相等则成功并 version++。
+  // expectedVersion 必填：v0.8.x+ runtime/renderer 同仓库同步部署，无「旧 renderer 配新 runtime」兼容压力。
+  // （renderer 侧 expectedVersion 已统一经 settingsStore.configVersion 传入，并由 config.ts ?? 0 兜底缺省。）
   'config.setProvider': { providerId: string; expectedVersion: number } & SetProviderData
   'config.deleteProvider': { providerId: string; expectedVersion: number }
   'config.setToolPermissions': { permissions: Record<string, string> }
@@ -632,6 +636,8 @@ export interface SkillCacheInvalidatedPayload {
  */
 export interface ServerMessageMapBase {
   // ── sendInitialState 推送 / domain 订阅（精确）──
+  // version：广播/reply 携带（optional，runtime 可省略），缺省时客户端按 0 处理（renderer api/domains/config.ts
+  // 的 setProvider/deleteProvider expectedVersion ?? 0 兜底）。
   'config.providers': { providers: ProviderInfo[]; version?: number }
   'config.skills': { skills: SkillInfo[] }
   /**
@@ -680,16 +686,23 @@ export interface ServerMessageMapBase {
   // 语义：操作拒绝，区别于 message.error（流终止）。不进对话流，不翻流式态。
   // useChat 收到后回滚 pendingSend + toast。
   // 【P5 C4 投递语义变更】send.rejected 从 broker.broadcast 改为 ctx.reply（发起方专属点对点，不广播）。
-  // 其他客户端的 busy 感知由新增的 session.busy 广播承担。判别联合 reason='busy' 时 busyOwnerId/
-  // busyOwnerDevice/leaseExpiresAt 必填（非全可选，避免类型歧义），前端 if(payload.reason==='busy') 收窄。
-  'send.rejected': { sessionId: string; message: string } & {
+  // 其他客户端的 busy 感知由新增的 session.busy 广播承担。
+  // busy 拒绝时的负载形状：当前业务只有 busy 一种 reason（dispatcher 的 rejectBusy 走 busy 路径，
+  // compacting 等其他原因走独立类型，不混入 send.rejected），故扁平单 interface——reason 为单值非联合，
+  // 不能作 discriminated union 的 discriminant（TS 不会收窄）。
+  // busyOwnerId/busyOwnerDevice/leaseExpiresAt 必填（非全可选，避免类型歧义）。
+  'send.rejected': {
+    sessionId: string
+    message: string
     reason: 'busy'
     busyOwnerId: string
     busyOwnerDevice: string
+    /** lease 到期时间（unix ms）。 */
     leaseExpiresAt: number
   }
   // P5 session.busy：lease acquire 成功后广播，让其他客户端更新 session 占用指示器（设备名 + 剩余秒数）。
   // session 级消息（带 sessionId）→ 入 P2 ring buffer 桶，resume 路径可靠回放。
+  // expiresAt 为 lease 到期时间（unix ms）。注意：与 send.rejected.leaseExpiresAt 同义但命名不同（历史遗留，改名是 breaking change）。
   'session.busy': { sessionId: string; clientId: string; deviceName: string; expiresAt: number }
   // P5 session.idle：lease 释放后广播（四释放路径：turn_end/lease_expired/aborted/send_failed）。
   // 前端清除占用指示器。session 级消息 → 入 P2 桶可靠回放。
@@ -1087,6 +1100,9 @@ export interface ServerMessage<T extends ServerMessageType = ServerMessageType> 
   payload: ServerMessageMap[T]
   // 仅广播消息携带（broker.broadcast 打点），reply/initial state 不带。
   // P2 可靠投递层：全局单调递增 seq，客户端断线重连凭 lastSeq 回放缺失段。
+  // 类型层未强制：seq 是 ServerMessage 顶层 optional，类型上不阻止 reply/initial-state 携带 seq；
+  // 「仅 broadcast 携带」是 runtime broker.broadcast 打点的运行时约定（reply/initial-state 构造点不传 seq），
+  // 非 TS 强制。消费侧不应假设「有 seq 必为广播」。
   seq?: number
 }
 

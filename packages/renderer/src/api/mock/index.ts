@@ -668,7 +668,7 @@ export const config = {
   onExtensionDirs: (h: (dirs: SkillDirConfig[]) => void) => extensionDirsSub.subscribe(h),
   // 动作型：mock 同构——更新 fixture 后经订阅广播推回（与 real sendInitialState/广播一致）
   // P6 D3 config CAS：setProvider/deleteProvider 第三参 expectedVersion（mock 不模拟冲突，接受忽略）。
-  async setProvider(providerId: string, data: SetProviderData, _expectedVersion: number) {
+  async setProvider(providerId: string, data: SetProviderData, _expectedVersion?: number) {
     await sleep(TIMING.ack)
     const target = fixtureProviders.find((p) => p.id === providerId)
     if (target) {
@@ -684,7 +684,7 @@ export const config = {
     }
     broadcastProviders()
   },
-  async deleteProvider(providerId: string, _expectedVersion: number) {
+  async deleteProvider(providerId: string, _expectedVersion?: number) {
     await sleep(TIMING.ack)
     const idx = fixtureProviders.findIndex((p) => p.id === providerId)
     if (idx >= 0) fixtureProviders.splice(idx, 1)

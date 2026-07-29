@@ -214,9 +214,13 @@ export function setExtensionDirs(dirs: string[]): Promise<void> {
  * P6 D3 config CAS：setProvider 携带 expectedVersion（客户端缓存的当前 config version）。
  * 服务端对比 currentVersion，不等则 reject（error code='version_conflict'），相等则成功并 version++。
  * expectedVersion 从 settings store 的 configVersion 取（onProviders 推送时缓存）。
+ *
+ * 兜底（缺省 0）：config.providers.version 在协议层 optional（runtime 可省略），若广播/reply 未带 version，
+ * settingsStore.configVersion 保持初始 0。此处 expectedVersion 缺省时按 0 处理，避免传 undefined 被
+ * runtime CAS 判 mismatch（undefined !== number）导致永远 version_conflict。
  */
-export function setProvider(providerId: string, data: SetProviderData, expectedVersion: number): Promise<void> {
-  return command('config.setProvider', { providerId, expectedVersion, ...data })
+export function setProvider(providerId: string, data: SetProviderData, expectedVersion?: number): Promise<void> {
+  return command('config.setProvider', { providerId, expectedVersion: expectedVersion ?? 0, ...data })
 }
 
 // W3 默认模型持久化：动作-ack，状态变更经 onDefaults 订阅推回（runtime 广播 config.defaults）。
@@ -226,10 +230,10 @@ export function setDefaultModel(provider: string, modelId: string): Promise<void
 }
 
 /**
- * P6 D3 config CAS：deleteProvider 同 setProvider 携带 expectedVersion。
+ * P6 D3 config CAS：deleteProvider 同 setProvider 携带 expectedVersion。缺省兜底 0（见 setProvider）。
  */
-export function deleteProvider(providerId: string, expectedVersion: number): Promise<void> {
-  return command('config.deleteProvider', { providerId, expectedVersion })
+export function deleteProvider(providerId: string, expectedVersion?: number): Promise<void> {
+  return command('config.deleteProvider', { providerId, expectedVersion: expectedVersion ?? 0 })
 }
 
 export function setSkill(skill: SkillInfo): Promise<void> {
