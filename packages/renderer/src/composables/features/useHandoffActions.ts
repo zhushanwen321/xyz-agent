@@ -34,13 +34,21 @@ export function useHandoffActions(focusedSessionId: Ref<string | null>) {
    * 置 handingOff=true 给 UI 即时反馈；完成由 useHandoffEffect 订阅 session.handoffComplete 复位 + 跳转。
    * 失败时复位 handingOff + rethrow（调用方决定 toast 反馈，参照 forkSession 的 rethrow 模式）。
    *
+   * Staging Mode（ADR-0043）：staging 传 composer 暂存的模型/thinking 覆盖，用于新 session 创建。
+   * 源 session turn 仍用源 session 自身模型，不受 override 影响。
+   *
    * @param srcSessionId 源 session（runtime 从其 agent_end 提取文档）
    * @param reply 可选用户备注（sanitize 后拼到 handoff prompt 末尾）
+   * @param staging 可选暂存配置（modelOverride/thinkingOverride，来自 composer Staging Mode）
    */
-  async function handoff(srcSessionId: string, reply?: string): Promise<void> {
+  async function handoff(
+    srcSessionId: string,
+    reply?: string,
+    staging?: { modelOverride?: string; thinkingOverride?: string },
+  ): Promise<void> {
     chat.setHandingOff(srcSessionId, true)
     try {
-      await sessionApi.handoff(srcSessionId, reply)
+      await sessionApi.handoff(srcSessionId, reply, staging)
     } catch (e) {
       // 触发失败 → 复位 handingOff（等不到 handoffComplete 广播），避免 UI 卡「正在交接」
       chat.setHandingOff(srcSessionId, false)

@@ -242,13 +242,25 @@ export interface ClientMessageMap {
     fromMessageRole?: string
     includeFrom?: boolean
     label?: string
+    /** Staging Mode（ADR-0043）：composer 暂存的模型覆盖（"provider/modelId" 格式）。
+     *  存在时优先于源 session preset 的 modelOverride；不存在时继承源 preset。 */
+    modelOverride?: string
+    /** Staging Mode：composer 暂存的思考等级覆盖（合法值见 VALID_THINKING_LEVELS）。 */
+    thinkingOverride?: string
   }
   // handoff：在源 session 触发 fast-handoff（agent-driven 模式）——runtime HandoffService 让源 session
   // 跑 handoff turn（内置 HANDOFF_PROMPT_TEMPLATE）生成文档 → 从 agent_end 提取 text → 新建 session
   // 由 runtime 注入 doc 触发新 turn。与 fork 的区别：fork 从某点分叉继承历史；handoff 不继承历史，
   // 只注入文档（"打包交接到新线程"）。reply sanitize 后拼到 handoff prompt 末尾告知 agent 下一 session 关注点。
   // 完成经独立通道 session.handoffComplete 广播，reply 是 message.status ack（前端不读 payload）。
-  'session.handoff': { sessionId: string; reply?: string }
+  // Staging Mode（ADR-0043）：modelOverride/thinkingOverride 来自 composer 暂存态的模型选择，
+  // 用于新 session 创建（源 session turn 仍用源 session 自身模型，不受 override 影响）。
+  'session.handoff': {
+    sessionId: string
+    reply?: string
+    modelOverride?: string
+    thinkingOverride?: string
+  }
   // abortHandoff：中断进行中的 handoff（runtime client.abort + 清 listener/timer/inflight）。
   // onTurnEnd 检测 aborted 标记跳过新建/注入。无进行中 handoff 时 no-op。
   'session.abortHandoff': { sessionId: string }

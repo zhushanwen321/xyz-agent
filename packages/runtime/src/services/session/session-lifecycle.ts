@@ -432,6 +432,15 @@ export class SessionLifecycle {
     fromPiEntryId: string,
     includeFrom: boolean,
     label?: string,
+    options?: {
+      /**
+       * Staging Mode（ADR-0043）：composer 暂存的模型覆盖，优先于源 preset.modelOverride。
+       * undefined 时 fork 仅继承源 preset（旧行为）。
+       */
+      modelOverride?: string
+      /** Staging Mode（ADR-0043）：composer 暂存的思考等级覆盖，优先于源 preset.thinkingLevel。 */
+      thinkingOverride?: string
+    },
   ): Promise<SessionSummary> {
     if (!this.configStore.getDefaultModel()) {
       throw errorWithCode('No model configured. Please configure a provider and model in Settings before forking a session.', MODEL_NOT_CONFIGURED)
@@ -473,8 +482,13 @@ export class SessionLifecycle {
       ?? BUILTIN_PRESET_IDS.FULL
     const forkResolution = await this.svc.getLaunchPresetOptions(forkPresetId, sessionCwd)
     const allExtPaths = forkResolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
-    // fork 继承源 preset 的全部字段（设计文档 §4.5），不接收 Landing Chip override。
-    const presetClientOptions = this.buildPresetClientOptions(forkResolution, undefined, undefined)
+    // Staging Mode（ADR-0043）：override 优先于源 preset 的 modelOverride/thinkingLevel（见 buildPresetClientOptions
+    // 内 C-RL-6 优先级）。undefined 时仅继承源 preset（旧行为），不影响现有 fork。
+    const presetClientOptions = this.buildPresetClientOptions(
+      forkResolution,
+      options?.modelOverride,
+      options?.thinkingOverride,
+    )
     const client = await this.pm.createSession(forkedId, sessionCwd, {
       skillPaths: forkResolution?.skillPaths ?? this.svc.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,

@@ -51,7 +51,13 @@ interface HandoffDeps {
   /** 互斥：进入 handoff 模式时退出 fork 模式（forkSource 残留指向错误 session） */
   exitForkMode: () => void
   /** handoff 编排（features 层跨 api + stores）：handleHandoffSend 调用触发 handoff（runtime agent-driven） */
-  handoff: (srcSessionId: string, reply?: string) => Promise<void>
+  handoff: (srcSessionId: string, reply?: string, staging?: { modelOverride?: string; thinkingOverride?: string }) => Promise<void>
+  /** Staging Mode（ADR-0043）：进入暂存态（快照模型/thinking） */
+  enterStagingMode: () => void
+  /** Staging Mode：退出暂存态（清空快照，恢复常规态） */
+  exitStagingMode: () => void
+  /** Staging Mode：获取暂存配置（供 handoff 发送时透传给新 session） */
+  getStagingConfig: () => { modelOverride?: string; thinkingOverride?: string }
 }
 
 /**
@@ -75,6 +81,8 @@ export function useComposerHandoffMode(
   function enterHandoffMode(srcSessionId: string): void {
     // 互斥：进 handoff 前退出 fork 模式（避免 forkSource 残留 + 两个模式同时活跃）
     deps.exitForkMode()
+    // Staging Mode（ADR-0043）：快照当前模型/thinking，进入暂存态
+    deps.enterStagingMode()
     handoffSource.value = { srcSessionId }
     handoffMode.value = true
     // 聚焦输入框，让用户立即键入 focus 备注
@@ -84,6 +92,8 @@ export function useComposerHandoffMode(
   function exitHandoffMode(): void {
     handoffMode.value = false
     handoffSource.value = null
+    // Staging Mode：退出暂存态，chip 恢复读源 session 模型
+    deps.exitStagingMode()
   }
 
   // 跨组件触发通道：Sidebar 全局快捷键（⌘J → enterHandoffModeFromLastAssistant）经 signal
@@ -135,7 +145,9 @@ export function useComposerHandoffMode(
     deps.clearInput()
     deps.setSending(true)
     try {
-      await handoffAction(srcSessionId, reply)
+      // Staging Mode（ADR-0043）：透传暂存的模型/thinking 配置给新 session
+      const staging = deps.getStagingConfig()
+      await handoffAction(srcSessionId, reply, staging)
     } catch (e) {
       // handoff 触发失败 → restoreInput 保草稿（与 fork handleForkSend 对称）
       deps.restoreInput(text)

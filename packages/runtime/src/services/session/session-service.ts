@@ -275,7 +275,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     fromPiEntryId: string | undefined,
     includeFrom: boolean,
     label?: string,
-    opts?: { fromMessageTimestamp?: number; fromMessageRole?: string },
+    opts?: {
+      fromMessageTimestamp?: number
+      fromMessageRole?: string
+      /** Staging Mode（ADR-0043）：composer 暂存的模型覆盖，优先于源 preset.modelOverride。 */
+      modelOverride?: string
+      /** Staging Mode（ADR-0043）：composer 暂存的思考等级覆盖，优先于源 preset.thinkingLevel。 */
+      thinkingOverride?: string
+    },
   ): Promise<SessionSummary> {
     // piEntryId 缺失（RPC 路径读取的 session）时，读 JSONL 按 timestamp + role 匹配 entryId
     let resolvedEntryId = fromPiEntryId
@@ -286,7 +293,12 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
         opts?.fromMessageRole,
       )
     }
-    return this.lifecycle.forkSession(srcSessionId, resolvedEntryId, includeFrom, label)
+    // override 透传给 lifecycle.forkSession（而非 resolveEntryIdByTimestamp——override 与 entry 解析无关，
+    // 仅作用于新 session 的 pi 启动参数）。
+    return this.lifecycle.forkSession(srcSessionId, resolvedEntryId, includeFrom, label, {
+      modelOverride: opts?.modelOverride,
+      thinkingOverride: opts?.thinkingOverride,
+    })
   }
 
   /**

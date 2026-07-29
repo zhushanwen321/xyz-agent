@@ -75,11 +75,13 @@ export class SessionMessageHandler {
       }
       case 'session.fork': {
         // fork：runtime 读源 JSONL 截断 → 新进程 switch_session。reply session.created（复用类型）。
-        const { srcSessionId, fromPiEntryId, fromMessageTimestamp, fromMessageRole, includeFrom, label } = msg.payload
+        const { srcSessionId, fromPiEntryId, fromMessageTimestamp, fromMessageRole, includeFrom, label, modelOverride, thinkingOverride } = msg.payload
         try {
           const session = await this.ctx.sessionService.forkSession(
             srcSessionId, fromPiEntryId, includeFrom ?? true, label,
-            { fromMessageTimestamp, fromMessageRole },
+            // Staging Mode（ADR-0043）：透传 composer 暂存的 modelOverride/thinkingOverride，
+            // 让 fork 出的新 session 用用户当前选定的模型/思考等级，而非单纯继承源 preset。
+            { fromMessageTimestamp, fromMessageRole, modelOverride, thinkingOverride },
           )
           this.ctx.reply(ws, msg.id, 'session.created', { session })
           // [W2 FR-12] fork 成功后广播 session.forkNotice：通知 srcSession 所在 panel
@@ -112,7 +114,12 @@ export class SessionMessageHandler {
           return this.ctx.sendError(ws, 'handoff_unsupported', 'handoff service not available', msg.id, { sessionId })
         }
         try {
-          await hs.runHandoff(sessionId, reply)
+          // Staging Mode（ADR-0043）：透传 modelOverride/thinkingOverride 给新 session 创建。
+          // 源 session 的 handoff turn 仍用源 session 自身模型，override 只作用于新建的承接 session。
+          await hs.runHandoff(sessionId, reply, {
+            modelOverride: msg.payload.modelOverride,
+            thinkingOverride: msg.payload.thinkingOverride,
+          })
           return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'sent' })
         } catch (e) {
           // L4: model 未配置时返回差异化 error code（与 session.create / session.fork 同模式），

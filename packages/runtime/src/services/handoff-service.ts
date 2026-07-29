@@ -142,9 +142,15 @@ export class HandoffService {
    *
    * @param srcSessionId 源 session id
    * @param reply 可选的用户备注（sanitize 后追加到 prompt 末尾）
+   * @param options Staging Mode（ADR-0043）：modelOverride/thinkingOverride 仅作用于新建的承接 session，
+   *   源 session 的 handoff turn 仍用源 session 自身模型（override 不影响源 turn）。
    * @throws 已有进行中 handoff / 历史为空 / session 不可用 / agent 产空文档 / timeout / abort
    */
-  async runHandoff(srcSessionId: string, reply?: string): Promise<void> {
+  async runHandoff(
+    srcSessionId: string,
+    reply?: string,
+    options?: { modelOverride?: string; thinkingOverride?: string },
+  ): Promise<void> {
     // 1. 并发守卫：同一 session 不可并发 handoff
     if (this.inflight.has(srcSessionId)) {
       throw new Error(`handoff already in progress for session ${srcSessionId}`)
@@ -244,7 +250,12 @@ export class HandoffService {
     }
 
     // 9. 新建空白 session（复用源 cwd）
-    const newSession = await this.opts.sessionService.create(srcCwd, `handoff from ${srcLabel}`)
+    // Staging Mode（ADR-0043）：透传 modelOverride/thinkingOverride 让承接 session 用用户当前选定模型/思考等级，
+    // 而非全局默认。源 session 的 handoff turn 已用自身模型跑完，不受此 override 影响。
+    const newSession = await this.opts.sessionService.create(srcCwd, `handoff from ${srcLabel}`, {
+      modelOverride: options?.modelOverride,
+      thinkingOverride: options?.thinkingOverride,
+    })
     const newId = newSession.id
 
     // 10. 标记源 session 已交接

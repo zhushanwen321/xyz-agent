@@ -208,6 +208,9 @@ const {
   localThinkingLevel,
   onModelSelect,
   onThinkingSelect,
+  enterStagingMode,
+  exitStagingMode,
+  getStagingConfig,
 } = useComposerModelThinking(computed(() => props.sessionId))
 
 /** #13 retry/queue 指示位数据源（store 由 W0/#8 维护，不可变 Map 更新触发响应） */
@@ -300,6 +303,9 @@ const fork = useComposerForkMode(sessionIdRef, {
   setSending: (value) => { isSending.value = value },
   clearInput,
   restoreInput,
+  enterStagingMode,
+  exitStagingMode,
+  getStagingConfig,
 })
 
 // Handoff 模式（fast-handoff）—— 见 useComposerHandoffMode。与 fork 互斥。复用上方 setup 顶部同步取到的 handoffAction。
@@ -309,7 +315,10 @@ const handoff = useComposerHandoffMode(sessionIdRef, {
   clearInput,
   restoreInput,
   exitForkMode: fork.exitForkMode,
-  handoff: (srcSessionId, reply) => handoffAction(srcSessionId, reply),
+  handoff: (srcSessionId, reply, staging) => handoffAction(srcSessionId, reply, staging),
+  enterStagingMode,
+  exitStagingMode,
+  getStagingConfig,
 })
 // 双向互斥（fork↔handoff）两处落点：① 这里 watch 进 fork 退 handoff（fork composable 不感知 handoff）；
 // ② useComposerHandoffMode.enterHandoffMode 内进 handoff 退 fork（见 deps.exitForkMode）。

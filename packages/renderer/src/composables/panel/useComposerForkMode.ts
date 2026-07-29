@@ -31,6 +31,12 @@ interface ForkDeps {
   clearInput: () => void
   /** 发送失败时恢复草稿到输入区 */
   restoreInput: (text: string) => void
+  /** Staging Mode（ADR-0043）：进入暂存态（快照模型/thinking） */
+  enterStagingMode: () => void
+  /** Staging Mode：退出暂存态（清空快照，恢复常规态） */
+  exitStagingMode: () => void
+  /** Staging Mode：获取暂存配置（供 fork 发送时透传给新 session） */
+  getStagingConfig: () => { modelOverride?: string; thinkingOverride?: string }
 }
 
 /**
@@ -66,6 +72,8 @@ export function useComposerForkMode(
   const forkSource = ref<{ srcSessionId: string; fromMessageId: string } | null>(null)
 
   function enterForkMode(srcSessionId: string, fromMessageId: string): void {
+    // Staging Mode（ADR-0043）：快照当前模型/thinking，进入暂存态
+    deps.enterStagingMode()
     forkSource.value = { srcSessionId, fromMessageId }
     forkMode.value = true
     // 聚焦输入框，让用户立即键入 fork 提问内容
@@ -75,6 +83,8 @@ export function useComposerForkMode(
   function exitForkMode(): void {
     forkMode.value = false
     forkSource.value = null
+    // Staging Mode：退出暂存态，chip 恢复读源 session 模型
+    deps.exitStagingMode()
   }
 
   // 跨组件触发通道：Sidebar 全局快捷键（⌘⇧G → enterForkModeFromLastAssistant）经 signal
@@ -122,7 +132,9 @@ export function useComposerForkMode(
     deps.clearInput()
     deps.setSending(true)
     try {
-      await forkSessionAsk(srcSessionId, fromMessageId, text)
+      // Staging Mode（ADR-0043）：透传暂存的模型/thinking 配置给新 session
+      const staging = deps.getStagingConfig()
+      await forkSessionAsk(srcSessionId, fromMessageId, text, staging)
     } catch (e) {
       deps.restoreInput(text)
       const msg = e instanceof Error ? e.message : String(e)
