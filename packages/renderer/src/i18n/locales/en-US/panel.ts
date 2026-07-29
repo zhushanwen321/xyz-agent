@@ -405,4 +405,4 @@ export default {
     done: "Done",
     failed: "Failed",
   },
-};
+}

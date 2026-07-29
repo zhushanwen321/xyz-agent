@@ -393,4 +393,4 @@ export default {
     done: "完成",
     failed: "失败",
   },
-};
+}
