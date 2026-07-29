@@ -9,14 +9,14 @@
   -->
   <Dialog :open="open" @update:open="requestClose">
     <!-- hide-close：标题栏已自绘关闭 X，隐藏 DialogContent 默认右上角 X，避免双 X（同 SettingsModal） -->
-    <DialogContent hide-close class="flex max-w-[780px] flex-col overflow-hidden p-0">
+    <DialogContent hide-close class="flex max-h-[85vh] max-w-[780px] flex-col overflow-hidden p-0">
       <!-- 标题栏。DialogTitle/DialogDescription 给 reka-ui a11y context（视觉用自绘 span） -->
       <div class="flex items-center justify-between border-b border-border px-5 py-4">
-        <DialogTitle class="text-[15px] font-semibold text-fg">{{ provider ? t('settings.providerEdit.editTitle') : t('settings.providerEdit.addTitle') }}</DialogTitle>
+        <DialogTitle class="text-[15px] font-semibold text-neutral-fg">{{ provider ? t('settings.providerEdit.editTitle') : t('settings.providerEdit.addTitle') }}</DialogTitle>
         <DialogDescription class="sr-only">{{ t('settings.providerEdit.dialogDescription') }}</DialogDescription>
         <Button
           variant="ghost"
-          class="size-7 shrink-0 rounded-sm p-0 text-muted hover:bg-surface-hover hover:text-fg"
+          class="size-7 shrink-0 rounded-sm p-0 text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
           :aria-label="t('settings.close')"
           @click="requestClose"
         >
@@ -29,13 +29,13 @@
         <div class="flex w-[340px] shrink-0 flex-col gap-4 border-r border-border p-5">
           <!-- 名称 -->
           <div>
-            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">{{ t('settings.providerEdit.fieldName') }}</Label>
+            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">{{ t('settings.providerEdit.fieldName') }}</Label>
             <Input v-model="form.name" :placeholder="t('settings.providerEdit.fieldNamePlaceholder')" />
           </div>
 
           <!-- 类型 -->
           <div>
-            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">
+            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
               {{ t('settings.providerEdit.fieldType') }} <span class="normal-case tracking-normal">{{ t('settings.providerEdit.fieldTypeHint') }}</span>
             </Label>
             <Select v-model="form.api">
@@ -43,23 +43,25 @@
                 <SelectValue :placeholder="t('settings.providerEdit.selectTypePlaceholder')" />
               </SelectTrigger>
               <SelectContent>
-                <!-- value 严格对齐 PROVIDER_API_TYPES（pi 终值，runtime 不再翻译别名）。
-                     pi 不支持 ollama 作为 api 标识：本地 ollama 用 OpenAI Compatible + baseUrl=http://localhost:11434 即可。 -->
-                <SelectItem value="anthropic-messages">Anthropic Messages</SelectItem>
-                <SelectItem value="openai-completions">OpenAI Compatible</SelectItem>
+                <!-- value 严格对齐 pi 支持的 api 终值（KNOWN_PI_API_TYPES）。
+                     pi 不支持 ollama 作为 api 标识：本地 ollama 用 OpenAI Compatible + baseUrl=http://localhost:11434 即可。
+                     openai-responses 透传 RESPONSES_COMPAT_FIELDS（compat-fields.ts），不可省否则死代码。 -->
+                <SelectItem value="anthropic-messages">{{ t('settings.providerEdit.apiAnthropic') }}</SelectItem>
+                <SelectItem value="openai-completions">{{ t('settings.providerEdit.apiOpenai') }}</SelectItem>
+                <SelectItem value="openai-responses">{{ t('settings.providerEdit.apiOpenaiResponses') }}</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
           <!-- Base URL -->
           <div>
-            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">{{ t('settings.providerEdit.fieldBaseUrl') }}</Label>
+            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">{{ t('settings.providerEdit.fieldBaseUrl') }}</Label>
             <Input v-model="form.baseUrl" placeholder="https://api.anthropic.com" />
           </div>
 
           <!-- API Key -->
           <div>
-            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">
+            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
               {{ t('settings.providerEdit.fieldApiKey') }} <span class="normal-case tracking-normal">{{ t('settings.providerEdit.apiKeyHint') }}</span>
             </Label>
             <div class="flex items-center gap-2">
@@ -71,7 +73,7 @@
               />
               <Button
                 variant="ghost"
-                class="size-8 shrink-0 rounded-sm p-0 text-subtle hover:bg-surface-hover hover:text-fg"
+                class="size-8 shrink-0 rounded-sm p-0 text-neutral-dim hover:bg-surface-hover hover:text-neutral-fg"
                 :aria-label="showKey ? t('settings.providerEdit.hideKey') : t('settings.providerEdit.showKey')"
                 @click="showKey = !showKey"
               >
@@ -82,7 +84,7 @@
               <Button
                 v-if="provider?.apiKeySet && form.apiKey !== '__CLEAR__'"
                 variant="ghost"
-                class="size-8 shrink-0 rounded-sm p-0 text-subtle hover:bg-danger-soft hover:text-danger"
+                class="size-8 shrink-0 rounded-sm p-0 text-neutral-dim hover:bg-danger-soft hover:text-danger"
                 :aria-label="t('settings.providerEdit.clearKey')"
                 :title="t('settings.providerEdit.clearKey')"
                 @click="clearApiKey"
@@ -91,14 +93,14 @@
               </Button>
             </div>
             <!-- apiKey 编辑语义说明（D18）：留空保存=不改；已配置时提示清除按钮的作用 -->
-            <p class="mt-1 text-[10px] text-subtle">
+            <p class="mt-1 text-[10px] text-neutral-dim">
               {{ t('settings.providerEdit.apiKeyNoteKeep') }}{{ provider?.apiKeySet ? t('settings.providerEdit.apiKeyNoteClear') : '' }}
             </p>
           </div>
 
           <!-- authHeader 开关（W3 D7）：是否把 apiKey 写入 Authorization header -->
           <div class="flex items-center justify-between">
-            <Label class="text-[11px] font-semibold uppercase tracking-wider text-muted">
+            <Label class="text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
               {{ t('settings.providerEdit.fieldAuthHeader') }} <span class="normal-case tracking-normal">{{ t('settings.providerEdit.authHeaderHint') }}</span>
             </Label>
             <Switch
@@ -111,7 +113,7 @@
 
           <!-- headers 编辑区（W3 D7）：key-value 行编辑 + 添加/删除 -->
           <div data-testid="headers-editor">
-            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-muted">
+            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
               {{ t('settings.providerEdit.customHeaders') }} <span class="normal-case tracking-normal">{{ t('settings.providerEdit.customHeadersHint') }}</span>
             </Label>
             <div class="flex flex-col gap-1.5">
@@ -134,7 +136,7 @@
                 />
                 <Button
                   variant="ghost"
-                  class="size-8 shrink-0 rounded-sm p-0 text-subtle hover:bg-transparent hover:text-danger [&_svg]:size-3.5"
+                  class="size-8 shrink-0 rounded-sm p-0 text-neutral-dim hover:bg-transparent hover:text-danger [&_svg]:size-3.5"
                   :aria-label="t('settings.providerEdit.removeHeader')"
                   @click="removeHeader(i)"
                 >
@@ -151,11 +153,39 @@
             </Button>
           </div>
 
+          <!-- Coding Plan 额度查询 Section（始终显示：手动选择类型，不再依赖自动匹配） -->
+          <CodingPlanSection
+            :fetcher-id="quotaFetcherId"
+            :fetcher-options="quotaFetcherOptions"
+            :enabled="quotaEnabled"
+            :cookie-input="quotaCookieInput"
+            :api-key-input="quotaApiKeyInput"
+            :api-key-configured="quotaApiKeyConfigured"
+            :test-status="quotaTestStatus"
+            :test-error-msg="quotaTestError"
+            :quota-row="quotaData"
+            :last-fetch-at="quotaLastFetchAt"
+            :is-cookie-auth="quotaIsCookieAuth"
+            :configuring="quotaConfiguring"
+            :configure-error-msg="quotaConfigureError"
+            :api-key-set="!!provider?.apiKeySet || !!provider?.quota?.apiKeySet"
+            :cookie-set="!!provider?.quota?.cookieSet"
+            :help-url="quotaHelpUrl"
+            :help-text="quotaHelpText"
+            @select-fetcher="quotaSelectFetcher"
+            @toggle-enabled="quotaToggleEnabled"
+            @test-query="quotaTestQuery"
+            @save-cookie="quotaSaveCookie"
+            @save-api-key="quotaSaveApiKey"
+            @update:cookie-input="quotaCookieInput = $event"
+            @update:api-key-input="quotaApiKeyInput = $event"
+          />
+
           <!-- 操作按钮 -->
           <div class="flex flex-wrap gap-2">
             <Button
               variant="secondary"
-              class="gap-1.5 px-2.5 py-1.5 text-[12px] text-muted [&_svg]:size-3.5"
+              class="gap-1.5 px-2.5 py-1.5 text-[12px] text-neutral-mid [&_svg]:size-3.5"
               :disabled="testing || discovering"
               @click="testConnection"
             >
@@ -165,7 +195,7 @@
             </Button>
             <Button
               variant="secondary"
-              class="gap-1.5 px-2.5 py-1.5 text-[12px] text-muted [&_svg]:size-3.5"
+              class="gap-1.5 px-2.5 py-1.5 text-[12px] text-neutral-mid [&_svg]:size-3.5"
               :disabled="discovering || testing"
               @click="autoDiscover"
             >
@@ -181,162 +211,22 @@
             <AlertCircle v-else class="size-3.5" />
             {{ testResult === 'ok' ? t('settings.providerEdit.testOk', { count: localModels.length }) : t('settings.providerEdit.testFail') }}
           </div>
-          <div v-if="discoverResult" class="text-[12px] text-muted">{{ discoverResult }}</div>
+          <div v-if="discoverResult" class="text-[12px] text-neutral-mid">{{ discoverResult }}</div>
         </div>
 
-        <!-- 右：模型清单 -->
-        <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <div class="flex items-center justify-between border-b border-border px-5 py-3">
-            <span class="text-[13px] font-semibold text-fg">{{ t('settings.providerEdit.modelList') }}</span>
-            <Button variant="ghost" class="h-auto p-0 text-[11px] text-accent hover:bg-transparent hover:underline" @click="showAddModel = !showAddModel">
-              {{ showAddModel ? t('settings.providerEdit.collapse') : t('settings.providerEdit.manualAdd') }}
-            </Button>
-          </div>
-
-          <!-- 手动添加模型表单（两行：模型名 + 输入类型 / 上下文 + 思考 + 添加）。
-               原单行把名称列挤到过窄、输入类型按钮占宽过大；改两行给名称留足空间。 -->
-          <div v-if="showAddModel" class="border-b border-border bg-surface px-5 py-3">
-            <!-- 第 1 行：模型名称（占满）+ 输入类型分段 -->
-            <div class="flex items-end gap-3">
-              <div class="min-w-0 flex-1">
-                <Label class="mb-1 block text-[10px] text-muted">{{ t('settings.providerEdit.modelNameLabel') }}</Label>
-                <Input v-model="newModel.name" :placeholder="t('settings.providerEdit.modelNamePlaceholder')" class="h-8 text-[12px]" />
-              </div>
-              <div>
-                <Label class="mb-1 block text-[10px] text-muted">{{ t('settings.providerEdit.inputTypeLabel') }}</Label>
-                <div class="flex h-8 gap-0.5 rounded-md border border-border bg-surface-2 p-0.5">
-                  <Button
-                    variant="ghost"
-                    class="h-full gap-1 rounded-sm px-2 text-[10px] hover:bg-transparent [&_svg]:size-3"
-                    :class="newModel.inputTypes.includes('text') ? 'bg-accent-soft text-accent' : 'text-muted hover:text-fg'"
-                    @click="toggleNewInput('text')"
-                  ><FileText /> {{ t('settings.providerEdit.inputText') }}</Button>
-                  <Button
-                    variant="ghost"
-                    class="h-full gap-1 rounded-sm px-2 text-[10px] hover:bg-transparent [&_svg]:size-3"
-                    :class="newModel.inputTypes.includes('image') ? 'bg-accent-soft text-accent' : 'text-muted hover:text-fg'"
-                    @click="toggleNewInput('image')"
-                  ><ImageIcon /> {{ t('settings.providerEdit.inputImage') }}</Button>
-                </div>
-              </div>
-            </div>
-            <!-- 第 2 行：上下文 + 思考 + 添加 -->
-            <div class="mt-3 flex items-end gap-3">
-              <div>
-                <Label class="mb-1 block text-[10px] text-muted">{{ t('settings.providerEdit.contextLabel') }}</Label>
-                <Select v-model="newModel.contextWindow">
-                  <SelectTrigger class="h-8 w-[110px] px-2 text-[11px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem v-for="o in ctxOptions" :key="o.value" :value="o.value">{{ o.label }}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label class="mb-1 block text-[10px] text-muted">{{ t('settings.providerEdit.thinkingLabel') }}</Label>
-                <Select v-model="newModel.thinking">
-                  <SelectTrigger class="h-8 w-[130px] px-1.5 py-0 text-[11px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem v-for="s in thinkingStrategies" :key="s.key" :value="s.key">{{ t(s.labelKey) }}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button class="h-8 shrink-0 px-3 text-[12px]" @click="onAddModel">{{ t('settings.providerEdit.addBtn') }}</Button>
-            </div>
-          </div>
-
-          <!-- 模型列表 -->
-          <div class="min-h-0 flex-1 overflow-y-auto">
-            <div v-if="!localModels.length" class="py-8 text-center text-[12px] text-muted">{{ t('settings.providerEdit.noModels') }}</div>
-
-            <!-- 表头。非名称列统一 text-center，与下方行 value 单元格对齐方式一致，
-                 解决 head(text-right) 与 value(icon 居中 / select 左对齐) 错位。
-                 列宽收窄：右三列原 80/96/112=288 → 56/80/96=232，给「模型」名列腾出 56px，
-                 避免 glm-5-turbo / claude-sonnet-4-5 等较长 id 被 truncate。 -->
-            <div v-if="localModels.length" class="flex items-center border-b border-border bg-surface px-5 py-2 text-center text-[10px] uppercase tracking-wider text-subtle">
-              <span class="flex-1 text-left">{{ t('settings.providerEdit.modelLabel') }}</span>
-              <span class="w-14">{{ t('settings.providerEdit.headInput') }}</span>
-              <span class="w-[80px]">{{ t('settings.providerEdit.headContext') }}</span>
-              <span class="w-24">{{ t('settings.providerEdit.headThinking') }}</span>
-              <span class="w-8" />
-            </div>
-
-            <div
-              v-for="(m, i) in localModels"
-              :key="m.id"
-              class="flex items-center border-b border-border px-5 py-2 text-[12px]"
-            >
-              <span class="flex-1 truncate font-mono text-fg">{{ m.id }}</span>
-              <!-- 输入类型 icon 按钮：紧贴 icon，不撑满整行高。
-                   Button 默认 h-9 撑满行高，显式 h-auto + p-1 让按钮贴合 icon（约 20px 见方）。 -->
-              <div class="flex w-14 items-center justify-center gap-1">
-                <Button
-                  variant="ghost"
-                  class="h-auto shrink-0 rounded-sm border p-1 hover:bg-transparent [&_svg]:size-3.5"
-                  :class="m.input?.includes('text') ? 'border-accent bg-accent-soft text-accent' : 'border-border text-subtle opacity-60 hover:opacity-100'"
-                  :title="t('settings.providerEdit.textInputTitle')"
-                  @click.stop="toggleInput(m, 'text')"
-                ><FileText /></Button>
-                <Button
-                  variant="ghost"
-                  class="h-auto shrink-0 rounded-sm border p-1 hover:bg-transparent [&_svg]:size-3.5"
-                  :class="m.input?.includes('image') ? 'border-accent bg-accent-soft text-accent' : 'border-border text-subtle opacity-60 hover:opacity-100'"
-                  :title="t('settings.providerEdit.imageInputTitle')"
-                  @click.stop="toggleInput(m, 'image')"
-                ><ImageIcon /></Button>
-              </div>
-              <!-- 上下文（弹出 select）。placeholder 兜底 contextWindow=undefined（发现来的模型），
-                   否则 SelectValue 无值时留空，触发器看起来「没文字」。 -->
-              <div class="flex w-[80px] justify-center">
-                <Select
-                  :model-value="m.contextWindow"
-                  @update:model-value="updateCtx(m, $event as number)"
-                >
-                  <SelectTrigger class="h-7 w-[72px] px-1.5 py-0 text-[11px]">
-                    <SelectValue placeholder="—" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem v-for="o in ctxOptions" :key="o.value" :value="o.value">{{ o.label }}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <!-- 思考策略（弹出 select） -->
-              <div class="flex w-24 justify-center">
-                <Select
-                  :model-value="getStrategyFromMap(m.thinkingLevelMap)"
-                  @update:model-value="pickStrategy(m, $event as ThinkingStrategy)"
-                >
-                  <SelectTrigger class="h-7 w-[88px] px-1.5 py-0 text-[11px]">
-                    <SelectValue placeholder="—" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem v-for="s in thinkingStrategies" :key="s.key" :value="s.key">{{ t(s.labelKey) }}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <!-- 移除 -->
-              <Button
-                variant="ghost"
-                class="size-5 w-8 shrink-0 rounded-sm p-0 text-subtle hover:bg-transparent hover:text-danger [&_svg]:size-3"
-                :aria-label="t('settings.providerEdit.removeModel')"
-                @click.stop="removeModel(i)"
-              >
-                <X />
-              </Button>
-            </div>
-          </div>
-        </div>
+        <!-- 右：模型清单（抽到 ModelListSection 子组件，保持主模板 ≤400 行） -->
+        <ModelListSection
+          v-model:show-add-model="showAddModel"
+          @add-model="onAddModel"
+        />
       </div>
 
       <!-- 底栏 -->
       <div class="flex items-center gap-2 border-t border-border px-5 py-3.5">
         <span v-if="actionError" class="flex-1 text-[12px] text-danger">{{ actionError }}</span>
         <span v-else class="flex-1" />
-        <Button variant="ghost" @click="requestClose">{{ t('settings.providerEdit.cancel') }}</Button>
-        <Button :disabled="saving" @click="onSave">
+        <Button variant="ghost" data-testid="provider-cancel-btn" @click="requestClose">{{ t('settings.providerEdit.cancel') }}</Button>
+        <Button data-testid="provider-save-btn" :disabled="saving" @click="onSave">
           {{ saving ? t('settings.providerEdit.saving') : t('settings.providerEdit.save') }}
         </Button>
       </div>
@@ -356,12 +246,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, toRef } from 'vue'
+import { ref, provide } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { computed, toRef } from 'vue'
 import {
   Eye, EyeOff, Loader2, Wifi, RefreshCw, CheckCircle2, AlertCircle,
-  X, FileText, ImageIcon, Trash2,
+  X, Trash2,
 } from '@lucide/vue'
+import { matchQuotaPreset } from '@xyz-agent/shared'
 import { Dialog, DialogContent, DialogTitle, DialogDescription, ConfirmDialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -371,10 +263,10 @@ import { Label } from '@/components/ui/label'
 import type { ProviderInfo } from '@xyz-agent/shared'
 import {
   useProviderEdit,
-  CONTEXT_OPTIONS,
-  THINKING_STRATEGIES,
-  type ThinkingStrategy,
 } from '@/composables/features/useProviderEdit'
+import { useQuotaConfigure } from '@/composables/features/useQuotaConfigure'
+import CodingPlanSection from '@/components/settings/CodingPlanSection.vue'
+import ModelListSection from '@/components/settings/ModelListSection.vue'
 import { useToast } from '@/composables/useToast'
 
 const props = defineProps<{ open: boolean; provider: ProviderInfo | null }>()
@@ -382,11 +274,41 @@ const emit = defineEmits<{ close: [] }>()
 
 const { t } = useI18n()
 
-// 模板用的常量（composable 导出的纯数据）
-const ctxOptions = CONTEXT_OPTIONS
-const thinkingStrategies = THINKING_STRATEGIES
-
 const { info: toastInfo } = useToast()
+
+// ── Coding Plan 额度查询：自动关联 + 配置 ──
+
+/**
+ * 按 provider baseUrl/name 匹配内置预设，作为下拉框的自动推荐默认值。
+ * 不再控制 Section 是否显示（始终显示），仅用于计算 fetcherId 的默认值。
+ */
+const matchedPreset = computed(() => {
+  const p = props.provider
+  return matchQuotaPreset({ baseUrl: p?.baseUrl, name: p?.name })
+})
+
+const {
+  fetcherId: quotaFetcherId,
+  fetcherOptions: quotaFetcherOptions,
+  enabled: quotaEnabled,
+  cookieInput: quotaCookieInput,
+  apiKeyInput: quotaApiKeyInput,
+  apiKeyConfigured: quotaApiKeyConfigured,
+  testStatus: quotaTestStatus,
+  testError: quotaTestError,
+  quotaData,
+  lastFetchAt: quotaLastFetchAt,
+  isCookieAuth: quotaIsCookieAuth,
+  helpUrl: quotaHelpUrl,
+  helpText: quotaHelpText,
+  configuring: quotaConfiguring,
+  configureError: quotaConfigureError,
+  toggleEnabled: quotaToggleEnabled,
+  selectFetcher: quotaSelectFetcher,
+  saveCookie: quotaSaveCookie,
+  saveApiKey: quotaSaveApiKey,
+  testQuery: quotaTestQuery,
+} = useQuotaConfigure(matchedPreset, toRef(props, 'provider'))
 
 // 业务编排全在 composable：本组件只做 props/emit + 调用（受控表单，F1 拆分）
 const {
@@ -403,6 +325,7 @@ const {
   saving,
   actionError,
   isDirty,
+  expandedCompat,
   getStrategyFromMap,
   testConnection,
   autoDiscover,
@@ -414,11 +337,28 @@ const {
   pickStrategy,
   addModel,
   removeModel,
+  toggleCompatExpand,
   // W3 D7：headers CRUD
   addHeader,
   removeHeader,
   syncHeadersFromRows,
 } = useProviderEdit(toRef(props, 'provider'))
+
+// ── 模型清单区注入：ModelListSection 经 provide('modelListDeps') 拿到这些状态/方法，避免 prop 传 newModel 触发 no-mutating-props
+provide('modelListDeps', {
+  newModel,
+  localModels,
+  toggleNewInput,
+  toggleInput,
+  updateCtx,
+  pickStrategy,
+  getStrategyFromMap,
+  removeModel,
+  expandedCompat,
+  toggleCompatExpand,
+  // provider 级 api：model 级 api 缺失时的回退（compat 字段集 + 预设按钮按 api 类型过滤）
+  providerApi: computed(() => form.api),
+})
 
 // ── D13：取消/关闭统一入口，有未保存改动时二次确认 ──
 

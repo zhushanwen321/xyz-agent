@@ -13,32 +13,34 @@
     <div class="sidebar__inner flex h-full w-[300px] flex-col pl-0.5">
       <!-- Brand -->
       <div class="flex items-center gap-2 px-2 pb-3.5">
-        <span class="grid size-[22px] shrink-0 place-items-center rounded-md bg-accent text-[11px] font-bold text-fg">x</span>
+        <span class="grid size-[22px] shrink-0 place-items-center rounded-md bg-accent text-[11px] font-bold text-neutral-fg">x</span>
         <div class="flex flex-col leading-tight">
-          <span class="text-[13px] font-semibold text-fg">xyz-agent</span>
-          <span class="text-[10px] text-muted">v{{ appVersion }}<template v-if="piVersion"> · pi v{{ piVersion }}</template></span>
+          <span class="text-[13px] font-semibold text-neutral-fg">xyz-agent</span>
+          <span class="text-[10px] text-neutral-mid">v{{ appVersion }}<template v-if="piVersion"> · pi v{{ piVersion }}</template></span>
         </div>
+        <!-- 升级状态指示器（useAppUpdate 单例 state，idle/checking 不渲染） -->
+        <UpdateButton class="ml-auto" />
       </div>
 
       <!-- 主操作 nav：新建任务 ⌘N / 搜索 ⌘K -->
       <nav class="flex flex-col gap-px px-1">
         <Button
           variant="ghost"
-          class="group h-auto justify-start gap-2.5 rounded-md px-2 py-1.5 text-[12px] text-muted hover:bg-surface-hover hover:text-fg"
+          class="group h-auto justify-start gap-2.5 rounded-md px-2 py-1.5 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
           @click="onNewSession"
         >
-          <Plus class="size-[15px] text-subtle transition-colors group-hover:text-muted" />
+          <Plus class="size-[15px] text-neutral-dim transition-colors group-hover:text-neutral-mid" />
           <span class="flex-1 text-left">{{ t('sidebar.newTask') }}</span>
-          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">{{ formatKbd('n') }}</kbd>
+          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim">{{ formatKbd('n') }}</kbd>
         </Button>
         <Button
           variant="ghost"
-          class="group h-auto justify-start gap-2.5 rounded-md px-2 py-1.5 text-[12px] text-muted hover:bg-surface-hover hover:text-fg"
+          class="group h-auto justify-start gap-2.5 rounded-md px-2 py-1.5 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
           @click="searchModal.open()"
         >
-          <Search class="size-[15px] text-subtle transition-colors group-hover:text-muted" />
+          <Search class="size-[15px] text-neutral-dim transition-colors group-hover:text-neutral-mid" />
           <span class="flex-1 text-left">{{ t('sidebar.search') }}</span>
-          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">{{ formatKbd('k') }}</kbd>
+          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim">{{ formatKbd('k') }}</kbd>
         </Button>
       </nav>
 
@@ -51,19 +53,19 @@
           'group mb-1 h-auto justify-start gap-2.5 rounded-md px-2 py-1.5 text-[12px]',
           isOverviewActive
             ? 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent'
-            : 'text-muted hover:bg-surface-hover hover:text-fg',
+            : 'text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg',
         )"
         @click="goOverview"
       >
         <LayoutGrid
           class="size-[15px] transition-colors"
-          :class="isOverviewActive ? 'text-accent' : 'text-subtle group-hover:text-muted'"
+          :class="isOverviewActive ? 'text-accent' : 'text-neutral-dim group-hover:text-neutral-mid'"
         />
         <span class="flex-1 text-left">{{ t('sidebar.overview') }}</span>
         <span
           v-if="session.list.length"
           class="font-mono text-[10px]"
-          :class="isOverviewActive ? 'text-accent' : 'text-subtle'"
+          :class="isOverviewActive ? 'text-accent' : 'text-neutral-dim'"
         >{{ session.list.length }}</span>
       </Button>
 
@@ -88,7 +90,7 @@
             data-testid="session-list-error"
           >
             <AlertCircle class="size-5 text-danger opacity-60" />
-            <p class="text-[11px] text-muted">{{ t('sidebar.sessionListLoadFailed', { error: session.listLoadError }) }}</p>
+            <p class="text-[11px] text-neutral-mid">{{ t('sidebar.sessionListLoadFailed', { error: session.listLoadError }) }}</p>
             <Button variant="ghost" class="h-6 text-[11px] text-accent" data-testid="session-list-retry" @click="onRetryLoadSessions">{{ t('sidebar.retry') }}</Button>
           </div>
           <SessionList
@@ -100,6 +102,7 @@
             @new-session="onNewSession"
             @rename="onRenameSession"
             @delete="onDeleteSession"
+            @delete-folder="onDeleteFolder"
             @stop-branch="onStopBranch"
           />
         </template>
@@ -144,8 +147,8 @@
             class="flex flex-col items-center justify-center gap-2 py-10 text-center"
             data-testid="file-view-no-session"
           >
-            <FolderOpen class="size-5 text-subtle opacity-40" />
-            <p class="text-[11px] text-subtle opacity-55">{{ t('sidebar.selectSessionHint') }}</p>
+            <FolderOpen class="size-5 text-neutral-dim opacity-40" />
+            <p class="text-[11px] text-neutral-dim opacity-55">{{ t('sidebar.selectSessionHint') }}</p>
           </div>
         </template>
       </div>
@@ -154,12 +157,12 @@
       <PresenceList />
 
       <!-- 用户区（footer）· 齿轮图标打开 Settings（settings/spec.md §1） -->
-      <div class="mt-auto flex items-center gap-2 rounded-md px-2 py-2 text-[12px] text-muted">
+      <div class="mt-auto flex items-center gap-2 rounded-md px-2 py-2 text-[12px] text-neutral-mid">
         <span class="size-5 shrink-0 rounded-full bg-gradient-to-br from-accent to-info" />
-        <span class="flex-1 truncate text-fg">{{ t('sidebar.developer') }}</span>
+        <span class="flex-1 truncate text-neutral-fg">{{ t('sidebar.developer') }}</span>
         <Button
           variant="ghost"
-          class="grid size-6 shrink-0 place-items-center rounded-sm p-0 text-subtle transition-colors hover:bg-surface-hover hover:text-fg [&_svg]:size-[14px]"
+          class="grid size-6 shrink-0 place-items-center rounded-sm p-0 text-neutral-dim transition-colors hover:bg-surface-hover hover:text-neutral-fg [&_svg]:size-[14px]"
           :title="t('sidebar.settingsTitle')"
           @click="openSettings()"
         >
@@ -190,11 +193,13 @@ import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'
 import { useCommandStore } from '@/stores/command'
+import { usePresetStore } from '@/stores/preset'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { useChat } from '@/composables/features/useChat'
 import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
 import SegmentedTab from './SegmentedTab.vue'
 import SessionList from './SessionList.vue'
+import UpdateButton from './UpdateButton.vue'
 import FileView from './FileView.vue'
 import SubagentList from './SubagentList.vue'
 import WorkflowList from './WorkflowList.vue'
@@ -208,6 +213,7 @@ import { useWorkflowStore } from '@/stores/workflow'
 import { useSubagentListSync } from '@/composables/features/useSubagentListSync'
 import { useWorkflowListSync } from '@/composables/features/useWorkflowListSync'
 import { useSidebarSubagentActions } from '@/composables/features/useSidebarSubagentActions'
+import { useAppUpdate } from '@/composables/features/useAppUpdate'
 import { useSearchModal } from '@/composables/features/useSearchModal'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
@@ -226,63 +232,39 @@ const fileTreeStore = useFileTreeStore()
 const panelStore = usePanelStore()
 const subagentStore = useSubagentStore()
 const workflowStore = useWorkflowStore()
-const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, focusedSessionId, focusedSession, forkFromLastAssistant, enterForkModeFromLastAssistant } = useSidebar()
+const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, deleteFolder, focusedSessionId, focusedSession, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant } = useSidebar()
 const { abort: abortSession } = useChat()
 const { derivedStatus } = useSessionDerivations()
 const openSettings = inject<() => void>('openSettings', () => {})
 
-/** pi 版本号（runtime 启动时经 app.info 推送；xyz-agent 版本走构建时 __APP_VERSION__） */
+/** pi 版本（runtime 启动时经 app.info 推送）+ xyz-agent 版本（vite define 注入） */
 const piVersion = ref('')
-/** xyz-agent 版本（vite define 构建时注入，见 renderer/vite.config.ts） */
 const appVersion = __APP_VERSION__
-
-/** Dialog 状态 */
 const renameOpen = ref(false)
 const targetSessionId = ref('')
-
-/** 当前是否处于 Overview view（按钮转 accent 态，spec §Overview 入口） */
 const isOverviewActive = computed(() => navigation.current.view === 'overview')
-
-/** 当前焦点 session（文件视图头部展示，跟随 panel focus） */
 const currentSession = focusedSession
 
-/**
- * 文件 tab 计数（当前 session 文件树顶层节点数）。
- * W4 重写：文件视图从「改动文件列表」改为「完整文件树浏览器」，
- * 计数改为读 fileTreeStore 该 session 的顶层节点数（W4 UC-1 浏览完整结构）。
- */
+/** tab 计数（fileTree / subagent / workflow） */
 const fileCount = computed(() => {
   const sid = focusedSessionId.value
   if (!sid) return 0
   return fileTreeStore.getTree(sid)?.length ?? 0
 })
-
-/** subagent tab 计数（当前 session 的 subagent 数量，读 store 分区） */
 const subagentCount = computed(() => subagentStore.recordsOf(focusedSessionId.value ?? '').value.length)
-
-/** subagent running 态数量（badge 精确化：仅 running>0 亮蓝点） */
 const subagentRunningCount = computed(
   () => subagentStore.recordsOf(focusedSessionId.value ?? '').value.filter((r) => r.status === 'running').length,
 )
-
-/** subagent 列表（store records 分区的响应式视图解包，供 template 直接用） */
 const subagentList = computed(() => subagentStore.recordsOf(focusedSessionId.value ?? '').value)
-
-/** workflow tab 计数（当前 session 的 workflow 数量，读 store 分区） */
 const workflowCount = computed(() => workflowStore.recordsOf(focusedSessionId.value ?? '').value.length)
-
-/** workflow running/paused 态数量（badge 精确化：仅活跃态>0 亮蓝点） */
 const workflowRunningCount = computed(
   () =>
     workflowStore
       .recordsOf(focusedSessionId.value ?? '')
       .value.filter((r) => r.status === 'running' || r.status === 'paused').length,
 )
-
-/** workflow 列表（store records 分区的响应式视图解包，供 template 直接用） */
 const workflowList = computed(() => workflowStore.recordsOf(focusedSessionId.value ?? '').value)
-
-/** 当前查看的 workflow record（视图 2 详情态，null 时显示视图 1 列表） */
+/** workflow 详情态（null 时显示列表） */
 const currentWorkflow = computed(() =>
   focusedSessionId.value ? workflowStore.getCurrentWorkflow(panelStore.activePanelId, focusedSessionId.value) : null,
 )
@@ -351,10 +333,25 @@ async function onDeleteSession(id: string): Promise<void> {
   }
 }
 
-/**
- * 停止后台分支 session（FR-19，ForkGroup 两段式确认后 emit stopBranch）。
- * 调 useChat.abort 中断该分支的活跃回合——abort 乐观清 dispatching，收口靠 runtime 广播。
- */
+/** 删除指定 cwd 下所有 session（folder 批量删除）。部分失败 toast 带 error；全成功不提示。 */
+async function onDeleteFolder(cwd: string): Promise<void> {
+  try {
+    const res = await deleteFolder(cwd)
+    if (res.failed.length > 0) {
+      const firstError = res.failed[0]?.error ?? ''
+      toastError(
+        t('sidebar.deleteFolderPartialFailed', res.failed.length, {
+          named: { count: res.failed.length, error: firstError },
+        }),
+      )
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    toastError(t('sidebar.deleteFolderFailed', { msg }))
+  }
+}
+
+/** 停止后台分支 session（ForkGroup 两段式确认后 emit stopBranch）。 */
 function onStopBranch(id: string): void {
   void abortSession(id)
 }
@@ -376,6 +373,14 @@ onMounted(() => {
   useSubagentListSync()
   useWorkflowListSync()
 })
+
+/**
+ * 启动 30s 自动升级检测（w4：useAppUpdate.initAutoCheck，UpdateButton 消费检测到的状态）。
+ * 在 setup 顶层同步调用（非 onMounted）：initAutoCheck 内部用 setTimeout 延迟 30s，不需等 DOM 挂载；
+ * onScopeDispose（initAutoCheck 内注册的清理）必须在活跃 effect scope 内同步绑定，
+ * 放 onMounted 回调内虽能工作（onMounted 在组件 scope 内同步跑）但脆弱且注释误导，故提到 setup 顶层。
+ */
+useAppUpdate().initAutoCheck()
 
 /**
  * #10.1 AC-10.1：Sidebar 全局快捷键派发（消除硬编码 if/else，改 keymap 数组遍历匹配）。
@@ -400,11 +405,18 @@ const keymap: KeymapEntry[] = [
   { key: 'k', action: () => { searchModal.toggle() } },
   { key: 'n', commandId: 'new-session', action: () => { void onNewSession() } },
   { key: 'b', commandId: 'toggle-sidebar', action: () => { sidebar.toggleCollapsed() } },
+  // FR-16：⌘⇧P 打开启动预设选择 Popover（与 useAppCommands 注册的 open-preset-select 同源）。
+  // commandId 让 shortcutOverrides 生效（设置页可重录）；shift 守卫确保仅 ⌘⇧P 触发，避免 ⌘P 误命中。
+  // 默认无 override 时走 fallback：mod + 'p' + shift；fallback 的默认 shortcut 在 useAppCommands 声明为 'shift+p'。
+  { key: 'p', shift: true, commandId: 'open-preset-select', action: () => { usePresetStore().requestOpen() } },
   // FR-16 fork 快捷键：⌘G 从末条 assistant 后台 fork（留在原线）；⌘⇧G 进 composer fork 模式。
   // shift 守卫（keydown handler 内）区分同 key 的 shift/非 shift 项，避免 ⌘G 误命中 ⌘⇧G。
   // 每条 entry 形如 { key: 'g'…}：'g' 后 shift 字段决定修饰要求。
   { key: 'g', action: () => { void forkFromLastAssistant() } },
   { key: 'g', shift: true, action: () => { void enterForkModeFromLastAssistant() } },
+  // fast-handoff 快捷键：⌘J 从末条 assistant 打包文档到新 session（完成后跳转新 session）。
+  // 用 ⌘J 而非 ⌘H：macOS 系统保留 ⌘H 为「Hide Application」，OS 先拦截 renderer 拦不住。
+  { key: 'j', action: () => { void handoffFromLastAssistant() } },
 ]
 useEventListener(window, 'keydown', (e: KeyboardEvent) => {
   // composer 聚焦时禁用全局 fork 快捷键（避免与 composer 输入冲突；⌘K/⌘N/⌘B 仍可用但 fork 专属此守卫）。

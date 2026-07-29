@@ -6,9 +6,10 @@
 # 2. 产物存在性（dist/main, dist/preload, dist/runtime, renderer/dist）
 # 3. tsup noExternal 与 runtime dependencies 一致性
 # 4. electron-builder.yml 结构完整性
-# 5. asarUnpack 与 files 一致性（防止 files 排除 dist/runtime）
-# 6. resources/pi 无指向外部绝对路径的 symlink
-# 7. 磁盘空间
+# 5. artifactName 固定名检查（不含 ${version}，支持自动升级 + releases/latest/download 静态 URL）
+# 6. asarUnpack 与 files 一致性（防止 files 排除 dist/runtime）
+# 7. resources/pi 无指向外部绝对路径的 symlink
+# 8. 磁盘空间
 #
 # 注：builtin pi-extensions（@zhushanwen/pi-*）已改为 Settings 推荐安装（2026-07-04），
 # 不再打包进产物，原 npm packages / 传递依赖检查已移除。
@@ -57,7 +58,7 @@ FAILED=0
 
 # ── 1. package.json 完整性 ─────────────────────────────────────────
 echo ""
-echo -e "${BLUE}[1/7] package.json fields...${NC}"
+echo -e "${BLUE}[1/8] package.json fields...${NC}"
 
 # 检查 apps/electron/package.json（electron-builder 的工作目录）
 ELECTRON_PKG="$(to_native_path "$ELECTRON_DIR/package.json")"
@@ -75,7 +76,7 @@ console.log('  ✓', pkg.name, 'v' + pkg.version);
 
 # ── 2. 产物存在性 ──────────────────────────────────────────────────
 echo ""
-echo -e "${BLUE}[2/7] Build artifacts exist...${NC}"
+echo -e "${BLUE}[2/8] Build artifacts exist...${NC}"
 
 check_file() {
     local path="$1"
@@ -108,7 +109,7 @@ check_dir() {
 
 # ── 3. tsup noExternal 与 runtime dependencies 同步 ─────────────────
 echo ""
-echo -e "${BLUE}[3/7] tsup noExternal vs runtime dependencies...${NC}"
+echo -e "${BLUE}[3/8] tsup noExternal vs runtime dependencies...${NC}"
 
 RUNTIME_PKG="$PROJECT_ROOT/packages/runtime/package.json"
 RUNTIME_TSUP="$PROJECT_ROOT/packages/runtime/tsup.config.ts"
@@ -159,7 +160,7 @@ fi
 
 # ── 4. electron-builder.yml 结构 ────────────────────────────────────
 echo ""
-echo -e "${BLUE}[4/7] electron-builder.yml structure...${NC}"
+echo -e "${BLUE}[4/8] electron-builder.yml structure...${NC}"
 
 EB_YML="$ELECTRON_DIR/electron-builder.yml"
 EB_YML_NATIVE="$(to_native_path "$EB_YML")"
@@ -183,9 +184,29 @@ else
     FAILED=1
 fi
 
-# ── 5. asarUnpack 与 files 一致性检查 ─────────────────────────────
+# ── 5. artifactName 固定名检查（不含 ${version}）────────────────────
+# 自动升级要求固定文件名（支持 releases/latest/download 静态 URL），
+# artifactName 含 ${version} 会导致每个版本文件名变化，无法用静态 URL 升级。
 echo ""
-echo -e "${BLUE}[5/7] asarUnpack vs files consistency...${NC}"
+echo -e "${BLUE}[5/8] artifactName fixed-name (no \${version})...${NC}"
+
+if [ -f "$EB_YML" ]; then
+    # grep 正则匹配 artifactName.*${version}（${ 在 BRE 中是字面量，无需转义）。
+    # 排除注释行（以 # 开头）避免误报。
+    if grep -v '^[[:space:]]*#' "$EB_YML" | grep -q 'artifactName.*${version}'; then
+        echo -e "  ${RED}✗ electron-builder.yml artifactName 含 \${version}，自动升级要求固定文件名（支持 releases/latest/download 静态 URL），请去掉 \${version}${NC}"
+        echo -e "  ${YELLOW}  FIX: 将 artifactName 中的 '\${version}' 移除，仅保留 \${arch}/\${ext} 等 target 相关变量${NC}"
+        FAILED=1
+    else
+        echo -e "  ${GREEN}✓ artifactName 不含 \${version}（固定文件名，支持静态升级 URL）${NC}"
+    fi
+else
+    echo -e "  ${YELLOW}⚠ 跳过（electron-builder.yml 不存在）${NC}"
+fi
+
+# ── 6. asarUnpack 与 files 一致性检查 ─────────────────────────────
+echo ""
+echo -e "${BLUE}[6/8] asarUnpack vs files consistency...${NC}"
 
 if [ -f "$EB_YML" ]; then
     if grep -q "asarUnpack" "$EB_YML" && grep -q "dist/runtime" "$EB_YML"; then
@@ -206,8 +227,10 @@ if [ -f "$EB_YML" ]; then
     fi
 
     # 致命：files 必须显式包含 dist/runtime，否则 asarUnpack 无文件可 unpack
-    # electron-builder 的 files 和 asarUnpack 是 AND 关系
-    if grep -v '^[[:space:]]*#' "$EB_YML" | grep -qE '^\s*-\s+dist/runtime/'; then
+    # electron-builder 的 files 和 asarUnpack 是 AND 关系。
+    # "? 匹配可选的左双引号——同时支持 `- dist/runtime/**/*` 与 `- "dist/runtime/**/*"`
+    # 两种 YAML 引号形式（之前只匹配无引号写法，导致用引号包裹的合法配置被误判缺失）。
+    if grep -v '^[[:space:]]*#' "$EB_YML" | grep -qE '^[[:space:]]*-[[:space:]]+"?dist/runtime/'; then
         echo -e "  ${GREEN}✓ files 显式包含 dist/runtime${NC}"
     else
         echo -e "  ${RED}✗ FATAL: files 未显式包含 dist/runtime，asarUnpack 将静默失败${NC}"
@@ -216,12 +239,12 @@ if [ -f "$EB_YML" ]; then
     fi
 fi
 
-# ── 6. resources/pi symlink 检查 ───────────────────────────────────
+# ── 7. resources/pi symlink 检查 ───────────────────────────────────
 # 仅检查 git 跟踪的 symlink（会进产物，危险）。
 # .gitignore 忽略的 symlink 是 setup-worktree.sh 创建的 workspace 共享缓存
 # （指向 .pi-binary-cache/），不进 git，CI 由 prepare-pi-resources.sh 重新准备。
 echo ""
-echo -e "${BLUE}[6/7] resources/pi symlink check...${NC}"
+echo -e "${BLUE}[7/8] resources/pi symlink check...${NC}"
 
 PI_RES_DIR="$ELECTRON_DIR/resources/pi"
 SYMLINK_FOUND=false
@@ -245,9 +268,9 @@ else
     echo -e "  ${GREEN}✓ resources/pi 无 symlink${NC}"
 fi
 
-# ── 7. 磁盘空间检查 ────────────────────────────────────────────────
+# ── 8. 磁盘空间检查 ────────────────────────────────────────────────
 echo ""
-echo -e "${BLUE}[7/7] Disk space...${NC}"
+echo -e "${BLUE}[8/8] Disk space...${NC}"
 
 # df -g 是 BSD/macOS 特有，Linux 不支持。用 df -k（KB，跨平台）换算成 GB。
 AVAILABLE_GB=$(($(df -k . | tail -1 | awk '{print $4}') / 1024 / 1024))

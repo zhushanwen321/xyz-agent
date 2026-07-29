@@ -26,6 +26,9 @@ vi.mock('@/composables/features/useSidebar', () => ({
   useSidebar: () => ({ onConnected: () => Promise.resolve() }),
 }))
 vi.mock('@/composables/effects/useForkNoticeEffect', () => ({ bindForkNoticeEffect: () => {} }))
+// stub handoff / session-stream-sync 全局效果（App setup 调用，依赖 pinia/session store；复用 App-w8 策略）
+vi.mock('@/composables/effects/useHandoffEffect', () => ({ bindHandoffEffect: () => {} }))
+vi.mock('@/composables/effects/useSessionStreamSync', () => ({ bindSessionStreamSync: () => {} }))
 vi.mock('@/lib/ws-client', () => ({
   getFailReason: () => ({ value: null }),
   getIsRemote: () => ({ value: false }),

@@ -34,7 +34,7 @@ describe('ConnectionManager P5 presence（activeSessions + broadcastPresence + b
 
   it('TC3: buildPresenceList 算 isOperating（busyOwnerId===clientId）', async () => {
     const sessions = [
-      { id: 's1', busyOwnerId: 'A', cwd: '/p', label: 's', modelId: 'm', createdAt: 0, lastActiveAt: 0, tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false, labelPersisted: false },
+      { id: 's1', busyOwnerId: 'A', cwd: '/p', label: 's', modelId: 'm', createdAt: 0, lastActiveAt: 0, tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false, labelPersisted: false, isBashRunning: false, bashRunToken: undefined },
     ]
     const { cm } = await makeCm({ allSessions: () => sessions[Symbol.iterator]() })
     // 手动塞 clients

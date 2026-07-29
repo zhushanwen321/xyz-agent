@@ -7,7 +7,7 @@
  * 注：ServerMessage(id) → pending.resolve 的回灌由 features 层 dispatcher 串联（Wave 3）。
  *      mock 模式下不走本域（api/index 切到 mock 门面）。
  */
-import type { SessionSummary, SessionGroup, SubagentRecord, WorkflowRunRecord, Message, PresenceConnection } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup, SubagentRecord, WorkflowRunRecord, Message, PresenceConnection, BatchDeleteResult } from '@xyz-agent/shared'
 import { command } from '../request'
 
 /**
@@ -23,12 +23,14 @@ export async function list(): Promise<SessionGroup[]> {
 /**
  * 创建新 session（#1 cwd 透传，位置参数 create(cwd?, label?)，issues #1 方案 A）。
  * cwd=undefined → payload 不含 cwd 键（runtime 回退 process.cwd()，AC-1.2 回归）。
+ * presetId：session 创建时锁定的 pi 启动预设 id（设计文档 §4.1），透传给 runtime。
  * reply envelope 是 { session }，解包 .session。
  */
-export async function create(cwd?: string, label?: string): Promise<SessionSummary> {
-  const payload: { cwd?: string; label?: string } = {}
+export async function create(cwd?: string, label?: string, presetId?: string): Promise<SessionSummary> {
+  const payload: { cwd?: string; label?: string; presetId?: string } = {}
   if (cwd !== undefined) payload.cwd = cwd
   if (label !== undefined) payload.label = label
+  if (presetId !== undefined) payload.presetId = presetId
   const reply = await command('session.create', payload)
   return reply.session
 }
@@ -111,6 +113,11 @@ export function remove(sessionId: string): Promise<void> {
   return command('session.delete', { sessionId })
 }
 
+/** 删除指定 cwd（folder）下所有 session（folder 维度批量删除，reply 含 deleted/failed 列表） */
+export function removeByCwd(cwd: string): Promise<BatchDeleteResult> {
+  return command('session.deleteByCwd', { cwd })
+}
+
 /**
  * 设置 session 的思考等级（动作；确认由 session.thinkingLevelSet reply 回灌 pending）。
  * level 是前端 6 级枚举字符串（off/low/medium/high/xhigh/max，见 thinking-levels.ts）。
@@ -186,4 +193,23 @@ export function subagentAction(
   subagentId: string,
 ): Promise<void> {
   return command('session.subagentAction', { sessionId, action, subagentId })
+}
+
+/**
+ * 触发 fast-handoff（痛点3，FR-fast-handoff）。
+ * runtime 让源 session 的 pi 跑 /skill:handoff：取末条 assistant 文档 → 注入新空白 session。
+ * 与 fork 的区别：fork 从某点分叉继承历史；handoff 不继承历史，只注入文档（"打包交接到新线程"）。
+ * reply 原样拼到 /skill:handoff 后作 args（用户备注）。完成经独立通道 session.handoffComplete 广播（effect 层订阅跳转），
+ * reply 是 message.status ack（前端不读 payload，等广播）。
+ */
+export function handoff(sessionId: string, reply?: string): Promise<void> {
+  return command('session.handoff', { sessionId, reply })
+}
+
+/**
+ * 取消进行中的 handoff（对称 abortHandoff 委托 SessionService.abort 中断 pi turn）。
+ * 无进行中 handoff 时 no-op。reply message.status ack。
+ */
+export function abortHandoff(sessionId: string): Promise<void> {
+  return command('session.abortHandoff', { sessionId })
 }

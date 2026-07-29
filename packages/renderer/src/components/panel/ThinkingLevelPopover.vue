@@ -1,14 +1,14 @@
 <template>
   <!--
     思考等级 popover（draft-composer-states §2c）。
-    触发器与列表均中性配色（与上下文容量 / 模型触发器同款 text-subtle），仅选中态走 accent。
+    触发器与列表均中性配色（与上下文容量 / 模型触发器同款 text-neutral-dim），仅选中态走 accent。
     等级强度靠 popover 内 off→max 的语义表达。
   -->
   <Popover v-model:open="open">
     <PopoverTrigger as-child>
       <Button
         variant="ghost"
-        class="h-7 gap-1 rounded-sm px-2 text-[11px] text-subtle transition-colors hover:text-muted"
+        class="h-7 gap-1 rounded-sm px-2 text-[11px] text-neutral-dim transition-colors hover:text-neutral-mid"
         :title="t('panel.thinkingLevel.title')"
       >
         <Brain class="size-3 shrink-0" />
@@ -22,7 +22,7 @@
     <PopoverContent side="top" class="w-[180px] p-0">
       <!-- head -->
       <div
-        class="flex items-center justify-between border-b border-border bg-white/[0.015] px-2.5 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-subtle"
+        class="flex items-center justify-between border-b border-border bg-white/[0.015] px-2.5 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-neutral-dim"
       >
         <span>{{ t('panel.thinkingLevel.title') }}</span>
       </div>
@@ -31,13 +31,13 @@
         v-for="opt in availableOptions"
         :key="opt.level"
         variant="ghost"
-        class="flex w-full items-center gap-2 rounded-none px-2.5 py-2 text-[13px] text-muted hover:bg-surface-hover hover:text-fg"
+        class="flex w-full items-center gap-2 rounded-none px-2.5 py-2 text-[13px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
         :class="level === opt.level && 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent'"
         @click="onSelect(opt)"
       >
         <span
           class="size-[7px] shrink-0 rounded-full"
-          :class="level === opt.level ? 'bg-accent' : 'bg-subtle'"
+          :class="level === opt.level ? 'bg-accent' : 'bg-neutral-dim'"
         />
         <span class="flex-1 text-left">{{ getDisplayLabel(opt.level, props.levelMap, t) }}</span>
         <Check

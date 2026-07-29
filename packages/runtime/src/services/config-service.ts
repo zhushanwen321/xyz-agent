@@ -7,6 +7,7 @@
  * Tool permissions are persisted to ~/.xyz-agent/config.json (xyz-agent own config).
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import {
@@ -18,6 +19,10 @@ import {
   type ScannedAgentInfo,
   type SystemPromptConfig,
   type TerminalConfig,
+  type SourceDetectResult,
+  type ProviderSource,
+  type ProviderImportPreview,
+  type ProviderImportResult,
 } from '@xyz-agent/shared'
 import type { IConfigService } from '../interfaces.js'
 import type { IConfigStore, ConfigModelDefinition } from './ports/config.js'
@@ -32,6 +37,26 @@ import {
 import { scanAgents } from './scanners/agent-scanner.js'
 import { pickModelCapabilityFields } from './model-mapper.js'
 import { getConfigDir } from '../infra/pi/pi-paths.js'
+import { detectSources as detectSourcesImpl } from './migration/index.js'
+import { previewImport as previewImportImpl, applyImport as applyImportImpl } from './migration/index.js'
+import {
+  getWorktreeRootDir as getWorktreeRootDirImpl,
+  setWorktreeRootDir as setWorktreeRootDirImpl,
+  getSetupScript as getSetupScriptImpl,
+  setSetupScript as setSetupScriptImpl,
+  getBareSetupScript as getBareSetupScriptImpl,
+  setBareSetupScript as setBareSetupScriptImpl,
+  getTimeout as getTimeoutImpl,
+  setTimeout as setTimeoutImpl,
+  getDefaultBaseBranch as getDefaultBaseBranchImpl,
+  setDefaultBaseBranch as setDefaultBaseBranchImpl,
+} from './worktree-config-helper.js'
+import {
+  defaultSystemPromptConfig,
+  mergeSystemPromptConfig,
+  defaultTerminalConfig,
+  mergeTerminalConfig,
+} from './config-merge-helpers.js'
 
 // ── ADR-0020 §1.1 强制目录（桥接层硬编码注入，不进 discovery.json）──
 // 强制·项目（最高优先）> 强制·全局 > 可选（discovery 数组顺序）。
@@ -167,6 +192,9 @@ export class ConfigService implements IConfigService {
       })),
       // W2：从 config.enabled 读，undefined/true 视为启用（向上兼容存量无此字段的 provider）
       enabled: config.enabled !== false,
+      // Coding Plan 额度查询配置：透传 quota（fetcher/enabled/cookieSet）到 ProviderInfo，
+      // 供 Settings UI 显示状态 + ContextCapacityPopover 判断是否显示额度区
+      quota: config.quota,
     }))
   }
 
@@ -175,8 +203,10 @@ export class ConfigService implements IConfigService {
     type?: string
     apiKey?: string
     baseUrl?: string
-    models?: Array<string | { id: string; name?: string; api?: string; baseUrl?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null>; enabled?: boolean }>
+    models?: Array<string | { id: string; name?: string; api?: string; baseUrl?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null>; enabled?: boolean; compat?: Record<string, unknown> }>
     enabled?: boolean
+    /** Coding Plan 额度查询配置（手动选择 fetcher + 启用状态）。 */
+    quota?: { fetcher?: string; enabled: boolean; cookieSet?: boolean }
   }, expectedVersion: number): { newDefault?: { provider: string; modelId: string }; newVersion: number } {
     // P6 D3 config CAS：先校验 expectedVersion，不等抛 VersionConflictError（handler 转 version_conflict）。
     // 必须在 upsert 前校验——避免冲突时仍写入 providers（version 自增只在成功路径触发）。
@@ -193,6 +223,8 @@ export class ConfigService implements IConfigService {
     if (data.name !== undefined) merged.name = data.name as string
     // W2：provider 级 enabled 透传到合并结果（data 类型已声明 enabled，原合并逻辑漏处理）
     if (data.enabled !== undefined) merged.enabled = data.enabled
+    // Coding Plan 额度查询：整体覆写 quota（fetcher/enabled/cookieSet 三字段一起持久化）
+    if (data.quota !== undefined) merged.quota = data.quota
     if (data.models !== undefined) {
       const rawModels = data.models as Array<Record<string, unknown>>
       const existingModels = (existing.models ?? []) as ConfigModelDefinition[]
@@ -219,6 +251,28 @@ export class ConfigService implements IConfigService {
         if (typeof m.api === 'string') model.api = m.api
         if (typeof m.baseUrl === 'string') model.baseUrl = m.baseUrl
         if (typeof m.enabled === 'boolean') model.enabled = m.enabled
+        // compat 透传：前端 compat 编辑器回传的兼容性覆盖必须写回，
+        // 否则编辑保存即丢失用户手动配置的 compat（隐性数据丢失 bug）。
+        // 类型守卫对齐 isValidThinkingLevelMap：必须排除 null（typeof null === 'object'）
+        // 与数组（typeof [] === 'object'），否则下游遍历 null 会崩或把数组当对象写入。
+        if (m.compat != null && typeof m.compat === 'object' && !Array.isArray(m.compat)) {
+          // sanitize compat（守卫通过后、赋值前）：
+          // - 剔除 __proto__/prototype/constructor 防 prototype pollution（compat 类型是
+          //   Record<string, unknown> 前向兼容扩展点，不能假定 key 安全）
+          // - 剔除 undefined value（避免 JSON 序列化丢 key 造成困惑）
+          // 不做 key 白名单：compat schema 未稳定，白名单会限制前向扩展。
+          const sanitized: Record<string, unknown> = {}
+          for (const [k, v] of Object.entries(m.compat)) {
+            if (k === '__proto__' || k === 'prototype' || k === 'constructor') continue
+            if (v === undefined) continue
+            sanitized[k] = v
+          }
+          model.compat = sanitized
+        } else if (m.compat === undefined && base.compat) {
+          // 前端 clearAll 发 undefined → 删除盘上已有的 compat（对齐 thinkingLevelMap undefined 分支），
+          // 否则 base spread 会保留旧 compat，导致「清除所有 compat」按钮失效。
+          delete model.compat
+        }
         return model as unknown as ConfigModelDefinition
       })
     }
@@ -304,74 +358,54 @@ export class ConfigService implements IConfigService {
   }
 
   // ── Worktree config（git-cwt-anywhere）──
+  // 委托 worktree-config-helper（控 max-lines 500；签名 / 行为不变，对外零感知）。
+  // loadAppConfig / saveAppConfig 仍为 private，通过 appConfig() 暴露 accessors 注入。
+
+  private appConfig(): { load(): Record<string, unknown>; save(config: Record<string, unknown>): void } {
+    return {
+      load: () => this.loadAppConfig(),
+      save: c => this.saveAppConfig(c),
+    }
+  }
 
   getWorktreeRootDir(): string {
-    const config = this.loadAppConfig()
-    const val = config['worktreeRootDir']
-    return typeof val === 'string' ? val : '~/worktrees'
+    return getWorktreeRootDirImpl(this.appConfig())
   }
 
   setWorktreeRootDir(dir: string): void {
-    if (!dir || !dir.trim()) {
-      throw new Error('worktreeRootDir cannot be empty')
-    }
-    const config = this.loadAppConfig()
-    config['worktreeRootDir'] = dir
-    this.saveAppConfig(config)
+    setWorktreeRootDirImpl(this.appConfig(), dir)
   }
 
   getSetupScript(): string {
-    const config = this.loadAppConfig()
-    const val = config['setupScript']
-    return typeof val === 'string' ? val : 'custom-hooks/setup-worktree.sh'
+    return getSetupScriptImpl(this.appConfig())
   }
 
   setSetupScript(script: string): void {
-    if (script.includes('..')) {
-      throw new Error('setupScript path cannot contain ..')
-    }
-    const config = this.loadAppConfig()
-    config['setupScript'] = script
-    this.saveAppConfig(config)
+    setSetupScriptImpl(this.appConfig(), script)
   }
 
   getBareSetupScript(): string {
-    const config = this.loadAppConfig()
-    const val = config['bareSetupScript']
-    return typeof val === 'string' ? val : 'custom-hooks/setup-worktree.sh'
+    return getBareSetupScriptImpl(this.appConfig())
   }
 
   setBareSetupScript(script: string): void {
-    const config = this.loadAppConfig()
-    config['bareSetupScript'] = script
-    this.saveAppConfig(config)
+    setBareSetupScriptImpl(this.appConfig(), script)
   }
 
   getTimeout(): number {
-    const config = this.loadAppConfig()
-    const val = config['worktreeTimeout']
-    return typeof val === 'number' ? val : 60
+    return getTimeoutImpl(this.appConfig())
   }
 
   setTimeout(timeout: number): void {
-    if (!Number.isFinite(timeout) || timeout <= 0 || timeout > 3600) {
-      throw new Error(`timeout must be a positive number in (0, 3600], got ${timeout}`)
-    }
-    const config = this.loadAppConfig()
-    config['worktreeTimeout'] = timeout
-    this.saveAppConfig(config)
+    setTimeoutImpl(this.appConfig(), timeout)
   }
 
   getDefaultBaseBranch(): string {
-    const config = this.loadAppConfig()
-    const val = config['defaultBaseBranch']
-    return typeof val === 'string' ? val : 'origin/main'
+    return getDefaultBaseBranchImpl(this.appConfig())
   }
 
   setDefaultBaseBranch(baseBranch: string): void {
-    const config = this.loadAppConfig()
-    config['defaultBaseBranch'] = baseBranch
-    this.saveAppConfig(config)
+    setDefaultBaseBranchImpl(this.appConfig(), baseBranch)
   }
 
   // ── Skill CRUD ─────────────────────────────────────────────────
@@ -600,63 +634,48 @@ export class ConfigService implements IConfigService {
     return scanAgents(sources, existingIds)
   }
 
+  // ── 迁移源检测（W1，cw-2026-07-26-migration-other-agents）──
+  // 只读检测本机其他 agent（Claude/Codex/Pi/ZCode）的 skill/agent 配置目录，
+  // 返回每个源的安装状态 + 资源计数（不读文件内容）。详见 services/migration/source-detector.ts。
+  detectSources(): SourceDetectResult[] {
+    return detectSourcesImpl(process.env.HOME || homedir())
+  }
+
+  // ── Provider 导入（W2，cw-2026-07-26-migration-other-agents）──
+  // preview→apply 两步数据流 + 内存缓存。安全红线（DM1）：apiKey 明文不进前端。
+  // preview 返回脱敏数据（只 apiKeyExtracted 布尔），完整配置暂存 preview-cache（5min TTL）。
+  // 实现委托 services/migration/provider-importer（与 detectSources 同模式：纯函数 + 直接读 pi-provider-store，
+  // 对齐 quota-service 的 provider 级直访先例，不经 IConfigStore port）。
+
+  previewImportProviders(source: ProviderSource): { importId: string; preview: ProviderImportPreview } | { error: { code: string; message: string } } {
+    return previewImportImpl(source, process.env.HOME || homedir())
+  }
+
+  applyImportProviders(importId: string, selectedIds: string[]): { result: ProviderImportResult } | { error: { code: string; message: string } } {
+    return applyImportImpl(importId, selectedIds)
+  }
+
   // ── System prompt config（FR-6/FR-7，ADR-0038）──
   // 独立文件 system-prompt.json（不复用 config.json）：replace/append 两段提示词配置，
   // 插件读此文件热生效（replace 启动期注入、append 每轮 before_agent_start 注入）。
+  // 默认值 / 合并纯逻辑见 config-merge-helpers.ts。
 
   private systemPromptPath(): string {
     return join(this.configStore.getConfigDir(), 'system-prompt.json')
   }
 
-  private defaultSystemPromptConfig(): SystemPromptConfig {
-    return {
-      version: 1,
-      replace: { enabled: false, prompt: '' },
-      append: { enabled: false, prompt: '' },
-    }
-  }
-
-  /**
-   * 防御性合并：把磁盘读到的 raw（可能字段缺失/类型错）合并到默认值上。
-   * corrupted=false（字段级容错，不视为损坏）；只有 JSON.parse 失败才 corrupted=true。
-   */
-  private mergeSystemPromptConfig(raw: unknown): SystemPromptConfig {
-    const base = this.defaultSystemPromptConfig()
-    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return base
-    const r = raw as Record<string, unknown>
-    const replaceRaw = r['replace']
-    const appendRaw = r['append']
-    const replace = (typeof replaceRaw === 'object' && replaceRaw !== null && !Array.isArray(replaceRaw))
-      ? replaceRaw as Record<string, unknown>
-      : {}
-    const append = (typeof appendRaw === 'object' && appendRaw !== null && !Array.isArray(appendRaw))
-      ? appendRaw as Record<string, unknown>
-      : {}
-    return {
-      version: typeof r['version'] === 'number' ? r['version'] : base.version,
-      replace: {
-        enabled: typeof replace['enabled'] === 'boolean' ? replace['enabled'] : false,
-        prompt: typeof replace['prompt'] === 'string' ? replace['prompt'] : '',
-      },
-      append: {
-        enabled: typeof append['enabled'] === 'boolean' ? append['enabled'] : false,
-        prompt: typeof append['prompt'] === 'string' ? append['prompt'] : '',
-      },
-    }
-  }
-
   getSystemPromptConfig(): { config: SystemPromptConfig; corrupted: boolean } {
     const cp = this.systemPromptPath()
     if (!existsSync(cp)) {
-      return { config: this.defaultSystemPromptConfig(), corrupted: false }
+      return { config: defaultSystemPromptConfig(), corrupted: false }
     }
     let raw: unknown
     try {
       raw = JSON.parse(readFileSync(cp, 'utf-8'))
     } catch {
-      return { config: this.defaultSystemPromptConfig(), corrupted: true }
+      return { config: defaultSystemPromptConfig(), corrupted: true }
     }
-    return { config: this.mergeSystemPromptConfig(raw), corrupted: false }
+    return { config: mergeSystemPromptConfig(raw), corrupted: false }
   }
 
   setSystemPromptConfig(config: SystemPromptConfig): { ok: boolean; error?: string } {
@@ -707,58 +726,24 @@ export class ConfigService implements IConfigService {
   // ── Terminal config（Phase 6 settings）──
   // 独立文件 terminal.json（不复用 config.json）：shell/字体/scrollback 等终端偏好。
   // 仅对新 spawn 的 PTY 生效（已启动的 PTY 不动态切换 shell），由 TerminalService.resolveShell 读取。
+  // 默认值 / 合并纯逻辑见 config-merge-helpers.ts。
 
   private terminalPath(): string {
     return join(this.configStore.getConfigDir(), 'terminal.json')
   }
 
-  private defaultTerminalConfig(): TerminalConfig {
-    return {
-      version: 1,
-      shell: '',
-      shellArgs: [],
-      fontSize: 14,
-      fontFamily: '',
-      scrollback: 5000,
-      cursorStyle: 'block',
-      bell: true,
-    }
-  }
-
-  /**
-   * 防御性合并：把磁盘读到的 raw（可能字段缺失/类型错）合并到默认值上。
-   * corrupted=false（字段级容错，不视为损坏）；只有 JSON.parse 失败才 corrupted=true。
-   */
-  private mergeTerminalConfig(raw: unknown): TerminalConfig {
-    const base = this.defaultTerminalConfig()
-    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return base
-    const r = raw as Record<string, unknown>
-    const validCursorStyles: TerminalConfig['cursorStyle'][] = ['block', 'underline', 'bar']
-    const cursorRaw = r['cursorStyle']
-    return {
-      version: typeof r['version'] === 'number' ? r['version'] : base.version,
-      shell: typeof r['shell'] === 'string' ? r['shell'] : base.shell,
-      shellArgs: Array.isArray(r['shellArgs']) ? r['shellArgs'].filter((a): a is string => typeof a === 'string') : base.shellArgs,
-      fontSize: typeof r['fontSize'] === 'number' && Number.isFinite(r['fontSize']) ? r['fontSize'] : base.fontSize,
-      fontFamily: typeof r['fontFamily'] === 'string' ? r['fontFamily'] : base.fontFamily,
-      scrollback: typeof r['scrollback'] === 'number' && Number.isFinite(r['scrollback']) ? r['scrollback'] : base.scrollback,
-      cursorStyle: typeof cursorRaw === 'string' && (validCursorStyles as string[]).includes(cursorRaw) ? cursorRaw as TerminalConfig['cursorStyle'] : base.cursorStyle,
-      bell: typeof r['bell'] === 'boolean' ? r['bell'] : base.bell,
-    }
-  }
-
   getTerminalConfig(): { config: TerminalConfig; corrupted: boolean } {
     const tp = this.terminalPath()
     if (!existsSync(tp)) {
-      return { config: this.defaultTerminalConfig(), corrupted: false }
+      return { config: defaultTerminalConfig(), corrupted: false }
     }
     let raw: unknown
     try {
       raw = JSON.parse(readFileSync(tp, 'utf-8'))
     } catch {
-      return { config: this.defaultTerminalConfig(), corrupted: true }
+      return { config: defaultTerminalConfig(), corrupted: true }
     }
-    return { config: this.mergeTerminalConfig(raw), corrupted: false }
+    return { config: mergeTerminalConfig(raw), corrupted: false }
   }
 
   setTerminalConfig(config: TerminalConfig): { ok: boolean; error?: string } {

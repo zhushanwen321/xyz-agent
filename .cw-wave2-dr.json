@@ -1,0 +1,49 @@
+{
+  "designReviewJudgment": {
+    "necessity": "本 wave 是 runtime 层 images 透传链路：把 message.send 新增的 images 字段从 transport 层一路透传到 pi RPC prompt。pi rpc-mode.ts（389-395行）已支持 prompt 命令的 images 字段并转发给 session.prompt({images})，但 runtime 的 RpcClient.prompt / dispatcher / session-service / handler 当前只透传文本 content，images 字段被丢弃。没有本 wave，前端发出的图片附件到 runtime 就断了，无法到达 pi。这是 add-file-picture-attach 功能的 runtime 段必经改动，对 slice 的贡献是把「图片数据通路」从 transport 接通到 pi 引擎。",
+    "sufficiency": {
+      "gaps": [
+        "sendSubagentMessage 不透传 images（CL2 已决议：范围外，subagent 路径无 images 语义，保持现状）"
+      ],
+      "overlaps": [
+        "无明显重叠。6 个改动点职责清晰：rpc-client 是唯一类型组装点，其余 5 个是纯签名同步/透传，无功能重复。"
+      ],
+      "meceNote": "改动点按调用链从外到内完全覆盖且互斥：transport 入口（handler 解构）→ facade（session-service）→ 派发（dispatcher sendMessage+sendPrompt）→ 接口契约同步（IPiEngine+ISessionService）→ infra 组装（rpc-client）。每层各司其职，无遗漏无重复。pi-engine.ts 与 interfaces.ts 两个接口签名同步虽是同类改动但作用于不同接口（IPiEngine=pi 引擎 port / ISessionService=跨服务 facade），各自独立必要。"
+    },
+    "alternatives": "考虑过替代方案：(1) 不逐层透传，直接在 handler 调用 rpc-client 组装并跳过中间层——被否决，违反分层架构（transport 不应直接持有 infra 句柄，且 dispatcher 有 busy 预检/hook 拦截/ensureActive 等必须经过的编排逻辑）。(2) 把 shared 的 {data;mimeType} 类型直接复用为 pi 的 images 类型（不加 type:'image'）——被否决，pi 的 ImageContent 要求 type 判别字段，且 AGENTS.md 规则 #5 要求 pi 私有字段不出 infra 层，rpc-client 必须是唯一组装点。(3) 改 sendCommand 签名让它感知 images——被否决，sendCommand 是通用 RPC 原语，images 是 prompt 专属语义，应在 prompt 方法内组装后作为 params 传入。当前逐层透传 + rpc-client 唯一组装是最小侵入、符合既有分层契约的方案。",
+    "tradeoffs": [
+      {
+        "id": "TR1",
+        "decision": "所有透传层的 images 参数设为可选（images?），undefined 走原路径",
+        "reason": "保证零回归——现有所有调用点（switchModel/workflowAction/subagentAction 等调 client.prompt 的地方）不需要改动，只有 message.send 主路径会传 images。",
+        "cost": "images 类型在各层签名重复出现 Array<{data:string;mimeType:string}>（未抽公共类型别名），有少量类型重复。可接受——shared 已定义该形状且跨包引用别名会增加耦合。"
+      },
+      {
+        "id": "TR2",
+        "decision": "空数组 images 与 undefined 都归一化为不传（在 rpc-client 用 images.length>0 判定）",
+        "reason": "pi 对空 images 数组的处理语义未定义（agent-session.ts 把非空数组当有效附件），防御性归一化避免向 pi 发空 content block。",
+        "cost": "rpc-client 多一个 length 判定，逻辑略复杂于直接透传。可接受——防御边界条件的代价极小。"
+      }
+    ],
+    "risks": [
+      {
+        "id": "R1",
+        "item": "client.prompt 的其他调用点（session-service.workflowAction / subagentAction / promptReload）未传 images，签名加可选参数后这些调用点类型仍兼容，但若漏改 IPiEngine 接口会导致 RpcClient implements IPiEngine 类型不匹配。",
+        "severity": "low",
+        "mitigation": "T7 验证任务强制 tsc --noEmit EXIT 0，类型不匹配会立即编译失败。改动清单已明确包含 pi-engine.ts(T5) 和 interfaces.ts(T6) 两个接口同步点。"
+      },
+      {
+        "id": "R2",
+        "item": "pi 实际收到 images 后的图片渲染/模型多模态行为依赖 pi 侧实现，本 wave 只保证数据透传到 pi RPC 入口，不验证 pi 内部图片处理。",
+        "severity": "medium",
+        "mitigation": "本 wave 范围明确是 runtime 透传链路，pi 侧行为由 pi 自身保证（rpc-mode.ts 已实现 command.images 转发）。端到端图片渲染验证属于后续 wave（renderer 段）或人工验收，不在本 wave testCases 内。"
+      }
+    ],
+    "layerSpecific": {
+      "testCaseCoverageNote": "3 个 testCases 覆盖关键分支：TC1 无 images（零回归主路径）/ TC2 有 images（组装+透传正路径）/ TC3 空数组（边界归一化）。三者合起来覆盖 images 参数的全部取值域（undefined / 非空数组 / 空数组），且 TC1 显式断言「不传 images 键」锁定零回归契约。组合测试（多张图片）属 TC2 的同构扩展，不单列。",
+      "boundaryConditionNote": "关键边界：images=undefined（TC1）与 images=[]（TC3）都必须归一化为不传 images 键，二者在 rpc-client 用同一判定 `images && images.length > 0` 合并处理，确保两条边界走相同的安全路径。images 含非法 mimeType / 空 data 字符串属 pi 校验职责，runtime 透传层不做内容校验（保持透传语义纯净）。",
+      "mockStrategyNote": "现有 runtime 测试已用 mock client（实现 IPiEngine）验证 dispatcher/session-service 行为。签名加可选参数后 mock 无需改动（可选参数不破坏现有 mock 实现）。新增测试可在 dispatcher 测试中 mock client.prompt 捕获第二参数断言透传；rpc-client 组装逻辑可单测（mock sendCommand 捕获 params.images 形状）。本 wave 以 tsc 类型一致性 + 现有测试不回归为最低验收，新增单测按需补充。",
+      "tddRedReadinessNote": "3 个 testCases 的 expected 都是可机器验证的确定性断言（消息体是否含 images 键 / images 元素形状），TDD 红灯可明确写出。TC1/TC3 断言「sendCommand params 无 images 键」，TC2 断言「params.images[0] === {type:'image',data,mimeType}」。验证方式 unit（机器跑），依赖 mock sendCommand 捕获 params，无需真实 pi 进程。"
+    }
+  }
+}

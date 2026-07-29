@@ -17,6 +17,20 @@ export interface ConfigProviderConfig {
   /** provider 级启停（W1）。省略时默认 true，与 infra PiProviderConfig 同构。 */
   enabled?: boolean
   models?: ConfigModelDefinition[]
+  /**
+   * Coding Plan 额度查询配置（手动选择 fetcher + 启用状态 + cookie 标记）。
+   * 与 infra PiProviderConfig.quota 同构，listProviders 透传到 ProviderInfo.quota。
+   */
+  quota?: {
+    /** 用户手动指定的 fetcher id（省略时 QuotaService 自动按 baseUrl/name 匹配）。 */
+    fetcher?: string
+    /** 是否启用额度查询。 */
+    enabled: boolean
+    /** cookie 类 provider 的 cookie 是否已写入 secrets（布尔态）。 */
+    cookieSet?: boolean
+    /** api-key 类 provider 是否有专属 API Key（明文存 secrets，未设置/false 复用 provider.apiKey）。 */
+    apiKeySet?: boolean
+  }
 }
 
 /** service 侧的 model 定义形状。 */

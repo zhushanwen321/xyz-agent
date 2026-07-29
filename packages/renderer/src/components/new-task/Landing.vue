@@ -21,6 +21,7 @@ import BranchSelectPopover from './BranchSelectPopover.vue'
 import CreateBranchModal from './CreateBranchModal.vue'
 import CreateWorktreeModal from './CreateWorktreeModal.vue'
 import RemoteConnectModal from '@/components/remote/RemoteConnectModal.vue'
+import PresetSelectChip from './PresetSelectChip.vue'
 import Composer from '@/components/panel/Composer.vue'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useToast } from '@/composables/useToast'
@@ -207,6 +208,11 @@ const isBranchOpen = computed({
   get: () => flow.state.value === 'branch-popover',
   set: (v) => { if (!v) flow.closeOverlay(); else flow.openBranchPopover() },
 })
+/** preset popover 展开绑定（preset 互斥 wave）：与 dir/branch 同模式共享 flow 单实例状态机互斥 */
+const isPresetOpen = computed({
+  get: () => flow.state.value === 'preset-popover',
+  set: (v) => { if (!v) flow.closeOverlay(); else flow.openPresetPopover() },
+})
 /** 创建分支 modal 渲染绑定（#7）：state===branch-modal 时挂载 CreateBranchModal（Dialog teleport 到 body） */
 const isBranchModalOpen = computed(() => flow.state.value === 'branch-modal')
 
@@ -256,6 +262,16 @@ function onSelectWorktree(payload: { path: string }): void {
 function onRetry(): void {
   emit('retry')
 }
+/**
+ * onPresetSelect — PresetSelectChip emit select 的接收点（B6 透传链路修复）。
+ *
+ * 用户在 landing 态真实点击选预设（非默认回显）→ 写 flow.pendingPreset（对齐 pendingCwd/pendingModel
+ * 范式），submitFirstMessage create session 时透传 sessionApi.create。Composer.onSend 不再
+ * 直接读 store.selectedPresetId（已删除第二真源），统一经 flow 单一真源。
+ */
+function onPresetSelect(payload: { presetId: string }): void {
+  flow.setPendingPreset(payload.presetId)
+}
 </script>
 
 <template>
@@ -265,7 +281,7 @@ function onRetry(): void {
   >
 
     <!-- 问候语（22px / weight 650 / --fg，spec §3.1） -->
-    <h1 class="z-10 text-center text-[22px] font-[650] text-fg">
+    <h1 class="z-10 text-center text-[22px] font-[650] text-neutral-fg">
       {{ greetingPrefix }}，{{ t('app.greetingPrompt') }}
     </h1>
 
@@ -309,7 +325,7 @@ function onRetry(): void {
       v-if="historyError"
       data-testid="retry-history"
       variant="secondary"
-      class="z-10 h-auto gap-1.5 px-3 py-1.5 text-[12px] text-muted hover:bg-surface-hover hover:text-fg [&_svg]:size-3.5"
+      class="z-10 h-auto gap-1.5 px-3 py-1.5 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg [&_svg]:size-3.5"
       @click="onRetry"
     >
       <RefreshCw class="shrink-0" />
@@ -327,14 +343,14 @@ function onRetry(): void {
               <Button
                 data-testid="chip-directory"
                 variant="ghost"
-                class="h-auto gap-1.5 px-2 py-1 text-[12px] text-muted hover:bg-surface-hover hover:text-fg [&_svg]:size-3.5"
+                class="h-auto gap-1.5 px-2 py-1 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg [&_svg]:size-3.5"
                 :class="{ '!text-accent': !cwd }"
               >
                 <Folder class="shrink-0" />
                 <span class="font-mono">{{ dirLabel }}</span>
               </Button>
             </PopoverTrigger>
-            <PopoverContent side="top" class="w-[320px] p-0">
+            <PopoverContent side="top" :collision-padding="8" class="w-[320px] p-0">
               <DirSelectPopover
                 :current-cwd="currentCwd ?? null"
                 @select="onSelectWorkspace"
@@ -350,13 +366,13 @@ function onRetry(): void {
               <Button
                 data-testid="chip-branch"
                 variant="ghost"
-                class="h-auto gap-1.5 px-2 py-1 text-[12px] text-muted hover:bg-surface-hover hover:text-fg [&_svg]:size-3.5"
+                class="h-auto gap-1.5 px-2 py-1 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg [&_svg]:size-3.5"
               >
                 <GitFork class="shrink-0" />
                 <span class="font-mono">{{ branch || t('newTask.landing.gitRepo') }}</span>
               </Button>
             </PopoverTrigger>
-            <PopoverContent side="top" :avoid-collisions="false" class="w-[420px] p-0">
+            <PopoverContent side="top" :collision-padding="8" class="w-[420px] p-0">
               <BranchSelectPopover
                 :mode="flow.mode?.value === 'bare-workspace' ? 'bare-workspace' : 'plain-repo'"
                 :cwd="cwd ?? ''"
@@ -370,6 +386,13 @@ function onRetry(): void {
               />
             </PopoverContent>
           </Popover>
+          <span aria-hidden="true" class="h-3.5 w-px bg-border" />
+          <PresetSelectChip
+            :session-id="composerSid"
+            :launch-preset-id="flow.currentSession.value?.launchPresetId"
+            v-model:preset-open="isPresetOpen"
+            @select="onPresetSelect"
+          />
         </div>
       </template>
     </Composer>

@@ -15,6 +15,7 @@
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
 import { join, dirname, basename, resolve } from 'node:path'
 import { getPiAgentDir, getNpmDir, getExtensionsDir } from '../pi/pi-paths.js'
+import { canonicalizePath } from '../../utils/path-utils.js'
 import { readSettings } from '../pi/pi-settings-store.js'
 import { readDisabledPackages as readDisabledPackagesFromStore } from '../pi/pi-extension-settings.js'
 import type { IExtensionResolver, ExtensionPaths } from '../../services/ports/installer.js'
@@ -272,12 +273,14 @@ export class ExtensionResolver implements IExtensionResolver {
       }
       const entries = this.collectExtensionEntries(dir)
       for (const entryPath of entries) {
-        // 用入口路径的父目录名（子目录形式）或文件名（单文件形式）做 dedup key
+        // dedup key 用 canonicalPath（对齐 Pi 原生 collectAutoExtensionEntries 按路径去重语义）。
+        // [HISTORICAL] 此前用 normalizeExtName(name) 做同源内部 key，导致所有 index.ts 入口
+        // 共享 key 'index'，跨目录的 stock-tools/kelly-tools/llm-router-session 等被静默丢弃。
+        // canonicalPath 天然唯一，从结构上消除任意同名入口碰撞。
         const isFile = entryPath.endsWith('.ts') || entryPath.endsWith('.js')
-        const name = isFile ? basename(entryPath).replace(/\.(ts|js)$/, '') : basename(dirname(entryPath))
-        const extName = this.normalizeExtName(name)
-        if (!result.has(extName)) {
-          result.set(extName, isFile ? entryPath : dirname(entryPath))
+        const key = canonicalizePath(entryPath)
+        if (!result.has(key)) {
+          result.set(key, isFile ? entryPath : dirname(entryPath))
         }
       }
     }
@@ -330,8 +333,8 @@ export class ExtensionResolver implements IExtensionResolver {
         }
       }
     } catch (e) {
-      // best-effort：目录读取失败（权限/不存在/IO 错误）静默跳过——extension 扫描不因单个坏目录中断（与 pi 一致）
-      console.debug(`[extension-resolver] scan dir failed, skipping: ${dir}`, e)
+      // 目录读取失败：warn 记录后跳过（对齐 pi 的静默跳过语义，但满足 taste/no-silent-catch 至少记录）
+      log.warn('[extension-resolver] collectExtensionEntries readdir failed:', e)
     }
     return entries
   }
@@ -360,8 +363,8 @@ export class ExtensionResolver implements IExtensionResolver {
           if (resolved.length > 0) return resolved
         }
       } catch (e) {
-        // best-effort：package.json 解析失败（JSON 语法错/读 IO 错）继续尝试 index.ts/index.js fallback
-        console.debug(`[extension-resolver] package.json parse failed, trying index fallback: ${dir}`, e)
+        // package.json 解析失败：warn 记录后继续降级尝试 index.ts/index.js
+        log.warn('[extension-resolver] resolveExtensionEntries package.json parse failed, falling back to index.ts/js:', e)
       }
     }
 

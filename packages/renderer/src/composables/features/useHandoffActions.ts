@@ -1,0 +1,108 @@
+/**
+ * useHandoffActions —— sidebar fast-handoff 操作集合（参照 useForkActions）。
+ *
+ * 职责：handoff 会话的两类入口编排（直接 handoff / 进 composer handoff 模式带 focus 备注）。
+ * 跨 api + stores 编排在此层完成（铁律 1：唯一跨 api + stores 的层）。
+ *
+ * 与 fork 的差异：
+ * - fork 从指定 assistant 分叉（需 fromMessageId 锚点）；handoff 始终从末条 assistant 打包文档
+ *   （pi 跑 /skill:handoff 自取末条 assistant），无 fromMessageId 参数。
+ * - fork 完成后留原线 + forkNotice 反馈行；handoff 完成后跳转到新 session（useHandoffEffect
+ *   订阅 session.handoffComplete → selectSession(newSessionId)），无反馈行组件。
+ * - handoff 进行中显「正在交接…」瞬时提示（isHandingOff，chat store handingOffSessions Set）。
+ *
+ * 拆分原因：与 useForkActions 对称，独立 composable 职责内聚。参照 useForkActions 范式
+ * （调用方注入 focusedSessionId ref，内部自行获取 stores/api）。
+ */
+import type { Ref } from 'vue'
+import { session as sessionApi } from '@/api'
+import { useChatStore } from '@/stores/chat'
+import { triggerEnterHandoffMode } from '@/composables/panel/useHandoffModeChannel'
+
+/**
+ * Handoff 操作 composable。
+ *
+ * @param focusedSessionId 焦点 panel 绑定的 session（来自 useSidebar，驱动 ⌘H 快捷键的 handoff 源）。
+ *   注入而非内部派生：focusedSessionId 是 useSidebar 的派生状态，复用避免重复定义 + 单一来源。
+ */
+export function useHandoffActions(focusedSessionId: Ref<string | null>) {
+  const chat = useChatStore()
+
+  /**
+   * 触发 handoff：让源 session 的 pi 跑 /skill:handoff（取末条 assistant 文档 → 新空白 session）。
+   * reply 原样拼到 /skill:handoff 后作 args（用户备注）。
+   * 置 handingOff=true 给 UI 即时反馈；完成由 useHandoffEffect 订阅 session.handoffComplete 复位 + 跳转。
+   * 失败时复位 handingOff + rethrow（调用方决定 toast 反馈，参照 forkSession 的 rethrow 模式）。
+   *
+   * @param srcSessionId 源 session（取末条 assistant 文档）
+   * @param reply 可选用户备注（拼到 /skill:handoff 后作 args）
+   */
+  async function handoff(srcSessionId: string, reply?: string): Promise<void> {
+    chat.setHandingOff(srcSessionId, true)
+    try {
+      await sessionApi.handoff(srcSessionId, reply)
+    } catch (e) {
+      // 触发失败 → 复位 handingOff（等不到 handoffComplete 广播），避免 UI 卡「正在交接」
+      chat.setHandingOff(srcSessionId, false)
+      throw e
+    }
+  }
+
+  /**
+   * 取消进行中的 handoff（乐观清 handingOff 反馈 + 委托 abortHandoff RPC 中断 pi turn）。
+   * runtime abort 后不会广播 session.handoffComplete（onTurnEnd 检测 aborted 跳过新建），
+   * 故乐观清 handingOff（与 fork 的 abort 对称）。RPC 失败静默——UI 已清，无进一步回滚空间。
+   */
+  async function abortHandoff(sessionId: string): Promise<void> {
+    chat.setHandingOff(sessionId, false)
+    await sessionApi.abortHandoff(sessionId).catch((e) => {
+      // RPC 失败留诊断线索：abort 没成功时 pi turn 仍会跑完，可能稍后跳新 session（用户以为已取消）。
+      console.warn('[handoff] abortHandoff RPC failed, pi turn may continue:', e)
+    })
+  }
+
+  /**
+   * 找当前焦点 session 的末条 assistant 消息（⌘H 全局快捷键默认 handoff 点）。
+   * 全局快捷键无 hover 上下文，按对称 fork 的 lastAssistantOfFocused 默认从末条 assistant handoff。
+   * handoff 无需 messageId（pi /skill:handoff 自取末条 assistant），故只返回 { sessionId }。
+   * 无焦点 session 或无 assistant 消息时返回 null（调用方静默 no-op）。
+   */
+  function lastAssistantOfFocused(): { sessionId: string } | null {
+    const sid = focusedSessionId.value
+    if (!sid) return null
+    const msgs = chat.getMessages(sid)
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      if (msgs[i].role === 'assistant') return { sessionId: sid }
+    }
+    return null
+  }
+
+  /**
+   * 从末条 assistant 直接 handoff（⌘H）：pi 打包末条 assistant 文档到新 session。
+   * 完成经 session.handoffComplete 广播 → useHandoffEffect 跳转新 session。
+   * 无末条 assistant 时静默 no-op（无文档可打包）。
+   */
+  async function handoffFromLastAssistant(): Promise<void> {
+    const last = lastAssistantOfFocused()
+    if (!last) return
+    await handoff(last.sessionId)
+  }
+
+  /**
+   * 从末条 assistant 进入 composer handoff 模式（带 focus 备注）：
+   * 经 useHandoffModeChannel 发 signal，Composer 监听后调自身 enterHandoffMode（聚焦输入框等用户键入 focus 备注）。
+   * 无末条 assistant 时静默 no-op。
+   */
+  async function enterHandoffModeFromLastAssistant(): Promise<void> {
+    const last = lastAssistantOfFocused()
+    if (!last) return
+    triggerEnterHandoffMode(last.sessionId)
+  }
+
+  return {
+    handoff,
+    abortHandoff,
+    handoffFromLastAssistant,
+    enterHandoffModeFromLastAssistant,
+  }
+}

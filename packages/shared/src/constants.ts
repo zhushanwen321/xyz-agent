@@ -62,6 +62,17 @@ export const ENV_WHITELIST_PREFIXES: readonly string[] = [
 export const SYSTEM_PROMPT_MAX_LENGTH = 16000 as const
 
 /**
+ * 图片附件相关上限（SSOT）。
+ *
+ * write-session-image IPC 校验单图大小用 SINGLE_MAX_BYTES（防超大输入撑爆内存/磁盘）。
+ */
+export const IMAGE_LIMITS = {
+  /** 单图上限（write-session-image IPC 校验，base64 解码字节数 <= 此值才接受） */
+  // eslint-disable-next-line no-magic-numbers
+  SINGLE_MAX_BYTES: 20 * 1024 * 1024,
+} as const
+
+/**
  * ADR-0020 §2/§3 预设可选 skill/agent 目录候选（UI 「可选目录」的固定来源）。
  *
  * SSOT：services/skill-dir-config.ts（buildDirConfigs 读取端）与 infra/pi/discovery-store.ts

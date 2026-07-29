@@ -17,6 +17,7 @@ import type { IPiEngine } from '../ports/pi-engine.js'
 import type { SessionSummary } from '@xyz-agent/shared'
 import type { SessionOutcome } from '../ports/session.js'
 import type { IManagedSessionView, ScannedSession } from './types.js'
+import type { PresetResolution } from '../preset-service.js'
 
 export interface ISessionServiceInternal {
   // ── lifecycle 使用的共享 helper ──
@@ -38,6 +39,12 @@ export interface ISessionServiceInternal {
   getExtensionPaths(cwd?: string): Promise<string[]>
   /** 当前生效的替换系统提示词（委托 ConfigService.getReplaceSystemPrompt）。 */
   getReplaceSystemPrompt(): string | undefined
+  /**
+   * 按 launch presetId 解析 pi 启动参数（委托 PresetService.resolve）。
+   * 返回 undefined 时调用方 fallback 到现有 getExtensionPaths/getSkillPaths。
+   * 见 SessionService.getLaunchPresetOptions 实现注释 + pi-launch-presets 设计文档 §8.1。
+   */
+  getLaunchPresetOptions(presetId: string, cwd: string): Promise<PresetResolution | undefined>
 
   // ── dispatcher 使用 ──
   /** 确保会话活跃，必要时自动 restore。 */
@@ -86,6 +93,12 @@ export interface ISessionServiceInternal {
    * 供 LeaseManager.sweepExpired（扫过期 lease）+ getBusySession（反查 clientId 持有的 session）。
    */
   allSessions(): IterableIterator<IManagedSessionView>
+  /**
+   * M3：标记源 session 已交接给新 session（内存写 handedOffTo + 磁盘写 handoff_marker）。
+   * HandoffService 经此接口写交接态，而非直接改具体类内部对象（依赖倒置 + 所有权收口）。
+   * 仅 active session 生效；非 active 源 session 按 no-op 处理（见具体类 docstring）。
+   */
+  markHandedOff(srcSessionId: string, newSessionId: string): void
 
   // ── scanner 使用 ──
   /** 当前活跃会话的 summary 列表（已含 git 信息）。 */

@@ -19,20 +19,20 @@
       <div
         v-for="record in records"
         :key="record.id"
-        class="flex items-center gap-1.5 font-mono text-[11px]"
+        class="flex items-center gap-1.5 font-mono text-[length:var(--text-xs)]"
         :class="recordTextClass(record)"
       >
         <component :is="recordIcon(record)" class="size-3 shrink-0" />
         <span class="font-semibold">{{ record.agent }}</span>
-        <span v-if="record.model" class="text-subtle">· {{ record.model }}</span>
-        <span v-if="elapsedLabel(record)" class="text-subtle">— {{ elapsedLabel(record) }}</span>
+        <span v-if="record.model" class="text-neutral-dim">· {{ record.model }}</span>
+        <span v-if="elapsedLabel(record)" class="text-neutral-dim">— {{ elapsedLabel(record) }}</span>
       </div>
     </div>
 
     <!-- 单条：状态行 + 摘要 + 可展开详情 -->
     <div v-else class="flex flex-col gap-1">
       <div
-        class="flex cursor-pointer select-none items-center gap-1.5 font-mono text-[11px] transition-opacity hover:opacity-80"
+        class="flex cursor-pointer select-none items-center gap-1.5 font-mono text-[length:var(--text-xs)] transition-opacity hover:opacity-80"
         :class="single ? recordTextClass(single) : ''"
         :title="expanded ? t('panel.message.collapse') : t('panel.message.expand')"
         @click="expanded = !expanded"
@@ -40,21 +40,21 @@
         <ChevronRight class="size-2.5 transition-transform" :class="expanded ? 'rotate-90' : ''" />
         <component v-if="single" :is="recordIcon(single)" class="size-3 shrink-0" />
         <span v-if="single" class="font-semibold">{{ single.agent }}</span>
-        <span v-if="single?.model" class="text-subtle">· {{ single.model }}</span>
-        <span v-if="single && elapsedLabel(single)" class="text-subtle">— {{ elapsedLabel(single) }}</span>
+        <span v-if="single?.model" class="text-neutral-dim">· {{ single.model }}</span>
+        <span v-if="single && elapsedLabel(single)" class="text-neutral-dim">— {{ elapsedLabel(single) }}</span>
       </div>
 
       <!-- 摘要首行（result/error，收起态可见一行） -->
-      <p v-if="summaryLine" class="pl-4 text-[12px] leading-snug text-muted line-clamp-1">{{ summaryLine }}</p>
+      <p v-if="summaryLine" class="pl-4 text-[length:var(--text-sm)] leading-snug text-neutral-mid line-clamp-1">{{ summaryLine }}</p>
 
       <!-- 展开详情：完整 content + patchFile 提示 -->
       <template v-if="expanded">
-        <div v-if="patchHint" class="ml-4 mt-0.5 rounded-sm border border-info/30 bg-info-soft px-2 py-1 font-mono text-[11px] text-info">
+        <div v-if="patchHint" class="ml-4 mt-0.5 rounded-sm border border-info/30 bg-info-soft px-2 py-1 font-mono text-[length:var(--text-xs)] text-info">
           {{ patchHint }}
         </div>
         <!-- fullContent 走 MarkdownRenderer（thinking variant，同为次要过程信息语义）。
              subagent 返回的 LLM 生成文本含 md 语法（bold/列表/标题），纯文本不渲染。 -->
-        <div v-if="fullContent" class="ml-4 max-h-[200px] overflow-y-auto rounded-sm bg-surface-2/50 px-2 py-1 text-[11px] leading-relaxed text-muted">
+        <div v-if="fullContent" class="ml-4 max-h-[200px] overflow-y-auto rounded-sm bg-surface-2/50 px-2 py-1 text-[length:var(--text-xs)] leading-relaxed text-neutral-mid">
           <MarkdownRenderer :content="fullContent" variant="thinking" />
         </div>
       </template>
@@ -111,7 +111,7 @@ const cardClass = computed(() => {
     return 'border-danger/40 bg-danger-soft'
   }
   if (hasCancelled) {
-    return 'border-muted/30 bg-muted/5'
+    return 'border-neutral-mid/30 bg-neutral-mid/5'
   }
   return 'border-border bg-surface-hover/40'
 })
@@ -145,8 +145,8 @@ function recordIcon(record: BgNotifyRecord): Component {
 /** record → 文字色（与图标语义一致） */
 function recordTextClass(record: BgNotifyRecord): string {
   if (record.status === 'failed') return 'text-danger'
-  if (record.status === 'cancelled') return 'text-muted'
-  return 'text-fg'
+  if (record.status === 'cancelled') return 'text-neutral-mid'
+  return 'text-neutral-fg'
 }
 
 /** record 耗时摘要（startedAt→endedAt 差值，秒；endedAt 缺失或异常返空串） */

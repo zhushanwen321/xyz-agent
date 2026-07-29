@@ -27,7 +27,7 @@
       data-testid="browser-guide"
     >
       <Globe class="size-4 flex-shrink-0 text-accent" />
-      <span class="flex-1 text-[12px] text-fg">{{ t('panel.browserPane.guideHint') }}</span>
+      <span class="flex-1 text-[12px] text-neutral-fg">{{ t('panel.browserPane.guideHint') }}</span>
       <Button variant="ghost" size="sm" class="flex-shrink-0" data-testid="browser-guide-close" @click="dismissGuide">
         <X class="size-3" />
       </Button>
@@ -53,7 +53,7 @@
           <Lock v-if="isSecure" class="size-3 flex-shrink-0 text-success" />
           <Input
             v-model="urlInput"
-            class="h-6 flex-1 border-transparent bg-transparent px-1 font-mono text-[11px] text-fg focus-visible:border-transparent focus-visible:ring-0"
+            class="h-6 flex-1 border-transparent bg-transparent px-1 font-mono text-[11px] text-neutral-fg focus-visible:border-transparent focus-visible:ring-0"
             data-testid="browser-urlbar-input"
             :placeholder="t('panel.browserPane.urlPlaceholder')"
             @keydown.enter="onUrlEnter"
@@ -90,13 +90,13 @@
     <!-- 登录墙提示（spec §4.2：检测 401/403 → 醒目提示条 + 系统浏览器出口）-->
     <div
       v-if="loginRequired"
-      class="flex flex-shrink-0 items-center gap-2 border-b border-warning/30 bg-warning/10 px-3 py-2"
+      class="flex flex-shrink-0 items-center gap-2 border-b border-warn/30 bg-warn/10 px-3 py-2"
       data-testid="browser-login-wall"
     >
-      <AlertCircle class="size-4 flex-shrink-0 text-warning" />
+      <AlertCircle class="size-4 flex-shrink-0 text-warn" />
       <div class="min-w-0 flex-1">
-        <p class="text-[12px] font-medium text-warning">{{ t('panel.browserPane.loginRequired') }}</p>
-        <p class="truncate text-[11px] text-muted">{{ t('panel.browserPane.loginHint') }}</p>
+        <p class="text-[12px] font-medium text-warn">{{ t('panel.browserPane.loginRequired') }}</p>
+        <p class="truncate text-[11px] text-neutral-mid">{{ t('panel.browserPane.loginHint') }}</p>
       </div>
       <Button variant="ghost" size="sm" class="flex-shrink-0" @click="openInExternal">
         <ExternalLink class="size-3" />
@@ -113,7 +113,7 @@
         data-testid="browser-loading"
       >
         <div class="size-6 animate-spin rounded-full border-2 border-border border-t-accent" />
-        <span class="font-mono text-[11px] text-muted">{{ displayUrl }}</span>
+        <span class="font-mono text-[11px] text-neutral-mid">{{ displayUrl }}</span>
       </div>
       <!-- 错误态 -->
       <div
@@ -122,8 +122,8 @@
         data-testid="browser-error"
       >
         <AlertCircle class="size-8 text-danger" />
-        <span class="text-[13px] font-semibold text-fg">{{ t('panel.browserPane.loadFailed') }}</span>
-        <span class="max-w-[240px] text-center text-[11px] text-muted">{{ error.errorDescription }}</span>
+        <span class="text-[13px] font-semibold text-neutral-fg">{{ t('panel.browserPane.loadFailed') }}</span>
+        <span class="max-w-[240px] text-center text-[11px] text-neutral-mid">{{ error.errorDescription }}</span>
         <div class="mt-2 flex gap-2">
           <Button variant="secondary" size="sm" @click="reload">{{ t('panel.browserPane.retry') }}</Button>
           <Button variant="ghost" size="sm" @click="openInExternal">{{ t('panel.browserPane.openExternal') }}</Button>
@@ -135,8 +135,8 @@
         class="absolute inset-0 flex flex-col items-center justify-center gap-2"
         data-testid="browser-empty"
       >
-        <Globe class="size-10 text-subtle opacity-40" />
-        <span class="text-[12px] text-subtle">{{ t('panel.browserPane.empty') }}</span>
+        <Globe class="size-10 text-neutral-dim opacity-40" />
+        <span class="text-[12px] text-neutral-dim">{{ t('panel.browserPane.empty') }}</span>
       </div>
     </div>
   </div>
@@ -193,6 +193,9 @@ const HTTP_UNAUTHORIZED = 401
 const HTTP_FORBIDDEN = 403
 /** 复制成功反馈显示时长（ms） */
 const COPY_FEEDBACK_MS = 2000
+/** 登录墙检测（spec §4.2）：HTTP 401/403 errorCode → 显提示条。
+ * did-fail-load 的 errorCode 对应 HTTP 状态码（-3=ABORTED 已在主进程过滤）。 */
+const LOGIN_ERROR_CODES = new Set([HTTP_UNAUTHORIZED, HTTP_FORBIDDEN])
 /** localStorage key：首次使用引导是否已关闭 */
 const GUIDE_DISMISSED_KEY = 'xyz-browser-guide-dismissed'
 
@@ -240,13 +243,12 @@ const canGoBack = ref<boolean>(false)
 const canGoForward = ref<boolean>(false)
 /** 复制成功反馈（点复制后 2s 内显 Check icon） */
 const copied = ref<boolean>(false)
+/** copyUrl 的 setTimeout ID（onBeforeUnmount 清理） */
+const copyTimerId = ref<number | null>(null)
 
 /** 缩放管理（Wave 5）：zoomFactor 状态 + Cmd+/-/0 快捷键 + 主进程 IPC 同步 */
 const { onZoomKeydown, setZoomFromRemote } = useBrowserZoom(toRef(props, 'sessionId'))
 
-/** 登录墙检测（spec §4.2）：HTTP 401/403 errorCode → 显提示条。
- * did-fail-load 的 errorCode 对应 HTTP 状态码（-3=ABORTED 已在主进程过滤）。 */
-const LOGIN_ERROR_CODES = new Set([HTTP_UNAUTHORIZED, HTTP_FORBIDDEN])
 const loginRequired = computed<boolean>(() =>
   error.value !== null && LOGIN_ERROR_CODES.has(error.value.errorCode),
 )
@@ -262,7 +264,10 @@ const isSecure = computed(() => displayUrl.value.startsWith('https://'))
 const { urlInput, onUrlFocus, onUrlEnter, onUrlEscape } = useUrlBar(displayUrl, (url) => {
   isLoading.value = true
   error.value = null
-  void browserNavigate(props.sessionId, url)
+  void browserNavigate(props.sessionId, url).catch(() => {
+    // 保底重置 loading：主进程 onBrowserState 也会推送 did-fail-load 错误态
+    isLoading.value = false
+  })
 })
 
 /**
@@ -326,7 +331,14 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   // hide（keep-alive，不 destroy）：切 tab/关 drawer 时隐藏 WebContentsView，下次打开复用。
+  // fire-and-forget：Vue 3 生命周期钩子不支持 async/await，主进程 hide 是幂等的，
+  // 卸载完成后 IPC 消息仍会正常送达主进程执行隐藏。
   void browserHide(props.sessionId)
+  // 清理定时器
+  if (copyTimerId.value) {
+    clearTimeout(copyTimerId.value)
+    copyTimerId.value = null
+  }
   // 清理 rect 同步 + 缩放快捷键
   disposeRectSync()
   window.removeEventListener('keydown', onZoomKeydown)
@@ -351,8 +363,9 @@ function copyUrl(): void {
   if (!target) return
   navigator.clipboard.writeText(target).then(() => {
     copied.value = true
-    window.setTimeout(() => {
+    copyTimerId.value = window.setTimeout(() => {
       copied.value = false
+      copyTimerId.value = null
     }, COPY_FEEDBACK_MS)
   }).catch(() => {
     /* 剪贴板失败静默：非关键路径，不阻塞 UI */

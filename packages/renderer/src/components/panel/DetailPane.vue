@@ -11,18 +11,18 @@
   <div class="flex h-full flex-col" data-testid="detail-pane">
     <!-- header：文件名（hover 显绝对路径 + 复制文件名）+ 复制绝对路径按钮 + view toggle -->
     <div class="flex items-center gap-2 border-b border-border px-2 py-1.5">
-      <FileText class="size-3.5 shrink-0 text-subtle" />
+      <FileText class="size-3.5 shrink-0 text-neutral-dim" />
       <HoverCard :open-delay="0">
         <HoverCardTrigger as-child>
           <span
             data-testid="detail-filename"
-            class="flex-1 cursor-default truncate font-mono text-[11px] text-fg"
+            class="flex-1 cursor-default truncate font-mono text-[11px] text-neutral-fg"
           >{{ fileName }}</span>
         </HoverCardTrigger>
         <HoverCardContent class="w-auto max-w-md p-2" side="bottom">
           <div data-testid="detail-path-tooltip" class="flex flex-col gap-1.5">
             <div class="flex items-center gap-2">
-              <span class="font-mono text-[11px] text-fg">{{ fileName }}</span>
+              <span class="font-mono text-[11px] text-neutral-fg">{{ fileName }}</span>
               <Button
                 variant="ghost"
                 data-testid="detail-copy-filename"
@@ -32,11 +32,11 @@
                 @click="copy(fileName, 'filename')"
               >
                 <Check v-if="copied === 'filename'" class="size-3 text-accent" />
-                <Copy v-else class="size-3 text-subtle" />
+                <Copy v-else class="size-3 text-neutral-dim" />
               </Button>
             </div>
             <div class="flex items-center gap-2">
-              <span class="break-all font-mono text-[10px] text-muted">{{ absolutePath }}</span>
+              <span class="break-all font-mono text-[10px] text-neutral-mid">{{ absolutePath }}</span>
               <Button
                 variant="ghost"
                 data-testid="detail-copy-path"
@@ -46,7 +46,7 @@
                 @click="copy(absolutePath, 'path')"
               >
                 <Check v-if="copied === 'path'" class="size-3 text-accent" />
-                <Copy v-else class="size-3 text-subtle" />
+                <Copy v-else class="size-3 text-neutral-dim" />
               </Button>
             </div>
           </div>
@@ -61,7 +61,7 @@
         @click="copy(absolutePath, 'path')"
       >
         <Check v-if="copied === 'path'" class="size-3.5 text-accent" />
-        <Copy v-else class="size-3.5 text-subtle" />
+        <Copy v-else class="size-3.5 text-neutral-dim" />
       </Button>
       <!-- FR-3: 加入文件引用到 composer（无行范围，target=current） -->
       <Button
@@ -72,21 +72,21 @@
         :disabled="!state.path"
         @click="injectFileRef()"
       >
-        <Quote class="size-3.5 text-subtle" />
+        <Quote class="size-3.5 text-neutral-dim" />
       </Button>
       <!-- view toggle：有 git 改动时可切换 diff/preview -->
       <div v-if="state.hasGitChange" class="flex gap-0.5" data-testid="detail-view-toggle">
         <Button
           variant="ghost"
           class="h-6 rounded-sm px-1.5 text-[10px]"
-          :class="state.viewMode === 'diff' ? 'bg-accent-soft text-accent' : 'text-muted'"
+          :class="state.viewMode === 'diff' ? 'bg-accent-soft text-accent' : 'text-neutral-mid'"
           :title="t('panel.detail.showDiff')"
           @click="onToggleView('diff')"
         >{{ t('panel.detail.tabDiff') }}</Button>
         <Button
           variant="ghost"
           class="h-6 rounded-sm px-1.5 text-[10px]"
-          :class="state.viewMode === 'preview' ? 'bg-accent-soft text-accent' : 'text-muted'"
+          :class="state.viewMode === 'preview' ? 'bg-accent-soft text-accent' : 'text-neutral-mid'"
           :title="t('panel.detail.showPreview')"
           @click="onToggleView('preview')"
         >{{ t('panel.detail.preview') }}</Button>
@@ -99,8 +99,8 @@
       class="flex flex-1 flex-col items-center justify-center gap-2 p-4"
       data-testid="detail-loading"
     >
-      <Loader2 class="size-4 animate-spin text-subtle opacity-60" />
-      <p class="text-[11px] text-subtle opacity-60">{{ t('panel.detail.loading') }}</p>
+      <Loader2 class="size-4 animate-spin text-neutral-dim opacity-60" />
+      <p class="text-[11px] text-neutral-dim opacity-60">{{ t('panel.detail.loading') }}</p>
     </div>
 
     <!-- 错误态（AC-6.4/T6.4：权限/不存在 → 错误态） -->
@@ -110,8 +110,8 @@
       data-testid="detail-error"
     >
       <AlertCircle class="size-5 text-danger opacity-60" />
-      <p class="text-[11px] text-muted">{{ t('panel.detail.cannotPreview') }}</p>
-      <p class="font-mono text-[10px] text-subtle opacity-70">{{ state.error }}</p>
+      <p class="text-[11px] text-neutral-mid">{{ t('panel.detail.cannotPreview') }}</p>
+      <p class="font-mono text-[10px] text-neutral-dim opacity-70">{{ state.error }}</p>
     </div>
 
     <!-- 空态（无选中文件） -->
@@ -120,8 +120,8 @@
       class="flex flex-1 flex-col items-center justify-center gap-2 p-4 text-center"
       data-testid="detail-empty"
     >
-      <FileText class="size-6 text-subtle opacity-40" />
-      <p class="text-[11px] text-subtle opacity-55">{{ t('panel.detail.clickFilePreview') }}</p>
+      <FileText class="size-6 text-neutral-dim opacity-40" />
+      <p class="text-[11px] text-neutral-dim opacity-55">{{ t('panel.detail.clickFilePreview') }}</p>
     </div>
 
     <!-- 二进制文件占位（AC-6.5/T6.6：binary=true） -->
@@ -130,9 +130,9 @@
       class="flex flex-1 flex-col items-center justify-center gap-2 p-4 text-center"
       data-testid="detail-binary"
     >
-      <ImageIcon class="size-6 text-subtle opacity-50" />
-      <p class="text-[11px] text-muted">{{ t('panel.detail.binaryFile') }}</p>
-      <p class="font-mono text-[10px] text-subtle opacity-60">{{ t('panel.detail.cannotShowDiff') }}</p>
+      <ImageIcon class="size-6 text-neutral-dim opacity-50" />
+      <p class="text-[11px] text-neutral-mid">{{ t('panel.detail.binaryFile') }}</p>
+      <p class="font-mono text-[10px] text-neutral-dim opacity-60">{{ t('panel.detail.cannotShowDiff') }}</p>
     </div>
 
     <!-- 内容区：按 viewMode + kind 分发渲染（禁 v-html，<pre> + 文本插值，XSS 安全；
@@ -151,7 +151,7 @@
       <!-- 截断提示（>1MB，AC-6.5/T6.5） -->
       <div
         v-if="state.truncated"
-        class="border-b border-warning/30 bg-warning-soft px-2 py-1 text-[10px] text-warning"
+        class="border-b border-warn/30 bg-warn-soft px-2 py-1 text-[10px] text-warn"
         data-testid="detail-truncated"
       >
         {{ t('panel.detail.truncated') }}
@@ -194,14 +194,14 @@
       <!-- ── preview 模式：按 kind 分发 ── -->
       <template v-else>
         <!-- markdown：复用 MarkdownRenderer（shiki + markdown-it）。
-             text-[12px] 约束基础字号——MarkdownRenderer 的 .md-render 无基础 font-size，
-             在对话流里靠气泡 text-[13.5px] 拉低；此处不约束会继承浏览器默认 16px 整体偏大。
-             统一到 12px 与 DetailPane 其他渲染路径（code/text/diff）一致。 -->
+             text-[length:var(--text-sm)] 约束基础字号——MarkdownRenderer 的 .md-render 无基础 font-size，
+             在对话流里靠气泡 text-[length:var(--text-base)] 拉低；此处不约束会继承浏览器默认 16px 整体偏大。
+             统一到 --text-sm（12px）与 DetailPane 其他渲染路径（code/text/diff）一致。 -->
         <MarkdownRenderer
           v-if="state.kind === 'markdown'"
           :content="state.content"
           :session-id="sessionId ?? undefined"
-          class="detail-md p-2 text-[12px] leading-[1.5]"
+          class="detail-md p-2 text-[length:var(--text-sm)] leading-[1.5]"
           data-testid="detail-markdown"
         />
         <!-- image：local-file:// 协议直载（main.ts:142 注册，绕过 file.read 的 utf8 损坏） -->
@@ -219,9 +219,9 @@
           />
           <!-- 图片加载失败（403 白名单/文件损坏）降级占位 -->
           <div v-else class="flex flex-col items-center gap-1 text-center">
-            <ImageIcon class="size-6 text-subtle opacity-50" />
-            <p class="text-[11px] text-muted">{{ t('panel.detail.loadFailed') }}</p>
-            <p class="font-mono text-[10px] text-subtle opacity-60">{{ state.path }}</p>
+            <ImageIcon class="size-6 text-neutral-dim opacity-50" />
+            <p class="text-[11px] text-neutral-mid">{{ t('panel.detail.loadFailed') }}</p>
+            <p class="font-mono text-[10px] text-neutral-dim opacity-60">{{ state.path }}</p>
           </div>
         </div>
         <!-- code：CodeBlock shiki 高亮 -->
@@ -235,7 +235,7 @@
         <!-- text（兜底）：纯文本插值 -->
         <pre
           v-else
-          class="whitespace-pre-wrap break-all p-2 font-mono text-[12px] leading-[1.5] text-fg/90"
+          class="whitespace-pre-wrap break-all p-2 font-mono text-[12px] leading-[1.5] text-neutral-fg/90"
           data-testid="detail-text"
         >{{ state.content }}</pre>
       </template>

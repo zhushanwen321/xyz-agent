@@ -47,6 +47,12 @@ let projectRoot: string
 let settingsDir: string
 let service: ExtensionService
 
+/**
+ * 3 个 builtin extension 文件位于 repo root（= tmpRoot，模拟真实仓库根目录），
+ * dev 模式 projectRoot = `<repo>/apps/electron`（见 process-control.ts:154 app.getAppPath()），
+ * getExtensionFilePath dev 分支从 projectRoot/../.. 解析回 repo root（见 runtime-env.ts [HISTORICAL] 注释）。
+ * 故这里把文件放在 tmpRoot、projectRoot 设为 tmpRoot/apps/electron 以对齐真实 dev 场景。
+ */
 function agentExtensionPath(): string {
   return join(tmpRoot, 'xyz-agent-extension.js')
 }
@@ -55,10 +61,14 @@ function systemPromptExtensionPath(): string {
   return join(tmpRoot, 'xyz-system-prompt-extension.js')
 }
 
+function clientMsgIdMapperPath(): string {
+  return join(tmpRoot, 'xyz-client-msg-id-mapper.js')
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   tmpRoot = mkdtempSync(join(tmpdir(), 'ext-system-prompt-'))
-  projectRoot = join(tmpRoot, 'project')
+  projectRoot = join(tmpRoot, 'apps', 'electron')
   settingsDir = join(tmpRoot, 'settings')
   mkdirSync(projectRoot, { recursive: true })
   mkdirSync(settingsDir, { recursive: true })
@@ -131,10 +141,37 @@ describe('ExtensionService.getExtensionPaths system-prompt extension', () => {
     // 两个文件都不在结果里
     expect(paths.some(p => p.endsWith('xyz-agent-extension.js'))).toBe(false)
     expect(paths.some(p => p.endsWith('xyz-system-prompt-extension.js'))).toBe(false)
-    // 各 warn 一次，含 'extension file not found, skipping' 与对应路径
-    const warnCalls = warnSpy.mock.calls.map(c => String(c[0]))
-    expect(warnCalls.some(s => s.includes('extension file not found, skipping') && s.includes('xyz-agent-extension.js'))).toBe(true)
-    expect(warnCalls.some(s => s.includes('extension file not found, skipping') && s.includes('xyz-system-prompt-extension.js'))).toBe(true)
+    // 各 warn 一次，含 'builtin extension not found, skipping' 与对应路径
+    // （main 重构 getBuiltinExtensionPaths 后文案从 'extension file not found' 改为 'builtin extension not found'）
+    // log.warn 调用形式：console.warn('[extension-service]', msg)——c[0] 是 prefix，c[1] 才是 msg，需拼接检查。
+    const warnCalls = warnSpy.mock.calls.map(c => c.map(String).join(' '))
+    expect(warnCalls.some(s => s.includes('builtin extension not found, skipping') && s.includes('xyz-agent-extension.js'))).toBe(true)
+    expect(warnCalls.some(s => s.includes('builtin extension not found, skipping') && s.includes('xyz-system-prompt-extension.js'))).toBe(true)
     warnSpy.mockRestore()
+  })
+})
+
+describe('ExtensionService.getExtensionPaths client-msg-id-mapper extension', () => {
+  it('xyz-client-msg-id-mapper.js 存在时，结果包含它且位于 system-prompt 之后', async () => {
+    writeFileSync(agentExtensionPath(), '// agent', 'utf-8')
+    writeFileSync(systemPromptExtensionPath(), '// system-prompt', 'utf-8')
+    writeFileSync(clientMsgIdMapperPath(), '// client-msg-id-mapper', 'utf-8')
+
+    const paths = await service.getExtensionPaths()
+
+    expect(paths.some(p => p.endsWith('xyz-client-msg-id-mapper.js'))).toBe(true)
+    // 位于 system-prompt 之后（追加顺序：agent → system-prompt → client-msg-id-mapper）
+    const systemIdx = paths.findIndex(p => p.endsWith('xyz-system-prompt-extension.js'))
+    const mapperIdx = paths.findIndex(p => p.endsWith('xyz-client-msg-id-mapper.js'))
+    expect(mapperIdx).toBeGreaterThan(systemIdx)
+  })
+
+  it('xyz-client-msg-id-mapper.js 不存在时，结果不包含它', async () => {
+    writeFileSync(agentExtensionPath(), '// agent', 'utf-8')
+    expect(existsSync(clientMsgIdMapperPath())).toBe(false)
+
+    const paths = await service.getExtensionPaths()
+
+    expect(paths.some(p => p.endsWith('xyz-client-msg-id-mapper.js'))).toBe(false)
   })
 })

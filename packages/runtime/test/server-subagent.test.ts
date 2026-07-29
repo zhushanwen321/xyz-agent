@@ -320,6 +320,8 @@ describe('RuntimeServer message.send with subagent field', () => {
   expect(sendMessageMock).toHaveBeenCalledWith(
     'sess-normal',
     'Hello, this is a regular chat message',
+    // images 占位 undefined（合并 main 的 images 参数，位于第 3 位）。
+    undefined,
     // P5 lease：clientId + deviceName 透传给 dispatcher（lease acquire + busy 定向投递）。
     'local',
     '',

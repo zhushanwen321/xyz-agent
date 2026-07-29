@@ -7,7 +7,7 @@
   <div class="flex flex-col gap-3">
     <!-- page-header -->
     <div class="flex items-center justify-between">
-      <span />
+      <ProviderImportMenu :disabled="importState !== 'idle'" @select="onImportSelect" />
       <Button
         class="gap-1.5 rounded-sm px-2.5 py-1.5 text-[12px] font-medium [&_svg]:size-3.5"
         @click="openAdd"
@@ -31,16 +31,16 @@
     <!-- 空状态 -->
     <div v-if="!providers.length" class="flex flex-col items-center gap-2 py-16 text-center">
       <div class="grid size-16 place-items-center rounded-full border-2 border-dashed border-border-strong">
-        <Settings class="size-7 text-subtle" />
+        <Settings class="size-7 text-neutral-dim" />
       </div>
-      <p class="text-[14px] font-medium text-fg">{{ t('settings.provider.emptyTitle') }}</p>
-      <p class="text-[12px] text-muted">{{ t('settings.provider.emptyDesc') }}</p>
+      <p class="text-[14px] font-medium text-neutral-fg">{{ t('settings.provider.emptyTitle') }}</p>
+      <p class="text-[12px] text-neutral-mid">{{ t('settings.provider.emptyDesc') }}</p>
     </div>
 
     <!-- 实体列表 -->
     <div v-for="p in providers" :key="p.id" class="overflow-hidden rounded-md border border-border bg-bg">
       <!-- 行头 -->
-      <div class="flex items-center gap-3 px-4 py-3">
+      <div class="flex min-w-0 items-center gap-3 px-4 py-3">
         <span class="size-[7px] shrink-0 rounded-full" :class="statusDot(p.status)" />
 
         <!-- 启用开关（名称左侧）：Switch 原语。乐观更新——点击立即改 store，API 失败回滚。 -->
@@ -55,7 +55,7 @@
 
         <!-- 供应商名称（点击展开/收起） -->
         <span
-          class="flex-1 cursor-pointer truncate text-[13px] font-medium text-fg"
+          class="flex-1 cursor-pointer truncate text-[13px] font-medium text-neutral-fg"
           @click="toggleExpand(p.id)"
         >{{ p.name }}</span>
 
@@ -68,12 +68,12 @@
           class="h-auto shrink-0 rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent hover:bg-accent-soft"
         >{{ t('settings.provider.defaultPill') }}</Button>
 
-        <span class="shrink-0 text-[11px] text-subtle">{{ t('settings.provider.modelsCount', { count: p.models.length }) }}</span>
+        <span class="shrink-0 text-[11px] text-neutral-dim">{{ t('settings.provider.modelsCount', { count: p.models.length }) }}</span>
 
         <!-- 编辑 + 删除按钮 -->
         <Button
           variant="ghost"
-          class="size-6 shrink-0 rounded-sm p-0 text-subtle hover:bg-surface-hover hover:text-fg [&_svg]:size-[13px]"
+          class="size-6 shrink-0 rounded-sm p-0 text-neutral-dim hover:bg-surface-hover hover:text-neutral-fg [&_svg]:size-[13px]"
           :title="t('settings.provider.editTitle')"
           @click.stop="openEdit(p)"
         >
@@ -81,7 +81,7 @@
         </Button>
         <Button
           variant="ghost"
-          class="size-6 shrink-0 rounded-sm p-0 text-subtle hover:bg-danger-soft hover:text-danger [&_svg]:size-[13px]"
+          class="size-6 shrink-0 rounded-sm p-0 text-neutral-dim hover:bg-danger-soft hover:text-danger [&_svg]:size-[13px]"
           :title="t('settings.provider.deleteTitle')"
           @click.stop="deleteTarget = p"
         >
@@ -93,55 +93,67 @@
       <div v-if="expanded.has(p.id)" class="border-t border-border">
         <!-- 凭据与连接 -->
         <div class="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2 px-4 py-3 text-[12px]">
-          <span class="text-muted">{{ t('settings.provider.apiType') }}</span>
-          <span class="font-mono text-fg">{{ p.api ?? '-' }}</span>
-          <span class="text-muted">{{ t('settings.provider.baseUrl') }}</span>
-          <span class="font-mono text-fg">{{ p.baseUrl ?? '-' }}</span>
-          <span class="text-muted">{{ t('settings.provider.apiKey') }}</span>
-          <span class="text-fg">{{ p.apiKeySet ? t('settings.provider.apiKeyConfigured') : t('settings.provider.apiKeyNotConfigured') }}</span>
+          <span class="text-neutral-mid">{{ t('settings.provider.apiType') }}</span>
+          <span class="font-mono text-neutral-fg">{{ p.api ?? '-' }}</span>
+          <span class="text-neutral-mid">{{ t('settings.provider.baseUrl') }}</span>
+          <span class="font-mono text-neutral-fg">{{ p.baseUrl ?? '-' }}</span>
+          <span class="text-neutral-mid">{{ t('settings.provider.apiKey') }}</span>
+          <span class="text-neutral-fg">{{ p.apiKeySet ? t('settings.provider.apiKeyConfigured') : t('settings.provider.apiKeyNotConfigured') }}</span>
         </div>
 
         <!-- 模型清单表格 -->
-        <div v-if="p.models.length" class="border-t border-border px-4 py-3">
-          <p class="mb-2 text-[11px] uppercase tracking-wider text-muted">{{ t('settings.provider.modelList') }}</p>
-          <Table class="text-[12px]">
+        <div v-if="p.models.length" class="overflow-x-auto border-t border-border px-4 py-3">
+          <p class="mb-2 text-[11px] uppercase tracking-wider text-neutral-mid">{{ t('settings.provider.modelList') }}</p>
+          <Table class="w-full table-fixed text-[12px]">
+            <colgroup>
+              <col class="w-[32%]" />
+              <col class="w-[10%]" />
+              <col class="w-[11%]" />
+              <col class="w-[14%]" />
+              <col class="w-[11%]" />
+              <col class="w-[15%]" />
+              <!-- 编辑列：7% 在窄视口下 <40px 会让 Pencil 按钮溢出/换行，故加 min-width（col 不支持 Tailwind class，用 inline style） -->
+              <col class="w-[7%]" style="min-width: 40px" />
+            </colgroup>
             <TableHeader>
               <TableRow class="hover:bg-transparent">
-                <TableHead class="pb-1.5">{{ t('settings.provider.colModel') }}</TableHead>
+                <TableHead class="max-w-0 pb-1.5">{{ t('settings.provider.colModel') }}</TableHead>
                 <TableHead class="pb-1.5 text-center">{{ t('settings.provider.colInput') }}</TableHead>
                 <TableHead class="pb-1.5 text-right">{{ t('settings.provider.colContext') }}</TableHead>
                 <TableHead class="pb-1.5 text-right">{{ t('settings.provider.colThinking') }}</TableHead>
                 <TableHead class="pb-1.5 text-center">{{ t('settings.provider.colEnabled') }}</TableHead>
                 <TableHead class="pb-1.5 text-right">{{ t('settings.provider.colDefault') }}</TableHead>
+                <TableHead class="pb-1.5 text-center">{{ t('settings.provider.colEdit') }}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               <TableRow v-for="m in p.models" :key="m.id">
-                <TableCell class="py-2 font-mono text-fg">{{ m.id }}</TableCell>
+                <TableCell class="max-w-0 py-2 font-mono text-neutral-fg">
+                  <span class="block truncate" :title="m.id">{{ m.id }}</span>
+                </TableCell>
                 <!-- 输入类型 icon -->
                 <TableCell class="py-2 text-center">
                   <div class="flex justify-center gap-0.5">
                     <FileText
                       class="size-3"
-                      :class="m.input?.includes('text') ? 'text-info' : 'text-subtle opacity-30'"
+                      :class="m.input?.includes('text') ? 'text-info' : 'text-neutral-dim opacity-30'"
                     />
                     <ImageIcon
                       class="size-3"
-                      :class="m.input?.includes('image') ? 'text-info' : 'text-subtle opacity-30'"
+                      :class="m.input?.includes('image') ? 'text-info' : 'text-neutral-dim opacity-30'"
                     />
                   </div>
                 </TableCell>
-                <TableCell class="py-2 text-right tabular-nums text-subtle">{{ formatCtx(m.contextWindow) }}</TableCell>
+                <TableCell class="py-2 text-right tabular-nums text-neutral-dim">{{ formatCtx(m.contextWindow) }}</TableCell>
                 <TableCell class="py-2 text-right">
-                  <!-- thinking 仅展示，编辑入口在 ProviderEditModal 行内 Select（pickStrategy）。
-                       列表页此 pill 不可点击（删除原空函数 cycleThinking）。 -->
+                  <!-- thinking 仅展示。点击「编辑」打开弹窗修改思考策略、compat 等完整字段。 -->
                   <Button
                     variant="ghost"
                     data-testid="thinking-pill"
-                    disabled
                     :title="t('settings.provider.thinkingEditHint')"
-                    class="h-auto cursor-default rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-semibold hover:bg-transparent"
+                    class="h-auto cursor-pointer rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-semibold hover:opacity-80"
                     :class="thinkingPillClass(m)"
+                    @click.stop="openEdit(p)"
                   >{{ thinkingLabel(m) }}</Button>
                 </TableCell>
                 <!-- model 级 enabled 开关（D6）：乐观改 store + config.setProvider 持久化。
@@ -161,10 +173,23 @@
                   <Button
                     v-if="!(p.id + '/' + m.id === defaultModel)"
                     variant="secondary"
-                    class="h-auto rounded-sm px-1.5 py-0.5 text-[10px] text-subtle hover:border-info hover:text-info"
+                    class="h-auto rounded-sm px-1.5 py-0.5 text-[10px] text-neutral-dim hover:border-info hover:text-info"
                     @click.stop="setDefaultModel(p.id, m.id)"
                   >{{ t('settings.provider.setDefault') }}</Button>
                   <span v-else class="rounded-sm bg-info-soft px-1.5 py-0.5 text-[10px] text-info">{{ t('settings.provider.defaultModel') }}</span>
+                </TableCell>
+                <!-- 编辑入口（修问题 2）：打开 ProviderEditModal 编辑此 model 的完整字段（思考策略/compat 等）。
+                     ProviderPage 是只读概览页，编辑统一走弹窗，避免列表-编辑分层混乱。 -->
+                <TableCell class="py-2 text-center">
+                  <Button
+                    variant="ghost"
+                    data-testid="model-edit-btn"
+                    class="size-6 shrink-0 rounded-sm p-0 text-neutral-dim hover:bg-surface-hover hover:text-neutral-fg [&_svg]:size-[13px]"
+                    :title="t('settings.provider.editModelTitle')"
+                    @click.stop="openEdit(p)"
+                  >
+                    <Pencil />
+                  </Button>
                 </TableCell>
               </TableRow>
             </TableBody>
@@ -193,6 +218,17 @@
     >
       <p v-if="actionError" class="pt-2 text-[12px] text-danger">{{ actionError }}</p>
     </ConfirmDialog>
+
+    <!-- 导入预览弹窗（W2）：open 派生自 importState（previewing/applying 时开） -->
+    <ProviderImportPreviewDialog
+      :open="importState === 'previewing' || importState === 'applying'"
+      :import-id="importId ?? undefined"
+      :preview="importPreview"
+      :loading="importState === 'applying'"
+      :error="importError"
+      @update:open="onPreviewDialogToggle"
+      @confirm="onImportConfirm"
+    />
   </div>
 </template>
 
@@ -207,11 +243,25 @@ import { Switch } from '@/components/ui/switch'
 import type { ProviderInfo } from '@xyz-agent/shared'
 import { config } from '@/api'
 import { useSettingsStore } from '@/stores/settings'
+import { useQuotaStore } from '@/stores/quota'
+import { useProviderImport } from '@/composables/features/useProviderImport'
 import ProviderEditModal from './ProviderEditModal.vue'
+import ProviderImportMenu from './ProviderImportMenu.vue'
+import ProviderImportPreviewDialog from './ProviderImportPreviewDialog.vue'
 
 const props = defineProps<{ providers: ProviderInfo[] }>()
 
 const { t } = useI18n()
+// 导入流程状态机（W2）抽到 composable，组件只持有展示态
+const {
+  importState,
+  importId,
+  importPreview,
+  importError,
+  onImportSelect,
+  onImportConfirm,
+  onPreviewDialogToggle,
+} = useProviderImport()
 
 /** toggle 中的 provider id 集合（防双击：API 期间 disable Switch） */
 const toggling = ref<Set<string>>(new Set())
@@ -312,6 +362,8 @@ async function confirmDelete() {
     if (settingsStore.defaultModel.startsWith(`${target.id}/`)) {
       settingsStore.defaultModel = ''
     }
+    // 清除该 provider 的额度缓存（provider 已删除，缓存失效）
+    useQuotaStore().clearCache(target.id)
     deleteTarget.value = null
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : String(e)
@@ -355,6 +407,7 @@ async function onToggleModelEnabled(
         contextWindow: m.contextWindow,
         input: m.input,
         thinkingLevelMap: m.thinkingLevelMap,
+        compat: m.compat,
         enabled: m.enabled,
       }))
       : props.providers.find((x) => x.id === providerId)?.models.map((m) => ({
@@ -365,6 +418,7 @@ async function onToggleModelEnabled(
         contextWindow: m.contextWindow,
         input: m.input,
         thinkingLevelMap: m.thinkingLevelMap,
+        compat: m.compat,
         enabled: m.id === modelId ? enabled : (m.enabled ?? true),
       })) ?? []
     await config.setProvider(providerId, { models: modelsToSend }, settingsStore.configVersion)
@@ -407,11 +461,11 @@ function thinkingPillClass(m: { thinkingLevelMap?: Record<string, string | null>
   const kind = thinkingKind(m)
   if (kind === 'all') return 'bg-info-soft text-info'
   if (kind === 'hightop') return 'bg-accent-soft text-accent'
-  return 'bg-surface text-muted'
+  return 'bg-surface text-neutral-mid'
 }
 
 function statusDot(status: ProviderInfo['status']): string {
-  const map = { connected: 'bg-success', not_configured: 'bg-subtle', error: 'bg-danger' }
+  const map = { connected: 'bg-success', not_configured: 'bg-neutral-dim', error: 'bg-danger' }
   return map[status]
 }
 </script>

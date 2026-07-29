@@ -24,7 +24,7 @@
       <!-- warning icon: lucide alert-triangle -->
       <svg
         v-else-if="t.type === 'warning'"
-        class="mt-px h-4 w-4 shrink-0 text-warning"
+        class="mt-px h-4 w-4 shrink-0 text-warn"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -64,8 +64,8 @@ const { toasts, remove } = useToast()
 /** toast 类型 → 颜色 class */
 function toastClass(type: 'error' | 'info' | 'warning'): string {
   if (type === 'error') return 'border-border bg-surface text-danger'
-  if (type === 'warning') return 'border-border bg-surface text-warning'
-  return 'border-border bg-surface text-fg'
+  if (type === 'warning') return 'border-border bg-surface text-warn'
+  return 'border-border bg-surface text-neutral-fg'
 }
 </script>
 

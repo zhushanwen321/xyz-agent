@@ -10,27 +10,27 @@
     这把「交互即时性」与「状态持久化」彻底解耦。
   -->
   <section>
-    <h3 class="mb-2 text-[12px] font-medium text-fg">{{ t('settings.loadPaths.title') }}</h3>
+    <h3 class="mb-2 text-[12px] font-medium text-neutral-fg">{{ t('settings.loadPaths.title') }}</h3>
 
     <!-- 强制目录（ADR-0020 §1.1 层 1-2，桥接层硬编码注入，不可关不可拖）-->
     <div class="mb-2 rounded-md border border-border bg-bg">
-      <div class="px-3 py-2 text-[11px] text-muted">{{ t('settings.loadPaths.forcedDirs') }}</div>
+      <div class="px-3 py-2 text-[11px] text-neutral-mid">{{ t('settings.loadPaths.forcedDirs') }}</div>
       <div
         v-for="dir in forcedDirs"
         :key="dir"
         class="flex items-center gap-2 border-t border-border px-3 py-2 text-[12px]"
       >
-        <span class="size-4 shrink-0 rounded bg-surface-hover text-center text-[10px] leading-4 text-subtle">
+        <span class="size-4 shrink-0 rounded bg-surface-hover text-center text-[10px] leading-4 text-neutral-dim">
           &#10003;
         </span>
-        <span class="font-mono text-fg opacity-60">{{ dir }}</span>
-        <span class="ml-auto text-[10px] text-subtle">{{ t('settings.loadPaths.forced') }}</span>
+        <span class="font-mono text-neutral-fg opacity-60">{{ dir }}</span>
+        <span class="ml-auto text-[10px] text-neutral-dim">{{ t('settings.loadPaths.forced') }}</span>
       </div>
     </div>
 
     <!-- 可选目录（ADR-0020 §1.1 层 3，可勾选可拖排序）-->
     <div class="rounded-md border border-border bg-bg">
-      <div class="px-3 py-2 text-[11px] text-muted">{{ t('settings.loadPaths.optionalDirs') }}</div>
+      <div class="px-3 py-2 text-[11px] text-neutral-mid">{{ t('settings.loadPaths.optionalDirs') }}</div>
       <div
         v-for="(dir, index) in localDirs"
         :key="dir.path"
@@ -48,7 +48,7 @@
         @dragend="onDragEnd"
       >
         <GripVertical
-          class="size-4 shrink-0 cursor-grab text-subtle hover:text-fg active:cursor-grabbing"
+          class="size-4 shrink-0 cursor-grab text-neutral-dim hover:text-neutral-fg active:cursor-grabbing"
           :class="{ 'cursor-not-allowed opacity-40': disabled }"
           :aria-label="t('settings.loadPaths.dragSort')"
         />
@@ -59,11 +59,11 @@
           :aria-label="t('settings.loadPaths.enableDir', { path: dir.path })"
           @update:model-value="onToggle(index, $event)"
         />
-        <span class="font-mono text-fg">{{ dir.path }}</span>
+        <span class="font-mono text-neutral-fg">{{ dir.path }}</span>
         <Button
           variant="ghost"
           data-testid="remove-path-btn"
-          class="ml-auto size-6 shrink-0 p-0 text-subtle hover:bg-surface-hover hover:text-danger"
+          class="ml-auto size-6 shrink-0 p-0 text-neutral-dim hover:bg-surface-hover hover:text-danger"
           :class="{ 'cursor-not-allowed opacity-40': disabled }"
           :disabled="disabled"
           :aria-label="t('settings.loadPaths.removeDir', { path: dir.path })"
@@ -71,6 +71,16 @@
         >
           <Trash2 class="size-3.5" />
         </Button>
+      </div>
+
+      <!-- 从其他 Agent 导入（W1：Skill/Agent 目录导入，cw-2026-07-26-migration-other-agents）-->
+      <div class="border-t border-border px-3 py-2">
+        <SourceImportSection
+          :kind="kind"
+          :existing-dirs="localDirs.filter((d) => d.enabled).map((d) => d.path)"
+          :disabled="disabled"
+          @import="onImportFromAgents"
+        />
       </div>
 
       <!-- 添加自定义路径入口（ADR-0020 §5 自定义 discovery 目录）-->
@@ -104,8 +114,8 @@
       </div>
     </div>
 
-    <p v-if="kind === 'agent'" class="mt-1.5 text-[11px] text-subtle">{{ t('settings.loadPaths.agentRestartHint') }}</p>
-    <p v-else-if="kind === 'extension'" class="mt-1.5 text-[11px] text-subtle">{{ t('settings.loadPaths.extensionLoadOrderHint') }}</p>
+    <p v-if="kind === 'agent'" class="mt-1.5 text-[11px] text-neutral-dim">{{ t('settings.loadPaths.agentRestartHint') }}</p>
+    <p v-else-if="kind === 'extension'" class="mt-1.5 text-[11px] text-neutral-dim">{{ t('settings.loadPaths.extensionLoadOrderHint') }}</p>
   </section>
 </template>
 
@@ -116,6 +126,7 @@ import { GripVertical, Trash2 } from '@lucide/vue'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import SourceImportSection from './SourceImportSection.vue'
 import type { SkillDirConfig } from '@xyz-agent/shared'
 
 const props = defineProps<{
@@ -259,6 +270,25 @@ function onAddPath(): void {
 function onRemove(index: number): void {
   if (props.disabled) return
   localDirs.value = localDirs.value.filter((_, i) => i !== index)
+  emit('update-dirs', localDirs.value.map((d) => ({ ...d })))
+}
+
+/**
+ * 从其他 Agent 导入（W1）：把源 agent 候选目录 append 到 localDirs。
+ * 去重——已存在的 path 跳过；默认 enabled=true；append 到末尾（最低优先级，可再拖排序）。
+ * 去重模式与 onAddPath 一致（按 path 字面相等）。
+ */
+function onImportFromAgents(paths: string[]): void {
+  if (props.disabled) return
+  const existing = new Set(localDirs.value.map((d) => d.path))
+  const additions: SkillDirConfig[] = []
+  for (const path of paths) {
+    if (existing.has(path)) continue
+    existing.add(path)
+    additions.push({ path, enabled: true })
+  }
+  if (additions.length === 0) return
+  localDirs.value = [...localDirs.value, ...additions]
   emit('update-dirs', localDirs.value.map((d) => ({ ...d })))
 }
 </script>

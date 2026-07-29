@@ -17,8 +17,19 @@ export default {
   workflowOpFailed: '工作流操作失败：{msg}',
   newTaskFailed: '新建任务失败：{msg}',
   deleteSessionFailed: '删除会话失败：{msg}',
+  deleteFolderFailed: '删除文件夹会话失败：{msg}',
+  // S3：带首个失败原因（error 占位符），让用户感知失败根因。zh-CN 无复数形态。
+  deleteFolderPartialFailed: '{count} 个会话删除失败：{error}',
   renameFailed: '重命名失败：{msg}',
   retry: '重试',
+  update: {
+    newVersion: '新版本可用',
+    downloading: '下载中 {percent}%',
+    replacing: '替换中',
+    restarting: '即将重启',
+    error: '升级失败',
+    goToDownload: '前往下载',
+  },
   sessionItem: {
     rename: '重命名',
     delete: '删除',
@@ -31,6 +42,7 @@ export default {
   sessionList: {
     empty: '暂无会话',
     newSession: '新建会话',
+    deleteFolderConfirm: '确认删除此文件夹下所有会话？',
   },
   forkGroup: {
     title: '本会话的分支',
@@ -69,7 +81,7 @@ export default {
     confirm: '确认',
     validationRequired: '请输入名称',
     validationMaxLength: '名称不能超过 {max} 个字符',
-    validationPattern: '仅允许中文、英文、数字、空格、横杠和下划线',
+    validationPattern: '不允许换行符，最大 {max} 个字符',
   },
   subagentList: {
     loading: '加载后台任务…',

@@ -1,0 +1,23 @@
+{
+  "designReviewJudgment": {
+    "necessity": "T1-T4 四个任务覆盖类型定义(segments.ts) + 序列化逻辑(segmentsToText) + 协议字段(protocol.ts) + 验证(vitest+tsc)，是一个原子可测单元。无冗余——每个任务对应一个文件的一个明确改动点。testCases 4 条覆盖正常(image占位)/混合(image+text)/回归(无image)/类型(tsc)四类。",
+    "sufficiency": {
+      "gaps": [],
+      "overlaps": [],
+      "meceNote": "4 任务 × 4 测试用例 × 3 文件改动 × 3 契约，覆盖 image 类型从定义到序列化到协议的完整闭环。segments.ts 的类型+序列化是一体的（T1/T2 同文件），protocol.ts 独立（T3），验证（T4）。MECE。"
+    },
+    "alternatives": "无替代方案。判别联合扩展是 segments.ts 既有模式（注释 line 16 明示），message.send 加可选字段是向后兼容的标准协议扩展方式。",
+    "tradeoffs": [
+      { "id": "TO1", "decision": "image 段产出占位文本进 pi prompt（而非完全不进文本）", "reason": "LLM 需要知道用户贴了图（即使收到 images base64，文本占位提供上下文锚点，让 LLM 回复时能引用'那张图'）", "cost": "prompt 多几个字节的占位文本（可忽略）" }
+    ],
+    "risks": [
+      { "id": "RK1", "item": "switch(seg.type) 加 image case 后，若有遗漏的消费点没处理 image 会导致运行时 fallthrough", "severity": "low", "mitigation": "TypeScript 判别联合的穷尽检查会在编译期报错（所有 switch 没处理 image 的地方 tsc 报错），T4 的 tsc 验证覆盖" }
+    ],
+    "layerSpecific": {
+      "testCaseCoverageNote": "TC1 正常 image 占位、TC2 image+text 混合（补空格逻辑）、TC3 回归（无 image 不破坏）、TC4 类型（tsc）。覆盖 image 段的主要路径。边界：空 segments 已有 TC（segmentsToText 现有 '' 返回），image.path/name 为空字符串由下游填充保证（本 wave 不校验）。",
+      "boundaryConditionNote": "边界：image 段为 segments 唯一元素、image 在首/尾位置、连续多个 image 段。这些由 segmentsToText 的 for 循环自然处理（不依赖位置）。name 含特殊字符（如 [ ]）可能破坏占位格式，但 name 是文件名（截图工具不会产 [ ]），低风险不专门处理。",
+      "mockStrategyNote": "纯函数测试无需 mock。segmentsToText 是纯函数（输入 Segment[] 输出 string），直接断言。protocol.ts 类型扩展用 tsc 编译验证（编译通过=类型对）。无外部依赖、无 IO、无异步。",
+      "tddRedReadinessNote": "可 TDD：先写 TC1-3 的测试（会因 image 类型不存在而 tsc 失败=红），再实现 T1/T2 使测试过=绿。protocol.ts 的 TC4 是类型测试（tsc 通过即绿）。建议 T1→TC1红→T2→绿 的顺序。"
+    }
+  }
+}

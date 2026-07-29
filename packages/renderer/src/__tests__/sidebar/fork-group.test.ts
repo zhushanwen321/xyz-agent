@@ -132,7 +132,7 @@ describe('U18: SessionItem 分支 sub 行显示 fork 自父名', () => {
       },
     })
 
-    // sub 行（dirName 行，font-mono text-subtle）应含「fork 自」血缘文案
+    // sub 行（dirName 行，font-mono text-neutral-dim）应含「fork 自」血缘文案
     expect(wrapper.text()).toContain('fork 自')
     // 血缘文案含父名
     expect(wrapper.text()).toContain('主分支会话')

@@ -3,6 +3,7 @@ import { createTokenManager } from './transport/token.js'
 import { createFileEndpoint } from './transport/file-endpoint.js'
 import { SessionService } from './services/session/session-service.js'
 import { ConfigService } from './services/config-service.js'
+import { PresetService } from './services/preset-service.js'
 import { ModelService } from './services/model-service.js'
 
 import { BASE_PORT, MAX_PORT } from '@xyz-agent/shared'
@@ -10,7 +11,7 @@ import { getDataDir } from '@xyz-agent/shared/paths'
 import { initLogger, closeLogger } from './infra/logger.js'
 
 import { ProcessManager } from './infra/pi/process-manager.js'
-import { migrateToPiSubdir } from './infra/pi/pi-provider-store.js'
+import { migrateToPiSubdir, getProviderConfig } from './infra/pi/pi-provider-store.js'
 import { getExtensionsDir, getNpmDir, getTmpDir } from './infra/pi/pi-paths.js'
 import { PiConfigStore } from './infra/pi/pi-config-store.js'
 import { PiSessionStore } from './infra/pi/session-store.js'
@@ -37,7 +38,9 @@ import { GitInfoReader } from './infra/system/git-info-reader.js'
 import { ShellRunner } from './infra/shell-runner.js'
 import { WorktreeService } from './services/worktree/worktree-service.js'
 import { TerminalService } from './services/terminal/terminal-service.js'
+import { QuotaService } from './services/quota-service.js'
 import { FileService } from './services/file-service.js'
+import { HandoffService } from './services/handoff-service.js'
 import { getAppVersion } from './services/plugin-service/plugin-version-checker.js'
 import { FsExecutor } from './infra/fs-executor.js'
 import { RecentWorkspacesStore } from './services/workspace/recent-workspaces-store.js'
@@ -146,6 +149,10 @@ export async function main(opts?: { host?: string; port?: number; tokenFile?: st
   // ADR-0020 §1 一次性迁移：旧版本 skill 路径存在 settings.json.skills，
   // 首启用时提升为 discovery.json SSOT。幂等：discovery 已有数据则 no-op。
   configService.migrateSettingsSkillsToDiscovery()
+  // PresetService（pi-launch-presets 设计 §8.1）：独立 service，与 ConfigService 对称。
+  // 依赖 configStore（pi-presets.json 路径推导）+ extensionService（resolve 用 builtin/scanExtensions）。
+  // 组合根构造，经 setPresetService 注入 SessionService（与 setConfigService 同模式）。
+  const presetService = new PresetService(configStore, extensionService)
   const modelService = new ModelService(modelSource)
 
   // ── Phase 2: create services that reference other services via closures / deps ──
@@ -179,7 +186,7 @@ export async function main(opts?: { host?: string; port?: number; tokenFile?: st
   // the interpreter queries its owning session's data. createAdapter is only called at session
   // creation time, so sessionService is always set by then.
   //
-  // fileChangeDiff：infra 纯函数的 port 实现（无状态，全局单例复用）。
+
   const fileChangeDiff = new FileChangeDiffAdapter()
   const createAdapter = (sessionId: string, send: (msg: import('@xyz-agent/shared').ServerMessage) => void, cwd?: string) => {
     // EventInterpreter 持有业务态（currentMessageId/statusBaseline/writeContents）+ 业务回调，
@@ -212,7 +219,9 @@ export async function main(opts?: { host?: string; port?: number; tokenFile?: st
       // W3：agent_end 副作用——isGenerating 复位 + tryPersistLabel 兜底。
       // 原 attachUsageListener agent_end 分支迁移至此。不迁移则 session 永远 busy（下条消息被拒）。
       // W4：转发 stopReason 用于 session_end 终态判定（'error'→error，其余→done）。
-      onTurnFinalize: (sid, stopReason) => sessionService.handleTurnEndSideEffects(sid, stopReason),
+      onTurnFinalize: (sid, stopReason) => {
+        sessionService.handleTurnEndSideEffects(sid, stopReason)
+      },
       onThinkingLevelChanged: (sid, level) => {
         // pi 切模型 / 用户手切档位后推 thinking_level_changed 事件。
         // 回写 session 缓存，使后续 broadcastSessionState 读到真值（而非 undefined）。
@@ -261,6 +270,20 @@ export async function main(opts?: { host?: string; port?: number; tokenFile?: st
     new GitInfoReader(),
     workspaceService,
   )
+
+  // HandoffService：fast-handoff 编排层。依赖 sessionService（create/sendMessage/abort/getHistory/getSession）
+  // + server（IMessageBroker 广播）+ pm（getClient 取源 session pi 句柄）。与 GitService/FileService 同模式
+  // （经 server.setServices 注入到 handler），但额外经 onTurnFinalize opt 接到 EventInterpreter（见上方闭包）。
+  //
+  // BLOCKER 2 / WARNING nextPushId：注入 broadcastSessionList + nextPushId（来自 broker），
+  // 与 session-message-handler 的 create/fork/delete/rename 一致。
+  // handoffService 经 server.setServices 注入到 handler（session-message-handler.ts）。
+  const handoffService = new HandoffService({
+    sessionService,
+    broker: server,
+    broadcastSessionList: () => server.broadcastSessionList(),
+    nextPushId: () => server.nextPushId(),
+  })
 
   // ── Phase 3: wire cross-service runtime deps ──
   pluginService.setSessionService(sessionService)
@@ -344,6 +367,9 @@ export async function main(opts?: { host?: string; port?: number; tokenFile?: st
   // 注入 ConfigService 供 getReplaceSystemPrompt 委托（spawn pi 时透传替换系统提示词）。
   // 与 setModelContextWindowResolver 同模式：避免构造参数破坏 SessionService 的测试调用点。
   sessionService.setConfigService(configService)
+  // 注入 PresetService 供 getLaunchPresetOptions 委托（spawn pi 时按 launch preset 构建 args）。
+  // 与 setConfigService 同模式（pi-launch-presets 设计 §8.1 + §4.3）。
+  sessionService.setPresetService(presetService)
 
   // ── SkillRegistry（W1）：全局 + 项目级 skill 缓存 + chokidar 文件监听 ──
   // 构造在 sessionService 之后（依赖其 getActiveSessionIds/getSessionCwd 窄接口）。
@@ -372,8 +398,11 @@ export async function main(opts?: { host?: string; port?: number; tokenFile?: st
   //   1. skillRegistry.onChange → onSkillChange（skill 变动触发）
   //   2. sessionService message.complete 广播 → onMessageComplete（running session 生成完成消费 pending 队）
   const reloadOrchestrator = new ReloadOrchestrator({ sessionService })
-  skillRegistry.onChange((affectedSessionIds) => {
-    void reloadOrchestrator.onSkillChange(affectedSessionIds)
+  skillRegistry.onChange((event) => {
+    // 既有链路：pi reload（只用 affectedSessionIds 字段）
+    void reloadOrchestrator.onSkillChange(event.affectedSessionIds)
+    // 新增链路：广播 config.skillCacheInvalidated 让 landing 缓存失效重拉
+    server.broadcastSkillCacheInvalidated(event.scope, event.cwd)
   })
   sessionService.setOnMessageComplete((sid) => {
     void reloadOrchestrator.onMessageComplete(sid)
@@ -404,7 +433,19 @@ export async function main(opts?: { host?: string; port?: number; tokenFile?: st
     fs,
   })
 
-  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, terminalService)
+  // QuotaService：Coding Plan 额度查询（hover 触发 + 缓存 + log）。
+  // 经 server.setServices 注入到 QuotaMessageHandler（quota.fetch/getCached/refresh/configure 路由）。
+  // getProviderInfo：从 providerId 解析 ProviderInfo（baseUrl/name/quota.fetcher），
+  // quota.fetcher 优先于 matchQuotaPreset（设计文档 §2.2.3 + 手动选择 fetcher 需求）。
+  const quotaService = new QuotaService({
+    getProviderInfo: (providerId) => {
+      const cfg = getProviderConfig(providerId)
+      if (!cfg) return undefined
+      return { baseUrl: cfg.baseUrl, name: cfg.name, quota: cfg.quota }
+    },
+  })
+
+  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, terminalService, quotaService, handoffService, presetService)
 
   // Graceful shutdown on signals
   let shuttingDown = false

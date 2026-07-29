@@ -51,6 +51,23 @@ export interface IManagedSessionView {
   busyOwnerId?: string
   /** P5 lease：lease TTL 到期时间（unix ms，无 lease 时 undefined）。续租挂 pingTick 成功路径。 */
   leaseExpiresAt?: number
+  /**
+   * bash 执行进行中标记（composer-bash-execute W1）。
+   *
+   * composer 直接执行 bash（pi bash RPC，不经 LLM turn）期间置 true，与 isGenerating/isCompacting
+   * 三者互斥（任一为 true 时 sendPrompt/sendBash 都拒）。用 try/finally 置位，finally 复位。
+   * 不进 toSummary（前端状态摘要只看 isGenerating 推 active/idle，bash 执行不改变 active/idle 态）。
+   */
+  isBashRunning: boolean
+  /**
+   * bash 执行的「代次令牌」（composer-bash-execute W1 竞态守卫，纯运行时态不进 toSummary）。
+   *
+   * sendBash 每次 await client.bash() 前生成新 token 存入此字段；await 返回后比对 token 是否未变。
+   * abortBash 在广播 cancelled bashResult 终态前旋转此 token（清 undefined），标记「已被 abort 抢先收口」。
+   * sendBash 检测到 token 变化（!== 自身 token）时静默跳过 bashResult/error 终态广播——
+   * 避免与 abortBash 的 cancelled bashResult 撞出双终态（先 cancelled 后真实结果，前端渲染错乱）。
+   */
+  bashRunToken: string | undefined
   thinkingLevel?: string
   sessionFilePath?: string
   /**

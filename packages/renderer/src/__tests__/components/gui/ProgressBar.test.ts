@@ -23,9 +23,9 @@ describe('ProgressBar', () => {
     expect(fill.attributes('style')).toContain('width: 87.5%')
   })
 
-  it('severity=warn → bg-warning，severity=danger → bg-danger', () => {
+  it('severity=warn → bg-warn，severity=danger → bg-danger', () => {
     const w1 = mount(ProgressBar, { props: { current: 3, total: 4, severity: 'warn' } })
-    expect(w1.find('.progress-bar__fill').classes()).toContain('bg-warning')
+    expect(w1.find('.progress-bar__fill').classes()).toContain('bg-warn')
 
     const w2 = mount(ProgressBar, { props: { current: 1, total: 4, severity: 'danger' } })
     expect(w2.find('.progress-bar__fill').classes()).toContain('bg-danger')
@@ -36,7 +36,7 @@ describe('ProgressBar', () => {
     expect(ok.find('.progress-bar__fill').classes()).toContain('bg-success')
 
     const warn = mount(ProgressBar, { props: { current: 6, total: 10 } })
-    expect(warn.find('.progress-bar__fill').classes()).toContain('bg-warning')
+    expect(warn.find('.progress-bar__fill').classes()).toContain('bg-warn')
 
     const danger = mount(ProgressBar, { props: { current: 3, total: 10 } })
     expect(danger.find('.progress-bar__fill').classes()).toContain('bg-danger')

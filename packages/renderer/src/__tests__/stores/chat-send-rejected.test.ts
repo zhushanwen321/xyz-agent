@@ -51,6 +51,11 @@ vi.mock('@/api', () => ({
     followUp: apiMock.followUp,
   },
   session: {},
+  config: {
+    getGlobalSkills: vi.fn().mockResolvedValue([]),
+    getProjectSkills: vi.fn().mockResolvedValue([]),
+    onSkillCacheInvalidated: () => () => {},
+  },
 }))
 
 // mount(Composer) 用例：mock 较深依赖（useChat 保留真实，验证 send.rejected 回滚链路）

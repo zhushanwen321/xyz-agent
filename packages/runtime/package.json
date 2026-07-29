@@ -24,6 +24,9 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@iarna/toml": "^2.2.5",
+    "@xyz-agent/extension-protocol": "workspace:*",
+    "@xyz-agent/shared": "workspace:*",
     "chokidar": "^4.0.1",
     "fast-glob": "^3.3.3",
     "qrcode-terminal": "^0.12.0",

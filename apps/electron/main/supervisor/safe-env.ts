@@ -31,7 +31,13 @@ export function buildSafeEnv(extras: Record<string, string | undefined>): Record
     }
   }
   for (const [key, value] of Object.entries(extras)) {
-    if (value !== undefined) safe[key] = value
+    if (value !== undefined) {
+      safe[key] = value
+    } else {
+      // undefined = 显式清除：删除白名单已继承的值（dev 模式 process-control 传
+      // XYZ_AGENT_PACKAGED: undefined 来清除包装模式标志，防止 shell 残留值污染 runtime）
+      delete safe[key]
+    }
   }
   return safe
 }

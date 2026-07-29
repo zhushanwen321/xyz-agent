@@ -23,6 +23,7 @@ function mockSession(overrides: Partial<IManagedSessionView> = {}): IManagedSess
   return {
     id: 's1', cwd: '/p', label: 's', modelId: 'm', createdAt: 0, lastActiveAt: 0,
     tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false, labelPersisted: false,
+    isBashRunning: false, bashRunToken: undefined,
     ...overrides,
   }
 }

@@ -41,6 +41,9 @@ vi.mock('@/lib/ws-client', () => ({
 const flowMock = vi.hoisted(() => ({
   currentSessionId: { value: null as string | null },
   currentCwd: { value: null as string | null },
+  // pi-launch-presets wave2：Landing 透传 launchPresetId 给 PresetSelectChip（flow.currentSession.value?.launchPresetId），
+  // 需 currentSession 兜底（合并 main 后 Landing.vue 新增引用，flowMock 缺失会触发 undefined.value 报错）
+  currentSession: { value: null as { launchPresetId?: string } | null },
   presetCwd: vi.fn(),
   gitInfo: { value: null as { branch: string } | null },
   mode: { value: 'not-repo' as string },

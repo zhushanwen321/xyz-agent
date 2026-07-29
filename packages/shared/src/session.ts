@@ -67,6 +67,16 @@ export interface SessionSummary {
   busyOwnerId?: string
   /** P5 lease：lease TTL 到期时间（unix ms，无 lease 时 undefined）。toSummary 透传。 */
   leaseExpiresAt?: number
+  /**
+   * session 创建时锁定的预设 ID。
+   *
+   * 持久化在独立 sidecar `<sessionFile>.preset.json`（不是 .meta.json——.meta.json 是
+   * session 终态 sidecar，session 结束时才写）。见设计文档 §4.1。
+   *
+   * session 活跃期间通过 IManagedSessionView 内存态保存，create() 成功后立即写 preset sidecar。
+   * restoreSession 时从此 sidecar 读取，用此 preset 重新构建 pi args。
+   */
+  launchPresetId?: string
 }
 
 export interface SessionGroup {

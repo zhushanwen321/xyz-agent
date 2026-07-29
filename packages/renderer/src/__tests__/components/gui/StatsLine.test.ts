@@ -26,7 +26,7 @@ describe('StatsLine', () => {
     const values = wrapper.findAll('.stats-line__value')
     expect(values).toHaveLength(3)
     expect(values[0].classes()).toContain('text-success')
-    expect(values[1].classes()).toContain('text-warning')
+    expect(values[1].classes()).toContain('text-warn')
     expect(values[2].classes()).toContain('text-danger')
   })
 

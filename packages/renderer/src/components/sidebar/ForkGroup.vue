@@ -61,7 +61,7 @@
           />
         </span>
         <div class="min-w-0 flex-1">
-          <div class="truncate text-[12px] leading-[1.3] text-fg">{{ b.label }}</div>
+          <div class="truncate text-[12px] leading-[1.3] text-neutral-fg">{{ b.label }}</div>
           <!-- 分支 N pill（accent-soft 底 + 9px mono，spec §7 branch-pill） -->
           <div class="mt-0.5 flex items-center gap-1">
             <span
@@ -69,7 +69,7 @@
             >
               {{ t('sidebar.forkGroup.branchN', { n: idx + 1 }) }}
             </span>
-            <span class="truncate font-mono text-[10px] text-subtle">{{ timeLabelOf(b) }}</span>
+            <span class="truncate font-mono text-[10px] text-neutral-dim">{{ timeLabelOf(b) }}</span>
           </div>
         </div>
 
@@ -90,7 +90,7 @@
             v-if="confirmingStopId !== b.id"
             variant="ghost"
             size="icon"
-            class="size-[20px] rounded-sm border border-border-strong bg-surface text-muted hover:bg-surface-hover hover:text-danger"
+            class="size-[20px] rounded-sm border border-border-strong bg-surface text-neutral-mid hover:bg-surface-hover hover:text-danger"
             :title="t('sidebar.forkGroup.stop')"
             data-testid="fork-group-stop"
             @click.stop="confirmingStopId = b.id"
@@ -101,7 +101,7 @@
             v-else
             variant="ghost"
             size="icon"
-            class="size-[20px] rounded-sm border border-danger bg-danger text-fg"
+            class="size-[20px] rounded-sm border border-danger bg-danger text-neutral-fg"
             :title="t('sidebar.forkGroup.stopConfirm')"
             data-testid="fork-group-stop-confirm"
             @click.stop="onStopConfirm(b.id)"
@@ -239,9 +239,9 @@ function dotClassFor(b: SessionSummary): string {
     case 'error':
       return 'bg-danger'
     case 'stopped':
-      return 'bg-subtle opacity-50'
+      return 'bg-neutral-dim opacity-50'
     default:
-      return 'bg-subtle'
+      return 'bg-neutral-dim'
   }
 }
 

@@ -7,7 +7,7 @@
   -->
   <div
     ref="elRef"
-    class="composer-input relative min-h-[60px] max-h-[120px] overflow-y-auto px-3.5 pb-1 pt-[11px] text-[13px] leading-[1.55] text-fg outline-none"
+    class="composer-input relative min-h-[60px] max-h-[120px] overflow-y-auto px-3.5 pb-1 pt-[11px] text-[13px] leading-[1.55] text-neutral-fg outline-none"
     :class="{ 'is-empty': isEmpty, 'is-focused': isFocused }"
     :contenteditable="!disabled"
     :data-placeholder="placeholder"
@@ -28,15 +28,17 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { useComposerChipCommands } from '@/composables/useComposerChipCommands'
+import { findImageChipElById, useComposerChipCommands } from '@/composables/useComposerChipCommands'
 import { useContenteditableInput } from '@/composables/panel/useContenteditableInput'
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     placeholder?: string
     disabled?: boolean
+    /** 当前会话 id（决定图片持久化目录）；landing 态为 null → IPC 内降级 tmpdir */
+    sessionId?: string | null
   }>(),
-  { placeholder: '', disabled: false },
+  { placeholder: '', disabled: false, sessionId: null },
 )
 
 const emit = defineEmits<{
@@ -59,6 +61,7 @@ const isFocused = ref(false)
 // 解耦：handleBackspaceOnChip 仅在运行期（onKeydown 触发）被调，setup 期可暂留占位再后赋值，
 // 故先声明本 composable，把 handleBackspaceOnChip 经 forwardRef 后赋，再声明 chip composable。
 let handleBackspaceOnChip: () => boolean = () => false
+let insertImageBadgeFn: (path: string, fileName: string, displayName: string, needsMigrate?: boolean) => void = () => {}
 const {
   composing,
   isEmpty,
@@ -84,6 +87,10 @@ const {
   onEnterKeydown: (e) => emit('keydown', e),
   onKeydown: (e) => emit('keydown', e),
   handleBackspaceOnChip: () => handleBackspaceOnChip(),
+  // insertImageBadge 经闭包转发，chip composable 声明后回填真实实现（同 handleBackspaceOnChip 范式）
+  insertImageBadge: (path, fileName, displayName, needsMigrate) => insertImageBadgeFn(path, fileName, displayName, needsMigrate),
+  // sessionId 透传给 handleImagePaste（决定持久化目录；landing 态 undefined → null → IPC 降级 tmpdir）
+  getSessionId: () => props.sessionId ?? null,
 })
 
 // ============ 富文本 chip（§2e slash / §2d mention） ============
@@ -95,8 +102,10 @@ const chipCommands = useComposerChipCommands(elRef, {
 const insertSlashChip = chipCommands.insertSlashChip
 const insertMentionChip = chipCommands.insertMentionChip
 const insertFileChip = chipCommands.insertFileChip
-// 后赋值：补回上面 forward 占位（setup 同步执行完毕，onKeydown 运行期读到真实实现）
+const insertImageBadge = chipCommands.insertImageBadge
+// 后赋值：补回上面 forward 占位（setup 同步执行完毕，onPaste 运行期读到真实实现）
 handleBackspaceOnChip = chipCommands.handleBackspaceOnChip
+insertImageBadgeFn = chipCommands.insertImageBadge
 
 /** blur：清聚焦态（隐藏光标 + 末尾不再闪），并保存选区供命令浮层后恢复光标 */
 function onBlur(): void {
@@ -113,6 +122,24 @@ function focus(): void {
   elRef.value?.focus()
 }
 
+/**
+ * 按 chipId 移除 image badge（ContextChipsBar × 删除回调用）。
+ * 用 dataset 遍历定位（C3：chipId 是稳定唯一 id，避免同一文件附两次时重复 path 冲突），
+ * 连同相邻 ZWSP spacer 一并移除，触发 onInput 同步状态。
+ */
+function removeImageChip(chipId: string): void {
+  const el = elRef.value
+  if (!el) return
+  const chip = findImageChipElById(el, chipId)
+  if (!chip) return
+  const next = chip.nextSibling
+  if (next && next.nodeType === Node.TEXT_NODE && next.textContent === '\u200B') {
+    next.remove()
+  }
+  chip.remove()
+  onInput()
+}
+
 defineExpose({
   clear,
   focus,
@@ -123,6 +150,8 @@ defineExpose({
   insertSlashChip,
   insertMentionChip,
   insertFileChip,
+  insertImageBadge,
+  removeImageChip,
   clearSlashQueryText,
   clearHashQueryText,
   saveSelection,
@@ -146,7 +175,7 @@ onMounted(() => {
   position: absolute;
   inset: 0;
   padding: inherit;
-  color: var(--subtle);
+  color: var(--neutral-dim);
   pointer-events: none;
 }
 
@@ -204,5 +233,11 @@ onMounted(() => {
 .composer-input :deep(.mention-chip.mention-file) {
   color: var(--success);
   background: var(--success-soft);
+}
+/* 图片 badge（Cmd+V 富呈现通路）：复用 .mention-chip 基础样式 + .image-chip 紫色修饰，
+   覆盖 mention-file 的绿色，与 ContextChipsBar image chip（text-reasoning）视觉一致（TO2）。 */
+.composer-input :deep(.mention-chip.image-chip) {
+  color: var(--reasoning);
+  background: var(--reasoning-soft);
 }
 </style>

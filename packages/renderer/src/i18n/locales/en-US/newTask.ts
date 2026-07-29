@@ -78,4 +78,14 @@ export default {
     retryHistory: 'Retry loading history',
     gitRepo: 'Git repo',
   },
+  presetSelect: {
+    title: 'Launch preset',
+    setAsDefault: 'Set as default',
+    alreadyDefault: 'Already default',
+    presetLockedTooltip: 'This session was created with {name} mode and cannot be changed',
+    legacySessionTooltip: '(legacy session, preset not recorded)',
+    legacyPresetName: 'Full tools',
+    loadingPresets: 'Loading…',
+    noPresets: 'No presets',
+  },
 }

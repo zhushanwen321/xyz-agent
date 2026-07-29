@@ -93,7 +93,7 @@ describe('MermaidRenderer（W5）', () => {
     await nextTick()
     // Dialog 经 DialogPortal teleport 到 body → 用 document.body 查找
     const body = document.body
-    const labelEl = body.querySelector('.font-mono.text-\\[11px\\]') as HTMLElement
+    const labelEl = body.querySelector('.font-mono.text-\\[length\\:var\\(--text-xs\\)\\]') as HTMLElement
     expect(labelEl).toBeTruthy()
     const before = parseInt(labelEl.textContent ?? '0', 10)
     // 点 zoom-in（title="放大"）
@@ -115,7 +115,7 @@ describe('MermaidRenderer（W5）', () => {
     await nextTick()
     await nextTick()
     const body = document.body
-    const labelEl = body.querySelector('.font-mono.text-\\[11px\\]') as HTMLElement
+    const labelEl = body.querySelector('.font-mono.text-\\[length\\:var\\(--text-xs\\)\\]') as HTMLElement
     // 先 zoom-in 放大
     const zoomInBtn = Array.from(body.querySelectorAll('button')).find(
       (b) => b.getAttribute('title') === '放大',

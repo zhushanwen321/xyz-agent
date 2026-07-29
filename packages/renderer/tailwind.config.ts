@@ -21,9 +21,14 @@ export default {
           hover: 'var(--surface-hover)',
           2: 'var(--surface-2)',
         },
-        fg: 'var(--fg)',
-        muted: 'var(--muted)',
-        subtle: 'var(--subtle)',
+        neutral: {
+          fg: 'var(--neutral-fg)',
+          mid: 'var(--neutral-mid)',
+          dim: 'var(--neutral-dim)',
+          faint: 'var(--neutral-faint)',
+          ico: 'var(--neutral-ico)',
+          'ico-hover': 'var(--neutral-ico-hover)',
+        },
         border: 'var(--border)',
         'border-strong': 'var(--border-strong)',
         accent: {
@@ -34,7 +39,7 @@ export default {
           foreground: 'var(--accent-foreground)', // shadcn text-accent-foreground
         },
         success: { DEFAULT: 'var(--success)', soft: 'var(--success-soft)' },
-        warning: { DEFAULT: 'var(--warning)', soft: 'var(--warning-soft)' },
+        warn: { DEFAULT: 'var(--warn)', soft: 'var(--warn-soft)' },
         danger: { DEFAULT: 'var(--danger)', soft: 'var(--danger-soft)' },
         info: { DEFAULT: 'var(--info)', soft: 'var(--info-soft)' },
         // reasoning 紫（draft-message-stream 思考块 / composer 思考等级专属色相）
@@ -80,7 +85,7 @@ export default {
         2: 'var(--shadow-2)',
         glow: 'var(--shadow-glow)',
       },
-      // 状态点脉冲（SessionItem / SessionCard 共享，running=accent / waiting=warning）。
+      // 状态点脉冲（SessionItem / SessionCard 共享，running=accent / waiting=warn）。
       // 原两组件各自 scoped 定义同一份 keyframes，收敛到 SSOT 避免漂移。
       keyframes: {
         'pulse-accent': {
@@ -88,10 +93,12 @@ export default {
           '70%': { 'box-shadow': '0 0 0 5px rgba(79, 142, 247, 0)' },
           '100%': { 'box-shadow': '0 0 0 0 rgba(79, 142, 247, 0)' },
         },
+        // 注意：rgba 值对应暗色 --warn (#b08a3e)。亮色 --warn (#8a6a2e) 下 pulse 环会有色相差，
+        // 已知限制——keyframe 无法读运行时 CSS 变量，需后续用 CSS @property 或独立动画方案解决。
         'pulse-warn': {
-          '0%': { 'box-shadow': '0 0 0 0 rgba(245, 165, 36, 0.5)' },
-          '70%': { 'box-shadow': '0 0 0 5px rgba(245, 165, 36, 0)' },
-          '100%': { 'box-shadow': '0 0 0 0 rgba(245, 165, 36, 0)' },
+          '0%': { 'box-shadow': '0 0 0 0 rgba(176, 138, 62, 0.5)' },
+          '70%': { 'box-shadow': '0 0 0 5px rgba(176, 138, 62, 0)' },
+          '100%': { 'box-shadow': '0 0 0 0 rgba(176, 138, 62, 0)' },
         },
         // Composer S6 流式态呼吸 ring（steer 提交引导）
         'steer-breathe': {
@@ -107,6 +114,11 @@ export default {
         blink: {
           '0%, 50%': { opacity: '1' },
           '51%, 100%': { opacity: '0' },
+        },
+        // message-stream trace 块 running 态双环 loader（Demo H，普通 tool/subagent/workflow 共用）。
+        // 1.4s 线性旋转，prefers-reduced-motion 由 style.css 全局 @media reduce 兜底。
+        'loader-spin': {
+          to: { transform: 'rotate(360deg)' },
         },
         // session status icons（方案 C 优化版 v3）
         wiggle: {
@@ -134,6 +146,7 @@ export default {
         'steer-breathe': 'steer-breathe 2.6s ease-in-out infinite',
         'working-pulse': 'working-pulse 1.4s ease-in-out infinite',
         blink: 'blink 1s step-end infinite',
+        'loader-spin': 'loader-spin 1.4s linear infinite',
         'ask-user-slide-up': 'ask-user-slide-up var(--duration-slow) var(--ease)',
         wiggle: 'wiggle 1.2s ease-in-out infinite',
         'pulse-strong': 'pulse-strong 1.4s ease-in-out infinite',

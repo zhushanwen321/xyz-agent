@@ -131,6 +131,15 @@ function queryBodyButtonIncludes(text: string): HTMLButtonElement | null {
     .find((b) => (b.textContent ?? '').includes(text)) ?? null
 }
 
+/**
+ * 按 data-testid 精确定位 button 元素（document.body，含 teleport）。
+ * 选用 testid 而非文案子串：弹窗内可能存在多个文案相近的按钮（如 CodingPlanSection
+ * 的「保存专属 API Key」与底栏「保存」），子串匹配会误中。testid 是结构契约，抗污染。
+ */
+function queryBodyButtonByTestId(testid: string): HTMLButtonElement | null {
+  return document.body.querySelector<HTMLButtonElement>(`button[data-testid="${testid}"]`)
+}
+
 describe('W4 D12: 保存成功 toast 反馈', () => {
   it('onSave 成功后 toastInfo("已保存") 并 emit close', async () => {
     const { toasts } = useToast()
@@ -145,8 +154,8 @@ describe('W4 D12: 保存成功 toast 反馈', () => {
     nameInput!.value = 'NewProvider'
     nameInput!.dispatchEvent(new Event('input', { bubbles: true }))
     await flushPromises()
-    // 点保存
-    const saveBtn = queryBodyButtonIncludes('保存')
+    // 点保存（底栏 provider-save-btn；不能用文案子串，会误中 CodingPlanSection 的「保存专属 API Key」）
+    const saveBtn = queryBodyButtonByTestId('provider-save-btn')
     expect(saveBtn).toBeTruthy()
     saveBtn!.click()
     await flushPromises()
@@ -299,13 +308,45 @@ describe('W4 D15a/D15b: addModel / save 前端校验', () => {
       attachTo: document.body,
     })
     await flushPromises()
-    // 不填 name 直接点保存
-    const saveBtn = queryBodyButtonIncludes('保存')
+    // 不填 name 直接点保存（底栏 provider-save-btn）
+    const saveBtn = queryBodyButtonByTestId('provider-save-btn')
     expect(saveBtn).toBeTruthy()
     saveBtn!.click()
     await flushPromises()
     expect(configMock.setProvider).not.toHaveBeenCalled()
     expect(document.body.textContent ?? '').toMatch(/名称不能为空|供应商名称/)
+  })
+})
+
+// ── 编辑模式模型回填（观察者视角回归测试）──
+// 背景：ModelListSection 经 provide/inject 拿到 useProviderEdit 的 localModels（ref）。
+// inject 对象的嵌套 ref 在模板里不自动解包，导致 v-if="!deps.localModels.length" 永远为 true，
+// 编辑弹窗永远显示「暂无模型」——即使 provider 有 models。此测覆盖该回归。
+describe('编辑模式打开后模型清单回填可见（inject ref 解包回归）', () => {
+  it('编辑含模型的 provider → 模型清单区域显示 model id，不显示「暂无模型」', async () => {
+    wrapper = mount(ProviderEditModal, {
+      props: { open: true, provider: providerFixture() },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    // providerFixture 含 1 个 model: claude-sonnet-4-5
+    // 回归点：inject ref 未解包时 localModels.length 为 undefined → v-if="!localModels.length"
+    // 的空状态 div 渲染、model 行不渲染。用 locale-invariant 的结构断言验证 model 行真实存在，
+    // 避免 locale 切换（en-US 显示 "No models"）时文案断言 false positive。
+    //
+    // ModelListSection.vue 把 model id 渲染进 <span class="flex-1 truncate font-mono text-fg">，
+    // 空状态是 <div class="py-8 text-center text-[12px] text-muted">——两者 class 都是结构契约，
+    // 不随 locale 变化。
+    const modelIdSpans = document.body.querySelectorAll('span.truncate.font-mono')
+    expect(modelIdSpans.length, 'model 行应作为 DOM 元素结构性渲染').toBeGreaterThan(0)
+    expect(
+      Array.from(modelIdSpans).some((s) => (s.textContent ?? '').includes('claude-sonnet-4-5')),
+      'model 行应含 model id',
+    ).toBe(true)
+    // 空状态 div（v-if="!localModels.length"）不应渲染——'py-8.text-center' 是其独有 class 组合
+    const emptyState = document.body.querySelector('.py-8.text-center')
+    expect(emptyState, '空状态不应渲染（localModels 已解包）').toBeNull()
   })
 })
 
@@ -373,9 +414,8 @@ describe('W3 D7: headers/authHeader 编辑回填 + 保存回写', () => {
     valueInput.dispatchEvent(new Event('input', { bubbles: true }))
     await flushPromises()
 
-    // 点保存
-    const saveBtn = Array.from(document.body.querySelectorAll('button'))
-      .find((b) => b.textContent?.includes('保存') && !b.textContent?.includes('保存中')) as HTMLButtonElement
+    // 点保存（底栏 provider-save-btn；不能用文案子串，会误中 CodingPlanSection 的「保存专属 API Key」）
+    const saveBtn = queryBodyButtonByTestId('provider-save-btn') as HTMLButtonElement
     expect(saveBtn).toBeTruthy()
     saveBtn!.click()
     await flushPromises()

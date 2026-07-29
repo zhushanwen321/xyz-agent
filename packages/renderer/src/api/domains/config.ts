@@ -20,6 +20,11 @@ import type {
   SkillDirConfig,
   SystemPromptConfig,
   TerminalConfig,
+  SourceDetectResult,
+  ProviderSource,
+  ProviderImportPreview,
+  ProviderImportResult,
+  SkillCacheInvalidatedPayload,
 } from '@xyz-agent/shared'
 import { command } from '../request'
 import * as events from '../events'
@@ -73,6 +78,39 @@ export async function scanAgents(sources: string[]): Promise<ScannedAgentInfo[]>
   return reply.agents
 }
 
+/**
+ * 检测本机已安装的源 agent（W1：skill/agent 维度，cw-2026-07-26-migration-other-agents）。
+ * 只读检测——后端仅统计文件数量，不读取文件内容（不提取 API key、不解析配置正文）。
+ * reply config.sourcesDetected 形状 `{ sources: SourceDetectResult[] }`。
+ */
+export async function detectSources(): Promise<SourceDetectResult[]> {
+  const reply = await command('config.detectSources', {})
+  return reply.sources
+}
+
+/**
+ * W2（cw-2026-07-26-migration-other-agents）：预览从源 agent 导入的 provider 列表。
+ * runtime 解析源配置 → 脱敏 ProviderImportPreview（只 apiKeyExtracted 布尔，无 key 值）+ 缓存(5min TTL)。
+ * reply config.providersPreviewed payload 是 `{ importId, preview }` 或 `{ error }`（command 不 reject，
+ * 错误以 envelope 形式返回，由前端按 union 分支处理）。
+ */
+export async function previewImportProviders(
+  source: ProviderSource,
+): Promise<{ importId: string; preview: ProviderImportPreview } | { error: { code: string; message: string } }> {
+  return command('config.previewImportProviders', { source })
+}
+
+/**
+ * W2：应用选中的 provider 导入。runtime 从 preview-cache 取完整配置 → 逐个 upsertProvider → 删缓存。
+ * reply config.providersImported payload 是 `{ result }` 或 `{ error }`（同上，错误以 envelope 返回）。
+ */
+export async function applyImportProviders(
+  importId: string,
+  selectedIds: string[],
+): Promise<{ result: ProviderImportResult } | { error: { code: string; message: string } }> {
+  return command('config.applyImportProviders', { importId, selectedIds })
+}
+
 /** discoverModels 的响应载荷（config.discoveredModels reply，settings-message-handler） */
 export interface DiscoveredModelsResult {
   models: Array<{ id: string; name?: string; contextWindow?: number }>
@@ -115,6 +153,23 @@ export function onAgents(handler: (agents: AgentInfo[]) => void): () => void {
 export function onSkillDirs(handler: (dirs: SkillDirConfig[]) => void): () => void {
   return events.onGlobalType('config.skillDirs', (msg) => {
     handler(msg.payload.dirs)
+  })
+}
+
+/**
+ * 订阅 skill 缓存失效信号（landing useGlobalSkills/useProjectSkills 失效缓存重拉）。
+ * 与 onSkills 区分：onSkills 推全量 skill 列表给 settingsStore（settings 弹窗用）；
+ * onSkillCacheInvalidated 推失效信号给 landing composable（runtime 已重扫缓存，前端重拉即拿新值）。
+ *
+ * payload 与 shared protocol.ts 的 config.skillCacheInvalidated 一致：
+ * - scope='global'：全局 skill 变动，所有 panel 刷全局缓存（cwd 缺省）
+ * - scope='project'：项目 skill 变动，cwd 携带变更的项目根（前端按需路由）
+ */
+export function onSkillCacheInvalidated(
+  handler: (payload: SkillCacheInvalidatedPayload) => void,
+): () => void {
+  return events.onGlobalType('config.skillCacheInvalidated', (msg) => {
+    handler(msg.payload)
   })
 }
 

@@ -53,6 +53,7 @@ vi.mock('@/api', () => ({
     // W4：useGlobalSkills/useProjectSkills 调用
     getGlobalSkills: vi.fn().mockResolvedValue([]),
     getProjectSkills: vi.fn().mockResolvedValue([]),
+    onSkillCacheInvalidated: () => () => {},
   },
 }))
 

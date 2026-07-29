@@ -70,6 +70,13 @@ export interface WorktreeServiceDeps {
 /** 主分支 fallback（origin/main ref 不存在时用本地 main）。 */
 const LOCAL_MAIN = 'main'
 
+/** '~/…' 前缀的展开：slice 起始位置跳过 '~' 后与 $HOME 拼接。 */
+const HOME_PREFIX_SLICE_START = 2
+/** 目录名去重后缀的短 hash 长度（md5 前 N 位 hex，足以区分同 repo 冲突）。 */
+const DIR_HASH_SUFFIX_LENGTH = 6
+/** 秒 → 毫秒换算系数（setup 脚本 timeout 从秒读到毫秒）。 */
+const MS_PER_SECOND = 1000
+
 /**
  * 非法分支名规则（SSOT: @xyz-agent/shared INVALID_BRANCH_REGEX，前端 + runtime 共用）。
  * runtime 是安全边界，前端校验只是 UX——此处必须独立校验防 Windows 路径遍历
@@ -96,7 +103,7 @@ function worktreeError(code: WorktreeErrorCode, message: string, detail?: unknow
 /** 展开 ~ 前缀到 $HOME（路径字符串预处理，path.join 不展开 ~）。不处理 ~user/ 格式（仅支持当前用户的 ~）。 */
 function expandHome(p: string): string {
   if (p === '~') return process.env['HOME'] ?? p
-  if (p.startsWith('~/')) return join(process.env['HOME'] ?? '', p.slice(2))
+  if (p.startsWith('~/')) return join(process.env['HOME'] ?? '', p.slice(HOME_PREFIX_SLICE_START))
   return p
 }
 
@@ -118,7 +125,7 @@ function computePlainRepoWorktreeDir(
 
   // 目标已存在：检查是否属于同一 repo（.git 文件内容可比对，但简单起见检查父级 repo 目录结构）
   // 策略：追加 repo 路径短 hash 后缀避免冲突
-  const hash = createHash('md5').update(repoRoot).digest('hex').slice(0, 6)
+  const hash = createHash('md5').update(repoRoot).digest('hex').slice(0, DIR_HASH_SUFFIX_LENGTH)
   return join(expandedRoot, `${repoName}-${hash}`, branchDir)
 }
 
@@ -399,7 +406,7 @@ export class WorktreeService implements IWorktreeService {
     const setupScriptPath = join(cwd, setupScriptRel)
     if (this.deps.fs.existsSync(setupScriptPath)) {
       // 超时从 configService.getTimeout() 读（默认 60s，setup 脚本一般很快；用户可调到 120s 给 pnpm install 留余量）
-      const timeoutMs = this.deps.configService.getTimeout() * 1000
+      const timeoutMs = this.deps.configService.getTimeout() * MS_PER_SECOND
       const result = await this.deps.shellRunner.execute({
         scriptPath: setupScriptPath,
         args: [worktreePath],

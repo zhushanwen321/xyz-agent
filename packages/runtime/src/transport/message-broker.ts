@@ -13,7 +13,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { WebSocket as WsType } from 'ws'
-import type { ServerMessage, ServerMessageMap, ServerMessageType } from '@xyz-agent/shared'
+import type { ServerMessage, ServerMessageMap, ServerMessageType, SkillCacheScope } from '@xyz-agent/shared'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IPluginService, IExtensionService } from '../interfaces.js'
 import { buildDirConfigs, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS } from '../services/skill-dir-config.js'
 import { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
@@ -372,6 +372,20 @@ export class ServerMessageBroker implements IMessageBroker {
   }
   broadcastSkillList(): void {
     this.broadcast(this.buildSkillListMsg())
+  }
+  /**
+   * 广播 skill 缓存失效信号（让 landing useGlobalSkills/useProjectSkills 失效缓存重拉）。
+   * 与 broadcastSkillList 区分：
+   *   - broadcastSkillList = 全量列表推送到 settingsStore.skills（settings 弹窗用）
+   *   - broadcastSkillCacheInvalidated = 失效信号给 landing composable（runtime 已重扫缓存，前端重拉即拿新值）
+   */
+  broadcastSkillCacheInvalidated(scope: SkillCacheScope, cwd?: string): void {
+    const msg = {
+      type: 'config.skillCacheInvalidated' as const,
+      id: this.nextPushId(),
+      payload: { scope, cwd },
+    } satisfies ServerMessage<'config.skillCacheInvalidated'>
+    this.broadcast(msg)
   }
   broadcastAgentList(): void {
     this.broadcast(this.buildAgentListMsg())

@@ -19,10 +19,10 @@
     >
       <Sparkles class="size-8 text-accent opacity-70" />
       <div>
-        <p class="text-[15px] font-medium text-fg">{{ t('workspace.emptyTitle') }}</p>
-        <p class="mt-1 text-[12px] text-muted">
+        <p class="text-[15px] font-medium text-neutral-fg">{{ t('workspace.emptyTitle') }}</p>
+        <p class="mt-1 text-[12px] text-neutral-mid">
           {{ t('workspace.shortcutHint') }}
-          <kbd class="ml-1 rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-subtle">{{ formatKbd('n') }}</kbd>
+          <kbd class="ml-1 rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim">{{ formatKbd('n') }}</kbd>
           {{ t('workspace.shortcutKey') }}
         </p>
       </div>

@@ -5,12 +5,15 @@
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType, ServerMessage, PresenceConnection } from '@xyz-agent/shared'
 import type { ISessionService } from '../interfaces.js'
+import type { HandoffService } from '../services/handoff-service.js'
 import { toErrorMessage, isEnoent, MODEL_NOT_CONFIGURED, SESSION_LIMIT_REACHED } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
 
 /** Interface for server methods needed by this handler */
 export interface SessionHandlerContext extends MessageHandlerContext {
   sessionService: ISessionService
+  /** fast-handoff 编排层（session.handoff 路由用）。可选：未注入时该 case 报 unsupported。 */
+  handoffService?: HandoffService
   nextPushId(): string
   broadcastSessionList(): void
   clearExtensionTimeoutsForSession(sessionId: string): void
@@ -41,11 +44,13 @@ export class SessionMessageHandler {
 
   /** D1: 本 handler 认领的 ClientMessageType 清单（session.compact 单独路由，故不在此列）。 */
   readonly handles: ClientMessageType[] = [
-    'session.create', 'session.delete', 'config.sessions', 'session.switch', 'session.history', 'session.getFullHistory', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork',
+    'session.create', 'session.delete', 'session.deleteByCwd', 'config.sessions', 'session.switch', 'session.history', 'session.getFullHistory', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork',
+    'session.handoff', 'session.abortHandoff',
     'session.getSubagents', 'session.getSubagentHistory',
     'session.getWorkflows', 'session.getAgentCallHistory', 'session.getAgentCallFilePath',
     'session.workflowAction', 'session.subagentAction',
     'message.send', 'message.abort', 'message.steer', 'message.follow_up',
+    'message.bash', 'message.abortBash',
     // P5 presence：客户端切 panel 上报活跃 session（触发 presence 重推）；resume 路径主动拉 presence。
     'session.setActive', 'presence.list',
   ]
@@ -54,7 +59,15 @@ export class SessionMessageHandler {
     switch (msg.type) {
       case 'session.create': {
         try {
-          const session = await this.ctx.sessionService.create(msg.payload.cwd, msg.payload.label, { hidden: msg.payload.hidden })
+          // B3：透传 modelOverride / thinkingOverride（Landing Chip 覆盖值，设计文档 §5.2）。
+          // 优先级：Landing Chip override > preset.modelOverride/thinkingLevel > 全局默认。
+          // 之前只透传了 hidden/presetId，覆盖值在 transport 层被丢弃，导致 Landing Chip 选型不生效。
+          const session = await this.ctx.sessionService.create(msg.payload.cwd, msg.payload.label, {
+            hidden: msg.payload.hidden,
+            presetId: msg.payload.presetId,
+            modelOverride: msg.payload.modelOverride,
+            thinkingOverride: msg.payload.thinkingOverride,
+          })
           this.ctx.reply(ws, msg.id, 'session.created', { session })
           return this.ctx.broadcastSessionList()
         } catch (e) {
@@ -100,6 +113,33 @@ export class SessionMessageHandler {
           throw e
         }
       }
+      case 'session.handoff': {
+        // handoff：runtime 直接从对话历史组装文档（同步编排）。
+        // 流程：getHistory → assembleHandoffDoc → create 新 session → 注入文档 → 广播。
+        // 不再调用 pi skill，不需要 agent_end / onTurnEnd 回调。
+        const { sessionId, reply } = msg.payload
+        const hs = this.ctx.handoffService
+        if (!hs) {
+          // handoffService 未注入（理论不可达——组合根必传），防御性报错。
+          return this.ctx.sendError(ws, 'handoff_unsupported', 'handoff service not available', msg.id, { sessionId })
+        }
+        try {
+          await hs.runHandoff(sessionId, reply)
+          return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'sent' })
+        } catch (e) {
+          // L4: model 未配置时返回差异化 error code（与 session.create / session.fork 同模式），
+          // 前端据此引导去 Settings 配置，而非泛化的 handoff_failed 气泡。
+          const code = (e as Error & { code?: string }).code
+          if (code === MODEL_NOT_CONFIGURED) {
+            return this.ctx.sendError(ws, MODEL_NOT_CONFIGURED, toErrorMessage(e), msg.id, { sessionId })
+          }
+          // runHandoff 失败（历史为空 / session 不存在 / 已有进行中 handoff）走 error envelope。
+          // 所有错误路径统一走此处的 sendError，不再有 onTurnEnd 内部广播路径。
+          const errMsg = toErrorMessage(e)
+          console.error('[runtime] session.handoff failed:', errMsg)
+          return this.ctx.sendError(ws, 'handoff_failed', errMsg, msg.id, { sessionId })
+        }
+      }
       case 'session.delete': {
         const delSid = msg.payload.sessionId
         this.ctx.clearExtensionTimeoutsForSession(delSid)
@@ -123,6 +163,23 @@ export class SessionMessageHandler {
           id: this.ctx.nextPushId(),
           payload: { sessionId: delSid },
         })
+        return this.ctx.broadcastSessionList()
+      }
+      case 'session.deleteByCwd': {
+        // deleteByCwd 是 best-effort 聚合（永远 resolve），clearExtensionTimeoutsForSession
+        // 只对 result.deleted 调用（失败的 session 未真正删除，不需清 timeout）。
+        // 与 session.delete 的「先清 timeout 再 delete」顺序相反——批量需先拿到聚合结果才知道清谁。
+        const cwd = msg.payload?.cwd
+        // cwd 非空字符串校验：与 extension-message-handler 的 invalid_payload 范式对齐。
+        // 不走「reply 空 BatchDeleteResult 成功」——那会让前端误判删除成功，掩盖参数错误。
+        if (!cwd || typeof cwd !== 'string') {
+          return this.ctx.sendError(ws, 'invalid_payload', 'session.deleteByCwd requires a non-empty "cwd" string', msg.id)
+        }
+        const result = await this.ctx.sessionService.deleteByCwd(cwd)
+        for (const id of result.deleted) {
+          this.ctx.clearExtensionTimeoutsForSession(id)
+        }
+        this.ctx.reply(ws, msg.id, 'session.deletedByCwd', result)
         return this.ctx.broadcastSessionList()
       }
       case 'config.sessions':
@@ -230,13 +287,13 @@ export class SessionMessageHandler {
         return this.ctx.broadcastSessionList()
       }
       case 'message.send': {
-        const { sessionId, content, subagent } = msg.payload
+        const { sessionId, content, subagent, images } = msg.payload
         // P5 lease：透传 clientId + deviceName 给 dispatcher（lease acquire + busy 定向投递用）。
         // deviceName 从连接池取（ctx.getClient 拿 ws 后无法直接取 deviceName，故经 sessionService 取连接 ctx）。
         const deviceName = this.ctx.getDeviceName?.(clientId) ?? ''
         const result = subagent
           ? await this.ctx.sessionService.sendSubagentMessage(sessionId, subagent.agent, subagent.task, content, clientId, deviceName)
-          : await this.ctx.sessionService.sendMessage(sessionId, content, clientId, deviceName)
+          : await this.ctx.sessionService.sendMessage(sessionId, content, images, clientId, deviceName)
         // D(round7-must-fix-3): hook 拦截时 dispatcher 已广播 message.error（错误气泡），
         // 此处必须走 error envelope（带 msg.id）让 renderer pending.reject，不得 reply success。
         // 否则 renderer 见 msg.id 且非 error → pending.resolve → composer 清空，与错误气泡矛盾。
@@ -279,6 +336,28 @@ export class SessionMessageHandler {
         const abortSid = msg.payload.sessionId
         await this.ctx.sessionService.abort(abortSid)
         return this.ctx.reply(ws, msg.id, 'message.status', { sessionId: abortSid, status: 'aborted' })
+      }
+      case 'message.bash': {
+        // 与 message.send 对称：调 dispatcher.sendBash → 按 result.rejected/blocked 走 ack 路径。
+        // rejected（预检拒绝）：send.rejected 已广播，reply message.status{rejected} 让 pending 干净 resolve。
+        // blocked（执行失败）：message.error 已广播（错误气泡），走 error envelope 让 pending.reject。
+        // 正常：reply message.status{sent}。实际 bash 结果经 message.bashStart/bashResult 广播通道推回（fire-and-forget）。
+        const { sessionId, command, excludeFromContext } = msg.payload
+        const result = await this.ctx.sessionService.sendBash(sessionId, command, excludeFromContext)
+        if (result.rejected) {
+          return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'rejected' })
+        }
+        if (result.blocked) {
+          return this.ctx.sendError(ws, 'message_blocked', 'Bash execution failed', msg.id, { sessionId })
+        }
+        return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'sent' })
+      }
+      case 'message.abortBash': {
+        // 与 message.abort 对称：调 dispatcher.abortBash，reply message.status{aborted}。
+        // 终态经 message.bashResult{cancelled:true} 广播推回（dispatcher.abortBash 兑底），不依赖 reply。
+        const abortBashSid = msg.payload.sessionId
+        await this.ctx.sessionService.abortBash(abortBashSid)
+        return this.ctx.reply(ws, msg.id, 'message.status', { sessionId: abortBashSid, status: 'aborted' })
       }
     }
   }

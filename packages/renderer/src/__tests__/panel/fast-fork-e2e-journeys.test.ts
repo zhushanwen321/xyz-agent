@@ -205,7 +205,18 @@ describe('E2E-L1-1: fork-ask 完整旅程（Turn → channel → Composer → fo
     ])
     const wrapper = mount(Turn, {
       props: { turn, sessionId: 's-src' },
-      global: { stubs: { Block: true, ChangeSetCard: true, MarkdownRenderer: true } },
+      // HoverCard 子组件 stub 成内联渲染（绕开 reka-ui HoverCardPortal 在 happy-dom 不渲染）；
+      // fork-ask-btn 现作为 fork split-button 的 hover 第二选项住在 HoverCardContent 内。
+      global: {
+        stubs: {
+          Block: true,
+          ChangeSetCard: true,
+          MarkdownRenderer: true,
+          HoverCard: { template: '<div><slot /></div>' },
+          HoverCardTrigger: { template: '<div><slot /></div>' },
+          HoverCardContent: { template: '<div><slot /></div>' },
+        },
+      },
     })
     // 用户可见：summary action 行有 fork 提问按钮（与复制同行，末条 assistant 位 1 组）
     const forkAskBtns = wrapper.findAll('[data-testid="fork-ask-btn"]')
@@ -219,7 +230,16 @@ describe('E2E-L1-1: fork-ask 完整旅程（Turn → channel → Composer → fo
     const turn = makeTurn([makeAssistant({ id: 'a1', piEntryId: 'pi-a1' })])
     const wrapper = mount(Turn, {
       props: { turn, sessionId: 's-src' },
-      global: { stubs: { Block: true, ChangeSetCard: true, MarkdownRenderer: true } },
+      global: {
+        stubs: {
+          Block: true,
+          ChangeSetCard: true,
+          MarkdownRenderer: true,
+          HoverCard: { template: '<div><slot /></div>' },
+          HoverCardTrigger: { template: '<div><slot /></div>' },
+          HoverCardContent: { template: '<div><slot /></div>' },
+        },
+      },
     })
 
     await wrapper.find('[data-testid="fork-ask-btn"]').trigger('click')

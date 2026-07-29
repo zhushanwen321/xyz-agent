@@ -78,6 +78,64 @@ describe('segmentsToText', () => {
       'src/foo.ts:L20',
     )
   })
+
+  it('image segment 序列化为裸路径独占一行（对齐 pi TUI）', () => {
+    const segs: Segment[] = [
+      {
+        type: 'image',
+        id: 'img-1',
+        path: '/var/folders/xx/T/dbfdb3c8-image.png',
+        fileName: 'dbfdb3c8-image.png',
+        displayName: 'screenshot-20260724-1530.png',
+      },
+    ]
+    const result = segmentsToText(segs)
+    expect(result).toBe('\n/var/folders/xx/T/dbfdb3c8-image.png\n')
+    // 不含 base64 标记（图片走路径模式，不走 base64）
+    expect(result).not.toMatch(/data:image/)
+    // 不含 [图片 N] 匿名占位
+    expect(result).not.toContain('[图片')
+  })
+
+  it('image + text 混合时，image 裸路径独占一行 + text 紧随（不补空格，image 的 \\n 已分隔）', () => {
+    const segs: Segment[] = [
+      { type: 'image', id: 'img-a', path: '/tmp/a.png', fileName: 'a.png', displayName: 'a.png' },
+      { type: 'text', text: '这张图怎么修' },
+    ]
+    // image 前后补 \n，text 紧接 image 的尾 \n（image 段自带 \n 分隔，紧跟的 text 不补空格，
+    // 否则产出 `\n/tmp/a.png\n 这张图怎么修` 行首空格污染 pi prompt）
+    expect(segmentsToText(segs)).toBe('\n/tmp/a.png\n这张图怎么修')
+  })
+
+  it('skill 后紧跟 text 仍补空格（与 image 区分，skill 无 \\n 分隔）', () => {
+    const segs: Segment[] = [
+      { type: 'skill', name: 'review' },
+      { type: 'text', text: '这段代码' },
+    ]
+    // skill 无 \n 自分隔，text 紧跟 skill 时仍需补空格，否则产出 `/skill:review这段代码` 粘连
+    expect(segmentsToText(segs)).toBe('/skill:review 这段代码')
+  })
+
+  it('连续多个 image segment：每个路径独占一行（无编号递增）', () => {
+    const segs: Segment[] = [
+      { type: 'image', id: 'img-1', path: '/tmp/1.png', fileName: '1.png', displayName: '1.png' },
+      { type: 'image', id: 'img-2', path: '/tmp/2.png', fileName: '2.png', displayName: '2.png' },
+    ]
+    expect(segmentsToText(segs)).toBe('\n/tmp/1.png\n\n/tmp/2.png\n')
+  })
+
+  it('image segment 不破坏既有 text/skill 序列化（回归）', () => {
+    // 混合 image 与既有类型，确认 image 的加入不影响 text/skill 的序列化。
+    // 补空格逻辑只在「当前段是 text && prev 段不是 text」时触发。
+    // 这里 text 在前（首段，prev=null 不补空格）；image 独占一行（\n 包裹）；
+    // skill 紧跟 image（非 text 段，不触发补空格）。
+    const segs: Segment[] = [
+      { type: 'text', text: '看这张' },
+      { type: 'image', id: 'img-x', path: '/tmp/x.png', fileName: 'x.png', displayName: 'x.png' },
+      { type: 'skill', name: 'review' },
+    ]
+    expect(segmentsToText(segs)).toBe('看这张\n/tmp/x.png\n/skill:review')
+  })
 })
 
 describe('segmentsToPrompt', () => {
@@ -119,5 +177,47 @@ describe('normalizeContent', () => {
 
   it('空 Segment[] 返回空字符串', () => {
     expect(normalizeContent([])).toBe('')
+  })
+
+  it('含 handoff segment 的 Segment[] 归一化正确', () => {
+    const segs: Segment[] = [
+      { type: 'handoff', sourceLabel: 'old-session' },
+      { type: 'text', text: '请继续完成任务' },
+    ]
+    expect(normalizeContent(segs)).toBe('[handoff from old-session] 请继续完成任务')
+  })
+
+  it('纯 handoff segment（无 text）归一化正确', () => {
+    const segs: Segment[] = [{ type: 'handoff', sourceLabel: 'src-abc' }]
+    expect(normalizeContent(segs)).toBe('[handoff from src-abc]')
+  })
+})
+
+describe('handoff segment', () => {
+  it('handoff segment 序列化为 [handoff from sourceLabel]', () => {
+    const segs: Segment[] = [{ type: 'handoff', sourceLabel: 'my-session' }]
+    expect(segmentsToText(segs)).toBe('[handoff from my-session]')
+  })
+
+  it('handoff + text 混合时，handoff 标记后紧跟 text 补空格', () => {
+    const segs: Segment[] = [
+      { type: 'handoff', sourceLabel: 'src-session' },
+      { type: 'text', text: '请继续完成以下任务' },
+    ]
+    expect(segmentsToText(segs)).toBe('[handoff from src-session] 请继续完成以下任务')
+  })
+
+  it('handoff segment 空 sourceLabel 不抛错', () => {
+    const segs: Segment[] = [{ type: 'handoff', sourceLabel: '' }]
+    expect(segmentsToText(segs)).toBe('[handoff from ]')
+  })
+
+  it('handoff + skill 混合不补空格（两者都是 chip 类但 handoff 已有 ] 分隔）', () => {
+    const segs: Segment[] = [
+      { type: 'handoff', sourceLabel: 'old-session' },
+      { type: 'skill', name: 'review' },
+    ]
+    // handoff 结尾是 ]，skill 开头是 /，非 text→非 text 边界补空格
+    expect(segmentsToText(segs)).toBe('[handoff from old-session] /skill:review')
   })
 })

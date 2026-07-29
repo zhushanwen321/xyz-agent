@@ -428,4 +428,41 @@ describe('TerminalService', () => {
     expect(sent.type).toBe('terminal.data')
     expect(sent.payload.data).toBe('x')
   })
+
+  // ── main 合入：spawn env 清理 sidecar 内部变量 ──────────────────────────────
+
+  it('TS-26: spawn env 清除 ELECTRON_RUN_AS_NODE 等 sidecar 内部变量（防 terminal 用户跑 electron 命令崩溃）', async () => {
+    // [HISTORICAL] 回归：runtime sidecar 的 process.env 含 ELECTRON_RUN_AS_NODE=1（打包模式
+    // 由 Electron 主进程注入，见 process-control.ts:202-205）。buildEnv 若原样透传到 terminal shell,
+    // 用户在 terminal 跑 `electron .` / `npm run dev` 时 Electron 退化为纯 Node,
+    // require('electron').app 为 undefined → 'Cannot read properties of undefined (reading isPackaged)' 崩溃。
+    // 修复：buildEnv 必须显式 delete 这些变量。
+    const prev = { ...process.env }
+    process.env.ELECTRON_RUN_AS_NODE = '1'
+    process.env.ELECTRON_NO_ASAR = '1'
+    process.env.ELECTRON_OVERRIDE_DIST_PATH = '/some/path'
+    try {
+      const { broadcast } = createBroadcastCollector()
+      const svc = new TerminalService({ broadcast })
+      await svc.spawn('s26', undefined, 80, 24)
+      const { spawn } = await import('node-pty')
+      // node-pty.spawn(file, args, options) → options.env
+      const opts = vi.mocked(spawn).mock.calls[0]![2] as { env: Record<string, string> }
+      expect(opts.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
+      expect(opts.env.ELECTRON_NO_ASAR).toBeUndefined()
+      expect(opts.env.ELECTRON_OVERRIDE_DIST_PATH).toBeUndefined()
+      // 正常 env 仍应保留（验证不是整个 env 被清空）。
+      // TERM 契约（buildEnv:225）：保留 process.env.TERM（若有），否则 fallback 到 xterm-256color。
+      // 测试环境可能 TERM=dumb（非 TTY），不能硬编码 xterm-256color——按契约断言。
+      const expectedTerm = prev.TERM || 'xterm-256color'
+      expect(opts.env.TERM).toBe(expectedTerm)
+      expect(opts.env.PATH).toBe(process.env.PATH)
+    } finally {
+      // 还原 process.env，避免污染后续测试
+      for (const k of ['ELECTRON_RUN_AS_NODE', 'ELECTRON_NO_ASAR', 'ELECTRON_OVERRIDE_DIST_PATH']) {
+        if (k in prev) process.env[k] = prev[k]!
+        else delete process.env[k]
+      }
+    }
+  })
 })

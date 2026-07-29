@@ -23,12 +23,12 @@
       >
         <span :class="chevronSlotClass" data-testid="chevron-slot">
           <ChevronRight
-            class="size-3 text-subtle transition-transform"
+            class="size-3 text-neutral-dim transition-transform"
             :class="{ 'rotate-90': isExpanded }"
           />
         </span>
-        <Folder class="size-3.5 shrink-0 text-muted" />
-        <span class="shrink whitespace-nowrap" :class="node.ignored ? 'text-subtle italic' : 'text-fg'">{{ node.name }}</span>
+        <Folder class="size-3.5 shrink-0 text-neutral-mid" />
+        <span class="shrink whitespace-nowrap" :class="node.ignored ? 'text-neutral-dim italic' : 'text-neutral-fg'">{{ node.name }}</span>
         <!-- W2 目录改动数徽章（子树改动文件数，>0 才显） -->
         <span
           v-if="dirChangeCount > 0"
@@ -42,7 +42,7 @@
         <!-- 展开在途：loading 指示（nodeStates[path].status==='loading'） -->
         <div
           v-if="dirState === 'loading'"
-          class="flex items-center gap-1.5 py-1 pr-2 font-mono text-[10px] text-subtle"
+          class="flex items-center gap-1.5 py-1 pr-2 font-mono text-[10px] text-neutral-dim"
           :style="childHintPaddingStyle"
           :data-testid="`file-tree-loading-${node.path}`"
         >
@@ -72,7 +72,7 @@
           <!-- 已加载但空目录（按过滤后判定：全部 ignored 被过滤后也视为空） -->
           <div
             v-if="node.children && visibleChildren.length === 0"
-            class="py-1 pr-2 font-mono text-[10px] text-subtle italic"
+            class="py-1 pr-2 font-mono text-[10px] text-neutral-dim italic"
             :style="childHintPaddingStyle"
           >
             {{ t('sidebar.fileTree.emptyDir') }}
@@ -96,7 +96,7 @@
       <span
         class="shrink whitespace-nowrap font-mono text-[12px]"
         :class="[
-          node.ignored ? 'text-subtle italic' : 'text-fg',
+          node.ignored ? 'text-neutral-dim italic' : 'text-neutral-fg',
           isSelected ? 'font-semibold text-accent' : '',
         ]"
       >{{ node.name }}</span>
@@ -114,7 +114,7 @@
       >
         <span v-if="lineStats.add !== undefined" class="text-success">+{{ formatCount(lineStats.add) }}</span>
         <span v-if="lineStats.del !== undefined" class="text-danger">−{{ formatCount(lineStats.del) }}</span>
-        <span v-if="lineStats.size !== undefined" class="text-subtle">~{{ formatCount(lineStats.size) }}</span>
+        <span v-if="lineStats.size !== undefined" class="text-neutral-dim">~{{ formatCount(lineStats.size) }}</span>
       </span>
     </div>
   </div>
@@ -204,7 +204,7 @@ const gitBadge = computed(() => {
 /** M/A/D/U/R 角标配色（design-tokens 语义色） */
 const gitBadgeClass = computed(() => {
   switch (gitStatus.value) {
-    case 'modified': return 'bg-warning-soft text-warning'
+    case 'modified': return 'bg-warn-soft text-warn'
     case 'added': return 'bg-success-soft text-success'
     case 'deleted': return 'bg-danger-soft text-danger'
     case 'unmerged': return 'bg-danger-soft text-danger font-semibold'
@@ -291,9 +291,9 @@ const fileIconColor = computed(() => {
   switch (ext.value) {
     case 'ts': case 'tsx': return 'text-info'
     case 'vue': return 'text-success'
-    case 'json': return 'text-warning'
-    case 'md': return 'text-muted'
-    default: return 'text-subtle'
+    case 'json': return 'text-warn'
+    case 'md': return 'text-neutral-mid'
+    default: return 'text-neutral-dim'
   }
 })
 </script>

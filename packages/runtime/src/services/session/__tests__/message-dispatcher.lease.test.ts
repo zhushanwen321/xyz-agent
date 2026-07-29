@@ -23,6 +23,7 @@ function makeMockSession(overrides: Partial<IManagedSessionView> = {}): IManaged
   return {
     id: 's1', cwd: '/test', label: 'test', modelId: 'm1', createdAt: 1, lastActiveAt: 1,
     tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false, labelPersisted: false,
+    isBashRunning: false, bashRunToken: undefined,
     ...overrides,
   }
 }
@@ -99,7 +100,7 @@ describe('MessageDispatcher P5 lease（隐式 acquire + 定向 busy 拒绝 + 释
       ownerDeviceName: 'Mac',
     })
 
-    const result = await dispatcher.sendMessage('s1', 'hello', 'clientB', 'Phone')
+    const result = await dispatcher.sendMessage('s1', 'hello', undefined, 'clientB', 'Phone')
 
     expect(result).toEqual({ blocked: true, rejected: true })
     expect(leaseManager.acquire).toHaveBeenCalledWith('s1', 'clientB', 'Phone')
@@ -126,7 +127,7 @@ describe('MessageDispatcher P5 lease（隐式 acquire + 定向 busy 拒绝 + 释
       ownerDeviceName: 'Mac',
     })
 
-    await dispatcher.sendMessage('s1', 'hello', 'clientB', 'Phone')
+    await dispatcher.sendMessage('s1', 'hello', undefined, 'clientB', 'Phone')
 
     expect(sent['clientB'][0]).toMatchObject({
       type: 'send.rejected',
@@ -144,7 +145,7 @@ describe('MessageDispatcher P5 lease（隐式 acquire + 定向 busy 拒绝 + 释
       ownerDeviceName: 'Mac',
     })
 
-    await dispatcher.sendMessage('s1', 'hello', 'clientB', 'Phone')
+    await dispatcher.sendMessage('s1', 'hello', undefined, 'clientB', 'Phone')
 
     const busyMsg = broadcasts.find((m) => m.type === 'session.busy')
     expect(busyMsg).toBeDefined()
@@ -160,7 +161,7 @@ describe('MessageDispatcher P5 lease（隐式 acquire + 定向 busy 拒绝 + 释
       // 不传 ownerDeviceName → lookup 对 clientX 返回 undefined → 兜底 ''
     })
 
-    await dispatcher.sendMessage('s1', 'hello', 'clientB', 'Phone')
+    await dispatcher.sendMessage('s1', 'hello', undefined, 'clientB', 'Phone')
 
     expect(sent['clientB'][0]).toMatchObject({
       payload: { busyOwnerId: 'clientX', busyOwnerDevice: '' },
@@ -174,7 +175,7 @@ describe('MessageDispatcher P5 lease（隐式 acquire + 定向 busy 拒绝 + 释
       acquireResult: { kind: 'acquired', expiresAt: 9999 },
     })
 
-    const result = await dispatcher.sendMessage('s1', 'hello', 'clientA', 'Mac')
+    const result = await dispatcher.sendMessage('s1', 'hello', undefined, 'clientA', 'Mac')
 
     expect(result).toEqual({ blocked: false })
     expect(leaseManager.acquire).toHaveBeenCalledWith('s1', 'clientA', 'Mac')
@@ -189,7 +190,7 @@ describe('MessageDispatcher P5 lease（隐式 acquire + 定向 busy 拒绝 + 释
       promptError: new Error('boom'),
     })
 
-    const result = await dispatcher.sendMessage('s1', 'hello', 'clientA', 'Mac')
+    const result = await dispatcher.sendMessage('s1', 'hello', undefined, 'clientA', 'Mac')
 
     expect(result).toEqual({ blocked: true })
     expect(releaseSpy).toHaveBeenCalledWith('s1', 'send_failed')
@@ -211,7 +212,7 @@ describe('MessageDispatcher P5 lease（隐式 acquire + 定向 busy 拒绝 + 释
       acquireResult: { kind: 'not_found' },
     })
 
-    const result = await dispatcher.sendMessage('s1', 'hello', 'clientA', 'Mac')
+    const result = await dispatcher.sendMessage('s1', 'hello', undefined, 'clientA', 'Mac')
 
     expect(result).toEqual({ blocked: true, rejected: true })
     expect(leaseManager.acquire).toHaveBeenCalledWith('s1', 'clientA', 'Mac')

@@ -74,6 +74,26 @@ export interface BranchSummary {
 }
 
 /**
+ * Bash 执行结果（composer-bash-execute W1，对应 message.bashResult）。
+ *
+ * composer 直接执行 bash 命令（不经 LLM agent turn），结果进对话流渲染为 BashResult 气泡。
+ * exitCode 用 number | null：pi 返回 number|undefined，shared 统一转 null 防 JSON 丢值
+ * （undefined 在 JSON.stringify 会丢字段，前端读到就是 undefined 而非 null）。
+ */
+export interface BashExecutionData {
+  command: string
+  output: string
+  exitCode: number | null
+  cancelled: boolean
+  truncated: boolean
+  /** 是否排除出 LLM 上下文（透传自 message.bash 请求，pi bash excludeFromContext 参数） */
+  excludeFromContext?: boolean
+  timestamp: number
+  /** pi truncated 时的完整输出文件路径（前端按需读取全文，避免大输出撑爆 WS 帧） */
+  fullOutputPath?: string
+}
+
+/**
  * Background subagent 完成通知的单条记录。
  *
  * 对应 pi-subagents 扩展 notifier.ts 的 BgNotifyRecord，经 customType:"subagent-bg-notify"
@@ -223,6 +243,14 @@ export interface Message {
   sendMode?: 'send' | 'steer' | 'follow-up'
   /** 是否被 abort 中断，仅 assistant 消息有值 */
   isInterrupted?: boolean
+  /**
+   * 消息级错误文本/标记（status:'error' 同源）。
+   * - assistant turn：message.error / send.rejected 通道写入错误文本
+   * - bash 消息：finalizeBashOnly 超时收口置 'timeout'（与 cancelled:true 区分超时 vs 主动取消）
+   * - markBashError abortBash 失败兜底写入错误文本
+   * 前端按值区分渲染（如 BashOutputBlock 消费 'timeout' 显示「超时」而非「已取消」）。
+   */
+  error?: string
   /** 上下文压缩摘要（W07-C，message.compactionSummary） */
   compactionSummary?: CompactionSummary
   /** 分支摘要（W07-C，message.branchSummary） */
@@ -240,6 +268,10 @@ export interface Message {
   display?: boolean
   /** Background subagent 完成通知（customType:"subagent-bg-notify" 时填充）。 */
   bgNotify?: BgNotifyDetails
+  /** Bash 执行结果（composer-bash-execute）。system 消息有值：实时经 message.bashResult
+   *  effect 创建 system 消息，历史经 converter 还原为 system 消息，统一走 BashOutputBlock 渲染。
+   *  与 toolCall 互斥（bash 不走工具链）。 */
+  bashExecution?: BashExecutionData
   /** pi CustomMessage details 原始字段（含 __gui__ 结构化渲染数据）。
    *  前端检测 details.__gui__ 路由到 GuiComponentRenderer。 */
   details?: Record<string, unknown>

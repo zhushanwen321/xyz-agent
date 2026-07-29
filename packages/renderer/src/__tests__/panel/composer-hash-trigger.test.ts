@@ -46,6 +46,7 @@ vi.mock('@/api', () => ({
   config: {
     getGlobalSkills: vi.fn().mockResolvedValue([]),
     getProjectSkills: vi.fn().mockResolvedValue([]),
+    onSkillCacheInvalidated: () => () => {},
   },
 }))
 

@@ -48,6 +48,11 @@ vi.mock('@/api', () => ({
     getMentionCandidates: vi.fn().mockResolvedValue([]),
     getFileCandidates: vi.fn().mockResolvedValue([]),
   },
+  config: {
+    getGlobalSkills: vi.fn().mockResolvedValue([]),
+    getProjectSkills: vi.fn().mockResolvedValue([]),
+    onSkillCacheInvalidated: () => () => {},
+  },
 }))
 
 import ComposerInput from '@/components/panel/ComposerInput.vue'

@@ -57,9 +57,8 @@ describe('W3: 普通 tool 展开体去重复 + 加补充细节条', () => {
     const headerSvgs = header.findAll('svg')
     const allSvgs = wrapper.findAll('svg')
     // header 自带 chevron + wrench + status = 3 个 svg
-    // 改后展开 body 不应再加 svg（result 区图标删掉）
-    // 当前实现 result 区有 1 个 Check svg，所以 allSvgs > headerSvgs（红灯）
-    expect(allSvgs.length).toBe(headerSvgs.length)
+    // result 区有 1 个 copy 按钮的 CopyIcon svg（hover overlay，始终在 DOM）
+    expect(allSvgs.length).toBe(headerSvgs.length + 1)
   })
 
   it('展开后显示补充细节条（耗时，从 startTime+endTime 计算）', async () => {
@@ -82,7 +81,7 @@ describe('W3: 普通 tool 展开体去重复 + 加补充细节条', () => {
     expect(wrapper.text()).toContain('file content here')
   })
 
-  it('失败 tool 展开后 error 仍直显（红框 + 错误文本，不因重构丢失）', async () => {
+  it('失败 tool 展开后 error 仍直显（错误文本可见，无鲜红框——Demo H 去鲜红）', async () => {
     const wrapper = mount(Block, {
       props: {
         type: 'tool',
@@ -90,10 +89,15 @@ describe('W3: 普通 tool 展开体去重复 + 加补充细节条', () => {
         working: false,
       },
     })
-    // 失败强制展开（无需点击）
+    // failed 不再强制展开，默认收起
+    expect(wrapper.text()).not.toContain('old_string not found')
+    // 手动点击展开
+    await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
+    // 展开后 error text 通过 displayContent 兜底显示
     expect(wrapper.text()).toContain('old_string not found')
-    // 红框仍在
-    expect(wrapper.find('.border-danger').exists()).toBe(true)
+    // Demo H：鲜红框已删（无 border-danger / bg-danger-soft）
+    expect(wrapper.find('.border-danger').exists()).toBe(false)
+    expect(wrapper.find('.bg-danger-soft').exists()).toBe(false)
     // 无重复 toolName(args) 行
     expect(wrapper.text()).not.toMatch(/edit\s*\(src\/App\.vue\)/)
   })
@@ -119,7 +123,7 @@ describe('W3 补充：read/bash 工具特化 meta（行数/字符数自算）', 
     expect(text).toContain('2s')
   })
 
-  it('bash 工具展开后细节条含输出行数 + 耗时（无字符数）', async () => {
+  it('bash 工具展开后细节条不含行数统计（filteredMetaItems 已过滤），只有耗时', async () => {
     const output = 'stdout line1\nstdout line2\nstdout line3\nstdout line4'
     const wrapper = mount(Block, {
       props: {
@@ -130,8 +134,8 @@ describe('W3 补充：read/bash 工具特化 meta（行数/字符数自算）', 
     })
     await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
     const text = wrapper.text()
-    // 4 行输出
-    expect(text).toContain('4 行')
+    // bash filteredMetaItems 过滤掉了行数统计（命令+output 已完整展示，行数无参考价值）
+    expect(text).not.toContain('4 行')
     // bash 不显示字符数（read/cat 才显示）
     expect(text).not.toContain('chars')
     // 耗时（diff=4200ms → formatDuration toFixed(0) → "4s"）
@@ -168,7 +172,7 @@ describe('W3 补充：read/bash 工具特化 meta（行数/字符数自算）', 
     expect(text).toContain('500ms')
   })
 
-  it('read 失败时细节条首项是错误摘要（danger 色）', async () => {
+  it('read 失败时错误移至内容区（displayContent 兜底 tool.error），meta 不含错误摘要', async () => {
     const wrapper = mount(Block, {
       props: {
         type: 'tool',
@@ -182,11 +186,14 @@ describe('W3 补充：read/bash 工具特化 meta（行数/字符数自算）', 
         working: false,
       },
     })
-    // 失败强制展开
-    const text = wrapper.text()
-    // 错误摘要首行可见
-    expect(text).toContain('File not found: src/missing.ts')
-    // danger 色 span 存在
-    expect(wrapper.find('.text-danger.font-semibold').exists()).toBe(true)
+    // failed 不再强制展开，默认收起
+    expect(wrapper.text()).not.toContain('File not found: src/missing.ts')
+    // 手动点击展开
+    await wrapper.find('[data-testid="tool-block-header"]').trigger('click')
+    // 错误文本通过 displayContent（兜底 tool.error）在内容区可见
+    expect(wrapper.text()).toContain('File not found: src/missing.ts')
+    // meta 不含错误摘要（已移至内容区），无 text-neutral-mid.font-semibold meta 项
+    expect(wrapper.find('.text-neutral-mid.font-semibold').exists()).toBe(false)
+    expect(wrapper.find('.text-danger').exists()).toBe(false)
   })
 })

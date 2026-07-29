@@ -6,6 +6,48 @@ AI Agent 桌面工作台，基于 Electron + Vue 3 + Node.js Runtime 架构。
 
 > 本项目使用上游 [pi-mono](https://github.com/badlogic/pi-mono)。详见 [CLAUDE.md](CLAUDE.md)。
 
+## 安装
+
+首次安装用以下命令。安装后 app 内会自动检测新版本，提示一键升级。
+
+### macOS（Apple Silicon）
+
+```bash
+curl -L https://github.com/zhushanwen321/xyz-agent/releases/latest/download/xyz-agent-mac-arm64.zip -o /tmp/xyz-agent.zip \
+  && unzip /tmp/xyz-agent.zip -d /Applications \
+  && open /Applications/xyz-agent.app
+```
+
+若启动时提示「已损坏」或「无法验证开发者」，执行（curl 下载通常不需要，浏览器下载需要）：
+
+```bash
+xattr -cr /Applications/xyz-agent.app
+```
+
+### Linux
+
+```bash
+curl -L https://github.com/zhushanwen321/xyz-agent/releases/latest/download/xyz-agent-x86_64.AppImage -o ~/xyz-agent.AppImage \
+  && chmod +x ~/xyz-agent.AppImage \
+  && ~/xyz-agent.AppImage
+```
+
+### Windows
+
+PowerShell（用 Invoke-WebRequest，避免 curl 在 PowerShell 是别名导致的参数冲突）：
+
+```powershell
+Invoke-WebRequest -Uri "https://github.com/zhushanwen321/xyz-agent/releases/latest/download/xyz-agent-setup-x64.exe" -OutFile "$env:TEMP\xyz-agent-setup.exe" -UseBasicParsing; & "$env:TEMP\xyz-agent-setup.exe"
+```
+
+命令提示符（cmd.exe，需系统自带 curl.exe，Win10 1803+ 默认含）：
+
+```cmd
+curl -L https://github.com/zhushanwen321/xyz-agent/releases/latest/download/xyz-agent-setup-x64.exe -o "%TEMP%\xyz-agent-setup.exe" && "%TEMP%\xyz-agent-setup.exe"
+```
+
+---
+
 ## 架构
 
 ```

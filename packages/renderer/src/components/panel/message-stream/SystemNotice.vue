@@ -1,14 +1,14 @@
 <template>
   <!--
     展示组件 · system 提示行（W07-C）。
-    渲染 bashExecution / compactionSummary / branchSummary 三类 system 消息。
+    渲染 compactionSummary / branchSummary 两类 system 消息。
     不冒充 user/assistant：弱化样式（居中、小字、图标 + 一行摘要），
-    作流转过程的元信息提示（执行记录 / 压缩 / 分支）。
+    作流转过程的元信息提示（压缩 / 分支）。
   -->
   <div class="system-notice flex min-w-0 items-center gap-2 py-1">
     <span class="h-px flex-1 bg-border" />
-    <component :is="icon" class="size-3 shrink-0 text-muted" />
-    <span class="min-w-0 truncate text-[11px] leading-snug text-muted">{{ text }}</span>
+    <component :is="icon" class="size-3 shrink-0 text-neutral-mid" />
+    <span class="min-w-0 truncate text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ text }}</span>
     <span class="h-px flex-1 bg-border" />
   </div>
 </template>
