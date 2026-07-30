@@ -20,9 +20,10 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSy
 import { join, resolve, basename, relative, isAbsolute, delimiter } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
-import { recommendedExtensions, mandatoryExtensions, isMandatoryExtension, BUILTIN_EXTENSION_FILES } from '@xyz-agent/shared'
+import { recommendedExtensions, mandatoryExtensions, isMandatoryExtension, isInfrastructureExtension, isFeatureMandatoryExtension, BUILTIN_EXTENSION_FILES } from '@xyz-agent/shared'
 import semver from 'semver'
-import type { IInstaller, IExtensionResolver } from './ports/installer.js'
+import type { IInstaller, IExtensionResolver, DiscoveredExtension } from './ports/installer.js'
+import { filterLoadablePaths, filterExtension } from './extension-filter.js'
 import type { IExtensionSettings } from './ports/extension-settings.js'
 import type { IConfigStore } from './ports/config.js'
 import { isStrictlyUnder, isUnderOrEqual, extractRepoName, expandHome } from '../utils/path-utils.js'
@@ -248,21 +249,48 @@ export class ExtensionService {
   }
 
   /**
-   * 扫描所有 extension，返回 ExtensionInfo[]。
-   * 用 ExtensionResolver 扫描所有源，对 settings 源的扩展读 packages[] 判断启用状态。
+   * 扫描所有 extension，返回 ExtensionInfo[]（全局视图，不含项目级 discovery 目录）。
+   * 用 ExtensionResolver 扫描所有源，复用 filterExtension 判定 enabled 状态。
+   * 保留 disabled 包（enabled:false），前端 ExtensionPage 据此渲染。
    */
   async scanExtensions(): Promise<ExtensionInfo[]> {
-    const result = this.resolver.resolve(this.projectRoot, this.packaged, this.getUserExtensionPaths())
-    // 读取 settings.json packages[] 用于判断 source 和 enabled
+    // 不传 discoveryDirs（全局视图，不含项目级扩展）
+    const discovered = this.resolver.resolve(this.projectRoot, this.packaged, this.getUserExtensionPaths()).extensionDirs
     const { packages, disabled } = this.readSettingsState()
     const disabledSet = new Set(disabled)
-    // 读取 auto-upgrade 配置
     const autoUpgradeSet = new Set(this.extSettings.getAutoUpgrade())
 
+    return this.assembleExtensionInfo(discovered, packages, disabledSet, autoUpgradeSet)
+  }
+
+  /**
+   * 项目级扩展（含 discovery 目录）。前端按 session cwd 调用。
+   * 与 scanExtensions（全局视图）分离，避免 ExtensionPage 列表随 session 变化。
+   */
+  async getProjectExtensions(cwd: string): Promise<ExtensionInfo[]> {
+    const discoveryDirs = this.resolveDiscoveryDirs(cwd)
+    const discovered = this.resolver.resolve(this.projectRoot, this.packaged, this.getUserExtensionPaths(), discoveryDirs).extensionDirs
+    const { packages, disabled } = this.readSettingsState()
+    const disabledSet = new Set(disabled)
+    const autoUpgradeSet = new Set(this.extSettings.getAutoUpgrade())
+
+    return this.assembleExtensionInfo(discovered, packages, disabledSet, autoUpgradeSet)
+  }
+
+  /**
+   * 组装 ExtensionInfo 列表（scanExtensions 和 getProjectExtensions 共用）。
+   * 复用 filterExtension 判定 enabled，保留 disabled 包。
+   */
+  private assembleExtensionInfo(
+    discovered: DiscoveredExtension[],
+    packages: string[],
+    disabledSet: Set<string>,
+    autoUpgradeSet: Set<string>,
+  ): ExtensionInfo[] {
     const extensions: ExtensionInfo[] = []
 
-    for (const discovered of result.extensionDirs) {
-      const dir = discovered.path
+    for (const ext of discovered) {
+      const dir = ext.path
       const pkgJsonPath = join(dir, 'package.json')
       let name = basename(dir)
       let version = ''
@@ -275,7 +303,6 @@ export class ExtensionService {
         name = pkg.name ?? name
         version = pkg.version ?? ''
         description = pkg.description ?? ''
-        // FR-11：从 package.json pi.tools 读取扩展提供的工具列表
         if (Array.isArray(pkg.pi?.tools)) {
           tools = pkg.pi.tools.filter((t): t is string => typeof t === 'string')
         }
@@ -283,11 +310,11 @@ export class ExtensionService {
         log.debug(`[extension-service] failed to read package.json at ${pkgJsonPath}: ${toErrorMessage(e)}`)
       }
 
-      // 判断 source：路径在 settings packages[] 中则为 user-installed
       const sourceKey = `npm:${name}`
       const isUserInstalled = packages.includes(sourceKey)
-      const isDisabled = disabledSet.has(sourceKey)
       const isAutoUpgrade = autoUpgradeSet.has(sourceKey)
+      // 复用 filterExtension 判定 enabled（单一权威）
+      const filterResult = filterExtension(dir, disabledSet)
 
       extensions.push({
         name,
@@ -295,16 +322,16 @@ export class ExtensionService {
         version,
         description,
         path: dir,
-        enabled: !isDisabled,
+        enabled: filterResult === 'load',
+        mandatory: isMandatoryExtension(name),
+        tier: isInfrastructureExtension(name) ? 'infrastructure'
+            : isFeatureMandatoryExtension(name) ? 'feature' : undefined,
         source: isUserInstalled ? 'user-installed' : 'built-in',
         autoUpgrade: isAutoUpgrade,
         ...(tools && { tools }),
       })
     }
 
-    for (const ext of extensions) {
-      ext.mandatory = isMandatoryExtension(ext.name)
-    }
     return extensions
   }
 
@@ -339,32 +366,16 @@ export class ExtensionService {
    */
   async getExtensionPaths(cwd?: string): Promise<string[]> {
     const discoveryDirs = this.resolveDiscoveryDirs(cwd)
-    const result = this.resolver.resolve(this.projectRoot, this.packaged, this.getUserExtensionPaths(), discoveryDirs)
+    const discovered = this.resolver.resolve(this.projectRoot, this.packaged, this.getUserExtensionPaths(), discoveryDirs).extensionDirs
     const { disabled } = this.readSettingsState()
     const disabledSet = new Set(disabled)
 
-    // 过滤禁用项（使用 DiscoveredExtension.path）
-    const filtered = result.extensionDirs
-      .filter(discovered => {
-        const dir = discovered.path
-        // Use package.json name (not basename) for scoped package support
-        let pkgName = basename(dir)
-        try {
-          const raw = readFileSync(join(dir, 'package.json'), 'utf-8')
-          const pkg = JSON.parse(raw) as { name?: string }
-          if (pkg.name) pkgName = pkg.name
-        } catch {
-          log.debug(`[extension-service] getExtensionPaths: failed to read package.json in ${dir}`)
-        }
-        // mandatory 包无视 disabled 状态，强制加载
-        if (isMandatoryExtension(pkgName)) return true
-        return !disabledSet.has(`npm:${pkgName}`)
-      })
-      .map(d => d.path)
+    // 委托给过滤管道（单一权威）
+    const filtered = filterLoadablePaths(discovered, disabledSet)
 
     // builtin extension：经 getBuiltinExtensionPaths() 注入（设计文档 §2.3，
     // pi-launch-presets 设计要求 builtin 永远前置，提取为独立方法供 PresetService.resolve 复用）。
-    filtered.push(...this.getBuiltinExtensionPaths())
+    filtered.unshift(...this.getBuiltinExtensionPaths())
 
     return filtered
   }
