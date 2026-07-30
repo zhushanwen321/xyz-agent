@@ -222,40 +222,49 @@ export class ExtensionService {
   }
 
   /**
-   * 读 discovery.json.extensionDirs 并 resolve 成存在的绝对路径数组。
+   * 读 discovery.json.extensionDirs，按绝对/相对路径分组 resolve。
    *
-   * 与 SessionService.getSkillPaths 对称（cw-2026-07-21-scan-project-agents-skills FR-1）：
-   * 相对路径按 cwd resolve 成绝对路径再 existsSync 过滤，否则项目级 extension 目录会按
-   * runtime 进程 cwd（app.getAppPath/resourcesPath）解析 → 在该 cwd 下不存在被过滤掉。
-   * ~/xxx 家目录前缀先 expandHome 展开（否则 isAbsolute('~/...') false → resolve(cwd, '~/...') 错位）。
+   * 绝对路径（如 ~/.pi/agent/extensions）：与 cwd 无关，全局有效 → 进 scanExtensions（ExtensionPage 可见）
+   * 相对路径（如 .agents/extensions）：依赖 cwd，项目级 → 仅 session 启动时按 cwd resolve 加载
    *
-   * configStore 未注入（测试场景）时返回空数组，等价于无 discovery 目录。
+   * ~/xxx 家目录前缀先 expandHome（否则 isAbsolute('~/...') false）。
+   * configStore 未注入（测试场景）时返回两组皆空。
    */
-  private resolveDiscoveryDirs(cwd?: string): string[] {
-    if (!this.configStore) return []
+  private resolveDiscoveryDirs(cwd?: string): { absolute: string[]; relative: string[] } {
+    if (!this.configStore) return { absolute: [], relative: [] }
     const base = cwd ?? this.projectRoot
-    const normalize = (p: string): string => {
+    const absolute: string[] = []
+    const relative: string[] = []
+    for (const p of this.configStore.getExtensionDirs()) {
       const expanded = expandHome(p)
-      return isAbsolute(expanded) ? expanded : resolve(base, expanded)
-    }
-    return this.configStore.getExtensionDirs().filter((p) => {
-      const resolved = normalize(p)
-      if (existsSync(resolved)) {
-        return true
+      const resolved = isAbsolute(expanded) ? expanded : resolve(base, expanded)
+      if (!existsSync(resolved)) {
+        console.warn(`[extension-service] discovery extension dir not found, skipping: ${p} (resolved: ${resolved})`)
+        continue
       }
-      console.warn(`[extension-service] discovery extension dir not found, skipping: ${p} (resolved: ${resolved})`)
-      return false
-    }).map(normalize)
+      // 判断用 isAbsolute(expanded)（expandHome 后的原始路径是否绝对），不是 resolved：
+      // 相对路径 resolve 后也变绝对了，必须在 resolve 前判断。
+      if (isAbsolute(expanded)) {
+        absolute.push(resolved)
+      } else {
+        relative.push(resolved)
+      }
+    }
+    return { absolute, relative }
   }
 
   /**
-   * 扫描所有 extension，返回 ExtensionInfo[]（全局视图，不含项目级 discovery 目录）。
+   * 扫描所有 extension，返回 ExtensionInfo[]（全局视图，含绝对路径 discovery 扩展）。
    * 用 ExtensionResolver 扫描所有源，复用 filterExtension 判定 enabled 状态。
    * 保留 disabled 包（enabled:false），前端 ExtensionPage 据此渲染。
+   *
+   * 绝对路径 discovery 目录（如 ~/.pi/agent/extensions）与 cwd 无关，全局有效 → 进列表；
+   * 相对路径 discovery 目录（如 .agents/extensions）依赖 cwd，项目级 → 仅 session 启动加载，不进全局视图。
    */
   async scanExtensions(): Promise<ExtensionInfo[]> {
-    // 不传 discoveryDirs（全局视图，不含项目级扩展）
-    const discovered = this.resolver.resolve(this.projectRoot, this.packaged, this.getUserExtensionPaths()).extensionDirs
+    // 绝对路径 discovery 目录全局有效，进列表（相对路径是项目级，不进全局视图）
+    const { absolute } = this.resolveDiscoveryDirs()
+    const discovered = this.resolver.resolve(this.projectRoot, this.packaged, this.getUserExtensionPaths(), absolute).extensionDirs
     const { packages, disabled } = this.readSettingsState()
     const disabledSet = new Set(disabled)
     const autoUpgradeSet = new Set(this.extSettings.getAutoUpgrade())
@@ -264,21 +273,7 @@ export class ExtensionService {
   }
 
   /**
-   * 项目级扩展（含 discovery 目录）。前端按 session cwd 调用。
-   * 与 scanExtensions（全局视图）分离，避免 ExtensionPage 列表随 session 变化。
-   */
-  async getProjectExtensions(cwd: string): Promise<ExtensionInfo[]> {
-    const discoveryDirs = this.resolveDiscoveryDirs(cwd)
-    const discovered = this.resolver.resolve(this.projectRoot, this.packaged, this.getUserExtensionPaths(), discoveryDirs).extensionDirs
-    const { packages, disabled } = this.readSettingsState()
-    const disabledSet = new Set(disabled)
-    const autoUpgradeSet = new Set(this.extSettings.getAutoUpgrade())
-
-    return this.assembleExtensionInfo(discovered, packages, disabledSet, autoUpgradeSet)
-  }
-
-  /**
-   * 组装 ExtensionInfo 列表（scanExtensions 和 getProjectExtensions 共用）。
+   * 组装 ExtensionInfo 列表（scanExtensions 共用）。
    *
    * S1 修复：name/tier/loadable 复用 resolveExtensions 的结果（resolveExtensions 内部一次读盘
    * 推导），不再每个 ext 各自 readFileSync(pkgJson) + filterExtension（又读一次）。
@@ -324,7 +319,7 @@ export class ExtensionService {
         enabled: resolved.loadable, // 复用 resolveExtensions 的 loadable 判定
         mandatory: isMandatoryExtension(name),
         tier: resolved.tier, // S10：tier 直接从 resolved 透传（天然正确）
-        source: isUserInstalled ? 'user-installed' : 'built-in',
+        source: ext.source === 'discovery' ? 'discovery' : isUserInstalled ? 'user-installed' : 'built-in',
         autoUpgrade: isAutoUpgrade,
         ...(tools && { tools }),
       })
@@ -383,7 +378,9 @@ export class ExtensionService {
    * @param cwd session cwd（相对 discovery 目录的 resolve 基准）
    */
   async getDiscoveredAndDisabled(cwd?: string): Promise<{ discovered: DiscoveredExtension[]; disabledSet: Set<string> }> {
-    const discoveryDirs = this.resolveDiscoveryDirs(cwd)
+    const { absolute, relative } = this.resolveDiscoveryDirs(cwd)
+    // session 启动需要全部 discovery 扩展：绝对路径（全局）+ 相对路径（按 cwd resolve）
+    const discoveryDirs = [...absolute, ...relative]
     const discovered = this.resolver.resolve(this.projectRoot, this.packaged, this.getUserExtensionPaths(), discoveryDirs).extensionDirs
     const { disabled } = this.readSettingsState()
     return { discovered, disabledSet: new Set(disabled) }

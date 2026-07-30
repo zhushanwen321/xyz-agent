@@ -6,6 +6,7 @@ import { ExtensionService, ExtensionInstallError } from '../src/services/extensi
 import { NpmGitInstaller } from '../src/infra/installers/npm-git-installer.js'
 import { ExtensionResolver } from '../src/infra/installers/extension-resolver.js'
 import { PiExtensionSettings } from '../src/infra/pi/pi-extension-settings.js'
+import type { IConfigStore } from '../src/services/ports/config.js'
 
 import { installPackage, uninstallPackage, NpmInstallError } from '../src/infra/installers/npm-installer.js'
 import { execFileSync } from 'node:child_process'
@@ -819,6 +820,121 @@ describe('ExtensionService', () => {
       // Should fail with git clone error, not URL validation error
       await expect(service.installGitRepository('https://github.com/user/repo.git'))
         .rejects.toThrow('git clone failed')
+    })
+  })
+
+  describe('scanExtensions with discovery dirs', () => {
+    // discovery.json 中的 extension 目录分两类：绝对路径（全局有效）与相对路径（项目级）。
+    // 这组测试验证拆分契约：绝对路径进 scanExtensions 全局视图，相对路径只进 session 启动（getDiscoveredAndDisabled）。
+    // 注意 discovery 扩展入口复刻 pi 原生扫描：扫描结果是「入口路径」（单文件 *.ts 或 <ext>/index.ts），
+    // 而非扩展目录本身——ExtensionInfo.name 取入口路径 basename，readPkgMeta 也以入口为基准读 package.json。
+    // 因此 fixture 用单文件 my-discovery-ext.ts（name = 'my-discovery-ext.ts'），可测 toggleExtension 的 npm:<name> 串联回路。
+    let discoveryService: ExtensionService
+    let discoverySettingsDir: string
+
+    beforeEach(() => {
+      vi.clearAllMocks()
+      discoverySettingsDir = mkdtempSync(join(tmpdir(), 'ext-discovery-test-'))
+      writeFileSync(join(discoverySettingsDir, 'settings.json'), JSON.stringify({ packages: [] }), 'utf-8')
+      mkdirSync(join(discoverySettingsDir, 'npm'), { recursive: true })
+      writeFileSync(join(discoverySettingsDir, 'npm', 'package.json'), JSON.stringify({ private: true }), 'utf-8')
+    })
+
+    afterEach(() => {
+      try { rmSync(discoverySettingsDir, { recursive: true, force: true }) } catch { /* ignore */ }
+    })
+
+    /**
+     * 构造带 configStore 的 service（复刻主 beforeEach 的端口装配，额外注入 configStore）。
+     * 只需 getExtensionDirs，其余 IConfigStore 方法测试不触达，按既定 partial-mock 惯例 cast。
+     */
+    const buildService = (configStore: { getExtensionDirs: () => string[] }): ExtensionService => new ExtensionService({
+      settingsDir: discoverySettingsDir,
+      // 相对路径 discovery 目录按 projectRoot resolve，测试用 discoverySettingsDir 作 base
+      projectRoot: discoverySettingsDir,
+      installer: new NpmGitInstaller(),
+      resolver: new ExtensionResolver({
+        settingsDir: discoverySettingsDir,
+        thirdPartyDir: join(discoverySettingsDir, 'extensions'),
+        npmDir: join(discoverySettingsDir, 'npm'),
+      }),
+      extensionSettings: new PiExtensionSettings(discoverySettingsDir),
+      extensionsDir: join(discoverySettingsDir, 'extensions'),
+      npmDir: join(discoverySettingsDir, 'npm'),
+      tmpDir: join(discoverySettingsDir, 'tmp'),
+      configStore: configStore as unknown as IConfigStore,
+    })
+
+    it('absolute-path discovery dir 中的扩展在 scanExtensions 可见，source=discovery', async () => {
+      // 在绝对路径 discovery 目录下放一个单文件 pi extension 入口
+      const discDir = join(discoverySettingsDir, 'discovery-exts')
+      mkdirSync(discDir, { recursive: true })
+      writeFileSync(join(discDir, 'my-discovery-ext.ts'),
+        '// discovery ext entry', 'utf-8')
+
+      const configStore = { getExtensionDirs: () => [discDir] } // 绝对路径
+      discoveryService = buildService(configStore)
+
+      const extensions = await discoveryService.scanExtensions()
+      const discExt = extensions.find(e => e.source === 'discovery')
+      expect(discExt).toBeDefined()
+      expect(discExt!.source).toBe('discovery')
+      expect(discExt!.enabled).toBe(true)
+      // 单文件入口：name/dirName = 入口路径 basename，path 指向入口文件
+      expect(discExt!.name).toBe('my-discovery-ext.ts')
+      expect(discExt!.path).toBe(join(discDir, 'my-discovery-ext.ts'))
+    })
+
+    it('toggleExtension(false) 后 discovery 扩展 enabled=false（disabled-packages.json 按 npm:<name> 匹配）', async () => {
+      const discDir = join(discoverySettingsDir, 'discovery-exts')
+      mkdirSync(discDir, { recursive: true })
+      writeFileSync(join(discDir, 'my-discovery-ext.ts'), '// entry', 'utf-8')
+
+      const configStore = { getExtensionDirs: () => [discDir] }
+      discoveryService = buildService(configStore)
+
+      const before = await discoveryService.scanExtensions()
+      const discExt = before.find(e => e.source === 'discovery')!
+      expect(discExt).toBeDefined()
+
+      // 用扫描出的 name 禁用（与 user-installed 同走 npm:<name> 机制）
+      await discoveryService.toggleExtension(discExt.name, false)
+
+      const after = await discoveryService.scanExtensions()
+      const discExtAfter = after.find(e => e.name === discExt.name)!
+      expect(discExtAfter.enabled).toBe(false)
+
+      // disabled-packages.json 落盘 npm:<name>
+      const disabledRaw = readFileSync(join(discoverySettingsDir, 'disabled-packages.json'), 'utf-8')
+      const disabledData = JSON.parse(disabledRaw) as { disabled: string[] }
+      expect(disabledData.disabled).toContain(`npm:${discExt.name}`)
+
+      // 再启用，状态恢复 enabled=true
+      await discoveryService.toggleExtension(discExt.name, true)
+      const reEnabled = await discoveryService.scanExtensions()
+      const discExtReEnabled = reEnabled.find(e => e.name === discExt.name)!
+      expect(discExtReEnabled.enabled).toBe(true)
+    })
+
+    it('relative-path discovery dir 不进 scanExtensions 全局视图（拆分契约）', async () => {
+      // 相对路径 discovery 目录：依赖 projectRoot，项目级，只 session 启动按 cwd resolve 加载
+      const relDirName = 'relative-exts'
+      mkdirSync(join(discoverySettingsDir, relDirName), { recursive: true })
+      writeFileSync(join(discoverySettingsDir, relDirName, 'rel-ext.ts'), '// rel entry', 'utf-8')
+
+      // configStore 返回相对路径（projectRoot = discoverySettingsDir，故能 resolve 到上面造的目录）
+      const configStore = { getExtensionDirs: () => [relDirName] }
+      discoveryService = buildService(configStore)
+
+      // 全局视图不应含相对路径 discovery 扩展
+      const scanResult = await discoveryService.scanExtensions()
+      expect(scanResult.filter(e => e.source === 'discovery')).toHaveLength(0)
+
+      // 但 session 启动（getDiscoveredAndDisabled）按 cwd resolve 后应含相对路径 discovery 扩展
+      const { discovered } = await discoveryService.getDiscoveredAndDisabled(discoverySettingsDir)
+      const discoveryEntries = discovered.filter(d => d.source === 'discovery')
+      expect(discoveryEntries).toHaveLength(1)
+      expect(discoveryEntries[0].path).toBe(join(discoverySettingsDir, relDirName, 'rel-ext.ts'))
     })
   })
 

@@ -240,6 +240,7 @@ export default {
     installedTitle: 'Installed',
     noExtensions: 'No extensions',
     sourceUser: 'user',
+    sourceDiscovery: 'discovery',
     mandatoryBadge: 'Built-in',
     autoUpgrade: 'Auto-upgrade',
     enableExt: 'Enable extension',

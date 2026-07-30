@@ -149,6 +149,7 @@
             <span class="rounded-sm bg-surface px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim">v{{ ext.version }}</span>
             <!-- 来源标签 -->
             <span v-if="ext.source === 'user-installed'" class="rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent">{{ t('settings.extension.sourceUser') }}</span>
+            <span v-if="ext.source === 'discovery'" class="rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent">{{ t('settings.extension.sourceDiscovery') }}</span>
             <!-- 内置 badge：mandatory 扩展（不可卸载/禁用） -->
             <span v-if="ext.mandatory" class="rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent">{{ t('settings.extension.mandatoryBadge') }}</span>
           </div>
@@ -192,7 +193,7 @@
         </Button>
         <!-- 卸载按钮（mandatory 扩展不可卸载，隐藏） -->
         <Button
-          v-if="!ext.mandatory"
+          v-if="!ext.mandatory && ext.source !== 'discovery'"
           variant="ghost"
           class="size-7 shrink-0 rounded-sm p-0 text-neutral-dim hover:bg-danger-soft hover:text-danger [&_svg]:size-3.5"
           :title="t('settings.extension.uninstallTitle')"

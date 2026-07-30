@@ -240,6 +240,7 @@ export default {
     installedTitle: '已安装',
     noExtensions: '暂无扩展',
     sourceUser: 'user',
+    sourceDiscovery: 'discovery',
     mandatoryBadge: '内置',
     autoUpgrade: '自动升级',
     enableExt: '启用扩展',
