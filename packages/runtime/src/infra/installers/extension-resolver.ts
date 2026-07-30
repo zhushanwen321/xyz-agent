@@ -16,7 +16,7 @@
  */
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
 import { join, dirname, basename, resolve } from 'node:path'
-import { getPiAgentDir, getNpmDir, getExtensionsDir } from '../pi/pi-paths.js'
+import { getNpmDir, getExtensionsDir } from '../pi/pi-paths.js'
 import { canonicalizePath } from '../../utils/path-utils.js'
 import { readSettings } from '../pi/pi-settings-store.js'
 import type { IExtensionResolver, ExtensionPaths, DiscoveredExtension, ExtensionSource } from '../../services/ports/installer.js'
@@ -161,8 +161,6 @@ export class ExtensionResolver implements IExtensionResolver {
    */
   scanSettingsExtensions(): ExtensionMap {
     const result: ExtensionMap = new Map()
-    const settingsDir = this.options.settingsDir ?? getPiAgentDir()
-
     // 读取 packages[]（经 pi-settings-store 单一所有者；测试经 setSettingsPath 对齐 settingsDir）
     const settings = readSettings()
     const packages: string[] = settings.packages ?? []
