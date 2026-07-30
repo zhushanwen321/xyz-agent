@@ -18,7 +18,6 @@ export default defineConfig({
       "@earendil-works/pi-ai": path.resolve(__dirname, "mocks/pi-ai.ts"),
       "@earendil-works/pi-tui": path.resolve(__dirname, "mocks/pi-tui.ts"),
       "typebox": path.resolve(__dirname, "mocks/typebox.ts"),
-      "@sinclair/typebox": path.resolve(__dirname, "mocks/typebox.ts"),
       "@zhushanwen/pi-structured-output": path.resolve(__dirname, "../structured-output/src/index.ts"),
     },
   },

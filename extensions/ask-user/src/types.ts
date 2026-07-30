@@ -1,5 +1,5 @@
 // src/types.ts
-import { type Static, Type } from "@sinclair/typebox";
+import { type Static, Type } from "typebox";
 
 // ── 常量 ─────────────────────────────────────────────
 export const OTHER_LABEL = "Other";

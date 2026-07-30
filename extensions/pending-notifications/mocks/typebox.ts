@@ -1,5 +1,5 @@
 /**
- * Mock for typebox (@sinclair/typebox)
+ * Mock for typebox (typebox)
  * 仅覆盖 pending-notifications 用到的 Type 方法（Type.Object / Type.Union / Type.Literal）。
  * 真实类型校验由 Pi 运行时提供。
  */

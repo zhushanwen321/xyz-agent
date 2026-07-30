@@ -27,7 +27,7 @@ import {
   guiResult,
   isGuiCapable,
 } from "@xyz-agent/extension-protocol";
-import { type Static, Type } from "@sinclair/typebox";
+import { type Static, Type } from "typebox";
 
 import { SLUG_MAX_LENGTH } from "../execution/execute-options-mapper.ts";
 import type { LauncherDeps } from "../orchestration/launcher.ts";

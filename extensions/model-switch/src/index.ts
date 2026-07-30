@@ -11,7 +11,7 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readCache } from "@zhushanwen/pi-quota-providers";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 
 import { computePeakRecommend, computeQuotaSnapshot, computeStickiness } from "./advisor";
 import { loadConfig } from "./config";

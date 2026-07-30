@@ -14,7 +14,6 @@ export default defineConfig({
 			"@earendil-works/pi-coding-agent": piStub,
 			"@earendil-works/pi-ai": piStub,
 			"@earendil-works/pi-tui": piStub,
-			"@sinclair/typebox": typeboxStub,
 			"typebox": typeboxStub,
 		},
 	},

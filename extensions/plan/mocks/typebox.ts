@@ -1,5 +1,5 @@
 /**
- * Mock for typebox (@sinclair/typebox)
+ * Mock for typebox (typebox)
  *
  * plan 扩展用 Type 定义 tool 参数 schema；运行时仅需形状存在，
  * 真实校验由 Pi 运行时提供。

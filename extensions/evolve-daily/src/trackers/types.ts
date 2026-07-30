@@ -9,7 +9,7 @@
  */
 
 import { StringEnum } from "@earendil-works/pi-ai";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 
 // ── 常量 ────────────────────────────────────────────
 

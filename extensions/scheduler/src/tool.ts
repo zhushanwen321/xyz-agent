@@ -1,4 +1,4 @@
-import { Static, Type } from '@sinclair/typebox'
+import { Static, Type } from 'typebox'
 
 import { formatRelativeTime, formatSchedule } from './format.js'
 import { computeNextRuns, parseSchedule } from './parsing.js'

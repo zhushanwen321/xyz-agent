@@ -1,5 +1,5 @@
 /**
- * Mock for @sinclair/typebox
+ * Mock for typebox
  *
  * structured-output 仅用 Type.Object / Type.Unknown 构造 tool 参数 schema；
  * 真实校验由扩展内部的 ajv 完成，schema 形状在运行时只需可序列化。

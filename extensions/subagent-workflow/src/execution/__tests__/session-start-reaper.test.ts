@@ -21,7 +21,7 @@ vi.mock("@earendil-works/pi-ai", () => ({
 vi.mock("@earendil-works/pi-ai", () => ({
   StringEnum: (values: string[]) => ({ type: "string", enum: values }),
 }));
-vi.mock("@sinclair/typebox", () => ({
+vi.mock("typebox", () => ({
   Type: {
     Object: (props: Record<string, unknown>) => ({ type: "object", properties: props }),
     Optional: (schema: unknown) => ({ ...schema as object, optional: true }),

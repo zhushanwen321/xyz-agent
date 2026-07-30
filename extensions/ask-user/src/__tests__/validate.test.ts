@@ -1,5 +1,5 @@
 // src/__tests__/validate.test.ts
-import { Value } from "@sinclair/typebox/value";
+import { Value } from "typebox/value";
 import { describe, expect, it } from "vitest";
 
 import { HEADER_MAX_CHARS, InputSchema, type Question } from "../types";

@@ -11,7 +11,7 @@
  *   最多重试 2 次，防止无限循环。
  */
 
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import Ajv, { type ValidateFunction } from "ajv";
 
