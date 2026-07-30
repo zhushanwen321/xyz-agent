@@ -322,6 +322,80 @@ body {
 /* diff 行 */
 .bash-trunc { color: var(--neutral-mid); font-family: var(--font-mono); font-size: 11px; padding: 4px 0; }
 
+/* ── subagent block（v6：failed 不切 icon，靠颜色表达；bg 状态行 blink 蓝点）── */
+.sa-v6 { padding: 10px 0 8px; margin-bottom: 2px; }
+.sa-hd { display: flex; min-width: 0; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; cursor: pointer; }
+.sa-ico { width: 13px; height: 13px; color: var(--neutral-ico); flex-shrink: 0; }
+.sa-loader { width: 13px; height: 13px; color: var(--accent); animation: spin 1.4s linear infinite; flex-shrink: 0; }
+.sa-prefix { font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--neutral-fg); margin-right: 2px; }
+.sa-agent { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
+.sa-sep { color: var(--neutral-faint); }
+.sa-slug { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
+.sa-model { font-family: var(--font-mono); font-size: 11px; color: var(--neutral-dim); }
+.sa-model .think-x { color: var(--neutral-dim); }
+.sa-task-preview { margin-top: 2px; padding-left: 16px; font-size: 12px; color: var(--neutral-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sa-body { margin-top: 4px; position: relative; }
+.sa-task-full { padding: 6px 0 6px 16px; font-size: 12px; line-height: 1.65; color: var(--neutral-mid); white-space: pre-wrap; }
+.sa-bgstatus { padding: 6px 0 6px 16px; margin-top: 6px; display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 11px; color: var(--neutral-dim); }
+.sa-bgstatus .blink-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: blink 1s step-end infinite; }
+
+/* ── workflow block（v6：failed 不切 icon；GUI 渲染由 extension 推，本身无内置进度条）── */
+.wf-v6 { padding: 10px 0 8px; margin-bottom: 2px; }
+.wf-hd { display: flex; min-width: 0; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; cursor: pointer; }
+.wf-ico { width: 13px; height: 13px; color: var(--neutral-ico); flex-shrink: 0; }
+.wf-loader { width: 13px; height: 13px; color: var(--accent); animation: spin 1.4s linear infinite; flex-shrink: 0; }
+.wf-prefix { font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--neutral-fg); margin-right: 2px; }
+.wf-action { font-family: var(--font-mono); font-size: 11px; color: var(--neutral-mid); }
+.wf-name { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
+.wf-runid { font-family: var(--font-mono); font-size: 11px; color: var(--neutral-dim); }
+.wf-body { margin-top: 4px; position: relative; }
+.wf-body-content { padding: 6px 0 6px 16px; font-size: 12px; line-height: 1.55; color: var(--neutral-mid); }
+/* GUI 进度条（extension 通过 __gui__ 推送，非 workflow 内置）*/
+.gui-pb { height: 6px; overflow: hidden; border-radius: var(--radius-sm); background: var(--bg-input); margin: 6px 0; }
+.gui-pb-fill { height: 100%; border-radius: var(--radius-sm); transition: width var(--duration) var(--ease); }
+.gui-pb-fill.ok { background: var(--success); }
+.gui-pb-fill.warn { background: var(--warn); }
+.gui-pb-fill.danger { background: var(--danger); }
+
+/* ── assistant 正文 markdown（v6：<p> 恢复 0.5em 间距 + 代码块 token 化）── */
+.md-body { font-size: 12px; line-height: 1.7; color: var(--neutral-mid); padding-bottom: 8px; }
+.md-body p { margin: 0; line-height: 1.7; }
+.md-body p + p { margin-top: 0.5em; }   /* v6：恢复段落间距（首段无 margin-top，段间 0.5em）*/
+.md-body h1, .md-body h2, .md-body h3, .md-body h4 { font-weight: 600; line-height: 1.3; margin: 1em 0 0.5em; color: var(--neutral-fg); }
+.md-body h1 { font-size: 1.3em; }
+.md-body h2 { font-size: 1.18em; }
+.md-body h3 { font-size: 1.12em; }      /* v6：h3 提一档，区分 h4 */
+.md-body h4 { font-size: 1.06em; }
+.md-body ul, .md-body ol { margin: 0; padding-left: 1.2em; }
+.md-body ul { list-style-type: disc; }
+.md-body ol { list-style-type: decimal; }
+.md-body li { margin: 0; line-height: 1.7; }
+.md-body li::marker { color: var(--neutral-fg); }
+.md-body a { color: var(--accent); text-decoration: none; }
+.md-body a:hover { text-decoration: underline; }
+.md-body strong { color: var(--neutral-fg); font-weight: 600; }
+/* 行内 code */
+.md-body code { font-family: var(--font-mono); font-size: 0.88em; background: var(--bg-input); padding: 0.1em 0.35em; border-radius: var(--radius-sm); color: var(--neutral-fg); }
+/* 代码块容器 */
+.md-codeblock { margin: 0.7em 0; border-radius: var(--radius); overflow: hidden; background: var(--bg-input); }
+.md-codeblock__hd { display: flex; justify-content: space-between; padding: 4px 6px 4px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+.md-codeblock__lang { font-size: 10px; color: var(--neutral-dim); text-transform: lowercase; align-self: center; }
+.md-codeblock__copy { font-size: 10px; color: var(--neutral-dim); padding: 2px 6px; border-radius: var(--radius-sm); cursor: pointer; }
+.md-codeblock__copy:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.md-codeblock pre { margin: 0; padding: 10px 14px; overflow-x: auto; font-family: var(--font-mono); font-size: 11px; line-height: 1.6; background: var(--bg-input); color: var(--neutral-fg); }
+/* blockquote */
+.md-body blockquote { border-left: 2px solid var(--border-strong); padding-left: 0.85em; margin: 0.6em 0; color: var(--neutral-mid); }
+/* table */
+.md-body table { width: 100%; border-collapse: collapse; margin: 0.7em 0; font-size: 0.92em; }
+.md-body th, .md-body td { border: 1px solid var(--border); padding: 0.35em 0.6em; }
+.md-body th { background: var(--surface-2); font-weight: 600; color: var(--neutral-fg); }
+/* hr */
+.md-body hr { border: 0; border-top: 1px solid var(--border); margin: 1em 0; }
+
+/* ── 动画（v6：状态指示 + 微交互，token 层已定义 duration/ease；keyframes spin/pulse-accent 在上方已定义）── */
+@keyframes blink { 0%,50% { opacity: 1; } 51%,100% { opacity: 0; } }
+.anim-note { font-family: var(--font-mono); font-size: 10px; color: var(--accent); background: var(--accent-soft); padding: 2px 6px; border-radius: var(--radius-sm); }
+
 /* doc foot */
 .doc-foot { margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; font-size: var(--text-xs); color: var(--neutral-dim); font-family: var(--font-mono); }
 .doc-foot a { color: var(--accent); text-decoration: none; }
@@ -336,7 +410,7 @@ body {
   <header class="doc-head">
     <div class="doc-eyebrow">v6 SPEC · 02 / 07</div>
     <h1 class="doc-title">对话流规格稿</h1>
-    <p class="doc-sub">覆盖 §4.1 全部组件：MessageStream 容器 / PanelHeader / TurnMeta / Block(thinking·bash·tool) / ChangeSetCard / UserBubble / QueueBubble / Composer。每个组件展示 v6 目标态渲染 + 全状态变体 + px/token 标注（现值 → v6 值）。bash 块区分两类来源（BashOutputBlock / tool-bash），pending 语义迁 QueueBubble。</p>
+    <p class="doc-sub">覆盖 §4.1 全部组件：MessageStream / PanelHeader / TurnMeta / Block(thinking·bash·tool·subagent·workflow) / ChangeSetCard / UserBubble / QueueBubble / Composer / 正文 markdown / 动画。每个组件展示 v6 目标态 + 全状态变体 + px/token 标注。failed icon 统一不切（靠颜色），icon stroke-width 1.75。</p>
     <div class="doc-meta">
       <span><b>SSOT</b> v6-design.md §4.1</span>
       <span><b>核心改动</b> assistant 居中 720px + 层级代边框 + 正文提亮</span>
@@ -355,6 +429,10 @@ body {
     <a href="#s8">§8 UserBubble</a>
     <a href="#s8b">§8.5 QueueBubble</a>
     <a href="#s9">§9 Composer</a>
+    <a href="#s10">§10 subagent</a>
+    <a href="#s11">§11 workflow</a>
+    <a href="#s12">§12 正文 markdown</a>
+    <a href="#s13">§13 动画</a>
   </nav>
 
   <!-- ================================================================
@@ -802,7 +880,8 @@ added 1 package in 2s</div>
       <div class="anno"><b>running icon:</b><br><span class="v6">双环 loader 13px accent（替换 icon）+ toolName 染 accent</span></div>
       <div class="anno"><b>running 折叠:</b><br>streaming 也保持收起（不强制展开）</div>
       <div class="anno"><b>done:</b><br>icon neutral-ico · toolName neutral-fg</div>
-      <div class="anno"><b>failed:</b><br><span class="v6">toolName neutral-mid · icon neutral-ico（删 hover:text-warn）· 无红框</span></div>
+      <div class="anno"><b>failed:</b><br><span class="v6">toolName neutral-mid · icon 保留（不切 AlertTriangle，与 subagent/workflow 统一）· 无红框</span></div>
+      <div class="anno"><b>icon stroke:</b><br><span class="v6">1.75（统一，修正注释与实现不一致）</span></div>
       <div class="anno"><b>exit N 标签:</b><br><span class="v6">mono 10px rounded-sm bg-surface-2 neutral-mid（中性）</span></div>
       <div class="anno"><b>unfinished:</b><br><span class="v6">崩溃/断连态（end_not_received）· toolName neutral-mid + 「未结束」标签</span></div>
       <div class="anno"><b>expanded body:</b><br>meta 条（耗时·行数）+ 输出；bash 工具用 border 容器（见 §5B）</div>
@@ -1145,8 +1224,284 @@ added 1 package in 2s</div>
     </div>
   </section>
 
+  <!-- ================================================================
+       §10 Block · subagent（background 异步模型，无 foreground 分支）
+       ================================================================ -->
+  <section class="spec" id="s10">
+    <div class="spec-head"><span class="spec-num">§10</span><h2 class="spec-title">Block · subagent</h2></div>
+    <p class="spec-desc">异步 background 执行——只展示发起参数（input），看不到执行过程（结果由主 agent 后续 turn 总结）。可折叠（default 收起，无 chevron）。v6：failed 不切 icon（与 §6 tool 决策一致——<b>全部不切，靠颜色表达</b>），保留 Users 图标 + toolName 降 <code>neutral-mid</code> + icon hover warn。独有 background 状态行（blink 蓝点）。</p>
+    <div class="change-points">
+      <span class="cp cp-v6"><b>failed</b> 不切 icon（统一靠颜色，与 tool/workflow 一致）</span>
+      <span class="cp cp-v6"><b>icon</b> stroke-width 1.75（统一）</span>
+    </div>
+
+    <div class="render-frame">
+      <div class="panel-stage"><div class="ms-scroll"><div class="ms-turn"><div class="ms-assistant-col">
+        <div class="state-row" style="margin:0;">
+          <div class="state-tag">collapsed</div>
+          <div class="state-demo">
+            <div class="sa-v6">
+              <div class="sa-hd">
+                <svg class="sa-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                <span class="sa-prefix">subagent</span><span class="sa-agent">general-purpose</span><span class="sa-sep">·</span><span class="sa-slug">analyze-deps</span><span class="sa-model">(glm-5.2 · <span class="think-x">thinking 3</span>)</span>
+              </div>
+              <div class="sa-task-preview">分析 package.json 的依赖关系，找出循环引用</div>
+            </div>
+          </div>
+        </div>
+        <div class="state-row" style="margin:14px 0 0;">
+          <div class="state-tag">running</div>
+          <div class="state-demo">
+            <div class="sa-v6">
+              <div class="sa-hd">
+                <svg class="sa-loader" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="10" opacity="0.35"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>
+                <span class="sa-prefix">subagent</span><span class="sa-agent">general-purpose</span><span class="sa-model">(glm-5.2)</span>
+              </div>
+              <div class="sa-body">
+                <div class="sa-task-full">分析 package.json 的依赖关系，找出循环引用</div>
+                <div class="sa-bgstatus"><span class="blink-dot"></span>background · running detached · will notify on completion</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="state-row" style="margin:14px 0 0;">
+          <div class="state-tag">expanded</div>
+          <div class="state-demo">
+            <div class="sa-v6">
+              <div class="sa-hd">
+                <svg class="sa-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                <span class="sa-prefix">subagent</span><span class="sa-agent">general-purpose</span><span class="sa-sep">·</span><span class="sa-slug">analyze-deps</span><span class="sa-model">(glm-5.2 · <span class="think-x">thinking 3</span>)</span>
+              </div>
+              <div class="sa-body">
+                <div class="sa-task-full">分析 package.json 的依赖关系，找出循环引用。
+重点关注 packages/runtime 和 packages/renderer 之间的依赖方向，
+列出所有 workspace:* 引用。</div>
+                <div class="sa-bgstatus"><span class="blink-dot"></span>background · 完成 · 已通知主 agent</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="state-row" style="margin:14px 0 0;">
+          <div class="state-tag">failed</div>
+          <div class="state-demo">
+            <div class="sa-v6">
+              <div class="sa-hd">
+                <svg class="sa-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                <span class="sa-prefix" style="color:var(--neutral-mid);">subagent</span><span class="sa-agent" style="color:var(--neutral-mid);">general-purpose</span>
+              </div>
+              <div class="sa-task-preview">分析 package.json 的依赖关系，找出循环引用</div>
+            </div>
+          </div>
+        </div>
+      </div></div></div></div>
+    </div>
+
+    <div class="anno-grid">
+      <div class="anno"><b>形态:</b><br>background 异步（无 foreground 分支，当前实现缺口）</div>
+      <div class="anno"><b>折叠:</b><br>本地态，default 收起，<b>无 chevron</b>，failed 不强制展开</div>
+      <div class="anno"><b>header:</b><br>13px [--text-base] font-medium · gap 6px</div>
+      <div class="anno"><b>icon:</b><br>Users 13px · stroke 1.75 · <span class="v6">failed 不切（统一靠颜色）</span></div>
+      <div class="anno"><b>prefix:</b><br>「subagent」10px mono 600 uppercase tracking-.08em neutral-fg</div>
+      <div class="anno"><b>agent/slug:</b><br>12px mono accent · 展开 invisible</div>
+      <div class="anno"><b>model:</b><br>11px mono · 「(model · thinking X)」dim</div>
+      <div class="anno"><b>running:</b><br>双环 loader 13px accent（替换 Users icon）</div>
+      <div class="anno"><b>task 预览:</b><br>12px neutral-dim truncate（60 字）</div>
+      <div class="anno"><b>task full:</b><br>12px neutral-mid leading-1.65 whitespace-pre-wrap</div>
+      <div class="anno"><b>bg 状态行:</b><br>6px accent blink 点 + mono 11px neutral-dim</div>
+      <div class="anno"><b>failed 色:</b><br><span class="v6">prefix/agent 降 neutral-mid（icon 保留 Users）</span></div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §11 Block · workflow（GUI 渲染由 extension 推，本身无内置进度条）
+       ================================================================ -->
+  <section class="spec" id="s11">
+    <div class="spec-head"><span class="spec-num">§11</span><h2 class="spec-title">Block · workflow</h2></div>
+    <p class="spec-desc">workflow 工具调用块。可折叠（default 收起）。v6：failed 不切 icon（保留 ListChecks + 颜色表达）。<b>进度条非内置</b>——仅当 extension 通过 <code>details.__gui__</code> 推送 <code>type:'progress-bar'</code> 时才渲染（见展开态示例）。审批/救生按钮 DEFERRED。</p>
+    <div class="change-points">
+      <span class="cp cp-v6"><b>failed</b> 不切 icon（统一靠颜色）</span>
+      <span class="cp cp-v6"><b>进度条</b> extension 推（非内置）· fill 色 ok/warn/danger</span>
+    </div>
+
+    <div class="render-frame">
+      <div class="panel-stage"><div class="ms-scroll"><div class="ms-turn"><div class="ms-assistant-col">
+        <div class="state-row" style="margin:0;">
+          <div class="state-tag">collapsed</div>
+          <div class="state-demo">
+            <div class="wf-v6">
+              <div class="wf-hd">
+                <svg class="wf-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                <span class="wf-prefix">workflow</span><span class="wf-action">run</span><span class="wf-name">test-suite</span><span class="sa-sep">·</span><span class="wf-name">unit</span><span class="wf-runid">a1b2c3d4</span>
+              </div>
+              <div class="sa-task-preview">运行单元测试套件</div>
+            </div>
+          </div>
+        </div>
+        <div class="state-row" style="margin:14px 0 0;">
+          <div class="state-tag">running+GUI</div>
+          <div class="state-demo">
+            <div class="wf-v6">
+              <div class="wf-hd">
+                <svg class="wf-loader" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="10" opacity="0.35"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>
+                <span class="wf-prefix">workflow</span><span class="wf-action">run</span><span class="wf-name">test-suite</span>
+              </div>
+              <div class="wf-body">
+                <div class="wf-body-content">运行单元测试套件</div>
+                <!-- GUI 进度条：extension 推送 __gui__ type:progress-bar -->
+                <div class="gui-pb"><div class="gui-pb-fill warn" style="width:62%;"></div></div>
+                <div class="sa-bgstatus" style="padding-left:16px;"><span class="blink-dot"></span>31/50 tests · running</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="state-row" style="margin:14px 0 0;">
+          <div class="state-tag">failed</div>
+          <div class="state-demo">
+            <div class="wf-v6">
+              <div class="wf-hd">
+                <svg class="wf-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                <span class="wf-prefix" style="color:var(--neutral-mid);">workflow</span><span class="wf-action" style="color:var(--neutral-mid);">run</span><span class="wf-name" style="color:var(--neutral-mid);">test-suite</span>
+              </div>
+              <div class="sa-task-preview">运行单元测试套件</div>
+            </div>
+          </div>
+        </div>
+      </div></div></div></div>
+    </div>
+
+    <div class="anno-grid">
+      <div class="anno"><b>折叠:</b><br>本地态，default 收起</div>
+      <div class="anno"><b>header:</b><br>13px [--text-base] font-medium · gap 6px</div>
+      <div class="anno"><b>icon:</b><br>ListChecks 13px · stroke 1.75 · <span class="v6">failed 不切</span></div>
+      <div class="anno"><b>prefix:</b><br>「workflow」10px mono 600 uppercase neutral-fg</div>
+      <div class="anno"><b>action:</b><br>11px mono neutral-mid（run/status/pause）</div>
+      <div class="anno"><b>name:</b><br>12px mono accent（仅 run action 有）</div>
+      <div class="anno"><b>runId:</b><br>11px mono neutral-dim（前 8 位）</div>
+      <div class="anno"><b>running:</b><br>双环 loader 13px accent</div>
+      <div class="anno"><b>进度条（GUI）:</b><br><span class="v6">h-6px rounded-sm · fill: ok(≥80%)/warn(≥50%)/danger · 非内置</span></div>
+      <div class="anno"><b>展开内容:</b><br>GuiComponentRenderer 优先 → AnsiText → 纯文本</div>
+      <div class="anno"><b>failed 色:</b><br><span class="v6">prefix/action/name 降 neutral-mid（icon 保留 ListChecks）</span></div>
+      <div class="anno"><b>审批按钮:</b><br>DEFERRED（未实现）</div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §12 assistant 正文 markdown（v6：<p> 恢复段间距 + 代码块 token 化）
+       ================================================================ -->
+  <section class="spec" id="s12">
+    <div class="spec-head"><span class="spec-num">§12</span><h2 class="spec-title">assistant 正文 · markdown body</h2></div>
+    <p class="spec-desc">assistant 的纯文本/markdown 回复渲染（MarkdownRenderer，markdown-it + shiki + mermaid）。v6 修复 4 点：① <code>&lt;p&gt;</code> 恢复段间距 0.5em（现状 margin:0 多段落贴太紧）；② h3 提一档区分 h4；③ 代码块容器 <code>bg-input</code> token 化（现状依赖 shiki inline style，与设计系统解耦）；④ 行内 code bg 统一 <code>bg-input</code>（与代码块正文一致）。</p>
+    <div class="change-points">
+      <span class="cp cp-now"><b>现</b> &lt;p&gt; margin:0 · 段落无间距</span>
+      <span class="cp cp-v6"><b>v6</b> 段间 0.5em（首段无 margin-top）</span>
+      <span class="cp cp-v6"><b>代码块</b> bg token 化 + h3 提档</span>
+    </div>
+
+    <div class="render-frame">
+      <div class="panel-stage"><div class="ms-scroll"><div class="ms-turn"><div class="ms-assistant-col">
+        <div class="md-body">
+          <p>这是第一段。v6 恢复了段落间距——多段落之间有 0.5em 的呼吸空间，首段紧贴 turn 无上方留白，兼顾紧凑与可读。</p>
+          <p>第二段。段落间距让长回复的结构更清晰，对标 Linear/Claude 的正文节奏。</p>
+          <h3>三级标题（h3 · v6 提档 1.12em）</h3>
+          <p>标题下方内容。v6 调整：<code>h3 1.12em</code> 区分 <code>h4 1.06em</code>（现状同字号层级弱）。</p>
+          <ul>
+            <li>无序列表项，marker 用 neutral-fg</li>
+            <li>第二项，含 <code>行内 code</code>（v6: bg-input 统一）</li>
+          </ul>
+          <blockquote>引用块：左边框 border-strong + 缩进 0.85em，文字 neutral-mid。</blockquote>
+          <div class="md-codeblock">
+            <div class="md-codeblock__hd"><span class="md-codeblock__lang">typescript</span><span class="md-codeblock__copy">复制</span></div>
+            <pre><span style="color:var(--accent);">const</span> x = <span style="color:var(--success);">42</span>;
+<span style="color:var(--info);">console</span>.log(x);</pre>
+          </div>
+          <p>代码块容器 v6 用 <code>bg-input</code>（凹陷语义），header <code>surface-2</code>，与设计 token 一致。</p>
+          <table>
+            <thead><tr><th>token</th><th>值</th></tr></thead>
+            <tbody>
+              <tr><td>accent</td><td>#4f8ef7</td></tr>
+              <tr><td>surface</td><td>#272830</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div></div></div></div>
+    </div>
+
+    <div class="anno-grid">
+      <div class="anno"><b>正文容器:</b><br>12px [--text-sm] · leading-1.7 · neutral-mid · pb-2</div>
+      <div class="anno"><b>&lt;p&gt;:</b><br><span class="old">margin:0（段落贴紧）</span><br><span class="v6">段间 margin-top 0.5em（首段无，p+p 选择器）</span></div>
+      <div class="anno"><b>line-height:</b><br>1.7（p/li 统一）</div>
+      <div class="anno"><b>h1/h2/h3/h4:</b><br>1.3/1.18/<span class="v6">1.12</span>/1.06em · 600 · neutral-fg · margin 1em 0 .5em</div>
+      <div class="anno"><b>h3 提档:</b><br><span class="old">1.06em（与 h4 同）</span> <span class="v6">→ 1.12em（区分 h4）</span></div>
+      <div class="anno"><b>列表:</b><br>pl-1.2em · disc/decimal · marker neutral-fg · li leading-1.7</div>
+      <div class="anno"><b>行内 code:</b><br><span class="old">bg surface-2</span> <span class="v6">→ bg-input · 0.88em · radius-sm · neutral-fg</span></div>
+      <div class="anno"><b>代码块容器:</b><br><span class="old">依赖 shiki inline bg</span> <span class="v6">→ bg-input token 化 · radius(8px)</span></div>
+      <div class="anno"><b>代码块 header:</b><br>surface-2 底 + border-b · 语言标签 10px dim lowercase · 复制按钮</div>
+      <div class="anno"><b>代码块正文:</b><br>11px mono leading-1.6 · bg-input（与容器一致）</div>
+      <div class="anno"><b>blockquote:</b><br>border-left 2px border-strong · pl-.85em · neutral-mid</div>
+      <div class="anno"><b>table:</b><br>border-collapse · th surface-2 600 · td border · 0.92em</div>
+      <div class="anno"><b>hr:</b><br>border-top 1px border · margin 1em 0</div>
+      <div class="anno"><b>strong:</b><br>neutral-fg 600（强调回升）</div>
+      <div class="anno"><b>thinking variant:</b><br>标题/borderquote 染 reasoning 紫</div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §13 动画（状态指示 + 微交互）
+       ================================================================ -->
+  <section class="spec" id="s13">
+    <div class="spec-head"><span class="spec-num">§13</span><h2 class="spec-title">动画 · 状态指示 + 微交互</h2></div>
+    <p class="spec-desc">动画分两类：<b>状态指示</b>（spinner/脉冲点/blink——是「状态如何表达」的一部分，不带动画状态就看不出）和 <b>微交互</b>（hover/focus 过渡、展开收起）。两类都在本 spec 标注（duration/easing），大动效（页面切换/引导序列）后出。token 层已有 <code>--duration-fast/normal/slow</code> + <code>--ease</code>。<code>prefers-reduced-motion</code> 全局兜底降级为瞬时。</p>
+
+    <div class="render-frame">
+      <h3 style="font-size:14px;color:var(--neutral-fg);margin:0 0 14px;font-weight:500;">状态指示动画</h3>
+      <div class="panel-stage" style="display:flex;gap:32px;flex-wrap:wrap;padding:20px;">
+        <div style="text-align:center;">
+          <div style="height:40px;display:flex;align-items:center;justify-content:center;"><svg style="width:18px;height:18px;color:var(--accent);animation:spin 1.4s linear infinite;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="10" opacity="0.35"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg></div>
+          <div style="font-size:11px;color:var(--neutral-mid);">双环 loader</div>
+          <div class="anno" style="margin-top:4px;">spin 1.4s linear<br>running 态（所有 block）</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="height:40px;display:flex;align-items:center;justify-content:center;"><span style="width:10px;height:10px;border-radius:50%;background:var(--accent);animation:pulse-accent 1.8s ease-in-out infinite;display:inline-block;"></span></div>
+          <div style="font-size:11px;color:var(--neutral-mid);">脉冲点</div>
+          <div class="anno" style="margin-top:4px;">pulse-accent 1.8s<br>QueueBubble（§8.5）</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="height:40px;display:flex;align-items:center;justify-content:center;"><span style="width:8px;height:8px;border-radius:50%;background:var(--accent);animation:blink 1s step-end infinite;display:inline-block;"></span></div>
+          <div style="font-size:11px;color:var(--neutral-mid);">blink 点</div>
+          <div class="anno" style="margin-top:4px;">blink 1s step-end<br>subagent bg 状态行（§10）</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="height:40px;display:flex;align-items:center;justify-content:center;"><svg style="width:18px;height:18px;color:var(--accent);animation:spin 1s linear infinite;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg></div>
+          <div style="font-size:11px;color:var(--neutral-mid);">单环 spinner</div>
+          <div class="anno" style="margin-top:4px;">spin 1s linear<br>TurnMeta streaming / composer sending</div>
+        </div>
+      </div>
+
+      <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">微交互过渡（duration / easing）</h3>
+      <table class="z-table" style="background:var(--bg-card);border-radius:var(--radius);overflow:hidden;">
+        <thead><tr><th style="text-align:left;padding:8px 12px;font-size:11px;color:var(--neutral-dim);text-transform:uppercase;border-bottom:1px solid var(--border-strong);">组件</th><th style="text-align:left;padding:8px 12px;font-size:11px;color:var(--neutral-dim);text-transform:uppercase;border-bottom:1px solid var(--border-strong);">过渡</th><th style="text-align:left;padding:8px 12px;font-size:11px;color:var(--neutral-dim);text-transform:uppercase;border-bottom:1px solid var(--border-strong);">token</th></tr></thead>
+        <tbody>
+          <tr><td style="padding:8px 12px;border-bottom:1px solid var(--border);">list-item / btn hover</td><td style="padding:8px 12px;border-bottom:1px solid var(--border);">background + color</td><td style="padding:8px 12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);color:var(--accent);">var(--duration-fast) var(--ease)</td></tr>
+          <tr><td style="padding:8px 12px;border-bottom:1px solid var(--border);">block 折叠/展开</td><td style="padding:8px 12px;border-bottom:1px solid var(--border);">chevron rotate + body</td><td style="padding:8px 12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);color:var(--accent);">var(--duration-fast) var(--ease)</td></tr>
+          <tr><td style="padding:8px 12px;border-bottom:1px solid var(--border);">Composer focus ring</td><td style="padding:8px 12px;border-bottom:1px solid var(--border);">border + shadow</td><td style="padding:8px 12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);color:var(--accent);">var(--duration) var(--ease)</td></tr>
+          <tr><td style="padding:8px 12px;border-bottom:1px solid var(--border);">GUI 进度条 fill</td><td style="padding:8px 12px;border-bottom:1px solid var(--border);">width</td><td style="padding:8px 12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);color:var(--accent);">300ms var(--ease)</td></tr>
+          <tr><td style="padding:8px 12px;">steer 呼吸（composer）</td><td style="padding:8px 12px;">box-shadow 呼吸</td><td style="padding:8px 12px;font-family:var(--font-mono);color:var(--accent);">2.6s ease-in-out infinite</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="anno-grid">
+      <div class="anno"><b>状态指示:</b><br>双环 loader 1.4s / 单环 spinner 1s / 脉冲点 1.8s / blink 1s</div>
+      <div class="anno"><b>微交互:</b><br>hover/折叠 var(--duration-fast) 120ms · focus var(--duration) 200ms</div>
+      <div class="anno"><b>easing:</b><br>统一 var(--ease) cubic-bezier(.4,0,.2,1)</div>
+      <div class="anno"><b>reduced-motion:</b><br>全局 @media 降级为 0.01ms 瞬时</div>
+      <div class="anno"><b>大动效:</b><br>页面切换/引导序列 → 后出（非本批）</div>
+      <div class="anno"><b>steer 呼吸:</b><br>composer 流式 steer 专用 2.6s（非通用）</div>
+    </div>
+  </section>
+
   <footer class="doc-foot">
-    <span>v6-spec-conversation.html · 对话流 · 9 组件全状态</span>
+    <span>v6-spec-conversation.html · 对话流 · 13 section 全状态</span>
     <span>SSOT: <a href="v6-design.md">v6-design.md §4.1</a> · token: <a href="v6-spec-tokens.html">v6-spec-tokens</a></span>
   </footer>
 

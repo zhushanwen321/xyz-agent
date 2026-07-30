@@ -146,7 +146,12 @@ hover: text-neutral-fg
 | TurnMeta | pill 默认可见（密度=现状）；删 turn 间 `hr border-border` 分隔线，改加大 turn gap 做层级；sticky 底色绑定内容列背景 |
 | Block·thinking | 收起态预览提亮 `text-neutral-mid`（过 AA）；**行数维持 1 行 ellipsis**（60 字符截断，推翻原「显 2 行」决策——2 行破坏 turn 视觉节奏） |
 | Block·bash | **区分两类来源**：① BashOutputBlock（composer `!` 前缀执行，独立系统消息，不可折叠，exit 标签：0→success/N→warn/timeout→dim）② tool-bash（agent 调用，嵌 §6 tool 块，可折叠，border 容器）。详见 v6-spec-conversation §5 |
-| Block·tool | 状态矩阵：collapsed/expanded × running(双环 loader)/done/failed/unfinished。failed 删 `hover:text-warn` 统一 `--neutral-ico`，toolName 降 `neutral-mid`（无红框）；exit≠0 加 mono `exit N` 中性标签；unfinished（崩溃态）「未结束」标签 |
+| Block·tool | 状态矩阵：collapsed/expanded × running(双环 loader)/done/failed/unfinished。**failed 统一不切 icon**（保留原 tool icon，与 subagent/workflow 一致，靠 toolName 降 `neutral-mid` 表达，无红框）；exit≠0 加 mono `exit N` 中性标签；unfinished「未结束」标签 |
+| Block·subagent | background 异步（只展 input，结果由后续 turn 总结）；可折叠 default 收起无 chevron。独有 bg 状态行（blink 蓝点）。failed 不切 icon（保留 Users + 颜色表达）。详见 v6-spec-conversation §10 |
+| Block·workflow | 可折叠 default 收起。**进度条非内置**（仅 extension `__gui__` type:progress-bar 推送时渲染，fill 色 ok/warn/danger）。failed 不切 icon（保留 ListChecks）。审批按钮 DEFERRED |
+| Block icon | **stroke-width 统一 1.75**（修正注释声称 1.7 实际 lucide 默认 2 的不一致；双环 loader SVG 1.7 保留）。size：block header 13px 统一。详见 v6-spec-conversation §13 |
+| assistant 正文 markdown | `<p>` 恢复段间距 0.5em（现状 margin:0 段落贴紧）；h3 提档 1.12em 区分 h4；代码块容器 `bg-input` token 化（现状依赖 shiki inline style）；行内 code bg 统一 `bg-input`。详见 v6-spec-conversation §12 |
+| 动画 | 状态指示（双环 loader 1.4s / 单环 spinner 1s / 脉冲点 1.8s / blink 1s）+ 微交互（hover/折叠 `duration-fast` 120ms，focus `duration` 200ms，easing `--ease`）。reduced-motion 全局兜底。大动效后出 |
 | ChangeSetCard | 去 border，`bg-surface` + 10px 圆角；状态 badge 降灰阶（仅 ±行数保留 success/danger git 语义色）；「待审查」badge 胶囊 accent-soft |
 | UserBubble | 删 `border-border-strong`，仅 `bg-surface-hover` 做层级；保持 14px/4px 不对称圆角；**删 pending 态**（排队消息不再进对话流渲染，迁 QueueBubble） |
 | QueueBubble | **v6 重设计**（pending 消息统一入口）：去 border，`bg-surface` 浮起 + 左侧脉冲点；head「N 排队中」+ 计数，多条可展开列表（FIFO 序号 + steer 蓝/followup 青类型点）；消息被消费后从队列移除进对话流；只读 |
