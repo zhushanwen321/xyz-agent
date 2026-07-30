@@ -119,7 +119,7 @@ check_changeset() {
     while IFS= read -r file; do
         # 提取包目录（extensions/<name>/src/ 或 extensions/shared/<name>/src/）
         local pkg_dir
-        pkg_dir=$(echo "$file" | grep -oE '^extensions/(shared/)?[^/]+/' | sed 's:/$::')
+        pkg_dir=$(echo "$file" | grep -oE '^extensions/(shared/)?[^/]+/' | sed 's:/$::' || true)
         [ -z "$pkg_dir" ] && continue
 
         # 只关心改了 src/ 的（排除 README、docs、examples、workflows）
