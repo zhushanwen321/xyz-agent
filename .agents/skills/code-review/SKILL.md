@@ -163,7 +163,7 @@ git diff <baseRef>...HEAD --stat   # baseRef 默认 main，bare repo workspace �
 在人工审查前，运行 fallow 静态分析获取基线数据：
 
 ```bash
-npm list -g @sourcemeta/fallow 2>/dev/null || npm install -g @sourcemeta/fallow
+pnpm list -g @sourcemeta/fallow 2>/dev/null || pnpm add -g @sourcemeta/fallow
 fallow scan $(git diff main...HEAD --name-only)
 ```
 

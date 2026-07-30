@@ -31,7 +31,7 @@
 
 ```bash
 # 1. 先启动真实 runtime（pnpm dev 会自动启动 runtime 子进程）
-npm run dev &
+pnpm run dev &
 # 等 ~/.xyz-agent-dev/runtime.port 文件出现
 
 # 2. 分批构建 real renderer bundle（与 mock bundle 输出冲突，不能同时构建）
@@ -70,13 +70,13 @@ XYZ_EXTENSION_PATHS="\
 <path-to>/pi-goal:\
 <path-to>/pi-subagent-workflow:\
 <path-to>/pi-todo" \
-npm run dev
+pnpm run dev
 ```
 
 ### 1.2 启动 dev app
 
 ```bash
-npm run dev
+pnpm run dev
 # 等待 Electron 窗口出现 + sidebar 渲染完成
 # 确认 runtime 日志无错误：tail -f ~/.xyz-agent-dev/logs/runtime-*.log
 ```

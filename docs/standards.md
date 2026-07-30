@@ -427,7 +427,7 @@ const MOCK: SearchItem[] = [
 
 | 工具 | 覆盖范围 | 触发时机 |
 |------|---------|---------|
-| taste-lint (ESLint) | 原生 HTML / emoji / v-model / 硬编码颜色 / 魔数间距 / 静默 catch / allSettled | `npm run lint` + pre-commit |
+| taste-lint (ESLint) | 原生 HTML / emoji / v-model / 硬编码颜色 / 魔数间距 / 静默 catch / allSettled | `pnpm run lint` + pre-commit |
 | vue_rules_checker.py | 行数上限 / CSS 选择器 / Tab 缩进 / 原生元素 / emoji / v-model | pre-commit |
 | pre-commit hook | ESLint + vue_rules_checker | git commit |
 

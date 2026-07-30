@@ -112,7 +112,7 @@ jobs:
 
       - name: Check plugin-sdk types are synced with runtime
         working-directory: packages/plugin-sdk
-        run: npm run check-sync
+        run: pnpm run check-sync
 
   test:
     name: Test

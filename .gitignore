@@ -97,8 +97,11 @@ screenshot.png
 
 # === npm lock 文件（本项目用 pnpm，package-lock.json 是历史遗留/误生成产物）===
 # 详见 AGENTS.md「包管理器与 lock 文件纪律」。pnpm-lock.yaml 是唯一权威 lock。
+# 含 extensions/ 下迁移自 xyz-pi-extensions 的历史 lock 垃圾。
 package-lock.json
 package-lock.json.*
+**/package-lock.json
+**/package-lock.json.*
 # 若未来某个子包独立用 npm，在子包自己的 .gitignore 里放开此规则。
 
 # === 备份/临时后缀兜底 ===

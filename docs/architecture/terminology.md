@@ -36,7 +36,7 @@
 1. `git mv apps/electron/sidecar packages/runtime`
 2. `sidecar-manager.ts` 拆分为 `main/supervisor/` 子系统（runtime-supervisor + port-discoverer + health-checker + process-control + safe-env）
 3. 批量替换 workspace 名和 import 路径
-4. `npm run build` + `npm run dev` 验证
+4. `pnpm run build` + `pnpm run dev` 验证
 
 ---
 
@@ -70,7 +70,7 @@
 3. 重命名组件文件
 4. 更新 `window-manager.ts` 类型引用
 5. 全局搜索 `usePaneStore`、`PaneLeaf`、`PaneTree`、`paneId` 等替换
-6. `npm run build` + `npm run dev` 验证
+6. `pnpm run build` + `pnpm run dev` 验证
 
 ---
 
@@ -97,7 +97,7 @@
 2. `useChat.ts` 的 `onError` 和 `abort` 中创建的通知改为 `SystemNotification`
 3. 重命名 `SystemMessage.vue` → `SystemNotification.vue`
 4. 全局搜索 `SystemChatMessage`、`as any`（ChatPanel 里的类型断言）清理
-5. `npm run lint` + `npm run dev` 验证
+5. `pnpm run lint` + `pnpm run dev` 验证
 
 ---
 
@@ -120,7 +120,7 @@
 1. 重命名组件文件
 2. 替换 settings store 中的变量和方法名
 3. 更新所有引用组件的 emit 和调用
-4. `npm run lint` + `npm run dev` 验证
+4. `pnpm run lint` + `pnpm run dev` 验证
 
 ---
 
@@ -143,7 +143,7 @@
 1. `git mv components/overview components/panel-grid`
 2. 替换 settings store 变量和方法
 3. 更新引用
-4. `npm run lint` + `npm run dev` 验证
+4. `pnpm run lint` + `pnpm run dev` 验证
 
 ---
 
@@ -167,7 +167,7 @@ R2-R5 之间无依赖，可并行执行。R1 影响面最大（涉及 npm worksp
 
 | 风险 | 缓解 |
 |------|------|
-| import 路径遗漏导致编译失败 | 每步完成后 `npm run build` 验证 |
+| import 路径遗漏导致编译失败 | 每步完成后 `pnpm run build` 验证 |
 | preload 桥接 API 变更 | 检查 `preload/index.ts` 暴露给前端的接口名是否需要同步改 |
 | localStorage key 变更 | settings store persist key 保持 `xyz-settings` 不变，只改变量名 |
 | git 历史追踪断裂 | 使用 `git mv` 而非删除+新建 |
@@ -175,7 +175,7 @@ R2-R5 之间无依赖，可并行执行。R1 影响面最大（涉及 npm worksp
 ## 验证清单
 
 每个 R 完成后执行：
-- [ ] `npm run build` 通过
-- [ ] `npm run dev` 启动正常，Electron 窗口可交互
-- [ ] `npm run lint` 通过
+- [ ] `pnpm run build` 通过
+- [ ] `pnpm run dev` 启动正常，Electron 窗口可交互
+- [ ] `pnpm run lint` 通过
 - [ ] 功能验证：创建 session、发送消息、分屏、切模型

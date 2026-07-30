@@ -57,10 +57,10 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 ## 常用命令
 
 ```bash
-npm run dev          # 开发模式 (Electron + Vite HMR)
-npm run build        # 生产构建 (electron-builder)
-npm run lint         # ESLint 检查（或 pnpm run lint）
-npm run prepare      # 安装 git hooks
+pnpm run dev          # 开发模式 (Electron + Vite HMR)
+pnpm run build        # 生产构建 (electron-builder)
+pnpm run lint         # ESLint 检查
+pnpm run prepare      # 安装 git hooks
 
 # 打包流程（pnpm workspace 单步安装，无需 cd 子目录）
 pnpm install          # 安装所有依赖（根 + packages/* + apps/*，ELECTRON_SKIP_BINARY_DOWNLOAD=1 跳过二进制下载）
@@ -326,7 +326,7 @@ lsof -i :1420 -P | grep node
    - `files` 显式包含 `dist/runtime/**/*`（不只是"未排除"）
    - `files` 未排除 `dist/runtime`（正则扫描 `!dist/runtime` 模式）
    - `resources/pi` 无 symlink
-2. **Build** (`npm run build`)：electron-builder 执行打包，产出 dmg/zip/exe
+2. **Build** (`pnpm run build`)：electron-builder 执行打包，产出 dmg/zip/exe
 3. **Postbuild** (`scripts/postbuild-validate.sh`)：
    - asar 内容正确性（dist/main/main.cjs, dist/preload/preload.cjs）
    - `app.asar.unpacked/dist/runtime/` 存在且包含 `index.cjs` + `plugin-bootstrap.cjs`
@@ -497,7 +497,7 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 
 | 检查工具 | 覆盖范围 | 触发时机 |
 |---------|---------|---------|
-| taste-lint (ESLint) | no-native-html / no-emoji / prefer-v-model / no-hardcoded-colors / no-magic-spacing / no-silent-catch / prefer-allsettled / no-multi-arg-emit | `npm run lint` + pre-commit |
+| taste-lint (ESLint) | no-native-html / no-emoji / prefer-v-model / no-hardcoded-colors / no-magic-spacing / no-silent-catch / prefer-allsettled / no-multi-arg-emit | `pnpm run lint` + pre-commit |
 | vue_rules_checker.py | 行数上限 / CSS 选择器 / Tab 缩进 / 原生元素 / Emoji / v-model | pre-commit |
 
 ### Lint / Git Hooks 问题处理原则 [MANDATORY]
@@ -582,7 +582,7 @@ Release Notes 需要同时包含中文和英文版本，使用 `<!-- LANG:zh -->
 **错误做法（禁止）：**
 ```
 # 坏 — push 后直接结束
-npm version patch && git push github HEAD --tags
+pnpm version patch && git push github HEAD --tags
 echo "已推送，CI 会构建"
 # ← AI 在此结束，不检查 CI 结果
 ```
@@ -590,7 +590,7 @@ echo "已推送，CI 会构建"
 **正确做法：**
 ```
 # 好 — push 后必须验证
-npm version patch && git push github HEAD --tags
+pnpm version patch && git push github HEAD --tags
 bash scripts/verify-ci-release.sh "v$(node -p "require('./package.json').version")"
 # ← 脚本会轮询 CI 直到完成，验证 dmg/exe/AppImage 存在
 # ← exit 0 = 通过，exit 非 0 = 失败（AI 必须修复直到 exit 0）
