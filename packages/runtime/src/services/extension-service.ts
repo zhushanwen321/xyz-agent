@@ -261,7 +261,8 @@ export class ExtensionService {
 
     const extensions: ExtensionInfo[] = []
 
-    for (const dir of result.extensionDirs) {
+    for (const discovered of result.extensionDirs) {
+      const dir = discovered.path
       const pkgJsonPath = join(dir, 'package.json')
       let name = basename(dir)
       let version = ''
@@ -342,21 +343,24 @@ export class ExtensionService {
     const { disabled } = this.readSettingsState()
     const disabledSet = new Set(disabled)
 
-    // 过滤禁用项
-    const filtered = result.extensionDirs.filter(dir => {
-      // Use package.json name (not basename) for scoped package support
-      let pkgName = basename(dir)
-      try {
-        const raw = readFileSync(join(dir, 'package.json'), 'utf-8')
-        const pkg = JSON.parse(raw) as { name?: string }
-        if (pkg.name) pkgName = pkg.name
-      } catch {
-        log.debug(`[extension-service] getExtensionPaths: failed to read package.json in ${dir}`)
-      }
-      // mandatory 包无视 disabled 状态，强制加载
-      if (isMandatoryExtension(pkgName)) return true
-      return !disabledSet.has(`npm:${pkgName}`)
-    })
+    // 过滤禁用项（使用 DiscoveredExtension.path）
+    const filtered = result.extensionDirs
+      .filter(discovered => {
+        const dir = discovered.path
+        // Use package.json name (not basename) for scoped package support
+        let pkgName = basename(dir)
+        try {
+          const raw = readFileSync(join(dir, 'package.json'), 'utf-8')
+          const pkg = JSON.parse(raw) as { name?: string }
+          if (pkg.name) pkgName = pkg.name
+        } catch {
+          log.debug(`[extension-service] getExtensionPaths: failed to read package.json in ${dir}`)
+        }
+        // mandatory 包无视 disabled 状态，强制加载
+        if (isMandatoryExtension(pkgName)) return true
+        return !disabledSet.has(`npm:${pkgName}`)
+      })
+      .map(d => d.path)
 
     // builtin extension：经 getBuiltinExtensionPaths() 注入（设计文档 §2.3，
     // pi-launch-presets 设计要求 builtin 永远前置，提取为独立方法供 PresetService.resolve 复用）。

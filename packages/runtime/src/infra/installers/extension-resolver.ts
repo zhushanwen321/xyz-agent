@@ -1,25 +1,25 @@
 /**
- * ExtensionResolver — 五源扫描与去重
+ * ExtensionResolver — 六源纯发现 + 去重
  *
- * 扫描五个来源的 extension，按优先级去重后返回目录路径列表：
- *   npm > user > settings > third-party > bundled
+ * 扫描六个来源的 extension，按优先级去重后返回 DiscoveredExtension[]（路径 + 来源元数据）：
+ *   npm > user > discovery > settings > third-party > bundled
+ *
+ * [纯发现层] 只负责扫描磁盘、校验 isValidPiExtension、按优先级去重。
+ * 不做任何策略过滤（disabled / mandatory / preset）——过滤职责归 extension-filter.ts 管道。
  *
  * npm 扫描：读取 package.json 的 dependencies，对每个包用 require.resolve 定位目录，
  * 再用 isValidPiExtension() 验证是否为有效 pi extension。
  * 不硬编码 scope 或前缀 —— dependencies 本身就是白名单。
  *
  * settings 扫描：读取 ~/.xyz-agent/pi/agent/settings.json 的 packages[]，
- * 定位 ~/.xyz-agent/npm/node_modules/ 下的扩展目录。
- * disabled-packages.json 控制启用/禁用状态（mandatory 包例外：强制加载，不受 disabled 影响）。
+ * 定位 ~/.xyz-agent/npm/node_modules/ 下的扩展目录。全量返回，不过滤 disabled。
  */
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
 import { join, dirname, basename, resolve } from 'node:path'
 import { getPiAgentDir, getNpmDir, getExtensionsDir } from '../pi/pi-paths.js'
 import { canonicalizePath } from '../../utils/path-utils.js'
 import { readSettings } from '../pi/pi-settings-store.js'
-import { readDisabledPackages as readDisabledPackagesFromStore } from '../pi/pi-extension-settings.js'
-import { isMandatoryExtension } from '@xyz-agent/shared'
-import type { IExtensionResolver, ExtensionPaths } from '../../services/ports/installer.js'
+import type { IExtensionResolver, ExtensionPaths, DiscoveredExtension, ExtensionSource } from '../../services/ports/installer.js'
 
 // re-export ExtensionPaths 供历史 import 此文件的消费者使用（类型归属 ports）
 export type { ExtensionPaths }
@@ -83,7 +83,8 @@ export class ExtensionResolver implements IExtensionResolver {
 
     const deduped = this.deduplicate(sources)
     log.info(`[extension-resolver] resolved ${deduped.size} extensions from ${sources.length} sources`)
-    return { extensionDirs: [...deduped.values()] }
+    const extensionDirs: DiscoveredExtension[] = [...deduped.entries()].map(([_, { dir, source }]) => ({ path: dir, source }))
+    return { extensionDirs }
   }
 
   /**
@@ -162,9 +163,6 @@ export class ExtensionResolver implements IExtensionResolver {
     const result: ExtensionMap = new Map()
     const settingsDir = this.options.settingsDir ?? getPiAgentDir()
 
-    // 读取 disabled-packages.json（xyz-agent 自己的文件，独立读）
-    const disabled = this.readDisabledPackages(settingsDir)
-
     // 读取 packages[]（经 pi-settings-store 单一所有者；测试经 setSettingsPath 对齐 settingsDir）
     const settings = readSettings()
     const packages: string[] = settings.packages ?? []
@@ -173,10 +171,8 @@ export class ExtensionResolver implements IExtensionResolver {
       if (!source.startsWith('npm:')) continue
       const NPM_PREFIX_LEN = 4
       const pkgName = source.slice(NPM_PREFIX_LEN)
-      // mandatory 包无视 disabled 状态，强制进入扫描结果（与 ExtensionService.getExtensionPaths
-      // 的 mandatory 强加载语义一致）。否则 resolver 在此就把 disabled 的 mandatory 包跳过，
-      // getExtensionPaths 的 mandatory 强加载 filter 永远看不到它，形成状态分离。
-      if (disabled.has(source) && !isMandatoryExtension(pkgName)) continue
+      // [纯发现层] 不在此过滤 disabled——过滤职责归 extension-filter.ts 管道。
+      // resolver 只负责扫描磁盘、返回全量发现结果，策略过滤由上层消费者统一处理。
 
       const pkgDir = join(this.options.npmDir ?? getNpmDir(), 'node_modules', pkgName)
 
@@ -192,15 +188,6 @@ export class ExtensionResolver implements IExtensionResolver {
     }
 
     return result
-  }
-
-  /**
-   * 读取 disabled-packages.json，返回禁用的 source 集合。
-   * F6: 经 pi-extension-settings 的单一读取入口（与 PiExtensionSettings 同源 JsonStore，
-   * 杜绝同进程双读 split-brain）。文件不存在时返回空集合。
-   */
-  private readDisabledPackages(settingsDir: string): Set<string> {
-    return new Set(readDisabledPackagesFromStore(settingsDir))
   }
 
   /**
@@ -382,18 +369,19 @@ export class ExtensionResolver implements IExtensionResolver {
 
   /**
    * 去重：按 PRIORITY_ORDER 升序遍历（高优先级在前），first-write-wins。
+   * 返回值携带 source 元数据，供过滤管道使用。
    */
-  deduplicate(sources: SourceMap[]): ExtensionMap {
-    const merged: ExtensionMap = new Map()
+  deduplicate(sources: SourceMap[]): Map<string, { dir: string; source: ExtensionSource }> {
+    const merged = new Map<string, { dir: string; source: ExtensionSource }>()
 
     const sorted = [...sources].sort((a, b) => {
       return PRIORITY_ORDER.indexOf(a.source) - PRIORITY_ORDER.indexOf(b.source)
     })
 
-    for (const { extensions } of sorted) {
-      for (const [name, path] of extensions) {
+    for (const { source, extensions } of sorted) {
+      for (const [name, dir] of extensions) {
         if (!merged.has(name)) {
-          merged.set(name, path)
+          merged.set(name, { dir, source })
         }
       }
     }

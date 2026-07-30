@@ -352,8 +352,10 @@ describe('ExtensionResolver', () => {
       ]
 
       const result = resolver.deduplicate(sources)
-      expect(result.get('ext-a')).toBe('/npm/ext-a')
-      expect(result.get('ext-b')).toBe('/bundled/ext-b')
+      expect(result.get('ext-a')?.dir).toBe('/npm/ext-a')
+      expect(result.get('ext-a')?.source).toBe('npm')
+      expect(result.get('ext-b')?.dir).toBe('/bundled/ext-b')
+      expect(result.get('ext-b')?.source).toBe('bundled')
     })
 
     it('npm overrides settings for same name', () => {
@@ -369,7 +371,8 @@ describe('ExtensionResolver', () => {
       ]
 
       const result = resolver.deduplicate(sources)
-      expect(result.get('review')).toBe('/npm/review')
+      expect(result.get('review')?.dir).toBe('/npm/review')
+      expect(result.get('review')?.source).toBe('npm')
     })
 
     it('settings overrides bundled for same name', () => {
@@ -385,7 +388,8 @@ describe('ExtensionResolver', () => {
       ]
 
       const result = resolver.deduplicate(sources)
-      expect(result.get('ext-a')).toBe('/settings/ext-a')
+      expect(result.get('ext-a')?.dir).toBe('/settings/ext-a')
+      expect(result.get('ext-a')?.source).toBe('settings')
     })
 
     it('returns all extensions when no conflicts', () => {
@@ -478,11 +482,11 @@ describe('ExtensionResolver', () => {
       const result = resolver.resolve('/project', false, ['/custom/my-ext'])
 
       // bundled ext-a
-      expect(result.extensionDirs.some(d => d === bundledDir + '/ext-a')).toBe(true)
+      expect(result.extensionDirs.some(d => d.path === bundledDir + '/ext-a')).toBe(true)
       // third-party ext-c
-      expect(result.extensionDirs.some(d => d.includes('ext-c'))).toBe(true)
+      expect(result.extensionDirs.some(d => d.path.includes('ext-c'))).toBe(true)
       // user extension
-      expect(result.extensionDirs.some(d => d === '/custom/my-ext')).toBe(true)
+      expect(result.extensionDirs.some(d => d.path === '/custom/my-ext')).toBe(true)
       // 5 sources all processed (no errors)
       expect(result.extensionDirs.length).toBeGreaterThanOrEqual(3)
     })
@@ -522,7 +526,7 @@ describe('ExtensionResolver', () => {
       resolver = new ExtensionResolver({ thirdPartyDir })
       const result = resolver.resolve('/project', true, [])
       expect(result.extensionDirs.length).toBe(1)
-      expect(result.extensionDirs[0]).toBe(`${thirdPartyDir}/ext-c`)
+      expect(result.extensionDirs[0].path).toBe(`${thirdPartyDir}/ext-c`)
     })
 
     it('scanDiscoveryExtensions: discovers single-file *.ts extensions', () => {
