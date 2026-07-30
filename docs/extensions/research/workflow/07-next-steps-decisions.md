@@ -1,7 +1,7 @@
 ---
 title: "Workflow 下一步行动与决策摘要"
 date: 2026-06-04
-related_spec: ".xyz-harness/2026-06-04-workflow-storage-and-verification/spec.md"
+related_spec: "xyz-pi-extensions: .xyz-harness/2026-06-04-workflow-storage-and-verification/spec.md"
 ---
 
 # Workflow 下一步行动与决策摘要
@@ -89,7 +89,7 @@ related_spec: ".xyz-harness/2026-06-04-workflow-storage-and-verification/spec.md
 
 ## 链接
 
-- Spec 完整版: [`.xyz-harness/2026-06-04-workflow-storage-and-verification/spec.md`](../../../.xyz-harness/2026-06-04-workflow-storage-and-verification/spec.md)
+- Spec 完整版: 决策溯源见源仓库归档：`xyz-pi-extensions-workspace/main/.xyz-harness/2026-06-04-workflow-storage-and-verification/spec.md`
 - 调研基线: [`docs/research/workflow/05-conclusions-recommendations.md`](05-conclusions-recommendations.md)
 - Claude Code Workflow TUI 参考: [`docs/research/workflow/06-Claude-Code-Workflow-TUI.md`](06-Claude-Code-Workflow-TUI.md)
-- 计划: [`.xyz-harness/2026-06-04-workflow-storage-and-verification/plan.md`](../../../.xyz-harness/2026-06-04-workflow-storage-and-verification/plan.md)
+- 计划: 决策溯源见源仓库归档：`xyz-pi-extensions-workspace/main/.xyz-harness/2026-06-04-workflow-storage-and-verification/plan.md`

@@ -2,7 +2,7 @@
 
 > 本文件是 subagents 扩展内部架构的**真相源**：记录已落地的分层结构与契约。
 > 设计动机、缺陷诊断、重构目标见
-> [`.xyz-harness/2026-06-15-subagent-architecture-consolidation/spec.md`](../../../.xyz-harness/2026-06-15-subagent-architecture-consolidation/spec.md)（只读引用，不复制内容）。
+> 决策溯源见源仓库归档：`xyz-pi-extensions-workspace/main/.xyz-harness/2026-06-15-subagent-architecture-consolidation/spec.md`
 
 ---
 
@@ -75,7 +75,7 @@ Core 内部进一步分两子层，依赖严格自上而下，禁止反向或同
 | **基础（Foundation）** | output-collector | 自身 + types + 叶子原语 | 编排子层 |
 | **叶子原语** | execution-record · model-resolver · agent-registry · concurrency-pool · turn-limiter · path-encoding | 自身 + types | 编排/基础子层 |
 
-> **[HISTORICAL]** 早期实现有独立的 `session-factory.ts`（造 bundle：input → BuiltSession）和 `event-bridge.ts`（SDK 事件翻译 + 累积）。技术债治理（debt-governance Wave 1/3）把它们内联进 `session-runner.ts`——session-factory 是 session-runner 的唯一调用方（四步组装中两步是一行包装），EventBridge 的 switch 翻译逻辑无独立状态、无独立生命周期。合并后 session-runner 完整表达「跑一次 session」，依赖方向不变。详见 [debt-governance spec](../../../.xyz-harness/2026-06-22-subagent-debt-governance/spec.md)。
+> **[HISTORICAL]** 早期实现有独立的 `session-factory.ts`（造 bundle：input → BuiltSession）和 `event-bridge.ts`（SDK 事件翻译 + 累积）。技术债治理（debt-governance Wave 1/3）把它们内联进 `session-runner.ts`——session-factory 是 session-runner 的唯一调用方（四步组装中两步是一行包装），EventBridge 的 switch 翻译逻辑无独立状态、无独立生命周期。合并后 session-runner 完整表达「跑一次 session」，依赖方向不变。详见决策溯源见源仓库归档：`xyz-pi-extensions-workspace/main/.xyz-harness/2026-06-22-subagent-debt-governance/spec.md`。
 
 ## 3. 文件归属
 
@@ -283,4 +283,4 @@ SubagentService 内部调：       │
 - [data-model.md](./data-model.md) — ExecutionRecord 唯一状态源与投影契约
 - [execution-flow.md](./execution-flow.md) — 统一执行流与 sync/bg 分叉
 - [session-runner.md](./session-runner.md) — SessionRunner 深化（run 编排骨架 + H1/H2 资源清理修复）
-- [.xyz-harness 重构 spec](../../../.xyz-harness/2026-06-15-subagent-architecture-consolidation/spec.md) — 设计动机与缺陷诊断（只读溯源）
+- 决策溯源见源仓库归档：`xyz-pi-extensions-workspace/main/.xyz-harness/2026-06-15-subagent-architecture-consolidation/spec.md` — 设计动机与缺陷诊断（只读溯源）
