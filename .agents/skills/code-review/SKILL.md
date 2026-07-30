@@ -40,7 +40,8 @@ pi workflow run .pi/workflows/review-fix-loop.js --args '{maxRounds:10, baseRef:
 ```
 
 workflow 内部逻辑（详见 `.pi/workflows/review-fix-loop.js`）：
-- 5 agent 分两批 `parallel()` 并行（batch1=3 + batch2=2）
+- 可选 fallow pre-scan（Scan phase，单独预先跑）
+- 5 agent 全并行单批 `parallel()`（Review phase，无 worktree 约束不需分批）
 - aggregator 聚合去重，产出 `aggregated.md` + `must_fix` 计数
 - `must_fix === 0` 判 clean；否则 fix agent 批量修复并 commit，进入下一轮
 - S1 conservative：连续 2 轮 clean 的 agent 会被跳过；任何 fix 全部重新启用

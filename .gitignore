@@ -26,8 +26,13 @@ target/
 # gh releases. Nothing under here is tracked. Builtin extensions are npm deps (root
 # package.json), skills are user/project-level — neither is bundled here.
 apps/electron/resources/
-.pi/
-.pi/infinite-context/
+
+# .pi/ 目录：只跟踪源码（workflows），忽略运行时缓存/会话数据。
+# check_directory_rules.py 会强制只允许 .pi/workflows/ 进 git（见 PI_ALLOWED 检查）。
+# pi extension 相关内容（如 extension-dependencies.json）不在 .pi/ 下，是 npm 包。
+.pi/*
+!.pi/workflows/
+
 
 # Electron binary cache (immutable, shared across worktrees)
 .electron-dist/

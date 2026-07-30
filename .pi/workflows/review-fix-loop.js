@@ -1,9 +1,9 @@
 const meta = {
   name: "review-fix-loop",
-  description: "xyz-agent review-fix loop: parallel review (5 dimension agents, 3+2 batched) → aggregate → fix → re-review until clean or max rounds. Per-run isolation via runId, state.json tracking, S1 conservative per-agent disable (2 consecutive clean → skip; any fix reactivates all). Agents: arch-boundary / business-logic / type-safety / electron-build / test-coverage.",
+  description: "xyz-agent review-fix loop: optional fallow pre-scan → parallel review (all 5 dimension agents in one batch) → aggregate → fix → re-review until clean or max rounds. Per-run isolation via runId, state.json tracking, S1 conservative per-agent disable (2 consecutive clean → skip; any fix reactivates all). Agents: arch-boundary / business-logic / type-safety / electron-build / test-coverage.",
   phases: [
-    { title: "Scan", detail: "Optional fallow static analysis pre-scan" },
-    { title: "Review", detail: "Run 5 dimension agents (skipping disabled ones) in 2 batches + aggregate" },
+    { title: "Scan", detail: "Optional fallow static analysis pre-scan (runs alone before review)" },
+    { title: "Review", detail: "Run all 5 dimension agents (skipping disabled ones) in parallel + aggregate" },
     { title: "Fix", detail: "Fix all must-fix issues from aggregated review report" },
   ],
 };
@@ -37,7 +37,7 @@ const aggregatorSchema = {
 };
 
 // 适配点：AGENT_DEFS 换为 xyz-agent 的 5 维度（对齐 .agents/agents/review-*.md 实体）。
-// 顺序即批次顺序：前 3 个 batch1，后 2 个 batch2。
+// 全并行单批 parallel——顺序不影响执行（无批次），按重要性排列便于日志阅读。
 // focus 文本是给 agent 的审查焦点提示（与各 agent .md 的 description 对齐，不重复完整 checklist）。
 const AGENT_DEFS = [
   { name: "review-arch-boundary", title: "ARCH BOUNDARY REVIEW", report: "arch-boundary",
@@ -256,7 +256,10 @@ while (round < MAX) {
     log("Disabled agents (clean ≥ " + CLEAN_THRESHOLD + " consecutive): " + [...disabledSet].join(", "));
   }
 
-  // ── Phase: Review (batched 3+2, only active agents) ──────
+  // ── Phase: Review (all active agents in parallel) ───────
+  // 不分批：review agent 不带 cwd、不写 worktree、只读 git diff，无 worktree 池约束。
+  // execute-full-workflow.js 的 review 阶段也是单批 parallel 全并行（line 643）；
+  // 只有 dev wave（带 cwd、受 worktree 池上限约束）才分 sub-batch。
   phase("Review");
   const roundDir = `${RUN_ROOT}/round-${round}`;
   fs.mkdirSync(roundDir, { recursive: true });
@@ -269,15 +272,13 @@ while (round < MAX) {
     continue; // restart this round with all agents active
   }
 
-  // Batch 1: first 3 agents of active set
-  log("Review batch 1/2 (3 agents)...");
-  const batch1 = await parallel(allCalls.slice(0, 3));
-  // Batch 2: remaining agents
-  log("Review batch 2/2 (2 agents)...");
-  const batch2 = await parallel(allCalls.slice(3));
+  // 全并行：所有 active agent 单批 parallel（原 xyz-pi-extensions 版分 3+2 两批串行，
+  // 那是过度照搬 dev wave 的 worktree 约束——review 无此约束，全并行更高效）
+  log("Review: " + allCalls.length + " agent(s) in parallel...");
+  const allRaw = await parallel(allCalls);
 
   // Parse results, tolerate individual failures
-  const allRaw = [...batch1, ...batch2];
+  // allRaw 来自上面 parallel(allCalls)，顺序与 allCalls 一一对应
   const reviewResults = [];
   const agentRoundResults = [];
   for (let i = 0; i < allRaw.length; i++) {
