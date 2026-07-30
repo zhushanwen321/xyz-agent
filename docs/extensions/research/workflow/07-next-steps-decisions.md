@@ -10,7 +10,7 @@ related_spec: ".xyz-harness/2026-06-04-workflow-storage-and-verification/spec.md
 
 ## 背景
 
-调研基线(05-结论与建议.md)列出 P0/P1/P2 三大类问题:
+调研基线(05-conclusions-recommendations.md)列出 P0/P1/P2 三大类问题:
 - **P0** — 立即修复:JSONL 主 session 膨胀(P0-1)、Approval Gate 失效(P0-2)
 - **P1** — 中期改进:Verification 缺失(P1-1)、无 maxAgents 保护(P1-2)
 - **P2** — 长期演进:nested workflow、JSONL GC 等
@@ -90,6 +90,6 @@ related_spec: ".xyz-harness/2026-06-04-workflow-storage-and-verification/spec.md
 ## 链接
 
 - Spec 完整版: [`.xyz-harness/2026-06-04-workflow-storage-and-verification/spec.md`](../../../.xyz-harness/2026-06-04-workflow-storage-and-verification/spec.md)
-- 调研基线: [`docs/research/workflow/05-结论与建议.md`](05-结论与建议.md)
+- 调研基线: [`docs/research/workflow/05-conclusions-recommendations.md`](05-conclusions-recommendations.md)
 - Claude Code Workflow TUI 参考: [`docs/research/workflow/06-Claude-Code-Workflow-TUI.md`](06-Claude-Code-Workflow-TUI.md)
 - 计划: [`.xyz-harness/2026-06-04-workflow-storage-and-verification/plan.md`](../../../.xyz-harness/2026-06-04-workflow-storage-and-verification/plan.md)

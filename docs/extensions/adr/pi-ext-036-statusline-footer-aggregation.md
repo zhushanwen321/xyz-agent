@@ -4,7 +4,7 @@
 - **Date**: 2026-07-29
 - **Branch**: `feat-permission-guidance`
 - **Supersedes**: —
-- **Related**: [`extension-dependencies.json:96` ask-user → subagent-workflow 握手条目](../../extension-dependencies.json), [`extensions/ask-user/src/channel-registry-register.ts`](../../extensions/ask-user/src/channel-registry-register.ts), [`@zhushanwen/pi-permission` README § 已知限制](../../extensions/permission/README.md)
+- **Related**: [`extension-dependencies.json:96` ask-user → subagent-workflow 握手条目](../../../extension-dependencies.json), [`extensions/ask-user/src/channel-registry-register.ts`](../../../extensions/ask-user/src/channel-registry-register.ts), [`@zhushanwen/pi-permission` README § 已知限制](../../../extensions/permission/README.md)
 
 ## Context
 
@@ -70,7 +70,7 @@ Pi 加载扩展用 `loadExtensionsInternal` 的 `for (const extPath of paths)` �
 
 statusline 是 **canonical owner**（registry 实例唯一创建方），其他扩展是 **consumer**（永不创建 registry，仅 push pending 或调 `registry.register`）。
 
-**关键架构原则**（沿用 ask-user 的 #M4 修复，[`extensions/ask-user/src/channel-registry-register.ts:1-15`](../../extensions/ask-user/src/channel-registry-register.ts)）：
+**关键架构原则**（沿用 ask-user 的 #M4 修复，[`extensions/ask-user/src/channel-registry-register.ts:1-15`](../../../extensions/ask-user/src/channel-registry-register.ts)）：
 
 - 槽位是 `{version, registry?, pending:[]}` 三元组，不是直接暴露的 Map
 - registry 实例**仅**由 statusline 的 `getOrCreateFooterRegistry()` 创建
@@ -544,7 +544,7 @@ pi.on("session_tree", (_e, ctx) => {
 }
 ```
 
-注意：`peerDependenciesMeta.optional: true` 让 pnpm 不强制安装 statusline——permission 在 statusline 缺失时仍能 typecheck + 加载（因为没有静态 import）。这与 ask-user 处理 `pi-subagent-workflow` 的模式完全一致（参考 [`extensions/ask-user/src/channel-registry-register.ts:36-43`](../../extensions/ask-user/src/channel-registry-register.ts) 注释说明）。
+注意：`peerDependenciesMeta.optional: true` 让 pnpm 不强制安装 statusline——permission 在 statusline 缺失时仍能 typecheck + 加载（因为没有静态 import）。这与 ask-user 处理 `pi-subagent-workflow` 的模式完全一致（参考 [`extensions/ask-user/src/channel-registry-register.ts:36-43`](../../../extensions/ask-user/src/channel-registry-register.ts) 注释说明）。
 
 **statusline `package.json` 不变**——它是协议主人（owner），被消费者。
 

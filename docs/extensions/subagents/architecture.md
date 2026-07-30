@@ -143,7 +143,7 @@ Core 内部进一步分两子层，依赖严格自上而下，禁止反向或同
 
 ### 测试（24 文件）
 
-`src/__tests__/` 下 24 个 `.test.ts` 测试文件（另含 `helpers/` 目录）覆盖 Core + Runtime + TUI 关键模块。详见 [pi-extension-standards.md](../../pi-extension-standards.md) §7 测试要求。
+`src/__tests__/` 下 24 个 `.test.ts` 测试文件（另含 `helpers/` 目录）覆盖 Core + Runtime + TUI 关键模块。详见 [development-guide.md](../development-guide.md) §7 测试要求。
 
 | 文件 | 覆盖 |
 |---|---|

@@ -132,7 +132,20 @@ task:  "read .agents/agents/review-aggregator.md；按其步骤读取以下 7 �
 
 ### 阶段 3：修 must-fix + 推 PR
 
-按 `~/.agents/skills/cr-fix/SKILL.md` 的分组规则（同文件 / 同模块优先成组、precommit 类单独成组、每组 3-10 个问题）派 worker：
+按以下分组规则派 worker：
+
+| 分组维度 | 规则 | 示例 |
+|---------|------|------|
+| **文件归属** | 同文件/同模块的问题归一组 | `extensions/foo/src/a.ts` 的所有问题归一组 |
+| **问题性质** | 同类型的问题可跨文件归一组 | 全部 "no-explicit-any" lint 问题归一组 |
+
+分组原则：
+- **每组 3-10 个问题**：太少浪费 subagent，太多单组上下文过载
+- **同组内文件尽量相邻**：减少 subagent 切换开销
+- **precommit 问题单独成组**：lint/format/typecheck 通常涉及全仓库，放最后跑
+- **相互依赖的问题分到同一组**：避免跨组等待
+
+输出"分组计划"草稿：每组列出「组名 + 问题清单（含文件:行号 + 描述 + level）」。
 
 ```text
 agent: "worker"
