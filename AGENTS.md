@@ -670,6 +670,15 @@ runtime 子进程（`packages/runtime/src/`）与 pi 子进程的所有日志输
 - 禁止 `npm version` 改版本号（会同步改写 package-lock.json），版本号用 `changeset version` 或手改 package.json
 - 子包若确需独立用 npm（罕见，如某个 vendored 工具），在该子包自己的 `.gitignore` 里放开 `package-lock.json` 规则，并在子包 package.json 声明对应 `packageManager`
 
+**保留 npm 的例外（不要"统一"成 pnpm）**：以下场景的 npm 命令是**刻意保留**的，未来 agent 做统一审查时**不要改**：
+- **第三方消费者安装指引**：`docs/extensions/local-dev-guide.md` 的 `npm install -g @earendil-works/pi-coding-agent`、`npm-prerelease/SKILL.md` 与 `release-npm-dev.yml` 的 `npm install @xyz-agent/extension-protocol@dev` 等。这些是发给 npm registry 的外部消费者的指引，他们环境未必装了 pnpm，npm 是最通用的兜底
+- **`npm publish`**：发包命令。`pnpm changeset publish` 内部最终也调 `npm publish`，文档里描述发包用 npm 是准确的
+- **runtime 安装用户 extension 的机制**：`extension-service.ts`/`installer.ts` 等代码里对用户 extension 执行 `npm install` 到数据目录——这是面向终端用户的 extension 安装机制，用户环境不可控，必须用 npm
+- **反例描述 / 规则正文**：「错误做法」表格里引用被禁的 `npm version`、§5 本节禁止 `npm install` 的规则条文，必须保留 npm 字样（描述被禁的命令名）
+- **`npx` 命令**：中立包执行器，不算 npm 风格违纪，保留
+
+**判断标准一句话**：命令执行者若是「本项目的开发者/CI/AI」→ 用 pnpm；若是「外部消费者/终端用户」或「描述被禁行为」→ 保留 npm。
+
 ## 跳过检查
 
 ### cw v1 testRunner cwd 对 monorepo 失效 [HISTORICAL]

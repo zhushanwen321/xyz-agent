@@ -100,6 +100,9 @@ if [[ -f "package.json" ]]; then
         fi
         pass "依赖已就绪（pnpm）"
     else
+        # 非 pnpm 项目 fallback（本脚本是通用多项目 merge 脚本，可能被复制到其它仓库使用）。
+        # 下面这段 npm ci/install + 子目录扫描逻辑只对非 pnpm 项目执行；xyz-agent 走上面的 pnpm 分支，
+        # 这段是 dead code 但刻意保留——删了会让脚本在其它 npm/yarn 项目里失效。见 AGENTS.md §5。
         # 动态读取 workspaces 配置
         WORKSPACE_DIRS=$(node -e "
             const p = require('./package.json');
