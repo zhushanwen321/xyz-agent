@@ -24,7 +24,7 @@
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
     "@earendil-works/pi-ai": "*",
-    "@sinclair/typebox": "*"
+    "typebox": "*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-tui": {
@@ -35,6 +35,7 @@
     }
   },
   "scripts": {
-    "typecheck": "npx tsc --noEmit"
+    "typecheck": "npx tsc --noEmit",
+    "test": "vitest run"
   }
 }

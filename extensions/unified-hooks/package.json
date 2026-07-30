@@ -21,7 +21,6 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "typebox": "*",
     "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
