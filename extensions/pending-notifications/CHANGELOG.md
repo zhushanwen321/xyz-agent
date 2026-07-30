@@ -1,5 +1,17 @@
 # @zhushanwen/pi-pending-notifications
 
+## 0.3.0
+
+### Minor Changes
+
+- 83e97ab: Integrate xyz-pi-extensions into xyz-agent monorepo
+
+  - Migrate 17 @zhushanwen/pi-\* extension packages from standalone repository
+  - Unify typebox imports to @sinclair/typebox across all extensions
+  - Add unit tests for vision, quota-providers/cache, model-switch/advisor+setup
+  - Fix type safety issues (PiAPI=any, TUnsafe compatibility)
+  - Clean up migration residue (dead aliases, dangling symlinks, stale comments)
+
 ## 0.2.1
 
 ### Patch Changes

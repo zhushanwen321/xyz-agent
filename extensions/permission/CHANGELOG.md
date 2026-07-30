@@ -1,5 +1,22 @@
 # @zhushanwen/pi-permission
 
+## 1.0.0
+
+### Minor Changes
+
+- 83e97ab: Integrate xyz-pi-extensions into xyz-agent monorepo
+
+  - Migrate 17 @zhushanwen/pi-\* extension packages from standalone repository
+  - Unify typebox imports to @sinclair/typebox across all extensions
+  - Add unit tests for vision, quota-providers/cache, model-switch/advisor+setup
+  - Fix type safety issues (PiAPI=any, TUnsafe compatibility)
+  - Clean up migration residue (dead aliases, dangling symlinks, stale comments)
+
+### Patch Changes
+
+- Updated dependencies [83e97ab]
+  - @zhushanwen/pi-statusline@0.6.0
+
 ## 0.1.0
 
 ### Minor Changes
