@@ -46,6 +46,7 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 - `extensions/` 目录下 16 个 `@zhushanwen/pi-*` extension 包 + `extensions/shared/quota-providers`，迁自已废弃的 xyz-pi-extensions 仓库，由本项目继续发布到 npm（`npm-v*` tag）
 - **Extension 开发规范**: [docs/extensions/development-guide.md](docs/extensions/development-guide.md)（完整指南）、[docs/extensions/extension-conventions.md](docs/extensions/extension-conventions.md)（强约束）、[docs/extensions/glossary.md](docs/extensions/glossary.md)（术语表）
 - 类型检查: `pnpm extensions:typecheck`；Lint: `pnpm extensions:lint`；测试: `pnpm extensions:test`
+- **Review 工作流**: `.agents/skills/pr-cr-fix/` 是 review→fix→PR 统一编排 skill，调度 `.agents/agents/` 下的 8 个 review agent（7 维审查 + 1 聚合器）。维度覆盖：arch-boundary / business-logic / electron-build / extension-api / monorepo-impact / test-coverage / type-safety。触发词："review 完开 PR"、"pr-cr-fix"。仅用于 xyz-agent worktree 的 PR 场景
 
 **Settings 模块设计文档**:
 - [Settings 视觉 demo](docs/page-design/archive/settings-final.html) — Section Groups 风格 HTML demo（pre-v3 历史稿）
@@ -538,7 +539,9 @@ npm 包发布流程（@zhushanwen/pi-* extensions + extension-protocol）：
 2. `pnpm changeset:version` 消费 changeset，bump 版本号
 3. commit + 打 tag `npm-v<根版本>` + push
 4. tag 触发 `release-npm.yml` → `pnpm changeset publish` 实际发 npm
-5. **禁止本地 `pnpm changeset publish` 或 `npm publish`**（曾因 npm registry 最终一致性导致 E403）；预发布走 `dev-npm-*` 分支 → `release-npm-dev.yml` → `@dev` dist-tag
+5. **禁止本地 `pnpm changeset publish` 或 `npm publish`**（曾因 npm registry 最终一致性导致 E403）；预发布走 `dev-npm-*` 分支 → `release-npm-dev.yml` → `@dev` dist-tag（脚本 `scripts/npm-prerelease.sh` 支持指定包名，如 `bash scripts/npm-prerelease.sh @zhushanwen/pi-goal`）
+
+> **merge skill 集成**：merge skill 阶段 4N 封装了上述 npm 发布流程（changeset version + npm-v* tag + CI 验证）。仅当 PR 含 `extensions/` 改动时执行，与 Electron 发布线（阶段 4，`v*` tag）独立。详见 `.agents/skills/merge/SKILL.md`
 
 每次 push tag 触发 CI（release workflow）构建 Electron 产物后，**必须等待 CI 完成并验证产物存在**。多次发生 AI push 后直接宣布"已完成"，实际 CI 构建失败或产物缺失而无人察觉。
 
