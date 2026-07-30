@@ -154,7 +154,7 @@ hover: text-neutral-fg
 | 动画 | 状态指示（双环 loader 1.4s / 单环 spinner 1s / 脉冲点 1.8s / blink 1s）+ 微交互（hover/折叠 `duration-fast` 120ms，focus `duration` 200ms，easing `--ease`）。reduced-motion 全局兜底。大动效后出 |
 | ChangeSetCard | 去 border，`bg-surface` + 10px 圆角；状态 badge 降灰阶（仅 ±行数保留 success/danger git 语义色）；「待审查」badge 胶囊 accent-soft |
 | UserBubble | 删 `border-border-strong`，仅 `bg-surface-hover` 做层级；保持 14px/4px 不对称圆角；**删 pending 态**（排队消息不再进对话流渲染，迁 QueueBubble） |
-| QueueBubble | **v6 重设计**（pending 消息统一入口）：带完整四边 border（非 side-stripe，遵循 impeccable），略窄于 composer（左右收进 16px）；head「N 排队中」+ 计数，多条可展开列表（FIFO 序号 + steer 蓝/followup 青圆点，列表项无 border-left 竖线）；消息被消费后从队列移除进对话流；只读 |
+| QueueBubble | **v6 重设计**（pending 消息统一入口）：带完整四边 border（非 side-stripe，遵循 impeccable）+ bg-surface 浮起 + 左右收进 16px；head 始终显「脉冲点+类型icon+N 排队中」**不展开首条摘要**（1条/收起都只 head）；多条展开列表项紧凑单行（icon+序号+文本）。类型用图标：⚡Zap=STEER(accent) / ⏰Clock=FOLLOWUP(info)；消息被消费后从队列移除进对话流；只读 |
 | Composer | **7 区构成**：RetryIndicator / QueueBubble / staging chip / ContextChipsBar(仅 image) / landing meta-row / Input / composer-bar(+添加·上下文 hover·模型·思考·发送位)。附件 8 路径 3 chip 色（紫 slash/image、绿 #file、蓝 @预留）。staging fork/handoff 互斥。发送位 4 态状态机。详见 v6-spec-conversation §9 |
 | PanelHeader | 去 `border-b`，用 bg-elevated 浮起分层；status icon 灰阶化，仅 git 点保留 danger/warn |
 
