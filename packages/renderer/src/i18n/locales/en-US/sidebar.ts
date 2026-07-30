@@ -114,8 +114,7 @@ export default {
     terminate: 'Terminate',
     terminateConfirm: 'Confirm terminate?',
     empty: 'No workflows',
-    emptyHint: 'Run a workflow script (e.g. /workflows run xxx) to start a workflow; progress appears here',
+    emptyHint: 'Workflows are multi-step automation scripts. Start one in chat and its progress appears here',
     agentsLabel: '{done}/{total}',
-    tokUnit: 'tok',
   },
 }
