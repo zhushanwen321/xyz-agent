@@ -386,6 +386,19 @@ describe('ExtensionService', () => {
       const disabledPath = join(testSettingsDir, 'disabled-packages.json')
       expect(existsSync(disabledPath)).toBe(false)
     })
+
+    it('rejects disabling mandatory packages', async () => {
+      // @zhushanwen/pi-goal 是 mandatory（与 uninstallExtension 守卫对称）：
+      // 禁用应抛 mandatory_cannot_disable，避免 UI 禁用但 getExtensionPaths 仍强加载的状态分离
+      await expect(service.toggleExtension('@zhushanwen/pi-goal', false))
+        .rejects.toThrow(/Mandatory extension cannot be disabled/)
+    })
+
+    it('allows enabling mandatory packages', async () => {
+      // 开启 mandatory 扩展允许（守卫只拦截禁用，开启无害）
+      await expect(service.toggleExtension('@zhushanwen/pi-goal', true))
+        .resolves.toBeUndefined()
+    })
   })
 
   // ── Task 3: ExtensionInstallError and error classification ────

@@ -494,6 +494,14 @@ export class ExtensionService {
    * 经 IExtensionSettings port 操作 disabled-packages.json。
    */
   async toggleExtension(name: string, enabled: boolean): Promise<void> {
+    // mandatory 扩展不可禁用（与 uninstallExtension 守卫对称，避免 UI 禁用但 getExtensionPaths 仍强加载的状态分离）
+    if (!enabled && isMandatoryExtension(name)) {
+      throw new ExtensionInstallError(
+        'mandatory_cannot_disable',
+        `Mandatory extension cannot be disabled: ${name}`,
+        'This extension is required by the application and cannot be disabled.',
+      )
+    }
     const source = `npm:${name}`
     await this.extSettings.setEnabled(source, enabled)
   }

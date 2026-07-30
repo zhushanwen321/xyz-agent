@@ -20,6 +20,7 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { getPiAgentDir } from '../infra/pi/pi-paths.js'
+import { logger } from '../infra/logger.js'
 
 /** app config.json 的 load/save 能力（ConfigService 注入，避免暴露其私有方法）。 */
 type AppConfigAccessors = {
@@ -166,7 +167,8 @@ export function ensureAutoRenameDefault(): void {
     // 标记已初始化（先写标记，再开开关；即使 enabled 写失败，标记已防重复）
     writeFileSync(initializedPath, '', 'utf-8')
     setAutoRenameEnabled(true)
-  } catch {
-    // 初始化失败不阻塞 boot
+  } catch (e) {
+    // 初始化失败不阻塞 boot，但记录原因便于诊断
+    logger.warn(`[worktree-config] ensureAutoRenameDefault failed: ${e instanceof Error ? e.message : String(e)}`)
   }
 }
