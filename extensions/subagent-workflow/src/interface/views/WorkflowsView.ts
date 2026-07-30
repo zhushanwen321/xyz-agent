@@ -109,7 +109,7 @@ function walled(theme: ThemeLike, content: string, contentWidth: number): string
 }
 
 // ── Minimal TUI duck-types（避免直接 import TUI/KeybindingsManager 类型 ──
-// 共享类型 fallback shared/types/mariozechner/index.d.ts 不导出 TUI 类，
+// 共享类型 fallback 不导出 TUI 类，
 // workspace 跨包 typecheck 会报 "no exported member 'TUI'"。
 // 此处用结构化接口替代——只声明 view 实际用到的成员（requestRender + terminal）。
 

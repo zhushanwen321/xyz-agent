@@ -12,12 +12,12 @@
 // 不导入 index.ts（它经 getAgentDir 值导入触发 alias 解析失败——alias 指向
 // .d.ts-only stub）。改测叶子注册函数。session_start 的
 // (event, ctx) 双参数契约由 tsconfig 的精确 stub 类型在编译期强制（见
-// shared/types/mariozechner/index.d.ts 注释：modelRegistry/cwd/ui 不在 event 上）。
+// 注释：modelRegistry/cwd/ui 不在 event 上）。
 
 import { describe, expect, it, vi } from "vitest";
 
 // registerSubagentTool 经 subagent-tool.ts 值导入 StringEnum（pi-ai）+ Type（typebox）。
-// shared/types stub 是 .d.ts（仅类型），pnpm optional-peer-dep 插件拦截值导入 → vi.mock 兜底。
+// stub 是 .d.ts（仅类型），pnpm optional-peer-dep 插件拦截值导入 → vi.mock 兜底。
 vi.mock("@earendil-works/pi-ai", () => ({
   StringEnum: (values: string[]) => ({ type: "string", enum: values }),
 }));
@@ -263,7 +263,7 @@ describe("subagent tool contract [MANDATORY]", () => {
 // ============================================================
 describe("session_start handler signature (compile-time guarantee)", () => {
   it("ExtensionHandler<SessionStartEvent> is (event, ctx) two-param — enforced by stub type", () => {
-    // 此测试是编译期断言：shared/types/mariozechner/index.d.ts:111 声明
+    // 此测试是编译期断言：stub 类型声明
     //   ExtensionHandler<E, R> = (event: E, ctx: ExtensionContext) => Promise<R|void> | R | void;
     // 且 SessionStartEvent 注释明确 modelRegistry/cwd/ui 不在 event 上（在 ctx）。
     // index.ts:66 `pi.on("session_start", (_event, ctx) => {...})` 通过此类型检查即证明契约。

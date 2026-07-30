@@ -10,7 +10,7 @@
 
 /**
  * ModelRegistry 的最小接口（duck-typed，测试可 mock）。
- * 字段结构与 Pi SDK 的 ctx.modelRegistry 对齐（见 shared/types stub）。
+ * 字段结构与 Pi SDK 的 ctx.modelRegistry 对齐。
  */
 export interface ModelRegistryLike {
   /** 返回所有已配置鉴权的可用模型。 */

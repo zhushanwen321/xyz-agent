@@ -10,7 +10,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 /**
  * Subset of `ToolExecutionEndEvent` fields used by this hook.
  * Local interface because the SDK's full event type is not re-exported
- * by the CI ambient type stubs in `shared/types/mariozechner/index.d.ts`.
+ * by the CI ambient type stubs.
  *
  * `result` 形如 `{ content: Array<{ type: "text", text: string }>, isError: boolean }`
  * （Pi 框架在 tool execute throw 时塞入 error content）。SDK 事件结构里没有独立
