@@ -3,7 +3,18 @@
   "changelog": "@changesets/cli/changelog",
   "commit": false,
   "fixed": [],
-  "linked": [],
+  "linked": [
+    [
+      "@zhushanwen/pi-quota-providers",
+      "@zhushanwen/pi-model-switch",
+      "@zhushanwen/pi-statusline"
+    ],
+    [
+      "@zhushanwen/pi-structured-output",
+      "@zhushanwen/pi-subagent-workflow",
+      "@zhushanwen/pi-ask-user"
+    ]
+  ],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",

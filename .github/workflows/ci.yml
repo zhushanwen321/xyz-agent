@@ -38,7 +38,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
 
       # pnpm workspace 单步安装：根 + packages/* + apps/* 一次装完
@@ -64,7 +64,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
 
       - name: Install dependencies
@@ -80,6 +80,9 @@ jobs:
 
       - name: TypeCheck - shared
         run: pnpm --filter @xyz-agent/shared run typecheck
+
+      - name: TypeCheck - pi extensions
+        run: pnpm extensions:typecheck
 
   # SDK 类型同步防漂移：runtime 的 plugin-types 是 single source of truth，
   # plugin-sdk/src/types.ts 由 sync-types.sh 自动生成。此 job 重新生成并要求
@@ -99,7 +102,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
 
       - name: Install dependencies
@@ -125,7 +128,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
 
       - name: Install dependencies
@@ -141,6 +144,9 @@ jobs:
 
       - name: Test - main
         run: pnpm --filter @xyz-agent/electron run test:main
+
+      - name: Test - pi extensions
+        run: pnpm extensions:test
 
       - name: Upload test results
         if: always()

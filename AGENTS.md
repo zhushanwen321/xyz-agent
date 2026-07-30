@@ -34,13 +34,20 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 **外部项目源码**:
 - **pi**: [badlogic/pi-mono](https://github.com/badlogic/pi-mono) — AI coding agent CLI，xyz-agent 通过子进程 RPC 调用。session tree / fork / clone 核心能力为 pi 原生，xyz-agent 不依赖任何 fork 特有改动
   - npm 包: `@earendil-works/pi-coding-agent`
-  - 当前版本: `0.80.3`
+  - 当前版本: `0.82.1`（devDependency 提供 extensions 开发期类型；打包的 pi binary 见 `resources/pi/`）
   - 历史背景：此前使用 fork `zhushanwen321/pi`（包名 `xyz-pi`），fork 唯一改动是在 `get_state` RPC 响应中透出 `leafId` 字段。该字段在 xyz-agent 前端从未消费，2026-07 已切回上游，leafId 改为从 JSONL session 文件解析近似值
   - Skill 加载: `packages/coding-agent/src/core/skills.ts`
   - Skill 展开: `packages/coding-agent/src/core/agent-session.ts` — `_expandSkillCommand()`
   - Slash 命令: `packages/coding-agent/src/core/slash-commands.ts`
   - RPC 协议: `packages/coding-agent/src/modes/rpc/rpc-mode.ts`
   - TUI 交互: `packages/coding-agent/src/modes/interactive/interactive-mode.ts`
+
+**Pi Extension 源码（本项目维护）**:
+- `extensions/` 目录下 16 个 `@zhushanwen/pi-*` extension 包 + `extensions/shared/quota-providers`，迁自已废弃的 xyz-pi-extensions 仓库，由本项目继续发布到 npm（`npm-v*` tag）
+- **Extension 开发规范**: [docs/extensions/development-guide.md](docs/extensions/development-guide.md)（完整指南）、[docs/extensions/extension-conventions.md](docs/extensions/extension-conventions.md)（强约束）、[docs/extensions/glossary.md](docs/extensions/glossary.md)（术语表）
+- 类型检查: `pnpm extensions:typecheck`；Lint: `pnpm extensions:lint`；测试: `pnpm extensions:test`
+- **本地开发调试**: `.agents/skills/dev-link/` 管理 `XYZ_EXTENSION_PATHS` 环境变量，在本地源码（live edit）和 npm 版本间切换 extension。`link-local.sh <pkg>` 添加 link → `set -a && source .env.dev-extensions && set +a && pnpm dev` 启动 → 改源码后新建 session 即生效。详见 [本地开发指南](docs/extensions/local-dev-guide.md)
+- **Review 工作流**: `.agents/skills/pr-cr-fix/` 是 review→fix→PR 统一编排 skill，调度 `.agents/agents/` 下的 8 个 review agent（7 维审查 + 1 聚合器）。维度覆盖：arch-boundary / business-logic / electron-build / extension-api / monorepo-impact / test-coverage / type-safety。触发词："review 完开 PR"、"pr-cr-fix"。仅用于 xyz-agent worktree 的 PR 场景
 
 **Settings 模块设计文档**:
 - [Settings 视觉 demo](docs/page-design/archive/settings-final.html) — Section Groups 风格 HTML demo（pre-v3 历史稿）
@@ -63,6 +70,11 @@ bash scripts/postbuild-validate.sh         # 打包后验证
 
 # 单独验证 runtime bundle
 bash scripts/validate-runtime-bundle.sh
+
+# Pi Extension 开发（extensions/ 目录）
+pnpm extensions:typecheck   # 全量 tsc 类型检查
+pnpm extensions:lint        # ESLint（extensions/ override 规则）
+pnpm extensions:test        # 全部 extension 包 vitest 测试
 ```
 
 ## 前端调试（Playwright 连 dev app）
@@ -405,9 +417,9 @@ xyz-agent runtime 只是旁观转发：它看到 pi 又开始流 `message_start`
 
 **排查跨层机制的强制步骤**：
 1. xyz-agent runtime 侧（event-interpreter / session-service / message-dispatcher / session-message-handler）：这些只是「旁观 + 转发 + UI 同步」，不主动编排 pi 行为
-2. pi extension 机制（运行在 pi 进程内）：`@zhushanwen/pi-subagent-workflow` / `pi-subagents` 等扩展的 notifier / hook 才是续跑/编排的发起方。源码在 `~/.xyz-agent/pi/agent/npm/node_modules/@zhushanwen/pi-*/src/`
+2. pi extension 机制（运行在 pi 进程内）：`@zhushanwen/pi-subagent-workflow` / `pi-subagents` 等扩展的 notifier / hook 才是续跑/编排的发起方。**开发期源码**在本项目 `extensions/`（@zhushanwen/pi-* 包），**运行时安装版**在用户机器 `~/.xyz-agent/pi/agent/npm/node_modules/@zhushanwen/pi-*/src/`（排查用户环境问题时看这个）
 3. pi 私有协议（`triggerTurn`/`deliverAs`/`before_agent_start` 等）：`packages/shared/src/message.ts` 的注释会提到这些语义（如「triggerTurn:true 唤醒父 agent 接力处理结果」），但 xyz-agent 不实现它们
-4. 设计文档：`docs/page-design/v3/` 下常有 extension adaptation 文档（如 `subagent-panel/workflow-extension-adaptation.md`）说明跨层协议
+4. 设计文档：`docs/page-design/v3/` 下常有 extension adaptation 文档（如 `subagent-panel/workflow-extension-adaptation.md`）说明跨层协议。extension 的 `ctx.mode`、运行环境、SDK 接口契约等前提知识见 [docs/extensions/extension-conventions.md](docs/extensions/extension-conventions.md)
 
 **判断「是 xyz-agent 职责还是 pi 职责」的依据**：如果一个行为涉及 pi 的 session loop / turn 调度 / LLM 调用，它的发起方几乎一定在 pi 进程内（extension 或 pi 核心），xyz-agent runtime 只是通过 RPC/事件流与 pi 交互，不会自己编排 pi 的 turn。xyz-agent 的职责是 UI 状态同步 + 用户命令转发，不是 pi 行为编排。
 
@@ -463,7 +475,7 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
    - **Escape hatch**（`<style scoped>`）：只用于 Tailwind 无法表达的场景：伪元素（`::placeholder`）、后代选择器（`.msg__body p`）、Vue Transition 类（`.xxx-enter-from`）
    - 禁止 `@apply`，禁止在 `style.css` 中新增组件级样式规则
 4. **行数上限** — `<template>` ≤ 400 行, `<script setup>` ≤ 300 行
-5. **禁止 `any`** — 用 `unknown` 或具体类型
+5. **禁止 `any`** — 用 `unknown` 或具体类型。`as never` / `as any` / `as unknown as T` 会绕过类型检查：不可替代的断言必须有运行时 guard 兜底；`(x as any).field` 改为类型守卫函数。extensions/ 代码由 `taste/no-unsafe-cast` 规则强制（warn），前端代码作为原则遵守
 6. **v-model 绑定** — 禁止 `:value` + `@input`，用 `v-model`
 7. **Promise.allSettled** — 独立数据源用 `allSettled`，不用 `all`
 8. **禁止硬编码颜色** — 用 CSS 变量（`var(--accent)`）或语义 Tailwind 类
@@ -507,6 +519,12 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 - 提交范围遵循全局提交策略：优先提交本次会话产生的改动，文件级颗粒度
 
 
+## Git 规范
+
+- **分支命名**：`feat/`、`fix/`、`refactor/`、`chore/` 前缀（如 `feat/merge-extensions`、`fix/app-start-error`）
+- **Commit 信息**：英文，遵循 conventional commits 风格（`feat:`/`fix:`/`refactor:`/`docs:`/`chore:`/`ci:` 前缀）
+- **提交粒度**：见全局 AGENTS.md「提交策略」——优先提交自己的改动，认知外的改动不碰
+
 ## 架构约定
 
 - **视图切换**: 状态驱动（settingsStore.currentView），不用 vue-router
@@ -517,6 +535,22 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 - **Runtime broadcast 时序竞争 [HISTORICAL]**: session 级 broadcast（如 `session.commands`）若在 session 激活/创建流程内部发出（`ensureActive`/`lifecycle.create` 内的 `fetchAndBroadcastCommands`），会**早于** renderer 订阅该 sessionId 通道——订阅依赖 `switchSession`/`create` 的 RPC resolve → `activeId`/`currentSessionId` 更新 → `CommandPopover` 的 `watch(sessionId)` 重订，而 broadcast 已在此之前发出 → 消息丢失，renderer transport 只收到同流程的 `reply`（RPC 响应，走 pending map，不依赖订阅）。**约束：renderer 切换/创建 session 后需立即消费的 session 级状态，必须主动拉取**（新增 `session.getCommands` RPC，`useSidebar.selectSession` / `useNewTaskFlow.precreateSessionAndLoadCommands` 在 session 建立后调它 + `events.dispatchSession` 本地投递），不可依赖 broadcast 到达。新增任何 session 级 broadcast 必须对照本条评估。
 
 ## 发布与 CI 验证 [HISTORICAL]
+
+本项目有**两条独立的发布管线**，通过不同 tag 前缀解耦：
+
+| 管线 | 产物 | 触发 tag | Workflow | 验证 |
+|------|------|----------|----------|------|
+| **Electron 打包** | DMG/EXE/AppImage 桌面应用 | `v*` | `release.yml` | `scripts/verify-ci-release.sh` |
+| **npm 包发布** | `@xyz-agent/extension-protocol` + `@zhushanwen/pi-*` extensions | `npm-v*` | `release-npm.yml` | changeset publish 输出 + npm registry 核对 |
+
+npm 包发布流程（@zhushanwen/pi-* extensions + extension-protocol）：
+1. 用 `pnpm changeset` 创建 changeset（声明改了哪些包、版本 bump 类型）
+2. `pnpm changeset:version` 消费 changeset，bump 版本号
+3. commit + 打 tag `npm-v<根版本>` + push
+4. tag 触发 `release-npm.yml` → `pnpm changeset publish` 实际发 npm
+5. **禁止本地 `pnpm changeset publish` 或 `npm publish`**（曾因 npm registry 最终一致性导致 E403）；预发布走 `dev-npm-*` 分支 → `release-npm-dev.yml` → `@dev` dist-tag（脚本 `scripts/npm-prerelease.sh` 支持指定包名，如 `bash scripts/npm-prerelease.sh @zhushanwen/pi-goal`）
+
+> **merge skill 集成**：merge skill 阶段 4N 封装了上述 npm 发布流程（changeset version + npm-v* tag + CI 验证）。仅当 PR 含 `extensions/` 改动时执行，与 Electron 发布线（阶段 4，`v*` tag）独立。详见 `.agents/skills/merge/SKILL.md`
 
 每次 push tag 触发 CI（release workflow）构建 Electron 产物后，**必须等待 CI 完成并验证产物存在**。多次发生 AI push 后直接宣布"已完成"，实际 CI 构建失败或产物缺失而无人察觉。
 
@@ -656,6 +690,7 @@ cw v1 的 testRunner 硬编码 `cwd: workspacePath`（仓库根）跑 `npx vites
 ```bash
 SKIP_ALL_CHECKS=1 git commit       # 跳过所有（仅紧急情况）
 SKIP_FRONTEND_LINT=1 git commit    # 跳过 ESLint
+SKIP_EXTENSION_LINT=1 git commit   # 跳过 extensions ESLint + tsc + manifest/convention 检查
 SKIP_CODE_RULES_CHECK=1 git commit # 跳过 vue_rules_checker
 SKIP_ENV_WHITELIST_CHECK=1 git commit   # 跳过 ENV 白名单同步检查
 SKIP_PATH_WHITELIST_CHECK=1 git commit   # 跳过路径白名单动态化检查
