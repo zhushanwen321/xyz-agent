@@ -211,18 +211,20 @@ body {
 .ub-v6 { max-width: 76%; border-radius: 14px 14px 4px 14px; background: var(--surface-hover); padding: 9px 13px; font-size: 13px; line-height: 1.55; color: var(--neutral-fg); }
 .ub-v6.editing { border: 1px solid var(--accent); background: var(--bg-input); box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 22%, transparent); border-radius: 14px; padding: 8px; }
 
-/* ── QueueBubble（v6 重设计：幽灵卡片，无 border，bg-surface 浮起 + 左侧脉冲点）── */
-/* pending 消息统一在此展示，不再进对话流。消息被消费后从队列移除，进入对话流渲染为正常 UserBubble */
-.qb-v6 { background: var(--surface); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 8px; }
+/* ── QueueBubble（v6 重设计 v2：带边框队列，略窄于 composer，遵循 impeccable）──
+   边框是完整四边（非 side-stripe），表达边界而非色块。
+   左右各收进 16px（对齐 composer-box 内边距），视觉比 composer 窄一档，层级退后。
+   列表项去 border-left（圆点已是 leading 分类标记，竖线冗余 → impeccable side-stripe 禁令）*/
+.qb-v6 { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; margin: 0 16px 8px; }
 .qb-head { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .qb-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex-shrink: 0; animation: pulse-accent 1.8s ease-in-out infinite; }
 @keyframes pulse-accent { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
 .qb-label { font-size: 12px; font-weight: 500; color: var(--neutral-fg); }
 .qb-count { font-family: var(--font-mono); font-size: 11px; color: var(--neutral-mid); }
-.qb-chev { width: 11px; height: 11px; color: var(--neutral-dim); transition: transform var(--duration-fast); }
+.qb-chev { width: 11px; height: 11px; color: var(--neutral-dim); transition: transform var(--duration-fast); margin-left: auto; }
 .qb-head.expanded .qb-chev { transform: rotate(90deg); }
-.qb-list { margin-top: 8px; padding-left: 15px; display: flex; flex-direction: column; gap: 8px; }
-.qb-item { display: flex; align-items: flex-start; gap: 8px; padding-left: 12px; border-left: 1px solid var(--border); }
+.qb-list { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+.qb-item { display: flex; align-items: flex-start; gap: 8px; }
 .qb-item-dot { width: 6px; height: 6px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
 .qb-item-dot.steer { background: var(--accent); }
 .qb-item-dot.followup { background: var(--info); }
@@ -1012,14 +1014,14 @@ added 1 package in 2s</div>
   </section>
 
   <!-- ================================================================
-       §8.5 QueueBubble（v6 重设计：幽灵卡片，pending 消息统一入口）
+       §8.5 QueueBubble（v6 重设计 v2：带边框队列，略窄于 composer，遵循 impeccable）
        ================================================================ -->
   <section class="spec" id="s8b">
     <div class="spec-head"><span class="spec-num">§8.5</span><h2 class="spec-title">QueueBubble · 排队队列</h2></div>
-    <p class="spec-desc">composer-box 上方的排队消息指示器。v6 重设计：<b>去 border</b>，<code>bg-surface</code> 浮起 + 左侧脉冲点；head 显「N 排队中」+ 计数，多条可展开列表。steer（蓝）/followup（青）用类型点区分。消息被消费（<code>message_start</code> 到达）后从队列移除，进入对话流渲染为正常 UserBubble（§8）。只读——入队后不可改不可撤（pi 无 clear_queue RPC）。</p>
+    <p class="spec-desc">composer-box 上方的排队消息指示器。v6：<b>带完整四边 border</b>（非 side-stripe），略窄于 composer（左右各收进 16px 对齐 composer-box 内边距，层级退后）；head 显「N 排队中」+ 计数，多条可展开列表。steer（蓝）/followup（青）用类型圆点区分（列表项无 border-left 竖线——圆点已是分类标记，竖线冗余，impeccable side-stripe 禁令）。消息被消费（<code>message_start</code> 到达）后从队列移除，进入对话流渲染为正常 UserBubble（§8）。只读。</p>
     <div class="change-points">
-      <span class="cp cp-now"><b>现</b> border + accent-soft 底 + 蓝点脉冲</span>
-      <span class="cp cp-v6"><b>v6</b> 无 border · bg-surface 浮起 + 左侧脉冲点</span>
+      <span class="cp cp-v6"><b>带边框</b> border 四边（非 side-stripe），略窄于 composer</span>
+      <span class="cp cp-v6"><b>列表项</b> 去 border-left（圆点分类，遵循 impeccable）</span>
     </div>
 
     <div class="render-frame">
@@ -1090,7 +1092,7 @@ added 1 package in 2s</div>
     </div>
 
     <div class="anno-grid">
-      <div class="anno"><b>容器:</b><br><span class="old">border + accent-soft 底</span><br><span class="v6">无 border · bg-surface · rounded(8px) · mb-2</span></div>
+      <div class="anno"><b>容器:</b><br><span class="old">border + accent-soft 底</span><br><span class="v6">border 四边 border 色 · bg-surface · rounded(8px) · 左右收进 16px · mb-2</span></div>
       <div class="anno"><b>head padding:</b><br>10px 12px</div>
       <div class="anno"><b>脉冲点:</b><br>7px accent · pulse-accent 1.8s</div>
       <div class="anno"><b>head 文案:</b><br>「N 排队中」12px neutral-fg + 计数 mono 11px neutral-mid</div>
@@ -1104,78 +1106,188 @@ added 1 package in 2s</div>
   </section>
 
   <!-- ================================================================
-       §9 Composer（完整构成：7 区 + 发送位三态）
+       §9 Composer（详尽：构成 + landing/panel + 附件 + staging + popover + 发送状态机）
        ================================================================ -->
   <section class="spec" id="s9">
     <div class="spec-head"><span class="spec-num">§9</span><h2 class="spec-title">Composer</h2></div>
-    <p class="spec-desc">输入框完整构成（7 个区）。v6：非 landing 态与内容列同宽居中（max-w-720px）；默认无边框（<code>bg-bg-input</code> 凹陷），focus 才出 accent ring。下方自上而下：<code>RetryIndicator</code> → <code>QueueBubble</code>(§8.5) → composer-box（staging chip / ContextChipsBar / landing meta-row / Input / composer-bar 工具条）。发送位三态：send / stop / spinner。</p>
+    <p class="spec-desc">输入框完整规格。自上而下 7 区：RetryIndicator → QueueBubble(§8.5) → composer-box（staging chip / ContextChipsBar / landing meta-row / Input / composer-bar 工具条）。landing 与 panel 两态视觉本体相同，差异仅在宽度、meta-row、slash 命令源。附件 8 种插入路径，3 种 chip 色（紫绿蓝）。staging fork/handoff 两模式。composer-bar 四个 popover。发送位 4 态状态机。</p>
     <div class="change-points">
       <span class="cp cp-v6"><b>非 landing</b> 居中 max-w-720px</span>
-      <span class="cp cp-v6"><b>默认无边框</b>，focus/bash 才出 ring</span>
-      <span class="cp cp-v6"><b>发送位三态</b> send / stop / spinner</span>
+      <span class="cp cp-v6"><b>默认无边框</b>，focus/bash/staging 才出 ring</span>
+      <span class="cp cp-v6"><b>发送位</b> 4 态状态机</span>
     </div>
 
-    <!-- 9A. 完整构成图（panel 态 · has-input） -->
-    <h3 style="font-size:14px;color:var(--neutral-fg);margin:4px 0 14px;font-weight:500;">9A. 完整构成 · panel 态 has-input（标注 7 区）</h3>
+    <!-- 9A. 构成总览 + landing/panel 差异 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:4px 0 14px;font-weight:500;">9A. 构成总览 · panel 态（7 区）+ landing/panel 差异</h3>
     <div class="render-frame">
       <div class="panel-stage">
         <div class="comp-wrap centered">
-          <!-- ① RetryIndicator -->
-          <div class="retry-v6"><svg class="retry-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>上次失败 · <span class="retry-act">重试</span> <span style="margin-left:auto;color:var(--neutral-dim);font-size:10px;">① RetryIndicator</span></div>
-          <!-- ② QueueBubble（§8.5，此处略画）-->
-          <div class="qb-v6" style="margin-bottom:8px;"><div class="qb-head"><span class="qb-dot"></span><span class="qb-label" style="font-size:11px;">1 排队中</span><span style="margin-left:auto;color:var(--neutral-dim);font-size:10px;">② QueueBubble (§8.5)</span></div></div>
-          <!-- ③~⑦ composer-box -->
+          <div class="retry-v6"><svg class="retry-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/></svg>上次失败 · <span class="retry-act">重试</span> <span style="margin-left:auto;color:var(--neutral-dim);font-size:10px;">① RetryIndicator</span></div>
+          <div class="qb-v6"><div class="qb-head"><span class="qb-dot"></span><span class="qb-label" style="font-size:11px;">1 排队中</span><span style="color:var(--neutral-dim);font-size:10px;">② QueueBubble §8.5</span></div></div>
           <div class="comp-box-v6 has-input">
-            <!-- ③ staging chip（fork/handoff 模式标识）-->
-            <div class="comp-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="6" r="3"/><path d="M6 9v3a6 6 0 0 0 12 0V9"/></svg>FORK 模式<span class="chip-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span></div>
-            <!-- ④ ContextChipsBar（已附上下文 chip）-->
+            <div class="comp-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M6 9v3a6 6 0 0 0 9 0V9"/></svg>FORK 模式<span class="chip-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/></svg></span></div>
             <div class="ctx-chips">
-              <span class="ctx-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>PanelHeader.vue<span class="ctx-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/></svg></span></span>
               <span class="ctx-chip image"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>设计稿.png<span class="ctx-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/></svg></span></span>
-              <span style="margin-left:auto;color:var(--neutral-dim);font-size:10px;align-self:center;">④ ContextChipsBar</span>
+              <span style="margin-left:auto;color:var(--neutral-dim);font-size:10px;align-self:center;">④ ContextChipsBar（仅 image 进此）</span>
             </div>
-            <!-- ⑥ Input -->
-            <div class="comp-input">重构 PanelHeader，去掉 border-b 改用 bg-elevated 浮起分层<span style="float:right;color:var(--neutral-dim);font-size:10px;">⑥ Input</span></div>
-            <!-- ⑦ composer-bar 工具条 -->
+            <div class="comp-input">重构 PanelHeader<span style="float:right;color:var(--neutral-dim);font-size:10px;">⑥ Input（contenteditable）</span></div>
             <div class="comp-bar">
               <span class="bar-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>
               <span class="bar-spacer"></span>
-              <span class="bar-btn" title="上下文容量"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
-              <span class="bar-btn" title="模型"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/></svg><span style="font-family:var(--font-mono);">glm-5.2</span></span>
-              <span class="bar-btn think" title="思考等级"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/></svg><span>medium</span></span>
+              <span class="bar-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span style="font-family:var(--font-mono);">12k · 24%</span></span>
+              <span class="bar-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg><span style="font-family:var(--font-mono);">glm-5.2</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:9px;height:9px;"><polyline points="6 9 12 15 18 9"/></svg></span>
+              <span class="bar-btn think"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/></svg><span>medium</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:9px;height:9px;"><polyline points="6 9 12 15 18 9"/></svg></span>
               <span class="send-slot send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span>
             </div>
           </div>
         </div>
-        <div style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);padding:8px 20px 0;">③ staging chip（fork/handoff，仅模式活跃时）· ⑤ landing meta-row（仅 landing，此处 panel 态无）· ⑦ composer-bar：+ 添加 / 上下文 / 模型 / 思考等级 / 发送</div>
+        <div style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);padding:8px 20px 0;">③ staging（fork/handoff，仅活跃时）· ⑤ meta-row（仅 landing）· ⑦ composer-bar：+ / 上下文(hover) / 模型(click) / 思考(click) / 发送位</div>
       </div>
     </div>
 
-    <!-- 9B. 发送位三态 -->
-    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">9B. 发送位三态 · send / stop / spinner</h3>
+    <p style="font-size:12px;color:var(--neutral-mid);margin:12px 0;padding:10px 14px;background:var(--bg-card);border-radius:var(--radius);"><b style="color:var(--neutral-fg);">landing vs panel 差异（仅 3 点，本体视觉 100% 相同）：</b>① 宽度——landing <code>mx-auto max-w-720px</code>，panel 撑满（v6 改 panel 也居中 720）；② meta-row——landing 注入 directory/branch/preset chip（见 9C），panel 为空；③ slash 命令源——landing=extCmds+skills，panel=compact+pi 命令。RetryIndicator/QueueBubble/ContextChipsBar/composer-bar/发送位<b>两态完全一致</b>。</p>
+
+    <!-- 9B. 附件 8 路径 + chip 类型 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">9B. 附件/上下文插入 · 8 种路径 + 3 种 chip</h3>
+    <div class="render-frame">
+      <h4 style="font-size:12px;color:var(--neutral-mid);margin:0 0 10px;font-weight:500;">3 种内联 chip（在 Input contenteditable 内，非 ContextChipsBar）</h4>
+      <div class="panel-stage" style="padding:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+        <div style="display:inline-flex;align-items:center;gap:4px;padding:1px 6px;border-radius:var(--radius-sm);background:var(--reasoning-soft);color:var(--reasoning);font:500 12px/1.4 var(--font-sans);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>skill:code-review<span style="opacity:.5;margin-left:2px;">×</span>
+        </div>
+        <span style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);">紫色 slash chip（/ 命令）· reasoning · 只允许 1 个 · 插最前</span>
+      </div>
+      <div class="panel-stage" style="padding:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:8px;">
+        <div style="display:inline-flex;align-items:center;gap:4px;padding:1px 4px;border-radius:var(--radius-sm);background:var(--success-soft);color:var(--success);font:500 12px/1.4 var(--font-sans);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>PanelHeader.vue:L12<span style="opacity:.5;margin-left:2px;">×</span>
+        </div>
+        <span style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);">绿色 file chip（# 引用 / + 附件）· success · 支持行范围 · 插光标处</span>
+      </div>
+      <div class="panel-stage" style="padding:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:8px;">
+        <div style="display:inline-flex;align-items:center;gap:4px;padding:1px 4px;border-radius:var(--radius-sm);background:var(--accent-soft);color:var(--accent);font:500 12px/1.4 var(--font-sans);">@model-select</div>
+        <span style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);">蓝色 @ chip（纯文本 mention，无浮层/无 segment，功能预留）· 无删除按钮</span>
+      </div>
+      <div class="panel-stage" style="padding:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:8px;">
+        <div style="display:inline-flex;align-items:center;gap:4px;padding:1px 6px;border-radius:var(--radius-sm);background:var(--reasoning-soft);color:var(--reasoning);font:500 12px/1.4 var(--font-sans);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>截图.png<span style="opacity:.5;margin-left:2px;">×</span>
+        </div>
+        <span style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);">紫色 image chip（粘贴/拖拽/+图片）· reasoning · 也进 ContextChipsBar</span>
+      </div>
+
+      <h4 style="font-size:12px;color:var(--neutral-mid);margin:16px 0 10px;font-weight:500;">8 种插入路径</h4>
+      <table class="z-table" style="background:var(--bg-card);border-radius:var(--radius);overflow:hidden;">
+        <thead><tr><th style="text-align:left;padding:8px 10px;font-size:11px;color:var(--neutral-dim);text-transform:uppercase;border-bottom:1px solid var(--border-strong);">入口</th><th style="text-align:left;padding:8px 10px;font-size:11px;color:var(--neutral-dim);text-transform:uppercase;border-bottom:1px solid var(--border-strong);">触发</th><th style="text-align:left;padding:8px 10px;font-size:11px;color:var(--neutral-dim);text-transform:uppercase;border-bottom:1px solid var(--border-strong);">产物</th></tr></thead>
+        <tbody>
+          <tr><td style="padding:7px 10px;border-bottom:1px solid var(--border);"><b>+ 附件</b></td><td style="padding:7px 10px;border-bottom:1px solid var(--border);">click + → 附件</td><td style="padding:7px 10px;border-bottom:1px solid var(--border);color:var(--success);">绿色 file chip（光标处）</td></tr>
+          <tr><td style="padding:7px 10px;border-bottom:1px solid var(--border);"><b>+ 图片</b></td><td style="padding:7px 10px;border-bottom:1px solid var(--border);">click + → 图片</td><td style="padding:7px 10px;border-bottom:1px solid var(--border);color:var(--reasoning);">紫色 image chip + ContextChipsBar</td></tr>
+          <tr><td style="padding:7px 10px;border-bottom:1px solid var(--border);"><b>+ 命令</b></td><td style="padding:7px 10px;border-bottom:1px solid var(--border);">click + → 命令</td><td style="padding:7px 10px;border-bottom:1px solid var(--border);">打开 slash 浮层（无 chip）</td></tr>
+          <tr><td style="padding:7px 10px;border-bottom:1px solid var(--border);"><b>/ 斜杠</b></td><td style="padding:7px 10px;border-bottom:1px solid var(--border);">敲 / （最左无 chip）</td><td style="padding:7px 10px;border-bottom:1px solid var(--border);color:var(--reasoning);">紫色 slash chip（最前，只 1 个）</td></tr>
+          <tr><td style="padding:7px 10px;border-bottom:1px solid var(--border);"><b># 文件</b></td><td style="padding:7px 10px;border-bottom:1px solid var(--border);">敲 # （光标处）</td><td style="padding:7px 10px;border-bottom:1px solid var(--border);color:var(--success);">绿色 file chip（光标处，支持 L12 行范围）</td></tr>
+          <tr><td style="padding:7px 10px;border-bottom:1px solid var(--border);"><b>@ mention</b></td><td style="padding:7px 10px;border-bottom:1px solid var(--border);">无浮层（仅 API）</td><td style="padding:7px 10px;border-bottom:1px solid var(--border);color:var(--accent);">蓝色 @ chip（纯文本，预留）</td></tr>
+          <tr><td style="padding:7px 10px;border-bottom:1px solid var(--border);"><b>粘贴图片</b></td><td style="padding:7px 10px;border-bottom:1px solid var(--border);">Ctrl/Cmd+V</td><td style="padding:7px 10px;border-bottom:1px solid var(--border);color:var(--reasoning);">紫色 image chip（占位→回填）</td></tr>
+          <tr><td style="padding:7px 10px;"><b>拖拽图片</b></td><td style="padding:7px 10px;">drop 到 composer-box</td><td style="padding:7px 10px;color:var(--reasoning);">紫色 image chip（同粘贴）</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 9C. staging fork/handoff -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">9C. staging · fork / handoff 两模式</h3>
+    <div class="render-frame">
+      <div class="panel-stage" style="padding:20px;">
+        <div style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:8px;">fork（⌘⇧G）— 从某 assistant fork 提问，发到新分支</div>
+        <div class="comp-wrap centered" style="padding:0 0 12px;">
+          <div class="comp-box-v6" style="border:1px solid var(--accent);box-shadow:0 0 0 3px var(--accent-ring);background:var(--accent-soft);">
+            <div class="comp-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M6 9v3a6 6 0 0 0 9 0V9"/></svg>将发到新分支 · 与主线隔离<span class="chip-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/></svg></span></div>
+            <div class="comp-input ph" style="color:var(--neutral-mid);">想从这条回复 fork 提问什么？（⏎ fork 并发送，Esc 退出）</div>
+            <div class="comp-bar"><span class="send-slot send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span></div>
+          </div>
+        </div>
+        <div style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);margin:12px 0 8px;">handoff（⌘J）— 交接到新 session，输入作为首条消息</div>
+        <div class="comp-wrap centered" style="padding:0;">
+          <div class="comp-box-v6" style="border:1px solid var(--accent);box-shadow:0 0 0 3px var(--accent-ring);background:var(--accent-soft);">
+            <div class="comp-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>交接到新 session · 当前输入将发送到新会话<span class="chip-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/></svg></span></div>
+            <div class="comp-input ph" style="color:var(--neutral-mid);">输入内容将作为新 session 的首条消息…（⏎ 交接，Esc 退出）</div>
+            <div class="comp-bar"><span class="send-slot send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span></div>
+          </div>
+        </div>
+        <p style="font-size:11px;color:var(--neutral-mid);margin-top:12px;">两模式 boxClass 视觉<b>完全相同</b>（accent 边 + 3px ring + accent-soft 底）。差异：chip icon（GitFork/Upload）+ label + placeholder。进入：⌘⇧G / ⌘J；退出：chip × / Esc / 发送后 / 切 session。互斥（进新 mode 先退旧）。fork 允许空发送=false，handoff=true。</p>
+      </div>
+    </div>
+
+    <!-- 9D. 四个 popover -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">9D. composer-bar 四个 popover</h3>
+    <div class="render-frame">
+      <table class="z-table" style="background:var(--bg-card);border-radius:var(--radius);overflow:hidden;">
+        <thead><tr><th style="text-align:left;padding:8px 10px;font-size:11px;color:var(--neutral-dim);text-transform:uppercase;border-bottom:1px solid var(--border-strong);">popover</th><th style="text-align:left;padding:8px 10px;font-size:11px;color:var(--neutral-dim);text-transform:uppercase;border-bottom:1px solid var(--border-strong);">触发</th><th style="text-align:left;padding:8px 10px;font-size:11px;color:var(--neutral-dim);text-transform:uppercase;border-bottom:1px solid var(--border-strong);">弹层</th><th style="text-align:left;padding:8px 10px;font-size:11px;color:var(--neutral-dim);text-transform:uppercase;border-bottom:1px solid var(--border-strong);">内容</th></tr></thead>
+        <tbody>
+          <tr><td style="padding:8px 10px;border-bottom:1px solid var(--border);"><b>+ 添加</b></td><td style="padding:8px 10px;border-bottom:1px solid var(--border);">click</td><td style="padding:8px 10px;border-bottom:1px solid var(--border);font-family:var(--font-mono);">top · 208px · start</td><td style="padding:8px 10px;border-bottom:1px solid var(--border);">3 项：附件/图片/命令（ghost Button）</td></tr>
+          <tr><td style="padding:8px 10px;border-bottom:1px solid var(--border);"><b>上下文容量</b></td><td style="padding:8px 10px;border-bottom:1px solid var(--border);"><span style="color:var(--accent);">hover</span>（HoverCard）</td><td style="padding:8px 10px;border-bottom:1px solid var(--border);font-family:var(--font-mono);">top · 260px</td><td style="padding:8px 10px;border-bottom:1px solid var(--border);">用量 + 进度条（accent/warn/danger 分档）+ stats + coding-plan 窗口</td></tr>
+          <tr><td style="padding:8px 10px;border-bottom:1px solid var(--border);"><b>模型</b></td><td style="padding:8px 10px;border-bottom:1px solid var(--border);">click</td><td style="padding:8px 10px;border-bottom:1px solid var(--border);font-family:var(--font-mono);">top · 220px</td><td style="padding:8px 10px;border-bottom:1px solid var(--border);">搜索框 + 按 provider 分组列表 + Check 选中</td></tr>
+          <tr><td style="padding:8px 10px;"><b>思考等级</b></td><td style="padding:8px 10px;">click</td><td style="padding:8px 10px;font-family:var(--font-mono);">top · 180px</td><td style="padding:8px 10px;">6 档（off/low/medium/high/xhigh/max）· 圆点 + Check 选中</td></tr>
+        </tbody>
+      </table>
+      <p style="font-size:11px;color:var(--neutral-mid);margin-top:12px;">trigger 共用样式：h-7/h-28 · rounded-sm · text-[11px] text-neutral-dim hover:text-neutral-mid。弹层共用 PopoverContent：<code>z-[1100] min-w-240 rounded-md border-border-strong bg-bg-elevated shadow-2</code>。ContextCapacity 是唯一 hover 触发（HoverCard），trigger 始终显当前用量「12k · 24%」（高用量 &gt;70% 染 warn）。</p>
+      <h4 style="font-size:12px;color:var(--neutral-mid);margin:16px 0 8px;font-weight:500;">思考等级弹层示例（6 档，按 model map 过滤可用档）</h4>
+      <div style="background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:var(--radius);width:180px;padding:0;font-size:13px;">
+        <div style="border-bottom:1px solid var(--border);padding:8px 10px;font-family:var(--font-mono);font-size:10px;text-transform:uppercase;color:var(--neutral-dim);">思考强度</div>
+        <div style="padding:4px 0;">
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;color:var(--neutral-mid);"><span style="width:7px;height:7px;border-radius:50%;background:var(--neutral-dim);"></span>关</div>
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;color:var(--neutral-mid);"><span style="width:7px;height:7px;border-radius:50%;background:var(--neutral-dim);"></span>低</div>
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--accent-soft);color:var(--accent);"><span style="width:7px;height:7px;border-radius:50%;background:var(--accent);"></span>中<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;margin-left:auto;"><polyline points="20 6 9 17 4 12"/></svg></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;color:var(--neutral-mid);"><span style="width:7px;height:7px;border-radius:50%;background:var(--neutral-dim);"></span>高</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 9E. 发送位 4 态状态机 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">9E. 发送位 · 4 态状态机（优先级自上而下）</h3>
     <div class="render-frame">
       <div class="panel-stage" style="display:flex;gap:24px;flex-wrap:wrap;padding:20px;">
         <div>
-          <div style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:8px;">idle → send</div>
-          <span class="send-slot send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span>
-        </div>
-        <div>
-          <div style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:8px;">streaming/dispatching → stop</div>
+          <div style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:6px;">① streaming → stop</div>
           <span class="send-slot stop"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></span>
+          <div class="anno" style="margin-top:6px;">surface-hover 底<br>hover→danger-soft+danger</div>
         </div>
         <div>
-          <div style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:8px;">sending → spinner</div>
+          <div style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:6px;">② compacting → spinner</div>
+          <span class="send-slot" style="background:var(--surface-hover);color:var(--neutral-mid);"><svg class="send-spinner-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg></span>
+          <div class="anno" style="margin-top:6px;">surface-hover 底（中性）<br>Loader2 spin</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:6px;">③ sending → spinner</div>
           <span class="send-slot spinner"><svg class="send-spinner-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg></span>
+          <div class="anno" style="margin-top:6px;">accent 底白图标<br>Loader2 spin</div>
         </div>
         <div>
-          <div style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:8px;">empty → disabled</div>
-          <span class="send-slot send disabled"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span>
+          <div style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:6px;">④ idle → send</div>
+          <span class="send-slot send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span>
+          <div class="anno" style="margin-top:6px;">accent 底 · ArrowUp<br>hover→accent-hover</div>
         </div>
+        <div>
+          <div style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:6px;">④ disabled</div>
+          <span class="send-slot send disabled"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span>
+          <div class="anno" style="margin-top:6px;">透明底 neutral-dim<br>!canSend（无输入/busy）</div>
+        </div>
+      </div>
+      <p style="font-size:11px;color:var(--neutral-mid);margin-top:8px;">优先级：isActive(stop) &gt; isCompacting(spinner灰) &gt; isSending(spinner蓝) &gt; idle(send)。title 提示：send「发送 · ⏎」/ fork「fork 并发送 · ⏎」/ handoff「交接并发送 · ⏎」/ disabled「输入内容后发送」。⏎ 发送、⇧⏎ 换行、⌥⏎ followUp 排队、活跃态⏎ steer 追加。</p>
+    </div>
+
+    <!-- 9F. bash 模式 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">9F. bash 模式 · <code style="font-size:12px;">!</code> 前缀</h3>
+    <div class="render-frame">
+      <div class="panel-stage">
+        <div class="comp-wrap centered">
+          <div class="comp-box-v6 bash">
+            <div class="comp-input" style="font-family:var(--font-mono);">!npm run dev</div>
+            <div class="comp-bar"><span class="send-slot send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span></div>
+          </div>
+        </div>
+        <p style="font-size:11px;color:var(--neutral-mid);padding:8px 20px 0;">输入 <code>!</code>（单）或 <code>!!</code>（双，excludeFromContext）触发。accent ring + bash placeholder，不走 LLM 直接执行。优先级低于 staging（staging 活跃时 bash 视觉不覆盖）。</p>
       </div>
     </div>
 
-    <!-- 9C. landing 态 meta-row -->
-    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">9C. landing 态 meta-row · directory / branch / preset</h3>
+    <!-- 9G. landing 态完整 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">9G. landing 态 · meta-row（directory/branch/preset）</h3>
     <div class="render-frame">
       <div class="panel-stage">
         <div class="comp-wrap centered">
@@ -1185,42 +1297,30 @@ added 1 package in 2s</div>
               <span class="meta-sep"></span>
               <span class="meta-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>main</span>
               <span class="meta-sep"></span>
-              <span class="meta-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/></svg>medium</span>
+              <span class="meta-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44"/></svg>preset</span>
             </div>
-            <div class="comp-input ph">描述任务，或输入命令…（landing 态：空 cwd 时 directory chip 染 accent 提示选择）</div>
+            <div class="comp-input ph">描述任务…（空 cwd 时 directory chip 染 accent 提示选择）</div>
             <div class="comp-bar"><span class="send-slot send disabled"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span></div>
           </div>
         </div>
-      </div>
-    </div>
-
-    <!-- 9D. bash 模式 -->
-    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">9D. bash 模式 · <code style="font-size:12px;">!</code> 前缀触发</h3>
-    <div class="render-frame">
-      <div class="panel-stage">
-        <div class="comp-wrap centered">
-          <div class="comp-box-v6 bash">
-            <div class="comp-input" style="font-family:var(--font-mono);">!npm run dev<span style="color:var(--neutral-mid);font-size:11px;font-family:var(--font-sans);margin-left:8px;">（bash 模式：accent ring + bash placeholder，不走 LLM 直接执行）</span></div>
-            <div class="comp-bar"><span class="send-slot send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span></div>
-          </div>
-        </div>
+        <p style="font-size:11px;color:var(--neutral-mid);padding:8px 20px 0;">landing 上下还有：问候语（h1 22px，按时段）+ history 重试按钮（失败时）。directory chip click→DirSelectPopover(320px)，branch chip click→BranchSelectPopover(420px 含 Worktree tab)。非 git 目录隐藏 branch + 分隔线。</p>
       </div>
     </div>
 
     <div class="anno-grid">
-      <div class="anno"><b>7 区构成:</b><br>①RetryIndicator ②QueueBubble ③staging ④ContextChipsBar ⑤meta-row ⑥Input ⑦composer-bar</div>
-      <div class="anno"><b>宽度（非 landing）:</b><br><span class="old">撑满 panel</span> <span class="v6">→ mx-auto max-w-720px</span></div>
-      <div class="anno"><b>box:</b><br>rounded-lg(8px) · bg-bg-input · 默认无边框</div>
-      <div class="anno"><b>has-input:</b><br><span class="v6">2px rgba(255,255,255,.04) 微描边</span></div>
-      <div class="anno"><b>focus:</b><br><span class="v6">border-accent + 3px accent-ring</span></div>
-      <div class="anno"><b>bash 模式:</b><br><span class="v6">同 focus ring（accent）· placeholder 切 bashHint · 不走 LLM</span></div>
-      <div class="anno"><b>staging chip:</b><br>左上角 accent-soft · fork/handoff 各自 icon · 可退出</div>
-      <div class="anno"><b>ContextChipsBar:</b><br>@file neutral-dim / image reasoning 紫 · 可删（X hover danger）</div>
-      <div class="anno"><b>meta-row（landing）:</b><br>directory/branch/preset · mono 11px · 空 cwd 染 accent</div>
-      <div class="anno"><b>composer-bar 控件:</b><br>+ 添加 / 上下文 / 模型 / 思考等级 · h-28 rounded-sm hover surface-hover</div>
-      <div class="anno"><b>发送位三态:</b><br><span class="v6">send(accent) / stop(surface-hover→danger hover) / spinner(accent+spin)</span></div>
-      <div class="anno"><b>send btn:</b><br>30px [--composer-btn-size] rounded · ArrowUp icon 15px</div>
-      <div class="anno"><b>图片粘贴:</b><br>粘贴/拖拽 → ContextChipsBar image chip（非缩略图）</div>
+      <div class="anno"><b>7 区:</b><br>①Retry ②Queue ③staging ④ContextChipsBar ⑤meta-row ⑥Input ⑦composer-bar</div>
+      <div class="anno"><b>landing vs panel:</b><br>仅 3 点差异（宽度/meta-row/slash 源），本体相同</div>
+      <div class="anno"><b>box:</b><br>rounded-lg · bg-bg-input · 默认无边框</div>
+      <div class="anno"><b>boxClass 优先级:</b><br>staging &gt; bash &gt; isActive(steer) &gt; hasInput &gt; 空</div>
+      <div class="anno"><b>chip 色:</b><br>紫 reasoning（slash/image）· 绿 success（#file）· 蓝 accent（@预留）</div>
+      <div class="anno"><b>ContextChipsBar:</b><br><span class="v6">仅 image 进此（@/# 是内联 chip 不进）</span></div>
+      <div class="anno"><b>staging:</b><br>fork/handoff · accent 边+ring+soft 底 · 互斥 · ⌘⇧G/⌘J</div>
+      <div class="anno"><b>4 popover:</b><br>+ click 208 / 上下文 hover 260 / 模型 click 220 / 思考 click 180</div>
+      <div class="anno"><b>发送位 4 态:</b><br>stop &gt; compacting(灰) &gt; sending(蓝) &gt; idle(send)</div>
+      <div class="anno"><b>send btn:</b><br>30px · ArrowUp 15px · disabled 透明底</div>
+      <div class="anno"><b>bash:</b><br>! 触发 · accent ring · 不走 LLM</div>
+      <div class="anno"><b>meta-row(landing):</b><br>dir/branch/preset · 空 cwd 染 accent</div>
+      <div class="anno"><b>快捷键:</b><br>⏎发送 / ⇧⏎换行 / ⌥⏎followUp / ⌘⇧G fork / ⌘J handoff</div>
     </div>
   </section>
 
