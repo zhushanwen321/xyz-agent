@@ -321,8 +321,8 @@ if [[ -f "package.json" ]]; then
         if echo "$test_script" | grep -q "echo.*no test specified"; then
             skip "测试脚本为默认占位符"
         else
-            echo "  运行 npm test ..."
-            run_check "单元测试" npm test
+            echo "  运行 pnpm test ..."
+            run_check "单元测试" pnpm test
             TEST_RAN=true
         fi
     fi

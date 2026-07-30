@@ -437,4 +437,4 @@ const MOCK: SearchItem[] = [
 
 1. 先更新 `shared/src/protocol.ts` 中的类型定义
 2. 确认前端和 runtime 的消费方都已适配
-3. 运行 `npm -w @xyz-agent/frontend run typecheck` 和 `npm -w @xyz-agent/runtime run typecheck` 验证
+3. 运行 `pnpm --filter @xyz-agent/frontend run typecheck` 和 `pnpm --filter @xyz-agent/runtime run typecheck` 验证

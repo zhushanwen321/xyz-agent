@@ -67,7 +67,7 @@ entry: {
 - **server.ts / handlers / adapters / infra 都不是独立 entry**——经 `index.ts` import 链打包进 `index.cjs`。目录 mv 后 `index.ts` 的 import 路径自动跟随，**entry 数组零改动**（仍 `index` + `plugin-bootstrap`）。
 - `noExternal: ['ws','semver','fast-glob','tar']`：本阶段无新增 npm 依赖，不动。
 - `electron-builder.yml`：`files` 含 `dist/runtime/**/*`、`asarUnpack` 同路径（已核对不受影响）。
-- **本阶段 tsup / electron-builder 实际零改动**。CLAUDE.md #12 的风险点在「目录迁移后 import 链断裂」，靠 `npm run build` + `validate-runtime-bundle.sh` 暴露，不需改 tsup 配置。
+- **本阶段 tsup / electron-builder 实际零改动**。CLAUDE.md #12 的风险点在「目录迁移后 import 链断裂」，靠 `pnpm run build` + `validate-runtime-bundle.sh` 暴露，不需改 tsup 配置。
 
 ### 5.（可选）T1 路由表声明式
 
@@ -76,10 +76,10 @@ entry: {
 
 ## 验证标准
 
-- [ ] `npm run build` 成功。
+- [ ] `pnpm run build` 成功。
 - [ ] `bash scripts/validate-runtime-bundle.sh` 通过（含 runtime bundle 深度验证 + smoke test）。
 - [ ] `bash scripts/preflight-check.sh` + `postbuild-validate.sh` 通过。
-- [ ] `npm run dev` 启动正常，全功能可用。
+- [ ] `pnpm run dev` 启动正常，全功能可用。
 - [ ] `rg "SidecarServer" src-electron/` 无残留。
 - [ ] 打包产物 `app.asar.unpacked/dist/runtime/` 结构正确。
 
@@ -94,6 +94,6 @@ entry: {
 | 风险 | 应对 |
 |------|------|
 | tsup entry 漏更新 → `Cannot find module` | mv 后立即跑 `validate-runtime-bundle.sh`；逐文件核对 entry |
-| import 路径漏改 → 编译失败 | `npm run build` 即可暴露；rg 全仓扫描被移文件名 |
+| import 路径漏改 → 编译失败 | `pnpm run build` 即可暴露；rg 全仓扫描被移文件名 |
 | Worker 入口 `plugin-bootstrap` 路径 | tsup entry 仍含 `plugin-bootstrap.ts`（在 plugin-service/ 切片内不迁移）；validate-runtime-bundle.sh 验证 |
 | extension-service/timeout-manager 漏迁 | 已补入 task 1；mv 后检查 index.ts:12/server.ts:13/extension-message-handler.ts:8-9 的 import |

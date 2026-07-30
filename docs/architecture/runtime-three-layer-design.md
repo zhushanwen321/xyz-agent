@@ -295,7 +295,7 @@ export interface IInstaller {
 
 # 第五部分 · 迁移步骤
 
-> **铁律**：每阶段独立 commit、独立验证（`npm run build:runtime` + `validate-runtime-bundle.sh` + vitest）。禁止跨阶段部分回滚。plugin-service 全程不动。
+> **铁律**：每阶段独立 commit、独立验证（`pnpm run build:runtime` + `validate-runtime-bundle.sh` + vitest）。禁止跨阶段部分回滚。plugin-service 全程不动。
 
 ## 阶段 R0 · 文档与认知（0 代码风险）
 
@@ -344,7 +344,7 @@ export interface IInstaller {
 
 ## 阶段 R5 · 收尾验证
 
-- `npm run build:runtime` + `validate-runtime-bundle.sh`
+- `pnpm run build:runtime` + `validate-runtime-bundle.sh`
 - `rg "Pi[A-Z]" services/ transport/` → **应为空**（PiXxx 不再泄漏）
 - `rg "from '.*infra/" services/` → **应为空**（service 不直接 import infra，只经 ports）
 - 全量 vitest

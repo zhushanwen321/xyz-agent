@@ -9,6 +9,6 @@
   "scripts": {
     "sync-types": "bash scripts/sync-types.sh",
     "check-sync": "bash scripts/sync-types.sh && git diff --exit-code -- src/types.ts",
-    "prepack": "npm run sync-types"
+    "prepack": "pnpm run sync-types"
   }
 }
