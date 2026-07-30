@@ -3,6 +3,9 @@
   "version": "0.8.37",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "scripts": {
     "dev": "pnpm --filter @xyz-agent/electron dev",
     "build": "pnpm --filter @xyz-agent/electron build",
