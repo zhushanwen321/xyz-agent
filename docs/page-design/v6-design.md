@@ -1,0 +1,432 @@
+# v6 视觉与架构设计规范（2026-07）
+
+> 日期：2026-07-30
+> 状态：定稿（决策已确认，待架构重构后实施视觉层）
+> 关联 demo：[`v6-demo.html`](./v6-demo.html)（综合交互 demo）
+> 取代：[`visual-modernization-2026-07.md`](./visual-modernization-2026-07.md)（v6 输入，保留追溯）
+> 性质：**全面重新设计**。落在视觉语言层（架构/色相/字体保留），授权大刀阔斧重构。
+
+---
+
+## 0. 设计哲学
+
+**一句话**：冷蓝暗色不变，shell 三栏不变，对标 Codex/Claude/Linear 的极简专业——「层级代替边框、圆角升档、正文提亮、内容收窄、彩色降噪」五原则更彻底地应用到全部页面。
+
+与 visual-modernization 的关系：**承继五原则为基，更彻底地应用**。五原则是 Codex/Claude/Linear 竞品分析的共同方向，没理由推翻；v6 把覆盖从「对话流+设置 40%」扩展到全页面，并融合 impeccable 禁令（禁 >1px 彩色侧边条）。
+
+**执行时序**：阶段 0（测试基础设施）→ 阶段 A（整体架构重构）→ 阶段 B（renderer 局部重构）→ 阶段 C（v6 视觉层）。详见 §8。
+
+---
+
+## 1. 已确认决策（不可变）
+
+### 1.1 全局方向
+
+| # | 决策 | 取值 |
+|---|------|------|
+| 1 | 范围 | 全面重新设计，落在视觉语言层 |
+| 2 | 架构 | 保留 shell 三栏拓扑（aside/main/drawer + traffic-light 安全区） |
+| 3 | 色相 | 保留冷蓝暗色（`--bg #1a1b1f` / `--accent #4f8ef7`） |
+| 4 | 字体 | 保留 Inter（正文）+ JetBrains Mono（等宽） |
+| 5 | 风格 | 极简专业，对标 Codex/Claude/Linear |
+| 6 | 五原则口径 | 以五原则为基，更彻底地应用 |
+
+### 1.2 视觉决策（demo 验证后确认）
+
+| # | 决策点 | 取值 | 含义 |
+|---|--------|------|------|
+| 7 | 选中态范式 | **bg 实色 + 蓝字** | `bg-surface` 实色块 + `text-accent`，无 ring 无左条。最贴近 Claude/Linear |
+| 8 | 彩色降噪 | **保留语义但缩小** | git M黄/A绿/D红 等语义彩色保留，但从色块/pill 降级为极小圆点或单字 |
+| 9 | 信息密度 | **现状** | meta（turn meta/工具参数/subagent 摘要）保持可见，不改密度 |
+| 10 | 背景层次 | **三层明度** | stage 深底(#131316) → 侧栏/drawer=画布色(--bg) → 主面板=surface 浮起。不嵌套第四层 |
+
+### 1.3 结构决策
+
+| # | 决策点 | 取值 |
+|---|--------|------|
+| 11 | 对话流列宽 | **仅 assistant 居中 720px**，UserBubble 保持右浮窄气泡（保留用户/助手视觉对称） |
+| 12 | files 紧凑 | 缩进 `INDENT_STEP` 14→10px，icon-文字 gap 6→4px |
+| 13 | 设置形态 | **全屏覆盖**（非居中 modal），左右分栏（左 nav tab 菜单，右内容左对齐 + max-width 720px） |
+| 14 | 设置改造 | **彻底重构**：新建 `FullSettingsOverlay`（不用 reka Dialog，类似 SearchModal 手写 inset-0）；ProviderEditModal 改嵌入式面板（点编辑→右侧内容交换+返回，不再双层 modal） |
+
+---
+
+## 2. Token 变更（反写到 style.css / design-tokens.md / tailwind.config.ts）
+
+### 2.1 圆角修订
+
+| Token | 现值 | v6 值 | 影响 |
+|-------|------|-------|------|
+| `--radius-sm` | `3px` | `6px` | kbd/tag/小按钮/chip 全局默认档升档。148 处 `rounded-sm` 消费点自动跟随 |
+| `--radius` | `8px` | 不变 | 按钮/卡片 |
+| `--radius-lg` | `12px` | 不变 | 面板/弹层/composer |
+
+`tailwind.config.ts` `borderRadius.sm` 同步 `3px→6px`。
+
+### 2.2 文字灰度修订一档
+
+| Token | 现值（暗） | v6 值（暗） | 备注 |
+|-------|-----------|------------|------|
+| `--neutral-dim` | `#6b7280` | `#7d8494` | 提亮一档（对比度只升不降，WCAG AA 仍满足），配合「使用面积减少」消除灰蒙蒙感 |
+
+亮色 `--neutral-dim`（现 `#8a8a95`）**同步提亮一档**保持主题一致（v6 新增决定，visual-modernization 未提亮色）。
+
+`--neutral-fg`/`--neutral-mid`/`--neutral-faint`/`--neutral-ico*` 不变。
+
+### 2.3 diff 着色柔化
+
+| Tailwind 派生色 | 现值 | v6 值 |
+|----------------|------|-------|
+| `diff-add-bg` / `diff-del-bg` | color-mix 18% | **12%** |
+| `diff-add-strong` / `diff-del-strong` | 45% | 不变（字符级精度保留辨识度） |
+
+### 2.4 新增 token
+
+| Token | 值（暗） | 用途 |
+|-------|---------|------|
+| `--content-max-w` | `720px` | 对话流 assistant 内容列宽 + 设置内容列宽 + Composer 非 landing 对齐同列 |
+| `--bg-sunken` | `var(--bg)` | 侧栏/drawer 画布色（**不往黑推**，与画布同色融合，靠主面板 surface 浮起分隔） |
+| `--bg-card` | `#22242c` | 设置分组卡片（介于 bg 与 surface 之间，解决现状 `bg-bg` 卡片无层级问题） |
+
+> `--bg-sunken` 的语义变更：原 visual-modernization 用 `color-mix(bg 97%, black)` 把侧栏往黑推，导致比画布还暗、发脏。v6 改为与画布同色，靠 stage 深底(#131316) + 主面板 surface(#272830) 浮起表达三层明度。
+
+---
+
+## 3. 组件范式（跨视图统一）
+
+### 3.1 SegmentedTab 新范式（侧栏/DetailPane/SearchModal/SearchModal 复用）
+
+```
+外层容器: bg-bg-input rounded-lg p-[3px]
+内项: 无边框
+active: bg-bg-elevated text-neutral-fg, 6px 圆角
+hover: text-neutral-fg
+```
+
+去所有 tab 的独立边框盒，active 用中性浮起（去 accent-soft 蓝染底）。
+
+### 3.2 选中态范式（Card-Active）
+
+- **列表项激活**（SessionItem/SessionCard/SettingsModal nav）：`bg-surface` 实色块 + `text-accent` 蓝字，**无 ring 无左条**
+- **面板激活**（Panel active）：维持 inset accent-ring
+- impeccable 禁令落实：禁止 >1px 彩色侧边条做选中强调
+
+### 3.3 状态指示统一
+
+- **会话/任务状态**：7px 圆点替换 15px 饱和图标。done=success(90% opacity) / running=accent / waiting=warn / error=danger
+- **工具失败（exit≠0）**：图标统一 `--neutral-ico`（删 warn 着色），行尾加 mono `exit N` 小标签（中性，非 danger）
+- **彩色边界**（保留语义但缩小）：
+  - 保留彩色：真失败块 danger、待行动状态 accent、git 语义色 M黄/A绿/D红（降为极小圆点或单字 badge）
+  - 降中性：workflow 进度条 done 态、GoalCard badge、±stats 降单色、目录改动数徽章
+
+### 3.4 分隔策略（层级 > 留白 > hairline > 边框）
+
+- 静态信息容器只用一个表面色（`--surface`/`--bg-input`/`--bg-card`），**不叠加 border**
+- border 仅保留给：浮起可交互容器（popover/dialog/composer）和 focus 态
+- drawer 内 header 分隔：去 `border-b`，改 `bg-surface-2` 浮起分层（DetailPane/CommandDocPanel/GitPanel/TerminalView/BrowserPane 统一）
+- 侧栏/drawer 与主面板间：去硬 border，靠三层明度（stage 深底 + 主面板 surface 浮起）+ SplitterResizeHandle 透明化（仅 hover/drag 显 accent）
+
+### 3.5 圆角档位
+
+- 默认档：6px（`--radius-sm` 升档后）
+- 卡片：8-10px（ChangeSetCard 10px 用任意值）
+- 浮层/composer：12px
+- 徽章/pill/状态标签：999px 胶囊
+- kbd：6px（保留小圆角矩形语义）
+
+---
+
+## 4. 分区设计（逐视图：v6 方案）
+
+### 4.1 对话流（assistant 居中 720）
+
+| 组件 | v6 方案 |
+|------|---------|
+| MessageStream | assistant 区（TurnMeta+trace+summary+ChangeSet）套 `mx-auto max-w-[var(--content-max-w)]`；UserBubble 保持右浮窄气泡（max-w-76%）；滚动条贴右缘 |
+| TurnMeta | pill 默认可见（密度=现状）；删 turn 间 `hr border-border` 分隔线，改加大 turn gap 做层级；sticky 底色绑定内容列背景 |
+| Block·thinking | 收起态预览提亮 `text-neutral-mid`（过 AA）+ 显 2 行 |
+| Block·bash | 删 border+bg-surface-2 嵌套卡片，改缩进+命令前缀区分（层级代边框）|
+| Block·tool failed | 删 `hover:text-warn`，统一 `--neutral-ico`；exit≠0 加 mono `exit N` 中性标签 |
+| ChangeSetCard | 去 border，`bg-surface` + 10px 圆角；状态 badge 降灰阶（仅 ±行数保留 success/danger git 语义色）；「待审查」badge 胶囊 accent-soft |
+| UserBubble | 删 `border-border-strong`，仅 `bg-surface-hover` 做层级；保持 14px/4px 不对称圆角 |
+| Composer | 非 landing 态与内容列同宽居中；默认无边框（bg-bg-input 凹陷做层级），focus 才出 accent ring；staging chip 缩小为左上角小标签（非整条） |
+| PanelHeader | 去 `border-b`，用 bg-elevated 浮起分层；status icon 灰阶化，仅 git 点保留 danger/warn |
+
+### 4.2 侧栏（4 tab + 容器）
+
+| 组件 | v6 方案 |
+|------|---------|
+| Sidebar 容器 | 底色 `bg-bg`（画布色，= `--bg-sunken` 新值），与主面板靠 surface 浮起分隔 |
+| SegmentedTab | 见 §3.1 新范式 |
+| SessionItem | 状态 14px 图标→7px 圆点；选中态见 §3.2（bg+蓝字）；hover 操作按钮去方框改 ghost icon 无框 |
+| SessionList 组标题 | 去 uppercase tracking（AI slop tell），改 normal-case `text-[11px] font-medium` |
+| ForkGroup | 去 border+accent/5 染底（嵌套卡片），改缩进+折叠头 accent 文字；「分支 N」pill 降 `text-neutral-dim` 无底 |
+| FileView/FileTreeRow | **缩进 14→10px**，icon-文字 **gap 6→4px**；git badge 保留语义色但缩小；目录改动数徽章降中性；branch 文本降 `text-neutral-mid`（去 accent） |
+| SubagentList | 卡片 py 统一 6px；cancel 确认态去 border 仅 bg-danger |
+| WorkflowList | 进度条仅 running 用 accent，done 改 bg-neutral-dim；abort 确认态去 border |
+| 底部用户区 | 头像渐变改纯色 bg-accent（去装饰渐变） |
+
+### 4.3 右侧 Drawer（6 tab）
+
+| 组件 | v6 方案 |
+|------|---------|
+| SideDrawer 容器 | 底色 `bg-bg`（画布色）；去硬 border-l 改投影分隔 `shadow: -12px 0 24px rgba(0,0,0,.25)`；SplitterResizeHandle 透明化（仅 hover/drag 显 accent） |
+| **二级 tab 架构** | 形态 B：icon 一级 + 内层二级（按需出现）。**每个一级 tab 是独立页面，二级 tab 由各 tab 组件自行定制**（drawer 框架不统一管二级）。详见下方二级 tab 策略表 |
+| DetailPane | header 去 border-b 改 bg-surface-2 浮起；**二级 tab：支持多文件 tab**（用户点文件→新开/切换 tab，可关闭），预览/变更 toggle 作为当前 tab 的视图切换。参考 `v6-drawer-tabs-demo.html` 形态 B |
+| DiffView | 行背景 12%（token 自动生效）；canvas `bg-bg-input rounded-lg` + py-2 内距；hunk header 去 bg-surface-2 仅 text-neutral-dim；删 lineRowClass hunk 死代码分支 |
+| TerminalView | 黑色底改 `bg-bg-input`（与画布同源凹陷语义，非纯黑割裂）；工具栏去 border-white/10 改 bg-bg-input 同色；**二级 tab：支持多实例 tab**（点 + 新开终端实例），二级 tab 栏放新增按钮（本期仅放按钮，新增功能后续实现） |
+| BrowserPane | 三处 border-b 全去（guide/nav/login wall），靠各自 bg 分层；guide banner 改中性；登录墙 warn 收敛到单点 |
+| GitPanel | pill 去 bg 改纯色文字 pill（语义靠字色）；**冲突态去 danger 左竖条**（impeccable side-stripe 禁令）改 bg-danger-soft 整块；badge 统一 text-neutral-dim 仅 U 保留 danger；**无二级 tab**（git 状态全局唯一） |
+| CommandDocPanel | header 去 border-b；source 标签圆角升 6px 去 bg；元信息区去 border-t 改 mt-4 空白分层；无二级 tab |
+| TasksPanel/GoalCard | GoalCard 去 border 仅 bg-surface；badge 升胶囊仅 blocked 着色；VERIFY 标字号提 9px 去 bg；todo checkbox 三态保留（语义清晰且面积小）；无二级 tab |
+
+**二级 tab 策略表**（按需出现，各 tab 自治）：
+
+| 一级 tab | 二级 tab | 多实例 | 新增按钮 | 说明 |
+|----------|---------|--------|---------|------|
+| detail | 多文件 tab | 是 | 否（文件从 git/文件树点开） | 点文件→新开/切换 tab，可关闭；预览/变更是当前 tab 的视图切换 |
+| terminal | 多终端实例 | 是 | **是**（本期仅放按钮，功能后续） | 每个 tab 一个独立 PTY 实例 |
+| browser | 单实例（暂） | 否 | 否 | 当前单 view + URL 替换；多 tab 作为后续扩展 |
+| git | 无 | — | — | 全局唯一状态，无需二级 |
+| doc | 无 | — | — | 单文档，无需二级 |
+| tasks | 无 | — | — | 固定列表，无需二级 |
+
+**架构含义**：当前 `useDetailPane.state` 是单例（`fileTreeStore.selectedPath` 单值驱动），要多文件 tab 需把单值改为按 tab id 索引的 map。terminal 同理需从 per-session 单 PTY 改为多 PTY 实例管理。这属于阶段 B（renderer 局部重构）/ 阶段 C（视觉层）的衔接点。
+
+### 4.4 Overview
+
+| 组件 | v6 方案 |
+|------|---------|
+| SessionCard | 去 border 靠 bg-surface 浮起 + hover；active 统一 `bg-bg-elevated`（去 ring-accent 纯色，与 §3.2 一致）；指标行去 border-t 靠 padding；gitBranch pill 降中性 bg-surface-2 text-neutral-mid |
+
+### 4.5 设置页（全屏覆盖重构）
+
+| 组件 | v6 方案 |
+|------|---------|
+| SettingsModal → FullSettingsOverlay | 新建，不用 reka Dialog，手写 `fixed inset-0`（类似 SearchModal）。无遮罩/无模糊（纯不透明全屏）。左 nav w-220px 固定 + 右内容滚动。ESC + 右上角 X 关闭 |
+| nav | 底色 bg-sunken；选中态 bg-surface + 蓝字（§3.2）；count badge 去彩色改中性圆点 |
+| 内容区 | 左对齐（mx-0）+ max-w-720px；页面标题作为左对齐内容块顶部（非固定栏） |
+| 10 个 *Page 分组卡片 | 去 border（双重分隔 AI slop），改 `bg-card` 层级 + 10px 圆角；行分隔 hairline 降 `rgba(255,255,255,.04)` |
+| 设置行 | 每行 label 下加 12px `--neutral-dim` 描述文字（i18n 新增 `*.desc` keys） |
+| ProviderEditModal → 嵌入式面板 | 点编辑→右侧内容交换为编辑视图+返回按钮，不再双层 modal |
+| 表单 label | 所有 uppercase tracking-wider 改大小写混合 font-medium |
+| SelectTrigger | 去 border，bg-surface-2→bg-bg-input，圆角 8px（全局改，见 §3.4） |
+| LoadPaths/SourceImportSection | 扁平化嵌套卡片为单列表；强制目录自绘 ✓ 改 Checkbox 原生组件 |
+
+### 4.6 Overlays
+
+| 组件 | v6 方案 |
+|------|---------|
+| SearchModal | 保持手写覆盖层（非 reka Dialog）；浮层圆角已 12px 合规；输入区去 border-b 靠 padding；分组 header 去 uppercase；高亮改 font-semibold 去彩色 |
+| AskUserOverlay | 保持内联（非 modal）；tab/选项圆角统一 6px；context 降中性 bg-surface-hover（去 reasoning 软底彩色）；hover 的 `white/[0.04]` 改 `bg-surface-hover` token |
+| ConfirmDialog | 圆角 12px（依赖 DialogContent）；danger 三角 icon 降 size-4；默认 cancel/confirm 文案改 i18n |
+| MermaidRenderer | 保持现状（95vw 图像查看器，缩放动画合适） |
+
+---
+
+## 5. 横切清理
+
+### 5.1 正文提亮（neutral-dim/faint 对比度）
+- thinking 预览、bash 截断标记、meta 条属正文范畴，当前用 `neutral-dim`/`neutral-faint`（#6b7280/#4b5563，部分不过 AA）
+- v6：正文位置统一提亮到 `neutral-mid`（#9ca3af，过 AA）；仅装饰/极弱位置保留 dim/faint
+
+### 5.2 z-index 语义化
+- 当前混用 `z-[1]`/`z-10`/`z-[1000]` 任意值
+- v6：定义语义 scale `--z-sticky:1 / --z-popover:10 / --z-overlay:20 / --z-modal:1000`，逐处替换
+
+### 5.3 图标 size scale
+- 当前 trace icon/badge icon/header icon 混用 10/12/13/14px
+- v6：定义 scale（badge 10px / trace 12px / header 14px / 操作 16px）
+
+### 5.4 i18n P0 修复
+- 补齐 5 个缺失声音 key（soundTitle/successSound/errorSound/soundDefault/soundPreview，中英双语）
+- ConfirmDialog 默认文案改 i18n
+
+---
+
+## 6. 架构重构（先整体后局部，先于视觉层）
+
+> 用户授权全面重写，不考虑成本/兼容性。**审查方法纠正**：初版架构报告直接跳进 renderer 的 useChat/store 细节，是局部视角；重新从最顶层审查后，整体架构其实设计扎实，真正的问题在整体层。renderer 局部问题降级。
+
+### 6.1 整体架构图（跨进程/跨包）
+
+```
+┌─────────────────────────── Electron App ───────────────────────────┐
+│                                                                     │
+│  MAIN PROCESS (Node)          PRELOAD (contextBridge)               │
+│  apps/electron/main/           apps/electron/preload/               │
+│   ├ WindowManager              window.electronAPI {40+ methods}     │
+│   ├ ShortcutRegistry              │                                 │
+│   ├ BrowserViewManager ◄──IPC─────┘                                 │
+│   ├ ipc-handlers                                                   │
+│   └ RuntimeSupervisor ──spawn runtime subprocess                   │
+│                                                                     │
+│  RENDERER (Chromium, Vue3) ◄────── WebSocket ──────►  RUNTIME (Node)│
+│  packages/renderer/                                    packages/runtime│
+│   ├ api/ (业务门面)            ClientMessage ◄──WS──► ServerMessage │
+│   ├ composables/ (编排)                              ├ transport/    │
+│   ├ stores/ (Pinia)                                  ├ services/     │
+│   └ components/                                      └ infra/pi/     │
+│                                                        │ stdin/stdout │
+│                                                        ▼ JSONL RPC    │
+│                                                  PI SUBPROCESS        │
+│                                                  (AI agent CLI)       │
+│                                                        │              │
+│                                   services/plugin ──spawn Worker─────┤
+│                                                       PLUGIN WORKER   │
+│                                                                     │
+│  数据隔离: ~/.xyz-agent/ (xyz-agent) ↔ ~/.pi/agent/ (系统 pi, 隔离) │
+└─────────────────────────────────────────────────────────────────────┘
+
+包依赖（pnpm workspace, 无循环）:
+  shared (零上游) ◄── runtime ◄── electron(app)
+                   ◄── renderer ──┘
+  extension-protocol ◄── renderer + runtime（GUI 渲染协议类型）
+
+四套通信机制（各有不可替代场景）:
+  1. IPC (preload↔main): OS 特权/窗口/runtime 端口
+  2. WebSocket (renderer↔runtime): 全部业务数据
+  3. stdin/stdout JSONL RPC (runtime↔pi): prompt/abort/bash
+  4. Worker postMessage RPC (runtime↔plugin): 插件隔离
+```
+
+**整体评价**：跨进程/跨包这一最顶层设计扎实、边界清晰、文档详尽。进程职责干净（main 是壳、runtime 是唯一 pi 适配点、renderer 不碰 Node API），包依赖单向无环，四套通信机制各有不可替代场景。问题集中在以下整体层。
+
+### 6.2 整体架构问题（优先级最高）
+
+| # | 整体问题 | 现状证据 | 重构方向 |
+|---|---------|---------|---------|
+| **整体-1** | runtime 三层契约名实不符：services 直连 infra（文档声称零直连） | 12 处 services 直连 infra（`session-service.ts` 连 5 个 infra、`migration/provider-importer.ts` 调 infra 写操作） | 纯路径/纯类型（pi-paths/pi-protocol）归"kernel"层合法依赖；有 pi 格式知识的模块收到 ports 接口后由 infra 实现注入；logger 构造函数注入。修正代码或修正文档使一致 |
+| **整体-2** | shared 包职责膨胀：混入运行期实现 | shared/src/ 含 git-status-parser/migration/pi-preset/quota-presets 等运行期逻辑，非纯类型常量 | shared 只留 protocol/message/session/paths/constants 等纯类型+常量；Node-only 解析器下沉到 runtime infra 或新建 node-utils 包（仅 main+runtime 依赖），renderer 依赖图可证明无 Node 逻辑 |
+| **整体-3** | IPC 边界过宽：混入业务持久化 + 命名错配 | electronAPI 40+ 方法含 writeSessionImage/writeSegmentsMetadata（业务持久化走 IPC 非 WS）、proxy 配置挂 update:* 通道 | IPC 收敛为纯 OS 特权；session 数据持久化迁到 runtime（WS 单一出口）；至少先修正 update:* 命名错配 |
+
+### 6.3 renderer 局部问题（整体修完后处理）
+
+> 这些是 renderer 内部的复杂度，不影响整体架构判断。之前误判为 P0，现降为局部。
+
+| # | 局部问题 | 重构方向 |
+|---|---------|---------|
+| 局部-1 | useChat 模块级单例状态违反 ADR-0036（`useChat.ts:45,52,66-83` + 8 个同类 composable） | per-session 状态迁入 useChatStore 或 useSessionScopedState 工厂；删除 `reset*ModuleState` |
+| 局部-2 | stores 间依赖契约被破坏（`chat-message-effects.ts:55,60` store 互相 import） | 抽独立事件消费层；store 回归纯职责 |
+| 局部-3 | routeInbound 100 行巨型 if-else 路由器 | 改声明式路由表 |
+| 局部-4 | Composer 被 16 个 composable 过度拆碎 | 按变化轴合并为 3 个（Input/Dispatch/Context） |
+| 局部-5 | chat store 11 文件碎片化 | 流式消息状态机内聚为深模块；消除绕 lint 的 *Impl |
+| 局部-6 | Sidebar 耦合 22 个 store/composable | 退化为纯布局容器，功能域抽子组件 |
+| 局部-7 | settings/ 22 文件无分层 | 按域分子目录 |
+| 局部-8 | ui/(shadcn-vue) 双名体系 | fork 改用 v3 原生命名 |
+| 局部-9 | composables 分层不一致 | 统一规则：顶层只留基础设施 |
+
+---
+
+## 7. 测试规范（重写 TEST-STRATEGY.md + 补工程门）
+
+> 现状盘点：505 文件 / ~4750 case / vitest 统一。最严重痛点——零 coverage + E2E 不进 CI（全绿无护栏）；大量测试断言内部调用而非用户可见行为；规范与实现脱节（规范说要测但实际没测，如对话流零 E2E）。
+
+### 7.1 测试规范核心三条（能发现问题的测试，非大厂规范）
+
+1. **测行为不测实现**：断言用户可见结果（DOM/文案/状态变化），不断言内部调用/mock spy/payload 形状。重构时测试红 = 可能真有 bug，而非"调用方式变了"。
+2. **分层有明确职责不交叉**：单测测纯函数/纯逻辑（零外部依赖）、集成测组件树交互（mount 入口 + DOM 断言）、E2E 测真实用户旅程。禁止"放大版单测冒充集成"。
+3. **有护栏门**：coverage 门槛 + E2E 进 CI。全绿必须有度量意义。
+
+### 7.2 分层与断言标准
+
+| 层 | 职责 | mock 程度 | 断言标准 | 进 CI |
+|----|------|----------|---------|-------|
+| **单测** | 纯函数/纯逻辑（转换器/parser/纯 store 逻辑） | 零 mock（真实 fs/tmpdir 可用） | 输入→输出 + 边界 | 是 |
+| **集成** | 组件树交互、WS 协议链路 | mock pi，**真 WS**（runtime↔renderer 真协议） | mount 入口 + DOM 断言（每条至少一个用户可见断言） | 是 |
+| **E2E mock 轨** | Vue 组件树真实渲染 | 不起 runtime（VITE_MOCK） | DOM 断言（明确标注非端到端） | 是 |
+| **E2E real 轨** | 真实用户旅程（真 runtime+pi） | 真实 LLM 或受控 fixture | 每步 DOM 断言 | 是（独立慢 job） |
+
+### 7.3 低价值测试处理
+
+- **删了不重写**（用户决策）：断言内部调用/payload 形状的低价值测试（api/ 10 文件、断言 spy 的 composables）删除
+- **删除时机**：随重构同步（重构到哪个模块，删该模块旧测试 + 写新行为测试，模块级原子化，无覆盖空窗）
+- **合并重复**：跨包重复的纯函数测试（git-status-parser 在 shared+runtime 各一份）收敛到一处
+- **保留高价值样本**：零 mock + 真实 fs 的测试（json-store/tasks/updater-script）作为新规范样板
+
+### 7.4 护栏门（工程保障）
+
+| 门 | 现状 | v6 要求 |
+|----|------|---------|
+| coverage | 零配置（装了没用） | 启用 `@vitest/coverage-v8`，设 line/branch 门槛（起步观察，逐步设阈值） |
+| E2E 进 CI | 完全不在 CI | CI 加 E2E job（mock 轨快跑 + real 轨独立慢 job） |
+| dev 冒烟闸门 | `dev-smoke.mjs` 标"待建"从未实现 | 补建（堵 mock 盲区，关键功能首屏渲染验证） |
+| pre-commit | 只跑 eslint+vue-tsc 不跑测试 | 维持（测试在 CI/pre-push 而非 commit，避免开发卡顿） |
+
+### 7.5 关键功能 E2E 补建（现状零覆盖）
+
+- **对话流 chat-flow**：现状 `chat-flow.spec.ts` 不存在，核心功能零 E2E。补 testid + 写 spec
+- **session 生命周期**：创建/切换/fork/重开/销毁全链路
+- **设置持久化**：修改→重启→恢复（跨进程数据一致性）
+
+### 7.6 规范落地
+
+- 重写 `TEST-STRATEGY.md` 为可执行规范（分层 + 断言标准 + 护栏门）
+- 更新 `docs/testing/` 盘点表（现状已滞后：列 6 spec 实际 10 spec）
+- 新测试遵循 §7.1 三条 + §7.2 断言标准
+
+---
+
+## 8. 实施波次
+
+### 阶段 0：测试基础设施（最先，为后续护航）
+- 0.1: 启用 coverage + 设观察门槛
+- 0.2: E2E 进 CI（mock 轨 + real 轨独立 job）
+- 0.3: 补建 dev-smoke 闸门
+- 0.4: 重写 TEST-STRATEGY.md
+
+### 阶段 A：整体架构重构（先整体）
+- A1: 整体-1 runtime 三层契约对齐（services/ports/infra 名实一致）
+- A2: 整体-2 shared 包瘦身（运行期实现下沉）
+- A3: 整体-3 IPC 边界收敛
+- 每步随重构同步删旧测试 + 写新行为测试（§7.3）
+
+### 阶段 B：renderer 局部重构（整体干净后）
+- B1: 局部-1~3 chat 编排层（useChat 状态范式 + 事件消费层 + routeInbound 路由表）
+- B2: 局部-4~6 模块级（Composer 合并 + chat store 重组 + Sidebar 拆分）
+- B3: 局部-7~9（settings 分层 + shadcn 双名 + composables 规则）
+- 每步同步删旧 + 写新测试
+
+### 阶段 C：v6 视觉层（架构干净后）
+- C1: §2 token 变更（style.css + tailwind.config.ts + 文档同步）
+- C2: §4.1 对话流
+- C3: §4.2 侧栏
+- C4: §4.3 Drawer（含二级 tab，形态 B：icon 一级 + 各 tab 自治二级；detail 多文件 tab / terminal 多实例 tab+新增按钮占位 / git·doc·tasks 无二级）
+- C5: §4.5 设置页（全屏覆盖重构）
+- C6: §4.4 Overview + §4.6 Overlays
+- C7: §5 横切清理
+- C8: 全量视觉验收
+
+每波独立 commit + 对应层级验收（架构波过测试门，视觉波过视觉验收）。
+
+---
+
+## 9. 验收基准
+
+**视觉**：
+- `v6-demo.html` 的「目标态」（选中态=bg+蓝字 / 彩色=保留语义缩小 / 密度=现状）为视觉验收 SSOT
+- 三层背景（stage→画布→surface）肉眼可辨
+- impeccable AI slop test：无明显 AI tell
+- 对比度：正文位置全部过 WCAG AA（≥4.5:1）
+
+**架构**：
+- 整体架构图（§6.1）的进程职责/通信机制/包依赖方向在实际代码中一致
+- runtime 三层契约名实相符（services 不越层连 infra，或文档与代码一致）
+- shared 包无运行期实现污染
+- IPC 仅 OS 特权，业务数据走 WS 单一出口
+
+**测试**：
+- coverage 启用并进 CI
+- E2E（mock + real 双轨）进 CI
+- 删除的测试对应功能有新行为测试覆盖（随重构同步，无空窗）
+- 对话流/session 生命周期/设置持久化有 E2E 覆盖
+
+---
+
+## 9. 文档同步清单（实施时更新）
+
+- `docs/page-design/design-tokens.md`：§2 全部变更 + 变更日志
+- `docs/page-design/design-system.md`：组件范式修订（§3）+ 新增分隔策略/内容列宽条文
+- `AGENTS.md`：前端编码规范 #10（圆角规则）受影响条文；v6 归档后 v3/ 引用更新
+- `docs/standards.md`：圆角/边框条目
+- `style.css` + `tailwind.config.ts`：token 反写
