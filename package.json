@@ -13,10 +13,16 @@
     "test:e2e": "playwright test",
     "changeset": "changeset",
     "changeset:version": "changeset version",
-    "release:npm": "pnpm --filter @xyz-agent/extension-protocol build && changeset publish"
+    "release:npm": "pnpm --filter @xyz-agent/extension-protocol build && changeset publish",
+    "extensions:typecheck": "cd extensions && npx tsc --noEmit",
+    "extensions:lint": "npx eslint extensions/",
+    "extensions:test": "pnpm -r --filter '@zhushanwen/pi-*' test"
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.0",
+    "@earendil-works/pi-ai": "0.82.1",
+    "@earendil-works/pi-coding-agent": "0.82.1",
+    "@earendil-works/pi-tui": "0.82.1",
     "@playwright/test": "^1.61.1",
     "eslint": "^10.3.0",
     "eslint-plugin-vue": "^10.9.1",
