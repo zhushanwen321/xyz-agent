@@ -145,7 +145,7 @@
       <div v-for="ext in extensions" :key="ext.name" class="flex items-center gap-3 rounded-md border border-border bg-bg px-3 py-2.5">
         <div class="flex min-w-0 flex-1 flex-col gap-0.5">
           <div class="flex items-center gap-2">
-            <span class="truncate text-[12px] font-medium text-neutral-fg">{{ ext.name }}</span>
+            <span class="truncate text-[12px] font-medium text-neutral-fg">{{ ext.displayName ?? ext.name }}</span>
             <span class="rounded-sm bg-surface px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim">v{{ ext.version }}</span>
             <!-- 来源标签 -->
             <span v-if="ext.source === 'user-installed'" class="rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent">{{ t('settings.extension.sourceUser') }}</span>

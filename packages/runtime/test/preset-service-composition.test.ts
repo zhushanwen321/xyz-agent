@@ -93,6 +93,7 @@ function makeFakeExtensionService(builtinPaths: string[], userExts: ExtensionInf
 function makeExt(name: string, enabled: boolean): ExtensionInfo {
   return {
     name,
+    displayName: name,
     dirName: name,
     version: '0.0.0-test',
     description: '',

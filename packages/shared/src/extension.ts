@@ -26,6 +26,9 @@ export type ExtensionInteractMethod = 'confirm' | 'select' | 'input' | 'editor'
 
 export interface ExtensionInfo {
   name: string
+  /** 展示用名称（UI 渲染）。有 package.json 时 = name；无 package.json 的 discovery 入口智能推导
+   * （index.ts → 父目录名，单文件 → basename 去后缀）。disabled key / allowlist 匹配仍用 name。 */
+  displayName: string
   /** Filesystem directory basename (may differ from npm package name for scoped packages) */
   dirName: string
   version: string

@@ -43,6 +43,7 @@ import { useToast } from '@/composables/useToast'
 function mandatoryExt(): ExtensionItem {
   return {
     name: '@zhushanwen/pi-goal',
+    displayName: '@zhushanwen/pi-goal',
     dirName: 'pi-goal',
     version: '0.5.0',
     description: 'goal extension',
@@ -59,6 +60,7 @@ function mandatoryExt(): ExtensionItem {
 function normalExt(): ExtensionItem {
   return {
     name: 'my-tools',
+    displayName: 'my-tools',
     dirName: 'my-tools',
     version: '1.0.0',
     description: 'normal extension',

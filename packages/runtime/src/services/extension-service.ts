@@ -17,7 +17,7 @@
  * 5. 清理临时目录
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, lstatSync, realpathSync, cpSync, rmSync, mkdtempSync } from 'node:fs'
-import { join, resolve, basename, relative, isAbsolute, delimiter } from 'node:path'
+import { join, resolve, basename, dirname, relative, isAbsolute, delimiter } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
 import { recommendedExtensions, mandatoryExtensions, isMandatoryExtension, BUILTIN_EXTENSION_FILES } from '@xyz-agent/shared'
@@ -310,8 +310,20 @@ export class ExtensionService {
       const isUserInstalled = packages.includes(sourceKey)
       const isAutoUpgrade = autoUpgradeSet.has(sourceKey)
 
+      // displayName 推导（展示用，不影响 disabled key / allowlist 匹配——那些用 name）：
+      //   有 package.json name → 用 name（规范：纯包名 @scope/pi-xxx）
+      //   无 package.json 的 index.ts/index.js 入口 → 父目录名（解决多目录 index.ts 重名）
+      //   无 package.json 的单文件 → basename 去后缀
+      const entryBasename = basename(dir)
+      const displayName = typeof meta.name === 'string'
+        ? name
+        : entryBasename === 'index.ts' || entryBasename === 'index.js'
+          ? basename(dirname(dir))
+          : entryBasename.replace(/\.(ts|js)$/, '')
+
       extensions.push({
         name,
+        displayName,
         dirName: basename(dir),
         version,
         description,
@@ -985,6 +997,7 @@ export class ExtensionService {
       // name is intentionally raw (not normalized) — see readPackageJson doc
       candidates.push({
         name: info.name,
+        displayName: info.name,
         dirName: basename(dir),
         version: info.version,
         description: info.description,
@@ -1013,6 +1026,7 @@ export class ExtensionService {
           const info = this.readPackageJson(entryPath)
           candidates.push({
             name: info.name,
+            displayName: info.name,
             dirName: entry,
             version: info.version,
             description: info.description,
