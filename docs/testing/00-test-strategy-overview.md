@@ -31,7 +31,7 @@ VITE_MOCK=true → renderer 走 api/mock/ 层（镜像 api/domains/ 签名）
 ### 1.2 非 MOCK 轨（full stack）
 
 ```
-npm run dev → 起 runtime 子进程 → 连 pi → 真实 session 文件读写
+pnpm run dev → 起 runtime 子进程 → 连 pi → 真实 session 文件读写
 ```
 
 **能测什么：**
@@ -54,14 +54,14 @@ node scripts/dev-smoke.mjs（待建）→ chromium 加载 vite dev server → 0 
 
 **设计意图**：MOCK 轨 E2E 跑构建产物（`dist/main` + `dist/preload` + `renderer/dist`），不走 vite dev server，所以测不出「dev 启动时模块加载崩溃」。dev 冒烟专门补这个缺口——起 vite dev server，用 chromium headless 加载，断言 console 0 error。
 
-**现状**：`scripts/dev-smoke.mjs` 待建。在它落地前，**每次改完代码必须手工 `npm run dev` 确认能启动**（非 MOCK 轨），不能只信 E2E 全绿。
+**现状**：`scripts/dev-smoke.mjs` 待建。在它落地前，**每次改完代码必须手工 `pnpm run dev` 确认能启动**（非 MOCK 轨），不能只信 E2E 全绿。
 
 ### 1.4 三轨对照表
 
 | 轨道 | 启动方式 | 覆盖维度 | 盲区 | 适用场景 |
 |------|---------|---------|------|---------|
-| MOCK 轨 | `npm run dev:mock` / `VITE_MOCK=true` E2E | renderer 渲染 + 交互 + 状态机 + mock 流式 | 模块加载副作用 / 真实协议 / WS 生命周期 | 日常开发、E2E 回归 |
-| 非 MOCK 轨 | `npm run dev` | 全链路（含 runtime/pi/文件系统） | 慢、环境敏感 | 手工冒烟、关键链路验证 |
+| MOCK 轨 | `pnpm run dev:mock` / `VITE_MOCK=true` E2E | renderer 渲染 + 交互 + 状态机 + mock 流式 | 模块加载副作用 / 真实协议 / WS 生命周期 | 日常开发、E2E 回归 |
+| 非 MOCK 轨 | `pnpm run dev` | 全链路（含 runtime/pi/文件系统） | 慢、环境敏感 | 手工冒烟、关键链路验证 |
 | dev 冒烟 | `node scripts/dev-smoke.mjs`（待建） | 模块加载健康 | 不测交互 | CI gate、PR 检查 |
 
 > **铁律**：MOCK 轨 E2E 全绿 ≠ 功能可用。必须配套非 MOCK 手工冒烟（或 dev 冒烟闸门）。这是 2026-06-30 事故的血泪教训。
@@ -111,11 +111,11 @@ E2E **不走 dev server**，走**构建产物**（见 §3）。但同样注入 M
   apps/electron/dist/main/main.cjs       ← main 入口
   apps/electron/dist/preload/preload.cjs ← preload
   packages/renderer/dist/index.html ← renderer（带 VITE_E2E=true 构建）
-任一缺失 → 跑 npm run build:e2e（180s 超时）→ 再检查
+任一缺失 → 跑 pnpm run build:e2e（180s 超时）→ 再检查
 仍缺失 → throw（测试中止）
 ```
 
-**含义**：首次跑 E2E 会自动构建（约 30-60s），后续增量跑直接用缓存产物。改了 renderer 代码后要重建：`npm run build:e2e`。
+**含义**：首次跑 E2E 会自动构建（约 30-60s），后续增量跑直接用缓存产物。改了 renderer 代码后要重建：`pnpm run build:e2e`。
 
 ### 3.3 launch-app fixture（核心 harness）
 
@@ -224,7 +224,7 @@ npx playwright test --headed                     # 有头模式（看窗口）
 npx playwright test --debug                      # 调试模式（step-by-step）
 
 # ── 构建产物（E2E 前置，globalSetup 自动跑，也可手动）──
-npm run build:e2e
+pnpm run build:e2e
 
 # ── renderer 单元/集成测试（vitest）──
 cd packages/renderer && npx vitest run                              # 全量
@@ -296,12 +296,12 @@ await page.locator('[data-testid="composer-box"]').getByRole('button', { name: '
 改了 renderer 代码后，E2E 仍跑旧产物 → 测试挂或测不出新代码。重建：
 
 ```bash
-npm run build:e2e   # 或删除 dist/ 强制 globalSetup 重建
+pnpm run build:e2e   # 或删除 dist/ 强制 globalSetup 重建
 ```
 
 ### 6.6 Electron 多实例 LOCK
 
-手动开了 dev app（`npm run dev`）又跑 E2E → Chromium userData LOCK 冲突。**跑 E2E 前关掉所有 xyz-agent 窗口**。E2E fixture 用独立临时 `XYZ_AGENT_DATA_DIR` 规避，但 dev app 用的是 `~/.xyz-agent-dev`，两者不冲突；冲突来自同一数据目录的多个实例。
+手动开了 dev app（`pnpm run dev`）又跑 E2E → Chromium userData LOCK 冲突。**跑 E2E 前关掉所有 xyz-agent 窗口**。E2E fixture 用独立临时 `XYZ_AGENT_DATA_DIR` 规避，但 dev app 用的是 `~/.xyz-agent-dev`，两者不冲突；冲突来自同一数据目录的多个实例。
 
 ### 6.7 窗口可见性：不抢焦点但不完全隐藏
 

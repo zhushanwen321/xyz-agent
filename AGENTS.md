@@ -57,10 +57,10 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 ## 常用命令
 
 ```bash
-npm run dev          # 开发模式 (Electron + Vite HMR)
-npm run build        # 生产构建 (electron-builder)
-npm run lint         # ESLint 检查（或 pnpm run lint）
-npm run prepare      # 安装 git hooks
+pnpm run dev          # 开发模式 (Electron + Vite HMR)
+pnpm run build        # 生产构建 (electron-builder)
+pnpm run lint         # ESLint 检查
+pnpm run prepare      # 安装 git hooks
 
 # 打包流程（pnpm workspace 单步安装，无需 cd 子目录）
 pnpm install          # 安装所有依赖（根 + packages/* + apps/*，ELECTRON_SKIP_BINARY_DOWNLOAD=1 跳过二进制下载）
@@ -295,6 +295,7 @@ lsof -i :1420 -P | grep node
   - electron-builder.yml 不再 `extraResources` 拷贝 `@zhushanwen/`，preflight-check.sh 移除了原 npm packages / 传递依赖检查（步骤 7、8）
   - **代价**：新用户首次启动无这些 extension，需到 Settings 手动安装；离线环境无法安装（npm-installer 需联网）
   - 旧规则背景：曾经发生过误删 builtin 依赖导致打包产物缺失的事故，故设禁止删除规则。现改为推荐安装机制后该约束不再适用，但「删除打包所需依赖」的事故教训仍适用于其他 builtin 资源（如 pi binary、xyz-agent-extension.js）
+  - **2026-07-30 推翻（升格 mandatory）**：上面的「Settings 推荐安装」机制**已被取代**。原 6 个推荐包（`pi-ask-user`/`pi-goal`/`pi-todo`/`pi-pending-notifications`/`pi-subagent-workflow`/`pi-structured-output`）已升格为 **mandatory**（强制安装），并新增 3 包（`pi-permission`/`pi-scheduler`/`pi-rename-session`），共 **9 包**改为 mandatory。mandatory 语义：runtime boot 时 `ensureMandatoryExtensions()` 自动 `npm install` 到 `~/.xyz-agent/npm/node_modules/` 并设 `autoUpgrade`、清 disabled 残留；**不可卸载/不可禁用**（`uninstallExtension`/`toggleExtension` 双重守卫，抛 `mandatory_cannot_disable`/`mandatory_cannot_uninstall`）。`recommended-extensions.json` 已清空为 `[]`（推荐机制保留给未来非强制可选扩展，当前为空）。**SSOT 迁移**：mandatory 列表 SSOT = `packages/shared/src/mandatory-extensions.json`（含 `tier: infrastructure | feature` 两级），recommended-extensions.json 不再是这些包的 SSOT。离线安装/用户手动安装等「推荐机制」结论不再适用。
   - **xyz-system-prompt-extension.js**（repo root）：builtin 文件型 pi 扩展，before_agent_start hook 实现系统提示词追加注入。走 `--extension` CLI 注入（extension-service.getExtensionPaths 在 xyz-agent-extension.js 之后追加）。打包走 electron-builder.yml extraResources（`../../xyz-system-prompt-extension.js`），postbuild-validate.sh 校验产物存在性。「删除打包所需依赖」事故教训同样适用
   - extension/skill 都不走 vendor submodule（2026-07-04 移除了 `vendor/xyz-pi-extensions` + `vendor/xyz-harness` 两个 submodule，`prepare-pi-resources.sh` 现只负责下载 pi binary，extensions 走 npm 源、skills 走用户/project 级目录 `~/.agents/skills` / `<cwd>/.pi/agent/skills`）
 
@@ -326,7 +327,7 @@ lsof -i :1420 -P | grep node
    - `files` 显式包含 `dist/runtime/**/*`（不只是"未排除"）
    - `files` 未排除 `dist/runtime`（正则扫描 `!dist/runtime` 模式）
    - `resources/pi` 无 symlink
-2. **Build** (`npm run build`)：electron-builder 执行打包，产出 dmg/zip/exe
+2. **Build** (`pnpm run build`)：electron-builder 执行打包，产出 dmg/zip/exe
 3. **Postbuild** (`scripts/postbuild-validate.sh`)：
    - asar 内容正确性（dist/main/main.cjs, dist/preload/preload.cjs）
    - `app.asar.unpacked/dist/runtime/` 存在且包含 `index.cjs` + `plugin-bootstrap.cjs`
@@ -497,18 +498,26 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 
 | 检查工具 | 覆盖范围 | 触发时机 |
 |---------|---------|---------|
-| taste-lint (ESLint) | no-native-html / no-emoji / prefer-v-model / no-hardcoded-colors / no-magic-spacing / no-silent-catch / prefer-allsettled / no-multi-arg-emit | `npm run lint` + pre-commit |
+| taste-lint (ESLint) | no-native-html / no-emoji / prefer-v-model / no-hardcoded-colors / no-magic-spacing / no-silent-catch / prefer-allsettled / no-multi-arg-emit | `pnpm run lint` + pre-commit |
 | vue_rules_checker.py | 行数上限 / CSS 选择器 / Tab 缩进 / 原生元素 / Emoji / v-model | pre-commit |
 
 ### Lint / Git Hooks 问题处理原则 [MANDATORY]
 
-**lint（ESLint / vue_rules_checker）或 githooks（pre-commit 的任何 check_*.py）检出的问题，必须全部正面修复，不得跳过。**
+**lint（ESLint / vue_rules_checker）或 githooks（pre-commit 的任何 check_*.py）检出的问题，无论等级（warning / error，或 critical / major / minor），也无论是否本次改动引入（预存存量问题一律同视），必须全部正面修复，不得跳过。不得以"不是本次改动导致"为由而不修复。**
 
-- **不得以“非本次改动引入”为由跳过**：存量问题同样要修。携改动的 commit 触发了检查，检查出的所有问题都是本次提交的责任范围。
-- **不得用 `SKIP_*` 变量绕过**（`SKIP_FRONTEND_LINT` / `SKIP_CODE_RULES_CHECK` / `SKIP_ALL_CHECKS` 等）— 仅限线上故障热修复等紧急场景，且必须在 commit message 说明原因。
+- **存量问题也要修**：携改动的 commit 触发了检查，检查出的所有问题（含本次改动前就存在的）都是本次提交的责任范围。
+- **不得以”只是 warning / minor”为由跳过**：低等级问题也必须修。等级只影响修复顺序，不影响”必须修复”的结论。reviewer 报告的 minor、ESLint 的 warning 同样必须解决。
+- **不得绕过检查**：禁止 `git commit --no-verify` 或项目专属的 `SKIP_*` 变量（`SKIP_FRONTEND_LINT` / `SKIP_CODE_RULES_CHECK` / `SKIP_ALL_CHECKS` 等）— 仅限线上故障热修复等紧急场景，且必须在 commit message 说明原因。
 - **不得仅“消除报错”而不解决根因**：例如把原生 `<button>` 改成 `<Button>` 是正面修复；但把检测规则改成“放过该写法”只有在确认规则误报时才可（且须在规则中加注释说明）。
 - **规则误报的唯一正当处理**：修正规则本身使其准确（如 reka-ui `SelectItem :value` 是选项值语义，应排除），并在规则文件加 `[HISTORICAL]` 注释记录原因。禁止用 `// eslint-disable-next-line` 局部静默。
-- pre-commit 每个检查失败分支已内置提示：“无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过”。
+- pre-commit 每个检查失败分支已内置提示：”无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过”。
+
+### 完成即提交 [MANDATORY]
+
+**所有变更改完并在本地验证通过后，在向用户汇报完成 / 结束本轮工作（stop）之前，必须执行 git commit。** 禁止留下”改了代码但未提交”的脏工作区就结束。
+
+- 若因**穷尽正面修复后仍未解决的**检查失败、冲突、认知外改动等原因无法提交，必须在结束前**明确说明未提交原因**，不得静默跳过（见失败模式防护 #3「失败要出声」）。注意：pre-commit 检出的问题必须先按上文「Lint / Git Hooks 问题处理原则」全部修复，「检查未过」本身不构成停笔理由
+- 提交范围遵循全局提交策略：优先提交本次会话产生的改动，文件级颗粒度
 
 
 ## Git 规范
@@ -574,7 +583,7 @@ Release Notes 需要同时包含中文和英文版本，使用 `<!-- LANG:zh -->
 **错误做法（禁止）：**
 ```
 # 坏 — push 后直接结束
-npm version patch && git push github HEAD --tags
+pnpm version patch && git push github HEAD --tags
 echo "已推送，CI 会构建"
 # ← AI 在此结束，不检查 CI 结果
 ```
@@ -582,7 +591,7 @@ echo "已推送，CI 会构建"
 **正确做法：**
 ```
 # 好 — push 后必须验证
-npm version patch && git push github HEAD --tags
+pnpm version patch && git push github HEAD --tags
 bash scripts/verify-ci-release.sh "v$(node -p "require('./package.json').version")"
 # ← 脚本会轮询 CI 直到完成，验证 dmg/exe/AppImage 存在
 # ← exit 0 = 通过，exit 非 0 = 失败（AI 必须修复直到 exit 0）
@@ -644,6 +653,32 @@ runtime 子进程（`packages/runtime/src/`）与 pi 子进程的所有日志输
 - **实现位置**：logger 模块在 `runtime/src/infra/logger.ts`，在 `index.ts` 组合根最早期初始化（`initLogger(getDataDir())`），console 作为 logger 语法糖（monkey-patch 全局 console 覆盖 runtime 内既有的裸 console，tee 到终端 + 文件）。supervisor 层（`main/supervisor/process-control.ts`）仍捕获 runtime stdout 打终端，日志落盘责任在 runtime 自身
 
 **[HISTORICAL] 背景**：handoff 2026-07-04 P1「pi 静默卡死」——坏 session 的 JSONL 只有 2 行、零 message，pi 子进程 0% CPU 不退出。runtime 发了 prompt 后 pi 发了什么事件（或什么都没发）无法事后追溯，因为日志只在 concurrently 终端，关掉即丢。此条目把「日志必须落盘」固化为规范，避免再次因证据丢失而无法定位。实现见 commit（logger.ts + index.ts initLogger + rpc-client.ts pi stdout tee）。
+
+### 5. 包管理器与 lock 文件纪律 [HISTORICAL]
+
+本项目是 **pnpm workspace 单一包管理器**项目（`pnpm-workspace.yaml` 声明 `packages/*` + `apps/*`）。`pnpm-lock.yaml` 是**唯一权威 lock 文件**，必须跟踪。**禁止跟踪任何 npm 产物**（`package-lock.json`）。
+
+**三件套（缺一不可）**：
+
+1. **`package.json` 必须声明 `packageManager` 字段**（锁定包管理器 + 版本）。示例：`"packageManager": "pnpm@10.27.0"`。corepack/IDE 据此自动切换，避免有人误用 npm install 生成 `package-lock.json`。新增项目或发现缺失时补全；pnpm 升级时同步更新此字段
+2. **`.gitignore` 必须忽略 `package-lock.json`**（连同 `package-lock.json.*`）。即使误生成也不进版本库
+3. **发现 `package-lock.json` 被 git 跟踪时，用 `git rm --cached package-lock.json` 停止跟踪**（保留磁盘文件），不要 `rm` 物理删除
+
+**根因**：`package-lock.json` 与 `pnpm-lock.yaml` 双轨跟踪时，版本号长期各跑各的（package.json / pnpm-lock / package-lock 三处版本号各不相同），且 npm 与 pnpm 的依赖解析算法不同（npm flat hoisting vs pnpm 严格隔离 + symlink），双 lock 会产生幽灵依赖、重复安装、解析不一致类 bug。2026-07-30 事故：`package-lock.json` 版本滞留在 0.8.32（main 已 0.8.38、package.json 0.8.37），且 `package.json` 未声明 `packageManager`，是 lock 双轨的根因。
+
+**操作纪律**：
+- 所有安装/添加依赖命令用 `pnpm install` / `pnpm add`，禁止 `npm install` / `npm ci`
+- 禁止 `npm version` 改版本号（会同步改写 package-lock.json），版本号用 `changeset version` 或手改 package.json
+- 子包若确需独立用 npm（罕见，如某个 vendored 工具），在该子包自己的 `.gitignore` 里放开 `package-lock.json` 规则，并在子包 package.json 声明对应 `packageManager`
+
+**保留 npm 的例外（不要"统一"成 pnpm）**：以下场景的 npm 命令是**刻意保留**的，未来 agent 做统一审查时**不要改**：
+- **第三方消费者安装指引**：`docs/extensions/local-dev-guide.md` 的 `npm install -g @earendil-works/pi-coding-agent`、`npm-prerelease/SKILL.md` 与 `release-npm-dev.yml` 的 `npm install @xyz-agent/extension-protocol@dev` 等。这些是发给 npm registry 的外部消费者的指引，他们环境未必装了 pnpm，npm 是最通用的兜底
+- **`npm publish`**：发包命令。`pnpm changeset publish` 内部最终也调 `npm publish`，文档里描述发包用 npm 是准确的
+- **runtime 安装用户 extension 的机制**：`extension-service.ts`/`installer.ts` 等代码里对用户 extension 执行 `npm install` 到数据目录——这是面向终端用户的 extension 安装机制，用户环境不可控，必须用 npm
+- **反例描述 / 规则正文**：「错误做法」表格里引用被禁的 `npm version`、§5 本节禁止 `npm install` 的规则条文，必须保留 npm 字样（描述被禁的命令名）
+- **`npx` 命令**：中立包执行器，不算 npm 风格违纪，保留
+
+**判断标准一句话**：命令执行者若是「本项目的开发者/CI/AI」→ 用 pnpm；若是「外部消费者/终端用户」或「描述被禁行为」→ 保留 npm。
 
 ## 跳过检查
 

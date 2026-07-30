@@ -157,7 +157,7 @@ cd packages/renderer && npx vitest run src/__tests__/stores/command-app.test.ts
 
 ## 6. 非 MOCK 模式测试（手工冒烟）
 
-> **铁律**：MOCK 轨测试全绿 ≠ 功能可用。search 改了 SearchModal + 新增 5 个 composable/lib/store，必须手工 `npm run dev` 确认模块加载健康（[00 §1.3](./00-test-strategy-overview.md) dev 冒烟闸门）。
+> **铁律**：MOCK 轨测试全绿 ≠ 功能可用。search 改了 SearchModal + 新增 5 个 composable/lib/store，必须手工 `pnpm run dev` 确认模块加载健康（[00 §1.3](./00-test-strategy-overview.md) dev 冒烟闸门）。
 
 ```bash
 pnpm dev    # 非 MOCK 轨，起 runtime + pi
@@ -207,7 +207,7 @@ test('E2E-2 查询命中文件 + 跳转 DetailPane', async ({ page }) => {
 | `registerApp` 无调用方 | 应用命令区运行时为空，搜索「命令」分组只显 slash 命令 | 测试用 mock 覆盖；功能不崩溃；slash 命令源工作 | P3（需产品决策命令清单）|
 | AC-10.1 未完全通用化 | Sidebar keydown 用本地 keymap 数组（未走 useCommandRegistry）| 硬编码 if/else 字面消除；⌘K toggle 已落地 | P3（需独立 keymap 注册表 + shortcut DSL）|
 | Playwright E2E 未落地 | 全链路用户旅程无 E2E | vitest 集成测试覆盖渲染+交互 | P2 增强非阻断 |
-| dev 冒烟闸门待建 | MOCK 全绿≠可用（模块加载盲区）| 手工 `npm run dev` 冒烟（见 §6）| 待 scripts/dev-smoke.mjs |
+| dev 冒烟闸门待建 | MOCK 全绿≠可用（模块加载盲区）| 手工 `pnpm run dev` 冒烟（见 §6）| 待 scripts/dev-smoke.mjs |
 | useSearch 单测 onScopeDispose warn | 测试输出不干净（harness 缺陷）| 生产无 warn（SearchModal setup 提供 scope）；测试全绿 | 低（测试 harness 优化）|
 
 ## 9. 设计文档溯源

@@ -141,9 +141,9 @@ function resolvePluginHostDir(): string {
 ### 没有 E2E 打包验证
 
 所有 PR 都做了以下检查：
-- `npm run build` ✅ （Vite + tsup + electron-builder 都不报错）
-- `npm run lint` ✅
-- `npm run test`（v0.3.11 才通过，之前 plugin-host 相关测试失败）
+- `pnpm run build` ✅ （Vite + tsup + electron-builder 都不报错）
+- `pnpm run lint` ✅
+- `pnpm run test`（v0.3.11 才通过，之前 plugin-host 相关测试失败）
 - `preflight-check.sh` ✅
 
 但**没有一个检查实际打开 DMG 验证 runtime 启动**。
@@ -194,7 +194,7 @@ v0.3.9 添加的 preflight-check 只检查了：
 
 5. **runtime 测试增加 CJS bundle 模式**
    - vitest 测试用 tsx（ESM）运行，不代表 CJS bundle 行为一致
-   - 增加 `npm run build && node dist/runtime/index.cjs --port=<random>` 的 smoke test
+   - 增加 `pnpm run build && node dist/runtime/index.cjs --port=<random>` 的 smoke test
    - 可以作为 `validate-runtime-bundle.sh` 的一个阶段
 
 6. **electron-builder.yml 变更触发全量验证**
@@ -236,7 +236,7 @@ PR #61（8b43045）是一个**单体巨型 commit**，同时改了 6 个互相�
 
 **问题**：当 v0.3.8 的 DMG 打不开时，根本无法判断是哪个改动导致的问题。观察到的症状（"连接断开"）对两个根因都是同一个表现，必须逐个排查。
 
-**教训**：涉及打包链路的改动必须**逐个拆分、逐个验证**。每个改动独立提交，用 `npm run build` + 解压验证确认无害后再做下一个。
+**教训**：涉及打包链路的改动必须**逐个拆分、逐个验证**。每个改动独立提交，用 `pnpm run build` + 解压验证确认无害后再做下一个。
 
 ### 一.五、被遮蔽的真相：v0.3.4 ~ v0.3.7 也无法正常启动
 
@@ -324,7 +324,7 @@ PR #62 的 commit message 列出了 4 个根因：
 
 更深层的问题是：**AI 在猜测而不是验证**。它猜测删除 `!dist/runtime` 就够了，不需要添加 `dist/runtime/**/*`。它猜测 `globalThis.__dirname` 没问题（因为上一个 PR 就是这样写的）。它没有实际构建 DMG、解压、运行来验证猜测。
 
-**教训**：打包问题的验证方式只有一个——**实际构建并检查产物**。`npm run build` 成功不代表产物正确。electron-builder 的静默失败特性决定了只有检查 `app.asar.unpacked/` 目录才能确认配置正确。
+**教训**：打包问题的验证方式只有一个——**实际构建并检查产物**。`pnpm run build` 成功不代表产物正确。electron-builder 的静默失败特性决定了只有检查 `app.asar.unpacked/` 目录才能确认配置正确。
 
 ### 五、每次修的都是不同层面的问题
 
@@ -393,7 +393,7 @@ PR #61 写了详细的 CLAUDE.md 规则 #12（Electron 打包约束），包括 
 ### 正确的修复流程应该是什么？
 
 1. **建立正确基线**：先确认哪个版本真的能用（v0.3.3，不是 v0.3.7）。`git diff v0.3.3..v0.3.8 --stat` 找到所有改动文件
-2. **构建验证**：`npm run build` + 解压 DMG + 检查 `app.asar.unpacked/`
+2. **构建验证**：`pnpm run build` + 解压 DMG + 检查 `app.asar.unpacked/`
 3. **运行验证**：`ELECTRON_RUN_AS_NODE=1 <electron> <index.cjs> --port=<random>` 确认 runtime 启动
 4. **二分排查**：如果以上失败，逐个回退改动直到找到引入问题的 commit
 5. **逐个修复**：每个根因独立修复、独立验证、独立提交

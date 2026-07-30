@@ -87,16 +87,16 @@
           </div>
           <Label
             v-for="ext in availableExtensions"
-            :key="ext"
+            :key="ext.name"
             class="flex items-center gap-1.5 rounded-sm border border-border px-2 py-1"
             :class="disabled ? 'cursor-default' : 'cursor-pointer hover:bg-surface'"
           >
             <Checkbox
-              :model-value="isExtChecked(ext)"
+              :model-value="isExtChecked(ext.name)"
               :disabled="disabled"
-              @update:model-value="(checked) => onExtToggle(ext, checked === true)"
+              @update:model-value="(checked) => onExtToggle(ext.name, checked === true)"
             />
-            <span class="text-[11px] text-neutral-fg">{{ ext }}</span>
+            <span class="text-[11px] text-neutral-fg">{{ ext.displayName }}</span>
           </Label>
         </div>
       </div>
@@ -164,8 +164,8 @@ const EXT_MODES = computed(() => [
 const BUILTIN_EXT_FILES: readonly string[] = BUILTIN_EXTENSION_FILES
 const availableExtensions = computed(() =>
   extensions.value
-    .map((e) => e.name)
-    .filter((name) => !BUILTIN_EXT_FILES.includes(name)),
+    .filter((e) => !BUILTIN_EXT_FILES.includes(e.name))
+    .map((e) => ({ name: e.name, displayName: e.displayName ?? e.name })),
 )
 
 /**

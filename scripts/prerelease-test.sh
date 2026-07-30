@@ -96,9 +96,9 @@ log "beta 版本: ${BETA_TAG}"
 log "=== 阶段 3/6: Bump 版本并推送 ==="
 
 cd "$WS_ROOT"
-npm version "$BETA_VERSION" --no-git-tag-version 1>/dev/null
+pnpm version "$BETA_VERSION" --no-git-tag-version 1>/dev/null
 cd apps/electron
-npm version "$BETA_VERSION" --no-git-tag-version 1>/dev/null
+pnpm version "$BETA_VERSION" --no-git-tag-version 1>/dev/null
 cd "$WS_ROOT"
 
 git add package.json apps/electron/package.json

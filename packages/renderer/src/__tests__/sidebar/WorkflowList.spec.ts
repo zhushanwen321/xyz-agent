@@ -93,13 +93,32 @@ describe('WorkflowList', () => {
     expect(wrapper.emitted('select')![0]).toEqual(['wf-click'])
   })
 
-  it('running 态渲染 Pause + Abort 按钮（常驻可见，非 hover-only）', () => {
+  it('running 态渲染 Pause + Abort 按钮（hover-only，含 group-focus-within 可见性）', () => {
     const records = [makeRecord({ runId: 'wf-run', status: 'running' })]
     const wrapper = mount(WorkflowList, { props: { workflows: records } })
 
-    // running 态有 pause + abort 按钮
-    expect(wrapper.find('[data-testid="workflow-action-pause"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="workflow-action-abort"]').exists()).toBe(true)
+    // running 态 pause + abort 按钮存在于 DOM（jsdom 不应用 hover CSS，验证元素存在即可）
+    const pauseBtn = wrapper.find('[data-testid="workflow-action-pause"]')
+    const abortBtn = wrapper.find('[data-testid="workflow-action-abort"]')
+    expect(pauseBtn.exists()).toBe(true)
+    expect(abortBtn.exists()).toBe(true)
+
+    // 操作容器需 hover + focus-within 可见性（可访问性：键盘聚焦也要能显示）
+    const container = pauseBtn.element.parentElement
+    expect(container?.classList.contains('group-hover:opacity-100')).toBe(true)
+    expect(container?.classList.contains('group-focus-within:opacity-100')).toBe(true)
+  })
+
+  it('卡片压缩 2 行：不再显示 token 信息（token 移至详情视图）', () => {
+    const records = [makeRecord({ runId: 'wf-tok', usedTokens: 50000 })]
+    const wrapper = mount(WorkflowList, { props: { workflows: records } })
+
+    const card = wrapper.find('[data-testid="workflow-card"]')
+    // usedTokens 不在卡片显示（50k / 50000 均不应出现）
+    expect(card.text()).not.toContain('50k')
+    expect(card.text()).not.toContain('50000')
+    // 但完成比例 + 耗时仍在
+    expect(card.text()).toContain('2/2')
   })
 
   it('abort 两段式：首次点击进入确认态（不 emit），再次点击确认按钮才 emit abort', async () => {

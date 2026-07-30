@@ -8,7 +8,7 @@
   <Dialog :open="open" @update:open="emit('update:open', $event)">
     <DialogContent
       hide-close
-      class="flex max-h-[85vh] max-w-[900px] flex-col gap-0 overflow-hidden p-0 sm:rounded-lg"
+      class="flex h-[640px] max-h-[88vh] w-[900px] max-w-[94vw] flex-col gap-0 overflow-hidden p-0 sm:rounded-lg"
     >
       <!-- modal-head -->
       <div class="modal-head flex h-[44px] flex-none items-center gap-2.5 border-b border-border px-3.5">

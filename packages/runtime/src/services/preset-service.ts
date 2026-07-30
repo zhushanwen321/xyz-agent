@@ -15,6 +15,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { resolveExtensions, applyPresetMode } from './extension-filter.js'
 
 import {
   BUILTIN_PRESET_IDS,
@@ -535,47 +536,37 @@ export class PresetService {
   /**
    * 解析 extensionPaths（设计文档 §2.3/§2.4）。
    *
-   * builtin 永远前置（不受 extensionMode 影响），用户 extension 按 mode 过滤：
+   * M1 根因修复：不再调 getExtensionPaths(cwd)（已含 builtin）再 prepend builtin（double-builtin），
+   * 改为调 getDiscoveredAndDisabled(cwd) 拿原始 discovered + disabled，本地 resolveExtensions
+   * + applyPresetMode 完成过滤，builtin 只在最终 prepend 一次（注入点唯一化）。
+   *
+   * builtin 永远前置（不受 extensionMode 影响），用户 extension 按 mode 二次筛选：
    *   - all: 全部 enabled
    *   - allowlist: enabled && name in preset.allowedExtensions
-   *   - denylist: enabled && name not in preset.deniedExtensions（pi 无原生 denylist → runtime 端过滤）
+   *   - denylist: enabled && name not in preset.deniedExtensions
    *   - none: 空（builtin 仍前置）
+   *
+   * tier 语义（applyPresetMode 内置）：
+   *   - infrastructure 包（presetOverridable=false）：任何模式都存活，不可覆盖
+   *   - feature mandatory / 普通包：presetOverridable=true，按 mode 过滤
    */
   private async resolveExtensionPaths(preset: PiLaunchPreset, cwd: string): Promise<string[]> {
-    void cwd // 当前实现未用 cwd（scanExtensions 不带 cwd）；保留参数对齐设计 §8.1 签名
     const builtinPaths = this.extensionService.getBuiltinExtensionPaths()
-    const userExts = await this.extensionService.scanExtensions()
+    const { discovered, disabledSet } = await this.extensionService.getDiscoveredAndDisabled(cwd)
 
-    let selected: string[]
-    switch (preset.extensionMode) {
-      case 'all':
-        selected = userExts.filter(e => e.enabled).map(e => e.path)
-        break
-      case 'allowlist': {
-        const allowed = preset.allowedExtensions ?? []
-        selected = userExts
-          .filter(e => e.enabled && allowed.includes(e.name))
-          .map(e => e.path)
-        break
-      }
-      case 'denylist': {
-        const denied = preset.deniedExtensions ?? []
-        selected = userExts
-          .filter(e => e.enabled && !denied.includes(e.name))
-          .map(e => e.path)
-        break
-      }
-      case 'none':
-        selected = []
-        break
-      // W-RT-1 兜底：coercePreset 已白名单校验，理论上走不到 default；
-      // 但防御性兜底（脏数据绕过 coerce / 未来新增枚举值未同步）按 'all' 处理，
-      // 与「不传 flag 用默认」语义一致，避免落空返回 undefined 导致 NaN spread。
-      default:
-        selected = userExts.filter(e => e.enabled).map(e => e.path)
-        break
-    }
-    return [...builtinPaths, ...selected]
+    // 一次读盘：disabled 过滤 + tier 推导
+    const resolved = resolveExtensions(discovered, disabledSet)
+    // preset mode 二次筛选（infrastructure 在任何模式下都存活）
+    const afterPreset = applyPresetMode(
+      resolved,
+      preset.extensionMode,
+      preset.allowedExtensions ?? [],
+      preset.deniedExtensions ?? [],
+    )
+    // builtin 永远前置 + 过滤后可加载的路径。
+    // .filter(r => r.loadable) 排除被 disabled 的普通包（applyPresetMode 不过滤 disabled，
+    // 只按 preset mode 过滤 presetOverridable/name，disabled 过滤在此完成）
+    return [...builtinPaths, ...afterPreset.filter(r => r.loadable).map(r => r.path)]
   }
 
   /**

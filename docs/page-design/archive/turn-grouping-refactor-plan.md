@@ -250,7 +250,7 @@ function groupIntoSections(msg: Message): AssistantSection[]
 
 **验证点**:
 - `vue-tsc --noEmit` 通过
-- `npm run lint` 无新增 error
+- `pnpm run lint` 无新增 error
 - 回归测试：消息发送、streaming、skill 触发、batch select、branch navigate 全部正常
 
 ## 4. 风险评估

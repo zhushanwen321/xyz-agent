@@ -50,6 +50,8 @@ import {
   setTimeout as setTimeoutImpl,
   getDefaultBaseBranch as getDefaultBaseBranchImpl,
   setDefaultBaseBranch as setDefaultBaseBranchImpl,
+  getAutoRenameEnabled as getAutoRenameEnabledImpl,
+  setAutoRenameEnabled as setAutoRenameEnabledImpl,
 } from './worktree-config-helper.js'
 import {
   defaultSystemPromptConfig,
@@ -349,6 +351,16 @@ export class ConfigService implements IConfigService {
 
   setDefaultBaseBranch(baseBranch: string): void {
     setDefaultBaseBranchImpl(this.appConfig(), baseBranch)
+  }
+
+  /** 读取 auto-rename 开关（标志文件存在=开，默认 false）。不经 appConfig（独立标志文件，非 config.json 字段）。 */
+  getAutoRenameEnabled(): boolean {
+    return getAutoRenameEnabledImpl()
+  }
+
+  /** 设置 auto-rename 开关（true 创建标志文件 / false 删除）。 */
+  setAutoRenameEnabled(enabled: boolean): void {
+    setAutoRenameEnabledImpl(enabled)
   }
 
   // ── Skill CRUD ─────────────────────────────────────────────────

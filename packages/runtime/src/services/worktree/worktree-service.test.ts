@@ -75,6 +75,9 @@ function mockConfigService(worktreeRootDir = '/home/user/worktrees') {
     setTimeout: vi.fn(),
     getDefaultBaseBranch: vi.fn(() => 'origin/main'),
     setDefaultBaseBranch: vi.fn(),
+    // auto-rename 开关 stub（worktree 测试不涉及，默认关闭）
+    getAutoRenameEnabled: vi.fn(() => false),
+    setAutoRenameEnabled: vi.fn(),
     // 其他方法 stub
     listProviders: vi.fn(() => []),
     getDefaultModel: vi.fn(() => null),

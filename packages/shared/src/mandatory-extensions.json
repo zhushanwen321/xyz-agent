@@ -1,0 +1,11 @@
+[
+  { "name": "@zhushanwen/pi-ask-user", "description": "Inline adaptive ask_user tool", "tier": "feature" },
+  { "name": "@zhushanwen/pi-goal", "description": "Codex-style /goal command, persistent goal-driven autonomous loop", "tier": "feature" },
+  { "name": "@zhushanwen/pi-todo", "description": "AI-driven todo list with session persistence and /todos", "tier": "feature" },
+  { "name": "@zhushanwen/pi-pending-notifications", "description": "Cross-extension async operation registration/query", "tier": "infrastructure" },
+  { "name": "@zhushanwen/pi-subagent-workflow", "description": "Unified subagent execution and multi-agent workflow orchestration", "tier": "feature" },
+  { "name": "@zhushanwen/pi-structured-output", "description": "Structured output tool with JSON Schema / Ajv validation", "tier": "infrastructure" },
+  { "name": "@zhushanwen/pi-permission", "description": "Permission tool for tool execution approval/denial", "tier": "feature" },
+  { "name": "@zhushanwen/pi-scheduler", "description": "Task scheduling and delayed execution", "tier": "feature" },
+  { "name": "@zhushanwen/pi-rename-session", "description": "Auto-generate session title after first turn", "tier": "feature" }
+]

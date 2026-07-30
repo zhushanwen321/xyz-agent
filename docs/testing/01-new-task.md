@@ -287,7 +287,7 @@ test.describe('新建任务 E2E', () => {
 | ⚠️ OS 原生 dialog 无法自动化 | 「打开其他目录」（`action-open-dir`）触发 Electron `dialog.showOpenDialog`，Playwright 无法交互系统对话框。E2E 测「选已有工作区」路径，`action-open-dir` 路径标 `[需手工]` |
 | ⚠️ mock 不模拟 create 失败 | mock `session.create` 恒成功。失败路径（E2/E3 create reject）只能集成测试验证（flow-integration.test.ts 有覆盖） |
 | ⚠️ branch chip 仅 git 目录 | 非 git 目录 `gitInfo == null` → branch chip 隐藏。mock fixture session 的 cwd 需是 git 仓库才能测 branch chip |
-| ❌ dev 冒烟盲区 | Landing 态渲染依赖 `useNewTaskFlow` + `useChat` + 多个 store，模块加载错误（node:path 类）mock 测不出。必须 `npm run dev` 手工冒烟 |
+| ❌ dev 冒烟盲区 | Landing 态渲染依赖 `useNewTaskFlow` + `useChat` + 多个 store，模块加载错误（node:path 类）mock 测不出。必须 `pnpm run dev` 手工冒烟 |
 
 ## 10. 相关文档
 

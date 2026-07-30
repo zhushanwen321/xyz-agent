@@ -710,7 +710,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_PREFLIGHT_CHECK" != "1" ]; then
             bash "$RUNTIME_BUNDLE_CHECKER"
             if [ $? -ne 0 ]; then
                 echo -e "${RED}[ERROR] Runtime bundle 验证失败（可能需要重新 build）${NC}"
-                echo -e "${YELLOW}[FIX] cd packages/runtime && npm run build，然后重新 commit${NC}"
+                echo -e "${YELLOW}[FIX] cd packages/runtime && pnpm run build，然后重新 commit${NC}"
                 echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
                 exit 1
             fi

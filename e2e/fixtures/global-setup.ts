@@ -32,7 +32,7 @@ export default async function globalSetup(): Promise<void> {
     console.log('[e2e global-setup] 构建产物缺失，跑 build:e2e ...')
     // VITE_E2E=true 必须透传给 renderer 构建（vite.config.ts define 读此注入 sample-project cwd）
     // VITE_MOCK=true 同理（renderer 构建期把 mock 开关打进 bundle）
-    execSync('npm run build:e2e', {
+    execSync('pnpm run build:e2e', {
       cwd: REPO_ROOT,
       stdio: 'inherit',
       env: { ...process.env, VITE_E2E: 'true', VITE_MOCK: 'true' },

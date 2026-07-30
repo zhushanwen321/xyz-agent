@@ -15,11 +15,38 @@ import { join } from 'node:path'
 import {
   DEFAULT_PRESETS,
   BUILTIN_PRESET_IDS,
-  type ExtensionInfo,
   type PiLaunchPreset,
   type PiPresetsFile,
 } from '@xyz-agent/shared'
 import { PresetService, PresetGuardError } from '../src/services/preset-service.js'
+import type { DiscoveredExtension } from '../src/services/ports/installer.js'
+
+/**
+ * vi.mock node:fs：只拦截 extension 相关路径（resolveExtensions 内 readPkgMeta 读 package.json），
+ * 让假路径返回真实包名（@zhushanwen/pi-pending-notifications 等），使 resolveExtensions 真正走
+ * infrastructure/feature 分支。其他文件（pi-presets.json/settings.json）透传 actual.readFileSync，
+ * 保证 wave1 / 其他 wave2 测试的真实 fs 读取不受影响。
+ */
+vi.mock('node:fs', async () => {
+  const actual = await vi.importActual<typeof import('node:fs')>('node:fs')
+  return {
+    ...actual,
+    readFileSync: vi.fn((path: PathOrFd, encoding?: unknown) => {
+      const p = typeof path === 'string' ? path : ''
+      // 让假路径的 package.json 返回真实包名（命中 mandatory SSOT）
+      if (p.includes('pi-pending-notifications')) return JSON.stringify({ name: '@zhushanwen/pi-pending-notifications' })
+      if (p.includes('pi-goal')) return JSON.stringify({ name: '@zhushanwen/pi-goal' })
+      // normal-a / normal-b 不匹配 mandatory → 普通包
+      if (p.includes('normal-a')) return JSON.stringify({ name: 'normal-a' })
+      if (p.includes('normal-b')) return JSON.stringify({ name: 'normal-b' })
+      // 其他文件（pi-presets.json / settings.json / disabled-packages.json 等）走真实 fs
+      return actual.readFileSync(path, encoding as Parameters<typeof actual.readFileSync>[1])
+    }),
+  }
+})
+
+/** readFileSync 第一个参数类型（number fd 或 string 路径）。 */
+type PathOrFd = Parameters<typeof import('node:fs')['readFileSync']>[0]
 
 /** 只暴露 getConfigDir 的最小 fake configStore。 */
 function makeFakeConfigStore(configDir: string) {
@@ -37,16 +64,31 @@ function makeFakeExtensionStore() {
 }
 
 /**
- * wave2 resolve 测试用的 fake extensionService：可控的 builtin 路径 + 用户 extension 列表。
+ * wave2 resolve 测试用的 fake extensionService：可控的 builtin 路径 + discovered/disabled。
+ *
+ * worker C 把 resolveExtensionPaths 改为调 getDiscoveredAndDisabled（返回原始 discovered + disabledSet），
+ * 本地再 resolveExtensions + applyPresetMode。所以 fake 需 mock getDiscoveredAndDisabled
+ * （不再 mock scanExtensions/getExtensionPaths，resolve 不再调它们；保留方法占位给可能用到的地方）。
+ *
  * builtinPaths: getBuiltinExtensionPaths 的固定返回值。
- * userExts: scanExtensions 的固定返回值（含 enabled 状态）。
+ * discovered: getDiscoveredAndDisabled 返回的原始发现结果（path + source）。
+ * disabledNames: 包名数组（不含 npm: 前缀），fake 内部转成 `npm:<name>` 形式的 Set。
  */
-function makeFakeExtensionStoreForResolve(builtinPaths: string[], userExts: ExtensionInfo[]) {
+function makeFakeExtensionStoreForResolve(
+  builtinPaths: string[],
+  discovered: DiscoveredExtension[],
+  disabledNames: string[],
+) {
   return {
     getBuiltinExtensionPaths: vi.fn(() => builtinPaths),
-    scanExtensions: vi.fn(async () => userExts),
-    getExtensionPaths: vi.fn(async () => [...builtinPaths, ...userExts.filter(e => e.enabled).map(e => e.path)]),
+    getDiscoveredAndDisabled: vi.fn(async () => ({
+      discovered,
+      disabledSet: new Set(disabledNames.map(n => `npm:${n}`)),
+    })),
     getSkillPaths: vi.fn(async () => []),
+    // 保留 scanExtensions/getExtensionPaths 占位（resolve 不再调，但保留兼容其他可能用到的地方）
+    scanExtensions: vi.fn(async () => []),
+    getExtensionPaths: vi.fn(async () => []),
   }
 }
 
@@ -60,19 +102,6 @@ function makePreset(overrides: Partial<PiLaunchPreset>): PiLaunchPreset {
     toolMode: 'all',
     extensionMode: 'all',
     ...overrides,
-  }
-}
-
-/** 构造最小 ExtensionInfo（仅 resolve 关心的字段，其余填默认值满足类型）。 */
-function makeExt(name: string, enabled: boolean, path?: string): ExtensionInfo {
-  return {
-    name,
-    dirName: name,
-    version: '0.0.0-test',
-    description: '',
-    path: path ?? `/fake/ext/${name}`,
-    enabled,
-    source: 'user-installed',
   }
 }
 
@@ -299,13 +328,20 @@ describe('PresetService · wave 2 resolve', () => {
 
   beforeEach(() => {
     // 复用顶层 tmpDir（已是 presetService 的 configDir），但用新 mock 构造 svcWithMock
+    // fixture 含三类包：infrastructure(pi-pending-notifications) + feature(pi-goal) + 2 普通(normal-a/normal-b)
+    // 假路径配合文件顶部 vi.mock('node:fs') 返回真实包名，使 resolveExtensions 真正走 infra/feature 分支
     mockExt = makeFakeExtensionStoreForResolve(
       ['/builtin/agent.js', '/builtin/sp.js'], // 2 个 builtin 路径
       [
-        makeExt('ext-a', true),
-        makeExt('ext-b', true),
-        makeExt('ext-c', false), // disabled
+        // 用真实 infrastructure 包名，让 resolveExtensions 真正走 infra 分支
+        { path: '/fake/ext/pi-pending-notifications', source: 'npm' },
+        // feature 包
+        { path: '/fake/ext/pi-goal', source: 'npm' },
+        // 普通包
+        { path: '/fake/ext/normal-a', source: 'user' },
+        { path: '/fake/ext/normal-b', source: 'user' },
       ],
+      [], // 不 disable 任何包
     )
     svcWithMock = new PresetService(
       makeFakeConfigStore(tmpDir) as unknown as ConstructorParameters<typeof PresetService>[0],
@@ -313,50 +349,70 @@ describe('PresetService · wave 2 resolve', () => {
     )
   })
 
-  it('w2-tc3: resolve extensionMode=all 返回 builtin + 全部 enabled 用户 extension', async () => {
+  it('w2-tc3: resolve extensionMode=all 返回 builtin + 全部 discovered extension', async () => {
     const result = await svcWithMock.resolve(makePreset({ extensionMode: 'all' }), '/cwd')
-    // 2 builtin + 2 enabled (ext-a, ext-b)，ext-c disabled 被排除
+    // 2 builtin + 全部 4 个扩展（infra / feature / 2 normal）
     expect(result.extensionPaths).toEqual([
       '/builtin/agent.js', '/builtin/sp.js',
-      '/fake/ext/ext-a', '/fake/ext/ext-b',
+      '/fake/ext/pi-pending-notifications',
+      '/fake/ext/pi-goal',
+      '/fake/ext/normal-a',
+      '/fake/ext/normal-b',
     ])
-    // 验证 disabled 被排除
-    expect(result.extensionPaths.some(p => p.includes('ext-c'))).toBe(false)
   })
 
-  it('w2-tc4: resolve extensionMode=allowlist 只含 allowedExtensions 命中的', async () => {
+  it('w2-tc4: resolve extensionMode=allowlist infrastructure 存活即使不在 allowlist（S2 核心）', async () => {
     const result = await svcWithMock.resolve(
-      makePreset({ extensionMode: 'allowlist', allowedExtensions: ['ext-a', 'ext-c'] }),
+      makePreset({ extensionMode: 'allowlist', allowedExtensions: ['normal-a'] }),
       '/cwd',
     )
-    // builtin 永远前置 + ext-a（enabled && allowed）
-    // ext-c 虽在 allowed 但 disabled → 排除；ext-b 不在 allowed → 排除
+    // builtin + infra（pi-pending-notifications 存活，即使不在 allowlist 也留）+ normal-a（在 allowlist）
+    // 不含 pi-goal（feature 不在 allowlist）、normal-b（不在 allowlist）
     expect(result.extensionPaths).toEqual([
       '/builtin/agent.js', '/builtin/sp.js',
-      '/fake/ext/ext-a',
+      '/fake/ext/pi-pending-notifications',
+      '/fake/ext/normal-a',
     ])
   })
 
-  it('w2-tc5: resolve extensionMode=denylist 排除 deniedExtensions', async () => {
+  it('w2-tc5: resolve extensionMode=denylist infrastructure 存活即使被列入 denylist（S2 核心）', async () => {
     const result = await svcWithMock.resolve(
-      makePreset({ extensionMode: 'denylist', deniedExtensions: ['ext-b'] }),
+      makePreset({
+        extensionMode: 'denylist',
+        deniedExtensions: ['@zhushanwen/pi-pending-notifications', '@zhushanwen/pi-goal', 'normal-a'],
+      }),
       '/cwd',
     )
-    // builtin + ext-a（enabled && !denied）；ext-b denied 排除；ext-c disabled 排除
+    // builtin + infra（pi-pending-notifications 扛住 denylist！即使被列入也留）
+    // 不含 pi-goal / normal-a（被 deny）；normal-b 未 deny 但…保留
     expect(result.extensionPaths).toEqual([
       '/builtin/agent.js', '/builtin/sp.js',
-      '/fake/ext/ext-a',
+      '/fake/ext/pi-pending-notifications',
+      '/fake/ext/normal-b',
     ])
   })
 
-  it('w2-tc6: resolve extensionMode=none 只返回 builtin（用户 extension 全排除）', async () => {
+  it('w2-tc6: resolve extensionMode=none 只留 builtin + infrastructure（feature/normal 全排除）', async () => {
     const result = await svcWithMock.resolve(
       makePreset({ extensionMode: 'none' }),
       '/cwd',
     )
-    // 验证 builtin 永远注入的硬约束：extensionMode=none 时仍含全部 builtin
-    expect(result.extensionPaths).toEqual(['/builtin/agent.js', '/builtin/sp.js'])
-    expect(result.extensionPaths.some(p => p.includes('ext-'))).toBe(false)
+    // builtin 永远前置 + none 模式只保留 infrastructure
+    expect(result.extensionPaths).toEqual([
+      '/builtin/agent.js', '/builtin/sp.js',
+      '/fake/ext/pi-pending-notifications',
+    ])
+  })
+
+  it('S2: infrastructure 包在 all/allowlist/denylist/none 四种 mode 下都绝对存活', async () => {
+    // denylist 故意把 infra 包也列进去，验证它扛住
+    for (const mode of ['all', 'allowlist', 'denylist', 'none'] as const) {
+      const result = await svcWithMock.resolve(
+        makePreset({ extensionMode: mode, deniedExtensions: ['@zhushanwen/pi-pending-notifications'] }),
+        '/cwd',
+      )
+      expect(result.extensionPaths).toContain('/fake/ext/pi-pending-notifications')
+    }
   })
 
   it('w2-tc7: resolve 4 种 toolMode 映射正确', async () => {

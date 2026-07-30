@@ -23,18 +23,18 @@ description: >-
 
 ```bash
 # Lint 检查
-npm run lint
+pnpm run lint
 
 # 单元测试（根 package.json 没有 test script，需要分别跑）
 cd packages/runtime && npx vitest run
 cd ../renderer && npx vitest run
 
 # 构建验证(确认 build 不报错)
-npm run build
+pnpm run build
 ```
 
 **Electron 特化说明**:
-- 构建产物在 CI 产生,本地只需确认 `npm run build` 不报错
+- 构建产物在 CI 产生,本地只需确认 `pnpm run build` 不报错
 - 本技能目录包含 `scripts/preflight-check.sh`,可用作更全面的预检
 
 ```bash

@@ -6,6 +6,7 @@ r"""
 3. 禁止 cw v1 工作流临时产物出现在根目录（应归档到 .xyz-harness/）
 4. 禁止备份/临时后缀文件进版本管理（*.bak/*.tmp/*.swp/*.orig/*~）
 5. 禁止非 ASCII 路径（中文目录名等）进版本管理
+6. .pi/ 目录只允许 workflows/ 子目录进 git（防止运行时缓存/会话数据误提交）
 
 设计原则 [HISTORICAL]：所有检查只针对 git staged 文件，不做全项目扫描。
 - staged 扫描已能拦截 `git add -f`（强制 add 后文件即 staged），全项目扫描
@@ -24,6 +25,12 @@ FORBIDDEN_DIR_NAMES = {"demos", "impeccable"}
 
 # symlink 白名单：允许的相对路径前缀
 SYMLINK_ALLOWED_PREFIXES = ("../", "./")
+
+# .pi/ 目录白名单：只允许这些子目录进 git。
+# .pi/ 整体放开跟踪后（.gitignore 用 .pi/* + !.pi/workflows/），
+# 本检查是防呆层——防止 .pi/sessions/ .pi/infinite-context/ 等运行时数据
+# 被 git add -f 误提交。workflows/ 是编排源码，extension 相关内容是 npm 包不在 .pi/ 下。
+PI_ALLOWED_SUBDIRS = {"workflows"}
 
 # 根目录禁止的 cw v1 工作流临时产物文件名模式（正则，对根目录相对路径匹配）。
 # 这些是 cw 跑完的运行时/归档产物，应放 .xyz-harness/，不是源码。
@@ -68,7 +75,8 @@ def check_forbidden_dirs(staged_files):
     forbidden_dirs_found = set()
 
     for filepath in staged_files:
-        parts = filepath.split(os.sep)
+        # git 输出的路径恒用正斜杠（跨平台一致），不能用 os.sep（Windows 上为反斜杠会切错）
+        parts = filepath.split('/')
         for part in parts:
             if part in FORBIDDEN_DIR_NAMES:
                 forbidden_dirs_found.add(part)
@@ -97,7 +105,8 @@ def check_root_temp_artifacts(staged_files):
     found = set()
     for filepath in staged_files:
         # 只检查根目录文件（无路径分隔符 = 直接在仓库根）
-        if os.sep in filepath:
+        # git 输出的路径恒用正斜杠（跨平台一致），不能用 os.sep（Windows 上漏判）
+        if '/' in filepath:
             continue
         for pattern in ROOT_FORBIDDEN_PATTERNS:
             if pattern.match(filepath):
@@ -154,6 +163,37 @@ def check_ascii_paths(staged_files):
         errors.append(
             f"禁止非 ASCII 路径: {sample}{suffix}\n"
             f"  目录/文件名必须全 ASCII（中文目录名跨平台/CI 易出问题）"
+        )
+    return errors
+
+
+def check_pi_whitelist(staged_files):
+    """检查 .pi/ 目录下只允许 workflows/ 子目录进 git。
+
+    .gitignore 已用 .pi/* + !.pi/workflows/ 放开跟踪，但 git add -f 可绕过 ignore。
+    本检查是防呆层：任何 .pi/ 下非 workflows/ 的文件都拒绝（运行时缓存/会话数据
+    如 .pi/sessions/ .pi/infinite-context/ 不应进版本管理）。
+    """
+    errors = []
+    found = []
+    for filepath in staged_files:
+        if not filepath.startswith(".pi/"):
+            continue
+        # filepath 形如 .pi/workflows/review-fix-loop.js → 第二段是子目录名
+        # git 输出的路径恒用正斜杠（跨平台一致），不能用 os.sep（Windows 上为反斜杠会切错）
+        parts = filepath.split('/')
+        if len(parts) < 2:
+            continue
+        subdir = parts[1]
+        if subdir not in PI_ALLOWED_SUBDIRS:
+            found.append(filepath)
+    if found:
+        sample = ", ".join(sorted(found)[:5])
+        suffix = f" 等 {len(found)} 个" if len(found) > 5 else ""
+        errors.append(
+            f".pi/ 目录只允许 workflows/ 进 git: {sample}{suffix}\n"
+            f"  .pi/sessions/ .pi/infinite-context/ 等是运行时数据，不应提交。"
+            f"只允许 {sorted(PI_ALLOWED_SUBDIRS)} 子目录"
         )
     return errors
 
@@ -231,6 +271,7 @@ def main():
     errors.extend(check_root_temp_artifacts(staged_files))
     errors.extend(check_backup_suffixes(staged_files))
     errors.extend(check_ascii_paths(staged_files))
+    errors.extend(check_pi_whitelist(staged_files))
     errors.extend(check_symlinks(staged_files))
 
     if errors:
