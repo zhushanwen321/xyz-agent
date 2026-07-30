@@ -189,21 +189,28 @@ body {
 .cs-chev { width: 12px; height: 12px; color: var(--neutral-mid); }
 .cs-ico { width: 14px; height: 14px; color: var(--info); }
 .cs-title { font-size: 12px; font-weight: 500; color: var(--neutral-fg); }
-.cs-count { font-size: 10px; padding: 2px 6px; border-radius: var(--radius-sm); background: var(--surface); color: var(--neutral-dim); }
-.cs-status { font-size: 10px; padding: 2px 6px; border-radius: 999px; }
+.cs-count { font-size: 10px; padding: 2px 6px; border-radius: var(--radius-sm); background: var(--surface); color: var(--neutral-dim); font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
+/* 状态 badge：rounded-sm（非胶囊），与代码 ChangeSetCard.vue:22 一致 */
+.cs-status { font-size: 10px; padding: 2px 6px; border-radius: var(--radius-sm); }
+.cs-status.accumulating { background: var(--accent-soft); color: var(--accent); }
 .cs-status.ready { background: var(--info-soft); color: var(--info); }
-.cs-status.pending { background: var(--accent-soft); color: var(--accent); }
-.cs-status.reviewed { background: var(--warn-soft); color: var(--warn); }
+.cs-status.partially-reviewed { background: var(--warn-soft); color: var(--warn); }
+.cs-status.resolved { background: var(--success-soft); color: var(--success); }
+.cs-status.superseded { background: var(--surface); color: var(--neutral-dim); }
 .cs-stats { margin-left: auto; display: flex; gap: 6px; font-size: 10px; font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
 .cs-stats .add { color: var(--success); }
 .cs-stats .del { color: var(--danger); }
 .cs-detail { padding: 4px 0; }
 .cs-file { display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
 .cs-file:hover { background: var(--surface-hover); }
+.cs-file .cs-extlink { width: 12px; height: 12px; color: var(--neutral-dim); opacity: 0; transition: opacity var(--duration-fast); margin-left: auto; }
+.cs-file:hover .cs-extlink { opacity: 1; }
 .cs-fbadge { font-family: var(--font-mono); font-size: 10px; font-weight: 600; padding: 2px 4px; border-radius: var(--radius-sm); min-width: 18px; text-align: center; }
 .cs-fbadge.A { background: var(--success-soft); color: var(--success); }
 .cs-fbadge.M { background: var(--info-soft); color: var(--info); }
 .cs-fbadge.D { background: var(--danger-soft); color: var(--danger); }
+/* U（unmerged）= danger/20 底 + ring 描边（ChangeSetCard.vue:122）*/
+.cs-fbadge.U { background: color-mix(in oklch, var(--danger) 20%, transparent); color: var(--danger); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--danger) 40%, transparent); }
 .cs-fname { color: var(--neutral-fg); font-family: var(--font-mono); }
 
 /* ── UserBubble（v6：删 border，仅 bg-surface-hover；删 pending 态，pending 语义迁 QueueBubble）── */
@@ -346,6 +353,8 @@ body {
 .bob-loader { width: 12px; height: 12px; animation: spin 1.4s linear infinite; }
 .bob-cancel { font-size: 10px; padding: 2px 6px; border-radius: var(--radius-sm); background: var(--surface-2); color: var(--neutral-mid); cursor: pointer; }
 .bob-cancel:hover { background: var(--danger-soft); color: var(--danger); }
+/* no-context tag（excludeFromContext，BashOutputBlock.vue:34-38，border pill）*/
+.bob-noctx { font-size: 10px; padding: 1px 4px; border-radius: var(--radius-sm); border: 1px solid var(--border); color: var(--neutral-dim); flex-shrink: 0; line-height: 1; }
 .bob-out { font-family: var(--font-mono); font-size: 12px; color: var(--neutral-mid); max-height: 240px; overflow: auto; margin-top: 6px; padding-left: 16px; white-space: pre-wrap; line-height: 1.5; }
 .bob-trunc { font-style: italic; font-size: 10px; color: var(--neutral-dim); padding-left: 16px; margin-top: 4px; }
 .bob-empty { font-size: 11px; color: var(--neutral-faint); padding-left: 16px; margin-top: 4px; font-style: italic; }
@@ -360,8 +369,13 @@ body {
 .tool-name.failed { color: var(--neutral-mid); }
 .tool-arg { color: var(--neutral-mid); font-family: var(--font-mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool-exit { margin-left: auto; font-family: var(--font-mono); font-size: 10px; padding: 2px 6px; border-radius: var(--radius-sm); background: var(--surface-2); color: var(--neutral-mid); }
-.tool-body { padding: 6px 0 0 16px; }
-.tool-meta { font-size: 11px; color: var(--neutral-dim); font-family: var(--font-mono); margin-bottom: 4px; }
+/* copy 按钮：hover 显，左上角浮标 ghost icon（Block.vue:130-141）*/
+.tool-copy { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: var(--radius-sm); color: var(--neutral-dim); opacity: 0; transition: opacity var(--duration-fast); }
+.tool-body:hover .tool-copy { opacity: 1; }
+.tool-copy:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.tool-copy svg { width: 12px; height: 12px; }
+.tool-body { padding: 6px 0 0 16px; position: relative; }
+.tool-meta { font-size: 11px; color: var(--neutral-dim); font-family: var(--font-mono); margin-bottom: 4px; display: flex; gap: 12px; flex-wrap: wrap; }
 /* tool-bash 渲染分支（agent 调用的 bash，嵌 tool 块，可折叠）*/
 .tool-bash-box { border: 1px solid var(--neutral-faint); border-radius: var(--radius-sm); background: var(--surface-2); }
 .tool-bash-cmd { padding: 6px 16px; font-family: var(--font-mono); font-size: 12px; color: var(--neutral-fg); border-bottom: 1px solid var(--neutral-faint); }
@@ -388,6 +402,60 @@ body {
 .sa-bgstatus { padding: 6px 0 6px 16px; margin-top: 6px; display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 11px; color: var(--neutral-dim); }
 .sa-bgstatus .blink-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: blink 1s step-end infinite; }
 
+/* ── BgNotifyCard（background 完成通知，§10.5，系统级异步通知卡片）── */
+.bn-card { display: flex; flex-direction: column; gap: 6px; border-radius: var(--radius); padding: 8px 12px; font-family: var(--font-mono); }
+.bn-card.has-failed { border: 1px solid color-mix(in oklch, var(--danger) 40%, transparent); background: var(--danger-soft); }
+.bn-card.has-cancelled { border: 1px solid color-mix(in oklch, var(--neutral-mid) 30%, transparent); background: color-mix(in oklch, var(--neutral-mid) 5%, transparent); }
+.bn-card.normal { border: 1px solid var(--border); background: color-mix(in oklch, var(--surface-hover) 40%, transparent); }
+.bn-row { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.bn-row .bn-ico { width: 12px; height: 12px; flex-shrink: 0; }
+.bn-row .bn-agent { font-weight: 600; }
+.bn-row .bn-model { color: var(--neutral-dim); }
+.bn-row .bn-elapsed { color: var(--neutral-dim); }
+.bn-row.done { color: var(--neutral-fg); }
+.bn-row.failed { color: var(--danger); }
+.bn-row.cancelled { color: var(--neutral-mid); }
+.bn-single-hd { display: flex; align-items: center; gap: 6px; font-size: 11px; cursor: pointer; }
+.bn-chev { width: 10px; height: 10px; color: var(--neutral-dim); flex-shrink: 0; }
+.bn-summary { padding-left: 16px; font-size: 12px; color: var(--neutral-mid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.4; }
+.bn-patch-hint { margin-left: 16px; border: 1px solid color-mix(in oklch, var(--info) 30%, transparent); background: var(--info-soft); color: var(--info); border-radius: var(--radius-sm); padding: 4px 8px; font-size: 11px; }
+.bn-fullcontent { margin-left: 16px; max-height: 120px; overflow-y: auto; background: color-mix(in oklch, var(--surface-2) 50%, transparent); border-radius: var(--radius-sm); padding: 4px 8px; font-size: 11px; line-height: 1.6; color: var(--neutral-mid); }
+
+/* ── GUI 组件规格（§11.5，extension __gui__ 推送渲染契约）── */
+.gui-spec { font-family: var(--font-mono); font-size: 12px; }
+.gui-tree-item { display: flex; align-items: center; gap: 6px; padding: 2px 0; line-height: 1.5; }
+.gui-tree-icon { width: 14px; height: 14px; flex-shrink: 0; display: inline-flex; justify-content: center; }
+.gui-tree-icon svg { width: 11px; height: 11px; }
+.gui-tree-label { color: var(--neutral-mid); }
+.gui-tree-status { font-size: 10px; }
+.gui-tree-status.running { color: var(--accent); }
+.gui-tree-status.done { color: var(--success); }
+.gui-tree-status.failed { color: var(--danger); }
+.gui-stats-line { display: flex; flex-wrap: wrap; align-items: center; gap: 0; }
+.gui-stats-item { display: flex; align-items: center; gap: 4px; padding: 0 12px; }
+.gui-stats-item:first-child { padding-left: 0; }
+.gui-stats-item.sep { border-left: 1px solid var(--border); }
+.gui-stats-label { color: var(--neutral-dim); }
+.gui-stats-value { font-weight: 500; font-variant-numeric: tabular-nums; }
+.gui-stats-value.ok { color: var(--success); }
+.gui-stats-value.warn { color: var(--warn); }
+.gui-stats-value.danger { color: var(--danger); }
+.gui-tab-bar { display: flex; gap: 2px; border-bottom: 1px solid var(--border); padding-bottom: 1px; }
+.gui-tab { display: flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: var(--radius-sm) var(--radius-sm) 0 0; font-size: 11px; color: var(--neutral-dim); }
+.gui-tab.active { background: var(--accent-soft); color: var(--accent); }
+.gui-tab.done:not(.active) { color: var(--success); }
+.gui-tab-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+.gui-tab-dot.done { background: var(--success); }
+.gui-tab-dot.pending { background: var(--neutral-dim); opacity: 0.5; }
+.gui-card-box { border-radius: var(--radius-lg); border: 1px solid var(--border); background: var(--surface); overflow: hidden; }
+.gui-card-box.elevated { border-color: var(--border-strong); background: var(--surface-2); }
+.gui-card-box.danger { border-color: var(--danger); }
+.gui-card-box.success { border-color: var(--success); }
+.gui-card-hd { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--neutral-mid); }
+.gui-card-body { padding: 12px; }
+.gui-ansi { white-space: pre-wrap; font-family: var(--font-mono); font-size: 11px; line-height: 1.5; }
+.gui-data-key { display: inline-block; background: var(--surface-2); color: var(--accent); border-radius: var(--radius-sm); padding: 1px 5px; font-size: 10px; margin: 1px 2px; }
+
 /* ── workflow block（v6：failed 不切 icon；GUI 渲染由 extension 推，本身无内置进度条）── */
 .wf-v6 { padding: 10px 0 8px; margin-bottom: 2px; }
 .wf-hd { display: flex; min-width: 0; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; cursor: pointer; }
@@ -405,6 +473,13 @@ body {
 .gui-pb-fill.ok { background: var(--success); }
 .gui-pb-fill.warn { background: var(--warn); }
 .gui-pb-fill.danger { background: var(--danger); }
+/* 进度条完整结构（ProgressBar.vue:39-53）：label 行 + 数字读数 + track */
+.gui-pb-full { font-family: var(--font-mono); font-size: 12px; margin: 8px 0 4px; padding-left: 16px; }
+.gui-pb-label-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.gui-pb-label { color: var(--neutral-mid); }
+.gui-pb-count { font-weight: 500; font-variant-numeric: tabular-nums; color: var(--neutral-fg); }
+.gui-pb-count-dim { color: var(--neutral-dim); }
+.gui-pb-full .gui-pb { margin: 0; height: 6px; }
 
 /* ── assistant 正文 markdown（v6：<p> 恢复 0.5em 间距 + 代码块 token 化）── */
 .md-body { font-size: 12px; line-height: 1.7; color: var(--neutral-mid); padding-bottom: 8px; }
@@ -474,7 +549,9 @@ body {
     <a href="#s6">§6 Block·tool</a>
     <a href="#s7">§7 ChangeSetCard</a>
     <a href="#s10">§10 subagent</a>
+    <a href="#s10-5">§10.5 BgNotifyCard</a>
     <a href="#s11">§11 workflow</a>
+    <a href="#s11-5">§11.5 GUI 组件</a>
   </nav>
 
   <!-- ================================================================
@@ -482,10 +559,10 @@ body {
        ================================================================ -->
   <section class="spec" id="s4">
     <div class="spec-head"><span class="spec-num">§4</span><h2 class="spec-title">Block · thinking（思考块）</h2></div>
-    <p class="spec-desc">收起态预览。<b>v6 仅做提亮</b>：预览文本 <code>neutral-dim #6b7280</code> → <code>neutral-mid #9ca3af</code>（过 AA）。<b>行数维持 1 行 ellipsis</b>（60 字符截断 + …，与代码现状一致）。<span style="color:var(--warn);">⚠ 推翻 handoff §4.1「显 2 行」决策</span>——2 行会破坏 turn 内的视觉节奏，1 行 ellipsis 更克制。label 保持 uppercase mono。</p>
+    <p class="spec-desc">收起态预览。<b>v6 仅做提亮</b>：预览文本 <code>neutral-dim #6b7280</code> → <code>neutral-mid #9ca3af</code>（过 AA）。<b>行数维持 1 行 ellipsis</b>（60 字符截断 + …，与代码现状一致）。<span style="color:var(--warn);">⚠ 推翻 handoff §4.1「显 2 行」决策</span>——2 行会破坏 turn 内的视觉节奏，1 行 ellipsis 更克制。label 保持 uppercase mono。<b>注</b>：collapsed preview 是 dim→mid 提亮，但 <b>expanded body 仍是 dim</b>（thinking variant 降级排版，MarkdownRenderer 标题用 <code>--reasoning</code> 紫），两者色差需说清。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> neutral-dim #6b7280 · 1 行 truncate</span>
-      <span class="cp cp-v6"><b>v6</b> neutral-mid #9ca3af · 1 行 truncate（仅提亮）</span>
+      <span class="cp cp-v6"><b>v6</b> preview neutral-mid #9ca3af · expanded body 仍 neutral-dim（thinking variant）</span>
     </div>
 
     <div class="render-frame">
@@ -495,7 +572,7 @@ body {
           <div class="state-demo">
             <div class="tk-v6">
               <div class="tk-row">
-                <svg class="tk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2Z"/></svg>
+                <svg class="tk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2Z"/></svg>
                 <span class="tk-label">THINK</span>
                 <span class="tk-preview">用户要求重构对话流的视觉层，我需要先分析当前的组件结构，确定哪些是表面层的样式调整，哪些涉及到布局变化…</span>
               </div>
@@ -507,11 +584,13 @@ body {
           <div class="state-demo">
             <div class="tk-v6">
               <div class="tk-row">
-                <svg class="tk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2Z"/></svg>
+                <svg class="tk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2Z"/></svg>
                 <span class="tk-label">THINK</span>
-                <span style="font-size:12px;color:var(--neutral-dim);">·</span>
+                <!-- expanded 态 separator + preview 文字设 invisible（保留占位，Block.vue:24-25）-->
+                <span style="font-size:12px;color:var(--neutral-dim);visibility:hidden;">·</span>
+                <span class="tk-preview" style="visibility:hidden;">（preview 占位，expanded invisible）</span>
               </div>
-              <div style="font-size:12px;color:var(--neutral-mid);line-height:1.7;padding-left:16px;padding-top:6px;">展开后完整思考内容，line-height 1.7 提升可读性，颜色同样用 neutral-mid（提亮）。hover 显示 copy 按钮。<br>注：working（思考进行中）态强制全展开且不可手动收，仍显 60 字预览非完整内容。</div>
+              <div style="font-size:12px;color:var(--neutral-dim);line-height:1.7;padding-left:16px;padding-top:6px;">展开后完整思考内容，expanded body 颜色 <b>仍是 neutral-dim</b>（Block.vue:28，thinking variant 降级排版），非 mid——与 collapsed preview 的 mid 形成色差（preview 更亮引导视线，body 弱化为过程信息）。hover 显示 copy 按钮。<br>注：working（思考进行中）态强制全展开且不可手动收，仍显 60 字预览非完整内容。</div>
             </div>
           </div>
         </div>
@@ -520,12 +599,15 @@ body {
 
     <div class="anno-grid">
       <div class="anno"><b>block padding:</b><br>py-2 (8px 上下)</div>
-      <div class="anno"><b>icon:</b><br>13px neutral-ico · <b>无 spinner</b>（thinking 块不用 loader）</div>
+      <div class="anno"><b>icon:</b><br>13px neutral-ico · stroke 1.75 · <b>无 spinner</b>（thinking 块不用 loader）</div>
       <div class="anno"><b>label:</b><br>10px [--text-2xs] mono 600 uppercase tracking-.08em neutral-fg</div>
       <div class="anno"><b>preview 文字:</b><br><span class="old">12px neutral-dim #6b7280</span><br><span class="v6">12px [--text-sm] neutral-mid #9ca3af（仅提亮）</span></div>
+      <div class="anno"><b>expanded body:</b><br><span class="v6">12px neutral-dim（Block.vue:28，<b>非 mid</b>）· MarkdownRenderer variant=thinking（标题用 --reasoning 紫）· 与 preview 色差刻意</span></div>
+      <div class="anno"><b>expanded 占位:</b><br><span class="v6">separator（·）+ preview 文字 expanded 时 invisible 保留占位（Block.vue:24-25），仅显 body</span></div>
       <div class="anno"><b>预览行数:</b><br><span class="v6">1 行 ellipsis（60 字符截断，维持现状）</span><br><span style="color:var(--warn);">推翻 handoff「2 行」</span></div>
-      <div class="anno"><b>对比度:</b><br><span class="v6">neutral-mid 6.95:1 ✓ AA</span>（dim 3.91:1 ✗）</div>
-      <div class="anno"><b>working 态:</b><br>强制展开 + 预览文本（无 spinner），不可手动收</div>
+      <div class="anno"><b>对比度:</b><br><span class="v6">preview neutral-mid 6.95:1 ✓ AA</span>（dim 3.91:1 ✗）</div>
+      <div class="anno"><b>working 态:</b><br>强制展开 + 预览文本（无 spinner），不可手动收（Block.vue:231 <code>if(working) return</code>）</div>
+      <div class="anno"><b>working cursor [待实现]:</b><br><span style="color:var(--warn);">[待实现] 现状仍 cursor-pointer（Block.vue:16），但 working 时点击拦截无反应——v6 应改 default cursor 避免误导可点击</span></div>
       <div class="anno"><b>折叠:</b><br>本地态 thinkingCollapsed，default 收起</div>
     </div>
   </section>
@@ -535,10 +617,11 @@ body {
        ================================================================ -->
   <section class="spec" id="s5">
     <div class="spec-head"><span class="spec-num">§5</span><h2 class="spec-title">Block · bash</h2></div>
-    <p class="spec-desc"><b>bash 有两个来源，渲染不同，必须区分</b>：① <b>BashOutputBlock</b>——composer 用 <code>!</code> 前缀直接执行的 bash，独立系统消息，<b>不可折叠</b>，header 显完整命令 + exit 状态标签；② <b>tool-bash</b>——agent 调用的 bash 工具，嵌在 tool 块内（见 §6），<b>可折叠</b>，展开后用 border 容器渲染命令+输出。两类 v6 统一：去嵌套卡片视觉冗余，failed 中性化。</p>
+    <p class="spec-desc"><b>bash 有两个来源，渲染不同，必须区分</b>：① <b>BashOutputBlock</b>——composer 用 <code>!</code> 前缀直接执行的 bash，独立系统消息，<b>不可折叠</b>，header 显完整命令 + exit 状态标签；② <b>tool-bash</b>——agent 调用的 bash 工具，嵌在 tool 块内（见 §6），<b>可折叠</b>，展开后用 border 容器渲染命令+输出。<b>失败视觉对照</b>：5A（独立系统消息）exit N 显 <code>warn</code>（哑光金）——用户主动执行的直接反馈需明确成败；tool-bash（嵌 tool 块）failed 走 §6 中性灰策略（无 exit 标签、靠 toolName 降色）——agent 工具调用的成败由 agent 后续 turn 解释，视觉退后。两类 v6 统一：去嵌套卡片视觉冗余。</p>
     <div class="change-points">
       <span class="cp cp-v6"><b>区分</b> BashOutputBlock（不可折叠）≠ tool-bash（可折叠）</span>
-      <span class="cp cp-v6"><b>failed</b> exit 标签中性化（非 danger 红框）</span>
+      <span class="cp cp-v6"><b>失败对照</b> 5A exit N→warn（用户直接反馈）· tool-bash failed→中性灰（agent 调用）</span>
+      <span class="cp cp-v6"><b>stroke</b> Terminal icon 1.75（统一，原 spec demo 误写 2）</span>
     </div>
 
     <!-- 5A. BashOutputBlock（composer 直接执行） -->
@@ -550,9 +633,11 @@ body {
           <div class="state-demo">
             <div class="bob">
               <div class="bob-head">
-                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
                 <span class="bob-cmd">npm run test</span>
-                <span class="bob-status running"><svg class="bob-loader" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg></svg></span>
+                <!-- no-context tag（excludeFromContext，BashOutputBlock.vue:34-38）-->
+                <span class="bob-noctx">no context</span>
+                <span class="bob-status running"><svg class="bob-loader" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg></span>
                 <span class="bob-cancel">取消</span>
               </div>
             </div>
@@ -563,7 +648,7 @@ body {
           <div class="state-demo">
             <div class="bob">
               <div class="bob-head">
-                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
                 <span class="bob-cmd">npm run test</span>
                 <span class="bob-status exit0">exit 0</span>
               </div>
@@ -578,7 +663,7 @@ Test Files  48 passed</div>
           <div class="state-demo">
             <div class="bob">
               <div class="bob-head">
-                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
                 <span class="bob-cmd">npm run test</span>
                 <span class="bob-status exitn">exit 1</span>
               </div>
@@ -587,12 +672,26 @@ Test Files  48 passed</div>
             </div>
           </div>
         </div>
+        <!-- empty 态：(无输出) 占位（BashOutputBlock.vue:99-103）-->
+        <div class="state-row" style="margin:14px 0 0;">
+          <div class="state-tag">empty</div>
+          <div class="state-demo">
+            <div class="bob">
+              <div class="bob-head">
+                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                <span class="bob-cmd">mkdir -p dist</span>
+                <span class="bob-status exit0">exit 0</span>
+              </div>
+              <div class="bob-empty">(无输出)</div>
+            </div>
+          </div>
+        </div>
         <div class="state-row" style="margin:14px 0 0;">
           <div class="state-tag">truncated</div>
           <div class="state-demo">
             <div class="bob">
               <div class="bob-head">
-                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
                 <span class="bob-cmd">npm run build</span>
                 <span class="bob-status exit0">exit 0</span>
               </div>
@@ -608,7 +707,7 @@ transforming 1247 modules...
           <div class="state-demo">
             <div class="bob">
               <div class="bob-head">
-                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
                 <span class="bob-cmd">npm run slow-script</span>
                 <span class="bob-status dim">超时</span>
               </div>
@@ -627,8 +726,8 @@ transforming 1247 modules...
           <div class="state-demo">
             <div class="tool-v6">
               <div class="tool-hd">
-                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-                <span class="tool-name">Bash</span><span class="tool-arg">npm install</span>
+                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                <span class="tool-name">Bash</span><span class="tool-arg">· npm install</span>
               </div>
               <div class="tool-body">
                 <div class="tool-bash-box">
@@ -647,25 +746,28 @@ added 1 package in 2s</div>
     <div class="anno-grid">
       <div class="anno"><b>两类来源:</b><br><span class="v6">BashOutputBlock（5A，不可折叠）≠ tool-bash（5B，可折叠）</span></div>
       <div class="anno"><b>BashOutputBlock 容器:</b><br>py-2 · <b>无边框无卡片背景</b>（靠 header 语义标识区分）</div>
-      <div class="anno"><b>header:</b><br>Terminal icon 13px neutral-ico + 命令 mono 12px neutral-fg</div>
+      <div class="anno"><b>header:</b><br>Terminal icon 13px neutral-ico · <span class="v6">stroke 1.75（统一，修正 demo 原 2）</span> + 命令 mono 12px neutral-fg</div>
       <div class="anno"><b>running:</b><br>双环 loader 12px accent + 取消按钮</div>
-      <div class="anno"><b>exit 标签:</b><br><span class="old">—</span> <span class="v6">exit 0→success绿 / exit N→warn金 / timeout·cancelled→neutral-dim</span></div>
+      <div class="anno"><b>no-context tag:</b><br><span class="v6">excludeFromContext 时显 border pill（BashOutputBlock.vue:34-38）· rounded-sm border-border neutral-dim · 标记「不进上下文」</span></div>
+      <div class="anno"><b>exit 标签:</b><br><span class="v6">exit 0→success绿 / exit N→warn金 / timeout·cancelled→neutral-dim</span></div>
       <div class="anno"><b>输出区:</b><br>mono 12px neutral-mid · max-h 240px overflow-auto · 仅 complete 态显示</div>
+      <div class="anno"><b>empty 占位:</b><br><span class="v6">无输出时显「(无输出)」italic neutral-dim（BashOutputBlock.vue:99-103）</span></div>
       <div class="anno"><b>截断标记:</b><br>italic 10px neutral-dim（pi 返回 truncated 才显）</div>
       <div class="anno"><b>tool-bash 容器:</b><br>border neutral-faint + bg-surface-2 rounded-sm（嵌 §6，受 tool 折叠态统辖）</div>
+      <div class="anno"><b>失败视觉对照:</b><br><span class="v6">5A exit N→warn（用户直接反馈，需明确成败）· tool-bash failed→中性灰（agent 调用，成败由后续 turn 解释）· 同一 bash 两套失败视觉，因来源语义不同</span></div>
     </div>
   </section>
 
   <!-- ================================================================
-       §6 Block · tool（状态矩阵：collapsed/expanded × running/done/failed/unfinished）
+       §6 Block · tool（状态矩阵 + argPath 变体 + copy + 现状/目标判定）
        ================================================================ -->
   <section class="spec" id="s6">
     <div class="spec-head"><span class="spec-num">§6</span><h2 class="spec-title">Block · tool</h2></div>
-    <p class="spec-desc">工具调用 block 的完整状态矩阵。可折叠（本地态，default 收起）。v6：failed 删 <code>hover:text-warn</code>，icon 统一 <code>--neutral-ico</code>；running 用双环 loader（替换 icon）；failed/unfinished 文字降 <code>neutral-mid</code>（无红框）；exit≠0 加 mono <code>exit N</code> 中性标签。</p>
+    <p class="spec-desc">工具调用 block 的完整状态矩阵。可折叠（本地态，default 收起）。v6：failed 删 <code>hover:text-warn</code>，icon 统一 <code>--neutral-ico</code>；running 用双环 loader（替换 icon）；failed/unfinished 文字降 <code>neutral-mid</code>（无红框）；exit≠0 加 mono <code>exit N</code> 中性标签。<b>关键判定</b>：普通 tool header（<code>Block.vue:112-180</code>）现状<b>无 exit/未结束标签 DOM</b>，也无 copy 之外的状态指示——下列标签/判定为 v6 目标态。</p>
     <div class="change-points">
-      <span class="cp cp-now"><b>现</b> failed hover:text-warn</span>
-      <span class="cp cp-v6"><b>v6</b> icon 统一 neutral-ico + exit N 中性标签</span>
-      <span class="cp cp-v6"><b>v6</b> running 双环 loader · failed 无红框</span>
+      <span class="cp cp-now"><b>现</b> failed 切 AlertTriangle（block-icon.ts:75）· header 无 exit 标签</span>
+      <span class="cp cp-v6"><b>v6</b> failed 不切 icon · exit N / 未结束 标签 [待实现]</span>
+      <span class="cp cp-v6"><b>v6</b> running 双环 loader · failed 无红框 · copy（hover 显）</span>
     </div>
 
     <div class="render-frame">
@@ -675,10 +777,18 @@ added 1 package in 2s</div>
           <div class="state-demo">
             <div class="tool-v6">
               <div class="tool-hd">
-                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-                <span class="tool-name">Edit</span><span class="tool-arg">PanelHeader.vue</span>
+                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                <span class="tool-name">Edit</span><span class="tool-arg">· PanelHeader.vue</span>
               </div>
             </div>
+          </div>
+        </div>
+        <!-- argPath 变体：grep（pattern）/ todo_write（N todos），覆盖 Block.vue:374-383 的 5 种 -->
+        <div class="state-row" style="margin:10px 0 0;">
+          <div class="state-tag">argPath 变体</div>
+          <div class="state-demo" style="display:flex;flex-direction:column;gap:6px;">
+            <div class="tool-v6" style="padding:2px 0;"><div class="tool-hd"><svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg><span class="tool-name" style="font-size:11px;">Grep</span><span class="tool-arg">· src/**/*.ts</span><span style="margin-left:8px;font-size:9px;color:var(--neutral-faint);font-family:var(--font-mono);">← pattern（grep）</span></div></div>
+            <div class="tool-v6" style="padding:2px 0;"><div class="tool-hd"><svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg><span class="tool-name" style="font-size:11px;">todo_write</span><span class="tool-arg">· 5 todos</span><span style="margin-left:8px;font-size:9px;color:var(--neutral-faint);font-family:var(--font-mono);">← tasks.length（todo_write）</span></div></div>
           </div>
         </div>
         <div class="state-row" style="margin:14px 0 0;">
@@ -687,7 +797,7 @@ added 1 package in 2s</div>
             <div class="tool-v6">
               <div class="tool-hd">
                 <svg class="tool-loader" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg>
-                <span class="tool-name running">Grep</span><span class="tool-arg">PanelHeader</span>
+                <span class="tool-name running">Grep</span><span class="tool-arg">· PanelHeader</span>
               </div>
             </div>
           </div>
@@ -697,11 +807,14 @@ added 1 package in 2s</div>
           <div class="state-demo">
             <div class="tool-v6">
               <div class="tool-hd">
-                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-                <span class="tool-name">Read</span><span class="tool-arg">style.css</span>
+                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                <span class="tool-name">Read</span><span class="tool-arg">· style.css</span>
               </div>
               <div class="tool-body">
-                <div class="tool-meta">1.2s · 126 行</div>
+                <!-- copy 按钮：左上角浮标，hover 显（Block.vue:128-141）。bash 复制「命令+输出」，其余复制输出 -->
+                <span class="tool-copy" title="copy（hover 显，复制输出）" style="position:absolute;top:0;left:0;opacity:1;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
+                <!-- meta 条：行数 + chars + 耗时 三项（useToolMeta.ts:49-62），bash 无行数；非 bash 在输出上方 -->
+                <div class="tool-meta"><span>126 行</span><span>3.4K chars</span><span>1.2s</span></div>
                 <div class="tool-out">--bg: #1a1b1f;
 --surface: #272830;
 --neutral-fg: #e5e7eb;…</div>
@@ -714,8 +827,8 @@ added 1 package in 2s</div>
           <div class="state-demo">
             <div class="tool-v6">
               <div class="tool-hd">
-                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-                <span class="tool-name failed">Bash</span><span class="tool-arg">npm test</span>
+                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                <span class="tool-name failed">Bash</span><span class="tool-arg">· npm test</span>
                 <span class="tool-exit">exit 1</span>
               </div>
               <div class="tool-body">
@@ -729,8 +842,8 @@ added 1 package in 2s</div>
           <div class="state-demo">
             <div class="tool-v6">
               <div class="tool-hd">
-                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-                <span class="tool-name failed">Bash</span><span class="tool-arg">long-running-task</span>
+                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                <span class="tool-name failed">Bash</span><span class="tool-arg">· long-running-task</span>
                 <span class="tool-exit">未结束</span>
               </div>
             </div>
@@ -744,29 +857,50 @@ added 1 package in 2s</div>
       <div class="anno"><b>block padding:</b><br>py-2 (8px)</div>
       <div class="anno"><b>header gap:</b><br>6px · 12px [--text-sm] font-medium</div>
       <div class="anno"><b>collapsed:</b><br>1 行：icon + toolName + argPath（truncate）</div>
+      <div class="anno"><b>argPath 5 种:</b><br><span class="v6">command(bash) / path / file_path / pattern(grep) / tasks(todo_write→「N todos」)（Block.vue:374-383）</span></div>
       <div class="anno"><b>running icon:</b><br><span class="v6">双环 loader 13px accent（替换 icon）+ toolName 染 accent</span></div>
       <div class="anno"><b>running 折叠:</b><br>streaming 也保持收起（不强制展开）</div>
       <div class="anno"><b>done:</b><br>icon neutral-ico · toolName neutral-fg</div>
-      <div class="anno"><b>failed:</b><br><span class="v6">toolName neutral-mid · icon 保留（不切 AlertTriangle，与 subagent/workflow 统一）· 无红框</span></div>
+      <div class="anno"><b>failed icon [现状/目标]:</b><br><span style="color:var(--danger);">[现状] 普通 tool 切 AlertTriangle（block-icon.ts:75 + Block.vue:285-289）</span><br><span class="v6">[v6 目标] 不切，与 subagent/workflow 统一，靠 toolName→neutral-mid + exit N 标签 + 内容区无 output 只有 error 区分 [待实现]</span></div>
       <div class="anno"><b>icon stroke:</b><br><span class="v6">1.75（统一，修正注释与实现不一致）</span></div>
-      <div class="anno"><b>exit N 标签:</b><br><span class="v6">mono 10px rounded-sm bg-surface-2 neutral-mid（中性）</span></div>
-      <div class="anno"><b>unfinished:</b><br><span class="v6">崩溃/断连态（end_not_received）· toolName neutral-mid + 「未结束」标签</span></div>
-      <div class="anno"><b>expanded body:</b><br>meta 条（耗时·行数）+ 输出；bash 工具用 border 容器（见 §5B）</div>
+      <div class="anno"><b>exit N 标签:</b><br><span class="v6">mono 10px rounded-sm bg-surface-2 neutral-mid（中性）</span> · <span style="color:var(--danger);">[待实现] 代码 header 现无此 DOM（Block.vue:112-180 仅 icon+toolName+argPath）</span></div>
+      <div class="anno"><b>unfinished:</b><br><span class="v6">崩溃/断连态（end_not_received）· toolName neutral-mid + 「未结束」标签</span> · <span style="color:var(--danger);">[待实现] 同上无此 DOM</span></div>
+      <div class="anno"><b>copy 按钮:</b><br><span class="v6">expanded 左上角 ghost icon（hover 显，Block.vue:128-141）· bash 复制含命令+输出，其余复制输出</span></div>
+      <div class="anno"><b>meta 条:</b><br><span class="v6">行数 + chars + 耗时 三项（useToolMeta.ts:49-62）· bash 无行数（过滤）· 非 bash 在输出上方，bash 在输出下方（Block.vue:154-177）</span></div>
+      <div class="anno" style="color:var(--warn);"><b>[欠考虑] 长输出限高</b><br>普通 tool output 区无 max-height/overflow（Block.vue:161-168），read 5000 行文件撑爆——v6 应考虑限高+滚动（待设计）</div>
+      <div class="anno" style="color:var(--warn);"><b>[欠考虑] MultiEdit 多文件</b><br>批量编辑工具 header 只显单 path（Block.vue:378-379），多文件丢信息——待设计（如「N files」折叠展开列表）</div>
     </div>
   </section>
 
   <!-- ================================================================
-       §7 ChangeSetCard
+       §7 ChangeSetCard（5 态状态机重写 · 对齐 ChangeSetCard.vue:84-103）
        ================================================================ -->
   <section class="spec" id="s7">
     <div class="spec-head"><span class="spec-num">§7</span><h2 class="spec-title">ChangeSetCard</h2></div>
-    <p class="spec-desc">变更集卡片。v6：去 <code>border border-border</code>，改 <code>bg-surface</code> + 10px 圆角（任意值，大于默认 8px）；状态 badge 降灰阶（仅 ±行数保留 success/danger git 语义色），「待审查」用胶囊 accent-soft。</p>
+    <p class="spec-desc">变更集卡片。<b>5 态状态机</b>（accumulating / ready / partially-reviewed / resolved / superseded，<code>ChangeSetCard.vue:84-103</code> + <code>message.ts:208</code>）。runtime 推 accumulating/ready（事实态），前端用户交互驱动 partially-reviewed/resolved/superseded（审查态）。v6：去 <code>border border-border</code>，改 <code>bg-surface</code> + 10px 圆角；状态 badge <b>rounded-sm</b>（<b>非胶囊</b>，与代码一致）；文件 badge 含 U（unmerged）态 + 点击文件行 → SideDrawer detail diff。</p>
     <div class="change-points">
-      <span class="cp cp-now"><b>现</b> border + rounded-md(6px) + bg-bg</span>
-      <span class="cp cp-v6"><b>v6</b> 去 border · bg-surface · 10px</span>
-      <span class="cp cp-v6"><b>v6</b> badge 降灰阶</span>
+      <span class="cp cp-now"><b>现</b> border + rounded-md(6px) + bg-bg · 3 态（ready/pending/reviewed）</span>
+      <span class="cp cp-v6"><b>v6</b> 去 border · bg-surface · 10px · 5 态（对齐代码）</span>
+      <span class="cp cp-v6"><b>v6</b> badge rounded-sm（非胶囊）· + U 态 · 点击 → drawer</span>
     </div>
 
+    <!-- 7A. 5 态状态 badge（每态一个样例，对齐 ChangeSetCard.vue:84-103 文案+配色） -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:4px 0 14px;font-weight:500;">7A. 5 态状态 badge（状态机 + 文案 + 配色）</h3>
+    <div class="render-frame">
+      <div class="panel-stage"><div class="ms-scroll"><div class="ms-turn"><div class="ms-assistant-col">
+        <div style="display:flex;flex-wrap:wrap;gap:14px 20px;padding:6px 0;align-items:center;">
+          <div style="display:flex;align-items:center;gap:8px;"><span class="cs-status accumulating">生成中</span><span style="font-size:11px;color:var(--neutral-dim);font-family:var(--font-mono);">accumulating · bg-accent-soft text-accent</span></div>
+          <div style="display:flex;align-items:center;gap:8px;"><span class="cs-status ready">待审查</span><span style="font-size:11px;color:var(--neutral-dim);font-family:var(--font-mono);">ready · bg-info-soft text-info</span></div>
+          <div style="display:flex;align-items:center;gap:8px;"><span class="cs-status partially-reviewed">部分审查</span><span style="font-size:11px;color:var(--neutral-dim);font-family:var(--font-mono);">partially-reviewed · bg-warn-soft text-warn</span></div>
+          <div style="display:flex;align-items:center;gap:8px;"><span class="cs-status resolved">已解决</span><span style="font-size:11px;color:var(--neutral-dim);font-family:var(--font-mono);">resolved · bg-success-soft text-success</span></div>
+          <div style="display:flex;align-items:center;gap:8px;"><span class="cs-status superseded">已废弃</span><span style="font-size:11px;color:var(--neutral-dim);font-family:var(--font-mono);">superseded · bg-surface text-neutral-dim</span></div>
+        </div>
+      </div></div></div></div>
+    </div>
+    <p style="font-size:12px;color:var(--warn);margin-top:10px;padding:8px 12px;background:var(--bg-card);border-radius:var(--radius);"><b>spec 修正：</b>原 spec 3 态「ready 就绪 / pending 待审查 / reviewed」与代码冲突，<b>已废弃</b>。代码文案：<code>generating / pendingReview / partiallyReviewed / resolved / superseded</code>（i18n）。<span class="cp cp-v6" style="margin-left:6px;">改名：spec 原「pending」≈ 代码「ready 待审查」，spec 原「reviewed」≈ 代码「partially-reviewed 部分审查」（语义不等价，审查是渐进的）。</span></p>
+
+    <!-- 7B. collapsed / expanded + 点击交互 + hover 态 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">7B. collapsed / expanded（含点击 → SideDrawer + hover ExternalLink）</h3>
     <div class="render-frame">
       <div class="panel-stage"><div class="ms-scroll"><div class="ms-turn"><div class="ms-assistant-col">
         <div class="state-row" style="margin:0;">
@@ -777,8 +911,8 @@ added 1 package in 2s</div>
                 <svg class="cs-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
                 <svg class="cs-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
                 <span class="cs-title">变更集</span>
-                <span class="cs-count">5 文件</span>
-                <span class="cs-status ready">就绪</span>
+                <span class="cs-count">5</span>
+                <span class="cs-status ready">待审查</span>
                 <span class="cs-stats"><span class="add">+142</span><span class="del">-37</span></span>
               </div>
             </div>
@@ -792,14 +926,17 @@ added 1 package in 2s</div>
                 <svg class="cs-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="transform:rotate(90deg);"><polyline points="9 18 15 12 9 6"/></svg>
                 <svg class="cs-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
                 <span class="cs-title">变更集</span>
-                <span class="cs-count">5 文件</span>
-                <span class="cs-status pending">待审查</span>
+                <span class="cs-count">5</span>
+                <span class="cs-status partially-reviewed">部分审查</span>
                 <span class="cs-stats"><span class="add">+142</span><span class="del">-37</span></span>
               </div>
               <div class="cs-detail">
-                <div class="cs-file"><span class="cs-fbadge M">M</span><span class="cs-fname">PanelHeader.vue</span><span style="margin-left:auto;font-family:var(--font-mono);font-size:10px;" class="add">+28</span><span style="font-family:var(--font-mono);font-size:10px;" class="del">-6</span></div>
-                <div class="cs-file"><span class="cs-fbadge A">A</span><span class="cs-fname">v6-spec-tokens.html</span><span style="margin-left:auto;font-family:var(--font-mono);font-size:10px;" class="add">+340</span></div>
-                <div class="cs-file"><span class="cs-fbadge D">D</span><span class="cs-fname">old-design.md</span><span style="margin-left:auto;font-family:var(--font-mono);font-size:10px;" class="del">-31</span></div>
+                <!-- 普通 M 文件行（hover 显 ExternalLink，点击 → drawer detail diff）-->
+                <div class="cs-file"><span class="cs-fbadge M">M</span><span class="cs-fname">PanelHeader.vue</span><span class="cs-extlink" style="opacity:1;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></span><span style="font-family:var(--font-mono);font-size:10px;" class="add">+28</span><span style="font-family:var(--font-mono);font-size:10px;" class="del">-6</span></div>
+                <div class="cs-file"><span class="cs-fbadge A">A</span><span class="cs-fname">v6-spec-tokens.html</span><span class="cs-extlink"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></span><span style="font-family:var(--font-mono);font-size:10px;" class="add">+340</span></div>
+                <!-- U（unmerged）= danger/20 底 + ring 描边（ChangeSetCard.vue:122）-->
+                <div class="cs-file"><span class="cs-fbadge U">U</span><span class="cs-fname">conflict-merge.ts</span><span class="cs-extlink"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></span><span style="font-family:var(--font-mono);font-size:10px;" class="add">+12</span><span style="font-family:var(--font-mono);font-size:10px;" class="del">-8</span></div>
+                <div class="cs-file"><span class="cs-fbadge D">D</span><span class="cs-fname">old-design.md</span><span class="cs-extlink"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></span><span style="font-family:var(--font-mono);font-size:10px;" class="del">-31</span></div>
               </div>
             </div>
           </div>
@@ -809,13 +946,16 @@ added 1 package in 2s</div>
 
     <div class="anno-grid">
       <div class="anno"><b>container:</b><br><span class="old">border border-border bg-bg rounded-md(6px)</span><br><span class="v6">bg-surface · 10px 圆角 · 无 border</span></div>
-      <div class="anno"><b>header padding:</b><br>px-3 py-2 (12px/8px)</div>
-      <div class="anno"><b>count badge:</b><br>10px rounded-sm bg-surface neutral-dim</div>
-      <div class="anno"><b>状态 badge:</b><br><span class="v6">胶囊 999px：ready→info / pending→accent-soft / reviewed→warn</span></div>
+      <div class="anno"><b>header padding:</b><br>px-3 py-2 (12px/8px) · click toggleCollapsed</div>
+      <div class="anno"><b>count badge:</b><br><span class="v6">纯数字 <code>{{ fileChanges.length }}</code>（无「文件」后缀，对齐代码 :20）</span></div>
+      <div class="anno"><b>状态 badge 形状:</b><br><span class="old">胶囊 999px</span> <span class="v6">rounded-sm（对齐代码 :22，直角微圆）</span></div>
+      <div class="anno"><b>5 态映射:</b><br><span class="v6">accumulating→accent / ready→info / partially-reviewed→warn / resolved→success / superseded→neutral-dim</span></div>
       <div class="anno"><b>±行数:</b><br>10px mono · <span class="v6">保留 success/danger git 语义色</span></div>
-      <div class="anno"><b>文件 badge:</b><br>A→success / M→info / D→danger（soft 底，保留 git 语义）</div>
-      <div class="anno"><b>文件行:</b><br>px-3 py-1.5 · hover bg-surface-hover</div>
+      <div class="anno"><b>文件 badge (4 态):</b><br>A→success-soft / M→info-soft / D→danger-soft / <span class="v6">U→danger/20 + ring-danger/40（unmerged，含冲突标记）</span></div>
+      <div class="anno"><b>文件行交互:</b><br><span class="v6">click → <code>drawer.open('detail', {filePath})</code>（:128-130）· hover 显 ExternalLink 12px neutral-dim（:42）</span></div>
+      <div class="anno"><b>文件行:</b><br>px-3 py-1.5 · hover bg-surface-hover · group/cs-file</div>
       <div class="anno"><b>margin-top:</b><br>8px（mt-2，与 turn 内其他 block 间距）</div>
+      <div class="anno" style="color:var(--warn);"><b>[欠考虑]</b><br>fileChanges 无上限全量 v-for（:31-48），大变更集（>50 文件）无折叠/虚拟滚动——待设计</div>
     </div>
   </section>
 
@@ -868,9 +1008,12 @@ added 1 package in 2s</div>
                 <span class="sa-prefix">subagent</span><span class="sa-agent">general-purpose</span><span class="sa-sep">·</span><span class="sa-slug">analyze-deps</span><span class="sa-model">(glm-5.2 · <span class="think-x">thinking 3</span>)</span>
               </div>
               <div class="sa-body">
+                <!-- copy 按钮：左上角 ghost icon，hover 显（BlockSubagent.vue:47-57）。复制 task + bgStatus -->
+                <span class="tool-copy" title="copy（hover 显，复制 task + bgStatus）" style="position:absolute;top:0;left:0;opacity:1;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
                 <div class="sa-task-full">分析 package.json 的依赖关系，找出循环引用。
 重点关注 packages/runtime 和 packages/renderer 之间的依赖方向，
 列出所有 workspace:* 引用。</div>
+                <!-- bg 状态行：来自 bgResponse.message（extension 自报文本，running 时回退固定串）。完成通知看 §10.5 BgNotifyCard -->
                 <div class="sa-bgstatus"><span class="blink-dot"></span>background · 完成 · 已通知主 agent</div>
               </div>
             </div>
@@ -902,8 +1045,118 @@ added 1 package in 2s</div>
       <div class="anno"><b>running:</b><br>双环 loader 13px accent（替换 Users icon）</div>
       <div class="anno"><b>task 预览:</b><br>12px neutral-dim truncate（60 字）</div>
       <div class="anno"><b>task full:</b><br>12px neutral-mid leading-1.65 whitespace-pre-wrap</div>
-      <div class="anno"><b>bg 状态行:</b><br>6px accent blink 点 + mono 11px neutral-dim</div>
+      <div class="anno"><b>bg 状态行:</b><br>6px accent blink 点 + mono 11px neutral-dim · <span class="v6">文案来自 <code>bgResponse.message</code>（extension 自报任意文本），running 时回退固定串。subagent 块本身无 done 视觉态——完成通知由 §10.5 BgNotifyCard 单独渲染</span></div>
+      <div class="anno"><b>copy 按钮:</b><br><span class="v6">expanded 左上角 ghost icon（hover 显，BlockSubagent.vue:47-57）· 复制 task + bgStatus</span></div>
       <div class="anno"><b>failed 色:</b><br><span class="v6">prefix/agent 降 neutral-mid（icon 保留 Users）</span></div>
+      <div class="anno" style="color:var(--warn);"><b>[欠考虑] task 无限高</b><br>展开体 subagentTask 全量 whitespace-pre-wrap 无 max-h（BlockSubagent.vue:59-62），超长 prompt 撑爆——待设计（如 max-h + 滚动）</div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §10.5 BgNotifyCard · background 完成通知（§10 subagent 的配套完成通知组件）
+       ================================================================ -->
+  <section class="spec" id="s10-5">
+    <div class="spec-head"><span class="spec-num">§10.5</span><h2 class="spec-title">BgNotifyCard · background 完成通知</h2></div>
+    <p class="spec-desc">§10 subagent 的<b>配套完成通知组件</b>。它是<b>独立 Message 类型</b>（<code>message.ts:269</code> <code>bgNotify</code> 字段，<code>customType:"subagent-bg-notify"</code>），渲染入口不同于 BlockSubagent——BlockSubagent 渲染<b>发起参数</b>（input），BgNotifyCard 渲染<b>完成结果</b>（output）。视觉语义：<b>系统级异步通知</b>，卡片带边框，<b>弱于</b> user/assistant 气泡、<b>强于</b> SystemNotice。关系链：subagent 块发起 → BgNotifyCard 完成通知 → 主 agent 后续 turn 总结。</p>
+    <div class="change-points">
+      <span class="cp cp-v6"><b>新增</b> BgNotifyCard（spec 原完全缺失，本 section 补全）</span>
+      <span class="cp cp-v6"><b>两种形态</b> 单条（可展开）· 批量（不可展开，每 record 一行）</span>
+      <span class="cp cp-v6"><b>卡片色</b> 按最差状态：failed→danger / cancelled→neutral / else→border</span>
+    </div>
+
+    <div class="render-frame">
+      <div class="panel-stage"><div class="ms-scroll"><div class="ms-turn"><div class="ms-assistant-col">
+        <!-- 单条·done（可展开，含 patchHint + fullContent）-->
+        <div class="state-row" style="margin:0;">
+          <div class="state-tag">单条·done</div>
+          <div class="state-demo">
+            <div class="bn-card normal">
+              <div class="bn-single-hd done">
+                <svg class="bn-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="transform:rotate(90deg);"><polyline points="9 18 15 12 9 6"/></svg>
+                <svg class="bn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                <span class="bn-agent">general-purpose</span>
+                <span class="bn-model">· glm-5.2</span>
+                <span class="bn-elapsed">— 12.3s</span>
+              </div>
+              <p class="bn-summary">分析完成：发现 3 个循环引用，packages/renderer → packages/runtime 形成环。</p>
+              <!-- 展开详情：patchHint（info 提示「git apply」）+ fullContent（MarkdownRenderer thinking variant，max-h-200 滚动）-->
+              <div class="bn-patch-hint">改动已保存到 patch 文件，可 <code>git apply /tmp/worktree-a1b2.patch</code></div>
+              <div class="bn-fullcontent">## 分析结果
+
+发现 **3 个循环引用**：
+- `packages/renderer` → `packages/runtime` → `packages/renderer`
+
+建议：将共享类型抽到 `packages/shared`。</div>
+            </div>
+          </div>
+        </div>
+        <!-- 单条·failed（卡片整体染 danger 边框）-->
+        <div class="state-row" style="margin:14px 0 0;">
+          <div class="state-tag">单条·failed</div>
+          <div class="state-demo">
+            <div class="bn-card has-failed">
+              <div class="bn-single-hd failed">
+                <svg class="bn-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+                <svg class="bn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                <span class="bn-agent">analyze-deps</span>
+                <span class="bn-model">· glm-5.2</span>
+                <span class="bn-elapsed">— 8.1s</span>
+              </div>
+              <p class="bn-summary">ENOENT: package.json not found in workspace root</p>
+            </div>
+          </div>
+        </div>
+        <!-- 单条·cancelled（卡片整体染 neutral 边框）-->
+        <div class="state-row" style="margin:14px 0 0;">
+          <div class="state-tag">单条·cancelled</div>
+          <div class="state-demo">
+            <div class="bn-card has-cancelled">
+              <div class="bn-single-hd cancelled">
+                <svg class="bn-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+                <svg class="bn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                <span class="bn-agent">general-purpose</span>
+                <span class="bn-model">· glm-5.2</span>
+                <span class="bn-elapsed">— 3.4s</span>
+              </div>
+              <p class="bn-summary">已取消</p>
+            </div>
+          </div>
+        </div>
+        <!-- 批量（isBatch）：每 record 一行，不可展开，卡片色按最差状态（hasFailed→danger）-->
+        <div class="state-row" style="margin:14px 0 0;">
+          <div class="state-tag">批量</div>
+          <div class="state-demo">
+            <div class="bn-card has-failed">
+              <div class="bn-row done">
+                <svg class="bn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                <span class="bn-agent">test-runner</span><span class="bn-model">· glm-5.2</span><span class="bn-elapsed">— 5.2s</span>
+              </div>
+              <div class="bn-row failed">
+                <svg class="bn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                <span class="bn-agent">lint-fixer</span><span class="bn-model">· glm-5.2</span><span class="bn-elapsed">— 2.1s</span>
+              </div>
+              <div class="bn-row done">
+                <svg class="bn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                <span class="bn-agent">doc-gen</span><span class="bn-model">· glm-5.2</span><span class="bn-elapsed">— 9.7s</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div></div></div></div>
+    </div>
+
+    <div class="anno-grid">
+      <div class="anno"><b>Message 类型:</b><br><span class="v6">独立 <code>bgNotify</code> 字段（message.ts:269），customType:"subagent-bg-notify"· 渲染入口 ≠ BlockSubagent（input vs output）</span></div>
+      <div class="anno"><b>容器:</b><br><span class="v6">rounded-md border px-3 py-2（BgNotifyCard.vue:14）· 卡片带边框，系统级通知</span></div>
+      <div class="anno"><b>卡片色（按最差态）:</b><br><span class="v6">hasFailed→border-danger/40 bg-danger-soft · hasCancelled→border-neutral-mid/30 bg-neutral-mid/5 · else→border-border bg-surface-hover/40（:106-117）</span></div>
+      <div class="anno"><b>三态图标:</b><br><span class="v6">done→CheckCircle2 · failed→XCircle · cancelled→Pause（:139-143）</span></div>
+      <div class="anno"><b>三态文字色:</b><br><span class="v6">done→neutral-fg · failed→text-danger · cancelled→neutral-mid（:146-150）</span></div>
+      <div class="anno"><b>单条形态:</b><br><span class="v6">chevron + icon + agent + ·model + —耗时，点击可展开（:33-45）· 摘要行 pl-4 line-clamp-1：done→result 首行 / failed→error / cancelled→i18n「已取消」（:48,120-126）</span></div>
+      <div class="anno"><b>展开详情:</b><br><span class="v6">patchHint（border-info/30 bg-info-soft text-info，「git apply」提示）+ fullContent（MarkdownRenderer thinking variant，max-h-[200px] 滚动）（:51-59）</span></div>
+      <div class="anno"><b>批量形态:</b><br><span class="v6">isBatch：每 record 一行（icon + agent + ·model + —耗时），<b>不可展开</b>（:18-30）</span></div>
+      <div class="anno"><b>耗时:</b><br><span class="v6">startedAt→endedAt 秒级 1 位小数（如「12.3s」），endedAt 缺失返空（:153-158）</span></div>
+      <div class="anno"><b>与 §10 关系:</b><br><span class="v6">subagent 块（§10）发起 → BgNotifyCard（§10.5）完成通知 → 主 agent 后续 turn 总结。block 内 bg 状态行是 extension 自报文本，完成态视觉看此卡片</span></div>
+      <div class="anno" style="color:var(--warn);"><b>[欠考虑] 批量无上限</b><br>批量 items 无上限折叠（notifier 60s 滑动窗口合并），且<b>批量不可展开</b>（patchFile/fullContent 无法查看）——大批量时信息丢失，待设计</div>
     </div>
   </section>
 
@@ -912,10 +1165,10 @@ added 1 package in 2s</div>
        ================================================================ -->
   <section class="spec" id="s11">
     <div class="spec-head"><span class="spec-num">§11</span><h2 class="spec-title">Block · workflow</h2></div>
-    <p class="spec-desc">workflow 工具调用块。可折叠（default 收起）。v6：failed 不切 icon（保留 ListChecks + 颜色表达）。<b>进度条非内置</b>——仅当 extension 通过 <code>details.__gui__</code> 推送 <code>type:'progress-bar'</code> 时才渲染（见展开态示例）。审批/救生按钮 DEFERRED。</p>
+    <p class="spec-desc">workflow 工具调用块。可折叠（default 收起）。v6：failed 不切 icon（保留 ListChecks + 颜色表达）。<b>进度条非内置</b>——仅当 extension 通过 <code>details.__gui__</code> 推送 <code>type:'progress-bar'</code> 时才渲染（见展开态示例 + §11.5 GUI 组件）。done 态无特殊装饰（回归中性 icon，与 failed 对称靠中性色）。审批/救生按钮 DEFERRED（G-018 决策）。</p>
     <div class="change-points">
-      <span class="cp cp-v6"><b>failed</b> 不切 icon（统一靠颜色）</span>
-      <span class="cp cp-v6"><b>进度条</b> extension 推（非内置）· fill 色 ok/warn/danger</span>
+      <span class="cp cp-v6"><b>failed/done</b> 不切 icon（统一靠颜色，done 回归中性）</span>
+      <span class="cp cp-v6"><b>进度条</b> extension 推（非内置）· 含 label 行 + 数字读数 + track bg-bg-input</span>
     </div>
 
     <div class="render-frame">
@@ -942,9 +1195,49 @@ added 1 package in 2s</div>
               </div>
               <div class="wf-body">
                 <div class="wf-body-content">运行单元测试套件</div>
-                <!-- GUI 进度条：extension 推送 __gui__ type:progress-bar -->
-                <div class="gui-pb"><div class="gui-pb-fill warn" style="width:62%;"></div></div>
-                <div class="sa-bgstatus" style="padding-left:16px;"><span class="blink-dot"></span>31/50 tests · running</div>
+                <!-- GUI 进度条：extension 推送 __gui__ type:progress-bar（完整结构见 §11.5）
+                     label 行（左）+ current/total unit 数字读数（右）+ track bg-bg-input + fill severity -->
+                <div class="gui-pb-full">
+                  <div class="gui-pb-label-row"><span class="gui-pb-label">running tests</span><span class="gui-pb-count">31<span class="gui-pb-count-dim"> / 50 tests</span></span></div>
+                  <div class="gui-pb"><div class="gui-pb-fill warn" style="width:62%;"></div></div>
+                </div>
+                <div class="sa-bgstatus" style="padding-left:16px;"><span class="blink-dot"></span>running</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- done 态：无特殊装饰，回归中性 icon（与 failed 对称靠中性色，无 success 绿装饰）-->
+        <div class="state-row" style="margin:14px 0 0;">
+          <div class="state-tag">done</div>
+          <div class="state-demo">
+            <div class="wf-v6">
+              <div class="wf-hd">
+                <svg class="wf-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                <span class="wf-prefix">workflow</span><span class="wf-action">status</span><span class="wf-name" style="color:var(--neutral-mid);">test-suite</span><span class="sa-sep">·</span><span class="wf-name" style="color:var(--neutral-mid);">unit</span><span class="wf-runid">a1b2c3d4</span>
+              </div>
+              <div class="sa-task-preview">运行单元测试套件</div>
+            </div>
+          </div>
+        </div>
+        <!-- expanded（含 copy 按钮，workflow 展开也有 copy，Block.vue:92-101）-->
+        <div class="state-row" style="margin:14px 0 0;">
+          <div class="state-tag">expanded</div>
+          <div class="state-demo">
+            <div class="wf-v6">
+              <div class="wf-hd">
+                <svg class="wf-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                <span class="wf-prefix">workflow</span><span class="wf-action">run</span><span class="wf-name">test-suite</span><span class="sa-sep">·</span><span class="wf-name">unit</span><span class="wf-runid">a1b2c3d4</span>
+              </div>
+              <div class="wf-body">
+                <div class="wf-body-content" style="position:relative;">
+                  <!-- copy 按钮：workflow expanded 左上角（Block.vue:92-101）-->
+                  <span class="tool-copy" title="copy（hover 显）" style="position:absolute;top:0;left:0;opacity:1;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
+                  运行单元测试套件，覆盖率 ≥ 80%
+                </div>
+                <div class="gui-pb-full">
+                  <div class="gui-pb-label-row"><span class="gui-pb-label">coverage</span><span class="gui-pb-count">42<span class="gui-pb-count-dim"> / 50 tests</span></span></div>
+                  <div class="gui-pb"><div class="gui-pb-fill warn" style="width:84%;background:var(--success);"></div></div>
+                </div>
               </div>
             </div>
           </div>
@@ -967,21 +1260,182 @@ added 1 package in 2s</div>
     <div class="anno-grid">
       <div class="anno"><b>折叠:</b><br>本地态，default 收起</div>
       <div class="anno"><b>header:</b><br>13px [--text-base] font-medium · gap 6px</div>
-      <div class="anno"><b>icon:</b><br>ListChecks 13px · stroke 1.75 · <span class="v6">failed 不切</span></div>
+      <div class="anno"><b>icon:</b><br>ListChecks 13px · stroke 1.75 · <span class="v6">failed/done 都不切（done 回归中性 icon）</span></div>
       <div class="anno"><b>prefix:</b><br>「workflow」10px mono 600 uppercase neutral-fg</div>
       <div class="anno"><b>action:</b><br>11px mono neutral-mid（run/status/pause）</div>
-      <div class="anno"><b>name:</b><br>12px mono accent（仅 run action 有）</div>
+      <div class="anno"><b>name:</b><br>12px mono accent（仅 run action 有）· done/failed 降 neutral-mid</div>
       <div class="anno"><b>runId:</b><br>11px mono neutral-dim（前 8 位）</div>
       <div class="anno"><b>running:</b><br>双环 loader 13px accent</div>
-      <div class="anno"><b>进度条（GUI）:</b><br><span class="v6">h-6px rounded-sm · fill: ok(≥80%)/warn(≥50%)/danger · 非内置</span></div>
-      <div class="anno"><b>展开内容:</b><br>GuiComponentRenderer 优先 → AnsiText → 纯文本</div>
+      <div class="anno"><b>done 态:</b><br><span class="v6">status=success 无特殊装饰，回归中性 icon + name 降 neutral-mid（与 failed 对称靠中性色，不显 success 绿）</span></div>
+      <div class="anno"><b>copy 按钮:</b><br><span class="v6">expanded 左上角 ghost icon（hover 显，Block.vue:92-101）</span></div>
+      <div class="anno"><b>进度条（GUI）:</b><br><span class="v6">label 行（neutral-mid）+ current/total unit 数字读数（neutral-fg）+ track bg-bg-input h-1.5 + fill severity（ProgressBar.vue:39-53）· 非内置，extension 推</span></div>
+      <div class="anno"><b>severity 推断:</b><br><span class="v6">severity 可选，缺省按比例自动推断：≥0.8 ok(success) / ≥0.5 warn / else danger（ProgressBar.vue:18-29）</span></div>
+      <div class="anno"><b>展开内容:</b><br>GuiComponentRenderer 优先 → AnsiText → 纯文本（详见 §11.5）</div>
       <div class="anno"><b>failed 色:</b><br><span class="v6">prefix/action/name 降 neutral-mid（icon 保留 ListChecks）</span></div>
-      <div class="anno"><b>审批按钮:</b><br>DEFERRED（未实现）</div>
+      <div class="anno"><b>审批按钮 [DEFERRED]:</b><br><span class="v6">G-018 决策：v1 不渲染审批按钮，failed 救生按钮也不做（agent 自处理）。未来审批走何种容器待设计</span></div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §11.5 GUI 组件规格 · extension 推送渲染契约（progress-bar / list-tree / stats-line / tab-bar / card / columns / ansi-text）
+       ================================================================ -->
+  <section class="spec" id="s11-5">
+    <div class="spec-head"><span class="spec-num">§11.5</span><h2 class="spec-title">GUI 组件规格 · extension 推送渲染契约</h2></div>
+    <p class="spec-desc">这些是 extension 通过 <code>details.__gui__</code> 协议推送的<b>数据结构</b>，renderer（<code>GuiComponentRenderer</code>）负责渲染形态。<b>无 spec 则 extension 开发者无法对齐推送数据结构</b>——workflow/tool 块的展开内容走此协议（GuiComponentRenderer 优先 → AnsiText → 纯文本）。共 7 种组件：<code>progress-bar</code> / <code>list-tree</code> / <code>stats-line</code> / <code>tab-bar</code> / <code>card</code> / <code>columns</code> / <code>ansi-text</code>。递归容器（card/columns）允许嵌套任意子组件。</p>
+    <div class="change-points">
+      <span class="cp cp-v6"><b>新增</b> §11.5（spec 原仅一句带过，本 section 补全 4 种 + progress-bar 细化）</span>
+      <span class="cp cp-v6"><b>渲染契约</b> extension 推 __gui__ 数据结构 · renderer 渲染形态</span>
+    </div>
+
+    <!-- 11.5A. progress-bar（补全 §11 的 label + 数字行 + track 色）-->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:4px 0 14px;font-weight:500;">11.5A. progress-bar · 进度条（<code>ProgressBar.vue</code>）</h3>
+    <div class="render-frame">
+      <div class="panel-stage" style="padding:14px 16px;">
+        <div class="gui-spec">
+          <div class="gui-pb-full" style="padding-left:0;">
+            <div class="gui-pb-label-row"><span class="gui-pb-label">running tests</span><span class="gui-pb-count">31<span class="gui-pb-count-dim"> / 50 tests</span></span></div>
+            <div class="gui-pb"><div class="gui-pb-fill warn" style="width:62%;"></div></div>
+          </div>
+          <div class="gui-pb-full" style="padding-left:0;margin-top:14px;">
+            <div class="gui-pb-label-row"><span class="gui-pb-label">coverage</span><span class="gui-pb-count">42<span class="gui-pb-count-dim"> / 50 tests</span></span></div>
+            <div class="gui-pb"><div class="gui-pb-fill ok" style="width:84%;"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="anno-grid" style="margin-bottom:24px;">
+      <div class="anno"><b>数据契约:</b><br><span class="v6">{ type:'progress-bar', label?, current, total, unit?, severity? }</span></div>
+      <div class="anno"><b>label 行:</b><br><span class="v6">可选 label（neutral-mid）左 + current/total unit 数字读数（neutral-fg，total+unit 为 neutral-dim）右（:40-45）</span></div>
+      <div class="anno"><b>track:</b><br><span class="v6">h-1.5(6px) rounded-sm <b>bg-bg-input</b>（:46）· fill h-full rounded-sm</span></div>
+      <div class="anno"><b>severity:</b><br><span class="v6">可选，缺省按比例自动推断：≥0.8 ok(success) / ≥0.5 warn / else danger（:18-29）</span></div>
+    </div>
+
+    <!-- 11.5B. list-tree -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:4px 0 14px;font-weight:500;">11.5B. list-tree · 递归树（<code>ListTree.vue</code>）</h3>
+    <div class="render-frame">
+      <div class="panel-stage" style="padding:14px 16px;">
+        <div class="gui-spec">
+          <!-- depth 0 -->
+          <div class="gui-tree-item"><span class="gui-tree-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></span><span class="gui-tree-label">setup</span><span class="gui-tree-status done">完成</span></div>
+          <!-- depth 1 -->
+          <div class="gui-tree-item" style="padding-left:20px;"><span class="gui-tree-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg></span><span class="gui-tree-label">install deps</span><span class="gui-tree-status done">完成</span></div>
+          <div class="gui-tree-item" style="padding-left:20px;"><span class="gui-tree-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3" fill="currentColor"/></svg></span><span class="gui-tree-label">run tests</span><span class="gui-tree-status running">运行中</span></div>
+          <!-- depth 2 -->
+          <div class="gui-tree-item" style="padding-left:40px;"><span class="gui-tree-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span><span class="gui-tree-label">panel.test.ts</span><span class="gui-tree-status failed">失败</span></div>
+          <div class="gui-tree-item"><span class="gui-tree-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></span><span class="gui-tree-label">skipped suite</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="anno-grid" style="margin-bottom:24px;">
+      <div class="anno"><b>数据契约:</b><br><span class="v6">{ type:'list-tree', items: TreeItem[] } · TreeItem = { icon?, label, status?, children?: TreeItem[] }</span></div>
+      <div class="anno"><b>递归缩进:</b><br><span class="v6">depth * 20px padding-left（根层 0，children 自动 +1，:45-47）</span></div>
+      <div class="anno"><b>icon (7 种):</b><br><span class="v6">arrow(ChevronRight) / check(Check) / cross(X) / circle(Circle) / dot(Dot) / pause(Pause) / branch(GitBranch)（:22-30）</span></div>
+      <div class="anno"><b>status 标签:</b><br><span class="v6">running→accent / done→success / failed→danger（:32-36）· i18n 中文标签</span></div>
+    </div>
+
+    <!-- 11.5C. stats-line -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:4px 0 14px;font-weight:500;">11.5C. stats-line · 水平键值对（<code>StatsLine.vue</code>）</h3>
+    <div class="render-frame">
+      <div class="panel-stage" style="padding:14px 16px;">
+        <div class="gui-spec">
+          <div class="gui-stats-line">
+            <div class="gui-stats-item"><span class="gui-stats-label">turns</span><span class="gui-stats-value">12</span></div>
+            <div class="gui-stats-item sep"><span class="gui-stats-label">tokens</span><span class="gui-stats-value warn">8.2k</span></div>
+            <div class="gui-stats-item sep"><span class="gui-stats-label">errors</span><span class="gui-stats-value danger">3</span></div>
+            <div class="gui-stats-item sep"><span class="gui-stats-label">elapsed</span><span class="gui-stats-value ok">1m24s</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="anno-grid" style="margin-bottom:24px;">
+      <div class="anno"><b>数据契约:</b><br><span class="v6">{ type:'stats-line', items: StatItem[] } · StatItem = { label?, value, severity? }</span></div>
+      <div class="anno"><b>分隔:</b><br><span class="v6">item 间 <code>border-l border-border</code>，首项无（first:pl-0）（:26-27）</span></div>
+      <div class="anno"><b>value 着色:</b><br><span class="v6">按 severity：ok→success / warn→warn / danger→danger，无 severity→neutral-fg（:13-17）</span></div>
+      <div class="anno"><b>label:</b><br><span class="v6">可选，neutral-dim（:28）· value font-medium tabular-nums</span></div>
+    </div>
+
+    <!-- 11.5D. tab-bar -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:4px 0 14px;font-weight:500;">11.5D. tab-bar · 标签栏（<code>TabBar.vue</code>）</h3>
+    <div class="render-frame">
+      <div class="panel-stage" style="padding:14px 16px;">
+        <div class="gui-spec">
+          <div class="gui-tab-bar">
+            <div class="gui-tab active done"><span class="gui-tab-dot done"></span>build</div>
+            <div class="gui-tab done"><span class="gui-tab-dot done"></span>test</div>
+            <div class="gui-tab"><span class="gui-tab-dot pending"></span>lint</div>
+            <div class="gui-tab">deploy</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="anno-grid" style="margin-bottom:24px;">
+      <div class="anno"><b>数据契约:</b><br><span class="v6">{ type:'tab-bar', tabs: Tab[] } · Tab = { label, active?, status?: 'done'|'pending' }</span></div>
+      <div class="anno"><b>active 态:</b><br><span class="v6">bg-accent-soft text-accent（:25）· 其余 neutral-dim hover neutral-mid</span></div>
+      <div class="anno"><b>status 点:</b><br><span class="v6">done→bg-success · pending→bg-neutral-dim opacity-50（:12-16）· done 非 active 时 label 也染 success（:32）</span></div>
+      <div class="anno"><b>容器:</b><br><span class="v6">flex gap-0.5 border-b border-border pb-px（:20）</span></div>
+    </div>
+
+    <!-- 11.5E. card（含递归嵌套）-->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:4px 0 14px;font-weight:500;">11.5E. card · 卡片容器（<code>Card.vue</code>，4 variant + 递归）</h3>
+    <div class="render-frame">
+      <div class="panel-stage" style="padding:14px 16px;">
+        <div class="gui-spec" style="display:flex;flex-direction:column;gap:14px;">
+          <div class="gui-card-box">
+            <div class="gui-card-hd">BUILD RESULT</div>
+            <div class="gui-card-body">
+              <div class="gui-stats-line">
+                <div class="gui-stats-item"><span class="gui-stats-label">status</span><span class="gui-stats-value ok">success</span></div>
+                <div class="gui-stats-item sep"><span class="gui-stats-label">duration</span><span class="gui-stats-value">12.3s</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="gui-card-box danger">
+            <div class="gui-card-hd" style="color:var(--danger);">FAILED CHECKS</div>
+            <div class="gui-card-body">
+              <div class="gui-tree-item"><span class="gui-tree-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span><span class="gui-tree-label">type-check</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="anno-grid" style="margin-bottom:24px;">
+      <div class="anno"><b>数据契约:</b><br><span class="v6">{ type:'card', variant?, header?: string|GuiComponent, body: GuiComponent[] }</span></div>
+      <div class="anno"><b>4 variant:</b><br><span class="v6">default(border-border bg-surface) / elevated(border-border-strong bg-surface-2) / danger(border-danger) / success(border-success)（:24-32）</span></div>
+      <div class="anno"><b>header:</b><br><span class="v6">string 或嵌套 GuiComponent（后者递归调 GuiComponentRenderer）（:41-49）· mono 11px uppercase neutral-mid</span></div>
+      <div class="anno"><b>body 递归:</b><br><span class="v6">body[] 通过 v-for + GuiComponentRenderer 递归渲染任意子组件（:50-56）</span></div>
+      <div class="anno"><b>容器:</b><br><span class="v6">rounded-lg border overflow-hidden（:36-38）</span></div>
+    </div>
+
+    <!-- 11.5F. columns / ansi-text（简要）-->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:4px 0 14px;font-weight:500;">11.5F. columns / ansi-text（简要）</h3>
+    <div class="render-frame">
+      <div class="panel-stage" style="padding:14px 16px;">
+        <div class="gui-spec">
+          <!-- columns：flex gap-3，ratios 控 flex-grow -->
+          <div style="display:flex;gap:12px;">
+            <div style="flex:2;min-width:0;padding:8px;background:var(--surface-2);border-radius:var(--radius-sm);">
+              <div class="gui-stats-item" style="padding:0;"><span class="gui-stats-label">左列</span><span class="gui-stats-value">flex-grow:2</span></div>
+            </div>
+            <div style="flex:1;min-width:0;padding:8px;background:var(--surface-2);border-radius:var(--radius-sm);">
+              <div class="gui-stats-item" style="padding:0;"><span class="gui-stats-label">右列</span><span class="gui-stats-value">1</span></div>
+            </div>
+          </div>
+          <div class="gui-ansi" style="margin-top:12px;"><span style="color:var(--success);">✓</span> 1827 passed
+<span style="color:var(--warn);">⚠</span> 3 skipped</div>
+        </div>
+      </div>
+    </div>
+    <div class="anno-grid">
+      <div class="anno"><b>columns 契约:</b><br><span class="v6">{ type:'columns', children: GuiComponent[], ratios?: number[] } · flex gap-3 · ratios 控 flex-grow（缺省等分）（Columns.vue）</span></div>
+      <div class="anno"><b>columns 递归:</b><br><span class="v6">children 通过 GuiComponentRenderer 递归渲染（min-w-0 flex-1 防溢出）</span></div>
+      <div class="anno"><b>ansi-text 契约:</b><br><span class="v6">{ type:'ansi-text', content: string } · ansi_up 解析 ANSI 转义着色 · whitespace-pre-wrap mono（AnsiText.vue）</span></div>
+      <div class="anno"><b>ansi-text 安全:</b><br><span class="v6">ansi_up 默认 escape_html=true（XSS 安全），解析失败回退纯文本</span></div>
+      <div class="anno"><b>渲染优先级:</b><br><span class="v6">GuiComponentRenderer（__gui__）优先 → AnsiText（outputRaw）→ 纯文本（displayContent）兜底</span></div>
     </div>
   </section>
 
   <footer class="doc-foot">
-    <span>v6-spec-blocks.html · 消息块 · §4-§7/§10/§11</span>
+    <span>v6-spec-blocks.html · 消息块 · §4-§7/§10/§10.5/§11/§11.5</span>
     <span>SSOT: <a href="v6-design.md">v6-design.md §4.1</a> · token: <a href="v6-spec-tokens.html">v6-spec-tokens</a></span>
   </footer>
 
