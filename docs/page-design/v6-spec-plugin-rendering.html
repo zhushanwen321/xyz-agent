@@ -1,0 +1,1437 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>xyz-agent · v6 视觉规格稿 · 09 Plugin Rendering</title>
+<style>
+/* ================================================================
+   v6 视觉规格稿 · 09 Plugin Rendering（插件渲染机制）
+   ──────────────────────────────────────────────────────────────
+   跨视图横切关注点：plugin 能往哪些视图注入、注入什么、改到什么程度、
+   注入后的视觉，以及 GuiComponent 7 原语的 v6 视觉重设计。
+   覆盖：5 维度 × 3 级别矩阵 / 16 挂载点 M1-M16 / 7 原语 v6 视觉 /
+        嵌套组合态 / ANSI 16 色 → v6 语义色映射。
+   token 复用 v6-spec-tokens.html 同一集（含 v6 提案值，逐字一致）。
+   ================================================================ */
+:root {
+  /* 背景层级 */
+  --bg: #1a1b1f;
+  --surface: #272830;
+  --surface-hover: #363740;
+  --surface-2: #2e2f38;
+  --bg-elevated: #313239;
+  --bg-input: #1e1f24;
+  /* v6 新增 */
+  --bg-sunken: var(--bg);
+  --bg-card: #22242c;
+
+  /* 文字 neutral 谱系（v6：dim 提亮一档）*/
+  --neutral-fg: #e5e7eb;
+  --neutral-mid: #9ca3af;
+  --neutral-dim: #7d8494;
+  --neutral-dim-old: #6b7280;
+  --neutral-faint: #4b5563;
+  --neutral-ico: #8b8d94;
+  --neutral-ico-hover: #e5e7eb;
+
+  /* 边框/分隔 */
+  --border: rgba(255,255,255,0.08);
+  --border-strong: rgba(255,255,255,0.15);
+
+  /* 主色（冷蓝）*/
+  --accent: #4f8ef7;
+  --accent-hover: #6ba3ff;
+  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
+  --accent-ring: rgba(79,142,247,0.30);
+
+  /* 状态色 */
+  --success: #22c55e;
+  --warn: #b08a3e;
+  --danger: #ef4444;
+  --info: #38bdf8;
+  --reasoning: #a78bfa;
+  --success-soft: color-mix(in oklch, var(--success) 12%, transparent);
+  --warn-soft: color-mix(in oklch, var(--warn) 14%, transparent);
+  --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
+  --info-soft: color-mix(in oklch, var(--info) 12%, transparent);
+  --reasoning-soft: color-mix(in oklch, var(--reasoning) 12%, transparent);
+
+  /* diff（v6：行背景 18%→12%）*/
+  --diff-add-bg: color-mix(in oklch, var(--success) 12%, transparent);
+  --diff-del-bg: color-mix(in oklch, var(--danger) 12%, transparent);
+  --diff-add-bg-old: color-mix(in oklch, var(--success) 18%, transparent);
+  --diff-del-bg-old: color-mix(in oklch, var(--danger) 18%, transparent);
+  --diff-add-strong: color-mix(in oklch, var(--success) 45%, transparent);
+  --diff-del-strong: color-mix(in oklch, var(--danger) 45%, transparent);
+
+  /* 字体 */
+  --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+
+  /* 字号 scale */
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+
+  /* 圆角（v6：sm 3px→6px）*/
+  --radius-sm: 6px;
+  --radius-sm-old: 3px;
+  --radius: 8px;
+  --radius-lg: 12px;
+
+  /* 间距（4px 栅格）*/
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-6: 24px; --space-8: 32px; --space-12: 48px; --space-16: 64px;
+
+  /* 阴影 */
+  --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);
+  --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
+  --shadow-drawer: -12px 0 24px rgba(0,0,0,0.25);
+  --shadow-glow: 0 0 0 3px rgba(79,142,247,0.25);
+
+  /* 组件尺寸（v6 新增）*/
+  --content-max-w: 720px;
+  --composer-btn-size: 30px;
+
+  /* z-index 语义化（§5.2 v6 新增）*/
+  --z-sticky: 1;
+  --z-popover: 10;
+  --z-overlay: 20;
+  --z-modal: 1000;
+
+  /* 动效 */
+  --ease: cubic-bezier(0.4,0,0.2,1);
+  --duration-fast: 120ms;
+  --duration: 200ms;
+  --duration-slow: 320ms;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  font-family: var(--font-sans);
+  background: #131316;
+  color: var(--neutral-fg);
+  -webkit-font-smoothing: antialiased;
+  font-size: var(--text-base);
+  line-height: 1.5;
+}
+
+/* ============ 页面骨架（与 tokens/conversation 稿一致）============ */
+.page { max-width: 1320px; margin: 0 auto; padding: 48px 40px 80px; }
+.doc-head { margin-bottom: 40px; padding-bottom: 24px; border-bottom: 1px solid var(--border); }
+.doc-eyebrow { font-size: var(--text-xs); color: var(--accent); font-family: var(--font-mono); letter-spacing: .04em; margin-bottom: 8px; }
+.doc-title { font-size: 28px; font-weight: 600; color: var(--neutral-fg); margin-bottom: 6px; letter-spacing: -.01em; }
+.doc-sub { font-size: var(--text-md); color: var(--neutral-mid); max-width: 820px; }
+.doc-meta { display: flex; gap: 20px; margin-top: 16px; font-size: var(--text-xs); color: var(--neutral-dim); font-family: var(--font-mono); flex-wrap: wrap; }
+.doc-meta b { color: var(--neutral-mid); font-weight: 500; }
+
+.toc { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 40px; padding: 12px; background: var(--bg-input); border-radius: var(--radius); }
+.toc a { font-size: var(--text-xs); color: var(--neutral-mid); text-decoration: none; padding: 4px 10px; border-radius: var(--radius-sm); font-family: var(--font-mono); transition: background var(--duration-fast), color var(--duration-fast); }
+.toc a:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+
+/* ============ spec section ============ */
+.spec { background: var(--surface); border-radius: var(--radius-lg); padding: 32px; margin-bottom: 24px; }
+.spec-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+.spec-num { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--accent); background: var(--accent-soft); padding: 2px 8px; border-radius: var(--radius-sm); }
+.spec-title { font-size: 20px; font-weight: 600; color: var(--neutral-fg); letter-spacing: -.005em; }
+.spec-desc { font-size: var(--text-sm); color: var(--neutral-mid); margin-bottom: 20px; max-width: 860px; }
+.spec-desc code { font-family: var(--font-mono); color: var(--neutral-fg); font-size: 11px; background: var(--bg-input); padding: 1px 5px; border-radius: 4px; }
+.spec h3 { font-size: var(--text-md); color: var(--neutral-fg); margin: 24px 0 12px; font-weight: 500; }
+.spec h3 .h3-tag { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--accent); background: var(--accent-soft); padding: 2px 6px; border-radius: var(--radius-sm); margin-left: 8px; vertical-align: 2px; }
+
+/* 变更要点 chip 行 */
+.change-points { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+.cp { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-xs); padding: 4px 10px; border-radius: 999px; font-family: var(--font-mono); }
+.cp-now { background: var(--surface-2); color: var(--neutral-mid); }
+.cp-v6 { background: var(--success-soft); color: var(--success); }
+.cp-info { background: var(--info-soft); color: var(--info); }
+.cp-warn { background: var(--warn-soft); color: var(--warn); }
+.cp b { font-weight: 500; }
+
+/* ============ 标注面板 ============
+   标注文字用 neutral-mid（#9ca3af）保证 AA：bg-card 上 6.10:1。 */
+.anno { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-mid); line-height: 1.8; }
+.anno b { color: var(--neutral-fg); font-weight: 500; }
+.anno .v6 { color: var(--success); }
+.anno .old { color: var(--neutral-faint); text-decoration: line-through; text-decoration-color: rgba(239,68,68,.5); }
+.anno .accent { color: var(--accent); }
+.anno-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap: 8px 20px; padding: 14px 16px; background: var(--bg-card); border-radius: var(--radius); margin-top: 12px; }
+
+/* ============ 渲染区（真实面板色，呈现目标态）============ */
+.render-frame {
+  background: var(--bg-card); border-radius: var(--radius); padding: 20px;
+  margin-bottom: 16px; overflow: hidden;
+}
+.render-frame.tight { padding: 14px; }
+.panel-stage { background: var(--surface); border-radius: var(--radius); padding: 0; overflow: hidden; }
+
+/* 状态标签 */
+.state-row { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
+.state-tag {
+  flex-shrink: 0; width: 82px; font-size: var(--text-2xs); font-family: var(--font-mono);
+  color: var(--neutral-dim); text-transform: uppercase; letter-spacing: .05em;
+  padding-top: 6px;
+}
+.state-demo { flex: 1; min-width: 0; }
+
+/* ============ 矩阵/表格（§1）============ */
+.matrix-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.matrix-table th {
+  text-align: left; padding: 10px 12px; font-size: var(--text-xs); color: var(--neutral-dim);
+  font-weight: 500; text-transform: uppercase; letter-spacing: .05em;
+  border-bottom: 1px solid var(--border-strong);
+}
+.matrix-table th.center { text-align: center; }
+.matrix-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.matrix-table tr:last-child td { border-bottom: 0; }
+.matrix-table .mt-dim { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--accent); white-space: nowrap; }
+.matrix-table .mt-sub { font-size: var(--text-2xs); color: var(--neutral-dim); font-family: var(--font-mono); }
+.cell-yes { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: var(--success-soft); color: var(--success); font-size: 11px; }
+.cell-no { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: var(--surface-2); color: var(--neutral-faint); font-size: 11px; }
+.cell-partial { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: var(--warn-soft); color: var(--warn); font-size: 11px; }
+.cell-l { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 600; padding: 2px 7px; border-radius: 999px; }
+.cell-l.l1 { background: var(--accent-soft); color: var(--accent); }
+.cell-l.l2 { background: var(--reasoning-soft); color: var(--reasoning); }
+.cell-l.l3 { background: var(--warn-soft); color: var(--warn); }
+.ext-yes { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--success); }
+.ext-no { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); }
+
+/* ============ 挂载点拓扑图（§1）============ */
+.topo { font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.7; color: var(--neutral-mid); background: var(--bg-input); border-radius: var(--radius); padding: 20px; white-space: pre; overflow-x: auto; }
+.topo .t-node { color: var(--neutral-fg); }
+.topo .t-mount { color: var(--accent); }
+.topo .t-dim { color: var(--neutral-dim); }
+.topo .t-dim-a { color: var(--reasoning); }
+.topo .t-dim-b { color: var(--success); }
+.topo .t-dim-c { color: var(--warn); }
+.topo .t-dim-d { color: var(--info); }
+.topo .t-dim-e { color: var(--danger); }
+
+/* ============ 模拟 sidebar / drawer / panel 头部（§2）============ */
+.demo-sidebar { width: 280px; background: var(--bg-sunken); border-radius: var(--radius); padding: 14px 10px; display: flex; flex-direction: column; gap: 10px; }
+.demo-sidebar .sb-brand { font-size: var(--text-sm); font-weight: 600; color: var(--neutral-fg); padding: 0 6px; }
+/* SegmentedTab（§3.1 范式，plugin tab 复用）*/
+.seg-tab { display: flex; gap: 2px; background: var(--bg-input); border-radius: var(--radius); padding: 3px; }
+.seg-tab .seg-item { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 5px 6px; border-radius: var(--radius-sm); font-size: var(--text-xs); color: var(--neutral-dim); cursor: pointer; }
+.seg-tab .seg-item:hover { color: var(--neutral-fg); }
+.seg-tab .seg-item.active { background: var(--bg-elevated); color: var(--neutral-fg); }
+.seg-tab .seg-item svg { width: 12px; height: 12px; }
+.seg-tab .seg-item .count { font-family: var(--font-mono); font-size: 9px; padding: 0 4px; border-radius: 999px; background: var(--surface-2); color: var(--neutral-mid); }
+.seg-tab .seg-item.active .count { background: var(--accent-soft); color: var(--accent); }
+.seg-tab .seg-item.plugin { color: var(--accent); }
+/* sidebar 内容区（plugin view 数据宿主）*/
+.sb-view { background: var(--surface); border-radius: var(--radius); padding: 10px; min-height: 120px; }
+.sb-view.empty { display: flex; align-items: center; justify-content: center; color: var(--neutral-dim); font-size: var(--text-sm); }
+.sb-list-item { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: var(--radius-sm); font-size: var(--text-xs); color: var(--neutral-mid); }
+.sb-list-item:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.sb-list-item .ico { width: 12px; height: 12px; color: var(--neutral-ico); flex-shrink: 0; }
+.sb-list-item .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+/* drawer tab（§3.1 范式复用，横向 icon tab）*/
+.demo-drawer { background: var(--bg-sunken); border-radius: var(--radius); overflow: hidden; }
+.drawer-tabs { display: flex; gap: 2px; padding: 6px; background: var(--surface-2); }
+.drawer-tab { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 26px; border-radius: var(--radius-sm); color: var(--neutral-dim); cursor: pointer; position: relative; }
+.drawer-tab:hover { color: var(--neutral-fg); background: var(--surface-hover); }
+.drawer-tab.active { background: var(--surface); color: var(--neutral-fg); }
+.drawer-tab svg { width: 14px; height: 14px; }
+.drawer-tab .tab-dot { position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.drawer-content { background: var(--surface); padding: 12px; min-height: 100px; }
+
+/* composer-bar / panel-header plugin 按钮（§3.4 SegmentedTab 间距对齐）*/
+.demo-bar { display: flex; align-items: center; gap: 2px; background: var(--bg-input); border-radius: var(--radius-lg); padding: 6px 8px; }
+.bar-icon-btn { width: 28px; height: 28px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-dim); cursor: pointer; position: relative; }
+.bar-icon-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.bar-icon-btn.disabled { color: var(--neutral-faint); cursor: not-allowed; }
+.bar-icon-btn.disabled:hover { background: transparent; color: var(--neutral-faint); }
+.bar-icon-btn svg { width: 14px; height: 14px; }
+.bar-icon-btn .ic-count { position: absolute; top: -2px; right: -2px; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 999px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 9px; display: inline-flex; align-items: center; justify-content: center; }
+
+/* panel-header（M12 按钮组）*/
+.demo-ph { display: flex; align-items: center; gap: 2px; height: 38px; padding: 0 10px; background: var(--bg-elevated); border-radius: var(--radius); }
+.demo-ph .ph-title { font-size: var(--text-sm); color: var(--neutral-fg); font-family: var(--font-mono); margin-right: auto; }
+.demo-ph .ph-ico-btn { width: 26px; height: 26px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-mid); cursor: pointer; }
+.demo-ph .ph-ico-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.demo-ph .ph-ico-btn svg { width: 14px; height: 14px; }
+.demo-ph .ph-divider { width: 1px; height: 16px; background: var(--border); margin: 0 4px; }
+
+/* ============ 全局底栏 StatusBarController（§2 A4）============ */
+.demo-statusbar { display: flex; align-items: center; gap: 0; background: var(--bg-elevated); border-radius: var(--radius-sm); padding: 0 6px; height: 26px; overflow: hidden; }
+.sb-item { display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; height: 100%; font-size: var(--text-xs); color: var(--neutral-mid); cursor: pointer; white-space: nowrap; }
+.sb-item:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.sb-item .sb-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.sb-item.ok .sb-dot { background: var(--success); }
+.sb-item.warn .sb-dot { background: var(--warn); }
+.sb-item.danger .sb-dot { background: var(--danger); }
+.sb-item.neutral .sb-dot { background: var(--neutral-ico); }
+.sb-item.ok { color: var(--success); }
+.sb-item.warn { color: var(--warn); }
+.sb-item.danger { color: var(--danger); }
+.sb-item .sb-sep { width: 1px; height: 12px; background: var(--border); margin: 0 -3px 0 5px; }
+.sb-spacer { flex: 1; }
+
+/* ============ GuiComponent 7 原语 v6 视觉（§3 核心）============ */
+/* 三层明度 stage */
+.layer3 { padding: 16px; background: #131316; border-radius: var(--radius); }
+.layer3 .l-canvas { padding: 14px; background: var(--bg); border-radius: var(--radius); }
+.layer3 .l-surface { padding: 14px; background: var(--surface); border-radius: var(--radius); }
+
+/* card v6（去 border，靠 bg 层级；header 去 border-b 改 bg 浮起）*/
+.gcard { border-radius: 8px; overflow: hidden; }
+.gcard.stage-default { background: var(--surface); }
+.gcard.stage-elevated { background: var(--surface-2); }
+.gcard.stage-card { background: var(--bg-card); }
+.gcard-hd { display: flex; align-items: center; gap: 6px; padding: 8px 12px; background: var(--surface-2); font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 600; color: var(--neutral-mid); }
+.gcard.stage-elevated .gcard-hd { background: var(--bg-elevated); }
+.gcard-hd .hd-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.gcard-hd .hd-badge { margin-left: auto; font-size: var(--text-2xs); padding: 2px 7px; border-radius: 999px; font-weight: 600; }
+.hd-badge.b-danger { background: var(--danger-soft); color: var(--danger); }
+.hd-badge.b-success { background: var(--success-soft); color: var(--success); }
+.hd-badge.b-warn { background: var(--warn-soft); color: var(--warn); }
+.hd-badge.b-neutral { background: var(--surface); color: var(--neutral-dim); }
+.gcard-bd { padding: 12px; font-size: var(--text-sm); color: var(--neutral-mid); line-height: 1.55; }
+/* 嵌套 card（靠 bg 层级非 border 叠加）*/
+.gcard-nested { background: var(--bg-card); border-radius: var(--radius-sm); padding: 10px; margin-top: 8px; }
+
+/* card 旧态（违规参照）*/
+.gcard-old { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); overflow: hidden; }
+.gcard-old .gcard-hd-old { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--border); font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 600; color: var(--neutral-mid); }
+.gcard-old .gcard-bd-old { padding: 12px; font-size: var(--text-sm); color: var(--neutral-mid); }
+.gcard-old.danger { border-color: var(--danger); }
+
+/* stats-line v6 */
+.gstats { display: flex; flex-wrap: wrap; align-items: center; font-family: var(--font-mono); font-size: var(--text-sm); }
+.gstats .gs-item { display: flex; align-items: center; gap: 5px; padding: 0 12px; }
+.gstats .gs-item + .gs-item { border-left: 1px solid var(--border); }
+.gstats .gs-item:first-child { padding-left: 0; }
+.gstats .gs-label { color: var(--neutral-dim); font-size: var(--text-xs); }
+.gstats .gs-value { font-weight: 500; font-variant-numeric: tabular-nums; }
+.gs-value.sv-danger { color: var(--danger); }
+.gs-value.sv-neutral { color: var(--neutral-fg); }
+.gs-value.sv-mid { color: var(--neutral-mid); }
+
+/* progress-bar v6（fill 柔化 color-mix，done 降中性）*/
+.gprog { display: flex; flex-direction: column; gap: 6px; font-family: var(--font-mono); font-size: var(--text-sm); }
+.gprog-hd { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.gprog-label { color: var(--neutral-mid); }
+.gprog-val { margin-left: auto; color: var(--neutral-fg); font-weight: 500; font-variant-numeric: tabular-nums; }
+.gprog-val .gprog-total { color: var(--neutral-dim); }
+.gprog-track { height: 6px; border-radius: var(--radius-sm); background: var(--bg-input); overflow: hidden; }
+.gprog-fill { height: 100%; border-radius: var(--radius-sm); transition: width var(--duration-slow) var(--ease); }
+.gprog-fill.f-ok { background: color-mix(in oklch, var(--success) 55%, transparent); }
+.gprog-fill.f-warn { background: color-mix(in oklch, var(--warn) 55%, transparent); }
+.gprog-fill.f-danger { background: color-mix(in oklch, var(--danger) 55%, transparent); }
+.gprog-fill.f-done { background: var(--neutral-dim); }
+.gprog-fill.f-accent { background: color-mix(in oklch, var(--accent) 55%, transparent); }
+/* indeterminate 动画条 */
+.gprog-fill.indet { width: 40% !important; background: color-mix(in oklch, var(--accent) 55%, transparent); animation: gprog-indet 1.4s var(--ease) infinite; }
+@keyframes gprog-indet { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+
+/* list-tree v6（缩进留白 16px 非 border-l；icon 12px；status 7px 圆点）*/
+.gtree { font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.6; }
+.gtree-node { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+.gtree-ico { width: 12px; height: 12px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-ico); }
+.gtree-ico svg { width: 12px; height: 12px; }
+.gtree-label { color: var(--neutral-mid); }
+.gtree-status { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; margin-left: auto; }
+.gtree-status.st-running { background: var(--accent); }
+.gtree-status.st-done { background: var(--success); opacity: .9; }
+.gtree-status.st-failed { background: var(--danger); }
+
+/* columns v6（gap-3 = 12px 标准）*/
+.gcols { display: flex; gap: 12px; }
+.gcols .gcol { flex: 1; min-width: 0; }
+
+/* tab-bar v6（强制迁移 SegmentedTab 范式）*/
+.gtabbar { display: flex; gap: 2px; background: var(--bg-input); border-radius: var(--radius); padding: 3px; }
+.gtabbar .gtab { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-dim); cursor: pointer; }
+.gtabbar .gtab:hover { color: var(--neutral-fg); }
+.gtabbar .gtab.active { background: var(--bg-elevated); color: var(--neutral-fg); }
+.gtabbar .gtab .gtab-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.gtabbar .gtab .gtab-dot.d-done { background: var(--success); }
+.gtabbar .gtab .gtab-dot.d-pending { background: var(--neutral-dim); opacity: .5; }
+/* tab-bar 旧态（违规：accent-soft 蓝染底 + border-b）*/
+.gtabbar-old { display: flex; gap: 2px; border-bottom: 1px solid var(--border); padding-bottom: 1px; }
+.gtabbar-old .gtab-old { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-top-left-radius: var(--radius-sm); border-top-right-radius: var(--radius-sm); font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-dim); }
+.gtabbar-old .gtab-old.active { background: var(--accent-soft); color: var(--accent); }
+
+/* ansi-text v6（映射后不饱和过载，不自加背景）*/
+.gansi { font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.6; white-space: pre-wrap; }
+.ansi-red { color: var(--danger); }
+.ansi-green { color: var(--success); }
+.ansi-yellow { color: var(--warn); }
+.ansi-blue { color: var(--accent); }
+.ansi-magenta { color: var(--reasoning); }
+.ansi-cyan { color: var(--info); }
+.ansi-white { color: var(--neutral-fg); }
+.ansi-gray { color: var(--neutral-mid); }
+.ansi-dim { color: var(--neutral-dim); }
+
+/* ============ ANSI 映射表（§8）============ */
+.ansi-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.ansi-table th { text-align: left; padding: 8px 12px; font-size: var(--text-xs); color: var(--neutral-dim); font-weight: 500; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--border-strong); }
+.ansi-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.ansi-table tr:last-child td { border-bottom: 0; }
+.ansi-table .at-name { font-family: var(--font-mono); font-size: var(--text-xs); }
+.ansi-table .at-swatch { display: inline-block; width: 16px; height: 16px; border-radius: 4px; vertical-align: -3px; margin-right: 6px; }
+.ansi-table .at-target { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--accent); }
+
+/* ============ 对话框/命令配置/独立 view（§4 §5 §6）============ */
+/* DialogRequest 示意（对齐 overlays 稿，引用不重复）*/
+.dialog-card { background: var(--bg-elevated); border-radius: var(--radius-lg); box-shadow: var(--shadow-2); padding: 20px; max-width: 420px; }
+.dialog-card .dc-title { font-size: var(--text-md); font-weight: 600; color: var(--neutral-fg); margin-bottom: 8px; }
+.dialog-card .dc-body { font-size: var(--text-sm); color: var(--neutral-mid); margin-bottom: 16px; line-height: 1.55; }
+.dialog-card .dc-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.dc-btn { padding: 6px 14px; border-radius: var(--radius-sm); font-size: var(--text-sm); cursor: pointer; }
+.dc-btn.ghost { color: var(--neutral-mid); }
+.dc-btn.ghost:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.dc-btn.primary { background: var(--accent); color: #fff; }
+.dc-btn.primary:hover { background: var(--accent-hover); }
+
+/* slash command（CommandPopover 引用）*/
+.cmd-pop { background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow-2); overflow: hidden; max-width: 380px; }
+.cmd-pop .cp-row { display: flex; align-items: center; gap: 8px; padding: 7px 10px; font-size: var(--text-sm); color: var(--neutral-mid); }
+.cmd-pop .cp-row.sel { background: var(--accent-soft); color: var(--accent); }
+.cmd-pop .cp-row .cp-ico { width: 14px; height: 14px; color: var(--neutral-dim); flex-shrink: 0; }
+.cmd-pop .cp-row.sel .cp-ico { color: var(--accent); }
+.cmd-pop .cp-row .cp-name { font-family: var(--font-mono); color: var(--neutral-fg); }
+.cmd-pop .cp-row.sel .cp-name { color: var(--accent); }
+.cmd-pop .cp-row .cp-desc { margin-left: auto; font-size: var(--text-xs); color: var(--neutral-dim); }
+
+/* settings schema 区段（§5 D2，复用 settings 控件）*/
+.settings-section { background: var(--bg-card); border-radius: var(--radius); padding: 18px; }
+.settings-section .ss-title { font-size: var(--text-sm); font-weight: 600; color: var(--neutral-fg); margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+.settings-section .ss-plugin { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); margin-bottom: 14px; }
+.ss-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border); }
+.ss-row:first-of-type { border-top: 0; }
+.ss-row .ss-label { flex: 0 0 150px; font-size: var(--text-sm); color: var(--neutral-fg); }
+.ss-row .ss-desc { font-size: var(--text-2xs); color: var(--neutral-dim); margin-top: 2px; }
+.ss-control { flex: 1; }
+/* schema→控件映射示例 */
+.ss-input { background: var(--bg-input); border: 1px solid transparent; border-radius: var(--radius-sm); padding: 6px 10px; font-size: var(--text-sm); color: var(--neutral-fg); width: 100%; max-width: 280px; }
+.ss-select { display: inline-flex; align-items: center; gap: 6px; background: var(--bg-input); border-radius: var(--radius-sm); padding: 6px 10px; font-size: var(--text-sm); color: var(--neutral-fg); }
+.ss-switch { width: 36px; height: 20px; border-radius: 999px; background: var(--surface-2); position: relative; }
+.ss-switch.on { background: var(--accent); }
+.ss-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left var(--duration-fast); }
+.ss-switch.on::after { left: 18px; }
+.schema-tag { font-family: var(--font-mono); font-size: var(--text-2xs); padding: 1px 5px; border-radius: var(--radius-sm); background: var(--reasoning-soft); color: var(--reasoning); }
+
+/* ============ 嵌套组合（§7 workflow 管理面板）============ */
+.wf-panel { background: var(--surface); border-radius: var(--radius); overflow: hidden; }
+.wf-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--surface-2); }
+.wf-head .wf-title { font-size: var(--text-sm); font-weight: 600; color: var(--neutral-fg); }
+.wf-body { padding: 12px; display: grid; grid-template-columns: 200px 1fr; gap: 12px; }
+.wf-side { background: var(--bg-card); border-radius: var(--radius-sm); padding: 8px; }
+.wf-main { display: flex; flex-direction: column; gap: 8px; }
+.wf-foot { padding: 10px 14px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 8px; background: var(--bg-card); }
+
+/* ============ 独立 view 容器（§6 E1）============ */
+.ind-view { background: var(--surface); border-radius: var(--radius); }
+.ind-view-head { display: flex; align-items: center; gap: 8px; padding: 14px 20px; background: var(--surface-2); border-radius: var(--radius) var(--radius) 0 0; }
+.ind-view-head .iv-title { font-size: var(--text-md); font-weight: 600; color: var(--neutral-fg); }
+.ind-view-body { padding: 20px; max-width: var(--content-max-w); }
+
+/* footer */
+.doc-foot { margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; font-size: var(--text-xs); color: var(--neutral-dim); font-family: var(--font-mono); flex-wrap: wrap; gap: 8px; }
+.doc-foot a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ============ 文档头 ============ -->
+  <header class="doc-head">
+    <div class="doc-eyebrow">v6 SPEC · 09 / 07</div>
+    <h1 class="doc-title">Plugin Rendering · 插件渲染</h1>
+    <p class="doc-sub">跨视图横切关注点：plugin 能往哪些视图注入、注入什么、改到什么程度、注入后的视觉。覆盖 5 自定义维度（结构容器 / 对话流 / 对话框 / 命令配置 / 独立 view）× 3 自定义级别（L1 元数据 / L2 原语树 / L3 预编译组件）矩阵 + 16 挂载点 M1-M16 全景拓扑 + GuiComponent 7 原语 v6 视觉重设计 + 嵌套组合态 + ANSI 16 色 → v6 语义色映射。</p>
+    <div class="doc-meta">
+      <span><b>SSOT</b> renderer-target-architecture.md §3 / §5 / §10</span>
+      <span><b>SSOT</b> v6-design.md §3 / §4</span>
+      <span><b>token</b> v6-spec-tokens.html（逐字一致）</span>
+      <span><b>性质</b> 横切稿，不重复各视图内置 UI</span>
+    </div>
+  </header>
+
+  <!-- ============ 目录 ============ -->
+  <nav class="toc">
+    <a href="#s1">§1 总览矩阵</a>
+    <a href="#s2">§2 维度A 结构容器</a>
+    <a href="#s3">§3 维度B 7原语v6视觉</a>
+    <a href="#s4">§4 维度C 对话框</a>
+    <a href="#s5">§5 维度D 命令配置</a>
+    <a href="#s6">§6 维度E 独立view</a>
+    <a href="#s7">§7 嵌套组合态</a>
+    <a href="#s8">§8 ANSI映射表</a>
+  </nav>
+
+  <!-- ================================================================
+       §1 总览：5 维度 × 3 级别矩阵 + 16 挂载点拓扑
+       ================================================================ -->
+  <section class="spec" id="s1">
+    <div class="spec-head"><span class="spec-num">§1</span><h2 class="spec-title">总览：5 维度 × 3 级别 + 16 挂载点</h2></div>
+    <p class="spec-desc">plugin 渲染的全景导航。横轴 3 个自定义级别（<code>L1</code> 元数据+数据驱动 / <code>L2</code> 结构化原语树 / <code>L3</code> 预编译自定义组件），纵轴 5 个视图自定义维度（A 结构容器 / B 对话流 / C 对话框 / D 命令配置 / E 独立 view）。每格标注级别适用性 + external 插件可用性（<code>L3 仅 built-in</code>，external 强制走 L1/L2）。下方是 16 挂载点 M1-M16 全景拓扑图，标注每个挂载点归入哪个维度。</p>
+
+    <h3>5 维度 × 3 级别适用性矩阵</h3>
+    <table class="matrix-table">
+      <thead>
+        <tr>
+          <th style="width:200px">维度（注入面）</th>
+          <th class="center">L1 元数据+数据驱动</th>
+          <th class="center">L2 结构化原语树</th>
+          <th class="center">L3 预编译组件</th>
+          <th class="center">external 可用</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="mt-dim">A 结构容器</span><br><span class="mt-sub">sidebar/drawer tab · 工具条按钮 · 底栏</span></td>
+          <td class="center"><span class="cell-yes">✓</span><br><span class="cell-l l1">主用</span></td>
+          <td class="center"><span class="cell-no">—</span></td>
+          <td class="center"><span class="cell-no">—</span></td>
+          <td class="center"><span class="ext-yes">✓ 全部</span></td>
+        </tr>
+        <tr>
+          <td><span class="mt-dim">B 对话流内容</span><br><span class="mt-sub">tool result · 自定义消息 · ask-user</span></td>
+          <td class="center"><span class="cell-partial">△</span><br><span class="cell-l l1">B3 ask</span></td>
+          <td class="center"><span class="cell-yes">✓</span><br><span class="cell-l l2">主用</span></td>
+          <td class="center"><span class="cell-no">—</span></td>
+          <td class="center"><span class="ext-yes">✓ 全部</span></td>
+        </tr>
+        <tr>
+          <td><span class="mt-dim">C 交互对话框</span><br><span class="mt-sub">confirm/select/input · ask-user 富交互</span></td>
+          <td class="center"><span class="cell-yes">✓</span><br><span class="cell-l l1">C1 dialog</span></td>
+          <td class="center"><span class="cell-partial">△</span><br><span class="cell-l l2">C2 ask</span></td>
+          <td class="center"><span class="cell-no">—</span></td>
+          <td class="center"><span class="ext-yes">✓ 全部</span></td>
+        </tr>
+        <tr>
+          <td><span class="mt-dim">D 命令配置</span><br><span class="mt-sub">slash command · settings schema 区段</span></td>
+          <td class="center"><span class="cell-yes">✓</span><br><span class="cell-l l1">主用</span></td>
+          <td class="center"><span class="cell-no">—</span></td>
+          <td class="center"><span class="cell-no">—</span></td>
+          <td class="center"><span class="ext-yes">✓ 全部</span></td>
+        </tr>
+        <tr>
+          <td><span class="mt-dim">E 独立 view</span><br><span class="mt-sub">完整 view 路由（最高自由度）</span></td>
+          <td class="center"><span class="cell-no">—</span></td>
+          <td class="center"><span class="cell-no">—</span></td>
+          <td class="center"><span class="cell-yes">✓</span><br><span class="cell-l l3">仅 built-in</span></td>
+          <td class="center"><span class="ext-no">✗ 仅内置</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="anno-grid">
+      <div class="anno"><b>L1 适用:</b> <span>维度 A / D（renderer 有固定宿主，plugin 只给元数据）</span></div>
+      <div class="anno"><b>L2 适用:</b> <span>维度 B / C（GuiComponent 原语组合，受限集合）</span></div>
+      <div class="anno"><b>L3 适用:</b> <span>维度 E + 复杂 view 逃生口（Vue 组件，编译期打包）</span></div>
+      <div class="anno"><b>external 铁律:</b> <span>L3 仅 built-in；external 强制走 L1/L2，custom 不可用</span></div>
+    </div>
+
+    <h3 style="margin-top:28px;">16 挂载点 M1-M16 全景拓扑 <span class="h3-tag">简化 AppShell 树</span></h3>
+    <div class="render-frame">
+      <div class="topo"><span class="t-node">AppShell</span> (flex h-screen)
+├─ <span class="t-dim">AsideRegion</span> (<span class="t-dim">aside</span>, 留 traffic-light 安全区)
+│  └─ <span class="t-node">Sidebar</span> (w-300px)
+│     ├─ Brand 区 / 主操作 nav / Overview 入口
+│     ├─ <span class="t-mount">M1</span> SegmentedTab (sessions/files/agents/flows)            <span class="t-dim-a">→ 维度 A1</span>
+│     ├─ <span class="t-mount">M2</span> 子视图区 (按 activeTab 切换)                          <span class="t-dim-a">→ 维度 A1</span>
+│     ├─ <span class="t-mount">M3</span> Brand/nav/Overview/footer 固定区                      <span class="t-dim-a">→ 维度 A3</span>
+│     └─ footer (头像 + Settings 齿轮)
+├─ <span class="t-dim">MainPanel</span> (<span class="t-dim">main</span>, 唯一浮起面板)
+│  └─ <span class="t-node">Workspace</span>
+│     └─ <span class="t-node">PanelContainer</span> (SplitterGroup)
+│        ├─ <span class="t-node">Panel#main</span>
+│        │  ├─ <span class="t-mount">M12</span> PanelHeader (按钮组)                              <span class="t-dim-a">→ 维度 A3</span>
+│        │  ├─ <span class="t-node">MessageStream</span> (对话流)
+│        │  │  ├─ <span class="t-mount">M4</span> Turn → Block (tool/text/thinking)              <span class="t-dim-b">→ 维度 B1</span>
+│        │  │  ├─ <span class="t-mount">M5</span> custom message (__gui__)                        <span class="t-dim-b">→ 维度 B2</span>
+│        │  │  └─ <span class="t-mount">M13</span> 浮层 slot (load-more/fork/jump)               <span class="t-dim-b">→ 维度 B（低优）</span>
+│        │  └─ <span class="t-node">companion-band</span>
+│        │     └─ AskUserOverlay | <span class="t-node">Composer</span>
+│        │        ├─ <span class="t-mount">M11</span> companion-band (ask-user 占位)            <span class="t-dim-b">→ 维度 B3 / C2</span>
+│        │        ├─ <span class="t-mount">M10</span> CommandPopover (slash 菜单)               <span class="t-dim-d">→ 维度 D1</span>
+│        │        └─ <span class="t-mount">M9</span>  composer-bar 工具条                        <span class="t-dim-a">→ 维度 A3</span>
+│        └─ <span class="t-node">SideDrawer#drawer</span>
+│           ├─ <span class="t-mount">M6</span> header tab栏 (terminal/browser/git/...)          <span class="t-dim-a">→ 维度 A2</span>
+│           ├─ <span class="t-mount">M7</span> 内容区 (GuiComponent 兜底)                       <span class="t-dim-a">→ 维度 A2</span>
+│           └─ <span class="t-mount">M8</span> footer status 底栏 → <span class="t-dim-a">全局底栏</span>              <span class="t-dim-a">→ 维度 A4</span>
+├─ <span class="t-mount">M14</span> 全局独立 view 路由 (chat / overview)                          <span class="t-dim-e">→ 维度 E1</span>
+├─ <span class="t-mount">M15</span> 全局 modal/dialog (ExtensionUIDialog)                        <span class="t-dim-c">→ 维度 C1</span>
+└─ <span class="t-mount">M16</span> SettingsModal (⌘, 扩展管理页)                                <span class="t-dim-d">→ 维度 D2</span>
+    + <span class="t-node">ToastContainer</span> [全局]</div>
+    </div>
+    <div class="anno-grid">
+      <div class="anno"><b>最成熟注入面:</b> <span>M4 / M5 / M7 / M8（对话流 + drawer，L2 原语已验证）</span></div>
+      <div class="anno"><b>最大空白:</b> <span>M1 / M6 / M9 / M12 / M14（结构性 contribution，声明但 renderer 零消费）</span></div>
+      <div class="anno"><b>新增概念:</b> <span>M8 全局底栏（§2 A4，当前绑死 SideDrawer footer，规划提升全局）</span></div>
+      <div class="anno"><b>色彩图例:</b> <span class="anno accent">A</span> 结构容器 · <span class="anno" style="color:var(--success)">B</span> 对话流 · <span class="anno" style="color:var(--warn)">C</span> 对话框 · <span class="anno" style="color:var(--info)">D</span> 命令 · <span class="anno" style="color:var(--danger)">E</span> 独立 view</span></div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §2 维度 A 结构容器注入
+       ================================================================ -->
+  <section class="spec" id="s2">
+    <div class="spec-head"><span class="spec-num">§2</span><h2 class="spec-title">维度 A · 结构容器注入</h2></div>
+    <p class="spec-desc">plugin 往固定结构加槽位（L1 元数据驱动，renderer 有固定宿主渲染）。覆盖 4 子项：<b>A1</b> sidebar plugin tab（M1+M2，复用 SegmentedTab 范式）/ <b>A2</b> drawer plugin tab（M6+M7，内容用 GuiComponent）/ <b>A3</b> 工具条/头部按钮（M9+M12，icon+command）/ <b>A4</b> 全局底栏 status item（M8，<b>新增概念</b> StatusBarController）。这是当前 plugin 系统最大空白——<code>contributes.views/statusBarItems/menus</code> 已声明但 renderer 零消费。</p>
+
+    <h3>A1 · sidebar plugin tab（M1+M2）<span class="h3-tag">复用 SegmentedTab §3.1</span></h3>
+    <div class="change-points">
+      <span class="cp cp-now"><b>现</b> SegmentedTab 硬编码 4 tab</span>
+      <span class="cp cp-v6"><b>v6</b> plugin 声明 view id/icon/title 注入</span>
+      <span class="cp cp-v6"><b>v6</b> 复用 SegmentedTab 范式（bg-input 容器 + 中性浮起）</span>
+    </div>
+    <div class="render-frame">
+      <div style="display:flex;gap:20px;flex-wrap:wrap;">
+        <!-- 激活态 -->
+        <div class="demo-sidebar">
+          <div class="sb-brand">sidebar</div>
+          <div class="seg-tab">
+            <span class="seg-item active"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+            <span class="seg-item"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span>
+            <span class="seg-item"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M21 21v-2a4 4 0 0 0-3-3.87"/></svg></span>
+            <span class="seg-item plugin"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span>
+          </div>
+          <div class="sb-view">
+            <div class="sb-list-item"><svg class="ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> plugin view 数据项 1</div>
+            <div class="sb-list-item"><svg class="ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> plugin view 数据项 2</div>
+            <div class="sb-list-item"><span class="dot" style="background:var(--accent)"></span> 带状态项</div>
+          </div>
+        </div>
+        <!-- loading / 空态 -->
+        <div class="demo-sidebar">
+          <div class="sb-brand">空态 / loading</div>
+          <div class="seg-tab">
+            <span class="seg-item"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="count">12</span></span>
+            <span class="seg-item active"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><span class="count">3</span></span>
+          </div>
+          <div class="sb-view empty">无数据 · plugin 未激活</div>
+        </div>
+      </div>
+    </div>
+    <div class="anno-grid">
+      <div class="anno"><b>tab icon:</b> <span>lucide name 或内联 SVG，size 12px [trace 档]，stroke 1.75</span></div>
+      <div class="anno"><b>激活态:</b> <span class="v6">bg-bg-elevated text-neutral-fg（中性浮起，非 accent-soft 蓝染底）</span></div>
+      <div class="anno"><b>count badge:</b> <span>mono 9px，bg-surface-2 → active 时 accent-soft</span></div>
+      <div class="anno"><b>空态:</b> <span>neutral-dim 居中文案，不渲染列表骨架</span></div>
+      <div class="anno"><b>loading:</b> <span>spinner 12px accent，内容区中性占位</span></div>
+      <div class="anno"><b>声明:</b> <span>contributes.views { id, title, icon, placement:'sidebar', viewType }</span></div>
+    </div>
+
+    <h3>A2 · drawer plugin tab（M6+M7）<span class="h3-tag">内容用 GuiComponent</span></h3>
+    <div class="render-frame">
+      <div style="display:flex;gap:20px;flex-wrap:wrap;">
+        <div class="demo-drawer" style="flex:1;min-width:300px;">
+          <div class="drawer-tabs">
+            <span class="drawer-tab" title="terminal"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></span>
+            <span class="drawer-tab" title="git"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M6 9v6a3 3 0 0 0 3 3h6"/></svg></span>
+            <span class="drawer-tab" title="doc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>
+            <span class="drawer-tab" title="tasks"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span class="tab-dot"></span></span>
+            <span class="drawer-tab active" title="plugin"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span>
+          </div>
+          <div class="drawer-content">
+            <div class="gcard stage-default">
+              <div class="gcard-hd"><span class="hd-dot" style="background:var(--success)"></span>plugin drawer 内容 <span class="hd-badge b-neutral">card 原语</span></div>
+              <div class="gcard-bd">drawer tab 内容用 GuiComponent 原语组合渲染（A2 = L1 容器 + L2 内容）。plugin 推送原语树，ViewHost 交 GuiComponentRenderer。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="anno-grid">
+      <div class="anno"><b>tab icon:</b> <span>size 14px [header 档]，active 时 bg-surface + neutral-fg</span></div>
+      <div class="anno"><b>tab.dot:</b> <span>6px accent 圆点（有更新/通知），active 态叠加</span></div>
+      <div class="anno"><b>内容渲染:</b> <span>GuiComponent 7 原语（§3），plugin 不进 renderer</span></div>
+      <div class="anno"><b>声明:</b> <span>contributes.views { placement:'drawer', viewType:'gui' }</span></div>
+    </div>
+
+    <h3>A3 · 工具条/头部按钮（M9+M12）<span class="h3-tag">icon + command</span></h3>
+    <div class="render-frame">
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <!-- composer-bar -->
+        <div>
+          <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-dim);margin-bottom:6px;">M9 · composer-bar 工具条</div>
+          <div class="demo-bar">
+            <span class="bar-icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></span>
+            <span class="bar-icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>
+            <span style="width:1px;height:18px;background:var(--border);margin:0 4px;"></span>
+            <span class="bar-icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6"/></svg></span>
+            <!-- plugin 按钮：默认 -->
+            <span class="bar-icon-btn" title="plugin action"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
+            <!-- plugin 按钮：带 count 徽章 -->
+            <span class="bar-icon-btn" title="plugin with count"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="ic-count">3</span></span>
+            <!-- plugin 按钮：disabled -->
+            <span class="bar-icon-btn disabled" title="plugin disabled"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></span>
+            <span class="bar-spacer" style="flex:1;"></span>
+            <span class="bar-icon-btn" style="background:var(--accent);color:#fff;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span>
+          </div>
+        </div>
+        <!-- panel-header -->
+        <div>
+          <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-dim);margin-bottom:6px;">M12 · panel-header 按钮组</div>
+          <div class="demo-ph">
+            <span class="ph-title">main-panel</span>
+            <span class="ph-ico-btn" title="jsonl"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg></span>
+            <span class="ph-ico-btn" title="git"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/></svg></span>
+            <span class="ph-divider"></span>
+            <!-- plugin 按钮 -->
+            <span class="ph-ico-btn" title="plugin header action"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></span>
+            <span class="ph-ico-btn" title="plugin header action"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33"/></svg></span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="anno-grid">
+      <div class="anno"><b>icon size:</b> <span>14px [操作档]，stroke 1.75，color neutral-dim → hover neutral-fg</span></div>
+      <div class="anno"><b>位置分组:</b> <span>M9 composer-bar / M12 panel-header，1px hairline 分隔 plugin 组与内置</span></div>
+      <div class="anno"><b>count 徽章:</b> <span>bg-accent 白字，胶囊，定位 top-right -2px</span></div>
+      <div class="anno"><b>disabled:</b> <span>neutral-faint，cursor not-allowed，无 hover bg</span></div>
+      <div class="anno"><b>点击:</b> <span>触发 command（contributes.commands），非直接回调</span></div>
+      <div class="anno"><b>声明:</b> <span>contributes.menus['composer.toolbar'|'panel.header']</span></div>
+    </div>
+
+    <h3>A4 · 全局底栏 status item（M8）<span class="h3-tag">新增概念 · StatusBarController</span></h3>
+    <div class="change-points">
+      <span class="cp cp-now"><b>现</b> status 绑死 SideDrawer footer</span>
+      <span class="cp cp-v6"><b>v6</b> 提升全局底栏（聚合 pi status + plugin statusBarItems）</span>
+      <span class="cp cp-info"><b>聚合</b> 按 alignment(left/right) + priority 排序</span>
+    </div>
+    <div class="render-frame">
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <!-- 完整底栏：左 pi + plugin，右 plugin -->
+        <div class="demo-statusbar">
+          <span class="sb-item ok"><span class="sb-dot"></span>pi: ready</span>
+          <span class="sb-item neutral"><span class="sb-dot"></span>session: 2</span>
+          <span class="sb-item warn"><span class="sb-dot"></span>plugin: lint 3 warn</span>
+          <span class="sb-item neutral"><span class="sb-dot"></span>plugin: db connected</span>
+          <span class="sb-spacer"></span>
+          <span class="sb-item neutral"><span class="sb-dot"></span>plugin: deploy</span>
+          <span class="sb-item danger"><span class="sb-dot"></span>build: failed</span>
+        </div>
+        <!-- 颜色语义 + 点击态 + 溢出 -->
+        <div class="demo-statusbar" style="max-width:480px;">
+          <span class="sb-item ok"><span class="sb-dot"></span>ok</span>
+          <span class="sb-item warn"><span class="sb-dot"></span>warn</span>
+          <span class="sb-item danger"><span class="sb-dot"></span>danger</span>
+          <span class="sb-item neutral"><span class="sb-dot"></span>neutral</span>
+          <span class="sb-spacer"></span>
+          <span class="sb-item neutral" style="background:var(--surface-hover);color:var(--neutral-fg);">hover/点击</span>
+        </div>
+        <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-dim);">↑ 滚动溢出：item 不换行，溢出时容器横向滚动（隐藏滚动条），priority 高的优先可见</div>
+      </div>
+    </div>
+    <div class="anno-grid">
+      <div class="anno"><b>排列:</b> <span>alignment left/right 两段；同段内按 priority 降序（大→左/前）</span></div>
+      <div class="anno"><b>颜色语义:</b> <span class="anno" style="color:var(--success)">ok=success</span> · <span class="anno" style="color:var(--warn)">warn</span> · <span class="anno" style="color:var(--danger)">danger</span> · 纯统计降 neutral-mid</span></div>
+      <div class="anno"><b>圆点:</b> <span>7px [状态指示范式 §3.3]，done=success opacity .9</span></div>
+      <div class="anno"><b>点击:</b> <span>触发 commandId（hover bg-surface-hover）</span></div>
+      <div class="anno"><b>tooltip:</b> <span>native title 或 popover，展示完整 text + 来源 plugin</span></div>
+      <div class="anno"><b>溢出:</b> <span>不换行，横向滚动隐藏滚动条；priority 高优先可见</span></div>
+      <div class="anno"><b>分隔:</b> <span>item 间无分隔线（靠 padding 区分），左/右段靠 spacer</span></div>
+      <div class="anno"><b>声明:</b> <span>contributes.statusBarItems { id, text, priority, alignment, commandId, tooltip }</span></div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §3 维度 B 对话流注入 — GuiComponent 7 原语 v6 视觉（核心）
+       ================================================================ -->
+  <section class="spec" id="s3">
+    <div class="spec-head"><span class="spec-num">§3</span><h2 class="spec-title">维度 B · 7 原语 v6 视觉（核心）</h2></div>
+    <p class="spec-desc">GuiComponent 是 pi extension + plugin 的共享渲染协议，7 个结构化原语（card / stats-line / progress-bar / list-tree / columns / tab-bar / ansi-text）替代 TUI ASCII 布局。这是最成熟、最核心的注入面（M4 tool result / M5 custom message / M7 drawer 内容）。v6 重设计 <b>只改 CSS/模板，不改协议类型</b>——已接入的 extension 零改动自动获得 v6 视觉。逐原语按 renderer-target-architecture §5.2 表定义 v6 目标。</p>
+
+    <!-- ── 3.1 card ── -->
+    <h3>3.1 · card 原语 <span class="h3-tag">去边框 · 靠背景层级</span></h3>
+    <div class="change-points">
+      <span class="cp cp-now"><b>现</b> rounded-lg(12px) + border 双重违反 §3.4</span>
+      <span class="cp cp-v6"><b>v6</b> 去边框靠 bg 层级（surface/surface-2/bg-card）</span>
+      <span class="cp cp-v6"><b>v6</b> header 去 border-b 改 bg 浮起</span>
+      <span class="cp cp-v6"><b>v6</b> 圆角降 8-10px</span>
+      <span class="cp cp-v6"><b>v6</b> variant 状态靠 badge/dot 非边框</span>
+    </div>
+
+    <h3 style="margin-top:16px;">三层明度背景语义 + variant 配色</h3>
+    <div class="render-frame">
+      <div class="layer3">
+        <div class="l-canvas">
+          <div class="l-surface">
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
+              <!-- default -->
+              <div class="gcard stage-default">
+                <div class="gcard-hd"><span class="hd-dot" style="background:var(--neutral-ico)"></span>default <span class="hd-badge b-neutral">variant</span></div>
+                <div class="gcard-bd">bg-surface · 最常用层。<code>variant:'default'</code></div>
+              </div>
+              <!-- elevated -->
+              <div class="gcard stage-elevated">
+                <div class="gcard-hd"><span class="hd-dot" style="background:var(--accent)"></span>elevated <span class="hd-badge b-neutral">浮起</span></div>
+                <div class="gcard-bd">bg-surface-2 · 浮起一档。<code>variant:'elevated'</code></div>
+              </div>
+              <!-- card -->
+              <div class="gcard stage-card">
+                <div class="gcard-hd"><span class="hd-dot" style="background:var(--neutral-ico)"></span>card <span class="hd-badge b-neutral">凹陷</span></div>
+                <div class="gcard-bd">bg-card · 凹陷分组（介于 bg 与 surface）</div>
+              </div>
+            </div>
+            <div style="margin-top:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
+              <!-- danger -->
+              <div class="gcard stage-default">
+                <div class="gcard-hd"><span class="hd-dot" style="background:var(--danger)"></span>danger <span class="hd-badge b-danger">失败</span></div>
+                <div class="gcard-bd">去 border-danger，靠 badge + dot 表达。<code>variant:'danger'</code></div>
+              </div>
+              <!-- success -->
+              <div class="gcard stage-default">
+                <div class="gcard-hd"><span class="hd-dot" style="background:var(--success)"></span>success <span class="hd-badge b-success">完成</span></div>
+                <div class="gcard-bd">去 border-success，靠 badge + dot。<code>variant:'success'</code></div>
+              </div>
+              <!-- 嵌套（不嵌卡片） -->
+              <div class="gcard stage-elevated">
+                <div class="gcard-hd">嵌套（靠 bg 层级）</div>
+                <div class="gcard-bd" style="padding:0;">
+                  <div style="padding:8px 12px;">外层 elevated</div>
+                  <div class="gcard-nested">内层 bg-card（无 border 叠加，纯靠明度差）</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3 style="margin-top:16px;">前后对比：border + border-b → bg 层级</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+      <div>
+        <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--danger);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em;">现状 · 违规</div>
+        <div class="gcard-old danger">
+          <div class="gcard-hd-old">danger card（border 1px danger）</div>
+          <div class="gcard-bd-old">rounded-lg(12px) + border + border-b + border-danger 三重边框违反 §3.4「层级 > 留白 > hairline > 边框」。</div>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--success);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em;">v6 · 目标</div>
+        <div class="gcard stage-default" style="border-radius:8px;">
+          <div class="gcard-hd"><span class="hd-dot" style="background:var(--danger)"></span>danger card <span class="hd-badge b-danger">badge</span></div>
+          <div class="gcard-bd">rounded-8px 无 border · header bg-surface-2 浮起（去 border-b）· variant 靠 dot+badge 非边框。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="anno-grid">
+      <div class="anno"><b>背景层级:</b> <span>bg-card(#22242c) → surface(#272830) → surface-2(#2e2f38)，三层明度替代 border</span></div>
+      <div class="anno"><b>圆角:</b> <span class="v6">8px [var(--radius)]（从 12px 降档）；大卡 10px 任意值</span></div>
+      <div class="anno"><b>header:</b> <span class="v6">去 border-b，改 bg-surface-2（elevated 用 bg-elevated）浮起分层</span></div>
+      <div class="anno"><b>header 文字:</b> <span>mono 11px font-600，去 uppercase tracking（AI slop tell）</span></div>
+      <div class="anno"><b>variant:</b> <span class="v6">default/elevated 靠 bg；danger/success 靠 dot + badge（非 border）</span></div>
+      <div class="anno"><b>嵌套:</b> <span class="v6">禁止 border 叠加，靠 bg 层级（gcard-nested = bg-card）</span></div>
+      <div class="anno"><b>落点:</b> <span>gui/Card.vue（去 border/border-b/rounded-lg，改 bg + 圆角）</span></div>
+    </div>
+
+    <!-- ── 3.2 stats-line ── -->
+    <h3 style="margin-top:32px;">3.2 · stats-line 原语 <span class="h3-tag">severity 收窄</span></h3>
+    <div class="change-points">
+      <span class="cp cp-now"><b>现</b> severity 全彩色（ok/warn/danger 都着色）</span>
+      <span class="cp cp-v6"><b>v6</b> danger 保留（真失败）</span>
+      <span class="cp cp-v6"><b>v6</b> ok/warn 纯统计降中性 neutral-fg</span>
+      <span class="cp cp-v6"><b>v6</b> border-l hairline 分隔保留</span>
+    </div>
+    <div class="render-frame">
+      <div class="layer3"><div class="l-canvas"><div class="l-surface" style="padding:20px;">
+        <div class="gstats">
+          <span class="gs-item"><span class="gs-label">turns</span><span class="gs-value sv-neutral">12</span></span>
+          <span class="gs-item"><span class="gs-label">tokens</span><span class="gs-value sv-neutral">3.2k</span></span>
+          <span class="gs-item"><span class="gs-label">time</span><span class="gs-value sv-mid">4m 12s</span></span>
+          <span class="gs-item"><span class="gs-label">ok 统计</span><span class="gs-value sv-neutral">98%</span></span>
+          <span class="gs-item"><span class="gs-label">warn 统计</span><span class="gs-value sv-neutral">3</span></span>
+          <span class="gs-item"><span class="gs-label">errors</span><span class="gs-value sv-danger">5</span></span>
+        </div>
+      </div></div></div>
+    </div>
+    <div class="anno-grid">
+      <div class="anno"><b>severity 映射:</b> <span class="v6">ok/warn → neutral-fg（纯统计降中性）；danger 保留（真失败）</span></div>
+      <div class="anno"><b>字号字重:</b> <span>mono 12px，value font-500 tabular-nums，label neutral-dim</span></div>
+      <div class="anno"><b>分隔:</b> <span>border-l hairline（1px var(--border)）首项无，保留</span></div>
+      <div class="anno"><b>无 severity:</b> <span>value neutral-fg（默认）</span></div>
+      <div class="anno"><b>落点:</b> <span>gui/StatsLine.vue（valueClass 收窄：仅 danger 着色）</span></div>
+    </div>
+
+    <!-- ── 3.3 progress-bar ── -->
+    <h3 style="margin-top:32px;">3.3 · progress-bar 原语 <span class="h3-tag">fill 柔化 · done 降中性</span></h3>
+    <div class="change-points">
+      <span class="cp cp-now"><b>现</b> fill 实色 bg-success/warn/danger</span>
+      <span class="cp cp-v6"><b>v6</b> fill 柔化 color-mix 55%（复用 §2.3 diff 柔化）</span>
+      <span class="cp cp-v6"><b>v6</b> done 态降中性 neutral-dim</span>
+      <span class="cp cp-v6"><b>v6</b> 圆角 6px</span>
+    </div>
+    <div class="render-frame">
+      <div class="layer3"><div class="l-canvas"><div class="l-surface" style="padding:20px;display:flex;flex-direction:column;gap:14px;">
+        <div class="gprog">
+          <div class="gprog-hd"><span class="gprog-label">running（accent）</span><span class="gprog-val">45<span class="gprog-total"> / 100</span></span></div>
+          <div class="gprog-track"><div class="gprog-fill f-accent" style="width:45%;"></div></div>
+        </div>
+        <div class="gprog">
+          <div class="gprog-hd"><span class="gprog-label">ok（success 柔化 55%）</span><span class="gprog-val">90<span class="gprog-total"> / 100</span></span></div>
+          <div class="gprog-track"><div class="gprog-fill f-ok" style="width:90%;"></div></div>
+        </div>
+        <div class="gprog">
+          <div class="gprog-hd"><span class="gprog-label">warn（warn 柔化 55%）</span><span class="gprog-val">52<span class="gprog-total"> / 100</span></span></div>
+          <div class="gprog-track"><div class="gprog-fill f-warn" style="width:52%;"></div></div>
+        </div>
+        <div class="gprog">
+          <div class="gprog-hd"><span class="gprog-label">danger（danger 柔化 55%）</span><span class="gprog-val">12<span class="gprog-total"> / 100</span></span></div>
+          <div class="gprog-track"><div class="gprog-fill f-danger" style="width:12%;"></div></div>
+        </div>
+        <div class="gprog">
+          <div class="gprog-hd"><span class="gprog-label">done（降中性 neutral-dim）</span><span class="gprog-val">100<span class="gprog-total"> / 100</span></span></div>
+          <div class="gprog-track"><div class="gprog-fill f-done" style="width:100%;"></div></div>
+        </div>
+        <div class="gprog">
+          <div class="gprog-hd"><span class="gprog-label">indeterminate（running 动画）</span><span class="gprog-val" style="color:var(--neutral-mid);">—</span></div>
+          <div class="gprog-track"><div class="gprog-fill indet"></div></div>
+        </div>
+        <div class="gprog">
+          <div class="gprog-hd"><span class="gprog-label">failed（track 凹陷 + danger 点）</span><span class="gprog-val sv-danger">failed</span></div>
+          <div class="gprog-track"><div class="gprog-fill f-danger" style="width:30%;"></div></div>
+        </div>
+      </div></div></div>
+    </div>
+    <div class="anno-grid">
+      <div class="anno"><b>fill 柔化:</b> <span class="v6">color-mix(severity 55%, transparent)，复用 §2.3 diff 柔化思路</span></div>
+      <div class="anno"><b>done 态:</b> <span class="v6">降中性 neutral-dim（完成非强调，§3.3 彩色降噪）</span></div>
+      <div class="anno"><b>圆角:</b> <span class="v6">track + fill 均 6px [var(--radius-sm)]</span></div>
+      <div class="anno"><b>track:</b> <span>bg-input 凹陷语义（与画布同源，非纯黑割裂）</span></div>
+      <div class="anno"><b>多态:</b> <span>indeterminate(动画)/running(accent)/done(neutral)/failed(danger)</span></div>
+      <div class="anno"><b>severity 推断:</b> <span>ratio≥0.8 ok / ≥0.5 warn / &lt;0.5 danger（保留）</span></div>
+      <div class="anno"><b>落点:</b> <span>gui/ProgressBar.vue（fillClass 改 color-mix；done→neutral-dim）</span></div>
+    </div>
+
+    <!-- ── 3.4 list-tree ── -->
+    <h3 style="margin-top:32px;">3.4 · list-tree 原语 <span class="h3-tag">缩进留白 · icon 12px · status 圆点</span></h3>
+    <div class="change-points">
+      <span class="cp cp-now"><b>现</b> 缩进 20px（无引导线）/ icon 11px 不在 scale / status 文字</span>
+      <span class="cp cp-v6"><b>v6</b> 缩进收 16px（留白档优于 border-l）</span>
+      <span class="cp cp-v6"><b>v6</b> icon 对齐 trace 档 12px</span>
+      <span class="cp cp-v6"><b>v6</b> status 用 7px 圆点替换文字</span>
+    </div>
+    <div class="render-frame">
+      <div class="layer3"><div class="l-canvas"><div class="l-surface" style="padding:20px;">
+        <div class="gtree">
+          <!-- depth 0 -->
+          <div class="gtree-node">
+            <span class="gtree-ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/></svg></span>
+            <span class="gtree-label">build（done）</span>
+            <span class="gtree-status st-done"></span>
+          </div>
+          <div class="gtree-node" style="padding-left:16px;">
+            <span class="gtree-ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg></span>
+            <span class="gtree-label">compile（running）</span>
+            <span class="gtree-status st-running"></span>
+          </div>
+          <div class="gtree-node" style="padding-left:32px;">
+            <span class="gtree-ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
+            <span class="gtree-label">lint（failed）</span>
+            <span class="gtree-status st-failed"></span>
+          </div>
+          <div class="gtree-node" style="padding-left:16px;">
+            <span class="gtree-ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg></span>
+            <span class="gtree-label">test（done）</span>
+            <span class="gtree-status st-done"></span>
+          </div>
+          <div class="gtree-node">
+            <span class="gtree-ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M6 9v6"/></svg></span>
+            <span class="gtree-label">deploy（running）</span>
+            <span class="gtree-status st-running"></span>
+          </div>
+        </div>
+      </div></div></div>
+    </div>
+    <div class="anno-grid">
+      <div class="anno"><b>缩进:</b> <span class="v6">depth × 16px padding-left（从 20px 收），留白档优于 border-l 引导线</span></div>
+      <div class="anno"><b>depth 分隔:</b> <span class="v6">纯留白，无 border-l（impeccable 禁 >1px 侧边条）</span></div>
+      <div class="anno"><b>icon:</b> <span class="v6">对齐 trace 档 12px [size-3]，stroke 1.75（从 11px）</span></div>
+      <div class="anno"><b>status:</b> <span class="v6">7px 圆点替换文字（done=success / running=accent / failed=danger）</span></div>
+      <div class="anno"><b>圆点定位:</b> <span>margin-left:auto 右对齐（与 §3.3 状态指示范式一致）</span></div>
+      <div class="anno"><b>label:</b> <span>neutral-mid，mono 12px</span></div>
+      <div class="anno"><b>落点:</b> <span>gui/ListTree.vue（INDENT_PX 20→16；status 文字→圆点）</span></div>
+    </div>
+
+    <!-- ── 3.5 columns ── -->
+    <h3 style="margin-top:32px;">3.5 · columns 原语 <span class="h3-tag">gap-3 标准 · 嵌套容器间距</span></h3>
+    <div class="change-points">
+      <span class="cp cp-now"><b>现</b> gap-3(12px) 合理</span>
+      <span class="cp cp-v6"><b>v6</b> 保留 gap-3 对齐标准 scale</span>
+      <span class="cp cp-v6"><b>v6</b> 容器内对齐 SegmentedTab 间距</span>
+    </div>
+    <div class="render-frame">
+      <div class="layer3"><div class="l-canvas"><div class="l-surface" style="padding:20px;">
+        <div class="gcols">
+          <div class="gcol">
+            <div class="gcard stage-default">
+              <div class="gcard-hd">列 1（ratio 1）</div>
+              <div class="gcard-bd">stats-line + progress-bar 嵌入</div>
+            </div>
+          </div>
+          <div class="gcol" style="flex-grow:2;">
+            <div class="gcard stage-elevated">
+              <div class="gcard-hd">列 2（ratio 2）</div>
+              <div class="gcard-bd">list-tree 嵌入</div>
+            </div>
+          </div>
+        </div>
+      </div></div></div>
+    </div>
+    <div class="anno-grid">
+      <div class="anno"><b>gap:</b> <span>12px [var(--space-3)]，标准 scale，不变</span></div>
+      <div class="anno"><b>ratios:</b> <span>flex-grow 比例，默认等分，无 ratios 时各列 grow=1</span></div>
+      <div class="anno"><b>嵌套容器间距:</b> <span>内部 card 用 gcard 自身 padding，不额外加 gap</span></div>
+      <div class="anno"><b>对齐 SegmentedTab:</b> <span>容器内出现 tab-bar 时，gap 与 SegmentedTab p-[3px] 一致</span></div>
+      <div class="anno"><b>落点:</b> <span>gui/Columns.vue（保留，仅确认 gap 对齐）</span></div>
+    </div>
+
+    <!-- ── 3.6 tab-bar ── -->
+    <h3 style="margin-top:32px;">3.6 · tab-bar 原语 <span class="h3-tag">强制迁移 SegmentedTab 范式</span></h3>
+    <div class="change-points">
+      <span class="cp cp-now"><b>现</b> bg-accent-soft 蓝染底 + border-b（违反 §3.1）</span>
+      <span class="cp cp-v6"><b>v6</b> 强制迁移 SegmentedTab</span>
+      <span class="cp cp-v6"><b>v6</b> bg-bg-input rounded-lg p-[3px]</span>
+      <span class="cp cp-v6"><b>v6</b> active 中性浮起（去 accent-soft），去 border-b</span>
+    </div>
+    <div class="render-frame">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+        <div>
+          <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--danger);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em;">现状 · 违规</div>
+          <div class="gtabbar-old">
+            <span class="gtab-old active">build</span>
+            <span class="gtab-old"><span class="gtab-dot" style="display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--success);"></span> test</span>
+            <span class="gtab-old">deploy</span>
+          </div>
+          <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-dim);margin-top:8px;">accent-soft 蓝染底 + border-b 底线</div>
+        </div>
+        <div>
+          <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--success);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em;">v6 · 目标（SegmentedTab）</div>
+          <div class="gtabbar">
+            <span class="gtab active">build</span>
+            <span class="gtab"><span class="gtab-dot d-done"></span> test</span>
+            <span class="gtab"><span class="gtab-dot d-pending"></span> deploy</span>
+          </div>
+          <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-dim);margin-top:8px;">bg-input 容器 + 中性浮起（无蓝染、无底线）</div>
+        </div>
+      </div>
+    </div>
+    <div class="anno-grid">
+      <div class="anno"><b>外层:</b> <span class="v6">bg-bg-input rounded-lg(8px) p-[3px]（SegmentedTab 范式 §3.1）</span></div>
+      <div class="anno"><b>active:</b> <span class="v6">bg-bg-elevated text-neutral-fg（中性浮起，去 accent-soft）</span></div>
+      <div class="anno"><b>底边:</b> <span class="v6">去 border-b（不再有底线分隔）</span></div>
+      <div class="anno"><b>status 圆点:</b> <span>6px，done=success / pending=neutral-dim opacity .5</span></div>
+      <div class="anno"><b>hover:</b> <span>text-neutral-fg（无 bg 变化，去 AI slop）</span></div>
+      <div class="anno"><b>完全复用:</b> <span>§3.1 SegmentedTab 已定义，零额外规范</span></div>
+      <div class="anno"><b>落点:</b> <span>gui/TabBar.vue（删 border-b/accent-soft，改 SegmentedTab 结构）</span></div>
+    </div>
+
+    <!-- ── 3.7 ansi-text ── -->
+    <h3 style="margin-top:32px;">3.7 · ansi-text 原语 <span class="h3-tag">ANSI 16 色 → v6 语义色</span></h3>
+    <div class="change-points">
+      <span class="cp cp-now"><b>现</b> 默认 ansi_up 调色板，未映射冷蓝暗色</span>
+      <span class="cp cp-v6"><b>v6</b> ANSI 16 色 → v6 语义色</span>
+      <span class="cp cp-v6"><b>v6</b> red→danger / green→success / blue→accent / yellow→warn</span>
+      <span class="cp cp-v6"><b>v6</b> 灰阶 → neutral-*；不自加背景</span>
+    </div>
+    <div class="render-frame">
+      <div class="layer3"><div class="l-canvas"><div class="l-surface" style="padding:16px;">
+        <div class="gansi"><span class="ansi-dim">$ </span><span class="ansi-green">npm run build</span>
+<span class="ansi-dim">→</span> compiling <span class="ansi-blue">src/index.ts</span>
+<span class="ansi-green">✓</span> built in <span class="ansi-white">2.4s</span>
+<span class="ansi-yellow">⚠</span> 3 warnings (deprecated)
+<span class="ansi-red">✗</span> ERROR in module.ts
+  <span class="ansi-red">SyntaxError</span>: Unexpected token
+<span class="ansi-cyan">info</span> Visit <span class="ansi-blue">https://docs</span> for help
+<span class="ansi-gray">[trace]</span> depth=2 elapsed=120ms</div>
+      </div></div></div>
+    </div>
+    <div class="anno-grid">
+      <div class="anno"><b>映射规则:</b> <span>red→danger / green→success / blue→accent(冷蓝) / yellow→warn</span></div>
+      <div class="anno"><b>灰阶:</b> <span>white→neutral-fg / gray→neutral-mid / dim→neutral-dim</span></div>
+      <div class="anno"><b>不自加背景:</b> <span class="v6">ANSI bg 色全部丢弃，只用 fg（v6 界面不饱和过载）</span></div>
+      <div class="anno"><b>兜底永留:</b> <span>未引入 extension-protocol 的 pi extension 走 ANSI 兜底（§5.5 永远保留）</span></div>
+      <div class="anno"><b>完整映射表:</b> <span>见 §8（16 色 × 暗/亮双主题）</span></div>
+      <div class="anno"><b>落点:</b> <span>gui/AnsiText.vue（ansi_up palette 替换为 v6 语义色）</span></div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §4 维度 C 交互对话框注入
+       ================================================================ -->
+  <section class="spec" id="s4">
+    <div class="spec-head"><span class="spec-num">§4</span><h2 class="spec-title">维度 C · 交互对话框注入</h2></div>
+    <p class="spec-desc">plugin 主动弹窗（统一 <code>DialogRequest</code> 协议，对齐 overlays 稿）。C1 confirm/select/input（M15 ExtensionUIDialog）+ C2 ask-user 富交互（M11 AskUserOverlay）。pi 侧 <code>extension.ui_request</code> 与 plugin 侧 <code>plugin:uiRequest</code> 消息类型统一到同一渲染出口。<b>视觉对齐 overlays 稿，本稿不重复定义控件细节</b>，仅展示 plugin 触发场景。</p>
+
+    <h3>C1 · confirm/select/input（M15 ExtensionUIDialog 对齐 v6）</h3>
+    <div class="change-points">
+      <span class="cp cp-info"><b>协议</b> 统一 DialogRequest（pi + plugin 共用）</span>
+      <span class="cp cp-v6"><b>视觉</b> 对齐 overlays 稿，不重复定义</span>
+    </div>
+    <div class="render-frame">
+      <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;">
+        <!-- confirm -->
+        <div class="dialog-card">
+          <div class="dc-title">确认删除？</div>
+          <div class="dc-body">此操作不可撤销，将删除 3 个文件。来源：plugin <code style="font-family:var(--font-mono);font-size:11px;color:var(--accent);">my-ext.delete</code></div>
+          <div class="dc-actions">
+            <span class="dc-btn ghost">取消</span>
+            <span class="dc-btn primary">删除</span>
+          </div>
+        </div>
+        <!-- select -->
+        <div class="dialog-card" style="max-width:380px;">
+          <div class="dc-title">选择目标分支</div>
+          <div class="dc-body" style="margin-bottom:10px;">来源：plugin <code style="font-family:var(--font-mono);font-size:11px;color:var(--accent);">my-ext.deploy</code></div>
+          <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:14px;">
+            <div class="sb-list-item" style="background:var(--accent-soft);color:var(--accent);padding:6px 8px;border-radius:var(--radius-sm);"><span class="dot" style="width:7px;height:7px;border-radius:50%;background:var(--accent);"></span> main</div>
+            <div class="sb-list-item" style="padding:6px 8px;"><span class="dot" style="width:7px;height:7px;border-radius:50%;background:var(--neutral-ico);"></span> develop</div>
+            <div class="sb-list-item" style="padding:6px 8px;"><span class="dot" style="width:7px;height:7px;border-radius:50%;background:var(--neutral-ico);"></span> feature/x</div>
+          </div>
+          <div class="dc-actions"><span class="dc-btn ghost">取消</span><span class="dc-btn primary">确定</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="anno-grid">
+      <div class="anno"><b>协议统一:</b> <span>pi ctx.ui + plugin api.ui → 统一 DialogRequest（消息类型对齐 §7）</span></div>
+      <div class="anno"><b>渲染出口:</b> <span>renderer 统一用 ExtensionUIDialog 消费</span></div>
+      <div class="anno"><b>视觉:</b> <span class="accent">对齐 overlays 稿（ExtensionUIDialog / ConfirmDialog），本稿不重复</span></div>
+      <div class="anno"><b>来源标注:</b> <span>body 内显式标注触发 plugin（command id），便于追溯</span></div>
+      <div class="anno"><b>z-index:</b> <span>--z-modal (1000)，全局浮层</span></div>
+    </div>
+
+    <h3 style="margin-top:24px;">C2 · ask-user 富交互（M11 AskUserOverlay 对齐 v6）</h3>
+    <div class="render-frame">
+      <div class="panel-stage" style="padding:14px;">
+        <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-dim);margin-bottom:8px;">composer 上方 companion-band（M11，ask-user 占位）· 来源：plugin</div>
+        <div style="background:var(--surface-hover);border-radius:var(--radius);padding:12px 14px;">
+          <div style="font-size:var(--text-sm);color:var(--neutral-fg);margin-bottom:10px;">部署需要确认参数，请选择环境：<span style="font-family:var(--font-mono);font-size:11px;color:var(--accent);">my-ext.deploy</span></div>
+          <div style="display:flex;flex-direction:column;gap:4px;">
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--radius-sm);background:var(--accent-soft);color:var(--accent);font-size:var(--text-sm);">
+              <span style="width:7px;height:7px;border-radius:50%;background:var(--accent);"></span> production（选中）
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--radius-sm);font-size:var(--text-sm);color:var(--neutral-mid);">
+              <span style="width:7px;height:7px;border-radius:50%;background:var(--neutral-ico);"></span> staging
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="anno-grid">
+      <div class="anno"><b>位置:</b> <span>M11 composer 上方 companion-band（与 Composer 互斥占位）</span></div>
+      <div class="anno"><b>双向通道:</b> <span>ask-user 是双向交互（等用户回传），独立通道，不并入单向 GuiComponent</span></div>
+      <div class="anno"><b>视觉:</b> <span class="accent">对齐 overlays 稿（AskUserOverlay），不重复</span></div>
+      <div class="anno"><b>context 降中性:</b> <span>bg-surface-hover（去 reasoning 软底彩色）</span></div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §5 维度 D 命令配置注入
+       ================================================================ -->
+  <section class="spec" id="s5">
+    <div class="spec-head"><span class="spec-num">§5</span><h2 class="spec-title">维度 D · 命令配置注入</h2></div>
+    <p class="spec-desc">D1 slash command（M10 CommandPopover，已定义对齐 v6）+ D2 settings schema 区段（<b>M16 待定义</b>——schema 驱动表单）。D2 决策：<b>复用 settings page 控件</b>（不独立实现），plugin 声明 <code>contributes.configuration</code>（VSCode configuration schema），settings 页渲染为 plugin 区段，schema → 控件自动映射。</p>
+
+    <h3>D1 · slash command（M10 CommandPopover 对齐 v6）</h3>
+    <div class="render-frame">
+      <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;">
+        <div class="demo-bar" style="align-self:stretch;">
+          <span class="bar-icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg></span>
+          <span style="font-family:var(--font-mono);font-size:13px;color:var(--neutral-fg);padding:0 8px;">/<span style="color:var(--accent);">rev</span></span>
+        </div>
+        <div class="cmd-pop">
+          <div class="cp-row sel"><svg class="cp-ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><span class="cp-name">/review</span><span class="cp-desc">plugin: my-ext</span></div>
+          <div class="cp-row"><svg class="cp-ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span class="cp-name">/timer</span><span class="cp-desc">plugin: timer-ext</span></div>
+          <div class="cp-row"><svg class="cp-ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg><span class="cp-name">/deploy</span><span class="cp-desc">plugin: my-ext</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="anno-grid">
+      <div class="anno"><b>统一双轨:</b> <span>session.commands 通道 + contributes.slashCommands → 统一驱动 CommandPopover</span></div>
+      <div class="anno"><b>视觉:</b> <span class="accent">对齐 composer 稿（CommandPopover），plugin slash 加 plugin 标识</span></div>
+      <div class="anno"><b>声明:</b> <span>contributes.slashCommands { name, description, when }</span></div>
+      <div class="anno"><b>未激活可见:</b> <span>命令面板在 plugin 未激活时即显示其命令（声明式优先 §1.2）</span></div>
+    </div>
+
+    <h3 style="margin-top:24px;">D2 · settings schema 区段（M16 待定义）<span class="h3-tag">复用 settings 控件</span></h3>
+    <div class="change-points">
+      <span class="cp cp-now"><b>现</b> 声明式 settings 未落地</span>
+      <span class="cp cp-v6"><b>v6</b> schema 驱动表单（VSCode configuration）</span>
+      <span class="cp cp-v6"><b>v6</b> 复用 settings page 控件（不独立）</span>
+    </div>
+    <div class="render-frame">
+      <div class="settings-section">
+        <div class="ss-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> Deploy Plugin</div>
+        <div class="ss-plugin">contributes.configuration · my-ext.deploy</div>
+        <div class="ss-row">
+          <div class="ss-label">
+            api endpoint <span class="schema-tag">string</span>
+            <div class="ss-desc">部署 API 地址</div>
+          </div>
+          <div class="ss-control"><input class="ss-input" value="https://api.example.com" /></div>
+        </div>
+        <div class="ss-row">
+          <div class="ss-label">
+            auto deploy <span class="schema-tag">boolean</span>
+            <div class="ss-desc">构建后自动部署</div>
+          </div>
+          <div class="ss-control"><span class="ss-switch on"></span></div>
+        </div>
+        <div class="ss-row">
+          <div class="ss-label">
+            environment <span class="schema-tag">enum</span>
+            <div class="ss-desc">目标环境</div>
+          </div>
+          <div class="ss-control"><span class="ss-select">production <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></div>
+        </div>
+        <div class="ss-row">
+          <div class="ss-label">
+            timeout <span class="schema-tag">number</span>
+            <div class="ss-desc">部署超时（秒）</div>
+          </div>
+          <div class="ss-control"><input class="ss-input" style="max-width:100px;" value="120" /></div>
+        </div>
+      </div>
+    </div>
+    <div class="anno-grid">
+      <div class="anno"><b>复用决策:</b> <span class="v6">复用 settings page 控件（Input/Switch/Select），不独立实现</span></div>
+      <div class="anno"><b>schema→控件:</b> <span>string→Input / boolean→Switch / enum→Select / number→Input</span></div>
+      <div class="anno"><b>容器:</b> <span>bg-card + 10px 圆角（对齐 §4.5 设置分组卡片）</span></div>
+      <div class="anno"><b>行分隔:</b> <span>hairline border-top rgba(255,255,255,.04)（首行无）</span></div>
+      <div class="anno"><b>label:</b> <span>neutral-fg + schema tag（reasoning 色，mono）+ 12px neutral-dim desc</span></div>
+      <div class="anno"><b>位置:</b> <span>M16 SettingsModal 内 plugin 区段（按 plugin 分组）</span></div>
+      <div class="anno"><b>声明:</b> <span>contributes.configuration { title, properties: Record&lt;string, ConfigProperty&gt; }</span></div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §6 维度 E 独立 view 容器规范
+       ================================================================ -->
+  <section class="spec" id="s6">
+    <div class="spec-head"><span class="spec-num">§6</span><h2 class="spec-title">维度 E · 独立 view 容器规范</h2></div>
+    <p class="spec-desc">L3 预编译自定义组件，仅 built-in 逃生口（external 不可用）。M14 全局独立 view 路由（如 Overview），预编译 Vue 组件完整 view。本节定义独立 view 容器规范：padding / max-width / header / 滚动区 / 与 chat view 的视觉区分。<b>仅 built-in，external 强制走 L1/L2</b>。</p>
+    <div class="change-points">
+      <span class="cp cp-now"><b>现</b> custom 逃生口 GUI_CUSTOM_REGISTRY_KEY 已预留（provide/inject）</span>
+      <span class="cp cp-warn"><b>v6</b> L3 仅 built-in，external 强制 L1/L2</span>
+      <span class="cp cp-info"><b>缓解</b> 7 原语 + 嵌套组合覆盖面足够（§7），不够补原语非放开 custom</span>
+    </div>
+    <div class="render-frame">
+      <div style="display:flex;gap:16px;flex-wrap:wrap;">
+        <!-- 独立 view（如 Overview） -->
+        <div class="ind-view" style="flex:1;min-width:320px;">
+          <div class="ind-view-head">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--neutral-fg)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+            <span class="iv-title">Overview（独立 view）</span>
+            <span style="margin-left:auto;font-family:var(--font-mono);font-size:var(--text-2xs);color:var(--warn);">L3 · built-in only</span>
+          </div>
+          <div class="ind-view-body">
+            <div style="font-size:var(--text-md);color:var(--neutral-fg);margin-bottom:8px;">全局独立 view</div>
+            <div style="font-size:var(--text-sm);color:var(--neutral-mid);line-height:1.55;">padding 20px · max-width 720px（对齐 --content-max-w）· header bg-surface-2 浮起 · 滚动区独立。与 chat view 区分：view 级 header 固定 + 内容左对齐居中。</div>
+          </div>
+        </div>
+        <!-- chat view 对比 -->
+        <div class="panel-stage" style="flex:1;min-width:260px;">
+          <div style="padding:14px 16px;background:var(--bg-elevated);border-radius:var(--radius) var(--radius) 0 0;display:flex;align-items:center;gap:8px;">
+            <span style="font-family:var(--font-mono);font-size:var(--text-sm);color:var(--neutral-fg);">chat view（对比）</span>
+            <span style="margin-left:auto;font-family:var(--font-mono);font-size:var(--text-2xs);color:var(--neutral-dim);">PanelHeader</span>
+          </div>
+          <div style="padding:14px 16px;font-size:var(--text-sm);color:var(--neutral-mid);">对话流：TurnMeta + trace + summary，assistant 居中 720px。无 view 级标题栏（PanelHeader 是 panel 容器头）。</div>
+        </div>
+      </div>
+    </div>
+    <div class="anno-grid">
+      <div class="anno"><b>padding:</b> <span>body 20px（与 chat 一致）</span></div>
+      <div class="anno"><b>max-width:</b> <span>对齐 --content-max-w 720px（独立 view 不另设，复用 token）</span></div>
+      <div class="anno"><b>header:</b> <span>bg-surface-2 浮起，view 标题 + L3 标识，去 border-b</span></div>
+      <div class="anno"><b>滚动区:</b> <span>body 独立 overflow-auto（与 chat 滚动区并列）</span></div>
+      <div class="anno"><b>与 chat 区分:</b> <span>view 级 header 固定 + 内容左对齐居中（chat 无 view 标题栏）</span></div>
+      <div class="anno"><b>external 铁律:</b> <span class="anno" style="color:var(--warn)">L3 仅 built-in；external 强制走 L1/L2，custom 不可用</span></div>
+      <div class="anno"><b>逃生口:</b> <span>GUI_CUSTOM_REGISTRY_KEY provide/inject，编译期注册 Vue 组件</span></div>
+      <div class="anno"><b>缓解策略:</b> <span>7 原语不够时补原语（如 table/kv-list），非放开 custom</span></div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §7 嵌套组合态
+       ================================================================ -->
+  <section class="spec" id="s7">
+    <div class="spec-head"><span class="spec-num">§7</span><h2 class="spec-title">嵌套组合态 · 7 原语表达力</h2></div>
+    <p class="spec-desc">7 原语 + 嵌套组合覆盖面足够（renderer-target-architecture §5.4）。columns + card + list-tree 可表达 workflow 的 sidebar+main+footer。本节画一个复杂 plugin 面板（workflow 管理面板）用原语组合渲染的完整示例，展示组合表现力——证明 external plugin 无需 custom（L3），L2 原语组合即可表达复杂 UI。</p>
+    <div class="change-points">
+      <span class="cp cp-info"><b>论证</b> columns+card+list-tree = workflow sidebar+main+footer</span>
+      <span class="cp cp-v6"><b>组合</b> 嵌套靠 bg 层级非 border 叠加</span>
+    </div>
+    <div class="render-frame">
+      <div class="layer3"><div class="l-canvas"><div class="l-surface" style="padding:14px;">
+        <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-dim);margin-bottom:8px;">plugin 推送的 GuiComponent 原语树（card 包 columns，columns 左 list-tree 右 card+progress-bar，footer stats-line）</div>
+        <div class="wf-panel">
+          <div class="wf-head">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--neutral-fg)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            <span class="wf-title">Workflow · deploy-pipeline</span>
+            <span style="margin-left:auto;font-family:var(--font-mono);font-size:var(--text-2xs);color:var(--accent);">card.header</span>
+          </div>
+          <div class="wf-body">
+            <!-- 左侧 list-tree（sidebar） -->
+            <div class="wf-side">
+              <div style="font-family:var(--font-mono);font-size:var(--text-2xs);color:var(--neutral-dim);margin-bottom:6px;">list-tree</div>
+              <div class="gtree" style="font-size:11px;">
+                <div class="gtree-node"><span class="gtree-ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/></svg></span><span class="gtree-label">build</span><span class="gtree-status st-done"></span></div>
+                <div class="gtree-node"><span class="gtree-ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg></span><span class="gtree-label">test</span><span class="gtree-status st-running"></span></div>
+                <div class="gtree-node" style="padding-left:14px;"><span class="gtree-ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span><span class="gtree-label">e2e</span><span class="gtree-status st-failed"></span></div>
+                <div class="gtree-node"><span class="gtree-ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg></span><span class="gtree-label">deploy</span><span class="gtree-status" style="background:var(--neutral-dim);opacity:.5;"></span></div>
+              </div>
+            </div>
+            <!-- 右侧 card + progress-bar（main） -->
+            <div class="wf-main">
+              <div class="gcard stage-default" style="border-radius:var(--radius-sm);">
+                <div class="gcard-hd"><span class="hd-dot" style="background:var(--accent)"></span>当前步骤 <span class="hd-badge b-warn">running</span></div>
+                <div class="gcard-bd" style="padding:10px;">
+                  <div class="gprog">
+                    <div class="gprog-hd"><span class="gprog-label">test suite</span><span class="gprog-val">62<span class="gprog-total"> / 100</span></span></div>
+                    <div class="gprog-track"><div class="gprog-fill f-accent" style="width:62%;"></div></div>
+                  </div>
+                </div>
+              </div>
+              <div class="gcard stage-card" style="border-radius:var(--radius-sm);">
+                <div class="gcard-hd"><span class="hd-dot" style="background:var(--danger)"></span>失败详情 <span class="hd-badge b-danger">e2e</span></div>
+                <div class="gcard-bd" style="padding:10px;font-size:11px;">3 个 e2e 用例失败 · 见 list-tree e2e 节点（红点）</div>
+              </div>
+            </div>
+          </div>
+          <!-- footer stats-line -->
+          <div class="wf-foot">
+            <div class="gstats" style="font-size:11px;">
+              <span class="gs-item"><span class="gs-label">passed</span><span class="gs-value sv-neutral">97</span></span>
+              <span class="gs-item"><span class="gs-label">failed</span><span class="gs-value sv-danger">3</span></span>
+              <span class="gs-item"><span class="gs-label">duration</span><span class="gs-value sv-mid">4m 12s</span></span>
+            </div>
+            <span style="margin-left:auto;font-family:var(--font-mono);font-size:var(--text-2xs);color:var(--neutral-dim);">stats-line</span>
+          </div>
+        </div>
+      </div></div></div>
+    </div>
+    <div class="anno-grid">
+      <div class="anno"><b>组合结构:</b> <span>card(header+body) → body 内 columns → 左 list-tree / 右 card+progress-bar → footer stats-line</span></div>
+      <div class="anno"><b>sidebar+main+footer:</b> <span>columns 表达 sidebar+main，card.header 表达 panel 头，wf-foot 表达 footer</span></div>
+      <div class="anno"><b>嵌套无 border:</b> <span class="v6">wf-side(bg-card) / wf-main card(surface) 靠明度差，无 border 叠加</span></div>
+      <div class="anno"><b>原语复用:</b> <span>list-tree + progress-bar + stats-line + card + columns 共 5 原语组合</span></div>
+      <div class="anno"><b>表现力:</b> <span>external plugin 用 L2 即可表达 workflow 管理面板，无需 custom（L3）</span></div>
+      <div class="anno"><b>降级:</b> <span>未注册 type 一律降级 AnsiText（JSON 序列化，不崩渲染不丢信息）</span></div>
+      <div class="anno"><b>落点:</b> <span>GuiComponentRenderer.vue 递归渲染（header/body/children 均 GuiComponent）</span></div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §8 ANSI 16 色 → v6 语义色完整映射表
+       ================================================================ -->
+  <section class="spec" id="s8">
+    <div class="spec-head"><span class="spec-num">§8</span><h2 class="spec-title">ANSI 16 色 → v6 语义色完整映射表</h2></div>
+    <p class="spec-desc">ansi-text 重点展开。未引入 extension-protocol 的 pi extension 走 ANSI 兜底（§5.5 <b>永远保留</b>）。v6 下需把 ANSI 16 色（black/red/green/yellow/blue/magenta/cyan/white + bright 变体）映射到冷蓝暗色语义色，否则旧 extension 输出在 v6 界面「颜色脏」。<b>映射规则</b>：red→danger / green→success / blue→accent(冷蓝) / yellow→warn / 灰阶→neutral-*。<b>不自加背景</b>（ANSI bg 色丢弃，只用 fg）。</p>
+
+    <div class="change-points">
+      <span class="cp cp-now"><b>现</b> ansi_up 默认调色板（饱和过载）</span>
+      <span class="cp cp-v6"><b>v6</b> 16 色 → 语义色映射（暗/亮双主题）</span>
+      <span class="cp cp-v6"><b>v6</b> 不自加背景 · 兜底永留</span>
+    </div>
+
+    <h3>完整映射表（暗色主题）</h3>
+    <div class="render-frame">
+      <table class="ansi-table">
+        <thead>
+          <tr>
+            <th style="width:160px">ANSI 色</th>
+            <th style="width:120px">原色值（参考）</th>
+            <th>v6 映射目标</th>
+            <th>语义说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><span class="at-swatch" style="background:#000;"></span><span class="at-name">black</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#000000</span></td><td><span class="at-target">--neutral-faint #4b5563</span></td><td>最弱，映射最深 neutral</td></tr>
+          <tr><td><span class="at-swatch" style="background:#ef4444;"></span><span class="at-name">red</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#ef4444</span></td><td><span class="at-target">--danger #ef4444</span></td><td>错误/失败（语义一致）</td></tr>
+          <tr><td><span class="at-swatch" style="background:#22c55e;"></span><span class="at-name">green</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#22c55e</span></td><td><span class="at-target">--success #22c55e</span></td><td>成功/通过（语义一致）</td></tr>
+          <tr><td><span class="at-swatch" style="background:#b08a3e;"></span><span class="at-name">yellow</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#eab308</span></td><td><span class="at-target">--warn #b08a3e</span></td><td>警告（v6 warn 收窄偏暗金）</td></tr>
+          <tr><td><span class="at-swatch" style="background:#4f8ef7;"></span><span class="at-name">blue</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#3b82f6</span></td><td><span class="at-target">--accent #4f8ef7（冷蓝）</span></td><td>信息/链接（主色冷蓝）</td></tr>
+          <tr><td><span class="at-swatch" style="background:#a78bfa;"></span><span class="at-name">magenta</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#a855f7</span></td><td><span class="at-target">--reasoning #a78bfa</span></td><td>推理/特殊（紫，无直接语义）</td></tr>
+          <tr><td><span class="at-swatch" style="background:#38bdf8;"></span><span class="at-name">cyan</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#06b6d4</span></td><td><span class="at-target">--info #38bdf8</span></td><td>提示/辅助信息</td></tr>
+          <tr><td><span class="at-swatch" style="background:#e5e7eb;"></span><span class="at-name">white</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#e5e7eb</span></td><td><span class="at-target">--neutral-fg #e5e7eb</span></td><td>默认前景文字</td></tr>
+          <tr><td><span class="at-swatch" style="background:#7d8494;"></span><span class="at-name">bright black</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#6b7280</span></td><td><span class="at-target">--neutral-mid #9ca3af</span></td><td>灰阶 → 次级文字</td></tr>
+          <tr><td><span class="at-swatch" style="background:#fca5a5;"></span><span class="at-name">bright red</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#f87171</span></td><td><span class="at-target">--danger #ef4444</span></td><td>亮红收敛到 danger（去饱和过载）</td></tr>
+          <tr><td><span class="at-swatch" style="background:#86efac;"></span><span class="at-name">bright green</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#4ade80</span></td><td><span class="at-target">--success #22c55e</span></td><td>亮绿收敛到 success</td></tr>
+          <tr><td><span class="at-swatch" style="background:#fde68a;"></span><span class="at-name">bright yellow</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#facc15</span></td><td><span class="at-target">--warn #b08a3e</span></td><td>亮黄收敛到 warn（偏暗金）</td></tr>
+          <tr><td><span class="at-swatch" style="background:#93c5fd;"></span><span class="at-name">bright blue</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#60a5fa</span></td><td><span class="at-target">--accent-hover #6ba3ff</span></td><td>亮蓝收敛到 accent-hover</td></tr>
+          <tr><td><span class="at-swatch" style="background:#c4b5fd;"></span><span class="at-name">bright magenta</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#c084fc</span></td><td><span class="at-target">--reasoning #a78bfa</span></td><td>亮紫收敛到 reasoning</td></tr>
+          <tr><td><span class="at-swatch" style="background:#7dd3fc;"></span><span class="at-name">bright cyan</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#22d3ee</span></td><td><span class="at-target">--info #38bdf8</span></td><td>亮青收敛到 info</td></tr>
+          <tr><td><span class="at-swatch" style="background:#9ca3af;"></span><span class="at-name">bright white</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#f3f4f6</span></td><td><span class="at-target">--neutral-fg #e5e7eb</span></td><td>亮白收敛到 fg（不刺眼）</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="margin-top:20px;">渲染示例（映射后 · 不自加背景）</h3>
+    <div class="render-frame">
+      <div class="layer3"><div class="l-canvas"><div class="l-surface" style="padding:16px;">
+        <div class="gansi"><span class="ansi-dim">$ </span><span class="ansi-green">✓</span> <span class="ansi-white">build succeeded</span> <span class="ansi-gray">(2.4s)</span>
+<span class="ansi-yellow">⚠</span> <span class="ansi-white">3 deprecation warnings</span>
+<span class="ansi-red">✗</span> <span class="ansi-red">FAIL</span> <span class="ansi-white">src/error.spec.ts</span>
+  <span class="ansi-red">AssertionError</span><span class="ansi-gray">: expected true received false</span>
+<span class="ansi-blue">→</span> <span class="ansi-cyan">rerun</span> <span class="ansi-blue">with --verbose</span>
+<span class="ansi-magenta">[debug]</span> <span class="ansi-gray">hook=pre-commit exit=1</span></div>
+      </div></div></div>
+    </div>
+    <div class="anno-grid">
+      <div class="anno"><b>映射规则:</b> <span>red→danger / green→success / blue→accent(冷蓝) / yellow→warn / cyan→info / magenta→reasoning</span></div>
+      <div class="anno"><b>灰阶:</b> <span>black→neutral-faint / white→neutral-fg / bright black→neutral-mid / bright white→neutral-fg</span></div>
+      <div class="anno"><b>亮色收敛:</b> <span class="v6">bright 变体收敛到对应语义色（去饱和过载，不刺眼）</span></div>
+      <div class="anno"><b>不自加背景:</b> <span class="v6">ANSI bg 转义全部丢弃，只用 fg（v6 界面三层明度，禁止色块背景）</span></div>
+      <div class="anno"><b>兜底永留:</b> <span>未引入 extension-protocol 的 pi extension 永远走 ANSI 兜底（§5.5，渐进迁移安全网）</span></div>
+      <div class="anno"><b>双主题:</b> <span class="v6">暗/亮双主题均映射（见下亮色表），同一语义 token、不同 hex 取值</span></div>
+      <div class="anno"><b>落点:</b> <span>gui/AnsiText.vue（ansi_up palette 配置替换为 v6 语义色，禁用 bg 着色）</span></div>
+    </div>
+
+    <h3 style="margin-top:20px;">完整映射表（亮色主题）</h3>
+    <p class="spec-desc" style="margin-top:-8px;">暗色镜像。语义 token 与暗色表一一对应（danger/success/accent/warn/neutral-* 等），仅 hex 取值随亮色主题 token 变化。规则：状态色 success/danger/info/reasoning 亮暗共用同一色相（亮色下饱和度足够，不单独覆盖）；<code>--accent</code> 亮色加深至 <code>#2563eb</code>、<code>--warn</code> 加深至 <code>#8a6a2e</code>（保白底对比度）；灰阶在亮色下明度对调（fg 最深、faint 最浅）。<b>bright 变体在亮色下进一步去饱和收敛</b>（白底已浅，再提亮会糊，故收敛到同语义色而非更亮值）。</p>
+    <div class="render-frame">
+      <table class="ansi-table">
+        <thead>
+          <tr>
+            <th style="width:160px">ANSI 色</th>
+            <th style="width:120px">亮色 token 值</th>
+            <th>v6 映射目标</th>
+            <th>语义说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><span class="at-swatch" style="background:#0d0d0f;border:1px solid var(--border-strong);"></span><span class="at-name">black</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#0d0d0f</span></td><td><span class="at-target">--neutral-fg #0d0d0f</span></td><td>亮色下 black 不再「最弱」——白底需最深字，故收敛到 fg</td></tr>
+          <tr><td><span class="at-swatch" style="background:#ef4444;"></span><span class="at-name">red</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#ef4444</span></td><td><span class="at-target">--danger #ef4444</span></td><td>错误/失败（状态色亮暗共用，饱和度足）</td></tr>
+          <tr><td><span class="at-swatch" style="background:#22c55e;"></span><span class="at-name">green</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#22c55e</span></td><td><span class="at-target">--success #22c55e</span></td><td>成功/通过（状态色亮暗共用）</td></tr>
+          <tr><td><span class="at-swatch" style="background:#8a6a2e;"></span><span class="at-name">yellow</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#eab308</span></td><td><span class="at-target">--warn #8a6a2e</span></td><td>警告（亮色 warn 加深保白底对比）</td></tr>
+          <tr><td><span class="at-swatch" style="background:#2563eb;"></span><span class="at-name">blue</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#3b82f6</span></td><td><span class="at-target">--accent #2563eb（冷蓝）</span></td><td>信息/链接（亮色 accent 加深至 #2563eb）</td></tr>
+          <tr><td><span class="at-swatch" style="background:#a78bfa;"></span><span class="at-name">magenta</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#a855f7</span></td><td><span class="at-target">--reasoning #a78bfa</span></td><td>推理/特殊（状态色亮暗共用）</td></tr>
+          <tr><td><span class="at-swatch" style="background:#38bdf8;"></span><span class="at-name">cyan</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#06b6d4</span></td><td><span class="at-target">--info #38bdf8</span></td><td>提示/辅助信息（状态色亮暗共用）</td></tr>
+          <tr><td><span class="at-swatch" style="background:#c0c0c8;"></span><span class="at-name">white</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#e5e7eb</span></td><td><span class="at-target">--neutral-faint #c0c0c8</span></td><td>亮色下 white 反转收敛到最浅 neutral-faint（不糊白底）</td></tr>
+          <tr><td><span class="at-swatch" style="background:#5a5a65;"></span><span class="at-name">bright black</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#6b7280</span></td><td><span class="at-target">--neutral-mid #5a5a65</span></td><td>灰阶 → 次级文字（亮色 dim/mid 明度对调）</td></tr>
+          <tr><td><span class="at-swatch" style="background:#dc2626;"></span><span class="at-name">bright red</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#f87171</span></td><td><span class="at-target">--danger #ef4444</span></td><td>亮红收敛到 danger（白底去饱和，不再更浅）</td></tr>
+          <tr><td><span class="at-swatch" style="background:#16a34a;"></span><span class="at-name">bright green</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#4ade80</span></td><td><span class="at-target">--success #22c55e</span></td><td>亮绿收敛到 success</td></tr>
+          <tr><td><span class="at-swatch" style="background:#8a6a2e;"></span><span class="at-name">bright yellow</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#facc15</span></td><td><span class="at-target">--warn #8a6a2e</span></td><td>亮黄收敛到 warn（加深保对比，不糊白底）</td></tr>
+          <tr><td><span class="at-swatch" style="background:#2563eb;"></span><span class="at-name">bright blue</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#60a5fa</span></td><td><span class="at-target">--accent #2563eb</span></td><td>亮蓝收敛到 accent（亮色取加深值，不再提亮）</td></tr>
+          <tr><td><span class="at-swatch" style="background:#a78bfa;"></span><span class="at-name">bright magenta</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#c084fc</span></td><td><span class="at-target">--reasoning #a78bfa</span></td><td>亮紫收敛到 reasoning</td></tr>
+          <tr><td><span class="at-swatch" style="background:#38bdf8;"></span><span class="at-name">bright cyan</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#22d3ee</span></td><td><span class="at-target">--info #38bdf8</span></td><td>亮青收敛到 info</td></tr>
+          <tr><td><span class="at-swatch" style="background:#0d0d0f;"></span><span class="at-name">bright white</span></td><td><span class="at-name" style="color:var(--neutral-dim);">#f3f4f6</span></td><td><span class="at-target">--neutral-fg #0d0d0f</span></td><td>亮白收敛到最深 fg（反转，白底需深字）</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="anno-grid" style="grid-template-columns:1fr;">
+      <div class="anno"><b>亮色收敛差异:</b> <span class="v6">暗色下 bright 提亮一档去饱和（red→danger 基色、blue→accent-hover 更亮蓝）；亮色下白底已浅，bright 变体不「再提亮」而是收敛到该语义色的标准亮色值（red/blue 都收敛到基色 token，yellow 收敛到加深后的 warn）。两主题共同目标：保白/暗底对比度 + 不糊</span></div>
+    </div>
+  </section>
+
+  <!-- ============ footer ============ -->
+  <footer class="doc-foot">
+    <span>v6-spec-plugin-rendering.html · 横切稿 · 不重复各视图内置 UI</span>
+    <span>SSOT: <a href="../architecture/renderer-target-architecture.md">renderer-target-architecture.md §3/§5/§10</a> · <a href="v6-design.md">v6-design.md §3/§4</a> · <a href="v6-spec-tokens.html">tokens</a></span>
+  </footer>
+
+</div>
+</body>
+</html>
