@@ -45,6 +45,7 @@ import { useToast } from '@/composables/useToast'
 function userExt(): ExtensionItem {
   return {
     name: 'my-tools',
+    displayName: 'my-tools',
     dirName: 'my-tools',
     version: '1.0.0',
     description: 'user installed extension',
@@ -60,6 +61,7 @@ function userExt(): ExtensionItem {
 function builtinExt(): ExtensionItem {
   return {
     name: 'core',
+    displayName: 'core',
     dirName: 'core',
     version: '0.1.0',
     description: 'built-in extension',
@@ -148,6 +150,7 @@ describe('ExtensionPage 候选项点击不双触发（W2 D3）', () => {
       tempDir: '/tmp/cand',
       candidates: [{
         name: 'cand-ext',
+        displayName: 'cand-ext',
         dirName: 'cand-ext',
         version: '1.0.0',
         description: 'candidate',

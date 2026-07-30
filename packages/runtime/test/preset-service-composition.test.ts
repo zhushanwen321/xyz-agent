@@ -75,18 +75,25 @@ function makeFakeWorkspaceService() {
   return {} as unknown as ConstructorParameters<typeof SessionService>[8]
 }
 
-/** wave2 同款 fake extensionService（可控 builtin + scanExtensions）。 */
+/** wave2 同款 fake extensionService（可控 builtin + discovered/disabled）。
+ * getDiscoveredAndDisabled 返回全部 userExts（enabled 和 disabled 都含，disabled 进 disabledSet），
+ * resolveExtensionPaths 据此本地跑 resolveExtensions + applyPresetMode（builtin 只 prepend 一次）。 */
 function makeFakeExtensionService(builtinPaths: string[], userExts: ExtensionInfo[]): IExtensionService {
   return {
     getBuiltinExtensionPaths: () => builtinPaths,
     scanExtensions: async () => userExts,
     getExtensionPaths: async () => [...builtinPaths, ...userExts.filter(e => e.enabled).map(e => e.path)],
+    getDiscoveredAndDisabled: async () => ({
+      discovered: userExts.map(e => ({ path: e.path, source: 'user' as const })),
+      disabledSet: new Set(userExts.filter(e => !e.enabled).map(e => `npm:${e.name}`)),
+    }),
   } as unknown as IExtensionService
 }
 
 function makeExt(name: string, enabled: boolean): ExtensionInfo {
   return {
     name,
+    displayName: name,
     dirName: name,
     version: '0.0.0-test',
     description: '',

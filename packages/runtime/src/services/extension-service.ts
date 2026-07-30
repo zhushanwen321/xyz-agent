@@ -17,12 +17,13 @@
  * 5. 清理临时目录
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, lstatSync, realpathSync, cpSync, rmSync, mkdtempSync } from 'node:fs'
-import { join, resolve, basename, relative, isAbsolute, delimiter } from 'node:path'
+import { join, resolve, basename, dirname, relative, isAbsolute, delimiter } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
-import { recommendedExtensions, BUILTIN_EXTENSION_FILES } from '@xyz-agent/shared'
+import { recommendedExtensions, mandatoryExtensions, isMandatoryExtension, BUILTIN_EXTENSION_FILES } from '@xyz-agent/shared'
 import semver from 'semver'
-import type { IInstaller, IExtensionResolver } from './ports/installer.js'
+import type { IInstaller, IExtensionResolver, DiscoveredExtension } from './ports/installer.js'
+import { resolveExtensions, readPkgMeta, type ResolvedExtension } from './extension-filter.js'
 import type { IExtensionSettings } from './ports/extension-settings.js'
 import type { IConfigStore } from './ports/config.js'
 import { isStrictlyUnder, isUnderOrEqual, extractRepoName, expandHome } from '../utils/path-utils.js'
@@ -221,81 +222,118 @@ export class ExtensionService {
   }
 
   /**
-   * 读 discovery.json.extensionDirs 并 resolve 成存在的绝对路径数组。
+   * 读 discovery.json.extensionDirs，按绝对/相对路径分组 resolve。
    *
-   * 与 SessionService.getSkillPaths 对称（cw-2026-07-21-scan-project-agents-skills FR-1）：
-   * 相对路径按 cwd resolve 成绝对路径再 existsSync 过滤，否则项目级 extension 目录会按
-   * runtime 进程 cwd（app.getAppPath/resourcesPath）解析 → 在该 cwd 下不存在被过滤掉。
-   * ~/xxx 家目录前缀先 expandHome 展开（否则 isAbsolute('~/...') false → resolve(cwd, '~/...') 错位）。
+   * 绝对路径（如 ~/.pi/agent/extensions）：与 cwd 无关，全局有效 → 进 scanExtensions（ExtensionPage 可见）
+   * 相对路径（如 .agents/extensions）：依赖 cwd，项目级 → 仅 session 启动时按 cwd resolve 加载
    *
-   * configStore 未注入（测试场景）时返回空数组，等价于无 discovery 目录。
+   * ~/xxx 家目录前缀先 expandHome（否则 isAbsolute('~/...') false）。
+   * configStore 未注入（测试场景）时返回两组皆空。
    */
-  private resolveDiscoveryDirs(cwd?: string): string[] {
-    if (!this.configStore) return []
+  private resolveDiscoveryDirs(cwd?: string): { absolute: string[]; relative: string[] } {
+    if (!this.configStore) return { absolute: [], relative: [] }
     const base = cwd ?? this.projectRoot
-    const normalize = (p: string): string => {
+    const absolute: string[] = []
+    const relative: string[] = []
+    for (const p of this.configStore.getExtensionDirs()) {
       const expanded = expandHome(p)
-      return isAbsolute(expanded) ? expanded : resolve(base, expanded)
-    }
-    return this.configStore.getExtensionDirs().filter((p) => {
-      const resolved = normalize(p)
-      if (existsSync(resolved)) {
-        return true
+      const resolved = isAbsolute(expanded) ? expanded : resolve(base, expanded)
+      if (!existsSync(resolved)) {
+        console.warn(`[extension-service] discovery extension dir not found, skipping: ${p} (resolved: ${resolved})`)
+        continue
       }
-      console.warn(`[extension-service] discovery extension dir not found, skipping: ${p} (resolved: ${resolved})`)
-      return false
-    }).map(normalize)
+      // 判断用 isAbsolute(expanded)（expandHome 后的原始路径是否绝对），不是 resolved：
+      // 相对路径 resolve 后也变绝对了，必须在 resolve 前判断。
+      if (isAbsolute(expanded)) {
+        absolute.push(resolved)
+      } else {
+        relative.push(resolved)
+      }
+    }
+    return { absolute, relative }
   }
 
   /**
-   * 扫描所有 extension，返回 ExtensionInfo[]。
-   * 用 ExtensionResolver 扫描所有源，对 settings 源的扩展读 packages[] 判断启用状态。
+   * 扫描所有 extension，返回 ExtensionInfo[]（全局视图，含绝对路径 discovery 扩展）。
+   * 用 ExtensionResolver 扫描所有源，复用 resolveExtensions 判定 loadable 状态。
+   * 保留 disabled 包（enabled:false），前端 ExtensionPage 据此渲染。
+   *
+   * 绝对路径 discovery 目录（如 ~/.pi/agent/extensions）与 cwd 无关，全局有效 → 进列表；
+   * 相对路径 discovery 目录（如 .agents/extensions）依赖 cwd，项目级 → 仅 session 启动加载，不进全局视图。
    */
   async scanExtensions(): Promise<ExtensionInfo[]> {
-    const result = this.resolver.resolve(this.projectRoot, this.packaged, this.getUserExtensionPaths())
-    // 读取 settings.json packages[] 用于判断 source 和 enabled
+    // 绝对路径 discovery 目录全局有效，进列表（相对路径是项目级，不进全局视图）
+    const { absolute } = this.resolveDiscoveryDirs()
+    const discovered = this.resolver.resolve(this.projectRoot, this.packaged, this.getUserExtensionPaths(), absolute).extensionDirs
     const { packages, disabled } = this.readSettingsState()
     const disabledSet = new Set(disabled)
-    // 读取 auto-upgrade 配置
     const autoUpgradeSet = new Set(this.extSettings.getAutoUpgrade())
+
+    return this.assembleExtensionInfo(discovered, packages, disabledSet, autoUpgradeSet)
+  }
+
+  /**
+   * 组装 ExtensionInfo 列表（scanExtensions 共用）。
+   *
+   * S1 修复：name/tier/loadable 复用 resolveExtensions 的结果（resolveExtensions 内部一次读盘
+   * 推导），不再每个 ext 各自 readFileSync(pkgJson) + resolveExtension（又读一次）。
+   * version/description/tools 仍需读 package.json（ResolvedExtension 未携带这些），用 readPkgMeta
+   * 在此一处读，不扩散到 PresetService。
+   */
+  private assembleExtensionInfo(
+    discovered: DiscoveredExtension[],
+    packages: string[],
+    disabledSet: Set<string>,
+    autoUpgradeSet: Set<string>,
+  ): ExtensionInfo[] {
+    // 一次读盘推导 name/tier/loadable（S1：不再每个 ext 各自读 + resolveExtension 再读）
+    const resolvedList = resolveExtensions(discovered, disabledSet)
+    const resolvedByPath = new Map<string, ResolvedExtension>(resolvedList.map(r => [r.path, r]))
 
     const extensions: ExtensionInfo[] = []
 
-    for (const dir of result.extensionDirs) {
-      const pkgJsonPath = join(dir, 'package.json')
-      let name = basename(dir)
-      let version = ''
-      let description = ''
+    for (const ext of discovered) {
+      const dir = ext.path
+      const resolved = resolvedByPath.get(dir)!
+      const name = resolved.name // 复用 resolveExtensions 已推导的 name（含 basename fallback + typeof 守卫）
 
+      // version/description/tools 仍需读 package.json（ResolvedExtension 未携带这些），但只在此处读一次
+      const meta = readPkgMeta(dir)
+      const version = meta.version ?? ''
+      const description = meta.description ?? ''
       let tools: string[] | undefined
-      try {
-        const raw = readFileSync(pkgJsonPath, 'utf-8')
-        const pkg = JSON.parse(raw) as { name?: string; version?: string; description?: string; pi?: { tools?: string[] } }
-        name = pkg.name ?? name
-        version = pkg.version ?? ''
-        description = pkg.description ?? ''
-        // FR-11：从 package.json pi.tools 读取扩展提供的工具列表
-        if (Array.isArray(pkg.pi?.tools)) {
-          tools = pkg.pi.tools.filter((t): t is string => typeof t === 'string')
-        }
-      } catch (e) {
-        log.debug(`[extension-service] failed to read package.json at ${pkgJsonPath}: ${toErrorMessage(e)}`)
+      if (Array.isArray(meta.pi?.tools)) {
+        tools = meta.pi!.tools!.filter((t): t is string => typeof t === 'string')
       }
 
-      // 判断 source：路径在 settings packages[] 中则为 user-installed
       const sourceKey = `npm:${name}`
       const isUserInstalled = packages.includes(sourceKey)
-      const isDisabled = disabledSet.has(sourceKey)
       const isAutoUpgrade = autoUpgradeSet.has(sourceKey)
+
+      // displayName 推导（展示用，不影响 disabled key / allowlist 匹配——那些用 name）：
+      //   有 package.json name → 用 name（规范：纯包名 @scope/pi-xxx）
+      //   无 package.json 的 index.ts/index.js 入口 → 父目录名（解决多目录 index.ts 重名）
+      //   无 package.json 的单文件 → basename 去后缀
+      const entryBasename = basename(dir)
+      const displayName = typeof meta.name === 'string'
+        ? name
+        : entryBasename === 'index.ts' || entryBasename === 'index.js'
+          ? basename(dirname(dir))
+          : entryBasename.replace(/\.(ts|js)$/, '')
 
       extensions.push({
         name,
+        displayName,
         dirName: basename(dir),
         version,
         description,
         path: dir,
-        enabled: !isDisabled,
-        source: isUserInstalled ? 'user-installed' : 'built-in',
+        enabled: resolved.loadable, // 复用 resolveExtensions 的 loadable 判定
+        // #4：mandatory 直接从 resolved.tier 推导（source 感知——discovery 源扩展即使 name 命中
+        // mandatory SSOT 也不当 mandatory，tier 为 undefined；packages[]/npm 源 mandatory 包 tier 非 undefined）
+        mandatory: resolved.tier !== undefined,
+        tier: resolved.tier, // S10：tier 直接从 resolved 透传（天然正确）
+        source: isUserInstalled ? 'user-installed' : ext.source === 'discovery' ? 'discovery' : 'built-in',
         autoUpgrade: isAutoUpgrade,
         ...(tools && { tools }),
       })
@@ -313,11 +351,17 @@ export class ExtensionService {
    * 的 name 字段一致，无需 normalizeExtName 转换。
    *
    * SSOT：recommended-extensions.json（shared 包导出，runtime import）。
+   * 额外过滤 mandatory 项：即使将来 recommended-extensions.json 误含 mandatory 包，
+   * 也不重复推荐（mandatory 由 boot 强制安装，无需出现在推荐区）。
+   * 当前 recommended-extensions.json 为空——原推荐机制已停用，相关包（原推荐 + 后续新增）
+   * 转入 mandatory-extensions.json 作为强制安装扩展（见该 mandatory SSOT，列表以它为准、不在此硬编码条目数）。
    */
   async getRecommendedExtensions(): Promise<Array<{ name: string; description: string; installed: boolean }>> {
     const installed = await this.scanExtensions()
     const installedNames = new Set(installed.map(e => e.name))
-    return recommendedExtensions.map(r => ({ ...r, installed: installedNames.has(r.name) }))
+    return recommendedExtensions
+      .filter(r => !isMandatoryExtension(r.name))
+      .map(r => ({ ...r, installed: installedNames.has(r.name) }))
   }
 
   /**
@@ -329,30 +373,38 @@ export class ExtensionService {
    *   否则项目级 extension 目录会错位落到 app/resources 下被 existsSync 过滤掉。
    */
   async getExtensionPaths(cwd?: string): Promise<string[]> {
-    const discoveryDirs = this.resolveDiscoveryDirs(cwd)
-    const result = this.resolver.resolve(this.projectRoot, this.packaged, this.getUserExtensionPaths(), discoveryDirs)
-    const { disabled } = this.readSettingsState()
-    const disabledSet = new Set(disabled)
-
-    // 过滤禁用项
-    const filtered = result.extensionDirs.filter(dir => {
-      // Use package.json name (not basename) for scoped package support
-      let pkgName = basename(dir)
-      try {
-        const raw = readFileSync(join(dir, 'package.json'), 'utf-8')
-        const pkg = JSON.parse(raw) as { name?: string }
-        if (pkg.name) pkgName = pkg.name
-      } catch {
-        log.debug(`[extension-service] getExtensionPaths: failed to read package.json in ${dir}`)
-      }
-      return !disabledSet.has(`npm:${pkgName}`)
-    })
-
-    // builtin extension：经 getBuiltinExtensionPaths() 注入（设计文档 §2.3，
-    // pi-launch-presets 设计要求 builtin 永远前置，提取为独立方法供 PresetService.resolve 复用）。
-    filtered.push(...this.getBuiltinExtensionPaths())
-
+    const { discovered, disabledSet } = await this.getDiscoveredAndDisabled(cwd)
+    // 委托给过滤管道（一次读盘，元数据透传）
+    const resolved = resolveExtensions(discovered, disabledSet)
+    const filtered = resolved.filter(r => r.loadable).map(r => r.path)
+    // builtin extension 永远前置（设计文档 §2.3）
+    filtered.unshift(...this.getBuiltinExtensionPaths())
     return filtered
+  }
+
+  /**
+   * 供 PresetService 做 preset 二次筛选：返回原始发现结果（不含 builtin、不过滤、不加 preset 筛选）
+   * + disabled 集合。
+   *
+   * M1 修复关键：preset-service 的 resolveExtensionPaths 需要原始 discovered（builtin 只在最终
+   * prepend 一次）。若用 getExtensionPaths（已含 builtin），preset-service 再 prepend 一次会 double-builtin。
+   * 此方法让 builtin 注入点唯一化（只在最终 prepend 一次），disabled 过滤本地完成。
+   *
+   * 已知限制：相对路径 discovery 扩展（项目级，如 .agents/extensions/foo）只在 session 启动时
+   * 按 cwd 解析加载，不进 scanExtensions 全局视图（避免列表随 session 变化）。因此它们在 preset
+   * allowlist 模式下会因 name 不在 allowedExtensions 被排除，用户无法通过 UI 勾选。
+   * 这是边缘场景（相对路径 discovery 少见），符合"前端不可见的扩展不参与 preset 管控"的一致性。
+   * 彻底解决需引入 session 级扩展列表（getProjectExtensions 接线），本次不做。
+   *
+   * @param cwd session cwd（相对 discovery 目录的 resolve 基准）
+   */
+  async getDiscoveredAndDisabled(cwd?: string): Promise<{ discovered: DiscoveredExtension[]; disabledSet: Set<string> }> {
+    const { absolute, relative } = this.resolveDiscoveryDirs(cwd)
+    // session 启动需要全部 discovery 扩展：绝对路径（全局）+ 相对路径（按 cwd resolve）
+    const discoveryDirs = [...absolute, ...relative]
+    const discovered = this.resolver.resolve(this.projectRoot, this.packaged, this.getUserExtensionPaths(), discoveryDirs).extensionDirs
+    const { disabled } = this.readSettingsState()
+    return { discovered, disabledSet: new Set(disabled) }
   }
 
   /**
@@ -435,6 +487,14 @@ export class ExtensionService {
    */
   async uninstallExtension(name: string): Promise<void> {
     return this.withInstallLock(async () => {
+      // mandatory 包不可卸载
+      if (isMandatoryExtension(name)) {
+        throw new ExtensionInstallError(
+          'mandatory_cannot_uninstall',
+          `Mandatory extension cannot be uninstalled: ${name}`,
+          'This extension is required by the application and cannot be removed.',
+        )
+      }
       // 先扫描已安装列表，按 name 查找 extension 的路径
       const installed = await this.scanExtensions()
       const target = installed.find((e) => e.name === name)
@@ -475,10 +535,30 @@ export class ExtensionService {
   /**
    * 切换某个包的启用/禁用。
    * 经 IExtensionSettings port 操作 disabled-packages.json。
+   *
+   * #2 修复：disabled key 按扩展来源命名空间隔离——discovery 源用 'discovery:' 前缀，其余源用
+   * 'npm:' 前缀（与 resolveExtension 的 disabledKey 推导对齐）。内部查 scanExtensions 取该扩展的
+   * source（不改 WS 协议/前端），查不到则 fallback 'npm:'（与历史行为兼容）。
    */
   async toggleExtension(name: string, enabled: boolean): Promise<void> {
-    const source = `npm:${name}`
-    await this.extSettings.setEnabled(source, enabled)
+    // 查扩展来源，决定 disabled key 前缀（npm: vs discovery:）。scanExtensions 的 source 判定
+    // 已通过 assembleExtensionInfo 推导（resolver 发现源）。查不到（异常）则 fallback 'npm'。
+    const extensions = await this.scanExtensions()
+    const ext = extensions.find(e => e.name === name)
+    const source = ext?.source === 'discovery' ? 'discovery' : 'npm'
+    // mandatory 扩展不可禁用（与 uninstallExtension 守卫对称，避免 UI 禁用但 getExtensionPaths
+    // 仍强加载的状态分离）。用 scanExtensions 的 mandatory 判定（已 source 感知：discovery 源扩展
+    // 即使 name 命中 mandatory SSOT 也不当 mandatory）。查不到时 fallback 到 isMandatoryExtension。
+    if (!enabled && (ext?.mandatory ?? isMandatoryExtension(name))) {
+      throw new ExtensionInstallError(
+        'mandatory_cannot_disable',
+        `Mandatory extension cannot be disabled: ${name}`,
+        'This extension is required by the application and cannot be disabled.',
+      )
+    }
+    // #2：disabled key 按 source 命名空间隔离（discovery 扩展用 'discovery:' 前缀，避免与 npm 扩展串扰）
+    const disabledKey = source === 'discovery' ? `discovery:${name}` : `npm:${name}`
+    await this.extSettings.setEnabled(disabledKey, enabled)
   }
 
   /**
@@ -535,6 +615,48 @@ export class ExtensionService {
       const actualVersion = this.readInstalledVersion(name, npmDir)
       return { upgraded: true, from: currentVersion, to: actualVersion || latestVersion }
     })
+  }
+
+  /**
+   * 确保 mandatory 扩展已安装。runtime boot 时调用（checkAndAutoUpgrade 之前）。
+   * 对 mandatoryExtensions SSOT 中每个包：已装则跳过，未装则 installExtension + setAutoUpgrade。
+   * 失败不抛错（记日志），不阻塞启动。与 checkAndAutoUpgrade 失败策略一致。
+   *
+   * 另外清理 disabled-packages.json 中的 mandatory 残留：某扩展可能在升格 mandatory 之前
+   * 被用户禁用过，disabled 状态会遗留。getExtensionPaths 会无视 disabled 强加载 mandatory，
+   * 但残留的 disabled 记录会让 scanExtensions 报 enabled:false + mandatory:true 的不一致状态
+   * （UI 显示禁用态但开关已隐藏）。boot 时清除这些残留，保证 mandatory 包 enabled 始终为 true。
+   */
+  async ensureMandatoryExtensions(): Promise<Array<{ name: string; installed: boolean; error?: string }>> {
+    const extensions = await this.scanExtensions()
+    const installedNames = new Set(extensions.map(e => e.name))
+    const disabled = this.extSettings.getDisabled()
+    const results: Array<{ name: string; installed: boolean; error?: string }> = []
+
+    for (const ext of mandatoryExtensions) {
+      const source = `npm:${ext.name}`
+      // 清理 disabled 残留（无论是否已安装）——mandatory 包不应处于 disabled 状态
+      if (disabled.includes(source)) {
+        try {
+          await this.extSettings.removeDisabled(source)
+        } catch (e) {
+          log.warn(`[extension-service] mandatory clear-disabled failed for ${ext.name}: ${toErrorMessage(e)}`)
+        }
+      }
+      if (installedNames.has(ext.name)) {
+        results.push({ name: ext.name, installed: true })
+        continue
+      }
+      try {
+        await this.installExtension(source)
+        await this.extSettings.setAutoUpgrade(source, true)
+        results.push({ name: ext.name, installed: true })
+      } catch (e) {
+        log.warn(`[extension-service] mandatory install failed for ${ext.name}: ${toErrorMessage(e)}`)
+        results.push({ name: ext.name, installed: false, error: toErrorMessage(e) })
+      }
+    }
+    return results
   }
 
   /**
@@ -876,6 +998,7 @@ export class ExtensionService {
       // name is intentionally raw (not normalized) — see readPackageJson doc
       candidates.push({
         name: info.name,
+        displayName: info.name,
         dirName: basename(dir),
         version: info.version,
         description: info.description,
@@ -904,6 +1027,7 @@ export class ExtensionService {
           const info = this.readPackageJson(entryPath)
           candidates.push({
             name: info.name,
+            displayName: info.name,
             dirName: entry,
             version: info.version,
             description: info.description,

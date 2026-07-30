@@ -63,8 +63,13 @@
           :key="group.phase"
           class="mb-2"
         >
-          <!-- phase header -->
-          <div class="flex items-center gap-1.5 px-1 py-1">
+          <!-- phase header：仅当存在显式 phase（非全部归到 Other）时渲染。
+               线性脚本（无 phase）不显示分组 header，agent call 直接平铺。 -->
+          <div
+            v-if="hasExplicitPhases"
+            class="flex items-center gap-1.5 rounded-sm px-1 py-1"
+            :class="group.phaseStatus === 'running' ? 'bg-accent/10' : ''"
+          >
             <span
               class="size-1.5 shrink-0 rounded-full"
               :class="phaseDotClass(group.phaseStatus)"
@@ -179,6 +184,12 @@ const phaseGroups = computed<PhaseGroup[]>(() => {
     phaseStatus: aggregatePhaseStatus(calls),
   }))
 })
+
+/** 是否存在显式 phase（至少一个 agent call 有 phase 字段）。
+ *  线性脚本（全部无 phase）不渲染分组 header，避免空洞的 'OTHER' 噪音。 */
+const hasExplicitPhases = computed(() =>
+  props.workflow.agentCalls.some((c) => c.phase !== undefined),
+)
 
 /** 聚合 phase 状态：有 running → running，全 completed/failed → completed，否则 pending */
 function aggregatePhaseStatus(calls: WorkflowAgentCall[]): 'completed' | 'running' | 'pending' {

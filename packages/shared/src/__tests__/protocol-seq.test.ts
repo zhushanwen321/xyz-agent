@@ -10,7 +10,7 @@
  * 模式与 __tests__/protocol.test.ts 一致：编译期 AssertHasKey/AssertExtends
  * （tsc --noEmit 保证）+ 运行期对象字面量可赋值断言（vitest）。纯类型层，零运行时依赖。
  *
- * 运行：cd packages/shared && npm run typecheck && npm test
+ * 运行：cd packages/shared && pnpm run typecheck && pnpm test
  */
 import { describe, it, expect } from 'vitest'
 import type {

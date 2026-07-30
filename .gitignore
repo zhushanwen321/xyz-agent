@@ -26,8 +26,13 @@ target/
 # gh releases. Nothing under here is tracked. Builtin extensions are npm deps (root
 # package.json), skills are user/project-level — neither is bundled here.
 apps/electron/resources/
-.pi/
-.pi/infinite-context/
+
+# .pi/ 目录：只跟踪源码（workflows），忽略运行时缓存/会话数据。
+# check_directory_rules.py 会强制只允许 .pi/workflows/ 进 git（见 PI_ALLOWED 检查）。
+# pi extension 相关内容（如 extension-dependencies.json）不在 .pi/ 下，是 npm 包。
+.pi/*
+!.pi/workflows/
+
 
 # Electron binary cache (immutable, shared across worktrees)
 .electron-dist/
@@ -89,6 +94,15 @@ screenshot.png
 
 # 手动测试残留的假数据目录（测试代码用 tmpdir()，不读根目录 session-data/）
 /session-data/
+
+# === npm lock 文件（本项目用 pnpm，package-lock.json 是历史遗留/误生成产物）===
+# 详见 AGENTS.md「包管理器与 lock 文件纪律」。pnpm-lock.yaml 是唯一权威 lock。
+# 含 extensions/ 下迁移自 xyz-pi-extensions 的历史 lock 垃圾。
+package-lock.json
+package-lock.json.*
+**/package-lock.json
+**/package-lock.json.*
+# 若未来某个子包独立用 npm，在子包自己的 .gitignore 里放开此规则。
 
 # === 备份/临时后缀兜底 ===
 *.bak

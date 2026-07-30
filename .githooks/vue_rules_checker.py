@@ -223,13 +223,19 @@ def check_vue_file(content: str, relative_path: str) -> tuple[int, list[str]]:
     in_style_tag = False
 
     for i, line in enumerate(lines, 1):
-        if '<style' in line:
+        stripped = line.strip()
+        # [HISTORICAL] 用行首精确匹配（stripped.startswith('<style'）而非裸子串 '<style' in line。
+        # 裸子串会被注释里提到 "<style scoped>" 的文字误判为 style 块开始，导致后续所有
+        # `import {` 语句被 RE_STYLE_SELECTOR 误匹配报「禁止编写自定义 CSS」。
+        # 合法 SFC 的 <style> 标签总是独占一行（无内联），行首匹配既准确又不放松真检查。
+        # 同理 </style> 也用行首匹配，避免注释里的 "</style>" 文字误重置状态。
+        if stripped.startswith('<style'):
             in_style_tag = True
             if 'scoped' in line:
                 in_style_section = True
             continue
 
-        if in_style_tag and '</style>' in line:
+        if in_style_tag and stripped.startswith('</style>'):
             in_style_tag = False
             in_style_section = False
             continue

@@ -30,8 +30,8 @@
 
 ## 验证标准
 
-- [ ] `npm run lint` 通过。
-- [ ] `npm run build` 通过。
+- [ ] `pnpm run lint` 通过。
+- [ ] `pnpm run build` 通过。
 - [ ] 全局搜索旧名无残留：`rg "Pane|SystemChatMessage|Drawer|Overview|SidecarServer" src-electron/ --type ts --type vue`（注意排除合法用法，如 CSS pane 属性）。
 - [ ] 手测涉及组件功能正常。
 

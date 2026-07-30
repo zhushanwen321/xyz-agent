@@ -400,5 +400,5 @@ AC-11 白名单外路径不链接
 - [ ] 正则线性无回溯（AC-1/7/9，新正则同样通过）
 - [ ] 真实渲染不卡顿（AC-2，保留）
 - [ ] 现有 `useMarkdownInteractions` / `AmbiguousFilePopover` 零改动验证
-- [ ] `npm run lint` 通过
+- [ ] `pnpm run lint` 通过
 - [ ] `vue-tsc` / `tsc` 类型检查通过

@@ -84,7 +84,7 @@ MARKER
 run_step "typecheck:extensions" bash -c 'cd "$0" && npx tsc --noEmit' extensions
 
 # ── Step 2: lint（根 eslint 覆盖全局含 extensions）
-run_step "lint" npm run lint
+run_step "lint" pnpm run lint
 
 # ── Step 3: test（extensions + runtime + renderer 三条线）
 # extensions 测试（pnpm -r --filter @zhushanwen/pi-* test = vitest run）
@@ -99,7 +99,7 @@ if [[ "${PR_PRE_MERGE_SKIP_BUILD:-1}" == "1" ]]; then
     log "  ↷ build skipped (PR_PRE_MERGE_SKIP_BUILD=1, default for Electron project)"
     RESULTS+=("SKIP build 0s")
 else
-    run_step "build" npm run build
+    run_step "build" pnpm run build
 fi
 
 # ── Step 5: changeset 完整性检查（WARNING 级别，不阻断）

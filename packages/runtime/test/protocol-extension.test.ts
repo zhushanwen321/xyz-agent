@@ -143,6 +143,7 @@ describe('Protocol: extension types', () => {
   it('ExtensionInfo has correct shape', () => {
     const info: ExtensionInfo = {
       name: 'my-extension',
+      displayName: 'my-extension',
       dirName: 'my-extension',
       version: '1.0.0',
       description: 'A test extension',
@@ -156,6 +157,7 @@ describe('Protocol: extension types', () => {
 
     const userInfo: ExtensionInfo = {
       name: 'user-ext',
+      displayName: 'user-ext',
       dirName: 'user-ext',
       version: '0.1.0',
       description: '',
@@ -226,7 +228,7 @@ describe('Protocol: extension types', () => {
       const payload: ExtensionDiscoveredPayload = {
         tempDir: '/tmp/ext-scan-123',
         candidates: [
-          { name: 'ext-a', dirName: 'ext-a', version: '1.0.0', description: 'Test', path: '/tmp/a', enabled: true, source: 'built-in' },
+          { name: 'ext-a', displayName: 'ext-a', dirName: 'ext-a', version: '1.0.0', description: 'Test', path: '/tmp/a', enabled: true, source: 'built-in' },
         ],
       }
       expect(payload.tempDir).toBe('/tmp/ext-scan-123')

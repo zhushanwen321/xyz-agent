@@ -349,6 +349,10 @@ export interface IConfigService {
   getDefaultBaseBranch(): string
   /** 写入默认基分支到 config.json.defaultBaseBranch。 */
   setDefaultBaseBranch(baseBranch: string): void
+  /** 读取是否启用 session 自动重命名（标志文件存在=开），默认 false。 */
+  getAutoRenameEnabled(): boolean
+  /** 设置 session 自动重命名开关（true 创建标志文件 / false 删除）。 */
+  setAutoRenameEnabled(enabled: boolean): void
 }
 
 // ── IExtensionService ──────────────────────────────────────────────
@@ -365,6 +369,11 @@ export interface IExtensionService {
   setAutoUpgrade(name: string, autoUpgrade: boolean): Promise<void>
   /** 启用的 extension 路径列表（供 pi --extension 参数）。cwd 用于解析相对的 discovery extension 目录。 */
   getExtensionPaths(cwd?: string): Promise<string[]>
+  /**
+   * 供 PresetService 做 preset 二次筛选：返回原始发现结果（不含 builtin、不过滤）+ disabled 集合。
+   * M1 修复：builtin 注入点唯一化，避免 preset-service 拿到含 builtin 的列表再 prepend 导致 double-builtin。
+   */
+  getDiscoveredAndDisabled(cwd?: string): Promise<{ discovered: import('./services/ports/installer.js').DiscoveredExtension[]; disabledSet: Set<string> }>
   /**
    * builtin 文件型 extension 路径（existsSync 过滤后），永远注入不受 preset.extensionMode 影响。
    * 设计文档 §2.3：供 PresetService.resolveExtensionPaths 复用。

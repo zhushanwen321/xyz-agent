@@ -106,7 +106,7 @@ bash scripts/check-version-bump.sh
 
 失败时需要检查：
 1. 是否有 prerelease（`-beta.N`）占用了目标版本号？清理后重试
-2. 是否已经手动 bump 过版本？执行 `npm version <latest_release_version> --no-git-tag-version` 回退
+2. 是否已经手动 bump 过版本？执行 `pnpm version <latest_release_version> --no-git-tag-version` 回退
 3. 可能是之前的 pre-release 测试未还原？运行 `cd $WS_ROOT/main && git reset --hard github/main` 重置
 
 ### 阶段 4: 版本 bump + 发布
@@ -123,8 +123,8 @@ git branch --show-current  # 必须输出 main，否则 git checkout main
 #    的版本号未提交，CI 从 apps/electron/package.json 读取到旧版本号。
 
 # 1. 纯修改文件，不创建 commit 和 tag（pnpm workspace 递归 bump 所有包）
-npm version patch --no-git-tag-version
-cd apps/electron && npm version patch --no-git-tag-version && cd ../..
+pnpm version patch --no-git-tag-version
+cd apps/electron && pnpm version patch --no-git-tag-version && cd ../..
 
 # 2. 原子提交：两个 package.json 在同一个 commit
 VERSION=$(node -p "require('./package.json').version")
@@ -212,7 +212,7 @@ NPM_VERSION=$(node -p "require('./packages/extension-protocol/package.json').ver
 # 或如果只发 extension，取某个 extension 的版本
 # NPM_VERSION=$(node -p "require('./extensions/<name>/package.json').version")
 
-git commit -m "chore: npm version ${NPM_VERSION}"
+git commit -m "chore: pnpm version ${NPM_VERSION}"
 
 # 打 npm-v* tag（注意前缀 npm-，与 Electron 的 v* 区分）
 git tag "npm-v${NPM_VERSION}"
@@ -414,7 +414,7 @@ bash .agents/skills/merge/scripts/remove-worktree.sh <branch-name> --force --ski
 
 - **交付方式**：GitHub Release + Electron 产物（DMG/EXE/AppImage）
 - **版本管理**：根 `package.json` + `apps/electron/package.json`（阶段 4 内联命令原子 bump 两个文件）
-- **构建验证**：本地 `npm run build` + CI 全量构建
+- **构建验证**：本地 `pnpm run build` + CI 全量构建
 
 ---
 
