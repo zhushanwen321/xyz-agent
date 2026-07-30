@@ -102,6 +102,73 @@ else
     run_step "build" npm run build
 fi
 
+# ── Step 5: changeset 完整性检查（WARNING 级别，不阻断）
+# 检测：改了 extensions/ 发布包但无对应 changeset → 提醒（不发版的改动可忽略）
+check_changeset() {
+    log "▸ Step: changeset check"
+
+    # 只在 feature 分支（有 main 可对比）时检查
+    if ! git rev-parse --verify main >/dev/null 2>&1 && ! git rev-parse --verify github/main >/dev/null 2>&1; then
+        log "  ↷ skip（找不到 main 分支，无法对比）"
+        RESULTS+=("SKIP changeset-check 0s (no main)")
+        return 0
+    fi
+
+    # 找出改了 src/ 的 extension 包（只改 docs/test/examples 的不算）
+    local changed_pkgs=()
+    while IFS= read -r file; do
+        # 提取包目录（extensions/<name>/src/ 或 extensions/shared/<name>/src/）
+        local pkg_dir
+        pkg_dir=$(echo "$file" | grep -oE '^extensions/(shared/)?[^/]+/' | sed 's:/$::')
+        [ -z "$pkg_dir" ] && continue
+
+        # 只关心改了 src/ 的（排除 README、docs、examples、workflows）
+        echo "$file" | grep -qE '^extensions/(shared/)?[^/]+/src/' || continue
+
+        # 读 package.json 的 name 字段
+        local pkg_name
+        pkg_name=$(node -p "require('./$pkg_dir/package.json').name" 2>/dev/null || echo "")
+        [ -z "$pkg_name" ] && continue
+
+        # 去重
+        local found=0
+        for p in "${changed_pkgs[@]:-}"; do [ "$p" = "$pkg_name" ] && found=1 && break; done
+        [ "$found" = "0" ] && changed_pkgs+=("$pkg_name")
+    done < <(git diff main...HEAD --name-only 2>/dev/null || git diff github/main...HEAD --name-only 2>/dev/null)
+
+    if [ "${#changed_pkgs[@]}" -eq 0 ]; then
+        log "  ✓ 无 extension src/ 改动，跳过 changeset 检查"
+        RESULTS+=("PASS changeset-check 0s (no ext changes)")
+        return 0
+    fi
+
+    # 收集 changeset 文件中声明的包名
+    local declared_pkgs
+    declared_pkgs=$(grep -rh '"@' .changeset/*.md 2>/dev/null | grep -oE '"@[^"]+"' | tr -d '"' | sort -u || echo "")
+
+    # 找出改了但没声明 changeset 的包
+    local missing=()
+    for pkg in "${changed_pkgs[@]}"; do
+        if ! echo "$declared_pkgs" | grep -qF "$pkg"; then
+            missing+=("$pkg")
+        fi
+    done
+
+    if [ "${#missing[@]}" -eq 0 ]; then
+        log "  ✓ 所有改动的 extension 包都有 changeset（${#changed_pkgs[@]} 个包）"
+        RESULTS+=("PASS changeset-check 0s (${#changed_pkgs[@]} pkgs)")
+    else
+        log "  ⚠ ${#missing[@]} 个 extension 改了 src/ 但无 changeset："
+        for pkg in "${missing[@]}"; do
+            log "    - $pkg"
+        done
+        log "  如需发布，运行: pnpm changeset"
+        log "  如是纯文档/测试/重构改动无需发布，可忽略此警告"
+        RESULTS+=("WARN changeset-check 0s (${#missing[@]} missing)")
+    fi
+}
+check_changeset
+
 END=$(date +%s)
 TOTAL=$((END - START))
 

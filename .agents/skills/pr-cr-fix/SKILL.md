@@ -159,10 +159,20 @@ task:  "跑 bash scripts/pr-pre-merge.sh --quiet
         它内部按序执行 typecheck → lint → test（extensions + runtime + renderer），全绿则写 .review/premerge-result marker (result=PASS)
         任意步骤 FAIL 则写 result=FAIL 并非零退出，**禁止 --no-verify / SKIP_LINT=1 / SKIP_EXTENSION_LINT=1**
         默认跳过 build 步骤（Electron build 耗时，CI 会跑）
-        完成后返回 JSON: { result: 'PASS'|'FAIL', failed_step?: 'typecheck'|'lint'|'test:extensions'|'test:runtime'|'test:renderer' }"
+        Step 5 是 changeset 完整性检查（WARNING 级别）：改了 extensions/*/src/ 但无 changeset 时输出 WARN，不导致 FAIL
+        完成后返回 JSON: { result: 'PASS'|'FAIL', failed_step?: 'typecheck'|'lint'|'test:extensions'|'test:runtime'|'test:renderer', changeset_missing?: string[] }"
 ```
 
 **Gate-3a（pre-merge 硬 gate）**：subagent 返回 `result === "PASS"` 才继续推 PR；FAIL 则停手，按 `failed_step` 对应工种重派 worker 修复后重跑 pr-pre-merge.sh。
+
+**Gate-3a.5（changeset 软提醒）**：如果 subagent 返回 `changeset_missing` 非空（有 extension 改了 src/ 但无 changeset），主 agent 用 AskUserQuestion 提醒用户：
+
+| 选项 | 后续动作 |
+|------|---------|
+| **现在补 changeset**（推荐） | 暂停推 PR，派 worker 跑 `pnpm changeset` 创建声明文件，commit 后重新进阶段 3b |
+| **跳过，直接推 PR** | 确认改动不需要发版（纯文档/测试/重构），直接进推 PR 步骤 |
+
+⚠️ 跳过的风险：merge 阶段 4N 的 `changeset version` 不会 bump 该包 → bug fix 不会发布到 npm。
 
 **PASS 后，再派 1 个 subagent 推 PR**：
 

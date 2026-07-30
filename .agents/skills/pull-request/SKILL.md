@@ -42,6 +42,29 @@ npm run build
 bash scripts/preflight-check.sh
 ```
 
+**[MANDATORY] changeset 完整性检查**（改了 `extensions/` 时）:
+
+推荐用 `pr-pre-merge.sh`（内置 changeset 检查，Step 5）：
+
+```bash
+bash scripts/pr-pre-merge.sh
+```
+
+或手动检查：如果 PR 改了 `extensions/*/src/`，确认有对应 changeset 文件声明改了哪些包：
+
+```bash
+# 检查改了哪些 extension 包的 src/
+git diff main...HEAD --name-only | grep -E '^extensions/.*/src/'
+
+# 检查是否有对应的 changeset
+ls .changeset/*.md 2>/dev/null | grep -v README
+```
+
+- **需要发布** → 运行 `pnpm changeset` 创建声明文件（声明包名 + patch/minor/major）
+- **纯文档/测试/重构改动，不需要发布** → 可忽略。但建议运行 `pnpm changeset add --empty` 创建空 changeset，避免 merge 时 `changeset version` 误报
+
+⚠️ **缺失 changeset 的后果**：merge 阶段 4N 的 `changeset version` 不会 bump 该包版本 → `changeset publish` 不会发布 → bug fix 静默丢失。
+
 ### 2. 提交改动
 
 ```bash
