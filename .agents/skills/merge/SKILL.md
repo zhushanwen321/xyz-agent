@@ -52,6 +52,24 @@ bash .agents/skills/merge/scripts/pre-merge-check.sh <worktree-dir>
 ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install
 ```
 
+### 阶段 1.5: Dev-Link 清理 [OPTIONAL]
+
+> **仅当开发期间用过 dev-link skill（`XYZ_EXTENSION_PATHS` 指向本 worktree 的 extensions/）时执行。**
+> 跳过此步骤会导致阶段 7 删除 worktree 后，`.env.dev-extensions` 中的 link 指向已删除目录，下次 `pnpm dev` 时 pi 加载报 ENOENT。
+
+检查并清理指向当前 worktree 的 dev-link：
+
+```bash
+cd /Users/zhushanwen/Code/xyz-agent-workspace
+# 查看当前 link 状态
+bash .agents/skills/dev-link/link-list.sh
+
+# 如果有指向当前 worktree 的 link，清理（--all 清除所有，或指定包名清理单个）
+bash .agents/skills/dev-link/link-npm.sh --all
+```
+
+如果没有 `.env.dev-extensions` 文件或其中无 link，直接跳过本阶段。
+
 ### 阶段 2: PR CI + 合并
 
 ```bash

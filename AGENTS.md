@@ -46,6 +46,7 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 - `extensions/` 目录下 16 个 `@zhushanwen/pi-*` extension 包 + `extensions/shared/quota-providers`，迁自已废弃的 xyz-pi-extensions 仓库，由本项目继续发布到 npm（`npm-v*` tag）
 - **Extension 开发规范**: [docs/extensions/development-guide.md](docs/extensions/development-guide.md)（完整指南）、[docs/extensions/extension-conventions.md](docs/extensions/extension-conventions.md)（强约束）、[docs/extensions/glossary.md](docs/extensions/glossary.md)（术语表）
 - 类型检查: `pnpm extensions:typecheck`；Lint: `pnpm extensions:lint`；测试: `pnpm extensions:test`
+- **本地开发调试**: `.agents/skills/dev-link/` 管理 `XYZ_EXTENSION_PATHS` 环境变量，在本地源码（live edit）和 npm 版本间切换 extension。`link-local.sh <pkg>` 添加 link → `set -a && source .env.dev-extensions && set +a && pnpm dev` 启动 → 改源码后新建 session 即生效。详见 [本地开发指南](docs/extensions/local-dev-guide.md)
 - **Review 工作流**: `.agents/skills/pr-cr-fix/` 是 review→fix→PR 统一编排 skill，调度 `.agents/agents/` 下的 8 个 review agent（7 维审查 + 1 聚合器）。维度覆盖：arch-boundary / business-logic / electron-build / extension-api / monorepo-impact / test-coverage / type-safety。触发词："review 完开 PR"、"pr-cr-fix"。仅用于 xyz-agent worktree 的 PR 场景
 
 **Settings 模块设计文档**:
