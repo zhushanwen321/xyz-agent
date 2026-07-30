@@ -6,5 +6,6 @@
   { "name": "@zhushanwen/pi-subagent-workflow", "description": "Unified subagent execution and multi-agent workflow orchestration" },
   { "name": "@zhushanwen/pi-structured-output", "description": "Structured output tool with JSON Schema / Ajv validation" },
   { "name": "@zhushanwen/pi-permission", "description": "Permission tool for tool execution approval/denial" },
-  { "name": "@zhushanwen/pi-scheduler", "description": "Task scheduling and delayed execution" }
+  { "name": "@zhushanwen/pi-scheduler", "description": "Task scheduling and delayed execution" },
+  { "name": "@zhushanwen/pi-rename-session", "description": "Auto-generate session title after first turn" }
 ]

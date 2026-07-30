@@ -192,9 +192,9 @@ describe('ExtensionService', () => {
 
       const results = await service.ensureMandatoryExtensions()
 
-      // 8 个 mandatory 包都触发了安装
-      expect(installSpy).toHaveBeenCalledTimes(8)
-      expect(autoUpgradeSpy).toHaveBeenCalledTimes(8)
+      // 9 个 mandatory 包都触发了安装
+      expect(installSpy).toHaveBeenCalledTimes(9)
+      expect(autoUpgradeSpy).toHaveBeenCalledTimes(9)
       // 每个结果都是 installed:true
       expect(results.every(r => r.installed)).toBe(true)
       expect(results.every(r => !r.error)).toBe(true)
@@ -223,8 +223,8 @@ describe('ExtensionService', () => {
 
       const results = await service.ensureMandatoryExtensions()
 
-      // pi-goal 已装 → 少调一次 installExtension（7 次而非 8 次）
-      expect(installSpy).toHaveBeenCalledTimes(7)
+      // pi-goal 已装 → 少调一次 installExtension（8 次而非 9 次）
+      expect(installSpy).toHaveBeenCalledTimes(8)
       expect(installSpy).not.toHaveBeenCalledWith('npm:@zhushanwen/pi-goal')
       // pi-goal 结果仍是 installed:true
       const goalResult = results.find(r => r.name === '@zhushanwen/pi-goal')
@@ -239,7 +239,7 @@ describe('ExtensionService', () => {
       const results = await service.ensureMandatoryExtensions()
 
       // 不抛错
-      expect(results).toHaveLength(8)
+      expect(results).toHaveLength(9)
       // 每个都 installed:false + 有 error
       expect(results.every(r => !r.installed)).toBe(true)
       expect(results.every(r => r.error?.includes('network timeout'))).toBe(true)
