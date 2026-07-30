@@ -12,11 +12,11 @@
  */
 
 import { Type } from "@sinclair/typebox";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import Ajv, { type ValidateFunction } from "ajv";
 
-/** Pi Extension API — typed as any because shared stub has no real signatures */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type PiAPI = any;
+/** Pi Extension API — properly typed via ExtensionAPI from pi-coding-agent SDK */
+type PiAPI = ExtensionAPI;
 
 const TOOL_NAME = "structured-output";
 const ENV_SCHEMA = "PI_WORKFLOW_SCHEMA";

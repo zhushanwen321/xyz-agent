@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
+import { Type } from "@sinclair/typebox";
 
 import type { PlanSessionMap } from "./state.js";
 import { getPlanState, persistPlanState, resetPlanState } from "./state.js";

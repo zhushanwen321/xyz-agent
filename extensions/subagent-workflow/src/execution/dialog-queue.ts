@@ -144,7 +144,7 @@ interface QueueItem {
  *
  * 单 session 假设（M-2，与 index.ts lastSessionId 同源）：本队列是进程级单例（实例挂在
  * globalThis[Symbol.for("@zhushanwen/pi-subagents.dialogQueue")]，见 getOrCreateDialogQueue）。
- * rejectAll()/clear() 清空所有 pending dialog——无 per-session 隔离。Pi 当前架构保证单进程
+ * rejectAll() 清空所有 pending dialog——无 per-session 隔离。Pi 当前架构保证单进程
  * 单 session 串行（同进程不会并发多个 session），故 session_shutdown 调 rejectAll() 只会清掉
  * 当前 session 的 pending。若未来 Pi 支持同进程多 session 并发，session A 退出会误清 session B
  * 的 pending dialog——届时需改为 per-session 隔离（入队项 QueueItem 带 sessionId，rejectAll
@@ -314,9 +314,10 @@ export class DialogGlobalQueue {
     this.processing = false;
   }
 
-  /** 清空队列（dispose 用）。pending 项的 Promise 不 settle（dispose 时调用方已不关心）。
-   *  如需 settle，dispose 前应先 rejectChildDialogs 或 rejectAll。 */
-  clear(): void {
+  /** 清空队列状态（仅在 rejectAll 之后调用）。pending Promise 必须先由 rejectAll settle。
+   *  不 settle Promise 的纯状态重置——单独调用会导致 Promise 永挂（footgun），故设为 private。
+   *  外部调用方应使用 rejectAll()（它 settle 所有 pending + 重置状态，是原子操作）。 */
+  private resetState(): void {
     this.queue = [];
     this.current = undefined;
     this.processing = false;

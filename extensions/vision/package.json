@@ -24,7 +24,7 @@
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
     "@earendil-works/pi-ai": "*",
-    "typebox": "*"
+    "@sinclair/typebox": "*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-tui": {

@@ -13,7 +13,7 @@ import type {
   Theme,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import type { Static } from "typebox";
+import type { Static } from "@sinclair/typebox";
 
 import { isValidSkillName } from "./skill-registry";
 import {

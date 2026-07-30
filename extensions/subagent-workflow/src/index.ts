@@ -396,10 +396,9 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     }
 
     // M2: 清理 dialog queue 运行时状态（queue/current/processing）。
-    // [#10] 先 rejectAll() settle 所有 pending dialog Promise（防闭包泄漏：未 settle 的
+    // [#10] rejectAll() settle 所有 pending dialog Promise（防闭包泄漏：未 settle 的
     // Promise 持有 resolve/reject 闭包及 handler 上下文，session 退出后仍挂在全球队列上），
-    // 再 clear() 重置 queue/current/processing（防异常退出后 processing=true 卡死下次 session）。
-    // rejectAll() 由 dialog-queue.ts 提供（Group B 新增）；若其内部已 reset 状态，此处 clear() 为幂等兜底。
+    // 并内部重置 queue/current/processing（原子操作，无 footgun）。
     // 单 session 假设（M-2，同 lastSessionId）：rejectAll() 清空进程级单例的所有 pending，
     // 依赖 Pi 单进程单 session 串行保证——不会误清其他 session。多 session 并发的迁移策略
     // 见 DialogGlobalQueue 类注释（rejectAllForSession）。
@@ -407,7 +406,6 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     // 在 /new /resume /fork 时不丢失注册）。
     const dialogQueue = getOrCreateDialogQueue();
     dialogQueue.rejectAll();
-    dialogQueue.clear();
   });
 
   // ════════════════════════════════════════════════════════════

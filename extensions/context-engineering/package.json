@@ -22,7 +22,7 @@
   ],
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
-    "typebox": "*"
+    "@sinclair/typebox": "*"
   },
   "scripts": {
     "typecheck": "npx tsc --noEmit",
