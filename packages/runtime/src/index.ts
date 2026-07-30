@@ -414,6 +414,23 @@ async function main(): Promise<void> {
     console.error('[runtime] skill registry initialization failed:', e)
   }
 
+  // mandatory 扩展：确保强制安装的扩展已装好（在 auto-upgrade 之前，先装再升级）
+  try {
+    const mandatoryResults = await extensionService.ensureMandatoryExtensions()
+    const installed = mandatoryResults.filter(r => r.installed && !r.error)
+    const failed = mandatoryResults.filter(r => !r.installed || r.error)
+    if (installed.length > 0) {
+      console.log(`[runtime] installed ${installed.length} mandatory extension(s):`,
+        installed.map(r => r.name).join(', '))
+    }
+    if (failed.length > 0) {
+      console.warn(`[runtime] ${failed.length} mandatory extension(s) failed to install:`,
+        failed.map(r => `${r.name} (${r.error})`).join(', '))
+    }
+  } catch (e) {
+    console.warn('[runtime] mandatory extension installation encountered an error:', e)
+  }
+
   // 自动升级：对开启 autoUpgrade 的 user-installed 扩展批量检查 npm latest 版本，
   // semver.lt 判定后静默升级。失败不阻塞启动（每个扩展独立 try-catch）。
   try {

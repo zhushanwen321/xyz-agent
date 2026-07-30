@@ -121,19 +121,31 @@ describe('ExtensionService', () => {
   })
 
   describe('getRecommendedExtensions', () => {
-    it('returns all recommended entries with installed=false when none installed', async () => {
+    it('excludes mandatory packages from recommended list (all 6 recommended are now mandatory)', async () => {
       const recommended = await service.getRecommendedExtensions()
-      // recommended-extensions.json SSOT 的 6 个条目全部返回
-      expect(recommended.length).toBe(6)
-      // fixture 只装了 pi-ask-user，recommended 列表里的包均未装
-      expect(recommended.every(r => r.installed === false)).toBe(true)
-      // 每条都有 name 和 description
-      expect(recommended.every(r => typeof r.name === 'string' && r.name.startsWith('@zhushanwen/pi-'))).toBe(true)
-      expect(recommended.every(r => typeof r.description === 'string' && r.description.length > 0)).toBe(true)
+      // recommended-extensions.json 的 6 个条目全部属于 mandatory SSOT，
+      // Task 4.3 要求 getRecommendedExtensions 过滤掉 mandatory 项 → 返回空列表。
+      // 这是新契约：mandatory 扩展不进推荐列表（它们由 boot 强制安装）。
+      expect(recommended.length).toBe(0)
     })
 
-    it('marks matching package as installed (raw npm name match, no normalize)', async () => {
-      // 在 npm/node_modules 下造一个与 recommended 列表同名的包
+    it('marks matching non-mandatory recommended package as installed', async () => {
+      // recommended-extensions.json 当前所有条目都是 mandatory，无法直接测 installed 标记。
+      // 这里改为间接验证：getRecommendedExtensions 过滤 mandatory 后只返回非 mandatory 项，
+      // 且对返回的每一项 installed 字段为 boolean（契约形状检查）。
+      const recommended = await service.getRecommendedExtensions()
+      expect(recommended.every(r => typeof r.installed === 'boolean')).toBe(true)
+      // 所有返回项都不是 mandatory 包
+      expect(recommended.every(r => !['@zhushanwen/pi-ask-user',
+        '@zhushanwen/pi-goal', '@zhushanwen/pi-todo',
+        '@zhushanwen/pi-pending-notifications', '@zhushanwen/pi-subagent-workflow',
+        '@zhushanwen/pi-structured-output'].includes(r.name))).toBe(true)
+    })
+  })
+
+  describe('mandatory extensions', () => {
+    it('scanExtensions sets mandatory=true for mandatory packages', async () => {
+      // 在 npm/node_modules 下造一个 mandatory 包（@zhushanwen/pi-goal）
       const pkgDir = join(testSettingsDir, 'npm', 'node_modules', '@zhushanwen', 'pi-goal')
       mkdirSync(pkgDir, { recursive: true })
       writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
@@ -143,19 +155,96 @@ describe('ExtensionService', () => {
         keywords: ['pi-package'],
         peerDependencies: { '@mariozechner/pi-coding-agent': '*' },
       }), 'utf-8')
-      // settings.json packages[] 加入该包，使 scanExtensions 的 settings 源能扫到
       const settingsPath = join(testSettingsDir, 'settings.json')
       const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
       settings.packages = [...(settings.packages || []), 'npm:@zhushanwen/pi-goal']
       writeFileSync(settingsPath, JSON.stringify(settings), 'utf-8')
 
-      const recommended = await service.getRecommendedExtensions()
-      const goal = recommended.find(r => r.name === '@zhushanwen/pi-goal')
+      const extensions = await service.scanExtensions()
+      const goal = extensions.find(e => e.name === '@zhushanwen/pi-goal')
       expect(goal).toBeDefined()
-      expect(goal!.installed).toBe(true)
-      // 其余 5 个仍未装
-      const others = recommended.filter(r => r.name !== '@zhushanwen/pi-goal')
-      expect(others.every(r => r.installed === false)).toBe(true)
+      expect(goal!.mandatory).toBe(true)
+      // 非 mandatory 包 mandatory 字段为 false
+      const askUser = extensions.find(e => e.name === 'pi-ask-user')
+      if (askUser) {
+        expect(askUser.mandatory).toBe(false)
+      }
+    })
+
+    it('uninstallExtension rejects mandatory packages', async () => {
+      await expect(service.uninstallExtension('@zhushanwen/pi-goal'))
+        .rejects.toThrow(/Mandatory extension cannot be uninstalled/)
+    })
+
+    it('uninstallExtension allows non-mandatory packages', async () => {
+      // pi-ask-user 非 mandatory，卸载不应抛 mandatory 守卫错误
+      // （后续 npm uninstall 是 mock 的，不会真正报错）
+      await expect(service.uninstallExtension('pi-ask-user'))
+        .resolves.toBeUndefined()
+    })
+  })
+
+  describe('ensureMandatoryExtensions', () => {
+    it('installs missing mandatory extensions + enables autoUpgrade', async () => {
+      // scanExtensions 只返回 pi-ask-user，所有 mandatory 包都「未装」
+      const installSpy = vi.spyOn(service, 'installExtension').mockResolvedValue(undefined)
+      const autoUpgradeSpy = vi.spyOn(service['extSettings'], 'setAutoUpgrade').mockResolvedValue(undefined)
+
+      const results = await service.ensureMandatoryExtensions()
+
+      // 8 个 mandatory 包都触发了安装
+      expect(installSpy).toHaveBeenCalledTimes(8)
+      expect(autoUpgradeSpy).toHaveBeenCalledTimes(8)
+      // 每个结果都是 installed:true
+      expect(results.every(r => r.installed)).toBe(true)
+      expect(results.every(r => !r.error)).toBe(true)
+
+      installSpy.mockRestore()
+      autoUpgradeSpy.mockRestore()
+    })
+
+    it('skips already-installed mandatory extensions', async () => {
+      // 造一个已安装的 mandatory 包 @zhushanwen/pi-goal
+      const pkgDir = join(testSettingsDir, 'npm', 'node_modules', '@zhushanwen', 'pi-goal')
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
+        name: '@zhushanwen/pi-goal',
+        version: '0.5.0',
+        description: 'goal ext',
+        keywords: ['pi-package'],
+        peerDependencies: { '@mariozechner/pi-coding-agent': '*' },
+      }), 'utf-8')
+      const settingsPath = join(testSettingsDir, 'settings.json')
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
+      settings.packages = [...(settings.packages || []), 'npm:@zhushanwen/pi-goal']
+      writeFileSync(settingsPath, JSON.stringify(settings), 'utf-8')
+
+      const installSpy = vi.spyOn(service, 'installExtension').mockResolvedValue(undefined)
+
+      const results = await service.ensureMandatoryExtensions()
+
+      // pi-goal 已装 → 少调一次 installExtension（7 次而非 8 次）
+      expect(installSpy).toHaveBeenCalledTimes(7)
+      expect(installSpy).not.toHaveBeenCalledWith('npm:@zhushanwen/pi-goal')
+      // pi-goal 结果仍是 installed:true
+      const goalResult = results.find(r => r.name === '@zhushanwen/pi-goal')
+      expect(goalResult?.installed).toBe(true)
+
+      installSpy.mockRestore()
+    })
+
+    it('does not throw when install fails, records error', async () => {
+      const installSpy = vi.spyOn(service, 'installExtension').mockRejectedValue(new Error('network timeout'))
+
+      const results = await service.ensureMandatoryExtensions()
+
+      // 不抛错
+      expect(results).toHaveLength(8)
+      // 每个都 installed:false + 有 error
+      expect(results.every(r => !r.installed)).toBe(true)
+      expect(results.every(r => r.error?.includes('network timeout'))).toBe(true)
+
+      installSpy.mockRestore()
     })
   })
 

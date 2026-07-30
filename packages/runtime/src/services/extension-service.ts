@@ -20,7 +20,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSy
 import { join, resolve, basename, relative, isAbsolute, delimiter } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
-import { recommendedExtensions, BUILTIN_EXTENSION_FILES } from '@xyz-agent/shared'
+import { recommendedExtensions, mandatoryExtensions, isMandatoryExtension, BUILTIN_EXTENSION_FILES } from '@xyz-agent/shared'
 import semver from 'semver'
 import type { IInstaller, IExtensionResolver } from './ports/installer.js'
 import type { IExtensionSettings } from './ports/extension-settings.js'
@@ -301,6 +301,9 @@ export class ExtensionService {
       })
     }
 
+    for (const ext of extensions) {
+      ext.mandatory = isMandatoryExtension(ext.name)
+    }
     return extensions
   }
 
@@ -313,11 +316,15 @@ export class ExtensionService {
    * 的 name 字段一致，无需 normalizeExtName 转换。
    *
    * SSOT：recommended-extensions.json（shared 包导出，runtime import）。
+   * mandatory 扩展不在此列——它们由 mandatory-extensions.json 单独管理（boot 时强制安装），
+   * 故过滤掉 mandatory 项避免重复推荐。
    */
   async getRecommendedExtensions(): Promise<Array<{ name: string; description: string; installed: boolean }>> {
     const installed = await this.scanExtensions()
     const installedNames = new Set(installed.map(e => e.name))
-    return recommendedExtensions.map(r => ({ ...r, installed: installedNames.has(r.name) }))
+    return recommendedExtensions
+      .filter(r => !isMandatoryExtension(r.name))
+      .map(r => ({ ...r, installed: installedNames.has(r.name) }))
   }
 
   /**
@@ -345,6 +352,8 @@ export class ExtensionService {
       } catch {
         log.debug(`[extension-service] getExtensionPaths: failed to read package.json in ${dir}`)
       }
+      // mandatory 包无视 disabled 状态，强制加载
+      if (isMandatoryExtension(pkgName)) return true
       return !disabledSet.has(`npm:${pkgName}`)
     })
 
@@ -435,6 +444,14 @@ export class ExtensionService {
    */
   async uninstallExtension(name: string): Promise<void> {
     return this.withInstallLock(async () => {
+      // mandatory 包不可卸载
+      if (isMandatoryExtension(name)) {
+        throw new ExtensionInstallError(
+          'mandatory_cannot_uninstall',
+          `Mandatory extension cannot be uninstalled: ${name}`,
+          'This extension is required by the application and cannot be removed.',
+        )
+      }
       // 先扫描已安装列表，按 name 查找 extension 的路径
       const installed = await this.scanExtensions()
       const target = installed.find((e) => e.name === name)
@@ -535,6 +552,34 @@ export class ExtensionService {
       const actualVersion = this.readInstalledVersion(name, npmDir)
       return { upgraded: true, from: currentVersion, to: actualVersion || latestVersion }
     })
+  }
+
+  /**
+   * 确保 mandatory 扩展已安装。runtime boot 时调用（checkAndAutoUpgrade 之前）。
+   * 对 mandatoryExtensions SSOT 中每个包：已装则跳过，未装则 installExtension + setAutoUpgrade。
+   * 失败不抛错（记日志），不阻塞启动。与 checkAndAutoUpgrade 失败策略一致。
+   */
+  async ensureMandatoryExtensions(): Promise<Array<{ name: string; installed: boolean; error?: string }>> {
+    const extensions = await this.scanExtensions()
+    const installedNames = new Set(extensions.map(e => e.name))
+    const results: Array<{ name: string; installed: boolean; error?: string }> = []
+
+    for (const ext of mandatoryExtensions) {
+      if (installedNames.has(ext.name)) {
+        results.push({ name: ext.name, installed: true })
+        continue
+      }
+      try {
+        const source = `npm:${ext.name}`
+        await this.installExtension(source)
+        await this.extSettings.setAutoUpgrade(source, true)
+        results.push({ name: ext.name, installed: true })
+      } catch (e) {
+        log.warn(`[extension-service] mandatory install failed for ${ext.name}: ${toErrorMessage(e)}`)
+        results.push({ name: ext.name, installed: false, error: toErrorMessage(e) })
+      }
+    }
+    return results
   }
 
   /**

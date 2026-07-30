@@ -1,3 +1,5 @@
+import mandatoryExtensions from './mandatory-extensions.json'
+
 // ── Extension 领域 DTO（runtime ↔ renderer 之间流转的扩展相关 payload）──
 // 迁移自 protocol.ts 第 3 块：ExtensionInfo / UI 交互 / 安装流 / 状态推送。
 // protocol.ts 仅保留 type→payload 映射（SSOT），领域形状归此处便于读者一查到底。
@@ -36,6 +38,8 @@ export interface ExtensionInfo {
   tools?: string[]
   /** 是否启用自动升级（仅 user-installed 扩展有效）。前端读写此字段控制 auto-upgrade 开关。 */
   autoUpgrade?: boolean
+  /** 是否为强制安装扩展（不可卸载/禁用，boot 时自动安装）。从 mandatory-extensions.json SSOT 派生。 */
+  mandatory?: boolean
 }
 
 // ── Extension install flow payload interfaces ──────────────────
@@ -57,4 +61,14 @@ export interface ExtensionDiscoveredPayload {
 export interface RecommendedExtension {
   name: string
   description: string
+}
+
+// ── Mandatory extensions（SSOT: mandatory-extensions.json）─────────
+
+/**
+ * 判断包名是否为强制安装 extension（从 mandatory-extensions.json SSOT 派生）。
+ * mandatory extension：runtime boot 时自动安装+升级，不可卸载/禁用。
+ */
+export function isMandatoryExtension(name: string): boolean {
+  return mandatoryExtensions.some(e => e.name === name)
 }

@@ -44,6 +44,9 @@ export { DEFAULT_PI_SYSTEM_PROMPT, DEFAULT_PI_SYSTEM_PROMPT_VERSION } from './pi
 // 推荐扩展列表 SSOT（runtime 读取，前端经 extension.recommended WS 拉取）
 import recommendedExtensions from './recommended-extensions.json'
 export { recommendedExtensions }
+// 强制安装扩展列表 SSOT（runtime boot 时自动安装+升级）
+import mandatoryExtensions from './mandatory-extensions.json'
+export { mandatoryExtensions }
 // 注意：paths.ts（getDataDir/getPiAgentDir）刻意不在此 barrel 导出。
 // 它们依赖 node:os / node:path，而本 barrel 被 renderer（浏览器）整包 import。
 // Node-only 消费方（main/runtime）从子路径 import：'@xyz-agent/shared/paths'

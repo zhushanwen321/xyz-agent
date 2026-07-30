@@ -1,0 +1,10 @@
+[
+  { "name": "@zhushanwen/pi-ask-user", "description": "Inline adaptive ask_user tool" },
+  { "name": "@zhushanwen/pi-goal", "description": "Codex-style /goal command, persistent goal-driven autonomous loop" },
+  { "name": "@zhushanwen/pi-todo", "description": "AI-driven todo list with session persistence and /todos" },
+  { "name": "@zhushanwen/pi-pending-notifications", "description": "Cross-extension async operation registration/query" },
+  { "name": "@zhushanwen/pi-subagent-workflow", "description": "Unified subagent execution and multi-agent workflow orchestration" },
+  { "name": "@zhushanwen/pi-structured-output", "description": "Structured output tool with JSON Schema / Ajv validation" },
+  { "name": "@zhushanwen/pi-permission", "description": "Permission tool for tool execution approval/denial" },
+  { "name": "@zhushanwen/pi-scheduler", "description": "Task scheduling and delayed execution" }
+]
