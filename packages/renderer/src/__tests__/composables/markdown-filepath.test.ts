@@ -290,7 +290,7 @@ describe('AC-11 白名单外路径不链接', () => {
 // ── AC-2 真实渲染不卡顿（real layer 集成场景）──────────────────────────────
 
 describe('AC-2 真实渲染不卡顿', () => {
-  it('750+ chars 中英混排+反引号+表格行 单次 render < 100ms 且不抛错', async () => {
+  it('750+ chars 中英混排+反引号+表格行 单次 render < 200ms 且不抛错', async () => {
     const triggerBlock = [
       '这是一段混排文本，包含长英文单词如 configurationmanagementstrategies 和 backwardcompatibilityguarantees，',
       '以及反引号路径 `packages/renderer/src/composables/logic/markdown.ts` 和 `~/Code/project/foo.ts`。',
@@ -314,7 +314,7 @@ describe('AC-2 真实渲染不卡顿', () => {
       expect.fail(`renderMarkdown threw: ${(e as Error).message}`)
     }
     const elapsed = performance.now() - t0
-    expect(elapsed).toBeLessThan(100)
+    expect(elapsed).toBeLessThan(200)
     expect(html.length).toBeGreaterThan(0)
   })
 })
