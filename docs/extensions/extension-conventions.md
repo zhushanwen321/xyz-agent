@@ -1,0 +1,183 @@
+# Pi Extension 开发约定
+
+> 本文档整合自 xyz-pi-extensions 项目的 CLAUDE.md，收录 pi extension 开发的**强约束和关键约定**。
+> 完整开发指南（规范红线 + 进阶模式范例）见 [development-guide.md](./development-guide.md)。
+> TUI 渲染细节见 [pi-tui-development-guide.md](./pi-tui-development-guide.md)。
+
+本文档只收录「违反必出 bug」或「[MANDATORY]」级别的约束。通用工程规范（TS 禁 any、错误处理等）不在此重复，见项目根 [AGENTS.md](../../AGENTS.md)。
+
+---
+
+## 运行环境
+
+- 扩展在 Pi 进程内执行，**不是独立进程**
+- 同一进程可能有多个 session。模块级 `let` 变量会被所有 session 共享，必须用闭包或 `session_start` 重建
+- 扩展不能依赖 fs 之外的 Node.js 原生模块（网络、child_process 等由 Pi 核心控制）。已知例外：
+  - `@zhushanwen/pi-subagent-workflow` 走单执行链——SubprocessAgentRunner 委托 SubagentService.executeAndAwait（`executeAndAwait` → `runSpawn` → `spawn("pi", ["--mode","json"])` 子进程，进程隔离），`session-runner.runSpawn` 是**唯一**的 Pi 子进程 spawn 点（ADR-030 决策 2）
+  - `execFileSync("git", ...)` 等只读子进程调用可使用 child_process
+- 旧包 `pi-workflow`/`pi-subagents` 的双 spawn 路径已废弃（见 ADR-030）；旧包 `pi-subagents` 曾用的进程内 `createAgentSession()` 路径已回退为 spawn（进程隔离优先，见 pi-ext-025）
+
+## 资源自包含
+
+扩展的文件分为两类，路径策略不同：
+
+**资源文件**（扩展自带、随 npm 分发的脚本/配置）：
+- 必须放在扩展自己的目录内（如 `scripts/`、`data/`），禁止引用扩展目录外的绝对路径
+- 代码中通过 `import.meta.dirname`（ESM）或 `__dirname`（CJS）定位扩展内资源
+- `package.json` 的 `files` 字段必须包含所有资源文件（`.py`、`.sh`、`.json` 等），确保 `npm pack` 后完整可用
+
+**运行时数据文件**（扩展运行时产出的报告/缓存等）：
+- 使用 Pi 平台约定路径 `homedir() + '.pi/agent/<用途>/'`
+- 不纳入 npm 包，不随扩展分发
+
+目标：用户 `pi install <extension>` 后直接可用，无需额外下载或配置外部资源。
+
+## Session 隔离（进程内层面）
+
+- 状态必须存储在 `session_start` 重建的闭包变量或 `ctx.sessionManager` entries 中
+- `todo` 扩展的 `let todos` 是已知的违反——当前单 session 使用不会有问题，但多 session 时需要重构为闭包内状态
+
+> 注意：这是 **extension 进程内**的 session 隔离，与 xyz-agent 前端的 per-session Map 分区（AGENTS.md §7）是不同层面。前者防 extension 模块级变量被多 session 共享，后者防 Vue 组件状态串台。
+
+## 状态持久化
+
+- 用 `pi.appendEntry(type, data)` 写入，`ctx.sessionManager.getEntries()` 读取
+- 自行实现 GC（splice 旧 entries），防止长 session 中 entries 无限积累
+- `deserializeState` 必须向后兼容旧格式（字段缺失时给默认值）
+
+## Tool 设计
+
+- 参数用 typebox `Type.Object()` + `StringEnum()` 定义 schema
+- `execute` 返回 `{ content: [...], details: {...} }` 结构
+- `details` 是 renderResult 的数据来源，不要依赖 content 文本解析
+- 错误用 `throw new Error()`，不要返回 `{ content: [{ text: "错误: ..." }] }` 的**错误成功模式**（调用方无法区分成功与失败）
+
+## TUI 渲染
+
+- `renderCall` 和 `renderResult` 返回 `new Text(string, 0, 0)`
+- 颜色通过 `theme.fg("token", text)` 使用语义 token，不硬编码 ANSI
+- 展开/折叠：`options.expanded` 控制显示详细程度
+- **导航键规范**：自定义 TUI 组件的列表导航用方向键，经 pi-tui 的 `matchesKey(data,"up"|"down")` 识别——它覆盖全部方向键编码（legacy `\x1b[A`/`\x1b[B`、application-mode `\x1bOA`/`\x1bOB`、Kitty CSI u、modifyOtherKeys）。不要硬编码单一字节序列（会漏掉 application-mode/Kitty 终端，方向键直接失效）。禁止用 vim j/k 导航（与同组件内的 filter 文本输入冲突）。确认/取消多键位（Enter/Esc）走 `kb.matches` 以尊重用户键位，不受此限。
+
+## 运行时环境区分（TUI 主进程 vs GUI 主进程 / xyz-agent）
+
+扩展需要在 TUI / GUI 两种主进程下走不同分支时（如 widget 内容源、sidecar 通道选择），用 `ctx.mode === "rpc"` 判断，**不要**用 `ctx.hasUI`。
+
+| 字段 | TUI 主进程 | GUI 主进程（xyz-agent）| subagent 子进程 |
+|---|---|---|---|
+| `ctx.mode` | `"tui"` | `"rpc"` | `"rpc"`（spawn 时 `--mode rpc`）|
+| `ctx.hasUI` | `true` | `true` | `true` |
+
+- `ctx` 来自 `session_start` 回调参数，永远是**当前进程**的 ctx。streamSink / widget 注入点的 ctx 是**主进程**的，跟子进程无关。
+- spawn 子进程时传的 `--mode rpc` 决定子进程 stdout 格式，与主进程的 ctx.mode 独立。
+- `hasUI` 在 TUI 和 RPC 都 true，不能区分。
+
+**应用示例**（subagent-workflow W1 修复）：TUI 下禁用 streamSink 避免 raw LLM text 灌 widget；GUI 下启用（ctx.ui.setWidget → sidecar → chatStore）。
+
+```typescript
+streamSink: ctx.mode === "rpc"
+  ? { setWidget: (key, lines) => ctx.ui.setWidget(key, lines) }
+  : undefined,
+```
+
+`ExtensionMode` 字面量（4 个值：`"tui" | "rpc" | "json" | "print"`）。完整章节 + 进程边界见 [pi-tui-development-guide.md](./pi-tui-development-guide.md) 第四部分第 8 节。
+
+> xyz-agent 跨层排查（AGENTS.md §17）常涉及 pi extension 行为——extension 的 `ctx.mode`、pi 私有协议（triggerTurn/deliverAs 等）是排查「主 agent 是否续跑」等跨层问题的前提知识。
+
+## SDK 接口契约
+
+凡调用 `pi.on(...)`、`pi.registerTool(...)`、`pi.registerCommand(...)`、读 `ctx.*` 的代码：
+
+- **ExtensionHandler 签名是 `(event, ctx) => ...`（两个参数）**。`modelRegistry`/`cwd`/`ui`/`sessionManager` 在第二个参数 `ExtensionContext` 上，不在 event 上。核对时打开真实 SDK 的 `types.d.ts`
+- 新增/修改 SDK 调用必须有契约测试覆盖（模板：`extensions/subagent-workflow/src/execution/__tests__/sdk-contract.test.ts`）
+- `registerTool` 的 schema 必填字段在所有执行模式下都必须真的必填；条件必填用 Optional + 运行时校验，避免 schema 与描述矛盾
+
+> 本项目已将 `@earendil-works/pi-coding-agent@0.82.1` 作为根 devDependency 安装（真实 SDK 类型），不再使用类型桩。extensions 的 tsconfig 直接从 node_modules 解析 SDK 类型。
+
+## 扩展安装红线 [强制]
+
+**所有扩展必须通过 npm 包（`pi install`）加载，禁止通过本地目录（`~/.pi/agent/extensions/`）加载，dev 环境测试除外。**
+
+| 方式 | 场景 | 是否允许 |
+|------|------|----------|
+| `pi install npm:@zhushanwen/pi-xxx` | 生产使用 | ✅ 唯一正确方式 |
+| `~/.pi/agent/extensions/` 目录放置 | dev 环境调试 | ✅ 仅开发时 |
+| `~/.pi/agent/extensions/` 目录放置 | 日常使用 | ❌ 禁止 |
+
+**原因**：Pi 的包发现机制对 npm 包和本地目录走不同路径。npm 包通过 `collectPackageResources` → `readPiManifest` 发现，**必须**有 `pi` 字段才能加载。本地目录有 `index.ts` fallback 所以不报错，但这掩盖了 `pi` 字段缺失的问题，导致 npm 安装后扩展静默不加载。
+
+**每个扩展 package.json 必须包含以下最小声明**：
+
+```json
+{
+  "type": "module",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "keywords": ["pi-package"]
+}
+```
+
+**[强制]** `pi.extensions` 必须为 `["./index.ts"]`，禁止 `["./src/index.ts"]`。顶层 `index.ts` re-export `src/index.ts`，确保 Pi 扩展加载列表统一显示纯包名。
+
+有 skills 目录的扩展还必须声明 `"pi.skills": ["./skills"]`。
+
+## Extension 依赖管理 [MANDATORY]
+
+所有 extension 之间的依赖关系必须在项目根的 `extension-dependencies.json` 中声明。新增、修改、删除 extension 时必须同步更新此文件。
+
+**数据文件**：
+- `extension-dependencies.json` — 依赖关系数据（source of truth，项目根）
+- `extension-dependencies.schema.json` — JSON Schema 校验
+
+**依赖类型**：
+
+| 类型 | 标识 | 含义 | 在 package.json 中体现 |
+|------|------|------|----------------------|
+| **runtime** | `"runtime"` | 运行时需要对方 extension 已安装，但代码层面不 import | 不体现（通过 pi 自动加载 extension） |
+| **package** | `"package"` | npm 包级别依赖，代码中直接 import 对方的模块 | 必须在 `dependencies` 或 `peerDependencies` 中声明 |
+| **optional** | `"optional"` | 功能增强，缺失时降级运行 | 在 `peerDependencies` + `peerDependenciesMeta.optional: true` 中声明 |
+
+**校验**：`npx ajv-cli validate -s extension-dependencies.schema.json -d extension-dependencies.json`
+
+详见：[pi-ext-019](./adr/pi-ext-019-structured-output-extension.md)
+
+## 禁止使用已废弃的 Pi SDK namespace [MANDATORY]
+
+**唯一正确的 namespace**：`@earendil-works/pi-*`（`pi-coding-agent`、`pi-tui`、`pi-ai`、`pi-agent-core` 四个包）。
+
+**禁止使用**：`@mariozechner/pi-*` 已被 Pi 团队重命名并被 npmjs 标记为 deprecated。仓库内任何位置（`.ts`、`.json`、`.d.ts`、vitest.config.ts、tsconfig.json）出现这个旧 namespace：
+
+- 会让 `pnpm install` 报 deprecation warning，污染终端输出
+- 让本地 monorepo 可能拉取 npm 上未迁移的旧版本
+- 认知成本高——「为什么会有两个 namespace」
+
+xyz-agent 依赖 `@earendil-works/pi-coding-agent`，此约束对消费侧同样有效。
+
+## 命名约定
+
+- 扩展入口：`export default function xxxExtension(pi: ExtensionAPI)`
+- 状态接口：`XxxRuntimeState`
+- 工具参数：`XxxParams`（typebox schema）
+- 工具详情：`XxxDetails`（renderResult 数据）
+
+## 行数上限
+
+- 单文件不超过 1000 行。超过时按职责拆分到 `src/` 下
+- 函数不超过 80 行
+
+> 注意：这是 extensions 的约定（TS 源码），与 xyz-agent 前端的约定（Vue template ≤400 / script ≤300）度量对象不同，各自 scope 合理。
+
+## TypeScript 约定
+
+- 禁止 `any`，用 `unknown` 或具体类型
+- `(entry as any).customType` 这种模式改为类型守卫函数
+- `as never` / `as any` / `as unknown as T` 会绕过类型检查，`taste/no-unsafe-cast` 规则（extensions/ 专用）会 warn 标记。不可替代的断言必须有运行时 guard 或 SDK 契约测试兜底
+- import 顺序：Node 内置 → npm 包 → 项目内部
+
+## typebox 注意事项
+
+本项目存在两个 typebox 包：`typebox`（v1.x，新版，SDK 使用）和 `@sinclair/typebox`（v0.34.x，经典版）。
+
+- 当 extension 的 schema 直接传给 `registerTool` 的泛型约束时，**必须用 `typebox`**（与 SDK 一致），否则结构不兼容导致类型错误
+- 仅在 extension 内部使用 schema（不传给 SDK 泛型）时，两个包均可，但建议统一用 `typebox`
