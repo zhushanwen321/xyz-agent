@@ -167,7 +167,7 @@ body {
 .tk-row { display: flex; align-items: center; gap: 6px; min-height: 24px; cursor: pointer; }
 .tk-ico { width: 13px; height: 13px; color: var(--neutral-ico); flex-shrink: 0; }
 .tk-label { font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--neutral-fg); margin-right: 2px; }
-.tk-preview { font-size: 12px; color: var(--neutral-mid); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.tk-preview { font-size: 12px; color: var(--neutral-mid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── bash block（v6：删卡片，缩进 + 命令前缀）── */
 .bash-v6 { padding: 8px 0 8px 16px; font-family: var(--font-mono); font-size: 12px; }
@@ -206,28 +206,120 @@ body {
 .cs-fbadge.D { background: var(--danger-soft); color: var(--danger); }
 .cs-fname { color: var(--neutral-fg); font-family: var(--font-mono); }
 
-/* ── UserBubble（v6：删 border，仅 bg-surface-hover）── */
+/* ── UserBubble（v6：删 border，仅 bg-surface-hover；删 pending 态，pending 语义迁 QueueBubble）── */
 .ub-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .ub-v6 { max-width: 76%; border-radius: 14px 14px 4px 14px; background: var(--surface-hover); padding: 9px 13px; font-size: 13px; line-height: 1.55; color: var(--neutral-fg); }
-.ub-v6.pending { border: 1px dashed var(--accent); background: var(--accent-soft); }
 .ub-v6.editing { border: 1px solid var(--accent); background: var(--bg-input); box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 22%, transparent); border-radius: 14px; padding: 8px; }
 
-/* ── Composer（v6：默认无边框 bg-input 凹陷，focus 出 ring）── */
+/* ── QueueBubble（v6 重设计：幽灵卡片，无 border，bg-surface 浮起 + 左侧脉冲点）── */
+/* pending 消息统一在此展示，不再进对话流。消息被消费后从队列移除，进入对话流渲染为正常 UserBubble */
+.qb-v6 { background: var(--surface); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 8px; }
+.qb-head { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.qb-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex-shrink: 0; animation: pulse-accent 1.8s ease-in-out infinite; }
+@keyframes pulse-accent { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+.qb-label { font-size: 12px; font-weight: 500; color: var(--neutral-fg); }
+.qb-count { font-family: var(--font-mono); font-size: 11px; color: var(--neutral-mid); }
+.qb-chev { width: 11px; height: 11px; color: var(--neutral-dim); transition: transform var(--duration-fast); }
+.qb-head.expanded .qb-chev { transform: rotate(90deg); }
+.qb-list { margin-top: 8px; padding-left: 15px; display: flex; flex-direction: column; gap: 8px; }
+.qb-item { display: flex; align-items: flex-start; gap: 8px; padding-left: 12px; border-left: 1px solid var(--border); }
+.qb-item-dot { width: 6px; height: 6px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+.qb-item-dot.steer { background: var(--accent); }
+.qb-item-dot.followup { background: var(--info); }
+.qb-item-body { flex: 1; min-width: 0; }
+.qb-item-type { font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.qb-item-type.steer { color: var(--accent); }
+.qb-item-type.followup { color: var(--info); }
+.qb-item-text { font-size: 12px; color: var(--neutral-mid); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qb-item-idx { font-family: var(--font-mono); font-size: 10px; color: var(--neutral-dim); margin-right: 4px; }
+
+/* ── Composer 完整（v6：默认无边框 bg-input 凹陷，focus 出 ring）── */
 .comp-wrap { padding: 0 20px 16px; }
 .comp-wrap.centered { max-width: var(--content-max-w); margin: 0 auto; }
+/* RetryIndicator（composer 上方独立行，重试提示）*/
+.retry-v6 { display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin-bottom: 8px; font-size: 12px; color: var(--neutral-mid); }
+.retry-v6 .retry-ico { width: 14px; height: 14px; color: var(--warn); }
+.retry-v6 .retry-act { color: var(--accent); cursor: pointer; }
 .comp-box-v6 { position: relative; border-radius: var(--radius-lg); background: var(--bg-input); border: 1px solid transparent; }
 .comp-box-v6.has-input { box-shadow: 0 0 0 2px rgba(255,255,255,0.04); }
 .comp-box-v6.focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
-.comp-input { min-height: 60px; max-height: 120px; padding: 11px 14px 4px; font-size: 13px; line-height: 1.55; color: var(--neutral-fg); }
-.comp-input.ph { color: var(--neutral-dim); }
-.comp-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0; padding: 0 10px 8px; margin-top: 4px; }
-.comp-send { width: var(--composer-btn-size); height: var(--composer-btn-size); border-radius: var(--radius); display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: #fff; cursor: pointer; }
-.comp-send svg { width: 15px; height: 15px; }
-.comp-send.disabled { background: var(--surface-2); color: var(--neutral-faint); cursor: not-allowed; }
+.comp-box-v6.bash { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
+/* staging chip（fork/handoff 模式，顶部 accent 标签）*/
 .comp-chip { display: inline-flex; align-items: center; gap: 6px; margin: 8px 10px 0; padding: 4px 8px; border-radius: var(--radius); background: var(--accent-soft); font-size: 11px; font-weight: 500; color: var(--accent); }
 .comp-chip svg { width: 12px; height: 12px; }
+.comp-chip .chip-x { width: 14px; height: 14px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; }
+.comp-chip .chip-x:hover { background: var(--accent); color: #fff; }
+/* ContextChipsBar（已附上下文 chip 行：@file / #skill / image）*/
+.ctx-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 7px 14px 0; }
+.ctx-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 180px; padding: 2px 6px; border-radius: var(--radius-sm); background: var(--surface-2); font-size: 11px; color: var(--neutral-mid); }
+.ctx-chip svg { width: 11px; height: 11px; flex-shrink: 0; }
+.ctx-chip.image { color: var(--reasoning); }
+.ctx-chip .ctx-x { width: 12px; height: 12px; border-radius: var(--radius-sm); cursor: pointer; opacity: .6; }
+.ctx-chip .ctx-x:hover { background: var(--danger-soft); color: var(--danger); opacity: 1; }
+/* landing meta-row chip（directory/branch/preset）*/
+.meta-row { display: flex; align-items: center; gap: 8px; padding: 8px 14px 0; flex-wrap: wrap; }
+.meta-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 11px; color: var(--neutral-mid); cursor: pointer; }
+.meta-chip:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.meta-chip.empty { color: var(--accent); }
+.meta-chip svg { width: 12px; height: 12px; }
+.meta-sep { width: 1px; height: 14px; background: var(--border); }
+/* composer-bar 底部工具条 */
+.comp-input { min-height: 60px; max-height: 120px; padding: 11px 14px 4px; font-size: 13px; line-height: 1.55; color: var(--neutral-fg); }
+.comp-input.ph { color: var(--neutral-dim); }
+.comp-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 0 10px 8px; margin-top: 4px; }
+.bar-btn { height: 28px; padding: 0 8px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--neutral-dim); cursor: pointer; }
+.bar-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.bar-btn svg { width: 14px; height: 14px; }
+.bar-btn.think { color: var(--neutral-mid); }
+.bar-spacer { flex: 1; }
+/* 发送位三态：send / stop / spinner */
+.send-slot { width: var(--composer-btn-size); height: var(--composer-btn-size); border-radius: var(--radius); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.send-slot svg { width: 15px; height: 15px; }
+.send-slot.send { background: var(--accent); color: #fff; }
+.send-slot.send:hover { background: var(--accent-hover); }
+.send-slot.send.disabled { background: var(--surface-2); color: var(--neutral-faint); cursor: not-allowed; }
+.send-slot.stop { background: var(--surface-hover); color: var(--neutral-mid); }
+.send-slot.stop:hover { background: var(--danger-soft); color: var(--danger); }
+.send-slot.spinner { background: var(--accent); color: #fff; }
+.send-spinner-ico { width: 13px; height: 13px; color: #fff; animation: spin 1s linear infinite; }
 
-/* diff 行（ChangeSet 详情里 mini diff 不用，这里给 BashOutput）*/
+/* ── BashOutputBlock（composer 直接执行，独立系统消息，不可折叠）── */
+/* 区别于 tool-bash（agent 调用，嵌 tool 块可折叠）*/
+.bob { padding: 8px 0; }
+.bob-head { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.bob-ico { width: 13px; height: 13px; color: var(--neutral-ico); flex-shrink: 0; }
+.bob-cmd { font-family: var(--font-mono); font-size: 12px; color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.bob-status { font-family: var(--font-mono); font-size: 10px; flex-shrink: 0; }
+.bob-status.running { color: var(--accent); display: inline-flex; align-items: center; gap: 4px; }
+.bob-status.exit0 { color: var(--success); }
+.bob-status.exitn { color: var(--warn); }
+.bob-status.dim { color: var(--neutral-dim); }
+.bob-loader { width: 12px; height: 12px; animation: spin 1.4s linear infinite; }
+.bob-cancel { font-size: 10px; padding: 2px 6px; border-radius: var(--radius-sm); background: var(--surface-2); color: var(--neutral-mid); cursor: pointer; }
+.bob-cancel:hover { background: var(--danger-soft); color: var(--danger); }
+.bob-out { font-family: var(--font-mono); font-size: 12px; color: var(--neutral-mid); max-height: 240px; overflow: auto; margin-top: 6px; padding-left: 16px; white-space: pre-wrap; line-height: 1.5; }
+.bob-trunc { font-style: italic; font-size: 10px; color: var(--neutral-dim); padding-left: 16px; margin-top: 4px; }
+.bob-empty { font-size: 11px; color: var(--neutral-faint); padding-left: 16px; margin-top: 4px; font-style: italic; }
+
+/* ── tool block（v6：failed 统一 neutral-ico，exit N 中性标签；补 running/unfinished 态）── */
+.tool-v6 { padding: 8px 0; }
+.tool-hd { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; cursor: pointer; }
+.tool-ico { width: 13px; height: 13px; color: var(--neutral-ico); flex-shrink: 0; }
+.tool-loader { width: 13px; height: 13px; color: var(--accent); animation: spin 1.4s linear infinite; flex-shrink: 0; }
+.tool-name { color: var(--neutral-fg); }
+.tool-name.running { color: var(--accent); }
+.tool-name.failed { color: var(--neutral-mid); }
+.tool-arg { color: var(--neutral-mid); font-family: var(--font-mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-exit { margin-left: auto; font-family: var(--font-mono); font-size: 10px; padding: 2px 6px; border-radius: var(--radius-sm); background: var(--surface-2); color: var(--neutral-mid); }
+.tool-body { padding: 6px 0 0 16px; }
+.tool-meta { font-size: 11px; color: var(--neutral-dim); font-family: var(--font-mono); margin-bottom: 4px; }
+/* tool-bash 渲染分支（agent 调用的 bash，嵌 tool 块，可折叠）*/
+.tool-bash-box { border: 1px solid var(--neutral-faint); border-radius: var(--radius-sm); background: var(--surface-2); }
+.tool-bash-cmd { padding: 6px 16px; font-family: var(--font-mono); font-size: 12px; color: var(--neutral-fg); border-bottom: 1px solid var(--neutral-faint); }
+.tool-bash-out { padding: 6px 16px; font-family: var(--font-mono); font-size: 12px; color: var(--neutral-mid); line-height: 1.5; }
+.tool-out { font-family: var(--font-mono); font-size: 12px; color: var(--neutral-mid); line-height: 1.5; }
+
+/* diff 行 */
 .bash-trunc { color: var(--neutral-mid); font-family: var(--font-mono); font-size: 11px; padding: 4px 0; }
 
 /* doc foot */
@@ -244,7 +336,7 @@ body {
   <header class="doc-head">
     <div class="doc-eyebrow">v6 SPEC · 02 / 07</div>
     <h1 class="doc-title">对话流规格稿</h1>
-    <p class="doc-sub">覆盖 §4.1 全部组件：MessageStream 容器 / PanelHeader / TurnMeta / Block(thinking·bash·tool-failed) / ChangeSetCard / UserBubble / Composer。每个组件展示 v6 目标态渲染 + 全状态变体 + px/token 标注（现值 → v6 值）。实现后拿本稿与真实 UI 逐元素比对验证。</p>
+    <p class="doc-sub">覆盖 §4.1 全部组件：MessageStream 容器 / PanelHeader / TurnMeta / Block(thinking·bash·tool) / ChangeSetCard / UserBubble / QueueBubble / Composer。每个组件展示 v6 目标态渲染 + 全状态变体 + px/token 标注（现值 → v6 值）。bash 块区分两类来源（BashOutputBlock / tool-bash），pending 语义迁 QueueBubble。</p>
     <div class="doc-meta">
       <span><b>SSOT</b> v6-design.md §4.1</span>
       <span><b>核心改动</b> assistant 居中 720px + 层级代边框 + 正文提亮</span>
@@ -261,6 +353,7 @@ body {
     <a href="#s6">§6 Block·tool</a>
     <a href="#s7">§7 ChangeSetCard</a>
     <a href="#s8">§8 UserBubble</a>
+    <a href="#s8b">§8.5 QueueBubble</a>
     <a href="#s9">§9 Composer</a>
   </nav>
 
@@ -440,14 +533,14 @@ body {
   </section>
 
   <!-- ================================================================
-       §4 Block · thinking
+       §4 Block · thinking（推翻 handoff §4.1「2 行」决策，回到 1 行 ellipsis）
        ================================================================ -->
   <section class="spec" id="s4">
     <div class="spec-head"><span class="spec-num">§4</span><h2 class="spec-title">Block · thinking（思考块）</h2></div>
-    <p class="spec-desc">收起态预览。v6：预览文本提亮到 <code>--neutral-mid</code>（#9ca3af，过 AA，现 neutral-dim #6b7280 部分场景不过 AA），并显 2 行（现仅 1 行 truncate）。label 保持 uppercase mono。</p>
+    <p class="spec-desc">收起态预览。<b>v6 仅做提亮</b>：预览文本 <code>neutral-dim #6b7280</code> → <code>neutral-mid #9ca3af</code>（过 AA）。<b>行数维持 1 行 ellipsis</b>（60 字符截断 + …，与代码现状一致）。<span style="color:var(--warn);">⚠ 推翻 handoff §4.1「显 2 行」决策</span>——2 行会破坏 turn 内的视觉节奏，1 行 ellipsis 更克制。label 保持 uppercase mono。</p>
     <div class="change-points">
-      <span class="cp cp-now"><b>现</b> neutral-dim #6b7280 · 1 行</span>
-      <span class="cp cp-v6"><b>v6</b> neutral-mid #9ca3af · 2 行</span>
+      <span class="cp cp-now"><b>现</b> neutral-dim #6b7280 · 1 行 truncate</span>
+      <span class="cp cp-v6"><b>v6</b> neutral-mid #9ca3af · 1 行 truncate（仅提亮）</span>
     </div>
 
     <div class="render-frame">
@@ -459,7 +552,7 @@ body {
               <div class="tk-row">
                 <svg class="tk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2Z"/></svg>
                 <span class="tk-label">THINK</span>
-                <span class="tk-preview">用户要求重构对话流的视觉层，我需要先分析当前的组件结构，确定哪些是表面层的样式调整，哪些涉及到布局变化。assistant 居中 720px 是核心改动，需要确认这不会影响虚拟滚动的 slot 结构…</span>
+                <span class="tk-preview">用户要求重构对话流的视觉层，我需要先分析当前的组件结构，确定哪些是表面层的样式调整，哪些涉及到布局变化…</span>
               </div>
             </div>
           </div>
@@ -473,7 +566,7 @@ body {
                 <span class="tk-label">THINK</span>
                 <span style="font-size:12px;color:var(--neutral-dim);">·</span>
               </div>
-              <div style="font-size:12px;color:var(--neutral-mid);line-height:1.7;padding-left:16px;padding-top:6px;">展开后完整思考内容，line-height 1.7 提升可读性，颜色同样用 neutral-mid（提亮）。hover 显示 copy 按钮。</div>
+              <div style="font-size:12px;color:var(--neutral-mid);line-height:1.7;padding-left:16px;padding-top:6px;">展开后完整思考内容，line-height 1.7 提升可读性，颜色同样用 neutral-mid（提亮）。hover 显示 copy 按钮。<br>注：working（思考进行中）态强制全展开且不可手动收，仍显 60 字预览非完整内容。</div>
             </div>
           </div>
         </div>
@@ -482,79 +575,158 @@ body {
 
     <div class="anno-grid">
       <div class="anno"><b>block padding:</b><br>py-2 (8px 上下)</div>
-      <div class="anno"><b>icon:</b><br>13px [--trace 不在此档，特例] neutral-ico</div>
+      <div class="anno"><b>icon:</b><br>13px neutral-ico · <b>无 spinner</b>（thinking 块不用 loader）</div>
       <div class="anno"><b>label:</b><br>10px [--text-2xs] mono 600 uppercase tracking-.08em neutral-fg</div>
-      <div class="anno"><b>preview 文字:</b><br><span class="old">12px neutral-dim 1 行 truncate</span><br><span class="v6">12px [--text-sm] neutral-mid · 2 行 -webkit-line-clamp</span></div>
-      <div class="anno"><b>预览行数:</b><br><span class="old">1 行 (60 字截断)</span> <span class="v6">→ 2 行</span></div>
+      <div class="anno"><b>preview 文字:</b><br><span class="old">12px neutral-dim #6b7280</span><br><span class="v6">12px [--text-sm] neutral-mid #9ca3af（仅提亮）</span></div>
+      <div class="anno"><b>预览行数:</b><br><span class="v6">1 行 ellipsis（60 字符截断，维持现状）</span><br><span style="color:var(--warn);">推翻 handoff「2 行」</span></div>
       <div class="anno"><b>对比度:</b><br><span class="v6">neutral-mid 6.95:1 ✓ AA</span>（dim 3.91:1 ✗）</div>
+      <div class="anno"><b>working 态:</b><br>强制展开 + 预览文本（无 spinner），不可手动收</div>
+      <div class="anno"><b>折叠:</b><br>本地态 thinkingCollapsed，default 收起</div>
     </div>
   </section>
 
   <!-- ================================================================
-       §5 Block · bash
+       §5 Block · bash（两类来源：BashOutputBlock + tool-bash）
        ================================================================ -->
   <section class="spec" id="s5">
     <div class="spec-head"><span class="spec-num">§5</span><h2 class="spec-title">Block · bash</h2></div>
-    <p class="spec-desc">v6：删 <code>border + bg-surface-2</code> 嵌套卡片（现状用 border-neutral-faint rounded-sm 包裹命令+输出），改缩进 + 命令前缀区分层级。对标 Claude/Codex：bash 不再是「卡片里的卡片」，而是缩进的命令块。</p>
+    <p class="spec-desc"><b>bash 有两个来源，渲染不同，必须区分</b>：① <b>BashOutputBlock</b>——composer 用 <code>!</code> 前缀直接执行的 bash，独立系统消息，<b>不可折叠</b>，header 显完整命令 + exit 状态标签；② <b>tool-bash</b>——agent 调用的 bash 工具，嵌在 tool 块内（见 §6），<b>可折叠</b>，展开后用 border 容器渲染命令+输出。两类 v6 统一：去嵌套卡片视觉冗余，failed 中性化。</p>
     <div class="change-points">
-      <span class="cp cp-now"><b>现</b> border + bg-surface-2 嵌套卡片</span>
-      <span class="cp cp-v6"><b>v6</b> 删卡片，缩进 + 命令前缀</span>
+      <span class="cp cp-v6"><b>区分</b> BashOutputBlock（不可折叠）≠ tool-bash（可折叠）</span>
+      <span class="cp cp-v6"><b>failed</b> exit 标签中性化（非 danger 红框）</span>
     </div>
 
+    <!-- 5A. BashOutputBlock（composer 直接执行） -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:4px 0 14px;font-weight:500;">5A. BashOutputBlock · composer 直接执行（不可折叠）</h3>
     <div class="render-frame">
       <div class="panel-stage"><div class="ms-scroll"><div class="ms-turn"><div class="ms-assistant-col">
         <div class="state-row" style="margin:0;">
-          <div class="state-tag">default</div>
+          <div class="state-tag">running</div>
           <div class="state-demo">
-            <div class="bash-v6">
-              <div class="bash-cmd"><span class="bash-prompt">$</span>npm run test -- --filter=panel</div>
-              <div class="bash-out">✓ 1827 passed
+            <div class="bob">
+              <div class="bob-head">
+                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                <span class="bob-cmd">npm run test</span>
+                <span class="bob-status running"><svg class="bob-loader" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg></svg></span>
+                <span class="bob-cancel">取消</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="state-row" style="margin:14px 0 0;">
+          <div class="state-tag">exit 0</div>
+          <div class="state-demo">
+            <div class="bob">
+              <div class="bob-head">
+                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                <span class="bob-cmd">npm run test</span>
+                <span class="bob-status exit0">exit 0</span>
+              </div>
+              <div class="bob-out">✓ 1827 passed
 ✓ 0 failed
 Test Files  48 passed</div>
             </div>
           </div>
         </div>
         <div class="state-row" style="margin:14px 0 0;">
+          <div class="state-tag">exit N</div>
+          <div class="state-demo">
+            <div class="bob">
+              <div class="bob-head">
+                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                <span class="bob-cmd">npm run test</span>
+                <span class="bob-status exitn">exit 1</span>
+              </div>
+              <div class="bob-out">FAIL  src/panel.test.ts
+  ● TestSuite › should render</div>
+            </div>
+          </div>
+        </div>
+        <div class="state-row" style="margin:14px 0 0;">
           <div class="state-tag">truncated</div>
           <div class="state-demo">
-            <div class="bash-v6">
-              <div class="bash-cmd"><span class="bash-prompt">$</span>npm run build</div>
-              <div class="bash-out">vite v6.0.0 building for production...
+            <div class="bob">
+              <div class="bob-head">
+                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                <span class="bob-cmd">npm run build</span>
+                <span class="bob-status exit0">exit 0</span>
+              </div>
+              <div class="bob-out">vite v6.0.0 building for production...
 transforming 1247 modules...
-✓ 1827 modules transformed.
-rendering chunks...</div>
-              <div class="bash-trunc">⋯ 输出已截断（显示前 8 行，共 142 行）· 点击展开全部</div>
+✓ 1827 modules transformed.</div>
+              <div class="bob-trunc">⋯ 输出已截断（pi 返回 truncated，共 142 行）</div>
+            </div>
+          </div>
+        </div>
+        <div class="state-row" style="margin:14px 0 0;">
+          <div class="state-tag">timeout</div>
+          <div class="state-demo">
+            <div class="bob">
+              <div class="bob-head">
+                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                <span class="bob-cmd">npm run slow-script</span>
+                <span class="bob-status dim">超时</span>
+              </div>
             </div>
           </div>
         </div>
       </div></div></div></div>
     </div>
 
+    <!-- 5B. tool-bash（agent 调用，嵌 §6 tool 块，此处说明差异） -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">5B. tool-bash · agent 调用（可折叠，嵌 §6 tool 块）</h3>
+    <div class="render-frame">
+      <div class="panel-stage"><div class="ms-scroll"><div class="ms-turn"><div class="ms-assistant-col">
+        <div class="state-row" style="margin:0;">
+          <div class="state-tag">expanded</div>
+          <div class="state-demo">
+            <div class="tool-v6">
+              <div class="tool-hd">
+                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                <span class="tool-name">Bash</span><span class="tool-arg">npm install</span>
+              </div>
+              <div class="tool-body">
+                <div class="tool-bash-box">
+                  <div class="tool-bash-cmd">npm install lodash</div>
+                  <div class="tool-bash-out">+ lodash@4.17.21
+added 1 package in 2s</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div></div></div></div>
+    </div>
+    <p style="font-size:12px;color:var(--neutral-mid);margin-top:12px;padding:10px 14px;background:var(--bg-card);border-radius:var(--radius);">tool-bash 展开 = §6 tool 块的 bash 渲染分支：border + bg-surface-2 容器 + 命令行 + 输出。它受 §6 tool 块的折叠/running/failed 状态统辖，本图仅展示其展开态的容器结构差异。其余状态见 §6。</p>
+
     <div class="anno-grid">
-      <div class="anno"><b>容器:</b><br><span class="old">border neutral-faint + bg-surface-2 + rounded-sm(3px)</span><br><span class="v6">→ 删除，仅 py-2 pl-4 (16px 缩进)</span></div>
-      <div class="anno"><b>命令行:</b><br>font-mono 12px [--text-sm] neutral-fg · <span class="v6">$ 前缀 neutral-dim</span></div>
-      <div class="anno"><b>输出:</b><br>font-mono 12px [--text-sm] neutral-mid · leading-snug</div>
-      <div class="anno"><b>命令/输出分隔:</b><br><span class="old">border-b neutral-faint</span> <span class="v6">→ 删除，用 margin (6px) 分隔</span></div>
-      <div class="anno"><b>截断标记:</b><br><span class="v6">11px [--text-xs] neutral-mid（提亮，原 dim）</span></div>
-      <div class="anno"><b>层级表达:</b><br><span class="v6">缩进 pl-4 + 命令前缀 $（代边框做层级）</span></div>
+      <div class="anno"><b>两类来源:</b><br><span class="v6">BashOutputBlock（5A，不可折叠）≠ tool-bash（5B，可折叠）</span></div>
+      <div class="anno"><b>BashOutputBlock 容器:</b><br>py-2 · <b>无边框无卡片背景</b>（靠 header 语义标识区分）</div>
+      <div class="anno"><b>header:</b><br>Terminal icon 13px neutral-ico + 命令 mono 12px neutral-fg</div>
+      <div class="anno"><b>running:</b><br>双环 loader 12px accent + 取消按钮</div>
+      <div class="anno"><b>exit 标签:</b><br><span class="old">—</span> <span class="v6">exit 0→success绿 / exit N→warn金 / timeout·cancelled→neutral-dim</span></div>
+      <div class="anno"><b>输出区:</b><br>mono 12px neutral-mid · max-h 240px overflow-auto · 仅 complete 态显示</div>
+      <div class="anno"><b>截断标记:</b><br>italic 10px neutral-dim（pi 返回 truncated 才显）</div>
+      <div class="anno"><b>tool-bash 容器:</b><br>border neutral-faint + bg-surface-2 rounded-sm（嵌 §6，受 tool 折叠态统辖）</div>
     </div>
   </section>
 
   <!-- ================================================================
-       §6 Block · tool（含 failed）
+       §6 Block · tool（状态矩阵：collapsed/expanded × running/done/failed/unfinished）
        ================================================================ -->
   <section class="spec" id="s6">
-    <div class="spec-head"><span class="spec-num">§6</span><h2 class="spec-title">Block · tool（含 failed）</h2></div>
-    <p class="spec-desc">工具调用 block header。v6：failed 态删 <code>hover:text-warn</code>，图标统一 <code>--neutral-ico</code>；exit≠0 加 mono <code>exit N</code> 中性标签（非 danger），失败靠输出区文字表达而非红色装饰。</p>
+    <div class="spec-head"><span class="spec-num">§6</span><h2 class="spec-title">Block · tool</h2></div>
+    <p class="spec-desc">工具调用 block 的完整状态矩阵。可折叠（本地态，default 收起）。v6：failed 删 <code>hover:text-warn</code>，icon 统一 <code>--neutral-ico</code>；running 用双环 loader（替换 icon）；failed/unfinished 文字降 <code>neutral-mid</code>（无红框）；exit≠0 加 mono <code>exit N</code> 中性标签。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> failed hover:text-warn</span>
-      <span class="cp cp-v6"><b>v6</b> 统一 neutral-ico + exit N 标签</span>
+      <span class="cp cp-v6"><b>v6</b> icon 统一 neutral-ico + exit N 中性标签</span>
+      <span class="cp cp-v6"><b>v6</b> running 双环 loader · failed 无红框</span>
     </div>
 
     <div class="render-frame">
       <div class="panel-stage"><div class="ms-scroll"><div class="ms-turn"><div class="ms-assistant-col">
         <div class="state-row" style="margin:0;">
-          <div class="state-tag">success</div>
+          <div class="state-tag">collapsed</div>
           <div class="state-demo">
             <div class="tool-v6">
               <div class="tool-hd">
@@ -565,15 +737,57 @@ rendering chunks...</div>
           </div>
         </div>
         <div class="state-row" style="margin:14px 0 0;">
+          <div class="state-tag">running</div>
+          <div class="state-demo">
+            <div class="tool-v6">
+              <div class="tool-hd">
+                <svg class="tool-loader" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg>
+                <span class="tool-name running">Grep</span><span class="tool-arg">PanelHeader</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="state-row" style="margin:14px 0 0;">
+          <div class="state-tag">expanded</div>
+          <div class="state-demo">
+            <div class="tool-v6">
+              <div class="tool-hd">
+                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                <span class="tool-name">Read</span><span class="tool-arg">style.css</span>
+              </div>
+              <div class="tool-body">
+                <div class="tool-meta">1.2s · 126 行</div>
+                <div class="tool-out">--bg: #1a1b1f;
+--surface: #272830;
+--neutral-fg: #e5e7eb;…</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="state-row" style="margin:14px 0 0;">
           <div class="state-tag">failed</div>
           <div class="state-demo">
             <div class="tool-v6">
               <div class="tool-hd">
                 <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-                <span class="tool-name">Bash</span><span class="tool-arg">npm test</span>
+                <span class="tool-name failed">Bash</span><span class="tool-arg">npm test</span>
                 <span class="tool-exit">exit 1</span>
               </div>
-              <div style="font-size:12px;color:var(--neutral-mid);font-family:var(--font-mono);padding:6px 0 0 16px;">AssertionError: expected true to be false</div>
+              <div class="tool-body">
+                <div class="tool-out">AssertionError: expected true to be false</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="state-row" style="margin:14px 0 0;">
+          <div class="state-tag">unfinished</div>
+          <div class="state-demo">
+            <div class="tool-v6">
+              <div class="tool-hd">
+                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                <span class="tool-name failed">Bash</span><span class="tool-arg">long-running-task</span>
+                <span class="tool-exit">未结束</span>
+              </div>
             </div>
           </div>
         </div>
@@ -581,14 +795,17 @@ rendering chunks...</div>
     </div>
 
     <div class="anno-grid">
+      <div class="anno"><b>折叠:</b><br>本地态 toolCollapsed，default 收起</div>
       <div class="anno"><b>block padding:</b><br>py-2 (8px)</div>
       <div class="anno"><b>header gap:</b><br>6px · 12px [--text-sm] font-medium</div>
-      <div class="anno"><b>icon:</b><br>13px · <span class="v6">统一 neutral-ico（含 failed）</span></div>
-      <div class="anno"><b>tool name:</b><br>neutral-fg</div>
-      <div class="anno"><b>arg:</b><br>11px [--text-xs] mono neutral-mid</div>
-      <div class="anno"><b>failed icon hover:</b><br><span class="old">hover:text-warn</span> <span class="v6">→ 删除</span></div>
-      <div class="anno"><b>exit N 标签:</b><br><span class="v6">mono 10px rounded-sm bg-surface-2 neutral-mid（中性，非 danger）</span></div>
-      <div class="anno"><b>失败输出:</b><br>neutral-mid（文字表达，非红框装饰）</div>
+      <div class="anno"><b>collapsed:</b><br>1 行：icon + toolName + argPath（truncate）</div>
+      <div class="anno"><b>running icon:</b><br><span class="v6">双环 loader 13px accent（替换 icon）+ toolName 染 accent</span></div>
+      <div class="anno"><b>running 折叠:</b><br>streaming 也保持收起（不强制展开）</div>
+      <div class="anno"><b>done:</b><br>icon neutral-ico · toolName neutral-fg</div>
+      <div class="anno"><b>failed:</b><br><span class="v6">toolName neutral-mid · icon neutral-ico（删 hover:text-warn）· 无红框</span></div>
+      <div class="anno"><b>exit N 标签:</b><br><span class="v6">mono 10px rounded-sm bg-surface-2 neutral-mid（中性）</span></div>
+      <div class="anno"><b>unfinished:</b><br><span class="v6">崩溃/断连态（end_not_received）· toolName neutral-mid + 「未结束」标签</span></div>
+      <div class="anno"><b>expanded body:</b><br>meta 条（耗时·行数）+ 输出；bash 工具用 border 容器（见 §5B）</div>
     </div>
   </section>
 
@@ -657,14 +874,14 @@ rendering chunks...</div>
   </section>
 
   <!-- ================================================================
-       §8 UserBubble
+       §8 UserBubble（删 pending 态，pending 语义迁 QueueBubble）
        ================================================================ -->
   <section class="spec" id="s8">
     <div class="spec-head"><span class="spec-num">§8</span><h2 class="spec-title">UserBubble</h2></div>
-    <p class="spec-desc">用户消息气泡。v6：删 <code>border border-border-strong</code>，仅 <code>bg-surface-hover</code> 做层级（更干净，对标 Claude）。保持右浮窄气泡 + 14px/4px 不对称圆角（右下小尾巴）。</p>
+    <p class="spec-desc">用户消息气泡。<b>v6 删除 pending 态</b>——排队中的消息不再在对话流渲染虚线气泡，统一由 composer 上方的 QueueBubble 展示（见 §8.5）。消息被消费、进入对话流后，渲染为正常 UserBubble。其余：删 <code>border-border-strong</code>，仅 <code>bg-surface-hover</code> 做层级；保持右浮窄气泡 + 14px/4px 不对称圆角。</p>
     <div class="change-points">
-      <span class="cp cp-now"><b>现</b> border-border-strong + bg-surface-hover</span>
-      <span class="cp cp-v6"><b>v6</b> 删 border，仅 bg-surface-hover</span>
+      <span class="cp cp-v6"><b>删</b> pending 态（虚线气泡）→ 迁 QueueBubble</span>
+      <span class="cp cp-v6"><b>删</b> border-border-strong，仅 bg-surface-hover</span>
     </div>
 
     <div class="render-frame">
@@ -678,10 +895,10 @@ rendering chunks...</div>
           </div>
         </div>
         <div class="state-row" style="margin:14px 0 0;">
-          <div class="state-tag">pending</div>
+          <div class="state-tag">+image</div>
           <div class="state-demo">
             <div class="ub-wrap">
-              <div class="ub-v6 pending">排队中 · 等待当前任务完成</div>
+              <div class="ub-v6">看这个设计稿<br><span style="display:inline-block;width:48px;height:32px;border-radius:4px;background:linear-gradient(135deg,var(--accent),var(--info));vertical-align:middle;"></span> <span style="font-family:var(--font-mono);font-size:11px;color:var(--reasoning);">截图.png</span></div>
             </div>
           </div>
         </div>
@@ -693,6 +910,12 @@ rendering chunks...</div>
             </div>
           </div>
         </div>
+        <div class="state-row" style="margin:14px 0 0;">
+          <div class="state-tag" style="color:var(--neutral-faint);">pending</div>
+          <div class="state-demo" style="opacity:.45;">
+            <div style="padding:9px 13px;border-radius:14px 14px 4px 14px;border:1px dashed var(--neutral-faint);color:var(--neutral-dim);font-size:12px;font-style:italic;">✗ 已废弃：pending 不再在对话流渲染（虚线气泡删除）→ 见 §8.5 QueueBubble</div>
+          </div>
+        </div>
       </div></div></div>
     </div>
 
@@ -701,70 +924,86 @@ rendering chunks...</div>
       <div class="anno"><b>max-width:</b><br>76%（不进 assistant 720 列）</div>
       <div class="anno"><b>border-radius:</b><br>14px 14px 4px 14px（右下 4px 尾巴）</div>
       <div class="anno"><b>background:</b><br><span class="v6">var(--surface-hover)（去 border-border-strong）</span></div>
-      <div class="anno"><b>border:</b><br><span class="old">1px border-strong</span> <span class="v6">→ 删除（default 态）</span></div>
       <div class="anno"><b>padding:</b><br>9px 13px</div>
       <div class="anno"><b>font:</b><br>13px [--text-base] / 1.55 neutral-fg</div>
-      <div class="anno"><b>pending 态:</b><br>dashed accent + accent-soft 底</div>
-      <div class="anno"><b>editing 态:</b><br>全圆角 14px + accent 边 + 3px ring</div>
+      <div class="anno"><b>pending 态:</b><br><span class="old">虚线气泡</span> <span class="v6">→ 删除，迁 §8.5 QueueBubble</span></div>
+      <div class="anno"><b>+image:</b><br>ImageThumb 内联缩略图 + reasoning 色 chip 名</div>
+      <div class="anno"><b>editing 态:</b><br>全圆角 14px + accent 边 + 3px ring · 不显 hover actions</div>
     </div>
   </section>
 
   <!-- ================================================================
-       §9 Composer
+       §8.5 QueueBubble（v6 重设计：幽灵卡片，pending 消息统一入口）
        ================================================================ -->
-  <section class="spec" id="s9">
-    <div class="spec-head"><span class="spec-num">§9</span><h2 class="spec-title">Composer</h2></div>
-    <p class="spec-desc">输入框。v6：非 landing 态与内容列同宽居中（max-w-720px）；默认无边框（<code>bg-bg-input</code> 凹陷做层级），focus 才出 accent ring；staging chip 缩小为左上角小标签（非整条横贯）。</p>
+  <section class="spec" id="s8b">
+    <div class="spec-head"><span class="spec-num">§8.5</span><h2 class="spec-title">QueueBubble · 排队队列</h2></div>
+    <p class="spec-desc">composer-box 上方的排队消息指示器。v6 重设计：<b>去 border</b>，<code>bg-surface</code> 浮起 + 左侧脉冲点；head 显「N 排队中」+ 计数，多条可展开列表。steer（蓝）/followup（青）用类型点区分。消息被消费（<code>message_start</code> 到达）后从队列移除，进入对话流渲染为正常 UserBubble（§8）。只读——入队后不可改不可撤（pi 无 clear_queue RPC）。</p>
     <div class="change-points">
-      <span class="cp cp-now"><b>现</b> 非 landing 撑满 panel 宽</span>
-      <span class="cp cp-v6"><b>v6</b> 非 landing 居中 max-w-720px</span>
-      <span class="cp cp-v6"><b>v6</b> 默认无边框，focus 才出 ring</span>
+      <span class="cp cp-now"><b>现</b> border + accent-soft 底 + 蓝点脉冲</span>
+      <span class="cp cp-v6"><b>v6</b> 无 border · bg-surface 浮起 + 左侧脉冲点</span>
     </div>
 
     <div class="render-frame">
       <div class="panel-stage">
         <div class="state-row" style="margin:0;">
-          <div class="state-tag">empty</div>
+          <div class="state-tag">1 条</div>
           <div class="state-demo">
-            <div class="comp-wrap centered">
-              <div class="comp-box-v6">
-                <div class="comp-input ph">描述任务，或输入命令…</div>
-                <div class="comp-bar"><span class="comp-send disabled"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span></div>
+            <div class="comp-wrap centered" style="padding:16px 20px;">
+              <div class="qb-v6">
+                <div class="qb-head">
+                  <span class="qb-dot"></span>
+                  <span class="qb-label">1 排队中</span>
+                  <span class="qb-count">steer 1</span>
+                </div>
+                <div class="qb-list">
+                  <div class="qb-item"><span class="qb-item-dot steer"></span>
+                    <div class="qb-item-body"><span class="qb-item-type steer">STEER</span><div class="qb-item-text">先处理这个，把 PanelHeader 的 border-b 去掉</div></div>
+                  </div>
+                </div>
               </div>
+              <div class="comp-box-v6"><div class="comp-input ph" style="min-height:40px;">消息处理中…</div></div>
             </div>
           </div>
         </div>
         <div class="state-row" style="margin:16px 0 0;">
-          <div class="state-tag">has-input</div>
+          <div class="state-tag">多条收起</div>
           <div class="state-demo">
-            <div class="comp-wrap centered">
-              <div class="comp-box-v6 has-input">
-                <div class="comp-input">重构 PanelHeader，去掉 border-b 改用 bg-elevated 浮起分层</div>
-                <div class="comp-bar"><span class="comp-send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span></div>
+            <div class="comp-wrap centered" style="padding:16px 20px;">
+              <div class="qb-v6">
+                <div class="qb-head expanded">
+                  <span class="qb-dot"></span>
+                  <span class="qb-label">3 排队中</span>
+                  <span class="qb-count">steer 2 · followup 1</span>
+                  <svg class="qb-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:auto;"><polyline points="9 18 15 12 9 6"/></svg>
+                </div>
               </div>
+              <div class="comp-box-v6"><div class="comp-input ph" style="min-height:40px;">消息处理中…</div></div>
             </div>
           </div>
         </div>
         <div class="state-row" style="margin:16px 0 0;">
-          <div class="state-tag">focus</div>
+          <div class="state-tag">多条展开</div>
           <div class="state-demo">
-            <div class="comp-wrap centered">
-              <div class="comp-box-v6 focus">
-                <div class="comp-input">focus 态出 accent 边 + 3px 聚焦环</div>
-                <div class="comp-bar"><span class="comp-send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span></div>
+            <div class="comp-wrap centered" style="padding:16px 20px;">
+              <div class="qb-v6">
+                <div class="qb-head expanded">
+                  <span class="qb-dot"></span>
+                  <span class="qb-label">3 排队中</span>
+                  <svg class="qb-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:auto;transform:rotate(90deg);"><polyline points="9 18 15 12 9 6"/></svg>
+                </div>
+                <div class="qb-list">
+                  <div class="qb-item"><span class="qb-item-dot steer"></span>
+                    <div class="qb-item-body"><span class="qb-item-idx">1</span><span class="qb-item-type steer">STEER</span><div class="qb-item-text">先处理这个，把 PanelHeader 的 border-b 去掉</div></div>
+                  </div>
+                  <div class="qb-item"><span class="qb-item-dot steer"></span>
+                    <div class="qb-item-body"><span class="qb-item-idx">2</span><span class="qb-item-type steer">STEER</span><div class="qb-item-text">顺手把 TurnMeta 的 hr 也删了</div></div>
+                  </div>
+                  <div class="qb-item"><span class="qb-item-dot followup"></span>
+                    <div class="qb-item-body"><span class="qb-item-idx">3</span><span class="qb-item-type followup">FOLLOWUP</span><div class="qb-item-text">改完跑一下测试</div></div>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-        </div>
-        <div class="state-row" style="margin:16px 0 0;">
-          <div class="state-tag">+staging</div>
-          <div class="state-demo">
-            <div class="comp-wrap centered">
-              <div class="comp-box-v6">
-                <div class="comp-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2Z"/></svg>think · 4</div>
-                <div class="comp-input ph">描述任务…</div>
-                <div class="comp-bar"><span class="comp-send disabled"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span></div>
-              </div>
+              <div class="comp-box-v6"><div class="comp-input ph" style="min-height:40px;">消息处理中…</div></div>
             </div>
           </div>
         </div>
@@ -772,15 +1011,137 @@ rendering chunks...</div>
     </div>
 
     <div class="anno-grid">
+      <div class="anno"><b>容器:</b><br><span class="old">border + accent-soft 底</span><br><span class="v6">无 border · bg-surface · rounded(8px) · mb-2</span></div>
+      <div class="anno"><b>head padding:</b><br>10px 12px</div>
+      <div class="anno"><b>脉冲点:</b><br>7px accent · pulse-accent 1.8s</div>
+      <div class="anno"><b>head 文案:</b><br>「N 排队中」12px neutral-fg + 计数 mono 11px neutral-mid</div>
+      <div class="anno"><b>多条 chevron:</b><br>11px neutral-dim · rotate-90 展开（仅 totalCount&gt;1）</div>
+      <div class="anno"><b>列表项:</b><br>pl-4 + 左 border-border 竖线 · 类型点 6px</div>
+      <div class="anno"><b>类型区分:</b><br>steer→accent 蓝 / followup→info 青（点 + label）</div>
+      <div class="anno"><b>FIFO 序号:</b><br>mono 10px neutral-dim（展开多条显）</div>
+      <div class="anno"><b>生命周期:</b><br>message_start 到达 → state undefined → v-if 消失</div>
+      <div class="anno"><b>只读:</b><br>无操作按钮（pi 无 clear_queue RPC）</div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §9 Composer（完整构成：7 区 + 发送位三态）
+       ================================================================ -->
+  <section class="spec" id="s9">
+    <div class="spec-head"><span class="spec-num">§9</span><h2 class="spec-title">Composer</h2></div>
+    <p class="spec-desc">输入框完整构成（7 个区）。v6：非 landing 态与内容列同宽居中（max-w-720px）；默认无边框（<code>bg-bg-input</code> 凹陷），focus 才出 accent ring。下方自上而下：<code>RetryIndicator</code> → <code>QueueBubble</code>(§8.5) → composer-box（staging chip / ContextChipsBar / landing meta-row / Input / composer-bar 工具条）。发送位三态：send / stop / spinner。</p>
+    <div class="change-points">
+      <span class="cp cp-v6"><b>非 landing</b> 居中 max-w-720px</span>
+      <span class="cp cp-v6"><b>默认无边框</b>，focus/bash 才出 ring</span>
+      <span class="cp cp-v6"><b>发送位三态</b> send / stop / spinner</span>
+    </div>
+
+    <!-- 9A. 完整构成图（panel 态 · has-input） -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:4px 0 14px;font-weight:500;">9A. 完整构成 · panel 态 has-input（标注 7 区）</h3>
+    <div class="render-frame">
+      <div class="panel-stage">
+        <div class="comp-wrap centered">
+          <!-- ① RetryIndicator -->
+          <div class="retry-v6"><svg class="retry-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>上次失败 · <span class="retry-act">重试</span> <span style="margin-left:auto;color:var(--neutral-dim);font-size:10px;">① RetryIndicator</span></div>
+          <!-- ② QueueBubble（§8.5，此处略画）-->
+          <div class="qb-v6" style="margin-bottom:8px;"><div class="qb-head"><span class="qb-dot"></span><span class="qb-label" style="font-size:11px;">1 排队中</span><span style="margin-left:auto;color:var(--neutral-dim);font-size:10px;">② QueueBubble (§8.5)</span></div></div>
+          <!-- ③~⑦ composer-box -->
+          <div class="comp-box-v6 has-input">
+            <!-- ③ staging chip（fork/handoff 模式标识）-->
+            <div class="comp-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="6" r="3"/><path d="M6 9v3a6 6 0 0 0 12 0V9"/></svg>FORK 模式<span class="chip-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span></div>
+            <!-- ④ ContextChipsBar（已附上下文 chip）-->
+            <div class="ctx-chips">
+              <span class="ctx-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>PanelHeader.vue<span class="ctx-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/></svg></span></span>
+              <span class="ctx-chip image"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>设计稿.png<span class="ctx-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/></svg></span></span>
+              <span style="margin-left:auto;color:var(--neutral-dim);font-size:10px;align-self:center;">④ ContextChipsBar</span>
+            </div>
+            <!-- ⑥ Input -->
+            <div class="comp-input">重构 PanelHeader，去掉 border-b 改用 bg-elevated 浮起分层<span style="float:right;color:var(--neutral-dim);font-size:10px;">⑥ Input</span></div>
+            <!-- ⑦ composer-bar 工具条 -->
+            <div class="comp-bar">
+              <span class="bar-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>
+              <span class="bar-spacer"></span>
+              <span class="bar-btn" title="上下文容量"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+              <span class="bar-btn" title="模型"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/></svg><span style="font-family:var(--font-mono);">glm-5.2</span></span>
+              <span class="bar-btn think" title="思考等级"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/></svg><span>medium</span></span>
+              <span class="send-slot send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span>
+            </div>
+          </div>
+        </div>
+        <div style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);padding:8px 20px 0;">③ staging chip（fork/handoff，仅模式活跃时）· ⑤ landing meta-row（仅 landing，此处 panel 态无）· ⑦ composer-bar：+ 添加 / 上下文 / 模型 / 思考等级 / 发送</div>
+      </div>
+    </div>
+
+    <!-- 9B. 发送位三态 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">9B. 发送位三态 · send / stop / spinner</h3>
+    <div class="render-frame">
+      <div class="panel-stage" style="display:flex;gap:24px;flex-wrap:wrap;padding:20px;">
+        <div>
+          <div style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:8px;">idle → send</div>
+          <span class="send-slot send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:8px;">streaming/dispatching → stop</div>
+          <span class="send-slot stop"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></span>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:8px;">sending → spinner</div>
+          <span class="send-slot spinner"><svg class="send-spinner-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg></span>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:8px;">empty → disabled</div>
+          <span class="send-slot send disabled"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 9C. landing 态 meta-row -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">9C. landing 态 meta-row · directory / branch / preset</h3>
+    <div class="render-frame">
+      <div class="panel-stage">
+        <div class="comp-wrap centered">
+          <div class="comp-box-v6">
+            <div class="meta-row">
+              <span class="meta-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>feat-optimize-ui</span>
+              <span class="meta-sep"></span>
+              <span class="meta-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>main</span>
+              <span class="meta-sep"></span>
+              <span class="meta-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/></svg>medium</span>
+            </div>
+            <div class="comp-input ph">描述任务，或输入命令…（landing 态：空 cwd 时 directory chip 染 accent 提示选择）</div>
+            <div class="comp-bar"><span class="send-slot send disabled"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 9D. bash 模式 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">9D. bash 模式 · <code style="font-size:12px;">!</code> 前缀触发</h3>
+    <div class="render-frame">
+      <div class="panel-stage">
+        <div class="comp-wrap centered">
+          <div class="comp-box-v6 bash">
+            <div class="comp-input" style="font-family:var(--font-mono);">!npm run dev<span style="color:var(--neutral-mid);font-size:11px;font-family:var(--font-sans);margin-left:8px;">（bash 模式：accent ring + bash placeholder，不走 LLM 直接执行）</span></div>
+            <div class="comp-bar"><span class="send-slot send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="anno-grid">
+      <div class="anno"><b>7 区构成:</b><br>①RetryIndicator ②QueueBubble ③staging ④ContextChipsBar ⑤meta-row ⑥Input ⑦composer-bar</div>
       <div class="anno"><b>宽度（非 landing）:</b><br><span class="old">撑满 panel</span> <span class="v6">→ mx-auto max-w-720px</span></div>
-      <div class="anno"><b>宽度（landing）:</b><br>mx-auto max-w-720px（不变）</div>
-      <div class="anno"><b>box:</b><br>rounded-lg(8px) · bg-bg-input</div>
-      <div class="anno"><b>默认 border:</b><br><span class="old">box-shadow 2px 微描边</span> <span class="v6">→ 无边框（凹陷做层级）</span></div>
-      <div class="anno"><b>has-input:</b><br><span class="v6">2px rgba(255,255,255,.04) 微描边（仅输入态）</span></div>
+      <div class="anno"><b>box:</b><br>rounded-lg(8px) · bg-bg-input · 默认无边框</div>
+      <div class="anno"><b>has-input:</b><br><span class="v6">2px rgba(255,255,255,.04) 微描边</span></div>
       <div class="anno"><b>focus:</b><br><span class="v6">border-accent + 3px accent-ring</span></div>
-      <div class="anno"><b>input:</b><br>min-h 60 / max-h 120 · 13px · pt-11 px-14</div>
-      <div class="anno"><b>staging chip:</b><br><span class="v6">缩小为左上角标签（非整条）：mt-2 mx-2.5 · accent-soft · 11px</span></div>
-      <div class="anno"><b>send btn:</b><br>30px [--composer-btn-size] rounded-md · accent 底</div>
+      <div class="anno"><b>bash 模式:</b><br><span class="v6">同 focus ring（accent）· placeholder 切 bashHint · 不走 LLM</span></div>
+      <div class="anno"><b>staging chip:</b><br>左上角 accent-soft · fork/handoff 各自 icon · 可退出</div>
+      <div class="anno"><b>ContextChipsBar:</b><br>@file neutral-dim / image reasoning 紫 · 可删（X hover danger）</div>
+      <div class="anno"><b>meta-row（landing）:</b><br>directory/branch/preset · mono 11px · 空 cwd 染 accent</div>
+      <div class="anno"><b>composer-bar 控件:</b><br>+ 添加 / 上下文 / 模型 / 思考等级 · h-28 rounded-sm hover surface-hover</div>
+      <div class="anno"><b>发送位三态:</b><br><span class="v6">send(accent) / stop(surface-hover→danger hover) / spinner(accent+spin)</span></div>
+      <div class="anno"><b>send btn:</b><br>30px [--composer-btn-size] rounded · ArrowUp icon 15px</div>
+      <div class="anno"><b>图片粘贴:</b><br>粘贴/拖拽 → ContextChipsBar image chip（非缩略图）</div>
     </div>
   </section>
 

@@ -144,12 +144,13 @@ hover: text-neutral-fg
 |------|---------|
 | MessageStream | assistant 区（TurnMeta+trace+summary+ChangeSet）套 `mx-auto max-w-[var(--content-max-w)]`；UserBubble 保持右浮窄气泡（max-w-76%）；滚动条贴右缘 |
 | TurnMeta | pill 默认可见（密度=现状）；删 turn 间 `hr border-border` 分隔线，改加大 turn gap 做层级；sticky 底色绑定内容列背景 |
-| Block·thinking | 收起态预览提亮 `text-neutral-mid`（过 AA）+ 显 2 行 |
-| Block·bash | 删 border+bg-surface-2 嵌套卡片，改缩进+命令前缀区分（层级代边框）|
-| Block·tool failed | 删 `hover:text-warn`，统一 `--neutral-ico`；exit≠0 加 mono `exit N` 中性标签 |
+| Block·thinking | 收起态预览提亮 `text-neutral-mid`（过 AA）；**行数维持 1 行 ellipsis**（60 字符截断，推翻原「显 2 行」决策——2 行破坏 turn 视觉节奏） |
+| Block·bash | **区分两类来源**：① BashOutputBlock（composer `!` 前缀执行，独立系统消息，不可折叠，exit 标签：0→success/N→warn/timeout→dim）② tool-bash（agent 调用，嵌 §6 tool 块，可折叠，border 容器）。详见 v6-spec-conversation §5 |
+| Block·tool | 状态矩阵：collapsed/expanded × running(双环 loader)/done/failed/unfinished。failed 删 `hover:text-warn` 统一 `--neutral-ico`，toolName 降 `neutral-mid`（无红框）；exit≠0 加 mono `exit N` 中性标签；unfinished（崩溃态）「未结束」标签 |
 | ChangeSetCard | 去 border，`bg-surface` + 10px 圆角；状态 badge 降灰阶（仅 ±行数保留 success/danger git 语义色）；「待审查」badge 胶囊 accent-soft |
-| UserBubble | 删 `border-border-strong`，仅 `bg-surface-hover` 做层级；保持 14px/4px 不对称圆角 |
-| Composer | 非 landing 态与内容列同宽居中；默认无边框（bg-bg-input 凹陷做层级），focus 才出 accent ring；staging chip 缩小为左上角小标签（非整条） |
+| UserBubble | 删 `border-border-strong`，仅 `bg-surface-hover` 做层级；保持 14px/4px 不对称圆角；**删 pending 态**（排队消息不再进对话流渲染，迁 QueueBubble） |
+| QueueBubble | **v6 重设计**（pending 消息统一入口）：去 border，`bg-surface` 浮起 + 左侧脉冲点；head「N 排队中」+ 计数，多条可展开列表（FIFO 序号 + steer 蓝/followup 青类型点）；消息被消费后从队列移除进对话流；只读 |
+| Composer | **7 区构成**：RetryIndicator / QueueBubble / staging chip / ContextChipsBar(@file·image) / landing meta-row / Input / composer-bar(+添加·上下文·模型·思考等级·发送位三态)。非 landing 与内容列同宽居中；默认无边框，focus/bash 才出 accent ring |
 | PanelHeader | 去 `border-b`，用 bg-elevated 浮起分层；status icon 灰阶化，仅 git 点保留 danger/warn |
 
 ### 4.2 侧栏（4 tab + 容器）
