@@ -40,6 +40,8 @@ export interface ExtensionInfo {
   autoUpgrade?: boolean
   /** 是否为强制安装扩展（不可卸载/禁用，boot 时自动安装）。从 mandatory-extensions.json SSOT 派生。 */
   mandatory?: boolean
+  /** mandatory 扩展的分级（infrastructure=绝对强加载 / feature=preset 可覆盖）。从 mandatory-extensions.json SSOT 派生。 */
+  tier?: ExtensionTier
 }
 
 // ── Extension install flow payload interfaces ──────────────────
@@ -70,9 +72,34 @@ export interface RecommendedExtension {
 // ── Mandatory extensions（SSOT: mandatory-extensions.json）─────────
 
 /**
+ * mandatory 扩展的两级分类。
+ * - infrastructure：纯能力提供者，绝对强加载，不可被任何方式排除（disabled/preset denylist/allowlist 未列入都无效）
+ * - feature：提供用户可感知功能，强安装+强启用，但 preset extensionMode 可覆盖
+ * - undefined：非 mandatory 扩展
+ */
+export type ExtensionTier = 'infrastructure' | 'feature' | undefined
+
+/**
  * 判断包名是否为强制安装 extension（从 mandatory-extensions.json SSOT 派生）。
  * mandatory extension：runtime boot 时自动安装+升级，不可卸载/禁用。
+ * 向后兼容：infrastructure 和 feature 都返回 true。
  */
 export function isMandatoryExtension(name: string): boolean {
   return mandatoryExtensions.some(e => e.name === name)
+}
+
+/**
+ * 判断包名是否为 infrastructure 基础包（绝对强加载，不可被任何方式排除）。
+ * infrastructure 包是纯能力提供者，不提供用户可感知功能，只为其他扩展提供基础能力。
+ */
+export function isInfrastructureExtension(name: string): boolean {
+  return mandatoryExtensions.some(e => e.name === name && e.tier === 'infrastructure')
+}
+
+/**
+ * 判断包名是否为 feature 功能包（强安装+强启用，但 preset extensionMode 可覆盖）。
+ * feature 包提供用户可感知功能。
+ */
+export function isFeatureMandatoryExtension(name: string): boolean {
+  return mandatoryExtensions.some(e => e.name === name && e.tier === 'feature')
 }
