@@ -82,6 +82,7 @@ fi
 # 获取变更文件
 STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
 FRONTEND_FILES=$(echo "$STAGED_FILES" | grep "^packages/renderer/src/" || true)
+EXTENSION_FILES=$(echo "$STAGED_FILES" | grep -E "^extensions/.*\.ts$" | grep -vE "__tests__|\.test\.|/workflows/|/examples/|\.d\.ts$" || true)
 
 # ============================================================================
 # 1. 前端 ESLint 检查
@@ -155,6 +156,43 @@ if [ -n "$FRONTEND_FILES" ]; then
         fi
     else
         echo -e "${YELLOW}[SKIP] vue-tsc 类型检查已跳过${NC}"
+    fi
+fi
+
+# ============================================================================
+# 2b. pi extensions ESLint + tsc 类型检查
+#    extensions 是无构建的 TS 源码（pi 运行时加载），用 extensions/tsconfig.json
+#    + eslint.config.mjs 的 extensions/ override 块检查。
+#    ESLint 只拦 error（--quiet），warning 是迁入时已有的技术债标记（no-magic-numbers
+#    等，源项目基线即 warn），不阻断提交。
+# ============================================================================
+
+if [ -n "$EXTENSION_FILES" ]; then
+    print_section "[pi extensions ESLint + 类型检查]"
+
+    if [ "$SKIP_EXTENSION_LINT" != "1" ]; then
+        ESLINT_EXT_FILES=$(echo "$EXTENSION_FILES" | tr '\n' ' ')
+        echo -e "${BLUE}[INFO] 运行 ESLint 检查（仅拦 error）...${NC}"
+        ESLINT_EXT_OUTPUT=$(npx eslint --quiet --no-warn-ignored $ESLINT_EXT_FILES 2>&1)
+        ESLINT_EXT_EXIT=$?
+        if [ $ESLINT_EXT_EXIT -ne 0 ]; then
+            echo -e "${RED}[ERROR] extensions ESLint 检查失败:${NC}"
+            echo "$ESLINT_EXT_OUTPUT"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}[OK] extensions ESLint 检查通过（warning 为技术债标记，不阻断）${NC}"
+
+        echo -e "${BLUE}[INFO] 运行 tsc 类型检查（extensions 全量）...${NC}"
+        if ! (cd extensions && npx tsc --noEmit 2>&1); then
+            echo ""
+            echo -e "${RED}[ERROR] extensions tsc 类型检查失败${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}[OK] extensions tsc 类型检查通过${NC}"
+    else
+        echo -e "${YELLOW}[SKIP] extensions 检查已跳过${NC}"
     fi
 fi
 
@@ -629,6 +667,7 @@ echo ""
 echo -e "${CYAN}已安装的检查项目:${NC}"
 echo -e "  ${GREEN}[+]${NC} 前端 ESLint 代码检查"
 echo -e "  ${GREEN}[+]${NC} vue-tsc 类型检查（全量，与 CI 等价）"
+echo -e "  ${GREEN}[+]${NC} pi extensions ESLint + tsc 类型检查（extensions/ 目录）"
 echo -e "  ${GREEN}[+]${NC} Vue 组件规范检查（禁止原生 HTML、Emoji、自定义 CSS）"
 echo -e "  ${GREEN}[+]${NC} Sidecar session 隔离检查"
 echo -e "  ${GREEN}[+]${NC} CSS tokens 检查"

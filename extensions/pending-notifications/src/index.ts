@@ -46,11 +46,6 @@ const PendingNotificationsParams = Type.Object({
 	]),
 });
 
-/** tool 入参形状 */
-interface ToolParams {
-	action: "count" | "list";
-}
-
 /** pending_notifications 工具的 details 形状。两个分支共用同一结构（items 缺省时 undefined），
  *  让 registerTool 泛型对 TDetails 推断一致，避免 union 细节冲突。 */
 interface PendingToolDetails {

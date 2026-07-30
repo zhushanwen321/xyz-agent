@@ -27,41 +27,9 @@ import { type RenderContext,renderSubagentCall, renderSubagentResult } from "./t
 // ============================================================
 
 /**
- * execute 回调的 params 类型（手写副本——stub registerTool 是 unknown，
- * 无法从 SubagentParams schema 反向推断参数类型）。
+ * execute 回调的 params 类型由 SubagentParams schema 经 Static 投影得出（见下方 cb 签名）。
  * action 与对应 param 不匹配时 handler 内 throw。
  */
-interface ListParam {
-  includeFinished?: boolean;
-  limit?: number;
-}
-
-interface CancelParam {
-  subagentId: string;
-}
-
-interface SubagentExecuteParams {
-  action: "start" | "list" | "cancel";
-  // action:"start" 的 13 字段拍平到顶层（弱模型常省略 startParam 嵌套层导致调用失败）。
-  // 拍平后这些字段直接在顶层（全部 optional——schema flat 无法表达「action 条件必填」，
-  // 由 startHandler runtime 校验 task/slug 必填）。
-  task?: string;
-  slug?: string;
-  agent?: string;
-  model?: string;
-  thinkingLevel?: string;
-  skillPath?: string;
-  appendSystemPrompt?: string[];
-  schema?: Record<string, unknown>;
-  maxTurns?: number;
-  graceTurns?: number;
-  fork?: boolean;
-  worktree?: boolean;
-  cwd?: string;
-  listParam?: ListParam;
-  cancelParam?: CancelParam;
-}
-
 type SubagentExecuteCb = (
   toolCallId: string,
   // Pi SDK 从 parameters schema 反向推断 params 类型。typebox v1 的 StringEnum
