@@ -91,7 +91,7 @@ export async function callRenameLLM(
 		// 标题只需几个词，64 token 足够且省 quota
 		maxTokens: 64,
 	};
-	const context: LlmContext = { systemPrompt, messages, tools: mappedTools as any };
+	const context: LlmContext = { systemPrompt, messages, tools: mappedTools as LlmContext["tools"] };
 	const resp: AssistantMessage = await completeSimple(model, context, options);
 
 	const title = extractTitle(resp, CONFIG.maxTitleLength);
