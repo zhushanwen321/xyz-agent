@@ -619,6 +619,23 @@ runtime 子进程（`packages/runtime/src/`）与 pi 子进程的所有日志输
 
 **[HISTORICAL] 背景**：handoff 2026-07-04 P1「pi 静默卡死」——坏 session 的 JSONL 只有 2 行、零 message，pi 子进程 0% CPU 不退出。runtime 发了 prompt 后 pi 发了什么事件（或什么都没发）无法事后追溯，因为日志只在 concurrently 终端，关掉即丢。此条目把「日志必须落盘」固化为规范，避免再次因证据丢失而无法定位。实现见 commit（logger.ts + index.ts initLogger + rpc-client.ts pi stdout tee）。
 
+### 5. 包管理器与 lock 文件纪律 [HISTORICAL]
+
+本项目是 **pnpm workspace 单一包管理器**项目（`pnpm-workspace.yaml` 声明 `packages/*` + `apps/*`）。`pnpm-lock.yaml` 是**唯一权威 lock 文件**，必须跟踪。**禁止跟踪任何 npm 产物**（`package-lock.json`）。
+
+**三件套（缺一不可）**：
+
+1. **`package.json` 必须声明 `packageManager` 字段**（锁定包管理器 + 版本）。示例：`"packageManager": "pnpm@10.27.0"`。corepack/IDE 据此自动切换，避免有人误用 npm install 生成 `package-lock.json`。新增项目或发现缺失时补全；pnpm 升级时同步更新此字段
+2. **`.gitignore` 必须忽略 `package-lock.json`**（连同 `package-lock.json.*`）。即使误生成也不进版本库
+3. **发现 `package-lock.json` 被 git 跟踪时，用 `git rm --cached package-lock.json` 停止跟踪**（保留磁盘文件），不要 `rm` 物理删除
+
+**根因**：`package-lock.json` 与 `pnpm-lock.yaml` 双轨跟踪时，版本号长期各跑各的（package.json / pnpm-lock / package-lock 三处版本号各不相同），且 npm 与 pnpm 的依赖解析算法不同（npm flat hoisting vs pnpm 严格隔离 + symlink），双 lock 会产生幽灵依赖、重复安装、解析不一致类 bug。2026-07-30 事故：`package-lock.json` 版本滞留在 0.8.32（main 已 0.8.38、package.json 0.8.37），且 `package.json` 未声明 `packageManager`，是 lock 双轨的根因。
+
+**操作纪律**：
+- 所有安装/添加依赖命令用 `pnpm install` / `pnpm add`，禁止 `npm install` / `npm ci`
+- 禁止 `npm version` 改版本号（会同步改写 package-lock.json），版本号用 `changeset version` 或手改 package.json
+- 子包若确需独立用 npm（罕见，如某个 vendored 工具），在该子包自己的 `.gitignore` 里放开 `package-lock.json` 规则，并在子包 package.json 声明对应 `packageManager`
+
 ## 跳过检查
 
 ### cw v1 testRunner cwd 对 monorepo 失效 [HISTORICAL]

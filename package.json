@@ -3,6 +3,7 @@
   "version": "0.8.37",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@10.27.0",
   "scripts": {
     "dev": "pnpm --filter @xyz-agent/electron dev",
     "build": "pnpm --filter @xyz-agent/electron build",
