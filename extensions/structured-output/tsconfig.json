@@ -12,5 +12,6 @@
     "types": ["node", "vitest/globals"],
     "noEmit": true
   },
-  "include": ["."]
+  "include": ["."],
+  "exclude": ["node_modules", "**/__tests__", "**/*.test.ts", "vitest.config.ts"]
 }

@@ -461,7 +461,7 @@ pi.registerTool(tool);
 | **Schema 即文档** | 每个 TypeBox 字段都有详细 description |
 | **流式更新** | 使用 `onUpdate` 回调实时推送进度 |
 | **中断支持** | 检查 `signal.aborted` 并优雅退出 |
-| **上下文感知** | 区分 `ctx.hasUI`（CLI 模式 vs TUI 模式） |
+| **上下文感知** | 用 `ctx.mode` 区分 TUI/GUI 运行环境（不要用 `ctx.hasUI`，TUI 和 RPC 都 true） |
 | **结构化 details** | 返回 `details` 对象供渲染器和会话持久化使用 |
 
 ### 4.4 execute 字段名与签名 **[MANDATORY]** 🔵

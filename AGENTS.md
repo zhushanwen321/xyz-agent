@@ -661,7 +661,7 @@ cw v1 的 testRunner 硬编码 `cwd: workspacePath`（仓库根）跑 `npx vites
 ```bash
 SKIP_ALL_CHECKS=1 git commit       # 跳过所有（仅紧急情况）
 SKIP_FRONTEND_LINT=1 git commit    # 跳过 ESLint
-SKIP_EXTENSION_LINT=1 git commit   # 跳过 extensions ESLint + tsc 检查
+SKIP_EXTENSION_LINT=1 git commit   # 跳过 extensions ESLint + tsc + manifest/convention 检查
 SKIP_CODE_RULES_CHECK=1 git commit # 跳过 vue_rules_checker
 SKIP_ENV_WHITELIST_CHECK=1 git commit   # 跳过 ENV 白名单同步检查
 SKIP_PATH_WHITELIST_CHECK=1 git commit   # 跳过路径白名单动态化检查

@@ -4,7 +4,7 @@
 
 Accepted
 
-> 本 ADR 承接并 supersede [ADR-026](./026-two-package-architecture-no-l3a.md)（两包架构，**完全 superseded**）与 [ADR-029](./029-full-workflow-takeover-with-worktree.md)（全流程 workflow 接管，**部分 superseded**——仅 worktree 编排决策 2 被取代，per-call cwd / cw 调用 / plan.json schema 等决策仍有效）。
+> 本 ADR 承接并 supersede ADR-026（未迁移——属源项目工程决策，两包架构，**完全 superseded**）与 [ADR-029](./pi-ext-029-full-workflow-takeover-with-worktree.md)（全流程 workflow 接管，**部分 superseded**——仅 worktree 编排决策 2 被取代，per-call cwd / cw 调用 / plan.json schema 等决策仍有效）。
 > 见本文 Consequences 段「被取代的 ADR」。
 
 ## Context
@@ -45,7 +45,7 @@ SubprocessAgentRunner（原 workflow 侧）改造为委托 SubagentService.execu
 
 ConcurrencyPool 默认 `maxConcurrent = 6`（**来源：T2 system-architecture §并发池分层配额**）。嵌套时按 depth 分层分配配额：`acquire(priority, effectiveMaxConcurrent = max(1, maxConcurrent - depth))`，即 depth=N 的子层可用配额 = `max(1, 6 - N)`，保底 1 槽防饿死。例：顶层 workflow（depth=0）可用 6 槽；其内再 fork workflow（depth=1）可用 5 槽；depth=5 时保底 1 槽。
 
-`workflow()` 函数支持 workflow 嵌套编排（顺序 chain / 并行 parallel / scatter-gather / map-reduce 四种模式），内置通用编排 workflow 见 `extensions/subagent-workflow/workflows/`（可直接 `workflow run`，见 [ADR-032](./032-builtin-orchestration-workflows.md)）。详见 T2 code-architecture.md §2.1 ConcurrencyPool 改造。
+`workflow()` 函数支持 workflow 嵌套编排（顺序 chain / 并行 parallel / scatter-gather / map-reduce 四种模式），内置通用编排 workflow 见 `extensions/subagent-workflow/workflows/`（可直接 `workflow run`，见 [ADR-032](./pi-ext-032-builtin-orchestration-workflows.md)）。详见 T2 code-architecture.md §2.1 ConcurrencyPool 改造。
 
 ### 决策 4：删 sync 模式 + 通知合并
 
@@ -57,7 +57,7 @@ ConcurrencyPool 默认 `maxConcurrent = 6`（**来源：T2 system-architecture �
 
 - **单包交付**：用户只需安装 `@zhushanwen/pi-subagent-workflow`，无需版本同步两包。
 - **执行链单一**：SubprocessAgentRunner 委托 SubagentService，消除重复 spawn 路径，嵌套调用走同一执行链 + MAX_FORK_DEPTH 护栏。
-- **嵌套能力**：`workflow()` 支持 workflow 嵌套编排，内置通用编排 workflow（chain/parallel/scatter-gather/map-reduce）开箱即用，`workflow run <name>` 直接执行（详见 [ADR-032](./032-builtin-orchestration-workflows.md)）。
+- **嵌套能力**：`workflow()` 支持 workflow 嵌套编排，内置通用编排 workflow（chain/parallel/scatter-gather/map-reduce）开箱即用，`workflow run <name>` 直接执行（详见 [ADR-032](./pi-ext-032-builtin-orchestration-workflows.md)）。
 - **通知统一**：EventBus 单一机制（`pending:unregister`），pending-notifications 集中消费，删除 BgNotifier 双轨。
 
 ### 负面
@@ -70,5 +70,5 @@ ConcurrencyPool 默认 `maxConcurrent = 6`（**来源：T2 system-architecture �
 
 | ADR | supersede 范围 | 说明 |
 |-----|---------------|------|
-| [ADR-026](./026-two-package-architecture-no-l3a.md) | **完全 superseded** | 两包架构 → 单包合并；L3A 能力合并进单包（决策 1 承接，不做独立 L3A 包的立场保留） |
-| [ADR-029](./029-full-workflow-takeover-with-worktree.md) | **部分 superseded** | 仅 worktree 编排（决策 2）被取代——worktree 生命周期知识转移到 `coding-execute` skill（T3 UC-11，内容来自该决策原文）；per-call cwd（决策 1）已实现且仍活跃；cw 调用（决策 3）/ plan.json schema（决策 4）/ 砍 pending-env（决策 5）/ SQLite WAL（决策 6）与合并正交，逐决策标注仍有效 |
+| ADR-026（未迁移——属源项目工程决策） | **完全 superseded** | 两包架构 → 单包合并；L3A 能力合并进单包（决策 1 承接，不做独立 L3A 包的立场保留） |
+| [ADR-029](./pi-ext-029-full-workflow-takeover-with-worktree.md) | **部分 superseded** | 仅 worktree 编排（决策 2）被取代——worktree 生命周期知识转移到 `coding-execute` skill（T3 UC-11，内容来自该决策原文）；per-call cwd（决策 1）已实现且仍活跃；cw 调用（决策 3）/ plan.json schema（决策 4）/ 砍 pending-env（决策 5）/ SQLite WAL（决策 6）与合并正交，逐决策标注仍有效 |

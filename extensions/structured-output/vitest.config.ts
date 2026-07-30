@@ -8,8 +8,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      // structured-output 不直接 import pi-coding-agent（SDK 以 any 注入），指向 .d.ts 桩即可
-      "@earendil-works/pi-coding-agent": path.resolve(__dirname, "../../shared/types/earendil-works/index.d.ts"),
+      // @earendil-works/pi-coding-agent 现从根 node_modules 解析（真实 SDK devDep），无需类型桩 alias
       // 测试环境用本地 mock，真实类型由 Pi 运行时提供
       "@sinclair/typebox": path.resolve(__dirname, "mocks/typebox.ts"),
     },

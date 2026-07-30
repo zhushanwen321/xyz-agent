@@ -97,6 +97,21 @@ Workflow 脚本中 Subagent 的执行模式：Single（单 agent 单 task 阻塞
 **Background Job**
 `background: true` 模式下的 Subagent 运行实例。结果通过 Pi 的 `sendMessage({ deliverAs: "followUp", triggerTurn: true })` 自动注入主对话。
 
+**AgentRuntime**
+Subagent 执行的底层运行时。提供 agent session 管理、agent 发现、配置合并、模型解析、tool 过滤、并发控制、事件桥接等能力。编排层（workflow）通过 `runAgent()` 或 `createSession()` 调用。
+
+**ManagedSession**
+AgentRuntime 提供的可控 agent session。创建后可多次 `prompt()`、`steer()`、`abort()`，不自动销毁。供编排层的多步执行（chain）使用。
+
+**AgentScope**
+Agent 定义文件的发现范围：`user`（`~/.pi/agent/agents/`）、`project`（`.pi/agents/`）、`both`。
+
+**TaskComplexity**
+任务复杂度等级，用于自动模型选择：`low`（简单快速）、`medium`（中等）、`high`（复杂）。
+
+**ThinkingLevel**
+模型的推理深度：`high`（标准推理）或 `max`（最大推理）。按 TaskComplexity 默认：low→high, medium→high, high→max。
+
 ### Context Engineering（pi-context-engineering）
 
 **L0 / L1 / L2**
@@ -105,8 +120,14 @@ Workflow 脚本中 Subagent 的执行模式：Single（单 agent 单 task 阻塞
 **Recall**
 LLM 通过 `recall_context` 工具按 ID 获取被压缩前的原始内容。压缩的可逆性保障。
 
+**RecallStore**
+内存 Map，存储被压缩消息的原始内容。ID 格式 `ctx-{12hex}`。无持久化，`session_start` 时重建。
+
 **Protected Turn**
 最近 N 个 Turn Boundary，其中的 toolResult 不被压缩。N 由 `protectRecentTurns` 配置（默认 2）。
+
+**Turn Boundary**
+以 user 消息为分界的消息分组，用于判断 Protected Turn 范围。
 
 ### Permission（pi-permission）
 
@@ -116,6 +137,18 @@ LLM 通过 `recall_context` 工具按 ID 获取被压缩前的原始内容。压
 **Permission Pipeline（三层管道）**
 auto 模式的安全检查管道：层 1 AST 结构分析 → 层 2 规则匹配 → 层 3 AI Classifier + 用户审批竞速。任一层 allow 放行，deny 拒绝，ask 流向下游。
 
+**Permission Decision**
+checkPermission 的返回值，三态 `action`（allow/deny/ask）+ `reason` + `source`（mode/ast/rule/ai/user）。checkPermission 永不 throw（fail-closed：异常 → ask）。
+
+**Permission Rule**
+层 2 规则匹配单元，字段含 `id`/`tool`（wildcard）/`pattern`/`action`（allow/deny/ask）/`source`（builtin-safe/builtin-danger/user）。last-match-wins 语义（user 可覆盖 builtin）。
+
+**AST Structure Analysis（层 1）**
+bash 命令的 tree-sitter-bash 结构分析。非白名单节点（command_substitution/subshell 等）→ 流向下游审批。fail-closed：解析异常 → ask。
+
+**AI Classifier（层 3）**
+auto 模式的 LLM 风险分类器，输出 `risk_level`（low/medium/high）+ `outcome`（allow/deny/ask）。与用户审批 UI 并行竞速。
+
 ### Workflow（pi-subagent-workflow）
 
 **External State Pointer**
@@ -123,6 +156,51 @@ session JSONL 中指向外部 state 文件的轻量 entry（`customType === "wor
 
 **Approval Memory**
 session-level 持久化已确认 workflow 名称集合，跨 session_start 重建。`workflow-run` tool 的 auto 模式走此 cache 避免重复弹 confirm。
+
+**State-Lost**
+workflow 终态，表示外部 state 文件不可读（删除/损坏/权限拒绝），无法 rehydrate。属 TERMINAL_STATUSES，无 outgoing transitions。
+
+**Verification Strategy**
+workflow 节点验证模式分类，可选值 `internal` / `follow-up` / `none`。是 debug 辅助，不强制 AI 标注。
+
+### Goal（pi-goal）补充术语
+
+**Steering Template**
+Goal 扩展的四种提示词模板：Continuation（每 turn 注入驱动下一轮）/ Budget Limit（90% 时收尾）/ Objective Updated（目标变更时）/ Context Injection（before_agent_start 注入上下文）。
+
+**Budget Warning**
+预算消耗的两阶段预警：70% 提示注意，90% 提示收尾。token 和时间预算共享预警 flag。
+
+**Stall（已废弃概念）**
+V2 重构删除了 stallCount/maxStallTurns 自动终态机制。停滞检测退化为基于单任务级 `lastUpdatedTurn` 的提示词提醒，不再自动转 blocked。
+
+### Evolve 自进化系统（pi-evolve-daily）
+
+**Detector**
+被动观测器。监听 Pi 事件 → match() → appendEntry() 写入数据，不解入 AI 行为。适用于纯统计场景。AI 不知道自己在被追踪。
+
+**Tracker**
+主动引导器。监听 Pi 事件 → steering 注入 → AI 调用 tool 汇报状态 → 状态机流转。适用于需要 AI 自我汇报的场景。
+
+**TrackedItem**
+Tracker 状态机中的单个实例。包含 id、name、status（loaded/completed/error/recorded）、metadata、anchor。
+
+**Anchor**
+TrackedItem 中的数据锚点字段（triggerType/triggerTurn/triggerSummary），记录触发事件的时间位置和摘要。供 L3 extractor 在 session JSONL 中定位原始上下文。
+
+**Sample**
+L3 extractor 从 session JSONL 提取的叙事级上下文片段。供 L4 /evolve LLM 进行具体分析。
+
+### Plan Mode（pi-plan）
+
+**Plan Mode**
+用户通过 `/plan [描述]` 触发的轻量级规划模式。融合 brainstorming + writing-plans 能力，产出 plan 文件。与 Coding Workflow 的区别：无 gate/review/retrospect。
+
+**Plan File**
+Plan Mode 的产出物，存储在 `.xyz-harness/{slug}/plan.md`。含 YAML frontmatter（template, created, status）和模板章节。
+
+**Brainstorming**
+Plan Mode 的需求探索阶段。包含 Quick Overview、渐进式提问、方案探索、假设审计四个步骤。
 
 ---
 

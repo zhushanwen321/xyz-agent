@@ -1,8 +1,8 @@
 # ADR-001: Subagent 架构与使用模型
 
 > **⚠️ 部分SUPERSEDED — 本 ADR 的进程模型已被后续 ADR 取代：**
-> - **决策 1（进程隔离模型，spawn 子进程）**：被 [ADR-025](./025-agent-execution-in-process.md) 取代——改为进程内 `createAgentSession()`
-> - **决策 3（background 自动注入机制，backgroundJob 追踪子进程退出）**：被 [ADR-027](./027-subagent-execution-persistence.md) 的 BgNotifier + `pi.sendMessage({deliverAs:"followUp"})` 取代
+> - **决策 1（进程隔离模型，spawn 子进程）**：被 ADR-025（未迁移——属源项目工程决策）取代——改为进程内 `createAgentSession()`
+> - **决策 3（background 自动注入机制，backgroundJob 追踪子进程退出）**：被 [ADR-027](./pi-ext-027-subagent-execution-persistence.md) 的 BgNotifier + `pi.sendMessage({deliverAs:"followUp"})` 取代
 > - 决策 2（上下文传递协议，含 fork 继承模式）、决策 4（能力边界 prompt 工程）、决策 5（模型选择策略思路）的 prompt 工程结论仍有参考价值
 > - 决策 6（Fork/Worktree 架构 D-007/D-008/D-018）记录 fork 深度与 worktree 隔离的硬约束，仍有效
 >

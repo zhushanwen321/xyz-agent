@@ -10,9 +10,8 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      // plan 仅用 import type 引用 pi-coding-agent（运行时擦除），指向 .d.ts 桩即可
-      "@earendil-works/pi-coding-agent": path.resolve(dir, "../../shared/types/earendil-works/index.d.ts"),
-      // 测试环境用本地 mock，真实类型由 Pi 运行时提供（与 pending-notifacts 等包约定一致）
+      // @earendil-works/pi-coding-agent 现从根 node_modules 解析（真实 SDK devDep），无需类型桩 alias
+      // 测试环境用本地 mock，真实类型由 Pi 运行时提供（与 pending-notifications 等包约定一致）
       "@earendil-works/pi-tui": path.resolve(dir, "mocks/pi-tui.ts"),
       "@earendil-works/pi-ai": path.resolve(dir, "mocks/pi-ai.ts"),
       "typebox": path.resolve(dir, "mocks/typebox.ts"),

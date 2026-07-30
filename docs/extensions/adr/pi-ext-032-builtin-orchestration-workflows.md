@@ -63,6 +63,6 @@ ADR-030 决策 3 提到"workflow 嵌套编排（chain/parallel/scatter-gather/ma
 
 ## 参考
 
-- [ADR-030](./030-subagents-workflow-merge.md) — 决策 3（分层配额 + workflow 嵌套）的原始决策
+- [ADR-030](./pi-ext-030-subagents-workflow-merge.md) — 决策 3（分层配额 + workflow 嵌套）的原始决策
 - `.xyz-harness/swf-scripts-docs-adr/decisions.md` — D-031/D-032 原文
 - `skills/workflow-script-format/SKILL.md` — workflow script 完整 API（`workflow()` 嵌套教学示例）

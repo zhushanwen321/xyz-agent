@@ -9,7 +9,9 @@
     "allowImportingTsExtensions": true,
     "isolatedModules": true,
     "lib": ["ES2022"],
-    "types": ["node", "vitest/globals"]
+    "types": ["node", "vitest/globals"],
+    "noEmit": true
   },
-  "include": ["."]
+  "include": ["."],
+  "exclude": ["node_modules", "**/__tests__", "**/*.test.ts", "vitest.config.ts"]
 }
