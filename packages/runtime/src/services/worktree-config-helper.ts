@@ -41,6 +41,8 @@ const TIMEOUT_MAX = 3600
 const DEFAULT_BASE_BRANCH = 'origin/main'
 /** auto-rename 开关标志文件名（放在 PI_CODING_AGENT_DIR 下，文件存在=开，不存在=关）。 */
 const AUTO_RENAME_ENABLED_FILE = 'auto-rename-enabled'
+/** auto-rename 初始化标记文件名（存在=已执行过默认初始化，防止 boot 反复覆盖用户的关闭操作）。 */
+const AUTO_RENAME_INITIALIZED_FILE = 'auto-rename-initialized'
 
 export function getWorktreeRootDir(app: AppConfigAccessors): string {
   const val = app.load()['worktreeRootDir']
@@ -146,5 +148,25 @@ export function setAutoRenameEnabled(enabled: boolean): void {
       const code = (e as NodeJS.ErrnoException).code
       if (code !== 'ENOENT') throw e
     }
+  }
+}
+
+/**
+ * 首次启动时默认开启 auto-rename（创建 flag file）。
+ * 用 auto-rename-initialized 标记防止后续 boot 反复覆盖用户的关闭操作：
+ *   - initialized 不存在 → 首次，创建 enabled flag（默认开）+ initialized 标记
+ *   - initialized 存在 → 用户已设置过，不干预
+ * 不抛错（与 getAutoRenameEnabled 防御性设计一致）。
+ */
+export function ensureAutoRenameDefault(): void {
+  try {
+    const initializedPath = join(getPiAgentDir(), AUTO_RENAME_INITIALIZED_FILE)
+    if (existsSync(initializedPath)) return
+    mkdirSync(dirname(initializedPath), { recursive: true })
+    // 标记已初始化（先写标记，再开开关；即使 enabled 写失败，标记已防重复）
+    writeFileSync(initializedPath, '', 'utf-8')
+    setAutoRenameEnabled(true)
+  } catch {
+    // 初始化失败不阻塞 boot
   }
 }

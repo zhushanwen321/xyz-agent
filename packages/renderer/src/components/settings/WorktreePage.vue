@@ -109,18 +109,6 @@
             @blur="onSaveDefaultBaseBranch"
           />
         </div>
-        <!-- 自动重命名 session -->
-        <div class="flex items-center justify-between border-t border-border px-4 py-3">
-          <div class="flex flex-col gap-0.5">
-            <Label class="text-[12px] text-neutral-fg">{{ t('settings.worktree.autoRenameSession') }}</Label>
-            <span class="text-[10px] text-neutral-mid">{{ t('settings.worktree.autoRenameSessionHint') }}</span>
-          </div>
-          <Switch
-            data-testid="setting-auto-rename-session"
-            :model-value="autoRenameEnabled"
-            @update:model-value="onSaveAutoRename"
-          />
-        </div>
       </div>
     </div>
   </div>
@@ -132,7 +120,6 @@ import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
 import { useToast } from '@/composables/useToast'
 import {
   getWorktreeRootDir,
@@ -145,8 +132,6 @@ import {
   setWorktreeTimeout,
   getDefaultBaseBranch,
   setDefaultBaseBranch,
-  getAutoRenameEnabled,
-  setAutoRenameEnabled,
 } from '@/api/domains/settings'
 
 const { t } = useI18n()
@@ -161,7 +146,6 @@ const setupScript = ref('')
 const bareSetupScript = ref('')
 const timeout = ref(DEFAULT_TIMEOUT_SECONDS)
 const defaultBaseBranch = ref('origin/main')
-const autoRenameEnabled = ref(false)
 
 // ── 初始值快照（用于失败回滚）──
 let prevWorktreeRootDir = ''
@@ -169,17 +153,15 @@ let prevSetupScript = ''
 let prevBareSetupScript = ''
 let prevTimeout = DEFAULT_TIMEOUT_SECONDS
 let prevDefaultBaseBranch = 'origin/main'
-let prevAutoRenameEnabled = false
 
 // ── 加载初始配置 ──
 onMounted(async () => {
-  const [rootDirRes, scriptRes, bareScriptRes, timeoutRes, baseBranchRes, autoRenameRes] = await Promise.allSettled([
+  const [rootDirRes, scriptRes, bareScriptRes, timeoutRes, baseBranchRes] = await Promise.allSettled([
     getWorktreeRootDir(),
     getSetupScript(),
     getBareSetupScript(),
     getWorktreeTimeout(),
     getDefaultBaseBranch(),
-    getAutoRenameEnabled(),
   ])
 
   if (rootDirRes.status === 'fulfilled') {
@@ -202,13 +184,9 @@ onMounted(async () => {
     defaultBaseBranch.value = baseBranchRes.value.baseBranch
     prevDefaultBaseBranch = baseBranchRes.value.baseBranch
   }
-  if (autoRenameRes.status === 'fulfilled') {
-    autoRenameEnabled.value = autoRenameRes.value.enabled
-    prevAutoRenameEnabled = autoRenameRes.value.enabled
-  }
 
   // 收集所有 rejected，提示用户（allSettled 自身永不 reject，但内部 RPC 可能失败）
-  const failures = [rootDirRes, scriptRes, bareScriptRes, timeoutRes, baseBranchRes, autoRenameRes]
+  const failures = [rootDirRes, scriptRes, bareScriptRes, timeoutRes, baseBranchRes]
     .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
   if (failures.length > 0) {
     const details = failures.map(r => r.reason instanceof Error ? r.reason.message : String(r.reason)).join('; ')
@@ -284,19 +262,6 @@ async function onSaveDefaultBaseBranch() {
   } catch (_e) {
     defaultBaseBranch.value = prev
     prevDefaultBaseBranch = prev
-    toastError(t('settings.worktree.saveFailed'))
-  }
-}
-
-async function onSaveAutoRename(checked: boolean) {
-  const prev = prevAutoRenameEnabled
-  prevAutoRenameEnabled = checked
-  try {
-    await setAutoRenameEnabled(checked)
-    toastInfo(t('settings.worktree.saved'))
-  } catch (_e) {
-    autoRenameEnabled.value = prev
-    prevAutoRenameEnabled = prev
     toastError(t('settings.worktree.saveFailed'))
   }
 }

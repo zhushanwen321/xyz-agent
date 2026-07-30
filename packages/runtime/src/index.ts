@@ -1,6 +1,7 @@
 import { RuntimeServer } from './transport/server.js'
 import { SessionService } from './services/session/session-service.js'
 import { ConfigService } from './services/config-service.js'
+import { ensureAutoRenameDefault } from './services/worktree-config-helper.js'
 import { PresetService } from './services/preset-service.js'
 import { ModelService } from './services/model-service.js'
 
@@ -429,6 +430,13 @@ async function main(): Promise<void> {
     }
   } catch (e) {
     console.warn('[runtime] mandatory extension installation encountered an error:', e)
+  }
+
+  // auto-rename 默认初始化：首次启动默认开启（创建 flag file + initialized 标记）
+  try {
+    ensureAutoRenameDefault()
+  } catch (e) {
+    console.warn('[runtime] auto-rename default initialization failed:', e)
   }
 
   // 自动升级：对开启 autoUpgrade 的 user-installed 扩展批量检查 npm latest 版本，
