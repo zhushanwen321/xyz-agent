@@ -490,13 +490,21 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 
 ### Lint / Git Hooks 问题处理原则 [MANDATORY]
 
-**lint（ESLint / vue_rules_checker）或 githooks（pre-commit 的任何 check_*.py）检出的问题，必须全部正面修复，不得跳过。**
+**lint（ESLint / vue_rules_checker）或 githooks（pre-commit 的任何 check_*.py）检出的问题，无论等级（warning / error，或 critical / major / minor），必须全部正面修复，不得跳过。**
 
-- **不得以“非本次改动引入”为由跳过**：存量问题同样要修。携改动的 commit 触发了检查，检查出的所有问题都是本次提交的责任范围。
+- **不得以”非本次改动引入”为由跳过**：存量问题同样要修。携改动的 commit 触发了检查，检查出的所有问题都是本次提交的责任范围。
+- **不得以”只是 warning / minor”为由跳过**：低等级问题也必须修。等级只影响修复顺序，不影响”必须修复”的结论。reviewer 报告的 minor、ESLint 的 warning 同样必须解决。
 - **不得用 `SKIP_*` 变量绕过**（`SKIP_FRONTEND_LINT` / `SKIP_CODE_RULES_CHECK` / `SKIP_ALL_CHECKS` 等）— 仅限线上故障热修复等紧急场景，且必须在 commit message 说明原因。
 - **不得仅“消除报错”而不解决根因**：例如把原生 `<button>` 改成 `<Button>` 是正面修复；但把检测规则改成“放过该写法”只有在确认规则误报时才可（且须在规则中加注释说明）。
 - **规则误报的唯一正当处理**：修正规则本身使其准确（如 reka-ui `SelectItem :value` 是选项值语义，应排除），并在规则文件加 `[HISTORICAL]` 注释记录原因。禁止用 `// eslint-disable-next-line` 局部静默。
-- pre-commit 每个检查失败分支已内置提示：“无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过”。
+- pre-commit 每个检查失败分支已内置提示：”无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过”。
+
+### 完成即提交 [MANDATORY]
+
+**所有变更改完并在本地验证通过后，在向用户汇报完成 / 结束本轮工作（stop）之前，必须执行 git commit。** 禁止留下”改了代码但未提交”的脏工作区就结束。
+
+- 若因 pre-commit 检查未过、冲突、认知外改动等原因无法提交，必须在结束前**明确说明未提交原因**，不得静默跳过（见失败模式防护 #3「失败要出声」）
+- 提交范围遵循全局提交策略：优先提交本次会话产生的改动，文件级颗粒度
 
 
 ## 架构约定
