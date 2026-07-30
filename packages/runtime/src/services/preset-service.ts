@@ -14,7 +14,8 @@
  * （参考 setConfigService session-service.ts L187-189）。
  */
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, basename } from 'node:path'
+import { isPresetOverridable, readPkgMeta } from './extension-filter.js'
 
 import {
   BUILTIN_PRESET_IDS,
@@ -540,39 +541,56 @@ export class PresetService {
    *   - allowlist: enabled && name in preset.allowedExtensions
    *   - denylist: enabled && name not in preset.deniedExtensions（pi 无原生 denylist → runtime 端过滤）
    *   - none: 空（builtin 仍前置）
+   *
+   * tier 语义：
+   *   - infrastructure 包（pending-notifications/structured-output）：任何模式都加载，不可覆盖
+   *   - feature mandatory 包：preset allowlist 未列入 / denylist 列入 → 不加载（给高级用户控制权）
+   *   - 普通包：按 preset 正常过滤
    */
   private async resolveExtensionPaths(preset: PiLaunchPreset, cwd: string): Promise<string[]> {
-    void cwd // 当前实现未用 cwd（scanExtensions 不带 cwd）；保留参数对齐设计 §8.1 签名
     const builtinPaths = this.extensionService.getBuiltinExtensionPaths()
-    const userExts = await this.extensionService.scanExtensions()
+    // ⚠️ 关键修复：用 getExtensionPaths(cwd) 替代 scanExtensions
+    // → 统一经过过滤管道（mandatory 强加载）+ 含 discovery 目录
+    const allLoadable = await this.extensionService.getExtensionPaths(cwd)
 
+    // builtin 永远前置，不受 extensionMode 影响
+    if (preset.extensionMode === 'none') {
+      // infrastructure 包即使 'none' 模式也要保留（绝对强加载）
+      const infraPaths = allLoadable.filter(p => !isPresetOverridable(p))
+      return [...builtinPaths, ...infraPaths]
+    }
+
+    // extensionMode 在「已加载」集合上做二次筛选
     let selected: string[]
     switch (preset.extensionMode) {
       case 'all':
-        selected = userExts.filter(e => e.enabled).map(e => e.path)
+        selected = allLoadable
         break
       case 'allowlist': {
         const allowed = preset.allowedExtensions ?? []
-        selected = userExts
-          .filter(e => e.enabled && allowed.includes(e.name))
-          .map(e => e.path)
+        // infrastructure 包无论是否在 allowlist 都保留；其余必须在 allowlist 内
+        selected = allLoadable.filter(p => {
+          if (!isPresetOverridable(p)) return true
+          const name = readPkgMeta(p).name ?? basename(p)
+          return allowed.includes(name)
+        })
         break
       }
       case 'denylist': {
         const denied = preset.deniedExtensions ?? []
-        selected = userExts
-          .filter(e => e.enabled && !denied.includes(e.name))
-          .map(e => e.path)
+        // infrastructure 包不在 denylist 生效范围；其余按 denylist 排除
+        selected = allLoadable.filter(p => {
+          if (!isPresetOverridable(p)) return true
+          const name = readPkgMeta(p).name ?? basename(p)
+          return !denied.includes(name)
+        })
         break
       }
-      case 'none':
-        selected = []
-        break
       // W-RT-1 兜底：coercePreset 已白名单校验，理论上走不到 default；
       // 但防御性兜底（脏数据绕过 coerce / 未来新增枚举值未同步）按 'all' 处理，
       // 与「不传 flag 用默认」语义一致，避免落空返回 undefined 导致 NaN spread。
       default:
-        selected = userExts.filter(e => e.enabled).map(e => e.path)
+        selected = allLoadable
         break
     }
     return [...builtinPaths, ...selected]
