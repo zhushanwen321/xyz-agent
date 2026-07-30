@@ -353,7 +353,8 @@ export class ExtensionService {
    * SSOT：recommended-extensions.json（shared 包导出，runtime import）。
    * 额外过滤 mandatory 项：即使将来 recommended-extensions.json 误含 mandatory 包，
    * 也不重复推荐（mandatory 由 boot 强制安装，无需出现在推荐区）。
-   * 当前 recommended-extensions.json 为空（原条目已升格 mandatory），返回空数组。
+   * 当前 recommended-extensions.json 为空——原推荐机制已停用，相关包（原推荐 + 后续新增）
+   * 转入 mandatory-extensions.json 作为强制安装扩展（见该 mandatory SSOT，列表以它为准、不在此硬编码条目数）。
    */
   async getRecommendedExtensions(): Promise<Array<{ name: string; description: string; installed: boolean }>> {
     const installed = await this.scanExtensions()

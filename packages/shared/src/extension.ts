@@ -63,8 +63,10 @@ export interface ExtensionDiscoveredPayload {
  * 推荐扩展条目。数据源 recommended-extensions.json（runtime 读取，前端经 WS 拉取）。
  * 不含 version —— 版本动态从 npm registry 拉，JSON 只存稳定的 name + 描述。
  *
- * 注意：此前此处的 6 个推荐条目已全部升格为 mandatory（见 mandatory-extensions.json），
- * recommended-extensions.json 现为空数组。推荐机制保留给未来「非强制的可选扩展」使用，
+ * 注意：原推荐机制已停用——此前此处的推荐条目（连同后续新增包）已转入 mandatory-extensions.json
+ * 作为强制安装扩展（boot 时 ensureMandatoryExtensions 自动安装、不可卸载/不可禁用），
+ * recommended-extensions.json 现为空数组。具体 mandatory 列表以 mandatory-extensions.json 为 SSOT，
+ * 不在此硬编码条目数（避免 SSOT 变动后计数过期）。推荐机制保留给未来「非强制的可选扩展」使用，
  * 当前 ExtensionPage 的推荐区在 recommended 为空时不渲染。
  */
 export interface RecommendedExtension {
