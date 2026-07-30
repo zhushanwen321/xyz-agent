@@ -75,7 +75,8 @@ def check_forbidden_dirs(staged_files):
     forbidden_dirs_found = set()
 
     for filepath in staged_files:
-        parts = filepath.split(os.sep)
+        # git 输出的路径恒用正斜杠（跨平台一致），不能用 os.sep（Windows 上为反斜杠会切错）
+        parts = filepath.split('/')
         for part in parts:
             if part in FORBIDDEN_DIR_NAMES:
                 forbidden_dirs_found.add(part)
@@ -104,7 +105,8 @@ def check_root_temp_artifacts(staged_files):
     found = set()
     for filepath in staged_files:
         # 只检查根目录文件（无路径分隔符 = 直接在仓库根）
-        if os.sep in filepath:
+        # git 输出的路径恒用正斜杠（跨平台一致），不能用 os.sep（Windows 上漏判）
+        if '/' in filepath:
             continue
         for pattern in ROOT_FORBIDDEN_PATTERNS:
             if pattern.match(filepath):
@@ -178,7 +180,8 @@ def check_pi_whitelist(staged_files):
         if not filepath.startswith(".pi/"):
             continue
         # filepath 形如 .pi/workflows/review-fix-loop.js → 第二段是子目录名
-        parts = filepath.split(os.sep)
+        # git 输出的路径恒用正斜杠（跨平台一致），不能用 os.sep（Windows 上为反斜杠会切错）
+        parts = filepath.split('/')
         if len(parts) < 2:
             continue
         subdir = parts[1]

@@ -57,6 +57,10 @@ export interface ExtensionDiscoveredPayload {
 /**
  * 推荐扩展条目。数据源 recommended-extensions.json（runtime 读取，前端经 WS 拉取）。
  * 不含 version —— 版本动态从 npm registry 拉，JSON 只存稳定的 name + 描述。
+ *
+ * 注意：此前此处的 6 个推荐条目已全部升格为 mandatory（见 mandatory-extensions.json），
+ * recommended-extensions.json 现为空数组。推荐机制保留给未来「非强制的可选扩展」使用，
+ * 当前 ExtensionPage 的推荐区在 recommended 为空时不渲染。
  */
 export interface RecommendedExtension {
   name: string

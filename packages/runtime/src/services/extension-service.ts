@@ -316,8 +316,9 @@ export class ExtensionService {
    * 的 name 字段一致，无需 normalizeExtName 转换。
    *
    * SSOT：recommended-extensions.json（shared 包导出，runtime import）。
-   * mandatory 扩展不在此列——它们由 mandatory-extensions.json 单独管理（boot 时强制安装），
-   * 故过滤掉 mandatory 项避免重复推荐。
+   * 额外过滤 mandatory 项：即使将来 recommended-extensions.json 误含 mandatory 包，
+   * 也不重复推荐（mandatory 由 boot 强制安装，无需出现在推荐区）。
+   * 当前 recommended-extensions.json 为空（原条目已升格 mandatory），返回空数组。
    */
   async getRecommendedExtensions(): Promise<Array<{ name: string; description: string; installed: boolean }>> {
     const installed = await this.scanExtensions()
@@ -566,19 +567,33 @@ export class ExtensionService {
    * 确保 mandatory 扩展已安装。runtime boot 时调用（checkAndAutoUpgrade 之前）。
    * 对 mandatoryExtensions SSOT 中每个包：已装则跳过，未装则 installExtension + setAutoUpgrade。
    * 失败不抛错（记日志），不阻塞启动。与 checkAndAutoUpgrade 失败策略一致。
+   *
+   * 另外清理 disabled-packages.json 中的 mandatory 残留：某扩展可能在升格 mandatory 之前
+   * 被用户禁用过，disabled 状态会遗留。getExtensionPaths 会无视 disabled 强加载 mandatory，
+   * 但残留的 disabled 记录会让 scanExtensions 报 enabled:false + mandatory:true 的不一致状态
+   * （UI 显示禁用态但开关已隐藏）。boot 时清除这些残留，保证 mandatory 包 enabled 始终为 true。
    */
   async ensureMandatoryExtensions(): Promise<Array<{ name: string; installed: boolean; error?: string }>> {
     const extensions = await this.scanExtensions()
     const installedNames = new Set(extensions.map(e => e.name))
+    const disabled = this.extSettings.getDisabled()
     const results: Array<{ name: string; installed: boolean; error?: string }> = []
 
     for (const ext of mandatoryExtensions) {
+      const source = `npm:${ext.name}`
+      // 清理 disabled 残留（无论是否已安装）——mandatory 包不应处于 disabled 状态
+      if (disabled.includes(source)) {
+        try {
+          await this.extSettings.removeDisabled(source)
+        } catch (e) {
+          log.warn(`[extension-service] mandatory clear-disabled failed for ${ext.name}: ${toErrorMessage(e)}`)
+        }
+      }
       if (installedNames.has(ext.name)) {
         results.push({ name: ext.name, installed: true })
         continue
       }
       try {
-        const source = `npm:${ext.name}`
         await this.installExtension(source)
         await this.extSettings.setAutoUpgrade(source, true)
         results.push({ name: ext.name, installed: true })

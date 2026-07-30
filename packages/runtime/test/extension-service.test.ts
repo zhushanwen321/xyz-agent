@@ -246,6 +246,27 @@ describe('ExtensionService', () => {
 
       installSpy.mockRestore()
     })
+
+    it('清理 disabled-packages.json 中的 mandatory 残留', async () => {
+      // 某扩展升格 mandatory 前被用户禁用过，disabled 状态遗留
+      const disabledPath = join(testSettingsDir, 'disabled-packages.json')
+      writeFileSync(disabledPath, JSON.stringify({
+        disabled: ['npm:@zhushanwen/pi-goal'],
+      }), 'utf-8')
+
+      // installExtension mock 掉避免真装，只测 disabled 清理
+      const installSpy = vi.spyOn(service, 'installExtension').mockResolvedValue(undefined)
+      const autoUpgradeSpy = vi.spyOn(service['extSettings'], 'setAutoUpgrade').mockResolvedValue(undefined)
+
+      await service.ensureMandatoryExtensions()
+
+      // disabled-packages.json 中的 @zhushanwen/pi-goal 被清除
+      // 用 getDisabled() API 读（removeDisabled 删空后会删文件，getDisabled 对 ENOENT 返回空数组）
+      expect(service['extSettings'].getDisabled()).not.toContain('npm:@zhushanwen/pi-goal')
+
+      installSpy.mockRestore()
+      autoUpgradeSpy.mockRestore()
+    })
   })
 
   describe('getExtensionPaths', () => {
@@ -261,6 +282,32 @@ describe('ExtensionService', () => {
 
       const paths = await service.getExtensionPaths()
       expect(paths.some(p => p.includes('pi-ask-user'))).toBe(false)
+    })
+
+    it('mandatory 包无视 disabled 状态，强制加载', async () => {
+      // 造一个已安装的 mandatory 包 @zhushanwen/pi-goal（scoped name）
+      const pkgDir = join(testSettingsDir, 'npm', 'node_modules', '@zhushanwen', 'pi-goal')
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
+        name: '@zhushanwen/pi-goal',
+        version: '0.5.0',
+        description: 'goal ext',
+        keywords: ['pi-package'],
+        peerDependencies: { '@mariozechner/pi-coding-agent': '*' },
+      }), 'utf-8')
+      const settingsPath = join(testSettingsDir, 'settings.json')
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
+      settings.packages = [...(settings.packages || []), 'npm:@zhushanwen/pi-goal']
+      writeFileSync(settingsPath, JSON.stringify(settings), 'utf-8')
+
+      // 把 mandatory 包加入 disabled-packages.json
+      writeFileSync(join(testSettingsDir, 'disabled-packages.json'), JSON.stringify({
+        disabled: ['npm:@zhushanwen/pi-goal'],
+      }), 'utf-8')
+
+      const paths = await service.getExtensionPaths()
+      // mandatory 包即使被 disabled 仍出现在路径中（强制加载）
+      expect(paths.some(p => p.includes('@zhushanwen') && p.includes('pi-goal'))).toBe(true)
     })
   })
 

@@ -10,7 +10,7 @@
  *
  * settings 扫描：读取 ~/.xyz-agent/pi/agent/settings.json 的 packages[]，
  * 定位 ~/.xyz-agent/npm/node_modules/ 下的扩展目录。
- * disabled-packages.json 控制启用/禁用状态。
+ * disabled-packages.json 控制启用/禁用状态（mandatory 包例外：强制加载，不受 disabled 影响）。
  */
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
 import { join, dirname, basename, resolve } from 'node:path'
@@ -18,6 +18,7 @@ import { getPiAgentDir, getNpmDir, getExtensionsDir } from '../pi/pi-paths.js'
 import { canonicalizePath } from '../../utils/path-utils.js'
 import { readSettings } from '../pi/pi-settings-store.js'
 import { readDisabledPackages as readDisabledPackagesFromStore } from '../pi/pi-extension-settings.js'
+import { isMandatoryExtension } from '@xyz-agent/shared'
 import type { IExtensionResolver, ExtensionPaths } from '../../services/ports/installer.js'
 
 // re-export ExtensionPaths 供历史 import 此文件的消费者使用（类型归属 ports）
@@ -170,10 +171,13 @@ export class ExtensionResolver implements IExtensionResolver {
 
     for (const source of packages) {
       if (!source.startsWith('npm:')) continue
-      if (disabled.has(source)) continue
-
       const NPM_PREFIX_LEN = 4
       const pkgName = source.slice(NPM_PREFIX_LEN)
+      // mandatory 包无视 disabled 状态，强制进入扫描结果（与 ExtensionService.getExtensionPaths
+      // 的 mandatory 强加载语义一致）。否则 resolver 在此就把 disabled 的 mandatory 包跳过，
+      // getExtensionPaths 的 mandatory 强加载 filter 永远看不到它，形成状态分离。
+      if (disabled.has(source) && !isMandatoryExtension(pkgName)) continue
+
       const pkgDir = join(this.options.npmDir ?? getNpmDir(), 'node_modules', pkgName)
 
       if (!existsSync(pkgDir)) {
