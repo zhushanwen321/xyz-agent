@@ -204,8 +204,11 @@ export class SessionLifecycle {
     // try-catch + safeDestroy 保证异常时清理 pi 进程。
     let session: IManagedSessionView
     try {
+      // Staging Mode（ADR-0043）：透传 effectiveModel（presetClientOptions.model，已含 C-RL-6 优先级解析）
+      // 让 session 元数据 modelId 反映实际启动模型，前端 composer chip 正确显示。
       session = await this.svc.initializeManagedSession(
         id, client, sessionCwd, label ?? basename(sessionCwd), sessionFilePath, options?.hidden,
+        undefined, undefined, presetClientOptions.model,
       )
     } catch (initErr) {
       await this.safeDestroy(id)
@@ -432,6 +435,15 @@ export class SessionLifecycle {
     fromPiEntryId: string,
     includeFrom: boolean,
     label?: string,
+    options?: {
+      /**
+       * Staging Mode（ADR-0043）：composer 暂存的模型覆盖，优先于源 preset.modelOverride。
+       * undefined 时 fork 仅继承源 preset（旧行为）。
+       */
+      modelOverride?: string
+      /** Staging Mode（ADR-0043）：composer 暂存的思考等级覆盖，优先于源 preset.thinkingLevel。 */
+      thinkingOverride?: string
+    },
   ): Promise<SessionSummary> {
     if (!this.configStore.getDefaultModel()) {
       throw errorWithCode('No model configured. Please configure a provider and model in Settings before forking a session.', MODEL_NOT_CONFIGURED)
@@ -473,8 +485,13 @@ export class SessionLifecycle {
       ?? BUILTIN_PRESET_IDS.FULL
     const forkResolution = await this.svc.getLaunchPresetOptions(forkPresetId, sessionCwd)
     const allExtPaths = forkResolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
-    // fork 继承源 preset 的全部字段（设计文档 §4.5），不接收 Landing Chip override。
-    const presetClientOptions = this.buildPresetClientOptions(forkResolution, undefined, undefined)
+    // Staging Mode（ADR-0043）：override 优先于源 preset 的 modelOverride/thinkingLevel（见 buildPresetClientOptions
+    // 内 C-RL-6 优先级）。undefined 时仅继承源 preset（旧行为），不影响现有 fork。
+    const presetClientOptions = this.buildPresetClientOptions(
+      forkResolution,
+      options?.modelOverride,
+      options?.thinkingOverride,
+    )
     const client = await this.pm.createSession(forkedId, sessionCwd, {
       skillPaths: forkResolution?.skillPaths ?? this.svc.getSkillPaths(sessionCwd),
       extensionPaths: allExtPaths,
@@ -520,9 +537,11 @@ export class SessionLifecycle {
     const parentSessionKey = sourceActive?.sessionFilePath ?? srcSessionId
     let session: IManagedSessionView
     try {
+      // Staging Mode（ADR-0043）：透传 effectiveModel（presetClientOptions.model）让 fork 新 session
+      // 元数据 modelId 反映实际启动模型（override > 源 preset.modelOverride）。
       session = await this.svc.initializeManagedSession(
         forkedId, client, sessionCwd, label ?? basename(sessionCwd), forkedFilePath,
-        undefined, parentSessionKey, fromPiEntryId,
+        undefined, parentSessionKey, fromPiEntryId, presetClientOptions.model,
       )
     } catch (initErr) {
       // L5: initializeManagedSession 失败时清理孤儿 fork 文件（已写出但 session 未进 Map）

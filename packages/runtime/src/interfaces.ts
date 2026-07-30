@@ -185,7 +185,14 @@ export interface ISessionService {
     fromPiEntryId: string | undefined,
     includeFrom: boolean,
     label?: string,
-    opts?: { fromMessageTimestamp?: number; fromMessageRole?: string },
+    opts?: {
+      fromMessageTimestamp?: number
+      fromMessageRole?: string
+      /** Staging Mode（ADR-0043）：composer 暂存的模型覆盖，优先于源 preset.modelOverride。 */
+      modelOverride?: string
+      /** Staging Mode（ADR-0043）：composer 暂存的思考等级覆盖，优先于源 preset.thinkingLevel。 */
+      thinkingOverride?: string
+    },
   ): Promise<SessionSummary>
   hasActiveSession(sessionId: string): boolean
   getSummary(sessionId: string): SessionSummary | undefined

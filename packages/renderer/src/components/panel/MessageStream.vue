@@ -90,7 +90,7 @@
     <div
       v-if="isCompacting"
       ref="compactingNoticeEl"
-      class="system-notice absolute left-5 right-5 flex min-w-0 items-center gap-2 pt-2.5 pb-5"
+      class="system-notice absolute left-5 right-5 z-10 flex min-w-0 items-center gap-2 rounded-md bg-surface px-2 pt-2.5 pb-5 shadow-sm"
       :style="{ top: vlistBottom + 'px' }"
     >
       <span class="h-px flex-1 bg-border" />
@@ -99,31 +99,10 @@
       <span class="h-px flex-1 bg-border" />
     </div>
 
-    <!-- 正在交接提示（fast-handoff 瞬时态）：isHandingOff=true 时显示在压缩中块之后。
-         完成经 session.handoffComplete 广播跳转新 session，isHandingOff 同步复位。
-         非虚拟化，absolute 定位到列表末尾 + compacting 占位高度。 -->
-    <div
-      v-if="isHandingOff"
-      class="system-notice absolute left-5 right-5 flex min-w-0 items-center gap-2 pt-2.5 pb-5"
-      :style="{ top: handoffNoticeTop + 'px' }"
-    >
-      <span class="h-px flex-1 bg-border" />
-      <Loader2 class="size-3 shrink-0 animate-spin text-neutral-mid" />
-      <span class="min-w-0 truncate text-[length:var(--text-xs)] leading-snug text-neutral-mid">{{ t('panel.message.handing') }}</span>
-      <Button
-        variant="ghost"
-        size="sm"
-        class="h-auto p-0 text-[length:var(--text-xs)] text-neutral-mid hover:text-neutral-fg"
-        data-testid="handoff-cancel-btn"
-        @click="onAbortHandoff"
-      >{{ t('panel.message.cancel') }}</Button>
-      <span class="h-px flex-1 bg-border" />
-    </div>
-
-    <!-- dispatching 空窗期占位（非虚拟化，absolute 定位到列表末尾 + compacting + handoff 占位高度）。 -->
+    <!-- dispatching 空窗期占位（非虚拟化，absolute 定位到列表末尾 + compacting 占位高度）。 -->
     <div
       v-if="isDispatching && !hasWorkingTurn"
-      class="absolute left-5 right-5 flex items-center gap-2 py-2 pl-1 text-[length:var(--text-sm)] text-neutral-mid"
+      class="absolute left-5 right-5 z-10 flex items-center gap-2 rounded-md bg-surface px-2 py-2 shadow-sm text-[length:var(--text-sm)] text-neutral-mid"
       :style="{ top: dispatchingTop + 'px' }"
     >
       <Loader2 class="size-3 animate-spin text-accent" />
@@ -131,7 +110,7 @@
     </div>
 
     <!-- ForkNotice 反馈行（transient，非虚拟化，RV1）。
-         绝对定位到列表末尾 + compacting/handoff/dispatching 占位高度；多条通知垂直堆叠。 -->
+         绝对定位到列表末尾 + compacting/dispatching 占位高度；多条通知垂直堆叠。 -->
     <template v-if="forkNotices.length > 0">
       <div
         v-for="(notice, idx) in forkNotices"
@@ -208,7 +187,6 @@ import { useStreamingPin } from '@/composables/panel/useStreamingPin'
 import {
   useMessageStreamNotices,
   COMPACTING_NOTICE_HEIGHT,
-  HANDOFF_NOTICE_HEIGHT,
 } from '@/composables/panel/useMessageStreamNotices'
 
 const props = defineProps<{
@@ -274,7 +252,7 @@ const topOffset = computed(() => 0)
 
 /**
  * [cw wave w3] virta 末项底部绝对 px（design §4.7）。
- * 瞬时块（compacting/handoff/dispatching/fork）absolute 定位的 top 基线——比原手写 totalHeight 更准
+ * 瞬时块（compacting/dispatching/fork）absolute 定位的 top 基线——比原手写 totalHeight 更准
  * （virta scrollSize 含实测项高度，未实测项用估算，随 RO 测量持续收敛）。
  *
  * 边界：
@@ -295,18 +273,15 @@ const [loadMoreEl, compactingNoticeEl] = useConstantHeightAssert([
   { name: 'COMPACTING_NOTICE_HEIGHT', expected: COMPACTING_NOTICE_HEIGHT },
 ]).els
 
-/** 末尾瞬时块（compacting/handoff/dispatching）状态 + 垂直堆叠定位 + 取消 handler（M2 + fast-handoff）。
+/** 末尾瞬时块（compacting/dispatching）状态 + 垂直堆叠定位 + 取消 handler（M2）。
  *  [cw wave w3] 切到 virta 路径：totalHeight 不传（virta scrollSize 经 vlistBottom 注入），
  *  topOffset 恒 0（W3C2 R2）。 */
 const {
   isCompacting,
-  isHandingOff,
   isDispatching,
   hasWorkingTurn,
-  handoffNoticeTop,
   dispatchingTop,
   forkNoticeBaseTop,
-  onAbortHandoff,
 } = useMessageStreamNotices({
   sessionId,
   vlistBottom,
@@ -324,8 +299,6 @@ const { forkNotices, forkNoticeTop, onView: onForkNoticeView, onDismiss: onForkN
     isDispatching,
     hasWorkingTurn,
     compactNoticeHeight: COMPACTING_NOTICE_HEIGHT,
-    isHandingOff,
-    handoffNoticeHeight: HANDOFF_NOTICE_HEIGHT,
     injectedBaseTop: forkNoticeBaseTop,
   })
 
@@ -410,7 +383,6 @@ useMessageStreamScroll({
   currentMessages,
   lastRenderTurn,
   isCompacting,
-  isHandingOff,
   isSessionActive,
   scrollToBottom: (force?: boolean) => {
     if (force) followToBottom(true)

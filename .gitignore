@@ -2,8 +2,9 @@
 .DS_Store
 .env
 .env.*
-.superpowers/2026-04-*
-.superpowers/brainstorm/
+# .superpowers/ skill 临时产物（plan/brainstorm 等），全目录忽略。
+# 旧规则只匹配 2026-04-* 和 brainstorm/，漏 2026-06+（事故：2026-06-22-sidebar-polish/plan.md 漏网被 commit）。
+.superpowers/
 .xyz-harness/gate/
 *.local
 *.log
@@ -56,4 +57,39 @@ screenshot.png
 
 # impeccable skill 产生的 UI critique 报告（临时审查产物，非源码）。
 # AGENTS.md 规则 13 禁止 impeccable/ 目录进版本管理；历史遗留的 4 个已 git rm --cached 清理。
+# 子目录也要匹配（事故：packages/renderer/src/.impeccable/ 漏网被 commit），用 /**/.impeccable/ 兜底。
 .impeccable/
+/**/.impeccable/
+
+# .v3-audit/ 一次性 v3 重建审计档案（已清理，results/handoffs/verify 等过程产物，
+# 代码引用已改为指向 git 历史）。防止再次创建。
+.v3-audit/
+
+# === cw v1 工作流临时产物（根目录散落，应放 .xyz-harness/ 归档）===
+# .cw-*.json/.md 是 cw 跑完手动归档的中间产物，不是源码；.cw/（带斜杠）是 tracked 测试脚本，不忽略。
+/.cw-*.json
+/.cw-*.md
+# wave-* / clarify / plan / design-review 等是 cw 当前 wave 的运行时产物。
+/wave-*.json
+/wave-*.md
+/clarify.json
+/clarify-*.json
+/design-review.json
+/plan.json
+/plan.md
+/exec-review.json
+/retrospect.json
+/closeout.json
+/test.json
+# cw/agent 产生的根目录审查报告（review-*.md），应归档到 .xyz-harness/ 而非散落项目根。
+/review-*.md
+
+# 手动测试残留的假数据目录（测试代码用 tmpdir()，不读根目录 session-data/）
+/session-data/
+
+# === 备份/临时后缀兜底 ===
+*.bak
+*.tmp
+*.swp
+*.orig
+*~

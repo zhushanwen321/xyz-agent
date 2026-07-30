@@ -15,6 +15,8 @@ import type { ISessionService, IConfigService, IModelService, IMessageBroker, IE
 import type { GitService } from '../services/git-service.js'
 import type { FileService } from '../services/file-service.js'
 import type { SkillRegistry } from '../services/skill-registry.js'
+// MessageBus（wave:runtime-wiring）：注入到 SessionMessageHandler ctx（subscribe/unsubscribe RPC）。
+import type { MessageBus } from '../services/message-bus/message-bus.js'
 import { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
 import { ConnectionManager } from './connection-manager.js'
 import { ServerMessageBroker } from './message-broker.js'
@@ -55,6 +57,12 @@ export class RuntimeServer implements IMessageBroker {
   private handoffService?: HandoffService
   /** W4：skillRegistry（可选，landing 全局/项目 skill 缓存源） */
   private skillRegistry?: SkillRegistry
+  /**
+   * MessageBus 单例（wave:runtime-wiring）：注入到 SessionMessageHandler ctx，
+   * 供 session.subscribe/unsubscribe RPC 注册/取消订阅。ws 断开时 onDisconnect 回调调
+   * bus.unsubscribeAll(ws) 清理订阅。经 setMessageBus 注入（组合根在 setServices 前调）。
+   */
+  private messageBus?: MessageBus
 
   // ── Message handlers (extracted) ────────────────────────────────
   // Constructed in setServices() — not at field-init time — so `this` is fully
@@ -86,12 +94,23 @@ export class RuntimeServer implements IMessageBroker {
   constructor(port: number, projectRoot?: string) {
     this.projectRoot = projectRoot ?? process.cwd()
     // ConnectionManager 注入回调：连接建立 → broker 推送 initial state；
-    // 消息到达 → server.handleMessage 路由；解析/兜底错误 → broker.sendError。
+    // 消息到达 → server.handleMessage 路由；解析/兜底错误 → broker.sendError；
+    // 连接关闭 → bus.unsubscribeAll(ws) 清理该 ws 的所有 session 订阅（wave:runtime-wiring）。
     this.conn = new ConnectionManager(port, {
       onConnect: (ws) => this.broker.sendInitialState(ws),
       onMessage: (msg, ws) => this.handleMessage(msg, ws),
       sendError: (ws, code, message, id, details) => this.broker.sendError(ws, code, message, id, details),
+      onDisconnect: (ws) => this.messageBus?.unsubscribeAll(ws as unknown as import('../services/message-bus/types.js').BusClient),
     })
+  }
+
+  /**
+   * 注入 MessageBus 单例（wave:runtime-wiring）：供 SessionMessageHandler 的 subscribe/
+   * unsubscribe RPC 用 + ConnectionManager.onDisconnect 调 unsubscribeAll。
+   * 必须在 setServices 前调（setServices 装配 sessionHandler 时读 this.messageBus）。
+   */
+  setMessageBus(bus: MessageBus): void {
+    this.messageBus = bus
   }
 
   setServices(session: ISessionService, config: IConfigService, model: IModelService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService, workspace?: WorkspaceService, appInfo?: { appVersion: string; piVersion: string }, skillRegistry?: SkillRegistry, worktree?: IWorktreeService, terminal?: ITerminalService, quota?: QuotaService, handoff?: HandoffService, preset?: PresetService): void {
@@ -153,6 +172,8 @@ export class RuntimeServer implements IMessageBroker {
       ...messaging,
       sessionService: this.sessionService,
       handoffService: this.handoffService,
+      // wave:runtime-wiring：注入 MessageBus 供 session.subscribe/unsubscribe RPC 用。
+      messageBus: this.messageBus,
       nextPushId: () => this.broker.nextPushId(),
       broadcastSessionList: () => this.broker.broadcastSessionList(),
       clearExtensionTimeoutsForSession: (sessionId) => this.clearExtensionTimeoutsForSession(sessionId),

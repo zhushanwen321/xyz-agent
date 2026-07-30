@@ -43,6 +43,12 @@ export type ClientMessageType =
   | 'session.create' | 'session.delete' | 'session.deleteByCwd' | 'config.sessions' | 'session.switch' | 'session.history' | 'session.getFullHistory' | 'session.getCommands' | 'session.getContext'
   | 'session.compact' | 'session.rename' | 'session.fork'
   | 'session.handoff' | 'session.abortHandoff'
+  // runtime-message-bus（slice:runtime-message-bus，wave:protocol-seq）：
+  // session.subscribe 订阅某 session 的 live 事件流（bus.publish 推送的带 seq 消息），
+  // reply { snapshot, lastSeq, gap? }（见 ReplyPayloadMap）。
+  // session.unsubscribe 取消订阅，reply message.status ack。
+  // wave:runtime-wiring 已在 ClientMessageMap 补登记 request payload 形状（见下方）。
+  | 'session.subscribe' | 'session.unsubscribe'
   | 'session.getSubagents' | 'session.getSubagentHistory'
   | 'session.getWorkflows' | 'session.getAgentCallHistory' | 'session.getAgentCallFilePath'
   | 'session.workflowAction' | 'session.subagentAction'
@@ -237,14 +243,26 @@ export interface ClientMessageMap {
     fromMessageRole?: string
     includeFrom?: boolean
     label?: string
+    /** Staging Mode（ADR-0043）：composer 暂存的模型覆盖（"provider/modelId" 格式）。
+     *  存在时优先于源 session preset 的 modelOverride；不存在时继承源 preset。 */
+    modelOverride?: string
+    /** Staging Mode：composer 暂存的思考等级覆盖（合法值见 VALID_THINKING_LEVELS）。 */
+    thinkingOverride?: string
   }
-  // handoff：在源 session 触发 fast-handoff——runtime 让源 session 的 pi 跑 /skill:handoff
-  // 生成文档，agent_end 后取末条 assistant 文档 → 新建空白 session 注入首条 → 广播跳转。
-  // 与 fork 的区别：fork 从某点分叉继承历史；handoff 不继承历史，只注入文档（"打包交接到新线程"）。
-  // reply 原样拼到 /skill:handoff 后作 args（用户备注）。
+  // handoff：在源 session 触发 fast-handoff（agent-driven 模式）——runtime HandoffService 让源 session
+  // 跑 handoff turn（内置 HANDOFF_PROMPT_TEMPLATE）生成文档 → 从 agent_end 提取 text → 新建 session
+  // 由 runtime 注入 doc 触发新 turn。与 fork 的区别：fork 从某点分叉继承历史；handoff 不继承历史，
+  // 只注入文档（"打包交接到新线程"）。reply sanitize 后拼到 handoff prompt 末尾告知 agent 下一 session 关注点。
   // 完成经独立通道 session.handoffComplete 广播，reply 是 message.status ack（前端不读 payload）。
-  'session.handoff': { sessionId: string; reply?: string }
-  // abortHandoff：取消进行中的 handoff。委托 SessionService.abort 中断 pi turn，
+  // Staging Mode（ADR-0043）：modelOverride/thinkingOverride 来自 composer 暂存态的模型选择，
+  // 用于新 session 创建（源 session turn 仍用源 session 自身模型，不受 override 影响）。
+  'session.handoff': {
+    sessionId: string
+    reply?: string
+    modelOverride?: string
+    thinkingOverride?: string
+  }
+  // abortHandoff：中断进行中的 handoff（runtime client.abort + 清 listener/timer/inflight）。
   // onTurnEnd 检测 aborted 标记跳过新建/注入。无进行中 handoff 时 no-op。
   'session.abortHandoff': { sessionId: string }
   // subagent 列表/对话流读取（runtime 直读主 session JSONL + subagent JSONL，不依赖扩展）
@@ -258,6 +276,17 @@ export interface ClientMessageMap {
   // session.subagentAction：subagent 生命周期操作（当前只 cancel，对称 workflowAction 的扩展 slash command 转发）。
   // runtime 经 client.prompt("/subagents <action> <subagentId>") 调扩展（不经 LLM）。
   'session.subagentAction': { sessionId: string; action: 'cancel'; subagentId: string }
+  // session.subscribe（runtime-message-bus wave:runtime-wiring 补登记，对应 IF6 契约）：
+  // renderer 切换/创建 session 时调用，触发 bus.subscribe 注册订阅 + 拉 ring snapshot。
+  // fromSeq 可选：重连场景带 lastSeenSeq，bus 返回 seq > fromSeq 的增量
+  // （若 ring 内已淘汰 fromSeq 之前的消息则返回全量 snapshot + reply 标记 gap=true）。
+  // reply 'session.subscribe' { snapshot: ServerMessage[]; lastSeq: number; gap?: boolean }。
+  'session.subscribe': { sessionId: string; fromSeq?: number }
+  // session.unsubscribe（runtime-message-bus wave:runtime-wiring 补登记，对应 IF7 契约）：
+  // renderer 切走 session 时调用（可选），触发 bus.unsubscribe 减少不活跃 session 的 live push 开销。
+  // 不调也安全——ws 断开时 ConnectionManager.onClose → bus.unsubscribeAll 兜底。
+  // reply 'session.unsubscribe' undefined（ack 型，ReplyPayloadMap 已定 void）。
+  'session.unsubscribe': { sessionId: string }
   // message.send：images 是 Cmd+V 富呈现通路的图片数据（base64，不含 data: 前缀）。
   // runtime 适配层（rpc-client）补 type:'image' 组装成 pi 的 ImageContent。
   // 不带 type 字段（type 是 pi 私有，runtime 适配层负责补）。
@@ -494,7 +523,7 @@ export type WorktreeEnvelopeCode = WorktreeErrorCode | WorktreeUnknownErrorCode
 
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'session.deletedByCwd' | 'config.sessions' | 'session.history' | 'session.fullHistory'
-  | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.handoffComplete'
+  | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.handoffStarted' | 'session.handoffComplete' | 'session.handoffAborted'
   | 'session.subagents' | 'session.subagentHistory'
   | 'session.workflows' | 'session.agentCallHistory' | 'session.agentCallFilePath'
   | 'session.workflowUpdate' | 'session.workflowActionDone' | 'session.subagentActionDone'
@@ -517,6 +546,12 @@ export type ServerMessageType =
   | 'model.list' | 'model.switched'
   | 'session.thinkingLevelSet'
   | 'session.state_changed'
+  // wave:runtime-wiring：session.subscribe 的 RPC reply type（payload 消费型，含 snapshot/lastSeq/gap）。
+  // 与 ClientMessageType 的 'session.subscribe'（request）同名——request/reply 同名是本项目惯用模式
+  //（见 session.compact→session.compacted 等多数用不同名，但 session.subscribe 因其「订阅」语义
+  // request 与 reply 同名更直观：renderer register<{snapshot,lastSeq,gap}> 按 id resolve）。
+  // session.unsubscribe 的 reply 走 message.status（ack 型，见 ReplyPayloadMap :1192 注释），不在此登记。
+  | 'session.subscribe'
   | 'pong' | 'error'
   | 'extension.ui_request' | 'extension.ui_timeout' | 'extension.error'
   | 'extension.discovered' | 'extension.installCancelled'
@@ -679,6 +714,16 @@ export interface ServerMessageMapBase {
   // session 通道推送（runtime session-service / index.ts 生产，W04 收紧）
   'session.compacting': { sessionId: string }
   'session.compacted': { sessionId: string; status: 'compacted'; error?: string }
+  // session.subscribe（wave:runtime-wiring）：session.subscribe RPC 的 reply payload（IF6 契约）。
+  // snapshot：订阅时刻 bus ring 内当前事件序列（元素为带 seq 的 ServerMessage），renderer 据此 reconcile。
+  // stateSnapshot：4 个 state topic（commands/context/subagents/workflows）的 last-value 数组拷贝
+  //   （wave:remove-bandaids 新增）。让 renderer subscribe 后一次性把 commands/context/subagents 的
+  //   当前状态灌入对应 store（dispatch 到 events 通道 → routeInbound 兜底分支 applyRecords），
+  //   替代 selectSession/submitFirstMessage 内的主动拉取 RPC 兜底。stateSnapshot 与 snapshot 独立：
+  //   snapshot 受 subscribe RPC 的 fromSeq 增量过滤影响，stateSnapshot 是 last-value 语义不受影响。
+  // lastSeq：当前 per-session seq 计数器值，renderer 记为 lastSeenSeq 做 gap 检测基线。
+  // gap：fromSeq 早于 ring 最旧 seq（旧消息已被 FIFO 淘汰）时 true，renderer 需全量重拉而非增量 backfill。
+  'session.subscribe': { snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; lastSeq: number; gap?: boolean }
   // session.commands：pi 扩展命令列表（fetchAndBroadcastCommands 广播）
   // sourceInfo 透传自 pi get_commands 的 RpcSlashCommand（SKILL.md / extension 文件路径等），可选（旧消费方向后兼容）
   'session.commands': { sessionId: string; commands: Array<{ name: string; description?: string; source: string; sourceInfo?: CommandSourceInfo }> }
@@ -847,16 +892,23 @@ export interface ServerMessageMapBase {
     branchName?: string
     preview?: string
   }
-  // session.handoffComplete：fast-handoff 完成后的广播（FR-fast-handoff）。
-  // 时机：源 session 的 pi 跑完 /skill:handoff → 取末条 assistant 文档 → xml 包装 →
-  // 新建空白 session 之后。前端据 newSessionId 跳转新 session，据 srcSessionId
-  // 在源 session 标记已交接（配合磁盘 handoff_marker → SessionSummary.handedOffTo）。
-  // doc：纯文本 handoff 文档（不再 xml 包装）。发送职责归位 renderer——前端收到后 ensureStreamSubscription
-  // 再 chatApi.send(doc)，避免 runtime 早 send 导致的时序竞争（pi 流式事件早于前端订阅被丢）。
-  // reply：用户在 composer handoff 模式下键入的备注文本（可选）。
+  // session.handoffStarted：handoff 开始时广播到源 session 对话流（B1 修复）。
+  // 时机：runHandoff 发送 handoff prompt 给源 session pi 之前。
+  // 前端据此在对话流中显示「正在生成 handoff 文档...」提示，让用户知道 handoff 已启动。
+  'session.handoffStarted': { sessionId: string }
+  // session.handoffComplete：fast-handoff 完成后的广播（FR-fast-handoff，agent-driven 模式）。
+  // 时机：源 session 的 pi 跑完 handoff turn（HANDOFF_PROMPT_TEMPLATE）→ runtime 从 agent_end 提取
+  // 文档文本 → 新建空白 session → 用 wrapWithXmlTag(doc) + reply 注入新 session 触发新 turn 之后。
+  // agent-driven 模式下 doc 由 runtime 直接发给新 session pi（wave1 已实现），不再经广播回传前端——
+  // 广播 payload 仅通知前端复位源 session handingOff + 刷新列表 + 跳转新 session（selectSession 内部
+  // 自带 hydrate + 订阅 + 命令/上下文兜底拉取，前端不再手动 ensureStreamSubscription/send）。
   // sourceLabel：交接来源 session 名称（可选，前端用于构造 handoff badge segment）。
-  // 对齐 fork-ask 模式（useForkActions.ts:109-113）。
-  'session.handoffComplete': { srcSessionId: string; newSessionId: string; doc: string; reply?: string; sourceLabel?: string }
+  'session.handoffComplete': { srcSessionId: string; newSessionId: string; sourceLabel?: string }
+  // session.handoffAborted：fast-handoff 中断后的广播（agent-driven 模式 wave2）。
+  // 时机：用户取消进行中的 handoff（或 abort 兜底）→ runtime 调 handoffService.abortHandoff
+  // （内部 client.abort + 清 inflight）→ 广播此帧让前端复位源 session 的 handingOff 态。
+  // srcSessionId：被中断的源 session id（与 handoffComplete 的 srcSessionId 同义，统一字段名）。
+  'session.handoffAborted': { srcSessionId: string }
   // session.history：session.history / session.switch 的成功 reply（session-message-handler.ts:83/96/111）。
   // session optional——switch 路径带 SessionSummary（已 restore 的 session），getHistory 路径不带。
   // historyTruncated：历史超上限截断标志（前端据此提示「历史已截断」）。
@@ -997,7 +1049,14 @@ export type ServerMessageMap = ServerMessageMapBase & {
  */
 export interface ServerMessage<T extends ServerMessageType = ServerMessageType> {
   type: T
+  /** RPC reply 关联 ID（renderer 在 ClientMessage 生成 UUID，runtime reply 原样回填）。
+   *  与 seq 互斥（见 D7）：同一条消息要么是 RPC reply（带 id）要么是 server-push live（带 seq），
+   *  runtime routeInbound 先判 id 再判 seq。 */
   id?: string
+  /** server-push live 事件的单调序号（per-session，bus.publish 分配，DM3/D5）。
+   *  与 id 互斥（见 D7）：subscribe 后 renderer 用 lastSeenSeq 做 gap 检测与 reconcile backfill。
+   *  类型层不强制 id/seq union（避免破坏现有构造侧默认泛型赋值），互斥由 runtime 保证。 */
+  seq?: number
   payload: ServerMessageMap[T]
 }
 
@@ -1159,11 +1218,22 @@ export interface ReplyPayloadMap {
   'session.compact': void         // reply session.compacted
   'session.delete': void          // reply session.deleted
   'session.deleteByCwd': BatchDeleteResult // reply session.deletedByCwd（前端读 deleted/failed 列表）
-  // session.handoff：触发后 pi 异步跑 /skill:handoff，完成经 session.handoffComplete 独立广播通道推回。
-  // reply message.status ack（前端不读 payload，等 handoffComplete 广播跳转新 session）。
+  // session.handoff：触发后 runtime HandoffService 异步让源 session 跑 handoff turn 生成文档，
+  // 完成经 session.handoffComplete 独立广播通道推回。reply message.status ack（前端不读 payload，等广播跳转新 session）。
   'session.handoff': void         // reply message.status
   // session.abortHandoff：取消进行中 handoff，reply message.status ack（与 message.abort 同模式）。
   'session.abortHandoff': void    // reply message.status
+  // session.subscribe（runtime-message-bus wave:protocol-seq）：订阅某 session 的 live 事件流。
+  // payload 消费型——renderer 读 snapshot 做 reconcile（订阅时刻 bus ring 内当前事件序列，
+  // 元素为带 seq 的 ServerMessage），记 lastSeq 作为后续 gap 检测基线；gap=true 标记本次
+  // snapshot 因 ring 容量溢出存在缺口（renderer 需全量重拉而非增量 backfill）。
+  // stateSnapshot（wave:remove-bandaids）：4 个 state topic 的 last-value 数组拷贝，让 renderer
+  // subscribe 后一次性把 commands/context/subagents 的当前状态灌入对应 store，替代主动拉取兜底。
+  'session.subscribe': { snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; lastSeq: number; gap?: boolean }
+  // session.unsubscribe（runtime-message-bus wave:protocol-seq）：取消订阅，ack 型。
+  // 与 session.handoff/session.abortHandoff/message.abort 同模式，renderer register<void>
+  // 不读 reply payload，取消订阅的副作用由后续 live 事件停发体现。
+  'session.unsubscribe': void     // reply message.status
   'session.rename': void          // reply session.renamed
   'session.setThinkingLevel': void // reply session.thinkingLevelSet
   'session.subagentAction': void  // reply session.subagentActionDone

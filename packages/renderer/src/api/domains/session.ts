@@ -7,8 +7,16 @@
  * 注：ServerMessage(id) → pending.resolve 的回灌由 features 层 dispatcher 串联（Wave 3）。
  *      mock 模式下不走本域（api/index 切到 mock 门面）。
  */
-import type { SessionSummary, SessionGroup, SubagentRecord, WorkflowRunRecord, Message, BatchDeleteResult } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup, SubagentRecord, WorkflowRunRecord, Message, BatchDeleteResult, ServerMessage } from '@xyz-agent/shared'
 import { command } from '../request'
+
+/**
+ * handoff RPC 超时：对齐 runtime HandoffService.HANDOFF_TIMEOUT_MS（600s）+ 60s 余量（agent_end 后的 create/broadcast）。
+ * 不直接 import runtime 包（跨包依赖不可行），本地定义并手动对齐——runtime 改值时这里同步更新。
+ * 不走 pending.ts DEFAULT_TIMEOUT_MS（65s）：65s 后前端 RPC 超时 reject → useHandoffActions 复位 handingOff（按钮可重点），
+ * 但 runtime runHandoff 仍最长跑 600s，用户重试会撞 runtime already in progress。
+ */
+const HANDOFF_RPC_TIMEOUT_MS = 660_000
 
 /**
  * 列出所有 session，按 cwd 分组（对齐后端 SessionGroup[]，D7）。
@@ -43,6 +51,9 @@ export function switchSession(sessionId: string): Promise<void> {
 /**
  * Fork session：从 srcSessionId 截断到 fromPiEntryId，创建新 session（独立 pi 进程）。
  * reply 复用 session.created，解包 .session。
+ *
+ * Staging Mode（ADR-0043）：modelOverride/thinkingOverride 来自 composer 暂存态，
+ * 优先于源 session preset 的对应字段。
  */
 export async function fork(
   srcSessionId: string,
@@ -52,6 +63,8 @@ export async function fork(
     messageRole?: string
     includeFrom?: boolean
     label?: string
+    modelOverride?: string
+    thinkingOverride?: string
   },
 ): Promise<SessionSummary> {
   const reply = await command('session.fork', {
@@ -61,6 +74,8 @@ export async function fork(
     fromMessageRole: opts.messageRole,
     includeFrom: opts.includeFrom,
     label: opts.label,
+    modelOverride: opts.modelOverride,
+    thinkingOverride: opts.thinkingOverride,
   })
   return reply.session
 }
@@ -180,19 +195,65 @@ export function subagentAction(
 
 /**
  * 触发 fast-handoff（痛点3，FR-fast-handoff）。
- * runtime 让源 session 的 pi 跑 /skill:handoff：取末条 assistant 文档 → 注入新空白 session。
+ * runtime HandoffService 让源 session 跑 handoff turn 生成文档 → 新建 session 由 runtime 注入 doc。
  * 与 fork 的区别：fork 从某点分叉继承历史；handoff 不继承历史，只注入文档（"打包交接到新线程"）。
- * reply 原样拼到 /skill:handoff 后作 args（用户备注）。完成经独立通道 session.handoffComplete 广播（effect 层订阅跳转），
+ * reply sanitize 后拼到 handoff prompt 末尾告知 agent 下一 session 关注点。完成经独立通道 session.handoffComplete 广播（effect 层订阅跳转），
  * reply 是 message.status ack（前端不读 payload，等广播）。
+ *
+ * Staging Mode（ADR-0043）：modelOverride/thinkingOverride 来自 composer 暂存态的模型选择，
+ * 用于新 session 创建（源 session turn 仍用源 session 自身模型，不受 override 影响）。
  */
-export function handoff(sessionId: string, reply?: string): Promise<void> {
-  return command('session.handoff', { sessionId, reply })
+export function handoff(
+  sessionId: string,
+  reply?: string,
+  options?: { modelOverride?: string; thinkingOverride?: string },
+): Promise<void> {
+  return command('session.handoff', {
+    sessionId,
+    reply,
+    modelOverride: options?.modelOverride,
+    thinkingOverride: options?.thinkingOverride,
+  }, HANDOFF_RPC_TIMEOUT_MS)
 }
 
 /**
- * 取消进行中的 handoff（对称 abortHandoff 委托 SessionService.abort 中断 pi turn）。
+ * 取消进行中的 handoff（委托 HandoffService.abortHandoff 中断 handoff inflight：client.abort + 清 listener/timer）。
  * 无进行中 handoff 时 no-op。reply message.status ack。
  */
 export function abortHandoff(sessionId: string): Promise<void> {
   return command('session.abortHandoff', { sessionId })
+}
+
+/**
+ * 订阅指定 session 的 live 事件流（runtime-message-bus slice，wave:protocol-seq + wave:runtime-wiring）。
+ *
+ * runtime 在订阅时刻返回：
+ * - snapshot：bus ring 内当前事件序列（含已发生但 renderer 未消费的带 seq 消息），renderer 用其
+ *   回放流式历史到 events 通道。
+ * - stateSnapshot（wave:remove-bandaids）：4 个 state topic（commands/context/subagents/workflows）
+ *   的 last-value 数组，renderer 一次性把当前状态灌入对应 store（替代 selectSession/submitFirstMessage
+ *   内的主动拉取 RPC 兜底）。与 snapshot 独立——stateSnapshot 不受 fromSeq 增量过滤影响。
+ * - lastSeq：当前 per-session seq 计数器，renderer 记为 lastSeenSeq 做 gap 检测基线。
+ * - gap：fromSeq 早于 ring 最旧 seq（旧消息已被 FIFO 淘汰）时 true，renderer 需全量重拉而非增量 backfill。
+ *
+ * fromSeq：可选，指定起始 seq 回拉（gap 检测触发 reconcile 时传当前缺失的 seq）。
+ * 首次订阅不传（runtime 从 ring 末尾开始）。
+ *
+ * 返回类型由 ReplyPayloadMap['session.subscribe'] 自动推导（payload 消费型）。
+ */
+export async function subscribe(
+  sessionId: string,
+  fromSeq?: number,
+): Promise<{ snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; lastSeq: number; gap?: boolean }> {
+  return command('session.subscribe', { sessionId, fromSeq })
+}
+
+/**
+ * 取消订阅指定 session 的 live 事件流（runtime-message-bus slice）。
+ *
+ * ack 型（reply message.status，ReplyPayloadMap['session.unsubscribe']=void）。
+ * 取消订阅的副作用由后续 live 事件停发体现——renderer 不读 reply payload。
+ */
+export function unsubscribe(sessionId: string): Promise<void> {
+  return command('session.unsubscribe', { sessionId })
 }

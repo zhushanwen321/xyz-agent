@@ -89,6 +89,7 @@ export function useForkActions(focusedSessionId: Ref<string | null>) {
     srcSessionId: string,
     fromMessageId: string,
     content: string,
+    staging?: { modelOverride?: string; thinkingOverride?: string },
   ): Promise<void> {
     // 解析 fork 点：尽量取 piEntryId（精确），取不到则降级传 fromMessageId（runtime 走 JSONL 兜底）。
     // 不像 forkSession 那样在消息缺失时硬抛——fork-ask 的核心有效负载是 content，fork 点缺失不应阻断。
@@ -98,6 +99,9 @@ export function useForkActions(focusedSessionId: Ref<string | null>) {
       messageTimestamp: forkMsg?.timestamp,
       messageRole: forkMsg?.role,
       includeFrom: true,
+      // Staging Mode（ADR-0043）：composer 暂存的模型覆盖，优先于源 preset。
+      modelOverride: staging?.modelOverride,
+      thinkingOverride: staging?.thinkingOverride,
     })
     session.appendSession(created)
     const newId = created.id

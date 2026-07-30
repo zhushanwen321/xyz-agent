@@ -44,7 +44,6 @@ interface ScrollDepsHolder {
   currentMessages: Ref<Message[]>
   lastRenderTurn: Ref<{ isStreaming: boolean } | null>
   isCompacting: Ref<boolean>
-  isHandingOff: Ref<boolean>
   isSessionActive: Ref<boolean>
   scrollToBottom: ReturnType<typeof vi.fn>
 }
@@ -59,7 +58,6 @@ function makeDepsHolder(initial: {
     currentMessages: ref<Message[]>(initial.messages ?? [msg('a1', 'hello')]),
     lastRenderTurn: ref<{ isStreaming: boolean } | null>({ isStreaming: false }),
     isCompacting: ref(false),
-    isHandingOff: ref(false),
     isSessionActive: ref(initial.isSessionActive ?? false),
     scrollToBottom: vi.fn(),
   }
@@ -87,7 +85,6 @@ function mountScroll(holder: ScrollDepsHolder) {
         currentMessages: toComputed(holder.currentMessages),
         lastRenderTurn: toComputed(holder.lastRenderTurn),
         isCompacting: toComputed(holder.isCompacting),
-        isHandingOff: toComputed(holder.isHandingOff),
         isSessionActive: toComputed(holder.isSessionActive),
         scrollToBottom: holder.scrollToBottom,
       })

@@ -13,15 +13,18 @@ import { builtinModules } from 'node:module'
 // builtinModules 仅返回不带前缀的模块名（如 'stream'、'fs'），需手动拼 'node:' 前缀。
 const nodeExternals = [
   'electron',
-  // undici：Electron 内置 Node 运行时已自带 undici（fetch 底层依赖），
-  // 且本仓库把它作为根依赖安装。标记为 external 让 main bundle 运行时 require 解析
-  // 已安装的 undici，而非打进 bundle——避免重复打包、减小体积，并保证 ProxyAgent 等
-  // named export 在运行时可用（gateway/update-handlers 用它构造代理 dispatcher）。
-  'undici',
   // builtinModules 不含 'node:' 前缀；为兼容 `import 'node:fs'` 与 `import 'fs'` 两种写法，
   // 同时映射带前缀和不带前缀两种形式。
   ...builtinModules.flatMap((m) => [m, `node:${m}`]),
 ]
+
+// [HISTORICAL] 第三方 npm 包一律打进 main bundle，不放进 external 数组。
+// 曾误以为 "Electron 内置 Node 已自带 undici 可直接 require"，把 'undici' 标为 external，
+// 导致打包产物 main.cjs 保留 require('undici')，但 electron-builder files 白名单不含 undici、
+// Electron 运行时也不把它作为公共 require 目标暴露 → 安装后启动即
+// "Cannot find module 'undici'"。Electron 的 Node 仅把 undici 作为 fetch 的内部实现，
+// 不暴露 require('undici')。auto-update 代理下载（gateway/update-handlers、update/download-asset）
+// 需要 undici 的 ProxyAgent，必须打进 bundle。
 
 export default defineConfig({
   build: {

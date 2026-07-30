@@ -23,6 +23,11 @@ import type { Segment } from '@xyz-agent/shared'
 import { segmentsToPrompt } from '@xyz-agent/shared'
 import { writeSegmentsMetadata } from '@/lib/ipc'
 import { markBashError } from '@/stores/chat-bash-effects'
+import {
+  subscribeSession,
+  clearSubscription,
+  resetSubscriptionStates,
+} from '@/composables/useMessageBusSubscription'
 
 const t = i18n.global.t
 
@@ -71,6 +76,10 @@ export function resetChatModuleState(): void {
   streamSubscriptions.clear()
   // 重置 history 截断标记
   historyTruncatedSessions.value = new Set()
+  // wave:renderer-subscribe：重置 MessageBus 订阅状态（subscriptionStates 模块级 Map）。
+  // 与 streamSubscriptions/historyTruncatedSessions 同理——测试间不 reset 会泄漏到下一用例
+  //（subscriptionStates 残留 → routeInbound gap 检测误判）。
+  resetSubscriptionStates()
 }
 
 /**
@@ -87,6 +96,17 @@ export function ensureStreamSubscription(
   sessionStore: ReturnType<typeof useSessionStore>,
 ): void {
   if (streamSubscriptions.has(sid)) return
+  // wave:renderer-subscribe：升级为 subscribe + reconcile（DM4/IF8）。
+  // 在 events 订阅之外，额外调 subscribeSession 建立 MessageBus 订阅：RPC 拉 snapshot 回放历史
+  // （reconcile）+ 记 lastSeenSeq（routeInbound gap 检测基线）。两者职责分工：
+  //   - events.on 订阅 = 消费端入口（message.*/session.* handler，UI 响应）
+  //   - subscribeSession = 数据完整性层（seq 去重 + gap 补齐）
+  // fire-and-forget（不 await）：ensureStreamSubscription 是同步函数（被 send/sendBash 等同步路径
+  // 调用），不能改 async（破坏调用链签名）。subscribeSession 内部 catch 失败 console.warn，
+  // 不标记 subscribed（下次可重试）。subscribe RPC 失败属连接级故障，WS 重连后重新建立。
+  void subscribeSession(sid).catch((e) =>
+    console.warn(`[useChat] subscribeSession failed for session ${sid}:`, e),
+  )
   const unsub = chatApi.streamSubscribe(sid, (msg) => {
     // [send.rejected] 防御性反馈通道（D-006 独立类型，不进对话流）
     if (msg.type === 'send.rejected') {
@@ -107,6 +127,8 @@ export function ensureStreamSubscription(
     // session.* → 跨 store 协调（sessionStore.updateLabel/updateSessionState/setCompacting），
     // 保留在 useChat（stores 间禁止互相 import）。
     switch (msg.type) {
+      // [fix-handoff-with-message] session.handoffStarted 不再处理：前端已删除「正在交接…」
+      // system notice（改由 composer stop 按钮提供取消入口）。runtime 仍广播此消息，前端忽略即可。
       case 'session.compacting':
         // #6：compact 生命周期开始（runtime server-push，走 session 通道）
         chat.setCompacting(sid, true)
@@ -513,6 +535,10 @@ export function useChat() {
       streamSubscriptions.delete(sessionId)
     }
     clearHistoryTruncated(sessionId) // SUGGESTION：已删 session 的截断标记不再有意义
+    // wave:renderer-subscribe：清除 MessageBus 订阅状态（SubscriptionState）。
+    // 与 streamSubscriptions.delete 配对——session 删除后若不清，routeInbound 的 gap 检测
+    // 仍会读残留 state（lastSeenSeq 基线 stale），且 Map 永久增长。
+    clearSubscription(sessionId)
     chat.disposeSession(sessionId)
   }
 

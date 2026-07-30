@@ -47,7 +47,7 @@
           >
             <Check v-if="copied === aiMdKey" class="size-3 text-success" />
             <Copy v-else class="size-3" />
-            <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[length:var(--text-2xs)] font-bold leading-[10px] text-accent-foreground">MD</span>
+            <span class="absolute -right-0.5 -bottom-0.5 rounded-sm bg-accent px-[2px] text-[8px] font-bold leading-[8px] text-accent-foreground">MD</span>
           </Button>
         </HoverCardContent>
       </HoverCard>
@@ -66,7 +66,6 @@
               @click="onFork(lastAssistant)"
             >
               <GitFork class="size-3" />
-              <span class="as-fork-kbd absolute -right-0.5 -top-0.5 rounded-[3px] bg-surface-2 px-1 font-mono text-[length:var(--text-2xs)] font-medium text-neutral-dim">{{ formatKbd('g') }}</span>
             </Button>
           </HoverCardTrigger>
           <HoverCardContent side="top" align="center" :side-offset="6" class="min-w-0 p-1">
@@ -79,7 +78,7 @@
               @click="onForkAsk(lastAssistant)"
             >
               <GitFork class="size-3 fill-current" />
-              <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[length:var(--text-2xs)] font-bold leading-[10px] text-accent-foreground">MSG</span>
+              <span class="absolute -right-0.5 -bottom-0.5 rounded-sm bg-accent px-[2px] text-[8px] font-bold leading-[8px] text-accent-foreground">+Q</span>
             </Button>
           </HoverCardContent>
         </HoverCard>
@@ -108,7 +107,7 @@
               @click="onHandoffAsk(lastAssistant)"
             >
               <Upload class="size-3 fill-current" />
-              <span class="absolute -right-0.5 -top-0.5 rounded-sm bg-accent px-[3px] text-[length:var(--text-2xs)] font-bold leading-[10px] text-accent-foreground">MSG</span>
+              <span class="absolute -right-0.5 -bottom-0.5 rounded-sm bg-accent px-[2px] text-[8px] font-bold leading-[8px] text-accent-foreground">+Q</span>
             </Button>
           </HoverCardContent>
         </HoverCard>
@@ -129,7 +128,6 @@ import { normalizeContent } from '@xyz-agent/shared'
 import { assistantToMarkdown } from '@/composables/logic/messageFormat'
 import { useCopy } from '@/composables/effects/useCopy'
 import { useChatStore } from '@/stores/chat'
-import { usePlatformShortcut } from '@/composables/usePlatformShortcut'
 import { isSubagentVirtualId } from '@/stores/subagent'
 import { useTurnActions } from '@/composables/panel/useTurnActions'
 import MarkdownRenderer from './MarkdownRenderer.vue'
@@ -143,7 +141,6 @@ const props = defineProps<{
 
 const { t } = useI18n()
 const chat = useChatStore()
-const { formatKbd } = usePlatformShortcut()
 
 /** fork/handoff hover action handler（内部调用，不冒泡） */
 const { onFork, onForkAsk, onHandoff, onHandoffAsk } = useTurnActions({
