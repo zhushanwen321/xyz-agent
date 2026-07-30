@@ -84,6 +84,9 @@ screenshot.png
 # cw/agent 产生的根目录审查报告（review-*.md），应归档到 .xyz-harness/ 而非散落项目根。
 /review-*.md
 
+# pr-cr-fix skill 运行时产物（review 报告 .review/run-*/ + premerge-result marker）
+/.review/
+
 # 手动测试残留的假数据目录（测试代码用 tmpdir()，不读根目录 session-data/）
 /session-data/
 

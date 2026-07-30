@@ -92,6 +92,20 @@ gh pr create \
 - 如有 breaking changes 必须在描述中标明
 - 确保 `.agents/skills/` 目录的改动也纳入提交
 
+### 可选：YAML / extension 规范校验
+
+本 skill 目录含两个校验脚本，PR 创建前可按需运行：
+
+```bash
+# 校验 skill SKILL.md 的 frontmatter（name/description 必填，description 双引号包裹）
+python3 .agents/skills/pull-request/validate-skill-yaml.py <skill-paths>
+
+# 校验 extension package.json 的 pi 字段（pi.extensions/keywords/type）
+python3 .agents/skills/pull-request/validate-extensions-yaml.py <extension-dirs>
+```
+
+修改了 `.agents/skills/` 或 `extensions/*/package.json` 时建议运行对应校验。
+
 ---
 
 ## 标记说明
