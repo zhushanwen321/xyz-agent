@@ -58,6 +58,9 @@ jobs:
         run: |
           echo "## NPM Publish Complete" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Published \`@xyz-agent/extension-protocol\` to npm." >> "$GITHUB_STEP_SUMMARY"
+          echo "Published all packages with pending changesets to npm." >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Verify: https://www.npmjs.com/package/@xyz-agent/extension-protocol" >> "$GITHUB_STEP_SUMMARY"
+          echo "This includes:" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`@xyz-agent/extension-protocol\` (builds dist)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`@zhushanwen/pi-*\` extensions (publishes TS source, no build)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`@zhushanwen/pi-quota-providers\` (shared lib)" >> "$GITHUB_STEP_SUMMARY"
