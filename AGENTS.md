@@ -490,9 +490,9 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 
 ### Lint / Git Hooks 问题处理原则 [MANDATORY]
 
-**lint（ESLint / vue_rules_checker）或 githooks（pre-commit 的任何 check_*.py）检出的问题，无论等级（warning / error，或 critical / major / minor），必须全部正面修复，不得跳过。**
+**lint（ESLint / vue_rules_checker）或 githooks（pre-commit 的任何 check_*.py）检出的问题，无论等级（warning / error，或 critical / major / minor），也无论是否本次改动引入（预存存量问题一律同视），必须全部正面修复，不得跳过。不得以"不是本次改动导致"为由而不修复。**
 
-- **不得以”非本次改动引入”为由跳过**：存量问题同样要修。携改动的 commit 触发了检查，检查出的所有问题都是本次提交的责任范围。
+- **存量问题也要修**：携改动的 commit 触发了检查，检查出的所有问题（含本次改动前就存在的）都是本次提交的责任范围。
 - **不得以”只是 warning / minor”为由跳过**：低等级问题也必须修。等级只影响修复顺序，不影响”必须修复”的结论。reviewer 报告的 minor、ESLint 的 warning 同样必须解决。
 - **不得用 `SKIP_*` 变量绕过**（`SKIP_FRONTEND_LINT` / `SKIP_CODE_RULES_CHECK` / `SKIP_ALL_CHECKS` 等）— 仅限线上故障热修复等紧急场景，且必须在 commit message 说明原因。
 - **不得仅“消除报错”而不解决根因**：例如把原生 `<button>` 改成 `<Button>` 是正面修复；但把检测规则改成“放过该写法”只有在确认规则误报时才可（且须在规则中加注释说明）。
