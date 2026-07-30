@@ -10,7 +10,7 @@
       <div
         v-for="g in groups"
         :key="g.cwd"
-        class="group group-section flex flex-col gap-0.5"
+        class="group/folder group-section flex flex-col gap-0.5"
       >
         <!-- 组标题：cwd 末段（长路径只显末段防溢出，与 SessionItem.dirName 同一信息原子）。
              sticky 贴顶用 bg-bg 不透明（侧边栏底色透明融合 bg，header 同色遮住滚过的 item 文字） -->
@@ -23,7 +23,7 @@
           <!-- folder 维度批量删除按钮（两段式确认，与 SessionItem.delete 一致） -->
           <div
             class="ml-auto"
-            :class="folderConfirmingCwd === g.cwd ? 'flex' : 'flex opacity-0 group-hover:opacity-100'"
+            :class="folderConfirmingCwd === g.cwd ? 'flex' : 'flex opacity-0 group-hover/folder:opacity-100'"
             @mouseleave="onFolderMouseLeave(g.cwd)"
           >
             <Button
