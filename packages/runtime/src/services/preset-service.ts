@@ -563,8 +563,9 @@ export class PresetService {
       preset.allowedExtensions ?? [],
       preset.deniedExtensions ?? [],
     )
-    // builtin 永远前置 + 过滤后可加载的路径（防御性 .filter(r => r.loadable)：applyPresetMode 返回项
-    // 在 none 模式下的 infrastructure 必为 mandatory→loadable 恒 true，此 filter 是 no-op 但显式安全）
+    // builtin 永远前置 + 过滤后可加载的路径。
+    // .filter(r => r.loadable) 排除被 disabled 的普通包（applyPresetMode 不过滤 disabled，
+    // 只按 preset mode 过滤 presetOverridable/name，disabled 过滤在此完成）
     return [...builtinPaths, ...afterPreset.filter(r => r.loadable).map(r => r.path)]
   }
 

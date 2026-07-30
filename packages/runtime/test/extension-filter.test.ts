@@ -156,13 +156,109 @@ describe('resolveExtensions', () => {
   // S8：畸形 package.json name（非 string）fallback 到 basename
   it('S8: 畸形 package.json name（非 string）fallback 到 basename', () => {
     const dir = '/ext/malformed-name-ext'
-    const result = resolveExtension(dir, new Set())
+    const result = resolveExtension(dir, 'user', new Set())
     // name 字段为 number（123），typeof 守卫失败 → fallback 到 basename(dir)
     expect(result.name).toBe('malformed-name-ext')
     // basename 不是 mandatory 包 → 普通处理：未 disabled 则 loadable
     expect(result.loadable).toBe(true)
     expect(result.tier).toBeUndefined()
     expect(result.presetOverridable).toBe(true)
+  })
+
+  // #2：disabled key 跨源隔离——同名 discovery 扩展与 npm 扩展互不影响
+  it('#2: discovery 扩展用 discovery: 前缀 disabled key，与同名 npm 扩展不串扰', () => {
+    // 同名 normal-ext 分属 discovery 源与 user 源
+    const discovered: DiscoveredExtension[] = [
+      { path: '/disc/normal-ext', source: 'discovery' },
+      { path: '/npm/normal-ext', source: 'user' },
+    ]
+    // 只禁用 npm 源（npm: 前缀）
+    const disabled = new Set(['npm:normal-ext'])
+    const result = resolveExtensions(discovered, disabled)
+    // discovery 源：disabled key 是 discovery:normal-ext，不在 disabled 集合 → loadable
+    expect(result[0]!.source).toBe('discovery')
+    expect(result[0]!.loadable).toBe(true)
+    // user 源：disabled key 是 npm:normal-ext，在 disabled 集合 → 不 loadable
+    expect(result[1]!.source).toBe('user')
+    expect(result[1]!.loadable).toBe(false)
+  })
+
+  it('#2: discovery 扩展禁用用 discovery: 前缀（反向验证）', () => {
+    const discovered: DiscoveredExtension[] = [
+      { path: '/disc/normal-ext', source: 'discovery' },
+      { path: '/npm/normal-ext', source: 'user' },
+    ]
+    // 只禁用 discovery 源（discovery: 前缀）
+    const disabled = new Set(['discovery:normal-ext'])
+    const result = resolveExtensions(discovered, disabled)
+    // discovery 源被禁用
+    expect(result[0]!.source).toBe('discovery')
+    expect(result[0]!.loadable).toBe(false)
+    // user 源不受影响（npm: 前缀未在集合中）
+    expect(result[1]!.source).toBe('user')
+    expect(result[1]!.loadable).toBe(true)
+  })
+
+  // #4：mandatory 判定只对 npm 源生效——discovery 源扩展即使 name 命中 mandatory SSOT 也不当 mandatory
+  it('#4: discovery 源扩展 name 命中 mandatory SSOT 不当 mandatory（tier undefined, presetOverridable true）', () => {
+    const discovered: DiscoveredExtension[] = [
+      { path: '/disc/pi-pending-notifications', source: 'discovery' },
+      { path: '/disc/pi-goal', source: 'discovery' },
+    ]
+    // 即使把它们加入 disabled（discovery: 前缀），也应当被排除（不当 mandatory 强加载）
+    const disabled = new Set([
+      'discovery:@zhushanwen/pi-pending-notifications',
+      'discovery:@zhushanwen/pi-goal',
+    ])
+    const result = resolveExtensions(discovered, disabled)
+    // discovery 源的 mandatory 命中扩展不当 mandatory → tier undefined
+    expect(result[0]!.tier).toBeUndefined()
+    expect(result[1]!.tier).toBeUndefined()
+    // 非 mandatory → 受 disabled 控制（loadable=false）
+    expect(result[0]!.loadable).toBe(false)
+    expect(result[1]!.loadable).toBe(false)
+    // 非 mandatory → presetOverridable=true（可被 preset 覆盖）
+    expect(result[0]!.presetOverridable).toBe(true)
+    expect(result[1]!.presetOverridable).toBe(true)
+  })
+
+  it('#4: 对比 npm 源同名扩展当 mandatory（强加载, presetOverridable 按 infrastructure/feature 区分）', () => {
+    const discovered: DiscoveredExtension[] = [
+      { path: '/npm/pi-pending-notifications', source: 'npm' }, // infrastructure
+      { path: '/npm/pi-goal', source: 'npm' }, // feature
+    ]
+    const disabled = new Set([
+      'npm:@zhushanwen/pi-pending-notifications',
+      'npm:@zhushanwen/pi-goal',
+    ])
+    const result = resolveExtensions(discovered, disabled)
+    // npm 源 mandatory 包无视 disabled 强加载
+    expect(result[0]!.tier).toBe('infrastructure')
+    expect(result[0]!.loadable).toBe(true)
+    expect(result[0]!.presetOverridable).toBe(false)
+    expect(result[1]!.tier).toBe('feature')
+    expect(result[1]!.loadable).toBe(true)
+    expect(result[1]!.presetOverridable).toBe(true)
+  })
+
+  it('#4: settings 源（packages[] 安装）mandatory 包仍当 mandatory（生产 boot 安装路径）', () => {
+    // 生产场景：boot 自动安装的 mandatory 包经 packages[] → resolver 标 source='settings'
+    const discovered: DiscoveredExtension[] = [
+      { path: '/settings/pi-pending-notifications', source: 'settings' }, // infrastructure
+      { path: '/settings/pi-goal', source: 'settings' }, // feature
+    ]
+    const disabled = new Set([
+      'npm:@zhushanwen/pi-pending-notifications',
+      'npm:@zhushanwen/pi-goal',
+    ])
+    const result = resolveExtensions(discovered, disabled)
+    // settings 源 mandatory 包仍当 mandatory（强加载，disabled key 用 npm: 前缀）
+    expect(result[0]!.tier).toBe('infrastructure')
+    expect(result[0]!.loadable).toBe(true)
+    expect(result[0]!.presetOverridable).toBe(false)
+    expect(result[1]!.tier).toBe('feature')
+    expect(result[1]!.loadable).toBe(true)
+    expect(result[1]!.presetOverridable).toBe(true)
   })
 })
 
@@ -274,5 +370,42 @@ describe('applyPresetMode', () => {
       const paths = result.map(r => r.path)
       expect(paths).toContain(infraPath)
     }
+  })
+
+  // #6b：applyPresetMode 不过滤 loadable——disabled 普通包（loadable=false）在 all 模式下
+  // 仍被 applyPresetMode 返回，靠下游消费端 .filter(r => r.loadable) 排除。
+  // 这验证了 disabled 过滤与 preset mode 过滤的职责分离。
+  it('#6b: all 模式返回含 loadable=false 的项（applyPresetMode 不过滤 loadable，靠下游 filter）', () => {
+    // 构造一个 loadable=false 的 ResolvedExtension（disabled 普通包）
+    const disabledExt: ResolvedExtension = {
+      path: '/ext/disabled-ext',
+      name: 'disabled-ext',
+      source: 'user',
+      tier: undefined,
+      loadable: false,
+      presetOverridable: true,
+    }
+    // all 模式：applyPresetMode 全保留，不过滤 loadable
+    const result = applyPresetMode([disabledExt], 'all', [], [])
+    expect(result).toHaveLength(1)
+    expect(result[0]!.loadable).toBe(false)
+    // 证明 disabled 过滤职责在下游：applyPresetMode 返回后消费端需自己 .filter(r => r.loadable)
+    expect(result.filter(r => r.loadable)).toHaveLength(0)
+  })
+
+  it('#6b: allowlist 模式也保留 loadable=false 的 allowlist 内项（preset 过滤与 disabled 过滤正交）', () => {
+    const disabledExt: ResolvedExtension = {
+      path: '/ext/disabled-ext',
+      name: 'disabled-ext',
+      source: 'user',
+      tier: undefined,
+      loadable: false,
+      presetOverridable: true,
+    }
+    // allowlist 含 disabled-ext name → preset 层放行（presetOverridable 且 name 在 allowlist）
+    // 但 loadable=false（disabled 层排除），两者正交
+    const result = applyPresetMode([disabledExt], 'allowlist', ['disabled-ext'], [])
+    expect(result).toHaveLength(1)
+    expect(result[0]!.loadable).toBe(false)
   })
 })

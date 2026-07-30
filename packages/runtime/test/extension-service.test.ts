@@ -828,7 +828,7 @@ describe('ExtensionService', () => {
     // 这组测试验证拆分契约：绝对路径进 scanExtensions 全局视图，相对路径只进 session 启动（getDiscoveredAndDisabled）。
     // 注意 discovery 扩展入口复刻 pi 原生扫描：扫描结果是「入口路径」（单文件 *.ts 或 <ext>/index.ts），
     // 而非扩展目录本身——ExtensionInfo.name 取入口路径 basename，readPkgMeta 也以入口为基准读 package.json。
-    // 因此 fixture 用单文件 my-discovery-ext.ts（name = 'my-discovery-ext.ts'），可测 toggleExtension 的 npm:<name> 串联回路。
+    // 因此 fixture 用单文件 my-discovery-ext.ts（name = 'my-discovery-ext.ts'），可测 toggleExtension 的 discovery:<name> 串联回路。
     let discoveryService: ExtensionService
     let discoverySettingsDir: string
 
@@ -885,7 +885,7 @@ describe('ExtensionService', () => {
       expect(discExt!.path).toBe(join(discDir, 'my-discovery-ext.ts'))
     })
 
-    it('toggleExtension(false) 后 discovery 扩展 enabled=false（disabled-packages.json 按 npm:<name> 匹配）', async () => {
+    it('toggleExtension(false) 后 discovery 扩展 enabled=false（disabled-packages.json 按 discovery:<name> 隔离）', async () => {
       const discDir = join(discoverySettingsDir, 'discovery-exts')
       mkdirSync(discDir, { recursive: true })
       writeFileSync(join(discDir, 'my-discovery-ext.ts'), '// entry', 'utf-8')
@@ -897,17 +897,19 @@ describe('ExtensionService', () => {
       const discExt = before.find(e => e.source === 'discovery')!
       expect(discExt).toBeDefined()
 
-      // 用扫描出的 name 禁用（与 user-installed 同走 npm:<name> 机制）
+      // 用扫描出的 name 禁用——discovery 源走 discovery:<name> 机制（#2 与 npm 源隔离）
       await discoveryService.toggleExtension(discExt.name, false)
 
       const after = await discoveryService.scanExtensions()
       const discExtAfter = after.find(e => e.name === discExt.name)!
       expect(discExtAfter.enabled).toBe(false)
 
-      // disabled-packages.json 落盘 npm:<name>
+      // disabled-packages.json 落盘 discovery:<name>（#2 源隔离）
       const disabledRaw = readFileSync(join(discoverySettingsDir, 'disabled-packages.json'), 'utf-8')
       const disabledData = JSON.parse(disabledRaw) as { disabled: string[] }
-      expect(disabledData.disabled).toContain(`npm:${discExt.name}`)
+      expect(disabledData.disabled).toContain(`discovery:${discExt.name}`)
+      // 不应误写 npm: 前缀（避免与同名 npm 扩展串扰）
+      expect(disabledData.disabled).not.toContain(`npm:${discExt.name}`)
 
       // 再启用，状态恢复 enabled=true
       await discoveryService.toggleExtension(discExt.name, true)

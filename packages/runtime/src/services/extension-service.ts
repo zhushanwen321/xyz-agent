@@ -255,7 +255,7 @@ export class ExtensionService {
 
   /**
    * 扫描所有 extension，返回 ExtensionInfo[]（全局视图，含绝对路径 discovery 扩展）。
-   * 用 ExtensionResolver 扫描所有源，复用 filterExtension 判定 enabled 状态。
+   * 用 ExtensionResolver 扫描所有源，复用 resolveExtensions 判定 loadable 状态。
    * 保留 disabled 包（enabled:false），前端 ExtensionPage 据此渲染。
    *
    * 绝对路径 discovery 目录（如 ~/.pi/agent/extensions）与 cwd 无关，全局有效 → 进列表；
@@ -276,7 +276,7 @@ export class ExtensionService {
    * 组装 ExtensionInfo 列表（scanExtensions 共用）。
    *
    * S1 修复：name/tier/loadable 复用 resolveExtensions 的结果（resolveExtensions 内部一次读盘
-   * 推导），不再每个 ext 各自 readFileSync(pkgJson) + filterExtension（又读一次）。
+   * 推导），不再每个 ext 各自 readFileSync(pkgJson) + resolveExtension（又读一次）。
    * version/description/tools 仍需读 package.json（ResolvedExtension 未携带这些），用 readPkgMeta
    * 在此一处读，不扩散到 PresetService。
    */
@@ -286,7 +286,7 @@ export class ExtensionService {
     disabledSet: Set<string>,
     autoUpgradeSet: Set<string>,
   ): ExtensionInfo[] {
-    // 一次读盘推导 name/tier/loadable（S1：不再每个 ext 各自读 + filterExtension 再读）
+    // 一次读盘推导 name/tier/loadable（S1：不再每个 ext 各自读 + resolveExtension 再读）
     const resolvedList = resolveExtensions(discovered, disabledSet)
     const resolvedByPath = new Map<string, ResolvedExtension>(resolvedList.map(r => [r.path, r]))
 
@@ -317,9 +317,11 @@ export class ExtensionService {
         description,
         path: dir,
         enabled: resolved.loadable, // 复用 resolveExtensions 的 loadable 判定
-        mandatory: isMandatoryExtension(name),
+        // #4：mandatory 直接从 resolved.tier 推导（source 感知——discovery 源扩展即使 name 命中
+        // mandatory SSOT 也不当 mandatory，tier 为 undefined；packages[]/npm 源 mandatory 包 tier 非 undefined）
+        mandatory: resolved.tier !== undefined,
         tier: resolved.tier, // S10：tier 直接从 resolved 透传（天然正确）
-        source: ext.source === 'discovery' ? 'discovery' : isUserInstalled ? 'user-installed' : 'built-in',
+        source: isUserInstalled ? 'user-installed' : ext.source === 'discovery' ? 'discovery' : 'built-in',
         autoUpgrade: isAutoUpgrade,
         ...(tools && { tools }),
       })
@@ -374,6 +376,12 @@ export class ExtensionService {
    * M1 修复关键：preset-service 的 resolveExtensionPaths 需要原始 discovered（builtin 只在最终
    * prepend 一次）。若用 getExtensionPaths（已含 builtin），preset-service 再 prepend 一次会 double-builtin。
    * 此方法让 builtin 注入点唯一化（只在最终 prepend 一次），disabled 过滤本地完成。
+   *
+   * 已知限制：相对路径 discovery 扩展（项目级，如 .agents/extensions/foo）只在 session 启动时
+   * 按 cwd 解析加载，不进 scanExtensions 全局视图（避免列表随 session 变化）。因此它们在 preset
+   * allowlist 模式下会因 name 不在 allowedExtensions 被排除，用户无法通过 UI 勾选。
+   * 这是边缘场景（相对路径 discovery 少见），符合"前端不可见的扩展不参与 preset 管控"的一致性。
+   * 彻底解决需引入 session 级扩展列表（getProjectExtensions 接线），本次不做。
    *
    * @param cwd session cwd（相对 discovery 目录的 resolve 基准）
    */
@@ -514,18 +522,30 @@ export class ExtensionService {
   /**
    * 切换某个包的启用/禁用。
    * 经 IExtensionSettings port 操作 disabled-packages.json。
+   *
+   * #2 修复：disabled key 按扩展来源命名空间隔离——discovery 源用 'discovery:' 前缀，其余源用
+   * 'npm:' 前缀（与 resolveExtension 的 disabledKey 推导对齐）。内部查 scanExtensions 取该扩展的
+   * source（不改 WS 协议/前端），查不到则 fallback 'npm:'（与历史行为兼容）。
    */
   async toggleExtension(name: string, enabled: boolean): Promise<void> {
-    // mandatory 扩展不可禁用（与 uninstallExtension 守卫对称，避免 UI 禁用但 getExtensionPaths 仍强加载的状态分离）
-    if (!enabled && isMandatoryExtension(name)) {
+    // 查扩展来源，决定 disabled key 前缀（npm: vs discovery:）。scanExtensions 的 source 判定
+    // 已通过 assembleExtensionInfo 推导（resolver 发现源）。查不到（异常）则 fallback 'npm'。
+    const extensions = await this.scanExtensions()
+    const ext = extensions.find(e => e.name === name)
+    const source = ext?.source === 'discovery' ? 'discovery' : 'npm'
+    // mandatory 扩展不可禁用（与 uninstallExtension 守卫对称，避免 UI 禁用但 getExtensionPaths
+    // 仍强加载的状态分离）。用 scanExtensions 的 mandatory 判定（已 source 感知：discovery 源扩展
+    // 即使 name 命中 mandatory SSOT 也不当 mandatory）。查不到时 fallback 到 isMandatoryExtension。
+    if (!enabled && (ext?.mandatory ?? isMandatoryExtension(name))) {
       throw new ExtensionInstallError(
         'mandatory_cannot_disable',
         `Mandatory extension cannot be disabled: ${name}`,
         'This extension is required by the application and cannot be disabled.',
       )
     }
-    const source = `npm:${name}`
-    await this.extSettings.setEnabled(source, enabled)
+    // #2：disabled key 按 source 命名空间隔离（discovery 扩展用 'discovery:' 前缀，避免与 npm 扩展串扰）
+    const disabledKey = source === 'discovery' ? `discovery:${name}` : `npm:${name}`
+    await this.extSettings.setEnabled(disabledKey, enabled)
   }
 
   /**
