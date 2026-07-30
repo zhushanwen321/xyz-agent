@@ -48,7 +48,10 @@ import type { RecommendedExtension } from './extension'
 const recommendedExtensions = recommendedExtensionsRaw as RecommendedExtension[]
 export { recommendedExtensions }
 // 强制安装扩展列表 SSOT（runtime boot 时自动安装+升级）
-import mandatoryExtensions from './mandatory-extensions.json'
+// 带类型断言：JSON import 默认推断为宽泛类型，断言为 MandatoryExtension[] 保证 tier 字段拼写错误编译期可捕获
+import mandatoryExtensionsRaw from './mandatory-extensions.json'
+import type { MandatoryExtension } from './extension'
+const mandatoryExtensions = mandatoryExtensionsRaw as MandatoryExtension[]
 export { mandatoryExtensions }
 // 注意：paths.ts（getDataDir/getPiAgentDir）刻意不在此 barrel 导出。
 // 它们依赖 node:os / node:path，而本 barrel 被 renderer（浏览器）整包 import。

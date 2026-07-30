@@ -20,10 +20,10 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSy
 import { join, resolve, basename, relative, isAbsolute, delimiter } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import type { ExtensionInfo } from '@xyz-agent/shared'
-import { recommendedExtensions, mandatoryExtensions, isMandatoryExtension, isInfrastructureExtension, isFeatureMandatoryExtension, BUILTIN_EXTENSION_FILES } from '@xyz-agent/shared'
+import { recommendedExtensions, mandatoryExtensions, isMandatoryExtension, BUILTIN_EXTENSION_FILES } from '@xyz-agent/shared'
 import semver from 'semver'
 import type { IInstaller, IExtensionResolver, DiscoveredExtension } from './ports/installer.js'
-import { filterLoadablePaths, filterExtension } from './extension-filter.js'
+import { resolveExtensions, readPkgMeta, type ResolvedExtension } from './extension-filter.js'
 import type { IExtensionSettings } from './ports/extension-settings.js'
 import type { IConfigStore } from './ports/config.js'
 import { isStrictlyUnder, isUnderOrEqual, extractRepoName, expandHome } from '../utils/path-utils.js'
@@ -279,7 +279,11 @@ export class ExtensionService {
 
   /**
    * 组装 ExtensionInfo 列表（scanExtensions 和 getProjectExtensions 共用）。
-   * 复用 filterExtension 判定 enabled，保留 disabled 包。
+   *
+   * S1 修复：name/tier/loadable 复用 resolveExtensions 的结果（resolveExtensions 内部一次读盘
+   * 推导），不再每个 ext 各自 readFileSync(pkgJson) + filterExtension（又读一次）。
+   * version/description/tools 仍需读 package.json（ResolvedExtension 未携带这些），用 readPkgMeta
+   * 在此一处读，不扩散到 PresetService。
    */
   private assembleExtensionInfo(
     discovered: DiscoveredExtension[],
@@ -287,34 +291,29 @@ export class ExtensionService {
     disabledSet: Set<string>,
     autoUpgradeSet: Set<string>,
   ): ExtensionInfo[] {
+    // 一次读盘推导 name/tier/loadable（S1：不再每个 ext 各自读 + filterExtension 再读）
+    const resolvedList = resolveExtensions(discovered, disabledSet)
+    const resolvedByPath = new Map<string, ResolvedExtension>(resolvedList.map(r => [r.path, r]))
+
     const extensions: ExtensionInfo[] = []
 
     for (const ext of discovered) {
       const dir = ext.path
-      const pkgJsonPath = join(dir, 'package.json')
-      let name = basename(dir)
-      let version = ''
-      let description = ''
+      const resolved = resolvedByPath.get(dir)!
+      const name = resolved.name // 复用 resolveExtensions 已推导的 name（含 basename fallback + typeof 守卫）
 
+      // version/description/tools 仍需读 package.json（ResolvedExtension 未携带这些），但只在此处读一次
+      const meta = readPkgMeta(dir)
+      const version = meta.version ?? ''
+      const description = meta.description ?? ''
       let tools: string[] | undefined
-      try {
-        const raw = readFileSync(pkgJsonPath, 'utf-8')
-        const pkg = JSON.parse(raw) as { name?: string; version?: string; description?: string; pi?: { tools?: string[] } }
-        name = pkg.name ?? name
-        version = pkg.version ?? ''
-        description = pkg.description ?? ''
-        if (Array.isArray(pkg.pi?.tools)) {
-          tools = pkg.pi.tools.filter((t): t is string => typeof t === 'string')
-        }
-      } catch (e) {
-        log.debug(`[extension-service] failed to read package.json at ${pkgJsonPath}: ${toErrorMessage(e)}`)
+      if (Array.isArray(meta.pi?.tools)) {
+        tools = meta.pi!.tools!.filter((t): t is string => typeof t === 'string')
       }
 
       const sourceKey = `npm:${name}`
       const isUserInstalled = packages.includes(sourceKey)
       const isAutoUpgrade = autoUpgradeSet.has(sourceKey)
-      // 复用 filterExtension 判定 enabled（单一权威）
-      const filterResult = filterExtension(dir, disabledSet)
 
       extensions.push({
         name,
@@ -322,10 +321,9 @@ export class ExtensionService {
         version,
         description,
         path: dir,
-        enabled: filterResult === 'load',
+        enabled: resolved.loadable, // 复用 resolveExtensions 的 loadable 判定
         mandatory: isMandatoryExtension(name),
-        tier: isInfrastructureExtension(name) ? 'infrastructure'
-            : isFeatureMandatoryExtension(name) ? 'feature' : undefined,
+        tier: resolved.tier, // S10：tier 直接从 resolved 透传（天然正确）
         source: isUserInstalled ? 'user-installed' : 'built-in',
         autoUpgrade: isAutoUpgrade,
         ...(tools && { tools }),
@@ -365,19 +363,30 @@ export class ExtensionService {
    *   否则项目级 extension 目录会错位落到 app/resources 下被 existsSync 过滤掉。
    */
   async getExtensionPaths(cwd?: string): Promise<string[]> {
+    const { discovered, disabledSet } = await this.getDiscoveredAndDisabled(cwd)
+    // 委托给过滤管道（一次读盘，元数据透传）
+    const resolved = resolveExtensions(discovered, disabledSet)
+    const filtered = resolved.filter(r => r.loadable).map(r => r.path)
+    // builtin extension 永远前置（设计文档 §2.3）
+    filtered.unshift(...this.getBuiltinExtensionPaths())
+    return filtered
+  }
+
+  /**
+   * 供 PresetService 做 preset 二次筛选：返回原始发现结果（不含 builtin、不过滤、不加 preset 筛选）
+   * + disabled 集合。
+   *
+   * M1 修复关键：preset-service 的 resolveExtensionPaths 需要原始 discovered（builtin 只在最终
+   * prepend 一次）。若用 getExtensionPaths（已含 builtin），preset-service 再 prepend 一次会 double-builtin。
+   * 此方法让 builtin 注入点唯一化（只在最终 prepend 一次），disabled 过滤本地完成。
+   *
+   * @param cwd session cwd（相对 discovery 目录的 resolve 基准）
+   */
+  async getDiscoveredAndDisabled(cwd?: string): Promise<{ discovered: DiscoveredExtension[]; disabledSet: Set<string> }> {
     const discoveryDirs = this.resolveDiscoveryDirs(cwd)
     const discovered = this.resolver.resolve(this.projectRoot, this.packaged, this.getUserExtensionPaths(), discoveryDirs).extensionDirs
     const { disabled } = this.readSettingsState()
-    const disabledSet = new Set(disabled)
-
-    // 委托给过滤管道（单一权威）
-    const filtered = filterLoadablePaths(discovered, disabledSet)
-
-    // builtin extension：经 getBuiltinExtensionPaths() 注入（设计文档 §2.3，
-    // pi-launch-presets 设计要求 builtin 永远前置，提取为独立方法供 PresetService.resolve 复用）。
-    filtered.unshift(...this.getBuiltinExtensionPaths())
-
-    return filtered
+    return { discovered, disabledSet: new Set(disabled) }
   }
 
   /**

@@ -155,8 +155,8 @@ export class ExtensionResolver implements IExtensionResolver {
 
   /**
    * 扫描 user-installed extensions。
-   * 读取 settings.json 的 packages[]（经 pi-settings-store 统一读写层，D17），
-   * 过滤 disabled-packages.json 中的禁用项，
+   * 全量返回 packages[] 定位到的扩展目录。
+   * [纯发现层] 不在此过滤 disabled——disabled 过滤由 extension-filter.ts 统一负责。
    * 定位 npm/目录下的扩展。
    */
   scanSettingsExtensions(): ExtensionMap {

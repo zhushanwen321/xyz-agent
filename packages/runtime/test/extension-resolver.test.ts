@@ -183,11 +183,17 @@ describe('ExtensionResolver', () => {
       expect(result.get('ask-user')).toBe(pkgDir)
     })
 
-    it('skips disabled packages', () => {
+    it('returns disabled packages (pure discovery, no disabled filtering)', () => {
+      // S7：resolver 是纯发现层——不再过滤 disabled（过滤职责已移至 extension-filter.ts 管道）。
+      // 让 disabled 包的目录确实存在，断言它仍被返回（全量发现）。
+      const pkgDir = `${settingsDir}/npm/node_modules/pi-ask-user`
+
       mockedExistsSync.mockImplementation((p: unknown) => {
         if (typeof p !== 'string') return false
         if (p === `${settingsDir}/settings.json`) return true
         if (p === `${settingsDir}/disabled-packages.json`) return true
+        if (p === pkgDir) return true
+        if (p === `${pkgDir}/package.json`) return true
         return false
       })
 
@@ -199,11 +205,18 @@ describe('ExtensionResolver', () => {
         if (p === `${settingsDir}/disabled-packages.json`) {
           return JSON.stringify({ disabled: ['npm:pi-ask-user'] })
         }
+        if (p === `${pkgDir}/package.json`) {
+          // 满足 isValidPiExtension（keywords 含 pi-package）
+          return JSON.stringify({ name: 'pi-ask-user', keywords: ['pi-package'] })
+        }
         throw new Error('not found')
       })
 
       const result = resolver.scanSettingsExtensions()
-      expect(result.size).toBe(0)
+      // disabled 过滤已移至 extension-filter.ts，resolver 全量返回
+      expect(result.size).toBe(1)
+      // normalizeExtName('pi-ask-user') 去掉 pi- 前缀 → 'ask-user'
+      expect(result.get('ask-user')).toBe(pkgDir)
     })
 
     it('skips invalid pi extensions', () => {

@@ -164,6 +164,8 @@ describe('ExtensionService', () => {
       const goal = extensions.find(e => e.name === '@zhushanwen/pi-goal')
       expect(goal).toBeDefined()
       expect(goal!.mandatory).toBe(true)
+      // S10：tier 直接从 resolveExtensions 透传（pi-goal 是 feature mandatory）
+      expect(goal!.tier).toBe('feature')
       // 非 mandatory 包 mandatory 字段为 false
       const askUser = extensions.find(e => e.name === 'pi-ask-user')
       if (askUser) {

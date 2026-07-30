@@ -71,13 +71,20 @@ export interface RecommendedExtension {
 
 // ── Mandatory extensions（SSOT: mandatory-extensions.json）─────────
 
+/** mandatory-extensions.json 的条目形状（SSOT 数据的类型约束） */
+export interface MandatoryExtension {
+  name: string
+  description: string
+  tier: 'infrastructure' | 'feature'
+}
+
 /**
  * mandatory 扩展的两级分类。
  * - infrastructure：纯能力提供者，绝对强加载，不可被任何方式排除（disabled/preset denylist/allowlist 未列入都无效）
  * - feature：提供用户可感知功能，强安装+强启用，但 preset extensionMode 可覆盖
- * - undefined：非 mandatory 扩展
+ * tier 字段不存在（undefined）表示非 mandatory 扩展
  */
-export type ExtensionTier = 'infrastructure' | 'feature' | undefined
+export type ExtensionTier = 'infrastructure' | 'feature'
 
 /**
  * 判断包名是否为强制安装 extension（从 mandatory-extensions.json SSOT 派生）。
