@@ -24,6 +24,10 @@ export default [
       'test-results/**',
       // vitest coverage 产物（工具生成的 JS，已被 .gitignore）
       '**/coverage/**',
+      // pi extension 运行时脚本/示例（非 TS 源码，不参与 lint）
+      'extensions/*/workflows/**',
+      'extensions/*/.pi/workflows/**',
+      'extensions/*/examples/**',
     ],
   },
   // [HISTORICAL] mock 门面文件是所有 domain 的聚合中心（session/chat/config/model/extension/plugin/
@@ -114,6 +118,24 @@ export default [
     files: ['packages/renderer/src/composables/features/useProviderEdit.ts'],
     rules: {
       'max-lines-per-function': 'off',
+    },
+  },
+  // pi extensions（extensions/**/*.ts）专用规则块。
+  // extensions 是无构建的 TS 源码（pi 运行时直接加载），迁自 xyz-pi-extensions 仓库，
+  // 与 renderer/runtime 的 Vue/Electron 代码性质不同：
+  //   - 缩进：源项目用 tab（pi 生态约定），不强制 2-space。关掉 indent 规则保留既有约定。
+  //   - 行数上限：放宽到 1000（源项目约定，extensions 逻辑比 Vue 组件更聚合）。
+  //   - 启用迁自 pi-taste-lint 的 4 条 TS 向品味规则（注册在 tastePlugin 但不在默认 tasteRules，
+  //     仅在此块开启，不影响 renderer/runtime）。
+  {
+    files: ['extensions/**/*.ts'],
+    rules: {
+      'indent': 'off',
+      'max-lines': ['warn', { max: 1000, skipBlankLines: true, skipComments: true }],
+      'taste/no-unsafe-cast': 'warn',
+      'taste/no-unbounded-while-true': 'warn',
+      'taste/no-inline-import-type': 'warn',
+      'taste/no-unsafe-object-entries': 'warn',
     },
   },
 ];
