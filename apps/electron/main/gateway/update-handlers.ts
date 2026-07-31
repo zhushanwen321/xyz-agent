@@ -25,8 +25,7 @@ import { readProxyConfig, writeProxyConfig, resolveProxyUrl } from '../update/pr
 import { validateRelease } from '../update/validate-release.js'
 import { writePendingUpdate, readPendingUpdate } from '../update/pending-update.js'
 import { getUpdateSettings, setUpdateSettings } from '../update/update-settings.js'
-import { downloadUpdate, installUpdate } from '../update/orchestrator.js'
-import type { UpdateProgressCallback } from '../update/orchestrator.js'
+import type { IUpdateOrchestrator, UpdateProgressCallback } from '../update/orchestrator.js'
 import { writePreloadedUpdate, readPreloadedUpdate, clearPreloadedUpdate } from '../update/preloaded-update.js'
 
 /** 触发重启前留给前端渲染「重启中」状态的延迟（毫秒）。 */
@@ -135,8 +134,16 @@ let preDownloadPromise: Promise<void> | null = null
  *
  * download-asset 的断点续传机制保证：预下载未完成时用户手动点更新，performUpdate 的
  * downloadUpdate 会接管同一临时文件续传，进度不浪费。
+ *
+ * [S#11 arch-boundary] 经 DI 注入的 {@link IUpdateOrchestrator} 调 downloadUpdate，
+ * 而非直接 import 模块级单例——使预下载能力也可在测试中经 mock DI 接口替换。
+ *
+ * @param orchestrator DI 注入的升级编排器（与 update:perform 共享同一实例）
  */
-async function preloadUpdateSilently(release: LatestReleaseInfo): Promise<void> {
+async function preloadUpdateSilently(
+  release: LatestReleaseInfo,
+  orchestrator: IUpdateOrchestrator,
+): Promise<void> {
   if (preDownloading) return
   preDownloading = true
   try {
@@ -147,7 +154,7 @@ async function preloadUpdateSilently(release: LatestReleaseInfo): Promise<void> 
       return
     }
     console.log(`[preload] background pre-downloading v${release.version}...`)
-    const { filePath } = await downloadUpdate(release)
+    const { filePath } = await orchestrator.downloadUpdate(release)
     writePreloadedUpdate(release, filePath)
     console.log(`[preload] pre-downloaded v${release.version} to ${filePath}`)
   } catch (err) {
@@ -178,9 +185,10 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
         // 预下载开关开 → 异步后台下载（功能 2），不 await 不阻塞 check 响应。
         // 把 promise 存起来（非 void），供 update:perform 在预下载进行中时 await，
         // 避免与后台预下载争抢 orchestrator 的 downloading 锁而硬报错。
+        // updateOrchestrator 未注入（dev/check-only 场景）时跳过预下载（perform 会另行报错）。
         const settings = getUpdateSettings()
-        if (settings.preDownload) {
-          preDownloadPromise = preloadUpdateSilently(info)
+        if (settings.preDownload && deps.updateOrchestrator) {
+          preDownloadPromise = preloadUpdateSilently(info, deps.updateOrchestrator)
         }
       }
       return info
@@ -229,10 +237,12 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
       const preloadedFile = await readPreloadedUpdate(payload.release)
       let result: { triggerRestart: boolean }
       if (preloadedFile) {
-        // 预下载产物有效：快路径，仅推 replacing 进度 + installUpdate
+        // 预下载产物有效：快路径，仅推 replacing 进度 + installUpdate。
+        // [S#11 arch-boundary] 经 DI 注入的 orchestrator 调 installUpdate，与 performUpdate
+        // 走同一 DI 契约，使快路径也可在测试中经 mock 接口替换。
         console.log(`[update:perform] using preloaded file ${preloadedFile}, skipping download`)
         usedFastPath = true
-        result = await installUpdate(payload.release, preloadedFile, onProgress)
+        result = await deps.updateOrchestrator.installUpdate(payload.release, preloadedFile, onProgress)
       } else {
         // 无预下载产物或产物失效：完整流程（下载 → 校验 → 替换）
         result = await deps.updateOrchestrator.performUpdate(payload.release, { onProgress })

@@ -43,10 +43,22 @@ const PROGRESS_COMPLETE = 100
 /** 升级进度回调签名 */
 export type UpdateProgressCallback = (stage: UpdateStage, percent: number) => void
 
-/** 升级编排器 Facade 接口（DI 契约，供 handler 注入） */
+/** 下载阶段返回的已校验产物路径 */
+interface DownloadedFile {
+  filePath: string
+}
+
+/** 升级编排器 Facade 接口（DI 契约，供 handler 注入）。
+ *
+ * handler（update-handlers.ts）的全部升级能力都经此接口调用，禁止绕过 DI
+ * 直接 import downloadUpdate/installUpdate——这样快路径与预下载也能在测试中
+ * 经 mock DI 接口替换，而非靠 mock 模块本身（见 S#11 arch-boundary）。
+ */
 export interface IUpdateOrchestrator {
   /**
    * 执行完整升级流程（下载 → 校验 → 替换 → 触发重启）。
+   *
+   * 内部组合 {@link IUpdateOrchestrator.downloadUpdate} + {@link IUpdateOrchestrator.installUpdate}。
    *
    * @param release release-checker 返回的最新版本信息
    * @param opts.onProgress 进度回调（stage + percent 0-100）
@@ -56,6 +68,38 @@ export interface IUpdateOrchestrator {
   performUpdate(
     release: LatestReleaseInfo,
     opts: { onProgress: UpdateProgressCallback },
+  ): Promise<{ triggerRestart: boolean }>
+
+  /**
+   * 下载阶段：选 asset + 写 replacing 标记 + 下载 + sha256 校验。
+   *
+   * 供预下载（后台静默下载）复用。下载完成后返回已校验的文件路径，不触发替换。
+   *
+   * @param release release-checker 返回的最新版本信息
+   * @param onProgress 下载进度回调（0-100 百分比，仅 downloading 阶段）。可为 undefined（预下载静默）
+   * @returns 已下载并校验的文件路径
+   * @throws UpdateError 下载/校验失败（含 downloading 锁重入拒绝）
+   */
+  downloadUpdate(
+    release: LatestReleaseInfo,
+    onProgress?: (percent: number) => void,
+  ): Promise<DownloadedFile>
+
+  /**
+   * 安装阶段：平台分发（生成替换脚本 + 触发替换）+ 据 ref.kind 决定返回值。
+   *
+   * 供预下载快路径复用：预下载产物存在时跳过 downloadUpdate 直接调本函数。
+   *
+   * @param release 当前 release 信息（取 sha256 / version / htmlUrl，注入替换脚本）
+   * @param filePath downloadUpdate 返回的已校验文件路径
+   * @param onProgress 进度回调（仅 replacing 阶段）。可为 undefined
+   * @returns triggerRestart=true 表示需要重启（handler 调 app.quit）
+   * @throws UpdateError/UpdateUnsupportedError 准备替换失败
+   */
+  installUpdate(
+    release: LatestReleaseInfo,
+    filePath: string,
+    onProgress?: UpdateProgressCallback,
   ): Promise<{ triggerRestart: boolean }>
 }
 
@@ -271,5 +315,15 @@ function writeUpdateResult(status: string, version: string, error?: string): voi
   writeFileSync(UPDATE_RESULT_FILE, JSON.stringify(data, null, 2))
 }
 
-/** 升级编排器单例（注入 IpcHandlerDeps） */
-export const updateOrchestrator: IUpdateOrchestrator = { performUpdate }
+/**
+ * 升级编排器单例（注入 IpcHandlerDeps）。
+ *
+ * 实现 {@link IUpdateOrchestrator} 全部 3 个方法：performUpdate / downloadUpdate / installUpdate。
+ * handler 经 deps.updateOrchestrator.* 调用——快路径与预下载也走 DI，使全部升级能力可经
+ * mock 接口替换测试（见 S#11 arch-boundary：消除「DI 契约只含 performUpdate，新能力绕过 DI」的分裂）。
+ */
+export const updateOrchestrator: IUpdateOrchestrator = {
+  performUpdate,
+  downloadUpdate,
+  installUpdate,
+}
