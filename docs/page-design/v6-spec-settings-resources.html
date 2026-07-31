@@ -1,0 +1,1100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>xyz-agent · v6 视觉规格稿 · 设置页 · 资源（Skill/Agent）</title>
+<style>
+/* ================================================================
+   v6 视觉规格稿 · 设置页 · 资源（Skill / Agent 菜单页）
+   ──────────────────────────────────────────────────────────────
+   覆盖 SettingsResourcePage：Layer A 加载路径（强制/可选/拖拽/添加/
+     SourceImport）+ Layer B 资源只读预览（扫描/来源 tab/资源项/空错误态）。
+   本稿定位为「交互重新设计 + xyz-ui 组件规范」：所有按钮来自 xyz-ui
+     Button（default/secondary/ghost/danger 变体，size default/dense/icon），
+     Input/Checkbox/Switch 全部用 xyz-ui 原子组件，禁止自创 .btn 类。
+   token 复用 v6-spec-tokens.html 同一集（含 v6 提案值），:root 逐字一致。
+   ================================================================ */
+:root {
+  --bg: #1a1b1f; --surface: #272830; --surface-hover: #363740;
+  --surface-2: #2e2f38; --bg-elevated: #313239; --bg-input: #1e1f24;
+  --bg-sunken: var(--bg); --bg-card: #22242c;
+  --neutral-fg: #e5e7eb; --neutral-mid: #9ca3af; --neutral-dim: #7d8494;
+  --neutral-dim-old: #6b7280; --neutral-faint: #4b5563;
+  --neutral-ico: #8b8d94; --neutral-ico-hover: #e5e7eb;
+  --border: rgba(255,255,255,0.08); --border-strong: rgba(255,255,255,0.15);
+  --accent: #4f8ef7; --accent-hover: #6ba3ff;
+  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
+  --accent-ring: rgba(79,142,247,0.30);
+  --success: #22c55e; --warn: #b08a3e; --danger: #ef4444;
+  --info: #38bdf8; --reasoning: #a78bfa;
+  --success-soft: color-mix(in oklch, var(--success) 12%, transparent);
+  --warn-soft: color-mix(in oklch, var(--warn) 14%, transparent);
+  --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
+  --info-soft: color-mix(in oklch, var(--info) 12%, transparent);
+  --reasoning-soft: color-mix(in oklch, var(--reasoning) 12%, transparent);
+  --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  --text-2xs: 10px; --text-xs: 11px; --text-sm: 12px; --text-base: 13px; --text-md: 14px;
+  --radius-sm: 6px; --radius: 8px; --radius-lg: 12px;
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-6: 24px; --space-8: 32px;
+  --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
+  --content-max-w: 720px; --composer-btn-size: 30px;
+  --ease: cubic-bezier(0.4,0,0.2,1); --duration-fast: 120ms; --duration: 200ms;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  font-family: var(--font-sans);
+  background: #131316; color: var(--neutral-fg);
+  -webkit-font-smoothing: antialiased;
+  font-size: var(--text-base); line-height: 1.5;
+}
+
+/* ============ 页面骨架（与 tokens 稿一致）============ */
+.page { max-width: 1320px; margin: 0 auto; padding: 48px 40px 80px; }
+.doc-head { margin-bottom: 40px; padding-bottom: 24px; border-bottom: 1px solid var(--border); }
+.doc-eyebrow { font-size: var(--text-xs); color: var(--accent); font-family: var(--font-mono); letter-spacing: .04em; margin-bottom: 8px; }
+.doc-title { font-size: 28px; font-weight: 600; color: var(--neutral-fg); margin-bottom: 6px; letter-spacing: -.01em; }
+.doc-sub { font-size: var(--text-md); color: var(--neutral-mid); max-width: 860px; }
+.doc-meta { display: flex; gap: 20px; margin-top: 16px; font-size: var(--text-xs); color: var(--neutral-dim); font-family: var(--font-mono); }
+.doc-meta b { color: var(--neutral-mid); font-weight: 500; }
+
+.toc { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 40px; padding: 12px; background: var(--bg-input); border-radius: var(--radius); }
+.toc a { font-size: var(--text-xs); color: var(--neutral-mid); text-decoration: none; padding: 4px 10px; border-radius: var(--radius-sm); font-family: var(--font-mono); transition: background var(--duration-fast), color var(--duration-fast); }
+.toc a:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+
+/* ============ spec section ============ */
+.spec { background: var(--surface); border-radius: var(--radius-lg); padding: 32px; margin-bottom: 24px; }
+.spec-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+.spec-num { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--accent); background: var(--accent-soft); padding: 2px 8px; border-radius: var(--radius-sm); }
+.spec-title { font-size: 20px; font-weight: 600; color: var(--neutral-fg); letter-spacing: -.005em; }
+.spec-desc { font-size: var(--text-sm); color: var(--neutral-mid); margin-bottom: 20px; max-width: 860px; }
+
+/* 变更要点 chip 行 */
+.change-points { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+.cp { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-xs); padding: 4px 10px; border-radius: 999px; font-family: var(--font-mono); }
+.cp-now { background: var(--surface-2); color: var(--neutral-mid); }
+.cp-v6 { background: var(--success-soft); color: var(--success); }
+.cp b { font-weight: 500; }
+
+/* ============ 标注面板 ============
+   标注文字用 neutral-mid（#9ca3af）保证 AA：bg-card 上 6.10:1。
+   标注值属可读正文，不用 dim（dim 仅装饰/极弱位置）。 */
+.anno { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-mid); line-height: 1.8; }
+.anno b { color: var(--neutral-fg); font-weight: 500; }
+.anno .v6 { color: var(--success); }
+.anno .old { color: var(--neutral-faint); text-decoration: line-through; text-decoration-color: rgba(239,68,68,.5); }
+.anno-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap: 8px 20px; padding: 14px 16px; background: var(--bg-card); border-radius: var(--radius); margin-top: 12px; }
+
+/* ============ 渲染区（真实面板色，呈现目标态）============ */
+.render-frame {
+  background: var(--bg-card); border-radius: var(--radius); padding: 20px;
+  margin-bottom: 16px; overflow: hidden;
+}
+
+/* 状态标签（每行变体前的 [状态] 标）*/
+.state-row { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
+.state-tag {
+  flex-shrink: 0; width: 96px; font-size: var(--text-2xs); font-family: var(--font-mono);
+  color: var(--neutral-dim); text-transform: uppercase; letter-spacing: .05em;
+  padding-top: 6px;
+}
+.state-demo { flex: 1; min-width: 0; }
+
+/* ================================================================
+   渲染用：xyz-ui 原子组件（逐字还原 Button/Input/Checkbox/Switch 变体）
+   严格遵循：
+   - Button default = bg-accent text-white hover:bg-accent-hover
+   - Button secondary = bg-transparent border border-border text-neutral-fg hover:bg-surface-hover
+   - Button ghost = hover:bg-surface-hover（透明底）
+   - Button danger = text-danger hover:bg-danger-soft
+   - Button size: default h-9 px-4 / dense h-8 px-3 / icon h-10 w-10
+   - Input h-10 rounded-md border-input bg-surface-2 px-3；error → border-danger
+   - Checkbox size-4 border-border-strong；checked bg-accent（强制 = disabled + lock）
+   - Switch h-5 w-9；checked bg-accent
+   禁止出现 .btn 自创类——所有按钮复用 .xb-* 等价于 <Button variant=…>。
+   ================================================================ */
+
+/* ── Button（4 变体 × 4 size）── */
+.xb {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  white-space: nowrap; border-radius: var(--radius);
+  font-size: var(--text-md); font-weight: 500; font-family: var(--font-sans);
+  transition: background var(--duration-fast), color var(--duration-fast), box-shadow var(--duration-fast);
+  cursor: pointer; user-select: none;
+}
+.xb svg { pointer-events: none; width: 16px; height: 16px; flex-shrink: 0; }
+/* 变体 */
+.xb-default { background: var(--accent); color: #fff; }
+.xb-default:hover { background: var(--accent-hover); }
+.xb-secondary { background: transparent; border: 1px solid var(--border); color: var(--neutral-fg); }
+.xb-secondary:hover { background: var(--surface-hover); }
+.xb-ghost { background: transparent; color: var(--neutral-fg); }
+.xb-ghost:hover { background: var(--surface-hover); }
+.xb-danger { background: transparent; color: var(--danger); }
+.xb-danger:hover { background: var(--danger-soft); }
+/* 尺寸 */
+.xb-default-sz, .xb-secondary-sz, .xb-ghost-sz, .xb-danger-sz { height: 36px; padding: 8px 16px; }       /* default h-9 px-4 */
+.xb-dense { height: 32px; padding: 0 12px; font-size: var(--text-sm); }                                    /* dense h-8 px-3 */
+.xb-sm { height: 36px; padding: 0 12px; font-size: var(--text-sm); }                                       /* sm h-9 px-3 */
+.xb-icon { height: 40px; width: 40px; padding: 0; }                                                        /* icon h-10 w-10 */
+/* disabled（继承自 reka disabled:pointer-events-none + opacity-50）*/
+.xb[disabled], .xb.is-disabled { opacity: .5; pointer-events: none; cursor: not-allowed; }
+/* focus-visible ring（Button 用外环 + offset，shadcn 惯例）*/
+.xb:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent-ring); }
+/* 紧凑型 icon-only 操作按钮（资源行尾删除/引用）—— ghost 变体 + 自定 size-6 */
+.xb-ghost-ico { height: 24px; width: 24px; padding: 0; border-radius: var(--radius-sm); background: transparent; color: var(--neutral-dim); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background var(--duration-fast), color var(--duration-fast); }
+.xb-ghost-ico:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.xb-ghost-ico.danger-hover:hover { color: var(--danger); }
+.xb-ghost-ico svg { width: 14px; height: 14px; }
+
+/* ── Input（h-10 rounded-md border-input bg-surface-2 px-3）── */
+.xinp {
+  display: inline-flex; align-items: center;
+  height: 40px; width: 100%; padding: 8px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: var(--text-md); color: var(--neutral-fg);
+  font-family: var(--font-mono);
+  transition: box-shadow var(--duration-fast), border-color var(--duration-fast);
+}
+.xinp.ph { color: var(--neutral-mid); font-family: var(--font-sans); }
+.xinp.focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset, 0 0 0 3px var(--accent-ring); }
+.xinp.error { border-color: var(--danger); }
+.xinp.dense { height: 32px; padding: 4px 10px; font-size: var(--text-sm); }
+
+/* ── Checkbox（size-4 border-border-strong；checked bg-accent）── */
+.xcb {
+  width: 16px; height: 16px; border-radius: var(--radius-sm);
+  background: transparent; border: 1px solid var(--border-strong);
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; cursor: pointer; transition: background var(--duration-fast), border-color var(--duration-fast);
+}
+.xcb.checked { background: var(--accent); border-color: var(--accent); }
+.xcb svg { width: 12px; height: 12px; color: #fff; }
+.xcb.disabled { opacity: .5; cursor: not-allowed; }
+
+/* ── Switch（h-5 w-9；checked bg-accent）── */
+.xsw {
+  width: 36px; height: 20px; border-radius: 999px;
+  background: var(--surface-2); position: relative; cursor: pointer;
+  transition: background var(--duration); flex-shrink: 0;
+}
+.xsw::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 16px; height: 16px; border-radius: 50%; background: var(--neutral-fg);
+  transition: transform var(--duration), background var(--duration);
+}
+.xsw.on { background: var(--accent); }
+.xsw.on::after { transform: translateX(16px); background: #fff; }
+
+/* ================================================================
+   渲染用：资源页组件样式
+   ================================================================ */
+
+/* 页面标题（与 settings 稿一致）*/
+.page-title { font-size: 20px; font-weight: 600; color: var(--neutral-fg); letter-spacing: -.005em; margin-bottom: 4px; }
+.page-desc { font-size: var(--text-base); color: var(--neutral-mid); margin-bottom: 20px; }
+
+/* §1/§2 Layer A · 加载路径卡片（扁平单 bg-card，hairline 分行）*/
+.lp-card {
+  background: var(--bg-card); border-radius: 10px;
+  margin-bottom: 12px; overflow: hidden;
+}
+.lp-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px 10px;
+}
+.lp-title { font-size: var(--text-base); font-weight: 500; color: var(--neutral-fg); }
+.lp-hint { font-size: var(--text-xs); color: var(--neutral-mid); }
+.lp-section-label {
+  font-size: var(--text-xs); color: var(--neutral-mid);
+  padding: 8px 16px 6px; letter-spacing: .01em;
+}
+.lp-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 16px; border-top: 1px solid rgba(255,255,255,0.04); font-size: var(--text-sm);
+  transition: background var(--duration-fast), border-color var(--duration-fast);
+}
+.lp-row.dragging { opacity: .4; background: rgba(79,142,247,0.04); }
+.lp-row.drop-target { border-top: 2px solid var(--accent); background: var(--accent-soft); }
+.lp-grip { width: 16px; height: 16px; color: var(--neutral-dim); flex-shrink: 0; cursor: grab; transition: color var(--duration-fast); }
+.lp-grip:hover { color: var(--neutral-fg); }
+.lp-grip.locked { cursor: not-allowed; opacity: .3; }
+.lp-grip.locked:hover { color: var(--neutral-dim); }
+.lp-lock { width: 14px; height: 14px; color: var(--neutral-dim); flex-shrink: 0; }
+.lp-path { font-family: var(--font-mono); color: var(--neutral-fg); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); }
+.lp-path.forced { opacity: .55; }
+.lp-tag {
+  font-size: var(--text-2xs); padding: 2px 7px; border-radius: 999px;
+  font-family: var(--font-mono); flex-shrink: 0; letter-spacing: .02em;
+}
+.lp-tag.forced { background: var(--surface-2); color: var(--neutral-dim); }
+.lp-tag.shared { background: var(--info-soft); color: var(--info); }
+.lp-src-label { font-size: var(--text-xs); color: var(--neutral-fg); flex-shrink: 0; min-width: 56px; }
+.lp-src-path { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-mid); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lp-count { font-size: var(--text-xs); color: var(--neutral-dim); font-family: var(--font-mono); flex-shrink: 0; }
+.lp-add-row { display: flex; align-items: flex-start; gap: 8px; padding: 10px 16px; border-top: 1px solid rgba(255,255,255,0.04); }
+.lp-add-row .xinp { flex: 1; min-width: 0; }
+.lp-err { font-size: var(--text-xs); color: var(--danger); padding: 4px 16px 10px; display: flex; align-items: center; gap: 6px; }
+.lp-err svg { width: 12px; height: 12px; }
+.lp-import-actions { padding: 10px 16px; border-top: 1px solid rgba(255,255,255,0.04); display: flex; align-items: center; gap: 8px; }
+
+/* §3 Layer B · 资源预览 */
+.rp-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 10px; flex-wrap: wrap;
+}
+.rp-title { font-size: var(--text-base); font-weight: 500; color: var(--neutral-fg); }
+.rp-count {
+  font-size: var(--text-xs); color: var(--neutral-mid); font-family: var(--font-mono);
+  background: var(--bg-input); padding: 2px 8px; border-radius: var(--radius-sm);
+}
+.rp-tabs { display: flex; gap: 2px; margin-left: auto; background: var(--bg-input); padding: 2px; border-radius: var(--radius-sm); }
+.rp-tab {
+  font-size: var(--text-xs); color: var(--neutral-mid);
+  padding: 4px 10px; border-radius: var(--radius-sm); cursor: pointer;
+  transition: background var(--duration-fast), color var(--duration-fast);
+  font-family: var(--font-sans);
+}
+.rp-tab:hover { color: var(--neutral-fg); }
+.rp-tab.active { background: var(--surface-hover); color: var(--neutral-fg); }
+
+.rp-list { background: var(--bg-card); border-radius: 10px; overflow: hidden; }
+.rp-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 16px; border-top: 1px solid rgba(255,255,255,0.04); font-size: var(--text-sm);
+  transition: background var(--duration-fast);
+}
+.rp-item:first-child { border-top: 0; }
+.rp-item:hover { background: rgba(255,255,255,0.02); }
+.rp-item:hover .rp-item-actions { opacity: 1; }
+.rp-name { flex: 1; min-width: 0; font-weight: 500; color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-desc { font-size: var(--text-xs); color: var(--neutral-mid); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
+.rp-badge {
+  font-size: var(--text-2xs); padding: 2px 7px; border-radius: var(--radius-sm);
+  font-family: var(--font-mono); flex-shrink: 0; letter-spacing: .02em;
+}
+.rp-badge.effective { background: var(--accent-soft); color: var(--accent); box-shadow: 0 0 0 1px var(--accent-ring) inset; }
+.rp-badge.pi { background: var(--accent-soft); color: var(--accent); }
+.rp-badge.claude { background: var(--warn-soft); color: var(--warn); }
+.rp-badge.agents { background: var(--success-soft); color: var(--success); }
+.rp-badge.piinstall { background: var(--info-soft); color: var(--info); }
+.rp-badge.muted { background: var(--surface-2); color: var(--neutral-mid); }
+.rp-badge.faded { opacity: .6; }
+.rp-item-actions { display: flex; gap: 2px; flex-shrink: 0; opacity: 0; transition: opacity var(--duration-fast); }
+
+/* 空态 */
+.rp-empty {
+  padding: 36px 16px; text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+.rp-empty svg { width: 28px; height: 28px; color: var(--neutral-faint); }
+.rp-empty-text { font-size: var(--text-sm); color: var(--neutral-mid); }
+.rp-empty-hint { font-size: var(--text-xs); color: var(--neutral-dim); }
+
+/* 错误态（操作错误条）*/
+.rp-err {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; margin-bottom: 10px;
+  background: var(--danger-soft); border-radius: var(--radius);
+  font-size: var(--text-xs); color: var(--danger);
+}
+.rp-err svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+/* 扫描中态（骨架行）*/
+.rp-skel {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 16px; border-top: 1px solid rgba(255,255,255,0.04);
+}
+.rp-skel:first-child { border-top: 0; }
+.rp-skel-bar { height: 10px; border-radius: 999px; background: linear-gradient(90deg, var(--surface-2) 0%, var(--surface-hover) 50%, var(--surface-2) 100%); background-size: 200% 100%; animation: skel 1.4s ease-in-out infinite; }
+.rp-skel-name { width: 140px; }
+.rp-skel-badge { width: 60px; }
+.rp-skel-desc { flex: 1; }
+@keyframes skel { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .rp-skel-bar { animation: none; background: var(--surface-2); }
+}
+
+/* SourceImport 导入进度态 */
+.imp-progress {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px; border-top: 1px solid rgba(255,255,255,0.04);
+  font-size: var(--text-xs); color: var(--neutral-mid);
+}
+.imp-progress-bar {
+  flex: 1; height: 4px; border-radius: 999px; background: var(--surface-2); overflow: hidden;
+}
+.imp-progress-fill {
+  height: 100%; width: 60%; background: var(--accent); border-radius: 999px;
+  transition: width var(--duration);
+}
+.imp-done {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 16px; border-top: 1px solid rgba(255,255,255,0.04);
+  font-size: var(--text-xs); color: var(--success);
+}
+.imp-done svg { width: 13px; height: 13px; }
+
+/* 来源标签筛选 tab 的语义说明卡 */
+.src-legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px,1fr)); gap: 10px; }
+.src-legend-cell {
+  background: var(--bg-card); border-radius: var(--radius); padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.src-legend-cell .sl-head { display: flex; align-items: center; gap: 8px; }
+.src-legend-cell .sl-meta { font-size: var(--text-2xs); color: var(--neutral-dim); font-family: var(--font-mono); }
+
+/* footer */
+.doc-foot {
+  margin-top: 48px; padding-top: 24px;
+  border-top: 1px solid var(--border);
+  display: flex; justify-content: space-between;
+  font-size: var(--text-xs); color: var(--neutral-dim); font-family: var(--font-mono);
+}
+.doc-foot a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ============ 文档头 ============ -->
+  <header class="doc-head">
+    <div class="doc-eyebrow">v6 SPEC · settings · resources</div>
+    <h1 class="doc-title">Settings · 资源页（Skill / Agent）</h1>
+    <p class="doc-sub">Skill / Agent 菜单页的交互重新设计稿。覆盖两层模型：Layer A 加载路径（强制目录锁定态 + 可选目录拖拽排序 + 添加自定义路径错误反馈 + SourceImport 导入流），Layer B 资源只读预览（扫描 loading / 来源标签 tab 切换 / 资源项 hover 引用 / 空态错误态）。所有按钮、输入、勾选、开关全部来自 xyz-ui 原子组件（Button 4 变体 / Input / Checkbox / Switch），禁止自创 .btn 类，路径用真实 ~/.xyz-agent/skills。</p>
+    <div class="doc-meta">
+      <span><b>组件源</b> xyz-ui Button/Input/Checkbox/Switch</span>
+      <span><b>SSOT</b> SettingsResourcePage / LoadPaths / SourceImportSection</span>
+      <span><b>路径</b> ~/.xyz-agent/skills · .xyz-agent/skills</span>
+      <span><b>状态</b> 定稿，待实施</span>
+    </div>
+  </header>
+
+  <!-- ============ 目录 ============ -->
+  <nav class="toc">
+    <a href="#s1">§1 Layer A 加载路径总览</a>
+    <a href="#s2">§2 拖拽排序交互</a>
+    <a href="#s3">§3 添加自定义路径</a>
+    <a href="#s4">§4 SourceImport 导入流</a>
+    <a href="#s5">§5 Layer B 资源预览</a>
+    <a href="#s6">§6 来源标签体系</a>
+    <a href="#s7">§7 空态 / 错误态</a>
+    <a href="#s8">§8 状态矩阵</a>
+  </nav>
+
+  <!-- ================================================================
+       §1 Layer A 加载路径总览（强制 + 可选 + 拖拽 + 导入 + 添加）
+       ================================================================ -->
+  <section class="spec" id="s1">
+    <div class="spec-head">
+      <span class="spec-num">§1</span>
+      <h2 class="spec-title">Layer A · 加载路径总览</h2>
+    </div>
+    <p class="spec-desc">单一 bg-card 容器内 hairline 分行，把强制目录 / 可选目录 / SourceImport / 添加路径四类聚合到一张扁平列表（消除现状三层嵌套 border 卡片）。强制目录用 xyz-ui Checkbox 的 <code>checked + disabled</code> 锁定态（配 lock 图标，不可关不可拖）；可选目录 Checkbox 可勾选、GripVertical 可拖拽排序（靠前覆盖靠后）；添加路径用 xyz-ui Input + Button default；SourceImport 见 §4。路径全部用真实 <code>~/.xyz-agent/skills</code>（skills）或 <code>~/.xyz-agent/agents</code>（agents）。</p>
+
+    <div class="change-points">
+      <span class="cp cp-now"><b>结构</b> 3 个嵌套 border 卡片</span>
+      <span class="cp cp-v6"><b>v6</b> 单 bg-card · hairline 分行</span>
+      <span class="cp cp-now"><b>按钮</b> 自创样式</span>
+      <span class="cp cp-v6"><b>v6</b> xyz-ui Button 4 变体</span>
+      <span class="cp cp-v6"><b>路径</b> ~/.xyz-agent/skills 真实值</span>
+    </div>
+
+    <!-- 完整渲染：Skill 资源页的 Layer A -->
+    <div class="render-frame">
+      <div style="background:var(--surface);border-radius:var(--radius);padding:20px;max-width:var(--content-max-w);">
+        <div class="page-title">技能</div>
+        <div class="page-desc">勾选目录启用扫描，拖动手柄调整优先级，靠前的目录覆盖靠后</div>
+
+        <div class="lp-card">
+          <div class="lp-head">
+            <span class="lp-title">加载路径</span>
+            <span class="lp-hint">靠前 = 高优先级</span>
+          </div>
+
+          <!-- 强制目录（Checkbox checked + disabled，配 lock 图标）-->
+          <div class="lp-section-label">强制目录</div>
+          <div class="lp-row">
+            <svg class="lp-grip locked" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+            <span class="xcb checked disabled"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span class="lp-path forced">~/.xyz-agent/skills</span>
+            <svg class="lp-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <span class="lp-tag forced">强制</span>
+          </div>
+          <div class="lp-row">
+            <svg class="lp-grip locked" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+            <span class="xcb checked disabled"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span class="lp-path forced">.xyz-agent/skills</span>
+            <svg class="lp-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <span class="lp-tag forced">强制</span>
+          </div>
+
+          <!-- 可选目录（Checkbox 可勾选 + GripVertical 可拖）-->
+          <div class="lp-section-label">可选目录</div>
+          <div class="lp-row">
+            <svg class="lp-grip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+            <span class="xcb checked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span class="lp-path">~/projects/my-skills</span>
+            <span class="xb-ghost-ico danger-hover" title="移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span>
+          </div>
+          <div class="lp-row">
+            <svg class="lp-grip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+            <span class="xcb"></span>
+            <span class="lp-path">~/work/shared-skills</span>
+            <span class="xb-ghost-ico danger-hover" title="移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span>
+          </div>
+
+          <!-- SourceImport（详见 §4）-->
+          <div class="lp-section-label">从其他 Agent 导入</div>
+          <div class="lp-row">
+            <span class="xcb checked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span class="lp-src-label">Claude</span>
+            <span class="lp-src-path">~/.claude/skills</span>
+            <span class="lp-count">12 skills</span>
+          </div>
+          <div class="lp-row">
+            <span class="xcb"></span>
+            <span class="lp-src-label">Codex</span>
+            <span class="lp-src-path">~/.codex/skills</span>
+            <span class="lp-tag shared">共享池已生效</span>
+          </div>
+          <div class="lp-import-actions">
+            <button class="xb xb-secondary xb-dense">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+              导入选中
+            </button>
+          </div>
+
+          <!-- 添加自定义路径（详见 §3）-->
+          <div class="lp-section-label">添加自定义路径</div>
+          <div class="lp-add-row">
+            <span class="xinp ph">/absolute/path/to/dir</span>
+            <button class="xb xb-default xb-dense">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+              添加
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="anno-grid">
+        <div class="anno"><b>容器:</b> <span class="old">3 个嵌套 border bg-bg 卡片</span> → <span class="v6">1 个 bg-card #22242c + hairline rgba(255,255,255,.04)</span></div>
+        <div class="anno"><b>圆角:</b> <span class="v6">10px（卡片档）</span></div>
+        <div class="anno"><b>行 padding:</b> <span>9px 16px</span></div>
+        <div class="anno"><b>section label:</b> <span class="v6">11px neutral-mid · 强制/可选/导入/添加 四段</span></div>
+        <div class="anno"><b>强制目录 Checkbox:</b> <span class="v6">xyz-ui Checkbox · checked + disabled · 配 lock 图标（禁关禁拖）</span></div>
+        <div class="anno"><b>可选目录 Checkbox:</b> <span>xyz-ui Checkbox · 可勾选触发 store 写回</span></div>
+        <div class="anno"><b>路径字:</b> <span>var(--font-mono) 12px · neutral-fg · 强制态 opacity .55</span></div>
+        <div class="anno"><b>真实路径:</b> <span class="v6">~/.xyz-agent/skills + .xyz-agent/skills（非 ~/.pi/skills）</span></div>
+        <div class="anno"><b>按钮:</b> <span class="v6">全部 xyz-ui Button（添加 default / 导入 secondary / 移除 ghost icon）</span></div>
+        <div class="anno"><b>反写位置:</b> <span>LoadPaths.vue + SourceImportSection.vue + SettingsResourcePage.vue</span></div>
+      </div>
+    </div>
+
+    <div class="anno-grid">
+      <div class="anno"><b>禁嵌套依据:</b> <span>impeccable——禁嵌套卡片；§3.4 静态容器只用一个表面色不叠 border</span></div>
+      <div class="anno"><b>desc 文字:</b> <span>页描述与 section label 用 neutral-mid（#9ca3af on surface 6.95:1 过 AA），不用 dim</span></div>
+      <div class="anno"><b>agent 复用:</b> <span>kind=agent 时路径换 ~/.xyz-agent/agents + .xyz-agent/agents，SourceImport 只显 claude 一行</span></div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §2 拖拽排序交互（拖起 / 放置 / 排序变化反馈）
+       ================================================================ -->
+  <section class="spec" id="s2">
+    <div class="spec-head">
+      <span class="spec-num">§2</span>
+      <h2 class="spec-title">拖拽排序交互</h2>
+    </div>
+    <p class="spec-desc">可选目录用原生 HTML5 拖拽，纯本地状态驱动（拖拽只改 localDirs 即时生效，dragend 一次性 emit 持久化）。四态可视化：default（可拖）/ dragging（被拖行 opacity .4）/ drop-target（目标行上方 2px accent 指示线 + accent-soft 微染）/ locked（强制行 grip 不可拖 opacity .3）。GripVertical 16px 是唯一拖拽手柄。</p>
+
+    <div class="change-points">
+      <span class="cp cp-v6"><b>反馈</b> 拖起 opacity .4</span>
+      <span class="cp cp-v6"><b>放置线</b> 2px accent + accent-soft 微染</span>
+      <span class="cp cp-v6"><b>持久化</b> dragend 一次 emit（零回路）</span>
+    </div>
+
+    <div class="render-frame">
+      <!-- 四态 -->
+      <div class="state-row">
+        <div class="state-tag">default</div>
+        <div class="state-demo">
+          <div class="lp-row" style="border-top:0;">
+            <svg class="lp-grip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+            <span class="xcb checked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span class="lp-path">~/projects/my-skills</span>
+          </div>
+          <div class="anno" style="margin-top:6px;"><b>grip:</b> <span>GripVertical 16px · neutral-dim · cursor grab · hover neutral-fg</span></div>
+        </div>
+      </div>
+
+      <div class="state-row">
+        <div class="state-tag">dragging</div>
+        <div class="state-demo">
+          <div class="lp-row dragging" style="border-top:0;">
+            <svg class="lp-grip" style="color:var(--accent);cursor:grabbing;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+            <span class="xcb checked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span class="lp-path">~/projects/my-skills</span>
+          </div>
+          <div class="anno" style="margin-top:6px;"><b>被拖行:</b> <span>opacity .4 · 微染 accent-soft · grip 转 accent + cursor-grabbing</span></div>
+        </div>
+      </div>
+
+      <div class="state-row">
+        <div class="state-tag">drop-target</div>
+        <div class="state-demo">
+          <div class="lp-row drop-target" style="border-top:0;">
+            <svg class="lp-grip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+            <span class="xcb checked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span class="lp-path">~/work/shared-skills</span>
+          </div>
+          <div class="anno" style="margin-top:6px;"><b>放置指示:</b> <span>border-top 2px solid var(--accent) + bg accent-soft（dropline 即时跟随 dragenter/dragover）</span></div>
+        </div>
+      </div>
+
+      <div class="state-row" style="margin-bottom:6px;">
+        <div class="state-tag">locked</div>
+        <div class="state-demo">
+          <div class="lp-row" style="border-top:0;">
+            <svg class="lp-grip locked" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+            <span class="xcb checked disabled"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span class="lp-path forced">~/.xyz-agent/skills</span>
+            <svg class="lp-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <span class="lp-tag forced">强制</span>
+          </div>
+          <div class="anno" style="margin-top:6px;"><b>强制行:</b> <span>grip opacity .3 + cursor not-allowed · Checkbox disabled · path opacity .55 · 显式 lock 图标</span></div>
+        </div>
+      </div>
+
+      <div class="anno-grid" style="margin-top:14px;">
+        <div class="anno"><b>拖拽手柄:</b> <span>仅 GripVertical（16px）可拖；Checkbox/路径/disabled 行均 draggable=false</span></div>
+        <div class="anno"><b>事件链:</b> <span>dragstart→dragenter→dragover→drop→dragend；drop 立即重排 localDirs，dragend 一次 emit update-dirs</span></div>
+        <div class="anno"><b>广播回显抑制:</b> <span>awaitingBroadcast 标志：emit 后 watch(props.dirs) 若 enabled 顺序一致则跳过覆盖（防回弹竞态）</span></div>
+        <div class="anno"><b>排序语义:</b> <span>靠前覆盖靠后（同 name 资源取首个 enabled 目录）——§1.1 层 3</span></div>
+        <div class="anno"><b>动效:</b> <span>opacity/background/border 过渡 120ms ease；遵守 prefers-reduced-motion</span></div>
+        <div class="anno"><b>无障碍:</b> <span>grip 加 aria-label「拖拽排序」；纯拖拽场景下另提供键盘上下移的备用入口（未来增强）</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §3 添加自定义路径（Input + Button + 错误反馈）
+       ================================================================ -->
+  <section class="spec" id="s3">
+    <div class="spec-head">
+      <span class="spec-num">§3</span>
+      <h2 class="spec-title">添加自定义路径</h2>
+    </div>
+    <p class="spec-desc">Input（xyz-ui，placeholder <code>/absolute/path/to/dir</code>，font-mono）+ Button default（「添加」，verb+object）。回车或点按钮触发校验：非空 + 去重（与现有 path 字面相等则报「路径已存在」）。错误态 Input 边框转 danger，下方 neutral-mid 错误文案配警示图标。新路径默认 enabled=true，append 到列表末尾（最低优先级，可再拖排序）。</p>
+
+    <div class="render-frame">
+      <!-- default -->
+      <div class="state-row">
+        <div class="state-tag">default</div>
+        <div class="state-demo">
+          <div class="lp-add-row" style="border-top:0;padding:10px 0;">
+            <span class="xinp ph">/absolute/path/to/dir</span>
+            <button class="xb xb-default xb-dense">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+              添加
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- typing -->
+      <div class="state-row">
+        <div class="state-tag">typing</div>
+        <div class="state-demo">
+          <div class="lp-add-row" style="border-top:0;padding:10px 0;">
+            <span class="xinp">~/projects/legacy-skills</span>
+            <button class="xb xb-default xb-dense">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+              添加
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- error: 重复 -->
+      <div class="state-row" style="margin-bottom:6px;">
+        <div class="state-tag">error</div>
+        <div class="state-demo">
+          <div class="lp-add-row" style="border-top:0;padding:10px 0;">
+            <span class="xinp error">~/projects/my-skills</span>
+            <button class="xb xb-default xb-dense">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+              添加
+            </button>
+          </div>
+          <div class="lp-err" style="padding:4px 0 0;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+            路径已存在：~/projects/my-skills 已在列表中
+          </div>
+        </div>
+      </div>
+
+      <div class="anno-grid" style="margin-top:14px;">
+        <div class="anno"><b>Input:</b> <span class="v6">xyz-ui Input · h-10 · bg-surface-2 · border-input · 圆角 8px · px-3</span></div>
+        <div class="anno"><b>placeholder:</b> <span>/absolute/path/to/dir · neutral-mid · font-mono</span></div>
+        <div class="anno"><b>trigger:</b> <span>keydown.enter（@keydown.enter="onAddPath"）+ Button @click</span></div>
+        <div class="anno"><b>校验:</b> <span>非空（空路径无操作不报错）+ 重复（path 字面相等）→ pathError 文案</span></div>
+        <div class="anno"><b>error prop:</b> <span>Input error=true → border-danger（xyz-ui Input 原生支持 error border 态）</span></div>
+        <div class="anno"><b>错误文案:</b> <span class="v6">neutral-mid（非 dim）配 AlertCircle 12px danger 图标，过 AA</span></div>
+        <div class="anno"><b>添加按钮:</b> <span class="v6">xyz-ui Button variant=default size=dense · bg-accent text-white hover:bg-accent-hover</span></div>
+        <div class="anno"><b>新路径落位:</b> <span>append 到可选目录末尾 · enabled=true · 用户可再拖到靠前位置</span></div>
+        <div class="anno"><b>不做存在性校验:</b> <span>D1 决策——前端无 homedir，不展开 ~ / 不查 RPC，避免新增通道</span></div>
+      </div>
+    </div>
+
+    <div class="anno-grid">
+      <div class="anno"><b>禁自创类:</b> <span>不写 .btn / .add-input——全部复用 xyz-ui Input + Button；本稿仅作视觉还原</span></div>
+      <div class="anno"><b>错误文案职责分层:</b> <span>Input 只暴露 error border 态；下方文案归表单层（设计系统 §4 P1-3 裁决）</span></div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §4 SourceImport 导入流（CTA → 选择 → 进度 → 成功/失败）
+       ================================================================ -->
+  <section class="spec" id="s4">
+    <div class="spec-head">
+      <span class="spec-num">§4</span>
+      <h2 class="spec-title">SourceImport 导入流</h2>
+    </div>
+    <p class="spec-desc">从其他 Agent（claude / codex / pi / zcode）检测本机已安装的 skill 目录并一键导入。交互四步：① 检测（onMounted 调 config.detectSources，loading 态）→ ② 选择（Checkbox 多选，共享池已生效的行 disabled + 标签）→ ③ 导入（Button secondary「导入选中」，emit paths 给父组件去重 append）→ ④ 成功反馈（导入的行立即出现在可选目录区，配 success 微提示）。检测失败显错误条。</p>
+
+    <div class="render-frame">
+      <!-- ① 检测中 -->
+      <div class="state-row">
+        <div class="state-tag">① 检测中</div>
+        <div class="state-demo">
+          <div class="lp-card" style="margin:0;">
+            <div class="lp-section-label">从其他 Agent 导入</div>
+            <div class="lp-row" style="border-top:0;display:flex;align-items:center;gap:10px;">
+              <span class="xb-ghost-ico" style="opacity:1;color:var(--accent);">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation:skel 1s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+              </span>
+              <span style="font-size:var(--text-xs);color:var(--neutral-mid);">正在检测已安装的 Agent...</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ② 选择 -->
+      <div class="state-row">
+        <div class="state-tag">② 选择</div>
+        <div class="state-demo">
+          <div class="lp-card" style="margin:0;">
+            <div class="lp-section-label">从其他 Agent 导入</div>
+            <div class="lp-row" style="border-top:0;">
+              <span class="xcb checked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+              <span class="lp-src-label">Claude</span>
+              <span class="lp-src-path">~/.claude/skills</span>
+              <span class="lp-count">12 skills</span>
+            </div>
+            <div class="lp-row">
+              <span class="xcb"></span>
+              <span class="lp-src-label">Codex</span>
+              <span class="lp-src-path">~/.codex/skills</span>
+              <span class="lp-count">8 skills</span>
+            </div>
+            <div class="lp-row">
+              <span class="xcb disabled"></span>
+              <span class="lp-src-label" style="opacity:.6;">Pi</span>
+              <span class="lp-src-path" style="opacity:.6;">~/.pi/skills</span>
+              <span class="lp-tag shared">共享池已生效</span>
+            </div>
+            <div class="lp-import-actions">
+              <button class="xb xb-secondary xb-dense">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                导入选中
+              </button>
+              <span style="font-size:var(--text-xs);color:var(--neutral-dim);font-family:var(--font-mono);">已选 1 / 2 可导入</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ③ 导入进度 -->
+      <div class="state-row">
+        <div class="state-tag">③ 导入中</div>
+        <div class="state-demo">
+          <div class="lp-card" style="margin:0;">
+            <div class="imp-progress">
+              <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;animation:skel 1s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+              <span>正在追加 ~/.claude/skills 到加载路径...</span>
+              <div class="imp-progress-bar"><div class="imp-progress-fill"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ④ 成功反馈 -->
+      <div class="state-row" style="margin-bottom:6px;">
+        <div class="state-tag">④ 成功</div>
+        <div class="state-demo">
+          <div class="lp-card" style="margin:0;">
+            <div class="imp-done">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+              已导入 1 个目录：~/.claude/skills（可在上方可选目录区调整优先级）
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 检测失败 -->
+      <div class="state-row" style="margin-bottom:6px;">
+        <div class="state-tag">检测失败</div>
+        <div class="state-demo">
+          <div class="rp-err">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+            检测本机 Agent 失败，请稍后重试或手动添加路径
+          </div>
+        </div>
+      </div>
+
+      <div class="anno-grid" style="margin-top:14px;">
+        <div class="anno"><b>触发:</b> <span>组件 onMounted → config.detectSources()（后台扫描本机 claude/codex/pi/zcode 安装目录）</span></div>
+        <div class="anno"><b>选择:</b> <span>xyz-ui Checkbox 多选 · Set&lt;source&gt;（source 唯一，避免 dir 冲突）</span></div>
+        <div class="anno"><b>共享池:</b> <span>候选 dir 与 existingDirs normalize 后相等 → Checkbox disabled + info 胶囊「共享池已生效」</span></div>
+        <div class="anno"><b>导入按钮:</b> <span class="v6">xyz-ui Button variant=secondary size=dense（Download 图标 + 「导入选中」）· 无选中时 disabled</span></div>
+        <div class="anno"><b>进度:</b> <span>accent 微 spinner + 文案 + 进度条（父组件去重 + append 的瞬时反馈）</span></div>
+        <div class="anno"><b>成功:</b> <span>success 色 CheckCircle + 文案「已导入 N 个目录」；导入的行同步出现在 §1 可选目录区</span></div>
+        <div class="anno"><b>失败:</b> <span>danger soft 条 + 原因 + 下一步（重试或手动添加）——设计系统 §9 文案规范</span></div>
+        <div class="anno"><b>kind 差异:</b> <span>skill 显全部 4 源；agent 只显 claude（取 agentCount，回退 skillCount）</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §5 Layer B 资源预览（扫描 + 来源 tab + 资源项 hover）
+       ================================================================ -->
+  <section class="spec" id="s5">
+    <div class="spec-head">
+      <span class="spec-num">§5</span>
+      <h2 class="spec-title">Layer B · 资源预览</h2>
+    </div>
+    <p class="spec-desc">只读预览扫描结果（ADR-0020 §5，无文件级开关无 CRUD）。顶部工具栏：标题 + 计数 pill + 扫描/刷新按钮（xyz-ui Button secondary，RefreshCw 图标，scanning 时图标 spin + 文案转「刷新中」）+ 来源 tab（4 项：全部 / xyz-agent / Claude / Agents）。资源项 hover 显「引用到 composer」ghost icon 操作。多来源资源用 badge 链（首项 effective + ring inset，余项 opacity .6）。</p>
+
+    <div class="change-points">
+      <span class="cp cp-now"><b>扫描按钮</b> secondary 常驻</span>
+      <span class="cp cp-v6"><b>v6</b> xyz-ui secondary · spin 反馈</span>
+      <span class="cp cp-v6"><b>tab</b> segmented（bg-input 容器）</span>
+      <span class="cp cp-v6"><b>资源项</b> hover 显引用操作</span>
+    </div>
+
+    <!-- 默认态：列表 + 来源 tab -->
+    <div class="render-frame">
+      <div style="background:var(--surface);border-radius:var(--radius);padding:20px;max-width:var(--content-max-w);">
+        <div class="rp-toolbar">
+          <span class="rp-title">已发现的 Skill</span>
+          <span class="rp-count">5</span>
+          <button class="xb xb-secondary xb-dense">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+            刷新
+          </button>
+          <div class="rp-tabs">
+            <span class="rp-tab active">全部</span>
+            <span class="rp-tab">xyz-agent</span>
+            <span class="rp-tab">Claude</span>
+            <span class="rp-tab">Agents</span>
+          </div>
+        </div>
+
+        <div class="rp-list">
+          <!-- 单来源资源 -->
+          <div class="rp-item">
+            <span class="rp-name">commit-helper</span>
+            <span class="rp-badge pi">xyz-agent</span>
+            <span class="rp-desc">按规范生成提交信息</span>
+            <span class="rp-item-actions">
+              <span class="xb-ghost-ico" title="引用到 composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 13 6 6"/><path d="m15 13-6 6"/></svg></span>
+            </span>
+          </div>
+          <div class="rp-item">
+            <span class="rp-name">browser-automation</span>
+            <span class="rp-badge claude">Claude</span>
+            <span class="rp-desc">浏览器自动化调试</span>
+            <span class="rp-item-actions">
+              <span class="xb-ghost-ico" title="引用到 composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 13 6 6"/><path d="m15 13-6 6"/></svg></span>
+            </span>
+          </div>
+          <!-- 多来源 badge 链（首项 effective）-->
+          <div class="rp-item">
+            <span class="rp-name">merge</span>
+            <span class="rp-badge effective">生效·xyz-agent</span>
+            <span class="rp-badge claude faded">Claude</span>
+            <span class="rp-desc">合并分支并发布</span>
+            <span class="rp-item-actions">
+              <span class="xb-ghost-ico" title="引用到 composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 13 6 6"/><path d="m15 13-6 6"/></svg></span>
+            </span>
+          </div>
+          <div class="rp-item">
+            <span class="rp-name">zcommit</span>
+            <span class="rp-badge pi">xyz-agent</span>
+            <span class="rp-desc">执行 git commit</span>
+            <span class="rp-item-actions">
+              <span class="xb-ghost-ico" title="引用到 composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 13 6 6"/><path d="m15 13-6 6"/></svg></span>
+            </span>
+          </div>
+          <div class="rp-item">
+            <span class="rp-name">code-review</span>
+            <span class="rp-badge pi">xyz-agent</span>
+            <span class="rp-desc">审查代码变更</span>
+            <span class="rp-item-actions">
+              <span class="xb-ghost-ico" title="引用到 composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 13 6 6"/><path d="m15 13-6 6"/></svg></span>
+            </span>
+          </div>
+        </div>
+      </div>
+      <div class="anno-grid">
+        <div class="anno"><b>工具栏:</b> <span>标题 + 计数 pill（bg-input）+ 刷新 Button + 来源 tab（右对齐）</span></div>
+        <div class="anno"><b>刷新按钮:</b> <span class="v6">xyz-ui Button variant=secondary size=dense · RefreshCw 16px · scanning 时图标 animate-spin + 文案「刷新中」+ disabled</span></div>
+        <div class="anno"><b>来源 tab:</b> <span class="v6">segmented（bg-input 容器 + 选中 bg-surface-hover neutral-fg）· 4 项 all/pi/claude/agents</span></div>
+        <div class="anno"><b>资源项:</b> <span>name font-medium neutral-fg + 来源 badge + desc neutral-mid（非 dim）+ hover 显引用操作</span></div>
+        <div class="anno"><b>多来源 badge 链:</b> <span>首项 effective（accent-soft + accent-ring inset ring）· 余项 opacity .6</span></div>
+        <div class="anno"><b>hover 操作:</b> <span class="v6">ghost icon「引用到 composer」（FileText 图标）· opacity 0→1 · 120ms</span></div>
+        <div class="anno"><b>只读:</b> <span>ADR §5——预览无开关无 CRUD，启用靠 §1 目录勾选</span></div>
+      </div>
+    </div>
+
+    <!-- 扫描中态（骨架）-->
+    <h3 style="font-size:var(--text-md);color:var(--neutral-fg);margin:8px 0 14px;font-weight:500;">扫描中（骨架行）</h3>
+    <div class="render-frame">
+      <div style="background:var(--surface);border-radius:var(--radius);padding:20px;max-width:var(--content-max-w);">
+        <div class="rp-toolbar">
+          <span class="rp-title">已发现的 Skill</span>
+          <span class="rp-count">…</span>
+          <button class="xb xb-secondary xb-dense is-disabled" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation:skel 1s linear infinite;"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+            刷新中
+          </button>
+          <div class="rp-tabs">
+            <span class="rp-tab active">全部</span>
+            <span class="rp-tab">xyz-agent</span>
+            <span class="rp-tab">Claude</span>
+            <span class="rp-tab">Agents</span>
+          </div>
+        </div>
+        <div class="rp-list">
+          <div class="rp-skel"><div class="rp-skel-bar rp-skel-name"></div><div class="rp-skel-bar rp-skel-badge"></div><div class="rp-skel-bar rp-skel-desc"></div></div>
+          <div class="rp-skel"><div class="rp-skel-bar rp-skel-name"></div><div class="rp-skel-bar rp-skel-badge"></div><div class="rp-skel-bar rp-skel-desc"></div></div>
+          <div class="rp-skel"><div class="rp-skel-bar rp-skel-name"></div><div class="rp-skel-bar rp-skel-badge"></div><div class="rp-skel-bar rp-skel-desc"></div></div>
+        </div>
+      </div>
+      <div class="anno-grid">
+        <div class="anno"><b>骨架行:</b> <span>shimmer 动画（surface-2 → surface-hover）· name 140px + badge 60px + desc flex:1</span></div>
+        <div class="anno"><b>刷新按钮:</b> <span class="v6">disabled + 文案「刷新中」+ 图标 animate-spin</span></div>
+        <div class="anno"><b>reduced-motion:</b> <span>骨架降级为静态 surface-2 色，spin 停止</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §6 来源标签体系
+       ================================================================ -->
+  <section class="spec" id="s6">
+    <div class="spec-head">
+      <span class="spec-num">§6</span>
+      <h2 class="spec-title">来源标签体系</h2>
+    </div>
+    <p class="spec-desc">资源来源的语义配色——全部 token 化（ADR-0018），禁止直引 Tailwind amber/emerald/violet。skill/agent 共用一套：pi-install 归一化到 pi tab 过滤。effective 标记用 accent + inset ring（与 Card-Active 范式一致）。desc 文案用 neutral-mid（过 AA），非 dim。</p>
+
+    <div class="render-frame">
+      <div class="src-legend">
+        <div class="src-legend-cell">
+          <div class="sl-head"><span class="rp-badge pi">xyz-agent</span><span class="sl-meta">pi · 主色</span></div>
+          <div class="anno"><b>token:</b> <span>bg accent-soft / text accent</span></div>
+        </div>
+        <div class="src-legend-cell">
+          <div class="sl-head"><span class="rp-badge claude">Claude</span><span class="sl-meta">claude · warn</span></div>
+          <div class="anno"><b>token:</b> <span>bg warn-soft / text warn</span></div>
+        </div>
+        <div class="src-legend-cell">
+          <div class="sl-head"><span class="rp-badge agents">Agents</span><span class="sl-meta">agents · success</span></div>
+          <div class="anno"><b>token:</b> <span>bg success-soft / text success</span></div>
+        </div>
+        <div class="src-legend-cell">
+          <div class="sl-head"><span class="rp-badge piinstall">pi-install</span><span class="sl-meta">归一化→pi tab</span></div>
+          <div class="anno"><b>token:</b> <span>bg info-soft / text info</span></div>
+        </div>
+        <div class="src-legend-cell">
+          <div class="sl-head"><span class="rp-badge effective">生效·xyz-agent</span><span class="sl-meta">effective · 首项</span></div>
+          <div class="anno"><b>token:</b> <span>accent-soft + accent-ring inset ring</span></div>
+        </div>
+        <div class="src-legend-cell">
+          <div class="sl-head"><span class="rp-badge muted">未知</span><span class="sl-meta">fallback</span></div>
+          <div class="anno"><b>token:</b> <span>bg surface-2 / text neutral-mid</span></div>
+        </div>
+      </div>
+
+      <div class="anno-grid" style="margin-top:14px;">
+        <div class="anno"><b>配色统一:</b> <span>skill/agent 同一套：pi=accent · claude=warn · agents=success · piinstall=info</span></div>
+        <div class="anno"><b>归一化:</b> <span>'piinstall' → 'pi'（来源 tab 过滤时归入 pi tab，避免空结果）</span></div>
+        <div class="anno"><b>effective:</b> <span>多来源 badge 链首项 · 文案「生效·{source}」· inset ring 与 Card-Active 一致</span></div>
+        <div class="anno"><b>faded:</b> <span>多来源 badge 链余项 opacity .6（次级来源）</span></div>
+        <div class="anno"><b>软底透明度:</b> <span>color-mix 12%（与 FileTreeRow badge 模式一致）</span></div>
+        <div class="anno"><b>禁止:</b> <span>直引 Tailwind amber/emerald/violet 等 palette 色</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §7 空态 / 错误态
+       ================================================================ -->
+  <section class="spec" id="s7">
+    <div class="spec-head">
+      <span class="spec-num">§7</span>
+      <h2 class="spec-title">空态 / 错误态</h2>
+    </div>
+    <p class="spec-desc">空态三要素（设计系统 §7）：图标（neutral-faint）+ 一句说明 + 一个 Primary 入口。两类空态：① 全来源空（无任何资源）——指向「添加目录」或「刷新」；② 单 tab 筛选空（该来源无资源）——指向「切换 tab」。错误态：扫描失败 / 检测失败——danger soft 条 + 原因 + 下一步。文案用 neutral-mid（过 AA）。</p>
+
+    <div class="render-frame">
+      <!-- 全空 -->
+      <div class="state-row">
+        <div class="state-tag">全空</div>
+        <div class="state-demo">
+          <div class="rp-list">
+            <div class="rp-empty">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg>
+              <span class="rp-empty-text">未发现任何 Skill</span>
+              <span class="rp-empty-hint">勾选加载路径中的目录，或刷新重新扫描</span>
+              <div style="display:flex;gap:8px;margin-top:4px;">
+                <button class="xb xb-secondary xb-dense">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+                  刷新
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- tab 筛选空 -->
+      <div class="state-row">
+        <div class="state-tag">筛选空</div>
+        <div class="state-demo">
+          <div class="rp-list">
+            <div class="rp-empty">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              <span class="rp-empty-text">Claude 来源下暂无 Skill</span>
+              <span class="rp-empty-hint">切换到「全部」查看其他来源，或导入 Claude 目录</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 扫描错误 -->
+      <div class="state-row" style="margin-bottom:6px;">
+        <div class="state-tag">扫描错误</div>
+        <div class="state-demo">
+          <div class="rp-err">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+            扫描失败：无法读取 ~/.xyz-agent/skills（权限不足）· 检查目录权限后重试
+          </div>
+        </div>
+      </div>
+
+      <div class="anno-grid" style="margin-top:14px;">
+        <div class="anno"><b>空态图标:</b> <span>Sparkles（全空）/ Search（筛选空）· 28px · neutral-faint</span></div>
+        <div class="anno"><b>空态文案:</b> <span class="v6">neutral-mid 主文 + neutral-dim 辅文（均过 AA）</span></div>
+        <div class="anno"><b>空态入口:</b> <span class="v6">xyz-ui Button secondary「刷新」（verb+object，设计系统 §9）</span></div>
+        <div class="anno"><b>错误条:</b> <span>danger-soft 底 + danger 字 + AlertCircle 14px · 含原因 + 下一步（重试/检查权限）</span></div>
+        <div class="anno"><b>i18n:</b> <span>settings.resource.notFound（全空）/ notFoundInSource（筛选空）</span></div>
+        <div class="anno"><b>禁:</b> <span>纯「暂无数据」四字（设计系统 §7）</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §8 状态矩阵
+       ================================================================ -->
+  <section class="spec" id="s8">
+    <div class="spec-head">
+      <span class="spec-num">§8</span>
+      <h2 class="spec-title">状态矩阵</h2>
+    </div>
+    <p class="spec-desc">资源页所有交互组件的状态变体一览，供实施时逐态比对。覆盖 Layer A（Checkbox 3 态 / grip 4 态 / Input 3 态）+ Layer B（资源项 2 态 / 来源 badge 6 种 / 刷新按钮 2 态 / 来源 tab 2 态）+ SourceImport（4 步流）。</p>
+
+    <table class="overview-table" style="width:100%;border-collapse:collapse;font-size:var(--text-sm);">
+      <thead>
+        <tr>
+          <th style="text-align:left;padding:10px 12px;font-size:var(--text-xs);color:var(--neutral-dim);font-weight:500;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border-strong);width:140px;">组件</th>
+          <th style="text-align:left;padding:10px 12px;font-size:var(--text-xs);color:var(--neutral-dim);font-weight:500;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border-strong);width:110px;">状态</th>
+          <th style="text-align:left;padding:10px 12px;font-size:var(--text-xs);color:var(--neutral-dim);font-weight:500;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border-strong);">视觉表达（token）</th>
+          <th style="text-align:left;padding:10px 12px;font-size:var(--text-xs);color:var(--neutral-dim);font-weight:500;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border-strong);width:90px;">参见</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- Checkbox -->
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);vertical-align:middle;" rowspan="3"><span style="font-weight:500;color:var(--neutral-fg);">Checkbox</span></td><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--neutral-dim);">unchecked</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">bg transparent · border border-strong</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§1</td></tr>
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--neutral-dim);">checked</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">bg accent · 勾标 #fff</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§1</td></tr>
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">checked·disabled</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">bg accent · opacity .5 · cursor not-allowed（强制目录锁定态）</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§1·§2</td></tr>
+
+        <!-- Grip -->
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);vertical-align:middle;" rowspan="4"><span style="font-weight:500;color:var(--neutral-fg);">GripVertical</span></td><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--neutral-dim);">default</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">16px · neutral-dim · cursor grab</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§2</td></tr>
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--neutral-dim);">hover</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">color neutral-fg</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§2</td></tr>
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">dragging</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">color accent · cursor grabbing · 行 opacity .4 + accent-soft 微染</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§2</td></tr>
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--neutral-dim);">locked</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">opacity .3 · cursor not-allowed（强制行，配 lock 图标）</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§2</td></tr>
+
+        <!-- 拖拽行 -->
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);vertical-align:middle;" rowspan="2"><span style="font-weight:500;color:var(--neutral-fg);">拖拽行</span></td><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--neutral-dim);">dragging</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">opacity .4 · bg accent-soft</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§2</td></tr>
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">drop-target</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">border-top 2px accent · bg accent-soft</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§2</td></tr>
+
+        <!-- Input -->
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);vertical-align:middle;" rowspan="3"><span style="font-weight:500;color:var(--neutral-fg);">Input</span></td><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--neutral-dim);">default</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">bg surface-2 · border border · 圆角 8px · h-10</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§3</td></tr>
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--neutral-dim);">placeholder</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">字 neutral-mid · font-sans</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§3</td></tr>
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--danger);">error</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">border danger · 下方 neutral-mid 错误文案 + danger 图标</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§3</td></tr>
+
+        <!-- Button default -->
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);vertical-align:middle;"><span style="font-weight:500;color:var(--neutral-fg);">Button·default</span></td><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--neutral-dim);">添加路径</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">bg accent · text white · hover bg accent-hover · dense h-8 px-3</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§3</td></tr>
+
+        <!-- Button secondary -->
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);vertical-align:middle;" rowspan="2"><span style="font-weight:500;color:var(--neutral-fg);">Button·secondary</span></td><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--neutral-dim);">刷新/导入</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">bg transparent · border border · text neutral-fg · hover bg surface-hover</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§4·§5</td></tr>
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--neutral-dim);">scanning</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">disabled + 图标 animate-spin + 文案「刷新中」</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§5</td></tr>
+
+        <!-- Button ghost icon -->
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);vertical-align:middle;"><span style="font-weight:500;color:var(--neutral-fg);">Button·ghost·icon</span></td><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--neutral-dim);">移除/引用</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">size-6 · hover bg surface-hover · color neutral-dim→fg（移除 hover 转 danger）</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§1·§5</td></tr>
+
+        <!-- 资源项 -->
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);vertical-align:middle;" rowspan="2"><span style="font-weight:500;color:var(--neutral-fg);">资源项</span></td><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--neutral-dim);">default</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">name font-medium neutral-fg + 来源 badge + desc neutral-mid · 操作隐藏</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§5</td></tr>
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">hover</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">bg rgba(255,255,255,.02) · 显「引用到 composer」ghost icon（opacity 0→1）</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§5</td></tr>
+
+        <!-- 来源 tab -->
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);vertical-align:middle;" rowspan="2"><span style="font-weight:500;color:var(--neutral-fg);">来源 tab</span></td><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--neutral-dim);">default</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">color neutral-mid · hover color neutral-fg</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§5</td></tr>
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">active</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">bg surface-hover · color neutral-fg（segmented 容器 bg-input）</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§5</td></tr>
+
+        <!-- 来源 badge -->
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);vertical-align:middle;"><span style="font-weight:500;color:var(--neutral-fg);">来源 badge</span></td><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--neutral-dim);">6 种</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">pi=accent · claude=warn · agents=success · piinstall=info · effective=accent+ring · muted=surface-2</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§6</td></tr>
+
+        <!-- SourceImport 流 -->
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);vertical-align:middle;" rowspan="4"><span style="font-weight:500;color:var(--neutral-fg);">SourceImport</span></td><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--neutral-dim);">①检测中</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">accent spinner + 「正在检测...」文案</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§4</td></tr>
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--neutral-dim);">②选择</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">Checkbox 多选 · 共享池行 disabled + info 胶囊 · secondary「导入选中」</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§4</td></tr>
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">③进度</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">accent spinner + 文案 + 进度条（accent fill）</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§4</td></tr>
+        <tr><td style="padding:12px;"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--success);">④成功</span></td><td style="padding:12px;color:var(--neutral-mid);">success CheckCircle + 「已导入 N 个目录」· 同步行出现在可选目录区</td><td style="padding:12px;font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§4</td></tr>
+      </tbody>
+    </table>
+
+    <div class="anno-grid" style="margin-top:16px;">
+      <div class="anno"><b>全覆盖检查:</b> <span>Checkbox 3 ✓ / Grip 4 ✓ / 拖拽行 2 ✓ / Input 3 ✓ / Button default+secondary+ghost ✓ / 资源项 2 ✓ / 来源 tab 2 ✓ / badge 6 ✓ / SourceImport 4 步 ✓</span></div>
+      <div class="anno"><b>xyz-ui 落地:</b> <span>全部按钮复用 Button 变体（default/secondary/ghost/icon），Input/Checkbox/Switch 用原子组件，零自创 .btn 类</span></div>
+      <div class="anno"><b>路径真实性:</b> <span>~/.xyz-agent/skills + .xyz-agent/skills（skills）· ~/.xyz-agent/agents（agents）· 无 ~/.pi/skills</span></div>
+      <div class="anno"><b>对比度:</b> <span>desc 与 section label 用 neutral-mid #9ca3af（on surface 6.95:1 / on bg-card 6.10:1，过 AA）</span></div>
+    </div>
+  </section>
+
+  <!-- ============ footer ============ -->
+  <footer class="doc-foot">
+    <span>v6-spec-settings-resources.html · 设置页资源（Skill/Agent）交互重设计</span>
+    <span>SSOT: SettingsResourcePage/LoadPaths/SourceImportSection · token: <a href="v6-spec-tokens.html">v6-spec-tokens.html</a></span>
+  </footer>
+
+</div>
+</body>
+</html>
