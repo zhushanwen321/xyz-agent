@@ -369,7 +369,9 @@ body {
 /* --- Input（Input.vue 真实值）--- */
 /* flex h-10 w-full rounded-md border border-input bg-surface-2 px-3 py-2 text-sm
    placeholder:text-neutral-mid focus-visible:ring-1 ring-inset ring-accent-ring
-   disabled:opacity-50 ; error → border-danger */
+   disabled:opacity-50 ; error → border-danger
+   注：源码 border-input = --input，项目 style.css 中 --input: var(--border)，
+       故 spec CSS 直接用 var(--border)（同值，已核实）。 */
 .ui-input {
   display: flex; height: 40px; width: 100%; border-radius: var(--radius);
   border: 1px solid var(--border); background: var(--surface-2);
@@ -387,14 +389,18 @@ body {
 .ui-input-wrap .ui-input-suffix { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); }
 
 /* --- SelectTrigger（SelectTrigger.vue 真实值）--- */
-/* flex w-full items-center justify-between gap-1 whitespace-nowrap rounded-md
-   border border-border bg-surface-2 px-3 py-2 text-[13px] text-neutral-fg
-   focus-visible:ring-1 ring-inset ring-accent-ring disabled:opacity-50 */
+/* 源码类：flex w-full items-center justify-between gap-1 whitespace-nowrap rounded-md
+   border border-border bg-surface-2 px-3 py-2 text-[13px] text-neutral-fg outline-none
+   transition-colors placeholder:text-neutral-mid
+   focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent-ring
+   disabled:cursor-not-allowed disabled:opacity-50 data-[placeholder]:text-neutral-mid
+   注：源码无显式高度类（vue 注释提到 h-9 但 class 缺失），py-2(8+8) + text-13/1.5
+       隐式高度约 36px。spec 显式 height:40px 与 Input h-10(40px) 归一对齐。 */
 .ui-select {
   display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 4px;
   white-space: nowrap; border-radius: var(--radius);
   border: 1px solid var(--border); background: var(--surface-2);
-  padding: 0 12px; height: 36px; font-size: 13px; font-family: inherit; color: var(--neutral-fg);
+  padding: 0 12px; height: 40px; font-size: 13px; font-family: inherit; color: var(--neutral-fg);
   cursor: pointer;
   transition: border-color var(--duration-fast) var(--ease), box-shadow var(--duration-fast) var(--ease);
 }
@@ -987,7 +993,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s6">
     <div class="spec-head"><span class="spec-num">§6</span><h2 class="spec-title">控件范式 · xyz-ui 5 组件真实变体</h2></div>
-    <p class="spec-desc">所有控件复刻 xyz-ui 组件源码的精确 CSS 值，不自创类。Button 4 变体（default/secondary/ghost/danger）+ 4 size；Input（h-10 surface-2）；Select（h-9 对齐 Input，ChevronDown）；Switch（track 36×20 thumb 16）；Checkbox（16×16 border-strong）。每控件标注 default/hover/focus/active/disabled/error 全态交互。</p>
+    <p class="spec-desc">所有控件复刻 xyz-ui 组件源码的精确 CSS 值，不自创类。Button 4 变体（default/secondary/ghost/danger）+ 4 size；Input（h-10 surface-2）；Select（spec h-40 与 Input h-10 归一；源码用 py-2 隐式约 36px，ChevronDown）；Switch（track 36×20 thumb 16）；Checkbox（16×16 border-strong）。每控件标注 default/hover/focus/active/disabled/error 全态交互。</p>
     <div class="change-points">
       <span class="cp cp-v6"><b>Button</b> 4 变体真实复刻</span>
       <span class="cp cp-v6"><b>Input/Select/Switch/Checkbox</b> 源码值</span>
@@ -1159,7 +1165,7 @@ body {
             <svg class="us-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
           <div class="anno" style="margin-top:8px;">
-            <b>样式:</b> <span class="key">h-9 rounded-md border-border bg-surface-2 px-3 text-13</span><br>
+            <b>样式:</b> <span class="key">rounded-md border-border bg-surface-2 px-3 py-2 text-13</span>（源码无 h 类，py-2 隐式约 36px；spec 显式 h-40 与 Input 归一）<br>
             <b>chevron:</b> size-3.5 neutral-dim opacity-0.5
           </div>
         </div>
@@ -1234,7 +1240,8 @@ body {
           <div class="cc-label">focus</div>
           <div class="ui-switch on" style="box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4);"><span class="us-thumb"></span></div>
           <div class="anno" style="margin-top:8px;">
-            <b>focus-visible:</b> <span class="key">ring-2 ring-ring ring-offset-2</span>
+            <b>focus-visible:</b> <span class="key">box-shadow 0 0 0 2px accent + 0 0 0 4px black/40</span><br>
+            xyz-ui 源码用 ring-ring（tailwind ring 变量）；token 稿未单独定义 --ring，spec 用 box-shadow var(--accent) 近似
           </div>
         </div>
         <div class="control-cell">
@@ -1302,9 +1309,9 @@ body {
 
     <div class="anno-grid">
       <div class="anno"><b>硬约束:</b><br><span class="key">禁止自创 .btn/.input/.select 类</span><br>所有控件用 xyz-ui 组件<br>spec 标注 variant=default/secondary/ghost/danger</div>
-      <div class="anno"><b>Button focus:</b><br>shadcn 外环 + offset<br>ring-2 ring-ring ring-offset-2<br>与 Input inset ring 故意不同</div>
+      <div class="anno"><b>Button focus:</b><br>shadcn 外环 + offset<br>spec: box-shadow 0 0 0 2px accent + 0 0 0 4px black/40<br>（源码 ring-ring = tailwind 变量，token 稿未定义 --ring，用 accent box-shadow 近似）<br>与 Input inset ring 故意不同</div>
       <div class="anno"><b>Input focus:</b><br>inset ring-1 accent-ring<br>容器型原语，inset 表边界聚焦</div>
-      <div class="anno"><b>Select 对齐:</b><br>h-9 与 Input 对齐<br>（Input h-10，差 1px 可接受）<br>同 bg-surface-2 border-border</div>
+      <div class="anno"><b>Select 对齐:</b><br>spec h-40 与 Input h-10(40px) 归一<br>（源码 py-2 隐式约 36px，与 Input 差 4px）<br>同 bg-surface-2 border-border</div>
       <div class="anno"><b>Switch 尺寸:</b><br>track 36×20 · thumb 16<br>checked translate-x-18<br>unchecked translate-x-2</div>
       <div class="anno"><b>Checkbox:</b><br>16×16 · rounded-sm<br>border-strong（比 border 深一档）<br>checked bg-accent</div>
       <div class="anno"><b>错误态分层:</b><br>原子 Input: 仅 error border-danger<br>表单层: form-msg 文案<br>（项目待引入 Form/FormItem）</div>

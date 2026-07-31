@@ -12,7 +12,8 @@
         / badge 三轴语义体系（source / mandatory / tier） / 安装 npm tab（单步）
         / 安装 dir+git tab（候选发现→选择→安装多步） / 状态矩阵 / 错误态 / 空态
    token 复用 v6-spec-tokens.html 同一集（:root 逐字一致）
-   组件遵循 xyz-ui：Button 4 变体 / Input / Select / Switch(h-5 w-9) / Checkbox(size-4)
+   组件遵循 xyz-ui：Button 4 变体 / Input / Switch(h-5 w-9) / Checkbox(size-4)
+   （ExtensionPage 实际未用 Select 下拉，故本稿不列 Select）
    ================================================================ */
 :root {
   /* 背景层级 */
@@ -193,7 +194,7 @@ body {
    不自创 .btn，所有按钮走这套变体语义。 */
 .xyz-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  white-space: nowrap; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500;
+  white-space: nowrap; border-radius: var(--radius); font-size: 13px; font-weight: 500;
   font-family: var(--font-sans); cursor: pointer;
   transition: background var(--duration-fast), color var(--duration-fast), opacity var(--duration-fast);
 }
@@ -216,8 +217,8 @@ body {
 /* variant: danger text-danger hover danger-soft */
 .xyz-btn.v-danger { background: transparent; color: var(--danger); }
 .xyz-btn.v-danger:hover { background: var(--danger-soft); }
-/* 图标按钮密化（升级/卸载用）*/
-.xyz-btn.icon-dense { width: 28px; height: 28px; padding: 0; border-radius: var(--radius-sm); }
+/* 图标按钮密化（升级/卸载用）—— 圆角沿用 .xyz-btn 的 var(--radius) 8px（对齐 Button rounded-md）*/
+.xyz-btn.icon-dense { width: 28px; height: 28px; padding: 0; }
 .xyz-btn.icon-dense svg { width: 14px; height: 14px; }
 /* 主操作载入态（spinner 取代文字）*/
 .xyz-btn .spin { animation: spin 0.8s linear infinite; }
@@ -234,27 +235,17 @@ body {
 .xyz-inp.dense { height: 32px; font-size: 12px; }
 .xyz-inp.ph { color: var(--neutral-mid); }
 .xyz-inp.mono { font-family: var(--font-mono); font-size: 12px; }
-.xyz-inp.focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
+/* focus：源码 Input.vue 用 focus-visible:ring-1 ring-inset ring-accent-ring（1px 内环 box-shadow，不改 border 色）。此项目 tailwind ring 即 box-shadow inset 0 0 0 1px。*/
+.xyz-inp.focus { border-color: var(--border); box-shadow: inset 0 0 0 1px var(--accent-ring); }
 .xyz-inp.error { border-color: var(--danger); }
 
-/* ── xyz-ui SelectTrigger（逐字对齐：bg-surface-2 border-border，右侧 ChevronDown）── */
-.xyz-sel {
-  display: inline-flex; align-items: center; justify-content: space-between; gap: 8px;
-  height: 40px; min-width: 200px; padding: 0 12px;
-  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);
-  font-size: 13px; color: var(--neutral-fg); cursor: pointer;
-  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
-}
-.xyz-sel.ph { color: var(--neutral-mid); }
-.xyz-sel svg { width: 14px; height: 14px; color: var(--neutral-dim); opacity: .6; flex-shrink: 0; transition: transform var(--duration), opacity var(--duration); }
-.xyz-sel.open { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
-.xyz-sel.open svg { transform: rotate(180deg); opacity: 1; }
+/* （Select 组件样式已移除：ExtensionPage 实际未用 Select 下拉，本稿无 .xyz-sel 渲染点，留 CSS 即死码。） */
 
 /* ── xyz-ui Switch（逐字对齐 Switch.vue：track h-5 w-9 / thumb size-4 / checked:bg-accent）──
    track 20×36 / thumb 16px / on 偏右 18px / off 偏左 2px */
 .xyz-sw {
   position: relative; width: 36px; height: 20px; border-radius: 999px;
-  background: var(--surface-2); border: 1px solid transparent;
+  background: var(--border-strong); border: 1px solid transparent;
   flex-shrink: 0; cursor: pointer; transition: background var(--duration);
 }
 .xyz-sw::after {
@@ -266,9 +257,10 @@ body {
 .xyz-sw.on::after { transform: translateX(16px); background: #fff; }
 .xyz-sw.disabled { opacity: .5; cursor: not-allowed; }
 
-/* ── xyz-ui Checkbox（逐字对齐 Checkbox.vue：size-4 / border-border-strong / checked:bg-accent）── */
+/* ── xyz-ui Checkbox（逐字对齐 Checkbox.vue：size-4 / border-border-strong / checked:bg-accent）──
+   注：Checkbox.vue 用 rounded-sm = tailwind sm = 3px（v6 token --radius-sm 升到 6px，但 tailwind sm 在本仓 tailwind.config 仍为 3px，故这里写死 3px 对齐源码）。 */
 .xyz-cb {
-  width: 16px; height: 16px; border-radius: var(--radius-sm);
+  width: 16px; height: 16px; border-radius: 3px;
   background: transparent; border: 1px solid var(--border-strong);
   display: inline-flex; align-items: center; justify-content: center;
   flex-shrink: 0; cursor: pointer; transition: background var(--duration-fast), border-color var(--duration-fast);
@@ -439,10 +431,10 @@ body {
   <header class="doc-head">
     <div class="doc-eyebrow">v6 SPEC · settings · extension</div>
     <h1 class="doc-title">Settings · 扩展（ExtensionPage 交互重新设计）</h1>
-    <p class="doc-sub">Pi 扩展管理页的 v6 视觉与交互重做。源码三区域（推荐 / 安装多步 / 已安装列表）经 impeccable 信息架构重排：强制扩展（mandatory）从「空白隐藏开关」改为「锁定 affordance + tooltip」，user-installed 走 Switch 乐观更新 + 自动升级开关 + 两段式卸载确认，安装流区分 npm 单步与 dir/git 多步（发现→选择→安装）并补全候选全选与进度反馈。badge 三轴（source / mandatory / tier）用不同形状语义区分，杜绝同形 pill 堆叠。所有控件走 xyz-ui 真实变体（Button 4 变体 / Input / Select / Switch / Checkbox），不自创 .btn。</p>
+    <p class="doc-sub">Pi 扩展管理页的 v6 视觉与交互重做。源码三区域（推荐 / 安装多步 / 已安装列表）经 impeccable 信息架构重排：强制扩展（mandatory）从「空白隐藏开关」改为「锁定 affordance + tooltip」，user-installed 走 Switch 乐观更新 + 自动升级开关 + 两段式卸载确认，安装流区分 npm 单步与 dir/git 多步（发现→选择→安装）并补全候选全选与进度反馈。badge 三轴（source / mandatory / tier）用不同形状语义区分，杜绝同形 pill 堆叠。所有控件走 xyz-ui 真实变体（Button 4 变体 / Input / Switch / Checkbox），不自创 .btn。</p>
     <div class="doc-meta">
       <span><b>SSOT</b> ExtensionPage.vue + extension.ts + mandatory-extensions.json（9 条）</span>
-      <span><b>组件</b> xyz-ui Button/Input/Select/Switch/Checkbox</span>
+      <span><b>组件</b> xyz-ui Button/Input/Switch/Checkbox</span>
       <span><b>区域底</b> bg-card（同 settings §4）</span>
       <span><b>列宽</b> --content-max-w 720px</span>
       <span><b>状态</b> 定稿，待实施</span>
@@ -1080,10 +1072,10 @@ body {
         <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:11px;color:var(--accent);">active</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">bg surface-hover · color neutral-fg（持久）</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--accent);">§4/§5</td></tr>
 
         <tr><td style="padding:12px;border-bottom:1px solid var(--border);vertical-align:middle;" rowspan="3"><span style="font-weight:500;color:var(--neutral-fg);">Input</span></td><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:11px;color:var(--neutral-dim);">default</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">bg surface-2 · border border · 圆角 8px · placeholder neutral-mid</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--accent);">§4/§5</td></tr>
-        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:11px;color:var(--accent);">focus</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">border accent · ring 3px accent-ring</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--accent);">§4/§5</td></tr>
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:11px;color:var(--accent);">focus</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">border 不变 · 1px inset ring accent-ring（box-shadow）</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--accent);">§4/§5</td></tr>
         <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:11px;color:var(--danger);">error</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">border danger · 底部 danger 错误条</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--accent);">§4/§8</td></tr>
 
-        <tr><td style="padding:12px;border-bottom:1px solid var(--border);vertical-align:middle;" rowspan="4"><span style="font-weight:500;color:var(--neutral-fg);">Switch</span></td><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:11px;color:var(--neutral-dim);">off</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">bg surface-2 · thumb neutral-fg 偏左 2px</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--accent);">§3</td></tr>
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);vertical-align:middle;" rowspan="4"><span style="font-weight:500;color:var(--neutral-fg);">Switch</span></td><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:11px;color:var(--neutral-dim);">off</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">bg border-strong · thumb neutral-fg 偏左 2px</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--accent);">§3</td></tr>
         <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:11px;color:var(--accent);">on</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">bg accent · thumb #fff 偏右 16px</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--accent);">§3</td></tr>
         <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:11px;color:var(--neutral-dim);">disabled</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">opacity .5 · cursor not-allowed（toggling 防双击）</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--accent);">§3</td></tr>
         <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:11px;color:var(--neutral-dim);">hidden</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">mandatory 不渲染（用锁定 affordance 替代）</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--accent);">§2</td></tr>
@@ -1106,7 +1098,7 @@ body {
       <div class="anno"><b>全覆盖检查:</b> <span>tab 3 ✓ / Input 3 ✓ / Switch 4 ✓ / Checkbox 3 ✓ / Button 4 ✓ / 锁 2 ✓</span></div>
       <div class="anno"><b>彩色降噪:</b> <span>仅 source pill（accent/info）+ danger 操作 + 升级 success 版本号保留语义色，其余中性</span></div>
       <div class="anno"><b>AI slop 清除:</b> <span>去三轴同形 pill / mandatory 留空 / 原生 confirm / 候选默认全选误装</span></div>
-      <div class="anno"><b>组件 SSOT:</b> <span>xyz-ui Button 4 变体 · Input · Select · Switch · Checkbox（不自创）</span></div>
+      <div class="anno"><b>组件 SSOT:</b> <span>xyz-ui Button 4 变体 · Input · Switch · Checkbox（不自创；ExtensionPage 未用 Select）</span></div>
     </div>
   </section>
 
@@ -1137,20 +1129,10 @@ body {
         </div>
       </div>
 
-      <!-- 推荐区空（recommended 为空不渲染，这里展示「已停用」语义）-->
-      <div class="anno" style="margin-bottom:10px;"><b>推荐区</b> · recommended-extensions.json 为空 [] → 推荐区不渲染（非空态，省略即可）</div>
-      <div class="group-card" style="margin-bottom:14px;">
-        <div class="empty">
-          <div class="empty-ico">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/><path d="m10 15-3-3 3-3"/></svg>
-          </div>
-          <span class="empty-text">推荐扩展已转为强制安装，无需手动添加</span>
-          <span class="empty-hint">所有 builtin pi 扩展现已 boot 时自动安装</span>
-        </div>
-      </div>
+      <!-- 推荐区空态：recommended-extensions.json 为空 [] 时，推荐区由 v-if 守卫隐藏，整块不渲染 —— 故无空态示例（画了即自相矛盾）。 -->
 
-      <!-- 已安装列表空态 -->
-      <div class="anno" style="margin-bottom:10px;"><b>已安装列表空态</b> · 图标 + 说明 + Primary 入口（指向安装）</div>
+      <!-- 已安装列表空态：三要素齐全（图标 + 说明 + Primary 入口）-->
+      <div class="anno" style="margin-bottom:10px;"><b>已安装列表空态</b> · 图标 + 说明 + Primary 入口（default Button 指向安装区 §4/§5）</div>
       <div class="group-card">
         <div class="empty">
           <div class="empty-ico">
@@ -1158,6 +1140,10 @@ body {
           </div>
           <span class="empty-text">还没有安装任何扩展</span>
           <span class="empty-hint">从 npm 包名、本地目录或 Git URL 安装第一个扩展</span>
+          <button class="xyz-btn v-default sz-dense">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            添加扩展
+          </button>
         </div>
       </div>
 
@@ -1165,8 +1151,8 @@ body {
         <div class="anno"><b>错误条:</b> <span>border-top hairline · AlertCircle + danger 文案</span></div>
         <div class="anno"><b>错误文案:</b> <span>「原因 + 下一步」（design-system §9）非裸错误码</span></div>
         <div class="anno"><b>成功 Toast:</b> <span>installedToast / uninstalledToast / upgradedToast</span></div>
-        <div class="anno"><b>空态三要素:</b> <span>图标（subtle）+ 说明 + Primary 入口（design-system §7）</span></div>
-        <div class="anno"><b>推荐区空:</b> <span>recommended=[] → 区域不渲染（v-if 守卫）</span></div>
+        <div class="anno"><b>空态三要素:</b> <span>图标（subtle）+ 说明 + Primary 入口（Button default 指向安装区 §4/§5）</span></div>
+        <div class="anno"><b>推荐区空:</b> <span>recommended=[] → 区域不渲染（v-if 守卫），无空态示例</span></div>
         <div class="anno"><b>反 slop:</b> <span class="old">「暂无数据」裸文</span> → <span class="v6">指向动作的引导</span></div>
       </div>
     </div>

@@ -218,9 +218,9 @@ body {
 /* variant ghost（恢复默认 / 折叠展开 / 复制）*/
 .btn-ghost { background: transparent; color: var(--neutral-mid); }
 .btn-ghost:hover { background: var(--surface-hover); color: var(--neutral-fg); }
-/* size default h-9 / dense h-8 / sm h-9 */
-.btn-h9 { height: 32px; padding: 0 14px; }
-.btn-h8 { height: 28px; padding: 0 12px; }
+/* size default h-9=36px / dense h-8=32px / sm h-9=36px */
+.btn-h9 { height: 36px; padding: 0 14px; }
+.btn-h8 { height: 32px; padding: 0 12px; }
 .btn-link { height: auto; padding: 0; background: transparent; color: var(--accent); border-radius: 0; font-weight: 400; }
 .btn-link:hover { background: transparent; color: var(--accent-hover); text-decoration: underline; }
 
@@ -257,7 +257,7 @@ body {
   box-shadow: 0 1px 2px rgba(0,0,0,0.3);
   transition: transform var(--duration);
 }
-.sw.on::after { transform: translateX(16px); }  /* 36-16-2-1-1 = 16px */
+.sw.on::after { transform: translateX(18px); }  /* data-[state=checked]:translate-x-[18px]，对齐 Switch.vue 源码 */
 .sw.disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ================================================================

@@ -198,6 +198,9 @@ body {
 /* variant: danger = text-danger hover:bg-danger-soft */
 .btn-danger { background: transparent; color: var(--danger); }
 .btn-danger:hover { background: var(--danger-soft); }
+/* 删除变体：ghost 常态 + hover 转 danger（列表行尾删除、Key 清除、header/模型移除） */
+.btn-ghost.danger-hover { color: var(--neutral-dim); }
+.btn-ghost.danger-hover:hover { background: var(--danger-soft); color: var(--danger); }
 /* size: default h-9(36px) px-4 / dense h-8(32px) px-3 / sm h-9 px-3 / icon h-10(40px) w-10 */
 .btn-default-size { height: 36px; padding: 8px 16px; }
 .btn-dense { height: 32px; padding: 0 12px; }
@@ -206,12 +209,20 @@ body {
 /* dense 行内图标操作（列表里的 6×6 编辑/删除）——size-6 + ghost 变体覆盖 */
 .btn-act { height: 24px; width: 24px; padding: 0; border-radius: var(--radius-sm); }
 .btn-act svg { width: 13px; height: 13px; }
+/* 兜底：按钮内 SVG 缺尺寸时归一到 size-4(16px)，对齐源码 [&_svg]:size-4（被更具体规则覆盖） */
+.btn svg { width: 16px; height: 16px; flex-shrink: 0; }
 .btn:disabled { opacity: 0.5; pointer-events: none; }
+/* focus-visible 外环（键盘可达性，design-system §3 裁决） */
+.btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 4px var(--accent); }
+.ui-switch:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
+.ui-check:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
+.ui-input:focus-visible { outline: none; }
+.ui-select:focus-visible { outline: none; }
 
 /* ================================================================
    xyz-ui Input / SelectTrigger（逐字对应源码，不自创）
    Input:  h-10(40px) rounded-md var(--radius) border-input bg-surface-2 px-3
-   Select: 同 Input 形态（h-9 归一），右侧 ChevronDown
+   Select: 同 Input 形态（h-10 归一 40px），右侧 ChevronDown
    ================================================================ */
 .ui-input {
   display: flex; width: 100%; height: 40px; border-radius: var(--radius);
@@ -253,8 +264,8 @@ body {
   transform: translateX(2px); transition: transform var(--duration);
 }
 .ui-switch.on .thumb { transform: translateX(18px); }
-/* 乐观更新「应用中」态：thumb 微脉冲 */
-.ui-switch.pending { background: var(--accent); }
+/* 乐观更新「应用中」态：thumb 微脉冲 + 防双击（API 期间不可交互） */
+.ui-switch.pending { background: var(--accent); cursor: not-allowed; pointer-events: none; }
 .ui-switch.pending .thumb { animation: sw-pulse 0.9s ease-in-out infinite; }
 @keyframes sw-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
 /* 回滚态：短暂 danger 边框提示 */
@@ -296,6 +307,7 @@ body {
 .row-name .chev-expand { display: inline-block; width: 12px; height: 12px; color: var(--neutral-dim);
   transition: transform var(--duration); vertical-align: -1px; }
 .row-name.expanded .chev-expand { transform: rotate(90deg); }
+.row-name:focus-visible, .thinking-pill:focus-visible, .add-header-link:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); border-radius: var(--radius-sm); }
 /* 默认供应商 pill（v6：去 uppercase tracking，对齐设置页降噪） */
 .pill-default { flex-shrink: 0; background: var(--accent-soft); color: var(--accent);
   padding: 2px 6px; border-radius: var(--radius-sm); font-size: var(--text-2xs); font-weight: 500; }
@@ -304,7 +316,7 @@ body {
 /* inline action error（常驻横幅） */
 .inline-error {
   display: flex; align-items: center; gap: 6px; padding: 6px 12px;
-  border: 1px solid var(--danger-soft); background: var(--danger-soft);
+  border: 1px solid var(--danger); background: var(--danger-soft);
   border-radius: var(--radius); margin-bottom: 12px; font-size: var(--text-xs); color: var(--danger);
 }
 .inline-error svg { width: 14px; height: 14px; flex-shrink: 0; }
@@ -358,13 +370,18 @@ body {
   border-bottom: 1px solid var(--border); padding: 16px 20px; }
 .edit-title { font-size: 15px; font-weight: 600; color: var(--neutral-fg); }
 .edit-body { display: flex; min-height: 0; flex: 1; }
-.edit-left { width: 360px; flex-shrink: 0; display: flex; flex-direction: column; gap: 16px;
+.edit-left { width: 360px; flex-shrink: 0; display: flex; flex-direction: column; gap: 0;
   border-right: 1px solid var(--border); padding: 20px; overflow-y: auto; }
-.edit-right { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+.edit-right { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bg-card); border-left: 1px solid var(--border); }
 
 /* 字段 label（v6：去 uppercase tracking 降噪，normal-case 11px neutral-mid） */
 .fld-label { display: block; margin-bottom: 6px; font-size: var(--text-xs); font-weight: 500; color: var(--neutral-mid); }
 .fld-hint { font-weight: 400; color: var(--neutral-dim); }
+/* 表单卡：5 卡分组每段独立凸起 card 表面（凭据/headers/额度/操作/模型） */
+.form-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+.form-card + .form-card { margin-top: 14px; }
+.form-card-title { display: block; margin-bottom: 10px; font-size: var(--text-xs); font-weight: 600; color: var(--neutral-fg); text-transform: uppercase; letter-spacing: .04em; }
 .apikey-row { display: flex; align-items: center; gap: 8px; }
 .apikey-note { margin-top: 4px; font-size: var(--text-2xs); color: var(--neutral-dim); }
 /* authHeader 行 */
@@ -464,9 +481,24 @@ body {
 .preview-title { font-size: 15px; font-weight: 600; color: var(--neutral-fg); margin-bottom: 4px; }
 .preview-desc { font-size: var(--text-sm); color: var(--neutral-mid); }
 /* 顶层警告横幅 */
-.warn-banner { display: flex; align-items: flex-start; gap: 6px; border: 1px solid var(--warn-soft);
+.warn-banner { display: flex; align-items: flex-start; gap: 6px; border: 1px solid var(--warn);
   background: var(--warn-soft); border-radius: var(--radius); padding: 8px 12px; font-size: var(--text-sm); color: var(--warn); margin-bottom: 10px; }
 .warn-banner svg { width: 14px; height: 14px; flex-shrink: 0; margin-top: 1px; }
+
+/* ================================================================
+   ConfirmDialog（未保存改动二次确认 / 删除确认）—— AlertDialog 形态
+   ================================================================ */
+.confirm-dialog { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2); max-width: 420px; margin: 0 auto; padding: 20px; }
+.confirm-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 999px;
+  background: var(--warn-soft); color: var(--warn); margin-bottom: 14px; }
+.confirm-icon.danger { background: var(--danger-soft); color: var(--danger); }
+.confirm-icon svg { width: 20px; height: 20px; }
+.confirm-title { font-size: 15px; font-weight: 600; color: var(--neutral-fg); margin-bottom: 6px; }
+.confirm-desc { font-size: var(--text-sm); color: var(--neutral-mid); margin-bottom: 18px; line-height: 1.5; }
+.confirm-foot { display: flex; justify-content: flex-end; gap: 8px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 /* preview provider 项 */
 .preview-item { border: 1px solid var(--border); background: var(--bg); border-radius: var(--radius); padding: 8px 12px; font-size: var(--text-sm); margin-bottom: 6px; }
 .preview-item.conflict { opacity: 0.7; }
@@ -607,7 +639,7 @@ body {
           <span class="status-dot dot-connected" title="已连接"></span>
           <!-- 启用 Switch = xyz-ui Switch variant（track h-5 w-9 / thumb size-4 / checked:bg-accent） -->
           <span class="ui-switch on" role="switch" aria-checked="true" aria-label="Anthropic 启用"><span class="thumb"></span></span>
-          <span class="row-name expanded">
+          <span class="row-name expanded" role="button" tabindex="0" aria-expanded="true" aria-label="展开 Anthropic 详情">
             Anthropic
             <svg class="chev-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
           </span>
@@ -618,7 +650,7 @@ body {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
           </button>
           <!-- 删除 = Button variant=ghost + hover:bg-danger-soft（hover 转 danger 色） -->
-          <button class="btn btn-ghost btn-act" type="button" title="删除供应商" aria-label="删除 Anthropic" style="color:var(--neutral-dim);">
+          <button class="btn btn-ghost btn-act danger-hover" type="button" title="删除供应商" aria-label="删除 Anthropic">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           </button>
         </div>
@@ -630,7 +662,7 @@ body {
         <div class="row-head">
           <span class="status-dot dot-error" title="连接错误"></span>
           <span class="ui-switch" role="switch" aria-checked="false" aria-label="OpenAI Compatible 启用"><span class="thumb"></span></span>
-          <span class="row-name">
+          <span class="row-name" role="button" tabindex="0" aria-expanded="false" aria-label="展开 OpenAI Compatible 详情">
             OpenAI Compatible
             <svg class="chev-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
           </span>
@@ -638,7 +670,7 @@ body {
           <button class="btn btn-ghost btn-act" type="button" title="编辑供应商" aria-label="编辑 OpenAI Compatible">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
           </button>
-          <button class="btn btn-ghost btn-act" type="button" title="删除供应商" aria-label="删除 OpenAI Compatible" style="color:var(--neutral-dim);">
+          <button class="btn btn-ghost btn-act danger-hover" type="button" title="删除供应商" aria-label="删除 OpenAI Compatible">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           </button>
         </div>
@@ -648,8 +680,8 @@ body {
       <div class="provider-card">
         <div class="row-head">
           <span class="status-dot dot-not_configured" title="未配置"></span>
-          <span class="ui-switch pending" role="switch" aria-checked="true" aria-label="本地 Ollama 启用" aria-busy="true"><span class="thumb"></span></span>
-          <span class="row-name">
+          <span class="ui-switch pending disabled" role="switch" aria-checked="true" aria-label="本地 Ollama 启用" aria-busy="true" aria-disabled="true"><span class="thumb"></span></span>
+          <span class="row-name" role="button" tabindex="0" aria-expanded="false" aria-label="展开 本地 Ollama 详情">
             本地 Ollama
             <svg class="chev-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
           </span>
@@ -657,7 +689,7 @@ body {
           <button class="btn btn-ghost btn-act" type="button" title="编辑供应商" aria-label="编辑 本地 Ollama" disabled>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
           </button>
-          <button class="btn btn-ghost btn-act" type="button" title="删除供应商" aria-label="删除 本地 Ollama" style="color:var(--neutral-dim);" disabled>
+          <button class="btn btn-ghost btn-act danger-hover" type="button" title="删除供应商" aria-label="删除 本地 Ollama" disabled>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           </button>
         </div>
@@ -690,11 +722,11 @@ body {
         <div class="row-head">
           <span class="status-dot dot-connected"></span>
           <span class="ui-switch on" role="switch" aria-checked="true"><span class="thumb"></span></span>
-          <span class="row-name expanded">Anthropic <svg class="chev-expand" style="transform:rotate(90deg)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
+          <span class="row-name expanded" role="button" tabindex="0" aria-expanded="true" aria-label="收起 Anthropic 详情">Anthropic <svg class="chev-expand" style="transform:rotate(90deg)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
           <span class="pill-default">默认供应商</span>
           <span class="models-count">3 模型</span>
           <button class="btn btn-ghost btn-act" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
-          <button class="btn btn-ghost btn-act" type="button" style="color:var(--neutral-dim);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+          <button class="btn btn-ghost btn-act danger-hover" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
         </div>
         <div class="detail">
           <!-- 凭据只读网格 -->
@@ -724,7 +756,7 @@ body {
                   <svg class="input-ico off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
                 </td>
                 <td class="mt-num">200K</td>
-                <td style="text-align:right"><span class="thinking-pill tp-all">全档</span></td>
+                <td style="text-align:right"><span class="thinking-pill tp-all" role="button" tabindex="0" aria-label="编辑思考策略：全档">全档</span></td>
                 <td class="mt-ctr"><span class="ui-switch on" role="switch" aria-checked="true" aria-label="claude-sonnet-4.5 启用"><span class="thumb"></span></span></td>
                 <td style="text-align:right"><span class="default-mark">默认模型</span></td>
                 <td class="mt-ctr"><button class="btn btn-ghost btn-act" type="button" title="编辑此模型的完整配置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button></td>
@@ -736,7 +768,7 @@ body {
                   <svg class="input-ico off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
                 </td>
                 <td class="mt-num">200K</td>
-                <td style="text-align:right"><span class="thinking-pill tp-hightop">高/顶</span></td>
+                <td style="text-align:right"><span class="thinking-pill tp-hightop" role="button" tabindex="0" aria-label="编辑思考策略：高/顶">高/顶</span></td>
                 <td class="mt-ctr"><span class="ui-switch on" role="switch" aria-checked="true" aria-label="claude-opus-4 启用"><span class="thumb"></span></span></td>
                 <td style="text-align:right"><button class="set-default-btn" type="button">设为默认</button></td>
                 <td class="mt-ctr"><button class="btn btn-ghost btn-act" type="button" title="编辑此模型的完整配置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button></td>
@@ -747,7 +779,7 @@ body {
                   <svg class="input-ico off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                 </td>
                 <td class="mt-num">200K</td>
-                <td style="text-align:right"><span class="thinking-pill tp-toggle">开关</span></td>
+                <td style="text-align:right"><span class="thinking-pill tp-toggle" role="button" tabindex="0" aria-label="编辑思考策略：开关">开关</span></td>
                 <td class="mt-ctr"><span class="ui-switch" role="switch" aria-checked="false" aria-label="claude-haiku-4 启用"><span class="thumb"></span></span></td>
                 <td style="text-align:right"><button class="set-default-btn" type="button">设为默认</button></td>
                 <td class="mt-ctr"><button class="btn btn-ghost btn-act" type="button" title="编辑此模型的完整配置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button></td>
@@ -799,7 +831,9 @@ body {
           <!-- 左：凭据配置（5 卡分组中的 4 卡）-->
           <div class="edit-left">
             <!-- 卡 1：凭据（名称/类型/Base URL/API Key/authHeader）—— 建立连接的最小集 -->
-            <div>
+            <div class="form-card">
+              <span class="form-card-title">凭据</span>
+              <div>
               <div class="fld-label">名称</div>
               <input class="ui-input" type="text" placeholder="My Provider" value="Anthropic">
             </div>
@@ -824,42 +858,45 @@ body {
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                 </button>
                 <!-- 清除已配置 key = Button variant=ghost + hover→danger（仅 apiKeySet 时显示） -->
-                <button class="btn btn-ghost" type="button" aria-label="清除密钥" title="清除密钥" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);color:var(--neutral-dim);">
+                <button class="btn btn-ghost danger-hover" type="button" aria-label="清除密钥" title="清除密钥" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                 </button>
               </div>
               <p class="apikey-note">留空保存则保持不变；点垃圾桶清除已配置的 key</p>
             </div>
-            <div class="switch-row">
+            <div class="switch-row" style="margin-top:16px;">
               <span class="fld-label" style="margin-bottom:0;">Auth Header <span class="fld-hint">把 API Key 写入 Authorization</span></span>
               <span class="ui-switch on" role="switch" aria-checked="true" aria-label="Auth Header"><span class="thumb"></span></span>
             </div>
+            </div>
 
             <!-- 卡 2：自定义 Headers（可选高级配置，key-value 行编辑） -->
-            <div style="border-top:1px solid var(--border);padding-top:16px;">
+            <div class="form-card">
+              <span class="form-card-title">自定义 Headers</span>
               <div class="fld-label">自定义 Headers <span class="fld-hint">附加请求头</span></div>
               <div class="header-rows">
                 <div class="header-row">
                   <input class="ui-input ui-input-dense" type="text" placeholder="X-Custom-Header" value="X-Request-Source" style="flex:1;">
                   <input class="ui-input ui-input-dense" type="text" placeholder="value" value="xyz-agent" style="flex:1;">
                   <!-- 移除 header = Button variant=ghost + hover→danger -->
-                  <button class="btn btn-ghost" type="button" aria-label="移除 header" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);color:var(--neutral-dim);">
+                  <button class="btn btn-ghost danger-hover" type="button" aria-label="移除 header" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                   </button>
                 </div>
                 <div class="header-row">
                   <input class="ui-input ui-input-dense" type="text" placeholder="X-Custom-Header" style="flex:1;">
                   <input class="ui-input ui-input-dense" type="text" placeholder="value" style="flex:1;">
-                  <button class="btn btn-ghost" type="button" aria-label="移除 header" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);color:var(--neutral-dim);">
+                  <button class="btn btn-ghost danger-hover" type="button" aria-label="移除 header" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                   </button>
                 </div>
               </div>
-              <span class="add-header-link">+ 添加 header</span>
+              <span class="add-header-link" role="button" tabindex="0" aria-label="添加 header">+ 添加 header</span>
             </div>
 
             <!-- 卡 3：额度查询（Coding Plan，独立子域，折叠摘要态） -->
-            <div style="border-top:1px solid var(--border);padding-top:16px;">
+            <div class="form-card">
+              <span class="form-card-title">额度查询</span>
               <div class="switch-row">
                 <span class="fld-label" style="margin-bottom:0;">Coding Plan 额度查询 <span class="fld-hint">查询 5h/周/月 配额使用</span></span>
                 <span class="ui-switch" role="switch" aria-checked="false" aria-label="启用额度查询"><span class="thumb"></span></span>
@@ -868,7 +905,8 @@ body {
             </div>
 
             <!-- 卡 4：操作（测试连接 / 自动发现）—— 凭据写完后的验证 -->
-            <div style="border-top:1px solid var(--border);padding-top:16px;">
+            <div class="form-card">
+              <span class="form-card-title">验证连接</span>
               <div class="fld-label">验证连接</div>
               <div class="ops">
                 <button class="btn btn-secondary btn-dense" type="button">
@@ -947,7 +985,7 @@ body {
               <span class="r-think"><span class="mini-select">全档 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></span>
               <span class="r-act">
                 <button class="btn btn-ghost" type="button" aria-label="兼容性" title="兼容性" style="width:32px;height:20px;padding:0;border-radius:var(--radius-sm);color:var(--accent);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
-                <button class="btn btn-ghost" type="button" aria-label="移除模型" style="width:32px;height:20px;padding:0;border-radius:var(--radius-sm);color:var(--neutral-dim);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                <button class="btn btn-ghost danger-hover" type="button" aria-label="移除模型" style="width:32px;height:20px;padding:0;border-radius:var(--radius-sm);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
               </span>
             </div>
             <!-- compat 展开区 -->
@@ -963,7 +1001,7 @@ body {
               <span class="r-think"><span class="mini-select">高/顶 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></span>
               <span class="r-act">
                 <button class="btn btn-ghost" type="button" aria-label="兼容性" style="width:32px;height:20px;padding:0;border-radius:var(--radius-sm);color:var(--neutral-dim);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><circle cx="12" cy="12" r="3"/></svg></button>
-                <button class="btn btn-ghost" type="button" aria-label="移除模型" style="width:32px;height:20px;padding:0;border-radius:var(--radius-sm);color:var(--neutral-dim);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                <button class="btn btn-ghost danger-hover" type="button" aria-label="移除模型" style="width:32px;height:20px;padding:0;border-radius:var(--radius-sm);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
               </span>
             </div>
           </div>
@@ -978,6 +1016,27 @@ body {
       </div>
     </div>
 
+    <!-- 未保存确认 ConfirmDialog（isDirty 时点取消/X/Esc 触发） -->
+    <h3 class="h3" style="margin-top:24px;">未保存确认 · ConfirmDialog（dirty → 确认离开）</h3>
+    <div class="render-frame">
+      <div class="stage-modal" style="padding:32px 16px;">
+        <!-- AlertDialog：标题 + 描述 + 二按钮，焦点初始在「继续编辑」（default，安全选择） -->
+        <div class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="cd-unsaved-title" aria-describedby="cd-unsaved-desc">
+          <h2 id="cd-unsaved-title" class="sr-only">未保存改动确认</h2>
+          <p id="cd-unsaved-desc" class="sr-only">你正在编辑的供应商有未保存的改动，确认丢弃并离开？</p>
+          <div class="confirm-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </div>
+          <div class="confirm-title">放弃未保存的改动？</div>
+          <div class="confirm-desc">你正在编辑的供应商有未保存的改动，离开将丢弃这些改动。此操作不可撤销。</div>
+          <div class="confirm-foot">
+            <button class="btn btn-default" type="button" autofocus>继续编辑</button>
+            <button class="btn btn-danger" type="button" data-testid="discard-unsaved-btn">放弃改动</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="anno-grid">
       <div class="anno"><b>信息架构 v6:</b><br><span class="old">字段平铺单列</span> <span class="v6">→ 5 卡按修改目的分组（凭据/headers/额度/操作/模型）</span></div>
       <div class="anno"><b>认知负载:</b><br>分组后每卡 3-5 字段 · 用户按目的直奔目标卡 · 不必通读全部</div>
@@ -988,7 +1047,7 @@ body {
       <div class="anno"><b>连接测试:</b><br>testing→spinner · ok→「找到 N 个模型」success · fail→「检查 API Key」danger</div>
       <div class="anno"><b>自动发现:</b><br>discovering→spinner · 结果填 discoverResult · 与测试互斥 disabled</div>
       <div class="anno"><b>sticky 保存栏:</b><br>border-t · 错误左(可换 spacer) · 取消=ghost · 保存=default · saving→disabled+saving 文案</div>
-      <div class="anno"><b>未保存确认:</b><br>isDirty 时点取消/X/Esc → ConfirmDialog「未保存改动将丢失」二次确认</div>
+      <div class="anno"><b>未保存确认:</b><br>isDirty 时点取消/X/Esc → ConfirmDialog（alertdialog）「未保存改动将丢失」二次确认 · 焦点初始在「继续编辑」（安全选择）</div>
       <div class="anno"><b>label v6:</b><br><span class="old">uppercase tracking-wider 11px</span> <span class="v6">→ normal-case 11px neutral-mid（降噪）</span></div>
       <div class="anno"><b>headers CRUD:</b><br>key-value 行 + 添加/删除 · 移除按钮 ghost→hover danger</div>
       <div class="anno"><b>compat 编辑:</b><br>模型行展开 toggle · 字段集按 api 类型过滤 · 预设按钮</div>
@@ -1200,7 +1259,7 @@ body {
       <div class="state-row">
         <div class="state-tag">乐观中</div>
         <div class="state-demo">
-          <span class="ui-switch pending" role="switch" aria-checked="true" aria-busy="true"><span class="thumb"></span></span>
+          <span class="ui-switch pending disabled" role="switch" aria-checked="true" aria-busy="true" aria-disabled="true"><span class="thumb"></span></span>
           <span style="margin-left:12px;font-size:var(--text-sm);color:var(--neutral-mid);">pending · thumb 脉冲 · disabled（防双击）</span>
         </div>
       </div>

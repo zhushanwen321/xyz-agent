@@ -12,7 +12,7 @@
      SourceImport）+ Layer B 资源只读预览（扫描/来源 tab/资源项/空错误态）。
    本稿定位为「交互重新设计 + xyz-ui 组件规范」：所有按钮来自 xyz-ui
      Button（default/secondary/ghost/danger 变体，size default/dense/icon），
-     Input/Checkbox/Switch 全部用 xyz-ui 原子组件，禁止自创 .btn 类。
+     Input/Checkbox 全部用 xyz-ui 原子组件，禁止自创 .btn 类。
    token 复用 v6-spec-tokens.html 同一集（含 v6 提案值），:root 逐字一致。
    ================================================================ */
 :root {
@@ -105,7 +105,7 @@ body {
 .state-demo { flex: 1; min-width: 0; }
 
 /* ================================================================
-   渲染用：xyz-ui 原子组件（逐字还原 Button/Input/Checkbox/Switch 变体）
+   渲染用：xyz-ui 原子组件（逐字还原 Button/Input/Checkbox 变体）
    严格遵循：
    - Button default = bg-accent text-white hover:bg-accent-hover
    - Button secondary = bg-transparent border border-border text-neutral-fg hover:bg-surface-hover
@@ -114,7 +114,6 @@ body {
    - Button size: default h-9 px-4 / dense h-8 px-3 / icon h-10 w-10
    - Input h-10 rounded-md border-input bg-surface-2 px-3；error → border-danger
    - Checkbox size-4 border-border-strong；checked bg-accent（强制 = disabled + lock）
-   - Switch h-5 w-9；checked bg-accent
    禁止出现 .btn 自创类——所有按钮复用 .xb-* 等价于 <Button variant=…>。
    ================================================================ */
 
@@ -177,20 +176,6 @@ body {
 .xcb.checked { background: var(--accent); border-color: var(--accent); }
 .xcb svg { width: 12px; height: 12px; color: #fff; }
 .xcb.disabled { opacity: .5; cursor: not-allowed; }
-
-/* ── Switch（h-5 w-9；checked bg-accent）── */
-.xsw {
-  width: 36px; height: 20px; border-radius: 999px;
-  background: var(--surface-2); position: relative; cursor: pointer;
-  transition: background var(--duration); flex-shrink: 0;
-}
-.xsw::after {
-  content: ''; position: absolute; top: 2px; left: 2px;
-  width: 16px; height: 16px; border-radius: 50%; background: var(--neutral-fg);
-  transition: transform var(--duration), background var(--duration);
-}
-.xsw.on { background: var(--accent); }
-.xsw.on::after { transform: translateX(16px); background: #fff; }
 
 /* ================================================================
    渲染用：资源页组件样式
@@ -367,9 +352,9 @@ body {
   <header class="doc-head">
     <div class="doc-eyebrow">v6 SPEC · settings · resources</div>
     <h1 class="doc-title">Settings · 资源页（Skill / Agent）</h1>
-    <p class="doc-sub">Skill / Agent 菜单页的交互重新设计稿。覆盖两层模型：Layer A 加载路径（强制目录锁定态 + 可选目录拖拽排序 + 添加自定义路径错误反馈 + SourceImport 导入流），Layer B 资源只读预览（扫描 loading / 来源标签 tab 切换 / 资源项 hover 引用 / 空态错误态）。所有按钮、输入、勾选、开关全部来自 xyz-ui 原子组件（Button 4 变体 / Input / Checkbox / Switch），禁止自创 .btn 类，路径用真实 ~/.xyz-agent/skills。</p>
+    <p class="doc-sub">Skill / Agent 菜单页的交互重新设计稿。覆盖两层模型：Layer A 加载路径（强制目录锁定态 + 可选目录拖拽排序 + 添加自定义路径错误反馈 + SourceImport 导入流），Layer B 资源只读预览（扫描 loading / 来源标签 tab 切换 / 资源项 hover 引用 / 空态错误态）。所有按钮、输入、勾选全部来自 xyz-ui 原子组件（Button 4 变体 / Input / Checkbox），禁止自创 .btn 类，路径用真实 ~/.xyz-agent/skills。</p>
     <div class="doc-meta">
-      <span><b>组件源</b> xyz-ui Button/Input/Checkbox/Switch</span>
+      <span><b>组件源</b> xyz-ui Button/Input/Checkbox</span>
       <span><b>SSOT</b> SettingsResourcePage / LoadPaths / SourceImportSection</span>
       <span><b>路径</b> ~/.xyz-agent/skills · .xyz-agent/skills</span>
       <span><b>状态</b> 定稿，待实施</span>
@@ -491,7 +476,8 @@ body {
         <div class="anno"><b>强制目录 Checkbox:</b> <span class="v6">xyz-ui Checkbox · checked + disabled · 配 lock 图标（禁关禁拖）</span></div>
         <div class="anno"><b>可选目录 Checkbox:</b> <span>xyz-ui Checkbox · 可勾选触发 store 写回</span></div>
         <div class="anno"><b>路径字:</b> <span>var(--font-mono) 12px · neutral-fg · 强制态 opacity .55</span></div>
-        <div class="anno"><b>真实路径:</b> <span class="v6">~/.xyz-agent/skills + .xyz-agent/skills（非 ~/.pi/skills）</span></div>
+        <div class="anno"><b>主资源路径:</b> <span class="v6">~/.xyz-agent/skills + .xyz-agent/skills（本 Agent 的加载目录，非 ~/.pi/skills）</span></div>
+        <div class="anno"><b>Pi 源检测目录:</b> <span>~/.pi/skills（仅 §4 SourceImport 检测 Pi 安装时出现，与主资源路径互不冲突）</span></div>
         <div class="anno"><b>按钮:</b> <span class="v6">全部 xyz-ui Button（添加 default / 导入 secondary / 移除 ghost icon）</span></div>
         <div class="anno"><b>反写位置:</b> <span>LoadPaths.vue + SourceImportSection.vue + SettingsResourcePage.vue</span></div>
       </div>
@@ -1083,8 +1069,9 @@ body {
 
     <div class="anno-grid" style="margin-top:16px;">
       <div class="anno"><b>全覆盖检查:</b> <span>Checkbox 3 ✓ / Grip 4 ✓ / 拖拽行 2 ✓ / Input 3 ✓ / Button default+secondary+ghost ✓ / 资源项 2 ✓ / 来源 tab 2 ✓ / badge 6 ✓ / SourceImport 4 步 ✓</span></div>
-      <div class="anno"><b>xyz-ui 落地:</b> <span>全部按钮复用 Button 变体（default/secondary/ghost/icon），Input/Checkbox/Switch 用原子组件，零自创 .btn 类</span></div>
-      <div class="anno"><b>路径真实性:</b> <span>~/.xyz-agent/skills + .xyz-agent/skills（skills）· ~/.xyz-agent/agents（agents）· 无 ~/.pi/skills</span></div>
+      <div class="anno"><b>xyz-ui 落地:</b> <span>全部按钮复用 Button 变体（default/secondary/ghost/icon），Input/Checkbox 用原子组件，零自创 .btn 类</span></div>
+      <div class="anno"><b>主资源路径:</b> <span>~/.xyz-agent/skills + .xyz-agent/skills（skills）· ~/.xyz-agent/agents（agents）· 非 ~/.pi/skills</span></div>
+      <div class="anno"><b>Pi 源检测目录:</b> <span>~/.pi/skills 仅在 §4 SourceImport 检测其他 Agent 时出现（与 SourceImportSection.spec.ts 一致），不与本页主资源路径混淆</span></div>
       <div class="anno"><b>对比度:</b> <span>desc 与 section label 用 neutral-mid #9ca3af（on surface 6.95:1 / on bg-card 6.10:1，过 AA）</span></div>
     </div>
   </section>
