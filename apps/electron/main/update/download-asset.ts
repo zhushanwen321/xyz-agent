@@ -658,6 +658,12 @@ async function downloadPart(
     })
   } catch (err) {
     writeStream?.destroy()
+    // [MUST-FIX #4] 失败时 best-effort 删除本段已写的 part 临时文件，保证单段失败自清理。
+    // 旧实现只 destroy writeStream，清理完全依赖 downloadMultiPart 的 catch（Promise.all 层），
+    // 但若本段 reject 先于其他段完成，其他段的 .part-i 可能正被并发写，downloadMultiPart
+    // 的 unlinkSync 与并发 write 竞争会抛 EBUSY/EPERM 吞掉原始错误。这里每段清理自己的
+    // part 文件（try/catch 容错，文件不存在或被占用都不影响抛出原始 err）。
+    try { unlinkSync(part.tempPath) } catch (unlinkErr) { console.warn(`[download] part ${part.index} temp cleanup failed:`, unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
     throw err
   } finally {
     clearTimeout(timer)
@@ -673,6 +679,13 @@ async function downloadPart(
  * 2. 每段独立 Range 请求 + 独立 ProxyAgent 连接，并发下载到各自 temp 文件
  * 3. 全部完成后按顺序合并到 .downloading 文件
  * 4. 删除段临时文件
+ *
+ * [MUST-FIX #4 / timeout 语义说明] downloadPart 每段独立用 DOWNLOAD_TIMEOUT_MS（3600s 总）
+ * + IDLE_TIMEOUT_MS（30s 空闲）。这是多段下载的固有特性：某段 Range 落到 CDN 缓存未命中的
+ * 字节区，单段 30s idle 中断即触发整批 Promise.all reject。这与单段下载「同一区域只中断一次
+ * 可续传」语义不同。不放宽 timeout（30s idle 是国内网络挂死检测的合理阈值，放宽会退化为挂死），
+ * 阈值调整（10MB→更大）超出 must-fix 范围。确定性风险已通过 downloadPart 失败自清 part 文件
+ * （见 downloadPart catch）收敛。
  */
 async function downloadMultiPart(
   asset: ReleaseAsset,
@@ -685,6 +698,11 @@ async function downloadMultiPart(
   const parts: IPartSpec[] = []
   const tempPath = path.join(UPDATE_DIR, `${asset.name}.downloading`)
   mkdirSync(UPDATE_DIR, { recursive: true })
+  // [MUST-FIX #2] multipart 路径全程不写 resume-state（各段独立写 .part-N，无单一进度可记）。
+  // 若上次单段下载残留了 resume-state（state.downloadedBytes 可能远大于本次合并进度），
+  // 本次 multipart 失败后下次启动会被误判为「单段续传起点」拼接到损坏的合并片段上。
+  // 因此进入 multipart 前先清旧 state，保证此路径不被跨次残留干扰。
+  clearResumeState()
   for (let i = 0; i < maxParts; i++) {
     const start = i * partSize
     const end = (i === maxParts - 1) ? totalBytes - 1 : (i + 1) * partSize - 1
@@ -738,6 +756,10 @@ async function downloadMultiPart(
     })
   } catch (err) {
     writeStream.destroy()
+    // [MUST-FIX #2] 合并失败：除段临时文件外，半写入的合并产物 .downloading 也必须清理。
+    // 旧的 finally 只清 .part-N，留下损坏的 .downloading；若此时 resume-state 又被
+    // 上一次单段下载残留填充，下次启动会误把它当续传起点拼接，造成不可恢复的损坏。
+    try { unlinkSync(tempPath) } catch (unlinkErr) { console.warn('[download] merged file cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
     throw err
   } finally {
     // 清理段临时文件（合并后无用）
@@ -745,6 +767,9 @@ async function downloadMultiPart(
       try { unlinkSync(part.tempPath) } catch (unlinkErr) { console.warn('[download] part cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
     }
   }
+  // [MUST-FIX #2] multipart 成功：与单段路径对齐，清除 resume-state（本路径开头已 clear，
+  // 但中途单段下载流程不会重新 save，这里保持幂等清理，确保成功后无残留）。
+  clearResumeState()
   return { tempPath }
 }
 

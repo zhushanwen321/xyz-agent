@@ -27,7 +27,7 @@ import { writePendingUpdate, readPendingUpdate } from '../update/pending-update.
 import { getUpdateSettings, setUpdateSettings } from '../update/update-settings.js'
 import { downloadUpdate, installUpdate } from '../update/orchestrator.js'
 import type { UpdateProgressCallback } from '../update/orchestrator.js'
-import { writePreloadedUpdate, readPreloadedUpdate } from '../update/preloaded-update.js'
+import { writePreloadedUpdate, readPreloadedUpdate, clearPreloadedUpdate } from '../update/preloaded-update.js'
 
 /** 触发重启前留给前端渲染「重启中」状态的延迟（毫秒）。 */
 const RESTART_QUIT_DELAY_MS = 500
@@ -117,6 +117,17 @@ async function testProxyConnection(config: IProxyConfig): Promise<{ success: boo
 let preDownloading = false
 
 /**
+ * 进行中的预下载 promise（若有）。
+ *
+ * 预下载持锁的是 orchestrator 的 `downloading` 锁。若用户在预下载进行中点更新，
+ * update:perform 的 download 路径会因 `downloading` 锁被拒（'download already in progress'）。
+ * 存下 promise 让 perform handler 先 await 它：预下载成功 → 写入 preloaded-update.json →
+ * perform 重读命中快路径；预下载失败 → 锁已释放 → perform 正常走 download。
+ * promise 完成后置回 null（配合 preDownloading 标志做幂等）。
+ */
+let preDownloadPromise: Promise<void> | null = null
+
+/**
  * 后台预下载（静默）：检测到新版 + 预下载开关开时触发。
  *
  * 不推 update:progress 事件（静默后台行为，不干扰用户）。下载成功后写 preloaded-update.json，
@@ -144,6 +155,7 @@ async function preloadUpdateSilently(release: LatestReleaseInfo): Promise<void> 
     console.warn(`[preload] background pre-download failed for v${release.version}:`, err)
   } finally {
     preDownloading = false
+    preDownloadPromise = null
   }
 }
 
@@ -163,10 +175,12 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
       // 检测到新版 → 写持久化标志（功能 1：常驻提醒），best-effort 不阻塞响应
       if (info) {
         writePendingUpdate(info)
-        // 预下载开关开 → 异步后台下载（功能 2），不 await 不阻塞 check 响应
+        // 预下载开关开 → 异步后台下载（功能 2），不 await 不阻塞 check 响应。
+        // 把 promise 存起来（非 void），供 update:perform 在预下载进行中时 await，
+        // 避免与后台预下载争抢 orchestrator 的 downloading 锁而硬报错。
         const settings = getUpdateSettings()
         if (settings.preDownload) {
-          void preloadUpdateSilently(info)
+          preDownloadPromise = preloadUpdateSilently(info)
         }
       }
       return info
@@ -182,6 +196,10 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
     if (!deps.updateOrchestrator) {
       throw new Error('updateOrchestrator not configured')
     }
+    // [MUST-FIX #3] 记录本次是否走快路径：catch 中据此决定是否清 preloaded 标志，
+    // 避免快路径 installUpdate 失败后重试反复命中同一（可能损坏的）文件而死循环。
+    // 声明在 try 外，catch 才能读到。
+    let usedFastPath = false
     try {
       // [SECURITY] 校验 renderer payload：防 SSRF（downloadUrl 白名单 GitHub 域名）+
       // 路径遍历（name 严格字符集）+ shell 注入（name/version/sha256 严格格式）。
@@ -198,11 +216,22 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
         }
       }
 
+      // [MUST-FIX #1] 若后台预下载仍在进行，先 await 它：预下载持有 orchestrator 的
+      // downloading 锁，直接走 download 路径会被拒（'download already in progress'）。
+      // await 到锁释放后再决定走快路径（预下载成功写入了产物）还是 download 路径（预下载失败）。
+      // 用局部引用避免 await 期间 preDownloadPromise 被置 null 后读到旧值。
+      const inFlight = preDownloadPromise
+      if (inFlight) {
+        console.log('[update:perform] background preload in progress, waiting for it to finish')
+        await inFlight
+      }
+
       const preloadedFile = await readPreloadedUpdate(payload.release)
       let result: { triggerRestart: boolean }
       if (preloadedFile) {
         // 预下载产物有效：快路径，仅推 replacing 进度 + installUpdate
         console.log(`[update:perform] using preloaded file ${preloadedFile}, skipping download`)
+        usedFastPath = true
         result = await installUpdate(payload.release, preloadedFile, onProgress)
       } else {
         // 无预下载产物或产物失效：完整流程（下载 → 校验 → 替换）
@@ -214,6 +243,16 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
       }
       return result
     } catch (err) {
+      // [MUST-FIX #3] 快路径 installUpdate 失败时清 preloaded 标志：避免重试反复命中
+      // 同一产物（installUpdate 非「文件完整性」失败如 spawn 失败、replacing 权限错误，
+      // 或即便文件真坏），下次重试强制走完整重下 + 重新校验，杜绝死循环。
+      // 采用「快路径失败一律 clear」保守策略：重下后会重新 sha256 校验，比死循环安全；
+      // 文件完整性错误（UpdateIntegrityError）本就需重下，clear 同样正确。
+      if (usedFastPath) {
+        console.warn('[update:perform] fast-path install failed, clearing preloaded flag to force full re-download on retry')
+        clearPreloadedUpdate()
+      }
+
       // 错误转 update:error 事件（区分 stage / errorCode）
       const win = deps.getMainWindow()
       let errorPayload
