@@ -13,7 +13,7 @@
  */
 import { createHash } from 'node:crypto'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -261,5 +261,75 @@ describe('W3: download-asset (W3TC1-3)', () => {
     const lastCall = onProgress.mock.calls[onProgress.mock.calls.length - 1]?.[0]
     expect(lastCall).toBeLessThanOrEqual(100)
     expect(lastCall).toBeGreaterThanOrEqual(0)
+  })
+})
+
+/**
+ * 多段并行下载错误路径测试（S#10 / test-coverage）。
+ *
+ * W3TC4 只测 happy path。这里覆盖错误清理路径：某段 Range 请求返回 500 时，
+ * downloadPart 抛 UpdateError → downloadAsset rejects → 所有 .part-* 临时文件 +
+ * .downloading 合并产物 + resume-state 全部被清理，无磁盘泄漏。
+ */
+describe('W3 multipart error path (S#10)', () => {
+  let originalFetch: typeof globalThis.fetch
+  let downloadAsset: typeof import('../update/download-asset.js')['downloadAsset']
+
+  beforeEach(async () => {
+    originalFetch = globalThis.fetch
+    const mod = await loadModule()
+    downloadAsset = mod.downloadAsset
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    vi.restoreAllMocks()
+    const updateDir = path.join(TMP_DATA_DIR, 'update')
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+  })
+
+  // ── W3TC5：某段 Range 返回 500 → downloadAsset rejects + 全部临时文件清理 ──
+  it('W3TC5: 某段 Range 请求返回 500 → downloadAsset rejects UpdateError，.part-* 与 .downloading 全部清理', { timeout: 60_000 }, async () => {
+    const expectedSha = sha256Hex(MULTI_PART_CONTENT)
+    // 让 part-0 的 Range 请求返回 500，其余段正常；HEAD 探测正常放行多段。
+    globalThis.fetch = vi.fn(async (url, init) => {
+      const method = (init?.method as string | undefined) ?? 'GET'
+      if (method === 'HEAD') {
+        return makeHeadResponse(MULTI_PART_CONTENT.length)
+      }
+      const rangeHeader = (init?.headers as Record<string, string> | undefined)?.Range ?? ''
+      const match = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader)
+      if (!match) {
+        return makeContentResponse(MULTI_PART_CONTENT)
+      }
+      const start = Number(match[1])
+      // 第一段（start=0）返回 500 触发 downloadPart 抛错
+      if (start === 0) {
+        return new Response('Internal Server Error', { status: 500 })
+      }
+      const end = Number(match[2])
+      return makeRangeResponse(MULTI_PART_CONTENT, start, end)
+    }) as unknown as typeof globalThis.fetch
+
+    const updateDir = path.join(TMP_DATA_DIR, 'update')
+    const assetName = 'multipart-err.zip'
+    const downloadingPath = path.join(updateDir, `${assetName}.downloading`)
+
+    await expect(downloadAsset({
+      name: assetName,
+      downloadUrl: 'https://example.com/multipart-err.zip',
+      size: MULTI_PART_CONTENT.length,
+      sha256: expectedSha,
+    })).rejects.toThrow(/HTTP 500/)
+
+    // 最终文件不存在
+    expect(existsSync(path.join(updateDir, assetName))).toBe(false)
+    // .downloading 合并产物未残留
+    expect(existsSync(downloadingPath)).toBe(false)
+    // 所有 .part-* 临时文件均被清理（downloadPart 自清 + downloadMultiPart catch 兜底）
+    if (existsSync(updateDir)) {
+      const leftovers = readdirSync(updateDir).filter((f) => /\.part-\d+$/.test(f))
+      expect(leftovers).toEqual([])
+    }
   })
 })

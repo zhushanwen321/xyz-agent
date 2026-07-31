@@ -31,6 +31,7 @@ import { pipeline } from 'node:stream/promises'
 import { ProxyAgent } from 'undici'
 import type { ReleaseAsset, IProxyConfig } from '@xyz-agent/shared'
 import { UPDATE_DIR } from './constants.js'
+import { resolveProxyUrl } from './proxy-config.js'
 import { UpdateError, UpdateIntegrityError } from './types.js'
 
 /**
@@ -74,6 +75,22 @@ const DOWNLOAD_TIMEOUT_MS = 3_600_000
  * 可走断点续传重连，远比挂死 1 小时体验好。
  */
 const IDLE_TIMEOUT_MS = 30_000
+
+/**
+ * 把 fetch 返回的 web ReadableStream 适配成 Node stream/web 的 ReadableStream 类型，
+ * 供 `Readable.fromWeb` 消费。
+ *
+ * [S#4 / type-safety] 这是 Node Web Stream 互操作的公认 TS 缺陷：
+ * fetch `response.body` 是 lib.dom 的 `ReadableStream<Uint8Array>`，与 `node:stream/web`
+ * 的 `ReadableStream` 结构性不兼容（同构但分别声明），TS 拒绝直接赋值。
+ * 运行时两者是同一个对象（Node 用 undici 实现 fetch，返回的就是 web ReadableStream）。
+ * 把 `as unknown as T` 双重断言集中收敛到这唯一一处封装函数，其余调用点不再散落断言。
+ */
+function toNodeReadableWebStream(
+  body: ReadableStream<Uint8Array> | null,
+): import('stream/web').ReadableStream<Uint8Array> {
+  return body as unknown as import('stream/web').ReadableStream<Uint8Array>
+}
 
 /**
  * 读取 Node 错误的 errno code（如 'ENOSPC'、'EACCES'）。
@@ -206,6 +223,10 @@ export async function downloadAsset(
   //    - 无续传状态、文件较大、远端支持 accept-ranges: bytes 时启用多段并行。
   //    - 多段绕过单条 HTTP/1.1 连接被代理/出口限速的问题，类似 Chrome 多连接。
   let useMultiPart = false
+  // [S#1 / business-logic] 多段启用阈值用 release 声明的 asset.size，而非 probe 返回的
+  // 真实 totalBytes：此判定在 probe 之前，目的是先过滤掉小文件，避免对每个小文件都发一次
+  // HEAD probe（额外 RTT）。即使 release 声明 size 被误填偏小，导致大文件误走单段下载，
+  // probe 仍会兜底判 supported=false；多段只是加速优化，单段下载本身完全正确，无正确性风险。
   if (!resumeState && asset.size && asset.size >= MIN_MULTI_PART_SIZE) {
     const { supported, totalBytes } = await probeMultiPartSupport(asset, proxyConfig)
     if (supported) {
@@ -323,7 +344,7 @@ export async function downloadAsset(
     // 如果是断点续传（206），使用追加模式打开文件；否则覆盖写
     const writeStream = createWriteStream(tempPath, { flags: writeFlags })
     // response.body 是 web ReadableStream；转 node Readable 以 pipe。
-    const nodeStream = Readable.fromWeb(response.body as unknown as import('stream/web').ReadableStream)
+    const nodeStream = Readable.fromWeb(toNodeReadableWebStream(response.body))
     // [M1] idle timeout：长时间无新数据字节即中断。每次收到 chunk 重置。
     let idleTimer: NodeJS.Timeout | undefined = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS)
     // [M3] 记录上次保存进度（续传起点），超过 SAVE_INTERVAL_BYTES 才落盘（替代整除判断）
@@ -523,7 +544,7 @@ function buildFetchOptions(
     ...extraHeaders,
   }
   const options: RequestInit & { dispatcher?: ProxyAgent } = { signal, headers }
-  const proxyUrl = resolveProxyUrl(proxyConfig)
+  const proxyUrl = proxyConfig ? resolveProxyUrl(proxyConfig) : undefined
   if (proxyUrl) {
     try {
       options.dispatcher = new ProxyAgent(proxyUrl)
@@ -532,18 +553,6 @@ function buildFetchOptions(
     }
   }
   return options
-}
-
-/**
- * 根据 proxyConfig 解析出实际代理 URL（manual 用配置，system 读环境变量）。
- */
-function resolveProxyUrl(proxyConfig: IProxyConfig | undefined): string | null {
-  if (!proxyConfig || proxyConfig.mode === 'disabled') return null
-  if (proxyConfig.mode === 'manual') {
-    return proxyConfig.httpsProxy ?? proxyConfig.httpProxy ?? null
-  }
-  return process.env.HTTPS_PROXY ?? process.env.https_proxy ??
-    process.env.HTTP_PROXY ?? process.env.http_proxy ?? null
 }
 
 /**
@@ -639,7 +648,7 @@ async function downloadPart(
       await response.body?.cancel().catch(() => {})
       throw new UpdateError(`part ${part.index} download failed: HTTP ${response.status}`, 'downloading', 'UPDATE_NETWORK_FAILED')
     }
-    const nodeStream = Readable.fromWeb(response.body as unknown as import('stream/web').ReadableStream)
+    const nodeStream = Readable.fromWeb(toNodeReadableWebStream(response.body))
     writeStream = createWriteStream(part.tempPath, { flags: 'w' })
     let downloaded = 0
     return await new Promise<number>((resolve, reject) => {
