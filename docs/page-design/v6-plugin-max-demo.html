@@ -342,6 +342,55 @@ body {
 .ct-level.l3 { background: var(--warn-soft); color: var(--warn); }
 .cap-table .ct-prim { font-family: var(--font-mono); font-size: 10px; color: var(--neutral-mid); }
 
+/* ============ §4 点击闭环（点击后能干什么）============ */
+/* code-block：plugin activate() handler 代码示例 */
+.cb { background: var(--bg-input); border-radius: var(--radius); padding: 12px 14px; font-family: var(--font-mono); font-size: 10.5px; line-height: 1.75; overflow-x: auto; white-space: pre; color: var(--neutral-mid); margin: 0; }
+.cb .cb-com { color: var(--neutral-dim); }
+.cb .cb-kw { color: var(--reasoning); }
+.cb .cb-fn { color: var(--accent); }
+.cb .cb-str { color: var(--success); }
+.cb .cb-api { color: var(--info); font-weight: 500; }
+.cb-hd { display: flex; align-items: center; gap: 8px; padding: 7px 12px; background: var(--surface-2); border-radius: var(--radius) var(--radius) 0 0; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-dim); }
+.cb-hd .cb-lang { margin-left: auto; font-size: 9px; padding: 1px 6px; border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--accent); }
+.cb-wrap { border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); }
+
+/* 序列图（点击 deploy 按钮 → handler → 多路反馈）*/
+.flow { background: var(--bg-input); border-radius: var(--radius); padding: 16px 18px; font-family: var(--font-mono); font-size: 10.5px; line-height: 1.85; color: var(--neutral-mid); overflow-x: auto; white-space: pre; }
+.flow .f-actor { color: var(--neutral-fg); font-weight: 600; }
+.flow .f-renderer { color: var(--accent); }
+.flow .f-runtime { color: var(--success); }
+.flow .f-plugin { color: var(--reasoning); }
+.flow .f-com { color: var(--neutral-dim); }
+.flow .f-gap { color: var(--danger); font-weight: 500; }
+.flow .f-ok { color: var(--success); }
+
+/* API 能力表（复用 spec §9.3 样式，demo 精简版）*/
+.api-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.api-table th { text-align: left; padding: 8px 10px; font-size: var(--text-xs); color: var(--neutral-dim); font-weight: 500; text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--border-strong); }
+.api-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.api-table tr:last-child td { border-bottom: 0; }
+.api-table .at-api { font-family: var(--font-mono); font-size: 10px; color: var(--info); white-space: nowrap; }
+.api-table .at-do { font-size: var(--text-xs); color: var(--neutral-fg); }
+.api-table .at-mount { font-family: var(--font-mono); font-size: 9px; white-space: nowrap; color: var(--neutral-mid); }
+.api-table .at-status { font-family: var(--font-mono); font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 999px; white-space: nowrap; }
+.at-status.s-done { background: var(--success-soft); color: var(--success); }
+.at-status.s-todo { background: var(--danger-soft); color: var(--danger); }
+
+/* 闭环 vs 空壳 对比卡 */
+.loop-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.loop-card { background: var(--bg-card); border-radius: var(--radius); padding: 14px; border-left: 3px solid; }
+.loop-card.ok { border-left-color: var(--success); }
+.loop-card.gap { border-left-color: var(--danger); }
+.loop-card h4 { font-size: var(--text-sm); font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+.loop-card.ok h4 { color: var(--success); }
+.loop-card.gap h4 { color: var(--danger); }
+.loop-card p { font-size: var(--text-xs); color: var(--neutral-mid); line-height: 1.7; }
+.loop-card p b { color: var(--neutral-fg); font-weight: 500; }
+.loop-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.loop-pill { font-family: var(--font-mono); font-size: 9px; padding: 2px 7px; border-radius: 999px; }
+.loop-pill.pk-ok { background: var(--success-soft); color: var(--success); }
+.loop-pill.pk-gap { background: var(--danger-soft); color: var(--danger); }
+
 /* footer */
 .doc-foot { margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; font-size: var(--text-xs); color: var(--neutral-dim); font-family: var(--font-mono); flex-wrap: wrap; gap: 8px; }
 .doc-foot a { color: var(--accent); text-decoration: none; }
@@ -960,6 +1009,147 @@ body {
           · 垂直 stack / 二维 grid（协议暂无，需补原语）<br>
           · 改 core 对话流结构（TurnMeta/trace/summary）
         </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §4 点击后能干什么（交互闭环）
+       ================================================================ -->
+  <section class="section">
+    <div class="section-head"><span class="section-num">§4</span><h2 class="section-title">点击后能干什么 · 交互闭环</h2></div>
+    <p class="section-desc">§1-§3 画了 plugin 能往<b>哪里</b>放东西（16 挂载点）。本节回答另一半：用户点了 M9 按钮 / M2 view tab / M8 底栏项之后，<b>plugin 能干什么、怎么扩展</b>。核心一句话——挂载点是入口（声明式 contribution），点击后的行为由 plugin 在 <code>activate()</code> 中注册的 <code>handler</code> 决定，handler 能调 SDK 全部 API 反馈到多个挂载点。</p>
+
+    <h3 style="margin-bottom:12px;">① 点 deploy 按钮 → 发生了什么（序列图）</h3>
+    <p style="font-size:var(--text-sm);color:var(--neutral-mid);margin-bottom:12px;">以 §1 里 M9 composer 工具条的 deploy 按钮为例。链路穿过 renderer → runtime → plugin Worker，handler 执行后可<b>同时</b>反馈到 M8/M15/M2/M4 多个挂载点（多路反馈，不限于触发它的位置）。<span style="color:var(--danger);font-family:var(--font-mono);">红色 = 当前未实现的环节</span>。</p>
+    <div class="flow"><span class="f-actor">用户</span>                 <span class="f-com">点 M9 deploy 按钮（commandId: 'my-ext.deploy'）</span>
+  │
+  ▼
+<span class="f-renderer">renderer</span>             <span class="f-com">发 plugin.executeCommand { pluginId, commandId, args }（WS）</span>
+  │
+  ▼
+<span class="f-runtime">runtime plugin-service</span>  <span class="f-com">路由到 plugin Worker（按 pluginId）→ RPC invoke</span>
+  │
+  ▼
+<span class="f-plugin">plugin (Worker)</span>        <span class="f-com">CommandRegistry 查 handler（按 commandId）</span>
+  │
+  │  <span class="f-gap">▼ ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒</span>
+  │  <span class="f-gap">GAP：api.commands.register() 未实现 → 无 handler</span>
+  │  <span class="f-gap">     命令落到 fire-and-forget ack（pong {}），无执行</span>
+  │  <span class="f-gap">▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒</span>
+  │
+  │  <span class="f-com">[目标态] handler 执行，调 SDK API 多路反馈：</span>
+  ├─→ <span class="f-plugin">api.ui.showConfirm(...)</span>        <span class="f-com">→ M15 弹确认框</span> <span class="f-ok">✓</span>
+  ├─→ <span class="f-plugin">api.ui.updateStatusBarItem(...)</span> <span class="f-com">→ M8 更新底栏</span> <span class="f-ok">✓</span>
+  ├─→ <span class="f-plugin">api.views.update(...)</span>           <span class="f-com">→ M2 推 view 内容</span> <span class="f-gap">[GAP]</span>
+  ├─→ <span class="f-plugin">api.sessions.sendMessage(...)</span>   <span class="f-com">→ M4 对话流</span> <span class="f-ok">✓</span>
+  └─→ <span class="f-plugin">api.tools.invoke(...)</span>           <span class="f-com">→ M4 tool block</span> <span class="f-ok">✓</span>
+  │
+  ▼
+<span class="f-renderer">renderer</span>             <span class="f-com">消费消息族 → 各挂载点 UI 更新</span></div>
+
+    <h3 style="margin:24px 0 12px;">② plugin 代码：声明入口 + 注册 handler</h3>
+    <p style="font-size:var(--text-sm);color:var(--neutral-mid);margin-bottom:12px;">两步解耦：<b>manifest 声明</b>「入口长什么样」（按钮位置/icon），<b>activate 注册 handler</b>「点击后干什么」。handler 里的 <code style="font-family:var(--font-mono);color:var(--info);">ctx.api.xxx</code> 调用 = 点击后能干的事。这是 external plugin 扩展能力的<b>唯一</b>编程式入口。</p>
+    <div style="display:grid;grid-template-columns:1fr 1.3fr;gap:12px;">
+      <div class="cb-wrap">
+        <div class="cb-hd">① manifest 声明入口<span class="cb-lang">json</span></div>
+<pre class="cb"><span class="cb-com">// package.json · contributes</span>
+{
+  <span class="cb-str">"commands"</span>: [{
+    <span class="cb-str">"id"</span>: <span class="cb-str">"my-ext.deploy"</span>,
+    <span class="cb-str">"title"</span>: <span class="cb-str">"Deploy"</span>,
+    <span class="cb-str">"icon"</span>: <span class="cb-str">"rocket"</span>
+  }],
+  <span class="cb-str">"menus"</span>: {
+    <span class="cb-str">"composer.toolbar"</span>: [
+      { <span class="cb-str">"commandId"</span>: <span class="cb-str">"my-ext.deploy"</span> }
+    ]
+  }
+}</pre>
+      </div>
+      <div class="cb-wrap">
+        <div class="cb-hd">② activate 注册 handler<span class="cb-lang">typescript</span></div>
+<pre class="cb"><span class="cb-kw">export function</span> <span class="cb-fn">activate</span>(ctx) {
+  ctx.api.commands.<span class="cb-api">register</span>(<span class="cb-str">'my-ext.deploy'</span>, <span class="cb-kw">async</span> (args) =&gt; {
+    <span class="cb-kw">const</span> env = <span class="cb-kw">await</span> ctx.api.config.<span class="cb-api">get</span>(<span class="cb-str">'environment'</span>)
+    <span class="cb-kw">const</span> ok = <span class="cb-kw">await</span> ctx.api.ui.<span class="cb-api">showConfirm</span>(<span class="cb-str">'Deploy'</span>, <span class="cb-str">`→${env}`</span>)
+    <span class="cb-kw">if</span> (!ok) <span class="cb-kw">return</span>
+    <span class="cb-kw">await</span> ctx.api.ui.<span class="cb-api">updateStatusBarItem</span>(<span class="cb-str">'deploy'</span>, <span class="cb-str">'...'</span>)
+    <span class="cb-kw">await</span> ctx.api.views.<span class="cb-api">update</span>(<span class="cb-str">'pipelines'</span>, tree)
+    <span class="cb-kw">await</span> ctx.api.sessions.<span class="cb-api">sendMessage</span>({ content: <span class="cb-str">'done'</span> })
+  })
+}</pre>
+      </div>
+    </div>
+
+    <h3 style="margin:24px 0 12px;">③ handler 能调什么（SDK API 能力面）</h3>
+    <p style="font-size:var(--text-sm);color:var(--neutral-mid);margin-bottom:12px;">handler 内可调的全部 API（<code style="font-family:var(--font-mono);">Phase2AgentAPI</code>）。<b>这 = 点击后能干的事的边界</b>。<span style="color:var(--danger);font-family:var(--font-mono);">红色 = 当前缺口</span>（架构已定义目标，代码未实现）。</p>
+    <div style="background:var(--bg-card);border-radius:var(--radius);padding:4px;">
+      <table class="api-table">
+        <thead><tr><th style="width:200px;">SDK API</th><th>点击后能干什么</th><th style="width:95px;">反馈挂载点</th><th style="width:65px;">状态</th></tr></thead>
+        <tbody>
+          <tr><td class="at-api">ui.showConfirm/Select/Input</td><td class="at-do">弹确认/选择/输入框，await 用户输入</td><td class="at-mount">M15 / M11</td><td><span class="at-status s-done">已实现</span></td></tr>
+          <tr><td class="at-api">ui.updateStatusBarItem</td><td class="at-do">改底栏状态项文本/状态色</td><td class="at-mount">M8 底栏</td><td><span class="at-status s-done">已实现</span></td></tr>
+          <tr><td class="at-api">ui.notify</td><td class="at-do">Toast 通知（info/warn/error）</td><td class="at-mount">全局 Toast</td><td><span class="at-status s-done">已实现</span></td></tr>
+          <tr><td class="at-api">sessions.sendMessage</td><td class="at-do">往对话流发消息（触发 agent turn）</td><td class="at-mount">M4 对话流</td><td><span class="at-status s-done">已实现</span></td></tr>
+          <tr><td class="at-api">tools.register / invoke</td><td class="at-do">注册/调用 LLM tool（result 走 M4）</td><td class="at-mount">M4 tool block</td><td><span class="at-status s-done">已实现</span></td></tr>
+          <tr><td class="at-api">hooks.onBeforeToolCall/SendMessage</td><td class="at-do">拦截/改写 tool call 或消息</td><td class="at-mount">对话流行为</td><td><span class="at-status s-done">已实现</span></td></tr>
+          <tr><td class="at-api">config.get / set</td><td class="at-do">读写 plugin 配置（M16 schema）</td><td class="at-mount">M16 settings</td><td><span class="at-status s-done">已实现</span></td></tr>
+          <tr><td class="at-api">sessionData.get / set</td><td class="at-do">per-session 状态存取（隔离）</td><td class="at-mount">内部状态</td><td><span class="at-status s-done">已实现</span></td></tr>
+          <tr><td class="at-api">agent.setModel / setThinkingLevel</td><td class="at-do">改 agent 参数</td><td class="at-mount">agent 行为</td><td><span class="at-status s-done">已实现</span></td></tr>
+          <tr><td class="at-api"><b>commands.register</b></td><td class="at-do"><b>注册 command handler（点击→执行的入口）</b></td><td class="at-mount">M9/M12/M8</td><td><span class="at-status s-todo">未实现</span></td></tr>
+          <tr><td class="at-api"><b>views.update / provide</b></td><td class="at-do"><b>推送 view 内容（GuiComponent 原语树）</b></td><td class="at-mount">M2/M7/M14</td><td><span class="at-status s-todo">未实现</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="margin:24px 0 12px;">④ 闭环 vs 空壳（哪些按钮真能用）</h3>
+    <p style="font-size:var(--text-sm);color:var(--neutral-mid);margin-bottom:12px;">16 挂载点分两类。<b style="color:var(--success);">完整闭环</b> = 入口 + handler + 内容推送全通，plugin 能真正做交互。<b style="color:var(--danger);">声明式空壳</b> = 入口能声明渲染（按钮/tab 出现），但点击后无执行逻辑或无内容可推。</p>
+    <div class="loop-grid">
+      <div class="loop-card ok">
+        <h4>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          完整闭环（6 挂载点 · 能真交互）
+        </h4>
+        <p>入口 + 执行 + 反馈全通。plugin 经适配器复用 pi-extension 机制：</p>
+        <div class="loop-list">
+          <span class="loop-pill pk-ok">M4 tool result</span>
+          <span class="loop-pill pk-ok">M5 custom msg</span>
+          <span class="loop-pill pk-ok">M7 drawer widget</span>
+          <span class="loop-pill pk-ok">M8 status</span>
+          <span class="loop-pill pk-ok">M11 ask-user</span>
+          <span class="loop-pill pk-ok">M15 dialog</span>
+        </div>
+        <p style="margin-top:8px;color:var(--success);">已能覆盖大部分交互场景（tool result / 自定义消息 / 底栏 / 弹框）。</p>
+      </div>
+      <div class="loop-card gap">
+        <h4>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          声明式空壳（6 挂载点 · 入口画好等接线）
+        </h4>
+        <p>入口能声明渲染，但<b>点击后无 handler 执行 / 无内容推送</b>：</p>
+        <div class="loop-list">
+          <span class="loop-pill pk-gap">M1 第5 tab</span>
+          <span class="loop-pill pk-gap">M2 view tab</span>
+          <span class="loop-pill pk-gap">M9 工具条</span>
+          <span class="loop-pill pk-gap">M12 header</span>
+          <span class="loop-pill pk-gap">M14 独立 view</span>
+          <span class="loop-pill pk-gap">M16 settings</span>
+        </div>
+        <p style="margin-top:8px;color:var(--danger);">缺 <code style="font-family:var(--font-mono);">commands.register</code> + <code style="font-family:var(--font-mono);">views.update</code> 两个 API（见上表红色行）。</p>
+      </div>
+    </div>
+
+    <div style="margin-top:14px;background:color-mix(in oklch, var(--danger) 6%, var(--bg-card));border-left:3px solid var(--danger);border-radius:var(--radius);padding:12px 14px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <b style="color:var(--danger);font-size:var(--text-sm);">必修缺陷</b>
+        <span style="font-family:var(--font-mono);font-size:9px;color:var(--neutral-dim);margin-left:auto;">renderer-target-architecture §9.2 · 主干化前置</span>
+      </div>
+      <div style="font-size:var(--text-xs);color:var(--neutral-mid);line-height:1.7;font-family:var(--font-mono);">
+        <b style="color:var(--danger);">缺口 1 · commands.register：</b>plugin 无法注册 handler → M9/M12 按钮点击落到 ack（pong {}），无执行。<br>
+        <b style="color:var(--danger);">缺口 2 · views.update：</b>plugin 无法往 M2/M7/M14 推内容 → view tab 点开是空的。<br>
+        <b>修复方向：</b>renderer 新增 ExtensionHost 层（CommandRegistry + ViewHost + ContributionRegistry），详见 spec §9 / architecture §6。
       </div>
     </div>
   </section>
