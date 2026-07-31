@@ -501,7 +501,7 @@ body {
       </thead>
       <tbody>
         <tr><td class="z-name">--z-popover</td><td class="z-val">10</td><td class="z-use">popover / dropdown / tooltip</td><td class="z-comp">CommandPopover · @mention · #file · 模型选择 · 思考档位 · tooltip（composer 内浮层）</td></tr>
-        <tr><td class="z-name">--z-overlay</td><td class="z-val">20</td><td class="z-use">overlay（内联覆盖 / 抽屉）</td><td class="z-comp"><b style="color:var(--accent);">AskUserOverlay</b>（companion-band，非 modal）· SideDrawer 右抽屉</td></tr>
+        <tr><td class="z-name">--z-overlay</td><td class="z-val">20</td><td class="z-use">overlay（内联覆盖 / 抽屉）</td><td class="z-comp"><b style="color:var(--accent);">AskUserOverlay</b>（companion-band，非 modal）· SideDrawer 右抽屉<br><span style="font-size:11px;color:var(--neutral-dim);">注：companion-band 现也承载 confirm/select/input（showConfirm/Select/Input），不再用独立 modal</span></td></tr>
         <tr><td class="z-name">--z-modal</td><td class="z-val">1000</td><td class="z-use">modal（居中遮罩浮层）</td><td class="z-comp"><b style="color:var(--accent);">SearchModal</b> · <b style="color:var(--accent);">ConfirmDialog</b> · <b style="color:var(--accent);">Mermaid 全屏 viewer</b> · FullSettingsOverlay</td></tr>
         <tr class="fixed"><td class="z-name" style="color:var(--neutral-dim);">（无 token）</td><td class="z-val">9999</td><td class="z-use">toast（固定值，脱离 scale）</td><td class="z-comp">ToastContainer · 右下角通知（v6 保持现状，需永远在最上）</td></tr>
       </tbody>
@@ -722,7 +722,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s3">
     <div class="spec-head"><span class="spec-num">§3</span><h2 class="spec-title">AskUserOverlay · 内联 companion 覆盖层</h2></div>
-    <p class="spec-desc">ask-user extension 的富交互渲染（单选/多选/Other/comment/多问题 tab）。v6 明确保持「内联」（非 modal）：落在 composer 上方的 companion-band，<code>z-overlay(20)</code>，根 <code>bg-input rounded-lg(12px)</code> 单容器靠间距分区（去 border-b/border-t）。三处降噪：①tab/选项圆角统一 <code>--radius-sm(6px)</code>；②context 降中性 <code>bg-surface-hover</code>（去 reasoning-soft 软底彩色）；③选项 hover 的 <code>white/[0.04]</code> 改 <code>bg-surface-hover</code> token。<b>交互优化</b>：最后一个问题选择后<b>直接提交</b>（单问题：选完即提交，无需再点提交按钮；多问题：最后一题选完自动提交），减少一次点击；非最后问题保持 next 切换；仅「Other」文本输入态需手动点提交（需显式确认输入内容）。</p>
+    <p class="spec-desc">ask-user extension 的富交互渲染（单选/多选/Other/comment/多问题 tab）。v6 明确保持「内联」（非 modal）：落在 composer 上方的 companion-band，<code>z-overlay(20)</code>，根 <code>bg-input rounded-lg(12px)</code> 单容器靠间距分区（去 border-b/border-t）。三处降噪：①tab/选项圆角统一 <code>--radius-sm(6px)</code>；②context 降中性 <code>bg-surface-hover</code>（去 reasoning-soft 软底彩色）；③选项 hover 的 <code>white/[0.04]</code> 改 <code>bg-surface-hover</code> token。<b>交互优化</b>：最后一个问题选择后<b>直接提交</b>（单问题：选完即提交，无需再点提交按钮；多问题：最后一题选完自动提交），减少一次点击；非最后问题保持 next 切换；仅「Other」文本输入态需手动点提交（需显式确认输入内容）。<b>统一出口</b>：companion-band 现为 ask-user + confirm/select/input 四种 plugin 交互的统一落点（M11 统一出口）——<code>api.ui.showConfirm / showSelect / showInput</code> 不再走独立全局 modal（M15 ExtensionUIDialog 降级为仅致命错误/系统级提示），与 ask-user 同位置同机制：顶替 composer、阻塞、plugin await。</p>
     <div class="change-points">
       <span class="cp cp-v6"><b>v6</b> 保持内联（z-overlay:20，非 modal）</span>
       <span class="cp cp-v6"><b>v6</b> tab/选项圆角统一 6px [--radius-sm]</span>
@@ -869,6 +869,7 @@ body {
       <div class="anno"><b>actions:</b><br>justify-end gap-2 px-3.5 pb-2.5 · cancel ghost / next·submit primary（守卫 allAnswered）</div>
       <div class="anno"><b>v6 交互优化:</b><br><span class="v6">最后一个问题选择后直接提交</span><br>（单问题：选完即提交，无需再点提交按钮；多问题：最后一题选完自动提交）<br>非最后问题保持 next 切换<br>提交按钮仅「其他（Other）」输入态需手动点（需显式确认文本）</div>
       <div class="anno"><b>落点:</b><br>AskUserOverlay.vue · 根 z-[20]→z-overlay · rounded-sm(自动跟 6px) · context / hover 逐处</div>
+      <div class="anno"><b>统一出口:</b><br>companion-band（M11）现为 <b>ask-user + confirm/select/input 四种 plugin 交互</b>的统一落点 · <code>showConfirm / showSelect / showInput</code> 与 ask-user 同位置同机制（顶替 composer · 阻塞 · plugin await）<br>不再用独立全局 modal（M15 ExtensionUIDialog 降级为仅致命错误/系统级提示）</div>
     </div>
   </section>
 

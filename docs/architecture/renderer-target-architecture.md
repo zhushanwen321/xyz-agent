@@ -127,18 +127,18 @@ AppShell (flex h-screen)
 │           │  │  ├─ Turn → Block (tool/text/thinking)              ← M4 挂载点
 │           │  │  ├─ custom message (__gui__)                       ← M5 挂载点
 │           │  │  └─ [浮层: load-more/fork-notice/jump]             ← M13 挂载点
-│           │  └─ companion-band
-│           │     ├─ ProgressZone
-│           │     └─ AskUserOverlay | Composer                      ← M11 挂载点
-│           │        └─ Composer
-│           │           ├─ CommandPopover (slash 菜单)              ← M10 挂载点
-│           │           └─ composer-bar 工具条 (5 按钮)             ← M9 挂载点
+│           │  ├─ companion-band
+│           │  │  ├─ ProgressZone
+│           │  │  └─ AskUserOverlay | Composer（含 confirm/select/input） ← M11 挂载点
+│           │  │     └─ Composer
+│           │  │        ├─ CommandPopover (slash 菜单)              ← M10 挂载点
+│           │  │        └─ composer-bar 工具条 (5 按钮)             ← M9 挂载点
+│           │  └─ main-panel 局部底栏 (composer 下方，不跨 sidebar/drawer) ← M8 挂载点
 │           └─ SideDrawer#drawer (可拖拽)
 │              ├─ header tab栏 (terminal/browser/git/doc/detail/tasks) ← M6 挂载点
-│              ├─ 内容区 (按 tab 切换)                               ← M7 挂载点
-│              │  ├─ widget/widgetGui → GuiComponentRenderer
-│              │  └─ 各固定 tab 组件
-│              └─ footer status 底栏                                ← M8 挂载点
+│              └─ 内容区 (按 tab 切换)                               ← M7 挂载点
+│                 ├─ widget/widgetGui → GuiComponentRenderer
+│                 └─ 各固定 tab 组件
 └─ SettingsModal (⌘, 全局 Dialog)                                   ← M16 挂载点
    + [全局] ToastContainer
 ```
@@ -154,9 +154,9 @@ AppShell (flex h-screen)
 | **A1** | 侧栏新增 tab（M1+M2） | plugin 声明 view id/icon/title，renderer 渲染 tab + 内容区（数据源契约） | L1 | panels 声明未消费 | viewsContainer + views |
 | **A2** | 抽屉新增 tab（M6+M7） | plugin 声明 drawerTab id/icon，内容用 GuiComponent 原语 | L1 | 无 | 无直接对应（近似 panel） |
 | **A3** | 工具条/头部新增按钮（M9+M12） | plugin 声明 action button（icon+command），点击触发 command | L1 | 无 | menus (editor/title) |
-| **A4** | 底栏状态项（M8） | plugin 推送 statusKey+text+priority，全局底栏聚合 | L1 | pi 已实现（extension:status），plugin 未接入 | statusBarItems |
+| **A4** | 底栏状态项（M8） | plugin 推送 statusKey+text+priority，main-panel 局部底栏聚合（composer 下方，不跨 sidebar/drawer） | L1 | pi 已实现（extension:status），plugin 未接入 | statusBarItems |
 
-**当前状态**：维度 A 是 plugin 系统最大的空白——`contributes.panels/statusBarItems` 已在 SDK 声明但 renderer 零消费。pi 侧的 status 已实现但绑死 SideDrawer footer（规划提升全局底栏）。
+**当前状态**：维度 A 是 plugin 系统最大的空白——`contributes.panels/statusBarItems` 已在 SDK 声明但 renderer 零消费。pi 侧的 status 已实现但绑死 SideDrawer footer（规划挂到 main-panel 局部底栏，位于 composer 下方，不跨 sidebar/drawer）。
 
 #### 维度 B：对话流内容注入（agent 特有，最核心）
 
@@ -164,7 +164,7 @@ AppShell (flex h-screen)
 |---|---|---|---|---|---|
 | **B1** | tool result 渲染（M4） | tool 返回 `details.__gui__`，对话流内渲染 GuiComponent | L2 | **已实现** | 无（agent 特有） |
 | **B2** | 自定义消息卡片（M5） | plugin 推送 message，对话流穿插 GuiComponent | L2 | **已实现** | 无（agent 特有） |
-| **B3** | composer 上方交互区（M11） | ask-user 富交互占位 | L1/L2 | **已实现** | 无（agent 特有） |
+| **B3** | composer 上方交互区（M11） | ask-user 富交互 + confirm/select/input（顶替 composer、阻塞） | L1/L2 | **已实现** | 无（agent 特有） |
 
 **当前状态**：维度 B 是最成熟的插件注入面——GuiComponent 7 原语 + ask-user 双向交互均已验证可用。
 
@@ -172,8 +172,8 @@ AppShell (flex h-screen)
 
 | 子项 | 挂载点 | 内容 | 级别 | 当前状态 |
 |---|---|---|---|---|
-| **C1** | confirm/select/input（M15） | 内置对话框原语 | L1 | **已实现**（pi 侧） |
-| **C2** | ask-user 富交互（M11） | 多问题/多选/评论 | L1/L2 | **已实现** |
+| **C1** | confirm/select/input（M15→M11） | 内置对话框原语；现并入 M11 companion-band（顶替 composer、阻塞），M15 仅留致命错误/系统级提示 | L1 | **已实现**（pi 侧，现走 companion-band） |
+| **C2** | ask-user 富交互（M11） | 多问题/多选/评论（与 confirm/select/input 同位置同机制） | L1/L2 | **已实现** |
 
 **当前状态**：已实现，但 pi 侧（`extension.ui_request`）和 plugin 侧（`plugin:uiRequest`）消息类型不一致，renderer 只消费前者。统一见 §7。
 
@@ -376,7 +376,7 @@ ExtensionHost
 ├─ ActivationManager       懒激活，响应 activationEvents（onView/onCommand/onSlashCommand/...）加载插件
 ├─ ViewHost                渲染 plugin 贡献的 sidebar/drawer view，订阅 plugin 推送的 GuiComponent 流
 ├─ CommandRegistry         命令注册表（命令面板/快捷键/slash 统一来源）
-├─ StatusBarController     底栏状态项聚合（pi status + plugin statusBarItems 统一）
+├─ StatusBarController     底栏状态项聚合（pi status + plugin statusBarItems 统一），挂 main-panel 局部底栏（composer 下方，不跨 sidebar/drawer）
 └─ MessageBusBridge        plugin:uiRequest/statusBarUpdate/crashed/permissionRequest 等消息族接入 renderer
 ```
 
@@ -413,7 +413,7 @@ plugin 的 view 内容与 pi extension 的 widget 走**同一套** GuiComponentR
 
 | 机制 | 来源 | 消息类型 | renderer 消费 |
 |---|---|---|---|
-| pi `ctx.ui` | pi extension | `extension.ui_request` | ✅ ExtensionUIDialog + AskUserOverlay |
+| pi `ctx.ui` | pi extension | `extension.ui_request` | ✅ ExtensionUIDialog + AskUserOverlay（confirm/select/input 现走 companion-band / M11，M15 仅致命错误） |
 | plugin `api.ui` | plugin-sdk | `plugin:uiRequest` | ❌ 零消费 |
 | GuiComponent | extension-protocol | `details.__gui__` / `extension:widgetGui` | ✅ GuiComponentRenderer |
 
@@ -500,14 +500,14 @@ plugin-sdk 架构审查发现 3 个致命缺陷，作为「以 plugin-sdk 为主
 | M5 | MessageStream custom message | 数据驱动 | 是 | **P（强）** GuiComponent | 无（agent 特有） | L2 | B2 |
 | M6 | SideDrawer tab 列表 | 可枚举 | 半动态（tasks 条件 push） | P（tasks 是内置扩展 tab） | 无直接对应 | L1 | A2 |
 | M7 | SideDrawer tab 内容区 | 固定+数据驱动 | 是（GuiComponent 兜底） | **P（强）** widget/widgetGui | 无（agent 特有） | L2 + L1 | A2 |
-| M8 | SideDrawer footer status（规划全局底栏） | 数据驱动 | 是（extension:status） | **P（强）** | statusBarItems | L1 + L2 | A4 |
+| M8 | main-panel 局部底栏（composer 下方，不跨 sidebar/drawer，bg-bg-elevated） | 数据驱动 | 是（extension:status） | **P（强）** | statusBarItems | L1 + L2 | A4 |
 | M9 | Composer composer-bar 工具条 | 固定 | 否 | — | menus (editor/title) | L1 | A3 |
 | M10 | Composer CommandPopover（slash） | 数据驱动 | 是（commandStore） | **P（强）** slash command | commands | L1 | D1 |
-| M11 | Composer 上方 companion-band | slot（互斥） | 半（AskUserOverlay） | P（ask-user） | 无（agent 特有） | L2 | B3 |
+| M11 | Composer 上方 companion-band（含 confirm/select/input） | slot（互斥） | 半（AskUserOverlay） | P（ask-user + confirm/select/input） | 无（agent 特有） | L2 | B3 |
 | M12 | PanelHeader 按钮组 | 固定 | 否 | — | menus (editor/title) | L1 | A3 |
 | M13 | MessageStream 浮层 slot | 固定浮层 | 否 | — | 无（agent 特有） | L2（低优） | — |
 | M14 | 全局独立 view（chat/overview） | 固定 | 否 | — | webviewPanel | L3（仅内置） | E1 |
-| M15 | 全局 modal/dialog | slot | 是（ExtensionUIDialog） | P（confirm/select/input/editor/notify） | window/dialogs | L1 | C1 |
+| M15 | 全局 modal/dialog（降级为仅致命错误/系统级提示） | slot | 是（ExtensionUIDialog） | P（致命错误/系统级提示；confirm/select/input 已并入 M11） | window/dialogs | L1 | C1 |
 | M16 | SettingsModal 扩展管理页 | 固定 | — | P（LoadPaths） | extensions view | L1 | D2 |
 
 **关键发现**：
@@ -527,3 +527,10 @@ plugin-sdk 架构审查发现 3 个致命缺陷，作为「以 plugin-sdk 为主
 | `runtime-three-layer-design.md` | runtime 侧。plugin-sdk 主干化的 runtime 实现基础 |
 | `vscode-extension-analysis.md` | 理论依据。本文档的 contribution 体系/隔离/激活借鉴其结论 |
 | `ADR-0036` | per-session 隔离范式。本文档 §1 原则 6 引用 |
+
+---
+
+## 决策变更记录
+
+- **2026-07-31 · M8 底栏从「全局跨全宽」改为「main-panel 局部」**：原文为 M8 是 AppShell 底部跨 sidebar+main+drawer 全宽的状态栏（VSCode 风格全局底栏，bg-bg-sunken，挂 SideDrawer footer）；现方案为 M8 挂 main-panel 内部、composer 下方，不跨 sidebar/drawer，是 main-panel 的局部组件（bg-bg-elevated）。涉及 §3.1 拓扑树 / §3.2 维度 A4 / §6.1 StatusBarController / §10 M8 行。
+- **2026-07-31 · confirm 从 M15 独立 modal 并入 M11 companion-band**：原文为 confirm/select/input 走 M15 ExtensionUIDialog（独立全局 modal）；现方案为 confirm/select/input 合并到 M11 companion-band（与 ask-user 同位置同机制，顶替 composer、阻塞），M15 降级为仅致命错误/系统级提示。涉及 §3.1 拓扑树 / §3.2 维度 B3/C1/C2 / §7.1 / §10 M11、M15 行。

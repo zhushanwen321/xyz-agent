@@ -714,24 +714,25 @@ body {
 │        │  │  ├─ <span class="t-mount">M4</span> Turn → Block (tool/text/thinking)              <span class="t-dim-b">→ 维度 B1</span>
 │        │  │  ├─ <span class="t-mount">M5</span> custom message (__gui__)                        <span class="t-dim-b">→ 维度 B2</span>
 │        │  │  └─ <span class="t-mount">M13</span> 浮层 slot (load-more/fork/jump)               <span class="t-dim-b">→ 维度 B（低优）</span>
-│        │  └─ <span class="t-node">companion-band</span>
-│        │     └─ AskUserOverlay | <span class="t-node">Composer</span>
-│        │        ├─ <span class="t-mount">M11</span> companion-band (ask-user 占位)            <span class="t-dim-b">→ 维度 B3 / C2</span>
-│        │        ├─ <span class="t-mount">M10</span> CommandPopover (slash 菜单)               <span class="t-dim-d">→ 维度 D1</span>
-│        │        └─ <span class="t-mount">M9</span>  composer-bar 工具条                        <span class="t-dim-a">→ 维度 A3</span>
+│        │  ├─ <span class="t-node">companion-band</span> (顶替 composer 的阻塞交互位)
+│        │  │  └─ <span class="t-mount">M11</span> companion-band (ask-user <b>及 confirm/select/input</b>) <span class="t-dim-b">→ 维度 B3 / C1+C2</span>
+│        │  ├─ <span class="t-node">Composer</span>
+│        │  │  ├─ <span class="t-mount">M10</span> CommandPopover (slash 菜单)               <span class="t-dim-d">→ 维度 D1</span>
+│        │  │  └─ <span class="t-mount">M9</span>  composer-bar 工具条                        <span class="t-dim-a">→ 维度 A3</span>
+│        │  └─ <span class="t-mount">M8</span>  main-panel 局部底栏 (composer 下方 status)        <span class="t-dim-a">→ 维度 A4</span>
 │        └─ <span class="t-node">SideDrawer#drawer</span>
 │           ├─ <span class="t-mount">M6</span> header tab栏 (terminal/browser/git/...)          <span class="t-dim-a">→ 维度 A2</span>
-│           ├─ <span class="t-mount">M7</span> 内容区 (GuiComponent 兜底)                       <span class="t-dim-a">→ 维度 A2</span>
-│           └─ <span class="t-mount">M8</span> footer status 底栏 → <span class="t-dim-a">全局底栏</span>              <span class="t-dim-a">→ 维度 A4</span>
+│           └─ <span class="t-mount">M7</span> 内容区 (GuiComponent 兜底)                       <span class="t-dim-a">→ 维度 A2</span>
 ├─ <span class="t-mount">M14</span> 全局独立 view 路由 (chat / overview)                          <span class="t-dim-e">→ 维度 E1</span>
-├─ <span class="t-mount">M15</span> 全局 modal/dialog (ExtensionUIDialog)                        <span class="t-dim-c">→ 维度 C1</span>
+├─ <span class="t-mount">M15</span> 全局 modal (仅致命错误/系统级提示，confirm 已并入 M11)       <span class="t-dim-c">→ 维度 C（降级）</span>
 └─ <span class="t-mount">M16</span> SettingsModal (⌘, 扩展管理页)                                <span class="t-dim-d">→ 维度 D2</span>
     + <span class="t-node">ToastContainer</span> [全局]</div>
     </div>
     <div class="anno-grid">
-      <div class="anno"><b>最成熟注入面:</b> <span>M4 / M5 / M7 / M8（对话流 + drawer，L2 原语已验证）</span></div>
+      <div class="anno"><b>最成熟注入面:</b> <span>M4 / M5 / M7 / M8 / M11（对话流 + drawer + 底栏 + companion，L2 原语已验证）</span></div>
       <div class="anno"><b>最大空白:</b> <span>M1 / M6 / M9 / M12 / M14（结构性 contribution，声明但 renderer 零消费）</span></div>
-      <div class="anno"><b>新增概念:</b> <span>M8 全局底栏（§2 A4，当前绑死 SideDrawer footer，规划提升全局）</span></div>
+      <div class="anno"><b>M8 位置变更:</b> <span class="v6">从 SideDrawer footer → main-panel 局部（composer 下方，不跨全宽，§2 A4）</span></div>
+      <div class="anno"><b>M15 降级:</b> <span class="v6">confirm/select/input 并入 M11 companion-band；M15 仅留致命错误/系统级提示</span></div>
       <div class="anno"><b>色彩图例:</b> <span class="anno accent">A</span> 结构容器 · <span class="anno" style="color:var(--success)">B</span> 对话流 · <span class="anno" style="color:var(--warn)">C</span> 对话框 · <span class="anno" style="color:var(--info)">D</span> 命令 · <span class="anno" style="color:var(--danger)">E</span> 独立 view</span></div>
     </div>
 
@@ -923,40 +924,45 @@ body {
       <div class="anno"><b>声明:</b> <span>contributes.menus['composer.toolbar'|'panel.header']</span></div>
     </div>
 
-    <h3>A4 · 全局底栏 status item（M8）<span class="h3-tag">新增概念 · AppShell 底部跨全宽 · StatusBarController</span></h3>
+    <h3>A4 · main-panel 局部底栏 status item（M8）<span class="h3-tag">composer 下方 · main-panel 局部 · 不跨全宽</span></h3>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> status 绑死 SideDrawer footer（drawer 关闭就看不到）</span>
-      <span class="cp cp-v6"><b>v6</b> 提升到 AppShell 全局底栏（跨全宽常驻）</span>
+      <span class="cp cp-v6"><b>v6</b> 挂 main-panel 局部底栏（composer 下方，<span style="color:var(--warn);">不跨 sidebar/drawer</span>）</span>
       <span class="cp cp-v6"><b>v6</b> 聚合 pi extension:status + plugin statusBarItems（统一 StatusBarController）</span>
       <span class="cp cp-info"><b>聚合</b> 按 alignment(left/right) + priority 排序</span>
+      <span class="cp cp-warn"><b>推翻</b> 原「AppShell 全局跨全宽」方案（见底部决策记录）</span>
     </div>
-    <p class="spec-desc" style="margin-top:-8px;"><b>位置</b>：AppShell 底部<b>跨全宽</b>的细条（在主面板 + drawer 下方，类似 VSCode 底部状态栏），高约 <code>24-28px</code>，<code>bg-bg-sunken</code>，<code>z-sticky</code>。当前 status 绑死 SideDrawer footer（drawer 关闭就看不到），v6 提升到 AppShell 全局底栏（跨全宽常驻，drawer 开关不影响可见性）。</p>
+    <p class="spec-desc" style="margin-top:-8px;"><b>位置</b>：main-panel 内部、composer <b>下方</b>的细条（不跨 sidebar、不跨 drawer，只随 main-panel 存在），高约 <code>24-28px</code>，<code>bg-bg-elevated</code>（与 panel-header 同层浮起），<code>z-sticky</code>。当前 status 绑死 SideDrawer footer（drawer 关闭就看不到），v6 改挂 main-panel 底部——<b>跟着对话主体走</b>，不开 drawer 也能看到，但不污染 sidebar/drawer 的视觉。</p>
 
-    <!-- AppShell 底部位置示意（全局底栏跨全宽）-->
+    <!-- main-panel 局部底栏位置示意 -->
     <div class="render-frame">
-      <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-dim);margin-bottom:8px;">AppShell 结构图 · 全局底栏跨 sidebar + main + drawer 全宽（drawer 开关不影响）</div>
+      <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-dim);margin-bottom:8px;">AppShell 结构图 · M8 底栏只在 main-panel 内（composer 下方），不跨 sidebar/drawer</div>
       <div class="appshell-mock">
         <div class="as-label">AppShell</div>
         <div class="as-row">
           <div class="as-sidebar">sidebar</div>
-          <div class="as-main">MainPanel · Workspace · PanelContainer</div>
+          <div class="as-main">
+            <div style="font-size:9px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:4px;">MainPanel</div>
+            <div style="background:var(--surface-2);border-radius:3px;padding:8px;font-size:9px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:3px;">MessageStream · 对话流</div>
+            <div style="background:var(--bg-input);border-radius:3px;padding:6px;font-size:9px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:3px;">composer-bar</div>
+            <div class="as-statusbar" style="border:1px solid color-mix(in oklch, var(--accent) 40%, transparent);height:20px;">
+              <span class="sb-item ok" style="font-size:8px;"><span class="sb-dot"></span>pi: ready</span>
+              <span class="sb-item warn" style="font-size:8px;"><span class="sb-dot"></span>plugin: lint</span>
+              <span class="sb-spacer"></span>
+              <span class="sb-item danger" style="font-size:8px;"><span class="sb-dot"></span>build: fail</span>
+            </div>
+            <div style="font-size:8px;color:var(--accent);font-family:var(--font-mono);margin-top:3px;text-align:center;">↑ M8 只在 main-panel 内</div>
+          </div>
           <div class="as-drawer">SideDrawer</div>
         </div>
-        <div class="as-label hl">↓ 全局底栏（跨全宽 · 24-28px · bg-bg-sunken · z-sticky）</div>
-        <div class="as-statusbar">
-          <span class="sb-item ok"><span class="sb-dot"></span>pi: ready</span>
-          <span class="sb-item neutral"><span class="sb-dot"></span>session: 2</span>
-          <span class="sb-item warn"><span class="sb-dot"></span>plugin: lint 3 warn</span>
-          <span class="sb-spacer"></span>
-          <span class="sb-item neutral"><span class="sb-dot"></span>plugin: deploy</span>
-          <span class="sb-item danger"><span class="sb-dot"></span>build: failed</span>
-        </div>
+        <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-dim);margin-top:6px;">sidebar / drawer <b style="color:var(--warn);">无底栏</b>——M8 是 main-panel 局部组件，非 AppShell 全局</div>
       </div>
     </div>
 
     <!-- 完整底栏渲染：左 status items（priority 排序）+ 右 status items（alignment: right）+ 分隔符 -->
     <div class="render-frame">
       <div style="display:flex;flex-direction:column;gap:14px;">
+        <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-dim);">main-panel 局部底栏（宽度 = main-panel 宽，不跨全宽）</div>
         <!-- 完整底栏：左 pi + plugin，右 plugin -->
         <div class="demo-statusbar">
           <span class="sb-item ok"><span class="sb-dot"></span>pi: ready</span>
@@ -980,8 +986,8 @@ body {
       </div>
     </div>
     <div class="anno-grid">
-      <div class="anno"><b>位置（v6 提升）:</b> <span class="v6">AppShell 底部跨全宽细条（sidebar+main+drawer 下方），24-28px 高，bg-bg-sunken，z-sticky</span></div>
-      <div class="anno"><b>常驻:</b> <span class="v6">drawer 开关不影响底栏可见性（对比现状绑死 SideDrawer footer）</span></div>
+      <div class="anno"><b>位置（v6 改）:</b> <span class="v6">main-panel 内、composer 下方细条，24-28px 高，bg-bg-elevated，z-sticky。<b style="color:var(--warn);">不跨 sidebar/drawer</b></span></div>
+      <div class="anno"><b>跟随 main:</b> <span class="v6">底栏是 main-panel 局部组件，随 main-panel 显隐/宽度变化（对比原方案跨全宽）</span></div>
       <div class="anno"><b>聚合:</b> <span class="v6">统一 StatusBarController 聚合 pi <code>extension:status</code> + plugin <code>statusBarItems</code></span></div>
       <div class="anno"><b>排列:</b> <span>alignment left/right 两段；同段内按 priority 降序（大→左/前）</span></div>
       <div class="anno"><b>颜色语义:</b> <span class="anno" style="color:var(--success)">ok=success</span> · <span class="anno" style="color:var(--warn)">warn</span> · <span class="anno" style="color:var(--danger)">danger</span> · 纯统计降 neutral-mid</span></div>
@@ -989,6 +995,21 @@ body {
       <div class="anno"><b>每个 item:</b> <span>文字 + 可选 icon + 可选点击（commandId）+ tooltip</span></div>
       <div class="anno"><b>溢出:</b> <span>不换行，横向滚动隐藏滚动条；priority 高优先可见</span></div>
       <div class="anno"><b>声明:</b> <span>contributes.statusBarItems { id, text, priority, alignment, commandId, tooltip }</span></div>
+    </div>
+
+    <!-- 决策记录：为什么从全局改局部 -->
+    <div class="note-box" style="margin-top:20px;border-left-color:var(--warn);">
+      <div class="note-box-head" style="color:var(--warn);">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        决策变更 · 全局底栏 → main-panel 局部
+        <span class="nb-tag">2026-07-31 推翻原方案</span>
+      </div>
+      <div class="note-foot">
+        <b style="color:var(--warn);">原方案：</b>AppShell 底部跨 sidebar+main+drawer 全宽细条（bg-bg-sunken，VSCode 风格全局状态栏）。<br>
+        <b style="color:var(--success);">现方案：</b>M8 挂 main-panel 内、composer 下方，不跨 sidebar/drawer。<br>
+        <b>理由：</b>① status 信息语义上属于「当前对话/agent 状态」，跟着 main-panel（对话主体）走比跨全宽更内聚；② sidebar 是导航区、drawer 是辅助区，往那里渗 status 语义不符；③ 全局底栏的 VSCode 范式适合「编辑器全局状态」，xyz-agent 是多 panel 对话工作台，每个 panel 独立 status 更合理（未来 split 多 panel 时各 panel 各自底栏）。<br>
+        <b>代价：</b>drawer 关闭时 status 仍可见（在 main 底部），但 drawer 打开时 status 不延伸到 drawer 下方——drawer 自己的 footer 若需 status 另行处理。
+      </div>
     </div>
   </section>
 
@@ -1336,51 +1357,56 @@ body {
        ================================================================ -->
   <section class="spec" id="s4">
     <div class="spec-head"><span class="spec-num">§4</span><h2 class="spec-title">维度 C · 交互对话框注入</h2></div>
-    <p class="spec-desc">plugin 主动弹窗（统一 <code>DialogRequest</code> 协议，对齐 overlays 稿）。C1 confirm/select/input（M15 ExtensionUIDialog）+ C2 ask-user 富交互（M11 AskUserOverlay）。pi 侧 <code>extension.ui_request</code> 与 plugin 侧 <code>plugin:uiRequest</code> 消息类型统一到同一渲染出口。<b>视觉对齐 overlays 稿，本稿不重复定义控件细节</b>，仅展示 plugin 触发场景。</p>
+    <p class="spec-desc">plugin 需要用户输入时的交互注入。<b>统一落到 companion-band（覆盖/顶替 composer 的位置）</b>——confirm/select/input（C1）与 ask-user 富交互（C2）<b>同位置、同机制</b>：plugin <code>await</code> 用户回应，期间 composer 被顶替（阻塞对话流，强引导）。pi 侧 <code>extension.ui_request</code> + plugin 侧 <code>plugin:uiRequest</code> + ask-user 双向通道，三者统一到 companion-band 这一个渲染出口。<b>视觉对齐 overlays 稿，本稿不重复定义控件细节</b>。</p>
 
-    <h3>C1 · confirm/select/input（M15 ExtensionUIDialog 对齐 v6）</h3>
-    <div class="change-points">
-      <span class="cp cp-info"><b>协议</b> 统一 DialogRequest（pi + plugin 共用）</span>
-      <span class="cp cp-v6"><b>视觉</b> 对齐 overlays 稿，不重复定义</span>
+    <div class="change-points" style="margin-bottom:20px;">
+      <span class="cp cp-now"><b>原方案</b> confirm 走独立全局 modal（M15 ExtensionUIDialog，z-modal 1000）</span>
+      <span class="cp cp-v6"><b>v6</b> confirm 合并到 companion-band（与 ask-user 同位置同机制）</span>
+      <span class="cp cp-v6"><b>v6</b> 统一阻塞交互：plugin await，composer 被顶替</span>
+      <span class="cp cp-warn"><b>推翻</b> M15 不再作为 confirm 的独立出口（见决策记录）</span>
     </div>
+
+    <h3>C1 · confirm/select/input → companion-band（M11 统一出口）<span class="h3-tag">与 ask-user 同位置同机制</span></h3>
+    <p class="spec-desc" style="margin-top:-8px;"><code>api.ui.showConfirm/showSelect/showInput</code> 不再弹独立 modal，而是落到 <b>companion-band</b>（composer 上方/顶替 composer 的位置），与 C2 ask-user 共用同一渲染出口。plugin <code>await</code> 用户点选，期间 composer 不可用（被顶替）。</p>
     <div class="render-frame">
-      <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;">
-        <!-- confirm -->
-        <div class="dialog-card">
-          <div class="dc-title">确认删除？</div>
-          <div class="dc-body">此操作不可撤销，将删除 3 个文件。来源：plugin <code style="font-family:var(--font-mono);font-size:11px;color:var(--accent);">my-ext.delete</code></div>
-          <div class="dc-actions">
-            <span class="dc-btn ghost">取消</span>
-            <span class="dc-btn default">删除</span>
+      <div class="panel-stage" style="padding:14px;">
+        <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-dim);margin-bottom:8px;">companion-band（顶替 composer）· confirm 形态 · 来源：plugin</div>
+        <!-- companion-band: confirm -->
+        <div style="background:var(--surface-hover);border-radius:var(--radius);padding:12px 14px;border:1px solid var(--accent-ring);">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span style="font-size:var(--text-sm);color:var(--neutral-fg);font-weight:500;">确认部署到 production？</span>
+            <span style="margin-left:auto;font-family:var(--font-mono);font-size:var(--text-2xs);color:var(--accent);">my-ext.deploy</span>
+          </div>
+          <div style="font-size:var(--text-xs);color:var(--neutral-mid);margin-bottom:10px;">e2e 有 3 个失败，此操作不可撤销。</div>
+          <div style="display:flex;gap:6px;justify-content:flex-end;">
+            <span class="dc-btn ghost" style="padding:4px 12px;font-size:var(--text-xs);">取消</span>
+            <span class="dc-btn primary" style="padding:4px 12px;font-size:var(--text-xs);">确认部署</span>
           </div>
         </div>
-        <!-- select -->
-        <div class="dialog-card" style="max-width:380px;">
-          <div class="dc-title">选择目标分支</div>
-          <div class="dc-body" style="margin-bottom:10px;">来源：plugin <code style="font-family:var(--font-mono);font-size:11px;color:var(--accent);">my-ext.deploy</code></div>
-          <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:14px;">
-            <div class="sb-list-item" style="background:var(--accent-soft);color:var(--accent);padding:6px 8px;border-radius:var(--radius-sm);"><span class="dot" style="width:7px;height:7px;border-radius:50%;background:var(--accent);"></span> main</div>
-            <div class="sb-list-item" style="padding:6px 8px;"><span class="dot" style="width:7px;height:7px;border-radius:50%;background:var(--neutral-ico);"></span> develop</div>
-            <div class="sb-list-item" style="padding:6px 8px;"><span class="dot" style="width:7px;height:7px;border-radius:50%;background:var(--neutral-ico);"></span> feature/x</div>
-          </div>
-          <div class="dc-actions"><span class="dc-btn ghost">取消</span><span class="dc-btn default">确定</span></div>
-        </div>
+        <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-dim);margin-top:8px;">↑ composer 被顶替（不可输入）· plugin await 用户点击 · 点确认/取消后 companion 消失，composer 恢复</div>
       </div>
     </div>
     <div class="anno-grid">
-      <div class="anno"><b>协议统一:</b> <span>pi ctx.ui + plugin api.ui → 统一 DialogRequest（消息类型对齐 §7）</span></div>
-      <div class="anno"><b>渲染出口:</b> <span>renderer 统一用 ExtensionUIDialog 消费</span></div>
-      <div class="anno"><b>视觉:</b> <span class="accent">对齐 overlays 稿（ExtensionUIDialog / ConfirmDialog），本稿不重复</span></div>
-      <div class="anno"><b>来源标注:</b> <span>body 内显式标注触发 plugin（command id），便于追溯</span></div>
-      <div class="anno"><b>z-index:</b> <span>--z-modal (1000)，全局浮层</span></div>
+      <div class="anno"><b>位置（v6 改）:</b> <span class="v6">companion-band（顶替 composer），与 ask-user 同出口。<b style="color:var(--warn);">不再是独立全局 modal</b></span></div>
+      <div class="anno"><b>机制:</b> <span class="v6">plugin <code>await</code> 用户回应（confirm→boolean / select→string / input→string），期间 composer 不可用</span></div>
+      <div class="anno"><b>协议统一:</b> <span>pi ctx.ui + plugin api.ui + ask-user → 统一 companion-band 渲染出口</span></div>
+      <div class="anno"><b>视觉:</b> <span class="accent">对齐 overlays 稿 AskUserOverlay（companion-band 范式），confirm/select/input 仅交互控件不同</span></div>
+      <div class="anno"><b>来源标注:</b> <span>header 显式标注触发 plugin（command id），便于追溯</span></div>
+      <div class="anno"><b>z-index:</b> <span class="v6">--z-overlay (20)（companion-band 层，非 z-modal 1000）</span></div>
     </div>
 
-    <h3 style="margin-top:24px;">C2 · ask-user 富交互（M11 AskUserOverlay 对齐 v6）</h3>
+    <h3 style="margin-top:24px;">C2 · ask-user 富交互（M11 companion-band）<span class="h3-tag">多问题/多选/评论</span></h3>
+    <p class="spec-desc" style="margin-top:-8px;">ask-user 本就在 companion-band，C1 改过来后两者完全同位。区别仅在交互控件：ask-user 支持多问题序列/多选/评论，confirm/select/input 是单次确认/选择/输入。</p>
     <div class="render-frame">
       <div class="panel-stage" style="padding:14px;">
-        <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-dim);margin-bottom:8px;">composer 上方 companion-band（M11，ask-user 占位）· 来源：plugin</div>
-        <div style="background:var(--surface-hover);border-radius:var(--radius);padding:12px 14px;">
-          <div style="font-size:var(--text-sm);color:var(--neutral-fg);margin-bottom:10px;">部署需要确认参数，请选择环境：<span style="font-family:var(--font-mono);font-size:11px;color:var(--accent);">my-ext.deploy</span></div>
+        <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-dim);margin-bottom:8px;">companion-band（顶替 composer）· ask-user 形态（多选）· 来源：plugin</div>
+        <div style="background:var(--surface-hover);border-radius:var(--radius);padding:12px 14px;border:1px solid var(--accent-ring);">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span style="font-size:var(--text-sm);color:var(--neutral-fg);font-weight:500;">部署需要确认参数，请选择环境</span>
+            <span style="margin-left:auto;font-family:var(--font-mono);font-size:var(--text-2xs);color:var(--accent);">my-ext.deploy</span>
+          </div>
           <div style="display:flex;flex-direction:column;gap:4px;">
             <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--radius-sm);background:var(--accent-soft);color:var(--accent);font-size:var(--text-sm);">
               <span style="width:7px;height:7px;border-radius:50%;background:var(--accent);"></span> production（选中）
@@ -1390,13 +1416,31 @@ body {
             </div>
           </div>
         </div>
+        <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-dim);margin-top:8px;">↑ 与 C1 confirm 同位置同机制，仅交互控件不同（多选 vs 确认按钮）</div>
       </div>
     </div>
     <div class="anno-grid">
-      <div class="anno"><b>位置:</b> <span>M11 composer 上方 companion-band（与 Composer 互斥占位）</span></div>
+      <div class="anno"><b>位置:</b> <span>M11 companion-band（顶替 composer）——与 C1 confirm 同出口</span></div>
       <div class="anno"><b>双向通道:</b> <span>ask-user 是双向交互（等用户回传），独立通道，不并入单向 GuiComponent</span></div>
       <div class="anno"><b>视觉:</b> <span class="accent">对齐 overlays 稿（AskUserOverlay），不重复</span></div>
       <div class="anno"><b>context 降中性:</b> <span>bg-surface-hover（去 reasoning 软底彩色）</span></div>
+      <div class="anno"><b>C1 vs C2:</b> <span>同位同机制，区别仅在控件（confirm=按钮 / select=单选 / input=输入框 / ask-user=多问题序列+多选+评论）</span></div>
+    </div>
+
+    <!-- 决策记录：confirm 为什么从 modal 改 companion-band -->
+    <div class="note-box" style="margin-top:20px;border-left-color:var(--warn);">
+      <div class="note-box-head" style="color:var(--warn);">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        决策变更 · confirm 从独立 modal → companion-band
+        <span class="nb-tag">2026-07-31 推翻原方案</span>
+      </div>
+      <div class="note-foot">
+        <b style="color:var(--warn);">原方案：</b>confirm/select/input 走 M15 ExtensionUIDialog（独立全局 modal，z-modal 1000，非阻塞，composer 仍可用）。<br>
+        <b style="color:var(--success);">现方案：</b>confirm/select/input 合并到 companion-band（M11），与 ask-user 同位置同机制（顶替 composer，阻塞，plugin await）。<br>
+        <b>理由：</b>① confirm 本质也是「plugin 等用户决定」，和 ask-user 同语义，没必要两套 UI 机制；② companion-band 顶替 composer 是强引导，避免用户忽略 confirm 继续打字；③ 视觉统一（一种交互一种位置），减少认知负担；④ 为 C3 窗口化留口——companion 可最小化成 badge（见下），比 modal 更灵活。<br>
+        <b>代价：</b>confirm 期间 composer 不可用（被顶替）。但 confirm 本就是阻塞决策，这符合语义；用户若想暂不决定，可点 companion 的最小化按钮（C3）把它收成 badge，composer 恢复。<br>
+        <b>M15 出口保留：</b>M15 不再是 confirm 主出口，但保留给「真正需要全局阻断」的场景（如致命错误确认、必须立即处理的系统级提示）——这些罕见场景才用 modal。日常 plugin confirm 走 companion-band。
+      </div>
     </div>
 
     <!-- overlay 窗口化（最小化 / 还原 / 拖动）-->
@@ -1800,7 +1844,7 @@ body {
   │  <span class="s-gap">▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒</span>
   │
   │  <span class="s-com">[目标态] handler 执行，调 SDK API 产生多路反馈：</span>
-  ├─→ <span class="s-plugin">api.ui.showConfirm(...)</span>        <span class="s-com">→ M15 弹确认框</span>
+  ├─→ <span class="s-plugin">api.ui.showConfirm(...)</span>        <span class="s-com">→ M11 companion-band 弹确认</span>
   ├─→ <span class="s-plugin">api.ui.updateStatusBarItem(...)</span> <span class="s-com">→ M8 更新底栏状态</span>
   ├─→ <span class="s-plugin">api.views.update(...)</span>           <span class="s-mount">→ M2 推送 view 内容（GuiComponent）</span> <span class="s-gap">[GAP]</span>
   ├─→ <span class="s-plugin">api.sessions.sendMessage(...)</span>   <span class="s-com">→ M4 往对话流发消息 / 触发 agent turn</span>
@@ -1809,7 +1853,7 @@ body {
   │
   ▼
 <span class="s-renderer">renderer</span>              <span class="s-com">消费 plugin:uiRequest / plugin:viewUpdate / plugin:statusUpdate 消息族</span>
-                          <span class="s-com">→ 各挂载点 UI 更新（dialog 弹出 / 底栏刷新 / view 渲染 / 对话流追加）</span></div>
+                          <span class="s-com">→ 各挂载点 UI 更新（companion 弹出 / 底栏刷新 / view 渲染 / 对话流追加）</span></div>
     </div>
 
     <h3 style="margin-top:28px;">9.2 plugin handler 注册（代码示例）<span class="h3-tag">manifest 声明 + activate 注册</span></h3>
@@ -1846,7 +1890,7 @@ body {
   ctx.api.commands.<span class="cb-api">register</span>(<span class="cb-str">'my-ext.deploy'</span>, <span class="cb-kw">async</span> (args) =&gt; {
     <span class="cb-com">// ① 读配置（M16）</span>
     <span class="cb-kw">const</span> env = <span class="cb-kw">await</span> ctx.api.config.<span class="cb-api">get</span>(<span class="cb-str">'environment'</span>)
-    <span class="cb-com">// ② 弹确认框（M15）</span>
+    <span class="cb-com">// ② 弹确认框（M11 companion-band）</span>
     <span class="cb-kw">const</span> ok = <span class="cb-kw">await</span> ctx.api.ui.<span class="cb-api">showConfirm</span>(
       <span class="cb-str">'Deploy'</span>, <span class="cb-str">`部署到 ${env}？`</span>
     )
@@ -1887,9 +1931,9 @@ body {
           </tr>
         </thead>
         <tbody>
-          <tr><td><span class="ca-api">api.ui.showConfirm</span></td><td class="ca-behavior">弹确认框，await 用户 yes/no</td><td><span class="ca-mount">M15 dialog</span></td><td><span class="ca-status s-done">已实现</span></td></tr>
-          <tr><td><span class="ca-api">api.ui.showSelect</span></td><td class="ca-behavior">弹选择框，await 用户选项</td><td><span class="ca-mount">M15 / M11</span></td><td><span class="ca-status s-done">已实现</span></td></tr>
-          <tr><td><span class="ca-api">api.ui.showInput</span></td><td class="ca-behavior">弹输入框，await 用户文本</td><td><span class="ca-mount">M15 dialog</span></td><td><span class="ca-status s-done">已实现</span></td></tr>
+          <tr><td><span class="ca-api">api.ui.showConfirm</span></td><td class="ca-behavior">弹确认框（companion-band），await 用户 yes/no</td><td><span class="ca-mount">M11 companion</span></td><td><span class="ca-status s-done">已实现</span></td></tr>
+          <tr><td><span class="ca-api">api.ui.showSelect</span></td><td class="ca-behavior">弹选择框（companion-band），await 用户选项</td><td><span class="ca-mount">M11 companion</span></td><td><span class="ca-status s-done">已实现</span></td></tr>
+          <tr><td><span class="ca-api">api.ui.showInput</span></td><td class="ca-behavior">弹输入框（companion-band），await 用户文本</td><td><span class="ca-mount">M11 companion</span></td><td><span class="ca-status s-done">已实现</span></td></tr>
           <tr><td><span class="ca-api">api.ui.notify</span></td><td class="ca-behavior">Toast 通知（info/warn/error）</td><td><span class="ca-mount">全局 Toast</span></td><td><span class="ca-status s-done">已实现</span></td></tr>
           <tr><td><span class="ca-api">api.ui.updateStatusBarItem</span></td><td class="ca-behavior">更新底栏状态项文本/状态色</td><td><span class="ca-mount">M8 底栏</span></td><td><span class="ca-status s-done">已实现</span></td></tr>
           <tr><td><span class="ca-api">api.sessions.sendMessage</span></td><td class="ca-behavior">往对话流发消息（可触发 agent turn）</td><td><span class="ca-mount">M4 对话流</span></td><td><span class="ca-status s-done">已实现</span></td></tr>
@@ -1917,7 +1961,7 @@ body {
         <div class="note-col goal">
           <h4 style="color:var(--success);">✓ 完整闭环（6 挂载点）</h4>
           <p>入口 + 执行 + 反馈全通。这些挂载点 plugin 能真正「做交互」：</p>
-          <p><b>M4</b> tool result block · <b>M5</b> custom message（<code>__gui__</code> 推送）<br><b>M7</b> drawer widget · <b>M8</b> 底栏 status（<code>updateStatusBarItem</code>）<br><b>M11</b> ask-user · <b>M15</b> dialog（<code>showConfirm/Select/Input</code>）</p>
+          <p><b>M4</b> tool result block · <b>M5</b> custom message（<code>__gui__</code> 推送）<br><b>M7</b> drawer widget · <b>M8</b> 底栏 status（<code>updateStatusBarItem</code>）<br><b>M11</b> companion-band（ask-user <b>及 confirm/select/input</b>）</p>
           <p style="color:var(--success);">pi-extension 机制完整可用，plugin 经适配器复用。</p>
         </div>
         <div class="note-col now">

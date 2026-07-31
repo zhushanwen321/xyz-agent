@@ -421,7 +421,7 @@ body {
        ================================================================ -->
   <section class="section">
     <div class="section-head"><span class="section-num">§1</span><h2 class="section-title">AppShell 全景 · 16 挂载点同时点亮</h2></div>
-    <p class="section-desc">单个界面里，plugin「Pipeline Commander」触达了它能触达的<b>每一个</b>位置。左 sidebar（M1/M2 一级+二级 tab）/ 中 main（M4/M5/M9/M10/M11/M12 对话流+工具条+命令+ask-user）/ 右 drawer（M6/M7 plugin tab + 日志）/ 底全局底栏（M8 跨全宽 status）。浮层 M13/M14/M15/M16 见 §2。每个 <code>M编号</code> 标签的颜色 = 所属维度。</p>
+    <p class="section-desc">单个界面里，plugin「Pipeline Commander」触达了它能触达的<b>每一个</b>位置。左 sidebar（M1/M2 一级+二级 tab）/ 中 main（M4/M5/M9/M10/M11/M12 对话流+工具条+命令+companion+<b>M8 main 局部底栏</b>）/ 右 drawer（M6/M7 plugin tab + 日志）。浮层 M13/M14/M15/M16 见 §2。每个 <code>M编号</code> 标签的颜色 = 所属维度。</p>
 
     <div class="appshell">
       <div class="as-stage-label"><span class="as-prod">●</span> stage #131316 窗口底 · AppShell flex h-screen</div>
@@ -605,16 +605,29 @@ body {
                 <span class="mtag mtag-float mb" style="top:18px;right:-7px;">M5</span>
               </div>
 
-              <!-- M11: companion-band（ask-user 占位，plugin 发起的富交互）-->
+              <!-- M11: companion-band（顶替 composer，ask-user + confirm/select/input 统一出口）-->
               <div style="position:relative;">
-                <div class="companion">
-                  <div class="companion-label">⌘ Pipeline Commander 需要确认 · my-ext.deploy</div>
-                  <div class="companion-q">检测到 e2e 失败，是否继续部署到 production？</div>
-                  <div class="companion-opts">
-                    <div class="copt sel"><span class="copt-dot"></span>继续部署（忽略 e2e）</div>
-                    <div class="copt"><span class="copt-dot"></span>中止，先修 e2e</div>
-                    <div class="copt"><span class="copt-dot"></span>部署到 staging 回退</div>
+                <div style="display:flex;flex-direction:column;gap:6px;">
+                  <!-- 形态①：ask-user（多选项）-->
+                  <div class="companion">
+                    <div class="companion-label">⌘ ask-user · my-ext.deploy（多选）</div>
+                    <div class="companion-q">检测到 e2e 失败，是否继续部署到 production？</div>
+                    <div class="companion-opts">
+                      <div class="copt sel"><span class="copt-dot"></span>继续部署（忽略 e2e）</div>
+                      <div class="copt"><span class="copt-dot"></span>中止，先修 e2e</div>
+                      <div class="copt"><span class="copt-dot"></span>部署到 staging 回退</div>
+                    </div>
                   </div>
+                  <!-- 形态②：confirm（showConfirm，按钮）— 同位置同机制 -->
+                  <div class="companion" style="border-color:var(--success);">
+                    <div class="companion-label" style="color:var(--success);">✓ confirm · my-ext.deploy（showConfirm）</div>
+                    <div class="companion-q" style="margin-bottom:6px;">确认部署到 production？</div>
+                    <div style="display:flex;gap:5px;justify-content:flex-end;">
+                      <span class="dc-btn ghost" style="padding:3px 10px;font-size:var(--text-xs);">取消</span>
+                      <span class="dc-btn primary" style="padding:3px 10px;font-size:var(--text-xs);">确认</span>
+                    </div>
+                  </div>
+                  <div style="font-family:var(--font-mono);font-size:9px;color:var(--neutral-dim);text-align:center;">↑ 两种形态同位同机制（顶替 composer），仅控件不同</div>
                 </div>
                 <span class="mtag mtag-float mb" style="top:-7px;right:-7px;">M11</span>
               </div>
@@ -644,6 +657,24 @@ body {
                     <span class="cb-send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span>
                   </div>
                   <span class="mtag mtag-float ma" style="bottom:-7px;right:-7px;">M9</span>
+                </div>
+
+                <!-- M8: main-panel 局部底栏（composer 下方，不跨全宽）-->
+                <div style="position:relative;margin-top:4px;">
+                  <div class="as-statusbar">
+                    <!-- pi 内置 status -->
+                    <span class="sb-item ok"><span class="sb-dot"></span>pi: ready</span>
+                    <span class="sb-item neutral"><span class="sb-dot"></span>session: 2a8f</span>
+                    <!-- plugin statusBarItems（左 alignment）-->
+                    <span class="sb-item plugin-src"><span class="sb-dot"></span>pipeline: running</span>
+                    <span class="sb-item warn"><span class="sb-dot"></span>e2e: 3 failed</span>
+                    <span class="sb-item danger"><span class="sb-dot"></span>build: blocked</span>
+                    <span class="sb-spacer"></span>
+                    <!-- plugin statusBarItems（右 alignment）-->
+                    <span class="sb-item plugin-src"><span class="sb-dot"></span>target: staging</span>
+                    <span class="sb-item neutral"><span class="sb-dot"></span>last deploy: 2m</span>
+                  </div>
+                  <span class="mtag mtag-float ma" style="top:-7px;right:-7px;">M8</span>
                 </div>
               </div>
 
@@ -680,24 +711,7 @@ body {
 
       </div>
 
-      <!-- M8: 全局底栏（跨全宽，AppShell 底部）-->
-      <div style="position:relative;">
-        <div class="as-stage-label" style="color:var(--accent);"><span class="as-prod">↓</span> 全局底栏（跨全宽 · AppShell 底部 · bg-bg-elevated）</div>
-        <div class="as-statusbar">
-          <!-- pi 内置 status -->
-          <span class="sb-item ok"><span class="sb-dot"></span>pi: ready</span>
-          <span class="sb-item neutral"><span class="sb-dot"></span>session: 2a8f</span>
-          <!-- plugin statusBarItems（左 alignment，priority 排序）-->
-          <span class="sb-item plugin-src"><span class="sb-dot"></span>pipeline: running</span>
-          <span class="sb-item warn"><span class="sb-dot"></span>e2e: 3 failed</span>
-          <span class="sb-item danger"><span class="sb-dot"></span>build: blocked</span>
-          <span class="sb-spacer"></span>
-          <!-- plugin statusBarItems（右 alignment）-->
-          <span class="sb-item plugin-src"><span class="sb-dot"></span>target: staging</span>
-          <span class="sb-item neutral"><span class="sb-dot"></span>last deploy: 2m ago</span>
-        </div>
-        <span class="mtag mtag-float ma" style="top:14px;right:-7px;">M8</span>
-      </div>
+      <div class="as-stage-label" style="color:var(--neutral-dim);"><span class="as-prod">●</span> sidebar / drawer 无底栏 — M8 是 main-panel 局部组件（见上 main 栏底部）</div>
 
     </div>
 
@@ -710,14 +724,14 @@ body {
       <div><span class="mtag mb">M5</span> custom __gui__</div>
       <div><span class="mtag ma">M6</span> drawer tab 栏</div>
       <div><span class="mtag ma">M7</span> drawer 内容</div>
-      <div><span class="mtag ma">M8</span> 全局底栏</div>
+      <div><span class="mtag ma">M8</span> main 局部底栏</div>
       <div><span class="mtag ma">M9</span> composer 工具条</div>
       <div><span class="mtag md">M10</span> slash 命令</div>
-      <div><span class="mtag mb">M11</span> ask-user</div>
+      <div><span class="mtag mb">M11</span> companion（ask+confirm）</div>
       <div><span class="mtag ma">M12</span> panel header</div>
       <div><span class="mtag mb">M13</span> 浮层 slot（低优，§2）</div>
       <div><span class="mtag me">M14</span> 独立 view（§2）</div>
-      <div><span class="mtag mc">M15</span> dialog（§2）</div>
+      <div><span class="mtag mc">M15</span> 全局 modal（降级，§2）</div>
       <div><span class="mtag md">M16</span> settings 区段（§2）</div>
     </div>
   </section>
@@ -727,7 +741,7 @@ body {
        ================================================================ -->
   <section class="section">
     <div class="section-head"><span class="section-num">§2</span><h2 class="section-title">浮层 · 独立 view · 配置区（M13-M16 + C3）</h2></div>
-    <p class="section-desc">不在主 AppShell 行内的挂载点：M14 独立 view 路由（完整页面，L3 仅 built-in）/ M15 全局 dialog（C1 confirm）/ M16 settings schema 区段（D2，plugin 配置表单）/ M13 对话流浮层 slot（B，低优）。加 C3 overlay 窗口化能力（最小化 badge）。</p>
+    <p class="section-desc">不在主 AppShell 行内的挂载点：M14 独立 view 路由（完整页面，L3 仅 built-in）/ <b>M15 全局 modal（降级：仅致命错误/系统级提示；日常 confirm 已并入 M11 companion-band，见 §1）</b> / M16 settings schema 区段（D2，plugin 配置表单）/ M13 对话流浮层 slot（B，低优）。加 C3 overlay 窗口化能力（companion-band + modal 都可最小化 badge）。</p>
 
     <div class="overlays-row">
 
@@ -770,30 +784,34 @@ body {
         </div>
       </div>
 
-      <!-- M15: dialog（C1 confirm）+ C3 overlay 窗口化 -->
+      <!-- M15: 全局 modal（降级 · 仅致命错误/系统级）+ C3 窗口化 -->
       <div class="overlay-card">
-        <div class="overlay-card-label"><span class="mtag mc">M15</span> 全局 dialog（C1 confirm）· <span class="mtag mc">C3</span> 窗口化</div>
+        <div class="overlay-card-label"><span class="mtag mc">M15</span> 全局 modal（降级）· <span class="mtag mc">C3</span> 窗口化</div>
         <div style="display:flex;flex-direction:column;gap:14px;">
-          <!-- 展开态 dialog -->
-          <div class="dialog-card">
-            <div class="dc-title">确认部署到 production？</div>
-            <div class="dc-body">e2e 有 3 个失败。继续部署不可撤销。来源：plugin <code>my-ext.deploy</code></div>
+          <!-- 降级说明 -->
+          <div style="background:color-mix(in oklch, var(--warn) 8%, transparent);border-left:3px solid var(--warn);border-radius:var(--radius);padding:8px 10px;font-size:10px;color:var(--neutral-mid);font-family:var(--font-mono);line-height:1.6;">
+            <b style="color:var(--warn);">M15 降级：</b>confirm/select/input 已并入 M11 companion-band（见 §1）。M15 仅留<b>致命错误/系统级提示</b>（必须立即处理、强阻断）。
+          </div>
+          <!-- M15 现仅用于致命错误 -->
+          <div class="dialog-card" style="border:1px solid var(--danger);">
+            <div class="dc-title" style="color:var(--danger);">⚠ Runtime 致命错误</div>
+            <div class="dc-body">plugin 进程崩溃，无法恢复。需立即重启。来源：<code>system</code></div>
             <div class="dc-actions">
-              <span class="dc-btn ghost">取消</span>
-              <span class="dc-btn primary">强制部署</span>
+              <span class="dc-btn ghost">忽略</span>
+              <span class="dc-btn primary">重启 plugin</span>
             </div>
           </div>
-          <!-- C3 最小化 badge（overlay 窗口化）-->
+          <!-- C3 最小化 badge（窗口化，适用于 M11 companion + M15 modal）-->
           <div style="position:relative;background:var(--bg-input);border-radius:var(--radius);padding:20px;min-height:90px;display:flex;align-items:center;justify-content:center;">
-            <div style="position:absolute;top:8px;left:8px;font-family:var(--font-mono);font-size:9px;color:var(--neutral-dim);">最小化态（浮角落）</div>
+            <div style="position:absolute;top:8px;left:8px;font-family:var(--font-mono);font-size:9px;color:var(--neutral-dim);">C3 最小化态（companion/modal 都可）</div>
             <span class="overlay-badge" title="点击还原">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-              deploy 待确认
+              待确认
               <span class="ob-count">1</span>
               <span class="ob-restore"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
             </span>
           </div>
-          <div style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);">dialog 可最小化为 badge（浮右下角），点还原；header 可拖动。让用户把确认框挪到一边继续看对话流。</div>
+          <div style="font-size:10px;color:var(--neutral-dim);font-family:var(--font-mono);">C3 窗口化适用于 M11 companion-band（日常 confirm）+ M15 modal（致命错误）：都可最小化为 badge 浮角落，点还原。</div>
         </div>
       </div>
 
@@ -914,10 +932,10 @@ body {
         </tr>
         <tr>
           <td><span class="mtag ma">M8</span></td>
-          <td><span class="ct-where">AppShell · 全局底栏</span></td>
+          <td><span class="ct-where">main-panel · 局部底栏</span></td>
           <td><span class="lg lg-a">A 结构容器</span></td>
           <td><span class="ct-level l1">L1</span></td>
-          <td class="ct-prim">4 个 statusBarItems：pipeline running / e2e failed(warn) / build blocked(danger) / target staging。priority + alignment 排序，跨全宽常驻</td>
+          <td class="ct-prim">4 个 statusBarItems：pipeline running / e2e failed(warn) / build blocked(danger) / target staging。priority + alignment 排序，<b style="color:var(--accent);">main-panel 局部（composer 下方，不跨全宽）</b></td>
           <td class="ct-prim" style="color:var(--success);">✓ 全部</td>
         </tr>
         <tr>
@@ -941,7 +959,7 @@ body {
           <td><span class="ct-where">composer · companion</span></td>
           <td><span class="lg lg-b">B 对话流</span></td>
           <td><span class="ct-level l1">L1</span></td>
-          <td class="ct-prim">ask-user 富交互（双向通道）：e2e 失败后询问是否继续部署，3 选项单选。可最小化为 badge（C3）</td>
+          <td class="ct-prim"><b style="color:var(--accent);">统一出口</b>：ask-user 富交互 + confirm/select/input（showConfirm 等）。顶替 composer、阻塞、plugin await。可最小化为 badge（C3）</td>
           <td class="ct-prim" style="color:var(--success);">✓ 全部</td>
         </tr>
         <tr>
@@ -970,10 +988,10 @@ body {
         </tr>
         <tr>
           <td><span class="mtag mc">M15</span></td>
-          <td><span class="ct-where">全局 · modal</span></td>
+          <td><span class="ct-where">全局 · modal（降级）</span></td>
           <td><span class="lg lg-c">C 对话框</span></td>
           <td><span class="ct-level l1">L1</span></td>
-          <td class="ct-prim">confirm dialog（确认部署到 production）+ C3 窗口化（最小化 badge / 拖动）。统一 DialogRequest 协议</td>
+          <td class="ct-prim"><b style="color:var(--warn);">降级</b>：confirm 已并入 M11。M15 仅留致命错误/系统级提示（强阻断）。+ C3 窗口化（最小化 badge / 拖动）</td>
           <td class="ct-prim" style="color:var(--success);">✓ 全部</td>
         </tr>
         <tr>
@@ -1039,7 +1057,7 @@ body {
   │  <span class="f-gap">▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒</span>
   │
   │  <span class="f-com">[目标态] handler 执行，调 SDK API 多路反馈：</span>
-  ├─→ <span class="f-plugin">api.ui.showConfirm(...)</span>        <span class="f-com">→ M15 弹确认框</span> <span class="f-ok">✓</span>
+  ├─→ <span class="f-plugin">api.ui.showConfirm(...)</span>        <span class="f-com">→ M11 companion 弹确认</span> <span class="f-ok">✓</span>
   ├─→ <span class="f-plugin">api.ui.updateStatusBarItem(...)</span> <span class="f-com">→ M8 更新底栏</span> <span class="f-ok">✓</span>
   ├─→ <span class="f-plugin">api.views.update(...)</span>           <span class="f-com">→ M2 推 view 内容</span> <span class="f-gap">[GAP]</span>
   ├─→ <span class="f-plugin">api.sessions.sendMessage(...)</span>   <span class="f-com">→ M4 对话流</span> <span class="f-ok">✓</span>
@@ -1088,7 +1106,7 @@ body {
       <table class="api-table">
         <thead><tr><th style="width:200px;">SDK API</th><th>点击后能干什么</th><th style="width:95px;">反馈挂载点</th><th style="width:65px;">状态</th></tr></thead>
         <tbody>
-          <tr><td class="at-api">ui.showConfirm/Select/Input</td><td class="at-do">弹确认/选择/输入框，await 用户输入</td><td class="at-mount">M15 / M11</td><td><span class="at-status s-done">已实现</span></td></tr>
+          <tr><td class="at-api">ui.showConfirm/Select/Input</td><td class="at-do">弹确认/选择/输入框（companion-band），await</td><td class="at-mount">M11 companion</td><td><span class="at-status s-done">已实现</span></td></tr>
           <tr><td class="at-api">ui.updateStatusBarItem</td><td class="at-do">改底栏状态项文本/状态色</td><td class="at-mount">M8 底栏</td><td><span class="at-status s-done">已实现</span></td></tr>
           <tr><td class="at-api">ui.notify</td><td class="at-do">Toast 通知（info/warn/error）</td><td class="at-mount">全局 Toast</td><td><span class="at-status s-done">已实现</span></td></tr>
           <tr><td class="at-api">sessions.sendMessage</td><td class="at-do">往对话流发消息（触发 agent turn）</td><td class="at-mount">M4 对话流</td><td><span class="at-status s-done">已实现</span></td></tr>
@@ -1117,8 +1135,7 @@ body {
           <span class="loop-pill pk-ok">M5 custom msg</span>
           <span class="loop-pill pk-ok">M7 drawer widget</span>
           <span class="loop-pill pk-ok">M8 status</span>
-          <span class="loop-pill pk-ok">M11 ask-user</span>
-          <span class="loop-pill pk-ok">M15 dialog</span>
+          <span class="loop-pill pk-ok">M11 companion（ask+confirm）</span>
         </div>
         <p style="margin-top:8px;color:var(--success);">已能覆盖大部分交互场景（tool result / 自定义消息 / 底栏 / 弹框）。</p>
       </div>
