@@ -567,6 +567,8 @@ body {
 .cap-api-table .ca-status { font-family: var(--font-mono); font-size: 9px; font-weight: 600; padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
 .ca-status.s-done { background: var(--success-soft); color: var(--success); }
 .ca-status.s-todo { background: var(--danger-soft); color: var(--danger); }
+.ca-status.s-warn { background: var(--warn-soft); color: var(--warn); }
+.ca-status.s-block { background: var(--surface-2); color: var(--neutral-dim); }
 
 /* 缺口/边界框（复用 note-box，gap 用 danger bg-soft 整块 + head icon）*/
 .note-box.gap { background: color-mix(in oklch, var(--danger) 10%, var(--bg-card)); }
@@ -1993,6 +1995,36 @@ body {
         <b>缓解：</b>5 个完整闭环挂载点（M4/M5/M7/M8/M11）已能覆盖大部分交互场景（tool result / 自定义消息 / 底栏 / 弹框）。M15 降级为仅致命错误，不计入完整闭环。声明式空壳的 6 个是「入口已画好，等接线」。
       </div>
     </div>
+
+    <h3 style="margin-top:28px;">9.5 视觉态 vs 架构依赖对照 <span class="h3-tag">来自 renderer-target-architecture §11.3</span></h3>
+    <p class="spec-desc">v6 视觉稿采取「<b>视觉先行、架构跟进</b>」策略——所有挂载点的视觉态已在本文档定义，实施者按本表一眼判断「现在能不能做」。三列：<b>视觉设计</b>（本文档定义的 v6 视觉态）/ <b>架构依赖</b>（架构层先行项，SSOT <code>renderer-target-architecture.md §11.3</code>）/ <b>落地状态</b>（4 档，对应状态色见说明）。</p>
+    <div class="render-frame">
+      <table class="cap-api-table">
+        <thead>
+          <tr>
+            <th style="width:230px;">视觉设计（v6 视觉态）</th>
+            <th>架构依赖（先行项）</th>
+            <th style="width:130px;">落地状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><span class="ca-mount">M4/M5 tool result + 自定义消息渲染</span></td><td class="ca-behavior">GuiComponentRenderer 已实现</td><td><span class="ca-status s-done">✅ 可直接落地</span></td></tr>
+          <tr><td><span class="ca-mount">M7 drawer widget</span></td><td class="ca-behavior">GuiComponentRenderer 已实现</td><td><span class="ca-status s-done">✅ 可直接落地</span></td></tr>
+          <tr><td><span class="ca-mount">M10 slash command（CommandPopover）</span></td><td class="ca-behavior">已实现（session.commands 双轨已通）</td><td><span class="ca-status s-done">✅ 可直接落地</span></td></tr>
+          <tr><td><span class="ca-mount">M8 main-panel 局部底栏 status item</span></td><td class="ca-behavior">StatusBarController（pi status 已实现，plugin statusBarItems 待接入）</td><td><span class="ca-status s-warn">⚠️ 视觉态就绪，plugin 接入待架构</span></td></tr>
+          <tr><td><span class="ca-mount">M11 companion-band 统一交互出口</span></td><td class="ca-behavior">companion-band 已实现 + MessageBusBridge（overlay lifecycle 统一管理）</td><td><span class="ca-status s-warn">⚠️ 视觉态就绪，lifecycle 待架构补约定</span></td></tr>
+          <tr><td><span class="ca-mount">C3 overlay 窗口化（最小化/还原/拖动）</span></td><td class="ca-behavior">MessageBusBridge lifecycle 约定</td><td><span class="ca-status s-warn">⚠️ 视觉态就绪，lifecycle 待架构补约定</span></td></tr>
+          <tr><td><span class="ca-mount">M1 sidebar 第 5 plugin tab（有实际内容）</span></td><td class="ca-behavior"><code>api.views.update</code> API + ViewHost</td><td><span class="ca-status s-todo">❌ 视觉态就绪，差 API（声明式空壳）</span></td></tr>
+          <tr><td><span class="ca-mount">M2/M9/M12 plugin 按钮/视图点击响应</span></td><td class="ca-behavior"><code>api.commands.register</code> API + CommandRegistry</td><td><span class="ca-status s-todo">❌ 视觉态就绪，差 API（声明式空壳）</span></td></tr>
+          <tr><td><span class="ca-mount">M16 settings plugin 配置区段（D2）</span></td><td class="ca-behavior">contribution schema <code>configuration</code> 落地</td><td><span class="ca-status s-todo">❌ 视觉态就绪，schema 驱动表单待架构</span></td></tr>
+          <tr><td><span class="ca-mount">M14 独立 view（E1）容器</span></td><td class="ca-behavior">L3 逃生口（GUI_CUSTOM_REGISTRY_KEY）已预留未实现</td><td><span class="ca-status s-todo">❌ 视觉态就绪，逃生口待架构</span></td></tr>
+          <tr><td><span class="ca-mount">形态 B（detail 多文件 tab / terminal 多实例）</span></td><td class="ca-behavior">useDetailPane 单值→map、单 PTY→多 PTY 重构</td><td><span class="ca-status s-todo">❌ 视觉态就绪，数据模型重构属阶段 B</span></td></tr>
+          <tr><td><span class="ca-mount">subagent/workflow 嵌套对话流</span></td><td class="ca-behavior">虚拟 session API（runtime+renderer+stores 三层，成本巨大）</td><td><span class="ca-status s-todo">❌ 视觉态就绪，暂缓（架构层评估为高成本）</span></td></tr>
+          <tr><td><span class="ca-mount">A2 drawer plugin tab</span></td><td class="ca-behavior">proposed 暂不开放（v2 决策，避免一级 tab 泛滥）</td><td><span class="ca-status s-block">⛔ 不设计（架构未解锁）</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="spec-desc"><b>说明</b>：v6 视觉稿采取「视觉先行、架构跟进」策略——所有挂载点的视觉态已在本文档定义，<b>✅</b> 项可直接进入实施；<b>⚠️</b> 项视觉就绪但需架构补约定/lifecycle；<b>❌</b> 项视觉就绪但阻塞于 API 缺口（ExtensionHost 层 P0：<code>api.commands.register</code> + <code>api.views.update</code>，解 6 个声明式空壳）；<b>⛔</b> 项架构未解锁，视觉不设计。架构依赖详情见 <code>renderer-target-architecture.md §11.3</code>。</p>
   </section>
 
   <!-- ============ footer ============ -->
