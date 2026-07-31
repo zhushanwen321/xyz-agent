@@ -265,4 +265,57 @@ describe('useAppUpdate', () => {
     expect(result!.state.errorMessage).toBe('网络中断')
     scope.stop()
   })
+
+  // [HISTORICAL] 回归：传给 ipc 的 release 必须是 plain object，不能是 Vue reactive proxy。
+  // 事故：state.latestRelease 存入 reactive(state) 后被 Vue 深度代理化（含嵌套 assets），
+  // performUpdate 把 proxy 传给 ipcRenderer.invoke → Electron structured clone 抛
+  // "an object could not be cloned" → invoke reject 被 catch 吞成 errorMessage，
+  // 用户在 UpdateButton hover 看到英文 clone 报错。现有用例 mock @/lib/ipc 接收的是
+  // makeRelease() 返回的普通对象，测不到此问题；本用例在 reactive 上下文（effectScope +
+  // useAppUpdate 内部 reactive state）下验证传给 ipc 的对象可被 structuredClone。
+  it('performUpdate 传给 ipc 的是 plain object（非 reactive proxy），可过 structured clone', async () => {
+    // makeRelease 带嵌套 asset，覆盖「嵌套层也必须 plain」（toRaw 浅解包会漏掉嵌套）
+    const releaseWithAsset: LatestReleaseInfo = {
+      ...makeRelease('0.9.0'),
+      assets: {
+        macArm64Zip: {
+          name: 'xyz-agent-mac-arm64.zip',
+          downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/xyz-agent-mac-arm64.zip',
+          size: 100,
+          sha256: 'a'.repeat(64),
+        },
+      },
+    }
+    hoisted.checkForUpdate.mockResolvedValue(releaseWithAsset)
+    // 捕获 performUpdate 实际收到的参数（mock 在 ipc 层，但 useAppUpdate.performUpdate
+    // 内部读 state.latestRelease 后透传给 ipc.performUpdate，捕获点即 IPC 入参）
+    const received: LatestReleaseInfo[] = []
+    hoisted.performUpdate.mockImplementation(async (r) => {
+      received.push(r)
+      return { triggerRestart: true }
+    })
+    const scope = effectScope()
+    let result: ReturnType<typeof useAppUpdate> | undefined
+    scope.run(() => {
+      result = useAppUpdate()
+    })
+    await result!.checkForUpdate()
+    await result!.performUpdate()
+
+    expect(received).toHaveLength(1)
+    const passed = received[0]!
+    // 关键断言 1：原型是 Object.prototype（plain object），不是 reactive proxy 的目标
+    // （proxy 的 getPrototypeOf 透传 target，但 structuredClone 对 proxy 本身报错；
+    // 配合断言 2 的 structuredClone 不抛错，双重确认）
+    expect(Object.getPrototypeOf(passed)).toBe(Object.prototype)
+    // 关键断言 2：可被 structuredClone（IPC 用的同款序列化算法），不抛 DataCloneError
+    expect(() => structuredClone(passed)).not.toThrow()
+    // 关键断言 3：嵌套层也是 plain（assets.macArm64Zip 不能是 reactive proxy）
+    expect(Object.getPrototypeOf(passed.assets.macArm64Zip!)).toBe(Object.prototype)
+    expect(() => structuredClone(passed.assets.macArm64Zip!)).not.toThrow()
+    // 数据完整性：深拷贝后字段保留
+    expect(passed.version).toBe('0.9.0')
+    expect(passed.assets.macArm64Zip!.sha256).toBe('a'.repeat(64))
+    scope.stop()
+  })
 })

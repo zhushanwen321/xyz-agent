@@ -7,7 +7,7 @@
  *
  * 依赖方向：无下游（读全局 window.electronAPI，类型经 declare global 自动可用）
  */
-import type { LatestReleaseInfo, SegmentsMetadataEntry, UpdateStage } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, SegmentsMetadataEntry, UpdateStage, UpdateSettings } from '@xyz-agent/shared'
 
 /** preload 注入的 electronAPI（web/mock 环境为 undefined） */
 const api = window.electronAPI
@@ -318,6 +318,26 @@ export function setProxyConfig(config: import('@xyz-agent/shared').IProxyConfig)
 /** 测试代理连接。无 IPC 时返回成功（跳过测试） */
 export function testProxy(config: import('@xyz-agent/shared').IProxyConfig): Promise<{ success: boolean; message?: string }> {
   return api?.testProxy(config) ?? Promise.resolve({ success: true, message: 'No IPC available' })
+}
+
+// ── 升级提醒持久化标志 + 升级设置（功能 1 常驻提醒 + 功能 2 预下载开关）─────────
+// getPendingUpdate：app 启动时调，读持久化标志恢复「可升级」提醒（离线也能常驻）。
+// getUpdateSettings/setUpdateSettings：读/写升级设置（预下载开关），设置页用。
+// 无 IPC（web/mock）时 getPendingUpdate 返回 null，getUpdateSettings 返回默认值，setUpdateSettings no-op。
+
+/** 读取升级提醒持久化标志。无 IPC 时返回 null（无持久化提醒可恢复） */
+export function getPendingUpdate(): Promise<LatestReleaseInfo | null> {
+  return api?.getPendingUpdate() ?? Promise.resolve(null)
+}
+
+/** 读取升级设置。无 IPC 时返回默认值（预下载关闭） */
+export function getUpdateSettings(): Promise<UpdateSettings> {
+  return api?.getUpdateSettings() ?? Promise.resolve({ preDownload: false })
+}
+
+/** 保存升级设置。无 IPC 时 no-op 返回 success */
+export function setUpdateSettings(settings: UpdateSettings): Promise<{ success: boolean }> {
+  return api?.setUpdateSettings(settings) ?? Promise.resolve({ success: true })
 }
 
 // ── 系统提示音（跨平台：mac afplay / linux paplay / win 返 wav base64）─────────

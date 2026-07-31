@@ -21,15 +21,18 @@
  * - 校验失败必须删除半下载文件，避免下次误用残文件
  * - .downloading 临时后缀：崩溃后残留文件不会伪装成完整安装包
  *
- * 依赖方向：download-asset → constants + types + @xyz-agent/shared + node:crypto/fs/stream
+ * 依赖方向：download-asset → constants + types + hash + @xyz-agent/shared + node:fs/stream
+ *   （hash 为无网络依赖的纯函数叶子模块，见 hash.ts / review S#13）
  */
-import { createHash } from 'node:crypto'
 import { createWriteStream, createReadStream, mkdirSync, renameSync, statSync, unlinkSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { ProxyAgent } from 'undici'
 import type { ReleaseAsset, IProxyConfig } from '@xyz-agent/shared'
 import { UPDATE_DIR } from './constants.js'
+import { hashFileSha256 } from './hash.js'
+import { resolveProxyUrl } from './proxy-config.js'
 import { UpdateError, UpdateIntegrityError } from './types.js'
 
 /**
@@ -73,6 +76,22 @@ const DOWNLOAD_TIMEOUT_MS = 3_600_000
  * 可走断点续传重连，远比挂死 1 小时体验好。
  */
 const IDLE_TIMEOUT_MS = 30_000
+
+/**
+ * 把 fetch 返回的 web ReadableStream 适配成 Node stream/web 的 ReadableStream 类型，
+ * 供 `Readable.fromWeb` 消费。
+ *
+ * [S#4 / type-safety] 这是 Node Web Stream 互操作的公认 TS 缺陷：
+ * fetch `response.body` 是 lib.dom 的 `ReadableStream<Uint8Array>`，与 `node:stream/web`
+ * 的 `ReadableStream` 结构性不兼容（同构但分别声明），TS 拒绝直接赋值。
+ * 运行时两者是同一个对象（Node 用 undici 实现 fetch，返回的就是 web ReadableStream）。
+ * 把 `as unknown as T` 双重断言集中收敛到这唯一一处封装函数，其余调用点不再散落断言。
+ */
+function toNodeReadableWebStream(
+  body: ReadableStream<Uint8Array> | null,
+): import('stream/web').ReadableStream<Uint8Array> {
+  return body as unknown as import('stream/web').ReadableStream<Uint8Array>
+}
 
 /**
  * 读取 Node 错误的 errno code（如 'ENOSPC'、'EACCES'）。
@@ -134,6 +153,25 @@ const TOTAL_BYTES_TOLERANCE = 1024
 
 const PROGRESS_MAX = 100
 
+/** 下载请求 User-Agent：与 release-checker 保持一致，避免部分 CDN 因空 UA 限速/拒绝。 */
+const DOWNLOAD_USER_AGENT = 'xyz-agent-updater'
+
+/**
+ * 多段并行下载：把单条 TCP 连接拆成 N 条并发 Range 请求，绕过部分代理/出口对
+ * 单条 HTTP/1.1 连接的限速。GitHub release asset 位于 Azure Blob，支持
+ * accept-ranges: bytes，具备拆分条件。
+ */
+const MULTI_PART_COUNT = 4
+
+/** 只有文件大于此阈值才启用多段（小文件拆分收益低、连接开销占比大）。 */
+const MIN_MULTI_PART_SIZE = 10 * 1024 * 1024
+
+/** 每段至少 2MB，防止段数过多。 */
+const MIN_BYTES_PER_PART = 2 * 1024 * 1024
+
+/** 进度回调节流间隔：同一段下载内最多每 N ms 推一次进度，降低 IPC 压力。 */
+const PROGRESS_THROTTLE_MS = 200
+
 /**
  * 下载单个 asset 并校验完整性。
  *
@@ -182,50 +220,43 @@ export async function downloadAsset(
     }
   }
 
-  // 3. fetch + 流式传输共用同一个 AbortController，配两个 watchdog：
+  // 3. 决定单段 or 多段并行下载：
+  //    - 无续传状态、文件较大、远端支持 accept-ranges: bytes 时启用多段并行。
+  //    - 多段绕过单条 HTTP/1.1 连接被代理/出口限速的问题，类似 Chrome 多连接。
+  let useMultiPart = false
+  // [S#1 / business-logic] 多段启用阈值用 release 声明的 asset.size，而非 probe 返回的
+  // 真实 totalBytes：此判定在 probe 之前，目的是先过滤掉小文件，避免对每个小文件都发一次
+  // HEAD probe（额外 RTT）。即使 release 声明 size 被误填偏小，导致大文件误走单段下载，
+  // probe 仍会兜底判 supported=false；多段只是加速优化，单段下载本身完全正确，无正确性风险。
+  if (!resumeState && asset.size && asset.size >= MIN_MULTI_PART_SIZE) {
+    const { supported, totalBytes } = await probeMultiPartSupport(asset, proxyConfig)
+    if (supported) {
+      useMultiPart = true
+      await downloadMultiPart(asset, totalBytes, onProgress, proxyConfig)
+    }
+  }
+
+  // 4. 单段下载（续传或 Probe 未通过时走此路径）。
+  //    fetch + 流式传输共用同一个 AbortController，配两个 watchdog：
   //    - timer: 总超时 DOWNLOAD_TIMEOUT_MS（兜底上限，3600s）
   //    - idleTimer: 空闲超时 IDLE_TIMEOUT_MS（30s 无新数据字节即中断）
   //    [NOTE] clearTimeout 必须在流式传输真正完成（writeStream finish/close）
   //    或出错后才执行 —— 若像旧实现那样在 fetch resolve 后的 finally 里 clear，
   //    60s 只会约束初始 HTTP 响应；后续流式字节传输（pipe）将无超时，慢速/卡住
   //    连接的大文件可能永远挂住。下方用外层 try/finally 保证 stream 结束才 clear。
+  if (!useMultiPart) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS)
   let response: Response
   // dispatcher 声明在外层，确保外层 finally 能访问到做 close（连接池清理）。
   let dispatcher: ProxyAgent | undefined
   try {
-    // 构建 fetch 选项，支持代理配置和断点续传
-    // [NOTE] dispatcher 是 undici 扩展字段，global RequestInit 在当前 TS lib 下未声明，
-    // 用 as 适配（与 update-handlers.ts 的 testProxy 同源逻辑，保持一致）。
-    const fetchOptions: RequestInit & { dispatcher?: ProxyAgent } = {
-      signal: controller.signal,
-    }
-
-    // 如果有断点续传，添加 Range 请求头
-    if (downloadedBytes > 0) {
-      fetchOptions.headers = {
-        'Range': `bytes=${downloadedBytes}-`,
-      }
-    }
-
-    // 解析代理 dispatcher：manual 用配置的代理 URL，system 读环境变量，disabled 直连。
-    // 逻辑与 gateway 层 resolveDispatcher 一致（packages/electron/main/gateway/update-handlers.ts）。
-    if (proxyConfig && proxyConfig.mode !== 'disabled') {
-      const proxyUrl = proxyConfig.mode === 'manual'
-        ? (proxyConfig.httpsProxy ?? proxyConfig.httpProxy)
-        : (process.env.HTTPS_PROXY ?? process.env.https_proxy ??
-           process.env.HTTP_PROXY ?? process.env.http_proxy)
-      if (proxyUrl) {
-        try {
-          dispatcher = new ProxyAgent(proxyUrl)
-          fetchOptions.dispatcher = dispatcher
-        } catch (err) {
-          // ProxyAgent 构造失败（URL 非法等）→ 降级直连并告警，不阻断下载
-          console.warn('[download] proxy agent init failed, fallback to direct:', err)
-        }
-      }
-    }
+    // 构建 fetch 选项：User-Agent + 代理 + 断点续传 Range 头。
+    const rangeHeaders = downloadedBytes > 0
+      ? { Range: `bytes=${downloadedBytes}-` }
+      : undefined
+    const fetchOptions = buildFetchOptions(proxyConfig, controller.signal, rangeHeaders)
+    dispatcher = fetchOptions.dispatcher
 
     // 执行 fetch（dispatcher 存在时真正走代理），捕获网络错误并分类
     try {
@@ -314,11 +345,13 @@ export async function downloadAsset(
     // 如果是断点续传（206），使用追加模式打开文件；否则覆盖写
     const writeStream = createWriteStream(tempPath, { flags: writeFlags })
     // response.body 是 web ReadableStream；转 node Readable 以 pipe。
-    const nodeStream = Readable.fromWeb(response.body as unknown as import('stream/web').ReadableStream)
+    const nodeStream = Readable.fromWeb(toNodeReadableWebStream(response.body))
     // [M1] idle timeout：长时间无新数据字节即中断。每次收到 chunk 重置。
     let idleTimer: NodeJS.Timeout | undefined = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS)
     // [M3] 记录上次保存进度（续传起点），超过 SAVE_INTERVAL_BYTES 才落盘（替代整除判断）
     let lastSavedBytes = downloaded
+    // 进度回调节流：每段下载内按百分比变化 + 时间间隔推，降低 IPC 压力。
+    const reportProgress = createThrottledProgress(onProgress, total)
     const clearTimers = () => {
       clearTimeout(timer)
       if (idleTimer) {
@@ -337,9 +370,8 @@ export async function downloadAsset(
           // onProgress 签名是 0-100 百分比，无总量时无法计算百分比；
           // 前端 useAppUpdate 的 state.percent 期望 0-100，传负值会 UI 异常。
           // 设计权衡：chunked 时进度条不动（但下载会完成），优于 UI 异常。
-          if (onProgress && total > 0) {
-            const percent = Math.min(PROGRESS_MAX, Math.round((downloaded / total) * PROGRESS_MAX))
-            onProgress(percent)
+          if (total > 0) {
+            reportProgress(downloaded)
           }
           // [M3] 保存断点续传状态：每超过上次保存点 SAVE_INTERVAL_BYTES 字节才落盘。
           // 旧实现 `downloaded % 1MB === 0` 在续传场景（起点非 1MB 整数倍）几乎
@@ -444,6 +476,7 @@ export async function downloadAsset(
       await dispatcher.close().catch(() => {}) // best-effort 连接池清理，失败不影响下载结果
     }
   }
+  }
 
   // 6. 校验：sha256 优先，缺失降级 size，再缺失拒绝
   //    [BLOCKER 4] 旧实现 `else if (asset.size && asset.size > 0)`：若 size=0 且无 sha256，
@@ -499,16 +532,255 @@ export async function downloadAsset(
 }
 
 /**
- * 异步计算文件 sha256 hex（流式，避免 100MB 文件一次性进内存）。
+ * 构造 fetch 选项（User-Agent + 代理 + signal + 可选 Range 头）。
+ * 与 release-checker 保持一致的 User-Agent，避免部分 CDN 因空 UA 拒绝/限速。
  */
-export async function hashFileSha256(filePath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const hash = createHash('sha256')
-    const stream = createReadStream(filePath)
-    stream.on('data', (chunk) => hash.update(chunk))
-    stream.on('end', () => resolve(hash.digest('hex')))
-    stream.on('error', reject)
+function buildFetchOptions(
+  proxyConfig: IProxyConfig | undefined,
+  signal: AbortSignal,
+  extraHeaders?: Record<string, string>,
+): RequestInit & { dispatcher?: ProxyAgent } {
+  const headers: Record<string, string> = {
+    'User-Agent': DOWNLOAD_USER_AGENT,
+    ...extraHeaders,
+  }
+  const options: RequestInit & { dispatcher?: ProxyAgent } = { signal, headers }
+  const proxyUrl = proxyConfig ? resolveProxyUrl(proxyConfig) : undefined
+  if (proxyUrl) {
+    try {
+      options.dispatcher = new ProxyAgent(proxyUrl)
+    } catch (err) {
+      console.warn('[download] proxy agent init failed, fallback to direct:', err)
+    }
+  }
+  return options
+}
+
+/**
+ * 探测目标是否支持多段并行下载（HEAD 请求检查 accept-ranges + content-length）。
+ *
+ * @returns supported=true 表示支持 Range 且 totalBytes 已知；否则返回 false
+ */
+async function probeMultiPartSupport(
+  asset: ReleaseAsset,
+  proxyConfig: IProxyConfig | undefined,
+): Promise<{ supported: boolean; totalBytes: number }> {
+  let dispatcher: ProxyAgent | undefined
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 30_000)
+    const options = buildFetchOptions(proxyConfig, controller.signal)
+    dispatcher = options.dispatcher
+    const response = await fetch(asset.downloadUrl, { ...options, method: 'HEAD' })
+    clearTimeout(timer)
+    const acceptRanges = response.headers.get('accept-ranges') ?? ''
+    const contentLength = Number(response.headers.get('content-length') ?? 0)
+    // 无论是否支持都释放 body
+    await response.body?.cancel().catch(() => {})
+    const supported = response.ok &&
+      acceptRanges.includes('bytes') &&
+      contentLength > 0 &&
+      contentLength >= MIN_MULTI_PART_SIZE
+    return { supported, totalBytes: contentLength }
+  } catch (err) {
+    console.warn('[download] multipart probe failed:', err)
+    return { supported: false, totalBytes: 0 }
+  } finally {
+    if (dispatcher) {
+      await dispatcher.close().catch(() => {})
+    }
+  }
+}
+
+/** 多段下载的单个段描述。 */
+interface IPartSpec {
+  index: number
+  start: number
+  end: number
+  tempPath: string
+}
+
+/** 创建带节流的进度回调（降低 IPC/渲染进程压力）。 */
+function createThrottledProgress(
+  onProgress: ((percent: number) => void) | undefined,
+  totalBytes: number,
+): (downloadedBytes: number) => void {
+  if (!onProgress || totalBytes <= 0) return () => {}
+  let lastPercent = -1
+  let lastTime = 0
+  return (downloadedBytes: number) => {
+    const percent = Math.min(PROGRESS_MAX, Math.round((downloadedBytes / totalBytes) * PROGRESS_MAX))
+    const now = Date.now()
+    if (percent !== lastPercent && (now - lastTime >= PROGRESS_THROTTLE_MS || percent === PROGRESS_MAX)) {
+      lastPercent = percent
+      lastTime = now
+      onProgress(percent)
+    }
+  }
+}
+
+/**
+ * 下载一个段（Range: bytes=start-end）到临时文件。
+ *
+ * @param asset 下载目标
+ * @param part 段描述
+ * @param proxyConfig 代理配置
+ * @param onProgress 段内进度（实际只更新总进度，这里传 no-op 或段内计数）
+ * @returns 下载字节数
+ */
+async function downloadPart(
+  asset: ReleaseAsset,
+  part: IPartSpec,
+  proxyConfig: IProxyConfig | undefined,
+  onProgress: (bytes: number) => void,
+): Promise<number> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS)
+  let idleTimer: NodeJS.Timeout | undefined = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS)
+  let dispatcher: ProxyAgent | undefined
+  let writeStream: ReturnType<typeof createWriteStream> | undefined
+  try {
+    const options = buildFetchOptions(proxyConfig, controller.signal, {
+      Range: `bytes=${part.start}-${part.end}`,
+    })
+    dispatcher = options.dispatcher
+    const response = await fetch(asset.downloadUrl, options)
+    if (!response.ok || !response.body) {
+      await response.body?.cancel().catch(() => {})
+      throw new UpdateError(`part ${part.index} download failed: HTTP ${response.status}`, 'downloading', 'UPDATE_NETWORK_FAILED')
+    }
+    const nodeStream = Readable.fromWeb(toNodeReadableWebStream(response.body))
+    writeStream = createWriteStream(part.tempPath, { flags: 'w' })
+    let downloaded = 0
+    return await new Promise<number>((resolve, reject) => {
+      nodeStream.on('data', (chunk: Buffer) => {
+        downloaded += chunk.length
+        if (idleTimer) {
+          clearTimeout(idleTimer)
+        }
+        idleTimer = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS)
+        onProgress(downloaded)
+      })
+      nodeStream.pipe(writeStream!)
+      writeStream!.on('finish', () => resolve(downloaded))
+      writeStream!.on('error', reject)
+      nodeStream.on('error', reject)
+    })
+  } catch (err) {
+    writeStream?.destroy()
+    // [MUST-FIX #4] 失败时 best-effort 删除本段已写的 part 临时文件，保证单段失败自清理。
+    // 旧实现只 destroy writeStream，清理完全依赖 downloadMultiPart 的 catch（Promise.all 层），
+    // 但若本段 reject 先于其他段完成，其他段的 .part-i 可能正被并发写，downloadMultiPart
+    // 的 unlinkSync 与并发 write 竞争会抛 EBUSY/EPERM 吞掉原始错误。这里每段清理自己的
+    // part 文件（try/catch 容错，文件不存在或被占用都不影响抛出原始 err）。
+    try { unlinkSync(part.tempPath) } catch (unlinkErr) { console.warn(`[download] part ${part.index} temp cleanup failed:`, unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
+    throw err
+  } finally {
+    clearTimeout(timer)
+    if (idleTimer) clearTimeout(idleTimer)
+    if (dispatcher) await dispatcher.close().catch(() => {})
+  }
+}
+
+/**
+ * 多段并行下载完整 asset。
+ *
+ * 1. 把 totalBytes 拆成 N 段（每段至少 MIN_BYTES_PER_PART）
+ * 2. 每段独立 Range 请求 + 独立 ProxyAgent 连接，并发下载到各自 temp 文件
+ * 3. 全部完成后按顺序合并到 .downloading 文件
+ * 4. 删除段临时文件
+ *
+ * [MUST-FIX #4 / timeout 语义说明] downloadPart 每段独立用 DOWNLOAD_TIMEOUT_MS（3600s 总）
+ * + IDLE_TIMEOUT_MS（30s 空闲）。这是多段下载的固有特性：某段 Range 落到 CDN 缓存未命中的
+ * 字节区，单段 30s idle 中断即触发整批 Promise.all reject。这与单段下载「同一区域只中断一次
+ * 可续传」语义不同。不放宽 timeout（30s idle 是国内网络挂死检测的合理阈值，放宽会退化为挂死），
+ * 阈值调整（10MB→更大）超出 must-fix 范围。确定性风险已通过 downloadPart 失败自清 part 文件
+ * （见 downloadPart catch）收敛。
+ */
+async function downloadMultiPart(
+  asset: ReleaseAsset,
+  totalBytes: number,
+  onProgress?: (percent: number) => void,
+  proxyConfig?: IProxyConfig,
+): Promise<{ tempPath: string }> {
+  const maxParts = Math.max(1, Math.min(MULTI_PART_COUNT, Math.floor(totalBytes / MIN_BYTES_PER_PART)))
+  const partSize = Math.floor(totalBytes / maxParts)
+  const parts: IPartSpec[] = []
+  const tempPath = path.join(UPDATE_DIR, `${asset.name}.downloading`)
+  mkdirSync(UPDATE_DIR, { recursive: true })
+  // [MUST-FIX #2] multipart 路径全程不写 resume-state（各段独立写 .part-N，无单一进度可记）。
+  // 若上次单段下载残留了 resume-state（state.downloadedBytes 可能远大于本次合并进度），
+  // 本次 multipart 失败后下次启动会被误判为「单段续传起点」拼接到损坏的合并片段上。
+  // 因此进入 multipart 前先清旧 state，保证此路径不被跨次残留干扰。
+  clearResumeState()
+  for (let i = 0; i < maxParts; i++) {
+    const start = i * partSize
+    const end = (i === maxParts - 1) ? totalBytes - 1 : (i + 1) * partSize - 1
+    parts.push({
+      index: i,
+      start,
+      end,
+      tempPath: `${tempPath}.part-${i}`,
+    })
+  }
+  const progress = createThrottledProgress(onProgress, totalBytes)
+  const downloadedPerPart = new Array(maxParts).fill(0)
+  const updateProgress = () => {
+    const total = downloadedPerPart.reduce((a, b) => a + b, 0)
+    progress(total)
+  }
+  const abortController = new AbortController()
+  const partPromises = parts.map(async (part) => {
+    try {
+      const bytes = await downloadPart(asset, part, proxyConfig, (bytes) => {
+        downloadedPerPart[part.index] = bytes
+        updateProgress()
+      })
+      downloadedPerPart[part.index] = bytes
+      updateProgress()
+      return part
+    } catch (err) {
+      abortController.abort()
+      throw err
+    }
   })
+  try {
+    await Promise.all(partPromises)
+  } catch (err) {
+    // 清理段临时文件
+    for (const part of parts) {
+      try { unlinkSync(part.tempPath) } catch (unlinkErr) { console.warn('[download] part cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
+    }
+    throw err
+  }
+  // 合并段文件到 .downloading
+  const writeStream = createWriteStream(tempPath, { flags: 'w' })
+  try {
+    for (const part of parts) {
+      await pipeline(createReadStream(part.tempPath), writeStream, { end: false })
+    }
+    writeStream.end()
+    await new Promise<void>((resolve, reject) => {
+      writeStream.on('finish', resolve)
+      writeStream.on('error', reject)
+    })
+  } catch (err) {
+    writeStream.destroy()
+    // [MUST-FIX #2] 合并失败：除段临时文件外，半写入的合并产物 .downloading 也必须清理。
+    // 旧的 finally 只清 .part-N，留下损坏的 .downloading；若此时 resume-state 又被
+    // 上一次单段下载残留填充，下次启动会误把它当续传起点拼接，造成不可恢复的损坏。
+    try { unlinkSync(tempPath) } catch (unlinkErr) { console.warn('[download] merged file cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
+    throw err
+  } finally {
+    // 清理段临时文件（合并后无用）
+    for (const part of parts) {
+      try { unlinkSync(part.tempPath) } catch (unlinkErr) { console.warn('[download] part cleanup failed:', unlinkErr) } // eslint-disable-line taste/no-silent-catch -- best-effort 清理
+    }
+  }
+  // [MUST-FIX #2] multipart 成功：与单段路径对齐，清除 resume-state（本路径开头已 clear，
+  // 但中途单段下载流程不会重新 save，这里保持幂等清理，确保成功后无残留）。
+  clearResumeState()
+  return { tempPath }
 }
 
 /**

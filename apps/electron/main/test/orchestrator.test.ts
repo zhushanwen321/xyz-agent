@@ -202,4 +202,115 @@ describe('W3: orchestrator (W3TC8-9)', () => {
     // downloadAsset 不应被调
     expect(downloadMocks.downloadAsset).not.toHaveBeenCalled()
   })
+
+  // ── W3TC10：downloadUpdate 拆分函数 ────────────────────────────
+  // downloadUpdate = pickAsset + 写 replacing 标记 + downloadAsset 下载校验。
+  // 与 performUpdate 的下载阶段共享 downloading 锁，独立 onProgress（仅下载百分比）。
+  it('W3TC10: downloadUpdate → downloadAsset mock 返回 {filePath}，透传给调用方', async () => {
+    setPlatform('darwin')
+    downloadMocks.downloadAsset.mockResolvedValue({ filePath: '/tmp/x.zip' })
+
+    const { downloadUpdate } = await loadModule()
+    const result = await downloadUpdate(MAC_RELEASE)
+
+    // 返回 downloadAsset 桩的 filePath（不触发替换阶段）
+    expect(result).toEqual({ filePath: '/tmp/x.zip' })
+    // downloadAsset 被调一次，传入了 darwin 平台的 mac asset
+    expect(downloadMocks.downloadAsset).toHaveBeenCalledTimes(1)
+    const downloadArg = downloadMocks.downloadAsset.mock.calls[0][0]
+    expect(downloadArg.name).toBe('mac.zip')
+    // replacing 标记已写（downloadUpdate 内部 writeUpdateResult('replacing')）
+    expect(existsSync(path.join(TMP_DATA_DIR, 'update', 'update-result.json'))).toBe(true)
+  })
+
+  it('W3TC10b: downloadUpdate onProgress 透传给 downloadAsset（仅下载百分比）', async () => {
+    setPlatform('darwin')
+    downloadMocks.downloadAsset.mockImplementation(async (_asset, onProgress) => {
+      onProgress?.(25)
+      onProgress?.(75)
+      return { filePath: '/tmp/x.zip' }
+    })
+
+    const { downloadUpdate } = await loadModule()
+    const onProgress = vi.fn()
+    await downloadUpdate(MAC_RELEASE, onProgress)
+
+    // downloadAsset 收到的 onProgress 就是调用方传的（百分比透传）
+    const receivedCb = downloadMocks.downloadAsset.mock.calls[0][1]
+    expect(receivedCb).toBe(onProgress)
+    // 推送的百分比经透传到达调用方回调
+    expect(onProgress).toHaveBeenCalledWith(25)
+    expect(onProgress).toHaveBeenCalledWith(75)
+  })
+
+  it('W3TC10c: downloadUpdate 重入 → 抛 UpdateError（downloading 锁互斥）', async () => {
+    setPlatform('darwin')
+    // 用 gate 让第一次 downloadUpdate 挂起（downloading 锁持有中），触发第二次重入
+    let releaseGate: () => void = () => {}
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve })
+    downloadMocks.downloadAsset.mockImplementation(async () => {
+      await gate // 阻塞直到 releaseGate
+      return { filePath: '/tmp/x.zip' }
+    })
+
+    const { downloadUpdate } = await loadModule()
+    const first = downloadUpdate(MAC_RELEASE)
+    // 让事件循环跑一轮确保 first 进入 downloadAsset（拿到锁）
+    await Promise.resolve()
+    // 第二次重入：downloading 锁持有中 → 抛 UpdateError
+    await expect(downloadUpdate(MAC_RELEASE)).rejects.toThrow(/download already in progress/)
+    // 释放第一次，让其正常结束（finally 释放锁），避免污染后续用例
+    releaseGate()
+    await first
+  })
+
+  // ── W3TC11：installUpdate 拆分函数 ─────────────────────────────
+  // installUpdate = createPlatformUpdater.prepareUpdate + handleScriptRef。
+  // 与 performUpdate 的替换阶段共享 updating 锁。
+  it('W3TC11: installUpdate detached-script → 返回 {triggerRestart:true} + prepareUpdate 被调', async () => {
+    setPlatform('darwin')
+    const detachedRef: UpdateScriptRef = { kind: 'detached-script', scriptPath: '/tmp/updater.sh' }
+    // 显式参数签名：prepareUpdate(filePath, release)，让 mock.calls 元组有元素可解构
+    const prepareUpdate = vi.fn((_filePath: string, _release: LatestReleaseInfo): UpdateScriptRef => detachedRef)
+    platformMocks.createPlatformUpdater.mockReturnValue({ prepareUpdate })
+
+    const { installUpdate } = await loadModule()
+    const onProgress = vi.fn()
+    const result = await installUpdate(MAC_RELEASE, '/tmp/x.zip', onProgress)
+
+    expect(result).toEqual({ triggerRestart: true })
+    // createPlatformUpdater 被调
+    expect(platformMocks.createPlatformUpdater).toHaveBeenCalledTimes(1)
+    // prepareUpdate 收到 downloadUpdate 的 filePath + release
+    expect(prepareUpdate).toHaveBeenCalledTimes(1)
+    expect(prepareUpdate).toHaveBeenCalledWith('/tmp/x.zip', MAC_RELEASE)
+    // onProgress 推 replacing 阶段（0 起、100 完）
+    expect(onProgress).toHaveBeenCalledWith('replacing', 0)
+    expect(onProgress).toHaveBeenCalledWith('replacing', 100)
+  })
+
+  it('W3TC11b: installUpdate detached-script 在 prepareUpdate 内 spawn（断言 spawn 被调）', async () => {
+    setPlatform('darwin')
+    // 真实 detached-script 流程：prepareUpdate 内 spawn detached bash（与 mac updater 行为一致）
+    // 这里用 mock 的 prepareUpdate 显式调 spawn 模拟 mac updater 的 spawn 行为
+    const detachedRef: UpdateScriptRef = { kind: 'detached-script', scriptPath: '/tmp/updater.sh' }
+    platformMocks.createPlatformUpdater.mockReturnValue({
+      prepareUpdate: vi.fn((_file, _release) => {
+        // 模拟 mac updater.prepareUpdate 内 spawn detached bash 写替换脚本 + 触发执行
+        childProcessMocks.spawn('/tmp/updater.sh', ['arg1'], { detached: true, stdio: 'ignore' })
+        return detachedRef
+      }),
+    })
+
+    const { installUpdate } = await loadModule()
+    const result = await installUpdate(MAC_RELEASE, '/tmp/x.zip')
+
+    expect(result).toEqual({ triggerRestart: true })
+    // prepareUpdate 内 spawn 了 detached bash（orchestrator 透传给 handleScriptRef 不再 spawn）
+    expect(childProcessMocks.spawn).toHaveBeenCalledTimes(1)
+    const [exe, args, opts] = childProcessMocks.spawn.mock.calls[0]
+    expect(exe).toBe('/tmp/updater.sh')
+    expect(args).toEqual(['arg1'])
+    expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
+  })
 })

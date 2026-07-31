@@ -438,6 +438,9 @@ export default {
     saving: 'Saving...',
     saved: 'Proxy configuration saved',
     saveFailed: 'Save failed: {msg}',
+    preDownloadTitle: 'Pre-download Updates',
+    preDownloadDesc: 'Automatically download the installer in the background when a new version is detected, so updates no longer wait for download',
+    preDownloadLabel: 'Enable pre-download',
   },
   // ── Compat editor (CompatEditor / CompatField) ──
   compat: {

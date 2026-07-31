@@ -18,11 +18,15 @@
  */
 import { app, ipcMain } from 'electron'
 import { ProxyAgent } from 'undici'
-import type { LatestReleaseInfo, IProxyConfig } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, IProxyConfig, UpdateSettings } from '@xyz-agent/shared'
 import type { IpcHandlerDeps } from '../interfaces.js'
 import { UpdateError } from '../update/types.js'
 import { readProxyConfig, writeProxyConfig, resolveProxyUrl } from '../update/proxy-config.js'
 import { validateRelease } from '../update/validate-release.js'
+import { writePendingUpdate, readPendingUpdate } from '../update/pending-update.js'
+import { getUpdateSettings, setUpdateSettings } from '../update/update-settings.js'
+import type { IUpdateOrchestrator, UpdateProgressCallback } from '../update/orchestrator.js'
+import { writePreloadedUpdate, readPreloadedUpdate, clearPreloadedUpdate } from '../update/preloaded-update.js'
 
 /** 触发重启前留给前端渲染「重启中」状态的延迟（毫秒）。 */
 const RESTART_QUIT_DELAY_MS = 500
@@ -103,7 +107,67 @@ async function testProxyConnection(config: IProxyConfig): Promise<{ success: boo
 }
 
 /**
- * 注册自动升级 IPC handler（update:check + update:perform）。
+ * 后台预下载互斥标志：防止 update:check 多次触发重复下载。
+ *
+ * 与 orchestrator 的 downloading 锁分离：本标志只在 handler 层防重复触发（check 可能被
+ * 多次调用），orchestrator 的 downloading 锁保护真正的下载过程。预下载失败会重置此标志，
+ * 下次 check 可再次尝试。
+ */
+let preDownloading = false
+
+/**
+ * 进行中的预下载 promise（若有）。
+ *
+ * 预下载持锁的是 orchestrator 的 `downloading` 锁。若用户在预下载进行中点更新，
+ * update:perform 的 download 路径会因 `downloading` 锁被拒（'download already in progress'）。
+ * 存下 promise 让 perform handler 先 await 它：预下载成功 → 写入 preloaded-update.json →
+ * perform 重读命中快路径；预下载失败 → 锁已释放 → perform 正常走 download。
+ * promise 完成后置回 null（配合 preDownloading 标志做幂等）。
+ */
+let preDownloadPromise: Promise<void> | null = null
+
+/**
+ * 后台预下载（静默）：检测到新版 + 预下载开关开时触发。
+ *
+ * 不推 update:progress 事件（静默后台行为，不干扰用户）。下载成功后写 preloaded-update.json，
+ * update:perform 走快路径跳过重复下载。下载失败仅 console.warn（符合「静默放弃，下次检测重试」决策）。
+ *
+ * download-asset 的断点续传机制保证：预下载未完成时用户手动点更新，performUpdate 的
+ * downloadUpdate 会接管同一临时文件续传，进度不浪费。
+ *
+ * [S#11 arch-boundary] 经 DI 注入的 {@link IUpdateOrchestrator} 调 downloadUpdate，
+ * 而非直接 import 模块级单例——使预下载能力也可在测试中经 mock DI 接口替换。
+ *
+ * @param orchestrator DI 注入的升级编排器（与 update:perform 共享同一实例）
+ */
+async function preloadUpdateSilently(
+  release: LatestReleaseInfo,
+  orchestrator: IUpdateOrchestrator,
+): Promise<void> {
+  if (preDownloading) return
+  preDownloading = true
+  try {
+    // 已有有效预下载产物（同版本同 asset 文件存在 + 完整性校验通过）→ 不重复下载
+    const existing = await readPreloadedUpdate(release)
+    if (existing) {
+      console.log(`[preload] preloaded update for v${release.version} already exists, skip`)
+      return
+    }
+    console.log(`[preload] background pre-downloading v${release.version}...`)
+    const { filePath } = await orchestrator.downloadUpdate(release)
+    writePreloadedUpdate(release, filePath)
+    console.log(`[preload] pre-downloaded v${release.version} to ${filePath}`)
+  } catch (err) {
+    // 静默放弃：仅 warn，下次 check 检测到新版会再次尝试（断点续传保留进度）
+    console.warn(`[preload] background pre-download failed for v${release.version}:`, err)
+  } finally {
+    preDownloading = false
+    preDownloadPromise = null
+  }
+}
+
+/**
+ * 注册自动升级 IPC handler（update:check + update:perform + getPending + getSettings/setSettings）。
  *
  * @param deps 注入依赖（releaseChecker / updateOrchestrator / getMainWindow）
  */
@@ -112,9 +176,22 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
   ipcMain.handle('update:check', async (_event, payload?: { force?: boolean }) => {
     if (!deps.releaseChecker) return null
     try {
-      return await deps.releaseChecker.checkForLatestRelease(app.getVersion(), {
+      const info = await deps.releaseChecker.checkForLatestRelease(app.getVersion(), {
         force: payload?.force,
       })
+      // 检测到新版 → 写持久化标志（功能 1：常驻提醒），best-effort 不阻塞响应
+      if (info) {
+        writePendingUpdate(info)
+        // 预下载开关开 → 异步后台下载（功能 2），不 await 不阻塞 check 响应。
+        // 把 promise 存起来（非 void），供 update:perform 在预下载进行中时 await，
+        // 避免与后台预下载争抢 orchestrator 的 downloading 锁而硬报错。
+        // updateOrchestrator 未注入（dev/check-only 场景）时跳过预下载（perform 会另行报错）。
+        const settings = getUpdateSettings()
+        if (settings.preDownload && deps.updateOrchestrator) {
+          preDownloadPromise = preloadUpdateSilently(info, deps.updateOrchestrator)
+        }
+      }
+      return info
     } catch (err) {
       // 兜底：理论上 checkForLatestRelease 自身已 catch，此处防止意外 reject
       console.error('[update:check] failed:', err)
@@ -127,26 +204,65 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
     if (!deps.updateOrchestrator) {
       throw new Error('updateOrchestrator not configured')
     }
+    // [MUST-FIX #3] 记录本次是否走快路径：catch 中据此决定是否清 preloaded 标志，
+    // 避免快路径 installUpdate 失败后重试反复命中同一（可能损坏的）文件而死循环。
+    // 声明在 try 外，catch 才能读到。
+    let usedFastPath = false
     try {
       // [SECURITY] 校验 renderer payload：防 SSRF（downloadUrl 白名单 GitHub 域名）+
       // 路径遍历（name 严格字符集）+ shell 注入（name/version/sha256 严格格式）。
       // 必须在 performUpdate 前执行——orchestrator 内部会把 name 拼进下载路径、
       // 可能 spawn bash 脚本，未校验的输入可触发任意代码执行。
       validateRelease(payload.release)
-      const result = await deps.updateOrchestrator.performUpdate(payload.release, {
-        onProgress: (stage, percent) => {
-          const win = deps.getMainWindow()
-          if (win && !win.isDestroyed()) {
-            win.webContents.send('update:progress', { stage, percent })
-          }
-        },
-      })
+
+      // [功能 2 快路径] 若有有效的预下载产物（同版本 + 文件存在），跳过下载直接 installUpdate。
+      // 用户体感：点击更新后无需等待下载，直接进入替换重启。产物无效则降级走完整 performUpdate。
+      const onProgress: UpdateProgressCallback = (stage, percent) => {
+        const win = deps.getMainWindow()
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('update:progress', { stage, percent })
+        }
+      }
+
+      // [MUST-FIX #1] 若后台预下载仍在进行，先 await 它：预下载持有 orchestrator 的
+      // downloading 锁，直接走 download 路径会被拒（'download already in progress'）。
+      // await 到锁释放后再决定走快路径（预下载成功写入了产物）还是 download 路径（预下载失败）。
+      // 用局部引用避免 await 期间 preDownloadPromise 被置 null 后读到旧值。
+      const inFlight = preDownloadPromise
+      if (inFlight) {
+        console.log('[update:perform] background preload in progress, waiting for it to finish')
+        await inFlight
+      }
+
+      const preloadedFile = await readPreloadedUpdate(payload.release)
+      let result: { triggerRestart: boolean }
+      if (preloadedFile) {
+        // 预下载产物有效：快路径，仅推 replacing 进度 + installUpdate。
+        // [S#11 arch-boundary] 经 DI 注入的 orchestrator 调 installUpdate，与 performUpdate
+        // 走同一 DI 契约，使快路径也可在测试中经 mock 接口替换。
+        console.log(`[update:perform] using preloaded file ${preloadedFile}, skipping download`)
+        usedFastPath = true
+        result = await deps.updateOrchestrator.installUpdate(payload.release, preloadedFile, onProgress)
+      } else {
+        // 无预下载产物或产物失效：完整流程（下载 → 校验 → 替换）
+        result = await deps.updateOrchestrator.performUpdate(payload.release, { onProgress })
+      }
       if (result.triggerRestart) {
         // 延迟 RESTART_QUIT_DELAY_MS 给前端时间显示「重启中」，再 quit
         setTimeout(() => app.quit(), RESTART_QUIT_DELAY_MS)
       }
       return result
     } catch (err) {
+      // [MUST-FIX #3] 快路径 installUpdate 失败时清 preloaded 标志：避免重试反复命中
+      // 同一产物（installUpdate 非「文件完整性」失败如 spawn 失败、replacing 权限错误，
+      // 或即便文件真坏），下次重试强制走完整重下 + 重新校验，杜绝死循环。
+      // 采用「快路径失败一律 clear」保守策略：重下后会重新 sha256 校验，比死循环安全；
+      // 文件完整性错误（UpdateIntegrityError）本就需重下，clear 同样正确。
+      if (usedFastPath) {
+        console.warn('[update:perform] fast-path install failed, clearing preloaded flag to force full re-download on retry')
+        clearPreloadedUpdate()
+      }
+
       // 错误转 update:error 事件（区分 stage / errorCode）
       const win = deps.getMainWindow()
       let errorPayload
@@ -211,5 +327,27 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
   // ── update:testProxy（测试代理连接）────────────────────────────
   ipcMain.handle('update:testProxy', async (_event, config: IProxyConfig) => {
     return testProxyConnection(config)
+  })
+
+  // ── update:getPending（读取升级提醒持久化标志）──────────────────
+  // 功能 1：启动时 renderer 调此 handler 恢复「可升级」提醒（离线也能常驻）。
+  // readPendingUpdate 内部做版本比较：currentVersion >= pending.version → 清除 + 返回 null。
+  ipcMain.handle('update:getPending', async () => {
+    return readPendingUpdate(app.getVersion())
+  })
+
+  // ── update:getSettings（读取升级设置）──────────────────────────
+  ipcMain.handle('update:getSettings', async () => {
+    return getUpdateSettings()
+  })
+
+  // ── update:setSettings（保存升级设置）──────────────────────────
+  ipcMain.handle('update:setSettings', async (_event, settings: UpdateSettings) => {
+    // 基本类型校验
+    if (typeof settings.preDownload !== 'boolean') {
+      throw new Error('Invalid settings: preDownload must be boolean')
+    }
+    setUpdateSettings(settings)
+    return { success: true }
   })
 }

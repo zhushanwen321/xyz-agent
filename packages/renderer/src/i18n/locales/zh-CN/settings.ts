@@ -438,6 +438,9 @@ export default {
     saving: '保存中...',
     saved: '代理配置已保存',
     saveFailed: '保存失败: {msg}',
+    preDownloadTitle: '预下载更新',
+    preDownloadDesc: '检测到新版本时自动在后台下载安装包，更新时无需等待下载',
+    preDownloadLabel: '启用预下载',
   },
   // ── Compat 编辑器（CompatEditor / CompatField）──
   compat: {

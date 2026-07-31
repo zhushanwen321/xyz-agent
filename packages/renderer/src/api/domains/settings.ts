@@ -11,8 +11,14 @@
 import * as configDomain from './config'
 import * as extensionDomain from './extension'
 import { command } from '../request'
-import type { ServerMessageMap, IProxyConfig } from '@xyz-agent/shared'
-import { getProxyConfig as getProxyConfigIpc, setProxyConfig as setProxyConfigIpc, testProxy as testProxyIpc } from '@/lib/ipc'
+import type { ServerMessageMap, IProxyConfig, UpdateSettings } from '@xyz-agent/shared'
+import {
+  getProxyConfig as getProxyConfigIpc,
+  setProxyConfig as setProxyConfigIpc,
+  testProxy as testProxyIpc,
+  getUpdateSettings as getUpdateSettingsIpc,
+  setUpdateSettings as setUpdateSettingsIpc,
+} from '@/lib/ipc'
 
 export interface SystemSettings {
   locale: 'zh-CN' | 'en-US'
@@ -141,6 +147,19 @@ export async function setProxyConfig(config: IProxyConfig): Promise<void> {
 /** 测试代理连接。 */
 export async function testProxy(config: IProxyConfig): Promise<{ success: boolean; message?: string }> {
   return testProxyIpc(config)
+}
+
+// ── 升级设置（update:getSettings / update:setSettings）──
+// 预下载开关等升级偏好，通过 Electron IPC 直接与 main 进程通信（不走 runtime WS）。
+
+/** 读取升级设置。 */
+export async function getUpdateSettings(): Promise<UpdateSettings> {
+  return getUpdateSettingsIpc()
+}
+
+/** 保存升级设置。 */
+export async function setUpdateSettings(settings: UpdateSettings): Promise<void> {
+  await setUpdateSettingsIpc(settings)
 }
 
 // ── 纯前端偏好（localStorage，不走 transport；mock 侧直接复用本实现，消除手工同构）──
