@@ -474,22 +474,42 @@ body {
 .sn .sn-text { font-size: 11px; color: var(--neutral-mid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
 /* ④ 压缩中提示（abs，shadow，bg-surface）*/
-.ms-compact { position: absolute; left: 20px; right: 20px; z-index: 10; display: flex; min-width: 0; align-items: center; gap: 8px; border-radius: var(--radius); background: var(--surface); padding: 8px; box-shadow: var(--shadow-2); }
-.ms-compact .sn-rule { height: 1px; flex: 1; background: var(--border); }
+/* [v6 统一] 瞬时浮层统一骨架：rounded-md bg-surface shadow-sm border border-border/50 · flex items-center gap-2 px-3 py-2 */
+.ms-compact { position: absolute; left: 20px; right: 20px; z-index: 10; display: flex; min-width: 0; align-items: center; gap: 8px; border-radius: var(--radius); border: 1px solid var(--border-strong); background: var(--surface); padding: 8px 12px; box-shadow: var(--shadow-2); }
 .ms-compact svg { width: 12px; height: 12px; color: var(--neutral-mid); flex-shrink: 0; animation: spin 1s linear infinite; }
-.ms-compact .ms-compact-text { font-size: 11px; color: var(--neutral-mid); }
+.ms-compact .ms-compact-text { flex: 1; min-width: 0; font-size: 12px; color: var(--neutral-mid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ⑤ dispatching 空窗期（abs，accent Loader2）*/
-.ms-dispatch { position: absolute; left: 20px; right: 20px; z-index: 10; display: flex; align-items: center; gap: 8px; border-radius: var(--radius); background: var(--surface); padding: 8px; box-shadow: var(--shadow-2); font-size: 13px; color: var(--neutral-mid); }
+.ms-dispatch { position: absolute; left: 20px; right: 20px; z-index: 10; display: flex; min-width: 0; align-items: center; gap: 8px; border-radius: var(--radius); border: 1px solid var(--border-strong); background: var(--surface); padding: 8px 12px; box-shadow: var(--shadow-2); font-size: 12px; color: var(--neutral-mid); }
 .ms-dispatch svg { width: 12px; height: 12px; color: var(--accent); flex-shrink: 0; animation: spin 1s linear infinite; }
+
+/* [v6 统一] 瞬时浮层对比帧：静态（非 abs）统一卡片骨架，凸显同骨架 + leading icon 差异 */
+.ms-cmp { display: flex; align-items: center; gap: 8px; border-radius: var(--radius); border: 1px solid var(--border-strong); background: var(--surface); padding: 8px 12px; box-shadow: var(--shadow-2); font-size: 12px; color: var(--neutral-mid); }
+.ms-cmp svg { width: 12px; height: 12px; flex-shrink: 0; }
+.ms-cmp .cmp-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-cmp .cmp-text b { font-weight: 550; color: var(--neutral-fg); }
+.ms-cmp .cmp-view { font-size: 12px; color: var(--accent); flex-shrink: 0; }
+.ms-cmp .cmp-x { width: 18px; height: 18px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-dim); flex-shrink: 0; }
+.ms-cmp .cmp-x svg { width: 11px; height: 11px; color: inherit; }
+.ms-cmp .cmp-tag { font-size: 10px; font-family: var(--font-mono); padding: 1px 6px; border-radius: var(--radius-sm); flex-shrink: 0; background: var(--surface-2); color: var(--neutral-mid); }
+.cmp-row { display: flex; align-items: center; gap: 8px; }
+.cmp-row .cmp-label { width: 78px; flex-shrink: 0; font-size: 10px; font-family: var(--font-mono); color: var(--neutral-dim); text-transform: uppercase; letter-spacing: .04em; }
+.cmp-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-family: var(--font-mono); font-size: 10px; }
+.cmp-table th, .cmp-table td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: top; line-height: 1.5; }
+.cmp-table th { color: var(--neutral-dim); font-weight: 500; text-transform: uppercase; letter-spacing: .04em; }
+.cmp-table td { color: var(--neutral-mid); }
+.cmp-table tr:last-child td { border-bottom: none; }
+.cmp-table .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
 
 /* ⑥ 回到底部按钮（abs bottom center）*/
 .ms-jump { position: absolute; bottom: 16px; left: 50%; z-index: 10; width: 36px; height: 36px; transform: translateX(-50%); border-radius: 9999px; display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: #fff; box-shadow: var(--shadow-2); cursor: pointer; }
 .ms-jump svg { width: 16px; height: 16px; }
 
 /* ⑦ ForkNotice（info-soft 底 + border + radius）*/
-.fn { display: flex; align-items: center; gap: 8px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--info-soft); padding: 7px 11px; }
+/* [v6 统一] ForkNotice 改用统一卡片骨架：bg-surface（原 bg-info-soft 去除）· info 色只落在 GitFork icon + 查看链接 */
+.fn { display: flex; align-items: center; gap: 8px; border-radius: var(--radius); border: 1px solid var(--border-strong); background: var(--surface); padding: 8px 12px; box-shadow: var(--shadow-2); }
 .fn svg { width: 14px; height: 14px; color: var(--info); flex-shrink: 0; }
+.fn .gitfork-ico { color: var(--info); }
 .fn .fn-text { flex: 1; min-width: 0; font-size: 12px; color: var(--neutral-fg); line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fn .fn-text b { font-weight: 550; }
 .fn .fn-view { font-size: 12px; color: var(--accent); cursor: pointer; flex-shrink: 0; }
@@ -618,12 +638,14 @@ body {
        ================================================================ -->
   <section class="spec" id="s1-5">
     <div class="spec-head"><span class="spec-num">§1.5</span><h2 class="spec-title">瞬时浮层与系统提示</h2></div>
-    <p class="spec-desc">MessageStream 容器内的辅助/瞬时元素——它们不是 turn 内块（trace/ChangeSet），而是承载在 scrollEl 直接子节点上的视图层分支。v6 补全：spec 原先只画了容器滚动结构（§1），这 7 类实际存在、用户可见、且无其他 spec 承接的元素在此补齐。分三类：<b>① 空态/导航</b>（空态欢迎语、加载更多、回到底部）<b>② 系统提示行</b>（SystemNotice 虚拟化穿插）<b>③ 瞬时浮层</b>（compacting/dispatching/ForkNotice，abs 定位读 <code>vlistBottom</code> 堆叠）。落点：<code>MessageStream.vue</code> template。</p>
+    <p class="spec-desc">MessageStream 容器内的辅助/瞬时元素——它们不是 turn 内块（trace/ChangeSet），而是承载在 scrollEl 直接子节点上的视图层分支。v6 补全：spec 原先只画了容器滚动结构（§1），这 7 类实际存在、用户可见、且无其他 spec 承接的元素在此补齐。分三类：<b>① 空态/导航</b>（空态欢迎语、加载更多、回到底部）<b>② 持久历史标记</b>（SystemNotice 虚拟化穿插）<b>③ 瞬时浮层</b>（compacting/dispatching/ForkNotice，abs 定位读 <code>vlistBottom</code> 堆叠）。落点：<code>MessageStream.vue</code> template。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现状</b> 7 类元素已在代码中，spec 未画</span>
       <span class="cp cp-v6"><b>v6</b> spec 补全展示 + 定位/z-index 标注</span>
       <span class="cp cp-v6"><b>[欠考虑]</b> 瞬时浮层堆叠顺序需文档化</span>
+      <span class="cp cp-v6"><b>[v6 统一]</b> ④⑤⑦ 瞬时浮层视觉统一为浮层卡片骨架（差异仅 leading icon）</span>
     </div>
+    <p class="spec-desc"><b>语义分类（v6 明确）：</b>② 与 ③ 视觉刻意区分，反映生命周期不同——<b>SystemNotice（②持久历史标记）</b>compaction/branch 完成后<b>永久留在消息流</b>，虚拟列表内的 inline 行，用双侧分隔线（无 bg 无 shadow）记录「这里发生过什么」；<b>瞬时浮层（③进行态/完成态指示）</b>abs 定位读 <code>vlistBottom</code> 堆叠，<b>出现又消失</b>，用浮层卡片（bg-surface shadow-sm）。<b>生命周期关系：</b>压缩中（瞬时进行态）→ 完成后消失，由 SystemNotice（持久记录）取代其在消息流的位置，即「瞬时浮层完成 → SystemNotice 持久记录」。二者不可合并：瞬时浮层是「正在发生/刚发生」的临时指示，SystemNotice 是「曾经发生」的永久档案。</p>
 
     <!-- ① 空态欢迎语 -->
     <div class="render-frame">
@@ -662,7 +684,7 @@ body {
       </div>
     </div>
 
-    <!-- ③ SystemNotice -->
+    <!-- ③ SystemNotice（持久历史标记，视觉刻意区别于瞬时浮层）-->
     <div class="render-frame">
       <div class="state-row">
         <div class="state-tag">③ system</div>
@@ -679,12 +701,13 @@ body {
             <span class="sn-text">分支自 a1b2c3d 创建</span>
             <span class="sn-rule"></span>
           </div>
-          <div class="ms-stage-hint">两型：compactionSummary（Archive icon + tokens）/ branchSummary（GitBranch icon + 源 id）· 双侧 h-px flex-1 分隔线</div>
+          <div class="ms-stage-hint">两型：compactionSummary（Archive icon + tokens）/ branchSummary（GitBranch icon + 源 id）· 双侧 h-px flex-1 分隔线 · <b style="color:var(--neutral-fg);">【持久历史标记】</b>compaction/branch 完成后<b>永久留在消息流</b>，虚拟列表内的 inline 行，<b>无 bg 无 shadow</b></div>
+          <div class="ms-stage-hint"><b style="color:var(--info);">↑ 语义对照 →</b> 此处的「已压缩」正是 ④压缩中 浮层完成后的<b>持久取代物</b>：压缩中（瞬时进行态，abs 浮层卡片）→ 完成后消失，SystemNotice（持久记录，分隔线行）插入消息流原位。二者视觉刻意不同：浮层卡片 = 临时指示，分隔线行 = 永久档案。</div>
         </div>
       </div>
     </div>
 
-    <!-- ④ 压缩中提示 -->
+    <!-- ④ 压缩中提示（瞬时进行态 · v6 统一浮层卡片，删双侧分隔线）-->
     <div class="render-frame">
       <div class="state-row">
         <div class="state-tag">④ 压缩中</div>
@@ -694,18 +717,17 @@ body {
               <div style="font-size:12px;color:var(--neutral-fg);">← 末尾 turn 内容（vlistBottom 基线）</div>
             </div>
             <div class="ms-compact" style="top:60px;">
-              <span class="sn-rule"></span>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg>
               <span class="ms-compact-text">压缩中…</span>
-              <span class="sn-rule"></span>
             </div>
           </div>
-          <div class="ms-stage-hint">isCompacting=true 时显示 · 中性 Loader2（区别于 dispatching 的 accent 蓝）· 完成后由 SystemNotice 持久化取代</div>
+          <div class="ms-stage-hint"><span class="v6">[v6 改动]</span> 删除双侧 <code>h-px flex-1</code> 分隔线（代码现状 <code>MessageStream.vue:96,99</code> 有两条，沿用了 SystemNotice 范式）→ v6 统一为<b>纯浮层卡片</b>（bg-surface shadow-sm border），无分隔线。理由：分隔线是 SystemNotice 持久历史标记的范式，瞬时进行态浮层不该用。</div>
+          <div class="ms-stage-hint"><span class="v6">[v6 统一]</span> <b>中性灰 Loader2</b>（text-neutral-mid）+ 「压缩中…」· isCompacting=true 时显示 · 完成后由 ③ SystemNotice 持久化取代（瞬时浮层完成 → 持久记录）</div>
         </div>
       </div>
     </div>
 
-    <!-- ⑤ dispatching 空窗期 -->
+    <!-- ⑤ dispatching 空窗期（瞬时进行态 · v6 统一浮层卡片）-->
     <div class="render-frame">
       <div class="state-row">
         <div class="state-tag">⑤ dispatch</div>
@@ -719,7 +741,7 @@ body {
               <span>派发中…</span>
             </div>
           </div>
-          <div class="ms-stage-hint">isDispatching && !hasWorkingTurn · accent 蓝 Loader2（与压缩中中性 Loader2 区分语义）</div>
+          <div class="ms-stage-hint"><span class="v6">[v6 统一]</span> 与 ④ 共用同一浮层卡片骨架（bg-surface shadow-sm border）· 差异仅在 leading loader：<b>accent 蓝 Loader2</b>（text-accent，等待响应）vs ④ 中性灰（内部处理）。isDispatching && !hasWorkingTurn</div>
         </div>
       </div>
     </div>
@@ -740,43 +762,106 @@ body {
       </div>
     </div>
 
-    <!-- ⑦ ForkNotice -->
+    <!-- ⑦ ForkNotice（瞬时完成态通知 · v6 统一浮层卡片，bg-info-soft → bg-surface）-->
     <div class="render-frame">
       <div class="state-row">
         <div class="state-tag">⑦ fork</div>
         <div class="state-demo">
           <div class="fn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+            <svg class="gitfork-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
             <span class="fn-text">已 fork 到后台 · <b>feat/login-fix</b></span>
             <span class="fn-view">查看</span>
             <span class="fn-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
           </div>
           <div class="fn" style="margin-top:8px;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+            <svg class="gitfork-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
             <span class="fn-text">已在新分支提问 · <b>如何优化这个查询？</b></span>
             <span class="fn-view">查看分支</span>
             <span class="fn-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
           </div>
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
             <div class="fn" style="flex:1;min-width:180px;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+              <svg class="gitfork-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
               <span class="fn-kind-tag done">done</span>
               <span class="fn-text">分支已完成 · <b>feat/api</b></span>
               <span class="fn-view">查看</span>
             </div>
             <div class="fn" style="flex:1;min-width:180px;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+              <svg class="gitfork-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
               <span class="fn-kind-tag error">error</span>
               <span class="fn-text">分支出错 · <b>feat/retry</b></span>
               <span class="fn-view">查看</span>
             </div>
           </div>
           <div class="fn" style="margin-top:8px;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+            <svg class="gitfork-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
             <span class="fn-text">分支已删除（sessionDeleted 降级）· <b>feat/old</b></span>
             <span class="fn-view dim">查看</span>
           </div>
-          <div class="ms-stage-hint">4 个 kind 变体（done/error/stopped/default）· sessionDeleted=true 时「查看」降级纯文本 span 不可点 · animate-notice-in 200ms</div>
+          <div class="ms-stage-hint"><span class="v6">[v6 改动]</span> 卡片底色 <code>bg-info-soft → bg-surface</code>（代码现状 <code>ForkNotice.vue:17</code> 为 bg-info-soft）→ v6 统一浮层卡片骨架，<b>info 色只落在 GitFork icon + 「查看」链接</b>，不再铺满整卡底色。</div>
+          <div class="ms-stage-hint"><span class="v6">[v6 统一]</span> 与 ④⑤ 共用浮层卡片骨架（bg-surface shadow-sm border）· 差异：leading <b>GitFork（info 色，操作完成通知）</b>而非 loader · 4 个 kind 变体（done/error/stopped/default）· sessionDeleted 时「查看」降级 · animate-notice-in 200ms</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ⑧ 瞬时浮层统一对比（同骨架 + leading icon 差异）-->
+    <div class="render-frame">
+      <div class="state-row">
+        <div class="state-tag">⑧ 统一对比</div>
+        <div class="state-demo">
+          <div class="ms-stage-hint" style="padding-top:0;"><span class="v6">[v6 统一]</span> ④⑤⑦ 三种瞬时浮层共用<b>同一套卡片骨架</b>——<code>rounded-md bg-surface shadow-sm border border-border/50</code> + <code>flex items-center gap-2 px-3 py-2</code>。差异<b>仅</b>在 leading icon 的类型/颜色 + 文案色 + 右侧操作区：</div>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px;">
+            <div class="cmp-row">
+              <span class="cmp-label">④ 压缩中</span>
+              <div class="ms-cmp" style="flex:1;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--neutral-mid);animation:spin 1s linear infinite;"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg>
+                <span class="cmp-text">压缩中…</span>
+              </div>
+            </div>
+            <div class="cmp-row">
+              <span class="cmp-label">⑤ dispatch</span>
+              <div class="ms-cmp" style="flex:1;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--accent);animation:spin 1s linear infinite;"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg>
+                <span class="cmp-text">派发中…</span>
+              </div>
+            </div>
+            <div class="cmp-row">
+              <span class="cmp-label">⑦ fork</span>
+              <div class="ms-cmp" style="flex:1;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--info);"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+                <span class="cmp-text" style="color:var(--neutral-fg);">已 fork 到后台 · <b>feat/x</b></span>
+                <span class="cmp-view">查看</span>
+                <span class="cmp-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
+              </div>
+            </div>
+          </div>
+          <table class="cmp-table">
+            <thead><tr><th>浮层</th><th>leading icon</th><th>文案色</th><th>语义</th><th>右侧操作</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><span class="swatch" style="background:var(--neutral-mid);"></span>④ 压缩中</td>
+                <td>Loader2 spin <b style="color:var(--neutral-mid);">中性灰</b></td>
+                <td>neutral-mid</td>
+                <td>内部处理中</td>
+                <td>— 无（纯状态）</td>
+              </tr>
+              <tr>
+                <td><span class="swatch" style="background:var(--accent);"></span>⑤ dispatch</td>
+                <td>Loader2 spin <b style="color:var(--accent);">accent 蓝</b></td>
+                <td>neutral-mid</td>
+                <td>等待响应</td>
+                <td>— 无（纯状态）</td>
+              </tr>
+              <tr>
+                <td><span class="swatch" style="background:var(--info);"></span>⑦ fork</td>
+                <td>GitFork <b style="color:var(--info);">info 色</b></td>
+                <td>neutral-fg</td>
+                <td>操作完成通知</td>
+                <td>accent「查看」+ 关闭 ×</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="ms-stage-hint">共同点：<code>bg-surface</code>（非 bg-info-soft / 非 neutral-bg）· <code>shadow-sm</code> · <code>border</code> · abs 定位读 <code>vlistBottom</code> · 出现又消失（区别于 ③ SystemNotice 永久分隔线行）。差异点全部由 <b>leading icon 的颜色和类型</b>承载：loader = 进行态（灰=内部/蓝=等待），GitFork = 完成态。</div>
         </div>
       </div>
     </div>
@@ -786,13 +871,15 @@ body {
       <div class="anno"><b>① 空态文案:</b><br>Sparkles size-6 text-accent opacity-70 · p text-base neutral-mid</div>
       <div class="anno"><b>② load-more 定位:</b><br>absolute left-5 right-5 top-0 · justify-center py-2</div>
       <div class="anno"><b>② 预留高度:</b><br><span class="v6">LOAD_MORE_RESERVED_HEIGHT=44px</span>（virta :startMargin）</div>
-      <div class="anno"><b>③ SystemNotice:</b><br>flex items-center · 双 h-px flex-1 分隔线 · 13px 中性图标 + text-xs neutral-mid truncate</div>
-      <div class="anno"><b>④ 压缩中:</b><br>absolute z-10 bg-surface shadow-sm · top: vlistBottom · <span class="v6">COMPACTING_NOTICE_HEIGHT=46px</span></div>
-      <div class="anno"><b>④ 压缩中 Loader:</b><br>size-3 animate-spin text-neutral-mid（中性，区别 dispatching）</div>
-      <div class="anno"><b>⑤ dispatching:</b><br>absolute z-10 bg-surface shadow-sm text-sm · Loader2 text-accent（蓝）</div>
+      <div class="anno"><b>③ SystemNotice:</b><br>flex items-center · 双 h-px flex-1 分隔线 · 13px 中性图标 + text-xs neutral-mid truncate · <b>无 bg 无 shadow</b></div>
+      <div class="anno"><b>③ 生命周期区分:</b><br>SystemNotice = <b>持久历史标记</b>（永久留在消息流，分隔线行）；④⑤⑦ 瞬时浮层 = 进行态/完成态指示（abs 浮层卡片，出现又消失）。<span class="v6">[v6 明确]</span> 压缩中完成 → 消失，由 SystemNotice 取代其位置</div>
+      <div class="anno"><b>④ 压缩中:</b><br>absolute z-10 · top: vlistBottom · <span class="v6">COMPACTING_NOTICE_HEIGHT=46px</span> · <span class="v6">[v6 改动]</span> 删双侧 <span class="old">h-px flex-1 分隔线</span> → 统一浮层卡片</div>
+      <div class="anno"><b>④ 压缩中 Loader:</b><br>size-3 animate-spin <b>text-neutral-mid 中性灰</b>（内部处理，区别 ⑤ accent 蓝）</div>
+      <div class="anno"><b>⑤ dispatching:</b><br>absolute z-10 · Loader2 <b>text-accent 蓝</b>（等待响应）· 同 ④ 卡片骨架</div>
+      <div class="anno"><b><span class="v6">[v6 统一]</span> 瞬时浮层骨架:</b><br>④⑤⑦ 共用 <code>rounded-md bg-surface shadow-sm border border-border/50</code> + <code>flex items-center gap-2 px-3 py-2</code>。差异仅在 leading icon：灰 loader(④) / 蓝 loader(⑤) / info GitFork(⑦)</div>
       <div class="anno"><b>⑥ 回底部按钮:</b><br>absolute bottom-4 left-1/2 z-10 size-9 -translate-x-1/2 rounded-full shadow-lg · Transition fade</div>
       <div class="anno"><b>⑥ 触发条件:</b><br>showJumpButton = 非贴底 + 有新内容</div>
-      <div class="anno"><b>⑦ ForkNotice:</b><br>bg-info-soft border rounded-[var(--radius)] px-[11px] py-[7px] · GitFork 14px info</div>
+      <div class="anno"><b>⑦ ForkNotice:</b><br><span class="v6">[v6 改动]</span> <span class="old">bg-info-soft</span> → <code>bg-surface</code> 卡片骨架 · <b>info 色只落 GitFork icon + 查看链接</b> · 同 ④⑤ 卡片骨架</div>
       <div class="anno"><b>[欠考虑] 堆叠顺序:</b><br>compacting/dispatching/fork 都读 <code>vlistBottom</code> + offset 垂直堆叠：compacting(46) → dispatching(46) → fork(baseTop)。z-index=10；<b>定位基准与堆叠偏移需文档化</b>（当前由 useMessageStreamNotices/useNoticeStack 计算）</div>
       <div class="anno"><b>abs 锚点汇总:</b><br>top=0（load-more）· top=vlistBottom（compacting/dispatching/fork）· bottom-4 center（回底部）· inset-0（空态）</div>
       <div class="anno"><b>z-index 层级:</b><br>瞬时浮层 z-10 · TurnRail z-20 · 同层内按 DOM 顺序</div>
