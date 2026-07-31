@@ -167,7 +167,7 @@ body {
 .state-row { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
 .state-tag {
   flex-shrink: 0; width: 84px; font-size: var(--text-2xs); font-family: var(--font-mono);
-  color: var(--neutral-dim); text-transform: uppercase; letter-spacing: .05em;
+  color: var(--neutral-dim);
   padding-top: 6px;
 }
 .state-demo { flex: 1; min-width: 0; }
@@ -175,7 +175,7 @@ body {
 /* 对比组（左旧右新）*/
 .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
 .compare-col { background: var(--bg-card); border-radius: var(--radius); padding: 20px; overflow: hidden; }
-.compare-tag { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-2xs); font-family: var(--font-mono); padding: 3px 8px; border-radius: 999px; margin-bottom: 16px; text-transform: uppercase; letter-spacing: .05em; }
+.compare-tag { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-2xs); font-family: var(--font-mono); padding: 3px 8px; border-radius: 999px; margin-bottom: 16px; }
 .compare-tag.old { background: var(--danger-soft); color: var(--danger); }
 .compare-tag.new { background: var(--success-soft); color: var(--success); }
 
@@ -204,7 +204,7 @@ body {
 .z-stage-label { position: absolute; font-family: var(--font-mono); font-size: 9px; color: var(--neutral-faint); }
 
 .z-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); margin-top: 4px; }
-.z-table th { text-align: left; padding: 8px 12px; font-size: var(--text-xs); color: var(--neutral-dim); font-weight: 500; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--border-strong); }
+.z-table th { text-align: left; padding: 8px 12px; font-size: var(--text-xs); color: var(--neutral-dim); font-weight: 500; border-bottom: 1px solid var(--border-strong); }
 .z-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 .z-table tr:last-child td { border-bottom: 0; }
 .z-table .z-name { font-family: var(--font-mono); color: var(--accent); font-size: var(--text-xs); }

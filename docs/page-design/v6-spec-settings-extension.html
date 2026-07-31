@@ -166,7 +166,7 @@ body {
 .state-row { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
 .state-tag {
   flex-shrink: 0; width: 92px; font-size: var(--text-2xs); font-family: var(--font-mono);
-  color: var(--neutral-dim); text-transform: uppercase; letter-spacing: .05em;
+  color: var(--neutral-dim);
   padding-top: 6px;
 }
 .state-tag.on { color: var(--accent); }
@@ -441,7 +441,7 @@ body {
 .doc-foot a { color: var(--accent); text-decoration: none; }
 
 /* compare tag */
-.compare-tag { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; font-family: var(--font-mono); padding: 3px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: .05em; }
+.compare-tag { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; font-family: var(--font-mono); padding: 3px 8px; border-radius: 999px; }
 .compare-tag.old { background: var(--danger-soft); color: var(--danger); }
 .compare-tag.new { background: var(--success-soft); color: var(--success); }
 
@@ -1172,10 +1172,10 @@ body {
     <table style="width:100%;border-collapse:collapse;font-size:12px;">
       <thead>
         <tr>
-          <th style="text-align:left;padding:10px 12px;font-size:11px;color:var(--neutral-dim);font-weight:500;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border-strong);width:150px;">组件</th>
-          <th style="text-align:left;padding:10px 12px;font-size:11px;color:var(--neutral-dim);font-weight:500;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border-strong);width:120px;">状态</th>
-          <th style="text-align:left;padding:10px 12px;font-size:11px;color:var(--neutral-dim);font-weight:500;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border-strong);">视觉表达（token）</th>
-          <th style="text-align:left;padding:10px 12px;font-size:11px;color:var(--neutral-dim);font-weight:500;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border-strong);width:90px;">参见</th>
+          <th style="text-align:left;padding:10px 12px;font-size:11px;color:var(--neutral-dim);font-weight:500;border-bottom:1px solid var(--border-strong);width:150px;">组件</th>
+          <th style="text-align:left;padding:10px 12px;font-size:11px;color:var(--neutral-dim);font-weight:500;border-bottom:1px solid var(--border-strong);width:120px;">状态</th>
+          <th style="text-align:left;padding:10px 12px;font-size:11px;color:var(--neutral-dim);font-weight:500;border-bottom:1px solid var(--border-strong);">视觉表达（token）</th>
+          <th style="text-align:left;padding:10px 12px;font-size:11px;color:var(--neutral-dim);font-weight:500;border-bottom:1px solid var(--border-strong);width:90px;">参见</th>
         </tr>
       </thead>
       <tbody>

@@ -105,7 +105,7 @@ body {
 .state-row { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
 .state-tag {
   flex-shrink: 0; width: 96px; font-size: var(--text-2xs); font-family: var(--font-mono);
-  color: var(--neutral-dim); text-transform: uppercase; letter-spacing: .05em;
+  color: var(--neutral-dim);
   padding-top: 6px;
 }
 .state-demo { flex: 1; min-width: 0; }
@@ -353,7 +353,7 @@ body {
 .ot { width: 100%; border-collapse: collapse; font-size: 12px; }
 .ot th {
   text-align: left; padding: 10px 12px; font-size: 11px; color: var(--neutral-dim);
-  font-weight: 500; text-transform: uppercase; letter-spacing: .05em;
+  font-weight: 500;
   border-bottom: 1px solid var(--border-strong);
 }
 .ot td { padding: 11px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; color: var(--neutral-mid); }
@@ -494,7 +494,7 @@ body {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
       <!-- 现状：bug 场景 -->
       <div style="background:var(--bg-card);border-radius:var(--radius);padding:20px;">
-        <span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;font-family:var(--font-mono);padding:3px 8px;border-radius:999px;background:var(--danger-soft);color:var(--danger);text-transform:uppercase;letter-spacing:.05em;margin-bottom:16px;">现状 · C1 bug</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;font-family:var(--font-mono);padding:3px 8px;border-radius:999px;background:var(--danger-soft);color:var(--danger);margin-bottom:16px;">现状 · C1 bug</span>
         <div style="font-size:11px;color:var(--neutral-dim);margin-bottom:10px;line-height:1.6;">场景：用户编辑了提示词，又想关掉开关（恢复默认）。点 Save，按钮是灰的。</div>
         <div class="sp-card" style="margin:0;">
           <div class="sp-head">
@@ -517,7 +517,7 @@ body {
 
       <!-- v6：dirty 驱动 -->
       <div style="background:var(--bg-card);border-radius:var(--radius);padding:20px;">
-        <span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;font-family:var(--font-mono);padding:3px 8px;border-radius:999px;background:var(--success-soft);color:var(--success);text-transform:uppercase;letter-spacing:.05em;margin-bottom:16px;">v6 · dirty 驱动</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;font-family:var(--font-mono);padding:3px 8px;border-radius:999px;background:var(--success-soft);color:var(--success);margin-bottom:16px;">v6 · dirty 驱动</span>
         <div style="font-size:11px;color:var(--neutral-dim);margin-bottom:10px;line-height:1.6;">同场景：关掉 switch（视为编辑），dirty 置位，badge 出现，Save 启用。可正常保存。</div>
         <div class="sp-card" style="margin:0;">
           <div class="sp-head">
@@ -783,7 +783,7 @@ body {
 
       <!-- demo 控制条：模拟两种场景 + 显示内部状态 -->
       <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px;padding:10px 12px;background:var(--bg-input);border-radius:var(--radius);">
-        <span style="font-size:10px;font-family:var(--font-mono);color:var(--neutral-dim);text-transform:uppercase;letter-spacing:.05em;margin-right:4px;">demo 控制</span>
+        <span style="font-size:10px;font-family:var(--font-mono);color:var(--neutral-dim);margin-right:4px;">demo 控制</span>
         <button class="btn btn-secondary btn-dense" id="af-reset-first">重置为「首次启用」</button>
         <button class="btn btn-secondary btn-dense" id="af-set-history">模拟「已有历史内容」</button>
         <span style="flex:1;"></span>
@@ -827,7 +827,7 @@ body {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
         <!-- 首次启用 -->
         <div>
-          <span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;font-family:var(--font-mono);padding:3px 8px;border-radius:999px;background:var(--success-soft);color:var(--success);text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">v6 · 首次启用（!everEnabled）</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;font-family:var(--font-mono);padding:3px 8px;border-radius:999px;background:var(--success-soft);color:var(--success);margin-bottom:12px;">v6 · 首次启用（!everEnabled）</span>
           <div style="font-size:11px;color:var(--neutral-dim);line-height:1.6;margin-bottom:10px;">用户从未启用过。打开 Switch → 自动拉取 pi 当前提示词填入，编辑器非空，可直接在其上修改。</div>
           <div class="sp-card" style="margin:0;">
             <div class="sp-head">
@@ -849,7 +849,7 @@ body {
         </div>
         <!-- 复启用 -->
         <div>
-          <span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;font-family:var(--font-mono);padding:3px 8px;border-radius:999px;background:var(--surface-2);color:var(--neutral-mid);text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">v6 · 复启用（everEnabled）</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;font-family:var(--font-mono);padding:3px 8px;border-radius:999px;background:var(--surface-2);color:var(--neutral-mid);margin-bottom:12px;">v6 · 复启用（everEnabled）</span>
           <div style="font-size:11px;color:var(--neutral-dim);line-height:1.6;margin-bottom:10px;">用户之前启用过（有历史 prompt）。再次打开 Switch → 恢复历史内容，<b>不</b>覆盖、<b>不</b>重拉 pi 默认。</div>
           <div class="sp-card" style="margin:0;">
             <div class="sp-head">
@@ -1017,12 +1017,12 @@ Guidelines:
     <div class="render-frame">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
         <div>
-          <span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;font-family:var(--font-mono);padding:3px 8px;border-radius:999px;background:var(--danger-soft);color:var(--danger);text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">现状 · min-h-120</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;font-family:var(--font-mono);padding:3px 8px;border-radius:999px;background:var(--danger-soft);color:var(--danger);margin-bottom:12px;">现状 · min-h-120</span>
           <textarea class="ta" style="min-height:120px;max-height:none;" readonly>You are a senior backend engineer...</textarea>
           <div class="anno" style="margin-top:10px;"><b>问题:</b> <span>120px 仅露 5 行 mono，长提示词需大量滚动，编辑时丢失上下文</span></div>
         </div>
         <div>
-          <span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;font-family:var(--font-mono);padding:3px 8px;border-radius:999px;background:var(--success-soft);color:var(--success);text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">v6 · min-h-200 / max-h-60vh</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;font-family:var(--font-mono);padding:3px 8px;border-radius:999px;background:var(--success-soft);color:var(--success);margin-bottom:12px;">v6 · min-h-200 / max-h-60vh</span>
           <textarea class="ta" readonly>You are a senior backend engineer. Read files before editing. Prefer precise edits over rewrites. Keep responses concise and show file paths clearly.
 Follow project conventions. When changing multiple files, list the change set first.</textarea>
           <div class="anno" style="margin-top:10px;"><b>改善:</b> <span>200px 露 ~10 行；60vh 封顶后内部滚动；resize-y 可拖</span></div>
