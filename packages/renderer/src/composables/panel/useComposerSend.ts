@@ -141,13 +141,19 @@ export function useComposerSend(deps: ComposerSendDeps): { onSend: () => Promise
     // 成功后统一重放）。`/` 前缀是命令——压缩完成后才能执行，此处拒绝 + toast，draft 保留不清空。
     // 入队语义是重放纯文本（用 draft 而非 segments——segments 含 chip/图片段，重放时无 chip 上下文）。
     if (deps.isCompacting.value) {
-      if (text.trim().startsWith('/')) {
+      // S6 守卫：isCompacting 与 sessionIdRef 非空性同源（isCompacting 由 props.sessionId
+      // 派生，true 时 sessionIdRef 必非 null）。把不变量局部化，消除 enqueue 处的 `!` 断言。
+      if (!deps.sessionIdRef.value) return
+      // `/` 与 `!`/`!!` 前缀都是命令（slash 命令 / bash 命令）——压缩完成后才能执行，
+      // 此处拒绝 + toast，draft 保留不清空。`!` 对称于 `/`：避免 bash 命令被静默降级
+      // 为纯文本入队（重放走普通 send 不会按 bash 执行，用户语义被悄悄改变）。
+      if (text.trim().startsWith('/') || text.trim().startsWith('!')) {
         deps.toastError(deps.t('panel.composer.commandQueuedRejected'))
         return
       }
       // 先 enqueue 再 clearInput：text 在函数开头已捕获（= draft 当前值），
       // clearInput 会把 draft 置空，顺序颠倒会入队空字符串。
-      useCompactQueue().enqueue(deps.sessionIdRef.value!, text)
+      useCompactQueue().enqueue(deps.sessionIdRef.value, text)
       deps.clearInput()
       return
     }

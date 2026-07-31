@@ -5,6 +5,7 @@
  * - TC11: compact 期间 ⏎ 发送 → 入队 + 输入清空 + badge 可见
  * - TC12: compact 期间发送按钮点击 → 入队（按钮可点非 spinner）
  * - TC13: compact 期间 `/` 前缀文本 → 拒绝入队 + toast + draft 保留
+ * - TC13b: compact 期间 `!`/`!!` 前缀 bash 命令 → 拒绝入队 + toast + draft 保留（对称于 `/`）
  * - TC14: badge 显示条数 + 首条预览 + 取消按钮移除单条
  * - TC15: compacted 成功（flush 清空）→ 队列清空 + badge 消失
  * - TC16: compacted 失败（队列保留）→ badge 仍在
@@ -185,6 +186,22 @@ describe('Composer compact 待发队列（TC11-TC16/TC18）', () => {
     expect(useCompactQueue().count('s1')).toBe(0)
     expect(chatApiMock.compact).not.toHaveBeenCalled()
     // toast 拒绝提示（zh-CN commandQueuedRejected）
+    expect(toastMock.error).toHaveBeenCalledWith('压缩进行中，命令请等待完成后使用')
+    // draft 未清空（clear 未被调），badge 不出现
+    expect(wrapper.findComponent(ComposerInputMock).vm.clear).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="compact-queue-badge"]').exists()).toBe(false)
+  })
+
+  it('TC13b: compact 期间 `!` 前缀 bash 命令 → 拒绝入队 + toast + draft 保留', async () => {
+    const chat = useChatStore()
+    chat.setCompacting('s1', true)
+    const wrapper = mountComposer({ sessionId: 's1' })
+    await typeAndEnter(wrapper, '!ls')
+
+    // 队列为空（enqueue 未被调）+ sendBash 未被调（未静默降级为纯文本，也未执行 bash）
+    expect(useCompactQueue().count('s1')).toBe(0)
+    expect(chatApiMock.sendBash).not.toHaveBeenCalled()
+    // toast 拒绝提示（与 `/` 命令同一文案，zh-CN commandQueuedRejected）
     expect(toastMock.error).toHaveBeenCalledWith('压缩进行中，命令请等待完成后使用')
     // draft 未清空（clear 未被调），badge 不出现
     expect(wrapper.findComponent(ComposerInputMock).vm.clear).not.toHaveBeenCalled()
