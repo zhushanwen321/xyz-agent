@@ -58,10 +58,10 @@
    仅一条 border-b 与下方输入区分隔；融入 composer bg-input 背景，无独立 bg。
    每条排队消息一行：Zap(steer/accent)/Clock(followup/info) icon + truncate 文本。
    多条时显前 2-3 条 + 「+N」。pulse-accent 删除（保留 Zap/Clock icon 区分类型）。*/
-.qb-inline { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px 8px; border-bottom: 1px solid color-mix(in oklch, var(--neutral-faint) 60%, transparent); }
+.qb-inline { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px 8px; border-bottom: 1px solid color-mix(in oklch, var(--border-strong) 50%, transparent); }   /* 分隔线统一 border-border/50（CSS neutral-faint 60% + desc border-border/40 失配 → 统一）*/
 .qb-inline .qb-item { display: flex; align-items: center; gap: 8px; }
 .qb-inline .qb-item-text { font-size: 12px; color: var(--neutral-mid); }
-.qb-inline .qb-more { font-size: 11px; font-family: var(--font-mono); color: var(--neutral-dim); padding-left: 21px; }
+.qb-inline .qb-more { font-size: 11px; font-family: var(--font-mono); color: var(--neutral-dim); padding-left: 25px; }   /* padding-left 21px 魔数 → 标准间距（13px icon + 8px gap + 4px 对齐）*/
 
 /* [已移除] RetryIndicator（原 composer 上方独立行）→ 迁对话流 TurnMeta 重试中态（见 v6-spec-container.html §3）。.retry-v6 样式已删除。*/
 
@@ -188,7 +188,7 @@
         <div class="state-row" style="margin:14px 0 0;">
           <div class="state-tag" style="color:var(--neutral-faint);">pending</div>
           <div class="state-demo" style="opacity:.45;">
-            <div style="padding:9px 13px;border-radius:14px 14px 4px 14px;border:1px dashed var(--neutral-faint);color:var(--neutral-dim);font-size:12px;font-style:italic;">✗ <b style="color:var(--neutral-dim);">[v6 目标]</b> 已废弃：pending 不再在对话流渲染（虚线气泡删除）→ 见 §8.5 QueueBubble</div>
+            <div style="padding:9px 13px;border-radius:14px 14px 4px 14px;border:1px dashed var(--neutral-faint);color:var(--neutral-dim);font-size:12px;font-style:italic;"><svg style="width:12px;height:12px;color:var(--neutral-dim);vertical-align:-1px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> <b style="color:var(--neutral-dim);">[v6 目标]</b> 已废弃：pending 不再在对话流渲染（虚线气泡删除）→ 见 §8.5 QueueBubble</div>
           </div>
         </div>
       </div></div></div>
@@ -218,7 +218,7 @@
        ================================================================ -->
   <section class="spec" id="s8b">
     <div class="spec-head"><span class="spec-num">§8.5</span><h2 class="spec-title">QueueBubble · 排队队列</h2></div>
-    <p class="spec-desc">composer-box 顶部内嵌的排队消息指示器。<b>[v6 目标] 从独立卡片改为内嵌 composer-box 顶部</b>（像被遮挡的卡片仅露内容）：去掉独立 <code>border-accent</code>、去掉整块 <code>bg-accent-soft</code> 底色、去掉「PENDING / N 排队中」标签和计数 badge、去掉 chevron（不支持收起）、<b>去掉脉冲闪烁动画</b>（pulse-accent 删除）。仅用一条细的分隔线（<code>border-b border-border/40</code>）与下方输入区隔开，整体融入 composer-box 的 <code>bg-input</code> 背景。内容：每条排队消息一行，<b>Zap（steer，accent 色）/ Clock（followup，info 色）icon + truncate 文本</b>，多条时显前 2-3 条 + 「+N」。保留 Zap/Clock icon 区分类型。消息被消费后从队列移除进对话流（§8）。只读。</p>
+    <p class="spec-desc">composer-box 顶部内嵌的排队消息指示器。<b>[v6 目标] 从独立卡片改为内嵌 composer-box 顶部</b>（像被遮挡的卡片仅露内容）：去掉独立 <code>border-accent</code>、去掉整块 <code>bg-accent-soft</code> 底色、去掉「PENDING / N 排队中」标签和计数 badge、去掉 chevron（不支持收起）、<b>去掉脉冲闪烁动画</b>（pulse-accent 删除）。仅用一条细的分隔线（<code>border-b border-border/50</code>）与下方输入区隔开，整体融入 composer-box 的 <code>bg-input</code> 背景。内容：每条排队消息一行，<b>Zap（steer，accent 色）/ Clock（followup，info 色）icon + truncate 文本</b>，多条时显前 2-3 条 + 「+N」。保留 Zap/Clock icon 区分类型。消息被消费后从队列移除进对话流（§8）。只读。</p>
     <div class="change-points">
       <span class="cp cp-v6"><b>内嵌</b> 改为 composer-box 顶部（去独立卡片） <span style="opacity:.7;">[v6 目标 · 整组件重写]</span></span>
       <span class="cp cp-v6"><b>去脉冲</b> 删 pulse-accent 闪烁动画</span>
@@ -260,7 +260,7 @@
             </div>
           </div>
         </div>
-        <p style="font-size:11px;color:var(--neutral-mid);margin-top:12px;padding:10px 14px;background:var(--bg-card);border-radius:var(--radius);"><b style="color:var(--neutral-fg);">图标语义：</b>⚡Zap=STEER（抢占当前 turn，闪电喻意打断，accent 蓝）/ ⏰Clock=FOLLOWUP（排到下一轮，时钟喻意等待，info 青）。<b>无脉冲点、无 PENDING/N排队中 标签、无 chevron</b>；多条时显前 2-3 条 + 「+N」计数。</p>
+        <p style="font-size:11px;color:var(--neutral-mid);margin-top:12px;padding:10px 14px;background:var(--bg-card);border-radius:var(--radius);"><b style="color:var(--neutral-fg);">图标语义：</b><svg style="width:12px;height:12px;color:var(--accent);vertical-align:-1px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>Zap=STEER（抢占当前 turn，闪电喻意打断，accent 蓝）/ <svg style="width:12px;height:12px;color:var(--info);vertical-align:-1px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>Clock=FOLLOWUP（排到下一轮，时钟喻意等待，info 青）。<b>无脉冲点、无 PENDING/N排队中 标签、无 chevron</b>；多条时显前 2-3 条 + 「+N」计数。</p>
 
         <!-- 现状 vs v6 目标 定性（差距巨大，整组件重写级别）-->
         <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:10px;">
@@ -290,7 +290,7 @@
     </div>
 
     <div class="anno-grid">
-      <div class="anno"><b>容器 [v6 目标]:</b><br><span class="old">[现状] border-accent(45%) + accent-soft 底（独立卡片，composer 外）</span><br><span class="v6">内嵌 composer-box 顶部 · 无独立 border/bg · 融入 bg-input · 仅 border-b/40 分隔</span></div>
+      <div class="anno"><b>容器 [v6 目标]:</b><br><span class="old">[现状] border-accent(45%) + accent-soft 底（独立卡片，composer 外）</span><br><span class="v6">内嵌 composer-box 顶部 · 无独立 border/bg · 融入 bg-input · 仅 border-b/50 分隔</span></div>
       <div class="anno"><b>去 pulse [v6 目标]:</b><br><span class="old">[现状] qb-dot 7px 脉冲闪烁（pulse-accent 1.8s）</span><br><span class="v6">删除脉冲动画，无 dot</span></div>
       <div class="anno"><b>去标签/badge/chevron [v6 目标]:</b><br><span class="old">[现状] PENDING + 「N 排队中」 + 计数 badge + chevron(可折叠)</span><br><span class="v6">全部去掉 · 不支持收起</span></div>
       <div class="anno"><b>内容行:</b><br><span class="v6">每条一行：Zap/Clock icon(13px) + 文本 truncate(12px neutral-mid) · padding 10px 14px 8px · gap-4</span></div>
@@ -486,7 +486,7 @@
           <tr><td style="padding:8px 10px;"><b>思考等级</b><br><span style="font-size:10px;color:var(--neutral-dim);">ThinkingLevelPopover</span></td><td style="padding:8px 10px;">click<br><span style="font-size:10px;color:var(--neutral-dim);">PopoverTrigger（Brain+label）</span></td><td style="padding:8px 10px;font-family:var(--font-mono);">top · <b>180px</b> · p-0</td><td style="padding:8px 10px;">head + 6 档（off/low/medium/high/xhigh/max）· 圆点 + Check（见下）</td></tr>
         </tbody>
       </table>
-      <p style="font-size:11px;color:var(--neutral-mid);margin-top:12px;padding:8px 12px;background:var(--bg-card);border-radius:var(--radius);"><b style="color:var(--neutral-fg);">trigger 共用样式（popover-styles.ts）：</b>文本型 <code>h-7 rounded-sm px-2 text-[11.5px] text-neutral-dim transition-colors hover:text-neutral-mid</code> · 图标型 <code>size-[28px] shrink-0 rounded-sm text-neutral-dim transition-colors hover:bg-surface-hover hover:text-neutral-mid</code> · ChevronDown size-9 rotate-180。选中态 <code>bg-accent-soft text-accent</code>（锁 hover 不回退）。<b>PopoverContent 共用</b>：<code>z-[1100] min-w-240 rounded-md border-border-strong bg-bg-elevated shadow-2</code> · open/close fade+zoom 动画。ContextCapacity 是唯一 hover 触发，trigger 始终显当前用量「12K · 24%」（<code>tabular-nums</code>，高用量 &gt;70% 染 warn）。</p>
+      <p style="font-size:11px;color:var(--neutral-mid);margin-top:12px;padding:8px 12px;background:var(--bg-card);border-radius:var(--radius);"><b style="color:var(--neutral-fg);">trigger 共用样式（popover-styles.ts）：</b>文本型 <code>h-7 rounded-sm px-2 text-[11.5px] text-neutral-dim transition-colors hover:text-neutral-mid</code> · 图标型 <code>size-[28px] shrink-0 rounded-sm text-neutral-dim transition-colors hover:bg-surface-hover hover:text-neutral-mid</code> · ChevronDown size-9 rotate-180。选中态 <code>bg-accent-soft text-accent</code>（锁 hover 不回退）。<b>PopoverContent 共用</b>：<code>z-modal(1000) min-w-240 rounded-lg(12px) border-border-strong bg-bg-elevated shadow-2</code>（<span class="v6">R18 z 归 modal · R19 圆角 12px</span>）· open/close fade+zoom 动画。ContextCapacity 是唯一 hover 触发，trigger 始终显当前用量「12K · 24%」（<code>tabular-nums</code>，高用量 &gt;70% 染 warn）。</p>
 
       <!-- + 添加菜单内部 -->
       <h4 style="font-size:12px;color:var(--neutral-mid);margin:16px 0 8px;font-weight:500;">+ 添加菜单（208px · 3 项 · px-2.5 py-1.5 gap-2.5）</h4>
@@ -730,7 +730,7 @@
     </div>
 
     <div class="anno-grid">
-      <div class="anno"><b>7 区:</b><br>①RetryIndicator ②QueueBubble ③staging mode-chip ④ContextChipsBar ⑤meta-row slot ⑥Input ⑦composer-bar</div>
+      <div class="anno"><b>6 区:</b><br>①QueueBubble ②staging mode-chip ③ContextChipsBar ④meta-row slot ⑤Input ⑥composer-bar<br><span class="old">[已移除] 原 ①RetryIndicator → 迁对话流 TurnMeta</span></div>
       <div class="anno"><b>box:</b><br><code>rounded-lg bg-bg-input</code> · 默认 transparent 边<br><span class="v6">v6 panel 也居中 720</span></div>
       <div class="anno"><b>boxClass 优先级:</b><br>staging(accent+ring+soft底) &gt; bash(accent ring) &gt; isActive(steer 呼吸) &gt; hasInput(2px 微 ring) &gt; 空<br>sending 叠 opacity-55</div>
       <div class="anno"><b>4 种内联 chip [v6 目标]:</b><br><span class="v6">统一范式：无底无边 + 加粗 + 前缀 icon</span><br>skill Wand紫(最前/1个/×) · file FileText绿(光标/×/L12) · image Image紫(光标/×/chipId) · @ AtSign蓝(光标/纯文本/无×)</div>
@@ -739,7 +739,7 @@
       <div class="anno"><b>8 插入路径:</b><br>+附件/+图片/+命令 · /斜杠 · #文件 · @ · 粘贴图 · 拖拽/drawer注入</div>
       <div class="anno"><b>drawer 注入:</b><br>SideDrawer → store 通道 · target=new(startFlow 两阶段)/current(匹配注入 file/text)</div>
       <div class="anno"><b>staging fork/handoff:</b><br>同 boxClass(accent+3px ring+soft 底) · GitFork/Upload icon · ⌘⇧G/⌘J · 互斥 · 4 路径退出 · fork 禁空发/handoff 允许</div>
-      <div class="anno"><b>4 popover:</b><br>+(click 208) / 上下文(<span style="color:var(--accent);">hover</span> 260) / 模型(click 220) / 思考(click 180) · 全 side=top · z-1100 min-w-240</div>
+      <div class="anno"><b>4 popover:</b><br>+(click 208) / 上下文(<span style="color:var(--accent);">hover</span> 260) / 模型(click 220) / 思考(click 180) · 全 side=top · <span class="v6">z-modal(1000) min-w-240</span></div>
       <div class="anno"><b>发送位 4 态:</b><br>isActive(stop Square13) &gt; isCompacting(spinner 灰) &gt; isSending(spinner 蓝) &gt; idle(send ArrowUp15/disabled)</div>
       <div class="anno"><b>send btn:</b><br><code>size-[var(--composer-btn-size)]</code>=30px · <code>rounded-md</code> · ml-1.5 · Loader2 size-4 spin</div>
       <div class="anno"><b>bash:</b><br><code>!</code>/<code>!!</code> 触发 · accent ring(0.30) · bashPlaceholder · 不走 LLM(sendBash RPC) · 低于 staging</div>

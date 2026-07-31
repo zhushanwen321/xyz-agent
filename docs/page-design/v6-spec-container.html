@@ -51,16 +51,16 @@
 
 /* ④ 压缩中提示（abs，shadow，bg-surface）*/
 /* [v6 统一] 瞬时浮层统一骨架：rounded-md bg-surface shadow-sm border border-border/50 · flex items-center gap-2 px-3 py-2 */
-.ms-compact { position: absolute; left: 20px; right: 20px; z-index: 10; display: flex; min-width: 0; align-items: center; gap: 8px; border-radius: var(--radius); border: 1px solid var(--border-strong); background: var(--surface); padding: 8px 12px; box-shadow: var(--shadow-2); }
+.ms-compact { position: absolute; left: 20px; right: 20px; z-index: 10; display: flex; min-width: 0; align-items: center; gap: 8px; border-radius: var(--radius); border: 1px solid color-mix(in oklch, var(--neutral-faint) 50%, transparent); background: var(--surface); padding: 8px 12px; box-shadow: var(--shadow-2); }
 .ms-compact svg { width: 12px; height: 12px; color: var(--neutral-mid); flex-shrink: 0; animation: spin 1s linear infinite; }
 .ms-compact .ms-compact-text { flex: 1; min-width: 0; font-size: 12px; color: var(--neutral-mid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ⑤ dispatching 空窗期（abs，accent Loader2）*/
-.ms-dispatch { position: absolute; left: 20px; right: 20px; z-index: 10; display: flex; min-width: 0; align-items: center; gap: 8px; border-radius: var(--radius); border: 1px solid var(--border-strong); background: var(--surface); padding: 8px 12px; box-shadow: var(--shadow-2); font-size: 12px; color: var(--neutral-mid); }
+.ms-dispatch { position: absolute; left: 20px; right: 20px; z-index: 10; display: flex; min-width: 0; align-items: center; gap: 8px; border-radius: var(--radius); border: 1px solid color-mix(in oklch, var(--neutral-faint) 50%, transparent); background: var(--surface); padding: 8px 12px; box-shadow: var(--shadow-2); font-size: 12px; color: var(--neutral-mid); }
 .ms-dispatch svg { width: 12px; height: 12px; color: var(--accent); flex-shrink: 0; animation: spin 1s linear infinite; }
 
 /* [v6 统一] 瞬时浮层对比帧：静态（非 abs）统一卡片骨架，凸显同骨架 + leading icon 差异 */
-.ms-cmp { display: flex; align-items: center; gap: 8px; border-radius: var(--radius); border: 1px solid var(--border-strong); background: var(--surface); padding: 8px 12px; box-shadow: var(--shadow-2); font-size: 12px; color: var(--neutral-mid); }
+.ms-cmp { display: flex; align-items: center; gap: 8px; border-radius: var(--radius); border: 1px solid color-mix(in oklch, var(--neutral-faint) 50%, transparent); background: var(--surface); padding: 8px 12px; box-shadow: var(--shadow-2); font-size: 12px; color: var(--neutral-mid); }
 .ms-cmp svg { width: 12px; height: 12px; flex-shrink: 0; }
 .ms-cmp .cmp-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-cmp .cmp-text b { font-weight: 550; color: var(--neutral-fg); }
@@ -83,7 +83,7 @@
 
 /* ⑦ ForkNotice（info-soft 底 + border + radius）*/
 /* [v6 统一] ForkNotice 改用统一卡片骨架：bg-surface（原 bg-info-soft 去除）· info 色只落在 GitFork icon + 查看链接 */
-.fn { display: flex; align-items: center; gap: 8px; border-radius: var(--radius); border: 1px solid var(--border-strong); background: var(--surface); padding: 8px 12px; box-shadow: var(--shadow-2); }
+.fn { display: flex; align-items: center; gap: 8px; border-radius: var(--radius); border: 1px solid color-mix(in oklch, var(--neutral-faint) 50%, transparent); background: var(--surface); padding: 8px 12px; box-shadow: var(--shadow-2); }
 .fn svg { width: 14px; height: 14px; color: var(--info); flex-shrink: 0; }
 .fn .gitfork-ico { color: var(--info); }
 .fn .fn-text { flex: 1; min-width: 0; font-size: 12px; color: var(--neutral-fg); line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -101,14 +101,16 @@
 .fn .fn-kind-tag.stopped { background: var(--warn-soft); color: var(--warn); }
 
 /* ── §3.5 TurnRail 右侧导航 mini-map ── */
-/* 演示舞台：右侧 rail 贴面板右缘 */
+/* 演示舞台：右侧 rail 贴面板右缘。
+   【D11/R5】spec 层删 h-340px 固定值——TurnRail 高度 = turn 数 × 行高，随 turn 数自适应，
+   无固定上限（renderer 实现：rail height: 100% 贴 panel 高度，viewport indicator 按比例）。下面变体示意画 1/5/20 turn。*/
 .rail-stage { position: relative; background: var(--surface); border-radius: var(--radius); padding: 20px; min-height: 380px; overflow: hidden; }
-.rail-canvas { position: relative; height: 340px; }
+.rail-canvas { position: relative; }   /* 高度随内容自适应，无固定值 */
 /* 常驻窄条 spine */
-.rail { position: absolute; top: 50%; transform: translateY(-50%); height: 340px; width: 6px; border-radius: 9999px; background: var(--surface-hover); transition: width var(--duration) var(--ease); }
+.rail { position: absolute; top: 50%; transform: translateY(-50%); width: 6px; border-radius: 9999px; background: var(--surface-hover); transition: width var(--duration) var(--ease); }
 .rail .rail-spine { position: absolute; inset: 0; width: 6px; border-radius: 9999px; background: var(--surface-hover); }
-/* viewport indicator */
-.rail .rail-vp { position: absolute; left: 0; width: 6px; border-radius: 9999px; border-left: 2px solid var(--accent); background: color-mix(in oklch, var(--accent) 20%, transparent); }
+/* viewport indicator（R5：accent 短粗线，非 border-l-2）——独立实色条块叠在 spine 上，标记当前 turn 比例位置 */
+.rail .rail-vp { position: absolute; left: 0; width: 6px; border-radius: 9999px; background: var(--accent); opacity: .55; }
 /* hover 展开 panel（演示态：直接展开）*/
 .rail.expanded { width: 224px; }
 .rail .rail-panel { position: absolute; left: 12px; right: 0; top: 0; bottom: 0; border-radius: var(--radius-lg); background: var(--bg-elevated); padding: 8px; box-shadow: var(--shadow-2); }
@@ -117,7 +119,9 @@
 .rail-list { display: flex; flex-direction: column; gap: 2px; max-height: 100%; overflow-y: auto; }
 .rail-node { position: relative; display: flex; flex-direction: column; gap: 2px; padding: 4px 6px; border-radius: var(--radius-sm); cursor: pointer; }
 .rail-node:hover { background: var(--surface-hover); }
-.rail-node.active { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-ring); }
+.rail-node.active { background: var(--surface); }   /* R5+D11：active 改 §3.2 范式（bg-surface，文字 accent 表达），去 ring-inset */
+.rail-node.active .rn-utext { color: var(--accent); }
+.rail-node.active .rn-atext { color: var(--accent); }
 .rail-node .rn-user { display: flex; min-width: 0; align-items: center; gap: 6px; }
 .rail-node .rn-user svg { width: 12px; height: 12px; color: var(--neutral-ico); flex-shrink: 0; }
 .rail-node .rn-user .rn-utext { flex: 1; font-size: 11px; line-height: 1.25; color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 24px; }
@@ -467,7 +471,7 @@
        ================================================================ -->
   <section class="spec" id="s2">
     <div class="spec-head"><span class="spec-num">§2</span><h2 class="spec-title">PanelHeader</h2></div>
-    <p class="spec-desc">主面板顶部 header（状态图标 + breadcrumb 目录▸分支 + jsonl + drawer toggle + git）。v6：去 <code>border-b border-border</code>，改 <code>bg-bg-elevated</code> 浮起分层；status icon 灰阶化（仅 done 绿/error 红/waiting 金保留语义色，其余中性），仅 git 脏状态点保留 danger/warn。</p>
+    <p class="spec-desc">主面板顶部 header（状态图标 + breadcrumb 目录▸分支 + jsonl + drawer toggle + git）。v6：去 <code>border-b border-border</code>，改 <code>bg-bg-elevated</code> 浮起分层；status icon 灰阶化（仅 done 绿/error 红/waiting 金保留语义色，其余中性，<b>running 改 --neutral-ico</b>），仅 git 脏状态点保留 danger/warn。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> border-b border-border</span>
       <span class="cp cp-v6"><b>v6</b> bg-bg-elevated 浮起，去 border-b</span>
@@ -536,10 +540,10 @@
        ================================================================ -->
   <section class="spec" id="s3">
     <div class="spec-head"><span class="spec-num">§3</span><h2 class="spec-title">TurnMeta</h2></div>
-    <p class="spec-desc">turn 元信息条。本身是 ghost 文字行（无 bg/radius），内含 think/tool badge 是 pill。<b>sessionActive（streaming/working/waiting）时整体包在 sticky wrapper 内吸顶</b>，底色绑定内容列背景（<code>--panel-bg</code>，非半透明 blur）。<b>[决策待定] hr 矛盾</b>：spec v6 原主张删 turn 间 <code>&lt;hr border-t border-border&gt;</code>，但代码 <code>TurnMeta.vue:45</code> 仍有 hr（注释 line 6 明说"turn-meta + hr 包在同一 sticky wrapper"），待明确方向。</p>
+    <p class="spec-desc">turn 元信息条。本身是 ghost 文字行（无 bg/radius），内含 think/tool badge 是 pill。<b>sessionActive（streaming/working/waiting）时整体包在 sticky wrapper 内吸顶</b>，底色绑定内容列背景（<code>--panel-bg</code>，非半透明 blur）。<b>[已裁决：删 hr]</b> turn 间 <code>&lt;hr border-t border-border&gt;</code> 删除——靠加大 turn gap（gap-3.5）做层级分隔（代码 <code>TurnMeta.vue:45</code> 现状仍有 hr 属待落地实现债，spec 权威指引代码后续删除）。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> hr border-t 分隔</span>
-      <span class="cp cp-v6"><b>[决策待定]</b> spec 主张删 hr，代码现状仍有 hr（TurnMeta.vue:45）</span>
+      <span class="cp cp-v6"><b>[已裁决：删]</b> 删 hr，靠 gap-3.5 做层级（代码 TurnMeta.vue:45 待删）</span>
       <span class="cp cp-v6"><b>v6</b> sticky bg-panel-bg（非 blur）· sessionActive 时生效</span>
       <span class="cp cp-v6"><b>v6</b> chevron 仅 hasFoldable && !sessionActive 时渲染</span>
       <span class="cp cp-v6"><b>[v6 改动]</b> RetryIndicator 从 composer 移除 → 重试信息迁至 TurnMeta「重试中 N/M」+ warn spinner</span>
@@ -669,21 +673,20 @@
             <div style="flex:1;min-width:240px;">
               <div style="font-size:10px;font-family:var(--font-mono);color:var(--accent);margin-bottom:6px;">sessionActive=true · 吸顶（bg-panel-bg 遮挡滚动文字）</div>
               <div class="ms-stage" style="min-height:160px;position:relative;overflow:hidden;">
-                <div style="position:sticky;top:0;z-index:1;background:var(--surface);padding:12px 12px 4px;border-bottom:1px solid var(--border);">
+                <div style="position:sticky;top:0;z-index:1;background:var(--surface);padding:12px 12px 8px;">
                   <div class="tm-v6">
                     <svg class="tm-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg>
                     <span class="tm-label">思考中</span><span class="tm-elapsed">12.3s</span>
                     <span class="tm-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/></svg>think · 4</span>
                   </div>
-                  <!-- [决策待定] hr 也包在 sticky wrapper 内，吸顶时一起固定 -->
-                  <hr style="border:0;border-top:1px solid var(--border);margin-top:4px;" />
+                  <!-- [已裁决：删 hr] turn 间 hr 删除，靠 turn gap 做层级（sticky wrapper 不再含 hr）-->
                 </div>
                 <div style="padding:8px 12px;font-size:12px;color:var(--neutral-faint);line-height:1.6;">下方滚动文字被 panel-bg 遮挡…（模拟滚动穿透）</div>
                 <div style="padding:0 12px;font-size:12px;color:var(--neutral-faint);line-height:1.6;">…更多 trace 内容…</div>
               </div>
             </div>
           </div>
-          <div class="ms-stage-hint">sessionActive=true 时 wrapper 加 sticky top-0 z-[1] bg-[var(--panel-bg)]（TurnMeta.vue:8-12）· turn-meta + hr 包在同一 sticky wrapper 内一起吸顶 · bg 不透明遮挡下方滚动文字（非 blur）</div>
+          <div class="ms-stage-hint">sessionActive=true 时 wrapper 加 sticky top-0 z-[1] bg-[var(--panel-bg)]（TurnMeta.vue:8-12）· turn-meta 包在 sticky wrapper 内吸顶 · bg 不透明遮挡下方滚动文字（非 blur）· <b>[已裁决：删 hr]</b> sticky wrapper 不再含 hr</div>
         </div>
       </div>
     </div>
@@ -694,9 +697,9 @@
       <div class="anno"><b>label 色:</b><br>active→accent · inactive→neutral-mid</div>
       <div class="anno"><b>elapsed:</b><br>font-mono 500 fg</div>
       <div class="anno"><b>badge pill:</b><br><span class="v6">rounded-full bg-surface-2 px-2 py-1 · 10px font-mono 600 neutral-mid</span></div>
-      <div class="anno"><b>[决策待定] turn 间分隔 hr:</b><br>spec v6 主张删 hr（gap-3.5 做层级），<b>但代码 TurnMeta.vue:45 仍有 hr</b>，且 hr 包在 sticky wrapper 内一起吸顶。spec 说删、代码有 hr，<b>需明确方向</b>。</div>
+      <div class="anno"><b>[已裁决] turn 间分隔 hr:</b><br><span class="v6">删除 hr</span>——靠 turn gap（gap-3.5）做层级分隔。<span class="old">代码 TurnMeta.vue:45 仍有 hr</span>（待落地实现债，spec 权威指引代码后续删除）。</div>
       <div class="anno"><b>sticky 触发:</b><br><span class="v6">sessionActive=true 时</span> wrapper 加 sticky top-0 z-[1] bg-[var(--panel-bg)]（非 blur 不透明）· sessionActive=false 时不吸顶</div>
-      <div class="anno"><b>sticky wrapper:</b><br>turn-meta + hr 包在同一 div（TurnMeta.vue:8），吸顶时两者一起固定</div>
+      <div class="anno"><b>sticky wrapper:</b><br>turn-meta 包在同一 div（TurnMeta.vue:8）吸顶固定 · <span class="v6">[已裁决] 不再含 hr</span></div>
       <div class="anno"><b>chevron 显示条件:</b><br><span class="v6">v-if="hasFoldable && !sessionActive"</span> · sessionActive（streaming/waiting）时<b>不渲染</b> · 9px neutral-dim · 展开 rotate-90 + accent</div>
       <div class="anno"><b>[修正] streaming 无 chevron:</b><br>原 spec streaming 帧画了 chevron 是错的——sessionActive 时 v-if 为 false 不渲染（已修）</div>
       <div class="anno"><b>disabled 条件:</b><br><span class="v6">:disabled="sessionActive || !turn.hasFoldable"</span>（TurnMeta.vue:22）· streaming/waiting 或无可折叠内容时整个 Button disabled</div>
@@ -719,11 +722,13 @@
        ================================================================ -->
   <section class="spec" id="s3-5">
     <div class="spec-head"><span class="spec-num">§3.5</span><h2 class="spec-title">TurnRail · 右侧 turn 导航</h2></div>
-    <p class="spec-desc">对话流右侧常驻的全局导航 mini-map，独立于 720 内容列之外。常驻窄条（spine + viewport indicator 标记当前 turn 比例位置），hover 展开 <code>w-56</code> 浮层显示 turn 节点列表（user 行 + agent 行），提供 turn 间快速跳转（jump）和折叠（toggle）。落点：<code>TurnRail.vue</code>，由 <code>MessageStream.vue:149-157</code> 挂载，事件路由经 <code>useMessageStreamRail</code>（jump→virtua scrollToIndex，toggle→useTurnExpansion）。</p>
+    <p class="spec-desc">对话流右侧常驻的全局导航 mini-map，独立于 720 内容列之外。常驻窄条（spine + viewport indicator 标记当前 turn 比例位置），hover 展开 <code>w-56</code> 浮层显示 turn 节点列表（user 行 + agent 行），提供 turn 间快速跳转（jump）和折叠（toggle）。<b>[R5+D11]</b> active 节点改 §3.2 范式（bg-surface + 文字 accent，去 ring-inset）；viewport indicator 改 accent 实色短粗线（非 border-l-2）；<b>spec 层删 h-340px 固定值</b>——高度 = turn 数 × 行高，随 turn 数自适应，无固定上限（见下 1/5/20 变体示意）。落点：<code>TurnRail.vue</code>，由 <code>MessageStream.vue:149-157</code> 挂载，事件路由经 <code>useMessageStreamRail</code>（jump→virtua scrollToIndex，toggle→useTurnExpansion）。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现状</b> 组件已实现，spec 未画</span>
       <span class="cp cp-v6"><b>v6</b> spec 补全常驻窄条 + hover 展开浮层</span>
       <span class="cp cp-v6"><b>v6</b> agent 图标三态（failed/active/done）</span>
+      <span class="cp cp-v6"><b>[R5]</b> active 改 §3.2 范式 · vp 改 accent 短粗线</span>
+      <span class="cp cp-v6"><b>[D11]</b> 删 h-340 固定值 · 高度随 turn 数自适应</span>
     </div>
 
     <!-- ① 常驻窄条（未 hover）+ viewport indicator -->
@@ -740,15 +745,15 @@
                 <div style="margin-top:8px;">turn 2 · assistant 正文…</div>
                 <div style="margin-top:8px;">turn 3 · assistant 正文…</div>
               </div>
-              <!-- 常驻窄条（未展开），贴 panelRightEdge 右侧 8px -->
-              <div class="rail" style="right:24px;">
+              <!-- 常驻窄条（未展开），贴 panelRightEdge 右侧 8px。高度随 turn 数自适应（D11：无固定上限）-->
+              <div class="rail" style="right:24px;top:30px;bottom:30px;height:auto;transform:none;">
                 <div class="rail-spine"></div>
                 <div class="rail-vp" style="top:66%;height:33%;"></div>
               </div>
               <div style="position:absolute;right:6px;top:50%;transform:translateY(-50%);font-size:10px;font-family:var(--font-mono);color:var(--accent);writing-mode:vertical-rl;">w-1.5 spine</div>
             </div>
           </div>
-          <div class="ms-stage-hint">未 hover：仅 spine（bg-surface-hover w-1.5 h-340px）+ viewport indicator（accent/20 + border-l-2 accent 标记当前 turn 比例位置）可见</div>
+          <div class="ms-stage-hint">未 hover：仅 spine（bg-surface-hover w-1.5 · <b>高度随 turn 数自适应</b>，无固定上限）+ viewport indicator（accent 实色短粗线，标记当前 turn 比例位置）可见</div>
         </div>
       </div>
     </div>
@@ -761,8 +766,8 @@
           <div class="rail-stage">
             <div class="rail-canvas">
               <div style="position:absolute;left:12px;top:0;font-size:12px;color:var(--neutral-mid);font-family:var(--font-mono);">hover 后 rail 横向展开为 w-56 浮层</div>
-              <!-- 展开 rail（演示态）-->
-              <div class="rail expanded" style="right:24px;">
+              <!-- 展开 rail（演示态）。高度随 turn 数自适应（D11）-->
+              <div class="rail expanded" style="right:24px;top:30px;bottom:30px;height:auto;transform:none;">
                 <div class="rail-spine" style="opacity:.3;"></div>
                 <div class="rail-vp" style="top:40%;height:20%;opacity:.5;"></div>
                 <div class="rail-panel">
@@ -812,11 +817,37 @@
       </div>
     </div>
 
+    <!-- [D11] 高度变体示意：1/5/20 turn 的 spine 形态（高度随 turn 数自适应，无固定上限）-->
+    <div class="render-frame" style="margin-top:16px;">
+      <div style="font-size:11px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:10px;"><b style="color:var(--neutral-fg);">[D11] 高度变体示意</b> · rail 高度 = turn 数 × 行高，随 turn 数自适应（无固定上限，随 panel 高度）</div>
+      <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
+        <div style="text-align:center;">
+          <div style="position:relative;width:60px;height:64px;background:var(--surface);border-radius:var(--radius);display:flex;align-items:center;justify-content:center;">
+            <div style="width:6px;height:20px;border-radius:9999px;background:var(--surface-hover);position:relative;"><div style="position:absolute;left:0;top:0;width:6px;height:20px;border-radius:9999px;background:var(--accent);opacity:.55;"></div></div>
+          </div>
+          <div style="font-size:10px;color:var(--neutral-mid);font-family:var(--font-mono);margin-top:6px;">1 turn<br>≈ 单节点高</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="position:relative;width:60px;height:120px;background:var(--surface);border-radius:var(--radius);display:flex;align-items:center;justify-content:center;">
+            <div style="width:6px;height:90px;border-radius:9999px;background:var(--surface-hover);position:relative;"><div style="position:absolute;left:0;top:40%;width:6px;height:20px;border-radius:9999px;background:var(--accent);opacity:.55;"></div></div>
+          </div>
+          <div style="font-size:10px;color:var(--neutral-mid);font-family:var(--font-mono);margin-top:6px;">5 turn<br>≈ 1/3 panel</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="position:relative;width:60px;height:180px;background:var(--surface);border-radius:var(--radius);display:flex;align-items:center;justify-content:center;">
+            <div style="width:6px;height:170px;border-radius:9999px;background:var(--surface-hover);position:relative;"><div style="position:absolute;left:0;top:75%;width:6px;height:24px;border-radius:9999px;background:var(--accent);opacity:.55;"></div></div>
+          </div>
+          <div style="font-size:10px;color:var(--neutral-mid);font-family:var(--font-mono);margin-top:6px;">20 turn<br>≈ 撑满 panel</div>
+        </div>
+        <div style="font-size:11px;color:var(--neutral-dim);font-family:var(--font-mono);line-height:1.7;max-width:280px;">spine 高度 = <code>turns.length × 节点行高</code>，renderer 按 panel 高度 clamp（min: 单节点，max: panel 高，中间无固定档位）。<b>删 h-340px 固定值</b>——固定高度会与 turn 数脱节（5 turn 留大量空白 / 20 turn 溢出截断）。</div>
+      </div>
+    </div>
+
     <div class="anno-grid">
-      <div class="anno"><b>常驻窄条定位:</b><br>fixed top-1/2 h-[340px] w-1.5 -translate-y-1/2 · z-20</div>
+      <div class="anno"><b>常驻窄条定位:</b><br>fixed top-1/2 w-1.5 -translate-y-1/2 · z-20 · <span class="v6">[D11] 高度 = turn 数 × 行高，随 turn 数自适应，无固定上限（原 h-[340px] 已删）</span></div>
       <div class="anno"><b>横向 right 计算:</b><br><span class="v6">right: calc(100vw - panelRightEdge + 8px)</span>（贴面板右缘内缩 8px）；缺省 fallback right:8px</div>
       <div class="anno"><b>spine:</b><br>absolute inset-0 w-1.5 rounded-full bg-surface-hover</div>
-      <div class="anno"><b>viewport indicator:</b><br>w-1.5 border-l-2 border-accent bg-accent/20 · top/height 按 activeTurnIndex/total 比例</div>
+      <div class="anno"><b>viewport indicator:</b><br><span class="v6">[R5] w-1.5 实色 accent 短粗线（非 border-l-2），opacity .55 · top/height 按 activeTurnIndex/total 比例</span></div>
       <div class="anno"><b>hover 展开:</b><br>w-1.5 → w-56 · transition-[width] duration-[var(--duration)] ease-[var(--ease)] · before 伪元素扩大热区 w-3</div>
       <div class="anno"><b>展开浮层:</b><br>absolute left-3 inset-y-0 · bg-bg-elevated ring-1 ring-border-strong shadow-2 · transition-all group-hover opacity/translate</div>
       <div class="anno"><b>节点结构:</b><br>两行：user 行（User 12px neutral-ico + text-xs neutral-fg）+ agent 行（状态图标 + 摘要）</div>
@@ -826,8 +857,9 @@
       <div class="anno"><b>toggle disabled:</b><br>:disabled="sessionActive"（streaming 中禁用，避免 toggle 展开态）</div>
       <div class="anno"><b>jump 路由:</b><br>emit('jump', idx) → MessageStream → useMessageStreamRail → virtua scrollToIndex(idx)</div>
       <div class="anno"><b>toggle 路由:</b><br>emit('toggle', idx) → useTurnExpansion（与 Turn.vue 各自 per-instance Map）</div>
-      <div class="anno"><b>active 节点高亮:</b><br>bg-accent-soft + ring-inset ring-accent-ring · toggle 常驻可见</div>
+      <div class="anno"><b>active 节点高亮:</b><br><span class="v6">[R5+D11] bg-surface + 文字 accent（§3.2 范式，去 ring-inset）</span> · toggle 常驻可见</div>
       <div class="anno"><b>空 turns:</b><br>v-if turns.length > 0（空 session 不渲染 rail）</div>
+      <div class="anno"><b>[D11] 高度变体示意:</b><br><span class="v6">rail 高度随 turn 数自适应：1 turn ≈ 单节点高 · 5 turn ≈ 1/3 panel · 20 turn ≈ 撑满 panel（仍无滚动上限，随 panel 高）</span>。下示意 1/5/20 turn 的 spine 形态</div>
     </div>
   </section>
 

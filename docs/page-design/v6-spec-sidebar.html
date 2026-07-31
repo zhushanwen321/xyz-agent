@@ -78,7 +78,6 @@
 
   /* 圆角（v6：sm 3px→6px）*/
   --radius-sm: 6px;
-  --radius-sm-old: 3px;
   --radius: 8px;
   --radius-lg: 12px;
 
@@ -293,7 +292,7 @@ body {
 .fg-label { font-size: var(--text-sm); line-height: 1.3; color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fg-meta { margin-top: 2px; display: flex; align-items: center; gap: 4px; }
 /* v6：「分支 N」pill 降 text-neutral-dim 无底色 */
-.fg-pill { font-family: var(--font-mono); font-size: var(--text-2xs); /* 9px→10px 入 scale（原裸 9px，统一入 --text-2xs）*/ font-weight: 600; line-height: 1.4; padding: 1px 4px; border-radius: var(--radius-sm-old); color: var(--neutral-dim); }
+.fg-pill { font-family: var(--font-mono); font-size: var(--text-2xs); /* 9px→10px 入 scale（原裸 9px，统一入 --text-2xs）*/ font-weight: 600; line-height: 1.4; padding: 1px 4px; border-radius: var(--radius-sm); color: var(--neutral-dim); }
 .fg-time { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* fork-group stop = danger 图标（hover→bg-danger-soft text-danger）· confirm = 实心 danger 两段式确认 */
 .fg-stop { flex-shrink: 0; width: 20px; height: 20px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-mid); cursor: pointer; background: transparent; border: 0; transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease); }
@@ -335,14 +334,14 @@ body {
 .tr-name.ignored { color: var(--neutral-dim); font-style: italic; }
 .tr-row.sel .tr-name { font-weight: 600; color: var(--accent); }
 /* git badge（v6：保留语义色但缩小为极小圆点/badge）*/
-.tr-git { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 600; padding: 0 4px; border-radius: 3px; line-height: 1.5; }
+.tr-git { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 600; padding: 0 4px; border-radius: var(--radius-sm); line-height: 1.5; }
 .tr-git.M { background: var(--warn-soft); color: var(--warn); }
 .tr-git.A { background: var(--success-soft); color: var(--success); }
 .tr-git.D { background: var(--danger-soft); color: var(--danger); }
 .tr-git.U { background: var(--danger-soft); color: var(--danger); font-weight: 700; }
 .tr-git.R { background: var(--info-soft); color: var(--info); }
 /* 目录改动数徽章（v6：降中性，去 accent）*/
-.tr-dirbadge { flex-shrink: 0; font-family: var(--font-mono); font-size: var(--text-2xs); padding: 1px 5px; border-radius: var(--radius-sm-old); background: var(--surface-2); color: var(--neutral-mid); }
+.tr-dirbadge { flex-shrink: 0; font-family: var(--font-mono); font-size: var(--text-2xs); padding: 1px 5px; border-radius: var(--radius-sm); background: var(--surface-2); color: var(--neutral-mid); }
 /* 行数 stats（±单色保留 git 语义，缩小）*/
 .tr-stats { flex-shrink: 0; font-family: var(--font-mono); font-size: var(--text-2xs); }
 .tr-stats .add { color: var(--success); }
@@ -354,7 +353,7 @@ body {
 .sa-card:hover { background: var(--surface-hover); }
 .sa-row { display: flex; align-items: center; gap: 8px; }
 .sa-spinner { width: 13px; height: 13px; flex-shrink: 0; color: var(--accent); animation: spin 1.4s linear infinite; }
-.sa-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.sa-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .sa-dot.done { background: var(--success); }
 .sa-dot.failed { background: var(--danger); }
 .sa-dot.cancelled { background: var(--neutral-dim); opacity: .5; }
@@ -374,7 +373,7 @@ body {
 .wf-card:hover { background: var(--surface-hover); }
 .wf-row { display: flex; align-items: center; gap: 8px; }
 .wf-spinner { width: 13px; height: 13px; flex-shrink: 0; color: var(--accent); animation: spin 1.4s linear infinite; }
-.wf-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.wf-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .wf-dot.done { background: var(--success); }
 .wf-dot.failed { background: var(--danger); }
 .wf-dot.paused { background: var(--warn); }
@@ -498,7 +497,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s1">
     <div class="spec-head"><span class="spec-num">§1</span><h2 class="spec-title">容器总览</h2></div>
-    <p class="spec-desc">Sidebar 容器底色 <code>bg-bg</code>（= <code>--bg-sunken</code> 新值，画布色），与主面板靠 surface 浮起分隔——去硬 <code>border-r</code>，靠三层明度（stage 深底 #131316 + 主面板 <code>--surface</code> 浮起）表达层级（§3.4）。整体轮廓：Brand → 主操作 nav（新建/搜索）→ Overview 入口 → SegmentedTab → 子视图区 → 底部用户区。</p>
+    <p class="spec-desc">Sidebar 容器底色 <code>bg-bg</code>（= <code>--bg-sunken</code> 新值，画布色），与主面板靠 surface 浮起分隔——去硬 <code>border-r</code>，靠三层明度（stage 深底 #131316 + 主面板 <code>--surface</code> 浮起）表达层级（§3.4）。整体轮廓：Brand → 主操作 nav（新建/搜索）→ SegmentedTab → 子视图区 → 底部用户区。<strong>Overview 入口已移除</strong>（§4.4 DEPRECATED，任务概览并入 drawer 详情视图）。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> border-r border-border 硬分隔</span>
       <span class="cp cp-v6"><b>v6</b> 去硬 border，靠 surface 浮起</span>
@@ -530,7 +529,8 @@ body {
             </div>
           </div>
           <div class="sb-hr"></div>
-          <div class="sb-overview">
+          <!-- Overview 入口已移除（§4.4 DEPRECATED，D3 关联：任务概览并入 drawer 详情视图）-->
+          <div class="sb-overview" style="opacity:.45;text-decoration:line-through;text-decoration-color:rgba(239,68,68,.5);" title="已移除（§4.4 DEPRECATED）">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
             <span class="lbl">Overview</span><span class="cnt">12</span>
           </div>
@@ -591,7 +591,7 @@ body {
       <div class="anno"><b>与主面板分隔:</b><br><span class="old">border-r border-border</span> <span class="v6">→ 去硬 border，靠 surface 浮起</span></div>
       <div class="anno"><b>三层明度:</b><br>stage #131316 → 侧栏 bg #1a1b1f → 主面板 surface #272830</div>
       <div class="anno"><b>宽度:</b><br>w-[300px]（不变）· 折叠态 w-0 opacity-0</div>
-      <div class="anno"><b>结构分层:</b><br>Brand → nav → Overview → SegmentedTab → 子视图 → 用户区</div>
+      <div class="anno"><b>结构分层:</b><br>Brand → nav → SegmentedTab → 子视图 → 用户区<br>（Overview 入口已移除，§4.4 DEPRECATED）</div>
       <div class="anno"><b>SplitterResizeHandle:</b><br><span class="v6">透明化（仅 hover/drag 显 accent）</span></div>
     </div>
   </section>
@@ -1364,7 +1364,7 @@ body {
     <div class="anno-grid">
       <div class="anno"><b>subagent 卡片 py:</b><br><span class="v6">统一 6px（px-2 py-[6px]）</span></div>
       <div class="anno"><b>subagent 2 行结构:</b><br>L1 name + <code>turns · tok</code> 合并靠右<br>L2 slug（任务标识，neutral-dim 截断）</div>
-      <div class="anno"><b>subagent 状态点:</b><br>8px · done=success / failed=danger / cancelled=dim.5 / running→spinner</div>
+      <div class="anno"><b>subagent 状态点:</b><br>7px · done=success / failed=danger / cancelled=dim.5 / running→spinner</div>
       <div class="anno"><b>cancel 确认:</b><br><span class="old">border border-danger bg-danger</span> <span class="v6">→ 仅 bg-danger</span></div>
       <div class="anno"><b>进度条 running:</b><br><span class="v6">bg-accent（唯一用 accent）</span></div>
       <div class="anno"><b>进度条 done:</b><br><span class="old">bg-success</span> <span class="v6">→ bg-neutral-dim（降中性）</span></div>

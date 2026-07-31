@@ -155,11 +155,11 @@ body {
 /* ── Input（h-10 rounded-md border-input bg-surface-2 px-3）类名对齐 SSOT §6.2 ── */
 .ui-input {
   display: inline-flex; align-items: center;
-  height: 40px; width: 100%; padding: 8px 12px;
+  height: 40px; width: 100%; padding: 0 12px;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  font-size: var(--text-md); color: var(--neutral-fg);
+  font-size: var(--text-base); color: var(--neutral-fg);
   font-family: inherit;
   transition: box-shadow var(--duration-fast), border-color var(--duration-fast);
 }
@@ -209,7 +209,7 @@ body {
 .lp-group-head {
   display: flex; align-items: center; gap: 8px;
   padding: 10px 16px; background: var(--surface-2);
-  border-top: 1px solid var(--border);
+  border-top: 1px solid rgba(255,255,255,0.04);
 }
 .lp-group-head:first-child { border-top: 0; }
 .lp-group-name { font-size: var(--text-sm); font-weight: 600; color: var(--neutral-fg); }
@@ -218,7 +218,7 @@ body {
   font-family: var(--font-mono); flex-shrink: 0; letter-spacing: .02em;
 }
 .lp-group-scope.project { background: var(--accent-soft); color: var(--accent); }
-.lp-group-scope.global { background: var(--surface); color: var(--neutral-mid); box-shadow: 0 0 0 1px var(--border) inset; }
+.lp-group-scope.global { background: var(--surface); color: var(--neutral-mid); }
 .lp-group-hint { font-size: var(--text-xs); color: var(--neutral-dim); margin-left: auto; font-family: var(--font-mono); }
 .lp-row {
   display: flex; align-items: center; gap: 10px;
@@ -260,7 +260,7 @@ body {
   font-size: var(--text-xs); color: var(--neutral-mid); font-family: var(--font-mono);
   background: var(--bg-input); padding: 2px 8px; border-radius: var(--radius-sm);
 }
-.rp-tabs { display: flex; gap: 2px; margin-left: auto; background: var(--bg-input); padding: 2px; border-radius: var(--radius-sm); }
+.rp-tabs { display: flex; gap: 2px; margin-left: auto; background: var(--bg-input); padding: 3px; border-radius: var(--radius-lg); }
 .rp-tab {
   font-size: var(--text-xs); color: var(--neutral-mid);
   padding: 4px 10px; border-radius: var(--radius-sm); cursor: pointer;
@@ -268,7 +268,7 @@ body {
   font-family: var(--font-sans);
 }
 .rp-tab:hover { color: var(--neutral-fg); }
-.rp-tab.active { background: var(--surface-hover); color: var(--neutral-fg); }
+.rp-tab.active { background: var(--bg-elevated); color: var(--neutral-fg); }
 
 .rp-list { background: var(--bg-card); border-radius: 10px; overflow: hidden; }
 .rp-item {
@@ -280,17 +280,21 @@ body {
 .rp-item:hover { background: rgba(255,255,255,0.02); }
 .rp-item:hover .rp-item-actions { opacity: 1; }
 .rp-name { flex: 1; min-width: 0; font-weight: 500; color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rp-desc { font-size: var(--text-xs); color: var(--neutral-mid); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
+.rp-desc { font-size: var(--text-sm); color: var(--neutral-mid); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
+/* R17：来源 badge 统一中性底 + 彩色小点（去 5 种 soft 底色，降噪统一） */
 .rp-badge {
-  font-size: var(--text-2xs); padding: 2px 7px; border-radius: var(--radius-sm);
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: var(--text-2xs); padding: 2px 7px 2px 5px; border-radius: 999px;
   font-family: var(--font-mono); flex-shrink: 0; letter-spacing: .02em;
+  background: var(--surface-2); color: var(--neutral-mid);
 }
-.rp-badge.effective { background: var(--accent-soft); color: var(--accent); box-shadow: 0 0 0 1px var(--accent-ring) inset; }
-.rp-badge.pi { background: var(--accent-soft); color: var(--accent); }
-.rp-badge.claude { background: var(--warn-soft); color: var(--warn); }
-.rp-badge.agents { background: var(--success-soft); color: var(--success); }
-.rp-badge.piinstall { background: var(--info-soft); color: var(--info); }
-.rp-badge.muted { background: var(--surface-2); color: var(--neutral-mid); }
+.rp-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: var(--neutral-dim); }
+.rp-badge.effective::before { background: var(--accent); }
+.rp-badge.pi::before { background: var(--accent); }
+.rp-badge.claude::before { background: var(--warn); }
+.rp-badge.agents::before { background: var(--success); }
+.rp-badge.piinstall::before { background: var(--info); }
+.rp-badge.muted::before { background: var(--neutral-dim); }
 .rp-badge.faded { opacity: .6; }
 .rp-item-actions { display: flex; gap: 2px; flex-shrink: 0; opacity: 0; transition: opacity var(--duration-fast); }
 

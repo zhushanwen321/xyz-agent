@@ -187,7 +187,7 @@ body {
 .group-head {
   display: flex; align-items: center; gap: 8px;
   padding: 10px 16px; background: var(--surface-2);
-  border-top: 1px solid var(--border);
+  border-top: 1px solid rgba(255,255,255,0.04);
 }
 .group-head:first-child { border-top: 0; }
 .group-title { font-size: var(--text-sm); font-weight: 600; color: var(--neutral-fg); }
@@ -201,7 +201,7 @@ body {
   display: inline-flex; align-items: center; gap: 4px;
 }
 .group-scope.mandatory { background: var(--accent-soft); color: var(--accent); }
-.group-scope.user { background: var(--surface); color: var(--neutral-mid); box-shadow: 0 0 0 1px var(--border) inset; }
+.group-scope.user { background: var(--surface); color: var(--neutral-mid); }
 .group-scope svg { width: 11px; height: 11px; }
 .group-aux { margin-left: auto; font-size: 11px; color: var(--neutral-dim); font-family: var(--font-mono); }
 
@@ -328,7 +328,7 @@ body {
 /* ── 版本 chip（次要，monospace）── */
 .ver {
   font-family: var(--font-mono); font-size: 10px; color: var(--neutral-dim);
-  background: var(--surface-2); padding: 2px 7px; border-radius: var(--radius-sm); flex-shrink: 0;
+  background: var(--surface-2); padding: 2px 7px; border-radius: 999px; flex-shrink: 0;
 }
 .ver.up { color: var(--success); background: var(--success-soft); }
 
@@ -458,7 +458,7 @@ body {
    project=accent 强语义色（仅当前项目）· global=中性 + inset border（所有项目共享）
    与资源页 .lp-group-scope.project / .global 逐字对齐。 */
 .group-scope.project { background: var(--accent-soft); color: var(--accent); }
-.group-scope.global { background: var(--surface); color: var(--neutral-mid); box-shadow: 0 0 0 1px var(--border) inset; }
+.group-scope.global { background: var(--surface); color: var(--neutral-mid); }
 
 /* .ui-checkbox.disabled：preset 锁定目录禁关（资源页已有，本 spec §1-§8 未用到故补定义，与 .ui-switch.disabled 同范式）*/
 .ui-checkbox.disabled { opacity: .5; cursor: not-allowed; }
@@ -481,11 +481,11 @@ body {
    三类目录（extension/skill/agent）共享同一套扫描目录机制，顶部用此 tab 切换 extensionDirs/skillDirs/agentDirs。 */
 .seg-tabs {
   display: inline-flex; align-items: center; gap: 2px;
-  padding: 3px; background: var(--bg-input); border-radius: var(--radius);
+  padding: 3px; background: var(--bg-input); border-radius: var(--radius-lg);
 }
 .seg-tab {
   font-size: var(--text-xs); color: var(--neutral-mid); cursor: pointer;
-  padding: 5px 12px; border-radius: 5px; font-family: var(--font-sans);
+  padding: 5px 12px; border-radius: var(--radius-sm); font-family: var(--font-sans);
   transition: background var(--duration-fast), color var(--duration-fast);
   white-space: nowrap;
 }

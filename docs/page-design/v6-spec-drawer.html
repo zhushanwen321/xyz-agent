@@ -89,7 +89,7 @@
   /* 阴影 */
   --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);
   --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
-  --shadow-drawer: -12px 0 24px rgba(0,0,0,0.25);
+  --shadow-drawer: -12px 0 24px rgba(0,0,0,0.16);   /* R14 弱投影：0.25→0.16，D2 一体化后仅作弱分隔 */
   --shadow-glow: 0 0 0 3px rgba(79,142,247,0.25);
 
   /* 组件尺寸（v6 新增）*/
@@ -168,16 +168,16 @@ body {
 .workspace-stage { background: #131316; border-radius: var(--radius); padding: 16px; overflow: hidden; }
 .workspace-row { display: flex; gap: 0; min-height: 340px; }
 .ws-panel { flex: 1; min-width: 0; background: var(--surface); border-radius: var(--radius) 0 0 var(--radius); display: flex; align-items: center; justify-content: center; color: var(--neutral-dim); font-size: var(--text-xs); text-align: center; line-height: 1.6; }
-/* SplitterResizeHandle（透明，仅 hover/drag 显 accent，§6 Splitter 透明化）*/
+/* SplitterResizeHandle（默认真透明，仅 hover/drag 显 accent，§6 Splitter 透明化）*/
 .ws-splitter {
   flex: 0 0 6px; position: relative; cursor: col-resize; margin: 0 -3px;
   display: flex; align-items: center; justify-content: center; z-index: 2;
 }
 .ws-splitter::before {
-  content: ''; width: 1px; height: 60%; background: var(--border);
+  content: ''; width: 0; height: 60%; background: transparent;
   transition: background var(--duration) var(--ease), width var(--duration) var(--ease);
 }
-.ws-splitter:hover::before { background: var(--border-strong); }
+.ws-splitter:hover::before { background: var(--border-strong); width: 1px; }
 .ws-splitter.drag::before { background: var(--accent); width: 2px; height: 80%; }
 
 /* 状态标签（每行变体前的 [状态] 标）*/
@@ -193,9 +193,9 @@ body {
    渲染用：组件样式（呈现 v6 目标态）
    ================================================================ */
 
-/* ── SideDrawer 容器（v6：bg-bg 画布色 + shadow-drawer 投影分隔，去硬 border-l）── */
+/* ── SideDrawer 容器（D2 一体化：与 main 共享 surface，弱投影 0.16 分隔，去硬 border-l）── */
 .sd-drawer {
-  flex: 1; background: var(--bg); box-shadow: var(--shadow-drawer);
+  flex: 1; background: var(--surface); box-shadow: var(--shadow-drawer);
   border-radius: 0 var(--radius) var(--radius) 0;
   display: flex; flex-direction: column; overflow: hidden; min-width: 0;
 }
@@ -207,8 +207,8 @@ body {
   display: flex; align-items: center; justify-content: center; transition: all var(--duration-fast);
 }
 .sd-l1 .l1-icon:hover { color: var(--neutral-fg); background: var(--surface-hover); }
-.sd-l1 .l1-icon.on { color: var(--accent); background: var(--accent-soft); }
-.sd-l1 .l1-icon.on:hover { color: var(--accent); background: var(--accent-soft); }
+.sd-l1 .l1-icon.on { color: var(--neutral-fg); background: var(--bg-elevated); }
+.sd-l1 .l1-icon.on:hover { color: var(--neutral-fg); background: var(--bg-elevated); }
 .sd-l1 .spacer { flex: 1; }
 .sd-l1 .l1-act {
   width: 28px; height: 28px; border-radius: var(--radius-sm); border: 0; cursor: pointer;
@@ -249,17 +249,17 @@ body {
 .matrix-table .m-note { color: var(--neutral-mid); }
 
 /* ── 形态 B：内层二级 tab 栏（detail 多文件 / terminal 多实例 / browser 多页面）──
-   v6：分割感增强——二级 tab 栏作为独立条带，底部 hairline 分隔 + 内容区 bg-input 凹陷底色，
-   与 tab 栏（surface-2）形成明度层次。整体仍低饱和（降噪），active 用 accent-soft（非实色块）。 */
-.b-l2 { display: flex; align-items: center; gap: 2px; padding: 6px 8px; background: var(--surface-2); min-height: 36px; border-bottom: 1px solid var(--border); }
+   v6：分割感增强——二级 tab 栏作为独立条带（bg-surface-2 浮起），内容区 bg-input 凹陷底色，
+   与 tab 栏形成明度层次（D2 一体化后去 border-bottom，靠 bg 浮起）。active 用 bg-elevated 中性浮起（R15/D8 tab 型）。 */
+.b-l2 { display: flex; align-items: center; gap: 2px; padding: 6px 8px; background: var(--surface-2); min-height: 36px; }
 .b-l2-tab {
   display: flex; align-items: center; gap: 6px; max-width: 150px; padding: 4px 8px;
   border-radius: var(--radius-sm); cursor: pointer; font-size: var(--text-xs); color: var(--neutral-mid);
   transition: all var(--duration-fast);
 }
 .b-l2-tab:hover { background: var(--surface-hover); color: var(--neutral-fg); }
-.b-l2-tab.on { background: var(--accent-soft); color: var(--accent); }
-.b-l2-tab.on:hover { background: var(--accent-soft); color: var(--accent); }
+.b-l2-tab.on { background: var(--bg-elevated); color: var(--neutral-fg); }
+.b-l2-tab.on:hover { background: var(--bg-elevated); color: var(--neutral-fg); }
 .b-l2-tab .tt-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
 .b-l2-tab .tt-close {
   width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; opacity: 0;
@@ -273,7 +273,7 @@ body {
 }
 .b-l2-newtab:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 .b-l2 .spacer { flex: 1; }
-.b-l2 .l2-view { display: flex; gap: 2px; background: var(--bg-input); border-radius: var(--radius); padding: 2px; }
+.b-l2 .l2-view { display: flex; gap: 2px; background: var(--bg-input); border-radius: var(--radius); padding: 3px; }
 .b-l2 .l2-view .lv-btn {
   border: 0; cursor: pointer; font: inherit; font-size: var(--text-2xs); padding: 3px 9px;
   border-radius: var(--radius-sm); background: transparent; color: var(--neutral-mid); transition: all var(--duration-fast);
@@ -289,10 +289,10 @@ body {
 .dp-header .dp-name { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dp-btn { width: 24px; height: 24px; border-radius: var(--radius-sm); border: 0; cursor: pointer; background: transparent; color: var(--neutral-dim); display: flex; align-items: center; justify-content: center; transition: all var(--duration-fast); }
 .dp-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
-.dp-toggle { display: flex; gap: 2px; background: var(--bg-input); border-radius: var(--radius); padding: 2px; }
+.dp-toggle { display: flex; gap: 2px; background: var(--bg-input); border-radius: var(--radius); padding: 3px; }
 .dp-toggle .dt-btn { border: 0; cursor: pointer; font: inherit; font-size: var(--text-2xs); padding: 3px 9px; border-radius: var(--radius-sm); background: transparent; color: var(--neutral-mid); transition: all var(--duration-fast); }
 .dp-toggle .dt-btn.on { background: var(--bg-elevated); color: var(--neutral-fg); }
-.dp-toggle .dt-btn.diff.on { background: var(--accent-soft); color: var(--accent); }
+.dp-toggle .dt-btn.diff.on { background: var(--bg-elevated); color: var(--neutral-fg); }
 
 /* DetailPane 内容（preview / diff）*/
 .dp-preview { font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.6; color: var(--neutral-mid); padding: 12px 16px; }
@@ -301,10 +301,10 @@ body {
 .dp-preview .com { color: var(--neutral-dim); }
 
 /* ── DiffView（v6：行背景 12% + canvas bg-bg-input + hunk 去底色）── */
-.dv-canvas { background: var(--bg-input); border-radius: var(--radius-lg); padding: 8px 0; font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.6; overflow: hidden; }
+.dv-canvas { background: var(--bg-input); border-radius: var(--radius-lg); padding: 8px 0; font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.5; overflow: hidden; }
 .dv-hunk-header { padding: 3px 12px; color: var(--neutral-dim); background: transparent; }
 .dv-line { display: flex; align-items: baseline; padding: 0; }
-.dv-line .dv-oldno, .dv-line .dv-newno { width: 36px; flex-shrink: 0; padding: 0 6px; text-align: right; color: var(--neutral-faint); user-select: none; }
+.dv-line .dv-oldno, .dv-line .dv-newno { width: 40px; flex-shrink: 0; padding: 0 6px; text-align: right; color: var(--neutral-dim); user-select: none; }
 .dv-line .dv-newno { cursor: pointer; transition: color var(--duration-fast); }
 .dv-line .dv-newno:hover { color: var(--accent); }
 .dv-line .dv-sign { width: 16px; flex-shrink: 0; text-align: center; user-select: none; }
@@ -426,13 +426,8 @@ body {
 /* 文件行 */
 .gp-filelist { display: flex; flex-direction: column; gap: 2px; }
 .gp-file { display: flex; align-items: center; gap: 8px; padding: 3px 4px; border-radius: var(--radius-sm); cursor: pointer; transition: background var(--duration-fast); }
-.gp-file:hover { background: var(--surface-2); }
+.gp-file:hover { background: var(--surface-hover); }
 .gp-file .gp-badge { width: 14px; flex-shrink: 0; text-align: center; font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 600; color: var(--neutral-dim); }
-.gp-file .gp-badge.M { color: var(--warn); }
-.gp-file .gp-badge.A { color: var(--success); }
-.gp-file .gp-badge.D { color: var(--danger); }
-.gp-file .gp-badge.R { color: var(--accent); }
-.gp-file .gp-badge.Q { color: var(--neutral-dim); }
 .gp-file .gp-badge.U { color: var(--danger); font-weight: 700; }
 .gp-file .gp-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--neutral-mid); font-size: var(--text-xs); }
 /* per-file stage toggle（v6 MVP-1：hover 显 +/- 按钮，xyCode 判态）*/
@@ -442,7 +437,7 @@ body {
 .gp-file .gp-stage-toggle.is-staged { color: var(--success); }  /* 已暂存 → 显 -（unstage），点 unstage(sid,[path]) */
 .gp-file .gp-stage-toggle.is-unstaged { color: var(--neutral-mid); } /* 未暂存 → 显 +（stage），点 stage(sid,[path]) */
 /* demo 专用：恒显 toggle 模拟 hover 态（spec 静态稿用，runtime 不渲染此类）*/
-.gp-file.demo-hover { background: var(--surface-2); }
+.gp-file.demo-hover { background: var(--surface-hover); }
 .gp-file.demo-hover .gp-stage-toggle { opacity: 1; }
 .gp-file.demo-hover .gp-path { color: var(--neutral-fg); }
 /* 分支切换（v6 MVP-2：branch 名可点 → BranchSelectPopover；MVP-3：popover 内 + 新建分支 → CreateBranchModal）*/
@@ -456,7 +451,7 @@ body {
 .gp-branch-btn.is-open .gp-branch-chev { transform: rotate(180deg); }
 /* 分支 popover（绝对定位浮层列表，复用 BranchSelectPopover）*/
 .gp-branch-popover { position: absolute; min-width: 200px; max-width: 260px; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow-2); padding: 4px; z-index: var(--z-popover); display: flex; flex-direction: column; gap: 1px; }
-.gp-branch-popover .gp-po-head { font-size: var(--text-2xs); color: var(--neutral-dim); padding: 4px 8px 2px; text-transform: uppercase; letter-spacing: .04em; font-family: var(--font-mono); }
+.gp-branch-popover .gp-po-head { font-size: var(--text-2xs); color: var(--neutral-dim); padding: 4px 8px 2px; font-family: var(--font-mono); }
 .gp-branch-popover .gp-po-item { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: var(--radius-sm); cursor: pointer; transition: background var(--duration-fast); }
 .gp-branch-popover .gp-po-item:hover { background: var(--surface-hover); }
 .gp-branch-popover .gp-po-item.is-current { background: var(--accent-soft); }
@@ -492,8 +487,8 @@ body {
 .cd-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--surface-2); flex-shrink: 0; }
 .cd-header .cd-ico { width: 14px; height: 14px; color: var(--reasoning); flex-shrink: 0; }
 .cd-header .cd-name { font-family: var(--font-mono); font-size: var(--text-md); font-weight: 500; color: var(--neutral-fg); }
-/* source 标签（v6：去 bg-surface-hover，圆角升 6px，纯色文字）*/
-.cd-source { margin-left: auto; font-size: var(--text-2xs); color: var(--neutral-mid); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 2px 8px; }
+/* source 标签（v6：去 bg-surface-hover，圆角升 6px，纯色文字，去 border）*/
+.cd-source { margin-left: auto; font-size: var(--text-2xs); color: var(--neutral-mid); border-radius: var(--radius-sm); padding: 2px 8px; }
 .cd-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px; }
 .cd-desc { font-size: var(--text-md); color: var(--neutral-mid); margin-bottom: 12px; line-height: 1.6; }
 .cd-doc { font-size: var(--text-base); color: var(--neutral-fg); line-height: 1.65; }
@@ -503,11 +498,11 @@ body {
 .cd-doc .cd-code .cd-code-kw { color: var(--accent); }
 .cd-doc .cd-code .cd-code-str { color: var(--success); }
 .cd-doc .cd-code .cd-code-com { color: var(--neutral-dim); }
-.cd-doc .cd-inline-code { font-family: var(--font-mono); font-size: 0.9em; background: var(--bg-input); border-radius: 4px; padding: 1px 5px; color: var(--neutral-fg); }
+.cd-doc .cd-inline-code { font-family: var(--font-mono); font-size: 0.9em; background: var(--bg-input); border-radius: var(--radius-sm); padding: 1px 5px; color: var(--neutral-fg); }
 .cd-doc .cd-li { margin-bottom: 4px; color: var(--neutral-mid); padding-left: 14px; position: relative; }
 .cd-doc .cd-li::before { content: ""; position: absolute; left: 2px; top: 9px; width: 4px; height: 4px; border-radius: 50%; background: var(--neutral-dim); }
 /* 元信息区（v6：去 border-t 改 mt-4 空白分层）*/
-.cd-meta { margin-top: 24px; }
+.cd-meta { margin-top: 16px; }
 .cd-meta .cd-meta-label { font-size: var(--text-xs); color: var(--neutral-dim); }
 .cd-meta .cd-meta-val { margin-top: 2px; word-break: break-all; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-mid); }
 
@@ -526,10 +521,10 @@ body {
 .gc-status-ico.active { color: var(--accent); }
 .gc-slug { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: var(--text-sm); font-weight: 600; color: var(--neutral-fg); }
 /* badge（v6：升胶囊 999px，仅 blocked 着色，其余中性）*/
-.gc-badge { flex-shrink: 0; font-size: var(--text-2xs); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--neutral-mid); }
+.gc-badge { flex-shrink: 0; font-size: var(--text-2xs); font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--neutral-mid); }
 .gc-badge.blocked { background: var(--warn-soft); color: var(--warn); }
 .gc-objective { font-size: var(--text-sm); color: var(--neutral-mid); line-height: 1.5; }
-.gc-resume { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 10px; border: 0; border-radius: var(--radius-sm); background: var(--warn); color: #1a1b1f; font-size: var(--text-xs); font-weight: 500; cursor: pointer; margin-top: 2px; transition: filter var(--duration-fast); }
+.gc-resume { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 10px; border: 0; border-radius: var(--radius-sm); background: var(--warn); color: var(--bg); font-size: var(--text-xs); font-weight: 500; cursor: pointer; margin-top: 2px; transition: filter var(--duration-fast); }
 .gc-resume:hover { filter: brightness(1.1); }
 /* todo section */
 .ts-head { display: flex; align-items: center; justify-content: space-between; padding: 0 2px; }
@@ -549,7 +544,7 @@ body {
 .ts-text.done { color: var(--neutral-dim); text-decoration: line-through; text-decoration-color: rgba(255,255,255,.2); }
 .ts-text.todo { color: var(--neutral-fg); }
 /* VERIFY 标签（v6：字号提 9px，去 bg-reasoning-soft，纯色文字）*/
-.ts-verify { flex-shrink: 0; font-size: 9px; font-weight: 600; letter-spacing: .04em; color: var(--reasoning); text-transform: uppercase; }
+.ts-verify { flex-shrink: 0; font-size: 9px; font-weight: 600; color: var(--reasoning); }
 
 /* ── 辅助：旧 vs v6 对比块（§6/§7/§8 复用）── */
 .cmp-old { border-radius: var(--radius); overflow: hidden; }
@@ -573,7 +568,7 @@ body {
 .sa-stream { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
 /* turn 分组：user 气泡 + assistant 回复 */
 .sa-turn { display: flex; flex-direction: column; gap: 4px; }
-.sa-user { align-self: flex-end; max-width: 80%; background: var(--bg-elevated); border-radius: var(--radius) var(--radius) var(--radius-sm) var(--radius); padding: 6px 10px; font-size: var(--text-sm); color: var(--neutral-fg); }
+.sa-user { align-self: flex-end; max-width: 76%; background: var(--surface-hover); border-radius: var(--radius) var(--radius) var(--radius-sm) var(--radius); padding: 6px 10px; font-size: var(--text-sm); color: var(--neutral-fg); }
 .sa-asst { display: flex; flex-direction: column; gap: 6px; }
 .sa-asst-text { font-size: var(--text-sm); color: var(--neutral-mid); line-height: 1.6; padding: 2px 0; }
 /* 嵌套 block（tool call / file / subagent block 缩略）*/
@@ -581,7 +576,7 @@ body {
 .sa-block .sa-block-ico { width: 12px; height: 12px; color: var(--neutral-dim); flex-shrink: 0; }
 .sa-block .sa-block-name { color: var(--neutral-fg); }
 /* 只读提示条（无 composer）*/
-.sa-readonly-hint { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: var(--bg-input); border-top: 1px solid var(--border); font-size: var(--text-2xs); color: var(--neutral-dim); flex-shrink: 0; }
+.sa-readonly-hint { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: var(--bg-input); font-size: var(--text-2xs); color: var(--neutral-dim); flex-shrink: 0; }
 .sa-readonly-hint .sa-ro-ico { width: 12px; height: 12px; opacity: .7; flex-shrink: 0; }
 /* 加载/空态 */
 .sa-loading { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--neutral-dim); }
@@ -617,10 +612,10 @@ body {
 .wf-phase-count { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); }
 /* agent call 卡片 */
 .wf-call { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: var(--radius-sm); cursor: pointer; transition: background var(--duration-fast); }
-.wf-call:hover { background: var(--surface-2); }
-.wf-call.selected { background: var(--accent-soft); }
-.wf-call.selected:hover { background: var(--accent-soft); }
-.wf-call .wf-status { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.wf-call:hover { background: var(--surface-hover); }
+.wf-call.selected { background: var(--surface); }
+.wf-call.selected:hover { background: var(--surface); }
+.wf-call .wf-status { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
 .wf-call .wf-status.done { background: var(--success); }
 .wf-call .wf-status.failed { background: var(--danger); }
 .wf-call .wf-status.pending { background: var(--neutral-faint); }
@@ -681,7 +676,7 @@ body {
   <header class="doc-head">
     <div class="doc-eyebrow">v6 SPEC · 05 / 07</div>
     <h1 class="doc-title">Drawer · 右侧抽屉</h1>
-    <p class="doc-sub">覆盖 §4.3 右侧 Drawer：容器（bg-bg 画布色 + shadow-drawer 投影分隔）+ 形态 B 二级 tab 架构（icon 一级 + 内层二级，各 tab 自治）+ 5 个一级 tab（terminal/browser/git/doc/detail）各自的 v6 方案。tasks tab 已移除（goal/todo 回归对话流，见 §9）。</p>
+    <p class="doc-sub">覆盖 §4.3 右侧 Drawer：容器（D2 一体化，与 main 共享 surface，弱投影 0.16 分隔）+ 形态 B 二级 tab 架构（icon 一级 + 内层二级，各 tab 自治）+ 7 个一级 tab（terminal/browser/git/doc/detail/subagent/workflow）各自的 v6 方案。tasks tab 已移除（goal/todo 回归对话流，见 §9）。</p>
     <div class="doc-meta">
       <span><b>SSOT</b> v6-design.md §4.3 + §3.4 分隔策略</span>
       <span><b>范式</b> v6-drawer-tabs-demo 形态 B</span>
@@ -712,11 +707,11 @@ body {
        ================================================================ -->
   <section class="spec" id="s1">
     <div class="spec-head"><span class="spec-num">§1</span><h2 class="spec-title">SideDrawer 容器</h2></div>
-    <p class="spec-desc">右侧抽屉容器，承载 5 个一级 tab（terminal/browser/git/doc/detail）。v6 核心改动：底色用 <code>bg-bg</code>（画布色 = <code>--bg-sunken</code>），与主面板靠 surface 浮起分隔；去硬 <code>border-l</code> 改 <code>shadow-drawer</code> 投影分隔（对标 Claude/Linear 的层级代边框）。一级 tab 栏是 icon-only（label 收进 title 供 hover 查看），右侧挂钉住/关闭。<b>宽度比例</b>：主面板与 drawer 默认 <code>1:1</code>（flex:1 等分），中间 <code>SplitterResizeHandle</code> 可拖动调整（透明，仅 hover/drag 显 accent）。<b>tasks tab 已移除</b>（goal/todo 回归对话流，见 §9）。</p>
+    <p class="spec-desc">右侧抽屉容器，承载 7 个一级 tab（terminal/browser/git/doc/detail/subagent/workflow）。v6 核心改动（D2 一体化）：drawer 与主面板<b>共享 surface 底色</b>（同色一体，非画布色 bg-bg），去硬 <code>border-l</code> 改 <code>shadow-drawer</code> <b>弱投影 0.16</b> 分隔（R14，对标 Claude/Linear 的层级代边框）。一级 tab 栏是 icon-only（label 收进 title 供 hover 查看），右侧挂钉住/关闭。<b>宽度比例</b>：主面板与 drawer 默认 <code>1:1</code>（flex:1 等分，可拖拽），中间 <code>SplitterResizeHandle</code> 可拖动调整（透明，仅 hover/drag 显 accent）。<b>tasks tab 已移除</b>（goal/todo 回归对话流，见 §9）。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> border-l border-border 硬分隔</span>
-      <span class="cp cp-v6"><b>v6</b> shadow-drawer 投影分隔</span>
-      <span class="cp cp-v6"><b>v6</b> 底色 bg-bg 画布色（与侧栏同源）</span>
+      <span class="cp cp-v6"><b>v6</b> shadow-drawer 弱投影 0.16 分隔（D2 一体化）</span>
+      <span class="cp cp-v6"><b>v6</b> 与 main 共享 surface（一体化同色）</span>
       <span class="cp cp-v6"><b>v6</b> SplitterResizeHandle 透明化</span>
     </div>
 
@@ -729,7 +724,7 @@ body {
           <div class="ws-splitter" title="拖动调整主面板/drawer 宽度（默认 1:1）"></div>
           <div class="sd-drawer">
             <div class="sd-l1">
-              <!-- 6 个一级 icon tab：terminal / browser / git / doc / detail / tasks -->
+              <!-- 7 个一级 icon tab：terminal / browser / git / doc / detail / subagent / workflow（tasks 已移除，见 §9）-->
               <button class="l1-icon on" title="terminal">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
               </button>
@@ -751,9 +746,6 @@ body {
               </button>
               <button class="l1-icon" title="workflow（agent call 列表）">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>
-              </button>
-              <button class="l1-icon" title="tasks">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
               </button>
               <span class="sd-unread" title="drawer 打开期间 agent 新消息">
                 <span class="pulse-dot"></span><span class="count">3</span>
@@ -777,8 +769,8 @@ body {
       </div>
     </div>
 
-    <!-- 分隔策略对比：旧硬 border vs v6 投影 -->
-    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">分隔策略：硬 border-l → 投影分隔</h3>
+    <!-- 分隔策略对比：旧硬 border / 旧强投影 → v6 一体化 + 弱投影 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">分隔策略：硬 border-l → D2 一体化同色体 + 弱投影 0.16</h3>
     <div class="render-frame">
       <div class="state-row">
         <div class="state-tag">现状</div>
@@ -800,7 +792,7 @@ body {
             <div class="workspace-row" style="min-height:120px;">
               <div class="ws-panel">主面板 surface</div>
               <div class="sd-drawer">
-                <div style="padding:16px;color:var(--neutral-dim);font-size:var(--text-xs);">drawer · 靠 shadow-drawer 投影分隔（柔和，靠三层明度主面板浮起）</div>
+                <div style="padding:16px;color:var(--neutral-dim);font-size:var(--text-xs);">drawer · D2 一体化：与 main 同色 surface，弱投影 shadow-drawer 0.16 分隔（柔和，无硬边线）</div>
               </div>
             </div>
           </div>
@@ -809,11 +801,11 @@ body {
     </div>
 
     <div class="anno-grid">
-      <div class="anno"><b>底色:</b><br><span class="v6">var(--bg) [画布色 = --bg-sunken]</span></div>
-      <div class="anno"><b>左侧分隔:</b><br><span class="old">border-l 1px border-border</span> <span class="v6">→ shadow-drawer 投影</span></div>
-      <div class="anno"><b>shadow-drawer:</b><br>-12px 0 24px rgba(0,0,0,.25)</div>
-      <div class="anno"><b>一级 tab:</b><br>icon-only 8 个 · size-7 (30px) rounded-sm<br>terminal/browser/git/doc/detail/<span class="v6">subagent</span>/<span class="v6">workflow</span>/tasks</div>
-      <div class="anno"><b>icon active:</b><br>bg-accent-soft + text-accent（无 ring 无左条）</div>
+      <div class="anno"><b>底色:</b><br><span class="old">var(--bg) [画布色]</span> <span class="v6">→ var(--surface)（D2 一体化，与 main 同色）</span></div>
+      <div class="anno"><b>左侧分隔:</b><br><span class="old">border-l 1px border-border</span> <span class="v6">→ shadow-drawer 弱投影 0.16</span></div>
+      <div class="anno"><b>shadow-drawer:</b><br>-12px 0 24px rgba(0,0,0,.16)</div>
+      <div class="anno"><b>一级 tab:</b><br>icon-only 7 个 · size-7 (30px) rounded-sm<br>terminal/browser/git/doc/detail/<span class="v6">subagent</span>/<span class="v6">workflow</span></div>
+      <div class="anno"><b>icon active:</b><br>bg-bg-elevated + text-neutral-fg（R15/D8 tab 型，无 ring 无左条）</div>
       <div class="anno"><b>icon hover:</b><br>bg-surface-hover + text-neutral-fg</div>
       <div class="anno"><b>icon default:</b><br>transparent + text-neutral-mid</div>
       <div class="anno"><b>icon size:</b><br>15px · stroke-width 1.75（§7 统一）</div>
@@ -832,7 +824,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s2">
     <div class="spec-head"><span class="spec-num">§2</span><h2 class="spec-title">二级 tab 架构（形态 B）</h2></div>
-    <p class="spec-desc">Drawer 采用「形态 B：icon 一级 + 内层二级（按需出现）」。每个一级 tab 是独立页面，二级 tab 由各 tab 组件自行定制——drawer 框架不统一管二级。只有内容支持多实例的一级 tab（detail 多文件 / terminal 多实例）才显示二级 tab 栏；单一内容 tab（git/doc/tasks）不显示，避免「假二级」。对标 VS Code「侧栏 icon + 编辑器 tab」的双层模型。</p>
+    <p class="spec-desc">Drawer 采用「形态 B：icon 一级 + 内层二级（按需出现）」。每个一级 tab 是独立页面，二级 tab 由各 tab 组件自行定制——drawer 框架不统一管二级。只有内容支持多实例的一级 tab（detail 多文件 / terminal 多实例 / browser 多页面）才显示二级 tab 栏；单一内容 tab（git/doc/subagent/workflow）不显示，避免「假二级」（tasks tab 已移除，见 §9）。对标 VS Code「侧栏 icon + 编辑器 tab」的双层模型。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> useDetailPane 单例（单值驱动）</span>
       <span class="cp cp-v6"><b>v6</b> 形态 B：icon 一级 + 内层二级（按需）</span>
@@ -961,13 +953,13 @@ body {
     <div class="anno-grid">
       <div class="anno"><b>架构:</b><br>形态 B · icon 一级 + 内层二级（按需出现）</div>
       <div class="anno"><b>二级 tab 自治:</b><br>drawer 框架不统一管，各 tab 组件自行定制</div>
-      <div class="anno"><b>按需出现:</b><br>仅 detail/terminal/browser 显二级栏；git/doc/<span class="v6">subagent</span>/<span class="v6">workflow</span>/tasks 不显（避免假二级）</div>
+      <div class="anno"><b>按需出现:</b><br>仅 detail/terminal/browser 显二级栏；git/doc/<span class="v6">subagent</span>/<span class="v6">workflow</span> 不显（避免假二级，tasks 已移除见 §9）</div>
       <div class="anno"><b>一级栏:</b><br>icon-only · 6px+6px padding · 高 42px</div>
       <div class="anno"><b>二级栏:</b><br>bg-surface-2 浮起 · 高 36px · tab rounded-sm</div>
-      <div class="anno"><b>二级 tab active:</b><br>bg-accent-soft + text-accent（无下划线/无 ring）</div>
+      <div class="anno"><b>二级 tab active:</b><br>bg-bg-elevated + text-neutral-fg（R15/D8 tab 型，无下划线/无 ring）</div>
       <div class="anno"><b>二级 tab close:</b><br>hover/on 显 14px · opacity 0→.6→1</div>
       <div class="anno"><b>垂直成本:</b><br>icon 栏 42px + 二级栏 36px = 78px（仅多实例 tab）</div>
-      <div class="anno"><b>架构含义:</b><br>useDetailPane 单值→按 tab id 索引的 map；terminal 单 PTY→多 PTY 实例</div>
+      <div class="anno"><b>架构含义 · 视觉态（实现依赖阶段 B）:</b><br>useDetailPane 单值→按 tab id 索引的 map；terminal 单 PTY→多 PTY 实例（多文件 tab / 多终端实例为视觉态，实现依赖阶段 B）</div>
       <div class="anno"><b>落点:</b><br>DetailPane.vue / TerminalView.vue 各自二级栏</div>
     </div>
   </section>
@@ -997,7 +989,6 @@ body {
               <button class="l1-icon" title="git"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/></svg></button>
               <button class="l1-icon" title="doc"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></button>
               <button class="l1-icon on" title="detail"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>
-              <button class="l1-icon" title="tasks"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
               <span class="spacer"></span>
               <button class="l1-act" title="关闭"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </div>
@@ -1041,7 +1032,7 @@ body {
       <div class="state-row">
         <div class="state-tag">active</div>
         <div class="state-demo">
-          <div class="b-l2" style="background:var(--bg-input);">
+          <div class="b-l2">
             <div class="b-l2-tab on"><span class="tt-name">TurnMeta.vue</span><span class="tt-close"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span></div>
           </div>
         </div>
@@ -1049,7 +1040,7 @@ body {
       <div class="state-row">
         <div class="state-tag">hover</div>
         <div class="state-demo">
-          <div class="b-l2" style="background:var(--bg-input);">
+          <div class="b-l2">
             <div class="b-l2-tab" style="background:var(--surface-hover);color:var(--neutral-fg);"><span class="tt-name">Block.vue</span><span class="tt-close" style="opacity:.6;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span></div>
           </div>
         </div>
@@ -1057,7 +1048,7 @@ body {
       <div class="state-row">
         <div class="state-tag">default</div>
         <div class="state-demo">
-          <div class="b-l2" style="background:var(--bg-input);">
+          <div class="b-l2">
             <div class="b-l2-tab"><span class="tt-name">style.css</span><span class="tt-close" style="opacity:0;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span></div>
           </div>
         </div>
@@ -1075,13 +1066,13 @@ body {
 
     <div class="anno-grid">
       <div class="anno"><b>多文件 tab:</b><br><span class="v6">点文件→新开/切换 tab，可关闭</span></div>
-      <div class="anno"><b>数据模型:</b><br><span class="old">单值 selectedPath</span> <span class="v6">→ 按 tab id 索引的 map</span></div>
+      <div class="anno"><b>数据模型 · 视觉态（实现依赖阶段 B）:</b><br><span class="old">单值 selectedPath</span> <span class="v6">→ 按 tab id 索引的 map</span>（多文件 tab 为视觉态，实现依赖阶段 B：useDetailPane 单值→map）</div>
       <div class="anno"><b>新增按钮:</b><br>否（文件从 git/文件树点开，无 + 按钮）</div>
       <div class="anno"><b>header 底色:</b><br><span class="v6">bg-surface-2 浮起</span>（去 border-b）</div>
       <div class="anno"><b>预览/变更 toggle:</b><br>当前 tab 的视图切换（非全局）· 仅 hasGitChange 时显</div>
       <div class="anno"><b>toggle 样式:</b><br>SegmentedTab：bg-bg-input p-[2px] · on bg-bg-elevated</div>
-      <div class="anno"><b>二级 tab active:</b><br>bg-accent-soft + text-accent · close opacity .6</div>
-      <div class="anno"><b>二级 tab 名:</b><br>font-mono 11.5px · ellipsis · max-w 150px</div>
+      <div class="anno"><b>二级 tab active:</b><br>bg-bg-elevated + text-neutral-fg · close opacity .6</div>
+      <div class="anno"><b>二级 tab 名:</b><br>font-mono 11px · ellipsis · max-w 150px</div>
       <div class="anno"><b>空态:</b><br>无二级栏 · FileText icon 24px + 提示文</div>
       <div class="anno"><b>落点:</b><br>DetailPane.vue · useDetailPane（map 改造）</div>
     </div>
@@ -1184,7 +1175,7 @@ body {
       <div class="anno"><b>canvas 圆角:</b><br><span class="v6">rounded-lg (12px)</span></div>
       <div class="anno"><b>canvas 内距:</b><br><span class="v6">py-2 (8px 上下)</span></div>
       <div class="anno"><b>hunk header:</b><br><span class="old">bg-surface-2</span> <span class="v6">→ 无底色 text-neutral-dim</span></div>
-      <div class="anno"><b>行号槽:</b><br>w-10 (40px) · text-right · neutral-dim/60</div>
+      <div class="anno"><b>行号槽:</b><br>w-10 (40px) · text-right · neutral-dim（与 CSS 一致）</div>
       <div class="anno"><b>newNo 可点:</b><br>hover text-accent · 点击注入 #file:Lno</div>
       <div class="anno"><b>+/- 符号:</b><br>w-4 · add success / del danger / ctx faint</div>
       <div class="anno"><b>字体:</b><br>font-mono 12px · leading-1.5</div>
@@ -1218,7 +1209,6 @@ body {
               <button class="l1-icon" title="git"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/></svg></button>
               <button class="l1-icon" title="doc"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></button>
               <button class="l1-icon" title="detail"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>
-              <button class="l1-icon" title="tasks"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
               <span class="spacer"></span>
               <button class="l1-act" title="关闭"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </div>
@@ -1295,10 +1285,10 @@ body {
       <div class="anno"><b>工具栏分隔:</b><br><span class="old">border-b border-white/10</span> <span class="v6">→ 删除（同色）</span></div>
       <div class="anno"><b>多实例 tab:</b><br><span class="v6">每个 tab 一个独立 PTY 实例</span></div>
       <div class="anno"><b>新增按钮:</b><br><span class="v6">+ 新实例（本期仅占位，功能后续）</span></div>
-      <div class="anno"><b>数据模型:</b><br><span class="old">per-session 单 PTY</span> <span class="v6">→ 多 PTY 实例管理</span></div>
+      <div class="anno"><b>数据模型 · 视觉态（实现依赖阶段 B）:</b><br><span class="old">per-session 单 PTY</span> <span class="v6">→ 多 PTY 实例管理</span>（多终端实例为视觉态，实现依赖阶段 B：单 PTY→多 PTY）</div>
       <div class="anno"><b>实例标签:</b><br>font-mono · pty-N · 显示当前实例</div>
       <div class="anno"><b>工具栏按钮:</b><br>size-6 · clear(Eraser) / kill(Square)</div>
-      <div class="anno"><b>kill 态:</b><br>ptyAlive=false 时 opacity-30 disabled</div>
+      <div class="anno"><b>kill 态:</b><br>ptyAlive=false 时 opacity-50 disabled</div>
       <div class="anno"><b>prompt 色:</b><br>$ 符号 accent · 命令 neutral-fg</div>
       <div class="anno"><b>输出色:</b><br>neutral-mid · 成功 success</div>
       <div class="anno"><b>落点:</b><br>TerminalView.vue · useTerminal（多 PTY）</div>
@@ -1331,7 +1321,6 @@ body {
               <button class="l1-icon" title="git"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/></svg></button>
               <button class="l1-icon" title="doc"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></button>
               <button class="l1-icon" title="detail"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>
-              <button class="l1-icon" title="tasks"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
               <span class="spacer"></span>
               <button class="l1-act" title="关闭"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </div>
@@ -1502,11 +1491,11 @@ body {
       <div class="anno"><b>login wall:</b><br><span class="v6">bg-warn-soft 整块单点</span>（去 border-b 散布）</div>
       <div class="anno"><b>login 图标:</b><br>warn · AlertTriangle 14px</div>
       <div class="anno"><b>viewport 底:</b><br>bg-bg（画布，承载 view 覆盖）</div>
-      <div class="anno"><b>nav 按钮:</b><br>size-7 ghost · disabled opacity-30</div>
+      <div class="anno"><b>nav 按钮:</b><br>size-7 ghost · disabled opacity-50</div>
       <div class="anno"><b>urlbar:</b><br>rounded-full bg-bg-input · mono 11px</div>
       <div class="anno"><b>lock 图标:</b><br>https 显 success 12px</div>
       <div class="anno"><b>加载 spinner:</b><br>size-6 · border-2 · border-t-accent</div>
-      <div class="anno"><b>二级 tab:</b><br>无（单实例，暂；多 tab 后续扩展）</div>
+      <div class="anno"><b>二级 tab:</b><br>多页面 tab（已授权 plugin/view 体系，D4，对齐矩阵 + mock）</div>
       <div class="anno"><b>落点:</b><br>BrowserPane.vue guide/nav/login 三处</div>
     </div>
   </section>
@@ -1537,7 +1526,6 @@ body {
               <button class="l1-icon on" title="git"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></button>
               <button class="l1-icon" title="doc"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></button>
               <button class="l1-icon" title="detail"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>
-              <button class="l1-icon" title="tasks"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
               <span class="spacer"></span>
               <button class="l1-act" title="关闭"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </div>
@@ -1556,7 +1544,7 @@ body {
                   <button class="gp-refresh" title="刷新"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
                 </div>
                 <!-- 文件列表（badge 降噪：M/A/R 中性 dim，仅 U 保留 danger）
-                     v6 MVP-1：per-file stage toggle，hover 显 +/-，xyCode 判态
+                     v6 MVP-1（已授权 · 决策 #16）：per-file stage toggle，hover 显 +/-，xyCode 判态
                        - 未暂存（Y 列有值）→ 显 + → stage(sid,[path])
                        - 已暂存（X 列有值）→ 显 − → unstage(sid,[path]) -->
                 <ul class="gp-filelist">
@@ -1795,10 +1783,10 @@ body {
       <div class="anno"><b>按钮:</b><br>h-7 ghost(primary accent) · disabled opacity</div>
       <div class="anno"><b>非 git 空态:</b><br>整块不渲染（isRepo=false）</div>
       <div class="anno"><b>二级 tab:</b><br>无（git 状态全局唯一）</div>
-      <div class="anno"><b>per-file stage (MVP-1):</b><br><span class="v6">hover 显 +/- toggle</span>，xyCode 判态：Y 有值→+→<span class="v6">stage(sid,[path])</span>；X 有值→−→<span class="v6">unstage(sid,[path])</span>（底部「全部暂存/取消」保留作快捷）</div>
-      <div class="anno"><b>分支切换 (MVP-2):</b><br>branch 名可点（hover 底色 + chevron）→ <span class="v6">BranchSelectPopover</span>（复用，数据 <span class="v6">branches[]</span>），当前分支高亮</div>
-      <div class="anno"><b>新建分支 (MVP-3):</b><br>popover 内底部「+ 新建分支」（accent）→ <span class="v6">CreateBranchModal</span>（复用现有组件）</div>
-      <div class="anno"><b>提交快捷键:</b><br><span class="v6">Cmd/Ctrl+Enter</span>（非普通 Enter，防多行 message 误触）</div>
+      <div class="anno"><b>per-file stage (MVP-1) · 已授权（决策 #16）:</b><br><span class="v6">hover 显 +/- toggle</span>，xyCode 判态：Y 有值→+→<span class="v6">stage(sid,[path])</span>；X 有值→−→<span class="v6">unstage(sid,[path])</span>（底部「全部暂存/取消」保留作快捷）</div>
+      <div class="anno"><b>分支切换 (MVP-2) · 已授权（决策 #16）:</b><br>branch 名可点（hover 底色 + chevron）→ <span class="v6">BranchSelectPopover</span>（复用，数据 <span class="v6">branches[]</span>），当前分支高亮</div>
+      <div class="anno"><b>新建分支 (MVP-3) · 已授权（决策 #16）:</b><br>popover 内底部「+ 新建分支」（accent）→ <span class="v6">CreateBranchModal</span>（复用现有组件）</div>
+      <div class="anno"><b>提交快捷键 · 已授权（决策 #16）:</b><br><span class="v6">Cmd/Ctrl+Enter</span>（非普通 Enter，防多行 message 误触）</div>
       <div class="anno"><b>落点:</b><br>GitPanel.vue section/pillClass/statusBadgeClass</div>
     </div>
   </section>
@@ -1808,13 +1796,13 @@ body {
        ================================================================ -->
   <section class="spec" id="s8">
     <div class="spec-head"><span class="spec-num">§8</span><h2 class="spec-title">CommandDocPanel（doc tab）</h2></div>
-    <p class="spec-desc">命令/skill 文档展示（drawer Doc tab 内容，SKILL.md 经 markdown 渲染）。v6 核心改动：header 去 <code>border-b</code> 改 <code>bg-surface-2</code> 浮起分层（§3.4 统一）；source 标签圆角升 <b>6px</b> 去 <code>bg-surface-hover</code>（纯色文字 + 1px hairline 边框，去 AI slop 色块）；元信息区（sourcePath）去 <code>border-t</code> 改 <code>mt-4</code> 空白分层。单文档，故<b>无二级 tab</b>。</p>
+    <p class="spec-desc">命令/skill 文档展示（drawer Doc tab 内容，SKILL.md 经 markdown 渲染）。v6 核心改动：header 去 <code>border-b</code> 改 <code>bg-surface-2</code> 浮起分层（§3.4 统一）；source 标签圆角升 <b>6px</b> 去 <code>bg-surface-hover</code>（纯色文字，去 bg 去 border）；元信息区（sourcePath）去 <code>border-t</code> 改 <code>mt-4</code>（16px）空白分层。单文档，故<b>无二级 tab</b>。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> header border-b border-border 分隔</span>
       <span class="cp cp-v6"><b>v6</b> header 去 border-b 改 bg-surface-2 浮起</span>
       <span class="cp cp-now"><b>现</b> source 标签 bg-surface-hover 色块 + 圆角 3px</span>
-      <span class="cp cp-v6"><b>v6</b> source 圆角 6px 去 bg，纯色文字 + hairline</span>
-      <span class="cp cp-v6"><b>v6</b> 元信息区 border-t 改 mt-4 空白分层</span>
+      <span class="cp cp-v6"><b>v6</b> source 圆角 6px 去 bg 去 border，纯色文字</span>
+      <span class="cp cp-v6"><b>v6</b> 元信息区 border-t 改 mt-4（16px）空白分层</span>
     </div>
 
     <!-- 目标态：skill 文档完整页 -->
@@ -1829,7 +1817,6 @@ body {
               <button class="l1-icon" title="git"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/></svg></button>
               <button class="l1-icon on" title="doc"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></button>
               <button class="l1-icon" title="detail"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>
-              <button class="l1-icon" title="tasks"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
               <span class="spacer"></span>
               <button class="l1-act" title="关闭"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </div>
@@ -1866,7 +1853,7 @@ body {
     </div>
 
     <!-- source 标签前后对比 -->
-    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">source 标签前后对比：色块 + 3px → 纯色 + 6px hairline</h3>
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">source 标签前后对比：色块 + 3px → 纯色文字 + 6px（去 bg 去 border）</h3>
     <div class="render-frame">
       <div class="state-row">
         <div class="state-tag">现状</div>
@@ -1885,7 +1872,7 @@ body {
             <span style="font-family:var(--font-mono);font-size:var(--text-md);color:var(--neutral-fg);font-weight:500;">/build</span>
             <span class="cd-source">Skill</span>
           </div>
-          <div class="anno" style="margin-top:8px;"><b>v6:</b> <span class="v6">圆角 6px · 去 bg · 纯色文字 + hairline</span></div>
+          <div class="anno" style="margin-top:8px;"><b>v6:</b> <span class="v6">圆角 6px · 去 bg · 去 border · 纯色文字</span></div>
         </div>
       </div>
     </div>
@@ -1935,7 +1922,7 @@ body {
               <p class="cd-meta-val">~/.agents/skills/build/SKILL.md</p>
             </div>
           </div>
-          <div class="anno" style="margin-top:8px;"><b>v6:</b> <span class="v6">mt-6 空白分层（--space-6=24px）</span>（去 border-t）</div>
+          <div class="anno" style="margin-top:8px;"><b>v6:</b> <span class="v6">mt-4 空白分层（16px）</span>（去 border-t）</div>
         </div>
       </div>
     </div>
@@ -1945,14 +1932,14 @@ body {
       <div class="anno"><b>header 分隔:</b><br><span class="old">border-b border-border</span> <span class="v6">→ 删除</span></div>
       <div class="anno"><b>命令名:</b><br>font-mono 14px font-medium neutral-fg</div>
       <div class="anno"><b>命令 icon:</b><br>14px · text-reasoning（slash icon 映射）</div>
-      <div class="anno"><b>source 标签:</b><br><span class="old">bg-surface-hover + 3px</span> <span class="v6">→ hairline + 6px</span></div>
+      <div class="anno"><b>source 标签:</b><br><span class="old">bg-surface-hover + 3px</span> <span class="v6">→ 纯色文字 + 6px（去 bg 去 border）</span></div>
       <div class="anno"><b>source 字:</b><br>text-neutral-mid · 10px · 无 bg</div>
       <div class="anno"><b>source 文案:</b><br>Skill / Extension / 内置（kind 映射）</div>
-      <div class="anno"><b>元信息分层:</b><br><span class="old">border-t</span> <span class="v6">→ mt-6 空白（--space-6=24px）</span></div>
+      <div class="anno"><b>元信息分层:</b><br><span class="old">border-t</span> <span class="v6">→ mt-4 空白（16px）</span></div>
       <div class="anno"><b>元信息 label:</b><br>text-neutral-dim 11px</div>
       <div class="anno"><b>sourcePath:</b><br>font-mono 11px · text-neutral-mid · break-all</div>
       <div class="anno"><b>正文:</b><br>text-base · leading-1.65</div>
-      <div class="anno"><b>inline code:</b><br>font-mono · bg-bg-input · rounded 4px</div>
+      <div class="anno"><b>inline code:</b><br>font-mono · bg-bg-input · rounded 6px</div>
       <div class="anno"><b>二级 tab:</b><br>无（单文档）</div>
       <div class="anno"><b>落点:</b><br>CommandDocPanel.vue header/source/.border-t</div>
     </div>
@@ -1972,10 +1959,13 @@ body {
     </div>
 
     <!-- 迁移说明框 -->
-    <div style="padding:14px 18px;background:var(--warn-soft);border-left:3px solid var(--warn);border-radius:0 var(--radius) var(--radius) 0;margin-bottom:20px;">
-      <div style="font-size:var(--text-sm);font-weight:500;color:var(--neutral-fg);margin-bottom:6px;">⚠ tasks tab 已从 drawer 移除</div>
-      <div style="font-size:var(--text-xs);color:var(--neutral-mid);line-height:1.7;">
-        goal/todo 回归对话流（<code style="color:var(--accent);">v6-spec-blocks.html §12</code>），走 gui-protocol 统一渲染（Card.vue 补 warning variant）。下方保留原 drawer 内的 GoalCard/todo 渲染作为<b>视觉参照</b>（展示迁移前的样式），实际落点已改为对话流 tool block。drawer 不再有 tasks 一级 tab。
+    <div style="display:flex;gap:10px;padding:14px 16px;background:var(--warn-soft);border-radius:var(--radius);margin-bottom:20px;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px;"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      <div style="min-width:0;">
+        <div style="font-size:var(--text-sm);font-weight:500;color:var(--neutral-fg);margin-bottom:4px;">tasks tab 已从 drawer 移除</div>
+        <div style="font-size:var(--text-xs);color:var(--neutral-mid);line-height:1.7;">
+          goal/todo 回归对话流（<code style="color:var(--accent);">v6-spec-blocks.html §12</code>），走 gui-protocol 统一渲染（Card.vue 补 warning variant）。下方保留原 drawer 内的 GoalCard/todo 渲染作为<b>视觉参照</b>（展示迁移前的样式），实际落点已改为对话流 tool block。drawer 不再有 tasks 一级 tab。
+        </div>
       </div>
     </div>
     <div class="sub-h" style="color:var(--neutral-dim);">以下为迁移前的视觉参照（实际渲染已迁至对话流 §12）</div>
@@ -1992,7 +1982,6 @@ body {
               <button class="l1-icon" title="git"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/></svg></button>
               <button class="l1-icon" title="doc"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></button>
               <button class="l1-icon" title="detail"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>
-              <button class="l1-icon on" title="tasks"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
               <span class="spacer"></span>
               <button class="l1-act" title="关闭"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </div>
@@ -2176,7 +2165,7 @@ body {
       <div class="anno"><b>badge 范式:</b><br><span class="v6">胶囊 999px</span>（升档）</div>
       <div class="anno"><b>badge 默认:</b><br><span class="v6">bg-surface-2 + text-neutral-mid</span>（中性）</div>
       <div class="anno"><b>badge blocked:</b><br><span class="v6">bg-warn-soft + text-warn（仅此着色）</span></div>
-      <div class="anno"><b>badge 字:</b><br>10px font-semibold uppercase tracking-04em</div>
+      <div class="anno"><b>badge 字:</b><br>10px font-semibold（normal-case，产品 UI）</div>
       <div class="anno"><b>VERIFY 标:</b><br><span class="old">bg-reasoning-soft 8px</span> <span class="v6">→ 纯色 9px</span></div>
       <div class="anno"><b>VERIFY 色:</b><br>text-reasoning · 去底</div>
       <div class="anno"><b>checkbox 尺寸:</b><br>13×13px 圆（语义清晰面积小）</div>
@@ -2219,7 +2208,6 @@ body {
               <button class="l1-icon" title="detail"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>
               <button class="l1-icon on" title="subagent（嵌套只读对话流）"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg></button>
               <button class="l1-icon" title="workflow（agent call 列表）"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg></button>
-              <button class="l1-icon" title="tasks"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
               <span class="spacer"></span>
               <button class="l1-act" title="关闭"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </div>
@@ -2370,7 +2358,6 @@ body {
               <button class="l1-icon" title="detail"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>
               <button class="l1-icon" title="subagent（嵌套只读对话流）"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg></button>
               <button class="l1-icon on" title="workflow（agent call 列表）"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg></button>
-              <button class="l1-icon" title="tasks"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
               <span class="spacer"></span>
               <button class="l1-act" title="关闭"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </div>

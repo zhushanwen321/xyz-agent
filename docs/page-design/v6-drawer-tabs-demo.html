@@ -26,12 +26,12 @@
 body { font-family: var(--font-sans); background: #0e0e11; color: var(--neutral-fg); padding: 20px; font-size: 13px; }
 h1 { font-size: 18px; margin-bottom: 8px; }
 .sub { color: var(--neutral-mid); font-size: 12px; margin-bottom: 20px; line-height: 1.6; }
-.note { background: color-mix(in oklch, var(--warn) 10%, transparent); border-left: 2px solid var(--warn); padding: 10px 14px; border-radius: 0 6px 6px 0; font-size: 12px; color: var(--neutral-mid); margin-bottom: 24px; line-height: 1.6; }
+.note { background: var(--surface-2); padding: 12px 16px; border-radius: var(--radius); font-size: 12px; color: var(--neutral-mid); margin-bottom: 24px; line-height: 1.6; }
 .note b { color: var(--neutral-fg); }
 
 .console { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 14px; background: #141418; border-radius: var(--radius); margin-bottom: 20px; font-size: 12px; color: var(--neutral-mid); }
 .console label { color: var(--neutral-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
-.seg { display: flex; gap: 2px; background: var(--bg-input); border-radius: var(--radius); padding: 2px; }
+.seg { display: flex; gap: 2px; background: var(--bg-input); border-radius: var(--radius); padding: 3px; }
 .seg button { border:0; cursor:pointer; font:inherit; font-size:11px; padding:5px 11px; border-radius: var(--radius-sm); background:transparent; color: var(--neutral-mid); transition: all .12s; }
 .seg button:hover { color: var(--neutral-fg); }
 .seg button.on { background: var(--bg-elevated); color: var(--neutral-fg); }
@@ -56,7 +56,7 @@ h1 { font-size: 18px; margin-bottom: 8px; }
 .drawer-l1 { display: flex; align-items: center; gap: 2px; padding: 6px 8px; }
 .drawer-l1 .l1-icon { width: 30px; height: 30px; border-radius: var(--radius-sm); border:0; cursor:pointer; background:transparent; color: var(--neutral-mid); display:flex; align-items:center; justify-content:center; }
 .drawer-l1 .l1-icon:hover { color: var(--neutral-fg); }
-.drawer-l1 .l1-icon.on { background: var(--accent-soft); color: var(--accent); }
+.drawer-l1 .l1-icon.on { background: var(--bg-elevated); color: var(--neutral-fg); }
 .drawer-l1 .spacer { flex:1; }
 .drawer-l1 .l1-act { width: 28px; height: 28px; border-radius: var(--radius-sm); border:0; cursor:pointer; background:transparent; color: var(--neutral-dim); display:flex; align-items:center; justify-content:center; }
 .drawer-l1 .l1-act:hover { background: var(--surface-hover); color: var(--neutral-fg); }
@@ -78,10 +78,10 @@ h1 { font-size: 18px; margin-bottom: 8px; }
 .a-content { flex:1; background: var(--bg-input); padding: 14px 16px; overflow: auto; }
 
 /* ===== 形态 B：icon 一级 + 内层二级 tab ===== */
-.b-l2 { display: flex; align-items: center; gap: 0; padding: 4px 8px; background: var(--surface); border-bottom: 1px solid var(--border); min-height: 32px; }
-.b-l2-tab { display: flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: var(--radius-sm); cursor: pointer; font-size: 11.5px; color: var(--neutral-mid); max-width: 140px; transition: all .12s; }
+.b-l2 { display: flex; align-items: center; gap: 0; padding: 4px 8px; background: var(--surface-2); min-height: 32px; }
+.b-l2-tab { display: flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: var(--radius-sm); cursor: pointer; font-size: 11px; color: var(--neutral-mid); max-width: 140px; transition: all .12s; }
 .b-l2-tab:hover { background: var(--surface-hover); color: var(--neutral-fg); }
-.b-l2-tab.on { background: var(--accent-soft); color: var(--accent); }
+.b-l2-tab.on { background: var(--bg-elevated); color: var(--neutral-fg); }
 .b-l2-tab .tt-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family: var(--font-mono); }
 .b-l2-tab .tt-close { width: 13px; height: 13px; border-radius: 3px; display:flex; align-items:center; justify-content:center; opacity:0; flex-shrink:0; }
 .b-l2-tab:hover .tt-close, .b-l2-tab.on .tt-close { opacity: .6; }
@@ -96,7 +96,7 @@ h1 { font-size: 18px; margin-bottom: 8px; }
 .c-crumb { display: flex; align-items: center; gap: 6px; padding: 8px 12px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 12px; }
 .c-crumb .crumb-sep { color: var(--neutral-faint); }
 .c-crumb .crumb-file { color: var(--neutral-fg); font-family: var(--font-mono); font-size: 11.5px; }
-.c-crumb .crumb-view { margin-left: auto; display: flex; gap: 2px; background: var(--bg-input); border-radius: var(--radius); padding: 2px; }
+.c-crumb .crumb-view { margin-left: auto; display: flex; gap: 2px; background: var(--bg-input); border-radius: var(--radius); padding: 3px; }
 .c-crumb .cv-btn { padding: 3px 9px; border-radius: var(--radius-sm); border:0; cursor:pointer; font:inherit; font-size:10px; background:transparent; color: var(--neutral-mid); }
 .c-crumb .cv-btn.on { background: var(--bg-elevated); color: var(--neutral-fg); }
 .c-content { flex:1; padding: 14px 16px; overflow: auto; }
@@ -117,6 +117,10 @@ svg { display:block; }
 <body data-form="b">
 
 <h1>Drawer 二级 tab 形态对比</h1>
+<div style="display:flex;gap:10px;padding:12px 16px;background:var(--warn-soft);border-radius:var(--radius);margin-bottom:20px;align-items:flex-start;">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px;"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+  <div style="font-size:12px;color:var(--neutral-mid);line-height:1.6;"><b style="color:var(--neutral-fg);">SUPERSEDED · 形态 B 已选定</b>：本文档为早期探索稿（对比 A/B/C 三种形态），数值与最终结论以 <code style="color:var(--accent);">v6-spec-drawer.html</code> 为准。下方「你倾向哪种」等交互仅作历史参照，决策已落地。</div>
+</div>
 <div class="sub">
   目标：选定 drawer 的「可关闭 tab」交互骨架。<b>注意核实结论</b>：6 个一级 tab 中，只有 <b>detail</b>（文件预览，最强多实例诉求）和 <b>browser</b>（浏览器，中等）天然适合多实例二级 tab；terminal/git/doc/tasks 是单一内容，强行加二级 tab 会变假二级。<br>
   三种形态展示同一个场景：detail tab 下打开了 3 个文件，当前在第 2 个，要关闭第 3 个。

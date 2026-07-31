@@ -240,11 +240,13 @@ body {
 .sm-group-hd .sm-gcount { color: var(--neutral-dim); font-size: 10px; }
 .sm-item { display: flex; align-items: center; gap: 12px; padding: 7px 16px; cursor: pointer; }
 .sm-item:hover { background: var(--surface-hover); }
-.sm-item.sel { background: var(--surface-hover); }
+/* v6 选中态（列表项型 §3.2）：bg-surface + 蓝字/icon，与 hover 区分（hover 用 surface-hover 实色块）*/
+.sm-item.sel { background: var(--surface); }
+.sm-item.sel .sm-i-title { color: var(--accent); }
 .sm-item .sm-i-ico { width: 16px; height: 16px; flex-shrink: 0; color: var(--neutral-dim); }
 .sm-item.sel .sm-i-ico { color: var(--accent); }
 .sm-item .sm-i-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.sm-item .sm-i-title { font-size: 13.5px; color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sm-item .sm-i-title { font-size: 14px; color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sm-item .sm-i-sub { font-family: var(--font-mono); font-size: 11px; color: var(--neutral-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* v6 高亮：font-semibold，去彩色（去 mark bg / 去 accent 文字）*/
 .sm-hi { font-weight: 600; }
@@ -279,7 +281,7 @@ body {
 .au-tab { font-family: var(--font-sans); font-size: 12px; padding: 4px 10px; border-radius: var(--radius-sm); cursor: pointer; }
 .au-tab.idle { color: var(--neutral-dim); }
 .au-tab.idle:hover { background: var(--surface-hover); color: var(--neutral-mid); }
-.au-tab.active { background: var(--accent-soft); color: var(--neutral-fg); font-weight: 500; }
+.au-tab.active { background: var(--bg-elevated); color: var(--neutral-fg); font-weight: 500; }
 .au-tab .au-tab-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--success); display: inline-block; margin-left: 4px; vertical-align: 2px; }
 .au-body { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 4px; }
 .au-q-multi { font-size: 13px; font-weight: 500; color: var(--neutral-fg); }
@@ -296,7 +298,9 @@ body {
 .au-opt { display: flex; align-items: flex-start; gap: 8px; padding: 6px 10px; border-radius: var(--radius-sm); cursor: pointer; }
 /* v6 hover：bg-surface-hover token（去 white/[0.04]）*/
 .au-opt:hover { background: var(--surface-hover); }
-.au-opt.sel { background: var(--accent-soft); }
+/* v6 选中态（列表项型 §3.2）：bg-surface + 蓝字 label（与 hover 区分，hover 用 surface-hover）*/
+.au-opt.sel { background: var(--surface); }
+.au-opt.sel .au-opt-label { color: var(--accent); }
 .au-opt.disabled { opacity: 0.45; cursor: not-allowed; }
 .au-opt.disabled:hover { background: transparent; }
 .au-radio { width: 16px; height: 16px; flex-shrink: 0; border: 2px solid var(--border-strong); border-radius: 50%; margin-top: 2px; box-sizing: border-box; }
@@ -397,6 +401,7 @@ body {
 .shadow-demo { height: 96px; border-radius: var(--radius); margin-bottom: 14px; display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 11px; }
 .sd-float { background: var(--surface); color: var(--neutral-mid); box-shadow: var(--shadow-2); }
 .sd-modal { background: var(--surface); color: var(--neutral-mid); box-shadow: var(--shadow-2); border: 1px solid var(--border); }
+/* shadow 演示格 border 仅用于投影示意可视化（非组件规范，真实 drawer 去 border 靠 shadow 分隔）*/
 .sd-drawer { background: var(--surface); color: var(--neutral-mid); box-shadow: var(--shadow-drawer); border: 1px solid var(--border); }
 .sd-focus { background: var(--bg-input); color: var(--neutral-fg); box-shadow: var(--shadow-glow); border: 1px solid var(--accent); }
 .shadow-name { font-size: var(--text-sm); color: var(--neutral-fg); font-weight: 500; margin-bottom: 2px; }
@@ -708,7 +713,7 @@ body {
       <div class="anno"><b>input 高度:</b><br>h-8(32px) · text-14px · border-0 bg-transparent · focus-visible:ring-0</div>
       <div class="anno"><b>分组 header v6:</b><br><span class="old">font-mono 10px uppercase tracking-wider neutral-dim</span> <span class="v6">→ 去 uppercase tracking，normal-case 11px neutral-mid</span></div>
       <div class="anno"><b>结果项:</b><br>px-4(16px) py-2(8px) · icon 16px · 标题 13.5px fg · 子 11px mono neutral-dim</div>
-      <div class="anno"><b>选中态:</b><br>bg-surface-hover（实色块，无 ring 无左条，§3.2 范式）· icon→accent</div>
+      <div class="anno"><b>选中态 v6:</b><br>bg-surface + 标题/label→accent 蓝字（列表项型 §3.2，与 hover bg-surface-hover 区分）· icon→accent</div>
       <div class="anno"><b>高亮 v6:</b><br><span class="old">mark bg-transparent text-accent</span> <span class="v6">→ mark font-semibold（去彩色）</span></div>
       <div class="anno"><b>results max-h:</b><br>max-h-380px overflow-y-auto · py-1.5</div>
       <div class="anno"><b>loading 防闪烁:</b><br>开扫 200ms 后才显（LOADING_DELAY_MS）· spinner 14px accent</div>
@@ -823,7 +828,7 @@ body {
                   </div>
                   <div class="au-opt sel">
                     <span class="au-radio"></span>
-                    <div class="au-opt-body"><span class="au-opt-label">selected</span><span class="au-opt-desc">bg-accent-soft · radio 实心 accent</span></div>
+                    <div class="au-opt-body"><span class="au-opt-label">selected</span><span class="au-opt-desc">bg-surface · label→accent · radio 实心 accent</span></div>
                   </div>
                   <div class="au-opt disabled">
                     <span class="au-radio"></span>
@@ -857,11 +862,11 @@ body {
       <div class="anno"><b>落点:</b><br>companion-band（composer 上方），非 modal · 不遮挡对话流</div>
       <div class="anno"><b>head 行:</b><br>脉冲点 6px accent · gap-2 px-3.5 pt-2.5</div>
       <div class="anno"><b>单问题标题:</b><br>13px font-medium neutral-fg · 单行 truncate</div>
-      <div class="anno"><b>多问题 tab:</b><br>px-2.5 py-1 · <span class="v6">rounded 6px [--radius-sm]</span> · active bg-accent-soft + 已答绿点</div>
+      <div class="anno"><b>多问题 tab:</b><br>px-2.5 py-1 · <span class="v6">rounded 6px [--radius-sm]</span> · active <span class="v6">bg-elevated（tab 型 §3.1，去 accent-soft 蓝染）</span> + 已答绿点</div>
       <div class="anno"><b>tab 切换:</b><br>Tab/Shift+Tab 循环（IME 组合中不拦截）· 单选选中后 auto-advance</div>
       <div class="anno"><b>选项 v6:</b><br>px-2.5 py-1.5 · <span class="v6">rounded 6px [--radius-sm]</span> · 无边框</div>
       <div class="anno"><b>选项 hover v6:</b><br><span class="old">bg-white/[0.04]</span> <span class="v6">→ bg-surface-hover（token）</span></div>
-      <div class="anno"><b>选项 selected:</b><br>bg-accent-soft · radio/accent 实心 · 多选 checkbox 实心 accent + 白勾</div>
+      <div class="anno"><b>选项 selected:</b><br><span class="v6">bg-surface + label→accent 蓝字（列表项型 §3.2）</span> · radio/accent 实心 · 多选 checkbox 实心 accent + 白勾</div>
       <div class="anno"><b>选项 disabled:</b><br>opacity 0.45 · hover 不响应</div>
       <div class="anno"><b>radio:</b><br>16px · border-2 border-border-strong · sel→border-accent bg-accent（inset 2px bg-input 留环）</div>
       <div class="anno"><b>context v6:</b><br><span class="old">bg-reasoning-soft</span> <span class="v6">→ bg-surface-hover</span> · rounded 6px · 12px neutral-mid</div>
@@ -943,7 +948,7 @@ body {
             </div>
             <div class="cd-actions">
               <span class="btn ghost" style="opacity:0.5;pointer-events:none;">取消</span>
-              <span class="btn default" style="background:var(--surface-2);color:var(--neutral-faint);">
+              <span class="btn default" style="opacity:0.5;pointer-events:none;">
                 <svg class="btn-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg>
                 提交中…
               </span>
@@ -982,7 +987,7 @@ body {
         <span class="btn danger">danger · 删除</span>
         <span class="btn ghost">ghost · 取消</span>
         <span class="btn default" style="opacity:0.5;pointer-events:none;">default · disabled</span>
-        <span class="btn default" style="background:var(--surface-2);color:var(--neutral-faint);"><svg class="btn-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg>loading</span>
+        <span class="btn default" style="opacity:0.5;pointer-events:none;"><svg class="btn-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg>loading</span>
       </div>
       <div class="anno-grid" style="margin-top:14px;">
         <div class="anno"><b>default:</b><br>bg-accent text-white · h-9 px-4 · rounded 8px [--radius]<br>hover→accent-hover · <span class="v6">disabled→opacity 0.5（SSOT 统一）</span></div>
@@ -1122,6 +1127,7 @@ body {
       <div class="anno"><b>loading:</b><br>mermaid 首次加载 ~3MB · 极短占位「渲染中」</div>
       <div class="anno"><b>主题:</b><br>watch &lt;html data-theme&gt; MutationObserver · 主题切换重渲（颜色 bake 进 SVG）</div>
       <div class="anno"><b>v6 决策:</b><br><span class="v6">保持现状，不改视觉</span> · 圆角 12px 自动跟随 DialogContent · 完整性收录</div>
+      <div class="anno"><b>示意图豁免:</b><br>本节占位 mermaid SVG 用硬编码 hex 描边/填充，属<b>渲染产物示意</b>（mermaid 运行时 bake 进 SVG 的颜色），非组件 CSS 范式——实际主题色由 mermaid theme 注入，token 豁免</div>
       <div class="anno"><b>落点:</b><br>MermaidRenderer.vue · 无 v6 改动（仅 z-[1000]→z-modal 跟随 §5.2）</div>
     </div>
   </section>

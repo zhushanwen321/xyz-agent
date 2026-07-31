@@ -70,7 +70,7 @@
 .bn-chev { width: 10px; height: 10px; color: var(--neutral-dim); flex-shrink: 0; }
 .bn-summary { padding-left: 16px; font-size: 12px; color: var(--neutral-mid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.4; }
 .bn-patch-hint { margin-left: 16px; border: 1px solid color-mix(in oklch, var(--info) 30%, transparent); background: var(--info-soft); color: var(--info); border-radius: var(--radius-sm); padding: 4px 8px; font-size: 11px; }
-.bn-fullcontent { margin-left: 16px; max-height: 120px; overflow-y: auto; background: color-mix(in oklch, var(--surface-2) 50%, transparent); border-radius: var(--radius-sm); padding: 4px 8px; font-size: 11px; line-height: 1.6; color: var(--neutral-mid); }
+.bn-fullcontent { margin-left: 16px; max-height: 200px; overflow-y: auto; background: color-mix(in oklch, var(--surface-2) 50%, transparent); border-radius: var(--radius-sm); padding: 4px 8px; font-size: 11px; line-height: 1.6; color: var(--neutral-mid); }   /* max-height 120→200px（统一 anno「max-h-[200px]」）*/
 
 /* ── GUI 组件规格（§11.5，extension __gui__ 推送渲染契约）── */
 .gui-spec { font-family: var(--font-mono); font-size: 12px; }
@@ -98,18 +98,18 @@
 .gui-tab-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
 .gui-tab-dot.done { background: var(--success); }
 .gui-tab-dot.pending { background: var(--neutral-dim); opacity: 0.5; }
-.gui-card-box { border-radius: var(--radius-lg); border: 1px solid var(--border); background: var(--surface); overflow: hidden; }
-.gui-card-box.elevated { border-color: var(--border-strong); background: var(--surface-2); }
-.gui-card-box.danger { border-color: var(--danger); }
-.gui-card-box.success { border-color: var(--success); }
-.gui-card-box.warning { border-color: var(--warn); }   /* §12: goal blocked variant（v6 新增） */
-.gui-card-hd { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--neutral-mid); }
+.gui-card-box { border-radius: var(--radius-lg); background: var(--surface); overflow: hidden; }   /* 彩色整圈 border → 去 border（v6：靠 bg-soft 整块表达）*/
+.gui-card-box.elevated { background: var(--surface-2); }
+.gui-card-box.danger { background: var(--danger-soft); }
+.gui-card-box.success { background: var(--success-soft); }
+.gui-card-box.warning { background: var(--warn-soft); }   /* §12: goal blocked variant（v6 新增） */
+.gui-card-hd { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 11px; font-weight: 600; color: var(--neutral-mid); }   /* uppercase → normal-case（产品 UI）*/
 .gui-card-body { padding: 12px; }
 
-/* §12 goal/todo block（回归对话流，走 gui-protocol 统一渲染）*/
-.gt-goal-card { border-radius: var(--radius-lg); border: 1px solid var(--border); background: var(--surface); overflow: hidden; }
-.gt-goal-card.warning { border-color: var(--warn); background: color-mix(in oklch, var(--warn) 6%, var(--surface)); }
-.gt-goal-card.success { border-color: var(--success); }
+/* §12 goal/todo block（回归对话流，走 gui-protocol 统一渲染）。D3：去 border+bg 改 bg-surface（对齐 design §4.3）*/
+.gt-goal-card { border-radius: var(--radius-lg); background: var(--surface); overflow: hidden; }
+.gt-goal-card.warning { background: color-mix(in oklch, var(--warn) 6%, var(--surface)); }
+.gt-goal-card.success { background: var(--surface); }
 .gt-goal-hd { display: flex; align-items: center; gap: 8px; padding: 10px 14px; }
 .gt-goal-status { width: 14px; height: 14px; flex-shrink: 0; }
 .gt-goal-status.blocked { color: var(--warn); }
@@ -153,7 +153,7 @@
 .sa-hd { display: flex; min-width: 0; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; cursor: pointer; }
 .sa-ico { width: 13px; height: 13px; color: var(--neutral-ico); flex-shrink: 0; }
 .sa-loader { width: 13px; height: 13px; color: var(--accent); animation: spin 1.4s linear infinite; flex-shrink: 0; }
-.sa-prefix { font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--neutral-fg); margin-right: 2px; }
+.sa-prefix { font-family: var(--font-mono); font-size: 10px; font-weight: 600; color: var(--neutral-fg); margin-right: 2px; }   /* uppercase → normal-case（产品 UI）*/
 .sa-agent { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
 .sa-sep { color: var(--neutral-faint); }
 .sa-slug { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
@@ -165,7 +165,7 @@
 .wf-hd { display: flex; min-width: 0; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; cursor: pointer; }
 .wf-ico { width: 13px; height: 13px; color: var(--neutral-ico); flex-shrink: 0; }
 .wf-loader { width: 13px; height: 13px; color: var(--accent); animation: spin 1.4s linear infinite; flex-shrink: 0; }
-.wf-prefix { font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--neutral-fg); margin-right: 2px; }
+.wf-prefix { font-family: var(--font-mono); font-size: 10px; font-weight: 600; color: var(--neutral-fg); margin-right: 2px; }   /* uppercase → normal-case（产品 UI）*/
 .wf-name { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
 .wf-sep { color: var(--neutral-faint); }
 .wf-slug { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
@@ -233,10 +233,10 @@
        ================================================================ -->
   <section class="spec" id="s4">
     <div class="spec-head"><span class="spec-num">§4</span><h2 class="spec-title">Block · thinking（思考块）</h2></div>
-    <p class="spec-desc">收起态预览。<b>v6 仅做提亮</b>：预览文本 <code>neutral-dim #6b7280</code> → <code>neutral-mid #9ca3af</code>（过 AA）。<b>行数维持 1 行 ellipsis</b>（60 字符截断 + …，与代码现状一致）。<span style="color:var(--warn);">⚠ 推翻 handoff §4.1「显 2 行」决策</span>——2 行会破坏 turn 内的视觉节奏，1 行 ellipsis 更克制。label 保持 uppercase mono。<b>注</b>：collapsed preview 是 dim→mid 提亮，但 <b>expanded body 仍是 dim</b>（thinking variant 降级排版，MarkdownRenderer 标题用 <code>--reasoning</code> 紫），两者色差需说清。</p>
+    <p class="spec-desc">收起态预览。<b>v6 仅做提亮</b>：预览文本 <code>neutral-dim #6b7280</code> → <code>neutral-mid #9ca3af</code>（过 AA）。<b>行数维持 1 行 ellipsis</b>（60 字符截断 + …，与代码现状一致）。<span style="color:var(--warn);">⚠ 推翻 handoff §4.1「显 2 行」决策</span>——2 行会破坏 turn 内的视觉节奏，1 行 ellipsis 更克制。label 保持 mono。<b>R9</b>：expanded body 也用 <b>neutral-mid</b>（长正文必须过 AA，dim 仅留装饰位；thinking variant 降级排版，MarkdownRenderer 标题用 <code>--reasoning</code> 紫）。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> neutral-dim #6b7280 · 1 行 truncate</span>
-      <span class="cp cp-v6"><b>v6</b> preview neutral-mid #9ca3af · expanded body 仍 neutral-dim（thinking variant）</span>
+      <span class="cp cp-v6"><b>v6</b> preview neutral-mid #9ca3af · expanded body neutral-mid（R9，过 AA）</span>
     </div>
 
     <!-- v6 全局 block icon 更新（适用于所有 block：§4 thinking·§5 bash·§6 tool·§10 subagent·§11 workflow）-->
@@ -275,7 +275,7 @@
               <!-- v6 统一：copy 按钮行在 block icon 下方、内容区顶部，与正文基线对齐（hover 显，复制全部思考内容，Check 反馈）-->
               <div class="tk-body" style="padding-left:16px;padding-top:6px;">
                 <div class="blk-copy-row"><span class="blk-copy always-on" title="copy（hover 显，复制全部思考内容）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</span></div>
-                <div style="font-size:12px;color:var(--neutral-dim);line-height:1.7;">展开后完整思考内容，expanded body 颜色 <b>仍是 neutral-dim</b>（Block.vue:28，thinking variant 降级排版），非 mid——与 collapsed preview 的 mid 形成色差（preview 更亮引导视线，body 弱化为过程信息）。<br>注：working（思考进行中）态强制全展开且不可手动收，仍显 60 字预览非完整内容。</div>
+                <div style="font-size:12px;color:var(--neutral-mid);line-height:1.7;">展开后完整思考内容，expanded body 颜色 <b>neutral-mid</b>（R9：长正文必须过 AA，dim 仅留装饰位；Block.vue:28 thinking variant 降级排版）。<br>注：working（思考进行中）态强制全展开且不可手动收，仍显 60 字预览非完整内容。</div>
               </div>
             </div>
           </div>
@@ -288,7 +288,7 @@
       <div class="anno"><b>icon:</b><br>Brain 13px neutral-ico · stroke 1.75 · <b>无 spinner</b>（thinking 块不用 loader）</div>
       <div class="anno"><b>label:</b><br>10px [--text-2xs] mono 600 uppercase tracking-.08em neutral-fg</div>
       <div class="anno"><b>preview 文字:</b><br><span class="old">12px neutral-dim #6b7280</span><br><span class="v6">12px [--text-sm] neutral-mid #9ca3af（仅提亮）</span></div>
-      <div class="anno"><b>expanded body:</b><br><span class="v6">12px neutral-dim（Block.vue:28，<b>非 mid</b>）· MarkdownRenderer variant=thinking（标题用 --reasoning 紫）· 与 preview 色差刻意</span></div>
+      <div class="anno"><b>expanded body:</b><br><span class="v6">12px neutral-mid（R9：长正文过 AA）· MarkdownRenderer variant=thinking（标题用 --reasoning 紫）</span></div>
       <div class="anno"><b>expanded 占位:</b><br><span class="v6">separator（·）+ preview 文字 expanded 时 invisible 保留占位（Block.vue:24-25），仅显 body</span></div>
       <div class="anno"><b>预览行数:</b><br><span class="v6">1 行 ellipsis（60 字符截断，维持现状）</span><br><span style="color:var(--warn);">推翻 handoff「2 行」</span></div>
       <div class="anno"><b>对比度:</b><br><span class="v6">preview neutral-mid 6.95:1 ✓ AA</span>（dim 3.91:1 ✗）</div>
@@ -431,7 +431,7 @@ added 1 package in 2s</div>
         </div>
       </div></div></div></div>
     </div>
-    <p style="font-size:12px;color:var(--neutral-mid);margin-top:12px;padding:10px 14px;background:var(--bg-card);border-radius:var(--radius);">tool-bash 展开 = §6 tool 块的 bash 渲染分支：border + bg-surface-2 容器 + 命令行 + 输出。它受 §6 tool 块的折叠/running/failed 状态统辖，本图仅展示其展开态的容器结构差异。其余状态见 §6。</p>
+    <p style="font-size:12px;color:var(--neutral-mid);margin-top:12px;padding:10px 14px;background:var(--bg-card);border-radius:var(--radius);">tool-bash 展开 = §6 tool 块的 bash 渲染分支：<span class="v6">v6 bg-input 无 border</span> 容器 + 命令行 + 输出。它受 §6 tool 块的折叠/running/failed 状态统辖，本图仅展示其展开态的容器结构差异。其余状态见 §6。</p>
 
     <div class="anno-grid">
       <div class="anno"><b>两类来源:</b><br><span class="v6">BashOutputBlock（5A，不可折叠）≠ tool-bash（5B，可折叠）</span></div>
@@ -440,11 +440,11 @@ added 1 package in 2s</div>
       <div class="anno"><b>running:</b><br>双环 loader 12px accent + 取消按钮</div>
       <div class="anno"><b>no-context tag:</b><br><span class="v6">excludeFromContext 时显 border pill（BashOutputBlock.vue:34-38）· rounded-sm border-border neutral-dim · 标记「不进上下文」</span></div>
       <div class="anno"><b>exit 标签:</b><br><span class="v6">exit 0→success绿 / exit N→warn金 / timeout·cancelled→neutral-dim</span></div>
-      <div class="anno"><b>输出区:</b><br>mono 12px neutral-mid · max-h 240px overflow-auto · 仅 complete 态显示</div>
+      <div class="anno"><b>输出区:</b><br>mono 12px neutral-mid · max-h <code>var(--bash-output-max-height)</code>(240px) overflow-auto · 仅 complete 态显示</div>
       <div class="anno"><b>empty 占位:</b><br><span class="v6">无输出时显「(无输出)」italic neutral-dim（BashOutputBlock.vue:99-103）</span></div>
       <div class="anno"><b>截断标记:</b><br>italic 10px neutral-dim（pi 返回 truncated 才显）</div>
       <div class="anno"><b>copy 按钮 [v6 新增]:</b><br><span class="v6">BashOutputBlock 不可折叠，但输出区顶部补 copy 行内（与输出基线对齐）· hover 显 · 复制命令+输出 · Check 反馈（与可折叠块的展开态 copy 统一布局）</span></div>
-      <div class="anno"><b>tool-bash 容器:</b><br>border neutral-faint + bg-surface-2 rounded-sm（嵌 §6，受 tool 折叠态统辖）</div>
+      <div class="anno"><b>tool-bash 容器:</b><br><span class="v6">v6：bg-input 无 border rounded-sm</span>（向 BashOutputBlock 扁平风，原 border neutral-faint + bg-surface-2 双分隔已删）· 嵌 §6，受 tool 折叠态统辖</div>
       <div class="anno"><b>失败视觉对照:</b><br><span class="v6">5A exit N→warn（用户直接反馈，需明确成败）· tool-bash failed→中性灰（agent 调用，成败由后续 turn 解释）· 同一 bash 两套失败视觉，因来源语义不同</span></div>
     </div>
   </section>
@@ -674,7 +674,7 @@ added 1 package in 2s</div>
           <div class="state-demo">
             <div class="sa-v6">
               <div class="sa-hd">
-                <svg class="sa-loader" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="10" opacity="0.35"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>
+                <svg class="sa-loader" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="10" opacity="0.35"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>
                 <span class="sa-prefix">subagent</span><span class="sa-agent">general-purpose</span><span class="sa-sep">·</span><span class="sa-slug">analyze-deps</span><span class="sa-model">(glm-5.2 · <span class="think-x">thinking high</span>)</span>
               </div>
             </div>
@@ -855,7 +855,7 @@ added 1 package in 2s</div>
           <div class="state-demo">
             <div class="wf-v6">
               <div class="wf-hd">
-                <svg class="wf-loader" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="10" opacity="0.35"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>
+                <svg class="wf-loader" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="10" opacity="0.35"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>
                 <span class="wf-prefix">workflow</span><span class="wf-name">test-suite</span><span class="wf-sep">·</span><span class="wf-slug">unit</span>
               </div>
             </div>
@@ -1030,10 +1030,10 @@ added 1 package in 2s</div>
     </div>
     <div class="anno-grid" style="margin-bottom:24px;">
       <div class="anno"><b>数据契约:</b><br><span class="v6">{ type:'card', variant?, header?: string|GuiComponent, body: GuiComponent[] }</span></div>
-      <div class="anno"><b>4 variant:</b><br><span class="v6">default(border-border bg-surface) / elevated(border-border-strong bg-surface-2) / danger(border-danger) / success(border-success)（:24-32）</span></div>
-      <div class="anno"><b>header:</b><br><span class="v6">string 或嵌套 GuiComponent（后者递归调 GuiComponentRenderer）（:41-49）· mono 11px uppercase neutral-mid</span></div>
+      <div class="anno"><b>4 variant:</b><br><span class="v6">v6 去 border 改 bg-soft 整块：default(bg-surface) / elevated(bg-surface-2) / danger(bg-danger-soft) / success(bg-success-soft)（:24-32）</span></div>
+      <div class="anno"><b>header:</b><br><span class="v6">string 或嵌套 GuiComponent（后者递归调 GuiComponentRenderer）（:41-49）· mono 11px neutral-mid</span></div>
       <div class="anno"><b>body 递归:</b><br><span class="v6">body[] 通过 v-for + GuiComponentRenderer 递归渲染任意子组件（:50-56）</span></div>
-      <div class="anno"><b>容器:</b><br><span class="v6">rounded-lg border overflow-hidden（:36-38）</span></div>
+      <div class="anno"><b>容器:</b><br><span class="v6">rounded-lg overflow-hidden（去 border，靠 bg-soft 整块表达，:36-38）</span></div>
     </div>
 
     <!-- 11.5F. columns / ansi-text（简要）-->
@@ -1132,7 +1132,7 @@ added 1 package in 2s</div>
     <h3 style="font-size:14px;color:var(--neutral-fg);margin:20px 0 14px;font-weight:500;">12C. todo block · list-tree 原语（checkbox 三态 + VERIFY）</h3>
     <div class="render-frame">
       <div class="panel-stage" style="padding:14px 16px;max-width:var(--content-max-w);margin:0 auto;">
-        <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-mid);text-transform:uppercase;letter-spacing:.08em;font-weight:600;margin-bottom:8px;">待办列表 · 1/3</div>
+        <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-mid);font-weight:600;margin-bottom:8px;">待办列表 · 1/3</div>
         <div class="gt-todo-item">
           <span class="gt-todo-cb done"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
           <span class="gt-todo-label done">定位 BrowserPane 三处 border-b</span>
@@ -1153,7 +1153,7 @@ added 1 package in 2s</div>
     <div class="anno-grid">
       <div class="anno"><b>v6 决策:</b><br><span class="v6">移除 HIDDEN_TOOL_NAMES</span><br>对 todo/goal_control 特判<br>回归对话流 tool block</div>
       <div class="anno"><b>渲染器:</b><br><span class="v6">GuiComponentRenderer</span><br>→ Card.vue（goal）<br>→ ListTree.vue（todo）<br>统一渲染，消除双轨</div>
-      <div class="anno"><b>Card.vue 补:</b><br><span class="v6">warning variant</span><br>（border-warn + warn 背景）<br>+ 内嵌 Resume 按钮<br>（action slot）</div>
+      <div class="anno"><b>Card.vue 补:</b><br><span class="v6">warning variant</span><br>（warn 背景 bg-warn-soft，去 border）<br>+ 内嵌 Resume 按钮<br>（action slot）</div>
       <div class="anno"><b>goal 原语:</b><br>card（variant）+<br>stats-line（状态）+<br>progress-bar（token%/time%）</div>
       <div class="anno"><b>todo 原语:</b><br>list-tree<br>TreeItem（status 圆点）<br>checkbox 三态保留</div>
       <div class="anno"><b>VERIFY 摩擦点:</b><br>list-tree TreeItem<br>不含 isVerification 字段<br>需扩展协议或接受不显</div>

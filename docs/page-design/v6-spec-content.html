@@ -42,7 +42,7 @@
 .mm-src-copy.copied { color: var(--success); }
 /* 全屏 Dialog（:51-72）：max-h-92vh max-w-95vw + 顶部工具栏 4 按钮 + zoomLabel + 关闭 ×
    v6：toolbar 统一到轻量 head 栏风格（与代码块 head 同骨架），左侧放标题/类型，右侧归拢所有按钮（zoom-in/out/fit/1:1 + 关闭） */
-.mm-dialog { max-width: 95%; max-height: 70%; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow-2); overflow: hidden; display: flex; flex-direction: column; margin: 0 auto; }
+.mm-dialog { max-width: 95%; max-height: 92vh; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow-2); overflow: hidden; display: flex; flex-direction: column; margin: 0 auto; }   /* max-height 70% → 92vh（统一 anno「max-h-92vh」）*/
 /* 统一轻量 head 栏：flex items-center gap-2 h-7 px-3 text-xs · 背景 surface-2/50 半透明 · border-b border-border/50（与代码块 head 一致） */
 .mm-dialog-bar { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; background: color-mix(in oklch, var(--surface-2) 50%, transparent); border-bottom: 1px solid color-mix(in oklch, var(--neutral-faint) 50%, transparent); }
 .mm-dialog-title { font-family: var(--font-mono); font-size: 11px; color: var(--neutral-dim); display: inline-flex; align-items: center; gap: 6px; }
@@ -530,6 +530,8 @@
     </div>
   </section>
 
+  <!-- ================================================================
+       §13 动画 · 状态指示 + 微交互 + 入场/退场
        ================================================================ -->
   <section class="spec" id="s13">
     <div class="spec-head"><span class="spec-num">§13</span><h2 class="spec-title">动画 · 状态指示 + 微交互 + 入场/退场</h2></div>
@@ -540,19 +542,19 @@
       <h3 style="font-size:14px;color:var(--neutral-fg);margin:0 0 14px;font-weight:500;">① 状态指示动画</h3>
       <div class="panel-stage" style="display:flex;gap:32px;flex-wrap:wrap;padding:20px;">
         <div style="text-align:center;">
-          <div style="height:40px;display:flex;align-items:center;justify-content:center;"><svg style="width:18px;height:18px;color:var(--accent);animation:spin 1.4s linear infinite;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="10" opacity="0.35"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg></div>
+          <div style="height:40px;display:flex;align-items:center;justify-content:center;"><svg style="width:18px;height:18px;color:var(--accent);animation:spin 1.4s linear infinite;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="10" opacity="0.35"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg></div>
           <div style="font-size:11px;color:var(--neutral-mid);">双环 loader</div>
           <div class="anno" style="margin-top:4px;">loader-spin 1.4s linear<br>running 态（所有 block）</div>
         </div>
         <div style="text-align:center;">
           <div style="height:40px;display:flex;align-items:center;justify-content:center;"><span style="width:10px;height:10px;border-radius:50%;background:var(--accent);animation:pulse-accent 2s var(--ease) infinite;display:inline-block;"></span></div>
           <div style="font-size:11px;color:var(--neutral-mid);">脉冲涟漪点</div>
-          <div class="anno" style="margin-top:4px;"><b style="color:var(--warn);">[修正]</b> pulse-accent 2s<br>box-shadow 0→5px 扩散环<br>QueueBubble / UserBubble</div>
+          <div class="anno" style="margin-top:4px;"><b style="color:var(--warn);">[修正]</b> pulse-accent 2s<br>box-shadow 0→5px 扩散环<br>状态指示动画</div>
         </div>
         <div style="text-align:center;">
           <div style="height:40px;display:flex;align-items:center;justify-content:center;"><span style="width:7px;height:14px;border-radius:1px;background:var(--accent);animation:blink 1s step-end infinite;display:inline-block;vertical-align:middle;"></span></div>
           <div style="font-size:11px;color:var(--neutral-mid);">blink 竖条 cursor</div>
-          <div class="anno" style="margin-top:4px;">blink 1s step-end<br>TurnSummary cursor（§12.6）<br>subagent bg 状态行（§10）</div>
+          <div class="anno" style="margin-top:4px;">blink 1s step-end<br>TurnSummary cursor（§12.6）<br>（subagent bg 状态行已移除，不再消费 blink）</div>
         </div>
         <div style="text-align:center;">
           <div style="height:40px;display:flex;align-items:center;justify-content:center;"><svg style="width:18px;height:18px;color:var(--accent);animation:spin 1s linear infinite;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg></div>

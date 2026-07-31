@@ -98,6 +98,8 @@
   /* 组件尺寸（v6 新增）*/
   --content-max-w: 720px;
   --composer-btn-size: 30px;
+  /* design §4.5：provider 页放弃 720 内容列宽（密集表单需满宽 2 列），
+     本文件定义 --content-max-w 仅为 token 完整性，不消费它。 */
 
   /* z-index 语义化（§5.2 v6 新增）*/
   --z-sticky: 1;
@@ -222,7 +224,7 @@ body {
 .ui-input {
   display: flex; width: 100%; height: 40px; border-radius: var(--radius);
   border: 1px solid var(--border); background: var(--surface-2);
-  padding: 8px 12px; font-size: var(--text-sm); color: var(--neutral-fg);
+  padding: 0 12px; font-size: var(--text-base); color: var(--neutral-fg);
   outline: none; transition: border-color var(--duration-fast);
 }
 .ui-input::placeholder { color: var(--neutral-mid); }
@@ -230,17 +232,17 @@ body {
 .ui-input:focus-visible { border-color: transparent; box-shadow: inset 0 0 0 1px var(--accent-ring); }
 .ui-input.err { border-color: var(--danger); }
 /* dense input h-8(32px) text-12px（headers 行 / 模型添加行用） */
-.ui-input-dense { height: 32px; font-size: var(--text-sm); }
+.ui-input.dense { height: 32px; font-size: var(--text-sm); }
 
 .ui-select {
   display: flex; align-items: center; justify-content: space-between; gap: 4px;
   white-space: nowrap; height: 40px; width: 100%; border-radius: var(--radius);
-  border: 1px solid var(--border); background: var(--surface-2);
-  padding: 8px 12px; font-size: var(--text-base); color: var(--neutral-fg);
-  outline: none; cursor: pointer; transition: border-color var(--duration-fast);
+  border: none; background: var(--bg-input);
+  padding: 0 12px; font-size: var(--text-base); color: var(--neutral-fg);
+  outline: none; cursor: pointer; transition: box-shadow var(--duration-fast);
 }
-/* SSOT §6：focus 不改 border 色，border 透明 + inset accent-ring 单环（与 Input 一致） */
-.ui-select:focus-visible { border-color: transparent; box-shadow: inset 0 0 0 1px var(--accent-ring); }
+/* SSOT §6：focus inset accent-ring 单环（无 border，与 Input 一致） */
+.ui-select:focus-visible { box-shadow: inset 0 0 0 1px var(--accent-ring); }
 .ui-select .chev { width: 12px; height: 12px; color: var(--neutral-dim); opacity: 0.5; transition: transform var(--duration); }
 
 /* ================================================================
@@ -257,7 +259,7 @@ body {
 .ui-switch.disabled { opacity: 0.5; cursor: not-allowed; }
 .ui-switch .thumb {
   position: absolute; display: block; width: 16px; height: 16px; border-radius: 999px;
-  background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+  background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.3);
   transform: translateX(2px); transition: transform var(--duration);
 }
 .ui-switch.on .thumb { transform: translateX(18px); }
@@ -278,7 +280,7 @@ body {
   display: inline-flex; align-items: center; justify-content: center;
   cursor: pointer; transition: background var(--duration-fast), border-color var(--duration-fast);
 }
-.ui-checkbox.on { border-color: var(--accent); background: var(--accent); }
+.ui-checkbox.checked { border-color: var(--accent); background: var(--accent); }
 .ui-checkbox.disabled { opacity: 0.5; cursor: not-allowed; }
 .ui-checkbox svg { width: 12px; height: 12px; color: #fff; }
 
@@ -287,7 +289,7 @@ body {
    ================================================================ */
 .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .provider-card {
-  background: var(--bg); border: 1px solid var(--border);
+  background: var(--bg-card); border: none;
   border-radius: var(--radius); overflow: hidden; margin-bottom: 8px;
 }
 /* 行头 */
@@ -304,16 +306,16 @@ body {
 .row-name .chev-expand { display: inline-block; width: 12px; height: 12px; color: var(--neutral-dim);
   transition: transform var(--duration); vertical-align: -1px; }
 .row-name.expanded .chev-expand { transform: rotate(90deg); }
-.row-name:focus-visible, .thinking-pill:focus-visible, .add-header-link:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); border-radius: var(--radius-sm); }
+.row-name:focus-visible, .thinking-pill:focus-visible, .add-header-link:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent-ring); border-radius: var(--radius-sm); }
 /* 默认供应商 pill（v6：去 uppercase tracking，对齐设置页降噪） */
 .pill-default { flex-shrink: 0; background: var(--accent-soft); color: var(--accent);
-  padding: 2px 6px; border-radius: var(--radius-sm); font-size: var(--text-2xs); font-weight: 500; }
+  padding: 2px 6px; border-radius: 999px; font-size: var(--text-2xs); font-weight: 500; }
 .models-count { flex-shrink: 0; font-size: var(--text-xs); color: var(--neutral-mid); }
 
 /* inline action error（常驻横幅） */
 .inline-error {
   display: flex; align-items: center; gap: 6px; padding: 6px 12px;
-  border: 1px solid var(--danger); background: var(--danger-soft);
+  border: 1px solid var(--border); background: var(--danger-soft);
   border-radius: var(--radius); margin-bottom: 12px; font-size: var(--text-xs); color: var(--danger);
 }
 .inline-error svg { width: 14px; height: 14px; flex-shrink: 0; }
@@ -321,11 +323,11 @@ body {
 /* 展开详情：旧只读网格（凭据网格/模型表）已移除——展开区即编辑区，见 §3 子区 */
 
 /* thinking pill（就地可点的思考策略标签，点击/Enter 触发 mini-select） */
-.thinking-pill { display: inline-block; padding: 2px 6px; border-radius: var(--radius-sm);
+.thinking-pill { display: inline-block; padding: 2px 6px; border-radius: 999px;
   font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 600; cursor: pointer;
   transition: filter var(--duration-fast); }
 .thinking-pill:hover { filter: brightness(1.15); }
-.thinking-pill:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
+.thinking-pill:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent-ring); }
 .tp-all { background: var(--info-soft); color: var(--info); }
 .tp-hightop { background: var(--accent-soft); color: var(--accent); }
 .tp-toggle { background: var(--surface); color: var(--neutral-mid); }
@@ -334,9 +336,9 @@ body {
   border-radius: var(--radius-sm); background: transparent; border: 1px solid var(--border); cursor: pointer;
   transition: border-color var(--duration-fast), color var(--duration-fast); }
 .set-default-btn:hover { border-color: var(--info); color: var(--info); }
-.set-default-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
+.set-default-btn:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent-ring); }
 .default-mark { background: var(--info-soft); color: var(--info); padding: 2px 6px;
-  border-radius: var(--radius-sm); font-size: var(--text-2xs); }
+  border-radius: 999px; font-size: var(--text-2xs); }
 
 /* ================================================================
    §3 展开就地编辑（取代 ProviderEditModal）
@@ -348,7 +350,7 @@ body {
 
 /* 子区分组卡（shell group-card 范式：bg-card + 去 border + 明度差） */
 .eg {
-  background: var(--bg-card); border-radius: var(--radius); padding: 12px 14px;
+  background: var(--bg-card); border-radius: 10px; padding: 12px 14px;
 }
 .eg-head {
   display: flex; align-items: center; gap: 8px; padding: 2px 2px 10px;
@@ -366,13 +368,13 @@ body {
   transition: background var(--duration-fast), color var(--duration-fast);
 }
 .eg-collapse:hover { background: var(--surface-hover); color: var(--neutral-fg); }
-.eg-collapse:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
+.eg-collapse:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent-ring); }
 .eg-chevron { width: 14px; height: 14px; transition: transform var(--duration) var(--ease); }
 .eg.collapsed .eg-chevron { transform: rotate(-90deg); }
 .eg-body { overflow: hidden; transition: max-height var(--duration) var(--ease); }
 .eg.collapsed .eg-body { max-height: 0; }
-/* 子区内 hairline 分隔（与 shell 一致） */
-.eg-hair { height: 1px; background: var(--border); margin: 8px 2px; }
+/* 子区内 hairline 分隔（与 shell 一致 · 0.04 比 token 0.08 更轻） */
+.eg-hair { height: 1px; background: rgba(255,255,255,0.04); margin: 8px 2px; }
 
 /* 字段 grid（2 列密集表单，窄屏自动堆叠） */
 .fld-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px 12px; }
@@ -395,7 +397,7 @@ body {
 .add-kv-link { display: inline-flex; align-items: center; gap: 4px; margin-top: 8px;
   font-size: var(--text-xs); color: var(--accent); cursor: pointer; border: none; background: transparent; padding: 0; }
 .add-kv-link:hover { text-decoration: underline; }
-.add-kv-link:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); border-radius: var(--radius-sm); }
+.add-kv-link:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent-ring); border-radius: var(--radius-sm); }
 
 /* 验证操作（测试连接 / 自动发现） + 结果反馈 */
 .ops { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -409,9 +411,9 @@ body {
 /* 模型清单（展开区内）：手动添加表单 + 行列表 */
 .model-add-form { display: grid; grid-template-columns: 1fr auto auto auto; gap: 6px; align-items: center; margin-bottom: 10px; }
 .amf-label { display: block; margin-bottom: 4px; font-size: var(--text-2xs); color: var(--neutral-mid); }
-/* 输入类型分段（SegmentedTab 范式：bg-input 容器 + active bg-elevated） */
-.input-seg { display: inline-flex; gap: 2px; border: 1px solid var(--border); background: var(--bg-input);
-  border-radius: var(--radius); padding: 2px; height: 32px; }
+/* 输入类型分段（SegmentedTab 范式：bg-input 容器 + active bg-elevated · 去 border） */
+.input-seg { display: inline-flex; gap: 2px; border: none; background: var(--bg-input);
+  border-radius: var(--radius-lg); padding: 3px; height: 32px; }
 .input-seg button { display: flex; align-items: center; gap: 4px; height: 100%;
   padding: 0 8px; font-size: var(--text-2xs); border-radius: var(--radius-sm); cursor: pointer;
   color: var(--neutral-mid); background: transparent; border: none; transition: background var(--duration-fast), color var(--duration-fast); }
@@ -420,7 +422,7 @@ body {
 .input-seg button svg { width: 12px; height: 12px; }
 
 /* 模型行（展开区内：可编辑 inline） */
-.ml-row { display: flex; align-items: center; gap: 8px; padding: 8px 2px; font-size: var(--text-sm); border-top: 1px solid var(--border); }
+.ml-row { display: flex; align-items: center; gap: 8px; padding: 8px 2px; font-size: var(--text-sm); border-top: 1px solid rgba(255,255,255,0.04); }
 .ml-row:first-of-type { border-top: 0; }
 .ml-row .r-model { flex: 1; min-width: 0; font-family: var(--font-mono); color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ml-row .r-input { display: flex; align-items: center; gap: 4px; }
@@ -443,7 +445,7 @@ body {
 /* === 模型行 distill：7 控件单行 → 3 控件常驻 + 高级抽屉（impeccable §9 旅程 C3） ===
    常驻行只暴露最高频操作（启用 / 展开 / 移除），低频配置（输入类型 / 上下文 / 思考 /
    兼容性 / 设默认）收进 .ml-advanced 抽屉。认知负荷 7→3（+1 移除）。 */
-.ml-row { display: flex; align-items: center; gap: 8px; padding: 8px 2px; font-size: var(--text-sm); border-top: 1px solid var(--border); }
+.ml-row { display: flex; align-items: center; gap: 8px; padding: 8px 2px; font-size: var(--text-sm); border-top: 1px solid rgba(255,255,255,0.04); }
 .ml-row:first-of-type { border-top: 0; }
 .ml-row.open { border-top-color: transparent; }
 .ml-row .r-model { flex: 1; min-width: 0; font-family: var(--font-mono); color: var(--neutral-fg);
@@ -459,13 +461,15 @@ body {
   border-radius: var(--radius-sm); color: var(--neutral-ico); cursor: pointer; background: transparent; border: none;
   transition: background var(--duration-fast), color var(--duration-fast); }
 .ml-advanced-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
-.ml-advanced-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
+.ml-advanced-btn:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent-ring); }
 .ml-advanced-btn svg { width: 14px; height: 14px; transition: transform var(--duration) var(--ease); }
 .ml-row.open .ml-advanced-btn svg { transform: rotate(90deg); }
 /* 高级抽屉：bg 层级浮起（surface-2）· 不嵌套卡片不叠 border（impeccable 禁令）· 缩进表示从属 */
 .ml-advanced { max-height: 0; overflow: hidden;
   transition: max-height var(--duration) var(--ease); }
-/* 相邻兄弟（紧随 .ml-row.open 之后的那一个抽屉）· 允许多行同时展开（对比配置） */
+/* 相邻兄弟（紧随 .ml-row.open 之后的那一个抽屉）· 允许多行同时展开（对比配置）
+   max-height:600px 为抽屉展开过渡上限（CSS transition 需确定值），非视觉尺寸约束 ——
+   实际抽屉高度由内容自适应；超出由 .ml-advanced 自身 overflow 控制。标注：token 化待定（--adv-drawer-max-h）。 */
 .ml-row.open + .ml-advanced { max-height: 600px; }
 .ml-advanced-inner { margin: 2px 0 6px 20px; padding: 10px 12px 10px 14px; background: var(--surface-2);
   border-radius: var(--radius); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: var(--text-xs); }
@@ -486,7 +490,7 @@ body {
 .compat-inline .ci-fname { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .compat-inline .ci-fctrl { flex-shrink: 0; display: inline-flex; align-items: center; }
 /* compat 字段值 chip（switch on/off / select value / text present） */
-.cv { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: var(--text-2xs); }
+.cv { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border-radius: 999px; font-family: var(--font-mono); font-size: var(--text-2xs); }
 .cv-on { background: var(--success-soft); color: var(--success); }
 .cv-off { background: var(--surface); color: var(--neutral-mid); }
 .cv-sel { background: var(--accent-soft); color: var(--accent); }
@@ -506,7 +510,7 @@ body {
 }
 .preset-chip:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 .preset-chip.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
-.preset-chip:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
+.preset-chip:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent-ring); }
 
 /* 额度三窗口展示（Coding Plan 子系统） */
 .quota-wins { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; margin-top: 10px; }
@@ -597,15 +601,15 @@ body {
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
   clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 /* preview provider 项 */
-.preview-item { border: 1px solid var(--border); background: var(--bg); border-radius: var(--radius); padding: 8px 12px; font-size: var(--text-sm); margin-bottom: 6px; }
+.preview-item { border: none; background: var(--bg-card); border-radius: var(--radius); padding: 8px 12px; font-size: var(--text-sm); margin-bottom: 6px; }
 .preview-item.conflict { opacity: 0.7; }
 .pi-top { display: flex; align-items: center; gap: 8px; }
 .pi-id { font-family: var(--font-mono); color: var(--neutral-fg); }
-.pi-proto { background: var(--surface); padding: 1px 6px; border-radius: var(--radius-sm); font-size: var(--text-2xs); color: var(--neutral-mid); }
+.pi-proto { background: var(--surface); padding: 1px 6px; border-radius: 999px; font-size: var(--text-2xs); color: var(--neutral-mid); }
 .pi-count { color: var(--neutral-mid); font-size: var(--text-sm); }
 .pi-keywarn { display: flex; align-items: center; color: var(--warn); }
 .pi-keywarn svg { width: 14px; height: 14px; }
-.pi-conflict-badge { background: var(--warn-soft); color: var(--warn); padding: 1px 6px; border-radius: var(--radius-sm); font-size: var(--text-2xs); }
+.pi-conflict-badge { background: var(--warn-soft); color: var(--warn); padding: 1px 6px; border-radius: 999px; font-size: var(--text-2xs); }
 .pi-warn-toggle { display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; margin-left: 24px;
   font-size: var(--text-xs); color: var(--neutral-mid); cursor: pointer; }
 .pi-warn-toggle svg { width: 12px; height: 12px; }
@@ -973,7 +977,7 @@ body {
               <div class="model-add-form">
                 <div>
                   <span class="amf-label">模型名称</span>
-                  <input class="ui-input ui-input-dense" type="text" placeholder="gpt-4o" aria-label="新模型名称">
+                  <input class="ui-input dense" type="text" placeholder="gpt-4o" aria-label="新模型名称">
                 </div>
                 <div>
                   <span class="amf-label">输入</span>
@@ -1158,13 +1162,13 @@ body {
               <div class="fld-label">自定义 Headers <span class="fld-hint">附加请求头</span></div>
               <div class="header-rows">
                 <div class="header-row">
-                  <input class="ui-input ui-input-dense" type="text" placeholder="X-Custom-Header" value="X-Request-Source" style="flex:1;" aria-label="header 名">
-                  <input class="ui-input ui-input-dense" type="text" placeholder="value" value="xyz-agent" style="flex:1;" aria-label="header 值">
+                  <input class="ui-input dense" type="text" placeholder="X-Custom-Header" value="X-Request-Source" style="flex:1;" aria-label="header 名">
+                  <input class="ui-input dense" type="text" placeholder="value" value="xyz-agent" style="flex:1;" aria-label="header 值">
                   <button class="btn btn-danger" type="button" aria-label="移除 header" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                 </div>
                 <div class="header-row">
-                  <input class="ui-input ui-input-dense" type="text" placeholder="X-Custom-Header" style="flex:1;" aria-label="header 名">
-                  <input class="ui-input ui-input-dense" type="text" placeholder="value" style="flex:1;" aria-label="header 值">
+                  <input class="ui-input dense" type="text" placeholder="X-Custom-Header" style="flex:1;" aria-label="header 名">
+                  <input class="ui-input dense" type="text" placeholder="value" style="flex:1;" aria-label="header 值">
                   <button class="btn btn-danger" type="button" aria-label="移除 header" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                 </div>
               </div>
@@ -1191,7 +1195,7 @@ body {
                 <span class="amf-label">认证方式 <span style="color:var(--accent);">api-key</span> <span style="color:var(--neutral-mid);">（cookie 类显示 cookie 输入）</span></span>
                 <label class="fld-label" for="p-quota-key" style="margin-top:4px;">专属 API Key <span class="fld-hint">Coding Plan 平台 key（留空复用 provider.apiKey）</span></label>
                 <div class="apikey-row">
-                  <input id="p-quota-key" class="ui-input ui-input-dense" type="password" placeholder="留空 = 复用 provider.apiKey（适配 router/反代）" value="">
+                  <input id="p-quota-key" class="ui-input dense" type="password" placeholder="留空 = 复用 provider.apiKey（适配 router/反代）" value="">
                   <button class="btn btn-ghost" type="button" aria-label="显示凭证" aria-pressed="false" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);color:var(--neutral-dim);">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                   </button>
@@ -1270,7 +1274,7 @@ body {
     <h3 class="h3">表单验证错误 · 模型名称空</h3>
     <div class="render-frame">
       <div style="display:flex;flex-direction:column;gap:8px;">
-        <input class="ui-input ui-input-dense err" type="text" placeholder="gpt-4o" value="" aria-invalid="true" aria-describedby="m-err" style="max-width:240px;">
+        <input class="ui-input dense err" type="text" placeholder="gpt-4o" value="" aria-invalid="true" aria-describedby="m-err" style="max-width:240px;">
         <div class="save-bar" style="background:var(--bg-card);margin:0;">
           <div class="sb-left"><span id="m-err" class="sb-error">模型名称不能为空</span></div>
           <span class="sb-spacer"></span>
@@ -1630,7 +1634,7 @@ body {
         <!-- provider 项 1：可导入（默认勾选） + key 警告 + 警告可展开 -->
         <div class="preview-item">
           <div class="pi-top">
-            <span class="ui-checkbox on" role="checkbox" aria-checked="true" aria-label="openai-main">
+            <span class="ui-checkbox checked" role="checkbox" aria-checked="true" aria-label="openai-main">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
             </span>
             <span class="pi-id">openai-main</span>
@@ -1647,7 +1651,7 @@ body {
         <!-- provider 项 2：可导入（默认勾选） -->
         <div class="preview-item">
           <div class="pi-top">
-            <span class="ui-checkbox on" role="checkbox" aria-checked="true" aria-label="anthropic-prod">
+            <span class="ui-checkbox checked" role="checkbox" aria-checked="true" aria-label="anthropic-prod">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
             </span>
             <span class="pi-id">anthropic-prod</span>
@@ -1672,7 +1676,7 @@ body {
         <!-- provider 项 4：可导入 + 警告展开态 -->
         <div class="preview-item">
           <div class="pi-top">
-            <span class="ui-checkbox on" role="checkbox" aria-checked="true" aria-label="ollama-local">
+            <span class="ui-checkbox checked" role="checkbox" aria-checked="true" aria-label="ollama-local">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
             </span>
             <span class="pi-id">ollama-local</span>

@@ -151,8 +151,8 @@ body {
   min-height: 0;
 }
 .app-shell {
-  display: flex; flex: 1; gap: var(--space-2);      /* 栏间窄 gap，靠 main 浮起分隔 */
-  border-radius: var(--radius-lg); overflow: hidden;
+  display: flex; flex: 1; gap: var(--space-3);      /* 栏间 gap 12px，靠 main 浮起分隔 */
+  border-radius: 10px; overflow: hidden;
 }
 /* 栏圆角：aside/drawer 与 stage 有间隙，各自圆角形成独立面板感 */
 .app-shell > * { border-radius: var(--radius); }
@@ -165,46 +165,44 @@ body {
   padding-top: 52px; /* traffic-light 安全区 */
   overflow: hidden;
 }
-.traffic-lights { position: absolute; left: 16px; top: 18px; display: flex; gap: 8px; z-index: 5; }
+.traffic-lights { position: absolute; left: 16px; top: 26px; display: flex; gap: 8px; z-index: 5; }
 .tl { width: 12px; height: 12px; border-radius: 50%; }
 .tl.r { background: #ff5f57; } .tl.y { background: #febc2e; } .tl.g { background: #28c840; }
 
 .aside-head { padding: var(--space-3) var(--space-3) var(--space-2); }
 .brand { display: flex; align-items: center; gap: 8px; margin-bottom: var(--space-3); }
-.brand-logo { width: 22px; height: 22px; border-radius: 6px; background: linear-gradient(135deg, var(--accent), var(--info)); display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 11px; }
+.brand-logo { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 11px; }
 .brand-name { font-weight: 600; font-size: var(--text-sm); color: var(--neutral-fg); }
 .brand-ver { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); margin-left: auto; }
 
 .primary-actions { display: flex; flex-direction: column; gap: var(--space-1); }
+/* aside primary actions 对齐 .btn SSOT（v6-spec-shell §6.1 / settings-shell §6.1）：
+   尺寸 = .btn dense（h:32 padding:0 12 font:12），variant=default(accent) / ghost。
+   此处用 .btn-primary / .btn-ghost 别名承载 aside 内的同语义按钮。 */
 .btn-primary {
-  display: flex; align-items: center; gap: 8px; cursor: pointer;
-  padding: 7px 10px; border-radius: var(--radius); border: 0;
+  display: inline-flex; align-items: center; justify-content: flex-start; gap: 8px; cursor: pointer;
+  height: 32px; padding: 0 12px; border-radius: var(--radius); border: 0;
   background: var(--accent); color: #fff; font: inherit; font-size: var(--text-sm); font-weight: 500;
-  transition: background var(--duration-fast);
+  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
 }
 .btn-primary:hover { background: var(--accent-hover); }
+.btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
+.btn-primary svg { display: block; width: 14px; height: 14px; flex-shrink: 0; }
 .btn-primary .kbd { margin-left: auto; font-family: var(--font-mono); font-size: var(--text-2xs); opacity: .7; }
 .btn-ghost {
-  display: flex; align-items: center; gap: 8px; cursor: pointer;
-  padding: 7px 10px; border-radius: var(--radius); border: 0; background: transparent;
+  display: inline-flex; align-items: center; justify-content: flex-start; gap: 8px; cursor: pointer;
+  height: 32px; padding: 0 12px; border-radius: var(--radius); border: 0; background: transparent;
   color: var(--neutral-mid); font: inherit; font-size: var(--text-sm);
-  transition: background var(--duration-fast), color var(--duration-fast);
+  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
 }
 .btn-ghost:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.btn-ghost:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
+.btn-ghost svg { display: block; width: 14px; height: 14px; flex-shrink: 0; }
 .btn-ghost .kbd { margin-left: auto; font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); }
-
-.overview-entry {
-  display: flex; align-items: center; gap: 8px; cursor: pointer;
-  margin-top: var(--space-2); padding: 6px 10px; border-radius: var(--radius);
-  font-size: var(--text-sm); color: var(--neutral-mid);
-  transition: background var(--duration-fast), color var(--duration-fast);
-}
-.overview-entry:hover { background: var(--surface-hover); color: var(--neutral-fg); }
-.overview-entry .count { margin-left: auto; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-dim); }
 
 /* SegmentedTab（v6 新范式：分段控件）*/
 .seg-tabs {
-  display: flex; gap: 0; background: var(--bg-input); border-radius: var(--radius);
+  display: flex; gap: 0; background: var(--bg-input); border-radius: 12px;
   padding: 3px; margin: var(--space-2) var(--space-3) var(--space-1);
 }
 .seg-tab {
@@ -226,7 +224,7 @@ body {
   display: flex; align-items: center; gap: 6px;
   padding: var(--space-3) var(--space-2) var(--space-1);
   font-size: var(--text-2xs); color: var(--neutral-dim);
-  text-transform: uppercase; letter-spacing: .05em; font-weight: 600;
+  font-weight: 600;
 }
 .list-group-head .count { margin-left: auto; font-family: var(--font-mono); }
 
@@ -262,7 +260,7 @@ body[data-select="d"] .list-item.sel .li-title { color: var(--accent); }
   display: flex; align-items: center; gap: 8px; padding: var(--space-2) var(--space-3);
   border-top: 1px solid var(--border);
 }
-.avatar { width: 24px; height: 24px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--info)); flex-shrink: 0; }
+.avatar { width: 24px; height: 24px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
 .aside-foot .uname { font-size: var(--text-sm); color: var(--neutral-fg); }
 .aside-foot .gear { margin-left: auto; width: 26px; height: 26px; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; color: var(--neutral-mid); cursor: pointer; }
 .aside-foot .gear:hover { background: var(--surface-hover); color: var(--neutral-fg); }
@@ -270,13 +268,14 @@ body[data-select="d"] .list-item.sel .li-title { color: var(--accent); }
 /* ── main panel ──────────────────────────────────────── */
 .main-panel {
   flex: 1; display: flex; flex-direction: column; min-width: 0;
-  background: var(--surface); border-radius: var(--radius);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow-1), var(--shadow-2);
   overflow: hidden;
 }
 .panel-header {
   display: flex; align-items: center; gap: var(--space-2);
   padding: var(--space-2) var(--space-4);
-  height: 44px; flex-shrink: 0;
+  height: 44px; flex-shrink: 0; background: var(--bg-elevated);
 }
 .panel-header .status-ico { width: 14px; height: 14px; color: var(--neutral-ico); flex-shrink: 0; }
 .breadcrumb { display: flex; align-items: center; gap: 6px; font-size: var(--text-sm); }
@@ -322,10 +321,10 @@ body[data-select="d"] .list-item.sel .li-title { color: var(--accent); }
 .turn-meta .tm-elapsed { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); }
 .turn-meta .tm-pill {
   display: inline-flex; align-items: center; gap: 4px;
-  padding: 2px 8px; border-radius: 999px; background: var(--surface);
+  padding: 2px 8px; border-radius: 999px; background: var(--bg-elevated);
   font-size: var(--text-2xs); color: var(--neutral-mid);
 }
-.turn-meta .tm-pill .pill-ico { width: 11px; height: 11px; }
+.turn-meta .tm-pill .pill-ico { width: 12px; height: 12px; }
 
 /* 信息密度变体（决策点 3）
    lean：激进减量 —— meta/pill/工具参数/sub 摘要全隐藏，主线只剩正文+极简状态
@@ -372,11 +371,11 @@ body[data-density="lift"] .sub-summary { font-size: 9px; opacity: .6; }
 .block-tool-head .bt-name { color: var(--neutral-fg); font-weight: 500; }
 .block-tool-head .tool-arg { color: var(--neutral-dim); font-family: var(--font-mono); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .block-tool-head .tool-arg .arg-file { color: var(--neutral-mid); }
-.block-tool-head .exit-tag { margin-left: auto; font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); background: var(--surface); padding: 1px 6px; border-radius: 999px; }
+.block-tool-head .exit-tag { margin-left: auto; font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); background: var(--bg-elevated); padding: 1px 6px; border-radius: 999px; }
 
-/* change-set card（v6：去 border，bg-surface + 10px 圆角）*/
+/* change-set card（v6：去 border，bg-elevated + 10px 圆角，浮在 main-panel surface 上）*/
 .change-set {
-  background: var(--surface); border-radius: 10px; padding: var(--space-3);
+  background: var(--bg-elevated); border-radius: 10px; padding: var(--space-3);
   display: flex; align-items: center; gap: var(--space-2);
 }
 .change-set .cs-icon { width: 16px; height: 16px; color: var(--accent); }
@@ -415,7 +414,7 @@ body[data-density="lift"] .sub-summary { font-size: 9px; opacity: .6; }
 }
 .drawer-head {
   display: flex; align-items: center; gap: var(--space-1);
-  padding: var(--space-2); border-bottom: 1px solid var(--border);
+  padding: var(--space-2); background: var(--surface-2);
 }
 .drawer-tab {
   width: 30px; height: 30px; border-radius: var(--radius-sm); border: 0; cursor: pointer;
@@ -423,7 +422,7 @@ body[data-density="lift"] .sub-summary { font-size: 9px; opacity: .6; }
   transition: background var(--duration-fast), color var(--duration-fast);
 }
 .drawer-tab:hover { color: var(--neutral-fg); }
-.drawer-tab.on { background: var(--accent-soft); color: var(--accent); }
+.drawer-tab.on { background: var(--bg-elevated); color: var(--neutral-fg); }
 .drawer-head .spacer { flex: 1; }
 .drawer-body { flex: 1; overflow-y: auto; padding: var(--space-3); }
 .drawer-body::-webkit-scrollbar { width: 6px; }
@@ -554,10 +553,10 @@ body[data-color="legacy"] .goal-card.complete .gc-badge { background: var(--succ
 .todo-check.in-progress { border-color: var(--warn); }
 .todo-text { font-size: var(--text-sm); color: var(--neutral-fg); }
 .todo-text.done { color: var(--neutral-dim); text-decoration: line-through; }
-.todo-verify { font-size: 8px; padding: 1px 5px; border-radius: 999px; background: var(--reasoning-soft); color: var(--reasoning); margin-left: 6px; }
+.todo-verify { font-size: 9px; padding: 1px 5px; border-radius: 999px; color: var(--reasoning); margin-left: 6px; }
 
 /* terminal */
-.terminal { background: #000; border-radius: var(--radius); padding: var(--space-3); font-family: var(--font-mono); font-size: var(--text-sm); color: #e5e7eb; line-height: 1.5; min-height: 200px; }
+.terminal { background: var(--bg-input); border-radius: var(--radius); padding: var(--space-3); font-family: var(--font-mono); font-size: var(--text-sm); color: #e5e7eb; line-height: 1.5; min-height: 200px; }
 .terminal .term-prompt { color: var(--accent); }
 .terminal .term-out { color: var(--neutral-mid); }
 .terminal .term-cwd { color: var(--info); }
@@ -573,30 +572,13 @@ body[data-color="legacy"] .goal-card.complete .gc-badge { background: var(--succ
 .sub-card.done .sub-dot { background: var(--success); opacity: .9; }
 .sub-card.failed .sub-dot { background: var(--danger); }
 
-/* ── overview ────────────────────────────────────────── */
-.overview { flex: 1; display: flex; flex-direction: column; padding: var(--space-6); overflow-y: auto; }
-.ov-head { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
-.ov-title { font-size: 18px; font-weight: 600; color: var(--neutral-fg); }
-.ov-count { padding: 2px 10px; border-radius: 999px; background: var(--surface); font-size: var(--text-xs); color: var(--neutral-mid); }
-.ov-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--space-4); }
-.session-card { background: var(--surface); border-radius: var(--radius); padding: var(--space-3); var(--space-4); cursor: pointer; transition: background var(--duration-fast); }
-.session-card:hover { background: var(--surface-hover); }
-body[data-select="a"] .session-card.sel { background: var(--bg-elevated); box-shadow: none; }
-body[data-select="b"] .session-card.sel { background: var(--bg-elevated); }
-body[data-select="c"] .session-card.sel { background: var(--bg-elevated); box-shadow: inset 0 0 0 1px var(--border-strong); }
-body[data-select="d"] .session-card.sel { background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--accent-ring); }
-.session-card .sc-head { display: flex; align-items: center; gap: 8px; margin-bottom: var(--space-2); }
-.session-card .sc-dot { width: 7px; height: 7px; border-radius: 50%; }
-.session-card .sc-title { font-size: var(--text-sm); color: var(--neutral-fg); font-weight: 500; }
-.session-card .sc-summary { font-size: var(--text-xs); color: var(--neutral-mid); line-height: 1.5; margin-bottom: var(--space-2); }
-.session-card .sc-meta { display: flex; gap: var(--space-3); font-size: var(--text-2xs); color: var(--neutral-dim); font-family: var(--font-mono); }
-
 /* ── settings ────────────────────────────────────────── */
+/* D1：设置改全屏覆盖（非 modal 浮层）。填满 stage，无投影/无 ring，靠 surface 浮起表达层级 */
 .settings-modal {
-  flex: 1; display: flex; background: var(--bg-sunken); border-radius: var(--radius-lg); overflow: hidden;
-  box-shadow: var(--shadow-2), 0 0 0 1px rgba(255,255,255,0.07);
+  flex: 1; display: flex; background: var(--bg-sunken); border-radius: var(--radius); overflow: hidden;
+  border: 1px solid var(--border);
 }
-.settings-nav { width: 200px; flex-shrink: 0; padding: var(--space-2); display: flex; flex-direction: column; gap: 1px; background: var(--bg-sunken); }
+.settings-nav { width: 220px; flex-shrink: 0; padding: var(--space-2); display: flex; flex-direction: column; gap: 1px; background: var(--bg-sunken); }
 .settings-nav-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: var(--radius); font-size: var(--text-sm); color: var(--neutral-mid); cursor: pointer; transition: background var(--duration-fast), color var(--duration-fast); }
 .settings-nav-item:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 .settings-nav-item .ico { width: 14px; height: 14px; }
@@ -609,7 +591,7 @@ body[data-select="d"] .settings-nav-item.sel { background: var(--surface-hover);
 .settings-content::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
 .settings-h2 { font-size: var(--text-md); font-weight: 600; color: var(--neutral-fg); margin-bottom: 2px; }
 .settings-h2-desc { font-size: var(--text-xs); color: var(--neutral-mid); margin-bottom: var(--space-4); }
-.settings-card { background: var(--bg-card); border-radius: var(--radius-lg); padding: var(--space-2) var(--space-4); margin-bottom: var(--space-4); }
+.settings-card { background: var(--bg-card); border-radius: 10px; padding: var(--space-2) var(--space-4); margin-bottom: var(--space-4); }
 .settings-row { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) 0; }
 .settings-row + .settings-row { border-top: 1px solid rgba(255,255,255,0.04); }
 .settings-label { font-size: var(--text-sm); color: var(--neutral-fg); }
@@ -633,7 +615,7 @@ body[data-select="d"] .settings-nav-item.sel { background: var(--surface-hover);
 .cmd-input { flex: 1; font-size: var(--text-md); color: var(--neutral-fg); background: transparent; border: 0; outline: none; }
 .cmd-input::placeholder { color: var(--neutral-dim); }
 .cmd-results { padding: var(--space-2) 0 var(--space-3); max-height: 360px; overflow-y: auto; }
-.cmd-group-head { padding: var(--space-2) var(--space-4); font-size: var(--text-2xs); color: var(--neutral-dim); text-transform: uppercase; letter-spacing: .05em; font-family: var(--font-mono); }
+.cmd-group-head { padding: var(--space-2) var(--space-4); font-size: var(--text-2xs); color: var(--neutral-dim); font-family: var(--font-mono); }
 .cmd-item { display: flex; align-items: center; gap: var(--space-2); padding: 7px var(--space-4); font-size: var(--text-sm); color: var(--neutral-fg); cursor: pointer; }
 .cmd-item:hover, .cmd-item.active { background: var(--surface-hover); }
 .cmd-item.active { background: var(--accent-soft); }
@@ -650,7 +632,7 @@ body[data-select="d"] .settings-nav-item.sel { background: var(--surface-hover);
 .ask-question { font-size: var(--text-sm); color: var(--neutral-fg); margin-bottom: var(--space-2); line-height: 1.5; }
 .ask-options { display: flex; flex-direction: column; gap: var(--space-1); }
 .ask-opt { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: var(--radius-sm); font-size: var(--text-sm); color: var(--neutral-fg); cursor: pointer; }
-.ask-opt:hover { background: rgba(255,255,255,0.04); }
+.ask-opt:hover { background: var(--surface-hover); }
 .ask-opt.sel { background: var(--accent-soft); }
 .ask-opt .radio { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--neutral-dim); flex-shrink: 0; }
 .ask-opt.sel .radio { border-color: var(--accent); background: radial-gradient(var(--accent) 40%, transparent 45%); }
@@ -663,7 +645,7 @@ body[data-select="d"] .settings-nav-item.sel { background: var(--surface-hover);
 /* ── 视图显隐 ────────────────────────────────────────── */
 .view { display: none; flex: 1; min-height: 0; }
 .view.on { display: flex; }
-.view.overview-view, .view.settings-view, .view.overlay-view { padding: var(--space-3); }
+.view.settings-view, .view.overlay-view { padding: var(--space-3); }
 #view-settings-system, #view-settings-provider { flex-direction: column; }
 
 /* SVG icon defaults */
@@ -681,7 +663,7 @@ svg { display: block; }
 .decision-hint .dh-current { font-family: var(--font-mono); color: var(--neutral-fg); }
 </style>
 </head>
-<body data-select="a" data-color="calm" data-density="lean">
+<body data-select="a" data-color="semantic" data-density="legacy">
 
 <!-- ================================================================
      控制台
@@ -699,7 +681,6 @@ svg { display: block; }
       <button data-view="main-files">files</button>
       <button data-view="main-subagents">subagents</button>
       <button data-view="main-workflows">workflows</button>
-      <button data-view="overview">overview</button>
       <button data-view="settings-system">设置·system</button>
       <button data-view="settings-provider">设置·provider</button>
       <button data-view="overlay-cmd">命令面板</button>
@@ -732,17 +713,17 @@ svg { display: block; }
     <div class="decision-group">
       <label>彩色</label>
       <div class="seg" data-decision="color">
-        <button data-key="calm" class="on">极克制</button>
-        <button data-key="semantic">保留语义</button>
+        <button data-key="calm">极克制</button>
+        <button data-key="semantic" class="on">保留语义</button>
         <button data-key="legacy">现状</button>
       </div>
     </div>
     <div class="decision-group">
       <label>密度</label>
       <div class="seg" data-decision="density">
-        <button data-key="lean" class="on">激进</button>
+        <button data-key="lean">激进</button>
         <button data-key="lift">提亮减字</button>
-        <button data-key="legacy">现状</button>
+        <button data-key="legacy" class="on">现状</button>
       </div>
     </div>
   </div>
@@ -768,7 +749,6 @@ svg { display: block; }
           <button class="btn-primary"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>新建任务<span class="kbd">⌘N</span></button>
           <button class="btn-ghost"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>搜索<span class="kbd">⌘K</span></button>
         </div>
-        <div class="overview-entry"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Overview<span class="count">12</span></div>
       </div>
       <div class="seg-tabs" data-tabs="aside">
         <button class="seg-tab on" data-tab="sessions"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
@@ -1034,24 +1014,7 @@ svg { display: block; }
     <main class="main-panel"><div class="panel-header"><div class="breadcrumb"><span class="dir">workflows tab</span></div></div><div style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--neutral-dim);font-size:var(--text-sm)">workflows 列表（彩色降噪变体影响进度条+状态点）→ 见左侧</div></main>
   </div>
 
-  <!-- overview -->
-  <div class="view overview-view" id="view-overview">
-    <div class="overview">
-      <div class="ov-head">
-        <div class="ov-title">Overview</div>
-        <div class="ov-count">12 个会话</div>
-        <div class="spacer" style="flex:1"></div>
-        <button class="btn-primary"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>新建任务</button>
-      </div>
-      <div class="ov-grid">
-        <div class="session-card sel"><div class="sc-head"><span class="sc-dot" style="background:var(--accent)"></span><span class="sc-title">优化 UI 视觉现代化</span></div><div class="sc-summary">对照 Codex/Claude 的简洁感，从五个杠杆入手重新设计视觉语言层。</div><div class="sc-meta"><span>feat-optimize-ui</span><span>8 turns</span></div></div>
-        <div class="session-card"><div class="sc-head"><span class="sc-dot" style="background:var(--success)"></span><span class="sc-title">修复 session 启动报错</span></div><div class="sc-summary">bundle undici into main process to fix packaged app startup crash.</div><div class="sc-meta"><span>main</span><span>4 turns</span></div></div>
-        <div class="session-card"><div class="sc-head"><span class="sc-dot" style="background:var(--warn)"></span><span class="sc-title">v3 重建 session tree</span></div><div class="sc-summary">L0-L4 递归骨架 spec + draft，重构 session tree 数据结构与渲染。</div><div class="sc-meta"><span>v3-rebuild</span><span>16 turns</span></div></div>
-        <div class="session-card"><div class="sc-head"><span class="sc-dot" style="background:var(--danger)"></span><span class="sc-title">打包产物缺失 runtime</span></div><div class="sc-summary">asarUnpack 与 files 的致命交互，导致打包产物缺失整个 runtime。</div><div class="sc-meta"><span>fix-build</span><span>12 turns</span></div></div>
-        <div class="session-card"><div class="sc-head"><span class="sc-dot" style="background:var(--success)"></span><span class="sc-title">compact 压缩对话流</span></div><div class="sc-summary">实时链路 + 持久化链路双通路维护，重开 session 后历史完整呈现。</div><div class="sc-meta"><span>main</span><span>6 turns</span></div></div>
-      </div>
-    </div>
-  </div>
+  <!-- overview view 已移除（§4.4 DEPRECATED，sidebar sessions tab 已覆盖会话列表需求）-->
 
   <!-- settings: system -->
   <div class="view settings-view" id="view-settings-system">
@@ -1183,7 +1146,7 @@ svg { display: block; }
 <!-- 决策点提示 -->
 <div class="decision-hint" id="decision-hint">
   <b>3 个决策点</b>已平铺在顶部右侧，直接点选切换看效果。<br>
-  当前：<span class="dh-current" id="dh-text">选中态=A · 彩色=极克制 · 密度=激进</span>
+  当前：<span class="dh-current" id="dh-text">选中态=A · 彩色=保留语义 · 密度=现状</span>
 </div>
 
 <script>

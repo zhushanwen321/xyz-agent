@@ -91,11 +91,9 @@
   --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);
   --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
   --shadow-drawer: -12px 0 24px rgba(0,0,0,0.25);
-  --shadow-glow: 0 0 0 3px rgba(79,142,247,0.25);
 
   /* 组件尺寸（v6 新增）*/
   --content-max-w: 720px;
-  --composer-btn-size: 30px;
 
   /* z-index 语义化（§5.2 v6 新增）*/
   --z-sticky: 1;
@@ -183,25 +181,28 @@ body {
 /* ================================================================
    §1 FullSettingsOverlay 容器（手写覆盖层）
    ================================================================ */
-.fs-stage { background: #131316; border-radius: var(--radius); padding: 24px 16px 16px; position: relative; overflow: hidden; }
-/* 模拟 app-shell 在 modal 之下隐约可见 */
-.fs-underlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
-.fs-app-dummy { width: 70%; height: 80%; background: var(--bg); border-radius: var(--radius); opacity: .5; }
-.fs-scrim { position: relative; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px); border-radius: var(--radius); padding: 28px; }
-.fs-modal {
-  position: relative; margin: 0 auto; max-width: 900px; width: 100%;
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-2); display: flex; flex-direction: column;
-  height: 560px; max-height: 88vh; overflow: hidden;
+.fs-stage { background: #131316; border-radius: var(--radius); padding: 0; position: relative; overflow: hidden; }
+/* 容器外框（呈现 stage 上覆盖全屏）*/
+.fs-window { position: relative; width: 100%; height: 460px; background: #131316; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border-strong); }
+.fs-esc-hint { position: absolute; top: 16px; right: 52px; z-index: 2; font-family: var(--font-mono); font-size: 10px; color: var(--neutral-dim); }
+/* §1 .fso = fixed inset-0 + z-modal + bg-bg 纯不透明全屏（无遮罩/无模糊/无 max-width） */
+.fso {
+  position: relative; width: 100%; height: 440px;
+  background: var(--bg); border-radius: 0; overflow: hidden;
+  display: flex;
 }
+/* nav（容器，与 §2 共享）—— w-220 bg-sunken 无 border-r */
+.fs-nav { flex: none; width: 220px; display: flex; flex-direction: column; gap: 1px; background: var(--bg-sunken); padding: 8px; }
+/* 内容列容器 —— bg-surface 滚动区 */
+.fs-content { flex: 1; min-width: 0; background: var(--surface); display: flex; flex-direction: column; overflow: hidden; }
 .fs-head {
   flex: none; height: 44px; display: flex; align-items: center; gap: 10px;
   padding: 0 14px; border-bottom: 1px solid var(--border);
 }
 .fs-head .fs-title { font-size: 14px; font-weight: 600; color: var(--neutral-fg); letter-spacing: -0.01em; }
 .fs-head .fs-spacer { flex: 1; }
-.fs-body { flex: 1; min-height: 0; display: flex; }
-.fs-content-blank { flex: 1; min-width: 0; padding: 24px; overflow: hidden; }
+.fs-body { flex: 1; min-height: 0; overflow-y: auto; padding: 24px 0; }
+.fs-content-blank { flex: 1; min-width: 0; padding: 0 24px; overflow: hidden; }
 .fs-content-blank .fs-cb-line { height: 10px; border-radius: 999px; background: var(--surface-2); margin-bottom: 10px; }
 .fs-content-blank .fs-cb-line.w-90 { width: 90%; }
 .fs-content-blank .fs-cb-line.w-70 { width: 70%; }
@@ -220,12 +221,6 @@ body {
 .xbtn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
 .xbtn svg { display: block; }
 
-/* nav（容器，与 §2 共享）*/
-.fs-nav { flex: none; width: 200px; display: flex; flex-direction: column; gap: 1px; background: var(--surface); border-right: 1px solid var(--border); padding: 8px; }
-
-/* 焦点陷阱示意：modal 内首个可聚焦元素 ring */
-.fs-trap-ring { box-shadow: 0 0 0 2px var(--accent-ring); border-radius: var(--radius-sm); }
-
 /* 键盘交互流程图 */
 .flow { display: flex; flex-direction: column; gap: 6px; font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-mid); }
 .flow-step { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg-card); border-radius: var(--radius-sm); }
@@ -238,26 +233,26 @@ body {
 /* ================================================================
    §2 nav 导航栏 + 10 nav 项
    ================================================================ */
-.nav-demo-wrap { background: var(--surface); border-radius: var(--radius); padding: 8px; display: inline-flex; flex-direction: column; gap: 1px; width: 200px; }
+.nav-demo-wrap { background: var(--bg-sunken); border-radius: var(--radius); padding: 8px; display: inline-flex; flex-direction: column; gap: 1px; width: 220px; }
 .nav-item {
-  /* = Button variant=ghost + 自定义高度（SettingsModal.vue：h-auto py-2 px-2.5） */
+  /* nav 项（v6：bg-sunken 底上，ghost hover；选中 bg-surface + 蓝字，无 ring） */
   display: flex; align-items: center; gap: 10px;
-  padding: 8px 10px; border-radius: var(--radius); font-size: 13px;
+  padding: 8px 10px; border-radius: var(--radius-sm); font-size: 13px;
   color: var(--neutral-mid); background: transparent; cursor: pointer; text-align: left;
   border: none; font-family: inherit; width: 100%;
   transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
   position: relative;
 }
 .nav-item:hover { background: var(--surface-hover); color: var(--neutral-fg); }
-/* 选中态 = ghost 基础上叠加选中样式（SettingsModal.vue：bg-surface-hover + ring-1 ring-inset ring-accent） */
-.nav-item.active { background: var(--surface-hover); color: var(--neutral-fg); box-shadow: inset 0 0 0 1px var(--accent-ring); }
+/* 选中态 = bg-surface + text-accent（无 ring，搬旧 settings.html :161） */
+.nav-item.active { background: var(--surface); color: var(--accent); }
 .nav-item.active:focus-visible, .nav-item:focus-visible {
-  outline: none; box-shadow: inset 0 0 0 1px var(--accent-ring), 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4);
+  outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4);
 }
 .nav-item.disabled { opacity: 0.4; pointer-events: none; color: var(--neutral-faint); }
-.nav-item .ni-ico { width: 17px; height: 17px; flex-shrink: 0; color: var(--neutral-ico); }
-.nav-item:hover .ni-ico { color: var(--neutral-ico-hover); }
-.nav-item.active .ni-ico { color: var(--accent); }
+.nav-item .ni-ico { width: 16px; height: 16px; flex-shrink: 0; color: currentColor; opacity: .85; }
+.nav-item:hover .ni-ico { opacity: 1; }
+.nav-item.active .ni-ico { opacity: 1; }
 .nav-item .ni-label { flex: 1; min-width: 0; }
 /* count = 中性圆点（bg-surface + neutral-dim，非 accent badge） */
 .nav-item .ni-count { font-family: var(--font-mono); font-size: 10px; color: var(--neutral-dim); background: var(--surface); padding: 1px 6px; border-radius: 999px; flex-shrink: 0; }
@@ -273,7 +268,7 @@ body {
    ================================================================ */
 .content-stage { background: var(--surface); border-radius: var(--radius); overflow: hidden; position: relative; }
 .content-col-outer { position: relative; padding: 20px 0; }
-.content-col-inner { max-width: var(--content-max-w); margin: 0 auto; padding: 0 24px; }
+.content-col-inner { max-width: var(--content-max-w); margin: 0; padding: 0 24px; }
 .content-col-marker { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--accent-ring); }
 .ccm-left { left: calc(50% - var(--content-max-w) / 2); }
 .ccm-right { right: calc(50% - var(--content-max-w) / 2); }
@@ -299,7 +294,7 @@ body {
    §4 分组卡片（bg-card + 10px + 去 border + hairline）
    ================================================================ */
 .group-card {
-  background: var(--bg-card); border-radius: var(--radius);
+  background: var(--bg-card); border-radius: 10px;
   padding: 10px; margin-bottom: 12px;
   /* 去 border：用 bg-card 与 surface 的明度差表达边界（不画 border） */
 }
@@ -315,8 +310,8 @@ body {
 .group-body { overflow: hidden; transition: max-height var(--duration) var(--ease); }
 .group-card.collapsed .group-body { max-height: 0; }
 
-/* 卡片 hairline 分隔（行间） */
-.hairline { height: 1px; background: var(--border); margin: 0 6px; }
+/* 卡片 hairline 分隔（行间，0.04 比 token --border 0.08 更轻，组内分隔不喧宾夺主） */
+.hairline { height: 1px; background: rgba(255,255,255,0.04); margin: 0 6px; }
 
 /* ================================================================
    §5 设置行（label + desc，desc→neutral-mid 对比度修正）
@@ -343,6 +338,7 @@ body {
 }
 .btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
 .btn:disabled { pointer-events: none; opacity: 0.5; }
+.btn svg { display: block; width: 16px; height: 16px; flex-shrink: 0; }
 .btn .btn-spin { width: 14px; height: 14px; animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -389,28 +385,23 @@ body {
 .ui-input-wrap .ui-input-suffix { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); }
 
 /* --- SelectTrigger（SelectTrigger.vue 真实值）--- */
-/* 源码类：flex w-full items-center justify-between gap-1 whitespace-nowrap rounded-md
-   border border-border bg-surface-2 px-3 py-2 text-[13px] text-neutral-fg outline-none
-   transition-colors placeholder:text-neutral-mid
-   focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent-ring
-   disabled:cursor-not-allowed disabled:opacity-50 data-[placeholder]:text-neutral-mid
-   注：源码无显式高度类（vue 注释提到 h-9 但 class 缺失），py-2(8+8) + text-13/1.5
-       隐式高度约 36px。spec 显式 height:40px 与 Input h-10(40px) 归一对齐。 */
+/* v6 目标态（design §4.5 / R3/D10）：去 border，bg-bg-input 与 Input 表达同一凹陷层，
+   靠背景差表达边界（不画 border）。源码 border-border/bg-surface-2 为旧态。 */
 .ui-select {
   display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 4px;
   white-space: nowrap; border-radius: var(--radius);
-  border: 1px solid var(--border); background: var(--surface-2);
+  border: none; background: var(--bg-input);
   padding: 0 12px; height: 40px; font-size: 13px; font-family: inherit; color: var(--neutral-fg);
   cursor: pointer;
-  transition: border-color var(--duration-fast) var(--ease), box-shadow var(--duration-fast) var(--ease);
+  transition: box-shadow var(--duration-fast) var(--ease);
 }
-.ui-select:focus-visible { outline: none; border-color: transparent; box-shadow: inset 0 0 0 1px var(--accent-ring); }
+.ui-select:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent-ring); }
 .ui-select:disabled { cursor: not-allowed; opacity: 0.5; }
 .ui-select[data-placeholder] .us-val { color: var(--neutral-mid); }
 .ui-select .us-val { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ui-select .us-chevron { width: 14px; height: 14px; flex-shrink: 0; color: var(--neutral-dim); opacity: 0.5; transition: transform var(--duration) var(--ease); }
 .ui-select[data-open] .us-chevron { transform: rotate(180deg); opacity: 1; }
-.ui-select.err { border-color: var(--danger); }
+.ui-select.err { box-shadow: inset 0 0 0 1px var(--danger); }
 
 /* Select 内容浮层（reka SelectContent，bg-elevated + shadow-2） */
 .ui-select-pop {
@@ -458,11 +449,11 @@ body {
   transition: background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease);
   position: relative;
 }
-.ui-checkbox.on { border-color: var(--accent); background: var(--accent); }
+.ui-checkbox.checked { border-color: var(--accent); background: var(--accent); }
 .ui-checkbox:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
 .ui-checkbox:disabled { cursor: not-allowed; opacity: 0.5; }
 .ui-checkbox .uc-check { width: 12px; height: 12px; color: #fff; opacity: 0; transition: opacity var(--duration-fast); }
-.ui-checkbox.on .uc-check { opacity: 1; }
+.ui-checkbox.checked .uc-check { opacity: 1; }
 .ui-checkbox.indeterminate { border-color: var(--accent); background: var(--accent); }
 .ui-checkbox.indeterminate .uc-check { opacity: 1; }
 
@@ -536,6 +527,7 @@ body {
     <a href="#s6">§6 控件范式</a>
     <a href="#s7">§7 边缘状态</a>
     <a href="#s8">§8 键盘流程</a>
+    <a href="#s9">§9 i18n P0 验收</a>
   </nav>
 
   <!-- ================================================================
@@ -543,23 +535,70 @@ body {
        ================================================================ -->
   <section class="spec" id="s1">
     <div class="spec-head"><span class="spec-num">§1</span><h2 class="spec-title">FullSettingsOverlay · 全屏覆盖层容器</h2></div>
-    <p class="spec-desc">手写覆盖层（非 reka Dialog 主体，沿用 SearchModal 手写范式规避 happy-dom + Teleport 测试问题）。根 <code>fixed inset-0 z-modal bg-black/80 backdrop-blur-sm</code>，内嵌 <code>bg-surface</code> 面板带 <code>shadow-2</code>。交互核心：ESC 关闭 + X 按钮关闭 + 焦点陷阱（Tab 循环不逃逸）+ 打开时焦点落首个可聚焦元素。X 按钮用 Button <code>variant=ghost</code>（不自创 .btn）。</p>
+    <p class="spec-desc">手写覆盖层（非 reka Dialog 主体，沿用 SearchModal 手写范式规避 happy-dom + Teleport 测试问题）。根 <code>.fso = fixed inset-0 z-modal bg-bg 纯不透明全屏</code>（<span class="v6">无遮罩 / 无模糊 / 无 max-width</span>，覆盖整个窗口），内部 <code>flex row</code>：左 <code>nav w-220 bg-sunken</code>，右 <code>content flex-1 bg-surface</code> 滚动区。交互核心：ESC 关闭 + X 按钮关闭 + 焦点陷阱（Tab 循环不逃逸）+ 打开时焦点落首个可聚焦元素。X 按钮用 Button <code>variant=ghost</code>（不自创 .btn）。</p>
     <div class="change-points">
       <span class="cp cp-key"><b>交互</b> ESC + X 双通道关闭</span>
       <span class="cp cp-key"><b>交互</b> 焦点陷阱 Tab 循环</span>
       <span class="cp cp-key"><b>交互</b> 打开焦点落首个控件</span>
       <span class="cp cp-v6"><b>X 按钮</b> Button variant=ghost</span>
-      <span class="cp cp-v6"><b>遮罩</b> bg-black/80 + blur(4px)</span>
+      <span class="cp cp-v6"><b>全屏</b> bg-bg 纯不透明 inset-0</span>
+      <span class="cp cp-now"><b>旧</b> bg-black/80 + blur + 900px modal</span>
     </div>
 
     <!-- 容器渲染（缩略示意，nav + content 占位）-->
     <div class="render-frame">
-      <div class="fs-stage">
-        <div class="fs-underlay"><div class="fs-app-dummy"></div></div>
-        <div class="fs-scrim">
-          <div class="fs-modal">
+      <div class="fs-window">
+        <span class="fs-esc-hint">⌘, · Esc 关闭</span>
+        <div class="fso">
+          <nav class="fs-nav">
+            <button class="nav-item active" type="button">
+              <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              <span class="ni-label">供应商</span>
+              <span class="ni-count">3</span>
+            </button>
+            <button class="nav-item" type="button">
+              <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8L20 10l-5 3.7L16.5 20 12 16.3 7.5 20 9 13.7 4 10l6.1-1.2z"/></svg>
+              <span class="ni-label">技能</span>
+              <span class="ni-count">12</span>
+            </button>
+            <button class="nav-item" type="button">
+              <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
+              <span class="ni-label">代理</span>
+              <span class="ni-count">5</span>
+            </button>
+            <button class="nav-item" type="button">
+              <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+              <span class="ni-label">扩展</span>
+              <span class="ni-count">2</span>
+            </button>
+            <button class="nav-item" type="button">
+              <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/><path d="M7 12h10"/></svg>
+              <span class="ni-label">系统提示词</span>
+            </button>
+            <button class="nav-item" type="button">
+              <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+              <span class="ni-label">终端</span>
+            </button>
+            <button class="nav-item" type="button">
+              <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 14l2 2 4-4"/></svg>
+              <span class="ni-label">预设</span>
+            </button>
+            <button class="nav-item" type="button">
+              <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+              <span class="ni-label">工作区</span>
+            </button>
+            <button class="nav-item" type="button">
+              <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <span class="ni-label">更新</span>
+            </button>
+            <button class="nav-item" type="button">
+              <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+              <span class="ni-label">系统</span>
+            </button>
+          </nav>
+          <div class="fs-content">
             <div class="fs-head">
-              <span class="fs-title">设置</span>
+              <span class="fs-title">设置 · 供应商</span>
               <span class="fs-spacer"></span>
               <!-- X 关闭按钮 = Button variant=ghost（真实样式值） -->
               <button class="xbtn" title="关闭 (Esc)" aria-label="关闭设置">
@@ -567,52 +606,6 @@ body {
               </button>
             </div>
             <div class="fs-body">
-              <nav class="fs-nav">
-                <button class="nav-item active fs-trap-ring" type="button">
-                  <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-                  <span class="ni-label">供应商</span>
-                  <span class="ni-count">3</span>
-                </button>
-                <button class="nav-item" type="button">
-                  <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8L20 10l-5 3.7L16.5 20 12 16.3 7.5 20 9 13.7 4 10l6.1-1.2z"/></svg>
-                  <span class="ni-label">技能</span>
-                  <span class="ni-count">12</span>
-                </button>
-                <button class="nav-item" type="button">
-                  <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
-                  <span class="ni-label">代理</span>
-                  <span class="ni-count">5</span>
-                </button>
-                <button class="nav-item" type="button">
-                  <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-                  <span class="ni-label">扩展</span>
-                  <span class="ni-count">2</span>
-                </button>
-                <button class="nav-item" type="button">
-                  <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/><path d="M7 12h10"/></svg>
-                  <span class="ni-label">系统提示词</span>
-                </button>
-                <button class="nav-item" type="button">
-                  <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-                  <span class="ni-label">终端</span>
-                </button>
-                <button class="nav-item" type="button">
-                  <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 14l2 2 4-4"/></svg>
-                  <span class="ni-label">预设</span>
-                </button>
-                <button class="nav-item" type="button">
-                  <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
-                  <span class="ni-label">工作区</span>
-                </button>
-                <button class="nav-item" type="button">
-                  <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                  <span class="ni-label">更新</span>
-                </button>
-                <button class="nav-item" type="button">
-                  <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
-                  <span class="ni-label">系统</span>
-                </button>
-              </nav>
               <div class="fs-content-blank">
                 <div class="fs-cb-line w-90"></div>
                 <div class="fs-cb-line w-70"></div>
@@ -628,14 +621,14 @@ body {
     </div>
 
     <div class="anno-grid">
-      <div class="anno"><b>容器根:</b><br>fixed inset-0 · z-modal [1000]<br>bg-black/80 · backdrop-blur-sm(4px)</div>
-      <div class="anno"><b>面板:</b><br>bg-surface · border 1px border-border<br>rounded-lg [12px] · shadow-2<br>w-900 · h-640 · max-h-88vh</div>
-      <div class="anno"><b>modal-head:</b><br>h-44 · flex items-center<br>border-b border-border · px-14<br>title 14px/600 · 右侧 X ghost 按钮</div>
+      <div class="anno"><b>容器根 (.fso):</b><br>fixed inset-0 · z-modal [1000]<br><span class="v6">bg-bg 纯不透明全屏</span><br><span class="old">旧: bg-black/80 + blur + 900px modal</span></div>
+      <div class="anno"><b>布局:</b><br>.fso flex row<br>nav w-220 bg-sunken 无 border-r<br>content flex-1 bg-surface 滚动区</div>
+      <div class="anno"><b>内容 head:</b><br>h-44 · flex items-center<br>border-b border-border · px-14<br>title 14px/600 · 右侧 X ghost 按钮</div>
       <div class="anno"><b>X 按钮:</b><br><span class="key">Button variant=ghost size=icon</span><br>hover:bg-surface-hover<br>focus: ring-2 accent + offset</div>
-      <div class="anno"><b>ESC 交互:</b><br>keydown Escape → emit close<br>reka Dialog 内置；手写需自监听<br><span class="old">旧: 仅 X 可点</span> → <span class="v6">双通道</span></div>
+      <div class="anno"><b>ESC 交互:</b><br>keydown Escape → emit close<br>手写监听（非 reka Dialog）<br><span class="old">旧: 仅 X 可点</span> → <span class="v6">ESC + X 双通道</span></div>
       <div class="anno"><b>焦点陷阱:</b><br>打开 → focus 首个可聚焦元素<br>Tab 循环 (nav→content→X)<br>Shift+Tab 逆循环<br>关闭 → 焦点返回触发器</div>
-      <div class="anno"><b>遮罩点击:</b><br>点击 scrim 空白处 → 关闭<br>（与 X / ESC 三通道）<br>点击面板内不关闭</div>
-      <div class="anno"><b>动效:</b><br>打开 fade+zoom-in 200ms<br>关闭 fade+zoom-out 200ms<br>prefers-reduced-motion: 瞬时</div>
+      <div class="anno"><b>无遮罩:</b><br>全屏纯不透明<br>下方 app-shell 不可见（无 scrim）<br>无 backdrop-blur（无残留模糊成本）</div>
+      <div class="anno"><b>动效:</b><br>打开 fade-in 200ms<br>关闭 fade-out 200ms<br>prefers-reduced-motion: 瞬时</div>
     </div>
   </section>
 
@@ -644,9 +637,9 @@ body {
        ================================================================ -->
   <section class="spec" id="s2">
     <div class="spec-head"><span class="spec-num">§2</span><h2 class="spec-title">nav 导航栏 · 10 项 + 状态全谱</h2></div>
-    <p class="spec-desc">左导航 <code>w-200 bg-surface border-r</code>，10 项 nav 各为 <span class="key">Button variant=ghost</span>（不自创 .nav-item 样式，真实复刻 ghost hover:bg-surface-hover）。选中态叠加 <code>bg-surface-hover + inset ring-accent</code>（半透明 ring 不改盒模型、不抖动，同 Card-Active 手法）。count 用中性圆点（<code>bg-surface neutral-dim</code>，非 accent badge，避免与操作角标混淆）。每项链接到 per-menu spec。</p>
+    <p class="spec-desc">左导航 <code>w-220 bg-sunken 无 border-r</code>（v6：从 surface+border-r 改 bg-sunken，与 content 的 surface 形成明度差分隔，不画竖线）。10 项 nav 各为 <span class="key">Button variant=ghost</span>（hover:bg-surface-hover）。<span class="v6">选中态 = bg-surface + text-accent，无 ring</span>（旧 surface-hover+neutral-fg+inset ring 三段式过重，回退为更轻的「浮起一档 + 蓝字」）。count 用中性圆点（<code>bg-surface neutral-dim</code>，非 accent badge）。每项链接到 per-menu spec。</p>
     <div class="change-points">
-      <span class="cp cp-v6"><b>选中</b> inset ring-accent（半透明，不抖动）</span>
+      <span class="cp cp-v6"><b>选中</b> bg-surface + 蓝字（无 ring）</span>
       <span class="cp cp-v6"><b>count</b> 中性圆点非 badge</span>
       <span class="cp cp-key"><b>交互</b> hover/active/disabled 全态</span>
       <span class="cp cp-key"><b>交互</b> 键盘 ↑↓ + Enter 导航</span>
@@ -657,7 +650,7 @@ body {
       <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start;">
         <!-- 完整 nav -->
         <div>
-          <div class="anno" style="margin-bottom:8px;"><b>完整 nav（10 项 · provider 选中）</b></div>
+          <div class="anno" style="margin-bottom:8px;"><b>完整 nav（10 项 · provider 选中）</b><br><span style="color:var(--neutral-faint);">死链登记：skill/agent/terminal/preset/worktree/update/system 7 项「待补 spec」（href 保留，无对应文件）</span></div>
           <div class="nav-demo-wrap">
             <a class="nav-item active" href="v6-spec-settings-provider.html">
               <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -665,12 +658,12 @@ body {
               <span class="ni-count">3</span>
               <svg class="ni-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
             </a>
-            <a class="nav-item" href="v6-spec-settings-skill.html">
+            <a class="nav-item" href="v6-spec-settings-skill.html" title="待补 spec">
               <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8L20 10l-5 3.7L16.5 20 12 16.3 7.5 20 9 13.7 4 10l6.1-1.2z"/></svg>
               <span class="ni-label">技能</span>
               <span class="ni-count">12</span>
             </a>
-            <a class="nav-item" href="v6-spec-settings-agent.html">
+            <a class="nav-item" href="v6-spec-settings-agent.html" title="待补 spec">
               <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
               <span class="ni-label">代理</span>
               <span class="ni-count">5</span>
@@ -684,23 +677,23 @@ body {
               <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/><path d="M7 12h10"/></svg>
               <span class="ni-label">系统提示词</span>
             </a>
-            <a class="nav-item" href="v6-spec-settings-terminal.html">
+            <a class="nav-item" href="v6-spec-settings-terminal.html" title="待补 spec">
               <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
               <span class="ni-label">终端</span>
             </a>
-            <a class="nav-item" href="v6-spec-settings-preset.html">
+            <a class="nav-item" href="v6-spec-settings-preset.html" title="待补 spec">
               <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 14l2 2 4-4"/></svg>
               <span class="ni-label">预设</span>
             </a>
-            <a class="nav-item" href="v6-spec-settings-worktree.html">
+            <a class="nav-item" href="v6-spec-settings-worktree.html" title="待补 spec">
               <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
               <span class="ni-label">工作区</span>
             </a>
-            <a class="nav-item" href="v6-spec-settings-update.html">
+            <a class="nav-item" href="v6-spec-settings-update.html" title="待补 spec">
               <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               <span class="ni-label">更新</span>
             </a>
-            <a class="nav-item" href="v6-spec-settings-system.html">
+            <a class="nav-item" href="v6-spec-settings-system.html" title="待补 spec">
               <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
               <span class="ni-label">系统</span>
             </a>
@@ -716,7 +709,7 @@ body {
               <span class="ni-label">default · 未选中</span>
             </div>
             <div class="nav-item" style="background:var(--surface-hover);color:var(--neutral-fg);cursor:default;">
-              <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="color:var(--neutral-ico-hover);"><circle cx="12" cy="12" r="3"/></svg>
+              <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg>
               <span class="ni-label">hover · 悬停</span>
             </div>
             <div class="nav-item active" style="cursor:default;">
@@ -724,9 +717,9 @@ body {
               <span class="ni-label">active · 选中</span>
               <span class="ni-count">3</span>
             </div>
-            <div class="nav-item active" style="box-shadow: inset 0 0 0 1px var(--accent-ring), 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); cursor:default;">
+            <div class="nav-item active" style="box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); cursor:default;">
               <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg>
-              <span class="ni-label">focus · 键盘聚焦</span>
+              <span class="ni-label">focus · 选中 + 键盘聚焦</span>
             </div>
             <div class="nav-item disabled">
               <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg>
@@ -742,14 +735,14 @@ body {
     </div>
 
     <div class="anno-grid">
-      <div class="anno"><b>容器:</b><br>w-200 · bg-surface<br>border-r 1px border-border<br>p-8 · flex-col gap-1</div>
-      <div class="anno"><b>nav-item 基底:</b><br><span class="key">Button variant=ghost</span><br>hover:bg-surface-hover<br>class 覆写: h-auto · py-2 px-2.5<br>rounded-md · text-13</div>
-      <div class="anno"><b>选中态:</b><br>bg-surface-hover · text-neutral-fg<br>ring-1 ring-inset ring-accent<br><span class="v6">inset 半透明 ring 不抖动</span><br>（同 Card-Active 手法）</div>
-      <div class="anno"><b>hover 态:</b><br>bg-surface-hover · text-neutral-fg<br>icon: neutral-ico → ico-hover<br>右侧 chevron 出现（链接提示）</div>
-      <div class="anno"><b>focus 态:</b><br>ring-2 accent + offset 2px<br>键盘 Tab / ↑↓ 到达时显示<br>不可与选中 ring 叠加（选中优先）</div>
+      <div class="anno"><b>容器:</b><br>w-220 · bg-sunken<br><span class="v6">无 border-r</span>（靠明度差分隔）<br>p-8 · flex-col gap-1</div>
+      <div class="anno"><b>nav-item 基底:</b><br><span class="key">Button variant=ghost</span><br>hover:bg-surface-hover<br>class 覆写: h-auto · py-2 px-2.5<br>rounded-sm · text-13</div>
+      <div class="anno"><b>选中态:</b><br><span class="v6">bg-surface + text-accent</span><br>无 ring（旧 surface-hover+inset ring 已弃）<br>icon opacity 1 + accent 色</div>
+      <div class="anno"><b>hover 态:</b><br>bg-surface-hover · text-neutral-fg<br>icon: opacity .85 → 1<br>右侧 chevron 出现（链接提示）</div>
+      <div class="anno"><b>focus 态:</b><br>ring-2 accent + offset 2px<br>键盘 Tab / ↑↓ 到达时显示<br>不可与选中态叠加（选中优先）</div>
       <div class="anno"><b>disabled 态:</b><br>opacity-0.4 · pointer-events-none<br>color neutral-faint<br>（如更新检查中、无权限）</div>
       <div class="anno"><b>count 圆点:</b><br>bg-surface · neutral-dim · 10px mono<br>rounded-full · px-1.5 py-0.5<br><span class="v6">中性非 badge</span>（选中时 accent-soft）<br>仅 provider/skill/agent/extension 有</div>
-      <div class="anno"><b>icon:</b><br>size-17 · stroke-width 1.75<br>default: neutral-ico<br>hover: neutral-ico-hover<br>active: accent</div>
+      <div class="anno"><b>icon:</b><br>size-16 · stroke-width 1.75<br>color: currentColor · opacity .85<br>hover/active: opacity 1</div>
       <div class="anno"><b>键盘交互:</b><br>Tab: 项间顺序聚焦<br>↑/↓: 项间移动并选中<br>Enter/Space: 确认选中（同 click）<br>Home/End: 首末项</div>
       <div class="anno"><b>切换反馈:</b><br>点击 nav → activeMenu 切换<br>内容区淡入新 view（120ms）<br>滚动位置重置到顶<br>count 实时反映 store 数量</div>
     </div>
@@ -1165,7 +1158,7 @@ body {
             <svg class="us-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
           <div class="anno" style="margin-top:8px;">
-            <b>样式:</b> <span class="key">rounded-md border-border bg-surface-2 px-3 py-2 text-13</span>（源码无 h 类，py-2 隐式约 36px；spec 显式 h-40 与 Input 归一）<br>
+            <b>样式 (v6):</b> <span class="key">rounded-md bg-bg-input 无 border · px-3 · text-13 · h-40</span>（与 Input 归一；源码 bg-surface-2+border 为旧态）<br>
             <b>chevron:</b> size-3.5 neutral-dim opacity-0.5
           </div>
         </div>
@@ -1181,7 +1174,7 @@ body {
         </div>
         <div class="control-cell">
           <div class="cc-label">open（展开浮层）</div>
-          <div class="ui-select" data-open style="width:200px;border-color:transparent;box-shadow:inset 0 0 0 1px var(--accent-ring);">
+          <div class="ui-select" data-open style="width:200px;box-shadow:inset 0 0 0 1px var(--accent-ring);">
             <span class="us-val">OpenAI</span>
             <svg class="us-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(180deg);opacity:1;"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
@@ -1275,7 +1268,7 @@ body {
         <div class="control-cell">
           <div class="cc-label">checked</div>
           <div style="display:flex;align-items:center;gap:10px;">
-            <div class="ui-checkbox on"><svg class="uc-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
+            <div class="ui-checkbox checked"><svg class="uc-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
             <span style="font-size:13px;color:var(--neutral-fg);">已勾选</span>
           </div>
           <div class="anno" style="margin-top:8px;">
@@ -1296,8 +1289,8 @@ body {
         <div class="control-cell">
           <div class="cc-label">focus / disabled</div>
           <div style="display:flex;align-items:center;gap:14px;">
-            <div class="ui-checkbox on" style="box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4);"><svg class="uc-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
-            <div class="ui-checkbox on" style="opacity:0.5;cursor:not-allowed;"><svg class="uc-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
+            <div class="ui-checkbox checked" style="box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4);"><svg class="uc-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
+            <div class="ui-checkbox checked" style="opacity:0.5;cursor:not-allowed;"><svg class="uc-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
           </div>
           <div class="anno" style="margin-top:8px;">
             <b>focus:</b> ring-2 accent + offset<br>
@@ -1311,7 +1304,8 @@ body {
       <div class="anno"><b>硬约束:</b><br><span class="key">禁止自创 .btn/.input/.select 类</span><br>所有控件用 xyz-ui 组件<br>spec 标注 variant=default/secondary/ghost/danger</div>
       <div class="anno"><b>Button focus:</b><br>shadcn 外环 + offset<br>spec: box-shadow 0 0 0 2px accent + 0 0 0 4px black/40<br>（源码 ring-ring = tailwind 变量，token 稿未定义 --ring，用 accent box-shadow 近似）<br>与 Input inset ring 故意不同</div>
       <div class="anno"><b>Input focus:</b><br>inset ring-1 accent-ring<br>容器型原语，inset 表边界聚焦</div>
-      <div class="anno"><b>Select 对齐:</b><br>spec h-40 与 Input h-10(40px) 归一<br>（源码 py-2 隐式约 36px，与 Input 差 4px）<br>同 bg-surface-2 border-border</div>
+      <div class="anno"><b>行级 focus 裁决 (R25):</b><br>非 Button 可点元素（行/链接）<br><span class="key">focus = inset 0 0 0 1px var(--accent-ring)</span><br>与 Input inset 单环一致<br>（provider L3.3 引用本范式）<br>Button 仍用外环 + offset（原子控件）</div>
+      <div class="anno"><b>Select 对齐 (R3):</b><br>spec h-40 与 Input h-10(40px) 归一<br><span class="v6">v6: bg-bg-input 无 border</span><br>（源码 bg-surface-2+border 为旧态）<br>靠背景差表达凹陷边界</div>
       <div class="anno"><b>Switch 尺寸:</b><br>track 36×20 · thumb 16<br>checked translate-x-18<br>unchecked translate-x-2</div>
       <div class="anno"><b>Checkbox:</b><br>16×16 · rounded-sm<br>border-strong（比 border 深一档）<br>checked bg-accent</div>
       <div class="anno"><b>错误态分层:</b><br>原子 Input: 仅 error border-danger<br>表单层: form-msg 文案<br>（项目待引入 Form/FormItem）</div>
@@ -1352,7 +1346,7 @@ body {
         <!-- 错误态（inline）-->
         <div class="control-cell">
           <div class="cc-label">错误态（inline 常驻）</div>
-          <div style="display:flex;align-items:center;gap:6px;padding:8px 12px;border-radius:var(--radius);background:var(--danger-soft);border:1px solid rgba(239,68,68,0.3);font-size:11px;color:var(--danger);">
+          <div style="display:flex;align-items:center;gap:6px;padding:8px 12px;border-radius:var(--radius);background:var(--danger-soft);border:1px solid var(--border);font-size:11px;color:var(--danger);">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12" y2="16"/></svg>
             <span>网络断开，无法保存。请检查连接后重试。</span>
           </div>
@@ -1376,7 +1370,7 @@ body {
         <!-- 危险确认 -->
         <div class="control-cell">
           <div class="cc-label">危险操作（二次确认）</div>
-          <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow-2);">
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;box-shadow:var(--shadow-2);">
             <div style="font-size:14px;font-weight:600;color:var(--neutral-fg);margin-bottom:6px;">删除供应商？</div>
             <div style="font-size:12px;color:var(--neutral-mid);margin-bottom:14px;">将移除「OpenAI」及其所有模型配置，此操作不可撤销。</div>
             <div style="display:flex;gap:8px;justify-content:flex-end;">
@@ -1456,9 +1450,102 @@ body {
     </div>
   </section>
 
+  <!-- ================================================================
+       §9 i18n P0 五 key 验收（承载 SystemPage 音效偏好轻量方案）
+       ================================================================ -->
+  <section class="spec" id="s9">
+    <div class="spec-head"><span class="spec-num">§9</span><h2 class="spec-title">i18n P0 · 音效偏好五 key 验收</h2></div>
+    <p class="spec-desc">承载 i18n P0 修复验收（审查 §5-5 轻量方案，不新建 SystemPage spec）。SystemPage 音效偏好原先硬编码中文，迁移到 i18n。下列五个 key 为 P0 必验项：标题 + 成功音 + 错误音 + 默认项 + 预览按钮。验收 = 五 key 均存在于 <code>zh-CN.json</code> 且 UI 正确取值。</p>
+    <div class="change-points">
+      <span class="cp cp-key"><b>P0</b> 5 key 全覆盖</span>
+      <span class="cp cp-v6"><b>承载</b> 不新建 SystemPage spec</span>
+      <span class="cp cp-v6"><b>轻量</b> 审查 §5-5 方案</span>
+    </div>
+
+    <div class="render-frame">
+      <div style="max-width:560px;">
+        <div class="group-card">
+          <div class="group-head">
+            <span class="gh-label">音效</span>
+            <span class="gh-spacer"></span>
+          </div>
+          <div class="group-body">
+            <div class="setting-row">
+              <div class="sr-text">
+                <div class="sr-label">音效</div>
+                <div class="sr-desc">为操作反馈播放音效。</div>
+              </div>
+              <div class="sr-control">
+                <div class="ui-switch on"><span class="us-thumb"></span></div>
+              </div>
+            </div>
+            <div class="hairline"></div>
+            <div class="setting-row">
+              <div class="sr-text">
+                <div class="sr-label">成功音效</div>
+                <div class="sr-desc">任务完成时播放的音效。</div>
+              </div>
+              <div class="sr-control">
+                <div class="ui-select" style="width:160px;">
+                  <span class="us-val">完成</span>
+                  <svg class="us-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
+              </div>
+            </div>
+            <div class="hairline"></div>
+            <div class="setting-row">
+              <div class="sr-text">
+                <div class="sr-label">错误音效</div>
+                <div class="sr-desc">任务失败时播放的音效。</div>
+              </div>
+              <div class="sr-control">
+                <div class="ui-select" style="width:160px;">
+                  <span class="us-val">错误</span>
+                  <svg class="us-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
+              </div>
+            </div>
+            <div class="hairline"></div>
+            <div class="setting-row">
+              <div class="sr-text">
+                <div class="sr-label">默认项</div>
+                <div class="sr-desc">恢复内置默认音效。</div>
+              </div>
+              <div class="sr-control">
+                <button class="btn btn-secondary btn-dense">恢复默认</button>
+              </div>
+            </div>
+            <div class="hairline"></div>
+            <div class="setting-row">
+              <div class="sr-text">
+                <div class="sr-label">预览</div>
+                <div class="sr-desc">点击试听当前所选音效。</div>
+              </div>
+              <div class="sr-control">
+                <button class="btn btn-ghost btn-dense">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  预览
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="anno-grid">
+      <div class="anno"><b>soundTitle:</b><br>「音效」分组标题<br>P0 必验 · zh-CN.json 存在<br>分组卡片 gh-label 取值</div>
+      <div class="anno"><b>successSound:</b><br>「成功音效」label + desc<br>P0 必验 · Select 选项文案<br>默认值「完成」</div>
+      <div class="anno"><b>errorSound:</b><br>「错误音效」label + desc<br>P0 必验 · Select 选项文案<br>默认值「错误」</div>
+      <div class="anno"><b>soundDefault:</b><br>「恢复默认」按钮文案<br>P0 必验 · btn-secondary 文本<br>恢复内置音效</div>
+      <div class="anno"><b>soundPreview:</b><br>「预览」按钮文案<br>P0 必验 · btn-ghost + 播放图标<br>试听当前所选</div>
+      <div class="anno"><b>验收准则:</b><br>① 五 key 均在 zh-CN.json<br>② 切 en 后 UI 英文<br>③ 缺 key 时 fallback 不崩<br>④ 控件样式同 §6 范式</div>
+    </div>
+  </section>
+
   <!-- ============ footer ============ -->
   <footer class="doc-foot">
-    <span>v6-spec-settings-shell.html · 设置外壳交互规格 · 完整性收录容器/nav/内容/卡片/行/控件/边缘/键盘</span>
+    <span>v6-spec-settings-shell.html · 设置外壳交互规格 · 完整性收录容器/nav/内容/卡片/行/控件/边缘/键盘/i18n</span>
     <span>SSOT: <a href="v6-design.md">v6-design.md</a> · token: <a href="v6-spec-tokens.html">v6-spec-tokens.html</a> · 控件: xyz-ui 5 组件源码</span>
   </footer>
 

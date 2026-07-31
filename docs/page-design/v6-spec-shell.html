@@ -44,7 +44,7 @@
   --space-6: 24px; --space-8: 32px; --space-12: 48px; --space-16: 64px;
   --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);
   --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
-  --shadow-drawer: -12px 0 24px rgba(0,0,0,0.25);
+  --shadow-drawer: -12px 0 24px rgba(0,0,0,0.16);
   --shadow-glow: 0 0 0 3px rgba(79,142,247,0.25);
   --content-max-w: 720px; --composer-btn-size: 30px;
   --z-sticky: 1; --z-popover: 10; --z-overlay: 20; --z-modal: 1000;
@@ -431,7 +431,7 @@ body {
   flex: 1; background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); margin-left: 0;
 }
-/* handle 三态：default 透明 / hover border-strong / drag accent */
+/* handle 三态：default 透明 / hover accent / drag accent(2px) */
 .ssd-handle {
   width: 6px; flex-shrink: 0; margin: 0 -3px; position: relative; cursor: col-resize;
   display: flex; align-items: center; justify-content: center;
@@ -442,7 +442,7 @@ body {
   transition: background var(--duration) var(--ease);
 }
 .ssd-handle.default::before { background: transparent; }
-.ssd-handle.hover::before { background: var(--border-strong); }
+.ssd-handle.hover::before { background: var(--accent); }
 .ssd-handle.drag::before { background: var(--accent); width: 2px; }
 /* handle 命中区（4px，透明，仅视觉线变化）*/
 .ssd-handle .h-hit { position: absolute; left: -2px; right: -2px; top: 0; bottom: 0; }
@@ -477,7 +477,6 @@ body {
 .wf-drawer-inline {
   flex: 0 0 160px; min-width: 0;
   background: var(--surface-2);
-  border-left: 1px solid var(--border);
   display: flex; flex-direction: column;
   overflow: hidden;
 }
@@ -485,7 +484,6 @@ body {
   height: 38px; flex-shrink: 0;
   background: var(--surface-2);
   display: flex; align-items: center; padding: 0 12px;
-  border-bottom: 1px solid var(--border);
 }
 .wf-drawer-inline .wf-drawer-body { flex: 1; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
 
@@ -519,7 +517,6 @@ body {
   height: 38px; flex-shrink: 0;
   background: var(--bg-elevated);
   display: flex; align-items: center; padding: 0 14px;
-  border-bottom: 1px solid var(--border);
 }
 .dd-toggle {
   margin-left: auto;
@@ -542,7 +539,6 @@ body {
 .dd-drawer {
   flex: 0 0 0px; min-width: 0;
   background: var(--surface-2);
-  border-left: 1px solid var(--border);
   display: flex; flex-direction: column;
   overflow: hidden;
   transition: flex-basis var(--duration-slow) var(--ease);
@@ -552,7 +548,6 @@ body {
   height: 38px; flex-shrink: 0;
   background: var(--surface-2);
   display: flex; align-items: center; padding: 0 12px;
-  border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
 .dd-drawer-body { flex: 1; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
@@ -586,13 +581,11 @@ body {
   height: 24px; flex-shrink: 0; background: var(--bg-elevated);
   display: flex; align-items: center; padding: 0 8px;
   font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-mid);
-  border-bottom: 1px solid var(--border);
 }
 .sdv-split { flex: 1; display: flex; min-height: 0; }
 .sdv-content { flex: 1; }
 .sdv-drawer-new {
   flex: 0 0 60px; background: var(--surface-2);
-  border-left: 1px solid var(--border);
   display: flex; align-items: center; justify-content: center;
   font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim);
 }
@@ -627,6 +620,7 @@ body {
 }
 .btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
 .btn:disabled { pointer-events: none; opacity: 0.5; }
+.btn svg { display: block; width: 16px; height: 16px; flex-shrink: 0; }
 .btn.btn-default { background: var(--accent); color: #fff; }
 .btn.btn-default:hover { background: var(--accent-hover); }
 .btn.btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--neutral-fg); }
@@ -677,7 +671,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s1">
     <div class="spec-head"><span class="spec-num">§1</span><h2 class="spec-title">三栏拓扑总览</h2></div>
-    <p class="spec-desc">AppShell 是三栏组合根：<code>aside</code>（侧栏画布）｜<code>app-nav-controls</code>（浮层导航）｜<code>main-panel</code>（surface 浮起，含 Workspace）+ 可选 <code>drawer</code>（右侧画布）。v6 保留 v3 的三栏拓扑不变（§1.1#2），底色语义：aside 与 drawer = 画布色（<code>--bg-sunken</code>），与窗口底同色融合；main-panel = surface 浮起，是唯一带 border + shadow 的面板。窗口整体落在 stage 深底 #131316 上（app-shell <code>p-3</code> 间隙显露）。<b>view 路由简化</b>：main-panel 仅 chat（Workspace），Overview 概览页已移除（sidebar sessions tab 已覆盖会话列表需求）。</p>
+    <p class="spec-desc">AppShell 是三栏组合根：<code>aside</code>（侧栏画布）｜<code>app-nav-controls</code>（浮层导航）｜<code>main-panel</code>（surface 浮起，含 Workspace）+ 可选 <code>drawer</code>（与 main 共享同一 surface 浮起体，从 main 右缘生长挤占 main 宽度，详见 §7）。v6 保留 v3 的三栏拓扑不变（§1.1#2），底色语义：aside = 画布色（<code>--bg-sunken</code>），与窗口底同色融合；main-panel + drawer 共享 surface 浮起（同一 border + shadow 外壳、同 <code>--surface</code> 底色），是唯一带 border + shadow 的浮起体。窗口整体落在 stage 深底 #131316 上（app-shell <code>p-3</code> 间隙显露）。<b>view 路由简化</b>：main-panel 仅 chat（Workspace），Overview 概览页已移除（sidebar sessions tab 已覆盖会话列表需求）。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> 三栏拓扑 + traffic-light 安全区</span>
       <span class="cp cp-v6"><b>v6</b> 拓扑不变，底色语义统一三层明度</span>
@@ -753,7 +747,7 @@ body {
           </div>
         </div>
         <div style="margin-top:14px;padding:10px 14px;background:rgba(0,0,0,0.4);border-radius:var(--radius);font-family:var(--font-mono);font-size:var(--text-2xs);color:var(--neutral-mid);">
-          窗口底 <span style="color:var(--neutral-fg);">#131316</span>（stage · app-shell p-3 间隙显露）· 三栏落在其上：aside/drawer 透明融合（画布色）/ main-panel surface 浮起（border + shadow）
+          窗口底 <span style="color:var(--neutral-fg);">#131316</span>（stage · app-shell p-3 间隙显露）· 三栏落在其上：aside 透明融合（画布色）/ main-panel + drawer 共享同一 surface 浮起体（border + shadow，drawer 从 main 右缘生长）
         </div>
       </div>
     </div>
@@ -761,7 +755,7 @@ body {
     <div class="anno-grid">
       <div class="anno"><b>AppShell:</b><br>flex gap-3 p-3 bg-bg rounded-[10px]<br><span class="v6">折叠态 !gap-0（强制覆盖）</span></div>
       <div class="anno"><b>aside 底色:</b><br>12px [var(--space-3)] 透明继承<br><span class="v6">→ bg-bg-sunken（画布色融合）</span></div>
-      <div class="anno"><b>main-panel:</b><br>flex-1 bg-surface border-border<br><span class="v6">rounded-lg + shadow-1/shadow-2 浮起</span></div>
+      <div class="anno"><b>main-panel:</b><br>flex-1 bg-surface border-border<br><span class="v6">rounded (=var(--radius)=8px) + shadow-1/shadow-2 浮起</span></div>
       <div class="anno"><b>drawer 底色:</b><br><span class="v6">var(--surface)（与 main 同色）</span><br>从 main 右缘生长挤占（详见 §7）</div>
       <div class="anno"><b>间隙 gap:</b><br>12px [var(--space-3)]（三栏间）</div>
       <div class="anno"><b>窗口圆角:</b><br>10px（任意值 · 不进 token）</div>
@@ -775,7 +769,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s2">
     <div class="spec-head"><span class="spec-num">§2</span><h2 class="spec-title">三层明度体系</h2></div>
-    <p class="spec-desc">v6 验收基准之一：三层背景肉眼可辨（§9）。从深到浅：<b>stage 深底 #131316</b>（窗口底，app-shell padding 背景，不新增 token）→ <b>画布 #1a1b1f</b>（<code>--bg-sunken</code> = <code>--bg</code>，侧栏/drawer 落色，与窗口同色融合）→ <b>surface 浮起 #272830</b>（主面板，焦点区）。<code>--bg-sunken</code> 语义变更：原 visual-modernization 用 color-mix(bg 97%, black) 把侧栏往黑推导致发脏，v6 改为与画布同色，靠主面板浮起表达层级。不嵌套第四层。</p>
+    <p class="spec-desc">v6 验收基准之一：三层背景肉眼可辨（§9）。从深到浅：<b>stage 深底 #131316</b>（窗口底，app-shell padding 背景，不新增 token）→ <b>画布 #1a1b1f</b>（<code>--bg-sunken</code> = <code>--bg</code>，侧栏落色，与窗口同色融合）→ <b>surface 浮起 #272830</b>（主面板 + drawer 共享，焦点区）。<code>--bg-sunken</code> 语义变更：原 visual-modernization 用 color-mix(bg 97%, black) 把侧栏往黑推导致发脏，v6 改为与画布同色，靠主面板浮起表达层级。drawer 不再独立成层——它与 main 共享同一 surface 浮起体（§7），从 main 右缘生长挤占 main 宽度。不嵌套第四层。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> bg-sunken color-mix 往黑推（发脏）</span>
       <span class="cp cp-v6"><b>v6</b> bg-sunken = bg（同色融合）</span>
@@ -798,22 +792,22 @@ body {
           </div>
           <div class="layer-step ls-canvas">
             <div>
-              <div class="ls-label">② 画布（aside / drawer）</div>
+              <div class="ls-label">② 画布（aside）</div>
               <div class="ls-sub">--bg-sunken</div>
             </div>
             <div>
               <div class="ls-hex">#1a1b1f</div>
-              <div class="ls-use">侧栏 / drawer 落色</div>
+              <div class="ls-use">侧栏落色</div>
             </div>
           </div>
           <div class="layer-step ls-surface">
             <div>
               <div class="ls-label">③ surface 浮起</div>
-              <div class="ls-sub">主面板（焦点）</div>
+              <div class="ls-sub">主面板 + drawer（焦点）</div>
             </div>
             <div>
               <div class="ls-hex">#272830</div>
-              <div class="ls-use">main-panel / 卡片</div>
+              <div class="ls-use">main-panel / drawer / 卡片</div>
             </div>
           </div>
         </div>
@@ -851,7 +845,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s3">
     <div class="spec-head"><span class="spec-num">§3</span><h2 class="spec-title">traffic-light 安全区</h2></div>
-    <p class="spec-desc">aside-region 恒定 <code>padding-top: 52px</code> 留出红黄绿落位的安全区，<b>三平台统一、全屏也保留</b>（mac 全屏 hover 时系统下拉覆盖层落进这块留白）。mac 由主进程 <code>titleBarStyle:'hidden'</code> + <code>trafficLightPosition:{x:16,y:26}</code> 精确控制（不用 hiddenInset）；win/linux 自绘彩色圆点 <code>left:16px top:26px</code> mimic mac，三平台左上视觉统一。<b>v6 修订</b>：① win/linux hover 符号弃用 lucide（8px 极小尺寸抗锯齿差、高 DPI 缩放下模糊溢出），改手绘 SVG path 针对小尺寸精确设计 stroke-width，去 border；② 挂载点从 AsideRegion 提升到 AppShell 层（避免折叠态 aside 归零改变定位基准）；③ 折叠态 left 让位 16→24px（给主面板浮起左 border 留呼吸）。</p>
+    <p class="spec-desc">aside-region 恒定 <code>padding-top: 52px</code> 留出红黄绿落位的安全区，<b>三平台统一、全屏也保留</b>（mac 全屏 hover 时系统下拉覆盖层落进这块留白）。mac 由主进程 <code>titleBarStyle:'hidden'</code> + <code>trafficLightPosition:{x:16,y:26}</code> 精确控制（不用 hiddenInset）；win/linux 自绘彩色圆点 <code>left:16px top:26px</code> mimic mac，三平台左上视觉统一。<b>v6 修订</b>：① win/linux hover 符号弃用 lucide（8px 极小尺寸抗锯齿差、高 DPI 缩放下模糊溢出），改手绘 SVG path 针对小尺寸精确设计 stroke-width，去 border；② 挂载点从 AsideRegion 提升到 AppShell 层（避免折叠态 aside 归零改变定位基准）。注：mac 红黄绿由 OS 绘制，无法随折叠态位移，故 traffic-light 恒定 <code>left:16px</code>，不随侧栏折叠让位。</p>
     <div class="change-points">
       <span class="cp cp-v6"><b>v6</b> padding-top:52px 三平台统一</span>
       <span class="cp cp-v6"><b>v6</b> mac hidden + trafficLightPosition（非 hiddenInset）</span>
@@ -958,7 +952,6 @@ body {
       <div class="anno"><b>落点:</b><br>AppShell.vue（v6 方案 G 提升）<br>TrafficLight.vue<br>usePlatformChrome</div>
       <div class="anno"><b>v6 方案 A:</b><br>win/linux hover 符号弃 lucide<br>改手绘 SVG path（12px 圆<br>专用 stroke-width 微调）<br>去 border（mac 原生无）</div>
       <div class="anno"><b>v6 方案 G:</b><br>挂载点 AsideRegion→AppShell<br>避免折叠态 offset parent 漂移<br>（与 AppNavControls 一致）</div>
-      <div class="anno"><b>v6 方案 E:</b><br>折叠态 left 16→24px<br>给主面板浮起左 border<br>留 12px 呼吸</div>
       <div class="anno"><b>flex-basis:</b><br>aside collapsed→0px<br>pt:52px 不受折叠影响</div>
     </div>
   </section>
@@ -1043,7 +1036,7 @@ body {
       <div class="anno"><b>非折叠 left:</b><br>100px（红黄绿右缘 68<br>+ 32px 呼吸）</div>
       <div class="anno"><b>全屏 left:</b><br>16px [var(--space-4)]<br>!left-[16px] 强制覆盖</div>
       <div class="anno"><b>top:</b><br>21px（按钮 h:22 中心=32）</div>
-      <div class="anno"><b>按钮尺寸:</b><br>26×22px · rounded (=var(--radius)=8px)<br>（非 token，像素级要求）</div>
+      <div class="anno"><b>按钮尺寸:</b><br>26×22px · rounded (=var(--radius-sm)=6px)<br>（与 .nav-btn CSS 一致）</div>
       <div class="anno"><b>icon:</b><br>14px · neutral-dim<br>hover→surface-hover+fg</div>
       <div class="anno"><b>transition:</b><br>left 320ms [var(--duration-slow)]<br>与 traffic-light opacity 同步</div>
       <div class="anno"><b>渲染条件:</b><br>非折叠态浮此浮层<br>折叠态迁入 PanelHeader</div>
@@ -1057,7 +1050,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s5">
     <div class="spec-head"><span class="spec-num">§5</span><h2 class="spec-title">折叠态 chrome 迁移</h2></div>
-    <p class="spec-desc">侧栏折叠时 chrome 迁入 PanelHeader：header <code>pl-[88px]</code> 让位，按钮起 x=100px，与浮层位置一致，<b>切换折叠无跳动</b>。AppShell 折叠态 <code>!gap-0</code>（强制覆盖 gap-3），否则 MainPanel 左右不对称（左缘=24 右缘=12）。折叠一律由 header 承接 chrome，避免与浮层重复渲染两套。<b>v6 方案 E</b>：折叠态 traffic-light 的 left 从 16px 让位到 24px——因折叠态 aside 归零后主面板浮起体左 border 到了 x≈12px，红黄绿（原 left:16）会贴着 border 无呼吸；让位到 24px 留出 12px 间距。非折叠态红黄绿在 aside 画布区，保持 left:16px。</p>
+    <p class="spec-desc">侧栏折叠时 chrome 迁入 PanelHeader：header <code>pl-[88px]</code> 让位，按钮起 x=100px，与浮层位置一致，<b>切换折叠无跳动</b>。AppShell 折叠态 <code>!gap-0</code>（强制覆盖 gap-3），否则 MainPanel 左右不对称（左缘=24 右缘=12）。折叠一律由 header 承接 chrome，避免与浮层重复渲染两套。注：mac 红黄绿由 OS 绘制无法随折叠位移，故 traffic-light 恒定 <code>left:16px</code>（折叠态红黄绿留在窗口左上原位，仅浮层按钮迁入 PanelHeader）。</p>
     <div class="change-points">
       <span class="cp cp-v6"><b>v6</b> 折叠态 chrome 迁 PanelHeader</span>
       <span class="cp cp-v6"><b>v6</b> header pl-[88px] 让位 · 无跳动</span>
@@ -1099,16 +1092,14 @@ body {
 
         <!-- 折叠 -->
         <div class="cc-col">
-          <span class="cc-label">折叠（chrome 迁入 PanelHeader · 方案 E 让位）</span>
+          <span class="cc-label">折叠（chrome 迁入 PanelHeader）</span>
           <div class="cc-window collapsed">
-            <!-- 方案 E：折叠态 traffic-light left 16→24px，给主面板浮起左 border（x≈12）留 12px 呼吸 -->
-            <div class="wf-tl" style="top:26px;left:24px;">
+            <!-- traffic-light 恒定 left:16px（mac OS 红黄绿无法随折叠位移，保持窗口左上原位）-->
+            <div class="wf-tl" style="top:26px;left:16px;">
               <span class="tl-dot close"></span>
               <span class="tl-dot min"></span>
               <span class="tl-dot max"></span>
             </div>
-            <!-- 呼吸距离标注线 -->
-            <div style="position:absolute;left:12px;top:26px;width:12px;height:12px;border-right:1px dashed var(--accent-ring);pointer-events:none;"></div>
             <div class="cc-aside collapsed"></div>
             <div class="cc-main">
               <div class="cc-main-header migrated">
@@ -1121,7 +1112,7 @@ body {
               </div>
             </div>
           </div>
-          <div class="anno"><b>gap:</b> <span class="v6">0 [!gap-0]</span> · <b>header pl:</b> <span class="v6">88px</span> · chrome 按钮 x=100（与浮层一致） · <b>方案 E:</b> <span class="v6">traffic-light left 16→24px 让位</span></div>
+          <div class="anno"><b>gap:</b> <span class="v6">0 [!gap-0]</span> · <b>header pl:</b> <span class="v6">88px</span> · chrome 按钮 x=100（与浮层一致） · <b>traffic-light:</b> <span class="v6">恒定 left:16px（mac OS 无法位移）</span></div>
         </div>
       </div>
     </div>
@@ -1135,7 +1126,7 @@ body {
       <div class="anno"><b>aside flex-basis:</b><br>collapsed→0px（minWidth:0）<br>（基类已含 min-width:0，<br>折叠态不需额外加）<br>pt:52px 安全区恒定</div>
       <div class="anno"><b>!important 原因:</b><br>gap-0 与 gap-3 同特异性<br>Tailwind 顺序 gap-0 先于 gap-3</div>
       <div class="anno"><b>唤回侧栏:</b><br>⌘B + header chrome 按钮<br>（rail-restore 左缘细条已移除）</div>
-      <div class="anno"><b>v6 方案 E（left 让位）:</b><br>折叠态 traffic-light<br>left 16→24px<br>给主面板浮起左 border<br>（x≈12）留 12px 呼吸<br>非折叠态恢复 16px</div>
+      <div class="anno"><b>traffic-light:</b><br>恒定 left:16px<br>（mac OS 红黄绿无法随折叠位移）<br>仅浮层按钮迁入 PanelHeader</div>
     </div>
   </section>
 
@@ -1147,7 +1138,7 @@ body {
     <p class="spec-desc">SplitterResizeHandle 透明化：<b>默认态透明</b>（侧栏/drawer 与主面板间去硬 border，靠三层明度分隔），仅 hover/drag 显 accent。分隔策略「层级 &gt; 留白 &gt; hairline &gt; 边框」——静态信息容器只用一个表面色，不叠加 border（impeccable 去嵌套卡片）。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> handle w-px bg-border</span>
-      <span class="cp cp-v6"><b>v6</b> 默认透明 · hover border-strong · drag accent</span>
+      <span class="cp cp-v6"><b>v6</b> 默认透明 · hover accent · drag accent</span>
       <span class="cp cp-v6"><b>v6</b> 侧栏/drawer 去硬 border</span>
     </div>
 
@@ -1228,10 +1219,10 @@ body {
 
     <div class="anno-grid">
       <div class="anno"><b>handle 默认:</b><br><span class="v6">透明（transparent）</span><br>去 bg-border</div>
-      <div class="anno"><b>handle hover:</b><br>border-strong<br>1px [var(--border-strong)]</div>
+      <div class="anno"><b>handle hover:</b><br>accent<br>1px [var(--accent)]</div>
       <div class="anno"><b>handle drag:</b><br>accent 2px [var(--accent)]<br>data-[state=drag]</div>
       <div class="anno"><b>命中区:</b><br>10px（透明 hit area）<br>width:6px + margin:-3px + h-hit:-2px<br>仅视觉线变化</div>
-      <div class="anno"><b>transition:</b><br>150ms ease<br>（bg-color）</div>
+      <div class="anno"><b>transition:</b><br>200ms [var(--duration)] ease<br>（bg-color，与 CSS 一致）</div>
       <div class="anno"><b>分隔优先级:</b><br>层级 &gt; 留白 &gt; hairline<br>&gt; 边框</div>
       <div class="anno"><b>嵌套禁令:</b><br>静态容器一个表面色<br>不叠加 border</div>
       <div class="anno"><b>落点:</b><br>PanelContainer.vue<br>SplitterResizeHandle</div>
