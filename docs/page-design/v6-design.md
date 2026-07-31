@@ -30,24 +30,27 @@
 | 4 | 字体 | 保留 Inter（正文）+ JetBrains Mono（等宽） |
 | 5 | 风格 | 极简专业，对标 Codex/Claude/Linear |
 | 6 | 五原则口径 | 以五原则为基，更彻底地应用 |
+| 15 | plugin 渲染体系扩展授权 | M1 侧栏第 5 tab / M8 main-panel 底栏 + StatusBarController / M11 companion-band 统一交互出口 / M15 降级仅致命错误 / C1-C3 companion/overlay 窗口化 / §9 ExtensionHost 层 + commands.register/views.update API 缺口，属 renderer-target-architecture 路线，与 v6 视觉层并列推进 |
+| 16 | GitPanel 三功能 MVP 授权 | per-file stage/unstage toggle / BranchSelectPopover 分支切换 / CreateBranchModal 新建分支 / commit 快捷键 Cmd+Enter，零后端改动的纯前端能力，属 v6 范围 |
 
 ### 1.2 视觉决策（demo 验证后确认）
 
 | # | 决策点 | 取值 | 含义 |
 |---|--------|------|------|
 | 7 | 选中态范式 | **bg 实色 + 蓝字** | `bg-surface` 实色块 + `text-accent`，无 ring 无左条。最贴近 Claude/Linear |
-| 8 | 彩色降噪 | **保留语义但缩小** | git M黄/A绿/D红 等语义彩色保留，但从色块/pill 降级为极小圆点或单字 |
+| 8 | 彩色降噪 | **保留语义但缩小** | git M黄（注：M 色对齐代码 info 蓝，非 warn 黄）/A绿/D红 等语义彩色保留，但从色块/pill 降级为极小圆点或单字 |
 | 9 | 信息密度 | **现状** | meta（turn meta/工具参数/subagent 摘要）保持可见，不改密度 |
-| 10 | 背景层次 | **三层明度** | stage 深底(#131316) → 侧栏/drawer=画布色(--bg) → 主面板=surface 浮起。不嵌套第四层 |
+| 10 | 背景层次 | **三层明度** | stage 深底(#131316) → 侧栏=画布色(--bg) → **main+drawer 共享 surface 浮起**。不嵌套第四层 |
 
 ### 1.3 结构决策
 
 | # | 决策点 | 取值 |
 |---|--------|------|
-| 11 | 对话流列宽 | **仅 assistant 居中 720px**，UserBubble 保持右浮窄气泡（保留用户/助手视觉对称） |
+| 11 | 对话流列宽 | **整 turn 居中 720px**，UserBubble 在列内右浮窄气泡（对齐 mixer/demo 实现） |
 | 12 | files 紧凑 | 缩进 `INDENT_STEP` 14→10px，icon-文字 gap 6→4px |
 | 13 | 设置形态 | **全屏覆盖**（非居中 modal），左右分栏（左 nav tab 菜单，右内容左对齐 + max-width 720px） |
-| 14 | 设置改造 | **彻底重构**：新建 `FullSettingsOverlay`（不用 reka Dialog，类似 SearchModal 手写 inset-0）；ProviderEditModal 改嵌入式面板（点编辑→右侧内容交换+返回，不再双层 modal） |
+| 14 | 设置改造 | **彻底重构**：新建 `FullSettingsOverlay`（不用 reka Dialog，类似 SearchModal 手写 inset-0）；ProviderEditModal 改展开就地编辑（手风琴）（点编辑→卡片下方展开，不再双层 modal） |
+| 15 | sidebar 第 5 tab | plugin tab 授权新增（突破决策 #2 的 4 tab 拓扑，仅 plugin tab 例外） |
 
 ---
 
@@ -94,10 +97,10 @@
 
 ## 3. 组件范式（跨视图统一）
 
-### 3.1 SegmentedTab 新范式（侧栏/DetailPane/SearchModal/SearchModal 复用）
+### 3.1 SegmentedTab 新范式（侧栏/DetailPane 复用；tab 型选中态通用规则）
 
 ```
-外层容器: bg-bg-input rounded-lg p-[3px]
+外层容器: bg-bg-input rounded-lg p-[3px]（rounded-lg = 12px，非 8px）
 内项: 无边框
 active: bg-bg-elevated text-neutral-fg, 6px 圆角
 hover: text-neutral-fg
@@ -113,7 +116,7 @@ hover: text-neutral-fg
 
 ### 3.3 状态指示统一
 
-- **会话/任务状态**：7px 圆点替换 15px 饱和图标。done=success(90% opacity) / running=accent / waiting=warn / error=danger
+- **会话/任务状态**：7px 圆点替换 15px 饱和图标（统一 7px，无 8/9/6px 例外）。done=success(90% opacity) / running=accent / waiting=warn / error=danger
 - **工具失败（exit≠0）**：图标统一 `--neutral-ico`（删 warn 着色），行尾加 mono `exit N` 小标签（中性，非 danger）
 - **彩色边界**（保留语义但缩小）：
   - 保留彩色：真失败块 danger、待行动状态 accent、git 语义色 M黄/A绿/D红（降为极小圆点或单字 badge）
@@ -124,15 +127,31 @@ hover: text-neutral-fg
 - 静态信息容器只用一个表面色（`--surface`/`--bg-input`/`--bg-card`），**不叠加 border**
 - border 仅保留给：浮起可交互容器（popover/dialog/composer）和 focus 态
 - drawer 内 header 分隔：去 `border-b`，改 `bg-surface-2` 浮起分层（DetailPane/CommandDocPanel/GitPanel/TerminalView/BrowserPane 统一）
-- 侧栏/drawer 与主面板间：去硬 border，靠三层明度（stage 深底 + 主面板 surface 浮起）+ SplitterResizeHandle 透明化（仅 hover/drag 显 accent）
+- 侧栏与主面板间：去硬 border，靠三层明度（stage 深底 + 主面板 surface 浮起）+ SplitterResizeHandle 透明化。**drawer 与 main 间靠弱投影 0.16 + 同色体分隔**（非 border）
 
 ### 3.5 圆角档位
 
 - 默认档：6px（`--radius-sm` 升档后）
 - 卡片：8-10px（ChangeSetCard 10px 用任意值）
 - 浮层/composer：12px
+- popover 圆角 12px（非 8px）
 - 徽章/pill/状态标签：999px 胶囊
 - kbd：6px（保留小圆角矩形语义）
+- tt-close 关闭按钮保留 3px 例外（图标按钮锐利感），其余 radius-sm-old 全删升 6px
+
+### 3.6 文档 chrome 规范（D7）
+
+spec 文档自身的标注元素（state-tag / anno 彩条 / 表头 th）**同样遵守 impeccable 禁令**：uppercase tracking-wider → normal-case；彩色侧边条注释框 → bg-soft 整块 + icon。不豁免。
+
+### 3.7 选中态判定规则（D8）
+
+- **tab 型**（SegmentedTab / drawer l1-l2 tab / AskUserOverlay au-tab / plugin seg-tab）= §3.1 `bg-bg-elevated text-neutral-fg`（中性浮起，去 accent-soft 蓝染底）
+- **列表项型**（SessionItem / FileTree / SearchModal sm-item / AskUserOverlay au-opt / wf-call / CommandPopover 项）= §3.2 `bg-surface + text-accent`（蓝字）
+- accent-soft 仅留瞬时高亮（fresh / is-current popover 项）
+
+### 3.8 行级 focus 裁决（R25）
+
+链接/行级可点元素（非 Button/Switch/Checkbox/Input）focus = `inset 0 0 0 1px var(--accent-ring)`（与 Input 一致的单环）。Button/Switch/Checkbox 维持 accent 双环。
 
 ---
 
@@ -144,21 +163,25 @@ hover: text-neutral-fg
 |------|---------|
 | MessageStream | assistant 区（TurnMeta+trace+summary+ChangeSet）套 `mx-auto max-w-[var(--content-max-w)]`；UserBubble 保持右浮窄气泡（max-w-76%）；滚动条贴右缘 |
 | TurnMeta | pill 默认可见（密度=现状）；删 turn 间 `hr border-border` 分隔线，改加大 turn gap 做层级；sticky 底色绑定内容列背景；**重试中态**：RetryIndicator 从 composer 移除，重试期间 TurnMeta label 切「重试中 N/M」+ warn 色 spinner（区别 streaming 的 accent）。详见 v6-spec-container.html §3 |
-| Block·thinking | 收起态预览提亮 `text-neutral-mid`（过 AA）；**行数维持 1 行 ellipsis**（60 字符截断，推翻原「显 2 行」决策——2 行破坏 turn 视觉节奏） |
+| TurnMeta pill | bg-surface-2（主面板 surface 上浮起一档，解决"面上面"不可见） |
+| Block·thinking | 收起态预览提亮 `text-neutral-mid`（过 AA）；**行数维持 1 行 ellipsis**（60 字符截断，推翻原「显 2 行」决策——2 行破坏 turn 视觉节奏）；**展开态正文用 neutral-mid**（过 AA，非 dim） |
 | Block·bash | **区分两类来源**：① BashOutputBlock（composer `!` 前缀执行，独立系统消息，不可折叠，exit 标签：0→success/N→warn/timeout→dim）② tool-bash（agent 调用，嵌 §6 tool 块，可折叠，border 容器）。详见 v6-spec-blocks.html §5 |
 | Block·tool | 状态矩阵：collapsed/expanded × running(双环 loader)/done/failed/unfinished。**failed 统一不切 icon**（保留原 tool icon，与 subagent/workflow 一致，靠 toolName 降 `neutral-mid` 表达，无红框）；exit≠0 加 mono `exit N` 中性标签；unfinished「未结束」标签 |
 | Block·subagent | background 异步。**v6：collapsed only（去 expanded）**，只显 `[Bot] subagent agent · slug (model · thinking X)`，点击 → drawer 打开 subagent tab 展示嵌套只读对话流（详见 v6-spec-drawer §10）。failed 不切 icon（Bot + neutral-mid）。完成通知由 §10.5 BgNotifyCard 承载 |
 | Block·workflow | **v6：collapsed only（去 expanded）**，只显 `[Workflow] workflow name · slug`，点击 → drawer 打开 workflow tab 展示 agent call 列表（复用 WorkflowDetail phase 分组，点 agent call 切 subagent tab，详见 v6-spec-drawer §11）。failed 不切 icon（Workflow + neutral-mid）。GUI 渲染迁 drawer/extension |
-| Block icon | **v6 全更新**：thinking=Brain / tool-bash=SquareTerminal / tool 通用兜底=SquareFunction / subagent=Bot / workflow=Workflow。stroke-width 统一 1.75。size：block header 13px 统一。展开态统一复制按钮（icon 下、与文字水平对齐、hover 显、复制全部、Check 反馈）。详见 v6-spec-blocks.html |
+| Block icon | **v6 全更新**：thinking=Brain / tool-bash=SquareTerminal / tool 通用兜底=SquareFunction / subagent=Bot / workflow=Workflow。stroke-width 统一 1.75。size：block header 14px 统一。展开态统一复制按钮（icon 下、与文字水平对齐、hover 显、复制全部、Check 反馈）。详见 v6-spec-blocks.html |
 | assistant 正文 markdown | `<p>` 恢复段间距 0.5em；h3 提档 1.12em 区分 h4；代码块容器 `bg-input` token 化；行内 code bg 统一 `bg-input`。**表格圆角化**（rounded-lg + thead surface-2 底 + 行间细 border）；blockquote 不动。**内容容器 head 统一**（代码块/mermaid/bash/ChangeSetCard）：轻量 head 栏 h-7 + 半透明背景优化 + 复制按钮右侧统一 + mermaid 按钮右侧归拢。**TurnSummary hover actions 方案 A**：3 扁平 icon button（Copy/GitFork/HandHelping），去 split-button 和 MD/+Q badge；fork/handoff 点击=+Q 带提问变体，composer 直接 enter=无内容变体。详见 v6-spec-content.html §12/§12.5/§12.6 |
 | 动画 | 状态指示（双环 loader 1.4s / 单环 spinner 1s / 脉冲点 1.8s / blink 1s）+ 微交互（hover/折叠 `duration-fast` 120ms，focus `duration` 200ms，easing `--ease`）。reduced-motion 全局兜底。大动效后出 |
 | ChangeSetCard | 去 border，`bg-surface` + 10px 圆角；状态 badge 降灰阶（仅 ±行数保留 success/danger git 语义色）；「待审查」badge 胶囊 accent-soft |
 | UserBubble | 删 `border-border-strong`，仅 `bg-surface-hover` 做层级；保持 14px/4px 不对称圆角；**删 pending 态**（排队消息不再进对话流渲染，迁 QueueBubble）；**skill/file badge 与 composer chip 同风格**（纯文字+前缀 icon+无底无边+加粗，skill=Wand紫无斜杠 / file=FileText绿） |
 | QueueBubble | **v6 内嵌 composer-box 顶部**（不再独立卡片）：去独立 border/bg/收起，仅 `border-b` 分隔融入 bg-input；**去脉冲闪烁**，保留 Zap(steer/accent)/Clock(followup/info) icon + truncate 文本，多条显前 2-3 条 +「+N」。详见 v6-spec-input.html §8.5 |
 | Composer | **6 区构成**（RetryIndicator 已移除→迁 TurnMeta）：QueueBubble(内嵌) / staging chip / ContextChipsBar(仅 image) / landing meta-row / Input / composer-bar。**chip 统一风格**：纯文字+前缀 icon+无底无边+文字加粗（skill=Wand紫 / file=FileText绿 / image=Image紫 / @=AtSign蓝）。**CommandPopover**：单行布局（icon+粗体名+·隔开+desc，file 也单行），width=composer，14 命令各配专属 icon（详见 v6-spec-input.html §9H 命令 icon 表）。staging fork/handoff 互斥。发送位 4 态状态机。详见 v6-spec-input.html §9 |
+| Composer focus | composer-box focus = 3px 外环 `box-shadow: 0 0 0 3px var(--accent-ring)`（对齐代码，非 inset 单环） |
 | PanelHeader | 去 `border-b`，用 bg-elevated 浮起分层；status icon 灰阶化，仅 git 点保留 danger/warn |
+| TurnRail（§3.5）| 保留既有组件。active 用 §3.2 范式（bg-surface+蓝字 无 ring）；viewport indicator 用 accent 短粗线（非 border-l-2，避 impeccable 禁令）；高度=turn 数×行高（renderer 实现，spec 画 1/5/20 turn 变体示意，无固定上限）。属阶段 B/C 衔接。 |
+| BgNotifyCard | 系统级通知（subagent 完成/fork/compact），保留 border 作为原则 #1 例外（需与普通消息块视觉区分）。 |
 
-### 4.2 侧栏（4 tab + 容器）
+### 4.2 侧栏（5 tab + 容器，第 5 tab 为 plugin）
 
 | 组件 | v6 方案 |
 |------|---------|
@@ -172,11 +195,11 @@ hover: text-neutral-fg
 | WorkflowList | 进度条仅 running 用 accent，done 改 bg-neutral-dim；abort 确认态去 border |
 | 底部用户区 | 头像渐变改纯色 bg-accent（去装饰渐变） |
 
-### 4.3 右侧 Drawer（6 tab）
+### 4.3 右侧 Drawer（7 tab）
 
 | 组件 | v6 方案 |
 |------|---------|
-| SideDrawer 容器 | 底色 `bg-bg`（画布色）；去硬 border-l 改投影分隔 `shadow: -12px 0 24px rgba(0,0,0,.25)`；SplitterResizeHandle 透明化（仅 hover/drag 显 accent）。**v6 新增 2 个一级 tab：subagent（Bot icon）+ workflow（Workflow icon）**，从 6 个变 8 个 |
+| SideDrawer 容器 | 与 main 共享同一 surface 浮起体（底色同为 `--surface`），从 main 右缘生长挤占 main 宽度；**保留弱投影 `shadow: -12px 0 24px rgba(0,0,0,0.16)` 做视觉分隔**；去 border-l 硬分隔；SplitterResizeHandle 透明化（仅 hover/drag 显 accent）。v6 调整：移除 tasks tab（goal/todo 回归对话流，见下），新增 subagent（Bot icon）+ workflow（Workflow icon），共 7 个一级 tab |
 | **二级 tab 架构** | 形态 B：icon 一级 + 内层二级（按需出现）。**每个一级 tab 是独立页面，二级 tab 由各 tab 组件自行定制**（drawer 框架不统一管二级）。详见下方二级 tab 策略表 |
 | DetailPane | header 去 border-b 改 bg-surface-2 浮起；**二级 tab：支持多文件 tab**（用户点文件→新开/切换 tab，可关闭），预览/变更 toggle 作为当前 tab 的视图切换。参考 `v6-drawer-tabs-demo.html` 形态 B |
 | DiffView | 行背景 12%（token 自动生效）；canvas `bg-bg-input rounded-lg` + py-2 内距；hunk header 去 bg-surface-2 仅 text-neutral-dim；删 lineRowClass hunk 死代码分支 |
@@ -184,7 +207,6 @@ hover: text-neutral-fg
 | BrowserPane | 三处 border-b 全去（guide/nav/login wall），靠各自 bg 分层；guide banner 改中性；登录墙 warn 收敛到单点 |
 | GitPanel | pill 去 bg 改纯色文字 pill（语义靠字色）；**冲突态去 danger 左竖条**（impeccable side-stripe 禁令）改 bg-danger-soft 整块；badge 统一 text-neutral-dim 仅 U 保留 danger；**无二级 tab**（git 状态全局唯一） |
 | CommandDocPanel | header 去 border-b；source 标签圆角升 6px 去 bg；元信息区去 border-t 改 mt-4 空白分层；无二级 tab |
-| TasksPanel/GoalCard | GoalCard 去 border 仅 bg-surface；badge 升胶囊仅 blocked 着色；VERIFY 标字号提 9px 去 bg；todo checkbox 三态保留（语义清晰且面积小）；无二级 tab |
 | **SubagentTab**（新增） | 嵌套渲染该 subagent session 的**只读对话流**（MessageStream，无 composer/输入区——subagent 是 background 任务）。从对话流 subagent block 点击或 workflow tab 的 agent call 进入。标题栏显 agent·slug(model·thinking)，从 workflow 进入有 ← 返回按钮。详见 v6-spec-drawer.html §10 |
 | **WorkflowTab**（新增） | 复用 WorkflowDetail 结构：phase 分组 + agent call 列表（状态点 + agent 名 + tokens/turns/duration 摘要）。点击 agent call → 切 subagent tab 展示对话流。标题栏显 scriptName·slug + pause/resume/abort 操作。详见 v6-spec-drawer.html §11 |
 
@@ -197,17 +219,18 @@ hover: text-neutral-fg
 | browser | 单实例（暂） | 否 | 否 | 当前单 view + URL 替换；多 tab 作为后续扩展 |
 | git | 无 | — | — | 全局唯一状态，无需二级 |
 | doc | 无 | — | — | 单文档，无需二级 |
-| tasks | 无 | — | — | 固定列表，无需二级 |
 | subagent | 无 | 否 | 否 | 嵌套只读对话流（MessageStream 无 composer），单实例=当前选中 subagent |
 | workflow | 无 | 否 | 否 | agent call 列表（phase 分组），点 agent call 切 subagent tab |
 
 **架构含义**：当前 `useDetailPane.state` 是单例（`fileTreeStore.selectedPath` 单值驱动），要多文件 tab 需把单值改为按 tab id 索引的 map。terminal 同理需从 per-session 单 PTY 改为多 PTY 实例管理。这属于阶段 B（renderer 局部重构）/ 阶段 C（视觉层）的衔接点。
 
+**tasks tab 移除决策**：tasks tab 移除，goal/todo 走 gui-protocol 统一渲染回归对话流；移除 HIDDEN_TOOL_NAMES 对 todo/goal_control 的特判（迁移影响见 v6-spec-blocks §12）。原 TasksPanel 的 GoalCard 视觉范式（去 border 仅 bg-surface）迁移至对话流 goal/todo 渲染。
+
+**drawer 静默新增元素登记**：sd-unread 未读角标保留（accent pill + 计数）；主面板:drawer 默认宽度比 1:1，可拖拽调整（D2 一体化后 drawer 挤占 main）。**形态 B 数据模型重构**：detail 多文件 tab / terminal 多实例涉及 useDetailPane 单值→map、单 PTY→多 PTY 重构，属阶段 B renderer 局部重构，v6 spec 仅保留视觉态。
+
 ### 4.4 Overview（已移除）
 
 > **DEPRECATED 2026-07-31**：Overview 概览页整体移除。有了左侧栏（sidebar sessions tab 列表），不再需要独立的概览/首页视图。MainPanel 的 view 路由简化为仅 chat（Workspace），去掉 overview 分支。原 `v6-spec-overview.html` 已删除。
-
-### 4.5 设置页（全屏覆盖重构）
 
 ### 4.5 设置页（全屏覆盖重构）
 
@@ -217,10 +240,10 @@ hover: text-neutral-fg
 | nav | 底色 bg-sunken；选中态 bg-surface + 蓝字（§3.2）；count badge 去彩色改中性圆点 |
 | 内容区 | 左对齐（mx-0）+ max-w-720px；页面标题作为左对齐内容块顶部（非固定栏） |
 | 10 个 *Page 分组卡片 | 去 border（双重分隔 AI slop），改 `bg-card` 层级 + 10px 圆角；行分隔 hairline 降 `rgba(255,255,255,.04)` |
-| 设置行 | 每行 label 下加 12px `--neutral-dim` 描述文字（i18n 新增 `*.desc` keys） |
-| ProviderEditModal → 嵌入式面板 | 点编辑→右侧内容交换为编辑视图+返回按钮，不再双层 modal |
+| 设置行 | 每行 label 下加 12px `--neutral-mid` 描述文字（i18n 新增 `*.desc` keys；mid 过 AA，dim 仅装饰位） |
+| ProviderEditModal → 嵌入式面板 | 点编辑→卡片下方手风琴展开编辑区（取代双层 modal），适合密集表单 |
 | 表单 label | 所有 uppercase tracking-wider 改大小写混合 font-medium |
-| SelectTrigger | 去 border，bg-surface-2→bg-bg-input，圆角 8px（全局改，见 §3.4） |
+| SelectTrigger | spec 画目标态：去 border + bg-bg-input + 圆角 8px（对齐本决策；真实 xyz-ui 组件改造留实施阶段，v6 不改 .vue 源码） |
 | LoadPaths/SourceImportSection | 扁平化嵌套卡片为单列表；强制目录自绘 ✓ 改 Checkbox 原生组件 |
 
 ### 4.6 Overlays
@@ -242,7 +265,7 @@ hover: text-neutral-fg
 
 ### 5.2 z-index 语义化
 - 当前混用 `z-[1]`/`z-10`/`z-[1000]` 任意值
-- v6：定义语义 scale `--z-sticky:1 / --z-popover:10 / --z-overlay:20 / --z-modal:1000`，逐处替换
+- v6：定义语义 scale `--z-sticky:1 / --z-popover:10 / --z-overlay:20 / --z-modal:1000`，逐处替换（映射：SearchModal/FullSettingsOverlay=z-modal 1000；AskUserOverlay=z-overlay 20；SideDrawer 与 main 同体不单列 z）
 
 ### 5.3 图标 size scale
 - 当前 trace icon/badge icon/header icon 混用 10/12/13/14px
@@ -251,6 +274,10 @@ hover: text-neutral-fg
 ### 5.4 i18n P0 修复
 - 补齐 5 个缺失声音 key（soundTitle/successSound/errorSound/soundDefault/soundPreview，中英双语）
 - ConfirmDialog 默认文案改 i18n
+
+### 5.6 SSOT 链文档同步（D9）
+
+v6 修订需同步：README.md（加 v6 章节+索引）、design-system.md（Card/Button/选中态原语同步 v6 §3）、visual-modernization-2026-07.md（标注被 v6-design 追认/修订）。详见 v6-fix-plan.md L1.7/L1.8/L5.5。
 
 ---
 
@@ -401,7 +428,7 @@ hover: text-neutral-fg
 - C1: §2 token 变更（style.css + tailwind.config.ts + 文档同步）
 - C2: §4.1 对话流
 - C3: §4.2 侧栏
-- C4: §4.3 Drawer（含二级 tab，形态 B：icon 一级 + 各 tab 自治二级；detail 多文件 tab / terminal 多实例 tab+新增按钮占位 / git·doc·tasks 无二级）
+- C4: §4.3 Drawer（含二级 tab，形态 B：icon 一级 + 各 tab 自治二级；detail 多文件 tab / terminal 多实例 tab+新增按钮占位 / git·doc 无二级）
 - C5: §4.5 设置页（全屏覆盖重构）
 - C6: §4.6 Overlays（§4.4 Overview 已移除）
 - C7: §5 横切清理
