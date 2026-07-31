@@ -43,6 +43,7 @@ import { useSidebar } from '@/composables/features/useSidebar'
 import { bindForkNoticeEffect } from '@/composables/effects/useForkNoticeEffect'
 import { bindHandoffEffect } from '@/composables/effects/useHandoffEffect'
 import { bindSessionStreamSync } from '@/composables/effects/useSessionStreamSync'
+import { useCompactQueue } from '@/composables/panel/useCompactQueue'
 
 // 应用挂载即初始化连接（mock 模式 200ms 直进 connected；真 runtime 走端口发现）。
 const { t } = useI18n()
@@ -62,6 +63,10 @@ bindHandoffEffect()
 // 对齐派生态视野（isGenerating 扫描所有 session），消除惰性订阅盲区（非交互 session 终态事件丢失 → 侧栏卡 running）。
 // flush:'sync' 保证 appendSession 同 tick 建订阅（fork-ask 路径 send 前订阅就绪）。onScopeDispose 随 App 卸载退订。
 bindSessionStreamSync()
+// compact-queued-messages：初始化 useCompactQueue 单例。App setup 是全局 effect 作用域，
+// 首次调用绑定 app 级 scope（onScopeDispose 随 App 卸载触发，registerSessionCleanup 常驻，
+// 防模块级 onScopeDispose 警告与过早反注册）。
+useCompactQueue()
 onMounted(() => { void init() })
 // [W8] onConnected 内部用模块级 hasConnectedBefore 区分首次 vs 重连：
 // - 首次 connected → initApp（内部含 workspaceStore.load + presetCwd）

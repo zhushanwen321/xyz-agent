@@ -18,6 +18,8 @@ export default {
     retry: 'Retry',
     thinkingLevel: 'Thinking level',
     compacting: 'Compacting…',
+    queueSend: 'Queue to send',
+    commandQueuedRejected: 'Compaction in progress, commands are disabled until it finishes',
     sending: 'Sending…',
     sendHint: 'Type and send',
     steerHint: 'Add to current task with ⏎ · Queue for next turn with Alt+⏎…',
@@ -268,6 +270,11 @@ export default {
     steerLabel: 'STEER append',
     followupLabel: 'FOLLOWUP new turn',
     itemCount: '{count} items',
+  },
+  compactQueue: {
+    pending: 'Send after compaction',
+    itemCount: '{count} items',
+    cancel: 'Cancel queue',
   },
   contextChips: {
     directory: 'Directory',
