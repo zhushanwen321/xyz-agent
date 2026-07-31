@@ -147,8 +147,8 @@ hover: text-neutral-fg
 | Block·thinking | 收起态预览提亮 `text-neutral-mid`（过 AA）；**行数维持 1 行 ellipsis**（60 字符截断，推翻原「显 2 行」决策——2 行破坏 turn 视觉节奏） |
 | Block·bash | **区分两类来源**：① BashOutputBlock（composer `!` 前缀执行，独立系统消息，不可折叠，exit 标签：0→success/N→warn/timeout→dim）② tool-bash（agent 调用，嵌 §6 tool 块，可折叠，border 容器）。详见 v6-spec-blocks.html §5 |
 | Block·tool | 状态矩阵：collapsed/expanded × running(双环 loader)/done/failed/unfinished。**failed 统一不切 icon**（保留原 tool icon，与 subagent/workflow 一致，靠 toolName 降 `neutral-mid` 表达，无红框）；exit≠0 加 mono `exit N` 中性标签；unfinished「未结束」标签 |
-| Block·subagent | background 异步（只展 input，结果由后续 turn 总结）；可折叠 default 收起无 chevron。独有 bg 状态行（blink 蓝点）。failed 不切 icon（保留 Bot + 颜色表达）。详见 v6-spec-blocks.html §10 |
-| Block·workflow | 可折叠 default 收起。**进度条非内置**（仅 extension `__gui__` type:progress-bar 推送时渲染，fill 色 ok/warn/danger）。failed 不切 icon（保留 Workflow）。审批按钮 DEFERRED |
+| Block·subagent | background 异步。**v6：collapsed only（去 expanded）**，只显 `[Bot] subagent agent · slug (model · thinking X)`，点击 → drawer 打开 subagent tab 展示嵌套只读对话流（详见 v6-spec-drawer §10）。failed 不切 icon（Bot + neutral-mid）。完成通知由 §10.5 BgNotifyCard 承载 |
+| Block·workflow | **v6：collapsed only（去 expanded）**，只显 `[Workflow] workflow name · slug`，点击 → drawer 打开 workflow tab 展示 agent call 列表（复用 WorkflowDetail phase 分组，点 agent call 切 subagent tab，详见 v6-spec-drawer §11）。failed 不切 icon（Workflow + neutral-mid）。GUI 渲染迁 drawer/extension |
 | Block icon | **v6 全更新**：thinking=Brain / tool-bash=SquareTerminal / tool 通用兜底=SquareFunction / subagent=Bot / workflow=Workflow。stroke-width 统一 1.75。size：block header 13px 统一。展开态统一复制按钮（icon 下、与文字水平对齐、hover 显、复制全部、Check 反馈）。详见 v6-spec-blocks.html |
 | assistant 正文 markdown | `<p>` 恢复段间距 0.5em；h3 提档 1.12em 区分 h4；代码块容器 `bg-input` token 化；行内 code bg 统一 `bg-input`。**表格圆角化**（rounded-lg + thead surface-2 底 + 行间细 border）；blockquote 不动。**内容容器 head 统一**（代码块/mermaid/bash/ChangeSetCard）：轻量 head 栏 h-7 + 半透明背景优化 + 复制按钮右侧统一 + mermaid 按钮右侧归拢。**TurnSummary hover actions 方案 A**：3 扁平 icon button（Copy/GitFork/HandHelping），去 split-button 和 MD/+Q badge；fork/handoff 点击=+Q 带提问变体，composer 直接 enter=无内容变体。详见 v6-spec-content.html §12/§12.5/§12.6 |
 | 动画 | 状态指示（双环 loader 1.4s / 单环 spinner 1s / 脉冲点 1.8s / blink 1s）+ 微交互（hover/折叠 `duration-fast` 120ms，focus `duration` 200ms，easing `--ease`）。reduced-motion 全局兜底。大动效后出 |
@@ -176,7 +176,7 @@ hover: text-neutral-fg
 
 | 组件 | v6 方案 |
 |------|---------|
-| SideDrawer 容器 | 底色 `bg-bg`（画布色）；去硬 border-l 改投影分隔 `shadow: -12px 0 24px rgba(0,0,0,.25)`；SplitterResizeHandle 透明化（仅 hover/drag 显 accent） |
+| SideDrawer 容器 | 底色 `bg-bg`（画布色）；去硬 border-l 改投影分隔 `shadow: -12px 0 24px rgba(0,0,0,.25)`；SplitterResizeHandle 透明化（仅 hover/drag 显 accent）。**v6 新增 2 个一级 tab：subagent（Bot icon）+ workflow（Workflow icon）**，从 6 个变 8 个 |
 | **二级 tab 架构** | 形态 B：icon 一级 + 内层二级（按需出现）。**每个一级 tab 是独立页面，二级 tab 由各 tab 组件自行定制**（drawer 框架不统一管二级）。详见下方二级 tab 策略表 |
 | DetailPane | header 去 border-b 改 bg-surface-2 浮起；**二级 tab：支持多文件 tab**（用户点文件→新开/切换 tab，可关闭），预览/变更 toggle 作为当前 tab 的视图切换。参考 `v6-drawer-tabs-demo.html` 形态 B |
 | DiffView | 行背景 12%（token 自动生效）；canvas `bg-bg-input rounded-lg` + py-2 内距；hunk header 去 bg-surface-2 仅 text-neutral-dim；删 lineRowClass hunk 死代码分支 |
@@ -185,6 +185,8 @@ hover: text-neutral-fg
 | GitPanel | pill 去 bg 改纯色文字 pill（语义靠字色）；**冲突态去 danger 左竖条**（impeccable side-stripe 禁令）改 bg-danger-soft 整块；badge 统一 text-neutral-dim 仅 U 保留 danger；**无二级 tab**（git 状态全局唯一） |
 | CommandDocPanel | header 去 border-b；source 标签圆角升 6px 去 bg；元信息区去 border-t 改 mt-4 空白分层；无二级 tab |
 | TasksPanel/GoalCard | GoalCard 去 border 仅 bg-surface；badge 升胶囊仅 blocked 着色；VERIFY 标字号提 9px 去 bg；todo checkbox 三态保留（语义清晰且面积小）；无二级 tab |
+| **SubagentTab**（新增） | 嵌套渲染该 subagent session 的**只读对话流**（MessageStream，无 composer/输入区——subagent 是 background 任务）。从对话流 subagent block 点击或 workflow tab 的 agent call 进入。标题栏显 agent·slug(model·thinking)，从 workflow 进入有 ← 返回按钮。详见 v6-spec-drawer.html §10 |
+| **WorkflowTab**（新增） | 复用 WorkflowDetail 结构：phase 分组 + agent call 列表（状态点 + agent 名 + tokens/turns/duration 摘要）。点击 agent call → 切 subagent tab 展示对话流。标题栏显 scriptName·slug + pause/resume/abort 操作。详见 v6-spec-drawer.html §11 |
 
 **二级 tab 策略表**（按需出现，各 tab 自治）：
 
@@ -196,6 +198,8 @@ hover: text-neutral-fg
 | git | 无 | — | — | 全局唯一状态，无需二级 |
 | doc | 无 | — | — | 单文档，无需二级 |
 | tasks | 无 | — | — | 固定列表，无需二级 |
+| subagent | 无 | 否 | 否 | 嵌套只读对话流（MessageStream 无 composer），单实例=当前选中 subagent |
+| workflow | 无 | 否 | 否 | agent call 列表（phase 分组），点 agent call 切 subagent tab |
 
 **架构含义**：当前 `useDetailPane.state` 是单例（`fileTreeStore.selectedPath` 单值驱动），要多文件 tab 需把单值改为按 tab id 索引的 map。terminal 同理需从 per-session 单 PTY 改为多 PTY 实例管理。这属于阶段 B（renderer 局部重构）/ 阶段 C（视觉层）的衔接点。
 

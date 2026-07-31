@@ -387,7 +387,7 @@ body {
   font-size: 11px; font-family: var(--font-mono);
   opacity: 0; transition: opacity var(--duration-fast), background var(--duration-fast), color var(--duration-fast); }
 .blk-copy svg { width: 12px; height: 12px; flex-shrink: 0; }
-.tool-body:hover .blk-copy, .sa-body:hover .blk-copy, .tk-body:hover .blk-copy, .wf-body:hover .blk-copy, .bob:hover .blk-copy { opacity: 1; }
+.tool-body:hover .blk-copy, .tk-body:hover .blk-copy, .bob:hover .blk-copy { opacity: 1; }
 .blk-copy:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 /* demo 态常驻可见（spec 静态展示，模拟 hover）*/
 .blk-copy.always-on { opacity: 1; }
@@ -402,7 +402,7 @@ body {
 /* diff 行 */
 .bash-trunc { color: var(--neutral-mid); font-family: var(--font-mono); font-size: 11px; padding: 4px 0; }
 
-/* ── subagent block（v6：failed 不切 icon，靠颜色表达；bg 状态行 blink 蓝点）── */
+/* ── subagent block（v6：collapsed only，failed 不切 icon 靠颜色表达；去 bg 状态行）── */
 .sa-v6 { padding: 10px 0 8px; margin-bottom: 2px; }
 .sa-hd { display: flex; min-width: 0; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; cursor: pointer; }
 .sa-ico { width: 13px; height: 13px; color: var(--neutral-ico); flex-shrink: 0; }
@@ -413,11 +413,6 @@ body {
 .sa-slug { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
 .sa-model { font-family: var(--font-mono); font-size: 11px; color: var(--neutral-dim); }
 .sa-model .think-x { color: var(--neutral-dim); }
-.sa-task-preview { margin-top: 2px; padding-left: 16px; font-size: 12px; color: var(--neutral-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sa-body { margin-top: 4px; position: relative; }
-.sa-task-full { padding: 6px 0 6px 16px; font-size: 12px; line-height: 1.65; color: var(--neutral-mid); white-space: pre-wrap; }
-.sa-bgstatus { padding: 6px 0 6px 16px; margin-top: 6px; display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 11px; color: var(--neutral-dim); }
-.sa-bgstatus .blink-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: blink 1s step-end infinite; }
 
 /* ── BgNotifyCard（background 完成通知，§10.5，系统级异步通知卡片）── */
 .bn-card { display: flex; flex-direction: column; gap: 6px; border-radius: var(--radius); padding: 8px 12px; font-family: var(--font-mono); }
@@ -501,18 +496,16 @@ body {
 .gui-ansi { white-space: pre-wrap; font-family: var(--font-mono); font-size: 11px; line-height: 1.5; }
 .gui-data-key { display: inline-block; background: var(--surface-2); color: var(--accent); border-radius: var(--radius-sm); padding: 1px 5px; font-size: 10px; margin: 1px 2px; }
 
-/* ── workflow block（v6：failed 不切 icon；GUI 渲染由 extension 推，本身无内置进度条）── */
+/* ── workflow block（v6：collapsed only，failed 不切 icon；GUI 渲染迁至 drawer / extension）── */
 .wf-v6 { padding: 10px 0 8px; margin-bottom: 2px; }
 .wf-hd { display: flex; min-width: 0; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; cursor: pointer; }
 .wf-ico { width: 13px; height: 13px; color: var(--neutral-ico); flex-shrink: 0; }
 .wf-loader { width: 13px; height: 13px; color: var(--accent); animation: spin 1.4s linear infinite; flex-shrink: 0; }
 .wf-prefix { font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--neutral-fg); margin-right: 2px; }
-.wf-action { font-family: var(--font-mono); font-size: 11px; color: var(--neutral-mid); }
 .wf-name { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
-.wf-runid { font-family: var(--font-mono); font-size: 11px; color: var(--neutral-dim); }
-.wf-body { margin-top: 4px; position: relative; }
-.wf-body-content { padding: 6px 0 6px 16px; font-size: 12px; line-height: 1.55; color: var(--neutral-mid); }
-/* GUI 进度条（extension 通过 __gui__ 推送，非 workflow 内置）*/
+.wf-sep { color: var(--neutral-faint); }
+.wf-slug { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
+/* GUI 进度条（extension 通过 __gui__ 推送，renderer 在 drawer workflow tab / extension 自呈现，§11.5）*/
 .gui-pb { height: 6px; overflow: hidden; border-radius: var(--radius-sm); background: var(--bg-input); margin: 6px 0; }
 .gui-pb-fill { height: 100%; border-radius: var(--radius-sm); transition: width var(--duration) var(--ease); }
 .gui-pb-fill.ok { background: var(--success); }
@@ -562,7 +555,6 @@ body {
 .md-body hr { border: 0; border-top: 1px solid var(--border); margin: 1em 0; }
 
 /* ── 动画（v6：状态指示 + 微交互，token 层已定义 duration/ease；keyframes spin/pulse-accent 在上方已定义）── */
-@keyframes blink { 0%,50% { opacity: 1; } 51%,100% { opacity: 0; } }
 .anim-note { font-family: var(--font-mono); font-size: 10px; color: var(--accent); background: var(--accent-soft); padding: 2px 6px; border-radius: var(--radius-sm); }
 
 /* doc foot */
@@ -1026,75 +1018,53 @@ added 1 package in 2s</div>
   </section>
 
   <!-- ================================================================
-       §10 Block · subagent（background 异步模型，无 foreground 分支）
+       §10 Block · subagent（background 异步模型；v6：collapsed only，点击开 drawer subagent tab）
        ================================================================ -->
   <section class="spec" id="s10">
     <div class="spec-head"><span class="spec-num">§10</span><h2 class="spec-title">Block · subagent</h2></div>
-    <p class="spec-desc">异步 background 执行——只展示发起参数（input），看不到执行过程（结果由主 agent 后续 turn 总结）。可折叠（default 收起，无 chevron）。v6：failed 不切 icon（与 §6 tool 决策一致——<b>全部不切，靠颜色表达</b>），保留 Bot 图标 + toolName 降 <code>neutral-mid</code> + icon hover warn。独有 background 状态行（blink 蓝点）。</p>
+    <p class="spec-desc">异步 background 执行——只展示发起参数（input），看不到执行过程（结果由主 agent 后续 turn 总结）。<b>v6：去掉 expanded 态，collapsed only</b>——整个 block 是单行精简摘要，点击不再在对话流内展开，而是调用 <code>drawer.open('subagent', { subagentId })</code> 在 <b>drawer 的 subagent tab</b> 展示该 subagent 的完整对话流（drawer 新增 subagent 一级 tab，详见 v6-spec-drawer.html）。collapsed 只保留一行：Bot icon + <code>subagent</code> prefix + <code>agent · slug</code> + <code>(model · thinking X)</code>。v6：failed 不切 icon（保留 Bot + 颜色表达），failed 时 icon + agent 降 <code>neutral-mid</code>。完成结果通知仍走 §10.5 BgNotifyCard。</p>
     <div class="change-points">
+      <span class="cp cp-v6"><b>[v6 改动] 去 expanded</b> collapsed only · 点击开 drawer subagent tab</span>
+      <span class="cp cp-v6"><b>[v6 改动] 字段精简</b> 去 task 预览/bg 状态行/copy，仅显单行</span>
       <span class="cp cp-v6"><b>failed</b> 不切 icon（统一靠颜色，与 tool/workflow 一致）</span>
       <span class="cp cp-v6"><b>icon</b> stroke-width 1.75（统一）</span>
     </div>
 
     <div class="render-frame">
       <div class="panel-stage"><div class="ms-scroll"><div class="ms-turn"><div class="ms-assistant-col">
+        <!-- v6：collapsed only，整个 block 一行，点击开 drawer subagent tab（drawer.open('subagent', { subagentId })）-->
         <div class="state-row" style="margin:0;">
-          <div class="state-tag">collapsed</div>
-          <div class="state-demo">
-            <div class="sa-v6">
-              <div class="sa-hd">
-                <svg class="sa-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
-                <span class="sa-prefix">subagent</span><span class="sa-agent">general-purpose</span><span class="sa-sep">·</span><span class="sa-slug">analyze-deps</span><span class="sa-model">(glm-5.2 · <span class="think-x">thinking 3</span>)</span>
-              </div>
-              <div class="sa-task-preview">分析 package.json 的依赖关系，找出循环引用</div>
-            </div>
-          </div>
-        </div>
-        <div class="state-row" style="margin:14px 0 0;">
           <div class="state-tag">running</div>
           <div class="state-demo">
             <div class="sa-v6">
               <div class="sa-hd">
                 <svg class="sa-loader" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="10" opacity="0.35"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>
-                <span class="sa-prefix">subagent</span><span class="sa-agent">general-purpose</span><span class="sa-model">(glm-5.2)</span>
-              </div>
-              <div class="sa-body">
-                <div class="sa-task-full">分析 package.json 的依赖关系，找出循环引用</div>
-                <div class="sa-bgstatus"><span class="blink-dot"></span>background · running detached · will notify on completion</div>
+                <span class="sa-prefix">subagent</span><span class="sa-agent">general-purpose</span><span class="sa-sep">·</span><span class="sa-slug">analyze-deps</span><span class="sa-model">(glm-5.2 · <span class="think-x">thinking 3</span>)</span>
               </div>
             </div>
           </div>
         </div>
+        <!-- done 态：collapsed，点击开 drawer；Bot icon 回归中性，无特殊装饰 -->
         <div class="state-row" style="margin:14px 0 0;">
-          <div class="state-tag">expanded</div>
+          <div class="state-tag">done</div>
           <div class="state-demo">
             <div class="sa-v6">
               <div class="sa-hd">
                 <svg class="sa-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
                 <span class="sa-prefix">subagent</span><span class="sa-agent">general-purpose</span><span class="sa-sep">·</span><span class="sa-slug">analyze-deps</span><span class="sa-model">(glm-5.2 · <span class="think-x">thinking 3</span>)</span>
               </div>
-              <div class="sa-body">
-                <!-- v6 统一：copy 按钮在 block icon（Bot）下方、内容区顶部，与正文基线对齐（hover 显，复制全部 task + bgStatus；Check 反馈）。
-                     布局：header 行 [Bot] subagent general-purpose · analyze-deps → 下方内容区第一行 [Copy] 正文… -->
-                <div class="blk-copy-row"><span class="blk-copy always-on" title="copy（hover 显，复制 task + bgStatus）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</span></div>
-                <div class="sa-task-full">分析 package.json 的依赖关系，找出循环引用。
-重点关注 packages/runtime 和 packages/renderer 之间的依赖方向，
-列出所有 workspace:* 引用。</div>
-                <!-- bg 状态行：来自 bgResponse.message（extension 自报文本，running 时回退固定串）。完成通知看 §10.5 BgNotifyCard -->
-                <div class="sa-bgstatus"><span class="blink-dot"></span>background · 完成 · 已通知主 agent</div>
-              </div>
             </div>
           </div>
         </div>
+        <!-- failed 态：无 expanded，点击仍开 drawer；icon + agent 降 neutral-mid 表达失败 -->
         <div class="state-row" style="margin:14px 0 0;">
           <div class="state-tag">failed</div>
           <div class="state-demo">
             <div class="sa-v6">
               <div class="sa-hd">
-                <svg class="sa-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
-                <span class="sa-prefix" style="color:var(--neutral-mid);">subagent</span><span class="sa-agent" style="color:var(--neutral-mid);">general-purpose</span>
+                <svg class="sa-ico" style="color:var(--neutral-mid);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
+                <span class="sa-prefix" style="color:var(--neutral-mid);">subagent</span><span class="sa-agent" style="color:var(--neutral-mid);">general-purpose</span><span class="sa-sep" style="color:var(--neutral-faint);">·</span><span class="sa-slug" style="color:var(--neutral-mid);">analyze-deps</span><span class="sa-model">(glm-5.2 · <span class="think-x">thinking 3</span>)</span>
               </div>
-              <div class="sa-task-preview">分析 package.json 的依赖关系，找出循环引用</div>
             </div>
           </div>
         </div>
@@ -1102,20 +1072,20 @@ added 1 package in 2s</div>
     </div>
 
     <div class="anno-grid">
-      <div class="anno"><b>形态:</b><br>background 异步（无 foreground 分支，当前实现缺口）</div>
-      <div class="anno"><b>折叠:</b><br>本地态，default 收起，<b>无 chevron</b>，failed 不强制展开</div>
+      <div class="anno"><b>形态 [v6 改动]:</b><br><span class="v6">background 异步（无 foreground 分支）· collapsed only，无 expanded · 去掉 task 预览/bg 状态行/copy</span></div>
+      <div class="anno"><b>点击行为 [v6 改动]:</b><br><span class="v6">整个 block 可点击 → <code>drawer.open('subagent', { subagentId })</code>，drawer 打开 subagent tab 展示该 subagent 完整对话流（不再在对话流内展开）· cursor pointer · hover opacity-80</span></div>
       <div class="anno"><b>header:</b><br>13px [--text-base] font-medium · gap 6px</div>
-      <div class="anno"><b>icon:</b><br>Bot 13px · stroke 1.75 · <span class="v6">failed 不切（统一靠颜色）</span></div>
+      <div class="anno"><b>icon:</b><br>Bot 13px · stroke 1.75 · running 双环 loader · <span class="v6">failed/done 都不切（done 回归中性 icon）</span></div>
       <div class="anno"><b>prefix:</b><br>「subagent」10px mono 600 uppercase tracking-.08em neutral-fg</div>
-      <div class="anno"><b>agent/slug:</b><br>12px mono accent · 展开 invisible</div>
-      <div class="anno"><b>model:</b><br>11px mono · 「(model · thinking X)」dim</div>
+      <div class="anno"><b>agent:</b><br>12px mono accent · failed 降 neutral-mid</div>
+      <div class="anno"><b>slug:</b><br><span class="v6">12px mono accent（前缀 ·）· 无 slug 则省略 · sep 与 slug</span></div>
+      <div class="anno"><b>model:</b><br>11px mono · 「(model · thinking X)」dim · <span class="v6">无 model 则整组省略（含括号）· thinking level 跟在 model 后</span></div>
       <div class="anno"><b>running:</b><br>双环 loader 13px accent（替换 Bot icon）</div>
-      <div class="anno"><b>task 预览:</b><br>12px neutral-dim truncate（60 字）</div>
-      <div class="anno"><b>task full:</b><br>12px neutral-mid leading-1.65 whitespace-pre-wrap</div>
-      <div class="anno"><b>bg 状态行:</b><br>6px accent blink 点 + mono 11px neutral-dim · <span class="v6">文案来自 <code>bgResponse.message</code>（extension 自报任意文本），running 时回退固定串。subagent 块本身无 done 视觉态——完成通知由 §10.5 BgNotifyCard 单独渲染</span></div>
-      <div class="anno"><b>copy 按钮 [v6 布局]:</b><br><span class="old">absolute 左上角浮层</span><br><span class="v6">block icon（Bot）下方内容区顶部行内（与正文基线对齐）· hover 显 · 复制全部 task + bgStatus · Check 反馈</span></div>
-      <div class="anno"><b>failed 色:</b><br><span class="v6">prefix/agent 降 neutral-mid（icon 保留 Bot）</span></div>
-      <div class="anno" style="color:var(--warn);"><b>[欠考虑] task 无限高</b><br>展开体 subagentTask 全量 whitespace-pre-wrap 无 max-h（BlockSubagent.vue:59-62），超长 prompt 撑爆——待设计（如 max-h + 滚动）</div>
+      <div class="anno"><b>done 态:</b><br><span class="v6">collapsed，回归中性 Bot icon（无 success 绿装饰）；完成结果通知走 §10.5 BgNotifyCard</span></div>
+      <div class="anno"><b>failed 色:</b><br><span class="v6">icon + agent + slug 降 neutral-mid（prefix 也降，整体表达失败）</span></div>
+      <div class="anno"><b>task 预览 [已移除]:</b><br><span class="old">12px neutral-dim truncate（60 字）第二行</span><br><span class="v6">v6 collapsed only 无展开内容，不在对话流显 task；task 全文看 drawer subagent tab</span></div>
+      <div class="anno"><b>bg 状态行 [已移除]:</b><br><span class="old">6px accent blink 点 + mono 11px neutral-dim（bgResponse.message）</span><br><span class="v6">v6 去掉内联 bg 状态行——running/done/failed 全在 collapsed 单行；完成通知看 §10.5 BgNotifyCard</span></div>
+      <div class="anno"><b>copy 按钮 [已移除]:</b><br><span class="old">absolute 左上角浮层 / block icon 下方内容区顶部行内</span><br><span class="v6">v6 collapsed only 无展开内容，block 本身不带 copy；结果复制走 drawer subagent tab</span></div>
     </div>
   </section>
 
@@ -1124,7 +1094,7 @@ added 1 package in 2s</div>
        ================================================================ -->
   <section class="spec" id="s10-5">
     <div class="spec-head"><span class="spec-num">§10.5</span><h2 class="spec-title">BgNotifyCard · background 完成通知</h2></div>
-    <p class="spec-desc">§10 subagent 的<b>配套完成通知组件</b>。它是<b>独立 Message 类型</b>（<code>message.ts:269</code> <code>bgNotify</code> 字段，<code>customType:"subagent-bg-notify"</code>），渲染入口不同于 BlockSubagent——BlockSubagent 渲染<b>发起参数</b>（input），BgNotifyCard 渲染<b>完成结果</b>（output）。视觉语义：<b>系统级异步通知</b>，卡片带边框，<b>弱于</b> user/assistant 气泡、<b>强于</b> SystemNotice。关系链：subagent 块发起 → BgNotifyCard 完成通知 → 主 agent 后续 turn 总结。</p>
+    <p class="spec-desc">§10 subagent 的<b>配套完成通知组件</b>。它是<b>独立 Message 类型</b>（<code>message.ts:269</code> <code>bgNotify</code> 字段，<code>customType:"subagent-bg-notify"</code>），渲染入口不同于 BlockSubagent——BlockSubagent 渲染<b>发起参数</b>（input，v6 collapsed only 不再展开），BgNotifyCard 渲染<b>完成结果</b>（output）。视觉语义：<b>系统级异步通知</b>，卡片带边框，<b>弱于</b> user/assistant 气泡、<b>强于</b> SystemNotice。关系链：subagent 块（§10 collapsed）发起 → BgNotifyCard 完成通知 → 主 agent 后续 turn 总结。</p>
     <div class="change-points">
       <span class="cp cp-v6"><b>新增</b> BgNotifyCard（spec 原完全缺失，本 section 补全）</span>
       <span class="cp cp-v6"><b>两种形态</b> 单条（可展开）· 批量（不可展开，每 record 一行）</span>
@@ -1222,101 +1192,59 @@ added 1 package in 2s</div>
       <div class="anno"><b>展开详情:</b><br><span class="v6">patchHint（border-info/30 bg-info-soft text-info，「git apply」提示）+ fullContent（MarkdownRenderer thinking variant，max-h-[200px] 滚动）（:51-59）</span></div>
       <div class="anno"><b>批量形态:</b><br><span class="v6">isBatch：每 record 一行（icon + agent + ·model + —耗时），<b>不可展开</b>（:18-30）</span></div>
       <div class="anno"><b>耗时:</b><br><span class="v6">startedAt→endedAt 秒级 1 位小数（如「12.3s」），endedAt 缺失返空（:153-158）</span></div>
-      <div class="anno"><b>与 §10 关系:</b><br><span class="v6">subagent 块（§10）发起 → BgNotifyCard（§10.5）完成通知 → 主 agent 后续 turn 总结。block 内 bg 状态行是 extension 自报文本，完成态视觉看此卡片</span></div>
+      <div class="anno"><b>与 §10 关系 [v6]:</b><br><span class="v6">subagent 块（§10 v6 collapsed only，不再展开也不再有内联 bg 状态行）发起 → BgNotifyCard（§10.5）完成通知 → 主 agent 后续 turn 总结。完成态视觉（结果摘要/patch/fullContent）由本卡片单独承载，subagent 块本身只保留单行摘要，详情走 drawer subagent tab</span></div>
       <div class="anno" style="color:var(--warn);"><b>[欠考虑] 批量无上限</b><br>批量 items 无上限折叠（notifier 60s 滑动窗口合并），且<b>批量不可展开</b>（patchFile/fullContent 无法查看）——大批量时信息丢失，待设计</div>
     </div>
   </section>
 
   <!-- ================================================================
-       §11 Block · workflow（GUI 渲染由 extension 推，本身无内置进度条）
+       §11 Block · workflow（v6：collapsed only，点击开 drawer workflow tab；GUI 渲染迁至 drawer / extension）
        ================================================================ -->
   <section class="spec" id="s11">
     <div class="spec-head"><span class="spec-num">§11</span><h2 class="spec-title">Block · workflow</h2></div>
-    <p class="spec-desc">workflow 工具调用块。可折叠（default 收起）。v6：failed 不切 icon（保留 Workflow + 颜色表达）。<b>进度条非内置</b>——仅当 extension 通过 <code>details.__gui__</code> 推送 <code>type:'progress-bar'</code> 时才渲染（见展开态示例 + §11.5 GUI 组件）。done 态无特殊装饰（回归中性 icon，与 failed 对称靠中性色）。审批/救生按钮 DEFERRED（G-018 决策）。</p>
+    <p class="spec-desc">workflow 工具调用块。<b>v6：去掉 expanded 态，collapsed only</b>——整个 block 是单行精简摘要，点击不再在对话流内展开，而是调用 <code>drawer.open('workflow', { runId })</code> 在 <b>drawer 的 workflow tab</b> 展示该 workflow 的 agent call 列表（drawer 新增 workflow 一级 tab，详见 v6-spec-drawer.html）。collapsed 只保留一行：Workflow icon + <code>workflow</code> prefix + <code>name · slug</code>。v6：failed/done 不切 icon（保留 Workflow + 颜色表达），failed 时 icon + name 降 <code>neutral-mid</code>。GUI 渲染（list-tree/progress-bar）<b>不再内联展开</b>，迁移到 drawer workflow tab 或由 extension 自行呈现（见 §11.5）。</p>
     <div class="change-points">
+      <span class="cp cp-v6"><b>[v6 改动] 去 expanded</b> collapsed only · 点击开 drawer workflow tab</span>
+      <span class="cp cp-v6"><b>[v6 改动] 字段精简</b> 去掉 action/runId/args.task 预览，仅显 name · slug</span>
+      <span class="cp cp-v6"><b>[架构变更]</b> GUI 渲染迁移出 workflow 块（→ drawer / extension 自呈现）</span>
       <span class="cp cp-v6"><b>failed/done</b> 不切 icon（统一靠颜色，done 回归中性）</span>
-      <span class="cp cp-v6"><b>进度条</b> extension 推（非内置）· 含 label 行 + 数字读数 + track bg-bg-input</span>
     </div>
 
     <div class="render-frame">
       <div class="panel-stage"><div class="ms-scroll"><div class="ms-turn"><div class="ms-assistant-col">
+        <!-- v6：collapsed only，整个 block 一行，点击开 drawer workflow tab（drawer.open('workflow', { runId })）-->
         <div class="state-row" style="margin:0;">
-          <div class="state-tag">collapsed</div>
-          <div class="state-demo">
-            <div class="wf-v6">
-              <div class="wf-hd">
-                <svg class="wf-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>
-                <span class="wf-prefix">workflow</span><span class="wf-action">run</span><span class="wf-name">test-suite</span><span class="sa-sep">·</span><span class="wf-name">unit</span><span class="wf-runid">a1b2c3d4</span>
-              </div>
-              <div class="sa-task-preview">运行单元测试套件</div>
-            </div>
-          </div>
-        </div>
-        <div class="state-row" style="margin:14px 0 0;">
-          <div class="state-tag">running+GUI</div>
+          <div class="state-tag">running</div>
           <div class="state-demo">
             <div class="wf-v6">
               <div class="wf-hd">
                 <svg class="wf-loader" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="10" opacity="0.35"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>
-                <span class="wf-prefix">workflow</span><span class="wf-action">run</span><span class="wf-name">test-suite</span>
-              </div>
-              <div class="wf-body">
-                <div class="wf-body-content">运行单元测试套件</div>
-                <!-- GUI 进度条：extension 推送 __gui__ type:progress-bar（完整结构见 §11.5）
-                     label 行（左）+ current/total unit 数字读数（右）+ track bg-bg-input + fill severity -->
-                <div class="gui-pb-full">
-                  <div class="gui-pb-label-row"><span class="gui-pb-label">running tests</span><span class="gui-pb-count">31<span class="gui-pb-count-dim"> / 50 tests</span></span></div>
-                  <div class="gui-pb"><div class="gui-pb-fill warn" style="width:62%;"></div></div>
-                </div>
-                <div class="sa-bgstatus" style="padding-left:16px;"><span class="blink-dot"></span>running</div>
+                <span class="wf-prefix">workflow</span><span class="wf-name">test-suite</span><span class="wf-sep">·</span><span class="wf-slug">unit</span>
               </div>
             </div>
           </div>
         </div>
-        <!-- done 态：无特殊装饰，回归中性 icon（与 failed 对称靠中性色，无 success 绿装饰）-->
+        <!-- done 态：无特殊装饰，回归中性 icon（与 failed 对称靠中性色，无 success 绿装饰）；仍是 collapsed，点击开 drawer -->
         <div class="state-row" style="margin:14px 0 0;">
           <div class="state-tag">done</div>
           <div class="state-demo">
             <div class="wf-v6">
               <div class="wf-hd">
                 <svg class="wf-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>
-                <span class="wf-prefix">workflow</span><span class="wf-action">status</span><span class="wf-name" style="color:var(--neutral-mid);">test-suite</span><span class="sa-sep">·</span><span class="wf-name" style="color:var(--neutral-mid);">unit</span><span class="wf-runid">a1b2c3d4</span>
-              </div>
-              <div class="sa-task-preview">运行单元测试套件</div>
-            </div>
-          </div>
-        </div>
-        <!-- expanded（含 copy 按钮，workflow 展开也有 copy，Block.vue:92-101）-->
-        <div class="state-row" style="margin:14px 0 0;">
-          <div class="state-tag">expanded</div>
-          <div class="state-demo">
-            <div class="wf-v6">
-              <div class="wf-hd">
-                <svg class="wf-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>
-                <span class="wf-prefix">workflow</span><span class="wf-action">run</span><span class="wf-name">test-suite</span><span class="sa-sep">·</span><span class="wf-name">unit</span><span class="wf-runid">a1b2c3d4</span>
-              </div>
-              <div class="wf-body">
-                <!-- v6 统一：copy 按钮在 block icon（Workflow）下方、内容区顶部，与正文基线对齐（hover 显，复制全部 workflow 结果；Check 反馈）。
-                     布局：header 行 [Workflow] run test-suite → 下方内容区第一行 [Copy] 正文… -->
-                <div class="blk-copy-row"><span class="blk-copy always-on" title="copy（hover 显，复制全部 workflow 结果）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</span></div>
-                <div class="wf-body-content">运行单元测试套件，覆盖率 ≥ 80%</div>
-                <div class="gui-pb-full">
-                  <div class="gui-pb-label-row"><span class="gui-pb-label">coverage</span><span class="gui-pb-count">42<span class="gui-pb-count-dim"> / 50 tests</span></span></div>
-                  <div class="gui-pb"><div class="gui-pb-fill warn" style="width:84%;background:var(--success);"></div></div>
-                </div>
+                <span class="wf-prefix">workflow</span><span class="wf-name">test-suite</span><span class="wf-sep">·</span><span class="wf-slug">unit</span>
               </div>
             </div>
           </div>
         </div>
+        <!-- failed 态：无 expanded，点击仍开 drawer；icon + name 降 neutral-mid 表达失败 -->
         <div class="state-row" style="margin:14px 0 0;">
           <div class="state-tag">failed</div>
           <div class="state-demo">
             <div class="wf-v6">
               <div class="wf-hd">
-                <svg class="wf-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>
-                <span class="wf-prefix" style="color:var(--neutral-mid);">workflow</span><span class="wf-action" style="color:var(--neutral-mid);">run</span><span class="wf-name" style="color:var(--neutral-mid);">test-suite</span>
+                <svg class="wf-ico" style="color:var(--neutral-mid);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>
+                <span class="wf-prefix" style="color:var(--neutral-mid);">workflow</span><span class="wf-name" style="color:var(--neutral-mid);">test-suite</span><span class="wf-sep" style="color:var(--neutral-faint);">·</span><span class="wf-slug" style="color:var(--neutral-mid);">unit</span>
               </div>
-              <div class="sa-task-preview">运行单元测试套件</div>
             </div>
           </div>
         </div>
@@ -1324,20 +1252,18 @@ added 1 package in 2s</div>
     </div>
 
     <div class="anno-grid">
-      <div class="anno"><b>折叠:</b><br>本地态，default 收起</div>
+      <div class="anno"><b>形态 [v6 改动]:</b><br><span class="v6">collapsed only，无 expanded · 整个 block 是单行精简摘要 · 去 action/runId/args.task 预览</span></div>
+      <div class="anno"><b>点击行为 [v6 改动]:</b><br><span class="v6">整个 block 可点击 → <code>drawer.open('workflow', { runId })</code>，drawer 打开 workflow tab 展示该 workflow 的 agent call 列表（不再在对话流内展开）· cursor pointer · hover opacity-80</span></div>
       <div class="anno"><b>header:</b><br>13px [--text-base] font-medium · gap 6px</div>
-      <div class="anno"><b>icon:</b><br>Workflow 13px · stroke 1.75 · <span class="v6">failed/done 都不切（done 回归中性 icon）</span></div>
+      <div class="anno"><b>icon:</b><br>Workflow 13px · stroke 1.75 · running 双环 loader · <span class="v6">failed/done 都不切（done 回归中性 icon）</span></div>
       <div class="anno"><b>prefix:</b><br>「workflow」10px mono 600 uppercase neutral-fg</div>
-      <div class="anno"><b>action:</b><br>11px mono neutral-mid（run/status/pause）</div>
-      <div class="anno"><b>name:</b><br>12px mono accent（仅 run action 有）· done/failed 降 neutral-mid</div>
-      <div class="anno"><b>runId:</b><br>11px mono neutral-dim（前 8 位）</div>
+      <div class="anno"><b>name:</b><br><span class="v6">12px mono accent（workflow 脚本名）· 无 name 时只显 slug · failed 降 neutral-mid</span></div>
+      <div class="anno"><b>slug:</b><br><span class="v6">12px mono accent（本次运行标识，前缀 ·）· 无 slug 则省略 · sep 与 slug</span><br><span class="old">旧 runId 11px neutral-dim（已去除）</span></div>
       <div class="anno"><b>running:</b><br>双环 loader 13px accent</div>
-      <div class="anno"><b>done 态:</b><br><span class="v6">status=success 无特殊装饰，回归中性 icon + name 降 neutral-mid（与 failed 对称靠中性色，不显 success 绿）</span></div>
-      <div class="anno"><b>copy 按钮 [v6 布局]:</b><br><span class="old">absolute 左上角浮层</span><br><span class="v6">block icon（Workflow）下方内容区顶部行内（与正文基线对齐）· hover 显 · 复制全部 workflow 结果 · Check 反馈</span></div>
-      <div class="anno"><b>进度条（GUI）:</b><br><span class="v6">label 行（neutral-mid）+ current/total unit 数字读数（neutral-fg）+ track bg-bg-input h-1.5 + fill severity（ProgressBar.vue:39-53）· 非内置，extension 推</span></div>
-      <div class="anno"><b>severity 推断:</b><br><span class="v6">severity 可选，缺省按比例自动推断：≥0.8 ok(success) / ≥0.5 warn / else danger（ProgressBar.vue:18-29）</span></div>
-      <div class="anno"><b>展开内容:</b><br>GuiComponentRenderer 优先 → AnsiText → 纯文本（详见 §11.5）</div>
-      <div class="anno"><b>failed 色:</b><br><span class="v6">prefix/action/name 降 neutral-mid（icon 保留 Workflow）</span></div>
+      <div class="anno"><b>done 态:</b><br><span class="v6">status=success 无特殊装饰，回归中性 icon（与 failed 对称靠中性色，不显 success 绿）</span></div>
+      <div class="anno"><b>failed 色:</b><br><span class="v6">icon + name + slug 降 neutral-mid（prefix 也降，整体表达失败）</span></div>
+      <div class="anno"><b>copy 按钮 [已移除]:</b><br><span class="old">absolute 左上角浮层 / block icon 下方内容区顶部行内</span><br><span class="v6">v6 collapsed only 无展开内容，block 本身不带 copy；结果复制走 drawer workflow tab</span></div>
+      <div class="anno"><b>GUI 渲染 [架构变更]:</b><br><span class="v6">workflow block 不再内联展开 GUI（progress-bar/list-tree/...）。GUI 渲染迁移到 drawer workflow tab，或由 extension 自行呈现（BgNotifyCard/workflow extension 推送仍用同一协议，组件规格见 §11.5）</span></div>
       <div class="anno"><b>审批按钮 [DEFERRED]:</b><br><span class="v6">G-018 决策：v1 不渲染审批按钮，failed 救生按钮也不做（agent 自处理）。未来审批走何种容器待设计</span></div>
     </div>
   </section>
@@ -1347,10 +1273,11 @@ added 1 package in 2s</div>
        ================================================================ -->
   <section class="spec" id="s11-5">
     <div class="spec-head"><span class="spec-num">§11.5</span><h2 class="spec-title">GUI 组件规格 · extension 推送渲染契约</h2></div>
-    <p class="spec-desc">这些是 extension 通过 <code>details.__gui__</code> 协议推送的<b>数据结构</b>，renderer（<code>GuiComponentRenderer</code>）负责渲染形态。<b>无 spec 则 extension 开发者无法对齐推送数据结构</b>——workflow/tool 块的展开内容走此协议（GuiComponentRenderer 优先 → AnsiText → 纯文本）。共 7 种组件：<code>progress-bar</code> / <code>list-tree</code> / <code>stats-line</code> / <code>tab-bar</code> / <code>card</code> / <code>columns</code> / <code>ansi-text</code>。递归容器（card/columns）允许嵌套任意子组件。</p>
+    <p class="spec-desc">这些是 extension 通过 <code>details.__gui__</code> 协议推送的<b>数据结构</b>，renderer（<code>GuiComponentRenderer</code>）负责渲染形态。<b>无 spec 则 extension 开发者无法对齐推送数据结构</b>。<span style="color:var(--warn);">[架构变更] workflow 块（§11）v6 collapsed only 不再内联展开 GUI</span>——GUI 渲染迁移到 <b>drawer workflow tab</b>（点击 workflow 块 <code>drawer.open('workflow', { runId })</code> 打开），或由 extension 自行呈现（BgNotifyCard / workflow extension 推送仍用同一协议）。tool 块（§6）等其他场景的展开内容仍走此协议（GuiComponentRenderer 优先 → AnsiText → 纯文本）。共 7 种组件：<code>progress-bar</code> / <code>list-tree</code> / <code>stats-line</code> / <code>tab-bar</code> / <code>card</code> / <code>columns</code> / <code>ansi-text</code>。递归容器（card/columns）允许嵌套任意子组件。</p>
     <div class="change-points">
       <span class="cp cp-v6"><b>新增</b> §11.5（spec 原仅一句带过，本 section 补全 4 种 + progress-bar 细化）</span>
       <span class="cp cp-v6"><b>渲染契约</b> extension 推 __gui__ 数据结构 · renderer 渲染形态</span>
+      <span class="cp cp-v6"><b>[架构变更]</b> workflow 块不再内联 GUI（→ drawer workflow tab / extension 自呈现）</span>
     </div>
 
     <!-- 11.5A. progress-bar（补全 §11 的 label + 数字行 + track 色）-->

@@ -552,6 +552,85 @@ body {
 /* ── 辅助：旧 vs v6 对比块（§6/§7/§8 复用）── */
 .cmp-old { border-radius: var(--radius); overflow: hidden; }
 .cmp-old .cmp-old-bar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border-strong); background: transparent; }
+
+/* ================================================================
+   §10-§11 专用组件样式（subagent/workflow 一级 tab，仅新增不改已有）
+   ================================================================ */
+
+/* ── §10 SubagentTab：嵌套只读对话流 ── */
+.sa-v6 { flex: 1; display: flex; flex-direction: column; background: var(--bg); min-height: 0; overflow: hidden; }
+/* 标题栏（v6：bg-surface-2 浮起，去 border-b，与 §3/§8 一致）*/
+.sa-header { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--surface-2); flex-shrink: 0; }
+.sa-header .sa-back { width: 24px; height: 24px; border-radius: var(--radius-sm); border: 0; cursor: pointer; background: transparent; color: var(--neutral-dim); display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all var(--duration-fast); }
+.sa-header .sa-back:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.sa-header .sa-ico { width: 14px; height: 14px; color: var(--neutral-dim); flex-shrink: 0; }
+.sa-header .sa-agent { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-fg); font-weight: 500; }
+.sa-header .sa-slug { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-dim); }
+.sa-header .sa-meta { margin-left: auto; font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); }
+/* 嵌套 MessageStream（只读，无 composer）*/
+.sa-stream { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+/* turn 分组：user 气泡 + assistant 回复 */
+.sa-turn { display: flex; flex-direction: column; gap: 4px; }
+.sa-user { align-self: flex-end; max-width: 80%; background: var(--bg-elevated); border-radius: var(--radius) var(--radius) var(--radius-sm) var(--radius); padding: 6px 10px; font-size: var(--text-sm); color: var(--neutral-fg); }
+.sa-asst { display: flex; flex-direction: column; gap: 6px; }
+.sa-asst-text { font-size: var(--text-sm); color: var(--neutral-mid); line-height: 1.6; padding: 2px 0; }
+/* 嵌套 block（tool call / file / subagent block 缩略）*/
+.sa-block { display: flex; align-items: center; gap: 6px; padding: 5px 8px; background: var(--surface-2); border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-mid); }
+.sa-block .sa-block-ico { width: 12px; height: 12px; color: var(--neutral-dim); flex-shrink: 0; }
+.sa-block .sa-block-name { color: var(--neutral-fg); }
+/* 只读提示条（无 composer）*/
+.sa-readonly-hint { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: var(--bg-input); border-top: 1px solid var(--border); font-size: var(--text-2xs); color: var(--neutral-dim); flex-shrink: 0; }
+.sa-readonly-hint .sa-ro-ico { width: 12px; height: 12px; opacity: .7; flex-shrink: 0; }
+/* 加载/空态 */
+.sa-loading { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--neutral-dim); }
+.sa-loader { width: 22px; height: 22px; border: 2px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: bp-spin 0.8s linear infinite; }
+.sa-loading .sa-load-text { font-size: var(--text-xs); }
+.sa-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--neutral-dim); padding: 24px; text-align: center; }
+.sa-empty .sa-empty-ico { width: 28px; height: 28px; opacity: .4; }
+.sa-empty .sa-empty-text { font-size: var(--text-sm); }
+
+/* ── §11 WorkflowTab：agent call 列表（复用侧栏 WorkflowDetail 结构）── */
+.wf-v6 { flex: 1; display: flex; flex-direction: column; background: var(--bg); min-height: 0; overflow: hidden; }
+/* 标题栏（v6：bg-surface-2 浮起 + 右侧操作 pause/resume + abort）*/
+.wf-header { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--surface-2); flex-shrink: 0; }
+.wf-header .wf-ico { width: 14px; height: 14px; color: var(--neutral-dim); flex-shrink: 0; }
+.wf-header .wf-name { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-fg); font-weight: 500; }
+.wf-header .wf-slug { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-dim); }
+.wf-acts { margin-left: auto; display: flex; gap: 2px; }
+.wf-act { width: 24px; height: 24px; border-radius: var(--radius-sm); border: 0; cursor: pointer; background: transparent; color: var(--neutral-dim); display: flex; align-items: center; justify-content: center; transition: all var(--duration-fast); }
+.wf-act:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.wf-act.danger:hover { background: var(--danger-soft); color: var(--danger); }
+.wf-act.confirm { background: var(--danger-soft); color: var(--danger); }
+.wf-act.confirm:hover { background: color-mix(in oklch, var(--danger) 22%, transparent); }
+/* 内容区：phase 分组 + agent call 列表 */
+.wf-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 10px; }
+/* phase 分组 */
+.wf-phase { display: flex; flex-direction: column; gap: 4px; }
+.wf-phase-head { display: flex; align-items: center; gap: 6px; padding: 2px 4px; }
+.wf-phase-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.wf-phase-dot.done { background: var(--success); }
+.wf-phase-dot.running { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.wf-phase-dot.pending { background: var(--neutral-dim); opacity: .5; }
+.wf-phase-name { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-mid); font-weight: 500; }
+.wf-phase-count { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); }
+/* agent call 卡片 */
+.wf-call { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: var(--radius-sm); cursor: pointer; transition: background var(--duration-fast); }
+.wf-call:hover { background: var(--surface-2); }
+.wf-call.selected { background: var(--accent-soft); }
+.wf-call.selected:hover { background: var(--accent-soft); }
+.wf-call .wf-status { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.wf-call .wf-status.done { background: var(--success); }
+.wf-call .wf-status.failed { background: var(--danger); }
+.wf-call .wf-status.pending { background: var(--neutral-faint); }
+.wf-call .wf-status.running { width: 14px; height: 14px; border: 2px solid var(--accent-soft); border-top-color: var(--accent); border-radius: 50%; background: transparent; animation: bp-spin 0.8s linear infinite; }
+.wf-call .wf-agent { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-fg); font-weight: 500; flex-shrink: 0; }
+.wf-call.selected .wf-agent { color: var(--accent); }
+.wf-call .wf-summary { margin-left: auto; display: flex; gap: 8px; font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); }
+.wf-call .wf-summary .wf-tokens { color: var(--neutral-mid); }
+/* 空态 */
+.wf-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--neutral-dim); padding: 24px; text-align: center; }
+.wf-empty .wf-empty-ico { width: 28px; height: 28px; opacity: .4; }
+.wf-empty .wf-empty-text { font-size: var(--text-sm); }
 </style>
 </head>
 <body>
@@ -582,6 +661,9 @@ body {
     <a href="#s7">§7 GitPanel</a>
     <a href="#s8">§8 CommandDocPanel</a>
     <a href="#s9">§9 TasksPanel·GoalCard</a>
+    <!-- §10-§11：subagent/workflow 一级 tab（新增） -->
+    <a href="#s10">§10 SubagentTab</a>
+    <a href="#s11">§11 WorkflowTab</a>
   </nav>
 
   <!-- ================================================================
@@ -621,6 +703,13 @@ body {
               </button>
               <button class="l1-icon" title="detail">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              </button>
+              <!-- subagent + workflow（新增一级 tab，lucide Bot / Workflow）-->
+              <button class="l1-icon" title="subagent（嵌套只读对话流）">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
+              </button>
+              <button class="l1-icon" title="workflow（agent call 列表）">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>
               </button>
               <button class="l1-icon" title="tasks">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
@@ -682,11 +771,13 @@ body {
       <div class="anno"><b>底色:</b><br><span class="v6">var(--bg) [画布色 = --bg-sunken]</span></div>
       <div class="anno"><b>左侧分隔:</b><br><span class="old">border-l 1px border-border</span> <span class="v6">→ shadow-drawer 投影</span></div>
       <div class="anno"><b>shadow-drawer:</b><br>-12px 0 24px rgba(0,0,0,.25)</div>
-      <div class="anno"><b>一级 tab:</b><br>icon-only 6 个 · size-7 (30px) rounded-sm</div>
+      <div class="anno"><b>一级 tab:</b><br>icon-only 8 个 · size-7 (30px) rounded-sm<br>terminal/browser/git/doc/detail/<span class="v6">subagent</span>/<span class="v6">workflow</span>/tasks</div>
       <div class="anno"><b>icon active:</b><br>bg-accent-soft + text-accent（无 ring 无左条）</div>
       <div class="anno"><b>icon hover:</b><br>bg-surface-hover + text-neutral-fg</div>
       <div class="anno"><b>icon default:</b><br>transparent + text-neutral-mid</div>
       <div class="anno"><b>icon size:</b><br>15px · stroke-width 1.75（§7 统一）</div>
+      <div class="anno"><b>subagent icon:</b><br><span class="v6">Bot（lucide）</span>· 嵌套只读对话流（§10）</div>
+      <div class="anno"><b>workflow icon:</b><br><span class="v6">Workflow（lucide）</span>· agent call 列表（§11）</div>
       <div class="anno"><b>钉住按钮:</b><br>钉住态 text-accent · 未钉 text-neutral-dim</div>
       <div class="anno"><b>unread badge:</b><br>bg-accent pill · 脉动蓝点 + 计数（>9 显 9+）</div>
       <div class="anno"><b>SplitterHandle:</b><br>透明化，仅 hover/drag 显 accent</div>
@@ -757,6 +848,20 @@ body {
             <td class="m-note">单文档，无需二级</td>
           </tr>
           <tr>
+            <td class="m-tab" style="color:var(--success);">subagent</td>
+            <td>无</td>
+            <td class="m-no">否</td>
+            <td class="m-no">否</td>
+            <td class="m-note">嵌套只读对话流（MessageStream，无 composer），单实例=当前选中 subagent（详见 §10）</td>
+          </tr>
+          <tr>
+            <td class="m-tab" style="color:var(--success);">workflow</td>
+            <td>无</td>
+            <td class="m-no">否</td>
+            <td class="m-no">否</td>
+            <td class="m-note">agent call 列表（phase 分组），点 agent call 切 subagent tab（详见 §11）</td>
+          </tr>
+          <tr>
             <td class="m-tab" style="text-decoration:line-through;opacity:.5;">tasks</td>
             <td colspan="4" class="m-note" style="color:var(--warn);"><b>v6 已移除</b> — goal/todo 回归对话流（gui-protocol 统一渲染，详见 §9 + blocks §12）</td>
           </tr>
@@ -815,7 +920,7 @@ body {
     <div class="anno-grid">
       <div class="anno"><b>架构:</b><br>形态 B · icon 一级 + 内层二级（按需出现）</div>
       <div class="anno"><b>二级 tab 自治:</b><br>drawer 框架不统一管，各 tab 组件自行定制</div>
-      <div class="anno"><b>按需出现:</b><br>仅 detail/terminal 显二级栏；git/doc/tasks 不显（避免假二级）</div>
+      <div class="anno"><b>按需出现:</b><br>仅 detail/terminal/browser 显二级栏；git/doc/<span class="v6">subagent</span>/<span class="v6">workflow</span>/tasks 不显（避免假二级）</div>
       <div class="anno"><b>一级栏:</b><br>icon-only · 6px+6px padding · 高 42px</div>
       <div class="anno"><b>二级栏:</b><br>bg-surface-2 浮起 · 高 36px · tab rounded-sm</div>
       <div class="anno"><b>二级 tab active:</b><br>bg-accent-soft + text-accent（无下划线/无 ring）</div>
@@ -2045,9 +2150,359 @@ body {
     </div>
   </section>
 
+  <!-- ================================================================
+       §10 SubagentTab（subagent tab · 嵌套只读对话流 · 无二级 tab）
+       ================================================================ -->
+  <section class="spec" id="s10">
+    <div class="spec-head"><span class="spec-num">§10</span><h2 class="spec-title">SubagentTab（subagent tab）</h2></div>
+    <p class="spec-desc">drawer 新增一级 tab（icon：<code>Bot</code>）。渲染某 subagent session 的<b>只读嵌套对话流</b>（MessageStream，无 composer/输入区/发送按钮）——subagent 是 background 任务，用户主要查看而非输入。<b>入口</b>：① 对话流里点击 subagent block；② workflow tab 里点击 agent call。若从 workflow tab 进入，标题栏显 <code>← 返回</code>（回 workflow tab）；直接从 subagent block 进入则无返回。<b>单实例</b>（无二级 tab，切换不同 subagent 直接替换内容）；chat store 已按 sessionId 分区，复用 MessageStream 传 subagent sessionId 即可。</p>
+    <div class="change-points">
+      <span class="cp cp-v6"><b>新增</b> 一级 tab：subagent（Bot icon）</span>
+      <span class="cp cp-v6"><b>v6</b> 嵌套只读 MessageStream（复用，传 sessionId）</span>
+      <span class="cp cp-v6"><b>v6</b> 无 composer（background 任务，仅查看）</span>
+      <span class="cp cp-v6"><b>v6</b> 单实例（无二级 tab）</span>
+    </div>
+
+    <!-- 目标态 A：从 workflow tab 进入（显 ← 返回）-->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin-bottom:14px;font-weight:500;">目标态 A · 从 workflow tab 进入（显 ← 返回）</h3>
+    <div class="render-frame">
+      <div class="workspace-stage">
+        <div class="workspace-row">
+          <div class="ws-panel">主面板<br>(surface)</div>
+          <div class="sd-drawer">
+            <div class="sd-l1">
+              <button class="l1-icon" title="terminal"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></button>
+              <button class="l1-icon" title="browser"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/></svg></button>
+              <button class="l1-icon" title="git"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/></svg></button>
+              <button class="l1-icon" title="doc"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></button>
+              <button class="l1-icon" title="detail"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>
+              <button class="l1-icon on" title="subagent（嵌套只读对话流）"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg></button>
+              <button class="l1-icon" title="workflow（agent call 列表）"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg></button>
+              <button class="l1-icon" title="tasks"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
+              <span class="spacer"></span>
+              <button class="l1-act" title="关闭"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+            </div>
+            <div class="sa-v6">
+              <!-- 标题栏：← 返回 + Bot icon + agent · slug + model · thinking -->
+              <div class="sa-header">
+                <button class="sa-back" title="返回 workflow tab"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg></button>
+                <svg class="sa-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
+                <span class="sa-agent">researcher</span>
+                <span class="sa-slug">· find-auth-flow</span>
+                <span class="sa-meta">glm-5.2 · thinking 3</span>
+              </div>
+              <!-- 嵌套 MessageStream（只读）-->
+              <div class="sa-stream">
+                <!-- turn 1 -->
+                <div class="sa-turn">
+                  <div class="sa-user">查找本仓库的认证流程实现</div>
+                  <div class="sa-asst">
+                    <div class="sa-asst-text">我来搜索认证相关的代码。</div>
+                    <div class="sa-block"><svg class="sa-block-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span class="sa-block-name">grep "authenticate"</span> 12 文件 / 38 匹配</div>
+                    <div class="sa-asst-text">认证主流程在 <code style="font-family:var(--font-mono);color:var(--accent);">src/auth/session.ts</code>，走 token 刷新。</div>
+                  </div>
+                </div>
+                <!-- turn 2 -->
+                <div class="sa-turn">
+                  <div class="sa-user">列出关键函数</div>
+                  <div class="sa-asst">
+                    <div class="sa-block"><svg class="sa-block-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg><span class="sa-block-name">read src/auth/session.ts</span></div>
+                    <div class="sa-asst-text">关键函数：<code style="font-family:var(--font-mono);color:var(--accent);">refreshToken()</code>、<code style="font-family:var(--font-mono);color:var(--accent);">validateSession()</code>。</div>
+                  </div>
+                </div>
+              </div>
+              <!-- 只读提示条（无 composer）-->
+              <div class="sa-readonly-hint">
+                <svg class="sa-ro-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                <span>只读 · subagent 为 background 任务，无输入区</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 目标态 B：从 subagent block 直接进入（无 ← 返回）-->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">目标态 B · 从对话流 subagent block 直接进入（无 ← 返回）</h3>
+    <div class="render-frame">
+      <div class="state-row" style="margin-bottom:0;">
+        <div class="state-tag">无返回</div>
+        <div class="state-demo">
+          <div class="sa-v6" style="min-height:200px;border-radius:var(--radius);overflow:hidden;">
+            <div class="sa-header">
+              <!-- 无 sa-back 按钮 -->
+              <svg class="sa-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
+              <span class="sa-agent">coder</span>
+              <span class="sa-slug">· refactor-auth</span>
+              <span class="sa-meta">glm-5.2 · thinking 5</span>
+            </div>
+            <div class="sa-stream">
+              <div class="sa-turn">
+                <div class="sa-user">重构 auth 模块</div>
+                <div class="sa-asst">
+                  <div class="sa-asst-text">开始重构。从对话流 subagent block 点击进入，无返回按钮。</div>
+                </div>
+              </div>
+            </div>
+            <div class="sa-readonly-hint">
+              <svg class="sa-ro-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              <span>只读 · subagent 为 background 任务，无输入区</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 加载态 / 空态 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">加载态 / 空态</h3>
+    <div class="render-frame">
+      <div class="state-row">
+        <div class="state-tag">加载态</div>
+        <div class="state-demo">
+          <div class="sa-v6" style="min-height:150px;border-radius:var(--radius);overflow:hidden;">
+            <div class="sa-loading">
+              <div class="sa-loader"></div>
+              <span class="sa-load-text">加载 subagent session…</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="state-row" style="margin-bottom:0;">
+        <div class="state-tag">空态</div>
+        <div class="state-demo">
+          <div class="sa-v6" style="min-height:150px;border-radius:var(--radius);overflow:hidden;">
+            <div class="sa-empty">
+              <svg class="sa-empty-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
+              <span class="sa-empty-text">未选中 subagent</span>
+              <span style="font-size:var(--text-xs);opacity:.6;">点击对话流的 subagent block 或 workflow 的 agent call</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="anno-grid">
+      <div class="anno"><b>新增一级 tab:</b><br><span class="v6">subagent（Bot icon）</span></div>
+      <div class="anno"><b>内容:</b><br><span class="v6">嵌套 MessageStream（只读，复用组件）</span></div>
+      <div class="anno"><b>数据源:</b><br>传 subagent sessionId<br>chat store 已按 sessionId 分区</div>
+      <div class="anno"><b>只读:</b><br><span class="v6">无 composer/输入区/发送按钮</span><br>subagent 是 background 任务</div>
+      <div class="anno"><b>标题栏字段:</b><br>agent 名 · slug · model · thinking X</div>
+      <div class="anno"><b>标题栏底色:</b><br>bg-surface-2 浮起（去 border-b，§3.4）</div>
+      <div class="anno"><b>返回按钮:</b><br><span class="v6">仅从 workflow 进入才显 ← 返回</span>（回 workflow tab）</div>
+      <div class="anno"><b>返回 icon:</b><br>ArrowLeft（lucide）· 14px</div>
+      <div class="anno"><b>入口 1:</b><br>对话流点 subagent block → drawer.setTab('subagent')</div>
+      <div class="anno"><b>入口 2:</b><br>workflow tab 点 agent call → 切 subagent + 传 sessionId</div>
+      <div class="anno"><b>user 气泡:</b><br>align-self-end · bg-elevated · rounded 不对称</div>
+      <div class="anno"><b>嵌套 block:</b><br>bg-surface-2 · mono 11px · icon 12px</div>
+      <div class="anno"><b>只读提示条:</b><br>bg-bg-input · Lock icon · 固定底部</div>
+      <div class="anno"><b>加载态:</b><br>loader-circle (border-spin) · accent</div>
+      <div class="anno"><b>空态:</b><br>Bot icon 28px + 提示文</div>
+      <div class="anno"><b>单实例:</b><br><span class="v6">无二级 tab</span>（切换 subagent 替换内容）</div>
+      <div class="anno"><b>落点:</b><br>SubagentTab.vue（新增）· 复用 MessageStream.vue</div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §11 WorkflowTab（workflow tab · agent call 列表 · 无二级 tab）
+       ================================================================ -->
+  <section class="spec" id="s11">
+    <div class="spec-head"><span class="spec-num">§11</span><h2 class="spec-title">WorkflowTab（workflow tab）</h2></div>
+    <p class="spec-desc">drawer 新增一级 tab（icon：<code>Workflow</code>）。展示某 workflow 的 <b>agent call 列表</b>，结构<b>复用侧栏 WorkflowDetail</b>——phase 分组（状态点 + phase 名 + agent 数量）+ agent call 卡片（状态点 + agent 名 + 摘要行 model · tokens in/out · turns · duration）。<b>点击 agent call</b> → 高亮 + 切到 subagent tab（传该 agent 的 sessionId）展示其对话流。标题栏右侧挂 pause/resume + abort，复用 WorkflowDetail 的<b>两段式确认</b>。<b>入口</b>：对话流里点击 workflow block。<b>单实例</b>（无二级 tab）。</p>
+    <div class="change-points">
+      <span class="cp cp-v6"><b>新增</b> 一级 tab：workflow（Workflow icon）</span>
+      <span class="cp cp-v6"><b>v6</b> 复用侧栏 WorkflowDetail 结构（phase 分组 + agent call 卡片）</span>
+      <span class="cp cp-v6"><b>v6</b> agent call 点击 → drawer.setTab('subagent') + 传 sessionId</span>
+      <span class="cp cp-v6"><b>v6</b> pause/resume + abort 两段式确认（复用）</span>
+    </div>
+
+    <!-- 目标态：phase 分组 + agent call 列表 -->
+    <div class="render-frame">
+      <div class="workspace-stage">
+        <div class="workspace-row">
+          <div class="ws-panel">主面板<br>(surface)</div>
+          <div class="sd-drawer">
+            <div class="sd-l1">
+              <button class="l1-icon" title="terminal"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></button>
+              <button class="l1-icon" title="browser"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/></svg></button>
+              <button class="l1-icon" title="git"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/></svg></button>
+              <button class="l1-icon" title="doc"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></button>
+              <button class="l1-icon" title="detail"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>
+              <button class="l1-icon" title="subagent（嵌套只读对话流）"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg></button>
+              <button class="l1-icon on" title="workflow（agent call 列表）"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg></button>
+              <button class="l1-icon" title="tasks"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
+              <span class="spacer"></span>
+              <button class="l1-act" title="关闭"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+            </div>
+            <div class="wf-v6">
+              <!-- 标题栏：Workflow icon + scriptName · slug + 右侧操作（pause/resume + abort）-->
+              <div class="wf-header">
+                <svg class="wf-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>
+                <span class="wf-name">build-and-deploy</span>
+                <span class="wf-slug">· release-2026-07</span>
+                <div class="wf-acts">
+                  <!-- resume（运行态显 pause，暂停态显 play）-->
+                  <button class="wf-act" title="暂停 workflow（两段式确认）"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="14" y="3" width="5" height="18" rx="1"/><rect x="5" y="3" width="5" height="18" rx="1"/></svg></button>
+                  <!-- abort（两段式确认：首点高亮 danger-soft，再点执行）-->
+                  <button class="wf-act danger" title="终止 workflow（两段式确认）"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/></svg></button>
+                </div>
+              </div>
+              <!-- 内容区：phase 分组 + agent call 列表 -->
+              <div class="wf-body">
+                <!-- phase 1：done -->
+                <div class="wf-phase">
+                  <div class="wf-phase-head">
+                    <span class="wf-phase-dot done"></span>
+                    <span class="wf-phase-name">build</span>
+                    <span class="wf-phase-count">2 agents</span>
+                  </div>
+                  <div class="wf-call">
+                    <span class="wf-status done"></span>
+                    <span class="wf-agent">installer</span>
+                    <div class="wf-summary">
+                      <span class="wf-tokens">↑1.2k ↓800</span>
+                      <span>4 turns</span>
+                      <span>8s</span>
+                    </div>
+                  </div>
+                  <div class="wf-call">
+                    <span class="wf-status done"></span>
+                    <span class="wf-agent">builder</span>
+                    <div class="wf-summary">
+                      <span class="wf-tokens">↑3.4k ↓1.1k</span>
+                      <span>6 turns</span>
+                      <span>22s</span>
+                    </div>
+                  </div>
+                </div>
+                <!-- phase 2：running -->
+                <div class="wf-phase">
+                  <div class="wf-phase-head">
+                    <span class="wf-phase-dot running"></span>
+                    <span class="wf-phase-name">test</span>
+                    <span class="wf-phase-count">2 agents</span>
+                  </div>
+                  <div class="wf-call">
+                    <span class="wf-status done"></span>
+                    <span class="wf-agent">unit-tester</span>
+                    <div class="wf-summary">
+                      <span class="wf-tokens">↑2.1k ↓900</span>
+                      <span>5 turns</span>
+                      <span>14s</span>
+                    </div>
+                  </div>
+                  <!-- 当前选中 agent call（高亮 accent-soft，点击将切到 subagent tab）-->
+                  <div class="wf-call selected" title="点击切到 subagent tab 展示该 agent 对话流">
+                    <span class="wf-status running"></span>
+                    <span class="wf-agent">e2e-tester</span>
+                    <div class="wf-summary">
+                      <span class="wf-tokens">↑880 ↓420</span>
+                      <span>3 turns</span>
+                      <span>running…</span>
+                    </div>
+                  </div>
+                </div>
+                <!-- phase 3：pending -->
+                <div class="wf-phase">
+                  <div class="wf-phase-head">
+                    <span class="wf-phase-dot pending"></span>
+                    <span class="wf-phase-name">deploy</span>
+                    <span class="wf-phase-count">1 agent</span>
+                  </div>
+                  <div class="wf-call">
+                    <span class="wf-status pending"></span>
+                    <span class="wf-agent">deployer</span>
+                    <div class="wf-summary">
+                      <span class="wf-tokens">—</span>
+                      <span>0 turns</span>
+                      <span>pending</span>
+                    </div>
+                  </div>
+                </div>
+                <!-- failed agent call 示例 -->
+                <div class="wf-phase">
+                  <div class="wf-phase-head">
+                    <span class="wf-phase-dot done"></span>
+                    <span class="wf-phase-name">lint</span>
+                    <span class="wf-phase-count">1 agent</span>
+                  </div>
+                  <div class="wf-call">
+                    <span class="wf-status failed"></span>
+                    <span class="wf-agent">linter</span>
+                    <div class="wf-summary">
+                      <span class="wf-tokens">↑600 ↓120</span>
+                      <span>2 turns</span>
+                      <span style="color:var(--danger);">failed</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- abort 两段式确认态 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">abort 两段式确认（复用 WorkflowDetail）</h3>
+    <div class="render-frame">
+      <div class="state-row" style="margin-bottom:0;">
+        <div class="state-tag">确认态</div>
+        <div class="state-demo">
+          <div style="background:var(--surface-2);padding:6px 10px;border-radius:var(--radius);display:flex;align-items:center;gap:8px;width:fit-content;">
+            <svg class="wf-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>
+            <span class="wf-name">build-and-deploy</span>
+            <div class="wf-acts">
+              <button class="wf-act" title="暂停"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="14" y="3" width="5" height="18" rx="1"/><rect x="5" y="3" width="5" height="18" rx="1"/></svg></button>
+              <!-- 首点后：高亮 danger-soft，title 变「再次点击确认终止」-->
+              <button class="wf-act confirm" title="再次点击确认终止"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/></svg></button>
+            </div>
+          </div>
+          <div class="anno" style="margin-top:8px;"><b>两段式:</b> 首点 abort → <span class="v6">bg-danger-soft 高亮</span>（非立即执行）；再次点击才终止。3s 内无第二次点击自动复位。</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 空态 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">空态</h3>
+    <div class="render-frame">
+      <div class="state-row" style="margin-bottom:0;">
+        <div class="state-tag">空态</div>
+        <div class="state-demo">
+          <div class="wf-v6" style="min-height:160px;border-radius:var(--radius);overflow:hidden;">
+            <div class="wf-empty">
+              <svg class="wf-empty-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>
+              <span class="wf-empty-text">未选中 workflow</span>
+              <span style="font-size:var(--text-xs);opacity:.6;">点击对话流的 workflow block 查看 agent call 列表</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="anno-grid">
+      <div class="anno"><b>新增一级 tab:</b><br><span class="v6">workflow（Workflow icon）</span></div>
+      <div class="anno"><b>结构复用:</b><br><span class="v6">侧栏 WorkflowDetail</span>（phase 分组 + agent call 卡片）</div>
+      <div class="anno"><b>标题栏字段:</b><br>scriptName · slug</div>
+      <div class="anno"><b>标题栏底色:</b><br>bg-surface-2 浮起（去 border-b，§3.4）</div>
+      <div class="anno"><b>操作按钮:</b><br>pause/resume（Pause/Play）+ abort（Square）</div>
+      <div class="anno"><b>abort 确认:</b><br><span class="v6">两段式</span>· 首点 bg-danger-soft 高亮，再点执行（3s 自动复位）</div>
+      <div class="anno"><b>phase 分组:</b><br>状态点 + phase 名 + agent 数量</div>
+      <div class="anno"><b>phase 状态点:</b><br>done=success / running=accent+ring / pending=dim</div>
+      <div class="anno"><b>agent call 卡片:</b><br>状态点 + agent 名 + 摘要行</div>
+      <div class="anno"><b>call 状态点:</b><br>done=success / running=<span class="v6">accent loader</span> / failed=danger / pending=faint</div>
+      <div class="anno"><b>摘要行:</b><br>model · tokens ↑in/↓out · turns · duration</div>
+      <div class="anno"><b>running loader:</b><br>LoaderCircle（lucide）· 14px · accent</div>
+      <div class="anno"><b>点击 agent call:</b><br><span class="v6">高亮 + drawer.setTab('subagent') + 传 sessionId</span></div>
+      <div class="anno"><b>选中态:</b><br>bg-accent-soft · agent 名 text-accent</div>
+      <div class="anno"><b>入口:</b><br>对话流点 workflow block → drawer.setTab('workflow')</div>
+      <div class="anno"><b>单实例:</b><br><span class="v6">无二级 tab</span></div>
+      <div class="anno"><b>落点:</b><br>WorkflowTab.vue（新增/复用侧栏 WorkflowDetail）</div>
+    </div>
+  </section>
+
   <!-- ============ footer ============ -->
   <footer class="doc-foot">
-    <span>v6-spec-drawer.html · Drawer 右侧抽屉 · §1-§9 全写实</span>
+    <span>v6-spec-drawer.html · Drawer 右侧抽屉 · §1-§11 全写实（§10 subagent / §11 workflow 一级 tab）</span>
     <span>SSOT: <a href="v6-design.md">v6-design.md §4.3 + §3.4</a></span>
   </footer>
 
