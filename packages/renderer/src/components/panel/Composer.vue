@@ -12,6 +12,9 @@
          auto_retry_end / message_start 到达时 store 自动清 → state=undefined → 组件 v-if 消失 -->
     <RetryIndicator :state="retryState" />
     <QueueBubble :state="queueState" />
+    <!-- compact 待发队列 badge（W2：compaction 期间入队消息预览 + 逐条取消）。
+         v-if count>0 自隐藏（flush 成功/队列取消后消失），QueueBubble 旁独立行 -->
+    <CompactQueueBadge :session-id="sessionId" />
     <!-- 命令浮层（§2d @/#//）：anchor = composer-box（slot），reka-ui Popover portal body。
          composer-box 内 focus 算 inside 不触发 dismiss，键盘路由见 onKeydown -->
     <CommandPopover
@@ -82,7 +85,7 @@
         <!-- 思考等级（spec §2c：click 出 6 级 popover；level 从 session 透传） -->
         <ThinkingLevelPopover :level="currentThinkingLevel" :level-map="currentThinkingLevelMap" @select="onThinkingSelect" />
 
-        <!-- 发送位三态：S6 streaming/dispatching→stop / S5 sending→spinner / S1·S2 idle→send -->
+        <!-- 发送位三态：S6 streaming/dispatching→stop / S5 sending→spinner / compact→queue-send（可点，入队待重放）/ S1·S2 idle→send -->
         <Button
           v-if="isActive"
           variant="ghost"
@@ -93,13 +96,17 @@
         >
           <Square class="size-[13px]" />
         </Button>
-        <div
+        <Button
           v-else-if="isCompacting"
-          class="ml-1.5 grid size-[var(--composer-btn-size)] place-items-center rounded-md bg-surface-hover text-neutral-mid"
-          :title="t('panel.composer.compacting')"
+          variant="default"
+          size="icon"
+          class="ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-[var(--accent)] text-white transition-colors enabled:hover:bg-[var(--accent-hover)] disabled:bg-transparent disabled:text-[var(--neutral-dim)]"
+          :disabled="!canSend"
+          :title="canSend ? t('panel.composer.queueSend') : t('panel.composer.sendHint')"
+          @click="onSend"
         >
-          <Loader2 class="size-4 animate-spin" />
-        </div>
+          <ArrowUp class="size-[15px]" />
+        </Button>
         <div
           v-else-if="isSending"
           class="ml-1.5 grid size-[var(--composer-btn-size)] place-items-center rounded-md bg-[var(--accent)] text-white"
@@ -139,6 +146,7 @@ import ThinkingLevelPopover from './ThinkingLevelPopover.vue'
 import ContextChipsBar from './ContextChipsBar.vue'
 import RetryIndicator from './RetryIndicator.vue'
 import QueueBubble from './QueueBubble.vue'
+import CompactQueueBadge from './CompactQueueBadge.vue'
 import { useChat } from '@/composables/features/useChat'
 import { useHandoffActions } from '@/composables/features/useHandoffActions'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
@@ -342,8 +350,9 @@ async function onStopClick(): Promise<void> {
   await onAbort()
 }
 
-/** 忙时（流式/派发/发送中/压缩中）—— canSend 与 canHandoffSend 共用，避免重复守卫 */
-const isBusy = computed(() => isActive.value || isSending.value || isCompacting.value)
+/** 忙时（流式/派发/发送中）—— canSend 与 canHandoffSend 共用，避免重复守卫。
+ *  不含 isCompacting：压缩期间允许排队动作（canSend = hasInput，onSend 守卫放行到 compact 分支）。 */
+const isBusy = computed(() => isActive.value || isSending.value)
 const canSend = computed(() => hasInput.value && !isBusy.value)
 
 // composer-box 视觉派生（boxClass / placeholder：staging 活跃 > bash > 默认）—— 见 useComposerModeVisual。
@@ -356,11 +365,11 @@ const { boxClass, placeholder } = useComposerModeVisual({
   isSending,
   isBashMode,
 })
-/** 发送分流（onSend）—— staging > landing（含 bash 检测）> bash(!/!!) > /compact > send。见 useComposerSend */
+/** 发送分流（onSend）—— staging > compact（压缩期入队） > landing（含 bash 检测）> bash(!/!!) > /compact > send。见 useComposerSend */
 const { onSend } = useComposerSend({
   staging: { hasActiveStaging: staging.hasActiveStaging, send: staging.send, activeStaging: staging.activeStaging },
   getStagingConfig,
-  canSend, isBusy,
+  canSend, isBusy, isCompacting,
   draft, inputRef,
   sessionIdRef, variantRef: computed(() => props.variant),
   composerBash,
@@ -390,7 +399,10 @@ function onKeydown(e: KeyboardEvent): void {
   if (e.key !== 'Enter' || e.shiftKey) return
   e.preventDefault()
   if (e.altKey) {
-    onFollowUp()
+    // Alt+⏎：压缩期间重路由到 onSend（入队待重放）——onFollowUp 无 isActive 守卫，
+    // 直通会走 pi followUp RPC 留陈旧队列。非压缩态保持 followUp。
+    if (isCompacting.value) onSend()
+    else onFollowUp()
   } else if (isActive.value) {
     onSteer()
   } else {

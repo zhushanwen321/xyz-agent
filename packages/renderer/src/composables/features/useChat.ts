@@ -28,6 +28,7 @@ import {
   clearSubscription,
   resetSubscriptionStates,
 } from '@/composables/useMessageBusSubscription'
+import { useCompactQueue } from '@/composables/panel/useCompactQueue'
 
 const t = i18n.global.t
 
@@ -133,10 +134,26 @@ export function ensureStreamSubscription(
         // #6：compact 生命周期开始（runtime server-push，走 session 通道）
         chat.setCompacting(sid, true)
         break
-      case 'session.compacted':
+      case 'session.compacted': {
         // #6：compact 生命周期结束（成功/失败均广播）。错误反馈走 compact() 的 catch，此处仅复位态。
         chat.setCompacting(sid, false)
+        // wave:compact-queued-messages：compact 成功后重放排队消息（session.compacted 无 error 字段）。
+        // - error 非空（compact 失败）：仅保留队列，不 flush 不 toast——compact() 的 RPC catch 已
+        //   toast（runtime 两条失败路径 busy 拒绝/compact 失败都会抛错走 error envelope → catch），
+        //   handler 再 toast 是双 toast（bug）。
+        // - error 为 undefined（compact 成功）：flush 重放；flush 返回 false（重放 RPC 失败）→
+        //   toast 提示（队列保留，下次 compact 成功时重试）。
+        const payload = msg.payload as { error?: string }
+        if (payload.error === undefined) {
+          const { error } = useToast()
+          void useCompactQueue()
+            .flush(sid)
+            .then((ok) => {
+              if (!ok) error(t('composable.queueFlushFailed'))
+            })
+        }
         break
+      }
       case 'session.renamed': {
         // pi 改写 session 名（session_info_changed → session.renamed，见 event-adapter.ts）。
         // guard：payload.name 为空时跳过 —— 防 pi 推空名/旧名覆盖用户手动 rename 的值。
