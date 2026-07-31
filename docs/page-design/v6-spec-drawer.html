@@ -435,6 +435,37 @@ body {
 .gp-file .gp-badge.Q { color: var(--neutral-dim); }
 .gp-file .gp-badge.U { color: var(--danger); font-weight: 700; }
 .gp-file .gp-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--neutral-mid); font-size: var(--text-xs); }
+/* per-file stage toggle（v6 MVP-1：hover 显 +/- 按钮，xyCode 判态）*/
+.gp-file .gp-stage-toggle { width: 18px; height: 18px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--neutral-dim); cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; opacity: 0; transition: opacity var(--duration-fast), background var(--duration-fast), color var(--duration-fast); }
+.gp-file:hover .gp-stage-toggle { opacity: 1; }
+.gp-file .gp-stage-toggle:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.gp-file .gp-stage-toggle.is-staged { color: var(--success); }  /* 已暂存 → 显 -（unstage），点 unstage(sid,[path]) */
+.gp-file .gp-stage-toggle.is-unstaged { color: var(--neutral-mid); } /* 未暂存 → 显 +（stage），点 stage(sid,[path]) */
+/* demo 专用：恒显 toggle 模拟 hover 态（spec 静态稿用，runtime 不渲染此类）*/
+.gp-file.demo-hover { background: var(--surface-2); }
+.gp-file.demo-hover .gp-stage-toggle { opacity: 1; }
+.gp-file.demo-hover .gp-path { color: var(--neutral-fg); }
+/* 分支切换（v6 MVP-2：branch 名可点 → BranchSelectPopover；MVP-3：popover 内 + 新建分支 → CreateBranchModal）*/
+.gp-branch-btn { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 2px 6px; margin-left: -6px; border: 0; border-radius: var(--radius-sm); background: transparent; cursor: pointer; transition: background var(--duration-fast); }
+.gp-branch-btn:hover { background: var(--surface-hover); }
+.gp-branch-btn.is-open { background: var(--surface-hover); }
+.gp-branch-btn .gp-branch-name { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gp-branch-btn:hover .gp-branch-name,
+.gp-branch-btn.is-open .gp-branch-name { color: var(--neutral-fg); }
+.gp-branch-btn .gp-branch-chev { width: 11px; height: 11px; color: var(--neutral-dim); flex-shrink: 0; transition: transform var(--duration-fast); }
+.gp-branch-btn.is-open .gp-branch-chev { transform: rotate(180deg); }
+/* 分支 popover（绝对定位浮层列表，复用 BranchSelectPopover）*/
+.gp-branch-popover { position: absolute; min-width: 200px; max-width: 260px; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow-2); padding: 4px; z-index: var(--z-popover); display: flex; flex-direction: column; gap: 1px; }
+.gp-branch-popover .gp-po-head { font-size: var(--text-2xs); color: var(--neutral-dim); padding: 4px 8px 2px; text-transform: uppercase; letter-spacing: .04em; font-family: var(--font-mono); }
+.gp-branch-popover .gp-po-item { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: var(--radius-sm); cursor: pointer; transition: background var(--duration-fast); }
+.gp-branch-popover .gp-po-item:hover { background: var(--surface-hover); }
+.gp-branch-popover .gp-po-item.is-current { background: var(--accent-soft); }
+.gp-branch-popover .gp-po-item .gp-po-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-fg); }
+.gp-branch-popover .gp-po-item .gp-po-check { width: 12px; height: 12px; color: var(--accent); flex-shrink: 0; opacity: 0; }
+.gp-branch-popover .gp-po-item.is-current .gp-po-check { opacity: 1; }
+.gp-branch-popover .gp-po-new { display: flex; align-items: center; gap: 6px; padding: 5px 8px; margin-top: 2px; border-top: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; color: var(--accent); font-size: var(--text-xs); transition: background var(--duration-fast); }
+.gp-branch-popover .gp-po-new:hover { background: var(--accent-soft); }
+.gp-branch-popover .gp-po-new .gp-po-new-ico { width: 12px; height: 12px; flex-shrink: 0; }
 /* 操作区（Input 一行 + 按钮一行）*/
 .gp-commit-input { width: 100%; height: 26px; padding: 0 8px; background: var(--bg-input); border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--neutral-fg); font-size: var(--text-xs); outline: none; transition: border-color var(--duration-fast); }
 .gp-commit-input::placeholder { color: var(--neutral-dim); }
@@ -1372,23 +1403,30 @@ body {
                 <!-- 头部：分支 + 纯色 pill + stats + refresh -->
                 <div class="gp-head">
                   <svg class="gp-branch-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
-                  <span class="gp-branch">feat/v6-drawer</span>
+                  <!-- v6 MVP-2：branch 名可点 → BranchSelectPopover（复用，数据 getStatus().branches[]）-->
+                  <button class="gp-branch-btn" title="切换分支">
+                    <span class="gp-branch-name">feat/v6-drawer</span>
+                    <svg class="gp-branch-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                  </button>
                   <span class="gp-pill dirty">dirty</span>
                   <span class="gp-stats"><span class="gp-add">+24</span> <span class="gp-del">−8</span></span>
                   <button class="gp-refresh" title="刷新"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
                 </div>
-                <!-- 文件列表（badge 降噪：M/A/R 中性 dim，仅 U 保留 danger）-->
+                <!-- 文件列表（badge 降噪：M/A/R 中性 dim，仅 U 保留 danger）
+                     v6 MVP-1：per-file stage toggle，hover 显 +/-，xyCode 判态
+                       - 未暂存（Y 列有值）→ 显 + → stage(sid,[path])
+                       - 已暂存（X 列有值）→ 显 − → unstage(sid,[path]) -->
                 <ul class="gp-filelist">
-                  <li class="gp-file"><span class="gp-badge M">M</span><span class="gp-path">packages/renderer/src/components/panel/GitPanel.vue</span></li>
-                  <li class="gp-file"><span class="gp-badge A">A</span><span class="gp-path">docs/page-design/v6-spec-drawer.html</span></li>
-                  <li class="gp-file"><span class="gp-badge D">D</span><span class="gp-path">docs/page-design/v5-drawer.html</span></li>
-                  <li class="gp-file"><span class="gp-badge R">R</span><span class="gp-path">docs/page-design/old-spec.md → design.md</span></li>
+                  <li class="gp-file demo-hover"><span class="gp-badge M">M</span><span class="gp-path">packages/renderer/src/components/panel/GitPanel.vue</span><button class="gp-stage-toggle is-unstaged" title="暂存此文件 stage(sid,[path])"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button></li>
+                  <li class="gp-file"><span class="gp-badge A">A</span><span class="gp-path">docs/page-design/v6-spec-drawer.html</span><button class="gp-stage-toggle is-unstaged" title="暂存此文件"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button></li>
+                  <li class="gp-file"><span class="gp-badge M">M</span><span class="gp-path">src/git/branch.ts</span><button class="gp-stage-toggle is-staged" title="取消暂存 unstage(sid,[path])"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg></button></li>
+                  <li class="gp-file"><span class="gp-badge D">D</span><span class="gp-path">docs/page-design/v5-drawer.html</span><button class="gp-stage-toggle is-unstaged" title="暂存此文件"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button></li>
                 </ul>
-                <!-- 操作区 -->
-                <input class="gp-commit-input" placeholder="提交信息（Cmd+Enter）" />
+                <!-- 操作区（v6：commit 提交快捷键 Cmd/Ctrl+Enter，非普通 Enter 防多行误触）-->
+                <input class="gp-commit-input" placeholder="提交信息（Cmd/Ctrl+Enter 提交）" />
                 <div class="gp-actions">
-                  <button class="gp-act ghost">暂存</button>
-                  <button class="gp-act ghost">取消</button>
+                  <button class="gp-act ghost">全部暂存</button>
+                  <button class="gp-act ghost">取消暂存</button>
                   <button class="gp-act primary">提交</button>
                 </div>
               </div>
@@ -1539,6 +1577,66 @@ body {
       </div>
     </div>
 
+    <!-- v6 MVP-2 / MVP-3：分支切换（branch 名可点 → BranchSelectPopover）+ 新建分支入口（popover 内 + 项 → CreateBranchModal）-->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">分支切换 + 新建分支（复用 BranchSelectPopover / CreateBranchModal · 数据 getStatus().branches[]）</h3>
+    <div class="render-frame">
+      <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
+        <!-- 态 A：branch 名 hover（可点暗示：底色 + chevron）-->
+        <div style="flex:0 0 auto;">
+          <div style="font-size:var(--text-2xs);color:var(--neutral-dim);margin-bottom:6px;font-family:var(--font-mono);">A · hover 态（可点）</div>
+          <div class="gp-head" style="background:var(--bg);padding:8px 10px;border-radius:var(--radius);width:fit-content;">
+            <svg class="gp-branch-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+            <!-- hover 态：复用 .gp-branch-btn，runtime 仅 hover 时加 surface-hover 底色 -->
+            <button class="gp-branch-btn" style="background:var(--surface-hover);" title="切换分支">
+              <span class="gp-branch-name" style="color:var(--neutral-fg);">feat/v6-drawer</span>
+              <svg class="gp-branch-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- 态 B：popover 展开态（分支列表 + 新建分支入口）-->
+        <div style="flex:0 0 auto;position:relative;">
+          <div style="font-size:var(--text-2xs);color:var(--neutral-dim);margin-bottom:6px;font-family:var(--font-mono);">B · popover 展开态</div>
+          <div style="background:var(--bg);padding:8px 10px;border-radius:var(--radius);width:fit-content;position:relative;">
+            <!-- 触发器（is-open：chevron 翻转 + 底色常驻）-->
+            <div class="gp-head" style="padding:0;">
+              <svg class="gp-branch-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+              <button class="gp-branch-btn is-open" title="切换分支">
+                <span class="gp-branch-name">feat/v6-drawer</span>
+                <svg class="gp-branch-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+            </div>
+            <!-- BranchSelectPopover（绝对定位浮层，top 全对齐触发器下方）-->
+            <div class="gp-branch-popover" style="top:calc(100% + 4px);left:10px;">
+              <div class="gp-po-head">branches</div>
+              <div class="gp-po-item is-current">
+                <span class="gp-po-name">feat/v6-drawer</span>
+                <svg class="gp-po-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <div class="gp-po-item">
+                <span class="gp-po-name">main</span>
+                <svg class="gp-po-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <div class="gp-po-item">
+                <span class="gp-po-name">release/v6</span>
+                <svg class="gp-po-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <div class="gp-po-item">
+                <span class="gp-po-name">fix/drawer-tab</span>
+                <svg class="gp-po-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <!-- v6 MVP-3：新建分支入口（accent 色 → CreateBranchModal，复用现有组件）-->
+              <div class="gp-po-new" title="新建分支 CreateBranchModal">
+                <svg class="gp-po-new-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <span>新建分支</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="anno" style="margin-top:14px;"><b>复用说明:</b> popover/modal 均<b>复用现有组件</b>——BranchSelectPopover（数据 <span class="v6">getStatus().branches[]</span>）、CreateBranchModal。<b>零后端改动</b>。</div>
+    </div>
+
     <div class="anno-grid">
       <div class="anno"><b>pill 范式:</b><br><span class="old">bg-soft 色块</span> <span class="v6">→ 纯色文字</span>（无底）</div>
       <div class="anno"><b>pill clean/staged:</b><br>text-success（mono 10px）</div>
@@ -1554,6 +1652,10 @@ body {
       <div class="anno"><b>按钮:</b><br>h-7 ghost(primary accent) · disabled opacity</div>
       <div class="anno"><b>非 git 空态:</b><br>整块不渲染（isRepo=false）</div>
       <div class="anno"><b>二级 tab:</b><br>无（git 状态全局唯一）</div>
+      <div class="anno"><b>per-file stage (MVP-1):</b><br><span class="v6">hover 显 +/- toggle</span>，xyCode 判态：Y 有值→+→<span class="v6">stage(sid,[path])</span>；X 有值→−→<span class="v6">unstage(sid,[path])</span>（底部「全部暂存/取消」保留作快捷）</div>
+      <div class="anno"><b>分支切换 (MVP-2):</b><br>branch 名可点（hover 底色 + chevron）→ <span class="v6">BranchSelectPopover</span>（复用，数据 <span class="v6">branches[]</span>），当前分支高亮</div>
+      <div class="anno"><b>新建分支 (MVP-3):</b><br>popover 内底部「+ 新建分支」（accent）→ <span class="v6">CreateBranchModal</span>（复用现有组件）</div>
+      <div class="anno"><b>提交快捷键:</b><br><span class="v6">Cmd/Ctrl+Enter</span>（非普通 Enter，防多行 message 误触）</div>
       <div class="anno"><b>落点:</b><br>GitPanel.vue section/pillClass/statusBadgeClass</div>
     </div>
   </section>

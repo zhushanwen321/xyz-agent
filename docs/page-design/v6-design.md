@@ -199,11 +199,11 @@ hover: text-neutral-fg
 
 **架构含义**：当前 `useDetailPane.state` 是单例（`fileTreeStore.selectedPath` 单值驱动），要多文件 tab 需把单值改为按 tab id 索引的 map。terminal 同理需从 per-session 单 PTY 改为多 PTY 实例管理。这属于阶段 B（renderer 局部重构）/ 阶段 C（视觉层）的衔接点。
 
-### 4.4 Overview
+### 4.4 Overview（已移除）
 
-| 组件 | v6 方案 |
-|------|---------|
-| SessionCard | 去 border 靠 bg-surface 浮起 + hover；active 统一 `bg-bg-elevated`（去 ring-accent 纯色，与 §3.2 一致）；指标行去 border-t 靠 padding；gitBranch pill 降中性 bg-surface-2 text-neutral-mid |
+> **DEPRECATED 2026-07-31**：Overview 概览页整体移除。有了左侧栏（sidebar sessions tab 列表），不再需要独立的概览/首页视图。MainPanel 的 view 路由简化为仅 chat（Workspace），去掉 overview 分支。原 `v6-spec-overview.html` 已删除。
+
+### 4.5 设置页（全屏覆盖重构）
 
 ### 4.5 设置页（全屏覆盖重构）
 
@@ -399,7 +399,7 @@ hover: text-neutral-fg
 - C3: §4.2 侧栏
 - C4: §4.3 Drawer（含二级 tab，形态 B：icon 一级 + 各 tab 自治二级；detail 多文件 tab / terminal 多实例 tab+新增按钮占位 / git·doc·tasks 无二级）
 - C5: §4.5 设置页（全屏覆盖重构）
-- C6: §4.4 Overview + §4.6 Overlays
+- C6: §4.6 Overlays（§4.4 Overview 已移除）
 - C7: §5 横切清理
 - C8: 全量视觉验收
 

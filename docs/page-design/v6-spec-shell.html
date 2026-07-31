@@ -644,7 +644,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s1">
     <div class="spec-head"><span class="spec-num">§1</span><h2 class="spec-title">三栏拓扑总览</h2></div>
-    <p class="spec-desc">AppShell 是三栏组合根：<code>aside</code>（侧栏画布）｜<code>app-nav-controls</code>（浮层导航）｜<code>main-panel</code>（surface 浮起，含 Workspace/Overview）+ 可选 <code>drawer</code>（右侧画布）。v6 保留 v3 的三栏拓扑不变（§1.1#2），底色语义：aside 与 drawer = 画布色（<code>--bg-sunken</code>），与窗口底同色融合；main-panel = surface 浮起，是唯一带 border + shadow 的面板。窗口整体落在 stage 深底 #131316 上（app-shell <code>p-3</code> 间隙显露）。</p>
+    <p class="spec-desc">AppShell 是三栏组合根：<code>aside</code>（侧栏画布）｜<code>app-nav-controls</code>（浮层导航）｜<code>main-panel</code>（surface 浮起，含 Workspace）+ 可选 <code>drawer</code>（右侧画布）。v6 保留 v3 的三栏拓扑不变（§1.1#2），底色语义：aside 与 drawer = 画布色（<code>--bg-sunken</code>），与窗口底同色融合；main-panel = surface 浮起，是唯一带 border + shadow 的面板。窗口整体落在 stage 深底 #131316 上（app-shell <code>p-3</code> 间隙显露）。<b>view 路由简化</b>：main-panel 仅 chat（Workspace），Overview 概览页已移除（sidebar sessions tab 已覆盖会话列表需求）。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> 三栏拓扑 + traffic-light 安全区</span>
       <span class="cp cp-v6"><b>v6</b> 拓扑不变，底色语义统一三层明度</span>
@@ -733,7 +733,7 @@ body {
       <div class="anno"><b>间隙 gap:</b><br>12px [var(--space-3)]（三栏间）</div>
       <div class="anno"><b>窗口圆角:</b><br>10px（任意值 · 不进 token）</div>
       <div class="anno"><b>落点:</b><br>AppShell.vue · AsideRegion.vue · MainPanel.vue</div>
-      <div class="anno"><b>view 路由:</b><br>chat → Workspace / overview → Overview</div>
+      <div class="anno"><b>view 路由:</b><br>chat → Workspace<br><span class="v6">Overview 已移除</span>（sidebar 覆盖）</div>
     </div>
   </section>
 
