@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>xyz-agent · v6 视觉规格稿 · Settings · SystemPrompt</title>
+<style>
+/* ================================================================
+   v6 视觉规格稿 · Settings · SystemPrompt（系统提示词编辑页）
+   ──────────────────────────────────────────────────────────────
+   覆盖：替换系统提示词卡 + 注入额外提示词卡 + 只读默认参考区 +
+        脏状态/未保存保护 + 编辑器交互 + 状态矩阵
+   源码：SystemPromptPage.vue · Textarea.vue · Switch · Button(dense)
+   token 复用 v6-spec-tokens.html 同一集（:root 逐字一致）
+   ================================================================ */
+:root {
+  --bg: #1a1b1f; --surface: #272830; --surface-hover: #363740;
+  --surface-2: #2e2f38; --bg-elevated: #313239; --bg-input: #1e1f24;
+  --bg-sunken: var(--bg); --bg-card: #22242c;
+  --neutral-fg: #e5e7eb; --neutral-mid: #9ca3af; --neutral-dim: #7d8494;
+  --neutral-dim-old: #6b7280; --neutral-faint: #4b5563;
+  --neutral-ico: #8b8d94; --neutral-ico-hover: #e5e7eb;
+  --border: rgba(255,255,255,0.08); --border-strong: rgba(255,255,255,0.15);
+  --accent: #4f8ef7; --accent-hover: #6ba3ff;
+  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
+  --accent-ring: rgba(79,142,247,0.30);
+  --success: #22c55e; --warn: #b08a3e; --danger: #ef4444;
+  --info: #38bdf8; --reasoning: #a78bfa;
+  --success-soft: color-mix(in oklch, var(--success) 12%, transparent);
+  --warn-soft: color-mix(in oklch, var(--warn) 14%, transparent);
+  --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
+  --info-soft: color-mix(in oklch, var(--info) 12%, transparent);
+  --reasoning-soft: color-mix(in oklch, var(--reasoning) 12%, transparent);
+  --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  --text-2xs: 10px; --text-xs: 11px; --text-sm: 12px; --text-base: 13px; --text-md: 14px;
+  --radius-sm: 6px; --radius: 8px; --radius-lg: 12px;
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-6: 24px; --space-8: 32px;
+  --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
+  --content-max-w: 720px; --composer-btn-size: 30px;
+  --ease: cubic-bezier(0.4,0,0.2,1); --duration-fast: 120ms; --duration: 200ms;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  font-family: var(--font-sans);
+  background: #131316; color: var(--neutral-fg);
+  -webkit-font-smoothing: antialiased;
+  font-size: var(--text-base); line-height: 1.5;
+}
+
+/* ============ 页面骨架（与 tokens 稿一致）============ */
+.page { max-width: 1320px; margin: 0 auto; padding: 48px 40px 80px; }
+.doc-head { margin-bottom: 40px; padding-bottom: 24px; border-bottom: 1px solid var(--border); }
+.doc-eyebrow { font-size: var(--text-xs); color: var(--accent); font-family: var(--font-mono); letter-spacing: .04em; margin-bottom: 8px; }
+.doc-title { font-size: 28px; font-weight: 600; color: var(--neutral-fg); margin-bottom: 6px; letter-spacing: -.01em; }
+.doc-sub { font-size: var(--text-md); color: var(--neutral-mid); max-width: 820px; }
+.doc-meta { display: flex; gap: 20px; margin-top: 16px; font-size: var(--text-xs); color: var(--neutral-dim); font-family: var(--font-mono); }
+.doc-meta b { color: var(--neutral-mid); font-weight: 500; }
+
+.toc { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 40px; padding: 12px; background: var(--bg-input); border-radius: var(--radius); }
+.toc a { font-size: var(--text-xs); color: var(--neutral-mid); text-decoration: none; padding: 4px 10px; border-radius: var(--radius-sm); font-family: var(--font-mono); transition: background var(--duration-fast), color var(--duration-fast); }
+.toc a:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+
+/* ============ spec section ============ */
+.spec { background: var(--surface); border-radius: var(--radius-lg); padding: 32px; margin-bottom: 24px; }
+.spec-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+.spec-num { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--accent); background: var(--accent-soft); padding: 2px 8px; border-radius: var(--radius-sm); }
+.spec-title { font-size: 20px; font-weight: 600; color: var(--neutral-fg); letter-spacing: -.005em; }
+.spec-desc { font-size: var(--text-sm); color: var(--neutral-mid); margin-bottom: 20px; max-width: 860px; }
+
+/* 变更要点 chip 行 */
+.change-points { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+.cp { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-xs); padding: 4px 10px; border-radius: 999px; font-family: var(--font-mono); }
+.cp-now { background: var(--surface-2); color: var(--neutral-mid); }
+.cp-v6 { background: var(--success-soft); color: var(--success); }
+.cp-fix { background: var(--danger-soft); color: var(--danger); }
+.cp b { font-weight: 500; }
+
+/* ============ 标注面板 ============
+   标注文字用 neutral-mid（#9ca3af）保证 AA：bg-card 上 6.10:1。
+   标注值属可读正文，不用 dim（dim 仅装饰/极弱位置）。 */
+.anno { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-mid); line-height: 1.8; }
+.anno b { color: var(--neutral-fg); font-weight: 500; }
+.anno .v6 { color: var(--success); }
+.anno .old { color: var(--neutral-faint); text-decoration: line-through; text-decoration-color: rgba(239,68,68,.5); }
+.anno-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap: 8px 20px; padding: 14px 16px; background: var(--bg-card); border-radius: var(--radius); margin-top: 12px; }
+
+/* ============ 渲染区（真实面板色，呈现目标态）============ */
+.render-frame {
+  background: var(--bg-card); border-radius: var(--radius); padding: 20px;
+  margin-bottom: 16px; overflow: hidden;
+}
+/* 状态标签（每行变体前的 [状态] 标）*/
+.state-row { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
+.state-tag {
+  flex-shrink: 0; width: 96px; font-size: var(--text-2xs); font-family: var(--font-mono);
+  color: var(--neutral-dim); text-transform: uppercase; letter-spacing: .05em;
+  padding-top: 6px;
+}
+.state-demo { flex: 1; min-width: 0; }
+
+/* footer */
+.doc-foot {
+  margin-top: 48px; padding-top: 24px;
+  border-top: 1px solid var(--border);
+  display: flex; justify-content: space-between;
+  font-size: var(--text-xs); color: var(--neutral-dim); font-family: var(--font-mono);
+}
+.doc-foot a { color: var(--accent); text-decoration: none; }
+
+/* ================================================================
+   渲染用：SystemPromptPage 组件样式（呈现 v6 目标态）
+   ================================================================ */
+
+/* ── 设置页内容列（max-w-720 复用全局）── */
+.sp-page-col {
+  max-width: var(--content-max-w); margin: 0 auto;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.sp-page-title { font-size: 20px; font-weight: 600; color: var(--neutral-fg); letter-spacing: -.005em; margin-bottom: 4px; }
+.sp-page-desc { font-size: var(--text-base); color: var(--neutral-mid); margin-bottom: 8px; }
+
+/* ── §1/§2 卡片（v6：bg-card + 10px + 去 border + hairline 分隔）── */
+.sp-card {
+  background: var(--bg-card); border-radius: 10px;
+  /* v6 去 border：双重分隔是 AI slop（§3.4），靠 bg-card 层级表达边界 */
+}
+.sp-card-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 16px 10px;
+}
+.sp-card-titleblock { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sp-card-title { font-size: var(--text-base); font-weight: 500; color: var(--neutral-fg); }
+.sp-card-sub { font-size: var(--text-xs); color: var(--neutral-mid); }
+
+/* Switch（复用 settings §6 范式 · 34×20 · on accent）*/
+.sw {
+  width: 34px; height: 20px; border-radius: 999px; flex-shrink: 0;
+  background: var(--surface-2); position: relative; cursor: pointer;
+  transition: background var(--duration);
+}
+.sw::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 16px; height: 16px; border-radius: 50%; background: var(--neutral-fg);
+  transition: transform var(--duration);
+}
+.sw.on { background: var(--accent); }
+.sw.on::after { transform: translateX(14px); background: #fff; }
+
+/* 卡片体（hairline 分隔 header 与 body）*/
+.sp-card-body {
+  padding: 12px 16px;
+  border-top: 1px solid rgba(255,255,255,0.04); /* v6 hairline：rgba(.04)，降一档 */
+}
+.sp-warning {
+  font-size: var(--text-xs); line-height: 1.55; color: var(--neutral-mid);
+  margin-bottom: 8px;
+  /* v6 M5：辅助文字统一 neutral-mid（#9ca3af，6.95:1 AA），dim 仅留装饰 */
+}
+.sp-label {
+  display: block; font-size: var(--text-xs); color: var(--neutral-mid);
+  margin-bottom: 4px;
+  /* v6 M5：label 从 dim 迁 mid，正文可读性提升 */
+}
+
+/* ── 编辑器（v6 M4：min-h 200-240px + leading-relaxed + max-h-60vh）── */
+.sp-editor {
+  width: 100%; min-height: 208px; max-height: 60vh;
+  padding: 10px 12px;
+  background: var(--bg-input); border: 1px solid transparent; border-radius: var(--radius);
+  font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.6; color: var(--neutral-fg);
+  resize: vertical; display: block;
+  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+}
+.sp-editor::placeholder { color: var(--neutral-dim); font-family: var(--font-sans); }
+.sp-editor.focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
+.sp-editor.disabled { opacity: .5; cursor: not-allowed; resize: none; }
+.sp-editor.danger { border-color: var(--danger); box-shadow: 0 0 0 3px color-mix(in oklch, var(--danger) 30%, transparent); }
+/* 旧编辑器（对比用 · 120px 太小）*/
+.sp-editor-old { min-height: 120px; line-height: 1.5; }
+
+/* ── 编辑器底栏：计数器 + Save ── */
+.sp-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; }
+.sp-counter { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-mid); }
+.sp-counter.warn { color: var(--warn); }
+.sp-counter.danger { color: var(--danger); font-weight: 500; }
+.sp-counter-note { font-size: var(--text-2xs); color: var(--warn); margin-left: 6px; }
+
+/* Save 按钮（dense · h-8 · bg-accent · disabled on !dirty || over-limit || saving）*/
+.sp-save {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 32px; padding: 0 12px; border-radius: var(--radius);
+  font-size: var(--text-sm); font-weight: 500; color: #fff;
+  background: var(--accent); cursor: pointer;
+  transition: background var(--duration-fast);
+}
+.sp-save:hover { background: var(--accent-hover); }
+.sp-save.disabled { background: var(--surface-2); color: var(--neutral-faint); cursor: not-allowed; }
+.sp-save svg { width: 14px; height: 14px; }
+.sp-save-spinner { width: 14px; height: 14px; color: #fff; animation: spin 1s linear infinite; }
+
+/* 脏状态 badge（未保存）*/
+.sp-dirty-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: var(--text-2xs); font-family: var(--font-mono);
+  padding: 2px 8px; border-radius: 999px;
+  background: var(--warn-soft); color: var(--warn);
+}
+.sp-dirty-badge .dd-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
+
+/* 页面级脏状态提示条（顶部，dirty 时显示）*/
+.sp-dirty-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; border-radius: var(--radius);
+  background: var(--warn-soft);
+  font-size: var(--text-xs); color: var(--warn);
+}
+.sp-dirty-bar svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+/* ── §3 只读默认参考区（可折叠）── */
+.sp-ref-toggle {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 10px 0 0; margin-top: 12px;
+  border-top: 1px solid rgba(255,255,255,0.04); /* hairline */
+  font-size: var(--text-xs); color: var(--accent); cursor: pointer;
+  background: transparent; text-align: left;
+}
+.sp-ref-toggle:hover { color: var(--accent-hover); }
+.sp-ref-toggle svg { width: 12px; height: 12px; transition: transform var(--duration-fast); flex-shrink: 0; }
+.sp-ref-toggle.open svg { transform: rotate(90deg); }
+.sp-ref-body { margin-top: 8px; }
+.sp-ref-hint {
+  font-size: var(--text-2xs); line-height: 1.55; color: var(--neutral-mid);
+  margin-bottom: 8px;
+}
+.sp-ref-actions { display: flex; gap: 8px; margin-bottom: 8px; }
+.sp-ref-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 26px; padding: 0 10px; border-radius: var(--radius-sm);
+  font-size: var(--text-xs); color: var(--neutral-mid); cursor: pointer;
+  background: transparent;
+}
+.sp-ref-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.sp-ref-btn.danger { color: var(--danger); }
+.sp-ref-btn.danger:hover { background: var(--danger-soft); color: var(--danger); }
+.sp-ref-btn svg { width: 13px; height: 13px; }
+/* 只读内容框（max-h-240 < 编辑器 max-h-60vh，确保编辑区始终更大）*/
+.sp-ref-pre {
+  max-height: 200px; overflow: auto;
+  padding: 10px 12px; background: var(--bg-input); border-radius: var(--radius);
+  font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.6; color: var(--neutral-fg);
+  white-space: pre-wrap; word-break: break-word; user-select: text;
+}
+
+/* ── §4 未保存导航确认 dialog ── */
+.sp-confirm-mask {
+  position: relative; width: 100%; height: 280px;
+  background: #131316; border-radius: var(--radius); overflow: hidden;
+  border: 1px solid var(--border-strong);
+}
+.sp-confirm-mask::before {
+  content: ''; position: absolute; inset: 0;
+  background: rgba(0,0,0,0.5); /* overlay scrim */
+}
+.sp-confirm-dialog {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  width: min(420px, 90%); background: var(--bg-elevated);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2); padding: 20px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.sp-confirm-icon {
+  width: 32px; height: 32px; border-radius: 50%;
+  background: var(--warn-soft); color: var(--warn);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.sp-confirm-icon svg { width: 18px; height: 18px; }
+.sp-confirm-title { font-size: var(--text-md); font-weight: 600; color: var(--neutral-fg); }
+.sp-confirm-desc { font-size: var(--text-sm); color: var(--neutral-mid); line-height: 1.5; }
+.sp-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.sp-confirm-btn {
+  height: 32px; padding: 0 14px; border-radius: var(--radius);
+  font-size: var(--text-sm); font-weight: 500; cursor: pointer;
+  display: inline-flex; align-items: center;
+}
+.sp-confirm-btn.ghost { background: transparent; color: var(--neutral-mid); }
+.sp-confirm-btn.ghost:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.sp-confirm-btn.danger { background: var(--danger); color: #fff; }
+.sp-confirm-btn.danger:hover { background: color-mix(in oklch, var(--danger) 88%, white); }
+
+/* ── 状态矩阵表 ── */
+.overview-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.overview-table th {
+  text-align: left; padding: 10px 12px; font-size: var(--text-xs); color: var(--neutral-dim);
+  font-weight: 500; text-transform: uppercase; letter-spacing: .05em;
+  border-bottom: 1px solid var(--border-strong);
+}
+.overview-table td { padding: 12px; border-bottom: 1px solid var(--border); vertical-align: middle; color: var(--neutral-mid); }
+.overview-table tr:last-child td { border-bottom: 0; }
+.overview-table .t-key { font-family: var(--font-mono); color: var(--neutral-dim); font-size: var(--text-xs); }
+.overview-table .v6 { color: var(--success); }
+.overview-table .fix { color: var(--danger); }
+
+/* mini switch + button 内联（矩阵用）*/
+.mini-sw { transform: scale(.85); transform-origin: left center; }
+
+/* 动画 */
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .sp-save-spinner { animation: none; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ============ 文档头 ============ -->
+  <header class="doc-head">
+    <div class="doc-eyebrow">v6 SPEC · settings · system-prompt</div>
+    <h1 class="doc-title">Settings · SystemPrompt 系统提示词</h1>
+    <p class="doc-sub">系统提示词编辑页（替换 + 追加两卡片）。基于 impeccable 审查重构：修复关闭 switch 时 Save 禁用的功能 bug（C1），引入脏状态/未保存保护（M2）、页面级单 Save（M1）、v6 token（bg-card + 10px + 去 border）、放大编辑器（M4）、计数器超限保护（m3）、恢复默认（m4）、Save loading（m1）、Switch aria（m2）。</p>
+    <div class="doc-meta">
+      <span><b>源码</b> SystemPromptPage.vue · Textarea.vue · Switch · Button(dense)</span>
+      <span><b>常量</b> SYSTEM_PROMPT_MAX_LENGTH = 16000</span>
+      <span><b>token</b> v6-spec-tokens.html（:root 逐字一致）</span>
+      <span><b>状态</b> 定稿，待实施</span>
+    </div>
+  </header>
+
+  <!-- ============ 目录 ============ -->
+  <nav class="toc">
+    <a href="#s0">§0 变更总览</a>
+    <a href="#s1">§1 替换卡</a>
+    <a href="#s2">§2 追加卡</a>
+    <a href="#s3">§3 默认参考区</a>
+    <a href="#s4">§4 脏状态保护</a>
+    <a href="#s5">§5 编辑器交互</a>
+    <a href="#s6">§6 状态矩阵</a>
+  </nav>
+
+  <!-- ================================================================
+       §0 变更总览 + C1 关键修复
+       ================================================================ -->
+  <section class="spec" id="s0">
+    <div class="spec-head">
+      <span class="spec-num">§0</span>
+      <h2 class="spec-title">变更总览 + C1 关键修复</h2>
+    </div>
+    <p class="spec-desc">现状 SystemPromptPage 每卡片 Save 的 <code>:disabled</code> 绑在 switch 的布尔值（<code>!replaceEnabled</code> / <code>!appendEnabled</code>）—— 关闭 switch 是有效操作（恢复 pi 默认），却无法保存。<b>C1 修复：Save 禁用条件改为「无脏数据」</b>（isDirty = 当前编辑态 ≠ 已保存配置）。同时落地 v6 token 与其余审查项。</p>
+
+    <div class="change-points">
+      <span class="cp cp-fix"><b>C1 修复</b> Save disabled 基于 dirty，非 switch 布尔</span>
+      <span class="cp cp-v6"><b>M1</b> 两卡交叉提交 → 页面级单 Save</span>
+      <span class="cp cp-v6"><b>M2</b> + isDirty / 未保存 badge / 离开确认</span>
+      <span class="cp cp-v6"><b>M3</b> v6 token：bg-card + 10px + 去 border + hairline rgba(.04)</span>
+      <span class="cp cp-v6"><b>M4</b> 编辑器 min-h 120px → 208px + max-h-60vh</span>
+      <span class="cp cp-v6"><b>M5</b> 辅助文字 dim → neutral-mid</span>
+      <span class="cp cp-v6"><b>m1</b> + Save saving 态 + Loader2</span>
+      <span class="cp cp-v6"><b>m2</b> + Switch aria-labelledby</span>
+      <span class="cp cp-v6"><b>m3</b> + 计数器接近上限 warn / 超限 danger + 禁用 Save</span>
+      <span class="cp cp-v6"><b>m4</b> + 恢复 pi 默认</span>
+    </div>
+
+    <!-- C1 前后对比 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:4px 0 14px;font-weight:500;">C1 关键修复：Save 禁用条件（前后）</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div style="background:var(--bg-card);border-radius:var(--radius);padding:18px;">
+        <span style="display:inline-flex;align-items:center;gap:6px;font-size:var(--text-2xs);font-family:var(--font-mono);padding:3px 8px;border-radius:999px;background:var(--danger-soft);color:var(--danger);text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">现状 · bug</span>
+        <div style="font-family:var(--font-mono);font-size:var(--text-xs);line-height:1.8;color:var(--neutral-mid);background:var(--bg-input);border-radius:var(--radius);padding:14px;white-space:pre-wrap;"><span style="color:var(--neutral-faint);text-decoration:line-through;text-decoration-color:rgba(239,68,68,.5);">// disabled 绑 switch 布尔值</span>
+&lt;Button
+  :disabled=<span style="color:var(--danger);">"!replaceEnabled"</span>
+&gt;保存&lt;/Button&gt;
+
+<span style="color:var(--neutral-dim);">// 关闭 switch 后：</span>
+<span style="color:var(--neutral-dim);">// replaceEnabled = false → Save 永久禁用</span>
+<span style="color:var(--neutral-dim);">// 用户无法保存「关闭替换」= 有效操作被阻断</span></div>
+        <div class="anno" style="margin-top:10px;"><b>后果:</b> <span>关闭开关后无法保存，必须先开开关才能点 Save，再关开关——逻辑悖论</span></div>
+      </div>
+      <div style="background:var(--bg-card);border-radius:var(--radius);padding:18px;">
+        <span style="display:inline-flex;align-items:center;gap:6px;font-size:var(--text-2xs);font-family:var(--font-mono);padding:3px 8px;border-radius:999px;background:var(--success-soft);color:var(--success);text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">v6 · 修复</span>
+        <div style="font-family:var(--font-mono);font-size:var(--text-xs);line-height:1.8;color:var(--neutral-mid);background:var(--bg-input);border-radius:var(--radius);padding:14px;white-space:pre-wrap;"><span style="color:var(--success);">// disabled 绑 dirty（非 switch）</span>
+&lt;Button
+  :disabled=<span style="color:var(--success);">"!isDirty || isOverLimit || saving"</span>
+&gt;保存&lt;/Button&gt;
+
+<span style="color:var(--neutral-dim);">// isDirty = 编辑态 ≠ 已存配置</span>
+<span style="color:var(--neutral-dim);">// 关 switch → 与已存不同 → dirty=true</span>
+<span style="color:var(--neutral-dim);">// → Save 可点，可保存「关闭替换」</span></div>
+        <div class="anno" style="margin-top:10px;"><b>isDirty 定义:</b> <span class="v6">JSON.stringify(buildConfig()) !== JSON.stringify(savedConfig)</span></div>
+      </div>
+    </div>
+
+    <!-- isDirty 伪码 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">isDirty 计算 + savedConfig 快照（M2）</h3>
+    <div style="font-family:var(--font-mono);font-size:var(--text-xs);line-height:1.8;color:var(--neutral-mid);background:var(--bg-input);border-radius:var(--radius);padding:16px;white-space:pre-wrap;"><span style="color:var(--neutral-dim);">// loadConfig 成功后存快照（初始 savedConfig = 加载值）</span>
+<span style="color:var(--accent);">const</span> savedConfig = ref&lt;SystemPromptConfig | <span style="color:var(--accent);">null</span>&gt;(<span style="color:var(--accent);">null</span>)
+
+<span style="color:var(--accent);">const</span> isDirty = computed(<span style="color:var(--accent);">() =&gt;</span> {
+  <span style="color:var(--accent);">if</span> (!savedConfig.value) <span style="color:var(--accent);">return false</span>          <span style="color:var(--neutral-dim);">// 未加载完不算 dirty</span>
+  <span style="color:var(--accent);">return</span> JSON.stringify(buildConfig()) !== JSON.stringify(savedConfig.value)
+})
+
+<span style="color:var(--neutral-dim);">// save 成功后刷新快照 → isDirty 自动归 false → badge 消失、Save 禁用</span>
+<span style="color:var(--accent);">async function</span> save() {
+  saving.value = <span style="color:var(--accent);">true</span>
+  <span style="color:var(--accent);">try</span> {
+    <span style="color:var(--accent);">const</span> cfg = buildConfig()
+    <span style="color:var(--accent);">await</span> config.setSystemPrompt(cfg)
+    savedConfig.value = cfg                <span style="color:var(--neutral-dim);">// 刷新快照</span>
+    info(t(<span style="color:var(--success);">'settings.systemPrompt.savedToast'</span>))
+  } <span style="color:var(--accent);">catch</span> (e) { error(...) }
+  <span style="color:var(--accent);">finally</span> { saving.value = <span style="color:var(--accent);">false</span> }
+}</div>
+
+    <div class="anno-grid" style="margin-top:16px;">
+      <div class="anno"><b>C1 根因:</b> <span>:disabled 绑 <span class="old">!replaceEnabled</span>（switch 布尔）而非 dirty</span></div>
+      <div class="anno"><b>buildConfig:</b> <span>已统一两卡为单 SystemPromptConfig（现状即如此），故 M1 页面级 Save 天然契合</span></div>
+      <div class="anno"><b>savedConfig 初始:</b> <span>null → 加载前 isDirty=false（避免初始闪烁 dirty badge）</span></div>
+      <div class="anno"><b>导航保护触发:</b> <span>isDirty=true 时离开设置页 / 关 overlay → 弹确认（§4）</span></div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §1 替换卡（replace）
+       ================================================================ -->
+  <section class="spec" id="s1">
+    <div class="spec-head">
+      <span class="spec-num">§1</span>
+      <h2 class="spec-title">替换系统提示词卡（replace）</h2>
+    </div>
+    <p class="spec-desc">卡 1：完全覆盖 pi 默认身份与指引。Switch + 大编辑器 + 字符计数器（16000 上限）+ 脏态 badge + Save。v6 重构：去 border 改 bg-card、放大编辑器（120→208px）、计数器超限保护、Save 基于 dirty。switch 受 <code>aria-labelledby</code> 关联卡片标题（m2）。</p>
+
+    <!-- 目标态渲染：enabled + dirty -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:4px 0 14px;font-weight:500;">目标态 · enabled + dirty（编辑中，Save 可点）</h3>
+    <div class="render-frame">
+      <div style="background:var(--surface);border-radius:var(--radius);padding:24px;">
+        <div class="sp-page-col" style="max-width:560px;">
+          <div class="sp-card">
+            <div class="sp-card-head">
+              <div class="sp-card-titleblock">
+                <span class="sp-card-title" id="sp-replace-title">替换系统提示词</span>
+                <span class="sp-card-sub">完全覆盖 pi 默认的身份与指引</span>
+              </div>
+              <span class="sw on" role="switch" aria-checked="true" aria-labelledby="sp-replace-title"></span>
+            </div>
+            <div class="sp-card-body">
+              <p class="sp-warning">替换后 pi 默认的身份/工具列表/指引将被移除，工具描述需在文本中自行维护。仅对新建会话生效；关闭开关即恢复 pi 默认。</p>
+              <label class="sp-label" for="sp-replace-input">自定义系统提示词</label>
+              <div class="sp-editor" id="sp-replace-input" contenteditable="true" spellcheck="false">You are a senior software architect. Always explain trade-offs before writing code.
+Follow the project's existing conventions.
+When unsure, ask clarifying questions.</div>
+              <div class="sp-foot">
+                <span>
+                  <span class="sp-counter">142 / 16,000</span>
+                </span>
+                <span style="display:inline-flex;align-items:center;gap:8px;">
+                  <span class="sp-dirty-badge"><span class="dd-dot"></span>未保存</span>
+                  <span class="sp-save">保存</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="anno-grid">
+        <div class="anno"><b>卡片 bg:</b> <span class="v6">bg-card #22242c</span> <span class="old">bg-bg</span></div>
+        <div class="anno"><b>卡片圆角:</b> <span class="v6">10px</span> · <b>border:</b> <span class="v6">无（去 border）</span></div>
+        <div class="anno"><b>header↔body 分隔:</b> <span class="v6">hairline rgba(255,255,255,0.04)</span></div>
+        <div class="anno"><b>编辑器 min-h:</b> <span class="v6">208px</span> <span class="old">120px</span> · <b>max-h:</b> <span class="v6">60vh</span></div>
+        <div class="anno"><b>编辑器 line-height:</b> <span class="v6">1.6</span>（leading-relaxed）<span class="old">1.5</span></div>
+        <div class="anno"><b>Save disabled:</b> <span class="v6">!isDirty || isOverLimit || saving</span> <span class="old">!replaceEnabled</span></div>
+        <div class="anno"><b>Switch aria:</b> <span class="v6">aria-labelledby="sp-replace-title"</span></div>
+        <div class="anno"><b>计数器上限:</b> <span>16,000（SYSTEM_PROMPT_MAX_LENGTH，argv 安全边界）</span></div>
+        <div class="anno"><b>辅助文字:</b> <span class="v6">neutral-mid</span> <span class="old">neutral-dim</span>（M5 对比度）</div>
+      </div>
+    </div>
+
+    <!-- 关闭 switch 态（C1 核心：可保存） -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">关闭 switch 态（C1 核心：关闭 = 有效操作，可保存）</h3>
+    <div class="render-frame">
+      <div style="background:var(--surface);border-radius:var(--radius);padding:24px;">
+        <div class="sp-page-col" style="max-width:560px;">
+          <div class="sp-card">
+            <div class="sp-card-head">
+              <div class="sp-card-titleblock">
+                <span class="sp-card-title">替换系统提示词</span>
+                <span class="sp-card-sub">完全覆盖 pi 默认的身份与指引</span>
+              </div>
+              <span class="sw" role="switch" aria-checked="false"></span>
+            </div>
+            <div class="sp-card-body">
+              <p class="sp-warning">替换后 pi 默认的身份/工具列表/指引将被移除……关闭开关即恢复 pi 默认。</p>
+              <label class="sp-label">自定义系统提示词</label>
+              <div class="sp-editor disabled">You are a senior software architect…</div>
+              <div class="sp-foot">
+                <span class="sp-counter">142 / 16,000</span>
+                <span style="display:inline-flex;align-items:center;gap:8px;">
+                  <span class="sp-dirty-badge"><span class="dd-dot"></span>未保存</span>
+                  <span class="sp-save">保存</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="anno-grid">
+        <div class="anno"><b>switch:</b> <span>off（用户刚关闭）</span></div>
+        <div class="anno"><b>编辑器:</b> <span>disabled（opacity .5，不可编辑）</span></div>
+        <div class="anno"><b>isDirty:</b> <span class="v6">true（off ≠ 已存 on）→ badge 显示「未保存」</span></div>
+        <div class="anno"><b>Save:</b> <span class="v6 fix">可点（!dirty=false）→ 点保存即写入「关闭替换」</span></div>
+        <div class="anno"><b>对比现状:</b> <span class="old">disabled=!replaceEnabled=true → 无法保存</span></div>
+      </div>
+    </div>
+
+    <!-- 计数器超限态（m3） -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">计数器三态（m3：normal / warn / danger）</h3>
+    <div class="render-frame">
+      <div style="display:flex;gap:24px;flex-wrap:wrap;padding:8px;">
+        <div style="display:flex;flex-direction:column;gap:8px;min-width:200px;">
+          <div style="font-size:var(--text-2xs);color:var(--neutral-dim);font-family:var(--font-mono);">① normal &lt; 80%</div>
+          <div class="sp-foot" style="margin:0;">
+            <span class="sp-counter">2,400 / 16,000</span>
+            <span class="sp-save">保存</span>
+          </div>
+          <div class="anno"><b>色:</b> neutral-mid · <b>Save:</b> 可点</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;min-width:200px;">
+          <div style="font-size:var(--text-2xs);color:var(--neutral-dim);font-family:var(--font-mono);">② warn ≥ 80%（13,000+）</div>
+          <div class="sp-foot" style="margin:0;">
+            <span class="sp-counter warn">14,200 / 16,000 <span class="sp-counter-note">· 接近上限</span></span>
+            <span class="sp-save">保存</span>
+          </div>
+          <div class="anno"><b>色:</b> <span style="color:var(--warn);">warn</span> · <b>Save:</b> 可点（未超限）</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;min-width:200px;">
+          <div style="font-size:var(--text-2xs);color:var(--neutral-dim);font-family:var(--font-mono);">③ danger &gt; 16,000</div>
+          <div class="sp-foot" style="margin:0;">
+            <span class="sp-counter danger">16,847 / 16,000 <span class="sp-counter-note" style="color:var(--danger);">· 已超限</span></span>
+            <span class="sp-save disabled">保存</span>
+          </div>
+          <div class="anno"><b>色:</b> <span style="color:var(--danger);">danger</span> · <b>Save:</b> <span class="fix">禁用（isOverLimit）</span></div>
+        </div>
+      </div>
+      <div class="anno-grid" style="margin-top:12px;">
+        <div class="anno"><b>超限判定:</b> <span class="v6">isOverLimit = replacePrompt.length &gt; SYSTEM_PROMPT_MAX_LENGTH</span></div>
+        <div class="anno"><b>warn 阈值:</b> <span class="v6">length &gt;= maxLength * 0.8（12,800+）</span></div>
+        <div class="anno"><b>编辑器 danger 态:</b> <span>超限时编辑器 border 变 danger + ring（见 §5）</span></div>
+        <div class="anno"><b>runtime 兜底:</b> <span>ConfigService.setSystemPromptConfig 超限拒存（前端禁用为前置防线）</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §2 追加卡（append）
+       ================================================================ -->
+  <section class="spec" id="s2">
+    <div class="spec-head">
+      <span class="spec-num">§2</span>
+      <h2 class="spec-title">注入额外提示词卡（append）</h2>
+    </div>
+    <p class="spec-desc">卡 2：在系统提示词末尾追加内容，保存后下一轮对话即生效（含进行中会话）。结构与替换卡一致。差异：append 走 hook 不经 argv，<b>无 16000 硬上限</b>（R3）——计数器只显字符数不显上限，但仍可在超大输入时给软提示。同享页面级单 Save。</p>
+
+    <div class="change-points">
+      <span class="cp cp-now"><b>现状</b> 独立 Save（disabled=!appendEnabled）+ 无上限计数</span>
+      <span class="cp cp-v6"><b>v6</b> 页面级单 Save + dirty 驱动 + 无上限计数（仅字符数）</span>
+    </div>
+
+    <!-- 目标态 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:4px 0 14px;font-weight:500;">目标态 · enabled + dirty</h3>
+    <div class="render-frame">
+      <div style="background:var(--surface);border-radius:var(--radius);padding:24px;">
+        <div class="sp-page-col" style="max-width:560px;">
+          <div class="sp-card">
+            <div class="sp-card-head">
+              <div class="sp-card-titleblock">
+                <span class="sp-card-title" id="sp-append-title">注入额外提示词</span>
+                <span class="sp-card-sub">在系统提示词末尾追加内容</span>
+              </div>
+              <span class="sw on" role="switch" aria-checked="true" aria-labelledby="sp-append-title"></span>
+            </div>
+            <div class="sp-card-body">
+              <p class="sp-warning">追加到系统提示词末尾，保存后下一轮对话即生效（含进行中的会话）。</p>
+              <label class="sp-label" for="sp-append-input">追加的提示词</label>
+              <div class="sp-editor" id="sp-append-input" contenteditable="true" spellcheck="false">回复时优先使用中文。
+代码块始终标注语言。
+不要重复用户已经说过的话。</div>
+              <div class="sp-foot">
+                <span class="sp-counter">48 字符</span>
+                <span style="display:inline-flex;align-items:center;gap:8px;">
+                  <span class="sp-dirty-badge"><span class="dd-dot"></span>未保存</span>
+                  <span class="sp-save">保存</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="anno-grid">
+        <div class="anno"><b>计数器:</b> <span class="v6">仅字符数「48 字符」</span>（无 /N 上限，append 走 hook 不经 argv）</div>
+        <div class="anno"><b>差异 vs replace:</b> <span>无 isOverLimit 判定 · 无 danger 态 · Save 仅看 dirty+saving</span></div>
+        <div class="anno"><b>Save:</b> <span>页面级单 Save（与 replace 共用，见 M1）</span></div>
+        <div class="anno"><b>Switch aria:</b> <span class="v6">aria-labelledby="sp-append-title"</span></div>
+        <div class="anno"><b>i18n:</b> <span>charCount = 「字符」</span></div>
+      </div>
+    </div>
+
+    <!-- 两卡同页（页面级 Save 落点） -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">两卡同页 · 页面级单 Save（M1 落点）</h3>
+    <div class="render-frame">
+      <div style="background:var(--surface);border-radius:var(--radius);padding:24px;">
+        <div class="sp-page-col" style="max-width:560px;">
+          <div class="sp-card">
+            <div class="sp-card-head">
+              <div class="sp-card-titleblock">
+                <span class="sp-card-title">替换系统提示词</span>
+                <span class="sp-card-sub">完全覆盖 pi 默认的身份与指引</span>
+              </div>
+              <span class="sw on" role="switch" aria-checked="true"></span>
+            </div>
+            <div class="sp-card-body">
+              <div class="sp-editor" style="min-height:80px;font-size:var(--text-xs);">You are a senior software architect…</div>
+              <div class="sp-foot">
+                <span class="sp-counter">142 / 16,000</span>
+                <span class="sp-dirty-badge"><span class="dd-dot"></span>未保存</span>
+              </div>
+            </div>
+          </div>
+          <div class="sp-card">
+            <div class="sp-card-head">
+              <div class="sp-card-titleblock">
+                <span class="sp-card-title">注入额外提示词</span>
+                <span class="sp-card-sub">在系统提示词末尾追加内容</span>
+              </div>
+              <span class="sw on" role="switch" aria-checked="true"></span>
+            </div>
+            <div class="sp-card-body">
+              <div class="sp-editor" style="min-height:80px;font-size:var(--text-xs);">回复时优先使用中文…</div>
+              <div class="sp-foot">
+                <span class="sp-counter">48 字符</span>
+                <span class="sp-dirty-badge"><span class="dd-dot"></span>未保存</span>
+              </div>
+            </div>
+          </div>
+          <!-- 页面级 Save（任一卡 dirty 即启用） -->
+          <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;padding-top:4px;">
+            <span style="font-size:var(--text-xs);color:var(--neutral-mid);">两卡均有未保存更改</span>
+            <span class="sp-save">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              保存全部更改
+            </span>
+          </div>
+        </div>
+      </div>
+      <div class="anno-grid">
+        <div class="anno"><b>M1 方案:</b> <span class="v6">页面级单 Save（替代两卡各自的 Save）</span></div>
+        <div class="anno"><b>启用条件:</b> <span class="v6">isDirty（任一卡 dirty）&& !isOverLimit && !saving</span></div>
+        <div class="anno"><b>提交内容:</b> <span>buildConfig() 统一两卡（现状已如此，消除交叉提交歧义）</span></div>
+        <div class="anno"><b>备选（若保留分卡 Save）:</b> <span>每卡 Save 各自基于该卡 dirty，互不干扰（buildConfig 仍统一）</span></div>
+        <div class="anno"><b>badge 落点:</b> <span>每卡片内各自显 dirty badge（颗粒到卡），页面级 Save 统一提交</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §3 只读默认参考区 + 恢复默认
+       ================================================================ -->
+  <section class="spec" id="s3">
+    <div class="spec-head">
+      <span class="spec-num">§3</span>
+      <h2 class="spec-title">只读默认参考区 + 恢复默认</h2>
+    </div>
+    <p class="spec-desc">替换卡内嵌可折叠的 pi 默认提示词参考区（DEFAULT_PI_SYSTEM_PROMPT）。展开后可复制 + <b>恢复 pi 默认</b>（m4：一键将 replace.prompt 置为默认值并标 dirty，等用户保存生效）。只读框 max-h 200px（&lt; 编辑器 60vh，确保编辑区始终更大 · M4）。</p>
+
+    <div class="change-points">
+      <span class="cp cp-now"><b>现状</b> 仅「复制」按钮</span>
+      <span class="cp cp-v6"><b>m4</b> + 「恢复 pi 默认」按钮（置默认值 + 标 dirty）</span>
+      <span class="cp cp-v6"><b>M4</b> 参考框 max-h 240px → 200px（&lt; 编辑器）</span>
+    </div>
+
+    <!-- 展开态 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:4px 0 14px;font-weight:500;">展开态（复制 + 恢复默认）</h3>
+    <div class="render-frame">
+      <div style="background:var(--surface);border-radius:var(--radius);padding:24px;">
+        <div class="sp-page-col" style="max-width:560px;">
+          <div class="sp-card">
+            <div class="sp-card-head">
+              <div class="sp-card-titleblock">
+                <span class="sp-card-title">替换系统提示词</span>
+                <span class="sp-card-sub">完全覆盖 pi 默认的身份与指引</span>
+              </div>
+              <span class="sw" role="switch" aria-checked="false"></span>
+            </div>
+            <div class="sp-card-body">
+              <!-- 折叠触发器（展开态）-->
+              <button class="sp-ref-toggle open">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                查看 pi 默认提示词
+              </button>
+              <div class="sp-ref-body">
+                <p class="sp-ref-hint">这是 pi 的默认核心提示词（身份+工具列表+指引）。替换后此段会被你的文本覆盖；动态段（AGENTS.md/skills/cwd）不受影响，仍由 pi 照常拼接。</p>
+                <div class="sp-ref-actions">
+                  <span class="sp-ref-btn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    复制
+                  </span>
+                  <span class="sp-ref-btn danger">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                    恢复 pi 默认
+                  </span>
+                </div>
+                <pre class="sp-ref-pre">You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
+
+Available tools:
+- read: Read file contents
+- bash: Execute bash commands (ls, grep, find, etc.)
+- edit: Make precise file edits with exact text replacement
+- write: Create or overwrite files
+
+Guidelines:
+- Use read to examine files instead of cat or sed.
+- Keep edits[].oldText as small as possible while still unique.
+- Be concise in your responses
+- Show file paths clearly when working with files
+
+Pi documentation (read only when the user asks about pi itself…)</pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="anno-grid">
+        <div class="anno"><b>折叠触发器:</b> <span>ghost 文字行 · chevron rotate 90 展开 · 全宽左对齐</span></div>
+        <div class="anno"><b>hint 文字:</b> <span class="v6">neutral-mid</span> <span class="old">neutral-dim</span>（M5）</span></div>
+        <div class="anno"><b>复制按钮:</b> <span>ghost · Copy icon 13px · 成功 info toast「已复制到剪贴板」</span></div>
+        <div class="anno"><b>恢复默认:</b> <span class="v6 m4">danger 色 ghost · Replace icon · 点击后 replacePrompt=DEFAULT + dirty=true</span></div>
+        <div class="anno"><b>恢复默认行为:</b> <span>不直接保存——置值 + 标 dirty，由用户点 Save 确认（防误操作）</span></div>
+        <div class="anno"><b>参考框 max-h:</b> <span class="v6">200px</span> <span class="old">240px</span>（&lt; 编辑器 60vh，M4 一致性）</span></div>
+        <div class="anno"><b>参考框:</b> <span>bg-input · mono 11px · select-text · overflow-auto</span></div>
+      </div>
+    </div>
+
+    <!-- 折叠态 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">折叠态（默认 · showDefaultPrompt=false）</h3>
+    <div class="render-frame">
+      <div style="background:var(--surface);border-radius:var(--radius);padding:24px;">
+        <div class="sp-page-col" style="max-width:560px;">
+          <div class="sp-card">
+            <div class="sp-card-body" style="padding-top:12px;">
+              <button class="sp-ref-toggle">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                查看 pi 默认提示词
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="anno"><b>默认:</b> <span>折叠（showDefaultPrompt=false）· chevron 0° · 仅一行触发器</span></div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §4 脏状态 + 未保存保护
+       ================================================================ -->
+  <section class="spec" id="s4">
+    <div class="spec-head">
+      <span class="spec-num">§4</span>
+      <h2 class="spec-title">脏状态 + 未保存保护（M2）</h2>
+    </div>
+    <p class="spec-desc">isDirty=true 时三处可见反馈：<b>① 卡片内 dirty badge</b>（未保存）· <b>② 页面顶部 dirty 提示条</b>（两卡汇总）· <b>③ 离开确认 dialog</b>（关闭设置 overlay / 切换 nav 时拦截）。防用户误丢编辑。</p>
+
+    <div class="change-points">
+      <span class="cp cp-now"><b>现状</b> 无脏状态感知，编辑后切走即丢</span>
+      <span class="cp cp-v6"><b>M2</b> + dirty badge + 顶部提示条 + 离开确认 dialog</span>
+    </div>
+
+    <!-- ① 卡片内 badge（已在 §1/§2 展示，此处汇总） -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:4px 0 14px;font-weight:500;">① 卡片内 dirty badge（颗粒到卡）</h3>
+    <div class="render-frame">
+      <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap;padding:12px;">
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <div style="font-size:var(--text-2xs);color:var(--neutral-dim);font-family:var(--font-mono);">clean（已保存）</div>
+          <span style="font-size:var(--text-xs);color:var(--neutral-faint);font-family:var(--font-mono);">— 无 badge —</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <div style="font-size:var(--text-2xs);color:var(--neutral-dim);font-family:var(--font-mono);">dirty（未保存）</div>
+          <span class="sp-dirty-badge"><span class="dd-dot"></span>未保存</span>
+        </div>
+      </div>
+      <div class="anno-grid" style="margin-top:12px;">
+        <div class="anno"><b>badge 样式:</b> <span>warn-soft 底 · warn 字 · 6px 圆点 · mono 10px</span></div>
+        <div class="anno"><b>显示条件:</b> <span>该卡 buildConfig 片段 ≠ savedConfig 对应片段</span></div>
+        <div class="anno"><b>消除时机:</b> <span>Save 成功后 savedConfig 刷新 → isDirty=false → badge 消失</span></div>
+      </div>
+    </div>
+
+    <!-- ② 页面顶部提示条 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">② 页面顶部 dirty 提示条（任一卡 dirty 时显示）</h3>
+    <div class="render-frame">
+      <div style="background:var(--surface);border-radius:var(--radius);padding:24px;">
+        <div class="sp-page-col" style="max-width:560px;">
+          <div class="sp-dirty-bar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <span>有 2 项未保存的更改（替换 · 追加）。离开前请保存。</span>
+            <span style="margin-left:auto;" class="sp-save" style="height:26px;padding:0 10px;font-size:var(--text-xs);">保存全部</span>
+          </div>
+        </div>
+      </div>
+      <div class="anno-grid" style="margin-top:12px;">
+        <div class="anno"><b>样式:</b> <span>warn-soft 底 · warn 字 · 8px 12px · 圆角 8px</span></div>
+        <div class="anno"><b>显示条件:</b> <span>isDirty=true（任一卡 dirty）</span></div>
+        <div class="anno"><b>位置:</b> <span>页面标题下方、卡片上方</span></div>
+      </div>
+    </div>
+
+    <!-- ③ 离开确认 dialog -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">③ 离开确认 dialog（关闭 overlay / 切 nav 时拦截）</h3>
+    <div class="render-frame">
+      <div class="sp-confirm-mask">
+        <!-- 模拟底层设置页（半遮）-->
+        <div style="position:absolute;inset:0;padding:24px;opacity:.4;">
+          <div style="font-size:var(--text-md);color:var(--neutral-fg);margin-bottom:8px;">系统提示词</div>
+          <div style="height:60px;background:var(--bg-card);border-radius:10px;"></div>
+        </div>
+        <div class="sp-confirm-dialog">
+          <div style="display:flex;align-items:flex-start;gap:12px;">
+            <span class="sp-confirm-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            </span>
+            <div>
+              <div class="sp-confirm-title">放弃未保存的更改？</div>
+              <div class="sp-confirm-desc">你有 2 项未保存的系统提示词更改，离开后将丢失。</div>
+            </div>
+          </div>
+          <div class="sp-confirm-actions">
+            <span class="sp-confirm-btn ghost">取消</span>
+            <span class="sp-confirm-btn danger">放弃更改</span>
+          </div>
+        </div>
+      </div>
+      <div class="anno-grid" style="margin-top:12px;">
+        <div class="anno"><b>触发:</b> <span>isDirty=true 时：点 overlay 关闭 / 切 nav / 按 Esc</span></div>
+        <div class="anno"><b>对话框:</b> <span>bg-elevated · 圆角 12px · shadow-2 · 居中</span></div>
+        <div class="anno"><b>遮罩:</b> <span>rgba(0,0,0,.5) scrim · z-modal 1000</span></div>
+        <div class="anno"><b>主操作:</b> <span class="fix">「放弃更改」danger 色（破坏性，需确认）</span></div>
+        <div class="anno"><b>次操作:</b> <span>「取消」ghost（留在页面）</span></div>
+        <div class="anno"><b>组件复用:</b> <span>ConfirmDialog（既有 z-modal 1000 原语，AlertTriangle icon）</span></div>
+        <div class="anno"><b>文案:</b> <span>列明 dirty 项数，让用户明确丢失范围</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §5 编辑器交互
+       ================================================================ -->
+  <section class="spec" id="s5">
+    <div class="spec-head">
+      <span class="spec-num">§5</span>
+      <h2 class="spec-title">编辑器交互（显隐 / 计数 warn / saving loading）</h2>
+    </div>
+    <p class="spec-desc">Textarea 是本页核心交互。v6 放大编辑区（M4）、补超限 danger 态（m3）、补 Save saving loading（m1）。switch off 时编辑器 disabled 但仍可见内容（非隐藏，让用户知道当前存了什么）。</p>
+
+    <!-- 编辑器状态矩阵 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:4px 0 14px;font-weight:500;">编辑器四态（disabled / default / focus / over-limit）</h3>
+    <div class="render-frame">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div>
+          <div style="font-size:var(--text-2xs);color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:8px;">① disabled（switch off）</div>
+          <div class="sp-editor disabled">You are a senior software architect…</div>
+          <div class="anno" style="margin-top:8px;"><b>opacity:</b> .5 · <b>resize:</b> none · <b>cursor:</b> not-allowed · 内容仍可见</div>
+        </div>
+        <div>
+          <div style="font-size:var(--text-2xs);color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:8px;">② default（switch on · 未聚焦）</div>
+          <div class="sp-editor" contenteditable="true" spellcheck="false">You are a senior software architect. Always explain trade-offs.</div>
+          <div class="anno" style="margin-top:8px;"><b>bg:</b> bg-input · <b>border:</b> transparent · <b>min-h:</b> <span class="v6">208px</span></div>
+        </div>
+        <div>
+          <div style="font-size:var(--text-2xs);color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:8px;">③ focus（聚焦输入）</div>
+          <div class="sp-editor focus" contenteditable="true" spellcheck="false">You are a senior software architect. Always explain trade-offs|</div>
+          <div class="anno" style="margin-top:8px;"><b>border:</b> accent · <b>ring:</b> 3px accent-ring</div>
+        </div>
+        <div>
+          <div style="font-size:var(--text-2xs);color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:8px;">④ over-limit（超 16000 · m3）</div>
+          <div class="sp-editor danger" contenteditable="true" spellcheck="false" style="font-size:var(--text-xs);">…（超长内容，16,847 字符）…</div>
+          <div class="anno" style="margin-top:8px;"><b>border:</b> <span style="color:var(--danger);">danger</span> · <b>ring:</b> 3px danger-30% · Save 禁用</div>
+        </div>
+      </div>
+      <div class="anno-grid" style="margin-top:12px;">
+        <div class="anno"><b>min-h:</b> <span class="v6">208px</span> <span class="old">120px</span>（M4，足够展示 6-8 行）</span></div>
+        <div class="anno"><b>max-h:</b> <span class="v6">60vh</span>（超出滚动，防撑爆设置 overlay）</span></div>
+        <div class="anno"><b>line-height:</b> <span class="v6">1.6</span>（leading-relaxed）<span class="old">1.5</span></div>
+        <div class="anno"><b>font:</b> <span>mono 12px（var(--text-sm)）</span></div>
+        <div class="anno"><b>padding:</b> <span>10px 12px</span></div>
+        <div class="anno"><b>resize:</b> <span>vertical（用户可手动拉高，受 max-h-60vh 约束）</span></div>
+        <div class="anno"><b>placeholder 色:</b> <span class="v6">neutral-dim</span>（占位属装饰位，可用 dim）</div>
+      </div>
+    </div>
+
+    <!-- 旧 vs 新尺寸对比 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">编辑器尺寸对比（M4：120px → 208px）</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div style="background:var(--bg-card);border-radius:var(--radius);padding:18px;">
+        <span style="display:inline-flex;font-size:var(--text-2xs);font-family:var(--font-mono);padding:3px 8px;border-radius:999px;background:var(--danger-soft);color:var(--danger);text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">现状 · 120px 太小</span>
+        <div class="sp-editor sp-editor-old" contenteditable="true" spellcheck="false" style="font-size:var(--text-xs);">You are a senior software architect.
+Always explain trade-offs.</div>
+        <div class="anno" style="margin-top:10px;"><b>min-h:</b> <span class="old">120px</span>（仅 4-5 行）<br><b>line-height:</b> <span class="old">1.5</span><br><b>问题:</b> 长提示词需频繁滚动，编辑体验差</div>
+      </div>
+      <div style="background:var(--bg-card);border-radius:var(--radius);padding:18px;">
+        <span style="display:inline-flex;font-size:var(--text-2xs);font-family:var(--font-mono);padding:3px 8px;border-radius:999px;background:var(--success-soft);color:var(--success);text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">v6 · 208px</span>
+        <div class="sp-editor" contenteditable="true" spellcheck="false" style="font-size:var(--text-xs);">You are a senior software architect.
+Always explain trade-offs before writing code.
+Follow the project's existing conventions.
+When unsure, ask clarifying questions.</div>
+        <div class="anno" style="margin-top:10px;"><b>min-h:</b> <span class="v6">208px</span>（6-8 行）<br><b>line-height:</b> <span class="v6">1.6</span><br><b>max-h:</b> <span class="v6">60vh</span>（大于只读参考框 200px）</div>
+      </div>
+    </div>
+
+    <!-- Save saving 态（m1） -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">Save 三态（m1：default / disabled / saving）</h3>
+    <div class="render-frame">
+      <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap;padding:12px;">
+        <div style="display:flex;flex-direction:column;align-items:flex-start;gap:8px;">
+          <span style="font-size:var(--text-2xs);color:var(--neutral-dim);font-family:var(--font-mono);">① default（dirty & 可保存）</span>
+          <span class="sp-save">保存</span>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-start;gap:8px;">
+          <span style="font-size:var(--text-2xs);color:var(--neutral-dim);font-family:var(--font-mono);">② disabled（clean / 超限）</span>
+          <span class="sp-save disabled">保存</span>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-start;gap:8px;">
+          <span style="font-size:var(--text-2xs);color:var(--neutral-dim);font-family:var(--font-mono);">③ saving（提交中 · m1）</span>
+          <span class="sp-save disabled">
+            <svg class="sp-save-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+            保存中…
+          </span>
+        </div>
+      </div>
+      <div class="anno-grid" style="margin-top:12px;">
+        <div class="anno"><b>saving 触发:</b> <span>save() 期间 saving=true → 按钮禁用 + Loader2 spin</span></div>
+        <div class="anno"><b>Loader2:</b> <span>14px · color #fff · spin 1s linear infinite（accent 底上白 icon）</span></div>
+        <div class="anno"><b>完成:</b> <span>finally { saving=false } → savedConfig 刷新 → 回到 disabled（clean）</span></div>
+        <div class="anno"><b>文案:</b> <span>「保存中…」（loading）/「保存」（idle）/ 隐含 toast「已保存」（成功）</span></div>
+        <div class="anno"><b>防重复提交:</b> <span>saving 期间按钮 disabled，防双击重复 setSystemPrompt</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §6 状态矩阵
+       ================================================================ -->
+  <section class="spec" id="s6">
+    <div class="spec-head">
+      <span class="spec-num">§6</span>
+      <h2 class="spec-title">状态矩阵（enabled/disabled × dirty/clean × saving）</h2>
+    </div>
+    <p class="spec-desc">每卡片（以 replace 为例，append 同理但无 over-limit）在所有状态组合下的视觉与 Save 可用性。供实施时逐态比对验证。核心：Save 可用性 <b>仅</b> 由 dirty / over-limit / saving 决定，与 switch 无关（C1）。</p>
+
+    <table class="overview-table">
+      <thead>
+        <tr>
+          <th style="width:80px;">switch</th>
+          <th style="width:80px;">dirty</th>
+          <th style="width:90px;">over-limit</th>
+          <th style="width:80px;">saving</th>
+          <th>编辑器视觉</th>
+          <th>计数器</th>
+          <th>badge</th>
+          <th>Save</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="t-key">on</span></td>
+          <td><span class="t-key">false</span></td>
+          <td><span class="t-key">false</span></td>
+          <td><span class="t-key">false</span></td>
+          <td>default · 可编辑</td>
+          <td>mid · N/16000</td>
+          <td>—</td>
+          <td><span class="fix">disabled（clean）</span></td>
+        </tr>
+        <tr>
+          <td><span class="t-key">on</span></td>
+          <td><span style="color:var(--success);font-family:var(--font-mono);font-size:11px;">true</span></td>
+          <td><span class="t-key">false</span></td>
+          <td><span class="t-key">false</span></td>
+          <td>default · 可编辑</td>
+          <td>mid · N/16000</td>
+          <td><span style="color:var(--warn);">未保存</span></td>
+          <td><span class="v6">可点（default）</span></td>
+        </tr>
+        <tr>
+          <td><span class="t-key">on</span></td>
+          <td><span style="color:var(--success);font-family:var(--font-mono);font-size:11px;">true</span></td>
+          <td><span style="color:var(--warn);font-family:var(--font-mono);font-size:11px;">≥80%</span></td>
+          <td><span class="t-key">false</span></td>
+          <td>default · 可编辑</td>
+          <td><span style="color:var(--warn);">warn · 接近上限</span></td>
+          <td><span style="color:var(--warn);">未保存</span></td>
+          <td><span class="v6">可点（未超限）</span></td>
+        </tr>
+        <tr>
+          <td><span class="t-key">on</span></td>
+          <td><span style="color:var(--success);font-family:var(--font-mono);font-size:11px;">true</span></td>
+          <td><span style="color:var(--danger);font-family:var(--font-mono);font-size:11px;">true</span></td>
+          <td><span class="t-key">false</span></td>
+          <td><span style="color:var(--danger);">danger · border+ring</span></td>
+          <td><span style="color:var(--danger);">danger · 已超限</span></td>
+          <td><span style="color:var(--warn);">未保存</span></td>
+          <td><span class="fix">disabled（over-limit）</span></td>
+        </tr>
+        <tr>
+          <td><span class="t-key">on</span></td>
+          <td><span style="color:var(--success);font-family:var(--font-mono);font-size:11px;">true</span></td>
+          <td><span class="t-key">false</span></td>
+          <td><span style="color:var(--accent);font-family:var(--font-mono);font-size:11px;">true</span></td>
+          <td>default · 可编辑</td>
+          <td>mid · N/16000</td>
+          <td><span style="color:var(--warn);">未保存</span></td>
+          <td><span class="fix">disabled（saving · Loader2）</span></td>
+        </tr>
+        <tr>
+          <td><span style="color:var(--accent);font-family:var(--font-mono);font-size:11px;">off</span></td>
+          <td><span style="color:var(--success);font-family:var(--font-mono);font-size:11px;">true</span></td>
+          <td><span class="t-key">—</span></td>
+          <td><span class="t-key">false</span></td>
+          <td><span style="color:var(--neutral-dim);">disabled(opacity .5) · 不可编辑</span></td>
+          <td>mid · N/16000</td>
+          <td><span style="color:var(--warn);">未保存</span></td>
+          <td><span class="v6">可点（C1：关闭是有效操作）</span></td>
+        </tr>
+        <tr>
+          <td><span style="color:var(--accent);font-family:var(--font-mono);font-size:11px;">off</span></td>
+          <td><span class="t-key">false</span></td>
+          <td><span class="t-key">—</span></td>
+          <td><span class="t-key">false</span></td>
+          <td><span style="color:var(--neutral-dim);">disabled(opacity .5)</span></td>
+          <td>mid · N/16000</td>
+          <td>—</td>
+          <td><span class="fix">disabled（clean）</span></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="anno-grid" style="margin-top:16px;">
+      <div class="anno"><b>C1 验证:</b> <span>第 6 行（off+dirty）= <span class="v6">Save 可点</span>（修复核心）；现状该行 disabled</span></div>
+      <div class="anno"><b>Save 可用公式:</b> <span class="v6">!saving && isDirty && !isOverLimit</span>（与 switch 无关）</span></div>
+      <div class="anno"><b>over-limit 仅 replace:</b> <span>append 无上限，over-limit 列恒 false（走 hook 不经 argv）</span></div>
+      <div class="anno"><b>badge 粒度:</b> <span>每卡独立 dirty 判定；页面级 Save 统一提交</span></div>
+      <div class="anno"><b>导航保护:</b> <span>任一卡 dirty → 离开拦截（§4③）</span></div>
+      <div class="anno"><b>全覆盖:</b> <span>switch 2 × dirty 2 × over-limit 3 × saving 2 = 关键路径全覆盖 ✓</span></div>
+    </div>
+
+    <!-- corrupted 态（补充） -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:28px 0 14px;font-weight:500;">补充 · corrupted 配置损坏提示条</h3>
+    <div class="render-frame">
+      <div style="background:var(--surface);border-radius:var(--radius);padding:24px;">
+        <div class="sp-page-col" style="max-width:560px;">
+          <div style="display:flex;align-items:flex-start;gap:8px;border-radius:var(--radius);background:var(--warn-soft);padding:8px 12px;font-size:var(--text-sm);color:var(--neutral-fg);">
+            <svg style="width:16px;height:16px;flex-shrink:0;color:var(--warn);margin-top:1px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span>系统提示词配置文件已损坏，已回退默认配置</span>
+          </div>
+        </div>
+      </div>
+      <div class="anno-grid" style="margin-top:12px;">
+        <div class="anno"><b>触发:</b> <span>config.getSystemPrompt 返回 corrupted=true</span></div>
+        <div class="anno"><b>样式:</b> <span>warn-soft 底 · warn 边 · AlertTriangle 16px · 顶部</span></div>
+        <div class="anno"><b>行为:</b> <span>已回退默认（编辑态=默认值），用户可正常编辑保存</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ footer ============ -->
+  <footer class="doc-foot">
+    <span>v6-spec-settings-system-prompt.html · 系统提示词编辑页</span>
+    <span>SSOT: <a href="v6-design.md">v6-design.md §4.5</a> · token: <a href="v6-spec-tokens.html">v6-spec-tokens.html</a> · 源码: SystemPromptPage.vue</span>
+  </footer>
+
+</div>
+</body>
+</html>
