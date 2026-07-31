@@ -199,26 +199,20 @@ body {
 /* variant: danger = text-danger hover:bg-danger-soft */
 .btn-danger { background: transparent; color: var(--danger); }
 .btn-danger:hover { background: var(--danger-soft); }
-/* 删除变体：ghost 常态 + hover 转 danger（列表行尾删除、Key 清除、header/模型移除） */
-.btn-ghost.danger-hover { color: var(--neutral-dim); }
-.btn-ghost.danger-hover:hover { background: var(--danger-soft); color: var(--danger); }
 /* size: default h-9(36px) px-4 / dense h-8(32px) px-3 / sm h-9 px-3 / icon h-10(40px) w-10 */
 .btn-default-size { height: 36px; padding: 8px 16px; }
 .btn-dense { height: 32px; padding: 0 12px; }
-.btn-sm-size { height: 36px; padding: 0 12px; }
+.btn-sm { height: 36px; padding: 0 12px; }
 .btn-icon { height: 40px; width: 40px; padding: 0; }
-/* dense 行内图标操作（列表里的 6×6 编辑/删除）——size-6 + ghost 变体覆盖 */
-.btn-act { height: 24px; width: 24px; padding: 0; border-radius: var(--radius-sm); }
-.btn-act svg { width: 13px; height: 13px; }
+/* 行内图标操作（列表里的编辑/删除/移除）——h-7 w-7(28px) radius-sm，与 shell SSOT §6 一致 */
+.btn-icon-sm { height: 28px; width: 28px; padding: 0; border-radius: var(--radius-sm); }
 /* 兜底：按钮内 SVG 缺尺寸时归一到 size-4(16px)，对齐源码 [&_svg]:size-4（被更具体规则覆盖） */
 .btn svg { width: 16px; height: 16px; flex-shrink: 0; }
 .btn:disabled { opacity: 0.5; pointer-events: none; }
-/* focus-visible 外环（键盘可达性，design-system §3 裁决） */
-.btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 4px var(--accent); }
-.ui-switch:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
-.ui-check:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
-.ui-input:focus-visible { outline: none; }
-.ui-select:focus-visible { outline: none; }
+/* focus-visible 双环：内环 accent 实色 + 外环黑色阴影（Button/Switch/Checkbox 统一，design-system §3 裁决） */
+.btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
+.ui-switch:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
+.ui-checkbox:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
 
 /* ================================================================
    xyz-ui Input / SelectTrigger（逐字对应源码，不自创）
@@ -232,7 +226,8 @@ body {
   outline: none; transition: border-color var(--duration-fast);
 }
 .ui-input::placeholder { color: var(--neutral-mid); }
-.ui-input:focus { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-ring); }
+/* SSOT §6：focus 不改 border 色，border 透明 + inset accent-ring 单环 */
+.ui-input:focus-visible { border-color: transparent; box-shadow: inset 0 0 0 1px var(--accent-ring); }
 .ui-input.err { border-color: var(--danger); }
 /* dense input h-8(32px) text-12px（headers 行 / 模型添加行用） */
 .ui-input-dense { height: 32px; font-size: var(--text-sm); }
@@ -244,7 +239,8 @@ body {
   padding: 8px 12px; font-size: var(--text-base); color: var(--neutral-fg);
   outline: none; cursor: pointer; transition: border-color var(--duration-fast);
 }
-.ui-select:focus { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-ring); }
+/* SSOT §6：focus 不改 border 色，border 透明 + inset accent-ring 单环（与 Input 一致） */
+.ui-select:focus-visible { border-color: transparent; box-shadow: inset 0 0 0 1px var(--accent-ring); }
 .ui-select .chev { width: 12px; height: 12px; color: var(--neutral-dim); opacity: 0.5; transition: transform var(--duration); }
 
 /* ================================================================
@@ -276,15 +272,15 @@ body {
    xyz-ui Checkbox（逐字对应 Checkbox.vue）
    size-4(16px) border-border-strong checked:bg-accent + Check 白
    ================================================================ */
-.ui-check {
+.ui-checkbox {
   width: 16px; height: 16px; flex-shrink: 0; border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong); background: transparent;
   display: inline-flex; align-items: center; justify-content: center;
   cursor: pointer; transition: background var(--duration-fast), border-color var(--duration-fast);
 }
-.ui-check.on { border-color: var(--accent); background: var(--accent); }
-.ui-check.disabled { opacity: 0.5; cursor: not-allowed; }
-.ui-check svg { width: 12px; height: 12px; color: #fff; }
+.ui-checkbox.on { border-color: var(--accent); background: var(--accent); }
+.ui-checkbox.disabled { opacity: 0.5; cursor: not-allowed; }
+.ui-checkbox svg { width: 12px; height: 12px; color: #fff; }
 
 /* ================================================================
    §1 列表行 / page-header
@@ -300,7 +296,7 @@ body {
 }
 .status-dot { width: 7px; height: 7px; flex-shrink: 0; border-radius: 999px; }
 .dot-connected { background: var(--success); }
-.dot-error { background: var(--danger); }
+/* dot-error 已移除：status 实为两态（connected/not_configured），error 从不产生（config-service.ts）*/
 .dot-not_configured { background: var(--neutral-dim); }
 /* 名称（点击展开/收起） */
 .row-name { flex: 1; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -448,7 +444,56 @@ body {
 .compat-inline { margin: 4px 0 6px 18px; padding: 10px 12px; background: var(--surface-2); border-radius: var(--radius);
   font-size: var(--text-xs); color: var(--neutral-mid); border-left: 1px solid var(--border); }
 .compat-inline .ci-title { color: var(--neutral-fg); font-weight: 500; font-size: var(--text-xs); margin-bottom: 6px; }
+.compat-inline .ci-sub { font-size: var(--text-2xs); color: var(--neutral-dim); margin-bottom: 8px; }
+.compat-inline .ci-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
 .compat-inline .ci-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px 10px; }
+.compat-inline .ci-group-label { grid-column: 1 / -1; font-size: var(--text-2xs); color: var(--neutral-dim); font-family: var(--font-mono); margin: 6px 0 2px; text-transform: uppercase; letter-spacing: .04em; }
+.compat-inline .ci-field { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
+.compat-inline .ci-fname { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compat-inline .ci-fctrl { flex-shrink: 0; display: inline-flex; align-items: center; }
+/* compat 字段值 chip（switch on/off / select value / text present） */
+.cv { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: var(--text-2xs); }
+.cv-on { background: var(--success-soft); color: var(--success); }
+.cv-off { background: var(--surface); color: var(--neutral-dim); }
+.cv-sel { background: var(--accent-soft); color: var(--accent); }
+.cv-text { background: var(--reasoning-soft); color: var(--reasoning); }
+/* mini switch 用于 compat 字段展示（不可点击，纯视觉） */
+.cv-switch { position: relative; display: inline-flex; height: 14px; width: 24px; align-items: center; border-radius: 999px; background: var(--border-strong); }
+.cv-switch.on { background: var(--accent); }
+.cv-switch .thumb { position: absolute; width: 10px; height: 10px; border-radius: 999px; background: #fff; transform: translateX(2px); }
+.cv-switch.on .thumb { transform: translateX(12px); }
+
+/* 预设按钮 chip（国产一键填充 / fetcher 选择） */
+.preset-chip {
+  display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 10px;
+  border: 1px solid var(--border); background: transparent; color: var(--neutral-mid);
+  border-radius: var(--radius-sm); font-size: var(--text-2xs); font-family: var(--font-mono);
+  cursor: pointer; transition: border-color var(--duration-fast), color var(--duration-fast), background var(--duration-fast);
+}
+.preset-chip:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.preset-chip.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.preset-chip:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
+
+/* 额度三窗口展示（Coding Plan 子系统） */
+.quota-wins { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; margin-top: 10px; }
+.quota-win { background: var(--surface-2); border-radius: var(--radius-sm); padding: 8px 10px; }
+.quota-win .qw-label { font-size: var(--text-2xs); color: var(--neutral-dim); font-family: var(--font-mono); margin-bottom: 4px; }
+.quota-win .qw-pct { font-size: var(--text-md); font-weight: 600; color: var(--neutral-fg); font-family: var(--font-mono); }
+.quota-win .qw-reset { font-size: var(--text-2xs); color: var(--neutral-mid); margin-top: 2px; }
+.quota-win.high .qw-pct { color: var(--warn); }
+.quota-win.full .qw-pct { color: var(--danger); }
+
+/* spec 数据表（§0 存储/类型对照/字段全集/导入差异等） */
+.spec-table { width: 100%; border-collapse: collapse; font-size: var(--text-xs); margin-top: 12px; table-layout: fixed; }
+.spec-table th { text-align: left; padding: 8px 10px; color: var(--neutral-dim); font-weight: 500; font-size: var(--text-2xs);
+  text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--border-strong); }
+.spec-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; color: var(--neutral-mid);
+  overflow-wrap: anywhere; word-break: break-word; }
+.spec-table td code { overflow-wrap: anywhere; word-break: break-all; }
+.spec-table tr:last-child td { border-bottom: 0; }
+.spec-table .st-key { font-family: var(--font-mono); color: var(--neutral-fg); }
+.spec-table .st-mono { font-family: var(--font-mono); }
+.spec-table .st-accent { font-family: var(--font-mono); color: var(--accent); }
 
 /* sticky 保存栏（展开区底部：取消 / 保存 + 左侧 dirty/error） */
 .save-bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 8px;
@@ -598,15 +643,20 @@ body {
     <h1 class="doc-title">Settings · Provider 视觉稿（交互重新设计）</h1>
     <p class="doc-sub">Provider 页完整用户旅程的规格稿：列表态（Switch 乐观更新 + 状态点）→ <b>展开就地编辑（取代 ProviderEditModal）</b>：原 5 卡（凭据 / 模型 / 验证 / 高级 Headers + 额度）全部收进展开区，按目的分组、次要项可折叠，底部 sticky 保存栏 + 未保存保护 → 导入流程（触发→预览→冲突→导入）→ 错误/空态 → 状态矩阵。基于 impeccable distill/shape/harden 做交互重新设计：消除外层展开与内层 Modal 的功能重复。所有控件用 xyz-ui Button 4 变体 + Input/SelectTrigger/Switch/Checkbox 真实样式，禁止自创 .btn / 表单类。</p>
     <div class="doc-meta">
-      <span><b>源码</b> ProviderPage.vue + ModelListSection.vue + ProviderImport{Menu,PreviewDialog}（ProviderEditModal 已移除）</span>
+      <span><b>源码</b> ProviderPage.vue + ModelListSection.vue + ProviderImport{Menu,PreviewDialog}（ProviderEditModal 待移除）</span>
       <span><b>组件</b> xyz-ui Button/Input/Select/Switch/Checkbox</span>
       <span><b>token</b> v6-spec-tokens.html（逐字一致）</span>
-      <span><b>决策</b> 移除内层 Modal，展开区即唯一编辑入口</span>
+      <span><b>决策</b> 展开区即唯一编辑入口（取代 Modal）</span>
+    </div>
+    <!-- 目标态标注：spec 描述重构方向，与当前产品代码存在差距 -->
+    <div style="margin-top:16px;padding:12px 16px;border:1px solid var(--warn);background:var(--warn-soft);border-radius:var(--radius);font-size:var(--text-sm);color:var(--warn);line-height:1.6;">
+      <b style="font-weight:600;">本 spec 描述的是目标态（重构方向）。</b>展开就地编辑取代 ProviderEditModal 是落地<b>待实施</b>的设计——当前产品代码中 <code style="background:var(--bg-input);padding:1px 5px;border-radius:var(--radius-sm);color:var(--neutral-fg);">ProviderEditModal.vue</code> 仍存在，<code style="background:var(--bg-input);padding:1px 5px;border-radius:var(--radius-sm);color:var(--neutral-fg);">ProviderPage.vue</code> 仍渲染它（约 L202-206），展开区（L92-198）仍是只读详情。落地实施时需同步：①删除 <code style="background:var(--bg-input);padding:1px 5px;border-radius:var(--radius-sm);color:var(--neutral-fg);">ProviderEditModal.vue</code>；②把展开区改造为就地编辑（4 子区，见 §2）；③接入 <code style="background:var(--bg-input);padding:1px 5px;border-radius:var(--radius-sm);color:var(--neutral-fg);">useProviderEdit.ts</code> 的编排逻辑（test/discover/save）。下文 §1–§9 的展开编辑设计均按目标态描述。
     </div>
   </header>
 
   <!-- ============ 目录 ============ -->
   <nav class="toc">
+    <a href="#s0">§0 数据模型 · 存储 · 安全</a>
     <a href="#s1">§1 列表态</a>
     <a href="#s2">§2 展开就地编辑</a>
     <a href="#s3">§3 未保存保护</a>
@@ -619,11 +669,80 @@ body {
   </nav>
 
   <!-- ================================================================
+       §0 数据模型 · 存储分层 · 安全红线（功能语义基础）
+       ================================================================ -->
+  <section class="spec" id="s0">
+    <div class="spec-head"><span class="spec-num">§0</span><h2 class="spec-title">数据模型 · 存储分层 · 安全红线</h2></div>
+    <p class="spec-desc">Provider 页所有交互依赖的功能语义基础。<b>provider 是「连接配置 + model 集合」的聚合体</b>，本节定义：①<b>存储分层</b>——provider/凭证/偏好/secrets 各落在哪个文件，明文还是加密；②<b>默认 provider 派生语义</b>——无独立「默认 provider」字段，由 defaultModel 反推；③<b>凭证存储安全红线</b>——哪些是明文、哪些绝不提取。后续 §1–§9 的字段交互均以此为基础。</p>
+
+    <h3 class="h3">① 存储分层（4 类文件）</h3>
+    <table class="spec-table">
+      <thead>
+        <tr><th style="width:220px">文件</th><th style="width:110px">明文/加密</th><th style="width:160px">承载字段</th><th>说明</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="st-key">~/.xyz-agent/pi/agent/<br>models.json</td>
+          <td><span class="tag-cell tag-warn">明文</span></td>
+          <td class="st-mono">providers[]<br>(name/api/baseUrl/<b>apiKey</b>/headers/quota/enabled)</td>
+          <td>pi 复用的 provider+model 配置库。<b>apiKey 明文</b>写入此处（无 keychain、无加密）。authHeader/quota 字段也在此。</td>
+        </tr>
+        <tr>
+          <td class="st-key">~/.xyz-agent/pi/agent/<br>secrets/&lt;providerId&gt;.{key,cookie}</td>
+          <td><span class="tag-cell tag-warn">明文</span> + <span class="tag-cell tag-info">权限 0700</span></td>
+          <td class="st-mono">Coding Plan 专属 key / cookie</td>
+          <td>目录权限 <code>0o700</code>（仅属主可读写执行，临时清零 umask 保证）。cookie 类与 Coding Plan 专属 API Key 存此（quota-service.ts）。</td>
+        </tr>
+        <tr>
+          <td class="st-key">~/.xyz-agent/pi/agent/<br>settings.json</td>
+          <td><span class="tag-cell tag-warn">明文</span></td>
+          <td class="st-mono">defaultModel<br>defaultThinkingLevel</td>
+          <td>用户偏好。<code>defaultModel</code> = <code>"providerId/modelId"</code> 复合键（见下「默认 provider 派生」）。</td>
+        </tr>
+        <tr>
+          <td class="st-key">config.json (zcode)</td>
+          <td><span class="tag-cell tag-mute">导入源</span></td>
+          <td class="st-mono">仅导入读取</td>
+          <td>zcode 源配置（见 §4）；<code>credentials.json</code> 加密不读取。</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="anno-grid">
+      <div class="anno"><b>存储红线:</b><br>apiKey/cookie/专属 key 全明文存本地。<b>不</b>用 OS keychain（跨平台 + 权限复杂），<b>不</b>加密（pi 复用约定）。secrets 目录靠 <code>0700</code> 权限 + 属主隔离做基础防护。</div>
+      <div class="anno"><b>规划空间:</b><br>未来可规划加密（keychain / 加密文件），但当前实现是明文。spec 不虚构已加密。</div>
+    </div>
+
+    <h3 class="h3">② 默认 provider 派生语义</h3>
+    <div class="anno-grid">
+      <div class="anno"><b>无独立字段:</b><br>无 <code>defaultProvider</code>。默认值由 <code>defaultModel</code> 反推：<code>providerId = defaultModel.split('/')[0]</code>。故 §1 行头<b>无「设默认」按钮</b>。</div>
+      <div class="anno"><b>设默认入口:</b><br>仅在 model 行（§2 子区②）——点 model 的「设为默认」写 <code>settings.defaultModel = "providerId/modelId"</code>。</div>
+      <div class="anno"><b>自动 fallback:</b><br>当默认 model 的 provider 被禁用/删除，或 model 被移除 → runtime <code>pickFirstModelProvider</code> 回退第一个可用 provider/model（幂等广播覆盖前端）。</div>
+      <div class="anno"><b>禁用清空:</b><br>禁用 defaultModel 归属 provider → 前端先清空 defaultModel（runtime 也会修正），避免指向不可用项。</div>
+    </div>
+
+    <h3 class="h3">③ model 级字段（存在但 UI 未全暴露）</h3>
+    <table class="spec-table">
+      <thead><tr><th style="width:180px">字段</th><th style="width:110px">UI 暴露</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td class="st-key">id / name</td><td>编辑/展示</td><td>model 标识与显示名。</td></tr>
+        <tr><td class="st-key">api / baseUrl</td><td>编辑</td><td>可 model 级覆盖 provider 级（透传到 runtime setProvider，省略则继承 provider）。</td></tr>
+        <tr><td class="st-key">contextWindow</td><td>mini-select</td><td>上下文窗口（128K–1M 选项，见 useProviderEdit.ts CONTEXT_OPTIONS）。</td></tr>
+        <tr><td class="st-key">input</td><td>toggle</td><td><code>['text','image']</code>，文本/图片输入开关。</td></tr>
+        <tr><td class="st-key">thinkingLevelMap</td><td>thinking pill</td><td>思考策略档位映射（见 §2 thinking 语义）。</td></tr>
+        <tr><td class="st-key">compat</td><td>就地展开</td><td>model 级兼容性覆盖（见 §2 compat 字段全集）。</td></tr>
+        <tr><td class="st-key">enabled</td><td>Switch</td><td>model 级启停（默认 true，乐观更新见 §5）。</td></tr>
+        <tr><td class="st-key">maxTokens / cost / reasoning</td><td><span class="tag-cell tag-err">UI 未暴露</span></td><td>schema 字段存在，但 Settings UI 无控件编辑（runtime 直读，用户手改 models.json）。</td></tr>
+        <tr><td class="st-key">headers (model 级)</td><td><span class="tag-cell tag-err">UI 未暴露</span></td><td>字段存在但无 UI；provider 级 headers 在 §2 子区④编辑。</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ================================================================
        §1 列表态 · page-header + 实体列表行
        ================================================================ -->
   <section class="spec" id="s1">
     <div class="spec-head"><span class="spec-num">§1</span><h2 class="spec-title">列表态 · page-header 与实体行</h2></div>
-    <p class="spec-desc">Provider 列表的入口态。行布局从左到右：<code>状态点 → 启用 Switch → 名称(点击展开就地编辑) → 默认供应商 pill → 模型数 → dirty badge(编辑中) → 删除</code>。<b>distill 决策（impeccable）</b>：移除行尾「编辑」按钮——展开区即唯一编辑入口（原 ProviderEditModal 删除），「编辑」与「展开」不再重复。把「启用」开关提到名称左侧（该行最高频操作），名称承载「展开编辑」主操作，删除退到行尾作为低频危险操作。编辑中的行在名称右侧显示「未保存」dirty badge，并阻止收起/切换（§3）。Switch 用乐观更新（§5 详述），状态点三态传达连接健康度。</p>
+    <p class="spec-desc">Provider 列表的入口态。行布局从左到右：<code>状态点 → 启用 Switch → 名称(点击展开就地编辑) → 默认供应商 pill → 模型数 → dirty badge(编辑中) → 删除</code>。<b>distill 决策（impeccable）</b>：移除行尾「编辑」按钮——展开区即唯一编辑入口（原 ProviderEditModal 删除），「编辑」与「展开」不再重复。把「启用」开关提到名称左侧（该行最高频操作），名称承载「展开编辑」主操作，删除退到行尾作为低频危险操作。编辑中的行在名称右侧显示「未保存」dirty badge，并阻止收起/切换（§3）。Switch 用乐观更新（§5 详述），状态点<b>两态</b>（connected=已配置 apiKey / not_configured=未配置）传达配置完整度——连接测试失败的反馈在 §6 验证子区，不进状态点。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> 外层展开（只读）+ 内层 Modal（编辑）双层重复</span>
       <span class="cp cp-v6"><b>distill</b> 移除 Modal · 展开即编辑</span>
@@ -643,7 +762,7 @@ body {
           从其他 Agent 导入
         </button>
         <!-- 添加按钮 = Button variant=default size=sm(h-9 px-3) + Plus icon -->
-        <button class="btn btn-default btn-sm-size" type="button">
+        <button class="btn btn-default btn-sm" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           添加供应商
         </button>
@@ -670,24 +789,24 @@ body {
           <!-- dirty badge：编辑未保存时显示，阻止收起（§3） -->
           <span class="dirty-badge"><span class="dot"></span>未保存</span>
           <!-- 删除 = Button variant=ghost + hover:bg-danger-soft（hover 转 danger 色） -->
-          <button class="btn btn-ghost btn-act danger-hover" type="button" title="删除供应商" aria-label="删除 Anthropic">
+          <button class="btn btn-danger btn-icon-sm" type="button" title="删除供应商" aria-label="删除 Anthropic">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           </button>
         </div>
         <!-- 展开就地编辑见 §2 -->
       </div>
 
-      <!-- 行 2：error + disabled（未配置或连接失败，折叠态） -->
+      <!-- 行 2：connected + disabled（已配置但未启用，折叠态） -->
       <div class="provider-card">
         <div class="row-head">
-          <span class="status-dot dot-error" title="连接错误"></span>
+          <span class="status-dot dot-connected" title="已连接"></span>
           <span class="ui-switch" role="switch" aria-checked="false" aria-label="OpenAI Compatible 启用"><span class="thumb"></span></span>
           <span class="row-name" role="button" tabindex="0" aria-expanded="false" aria-label="展开 OpenAI Compatible 详情">
             OpenAI Compatible
             <svg class="chev-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
           </span>
           <span class="models-count">5 模型</span>
-          <button class="btn btn-ghost btn-act danger-hover" type="button" title="删除供应商" aria-label="删除 OpenAI Compatible">
+          <button class="btn btn-danger btn-icon-sm" type="button" title="删除供应商" aria-label="删除 OpenAI Compatible">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           </button>
         </div>
@@ -703,7 +822,7 @@ body {
             <svg class="chev-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
           </span>
           <span class="models-count">2 模型</span>
-          <button class="btn btn-ghost btn-act danger-hover" type="button" title="删除供应商" aria-label="删除 本地 Ollama" disabled>
+          <button class="btn btn-danger btn-icon-sm" type="button" title="删除供应商" aria-label="删除 本地 Ollama" disabled>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           </button>
         </div>
@@ -712,7 +831,7 @@ body {
 
     <div class="anno-grid">
       <div class="anno"><b>distill · 去编辑按钮:</b><br><span class="old">行尾 编辑(开 Modal)</span> <span class="v6">→ 删除 · 展开即编辑（唯一入口）</span></div>
-      <div class="anno"><b>状态点:</b><br>7px 圆点 · connected→success / error→danger / not_configured→neutral-dim</div>
+      <div class="anno"><b>状态点（两态）:</b><br>7px 圆点 · connected→success(绿) / not_configured→neutral-dim(灰)。<b>无 error 态</b>——status 字段实为 <code>config.apiKey ? 'connected' : 'not_configured'</code>（config-service.ts），仅凭 apiKey 有无判定，从不产生 error。连接测试失败的反馈走 §6 的 testResult（验证子区内联），不进状态点。</div>
       <div class="anno"><b>Switch:</b><br>xyz-ui Switch · track h-5(20px) w-9(36px) · thumb size-4(16px) · checked:bg-accent</div>
       <div class="anno"><b>名称(展开):</b><br>cursor-pointer · 点击 toggleExpand · chevron rotate(90deg) 200ms · 编辑中阻止收起（§3）</div>
       <div class="anno"><b>默认 pill v6:</b><br><span class="old">uppercase tracking</span> <span class="v6">→ normal-case · bg-accent-soft text-accent px-1.5 py-0.5 rounded-sm</span></div>
@@ -752,7 +871,7 @@ body {
           <span class="pill-default">默认供应商</span>
           <span class="models-count">3 模型</span>
           <span class="dirty-badge"><span class="dot"></span>未保存</span>
-          <button class="btn btn-ghost btn-act danger-hover" type="button" title="删除供应商" aria-label="删除 Anthropic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+          <button class="btn btn-danger btn-icon-sm" type="button" title="删除供应商" aria-label="删除 Anthropic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
         </div>
 
         <!-- ============ 展开就地编辑区 ============ -->
@@ -772,18 +891,21 @@ body {
                   <input id="p-name" class="ui-input" type="text" placeholder="My Provider" value="Anthropic">
                 </div>
                 <div class="fld">
-                  <label class="fld-label" for="p-type">类型 <span class="fld-hint">决定 baseUrl 默认值与是否需要 API Key</span></label>
+                  <label class="fld-label" for="p-type">类型 <span class="fld-hint">3 种 api · 决定 baseUrl 默认值 / 鉴权头 / compat 字段集 / 发现机制</span></label>
                   <div class="ui-select" id="p-type" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false">
-                    <span>Anthropic Messages</span>
+                    <span>Anthropic Messages <span style="color:var(--neutral-dim);">· anthropic-messages</span></span>
                     <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
                   </div>
+                  <!-- 下拉展开后 3 选项（spec 说明，实际由 SelectItem 渲染）：
+                       anthropic-messages / openai-completions / openai-responses -->
+                  <div style="margin-top:3px;font-size:var(--text-2xs);color:var(--neutral-dim);font-family:var(--font-mono);">▾ anthropic-messages · openai-completions · openai-responses</div>
                 </div>
                 <div class="fld fld-full">
                   <label class="fld-label" for="p-url">Base URL</label>
                   <input id="p-url" class="ui-input" type="text" placeholder="https://api.anthropic.com" value="https://api.anthropic.com">
                 </div>
                 <div class="fld fld-full">
-                  <label class="fld-label" for="p-key">API Key <span class="fld-hint">仅本地加密存储</span></label>
+                  <label class="fld-label" for="p-key">API Key <span class="fld-hint">明文存于本地 models.json（未加密）</span></label>
                   <div class="apikey-row">
                     <input id="p-key" class="ui-input" type="password" placeholder="留空保存则保持不变" value="sk-ant-xxxxxxxx">
                     <!-- 显隐切换 = Button ghost size-8 -->
@@ -791,11 +913,11 @@ body {
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                     </button>
                     <!-- 清除已配置 key = Button ghost + hover→danger（仅 apiKeySet 时显示） -->
-                    <button class="btn btn-ghost danger-hover" type="button" aria-label="清除密钥" title="清除密钥" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);">
+                    <button class="btn btn-danger" type="button" aria-label="清除密钥" title="清除密钥" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                     </button>
                   </div>
-                  <p class="apikey-note">留空保存则保持不变；点垃圾桶清除已配置的 key</p>
+                  <p class="apikey-note">留空保存则保持不变；点垃圾桶清除已配置的 key。凭证明文写入 <code style="font-family:var(--font-mono);">~/.xyz-agent/pi/agent/models.json</code>（pi 复用，无 keychain、无加密）；见 §0 安全红线——未来可规划加密但当前明文。</p>
                 </div>
                 <div class="fld fld-full switch-row">
                   <span class="fld-label">Auth Header <span class="fld-hint">把 API Key 写入 Authorization 头</span></span>
@@ -847,16 +969,42 @@ body {
                 <span class="ui-switch on" role="switch" aria-checked="true" aria-label="claude-sonnet-4.5 启用"><span class="thumb"></span></span>
                 <span class="default-mark">默认</span>
                 <span class="r-act">
-                  <button class="btn btn-ghost btn-act" type="button" aria-label="展开兼容性" title="兼容性" style="color:var(--accent);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg></button>
-                  <button class="btn btn-ghost btn-act danger-hover" type="button" aria-label="移除模型"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                  <button class="btn btn-ghost btn-icon-sm" type="button" aria-label="展开兼容性" title="兼容性" style="color:var(--accent);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg></button>
+                  <button class="btn btn-danger btn-icon-sm" type="button" aria-label="移除模型"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                 </span>
               </div>
               <!-- compat 就地展开（取代弹窗内 compat 编辑） -->
               <div class="compat-inline">
-                <div class="ci-title">兼容性参数</div>
+                <div class="ci-title">兼容性参数 <span style="font-weight:400;color:var(--neutral-dim);">· openai-completions（19 字段）</span></div>
+                <div class="ci-sub">按 model 的 <code>api</code> 类型动态渲染字段集（compat-fields.ts SSOT）· essential 常显 · advanced 默认折叠</div>
+                <!-- 国产预设：按 api 类型过滤显示（5 个 openai-completions + 1 个 anthropic-messages） -->
+                <div class="ci-presets">
+                  <button class="preset-chip" type="button">DeepSeek</button>
+                  <button class="preset-chip" type="button">GLM</button>
+                  <button class="preset-chip" type="button">Kimi K2</button>
+                  <button class="preset-chip" type="button">Kimi K3</button>
+                  <button class="preset-chip" type="button">MiMo</button>
+                </div>
                 <div class="ci-fields">
-                  <div class="mini-select"><span>max_tokens: 8192</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></div>
-                  <div class="mini-select"><span>temperature: 默认</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></div>
+                  <div class="ci-group-label">essential · 3（常驻）</div>
+                  <div class="ci-field"><span class="ci-fname">thinkingFormat</span><span class="ci-fctrl"><span class="cv cv-sel">deepseek ▾</span></span></div>
+                  <div class="ci-field"><span class="ci-fname">supportsDeveloperRole</span><span class="ci-fctrl"><span class="cv-switch"><span class="thumb"></span></span></span></div>
+                  <div class="ci-field"><span class="ci-fname">supportsReasoningEffort</span><span class="ci-fctrl"><span class="cv-switch on"><span class="thumb"></span></span></span></div>
+                  <div class="ci-group-label">advanced · 16（默认折叠，展开示例）</div>
+                  <div class="ci-field"><span class="ci-fname">maxTokensField</span><span class="ci-fctrl"><span class="cv cv-sel">max_completion_tokens ▾</span></span></div>
+                  <div class="ci-field"><span class="ci-fname">supportsUsageInStreaming</span><span class="ci-fctrl"><span class="cv-switch on"><span class="thumb"></span></span></span></div>
+                  <div class="ci-field"><span class="ci-fname">supportsStore</span><span class="ci-fctrl"><span class="cv-switch"><span class="thumb"></span></span></span></div>
+                  <div class="ci-field"><span class="ci-fname">requiresToolResultName</span><span class="ci-fctrl"><span class="cv-switch"><span class="thumb"></span></span></span></div>
+                  <div class="ci-field"><span class="ci-fname">requiresAssistantAfterToolResult</span><span class="ci-fctrl"><span class="cv-switch"><span class="thumb"></span></span></span></div>
+                  <div class="ci-field"><span class="ci-fname">requiresThinkingAsText</span><span class="ci-fctrl"><span class="cv-switch"><span class="thumb"></span></span></span></div>
+                  <div class="ci-field"><span class="ci-fname">requiresReasoningContentOnAssistantMessages</span><span class="ci-fctrl"><span class="cv-switch on"><span class="thumb"></span></span></span></div>
+                  <div class="ci-field"><span class="ci-fname">supportsStrictMode</span><span class="ci-fctrl"><span class="cv-switch"><span class="thumb"></span></span></span></div>
+                  <div class="ci-field"><span class="ci-fname">supportsLongCacheRetention</span><span class="ci-fctrl"><span class="cv-switch"><span class="thumb"></span></span></span></div>
+                  <div class="ci-field"><span class="ci-fname">sendSessionAffinityHeaders</span><span class="ci-fctrl"><span class="cv-switch"><span class="thumb"></span></span></span></div>
+                  <div class="ci-field"><span class="ci-fname">zaiToolStream</span><span class="ci-fctrl"><span class="cv-switch"><span class="thumb"></span></span></span></div>
+                  <div class="ci-field"><span class="ci-fname">openRouterRouting</span><span class="ci-fctrl"><span class="cv cv-text">JSON</span></span></div>
+                  <div class="ci-field"><span class="ci-fname">vercelGatewayRouting</span><span class="ci-fctrl"><span class="cv cv-text">JSON</span></span></div>
+                  <div class="ci-field"><span class="ci-fname">chatTemplateKwargs</span><span class="ci-fctrl"><span class="cv cv-text">JSON</span></span></div>
                 </div>
               </div>
 
@@ -872,8 +1020,8 @@ body {
                 <span class="ui-switch on" role="switch" aria-checked="true" aria-label="claude-opus-4 启用"><span class="thumb"></span></span>
                 <button class="set-default-btn" type="button">设为默认</button>
                 <span class="r-act">
-                  <button class="btn btn-ghost btn-act" type="button" aria-label="展开兼容性" style="color:var(--neutral-dim);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><circle cx="12" cy="12" r="3"/></svg></button>
-                  <button class="btn btn-ghost btn-act danger-hover" type="button" aria-label="移除模型"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                  <button class="btn btn-ghost btn-icon-sm" type="button" aria-label="展开兼容性" style="color:var(--neutral-dim);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><circle cx="12" cy="12" r="3"/></svg></button>
+                  <button class="btn btn-danger btn-icon-sm" type="button" aria-label="移除模型"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                 </span>
               </div>
 
@@ -889,8 +1037,8 @@ body {
                 <span class="ui-switch" role="switch" aria-checked="false" aria-label="claude-haiku-4 启用"><span class="thumb"></span></span>
                 <button class="set-default-btn" type="button">设为默认</button>
                 <span class="r-act">
-                  <button class="btn btn-ghost btn-act" type="button" aria-label="展开兼容性" style="color:var(--neutral-dim);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><circle cx="12" cy="12" r="3"/></svg></button>
-                  <button class="btn btn-ghost btn-act danger-hover" type="button" aria-label="移除模型"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                  <button class="btn btn-ghost btn-icon-sm" type="button" aria-label="展开兼容性" style="color:var(--neutral-dim);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><circle cx="12" cy="12" r="3"/></svg></button>
+                  <button class="btn btn-danger btn-icon-sm" type="button" aria-label="移除模型"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                 </span>
               </div>
             </div>
@@ -922,14 +1070,14 @@ body {
             </div>
           </div>
 
-          <!-- 子区 ④：高级（默认折叠 · Headers + 额度） -->
-          <div class="eg collapsed">
+          <!-- 子区 ④：高级（默认折叠 · Headers + Coding Plan 额度子系统）—— 此处展开展示 -->
+          <div class="eg">
             <div class="eg-head">
               <span class="eg-label">高级</span>
-              <span class="eg-hint">自定义 Headers · 额度查询</span>
+              <span class="eg-hint">自定义 Headers · Coding Plan 额度</span>
               <span class="eg-spacer"></span>
-              <button class="eg-collapse" type="button" aria-label="展开高级" aria-expanded="false">
-                <svg class="eg-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              <button class="eg-collapse" type="button" aria-label="收起高级" aria-expanded="true">
+                <svg class="eg-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(0deg)"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
             </div>
             <div class="eg-body">
@@ -939,22 +1087,82 @@ body {
                 <div class="header-row">
                   <input class="ui-input ui-input-dense" type="text" placeholder="X-Custom-Header" value="X-Request-Source" style="flex:1;" aria-label="header 名">
                   <input class="ui-input ui-input-dense" type="text" placeholder="value" value="xyz-agent" style="flex:1;" aria-label="header 值">
-                  <button class="btn btn-ghost danger-hover" type="button" aria-label="移除 header" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                  <button class="btn btn-danger" type="button" aria-label="移除 header" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                 </div>
                 <div class="header-row">
                   <input class="ui-input ui-input-dense" type="text" placeholder="X-Custom-Header" style="flex:1;" aria-label="header 名">
                   <input class="ui-input ui-input-dense" type="text" placeholder="value" style="flex:1;" aria-label="header 值">
-                  <button class="btn btn-ghost danger-hover" type="button" aria-label="移除 header" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                  <button class="btn btn-danger" type="button" aria-label="移除 header" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                 </div>
               </div>
               <button class="add-kv-link" type="button">+ 添加 header</button>
               <div class="eg-hair"></div>
-              <!-- Coding Plan 额度查询 -->
-              <div class="switch-row">
-                <span class="fld-label">Coding Plan 额度查询 <span class="fld-hint">查询 5h/周/月 配额使用</span></span>
-                <span class="ui-switch" role="switch" aria-checked="false" aria-label="启用额度查询"><span class="thumb"></span></span>
+
+              <!-- ============ Coding Plan 额度查询子系统（完整）============ -->
+              <div class="fld-label">Coding Plan 额度查询 <span class="fld-hint">查询 5h 滚动 / 本周 / 本月三窗口配额</span></div>
+              <p class="apikey-note" style="margin-bottom:10px;">按 baseUrl 域名 + name 正则自动匹配 fetcher（QUOTA_PRESETS），也可手动选。凭证明文存 <code style="font-family:var(--font-mono);">~/.xyz-agent/pi/agent/secrets/</code>（权限 0700，见 §0）。</p>
+
+              <!-- fetcher 类型选择（始终显示，不依赖自动匹配） -->
+              <div style="margin-bottom:8px;">
+                <span class="amf-label">Fetcher 类型</span>
+                <div class="ui-select" id="p-quota-fetcher" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false">
+                  <span>智谱 GLM Coding Plan <span style="color:var(--neutral-dim);">(api-key · 自动匹配)</span></span>
+                  <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
+                <!-- 其余 4 fetcher 选项（说明） -->
+                <div style="margin-top:4px;font-size:var(--text-2xs);color:var(--neutral-dim);font-family:var(--font-mono);">可选：智谱 GLM · Kimi Coding · MiniMax · 小米 MiMo · opencode.go</div>
               </div>
-              <p class="apikey-note">关闭 · 选择对应 Coding Plan 类型后启用查询</p>
+
+              <!-- 认证方式：api-key 类（专属 API Key 输入） -->
+              <div style="margin-bottom:8px;">
+                <span class="amf-label">认证方式 <span style="color:var(--accent);">api-key</span> <span style="color:var(--neutral-dim);">（cookie 类显示 cookie 输入）</span></span>
+                <label class="fld-label" for="p-quota-key" style="margin-top:4px;">专属 API Key <span class="fld-hint">Coding Plan 平台 key（留空复用 provider.apiKey）</span></label>
+                <div class="apikey-row">
+                  <input id="p-quota-key" class="ui-input ui-input-dense" type="password" placeholder="留空 = 复用 provider.apiKey（适配 router/反代）" value="">
+                  <button class="btn btn-ghost" type="button" aria-label="显示凭证" aria-pressed="false" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);color:var(--neutral-dim);">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                  </button>
+                </div>
+                <div style="margin-top:4px;">
+                  <a href="#" style="font-size:var(--text-2xs);color:var(--accent);text-decoration:none;">如何获取凭证？</a>
+                  <span style="font-size:var(--text-2xs);color:var(--neutral-dim);margin-left:6px;">在 bigmodel.cn 控制台 → API Keys 页面获取</span>
+                </div>
+              </div>
+
+              <!-- 启用开关 + 测试查询 -->
+              <div class="switch-row" style="margin-bottom:10px;">
+                <span class="fld-label">启用额度查询 <span class="fld-hint">保存后定时拉取并在 Context 容量区展示</span></span>
+                <span class="ui-switch on" role="switch" aria-checked="true" aria-label="启用额度查询"><span class="thumb"></span></span>
+              </div>
+              <div class="ops" style="margin-bottom:4px;">
+                <button class="btn btn-secondary btn-dense" type="button">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                  刷新额度
+                </button>
+              </div>
+
+              <!-- 三窗口额度展示（成功态） -->
+              <div class="quota-wins">
+                <div class="quota-win">
+                  <div class="qw-label">5h 滚动</div>
+                  <div class="qw-pct">23%</div>
+                  <div class="qw-reset">1h 42m 后重置</div>
+                </div>
+                <div class="quota-win">
+                  <div class="qw-label">本周</div>
+                  <div class="qw-pct">51%</div>
+                  <div class="qw-reset">3d 12h 后重置</div>
+                </div>
+                <div class="quota-win high">
+                  <div class="qw-label">本月</div>
+                  <div class="qw-pct">78%</div>
+                  <div class="qw-reset">12d 后重置</div>
+                </div>
+              </div>
+              <div class="test-result ok" style="margin-top:8px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                查询成功 · 三窗口配额已更新
+              </div>
             </div>
           </div>
 
@@ -1017,6 +1225,177 @@ body {
       <div class="anno"><b>compat 就地:</b><br>模型行齿轮 toggle · 字段集按 api 类型过滤 · 预设按钮</div>
       <div class="anno"><b>a11y:</b><br>name/eg-collapse aria-expanded · toggle/eye aria-pressed · Switch/pill aria-label · Input aria-invalid+describedby</div>
       <div class="anno"><b>响应式:</b><br>2 列 → ≤640px 堆叠 · model-add-form 同</div>
+    </div>
+
+    <!-- Coding Plan 额度子系统（功能语义补全 · P0 重灾区） -->
+    <h3 class="h3">Coding Plan 额度子系统 · 5 fetcher + 双认证 + 三窗口（quota-presets.ts SSOT）</h3>
+    <p class="spec-desc" style="margin-bottom:8px;">Coding Plan 额度查询是一个完整子系统（不是单一开关）。<b>5 个内置 fetcher</b>，<b>2 种认证方式</b>（<code>api-key</code> / <code>cookie</code>）。fetcher 类型按 baseUrl 域名 + name 正则<b>自动匹配</b>（<code>matchQuotaPreset</code>），也可手动下拉选择。<b>专属 API Key</b>（api-key 类）适配 router/反代场景：provider.apiKey 可能是 router 的 key，Coding Plan 平台需专属 key（存 secrets 目录，留空 = 复用 provider.apiKey）。<b>三窗口额度</b>：<code>[5h 滚动, 本周, 本月]</code>，每窗口 <code>pct</code>（0-100，null=无限/未订阅→整行隐藏）+ <code>resetSec</code>（剩余秒，null=未知→显示 --）。</p>
+    <table class="spec-table">
+      <thead>
+        <tr><th style="width:130px">fetcher id</th><th style="width:150px">label</th><th style="width:90px">认证</th><th>自动匹配规则（baseUrl 域名 / name 正则）</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="st-key">zhipu</td><td>智谱 GLM Coding Plan</td><td><span class="tag-cell tag-ok">api-key</span></td><td class="st-mono">baseUrl 含 <code>bigmodel.cn</code> · name 正则 <code>zhipu|glm|\bzai\b</code></td></tr>
+        <tr><td class="st-key">kimi-coding</td><td>Kimi Coding Plan</td><td><span class="tag-cell tag-ok">api-key</span></td><td class="st-mono">baseUrl 含 <code>kimi.com</code> · name 正则 <code>\bkimi\b</code></td></tr>
+        <tr><td class="st-key">minimax</td><td>MiniMax Coding Plan</td><td><span class="tag-cell tag-ok">api-key</span></td><td class="st-mono">baseUrl 含 <code>minimaxi.com</code> · name 正则 <code>\bminimax\b</code></td></tr>
+        <tr><td class="st-key">mimo</td><td>小米 MiMo Coding Plan</td><td><span class="tag-cell tag-info">cookie</span></td><td class="st-mono">baseUrl 含 <code>xiaomimimo.com</code> · name 正则 <code>\bmimo\b</code></td></tr>
+        <tr><td class="st-key">opencode-go</td><td>opencode.go</td><td><span class="tag-cell tag-info">cookie</span></td><td class="st-mono">name 正则 <code>\bopencode\b</code>（无 baseUrl 规则）</td></tr>
+      </tbody>
+    </table>
+    <div class="anno-grid" style="margin-top:12px;">
+      <div class="anno"><b>认证方式切换:</b><br>fetcher 类型决定认证方式。api-key 类（zhipu/kimi/minimax）显示「专属 API Key」输入；cookie 类（mimo/opencode）显示「cookie」输入（从浏览器 DevTools 复制完整 cookie 字符串）。</div>
+      <div class="anno"><b>专属 key 概念:</b><br>provider.apiKey 可能是 router/反代的 key；Coding Plan 平台额度查询需平台专属 key。留空=复用 provider.apiKey（适配无 router 场景）。</div>
+      <div class="anno"><b>凭证存储:</b><br>cookie/专属 key 明文存 <code>~/.xyz-agent/pi/agent/secrets/</code>（目录权限 0700）· 文件名 <code>&lt;providerId&gt;.{key,cookie}</code>。</div>
+      <div class="anno"><b>测试查询:</b><br>「刷新额度」按钮 · 成功显示三窗口百分比+重置倒计时 · 失败提示凭证无效（isCredentialValid 判定，如 opencode 302 重定向=过期）。</div>
+      <div class="anno"><b>三窗口语义:</b><br>QuotaWins = [5h 滚动, 本周, 本月] · pct=null→无限（整行隐藏）· resetSec=null→无重置信息（显示 --）。</div>
+      <div class="anno"><b>帮助链接:</b><br>每个 preset 有 helpUrl（「如何获取凭证？」）+ helpText（获取步骤说明）。</div>
+      <div class="anno"><b>fetcher 手动选:</b><br>下拉始终显示，不依赖自动匹配——用户可覆盖自动判定（如自建 provider 命中规则外的 fetcher）。</div>
+      <div class="anno"><b>展示入口:</b><br>启用后定时拉取，在 Context 容量区（ContextCapacityPopover）展示额度。</div>
+    </div>
+
+    <!-- compat 字段全集 + 控件类型 + 国产预设（功能语义补全） -->
+    <h3 class="h3">compat 字段全集 · 按 api 类型分组（compat-fields.ts SSOT）</h3>
+    <p class="spec-desc" style="margin-bottom:8px;">model 的 <code>api</code> 类型决定 compat 字段形状（pi 判别联合）。<b>三种控件类型</b>：<code>switch</code>（布尔）/ <code>select</code>（枚举下拉）/ <code>text</code>（object/JSON 高级字段）。<b>两组分组</b>：<code>essential</code>（常驻露出，reasoning 模型必配）/ <code>advanced</code>（默认折叠）。字段名即 pi schema key，i18n label/hint 由 <code>labelKey</code>/<code>hintKey</code> 派生。<b>注意：temperature 不是 compat 字段</b>（已从示例移除）。</p>
+    <table class="spec-table">
+      <thead>
+        <tr><th style="width:150px">api 类型</th><th style="width:60px">字段数</th><th>essential（常显）</th><th>advanced（默认折叠）</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="st-accent">openai-completions</td>
+          <td>19</td>
+          <td class="st-mono">thinkingFormat <span class="cv cv-sel">select · 10 选项</span> / supportsDeveloperRole / supportsReasoningEffort</td>
+          <td class="st-mono">maxTokensField <span class="cv cv-sel">select · 2 选项</span> / supportsUsageInStreaming / supportsStore / requiresToolResultName / requiresAssistantAfterToolResult / requiresThinkingAsText / requiresReasoningContentOnAssistantMessages / supportsStrictMode / supportsLongCacheRetention / sendSessionAffinityHeaders / zaiToolStream / openRouterRouting <span class="cv cv-text">text</span> / vercelGatewayRouting <span class="cv cv-text">text</span> / chatTemplateKwargs <span class="cv cv-text">text</span></td>
+        </tr>
+        <tr>
+          <td class="st-accent">anthropic-messages</td>
+          <td>7</td>
+          <td class="st-mono">forceAdaptiveThinking</td>
+          <td class="st-mono">supportsTemperature / supportsEagerToolInputStreaming / supportsCacheControlOnTools / supportsLongCacheRetention / sendSessionAffinityHeaders / allowEmptySignature</td>
+        </tr>
+        <tr>
+          <td class="st-accent">openai-responses</td>
+          <td>3</td>
+          <td class="st-mono"><span style="color:var(--neutral-dim);">（无）</span></td>
+          <td class="st-mono">supportsDeveloperRole / sendSessionIdHeader / supportsLongCacheRetention <span style="color:var(--neutral-dim);">（全 advanced）</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="anno-grid" style="margin-top:12px;">
+      <div class="anno"><b>thinkingFormat 10 选项:</b><br><span class="cv cv-sel">openai</span> <span class="cv cv-sel">openrouter</span> <span class="cv cv-sel">deepseek</span> <span class="cv cv-sel">together</span> <span class="cv cv-sel">zai</span> <span class="cv cv-sel">qwen</span> <span class="cv cv-sel">qwen-chat-template</span> <span class="cv cv-sel">chat-template</span> <span class="cv cv-sel">ant-ling</span> <span class="cv cv-sel">string-thinking</span></div>
+      <div class="anno"><b>maxTokensField 2 选项:</b><br><span class="cv cv-sel">max_completion_tokens</span>（新）/ <span class="cv cv-sel">max_tokens</span>（旧 OpenAI）</div>
+      <div class="anno"><b>getCompatFields(api):</b><br>api 决定字段集，未匹配默认 openai-completions（Ollama/vLLM 等最常用）</div>
+      <div class="anno"><b>cacheControlFormat:</b><br>已从 UI 移除（唯一值 'anthropic' 单选无意义）· applyPreset 应用 anthropic 预设时自动注入</div>
+    </div>
+
+    <h3 class="h3">国产 compat 预设 · 一键填充（COMPAT_PRESETS）</h3>
+    <table class="spec-table">
+      <thead><tr><th style="width:110px">预设 id</th><th style="width:150px">api</th><th>一键填入的 compat（整体替换当前 compat）</th></tr></thead>
+      <tbody>
+        <tr><td class="st-key">deepseek</td><td class="st-mono">openai-completions</td><td class="st-mono">thinkingFormat=deepseek · supportsDeveloperRole=false · supportsReasoningEffort=true · requiresReasoningContentOnAssistantMessages=true</td></tr>
+        <tr><td class="st-key">glm</td><td class="st-mono">openai-completions</td><td class="st-mono">thinkingFormat=zai · supportsDeveloperRole=false · supportsReasoningEffort=false</td></tr>
+        <tr><td class="st-key">kimiK2</td><td class="st-mono">openai-completions</td><td class="st-mono">thinkingFormat=deepseek · supportsDeveloperRole=false · supportsReasoningEffort=false</td></tr>
+        <tr><td class="st-key">kimiK3</td><td class="st-mono">openai-completions</td><td class="st-mono">thinkingFormat=openai · supportsDeveloperRole=false · supportsReasoningEffort=true</td></tr>
+        <tr><td class="st-key">mimo</td><td class="st-mono">openai-completions</td><td class="st-mono">thinkingFormat=qwen-chat-template · supportsDeveloperRole=false · supportsReasoningEffort=false</td></tr>
+        <tr><td class="st-key">minimax</td><td class="st-mono">anthropic-messages</td><td class="st-mono">forceAdaptiveThinking=true</td></tr>
+      </tbody>
+    </table>
+    <div class="anno-grid" style="margin-top:12px;">
+      <div class="anno"><b>预设过滤:</b><br><code>getPresetsForApi(api)</code> 按当前 api 过滤——选 anthropic-messages 只显示 minimax，其余 5 个在 openai-completions 下显示。</div>
+      <div class="anno"><b>一键填充语义:</b><br>点预设 = 整体替换 compat（非合并）· 应用后用户仍可逐字段微调。</div>
+      <div class="anno"><b>数据来源:</b><br>各模型官方 API 文档 + pi 生产配置交叉验证（2026-07 调研）。</div>
+      <div class="anno"><b>国产共性:</b><br>国产 API 全部不认 developer 角色 → supportsDeveloperRole=false 是统一默认。</div>
+    </div>
+
+    <!-- API 类型对照表（功能语义补全 · P1） -->
+    <h3 class="h3">API 类型对照表 · 3 种（ProviderEditModal SelectItem SSOT）</h3>
+    <p class="spec-desc" style="margin-bottom:8px;">类型 Select 实际渲染 3 项（<code>anthropic-messages</code> / <code>openai-completions</code> / <code>openai-responses</code>）。类型决定 <b>baseUrl 默认值</b>、<b>鉴权头</b>、<b>compat 字段集</b>（见上表）、<b>发现机制</b>（见下）。<b>ollama / glm / deepseek 都不是独立类型</b>——本地 ollama 走 openai-completions + <code>baseUrl=http://localhost:11434/v1</code>；国产 glm/deepseek 同理（pi 不支持 ollama 作为 api 标识）。</p>
+    <table class="spec-table">
+      <thead>
+        <tr><th style="width:160px">api 类型</th><th style="width:120px">鉴权头</th><th style="width:200px">发现端点</th><th>适用场景</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="st-accent">anthropic-messages</td>
+          <td class="st-mono">x-api-key<br>+ anthropic-version: 2023-06-01</td>
+          <td class="st-mono">GET &lt;base&gt;/v1/models</td>
+          <td>Anthropic 官方 / Claude 协议兼容（minimax）</td>
+        </tr>
+        <tr>
+          <td class="st-accent">openai-completions</td>
+          <td class="st-mono">Authorization: Bearer &lt;key&gt;</td>
+          <td class="st-mono">GET &lt;base&gt;/v1/models<br>（base 含 /v1 时调 /models）</td>
+          <td>OpenAI / 国产 (glm/deepseek/kimi/mimo) / <b>ollama</b> / vLLM 等最常用</td>
+        </tr>
+        <tr>
+          <td class="st-accent">openai-responses</td>
+          <td class="st-mono">Authorization: Bearer &lt;key&gt;</td>
+          <td class="st-mono">GET &lt;base&gt;/v1/models<br>（同 completions 鉴权）</td>
+          <td>OpenAI Responses API（codex wire_api=responses 导入）</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="anno-grid" style="margin-top:12px;">
+      <div class="anno"><b>默认值:</b><br>新建 provider 默认 anthropic-messages（useProviderEdit form.api 初值）。baseUrl 默认 <code>https://api.anthropic.com</code>（anthropic）/ 其他按厂商填。</div>
+      <div class="anno"><b>ollama 特别说明:</b><br>pi 不支持 ollama 作为 api 标识。本地 ollama = openai-completions + baseUrl <code>http://localhost:11434/v1</code>（11434 是 ollama 的 OpenAI 兼容端口）。</div>
+    </div>
+
+    <!-- 连通性测试 + 发现机制 + 错误分类（功能语义补全 · P1） -->
+    <h3 class="h3">连通性测试 + 模型发现 · 机制与错误分类（model-api-discoverer.ts / model-service.ts）</h3>
+    <p class="spec-desc" style="margin-bottom:8px;"><b>测试连接</b>与<b>自动发现</b>共用同一 RPC（<code>config.discoverModels</code>），区别在前端是否合并结果：test 探活（显示连接成败+找到模型数），discover 把结果合并进模型列表。两者走 <code>runDiscover</code> 互斥（一个进行中另一个 disabled）。</p>
+    <table class="spec-table">
+      <thead>
+        <tr><th style="width:160px">机制项</th><th style="width:200px">值/行为</th><th>说明</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="st-key">发现端点</td><td class="st-mono">&lt;baseUrl&gt;/v1/models</td><td>baseUrl 已含 <code>/v1</code> 时调 <code>/models</code>（避免 /v1/v1/models）。</td></tr>
+        <tr><td class="st-key">鉴权差异</td><td class="st-mono">见 API 类型对照表</td><td>anthropic 用 x-api-key + anthropic-version；openai 系用 Bearer。</td></tr>
+        <tr><td class="st-key">超时</td><td class="st-mono">10_000 ms</td><td><code>AbortSignal.timeout(API_FETCH_TIMEOUT_MS)</code>，超时归入 UNREACHABLE。</td></tr>
+        <tr><td class="st-key">test vs discover</td><td class="st-mono">同一 RPC · 前端区分合并</td><td>test 只显示成败；discover 把模型合并进列表。</td></tr>
+        <tr><td class="st-key">providerId 回填</td><td class="st-mono">表单 apiKey 空时读已存</td><td>表单 apiKey 为空时，runtime 从 models.json 读已保存的 key 测试（可用已存 key 验证连接）。</td></tr>
+      </tbody>
+    </table>
+
+    <p class="spec-desc" style="margin:18px 0 8px;"><b>3 类错误分类</b>（<code>classifyDiscoveryError</code>，raw 错误消息含特定关键字判定）：</p>
+    <table class="spec-table">
+      <thead>
+        <tr><th style="width:170px">code</th><th style="width:200px">触发关键字</th><th>文案（impeccable：动词+原因）</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="st-key">INVALID_AUTH_CHARS</td><td class="st-mono">raw 含 ByteString</td><td>请求失败：Base URL 或 API Key 包含 HTTP 不支持的字符</td></tr>
+        <tr><td class="st-key">UNREACHABLE</td><td class="st-mono">raw 含 fetch failed</td><td>连接失败：无法访问 <code>&lt;baseUrl&gt;/v1/models</code></td></tr>
+        <tr><td class="st-key">UNKNOWN</td><td class="st-mono">其余（兜底）</td><td>原始错误消息（透传）</td></tr>
+      </tbody>
+    </table>
+    <div class="anno-grid" style="margin-top:12px;">
+      <div class="anno"><b>错误分类位置:</b><br>model-service.ts 的 <code>discoverModelsFromApi</code> catch → classifyDiscoveryError，返回 ModelDiscoveryError(code, message)。</div>
+      <div class="anno"><b>前端展示:</b><br>testResult='fail' 显示在验证子区内联（§6）· 不收起展开区供重试 · 文案用分类后的 message。</div>
+    </div>
+
+    <!-- thinking 语义（功能语义补全 · P1） -->
+    <h3 class="h3">thinking 语义 · key=value 映射（useProviderEdit.ts）</h3>
+    <p class="spec-desc" style="margin-bottom:8px;">thinking pill 的档位是 <code>thinkingLevelMap: Record&lt;string, string|null&gt;</code>：<b>key = UI 可选档位</b>（ThinkingLevel 枚举值，含 max，用于展示和判定可用）；<b>value = 发给 pi 的实际 level</b>（string=可用，null=不可用）。<b>发给 pi 的是 value 不是 key</b>——展示与传递分离。3 预设：</p>
+    <table class="spec-table">
+      <thead>
+        <tr><th style="width:130px">预设 (Strategy)</th><th style="width:110px">pill 显示</th><th>thinkingLevelMap（key → value）</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="st-key">all-levels</td><td><span class="thinking-pill tp-all">全档</span></td><td class="st-mono">undefined（全档可用，无映射限制）</td></tr>
+        <tr><td class="st-key">on-off</td><td><span class="thinking-pill tp-toggle">开关</span></td><td class="st-mono">{ off: 'off', high: 'high' }</td></tr>
+        <tr><td class="st-key">high-max</td><td><span class="thinking-pill tp-hightop">高/顶</span></td><td class="st-mono">{ off: 'off', high: 'high', max: 'xhigh' }</td></tr>
+      </tbody>
+    </table>
+    <div class="anno-grid" style="margin-top:12px;">
+      <div class="anno"><b>max → xhigh 映射:</b><br>high-max 预设的 max 档位，UI 显示「max」但发给 pi 的是 <code>xhigh</code>（不是 max）。这是 pi 的 level 命名差异。</div>
+      <div class="anno"><b>null=不可用:</b><br>value 为 null 表示该档位不可用（前端隐藏/禁用）。string 值=该档位可用且发此值。</div>
+      <div class="anno"><b>全局默认:</b><br><code>settings.json.defaultThinkingLevel</code>，默认 <code>'high'</code>（pi-provider-store.ts：readSettings().defaultThinkingLevel ?? 'high'）。model 级 thinkingLevelMap 可覆盖。</div>
+      <div class="anno"><b>默认预设:</b><br>新建 model 默认 all-levels（thinkingLevelMap=undefined，全档）。</div>
+    </div>
+
+    <!-- headers 重复 key 校验 + 字段补全（P2） -->
+    <div class="anno-grid" style="margin-top:24px;">
+      <div class="anno"><b>headers 重复 key:</b><br><code>buildHeadersFromRows</code> 检测重复 key（trim 后），置 <code>hasDuplicate=true</code> → actionError 进保存栏 · 保存 disabled。</div>
+      <div class="anno"><b>header 值透传:</b><br>headers Record 透传 runtime setProvider（provider 级附加请求头）· 后写的重复 key 覆盖前者。</div>
     </div>
   </section>
 
@@ -1111,6 +1490,53 @@ body {
       <div class="anno"><b>选中:</b><br>关闭 Popover + emit('select', source) → 父驱动 preview 流程</div>
     </div>
 
+    <!-- 各源差异对照表（功能语义补全 · P1） -->
+    <h3 class="h3">各源解析差异 · 配置文件 / 协议映射 / apiKey 提取（parsers/* SSOT）</h3>
+    <p class="spec-desc" style="margin-bottom:8px;">4 源各自的解析器（<code>parseProviders(source, homeDir)</code>）差异：<b>配置文件路径</b>、<b>协议映射规则</b>、<b>apiKey 提取能力</b>、<b>model 列表完整度</b>。这些差异决定了预览阶段「key 缺失警告」「model 占位 warning」「丢弃警告」的出现条件。<b>安全红线</b>：claude/codex 的 key 因存储方式（keychain / 脚本 / OAuth / env）无法安全提取，用户导入后需手动补 key。</p>
+    <table class="spec-table">
+      <thead>
+        <tr><th style="width:90px">源</th><th style="width:200px">配置文件</th><th style="width:230px">协议映射</th><th>apiKey 提取</th><th style="width:120px">model 列表</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="st-key">pi</td>
+          <td class="st-mono">~/.pi/agent/models.json<br>+ auth.json</td>
+          <td class="st-mono">必须 pi 终值（直接用）<br>google-generative-ai / 未知 → 丢弃 + warning</td>
+          <td>auth.json 明文优先（fallback models.json 的 apiKey）</td>
+          <td><span class="tag-cell tag-ok">完整</span></td>
+        </tr>
+        <tr>
+          <td class="st-key">zcode</td>
+          <td class="st-mono">~/.zcode/v2/config.json</td>
+          <td class="st-mono">kind=anthropic → anthropic-messages<br>kind=openai* → openai-completions</td>
+          <td>config.json 明文<br><b>不读</b> credentials.json（enc:v1: 加密，不解密）</td>
+          <td><span class="tag-cell tag-ok">完整</span></td>
+        </tr>
+        <tr>
+          <td class="st-key">codex</td>
+          <td class="st-mono">~/.codex/config.toml<br>+ auth.json</td>
+          <td class="st-mono">wire_api=responses → openai-responses<br>wire_api=chat → openai-completions<br>（chat 已废弃，warning）</td>
+          <td>env_key 只从 <code>process.env</code> 静态查<br><b>不执行脚本</b>（任意代码执行禁止）</td>
+          <td><span class="tag-cell tag-warn">不完整</span><br>（仅占位 + warning）</td>
+        </tr>
+        <tr>
+          <td class="st-key">claude</td>
+          <td class="st-mono">~/.claude/settings.json</td>
+          <td class="st-mono">恒 anthropic-messages<br>（协议固定）</td>
+          <td><span class="tag-cell tag-err">恒不提取</span><br>key 在 keychain / apiKeyHelper 脚本 / OAuth token</td>
+          <td><span class="tag-cell tag-warn">占位 1 个</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="anno-grid" style="margin-top:12px;">
+      <div class="anno"><b>claude 安全红线:</b><br>key 存于 OS keychain（macOS Keychain / Linux secret service / Windows Credential Manager）/ apiKeyHelper 脚本 / OAuth token。导入器<b>不查 keychain</b>（跨平台+权限）、<b>不执行 apiKeyHelper</b>（任意代码执行禁止）→ _apiKeyExtracted 恒 false，warning 提示导入后手动填。</div>
+      <div class="anno"><b>codex 安全红线:</b><br>env_key 只从 <code>process.env</code> 静态查（如 ROUTER_KEY 已在环境变量则提取成功），<b>不执行任何脚本</b>。未提取时 warning。</div>
+      <div class="anno"><b>codex model 不完整:</b><br>codex config.toml 无 model 列表 → 仅占位 provider，warning 提示「model 列表需手动补」。</div>
+      <div class="anno"><b>pi 协议丢弃:</b><br>google-generative-ai（Google GenAI 协议不支持）/ 其余未知 api → 丢弃 + topWarning（进顶层 warnings 数组，preview 阶段整体展示）。</div>
+      <div class="anno"><b>apiKey 脱敏:</b><br>preview 只透出 <code>apiKeyExtracted</code> 布尔，<b>不含 key 值</b>。完整配置（含明文 key）只活在 runtime 内存 preview-cache，applyImport 据此写 models.json。日志只记 importId/source/status/count。</div>
+      <div class="anno"><b>key 警告展示:</b><br>apiKeyExtracted=false → KeyRound 图标 warn 色 + tooltip「API Key 未提取」（见预览项）。</div>
+    </div>
+
     <!-- 步骤 2+3：预览 + 冲突处理 -->
     <h3 class="h3">步骤 2+3 · 预览与冲突处理（默认勾选可导入项，冲突禁用）</h3>
     <div class="render-frame">
@@ -1129,7 +1555,7 @@ body {
         <!-- provider 项 1：可导入（默认勾选） + key 警告 + 警告可展开 -->
         <div class="preview-item">
           <div class="pi-top">
-            <span class="ui-check on" role="checkbox" aria-checked="true" aria-label="openai-main">
+            <span class="ui-checkbox on" role="checkbox" aria-checked="true" aria-label="openai-main">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
             </span>
             <span class="pi-id">openai-main</span>
@@ -1146,7 +1572,7 @@ body {
         <!-- provider 项 2：可导入（默认勾选） -->
         <div class="preview-item">
           <div class="pi-top">
-            <span class="ui-check on" role="checkbox" aria-checked="true" aria-label="anthropic-prod">
+            <span class="ui-checkbox on" role="checkbox" aria-checked="true" aria-label="anthropic-prod">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
             </span>
             <span class="pi-id">anthropic-prod</span>
@@ -1158,7 +1584,7 @@ body {
         <!-- provider 项 3：冲突（已存在同名，默认不勾选 + 禁用 + 冲突标记） -->
         <div class="preview-item conflict">
           <div class="pi-top">
-            <span class="ui-check disabled" role="checkbox" aria-checked="false" aria-disabled="true" aria-label="openai-compatible">
+            <span class="ui-checkbox disabled" role="checkbox" aria-checked="false" aria-disabled="true" aria-label="openai-compatible">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="display:none;"></svg>
             </span>
             <span class="pi-id">openai-compatible</span>
@@ -1171,7 +1597,7 @@ body {
         <!-- provider 项 4：可导入 + 警告展开态 -->
         <div class="preview-item">
           <div class="pi-top">
-            <span class="ui-check on" role="checkbox" aria-checked="true" aria-label="ollama-local">
+            <span class="ui-checkbox on" role="checkbox" aria-checked="true" aria-label="ollama-local">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
             </span>
             <span class="pi-id">ollama-local</span>
@@ -1333,15 +1759,16 @@ body {
           </div>
         </div>
       </div>
-      <!-- 连接测试失败 -->
+      <!-- 连接测试失败（3 类错误分类，见 §2 错误分类表） -->
       <div class="state-row">
         <div class="state-tag">连接失败</div>
         <div class="state-demo">
           <div class="test-result fail">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-            连接失败，请检查 API Key
+            连接失败：无法访问 <code style="font-family:var(--font-mono);">https://api.example.com/v1/models</code>
           </div>
-          <div style="margin-top:6px;font-size:var(--text-xs);color:var(--neutral-mid);">testResult='fail' · 验证子区下方 · 不收起展开区（供重试）</div>
+          <div style="margin-top:6px;font-size:var(--text-xs);color:var(--neutral-mid);">testResult='fail' · <code>UNREACHABLE</code>（fetch failed / 超时 10s）· 验证子区下方 · 不收起展开区（供重试）</div>
+          <div style="margin-top:4px;font-size:var(--text-2xs);color:var(--neutral-dim);font-family:var(--font-mono);">他例：INVALID_AUTH_CHARS（含 ByteString）/ UNKNOWN（原始错误透传）</div>
         </div>
       </div>
       <!-- 导入失败（内联，对话框保持开） -->
@@ -1359,7 +1786,7 @@ body {
     <div class="anno-grid">
       <div class="anno"><b>动作错误:</b><br>常驻 inline-error · 展开区收起后仍可见（页级横幅）· 含原因+下一步</div>
       <div class="anno"><b>表单验证:</b><br>actionError 进 sticky 保存栏 · Input error 态 border-danger · 保存 disabled</div>
-      <div class="anno"><b>连接测试:</b><br>testResult='fail' · 「检查 API Key」· 验证子区内联 · 不收起展开区供重试</div>
+      <div class="anno"><b>连接测试:</b><br>testResult='fail' · 文案用 <code>classifyDiscoveryError</code> 的 3 类消息（UNREACHABLE / INVALID_AUTH_CHARS / UNKNOWN，见 §2）· 验证子区内联 · 不收起展开区供重试</div>
       <div class="anno"><b>导入失败:</b><br>预览对话框内联 error · 对话框保持开 · 允许重试</div>
       <div class="anno"><b>删除确认错误:</b><br>actionError 进 ConfirmDialog（删除确认弹窗）· 弹窗保持开供重试</div>
       <div class="anno"><b>文案语气:</b><br>动词+原因+下一步（impeccable）· 非错码</div>
@@ -1380,7 +1807,7 @@ body {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             从其他 Agent 导入
           </button>
-          <button class="btn btn-default btn-sm-size" type="button">
+          <button class="btn btn-default btn-sm" type="button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             添加供应商
           </button>
@@ -1420,13 +1847,11 @@ body {
         </tr>
       </thead>
       <tbody>
-        <tr><td class="m-comp" rowspan="3">状态点</td>
+        <tr><td class="m-comp" rowspan="2">状态点</td>
           <td><span class="tag-cell tag-ok">connected</span></td>
-          <td><span class="m-token">--success</span> · 7px 圆</td><td>连接健康</td></tr>
-        <tr><td><span class="tag-cell tag-err">error</span></td>
-          <td><span class="m-token">--danger</span> · 7px 圆</td><td>连接失败</td></tr>
+          <td><span class="m-token">--success</span> · 7px 圆</td><td>已配置 apiKey（status='connected'）</td></tr>
         <tr><td><span class="tag-cell tag-mute">not_configured</span></td>
-          <td><span class="m-token">--neutral-dim</span> · 7px 圆</td><td>未配置</td></tr>
+          <td><span class="m-token">--neutral-dim</span> · 7px 圆</td><td>未配置 apiKey（status='not_configured'）</td></tr>
 
         <tr><td class="m-comp" rowspan="4">Switch</td>
           <td><span class="tag-cell tag-info">on</span></td>
@@ -1480,11 +1905,11 @@ body {
 
         <tr><td class="m-comp" rowspan="3">thinking pill</td>
           <td>全档</td>
-          <td><span class="m-token">bg-info-soft text-info</span></td><td>thinkingKind=all</td></tr>
+          <td><span class="m-token">bg-info-soft text-info</span></td><td>strategy=all-levels · map=undefined（全档）</td></tr>
         <tr><td>高/顶</td>
-          <td><span class="m-token">bg-accent-soft text-accent</span></td><td>thinkingKind=hightop</td></tr>
+          <td><span class="m-token">bg-accent-soft text-accent</span></td><td>strategy=high-max · max→发 xhigh</td></tr>
         <tr><td>开关</td>
-          <td><span class="m-token">bg-surface text-neutral-mid</span></td><td>thinkingKind=toggle</td></tr>
+          <td><span class="m-token">bg-surface text-neutral-mid</span></td><td>strategy=on-off · off+high</td></tr>
 
         <tr><td class="m-comp" rowspan="2">设默认</td>
           <td>按钮</td>

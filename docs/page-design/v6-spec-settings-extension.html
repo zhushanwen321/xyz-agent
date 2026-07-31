@@ -182,92 +182,113 @@ body {
 
 /* 分组卡片（与 v6-spec-settings §4 一致）*/
 .group-card { background: var(--bg-card); border-radius: 10px; overflow: hidden; }
+/* 分组头：沿用资源页 .lp-group-head 范式（bg-surface-2 浮起分层 · 不嵌套卡片 · 不叠 border），
+   加 scope pill 强化「来源/作用域」三分（系统强制 / 用户安装），与资源页 project/global scope pill 同形。 */
 .group-head {
   display: flex; align-items: center; gap: 8px;
-  padding: 11px 14px 9px;
+  padding: 10px 16px; background: var(--surface-2);
+  border-top: 1px solid var(--border);
 }
-.group-title { font-size: 12px; font-weight: 500; color: var(--neutral-fg); }
+.group-head:first-child { border-top: 0; }
+.group-title { font-size: var(--text-sm); font-weight: 600; color: var(--neutral-fg); }
 .group-count { font-size: 11px; color: var(--neutral-dim); font-family: var(--font-mono); }
+/* scope pill：复刻资源页 .lp-group-scope（mono · 圆角 999 · letter-spacing .02em）。
+   mandatory=系统强制 → accent（对应资源页 project scope，强语义色）；
+   user=用户安装 → 中性 + inset border（对应资源页 global scope，弱语义色）。 */
+.group-scope {
+  font-size: var(--text-2xs); padding: 2px 7px; border-radius: 999px;
+  font-family: var(--font-mono); flex-shrink: 0; letter-spacing: .02em;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.group-scope.mandatory { background: var(--accent-soft); color: var(--accent); }
+.group-scope.user { background: var(--surface); color: var(--neutral-mid); box-shadow: 0 0 0 1px var(--border) inset; }
+.group-scope svg { width: 11px; height: 11px; }
 .group-aux { margin-left: auto; font-size: 11px; color: var(--neutral-dim); font-family: var(--font-mono); }
 
-/* ── xyz-ui Button 4 变体（逐字对齐 packages/renderer/.../button/index.ts）──
-   不自创 .btn，所有按钮走这套变体语义。 */
-.xyz-btn {
+/* ── Button 4 变体（SSOT：v6-spec-settings-shell.html §6.1 / button/index.ts，逐字对齐）──
+   命名空间 .btn-* 回 SSOT，不再自创 .xyz-btn / .v-* / .sz-*。 */
+.btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   white-space: nowrap; border-radius: var(--radius); font-size: 13px; font-weight: 500;
   font-family: var(--font-sans); cursor: pointer; border: none;
   transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease);
 }
-.xyz-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
-.xyz-btn:disabled { pointer-events: none; opacity: 0.5; }
-.xyz-btn svg { width: 14px; height: 14px; flex-shrink: 0; }
+/* focus ring：accent 实色 + 黑阴影（已对齐 SSOT，比资源页还准——rename 时保留不变）*/
+.btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
+.btn:disabled { pointer-events: none; opacity: 0.5; }
+.btn svg { width: 14px; height: 14px; flex-shrink: 0; }
 /* size（对齐 SSOT：default=h-9 px-4 / dense=h-8 px-3 / sm=h-9 px-3 / icon=h-10 w-10 / icon-sm=28×28 rounded-sm）*/
-.xyz-btn.sz-default { height: 36px; padding: 0 16px; }
-.xyz-btn.sz-dense   { height: 32px; padding: 0 12px; font-size: 12px; }
-.xyz-btn.sz-sm      { height: 36px; padding: 0 12px; }
-.xyz-btn.sz-icon    { height: 40px; width: 40px; padding: 0; }
-.xyz-btn.sz-icon-sm { width: 28px; height: 28px; padding: 0; border-radius: var(--radius-sm); }
-.xyz-btn.sz-icon-sm svg { width: 14px; height: 14px; }
+.btn.btn-default-size { height: 36px; padding: 0 16px; }
+.btn.btn-dense        { height: 32px; padding: 0 12px; font-size: 12px; }
+.btn.btn-sm           { height: 36px; padding: 0 12px; }
+.btn.btn-icon         { height: 40px; width: 40px; padding: 0; }
+.btn.btn-icon-sm      { width: 28px; height: 28px; padding: 0; border-radius: var(--radius-sm); }
+.btn.btn-icon-sm svg { width: 14px; height: 14px; }
 /* variant: default（主操作）bg-accent text-white hover accent-hover（SSOT variant=default）*/
-.xyz-btn.v-default { background: var(--accent); color: #fff; }
-.xyz-btn.v-default:hover { background: var(--accent-hover); }
+.btn.btn-default { background: var(--accent); color: #fff; }
+.btn.btn-default:hover { background: var(--accent-hover); }
 /* variant: secondary 透明底 + border-border（SSOT variant=secondary）*/
-.xyz-btn.v-secondary { background: transparent; border: 1px solid var(--border); color: var(--neutral-fg); }
-.xyz-btn.v-secondary:hover { background: var(--surface-hover); }
+.btn.btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--neutral-fg); }
+.btn.btn-secondary:hover { background: var(--surface-hover); }
 /* variant: ghost 透明底 hover 出 surface-hover（SSOT variant=ghost · base neutral-fg）*/
-.xyz-btn.v-ghost { background: transparent; color: var(--neutral-fg); }
-.xyz-btn.v-ghost:hover { background: var(--surface-hover); }
+.btn.btn-ghost { background: transparent; color: var(--neutral-fg); }
+.btn.btn-ghost:hover { background: var(--surface-hover); }
 /* variant: danger text-danger hover danger-soft（SSOT variant=danger）*/
-.xyz-btn.v-danger { background: transparent; color: var(--danger); }
-.xyz-btn.v-danger:hover { background: var(--danger-soft); }
+.btn.btn-danger { background: transparent; color: var(--danger); }
+.btn.btn-danger:hover { background: var(--danger-soft); }
 /* 主操作载入态（spinner 取代文字）*/
-.xyz-btn .spin { animation: spin 0.8s linear infinite; }
+.btn .spin { animation: spin 0.8s linear infinite; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ── xyz-ui Input（逐字对齐 Input.vue：h-10 bg-surface-2 border-input，error→border-danger）── */
-.xyz-inp {
+.ui-input {
   display: flex; align-items: center; height: 40px; width: 100%;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 0 12px; font-size: 13px; color: var(--neutral-fg); font-family: var(--font-sans);
   transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
 }
-.xyz-inp.dense { height: 32px; font-size: 12px; }
-.xyz-inp.ph { color: var(--neutral-mid); }
-.xyz-inp.mono { font-family: var(--font-mono); font-size: 12px; }
-/* focus：源码 Input.vue 用 focus-visible:ring-1 ring-inset ring-accent-ring（1px 内环 box-shadow，不改 border 色）。此项目 tailwind ring 即 box-shadow inset 0 0 0 1px。*/
-.xyz-inp.focus { border-color: var(--border); box-shadow: inset 0 0 0 1px var(--accent-ring); }
-.xyz-inp.error { border-color: var(--danger); }
+.ui-input.dense { height: 32px; font-size: 12px; }
+.ui-input.ph { color: var(--neutral-mid); }
+.ui-input.mono { font-family: var(--font-mono); font-size: 12px; }
+/* focus：SSOT Input 单环（inset accent-ring，border 透明，不改 border 色）。
+   与 Button/Switch/Checkbox 的双环范式（accent 实色 + 黑阴影）故意不同，不可混用。*/
+.ui-input.focus { border-color: transparent; box-shadow: inset 0 0 0 1px var(--accent-ring); }
+.ui-input.err { border-color: var(--danger); }
 
-/* （Select 组件样式已移除：ExtensionPage 实际未用 Select 下拉，本稿无 .xyz-sel 渲染点，留 CSS 即死码。） */
+/* （Select 组件样式已移除：ExtensionPage 实际未用 Select 下拉，本稿无 .ui-select 渲染点，留 CSS 即死码。） */
 
 /* ── xyz-ui Switch（逐字对齐 Switch.vue：track h-5 w-9 / thumb size-4 / checked:bg-accent）──
-   track 20×36 / thumb 16px / on 偏右 18px / off 偏左 2px */
-.xyz-sw {
+   track 36×20 / thumb 16px 始终 #fff / on 偏右 18px / off 偏左 2px */
+.ui-switch {
   position: relative; width: 36px; height: 20px; border-radius: 999px;
   background: var(--border-strong); border: 1px solid transparent;
   flex-shrink: 0; cursor: pointer; transition: background var(--duration);
 }
-.xyz-sw::after {
-  content: ''; position: absolute; top: 2px; left: 2px;
-  width: 16px; height: 16px; border-radius: 50%; background: var(--neutral-fg);
-  transition: transform var(--duration), background var(--duration);
+/* focus：SSOT Switch 双环（accent 实色内环 + 黑色阴影外环，同 Button/Checkbox 范式）*/
+.ui-switch:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
+.ui-switch::after {
+  content: ''; position: absolute; top: 1px; left: 0;
+  width: 16px; height: 16px; border-radius: 50%; background: #fff;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+  transform: translateX(2px);
+  transition: transform var(--duration);
 }
-.xyz-sw.on { background: var(--accent); }
-.xyz-sw.on::after { transform: translateX(16px); background: #fff; }
-.xyz-sw.disabled { opacity: .5; cursor: not-allowed; }
+.ui-switch.on { background: var(--accent); }
+.ui-switch.on::after { transform: translateX(18px); }
+.ui-switch.disabled { opacity: .5; cursor: not-allowed; }
 
 /* ── xyz-ui Checkbox（逐字对齐 Checkbox.vue：size-4 / border-border-strong / checked:bg-accent）──
-   注：Checkbox.vue 用 rounded-sm = tailwind sm = 3px（v6 token --radius-sm 升到 6px，但 tailwind sm 在本仓 tailwind.config 仍为 3px，故这里写死 3px 对齐源码）。 */
-.xyz-cb {
-  width: 16px; height: 16px; border-radius: 3px;
+   圆角用 v6 token --radius-sm（= 6px）。 */
+.ui-checkbox {
+  width: 16px; height: 16px; border-radius: var(--radius-sm);
   background: transparent; border: 1px solid var(--border-strong);
   display: inline-flex; align-items: center; justify-content: center;
   flex-shrink: 0; cursor: pointer; transition: background var(--duration-fast), border-color var(--duration-fast);
 }
-.xyz-cb.checked { background: var(--accent); border-color: var(--accent); }
-.xyz-cb.indeterminate { background: var(--accent); border-color: var(--accent); }
-.xyz-cb svg { width: 11px; height: 11px; color: #fff; }
+.ui-checkbox.checked { background: var(--accent); border-color: var(--accent); }
+.ui-checkbox.indeterminate { background: var(--accent); border-color: var(--accent); }
+.ui-checkbox svg { width: 11px; height: 11px; color: #fff; }
 
 /* ============ badge 三轴语义体系 ============
    source（分类）→ Pill 圆角 999 soft 底 + 实色字（design-system §5 Pill 语义）
@@ -358,7 +379,7 @@ body {
 .install-tab:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 .install-tab.active { background: var(--surface-hover); color: var(--neutral-fg); }
 .install-row { display: flex; align-items: center; gap: 8px; padding: 4px 12px 12px; }
-.install-row .xyz-inp { flex: 1; }
+.install-row .ui-input { flex: 1; }
 .install-hint { font-size: 11px; color: var(--neutral-dim); padding: 0 12px 10px; font-family: var(--font-mono); }
 .install-err {
   display: flex; align-items: flex-start; gap: 6px;
@@ -385,18 +406,23 @@ body {
 .prog .bar { height: 100%; background: var(--accent); border-radius: 999px; transition: width var(--duration); }
 
 /* ============ ConfirmDialog（卸载两段式确认）============
-   非 modal-first：卸载是破坏性操作，两段式确认是必要保护，非偷懒。 */
-.cd-backdrop { position: relative; background: rgba(0,0,0,0.55); border-radius: var(--radius); padding: 40px; display: flex; align-items: flex-start; justify-content: center; }
+   非 modal-first：卸载是破坏性操作，两段式确认是必要保护，非偷懒。
+   容器范式对齐 v6-spec-overlays.html §4 ConfirmDialog SSOT：
+   bg-surface + border(--border) + shadow-2 + radius-lg(12px) + padding 24px；
+   图标用 overlays cd-ico（16px 内联，title-row 并排）取代独立大圆底块；
+   按钮：取消 = .btn-ghost / 确认危险 = .btn-danger（与 overlays cd-actions 一致）。 */
+.cd-backdrop { position: relative; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px); border-radius: var(--radius); padding: 40px 16px; overflow: hidden; display: flex; align-items: flex-start; justify-content: center; }
 .cd {
-  background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-2); width: 100%; max-width: 360px; padding: 20px;
+  position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2); width: 100%; max-width: 360px; padding: 24px;
 }
-.cd-icon { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 999px; background: var(--danger-soft); margin-bottom: 14px; }
-.cd-icon svg { width: 18px; height: 18px; color: var(--danger); }
-.cd-title { font-size: 15px; font-weight: 600; color: var(--neutral-fg); margin-bottom: 6px; }
-.cd-desc { font-size: 13px; color: var(--neutral-mid); line-height: 1.5; margin-bottom: 20px; }
+.cd-header { display: flex; flex-direction: column; gap: 6px; }
+.cd-title-row { display: flex; align-items: center; gap: 8px; }
+.cd-ico { width: 16px; height: 16px; flex-shrink: 0; color: var(--danger); }
+.cd-title { font-size: 15px; font-weight: 600; color: var(--neutral-fg); }
+.cd-desc { font-size: 13px; color: var(--neutral-mid); line-height: 1.55; margin-top: 4px; margin-bottom: 20px; }
 .cd-target { font-family: var(--font-mono); color: var(--neutral-fg); }
-.cd-acts { display: flex; justify-content: flex-end; gap: 8px; }
+.cd-acts { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
 
 /* ============ 空态 ============ */
 .empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 40px 20px; text-align: center; }
@@ -431,7 +457,7 @@ body {
   <header class="doc-head">
     <div class="doc-eyebrow">v6 SPEC · settings · extension</div>
     <h1 class="doc-title">Settings · 扩展（ExtensionPage 交互重新设计）</h1>
-    <p class="doc-sub">Pi 扩展管理页的 v6 视觉与交互重做。源码三区域（推荐 / 安装多步 / 已安装列表）经 impeccable 信息架构重排：强制扩展（mandatory）从「空白隐藏开关」改为「锁定 affordance + tooltip」，user-installed 走 Switch 乐观更新 + 自动升级开关 + 两段式卸载确认，安装流区分 npm 单步与 dir/git 多步（发现→选择→安装）并补全候选全选与进度反馈。badge 三轴（source / mandatory / tier）用不同形状语义区分，杜绝同形 pill 堆叠。所有控件走 xyz-ui 真实变体（Button 4 变体 / Input / Switch / Checkbox），不自创 .btn。</p>
+    <p class="doc-sub">Pi 扩展管理页的 v6 视觉与交互重做。源码三区域（推荐 / 安装多步 / 已安装列表）经 impeccable 信息架构重排：强制扩展（mandatory）从「空白隐藏开关」改为「锁定 affordance + tooltip」，user-installed 走 Switch 乐观更新 + 自动升级开关 + 两段式卸载确认，安装流区分 npm 单步与 dir/git 多步（发现→选择→安装）并补全候选全选与进度反馈。badge 三轴（source / mandatory / tier）用不同形状语义区分，杜绝同形 pill 堆叠。所有控件走 xyz-ui 真实变体（Button 4 变体 .btn-* · Input / Switch / Checkbox），类名回 SSOT（与 resources/shell 页统一）。</p>
     <div class="doc-meta">
       <span><b>SSOT</b> ExtensionPage.vue + extension.ts + mandatory-extensions.json（9 条）</span>
       <span><b>组件</b> xyz-ui Button/Input/Switch/Checkbox</span>
@@ -542,8 +568,12 @@ body {
       <div class="group-card">
         <div class="group-head">
           <span class="group-title">已安装扩展</span>
+          <span class="group-scope mandatory">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            系统强制
+          </span>
           <span class="group-count">9</span>
-          <span class="group-aux">含 9 mandatory</span>
+          <span class="group-aux">runtime 自动安装/升级 · 不可禁用/卸载</span>
         </div>
 
         <!-- mandatory · infrastructure（纯能力提供者）-->
@@ -618,6 +648,7 @@ body {
         <div class="anno"><b>tooltip 触发:</b> <span>hover 锁标显「不可禁用/卸载」完整说明</span></div>
         <div class="anno"><b>反 slop:</b> <span class="old">隐藏控件留空</span> → <span class="v6">显式锁定 + 说明</span></div>
         <div class="anno"><b>数据 SSOT:</b> <span>mandatory-extensions.json（9 条 · tier infra/feat）</span></div>
+        <div class="anno"><b>分组头 scope pill:</b> <span class="v6">复刻资源页 .lp-group-scope 范式 · mandatory=accent「系统强制」+ 锁图标 · 与资源页 project scope 同形（强语义色）；不硬加 project/global 维度（extension 配置全局存储）</span></div>
       </div>
     </div>
   </section>
@@ -644,6 +675,11 @@ body {
     <!-- 状态变体行 -->
     <div class="render-frame">
       <div class="group-card">
+        <div class="group-head">
+          <span class="group-title">已安装扩展</span>
+          <span class="group-scope user">用户安装</span>
+          <span class="group-aux">可开关 · 可升级 · 可卸载</span>
+        </div>
 
         <!-- 默认启用 + 自动升级开 -->
         <div class="state-row">
@@ -658,16 +694,16 @@ body {
                 </div>
                 <span class="ext-desc">本地开发的自定义工具集</span>
                 <div class="ext-autoup">
-                  <span class="xyz-sw on"></span>
+                  <span class="ui-switch on"></span>
                   自动升级
                 </div>
               </div>
               <div class="ext-acts">
-                <span class="xyz-sw on" title="已启用"></span>
-                <button class="xyz-btn v-ghost sz-icon-sm" title="升级">
+                <span class="ui-switch on" title="已启用"></span>
+                <button class="btn btn-ghost btn-icon-sm" title="升级">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v5"/><path d="M5.2 13a8 8 0 1 0 13.6 0"/><path d="m6 7 6 6 6-6"/></svg>
                 </button>
-                <button class="xyz-btn v-danger sz-icon-sm" title="卸载">
+                <button class="btn btn-danger btn-icon-sm" title="卸载">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                 </button>
               </div>
@@ -689,11 +725,11 @@ body {
                 <span class="ext-desc">旧版任务运行器（已禁用）</span>
               </div>
               <div class="ext-acts">
-                <span class="xyz-sw"></span>
-                <button class="xyz-btn v-ghost sz-icon-sm" title="升级">
+                <span class="ui-switch"></span>
+                <button class="btn btn-ghost btn-icon-sm" title="升级">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v5"/><path d="M5.2 13a8 8 0 1 0 13.6 0"/><path d="m6 7 6 6 6-6"/></svg>
                 </button>
-                <button class="xyz-btn v-danger sz-icon-sm" title="卸载">
+                <button class="btn btn-danger btn-icon-sm" title="卸载">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                 </button>
               </div>
@@ -715,11 +751,11 @@ body {
                 <span class="ext-desc">本地开发的自定义工具集</span>
               </div>
               <div class="ext-acts">
-                <span class="xyz-sw on"></span>
-                <button class="xyz-btn v-ghost sz-icon-sm" disabled title="升级中">
+                <span class="ui-switch on"></span>
+                <button class="btn btn-ghost btn-icon-sm" disabled title="升级中">
                   <svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
                 </button>
-                <button class="xyz-btn v-danger sz-icon-sm" title="卸载">
+                <button class="btn btn-danger btn-icon-sm" title="卸载">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                 </button>
               </div>
@@ -741,11 +777,11 @@ body {
                 <span class="ext-desc">本地开发的自定义工具集</span>
               </div>
               <div class="ext-acts">
-                <span class="xyz-sw on disabled"></span>
-                <button class="xyz-btn v-ghost sz-icon-sm" title="升级">
+                <span class="ui-switch on disabled"></span>
+                <button class="btn btn-ghost btn-icon-sm" title="升级">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v5"/><path d="M5.2 13a8 8 0 1 0 13.6 0"/><path d="m6 7 6 6 6-6"/></svg>
                 </button>
-                <button class="xyz-btn v-danger sz-icon-sm" title="卸载">
+                <button class="btn btn-danger btn-icon-sm" title="卸载">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                 </button>
               </div>
@@ -764,6 +800,7 @@ body {
         <div class="anno"><b>卸载按钮:</b> <span>ghost icon · hover danger-soft + danger · 触发两段式确认 §6</span></div>
         <div class="anno"><b>禁用态:</b> <span>info 块 opacity .6 · 开关 off · 操作仍可用（可再启用/卸载）</span></div>
         <div class="anno"><b>discovery 来源:</b> <span>bd-src info 色 · 不显示卸载（扫描实体非可卸载）</span></div>
+        <div class="anno"><b>分组头 scope pill:</b> <span class="v6">user=中性色 + inset border「用户安装」· 与资源页 global scope 同形（弱语义色）· 与 §2 mandatory accent pill 对偶，视觉二分来源</span></div>
       </div>
     </div>
   </section>
@@ -798,8 +835,8 @@ body {
           <span class="state-tag">default</span>
           <div class="state-demo">
             <div class="install-row">
-              <div class="xyz-inp dense ph mono" style="flex:1;">npm:package-name</div>
-              <button class="xyz-btn v-default sz-dense">
+              <div class="ui-input dense ph mono" style="flex:1;">npm:package-name</div>
+              <button class="btn btn-default btn-dense">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
                 安装
               </button>
@@ -819,8 +856,8 @@ body {
           <span class="state-tag on">installing</span>
           <div class="state-demo">
             <div class="install-row">
-              <div class="xyz-inp dense mono" style="flex:1;">@zhushanwen/pi-chart</div>
-              <button class="xyz-btn v-default sz-dense" disabled>
+              <div class="ui-input dense mono" style="flex:1;">@zhushanwen/pi-chart</div>
+              <button class="btn btn-default btn-dense" disabled>
                 <svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
                 安装中
               </button>
@@ -841,8 +878,8 @@ body {
           <span class="state-tag err">error</span>
           <div class="state-demo">
             <div class="install-row">
-              <div class="xyz-inp dense mono error" style="flex:1;">@zhushanwen/pi-missing</div>
-              <button class="xyz-btn v-default sz-dense">
+              <div class="ui-input dense mono err" style="flex:1;">@zhushanwen/pi-missing</div>
+              <button class="btn btn-default btn-dense">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
                 安装
               </button>
@@ -858,7 +895,7 @@ body {
       <div class="anno-grid">
         <div class="anno"><b>tab 切换:</b> <span>ghost tab · active bg-surface-hover + neutral-fg</span></div>
         <div class="anno"><b>Input:</b> <span>xyz-ui Input dense h-8 · bg-surface-2 · mono · placeholder neutral-mid</span></div>
-        <div class="anno"><b>安装按钮:</b> <span>Button default 变体（bg-accent text-white）· sz-dense h-8</span></div>
+        <div class="anno"><b>安装按钮:</b> <span>Button default 变体（bg-accent text-white）· btn-dense h-8</span></div>
         <div class="anno"><b>disabled:</b> <span>空输入 / installing · opacity .5 + pointer-events:none</span></div>
         <div class="anno"><b>回车提交:</b> <span>@keyup.enter 等同点击安装</span></div>
         <div class="anno"><b>前缀补全:</b> <span>无 npm: 前缀时自动补（runtime 强制要求）</span></div>
@@ -898,8 +935,8 @@ body {
           <span class="state-tag on">discovering</span>
           <div class="state-demo">
             <div class="install-row">
-              <div class="xyz-inp dense mono" style="flex:1;">/Users/me/code/my-extensions</div>
-              <button class="xyz-btn v-default sz-dense" disabled>
+              <div class="ui-input dense mono" style="flex:1;">/Users/me/code/my-extensions</div>
+              <button class="btn btn-default btn-dense" disabled>
                 <svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
                 发现中
               </button>
@@ -914,11 +951,11 @@ body {
       <div class="group-card" style="margin-bottom:14px;">
         <div class="cand-head">
           <span class="group-title">发现 3 个候选</span>
-          <button class="xyz-btn v-ghost sz-dense">取消</button>
+          <button class="btn btn-ghost btn-dense">取消</button>
         </div>
         <!-- 候选行（含全选行 + 部分选 + 未选）-->
         <label class="cand-row">
-          <span class="xyz-cb checked">
+          <span class="ui-checkbox checked">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
           </span>
           <div class="cand-info">
@@ -930,7 +967,7 @@ body {
           </div>
         </label>
         <label class="cand-row">
-          <span class="xyz-cb"></span>
+          <span class="ui-checkbox"></span>
           <div class="cand-info">
             <div class="cand-name-row">
               <span class="cand-name">data-fetch</span>
@@ -940,7 +977,7 @@ body {
           </div>
         </label>
         <label class="cand-row">
-          <span class="xyz-cb checked">
+          <span class="ui-checkbox checked">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
           </span>
           <div class="cand-info">
@@ -955,14 +992,14 @@ body {
         <div class="cand-foot">
           <div style="display:flex;align-items:center;gap:12px;">
             <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:11px;color:var(--neutral-dim);">
-              <span class="xyz-cb indeterminate">
+              <span class="ui-checkbox indeterminate">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/></svg>
               </span>
               全选
             </label>
             <span style="font-size:11px;color:var(--neutral-dim);font-family:var(--font-mono);">已选 2 / 3</span>
           </div>
-          <button class="xyz-btn v-default sz-dense">
+          <button class="btn btn-default btn-dense">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
             安装选中
           </button>
@@ -977,7 +1014,7 @@ body {
             <span style="font-size:11px;color:var(--neutral-mid);font-family:var(--font-mono);">正在安装 2 个候选…</span>
             <div class="prog"><div class="bar" style="width:65%;"></div></div>
           </div>
-          <button class="xyz-btn v-default sz-dense" disabled>
+          <button class="btn btn-default btn-dense" disabled>
             <svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
             安装中
           </button>
@@ -1007,7 +1044,7 @@ body {
       <span class="spec-num">§6</span>
       <h2 class="spec-title">卸载 · 两段式确认</h2>
     </div>
-    <p class="spec-desc">卸载是破坏性操作，两段式确认是必要保护（非 modal 偷懒——product.md 反 modal-as-first-thought，但破坏性操作除外）。点卸载 → ConfirmDialog（variant=danger）：危险图标 + 标题（含扩展名）+ 描述（说明后果）+ 取消（secondary）/ 卸载（danger）。loading 态确认按钮显 spinner 防双击。mandatory / discovery 来源不进此流（无卸载按钮）。</p>
+    <p class="spec-desc">卸载是破坏性操作，两段式确认是必要保护（非 modal 偷懒——product.md 反 modal-as-first-thought，但破坏性操作除外）。点卸载 → ConfirmDialog（variant=danger）：危险图标 + 标题（含扩展名）+ 描述（说明后果）+ 取消（ghost）/ 卸载（danger）。容器与按钮范式对齐 <code>v6-spec-overlays.html §4</code> ConfirmDialog SSOT（bg-surface + border + shadow-2 + radius-lg 12px；取消 ghost / 确认 danger）。loading 态确认按钮显 spinner 防双击。mandatory / discovery 来源不进此流（无卸载按钮）。</p>
 
     <div class="change-points">
       <span class="cp cp-now"><b>确认</b> 浏览器原生 confirm</span>
@@ -1019,14 +1056,16 @@ body {
     <div class="render-frame">
       <div class="cd-backdrop">
         <div class="cd">
-          <div class="cd-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
+          <div class="cd-header">
+            <div class="cd-title-row">
+              <svg class="cd-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              <span class="cd-title">卸载 <span class="cd-target">my-custom-tools</span>？</span>
+            </div>
+            <p class="cd-desc">该扩展将从扩展目录移除，其提供的工具在新会话不再可用。此操作不可撤销。</p>
           </div>
-          <div class="cd-title">卸载 <span class="cd-target">my-custom-tools</span>？</div>
-          <div class="cd-desc">该扩展将从扩展目录移除，其提供的工具在新会话不再可用。此操作不可撤销。</div>
           <div class="cd-acts">
-            <button class="xyz-btn v-secondary sz-dense">取消</button>
-            <button class="xyz-btn v-danger sz-dense">
+            <button class="btn btn-ghost btn-dense">取消</button>
+            <button class="btn btn-danger btn-dense">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
               卸载
             </button>
@@ -1036,11 +1075,12 @@ body {
 
       <div class="anno-grid">
         <div class="anno"><b>触发:</b> <span>点卸载 → confirmTarget=name → dialog open</span></div>
-        <div class="anno"><b>图标:</b> <span>danger-soft 圆底 + danger Trash</span></div>
+        <div class="anno"><b>容器 SSOT:</b> <span class="v6">对齐 overlays §4 ConfirmDialog · bg-surface + border(--border) + shadow-2 + radius-lg 12px + padding 24px · backdrop blur(4px) 0.8</span></div>
+        <div class="anno"><b>图标:</b> <span>overlays cd-ico · 16px danger AlertTriangle（title-row 内联，取代独立大圆底块）· 与 overlays danger variant 同形</span></div>
         <div class="anno"><b>标题:</b> <span>含扩展名（cd-target mono）· 明确操作对象</span></div>
         <div class="anno"><b>描述:</b> <span>说后果（移除+新会话不可用+不可撤销）非笼统确认</span></div>
-        <div class="anno"><b>取消按钮:</b> <span>secondary 变体（透明底 + border）</span></div>
-        <div class="anno"><b>确认按钮:</b> <span>danger 实色（danger 底 + 白字）· 动词+对象「卸载」</span></div>
+        <div class="anno"><b>取消按钮:</b> <span class="v6">.btn-ghost（overlays cd-actions 取消=ghost 范式 · 透明底 hover surface-hover）</span></div>
+        <div class="anno"><b>确认按钮:</b> <span class="v6">.btn-danger（text-danger hover danger-soft）· 动词+对象「卸载」· 与 overlays danger confirm 同形</span></div>
         <div class="anno"><b>loading:</b> <span>uninstalling → 确认钮 disabled + spinner</span></div>
         <div class="anno"><b>不适用:</b> <span>mandatory（锁定）/ discovery（无卸载按钮）不进此流</span></div>
       </div>
@@ -1055,7 +1095,7 @@ body {
       <span class="spec-num">§7</span>
       <h2 class="spec-title">状态矩阵汇总</h2>
     </div>
-    <p class="spec-desc">ExtensionPage 所有交互组件的状态变体一览，供实施时逐态比对。覆盖安装 tab（3 态）、Input（3 态）、Switch（4 态）、Checkbox（3 态）、Button（4 变体 × 多态）、mandatory 锁（2 态）、候选全选（3 态）。</p>
+    <p class="spec-desc">ExtensionPage 所有交互组件的状态变体一览，供实施时逐态比对。覆盖安装 tab（3 态）、Input（3 态）、Switch（4 态）、Checkbox（3 态）、Button（xyz-ui 4 变体中本页用 3：default/ghost/danger，secondary 未用）、mandatory 锁（2 态）、候选全选（3 态）。</p>
 
     <table style="width:100%;border-collapse:collapse;font-size:12px;">
       <thead>
@@ -1084,10 +1124,9 @@ body {
         <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:11px;color:var(--accent);">checked</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">bg accent · 勾标 #fff</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--accent);">§5</td></tr>
         <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:11px;color:var(--neutral-dim);">indeterminate</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">bg accent · 横杠 #fff（全选部分选中态）</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--accent);">§5</td></tr>
 
-        <tr><td style="padding:12px;border-bottom:1px solid var(--border);vertical-align:middle;" rowspan="4"><span style="font-weight:500;color:var(--neutral-fg);">Button</span></td><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:11px;color:var(--accent);">default</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">bg accent + 白字（主操作：安装/发现/安装选中）</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--accent);">§4/§5</td></tr>
-        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:11px;color:var(--neutral-dim);">secondary</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">透明底 + border-border + fg 字（取消）</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--accent);">§6</td></tr>
-        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:11px;color:var(--neutral-dim);">ghost</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">hover bg surface-hover（tab/图标/取消）</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--accent);">§3/§4</td></tr>
-        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:11px;color:var(--danger);">danger</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">danger 底 + 白字（卸载确认）/ ghost hover danger-soft（卸载图标）</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--accent);">§3/§6</td></tr>
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);vertical-align:middle;" rowspan="3"><span style="font-weight:500;color:var(--neutral-fg);">Button</span></td><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:11px;color:var(--accent);">default</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">bg accent + 白字（主操作：安装/发现/安装选中/添加扩展）</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--accent);">§4/§5/§8</td></tr>
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:11px;color:var(--neutral-dim);">ghost</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">透明底 hover bg surface-hover（升级行尾图标 / 取消：候选选择 §5 + 卸载确认 §6）</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--accent);">§3/§5/§6</td></tr>
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:11px;color:var(--danger);">danger</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">text-danger hover bg danger-soft（卸载行尾图标 §3 + 卸载确认钮 §6）</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--accent);">§3/§6</td></tr>
 
         <tr><td style="padding:12px;border-bottom:1px solid var(--border);vertical-align:middle;" rowspan="2"><span style="font-weight:500;color:var(--neutral-fg);">mandatory 锁</span></td><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:11px;color:var(--neutral-dim);">default</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">锁图标 neutral-dim + 「Mandatory」neutral-mid</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--accent);">§1/§2</td></tr>
         <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:11px;color:var(--accent);">hover</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">图标 neutral-mid · 显 tooltip「不可禁用/卸载」</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--accent);">§1/§2</td></tr>
@@ -1095,7 +1134,7 @@ body {
     </table>
 
     <div class="anno-grid" style="margin-top:16px;">
-      <div class="anno"><b>全覆盖检查:</b> <span>tab 3 ✓ / Input 3 ✓ / Switch 4 ✓ / Checkbox 3 ✓ / Button 4 ✓ / 锁 2 ✓</span></div>
+      <div class="anno"><b>全覆盖检查:</b> <span>tab 3 ✓ / Input 3 ✓ / Switch 4 ✓ / Checkbox 3 ✓ / Button 用 3（default/ghost/danger · secondary 未用）✓ / 锁 2 ✓</span></div>
       <div class="anno"><b>彩色降噪:</b> <span>仅 source pill（accent/info）+ danger 操作 + 升级 success 版本号保留语义色，其余中性</span></div>
       <div class="anno"><b>AI slop 清除:</b> <span>去三轴同形 pill / mandatory 留空 / 原生 confirm / 候选默认全选误装</span></div>
       <div class="anno"><b>组件 SSOT:</b> <span>xyz-ui Button 4 变体 · Input · Switch · Checkbox（不自创；ExtensionPage 未用 Select）</span></div>
@@ -1140,7 +1179,7 @@ body {
           </div>
           <span class="empty-text">还没有安装任何扩展</span>
           <span class="empty-hint">从 npm 包名、本地目录或 Git URL 安装第一个扩展</span>
-          <button class="xyz-btn v-default sz-dense">
+          <button class="btn btn-default btn-dense">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
             添加扩展
           </button>

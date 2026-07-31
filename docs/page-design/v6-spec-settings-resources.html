@@ -109,83 +109,78 @@ body {
 
 /* ================================================================
    渲染用：xyz-ui 原子组件（逐字还原 Button/Input/Checkbox 变体）
-   严格遵循（与 v6-spec-settings-shell.html 范式逐字一致）：
+   严格遵循 SSOT（v6-spec-settings-shell.html §6.1）——禁自创 .btn 等价类：
    - Button default = bg-accent text-white hover:bg-accent-hover
    - Button secondary = bg-transparent border border-border text-neutral-fg hover:bg-surface-hover
    - Button ghost = hover:bg-surface-hover（透明底）
    - Button danger = text-danger hover:bg-danger-soft
-   - Button size: default h-9 px-4 / dense h-8 px-3 / sm h-9 px-3 / icon h-10 w-10
-   - 移动按钮用更紧凑的 ghost icon（h-8 w-8 = 自定义 lp-move 子类）
+   - Button size: default(h-9 px-4) / dense(h-8 px-3) / sm(h-9 px-3) / icon(h-10 w-10) / icon-sm(h-7 w-7)
+   - 紧凑 icon 操作（↑↓ 移动 / 移除 / 引用）用 btn-icon-sm（28px），不自创尺寸档
    - Input h-10 rounded-md border-input bg-surface-2 px-3；focus = inset ring；error → border-danger
    - Checkbox size-4 border-border-strong；checked bg-accent（系统锁定 = disabled + lock）
-   禁止出现 .btn 自创类——所有按钮复用 .xb-* 等价于 <Button variant=…>。
    ================================================================ */
 
-/* ── Button（4 变体 × 4 size）── */
-.xb {
+/* ── Button（4 变体 × 5 size）逐字复刻 SSOT §6.1 ── */
+.btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  white-space: nowrap; border-radius: var(--radius);
-  font-size: var(--text-md); font-weight: 500; font-family: var(--font-sans);
-  transition: background var(--duration-fast), color var(--duration-fast), box-shadow var(--duration-fast);
-  cursor: pointer; user-select: none;
+  white-space: nowrap; border-radius: var(--radius); font-size: var(--text-md); font-weight: 500;
+  font-family: inherit; cursor: pointer; border: none;
+  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease);
 }
-.xb svg { pointer-events: none; width: 16px; height: 16px; flex-shrink: 0; }
-/* 变体 */
-.xb-default { background: var(--accent); color: #fff; }
-.xb-default:hover { background: var(--accent-hover); }
-.xb-secondary { background: transparent; border: 1px solid var(--border); color: var(--neutral-fg); }
-.xb-secondary:hover { background: var(--surface-hover); }
-.xb-ghost { background: transparent; color: var(--neutral-fg); }
-.xb-ghost:hover { background: var(--surface-hover); }
-.xb-danger { background: transparent; color: var(--danger); }
-.xb-danger:hover { background: var(--danger-soft); }
-/* 尺寸 */
-.xb-default-sz, .xb-secondary-sz, .xb-ghost-sz, .xb-danger-sz { height: 36px; padding: 8px 16px; }       /* default h-9 px-4 */
-.xb-dense { height: 32px; padding: 0 12px; font-size: var(--text-sm); }                                    /* dense h-8 px-3 */
-.xb-sm { height: 36px; padding: 0 12px; font-size: var(--text-sm); }                                       /* sm h-9 px-3 */
-.xb-icon { height: 40px; width: 40px; padding: 0; }                                                        /* icon h-10 w-10 */
-/* disabled（继承自 reka disabled:pointer-events-none + opacity-50）*/
-.xb[disabled], .xb.is-disabled { opacity: .5; pointer-events: none; cursor: not-allowed; }
-/* focus-visible ring（Button 用外环 + offset，shadcn 惯例）*/
-.xb:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent-ring); }
-/* 紧凑型 icon-only 操作按钮（资源行尾删除/引用）—— ghost 变体 + 自定 size-6 */
-.xb-ghost-ico { height: 24px; width: 24px; padding: 0; border-radius: var(--radius-sm); background: transparent; color: var(--neutral-dim); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background var(--duration-fast), color var(--duration-fast); }
-.xb-ghost-ico:hover { background: var(--surface-hover); color: var(--neutral-fg); }
-.xb-ghost-ico.danger-hover:hover { color: var(--danger); }
-.xb-ghost-ico svg { width: 14px; height: 14px; }
-/* 移动按钮（↑↓）—— ghost icon 紧凑档 h-8 w-8（范式允许的紧凑 icon 尺寸），SVG 14px */
-.xb-move { height: 28px; width: 28px; padding: 0; border-radius: var(--radius-sm); background: transparent; color: var(--neutral-dim); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background var(--duration-fast), color var(--duration-fast); }
-.xb-move:hover { background: var(--surface-hover); color: var(--neutral-fg); }
-.xb-move:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 4px var(--accent-ring); }
-.xb-move[disabled], .xb-move.is-disabled { opacity: .35; pointer-events: none; cursor: not-allowed; }
-.xb-move svg { width: 14px; height: 14px; }
+.btn svg { pointer-events: none; width: 16px; height: 16px; flex-shrink: 0; }
+.btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
+.btn:disabled { pointer-events: none; opacity: 0.5; }
+/* 变体（variant 后缀，双 class 等价：HTML 用 `btn btn-default`） */
+.btn-default { background: var(--accent); color: #fff; }
+.btn-default:hover { background: var(--accent-hover); }
+.btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--neutral-fg); }
+.btn-secondary:hover { background: var(--surface-hover); }
+.btn-ghost { background: transparent; color: var(--neutral-fg); }
+.btn-ghost:hover { background: var(--surface-hover); }
+.btn-danger { background: transparent; color: var(--danger); }
+.btn-danger:hover { background: var(--danger-soft); }
+/* 尺寸（SSOT §6.1：default-size / dense / sm / icon / icon-sm） */
+.btn-default-size { height: 36px; padding: 0 16px; }                                                        /* default h-9 px-4 */
+.btn-dense { height: 32px; padding: 0 12px; font-size: var(--text-sm); }                                    /* dense h-8 px-3 */
+.btn-sm { height: 36px; padding: 0 12px; font-size: var(--text-sm); }                                       /* sm h-9 px-3 */
+.btn-icon { height: 40px; width: 40px; padding: 0; }                                                        /* icon h-10 w-10 */
+.btn-icon-sm { height: 28px; width: 28px; padding: 0; border-radius: var(--radius-sm); }                    /* icon-sm h-7 w-7 */
+/* 紧凑 icon 操作（↑↓ 移动 / 引用）：ghost 态默认低调 neutral-dim，hover 转 neutral-fg；
+   btn-icon-sm 已是 SSOT 尺寸（28px），不自创尺寸档。
+   danger 变体（移除）由 .btn-danger 自身管 color，此处不覆盖，避免特异度压过 variant。 */
+.btn.btn-ghost.btn-icon-sm { color: var(--neutral-dim); }
+.btn.btn-ghost.btn-icon-sm:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.btn.btn-icon-sm svg { width: 14px; height: 14px; }
 
-/* ── Input（h-10 rounded-md border-input bg-surface-2 px-3）── */
-.xinp {
+/* ── Input（h-10 rounded-md border-input bg-surface-2 px-3）类名对齐 SSOT §6.2 ── */
+.ui-input {
   display: inline-flex; align-items: center;
   height: 40px; width: 100%; padding: 8px 12px;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font-size: var(--text-md); color: var(--neutral-fg);
-  font-family: var(--font-mono);
+  font-family: inherit;
   transition: box-shadow var(--duration-fast), border-color var(--duration-fast);
 }
-.xinp.ph { color: var(--neutral-mid); font-family: var(--font-sans); }
-.xinp.focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset, 0 0 0 3px var(--accent-ring); }
-.xinp.error { border-color: var(--danger); }
-.xinp.dense { height: 32px; padding: 4px 10px; font-size: var(--text-sm); }
+.ui-input.ph { color: var(--neutral-mid); }
+.ui-input.mono { font-family: var(--font-mono); }
+/* focus：SSOT Input 单环（inset accent-ring，border 透明，不改 border 色）。
+   与 Button/Switch/Checkbox 的双环范式（accent 实色 + 黑阴影）故意不同，不可混用。*/
+.ui-input.focus { border-color: transparent; box-shadow: inset 0 0 0 1px var(--accent-ring); }
+.ui-input.err { border-color: var(--danger); }
+.ui-input.dense { height: 32px; padding: 4px 10px; font-size: var(--text-sm); }
 
-/* ── Checkbox（size-4 border-border-strong；checked bg-accent）── */
-.xcb {
+/* ── Checkbox（size-4 border-border-strong；checked bg-accent）类名对齐 SSOT §6.5 ── */
+.ui-checkbox {
   width: 16px; height: 16px; border-radius: var(--radius-sm);
   background: transparent; border: 1px solid var(--border-strong);
   display: inline-flex; align-items: center; justify-content: center;
   flex-shrink: 0; cursor: pointer; transition: background var(--duration-fast), border-color var(--duration-fast);
 }
-.xcb.checked { background: var(--accent); border-color: var(--accent); }
-.xcb svg { width: 12px; height: 12px; color: #fff; }
-.xcb.disabled { opacity: .5; cursor: not-allowed; }
+.ui-checkbox.checked { background: var(--accent); border-color: var(--accent); }
+.ui-checkbox svg { width: 12px; height: 12px; color: #fff; }
+.ui-checkbox.disabled { opacity: .5; cursor: not-allowed; }
 
 /* ================================================================
    渲染用：资源页组件样式
@@ -249,7 +244,7 @@ body {
 .lp-count { font-size: var(--text-xs); color: var(--neutral-dim); font-family: var(--font-mono); flex-shrink: 0; }
 /* 添加路径区：双方式（目录选择按钮 + 手动填写输入框） */
 .lp-add-row { display: flex; align-items: flex-start; gap: 8px; padding: 10px 16px; border-top: 1px solid rgba(255,255,255,0.04); flex-wrap: wrap; }
-.lp-add-row .xinp { flex: 1; min-width: 180px; }
+.lp-add-row .ui-input { flex: 1; min-width: 180px; }
 .lp-err { font-size: var(--text-xs); color: var(--danger); padding: 4px 16px 10px; display: flex; align-items: center; gap: 6px; }
 .lp-err svg { width: 12px; height: 12px; }
 .lp-import-actions { padding: 10px 16px; border-top: 1px solid rgba(255,255,255,0.04); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -489,7 +484,7 @@ body {
 
           <!-- 系统锁定目录（Checkbox checked + disabled + lock 图标；不可移不可排序）-->
           <div class="lp-row">
-            <span class="xcb checked disabled"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span class="ui-checkbox checked disabled"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
             <span class="lp-path forced">~/.xyz-agent/skills</span>
             <svg class="lp-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
             <span class="lp-tag forced">系统</span>
@@ -497,32 +492,32 @@ body {
 
           <!-- 用户项目目录（Checkbox + ↑↓ + 移除）-->
           <div class="lp-row">
-            <span class="xcb checked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span class="ui-checkbox checked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
             <span class="lp-path">~/projects/my-skills</span>
             <span class="lp-actions">
-              <button class="xb-move is-disabled" disabled aria-label="上移" title="上移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
-              <button class="xb-move" aria-label="下移" title="下移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
-              <button class="xb-ghost-ico danger-hover" aria-label="移除" title="移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+              <button class="btn btn-ghost btn-icon-sm" disabled aria-label="上移" title="上移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
+              <button class="btn btn-ghost btn-icon-sm" aria-label="下移" title="下移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+              <button class="btn btn-danger btn-icon-sm" aria-label="移除" title="移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
             </span>
           </div>
           <div class="lp-row">
-            <span class="xcb checked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span class="ui-checkbox checked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
             <span class="lp-path">./.xyz-agent/skills</span>
             <span class="lp-actions">
-              <button class="xb-move" aria-label="上移" title="上移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
-              <button class="xb-move is-disabled" disabled aria-label="下移" title="下移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
-              <button class="xb-ghost-ico danger-hover" aria-label="移除" title="移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+              <button class="btn btn-ghost btn-icon-sm" aria-label="上移" title="上移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
+              <button class="btn btn-ghost btn-icon-sm" disabled aria-label="下移" title="下移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+              <button class="btn btn-danger btn-icon-sm" aria-label="移除" title="移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
             </span>
           </div>
 
           <!-- 项目目录：添加路径（双方式，详见 §3）-->
           <div class="lp-add-row">
-            <span class="xinp ph">/absolute/path/to/project-dir</span>
-            <button class="xb xb-secondary xb-dense" aria-label="选择目录" title="选择目录">
+            <span class="ui-input ph mono">/absolute/path/to/project-dir</span>
+            <button class="btn btn-secondary btn-dense" aria-label="选择目录" title="选择目录">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
               选择目录
             </button>
-            <button class="xb xb-default xb-dense">
+            <button class="btn btn-default btn-dense">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
               添加
             </button>
@@ -536,32 +531,32 @@ body {
           </div>
 
           <div class="lp-row">
-            <span class="xcb checked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span class="ui-checkbox checked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
             <span class="lp-path">~/work/shared-skills</span>
             <span class="lp-actions">
-              <button class="xb-move is-disabled" disabled aria-label="上移" title="上移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
-              <button class="xb-move" aria-label="下移" title="下移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
-              <button class="xb-ghost-ico danger-hover" aria-label="移除" title="移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+              <button class="btn btn-ghost btn-icon-sm" disabled aria-label="上移" title="上移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
+              <button class="btn btn-ghost btn-icon-sm" aria-label="下移" title="下移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+              <button class="btn btn-danger btn-icon-sm" aria-label="移除" title="移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
             </span>
           </div>
           <div class="lp-row">
-            <span class="xcb"></span>
+            <span class="ui-checkbox"></span>
             <span class="lp-path">~/lib/company-skills</span>
             <span class="lp-actions">
-              <button class="xb-move" aria-label="上移" title="上移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
-              <button class="xb-move is-disabled" disabled aria-label="下移" title="下移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
-              <button class="xb-ghost-ico danger-hover" aria-label="移除" title="移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+              <button class="btn btn-ghost btn-icon-sm" aria-label="上移" title="上移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
+              <button class="btn btn-ghost btn-icon-sm" disabled aria-label="下移" title="下移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+              <button class="btn btn-danger btn-icon-sm" aria-label="移除" title="移除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
             </span>
           </div>
 
           <!-- 全局目录：添加路径（双方式，详见 §3）-->
           <div class="lp-add-row">
-            <span class="xinp ph">/absolute/path/to/global-dir</span>
-            <button class="xb xb-secondary xb-dense" aria-label="选择目录" title="选择目录">
+            <span class="ui-input ph mono">/absolute/path/to/global-dir</span>
+            <button class="btn btn-secondary btn-dense" aria-label="选择目录" title="选择目录">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
               选择目录
             </button>
-            <button class="xb xb-default xb-dense">
+            <button class="btn btn-default btn-dense">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
               添加
             </button>
@@ -570,7 +565,7 @@ body {
           <!-- SourceImport 入口（详见 §4）-->
           <div class="lp-section-label">从其他 Agent 导入</div>
           <div class="lp-import-actions">
-            <button class="xb xb-secondary xb-dense">
+            <button class="btn btn-secondary btn-dense">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
               从其他 Agent 导入目录
             </button>
@@ -628,11 +623,11 @@ body {
         <div class="state-tag">default</div>
         <div class="state-demo">
           <div class="lp-row" style="border-top:0;">
-            <span class="xcb checked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span class="ui-checkbox checked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
             <span class="lp-path">~/projects/my-skills</span>
             <span class="lp-actions always-on">
-              <button class="xb-move" aria-label="上移" title="上移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
-              <button class="xb-move" aria-label="下移" title="下移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+              <button class="btn btn-ghost btn-icon-sm" aria-label="上移" title="上移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
+              <button class="btn btn-ghost btn-icon-sm" aria-label="下移" title="下移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
             </span>
           </div>
           <div class="anno" style="margin-top:6px;"><b>↑↓ 按钮:</b> <span>ghost icon · h-8 w-8 · neutral-dim · hover bg-surface-hover + neutral-fg（always-on 仅 demo，实际 hover/focus 显）</span></div>
@@ -644,11 +639,11 @@ body {
         <div class="state-tag">moving</div>
         <div class="state-demo">
           <div class="lp-row moving" style="border-top:0;">
-            <span class="xcb checked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span class="ui-checkbox checked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
             <span class="lp-path">~/projects/my-skills</span>
             <span class="lp-actions always-on">
-              <button class="xb-move" aria-label="上移" title="上移" style="color:var(--accent);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
-              <button class="xb-move" aria-label="下移" title="下移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+              <button class="btn btn-ghost btn-icon-sm" aria-label="上移" title="上移" style="color:var(--accent);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
+              <button class="btn btn-ghost btn-icon-sm" aria-label="下移" title="下移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
             </span>
           </div>
           <div class="anno" style="margin-top:6px;"><b>移动反馈:</b> <span>点击 ↑/↓ 后被移行 bg accent-soft 微染 120ms + 按钮图标转 accent · 过渡遵守 prefers-reduced-motion</span></div>
@@ -660,11 +655,11 @@ body {
         <div class="state-tag">disabled</div>
         <div class="state-demo">
           <div class="lp-row" style="border-top:0;">
-            <span class="xcb checked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span class="ui-checkbox checked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
             <span class="lp-path">~/work/shared-skills<span style="color:var(--neutral-dim);"> （组末行）</span></span>
             <span class="lp-actions always-on">
-              <button class="xb-move" aria-label="上移" title="上移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
-              <button class="xb-move is-disabled" disabled aria-label="下移" title="下移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+              <button class="btn btn-ghost btn-icon-sm" aria-label="上移" title="上移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
+              <button class="btn btn-ghost btn-icon-sm" disabled aria-label="下移" title="下移"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
             </span>
           </div>
           <div class="anno" style="margin-top:6px;"><b>边界行:</b> <span>组首 ↑ disabled / 组末 ↓ disabled · opacity .35 · pointer-events:none · aria-disabled=true</span></div>
@@ -707,7 +702,7 @@ body {
         <div class="state-tag">① 目录选择</div>
         <div class="state-demo">
           <div class="lp-add-row" style="border-top:0;padding:10px 0;">
-            <button class="xb xb-secondary xb-dense">
+            <button class="btn btn-secondary btn-dense">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
               选择目录
             </button>
@@ -722,12 +717,12 @@ body {
         <div class="state-tag">② 手动·default</div>
         <div class="state-demo">
           <div class="lp-add-row" style="border-top:0;padding:10px 0;">
-            <span class="xinp ph">/absolute/path/to/dir</span>
-            <button class="xb xb-secondary xb-dense" aria-label="选择目录" title="选择目录">
+            <span class="ui-input ph mono">/absolute/path/to/dir</span>
+            <button class="btn btn-secondary btn-dense" aria-label="选择目录" title="选择目录">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
               选择目录
             </button>
-            <button class="xb xb-default xb-dense">
+            <button class="btn btn-default btn-dense">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
               添加
             </button>
@@ -741,12 +736,12 @@ body {
         <div class="state-tag">② 手动·typing</div>
         <div class="state-demo">
           <div class="lp-add-row" style="border-top:0;padding:10px 0;">
-            <span class="xinp">~/projects/legacy-skills</span>
-            <button class="xb xb-secondary xb-dense" aria-label="选择目录" title="选择目录">
+            <span class="ui-input mono">~/projects/legacy-skills</span>
+            <button class="btn btn-secondary btn-dense" aria-label="选择目录" title="选择目录">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
               选择目录
             </button>
-            <button class="xb xb-default xb-dense">
+            <button class="btn btn-default btn-dense">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
               添加
             </button>
@@ -759,8 +754,8 @@ body {
         <div class="state-tag">② 手动·重复</div>
         <div class="state-demo">
           <div class="lp-add-row" style="border-top:0;padding:10px 0;">
-            <span class="xinp error">~/projects/my-skills</span>
-            <button class="xb xb-default xb-dense">
+            <span class="ui-input mono err">~/projects/my-skills</span>
+            <button class="btn btn-default btn-dense">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
               添加
             </button>
@@ -777,8 +772,8 @@ body {
         <div class="state-tag">② 手动·格式</div>
         <div class="state-demo">
           <div class="lp-add-row" style="border-top:0;padding:10px 0;">
-            <span class="xinp error">not a path</span>
-            <button class="xb xb-default xb-dense">
+            <span class="ui-input mono err">not a path</span>
+            <button class="btn btn-default btn-dense">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
               添加
             </button>
@@ -837,7 +832,7 @@ body {
           <div class="lp-card" style="margin:0;">
             <div class="lp-section-label">从其他 Agent 导入</div>
             <div class="lp-row" style="border-top:0;display:flex;align-items:center;gap:10px;">
-              <span class="xb-ghost-ico" style="opacity:1;color:var(--accent);">
+              <span class="btn btn-ghost btn-icon-sm" style="opacity:1;color:var(--accent);">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation:skel 1s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
               </span>
               <span style="font-size:var(--text-xs);color:var(--neutral-mid);">正在检测已安装的 Agent...</span>
@@ -853,25 +848,25 @@ body {
           <div class="lp-card" style="margin:0;">
             <div class="lp-section-label">从其他 Agent 导入</div>
             <div class="lp-row" style="border-top:0;">
-              <span class="xcb checked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+              <span class="ui-checkbox checked"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
               <span class="lp-src-label">Claude</span>
               <span class="lp-src-path">~/.claude/skills</span>
               <span class="lp-count">12 skills</span>
             </div>
             <div class="lp-row">
-              <span class="xcb"></span>
+              <span class="ui-checkbox"></span>
               <span class="lp-src-label">Codex</span>
               <span class="lp-src-path">~/.codex/skills</span>
               <span class="lp-count">8 skills</span>
             </div>
             <div class="lp-row">
-              <span class="xcb disabled"></span>
+              <span class="ui-checkbox disabled"></span>
               <span class="lp-src-label" style="opacity:.6;">Pi</span>
               <span class="lp-src-path" style="opacity:.6;">~/.pi/skills</span>
               <span class="lp-tag shared">共享池已生效</span>
             </div>
             <div class="lp-import-actions">
-              <button class="xb xb-secondary xb-dense">
+              <button class="btn btn-secondary btn-dense">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
                 导入选中
               </button>
@@ -900,8 +895,8 @@ body {
                 <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span><b>去重：</b>已存在的路径会自动跳过</span></li>
               </ul>
               <div class="imp-confirm-actions">
-                <button class="xb xb-ghost xb-dense">取消</button>
-                <button class="xb xb-default xb-dense">
+                <button class="btn btn-ghost btn-dense">取消</button>
+                <button class="btn btn-default btn-dense">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                   确认导入
                 </button>
@@ -990,7 +985,7 @@ body {
         <div class="rp-toolbar">
           <span class="rp-title">已发现的 Skill</span>
           <span class="rp-count">5</span>
-          <button class="xb xb-secondary xb-dense">
+          <button class="btn btn-secondary btn-dense">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
             刷新
           </button>
@@ -1009,7 +1004,7 @@ body {
             <span class="rp-badge pi">xyz-agent</span>
             <span class="rp-desc">按规范生成提交信息</span>
             <span class="rp-item-actions">
-              <span class="xb-ghost-ico" title="引用到 composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 13 6 6"/><path d="m15 13-6 6"/></svg></span>
+              <span class="btn btn-ghost btn-icon-sm" title="引用到 composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 13 6 6"/><path d="m15 13-6 6"/></svg></span>
             </span>
           </div>
           <div class="rp-item">
@@ -1017,7 +1012,7 @@ body {
             <span class="rp-badge claude">Claude</span>
             <span class="rp-desc">浏览器自动化调试</span>
             <span class="rp-item-actions">
-              <span class="xb-ghost-ico" title="引用到 composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 13 6 6"/><path d="m15 13-6 6"/></svg></span>
+              <span class="btn btn-ghost btn-icon-sm" title="引用到 composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 13 6 6"/><path d="m15 13-6 6"/></svg></span>
             </span>
           </div>
           <!-- 多来源 badge 链（首项 effective）-->
@@ -1027,7 +1022,7 @@ body {
             <span class="rp-badge claude faded">Claude</span>
             <span class="rp-desc">合并分支并发布</span>
             <span class="rp-item-actions">
-              <span class="xb-ghost-ico" title="引用到 composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 13 6 6"/><path d="m15 13-6 6"/></svg></span>
+              <span class="btn btn-ghost btn-icon-sm" title="引用到 composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 13 6 6"/><path d="m15 13-6 6"/></svg></span>
             </span>
           </div>
           <div class="rp-item">
@@ -1035,7 +1030,7 @@ body {
             <span class="rp-badge pi">xyz-agent</span>
             <span class="rp-desc">执行 git commit</span>
             <span class="rp-item-actions">
-              <span class="xb-ghost-ico" title="引用到 composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 13 6 6"/><path d="m15 13-6 6"/></svg></span>
+              <span class="btn btn-ghost btn-icon-sm" title="引用到 composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 13 6 6"/><path d="m15 13-6 6"/></svg></span>
             </span>
           </div>
           <div class="rp-item">
@@ -1043,7 +1038,7 @@ body {
             <span class="rp-badge pi">xyz-agent</span>
             <span class="rp-desc">审查代码变更</span>
             <span class="rp-item-actions">
-              <span class="xb-ghost-ico" title="引用到 composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 13 6 6"/><path d="m15 13-6 6"/></svg></span>
+              <span class="btn btn-ghost btn-icon-sm" title="引用到 composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 13 6 6"/><path d="m15 13-6 6"/></svg></span>
             </span>
           </div>
         </div>
@@ -1066,7 +1061,7 @@ body {
         <div class="rp-toolbar">
           <span class="rp-title">已发现的 Skill</span>
           <span class="rp-count">…</span>
-          <button class="xb xb-secondary xb-dense is-disabled" disabled>
+          <button class="btn btn-secondary btn-dense" disabled>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation:skel 1s linear infinite;"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
             刷新中
           </button>
@@ -1161,7 +1156,7 @@ body {
               <span class="rp-empty-text">未发现任何 Skill</span>
               <span class="rp-empty-hint">勾选加载路径中的目录，或刷新重新扫描</span>
               <div style="display:flex;gap:8px;margin-top:4px;">
-                <button class="xb xb-secondary xb-dense">
+                <button class="btn btn-secondary btn-dense">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
                   刷新
                 </button>

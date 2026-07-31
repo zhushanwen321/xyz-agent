@@ -173,11 +173,13 @@ body {
   outline: none;
 }
 .ta::placeholder { color: var(--neutral-mid); }
-.ta:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset, 0 0 0 3px var(--accent-ring); }
+/* focus：SSOT Input/Textarea 单环（inset accent-ring，border 透明，不改 border 色）。
+   Textarea 与 Input 同族，focus 范式一致；与 Button/Switch/Checkbox 双环故意不同，不可混用。*/
+.ta:focus { border-color: transparent; box-shadow: inset 0 0 0 1px var(--accent-ring); }
 .ta:disabled { opacity: 0.5; cursor: not-allowed; resize: none; }
-/* 超限态：danger 边框（同 Input error 范式，design-system §4）*/
+/* 超限态：danger 内环（同 SSOT Input.err:focus 范式，design-system §4）*/
 .ta.over-limit { border-color: var(--danger); }
-.ta.over-limit:focus { border-color: var(--danger); box-shadow: 0 0 0 1px var(--danger) inset, 0 0 0 3px color-mix(in oklch, var(--danger) 30%, transparent); }
+.ta.over-limit:focus { border-color: transparent; box-shadow: inset 0 0 0 1px var(--danger); }
 
 /* 计数器行（左计数 / 右操作）*/
 .sp-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; }
@@ -248,7 +250,7 @@ body {
           data-[state=unchecked]:translate-x-[2px]
    focus-visible:ring-2 ring-ring ring-offset-2
    ================================================================ */
-.sw {
+.ui-switch {
   position: relative; flex-shrink: 0;
   display: inline-flex; align-items: center;
   width: 36px; height: 20px; border-radius: 999px;
@@ -258,16 +260,20 @@ body {
   transition: background var(--duration);
   outline: none;
 }
-.sw:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent-ring); }
-.sw.on { background: var(--accent); }  /* data-[state=checked]:bg-accent */
-.sw::after {
-  content: ''; position: absolute; top: 1px; left: 1px;
+/* focus：SSOT Switch 双环（accent 实色内环 + 黑色阴影外环，同 Button/Checkbox 范式）*/
+.ui-switch:focus-visible { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
+.ui-switch.on { background: var(--accent); }  /* data-[state=checked]:bg-accent */
+/* thumb 用 ::after 伪元素呈现（SSOT 用 .us-thumb 子元素；本稿沿用 ::after 减少改动，
+   thumb 配色/位移值对齐 SSOT：始终 #fff，translate 2px/18px）*/
+.ui-switch::after {
+  content: ''; position: absolute; top: 1px; left: 0;
   width: 16px; height: 16px; border-radius: 50%; background: #fff;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+  transform: translateX(2px);          /* data-[state=unchecked]:translate-x-[2px] */
   transition: transform var(--duration);
 }
-.sw.on::after { transform: translateX(18px); }  /* data-[state=checked]:translate-x-[18px]，对齐 Switch.vue 源码 */
-.sw.disabled { opacity: 0.5; cursor: not-allowed; }
+.ui-switch.on::after { transform: translateX(18px); }  /* data-[state=checked]:translate-x-[18px]，对齐 Switch.vue 源码 */
+.ui-switch.disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ================================================================
    只读默认参考区（可折叠 · pi 默认提示词）
@@ -308,7 +314,7 @@ body {
   max-width: 400px; margin: 0 auto; padding: 20px;
 }
 .guard-overlay {
-  background: rgba(10,11,14,0.6); border-radius: var(--radius);
+  background: rgba(0,0,0,0.8); border-radius: var(--radius);
   padding: 40px 20px; display: flex; align-items: center; justify-content: center;
 }
 .guard-title { font-size: 14px; font-weight: 600; color: var(--neutral-fg); margin-bottom: 6px; }
@@ -496,7 +502,7 @@ body {
               <div class="sp-title">替换系统提示词</div>
               <div class="sp-subtitle">完全覆盖 pi 默认的身份与指引</div>
             </div>
-            <span class="sw" aria-hidden="true"></span>
+            <span class="ui-switch" aria-hidden="true"></span>
           </div>
           <div class="sp-body">
             <span class="ta" style="display:block;min-height:60px;opacity:.5;">You are a senior backend engineer...</span>
@@ -521,7 +527,7 @@ body {
             </div>
             <div class="sp-head-ctrl">
               <span class="dirty-badge"><span class="dot"></span>未保存</span>
-              <span class="sw" aria-hidden="true"></span>
+              <span class="ui-switch" aria-hidden="true"></span>
             </div>
           </div>
           <div class="sp-body">
@@ -589,7 +595,7 @@ body {
           <div class="sp-card" style="margin:0;">
             <div class="sp-head">
               <div class="sp-head-text"><div class="sp-title">替换系统提示词</div><div class="sp-subtitle">完全覆盖 pi 默认的身份与指引</div></div>
-              <div class="sp-head-ctrl"><span class="sw on" aria-hidden="true"></span></div>
+              <div class="sp-head-ctrl"><span class="ui-switch on" aria-hidden="true"></span></div>
             </div>
           </div>
         </div>
@@ -602,7 +608,7 @@ body {
               <div class="sp-head-text"><div class="sp-title">替换系统提示词</div><div class="sp-subtitle">完全覆盖 pi 默认的身份与指引</div></div>
               <div class="sp-head-ctrl">
                 <span class="dirty-badge"><span class="dot"></span>未保存</span>
-                <span class="sw on" aria-hidden="true"></span>
+                <span class="ui-switch on" aria-hidden="true"></span>
               </div>
             </div>
           </div>
@@ -616,7 +622,7 @@ body {
               <div class="sp-head-text"><div class="sp-title">替换系统提示词</div><div class="sp-subtitle">完全覆盖 pi 默认的身份与指引</div></div>
               <div class="sp-head-ctrl">
                 <span class="dirty-badge" style="background:var(--accent-soft);color:var(--accent);"><span class="spin" style="width:9px;height:9px;border-width:1.5px;"></span>保存中</span>
-                <span class="sw on" aria-hidden="true"></span>
+                <span class="ui-switch on" aria-hidden="true"></span>
               </div>
             </div>
           </div>
@@ -692,7 +698,7 @@ body {
               </div>
               <div class="sp-head-ctrl">
                 <span class="dirty-badge"><span class="dot"></span>未保存</span>
-                <span class="sw on" role="switch" aria-checked="true" aria-label="替换系统提示词"></span>
+                <span class="ui-switch on" role="switch" aria-checked="true" aria-label="替换系统提示词"></span>
               </div>
             </div>
             <div class="sp-body">
@@ -759,7 +765,7 @@ body {
               <div class="sp-head-ctrl">
                 <span class="dirty-badge" id="af-badge" style="display:none;"><span class="dot"></span>未保存</span>
                 <!-- 可交互 Switch（role=switch · 键盘 Space/Toggle · aria-checked 同步）-->
-                <span class="sw" id="af-sw" role="switch" aria-checked="false" aria-label="替换系统提示词" tabindex="0"></span>
+                <span class="ui-switch" id="af-sw" role="switch" aria-checked="false" aria-label="替换系统提示词" tabindex="0"></span>
               </div>
             </div>
             <div class="sp-body">
@@ -828,7 +834,7 @@ body {
               <div class="sp-head-text"><div class="sp-title">替换系统提示词</div><div class="sp-subtitle">已自动填充 pi 当前提示词</div></div>
               <div class="sp-head-ctrl">
                 <span class="dirty-badge"><span class="dot"></span>未保存</span>
-                <span class="sw on" aria-hidden="true"></span>
+                <span class="ui-switch on" aria-hidden="true"></span>
               </div>
             </div>
             <div class="sp-body">
@@ -850,7 +856,7 @@ body {
               <div class="sp-head-text"><div class="sp-title">替换系统提示词</div><div class="sp-subtitle">恢复历史自定义内容</div></div>
               <div class="sp-head-ctrl">
                 <span class="dirty-badge"><span class="dot"></span>未保存</span>
-                <span class="sw on" aria-hidden="true"></span>
+                <span class="ui-switch on" aria-hidden="true"></span>
               </div>
             </div>
             <div class="sp-body">
@@ -902,7 +908,7 @@ body {
                 <div class="sp-subtitle">在系统提示词末尾追加内容</div>
               </div>
               <div class="sp-head-ctrl">
-                <span class="sw on" role="switch" aria-checked="true" aria-label="注入额外提示词"></span>
+                <span class="ui-switch on" role="switch" aria-checked="true" aria-label="注入额外提示词"></span>
               </div>
             </div>
             <div class="sp-body">
@@ -938,7 +944,7 @@ body {
               </div>
               <div class="sp-head-ctrl">
                 <span class="dirty-badge"><span class="dot"></span>未保存</span>
-                <span class="sw on" role="switch" aria-checked="true" aria-label="替换系统提示词"></span>
+                <span class="ui-switch on" role="switch" aria-checked="true" aria-label="替换系统提示词"></span>
               </div>
             </div>
             <div class="sp-body">
