@@ -96,6 +96,12 @@ plugin-sdk 审查发现 3 个致命冲突，统一前必须解决：
 ## §3 终态 plugin 渲染机制 ★ 核心 ★
 
 > 这一章是给视觉稿联动的设计输入。定义「plugin 能往哪些视图注入、注入什么、改到什么程度」。
+>
+> **v2 修订（2026-07-31，基于视觉规格线 v6-spec-plugin-rendering 实践反馈）**：
+> 1. **维度收缩 5→4**：C 维度（对话框）并入 B 维度（companion-band 已在渲染层统一出口，C 仅因 API 不同才单列，不再独立）
+> 2. **挂载点分 Tier**：16 个分 Tier 1（12 个活注入点）/ Tier 2（4 个边缘：M3/M6/M13/M15）
+> 3. **A2 drawer tab 标 proposed**：plugin view 收口 sidebar 第 5 tab，drawer 暂不开放
+> 4. **补 C3 overlay lifecycle + 原语扩展路线**（视觉线发现的 2 个盲区）
 
 ### 3.1 真实视图拓扑（设计依据）
 
@@ -143,39 +149,37 @@ AppShell (flex h-screen)
    + [全局] ToastContainer
 ```
 
-### 3.2 5 个视图自定义维度（plugin 能往哪里注入）
+### 3.2 4 个视图自定义维度（plugin 能往哪里注入）
 
-16 个挂载点归为 5 个维度。每个维度标注：自定义级别、当前状态、VSCode 对应。
+> v1 是 5 维度（A/B/C/D/E）。v2 收为 4 维度——**C（对话框）并入 B**。
+>
+> **为什么 C 并入 B**：视觉规格线的 companion-band 统一出口已在渲染层把 confirm/select/input（原 C1）+ ask-user（原 C2）+ composer 上方交互（原 B3）压到**同一位置（M11）、同一机制**（plugin await + 顶替 composer + 阻塞）。C 维度之所以还单列，仅因 API 不同（DialogRequest / ask-user 双向 vs `__gui__` 单向），不再是位置或视觉的区别。既然渲染层已统一，架构层跟上即可——C 是 B 的 companion 交互子项，不是独立维度。
+>
+> M15（全局 modal）降级为「全局致命错误浮层」（接近 Toast 性质），不再是原 C 的主出口。
+
+16 个挂载点归为 4 个维度。每个维度标注：自定义级别、当前状态、VSCode 对应。
 
 #### 维度 A：结构容器注入（plugin 往固定结构里加槽位）
 
 | 子项 | 挂载点 | 内容 | 级别 | 当前状态 | VSCode 对应 |
 |---|---|---|---|---|---|
-| **A1** | 侧栏新增 tab（M1+M2） | plugin 声明 view id/icon/title，renderer 渲染 tab + 内容区（数据源契约） | L1 | panels 声明未消费 | viewsContainer + views |
-| **A2** | 抽屉新增 tab（M6+M7） | plugin 声明 drawerTab id/icon，内容用 GuiComponent 原语 | L1 | 无 | 无直接对应（近似 panel） |
+| **A1** | 侧栏新增 tab（M1+M2） | plugin 声明 view id/icon/title，renderer 渲染 tab + 内容区（数据源契约）。**plugin view 统一收口 sidebar 第 5 独立 tab（Puzzle icon）** | L1 | panels 声明未消费 | viewsContainer + views |
+| **A2** | 抽屉新增 tab（M6+M7） | plugin 声明 drawerTab。**proposed/未来——当前不开放，避免一级 tab 泛滥**（视觉线决策） | L1 | proposed | 无直接对应（近似 panel） |
 | **A3** | 工具条/头部新增按钮（M9+M12） | plugin 声明 action button（icon+command），点击触发 command | L1 | 无 | menus (editor/title) |
-| **A4** | 底栏状态项（M8） | plugin 推送 statusKey+text+priority，main-panel 局部底栏聚合（composer 下方，不跨 sidebar/drawer） | L1 | pi 已实现（extension:status），plugin 未接入 | statusBarItems |
+| **A4** | 底栏状态项（M8） | plugin 推送 statusKey+text+priority，**main-panel 局部底栏**聚合（composer 下方，不跨 sidebar/drawer） | L1 | pi 已实现（extension:status），plugin 未接入 | statusBarItems |
 
 **当前状态**：维度 A 是 plugin 系统最大的空白——`contributes.panels/statusBarItems` 已在 SDK 声明但 renderer 零消费。pi 侧的 status 已实现但绑死 SideDrawer footer（规划挂到 main-panel 局部底栏，位于 composer 下方，不跨 sidebar/drawer）。
 
-#### 维度 B：对话流内容注入（agent 特有，最核心）
+#### 维度 B：对话流 + companion 交互注入（agent 特有，最核心）
 
 | 子项 | 挂载点 | 内容 | 级别 | 当前状态 | VSCode 对应 |
 |---|---|---|---|---|---|
 | **B1** | tool result 渲染（M4） | tool 返回 `details.__gui__`，对话流内渲染 GuiComponent | L2 | **已实现** | 无（agent 特有） |
 | **B2** | 自定义消息卡片（M5） | plugin 推送 message，对话流穿插 GuiComponent | L2 | **已实现** | 无（agent 特有） |
-| **B3** | composer 上方交互区（M11） | ask-user 富交互 + confirm/select/input（顶替 composer、阻塞） | L1/L2 | **已实现** | 无（agent 特有） |
+| **B3** | companion 交互（M11，统一出口） | **顶替 composer、阻塞式交互**，三种子形态：B3a 单向原语（进度提示）/ B3b dialog 原语（confirm/select/input）/ B3c ask-user 双向富交互（多问题/多选/评论） | L1（主，dialog 原语）兼容 L2（ask-user） | **已实现** | 无（agent 特有） |
+| ~~C~~ | ~~全局 modal（M15）~~ | **降级**：仅致命错误/系统级强阻断（接近 Toast），非交互主出口 | L1 | 已实现（pi 侧），已降级 | window/dialogs |
 
-**当前状态**：维度 B 是最成熟的插件注入面——GuiComponent 7 原语 + ask-user 双向交互均已验证可用。
-
-#### 维度 C：交互对话框（plugin 主动弹窗）
-
-| 子项 | 挂载点 | 内容 | 级别 | 当前状态 |
-|---|---|---|---|---|
-| **C1** | confirm/select/input（M15→M11） | 内置对话框原语；现并入 M11 companion-band（顶替 composer、阻塞），M15 仅留致命错误/系统级提示 | L1 | **已实现**（pi 侧，现走 companion-band） |
-| **C2** | ask-user 富交互（M11） | 多问题/多选/评论（与 confirm/select/input 同位置同机制） | L1/L2 | **已实现** |
-
-**当前状态**：已实现，但 pi 侧（`extension.ui_request`）和 plugin 侧（`plugin:uiRequest`）消息类型不一致，renderer 只消费前者。统一见 §7。
+**当前状态**：维度 B 是最成熟的插件注入面——GuiComponent 7 原语 + ask-user 双向交互均已验证可用。companion-band 统一出口后，B3 是 plugin 交互的主入口（confirm/select/input/ask-user 都走这里）。
 
 #### 维度 D：命令与配置注入
 
@@ -196,35 +200,49 @@ AppShell (flex h-screen)
 
 | 级别 | 含义 | 适用 | 安全性 | external 可用 |
 |---|---|---|---|---|
-| **L1 元数据+数据驱动** | plugin 给 `{id, icon, title, data, command}`，renderer 用固定宿主渲染 | 维度 A、D | 高（plugin 不控制渲染） | ✅ |
-| **L2 结构化原语树** | plugin 给 GuiComponent 原语组合，renderer 用原语渲染器渲染 | 维度 B、C | 中（原语集合受限） | ✅ |
+| **L1 元数据+数据驱动** | plugin 给 `{id, icon, title, data, command}`，renderer 用固定宿主渲染 | 维度 A、D、B3 的 dialog 原语 | 高（plugin 不控制渲染） | ✅ |
+| **L2 结构化原语树** | plugin 给 GuiComponent 原语组合，renderer 用原语渲染器渲染 | 维度 B1/B2、B3c ask-user | 中（原语集合受限） | ✅ |
 | **L3 预编译自定义组件** | plugin 给 Vue 组件定义，编译期打包 | 维度 E + 复杂 view 逃生口 | 低（需 trust） | ❌ 仅 built-in |
 
-**设计依据**：用户已定「面板渲染用结构化原语组合」（L2）。L1 用于结构性容器（tab/按钮/底栏，renderer 有固定宿主），L3 仅作内置逃生口（external 插件强制走 L1/L2）。
+**设计依据**：用户已定「面板渲染用结构化原语组合」（L2）。L1 用于结构性容器（tab/按钮/底栏/dialog，renderer 有固定宿主），L3 仅作内置逃生口（external 插件强制走 L1/L2）。
 
-### 3.4 给视觉稿的具体需求清单
+### 3.4 挂载点 Tier 分层（v2 新增）
 
-> 视觉稿需为以下每项定义 v6 目标视觉。标注「已定义」的见 v6-design.md，需对齐；「待定义」的是视觉稿要补充的。
+> 16 个挂载点不必都同等对待。视觉线实践暴露 4 个边缘挂载点（M3/M6/M13/M15），显式分层让视觉稿和实施聚焦。
 
-**维度 A（结构容器）——全部待定义**：
-- A1/A2 plugin tab：icon 规范（lucide name 还是 SVG？size scale？）/ tab 激活态 / 空态 / loading 态 / count badge（复用 SegmentedTab 范式还是独立？）
-- A3 plugin 按钮：icon size / 位置分组（composer-bar vs panel-header）/ hover / disabled / 带 count 徽章态
-- A4 底栏 status item：排列方向（左/右）/ 分隔符 / priority 排序 / 颜色语义（ok/warn/danger）/ 点击态 / tooltip 态 / 滚动溢出
+| Tier | 挂载点 | 数量 | 处理 |
+|---|---|---|---|
+| **Tier 1（活注入点）** | M1/M2/M4/M5/M7/M8/M9/M10/M11/M12/M14/M16 | **12** | 视觉稿重点设计 + 实施优先 |
+| **Tier 2（边缘/未来/降级）** | M3（plugin 不改结构，只是 Settings 入口）/ M6（drawer tab proposed 暂不开放）/ M13（低优浮层）/ M15（降级仅致命错误） | **4** | 标「未来/降级」，视觉稿不必做完整设计 |
 
-**维度 B（对话流内容）——B 原语待定义，B3 已定义**：
-- B1/B2 七个 GuiComponent 原语的 v6 视觉 + 嵌套组合态（详见 §5）
-- B3 ask-user overlay：已定义（v6-design §4.x），需确认 composer 位互斥状态
+其中 Tier 1 的闭环状态（来自 v6-spec-plugin-rendering §9.4 交叉验证）：
+- **完整闭环 5 个**（入口+handler+推送全通）：M4/M5/M7/M8/M11
+- **声明式空壳 6 个**（入口能渲染，点击无 handler/无推送）：M1/M2/M9/M12/M14/M16
+- **已闭环双轨 1 个**：M10（slash command）
 
-**维度 C（对话框）——已定义，需对齐 v6**：
-- C1 confirm/select/input：ExtensionUIDialog 形态对齐 v6
-- C2 ask-user：AskUserOverlay 形态对齐 v6
+**关键阻塞**：6 个声明式空壳变闭环，只差 **2 个 API**（`api.commands.register` 让按钮点击有响应 + `api.views.update` 让 view tab 有内容）。这是 ExtensionHost 层（§6）的 P0。
 
-**维度 D（命令配置）——D1 已定义，D2 待定义**：
-- D1 slash command：CommandPopover 已定义，对齐 v6
-- D2 settings 区段：待定义——schema 驱动表单的控件样式（复用 settings page 控件还是独立？）
+### 3.5 给视觉稿的具体需求清单
 
-**维度 E（独立 view）——待定义**：
-- E1 独立 view 容器规范：padding / max-width / header / 滚动区 / 与 chat view 的视觉区分
+> 视觉稿需为以下每项定义 v6 目标视觉。标注「✅ 已定义」的见 v6-design.md / v6-spec-*，需对齐；「待定义」的是视觉稿要补充的。
+
+**维度 A（结构容器）**：
+- A1 plugin tab：✅ v6-spec-plugin-rendering 已定义（第 5 独立 Puzzle tab + 二级 view tab）；待定义：二级 tab 的 pin/close/overflow 行为
+- A2 drawer tab：**proposed 暂不开放，视觉稿不必设计**（v2 决策）
+- A3 plugin 按钮：待定义——icon size / 位置分组（composer-bar vs panel-header）/ hover / disabled
+- A4 底栏 status item：✅ v6-spec-plugin-rendering §A4 已定义（main-panel 局部底栏）
+
+**维度 B（对话流 + companion）**：
+- B1/B2 七个 GuiComponent 原语：✅ v6-spec-plugin-rendering §3 已定义全部 v6 视觉（详见 §5）
+- B3 companion 统一出口：✅ v6-spec-plugin-rendering §4 + v6-spec-overlays 已定义（B3b dialog / B3c ask-user 同位置）
+- **C3 overlay 窗口化**（最小化 badge / 拖动 / 还原）：✅ v6-spec-plugin-rendering §4 已定义视觉；**待架构层定 lifecycle 约定**（见 §7.3）
+
+**维度 D（命令配置）**：
+- D1 slash command：✅ CommandPopover 已定义
+- D2 settings 区段：待定义——schema 驱动表单的控件样式（复用 settings page 控件）
+
+**维度 E（独立 view）**：
+- E1 独立 view 容器规范：待定义——padding / max-width / header / 滚动区 / 与 chat view 的视觉区分
 
 ---
 
@@ -358,6 +376,23 @@ GuiComponentRenderer.vue（统一渲染器，7 原语 + custom 降级）
 
 **缓解**：7 原语 + 嵌套组合覆盖面足够（spec §14.3 已论证 columns+card+list-tree 可表达 workflow 的 sidebar+main+footer）。若 7 原语不够，**补原语**（如 table/kv-list）而非放开 custom。
 
+### 5.5 原语扩展路线（v2 新增，来自视觉线盲区分析）
+
+视觉规格线系统分析发现 7 原语的表达力盲区（v6-spec-plugin-rendering §3 末尾）：
+- 无**垂直原语**（rows/stack）——columns 只水平
+- 无**二维 grid** / flex-wrap / align / justify
+- **tab-bar 非容器**（只展示状态圆点，不切换内容）
+- **三栏带 footer** 无法表达（columns 能做三列，但跨栏 footer 需垂直 stack，协议暂无）
+
+**扩展原则**：按需补原语，不放开 custom。候选扩展原语：
+| 原语 | 解决的盲区 | 优先级 |
+|---|---|---|
+| `rows`（垂直 stack） | 跨栏 footer / 纵向布局 | 高（解三栏带 footer 盲区） |
+| `kv-list`（键值对列表） | 配置展示场景 | 中 |
+| `table`（二维表格） | 结构化数据 | 中 |
+
+补一个 `rows` 原语即可解掉视觉线指出的「跨栏 footer」盲区。**新增原语需同步 extension-protocol 类型 + renderer 组件 + v6 视觉 + ANSI 降级**，属于协议演进，要走 proposed → stable 流程（§9.3）。
+
 ### 5.5 ANSI 兜底永留
 
 未引入 extension-protocol 的 pi extension 走 ANSI 兜底（`outputRaw` → AnsiText）。这是渐进迁移的安全网，**永远保留**。v6 下需把 ANSI 颜色映射到冷蓝暗色（§5.7 ansi-text 行），否则旧 extension 输出在 v6 界面「颜色脏」。
@@ -435,6 +470,18 @@ plugin 的 view 内容与 pi extension 的 widget 走**同一套** GuiComponentR
 
 **ask-user 保留独立双向通道**：ask-user 是双向交互（等用户回传答案），复用 pi 的 select 双向通道，不并入单向 GuiComponent。
 
+### 7.3 overlay lifecycle 约定（v2 新增，来自视觉线 C3 窗口化）
+
+视觉规格线原创了 **C3 overlay 窗口化**能力：companion-band（M11）或 modal（M15）的交互 overlay 可最小化为角落 badge / 还原 / 拖动（header 手柄）。这是原架构设计里完全空白的一块。
+
+**架构层约定**（避免每个挂载点各搞一套）：
+- **窗口化是 renderer 能力，plugin 只管 await 结果**：plugin 调 `api.ui.showConfirm(...)` 后 await Promise，无论 overlay 是全展开、最小化为 badge、还是被拖动，plugin 只关心最终 resolve/reject。
+- **lifecycle 状态机**：`expanded`（默认，顶替 composer）→ `minimized`（角落 badge，仍 await）→ `restored`（用户点 badge 还原）。plugin 不感知这些状态转换。
+- **超时与取消**：overlay 最小化不暂停超时（沿用 pi select 的 5min 超时）；用户可显式取消（resolve undefined/null）。
+- **M15（全局 modal）窗口化范围**：仅致命错误 modal 支持最小化（转为通知 badge），普通 confirm/select/input 走 companion-band（M11）不窗口化。
+
+**renderer 侧实现**：ExtensionHost 的 MessageBusBridge 统一管理 overlay lifecycle 状态（per-session + per-requestId），不散落到各挂载点组件。
+
 ---
 
 ## §8 tool/hook 适配层
@@ -503,17 +550,122 @@ plugin-sdk 架构审查发现 3 个致命缺陷，作为「以 plugin-sdk 为主
 | M8 | main-panel 局部底栏（composer 下方，不跨 sidebar/drawer，bg-bg-elevated） | 数据驱动 | 是（extension:status） | **P（强）** | statusBarItems | L1 + L2 | A4 |
 | M9 | Composer composer-bar 工具条 | 固定 | 否 | — | menus (editor/title) | L1 | A3 |
 | M10 | Composer CommandPopover（slash） | 数据驱动 | 是（commandStore） | **P（强）** slash command | commands | L1 | D1 |
-| M11 | Composer 上方 companion-band（含 confirm/select/input） | slot（互斥） | 半（AskUserOverlay） | P（ask-user + confirm/select/input） | 无（agent 特有） | L2 | B3 |
+| M11 | Composer 上方 companion-band（**统一交互出口**：B3a 原语 / B3b dialog / B3c ask-user） | slot（互斥） | 是（AskUserOverlay + confirm/select/input） | P（ask-user + dialog） | 无（agent 特有） | L1（兼容 L2） | B3 |
 | M12 | PanelHeader 按钮组 | 固定 | 否 | — | menus (editor/title) | L1 | A3 |
-| M13 | MessageStream 浮层 slot | 固定浮层 | 否 | — | 无（agent 特有） | L2（低优） | — |
+| M13 | MessageStream 浮层 slot（Tier 2 低优） | 固定浮层 | 否 | — | 无（agent 特有） | L2（低优） | — |
 | M14 | 全局独立 view（chat/overview） | 固定 | 否 | — | webviewPanel | L3（仅内置） | E1 |
-| M15 | 全局 modal/dialog（降级为仅致命错误/系统级提示） | slot | 是（ExtensionUIDialog） | P（致命错误/系统级提示；confirm/select/input 已并入 M11） | window/dialogs | L1 | C1 |
+| M15 | 全局 modal（**降级**：仅致命错误/系统级提示，接近 Toast） | slot | 是 | P（致命错误；confirm/select/input 已并入 M11） | window/dialogs | L1 | B（降级） |
 | M16 | SettingsModal 扩展管理页 | 固定 | — | P（LoadPaths） | extensions view | L1 | D2 |
 
 **关键发现**：
-- **最成熟的插件注入面**：M4/M5/M7/M8（对话流 + SideDrawer），均为 L2 原语已验证。
-- **最大空白**：M1/M6/M9/M12/M14（结构性 contribution：sidebar tab / drawer tab / 工具条按钮 / 独立 view）——`contributes.panels/statusBarItems` 声明但 renderer 零消费。
+- **最成熟的插件注入面**：M4/M5/M7/M8/M11（对话流 + SideDrawer + companion），5 个完整闭环，均为 L1/L2 已验证。
+- **最大空白**：M1/M2/M9/M12/M14/M16（6 个声明式空壳）——`contributes.panels/statusBarItems` 声明但 renderer 零消费。补 2 个 API（`commands.register` / `views.update`）即变闭环（§3.4）。
 - **事实雏形**：`extensions/registry.ts` 已是扩展适配器分流层（goal/todo/subagents 经它分流到专属 UI），可升格为正式 ContributionRegistry。
+- **Tier 2 边缘**（§3.4）：M3（plugin 不改结构）/ M6（drawer tab proposed 暂不开放）/ M13（低优浮层）/ M15（降级仅致命错误）。
+
+---
+
+## §11 整体前端架构影响（不只 plugin）
+
+> 前面的章节聚焦 plugin 渲染。这一章回答「v6 视觉稿对整体前端架构有什么影响」。结论：**整体影响正面居多，但暴露 3 个整体层面的简化机会**。
+
+### 11.1 视觉稿验证了的架构判断（正面）
+
+视觉稿实践反向印证了几个整体架构决策的正确性：
+
+| 架构判断 | 视觉稿验证 |
+|---|---|
+| **renderer 需要独立 ExtensionHost 层**（§6） | 视觉稿 plugin spec §9 自认「ExtensionHost 层 + 2 API 缺口」，与架构设计一致 |
+| **GuiComponent 提升为共享渲染协议**（§5） | 7 原语视觉稿已全画，goal/todo/workflow 都能用原语表达，证明通用性 |
+| **companion-band 作为交互统一出口** | 视觉稿主动把 confirm/select/input + ask-user 合并到 M11，简化交互种类 |
+| **三层明度背景**（v6 决策 #10） | 视觉稿落实，且发现「面上面」问题（主面板 surface 上的 pill 需升一档 surface-2）——架构上对应「嵌套层级不超过 3 层」 |
+
+### 11.2 整体层面的 3 个简化机会
+
+视觉稿实践暴露了 3 个**超出 plugin 范围**的整体架构简化点：
+
+#### 简化 A：goal/todo 回归对话流，删除 tool name 特判（已定决策）
+
+v6 已决策移除 tasks tab，goal/todo 走 GuiComponent 统一渲染。架构上的连锁简化：
+- **删除 `HIDDEN_TOOL_NAMES`**（`shared/constants.ts`）——core 不再按 tool name 隐藏特定 tool
+- **删除 `Block.vue` 的 isHidden 守卫**——todo/goal_control 落入普通 tool 路径，已有的 `GuiComponentRenderer` 自动接管
+- **删除 `chat-message-effects.routeToolResultToTasks`**——不再特殊路由到 tasks store
+- **删除 tasks store + GoalCard + TasksPanel + SideDrawer tasks tab + tasks-adapter**
+- **GoalCard 的 blocked 视觉/Resume 按钮**：落到对话流 GuiComponent 渲染（card.variant + D 维度 `/goal resume` 命令）
+
+**这是「删特殊路径」为主的简化**，让 core 更通用（§12.1 详述，是 builtin plugin 第一实践）。
+
+#### 简化 B：选中态范式二分规则统一（视觉稿 D8 裁决）
+
+视觉稿审查发现「被选中」在产品里出现**三种视觉语言**（SegmentedTab bg-elevated / 列表项 bg-surface+蓝字 / drawer tab accent-soft 蓝染底）。v6 裁决为二分：
+- **tab 型**（SegmentedTab / drawer l1-l2 tab / AskUserOverlay au-tab / plugin seg-tab）= `bg-bg-elevated` 中性浮起
+- **列表项型**（SessionItem / FileTree / SearchModal sm-item / au-opt / wf-call / CommandPopover 项）= `bg-surface + text-accent` 蓝字
+
+**架构影响**：这本来是视觉问题，但统一为二分规则后，**ui 原语层可以收敛出两个通用「选中态」原语**（`<SelectableList>` / `<SegmentedGroup>`），业务组件消费原语而非各自硬编码 selected class。减少 Sidebar/SideDrawer/SearchModal 三处的重复实现。
+
+#### 简化 C：features/ 巨型桶按业务域重组 + 提取共享 composable
+
+视觉稿的四文件 CSS 复制漂移（7 处实质漂移，QueueBubble/ChangeSetCard/md-codeblock 等）暴露了一个架构问题：**对话流四文件各复制 ~450 行 CSS**。fix-plan 的解法是抽 `v6-spec-base.css` 共享。
+
+**架构层面的对应**：composables 也有同样的复制碎片化问题（features 41 文件 + panel 37 文件两个巨型桶）。这不是视觉问题，是组织问题——按业务域重组 + 提取共享 composable，与 CSS 抽 base 是同构的。详见 `v6-architecture-refactor.md` §B9。
+
+### 11.3 视觉稿无法自己解决、需架构层先行的 2 点
+
+| 点 | 为什么视觉稿做不了 | 架构层先行项 |
+|---|---|---|
+| **6 个声明式空壳变闭环** | 需要补 `api.commands.register` + `api.views.update` 两个 plugin API，属 runtime + ExtensionHost 层工作 | §6 ExtensionHost P0 |
+| **形态 B 数据模型重构**（detail 多文件 tab / terminal 多实例） | 视觉稿只能画视觉态，实现依赖 useDetailPane 单值→map、单 PTY→多 PTY | 阶段 B renderer 局部重构（`v6-architecture-refactor.md` §B） |
+
+---
+
+## §12 Builtin Plugin 实践候选（验证插件机制能否跑通）
+
+> 目的：选 1 个功能做成 builtin plugin，真实验证「plugin 机制能否跑通」。理想候选 = 当前硬编码特殊路径 + UI 能用 GuiComponent 原语表达 + 相对独立 + v6 已定决策顺势落地。
+
+### 12.1 候选评估（3 个，深度核实）
+
+经 explorer 核实代码现状（标注事实）：
+
+| 候选 | 硬编码程度 | 7 原语可表达 | 独立性 | 验证维度 | 改动量 | 综合 |
+|---|---|---|---|---|---|---|
+| **tasks（goal/todo）** | 中（已收敛为 adapter + 单一 isHidden 守卫） | **是（extension 已在产 card/list-tree/stats-line/progress-bar）** | **高（不碰 session/streaming/tree）** | **B（对话流）+ D（命令）** | **小-中（删特殊路径为主）** | **首选** |
+| subagent/workflow | 高且深（runtime + renderer + stores 三层，耦合虚拟 session/streaming） | 否（BlockSubagent 解析裸 input/output；嵌套对话流是完整 MessageStream 需 E 维度） | 低 | A + E（但前置需暴露虚拟 session API，成本巨大） | 大 | 暂缓 |
+| search（⌘K） | 高（3 源硬编码，平台导航基础设施） | 否（独立浮层，自有 SearchItem 类型） | 低（所有 plugin 共用的发现入口） | 无干净命中 | 中-大 | 不推荐 |
+
+### 12.2 为什么选 tasks（goal/todo）作为第一个 builtin plugin
+
+**首选理由**（4 条，均经核实为事实）：
+
+1. **它是 v6 已定决策的执行**（非额外架构赌注）：v6-design §4.3 已要求移除 tasks tab + `HIDDEN_TOOL_NAMES` 特判，goal/todo 走 gui-protocol 回归对话流。做 builtin plugin = 顺势落地 v6 决策，一举两得。
+
+2. **管线已就绪**（事实）：
+   - goal/todo extension 已产 GuiComponent（`extensions/todo/src/model.ts buildGui` → list-tree；`extensions/goal/src/adapters/goal-control-adapter.ts` → card/stats-line/progress-bar），有测试断言
+   - Block.vue 已有 `extractGui` + `GuiComponentRenderer` 通路（普通 tool 的 `details.__gui__` 自动渲染）
+   - ExtensionRegistry + tasks-adapter 已证明 adapter 模式可行（`extensions/adapters/tasks-adapter.ts`）
+
+3. **验证信号最纯**：核心验证命题是「core 不再 hardcode `'todo'`/`'goal_control'` tool name，仅凭 `details.__gui__` + 通用渲染器即可让 feature 在对话流呈现」。这同时覆盖 B 维度（tool result 渲染）和 D 维度（/goal /todo 命令）。
+
+4. **独立性最高**（事实）：纯 tool result 详情展示 + widget，不碰虚拟 session / streaming / session tree / runtime event-interpreter。失败不会波及核心 chat/session 流。
+
+### 12.3 builtin plugin 形态（Inferred，实施时确认）
+
+「做成 builtin plugin」的具体形态：把 goal/todo 的 **xyz-agent 侧渲染支持**（识别 + GuiComponent 渲染）从散落的 core 代码，收编为 `resources/plugins/xyz-tasks/` 下的 built-in 插件（`source:'built-in'`，享受最高 hook 优先级 / 免权限审批）。pi extension 侧（`@zhushanwen/pi-goal` / `pi-todo`）不变。
+
+**实践步骤概要**（实施计划另出）：
+1. 删除 core 特判：`HIDDEN_TOOL_NAMES` + `Block.vue` isHidden + `routeToolResultToTasks` + tasks store + GoalCard/TasksPanel + SideDrawer tasks tab
+2. goal/todo extension 的 `details.__gui__` 落入普通 tool 路径，`GuiComponentRenderer` 自动渲染
+3. 验证：回归对话流后 goal/todo 可见、blocked 视觉 + Resume 命令可用
+4. 若 GoalCard 的增强视觉（blocked 渐变 + Resume 按钮）7 原语表达不够，用 `custom` 原语（仅 built-in 可用，正好契合 builtin plugin 身份）
+
+### 12.4 验证成功标准
+
+- [ ] core 代码中 `grep -r "todo\|goal_control" packages/renderer/src/` 零硬编码 tool name 特判（除 plugin 注册外）
+- [ ] goal/todo 在对话流正常渲染（card/list-tree/stats-line/progress-bar 原语组合）
+- [ ] `/goal` `/todo` slash 命令仍可用（经 plugin 声明，非 core 硬编码）
+- [ ] builtin plugin 机制跑通：plugin manifest 扫描 → 激活 → 渲染 → 命令注册全链路
+- [ ] 删除的 tasks tab / GoalCard 不影响其他功能
+
+**若验证通过**，说明 plugin 机制（至少 B 维度对话流 + D 维度命令）可承载真实功能，为后续 plugin 化更多功能（subagent/workflow 第二阶段）铺路。
 
 ---
 
