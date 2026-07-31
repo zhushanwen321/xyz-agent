@@ -468,8 +468,36 @@ body {
 .gui-card-box.elevated { border-color: var(--border-strong); background: var(--surface-2); }
 .gui-card-box.danger { border-color: var(--danger); }
 .gui-card-box.success { border-color: var(--success); }
+.gui-card-box.warning { border-color: var(--warn); }   /* §12: goal blocked variant（v6 新增） */
 .gui-card-hd { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--neutral-mid); }
 .gui-card-body { padding: 12px; }
+
+/* §12 goal/todo block（回归对话流，走 gui-protocol 统一渲染）*/
+.gt-goal-card { border-radius: var(--radius-lg); border: 1px solid var(--border); background: var(--surface); overflow: hidden; }
+.gt-goal-card.warning { border-color: var(--warn); background: color-mix(in oklch, var(--warn) 6%, var(--surface)); }
+.gt-goal-card.success { border-color: var(--success); }
+.gt-goal-hd { display: flex; align-items: center; gap: 8px; padding: 10px 14px; }
+.gt-goal-status { width: 14px; height: 14px; flex-shrink: 0; }
+.gt-goal-status.blocked { color: var(--warn); }
+.gt-goal-status.active { color: var(--accent); }
+.gt-goal-status.complete { color: var(--success); }
+.gt-goal-title { flex: 1; min-width: 0; font-size: var(--text-sm); font-weight: 500; color: var(--neutral-fg); }
+.gt-goal-action { font-size: var(--text-2xs); padding: 4px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); cursor: pointer; white-space: nowrap; border: 0; }
+.gt-goal-action.warn { background: var(--warn-soft); color: var(--warn); }
+.gt-goal-body { padding: 0 14px 12px; }
+.gt-progress-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: var(--text-2xs); font-family: var(--font-mono); color: var(--neutral-mid); }
+.gt-progress-bar { flex: 1; height: 4px; border-radius: 2px; background: var(--surface-2); overflow: hidden; }
+.gt-progress-fill { height: 100%; border-radius: 2px; background: var(--accent); }
+.gt-progress-fill.done { background: var(--neutral-dim); }
+.gt-progress-fill.warn { background: var(--warn); }
+.gt-todo-item { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: var(--text-xs); line-height: 1.5; }
+.gt-todo-cb { width: 13px; height: 13px; flex-shrink: 0; border-radius: 50%; border: 1.5px solid var(--neutral-dim); display: flex; align-items: center; justify-content: center; }
+.gt-todo-cb.done { background: var(--success); border-color: var(--success); }
+.gt-todo-cb.doing { border-color: var(--warn); background: var(--warn-soft); }
+.gt-todo-label { color: var(--neutral-mid); }
+.gt-todo-label.done { color: var(--neutral-dim); text-decoration: line-through; text-decoration-color: var(--neutral-faint); }
+.gt-todo-label.doing { color: var(--neutral-fg); }
+.gt-verify-tag { font-size: 9px; padding: 1px 5px; border-radius: 3px; color: var(--reasoning); margin-left: 4px; }
 .gui-ansi { white-space: pre-wrap; font-family: var(--font-mono); font-size: 11px; line-height: 1.5; }
 .gui-data-key { display: inline-block; background: var(--surface-2); color: var(--accent); border-radius: var(--radius-sm); padding: 1px 5px; font-size: 10px; margin: 1px 2px; }
 
@@ -569,6 +597,7 @@ body {
     <a href="#s10-5">§10.5 BgNotifyCard</a>
     <a href="#s11">§11 workflow</a>
     <a href="#s11-5">§11.5 GUI 组件</a>
+    <a href="#s12">§12 goal/todo block</a>
   </nav>
 
   <!-- ================================================================
@@ -1471,8 +1500,107 @@ added 1 package in 2s</div>
     </div>
   </section>
 
+  <!-- ================================================================
+       §12 goal/todo block（回归对话流，走 gui-protocol 统一渲染）
+       ================================================================ -->
+  <section class="spec" id="s12">
+    <div class="spec-head"><span class="spec-num">§12</span><h2 class="spec-title">goal/todo block（回归对话流）</h2></div>
+    <p class="spec-desc"><b>v6 架构决策：goal/todo 从 drawer 回归对话流，走 gui-protocol 统一渲染。</b> 原因：goal/todo 数据走 gui-protocol 原生通道（tool result 的 <code>details.__gui__</code>，<code>card</code> + <code>stats-line</code> + <code>progress-bar</code> / <code>list-tree</code> 原语），原生落点是对话流 tool block（M4/B1），不应被 <code>HIDDEN_TOOL_NAMES</code> 劫持到 drawer + 自定义 GoalCard 重画（双轨割裂）。v6 移除 <code>HIDDEN_TOOL_NAMES</code> 对 todo/goal_control 的特判 → 走 <code>GuiComponentRenderer</code> + <code>Card.vue</code>（补 warning variant + 内嵌 Resume 按钮）统一渲染。消除 GoalCard 双轨。</p>
+    <div class="change-points">
+      <span class="cp cp-now"><b>现</b> HIDDEN_TOOL_NAMES 劫持 + GoalCard 自定义渲染（双轨）</span>
+      <span class="cp cp-v6"><b>v6</b> 移除 HIDDEN · 回归对话流 tool block</span>
+      <span class="cp cp-v6"><b>v6</b> Card.vue 补 warning variant + Resume 按钮</span>
+      <span class="cp cp-v6"><b>v6</b> 走 GuiComponentRenderer 统一渲染（消除双轨）</span>
+    </div>
+
+    <!-- goal block：blocked 态（warning variant + Resume 按钮）-->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:4px 0 14px;font-weight:500;">12A. goal block · blocked 态（Card.vue warning variant）</h3>
+    <div class="render-frame">
+      <div class="panel-stage" style="padding:14px 16px;max-width:var(--content-max-w);margin:0 auto;">
+        <div class="gt-goal-card warning">
+          <div class="gt-goal-hd">
+            <svg class="gt-goal-status blocked" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span class="gt-goal-title">fix-login-wall-render</span>
+            <button class="gt-goal-action warn">继续目标</button>
+          </div>
+          <div class="gt-goal-body">
+            <div style="font-size:var(--text-xs);color:var(--neutral-mid);line-height:1.5;">修复登录墙在 v6 抽屉中的 warn 单点收敛渲染问题</div>
+            <!-- progress-bar 原语（token% / time%）-->
+            <div class="gt-progress-row">
+              <span>tokens</span>
+              <div class="gt-progress-bar"><div class="gt-progress-fill warn" style="width:71%;"></div></div>
+              <span>71%</span>
+            </div>
+            <div class="gt-progress-row">
+              <span>time</span>
+              <div class="gt-progress-bar"><div class="gt-progress-fill done" style="width:45%;"></div></div>
+              <span>45%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="anno" style="margin-top:12px;"><b>渲染路径:</b> <span>tool result <code>details.__gui__.component</code>（card 原语，variant=warning）→ <code>GuiComponentRenderer</code> → <code>Card.vue</code>（v6 补 warning variant）· 内嵌 stats-line / progress-bar 原语（已有渲染器）· Resume 按钮经 commandStore.requestSlashInjection</span></div>
+    </div>
+
+    <!-- goal block：active / complete 态 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:20px 0 14px;font-weight:500;">12B. goal block · active / complete 态</h3>
+    <div class="render-frame">
+      <div class="panel-stage" style="padding:14px 16px;max-width:var(--content-max-w);margin:0 auto;display:flex;flex-direction:column;gap:14px;">
+        <div class="gt-goal-card">
+          <div class="gt-goal-hd">
+            <svg class="gt-goal-status active" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span class="gt-goal-title">build-feature-x</span>
+          </div>
+          <div class="gt-goal-body">
+            <div class="gt-progress-row"><span>tokens</span><div class="gt-progress-bar"><div class="gt-progress-fill" style="width:38%;"></div></div><span>38%</span></div>
+          </div>
+        </div>
+        <div class="gt-goal-card success">
+          <div class="gt-goal-hd">
+            <svg class="gt-goal-status complete" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            <span class="gt-goal-title">setup-ci-pipeline</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- todo block：list-tree 原语（checkbox 三态 + VERIFY）-->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:20px 0 14px;font-weight:500;">12C. todo block · list-tree 原语（checkbox 三态 + VERIFY）</h3>
+    <div class="render-frame">
+      <div class="panel-stage" style="padding:14px 16px;max-width:var(--content-max-w);margin:0 auto;">
+        <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-mid);text-transform:uppercase;letter-spacing:.08em;font-weight:600;margin-bottom:8px;">待办列表 · 1/3</div>
+        <div class="gt-todo-item">
+          <span class="gt-todo-cb done"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
+          <span class="gt-todo-label done">定位 BrowserPane 三处 border-b</span>
+        </div>
+        <div class="gt-todo-item">
+          <span class="gt-todo-cb doing"><span style="width:5px;height:5px;border-radius:50%;background:var(--warn);"></span></span>
+          <span class="gt-todo-label doing">改 guide banner 为中性 bg-surface-2</span>
+        </div>
+        <div class="gt-todo-item">
+          <span class="gt-todo-cb"></span>
+          <span class="gt-todo-label">收敛登录墙 warn 到单点</span>
+          <span class="gt-verify-tag">VERIFY</span>
+        </div>
+      </div>
+      <div class="anno" style="margin-top:12px;"><b>渲染路径:</b> <span>tool result <code>details.__gui__.component</code>（list-tree 原语）→ <code>GuiComponentRenderer</code> → <code>ListTree.vue</code> · checkbox 三态（done=success 实心勾 / doing=warn 脉冲点 / pending=空心圆）· VERIFY 标纯色 text-reasoning 9px（list-tree 的 TreeItem 需扩展 isVerification 字段，或接受对话流内不显 VERIFY）</span></div>
+    </div>
+
+    <div class="anno-grid">
+      <div class="anno"><b>v6 决策:</b><br><span class="v6">移除 HIDDEN_TOOL_NAMES</span><br>对 todo/goal_control 特判<br>回归对话流 tool block</div>
+      <div class="anno"><b>渲染器:</b><br><span class="v6">GuiComponentRenderer</span><br>→ Card.vue（goal）<br>→ ListTree.vue（todo）<br>统一渲染，消除双轨</div>
+      <div class="anno"><b>Card.vue 补:</b><br><span class="v6">warning variant</span><br>（border-warn + warn 背景）<br>+ 内嵌 Resume 按钮<br>（action slot）</div>
+      <div class="anno"><b>goal 原语:</b><br>card（variant）+<br>stats-line（状态）+<br>progress-bar（token%/time%）</div>
+      <div class="anno"><b>todo 原语:</b><br>list-tree<br>TreeItem（status 圆点）<br>checkbox 三态保留</div>
+      <div class="anno"><b>VERIFY 摩擦点:</b><br>list-tree TreeItem<br>不含 isVerification 字段<br>需扩展协议或接受不显</div>
+      <div class="anno"><b>实时字段:</b><br>goal widget（ANSI 解析）→<br>tasks store merge →<br>对话流 card 响应式更新<br>（读 merged GoalSnapshot）</div>
+      <div class="anno"><b>sticky:</b><br>goal/todo 会被新对话冲走<br>需 MessageStream 顶部 pin<br>当前 goal/todo 快照<br>（或 ProgressZone 辅助）</div>
+      <div class="anno"><b>落点:</b><br>Block.vue（移除 isHidden 特判）<br>Card.vue（补 warning + action）<br>constants.ts HIDDEN_TOOL_NAMES<br>tasks store（merged snapshot）</div>
+    </div>
+  </section>
+
   <footer class="doc-foot">
-    <span>v6-spec-blocks.html · 消息块 · §4-§7/§10/§10.5/§11/§11.5</span>
+    <span>v6-spec-blocks.html · 消息块 · §4-§7/§10/§10.5/§11/§11.5/§12</span>
     <span>SSOT: <a href="v6-design.md">v6-design.md §4.1</a> · token: <a href="v6-spec-tokens.html">v6-spec-tokens</a></span>
   </footer>
 

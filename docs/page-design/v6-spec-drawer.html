@@ -561,7 +561,7 @@ body {
   <header class="doc-head">
     <div class="doc-eyebrow">v6 SPEC · 05 / 07</div>
     <h1 class="doc-title">Drawer · 右侧抽屉</h1>
-    <p class="doc-sub">覆盖 §4.3 右侧 Drawer：容器（bg-bg 画布色 + shadow-drawer 投影分隔）+ 形态 B 二级 tab 架构（icon 一级 + 内层二级，各 tab 自治）+ 6 个一级 tab（terminal/browser/git/doc/detail/tasks）各自的 v6 方案。本篇覆盖 6 个一级 tab（terminal/browser/git/doc/detail/tasks）+ 形态 B 二级 tab 策略 + 各 tab v6 方案。</p>
+    <p class="doc-sub">覆盖 §4.3 右侧 Drawer：容器（bg-bg 画布色 + shadow-drawer 投影分隔）+ 形态 B 二级 tab 架构（icon 一级 + 内层二级，各 tab 自治）+ 5 个一级 tab（terminal/browser/git/doc/detail）各自的 v6 方案。tasks tab 已移除（goal/todo 回归对话流，见 §9）。</p>
     <div class="doc-meta">
       <span><b>SSOT</b> v6-design.md §4.3 + §3.4 分隔策略</span>
       <span><b>范式</b> v6-drawer-tabs-demo 形态 B</span>
@@ -589,7 +589,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s1">
     <div class="spec-head"><span class="spec-num">§1</span><h2 class="spec-title">SideDrawer 容器</h2></div>
-    <p class="spec-desc">右侧抽屉容器，承载 6 个一级 tab（terminal/browser/git/doc/detail/tasks）。v6 核心改动：底色用 <code>bg-bg</code>（画布色 = <code>--bg-sunken</code>），与主面板靠 surface 浮起分隔；去硬 <code>border-l</code> 改 <code>shadow-drawer</code> 投影分隔（对标 Claude/Linear 的层级代边框）。一级 tab 栏是 icon-only（label 收进 title 供 hover 查看），右侧挂钉住/关闭。<b>宽度比例</b>：主面板与 drawer 默认 <code>1:1</code>（flex:1 等分），中间 <code>SplitterResizeHandle</code> 可拖动调整（透明，仅 hover/drag 显 accent）。</p>
+    <p class="spec-desc">右侧抽屉容器，承载 5 个一级 tab（terminal/browser/git/doc/detail）。v6 核心改动：底色用 <code>bg-bg</code>（画布色 = <code>--bg-sunken</code>），与主面板靠 surface 浮起分隔；去硬 <code>border-l</code> 改 <code>shadow-drawer</code> 投影分隔（对标 Claude/Linear 的层级代边框）。一级 tab 栏是 icon-only（label 收进 title 供 hover 查看），右侧挂钉住/关闭。<b>宽度比例</b>：主面板与 drawer 默认 <code>1:1</code>（flex:1 等分），中间 <code>SplitterResizeHandle</code> 可拖动调整（透明，仅 hover/drag 显 accent）。<b>tasks tab 已移除</b>（goal/todo 回归对话流，见 §9）。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> border-l border-border 硬分隔</span>
       <span class="cp cp-v6"><b>v6</b> shadow-drawer 投影分隔</span>
@@ -757,11 +757,8 @@ body {
             <td class="m-note">单文档，无需二级</td>
           </tr>
           <tr>
-            <td class="m-tab">tasks</td>
-            <td>无</td>
-            <td class="m-no">—</td>
-            <td class="m-no">—</td>
-            <td class="m-note">固定列表，无需二级</td>
+            <td class="m-tab" style="text-decoration:line-through;opacity:.5;">tasks</td>
+            <td colspan="4" class="m-note" style="color:var(--warn);"><b>v6 已移除</b> — goal/todo 回归对话流（gui-protocol 统一渲染，详见 §9 + blocks §12）</td>
           </tr>
         </tbody>
       </table>
@@ -1819,16 +1816,23 @@ body {
        §9 TasksPanel · GoalCard（tasks tab · 无二级 tab）
        ================================================================ -->
   <section class="spec" id="s9">
-    <div class="spec-head"><span class="spec-num">§9</span><h2 class="spec-title">TasksPanel · GoalCard（tasks tab）</h2></div>
-    <p class="spec-desc">任务面板（顶部 GoalCard + 下方 todo 列表，只读渲染）。v6 核心改动：GoalCard 去 <code>border</code> 仅 <code>bg-surface</code>（嵌套卡片禁令，靠浮起表达层级）；badge 升胶囊（<b>999px</b>），<b>仅 blocked 着色</b>（warn-soft + warn 字），其余中性 <code>bg-surface-2 + text-neutral-mid</code>（彩色降噪）；VERIFY 标字号提 <b>9px</b> 去 <code>bg-reasoning-soft</code>（纯色 text-reasoning 文字标）；todo checkbox 三态保留（pending 空心圆 / in_progress 脉冲点 / completed 实心勾，语义清晰且面积小 13px）。固定列表，故<b>无二级 tab</b>。</p>
+    <div class="spec-head"><span class="spec-num">§9</span><h2 class="spec-title">TasksPanel · GoalCard（已移出 drawer）</h2></div>
+    <p class="spec-desc"><b>v6 架构决策：goal/todo 回归对话流，drawer 不再承载 tasks tab。</b> 原因：goal/todo 数据走 gui-protocol 原生通道（tool result 的 <code>details.__gui__</code>，card/stats-line/progress-bar/list-tree 原语），原生落点是对话流（M4/B1），不应被 <code>HIDDEN_TOOL_NAMES</code> 劫持到 drawer + 自定义 GoalCard 重画（双轨割裂）。v6 移除 tasks 一级 tab，goal/todo 在对话流内经 <code>GuiComponentRenderer</code> + <code>Card.vue</code>（补 warning variant + 内嵌 Resume 按钮）统一渲染。详见 <code>v6-spec-blocks.html §12 goal/todo block</code>。</p>
     <div class="change-points">
-      <span class="cp cp-now"><b>现</b> GoalCard border + 多状态色边框</span>
-      <span class="cp cp-v6"><b>v6</b> GoalCard 去 border 仅 bg-surface</span>
-      <span class="cp cp-now"><b>现</b> badge bg-soft 色块（全状态着色）+ 圆角 3px</span>
-      <span class="cp cp-v6"><b>v6</b> badge 胶囊 999px，仅 blocked 着色</span>
-      <span class="cp cp-now"><b>现</b> VERIFY 标 bg-reasoning-soft + 8px</span>
-      <span class="cp cp-v6"><b>v6</b> VERIFY 纯色文字 9px（去 bg）</span>
+      <span class="cp cp-now"><b>现</b> tasks tab 在 drawer（HIDDEN_TOOL_NAMES 劫持 + GoalCard 自定义渲染）</span>
+      <span class="cp cp-v6"><b>v6</b> 移除 tasks tab · goal/todo 回归对话流</span>
+      <span class="cp cp-v6"><b>v6</b> Card.vue 补 warning variant + Resume 按钮（统一渲染器）</span>
+      <span class="cp cp-v6"><b>v6</b> 消除 GoalCard 双轨（不再自定义渲染）</span>
     </div>
+
+    <!-- 迁移说明框 -->
+    <div style="padding:14px 18px;background:var(--warn-soft);border-left:3px solid var(--warn);border-radius:0 var(--radius) var(--radius) 0;margin-bottom:20px;">
+      <div style="font-size:var(--text-sm);font-weight:500;color:var(--neutral-fg);margin-bottom:6px;">⚠ tasks tab 已从 drawer 移除</div>
+      <div style="font-size:var(--text-xs);color:var(--neutral-mid);line-height:1.7;">
+        goal/todo 回归对话流（<code style="color:var(--accent);">v6-spec-blocks.html §12</code>），走 gui-protocol 统一渲染（Card.vue 补 warning variant）。下方保留原 drawer 内的 GoalCard/todo 渲染作为<b>视觉参照</b>（展示迁移前的样式），实际落点已改为对话流 tool block。drawer 不再有 tasks 一级 tab。
+      </div>
+    </div>
+    <div class="sub-h" style="color:var(--neutral-dim);">以下为迁移前的视觉参照（实际渲染已迁至对话流 §12）</div>
 
     <!-- 目标态：blocked GoalCard + todo 列表 -->
     <div class="render-frame">
@@ -2034,8 +2038,10 @@ body {
       <div class="anno"><b>checkbox doing:</b><br>bg-warn-soft + 5px 脉冲点</div>
       <div class="anno"><b>checkbox done:</b><br>bg-success + 勾 + 删除线</div>
       <div class="anno"><b>todo 计数:</b><br>mono tabular-nums · done/total</div>
-      <div class="anno"><b>二级 tab:</b><br>无（固定列表）</div>
-      <div class="anno"><b>落点:</b><br>GoalCard.vue cardClass/badgeClass · TasksPanel.vue verify-tag</div>
+      <div class="anno"><b>二级 tab:</b><br><span class="v6">N/A（tasks tab 已移除）</span></div>
+      <div class="anno"><b>v6 迁移落点:</b><br><span class="v6">对话流 v6-spec-blocks.html §12</span><br>goal/todo block（走 gui-protocol）<br>Card.vue 补 warning variant + Resume</div>
+      <div class="anno"><b>移除原因:</b><br>HIDDEN_TOOL_NAMES 劫持 +<br>GoalCard 自定义渲染 = 双轨<br>gui-protocol 原生落点是<br>对话流 tool result</div>
+      <div class="anno"><b>架构依据:</b><br>renderer-target-architecture<br>§5.3 统一渲染器收敛<br>§3 维度 B1（已实现）</div>
     </div>
   </section>
 
