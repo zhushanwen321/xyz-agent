@@ -11,6 +11,7 @@
  *
  * 运行：cd apps/electron/main && npx vitest run test/download-asset.test.ts
  */
+import { createHash } from 'node:crypto'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -43,6 +44,46 @@ function makeContentResponse(content: Buffer, status = 200): Response {
       'Content-Length': String(content.length),
     },
   })
+}
+
+/** 多段下载测试：12MB 内容（大于 MIN_MULTI_PART_SIZE = 10MB） */
+const MULTI_PART_SIZE = 12 * 1024 * 1024
+const MULTI_PART_CONTENT = Buffer.alloc(MULTI_PART_SIZE, 0)
+// 填充可识别的模式，便于后续断言内容
+for (let i = 0; i < MULTI_PART_SIZE; i++) {
+  MULTI_PART_CONTENT[i] = i % 256
+}
+
+/** 构造 HEAD 探测响应（accept-ranges + content-length） */
+function makeHeadResponse(total: number): Response {
+  return new Response(null, {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': String(total),
+      'Accept-Ranges': 'bytes',
+    },
+  })
+}
+
+/** 构造 Range 响应（content-length + content-range） */
+function makeRangeResponse(content: Buffer, start: number, end: number): Response {
+  const slice = content.subarray(start, end + 1)
+  const body = new Uint8Array(slice)
+  return new Response(body, {
+    status: 206,
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': String(slice.length),
+      'Content-Range': `bytes ${start}-${end}/${content.length}`,
+      'Accept-Ranges': 'bytes',
+    },
+  })
+}
+
+/** 计算 buffer 的 sha256 hex */
+function sha256Hex(content: Buffer): string {
+  return createHash('sha256').update(content).digest('hex')
 }
 
 describe('W3: download-asset (W3TC1-3)', () => {
@@ -143,6 +184,64 @@ describe('W3: download-asset (W3TC1-3)', () => {
     // 最终文件不应存在（校验失败被清理）
     const finalPath = path.join(TMP_DATA_DIR, 'update', 'no-check.zip')
     expect(existsSync(finalPath)).toBe(false)
+  })
+
+  // ── W3TC4：多段并行下载（大文件 + accept-ranges）──────────────────
+  it('W3TC4: 大文件且支持 accept-ranges → 多段并发下载 → 文件完整 + sha256 通过', { timeout: 60_000 }, async () => {
+    const expectedSha = sha256Hex(MULTI_PART_CONTENT)
+    globalThis.fetch = vi.fn(async (url, init) => {
+      const method = (init?.method as string | undefined) ?? 'GET'
+      if (method === 'HEAD') {
+        return makeHeadResponse(MULTI_PART_CONTENT.length)
+      }
+      const rangeHeader = (init?.headers as Record<string, string> | undefined)?.Range ?? ''
+      const match = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader)
+      if (!match) {
+        return makeContentResponse(MULTI_PART_CONTENT)
+      }
+      const start = Number(match[1])
+      const end = Number(match[2])
+      return makeRangeResponse(MULTI_PART_CONTENT, start, end)
+    }) as unknown as typeof globalThis.fetch
+
+    const onProgress = vi.fn()
+    const result = await downloadAsset({
+      name: 'multipart-asset.zip',
+      downloadUrl: 'https://example.com/multipart.zip',
+      size: MULTI_PART_CONTENT.length,
+      sha256: expectedSha,
+    }, onProgress)
+
+    expect(result.filePath).toMatch(/multipart-asset\.zip$/)
+    expect(existsSync(result.filePath)).toBe(true)
+    const downloaded = readFileSync(result.filePath)
+    expect(downloaded.length).toBe(MULTI_PART_CONTENT.length)
+    expect(downloaded.compare(MULTI_PART_CONTENT)).toBe(0)
+    // .downloading 与 .part-* 都应清理
+    expect(existsSync(`${result.filePath}.downloading`)).toBe(false)
+    const updateDir = path.join(TMP_DATA_DIR, 'update')
+    expect(existsSync(path.join(updateDir, 'multipart-asset.zip.downloading.part-0'))).toBe(false)
+    expect(onProgress).toHaveBeenCalled()
+    const lastCall = onProgress.mock.calls[onProgress.mock.calls.length - 1]?.[0]
+    expect(lastCall).toBe(100)
+  })
+
+  // ── W3TC4b：单段大文件下载速度基准（用于对比多段）────────────────
+  it('W3TC4b: 大文件但不支持 accept-ranges → 单段下载 → 文件完整', { timeout: 60_000 }, async () => {
+    const expectedSha = sha256Hex(MULTI_PART_CONTENT)
+    globalThis.fetch = vi.fn(async () => makeContentResponse(MULTI_PART_CONTENT)) as unknown as typeof globalThis.fetch
+
+    const result = await downloadAsset({
+      name: 'singlepart-asset.zip',
+      downloadUrl: 'https://example.com/singlepart.zip',
+      size: MULTI_PART_CONTENT.length,
+      sha256: expectedSha,
+    })
+
+    expect(result.filePath).toMatch(/singlepart-asset\.zip$/)
+    const downloaded = readFileSync(result.filePath)
+    expect(downloaded.length).toBe(MULTI_PART_CONTENT.length)
+    expect(downloaded.compare(MULTI_PART_CONTENT)).toBe(0)
   })
 
   // ── 进度回调 ────────────────────────────────────────────────────
