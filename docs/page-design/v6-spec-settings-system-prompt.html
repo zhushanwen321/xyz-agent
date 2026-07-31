@@ -13,7 +13,7 @@
         C1 功能 bug 修复（save disabled 基于 dirty 非 switch 布尔）、
         脏状态追踪 + 未保存 badge + 离开确认、编辑器 sizing/计数器/保存反馈、
         只读默认参考 + 恢复默认。
-   约束：组件用 xyz-ui 真实变体（Button default/ghost、Switch、Textarea），
+   约束：组件用 xyz-ui 真实变体（Button default/secondary/ghost/danger、Switch、Textarea），
         禁自创 .btn / 自创控件样式。
    token 复用 v6-spec-tokens.html 同一集（含 v6 提案值）
    ================================================================ */
@@ -189,45 +189,54 @@ body {
 .counter.danger .num { color: var(--danger); }
 
 /* ================================================================
-   Button（xyz-ui buttonVariants · 禁自创 .btn）
-   源：ui/button/index.ts
+   Button（xyz-ui 4 变体 · 禁自创 .btn · 逐字复刻 button/index.ts）
+   源：ui/button/index.ts · 对齐 SSOT v6-spec-settings-shell.html §6.1
    base: inline-flex items-center justify-center gap-2 whitespace-nowrap
-         rounded-md text-sm font-medium ring-offset-background transition-colors
-         focus-visible:ring-2 ring-ring ring-offset-2
-         disabled:pointer-events-none disabled:opacity-50
-         [&_svg]:size-4 [&_svg]:shrink-0
-   variant default: bg-accent text-white hover:bg-accent-hover
-   variant ghost: hover:bg-surface-hover
-   size default: h-9 px-4 py-2
-   size dense:  h-8 px-3
-   size sm:     h-9 px-3
+         rounded-md text-sm font-medium transition-colors
+         focus-visible:ring-2 focus-visible:ring-accent-ring disabled:opacity-50
+         disabled:pointer-events-none
+   variant default:   bg-accent text-white hover:bg-accent-hover（主操作 保存）
+   variant secondary: bg-transparent border border-border text-neutral-fg
+                     hover:bg-surface-hover（次操作 恢复默认）
+   variant ghost:     hover:bg-surface-hover（幽灵 取消/折叠/复制）
+   variant danger:    text-danger hover:bg-danger-soft（危险 放弃改动）
+   size default: h-9 px-4 (36px) · dense: h-8 px-3 (32px) ·
+        sm: h-9 px-3 · icon: h-10 w-10 (40px) · icon-sm: h-7 w-7
    ================================================================ */
 .btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   white-space: nowrap; border-radius: var(--radius);
-  font-family: var(--font-sans); font-size: 13px; font-weight: 500;
-  cursor: pointer; transition: background var(--duration-fast), color var(--duration-fast), opacity var(--duration-fast);
-  outline: none;
+  font-family: inherit; font-size: 13px; font-weight: 500; border: none;
+  cursor: pointer; outline: none;
+  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease);
 }
-.btn:focus-visible { box-shadow: 0 0 0 2px var(--ring-offset-color, var(--bg)), 0 0 0 4px var(--accent-ring); }
-.btn svg { width: 14px; height: 14px; flex-shrink: 0; }
+.btn:focus-visible { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
 .btn:disabled { opacity: 0.5; pointer-events: none; }
 /* variant default（主操作：保存）*/
 .btn-default { background: var(--accent); color: #fff; }
 .btn-default:hover { background: var(--accent-hover); }
-/* variant ghost（恢复默认 / 折叠展开 / 复制）*/
-.btn-ghost { background: transparent; color: var(--neutral-mid); }
-.btn-ghost:hover { background: var(--surface-hover); color: var(--neutral-fg); }
-/* size default h-9=36px / dense h-8=32px / sm h-9=36px */
-.btn-h9 { height: 36px; padding: 0 14px; }
-.btn-h8 { height: 32px; padding: 0 12px; }
-.btn-link { height: auto; padding: 0; background: transparent; color: var(--accent); border-radius: 0; font-weight: 400; }
-.btn-link:hover { background: transparent; color: var(--accent-hover); text-decoration: underline; }
+/* variant secondary（次操作：恢复默认）*/
+.btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--neutral-fg); }
+.btn-secondary:hover { background: var(--surface-hover); }
+/* variant ghost（幽灵：取消 / 折叠 / 复制）*/
+.btn-ghost { background: transparent; color: var(--neutral-fg); }
+.btn-ghost:hover { background: var(--surface-hover); }
+/* variant danger（危险：放弃改动）*/
+.btn-danger { background: transparent; color: var(--danger); }
+.btn-danger:hover { background: var(--danger-soft); }
+/* size scale（逐字对齐 shell SSOT）*/
+.btn-default-size { height: 36px; padding: 0 16px; }
+.btn-dense { height: 32px; padding: 0 12px; font-size: 12px; }
+.btn-sm { height: 36px; padding: 0 12px; }
+.btn-icon { height: 40px; width: 40px; padding: 0; }
+.btn-icon-sm { height: 28px; width: 28px; padding: 0; border-radius: var(--radius-sm); }
 
-/* spinner（保存中 · design-system §8 行内 spinner 14px accent）*/
+/* spinner（保存中 · design-system §8 行内 spinner 14px accent）
+   .btn-spin 对齐 shell SSOT（Button 内 spinner 14px）；.spin 留作 badge 内 9px 行内 spinner */
+.btn-spin { width: 14px; height: 14px; animation: spin 1s linear infinite; }
 .spin { width: 13px; height: 13px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .btn-spin, .spin { animation: none; } }
 
 /* ================================================================
    Switch（xyz-ui Switch.vue 真实样式 · 不自创）
@@ -263,15 +272,19 @@ body {
 /* ================================================================
    只读默认参考区（可折叠 · pi 默认提示词）
    ================================================================ */
+/* ref-toggle = Button variant=ghost · width:100%（折叠/展开只读参考）
+   非 .btn 自创控件：复刻 ghost hover:bg-surface-hover，仅覆写 w-full + 左对齐 + 折叠分隔线。
+   text-neutral-mid（次级操作）→ hover neutral-fg，与 ghost 范式一致（accent 蓝留给链接式复制按钮）。*/
 .ref-toggle {
-  display: flex; align-items: center; gap: 6px;
-  width: 100%; padding: 10px 0 0;
-  margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.04);
-  background: transparent; border-left: 0; border-right: 0; border-top: 1px solid rgba(255,255,255,0.04);
-  border-radius: 0;
-  font-size: 11px; color: var(--accent); cursor: pointer;
+  display: flex; align-items: center; justify-content: flex-start; gap: 6px;
+  width: 100%; height: 32px; padding: 0 8px; margin: 12px -8px 0;
+  background: transparent; border: none; border-radius: var(--radius);
+  font-family: inherit; font-size: 11px; font-weight: 500; color: var(--neutral-mid);
+  cursor: pointer; outline: none;
+  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
 }
-.ref-toggle:hover { color: var(--accent-hover); }
+.ref-toggle:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.ref-toggle:focus-visible { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
 .ref-toggle svg { width: 12px; height: 12px; transition: transform var(--duration-fast); }
 .ref-toggle.expanded svg.chev { transform: rotate(90deg); }
 .ref-body { margin-top: 8px; }
@@ -330,7 +343,7 @@ body {
 }
 .doc-foot a { color: var(--accent); text-decoration: none; }
 
-/* overview-table（§1 / §7 共用）*/
+/* overview-table（§1 / §8 共用）*/
 .ot { width: 100%; border-collapse: collapse; font-size: 12px; }
 .ot th {
   text-align: left; padding: 10px 12px; font-size: 11px; color: var(--neutral-dim);
@@ -352,11 +365,11 @@ body {
   <header class="doc-head">
     <div class="doc-eyebrow">v6 SPEC · settings · system-prompt</div>
     <h1 class="doc-title">系统提示词页 · 长文本编辑器交互重新设计</h1>
-    <p class="doc-sub">SystemPromptPage 是设置页里两个长文本编辑器（替换 / 追加）。本稿重点是 impeccable 对「长文本编辑器」的交互评估：C1 功能 bug 修复（Save disabled 基于 dirty 状态而非 switch 布尔值）、脏状态追踪 + 未保存 badge + 离开确认、编辑器 sizing / 计数器三态 / 保存反馈、只读默认参考 + 恢复默认。组件全部用 xyz-ui 真实变体（Button default/ghost · Switch h-5 w-9 · Textarea），禁自创 .btn 与控件样式。</p>
+    <p class="doc-sub">SystemPromptPage 是设置页里两个长文本编辑器（替换 / 追加）。本稿重点是 impeccable 对「长文本编辑器」的交互评估：C1 功能 bug 修复（Save disabled 基于 dirty 状态而非 switch 布尔值）、C7 首次启用自动填充 pi 当前提示词、脏状态追踪 + 未保存 badge + 离开确认、编辑器 sizing / 计数器三态 / 保存反馈、只读默认参考 + 恢复默认。组件全部用 xyz-ui 真实变体（Button default/secondary/ghost/danger · Switch h-5 w-9 · Textarea），禁自创 .btn 与控件样式。</p>
     <div class="doc-meta">
       <span><b>SSOT</b> SystemPromptPage.vue · constants.ts SYSTEM_PROMPT_MAX_LENGTH 16000</span>
       <span><b>编辑器</b> 200px min / 60vh max / resize-y</span>
-      <span><b>组件</b> Button default+ghost · Switch · Textarea（xyz-ui）</span>
+      <span><b>组件</b> Button default+secondary+ghost+danger · Switch · Textarea（xyz-ui）</span>
       <span><b>状态</b> 定稿，待实施</span>
     </div>
   </header>
@@ -367,9 +380,10 @@ body {
     <a href="#s2">§2 C1 Save disabled bug</a>
     <a href="#s3">§3 脏状态 + 离开保护</a>
     <a href="#s4">§4 替换卡完整态</a>
-    <a href="#s5">§5 追加卡 + 只读参考 + 恢复默认</a>
-    <a href="#s6">§6 编辑器交互（sizing / 计数 / 保存反馈）</a>
-    <a href="#s7">§7 状态矩阵</a>
+    <a href="#s5">§5 C7 首次启用自动填充</a>
+    <a href="#s6">§6 追加卡 + 只读参考 + 恢复默认</a>
+    <a href="#s7">§7 编辑器交互（sizing / 计数 / 保存反馈）</a>
+    <a href="#s8">§8 状态矩阵</a>
   </nav>
 
   <!-- ================================================================
@@ -380,7 +394,7 @@ body {
       <span class="spec-num">§1</span>
       <h2 class="spec-title">交互问题总览</h2>
     </div>
-    <p class="spec-desc">SystemPromptPage 本质是两个长文本编辑器，但现状把它当「带开关的文本框」处理，缺编辑器应有的认知负载控制与操作反馈。impeccable 对编辑器有专门评估维度（脏状态 / 保存机制 / 反馈 / 上限防护），据此列出 6 个问题。C1 是功能 bug（必修），其余是交互缺失（必修）。</p>
+    <p class="spec-desc">SystemPromptPage 本质是两个长文本编辑器，但现状把它当「带开关的文本框」处理，缺编辑器应有的认知负载控制与操作反馈。impeccable 对编辑器有专门评估维度（脏状态 / 保存机制 / 反馈 / 上限防护 / 启动起点），据此列出 7 个问题。C1 / C7 是功能/交互缺陷（必修），其余是交互缺失（必修）。</p>
 
     <table class="ot">
       <thead>
@@ -433,14 +447,22 @@ body {
           <td>可访问性</td>
           <td>Switch 无 <code>aria-label</code>，屏幕阅读器读不出「替换系统提示词开关」。默认参考折叠区也缺语义。</td>
           <td><span class="t-v6">a11y</span></td>
-          <td class="t-mono" style="color:var(--accent)">§4 §5</td>
+          <td class="t-mono" style="color:var(--accent)">§4 §6</td>
+        </tr>
+        <tr>
+          <td><span class="t-fix">C7</span></td>
+          <td>首次启用</td>
+          <td>用户<b>从未启用过</b>自定义提示词时，打开 Switch 给一个<b>空白编辑器</b>。用户本想在 pi 默认提示词基础上微调，面对空白无从下手，只能手抄或放弃。<b>正确行为</b>：首次启用应自动拉取 pi 当前系统提示词填入编辑器，作为修改起点。</td>
+          <td><span class="t-fix">交互缺陷</span></td>
+          <td class="t-mono" style="color:var(--accent)">§5</td>
         </tr>
       </tbody>
     </table>
 
     <div class="anno-grid">
       <div class="anno"><b>C1 必修依据:</b> <span class="fix">关闭 switch 不可保存 = 数据丢失 = 功能 bug，优先级最高</span></div>
-      <div class="anno"><b>编辑器评估维度:</b> <span>认知负载（一张卡一个意图）· 操作反馈（dirty/loading/toast）· 保存机制（显式 + 守卫）· 上限防护（计数三态 + 禁存）</span></div>
+      <div class="anno"><b>C7 必修依据:</b> <span class="fix">首次启用给空白编辑器 = 无修改起点 = 用户被迫手抄默认提示词或放弃，认知负载过高</span></div>
+      <div class="anno"><b>编辑器评估维度:</b> <span>认知负载（一张卡一个意图 + 合理起点）· 操作反馈（dirty/loading/toast）· 保存机制（显式 + 守卫）· 上限防护（计数三态 + 禁存）</span></div>
       <div class="anno"><b>不变项:</b> <span>两卡结构（replace + append）· 显式保存按钮（不自动保存）· 只读默认参考折叠区 · 这三项现状合理，保留</span></div>
       <div class="anno"><b>列宽:</b> <span>max-w-720（--content-max-w，与 v6-spec-settings §3 设置内容列统一，左对齐不居中）</span></div>
     </div>
@@ -480,7 +502,7 @@ body {
             <span class="ta" style="display:block;min-height:60px;opacity:.5;">You are a senior backend engineer...</span>
             <div class="sp-foot">
               <span class="counter">142 / 16000</span>
-              <button class="btn btn-default btn-h8" disabled>保存</button>
+              <button class="btn btn-default btn-dense" disabled>保存</button>
             </div>
           </div>
         </div>
@@ -506,7 +528,7 @@ body {
             <span class="ta" style="display:block;min-height:60px;opacity:.5;">You are a senior backend engineer...</span>
             <div class="sp-foot">
               <span class="counter">142 / 16000</span>
-              <button class="btn btn-default btn-h8">保存</button>
+              <button class="btn btn-default btn-dense">保存</button>
             </div>
           </div>
         </div>
@@ -619,15 +641,15 @@ body {
           <div class="guard-title" id="g-title">放弃未保存的改动？</div>
           <div class="guard-desc">系统提示词有未保存的修改，离开后会丢失。可以先保存再离开，或直接放弃。</div>
           <div class="guard-actions">
-            <button class="btn btn-ghost btn-h8">放弃改动</button>
-            <button class="btn btn-default btn-h8">继续编辑</button>
+            <button class="btn btn-danger btn-dense">放弃改动</button>
+            <button class="btn btn-default btn-dense">继续编辑</button>
           </div>
         </div>
       </div>
       <div class="anno-grid">
         <div class="anno"><b>触发:</b> <span>整页 dirty 时，点 nav 其他设置项 / 关设置 overlay</span></div>
         <div class="anno"><b>主按钮:</b> <span>「继续编辑」（default 变体，默认焦点），安全选项在前</span></div>
-        <div class="anno"><b>次按钮:</b> <span>「放弃改动」（ghost 变体），破坏性操作不抢焦点</span></div>
+        <div class="anno"><b>次按钮:</b> <span>「放弃改动」（danger 变体），破坏性操作不抢焦点</span></div>
         <div class="anno"><b>三层守卫:</b> <span>1) nav 路由守卫（dialog）2) overlay 关闭守卫（dialog）3) window beforeunload（浏览器原生，防关窗/刷新）</span></div>
         <div class="anno"><b>文案:</b> <span>动词 + 对象（impeccable：禁「确认/取消」）。说清后果「会丢失」</span></div>
         <div class="anno"><b>层级:</b> <span>var(--z-modal) 1000（同 ConfirmDialog，叠在 FullSettingsOverlay 之上）</span></div>
@@ -679,7 +701,7 @@ body {
               <textarea class="ta" id="rep" aria-label="自定义系统提示词">You are a senior backend engineer. Read files before editing. Prefer precise edits over rewrites. Keep responses concise and show file paths clearly.</textarea>
               <div class="sp-foot">
                 <span class="counter"><span class="num">186</span> / 16000</span>
-                <button class="btn btn-default btn-h8">保存</button>
+                <button class="btn btn-default btn-dense">保存</button>
               </div>
 
               <!-- 只读默认参考（折叠）-->
@@ -707,18 +729,163 @@ body {
   </section>
 
   <!-- ================================================================
-       §5 追加卡 + 只读参考 + 恢复默认
+       §5 C7 · 首次启用自动填充 pi 当前提示词
        ================================================================ -->
   <section class="spec" id="s5">
     <div class="spec-head">
       <span class="spec-num">§5</span>
+      <h2 class="spec-title">C7 · 首次启用自动填充 pi 当前提示词</h2>
+    </div>
+    <p class="spec-desc">用户从未启用过自定义提示词时，打开 Switch 不应给空白编辑器——应<b>自动拉取 pi 当前系统提示词</b>填入，作为修改起点（用户多半想在默认基础上微调，而非从零写）。判定逻辑：用一个 <code>everEnabled</code> 标记记录「历史是否启用过」（持久化在配置里）。Switch on 时：若 <code>!everEnabled</code>（首次）→ 调 <code>fetchSystemPrompt()</code> 填充 + 置 <code>everEnabled=true</code> + dirty=true；若已 <code>everEnabled</code>（复启用）→ 恢复历史自定义 prompt，不覆盖。下方 demo 可交互：点 Switch 看「首次填充」，再用「重置为首次启用」按钮模拟复启用场景。</p>
+
+    <div class="change-points">
+      <span class="cp cp-now"><b>现状</b> 首次启用 → 空白编辑器</span>
+      <span class="cp cp-v6"><b>修复</b> 首次启用 → fetchSystemPrompt() 自动填充</span>
+      <span class="cp cp-v6"><b>复启用</b> 恢复历史 prompt（不覆盖）</span>
+      <span class="cp cp-v6"><b>标记</b> everEnabled 持久化（历史是否启用过）</span>
+    </div>
+
+    <!-- 交互 demo：可点击的 Switch + 编辑器，演示首次/复启用填充 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:4px 0 14px;font-weight:500;">交互 demo（点 Switch 体验「首次启用自动填充」）</h3>
+    <div class="render-frame">
+      <div class="panel-stage" style="padding:20px;">
+        <div style="max-width:var(--content-max-w);">
+          <div class="sp-card">
+            <div class="sp-head">
+              <div class="sp-head-text">
+                <div class="sp-title">替换系统提示词</div>
+                <div class="sp-subtitle">首次启用自动拉取 pi 当前提示词作为修改起点</div>
+              </div>
+              <div class="sp-head-ctrl">
+                <span class="dirty-badge" id="af-badge" style="display:none;"><span class="dot"></span>未保存</span>
+                <!-- 可交互 Switch（role=switch · 键盘 Space/Toggle · aria-checked 同步）-->
+                <span class="sw" id="af-sw" role="switch" aria-checked="false" aria-label="替换系统提示词" tabindex="0"></span>
+              </div>
+            </div>
+            <div class="sp-body">
+              <div class="sp-hint" id="af-hint">开关关闭。打开后将自动填充 pi 当前系统提示词，可在其基础上修改。</div>
+              <label class="sp-label" for="af-ta">自定义系统提示词</label>
+              <textarea class="ta" id="af-ta" aria-label="自定义系统提示词" placeholder="（开关关闭 · 打开后自动填充 pi 当前提示词）" disabled></textarea>
+              <div class="sp-foot">
+                <span class="counter" id="af-counter"><span class="num">0</span> / 16000</span>
+                <button class="btn btn-default btn-dense" id="af-save" disabled>保存</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- demo 控制条：模拟两种场景 + 显示内部状态 -->
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px;padding:10px 12px;background:var(--bg-input);border-radius:var(--radius);">
+        <span style="font-size:10px;font-family:var(--font-mono);color:var(--neutral-dim);text-transform:uppercase;letter-spacing:.05em;margin-right:4px;">demo 控制</span>
+        <button class="btn btn-secondary btn-dense" id="af-reset-first">重置为「首次启用」</button>
+        <button class="btn btn-secondary btn-dense" id="af-set-history">模拟「已有历史内容」</button>
+        <span style="flex:1;"></span>
+        <span style="font-size:11px;font-family:var(--font-mono);color:var(--neutral-mid);" id="af-state">everEnabled=false · enabled=false · prompt=空</span>
+      </div>
+
+      <div class="anno-grid">
+        <div class="anno"><b>首次启用:</b> <span class="v6">Switch on + !everEnabled → fetchSystemPrompt() 填编辑器 + everEnabled=true + dirty=true</span></div>
+        <div class="anno"><b>复启用:</b> <span class="v6">Switch on + everEnabled → 恢复历史 prompt（不覆盖，不重拉 pi 默认）</span></div>
+        <div class="anno"><b>关闭 Switch:</b> <span>Textarea disabled 但保留内容 + dirty=true（C1：关 switch 是有效编辑，仍可存）</span></div>
+        <div class="anno"><b>everEnabled 持久化:</b> <span>存配置（与 replaceEnabled/replacePrompt 同级）。一旦 true 不回退（即使用户关 switch），保证「首次」只触发一次</span></div>
+        <div class="anno"><b>fetchSystemPrompt:</b> <span>读 pi 当前生效的系统提示词（含默认 + 动态段 AGENTS.md/skills/cwd 拼接结果），作为替换的「起点参考」</span></div>
+        <div class="anno"><b>填充后:</b> <span>编辑器可编辑 · 计数器回显字符数 · dirty badge 亮 · Save 启用（用户可在此基础上删改后保存）</span></div>
+        <div class="anno"><b>失败兜底:</b> <span>fetchSystemPrompt 失败 → 编辑器留空 + toast error「无法读取当前提示词」· 不阻断启用</span></div>
+        <div class="anno"><b>append 卡:</b> <span>同理：首次启用追加卡可填充一个「建议追加段」模板（可选，追加无默认全文，模板更轻）</span></div>
+      </div>
+    </div>
+
+    <!-- 逻辑伪码 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:8px 0 14px;font-weight:500;">填充逻辑（onSwitchChange · replace 卡）</h3>
+    <div style="background:var(--bg-input);border-radius:var(--radius);padding:16px 18px;font-family:var(--font-mono);font-size:11px;line-height:1.85;color:var(--neutral-mid);white-space:pre-wrap;margin-bottom:12px;"><span style="color:var(--neutral-dim);">// everEnabled：持久化标记，记录「历史是否启用过自定义提示词」（一经 true 不回退）</span>
+<span style="color:var(--accent);">const</span> everEnabled = ref(config.replaceEverEnabled ?? false)
+
+<span style="color:var(--neutral-dim);">// mock：拉取 pi 当前生效的系统提示词（默认 + 动态段拼接结果）</span>
+<span style="color:var(--accent);">async function</span> fetchSystemPrompt(): <span style="color:var(--info);">Promise</span>&lt;<span style="color:var(--info);">string</span>&gt; { ... }
+
+<span style="color:var(--accent);">async function</span> onReplaceToggle(checked: <span style="color:var(--info);">boolean</span>) {
+  replaceEnabled.value = checked
+  <span style="color:var(--accent);">if</span> (checked && !everEnabled.value) {
+    <span style="color:var(--neutral-dim);">// 首次启用：拉取 pi 当前提示词作为修改起点（非空白编辑器）</span>
+    replacePrompt.value = <span style="color:var(--accent);">await</span> fetchSystemPrompt()
+    everEnabled.value = <span style="color:var(--success);">true</span>          <span style="color:var(--neutral-dim);">// 标记已启用过，后续不再自动填充</span>
+  }
+  <span style="color:var(--neutral-dim);">// 复启用（everEnabled=true）：不动 replacePrompt，恢复用户历史内容</span>
+  <span style="color:var(--neutral-dim);">// dirty 由 snapshot diff 自动判定（enabled / prompt 任一变化即脏）</span>
+}</div>
+
+    <!-- 状态机：首次 vs 复启用 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:8px 0 14px;font-weight:500;">首次 vs 复启用 状态对比</h3>
+    <div class="render-frame">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <!-- 首次启用 -->
+        <div>
+          <span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;font-family:var(--font-mono);padding:3px 8px;border-radius:999px;background:var(--success-soft);color:var(--success);text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">v6 · 首次启用（!everEnabled）</span>
+          <div style="font-size:11px;color:var(--neutral-dim);line-height:1.6;margin-bottom:10px;">用户从未启用过。打开 Switch → 自动拉取 pi 当前提示词填入，编辑器非空，可直接在其上修改。</div>
+          <div class="sp-card" style="margin:0;">
+            <div class="sp-head">
+              <div class="sp-head-text"><div class="sp-title">替换系统提示词</div><div class="sp-subtitle">已自动填充 pi 当前提示词</div></div>
+              <div class="sp-head-ctrl">
+                <span class="dirty-badge"><span class="dot"></span>未保存</span>
+                <span class="sw on" aria-hidden="true"></span>
+              </div>
+            </div>
+            <div class="sp-body">
+              <span class="ta" style="display:block;min-height:90px;opacity:.85;">You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code…</span>
+              <div class="sp-foot">
+                <span class="counter"><span class="num">428</span> / 16000</span>
+                <button class="btn btn-default btn-dense">保存</button>
+              </div>
+            </div>
+          </div>
+          <div class="anno" style="margin-top:10px;"><b>动作:</b> <span class="v6">fetchSystemPrompt() → 填充 + everEnabled=true + dirty=true</span></div>
+        </div>
+        <!-- 复启用 -->
+        <div>
+          <span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;font-family:var(--font-mono);padding:3px 8px;border-radius:999px;background:var(--surface-2);color:var(--neutral-mid);text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">v6 · 复启用（everEnabled）</span>
+          <div style="font-size:11px;color:var(--neutral-dim);line-height:1.6;margin-bottom:10px;">用户之前启用过（有历史 prompt）。再次打开 Switch → 恢复历史内容，<b>不</b>覆盖、<b>不</b>重拉 pi 默认。</div>
+          <div class="sp-card" style="margin:0;">
+            <div class="sp-head">
+              <div class="sp-head-text"><div class="sp-title">替换系统提示词</div><div class="sp-subtitle">恢复历史自定义内容</div></div>
+              <div class="sp-head-ctrl">
+                <span class="dirty-badge"><span class="dot"></span>未保存</span>
+                <span class="sw on" aria-hidden="true"></span>
+              </div>
+            </div>
+            <div class="sp-body">
+              <span class="ta" style="display:block;min-height:90px;opacity:.85;">You are a senior backend engineer. Read files before editing. Prefer precise edits over rewrites…</span>
+              <div class="sp-foot">
+                <span class="counter"><span class="num">186</span> / 16000</span>
+                <button class="btn btn-default btn-dense">保存</button>
+              </div>
+            </div>
+          </div>
+          <div class="anno" style="margin-top:10px;"><b>动作:</b> <span class="v6">不动 prompt（恢复历史）· dirty 视与快照 diff（enabled 翻转即脏）</span></div>
+        </div>
+      </div>
+      <div class="anno-grid">
+        <div class="anno"><b>判定依据:</b> <span>everEnabled（持久化）而非「prompt 是否为空」——用户可能保存过空 prompt</span></div>
+        <div class="anno"><b>不可逆:</b> <span>everEnabled 一经 true 不因关 switch 回退，保证「首次填充」一生只触发一次</span></div>
+        <div class="anno"><b>与恢复默认关系:</b> <span>恢复默认（§6）只清空 prompt + 关 switch，不重置 everEnabled（下次开 switch 走复启用分支）</span></div>
+        <div class="anno"><b>SSOT:</b> <span>config.replaceEverEnabled（新增字段）+ SystemPromptPage.vue onReplaceToggle + useSystemPrompt.fetchSystemPrompt()</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §6 追加卡 + 只读参考 + 恢复默认
+       ================================================================ -->
+  <section class="spec" id="s6">
+    <div class="spec-head">
+      <span class="spec-num">§6</span>
       <h2 class="spec-title">追加卡 + 只读默认参考 + 恢复默认</h2>
     </div>
-    <p class="spec-desc">追加卡结构与替换卡一致，差异：无字符上限（走 hook 不经 argv，计数器只显字符数不显 /max）。默认参考区展开后是只读 <code>&lt;pre&gt;</code>（pi 默认提示词全文），配复制按钮（ghost）+ 恢复默认（ghost，把 replace prompt 清空并关 switch，标记 dirty 待保存）。恢复默认是编辑操作不是直接写盘，须经 Save 确认（与 C1 一致：所有写盘走显式保存）。</p>
+    <p class="spec-desc">追加卡结构与替换卡一致，差异：无字符上限（走 hook 不经 argv，计数器只显字符数不显 /max）。默认参考区展开后是只读 <code>&lt;pre&gt;</code>（pi 默认提示词全文），配复制按钮（ghost）+ 恢复默认（secondary，把 replace prompt 清空并关 switch，标记 dirty 待保存）。恢复默认是编辑操作不是直接写盘，须经 Save 确认（与 C1 一致：所有写盘走显式保存）。</p>
 
     <div class="change-points">
       <span class="cp cp-now"><b>恢复默认</b> 无（只能手删文本）</span>
-      <span class="cp cp-v6"><b>v6</b> ghost Button · 置 dirty 待存</span>
+      <span class="cp cp-v6"><b>v6</b> secondary Button · 置 dirty 待存</span>
       <span class="cp cp-now"><b>append 计数</b> 单字符数</span>
       <span class="cp cp-v6"><b>v6</b> 保留（无上限，不显 /max）</span>
     </div>
@@ -744,7 +911,7 @@ body {
               <textarea class="ta" id="app" aria-label="追加的提示词" style="min-height:120px;">回答前先用一句话复述我的核心诉求。涉及多文件改动时，先列变更清单再动手。</textarea>
               <div class="sp-foot">
                 <span class="counter"><span class="num">52</span> 字符</span>
-                <button class="btn btn-default btn-h8">保存</button>
+                <button class="btn btn-default btn-dense">保存</button>
               </div>
             </div>
           </div>
@@ -781,8 +948,8 @@ body {
               <div class="sp-foot">
                 <span class="counter"><span class="num">42</span> / 16000</span>
                 <div style="display:flex;gap:8px;align-items:center;">
-                  <button class="btn btn-ghost btn-h8">恢复默认</button>
-                  <button class="btn btn-default btn-h8">保存</button>
+                  <button class="btn btn-secondary btn-dense">恢复默认</button>
+                  <button class="btn btn-default btn-dense">保存</button>
                 </div>
               </div>
 
@@ -794,7 +961,7 @@ body {
               <div class="ref-body">
                 <div class="ref-hint">这是 pi 的默认核心提示词（身份 + 工具列表 + 指引）。替换后此段会被你的文本覆盖；动态段（AGENTS.md / skills / cwd）不受影响，仍由 pi 照常拼接。</div>
                 <div style="display:flex;gap:8px;margin-bottom:8px;">
-                  <button class="btn btn-ghost btn-link" style="font-size:11px;">
+                  <button class="btn btn-ghost btn-dense" style="font-size:11px;">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
                     复制
                   </button>
@@ -818,23 +985,23 @@ Guidelines:
       </div>
 
       <div class="anno-grid">
-        <div class="anno"><b>恢复默认按钮:</b> <span class="v6">ghost 变体（非 default）· 与 Save 同行右侧（次操作不抢主操作）</span></div>
+        <div class="anno"><b>恢复默认按钮:</b> <span class="v6">secondary 变体（border + text-fg，次操作）· 与 Save 同行右侧（次操作不抢主操作）</span></div>
         <div class="anno"><b>恢复默认行为:</b> <span class="v6">清空 replace prompt + 关 switch + 置 dirty=true（编辑操作，不直接写盘）</span></div>
         <div class="anno"><b>为何不直接写盘:</b> <span>与 C1 一致：所有写盘走显式 Save。恢复默认只是「把编辑态拉回 pi 默认」，用户仍可反悔或继续编辑</span></div>
         <div class="anno"><b>恢复默认后:</b> <span>Textarea 显示空 + switch off + dirty badge 亮 + Save 启用（用户确认后才真正生效）</span></div>
-        <div class="anno"><b>复制按钮:</b> <span>ghost link 样式 · 复制 DEFAULT_PI_SYSTEM_PROMPT 全文 · 成功 toast</span></div>
+        <div class="anno"><b>复制按钮:</b> <span>ghost 变体（dense · icon+text）· 复制 DEFAULT_PI_SYSTEM_PROMPT 全文 · 成功 toast</span></div>
         <div class="anno"><b>参考 &lt;pre&gt;:</b> <span>max-h 240px · overflow auto · select-text · mono 11px · leading 1.7（只读，不编辑）</span></div>
-        <div class="anno"><b>折叠态:</b> <span>ghost link「查看 pi 默认提示词」+ 右箭头（展开 rotate 90）</span></div>
+        <div class="anno"><b>折叠态:</b> <span>ghost 变体「查看 pi 默认提示词」+ chevron 右箭头（展开 rotate 90）</span></div>
       </div>
     </div>
   </section>
 
   <!-- ================================================================
-       §6 编辑器交互（sizing / 计数 / 保存反馈）
+       §7 编辑器交互（sizing / 计数 / 保存反馈）
        ================================================================ -->
-  <section class="spec" id="s6">
+  <section class="spec" id="s7">
     <div class="spec-head">
-      <span class="spec-num">§6</span>
+      <span class="spec-num">§7</span>
       <h2 class="spec-title">编辑器交互（sizing / 计数器 / 保存反馈）</h2>
     </div>
     <p class="spec-desc">长文本编辑器的三个核心交互。sizing：200px min（首屏可见 ~10 行 mono）/ 60vh max（防撑爆 viewport）/ resize-y（用户可拖）。计数器三态（normal &lt; 90% / warn 90-100% / danger &gt; 100%），超限禁用 Save 并给 danger 边框。保存反馈：点 Save → saving态（Button disabled + spinner + badge 变保存中）→ 成功 toast + dirty 清除。</p>
@@ -875,7 +1042,7 @@ Follow project conventions. When changing multiple files, list the change set fi
         <div class="state-demo">
           <div style="background:var(--bg-card);border-radius:var(--radius-sm);padding:10px 12px;display:flex;justify-content:space-between;align-items:center;">
             <span class="counter"><span class="num">1 240</span> / 16000</span>
-            <button class="btn btn-default btn-h8">保存</button>
+            <button class="btn btn-default btn-dense">保存</button>
           </div>
         </div>
       </div>
@@ -884,7 +1051,7 @@ Follow project conventions. When changing multiple files, list the change set fi
         <div class="state-demo">
           <div style="background:var(--bg-card);border-radius:var(--radius-sm);padding:10px 12px;display:flex;justify-content:space-between;align-items:center;">
             <span class="counter warn"><span class="num">14 580</span> / 16000 · 接近上限</span>
-            <button class="btn btn-default btn-h8">保存</button>
+            <button class="btn btn-default btn-dense">保存</button>
           </div>
         </div>
       </div>
@@ -893,7 +1060,7 @@ Follow project conventions. When changing multiple files, list the change set fi
         <div class="state-demo">
           <div style="background:var(--bg-card);border-radius:var(--radius-sm);padding:10px 12px;display:flex;justify-content:space-between;align-items:center;gap:12px;">
             <span class="counter danger"><span class="num">16 420</span> / 16000 · 超出 420 字符</span>
-            <button class="btn btn-default btn-h8" disabled>保存</button>
+            <button class="btn btn-default btn-dense" disabled>保存</button>
           </div>
         </div>
       </div>
@@ -916,7 +1083,7 @@ Follow project conventions. When changing multiple files, list the change set fi
         <div class="state-demo">
           <div style="display:flex;gap:12px;align-items:center;background:var(--bg-card);border-radius:var(--radius-sm);padding:10px 12px;justify-content:flex-end;">
             <span class="dirty-badge"><span class="dot"></span>未保存</span>
-            <button class="btn btn-default btn-h8">保存</button>
+            <button class="btn btn-default btn-dense">保存</button>
           </div>
         </div>
       </div>
@@ -925,7 +1092,7 @@ Follow project conventions. When changing multiple files, list the change set fi
         <div class="state-demo">
           <div style="display:flex;gap:12px;align-items:center;background:var(--bg-card);border-radius:var(--radius-sm);padding:10px 12px;justify-content:flex-end;">
             <span class="dirty-badge" style="background:var(--accent-soft);color:var(--accent);"><span class="spin" style="width:9px;height:9px;border-width:1.5px;"></span>保存中</span>
-            <button class="btn btn-default btn-h8" disabled><span class="spin"></span>保存</button>
+            <button class="btn btn-default btn-dense" disabled><svg class="btn-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>保存</button>
           </div>
         </div>
       </div>
@@ -933,7 +1100,7 @@ Follow project conventions. When changing multiple files, list the change set fi
         <div class="state-tag">success</div>
         <div class="state-demo">
           <div style="display:flex;gap:12px;align-items:center;background:var(--bg-card);border-radius:var(--radius-sm);padding:10px 12px;justify-content:flex-end;">
-            <button class="btn btn-default btn-h8" disabled>保存</button>
+            <button class="btn btn-default btn-dense" disabled>保存</button>
             <span class="toast">
               <svg class="t-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
               已保存
@@ -955,14 +1122,14 @@ Follow project conventions. When changing multiple files, list the change set fi
   </section>
 
   <!-- ================================================================
-       §7 状态矩阵
+       §8 状态矩阵
        ================================================================ -->
-  <section class="spec" id="s7">
+  <section class="spec" id="s8">
     <div class="spec-head">
-      <span class="spec-num">§7</span>
+      <span class="spec-num">§8</span>
       <h2 class="spec-title">状态矩阵汇总</h2>
     </div>
-    <p class="spec-desc">系统提示词页所有交互组件 / 反馈单元的状态变体一览，供实施时逐态比对。覆盖 Textarea（5 态）、Switch（3 态 + aria）、Button default（4 态）、Button ghost（2 操作）、计数器（3 态）、dirty badge（3 态）、离开守卫（1 dialog）、corrupted 条（1 异常态）。</p>
+    <p class="spec-desc">系统提示词页所有交互组件 / 反馈单元的状态变体一览，供实施时逐态比对。覆盖 Textarea（5 态）、Switch（3 态 + aria）、Button default（4 态）、Button secondary（恢复默认）、Button danger（放弃改动）、Button ghost（复制 / 折叠）、首次启用自动填充（C7）、计数器（3 态）、dirty badge（3 态）、离开守卫（1 dialog）、corrupted 条（1 异常态）。</p>
 
     <table class="ot">
       <thead>
@@ -975,31 +1142,40 @@ Follow project conventions. When changing multiple files, list the change set fi
       </thead>
       <tbody>
         <tr><td rowspan="5" style="vertical-align:top;"><span class="t-name">Textarea</span><br><span class="t-mono" style="color:var(--neutral-dim);">xyz-ui + class 覆写</span></td>
-          <td><span class="t-mono" style="color:var(--neutral-dim);">default</span></td><td>min-h 200 · bg surface-2 · border-input · mono 12 · leading 1.7</td><td class="t-mono" style="color:var(--accent);">§6</td></tr>
-        <tr><td><span class="t-mono" style="color:var(--accent);">focus</span></td><td>border accent + ring-inset 1px accent + ring 3px accent-ring</td><td class="t-mono" style="color:var(--accent);">§6</td></tr>
+          <td><span class="t-mono" style="color:var(--neutral-dim);">default</span></td><td>min-h 200 · bg surface-2 · border-input · mono 12 · leading 1.7</td><td class="t-mono" style="color:var(--accent);">§7</td></tr>
+        <tr><td><span class="t-mono" style="color:var(--accent);">focus</span></td><td>border accent + ring-inset 1px accent + ring 3px accent-ring</td><td class="t-mono" style="color:var(--accent);">§7</td></tr>
         <tr><td><span class="t-mono" style="color:var(--neutral-dim);">disabled</span></td><td>opacity .5 · cursor not-allowed · resize none（关 switch 时，内容保留可见）</td><td class="t-mono" style="color:var(--accent);">§4</td></tr>
-        <tr><td><span class="t-mono" style="color:var(--danger);">over-limit</span></td><td>border danger + focus danger ring · 配合计数器 danger + Save 禁用</td><td class="t-mono" style="color:var(--accent);">§6</td></tr>
-        <tr><td><span class="t-mono" style="color:var(--neutral-dim);">placeholder</span></td><td>neutral-mid（过 AA，xyz-ui 基线）</td><td class="t-mono" style="color:var(--accent);">§6</td></tr>
+        <tr><td><span class="t-mono" style="color:var(--danger);">over-limit</span></td><td>border danger + focus danger ring · 配合计数器 danger + Save 禁用</td><td class="t-mono" style="color:var(--accent);">§7</td></tr>
+        <tr><td><span class="t-mono" style="color:var(--neutral-dim);">placeholder</span></td><td>neutral-mid（过 AA，xyz-ui 基线）</td><td class="t-mono" style="color:var(--accent);">§7</td></tr>
 
         <tr><td rowspan="3" style="vertical-align:top;"><span class="t-name">Switch</span><br><span class="t-mono" style="color:var(--neutral-dim);">xyz-ui h-5 w-9</span></td>
-          <td><span class="t-mono" style="color:var(--neutral-dim);">unchecked</span></td><td>track bg border-strong · thumb #fff translate-x 2px</td><td class="t-mono" style="color:var(--accent);">§4</td></tr>
-        <tr><td><span class="t-mono" style="color:var(--accent);">checked</span></td><td>track bg accent · thumb #fff translate-x 18px</td><td class="t-mono" style="color:var(--accent);">§4</td></tr>
-        <tr><td><span class="t-mono" style="color:var(--neutral-dim);">focus / aria</span></td><td>ring 2px accent-ring + offset · <span class="v6">aria-label="替换/追加系统提示词"</span></td><td class="t-mono" style="color:var(--accent);">§4 §5</td></tr>
+          <td><span class="t-mono" style="color:var(--neutral-dim);">unchecked</span></td><td>track bg border-strong · thumb #fff translate-x 2px</td><td class="t-mono" style="color:var(--accent);">§4 §5</td></tr>
+        <tr><td><span class="t-mono" style="color:var(--accent);">checked</span></td><td>track bg accent · thumb #fff translate-x 18px</td><td class="t-mono" style="color:var(--accent);">§4 §5</td></tr>
+        <tr><td><span class="t-mono" style="color:var(--neutral-dim);">focus / aria</span></td><td>ring 2px accent-ring + offset · <span class="v6">aria-label="替换/追加系统提示词"</span></td><td class="t-mono" style="color:var(--accent);">§4 §5 §6</td></tr>
 
         <tr><td rowspan="4" style="vertical-align:top;"><span class="t-name">Button default</span><br><span class="t-mono" style="color:var(--neutral-dim);">保存（主操作）</span></td>
-          <td><span class="t-mono" style="color:var(--neutral-dim);">enabled</span></td><td>bg accent · text #fff · hover bg accent-hover · h-8 dense</td><td class="t-mono" style="color:var(--accent);">§6</td></tr>
+          <td><span class="t-mono" style="color:var(--neutral-dim);">enabled</span></td><td>bg accent · text #fff · hover bg accent-hover · dense h-8</td><td class="t-mono" style="color:var(--accent);">§7</td></tr>
         <tr><td><span class="t-mono" style="color:var(--neutral-dim);">disabled·无 dirty</span></td><td>opacity .5 · pointer-events none（C1 修复后由 isDirty 驱动）</td><td class="t-mono" style="color:var(--accent);">§2</td></tr>
-        <tr><td><span class="t-mono" style="color:var(--danger);">disabled·超限</span></td><td>opacity .5 · 配合 Textarea danger 边框 + 计数器 danger</td><td class="t-mono" style="color:var(--accent);">§6</td></tr>
-        <tr><td><span class="t-mono" style="color:var(--accent);">saving</span></td><td>disabled + spinner 13px accent · 防 double-submit</td><td class="t-mono" style="color:var(--accent);">§6</td></tr>
+        <tr><td><span class="t-mono" style="color:var(--danger);">disabled·超限</span></td><td>opacity .5 · 配合 Textarea danger 边框 + 计数器 danger</td><td class="t-mono" style="color:var(--accent);">§7</td></tr>
+        <tr><td><span class="t-mono" style="color:var(--accent);">saving</span></td><td>disabled + spinner 14px accent · 防 double-submit</td><td class="t-mono" style="color:var(--accent);">§7</td></tr>
 
-        <tr><td rowspan="2" style="vertical-align:top;"><span class="t-name">Button ghost</span><br><span class="t-mono" style="color:var(--neutral-dim);">次操作</span></td>
-          <td><span class="t-mono" style="color:var(--neutral-dim);">恢复默认</span></td><td>transparent · text neutral-mid · hover bg surface-hover · 清空+关 switch+置 dirty</td><td class="t-mono" style="color:var(--accent);">§5</td></tr>
-        <tr><td><span class="t-mono" style="color:var(--neutral-dim);">复制 / 折叠</span></td><td>ghost link · text accent · hover underline（复制成功 toast）</td><td class="t-mono" style="color:var(--accent);">§5</td></tr>
+        <tr><td rowspan="1" style="vertical-align:top;"><span class="t-name">Button secondary</span><br><span class="t-mono" style="color:var(--neutral-dim);">次操作</span></td>
+          <td><span class="t-mono" style="color:var(--neutral-dim);">恢复默认</span></td><td>bg transparent · border · text-fg · hover bg surface-hover · 清空+关 switch+置 dirty</td><td class="t-mono" style="color:var(--accent);">§6</td></tr>
+
+        <tr><td rowspan="1" style="vertical-align:top;"><span class="t-name">Button danger</span><br><span class="t-mono" style="color:var(--neutral-dim);">危险操作</span></td>
+          <td><span class="t-mono" style="color:var(--danger);">放弃改动</span></td><td>text danger · hover bg danger-soft（离开确认 dialog，默认焦点在 default 继续编辑）</td><td class="t-mono" style="color:var(--accent);">§3</td></tr>
+
+        <tr><td rowspan="1" style="vertical-align:top;"><span class="t-name">Button ghost</span><br><span class="t-mono" style="color:var(--neutral-dim);">幽灵操作</span></td>
+          <td><span class="t-mono" style="color:var(--neutral-dim);">复制 / 折叠</span></td><td>bg transparent · text-fg · hover bg surface-hover（复制成功 toast / chevron 旋转表达展开）</td><td class="t-mono" style="color:var(--accent);">§6</td></tr>
+
+        <tr><td rowspan="2" style="vertical-align:top;"><span class="t-name">首次启用填充</span><br><span class="t-mono" style="color:var(--neutral-dim);">C7 · Switch 开启时</span></td>
+          <td><span class="t-mono" style="color:var(--success);">首次（!everEnabled）</span></td><td>fetchSystemPrompt() 拉取 pi 当前提示词填入编辑器 · 置 everEnabled=true · dirty=true</td><td class="t-mono" style="color:var(--accent);">§5</td></tr>
+        <tr><td><span class="t-mono" style="color:var(--neutral-dim);">复启用（everEnabled）</span></td><td>恢复历史自定义 prompt（不覆盖）· dirty 视与快照 diff 而定</td><td class="t-mono" style="color:var(--accent);">§5</td></tr>
 
         <tr><td rowspan="3" style="vertical-align:top;"><span class="t-name">计数器</span><br><span class="t-mono" style="color:var(--neutral-dim);">replace 卡</span></td>
-          <td><span class="t-mono" style="color:var(--neutral-dim);">normal &lt;90%</span></td><td>neutral-dim 数字 + neutral-mid 分母</td><td class="t-mono" style="color:var(--accent);">§6</td></tr>
-        <tr><td><span class="t-mono" style="color:var(--warn);">warn 90-100%</span></td><td>warn 色 + 「接近上限」</td><td class="t-mono" style="color:var(--accent);">§6</td></tr>
-        <tr><td><span class="t-mono" style="color:var(--danger);">danger &gt;100%</span></td><td>danger 色 + 超出字数 · Save 禁用</td><td class="t-mono" style="color:var(--accent);">§6</td></tr>
+          <td><span class="t-mono" style="color:var(--neutral-dim);">normal &lt;90%</span></td><td>neutral-dim 数字 + neutral-mid 分母</td><td class="t-mono" style="color:var(--accent);">§7</td></tr>
+        <tr><td><span class="t-mono" style="color:var(--warn);">warn 90-100%</span></td><td>warn 色 + 「接近上限」</td><td class="t-mono" style="color:var(--accent);">§7</td></tr>
+        <tr><td><span class="t-mono" style="color:var(--danger);">danger &gt;100%</span></td><td>danger 色 + 超出字数 · Save 禁用</td><td class="t-mono" style="color:var(--accent);">§7</td></tr>
 
         <tr><td rowspan="3" style="vertical-align:top;"><span class="t-name">dirty badge</span><br><span class="t-mono" style="color:var(--neutral-dim);">卡片 head</span></td>
           <td><span class="t-mono" style="color:var(--neutral-dim);">clean</span></td><td>无 badge</td><td class="t-mono" style="color:var(--accent);">§3</td></tr>
@@ -1007,7 +1183,7 @@ Follow project conventions. When changing multiple files, list the change set fi
         <tr><td><span class="t-mono" style="color:var(--accent);">saving</span></td><td>accent-soft 底 + accent 字 + spinner「保存中」</td><td class="t-mono" style="color:var(--accent);">§3</td></tr>
 
         <tr><td rowspan="1" style="vertical-align:top;"><span class="t-name">离开守卫</span></td>
-          <td><span class="t-mono" style="color:var(--neutral-dim);">dialog</span></td><td>bg-elevated · border-strong · 「放弃改动」ghost / 「继续编辑」default（默认焦点）</td><td class="t-mono" style="color:var(--accent);">§3</td></tr>
+          <td><span class="t-mono" style="color:var(--neutral-dim);">dialog</span></td><td>bg-elevated · border-strong · 「放弃改动」danger / 「继续编辑」default（默认焦点）</td><td class="t-mono" style="color:var(--accent);">§3</td></tr>
 
         <tr><td rowspan="1" style="vertical-align:top;"><span class="t-name">corrupted 条</span></td>
           <td><span class="t-mono" style="color:var(--warn);">异常</span></td><td>warn-soft 底 + warn 边 + warn 图标「已回退默认配置」（仅磁盘损坏时）</td><td class="t-mono" style="color:var(--accent);">§4</td></tr>
@@ -1015,20 +1191,126 @@ Follow project conventions. When changing multiple files, list the change set fi
     </table>
 
     <div class="anno-grid" style="margin-top:16px;">
-      <div class="anno"><b>全覆盖检查:</b> <span>Textarea 5 ✓ / Switch 3 ✓ / Button default 4 ✓ / Button ghost 2 ✓ / 计数器 3 ✓ / dirty badge 3 ✓ / 离开守卫 1 ✓ / corrupted 1 ✓</span></div>
-      <div class="anno"><b>C1 落地:</b> <span class="fix">Save disabled 三条件 = !dirty || overLimit || saving（§2 + §6 矩阵印证）</span></div>
-      <div class="anno"><b>组件合规:</b> <span>Button 全用 default/ghost 变体 · Switch 用 xyz-ui h-5 w-9 · Textarea 用 xyz-ui + class 覆写（无自创控件）</span></div>
+      <div class="anno"><b>全覆盖检查:</b> <span>Textarea 5 ✓ / Switch 3 ✓ / Button default 4 ✓ / Button secondary 1 ✓ / Button danger 1 ✓ / Button ghost 1 ✓ / 首次启用填充 1 ✓ / 计数器 3 ✓ / dirty badge 3 ✓ / 离开守卫 1 ✓ / corrupted 1 ✓</span></div>
+      <div class="anno"><b>C1 落地:</b> <span class="fix">Save disabled 三条件 = !dirty || overLimit || saving（§2 + §8 矩阵印证）</span></div>
+      <div class="anno"><b>C7 落地:</b> <span class="fix">首次启用 = !everEnabled → fetchSystemPrompt() 填编辑器；复启用 → 恢复历史 prompt（§5 + §8 矩阵印证）</span></div>
+      <div class="anno"><b>组件合规:</b> <span>Button 全用 default/secondary/ghost/danger 4 变体 · Switch 用 xyz-ui h-5 w-9 · Textarea 用 xyz-ui + class 覆写（无自创控件）</span></div>
       <div class="anno"><b>对比度:</b> <span>辅助文字 neutral-mid（#9ca3af on bg-card 6.10:1 过 AA）；warn 提示关键词不染色（neutral-mid 承载，仅 corrupted 系统异常上色）</span></div>
-      <div class="anno"><b>反写位置:</b> <span>SystemPromptPage.vue（isDirty / snapshot / saving / overLimit / aria-label / 恢复默认 / 离开守卫 hook）</span></div>
+      <div class="anno"><b>反写位置:</b> <span>SystemPromptPage.vue（isDirty / snapshot / saving / overLimit / aria-label / 恢复默认 / 首次启用填充 / 离开守卫 hook）</span></div>
     </div>
   </section>
 
   <!-- ============ footer ============ -->
   <footer class="doc-foot">
     <span>v6-spec-settings-system-prompt.html · 系统提示词页 · 长文本编辑器交互重新设计</span>
-    <span>SSOT: SystemPromptPage.vue · constants.ts · token: <a href="v6-spec-tokens.html">v6-spec-tokens.html</a> · 设置外壳: <a href="v6-spec-settings.html">v6-spec-settings.html</a></span>
+    <span>SSOT: SystemPromptPage.vue · constants.ts · token: <a href="v6-spec-tokens.html">v6-spec-tokens.html</a> · 设置外壳: <a href="v6-spec-settings-shell.html">v6-spec-settings-shell.html</a>（按钮范式）</span>
   </footer>
 
 </div>
+
+<!-- ================================================================
+     §5 交互 demo 脚本：首次启用自动填充（C7）
+     mock fetchSystemPrompt() 返回示例 pi 提示词；everEnabled 模拟持久化标记。
+     ================================================================ -->
+<script>
+(function () {
+  var sw       = document.getElementById('af-sw');
+  var ta       = document.getElementById('af-ta');
+  var badge    = document.getElementById('af-badge');
+  var hint     = document.getElementById('af-hint');
+  var counter  = document.getElementById('af-counter');
+  var saveBtn  = document.getElementById('af-save');
+  var stateLbl = document.getElementById('af-state');
+  var btnFirst = document.getElementById('af-reset-first');
+  var btnHist  = document.getElementById('af-set-history');
+  if (!sw || !ta) return; // demo 元素不存在则跳过
+
+  // —— demo 状态（模拟配置 + 持久化标记）——
+  var enabled = false;
+  var everEnabled = false;
+  var historyPrompt = ''; // 用户历史自定义内容（复启用恢复用）
+
+  // mock：pi 当前生效的系统提示词（默认 + 动态段拼接结果示例）
+  var PI_CURRENT_PROMPT =
+    'You are an expert coding assistant operating inside pi, a coding agent harness. ' +
+    'You help users by reading files, executing commands, editing code, and writing new files.\n\n' +
+    'Guidelines:\n' +
+    '- Use read to examine files instead of cat or sed.\n' +
+    '- Make precise edits; use write only for new files or complete rewrites.\n' +
+    '- Keep responses concise and show file paths clearly.';
+
+  var MAX = 16000;
+
+  function render() {
+    // Switch 视觉 + aria
+    sw.classList.toggle('on', enabled);
+    sw.setAttribute('aria-checked', enabled ? 'true' : 'false');
+    // Textarea 启用/禁用
+    ta.disabled = !enabled;
+    // dirty：启用后或编辑过即视为脏（demo 简化：enabled 且有内容即脏）
+    var dirty = enabled && ta.value.length > 0;
+    badge.style.display = dirty ? '' : 'none';
+    // 计数器
+    var n = ta.value.length;
+    counter.querySelector('.num').textContent = n.toLocaleString();
+    counter.className = 'counter' + (n > MAX ? ' danger' : (n >= MAX * 0.9 ? ' warn' : ''));
+    counter.innerHTML = '<span class="num">' + n.toLocaleString() + '</span> / ' + MAX.toLocaleString();
+    // Save 启用：dirty 且未超限
+    saveBtn.disabled = !dirty || n > MAX;
+    // hint 文案
+    if (!enabled) {
+      hint.textContent = '开关关闭。打开后将' + (everEnabled ? '恢复你的历史自定义提示词。' : '自动填充 pi 当前系统提示词，可在其基础上修改。');
+    } else if (everEnabled) {
+      hint.textContent = '已恢复你历史保存的自定义提示词（复启用：不覆盖、不重拉 pi 默认）。';
+    } else {
+      hint.textContent = '已自动填充 pi 当前系统提示词（首次启用）。可在其基础上修改后保存。';
+    }
+    // 状态读数
+    stateLbl.textContent = 'everEnabled=' + everEnabled +
+      ' · enabled=' + enabled +
+      ' · prompt=' + (ta.value ? ta.value.length + ' 字符' : '空');
+  }
+
+  function toggle() {
+    enabled = !enabled;
+    if (enabled && !everEnabled) {
+      // C7 核心：首次启用 → 自动拉取 pi 当前提示词填充
+      ta.value = PI_CURRENT_PROMPT;
+      everEnabled = true; // 标记已启用过，后续不再自动填充
+    } else if (!enabled) {
+      // 关 switch：若当前有内容，存为历史（复启用恢复用）
+      if (ta.value) historyPrompt = ta.value;
+    }
+    // 复启用（everEnabled=true）：不动 ta.value，恢复历史内容
+    // 注意：若曾关闭又打开，且期间 ta.value 被清空过，则恢复历史
+    if (enabled && everEnabled && !ta.value && historyPrompt) {
+      ta.value = historyPrompt;
+    }
+    render();
+  }
+
+  sw.addEventListener('click', toggle);
+  sw.addEventListener('keydown', function (e) {
+    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(); }
+  });
+  ta.addEventListener('input', render);
+
+  // demo 控制：重置为「首次启用」场景
+  btnFirst.addEventListener('click', function () {
+    enabled = false; everEnabled = false; ta.value = ''; historyPrompt = '';
+    render();
+  });
+  // demo 控制：模拟「已有历史内容」（用户曾保存过自定义 prompt）
+  btnHist.addEventListener('click', function () {
+    enabled = false; everEnabled = true;
+    historyPrompt = 'You are a senior backend engineer. Read files before editing. ' +
+      'Prefer precise edits over rewrites. Keep responses concise and show file paths clearly.';
+    ta.value = '';
+    render();
+  });
+
+  render();
+})();
+</script>
 </body>
 </html>

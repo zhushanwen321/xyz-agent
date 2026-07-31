@@ -334,7 +334,7 @@ body {
 .tv-toolbar { display: flex; align-items: center; gap: 4px; padding: 6px 8px; background: var(--bg-input); }
 .tv-btn { width: 24px; height: 24px; border-radius: var(--radius-sm); border: 0; cursor: pointer; background: transparent; color: var(--neutral-mid); display: flex; align-items: center; justify-content: center; transition: all var(--duration-fast); }
 .tv-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
-.tv-btn.disabled { opacity: .3; cursor: not-allowed; }
+.tv-btn.disabled { opacity: 0.5; cursor: not-allowed; }
 .tv-spacer { flex: 1; }
 .tv-instance-label { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); }
 .tv-screen { flex: 1; min-height: 0; padding: 10px 14px; font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.6; color: var(--neutral-fg); overflow: auto; }
@@ -374,7 +374,7 @@ body {
 .bp-nav { display: flex; align-items: center; gap: 4px; padding: 6px 8px; background: var(--surface-2); flex-shrink: 0; }
 .bp-btn { width: 26px; height: 26px; border-radius: var(--radius-sm); border: 0; cursor: pointer; background: transparent; color: var(--neutral-mid); display: flex; align-items: center; justify-content: center; transition: all var(--duration-fast); flex-shrink: 0; }
 .bp-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
-.bp-btn.disabled { opacity: .3; cursor: not-allowed; }
+.bp-btn.disabled { opacity: 0.5; cursor: not-allowed; }
 .bp-urlbar { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 4px 12px; background: var(--bg-input); border-radius: 999px; margin: 0 4px; }
 .bp-urlbar .bp-lock { width: 11px; height: 11px; color: var(--success); flex-shrink: 0; }
 .bp-urlbar .bp-url { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -472,12 +472,14 @@ body {
 .gp-commit-input:focus { border-color: var(--accent-ring); }
 .gp-actions { display: flex; gap: 6px; }
 .gp-act { flex: 1; height: 26px; border-radius: var(--radius-sm); border: 0; cursor: pointer; font-size: var(--text-xs); padding: 0 8px; transition: all var(--duration-fast); }
-.gp-act.ghost { background: transparent; color: var(--neutral-mid); }
-.gp-act.ghost:hover:not(.disabled) { background: var(--surface-hover); color: var(--neutral-fg); }
-.gp-act.ghost.disabled { opacity: .3; cursor: not-allowed; }
+/* 对齐 SSOT variant：ghost = transparent + neutral-fg + hover surface-hover（=Button variant=ghost dense 化）*/
+.gp-act.ghost { background: transparent; color: var(--neutral-fg); }
+.gp-act.ghost:hover:not(.disabled) { background: var(--surface-hover); }
+.gp-act.ghost.disabled { opacity: 0.5; cursor: not-allowed; }
+/* primary = SSOT default（bg-accent text-white hover accent-hover）*/
 .gp-act.primary { background: var(--accent); color: #fff; }
 .gp-act.primary:hover:not(.disabled) { background: var(--accent-hover); }
-.gp-act.primary.disabled { opacity: .4; cursor: not-allowed; }
+.gp-act.primary.disabled { opacity: 0.5; cursor: not-allowed; }
 /* 非 git 仓库空态 */
 .gp-empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--neutral-dim); padding: 24px; text-align: center; }
 .gp-empty-state .gp-empty-ico { width: 28px; height: 28px; opacity: .4; }
@@ -631,6 +633,45 @@ body {
 .wf-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--neutral-dim); padding: 24px; text-align: center; }
 .wf-empty .wf-empty-ico { width: 28px; height: 28px; opacity: .4; }
 .wf-empty .wf-empty-text { font-size: var(--text-sm); }
+
+/* ================================================================
+   §按钮范式 SSOT（逐字对齐 v6-spec-settings-shell.html §6.1 button/index.ts）
+   ── drawer 内所有工具栏图标按钮 / 操作按钮遵循此范式：
+      variant = ghost（透明底 hover→bg-surface-hover）+ 圆角 --radius-sm(6px)
+      disabled 统一 opacity 0.5（SSOT）· focus-visible = ring-2 accent + offset
+   ================================================================ */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  white-space: nowrap; border-radius: var(--radius); font-size: 13px; font-weight: 500;
+  font-family: inherit; cursor: pointer; border: none;
+  height: 36px; padding: 0 16px;
+  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease);
+}
+.btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
+.btn:disabled { pointer-events: none; opacity: 0.5; }
+.btn.btn-default { background: var(--accent); color: #fff; }
+.btn.btn-default:hover { background: var(--accent-hover); }
+.btn.btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--neutral-fg); }
+.btn.btn-secondary:hover { background: var(--surface-hover); }
+.btn.btn-ghost { background: transparent; color: var(--neutral-fg); }
+.btn.btn-ghost:hover { background: var(--surface-hover); }
+.btn.btn-danger { background: transparent; color: var(--danger); }
+.btn.btn-danger:hover { background: var(--danger-soft); }
+.btn.btn-default-size { height: 36px; padding: 0 16px; }
+.btn.btn-dense { height: 32px; padding: 0 12px; font-size: 12px; }
+.btn.btn-sm { height: 36px; padding: 0 12px; }
+.btn.btn-icon { height: 40px; width: 40px; padding: 0; }
+.btn.btn-icon-sm { height: 28px; width: 28px; padding: 0; border-radius: var(--radius-sm); }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
+
+/* ── drawer 自有工具栏按钮对齐 SSOT ghost 图标范式 ──
+   （dp-btn / tv-btn / bp-btn / wf-act / gp-act：focus-visible ring-accent，与 SSOT focus 一致）*/
+.dp-btn:focus-visible, .tv-btn:focus-visible, .bp-btn:focus-visible, .wf-act:focus-visible, .gp-act:focus-visible {
+  outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4);
+}
 </style>
 </head>
 <body>

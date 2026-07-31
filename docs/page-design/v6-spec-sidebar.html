@@ -246,12 +246,15 @@ body {
 .si-time { flex-shrink: 0; padding-top: 4px; font-family: var(--font-mono); font-size: var(--text-2xs); line-height: 1.35; color: var(--neutral-dim); }
 /* hover 操作（v6：ghost icon 无框，去 border-box）*/
 .si-actions { position: absolute; bottom: 2px; right: 4px; display: flex; gap: 2px; }
-.si-act { width: 22px; height: 22px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-mid); cursor: pointer; }
+/* SessionItem 操作图标 = ghost 图标（hover→bg-surface-hover）；del = danger（hover→bg-danger-soft text-danger）*/
+.si-act { width: 22px; height: 22px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-mid); cursor: pointer; background: transparent; border: 0; transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease); }
 .si-act:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.si-act:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
 .si-act svg { width: 13px; height: 13px; }
-.si-act.del:hover { color: var(--danger); }
-.si-act.confirm { background: var(--danger); color: var(--neutral-fg); }   /* v6：确认态去 border 仅 bg-danger */
-.si-act.confirm:hover { background: var(--danger); color: var(--neutral-fg); }
+.si-act.del { color: var(--danger); }
+.si-act.del:hover { background: var(--danger-soft); color: var(--danger); }
+.si-act.confirm { background: var(--danger); color: #fff; }   /* 两段式确认态：实心 danger（affordance，非默认 variant）*/
+.si-act.confirm:hover { background: var(--danger); color: #fff; }
 
 @keyframes pulse-accent { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
 
@@ -292,11 +295,13 @@ body {
 /* v6：「分支 N」pill 降 text-neutral-dim 无底色 */
 .fg-pill { font-family: var(--font-mono); font-size: var(--text-2xs); /* 9px→10px 入 scale（原裸 9px，统一入 --text-2xs）*/ font-weight: 600; line-height: 1.4; padding: 1px 4px; border-radius: var(--radius-sm-old); color: var(--neutral-dim); }
 .fg-time { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fg-stop { flex-shrink: 0; width: 20px; height: 20px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-mid); cursor: pointer; }
-.fg-stop:hover { background: var(--surface-hover); color: var(--danger); }
+/* fork-group stop = danger 图标（hover→bg-danger-soft text-danger）· confirm = 实心 danger 两段式确认 */
+.fg-stop { flex-shrink: 0; width: 20px; height: 20px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-mid); cursor: pointer; background: transparent; border: 0; transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease); }
+.fg-stop:hover { background: var(--danger-soft); color: var(--danger); }
+.fg-stop:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
 .fg-stop svg { width: 11px; height: 11px; }
-.fg-stop.confirm { background: var(--danger); color: var(--neutral-fg); }   /* v6：去 border 仅 bg-danger */
-.fg-stop.confirm:hover { background: var(--danger); color: var(--neutral-fg); }
+.fg-stop.confirm { background: var(--danger); color: #fff; }
+.fg-stop.confirm:hover { background: var(--danger); color: #fff; }
 
 /* 旧 ForkGroup 对比（嵌套卡片反模式）*/
 .fg-old { margin: 2px 4px; border-radius: var(--radius); border: 1px solid var(--border); background: color-mix(in oklch, var(--accent) 5%, transparent); padding: 4px; }
@@ -397,10 +402,13 @@ body {
 .wfd-back svg { width: 15px; height: 15px; }
 .wfd-name { min-width: 0; flex: 1; font-size: var(--text-sm); font-weight: 600; line-height: 1.35; color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wfd-name .wfd-slug { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 400; color: var(--neutral-dim); margin-left: 6px; }
-.wfd-btn { flex-shrink: 0; height: 22px; padding: 0 8px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-xs); color: var(--neutral-dim); cursor: pointer; }
+/* workflow 操作按钮：ghost 语义（透明底 · hover→bg-surface-hover）+ danger 语义（hover→bg-danger-soft text-danger），对齐 SSOT */
+.wfd-btn { flex-shrink: 0; height: 22px; padding: 0 8px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-xs); color: var(--neutral-fg); cursor: pointer; background: transparent; border: 0; transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease); }
 .wfd-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.wfd-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
 .wfd-btn svg { width: 12px; height: 12px; }
-.wfd-btn.danger:hover { color: var(--danger); }
+.wfd-btn.danger { color: var(--danger); }
+.wfd-btn.danger:hover { background: var(--danger-soft); color: var(--danger); }
 .wfd-hr { height: 1px; background: var(--border); margin: 2px 4px; }
 .wfd-call { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--radius-sm); cursor: pointer; transition: background var(--duration-fast); }
 .wfd-call:hover { background: var(--surface-hover); }
@@ -425,6 +433,33 @@ body {
 /* doc foot */
 .doc-foot { margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; font-size: var(--text-xs); color: var(--neutral-dim); font-family: var(--font-mono); }
 .doc-foot a { color: var(--accent); text-decoration: none; }
+
+/* ================================================================
+   §按钮范式 SSOT（逐字对齐 v6-spec-settings-shell.html §6.1 button/index.ts）
+   ── sidebar 内按钮遵循：variant=default/secondary/ghost/danger · size=default/dense/sm/icon/icon-sm
+   ================================================================ */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  white-space: nowrap; border-radius: var(--radius); font-size: 13px; font-weight: 500;
+  font-family: inherit; cursor: pointer; border: none;
+  height: 36px; padding: 0 16px;
+  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease);
+}
+.btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
+.btn:disabled { pointer-events: none; opacity: 0.5; }
+.btn.btn-default { background: var(--accent); color: #fff; }
+.btn.btn-default:hover { background: var(--accent-hover); }
+.btn.btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--neutral-fg); }
+.btn.btn-secondary:hover { background: var(--surface-hover); }
+.btn.btn-ghost { background: transparent; color: var(--neutral-fg); }
+.btn.btn-ghost:hover { background: var(--surface-hover); }
+.btn.btn-danger { background: transparent; color: var(--danger); }
+.btn.btn-danger:hover { background: var(--danger-soft); }
+.btn.btn-default-size { height: 36px; padding: 0 16px; }
+.btn.btn-dense { height: 32px; padding: 0 12px; font-size: 12px; }
+.btn.btn-sm { height: 36px; padding: 0 12px; }
+.btn.btn-icon { height: 40px; width: 40px; padding: 0; }
+.btn.btn-icon-sm { height: 28px; width: 28px; padding: 0; border-radius: var(--radius-sm); }
 
 @media (prefers-reduced-motion: reduce) {
   .seg-badge.pulse, .si-dot.s-running, .fg-dot.running, .sa-spinner, .wf-spinner, .wfd-cdot.running { animation: none; }

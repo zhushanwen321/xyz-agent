@@ -8,10 +8,11 @@
 /* ================================================================
    v6 视觉规格稿 · Settings · Provider
    ──────────────────────────────────────────────────────────────
-   定位：Provider 页（列表态 → 展开详情 → 编辑表单 → 导入流程
+   定位：Provider 页（列表态 → 展开就地编辑 → 导入流程
         → 错误/空态 → 状态矩阵）的交互重新设计稿。
-   方法论：impeccable（信息架构审查 / 认知负载 / 交互流程 /
-           边缘情况 / 空态错误态 / 可访问性）。
+   方法论：impeccable distill（消除外层展开与内层 Modal 的功能重复）
+           + shape/harden（5 卡编辑能力收进展开区 / 完整交互态）。
+   关键决策：移除 ProviderEditModal —— 展开区是唯一编辑入口。
    组件：xyz-ui Button 4 变体（default/secondary/ghost/danger）+
          Input / SelectTrigger / Switch / Checkbox，不自创 CSS 类。
    token 唯一源：v6-spec-tokens.html :root（逐字一致）。
@@ -321,139 +322,157 @@ body {
 }
 .inline-error svg { width: 14px; height: 14px; flex-shrink: 0; }
 
-/* 展开详情：凭据只读网格 */
-.detail { border-top: 1px solid var(--border); }
-.cred-grid {
-  display: grid; grid-template-columns: auto 1fr; align-items: center;
-  gap: 8px 16px; padding: 12px 16px; font-size: var(--text-sm);
-}
-.cred-grid .ck-label { color: var(--neutral-mid); }
-.cred-grid .ck-val { font-family: var(--font-mono); color: var(--neutral-fg); }
-.cred-grid .ck-val.muted { color: var(--neutral-dim); }
+/* 展开详情：旧只读网格（凭据网格/模型表）已移除——展开区即编辑区，见 §3 子区 */
 
-/* 模型清单表 */
-.model-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); table-layout: fixed; }
-.model-table th { text-align: left; padding: 6px 12px 6px 0; font-size: var(--text-xs); color: var(--neutral-dim);
-  font-weight: 500; text-transform: uppercase; letter-spacing: .05em; border-top: 1px solid var(--border); }
-.model-table th:first-child { padding-left: 16px; }
-.model-table td { padding: 8px 12px 8px 0; border-top: 1px solid var(--border); vertical-align: middle; }
-.model-table td:first-child { padding-left: 16px; }
-.model-table .mt-id { font-family: var(--font-mono); color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.input-ico { width: 12px; height: 12px; }
-.input-ico.on { color: var(--info); }
-.input-ico.off { color: var(--neutral-dim); opacity: 0.3; }
-.mt-num { text-align: right; font-variant-numeric: tabular-nums; color: var(--neutral-dim); }
-.mt-ctr { text-align: center; }
-/* thinking pill（仅展示，点击开弹窗编辑） */
+/* thinking pill（就地可点的思考策略标签，点击/Enter 触发 mini-select） */
 .thinking-pill { display: inline-block; padding: 2px 6px; border-radius: var(--radius-sm);
-  font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 600; cursor: pointer; }
+  font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 600; cursor: pointer;
+  transition: filter var(--duration-fast); }
+.thinking-pill:hover { filter: brightness(1.15); }
+.thinking-pill:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
 .tp-all { background: var(--info-soft); color: var(--info); }
 .tp-hightop { background: var(--accent-soft); color: var(--accent); }
 .tp-toggle { background: var(--surface); color: var(--neutral-mid); }
 /* 设默认按钮 / 默认标记 */
 .set-default-btn { font-size: var(--text-2xs); color: var(--neutral-dim); padding: 2px 6px;
-  border-radius: var(--radius-sm); background: transparent; border: 1px solid var(--border); cursor: pointer; }
+  border-radius: var(--radius-sm); background: transparent; border: 1px solid var(--border); cursor: pointer;
+  transition: border-color var(--duration-fast), color var(--duration-fast); }
 .set-default-btn:hover { border-color: var(--info); color: var(--info); }
+.set-default-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
 .default-mark { background: var(--info-soft); color: var(--info); padding: 2px 6px;
   border-radius: var(--radius-sm); font-size: var(--text-2xs); }
 
 /* ================================================================
-   §3 编辑表单（弹窗内 2 列）
+   §3 展开就地编辑（取代 ProviderEditModal）
+   展开区分组：用 group-card 范式（bg-card · 去 border · 明度差分隔）
+   子区分组：凭据 / 模型（常驻） · 验证 / 高级（可折叠）
    ================================================================ */
-.edit-dialog {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius-lg); box-shadow: var(--shadow-2);
-  overflow: hidden; max-width: 880px; margin: 0 auto;
-  display: flex; flex-direction: column; max-height: 560px;
-}
-.edit-titlebar { display: flex; align-items: center; justify-content: space-between;
-  border-bottom: 1px solid var(--border); padding: 16px 20px; }
-.edit-title { font-size: 15px; font-weight: 600; color: var(--neutral-fg); }
-.edit-body { display: flex; min-height: 0; flex: 1; }
-.edit-left { width: 360px; flex-shrink: 0; display: flex; flex-direction: column; gap: 0;
-  border-right: 1px solid var(--border); padding: 20px; overflow-y: auto; }
-.edit-right { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden;
-  background: var(--bg-card); border-left: 1px solid var(--border); }
+.detail-edit { border-top: 1px solid var(--border); padding: 14px 16px 0; }
+.edit-subgrid { display: grid; grid-template-columns: 1fr; gap: 10px; }
 
-/* 字段 label（v6：去 uppercase tracking 降噪，normal-case 11px neutral-mid） */
+/* 子区分组卡（shell group-card 范式：bg-card + 去 border + 明度差） */
+.eg {
+  background: var(--bg-card); border-radius: var(--radius); padding: 12px 14px;
+}
+.eg-head {
+  display: flex; align-items: center; gap: 8px; padding: 2px 2px 10px;
+}
+.eg-head .eg-label { font-size: 12px; font-weight: 600; color: var(--neutral-fg); letter-spacing: .01em; }
+.eg-head .eg-hint  { font-size: 11px; color: var(--neutral-dim); }
+.eg-head .eg-spacer { flex: 1; }
+.eg-head .eg-count { font-size: 10px; font-family: var(--font-mono); color: var(--neutral-mid);
+  background: var(--surface); padding: 2px 7px; border-radius: 999px; }
+/* 折叠按钮 = Button ghost（22px，与 shell gh-collapse 一致） */
+.eg-collapse {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: var(--radius-sm);
+  color: var(--neutral-ico); cursor: pointer; background: transparent; border: none;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+.eg-collapse:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.eg-collapse:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
+.eg-chevron { width: 14px; height: 14px; transition: transform var(--duration) var(--ease); }
+.eg.collapsed .eg-chevron { transform: rotate(-90deg); }
+.eg-body { overflow: hidden; transition: max-height var(--duration) var(--ease); }
+.eg.collapsed .eg-body { max-height: 0; }
+/* 子区内 hairline 分隔（与 shell 一致） */
+.eg-hair { height: 1px; background: var(--border); margin: 8px 2px; }
+
+/* 字段 grid（2 列密集表单，窄屏自动堆叠） */
+.fld-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px 12px; }
+.fld { min-width: 0; }
+.fld-full { grid-column: 1 / -1; }
 .fld-label { display: block; margin-bottom: 6px; font-size: var(--text-xs); font-weight: 500; color: var(--neutral-mid); }
 .fld-hint { font-weight: 400; color: var(--neutral-dim); }
-/* 表单卡：5 卡分组每段独立凸起 card 表面（凭据/headers/额度/操作/模型） */
-.form-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
-.form-card + .form-card { margin-top: 14px; }
-.form-card-title { display: block; margin-bottom: 10px; font-size: var(--text-xs); font-weight: 600; color: var(--neutral-fg); text-transform: uppercase; letter-spacing: .04em; }
-.apikey-row { display: flex; align-items: center; gap: 8px; }
-.apikey-note { margin-top: 4px; font-size: var(--text-2xs); color: var(--neutral-dim); }
-/* authHeader 行 */
-.switch-row { display: flex; align-items: center; justify-content: space-between; }
-/* headers 行编辑 */
+
+/* API Key 行（input + 显隐 + 清除） */
+.apikey-row { display: flex; align-items: center; gap: 6px; }
+.apikey-row .ui-input { flex: 1; }
+.apikey-note { margin-top: 6px; font-size: var(--text-2xs); color: var(--neutral-dim); line-height: 1.5; }
+/* label + 控件同行（Auth Header / 额度查询 开关） */
+.switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.switch-row .fld-label { margin-bottom: 0; min-width: 0; }
+
+/* headers 行编辑（key-value 行 + 添加链接） */
 .header-row { display: flex; align-items: center; gap: 6px; }
 .header-rows { display: flex; flex-direction: column; gap: 6px; }
-.add-header-link { display: inline-flex; align-items: center; gap: 4px; margin-top: 6px;
-  font-size: var(--text-xs); color: var(--accent); cursor: pointer; }
-.add-header-link:hover { text-decoration: underline; }
+.add-kv-link { display: inline-flex; align-items: center; gap: 4px; margin-top: 8px;
+  font-size: var(--text-xs); color: var(--accent); cursor: pointer; border: none; background: transparent; padding: 0; }
+.add-kv-link:hover { text-decoration: underline; }
+.add-kv-link:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); border-radius: var(--radius-sm); }
 
-/* 操作按钮组（测试连接 / 自动发现） */
+/* 验证操作（测试连接 / 自动发现） + 结果反馈 */
 .ops { display: flex; flex-wrap: wrap; gap: 8px; }
-.test-result { display: flex; align-items: center; gap: 6px; font-size: var(--text-sm); }
+.test-result { display: flex; align-items: center; gap: 6px; font-size: var(--text-sm); margin-top: 10px; }
 .test-result.ok { color: var(--success); }
 .test-result.fail { color: var(--danger); }
-.spin { width: 14px; height: 14px; animation: spin 0.9s linear infinite; }
+.test-result.loading { color: var(--neutral-mid); }
+.spin { width: 13px; height: 13px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* sticky 保存栏 */
-.save-bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 8px;
-  border-top: 1px solid var(--border); padding: 14px 20px; background: var(--surface); }
-.save-bar .sb-error { flex: 1; font-size: var(--text-sm); color: var(--danger); }
-.save-bar .sb-spacer { flex: 1; }
-
-/* 模型区标题栏 */
-.model-head { display: flex; align-items: center; justify-content: space-between;
-  border-bottom: 1px solid var(--border); padding: 12px 20px; }
-.model-head-title { font-size: var(--text-base); font-weight: 600; color: var(--neutral-fg); }
-.add-model-link { font-size: var(--text-xs); color: var(--accent); cursor: pointer; }
-.add-model-link:hover { text-decoration: underline; }
-/* 手动添加模型表单（2 行） */
-.add-model-form { border-bottom: 1px solid var(--border); background: var(--surface); padding: 12px 20px; }
-.amf-row { display: flex; align-items: flex-end; gap: 12px; }
-.amf-row + .amf-row { margin-top: 12px; }
+/* 模型清单（展开区内）：手动添加表单 + 行列表 */
+.model-add-form { display: grid; grid-template-columns: 1fr auto auto auto; gap: 6px; align-items: center; margin-bottom: 10px; }
 .amf-label { display: block; margin-bottom: 4px; font-size: var(--text-2xs); color: var(--neutral-mid); }
-/* 输入类型分段 */
-.input-seg { display: flex; gap: 2px; border: 1px solid var(--border); background: var(--surface-2);
+/* 输入类型分段（SegmentedTab 范式：bg-input 容器 + active bg-elevated） */
+.input-seg { display: inline-flex; gap: 2px; border: 1px solid var(--border); background: var(--bg-input);
   border-radius: var(--radius); padding: 2px; height: 32px; }
 .input-seg button { display: flex; align-items: center; gap: 4px; height: 100%;
-  padding: 0 8px; font-size: var(--text-2xs); border-radius: var(--radius-sm); cursor: pointer; color: var(--neutral-mid); }
-.input-seg button.on { background: var(--accent-soft); color: var(--accent); }
+  padding: 0 8px; font-size: var(--text-2xs); border-radius: var(--radius-sm); cursor: pointer;
+  color: var(--neutral-mid); background: transparent; border: none; transition: background var(--duration-fast), color var(--duration-fast); }
+.input-seg button:hover { color: var(--neutral-fg); }
+.input-seg button.on { background: var(--bg-elevated); color: var(--neutral-fg); }
 .input-seg button svg { width: 12px; height: 12px; }
 
-/* 表头行（弹窗内模型列表） */
-.ml-head { display: flex; align-items: center; border-bottom: 1px solid var(--border);
-  background: var(--surface); padding: 8px 20px; font-size: var(--text-2xs); color: var(--neutral-dim); }
-.ml-head .h-model { flex: 1; }
-.ml-head .h-input { width: 56px; text-align: center; }
-.ml-head .h-ctx { width: 80px; text-align: center; }
-.ml-head .h-think { width: 96px; text-align: center; }
-.ml-head .h-act { width: 64px; }
-.ml-row { display: flex; align-items: center; padding: 8px 20px; font-size: var(--text-sm); border-bottom: 1px solid var(--border); }
-.ml-row .r-model { flex: 1; font-family: var(--font-mono); color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ml-row .r-input { width: 56px; display: flex; align-items: center; justify-content: center; gap: 4px; }
+/* 模型行（展开区内：可编辑 inline） */
+.ml-row { display: flex; align-items: center; gap: 8px; padding: 8px 2px; font-size: var(--text-sm); border-top: 1px solid var(--border); }
+.ml-row:first-of-type { border-top: 0; }
+.ml-row .r-model { flex: 1; min-width: 0; font-family: var(--font-mono); color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ml-row .r-input { display: flex; align-items: center; gap: 4px; }
 .input-toggle-btn { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
-  border-radius: var(--radius-sm); border: 1px solid var(--border); cursor: pointer; }
+  border-radius: var(--radius-sm); border: 1px solid var(--border); cursor: pointer; background: transparent; transition: background var(--duration-fast), border-color var(--duration-fast); }
+.input-toggle-btn:hover { background: var(--surface-hover); }
 .input-toggle-btn.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 .input-toggle-btn.off { color: var(--neutral-dim); opacity: 0.6; }
 .input-toggle-btn svg { width: 14px; height: 14px; }
-.ml-row .r-ctx { width: 80px; display: flex; justify-content: center; }
-.ml-row .r-think { width: 96px; display: flex; justify-content: center; }
-.ml-row .r-act { width: 64px; display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
+.ml-row .r-act { display: flex; align-items: center; gap: 2px; }
+/* mini select（与 ui-select 形态对齐，dense 28px） */
 .mini-select {
   height: 28px; border-radius: var(--radius-sm); border: 1px solid var(--border);
   background: var(--surface-2); padding: 0 8px; font-size: var(--text-xs); color: var(--neutral-fg);
-  display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px; cursor: pointer; transition: border-color var(--duration-fast);
 }
+.mini-select:hover { border-color: var(--border-strong); }
 .mini-select svg { width: 12px; height: 12px; color: var(--neutral-dim); opacity: 0.5; }
 
-/* compat 展开区 */
-.compat-row { border-top: 1px solid var(--border); background: var(--surface-2); padding: 12px 20px; font-size: var(--text-sm); color: var(--neutral-mid); }
+/* compat 就地展开区（取代弹窗内的 compat 编辑） */
+.compat-inline { margin: 4px 0 6px 18px; padding: 10px 12px; background: var(--surface-2); border-radius: var(--radius);
+  font-size: var(--text-xs); color: var(--neutral-mid); border-left: 1px solid var(--border); }
+.compat-inline .ci-title { color: var(--neutral-fg); font-weight: 500; font-size: var(--text-xs); margin-bottom: 6px; }
+.compat-inline .ci-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px 10px; }
+
+/* sticky 保存栏（展开区底部：取消 / 保存 + 左侧 dirty/error） */
+.save-bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 8px;
+  border-top: 1px solid var(--border); padding: 12px 16px; margin: 14px -16px 0;
+  background: var(--surface); }
+.save-bar .sb-left { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; }
+.save-bar .sb-error { font-size: var(--text-xs); color: var(--danger); }
+.save-bar .sb-spacer { flex: 1; }
+
+/* dirty badge（未保存角标 · system-prompt 范式） */
+.dirty-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: var(--text-2xs); font-family: var(--font-mono);
+  padding: 2px 8px; border-radius: 999px;
+  background: var(--warn-soft); color: var(--warn);
+  white-space: nowrap; line-height: 1.4; flex-shrink: 0;
+}
+.dirty-badge .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.dirty-badge.saving { background: var(--accent-soft); color: var(--accent); }
+
+@media (max-width: 640px) {
+  .fld-grid { grid-template-columns: 1fr; }
+  .model-add-form { grid-template-columns: 1fr 1fr; }
+}
 
 /* ================================================================
    §4 导入流程（Popover 触发 → 预览 → 冲突 → 导入）
@@ -577,20 +596,20 @@ body {
   <header class="doc-head">
     <div class="doc-eyebrow">v6 SPEC · settings · provider</div>
     <h1 class="doc-title">Settings · Provider 视觉稿（交互重新设计）</h1>
-    <p class="doc-sub">Provider 页完整用户旅程的规格稿：列表态（Switch 乐观更新 + 状态点 + 展开详情）→ 编辑表单（5 卡分组信息架构）→ 导入流程（触发→预览→冲突→导入）→ 错误/空态 → 状态矩阵。基于 impeccable 方法论做交互重新设计：信息架构审查、认知负载评估、边缘情况、可访问性。所有控件用 xyz-ui Button 4 变体 + Input/SelectTrigger/Switch/Checkbox 真实样式，禁止自创 .btn / 表单类。</p>
+    <p class="doc-sub">Provider 页完整用户旅程的规格稿：列表态（Switch 乐观更新 + 状态点）→ <b>展开就地编辑（取代 ProviderEditModal）</b>：原 5 卡（凭据 / 模型 / 验证 / 高级 Headers + 额度）全部收进展开区，按目的分组、次要项可折叠，底部 sticky 保存栏 + 未保存保护 → 导入流程（触发→预览→冲突→导入）→ 错误/空态 → 状态矩阵。基于 impeccable distill/shape/harden 做交互重新设计：消除外层展开与内层 Modal 的功能重复。所有控件用 xyz-ui Button 4 变体 + Input/SelectTrigger/Switch/Checkbox 真实样式，禁止自创 .btn / 表单类。</p>
     <div class="doc-meta">
-      <span><b>源码</b> ProviderPage.vue + ProviderEditModal.vue + ModelListSection.vue + ProviderImport{Menu,PreviewDialog}</span>
+      <span><b>源码</b> ProviderPage.vue + ModelListSection.vue + ProviderImport{Menu,PreviewDialog}（ProviderEditModal 已移除）</span>
       <span><b>组件</b> xyz-ui Button/Input/Select/Switch/Checkbox</span>
       <span><b>token</b> v6-spec-tokens.html（逐字一致）</span>
-      <span><b>列宽</b> 编辑表单取消 720 约束，密集表单用 2 列</span>
+      <span><b>决策</b> 移除内层 Modal，展开区即唯一编辑入口</span>
     </div>
   </header>
 
   <!-- ============ 目录 ============ -->
   <nav class="toc">
     <a href="#s1">§1 列表态</a>
-    <a href="#s2">§2 展开详情</a>
-    <a href="#s3">§3 编辑表单</a>
+    <a href="#s2">§2 展开就地编辑</a>
+    <a href="#s3">§3 未保存保护</a>
     <a href="#s4">§4 导入流程</a>
     <a href="#s5">§5 Switch 乐观更新</a>
     <a href="#s6">§6 错误态</a>
@@ -604,10 +623,13 @@ body {
        ================================================================ -->
   <section class="spec" id="s1">
     <div class="spec-head"><span class="spec-num">§1</span><h2 class="spec-title">列表态 · page-header 与实体行</h2></div>
-    <p class="spec-desc">Provider 列表的入口态。行布局从左到右：<code>状态点 → 启用 Switch → 名称(点击展开) → 默认供应商 pill → 模型数 → 编辑 → 删除</code>。<b>信息架构审查（impeccable）</b>：把「启用」开关提到名称左侧——它是该行最高频操作（一次点击即可开/关整条 provider），不应埋在展开详情里；名称承载「展开详情」次操作；编辑/删除退到行尾作为低频操作。Switch 用乐观更新（§5 详述），状态点三态传达连接健康度。</p>
+    <p class="spec-desc">Provider 列表的入口态。行布局从左到右：<code>状态点 → 启用 Switch → 名称(点击展开就地编辑) → 默认供应商 pill → 模型数 → dirty badge(编辑中) → 删除</code>。<b>distill 决策（impeccable）</b>：移除行尾「编辑」按钮——展开区即唯一编辑入口（原 ProviderEditModal 删除），「编辑」与「展开」不再重复。把「启用」开关提到名称左侧（该行最高频操作），名称承载「展开编辑」主操作，删除退到行尾作为低频危险操作。编辑中的行在名称右侧显示「未保存」dirty badge，并阻止收起/切换（§3）。Switch 用乐观更新（§5 详述），状态点三态传达连接健康度。</p>
     <div class="change-points">
-      <span class="cp cp-now"><b>现</b> page-header 仅 导入菜单 + 添加</span>
-      <span class="cp cp-v6"><b>v6</b> 常驻 inline-error 横幅（toggle/设默认/删除失败可见）</span>
+      <span class="cp cp-now"><b>现</b> 外层展开（只读）+ 内层 Modal（编辑）双层重复</span>
+      <span class="cp cp-v6"><b>distill</b> 移除 Modal · 展开即编辑</span>
+      <span class="cp cp-v6"><b>distill</b> 行尾去「编辑」按钮（与展开重复）</span>
+      <span class="cp cp-v6"><b>harden</b> dirty badge + 未保存保护（§3）</span>
+      <span class="cp cp-v6"><b>v6</b> 常驻 inline-error 横幅</span>
       <span class="cp cp-v6"><b>impeccable</b> Switch 提至名称左（高频操作前置）</span>
       <span class="cp cp-v6"><b>impeccable</b> 默认 pill 去 uppercase，降噪</span>
     </div>
@@ -615,7 +637,7 @@ body {
     <div class="render-frame">
       <!-- page-header -->
       <div class="page-header">
-        <!-- 导入菜单触发器（Popover，ghost 形态，§4 展开） -->
+        <!-- 导入菜单触发器（Popover，secondary 形态，§4 展开） -->
         <button class="popover-trigger" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           从其他 Agent 导入
@@ -633,7 +655,7 @@ body {
         <span>启用失败：网络断开，已暂停 · 重连</span>
       </div>
 
-      <!-- 行 1：connected + enabled + 默认 + 展开 -->
+      <!-- 行 1：connected + enabled + 默认 + 已展开 + dirty -->
       <div class="provider-card">
         <div class="row-head">
           <span class="status-dot dot-connected" title="已连接"></span>
@@ -645,19 +667,17 @@ body {
           </span>
           <span class="pill-default">默认供应商</span>
           <span class="models-count">3 模型</span>
-          <!-- 编辑 = Button variant=ghost size=icon-act（size-6 + Pencil） -->
-          <button class="btn btn-ghost btn-act" type="button" title="编辑供应商" aria-label="编辑 Anthropic">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
-          </button>
+          <!-- dirty badge：编辑未保存时显示，阻止收起（§3） -->
+          <span class="dirty-badge"><span class="dot"></span>未保存</span>
           <!-- 删除 = Button variant=ghost + hover:bg-danger-soft（hover 转 danger 色） -->
           <button class="btn btn-ghost btn-act danger-hover" type="button" title="删除供应商" aria-label="删除 Anthropic">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           </button>
         </div>
-        <!-- 展开详情见 §2 -->
+        <!-- 展开就地编辑见 §2 -->
       </div>
 
-      <!-- 行 2：error + disabled（未配置或连接失败） -->
+      <!-- 行 2：error + disabled（未配置或连接失败，折叠态） -->
       <div class="provider-card">
         <div class="row-head">
           <span class="status-dot dot-error" title="连接错误"></span>
@@ -667,9 +687,6 @@ body {
             <svg class="chev-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
           </span>
           <span class="models-count">5 模型</span>
-          <button class="btn btn-ghost btn-act" type="button" title="编辑供应商" aria-label="编辑 OpenAI Compatible">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
-          </button>
           <button class="btn btn-ghost btn-act danger-hover" type="button" title="删除供应商" aria-label="删除 OpenAI Compatible">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           </button>
@@ -686,9 +703,6 @@ body {
             <svg class="chev-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
           </span>
           <span class="models-count">2 模型</span>
-          <button class="btn btn-ghost btn-act" type="button" title="编辑供应商" aria-label="编辑 本地 Ollama" disabled>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
-          </button>
           <button class="btn btn-ghost btn-act danger-hover" type="button" title="删除供应商" aria-label="删除 本地 Ollama" disabled>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           </button>
@@ -697,217 +711,199 @@ body {
     </div>
 
     <div class="anno-grid">
+      <div class="anno"><b>distill · 去编辑按钮:</b><br><span class="old">行尾 编辑(开 Modal)</span> <span class="v6">→ 删除 · 展开即编辑（唯一入口）</span></div>
       <div class="anno"><b>状态点:</b><br>7px 圆点 · connected→success / error→danger / not_configured→neutral-dim</div>
       <div class="anno"><b>Switch:</b><br>xyz-ui Switch · track h-5(20px) w-9(36px) · thumb size-4(16px) · checked:bg-accent</div>
-      <div class="anno"><b>名称(展开):</b><br>cursor-pointer · 点击 toggleExpand · chevron rotate(90deg) 200ms</div>
+      <div class="anno"><b>名称(展开):</b><br>cursor-pointer · 点击 toggleExpand · chevron rotate(90deg) 200ms · 编辑中阻止收起（§3）</div>
       <div class="anno"><b>默认 pill v6:</b><br><span class="old">uppercase tracking</span> <span class="v6">→ normal-case · bg-accent-soft text-accent px-1.5 py-0.5 rounded-sm</span></div>
-      <div class="anno"><b>编辑/删除:</b><br>Button variant=ghost size-6(24px) · 编辑 hover→neutral-fg · 删除 hover→danger-soft+danger</div>
+      <div class="anno"><b>dirty badge:</b><br>isDirty 时名称右侧显示「未保存」· warn-soft · 收起/切其他行触发二次确认（§3）</div>
+      <div class="anno"><b>删除:</b><br>Button variant=ghost size-6(24px) · hover→danger-soft+danger · ConfirmDialog 二次确认</div>
       <div class="anno"><b>inline-error:</b><br>border+bg danger-soft · 14px AlertCircle · 错误含原因+下一步（impeccable 文案语气）</div>
       <div class="anno"><b>导入触发器:</b><br>PopoverTriggerButton · 导入流程进行中(importState≠idle)时 disabled</div>
-      <div class="anno"><b>添加按钮:</b><br>Button variant=default size=sm(h-9 px-3) + Plus icon(16px)</div>
-      <div class="anno"><b>a11y:</b><br>Switch aria-label=&lt;name&gt; 启用 · aria-checked · 乐观中 aria-busy=true</div>
+      <div class="anno"><b>添加按钮:</b><br>Button variant=default size=sm(h-9 px-3) + Plus icon(16px) · 新建行直接展开编辑态</div>
+      <div class="anno"><b>a11y:</b><br>Switch aria-label=&lt;name&gt; 启用 · aria-checked · 乐观中 aria-busy=true · 名称 aria-expanded</div>
       <div class="anno"><b>边缘情况:</b><br>禁用 defaultModel 归属 provider 时前端清空 defaultModel（runtime 广播幂等覆盖）</div>
     </div>
   </section>
 
   <!-- ================================================================
-       §2 展开详情 · 凭据只读网格 + 模型清单表
+       §2 展开就地编辑 · 4 子区分组（取代 ProviderEditModal）
        ================================================================ -->
   <section class="spec" id="s2">
-    <div class="spec-head"><span class="spec-num">§2</span><h2 class="spec-title">展开详情 · 凭据只读网格 + 模型清单</h2></div>
-    <p class="spec-desc">点击名称行展开。详情分两段：①<b>凭据只读网格</b>（API 类型 / Base URL / API Key 是否配置）——只读概览，修改走「编辑」弹窗，避免列表-编辑分层混乱（设计决策）；②<b>模型清单表</b>——模型 ID + 输入类型 icon + 上下文 + thinking pill + model 级启用 Switch + 设默认/默认标记 + 编辑入口。<b>交互设计</b>：thinking pill 点击直接开编辑弹窗（概览页不就地编辑复杂字段）；model 级 Switch 乐观更新（与 provider 级同范式）；设默认按 model 触发（provider 级默认从 model 级派生，无独立语义）。</p>
+    <div class="spec-head"><span class="spec-num">§2</span><h2 class="spec-title">展开就地编辑 · 4 子区分组（取代 ProviderEditModal）</h2></div>
+    <p class="spec-desc">点击名称行展开，展开区即<b>唯一编辑入口</b>（distill：移除 ProviderEditModal，消除外层展开/内层弹窗的功能重复）。<b>shape 决策（impeccable）</b>：原 5 卡内容按修改频率重组为 <b>4 子区</b>，用 shell 的 <code>group-card</code> 范式承载（<code>bg-card</code> + 去 border + 明度差分层，<b>不嵌套卡片</b>）：①<b>凭据</b>（常驻）— name/type/baseUrl/API Key/authHeader，2 列密集表单；②<b>模型</b>（常驻）— 手动添加 + 行内可编辑列表（输入 toggle / 思考 mini-select / 兼容性就地展开 / 启用 Switch / 设默认 / 移除）；③<b>验证</b>（常驻）— 测试连接 + 自动发现 + 结果反馈；④<b>高级</b>（默认折叠）— 自定义 Headers + Coding Plan 额度。展开区底部 sticky <b>保存栏</b>（取消 / 保存）+ <b>dirty badge</b>（行头未保存角标）。完整交互：表单验证、API Key 显隐+清除、连接测试反馈、未保存保护（§3）。</p>
+    <div class="change-points">
+      <span class="cp cp-now"><b>现</b> 外层只读展开 + 内层 Modal 编辑（重复）</span>
+      <span class="cp cp-v6"><b>distill</b> 移除 Modal · 展开即编辑</span>
+      <span class="cp cp-v6"><b>shape</b> 5 卡 → 4 子区（凭据/模型/验证/高级）</span>
+      <span class="cp cp-v6"><b>shape</b> 高级默认折叠（次要项降噪）</span>
+      <span class="cp cp-v6"><b>shape</b> 思考/兼容性就地展开（不再开弹窗）</span>
+      <span class="cp cp-v6"><b>harden</b> API Key 显隐+清除 · sticky 保存栏 · dirty badge</span>
+      <span class="cp cp-v6"><b>shape</b> 2 列密集表单（窄屏堆叠）</span>
+    </div>
 
     <div class="render-frame">
       <div class="provider-card">
+        <!-- 行头（与 §1 行 1 一致：dirty 态） -->
         <div class="row-head">
           <span class="status-dot dot-connected"></span>
-          <span class="ui-switch on" role="switch" aria-checked="true"><span class="thumb"></span></span>
+          <span class="ui-switch on" role="switch" aria-checked="true" aria-label="Anthropic 启用"><span class="thumb"></span></span>
           <span class="row-name expanded" role="button" tabindex="0" aria-expanded="true" aria-label="收起 Anthropic 详情">Anthropic <svg class="chev-expand" style="transform:rotate(90deg)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
           <span class="pill-default">默认供应商</span>
           <span class="models-count">3 模型</span>
-          <button class="btn btn-ghost btn-act" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
-          <button class="btn btn-ghost btn-act danger-hover" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+          <span class="dirty-badge"><span class="dot"></span>未保存</span>
+          <button class="btn btn-ghost btn-act danger-hover" type="button" title="删除供应商" aria-label="删除 Anthropic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
         </div>
-        <div class="detail">
-          <!-- 凭据只读网格 -->
-          <div class="cred-grid">
-            <span class="ck-label">API 类型</span>
-            <span class="ck-val">anthropic-messages</span>
-            <span class="ck-label">Base URL</span>
-            <span class="ck-val">https://api.anthropic.com</span>
-            <span class="ck-label">API Key</span>
-            <span class="ck-val" style="color:var(--success);">已配置</span>
+
+        <!-- ============ 展开就地编辑区 ============ -->
+        <div class="detail-edit">
+
+          <!-- 子区 ①：凭据（常驻展开） -->
+          <div class="eg">
+            <div class="eg-head">
+              <span class="eg-label">凭据</span>
+              <span class="eg-hint">建立连接的最小集</span>
+              <span class="eg-spacer"></span>
+            </div>
+            <div class="eg-body">
+              <div class="fld-grid">
+                <div class="fld">
+                  <label class="fld-label" for="p-name">名称</label>
+                  <input id="p-name" class="ui-input" type="text" placeholder="My Provider" value="Anthropic">
+                </div>
+                <div class="fld">
+                  <label class="fld-label" for="p-type">类型 <span class="fld-hint">决定 baseUrl 默认值与是否需要 API Key</span></label>
+                  <div class="ui-select" id="p-type" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false">
+                    <span>Anthropic Messages</span>
+                    <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                  </div>
+                </div>
+                <div class="fld fld-full">
+                  <label class="fld-label" for="p-url">Base URL</label>
+                  <input id="p-url" class="ui-input" type="text" placeholder="https://api.anthropic.com" value="https://api.anthropic.com">
+                </div>
+                <div class="fld fld-full">
+                  <label class="fld-label" for="p-key">API Key <span class="fld-hint">仅本地加密存储</span></label>
+                  <div class="apikey-row">
+                    <input id="p-key" class="ui-input" type="password" placeholder="留空保存则保持不变" value="sk-ant-xxxxxxxx">
+                    <!-- 显隐切换 = Button ghost size-8 -->
+                    <button class="btn btn-ghost" type="button" aria-label="显示密钥" aria-pressed="false" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);color:var(--neutral-dim);">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </button>
+                    <!-- 清除已配置 key = Button ghost + hover→danger（仅 apiKeySet 时显示） -->
+                    <button class="btn btn-ghost danger-hover" type="button" aria-label="清除密钥" title="清除密钥" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </button>
+                  </div>
+                  <p class="apikey-note">留空保存则保持不变；点垃圾桶清除已配置的 key</p>
+                </div>
+                <div class="fld fld-full switch-row">
+                  <span class="fld-label">Auth Header <span class="fld-hint">把 API Key 写入 Authorization 头</span></span>
+                  <span class="ui-switch on" role="switch" aria-checked="true" aria-label="Auth Header"><span class="thumb"></span></span>
+                </div>
+              </div>
+            </div>
           </div>
-          <!-- 模型清单表 -->
-          <table class="model-table">
-            <colgroup>
-              <col style="width:32%"><col style="width:10%"><col style="width:11%"><col style="width:14%"><col style="width:11%"><col style="width:15%"><col style="width:7%;min-width:40px">
-            </colgroup>
-            <thead>
-              <tr>
-                <th>模型</th><th style="text-align:center">输入</th><th style="text-align:right">上下文</th><th style="text-align:right">思考</th><th style="text-align:center">启用</th><th style="text-align:right">默认</th><th style="text-align:center">编辑</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td class="mt-id" title="claude-sonnet-4.5">claude-sonnet-4.5</td>
-                <td style="text-align:center">
-                  <svg class="input-ico on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                  <svg class="input-ico off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                </td>
-                <td class="mt-num">200K</td>
-                <td style="text-align:right"><span class="thinking-pill tp-all" role="button" tabindex="0" aria-label="编辑思考策略：全档">全档</span></td>
-                <td class="mt-ctr"><span class="ui-switch on" role="switch" aria-checked="true" aria-label="claude-sonnet-4.5 启用"><span class="thumb"></span></span></td>
-                <td style="text-align:right"><span class="default-mark">默认模型</span></td>
-                <td class="mt-ctr"><button class="btn btn-ghost btn-act" type="button" title="编辑此模型的完整配置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button></td>
-              </tr>
-              <tr>
-                <td class="mt-id" title="claude-opus-4">claude-opus-4</td>
-                <td style="text-align:center">
-                  <svg class="input-ico on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                  <svg class="input-ico off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                </td>
-                <td class="mt-num">200K</td>
-                <td style="text-align:right"><span class="thinking-pill tp-hightop" role="button" tabindex="0" aria-label="编辑思考策略：高/顶">高/顶</span></td>
-                <td class="mt-ctr"><span class="ui-switch on" role="switch" aria-checked="true" aria-label="claude-opus-4 启用"><span class="thumb"></span></span></td>
-                <td style="text-align:right"><button class="set-default-btn" type="button">设为默认</button></td>
-                <td class="mt-ctr"><button class="btn btn-ghost btn-act" type="button" title="编辑此模型的完整配置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button></td>
-              </tr>
-              <tr>
-                <td class="mt-id" title="claude-haiku-4">claude-haiku-4</td>
-                <td style="text-align:center">
-                  <svg class="input-ico off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                </td>
-                <td class="mt-num">200K</td>
-                <td style="text-align:right"><span class="thinking-pill tp-toggle" role="button" tabindex="0" aria-label="编辑思考策略：开关">开关</span></td>
-                <td class="mt-ctr"><span class="ui-switch" role="switch" aria-checked="false" aria-label="claude-haiku-4 启用"><span class="thumb"></span></span></td>
-                <td style="text-align:right"><button class="set-default-btn" type="button">设为默认</button></td>
-                <td class="mt-ctr"><button class="btn btn-ghost btn-act" type="button" title="编辑此模型的完整配置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
 
-    <div class="anno-grid">
-      <div class="anno"><b>凭据网格:</b><br>grid-cols auto_1fr · 只读 · API Key 显示「已配置/未配置」（不显示值）</div>
-      <div class="anno"><b>模型表 colgroup:</b><br>7 列固定宽 · 编辑列 min-width:40px 防 Pencil 溢出换行</div>
-      <div class="anno"><b>thinking pill 三态:</b><br>全档→info-soft · 高/顶→accent-soft · 开关→surface neutral-mid</div>
-      <div class="anno"><b>thinking 交互:</b><br>概览页只读 · 点击开 ProviderEditModal 修思考策略/compat（设计：避免就地编辑复杂字段）</div>
-      <div class="anno"><b>model Switch:</b><br>乐观改 store + config.setProvider 持久化 · 失败回滚（§5）</div>
-      <div class="anno"><b>设默认:</b><br>model 行触发 config.setDefaultModel · 状态经 onDefaults 订阅推回（无需本地乐观）</div>
-      <div class="anno"><b>默认派生:</b><br>provider 级「默认供应商」= defaultModel 复合串的 provider 段 · 无 provider 级设默认按钮</div>
-      <div class="anno"><b>输入 icon:</b><br>text/image 各 12px · 启用 info 色 · 禁用 neutral-dim opacity-0.3</div>
-    </div>
-  </section>
-
-  <!-- ================================================================
-       §3 编辑表单 · 5 卡分组信息架构（impeccable 认知负载评估）
-       ================================================================ -->
-  <section class="spec" id="s3">
-    <div class="spec-head"><span class="spec-num">§3</span><h2 class="spec-title">编辑表单 · 5 卡分组信息架构</h2></div>
-    <p class="spec-desc">ProviderEditModal 的交互重新设计。<b>impeccable 认知负载评估</b>：原表单把名称/类型/URL/Key/authHeader/headers/额度/操作/模型平铺在一个滚动区，字段无分组，用户需通读全部才能找到目标。v6 按「修改目的」重新分组成 5 卡：①<b>凭据卡</b>（名称/类型/Base URL/API Key/authHeader）——建立连接的最小集；②<b>自定义 Headers 卡</b>——可选的高级配置；③<b>额度查询卡</b>（Coding Plan）——独立子域；④<b>操作卡</b>（测试连接/自动发现）——凭据写完后的验证动作；⑤<b>模型清单卡</b>——右侧独立列。左侧 2 列网格承载密集表单（取消 720px 约束）。每卡做完整交互：表单验证、API Key 显隐+清除、连接测试反馈、sticky 保存栏、未保存改动二次确认。</p>
-    <div class="change-points">
-      <span class="cp cp-now"><b>现</b> 字段平铺单列，无分组</span>
-      <span class="cp cp-v6"><b>impeccable</b> 5 卡按修改目的分组</span>
-      <span class="cp cp-v6"><b>impeccable</b> 取消 720 约束，密集表单 2 列</span>
-      <span class="cp cp-v6"><b>impeccable</b> API Key 显隐+清除完整交互</span>
-      <span class="cp cp-v6"><b>impeccable</b> sticky 保存栏 + 未保存二次确认</span>
-      <span class="cp cp-v6"><b>impeccable</b> label 去 uppercase tracking 降噪</span>
-    </div>
-
-    <div class="stage-modal">
-      <div class="edit-dialog">
-        <!-- 标题栏 -->
-        <div class="edit-titlebar">
-          <span class="edit-title">编辑供应商</span>
-          <button class="btn btn-ghost" type="button" aria-label="关闭" style="width:28px;height:28px;padding:0;border-radius:var(--radius-sm);color:var(--neutral-mid);">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        </div>
-
-        <div class="edit-body">
-          <!-- 左：凭据配置（5 卡分组中的 4 卡）-->
-          <div class="edit-left">
-            <!-- 卡 1：凭据（名称/类型/Base URL/API Key/authHeader）—— 建立连接的最小集 -->
-            <div class="form-card">
-              <span class="form-card-title">凭据</span>
-              <div>
-              <div class="fld-label">名称</div>
-              <input class="ui-input" type="text" placeholder="My Provider" value="Anthropic">
+          <!-- 子区 ②：模型清单（常驻展开 · 行内可编辑） -->
+          <div class="eg">
+            <div class="eg-head">
+              <span class="eg-label">模型</span>
+              <span class="eg-count">3</span>
+              <span class="eg-spacer"></span>
             </div>
-            <div>
-              <div class="fld-label">类型 <span class="fld-hint">决定 baseUrl 默认值与是否需要 API Key</span></div>
-              <!-- SelectTrigger = xyz-ui，与 Input 对齐，右侧 ChevronDown -->
-              <div class="ui-select">
-                <span>Anthropic Messages</span>
-                <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-              </div>
-            </div>
-            <div>
-              <div class="fld-label">Base URL</div>
-              <input class="ui-input" type="text" placeholder="https://api.anthropic.com" value="https://api.anthropic.com">
-            </div>
-            <div>
-              <div class="fld-label">API Key <span class="fld-hint">仅本地加密存储</span></div>
-              <div class="apikey-row">
-                <input class="ui-input" type="password" placeholder="••••••••（已设置）" style="flex:1;" value="sk-ant-xxxxxxxx">
-                <!-- 显隐切换 = Button variant=ghost size-8(32px) -->
-                <button class="btn btn-ghost" type="button" aria-label="显示密钥" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);color:var(--neutral-dim);">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                </button>
-                <!-- 清除已配置 key = Button variant=ghost + hover→danger（仅 apiKeySet 时显示） -->
-                <button class="btn btn-ghost danger-hover" type="button" aria-label="清除密钥" title="清除密钥" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                </button>
-              </div>
-              <p class="apikey-note">留空保存则保持不变；点垃圾桶清除已配置的 key</p>
-            </div>
-            <div class="switch-row" style="margin-top:16px;">
-              <span class="fld-label" style="margin-bottom:0;">Auth Header <span class="fld-hint">把 API Key 写入 Authorization</span></span>
-              <span class="ui-switch on" role="switch" aria-checked="true" aria-label="Auth Header"><span class="thumb"></span></span>
-            </div>
-            </div>
-
-            <!-- 卡 2：自定义 Headers（可选高级配置，key-value 行编辑） -->
-            <div class="form-card">
-              <span class="form-card-title">自定义 Headers</span>
-              <div class="fld-label">自定义 Headers <span class="fld-hint">附加请求头</span></div>
-              <div class="header-rows">
-                <div class="header-row">
-                  <input class="ui-input ui-input-dense" type="text" placeholder="X-Custom-Header" value="X-Request-Source" style="flex:1;">
-                  <input class="ui-input ui-input-dense" type="text" placeholder="value" value="xyz-agent" style="flex:1;">
-                  <!-- 移除 header = Button variant=ghost + hover→danger -->
-                  <button class="btn btn-ghost danger-hover" type="button" aria-label="移除 header" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                  </button>
+            <div class="eg-body">
+              <!-- 手动添加模型表单（单行紧凑） -->
+              <div class="model-add-form">
+                <div>
+                  <span class="amf-label">模型名称</span>
+                  <input class="ui-input ui-input-dense" type="text" placeholder="gpt-4o" aria-label="新模型名称">
                 </div>
-                <div class="header-row">
-                  <input class="ui-input ui-input-dense" type="text" placeholder="X-Custom-Header" style="flex:1;">
-                  <input class="ui-input ui-input-dense" type="text" placeholder="value" style="flex:1;">
-                  <button class="btn btn-ghost danger-hover" type="button" aria-label="移除 header" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                  </button>
+                <div>
+                  <span class="amf-label">输入</span>
+                  <div class="input-seg" role="group" aria-label="输入类型">
+                    <button class="on" type="button" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> 文本</button>
+                    <button type="button" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg> 图片</button>
+                  </div>
+                </div>
+                <div>
+                  <span class="amf-label">上下文</span>
+                  <div class="mini-select"><span>200K</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></div>
+                </div>
+                <!-- 添加 = Button default dense -->
+                <button class="btn btn-default btn-dense" type="button" style="align-self:end;">添加</button>
+              </div>
+              <div class="eg-hair" style="margin: 4px 2px 8px;"></div>
+
+              <!-- 模型行 1（默认 + compat 就地展开） -->
+              <div class="ml-row">
+                <span class="r-model" title="claude-sonnet-4.5">claude-sonnet-4.5</span>
+                <span class="r-input">
+                  <button class="input-toggle-btn on" title="文本输入" aria-label="claude-sonnet-4.5 文本输入" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>
+                  <button class="input-toggle-btn off" title="图片输入" aria-label="claude-sonnet-4.5 图片输入" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></button>
+                </span>
+                <span class="mini-select" title="上下文窗口"><span>200K</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+                <span class="thinking-pill tp-all" role="button" tabindex="0" aria-label="claude-sonnet-4.5 思考策略：全档">全档</span>
+                <span class="ui-switch on" role="switch" aria-checked="true" aria-label="claude-sonnet-4.5 启用"><span class="thumb"></span></span>
+                <span class="default-mark">默认</span>
+                <span class="r-act">
+                  <button class="btn btn-ghost btn-act" type="button" aria-label="展开兼容性" title="兼容性" style="color:var(--accent);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg></button>
+                  <button class="btn btn-ghost btn-act danger-hover" type="button" aria-label="移除模型"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                </span>
+              </div>
+              <!-- compat 就地展开（取代弹窗内 compat 编辑） -->
+              <div class="compat-inline">
+                <div class="ci-title">兼容性参数</div>
+                <div class="ci-fields">
+                  <div class="mini-select"><span>max_tokens: 8192</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></div>
+                  <div class="mini-select"><span>temperature: 默认</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></div>
                 </div>
               </div>
-              <span class="add-header-link" role="button" tabindex="0" aria-label="添加 header">+ 添加 header</span>
-            </div>
 
-            <!-- 卡 3：额度查询（Coding Plan，独立子域，折叠摘要态） -->
-            <div class="form-card">
-              <span class="form-card-title">额度查询</span>
-              <div class="switch-row">
-                <span class="fld-label" style="margin-bottom:0;">Coding Plan 额度查询 <span class="fld-hint">查询 5h/周/月 配额使用</span></span>
-                <span class="ui-switch" role="switch" aria-checked="false" aria-label="启用额度查询"><span class="thumb"></span></span>
+              <!-- 模型行 2 -->
+              <div class="ml-row">
+                <span class="r-model" title="claude-opus-4">claude-opus-4</span>
+                <span class="r-input">
+                  <button class="input-toggle-btn on" aria-label="claude-opus-4 文本输入" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>
+                  <button class="input-toggle-btn off" aria-label="claude-opus-4 图片输入" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></button>
+                </span>
+                <span class="mini-select"><span>200K</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+                <span class="thinking-pill tp-hightop" role="button" tabindex="0" aria-label="claude-opus-4 思考策略：高/顶">高/顶</span>
+                <span class="ui-switch on" role="switch" aria-checked="true" aria-label="claude-opus-4 启用"><span class="thumb"></span></span>
+                <button class="set-default-btn" type="button">设为默认</button>
+                <span class="r-act">
+                  <button class="btn btn-ghost btn-act" type="button" aria-label="展开兼容性" style="color:var(--neutral-dim);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><circle cx="12" cy="12" r="3"/></svg></button>
+                  <button class="btn btn-ghost btn-act danger-hover" type="button" aria-label="移除模型"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                </span>
               </div>
-              <p class="apikey-note">关闭 · 选择对应 Coding Plan 类型后启用查询</p>
-            </div>
 
-            <!-- 卡 4：操作（测试连接 / 自动发现）—— 凭据写完后的验证 -->
-            <div class="form-card">
-              <span class="form-card-title">验证连接</span>
-              <div class="fld-label">验证连接</div>
+              <!-- 模型行 3 -->
+              <div class="ml-row">
+                <span class="r-model" title="claude-haiku-4">claude-haiku-4</span>
+                <span class="r-input">
+                  <button class="input-toggle-btn off" aria-label="claude-haiku-4 文本输入" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>
+                  <button class="input-toggle-btn off" aria-label="claude-haiku-4 图片输入" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></button>
+                </span>
+                <span class="mini-select"><span>200K</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+                <span class="thinking-pill tp-toggle" role="button" tabindex="0" aria-label="claude-haiku-4 思考策略：开关">开关</span>
+                <span class="ui-switch" role="switch" aria-checked="false" aria-label="claude-haiku-4 启用"><span class="thumb"></span></span>
+                <button class="set-default-btn" type="button">设为默认</button>
+                <span class="r-act">
+                  <button class="btn btn-ghost btn-act" type="button" aria-label="展开兼容性" style="color:var(--neutral-dim);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><circle cx="12" cy="12" r="3"/></svg></button>
+                  <button class="btn btn-ghost btn-act danger-hover" type="button" aria-label="移除模型"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 子区 ③：验证（常驻展开） -->
+          <div class="eg">
+            <div class="eg-head">
+              <span class="eg-label">验证</span>
+              <span class="eg-hint">凭据写完后的连接测试</span>
+              <span class="eg-spacer"></span>
+            </div>
+            <div class="eg-body">
               <div class="ops">
                 <button class="btn btn-secondary btn-dense" type="button">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
@@ -919,105 +915,124 @@ body {
                 </button>
               </div>
               <!-- 测试结果（成功态） -->
-              <div class="test-result ok" style="margin-top:10px;">
+              <div class="test-result ok">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
                 连接成功，找到 3 个模型
               </div>
             </div>
           </div>
 
-          <!-- 右：卡 5 模型清单（独立列，手动添加表单 + 列表） -->
-          <div class="edit-right">
-            <div class="model-head">
-              <span class="model-head-title">模型清单</span>
-              <span class="add-model-link">收起</span>
+          <!-- 子区 ④：高级（默认折叠 · Headers + 额度） -->
+          <div class="eg collapsed">
+            <div class="eg-head">
+              <span class="eg-label">高级</span>
+              <span class="eg-hint">自定义 Headers · 额度查询</span>
+              <span class="eg-spacer"></span>
+              <button class="eg-collapse" type="button" aria-label="展开高级" aria-expanded="false">
+                <svg class="eg-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
             </div>
-            <!-- 手动添加模型表单（两行：名称+输入类型 / 上下文+思考+添加） -->
-            <div class="add-model-form">
-              <div class="amf-row">
-                <div style="min-width:0;flex:1;">
-                  <span class="amf-label">模型名称</span>
-                  <input class="ui-input ui-input-dense" type="text" placeholder="gpt-4o">
+            <div class="eg-body">
+              <!-- 自定义 Headers（key-value 行编辑） -->
+              <div class="fld-label">自定义 Headers <span class="fld-hint">附加请求头</span></div>
+              <div class="header-rows">
+                <div class="header-row">
+                  <input class="ui-input ui-input-dense" type="text" placeholder="X-Custom-Header" value="X-Request-Source" style="flex:1;" aria-label="header 名">
+                  <input class="ui-input ui-input-dense" type="text" placeholder="value" value="xyz-agent" style="flex:1;" aria-label="header 值">
+                  <button class="btn btn-ghost danger-hover" type="button" aria-label="移除 header" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                 </div>
-                <div>
-                  <span class="amf-label">输入类型</span>
-                  <div class="input-seg">
-                    <button class="on" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> 文本</button>
-                    <button type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg> 图片</button>
-                  </div>
+                <div class="header-row">
+                  <input class="ui-input ui-input-dense" type="text" placeholder="X-Custom-Header" style="flex:1;" aria-label="header 名">
+                  <input class="ui-input ui-input-dense" type="text" placeholder="value" style="flex:1;" aria-label="header 值">
+                  <button class="btn btn-ghost danger-hover" type="button" aria-label="移除 header" style="width:32px;height:32px;padding:0;border-radius:var(--radius-sm);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                 </div>
               </div>
-              <div class="amf-row">
-                <div>
-                  <span class="amf-label">上下文</span>
-                  <div class="ui-select" style="height:32px;width:110px;font-size:var(--text-xs);">
-                    <span>200K</span>
-                    <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                  </div>
-                </div>
-                <div>
-                  <span class="amf-label">思考</span>
-                  <div class="ui-select" style="height:32px;width:130px;font-size:var(--text-xs);">
-                    <span>全档</span>
-                    <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                  </div>
-                </div>
-                <button class="btn btn-default btn-dense" type="button" style="height:32px;">添加</button>
+              <button class="add-kv-link" type="button">+ 添加 header</button>
+              <div class="eg-hair"></div>
+              <!-- Coding Plan 额度查询 -->
+              <div class="switch-row">
+                <span class="fld-label">Coding Plan 额度查询 <span class="fld-hint">查询 5h/周/月 配额使用</span></span>
+                <span class="ui-switch" role="switch" aria-checked="false" aria-label="启用额度查询"><span class="thumb"></span></span>
               </div>
-            </div>
-
-            <!-- 模型表头 -->
-            <div class="ml-head">
-              <span class="h-model">模型</span>
-              <span class="h-input">输入</span>
-              <span class="h-ctx">上下文</span>
-              <span class="h-think">思考</span>
-              <span class="h-act"></span>
-            </div>
-            <!-- 模型行 1（默认 + compat 展开） -->
-            <div class="ml-row">
-              <span class="r-model">claude-sonnet-4.5</span>
-              <span class="r-input">
-                <button class="input-toggle-btn on" title="文本输入"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>
-                <button class="input-toggle-btn off" title="图片输入"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></button>
-              </span>
-              <span class="r-ctx"><span class="mini-select">200K <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></span>
-              <span class="r-think"><span class="mini-select">全档 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></span>
-              <span class="r-act">
-                <button class="btn btn-ghost" type="button" aria-label="兼容性" title="兼容性" style="width:32px;height:20px;padding:0;border-radius:var(--radius-sm);color:var(--accent);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
-                <button class="btn btn-ghost danger-hover" type="button" aria-label="移除模型" style="width:32px;height:20px;padding:0;border-radius:var(--radius-sm);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-              </span>
-            </div>
-            <!-- compat 展开区 -->
-            <div class="compat-row">compat 兼容性编辑器（展开时显示）：按 api 类型过滤的字段集 + 预设按钮</div>
-            <!-- 模型行 2 -->
-            <div class="ml-row">
-              <span class="r-model">claude-opus-4</span>
-              <span class="r-input">
-                <button class="input-toggle-btn on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>
-                <button class="input-toggle-btn off"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></button>
-              </span>
-              <span class="r-ctx"><span class="mini-select">200K <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></span>
-              <span class="r-think"><span class="mini-select">高/顶 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></span>
-              <span class="r-act">
-                <button class="btn btn-ghost" type="button" aria-label="兼容性" style="width:32px;height:20px;padding:0;border-radius:var(--radius-sm);color:var(--neutral-dim);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><circle cx="12" cy="12" r="3"/></svg></button>
-                <button class="btn btn-ghost danger-hover" type="button" aria-label="移除模型" style="width:32px;height:20px;padding:0;border-radius:var(--radius-sm);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-              </span>
+              <p class="apikey-note">关闭 · 选择对应 Coding Plan 类型后启用查询</p>
             </div>
           </div>
-        </div>
 
-        <!-- sticky 保存栏（impeccable：常驻可见，错误/取消/保存） -->
-        <div class="save-bar">
-          <span class="sb-error">模型名称不能为空</span>
-          <button class="btn btn-ghost" type="button" data-testid="provider-cancel-btn">取消</button>
-          <button class="btn btn-default" type="button" data-testid="provider-save-btn">保存</button>
+          <!-- sticky 保存栏（展开区底部 · 取消 / 保存 + dirty/error） -->
+          <div class="save-bar">
+            <div class="sb-left">
+              <span class="dirty-badge"><span class="dot"></span>未保存</span>
+              <span class="sb-error" style="display:none;">模型名称不能为空</span>
+            </div>
+            <span class="sb-spacer"></span>
+            <button class="btn btn-ghost" type="button" data-testid="provider-cancel-btn">取消</button>
+            <button class="btn btn-default" type="button" data-testid="provider-save-btn">保存</button>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- 未保存确认 ConfirmDialog（isDirty 时点取消/X/Esc 触发） -->
-    <h3 class="h3" style="margin-top:24px;">未保存确认 · ConfirmDialog（dirty → 确认离开）</h3>
+    <!-- 保存中态（saving：保存按钮 disabled + 文案改「保存中…」+ badge 保存中） -->
+    <h3 class="h3" style="margin-top:20px;">保存中态 · saving</h3>
+    <div class="render-frame">
+      <div class="save-bar" style="background:var(--bg-card);margin:0;">
+        <div class="sb-left">
+          <span class="dirty-badge saving"><span class="spin"></span>保存中</span>
+        </div>
+        <span class="sb-spacer"></span>
+        <button class="btn btn-ghost" type="button" disabled>取消</button>
+        <button class="btn btn-default" type="button" disabled><span class="spin"></span>保存中…</button>
+      </div>
+    </div>
+
+    <!-- 表单验证错误态（actionError 进保存栏 · Input error border） -->
+    <h3 class="h3">表单验证错误 · 模型名称空</h3>
+    <div class="render-frame">
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <input class="ui-input ui-input-dense err" type="text" placeholder="gpt-4o" value="" aria-invalid="true" aria-describedby="m-err" style="max-width:240px;">
+        <div class="save-bar" style="background:var(--bg-card);margin:0;">
+          <div class="sb-left"><span id="m-err" class="sb-error">模型名称不能为空</span></div>
+          <span class="sb-spacer"></span>
+          <button class="btn btn-ghost" type="button">取消</button>
+          <button class="btn btn-default" type="button" disabled>保存</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="anno-grid">
+      <div class="anno"><b>distill · 去重:</b><br><span class="old">外层只读展开 + 内层 Modal 编辑</span> <span class="v6">→ 展开即编辑（唯一入口）</span></div>
+      <div class="anno"><b>shape · 4 子区:</b><br><span class="old">5 卡平铺</span> <span class="v6">→ 凭据/模型/验证(常驻) + 高级(默认折叠)</span></div>
+      <div class="anno"><b>不嵌套卡片:</b><br>子区用 group-card 范式（bg-card 去 border · 明度差）· 不在 detail-edit 内再叠 card+border</div>
+      <div class="anno"><b>认知负载:</b><br>常驻 3 区聚焦高频 · 高级折叠降噪 · 用户按目的直奔子区</div>
+      <div class="anno"><b>就地编辑:</b><br><span class="old">思考/兼容性点击开弹窗</span> <span class="v6">→ mini-select 就地改 · compat 行内展开</span></div>
+      <div class="anno"><b>API Key 交互:</b><br>password↔text（Eye/EyeOff）+ 已配置显示清除（Trash2）· aria-pressed 状态</div>
+      <div class="anno"><b>Key 清除语义:</b><br>置哨兵 '__CLEAR__' · save 发空串清空 · 留空保存=不改</div>
+      <div class="anno"><b>表单验证:</b><br>模型名称空 → actionError 进保存栏 · Input error 态 border-danger · 保存 disabled</div>
+      <div class="anno"><b>连接测试:</b><br>testing→spinner · ok→「找到 N 个模型」success · fail→「检查 API Key」danger（不收起）</div>
+      <div class="anno"><b>自动发现:</b><br>discovering→spinner · 结果填入模型列表 · 与测试互斥 disabled</div>
+      <div class="anno"><b>sticky 保存栏:</b><br>底部 border-t · 左 dirty/error · 取消=ghost · 保存=default · saving→disabled+「保存中…」</div>
+      <div class="anno"><b>dirty badge:</b><br>行头 + 保存栏双重提示「未保存」· warn-soft · save 成功后消失</div>
+      <div class="anno"><b>label v6:</b><br><span class="old">uppercase tracking-wider</span> <span class="v6">→ normal-case 11px neutral-mid（降噪）</span></div>
+      <div class="anno"><b>headers CRUD:</b><br>key-value 行 + 添加链接(secondary 色调) · 移除 ghost→hover danger</div>
+      <div class="anno"><b>compat 就地:</b><br>模型行齿轮 toggle · 字段集按 api 类型过滤 · 预设按钮</div>
+      <div class="anno"><b>a11y:</b><br>name/eg-collapse aria-expanded · toggle/eye aria-pressed · Switch/pill aria-label · Input aria-invalid+describedby</div>
+      <div class="anno"><b>响应式:</b><br>2 列 → ≤640px 堆叠 · model-add-form 同</div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       §3 未保存保护 · dirty 离开二次确认（ConfirmDialog）
+       ================================================================ -->
+  <section class="spec" id="s3">
+    <div class="spec-head"><span class="spec-num">§3</span><h2 class="spec-title">未保存保护 · dirty 离开二次确认</h2></div>
+    <p class="spec-desc">展开区编辑期间（isDirty=true）的安全网（impeccable harden）。三层保护：①<b>可见</b>——行头 + 保存栏双 dirty badge；②<b>拦截</b>——dirty 时点行名收起 / 切其他行 / 点删除 / 导航到其他设置页 → 弹 ConfirmDialog 二次确认；③<b>兜底</b>——窗口 beforeunload 拦截关窗/刷新（编辑期间）。ConfirmDialog 是 AlertDialog（确认/警告类弹窗，<b>非编辑 Modal</b>，保留），焦点初始在「继续编辑」（安全选择），Esc = 继续编辑。</p>
+    <div class="change-points">
+      <span class="cp cp-v6"><b>harden</b> dirty badge 双重提示（行头 + 保存栏）</span>
+      <span class="cp cp-v6"><b>harden</b> 收起/切行/删除/导航 dirty 拦截</span>
+      <span class="cp cp-v6"><b>harden</b> beforeunload 兜底</span>
+      <span class="cp cp-v6"><b>a11y</b> AlertDialog · 焦点在「继续编辑」</span>
+    </div>
+
     <div class="render-frame">
       <div class="stage-modal" style="padding:32px 16px;">
         <!-- AlertDialog：标题 + 描述 + 二按钮，焦点初始在「继续编辑」（default，安全选择） -->
@@ -1028,7 +1043,7 @@ body {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
           </div>
           <div class="confirm-title">放弃未保存的改动？</div>
-          <div class="confirm-desc">你正在编辑的供应商有未保存的改动，离开将丢弃这些改动。此操作不可撤销。</div>
+          <div class="confirm-desc">你正在编辑的供应商有未保存的改动，收起将丢弃这些改动。此操作不可撤销。</div>
           <div class="confirm-foot">
             <button class="btn btn-default" type="button" autofocus>继续编辑</button>
             <button class="btn btn-danger" type="button" data-testid="discard-unsaved-btn">放弃改动</button>
@@ -1038,20 +1053,14 @@ body {
     </div>
 
     <div class="anno-grid">
-      <div class="anno"><b>信息架构 v6:</b><br><span class="old">字段平铺单列</span> <span class="v6">→ 5 卡按修改目的分组（凭据/headers/额度/操作/模型）</span></div>
-      <div class="anno"><b>认知负载:</b><br>分组后每卡 3-5 字段 · 用户按目的直奔目标卡 · 不必通读全部</div>
-      <div class="anno"><b>列宽 v6:</b><br><span class="old">受 720px 约束</span> <span class="v6">→ 取消约束，左侧 360px 凭据列 + 右侧 flex 模型列</span></div>
-      <div class="anno"><b>API Key 交互:</b><br>password↔text 切换（Eye/EyeOff）+ 已配置时显示清除按钮（Trash2）</div>
-      <div class="anno"><b>Key 清除语义:</b><br>置哨兵 '__CLEAR__' · save 时发空串清空 · 留空保存=不改</div>
-      <div class="anno"><b>表单验证:</b><br>模型名称为空→addModel 抛错填 actionError · Input error 态 border-danger</div>
-      <div class="anno"><b>连接测试:</b><br>testing→spinner · ok→「找到 N 个模型」success · fail→「检查 API Key」danger</div>
-      <div class="anno"><b>自动发现:</b><br>discovering→spinner · 结果填 discoverResult · 与测试互斥 disabled</div>
-      <div class="anno"><b>sticky 保存栏:</b><br>border-t · 错误左(可换 spacer) · 取消=ghost · 保存=default · saving→disabled+saving 文案</div>
-      <div class="anno"><b>未保存确认:</b><br>isDirty 时点取消/X/Esc → ConfirmDialog（alertdialog）「未保存改动将丢失」二次确认 · 焦点初始在「继续编辑」（安全选择）</div>
-      <div class="anno"><b>label v6:</b><br><span class="old">uppercase tracking-wider 11px</span> <span class="v6">→ normal-case 11px neutral-mid（降噪）</span></div>
-      <div class="anno"><b>headers CRUD:</b><br>key-value 行 + 添加/删除 · 移除按钮 ghost→hover danger</div>
-      <div class="anno"><b>compat 编辑:</b><br>模型行展开 toggle · 字段集按 api 类型过滤 · 预设按钮</div>
-      <div class="anno"><b>a11y:</b><br>DialogTitle/Description sr-only · 显隐/清除/移除 aria-label · Switch aria-label</div>
+      <div class="anno"><b>可见:</b><br>行头 + 保存栏双 dirty badge（warn-soft）· save 成功后同步消失</div>
+      <div class="anno"><b>拦截触发:</b><br>dirty 时点行名(收起) / 切其他行展开 / 行尾删除 / 设置 nav 切页</div>
+      <div class="anno"><b>不拦截:</b><br>点保存/取消自身 · 测试连接/自动发现（这些不离开编辑区）</div>
+      <div class="anno"><b>beforeunload:</b><br>编辑期间 window beforeunload 拦截关窗/刷新（浏览器原生提示）</div>
+      <div class="anno"><b>AlertDialog:</b><br>role=alertdialog aria-modal · 确认/警告类弹窗（非编辑 Modal · 保留）</div>
+      <div class="anno"><b>焦点策略:</b><br>初始「继续编辑」（default · 安全）· Esc=继续编辑 · tab 顺序：继续→放弃</div>
+      <div class="anno"><b>dirty 计算:</b><br>当前编辑态 vs 已保存快照 deep diff · 含字段/models/headers 全量</div>
+      <div class="anno"><b>快照刷新:</b><br>展开加载 + save 成功后同步刷新（避免 badge 与状态不同步）</div>
     </div>
   </section>
 
@@ -1290,7 +1299,7 @@ body {
       <div class="anno"><b>defaultModel 兜底:</b><br>禁用/删除 defaultModel 归属 provider → 前端清空（runtime 也会广播修正）</div>
       <div class="anno"><b>model 级差异:</b><br>持久化传完整 models 数组（runtime 整体替换）· 从 store 读新鲜 models（闭包 p 已过期）</div>
       <div class="anno"><b>状态反馈三态:</b><br>on(accent) / pending(accent+thumb脉冲) / rollback(danger 外环)</div>
-      <div class="anno"><b>错误反馈:</b><br>常驻 inline-error 横幅（toggle/设默认/删除失败均可见，不只在弹窗内）</div>
+      <div class="anno"><b>错误反馈:</b><br>常驻 inline-error 横幅（toggle/设默认/删除失败均可见，不只在展开区内）</div>
       <div class="anno"><b>reduced-motion:</b><br>pending 脉冲在 prefers-reduced-motion 下退化为静态</div>
     </div>
   </section>
@@ -1332,7 +1341,7 @@ body {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             连接失败，请检查 API Key
           </div>
-          <div style="margin-top:6px;font-size:var(--text-xs);color:var(--neutral-mid);">testResult='fail' · 表单操作区下方 · 不关闭弹窗</div>
+          <div style="margin-top:6px;font-size:var(--text-xs);color:var(--neutral-mid);">testResult='fail' · 验证子区下方 · 不收起展开区（供重试）</div>
         </div>
       </div>
       <!-- 导入失败（内联，对话框保持开） -->
@@ -1348,11 +1357,11 @@ body {
     </div>
 
     <div class="anno-grid">
-      <div class="anno"><b>动作错误:</b><br>常驻 inline-error · 不只在弹窗 slot（弹窗关后仍可见）· 含原因+下一步</div>
-      <div class="anno"><b>表单验证:</b><br>actionError 进 sticky 保存栏 · Input error 态 border-danger</div>
-      <div class="anno"><b>连接测试:</b><br>testResult='fail' · 「检查 API Key」· 不关弹窗供重试</div>
+      <div class="anno"><b>动作错误:</b><br>常驻 inline-error · 展开区收起后仍可见（页级横幅）· 含原因+下一步</div>
+      <div class="anno"><b>表单验证:</b><br>actionError 进 sticky 保存栏 · Input error 态 border-danger · 保存 disabled</div>
+      <div class="anno"><b>连接测试:</b><br>testResult='fail' · 「检查 API Key」· 验证子区内联 · 不收起展开区供重试</div>
       <div class="anno"><b>导入失败:</b><br>预览对话框内联 error · 对话框保持开 · 允许重试</div>
-      <div class="anno"><b>删除确认错误:</b><br>actionError 进 ConfirmDialog slot · 弹窗保持开供重试</div>
+      <div class="anno"><b>删除确认错误:</b><br>actionError 进 ConfirmDialog（删除确认弹窗）· 弹窗保持开供重试</div>
       <div class="anno"><b>文案语气:</b><br>动词+原因+下一步（impeccable）· 非错码</div>
     </div>
   </section>
@@ -1514,38 +1523,38 @@ body {
        ================================================================ -->
   <section class="spec" id="s9">
     <div class="spec-head"><span class="spec-num">§9</span><h2 class="spec-title">用户旅程 · 完整端到端流程</h2></div>
-    <p class="spec-desc">Provider 页两条主旅程（手动添加 / 导入）与一条管理旅程（编辑/启用）的端到端交互流程，标注关键决策点与成功/失败分支。供验收时按旅程走查。</p>
+    <p class="spec-desc">Provider 页两条主旅程（手动添加 / 导入）与一条管理旅程（展开编辑/启用/删除）的端到端交互流程，标注关键决策点与成功/失败分支。供验收时按旅程走查。<b>无 Modal</b>：添加即新建一行并直接展开编辑，编辑即展开行就地改。</p>
 
     <h3 class="h3" style="margin-top:8px;">旅程 A · 手动添加 Provider</h3>
     <div class="journey">
       <div class="j-step">
         <span class="j-step-num">A1</span>
         <div class="j-step-title">空态/列表 → 添加</div>
-        <div class="j-step-desc">点「添加供应商」（Button default）→ 开 ProviderEditModal（provider=null）</div>
+        <div class="j-step-desc">点「添加供应商」（Button default）→ 新建空白行并<b>直接展开编辑态</b>（不弹窗）</div>
       </div>
       <div class="j-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></div>
       <div class="j-step">
         <span class="j-step-num">A2</span>
-        <div class="j-step-title">填凭据（卡1）</div>
-        <div class="j-step-desc">名称/类型/Base URL/API Key + authHeader · API Key 显隐+清除</div>
+        <div class="j-step-title">填凭据（子区①）</div>
+        <div class="j-step-desc">名称/类型/Base URL/API Key + authHeader · API Key 显隐+清除 · dirty badge 出现</div>
       </div>
       <div class="j-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></div>
       <div class="j-step j-decision">
         <span class="j-step-num">A3</span>
         <div class="j-step-title">验证连接？</div>
-        <div class="j-step-desc">「测试连接」可选 · ok→「找到 N 模型」/ fail→「检查 Key」</div>
+        <div class="j-step-desc">子区③「测试连接」可选 · ok→「找到 N 模型」/ fail→「检查 Key」（不收起）</div>
       </div>
       <div class="j-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></div>
       <div class="j-step">
         <span class="j-step-num">A4</span>
-        <div class="j-step-title">加模型（卡5）</div>
+        <div class="j-step-title">加模型（子区②）</div>
         <div class="j-step-desc">手动添加（名称/输入/上下文/思考）或「自动发现」· 名称空→验证错</div>
       </div>
       <div class="j-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></div>
       <div class="j-step j-success">
         <span class="j-step-num">A5</span>
         <div class="j-step-title">保存</div>
-        <div class="j-step-desc">点保存（saving→disabled）→ 成功 toast「已保存」+ 关弹窗 · 状态订阅推回</div>
+        <div class="j-step-desc">底部保存栏点保存（saving→disabled）→ 成功 toast「已保存」+ dirty badge 消失 · 行保持展开</div>
       </div>
     </div>
 
@@ -1582,30 +1591,30 @@ body {
       </div>
     </div>
 
-    <h3 class="h3">旅程 C · 日常管理（启用/展开/编辑/删除）</h3>
+    <h3 class="h3">旅程 C · 日常管理（启用/展开编辑/删除）</h3>
     <div class="journey">
       <div class="j-step">
         <span class="j-step-num">C1</span>
         <div class="j-step-title">切换启用</div>
-        <div class="j-step-desc">行内 Switch 点击 → 乐观更新(store) + 持久化 · 失败回滚 + inline-error</div>
+        <div class="j-step-desc">行内 Switch 点击 → 乐观更新(store) + 持久化 · 失败回滚 + inline-error（无需展开）</div>
       </div>
       <div class="j-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></div>
       <div class="j-step">
         <span class="j-step-num">C2</span>
-        <div class="j-step-title">展开详情</div>
-        <div class="j-step-desc">点名称 → 凭据只读网格 + 模型表 · model Switch/设默认/thinking→编辑</div>
+        <div class="j-step-title">展开编辑</div>
+        <div class="j-step-desc">点名称 → 展开就地编辑（4 子区）· 任意字段改动 → dirty badge + 离开拦截（§3）</div>
       </div>
       <div class="j-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></div>
       <div class="j-step">
         <span class="j-step-num">C3</span>
-        <div class="j-step-title">编辑</div>
-        <div class="j-step-desc">行尾编辑按钮 → ProviderEditModal(provider=obj) · 改动→未保存二次确认</div>
+        <div class="j-step-title">行内微调</div>
+        <div class="j-step-desc">model Switch（乐观）/ 设默认 / 思考 mini-select / 兼容性就地展开 · 即改即 dirty</div>
       </div>
       <div class="j-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></div>
       <div class="j-step j-decision">
         <span class="j-step-num">C4</span>
         <div class="j-step-title">删除</div>
-        <div class="j-step-desc">ConfirmDialog「删除 X？将移除其下所有模型，不可撤销」→ 成功移除 / 失败保留弹窗+error</div>
+        <div class="j-step-desc">行尾删除 → ConfirmDialog「删除 X？将移除其下所有模型，不可撤销」→ 成功移除 / 失败保留弹窗+error</div>
       </div>
     </div>
 
@@ -1613,15 +1622,15 @@ body {
       <div class="anno"><b>旅程覆盖:</b><br>添加(A) / 导入(B) / 管理(C) 三主线 · 含决策点(黄)与成功(绿)标记</div>
       <div class="anno"><b>失败可恢复:</b><br>每步失败均有反馈+下一步 · 无静默吞（impeccable harden）</div>
       <div class="anno"><b>乐观反馈:</b><br>Switch/设默认/删除均乐观或经订阅推回 · 用户感知即时</div>
-      <div class="anno"><b>未保存保护:</b><br>编辑改动未存时点取消/X/Esc → 二次确认防误丢</div>
+      <div class="anno"><b>未保存保护:</b><br>编辑改动未存时点取消/收起/切行 → 二次确认防误丢（§3）</div>
       <div class="anno"><b>边缘情况:</b><br>禁用/删除 defaultModel 归属 provider → 前端清空 + runtime 幂等覆盖</div>
     </div>
   </section>
 
   <!-- ============ footer ============ -->
   <footer class="doc-foot">
-    <span>v6-spec-settings-provider.html · Provider 页交互重新设计 · 完整用户旅程</span>
-    <span>源码: ProviderPage.vue / ProviderEditModal.vue / ModelListSection.vue / ProviderImport{Menu,PreviewDialog}.vue · token: <a href="v6-spec-tokens.html">v6-spec-tokens.html</a></span>
+    <span>v6-spec-settings-provider.html · Provider 页交互重新设计（移除 Modal · 展开就地编辑）</span>
+    <span>源码: ProviderPage.vue / ModelListSection.vue / ProviderImport{Menu,PreviewDialog}.vue（ProviderEditModal 已移除）· token: <a href="v6-spec-tokens.html">v6-spec-tokens.html</a></span>
   </footer>
 
 </div>

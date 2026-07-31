@@ -241,20 +241,22 @@ body {
 .drawer-tab .tab-dot { position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 .drawer-content { background: var(--surface); padding: 12px; min-height: 100px; }
 
-/* composer-bar / panel-header plugin 按钮（§3.4 SegmentedTab 间距对齐）*/
+/* composer-bar / panel-header plugin 按钮（§3.4 SegmentedTab 间距对齐）
+   = Button variant=ghost size≈icon-sm：透明底 · hover→bg-surface-hover · focus ring-accent · disabled→opacity 0.5（SSOT）*/
 .demo-bar { display: flex; align-items: center; gap: 2px; background: var(--bg-input); border-radius: var(--radius-lg); padding: 6px 8px; }
-.bar-icon-btn { width: 28px; height: 28px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-dim); cursor: pointer; position: relative; }
+.bar-icon-btn { width: 28px; height: 28px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-dim); cursor: pointer; position: relative; transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease); }
 .bar-icon-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
-.bar-icon-btn.disabled { color: var(--neutral-faint); cursor: not-allowed; }
-.bar-icon-btn.disabled:hover { background: transparent; color: var(--neutral-faint); }
+.bar-icon-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
+.bar-icon-btn.disabled { opacity: 0.5; pointer-events: none; }
 .bar-icon-btn svg { width: 14px; height: 14px; }
 .bar-icon-btn .ic-count { position: absolute; top: -2px; right: -2px; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 999px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 9px; display: inline-flex; align-items: center; justify-content: center; }
 
-/* panel-header（M12 按钮组）*/
+/* panel-header（M12 按钮组）= ghost 图标按钮范式 */
 .demo-ph { display: flex; align-items: center; gap: 2px; height: 38px; padding: 0 10px; background: var(--bg-elevated); border-radius: var(--radius); }
 .demo-ph .ph-title { font-size: var(--text-sm); color: var(--neutral-fg); font-family: var(--font-mono); margin-right: auto; }
-.demo-ph .ph-ico-btn { width: 26px; height: 26px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-mid); cursor: pointer; }
+.demo-ph .ph-ico-btn { width: 26px; height: 26px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-mid); cursor: pointer; transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease); }
 .demo-ph .ph-ico-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.demo-ph .ph-ico-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
 .demo-ph .ph-ico-btn svg { width: 14px; height: 14px; }
 .demo-ph .ph-divider { width: 1px; height: 16px; background: var(--border); margin: 0 4px; }
 
@@ -385,11 +387,16 @@ body {
 .dialog-card .dc-title { font-size: var(--text-md); font-weight: 600; color: var(--neutral-fg); margin-bottom: 8px; }
 .dialog-card .dc-body { font-size: var(--text-sm); color: var(--neutral-mid); margin-bottom: 16px; line-height: 1.55; }
 .dialog-card .dc-actions { display: flex; gap: 8px; justify-content: flex-end; }
-.dc-btn { padding: 6px 14px; border-radius: var(--radius-sm); font-size: var(--text-sm); cursor: pointer; }
-.dc-btn.ghost { color: var(--neutral-mid); }
-.dc-btn.ghost:hover { background: var(--surface-hover); color: var(--neutral-fg); }
-.dc-btn.primary { background: var(--accent); color: #fff; }
-.dc-btn.primary:hover { background: var(--accent-hover); }
+/* dialog-card action 按钮：对齐 SSOT（variant=ghost/default dense 化）*/
+.dc-btn { padding: 6px 14px; border-radius: var(--radius-sm); font-size: var(--text-sm); font-weight: 500; cursor: pointer; border: 0; transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease); }
+.dc-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
+.dc-btn:disabled { pointer-events: none; opacity: 0.5; }
+/* ghost = transparent + neutral-fg + hover surface-hover（SSOT variant=ghost）*/
+.dc-btn.ghost { background: transparent; color: var(--neutral-fg); }
+.dc-btn.ghost:hover { background: var(--surface-hover); }
+/* default = bg-accent text-white hover accent-hover（SSOT variant=default）*/
+.dc-btn.default { background: var(--accent); color: #fff; }
+.dc-btn.default:hover { background: var(--accent-hover); }
 
 /* slash command（CommandPopover 引用）*/
 .cmd-pop { background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow-2); overflow: hidden; max-width: 380px; }
@@ -484,8 +491,9 @@ body {
 .overlay-win-hd .ow-title { font-size: var(--text-sm); font-weight: 600; color: var(--neutral-fg); }
 .overlay-win-hd .ow-source { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--accent); }
 .overlay-win-hd .ow-actions { margin-left: auto; display: flex; gap: 2px; }
-.overlay-win-hd .ow-btn { width: 20px; height: 20px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-dim); cursor: pointer; }
+.overlay-win-hd .ow-btn { width: 20px; height: 20px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-dim); cursor: pointer; transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease); }
 .overlay-win-hd .ow-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.overlay-win-hd .ow-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
 .overlay-win-hd .ow-btn svg { width: 12px; height: 12px; }
 .overlay-win-bd { padding: 14px; font-size: var(--text-sm); color: var(--neutral-mid); line-height: 1.55; }
 .overlay-win-bd .ow-prompt { font-size: var(--text-sm); color: var(--neutral-fg); margin-bottom: 10px; }
@@ -522,6 +530,37 @@ body {
 /* footer */
 .doc-foot { margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; font-size: var(--text-xs); color: var(--neutral-dim); font-family: var(--font-mono); flex-wrap: wrap; gap: 8px; }
 .doc-foot a { color: var(--accent); text-decoration: none; }
+
+/* ================================================================
+   §按钮范式 SSOT（逐字对齐 v6-spec-settings-shell.html §6.1 button/index.ts）
+   ── 插件挂载点按钮遵循：variant=default/secondary/ghost/danger · size=default/dense/sm/icon/icon-sm
+   ================================================================ */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  white-space: nowrap; border-radius: var(--radius); font-size: 13px; font-weight: 500;
+  font-family: inherit; cursor: pointer; border: none;
+  height: 36px; padding: 0 16px;
+  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease);
+}
+.btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
+.btn:disabled { pointer-events: none; opacity: 0.5; }
+.btn.btn-default { background: var(--accent); color: #fff; }
+.btn.btn-default:hover { background: var(--accent-hover); }
+.btn.btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--neutral-fg); }
+.btn.btn-secondary:hover { background: var(--surface-hover); }
+.btn.btn-ghost { background: transparent; color: var(--neutral-fg); }
+.btn.btn-ghost:hover { background: var(--surface-hover); }
+.btn.btn-danger { background: transparent; color: var(--danger); }
+.btn.btn-danger:hover { background: var(--danger-soft); }
+.btn.btn-default-size { height: 36px; padding: 0 16px; }
+.btn.btn-dense { height: 32px; padding: 0 12px; font-size: 12px; }
+.btn.btn-sm { height: 36px; padding: 0 12px; }
+.btn.btn-icon { height: 40px; width: 40px; padding: 0; }
+.btn.btn-icon-sm { height: 28px; width: 28px; padding: 0; border-radius: var(--radius-sm); }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
 </style>
 </head>
 <body>
@@ -1271,7 +1310,7 @@ body {
           <div class="dc-body">此操作不可撤销，将删除 3 个文件。来源：plugin <code style="font-family:var(--font-mono);font-size:11px;color:var(--accent);">my-ext.delete</code></div>
           <div class="dc-actions">
             <span class="dc-btn ghost">取消</span>
-            <span class="dc-btn primary">删除</span>
+            <span class="dc-btn default">删除</span>
           </div>
         </div>
         <!-- select -->
@@ -1283,7 +1322,7 @@ body {
             <div class="sb-list-item" style="padding:6px 8px;"><span class="dot" style="width:7px;height:7px;border-radius:50%;background:var(--neutral-ico);"></span> develop</div>
             <div class="sb-list-item" style="padding:6px 8px;"><span class="dot" style="width:7px;height:7px;border-radius:50%;background:var(--neutral-ico);"></span> feature/x</div>
           </div>
-          <div class="dc-actions"><span class="dc-btn ghost">取消</span><span class="dc-btn primary">确定</span></div>
+          <div class="dc-actions"><span class="dc-btn ghost">取消</span><span class="dc-btn default">确定</span></div>
         </div>
       </div>
     </div>
