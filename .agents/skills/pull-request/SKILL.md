@@ -23,24 +23,47 @@ description: >-
 
 ```bash
 # Lint 检查
-npm run lint
+pnpm run lint
 
 # 单元测试（根 package.json 没有 test script，需要分别跑）
 cd packages/runtime && npx vitest run
 cd ../renderer && npx vitest run
 
 # 构建验证(确认 build 不报错)
-npm run build
+pnpm run build
 ```
 
 **Electron 特化说明**:
-- 构建产物在 CI 产生,本地只需确认 `npm run build` 不报错
+- 构建产物在 CI 产生,本地只需确认 `pnpm run build` 不报错
 - 本技能目录包含 `scripts/preflight-check.sh`,可用作更全面的预检
 
 ```bash
 # 可选:使用 preflight-check.sh 做全面预检
 bash scripts/preflight-check.sh
 ```
+
+**[MANDATORY] changeset 完整性检查**（改了 `extensions/` 时）:
+
+推荐用 `pr-pre-merge.sh`（内置 changeset 检查，Step 5）：
+
+```bash
+bash scripts/pr-pre-merge.sh
+```
+
+或手动检查：如果 PR 改了 `extensions/*/src/`，确认有对应 changeset 文件声明改了哪些包：
+
+```bash
+# 检查改了哪些 extension 包的 src/
+git diff main...HEAD --name-only | grep -E '^extensions/.*/src/'
+
+# 检查是否有对应的 changeset
+ls .changeset/*.md 2>/dev/null | grep -v README
+```
+
+- **需要发布** → 运行 `pnpm changeset` 创建声明文件（声明包名 + patch/minor/major）
+- **纯文档/测试/重构改动，不需要发布** → 可忽略。但建议运行 `pnpm changeset add --empty` 创建空 changeset，避免 merge 时 `changeset version` 误报
+
+⚠️ **缺失 changeset 的后果**：merge 阶段 4N 的 `changeset version` 不会 bump 该包版本 → `changeset publish` 不会发布 → bug fix 静默丢失。
 
 ### 2. 提交改动
 
@@ -49,27 +72,67 @@ bash scripts/preflight-check.sh
 git status
 git diff --stat
 
-# 提交(确保 message 清晰描述改动内容)
+# 提交(确保 message 清晰描述改动)
 git commit -m "<描述性 commit message>"
 ```
 
-### 3. Push 并创建 PR
+### 3. 自动生成 PR title 和 body
+
+**[MANDATORY] 自动从分支所有 commit 生成，无需用户提供。全部使用英文。**
+
+流程：
+1. 收集分支相对于 base（main）的所有 commit：
+   ```bash
+   git log main..HEAD --format="%s%n%b---"
+   git diff main..HEAD --stat
+   ```
+2. 分析所有 commit message 和变更文件，总结本次 PR 的核心改动
+3. 生成 PR title：
+   - 格式：`fix(scope): short summary` 或 `feat(scope): short summary`（conventional commit 风格）
+   - 若涉及多个 scope，用最核心的那个，或用 `fix: short summary` 不带 scope
+   - 简洁一行，概括整个分支的改动
+4. 生成 PR body（英文）：
+   - 用 `## Summary` 段落概括改动目的和内容
+   - 用 `## Changes` 列表逐条列出各 commit 的关键改动（合并相关条目，不重复）
+   - 若有 changeset 文件（`.changeset/*.md`），读取其内容一并展示
+   - 包含 `## Test plan` 列出验证方式（如已有的 typecheck/test/lint 结果）
+
+### 4. Push 并创建/更新 PR
 
 **bare repo workspace 注意**：`origin` 指向本地 bare repo，GitHub 的 remote 叫 `github`。
 
+推荐用 `scripts/pr-submit.sh` 一体化推送 + 创建/更新 PR：
+
 ```bash
-# Push 到远程分支（用 github remote，不是 origin）
+# 方式 A：用 pr-submit.sh（自动检测 PR 是否已存在、仅内容变化时更新）
+bash scripts/pr-submit.sh \
+  --title "$PR_TITLE" \
+  --body "$PR_BODY" \
+  --base main
+
+# 方式 B：直接 gh 命令（bare repo workspace 需显式指定 repo 和 head）
 git push github HEAD
 
-# 创建 PR（bare repo workspace 下需要显式指定 repo 和 head）
+# PR 不存在时创建
 gh pr create \
   --repo zhushanwen321/xyz-agent \
   --head "zhushanwen321:$(git branch --show-current)" \
-  --title "<PR 标题>" \
-  --body "<PR 描述,包含改动摘要和测试说明>"
+  --title "$PR_TITLE" \
+  --body "$PR_BODY"
+
+# PR 已存在时更新（仅在 title/body 有变化时）
+gh pr edit <PR_NUMBER> \
+  --repo zhushanwen321/xyz-agent \
+  --title "$PR_TITLE" \
+  --body "$PR_BODY"
 ```
 
 如果 worktree 内 `gh` 能自动发现 repo（`.git` 文件追溯到 bare repo），可省略 `--repo` 和 `--head`。
+
+**force-push 场景**：如果分支已被 force-push 过（如 rebase 后），用 `--force-with-lease`：
+```bash
+git push github HEAD --force-with-lease
+```
 
 ## [HISTORICAL] 禁止跳过检查
 
@@ -91,6 +154,20 @@ gh pr create \
 - PR 描述中应列出改动文件和改动原因
 - 如有 breaking changes 必须在描述中标明
 - 确保 `.agents/skills/` 目录的改动也纳入提交
+
+### 可选：YAML / extension 规范校验
+
+本 skill 目录含两个校验脚本，PR 创建前可按需运行：
+
+```bash
+# 校验 skill SKILL.md 的 frontmatter（name/description 必填，description 双引号包裹）
+python3 .agents/skills/pull-request/validate-skill-yaml.py <skill-paths>
+
+# 校验 extension package.json 的 pi 字段（pi.extensions/keywords/type）
+python3 .agents/skills/pull-request/validate-extensions-yaml.py <extension-dirs>
+```
+
+修改了 `.agents/skills/` 或 `extensions/*/package.json` 时建议运行对应校验。
 
 ---
 

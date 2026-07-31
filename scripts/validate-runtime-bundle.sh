@@ -49,7 +49,7 @@ echo -e "${BLUE}[1/6] 检查 build 产物...${NC}"
 
 if [ ! -f "$BUNDLE_PATH" ] || [ ! -f "$BOOTSTRAP_PATH" ]; then
     echo -e "${YELLOW}[WARN] 产物不完整，先运行 build...${NC}"
-    cd "$RUNTIME_DIR" && npm run build
+    cd "$RUNTIME_DIR" && pnpm run build
 fi
 
 if [ ! -f "$BUNDLE_PATH" ]; then

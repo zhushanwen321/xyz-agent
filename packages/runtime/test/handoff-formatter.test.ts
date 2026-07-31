@@ -16,7 +16,7 @@ import { describe, it, expect } from 'vitest'
 import { wrapWithXmlTag } from '../src/services/handoff-formatter.js'
 
 const ACTION_SUFFIX =
-  '立即执行文档里尚未完成的下一项。遇到卡点或 blocked 项时停下问我。完成每一步后继续下一项。'
+  'Immediately execute the next incomplete item in the document. If you encounter a blocker or blocked item, stop and ask me. After completing each step, proceed to the next one.'
 
 describe('wrapWithXmlTag (TC1/TC2 纯函数)', () => {
   it('TC1 基本包装：含 handoff_document 开标签 + doc + 闭合标签 + action 后缀', () => {

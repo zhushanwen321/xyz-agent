@@ -36,7 +36,7 @@
           @click="emit('select', record.runId)"
           @mouseleave="abortingId = null"
         >
-          <!-- 第一行：状态指示 + scriptName + slug -->
+          <!-- 第一行：状态指示 + scriptName（占满）+ slug -->
           <div class="flex items-center gap-2">
             <Loader2
               v-if="record.status === 'running'"
@@ -51,42 +51,13 @@
             <span class="min-w-0 flex-1 truncate text-[12px] font-medium leading-[1.35] text-neutral-fg">
               {{ record.scriptName }}
             </span>
-            <span v-if="record.slug" class="shrink-0 font-mono text-[10px] text-neutral-mid">
+            <span v-if="record.slug" class="mr-1 shrink-0 font-mono text-[10px] text-neutral-mid">
               {{ record.slug }}
             </span>
-            <!-- 操作按钮：running 态 Pause+Abort，paused 态 Resume+Abort。
-                 非破坏性操作（pause/resume）常驻弱化显示；abort 两段式确认。 -->
-            <div v-if="record.status === 'running' || record.status === 'paused'" class="flex shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
-              <Button
-                variant="ghost"
-                size="icon"
-                class="size-5 text-neutral-dim hover:text-neutral-fg"
-                :title="record.status === 'running' ? t('sidebar.workflowList.pause') : t('sidebar.workflowList.resume')"
-                :data-testid="`workflow-action-${record.status === 'running' ? 'pause' : 'resume'}`"
-                @click.stop="emit('action', { action: record.status === 'running' ? 'pause' : 'resume', runId: record.runId })"
-              >
-                <Pause v-if="record.status === 'running'" class="size-3" />
-                <Play v-else class="size-3" />
-              </Button>
-              <!-- abort 两段式确认：首次点击进入确认态（testid 变 confirm），二次点击才 emit abort -->
-              <Button
-                variant="ghost"
-                size="icon"
-                :data-testid="abortingId === record.runId ? 'workflow-action-abort-confirm' : 'workflow-action-abort'"
-                :class="abortingId === record.runId
-                  ? 'size-5 border border-danger bg-danger text-neutral-fg'
-                  : 'size-5 text-neutral-dim hover:text-danger'"
-                :title="abortingId === record.runId ? t('sidebar.workflowList.terminateConfirm') : t('sidebar.workflowList.terminate')"
-                @click.stop="onAbortClick(record.runId)"
-              >
-                <Check v-if="abortingId === record.runId" class="size-3" />
-                <Square v-else class="size-3" />
-              </Button>
-            </div>
           </div>
 
-          <!-- 第二行：进度条 + agent 完成比例 -->
-          <div class="mt-1.5 flex items-center gap-2 pl-[21px]">
+          <!-- 第二行：进度条 + 完成比例 + 耗时（合并原行2/3，token 移至详情视图） -->
+          <div class="mt-1 flex items-center gap-1.5 pl-[21px] font-mono text-[10px] text-neutral-dim">
             <div class="h-[3px] min-w-[40px] flex-1 overflow-hidden rounded-full bg-border">
               <div
                 class="h-full rounded-full transition-all"
@@ -94,21 +65,49 @@
                 :style="{ width: `${progressPercent(record)}%` }"
               />
             </div>
-            <span class="shrink-0 font-mono text-[10px] text-neutral-dim">
+            <span class="shrink-0">
               {{ t('sidebar.workflowList.agentsLabel', { done: completedAgentCount(record), total: record.agentCalls.length }) }}
             </span>
+            <span v-if="record.startedAt" class="shrink-0">· {{ formatElapsedFromIso(record.startedAt, record.completedAt) }}</span>
           </div>
 
-          <!-- 第三行：摘要（耗时 · token） -->
-          <div class="mt-1 flex items-center gap-2 pl-[21px] font-mono text-[10px] text-neutral-dim">
-            <span v-if="record.startedAt">{{ formatElapsedFromIso(record.startedAt, record.completedAt) }}</span>
-            <span v-if="record.usedTokens !== undefined">· {{ formatTokens(record.usedTokens, t('sidebar.workflowList.tokUnit')) }}</span>
+          <!-- 操作按钮（hover-only，不占布局空间）：running 态 Pause+Abort，paused 态 Resume+Abort -->
+          <div
+            v-if="record.status === 'running' || record.status === 'paused'"
+            class="absolute right-1 top-1 flex items-center gap-0.5 rounded bg-bg/80 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+          >
+            <Button
+              variant="ghost"
+              size="icon"
+              class="size-5 text-neutral-dim hover:text-neutral-fg"
+              :title="record.status === 'running' ? t('sidebar.workflowList.pause') : t('sidebar.workflowList.resume')"
+              :data-testid="`workflow-action-${record.status === 'running' ? 'pause' : 'resume'}`"
+              @click.stop="emit('action', { action: record.status === 'running' ? 'pause' : 'resume', runId: record.runId })"
+            >
+              <Pause v-if="record.status === 'running'" class="size-3" />
+              <Play v-else class="size-3" />
+            </Button>
+            <!-- abort 两段式确认：首次点击进入确认态（testid 变 confirm），二次点击才 emit abort -->
+            <Button
+              variant="ghost"
+              size="icon"
+              :data-testid="abortingId === record.runId ? 'workflow-action-abort-confirm' : 'workflow-action-abort'"
+              :class="abortingId === record.runId
+                ? 'size-5 border border-danger bg-danger text-neutral-fg'
+                : 'size-5 text-neutral-dim hover:text-danger'"
+              :title="abortingId === record.runId ? t('sidebar.workflowList.terminateConfirm') : t('sidebar.workflowList.terminate')"
+              @click.stop="onAbortClick(record.runId)"
+            >
+              <Check v-if="abortingId === record.runId" class="size-3" />
+              <Square v-else class="size-3" />
+            </Button>
           </div>
         </div>
       </div>
     </ScrollArea>
 
-    <!-- 空态 -->
+    <!-- 空态（design-system 三要素：图标 + 说明）。
+         learnMore 按钮暂不实现——pi-workflow 扩展无公开文档着陆页，硬编码 URL 会导向 404。 -->
     <div
       v-else
       class="flex flex-col items-center justify-center gap-2 py-10 text-center"
@@ -116,7 +115,7 @@
     >
       <Workflow class="size-7 text-neutral-dim opacity-40" />
       <p class="text-[11px] text-neutral-dim opacity-55">{{ t('sidebar.workflowList.empty') }}</p>
-      <p class="text-[10px] text-neutral-dim opacity-40">{{ t('sidebar.workflowList.emptyHint') }}</p>
+      <p class="max-w-[220px] text-[10px] leading-[1.4] text-neutral-dim opacity-40">{{ t('sidebar.workflowList.emptyHint') }}</p>
     </div>
   </div>
 </template>
@@ -129,8 +128,6 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { WorkflowRunRecord, WorkflowRunStatus, WorkflowDoneReason } from '@xyz-agent/shared'
 
-/** token 数超过此阈值显示 k 单位 */
-const TOKEN_K_THRESHOLD = 1000
 /** 百分比基数 */
 const PERCENT_BASE = 100
 /** 毫秒 → 秒 */
@@ -200,12 +197,6 @@ function completedAgentCount(record: WorkflowRunRecord): number {
 function progressPercent(record: WorkflowRunRecord): number {
   if (record.agentCalls.length === 0) return 0
   return Math.round((completedAgentCount(record) / record.agentCalls.length) * PERCENT_BASE)
-}
-
-/** 格式化 token 数（超过阈值显示 k） */
-function formatTokens(tokens: number, unit: string): string {
-  if (tokens >= TOKEN_K_THRESHOLD) return `${(tokens / TOKEN_K_THRESHOLD).toFixed(1)}k ${unit}`
-  return `${tokens} ${unit}`
 }
 
 /** 格式化耗时（从 ISO 时间戳算秒数） */

@@ -67,7 +67,7 @@ export default {
     handoff: '交接并新开（对话历史将打包到新 session）',
     handoffAsk: '交接并备注（输入内容将作为新 session 的首条消息）',
     handoffFailed: '交接失败：{error}',
-    handing: '正在交接…',
+    handoffAbortFailed: '取消交接失败：{error}，交接仍在进行中。',
     editReplace: '编辑（替换并重新发送）',
     editAfterReplace: '编辑后替换并重新发送',
     cancel: '取消',

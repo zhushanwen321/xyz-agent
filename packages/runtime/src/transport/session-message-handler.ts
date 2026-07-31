@@ -8,12 +8,23 @@ import type { ISessionService } from '../interfaces.js'
 import type { HandoffService } from '../services/handoff-service.js'
 import { toErrorMessage, isEnoent, MODEL_NOT_CONFIGURED } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
+// MessageBus（wave:runtime-wiring）：session.subscribe/unsubscribe RPC handler 用它注册订阅。
+// type-only import（handler 不持有 bus 实例的创建，只调它的方法）。
+import type { MessageBus } from '../services/message-bus/message-bus.js'
+// BusClient（wave:bus-core）：ws 适配为 bus 订阅者的最小契约 { readyState, send }。
+// ws 库的 WebSocket 天然满足，但类型不完全一致，用 as unknown as BusClient 显式标记边界（R2）。
+import type { BusClient } from '../services/message-bus/types.js'
 
 /** Interface for server methods needed by this handler */
 export interface SessionHandlerContext extends MessageHandlerContext {
   sessionService: ISessionService
   /** fast-handoff 编排层（session.handoff 路由用）。可选：未注入时该 case 报 unsupported。 */
   handoffService?: HandoffService
+  /**
+   * MessageBus 单例（wave:runtime-wiring）：session.subscribe/unsubscribe RPC 用它注册/取消订阅。
+   * 可选：未注入时 subscribe/unsubscribe case 报 unsupported（组合根保证注入）。
+   */
+  messageBus?: MessageBus
   nextPushId(): string
   broadcastSessionList(): void
   clearExtensionTimeoutsForSession(sessionId: string): void
@@ -28,6 +39,8 @@ export class SessionMessageHandler {
   readonly handles: ClientMessageType[] = [
     'session.create', 'session.delete', 'session.deleteByCwd', 'config.sessions', 'session.switch', 'session.history', 'session.getFullHistory', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork',
     'session.handoff', 'session.abortHandoff',
+    // wave:runtime-wiring：session.subscribe/unsubscribe RPC（IF6/IF7）。
+    'session.subscribe', 'session.unsubscribe',
     'session.getSubagents', 'session.getSubagentHistory',
     'session.getWorkflows', 'session.getAgentCallHistory', 'session.getAgentCallFilePath',
     'session.workflowAction', 'session.subagentAction',
@@ -62,11 +75,13 @@ export class SessionMessageHandler {
       }
       case 'session.fork': {
         // fork：runtime 读源 JSONL 截断 → 新进程 switch_session。reply session.created（复用类型）。
-        const { srcSessionId, fromPiEntryId, fromMessageTimestamp, fromMessageRole, includeFrom, label } = msg.payload
+        const { srcSessionId, fromPiEntryId, fromMessageTimestamp, fromMessageRole, includeFrom, label, modelOverride, thinkingOverride } = msg.payload
         try {
           const session = await this.ctx.sessionService.forkSession(
             srcSessionId, fromPiEntryId, includeFrom ?? true, label,
-            { fromMessageTimestamp, fromMessageRole },
+            // Staging Mode（ADR-0043）：透传 composer 暂存的 modelOverride/thinkingOverride，
+            // 让 fork 出的新 session 用用户当前选定的模型/思考等级，而非单纯继承源 preset。
+            { fromMessageTimestamp, fromMessageRole, modelOverride, thinkingOverride },
           )
           this.ctx.reply(ws, msg.id, 'session.created', { session })
           // [W2 FR-12] fork 成功后广播 session.forkNotice：通知 srcSession 所在 panel
@@ -99,7 +114,12 @@ export class SessionMessageHandler {
           return this.ctx.sendError(ws, 'handoff_unsupported', 'handoff service not available', msg.id, { sessionId })
         }
         try {
-          await hs.runHandoff(sessionId, reply)
+          // Staging Mode（ADR-0043）：透传 modelOverride/thinkingOverride 给新 session 创建。
+          // 源 session 的 handoff turn 仍用源 session 自身模型，override 只作用于新建的承接 session。
+          await hs.runHandoff(sessionId, reply, {
+            modelOverride: msg.payload.modelOverride,
+            thinkingOverride: msg.payload.thinkingOverride,
+          })
           return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'sent' })
         } catch (e) {
           // L4: model 未配置时返回差异化 error code（与 session.create / session.fork 同模式），
@@ -112,6 +132,34 @@ export class SessionMessageHandler {
           // 所有错误路径统一走此处的 sendError，不再有 onTurnEnd 内部广播路径。
           const errMsg = toErrorMessage(e)
           console.error('[runtime] session.handoff failed:', errMsg)
+          return this.ctx.sendError(ws, 'handoff_failed', errMsg, msg.id, { sessionId })
+        }
+      }
+      case 'session.abortHandoff': {
+        // abortHandoff：中断进行中的 handoff turn（调 handoffService.abortHandoff → 内部 client.abort + 清 inflight）。
+        // W1：abortHandoff 返回 boolean——只有 inflight 真存在（真正 abort）才广播 session.handoffAborted
+        // 让前端复位 isHandingOff；inflight 无（no-op，如用户重复点取消、或 handoff 已完成）不广播，
+        // 避免前端先收 aborted 再收 complete 的 UX 抖动。reply message.status{aborted} 始终发（RPC ack）。
+        const { sessionId } = msg.payload
+        const hs = this.ctx.handoffService
+        if (!hs) {
+          return this.ctx.sendError(ws, 'handoff_unsupported', 'handoff service not available', msg.id, { sessionId })
+        }
+        try {
+          const aborted = await hs.abortHandoff(sessionId)
+          if (aborted) {
+            // 真正中断了 → 广播 handoffAborted（参照 forkNotice L75-79 broadcast 范式）
+            this.ctx.broadcast({
+              type: 'session.handoffAborted',
+              id: this.ctx.nextPushId(),
+              payload: { srcSessionId: sessionId },
+            })
+          }
+          // 无论 aborted 与否都 reply ack（RPC ack 让 renderer pending resolve）
+          return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'aborted' })
+        } catch (e) {
+          const errMsg = toErrorMessage(e)
+          console.error('[runtime] session.abortHandoff failed:', errMsg)
           return this.ctx.sendError(ws, 'handoff_failed', errMsg, msg.id, { sessionId })
         }
       }
@@ -212,6 +260,54 @@ export class SessionMessageHandler {
       case 'session.subagentAction': {
         await this.ctx.sessionService.subagentAction(msg.payload.sessionId, msg.payload.action, msg.payload.subagentId)
         return this.ctx.reply(ws, msg.id, 'session.subagentActionDone', { sessionId: msg.payload.sessionId, action: msg.payload.action, subagentId: msg.payload.subagentId })
+      }
+      case 'session.subscribe': {
+        // wave:runtime-wiring（IF6）：订阅某 session 的 live 事件流。
+        // 调 bus.subscribe 注册当前 ws 为订阅者 + 拉 ring 全量 snapshot + stateSnapshot + 最新 seq。
+        // fromSeq 可选（重连场景）：若提供且 < ring 最旧 seq（旧消息已被 FIFO 淘汰）→ gap=true
+        // 返全量 snapshot；否则过滤 snapshot 只返 seq > fromSeq 的（增量 backfill）。
+        // stateSnapshot（wave:remove-bandaids）是 4 个 state topic 的 last-value，不受 fromSeq
+        // 增量过滤影响（last-value 语义无历史概念），renderer 始终拿到最新状态 reconcile。
+        const { sessionId, fromSeq } = msg.payload
+        const bus = this.ctx.messageBus
+        if (!bus) {
+          // messageBus 未注入（理论不可达——组合根保证），防御性报错。
+          return this.ctx.sendError(ws, 'subscribe_unsupported', 'message bus not available', msg.id, { sessionId })
+        }
+        const result = bus.subscribe(sessionId, ws as unknown as BusClient)
+        let gap = false
+        let snapshot = result.snapshot
+        if (fromSeq !== undefined) {
+          const oldestSeq = snapshot[0]?.seq ?? 0
+          // ES2/gap 检测：fromSeq 早于 ring 最旧 seq → 旧消息已被淘汰，本次存在缺口。
+          if (fromSeq < oldestSeq) {
+            gap = true
+          } else {
+            // 增量模式：过滤掉 seq <= fromSeq 的（已处理过的），只返 seq > fromSeq。
+            snapshot = snapshot.filter(m => (m.seq ?? 0) > fromSeq)
+          }
+        }
+        return this.ctx.reply(ws, msg.id, 'session.subscribe', {
+          snapshot,
+          stateSnapshot: result.stateSnapshot,
+          lastSeq: result.lastSeq,
+          gap,
+        })
+      }
+      case 'session.unsubscribe': {
+        // wave:runtime-wiring（IF7）：取消订阅某 session 的 live 事件流。
+        // 调 bus.unsubscribe 移除当前 ws 的订阅（减少不活跃 session 的 live push 开销）。
+        // 不调也安全——ws 断开时 ConnectionManager.onClose → bus.unsubscribeAll 兜底。
+        // reply 'message.status' { status: 'unsubscribed' }（ack 型，ReplyPayloadMap 已定 void//
+        // reply message.status，与 message.abort/session.handoff 同模式——renderer register<void>
+        // 不读 payload，取消订阅的副作用由后续 live 事件停发体现）。
+        const { sessionId } = msg.payload
+        const bus = this.ctx.messageBus
+        if (!bus) {
+          return this.ctx.sendError(ws, 'subscribe_unsupported', 'message bus not available', msg.id, { sessionId })
+        }
+        bus.unsubscribe(sessionId, ws as unknown as BusClient)
+        return this.ctx.reply(ws, msg.id, 'message.status', { sessionId, status: 'unsubscribed' })
       }
       case 'session.getCommands': {
         // renderer 切 session 后主动拉取命令（修复 broadcast 与订阅时序竞争）。

@@ -56,3 +56,19 @@ export type UpdateState =
   | 'restarting'
   | 'error'
   | 'unsupported'
+
+/**
+ * 代理配置接口。
+ * 支持三种模式：
+ * - system：自动检测系统代理
+ * - manual：手动配置代理地址
+ * - disabled：禁用代理
+ */
+export interface IProxyConfig {
+  /** 代理模式 */
+  mode: 'system' | 'manual' | 'disabled'
+  /** 手动模式下的 HTTP 代理地址（如 http://127.0.0.1:7890） */
+  httpProxy?: string
+  /** 手动模式下的 HTTPS 代理地址（如 http://127.0.0.1:7890） */
+  httpsProxy?: string
+}

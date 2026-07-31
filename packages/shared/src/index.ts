@@ -42,8 +42,17 @@ export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, SUBAGENT_
 export type { ProviderApiType } from './constants'
 export { DEFAULT_PI_SYSTEM_PROMPT, DEFAULT_PI_SYSTEM_PROMPT_VERSION } from './pi-default-prompt'
 // 推荐扩展列表 SSOT（runtime 读取，前端经 extension.recommended WS 拉取）
-import recommendedExtensions from './recommended-extensions.json'
+// 带类型断言：空 JSON [] 会被 TS 推断为 never[]，断言为 RecommendedExtension[] 保证未来追加条目时类型正确
+import recommendedExtensionsRaw from './recommended-extensions.json'
+import type { RecommendedExtension } from './extension'
+const recommendedExtensions = recommendedExtensionsRaw as RecommendedExtension[]
 export { recommendedExtensions }
+// 强制安装扩展列表 SSOT（runtime boot 时自动安装+升级）
+// 带类型断言：JSON import 默认推断为宽泛类型，断言为 MandatoryExtension[] 保证 tier 字段拼写错误编译期可捕获
+import mandatoryExtensionsRaw from './mandatory-extensions.json'
+import type { MandatoryExtension } from './extension'
+const mandatoryExtensions = mandatoryExtensionsRaw as MandatoryExtension[]
+export { mandatoryExtensions }
 // 注意：paths.ts（getDataDir/getPiAgentDir）刻意不在此 barrel 导出。
 // 它们依赖 node:os / node:path，而本 barrel 被 renderer（浏览器）整包 import。
 // Node-only 消费方（main/runtime）从子路径 import：'@xyz-agent/shared/paths'
@@ -86,7 +95,7 @@ export {
   DEFAULT_PRESETS,
   isPiLaunchPreset,
 } from './pi-preset'
-export type { LatestReleaseInfo, ReleaseAsset, UpdateStage, UpdateState } from './update'
+export type { LatestReleaseInfo, ReleaseAsset, UpdateStage, UpdateState, IProxyConfig } from './update'
 // 迁移功能（从其他 agent 迁移配置）类型
 export type {
   ProviderSource,

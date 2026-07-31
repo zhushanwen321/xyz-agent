@@ -139,19 +139,19 @@ SA1 (传输+命令核心) → SA2 (事件路由+domains) → ┬ SA3 (mock 重�
 
 - SA1：单测 pending（超时/断连 reject/迟到丢弃）；`command` 发出带 `id` 的消息。
 - SA2：单测 events（订阅/取消、D6b 无 sessionId 丢弃、G5 emit 信号）；domains 覆盖 protocol 消息类型（见现状表）。
-- SA3：`VITE_MOCK=true npm run dev` mock 主流程跑通（覆盖最小集，见 task6）。
-- SA4/SA5：改的文件 `send(` 清零；`npm run dev` 对应功能正常；`npm run lint` 过。
-- SA6：useChat 23 事件手测（streaming/abort/thinking/toolCall）；`rg "from.*ws-client" renderer/src/` 仅剩 useConnection+api/transport.ts；`npm run dev` 全功能 + `VITE_MOCK=true` 均正常。
+- SA3：`VITE_MOCK=true pnpm run dev` mock 主流程跑通（覆盖最小集，见 task6）。
+- SA4/SA5：改的文件 `send(` 清零；`pnpm run dev` 对应功能正常；`pnpm run lint` 过。
+- SA6：useChat 23 事件手测（streaming/abort/thinking/toolCall）；`rg "from.*ws-client" renderer/src/` 仅剩 useConnection+api/transport.ts；`pnpm run dev` 全功能 + `VITE_MOCK=true` 均正常。
 
 ## 验证标准
 
-- [ ] `npm run dev` 全功能正常。
-- [ ] `VITE_MOCK=true npm run dev` mock 可跑。
+- [ ] `pnpm run dev` 全功能正常。
+- [ ] `VITE_MOCK=true pnpm run dev` mock 可跑。
 - [ ] 双主题无回归。
 - [ ] **`rg "from.*ws-client" renderer/src/`** 扫**全 renderer**（非仅 composables/）：仅剩 useConnection（传输层合法）+ api/transport.ts（封装层）。store/components/composables 的 send 直调清零。
 - [ ] API Client 单测：command 超时、事件订阅/取消、session 路由第 2 层丢弃、重连收尾（G5）。
 - [ ] useChat 23 事件迁移后行为不变（手测 streaming/abort/thinking/toolCall）。
-- [ ] `npm run lint` 通过。
+- [ ] `pnpm run lint` 通过。
 
 ## 回滚
 

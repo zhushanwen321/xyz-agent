@@ -183,11 +183,17 @@ describe('ExtensionResolver', () => {
       expect(result.get('ask-user')).toBe(pkgDir)
     })
 
-    it('skips disabled packages', () => {
+    it('returns disabled packages (pure discovery, no disabled filtering)', () => {
+      // S7：resolver 是纯发现层——不再过滤 disabled（过滤职责已移至 extension-filter.ts 管道）。
+      // 让 disabled 包的目录确实存在，断言它仍被返回（全量发现）。
+      const pkgDir = `${settingsDir}/npm/node_modules/pi-ask-user`
+
       mockedExistsSync.mockImplementation((p: unknown) => {
         if (typeof p !== 'string') return false
         if (p === `${settingsDir}/settings.json`) return true
         if (p === `${settingsDir}/disabled-packages.json`) return true
+        if (p === pkgDir) return true
+        if (p === `${pkgDir}/package.json`) return true
         return false
       })
 
@@ -199,11 +205,18 @@ describe('ExtensionResolver', () => {
         if (p === `${settingsDir}/disabled-packages.json`) {
           return JSON.stringify({ disabled: ['npm:pi-ask-user'] })
         }
+        if (p === `${pkgDir}/package.json`) {
+          // 满足 isValidPiExtension（keywords 含 pi-package）
+          return JSON.stringify({ name: 'pi-ask-user', keywords: ['pi-package'] })
+        }
         throw new Error('not found')
       })
 
       const result = resolver.scanSettingsExtensions()
-      expect(result.size).toBe(0)
+      // disabled 过滤已移至 extension-filter.ts，resolver 全量返回
+      expect(result.size).toBe(1)
+      // normalizeExtName('pi-ask-user') 去掉 pi- 前缀 → 'ask-user'
+      expect(result.get('ask-user')).toBe(pkgDir)
     })
 
     it('skips invalid pi extensions', () => {
@@ -352,8 +365,10 @@ describe('ExtensionResolver', () => {
       ]
 
       const result = resolver.deduplicate(sources)
-      expect(result.get('ext-a')).toBe('/npm/ext-a')
-      expect(result.get('ext-b')).toBe('/bundled/ext-b')
+      expect(result.get('ext-a')?.dir).toBe('/npm/ext-a')
+      expect(result.get('ext-a')?.source).toBe('npm')
+      expect(result.get('ext-b')?.dir).toBe('/bundled/ext-b')
+      expect(result.get('ext-b')?.source).toBe('bundled')
     })
 
     it('npm overrides settings for same name', () => {
@@ -369,7 +384,8 @@ describe('ExtensionResolver', () => {
       ]
 
       const result = resolver.deduplicate(sources)
-      expect(result.get('review')).toBe('/npm/review')
+      expect(result.get('review')?.dir).toBe('/npm/review')
+      expect(result.get('review')?.source).toBe('npm')
     })
 
     it('settings overrides bundled for same name', () => {
@@ -385,7 +401,8 @@ describe('ExtensionResolver', () => {
       ]
 
       const result = resolver.deduplicate(sources)
-      expect(result.get('ext-a')).toBe('/settings/ext-a')
+      expect(result.get('ext-a')?.dir).toBe('/settings/ext-a')
+      expect(result.get('ext-a')?.source).toBe('settings')
     })
 
     it('returns all extensions when no conflicts', () => {
@@ -478,11 +495,11 @@ describe('ExtensionResolver', () => {
       const result = resolver.resolve('/project', false, ['/custom/my-ext'])
 
       // bundled ext-a
-      expect(result.extensionDirs.some(d => d === bundledDir + '/ext-a')).toBe(true)
+      expect(result.extensionDirs.some(d => d.path === bundledDir + '/ext-a')).toBe(true)
       // third-party ext-c
-      expect(result.extensionDirs.some(d => d.includes('ext-c'))).toBe(true)
+      expect(result.extensionDirs.some(d => d.path.includes('ext-c'))).toBe(true)
       // user extension
-      expect(result.extensionDirs.some(d => d === '/custom/my-ext')).toBe(true)
+      expect(result.extensionDirs.some(d => d.path === '/custom/my-ext')).toBe(true)
       // 5 sources all processed (no errors)
       expect(result.extensionDirs.length).toBeGreaterThanOrEqual(3)
     })
@@ -522,7 +539,7 @@ describe('ExtensionResolver', () => {
       resolver = new ExtensionResolver({ thirdPartyDir })
       const result = resolver.resolve('/project', true, [])
       expect(result.extensionDirs.length).toBe(1)
-      expect(result.extensionDirs[0]).toBe(`${thirdPartyDir}/ext-c`)
+      expect(result.extensionDirs[0].path).toBe(`${thirdPartyDir}/ext-c`)
     })
 
     it('scanDiscoveryExtensions: discovers single-file *.ts extensions', () => {

@@ -55,6 +55,7 @@ vi.mock('@/composables/features/useChat', () => ({
     setHistoryTruncated: vi.fn(),
     disposeSession: useChatDisposeMock,
   }),
+  ensureStreamSubscription: vi.fn(),
 }))
 
 // ── mock api 域：removeByCwd 是 deleteFolder 的核心 WS 调用 ──
@@ -63,6 +64,7 @@ const switchSessionMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
 vi.mock('@/api', () => ({
   chat: {
     getHistory: vi.fn(() => Promise.resolve({ messages: [], historyTruncated: false })),
+    streamSubscribe: vi.fn(() => () => {}),
   },
   session: {
     create: vi.fn(() => Promise.resolve(makeSummary('mock'))),

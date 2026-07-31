@@ -1,9 +1,11 @@
 #!/bin/bash
 # npm 预发布：创建 dev-npm-* 分支 → changeset prerelease → push 触发 CI → 验证 npm 版本 → 还原
-# Usage: bash scripts/npm-prerelease.sh
+# Usage: bash scripts/npm-prerelease.sh [package-name]
+#   package-name — 要预发布的包名（如 @xyz-agent/extension-protocol、@zhushanwen/pi-goal）
+#                  省略时默认 @xyz-agent/extension-protocol
 #
 # 前置条件：
-#   - npm 已创建 @xyz-agent scope
+#   - npm 已创建 @xyz-agent / @zhushanwen scope
 #   - GitHub repo 有 NPM_TOKEN secret
 #   - changeset 已初始化（.changeset/config.json 存在）
 set -euo pipefail
@@ -18,8 +20,8 @@ GITHUB_REMOTE="github"
 CI_TIMEOUT_MINS=15
 POLL_INTERVAL=15
 
-# 发布的包名（目前只发这一个，后续扩展可改为参数）
-PKG_NAME="@xyz-agent/extension-protocol"
+# 发布的包名（参数化：可预发布任意已发布的 changeset 包）
+PKG_NAME="${1:-@xyz-agent/extension-protocol}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 log()  { echo -e "${GREEN}[NPM-PRE]${NC} $*"; }
@@ -64,8 +66,31 @@ log "=== 阶段 2/6: 生成 prerelease changeset ==="
 
 cd "$WS_ROOT"
 
+# 从包名查找其在 workspace 中的目录路径（packages/* 或 extensions/*）
+PKG_DIR=""
+for candidate in \
+  "packages/extension-protocol" \
+  "packages/$(echo "$PKG_NAME" | sed 's|@xyz-agent/||')" \
+  "extensions/$(echo "$PKG_NAME" | sed 's|@zhushanwen/pi-||')" \
+  "extensions/shared/$(echo "$PKG_NAME" | sed 's|@zhushanwen/pi-||')"; do
+  if [ -f "$WS_ROOT/$candidate/package.json" ]; then
+    PKG_NAME_IN_FILE=$(node -p "require('./$candidate/package.json').name" 2>/dev/null || echo "")
+    if [ "$PKG_NAME_IN_FILE" = "$PKG_NAME" ]; then
+      PKG_DIR="$candidate"
+      break
+    fi
+  fi
+done
+
+if [ -z "$PKG_DIR" ]; then
+  err "找不到包 ${PKG_NAME} 对应的 workspace 目录（在 packages/ 和 extensions/ 下搜索均未命中）"
+  err "请确认包名正确，且对应目录的 package.json name 字段匹配"
+  exit 1
+fi
+log "包 ${PKG_NAME} 位于: ${PKG_DIR}"
+
 # 记录原始版本号（用于还原）
-ORIGINAL_VERSION=$(node -p "require('./packages/extension-protocol/package.json').version")
+ORIGINAL_VERSION=$(node -p "require('./${PKG_DIR}/package.json').version")
 log "当前 ${PKG_NAME} 版本: ${ORIGINAL_VERSION}"
 
 # 创建 dev 分支（带时间戳，避免分支名冲突）
@@ -78,7 +103,7 @@ git checkout -b "$DEV_BRANCH"
 CHANGESET_FILE=".changeset/prerelease-${TIMESTAMP}.md"
 cat > "$CHANGESET_FILE" << EOF
 ---
-"@xyz-agent/extension-protocol": patch
+"${PKG_NAME}": patch
 ---
 
 Prerelease build for testing.
@@ -95,7 +120,7 @@ info "执行 changeset version..."
 pnpm changeset version 2>&1 | tail -5
 
 # 读取生成的版本号
-NEW_VERSION=$(node -p "require('./packages/extension-protocol/package.json').version")
+NEW_VERSION=$(node -p "require('./${PKG_DIR}/package.json').version")
 log "prerelease 版本: ${ORIGINAL_VERSION} → ${NEW_VERSION}"
 
 # ── 阶段 3/6: commit + push 触发 CI ──

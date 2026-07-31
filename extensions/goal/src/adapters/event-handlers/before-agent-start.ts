@@ -1,0 +1,168 @@
+/**
+ * 事件 5: before_agent_start（context wrap-up + injection）。
+ *
+ * FR-8.1 G-007 + FR-8.6。返回 message（注入到 LLM context）或 undefined（无注入）。
+ *
+ * 分支顺序：
+ * 1. 终态：currentTurnIndex - completedAtTurnIndex >= AUTO_CLEAR_TURNS(2) → clearGoalSession
+ * 2. ADR-002：Context 使用率 > 85% → 保持 active + 注入 wrap-up 指令
+ * 3. 正常：注入 contextInjectionPrompt
+ *
+ * 无 ESC 守卫（before_agent_start 是 agent 开始前的信号，此时无 aborted 可能）。
+ *
+ * 全解耦：不再做 staleness 检测（原依赖 pi.__todoGetList，跨 ext 失效），
+ * 不再探测 plan extension（原 typeof pi.__planStart，跨 ext 失效）。
+ * contextInjectionPrompt 恒定建议 plan mode（AI 自行决定是否用）。
+ */
+
+import type { CustomEntry, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+
+import { AUTO_CLEAR_TURNS, CONTEXT_USAGE_RATIO_LIMIT } from "../../constants";
+import { isActiveStatus, isTerminalStatus } from "../../engine/goal";
+import { contextInjectionPrompt } from "../../projection/prompts";
+import { asTheme, renderTerminalStatusLine } from "../../projection/widget";
+import type { GoalSession } from "../../session";
+import { clearGoalSession } from "../../session";
+import { buildPorts } from "../ports";
+
+interface BeforeAgentStartResult {
+	message: {
+		customType: string;
+		content: string;
+		display: boolean;
+	};
+}
+
+/** 类型守卫：把 SDK 的 SessionEntry 联合收窄到 CustomEntry。
+ *  SessionEntry 现为联合类型（SessionMessageEntry | CompactionEntry | CustomEntry | ...），
+ *  只有 CustomEntry 带 customType/data（pending:register/unregister 由 pi.appendEntry 落地，
+ *  type 恒为 "custom"）。读取前必须先收窄。 */
+function isCustomEntry(e: { type: string }): e is CustomEntry {
+	return e.type === "custom";
+}
+
+export async function handleBeforeAgentStart(
+	pi: ExtensionAPI,
+	session: GoalSession,
+	ctx: ExtensionContext,
+): Promise<BeforeAgentStartResult | undefined> {
+	if (!session.state) return;
+
+	pi.appendEntry("goal:log", {
+		timestamp: Date.now(),
+		level: "debug",
+		component: "goal:before-agent-start",
+		message: "handleBeforeAgentStart invoked",
+		data: { status: session.state.status },
+	});
+
+	// 终态处理
+	if (isTerminalStatus(session.state.status)) {
+		handleTerminalStateBeforeAgent(pi, session, ctx);
+		return;
+	}
+	if (!isActiveStatus(session.state.status)) return;
+
+	// Context 使用率检查（ADR-002：保持 active，仅注入提示）
+	const ctxResult = checkContextUsage(session, ctx);
+	if (ctxResult) return ctxResult;
+
+	// 正常 context injection。
+	// 全解耦：planAvailable 恒 true（contextInjectionPrompt 恒定建议 plan mode，AI 自行决定）。
+	// pending-notifications：若有活跃的异步操作，注入等待提示。
+	// 读取 pending:register/unregister entry 算差集，并校验 expiresAt（TTL 过期的视为非活跃）。
+	// pending-notifications 的 rebuildFromEntries 在其 session_start 已 flush 跨 session/过期残留，
+	// 但同一 session 内超时未 unregister 的 entry（如崩溃恢复遗漏）需此处完补以防误报 active。
+	const now = Date.now();
+	const entries = ctx.sessionManager.getEntries();
+	// pending:register/unregister 由 pi.appendEntry 落地为 CustomEntry（type:"custom"）。
+	// 先用 isCustomEntry 收窄联合类型，再读 customType/data。
+	const customEntries = entries.filter(isCustomEntry);
+	const pendingUnregisters = new Set(
+		customEntries.filter((e) => e.customType === "pending:unregister").map((e) => (e.data as Record<string, unknown>)?.id),
+	);
+	const activePending = customEntries.filter((e) => {
+		if (e.customType !== "pending:register") return false;
+		const id = (e.data as Record<string, unknown>)?.id;
+		if (pendingUnregisters.has(id)) return false;
+		// TTL 过期视为非活跃（expiresAt 缺失或类型错误时宽容处理为活跃）
+		const expiresAt = (e.data as Record<string, unknown>)?.expiresAt;
+		if (typeof expiresAt === "number" && expiresAt <= now) return false;
+		return true;
+	});
+	const pendingHint = activePending.length > 0
+		? `\nNote: There are ${activePending.length} pending async operation(s) running. Consider waiting for them to complete before starting new work.`
+		: "";
+
+	pi.appendEntry("goal:log", {
+		timestamp: Date.now(),
+		level: "debug",
+		component: "goal:before-agent-start",
+		message: "pending entries computed",
+		data: {
+			activePending: activePending.length,
+			injectHint: activePending.length > 0,
+			pendingIds: activePending.map((e) => (e.data as Record<string, unknown>)?.id),
+		},
+	});
+
+	return {
+		message: {
+			customType: "goal-context",
+			content: contextInjectionPrompt(session.state, session.state.timeUsedSeconds, true) + pendingHint,
+			display: false,
+		},
+	};
+}
+
+/**
+ * FR-8.1 G-007：终态 goal 在 AUTO_CLEAR_TURNS(2) 轮后自动清理。
+ * 未到清理阈值时：折叠 status bar（显示终态单行），清 widget。
+ */
+function handleTerminalStateBeforeAgent(
+	pi: ExtensionAPI,
+	session: GoalSession,
+	ctx: ExtensionContext,
+): void {
+	const state = session.state!;
+	const turnsInTerminal = state.currentTurnIndex - (state.completedAtTurnIndex ?? 0);
+	if (turnsInTerminal >= AUTO_CLEAR_TURNS) {
+		clearGoalSession(session, buildPorts(pi, ctx).ui);
+		return;
+	}
+	// 折叠 status bar（终态显示）
+	const statusText = renderTerminalStatusLine(state, asTheme(buildPorts(pi, ctx).ui));
+	if (statusText && ctx.hasUI) ctx.ui.setStatus("goal", statusText);
+	if (ctx.hasUI) ctx.ui.setWidget("goal", undefined);
+}
+
+/**
+ * ADR-002 context usage 提示：getContextUsage 超过 CONTEXT_USAGE_RATIO_LIMIT(0.85)
+ * → goal **保持 active**（不转 paused），仅注入 wrap-up 指令让 AI 自行 complete/cancel。
+ * 不做状态变更、不 persist、不 tick（资源保护通过"提示"而非"状态机"实现）。
+ */
+function checkContextUsage(
+	_session: GoalSession,
+	_ctx: ExtensionContext,
+): BeforeAgentStartResult | undefined {
+	const usage = _ctx.getContextUsage();
+	if (
+		usage &&
+		usage.contextWindow > 0 &&
+		(usage.tokens ?? 0) / usage.contextWindow > CONTEXT_USAGE_RATIO_LIMIT
+	) {
+		return {
+			message: {
+				customType: "goal-context-exceeded",
+				content:
+					"[GOAL — context space low, must wrap up now]\n" +
+					"1. Check remaining work and verify what is genuinely completed\n" +
+					"2. Only report completion for work backed by concrete evidence\n" +
+					"3. Summarize current progress and remaining work\n" +
+					"Do not start new work.",
+				display: false,
+			},
+		};
+	}
+	return undefined;
+}

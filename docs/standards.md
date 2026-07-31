@@ -427,7 +427,7 @@ const MOCK: SearchItem[] = [
 
 | 工具 | 覆盖范围 | 触发时机 |
 |------|---------|---------|
-| taste-lint (ESLint) | 原生 HTML / emoji / v-model / 硬编码颜色 / 魔数间距 / 静默 catch / allSettled | `npm run lint` + pre-commit |
+| taste-lint (ESLint) | 原生 HTML / emoji / v-model / 硬编码颜色 / 魔数间距 / 静默 catch / allSettled | `pnpm run lint` + pre-commit |
 | vue_rules_checker.py | 行数上限 / CSS 选择器 / Tab 缩进 / 原生元素 / emoji / v-model | pre-commit |
 | pre-commit hook | ESLint + vue_rules_checker | git commit |
 
@@ -437,4 +437,4 @@ const MOCK: SearchItem[] = [
 
 1. 先更新 `shared/src/protocol.ts` 中的类型定义
 2. 确认前端和 runtime 的消费方都已适配
-3. 运行 `npm -w @xyz-agent/frontend run typecheck` 和 `npm -w @xyz-agent/runtime run typecheck` 验证
+3. 运行 `pnpm --filter @xyz-agent/frontend run typecheck` 和 `pnpm --filter @xyz-agent/runtime run typecheck` 验证

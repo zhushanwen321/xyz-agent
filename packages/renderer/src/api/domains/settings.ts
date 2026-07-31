@@ -11,7 +11,8 @@
 import * as configDomain from './config'
 import * as extensionDomain from './extension'
 import { command } from '../request'
-import type { ServerMessageMap } from '@xyz-agent/shared'
+import type { ServerMessageMap, IProxyConfig } from '@xyz-agent/shared'
+import { getProxyConfig as getProxyConfigIpc, setProxyConfig as setProxyConfigIpc, testProxy as testProxyIpc } from '@/lib/ipc'
 
 export interface SystemSettings {
   locale: 'zh-CN' | 'en-US'
@@ -59,6 +60,8 @@ type BareSetupScriptReply = ServerMessageMap['config.bareSetupScript']
 type WorktreeTimeoutReply = ServerMessageMap['config.worktreeTimeout']
 /** 默认基分支配置 reply 类型。 */
 type DefaultBaseBranchReply = ServerMessageMap['config.defaultBaseBranch']
+/** 自动重命名 session 配置 reply 类型。 */
+type AutoRenameEnabledReply = ServerMessageMap['config.autoRenameEnabled']
 
 /** 设置 worktree 专用目录（持久化到 settings.json）。 */
 export async function setWorktreeRootDir(dir: string): Promise<WorktreeRootDirReply> {
@@ -108,6 +111,36 @@ export async function setDefaultBaseBranch(baseBranch: string): Promise<DefaultB
 /** 读取默认基分支配置。 */
 export async function getDefaultBaseBranch(): Promise<DefaultBaseBranchReply> {
   return command('config.getDefaultBaseBranch', {})
+}
+
+/** 设置自动重命名 session 开关。 */
+export async function setAutoRenameEnabled(enabled: boolean): Promise<AutoRenameEnabledReply> {
+  return command('config.setAutoRenameEnabled', { enabled })
+}
+
+/** 读取自动重命名 session 配置。 */
+export async function getAutoRenameEnabled(): Promise<AutoRenameEnabledReply> {
+  return command('config.getAutoRenameEnabled', {})
+}
+
+// ── 代理配置（update:getProxyConfig / update:setProxyConfig / update:testProxy）──
+// 代理配置通过 Electron IPC 直接与 main 进程通信（不走 runtime WS），
+// 因为升级模块运行在 main 进程中。
+// 使用 lib/ipc.ts 适配层，符合 renderer 对 electronAPI 的唯一适配点规范。
+
+/** 读取代理配置。 */
+export async function getProxyConfig(): Promise<IProxyConfig> {
+  return getProxyConfigIpc()
+}
+
+/** 保存代理配置。 */
+export async function setProxyConfig(config: IProxyConfig): Promise<void> {
+  await setProxyConfigIpc(config)
+}
+
+/** 测试代理连接。 */
+export async function testProxy(config: IProxyConfig): Promise<{ success: boolean; message?: string }> {
+  return testProxyIpc(config)
 }
 
 // ── 纯前端偏好（localStorage，不走 transport；mock 侧直接复用本实现，消除手工同构）──

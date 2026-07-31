@@ -113,8 +113,7 @@ export default {
     terminate: '终止',
     terminateConfirm: '确认终止？',
     empty: '暂无工作流',
-    emptyHint: '在对话中运行 workflow 脚本（如 /workflows run xxx）发起工作流，运行进度会显示在这里',
+    emptyHint: '工作流是多步骤自动化脚本，在对话中发起后会显示运行进度',
     agentsLabel: '{done}/{total}',
-    tokUnit: 'tok',
   },
 }

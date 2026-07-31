@@ -477,7 +477,7 @@ s.streamingMessage = { ...s.streamingMessage, content: s.streamingMessage.conten
 
 ```bash
 # 待执行 — 检查生产构建产物大小
-npm run build:vite   # 生产构建
+pnpm run build:vite   # 生产构建
 ls -lh renderer/dist/assets/  # 查看产物体积
 ```
 

@@ -34,13 +34,20 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 **外部项目源码**:
 - **pi**: [badlogic/pi-mono](https://github.com/badlogic/pi-mono) — AI coding agent CLI，xyz-agent 通过子进程 RPC 调用。session tree / fork / clone 核心能力为 pi 原生，xyz-agent 不依赖任何 fork 特有改动
   - npm 包: `@earendil-works/pi-coding-agent`
-  - 当前版本: `0.80.3`
+  - 当前版本: `0.82.1`（devDependency 提供 extensions 开发期类型；打包的 pi binary 见 `resources/pi/`）
   - 历史背景：此前使用 fork `zhushanwen321/pi`（包名 `xyz-pi`），fork 唯一改动是在 `get_state` RPC 响应中透出 `leafId` 字段。该字段在 xyz-agent 前端从未消费，2026-07 已切回上游，leafId 改为从 JSONL session 文件解析近似值
   - Skill 加载: `packages/coding-agent/src/core/skills.ts`
   - Skill 展开: `packages/coding-agent/src/core/agent-session.ts` — `_expandSkillCommand()`
   - Slash 命令: `packages/coding-agent/src/core/slash-commands.ts`
   - RPC 协议: `packages/coding-agent/src/modes/rpc/rpc-mode.ts`
   - TUI 交互: `packages/coding-agent/src/modes/interactive/interactive-mode.ts`
+
+**Pi Extension 源码（本项目维护）**:
+- `extensions/` 目录下 16 个 `@zhushanwen/pi-*` extension 包 + `extensions/shared/quota-providers`，迁自已废弃的 xyz-pi-extensions 仓库，由本项目继续发布到 npm（`npm-v*` tag）
+- **Extension 开发规范**: [docs/extensions/development-guide.md](docs/extensions/development-guide.md)（完整指南）、[docs/extensions/extension-conventions.md](docs/extensions/extension-conventions.md)（强约束）、[docs/extensions/glossary.md](docs/extensions/glossary.md)（术语表）
+- 类型检查: `pnpm extensions:typecheck`；Lint: `pnpm extensions:lint`；测试: `pnpm extensions:test`
+- **本地开发调试**: `.agents/skills/dev-link/` 管理 `XYZ_EXTENSION_PATHS` 环境变量，在本地源码（live edit）和 npm 版本间切换 extension。`link-local.sh <pkg>` 添加 link → `set -a && source .env.dev-extensions && set +a && pnpm dev` 启动 → 改源码后新建 session 即生效。详见 [本地开发指南](docs/extensions/local-dev-guide.md)
+- **Review 工作流**: `.agents/skills/pr-cr-fix/` 是 review→fix→PR 统一编排 skill，调度 `.agents/agents/` 下的 8 个 review agent（7 维审查 + 1 聚合器）。维度覆盖：arch-boundary / business-logic / electron-build / extension-api / monorepo-impact / test-coverage / type-safety。触发词："review 完开 PR"、"pr-cr-fix"。仅用于 xyz-agent worktree 的 PR 场景
 
 **Settings 模块设计文档**:
 - [Settings 视觉 demo](docs/page-design/archive/settings-final.html) — Section Groups 风格 HTML demo（pre-v3 历史稿）
@@ -50,10 +57,10 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 ## 常用命令
 
 ```bash
-npm run dev          # 开发模式 (Electron + Vite HMR)
-npm run build        # 生产构建 (electron-builder)
-npm run lint         # ESLint 检查（或 pnpm run lint）
-npm run prepare      # 安装 git hooks
+pnpm run dev          # 开发模式 (Electron + Vite HMR)
+pnpm run build        # 生产构建 (electron-builder)
+pnpm run lint         # ESLint 检查
+pnpm run prepare      # 安装 git hooks
 
 # 打包流程（pnpm workspace 单步安装，无需 cd 子目录）
 pnpm install          # 安装所有依赖（根 + packages/* + apps/*，ELECTRON_SKIP_BINARY_DOWNLOAD=1 跳过二进制下载）
@@ -63,6 +70,11 @@ bash scripts/postbuild-validate.sh         # 打包后验证
 
 # 单独验证 runtime bundle
 bash scripts/validate-runtime-bundle.sh
+
+# Pi Extension 开发（extensions/ 目录）
+pnpm extensions:typecheck   # 全量 tsc 类型检查
+pnpm extensions:lint        # ESLint（extensions/ override 规则）
+pnpm extensions:test        # 全部 extension 包 vitest 测试
 ```
 
 ## 前端调试（Playwright 连 dev app）
@@ -283,6 +295,7 @@ lsof -i :1420 -P | grep node
   - electron-builder.yml 不再 `extraResources` 拷贝 `@zhushanwen/`，preflight-check.sh 移除了原 npm packages / 传递依赖检查（步骤 7、8）
   - **代价**：新用户首次启动无这些 extension，需到 Settings 手动安装；离线环境无法安装（npm-installer 需联网）
   - 旧规则背景：曾经发生过误删 builtin 依赖导致打包产物缺失的事故，故设禁止删除规则。现改为推荐安装机制后该约束不再适用，但「删除打包所需依赖」的事故教训仍适用于其他 builtin 资源（如 pi binary、xyz-agent-extension.js）
+  - **2026-07-30 推翻（升格 mandatory）**：上面的「Settings 推荐安装」机制**已被取代**。原 6 个推荐包（`pi-ask-user`/`pi-goal`/`pi-todo`/`pi-pending-notifications`/`pi-subagent-workflow`/`pi-structured-output`）已升格为 **mandatory**（强制安装），并新增 3 包（`pi-permission`/`pi-scheduler`/`pi-rename-session`），共 **9 包**改为 mandatory。mandatory 语义：runtime boot 时 `ensureMandatoryExtensions()` 自动 `npm install` 到 `~/.xyz-agent/npm/node_modules/` 并设 `autoUpgrade`、清 disabled 残留；**不可卸载/不可禁用**（`uninstallExtension`/`toggleExtension` 双重守卫，抛 `mandatory_cannot_disable`/`mandatory_cannot_uninstall`）。`recommended-extensions.json` 已清空为 `[]`（推荐机制保留给未来非强制可选扩展，当前为空）。**SSOT 迁移**：mandatory 列表 SSOT = `packages/shared/src/mandatory-extensions.json`（含 `tier: infrastructure | feature` 两级），recommended-extensions.json 不再是这些包的 SSOT。离线安装/用户手动安装等「推荐机制」结论不再适用。
   - **xyz-system-prompt-extension.js**（repo root）：builtin 文件型 pi 扩展，before_agent_start hook 实现系统提示词追加注入。走 `--extension` CLI 注入（extension-service.getExtensionPaths 在 xyz-agent-extension.js 之后追加）。打包走 electron-builder.yml extraResources（`../../xyz-system-prompt-extension.js`），postbuild-validate.sh 校验产物存在性。「删除打包所需依赖」事故教训同样适用
   - extension/skill 都不走 vendor submodule（2026-07-04 移除了 `vendor/xyz-pi-extensions` + `vendor/xyz-harness` 两个 submodule，`prepare-pi-resources.sh` 现只负责下载 pi binary，extensions 走 npm 源、skills 走用户/project 级目录 `~/.agents/skills` / `<cwd>/.pi/agent/skills`）
 
@@ -314,7 +327,7 @@ lsof -i :1420 -P | grep node
    - `files` 显式包含 `dist/runtime/**/*`（不只是"未排除"）
    - `files` 未排除 `dist/runtime`（正则扫描 `!dist/runtime` 模式）
    - `resources/pi` 无 symlink
-2. **Build** (`npm run build`)：electron-builder 执行打包，产出 dmg/zip/exe
+2. **Build** (`pnpm run build`)：electron-builder 执行打包，产出 dmg/zip/exe
 3. **Postbuild** (`scripts/postbuild-validate.sh`)：
    - asar 内容正确性（dist/main/main.cjs, dist/preload/preload.cjs）
    - `app.asar.unpacked/dist/runtime/` 存在且包含 `index.cjs` + `plugin-bootstrap.cjs`
@@ -405,9 +418,9 @@ xyz-agent runtime 只是旁观转发：它看到 pi 又开始流 `message_start`
 
 **排查跨层机制的强制步骤**：
 1. xyz-agent runtime 侧（event-interpreter / session-service / message-dispatcher / session-message-handler）：这些只是「旁观 + 转发 + UI 同步」，不主动编排 pi 行为
-2. pi extension 机制（运行在 pi 进程内）：`@zhushanwen/pi-subagent-workflow` / `pi-subagents` 等扩展的 notifier / hook 才是续跑/编排的发起方。源码在 `~/.xyz-agent/pi/agent/npm/node_modules/@zhushanwen/pi-*/src/`
+2. pi extension 机制（运行在 pi 进程内）：`@zhushanwen/pi-subagent-workflow` / `pi-subagents` 等扩展的 notifier / hook 才是续跑/编排的发起方。**开发期源码**在本项目 `extensions/`（@zhushanwen/pi-* 包），**运行时安装版**在用户机器 `~/.xyz-agent/pi/agent/npm/node_modules/@zhushanwen/pi-*/src/`（排查用户环境问题时看这个）
 3. pi 私有协议（`triggerTurn`/`deliverAs`/`before_agent_start` 等）：`packages/shared/src/message.ts` 的注释会提到这些语义（如「triggerTurn:true 唤醒父 agent 接力处理结果」），但 xyz-agent 不实现它们
-4. 设计文档：`docs/page-design/v3/` 下常有 extension adaptation 文档（如 `subagent-panel/workflow-extension-adaptation.md`）说明跨层协议
+4. 设计文档：`docs/page-design/v3/` 下常有 extension adaptation 文档（如 `subagent-panel/workflow-extension-adaptation.md`）说明跨层协议。extension 的 `ctx.mode`、运行环境、SDK 接口契约等前提知识见 [docs/extensions/extension-conventions.md](docs/extensions/extension-conventions.md)
 
 **判断「是 xyz-agent 职责还是 pi 职责」的依据**：如果一个行为涉及 pi 的 session loop / turn 调度 / LLM 调用，它的发起方几乎一定在 pi 进程内（extension 或 pi 核心），xyz-agent runtime 只是通过 RPC/事件流与 pi 交互，不会自己编排 pi 的 turn。xyz-agent 的职责是 UI 状态同步 + 用户命令转发，不是 pi 行为编排。
 
@@ -463,7 +476,7 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
    - **Escape hatch**（`<style scoped>`）：只用于 Tailwind 无法表达的场景：伪元素（`::placeholder`）、后代选择器（`.msg__body p`）、Vue Transition 类（`.xxx-enter-from`）
    - 禁止 `@apply`，禁止在 `style.css` 中新增组件级样式规则
 4. **行数上限** — `<template>` ≤ 400 行, `<script setup>` ≤ 300 行
-5. **禁止 `any`** — 用 `unknown` 或具体类型
+5. **禁止 `any`** — 用 `unknown` 或具体类型。`as never` / `as any` / `as unknown as T` 会绕过类型检查：不可替代的断言必须有运行时 guard 兜底；`(x as any).field` 改为类型守卫函数。extensions/ 代码由 `taste/no-unsafe-cast` 规则强制（warn），前端代码作为原则遵守
 6. **v-model 绑定** — 禁止 `:value` + `@input`，用 `v-model`
 7. **Promise.allSettled** — 独立数据源用 `allSettled`，不用 `all`
 8. **禁止硬编码颜色** — 用 CSS 变量（`var(--accent)`）或语义 Tailwind 类
@@ -485,19 +498,33 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 
 | 检查工具 | 覆盖范围 | 触发时机 |
 |---------|---------|---------|
-| taste-lint (ESLint) | no-native-html / no-emoji / prefer-v-model / no-hardcoded-colors / no-magic-spacing / no-silent-catch / prefer-allsettled / no-multi-arg-emit | `npm run lint` + pre-commit |
+| taste-lint (ESLint) | no-native-html / no-emoji / prefer-v-model / no-hardcoded-colors / no-magic-spacing / no-silent-catch / prefer-allsettled / no-multi-arg-emit | `pnpm run lint` + pre-commit |
 | vue_rules_checker.py | 行数上限 / CSS 选择器 / Tab 缩进 / 原生元素 / Emoji / v-model | pre-commit |
 
 ### Lint / Git Hooks 问题处理原则 [MANDATORY]
 
-**lint（ESLint / vue_rules_checker）或 githooks（pre-commit 的任何 check_*.py）检出的问题，必须全部正面修复，不得跳过。**
+**lint（ESLint / vue_rules_checker）或 githooks（pre-commit 的任何 check_*.py）检出的问题，无论等级（warning / error，或 critical / major / minor），也无论是否本次改动引入（预存存量问题一律同视），必须全部正面修复，不得跳过。不得以"不是本次改动导致"为由而不修复。**
 
-- **不得以“非本次改动引入”为由跳过**：存量问题同样要修。携改动的 commit 触发了检查，检查出的所有问题都是本次提交的责任范围。
-- **不得用 `SKIP_*` 变量绕过**（`SKIP_FRONTEND_LINT` / `SKIP_CODE_RULES_CHECK` / `SKIP_ALL_CHECKS` 等）— 仅限线上故障热修复等紧急场景，且必须在 commit message 说明原因。
+- **存量问题也要修**：携改动的 commit 触发了检查，检查出的所有问题（含本次改动前就存在的）都是本次提交的责任范围。
+- **不得以”只是 warning / minor”为由跳过**：低等级问题也必须修。等级只影响修复顺序，不影响”必须修复”的结论。reviewer 报告的 minor、ESLint 的 warning 同样必须解决。
+- **不得绕过检查**：禁止 `git commit --no-verify` 或项目专属的 `SKIP_*` 变量（`SKIP_FRONTEND_LINT` / `SKIP_CODE_RULES_CHECK` / `SKIP_ALL_CHECKS` 等）— 仅限线上故障热修复等紧急场景，且必须在 commit message 说明原因。
 - **不得仅“消除报错”而不解决根因**：例如把原生 `<button>` 改成 `<Button>` 是正面修复；但把检测规则改成“放过该写法”只有在确认规则误报时才可（且须在规则中加注释说明）。
 - **规则误报的唯一正当处理**：修正规则本身使其准确（如 reka-ui `SelectItem :value` 是选项值语义，应排除），并在规则文件加 `[HISTORICAL]` 注释记录原因。禁止用 `// eslint-disable-next-line` 局部静默。
-- pre-commit 每个检查失败分支已内置提示：“无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过”。
+- pre-commit 每个检查失败分支已内置提示：”无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过”。
 
+### 完成即提交 [MANDATORY]
+
+**所有变更改完并在本地验证通过后，在向用户汇报完成 / 结束本轮工作（stop）之前，必须执行 git commit。** 禁止留下”改了代码但未提交”的脏工作区就结束。
+
+- 若因**穷尽正面修复后仍未解决的**检查失败、冲突、认知外改动等原因无法提交，必须在结束前**明确说明未提交原因**，不得静默跳过（见失败模式防护 #3「失败要出声」）。注意：pre-commit 检出的问题必须先按上文「Lint / Git Hooks 问题处理原则」全部修复，「检查未过」本身不构成停笔理由
+- 提交范围遵循全局提交策略：优先提交本次会话产生的改动，文件级颗粒度
+
+
+## Git 规范
+
+- **分支命名**：`feat/`、`fix/`、`refactor/`、`chore/` 前缀（如 `feat/merge-extensions`、`fix/app-start-error`）
+- **Commit 信息**：英文，遵循 conventional commits 风格（`feat:`/`fix:`/`refactor:`/`docs:`/`chore:`/`ci:` 前缀）
+- **提交粒度**：见全局 AGENTS.md「提交策略」——优先提交自己的改动，认知外的改动不碰
 
 ## 架构约定
 
@@ -510,14 +537,53 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 
 ## 发布与 CI 验证 [HISTORICAL]
 
+本项目有**两条独立的发布管线**，通过不同 tag 前缀解耦：
+
+| 管线 | 产物 | 触发 tag | Workflow | 验证 |
+|------|------|----------|----------|------|
+| **Electron 打包** | DMG/EXE/AppImage 桌面应用 | `v*` | `release.yml` | `scripts/verify-ci-release.sh` |
+| **npm 包发布** | `@xyz-agent/extension-protocol` + `@zhushanwen/pi-*` extensions | `npm-v*` | `release-npm.yml` | changeset publish 输出 + npm registry 核对 |
+
+npm 包发布流程（@zhushanwen/pi-* extensions + extension-protocol）：
+1. 用 `pnpm changeset` 创建 changeset（声明改了哪些包、版本 bump 类型）
+2. `pnpm changeset:version` 消费 changeset，bump 版本号
+3. commit + 打 tag `npm-v<根版本>` + push
+4. tag 触发 `release-npm.yml` → `pnpm changeset publish` 实际发 npm
+5. **禁止本地 `pnpm changeset publish` 或 `npm publish`**（曾因 npm registry 最终一致性导致 E403）；预发布走 `dev-npm-*` 分支 → `release-npm-dev.yml` → `@dev` dist-tag（脚本 `scripts/npm-prerelease.sh` 支持指定包名，如 `bash scripts/npm-prerelease.sh @zhushanwen/pi-goal`）
+
+> **merge skill 集成**：merge skill 阶段 4N 封装了上述 npm 发布流程（changeset version + npm-v* tag + CI 验证）。仅当 PR 含 `extensions/` 改动时执行，与 Electron 发布线（阶段 4，`v*` tag）独立。详见 `.agents/skills/merge/SKILL.md`
+
 每次 push tag 触发 CI（release workflow）构建 Electron 产物后，**必须等待 CI 完成并验证产物存在**。多次发生 AI push 后直接宣布"已完成"，实际 CI 构建失败或产物缺失而无人察觉。
+
+### [MANDATORY] Release Notes 必须中英双语
+
+Release Notes 需要同时包含中文和英文版本，使用 `<!-- LANG:zh -->` 和 `<!-- LANG:en -->` 标记分隔。前端会根据用户语言偏好自动提取对应部分。
+
+格式示例：
+```markdown
+<!-- LANG:en -->
+## What's New
+- Fix bug X
+- Add feature Y
+
+<!-- LANG:zh -->
+## 更新内容
+- 修复 bug X
+- 添加功能 Y
+```
+
+注意事项：
+- 英文在前，中文在后（便于 GitHub 默认显示英文）
+- 每个语言部分保持独立的 markdown 结构
+- 标记必须独占一行，前后可有空行
+- 向后兼容：无标记的 release 仍正常显示完整内容
 
 ### [MANDATORY] 必须遵守的规则
 
 **错误做法（禁止）：**
 ```
 # 坏 — push 后直接结束
-npm version patch && git push github HEAD --tags
+pnpm version patch && git push github HEAD --tags
 echo "已推送，CI 会构建"
 # ← AI 在此结束，不检查 CI 结果
 ```
@@ -525,7 +591,7 @@ echo "已推送，CI 会构建"
 **正确做法：**
 ```
 # 好 — push 后必须验证
-npm version patch && git push github HEAD --tags
+pnpm version patch && git push github HEAD --tags
 bash scripts/verify-ci-release.sh "v$(node -p "require('./package.json').version")"
 # ← 脚本会轮询 CI 直到完成，验证 dmg/exe/AppImage 存在
 # ← exit 0 = 通过，exit 非 0 = 失败（AI 必须修复直到 exit 0）
@@ -588,6 +654,32 @@ runtime 子进程（`packages/runtime/src/`）与 pi 子进程的所有日志输
 
 **[HISTORICAL] 背景**：handoff 2026-07-04 P1「pi 静默卡死」——坏 session 的 JSONL 只有 2 行、零 message，pi 子进程 0% CPU 不退出。runtime 发了 prompt 后 pi 发了什么事件（或什么都没发）无法事后追溯，因为日志只在 concurrently 终端，关掉即丢。此条目把「日志必须落盘」固化为规范，避免再次因证据丢失而无法定位。实现见 commit（logger.ts + index.ts initLogger + rpc-client.ts pi stdout tee）。
 
+### 5. 包管理器与 lock 文件纪律 [HISTORICAL]
+
+本项目是 **pnpm workspace 单一包管理器**项目（`pnpm-workspace.yaml` 声明 `packages/*` + `apps/*`）。`pnpm-lock.yaml` 是**唯一权威 lock 文件**，必须跟踪。**禁止跟踪任何 npm 产物**（`package-lock.json`）。
+
+**三件套（缺一不可）**：
+
+1. **`package.json` 必须声明 `packageManager` 字段**（锁定包管理器 + 版本）。示例：`"packageManager": "pnpm@10.27.0"`。corepack/IDE 据此自动切换，避免有人误用 npm install 生成 `package-lock.json`。新增项目或发现缺失时补全；pnpm 升级时同步更新此字段
+2. **`.gitignore` 必须忽略 `package-lock.json`**（连同 `package-lock.json.*`）。即使误生成也不进版本库
+3. **发现 `package-lock.json` 被 git 跟踪时，用 `git rm --cached package-lock.json` 停止跟踪**（保留磁盘文件），不要 `rm` 物理删除
+
+**根因**：`package-lock.json` 与 `pnpm-lock.yaml` 双轨跟踪时，版本号长期各跑各的（package.json / pnpm-lock / package-lock 三处版本号各不相同），且 npm 与 pnpm 的依赖解析算法不同（npm flat hoisting vs pnpm 严格隔离 + symlink），双 lock 会产生幽灵依赖、重复安装、解析不一致类 bug。2026-07-30 事故：`package-lock.json` 版本滞留在 0.8.32（main 已 0.8.38、package.json 0.8.37），且 `package.json` 未声明 `packageManager`，是 lock 双轨的根因。
+
+**操作纪律**：
+- 所有安装/添加依赖命令用 `pnpm install` / `pnpm add`，禁止 `npm install` / `npm ci`
+- 禁止 `npm version` 改版本号（会同步改写 package-lock.json），版本号用 `changeset version` 或手改 package.json
+- 子包若确需独立用 npm（罕见，如某个 vendored 工具），在该子包自己的 `.gitignore` 里放开 `package-lock.json` 规则，并在子包 package.json 声明对应 `packageManager`
+
+**保留 npm 的例外（不要"统一"成 pnpm）**：以下场景的 npm 命令是**刻意保留**的，未来 agent 做统一审查时**不要改**：
+- **第三方消费者安装指引**：`docs/extensions/local-dev-guide.md` 的 `npm install -g @earendil-works/pi-coding-agent`、`npm-prerelease/SKILL.md` 与 `release-npm-dev.yml` 的 `npm install @xyz-agent/extension-protocol@dev` 等。这些是发给 npm registry 的外部消费者的指引，他们环境未必装了 pnpm，npm 是最通用的兜底
+- **`npm publish`**：发包命令。`pnpm changeset publish` 内部最终也调 `npm publish`，文档里描述发包用 npm 是准确的
+- **runtime 安装用户 extension 的机制**：`extension-service.ts`/`installer.ts` 等代码里对用户 extension 执行 `npm install` 到数据目录——这是面向终端用户的 extension 安装机制，用户环境不可控，必须用 npm
+- **反例描述 / 规则正文**：「错误做法」表格里引用被禁的 `npm version`、§5 本节禁止 `npm install` 的规则条文，必须保留 npm 字样（描述被禁的命令名）
+- **`npx` 命令**：中立包执行器，不算 npm 风格违纪，保留
+
+**判断标准一句话**：命令执行者若是「本项目的开发者/CI/AI」→ 用 pnpm；若是「外部消费者/终端用户」或「描述被禁行为」→ 保留 npm。
+
 ## 跳过检查
 
 ### cw v1 testRunner cwd 对 monorepo 失效 [HISTORICAL]
@@ -608,6 +700,7 @@ cw v1 的 testRunner 硬编码 `cwd: workspacePath`（仓库根）跑 `npx vites
 ```bash
 SKIP_ALL_CHECKS=1 git commit       # 跳过所有（仅紧急情况）
 SKIP_FRONTEND_LINT=1 git commit    # 跳过 ESLint
+SKIP_EXTENSION_LINT=1 git commit   # 跳过 extensions ESLint + tsc + manifest/convention 检查
 SKIP_CODE_RULES_CHECK=1 git commit # 跳过 vue_rules_checker
 SKIP_ENV_WHITELIST_CHECK=1 git commit   # 跳过 ENV 白名单同步检查
 SKIP_PATH_WHITELIST_CHECK=1 git commit   # 跳过路径白名单动态化检查

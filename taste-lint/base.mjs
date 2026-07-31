@@ -17,6 +17,10 @@ import noNativeHtmlElements from './rules/no-native-html-elements.mjs';
 import noEmojiInTemplate from './rules/no-emoji-in-template.mjs';
 import preferVModel from './rules/prefer-v-model.mjs';
 import noMultiArgEmit from './rules/no-multi-arg-emit.mjs';
+import noUnboundedWhileTrue from './rules/no-unbounded-while-true.mjs';
+import noInlineImportType from './rules/no-inline-import-type.mjs';
+import noEslintDisable from './rules/no-eslint-disable.mjs';
+import noUnsafeCast from './rules/no-unsafe-cast.mjs';
 
 export const tastePlugin = {
   meta: { name: 'eslint-plugin-taste' },
@@ -30,6 +34,13 @@ export const tastePlugin = {
     'no-emoji-in-template': noEmojiInTemplate,
     'prefer-v-model': preferVModel,
     'no-multi-arg-emit': noMultiArgEmit,
+    // 以下 4 条迁自 @zhushanwen/pi-taste-lint（TS 向，适用于 pi extensions）。
+    // 注册到插件但不在默认 tasteRules 启用——由 eslint.config.mjs 的 extensions/
+    // override 块按需开启，不影响 renderer/runtime 代码。
+    'no-unbounded-while-true': noUnboundedWhileTrue,
+    'no-inline-import-type': noInlineImportType,
+    'no-eslint-disable': noEslintDisable,
+    'no-unsafe-cast': noUnsafeCast,
   },
 };
 

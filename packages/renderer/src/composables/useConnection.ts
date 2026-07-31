@@ -31,6 +31,11 @@ import type { ServerMessage } from '@xyz-agent/shared'
 import * as transport from '../api/transport'
 import * as pending from '../api/pending'
 import * as events from '../api/events'
+import {
+  getSubscriptionState,
+  updateLastSeenSeq,
+  subscribeSession,
+} from './useMessageBusSubscription'
 import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
 import { usePanelStore } from '../stores/panel'
@@ -71,12 +76,21 @@ export type ConnectionStatus =
  * 对每条入站 ServerMessage：
  *   1. 若 msg.id 命中 pending → resolve（普通响应）/ reject（error envelope）
  *   2. 按 payload.sessionId 是否存在分流：
- *      - 有 sessionId → events.dispatchSession（session 通道，CLAUDE.md line 98 隔离）
+ *      - 有 sessionId → seq gap 检测（IF8/ES3，仅对已 subscribe 的 session 生效）→
+ *        events.dispatchSession（session 通道，CLAUDE.md line 98 隔离）+ 4 个兜底
  *      - 无 sessionId → events.dispatchGlobal（global 通道，config.* 及 model.list 等广播）
  *
  * session 隔离规则不变：session 级消息仍按 sessionId 路由；新增的是全局通道，
  * 承接 sendInitialState 推送的 7 条无 sessionId server-push（config.providers/model.list 等），
  * 不再静默丢弃。两通道互不串扰。
+ *
+ * seq gap 检测（D7 id/seq 互斥）：msg.seq 是 server-push live 事件的序号（per-session，
+ * bus.publish 分配）。对已 subscribe 的 session（SubscriptionState.subscribed=true）：
+ *   - seq <= lastSeenSeq → 丢弃（reconcile 回放的重复或乱序）
+ *   - seq > lastSeenSeq+1 → 触发 subscribeSession(sid, seq-1) reconcile（ES3），当前 msg 仍 dispatch
+ *   - seq === lastSeenSeq+1 → 正常递进，dispatch + 更新 lastSeenSeq
+ * 未 subscribe 的 session（state 不存在或 subscribed=false）不做 gap 检测，正常 dispatch（渐进迁移，
+ * remove-bandaids wave 统一）。pending 路径（msg.id 分支）不受 seq 影响——id/seq 来源互斥（D7）。
  */
 function routeInbound(msg: ServerMessage): void {
   if (msg.id) {
@@ -115,6 +129,28 @@ function routeInbound(msg: ServerMessage): void {
   // 联合类型无法直接 .sessionId，窄断言为可选字段做路由判定（CLAUDE.md line 98 隔离规则不变）。
   const sid = (msg.payload as { sessionId?: string }).sessionId
   if (typeof sid === 'string' && sid) {
+    // seq gap 检测（IF8/ES3）：只对已 subscribe 的 session 生效（渐进迁移，T2）。
+    // state 不存在或 subscribed=false → 跳过检测，正常 dispatch（兼容旧路径）。
+    if (typeof msg.seq === 'number') {
+      const state = getSubscriptionState(sid)
+      if (state && state.subscribed) {
+        if (msg.seq <= state.lastSeenSeq) {
+          // 丢弃：reconcile 回放的重复或乱序（seq 回退）。
+          // 不 dispatch、不更新基线、不触发兜底——这条消息是已处理过的（reconcile 期间重复 dispatch）。
+          return
+        }
+        if (msg.seq > state.lastSeenSeq + 1) {
+          // gap detected（ES3）：中间 seq 缺失 → 触发 subscribeSession(sid, seq-1) reconcile。
+          // fromSeq = seq-1（当前缺失的最早 seq，runtime 从此 seq 回拉到最新）。
+          // 不 return：当前消息仍 dispatch（gap 期间尽量不丢，reconcile 负责补齐缺失段）。
+          // void fire-and-forget：reconcile 是异步 RPC，不阻塞当前 dispatch；失败由 subscribeSession 内部 console.warn。
+          void subscribeSession(sid, msg.seq - 1)
+        }
+        // 正常递进（seq === lastSeenSeq+1）或 gap 后当前消息：更新基线 + 继续 dispatch。
+        updateLastSeenSeq(sid, msg.seq)
+      }
+      // state 不存在或未 subscribed：正常 dispatch（兼容旧路径，未迁移的 session 不做 gap 检测）
+    }
     events.dispatchSession(sid, msg)
     // session.exited 兜底：进程退出必须标记 dead + toast，不能只依赖惰性的 session
     // 通道订阅（首次 send 前可能无订阅者 → dispatchSession no-op → 错误丢弃）。

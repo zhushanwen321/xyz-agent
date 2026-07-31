@@ -91,96 +91,109 @@ get_script() {
 section "步骤 0/5: 检查依赖"
 
 if [[ -f "package.json" ]]; then
-    # 动态读取 workspaces 配置
-    WORKSPACE_DIRS=$(node -e "
-        const p = require('./package.json');
-        const ws = p.workspaces;
-        if (Array.isArray(ws)) {
-            ws.forEach(w => console.log(w));
-        } else if (ws && Array.isArray(ws.packages)) {
-            ws.packages.forEach(w => console.log(w));
-        }
-    " 2>/dev/null || echo "")
-
-    if [[ -n "$WORKSPACE_DIRS" ]]; then
-        # Monorepo: 检查根 node_modules 和各 workspace
-        NEED_INSTALL=false
-        if [[ ! -d "node_modules" ]]; then
-            NEED_INSTALL=true
-        else
-            # 检查关键 workspace 的 node_modules（可能是 symlink，也可是真实目录）
-            for ws_dir in $WORKSPACE_DIRS; do
-                # 跳过 glob 模式（如 "packages/*"）
-                [[ "$ws_dir" == *"*"* ]] && continue
-                if [[ -d "$ws_dir" ]] && [[ ! -e "$ws_dir/node_modules" ]]; then
-                    NEED_INSTALL=true
-                    break
-                fi
-            done
+    # pnpm 项目：根目录 pnpm install --frozen-lockfile 一次装完所有 workspace + hoisted deps。
+    # 跳过下面的 npm/子目录扫描逻辑——pnpm hoisted 项目子目录不该独立 install。
+    if [[ -f "pnpm-lock.yaml" ]] || grep -q '"packageManager":.*"pnpm@' package.json 2>/dev/null; then
+        if [[ ! -d "node_modules" ]] || [[ ! -d "node_modules/.pnpm" ]]; then
+            echo "  📦 检测到 pnpm 项目，安装依赖..."
+            pnpm install --frozen-lockfile 2>&1
         fi
-
-        if $NEED_INSTALL; then
-            echo "  📦 检测到 monorepo，安装依赖中..."
-            if ! npm ci 2>&1; then
-                echo "  npm ci 失败，尝试 npm install..."
-                npm install 2>&1
-            fi
-        fi
+        pass "依赖已就绪（pnpm）"
     else
-        # 非 monorepo
-        if [[ ! -d "node_modules" ]]; then
-            echo "  📦 安装依赖中..."
-            if ! npm ci 2>&1; then
-                npm install 2>&1
+        # 非 pnpm 项目 fallback（本脚本是通用多项目 merge 脚本，可能被复制到其它仓库使用）。
+        # 下面这段 npm ci/install + 子目录扫描逻辑只对非 pnpm 项目执行；xyz-agent 走上面的 pnpm 分支，
+        # 这段是 dead code 但刻意保留——删了会让脚本在其它 npm/yarn 项目里失效。见 AGENTS.md §5。
+        # 动态读取 workspaces 配置
+        WORKSPACE_DIRS=$(node -e "
+            const p = require('./package.json');
+            const ws = p.workspaces;
+            if (Array.isArray(ws)) {
+                ws.forEach(w => console.log(w));
+            } else if (ws && Array.isArray(ws.packages)) {
+                ws.packages.forEach(w => console.log(w));
+            }
+        " 2>/dev/null || echo "")
+
+        if [[ -n "$WORKSPACE_DIRS" ]]; then
+            # Monorepo: 检查根 node_modules 和各 workspace
+            NEED_INSTALL=false
+            if [[ ! -d "node_modules" ]]; then
+                NEED_INSTALL=true
+            else
+                # 检查关键 workspace 的 node_modules（可能是 symlink，也可是真实目录）
+                for ws_dir in $WORKSPACE_DIRS; do
+                    # 跳过 glob 模式（如 "packages/*"）
+                    [[ "$ws_dir" == *"*"* ]] && continue
+                    if [[ -d "$ws_dir" ]] && [[ ! -e "$ws_dir/node_modules" ]]; then
+                        NEED_INSTALL=true
+                        break
+                    fi
+                done
+            fi
+
+            if $NEED_INSTALL; then
+                echo "  📦 检测到 monorepo，安装依赖中..."
+                if ! npm ci 2>&1; then
+                    echo "  npm ci 失败，尝试 npm install..."
+                    npm install 2>&1
+                fi
+            fi
+        else
+            # 非 monorepo
+            if [[ ! -d "node_modules" ]]; then
+                echo "  📦 安装依赖中..."
+                if ! npm ci 2>&1; then
+                    npm install 2>&1
+                fi
             fi
         fi
-    fi
 
-    # 前端独立检查（可能是 workspace 成员，也可能是独立目录）
-    if [[ -f "frontend/package.json" ]] && [[ ! -e "frontend/node_modules" ]]; then
-        echo "  📦 安装前端依赖中..."
-        (cd frontend && { npm ci 2>&1 || npm install 2>&1; })
-    fi
+        # 前端独立检查（可能是 workspace 成员，也可能是独立目录）
+        if [[ -f "frontend/package.json" ]] && [[ ! -e "frontend/node_modules" ]]; then
+            echo "  📦 安装前端依赖中..."
+            (cd frontend && { npm ci 2>&1 || npm install 2>&1; })
+        fi
 
-    # 通用扫描：安装有独立 package.json 但缺 node_modules 的子目录
-    # workspace 成员的依赖被 hoist 到根 node_modules，子目录只剩少量残留包
-    # 所以不能只看 node_modules 是否存在，需要检测关键类型定义是否可解析
-    for _subdir in */; do
-        [[ -f "${_subdir}package.json" ]] || continue
-        # 跳过根 node_modules 自身
-        [[ "${_subdir%/}" == "node_modules" ]] && continue
+        # 通用扫描：安装有独立 package.json 但缺 node_modules 的子目录
+        # workspace 成员的依赖被 hoist 到根 node_modules，子目录只剩少量残留包
+        # 所以不能只看 node_modules 是否存在，需要检测关键类型定义是否可解析
+        for _subdir in */; do
+            [[ -f "${_subdir}package.json" ]] || continue
+            # 跳过根 node_modules 自身
+            [[ "${_subdir%/}" == "node_modules" ]] && continue
 
-        if [[ ! -e "${_subdir}node_modules" ]]; then
-            echo "  📦 安装 ${_subdir%/} 依赖中..."
-            (cd "$_subdir" && { npm ci 2>&1 || npm install 2>&1; })
-        else
-            # node_modules 存在：检查关键依赖是否可解析
-            # 如果 package.json 有 devDependencies 且包含 @types 或 typescript，
-            # 说明是独立子项目，需要 node_modules 相对完整
-            _has_types=$(node -e "
-                try {
-                    const p = require('./${_subdir}package.json');
-                    const all = {...(p.dependencies||{}), ...(p.devDependencies||{})};
-                    console.log(Object.keys(all).some(k => k.includes('typescript') || k.includes('fastify') || k.includes('sqlite')) ? 'yes' : 'no');
-                } catch { console.log('no'); }
-            " 2>/dev/null || echo 'no')
+            if [[ ! -e "${_subdir}node_modules" ]]; then
+                echo "  📦 安装 ${_subdir%/} 依赖中..."
+                (cd "$_subdir" && { npm ci 2>&1 || npm install 2>&1; })
+            else
+                # node_modules 存在：检查关键依赖是否可解析
+                # 如果 package.json 有 devDependencies 且包含 @types 或 typescript，
+                # 说明是独立子项目，需要 node_modules 相对完整
+                _has_types=$(node -e "
+                    try {
+                        const p = require('./${_subdir}package.json');
+                        const all = {...(p.dependencies||{}), ...(p.devDependencies||{})};
+                        console.log(Object.keys(all).some(k => k.includes('typescript') || k.includes('fastify') || k.includes('sqlite')) ? 'yes' : 'no');
+                    } catch { console.log('no'); }
+                " 2>/dev/null || echo 'no')
 
-            if [[ "$_has_types" == "yes" ]]; then
-                # 有类型依赖的子项目：验证 tsc 能否解析（用 --listFiles 不编译）
-                _tsconfig="${_subdir}tsconfig.json"
-                if [[ -f "$_tsconfig" ]]; then
-                    # pipefail + grep 返回 1 会导致 set -e 退出，用 || true 保护
-                    _tsc_output=$(cd "$_subdir" && npx tsc --noEmit --pretty false 2>&1 || true)
-                    if echo "$_tsc_output" | grep -q "TS2307"; then
-                        echo "  📦 ${_subdir%/} tsc 找不到模块，重新安装..."
-                        (cd "$_subdir" && npm install 2>&1)
+                if [[ "$_has_types" == "yes" ]]; then
+                    # 有类型依赖的子项目：验证 tsc 能否解析（用 --listFiles 不编译）
+                    _tsconfig="${_subdir}tsconfig.json"
+                    if [[ -f "$_tsconfig" ]]; then
+                        # pipefail + grep 返回 1 会导致 set -e 退出，用 || true 保护
+                        _tsc_output=$(cd "$_subdir" && npx tsc --noEmit --pretty false 2>&1 || true)
+                        if echo "$_tsc_output" | grep -q "TS2307"; then
+                            echo "  📦 ${_subdir%/} tsc 找不到模块，重新安装..."
+                            (cd "$_subdir" && npm install 2>&1)
+                        fi
                     fi
                 fi
             fi
-        fi
-    done
+        done
 
-    pass "依赖已就绪"
+        pass "依赖已就绪"
+    fi
 else
     skip "未检测到 package.json，跳过依赖安装"
 fi
@@ -205,8 +218,8 @@ while IFS= read -r tsconfig; do
     if [[ -f "$pkg_file" ]]; then
         tsc_script=$(get_script "$pkg_file" "typecheck")
         if [[ -n "$tsc_script" ]]; then
-            echo "  检查 $label (npm run typecheck) ..."
-            run_check "${label}TypeScript 类型检查" bash -c "cd '${dir:-.}' && npm run typecheck"
+            echo "  检查 $label (pnpm run typecheck) ..."
+            run_check "${label}TypeScript 类型检查" bash -c "cd '${dir:-.}' && pnpm run typecheck"
             TSC_RAN=true
             continue
         fi
@@ -238,7 +251,7 @@ if [[ -f "frontend/tsconfig.json" ]] || [[ -f "frontend/tsconfig.app.json" ]]; t
     if [[ -f "$FE_PKG" ]]; then
         fe_typecheck=$(get_script "$FE_PKG" "typecheck")
         if [[ -n "$fe_typecheck" ]]; then
-            run_check "frontend/ vue-tsc 类型检查" bash -c "cd frontend && npm run typecheck"
+            run_check "frontend/ vue-tsc 类型检查" bash -c "cd frontend && pnpm run typecheck"
         else
             # 没有 typecheck 脚本，直接用 vue-tsc
             run_check "frontend/ vue-tsc 类型检查" bash -c "cd frontend && npx vue-tsc --noEmit"
@@ -262,8 +275,8 @@ LINT_RAN=false
 if [[ -f "package.json" ]]; then
     lint_script=$(get_script "./package.json" "lint")
     if [[ -n "$lint_script" ]]; then
-        echo "  运行 npm run lint ..."
-        run_check "Lint 检查" npm run lint
+        echo "  运行 pnpm run lint ..."
+        run_check "Lint 检查" pnpm run lint
         LINT_RAN=true
     fi
 fi
@@ -276,7 +289,7 @@ if ! $LINT_RAN; then
         sub_lint=$(get_script "$pkg_file" "lint")
         if [[ -n "$sub_lint" ]]; then
             echo "  运行 $sub_dir lint ..."
-            run_check "${sub_dir}/ lint 检查" bash -c "cd '$sub_dir' && npm run lint"
+            run_check "${sub_dir}/ lint 检查" bash -c "cd '$sub_dir' && pnpm run lint"
             LINT_RAN=true
         fi
     done
@@ -311,8 +324,8 @@ if [[ -f "package.json" ]]; then
         if echo "$test_script" | grep -q "echo.*no test specified"; then
             skip "测试脚本为默认占位符"
         else
-            echo "  运行 npm test ..."
-            run_check "单元测试" npm test
+            echo "  运行 pnpm test ..."
+            run_check "单元测试" pnpm test
             TEST_RAN=true
         fi
     fi
@@ -337,8 +350,8 @@ BUILD_RAN=false
 if [[ -f "package.json" ]]; then
     build_script=$(get_script "./package.json" "build")
     if [[ -n "$build_script" ]]; then
-        echo "  运行 npm run build ..."
-        run_check "构建检查" npm run build
+        echo "  运行 pnpm run build ..."
+        run_check "构建检查" pnpm run build
         BUILD_RAN=true
     fi
 fi
@@ -354,7 +367,7 @@ if [[ -f "frontend/package.json" ]]; then
             :
         else
             echo "  运行 frontend build ..."
-            run_check "前端构建检查" bash -c "cd frontend && npm run build"
+            run_check "前端构建检查" bash -c "cd frontend && pnpm run build"
         fi
     fi
 fi

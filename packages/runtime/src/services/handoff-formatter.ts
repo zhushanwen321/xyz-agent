@@ -44,5 +44,5 @@ export function wrapWithXmlTag(doc: string, source: string, filePath?: string): 
 ${doc}
 </handoff_document>
 
-立即执行文档里尚未完成的下一项。遇到卡点或 blocked 项时停下问我。完成每一步后继续下一项。`
+Immediately execute the next incomplete item in the document. If you encounter a blocker or blocked item, stop and ask me. After completing each step, proceed to the next one.`
 }
