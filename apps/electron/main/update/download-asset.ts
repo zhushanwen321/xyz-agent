@@ -21,9 +21,9 @@
  * - 校验失败必须删除半下载文件，避免下次误用残文件
  * - .downloading 临时后缀：崩溃后残留文件不会伪装成完整安装包
  *
- * 依赖方向：download-asset → constants + types + @xyz-agent/shared + node:crypto/fs/stream
+ * 依赖方向：download-asset → constants + types + hash + @xyz-agent/shared + node:fs/stream
+ *   （hash 为无网络依赖的纯函数叶子模块，见 hash.ts / review S#13）
  */
-import { createHash } from 'node:crypto'
 import { createWriteStream, createReadStream, mkdirSync, renameSync, statSync, unlinkSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { Readable } from 'node:stream'
@@ -31,6 +31,7 @@ import { pipeline } from 'node:stream/promises'
 import { ProxyAgent } from 'undici'
 import type { ReleaseAsset, IProxyConfig } from '@xyz-agent/shared'
 import { UPDATE_DIR } from './constants.js'
+import { hashFileSha256 } from './hash.js'
 import { resolveProxyUrl } from './proxy-config.js'
 import { UpdateError, UpdateIntegrityError } from './types.js'
 
@@ -780,16 +781,6 @@ async function downloadMultiPart(
   // 但中途单段下载流程不会重新 save，这里保持幂等清理，确保成功后无残留）。
   clearResumeState()
   return { tempPath }
-}
-
-export async function hashFileSha256(filePath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const hash = createHash('sha256')
-    const stream = createReadStream(filePath)
-    stream.on('data', (chunk) => hash.update(chunk))
-    stream.on('end', () => resolve(hash.digest('hex')))
-    stream.on('error', reject)
-  })
 }
 
 /**

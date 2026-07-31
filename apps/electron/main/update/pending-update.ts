@@ -36,6 +36,36 @@ interface PendingUpdateData {
 }
 
 /**
+ * 类型守卫：逐字段校验反序列化结果是否为合法的 PendingUpdateData。
+ *
+ * JSON.parse 结果类型为 any，直接 `as PendingUpdateData` 断言后 TS 不再保护，
+ * `data.release` 缺失时运行时拿到 undefined，下游当 LatestReleaseInfo 用会崩。
+ * 这里用 unknown + typeof 逐字段校验 release 的必要标量字段（version/tagName 等
+ * 是启动恢复时直接读取/渲染的字段），与 preloaded-update / update-settings 的
+ * SSOT 反序列化范式一致（见 review S#6 / I#4）。
+ *
+ * 校验范围：release 顶层标量字段 + assets 为对象。ReleaseAsset 细节字段
+ * （name/downloadUrl/size/sha256）由下游 pickPlatformAsset 等按平台可选读取，
+ * 缺失平台返回 undefined 已是其契约，故不在此强校验。
+ */
+function isPendingUpdateData(x: unknown): x is PendingUpdateData {
+  if (!x || typeof x !== 'object') return false
+  const obj = x as Record<string, unknown>
+  const release = obj.release
+  if (!release || typeof release !== 'object') return false
+  const rel = release as Record<string, unknown>
+  return (
+    typeof obj.at === 'string' &&
+    typeof rel.version === 'string' &&
+    typeof rel.tagName === 'string' &&
+    typeof rel.releaseNotes === 'string' &&
+    typeof rel.publishedAt === 'string' &&
+    typeof rel.htmlUrl === 'string' &&
+    typeof rel.assets === 'object'
+  )
+}
+
+/**
  * 写入升级提醒持久化标志。
  *
  * 检测到新版时调用：把完整 release 信息 + 时间戳落盘。
@@ -70,9 +100,9 @@ export function writePendingUpdate(release: LatestReleaseInfo): void {
 export function readPendingUpdate(currentVersion: string): LatestReleaseInfo | null {
   if (!existsSync(PENDING_UPDATE_FILE)) return null
 
-  let data: PendingUpdateData
+  let parsed: unknown
   try {
-    data = JSON.parse(readFileSync(PENDING_UPDATE_FILE, 'utf-8')) as PendingUpdateData
+    parsed = JSON.parse(readFileSync(PENDING_UPDATE_FILE, 'utf-8')) as unknown
   } catch (err) {
     // 文件损坏：清除残留避免每次启动都尝试解析失败
     console.warn('[pending-update] parse failed, clearing:', err)
@@ -80,10 +110,13 @@ export function readPendingUpdate(currentVersion: string): LatestReleaseInfo | n
     return null
   }
 
-  if (!data?.release?.version) {
+  // 类型守卫逐字段校验：缺 release 或必要字段 → 视为损坏，清除后返回 null（见 S#6）
+  if (!isPendingUpdateData(parsed)) {
+    console.warn('[pending-update] invalid schema, clearing')
     clearPendingUpdate()
     return null
   }
+  const data: PendingUpdateData = parsed
 
   // 版本比较清除策略：currentVersion >= pending.version 说明已升级，清除标志。
   // compare 返回 >= 0 表示 currentVersion 不小于 pending.version（相等或更高）。

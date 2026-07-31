@@ -11,14 +11,15 @@
  *   - 产物文件已不存在 → 清除
  *   - 完整性校验失败（size/sha256 不匹配）→ 清除
  *
- * 依赖方向：preloaded-update → constants + pick-platform-asset + @xyz-agent/shared + node:fs/path
+ * 依赖方向：preloaded-update → constants + pick-platform-asset + hash + @xyz-agent/shared + node:fs/path
+ *   （hash 为无网络依赖的纯函数叶子模块，见 hash.ts / review S#13）
  */
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import type { LatestReleaseInfo } from '@xyz-agent/shared'
 import { PRELOADED_UPDATE_FILE } from './constants.js'
 import { pickPlatformAsset, pickPlatformAssetName } from './pick-platform-asset.js'
-import { hashFileSha256 } from './download-asset.js'
+import { hashFileSha256 } from './hash.js'
 
 /**
  * preloaded-update.json 落盘结构。
@@ -36,6 +37,29 @@ interface PreloadedUpdateData {
   size: number
   /** 产物 sha256 hex（完整性校验，可选兜底） */
   sha256?: string
+}
+
+/**
+ * 类型守卫：逐字段校验反序列化结果是否为合法的 PreloadedUpdateData。
+ *
+ * JSON.parse 结果类型为 any，直接 `as PreloadedUpdateData` 断言后 TS 不再保护，
+ * 缺字段运行时拿到 undefined。这里用 unknown + typeof 逐字段校验，
+ * 与 update-settings.ts 的 SSOT 反序列化范式一致（见 review S#5 / I#4）。
+ *
+ * size 必填（writePreloadedUpdate 写 asset.size ?? 0，恒为 number）；
+ * sha256 可选（asset.sha256 可能缺失，readPreloadedUpdate 无 sha256 时跳过该项校验）。
+ */
+function isPreloadedUpdateData(x: unknown): x is PreloadedUpdateData {
+  if (!x || typeof x !== 'object') return false
+  const obj = x as Record<string, unknown>
+  return (
+    typeof obj.version === 'string' &&
+    typeof obj.assetName === 'string' &&
+    typeof obj.filePath === 'string' &&
+    typeof obj.downloadedAt === 'string' &&
+    typeof obj.size === 'number' &&
+    (typeof obj.sha256 === 'string' || obj.sha256 === undefined)
+  )
 }
 
 /**
@@ -76,14 +100,22 @@ export function writePreloadedUpdate(release: LatestReleaseInfo, filePath: strin
 export async function readPreloadedUpdate(release: LatestReleaseInfo): Promise<string | null> {
   if (!existsSync(PRELOADED_UPDATE_FILE)) return null
 
-  let data: PreloadedUpdateData
+  let parsed: unknown
   try {
-    data = JSON.parse(readFileSync(PRELOADED_UPDATE_FILE, 'utf-8')) as PreloadedUpdateData
+    parsed = JSON.parse(readFileSync(PRELOADED_UPDATE_FILE, 'utf-8')) as unknown
   } catch (err) {
     console.warn('[preloaded-update] parse failed, clearing:', err)
     clearPreloadedUpdate()
     return null
   }
+
+  // 类型守卫逐字段校验：缺字段/类型错误 → 视为损坏，清除后返回 null（见 S#5）
+  if (!isPreloadedUpdateData(parsed)) {
+    console.warn('[preloaded-update] invalid schema, clearing')
+    clearPreloadedUpdate()
+    return null
+  }
+  const data: PreloadedUpdateData = parsed
 
   // 版本不匹配（release 已更新或降级）→ 产物失效，清除
   if (data.version !== release.version) {
