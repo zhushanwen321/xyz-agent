@@ -1,5 +1,5 @@
 /**
- * Composer compact 待发队列 UI 集成测试（compact-queued-messages W2，TC11-TC16/TC18）。
+ * Composer compact 待发队列 UI 集成测试（compact-queued-messages W2，TC11-TC18）。
  *
  * 验证：
  * - TC11: compact 期间 ⏎ 发送 → 入队 + 输入清空 + badge 可见
@@ -9,6 +9,7 @@
  * - TC14: badge 显示条数 + 首条预览 + 取消按钮移除单条
  * - TC15: compacted 成功（flush 清空）→ 队列清空 + badge 消失
  * - TC16: compacted 失败（队列保留）→ badge 仍在
+ * - TC17: compact 态无输入 → 发送按钮 disabled + title=sendHint + 点击不入队
  * - TC18: compact 期间 Alt+⏎ → 入队而非 followUp
  *
  * 策略（对齐 composer-bash-mode.test.ts 结构范本）：
@@ -133,7 +134,7 @@ async function typeAndEnter(wrapper: ReturnType<typeof mountComposer>, text: str
   await wrapper.vm.$nextTick() // onSend 是 async，需 flush
 }
 
-describe('Composer compact 待发队列（TC11-TC16/TC18）', () => {
+describe('Composer compact 待发队列（TC11-TC18）', () => {
   it('TC11: compact 期间 ⏎ 发送 → 入队 + 输入清空 + badge 可见', async () => {
     const chat = useChatStore()
     chat.setCompacting('s1', true)
@@ -266,6 +267,27 @@ describe('Composer compact 待发队列（TC11-TC16/TC18）', () => {
 
     expect(queue.count('s1')).toBe(1)
     expect(wrapper.find('[data-testid="compact-queue-badge"]').exists()).toBe(true)
+  })
+
+  it('TC17: compact 态无输入 → 发送按钮 disabled + title=sendHint + 点击不入队', async () => {
+    const chat = useChatStore()
+    chat.setCompacting('s1', true)
+    const wrapper = mountComposer({ sessionId: 's1' })
+    await wrapper.vm.$nextTick()
+
+    // 无输入时 canSend=false：发送位为 disabled Button，title 为 sendHint「输入内容后发送」
+    // （TC12 覆盖有输入可点击态 title=queueSend，本用例是负分支）
+    const sendBtn = wrapper.find('[title="输入内容后发送"]')
+    expect(sendBtn.exists()).toBe(true)
+    expect(sendBtn.attributes('disabled')).toBeDefined()
+
+    // 点击不入队（onSend 入口 !canSend 守卫拦截）：badge 不出现 + count 0
+    await sendBtn.trigger('click')
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    expect(useCompactQueue().count('s1')).toBe(0)
+    expect(wrapper.find('[data-testid="compact-queue-badge"]').exists()).toBe(false)
   })
 
   it('TC18: compact 期间 Alt+⏎ → 入队而非 followUp', async () => {

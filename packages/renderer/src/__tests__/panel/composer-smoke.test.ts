@@ -177,7 +177,7 @@ describe('首屏冒烟（TC19）', () => {
         sessionId: null,
         sessionLabel: '',
         sessionDir: '',
-        status: 'done' as never,
+        status: 'done',
       },
       global: { stubs },
     })

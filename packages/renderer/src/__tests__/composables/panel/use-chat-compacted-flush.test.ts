@@ -1,10 +1,11 @@
 /**
- * useChat session.compacted → flush 集成测试（compact-queued-messages W1，TC9-TC10）。
+ * useChat session.compacted → flush 集成测试（compact-queued-messages W1，TC9-TC11）。
  *
  * 覆盖契约（/tmp/cw-plan-w1.json contracts C2）：
  * - TC9：compacted 成功（payload 无 error）→ useCompactQueue().flush 重放 + 队列清空 + isCompacting 复位
  * - TC10：compacted 失败（payload.error 非空）→ 队列保留 + 不 flush + 不 toast
  *   （compact() 的 RPC catch 已 toast，handler 重复 toast 是 bug）
+ * - TC11：compacted 成功但 flush 重放失败（send RPC reject）→ queueFlushFailed toast + 队列保留
  *
  * 结构对齐 __tests__/useChat.test.ts：vi.hoisted apiMock（streamSubscribe 捕获 handler）+ emit helper
  * + beforeEach resetChatModuleState()（useChat 模块级状态隔离）。
@@ -114,6 +115,24 @@ describe('useChat session.compacted → flush 重放（compact-queued-messages W
     expect(useCompactQueue().count('c-f')).toBe(0)
     expect(chat.isCompacting('c-f')).toBe(false)
     expect(toastSpy.error).not.toHaveBeenCalled()
+  })
+
+  it('TC11: compacted 成功但 flush 重放失败（send reject）→ queueFlushFailed toast + 队列保留', async () => {
+    const chat = useChatStore()
+    const { compact } = useChat()
+    await compact('c-g')
+    useCompactQueue().enqueue('c-g', 'q')
+    // flush 首条 send RPC 失败 → flush 返回 false → handler toast queueFlushFailed（队列保留，下次 compact 成功时重试）
+    apiMock.send.mockRejectedValueOnce(new Error('rpc fail'))
+
+    emit({ type: 'session.compacted', payload: { sessionId: 'c-g', status: 'compacted' } })
+    await vi.waitFor(() => {
+      expect(toastSpy.error).toHaveBeenCalledWith('排队消息重放失败，消息已保留')
+    })
+
+    // 队列保留（flush 失败不清空）+ isCompacting 复位
+    expect(useCompactQueue().count('c-g')).toBe(1)
+    expect(chat.isCompacting('c-g')).toBe(false)
   })
 
   it('TC10: compacted 失败（error 非空）→ 队列保留 + 不 flush + 不 toast', async () => {
