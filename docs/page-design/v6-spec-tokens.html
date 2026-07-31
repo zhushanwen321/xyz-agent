@@ -11,7 +11,7 @@
    定位：所有组件规格稿的标注基础。本文件定义 v6 全部 token 变更、
         前后对比、精确标注格式。后续 v6-spec-*.html 复用同一 token 集 + 标注范式。
    产出标准（§6.2）：每个 token 可视化精确、前后对比、px/hex/token 名三重标注。
-   复用：与 v6-demo.html 同一套 token（含 v6 提案值）。
+   核心 token 与 v6-demo.html 一致；本文档含完整 token 集（z-index/duration/shadow 等扩展 token，demo 未全部使用）。
    ================================================================ */
 :root {
   /* 背景层级 */
@@ -123,7 +123,7 @@ body {
    页面骨架
    ================================================================ */
 .page {
-  max-width: 1280px;
+  max-width: 1320px;
   margin: 0 auto;
   padding: 48px 40px 80px;
 }
@@ -151,7 +151,7 @@ body {
 .doc-sub {
   font-size: var(--text-md);
   color: var(--neutral-mid);
-  max-width: 760px;
+  max-width: 820px;
 }
 .doc-meta {
   display: flex;
@@ -217,7 +217,7 @@ body {
   font-size: var(--text-sm);
   color: var(--neutral-mid);
   margin-bottom: 24px;
-  max-width: 820px;
+  max-width: 860px;
 }
 
 /* 变更汇总行 */
@@ -1114,7 +1114,7 @@ body {
 <span class="af-com">// 1. px 值在前，token 引用方括号在后 —— 既可肉眼验证，又可反写代码</span>
 <span class="af-com">// 2. v6 变更项用 success 色，保留项用 neutral 色</span>
 <span class="af-com">// 3. 状态差异列全：default / hover / focus / active / disabled / error / loading / empty</span>
-<span class="af-com">// 4. 标注用 mono 字体（--font-mono）+ neutral-dim 色，与组件视觉分离</span></div>
+<span class="af-com">// 4. 标注用 mono 字体（--font-mono）+ neutral-mid 色，与组件视觉分离</span></div>
   </section>
 
   <!-- ============ footer ============ -->
