@@ -245,7 +245,7 @@ body {
 .si-sub.fork { color: color-mix(in oklch, var(--accent) 80%, transparent); }
 .si-time { flex-shrink: 0; padding-top: 4px; font-family: var(--font-mono); font-size: var(--text-2xs); line-height: 1.35; color: var(--neutral-dim); }
 /* hover 操作（v6：ghost icon 无框，去 border-box）*/
-.si-actions { position: absolute; top: 2px; right: 4px; display: flex; gap: 2px; }
+.si-actions { position: absolute; bottom: 2px; right: 4px; display: flex; gap: 2px; }
 .si-act { width: 22px; height: 22px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-mid); cursor: pointer; }
 .si-act:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 .si-act svg { width: 13px; height: 13px; }
@@ -355,13 +355,13 @@ body {
 .sa-dot.cancelled { background: var(--neutral-dim); opacity: .5; }
 .sa-dot.running { background: var(--accent); }
 .sa-name { min-width: 0; flex: 1; font-size: var(--text-sm); font-weight: 500; line-height: 1.35; color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sa-stats { flex-shrink: 0; margin-right: 4px; font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); white-space: nowrap; }   /* L1：turns · tok 合并到 name 同一行靠右 */
 .sa-cancel { flex-shrink: 0; width: 20px; height: 20px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-dim); cursor: pointer; }
 .sa-cancel:hover { color: var(--danger); }
 .sa-cancel svg { width: 12px; height: 12px; }
 .sa-cancel.confirm { background: var(--danger); color: var(--neutral-fg); }   /* v6：去 border 仅 bg-danger */
 .sa-cancel.confirm:hover { background: var(--danger); color: var(--neutral-fg); }
-.sa-meta { margin-top: 4px; padding-left: 21px; display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); }
-.sa-task { margin-top: 2px; padding-left: 21px; font-size: var(--text-xs); line-height: 1.3; color: var(--neutral-mid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sa-slug { margin-top: 2px; padding-left: 21px; font-family: var(--font-mono); font-size: var(--text-2xs); line-height: 1.3; color: var(--neutral-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }   /* L2：slug 任务标识，dim 截断 */
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* WorkflowList 进度条（v6：仅 running accent，done 改 bg-neutral-dim）*/
@@ -389,6 +389,30 @@ body {
 .wf-abort.confirm { background: var(--danger); color: var(--neutral-fg); }    /* v6：去 border */
 .wf-abort.confirm:hover { background: var(--danger); color: var(--neutral-fg); }
 
+/* WorkflowDetail（点击 workflow 卡片 → emit('select') → 进入详情视图）*/
+.wfd { background: var(--bg); border-radius: var(--radius); padding: 4px; }
+.wfd-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; }
+.wfd-back { flex-shrink: 0; width: 22px; height: 22px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-dim); cursor: pointer; }
+.wfd-back:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.wfd-back svg { width: 15px; height: 15px; }
+.wfd-name { min-width: 0; flex: 1; font-size: var(--text-sm); font-weight: 600; line-height: 1.35; color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wfd-name .wfd-slug { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 400; color: var(--neutral-dim); margin-left: 6px; }
+.wfd-btn { flex-shrink: 0; height: 22px; padding: 0 8px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-xs); color: var(--neutral-dim); cursor: pointer; }
+.wfd-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.wfd-btn svg { width: 12px; height: 12px; }
+.wfd-btn.danger:hover { color: var(--danger); }
+.wfd-hr { height: 1px; background: var(--border); margin: 2px 4px; }
+.wfd-call { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--radius-sm); cursor: pointer; transition: background var(--duration-fast); }
+.wfd-call:hover { background: var(--surface-hover); }
+.wfd-cdot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.wfd-cdot.running { background: var(--accent); animation: pulse-accent 1.8s ease-in-out infinite; }
+.wfd-cdot.done { background: var(--success); }
+.wfd-cdot.failed { background: var(--danger); }
+.wfd-cname { min-width: 0; flex: 1; font-size: var(--text-sm); color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wfd-csid { flex-shrink: 0; font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); }
+.wfd-link { flex-shrink: 0; width: 16px; height: 16px; color: var(--neutral-dim); }
+.wfd-link svg { width: 12px; height: 12px; }
+
 /* ── §8 底部用户区（v6：头像渐变改纯色 bg-accent）── */
 .usr { margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: var(--radius); font-size: var(--text-sm); color: var(--neutral-mid); }
 .usr-av { width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%; background: var(--accent); }   /* v6：纯色，去装饰渐变 */
@@ -403,7 +427,7 @@ body {
 .doc-foot a { color: var(--accent); text-decoration: none; }
 
 @media (prefers-reduced-motion: reduce) {
-  .seg-badge.pulse, .si-dot.s-running, .fg-dot.running, .sa-spinner, .wf-spinner { animation: none; }
+  .seg-badge.pulse, .si-dot.s-running, .fg-dot.running, .sa-spinner, .wf-spinner, .wfd-cdot.running { animation: none; }
 }
 </style>
 </head>
@@ -491,7 +515,7 @@ body {
               <span class="seg-badge pulse"></span>
             </div>
             <div class="seg-item def">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h2M15 7h2M7 12h2M15 12h2M7 17h2M15 17h2"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6"/><rect x="15" y="15" width="6" height="6"/><path d="M9 6h6a2 2 0 0 1 2 2v7"/></svg>
               <span class="seg-cnt">1</span>
               <span class="seg-badge pulse"></span>
             </div>
@@ -516,7 +540,7 @@ body {
           <!-- 底部用户区（详 §8）-->
           <div class="usr">
             <span class="usr-av"></span>
-            <span class="usr-name">developer</span>
+            <span class="usr-name">user</span>
             <span class="usr-set"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
           </div>
         </div>
@@ -564,12 +588,12 @@ body {
               <span class="seg-cnt">8</span>
             </div>
             <div class="seg-item def">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
               <span class="seg-cnt">3</span>
               <span class="seg-badge pulse"></span>
             </div>
             <div class="seg-item def">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h2M15 7h2M7 12h2M15 12h2M7 17h2M15 17h2"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6"/><rect x="15" y="15" width="6" height="6"/><path d="M9 6h6a2 2 0 0 1 2 2v7"/></svg>
               <span class="seg-cnt">1</span>
             </div>
           </div>
@@ -589,12 +613,12 @@ body {
               <span class="seg-cnt">8</span>
             </div>
             <div class="seg-item def">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
               <span class="seg-cnt">3</span>
               <span class="seg-badge"></span>
             </div>
             <div class="seg-item def">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h2M15 7h2M7 12h2M15 12h2M7 17h2M15 17h2"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6"/><rect x="15" y="15" width="6" height="6"/><path d="M9 6h6a2 2 0 0 1 2 2v7"/></svg>
               <span class="seg-cnt">1</span>
             </div>
           </div>
@@ -607,8 +631,8 @@ body {
           <div class="seg" style="margin:0;max-width:300px;">
             <div class="seg-item def"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
             <div class="seg-item def"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
-            <div class="seg-item def"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg></div>
-            <div class="seg-item def"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h2M15 7h2M7 12h2M15 12h2M7 17h2M15 17h2"/></svg></div>
+            <div class="seg-item def"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg></div>
+            <div class="seg-item def"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6"/><rect x="15" y="15" width="6" height="6"/><path d="M9 6h6a2 2 0 0 1 2 2v7"/></svg></div>
           </div>
         </div>
       </div>
@@ -617,7 +641,7 @@ body {
         <div class="state-tag">badge</div>
         <div class="state-demo" style="display:flex;align-items:center;gap:16px;padding-top:6px;">
           <div style="position:relative;width:44px;height:32px;background:var(--bg-elevated);border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--neutral-fg)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--neutral-fg)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
             <span class="seg-badge pulse" style="right:8px;top:8px;"></span>
           </div>
           <span class="anno" style="padding-top:0;"><b>running badge:</b> 6px accent 圆点 · 右上角 absolute · 仅 running&gt;0 亮（脉冲 1.8s）<br><b>count badge:</b> mono 10px · active neutral-mid / default neutral-dim opacity-70</span>
@@ -632,7 +656,7 @@ body {
       <div class="anno"><b>active 文字:</b><br><span class="old">text-accent</span> <span class="v6">→ text-neutral-fg</span></div>
       <div class="anno"><b>hover:</b><br><span class="v6">text-neutral-fg（不变底）</span></div>
       <div class="anno"><b>圆角:</b><br>内项 var(--radius-sm) 6px</div>
-      <div class="anno"><b>icon:</b><br>15px · stroke-width 1.75 · 等宽均分 flex-1</div>
+      <div class="anno"><b>icon:</b><br>15px · stroke-width 1.75 · 等宽均分 flex-1<br>MessageSquare · File · Bot · Workflow</div>
       <div class="anno"><b>count:</b><br>mono 10px · active opacity / default opacity-70</div>
       <div class="anno"><b>running badge:</b><br>6px · bg-accent · 右上角 · 仅 running&gt;0</div>
       <div class="anno"><b>落点:</b><br>SegmentedTab.vue:7-32</div>
@@ -675,8 +699,8 @@ body {
               <div class="si-main"><div class="si-label">修复 token 对比度</div><div class="si-sub">feat-optimize-ui</div></div>
               <span class="si-time" style="visibility:hidden;">1h</span>
               <div class="si-actions">
-                <span class="si-act" title="标记完成"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="5" rx="1"/><path d="M4 9v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9"/><path d="M10 13h4"/></svg></span>
                 <span class="si-act" title="重命名"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+                <span class="si-act" title="归档"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="5" rx="1"/><path d="M4 9v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9"/><path d="M10 13h4"/></svg></span>
                 <span class="si-act del" title="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span>
               </div>
             </div>
@@ -784,7 +808,7 @@ body {
       <div class="anno"><b>active ring:</b><br><span class="old">ring-1 ring-inset ring-accent-ring</span> <span class="v6">→ 删除（无 ring）</span></div>
       <div class="anno"><b>active 左条:</b><br><span class="v6">无（禁 >1px 彩色侧边条）</span></div>
       <div class="anno"><b>active 文字:</b><br>text-accent 蓝字（label）</div>
-      <div class="anno"><b>hover 操作:</b><br><span class="old">border-box bg-surface</span> <span class="v6">→ ghost icon 无框（hover 出底）</span></div>
+      <div class="anno"><b>hover 操作:</b><br><span class="old">border-box bg-surface</span> <span class="v6">→ ghost icon 无框（hover 出底）</span><br>顺序「重命名 → 归档 → 删除」· 位置卡片底部 bottom:2px</div>
       <div class="anno"><b>del 确认态:</b><br><span class="old">border border-danger bg-danger</span> <span class="v6">→ 仅 bg-danger（去 border）</span></div>
       <div class="anno"><b>padding:</b><br>px-2 py-[7px]（不变）· rounded-md</div>
       <div class="anno"><b>label:</b><br>12px / 1.35 · truncate</div>
@@ -1122,50 +1146,52 @@ body {
         <!-- 左：SubagentList 多态 -->
         <div style="background:var(--bg);border-radius:var(--radius);padding:6px;">
           <div class="anno" style="padding:4px 8px 8px;color:var(--neutral-dim);"><b>SubagentList</b></div>
-          <!-- running -->
+          <!-- running · L1 name+turns/tok · L2 slug -->
           <div class="sa-card">
             <div class="sa-row">
               <svg class="sa-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.22-8.56"/></svg>
               <span class="sa-name">code-review</span>
+              <span class="sa-stats">8 turns · 12.4k tok</span>
               <span class="sa-cancel" title="取消"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
             </div>
-            <div class="sa-meta"><span>8 turns</span><span>· 12.4k tok</span><span>· 2m</span></div>
-            <div class="sa-task">审查 Sidebar.vue 的状态管理耦合</div>
+            <div class="sa-slug">review-sidebar-state-coupling</div>
           </div>
           <!-- done -->
           <div class="sa-card">
             <div class="sa-row">
               <span class="sa-dot done"></span>
               <span class="sa-name">diagnose</span>
+              <span class="sa-stats">5 turns · 8.1k tok</span>
             </div>
-            <div class="sa-meta"><span>5 turns</span><span>· 8.1k tok</span><span>· 1m</span></div>
-            <div class="sa-task">诊断文件树懒加载失败</div>
+            <div class="sa-slug">diagnose-filetree-lazyload</div>
           </div>
           <!-- failed -->
           <div class="sa-card">
             <div class="sa-row">
               <span class="sa-dot failed"></span>
               <span class="sa-name">test-writer</span>
+              <span class="sa-stats">3 turns · 4.2k tok</span>
             </div>
-            <div class="sa-meta"><span>3 turns</span><span>· 4.2k tok</span><span>· 30s</span></div>
-            <div class="sa-task">生成 E2E 测试（进程崩溃）</div>
+            <div class="sa-slug">write-e2e-tests</div>
           </div>
           <!-- cancel 确认态 -->
           <div class="sa-card">
             <div class="sa-row">
               <svg class="sa-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.22-8.56"/></svg>
               <span class="sa-name">refactor</span>
+              <span class="sa-stats">12 turns · 18.7k tok</span>
               <span class="sa-cancel confirm" title="确认取消"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
             </div>
-            <div class="sa-meta"><span>12 turns</span><span>· 18.7k tok</span></div>
+            <div class="sa-slug">refactor-session-store</div>
           </div>
           <!-- cancelled -->
           <div class="sa-card">
             <div class="sa-row">
               <span class="sa-dot cancelled"></span>
               <span class="sa-name">explorer</span>
+              <span class="sa-stats">2 turns · 3.0k tok</span>
             </div>
-            <div class="sa-task">探索替代方案（已取消）</div>
+            <div class="sa-slug">explore-alternatives</div>
           </div>
         </div>
 
@@ -1234,10 +1260,75 @@ body {
           </div>
         </div>
       </div>
+
+      <!-- WorkflowDetail：两层关系（视图 1 列表 → 点击卡片 → 视图 2 详情）-->
+      <div class="anno" style="padding:4px 2px 8px;"><b>WorkflowList → WorkflowDetail（两层视图）</b> · 点击卡片 <code>emit('select')</code> → 进入详情</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <!-- 视图 1：列表态（高亮选中卡片）-->
+        <div class="state-row" style="margin-bottom:0;">
+          <div class="state-tag">视图1 列表</div>
+          <div class="state-demo">
+            <div style="background:var(--bg);border-radius:var(--radius);padding:6px;">
+              <div class="wf-card" style="background:var(--surface);">
+                <div class="wf-row">
+                  <svg class="wf-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.22-8.56"/></svg>
+                  <span class="wf-name" style="color:var(--accent);">full-review</span>
+                  <span class="wf-slug">main</span>
+                </div>
+                <div class="wf-prog-row">
+                  <div class="wf-pb"><div class="wf-pb-fill running" style="width:60%;"></div></div>
+                  <span>3 / 5 agents</span>
+                </div>
+              </div>
+              <div class="wf-card">
+                <div class="wf-row">
+                  <span class="wf-dot done"></span>
+                  <span class="wf-name">deploy-check</span>
+                  <span class="wf-slug">v1.4</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- 视图 2：详情态（WorkflowDetail）-->
+        <div class="state-row" style="margin-bottom:0;">
+          <div class="state-tag">视图2 详情</div>
+          <div class="state-demo">
+            <div class="wfd">
+              <div class="wfd-head">
+                <span class="wfd-back" title="返回列表"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg></span>
+                <span class="wfd-name">full-review<span class="wfd-slug">main</span></span>
+                <span class="wfd-btn" title="暂停"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>暂停</span>
+                <span class="wfd-btn danger" title="终止"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></span>
+              </div>
+              <div class="wfd-hr"></div>
+              <div class="wfd-call">
+                <span class="wfd-cdot done"></span>
+                <span class="wfd-cname">code-review</span>
+                <span class="wfd-csid">sess_a1b2</span>
+                <span class="wfd-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg></span>
+              </div>
+              <div class="wfd-call">
+                <span class="wfd-cdot running"></span>
+                <span class="wfd-cname">test-writer</span>
+                <span class="wfd-csid">sess_c3d4</span>
+                <span class="wfd-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg></span>
+              </div>
+              <div class="wfd-call">
+                <span class="wfd-cdot failed"></span>
+                <span class="wfd-cname">deploy-check</span>
+                <span class="wfd-csid">sess_e5f6</span>
+                <span class="wfd-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="anno-grid">
       <div class="anno"><b>subagent 卡片 py:</b><br><span class="v6">统一 6px（px-2 py-[6px]）</span></div>
+      <div class="anno"><b>subagent 2 行结构:</b><br>L1 name + <code>turns · tok</code> 合并靠右<br>L2 slug（任务标识，neutral-dim 截断）</div>
       <div class="anno"><b>subagent 状态点:</b><br>8px · done=success / failed=danger / cancelled=dim.5 / running→spinner</div>
       <div class="anno"><b>cancel 确认:</b><br><span class="old">border border-danger bg-danger</span> <span class="v6">→ 仅 bg-danger</span></div>
       <div class="anno"><b>进度条 running:</b><br><span class="v6">bg-accent（唯一用 accent）</span></div>
@@ -1248,7 +1339,10 @@ body {
       <div class="anno"><b>abort 确认:</b><br><span class="v6">去 border 仅 bg-danger</span></div>
       <div class="anno"><b>failed icon:</b><br>不切 icon，靠 dot=danger 表达</div>
       <div class="anno"><b>卡片:</b><br>rounded-md · hover bg-surface-hover · 无 border</div>
-      <div class="anno"><b>落点:</b><br>SubagentList.vue:31-83 · WorkflowList.vue:31-104</div>
+      <div class="anno"><b>两层视图:</b><br>视图1 列表 → 点击卡片 → 视图2 详情（WorkflowDetail）</div>
+      <div class="anno"><b>详情 header:</b><br>返回 + workflow 名 + pause/resume + abort 按钮</div>
+      <div class="anno"><b>agent call 行:</b><br>状态点 + call 名 + sessionId · 点击跳转</div>
+      <div class="anno"><b>落点:</b><br>SubagentList.vue:31-83 · WorkflowList.vue:31-104 · WorkflowDetail.vue</div>
     </div>
   </section>
 
@@ -1271,7 +1365,7 @@ body {
           <div class="state-demo">
             <div class="usr">
               <span class="usr-av"></span>
-              <span class="usr-name">developer</span>
+              <span class="usr-name">user</span>
               <span class="usr-set"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
             </div>
           </div>
@@ -1295,7 +1389,7 @@ body {
       <div class="anno"><b>头像底:</b><br><span class="old">bg-gradient-to-br from-accent to-info</span> <span class="v6">→ bg-accent 纯色</span></div>
       <div class="anno"><b>头像尺寸:</b><br>20px (size-5) · rounded-full</div>
       <div class="anno"><b>容器:</b><br>px-2 py-2 · rounded-md · gap-2</div>
-      <div class="anno"><b>名称:</b><br>12px · neutral-fg · truncate · flex-1</div>
+      <div class="anno"><b>名称:</b><br>12px · neutral-fg · truncate · flex-1<br><span class="v6">文案 t('sidebar.user')</span>（i18n，原 developer 改 user，支持多语言）</div>
       <div class="anno"><b>设置按钮:</b><br>size-6 · rounded-sm · neutral-dim · hover bg-surface-hover + neutral-fg</div>
       <div class="anno"><b>设置 icon:</b><br>Settings 14px</div>
       <div class="anno"><b>落点:</b><br>Sidebar.vue:161-172（footer .usr 区）</div>

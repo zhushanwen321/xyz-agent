@@ -318,6 +318,32 @@ body {
 /* 全屏态：红黄绿 opacity 0（虚线轮廓表示隐藏）*/
 .tl-dot.hidden { opacity: 0.15; border-style: dashed; }
 
+/* §3 方案 A 对比：win/linux 自绘符号 lucide(现状) vs 手绘 SVG(v6) */
+.symbol-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.sc-col { background: var(--bg-card); border-radius: var(--radius); padding: 18px; }
+.sc-title { font-size: var(--text-2xs); font-family: var(--font-mono); padding: 3px 8px; border-radius: 999px; margin-bottom: 14px; display: inline-flex; align-items: center; gap: 6px; text-transform: uppercase; letter-spacing: .05em; }
+.sc-title.old { background: var(--danger-soft); color: var(--danger); }
+.sc-title.new { background: var(--success-soft); color: var(--success); }
+/* 放大展示区（实际 12px 圆点放大 2.5× 便于看清符号差异）*/
+.sc-dots-row { display: flex; gap: 20px; align-items: flex-end; padding: 10px 4px 16px; }
+.sc-dot-big {
+  width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center;
+}
+.sc-dot-big.close { background: #ff5f57; }
+.sc-dot-big.min { background: #febc2e; }
+.sc-dot-big.max { background: #28c840; }
+/* 旧：lucide icon（border + 模糊感示意） */
+.sc-dot-big.old { border: 1px solid rgba(0,0,0,0.25); }
+.sc-dot-big.old svg { color: rgba(0,0,0,0.55); }
+/* 新：手绘 SVG（无 border，stroke 针对小尺寸调过） */
+.sc-dot-big.new { border: 0; }
+.sc-dot-big.new svg { color: rgba(0,0,0,0.6); }
+/* 实际尺寸展示（12px 真实大小，模拟高 DPI 下的清晰度差异） */
+.sc-actual { display: flex; gap: 8px; align-items: center; padding: 8px 4px; border-top: 1px dashed var(--border); margin-top: 8px; }
+.sc-actual-label { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); margin-right: 8px; }
+
+
 /* chrome 对齐图（三处按钮统一 y=32 中线）*/
 .chrome-align-demo {
   background: var(--bg-elevated); border-radius: var(--radius);
@@ -845,12 +871,55 @@ body {
       </div>
     </div>
 
+    <div class="sub-h">方案 A：win/linux 自绘符号 lucide（现状）vs 手绘 SVG（v6）</div>
+    <div class="render-frame">
+      <p style="font-size:var(--text-sm);color:var(--neutral-mid);margin-bottom:16px;">问题：lucide 在 8px 极小尺寸下抗锯齿差、stroke 比例失调，高 DPI 缩放下符号模糊且易溢出圆点边界。mac 原生符号是 OS 矢量绘制（针对 12px 圆像素级优化），lucide 通用图标库达不到。下方放大 2.5× 对比 + 实际尺寸对比。</p>
+      <div class="symbol-compare">
+        <!-- 现状：lucide -->
+        <div class="sc-col">
+          <span class="sc-title old">现状 · lucide icon</span>
+          <div class="sc-dots-row">
+            <div class="sc-dot-big close old"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
+            <div class="sc-dot-big min old"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg></div>
+            <div class="sc-dot-big max old"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></div>
+          </div>
+          <div class="anno"><b>问题:</b> <span>stroke-width=2 在 8px 缩放下线条粗壮、符号拥挤；border-black/25 双重边缘；高 DPI 模糊</span></div>
+          <div class="sc-actual">
+            <span class="sc-actual-label">实际 12px:</span>
+            <span style="width:12px;height:12px;border-radius:50%;background:#ff5f57;border:1px solid rgba(0,0,0,0.25);display:inline-flex;align-items:center;justify-content:center;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="rgba(0,0,0,0.55)" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
+            <span style="width:12px;height:12px;border-radius:50%;background:#febc2e;border:1px solid rgba(0,0,0,0.25);display:inline-flex;align-items:center;justify-content:center;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="rgba(0,0,0,0.55)" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg></span>
+            <span style="width:12px;height:12px;border-radius:50%;background:#28c840;border:1px solid rgba(0,0,0,0.25);display:inline-flex;align-items:center;justify-content:center;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="rgba(0,0,0,0.55)" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>
+          </div>
+        </div>
+        <!-- v6：手绘 SVG -->
+        <div class="sc-col">
+          <span class="sc-title new">v6 · 手绘 SVG path</span>
+          <div class="sc-dots-row">
+            <!-- close（×）：stroke 2.4 -->
+            <div class="sc-dot-big close new"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></div>
+            <!-- min（−）：居中偏下，stroke 2.6 -->
+            <div class="sc-dot-big min new"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="16" x2="19" y2="16"/></svg></div>
+            <!-- max（▲▽ 双 chevron）：stroke 2.2 -->
+            <div class="sc-dot-big max new"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 10 12 5 17 10"/><polyline points="7 14 12 19 17 14"/></svg></div>
+          </div>
+          <div class="anno"><b>改进:</b> <span class="v6">针对 12px 圆精确设计 stroke-width（close 2.4 / min 2.6 / max 2.2）；去 border；min 居中偏下贴近 mac；max 用双 chevron 近似 mac 绿点</span></div>
+          <div class="sc-actual">
+            <span class="sc-actual-label">实际 12px:</span>
+            <span style="width:12px;height:12px;border-radius:50%;background:#ff5f57;display:inline-flex;align-items:center;justify-content:center;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="rgba(0,0,0,0.6)" stroke-width="2.4" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></span>
+            <span style="width:12px;height:12px;border-radius:50%;background:#febc2e;display:inline-flex;align-items:center;justify-content:center;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="rgba(0,0,0,0.6)" stroke-width="2.6" stroke-linecap="round"><line x1="5" y1="16" x2="19" y2="16"/></svg></span>
+            <span style="width:12px;height:12px;border-radius:50%;background:#28c840;display:inline-flex;align-items:center;justify-content:center;"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="rgba(0,0,0,0.6)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 10 12 5 17 10"/><polyline points="7 14 12 19 17 14"/></svg></span>
+          </div>
+        </div>
+      </div>
+      <div class="anno" style="margin-top:14px;"><b>方案 A 决策:</b> <span>hover 符号弃 lucide 改手绘 SVG path，针对 12px 圆点精确设计 stroke-width；去 border（mac 原生无）；max 用双 chevron（▲▽）近似 mac 绿点的上下三角。SVG 矢量在高 DPI 缩放下不失真</span></div>
+    </div>
+
     <div class="anno-grid">
       <div class="anno"><b>padding-top:</b><br>52px（恒定）<br>三平台统一 · 全屏保留</div>
       <div class="anno"><b>mac 红黄绿:</b><br>titleBarStyle:'hidden'<br>+ trafficLightPosition<br>{x:16, y:26}</div>
       <div class="anno"><b>mac 禁用:</b><br>hiddenInset（强制水平内缩，<br>trafficLightPosition.x 被忽略）</div>
       <div class="anno"><b>win/linux:</b><br>自绘圆点 left:16px top:26px<br>与 mac 同位 · 三平台统一</div>
-      <div class="anno"><b>圆点尺寸:</b><br>12px (h-3 w-3) · gap 8px<br>border black/25</div>
+      <div class="anno"><b>圆点尺寸:</b><br>12px (h-3 w-3) · gap 8px<br><span class="v6">去 border（mac 原生无）</span></div>
       <div class="anno"><b>红黄绿映射:</b><br>close #ff5f57 / min #febc2e<br>max #28c840</div>
       <div class="anno"><b>全屏态:</b><br>opacity→0（320ms transition）<br>mac 系统 hover 独立</div>
       <div class="anno"><b>落点:</b><br>AppShell.vue（v6 方案 G 提升）<br>TrafficLight.vue<br>usePlatformChrome</div>
@@ -955,7 +1024,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s5">
     <div class="spec-head"><span class="spec-num">§5</span><h2 class="spec-title">折叠态 chrome 迁移</h2></div>
-    <p class="spec-desc">侧栏折叠时 chrome 迁入 PanelHeader：header <code>pl-[88px]</code> 让位，按钮起 x=100px，与浮层位置一致，<b>切换折叠无跳动</b>。AppShell 折叠态 <code>!gap-0</code>（强制覆盖 gap-3），否则 MainPanel 左右不对称（左缘=24 右缘=12）。折叠一律由 header 承接 chrome，避免与浮层重复渲染两套。</p>
+    <p class="spec-desc">侧栏折叠时 chrome 迁入 PanelHeader：header <code>pl-[88px]</code> 让位，按钮起 x=100px，与浮层位置一致，<b>切换折叠无跳动</b>。AppShell 折叠态 <code>!gap-0</code>（强制覆盖 gap-3），否则 MainPanel 左右不对称（左缘=24 右缘=12）。折叠一律由 header 承接 chrome，避免与浮层重复渲染两套。<b>v6 方案 E</b>：折叠态 traffic-light 的 left 从 16px 让位到 24px——因折叠态 aside 归零后主面板浮起体左 border 到了 x≈12px，红黄绿（原 left:16）会贴着 border 无呼吸；让位到 24px 留出 12px 间距。非折叠态红黄绿在 aside 画布区，保持 left:16px。</p>
     <div class="change-points">
       <span class="cp cp-v6"><b>v6</b> 折叠态 chrome 迁 PanelHeader</span>
       <span class="cp cp-v6"><b>v6</b> header pl-[88px] 让位 · 无跳动</span>
@@ -997,13 +1066,16 @@ body {
 
         <!-- 折叠 -->
         <div class="cc-col">
-          <span class="cc-label">折叠（chrome 迁入 PanelHeader）</span>
+          <span class="cc-label">折叠（chrome 迁入 PanelHeader · 方案 E 让位）</span>
           <div class="cc-window collapsed">
-            <div class="wf-tl" style="top:26px;left:16px;">
+            <!-- 方案 E：折叠态 traffic-light left 16→24px，给主面板浮起左 border（x≈12）留 12px 呼吸 -->
+            <div class="wf-tl" style="top:26px;left:24px;">
               <span class="tl-dot close"></span>
               <span class="tl-dot min"></span>
               <span class="tl-dot max"></span>
             </div>
+            <!-- 呼吸距离标注线 -->
+            <div style="position:absolute;left:12px;top:26px;width:12px;height:12px;border-right:1px dashed var(--accent-ring);pointer-events:none;"></div>
             <div class="cc-aside collapsed"></div>
             <div class="cc-main">
               <div class="cc-main-header migrated">
@@ -1016,7 +1088,7 @@ body {
               </div>
             </div>
           </div>
-          <div class="anno"><b>gap:</b> <span class="v6">0 [!gap-0]</span> · <b>header pl:</b> <span class="v6">88px</span> · chrome 按钮 x=100（与浮层一致）</div>
+          <div class="anno"><b>gap:</b> <span class="v6">0 [!gap-0]</span> · <b>header pl:</b> <span class="v6">88px</span> · chrome 按钮 x=100（与浮层一致） · <b>方案 E:</b> <span class="v6">traffic-light left 16→24px 让位</span></div>
         </div>
       </div>
     </div>
