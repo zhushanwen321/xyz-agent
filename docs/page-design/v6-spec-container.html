@@ -160,6 +160,10 @@ body {
 .tm-badge { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 999px; background: var(--surface-2); font-family: var(--font-mono); font-size: 10px; font-weight: 600; color: var(--neutral-mid); }
 .tm-badge svg { width: 10px; height: 10px; }
 .tm-spinner { width: 12px; height: 12px; color: var(--accent); animation: spin 1s linear infinite; }
+.tm-spinner.warn { color: var(--warn); }   /* 重试中态：warn 色，区别 streaming 的 accent */
+.tm-label.warn { color: var(--warn); }     /* 重试中 label：warn 色 */
+.tm-retry-count { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 600; color: var(--warn); }   /* N/M = attempt/maxAttempts */
+.tm-errmsg { font-size: var(--text-xs); color: var(--neutral-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }   /* errorMessage 缩略尾 */
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ── thinking block（v6：neutral-mid 提亮 + 2 行）── */
@@ -966,6 +970,7 @@ body {
       <span class="cp cp-v6"><b>[决策待定]</b> spec 主张删 hr，代码现状仍有 hr（TurnMeta.vue:45）</span>
       <span class="cp cp-v6"><b>v6</b> sticky bg-panel-bg（非 blur）· sessionActive 时生效</span>
       <span class="cp cp-v6"><b>v6</b> chevron 仅 hasFoldable && !sessionActive 时渲染</span>
+      <span class="cp cp-v6"><b>[v6 改动]</b> RetryIndicator 从 composer 移除 → 重试信息迁至 TurnMeta「重试中 N/M」+ warn spinner</span>
     </div>
 
     <div class="render-frame">
@@ -991,6 +996,26 @@ body {
           </div>
           <div class="ms-turn">
             <div class="ms-assistant-col">
+              <!-- 重试中态（auto_retry 进行中：warn spinner + 重试中 + N/M）-->
+              <div class="state-row" style="margin:0;">
+                <div class="state-tag">重试中</div>
+                <div class="state-demo">
+                  <div class="tm-v6">
+                    <!-- [v6 改动] 重试信息从 composer 迁至 TurnMeta；LoaderCircle（旧 Loader2）warn 色 animate-spin -->
+                    <svg class="tm-spinner warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg>
+                    <span class="tm-label warn">重试中</span><span class="tm-retry-count">2/3</span>
+                    <span class="tm-elapsed">12.3s</span>
+                    <span class="tm-errmsg">upstream timeout · stream aborted</span>
+                    <!-- 重试是 sessionActive 级别 turn 状态，同样不渲染 chevron -->
+                    <span style="font-family:var(--font-mono);font-size:10px;color:var(--neutral-dim);border:1px dashed var(--neutral-faint);border-radius:var(--radius-sm);padding:1px 4px;">无 chevron</span>
+                  </div>
+                </div>
+              </div>
+              <div style="font-size:13px;color:var(--neutral-fg);padding:8px 0;"><span class="v6" style="color:var(--success);">[v6 改动]</span> 重试期间 TurnMeta 从「思考中」切「<b style="color:var(--warn);">重试中</b>」+ <code style="font-family:var(--font-mono);">N/M</code> 计数 + <b style="color:var(--warn);">warn 色 spinner</b>（区别 streaming 的 accent 色）。重试是 turn 级状态，spinner 颜色区分两种「进行中」。同样无 chevron（sessionActive 级）。</div>
+            </div>
+          </div>
+          <div class="ms-turn">
+            <div class="ms-assistant-col">
               <!-- done 态 -->
               <div class="state-row" style="margin:0;">
                 <div class="state-tag">done</div>
@@ -1005,6 +1030,45 @@ body {
               <div style="font-size:13px;color:var(--neutral-fg);padding:8px 0;">turn 完成后，label 降 neutral-mid，可点击展开收起 trace。</div>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- streaming vs 重试中 对比（spinner 颜色 + label 区分两种「进行中」）-->
+    <div class="render-frame">
+      <div class="state-row">
+        <div class="state-tag">streaming vs 重试中</div>
+        <div class="state-demo">
+          <div class="ms-stage-hint" style="padding-top:0;"><span class="v6">[v6 改动]</span> 同为 sessionActive 级进行态，TurnMeta 用 <b>spinner 颜色 + label 文案</b>区分：<b style="color:var(--accent);">accent 蓝 + 「思考中」</b>= 正常流式响应；<b style="color:var(--warn);">warn 金 + 「重试中 N/M」</b>= auto_retry 进行中。warn 色区别于 streaming 的 accent 色。</div>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:10px;">
+            <!-- streaming 态：accent spinner + 思考中 -->
+            <div style="flex:1;min-width:240px;">
+              <div class="cmp-row">
+                <span class="cmp-label">streaming</span>
+                <div class="ms-cmp" style="flex:1;">
+                  <!-- LoaderCircle（lucide v1.x 由 Loader2 重命名而来；streaming 用 accent 色）-->
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;color:var(--accent);animation:spin 1s linear infinite;flex-shrink:0;"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg>
+                  <span class="cmp-text" style="color:var(--accent);font-weight:500;">思考中</span>
+                  <span class="cmp-text" style="color:var(--neutral-fg);">12.3s</span>
+                </div>
+              </div>
+            </div>
+            <!-- 重试中态：warn spinner + 重试中 N/M -->
+            <div style="flex:1;min-width:240px;">
+              <div class="cmp-row">
+                <span class="cmp-label">重试中</span>
+                <div class="ms-cmp" style="flex:1;">
+                  <!-- RefreshCw（warn 色 animate-spin，重试语义）= 圆弧 + 双端短十字头 -->
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;color:var(--warn);animation:spin 1s linear infinite;flex-shrink:0;"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+                  <span class="cmp-text" style="color:var(--warn);font-weight:500;">重试中</span>
+                  <span class="cmp-text" style="color:var(--warn);font-family:var(--font-mono);font-size:10px;font-weight:600;">2/3</span>
+                  <span class="cmp-text" style="color:var(--neutral-fg);">12.3s</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="ms-stage-hint">两者同在 sticky wrapper 内吸顶（均为 sessionActive 级进行态）· 均无 chevron · 重试中额外带 N/M 计数（attempt/maxAttempts，mono xs warn）+ 可选 errorMessage 缩略尾（neutral-dim truncate）。<b>composer 在重试期间保持可用</b>（不禁用，区别于 streaming 的 send→spinner）。</div>
+          <div class="ms-stage-hint"><b style="color:var(--neutral-fg);">生命周期：</b>触发 <code>auto_retry</code>（进行中）→ TurnMeta 切「重试中 N/M」· 结束 <code>auto_retry_end</code> 到达 → store 清 → TurnMeta 恢复 streaming 或 normal 态。</div>
         </div>
       </div>
     </div>
@@ -1066,6 +1130,15 @@ body {
       <div class="anno"><b>disabled 条件:</b><br><span class="v6">:disabled="sessionActive || !turn.hasFoldable"</span>（TurnMeta.vue:22）· streaming/waiting 或无可折叠内容时整个 Button disabled</div>
       <div class="anno"><b>ask-user waiting 态:</b><br>sessionActive=true 显「思考中」+ spinner，<b>与普通 streaming 视觉相同</b>（区别在下方 trace 内容，TurnMeta 本身无差异）</div>
       <div class="anno"><b>streaming spinner:</b><br>Loader2 size-3 animate-spin text-accent（替代原脉冲点）· 仅 isStreaming 时</div>
+      <div class="anno"><b><span class="v6">[v6 改动]</span> 重试中态:</b><br>RetryIndicator 从 <b>composer 上方独立 warn 卡片移除</b>，重试信息迁至 TurnMeta。重试期间 label <span class="old">思考中</span> → <span class="v6">重试中</span> + N/M（attempt/maxAttempts）· spinner <b>warn 色</b>（区别 streaming accent）</div>
+      <div class="anno"><b>重试 spinner 色:</b><br><b>warn（--warn）</b>区别于 streaming 的 accent（--accent）· 两种「进行中」靠 spinner 颜色一眼可辨</div>
+      <div class="anno"><b>重试计数 N/M:</b><br><code>attempt/maxAttempts</code> · font-mono <code>--text-2xs</code> 600 warn · 例 <code>2/3</code></div>
+      <div class="anno"><b>重试 errorMessage:</b><br>可选缩略尾（neutral-dim truncate），如 <code>upstream timeout · stream aborted</code></div>
+      <div class="anno"><b>composer 不禁用:</b><br>重试期间 composer <b>保持可用</b>（区别 streaming send→spinner）；用户可继续输入</div>
+      <div class="anno"><b>重试生命周期:</b><br>触发 <code>auto_retry</code>（进行中）→ 切重试中态 · 结束 <code>auto_retry_end</code> → store 清 → 恢复 streaming/normal</div>
+      <div class="anno"><b>重试态 chevron:</b><br>不渲染（重试是 sessionActive 级 turn 状态，同 streaming，v-if hasFoldable && !sessionActive）</div>
+      <div class="anno"><b>[icon 重命名] Loader2 → LoaderCircle:</b><br>lucide v1.x 将旧 <code>Loader2</code> 重命名为 <code>LoaderCircle</code>（同 path，圆弧形 spin）· 重试 spinner 可用 LoaderCircle(warn) 或 RefreshCw(warn) animate-spin</div>
+      <div class="anno"><b>[icon] RefreshCw path:</b><br>圆弧 + 双端短十字头（<code>M21 12a9 9 0 0 0-9-9...</code>），表达「重新发起」语义，重试场景首选</div>
     </div>
   </section>
 

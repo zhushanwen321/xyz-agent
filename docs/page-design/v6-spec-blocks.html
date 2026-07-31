@@ -376,6 +376,23 @@ body {
 .tool-copy svg { width: 12px; height: 12px; }
 .tool-body { padding: 6px 0 0 16px; position: relative; }
 .tool-meta { font-size: 11px; color: var(--neutral-dim); font-family: var(--font-mono); margin-bottom: 4px; display: flex; gap: 12px; flex-wrap: wrap; }
+
+/* ── 展开态 copy 按钮（v6 统一布局）──
+   所有 block 展开：copy 作为 block icon 下方、内容区顶部的「复制按钮行」内行内元素，
+   与正文文字水平/基线对齐（非 absolute 浮层覆盖内容）。
+   hover 显（group-hover opacity-100），复制全部，成功切 Check（success 色）。*/
+.blk-copy-row { display: flex; align-items: baseline; gap: 8px; padding: 0 0 4px; }
+.blk-copy { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px;
+  border-radius: var(--radius-sm); color: var(--neutral-dim); cursor: pointer;
+  font-size: 11px; font-family: var(--font-mono);
+  opacity: 0; transition: opacity var(--duration-fast), background var(--duration-fast), color var(--duration-fast); }
+.blk-copy svg { width: 12px; height: 12px; flex-shrink: 0; }
+.tool-body:hover .blk-copy, .sa-body:hover .blk-copy, .tk-body:hover .blk-copy, .wf-body:hover .blk-copy, .bob:hover .blk-copy { opacity: 1; }
+.blk-copy:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+/* demo 态常驻可见（spec 静态展示，模拟 hover）*/
+.blk-copy.always-on { opacity: 1; }
+/* 复制成功反馈：Check icon + success 色 */
+.blk-copy.copied { opacity: 1; color: var(--success); }
 /* tool-bash 渲染分支（agent 调用的 bash，嵌 tool 块，可折叠）*/
 .tool-bash-box { border: 1px solid var(--neutral-faint); border-radius: var(--radius-sm); background: var(--surface-2); }
 .tool-bash-cmd { padding: 6px 16px; font-family: var(--font-mono); font-size: 12px; color: var(--neutral-fg); border-bottom: 1px solid var(--neutral-faint); }
@@ -565,6 +582,14 @@ body {
       <span class="cp cp-v6"><b>v6</b> preview neutral-mid #9ca3af · expanded body 仍 neutral-dim（thinking variant）</span>
     </div>
 
+    <!-- v6 全局 block icon 更新（适用于所有 block：§4 thinking·§5 bash·§6 tool·§10 subagent·§11 workflow）-->
+    <div class="anno-grid" style="margin-bottom:20px;">
+      <div class="anno"><b>v6 block icon 全更新（全局）:</b><br><span class="v6">5 个 block icon 全换，更贴切各块语义：thinking Lightbulb→Brain · bash Terminal→SquareTerminal · tool（通用兜底 tool-other）Wrench→SquareFunction · subagent Users→Bot · workflow ListChecks→Workflow</span></div>
+      <div class="anno"><b>映射速查:</b><br>§4 Brain · §5 SquareTerminal（BashOutputBlock + tool-bash）· §6 SquareFunction（tool-other 兜底）· §10 Bot · §11 Workflow · stroke 1.75 统一</div>
+      <div class="anno"><b>lucide v1.x 重命名 [注意]:</b><br><span class="old">TerminalSquare</span> → <span class="v6">SquareTerminal</span>（lucide v1.x 别名规范化，旧名 TerminalSquare 已废弃）。其余 4 个为新选 icon，无重命名冲突。</div>
+      <div class="anno"><b>icon 选取来源:</b><br>path 取自 <code>@lucide/vue@1.23</code> <code>dist/esm/icons/*.mjs</code> 的 <code>__iconNode</code>（非手画），与运行时渲染一致。</div>
+    </div>
+
     <div class="render-frame">
       <div class="panel-stage"><div class="ms-scroll"><div class="ms-turn"><div class="ms-assistant-col">
         <div class="state-row" style="margin:0;">
@@ -572,7 +597,7 @@ body {
           <div class="state-demo">
             <div class="tk-v6">
               <div class="tk-row">
-                <svg class="tk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2Z"/></svg>
+                <svg class="tk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 18V5"/><path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4"/><path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"/><path d="M17.997 5.125a4 4 0 0 1 2.526 5.77"/><path d="M18 18a4 4 0 0 0 2-7.464"/><path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517"/><path d="M6 18a4 4 0 0 1-2-7.464"/><path d="M6.003 5.125a4 4 0 0 0-2.526 5.77"/></svg>
                 <span class="tk-label">THINK</span>
                 <span class="tk-preview">用户要求重构对话流的视觉层，我需要先分析当前的组件结构，确定哪些是表面层的样式调整，哪些涉及到布局变化…</span>
               </div>
@@ -584,13 +609,17 @@ body {
           <div class="state-demo">
             <div class="tk-v6">
               <div class="tk-row">
-                <svg class="tk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2Z"/></svg>
+                <svg class="tk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 18V5"/><path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4"/><path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"/><path d="M17.997 5.125a4 4 0 0 1 2.526 5.77"/><path d="M18 18a4 4 0 0 0 2-7.464"/><path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517"/><path d="M6 18a4 4 0 0 1-2-7.464"/><path d="M6.003 5.125a4 4 0 0 0-2.526 5.77"/></svg>
                 <span class="tk-label">THINK</span>
                 <!-- expanded 态 separator + preview 文字设 invisible（保留占位，Block.vue:24-25）-->
                 <span style="font-size:12px;color:var(--neutral-dim);visibility:hidden;">·</span>
                 <span class="tk-preview" style="visibility:hidden;">（preview 占位，expanded invisible）</span>
               </div>
-              <div style="font-size:12px;color:var(--neutral-dim);line-height:1.7;padding-left:16px;padding-top:6px;">展开后完整思考内容，expanded body 颜色 <b>仍是 neutral-dim</b>（Block.vue:28，thinking variant 降级排版），非 mid——与 collapsed preview 的 mid 形成色差（preview 更亮引导视线，body 弱化为过程信息）。hover 显示 copy 按钮。<br>注：working（思考进行中）态强制全展开且不可手动收，仍显 60 字预览非完整内容。</div>
+              <!-- v6 统一：copy 按钮行在 block icon 下方、内容区顶部，与正文基线对齐（hover 显，复制全部思考内容，Check 反馈）-->
+              <div class="tk-body" style="padding-left:16px;padding-top:6px;">
+                <div class="blk-copy-row"><span class="blk-copy always-on" title="copy（hover 显，复制全部思考内容）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</span></div>
+                <div style="font-size:12px;color:var(--neutral-dim);line-height:1.7;">展开后完整思考内容，expanded body 颜色 <b>仍是 neutral-dim</b>（Block.vue:28，thinking variant 降级排版），非 mid——与 collapsed preview 的 mid 形成色差（preview 更亮引导视线，body 弱化为过程信息）。<br>注：working（思考进行中）态强制全展开且不可手动收，仍显 60 字预览非完整内容。</div>
+              </div>
             </div>
           </div>
         </div>
@@ -599,7 +628,7 @@ body {
 
     <div class="anno-grid">
       <div class="anno"><b>block padding:</b><br>py-2 (8px 上下)</div>
-      <div class="anno"><b>icon:</b><br>13px neutral-ico · stroke 1.75 · <b>无 spinner</b>（thinking 块不用 loader）</div>
+      <div class="anno"><b>icon:</b><br>Brain 13px neutral-ico · stroke 1.75 · <b>无 spinner</b>（thinking 块不用 loader）</div>
       <div class="anno"><b>label:</b><br>10px [--text-2xs] mono 600 uppercase tracking-.08em neutral-fg</div>
       <div class="anno"><b>preview 文字:</b><br><span class="old">12px neutral-dim #6b7280</span><br><span class="v6">12px [--text-sm] neutral-mid #9ca3af（仅提亮）</span></div>
       <div class="anno"><b>expanded body:</b><br><span class="v6">12px neutral-dim（Block.vue:28，<b>非 mid</b>）· MarkdownRenderer variant=thinking（标题用 --reasoning 紫）· 与 preview 色差刻意</span></div>
@@ -609,6 +638,7 @@ body {
       <div class="anno"><b>working 态:</b><br>强制展开 + 预览文本（无 spinner），不可手动收（Block.vue:231 <code>if(working) return</code>）</div>
       <div class="anno"><b>working cursor [待实现]:</b><br><span style="color:var(--warn);">[待实现] 现状仍 cursor-pointer（Block.vue:16），但 working 时点击拦截无反应——v6 应改 default cursor 避免误导可点击</span></div>
       <div class="anno"><b>折叠:</b><br>本地态 thinkingCollapsed，default 收起</div>
+      <div class="anno"><b>copy 按钮 [v6 新增]:</b><br><span class="v6">expanded block icon（Brain）下方内容区顶部行内（与正文基线对齐）· hover 显 · 复制全部思考内容 · Check 反馈（现 thinking 块无 copy，v6 补齐）</span></div>
     </div>
   </section>
 
@@ -621,7 +651,8 @@ body {
     <div class="change-points">
       <span class="cp cp-v6"><b>区分</b> BashOutputBlock（不可折叠）≠ tool-bash（可折叠）</span>
       <span class="cp cp-v6"><b>失败对照</b> 5A exit N→warn（用户直接反馈）· tool-bash failed→中性灰（agent 调用）</span>
-      <span class="cp cp-v6"><b>stroke</b> Terminal icon 1.75（统一，原 spec demo 误写 2）</span>
+      <span class="cp cp-v6"><b>stroke</b> SquareTerminal icon 1.75（统一，原 spec demo 误写 2）</span>
+      <span class="cp cp-v6"><b>copy</b> BashOutputBlock 输出区顶部行内（不可折叠块也补 copy，复制命令+输出）</span>
     </div>
 
     <!-- 5A. BashOutputBlock（composer 直接执行） -->
@@ -633,7 +664,7 @@ body {
           <div class="state-demo">
             <div class="bob">
               <div class="bob-head">
-                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>
                 <span class="bob-cmd">npm run test</span>
                 <!-- no-context tag（excludeFromContext，BashOutputBlock.vue:34-38）-->
                 <span class="bob-noctx">no context</span>
@@ -648,10 +679,12 @@ body {
           <div class="state-demo">
             <div class="bob">
               <div class="bob-head">
-                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>
                 <span class="bob-cmd">npm run test</span>
                 <span class="bob-status exit0">exit 0</span>
               </div>
+              <!-- v6 copy（不可折叠块，输出区顶部行内，与输出基线对齐；hover 显，复制 命令+输出；Check 反馈）-->
+              <div class="blk-copy-row" style="padding-left:16px;padding-top:4px;"><span class="blk-copy always-on" title="copy（hover 显，复制命令+输出）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</span></div>
               <div class="bob-out">✓ 1827 passed
 ✓ 0 failed
 Test Files  48 passed</div>
@@ -663,7 +696,7 @@ Test Files  48 passed</div>
           <div class="state-demo">
             <div class="bob">
               <div class="bob-head">
-                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>
                 <span class="bob-cmd">npm run test</span>
                 <span class="bob-status exitn">exit 1</span>
               </div>
@@ -678,7 +711,7 @@ Test Files  48 passed</div>
           <div class="state-demo">
             <div class="bob">
               <div class="bob-head">
-                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>
                 <span class="bob-cmd">mkdir -p dist</span>
                 <span class="bob-status exit0">exit 0</span>
               </div>
@@ -691,7 +724,7 @@ Test Files  48 passed</div>
           <div class="state-demo">
             <div class="bob">
               <div class="bob-head">
-                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>
                 <span class="bob-cmd">npm run build</span>
                 <span class="bob-status exit0">exit 0</span>
               </div>
@@ -707,7 +740,7 @@ transforming 1247 modules...
           <div class="state-demo">
             <div class="bob">
               <div class="bob-head">
-                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                <svg class="bob-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>
                 <span class="bob-cmd">npm run slow-script</span>
                 <span class="bob-status dim">超时</span>
               </div>
@@ -726,7 +759,7 @@ transforming 1247 modules...
           <div class="state-demo">
             <div class="tool-v6">
               <div class="tool-hd">
-                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="M9 17c2 0 2.8-1 2.8-2.8V10c0-2 1-3.3 3.2-3"/><path d="M9 11.2h5.7"/></svg>
                 <span class="tool-name">Bash</span><span class="tool-arg">· npm install</span>
               </div>
               <div class="tool-body">
@@ -746,13 +779,14 @@ added 1 package in 2s</div>
     <div class="anno-grid">
       <div class="anno"><b>两类来源:</b><br><span class="v6">BashOutputBlock（5A，不可折叠）≠ tool-bash（5B，可折叠）</span></div>
       <div class="anno"><b>BashOutputBlock 容器:</b><br>py-2 · <b>无边框无卡片背景</b>（靠 header 语义标识区分）</div>
-      <div class="anno"><b>header:</b><br>Terminal icon 13px neutral-ico · <span class="v6">stroke 1.75（统一，修正 demo 原 2）</span> + 命令 mono 12px neutral-fg</div>
+      <div class="anno"><b>header:</b><br>SquareTerminal icon 13px neutral-ico · <span class="v6">stroke 1.75（统一，修正 demo 原 2）</span> + 命令 mono 12px neutral-fg</div>
       <div class="anno"><b>running:</b><br>双环 loader 12px accent + 取消按钮</div>
       <div class="anno"><b>no-context tag:</b><br><span class="v6">excludeFromContext 时显 border pill（BashOutputBlock.vue:34-38）· rounded-sm border-border neutral-dim · 标记「不进上下文」</span></div>
       <div class="anno"><b>exit 标签:</b><br><span class="v6">exit 0→success绿 / exit N→warn金 / timeout·cancelled→neutral-dim</span></div>
       <div class="anno"><b>输出区:</b><br>mono 12px neutral-mid · max-h 240px overflow-auto · 仅 complete 态显示</div>
       <div class="anno"><b>empty 占位:</b><br><span class="v6">无输出时显「(无输出)」italic neutral-dim（BashOutputBlock.vue:99-103）</span></div>
       <div class="anno"><b>截断标记:</b><br>italic 10px neutral-dim（pi 返回 truncated 才显）</div>
+      <div class="anno"><b>copy 按钮 [v6 新增]:</b><br><span class="v6">BashOutputBlock 不可折叠，但输出区顶部补 copy 行内（与输出基线对齐）· hover 显 · 复制命令+输出 · Check 反馈（与可折叠块的展开态 copy 统一布局）</span></div>
       <div class="anno"><b>tool-bash 容器:</b><br>border neutral-faint + bg-surface-2 rounded-sm（嵌 §6，受 tool 折叠态统辖）</div>
       <div class="anno"><b>失败视觉对照:</b><br><span class="v6">5A exit N→warn（用户直接反馈，需明确成败）· tool-bash failed→中性灰（agent 调用，成败由后续 turn 解释）· 同一 bash 两套失败视觉，因来源语义不同</span></div>
     </div>
@@ -777,7 +811,7 @@ added 1 package in 2s</div>
           <div class="state-demo">
             <div class="tool-v6">
               <div class="tool-hd">
-                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="M9 17c2 0 2.8-1 2.8-2.8V10c0-2 1-3.3 3.2-3"/><path d="M9 11.2h5.7"/></svg>
                 <span class="tool-name">Edit</span><span class="tool-arg">· PanelHeader.vue</span>
               </div>
             </div>
@@ -787,8 +821,8 @@ added 1 package in 2s</div>
         <div class="state-row" style="margin:10px 0 0;">
           <div class="state-tag">argPath 变体</div>
           <div class="state-demo" style="display:flex;flex-direction:column;gap:6px;">
-            <div class="tool-v6" style="padding:2px 0;"><div class="tool-hd"><svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg><span class="tool-name" style="font-size:11px;">Grep</span><span class="tool-arg">· src/**/*.ts</span><span style="margin-left:8px;font-size:9px;color:var(--neutral-faint);font-family:var(--font-mono);">← pattern（grep）</span></div></div>
-            <div class="tool-v6" style="padding:2px 0;"><div class="tool-hd"><svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg><span class="tool-name" style="font-size:11px;">todo_write</span><span class="tool-arg">· 5 todos</span><span style="margin-left:8px;font-size:9px;color:var(--neutral-faint);font-family:var(--font-mono);">← tasks.length（todo_write）</span></div></div>
+            <div class="tool-v6" style="padding:2px 0;"><div class="tool-hd"><svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="M9 17c2 0 2.8-1 2.8-2.8V10c0-2 1-3.3 3.2-3"/><path d="M9 11.2h5.7"/></svg><span class="tool-name" style="font-size:11px;">Grep</span><span class="tool-arg">· src/**/*.ts</span><span style="margin-left:8px;font-size:9px;color:var(--neutral-faint);font-family:var(--font-mono);">← pattern（grep）</span></div></div>
+            <div class="tool-v6" style="padding:2px 0;"><div class="tool-hd"><svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="M9 17c2 0 2.8-1 2.8-2.8V10c0-2 1-3.3 3.2-3"/><path d="M9 11.2h5.7"/></svg><span class="tool-name" style="font-size:11px;">todo_write</span><span class="tool-arg">· 5 todos</span><span style="margin-left:8px;font-size:9px;color:var(--neutral-faint);font-family:var(--font-mono);">← tasks.length（todo_write）</span></div></div>
           </div>
         </div>
         <div class="state-row" style="margin:14px 0 0;">
@@ -807,14 +841,17 @@ added 1 package in 2s</div>
           <div class="state-demo">
             <div class="tool-v6">
               <div class="tool-hd">
-                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="M9 17c2 0 2.8-1 2.8-2.8V10c0-2 1-3.3 3.2-3"/><path d="M9 11.2h5.7"/></svg>
                 <span class="tool-name">Read</span><span class="tool-arg">· style.css</span>
               </div>
               <div class="tool-body">
-                <!-- copy 按钮：左上角浮标，hover 显（Block.vue:128-141）。bash 复制「命令+输出」，其余复制输出 -->
-                <span class="tool-copy" title="copy（hover 显，复制输出）" style="position:absolute;top:0;left:0;opacity:1;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
-                <!-- meta 条：行数 + chars + 耗时 三项（useToolMeta.ts:49-62），bash 无行数；非 bash 在输出上方 -->
-                <div class="tool-meta"><span>126 行</span><span>3.4K chars</span><span>1.2s</span></div>
+                <!-- v6 统一：copy 按钮在 block icon 下方、内容区顶部，与正文基线对齐（hover 显，复制全部：bash=命令+输出，其余=输出；Check 反馈）。
+                     布局：header 行 [SquareFunction] Read · style.css → 下方内容区第一行 [Copy] 正文…（Copy 与正文基线对齐）-->
+                <div class="blk-copy-row">
+                  <span class="blk-copy always-on" title="copy（hover 显，复制输出）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</span>
+                  <!-- meta 条：行数 + chars + 耗时 三项（useToolMeta.ts:49-62），bash 无行数；非 bash 在输出上方（与 Copy 同行右对齐）-->
+                  <span class="tool-meta" style="margin-bottom:0;margin-left:auto;"><span>126 行</span><span>3.4K chars</span><span>1.2s</span></span>
+                </div>
                 <div class="tool-out">--bg: #1a1b1f;
 --surface: #272830;
 --neutral-fg: #e5e7eb;…</div>
@@ -827,7 +864,7 @@ added 1 package in 2s</div>
           <div class="state-demo">
             <div class="tool-v6">
               <div class="tool-hd">
-                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="M9 17c2 0 2.8-1 2.8-2.8V10c0-2 1-3.3 3.2-3"/><path d="M9 11.2h5.7"/></svg>
                 <span class="tool-name failed">Bash</span><span class="tool-arg">· npm test</span>
                 <span class="tool-exit">exit 1</span>
               </div>
@@ -842,7 +879,7 @@ added 1 package in 2s</div>
           <div class="state-demo">
             <div class="tool-v6">
               <div class="tool-hd">
-                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                <svg class="tool-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="M9 17c2 0 2.8-1 2.8-2.8V10c0-2 1-3.3 3.2-3"/><path d="M9 11.2h5.7"/></svg>
                 <span class="tool-name failed">Bash</span><span class="tool-arg">· long-running-task</span>
                 <span class="tool-exit">未结束</span>
               </div>
@@ -865,7 +902,7 @@ added 1 package in 2s</div>
       <div class="anno"><b>icon stroke:</b><br><span class="v6">1.75（统一，修正注释与实现不一致）</span></div>
       <div class="anno"><b>exit N 标签:</b><br><span class="v6">mono 10px rounded-sm bg-surface-2 neutral-mid（中性）</span> · <span style="color:var(--danger);">[待实现] 代码 header 现无此 DOM（Block.vue:112-180 仅 icon+toolName+argPath）</span></div>
       <div class="anno"><b>unfinished:</b><br><span class="v6">崩溃/断连态（end_not_received）· toolName neutral-mid + 「未结束」标签</span> · <span style="color:var(--danger);">[待实现] 同上无此 DOM</span></div>
-      <div class="anno"><b>copy 按钮:</b><br><span class="v6">expanded 左上角 ghost icon（hover 显，Block.vue:128-141）· bash 复制含命令+输出，其余复制输出</span></div>
+      <div class="anno"><b>copy 按钮 [v6 布局]:</b><br><span class="old">absolute 左上角浮层覆盖内容</span><br><span class="v6">block icon 下方、内容区顶部行内（与正文基线对齐，不覆盖内容）· hover 显 · 复制全部（bash=命令+输出，其余=输出）· 成功切 Check success 色</span></div>
       <div class="anno"><b>meta 条:</b><br><span class="v6">行数 + chars + 耗时 三项（useToolMeta.ts:49-62）· bash 无行数（过滤）· 非 bash 在输出上方，bash 在输出下方（Block.vue:154-177）</span></div>
       <div class="anno" style="color:var(--warn);"><b>[欠考虑] 长输出限高</b><br>普通 tool output 区无 max-height/overflow（Block.vue:161-168），read 5000 行文件撑爆——v6 应考虑限高+滚动（待设计）</div>
       <div class="anno" style="color:var(--warn);"><b>[欠考虑] MultiEdit 多文件</b><br>批量编辑工具 header 只显单 path（Block.vue:378-379），多文件丢信息——待设计（如「N files」折叠展开列表）</div>
@@ -964,7 +1001,7 @@ added 1 package in 2s</div>
        ================================================================ -->
   <section class="spec" id="s10">
     <div class="spec-head"><span class="spec-num">§10</span><h2 class="spec-title">Block · subagent</h2></div>
-    <p class="spec-desc">异步 background 执行——只展示发起参数（input），看不到执行过程（结果由主 agent 后续 turn 总结）。可折叠（default 收起，无 chevron）。v6：failed 不切 icon（与 §6 tool 决策一致——<b>全部不切，靠颜色表达</b>），保留 Users 图标 + toolName 降 <code>neutral-mid</code> + icon hover warn。独有 background 状态行（blink 蓝点）。</p>
+    <p class="spec-desc">异步 background 执行——只展示发起参数（input），看不到执行过程（结果由主 agent 后续 turn 总结）。可折叠（default 收起，无 chevron）。v6：failed 不切 icon（与 §6 tool 决策一致——<b>全部不切，靠颜色表达</b>），保留 Bot 图标 + toolName 降 <code>neutral-mid</code> + icon hover warn。独有 background 状态行（blink 蓝点）。</p>
     <div class="change-points">
       <span class="cp cp-v6"><b>failed</b> 不切 icon（统一靠颜色，与 tool/workflow 一致）</span>
       <span class="cp cp-v6"><b>icon</b> stroke-width 1.75（统一）</span>
@@ -977,7 +1014,7 @@ added 1 package in 2s</div>
           <div class="state-demo">
             <div class="sa-v6">
               <div class="sa-hd">
-                <svg class="sa-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                <svg class="sa-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
                 <span class="sa-prefix">subagent</span><span class="sa-agent">general-purpose</span><span class="sa-sep">·</span><span class="sa-slug">analyze-deps</span><span class="sa-model">(glm-5.2 · <span class="think-x">thinking 3</span>)</span>
               </div>
               <div class="sa-task-preview">分析 package.json 的依赖关系，找出循环引用</div>
@@ -1004,12 +1041,13 @@ added 1 package in 2s</div>
           <div class="state-demo">
             <div class="sa-v6">
               <div class="sa-hd">
-                <svg class="sa-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                <svg class="sa-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
                 <span class="sa-prefix">subagent</span><span class="sa-agent">general-purpose</span><span class="sa-sep">·</span><span class="sa-slug">analyze-deps</span><span class="sa-model">(glm-5.2 · <span class="think-x">thinking 3</span>)</span>
               </div>
               <div class="sa-body">
-                <!-- copy 按钮：左上角 ghost icon，hover 显（BlockSubagent.vue:47-57）。复制 task + bgStatus -->
-                <span class="tool-copy" title="copy（hover 显，复制 task + bgStatus）" style="position:absolute;top:0;left:0;opacity:1;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
+                <!-- v6 统一：copy 按钮在 block icon（Bot）下方、内容区顶部，与正文基线对齐（hover 显，复制全部 task + bgStatus；Check 反馈）。
+                     布局：header 行 [Bot] subagent general-purpose · analyze-deps → 下方内容区第一行 [Copy] 正文… -->
+                <div class="blk-copy-row"><span class="blk-copy always-on" title="copy（hover 显，复制 task + bgStatus）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</span></div>
                 <div class="sa-task-full">分析 package.json 的依赖关系，找出循环引用。
 重点关注 packages/runtime 和 packages/renderer 之间的依赖方向，
 列出所有 workspace:* 引用。</div>
@@ -1024,7 +1062,7 @@ added 1 package in 2s</div>
           <div class="state-demo">
             <div class="sa-v6">
               <div class="sa-hd">
-                <svg class="sa-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                <svg class="sa-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
                 <span class="sa-prefix" style="color:var(--neutral-mid);">subagent</span><span class="sa-agent" style="color:var(--neutral-mid);">general-purpose</span>
               </div>
               <div class="sa-task-preview">分析 package.json 的依赖关系，找出循环引用</div>
@@ -1038,16 +1076,16 @@ added 1 package in 2s</div>
       <div class="anno"><b>形态:</b><br>background 异步（无 foreground 分支，当前实现缺口）</div>
       <div class="anno"><b>折叠:</b><br>本地态，default 收起，<b>无 chevron</b>，failed 不强制展开</div>
       <div class="anno"><b>header:</b><br>13px [--text-base] font-medium · gap 6px</div>
-      <div class="anno"><b>icon:</b><br>Users 13px · stroke 1.75 · <span class="v6">failed 不切（统一靠颜色）</span></div>
+      <div class="anno"><b>icon:</b><br>Bot 13px · stroke 1.75 · <span class="v6">failed 不切（统一靠颜色）</span></div>
       <div class="anno"><b>prefix:</b><br>「subagent」10px mono 600 uppercase tracking-.08em neutral-fg</div>
       <div class="anno"><b>agent/slug:</b><br>12px mono accent · 展开 invisible</div>
       <div class="anno"><b>model:</b><br>11px mono · 「(model · thinking X)」dim</div>
-      <div class="anno"><b>running:</b><br>双环 loader 13px accent（替换 Users icon）</div>
+      <div class="anno"><b>running:</b><br>双环 loader 13px accent（替换 Bot icon）</div>
       <div class="anno"><b>task 预览:</b><br>12px neutral-dim truncate（60 字）</div>
       <div class="anno"><b>task full:</b><br>12px neutral-mid leading-1.65 whitespace-pre-wrap</div>
       <div class="anno"><b>bg 状态行:</b><br>6px accent blink 点 + mono 11px neutral-dim · <span class="v6">文案来自 <code>bgResponse.message</code>（extension 自报任意文本），running 时回退固定串。subagent 块本身无 done 视觉态——完成通知由 §10.5 BgNotifyCard 单独渲染</span></div>
-      <div class="anno"><b>copy 按钮:</b><br><span class="v6">expanded 左上角 ghost icon（hover 显，BlockSubagent.vue:47-57）· 复制 task + bgStatus</span></div>
-      <div class="anno"><b>failed 色:</b><br><span class="v6">prefix/agent 降 neutral-mid（icon 保留 Users）</span></div>
+      <div class="anno"><b>copy 按钮 [v6 布局]:</b><br><span class="old">absolute 左上角浮层</span><br><span class="v6">block icon（Bot）下方内容区顶部行内（与正文基线对齐）· hover 显 · 复制全部 task + bgStatus · Check 反馈</span></div>
+      <div class="anno"><b>failed 色:</b><br><span class="v6">prefix/agent 降 neutral-mid（icon 保留 Bot）</span></div>
       <div class="anno" style="color:var(--warn);"><b>[欠考虑] task 无限高</b><br>展开体 subagentTask 全量 whitespace-pre-wrap 无 max-h（BlockSubagent.vue:59-62），超长 prompt 撑爆——待设计（如 max-h + 滚动）</div>
     </div>
   </section>
@@ -1165,7 +1203,7 @@ added 1 package in 2s</div>
        ================================================================ -->
   <section class="spec" id="s11">
     <div class="spec-head"><span class="spec-num">§11</span><h2 class="spec-title">Block · workflow</h2></div>
-    <p class="spec-desc">workflow 工具调用块。可折叠（default 收起）。v6：failed 不切 icon（保留 ListChecks + 颜色表达）。<b>进度条非内置</b>——仅当 extension 通过 <code>details.__gui__</code> 推送 <code>type:'progress-bar'</code> 时才渲染（见展开态示例 + §11.5 GUI 组件）。done 态无特殊装饰（回归中性 icon，与 failed 对称靠中性色）。审批/救生按钮 DEFERRED（G-018 决策）。</p>
+    <p class="spec-desc">workflow 工具调用块。可折叠（default 收起）。v6：failed 不切 icon（保留 Workflow + 颜色表达）。<b>进度条非内置</b>——仅当 extension 通过 <code>details.__gui__</code> 推送 <code>type:'progress-bar'</code> 时才渲染（见展开态示例 + §11.5 GUI 组件）。done 态无特殊装饰（回归中性 icon，与 failed 对称靠中性色）。审批/救生按钮 DEFERRED（G-018 决策）。</p>
     <div class="change-points">
       <span class="cp cp-v6"><b>failed/done</b> 不切 icon（统一靠颜色，done 回归中性）</span>
       <span class="cp cp-v6"><b>进度条</b> extension 推（非内置）· 含 label 行 + 数字读数 + track bg-bg-input</span>
@@ -1178,7 +1216,7 @@ added 1 package in 2s</div>
           <div class="state-demo">
             <div class="wf-v6">
               <div class="wf-hd">
-                <svg class="wf-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                <svg class="wf-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>
                 <span class="wf-prefix">workflow</span><span class="wf-action">run</span><span class="wf-name">test-suite</span><span class="sa-sep">·</span><span class="wf-name">unit</span><span class="wf-runid">a1b2c3d4</span>
               </div>
               <div class="sa-task-preview">运行单元测试套件</div>
@@ -1212,7 +1250,7 @@ added 1 package in 2s</div>
           <div class="state-demo">
             <div class="wf-v6">
               <div class="wf-hd">
-                <svg class="wf-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                <svg class="wf-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>
                 <span class="wf-prefix">workflow</span><span class="wf-action">status</span><span class="wf-name" style="color:var(--neutral-mid);">test-suite</span><span class="sa-sep">·</span><span class="wf-name" style="color:var(--neutral-mid);">unit</span><span class="wf-runid">a1b2c3d4</span>
               </div>
               <div class="sa-task-preview">运行单元测试套件</div>
@@ -1225,15 +1263,14 @@ added 1 package in 2s</div>
           <div class="state-demo">
             <div class="wf-v6">
               <div class="wf-hd">
-                <svg class="wf-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                <svg class="wf-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>
                 <span class="wf-prefix">workflow</span><span class="wf-action">run</span><span class="wf-name">test-suite</span><span class="sa-sep">·</span><span class="wf-name">unit</span><span class="wf-runid">a1b2c3d4</span>
               </div>
               <div class="wf-body">
-                <div class="wf-body-content" style="position:relative;">
-                  <!-- copy 按钮：workflow expanded 左上角（Block.vue:92-101）-->
-                  <span class="tool-copy" title="copy（hover 显）" style="position:absolute;top:0;left:0;opacity:1;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
-                  运行单元测试套件，覆盖率 ≥ 80%
-                </div>
+                <!-- v6 统一：copy 按钮在 block icon（Workflow）下方、内容区顶部，与正文基线对齐（hover 显，复制全部 workflow 结果；Check 反馈）。
+                     布局：header 行 [Workflow] run test-suite → 下方内容区第一行 [Copy] 正文… -->
+                <div class="blk-copy-row"><span class="blk-copy always-on" title="copy（hover 显，复制全部 workflow 结果）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</span></div>
+                <div class="wf-body-content">运行单元测试套件，覆盖率 ≥ 80%</div>
                 <div class="gui-pb-full">
                   <div class="gui-pb-label-row"><span class="gui-pb-label">coverage</span><span class="gui-pb-count">42<span class="gui-pb-count-dim"> / 50 tests</span></span></div>
                   <div class="gui-pb"><div class="gui-pb-fill warn" style="width:84%;background:var(--success);"></div></div>
@@ -1247,7 +1284,7 @@ added 1 package in 2s</div>
           <div class="state-demo">
             <div class="wf-v6">
               <div class="wf-hd">
-                <svg class="wf-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                <svg class="wf-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>
                 <span class="wf-prefix" style="color:var(--neutral-mid);">workflow</span><span class="wf-action" style="color:var(--neutral-mid);">run</span><span class="wf-name" style="color:var(--neutral-mid);">test-suite</span>
               </div>
               <div class="sa-task-preview">运行单元测试套件</div>
@@ -1260,18 +1297,18 @@ added 1 package in 2s</div>
     <div class="anno-grid">
       <div class="anno"><b>折叠:</b><br>本地态，default 收起</div>
       <div class="anno"><b>header:</b><br>13px [--text-base] font-medium · gap 6px</div>
-      <div class="anno"><b>icon:</b><br>ListChecks 13px · stroke 1.75 · <span class="v6">failed/done 都不切（done 回归中性 icon）</span></div>
+      <div class="anno"><b>icon:</b><br>Workflow 13px · stroke 1.75 · <span class="v6">failed/done 都不切（done 回归中性 icon）</span></div>
       <div class="anno"><b>prefix:</b><br>「workflow」10px mono 600 uppercase neutral-fg</div>
       <div class="anno"><b>action:</b><br>11px mono neutral-mid（run/status/pause）</div>
       <div class="anno"><b>name:</b><br>12px mono accent（仅 run action 有）· done/failed 降 neutral-mid</div>
       <div class="anno"><b>runId:</b><br>11px mono neutral-dim（前 8 位）</div>
       <div class="anno"><b>running:</b><br>双环 loader 13px accent</div>
       <div class="anno"><b>done 态:</b><br><span class="v6">status=success 无特殊装饰，回归中性 icon + name 降 neutral-mid（与 failed 对称靠中性色，不显 success 绿）</span></div>
-      <div class="anno"><b>copy 按钮:</b><br><span class="v6">expanded 左上角 ghost icon（hover 显，Block.vue:92-101）</span></div>
+      <div class="anno"><b>copy 按钮 [v6 布局]:</b><br><span class="old">absolute 左上角浮层</span><br><span class="v6">block icon（Workflow）下方内容区顶部行内（与正文基线对齐）· hover 显 · 复制全部 workflow 结果 · Check 反馈</span></div>
       <div class="anno"><b>进度条（GUI）:</b><br><span class="v6">label 行（neutral-mid）+ current/total unit 数字读数（neutral-fg）+ track bg-bg-input h-1.5 + fill severity（ProgressBar.vue:39-53）· 非内置，extension 推</span></div>
       <div class="anno"><b>severity 推断:</b><br><span class="v6">severity 可选，缺省按比例自动推断：≥0.8 ok(success) / ≥0.5 warn / else danger（ProgressBar.vue:18-29）</span></div>
       <div class="anno"><b>展开内容:</b><br>GuiComponentRenderer 优先 → AnsiText → 纯文本（详见 §11.5）</div>
-      <div class="anno"><b>failed 色:</b><br><span class="v6">prefix/action/name 降 neutral-mid（icon 保留 ListChecks）</span></div>
+      <div class="anno"><b>failed 色:</b><br><span class="v6">prefix/action/name 降 neutral-mid（icon 保留 Workflow）</span></div>
       <div class="anno"><b>审批按钮 [DEFERRED]:</b><br><span class="v6">G-018 决策：v1 不渲染审批按钮，failed 救生按钮也不做（agent 自处理）。未来审批走何种容器待设计</span></div>
     </div>
   </section>
