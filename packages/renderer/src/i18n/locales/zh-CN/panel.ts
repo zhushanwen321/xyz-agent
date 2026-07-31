@@ -18,6 +18,8 @@ export default {
     retry: '重试',
     thinkingLevel: '思考级别',
     compacting: '压缩中…',
+    queueSend: '排队发送',
+    commandQueuedRejected: '压缩进行中，命令请等待完成后使用',
     sending: '发送中…',
     sendHint: '输入内容后发送',
     steerHint: '想补充什么？⏎ 加入当前任务 · Alt+⏎ 排到下一轮…',
@@ -268,6 +270,11 @@ export default {
     steerLabel: 'STEER 追加',
     followupLabel: 'FOLLOWUP 新轮',
     itemCount: '{count} 条',
+  },
+  compactQueue: {
+    pending: '压缩后发送',
+    itemCount: '{count} 条',
+    cancel: '取消排队',
   },
   contextChips: {
     directory: '目录',

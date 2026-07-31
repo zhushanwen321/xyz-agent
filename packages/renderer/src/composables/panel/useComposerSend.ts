@@ -14,6 +14,7 @@ import type { ComputedRef, Ref } from 'vue'
 import type { Segment } from '@xyz-agent/shared'
 import type { StagingAction, StagingConfig } from './staging-types'
 import type { BashCommandExtract } from './useComposerBash'
+import { useCompactQueue } from './useCompactQueue'
 
 /**
  * ComposerInput 实例最小契约（getSegments 经 defineExpose 暴露）。
@@ -70,7 +71,10 @@ interface ComposerSendDeps {
   // ── 守卫 ──
   /** 是否可发送（hasInput && !isBusy）—— 非 staging 态发送守卫 */
   canSend: ComputedRef<boolean>
-  /** 忙时（流式/派发/发送中/压缩中）—— staging 与普通发送共用守卫 */
+  /** 当前 session 是否正在压缩上下文（chatStore.isCompacting，Composer 已计算）—— compact 分支入口守卫 */
+  isCompacting: ComputedRef<boolean>
+  /** 忙时（流式/派发/发送中）—— staging 与普通发送共用守卫。
+   *  注意：不包含 isCompacting——压缩期间允许排队动作（canSend = hasInput，onSend 守卫放行到 compact 分支） */
   isBusy: ComputedRef<boolean>
   // ── 输入 ──
   /** draft ref（纯文本，用于发送判断 + 文本提取） */
@@ -111,14 +115,14 @@ interface ComposerSendDeps {
 }
 
 /**
- * @param deps staging / getStagingConfig / canSend / isBusy / draft / inputRef /
+ * @param deps staging / getStagingConfig / canSend / isCompacting / isBusy / draft / inputRef /
  *   sessionIdRef / variantRef / composerBash / clearInput / restoreSegments /
  *   isSending / flow / localThinkingLevel / send / compact / toastError / t
  *   （Composer.vue 内定义后注入）
  */
 export function useComposerSend(deps: ComposerSendDeps): { onSend: () => Promise<void> } {
   /**
-   * 发送分流（优先级）：staging > landing（含 bash 检测）> bash(!/!!) > /compact > send。
+   * 发送分流（优先级）：staging > compact（压缩期间入队待重放）> landing（含 bash 检测）> bash(!/!!) > /compact > send。
    * landing 与 active 两条路径合并：landing 走 submitFirstMessage，active 走 trySendBash / /compact / send。
    * 失败均 restoreSegments 回滚草稿（W8）。
    */
@@ -133,6 +137,20 @@ export function useComposerSend(deps: ComposerSendDeps): { onSend: () => Promise
     // 透传（fork/handoff 内部 handleXxxSend 也自取 deps.getStagingConfig，传参与自取等价故实际被忽略）。
     // 守卫 hasActiveStaging：非 staging 态不调 getStagingConfig（避免测试 mock 未提供该方法时炸 + 语义清晰）。
     if (deps.staging.hasActiveStaging.value && await deps.staging.send(text, deps.getStagingConfig())) return
+    // compact 分支：压缩进行中（isCompacting）时发送动作改为入队待重放（flush 在 session.compacted
+    // 成功后统一重放）。`/` 前缀是命令——压缩完成后才能执行，此处拒绝 + toast，draft 保留不清空。
+    // 入队语义是重放纯文本（用 draft 而非 segments——segments 含 chip/图片段，重放时无 chip 上下文）。
+    if (deps.isCompacting.value) {
+      if (text.trim().startsWith('/')) {
+        deps.toastError(deps.t('panel.composer.commandQueuedRejected'))
+        return
+      }
+      // 先 enqueue 再 clearInput：text 在函数开头已捕获（= draft 当前值），
+      // clearInput 会把 draft 置空，顺序颠倒会入队空字符串。
+      useCompactQueue().enqueue(deps.sessionIdRef.value!, text)
+      deps.clearInput()
+      return
+    }
     const segments = deps.inputRef.value?.getSegments() ?? [] // 先快照（clearInput 会清空 DOM）
     if (deps.variantRef.value === 'landing') {
       // landing bash 分流：提取 !/!! 前缀（empty=空命令不提交；not-bash=走普通首发）
