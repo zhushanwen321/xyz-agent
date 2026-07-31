@@ -20,7 +20,7 @@
  *
  * 依赖方向：lib/ipc（renderer→main 唯一适配点）+ composables/logic/markdown（releaseNotes 渲染）。
  */
-import { onScopeDispose, reactive } from 'vue'
+import { onScopeDispose, reactive, toRaw } from 'vue'
 import type { LatestReleaseInfo, UpdateState } from '@xyz-agent/shared'
 import {
   checkForUpdate as ipcCheckForUpdate,
@@ -239,7 +239,16 @@ async function performUpdate(): Promise<void> {
   state.errorMessage = ''
   errorHandled = false
   try {
-    const result = await ipcPerformUpdate(release)
+    // [HISTORICAL] toRaw 解包 reactive proxy 后再传 IPC。
+    // state 是 reactive，state.latestRelease 读取时 Vue 返回 proxy（含按需代理的嵌套
+    // assets.*）。ipcPerformUpdate → ipcRenderer.invoke('update:perform', { release })
+    // 经 Electron structured clone 序列化，Proxy 不可克隆 → 抛 "an object could not
+    // be cloned" → invoke reject 被 catch 吞成 errorMessage，用户在 UpdateButton hover
+    // 看到英文 clone 报错（而非中文错误体系文案）。
+    // toRaw 拿回 reactive target 的原始 plain 引用（嵌套层也是原始引用，Vue 3 惰性代理
+    // 不改写 target 内部），structured clone 可正常序列化。不能用 JSON.parse(JSON.stringify)
+    // 做源头深拷贝替代——赋值给 reactive state 后读取仍会重新代理化（实测无效）。
+    const result = await ipcPerformUpdate(toRaw(release))
     if (result.triggerRestart) {
       state.state = 'restarting'
     } else if (!errorHandled) {
