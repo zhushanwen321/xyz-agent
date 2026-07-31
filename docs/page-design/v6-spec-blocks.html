@@ -1022,7 +1022,7 @@ added 1 package in 2s</div>
        ================================================================ -->
   <section class="spec" id="s10">
     <div class="spec-head"><span class="spec-num">§10</span><h2 class="spec-title">Block · subagent</h2></div>
-    <p class="spec-desc">异步 background 执行——只展示发起参数（input），看不到执行过程（结果由主 agent 后续 turn 总结）。<b>v6：去掉 expanded 态，collapsed only</b>——整个 block 是单行精简摘要，点击不再在对话流内展开，而是调用 <code>drawer.open('subagent', { subagentId })</code> 在 <b>drawer 的 subagent tab</b> 展示该 subagent 的完整对话流（drawer 新增 subagent 一级 tab，详见 v6-spec-drawer.html）。collapsed 只保留一行：Bot icon + <code>subagent</code> prefix + <code>agent · slug</code> + <code>(model · thinking X)</code>。v6：failed 不切 icon（保留 Bot + 颜色表达），failed 时 icon + agent 降 <code>neutral-mid</code>。完成结果通知仍走 §10.5 BgNotifyCard。</p>
+    <p class="spec-desc">异步 background 执行——只展示发起参数（input），看不到执行过程（结果由主 agent 后续 turn 总结）。<b>v6：去掉 expanded 态，collapsed only</b>——整个 block 是单行精简摘要，点击不再在对话流内展开，而是调用 <code>drawer.open('subagent', { subagentId })</code> 在 <b>drawer 的 subagent tab</b> 展示该 subagent 的完整对话流（drawer 新增 subagent 一级 tab，详见 v6-spec-drawer.html）。collapsed 只保留一行：Bot icon + <code>subagent</code> prefix + <code>agent · slug</code> + <code>(model · thinking 档位名)</code>。v6：failed 不切 icon（保留 Bot + 颜色表达），failed 时 icon + agent 降 <code>neutral-mid</code>。完成结果通知仍走 §10.5 BgNotifyCard。</p>
     <div class="change-points">
       <span class="cp cp-v6"><b>[v6 改动] 去 expanded</b> collapsed only · 点击开 drawer subagent tab</span>
       <span class="cp cp-v6"><b>[v6 改动] 字段精简</b> 去 task 预览/bg 状态行/copy，仅显单行</span>
@@ -1039,7 +1039,7 @@ added 1 package in 2s</div>
             <div class="sa-v6">
               <div class="sa-hd">
                 <svg class="sa-loader" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="10" opacity="0.35"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>
-                <span class="sa-prefix">subagent</span><span class="sa-agent">general-purpose</span><span class="sa-sep">·</span><span class="sa-slug">analyze-deps</span><span class="sa-model">(glm-5.2 · <span class="think-x">thinking 3</span>)</span>
+                <span class="sa-prefix">subagent</span><span class="sa-agent">general-purpose</span><span class="sa-sep">·</span><span class="sa-slug">analyze-deps</span><span class="sa-model">(glm-5.2 · <span class="think-x">thinking high</span>)</span>
               </div>
             </div>
           </div>
@@ -1051,7 +1051,7 @@ added 1 package in 2s</div>
             <div class="sa-v6">
               <div class="sa-hd">
                 <svg class="sa-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
-                <span class="sa-prefix">subagent</span><span class="sa-agent">general-purpose</span><span class="sa-sep">·</span><span class="sa-slug">analyze-deps</span><span class="sa-model">(glm-5.2 · <span class="think-x">thinking 3</span>)</span>
+                <span class="sa-prefix">subagent</span><span class="sa-agent">general-purpose</span><span class="sa-sep">·</span><span class="sa-slug">analyze-deps</span><span class="sa-model">(glm-5.2 · <span class="think-x">thinking medium</span>)</span>
               </div>
             </div>
           </div>
@@ -1063,7 +1063,7 @@ added 1 package in 2s</div>
             <div class="sa-v6">
               <div class="sa-hd">
                 <svg class="sa-ico" style="color:var(--neutral-mid);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
-                <span class="sa-prefix" style="color:var(--neutral-mid);">subagent</span><span class="sa-agent" style="color:var(--neutral-mid);">general-purpose</span><span class="sa-sep" style="color:var(--neutral-faint);">·</span><span class="sa-slug" style="color:var(--neutral-mid);">analyze-deps</span><span class="sa-model">(glm-5.2 · <span class="think-x">thinking 3</span>)</span>
+                <span class="sa-prefix" style="color:var(--neutral-mid);">subagent</span><span class="sa-agent" style="color:var(--neutral-mid);">general-purpose</span><span class="sa-sep" style="color:var(--neutral-faint);">·</span><span class="sa-slug" style="color:var(--neutral-mid);">analyze-deps</span><span class="sa-model">(glm-5.2 · <span class="think-x">thinking low</span>)</span>
               </div>
             </div>
           </div>
@@ -1079,7 +1079,8 @@ added 1 package in 2s</div>
       <div class="anno"><b>prefix:</b><br>「subagent」10px mono 600 uppercase tracking-.08em neutral-fg</div>
       <div class="anno"><b>agent:</b><br>12px mono accent · failed 降 neutral-mid</div>
       <div class="anno"><b>slug:</b><br><span class="v6">12px mono accent（前缀 ·）· 无 slug 则省略 · sep 与 slug</span></div>
-      <div class="anno"><b>model:</b><br>11px mono · 「(model · thinking X)」dim · <span class="v6">无 model 则整组省略（含括号）· thinking level 跟在 model 后</span></div>
+      <div class="anno"><b>model:</b><br>11px mono · 「(model · thinking 档位名)」dim · <span class="v6">无 model 则整组省略（含括号）· thinking level 跟在 model 后</span></div>
+      <div class="anno"><b>thinking level [枚举]:</b><br><span class="v6">字符串枚举，<b>不是数字</b>：off / minimal / low / medium / high / xhigh / max（pi-preset.ts ThinkingLevel 与 panel/thinking-levels.ts 合集）。展示时显档位名（如 thinking high），不显数字——避免误读为「thinking 3」。minimal 为 pi 侧细档，max 为 UI 最高档（发 pi 的值映射到 xhigh）。</span></div>
       <div class="anno"><b>running:</b><br>双环 loader 13px accent（替换 Bot icon）</div>
       <div class="anno"><b>done 态:</b><br><span class="v6">collapsed，回归中性 Bot icon（无 success 绿装饰）；完成结果通知走 §10.5 BgNotifyCard</span></div>
       <div class="anno"><b>failed 色:</b><br><span class="v6">icon + agent + slug 降 neutral-mid（prefix 也降，整体表达失败）</span></div>
