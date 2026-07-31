@@ -8,6 +8,8 @@
  * - PENDING-TC4：防覆盖守卫——pending 恢复后 checkForUpdate 返回 null 不回退 idle
  * - PENDING-TC5：pending 恢复后 checkForUpdate 确认有新版 → 正常刷新 latestRelease
  * - PENDING-TC6：无 pending 恢复时，checkForUpdate 失败正常回退 idle（守卫不影响正常流程）
+ * - PENDING-TC7（I#8）：getPendingUpdate reject（IPC 异常）→ restorePendingUpdate catch 分支：state 保持 idle、不抛错
+ * - PENDING-TC8（I#9）：initAutoCheck 完整启动序列——先同步触发 restorePendingUpdate，30s 后触发 checkForUpdate
  *
  * 测试设计：直接调 restorePendingUpdate（绕过 initAutoCheck 的 30s 定时器，避免 fake timer
  * 与 async/await mock promise 的交互复杂度）。restorePendingUpdate 在 useAppUpdate 返回值中暴露
@@ -21,7 +23,7 @@
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/useAppUpdate.pending.test.ts
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { effectScope } from 'vue'
 import type { LatestReleaseInfo } from '@xyz-agent/shared'
 
@@ -187,6 +189,101 @@ describe('useAppUpdate 功能1：持久化升级提醒标志', () => {
 
     // 正常流程（非 pending 恢复）：检测失败 → 回退 idle（守卫只在 pendingRestored 时生效）
     expect(result.state.state).toBe('idle')
+    stop()
+  })
+
+  it('PENDING-TC7（I#8）：getPendingUpdate reject（IPC 异常）→ restorePendingUpdate catch 分支：state 保持 idle、不抛错', async () => {
+    // 模拟 IPC 通道异常（如 preload 桥未就绪 / ipcRenderer.invoke reject）
+    hoisted.getPendingUpdate.mockRejectedValue(new Error('ipc fail'))
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { result, stop } = setupUseAppUpdate()
+
+    // restorePendingUpdate 是 best-effort：catch 后不 re-throw，state 不变
+    await expect(result.restorePendingUpdate()).resolves.toBeUndefined()
+
+    // state 保持初始 idle，latestRelease 未被污染
+    expect(result.state.state).toBe('idle')
+    expect(result.state.latestRelease).toBeNull()
+    // 失败信息经 console.warn 诊断（不进 errorMessage，避免 idle 态残留）
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[useAppUpdate] restorePendingUpdate failed:',
+      expect.any(Error),
+    )
+    warnSpy.mockRestore()
+    stop()
+  })
+
+  it('PENDING-TC8（I#9）：initAutoCheck 完整启动序列——先同步触发 restorePendingUpdate，30s 后触发 checkForUpdate', async () => {
+    // AUTO_CHECK_DELAY_MS = 30_000（useAppUpdate.ts 未导出常量，用字面量并注明）
+    const AUTO_CHECK_DELAY_MS = 30_000
+    vi.useFakeTimers()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    // pending 恢复成功（立即触发，不等 30s）
+    hoisted.getPendingUpdate.mockResolvedValue(makeRelease('0.9.0'))
+    // 30s 后联网检测确认有更新版本
+    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.5'))
+    const { result, stop } = setupUseAppUpdate()
+
+    // initAutoCheck 必须在活跃 effect scope 内调（onScopeDispose 注册 timer 清理）
+    result.initAutoCheck()
+
+    // 1. 启动序列立即触发 restorePendingUpdate（30s 红点不等定时器）
+    //    getPendingUpdate 是 async，需 flush 微任务让 await 完成
+    await vi.waitFor(() => {
+      expect(hoisted.getPendingUpdate).toHaveBeenCalledOnce()
+    })
+    await vi.waitFor(() => {
+      expect(result.state.state).toBe('available')
+      expect(result.state.latestRelease?.version).toBe('0.9.0')
+    })
+    // 此时 30s 定时器尚未到期，checkForUpdate 不应被调
+    expect(hoisted.checkForUpdate).not.toHaveBeenCalled()
+
+    // 2. 推进 30s：联网检测被触发（刷新 release info）
+    vi.advanceTimersByTime(AUTO_CHECK_DELAY_MS)
+    await vi.waitFor(() => {
+      expect(hoisted.checkForUpdate).toHaveBeenCalledOnce()
+    })
+    // 联网检测确认 v0.9.5 → latestRelease 被刷新
+    await vi.waitFor(() => {
+      expect(result.state.latestRelease?.version).toBe('0.9.5')
+    })
+    expect(result.state.state).toBe('available')
+
+    warnSpy.mockRestore()
+    vi.useRealTimers()
+    stop()
+  })
+
+  it('PENDING-TC9（I#9 补充）：initAutoCheck 在 30s 内不触发 checkForUpdate（定时器语义正确，不提前检测）', async () => {
+    const AUTO_CHECK_DELAY_MS = 30_000
+    vi.useFakeTimers()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    hoisted.getPendingUpdate.mockResolvedValue(null)
+    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.0'))
+    const { result, stop } = setupUseAppUpdate()
+
+    result.initAutoCheck()
+    await vi.waitFor(() => {
+      expect(hoisted.getPendingUpdate).toHaveBeenCalledOnce()
+    })
+
+    // 推进 29s（差 1s 到期）→ checkForUpdate 仍不应被调
+    vi.advanceTimersByTime(AUTO_CHECK_DELAY_MS - 1_000)
+    expect(hoisted.checkForUpdate).not.toHaveBeenCalled()
+    // pending 为 null → state 保持 idle
+    expect(result.state.state).toBe('idle')
+
+    // 再推进 1s 达到 30s → checkForUpdate 触发
+    vi.advanceTimersByTime(1_000)
+    await vi.waitFor(() => {
+      expect(hoisted.checkForUpdate).toHaveBeenCalledOnce()
+    })
+
+    warnSpy.mockRestore()
+    vi.useRealTimers()
     stop()
   })
 })
