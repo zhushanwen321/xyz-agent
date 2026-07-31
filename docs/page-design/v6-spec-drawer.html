@@ -163,10 +163,22 @@ body {
   background: var(--bg-card); border-radius: var(--radius); padding: 20px;
   margin-bottom: 16px; overflow: hidden;
 }
-/* 模拟 stage（窗口底） + 主面板 surface 浮起，drawer 贴右 */
+/* 模拟 stage（窗口底） + 主面板 surface 浮起，drawer 贴右。
+ * v6：主面板与 drawer 宽度倾向 1:1（flex:1 等分），中间 SplitterResizeHandle 可拖动调整。*/
 .workspace-stage { background: #131316; border-radius: var(--radius); padding: 16px; overflow: hidden; }
 .workspace-row { display: flex; gap: 0; min-height: 340px; }
-.ws-panel { flex: 0 0 200px; background: var(--surface); border-radius: var(--radius) 0 0 var(--radius); display: flex; align-items: center; justify-content: center; color: var(--neutral-dim); font-size: var(--text-xs); text-align: center; line-height: 1.6; }
+.ws-panel { flex: 1; min-width: 0; background: var(--surface); border-radius: var(--radius) 0 0 var(--radius); display: flex; align-items: center; justify-content: center; color: var(--neutral-dim); font-size: var(--text-xs); text-align: center; line-height: 1.6; }
+/* SplitterResizeHandle（透明，仅 hover/drag 显 accent，§6 Splitter 透明化）*/
+.ws-splitter {
+  flex: 0 0 6px; position: relative; cursor: col-resize; margin: 0 -3px;
+  display: flex; align-items: center; justify-content: center; z-index: 2;
+}
+.ws-splitter::before {
+  content: ''; width: 1px; height: 60%; background: var(--border);
+  transition: background var(--duration) var(--ease), width var(--duration) var(--ease);
+}
+.ws-splitter:hover::before { background: var(--border-strong); }
+.ws-splitter.drag::before { background: var(--accent); width: 2px; height: 80%; }
 
 /* 状态标签（每行变体前的 [状态] 标）*/
 .state-row { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
@@ -236,8 +248,10 @@ body {
 .matrix-table .m-no { color: var(--neutral-dim); font-family: var(--font-mono); font-size: var(--text-xs); }
 .matrix-table .m-note { color: var(--neutral-mid); }
 
-/* ── 形态 B：内层二级 tab 栏（detail 多文件 / terminal 多实例）── */
-.b-l2 { display: flex; align-items: center; gap: 2px; padding: 6px 8px; background: var(--surface-2); min-height: 36px; }
+/* ── 形态 B：内层二级 tab 栏（detail 多文件 / terminal 多实例 / browser 多页面）──
+   v6：分割感增强——二级 tab 栏作为独立条带，底部 hairline 分隔 + 内容区 bg-input 凹陷底色，
+   与 tab 栏（surface-2）形成明度层次。整体仍低饱和（降噪），active 用 accent-soft（非实色块）。 */
+.b-l2 { display: flex; align-items: center; gap: 2px; padding: 6px 8px; background: var(--surface-2); min-height: 36px; border-bottom: 1px solid var(--border); }
 .b-l2-tab {
   display: flex; align-items: center; gap: 6px; max-width: 150px; padding: 4px 8px;
   border-radius: var(--radius-sm); cursor: pointer; font-size: var(--text-xs); color: var(--neutral-mid);
@@ -265,7 +279,8 @@ body {
   border-radius: var(--radius-sm); background: transparent; color: var(--neutral-mid); transition: all var(--duration-fast);
 }
 .b-l2 .l2-view .lv-btn.on { background: var(--bg-elevated); color: var(--neutral-fg); }
-.b-l2-content { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; }
+/* 内容区：bg-input 凹陷底色（比 tab 栏 surface-2 更深一档），与 tab 栏形成层次分割 */
+.b-l2-content { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; background: var(--bg-input); }
 
 /* ── DetailPane header（v6：去 border-b 改 bg-surface-2 浮起）── */
 .dp-v6 { flex: 1; display: flex; flex-direction: column; background: var(--bg); min-height: 0; }
@@ -543,7 +558,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s1">
     <div class="spec-head"><span class="spec-num">§1</span><h2 class="spec-title">SideDrawer 容器</h2></div>
-    <p class="spec-desc">右侧抽屉容器，承载 6 个一级 tab（terminal/browser/git/doc/detail/tasks）。v6 核心改动：底色用 <code>bg-bg</code>（画布色 = <code>--bg-sunken</code>），与主面板靠 surface 浮起分隔；去硬 <code>border-l</code> 改 <code>shadow-drawer</code> 投影分隔（对标 Claude/Linear 的层级代边框）。一级 tab 栏是 icon-only（label 收进 title 供 hover 查看），右侧挂钉住/关闭。</p>
+    <p class="spec-desc">右侧抽屉容器，承载 6 个一级 tab（terminal/browser/git/doc/detail/tasks）。v6 核心改动：底色用 <code>bg-bg</code>（画布色 = <code>--bg-sunken</code>），与主面板靠 surface 浮起分隔；去硬 <code>border-l</code> 改 <code>shadow-drawer</code> 投影分隔（对标 Claude/Linear 的层级代边框）。一级 tab 栏是 icon-only（label 收进 title 供 hover 查看），右侧挂钉住/关闭。<b>宽度比例</b>：主面板与 drawer 默认 <code>1:1</code>（flex:1 等分），中间 <code>SplitterResizeHandle</code> 可拖动调整（透明，仅 hover/drag 显 accent）。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> border-l border-border 硬分隔</span>
       <span class="cp cp-v6"><b>v6</b> shadow-drawer 投影分隔</span>
@@ -555,7 +570,9 @@ body {
     <div class="render-frame">
       <div class="workspace-stage">
         <div class="workspace-row">
-          <div class="ws-panel">主面板<br>(对话流 surface 浮起)</div>
+          <div class="ws-panel">主面板<br>(对话流 surface 浮起)<br><span style="font-family:var(--font-mono);font-size:var(--text-2xs);color:var(--accent);margin-top:8px;display:block;">flex:1 · 与 drawer 1:1</span></div>
+          <!-- SplitterResizeHandle：透明，hover 显 border-strong，drag 显 accent（§6） -->
+          <div class="ws-splitter" title="拖动调整主面板/drawer 宽度（默认 1:1）"></div>
           <div class="sd-drawer">
             <div class="sd-l1">
               <!-- 6 个一级 icon tab：terminal / browser / git / doc / detail / tasks -->
@@ -642,6 +659,7 @@ body {
       <div class="anno"><b>钉住按钮:</b><br>钉住态 text-accent · 未钉 text-neutral-dim</div>
       <div class="anno"><b>unread badge:</b><br>bg-accent pill · 脉动蓝点 + 计数（>9 显 9+）</div>
       <div class="anno"><b>SplitterHandle:</b><br>透明化，仅 hover/drag 显 accent</div>
+      <div class="anno"><b>v6 宽度比例:</b><br><span class="v6">主面板 : drawer = 1:1</span><br>(flex:1 等分默认值)<br>SplitterResizeHandle<br>可拖动调整比例</div>
       <div class="anno"><b>落点:</b><br>SideDrawer.vue header · asideClass</div>
     </div>
   </section>
@@ -688,10 +706,10 @@ body {
           </tr>
           <tr>
             <td class="m-tab">browser</td>
-            <td>单实例（暂）</td>
-            <td class="m-no">否</td>
-            <td class="m-no">否</td>
-            <td class="m-note">当前单 view + URL 替换；多 tab 作为后续扩展</td>
+            <td>多页面 tab</td>
+            <td class="m-yes">是</td>
+            <td class="m-yes">是（+ 新开页面）</td>
+            <td class="m-note">每个 tab 一个独立 URL 页面，可关闭；点 + 新开（默认页/输入 URL）</td>
           </tr>
           <tr>
             <td class="m-tab">git</td>
@@ -1118,12 +1136,13 @@ body {
        ================================================================ -->
   <section class="spec" id="s6">
     <div class="spec-head"><span class="spec-num">§6</span><h2 class="spec-title">BrowserPane（browser tab）</h2></div>
-    <p class="spec-desc">嵌入式浏览器面板（主进程 WebContentsView 覆盖渲染 viewport）。v6 核心改动：三处 <code>border-b</code> 全去（guide banner / nav 工具栏 / 登录墙），改靠各自底色 <code>bg-surface-2</code> / <code>bg-warn-soft</code> 浮起分层（§3.4 统一）；guide banner 去装饰色（<code>bg-accent-soft</code> + 蓝图标）改中性 <code>bg-surface-2</code> + neutral-mid 图标；登录墙 <code>warn</code> 收敛到单点提示（<code>bg-warn-soft</code> 单块 + warn 图标，非 border-b 散布）。单实例（暂），多 tab 作为后续扩展，故无二级 tab 栏。</p>
+    <p class="spec-desc">嵌入式浏览器面板（主进程 WebContentsView 覆盖渲染 viewport）。v6 核心改动：三处 <code>border-b</code> 全去（guide banner / nav 工具栏 / 登录墙），改靠各自底色 <code>bg-surface-2</code> / <code>bg-warn-soft</code> 浮起分层（§3.4 统一）；guide banner 去装饰色（<code>bg-accent-soft</code> + 蓝图标）改中性 <code>bg-surface-2</code> + neutral-mid 图标；登录墙 <code>warn</code> 收敛到单点提示（<code>bg-warn-soft</code> 单块 + warn 图标，非 border-b 散布）。<b>二级 tab：支持多页面 tab</b>（每个 tab 一个独立 URL 页面，可关闭；点 + 新开默认页/输入 URL），与 detail/terminal 一致的形态 B 二级 tab 架构。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> guide/nav/login 三处 border-b 分隔</span>
       <span class="cp cp-v6"><b>v6</b> 三处 border-b 全去，靠各自 bg 分层</span>
       <span class="cp cp-v6"><b>v6</b> guide banner 改中性（去 accent-soft 装饰）</span>
       <span class="cp cp-v6"><b>v6</b> 登录墙 warn 收敛单点（bg-warn-soft 整块）</span>
+      <span class="cp cp-v6"><b>v6</b> 二级 tab 多页面（+ 新增按钮）</span>
     </div>
 
     <!-- 目标态：guide + nav + 内容展示 -->
@@ -1143,6 +1162,15 @@ body {
               <button class="l1-act" title="关闭"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </div>
             <div class="bp-v6">
+              <!-- 二级 tab：多页面（每个 tab 一个独立 URL，可关闭；+ 新开）-->
+              <div class="b-l2">
+                <div class="b-l2-tab"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.7;"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span class="tt-name">example.com/docs</span><span class="tt-close"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span></div>
+                <div class="b-l2-tab on"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.7;"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span class="tt-name">api.reference</span><span class="tt-close"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span></div>
+                <div class="b-l2-newtab" title="新开页面（输入 URL 或默认页）">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  <span>新页面</span>
+                </div>
+              </div>
               <!-- guide banner（v6：中性 bg-surface-2，去 border-b 靠 bg 浮起）-->
               <div class="bp-guide">
                 <svg class="bp-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
