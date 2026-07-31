@@ -434,6 +434,91 @@ body {
 .ind-view-head .iv-title { font-size: var(--text-md); font-weight: 600; color: var(--neutral-fg); }
 .ind-view-body { padding: 20px; max-width: var(--content-max-w); }
 
+/* ============ plugin 第 5 独立 tab + 二级 tab（§2 A1 v6 新增）============ */
+/* 一级 Puzzle icon tab（特殊第 5 tab，与 4 个一级 tab 并列但语义独立）*/
+.seg-tab .seg-item.plugin-primary { color: var(--accent); }
+.seg-tab .seg-item.plugin-primary.active { background: var(--accent-soft); color: var(--accent); }
+.plugin-5th { display: flex; flex-direction: column; gap: 8px; }
+.plugin-5th-label { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--accent); padding: 0 4px; display: flex; align-items: center; gap: 5px; }
+/* 二级 tab 栏（plugin 注册的 view，可关闭/固定）*/
+.l2-tabbar { display: flex; gap: 2px; background: var(--bg-input); border-radius: var(--radius-sm); padding: 3px; flex-wrap: wrap; }
+.l2-tab { display: inline-flex; align-items: center; gap: 5px; padding: 3px 4px 3px 8px; border-radius: var(--radius-sm); font-size: var(--text-xs); color: var(--neutral-dim); background: transparent; cursor: pointer; }
+.l2-tab:hover { color: var(--neutral-fg); background: var(--surface-hover); }
+.l2-tab.active { background: var(--bg-elevated); color: var(--neutral-fg); }
+.l2-tab .l2-ico { width: 11px; height: 11px; color: var(--neutral-ico); flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; }
+.l2-tab.active .l2-ico { color: var(--accent); }
+.l2-tab .l2-ico svg { width: 11px; height: 11px; }
+.l2-tab .l2-close, .l2-tab .l2-pin { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; border-radius: 3px; color: var(--neutral-faint); opacity: 0; transition: opacity var(--duration-fast); }
+.l2-tab:hover .l2-close, .l2-tab:hover .l2-pin { opacity: 1; }
+.l2-tab .l2-close:hover, .l2-tab .l2-pin:hover { color: var(--neutral-fg); background: var(--surface-2); }
+.l2-tab .l2-pin svg, .l2-tab .l2-close svg { width: 11px; height: 11px; }
+.l2-tab .l2-pin.pinned { color: var(--accent); opacity: 1; }
+.l2-content { background: var(--surface); border-radius: var(--radius); padding: 10px; min-height: 100px; }
+
+/* ============ 醒目说明框（§1 现状 vs 目标，warn 色边框）============ */
+.note-box { border: 1px solid var(--border-strong); border-left: 3px solid var(--neutral-dim); border-radius: var(--radius); padding: 16px 18px; margin-top: 24px; background: var(--bg-card); }
+.note-box.warn { border-color: color-mix(in oklch, var(--warn) 40%, transparent); border-left-color: var(--warn); background: color-mix(in oklch, var(--warn) 6%, var(--bg-card)); }
+.note-box-head { display: flex; align-items: center; gap: 8px; font-size: var(--text-sm); font-weight: 600; color: var(--neutral-fg); margin-bottom: 12px; }
+.note-box.warn .note-box-head { color: var(--warn); }
+.note-box-head svg { width: 14px; height: 14px; flex-shrink: 0; }
+.note-box-head .nb-tag { margin-left: auto; font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 400; color: var(--neutral-dim); padding: 2px 7px; background: var(--bg-input); border-radius: var(--radius-sm); }
+.note-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+.note-col { background: var(--bg-input); border-radius: var(--radius-sm); padding: 10px 12px; }
+.note-col h4 { font-size: var(--text-2xs); font-family: var(--font-mono); color: var(--neutral-dim); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; font-weight: 500; display: flex; align-items: center; gap: 5px; }
+.note-col.now h4 { color: var(--neutral-mid); }
+.note-col.goal h4 { color: var(--success); }
+.note-col p { font-size: var(--text-xs); color: var(--neutral-mid); line-height: 1.65; }
+.note-col p + p { margin-top: 6px; }
+.note-col p code, .note-foot code { font-family: var(--font-mono); color: var(--neutral-fg); font-size: 10px; background: var(--surface-2); padding: 1px 5px; border-radius: 3px; }
+.note-col p b { color: var(--neutral-fg); font-weight: 500; }
+.note-foot { font-size: var(--text-xs); color: var(--neutral-mid); line-height: 1.75; font-family: var(--font-mono); padding-top: 12px; border-top: 1px solid var(--border); margin-top: 4px; }
+.note-foot b { color: var(--neutral-fg); font-weight: 500; }
+.note-foot .nf-warn { color: var(--warn); }
+
+/* ============ overlay 窗口化（§4 三态）============ */
+.overlay-win { background: var(--bg-elevated); border-radius: var(--radius-lg); box-shadow: var(--shadow-2); overflow: hidden; max-width: 320px; }
+.overlay-win-hd { display: flex; align-items: center; gap: 8px; padding: 7px 8px 7px 10px; background: var(--surface-2); cursor: grab; }
+.overlay-win-hd:active { cursor: grabbing; }
+.overlay-win-hd .ow-grip { display: inline-flex; flex-direction: column; gap: 1px; color: var(--neutral-faint); }
+.overlay-win-hd .ow-grip span { display: block; width: 10px; height: 1px; background: currentColor; }
+.overlay-win-hd .ow-title { font-size: var(--text-sm); font-weight: 600; color: var(--neutral-fg); }
+.overlay-win-hd .ow-source { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--accent); }
+.overlay-win-hd .ow-actions { margin-left: auto; display: flex; gap: 2px; }
+.overlay-win-hd .ow-btn { width: 20px; height: 20px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-dim); cursor: pointer; }
+.overlay-win-hd .ow-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.overlay-win-hd .ow-btn svg { width: 12px; height: 12px; }
+.overlay-win-bd { padding: 14px; font-size: var(--text-sm); color: var(--neutral-mid); line-height: 1.55; }
+.overlay-win-bd .ow-prompt { font-size: var(--text-sm); color: var(--neutral-fg); margin-bottom: 10px; }
+/* 最小化 badge */
+.overlay-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 6px 6px 10px; background: var(--accent); color: #fff; border-radius: 999px; box-shadow: var(--shadow-2); cursor: pointer; font-size: var(--text-xs); font-weight: 500; }
+.overlay-badge:hover { background: var(--accent-hover); }
+.overlay-badge svg { width: 12px; height: 12px; }
+.overlay-badge .ob-count { background: rgba(255,255,255,0.25); border-radius: 999px; padding: 0 6px; font-family: var(--font-mono); font-size: 10px; line-height: 14px; }
+.overlay-badge .ob-restore { width: 16px; height: 16px; border-radius: 50%; background: rgba(255,255,255,0.2); display: inline-flex; align-items: center; justify-content: center; }
+.overlay-badge .ob-restore svg { width: 10px; height: 10px; }
+/* 拖动虚影 */
+.overlay-ghost { background: var(--bg-elevated); border-radius: var(--radius-lg); border: 1px dashed var(--accent); }
+.overlay-ghost .og-handle { background: var(--accent-soft); height: 30px; border-radius: var(--radius-lg) var(--radius-lg) 0 0; display: flex; align-items: center; padding: 0 10px; gap: 6px; }
+.overlay-ghost .og-handle .og-grip { display: inline-flex; flex-direction: column; gap: 1px; color: var(--accent); }
+.overlay-ghost .og-handle .og-grip span { display: block; width: 10px; height: 1px; background: currentColor; }
+.overlay-ghost .og-handle .og-label { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--accent); }
+.overlay-ghost .og-body { padding: 14px; opacity: 0.5; }
+/* 浮动定位示意（右下角 badge）*/
+.float-corner { position: relative; background: var(--bg-card); border-radius: var(--radius); padding: 16px; min-height: 140px; }
+.float-corner .fc-content { font-size: var(--text-2xs); color: var(--neutral-dim); font-family: var(--font-mono); }
+.float-corner .overlay-badge { position: absolute; right: 12px; bottom: 12px; }
+
+/* ============ AppShell 全局底栏位置示意（§2 A4 v6 新增）============ */
+.appshell-mock { display: flex; flex-direction: column; gap: 4px; background: #131316; padding: 10px; border-radius: var(--radius); }
+.appshell-mock .as-label { font-family: var(--font-mono); font-size: 9px; color: var(--neutral-dim); padding: 0 2px; }
+.appshell-mock .as-label.hl { color: var(--accent); }
+.appshell-mock .as-row { display: flex; gap: 4px; }
+.appshell-mock .as-sidebar { width: 70px; background: var(--surface); border-radius: var(--radius-sm); padding: 10px 6px; font-size: 9px; color: var(--neutral-dim); font-family: var(--font-mono); display: flex; flex-direction: column; gap: 4px; align-items: center; }
+.appshell-mock .as-main { flex: 1; background: var(--surface); border-radius: var(--radius-sm); padding: 14px; font-size: 9px; color: var(--neutral-dim); font-family: var(--font-mono); min-height: 90px; display: flex; align-items: center; justify-content: center; }
+.appshell-mock .as-drawer { width: 90px; background: var(--surface); border-radius: var(--radius-sm); padding: 10px; font-size: 9px; color: var(--neutral-dim); font-family: var(--font-mono); display: flex; align-items: center; justify-content: center; }
+.appshell-mock .as-statusbar { background: var(--bg-elevated); border-radius: var(--radius-sm); height: 24px; display: flex; align-items: center; padding: 0 8px; gap: 0; position: relative; border: 1px solid color-mix(in oklch, var(--accent) 40%, transparent); }
+.appshell-mock .as-statusbar .sb-item { font-size: 9px; padding: 0 6px; height: 100%; }
+
 /* footer */
 .doc-foot { margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; font-size: var(--text-xs); color: var(--neutral-dim); font-family: var(--font-mono); flex-wrap: wrap; gap: 8px; }
 .doc-foot a { color: var(--accent); text-decoration: none; }
@@ -569,6 +654,31 @@ body {
       <div class="anno"><b>新增概念:</b> <span>M8 全局底栏（§2 A4，当前绑死 SideDrawer footer，规划提升全局）</span></div>
       <div class="anno"><b>色彩图例:</b> <span class="anno accent">A</span> 结构容器 · <span class="anno" style="color:var(--success)">B</span> 对话流 · <span class="anno" style="color:var(--warn)">C</span> 对话框 · <span class="anno" style="color:var(--info)">D</span> 命令 · <span class="anno" style="color:var(--danger)">E</span> 独立 view</span></div>
     </div>
+
+    <!-- 现状 vs 目标 澄清框 -->
+    <div class="note-box warn">
+      <div class="note-box-head">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        现状 vs 目标 · 本 spec 描绘目标态
+        <span class="nb-tag">当前实现度见下</span>
+      </div>
+      <div class="note-cols">
+        <div class="note-col now">
+          <h4>现状（pi-extension 已完整）</h4>
+          <p><b>pi-extension 渲染机制完整可用：</b>M4/M5/M7/M8/M11/M15 挂载点已落地，走 <code>details.__gui__</code> + <code>extension:widget</code> + <code>extension:status</code> + <code>extension.ui_request</code>。</p>
+          <p><b>plugin-sdk 渲染面完全空白：</b><code>contributes.panels / statusBarItems / views</code> 零消费；<code>plugin:viewUpdate</code> 消息族未实现；<code>ViewHost / ContributionRegistry / ExtensionHost</code> 在 renderer 不存在。</p>
+        </div>
+        <div class="note-col goal">
+          <h4>目标（统一扩展架构）</h4>
+          <p><b>统一扩展架构：</b>对齐 <code>renderer-target-architecture.md</code>，pi extension + plugin 共用 GuiComponent 7 原语 + 统一 <code>GuiComponentRenderer</code>。</p>
+          <p><b>ExtensionHost 层消费：</b>新增 ExtensionHost 消费 plugin contribution（views/menus/statusBarItems/commands/configuration），统一注册到 ContributionRegistry，由 ViewHost 驱动渲染。</p>
+        </div>
+      </div>
+      <div class="note-foot">
+        <b class="nf-warn">挂载点机制澄清：</b>挂载点是<b>「数据驱动渲染」</b>——plugin 推数据（原语树 / 元数据），renderer 渲染，<b>不是同步 hook</b>。<br>
+        hook（before/after/阻塞/修改数据）作用在 <b>tool / message 层</b>（拦截、改写、阻塞 tool call 或消息），<b>不作用在渲染挂载点</b>——渲染挂载点只接受数据，不接受控制流。
+      </div>
+    </div>
   </section>
 
   <!-- ================================================================
@@ -576,76 +686,116 @@ body {
        ================================================================ -->
   <section class="spec" id="s2">
     <div class="spec-head"><span class="spec-num">§2</span><h2 class="spec-title">维度 A · 结构容器注入</h2></div>
-    <p class="spec-desc">plugin 往固定结构加槽位（L1 元数据驱动，renderer 有固定宿主渲染）。覆盖 4 子项：<b>A1</b> sidebar plugin tab（M1+M2，复用 SegmentedTab 范式）/ <b>A2</b> drawer plugin tab（M6+M7，内容用 GuiComponent）/ <b>A3</b> 工具条/头部按钮（M9+M12，icon+command）/ <b>A4</b> 全局底栏 status item（M8，<b>新增概念</b> StatusBarController）。这是当前 plugin 系统最大空白——<code>contributes.views/statusBarItems/menus</code> 已声明但 renderer 零消费。</p>
+    <p class="spec-desc">plugin 往固定结构加槽位（L1 元数据驱动，renderer 有固定宿主渲染）。覆盖 4 子项：<b>A1</b> sidebar 第 5 独立插件 tab + 二级 view tab（M1+M2，一级 4 tab 不变，插件是独立第 5 个，内层二级 tab 是 plugin 注册的 view）/ <b>A2</b> drawer plugin tab（M6+M7，内容用 GuiComponent，drawer 暂不开放 plugin tab 集中 sidebar）/ <b>A3</b> 工具条/头部按钮（M9+M12，icon+command）/ <b>A4</b> 全局底栏 status item（M8，AppShell 底部跨全宽，<b>新增概念</b> StatusBarController）。这是当前 plugin 系统最大空白——<code>contributes.views/statusBarItems/menus</code> 已声明但 renderer 零消费。</p>
 
-    <h3>A1 · sidebar plugin tab（M1+M2）<span class="h3-tag">复用 SegmentedTab §3.1</span></h3>
+    <h3>A1 · sidebar 第 5 独立插件 tab + 二级 view tab（M1+M2）<span class="h3-tag">一级 4 tab 不变 · 内层二级</span></h3>
     <div class="change-points">
-      <span class="cp cp-now"><b>现</b> SegmentedTab 硬编码 4 tab</span>
-      <span class="cp cp-v6"><b>v6</b> plugin 声明 view id/icon/title 注入</span>
-      <span class="cp cp-v6"><b>v6</b> 复用 SegmentedTab 范式（bg-input 容器 + 中性浮起）</span>
+      <span class="cp cp-now"><b>现</b> SegmentedTab 硬编码 4 tab，无插件位</span>
+      <span class="cp cp-v6"><b>v6</b> 新增第 5 独立「插件」tab（Puzzle icon，特殊语义）</span>
+      <span class="cp cp-v6"><b>v6</b> 一级 4 tab 不变；插件 tab 内层是二级 tab</span>
+      <span class="cp cp-v6"><b>v6</b> 二级 tab = plugin 注册 view（可关闭/固定）</span>
     </div>
     <div class="render-frame">
       <div style="display:flex;gap:20px;flex-wrap:wrap;">
-        <!-- 激活态 -->
-        <div class="demo-sidebar">
-          <div class="sb-brand">sidebar</div>
+        <!-- 一级 tab 行：4 个内置 + 第 5 独立插件 tab -->
+        <div class="demo-sidebar" style="flex:1;min-width:300px;">
+          <div class="sb-brand">sidebar · 一级 SegmentedTab</div>
           <div class="seg-tab">
-            <span class="seg-item active"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
-            <span class="seg-item"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span>
-            <span class="seg-item"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M21 21v-2a4 4 0 0 0-3-3.87"/></svg></span>
-            <span class="seg-item plugin"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span>
+            <span class="seg-item active" title="sessions"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="count">12</span></span>
+            <span class="seg-item" title="files"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span>
+            <span class="seg-item" title="agents"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg></span>
+            <span class="seg-item" title="flows"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span>
+            <!-- 第 5 独立插件 tab（Puzzle icon，与 4 一级并列但语义独立）-->
+            <span class="seg-item plugin-primary active" title="插件（第 5 独立 tab）"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 2 12c0-.617.236-1.234.706-1.704L4.317 8.685a.982.982 0 0 1 .838-.276c.47.07.802.48.968.925a2.501 2.501 0 1 0 3.214-3.214c-.446-.166-.855-.497-.925-.968a.979.979 0 0 1 .276-.837l1.61-1.61A2.402 2.402 0 0 1 12 2c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg></span>
           </div>
-          <div class="sb-view">
-            <div class="sb-list-item"><svg class="ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> plugin view 数据项 1</div>
-            <div class="sb-list-item"><svg class="ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> plugin view 数据项 2</div>
-            <div class="sb-list-item"><span class="dot" style="background:var(--accent)"></span> 带状态项</div>
+          <!-- 二级 tab 栏（plugin 注册的 view，可关闭/固定）-->
+          <div class="plugin-5th">
+            <div class="plugin-5th-label">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              二级 tab · plugin views
+            </div>
+            <div class="l2-tabbar">
+              <span class="l2-tab active">
+                <span class="l2-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></span>
+                plugin A
+                <span class="l2-pin pinned" title="已固定"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg></span>
+              </span>
+              <span class="l2-tab">
+                <span class="l2-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/></svg></span>
+                plugin B
+                <span class="l2-close" title="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
+              </span>
+              <span class="l2-tab">
+                <span class="l2-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span>
+                plugin C
+                <span class="l2-close" title="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
+              </span>
+            </div>
+            <!-- 二级 tab 内容区（GuiComponent 原语渲染，plugin 推数据）-->
+            <div class="l2-content">
+              <div class="gcard stage-default" style="border-radius:var(--radius-sm);">
+                <div class="gcard-hd"><span class="hd-dot" style="background:var(--accent)"></span>plugin A view <span class="hd-badge b-neutral" style="background:var(--accent-soft);color:var(--accent);">GuiComponent</span></div>
+                <div class="gcard-bd" style="padding:10px;font-size:11px;">plugin A 推送的原语树（card + list-tree / progress-bar），由统一 GuiComponentRenderer 渲染。</div>
+              </div>
+            </div>
           </div>
         </div>
-        <!-- loading / 空态 -->
-        <div class="demo-sidebar">
-          <div class="sb-brand">空态 / loading</div>
+        <!-- 一级未选中插件 tab（4 内置之一激活，插件 tab 收起）-->
+        <div class="demo-sidebar" style="width:220px;">
+          <div class="sb-brand">一级未选中插件</div>
           <div class="seg-tab">
-            <span class="seg-item"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="count">12</span></span>
-            <span class="seg-item active"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><span class="count">3</span></span>
+            <span class="seg-item" title="sessions"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+            <span class="seg-item active" title="files"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span>
+            <span class="seg-item" title="agents"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="4"/></svg></span>
+            <span class="seg-item" title="flows"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span>
+            <span class="seg-item plugin-primary" title="插件（未激活）"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568a2.402 2.402 0 0 1 0 3.408l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-3.409 0l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568a2.402 2.402 0 0 1 0-3.408L4.317 8.685a.982.982 0 0 1 .838-.276c.47.07.802.48.968.925a2.501 2.501 0 1 0 3.214-3.214c-.446-.166-.855-.497-.925-.968a.979.979 0 0 1 .276-.837l1.61-1.61a2.402 2.402 0 0 1 3.409 0l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg><span class="count">3</span></span>
           </div>
-          <div class="sb-view empty">无数据 · plugin 未激活</div>
+          <div class="sb-view empty">files 内容 · 插件二级 tab 收起</div>
         </div>
       </div>
     </div>
     <div class="anno-grid">
-      <div class="anno"><b>tab icon:</b> <span>lucide name 或内联 SVG，size 12px [trace 档]，stroke 1.75</span></div>
-      <div class="anno"><b>激活态:</b> <span class="v6">bg-bg-elevated text-neutral-fg（中性浮起，非 accent-soft 蓝染底）</span></div>
-      <div class="anno"><b>count badge:</b> <span>mono 9px，bg-surface-2 → active 时 accent-soft</span></div>
-      <div class="anno"><b>空态:</b> <span>neutral-dim 居中文案，不渲染列表骨架</span></div>
-      <div class="anno"><b>loading:</b> <span>spinner 12px accent，内容区中性占位</span></div>
+      <div class="anno"><b>一级 4 tab:</b> <span class="v6">sessions/files/agents/flows 保持不变，不混入 plugin</span></div>
+      <div class="anno"><b>第 5 独立:</b> <span class="v6">plugin 是独立第 5 个一级 tab（Puzzle/拼图 icon），特殊语义容器</span></div>
+      <div class="anno"><b>内层二级:</b> <span class="v6">点开插件 tab → 二级 tab 栏（plugin A / B / C...），每个是 plugin 注册的 view</span></div>
+      <div class="anno"><b>二级可关闭/固定:</b> <span>hover 出现 × 关闭 / pin 固定（pinned 不被关闭）</span></div>
+      <div class="anno"><b>二级内容:</b> <span>GuiComponent 原语渲染（plugin 推数据，§3 七原语）</span></div>
       <div class="anno"><b>声明:</b> <span>contributes.views { id, title, icon, placement:'sidebar', viewType }</span></div>
     </div>
 
-    <h3>A2 · drawer plugin tab（M6+M7）<span class="h3-tag">内容用 GuiComponent</span></h3>
+    <h3>A2 · drawer plugin tab（M6+M7）<span class="h3-tag">drawer 暂不开放 · 集中 sidebar</span></h3>
+    <div class="change-points">
+      <span class="cp cp-now"><b>现</b> drawer 6 一级 tab（terminal/git/doc/tasks/...）硬编码</span>
+      <span class="cp cp-warn"><b>v6</b> drawer 暂不开放 plugin tab（避免一级 tab 泛滥）</span>
+      <span class="cp cp-info"><b>决策</b> plugin view 集中在 sidebar 第 5 tab 二级</span>
+      <span class="cp cp-v6"><b>未来</b> 若开放则复用 sidebar 二级机制（非加到一级 6 tab）</span>
+    </div>
     <div class="render-frame">
       <div style="display:flex;gap:20px;flex-wrap:wrap;">
         <div class="demo-drawer" style="flex:1;min-width:300px;">
           <div class="drawer-tabs">
             <span class="drawer-tab" title="terminal"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></span>
             <span class="drawer-tab" title="git"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M6 9v6a3 3 0 0 0 3 3h6"/></svg></span>
-            <span class="drawer-tab" title="doc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>
+            <span class="drawer-tab active" title="doc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>
             <span class="drawer-tab" title="tasks"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span class="tab-dot"></span></span>
-            <span class="drawer-tab active" title="plugin"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span>
+            <span class="drawer-tab" title="browser"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>
+            <span class="drawer-tab" title="more"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></span>
           </div>
           <div class="drawer-content">
             <div class="gcard stage-default">
-              <div class="gcard-hd"><span class="hd-dot" style="background:var(--success)"></span>plugin drawer 内容 <span class="hd-badge b-neutral">card 原语</span></div>
-              <div class="gcard-bd">drawer tab 内容用 GuiComponent 原语组合渲染（A2 = L1 容器 + L2 内容）。plugin 推送原语树，ViewHost 交 GuiComponentRenderer。</div>
+              <div class="gcard-hd"><span class="hd-dot" style="background:var(--neutral-ico)"></span>drawer 内置 tab <span class="hd-badge b-neutral">仅内置</span></div>
+              <div class="gcard-bd">drawer 一级 6 tab 全部为内置（terminal/git/doc/tasks/browser/...）<b style="color:var(--warn);">不向 plugin 开放</b>。plugin view 集中在 sidebar 第 5 独立 tab 的二级机制。</div>
             </div>
           </div>
         </div>
       </div>
     </div>
     <div class="anno-grid">
-      <div class="anno"><b>tab icon:</b> <span>size 14px [header 档]，active 时 bg-surface + neutral-fg</span></div>
-      <div class="anno"><b>tab.dot:</b> <span>6px accent 圆点（有更新/通知），active 态叠加</span></div>
-      <div class="anno"><b>内容渲染:</b> <span>GuiComponent 7 原语（§3），plugin 不进 renderer</span></div>
-      <div class="anno"><b>声明:</b> <span>contributes.views { placement:'drawer', viewType:'gui' }</span></div>
+      <div class="anno"><b>drawer 一级:</b> <span class="v6">6 tab 全内置（terminal/git/doc/tasks/browser/...），不开放 plugin</span></div>
+      <div class="anno"><b>集中决策:</b> <span class="anno" style="color:var(--warn)">plugin view 集中 sidebar 第 5 tab 二级，避免 drawer 一级 tab 泛滥</span></div>
+      <div class="anno"><b>未来若开放:</b> <span>复用 sidebar 二级机制（内层二级 tab），<b>非</b>加到 drawer 一级 6 tab</span></div>
+      <div class="anno"><b>内容渲染:</b> <span>即便未来开放，内容仍用 GuiComponent 7 原语（§3）</span></div>
+      <div class="anno"><b>声明（未来）:</b> <span>contributes.views { placement:'drawer', viewType:'gui' }（当前不消费）</span></div>
     </div>
 
     <h3>A3 · 工具条/头部按钮（M9+M12）<span class="h3-tag">icon + command</span></h3>
@@ -693,12 +843,38 @@ body {
       <div class="anno"><b>声明:</b> <span>contributes.menus['composer.toolbar'|'panel.header']</span></div>
     </div>
 
-    <h3>A4 · 全局底栏 status item（M8）<span class="h3-tag">新增概念 · StatusBarController</span></h3>
+    <h3>A4 · 全局底栏 status item（M8）<span class="h3-tag">新增概念 · AppShell 底部跨全宽 · StatusBarController</span></h3>
     <div class="change-points">
-      <span class="cp cp-now"><b>现</b> status 绑死 SideDrawer footer</span>
-      <span class="cp cp-v6"><b>v6</b> 提升全局底栏（聚合 pi status + plugin statusBarItems）</span>
+      <span class="cp cp-now"><b>现</b> status 绑死 SideDrawer footer（drawer 关闭就看不到）</span>
+      <span class="cp cp-v6"><b>v6</b> 提升到 AppShell 全局底栏（跨全宽常驻）</span>
+      <span class="cp cp-v6"><b>v6</b> 聚合 pi extension:status + plugin statusBarItems（统一 StatusBarController）</span>
       <span class="cp cp-info"><b>聚合</b> 按 alignment(left/right) + priority 排序</span>
     </div>
+    <p class="spec-desc" style="margin-top:-8px;"><b>位置</b>：AppShell 底部<b>跨全宽</b>的细条（在主面板 + drawer 下方，类似 VSCode 底部状态栏），高约 <code>24-28px</code>，<code>bg-bg-sunken</code>，<code>z-sticky</code>。当前 status 绑死 SideDrawer footer（drawer 关闭就看不到），v6 提升到 AppShell 全局底栏（跨全宽常驻，drawer 开关不影响可见性）。</p>
+
+    <!-- AppShell 底部位置示意（全局底栏跨全宽）-->
+    <div class="render-frame">
+      <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-dim);margin-bottom:8px;">AppShell 结构图 · 全局底栏跨 sidebar + main + drawer 全宽（drawer 开关不影响）</div>
+      <div class="appshell-mock">
+        <div class="as-label">AppShell</div>
+        <div class="as-row">
+          <div class="as-sidebar">sidebar</div>
+          <div class="as-main">MainPanel · Workspace · PanelContainer</div>
+          <div class="as-drawer">SideDrawer</div>
+        </div>
+        <div class="as-label hl">↓ 全局底栏（跨全宽 · 24-28px · bg-bg-sunken · z-sticky）</div>
+        <div class="as-statusbar">
+          <span class="sb-item ok"><span class="sb-dot"></span>pi: ready</span>
+          <span class="sb-item neutral"><span class="sb-dot"></span>session: 2</span>
+          <span class="sb-item warn"><span class="sb-dot"></span>plugin: lint 3 warn</span>
+          <span class="sb-spacer"></span>
+          <span class="sb-item neutral"><span class="sb-dot"></span>plugin: deploy</span>
+          <span class="sb-item danger"><span class="sb-dot"></span>build: failed</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 完整底栏渲染：左 status items（priority 排序）+ 右 status items（alignment: right）+ 分隔符 -->
     <div class="render-frame">
       <div style="display:flex;flex-direction:column;gap:14px;">
         <!-- 完整底栏：左 pi + plugin，右 plugin -->
@@ -724,13 +900,14 @@ body {
       </div>
     </div>
     <div class="anno-grid">
+      <div class="anno"><b>位置（v6 提升）:</b> <span class="v6">AppShell 底部跨全宽细条（sidebar+main+drawer 下方），24-28px 高，bg-bg-sunken，z-sticky</span></div>
+      <div class="anno"><b>常驻:</b> <span class="v6">drawer 开关不影响底栏可见性（对比现状绑死 SideDrawer footer）</span></div>
+      <div class="anno"><b>聚合:</b> <span class="v6">统一 StatusBarController 聚合 pi <code>extension:status</code> + plugin <code>statusBarItems</code></span></div>
       <div class="anno"><b>排列:</b> <span>alignment left/right 两段；同段内按 priority 降序（大→左/前）</span></div>
       <div class="anno"><b>颜色语义:</b> <span class="anno" style="color:var(--success)">ok=success</span> · <span class="anno" style="color:var(--warn)">warn</span> · <span class="anno" style="color:var(--danger)">danger</span> · 纯统计降 neutral-mid</span></div>
       <div class="anno"><b>圆点:</b> <span>7px [状态指示范式 §3.3]，done=success opacity .9</span></div>
-      <div class="anno"><b>点击:</b> <span>触发 commandId（hover bg-surface-hover）</span></div>
-      <div class="anno"><b>tooltip:</b> <span>native title 或 popover，展示完整 text + 来源 plugin</span></div>
+      <div class="anno"><b>每个 item:</b> <span>文字 + 可选 icon + 可选点击（commandId）+ tooltip</span></div>
       <div class="anno"><b>溢出:</b> <span>不换行，横向滚动隐藏滚动条；priority 高优先可见</span></div>
-      <div class="anno"><b>分隔:</b> <span>item 间无分隔线（靠 padding 区分），左/右段靠 spacer</span></div>
       <div class="anno"><b>声明:</b> <span>contributes.statusBarItems { id, text, priority, alignment, commandId, tooltip }</span></div>
     </div>
   </section>
@@ -1056,6 +1233,22 @@ body {
       <div class="anno"><b>完整映射表:</b> <span>见 §8（16 色 × 暗/亮双主题）</span></div>
       <div class="anno"><b>落点:</b> <span>gui/AnsiText.vue（ansi_up palette 替换为 v6 语义色）</span></div>
     </div>
+
+    <!-- 原语布局能力说明 -->
+    <h3 style="margin-top:32px;">原语布局能力说明 <span class="h3-tag">能做 / 局限 / 不够时</span></h3>
+    <div class="render-frame">
+      <div class="anno-grid">
+        <div class="anno"><b class="v6">能做 · columns + card:</b> <span>columns（水平多列 + flex-grow 比例 + 递归嵌套）+ card（纵向堆叠 body）组合，近似 sidebar+main 布局（见 §7 workflow 面板）</span></div>
+        <div class="anno"><b style="color:var(--warn)">局限 · 无垂直原语:</b> <span>无垂直布局原语（rows / stack）；columns 只水平不垂直</span></div>
+        <div class="anno"><b style="color:var(--warn)">局限 · 无 grid:</b> <span>无二维 grid（rows×cols）；无 flex-wrap / align / justify</span></div>
+        <div class="anno"><b style="color:var(--warn)">局限 · tab-bar 非容器:</b> <span>tab-bar 只展示状态（done/pending 圆点），不切换内容（非容器原语）</span></div>
+        <div class="anno"><b style="color:var(--danger)">三栏带 footer:</b> <span>columns 能做三列，但 footer（横向跨栏底栏）无法表达——需垂直 stack 原语，协议暂无</span></div>
+        <div class="anno"><b>不够时:</b> <span class="v6">补原语（table / kv-list / rows），不放开 custom（external plugin 强制走原语）</span></div>
+      </div>
+    </div>
+    <div class="anno-grid">
+      <div class="anno"><b>结论:</b> <span>7 原语覆盖大部分横向 + 纵向堆叠场景；纯纵向栈/二维网格/跨栏 footer 是当前表达力盲区，按需补原语而非放开 L3 custom</span></div>
+    </div>
   </section>
 
   <!-- ================================================================
@@ -1124,6 +1317,80 @@ body {
       <div class="anno"><b>双向通道:</b> <span>ask-user 是双向交互（等用户回传），独立通道，不并入单向 GuiComponent</span></div>
       <div class="anno"><b>视觉:</b> <span class="accent">对齐 overlays 稿（AskUserOverlay），不重复</span></div>
       <div class="anno"><b>context 降中性:</b> <span>bg-surface-hover（去 reasoning 软底彩色）</span></div>
+    </div>
+
+    <!-- overlay 窗口化（最小化 / 还原 / 拖动）-->
+    <h3 style="margin-top:24px;">C3 · overlay 窗口化能力（最小化 / 还原 / 拖动）<span class="h3-tag">plugin uiRequest + ask-user</span></h3>
+    <div class="change-points">
+      <span class="cp cp-v6"><b>v6</b> overlay 可最小化为 badge（浮角落，内容收起）</span>
+      <span class="cp cp-v6"><b>v6</b> 点 badge 还原展开态</span>
+      <span class="cp cp-v6"><b>v6</b> header 可拖动改变位置（拖拽手柄）</span>
+      <span class="cp cp-info"><b>适用</b> plugin uiRequest 对话框 + ask-user overlay</span>
+    </div>
+    <div class="render-frame">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;">
+        <!-- 展开态（正常）-->
+        <div>
+          <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-mid);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em;">① 展开态（正常）</div>
+          <div class="overlay-win">
+            <div class="overlay-win-hd">
+              <span class="ow-grip"><span></span><span></span><span></span></span>
+              <span class="ow-title">部署确认</span>
+              <span class="ow-source">my-ext.deploy</span>
+              <span class="ow-actions">
+                <span class="ow-btn" title="最小化"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg></span>
+                <span class="ow-btn" title="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
+              </span>
+            </div>
+            <div class="overlay-win-bd">
+              <div class="ow-prompt">选择目标环境</div>
+              <div style="display:flex;flex-direction:column;gap:4px;">
+                <div style="padding:5px 8px;border-radius:var(--radius-sm);background:var(--accent-soft);color:var(--accent);font-size:var(--text-xs);">production（选中）</div>
+                <div style="padding:5px 8px;border-radius:var(--radius-sm);color:var(--neutral-mid);font-size:var(--text-xs);">staging</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- 最小化态（缩成 badge）-->
+        <div>
+          <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-mid);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em;">② 最小化态（缩成 badge）</div>
+          <div class="float-corner">
+            <div class="fc-content">对话流可见<br>（overlay 不遮挡）</div>
+            <span class="overlay-badge" title="点击还原">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568a2.402 2.402 0 0 1 0 3.408l-1.611 1.611a.98.98 0 0 1-.837.276 2.5 2.5 0 1 0-4.182 2.282.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-3.409 0l-1.568-1.568a1.026 1.026 0 0 0-.877-.29 2.5 2.5 0 1 1-2.672-2.057c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568a2.402 2.402 0 0 1 0-3.408 2.402 2.402 0 0 1 3.409 0l1.568 1.568c.23.23.556.338.877.29a2.5 2.5 0 1 1 2.057-2.672Z"/></svg>
+              deploy 待回
+              <span class="ob-count">1</span>
+              <span class="ob-restore"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+            </span>
+          </div>
+          <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-dim);margin-top:8px;">badge 浮右下角 · 不遮挡内容 · 点还原</div>
+        </div>
+        <!-- 拖动态（header 拖拽手柄 + 虚影）-->
+        <div>
+          <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-mid);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em;">③ 拖动态（虚影）</div>
+          <div class="overlay-ghost">
+            <div class="og-handle">
+              <span class="og-grip"><span></span><span></span><span></span></span>
+              <span class="og-label">drag · header 手柄</span>
+            </div>
+            <div class="og-body">
+              <div style="font-size:var(--text-sm);color:var(--neutral-fg);margin-bottom:8px;">部署确认（虚影）</div>
+              <div style="font-size:var(--text-xs);color:var(--neutral-dim);">拖到一边继续看对话流…</div>
+            </div>
+          </div>
+          <div style="font-size:var(--text-2xs);font-family:var(--font-mono);color:var(--neutral-dim);margin-top:8px;">header = 拖拽手柄（grab cursor）· 虚影跟随</div>
+        </div>
+      </div>
+    </div>
+    <div class="anno-grid">
+      <div class="anno"><b>最小化:</b> <span class="v6">overlay/ask-user 可最小化为 badge/icon（浮角落如右下角），内容收起</span></div>
+      <div class="anno"><b>还原:</b> <span class="v6">点最小化后的 badge，恢复展开态（内容 + 操作恢复）</span></div>
+      <div class="anno"><b>拖动:</b> <span class="v6">overlay 可拖动改变位置，header 区作为拖拽手柄（<code>-webkit-app-region:drag</code> 或类似机制）</span></div>
+      <div class="anno"><b>badge 位置:</b> <span>浮在窗口右下角（默认），不遮挡对话流核心区</span></div>
+      <div class="anno"><b>badge 计数:</b> <span>显示待回交互数（ob-count），多个待回聚合</span></div>
+      <div class="anno"><b>适用范围:</b> <span>plugin <code>uiRequest</code> 对话框 + ask-user overlay（统一窗口化能力）</span></div>
+      <div class="anno"><b>z-index:</b> <span>--z-overlay (20)，拖动/最小化态保持顶层可见</span></div>
+      <div class="anno"><b>动机:</b> <span>窗口化让用户把 ask-user 拖到一边继续看对话流，不被阻塞遮挡</span></div>
     </div>
   </section>
 
