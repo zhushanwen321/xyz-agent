@@ -1,5 +1,5 @@
 /**
- * useCompactQueue 单测（compact-queued-messages W1，TC1-TC8）。
+ * useCompactQueue 单测（compact-queued-messages W1，TC1-TC8 + S1/S2 加固 TC9-TC11）。
  *
  * 覆盖契约（/tmp/cw-plan-w1.json contracts C1）：
  * - enqueue 追加并返回含 id 条目（TC1）
@@ -10,11 +10,17 @@
  * - flush 任一 RPC 失败 → 队列保留返回 false（TC6，E2 restoreQueue 语义）
  * - per-session 隔离（TC7）
  * - session 销毁 cleanup 移除队列分区（TC8）
+ * - flush 期间 send.rejected 广播（runtime 预检拒绝，RPC 仍 resolve）→ 队列保留返回 false（TC9，S1）
+ * - flush await 窗口内新入队消息不被误删（TC10，S2 精确移除）
+ * - flush 进行中重复触发复用同一 in-flight promise，不重复发送（TC11，S2）
  *
  * 测试注意（useSessionScopedState 工厂契约）：
  * - 单例经模块级缓存共享，用例间必须 _clearAllForTest() 清分区
  * - 工厂内部 onScopeDispose 需在 active effect scope 内调用（首次创建实例时）
  * - 实例 cleanup 注册在模块级注册表，scope 不 stop 保其常驻（TC8 依赖）
+ *
+ * send.rejected 注入：useCompactQueue 从 @/api/events 导入真实 events 模块（vi.mock('@/api')
+ * 只替换 index，不波及子模块），测试用 dispatchSession 直接投递事件，模拟 runtime 广播。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/panel/use-compact-queue.test.ts
  */
@@ -23,6 +29,7 @@ import { effectScope } from 'vue'
 import type { EffectScope } from 'vue'
 import { useCompactQueue } from '@/composables/panel/useCompactQueue'
 import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
+import { dispatchSession } from '@/api/events'
 
 // vi.hoisted 保证 mock 工厂在模块加载前就绪；chatApi.send/steer 是本队列唯一依赖的 RPC
 const apiMock = vi.hoisted(() => ({
@@ -67,7 +74,7 @@ describe('useCompactQueue 队列基础（TC1-TC2）', () => {
   it('TC2: remove 按 id 精确取消，未知 id no-op', () => {
     const queue = useCompactQueue()
     const e1 = queue.enqueue('s1', 'a')
-    const e2 = queue.enqueue('s1', 'b')
+    queue.enqueue('s1', 'b')
 
     queue.remove('s1', e1.id)
     expect(queue.peek('s1').map((m) => m.text)).toEqual(['b'])
@@ -127,6 +134,66 @@ describe('useCompactQueue flush（TC3-TC6）', () => {
     await expect(queue.flush('s1')).resolves.toBe(false)
     // 整队保留（已发送的 m1 不计入清除）
     expect(queue.count('s1')).toBe(2)
+  })
+
+  it('TC9: flush 期间收到 send.rejected（runtime 预检拒绝，RPC 仍 resolve）→ 队列保留返回 false（S1）', async () => {
+    const queue = useCompactQueue()
+    queue.enqueue('s1', 'm1')
+    queue.enqueue('s1', 'm2')
+    // 模拟 runtime busy 预检：广播 send.rejected 后 reply resolve（不抛错，ack 型 void）
+    apiMock.send.mockImplementationOnce(async () => {
+      dispatchSession('s1', {
+        type: 'send.rejected',
+        payload: { sessionId: 's1', reason: 'busy', message: 'Agent 正在处理' },
+      })
+    })
+
+    await expect(queue.flush('s1')).resolves.toBe(false)
+    // 消息从未实际投递 → 整队保留（不清空，下次 compact 重试）
+    expect(queue.count('s1')).toBe(2)
+    expect(queue.peek('s1').map((m) => m.text)).toEqual(['m1', 'm2'])
+  })
+
+  it('TC10: flush await 窗口内新入队消息不被误删（S2 精确移除）', async () => {
+    const queue = useCompactQueue()
+    queue.enqueue('s1', 'm1')
+    let resolveSend!: () => void
+    apiMock.send.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolveSend = resolve }),
+    )
+
+    const flushPromise = queue.flush('s1')
+    // await 窗口内（send 未 resolve）新入队——不得被 flush 误删
+    queue.enqueue('s1', 'late')
+    resolveSend()
+    await expect(flushPromise).resolves.toBe(true)
+
+    // 仅 snapshot 中的 m1 被移除；late 保留
+    expect(queue.peek('s1').map((m) => m.text)).toEqual(['late'])
+    expect(queue.count('s1')).toBe(1)
+    expect(apiMock.send).toHaveBeenCalledTimes(1)
+  })
+
+  it('TC11: flush 进行中重复触发 → 复用同一 in-flight promise，不重复发送（S2）', async () => {
+    const queue = useCompactQueue()
+    queue.enqueue('s1', 'm1')
+    let resolveSend!: () => void
+    apiMock.send.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolveSend = resolve }),
+    )
+
+    const p1 = queue.flush('s1')
+    const p2 = queue.flush('s1')
+    // 第二次 flush 复用 in-flight：send 只被调一次
+    expect(apiMock.send).toHaveBeenCalledTimes(1)
+    expect(apiMock.steer).not.toHaveBeenCalled()
+
+    resolveSend()
+    await expect(p1).resolves.toBe(true)
+    await expect(p2).resolves.toBe(true)
+    // 完成后队列清空 + 无重复发送
+    expect(apiMock.send).toHaveBeenCalledTimes(1)
+    expect(queue.count('s1')).toBe(0)
   })
 })
 

@@ -13,7 +13,9 @@
  */
 import { reactive, ref } from 'vue'
 import type { Ref } from 'vue'
+import type { ServerMessage } from '@xyz-agent/shared'
 import { chat as chatApi } from '@/api'
+import * as events from '@/api/events'
 import { useSessionScopedState } from '@/composables/useSessionScopedState'
 
 /** 待发消息条目（D1 继承自 slice） */
@@ -40,8 +42,16 @@ export interface CompactQueue {
   hasPending(sid: string): boolean
   /**
    * 重放队列：首条 chatApi.send + 其余依次 chatApi.steer（await 串行）。
-   * 全部成功 → 清空分区 + 返回 true；任一条失败 → 队列整体保留（不清空）+ 返回 false
+   * 成功判定（S1，D-009 契约核对）：runtime sendMessage busy 预检（isGenerating /
+   * isCompacting / isBashRunning）时广播 send.rejected 并返回 {blocked, rejected}（不抛错），
+   * session-message-handler 据此 reply message.status{rejected}——ack 型 void，renderer 的
+   * chatApi.send resolve 且拿不到 status，无法区分「真发送成功」与「预检拒绝」。
+   * 故 flush 窗口内临时订阅 send.rejected：收到即视为重放被拒 → 队列保留 + 返回 false
+   * （消息不丢，下次 compact 成功时整队重试）。
+   * 成功 → 仅移除 snapshot 中的条目（await 窗口内新入队的消息保留）+ 返回 true；
+   * 失败（RPC reject 或 send.rejected）→ 队列整体保留（不清空）+ 返回 false
    * （E2 restoreQueue 语义：已发送的条目不计入清除，下次 flush 重新发送整队保证顺序与完整性）。
+   * 并发（S2）：per-session in-flight 守卫，flush 进行中重复触发复用同一 promise，不重复发送。
    */
   flush(sid: string): Promise<boolean>
   /** 测试钩子：清空所有分区。生产代码禁止调用（对齐 useSessionScopedState._clearAllForTest 契约）。 */
@@ -107,9 +117,31 @@ function createCompactQueue(): CompactQueue {
     return count(sid) > 0
   }
 
+  // per-session in-flight 守卫（S2）：flush 进行中重复触发复用同一 promise，不重复发送
+  const inflightFlushes = new Map<string, Promise<boolean>>()
+
   async function flush(sid: string): Promise<boolean> {
+    const existing = inflightFlushes.get(sid)
+    if (existing) return existing
+    const p = doFlush(sid)
+    inflightFlushes.set(sid, p)
+    try {
+      return await p
+    } finally {
+      inflightFlushes.delete(sid)
+    }
+  }
+
+  async function doFlush(sid: string): Promise<boolean> {
     const snapshot = peek(sid)
     if (snapshot.length === 0) return true
+    // S1：flush 窗口内临时订阅 send.rejected。runtime 广播先于 RPC reply 到达
+    //（同 WS 连接 FIFO：dispatcher 同步广播 → handler 同步 reply），await resolve 时标志已就绪。
+    // 订阅仅存在于 flush 窗口，用户后续的 send.rejected 不影响本次判定。
+    let rejected = false
+    const unsub = events.on(sid, (msg: ServerMessage) => {
+      if (msg.type === 'send.rejected') rejected = true
+    })
     try {
       // 首条 send 启动新 run；其余 steer 串行入 pi steeringQueue，被该 run 消费
       await chatApi.send(sid, snapshot[0].text)
@@ -120,10 +152,17 @@ function createCompactQueue(): CompactQueue {
       // 任一条 RPC 失败 → 队列整体保留（不清空）+ 返回 false（E2 restoreQueue 语义）：
       // 已发送的条目不计入清除，下次 flush 重新发送整队，保证顺序与完整性。
       return false
+    } finally {
+      unsub()
     }
-    // 全部成功才清空分区
+    if (rejected) {
+      // 预检拒绝：消息未实际投递，队列整体保留（不清空）+ 返回 false（下次 compact 重试）
+      return false
+    }
+    // 成功：仅移除 snapshot 中的条目（S2：await 窗口内新入队的消息保留，不被误删）
+    const snapshotIds = new Set(snapshot.map((m) => m.id))
     state.updateFor(sid, (p) => {
-      p.messages = []
+      p.messages = p.messages.filter((m) => !snapshotIds.has(m.id))
     })
     return true
   }
