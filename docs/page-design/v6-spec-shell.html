@@ -160,20 +160,6 @@ body {
   background: var(--bg-elevated);
   display: flex; align-items: center; gap: 8px; padding: 0 14px;
 }
-/* drawer 栏（画布色，投影分隔）*/
-.wf-drawer {
-  flex: 0 0 180px; min-width: 0;
-  background: var(--bg-sunken);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-drawer);
-  display: flex; flex-direction: column;
-  overflow: hidden;
-}
-.wf-drawer-header {
-  height: 38px; flex-shrink: 0;
-  background: var(--surface-2);
-  display: flex; align-items: center; padding: 0 12px;
-}
 
 /* 占位内容 */
 .wf-ph-block {
@@ -181,9 +167,7 @@ body {
   background: rgba(255,255,255,0.04);
 }
 .wf-ph-block.h10 { height: 10px; }
-.wf-main-body { flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .wf-main-row { max-width: var(--content-max-w); width: 100%; display: flex; flex-direction: column; gap: 6px; }
-.wf-drawer-body { flex: 1; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
 
 /* 栏底色标记角标 */
 .col-tag {
@@ -455,30 +439,135 @@ body {
 .sep-panel-new { background: var(--surface); border: 1px solid var(--border); margin-left: 0; }
 
 /* ================================================================
-   §7 drawer 投影分隔
+   §1 三栏拓扑 · main + drawer 同体（drawer 内嵌 main）
    ================================================================ */
-.shadow-demo {
-  display: flex; gap: 16px; flex-wrap: wrap;
+.wf-main-split {
+  flex: 1; min-height: 0; display: flex; min-width: 0;
 }
-.sd-card {
-  flex: 1; min-width: 220px; background: var(--bg-card); border-radius: var(--radius);
-  padding: 18px;
+.wf-main-body { flex: 1; min-width: 0; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+/* drawer 内嵌 main：同 surface，从右缘生长 */
+.wf-drawer-inline {
+  flex: 0 0 160px; min-width: 0;
+  background: var(--surface-2);
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  overflow: hidden;
 }
-.sd-stage {
-  background: #131316; border-radius: var(--radius); padding: 14px;
-  height: 140px; display: flex; gap: 0; overflow: hidden;
+.wf-drawer-inline .wf-drawer-header {
+  height: 38px; flex-shrink: 0;
+  background: var(--surface-2);
+  display: flex; align-items: center; padding: 0 12px;
+  border-bottom: 1px solid var(--border);
 }
-.sd-main {
+.wf-drawer-inline .wf-drawer-body { flex: 1; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+
+/* ================================================================
+   §7 drawer 一体化生长（交互演示）
+   ================================================================ */
+.drawer-demo {
+  background: var(--bg-card); border-radius: var(--radius); padding: 16px;
+}
+.dd-stage {
+  background: #131316; border-radius: var(--radius); padding: 12px;
+  display: flex; gap: 12px; height: 220px; overflow: hidden;
+}
+.dd-aside {
+  flex: 0 0 90px; background: var(--bg-sunken); border-radius: var(--radius);
+  padding: 8px; display: flex; flex-direction: column;
+}
+.dd-aside-band { height: 8px; border-radius: var(--radius-sm); background: var(--surface-2); }
+
+/* main + drawer 共用一个 surface 浮起壳 */
+.dd-main-shell {
+  flex: 1; min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1), var(--shadow-2);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.dd-main-header {
+  height: 38px; flex-shrink: 0;
+  background: var(--bg-elevated);
+  display: flex; align-items: center; padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+.dd-toggle {
+  margin-left: auto;
+  width: 26px; height: 22px; border-radius: var(--radius);
+  border: 0; cursor: pointer; background: transparent;
+  color: var(--neutral-mid);
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+.dd-toggle:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.dd-toggle.active { background: var(--accent-soft); color: var(--accent); }
+
+.dd-body { flex: 1; min-height: 0; display: flex; min-width: 0; }
+.dd-main-body {
+  flex: 1; min-width: 0; padding: 14px;
+  display: flex; flex-direction: column; gap: 8px;
+  transition: flex-basis var(--duration-slow) var(--ease);
+}
+/* drawer 从 main 右缘生长 */
+.dd-drawer {
+  flex: 0 0 0px; min-width: 0;
+  background: var(--surface-2);
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  transition: flex-basis var(--duration-slow) var(--ease);
+}
+.drawer-demo.open .dd-drawer { flex-basis: 200px; }
+.dd-drawer-header {
+  height: 38px; flex-shrink: 0;
+  background: var(--surface-2);
+  display: flex; align-items: center; padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.dd-drawer-body { flex: 1; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+
+/* 旧 vs 新 分隔对比 */
+.sd-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.sd-card-v6 { background: var(--bg-card); border-radius: var(--radius); padding: 18px; }
+.sd-stage-v6 {
+  background: #131316; border-radius: var(--radius); padding: 10px;
+  height: 150px; display: flex; gap: 8px; overflow: hidden;
+}
+.sdv-aside { flex: 0 0 30px; background: var(--bg-sunken); border-radius: var(--radius-sm); }
+/* 旧：drawer 独立浮层 */
+.sdv-main-old {
   flex: 1; background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); margin-right: 0;
+  border-radius: var(--radius-sm); display: flex; flex-direction: column; overflow: hidden;
 }
-.sd-drawer {
-  flex: 0 0 100px; background: var(--bg-sunken); border-radius: var(--radius);
+.sdv-drawer-old {
+  flex: 0 0 60px; background: var(--bg-sunken); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-drawer);
   display: flex; align-items: center; justify-content: center;
   font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim);
 }
-.sd-drawer.shadow { box-shadow: var(--shadow-drawer); }
-.sd-drawer.border { border-left: 1px solid var(--border-strong); }
+/* 新：main+drawer 同体 */
+.sdv-shell {
+  flex: 1; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: var(--shadow-1);
+}
+.sdv-header {
+  height: 24px; flex-shrink: 0; background: var(--bg-elevated);
+  display: flex; align-items: center; padding: 0 8px;
+  font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-mid);
+  border-bottom: 1px solid var(--border);
+}
+.sdv-split { flex: 1; display: flex; min-height: 0; }
+.sdv-content { flex: 1; }
+.sdv-drawer-new {
+  flex: 0 0 60px; background: var(--surface-2);
+  border-left: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim);
+}
 
 /* ================================================================
    通用：栏内占位/图标
@@ -521,7 +610,7 @@ body {
     <a href="#s4">§4 app-nav-controls 浮层</a>
     <a href="#s5">§5 折叠态 chrome 迁移</a>
     <a href="#s6">§6 Splitter 透明化</a>
-    <a href="#s7">§7 drawer 投影分隔</a>
+    <a href="#s7">§7 drawer 一体化生长</a>
   </nav>
 
   <!-- ================================================================
@@ -571,34 +660,36 @@ body {
             </div>
           </div>
 
-          <!-- main panel -->
+          <!-- main panel + drawer（同一 surface 浮起体，drawer 从 main 右缘生长挤占）-->
           <div class="wf-main">
-            <span class="col-tag ct-main">main-panel · surface 浮起</span>
+            <span class="col-tag ct-main">main + drawer · 同一 surface 浮起</span>
             <div class="wf-main-header">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2"><circle cx="12" cy="12" r="9"/><polyline points="9 12 11 14 15 9"/></svg>
               <span style="font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--neutral-fg);">feat-optimize-ui</span>
               <span style="color:var(--neutral-faint);">›</span>
               <span style="font-family:var(--font-mono);font-size:11px;color:var(--neutral-mid);">main</span>
             </div>
-            <div class="wf-main-body">
-              <div class="wf-main-row">
-                <div style="font-size:12px;color:var(--accent);font-weight:500;">AI · 2.3s</div>
-                <div style="font-size:13px;color:var(--neutral-fg);line-height:1.6;">assistant 正文落在 surface 浮起的主面板内，居中 720px 列。</div>
-                <div class="wf-ph-block" style="background:var(--surface-hover);"></div>
+            <div class="wf-main-split">
+              <!-- main 内容区（被 drawer 挤占，宽度自适应收缩）-->
+              <div class="wf-main-body">
+                <div class="wf-main-row">
+                  <div style="font-size:12px;color:var(--accent);font-weight:500;">AI · 2.3s</div>
+                  <div style="font-size:13px;color:var(--neutral-fg);line-height:1.6;">assistant 正文落在 surface 浮起的主面板内，居中 720px 列。</div>
+                  <div class="wf-ph-block" style="background:var(--surface-hover);"></div>
+                </div>
               </div>
-            </div>
-          </div>
-
-          <!-- drawer -->
-          <div class="wf-drawer">
-            <div class="wf-drawer-header">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--neutral-mid)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-              <span style="font-size:12px;color:var(--neutral-fg);margin-left:8px;">DetailPane</span>
-            </div>
-            <div class="wf-drawer-body">
-              <div class="wf-ph-block h10"></div>
-              <div class="wf-ph-block h10"></div>
-              <div class="wf-ph-block h10" style="width:70%;"></div>
+              <!-- drawer 内容区（与 main 同 surface，从右缘生长）-->
+              <div class="wf-drawer-inline">
+                <div class="wf-drawer-header">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--neutral-mid)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                  <span style="font-size:12px;color:var(--neutral-fg);margin-left:8px;">DetailPane</span>
+                </div>
+                <div class="wf-drawer-body">
+                  <div class="wf-ph-block h10"></div>
+                  <div class="wf-ph-block h10"></div>
+                  <div class="wf-ph-block h10" style="width:70%;"></div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -612,7 +703,7 @@ body {
       <div class="anno"><b>AppShell:</b><br>flex gap-3 p-3 bg-bg rounded-[10px]<br><span class="v6">折叠态 !gap-0（强制覆盖）</span></div>
       <div class="anno"><b>aside 底色:</b><br>12px [var(--space-3)] 透明继承<br><span class="v6">→ bg-bg-sunken（画布色融合）</span></div>
       <div class="anno"><b>main-panel:</b><br>flex-1 bg-surface border-border<br><span class="v6">rounded-lg + shadow-1/shadow-2 浮起</span></div>
-      <div class="anno"><b>drawer 底色:</b><br><span class="v6">bg-bg-sunken（画布色）</span><br>分隔改 shadow-drawer（去 border-l）</div>
+      <div class="anno"><b>drawer 底色:</b><br><span class="v6">var(--surface)（与 main 同色）</span><br>从 main 右缘生长挤占（详见 §7）</div>
       <div class="anno"><b>间隙 gap:</b><br>12px [var(--space-3)]（三栏间）</div>
       <div class="anno"><b>窗口圆角:</b><br>10px（任意值 · 不进 token）</div>
       <div class="anno"><b>落点:</b><br>AppShell.vue · AsideRegion.vue · MainPanel.vue</div>
@@ -701,7 +792,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s3">
     <div class="spec-head"><span class="spec-num">§3</span><h2 class="spec-title">traffic-light 安全区</h2></div>
-    <p class="spec-desc">aside-region 恒定 <code>padding-top: 52px</code> 留出红黄绿落位的安全区，<b>三平台统一、全屏也保留</b>（mac 全屏 hover 时系统下拉覆盖层落进这块留白）。mac 由主进程 <code>titleBarStyle:'hidden'</code> + <code>trafficLightPosition:{x:16,y:26}</code> 精确控制（不用 hiddenInset）；win/linux 自绘彩色圆点 <code>left:16px top:26px</code> mimic mac，三平台左上视觉统一。</p>
+    <p class="spec-desc">aside-region 恒定 <code>padding-top: 52px</code> 留出红黄绿落位的安全区，<b>三平台统一、全屏也保留</b>（mac 全屏 hover 时系统下拉覆盖层落进这块留白）。mac 由主进程 <code>titleBarStyle:'hidden'</code> + <code>trafficLightPosition:{x:16,y:26}</code> 精确控制（不用 hiddenInset）；win/linux 自绘彩色圆点 <code>left:16px top:26px</code> mimic mac，三平台左上视觉统一。<b>v6 修订</b>：① win/linux hover 符号弃用 lucide（8px 极小尺寸抗锯齿差、高 DPI 缩放下模糊溢出），改手绘 SVG path 针对小尺寸精确设计 stroke-width，去 border；② 挂载点从 AsideRegion 提升到 AppShell 层（避免折叠态 aside 归零改变定位基准）；③ 折叠态 left 让位 16→24px（给主面板浮起左 border 留呼吸）。</p>
     <div class="change-points">
       <span class="cp cp-v6"><b>v6</b> padding-top:52px 三平台统一</span>
       <span class="cp cp-v6"><b>v6</b> mac hidden + trafficLightPosition（非 hiddenInset）</span>
@@ -762,7 +853,10 @@ body {
       <div class="anno"><b>圆点尺寸:</b><br>12px (h-3 w-3) · gap 8px<br>border black/25</div>
       <div class="anno"><b>红黄绿映射:</b><br>close #ff5f57 / min #febc2e<br>max #28c840</div>
       <div class="anno"><b>全屏态:</b><br>opacity→0（320ms transition）<br>mac 系统 hover 独立</div>
-      <div class="anno"><b>落点:</b><br>AsideRegion.vue · TrafficLight.vue<br>usePlatformChrome</div>
+      <div class="anno"><b>落点:</b><br>AppShell.vue（v6 方案 G 提升）<br>TrafficLight.vue<br>usePlatformChrome</div>
+      <div class="anno"><b>v6 方案 A:</b><br>win/linux hover 符号弃 lucide<br>改手绘 SVG path（12px 圆<br>专用 stroke-width 微调）<br>去 border（mac 原生无）</div>
+      <div class="anno"><b>v6 方案 G:</b><br>挂载点 AsideRegion→AppShell<br>避免折叠态 offset parent 漂移<br>（与 AppNavControls 一致）</div>
+      <div class="anno"><b>v6 方案 E:</b><br>折叠态 left 16→24px<br>给主面板浮起左 border<br>留 12px 呼吸</div>
       <div class="anno"><b>flex-basis:</b><br>aside collapsed→0px<br>pt:52px 不受折叠影响</div>
     </div>
   </section>
@@ -936,6 +1030,7 @@ body {
       <div class="anno"><b>aside flex-basis:</b><br>collapsed→0px（minWidth:0）<br>（基类已含 min-width:0，<br>折叠态不需额外加）<br>pt:52px 安全区恒定</div>
       <div class="anno"><b>!important 原因:</b><br>gap-0 与 gap-3 同特异性<br>Tailwind 顺序 gap-0 先于 gap-3</div>
       <div class="anno"><b>唤回侧栏:</b><br>⌘B + header chrome 按钮<br>（rail-restore 左缘细条已移除）</div>
+      <div class="anno"><b>v6 方案 E（left 让位）:</b><br>折叠态 traffic-light<br>left 16→24px<br>给主面板浮起左 border<br>（x≈12）留 12px 呼吸<br>非折叠态恢复 16px</div>
     </div>
   </section>
 
@@ -1039,48 +1134,105 @@ body {
   </section>
 
   <!-- ================================================================
-       §7 drawer 投影分隔
+       §7 drawer 一体化生长
        ================================================================ -->
   <section class="spec" id="s7">
-    <div class="spec-head"><span class="spec-num">§7</span><h2 class="spec-title">drawer 投影分隔</h2></div>
-    <p class="spec-desc">SideDrawer 去硬 <code>border-l</code>，改 <code>shadow-drawer: -12px 0 24px rgba(0,0,0,.25)</code> 投影分隔（v6-design §4.3）。drawer 底色 = 画布色（<code>--bg-sunken</code>），与 aside 同源。投影方向左投（-12px x 偏移），在主面板 surface 浮起与 drawer 画布色之间制造柔和明度过渡，替代生硬的 1px 边框线。SplitterResizeHandle 透明化与之配合。</p>
+    <div class="spec-head"><span class="spec-num">§7</span><h2 class="spec-title">drawer 一体化生长</h2></div>
+    <p class="spec-desc">drawer 与 main-panel 共享同一个 surface 浮起体——drawer 不是独立浮层，而是<b>从 main 右缘生长出来、挤占 main 宽度</b>的一部分。底色同为 <code>--surface</code>，无投影无 border 分隔，靠 main header 下方的 <code>bg-surface-2</code> 内嵌分隔线（drawer header 同源）表达边界。展开/收起是宽度过渡：main 内容区收缩 + drawer 宽度生长同步（320ms ease），形成「从 main 内部拉出」的一体感。</p>
     <div class="change-points">
-      <span class="cp cp-now"><b>现</b> drawer border-l 硬分隔</span>
-      <span class="cp cp-v6"><b>v6</b> shadow-drawer 投影分隔</span>
-      <span class="cp cp-v6"><b>v6</b> drawer 底色 = 画布色</span>
+      <span class="cp cp-now"><b>现</b> drawer 独立画布色 + shadow-drawer 投影</span>
+      <span class="cp cp-v6"><b>v6</b> drawer 共享 surface（与 main 一体）</span>
+      <span class="cp cp-v6"><b>v6</b> 从 main 右缘生长挤占 + 320ms 过渡</span>
     </div>
 
-    <div class="sub-h">分隔对比：硬 border（旧）vs 投影（新）</div>
+    <div class="sub-h">交互演示：点击切换 drawer 展开/收起（感受一体感与过渡）</div>
     <div class="render-frame">
-      <div class="shadow-demo">
-        <div class="sd-card">
-          <span class="sep-tag old">旧 · border-l</span>
-          <div class="sd-stage">
-            <div class="sd-main"></div>
-            <div class="sd-drawer border">drawer</div>
+      <div class="drawer-demo" id="drawerDemo">
+        <div class="dd-stage">
+          <div class="dd-aside">
+            <div class="dd-aside-band"></div>
+            <div class="wf-ph-block h10" style="margin-top:8px;"></div>
+            <div class="wf-ph-block h10"></div>
           </div>
-          <div class="anno" style="margin-top:10px;"><b>分隔:</b> <span class="old">border-left 1px [var(--border-strong)]</span> · 生硬割裂</div>
+          <!-- main + drawer 同一 surface 浮起体 -->
+          <div class="dd-main-shell">
+            <div class="dd-main-header">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2"><circle cx="12" cy="12" r="9"/><polyline points="9 12 11 14 15 9"/></svg>
+              <span style="font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--neutral-fg);margin-left:6px;">feat-optimize-ui</span>
+              <span style="color:var(--neutral-faint);margin-left:4px;">›</span>
+              <span style="font-family:var(--font-mono);font-size:11px;color:var(--neutral-mid);margin-left:4px;">main</span>
+              <button class="dd-toggle" id="drawerToggle" title="切换 drawer">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+              </button>
+            </div>
+            <div class="dd-body">
+              <!-- main 内容区：drawer 展开时收缩 -->
+              <div class="dd-main-body">
+                <div style="font-size:12px;color:var(--accent);font-weight:500;">AI · 2.3s</div>
+                <div style="font-size:13px;color:var(--neutral-fg);line-height:1.6;">main 内容区，drawer 展开时被挤压缩窄。</div>
+                <div class="wf-ph-block" style="background:var(--surface-hover);margin-top:6px;"></div>
+              </div>
+              <!-- drawer 内容区：从 main 右缘生长，同 surface -->
+              <div class="dd-drawer" id="ddDrawer">
+                <div class="dd-drawer-header">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--neutral-mid)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                  <span style="font-size:12px;color:var(--neutral-fg);margin-left:8px;">DetailPane</span>
+                </div>
+                <div class="dd-drawer-body">
+                  <div class="wf-ph-block h10"></div>
+                  <div class="wf-ph-block h10"></div>
+                  <div class="wf-ph-block h10" style="width:70%;"></div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-        <div class="sd-card">
-          <span class="sep-tag new">v6 · shadow-drawer</span>
-          <div class="sd-stage">
-            <div class="sd-main"></div>
-            <div class="sd-drawer shadow">drawer</div>
+        <div class="anno" style="margin-top:12px;"><b>一体感:</b> <span>main 与 drawer 同 <code>var(--surface)</code> 底色、同 border + shadow 浮起——视觉上是同一块面板的两个区域，drawer 从 main 右缘宽度生长挤占 main</span> · <b>过渡:</b> <span>main 内容区 flex 收缩 + drawer 宽度 0→200px 同步 320ms</span></div>
+      </div>
+    </div>
+
+    <div class="sub-h">分隔对比：旧（独立浮层 + 投影）vs v6（同体生长）</div>
+    <div class="render-frame">
+      <div class="sd-compare">
+        <div class="sd-card-v6">
+          <span class="sep-tag old">旧 · 独立浮层</span>
+          <div class="sd-stage-v6">
+            <div class="sdv-aside"></div>
+            <div class="sdv-main-old">
+              <div class="sdv-header">main</div>
+              <div class="sdv-content"></div>
+            </div>
+            <div class="sdv-drawer-old">drawer</div>
           </div>
-          <div class="anno" style="margin-top:10px;"><b>分隔:</b> <span class="v6">-12px 0 24px rgba(0,0,0,.25)</span> · 柔和明度过渡</div>
+          <div class="anno" style="margin-top:10px;"><b>关系:</b> <span class="old">drawer 独立画布色(bg-sunken) + shadow-drawer 投影</span> · 与 main 明度割裂，像两个浮层</div>
+        </div>
+        <div class="sd-card-v6">
+          <span class="sep-tag new">v6 · 同体生长</span>
+          <div class="sd-stage-v6">
+            <div class="sdv-aside"></div>
+            <div class="sdv-shell">
+              <div class="sdv-header">main + drawer</div>
+              <div class="sdv-split">
+                <div class="sdv-content"></div>
+                <div class="sdv-drawer-new">drawer</div>
+              </div>
+            </div>
+          </div>
+          <div class="anno" style="margin-top:10px;"><b>关系:</b> <span class="v6">同 surface 浮起体 · drawer 从 main 右缘生长</span> · 无投影，靠 header bg-surface-2 内分隔</div>
         </div>
       </div>
     </div>
 
     <div class="anno-grid">
-      <div class="anno"><b>shadow-drawer:</b><br>-12px 0 24px rgba(0,0,0,.25)<br><span class="v6">[v6 token]</span></div>
-      <div class="anno"><b>投影方向:</b><br>左投（x=-12px）<br>主面板与 drawer 间</div>
-      <div class="anno"><b>drawer 底色:</b><br>var(--bg-sunken) = var(--bg)<br>画布色（与 aside 同源）</div>
-      <div class="anno"><b>去掉:</b><br><span class="old">border-l border-border</span><br>生硬线条</div>
-      <div class="anno"><b>配合:</b><br>SplitterResizeHandle 透明化<br>（§6）</div>
-      <div class="anno"><b>drawer header:</b><br>去 border-b 改 bg-surface-2<br>浮起分层（§3.4）</div>
-      <div class="anno"><b>二级 tab:</b><br>各 tab 自治<br>（detail 多文件 / terminal 多实例）</div>
-      <div class="anno"><b>落点:</b><br>SideDrawer.vue · style.css<br>:root --shadow-drawer</div>
+      <div class="anno"><b>drawer 底色:</b><br><span class="v6">var(--surface)</span><br>与 main 同色一体</div>
+      <div class="anno"><b>浮起体:</b><br>main + drawer 共用<br>border + shadow-1/shadow-2<br>外层一个圆角</div>
+      <div class="anno"><b>边界表达:</b><br>main header 下 bg-surface-2<br>内嵌分隔线（非 border-l）<br>drawer header 同源</div>
+      <div class="anno"><b>去掉:</b><br><span class="old">shadow-drawer 投影</span><br><span class="old">border-l 硬分隔</span><br>同色无需投影</div>
+      <div class="anno"><b>展开动画:</b><br>drawer 宽度 0→200px<br>320ms [var(--duration-slow)]<br>cubic-bezier(--ease)</div>
+      <div class="anno"><b>挤占动画:</b><br>main 内容 flex-1 收缩<br>与 drawer 同步过渡<br>无跳动</div>
+      <div class="anno"><b>Splitter:</b><br>drawer 与 main 间<br>SplitterResizeHandle 透明<br>仅 hover/drag 显 accent（§6）</div>
+      <div class="anno"><b>收起态:</b><br>drawer width:0 + overflow:hidden<br>main 占满 · 过渡反向</div>
+      <div class="anno"><b>落点:</b><br>PanelContainer.vue（SplitterLayout）<br>SideDrawer.vue · useSideDrawer</div>
     </div>
   </section>
 
@@ -1091,5 +1243,21 @@ body {
   </footer>
 
 </div>
+
+<script>
+// §7 drawer 一体化生长交互演示
+(function () {
+  var demo = document.getElementById('drawerDemo');
+  var toggle = document.getElementById('drawerToggle');
+  if (!demo || !toggle) return;
+  // 默认展开，直观呈现 drawer 与 main 一体
+  demo.classList.add('open');
+  toggle.classList.add('active');
+  toggle.addEventListener('click', function () {
+    demo.classList.toggle('open');
+    toggle.classList.toggle('active');
+  });
+})();
+</script>
 </body>
 </html>
