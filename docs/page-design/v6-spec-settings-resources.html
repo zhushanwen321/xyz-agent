@@ -123,7 +123,7 @@ body {
 /* ── Button（4 变体 × 5 size）逐字复刻 SSOT §6.1 ── */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  white-space: nowrap; border-radius: var(--radius); font-size: var(--text-md); font-weight: 500;
+  white-space: nowrap; border-radius: var(--radius); font-size: 13px; font-weight: 500;
   font-family: inherit; cursor: pointer; border: none;
   transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease);
 }
@@ -141,8 +141,8 @@ body {
 .btn-danger:hover { background: var(--danger-soft); }
 /* 尺寸（SSOT §6.1：default-size / dense / sm / icon / icon-sm） */
 .btn-default-size { height: 36px; padding: 0 16px; }                                                        /* default h-9 px-4 */
-.btn-dense { height: 32px; padding: 0 12px; font-size: var(--text-sm); }                                    /* dense h-8 px-3 */
-.btn-sm { height: 36px; padding: 0 12px; font-size: var(--text-sm); }                                       /* sm h-9 px-3 */
+.btn-dense { height: 32px; padding: 0 12px; font-size: 12px; }                                    /* dense h-8 px-3 */
+.btn-sm { height: 36px; padding: 0 12px; }                                       /* sm h-9 px-3 */
 .btn-icon { height: 40px; width: 40px; padding: 0; }                                                        /* icon h-10 w-10 */
 .btn-icon-sm { height: 28px; width: 28px; padding: 0; border-radius: var(--radius-sm); }                    /* icon-sm h-7 w-7 */
 /* 紧凑 icon 操作（↑↓ 移动 / 引用）：ghost 态默认低调 neutral-dim，hover 转 neutral-fg；
