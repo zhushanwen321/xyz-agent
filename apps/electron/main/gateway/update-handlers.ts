@@ -129,8 +129,9 @@ async function preloadUpdateSilently(release: LatestReleaseInfo): Promise<void> 
   if (preDownloading) return
   preDownloading = true
   try {
-    // 已有有效预下载产物（同版本同 asset 文件存在）→ 不重复下载
-    if (readPreloadedUpdate(release)) {
+    // 已有有效预下载产物（同版本同 asset 文件存在 + 完整性校验通过）→ 不重复下载
+    const existing = await readPreloadedUpdate(release)
+    if (existing) {
       console.log(`[preload] preloaded update for v${release.version} already exists, skip`)
       return
     }
@@ -197,7 +198,7 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
         }
       }
 
-      const preloadedFile = readPreloadedUpdate(payload.release)
+      const preloadedFile = await readPreloadedUpdate(payload.release)
       let result: { triggerRestart: boolean }
       if (preloadedFile) {
         // 预下载产物有效：快路径，仅推 replacing 进度 + installUpdate

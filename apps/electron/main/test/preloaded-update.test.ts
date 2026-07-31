@@ -5,6 +5,8 @@
  *   1. writePreloadedUpdate + readPreloadedUpdate 往返（同版本同 platform asset → 返回 filePath）
  *   2. version 不匹配 → readPreloadedUpdate 返回 null + 清除
  *   3. 产物文件不存在 → readPreloadedUpdate 返回 null + 清除
+ *   4. 完整性校验（size / sha256）失败 → 返回 null + 清除
+ *   5. 完整性校验通过 → 返回 filePath
  *
  * Mock 策略参考 orchestrator.test.ts：
  *   - 用真实 fs（临时目录），经 XYZ_AGENT_DATA_DIR 重定向 PRELOADED_UPDATE_FILE
@@ -23,12 +25,14 @@ import {
   rmSync,
   existsSync,
   readFileSync,
+  writeFileSync,
   closeSync,
   openSync,
 } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import type { LatestReleaseInfo } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, ReleaseAsset } from '@xyz-agent/shared'
 
 // ── 必须在 import constants（间接被 preloaded-update import）前设 ──────
 // constants.ts 顶层计算 PRELOADED_UPDATE_FILE = path.join(getDataDir(), 'update', ...),
@@ -38,13 +42,18 @@ process.env.XYZ_AGENT_DATA_DIR = TMP_DATA_DIR
 
 interface PreloadedUpdateModule {
   writePreloadedUpdate: (release: LatestReleaseInfo, filePath: string) => void
-  readPreloadedUpdate: (release: LatestReleaseInfo) => string | null
+  readPreloadedUpdate: (release: LatestReleaseInfo) => Promise<string | null>
   clearPreloadedUpdate: () => void
 }
 
 // 动态 import：确保 env 赋值先生效
 async function loadModule(): Promise<PreloadedUpdateModule> {
   return await import('../update/preloaded-update.js')
+}
+
+/** 计算 buffer/string 的 sha256 hex（与 download-asset hashFileSha256 一致） */
+function sha256Hex(input: string | Buffer): string {
+  return createHash('sha256').update(input).digest('hex')
 }
 
 /** preloaded-update.json 落盘路径（与 constants.ts 推导一致） */
@@ -54,7 +63,13 @@ const PRELOADED_UPDATE_FILE = path.join(TMP_DATA_DIR, 'update', 'preloaded-updat
  * LatestReleaseInfo fixture（mac + deb 都覆盖，darwin 平台用 macArm64Zip）。
  * 参考 orchestrator.test.ts 的 MAC_RELEASE。
  */
-function makeRelease(version = '0.9.0'): LatestReleaseInfo {
+function makeRelease(version = '0.9.0', asset?: Partial<ReleaseAsset>): LatestReleaseInfo {
+  const macAsset: ReleaseAsset = {
+    name: 'xyz-agent-mac-arm64.zip',
+    downloadUrl: 'https://example.com/mac.zip',
+    size: asset?.size ?? 1000,
+    sha256: asset?.sha256 ?? 'a'.repeat(64),
+  }
   return {
     version,
     tagName: `v${version}`,
@@ -62,12 +77,7 @@ function makeRelease(version = '0.9.0'): LatestReleaseInfo {
     publishedAt: '2025-12-01T00:00:00Z',
     htmlUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/tag/v0.9.0',
     assets: {
-      macArm64Zip: {
-        name: 'xyz-agent-mac-arm64.zip',
-        downloadUrl: 'https://example.com/mac.zip',
-        size: 1000,
-        sha256: 'a'.repeat(64),
-      },
+      macArm64Zip: macAsset,
     },
   }
 }
@@ -79,7 +89,7 @@ describe('preloaded-update (预下载产物元信息 SSOT)', () => {
   const createdFiles: string[] = []
 
   beforeEach(async () => {
-    // 桩 platform 为 darwin（readPreloadedUpdate 内 getAssetName 读 process.platform）
+    // 桩 platform 为 darwin（readPreloadedUpdate 内 pickPlatformAssetName 读 process.platform）
     originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
 
@@ -101,33 +111,38 @@ describe('preloaded-update (预下载产物元信息 SSOT)', () => {
   })
 
   /** 创建一个真实存在的临时产物文件，返回绝对路径 */
-  function createProductFile(name: string): string {
+  function createProductFile(name: string, content?: string): string {
     const filePath = path.join(TMP_DATA_DIR, 'products', name)
     mkdirSync(path.dirname(filePath), { recursive: true })
-    // 创建空文件（existsSync 判定为 true 即可）
-    const fd = openSync(filePath, 'w')
-    closeSync(fd)
+    if (content !== undefined) {
+      writeFileSync(filePath, content)
+    } else {
+      // 创建空文件（existsSync 判定为 true 即可）
+      const fd = openSync(filePath, 'w')
+      closeSync(fd)
+    }
     createdFiles.push(filePath)
     return filePath
   }
 
-  // ── 1. writePreloadedUpdate + readPreloadedUpdate 往返 ──────────
-  it('writePreloadedUpdate 后 readPreloadedUpdate 返回同一 filePath（同版本同 platform asset）', () => {
-    const release = makeRelease('0.9.0')
-    const filePath = createProductFile('mac.zip')
+  // ── 1. writePreloadedUpdate + readPreloadedUpdate 往返（完整性通过） ─
+  it('writePreloadedUpdate 后 readPreloadedUpdate 返回同一 filePath（同版本同 platform asset + 完整性通过）', async () => {
+    const content = 'roundtrip content'
+    const release = makeRelease('0.9.0', { size: content.length, sha256: sha256Hex(content) })
+    const filePath = createProductFile('mac.zip', content)
 
     mod.writePreloadedUpdate(release, filePath)
     expect(existsSync(PRELOADED_UPDATE_FILE)).toBe(true)
 
-    // 同版本 + 同平台 asset + 文件存在 → 返回 filePath
-    const result = mod.readPreloadedUpdate(release)
+    // 同版本 + 同平台 asset + 文件存在 + size/sha256 匹配 → 返回 filePath
+    const result = await mod.readPreloadedUpdate(release)
     expect(result).toBe(filePath)
     // 读取有效不清除
     expect(existsSync(PRELOADED_UPDATE_FILE)).toBe(true)
   })
 
   // ── 2. version 不匹配 → 返回 null + 清除 ───────────────────────
-  it('readPreloadedUpdate：release.version 不匹配 → 返回 null + 清除元信息', () => {
+  it('readPreloadedUpdate：release.version 不匹配 → 返回 null + 清除元信息', async () => {
     const writeRelease = makeRelease('0.9.0')
     const filePath = createProductFile('mac.zip')
     mod.writePreloadedUpdate(writeRelease, filePath)
@@ -135,14 +150,14 @@ describe('preloaded-update (预下载产物元信息 SSOT)', () => {
 
     // 读取时 release 版本变了（0.9.1）→ 产物失效
     const readRelease = makeRelease('0.9.1')
-    const result = mod.readPreloadedUpdate(readRelease)
+    const result = await mod.readPreloadedUpdate(readRelease)
     expect(result).toBeNull()
     // 元信息被清除
     expect(existsSync(PRELOADED_UPDATE_FILE)).toBe(false)
   })
 
   // ── 3. 产物文件不存在 → 返回 null + 清除 ───────────────────────
-  it('readPreloadedUpdate：产物文件已被删除 → 返回 null + 清除元信息', () => {
+  it('readPreloadedUpdate：产物文件已被删除 → 返回 null + 清除元信息', async () => {
     const release = makeRelease('0.9.0')
     // 写入一个指向不存在文件的元信息
     const ghostPath = path.join(TMP_DATA_DIR, 'products', 'ghost.zip')
@@ -150,16 +165,52 @@ describe('preloaded-update (预下载产物元信息 SSOT)', () => {
     mod.writePreloadedUpdate(release, ghostPath)
     expect(existsSync(PRELOADED_UPDATE_FILE)).toBe(true)
 
-    const result = mod.readPreloadedUpdate(release)
+    const result = await mod.readPreloadedUpdate(release)
     expect(result).toBeNull()
     // 元信息被清除
     expect(existsSync(PRELOADED_UPDATE_FILE)).toBe(false)
   })
 
-  // ── 额外：readPreloadedUpdate 文件不存在 → 返回 null ────────────
-  it('readPreloadedUpdate：元信息文件不存在 → 返回 null（不抛错）', () => {
+  // ── 4. 完整性校验：size 不匹配 ────────────────────────────────
+  it('readPreloadedUpdate：size 不匹配 → 返回 null + 清除元信息', async () => {
+    const content = 'small'
+    // 元信息里写 size=1000，实际文件只有 5 字节
+    const release = makeRelease('0.9.0', { size: 1000, sha256: sha256Hex(content) })
+    const filePath = createProductFile('mac.zip', content)
+    mod.writePreloadedUpdate(release, filePath)
+
+    const result = await mod.readPreloadedUpdate(release)
+    expect(result).toBeNull()
     expect(existsSync(PRELOADED_UPDATE_FILE)).toBe(false)
-    const result = mod.readPreloadedUpdate(makeRelease('0.9.0'))
+  })
+
+  // ── 5. 完整性校验：sha256 不匹配 ───────────────────────────────
+  it('readPreloadedUpdate：sha256 不匹配 → 返回 null + 清除元信息', async () => {
+    const content = 'valid content'
+    const release = makeRelease('0.9.0', { size: content.length, sha256: 'b'.repeat(64) })
+    const filePath = createProductFile('mac.zip', content)
+    mod.writePreloadedUpdate(release, filePath)
+
+    const result = await mod.readPreloadedUpdate(release)
+    expect(result).toBeNull()
+    expect(existsSync(PRELOADED_UPDATE_FILE)).toBe(false)
+  })
+
+  // ── 6. 完整性校验：size=0 时跳过 size 但 sha256 仍校验 ─────────────
+  it('readPreloadedUpdate：size=0 跳过 size 校验，sha256 匹配仍返回 filePath', async () => {
+    const content = 'zero-size-meta'
+    const release = makeRelease('0.9.0', { size: 0, sha256: sha256Hex(content) })
+    const filePath = createProductFile('mac.zip', content)
+    mod.writePreloadedUpdate(release, filePath)
+
+    const result = await mod.readPreloadedUpdate(release)
+    expect(result).toBe(filePath)
+  })
+
+  // ── 额外：readPreloadedUpdate 文件不存在 → 返回 null ────────────
+  it('readPreloadedUpdate：元信息文件不存在 → 返回 null（不抛错）', async () => {
+    expect(existsSync(PRELOADED_UPDATE_FILE)).toBe(false)
+    const result = await mod.readPreloadedUpdate(makeRelease('0.9.0'))
     expect(result).toBeNull()
   })
 
@@ -174,10 +225,12 @@ describe('preloaded-update (预下载产物元信息 SSOT)', () => {
     expect(() => mod.clearPreloadedUpdate()).not.toThrow()
   })
 
-  // ── 额外：落盘结构含 version/assetName/filePath/downloadedAt ────
-  it('writePreloadedUpdate：落盘 JSON 含 version/assetName/filePath/downloadedAt', () => {
-    const release = makeRelease('0.9.0')
-    const filePath = createProductFile('mac.zip')
+  // ── 额外：落盘结构含 version/assetName/filePath/downloadedAt/size/sha256
+  it('writePreloadedUpdate：落盘 JSON 含 version/assetName/filePath/downloadedAt/size/sha256', () => {
+    const content = 'structured content'
+    const sha = sha256Hex(content)
+    const release = makeRelease('0.9.0', { size: content.length, sha256: sha })
+    const filePath = createProductFile('mac.zip', content)
     mod.writePreloadedUpdate(release, filePath)
 
     // 解析落盘文件验证结构（unknown + 字段访问，不用 as any）
@@ -189,5 +242,7 @@ describe('preloaded-update (预下载产物元信息 SSOT)', () => {
     expect(obj.assetName).toBe('xyz-agent-mac-arm64.zip')
     expect(obj.filePath).toBe(filePath)
     expect(typeof obj.downloadedAt).toBe('string')
+    expect(obj.size).toBe(content.length)
+    expect(obj.sha256).toBe(sha)
   })
 })

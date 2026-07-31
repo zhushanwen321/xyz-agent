@@ -25,9 +25,10 @@
  */
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
-import type { LatestReleaseInfo, ReleaseAsset, UpdateStage } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateStage } from '@xyz-agent/shared'
 import { downloadAsset } from './download-asset.js'
 import { createPlatformUpdater } from './platform-updater.js'
+import { pickPlatformAsset } from './pick-platform-asset.js'
 import { UPDATE_DIR, UPDATE_RESULT_FILE } from './constants.js'
 import { readProxyConfig } from './proxy-config.js'
 import { UpdateError, UpdateUnsupportedError } from './types.js'
@@ -101,7 +102,7 @@ export async function downloadUpdate(
   downloading = true
   try {
     // 1. 选 asset
-    const asset = pickAsset(release)
+    const asset = pickPlatformAsset(release)
     if (!asset) {
       throw new UpdateError(`no asset for platform ${process.platform}`, 'downloading')
     }
@@ -250,22 +251,6 @@ function handleScriptRef(ref: UpdateScriptRef): { triggerRestart: boolean } {
       return { triggerRestart: true }
     case 'unsupported':
       throw new UpdateUnsupportedError(ref.reason, ref.fallbackUrl)
-  }
-}
-
-/**
- * 按当前平台选 release asset。
- *
- * 注意：linux deb 用户也选 AppImage asset（pickAsset 不知道用户用哪种包）。
- * LinuxAppImageUpdater.prepareUpdate 会检测 APPIMAGE 环境变量，deb 用户（APPIMAGE undefined）
- * 抛 UpdateUnsupportedError → handler 推 update:error 事件 → 前端跳 release 页。
- */
-function pickAsset(release: LatestReleaseInfo): ReleaseAsset | undefined {
-  switch (process.platform) {
-    case 'darwin': return release.assets.macArm64Zip
-    case 'win32': return release.assets.winX64Exe
-    case 'linux': return release.assets.linuxX64AppImage
-    default: return undefined
   }
 }
 
