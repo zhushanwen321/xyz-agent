@@ -77,7 +77,6 @@
 
   /* 圆角（v6：sm 3px→6px）*/
   --radius-sm: 6px;
-  --radius-sm-old: 3px;
   --radius: 8px;
   --radius-lg: 12px;
 
@@ -88,7 +87,7 @@
   /* 阴影 */
   --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);
   --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
-  --shadow-drawer: -12px 0 24px rgba(0,0,0,0.25);
+  --shadow-drawer: -12px 0 24px rgba(0,0,0,0.16);
   --shadow-glow: 0 0 0 3px rgba(79,142,247,0.25);
 
   /* 组件尺寸（v6 新增）*/
@@ -733,10 +732,10 @@ body {
       <div class="compare-col">
         <span class="compare-tag old">现状 · 3px</span>
         <div class="radius-compare-cell" style="background:transparent;padding:0;text-align:left;">
-          <div class="rc-demo" style="border-radius: var(--radius-sm-old);"></div>
+          <div class="rc-demo" style="border-radius: 3px;"></div>
         </div>
         <div class="anno">
-          <b>border-radius:</b> <span>3px [var(--radius-sm-old)]</span><br>
+          <b>border-radius:</b> <span>3px [现状旧值，token 已废]</span><br>
           <b>视觉:</b> <span>接近直角，生硬</span>
         </div>
       </div>

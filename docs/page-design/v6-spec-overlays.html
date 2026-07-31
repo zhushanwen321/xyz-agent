@@ -77,7 +77,6 @@
 
   /* 圆角（v6：sm 3px→6px）*/
   --radius-sm: 6px;
-  --radius-sm-old: 3px;
   --radius: 8px;
   --radius-lg: 12px;
 
@@ -88,7 +87,7 @@
   /* 阴影 */
   --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);
   --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
-  --shadow-drawer: -12px 0 24px rgba(0,0,0,0.25);
+  --shadow-drawer: -12px 0 24px rgba(0,0,0,0.16);
   --shadow-glow: 0 0 0 3px rgba(79,142,247,0.25);
 
   /* 组件尺寸（v6 新增）*/
@@ -1137,7 +1136,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s6">
     <div class="spec-head"><span class="spec-num">§6</span><h2 class="spec-title">shadow token 应用</h2></div>
-    <p class="spec-desc">覆盖层的「浮起」靠 shadow token 表达（§2.4）。两个主 token：①<code>--shadow-2: 0 8px 24px rgba(0,0,0,0.4)</code> 用于全部浮层/modal（SearchModal 浮层 / ConfirmDialog / AskUserOverlay / popover）；②<code>--shadow-glow: 0 0 0 3px rgba(79,142,247,0.25)</code> 用于 focus 态（输入框聚焦环）。另：<code>--shadow-drawer: -12px 0 24px rgba(0,0,0,0.25)</code> 用于 SideDrawer 左投影分隔（与 overlays 同属覆盖层家族，此处一并标注）。v6 不新增 shadow token，仅收敛任意值到语义 token。</p>
+    <p class="spec-desc">覆盖层的「浮起」靠 shadow token 表达（§2.4）。两个主 token：①<code>--shadow-2: 0 8px 24px rgba(0,0,0,0.4)</code> 用于全部浮层/modal（SearchModal 浮层 / ConfirmDialog / AskUserOverlay / popover）；②<code>--shadow-glow: 0 0 0 3px rgba(79,142,247,0.25)</code> 用于 focus 态（输入框聚焦环）。另：<code>--shadow-drawer: -12px 0 24px rgba(0,0,0,0.16)</code> 用于 SideDrawer 左投影分隔（与 overlays 同属覆盖层家族，此处一并标注）。v6 不新增 shadow token，仅收敛任意值到语义 token。</p>
     <div class="change-points">
       <span class="cp cp-v6"><b>v6</b> 浮层/modal 统一 --shadow-2</span>
       <span class="cp cp-v6"><b>v6</b> focus 统一 --shadow-glow（替代任意 ring 值）</span>
@@ -1161,7 +1160,7 @@ body {
         <div class="shadow-cell">
           <div class="shadow-demo sd-drawer">shadow-drawer</div>
           <div class="shadow-name">--shadow-drawer</div>
-          <div class="shadow-val">-12px 0 24px rgba(0,0,0,0.25)</div>
+          <div class="shadow-val">-12px 0 24px rgba(0,0,0,0.16)</div>
           <div class="anno" style="margin-top:8px;"><b>用于:</b> <span>SideDrawer 右抽屉（左投影分隔，去硬 border-l）</span></div>
         </div>
         <div class="shadow-cell">
@@ -1211,7 +1210,7 @@ body {
     <div class="anno-grid">
       <div class="anno"><b>--shadow-2:</b><br>0 8px 24px rgba(0,0,0,0.4) · 浮层/modal 统一投影<br>偏移 8px + 模糊 24px + 40% 黑</div>
       <div class="anno"><b>--shadow-glow:</b><br>0 0 0 3px rgba(79,142,247,0.25) · focus 聚焦环<br>0 偏移（四周均匀）+ 3px accent 25%</div>
-      <div class="anno"><b>--shadow-drawer:</b><br>-12px 0 24px rgba(0,0,0,0.25) · drawer 左投影<br>仅左侧偏移（抽屉在右侧，向左投）</div>
+      <div class="anno"><b>--shadow-drawer:</b><br>-12px 0 24px rgba(0,0,0,0.16) · drawer 左投影<br>仅左侧偏移（抽屉在右侧，向左投）</div>
       <div class="anno"><b>应用规则:</b><br>modal = shadow-2 + 1px border-border（双表达）<br>overlay = shadow-2（无 border，bg 区分）</div>
       <div class="anno"><b>focus 配合:</b><br>1px border-accent + shadow-glow（glow 是外环，border 是实线）<br>替代任意 ring-2/ring-3 混用</div>
       <div class="anno"><b>不新增:</b><br>v6 不新增 shadow token · 现状任意 box-shadow 值收敛到这 3 个语义 token</div>

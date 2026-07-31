@@ -1,5 +1,7 @@
 # 视觉现代化设计规范 · 柔和现代（2026-07）
 
+> v6 状态（2026-07-31）：本文件是 v6 的视觉输入/基线提案。v6-design.md 已在此基线上确立最终决策并修订部分方案（见下方各修订注）。本文件保留作为历史追溯，**当前 SSOT 以 v6-design.md 为准**。
+
 > 日期：2026-07-30
 > 状态：提案（待评审 → 分波实施）
 > 关联 demo：[`../ui-style-mixer-2026-07-30.html`](../ui-style-mixer-2026-07-30.html)（分区风格组合器）
@@ -31,6 +33,8 @@ xyz-agent 的设计系统工程化程度不弱于竞品（token SSOT、10 主题
 - ❌ 不换底色/主色色相，不重做亮色主题校准
 - ❌ 不做「结论优先」对话流塌缩（mixer `st-v3`，过程透明度下降，作为长期方向另行评估）
 - ❌ 不做设置全页化（mixer `set-v3`，改动面大，作为后续独立提案）
+
+> **v6 修订**：设置已改为全屏覆盖（推翻基线 A 的「不做全页化」）。新建 `FullSettingsOverlay`（手写 `fixed inset-0`，非 reka Dialog），左 nav + 右内容 max-w-720px。见 v6-design.md §4.5 + 决策 D1（结构决策 #13/#14）。
 - ❌ 不动 shell 拓扑（traffic light 安全区、float-panel 体系，见 `v3/shell/spec.md`）
 - ❌ 不动任何功能逻辑/事件流/WS 协议（纯表现层改造）
 
@@ -129,6 +133,8 @@ demo 文件：`docs/page-design/ui-style-mixer-2026-07-30.html`。每个区域�
 | §2 卡片族·Card | 背景 `--surface` + 边框 `--border` | **默认无边框**，仅 `--surface` 层级；边框仅浮起可交互容器使用。新增「双重分隔反模式」条文：静态信息容器禁止 border+bg 叠加 |
 | §2 卡片族·Card-Inline | `--surface` + `--border` + `--radius` | `--surface`（或 `--bg-input` 凹陷语义）+ 无边框 + `--radius` |
 | §2 卡片族·Card-Active | 整圈 `inset 0 0 0 1px accent-ring` | 拆两种场景：**列表项激活**（侧栏 SessionItem 等）= `--surface` 底 + 左缘 2px `--accent` 指示条；**面板激活**（Panel active 等）= 维持 inset ring 不变 |
+
+> **v6 修订**：选中态范式重写。列表项激活去掉左缘 2px accent 条（违反 impeccable 禁令：禁 >1px 彩色侧边条），改为 `bg-surface` 实色块 + `text-accent` 蓝字，无 ring 无左条（最贴近 Claude/Linear）。选中态按组件类型二分：**tab 型**= §3.1 `bg-bg-elevated text-neutral-fg`（中性浮起）/ **列表项型**= §3.2 `bg-surface + 蓝字`（D8）。见 v6-design.md §3.1 + §3.2 + §3.7 + 决策 #7。
 | §5 标签族 | Pill 圆角 999（条文已有，代码未落实） | 强制落地：turn meta pill、变更集 badge、状态标签全部 999 胶囊；`rounded-sm` 矩形标签仅保留 kbd/键帽场景 |
 | §6 图标系统 | 状态图标用状态色填充 | 增补：工具失败（exit≠0）**不属于**状态色使用场景——中性图标 + mono `exit N` 小标签表达；danger 仅用于 agent 报错块/操作失败通知 |
 | 新增 §11 分隔策略 | — | 层级 > 留白 > hairline > 边框的优先级序；每类容器只允许一种主分隔手段 |
@@ -140,6 +146,8 @@ demo 文件：`docs/page-design/ui-style-mixer-2026-07-30.html`。每个区域�
 |-----------|------|------|
 | `sidebar/SegmentedTab.vue` | 每 tab 独立边框盒（`border border-border`，active `border-border-strong bg-accent-soft`），3px 圆角 | 分段控件：外层容器 `bg-bg-input rounded-lg p-[3px]`，内项无边框，active `bg-bg-elevated text-neutral-fg`，6px 圆角 |
 | `sidebar/SessionItem.vue` | 状态图标 15px+ 饱和绿 CheckCircle2（满屏大绿勾）；选中态整圈 accent ring | 状态 → 7px 圆点（done=success 90% / running=accent 脉冲 / waiting=warn / error=danger）；选中态 → `bg-surface` + 左缘 2px accent 条（§5.0 Card-Active 新范式） |
+
+> **v6 修订**：SessionItem 选中态去掉「左缘 2px accent 条」，改 `bg-surface` 实色块 + `text-accent` 蓝字（列表项型范式，D8）。状态圆点尺寸统一 7px（v6 §3.3 强调无 6/8/9px 例外）。见 v6-design.md §3.2 + §3.3 + §4.2。
 | `sidebar/Sidebar.vue` kbd | `border border-border-strong bg-surface rounded-sm` | 去 border，仅 `bg-surface` + 6px 圆角（kbd 保留小圆角矩形语义） |
 | `sidebar/Sidebar.vue` 容器 | 右缘 `border-r border-border` | 去边框，侧栏底色微沉（`#191a1e`，即 `--bg` 降 ~2% 的派生，可用 `color-mix(in oklch, var(--bg) 97%, black)`，**不新增 token**，tailwind 注册为 `bg-sunken`） |
 | `sidebar/SessionList.vue` / `ForkGroup.vue` / `SubagentList.vue` | 操作按钮（rename/delete 等）带 `border border-border-strong` 方盒 | 去 border，ghost 语义（透明底 + hover `bg-surface-hover`），与 design-system §3 Ghost 对齐 |
@@ -163,10 +171,14 @@ demo 文件：`docs/page-design/ui-style-mixer-2026-07-30.html`。每个区域�
 | 组件/文件 | 现状 | 改为 |
 |-----------|------|------|
 | `panel/SideDrawer.vue` 容器 | 左缘 `border-l` 分隔（贴右展开） | 去边框，改投影分隔（`box-shadow: -12px 0 24px rgba(0,0,0,.25)`），底色 `--bg` 微沉（同 §5.1 `bg-sunken`） |
+
+> **v6 修订**：drawer 改为与 main 一体化（共享 surface 同色 + 弱投影 0.16），非独立投影分隔。原方案把侧栏/drawer 往黑推（`bg-sunken = color-mix(bg 97%, black)`）导致比画布还暗、发脏，v6 改为与画布同色、靠主面板 surface 浮起分隔。见 v6-design.md §4.3 + §2.4 `--bg-sunken` + 决策 D2。
 | `panel/DetailPane.vue` header「预览/变更」切换 | 边框盒 tab（与 SegmentedTab 旧范式同族） | 分段控件（同 §5.1 新范式，复用 SegmentedTab 组件） |
 | `panel/detail-renderers/DiffView.vue` | 行背景 18% 饱和；canvas 无圆角贴边 | 行背景 12%（§4.3 token 变更自动生效）；diff 画布 `bg-bg-input rounded-lg` + 上下 8px 内距，hunk header 去 `bg-surface-2` 仅 `--neutral-dim` 文字 |
 
 ### 5.4 设置页（mixer `set-v2` modal 改良）
+
+> **v6 修订**：本节「modal 改良」整体推翻，改为全屏覆盖重构（`FullSettingsOverlay`）。ProviderEditModal 改为嵌入式手风琴就地编辑（非双层 modal）。下表组件改造点（去 border、bg-card 层级、描述文字、i18n P0）大部分仍适用，但容器形态以 v6-design.md §4.5 为准。见 v6-design.md §4.5 + 决策 D1。
 
 | 组件/文件 | 现状 | 改为 |
 |-----------|------|------|
