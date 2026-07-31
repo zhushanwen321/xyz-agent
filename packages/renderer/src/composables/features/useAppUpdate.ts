@@ -25,6 +25,7 @@ import type { LatestReleaseInfo, UpdateState } from '@xyz-agent/shared'
 import {
   checkForUpdate as ipcCheckForUpdate,
   performUpdate as ipcPerformUpdate,
+  getPendingUpdate,
   onUpdateProgress,
   onUpdateError,
   openUpdateFallbackUrl as ipcOpenUpdateFallbackUrl,
@@ -148,6 +149,16 @@ let refCount = 0
 let errorHandled = false
 
 /**
+ * pendingRestored flag：restorePendingUpdate 成功恢复「可升级」提醒后置 true。
+ *
+ * 防覆盖守卫：恢复 pending 后若 30s 联网检测失败/无新版（断网等），checkForUpdate 的
+ * 默认逻辑会把 state 从 available 回退到 idle，丢失已恢复的提醒。此 flag 让 checkForUpdate
+ * 在 !info 分支判断：若已从 pending 恢复，不回退 idle（pending 标志证明曾检测到更新，
+ * 除非版本比较已清否则应保持 available）。联网检测确认有更新时正常更新 state。
+ */
+let pendingRestored = false
+
+/**
  * 订阅 main 进程的进度 + 错误推送（引用计数管理生命周期）。
  * 首个消费者订阅，后续消费者只增计数；最后一个消费者 dispose 时退订。
  * onScopeDispose 注册在每个调用 useAppUpdate 的组件作用域上，随该作用域卸载而清理。
@@ -195,8 +206,13 @@ function subscribeProgress(): void {
 let renderToken = 0
 
 async function checkForUpdate(force = false): Promise<void> {
-  state.state = 'checking'
   const myToken = ++renderToken
+  // 防覆盖守卫：若已从 pending 恢复 available 态，联网检测不进入 checking 态
+  // （否则 available→checking→idle 会短暂隐藏提醒，且失败/无更新会丢失已恢复的提醒）。
+  // 仅当未恢复 pending（首次检测 / 正常流程）时才进入 checking 态。
+  if (!pendingRestored) {
+    state.state = 'checking'
+  }
   try {
     const info = await ipcCheckForUpdate({ force })
     // 防陈旧：若期间又发了新 checkForUpdate，丢弃本次结果
@@ -212,7 +228,9 @@ async function checkForUpdate(force = false): Promise<void> {
         if (myToken !== renderToken) return  // 丢弃陈旧解析
         state.releaseNotesHtml = html
       })
-    } else {
+    } else if (!pendingRestored) {
+      // 无新版：回退 idle。但若已从 pending 恢复（pendingRestored=true），保持 available——
+      // pending 标志证明曾检测到更新，联网检测此刻未发现可能是缓存/网络问题，不应丢失提醒。
       state.state = 'idle'
     }
   } catch (e) {
@@ -221,7 +239,10 @@ async function checkForUpdate(force = false): Promise<void> {
     // 检测失败不算升级流程错误（不打 error 态）。
     // 不设 errorMessage：idle 态 UpdateButton 隐藏，设了也看不到，且会残留到下次。
     // 失败信息仅 console.warn 便于诊断。
-    state.state = 'idle'
+    // 防覆盖守卫：pendingRestored 时不回退 idle（见上文理由）。
+    if (!pendingRestored) {
+      state.state = 'idle'
+    }
     console.warn('[useAppUpdate] checkForUpdate failed:', e)
   }
 }
@@ -277,11 +298,45 @@ async function openFallbackUrl(): Promise<void> {
 }
 
 /**
- * 启动 30s 自动检测（应用启动后延迟检测，避开冷启动高峰）。
+ * 从持久化标志恢复「可升级」提醒（功能 1：常驻提醒）。
+ *
+ * app 启动时调用（经 initAutoCheck 触发）：读取 main 侧 pending-update.json，
+ * 若有有效 pending release（版本仍 > 当前版本）→ 置 state.state='available' + 填充
+ * latestRelease + 异步渲染 releaseNotes，并设 pendingRestored=true 启用防覆盖守卫。
+ *
+ * 离线也能恢复（pending 存完整 release info，不依赖网络）。恢复后仍跑 30s 联网检测
+ * 作为刷新（修正 release 被编辑等不一致），但防覆盖守卫保证联网检测失败不丢失提醒。
+ */
+async function restorePendingUpdate(): Promise<void> {
+  try {
+    const pending = await getPendingUpdate()
+    if (!pending) return
+    // 版本比较已在 main 侧 readPendingUpdate 完成（currentVersion >= pending.version → 清除返回 null），
+    // 此处拿到的 pending 必然是仍有效的「有待升级版本」。
+    state.latestRelease = pending
+    state.state = 'available'
+    pendingRestored = true
+    // 异步渲染 releaseNotes（与 checkForUpdate 命中分支一致）
+    const localizedNotes = extractLocalizedNotes(pending.releaseNotes)
+    void renderMarkdown(localizedNotes).then((html) => {
+      state.releaseNotesHtml = html
+    })
+    console.log(`[useAppUpdate] restored pending update reminder for v${pending.version}`)
+  } catch (e) {
+    // best-effort：恢复失败不影响后续联网检测，仅 warn
+    console.warn('[useAppUpdate] restorePendingUpdate failed:', e)
+  }
+}
+
+/**
+ * 启动自动检测：先恢复持久化提醒（立即），再延迟 30s 联网检测（避开冷启动高峰 + 刷新 release info）。
  * 必须在活跃 effect scope 内调用，通常在组件 setup 顶层同步调用（onScopeDispose 依赖活跃 scope）；
- * 内部用 setTimeout 延迟 30s，不需要等 DOM 挂载，故不必放 onMounted。onScopeDispose 清理定时器避免泄漏。
+ * 30s 定时器不需要等 DOM 挂载，故不必放 onMounted。onScopeDispose 清理定时器避免泄漏。
  */
 function initAutoCheck(): void {
+  // 先恢复持久化提醒（立即，不等 30s），让用户一启动就看到「可升级」红点
+  void restorePendingUpdate()
+  // 30s 后联网检测：刷新 release info（修正不一致）+ 首次无 pending 时正常检测新版
   const timer = setTimeout(() => {
     void checkForUpdate(false)
   }, AUTO_CHECK_DELAY_MS)
@@ -301,6 +356,9 @@ export function useAppUpdate() {
     performUpdate,
     openFallbackUrl,
     initAutoCheck,
+    // restorePendingUpdate 暴露供测试直接调用（绕过 initAutoCheck 的 30s 定时器），
+    // 运行时由 initAutoCheck 内部触发，组件通常不需要直接调。
+    restorePendingUpdate,
   }
 }
 
@@ -318,4 +376,5 @@ export function _resetForTest(): void {
   errorHandled = false
   refCount = 0
   renderToken = 0
+  pendingRestored = false
 }

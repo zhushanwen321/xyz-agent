@@ -18,11 +18,16 @@
  */
 import { app, ipcMain } from 'electron'
 import { ProxyAgent } from 'undici'
-import type { LatestReleaseInfo, IProxyConfig } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, IProxyConfig, UpdateSettings } from '@xyz-agent/shared'
 import type { IpcHandlerDeps } from '../interfaces.js'
 import { UpdateError } from '../update/types.js'
 import { readProxyConfig, writeProxyConfig, resolveProxyUrl } from '../update/proxy-config.js'
 import { validateRelease } from '../update/validate-release.js'
+import { writePendingUpdate, readPendingUpdate } from '../update/pending-update.js'
+import { getUpdateSettings, setUpdateSettings } from '../update/update-settings.js'
+import { downloadUpdate, installUpdate } from '../update/orchestrator.js'
+import type { UpdateProgressCallback } from '../update/orchestrator.js'
+import { writePreloadedUpdate, readPreloadedUpdate } from '../update/preloaded-update.js'
 
 /** 触发重启前留给前端渲染「重启中」状态的延迟（毫秒）。 */
 const RESTART_QUIT_DELAY_MS = 500
@@ -103,7 +108,46 @@ async function testProxyConnection(config: IProxyConfig): Promise<{ success: boo
 }
 
 /**
- * 注册自动升级 IPC handler（update:check + update:perform）。
+ * 后台预下载互斥标志：防止 update:check 多次触发重复下载。
+ *
+ * 与 orchestrator 的 downloading 锁分离：本标志只在 handler 层防重复触发（check 可能被
+ * 多次调用），orchestrator 的 downloading 锁保护真正的下载过程。预下载失败会重置此标志，
+ * 下次 check 可再次尝试。
+ */
+let preDownloading = false
+
+/**
+ * 后台预下载（静默）：检测到新版 + 预下载开关开时触发。
+ *
+ * 不推 update:progress 事件（静默后台行为，不干扰用户）。下载成功后写 preloaded-update.json，
+ * update:perform 走快路径跳过重复下载。下载失败仅 console.warn（符合「静默放弃，下次检测重试」决策）。
+ *
+ * download-asset 的断点续传机制保证：预下载未完成时用户手动点更新，performUpdate 的
+ * downloadUpdate 会接管同一临时文件续传，进度不浪费。
+ */
+async function preloadUpdateSilently(release: LatestReleaseInfo): Promise<void> {
+  if (preDownloading) return
+  preDownloading = true
+  try {
+    // 已有有效预下载产物（同版本同 asset 文件存在）→ 不重复下载
+    if (readPreloadedUpdate(release)) {
+      console.log(`[preload] preloaded update for v${release.version} already exists, skip`)
+      return
+    }
+    console.log(`[preload] background pre-downloading v${release.version}...`)
+    const { filePath } = await downloadUpdate(release)
+    writePreloadedUpdate(release, filePath)
+    console.log(`[preload] pre-downloaded v${release.version} to ${filePath}`)
+  } catch (err) {
+    // 静默放弃：仅 warn，下次 check 检测到新版会再次尝试（断点续传保留进度）
+    console.warn(`[preload] background pre-download failed for v${release.version}:`, err)
+  } finally {
+    preDownloading = false
+  }
+}
+
+/**
+ * 注册自动升级 IPC handler（update:check + update:perform + getPending + getSettings/setSettings）。
  *
  * @param deps 注入依赖（releaseChecker / updateOrchestrator / getMainWindow）
  */
@@ -112,9 +156,19 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
   ipcMain.handle('update:check', async (_event, payload?: { force?: boolean }) => {
     if (!deps.releaseChecker) return null
     try {
-      return await deps.releaseChecker.checkForLatestRelease(app.getVersion(), {
+      const info = await deps.releaseChecker.checkForLatestRelease(app.getVersion(), {
         force: payload?.force,
       })
+      // 检测到新版 → 写持久化标志（功能 1：常驻提醒），best-effort 不阻塞响应
+      if (info) {
+        writePendingUpdate(info)
+        // 预下载开关开 → 异步后台下载（功能 2），不 await 不阻塞 check 响应
+        const settings = getUpdateSettings()
+        if (settings.preDownload) {
+          void preloadUpdateSilently(info)
+        }
+      }
+      return info
     } catch (err) {
       // 兜底：理论上 checkForLatestRelease 自身已 catch，此处防止意外 reject
       console.error('[update:check] failed:', err)
@@ -133,14 +187,26 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
       // 必须在 performUpdate 前执行——orchestrator 内部会把 name 拼进下载路径、
       // 可能 spawn bash 脚本，未校验的输入可触发任意代码执行。
       validateRelease(payload.release)
-      const result = await deps.updateOrchestrator.performUpdate(payload.release, {
-        onProgress: (stage, percent) => {
-          const win = deps.getMainWindow()
-          if (win && !win.isDestroyed()) {
-            win.webContents.send('update:progress', { stage, percent })
-          }
-        },
-      })
+
+      // [功能 2 快路径] 若有有效的预下载产物（同版本 + 文件存在），跳过下载直接 installUpdate。
+      // 用户体感：点击更新后无需等待下载，直接进入替换重启。产物无效则降级走完整 performUpdate。
+      const onProgress: UpdateProgressCallback = (stage, percent) => {
+        const win = deps.getMainWindow()
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('update:progress', { stage, percent })
+        }
+      }
+
+      const preloadedFile = readPreloadedUpdate(payload.release)
+      let result: { triggerRestart: boolean }
+      if (preloadedFile) {
+        // 预下载产物有效：快路径，仅推 replacing 进度 + installUpdate
+        console.log(`[update:perform] using preloaded file ${preloadedFile}, skipping download`)
+        result = await installUpdate(payload.release, preloadedFile, onProgress)
+      } else {
+        // 无预下载产物或产物失效：完整流程（下载 → 校验 → 替换）
+        result = await deps.updateOrchestrator.performUpdate(payload.release, { onProgress })
+      }
       if (result.triggerRestart) {
         // 延迟 RESTART_QUIT_DELAY_MS 给前端时间显示「重启中」，再 quit
         setTimeout(() => app.quit(), RESTART_QUIT_DELAY_MS)
@@ -211,5 +277,27 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
   // ── update:testProxy（测试代理连接）────────────────────────────
   ipcMain.handle('update:testProxy', async (_event, config: IProxyConfig) => {
     return testProxyConnection(config)
+  })
+
+  // ── update:getPending（读取升级提醒持久化标志）──────────────────
+  // 功能 1：启动时 renderer 调此 handler 恢复「可升级」提醒（离线也能常驻）。
+  // readPendingUpdate 内部做版本比较：currentVersion >= pending.version → 清除 + 返回 null。
+  ipcMain.handle('update:getPending', async () => {
+    return readPendingUpdate(app.getVersion())
+  })
+
+  // ── update:getSettings（读取升级设置）──────────────────────────
+  ipcMain.handle('update:getSettings', async () => {
+    return getUpdateSettings()
+  })
+
+  // ── update:setSettings（保存升级设置）──────────────────────────
+  ipcMain.handle('update:setSettings', async (_event, settings: UpdateSettings) => {
+    // 基本类型校验
+    if (typeof settings.preDownload !== 'boolean') {
+      throw new Error('Invalid settings: preDownload must be boolean')
+    }
+    setUpdateSettings(settings)
+    return { success: true }
   })
 }

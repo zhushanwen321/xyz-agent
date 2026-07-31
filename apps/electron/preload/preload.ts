@@ -1,6 +1,6 @@
 // apps/electron/preload/preload.ts
 import { contextBridge, ipcRenderer } from 'electron'
-import type { LatestReleaseInfo, SegmentsMetadataEntry, UpdateStage } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, SegmentsMetadataEntry, UpdateStage, UpdateSettings } from '@xyz-agent/shared'
 
 export interface ElectronAPI {
   /** 监听 runtime 端口事件 */
@@ -149,6 +149,17 @@ export interface ElectronAPI {
   setProxyConfig(config: import('@xyz-agent/shared').IProxyConfig): Promise<void>
   /** 测试代理连接 */
   testProxy(config: import('@xyz-agent/shared').IProxyConfig): Promise<{ success: boolean; message?: string }>
+  // ── 升级提醒持久化标志（功能 1：常驻提醒）──────────────────────────
+  /**
+   * 读取升级提醒持久化标志（app 启动时调用以恢复「可升级」提醒）。
+   * @returns 仍有效的 pending release（有新版待升级），无新版/已升级/失败返回 null
+   */
+  getPendingUpdate(): Promise<LatestReleaseInfo | null>
+  // ── 升级设置（功能 2：预下载开关）──────────────────────────────
+  /** 读取升级设置（预下载开关等） */
+  getUpdateSettings(): Promise<UpdateSettings>
+  /** 保存升级设置 */
+  setUpdateSettings(settings: UpdateSettings): Promise<{ success: boolean }>
   // ── 系统提示音（跨平台：mac afplay / linux paplay / win 返 wav base64）──
   /** 列出当前平台可用的系统提示音（existsSync 过滤后的精选清单） */
   listSystemSounds(): Promise<{ platform: string; sounds: Array<{ id: string; name: string }> }>
@@ -281,6 +292,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getProxyConfig: () => ipcRenderer.invoke('update:getProxyConfig'),
   setProxyConfig: (config) => ipcRenderer.invoke('update:setProxyConfig', config),
   testProxy: (config) => ipcRenderer.invoke('update:testProxy', config),
+  // ── 升级提醒持久化标志 + 升级设置 ────────────────────────────────
+  getPendingUpdate: () => ipcRenderer.invoke('update:getPending'),
+  getUpdateSettings: () => ipcRenderer.invoke('update:getSettings'),
+  setUpdateSettings: (settings: UpdateSettings) => ipcRenderer.invoke('update:setSettings', settings),
   // ── 系统提示音 ──────────────────────────────────────────────
   listSystemSounds: () => ipcRenderer.invoke('sound:list'),
   playSystemSound: (name: string, kind?: 'success' | 'error') => ipcRenderer.invoke('sound:play', name, kind),

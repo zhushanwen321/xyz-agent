@@ -45,7 +45,7 @@ export type UpdateProgressCallback = (stage: UpdateStage, percent: number) => vo
 /** 升级编排器 Facade 接口（DI 契约，供 handler 注入） */
 export interface IUpdateOrchestrator {
   /**
-   * 执行完整升级流程。
+   * 执行完整升级流程（下载 → 校验 → 替换 → 触发重启）。
    *
    * @param release release-checker 返回的最新版本信息
    * @param opts.onProgress 进度回调（stage + percent 0-100）
@@ -59,7 +59,7 @@ export interface IUpdateOrchestrator {
 }
 
 /**
- * 并发保护：performUpdate 进行中时拒绝重入。
+ * 并发保护：performUpdate / installUpdate 进行中时拒绝重入。
  *
  * 重复调用会竞争写 update-result.json + spawn 多个 detached 脚本（文件锁冲突 /
  * 多脚本同时替换导致破损）。用 module-level 单例标志做互斥。
@@ -68,19 +68,37 @@ export interface IUpdateOrchestrator {
 let updating = false
 
 /**
- * 执行完整升级流程。
+ * 并发保护：downloadUpdate 进行中时拒绝重入（含预下载）。
  *
- * 纯逻辑实现（不依赖 electron app），orchestrator 单例委托到此函数。
+ * 与 {@link updating} 分离：预下载（downloadUpdate）与安装（installUpdate/performUpdate）
+ * 使用不同锁，允许「预下载进行中用户点击更新」等并发场景由调用方编排（见 update-handlers
+ * 的快路径逻辑）。download-asset 自身的断点续传机制保证两者不会损坏同一临时文件。
  */
-export async function performUpdate(
+let downloading = false
+
+/**
+ * 下载阶段：选 asset + 写 replacing 标记 + 下载 + sha256 校验。
+ *
+ * 从原 performUpdate 拆分，供预下载（后台静默下载）复用。下载完成后返回已校验的文件路径，
+ * 不触发替换——调用方拿到 filePath 后可立即 installUpdate 或暂存（preloaded-update.json）。
+ *
+ * 不推 update:progress 事件：预下载是静默后台行为，进度回调由调用方决定如何处理
+ * （performUpdate 透传给 handler 推 IPC；预下载不传回调静默）。
+ *
+ * @param release release-checker 返回的最新版本信息
+ * @param onProgress 下载进度回调（0-100 百分比，仅 downloading 阶段）。可为 undefined（预下载）
+ * @returns 已下载并校验的文件路径
+ * @throws UpdateError 下载/校验失败
+ */
+export async function downloadUpdate(
   release: LatestReleaseInfo,
-  opts: { onProgress: UpdateProgressCallback },
-): Promise<{ triggerRestart: boolean }> {
-  // 0. 并发保护：重入直接拒绝（避免重复 spawn 脚本 / 写文件竞争）
-  if (updating) {
-    throw new UpdateError('update already in progress', 'downloading')
+  onProgress?: (percent: number) => void,
+): Promise<{ filePath: string }> {
+  // 0. 并发保护：重入直接拒绝（避免重复下载 / 写文件竞争）
+  if (downloading) {
+    throw new UpdateError('download already in progress', 'downloading')
   }
-  updating = true
+  downloading = true
   try {
     // 1. 选 asset
     const asset = pickAsset(release)
@@ -89,7 +107,7 @@ export async function performUpdate(
     }
 
     // 2. 写 update-result.json status='replacing'（self-healer 启动时检测中断）
-    //    replacing 标记是 self-healer 检测中断的关键信号，写入失败必须中止升级
+    //    replacing 标记是 self-healer 检测中断的关键信号，写入失败必须中止
     //    （否则崩溃后 self-healer 无法识别需要回滚）。这里不 catch，让异常上抛。
     try {
       mkdirSync(UPDATE_DIR, { recursive: true })
@@ -119,17 +137,39 @@ export async function performUpdate(
     //    把代理配置传给 downloadAsset，让下载链路真正接入代理
     //    （downloadAsset 内部据此构造 undici ProxyAgent dispatcher）。
     //    proxyConfig 读取失败（文件损坏等）不阻断升级：降级为默认 mode='system'（直连/环境变量）。
-    opts.onProgress('downloading', 0)
     const proxyConfig = readProxyConfig()
-    const { filePath } = await downloadAsset(
-      asset,
-      (percent) => opts.onProgress('downloading', percent),
-      proxyConfig,
-    )
-    opts.onProgress('verifying', PROGRESS_COMPLETE)
+    const { filePath } = await downloadAsset(asset, onProgress, proxyConfig)
+    return { filePath }
+  } finally {
+    downloading = false
+  }
+}
 
-    // 4. 平台分发（生成脚本 + 触发替换）
-    opts.onProgress('replacing', 0)
+/**
+ * 安装阶段：平台分发（生成替换脚本 + 触发替换）+ 据 ref.kind 决定返回值。
+ *
+ * 从原 performUpdate 拆分，供预下载快路径复用：预下载产物存在时跳过 downloadUpdate
+ * 直接调本函数。filePath 必须是已通过 sha256 校验的下载产物。
+ *
+ * @param release 当前 release 信息（取 sha256 / version / htmlUrl，注入替换脚本）
+ * @param filePath downloadUpdate 返回的已校验文件路径
+ * @param onProgress 进度回调（仅 replacing 阶段）。可为 undefined（预下载场景不适用）
+ * @returns triggerRestart=true 表示需要重启（handler 调 app.quit）
+ * @throws UpdateError/UpdateUnsupportedError 准备替换失败
+ */
+export async function installUpdate(
+  release: LatestReleaseInfo,
+  filePath: string,
+  onProgress?: UpdateProgressCallback,
+): Promise<{ triggerRestart: boolean }> {
+  // 复用 updating 锁：installUpdate 会 spawn 替换脚本，与 performUpdate 的替换阶段互斥
+  if (updating) {
+    throw new UpdateError('update already in progress', 'replacing')
+  }
+  updating = true
+  try {
+    // 平台分发（生成脚本 + 触发替换）
+    onProgress?.('replacing', 0)
     const updater = createPlatformUpdater()
     let ref: UpdateScriptRef
     try {
@@ -145,13 +185,41 @@ export async function performUpdate(
       }
       throw prepErr
     }
-    opts.onProgress('replacing', PROGRESS_COMPLETE)
+    onProgress?.('replacing', PROGRESS_COMPLETE)
 
-    // 5. 据 ref.kind 决定返回值
+    // 据 ref.kind 决定返回值
     return handleScriptRef(ref)
   } finally {
     updating = false
   }
+}
+
+/**
+ * 执行完整升级流程（下载 → 校验 → 替换 → 重启）。
+ *
+ * downloadUpdate + installUpdate 的组合，保持原有 onProgress 语义（downloading/verifying/replacing
+ * 全阶段进度），供 update:perform handler 调用。预下载快路径（handler 内）直接调 installUpdate
+ * 跳过下载阶段。
+ *
+ * 纯逻辑实现（不依赖 electron app），orchestrator 单例委托到此函数。
+ */
+export async function performUpdate(
+  release: LatestReleaseInfo,
+  opts: { onProgress: UpdateProgressCallback },
+): Promise<{ triggerRestart: boolean }> {
+  // 提前检查 updating 锁：避免下载完成后才发现安装阶段被占用（下载白做）
+  if (updating) {
+    throw new UpdateError('update already in progress', 'downloading')
+  }
+  // 下载阶段（downloadUpdate 内部有独立 downloading 锁）
+  opts.onProgress('downloading', 0)
+  const { filePath } = await downloadUpdate(release, (percent) =>
+    opts.onProgress('downloading', percent),
+  )
+  opts.onProgress('verifying', PROGRESS_COMPLETE)
+
+  // 安装阶段（installUpdate 内部持有 updating 锁）
+  return await installUpdate(release, filePath, opts.onProgress)
 }
 
 /**
