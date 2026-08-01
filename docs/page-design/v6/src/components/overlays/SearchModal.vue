@@ -420,10 +420,10 @@ function iconKind(cmd: SearchCommand): IconKind {
 .sm-empty {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 32px;
-  text-align: center;
+  text-align: left;
 }
 .sm-e-ico {
   width: 28px;
