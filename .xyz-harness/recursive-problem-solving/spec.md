@@ -20,6 +20,7 @@
 - [10. 遗留待决策问题](#10-遗留待决策问题)
 - [11. 可行性审查发现（轮次 10）](#11-可行性审查发现轮次-10)
 - [12. 决策与实现路径（轮次 11）](#12-决策与实现路径轮次-11)
+- [13. 第二轮可行性审查发现（轮次 12）](#13-第二轮可行性审查发现轮次-12)
 - [附录 A. 关键代码证据索引](#附录-a-关键代码证据索引)
 
 ---
@@ -781,6 +782,7 @@ CMU 实证：静态单层规划 > 动态多层规划。当前架构是"BFS 逐�
 7. **轮次 9**：确认每次 agent() spawn 独立子进程（崩溃隔离）+ 内置 3 次重试。确认 cw 可提供 frontier 幂等查询基础。三个问题（gate 时机/崩溃半径/幂等拉取）全部正面解答。架构闭环。
 8. **轮次 10（可行性审查）**：3 个 subagent 从 cw 侧 / workflow 侧 / 端到端走查三个维度独立审查，发现 4 个致命阻断点（agent() 无 worktree 支持、cw store worktree 断裂、frontier 不存在、双树混淆）+ 3 个高估项（childDeliveryConsistency 伪校验、budget 累积、design-review 不刹质量）。§4 的 5 个"✅已解"标注过于乐观。详见 §11。
 9. **轮次 11（决策与收敛）**：用户 6 个回应解除 5 个阻断/高估——agent() 加 worktree（验证 ExecuteOptions 已有字段，改造仅 3 处约 10 行）、cw project key 分离、agent 写 cw + schema 转派发指令（消除双树，frontier 降级为崩溃恢复专用）、retrospect 读子 agent session jsonl（伪校验→真实复盘）、budget 无限、workflow 确定性派发保证 review。三个关键决策：每 action 一个 agent、按任务复杂度选起点层（不跳层）、frontier 一起做完。详见 §12。
+10. **轮次 12（第二轮审查）**：3 个 subagent 从 §12 架构数据流 / 改动点代码级核实 / 端到端逐 action 走查三个维度审查 §12 新设计。发现 §12 的 4 个关键技术假设被源码证伪：(1) `executeAndAwait`（workflow 入口）根本不消费 `worktree===true`——改动 1A 是空操作；(2) wave 的 9 个 agent 无法共享 worktree（决策 A 与 worktree 隔离粒度冲突）；(3) cw execute 返回值不含全部子 unit id；(4) agent() 消息层丢弃 sessionFile。引入 2 致命 + 2 高危新阻断，但解法方向清晰（接缝处实现细节需补，非推翻重来）。详见 §13。
 
 ---
 
@@ -1152,3 +1154,145 @@ cw frontier --root <unitId> [--format json]
 | R4 | cw subagent-guidance 禁止 planning retrospect 委派（新发现 1） | 改 cw subagent-guidance / 忍受劝退 | 改 cw subagent-guidance，递归场景下 retrospect 必须委派 |
 | R5 | worktree 的 node_modules | symlink 主 repo（现有 best-effort）/ worktree 内 npm install / 主 repo 先装 | agent prompt 约束"新增依赖先在主 worktree 安装"+ worktree-manager 现有 symlink 兜底。若 symlink 失败则 worktree 内 npm install |
 | R6 | frontier 的层语义 | 按 scope 分组 / 按可并发性分组 | 按"阻塞/非阻塞"二分（blocked 的不派，非 blocked 的可派），同层非阻塞节点由 workflow 脚本决定并发 |
+
+---
+
+## 13. 第二轮可行性审查发现（轮次 12）
+
+> 3 个 subagent 从「§12 架构数据流可行性」/「§12 改动点代码级核实」/「端到端逐 action 走查」三个维度独立审查 §12 的新设计。结论：**§12 方向正确（schema 派发投影、每 action 一个 agent、project key 分离、retrospect 读 jsonl 都是好设计），但 4 个关键技术假设被源码证伪，引入 4 个新阻断点（2 致命 + 2 高危）。** 解法方向都存在且清晰，属于"接缝处实现细节需补"，不是推翻重来。两个独立 agent 分别从代码核实和走查到达相同结论，置信度高。
+
+### 13.1 致命阻断（2 个）
+
+#### 致命阻断 A：`executeAndAwait` 根本不消费 worktree——§12 改动 1A 是空操作
+
+**§12 的假设**：改动 1A 说"ExecuteOptions 已有 fork/worktree 字段，SubagentService 已完整消费，零改动复用 worktree 全套逻辑"。
+
+**源码事实（证伪）**：`SubagentService` 有两个入口，worktree 创建逻辑只在其中一个：
+- `execute()`（subagent-tool 路径，`:419-458`）——**有**完整 worktree 创建（MF#7 守卫 `worktree===true && !fork` 抛错 + `worktreeManager.create(this.cwd, record.id)`）
+- `executeAndAwait()`（workflow 路径，`:505-554`）——**完全没有** worktree 创建逻辑
+
+workflow 的 `agent()` 经 `SubprocessAgentRunner.run`（`subprocess-agent-runner.ts:108`）委托的是 `executeAndAwait`。`runAndFinalize`（`:668-671`）只处理 `typeof opts.worktree === "object"`（预创建 WorktreeHandle），**当 `worktree === true`（boolean）时分支不命中，worktreeHandle 保持 undefined → spawnCwd 落回 ctx.cwd → 零隔离**。
+
+**后果**：按 §12 改完那 3 处后，`agent({worktree:true})` 在 workflow 里**静默 no-op**——不创建 worktree、不报错、不隔离。§11 阻断 1 实际未被解除。
+
+**修正改动范围**（不止 3 处）：
+
+| # | 文件 | 改动 | §12 是否提到 |
+|---|------|------|-------------|
+| 1 | `types.ts` AgentCallOpts | 加 fork/worktree 字段 | ✅ |
+| 2 | `execute-options-mapper.ts` | 透传 fork/worktree | ✅ |
+| 3 | `worker-script-builder.ts` _knownFields | 放行 | ✅ |
+| **4** | **`subagent-service.ts` runAndFinalize（:667-671）** | **加 `else if (opts.worktree === true) { worktreeHandle = this.worktreeManager.create(...) }` 分支** | ❌ **遗漏** |
+| **5** | **`subagent-service.ts` executeAndAwait** | **补 MF#7 守卫（worktree===true && !fork 抛错），或确保 fork 被正确设置** | ❌ **遗漏** |
+
+**解法**：把 `execute()` 里的 worktree 创建块（:440-458）抽成共享方法供 `executeAndAwait` 也调；或在 `runAndFinalize` 的 worktree 解析处补 `worktree===true` 分支。
+
+#### 致命阻断 B：wave 的 9 个 agent 无法共享 worktree——决策 A 与 worktree 隔离根本冲突
+
+**§12 的假设**：决策 A（每 action 一个 agent）+ 每个 wave action 的 agent() 用 `worktree:true` 隔离。
+
+**源码事实（证伪）**：`worktree-manager.create`（`:51-124`）**每次调用都建新 worktree**（`git worktree add HEAD`，branch 名 `pi-sub-${recordId}` 唯一），无"按 key 复用"机制。`ExecuteOptions.worktree` 支持 `WorktreeHandle`（对象，复用外部已创建的），但：
+- `WorktreeHandle` 是主线程的不可序列化对象
+- worker 线程的 `agent()` 只发消息（postMessage），无法把 handle 对象传给后续 agent()
+
+**后果**：wave 的 9 个 action = 9 个 agent()。若每个都 `worktree:true`，则 9 个独立 worktree：
+```
+execute agent → worktree-A（写代码 + commit 到本地分支 pi-sub-xxx）
+test agent    → worktree-B（从 HEAD 新建，看不到 execute 的 commit）→ npm test 找不到代码 → gate fail
+```
+test gate 系统性失败。这是 §12 决策 A（每 action 一个 agent）与 worktree 隔离粒度的根本冲突。
+
+**解法**：worktree 生命周期绑 wave（不是 action）。
+- 同 wave 的 9 个 agent() 复用同一 worktree path（第一个 action 的 agent() 用 `worktree:true` 建 worktree 拿到路径，后续 action 的 agent() 不传 `worktree` 但传 `cwd: <那个 worktree 路径>`）
+- 但这要求 worker 脚本能拿到 worktree 路径——而路径在主线程生成（tmpdir 下），worker 拿不到（跨线程）。**需要新增跨线程协议**：workflow 脚本用"worktree group key"（字符串，如 wave unitId），主线程按 key 复用/创建。第一个 agent() 返回 worktree 路径，后续 agent() 用该路径做 cwd。
+- closeout 后销毁 worktree（引用计数或显式 cleanup）
+
+### 13.2 高危阻断（2 个）
+
+#### 高危阻断 C：cw execute 返回值不含全部子 unit id——schema 派发投影无法填全
+
+**§12 的假设**：§12.3 说"agent 调 cw execute 后 cw 按 plan.split 建子层 unit，agent 返回的 schema 含子 unitId"。
+
+**源码事实（证伪）**：`ActionResult`（`handlers/types.ts:87-111`）**没有 `executeResult`/`childUnitIds` 字段**。cw execute 的 JSON 只返回 `nextAction.crossLayer.targetUnitId`（第一个 child，`slice/execute.ts`、`feature/execute.ts` 都只取 `childUnitIds[0]`）。
+
+agent 无法从 cw execute 的返回值拿到全部子 unit id。要填全 schema children（含全部子 unitId + prompt），agent 必须**额外调 `cw tree`**。
+
+**解法**（二选一）：
+- (a) cw execute 的 ActionResult 加 `childUnitIds: string[]` 字段（改 cw，小改动）
+- (b) agent prompt 契约里强制 execute 后调 `cw tree` 收集子 id 填 schema（不改 cw，但要写进 agent prompt 约定）
+
+#### 高危阻断 D：sessionFile 传递通道断裂——retrospect 读 jsonl 不可行
+
+**§12 的假设**：改动 3C 说"workflow 脚本在每次 agent() 返回后记录 `result.sessionFile`"。
+
+**源码事实（证伪）**：`worker-script-builder.ts:144`：`pending.resolve(msg.result.parsedOutput ?? msg.result.content)`——agent() 只 resolve 业务字段（parsedOutput/content），**丢弃了 AgentResult.sessionFile/sessionId 等所有元数据**。
+
+`AgentResult.sessionFile` 字段确实存在（`types.ts:196`，`agent-result-mapper.ts:39` 透传），但**被 worker 消息层丢弃**，workflow 脚本拿不到。
+
+**后果**：retrospect 读 jsonl 方案当前不可行。retrospect agent 退化为抄 cw 状态（§11.2 高估 1 的伪校验复活）。
+
+**解法**（三选一）：
+- (a) worker-script-builder 的 agent() resolve 改为返回完整对象 `{parsedOutput, content, sessionFile, sessionId}`——破坏所有现有 workflow 脚本（它们期望 agent() 直接返回值）
+- (b) 新增 `agent({returnMeta:true})` 模式，设了返回 `{value, sessionFile}`，不设返回单值（向后兼容）
+- (c) 放弃 sessionFile 路径，retrospect agent 自己用 `cw` 查询子 wave 的 record（subagents session 目录可按 recordId 定位）。更符合"cw 是 SSOT"不变式，但 retrospect agent 要自己找 session 文件。
+
+### 13.3 走查暴露的其他问题（4 个）
+
+| # | 问题 | 证据 | 严重度 |
+|---|------|------|--------|
+| E | **handoff 不渲染 FeatureSpec（FR/AC）**——design-review agent 填 `frAcCoverageNote` 时看不到 FR/AC，被迫编造 | `render.ts:840-899` renderDecisionsSection 只渲染 clarifications.resolution，丢弃 spec 容器；`render.ts:999-1085` renderArtifactsSection planning 分支只渲染 split/techChoices/interfaces | 高 |
+| F | **design-review schema 不注入 layerSpecific 字段名**——agent 不知道该填哪些 key，靠 gate fail 试错 | `feature-internal.ts:75` 注入基类 DesignReviewJudgment（layerSpecific:Record<string,string>），不注入 FeatureDesignReviewLayerSpecific；gate 里 key 名写死（`design-review.ts:699-714`）| 中 |
+| G | **dependsOn 不驱动执行**——BFS 伪代码纯顺序处理，无拓扑排序。当前偶然安全（schema children 顺序=split 顺序），parallel 后必然错乱 | §12.4 BFS 伪代码无拓扑逻辑；cw 的 dependsOn 只用于判环（`design-review.ts:399`）| 中 |
+| H | **npm install 经 symlink 污染主 repo node_modules**——worktree 的 node_modules 是主 repo 的 symlink，wave agent 在 worktree 里 npm install 实际改主 repo | `worktree-manager.ts:80-97` symlink 逻辑 | 中 |
+
+### 13.4 §12 假设被证伪的完整清单
+
+| §12 假设 | 源码事实 | 涉及阻断 |
+|---------|---------|---------|
+| "ExecuteOptions 有字段 = SubagentService 会消费" | `executeAndAwait`（workflow 入口）不消费 `worktree===true` | 致命 A |
+| "worktree:true 能隔离 wave" | 每 action 新建 worktree，同 wave 9 步互不可见 | 致命 B |
+| "agent() 返回 sessionFile" | 消息层（:144）丢弃 sessionFile，只透传 parsedOutput/content | 高危 D |
+| "cw execute 返回全部子 unit id" | ActionResult 无 childUnitIds，只有 crossLayer 第一个 | 高危 C |
+| "handoff 暴露前序 action 产出" | 不渲染 FeatureSpec（FR/AC），layerSpecific 字段名不注入 | E、F |
+
+### 13.5 修正后的实现路径（在 §12.4 基础上补强）
+
+基于第二轮审查，阶段一（打通 worktree）的改动范围修正为：
+
+**改动 1A（修正版）：给 agent() 加 worktree 支持（5 处，非 3 处）**
+
+在 §12.4 改动 1A 基础上补：
+- 改动 4：`subagent-service.ts` `runAndFinalize` 加 `else if (opts.worktree === true) { worktreeHandle = this.worktreeManager.create(...) }` 分支
+- 改动 5：`subagent-service.ts` `executeAndAwait` 补 MF#7 守卫
+- **前置验证**：实现后必须实测 `agent({worktree:true})` 在 workflow 里是否真的 spawn 到独立 worktree（检查 spawnCwd），否则阶段一里程碑必然失败
+
+**改动 1B（补充）：wave 内 worktree 复用机制**
+
+- worktree 生命周期绑 wave（不是 action）。同 wave 的 9 个 agent() 复用同一 worktree
+- 需新增跨线程协议：workflow 脚本用"worktree group key"（如 wave unitId），主线程按 key 复用/创建。第一个 agent() 返回 worktree 路径，后续 agent() 用该路径做 cwd
+- 或简化：wave 的第一个 action（clarify）用 `worktree:true` 建 worktree，agent prompt 要求它在返回 schema 时附上 worktree 路径字段；workflow 脚本把该路径作为后续 8 个 action 的 `cwd` 传入
+
+**改动 1C（补充）：cw execute 返回 childUnitIds（高危阻断 C 解法）**
+
+- cw 的 `ActionResult` 加 `childUnitIds?: string[]` 字段（`handlers/types.ts`）
+- 各 execute handler 填入 `unit.executeResult.childUnitIds`
+- 或不改 cw，agent prompt 强制 execute 后调 `cw tree` 收集子 id
+
+**改动 1D（补充）：sessionFile 传递通道（高危阻断 D 解法）**
+
+- 推荐 (b) `agent({returnMeta:true})` 模式：设了返回 `{value, sessionFile}`，不设返回单值（向后兼容）
+- 或 (c) 放弃 sessionFile 路径，retrospect agent 自己查 cw 拿子 wave 的 record 定位 session 文件
+
+**改动 1E（补充）：handoff 渲染 FeatureSpec + layerSpecific 字段名（问题 E/F 解法）**
+
+- `render.ts` renderDecisionsSection 或新增段渲染 FeatureSpec 的 FR/AC（至少 id+title）
+- 各层 `get{Scope}SchemaText("design-review")` 改为注入该层 LayerSpecific interface（feature→FeatureDesignReviewLayerSpecific）
+
+### 13.6 对 §12.2 决策 A 的修正建议
+
+决策 A（每 action 一个 agent）本身有价值（gate 闭环、review 客观性），但与 worktree 隔离粒度冲突（致命阻断 B）。修正方向：
+
+- **planning 层（epic/feature/slice）**：每 action 一个 agent，共享主 cwd（不 worktree 隔离——planning 不写代码）。✅ 无冲突。
+- **wave 层**：worktree 隔离粒度绑 wave。同 wave 的 9 个 action 不是"9 个独立 agent 在 9 个 worktree"，而是"9 个 agent 复用同一 wave worktree"。agent 粒度仍是每 action 一个（保留 gate 闭环），但 worktree 生命周期绑 wave（第一个 action 建、closeout 后销毁、中间复用）。
+
+这不改变决策 A 的"每 action 一个 agent"语义，只改变 worktree 的绑定对象（从 action 提升到 wave）。
