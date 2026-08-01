@@ -328,7 +328,9 @@ describe("Workflow hook: structured-output failure retry", () => {
     const [msg, opts] = pi.sendUserMessage.mock.calls[0]!;
     expect(msg).toContain("FAILED validation");
     expect(msg).toContain("Schema validation failed: /count must be number");
-    expect(msg).toContain(`The correct schema is: ${SCHEMA}`);
+    // 新文案：告知 schema 由系统注入，引导只传 data
+    expect(msg).toContain(`The required schema for your \`data\` is: ${SCHEMA}`);
+    expect(msg).toContain("ONLY the `data` parameter");
     expect(opts).toEqual({ deliverAs: "steer" });
   });
 
@@ -526,5 +528,98 @@ describe("Tool execute (real call via executeStructuredOutput)", () => {
   it("accepts boolean root schema (draft-07: true = accept all)", async () => {
     const result = await executeStructuredOutput({ schema: true, data: { ok: 1 } });
     expect(result.details).toEqual({ ok: 1 });
+  });
+});
+
+// ── 权威 schema（workflow 模式）测试 ──────────────────────────
+//
+// [HISTORICAL] 2026-08-01 事故回归：workflow 模式下 PI_WORKFLOW_SCHEMA 注入权威 schema，
+// executeStructuredOutput 用它校验 data，LLM 传入的 schema 参数不参与校验。
+// 核心保障：LLM 无法通过自报 schema 自洽绕过格式约束。
+// 直接调 executeStructuredOutput 显式传 authoritativeSchema 模拟 env 注入路径。
+
+describe("Authoritative schema (workflow mode)", () => {
+  // 08-01 事故的 schema 形态：add_channels.items 要求 object，LLM 篡改成 string
+  const authoritativeSchema = {
+    type: "object",
+    properties: {
+      channels: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            action: { type: "string", enum: ["add", "remove", "fix"] },
+          },
+          required: ["name", "action"],
+        },
+      },
+    },
+    required: ["channels"],
+  };
+
+  it("authoritativeSchema 存在 + data 合规 → 通过，details = data", async () => {
+    const result = await executeStructuredOutput({
+      schema: authoritativeSchema, // LLM 传的 schema（碰巧和权威一致）
+      data: { channels: [{ name: "ch1", action: "add" }] },
+      authoritativeSchema,
+    });
+    expect(result.content[0]!.text).toContain("recorded successfully");
+    expect(result.details).toEqual({ channels: [{ name: "ch1", action: "add" }] });
+  });
+
+  // 核心回归用例：直接复现 08-01 事故——LLM 篡改 schema（items 改成 string）
+  // + data 跟着篡改（传字符串数组），必须被权威 schema 拒绝。
+  // 旧实现（校验 LLM schema）会让其通过 → 静默腐败；方案 A 必须拒绝。
+  it("rejects LLM-rewritten schema even when data matches the rewritten schema", async () => {
+    const rewrittenSchema = {
+      type: "object",
+      properties: {
+        channels: {
+          type: "array",
+          items: { type: "string" }, // LLM 篡改：object → string
+        },
+      },
+      required: ["channels"],
+    };
+    // data 符合篡改后的 schema（字符串数组），但不符合权威 schema（要求对象数组）
+    await expect(
+      executeStructuredOutput({
+        schema: rewrittenSchema,
+        data: { channels: ["ch1", "ch2"] },
+        authoritativeSchema,
+      }),
+    ).rejects.toThrow(/Schema validation failed \(authoritative\)/);
+  });
+
+  it("authoritativeSchema error includes authoritative schema echo for LLM guidance", async () => {
+    await expect(
+      executeStructuredOutput({
+        schema: { type: "object" }, // LLM 宽松 schema
+        data: { channels: "not-an-array" }, // 不符合权威 schema
+        authoritativeSchema,
+      }),
+    ).rejects.toThrow(/authoritative schema \(PI_WORKFLOW_SCHEMA\) is:/);
+  });
+
+  it("authoritativeSchema absent → falls through to daily-mode defense (regression guard)", async () => {
+    // 不传 authoritativeSchema → 走日常防御链（LLM schema 校验）。
+    // 用一个 LLM schema + 合规 data 应通过（证明没误入权威分支抛错）。
+    const result = await executeStructuredOutput({
+      schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+      data: { ok: true },
+    });
+    expect(result.details).toEqual({ ok: true });
+  });
+
+  it("authoritativeSchema present but LLM omits schema param → still validates data", async () => {
+    // 方案 A 后 schema 参数非必需。LLM 只传 data（schema=undefined）也应正常校验。
+    // 这对应提示词引导的新用法：「只需传 data」。
+    const result = await executeStructuredOutput({
+      schema: undefined,
+      data: { channels: [{ name: "ch1", action: "fix" }] },
+      authoritativeSchema,
+    });
+    expect(result.details).toEqual({ channels: [{ name: "ch1", action: "fix" }] });
   });
 });

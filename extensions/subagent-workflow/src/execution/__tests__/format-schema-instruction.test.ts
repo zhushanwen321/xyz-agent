@@ -46,12 +46,15 @@ describe("formatSchemaInstruction", () => {
     const out = formatSchemaInstruction({ type: "object" });
     // 完整结构快照——任何指令措辞/顺序/缩进漂移都会被捕获。
     // 注意第三行末尾的 em-dash（—），防止有人把它替换成普通连字符。
+    // [HISTORICAL] 方案 A 后文案更新：告知 LLM schema 由系统注入，只需传 data。
     expect(out).toBe(
       [
         "MANDATORY: Structured Output Requirement",
         "You MUST call the `structured-output` tool with your final answer.",
         "Do NOT output the JSON directly in your text response — you MUST use the structured-output tool.",
-        "The schema for the structured output is:",
+        "The schema is enforced by the system — call structured-output with ONLY the `data` parameter.",
+        "Do NOT pass a `schema` parameter; the system validates `data` against the authoritative schema automatically.",
+        "The schema for your `data` is:",
         "```json",
         '{',
         '  "type": "object"',

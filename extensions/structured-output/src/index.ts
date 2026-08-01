@@ -129,7 +129,15 @@ const CORRECT_USAGE_HINT =
 /**
  * 执行 schema 校验。从 createToolDefinition.execute 抽出以便单元测试直接调用。
  *
- * 防御顺序（编译前拦截，治静默腐败的根）：
+ * 两种模式：
+ *   - 权威模式（workflow）：`authoritativeSchema` 存在时，只用它校验 data，LLM 传入的
+ *     `schema` 不参与校验（仅用于错误回显）。这从根上杜绝 LLM 自报 schema 自洽绕过
+ *     （[HISTORICAL] 2026-08-01 事故：ds-flash 重写 add_channels.items 的 schema 后
+ *     自洽通过，4 条 channel 修复静默丢失）。权威分支提前 return，跳过日常防御链
+ *     （权威 schema 由 workflow 脚本写死，不存在互换/keyword-less 风险）。
+ *   - 日常模式（交互式）：无 `authoritativeSchema`，走下方防御链。
+ *
+ * 日常模式防御顺序（编译前拦截，治静默腐败的根）：
  *   1. 互换检测 — schema 像 data（无 keyword）且 data 像 schema（有 keyword）→ 抛纠错
  *   2. keyword-less schema 拒绝 — schema 是对象但无任何识别 keyword（{} / {a:1}）
  *      → 抛 "no recognized keyword"，否则 ajv strict:false 会编译成"接受一切"
@@ -139,6 +147,8 @@ const CORRECT_USAGE_HINT =
 export async function executeStructuredOutput(params: {
 	schema: unknown;
 	data: unknown;
+	/** 权威 schema（workflow 模式由 PI_WORKFLOW_SCHEMA env 注入）。存在时成为唯一校验权威。 */
+	authoritativeSchema?: unknown;
 }): Promise<{
 	content: Array<{ type: "text"; text: string }>;
 	// data 可能是 primitive/array/object（根 schema 决定），故 details 为 unknown。
@@ -148,6 +158,48 @@ export async function executeStructuredOutput(params: {
 	// Normalize: some models pass schema/data as JSON strings instead of objects
 	const schema = tryParseJson(params.schema);
 	const data = tryParseJson(params.data);
+
+	// ── 权威模式（workflow）：用 PI_WORKFLOW_SCHEMA 声明的期望 schema 校验 data。 ──
+	// LLM 传入的 schema 仅用于错误回显（告知期望形态），不参与校验——否则 LLM
+	// 可同时控制 schema 与 data 自洽绕过任何约束。日常模式无权威 schema 走下方防御链。
+	const authoritative =
+		params.authoritativeSchema !== undefined ? tryParseJson(params.authoritativeSchema) : undefined;
+	if (authoritative !== undefined) {
+		let validate: ValidateFunction;
+		try {
+			if (isPlainObject(authoritative) || typeof authoritative === "boolean") {
+				validate = getOrCompileValidator(authoritative);
+			} else {
+				throw new Error(
+					`authoritative schema must be a JSON Schema object or boolean, got ${typeof authoritative}`,
+				);
+			}
+		} catch (e) {
+			throw new Error(
+				`Invalid authoritative JSON Schema (from PI_WORKFLOW_SCHEMA): ${(e as Error).message}. `
+				+ `Received schema=${echo(schema)}, data=${echo(data)}`,
+			);
+		}
+		const valid = validate(data);
+		if (!valid) {
+			const errors = validate.errors
+				?.map((err) => `${err.instancePath} ${err.message}`)
+				.join("; ");
+			throw new Error(
+				`Schema validation failed (authoritative): ${errors}. `
+				+ `The authoritative schema (PI_WORKFLOW_SCHEMA) is: ${echo(authoritative)}. `
+				+ `Received schema=${echo(schema)}, data=${echo(data)}`,
+			);
+		}
+		return {
+			content: [
+				{ type: "text" as const, text: "Structured output recorded successfully." },
+			],
+			details: data,
+		};
+	}
+
+	// ── 日常模式防御链 ──────────────────────────────────────────────
 
 	// 1. 互换检测：schema 像数据（对象无 keyword）且 data 像 schema（对象有 keyword）。
 	// 这是最严重的静默腐败路径——若放行，ajv 会把"数据形态的 schema"编译成接受一切，
@@ -253,7 +305,14 @@ function createToolDefinition() {
 			_toolCallId: string,
 			params: { schema: unknown; data: unknown },
 		) {
-			return executeStructuredOutput(params);
+			// workflow 模式（PI_WORKFLOW_SCHEMA 存在）：权威 schema 成为唯一校验权威，
+			// LLM 传入的 params.schema 被降级为错误回显，无法影响校验结果。
+			const authoritativeSchema = process.env[ENV_SCHEMA];
+			return executeStructuredOutput(
+				authoritativeSchema !== undefined
+					? { ...params, authoritativeSchema }
+					: params,
+			);
 		},
 	};
 }
@@ -345,14 +404,16 @@ function setupWorkflowHook(pi: PiAPI, schemaJson: string): void {
 					"[MANDATORY] Your structured-output call FAILED validation:",
 					lastSchemaError,
 					"",
-					`The correct schema is: ${schemaJson}`,
-					"Call the structured-output tool AGAIN with data conforming to this schema.",
+					"The schema is enforced by the system (PI_WORKFLOW_SCHEMA) — do NOT pass your own `schema` parameter.",
+					`The required schema for your \`data\` is: ${schemaJson}`,
+					"Call the structured-output tool AGAIN with ONLY the `data` parameter conforming to this schema.",
 					"Do NOT output the result as text — call the tool.",
 				].join("\n")
 			: [
 					"[MANDATORY] You MUST call the structured-output tool now.",
 					"Your task requires a structured output. Do NOT respond with plain text.",
-					`Call the structured-output tool with: schema = ${schemaJson}, data = <your result>`,
+					`The schema is enforced by the system. Call structured-output with ONLY \`data\` matching this shape: ${schemaJson}`,
+					"Do NOT pass a `schema` parameter — the system validates `data` against the authoritative schema automatically.",
 					"This is enforced by the workflow system. Just call the tool.",
 				].join("\n");
 
