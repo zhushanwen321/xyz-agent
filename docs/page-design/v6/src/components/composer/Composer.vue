@@ -1,10 +1,12 @@
 <script setup lang="ts">
 /** Composer · 输入区（v6 spec-input §9）
- *  - .comp-box（bg-input radius-lg）内含 QueueBubble + contenteditable + composer-bar
+ *  - .comp-box（bg-input radius-lg）内含 QueueBubble + staging chip + contenteditable + composer-bar
  *  - composer-bar：+ 按钮(Plus) / 上下文容量(hover bar) / 模型(glm-5.2) / 思考等级(medium) / send-slot(ArrowUp accent)
- *  - focus 态：3px 外环 box-shadow accent-ring */
-import { computed, ref } from 'vue'
+ *  - focus 态：3px 外环 box-shadow accent-ring
+ *  - staging chip（spec-content §12.6 +Q 变体）：TurnSummary fork/handoff 后出现，聚焦输入；enter = 无内容变体 */
+import { computed, ref, watch } from 'vue'
 import QueueBubble from './QueueBubble.vue'
+import { stagedAction, clearStagedAction } from '@/composables/useStore'
 
 const focused = ref(false)
 const draft = ref('')
@@ -37,13 +39,22 @@ function onInput(e: Event) {
   draft.value = (e.target as HTMLElement).innerText
 }
 function onSend(e: Event) {
-  // demo：无实际发送
+  // demo：无实际发送。stagedAction 消费：+Q 变体随发送生效（composer 直接 enter = 无内容变体）
+  clearStagedAction()
   draft.value = ''
   // contenteditable 不受 v-model 控制，需手动清 DOM
   const el = (e.target as HTMLElement).closest('.comp-input') as HTMLElement | null
     ?? inputRef.value
   if (el) el.textContent = ''
 }
+
+/** fork/handoff 点击后聚焦输入框（staging chip 同时显在输入框上方） */
+watch(stagedAction, (v) => {
+  if (v) {
+    inputRef.value?.focus()
+    focused.value = true
+  }
+})
 </script>
 
 <template>
@@ -51,6 +62,16 @@ function onSend(e: Event) {
     <div class="comp-box" :class="{ focused, 'has-input': draft.length > 0 }">
       <!-- ① QueueBubble 内嵌顶部 -->
       <QueueBubble v-if="showQueue" />
+
+      <!-- ④ staging chip：fork/handoff +Q 变体（icon 13px accent + 文案 + 取消 ×） -->
+      <div v-if="stagedAction" class="stage-chip">
+        <svg v-if="stagedAction.type === 'fork'" class="stage-chip-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></svg>
+        <svg v-else class="stage-chip-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 12h2a2 2 0 1 0 0-4h-3c-.6 0-1.1.2-1.4.6L3 14"/><path d="m7 18 1.6-1.4c.3-.4.8-.6 1.4-.6h4c1.1 0 2.1-.4 2.8-1.2l4.6-4.4a2 2 0 0 0-2.75-2.91l-4.2 3.9"/><path d="m2 13 6 6"/></svg>
+        <span class="stage-chip-text">{{ stagedAction.type === 'fork' ? 'fork 此会话（+Q）· 输入问题后回车' : 'handoff 此会话（+Q）· 输入问题后回车' }}</span>
+        <button class="stage-chip-x" title="取消" @click="clearStagedAction()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
 
       <!-- ⑤ Input：contenteditable，min-h-60 max-h-120 -->
       <div
@@ -120,6 +141,45 @@ function onSend(e: Event) {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
+
+/* staging chip：fork/handoff +Q 变体（spec §12.6 · rounded-md bg-surface border-border/50 px-3 py-1.5 flex gap-2 text-xs） */
+.stage-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 14px 0;
+  padding: 6px 12px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+  font-size: var(--text-xs);
+  color: var(--neutral-mid);
+}
+.stage-chip-ico {
+  width: 13px;
+  height: 13px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.stage-chip-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stage-chip-x {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--neutral-dim);
+  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
+}
+.stage-chip-x svg { width: 11px; height: 11px; }
+.stage-chip-x:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 
 /* contenteditable input */
 .comp-input {

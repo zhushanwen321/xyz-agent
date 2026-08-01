@@ -25,6 +25,11 @@ export const settingsPage = ref<SettingsPage>('provider')
 // 选中 session
 export const activeSessionId = ref<string>('session-1')
 
+// 对话流 staging 动作（TurnSummary fork/handoff → +Q 变体，spec-content §12.6）
+export type StagedAction = { type: 'fork' | 'handoff' }
+export const stagedAction = ref<StagedAction | null>(null)
+export function clearStagedAction() { stagedAction.value = null }
+
 // drawer 二级 tab（多实例 tab 用）
 export const detailFileTab = ref(0)
 export const terminalInstanceTab = ref(0)
