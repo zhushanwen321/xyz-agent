@@ -1,0 +1,54 @@
+# logo square — 1:1 正方形版
+
+来源: 基于 logo.svg (v1 双鱼版) 改造为 1:1 正方形构图
+用户 2026-08-02 需求: "将 V1 版本 logo 做成正方形的 SVG 和 PNG"
+
+## 与 logo.svg (竖向版) 的差异
+
+| 维度 | logo.svg 竖向版 | logo-square.svg 正方形版 |
+|------|----------------|------------------------|
+| viewBox | 0 0 857 1224 | 0 0 1200 1200 (1:1) |
+| 宽高比 | 0.7:1 (竖向) | 1:1 (正方形) |
+| 鱼大小 | 787x734 (原图大小) | 551x514 (缩放 0.7) |
+| 留白 | 顶部 243px, 底部 247px | 上下各 ~340px, 左右各 ~325px (~30% 留白) |
+| 几何 | potrace 6 条 path | 同上, 不动 |
+| 中心位置 | 鱼 bbox 中点居中 | **鱼视觉重心居中** (微调 50px y 平移) |
+
+## 实现方式
+
+**用外层 g 做缩放+平移, 保留 potrace 几何不动**:
+
+```svg
+<svg viewBox="0 0 1200 1200">
+  <g transform="translate(311, 273) scale(0.7)">  <!-- 缩放+居中 -->
+    <g transform="translate(0,1224) scale(0.1,-0.1) translate(-21.334,980.869)">  <!-- potrace 坐标翻转 -->
+      <path d="..." />  <!-- 6 条 potrace path 不动 -->
+    </g>
+  </g>
+</svg>
+```
+
+**关键决策: 视觉重心 vs bbox 中心**
+
+鱼原始 bbox 中心是 (413, 610), 但**视觉重心在鱼头偏上方**(y ≈ 500-600)——
+千问图是"头大尾小"的造型 (鱼头大+腹部+小尾鳍), bbox 中心不等于视觉重心。
+
+- bbox 居中 (translate y=173) → 鱼视觉偏上
+- 微调 +50px (translate y=223) → 仍偏上
+- 微调 +100px (translate y=273) → 视觉居中 ✓
+
+## 何时使用
+
+| 场景 | 推荐版本 |
+|------|----------|
+| 文档封面/落地页 hero (竖向) | logo.svg (v1) |
+| favicon / 头像 / 应用图标 (正方形) | **logo-square.svg** |
+| App icon iOS/Android (1:1 必需) | **logo-square.svg** + logo-square.png |
+| Markdown 嵌入 (无 SVG 支持) | logo-square.png (1200x1200) |
+| 极简展示 (大留白) | logo-square.svg (默认 30% 留白已够) |
+
+## PNG 渲染
+
+详见 [logo.png.src.txt](logo.png.src.txt) 的方法, 区别只是改尺寸 1200x1200
+和把 logo.svg 换成 logo-square.svg. 已渲染 [logo-square.png](logo-square.png)
+(60KB, 1200x1200).
