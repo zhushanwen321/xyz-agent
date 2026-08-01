@@ -146,12 +146,20 @@ Pass 2: 计算 blocked 标记（两类阻塞）
     - 若有非终态 → blocked = true（等子层完成）
 
   类型 B — wave 层等依赖 wave 完成（v3 新增，致命缺陷 2 修复）：
-  - 对每个 wave 节点，查其 dependsOn 列表（从 cw plan.split 映射到 childUnitId）
-    的 wave 是否全部终态：
-    - 若全部终态 → blocked = false（依赖满足，可推进）
-    - 若有未终态 → blocked = true（等依赖 wave 完成）
-  - wave 无 dependsOn → blocked = false
-  - blockedReason: "依赖 wave:X 未完成"
+  - **关键：wave 没有 plan.split（叶子，cw 自动填 split=[]）**。
+    wave 的 dependsOn 信息只存在于**父 slice 的 plan.split[]** 里。
+    frontier 必须做反向查找才能拿到 wave 的 dependsOn：
+    1. 找该 wave 的 parentUnitId（父 slice）
+    2. 读父 slice 的 plan.split[]
+    3. 匹配 childSlug：`<slice.slug>::<split.slug>` === 该 wave 的 slug 部分
+       （wave id 格式 = `wave:<slice.slug>::<split.slug>`，见 core/workunit.ts:207 + slice/execute.ts:49）
+    4. 读匹配到的 Split 项的 dependsOn（兄弟 slug 列表）
+    5. 每个兄弟 slug 映射到 wave unitId：`wave:<slice.slug>::<depSlug>`
+       （映射逻辑与 C1 改动 2 一致）
+  - 查到 wave 的 dependsOn（wave unitId 列表）后：
+    - 全部终态 → blocked = false
+    - 有未终态 → blocked = true（blockedReason: "依赖 wave:X 未完成"）
+  - wave 无 dependsOn（父 slice 的 split 里没声明）→ blocked = false
 
   planning 层非 executing 状态（created/clarifying/planning/design-reviewed）：blocked = false
 
@@ -159,6 +167,8 @@ Pass 2: 计算 blocked 标记（两类阻塞）
 ```
 
 **类型 B（wave blocked）的必要性**（第三轮审查致命缺陷 2）：frontier 驱动模型下，wave B dependsOn A。若 frontier 只对 planning 标 blocked（类型 A），wave blocked 恒 false → B 在 A 未 closeout 前被标 !blocked → BFS 提前派发 B → B 的 execute 看不到 A 的代码（A 还没写或还没 closeout）。扩展 wave blocked 让 B 在 A closeout 前保持 blocked，A 终态后 B 才解除。
+
+**反向查找的必要性**（第四轮审查高风险）：wave 是叶子，自身 plan.split 为空。dependsOn 只在父 slice 的 plan.split 里声明（split 项的 dependsOn 字段，存兄弟 slug）。不显式描述反向查找，实现者可能读 `wave.plan.split`（恒空）→ 类型 B 失效 → 致命缺陷 2 未修复。
 
 #### 边界情况
 

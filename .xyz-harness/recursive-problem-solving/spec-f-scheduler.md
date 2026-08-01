@@ -76,40 +76,68 @@ phase("bfs");
 const worktreeRegistry = {};  // unitId → worktreePath（串行 wave 复用）
 const sessionFiles = {};       // unitId → sessionFile（retrospect 用）
 const retryCount = {};         // `${unitId}:${nextAction}` → 连续未推进次数（熔断用）
+const prevNextAction = {};     // unitId → 上一轮的 nextAction（跨轮对比 status 是否推进）
 const MAX_ACTION_RETRY = 3;    // 同一 (unitId, nextAction) 连续 3 次未推进 → abort
 
 // 不变式：visited 集合已删除。frontier 本身只返回非终态节点，天然保证幂等。
 // 节点到终态（closed/aborted）后 frontier 自动不再返回。去重靠 cw status（唯一真相）。
 // 防 agent 卡死靠 retryCount 熔断 + F4 超时双重保护。
+//
+// retryCount 累加逻辑（v4 修复致命缺陷）：在主循环里跨轮对比，不在 executeNodeNextAction 内部。
+// 因为"agent 是否推进了 status"在当轮无法判定——需要对比上一轮的 nextAction。
 
 while (true) {
-  // 每轮开头查 frontier，获取 actionable 节点（!blocked && 非终态）
   const frontier = queryFrontier(rootUnitId);
   const actionable = frontier.nodes.filter(n => !n.blocked && !isTerminal(n.status));
 
   if (actionable.length === 0) {
-    // 检查是否全部终态
     const allTerminal = frontier.nodes.every(n => isTerminal(n.status));
-    if (allTerminal) break;  // 递归完成
-    // 还有 blocked 节点但无 actionable——不应发生（blocked 节点的依赖迟早完成）
+    if (allTerminal) break;
     log("WARN: 无 actionable 节点但树未完成，可能有节点永久 blocked");
     break;
   }
 
+  // retryCount 熔断检查 + 累加（跨轮对比）
+  const nodesToAbort = [];
+  for (const node of actionable) {
+    const retryKey = `${node.unitId}:${node.nextAction}`;
+    const prevAction = prevNextAction[node.unitId];
+    if (prevAction === node.nextAction) {
+      // nextAction 没变 = 上一轮的 agent 没推进 status → 累加
+      retryCount[retryKey] = (retryCount[retryKey] ?? 0) + 1;
+      if (retryCount[retryKey] >= MAX_ACTION_RETRY) {
+        log(`Node ${node.unitId} stuck at ${node.nextAction} for ${MAX_ACTION_RETRY} rounds, aborting`);
+        nodesToAbort.push(node.unitId);
+      }
+    } else {
+      // nextAction 变了 = status 推进了 → 重置
+      retryCount[retryKey] = 0;
+    }
+    prevNextAction[node.unitId] = node.nextAction;
+  }
+
+  // 熔断的节点调 cw abort（不派 agent）
+  for (const unitId of nodesToAbort) {
+    await abortUnit(unitId);
+  }
+
+  // 过滤掉已 abort 的节点（它们在本轮不派 agent）
+  const dispatchable = actionable.filter(n => !nodesToAbort.includes(n.unitId));
+
   // 拓扑排序（F3）
-  const { concurrent, sequential } = topoSort(actionable);
+  const { concurrent, sequential } = topoSort(dispatchable);
 
   // 并发执行无依赖组
   if (concurrent.length > 0) {
-    const results = await parallel(concurrent.map(node => executeNodeNextAction(node, worktreeRegistry, sessionFiles, retryCount)));
+    const results = await parallel(concurrent.map(node => executeNodeNextAction(node, worktreeRegistry, sessionFiles)));
     for (const r of results) {
       if (r.sessionFile) sessionFiles[r.unitId] = r.sessionFile;
     }
   }
 
-  // 串行执行有依赖组（每个执行后下一个才解除 blocked）
+  // 串行执行有依赖组
   for (const node of sequential) {
-    const r = await executeNodeNextAction(node, worktreeRegistry, sessionFiles, retryCount);
+    const r = await executeNodeNextAction(node, worktreeRegistry, sessionFiles);
     if (r.sessionFile) sessionFiles[r.unitId] = r.sessionFile;
   }
 }
@@ -121,19 +149,11 @@ return { status: "done", rootUnitId };
 ### executeNodeNextAction（按 frontier 的 nextAction 执行单个 action）
 
 ```javascript
-async function executeNodeNextAction(node, worktreeRegistry, sessionFiles, retryCount) {
+async function executeNodeNextAction(node, worktreeRegistry, sessionFiles) {
   const isWave = node.scope === "wave";
   const action = node.nextAction;
-  const retryKey = `${node.unitId}:${action}`;
 
-  // 熔断检查：同一 (unitId, nextAction) 连续 MAX_ACTION_RETRY 次未推进 → abort
-  // "未推进" = agent 返回后下一轮 frontier 仍返回该节点的同一 nextAction
-  if ((retryCount[retryKey] ?? 0) >= MAX_ACTION_RETRY) {
-    log(`Node ${node.unitId} stuck at ${action} for ${MAX_ACTION_RETRY} rounds, aborting`);
-    await abortUnit(node.unitId);
-    retryCount[retryKey] = 0;
-    return { unitId: node.unitId, error: `stuck at ${action}` };
-  }
+  // retryCount 熔断已移到 BFS 主循环（跨轮对比 prevNextAction），此处不再检查。
 
   // worktree 复用决策
   let cwd = $WORKSPACE;
@@ -193,14 +213,10 @@ async function executeNodeNextAction(node, worktreeRegistry, sessionFiles, retry
   if (r.error || isTimeoutError(r)) {
     log(`Action ${action} for ${node.unitId} failed: ${r.error ?? "timeout"}`);
     await abortUnit(node.unitId);
-    retryCount[retryKey] = 0;  // abort 后重置（节点已终态，不会再被派）
     return result;
   }
 
-  // 成功返回：重置该 action 的 retryCount（agent 推进了 status，下一轮 nextAction 会变）
-  // 如果 agent 返回了但 cw status 没推进（gate fail 后 agent 放弃但没 abort），
-  // 下一轮 frontier 仍返回同一 nextAction → retryCount 累加 → 最终熔断 abort
-  retryCount[retryKey] = 0;
+  // 成功返回。retryCount 累加/重置在主循环跨轮对比（prevNextAction），此处不处理。
 
   return result;
 }
