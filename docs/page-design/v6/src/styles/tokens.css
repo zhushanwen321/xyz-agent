@@ -1,0 +1,94 @@
+/* v6 视觉 token 块（逐字对齐 v6-spec-base.css :17-113 SSOT）*/
+:root {
+  /* 背景层级 */
+  --bg: #1a1b1f;
+  --surface: #272830;
+  --surface-hover: #363740;
+  --surface-2: #2e2f38;
+  --bg-elevated: #313239;
+  --bg-input: #1e1f24;
+  --bg-sunken: var(--bg);
+  --bg-card: #22242c;
+
+  /* 文字 neutral 谱系 */
+  --neutral-fg: #e5e7eb;
+  --neutral-mid: #9ca3af;
+  --neutral-dim: #7d8494;
+  --neutral-faint: #4b5563;
+  --neutral-ico: #8b8d94;
+  --neutral-ico-hover: #e5e7eb;
+
+  /* 边框/分隔 */
+  --border: rgba(255,255,255,0.08);
+  --border-strong: rgba(255,255,255,0.15);
+
+  /* 主色（冷蓝）*/
+  --accent: #4f8ef7;
+  --accent-hover: #6ba3ff;
+  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
+  --accent-ring: rgba(79,142,247,0.30);
+
+  /* 状态色 */
+  --success: #22c55e;
+  --warn: #b08a3e;
+  --danger: #ef4444;
+  --info: #38bdf8;
+  --reasoning: #a78bfa;
+  --success-soft: color-mix(in oklch, var(--success) 12%, transparent);
+  --warn-soft: color-mix(in oklch, var(--warn) 14%, transparent);
+  --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
+  --info-soft: color-mix(in oklch, var(--info) 12%, transparent);
+  --reasoning-soft: color-mix(in oklch, var(--reasoning) 12%, transparent);
+
+  /* diff */
+  --diff-add-bg: color-mix(in oklch, var(--success) 12%, transparent);
+  --diff-del-bg: color-mix(in oklch, var(--danger) 12%, transparent);
+  --diff-add-strong: color-mix(in oklch, var(--success) 45%, transparent);
+  --diff-del-strong: color-mix(in oklch, var(--danger) 45%, transparent);
+
+  /* 字体 */
+  --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+
+  /* 字号 scale */
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+
+  /* 圆角 */
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+
+  /* 间距（4px 栅格）*/
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-6: 24px; --space-8: 32px; --space-12: 48px; --space-16: 64px;
+
+  /* 阴影 */
+  --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);
+  --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
+  --shadow-drawer: -12px 0 24px rgba(0,0,0,0.16);
+  --shadow-glow: 0 0 0 3px rgba(79,142,247,0.25);
+
+  /* 组件尺寸 */
+  --content-max-w: 720px;
+  --composer-btn-size: 30px;
+  --bash-output-max-height: 240px;
+
+  /* z-index 语义化 */
+  --z-sticky: 1;
+  --z-popover: 10;
+  --z-overlay: 20;
+  --z-modal: 1000;
+
+  /* 动效 */
+  --ease: cubic-bezier(0.4,0,0.2,1);
+  --duration-fast: 120ms;
+  --duration: 200ms;
+  --duration-slow: 320ms;
+
+  /* panel-bg：panel 内 sticky 浮层底色契约 */
+  --panel-bg: var(--surface);
+}
