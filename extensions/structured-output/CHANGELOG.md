@@ -1,11 +1,5 @@
 # @zhushanwen/pi-structured-output
 
-## 2.0.1
-
-### Patch Changes
-
-- Fix silent schema-bypass in workflow mode: structured-output now validates `data` against the authoritative schema from `PI_WORKFLOW_SCHEMA` env instead of the LLM-supplied `schema` parameter. Previously the LLM could rewrite the schema on each tool call (e.g. changing `items` from object to string) and self-validate against its own rewritten schema, silently passing malformed data — the 2026-08-01 incident where 4 channel fixes were silently lost. The `authoritativeSchema` is now the sole validation authority in workflow mode; the LLM-supplied `schema` is demoted to error-display only. Daily interactive mode (no env) behavior is unchanged. Steer messages and workflow-mode prompts updated to guide LLM to pass only `data`.
-
 ## 2.0.0
 
 ### Minor Changes
