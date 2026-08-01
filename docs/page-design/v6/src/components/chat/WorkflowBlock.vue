@@ -3,6 +3,12 @@
  *  - collapsed only：Workflow icon 14px + 「workflow」prefix + name·slug
  *  - running：双环 loader；failed：icon+name 降 neutral-mid */
 import { computed } from 'vue'
+import { drawerOpen, drawerTab } from '@/composables/useStore'
+
+function openDrawer() {
+  drawerTab.value = 'workflow'
+  drawerOpen.value = true
+}
 
 const props = defineProps<{ data: Record<string, unknown> }>()
 const name = computed(() => (props.data.name as string) || '')
@@ -15,7 +21,7 @@ const dim = computed(() => failed.value)
 
 <template>
   <div class="wf">
-    <div class="wf-hd">
+    <div class="wf-hd" @click="openDrawer">
       <svg v-if="running" class="wf-loader" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" opacity="0.35"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>
       <svg v-else class="wf-ico" :class="{ dim }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>
       <span class="wf-prefix" :class="{ dim }">workflow</span>
@@ -29,7 +35,7 @@ const dim = computed(() => failed.value)
 </template>
 
 <style scoped>
-.wf { padding: 8px 0; transition: opacity var(--duration-fast); }
+.wf { padding: 10px 0 8px; transition: opacity var(--duration-fast); }
 .wf:hover { opacity: 0.8; }
 .wf-hd {
   display: flex;

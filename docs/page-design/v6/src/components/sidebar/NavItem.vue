@@ -75,10 +75,14 @@ const ICONS: Record<Props['icon'], string> = {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* kbd 保留 border-strong：物理按键语义，§5.1 去 border 不覆盖（spec §1 anno） */
 .nav-item__kbd {
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   color: var(--neutral-dim);
-  opacity: 0.6;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
 }
 </style>

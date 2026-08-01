@@ -1,12 +1,14 @@
 <script setup lang="ts">
-/** WorkflowListView：从 mock workflows 渲染工作流卡片。
+/** WorkflowListView：从 mock workflows 渲染工作流卡片（两层视图）。
  *  v6（spec §7）：状态指示最左，无独立 workflow icon；
  *  进度条仅 running=accent，done=neutral-dim（降中性），
  *  failed=danger，paused=warn；卡片无 border。
- *  每卡片：状态 + name + slug + 进度条 + agents 计数。 */
+ *  每卡片：状态 + name + slug + 进度条 + agents 计数 + 耗时（paused 显「· 暂停」）。
+ *  点击卡片 → 本地 selectedId 切到视图 2 WorkflowDetail（选中卡片 bg-surface + name accent）。 */
 
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { workflows, type WorkflowItem } from '@/mock/sessions'
+import WorkflowDetail from './WorkflowDetail.vue'
 
 type Status = WorkflowItem['status']
 
@@ -15,6 +17,22 @@ function fillClass(s: Status) {
 }
 function dotClass(s: Status) {
   return `is-${s}`
+}
+
+// 两层视图（spec §7）：列表 → 点击卡片 → 详情。
+// selectedId 保留（返回列表后选中卡片仍高亮，spec 视图 1）；viewDetail 控制视图切换。
+const selectedId = ref<string | null>(null)
+const viewDetail = ref(false)
+const selectedWf = computed(() =>
+  workflows.find((w) => w.id === selectedId.value),
+)
+
+function select(id: string) {
+  selectedId.value = id
+  viewDetail.value = true
+}
+function backToList() {
+  viewDetail.value = false
 }
 
 // running 卡片 abort 两段式确认（纯 UI 状态）
@@ -31,15 +49,27 @@ function resetAbort() {
 
 <template>
   <div class="wf-list">
-    <div
-      v-for="wf in workflows"
-      :key="wf.id"
-      class="wf-card"
-      role="button"
-      tabindex="0"
-      @mouseenter="hoveredId = wf.id"
-      @mouseleave="hoveredId = null; pendingAbort = null"
-    >
+    <!-- 视图 2：详情（WorkflowDetail） -->
+    <WorkflowDetail
+      v-if="viewDetail && selectedWf"
+      :workflow="selectedWf"
+      @back="backToList"
+    />
+
+    <!-- 视图 1：列表 -->
+    <template v-else>
+      <div
+        v-for="wf in workflows"
+        :key="wf.id"
+        class="wf-card"
+        :class="{ 'wf-card--sel': selectedId === wf.id }"
+        role="button"
+        tabindex="0"
+        @click="select(wf.id)"
+        @keydown.enter="select(wf.id)"
+        @mouseenter="hoveredId = wf.id"
+        @mouseleave="hoveredId = null; pendingAbort = null"
+      >
       <div class="wf-card__row">
         <!-- 状态指示（最左）：running=spinner / 其他=圆点 -->
         <svg
@@ -94,7 +124,7 @@ function resetAbort() {
         </div>
       </div>
 
-      <!-- 进度条 + agents 计数（去百分比） -->
+      <!-- 进度条 + agents 计数 + 耗时（spec §7 meta 行「N / M agents · 4m」，paused「· 暂停」） -->
       <div class="wf-card__prog">
         <div class="wf-card__pb">
           <div
@@ -104,8 +134,10 @@ function resetAbort() {
           ></div>
         </div>
         <span class="wf-card__meta">{{ wf.agentsDone }} / {{ wf.agentsTotal }} agents</span>
+        <span class="wf-card__elapsed">· {{ wf.status === 'paused' ? '暂停' : wf.elapsed }}</span>
       </div>
-    </div>
+      </div>
+    </template>
   </div>
 </template>
 
@@ -125,6 +157,13 @@ function resetAbort() {
 }
 .wf-card:hover {
   background: var(--surface-hover);
+}
+/* 选中卡片高亮：bg-surface + name accent（spec §7 视图 1） */
+.wf-card--sel {
+  background: var(--surface);
+}
+.wf-card--sel .wf-card__name {
+  color: var(--accent);
 }
 .wf-card__row {
   display: flex;
@@ -250,6 +289,11 @@ function resetAbort() {
 }
 .wf-card__meta {
   white-space: nowrap;
+}
+.wf-card__elapsed {
+  flex-shrink: 0;
+  white-space: nowrap;
+  color: var(--neutral-dim);
 }
 @keyframes spin {
   to {

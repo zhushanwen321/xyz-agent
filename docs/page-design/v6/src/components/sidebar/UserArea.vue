@@ -86,7 +86,6 @@ withDefaults(defineProps<Props>(), { name: 'user' })
   align-items: center;
   gap: 8px;
   padding: 8px;
-  border-top: 1px solid var(--border);
   border-radius: var(--radius);
   font-size: var(--text-sm);
   color: var(--neutral-mid);

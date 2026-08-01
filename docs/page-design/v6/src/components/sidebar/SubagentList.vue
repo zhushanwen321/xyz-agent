@@ -2,7 +2,7 @@
 /** SubagentList：从 mock subagents 渲染子智能体卡片。
  *  v6（spec §7）：卡片 py 统一 6px · 无 border；
  *  状态指示在最左：running→spinner / done→success 圆点 / failed→danger / cancelled→dim.5。
- *  每卡片：状态 + name + model·thinking + 耗时 + running cancel。 */
+ *  每卡片：状态 + name + stats（turns · tokens）+ running cancel。 */
 
 import { ref } from 'vue'
 import { subagents, type SubagentItem } from '@/mock/sessions'
@@ -55,9 +55,6 @@ function resetCancel() {
         <!-- name + stats（spec §7：turns · tokens） -->
         <span class="sa-card__name">{{ sa.name }}</span>
         <span class="sa-card__stats">{{ sa.turns }} turns · {{ sa.tokens }} tok</span>
-
-        <!-- 耗时 -->
-        <span v-if="sa.elapsed" class="sa-card__elapsed">{{ sa.elapsed }}</span>
 
         <!-- running cancel 按钮（X ghost，两段式确认） -->
         <div v-if="sa.status === 'running' && (hoveredId === sa.id || pendingCancel === sa.id)" class="sa-card__cancel">
@@ -161,12 +158,6 @@ function resetCancel() {
 }
 .sa-card__dot.is-running {
   background: var(--accent);
-}
-.sa-card__elapsed {
-  flex-shrink: 0;
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  color: var(--neutral-dim);
 }
 /* running cancel 按钮 */
 .sa-card__cancel {

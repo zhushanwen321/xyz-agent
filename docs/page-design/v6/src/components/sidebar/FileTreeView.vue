@@ -4,11 +4,10 @@
  *  git badge 缩小保留语义色（M/A/D/U/R）；目录改动数降中性；ignored 灰斜体。
  *  选中态 bg-surface（§3.2 列表项型）。 */
 
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import {
   fileTree,
   type FileNode,
-  type SessionItem,
 } from '@/mock/sessions'
 import { activeSessionId } from '@/composables/useStore'
 import { sessions } from '@/mock/sessions'
@@ -16,10 +15,10 @@ import { sessions } from '@/mock/sessions'
 const BASE_PADDING = 8 // depth=0 起始
 const INDENT_STEP = 10 // v6：14→10（spec §1.3#12）
 
-/** 当前选中 session（用于 header 显示） */
-const activeSession = sessions.find(
-  (s) => s.id === activeSessionId.value,
-) as SessionItem | undefined
+/** 当前选中 session（computed：随 activeSessionId 响应式，用于 header 显示） */
+const activeSession = computed(() =>
+  sessions.find((s) => s.id === activeSessionId.value),
+)
 
 const showIgnored = ref(false)
 
@@ -162,14 +161,15 @@ function visibleNodes(): FileNode[] {
           {{ node.gitStatus }}
         </span>
 
-        <!-- 行数 stats -->
-        <span v-if="node.stats" class="tr-row__stats">
-          <span v-if="node.stats.add" class="tr-row__stats-add">
+        <!-- 行数 stats（+add / −del / untracked ~size，spec §6） -->
+        <span v-if="node.stats || node.size" class="tr-row__stats">
+          <span v-if="node.stats && node.stats.add" class="tr-row__stats-add">
             +{{ node.stats.add }}
           </span>
-          <span v-if="node.stats.del" class="tr-row__stats-del">
+          <span v-if="node.stats && node.stats.del" class="tr-row__stats-del">
             −{{ node.stats.del }}
           </span>
+          <span v-if="node.size" class="tr-row__stats-sz">{{ node.size }}</span>
         </span>
       </div>
     </div>
@@ -362,5 +362,9 @@ function visibleNodes(): FileNode[] {
 }
 .tr-row__stats-del {
   color: var(--danger);
+}
+/* untracked 文件：~size 占位（dim，spec §6 .tr-stats .sz） */
+.tr-row__stats-sz {
+  color: var(--neutral-dim);
 }
 </style>

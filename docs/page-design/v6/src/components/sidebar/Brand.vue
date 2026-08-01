@@ -89,7 +89,7 @@ const emit = defineEmits<{ (e: 'update-click'): void }>()
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   font-size: var(--text-2xs);
   color: var(--accent);
   background: transparent;

@@ -30,6 +30,8 @@ export interface FileNode {
   depth: number
   gitStatus?: 'M' | 'A' | 'D' | 'U' | 'R'
   stats?: { add: number; del: number }
+  /** untracked 文件大小占位（spec §6：~size dim） */
+  size?: string
   ignored?: boolean
   expanded?: boolean
   childCount?: number
@@ -41,6 +43,7 @@ export const fileTree: FileNode[] = [
   { name: 'v6-design.md', type: 'file', depth: 2, gitStatus: 'M', stats: { add: 24, del: 8 } },
   { name: 'v6-spec-shell.html', type: 'file', depth: 2, gitStatus: 'M', stats: { add: 12, del: 5 } },
   { name: 'v6-spec-drawer.html', type: 'file', depth: 2, gitStatus: 'A', stats: { add: 142, del: 0 } },
+  { name: 'notes.md', type: 'file', depth: 2, gitStatus: 'A', size: '~2k' },
   { name: 'v6-app-demo.html', type: 'file', depth: 2, gitStatus: 'D', stats: { add: 0, del: 1909 } },
   { name: 'standards.md', type: 'file', depth: 2, ignored: true },
   { name: 'architecture', type: 'dir', depth: 1, childCount: 5 },
@@ -73,6 +76,15 @@ export const subagents: SubagentItem[] = [
 ]
 
 // === Workflow 列表（sidebar workflows tab）===
+export type WorkflowCallStatus = 'running' | 'done' | 'failed'
+
+export interface WorkflowCall {
+  id: string
+  name: string
+  status: WorkflowCallStatus
+  sessionId: string
+}
+
 export interface WorkflowItem {
   id: string
   name: string
@@ -82,13 +94,42 @@ export interface WorkflowItem {
   /** v6 spec §7：agents 计数 = 完成数 / 总数（done ≤ total） */
   agentsDone: number
   agentsTotal: number
+  /** 耗时 demo 值（spec §7 meta 行「· 4m」，paused 显示「· 暂停」） */
+  elapsed?: string
+  /** 详情视图 agent call 行（WorkflowDetail，spec §7 视图 2） */
+  calls: WorkflowCall[]
 }
 
 export const workflows: WorkflowItem[] = [
-  { id: 'wf-1', name: 'build-and-deploy', slug: 'release-v6', status: 'running', progress: 65, agentsDone: 3, agentsTotal: 5 },
-  { id: 'wf-2', name: 'code-review', slug: 'pr-61-review', status: 'done', progress: 100, agentsDone: 5, agentsTotal: 5 },
-  { id: 'wf-3', name: 'test-coverage', slug: 'audit-blocks', status: 'failed', progress: 40, agentsDone: 1, agentsTotal: 4 },
-  { id: 'wf-4', name: 'docs-update', slug: 'sync-specs', status: 'paused', progress: 30, agentsDone: 2, agentsTotal: 6 },
+  {
+    id: 'wf-1', name: 'build-and-deploy', slug: 'release-v6', status: 'running', progress: 65, agentsDone: 3, agentsTotal: 5, elapsed: '4m',
+    calls: [
+      { id: 'c-1', name: 'code-review', status: 'done', sessionId: 'sess_a1b2' },
+      { id: 'c-2', name: 'test-writer', status: 'running', sessionId: 'sess_c3d4' },
+      { id: 'c-3', name: 'deploy-check', status: 'failed', sessionId: 'sess_e5f6' },
+    ],
+  },
+  {
+    id: 'wf-2', name: 'code-review', slug: 'pr-61-review', status: 'done', progress: 100, agentsDone: 5, agentsTotal: 5, elapsed: '6m',
+    calls: [
+      { id: 'c-1', name: 'reviewer', status: 'done', sessionId: 'sess_a1b2' },
+      { id: 'c-2', name: 'oracle', status: 'done', sessionId: 'sess_c3d4' },
+    ],
+  },
+  {
+    id: 'wf-3', name: 'test-coverage', slug: 'audit-blocks', status: 'failed', progress: 40, agentsDone: 1, agentsTotal: 4, elapsed: '3m',
+    calls: [
+      { id: 'c-1', name: 'test-runner', status: 'done', sessionId: 'sess_f1g2' },
+      { id: 'c-2', name: 'explorer', status: 'failed', sessionId: 'sess_h3i4' },
+    ],
+  },
+  {
+    id: 'wf-4', name: 'docs-update', slug: 'sync-specs', status: 'paused', progress: 30, agentsDone: 2, agentsTotal: 6,
+    calls: [
+      { id: 'c-1', name: 'writer', status: 'done', sessionId: 'sess_j5k6' },
+      { id: 'c-2', name: 'researcher', status: 'running', sessionId: 'sess_l7m8' },
+    ],
+  },
 ]
 
 // === 对话流消息（MessageStream）===
@@ -111,13 +152,12 @@ export const chatTurns: ChatTurn[] = [
     blocks: [
       {
         type: 'thinking',
-        state: 'collapsed',
-        data: { preview: '对比维度主要看圆角尺度、分隔方式、灰度分布、列宽留白、彩色密度五个杠杆…' },
+        data: { state: 'expanded', preview: '对比维度主要看圆角尺度、分隔方式、灰度分布、列宽留白、彩色密度五个杠杆…' },
       },
       {
         type: 'bash',
-        state: 'done',
         data: {
+          state: 'done',
           cmd: 'git status --porcelain',
           output: '?? docs/page-design/v6-design.md\n?? docs/page-design/v6-spec-shell.html',
           exit: 0,
@@ -125,8 +165,8 @@ export const chatTurns: ChatTurn[] = [
       },
       {
         type: 'tool',
-        state: 'expanded',
         data: {
+          state: 'expanded',
           name: 'read',
           arg: 'docs/standards.md',
           exit: 0,
@@ -136,8 +176,8 @@ export const chatTurns: ChatTurn[] = [
       },
       {
         type: 'changeset',
-        state: 'collapsed',
         data: {
+          state: 'collapsed',
           status: 'accumulating',
           title: 'v6 视觉稿修复',
           count: 5,
@@ -156,14 +196,34 @@ export const chatTurns: ChatTurn[] = [
     userMessage: '把这些修复都做了，不用过问我',
     blocks: [
       {
+        // running 态 bash：展示双环 loader + 取消按钮 + no-context tag
+        type: 'bash',
+        data: {
+          state: 'running',
+          cmd: 'pnpm install --ignore-workspace',
+          excludeFromContext: true,
+        },
+      },
+      {
+        // tool-bash（§5B）：agent 调用，嵌 tool 块可折叠，bg-input 容器
+        type: 'tool',
+        data: {
+          state: 'expanded',
+          name: 'Bash',
+          toolType: 'bash',
+          arg: 'pnpm add lodash',
+          cmd: 'pnpm add lodash',
+          exit: 0,
+          output: '+ lodash@4.17.21\nadded 1 package in 2s',
+        },
+      },
+      {
         type: 'subagent',
-        state: 'done',
-        data: { name: 'researcher', slug: 'find-auth-flow', model: 'glm-5.2', thinking: 'medium' },
+        data: { state: 'done', name: 'researcher', slug: 'find-auth-flow', model: 'glm-5.2', thinking: 'medium' },
       },
       {
         type: 'workflow',
-        state: 'done',
-        data: { name: 'code-review', slug: 'pr-61-review' },
+        data: { state: 'done', name: 'code-review', slug: 'pr-61-review' },
       },
     ],
   },

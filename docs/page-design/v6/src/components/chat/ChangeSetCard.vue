@@ -1,9 +1,16 @@
 <script setup lang="ts">
 /** ChangeSetCard · 变更集卡片（v6 spec-blocks §7）
- *  - bg-elevated 10px 圆角，无 border（浮在 main-panel surface 上）
+ *  - bg-surface + 10px 圆角，无 border（spec-blocks.html:574/642「v6：去 border，改 bg-surface」）
  *  - 状态 badge 5 态彩色：accumulating/ready/partially-reviewed/resolved/superseded
- *  - collapsed：header only；expanded：文件列表（badge M/A/D/U + 文件名 + ±行数） */
+ *  - collapsed：header only；expanded：文件列表（badge M/A/D/U + 文件名 + ±行数）
+ *  - 文件行：hover 显 ExternalLink icon + click → drawer detail */
 import { computed, ref } from 'vue'
+import { drawerOpen, drawerTab } from '@/composables/useStore'
+
+function openFile() {
+  drawerTab.value = 'detail'
+  drawerOpen.value = true
+}
 
 interface CsFile { name: string; badge: 'M' | 'A' | 'D' | 'U'; add: number; del: number }
 
@@ -40,11 +47,13 @@ const statusLabel: Record<string, string> = {
       </span>
     </div>
     <div v-if="expanded" class="cs-detail">
-      <div v-for="(f, i) in files" :key="i" class="cs-file">
+      <div v-for="(f, i) in files" :key="i" class="cs-file" @click="openFile">
         <span class="cs-fbadge" :class="f.badge">{{ f.badge }}</span>
         <span class="cs-fname">{{ f.name }}</span>
         <span v-if="f.add" class="fstat add">+{{ f.add }}</span>
         <span v-if="f.del" class="fstat del">-{{ f.del }}</span>
+        <!-- ExternalLink icon：hover 显（opacity 0→1）-->
+        <svg class="cs-extlink" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
       </div>
     </div>
   </div>
@@ -53,7 +62,7 @@ const statusLabel: Record<string, string> = {
 <style scoped>
 .cs {
   margin-top: 8px;
-  background: var(--bg-elevated);
+  background: var(--surface);
   border-radius: 10px;
   overflow: hidden;
 }
@@ -121,9 +130,20 @@ const statusLabel: Record<string, string> = {
   gap: 8px;
   padding: 6px 12px;
   border-radius: var(--radius-sm);
+  cursor: pointer;
   transition: background var(--duration-fast) var(--ease);
 }
 .cs-file:hover { background: var(--surface-hover); }
+/* ExternalLink：hover 显（opacity 0→1），12px neutral-dim */
+.cs-extlink {
+  width: 12px;
+  height: 12px;
+  color: var(--neutral-dim);
+  opacity: 0;
+  flex-shrink: 0;
+  transition: opacity var(--duration-fast) var(--ease);
+}
+.cs-file:hover .cs-extlink { opacity: 1; }
 .cs-fbadge {
   display: inline-flex;
   align-items: center;

@@ -3,6 +3,12 @@
  *  - collapsed only：Bot icon 14px + 「subagent」prefix + name·slug + (model·thinking)
  *  - running：双环 loader；failed：icon+agent 降 neutral-mid */
 import { computed } from 'vue'
+import { drawerOpen, drawerTab } from '@/composables/useStore'
+
+function openDrawer() {
+  drawerTab.value = 'subagent'
+  drawerOpen.value = true
+}
 
 const props = defineProps<{ data: Record<string, unknown> }>()
 const name = computed(() => (props.data.name as string) || '')
@@ -17,7 +23,7 @@ const dim = computed(() => failed.value)
 
 <template>
   <div class="sa">
-    <div class="sa-hd">
+    <div class="sa-hd" @click="openDrawer">
       <svg v-if="running" class="sa-loader" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" opacity="0.35"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>
       <svg v-else class="sa-ico" :class="{ dim }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
       <span class="sa-prefix" :class="{ dim }">subagent</span>
@@ -32,7 +38,7 @@ const dim = computed(() => failed.value)
 </template>
 
 <style scoped>
-.sa { padding: 8px 0; transition: opacity var(--duration-fast); }
+.sa { padding: 10px 0 8px; transition: opacity var(--duration-fast); }
 .sa:hover { opacity: 0.8; }
 .sa-hd {
   display: flex;

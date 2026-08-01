@@ -7,6 +7,7 @@
 import { computed, ref } from 'vue'
 import { activeSessionId } from '@/composables/useStore'
 import { sessions, type SessionItem } from '@/mock/sessions'
+import ForkGroup from './ForkGroup.vue'
 
 type Status = SessionItem['status']
 
@@ -72,10 +73,9 @@ function resetDelete() {
       </div>
 
       <!-- 会话项 -->
-      <div
-        v-for="s in grp.items"
-        :key="s.id"
-        class="si"
+      <template v-for="s in grp.items" :key="s.id">
+        <div
+          class="si"
         :class="{
           'si--active': activeSessionId === s.id,
           'si--dead': s.status === 'dead',
@@ -178,7 +178,10 @@ function resetDelete() {
             </button>
           </template>
         </div>
-      </div>
+        </div>
+        <!-- 后台分支小列表：当前 session 项下方（spec §5 ForkGroup） -->
+        <ForkGroup v-if="s.id === activeSessionId" />
+      </template>
     </div>
   </div>
 </template>
@@ -191,7 +194,7 @@ function resetDelete() {
   padding: 0 4px;
 }
 
-/* 组标题：sticky · normal-case · 11px · neutral-dim */
+/* 组标题：sticky · normal-case · 11px · neutral-dim · 底色 bg（与侧栏底融合，遮滚过 item，spec §4） */
 .group-head {
   position: sticky;
   top: 0;
@@ -200,6 +203,7 @@ function resetDelete() {
   align-items: center;
   gap: 6px;
   padding: 8px 8px 2px;
+  background: var(--bg);
 }
 .group-head__icon {
   width: 11px;
@@ -237,6 +241,10 @@ function resetDelete() {
 }
 .si:hover {
   background: var(--surface-hover);
+}
+/* hover 时隐藏耗时，给 ghost 操作让位（保留占位防跳动，spec §3 hover 帧） */
+.si:hover .si__time {
+  visibility: hidden;
 }
 /* active：bg-surface 实色块 + text-accent 蓝字，无 ring 无左条（spec §3.2） */
 .si--active {
@@ -349,6 +357,10 @@ function resetDelete() {
 .si-act:hover {
   background: var(--surface-hover);
   color: var(--neutral-fg);
+}
+.si-act:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0, 0, 0, 0.4);
 }
 .si-act svg {
   width: 13px;
