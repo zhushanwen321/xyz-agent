@@ -85,6 +85,12 @@ const MAX_ACTION_RETRY = 3;    // 同一 (unitId, nextAction) 连续 3 次未推
 //
 // retryCount 累加逻辑（v4 修复致命缺陷）：在主循环里跨轮对比，不在 executeNodeNextAction 内部。
 // 因为"agent 是否推进了 status"在当轮无法判定——需要对比上一轮的 nextAction。
+//
+// 实现注意（第五轮审查建议，非致命）：
+// - progressive action（clarify/plan/design-review）合法地反复执行（status 原地不动）。
+//   retryCount 会在 3 轮后 abort 反复 progressive 的节点。对复杂任务需多轮 progressive 的场景可能误杀。
+//   建议：对 progressive action 调大阈值（5-8）或豁免。实现时 frontier 节点可暴露 progressive 标志。
+// - allTerminal 判定可简化为 frontier.nodes.length === 0（语义等价，因 frontier 只返回非终态节点）。
 
 while (true) {
   const frontier = queryFrontier(rootUnitId);

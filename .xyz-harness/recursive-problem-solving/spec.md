@@ -811,6 +811,8 @@ CMU 实证：静态单层规划 > 动态多层规划。当前架构是"BFS 逐�
 12. **轮次 14（拆分子 spec + 三维审查）**：拆分 3 个子 spec（spec-w/spec-c/spec-f），派 3 个 subagent 从一致性/逻辑正确性/覆盖度三维审查。发现 5 个必须修正的设计缺陷（returnMeta 竞态、postAgentResult 定位错、BFS 缺 planning retrospect、spec-w 漏前 3 处改动、topoSort queue 重置 bug）+ 8 个需补充的设计缺口。确认不需要新增子 spec（W/C/F 覆盖核心需求），runtime 可见性（spec-g）和 deployment（spec-d）延后。
 13. **轮次 15（修复全部审查发现）**：三个子 spec + 主 spec 全部修正。spec-w 改 returnMeta 模式（消除模块级变量竞态，统一 worktreePath+sessionFile 传递）+ 补认领前 3 处改动。spec-c C1 扩展为含 dependsOn、C2 frontier 补 dependsOn 输出、C5 扩展 WAVE_RULES.retrospect。spec-f 补聚合回扫（frontier 驱动统一路径）+ topoSort bug 修复 + worktreeRegistry + 失败传播（cw abort）+ childUnitIds prompt 指示 + 崩溃恢复策略 + replan 禁用（MVP）+ budget 配置 + startLayer 指引。主 spec 补改动编号映射表、R2 更新、spec-g/spec-d 占位。
 14. **轮次 16（第三轮审查 + 修复）**：3 个 subagent 审查 v2，发现 v2 frontier 驱动重写引入 2 个致命缺陷：(1) visited 集合阻断所有多-action 节点推进（节点走完第 1 个 action 后被永久 visited，第 2-8 个 action 永不执行）；(2) frontier 的 blocked 只标 planning 层，wave 间 dependsOn 无法表达（wave B 在 A 未完成时被提前派发）。另发现 allWavesClosed gate 实测本就接受 aborted（C-supplement 是空操作）。修复：spec-f 删 visited 改 retryCount 熔断 + queryFrontier 封装（execSync timeout + 轮次边界不变式）+ split-空检测；spec-c C2 Pass 2 扩展类型 B（wave dependsOn blocked）；主 spec 决策 C 加勘误、"9 步"统一为"8 步"。详见 §14.3。
+15. **轮次 17（第四轮审查 + 修复）**：1 个 subagent 深度验证 v3。发现 retryCount 熔断是空操作（只有 `=0` 重置没有 `++` 累加，熔断永不触发），以及 wave dependsOn 反向查找描述不全。修复：retryCount 累加移到 BFS 主循环（跨轮对比 prevNextAction，nextAction 不变才累加）；spec-c C2 类型 B 补 5 步反向查找显式描述。
+16. **轮次 18（第五轮审查 — 收敛）**：1 个 subagent 对照 cw dist 源码 + pi 源码逐项验证 v4。retryCount 跨轮熔断通过、类型 B 反向查找通过、整体收敛性通过（3 层树逐步推演收敛到 allTerminal）、无 v4 新致命问题。**迭代收敛，方案可跑通。** 4 个非致命改进建议记录为实现注意事项：progressive action 熔断豁免、类型 B 改用 childDelivery、allTerminal 判定简化、cw 补 duplicate-slug gate。
 
 ---
 

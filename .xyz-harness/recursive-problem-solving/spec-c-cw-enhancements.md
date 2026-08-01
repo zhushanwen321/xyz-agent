@@ -170,6 +170,10 @@ Pass 2: 计算 blocked 标记（两类阻塞）
 
 **反向查找的必要性**（第四轮审查高风险）：wave 是叶子，自身 plan.split 为空。dependsOn 只在父 slice 的 plan.split 里声明（split 项的 dependsOn 字段，存兄弟 slug）。不显式描述反向查找，实现者可能读 `wave.plan.split`（恒空）→ 类型 B 失效 → 致命缺陷 2 未修复。
 
+**实现优化建议**（第五轮审查，非致命）：父 slice 的 `evidence.childDelivery: ChildDeliveryRecord[]` 已存 `{splitSlug, childUnitId, childStatus}` 显式映射（execute 阶段写入）。类型 B 可改用 childDelivery 反查（`parent.evidence.childDelivery.find(r => r.childUnitId === wave.id).splitSlug` → 查 plan.split 的 dependsOn → 再用 childDelivery 反查 depSlug 对应的 childUnitId），比 slug 字符串匹配更鲁棒，且天然处理 duplicate slug 边界。当前 slug 匹配写法能跑通，childDelivery 是可选优化。
+
+**旁路发现**（第五轮审查）：cw 无 duplicate-slug gate——split 同 slug 会导致 child wave id 冲突覆盖（store 按 id save）。建议 cw 补 duplicate-slug 校验（design-review gate 层），非本 spec 范围。
+
 #### 边界情况
 
 | 情况 | 处理 |
