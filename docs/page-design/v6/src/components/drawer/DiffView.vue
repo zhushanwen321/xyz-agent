@@ -4,6 +4,7 @@
  * dv-canvas：bg-input rounded-lg py-2 凹陷底色
  * 行号（neutral-dim 40px）+ add/del/ctx/hunk 行背景 + 字符级 strong（45%）
  */
+import { computed } from 'vue'
 import type { GitFile } from '@/mock/sessions'
 
 interface DiffSeg {
@@ -25,13 +26,18 @@ export interface DiffLine {
   text?: string
 }
 
-defineProps<{
-  /** 所属文件（用于标题/状态，可选） */
+const props = defineProps<{
+  /** 所属文件：按文件渲染对应 diff（多文件 tab 各自独立，spec §3「每个 tab 显示该文件内容」） */
   file?: GitFile
 }>()
 
-/** 示例 diff：8 行 hunk，含 add/del/ctx + 字符级 strong */
-const lines: DiffLine[] = [
+function basename(path: string): string {
+  const idx = path.lastIndexOf('/')
+  return idx >= 0 ? path.slice(idx + 1) : path
+}
+
+/** 默认组（design 文档）：spec §4 目标态 hunk + 6 行 code（radius tokens） */
+const DEFAULT_LINES: DiffLine[] = [
   { type: 'hunk', text: '@@ -10,7 +10,9 @@ export const TOKENS = {' },
   { type: 'ctx', oldNo: 10, newNo: 10, segs: [{ text: '  radius: {' }] },
   { type: 'del', oldNo: 11, segs: [{ text: '    sm: ' }, { text: "'3px'", strong: 'del' }, { text: ',' }] },
@@ -39,8 +45,38 @@ const lines: DiffLine[] = [
   { type: 'ctx', oldNo: 12, newNo: 12, segs: [{ text: "    md: '8px'," }] },
   { type: 'add', newNo: 13, segs: [{ text: "    lg: '12px'," }] },
   { type: 'ctx', oldNo: 13, newNo: 14, segs: [{ text: '  },' }] },
-  { type: 'ctx', oldNo: 14, newNo: 15, segs: [{ text: '};' }] },
 ]
+
+/** demo diff 数据：mock 的 GitFile 无 lines 字段，按文件名分支给 2-3 组不同行数据 */
+const DIFF_BY_FILE: Record<string, DiffLine[]> = {
+  'v6-design.md': DEFAULT_LINES,
+  'v6-spec-shell.html': [
+    { type: 'hunk', text: '@@ -40,7 +40,7 @@ .window-frame {' },
+    { type: 'ctx', oldNo: 40, newNo: 40, segs: [{ text: '.window-frame {' }] },
+    { type: 'del', oldNo: 41, segs: [{ text: '  gap: ' }, { text: '16px', strong: 'del' }, { text: ';' }] },
+    { type: 'add', newNo: 41, segs: [{ text: '  gap: ' }, { text: '12px', strong: 'add' }, { text: ';' }] },
+    { type: 'ctx', oldNo: 42, newNo: 42, segs: [{ text: '  border-radius: 10px;' }] },
+    { type: 'ctx', oldNo: 43, newNo: 43, segs: [{ text: '  padding: 12px;' }] },
+    { type: 'del', oldNo: 44, segs: [{ text: '  box-shadow: none;' }] },
+    { type: 'add', newNo: 44, segs: [{ text: '  box-shadow: var(--shadow-1);' }] },
+  ],
+  'v6-spec-drawer.html': [
+    { type: 'hunk', text: '@@ -195,7 +195,7 @@ .sd-drawer {' },
+    { type: 'ctx', oldNo: 195, newNo: 195, segs: [{ text: '.sd-drawer {' }] },
+    { type: 'del', oldNo: 196, segs: [{ text: '  border-left: 1px solid var(--border);' }] },
+    { type: 'add', newNo: 196, segs: [{ text: '  box-shadow: var(--shadow-drawer);' }] },
+    { type: 'ctx', oldNo: 197, newNo: 197, segs: [{ text: '  display: flex;' }] },
+    { type: 'ctx', oldNo: 198, newNo: 198, segs: [{ text: '  flex-direction: column;' }] },
+    { type: 'ctx', oldNo: 199, newNo: 199, segs: [{ text: '  overflow: hidden;' }] },
+    { type: 'ctx', oldNo: 200, newNo: 200, segs: [{ text: '}' }] },
+  ],
+}
+
+/** 当前文件对应 diff（未匹配回退默认组） */
+const lines = computed<DiffLine[]>(() => {
+  if (!props.file) return DEFAULT_LINES
+  return DIFF_BY_FILE[basename(props.file.name)] ?? DEFAULT_LINES
+})
 
 /** 行 class 工具（仅 code 行；hunk 直接渲染为 .dv-hunk-header，无外层行包装） */
 function rowClass(type: DiffLine['type']): string {

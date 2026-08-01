@@ -16,7 +16,7 @@ interface TermInstance {
   lines: { kind: 'out' | 'ok'; text: string }[]
 }
 
-const instances: TermInstance[] = [
+const instances = ref<TermInstance[]>([
   {
     id: 'pty-1',
     label: 'pty-1 · dev',
@@ -52,9 +52,16 @@ const instances: TermInstance[] = [
       { kind: 'ok', text: '✓ 18 passed (18)' },
     ],
   },
-]
+])
 
-const current = computed<TermInstance>(() => instances[terminalInstanceTab.value] ?? instances[0])
+const current = computed<TermInstance | undefined>(() => instances.value[terminalInstanceTab.value] ?? instances.value[0])
+
+/** 关闭实例（移除 + 校正选中 index） */
+function closeInstance(i: number) {
+  instances.value.splice(i, 1)
+  if (i < terminalInstanceTab.value) terminalInstanceTab.value -= 1
+  else if (terminalInstanceTab.value >= instances.value.length) terminalInstanceTab.value = Math.max(0, instances.value.length - 1)
+}
 
 /** clear/kill 占位态 */
 const cleared = ref(false)
@@ -78,7 +85,7 @@ function killPty() {
         @click="terminalInstanceTab = i; cleared = false"
       >
         <span class="tt-name">{{ inst.label }}</span>
-        <span class="tt-close" title="关闭实例">
+        <span class="tt-close" title="关闭实例" @click.stop="closeInstance(i)">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
             <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
           </svg>
@@ -93,7 +100,7 @@ function killPty() {
       </div>
 
       <span class="spacer"></span>
-      <span class="tv-instance-label">{{ current.id }}</span>
+      <span class="tv-instance-label">{{ current?.id ?? '—' }}</span>
     </div>
 
     <!-- 工具栏（clear/kill，同色无 border）-->
@@ -105,24 +112,28 @@ function killPty() {
       </button>
       <button
         class="tv-btn"
-        :class="{ disabled: !current.alive }"
+        :class="{ disabled: !current?.alive }"
         title="终止 PTY"
-        :disabled="!current.alive"
+        :disabled="!current?.alive"
         @click="killPty"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
           <rect x="5" y="5" width="14" height="14" rx="2" />
         </svg>
       </button>
+      <span class="tv-spacer"></span>
     </div>
 
-    <!-- 终端屏幕（bg-input 同色）-->
+    <!-- 终端屏幕（bg-input 同色；无实例时空态）-->
     <div class="tv-screen">
-      <template v-if="!cleared">
-        <div><span class="tv-prompt">$</span> <span class="tv-cmd">{{ current.cmd }}</span></div>
-        <div v-for="(ln, i) in current.lines" :key="i" :class="ln.kind === 'ok' ? 'tv-ok' : 'tv-out'">{{ ln.text }}</div>
+      <template v-if="current">
+        <template v-if="!cleared">
+          <div><span class="tv-prompt">$</span> <span class="tv-cmd">{{ current.cmd }}</span></div>
+          <div v-for="(ln, i) in current.lines" :key="i" :class="ln.kind === 'ok' ? 'tv-ok' : 'tv-out'">{{ ln.text }}</div>
+        </template>
+        <div><span class="tv-prompt">$</span> <span class="tv-cursor"></span></div>
       </template>
-      <div><span class="tv-prompt">$</span> <span class="tv-cursor"></span></div>
+      <div v-else class="tv-empty">无终端实例</div>
     </div>
   </div>
 </template>
@@ -252,6 +263,10 @@ function killPty() {
   opacity: 0.5;
   cursor: not-allowed;
 }
+/* 工具栏 spacer（spec §5：tv-toolbar 内右对齐占位） */
+.tv-toolbar .tv-spacer {
+  flex: 1;
+}
 .tv-btn:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0, 0, 0, 0.4);
@@ -287,6 +302,13 @@ function killPty() {
   background: var(--neutral-fg);
   vertical-align: middle;
   animation: tv-blink 1.1s step-end infinite;
+}
+.tv-screen .tv-empty {
+  padding: 24px 0;
+  text-align: center;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  color: var(--neutral-dim);
 }
 @keyframes tv-blink {
   0%, 50% { opacity: 1; }

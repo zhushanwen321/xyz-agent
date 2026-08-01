@@ -38,7 +38,7 @@
   cursor: col-resize;
 }
 .splitter-handle:hover .splitter-line {
-  background: var(--accent);
+  background: var(--border-strong);
 }
 .splitter-handle:active .splitter-line {
   background: var(--accent);

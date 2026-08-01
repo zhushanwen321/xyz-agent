@@ -5,11 +5,21 @@
  * + gp-filelist（checkbox + badge + 文件名 + ±行数）+ commit input + gp-actions
  * pill 纯色文字（语义靠字色），badge 统一 neutral-dim 仅 U 留 danger
  */
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { gitFiles, type GitFile } from '@/mock/sessions'
 
 /** 本地副本（per-file stage toggle 用） */
 const files = ref<GitFile[]>(gitFiles.map((f) => ({ ...f })))
+
+// demo 演示数据：mock 暂无 U（conflict）文件，静态补一行演示冲突态渲染
+// （真实数据来自 GIT_STATUS 的 U 条目；mock 更新后删此段）
+files.value.push({
+  name: 'src/git/merge.ts',
+  badge: 'U',
+  staged: false,
+  add: 0,
+  del: 0,
+})
 
 /** 累计 stats */
 const stats = computed(() => {
@@ -23,8 +33,35 @@ const stats = computed(() => {
 })
 
 /** 当前分支 */
-const branch = ref('feat/v6-drawer')
+const branch = ref('main')
 const branchOpen = ref(false)
+
+/** 分支列表（demo 静态数据，勿改 mock；spec §7 MVP-2 getStatus().branches[] 占位） */
+const branches = ['main', 'feat/v6-demo', 'fix/drawer-shadow']
+
+/** 切分支：高亮跟随 + 收起 popover */
+function selectBranch(name: string) {
+  branch.value = name
+  branchOpen.value = false
+}
+
+/** 点击外部 / Esc 关闭 popover */
+const branchBtnRef = ref<HTMLElement | null>(null)
+function onDocClick(e: MouseEvent) {
+  const el = branchBtnRef.value
+  if (el && !el.contains(e.target as Node)) branchOpen.value = false
+}
+function onEsc(e: KeyboardEvent) {
+  if (e.key === 'Escape') branchOpen.value = false
+}
+onMounted(() => {
+  document.addEventListener('click', onDocClick)
+  document.addEventListener('keydown', onEsc)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('click', onDocClick)
+  document.removeEventListener('keydown', onEsc)
+})
 
 /** commit message */
 const commitMsg = ref('')
@@ -58,7 +95,7 @@ function onCommitKeydown(e: KeyboardEvent) {
   <div class="gp-v6">
     <div class="gp-body">
       <!-- 头部：分支按钮 + dirty pill + stats + refresh -->
-      <div class="gp-head">
+      <div class="gp-head" ref="branchBtnRef">
         <svg class="gp-branch-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
           <line x1="6" y1="3" x2="6" y2="15" /><circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="M18 9a9 9 0 0 1-9 9" />
         </svg>
@@ -73,6 +110,31 @@ function onCommitKeydown(e: KeyboardEvent) {
             <polyline points="6 9 12 15 18 9" />
           </svg>
         </button>
+
+        <!-- BranchSelectPopover（spec §7 MVP-2：绝对定位卡片，当前分支高亮 + 新建分支入口）-->
+        <div v-if="branchOpen" class="gp-branch-popover">
+          <div class="gp-po-head">branches</div>
+          <div
+            v-for="b in branches"
+            :key="b"
+            class="gp-po-item"
+            :class="{ 'is-current': b === branch }"
+            @click="selectBranch(b)"
+          >
+            <span class="gp-po-name">{{ b }}</span>
+            <svg class="gp-po-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          </div>
+          <!-- MVP-3：新建分支入口（accent，占位）-->
+          <div class="gp-po-new" title="新建分支 CreateBranchModal">
+            <svg class="gp-po-new-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            <span>新建分支</span>
+          </div>
+        </div>
+
         <span class="gp-pill dirty" :title="files.length + ' changes'">dirty</span>
         <span class="gp-stats">
           <span class="gp-add">+{{ stats.add }}</span>
@@ -91,13 +153,15 @@ function onCommitKeydown(e: KeyboardEvent) {
           v-for="f in files"
           :key="f.name"
           class="gp-file"
-          :title="f.name"
+          :class="{ 'gp-file--conflict': f.badge === 'U' }"
+          :title="f.badge === 'U' ? f.name + '（冲突，需先解决）' : f.name"
         >
           <!-- stage toggle checkbox -->
           <button
             class="gp-stage-toggle"
             :class="f.staged ? 'is-staged' : 'is-unstaged'"
-            :title="f.staged ? '取消暂存 unstage(sid,[path])' : '暂存此文件 stage(sid,[path])'"
+            :title="f.badge === 'U' ? '冲突文件需先解决冲突再暂存' : f.staged ? '取消暂存 unstage(sid,[path])' : '暂存此文件 stage(sid,[path])'"
+            :disabled="f.badge === 'U'"
             @click="toggleStage(f)"
           >
             <svg v-if="f.staged" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
@@ -110,7 +174,7 @@ function onCommitKeydown(e: KeyboardEvent) {
 
           <span class="gp-badge" :class="f.badge">{{ f.badge }}</span>
           <span class="gp-path">{{ f.name }}</span>
-          <span class="gp-filestat">
+          <span v-if="f.badge !== 'U'" class="gp-filestat">
             <span class="gp-add">+{{ f.add }}</span>
             <span class="gp-del">−{{ f.del }}</span>
           </span>
@@ -128,7 +192,7 @@ function onCommitKeydown(e: KeyboardEvent) {
       <!-- 操作区 -->
       <div class="gp-actions">
         <button class="gp-act ghost" @click="stageAll">全部暂存</button>
-        <button class="gp-act ghost" @click="unstageAll">取消</button>
+        <button class="gp-act ghost" @click="unstageAll">取消暂存</button>
         <button class="gp-act primary" @click="commit">提交</button>
       </div>
     </div>
@@ -155,12 +219,13 @@ function onCommitKeydown(e: KeyboardEvent) {
   font-size: var(--text-sm);
 }
 
-/* 头部 */
+/* 头部（popover 定位锚点） */
 .gp-head {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 0 2px;
+  position: relative;
 }
 .gp-head .gp-branch-ico {
   width: 12px;
@@ -206,6 +271,86 @@ function onCommitKeydown(e: KeyboardEvent) {
 }
 .gp-branch-btn.is-open .gp-branch-chev {
   transform: rotate(180deg);
+}
+
+/* BranchSelectPopover（spec §7 MVP-2：bg-bg-elevated + ring-border-strong + shadow-2）*/
+.gp-branch-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 2px;
+  min-width: 200px;
+  max-width: 260px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  padding: 4px;
+  z-index: var(--z-popover);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.gp-branch-popover .gp-po-head {
+  font-size: var(--text-2xs);
+  color: var(--neutral-dim);
+  padding: 4px 8px 2px;
+  font-family: var(--font-mono);
+}
+.gp-branch-popover .gp-po-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease);
+}
+.gp-branch-popover .gp-po-item:hover {
+  background: var(--surface-hover);
+}
+.gp-branch-popover .gp-po-item.is-current {
+  background: var(--accent-soft);
+}
+.gp-branch-popover .gp-po-item .gp-po-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--neutral-fg);
+}
+.gp-branch-popover .gp-po-item .gp-po-check {
+  width: 12px;
+  height: 12px;
+  color: var(--accent);
+  flex-shrink: 0;
+  opacity: 0;
+}
+.gp-branch-popover .gp-po-item.is-current .gp-po-check {
+  opacity: 1;
+}
+.gp-branch-popover .gp-po-new {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  margin-top: 2px;
+  border-top: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--accent);
+  font-size: var(--text-xs);
+  transition: background var(--duration-fast) var(--ease);
+}
+.gp-branch-popover .gp-po-new:hover {
+  background: var(--accent-soft);
+}
+.gp-branch-popover .gp-po-new .gp-po-new-ico {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
 }
 
 /* 纯色文字 pill（语义靠字色） */
@@ -282,6 +427,16 @@ function onCommitKeydown(e: KeyboardEvent) {
 .gp-file:hover {
   background: var(--surface-hover);
 }
+/* 冲突态（v6：去 danger 左竖条，改 bg-danger-soft 整块 + rounded，spec §7）*/
+.gp-file--conflict,
+.gp-file--conflict:hover {
+  background: var(--danger-soft);
+  border-radius: var(--radius-sm);
+}
+.gp-file--conflict .gp-stage-toggle {
+  opacity: 0;
+  cursor: not-allowed;
+}
 .gp-file .gp-stage-toggle {
   width: 18px;
   height: 18px;
@@ -306,7 +461,6 @@ function onCommitKeydown(e: KeyboardEvent) {
 }
 .gp-file .gp-stage-toggle.is-staged {
   color: var(--success);
-  opacity: 1;
 }
 .gp-file .gp-stage-toggle.is-unstaged {
   color: var(--neutral-mid);

@@ -9,14 +9,28 @@ import { detailFileTab } from '@/composables/useStore'
 import { gitFiles, type GitFile } from '@/mock/sessions'
 import DiffView from './DiffView.vue'
 
-/** 多文件 tab（取自 git 改动文件，demo 用前 3 个） */
-const fileTabs: GitFile[] = gitFiles.slice(0, 3)
+/** 多文件 tab（取自 git 改动文件，demo 用前 3 个；响应式数组支持关闭移除） */
+interface TabFile extends GitFile {
+  /** 是否有 git 变更（spec §3：预览/变更 toggle 仅 hasGitChange 时显；demo 全为 git 文件恒 true） */
+  gitChange: boolean
+}
+
+const fileTabs = ref<TabFile[]>(
+  gitFiles.slice(0, 3).map((f) => ({ ...f, gitChange: true })),
+)
 
 /** 当前视图模式（预览/变更），demo 默认变更 */
 const viewMode = ref<'preview' | 'diff'>('diff')
 
-/** 当前 tab 文件（绑 detailFileTab，越界回退 0） */
-const currentFile = computed<GitFile>(() => fileTabs[detailFileTab.value] ?? fileTabs[0])
+/** 当前 tab 文件（绑 detailFileTab，越界/空数组回退 undefined） */
+const currentFile = computed<TabFile | undefined>(() => fileTabs.value[detailFileTab.value] ?? fileTabs.value[0])
+
+/** 关闭 tab（移除 + 校正选中 index） */
+function closeFile(i: number) {
+  fileTabs.value.splice(i, 1)
+  if (i < detailFileTab.value) detailFileTab.value -= 1
+  else if (detailFileTab.value >= fileTabs.value.length) detailFileTab.value = Math.max(0, fileTabs.value.length - 1)
+}
 
 /** 仅取文件名（去路径前缀） */
 function basename(path: string): string {
@@ -26,14 +40,15 @@ function basename(path: string): string {
 
 /** 复制路径（demo 占位） */
 function copyPath() {
+  if (!currentFile.value) return
   navigator.clipboard?.writeText(currentFile.value.name).catch(() => {})
 }
 </script>
 
 <template>
   <div class="dp-v6">
-    <!-- L2 多文件 tab 栏（bg-surface-2 浮起）-->
-    <div class="b-l2">
+    <!-- L2 多文件 tab 栏（bg-surface-2 浮起；全部关闭后隐藏，进空态）-->
+    <div v-if="fileTabs.length > 0" class="b-l2">
       <div
         v-for="(f, i) in fileTabs"
         :key="f.name"
@@ -42,7 +57,7 @@ function copyPath() {
         @click="detailFileTab = i"
       >
         <span class="tt-name">{{ basename(f.name) }}</span>
-        <span class="tt-close" title="关闭 tab">
+        <span class="tt-close" title="关闭 tab" @click.stop="closeFile(i)">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
             <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
           </svg>
@@ -51,15 +66,15 @@ function copyPath() {
 
       <span class="spacer"></span>
 
-      <!-- 预览/变更 toggle（SegmentedTab：bg-input p-3px，on bg-elevated）-->
-      <div class="l2-view" title="当前 tab 视图切换">
+      <!-- 预览/变更 toggle（SegmentedTab：bg-input p-3px，on bg-elevated；仅 hasGitChange 时显，spec §3）-->
+      <div v-if="currentFile?.gitChange" class="l2-view" title="当前 tab 视图切换">
         <button class="lv-btn" :class="{ on: viewMode === 'preview' }" @click="viewMode = 'preview'">预览</button>
         <button class="lv-btn" :class="{ on: viewMode === 'diff' }" @click="viewMode = 'diff'">变更</button>
       </div>
     </div>
 
-    <!-- header：文件名 + 复制/引用 -->
-    <div class="dp-header">
+    <!-- header：文件名 + 复制/引用（无 tab 时隐藏）-->
+    <div v-if="currentFile" class="dp-header">
       <svg class="dp-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" />
       </svg>
@@ -76,8 +91,8 @@ function copyPath() {
       </button>
     </div>
 
-    <!-- 内容区 -->
-    <div class="dp-content">
+    <!-- 内容区（无 tab 时不渲染）-->
+    <div v-if="currentFile" class="dp-content">
       <!-- 预览模式 -->
       <div v-if="viewMode === 'preview'" class="dp-preview">
         <div><span class="kw">export</span> <span class="kw">default</span> {</div>
@@ -88,6 +103,18 @@ function copyPath() {
       </div>
       <!-- 变更模式：DiffView -->
       <DiffView v-else :file="currentFile" />
+    </div>
+
+    <!-- 空态（全部 tab 关闭）：无二级栏 · FileText icon 24px + 提示文（spec §3 空态变体）-->
+    <div v-else class="dp-empty">
+      <svg class="dp-empty-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+        <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+        <path d="M10 9H8" />
+        <path d="M16 13H8" />
+        <path d="M16 17H8" />
+      </svg>
+      <span class="dp-empty-text">无打开的文件</span>
     </div>
   </div>
 </template>
@@ -245,6 +272,27 @@ function copyPath() {
   overflow: auto;
   padding: 12px 16px;
   background: var(--bg-input);
+}
+
+/* 空态（全部 tab 关闭）：FileText 24px + 提示文，无二级栏 */
+.dp-empty {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--bg);
+}
+.dp-empty .dp-empty-ico {
+  width: 24px;
+  height: 24px;
+  color: var(--neutral-dim);
+}
+.dp-empty .dp-empty-text {
+  font-size: var(--text-xs);
+  color: var(--neutral-dim);
 }
 
 /* 预览模式：mono + 语法高亮占位 */

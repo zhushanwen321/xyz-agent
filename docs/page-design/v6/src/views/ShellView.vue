@@ -110,13 +110,16 @@ import { sidebarCollapsed, drawerOpen } from '@/composables/useStore'
 }
 
 /* drawer wrapper：width 0 → 360px 平滑过渡（320ms），DOM 常驻保 terminal 等状态。
- * 内部 SideDrawer 始终挂载；关闭时宽度收缩到 0 + overflow:hidden 实现 320ms 过渡。*/
+ * 内部 SideDrawer 始终挂载；关闭时宽度收缩到 0 实现 320ms 过渡。
+ * overflow 必须 visible：SideDrawer 的 --shadow-drawer（-12px 左投）靠此透出，
+ * 否则被 wrap 裁剪导致 drawer 与主面板零可见分隔（spec §1 D2 弱投影分隔）。
+ * 内容不泄漏：SideDrawer 自身 overflow:hidden（sd-drawer）在宽度收缩时自行裁剪。*/
 .drawer-wrap {
   flex: 0 0 auto;
   width: 0;
   min-width: 0;
   display: flex;
-  overflow: hidden;
+  overflow: visible;
   transition: width var(--duration-slow) var(--ease);
 }
 .drawer-wrap.open {
