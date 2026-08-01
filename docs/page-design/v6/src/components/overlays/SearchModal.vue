@@ -352,9 +352,12 @@ function iconKind(cmd: SearchCommand): IconKind {
 .sm-item:hover .sm-i-sub {
   color: var(--neutral-mid); /* hover 副标题提亮（dim→mid） */
 }
-/* §3.2 列表项型选中：bg-surface + accent 文字/icon（与 hover 实色块区分）*/
+/* 选中态：surface-hover 背景（与 dialog surface 底有 5% 明度差，可见）+ accent 蓝字/蓝 icon。
+   dialog 底 = surface，sel 用 bg-surface 会同色淹没（与 drawer tab 同类问题），
+   改用 surface-hover 与 hover 同背景，靠蓝字/蓝 icon 区分（Linear/Raycast 范式：
+   hover = 即将选中预览，sel = hover + 蓝字强调）*/
 .sm-item.sel {
-  background: var(--surface);
+  background: var(--surface-hover);
 }
 .sm-item.sel .sm-i-title {
   color: var(--accent);
