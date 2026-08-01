@@ -26,9 +26,6 @@ const SPACE_TOKENS = SIZE_TOKENS.slice(4)
 const BG_TOKENS = COLOR_TOKENS.slice(0, 8)
 const NEUTRAL_TOKENS = COLOR_TOKENS.slice(8, 13)
 const STATE_TOKENS = COLOR_TOKENS.slice(13)
-const STATE_HUE_OFFSET: Record<string, number> = {
-  '--success': 120, '--warn': 60, '--danger': 0, '--info': 200, '--reasoning': 280,
-}
 
 const THEMES: Record<string, Record<string, string>> = {
   '冷蓝暗色（默认）': { '--bg': '#1a1b1f', '--surface': '#272830', '--surface-hover': '#363740', '--surface-2': '#2e2f38', '--bg-elevated': '#313239', '--bg-input': '#1e1f24', '--bg-card': '#22242c', '--bg-sunken': '#1a1b1f', '--neutral-fg': '#e5e7eb', '--neutral-mid': '#9ca3af', '--neutral-dim': '#7d8494', '--neutral-faint': '#4b5563', '--neutral-ico': '#8b8d94', '--accent': '#4f8ef7', '--success': '#22c55e', '--warn': '#b08a3e', '--danger': '#ef4444', '--info': '#38bdf8', '--reasoning': '#a78bfa' },
@@ -127,6 +124,8 @@ function applyGlobalAdjust(): void {
 }
 
 // ── 3. 主色驱动：改 accent + 状态色跟随 accent 色相 ──
+/** 开启"跟随 accent"时，记录各状态色与 accent 的色相差；accent 变化时按差值旋转 */
+const stateHueDeltas: Record<string, number> = {}
 function setAccent(v: string): void {
   accentInput.value = v; writeToken('--accent', v)
   if (followAccent.value) syncStateHueToAccent(v)
@@ -134,23 +133,36 @@ function setAccent(v: string): void {
 }
 function onFollowToggle(v: boolean): void {
   followAccent.value = v
-  if (v) syncStateHueToAccent(accentInput.value || baselineColors['--accent'])
-  refreshColorValues()
+  if (v) {
+    // 开启时记录各状态色与当前 accent 的色相差
+    const accentH = hexToHsl(accentInput.value || baselineColors['--accent'] || '#4f8ef7').h
+    for (const t of STATE_TOKENS) {
+      const base = baselineColors[t]; if (!base) continue
+      stateHueDeltas[t] = hexToHsl(base).h - accentH
+    }
+  } else {
+    // 关闭时恢复各状态色到 baseline
+    for (const t of STATE_TOKENS) { if (baselineColors[t]) writeToken(t, baselineColors[t]) }
+    refreshColorValues()
+  }
 }
 function syncStateHueToAccent(accentHex: string): void {
-  // 每个状态色向"协调目标色相"偏移，同时保留 accent 色相影响（50/50 混合），
-  // 使 5 个状态色相对 accent 趋同又不失各自语义。
+  // 各状态色色相 = 新 accent 色相 + 原始色相差（整体随 accent 旋转，保持相对关系）
   const accentH = hexToHsl(accentHex).h
-  for (const [t, off] of Object.entries(STATE_HUE_OFFSET)) {
+  for (const t of STATE_TOKENS) {
+    if (stateHueDeltas[t] === undefined) continue
     const base = baselineColors[t]; if (!base) continue
     const { s, l } = hexToHsl(base)
-    const mixed = accentH + (off - accentH) * 0.5
-    writeToken(t, hslToHex(mixed, s, l))
+    writeToken(t, hslToHex(accentH + stateHueDeltas[t], s, l))
   }
 }
 
 // ── 4. 逐 token：color picker + hex 输入 ──
-function onTokenColor(t: string, v: string): void { colorValues[t] = v; writeToken(t, v) }
+function onTokenColor(t: string, v: string): void {
+  colorValues[t] = v; writeToken(t, v)
+  // 如果改的是 accent 且 followAccent 开启，同步状态色
+  if (t === '--accent' && followAccent.value) { accentInput.value = v; syncStateHueToAccent(v) }
+}
 function onTokenHex(t: string, v: string): void {
   const raw = v.trim()
   if (/^#?[0-9a-fA-F]{6}$/.test(raw)) {
