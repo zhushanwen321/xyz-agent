@@ -783,6 +783,7 @@ CMU 实证：静态单层规划 > 动态多层规划。当前架构是"BFS 逐�
 8. **轮次 10（可行性审查）**：3 个 subagent 从 cw 侧 / workflow 侧 / 端到端走查三个维度独立审查，发现 4 个致命阻断点（agent() 无 worktree 支持、cw store worktree 断裂、frontier 不存在、双树混淆）+ 3 个高估项（childDeliveryConsistency 伪校验、budget 累积、design-review 不刹质量）。§4 的 5 个"✅已解"标注过于乐观。详见 §11。
 9. **轮次 11（决策与收敛）**：用户 6 个回应解除 5 个阻断/高估——agent() 加 worktree（验证 ExecuteOptions 已有字段，改造仅 3 处约 10 行）、cw project key 分离、agent 写 cw + schema 转派发指令（消除双树，frontier 降级为崩溃恢复专用）、retrospect 读子 agent session jsonl（伪校验→真实复盘）、budget 无限、workflow 确定性派发保证 review。三个关键决策：每 action 一个 agent、按任务复杂度选起点层（不跳层）、frontier 一起做完。详见 §12。
 10. **轮次 12（第二轮审查）**：3 个 subagent 从 §12 架构数据流 / 改动点代码级核实 / 端到端逐 action 走查三个维度审查 §12 新设计。发现 §12 的 4 个关键技术假设被源码证伪：(1) `executeAndAwait`（workflow 入口）根本不消费 `worktree===true`——改动 1A 是空操作；(2) wave 的 9 个 agent 无法共享 worktree（决策 A 与 worktree 隔离粒度冲突）；(3) cw execute 返回值不含全部子 unit id；(4) agent() 消息层丢弃 sessionFile。引入 2 致命 + 2 高危新阻断，但解法方向清晰（接缝处实现细节需补，非推翻重来）。详见 §13。
+11. **轮次 13（W3 实测 + 决策 D）**：实测验证 `git rev-parse --git-common-dir` 的 dirname 在 8 种 worktree 场景下一致（W3 方案成立，go/no-go 分水岭通过）。实测发现必须用 `fs.realpathSync` 解析符号链接（macOS `/var`→`/private/var`）。用户决策 D：保持 worktree 隔离方案（不退回同 cwd 串行），集成测试先不做（未来在 slice 层增加集成 test gate，当前不设计）。接受"各 wave 单独 test 通过但 merge 后可能冲突"的残余风险，靠依赖感知调度（有 dependsOn 的 wave 串行）缓解。
 
 ---
 
@@ -917,6 +918,44 @@ cw 固定 4 层（epic/feature/slice/wave），但不同复杂度的任务起点
 - 不只是"findChildren + status 过滤 + status→action 映射"三步
 - **需额外做子层完成度检查**：planning 层 executing 节点的 nextAction 取决于子节点是否全终态。全终态→retrospect（可派）；有非终态→阻塞（不可派，但不消失）
 - **两遍扫描**：先扫所有节点状态，再判定哪些 planning executing 节点的子层已全终态
+
+#### 决策 D：保持 worktree 隔离，集成测试推迟（用户决策，轮次 13）
+
+**背景**：worktree 隔离下，各 wave 在独立 worktree 测试自己的代码（单元测试自洽），但"多个 wave 的产出 merge 后是否冲突"未被验证——cw 当前只有 wave 层有 test gate，slice/feature/epic 的 retrospect 不做集成测试。
+
+**决策**：
+1. **保持 worktree 隔离方案**（W1-W4 仍为 MVP 必需）。不退回"同 cwd 串行"。
+2. **集成测试先不做**。各 wave 独立 test pass 即视为该 wave 交付。slice retrospect 仍只验"子层全 closed + 主客观一致"（伪校验问题靠 §12 改动 3C retrospect 读 session jsonl 补救，不做集成 test）。
+3. **未来在 slice 层增加集成 test gate**（方向 1：slice retrospect 时 merge 子 wave commit 到集成分支跑测试）。这是后续迭代，当前不设计。
+
+**取舍记录**：
+- 接受"各 wave 单独 test 通过但 merge 后可能冲突"的风险。缓解依赖：依赖感知调度（§12.5 R2——有 dependsOn 的 wave 串行，B 的 worktree 从 A 的 commit 创建，B 能看到 A 的代码）。
+- 无依赖的 wave 仍可能改同一文件（间接冲突），但概率低于有依赖的。MVP 阶段接受这个残余风险。
+
+### 12.2.1 W3 验证结果（轮次 13 实测）
+
+**验证目标**：`git rev-parse --git-common-dir` 的 dirname 是否在所有 worktree 场景下一致（projectKey 方案可行性）。
+
+**实测脚本**：覆盖 8 个场景——普通 repo + worktree、bare repo + worktree、monorepo 子包、非 git 目录、detached HEAD worktree、submodule、worktree 内嵌 worktree、远离 repo 的 tmpdir worktree。
+
+**结果**：**全部 PASS，方案成立。**
+
+| 场景 | 结果 | 说明 |
+|------|------|------|
+| 普通 repo + 2 worktree | ✅ | main/wt-a/wt-b key 一致 |
+| bare repo + worktree | ✅ | feat/fix key 一致，projectKey = workspace 根（`.bare` 父目录）|
+| monorepo 子包 | ✅ | root/sub key 一致 |
+| 非 git 目录 | ✅ | 降级为 NOT_A_GIT_REPO |
+| detached HEAD worktree | ✅ | 与 main 一致 |
+| submodule | ℹ️ | 独立 key（指向 `.git/modules/xxx`）——正确行为，submodule 是独立项目 |
+| worktree 内嵌 worktree（wave 子 worktree）| ✅ | 与父 worktree 一致 |
+| 远离 repo 的 tmpdir worktree（pi 模式）| ✅ | 与 main 一致——**关键，pi worktree-manager 把 wave worktree 建在 os.tmpdir() 下** |
+
+**实现注意事项（实测发现）**：
+1. **必须用 `fs.realpathSync`（或 `pwd -P`）解析符号链接**。macOS 的 `/tmp`→`/private/tmp`、`/var`→`/private/var` 会导致未解析路径不一致。`resolveProjectKey` 实现必须 `fs.realpathSync(dirname(commonDir))`，不能裸 `dirname`。
+2. **projectKey 与分支无关**——`git rev-parse --git-common-dir` 返回物理仓库路径，不参与分支计算。不同分支的 worktree 解析出同一 key（已验证 detached HEAD）。无分支混淆风险。
+3. **bare repo 下 projectKey = workspace 根**（`.bare` 父目录），不是 bare repo 本身。这是正确的——所有 worktree 共享同一棵 cw 树。
+4. **submodule 有独立 key**——submodule 的 common-dir 指向 `.git/modules/xxx`，与主 repo 不同。正确行为（submodule 是独立项目，应有独立 cw store）。
 
 ### 12.3 最终架构（取代 §6 的部分描述）
 
