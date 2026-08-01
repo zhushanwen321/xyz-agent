@@ -584,6 +584,9 @@ export class SubagentService {
     // W2 改动 7：注入 worktreePath（worktree 隔离激活时来自 step 2.5 的 worktreeHandle）。
     // mapToWorkflowAgentResult 不感知 worktree（它只做 subagents AgentResult → workflow AgentResult
     // 的 DTO 映射），故在 caller 侧 mutate 刚新建的产物对象（无共享引用，安全）。
+    // 注意：runAndFinalize 内的 finalizeRecord 已在此时 cleanup worktree（git worktree remove），
+    // worktreePath 是该 worktree 的历史路径标识——目录可能已不存在。消费者（如后续 agent 复用
+    // worktree 做 cwd）应理解为标识符，实际复用需在 cleanup 前捕获路径或由 worktreeRegistry 管理。
     wfResult.worktreePath = record.worktreeHandle?.path;
     return wfResult;
   }

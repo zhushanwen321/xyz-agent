@@ -120,6 +120,16 @@ export default [
       'max-lines-per-function': 'off',
     },
   },
+  // [HISTORICAL] buildWorkerScript 是 worker 源码生成器——返回单一字符串数组的纯模板函数，
+  // 数组每个元素是生成脚本的逐行源码。AC-4 不变式要求脚本格式逐字保留（用户资产：workflow 脚本
+  // 依赖 agent/parallel/pipeline/$ARGS/$BUDGET 等注入契约），不可为凑行数随意合并/拆分行。
+  // returnMeta 透传补全后函数体超 300（303），属同质唯一聚合中心，override 避免误报。
+  {
+    files: ['extensions/subagent-workflow/src/orchestration/worker-script-builder.ts'],
+    rules: {
+      'max-lines-per-function': 'off',
+    },
+  },
   // [HISTORICAL] i18n settings 字典（zh-CN/en-US 镜像）是 settings 全文案的 SSOT，
   // 每新增一个设置项需双语同步追加。auto-rename-session 开关追加后行数微超 500（501 行），
   // 属唯一聚合中心、结构内聚（扁平 key），强行拆分需设计 per-section 文件组织，

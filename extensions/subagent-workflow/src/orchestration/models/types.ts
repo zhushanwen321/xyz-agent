@@ -139,6 +139,9 @@ export interface AgentCallOpts {
   fork?: boolean;
   /** Filesystem isolation: when true, creates a new git worktree for the agent (requires fork: true). */
   worktree?: boolean;
+  /** When true, agent() resolves {value, sessionFile, worktreePath, error} instead of a bare value.
+   * Worker-layer flag only — not forwarded to ExecuteOptions (mapToExecuteOptions drops it). */
+  returnMeta?: boolean;
 }
 
 /**
@@ -199,9 +202,9 @@ export interface AgentResult {
  */
   sessionFile?: string;
  /**
-   * Absolute path of the git worktree used for filesystem isolation (set when
-   * worktree isolation is active). Injected by executeAndAwait from record.worktreeHandle.path.
-   */
+ * Absolute path of the git worktree used for filesystem isolation (set when
+ * worktree isolation is active). Injected by executeAndAwait from record.worktreeHandle.path.
+ */
   worktreePath?: string;
  /** All tool calls collected from JSONL stream (FR-7). */
   toolCalls?: ToolCallEntry[];
