@@ -3,9 +3,12 @@
  *  - collapsed only：Workflow icon 14px + 「workflow」prefix + name·slug
  *  - running：双环 loader；failed：icon+name 降 neutral-mid */
 import { computed } from 'vue'
-import { drawerOpen, drawerTab } from '@/composables/useStore'
+import { drawerOpen, drawerTab, workflowName } from '@/composables/useStore'
 
 function openDrawer() {
+  // spec §11 入口：点 workflow block → 选中该 workflow + drawer.setTab('workflow')
+  const name = props.data.name as string | undefined
+  if (name) workflowName.value = name
   drawerTab.value = 'workflow'
   drawerOpen.value = true
 }

@@ -5,7 +5,8 @@
  * + phase 分组（4 phase）+ agent call 行（status 圆点 + agent 名 + slug + tokens/turns/耗时）
  * status：running=accent 脉冲 / done=success / failed=danger / pending=dim
  */
-import { ref } from 'vue'
+import { onBeforeUnmount, ref } from 'vue'
+import { drawerTab, subagentSessionId, workflowName } from '@/composables/useStore'
 
 type CallStatus = 'running' | 'done' | 'failed' | 'pending'
 type PhaseStatus = 'done' | 'running' | 'pending'
@@ -18,6 +19,8 @@ interface AgentCall {
   tokensOut?: string
   turns?: number
   duration?: string
+  /** spec §11：call 对应 subagent session，点击切 subagent tab 时传入 */
+  sessionId?: string
 }
 
 interface Phase {
@@ -39,7 +42,7 @@ const phases: Phase[] = [
     name: 'test',
     status: 'running',
     calls: [
-      { agent: 'tester', slug: 'run-unit-tests', status: 'running', turns: 3, duration: '12s' },
+      { agent: 'tester', slug: 'run-unit-tests', status: 'running', tokensIn: '880', tokensOut: '420', turns: 3, sessionId: 'sess_t1u2' },
       { agent: 'tester', slug: 'run-e2e', status: 'pending' },
     ],
   },
@@ -58,19 +61,38 @@ const phases: Phase[] = [
   },
 ]
 
-/** abort 两段式确认 */
+/** abort 两段式确认（spec §11：3s 内无第二次点击自动复位） */
 const abortConfirming = ref(false)
+let abortTimer: ReturnType<typeof setTimeout> | null = null
 function onAbortClick() {
   if (!abortConfirming.value) {
     abortConfirming.value = true
+    abortTimer = setTimeout(() => {
+      abortConfirming.value = false
+      abortTimer = null
+    }, 3000)
     return
   }
   /* demo：执行终止 */
   abortConfirming.value = false
+  if (abortTimer) {
+    clearTimeout(abortTimer)
+    abortTimer = null
+  }
 }
+onBeforeUnmount(() => {
+  if (abortTimer) clearTimeout(abortTimer)
+})
 
 /** 选中 agent call（demo 高亮） */
 const selectedSlug = ref<string | null>(null)
+
+/** 点击 agent call → 高亮 + 切 subagent tab + 传 sessionId（spec §11） */
+function onCallClick(call: AgentCall) {
+  selectedSlug.value = call.slug
+  subagentSessionId.value = call.sessionId ?? null
+  drawerTab.value = 'subagent'
+}
 </script>
 
 <template>
@@ -80,7 +102,7 @@ const selectedSlug = ref<string | null>(null)
       <svg class="wf-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
         <rect width="8" height="8" x="3" y="3" rx="2" /><path d="M7 11v4a2 2 0 0 0 2 2h4" /><rect width="8" height="8" x="13" y="13" rx="2" />
       </svg>
-      <span class="wf-name">build-and-deploy</span>
+      <span class="wf-name">{{ workflowName ?? 'build-and-deploy' }}</span>
       <span class="wf-slug">· release-v6</span>
       <div class="wf-acts">
         <!-- pause（运行态显 pause）-->
@@ -103,13 +125,22 @@ const selectedSlug = ref<string | null>(null)
       </div>
     </div>
 
+    <!-- 空态：未选中 workflow（spec §11）入口 = 消息流 workflow block 点击 -->
+    <div v-if="!workflowName" class="wf-empty">
+      <svg class="wf-empty-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <rect width="8" height="8" x="3" y="3" rx="2" /><path d="M7 11v4a2 2 0 0 0 2 2h4" /><rect width="8" height="8" x="13" y="13" rx="2" />
+      </svg>
+      <span class="wf-empty-text">未选中 workflow</span>
+      <span class="wf-empty-sub">点击对话流的 workflow block 查看 agent call 列表</span>
+    </div>
+
     <!-- 内容区：phase 分组 + agent call 列表 -->
-    <div class="wf-body">
+    <div v-else class="wf-body">
       <div v-for="(phase, pi) in phases" :key="pi" class="wf-phase">
         <div class="wf-phase-head">
           <span class="wf-phase-dot" :class="phase.status"></span>
           <span class="wf-phase-name">{{ phase.name }}</span>
-          <span class="wf-phase-count">{{ phase.calls.length }} agents</span>
+          <span class="wf-phase-count">{{ phase.calls.length }} {{ phase.calls.length === 1 ? 'agent' : 'agents' }}</span>
         </div>
 
         <div
@@ -117,15 +148,17 @@ const selectedSlug = ref<string | null>(null)
           :key="ci"
           class="wf-call"
           :class="{ selected: selectedSlug === call.slug }"
-          @click="selectedSlug = call.slug"
+          :title="call.sessionId ? '点击切到 subagent tab 展示该 agent 对话流' : ''"
+          @click="onCallClick(call)"
         >
           <span class="wf-status" :class="call.status"></span>
           <span class="wf-agent">{{ call.agent }}</span>
           <span class="wf-call-slug">{{ call.slug }}</span>
           <div class="wf-summary">
             <template v-if="call.status === 'running'">
-              <span>turn {{ call.turns }}</span>
-              <span>{{ call.duration }}</span>
+              <span class="wf-tokens">↑{{ call.tokensIn }} ↓{{ call.tokensOut }}</span>
+              <span>{{ call.turns }} turns</span>
+              <span class="wf-running">running…</span>
             </template>
             <template v-else-if="call.status === 'pending'">
               <span class="wf-pending">pending</span>
@@ -357,7 +390,35 @@ const selectedSlug = ref<string | null>(null)
 .wf-call .wf-summary .wf-tokens {
   color: var(--neutral-mid);
 }
+.wf-call .wf-summary .wf-running {
+  color: var(--accent);
+}
 .wf-call .wf-summary .wf-pending {
   color: var(--neutral-faint);
+}
+
+/* 空态（spec §11）*/
+.wf-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--neutral-dim);
+  padding: 24px;
+  text-align: center;
+}
+.wf-empty .wf-empty-ico {
+  width: 28px;
+  height: 28px;
+  opacity: 0.4;
+}
+.wf-empty .wf-empty-text {
+  font-size: var(--text-sm);
+}
+.wf-empty .wf-empty-sub {
+  font-size: var(--text-xs);
+  opacity: 0.6;
 }
 </style>

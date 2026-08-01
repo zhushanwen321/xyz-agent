@@ -35,6 +35,12 @@ export const detailFileTab = ref(0)
 export const terminalInstanceTab = ref(0)
 export const browserPageTab = ref(0)
 
+// workflow → subagent 联动（spec §11：call 点击传 sessionId；§10 空态判定）
+export const subagentSessionId = ref<string | null>(null)
+
+// 选中 workflow（spec §11：未选中显示空态；入口 = 消息流 workflow block 点击）
+export const workflowName = ref<string | null>(null)
+
 // 配色/密度（可选展示用，不影响结构）
 export type ColorScheme = 'a' | 'semantic' | 'legacy'
 export const colorScheme = ref<ColorScheme>('a')

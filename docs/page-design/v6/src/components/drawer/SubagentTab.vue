@@ -5,7 +5,7 @@
  * + 2-3 条只读消息（assistant 文本 + tool block 只读）+ 只读提示条
  */
 import { ref } from 'vue'
-import { drawerTab } from '@/composables/useStore'
+import { drawerTab, subagentSessionId } from '@/composables/useStore'
 
 /** 是否从 workflow tab 进入（显返回） */
 const fromWorkflow = ref(true)
@@ -14,6 +14,9 @@ const fromWorkflow = ref(true)
 function backToWorkflow() {
   drawerTab.value = 'workflow'
 }
+
+/** 有选中 subagent 才渲染对话流（spec §10 空态：未选中显提示） */
+const hasSelected = () => subagentSessionId.value !== null
 
 interface SaTurn {
   user: string
@@ -41,6 +44,16 @@ const turns: SaTurn[] = [
 
 <template>
   <div class="sa-v6">
+    <!-- 空态：未选中 subagent（spec §10）入口 = 直接点 L1 subagent tab / 初始无选中 -->
+    <div v-if="!hasSelected()" class="sa-empty">
+      <svg class="sa-empty-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 8V4H8" /><rect width="16" height="12" x="4" y="8" rx="2" /><path d="M2 14h2" /><path d="M20 14h2" /><path d="M15 13v2" /><path d="M9 13v2" />
+      </svg>
+      <span class="sa-empty-text">未选中 subagent</span>
+      <span class="sa-empty-sub">从 workflow 的 agent call 点击进入查看对话流</span>
+    </div>
+
+    <template v-else>
     <!-- 标题栏：bg-surface-2 浮起，去 border-b -->
     <div class="sa-header">
       <button v-if="fromWorkflow" class="sa-back" title="返回 workflow tab" @click="backToWorkflow">
@@ -82,6 +95,7 @@ const turns: SaTurn[] = [
       </svg>
       <span>只读 · subagent 为 background 任务，无输入区</span>
     </div>
+    </template>
   </div>
 </template>
 
@@ -229,5 +243,29 @@ const turns: SaTurn[] = [
   height: 12px;
   opacity: 0.7;
   flex-shrink: 0;
+}
+/* 空态（spec §10）*/
+.sa-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--neutral-dim);
+  padding: 24px;
+  text-align: center;
+}
+.sa-empty .sa-empty-ico {
+  width: 28px;
+  height: 28px;
+  opacity: 0.4;
+}
+.sa-empty .sa-empty-text {
+  font-size: var(--text-sm);
+}
+.sa-empty .sa-empty-sub {
+  font-size: var(--text-xs);
+  opacity: 0.6;
 }
 </style>
