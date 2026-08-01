@@ -1,6 +1,6 @@
 {
   "name": "xyz-agent",
-  "version": "0.8.41",
+  "version": "0.8.42",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.27.0",
