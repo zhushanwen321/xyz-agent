@@ -11,12 +11,16 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
 import {
   type DiscoveredResource,
   discoverResourcesSync,
   type ScanConfig,
 } from "../shared/resource-discovery.ts";
 import type { AgentConfig } from "./model-resolver.ts";
+
+const logger = getLogger("subagents");
 
 /** 内置 agent（代码硬编码，如 default worker）。 */
 export interface BuiltinAgentRegistry {
@@ -52,13 +56,17 @@ export function createPackageBuiltinRegistry(): BuiltinAgentRegistry {
       } catch (err) {
         // 单个 builtin agent 文件损坏不影响其他——降级跳过该文件。
         void err;
-        console.warn(`[subagents] skip malformed builtin agent: ${resource.path}`, err);
+        logger.warn(`[subagents] skip malformed builtin agent: ${resource.path}`, {
+          detail: err instanceof Error ? err.message : String(err),
+        });
       }
     }
   } catch (err) {
     // agents/ 目录不存在（打包遗漏）→ 空 builtin，不崩。
     void err;
-    console.warn("[subagents] builtin agents/ directory unreadable, falling back to empty set:", err);
+    logger.warn("[subagents] builtin agents/ directory unreadable, falling back to empty set", {
+      detail: err instanceof Error ? err.message : String(err),
+    });
   }
   return {
     get: (name) => cache.get(name),

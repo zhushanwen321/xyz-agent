@@ -25,6 +25,8 @@
  * 参考：domain-models.md §失败处理矩阵。
  */
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
 import { SLUG_MAX_LENGTH } from "../execution/execute-options-mapper.ts";
 import { createRecord, updateFromEvent } from "../execution/execution-record.ts";
 import { SubagentStream } from "../execution/stream-sink.ts";
@@ -39,6 +41,8 @@ import type { WorkerLogEntry } from "./models/types.ts";
 import type { AgentCallOpts, AgentResult, ExecutionTraceNode } from "./models/types.ts";
 import type { WorkflowRun } from "./models/workflow-run.ts";
 import type { WorkerHandle } from "./worker-handle.ts";
+
+const logger = getLogger("subagents");
 
 // ── 常量 ─────────────────────────────────────────────────────
 
@@ -225,7 +229,7 @@ function dispatchAgentCall(
   if (typeof msg.callId !== "number" || !Number.isFinite(msg.callId) ||
       typeof msg.opts !== "object" || msg.opts === null ||
       typeof msg.opts.prompt !== "string") {
-    console.error(`[workflow] malformed agent-call message: callId=${JSON.stringify(msg.callId)}, opts=${JSON.stringify(msg.opts)?.slice(0, 200)}`);
+    logger.error(`[workflow] malformed agent-call message: callId=${JSON.stringify(msg.callId)}, opts=${JSON.stringify(msg.opts)?.slice(0, 200)}`);
     return;
   }
 
@@ -299,7 +303,7 @@ function dispatchAgentCall(
     });
     postAgentResult(run, msg.callId, errorResult, false);
     deps.store.save(run).catch((e: unknown) => {
-      console.error(`[workflow] store.save failed (resolveAgentOpts): ${e instanceof Error ? e.message : String(e)}`);
+      logger.error(`[workflow] store.save failed (resolveAgentOpts): ${e instanceof Error ? e.message : String(e)}`);
     });
     return;
   }
@@ -352,7 +356,7 @@ function dispatchAgentCall(
       postBudgetUpdate(run);
       deps.store.save(run).catch((e: unknown) => {
         const m = e instanceof Error ? e.message : String(e);
-        console.error(`[workflow] store.save failed (agent call ${msg.callId}): ${m}`);
+        logger.error(`[workflow] store.save failed (agent call ${msg.callId}): ${m}`);
       });
 
  // C-2：budget 超限 → 终止整个 run（避免继续 spawn 烧预算）
@@ -374,7 +378,7 @@ function dispatchAgentCall(
         if (transitioned) {
           deps.store.save(run).catch((e: unknown) => {
             const m = e instanceof Error ? e.message : String(e);
-            console.error(`[workflow] store.save failed (budget done): ${m}`);
+            logger.error(`[workflow] store.save failed (budget done): ${m}`);
           });
           deps.log?.("debug", "workflow:error-recovery", "run saved after budget done", { runId: run.runId, reason: run.state.reason });
           // M12: onRunDone/emit 单独 try——这些是真实副作用，错误不应被静默吞掉
@@ -385,7 +389,7 @@ function dispatchAgentCall(
             deps.onRunDone?.(run);
           } catch (err) {
             const m = err instanceof Error ? err.message : String(err);
-            console.error(`[workflow] onRunDone/emit failed (budget done): ${m}`);
+            logger.error(`[workflow] onRunDone/emit failed (budget done): ${m}`);
           }
         }
       }
@@ -394,7 +398,7 @@ function dispatchAgentCall(
  // withSlot 在 queued + signal-aborted 时 reject AbortError——预期，不记错。
       if (err instanceof Error && err.name === "AbortError") return;
       const message = err instanceof Error ? err.message : String(err);
-      console.error(`[workflow] agent call ${msg.callId} failed: ${message}`);
+      logger.error(`[workflow] agent call ${msg.callId} failed: ${message}`);
  // 兜底回发：executeAgentCall 抛非 Abort 异常时（如 runner undefined 的 TypeError、
  // gate.withSlot 内部 bug）原 catch 仅 console.error，worker 内对 callId 的 pending
  // Promise 永不 resolve → agent() 永久 await → worker 脚本挂死。构造 failed AgentResult
@@ -422,7 +426,7 @@ function dispatchAgentCall(
       // S2: 与 .then 对称——catch 路径也同步 worker $BUDGET（幂等）
       postBudgetUpdate(run);
       deps.store.save(run).catch((e: unknown) => {
-        console.error(`[workflow] store.save failed (catch fallback): ${e instanceof Error ? e.message : String(e)}`);
+        logger.error(`[workflow] store.save failed (catch fallback): ${e instanceof Error ? e.message : String(e)}`);
       });
     });
 }
@@ -456,7 +460,7 @@ function dispatchWorkflowCall(
   if (typeof msg.callId !== "number" || !Number.isFinite(msg.callId) ||
       typeof msg.name !== "string" ||
       typeof msg.args !== "object" || msg.args === null) {
-    console.error(`[workflow] malformed workflow-call message: callId=${JSON.stringify(msg.callId)}, name=${JSON.stringify(msg.name)}`);
+    logger.error(`[workflow] malformed workflow-call message: callId=${JSON.stringify(msg.callId)}, name=${JSON.stringify(msg.name)}`);
     return;
   }
 
@@ -474,7 +478,7 @@ function dispatchWorkflowCall(
       });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[workflow] postResult (workflow-call callId=${msg.callId}) failed: ${errMsg}. Sending error fallback.`);
+      logger.error(`[workflow] postResult (workflow-call callId=${msg.callId}) failed: ${errMsg}. Sending error fallback.`);
       // 回发纯字符串 fallback result（必可克隆），让 worker pending resolve
       try {
         run.runtime?.worker.postMessage({
@@ -484,7 +488,7 @@ function dispatchWorkflowCall(
         });
       } catch {
         // fallback 也失败——worker 此 callId 的 pending 只能靠 timeout 兜底
-        console.error(`[workflow] postResult fallback also failed (callId=${msg.callId}): worker pending will hang until timeout`);
+        logger.error(`[workflow] postResult fallback also failed (callId=${msg.callId}): worker pending will hang until timeout`);
       }
     }
   };
@@ -515,7 +519,7 @@ function dispatchWorkflowCall(
  * postMessage 同步抛 DataCloneError。若冒泡到 dispatchAgentCall 的 .then 回调，会中断
  * 后续 postBudgetUpdate/store.save/budget 检查，run 卡在 running。故内部 try/catch：
  * 失败时记录诊断 + 回发纯字符串 fallback result（必可克隆），让 worker pending resolve。
- * 函数签名不变（所有调用点无需改动），仅用 console.error 记日志（deps 不在手边）。
+ * 函数签名不变（所有调用点无需改动），仅用共享 logger 记日志（deps 不在手边）。
  */
 function postAgentResult(
   run: WorkflowRun,
@@ -527,7 +531,7 @@ function postAgentResult(
     run.runtime?.worker.postMessage({ type: "agent-result", callId, result, cached });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[workflow] postAgentResult failed (callId=${callId}): ${msg}. Result likely contains non-cloneable value.`);
+    logger.error(`[workflow] postAgentResult failed (callId=${callId}): ${msg}. Result likely contains non-cloneable value.`);
     // 回发纯字符串 fallback result（必可克隆），让 worker pending resolve（避免永久挂起）
     try {
       run.runtime?.worker.postMessage({
@@ -539,7 +543,7 @@ function postAgentResult(
       });
     } catch {
       // fallback 也失败——worker 此 callId 的 pending 只能靠 timeout/exit 兜底
-      console.error(`[workflow] postAgentResult fallback also failed (callId=${callId}): worker pending will hang until timeout`);
+      logger.error(`[workflow] postAgentResult fallback also failed (callId=${callId}): worker pending will hang until timeout`);
     }
   }
 }
@@ -565,7 +569,7 @@ export function postBudgetUpdate(run: WorkflowRun): void {
     const msg = err instanceof Error ? err.message : String(err);
     // budget 是纯 number 不太可能失败，但防御性兜底——budget 同步非关键（worker 仍可
     // 基于 $BUDGET.spent() 自行累计），失败仅记日志，不中断调用方流程。
-    console.error(`[workflow] postBudgetUpdate failed: ${msg}. Budget sync to worker skipped (non-critical).`);
+    logger.error(`[workflow] postBudgetUpdate failed: ${msg}. Budget sync to worker skipped (non-critical).`);
   }
 }
 

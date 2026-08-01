@@ -14,12 +14,25 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// Mock 共享 logger，让 logger.warn 可被 spy（源码已从 console.warn 改为 logger.warn）
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: {
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+  },
+}));
+vi.mock("@zhushanwen/pi-extension-logger", () => ({
+  getLogger: () => loggerMock,
+}));
+
 import { UiRequestObservability } from "../ui-request-observability.ts";
 
 // ── 公共 fixture ──────────────────────────────────────────────
 
 beforeEach(() => {
-  vi.spyOn(console, "warn").mockImplementation(() => {});
+  loggerMock.warn.mockClear();
 });
 
 afterEach(() => {
@@ -57,17 +70,17 @@ describe("UiRequestObservability — notifyMissingHandler per-session 去重", (
     const obs = new UiRequestObservability();
     obs.notifyMissingHandler("s1");
     obs.notifyMissingHandler("s1");
-    expect(console.warn).toHaveBeenCalledTimes(1);
+    expect(loggerMock.warn).toHaveBeenCalledTimes(1);
   });
 
   it("warn 内容含 sessionId 和 mode（可观测性）", () => {
     const obs = new UiRequestObservability();
     obs.setMode("tui");
     obs.notifyMissingHandler("s1");
-    expect(console.warn).toHaveBeenCalledWith(
+    expect(loggerMock.warn).toHaveBeenCalledWith(
       expect.stringContaining("session=s1"),
     );
-    expect(console.warn).toHaveBeenCalledWith(
+    expect(loggerMock.warn).toHaveBeenCalledWith(
       expect.stringContaining("mode=tui"),
     );
   });
@@ -77,12 +90,12 @@ describe("UiRequestObservability — resetMissingHandlerWarnings 后可重新 wa
   it("notify(s1) → reset → notify(s1) → warn 被调 2 次", () => {
     const obs = new UiRequestObservability();
     obs.notifyMissingHandler("s1");
-    expect(console.warn).toHaveBeenCalledTimes(1);
+    expect(loggerMock.warn).toHaveBeenCalledTimes(1);
 
     obs.resetMissingHandlerWarnings();
 
     obs.notifyMissingHandler("s1");
-    expect(console.warn).toHaveBeenCalledTimes(2);
+    expect(loggerMock.warn).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -91,11 +104,11 @@ describe("UiRequestObservability — 不同 session 各自首次 warn", () => {
     const obs = new UiRequestObservability();
     obs.notifyMissingHandler("s1");
     obs.notifyMissingHandler("s2");
-    expect(console.warn).toHaveBeenCalledTimes(2);
+    expect(loggerMock.warn).toHaveBeenCalledTimes(2);
 
     // 再次各自调用，已被去重，不再 warn
     obs.notifyMissingHandler("s1");
     obs.notifyMissingHandler("s2");
-    expect(console.warn).toHaveBeenCalledTimes(2);
+    expect(loggerMock.warn).toHaveBeenCalledTimes(2);
   });
 });

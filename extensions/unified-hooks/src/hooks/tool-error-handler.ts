@@ -1,11 +1,19 @@
 /**
  * Tool Error Handler Hook
  *
- * Logs tool execution errors for debugging. Can be extended to handle
- * specific error patterns with contextual recovery.
+ * Records tool execution errors for post-hoc debugging via appendEntry.
+ *
+ * Design: tool errors already surface in the conversation flow via pi's native
+ * tool result (isError → error content fed back to LLM). This hook does NOT
+ * call ctx.ui.notify — that would duplicate the error in the TUI notification
+ * area, and the "bash error" wording misleads (the error may be a hook's
+ * block reason, not a real crash). We only appendEntry for audit trail.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
+const logger = getLogger("unified-hooks");
 
 /**
  * Subset of `ToolExecutionEndEvent` fields used by this hook.
@@ -68,27 +76,19 @@ function getStringProperty(obj: unknown, key: string): string | undefined {
 }
 
 export function setupToolErrorHandler(pi: ExtensionAPI): void {
-  pi.on("tool_execution_end", async (event: unknown, ctx: HookContext) => {
+  pi.on("tool_execution_end", async (event: unknown) => {
     const e = event as ToolExecutionEndLikeEvent;
     if (!e.isError) return;
 
     // 提取错误文本：tool execute throw 时 Pi 把 error.message 塞进 result.content。
     // SDK 事件无 errorMessage 字段，只能从这里捞；拿不到也不阻断（降级到无详情）。
     const errorText = extractErrorText(e.result);
-    const detail = errorText ? `: ${errorText}` : "";
-    const msg = `[unified-hooks] ${e.toolName} error (callId=${e.toolCallId})${detail}`;
 
-    // ctx.ui.notify 走 TUI 通知区，不越过 alternate screen 污染 input。
-    // console.warn 会写 raw stderr，在 TUI 下泄漏到 input 区。
-    // headless / RPC 会话 ctx.ui 可能为 undefined——降级到 console.warn 保证不 NPE。
-    if (ctx.ui?.notify) {
-      ctx.ui.notify(msg, "warning");
-    } else {
-      console.warn(msg);
-    }
     // appendEntry 持久化到 session entries，供事后排查（无 UI、不泄漏）。
     // errorText 一起存上——事后排查能看到真实原因（如 "hub disposed"）。
-    pi.appendEntry("unified-hooks:tool-error", {
+    // 不调 ctx.ui.notify——tool error 已在对话流里（pi 原生 tool result），
+    // notify 会重复显示且措辞（"bash error"）误导。
+    logger.warn(`[unified-hooks] ${e.toolName} error (callId=${e.toolCallId})`, {
       toolName: e.toolName,
       toolCallId: e.toolCallId,
       errorText: errorText ?? null,

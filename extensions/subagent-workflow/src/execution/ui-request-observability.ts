@@ -3,7 +3,11 @@
 // UI 请求可观测性状态（从 subagent-service.ts 提取，降低主文件行数）。
 // 持有 sessionMode + handler 缺失告警去重集合，供 SubagentService 委托调用。
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
 import type { ExtensionMode } from "./host-mode.ts";
+
+const logger = getLogger("subagents");
 
 // ── 跨模块桥接（ui-request-queue 无 ctx.service 引用时走这里） ──
 //
@@ -32,7 +36,7 @@ export function notifyMissingHandlerGlobal(sessionId: string): void {
   if (obs) {
     obs.notifyMissingHandler(sessionId);
   } else {
-    console.warn(
+    logger.warn(
       `[subagents] uiRequestHandler missing (session=${sessionId}, global observability not registered)`,
     );
   }
@@ -72,6 +76,6 @@ export class UiRequestObservability {
       this.warnedMissingHandlerSessions.clear();
     }
     this.warnedMissingHandlerSessions.add(sessionId);
-    console.warn(`[subagents] uiRequestHandler missing (session=${sessionId}, mode=${this.sessionMode})`);
+    logger.warn(`[subagents] uiRequestHandler missing (session=${sessionId}, mode=${this.sessionMode})`);
   }
 }

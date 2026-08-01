@@ -21,7 +21,13 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "*",
+    "@zhushanwen/pi-extension-logger": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@zhushanwen/pi-extension-logger": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "vitest": "^4.1.8"

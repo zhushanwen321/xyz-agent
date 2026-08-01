@@ -4,6 +4,8 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
 import type { ExtensionMode } from "./host-mode.ts";
 
 import type { AgentResult as WorkflowAgentResult } from "../orchestration/models/types.ts";
@@ -51,6 +53,8 @@ import { DEFAULT_AGENT_NAME } from "./types.ts";
 import { registerGlobalObservability, UiRequestObservability } from "./ui-request-observability.ts";
 import { WorktreeManager } from "./worktree-manager.ts";
 
+const logger = getLogger("subagents");
+
 /** dispose 后注入的 stub UI 请求 handler。
  *
  * [背景] Pi 单进程 session 串行接管。session A shutdown 时 SIGTERM 子进程后、
@@ -58,7 +62,7 @@ import { WorktreeManager } from "./worktree-manager.ts";
  * 子进程的 trailing extension_ui_request 仍可能被父进程 pump 解析，调到 A 的 handler 闭包。
  * 若 dispose 不清 uiRequestHandler，旧 handler 闭包仍持有 A 的 ctx，触发
  * ui-request-queue.ts 的 catch 分支打 `[subagents] uiRequestHandler threw` 误导性
- * console.error（看起来像 bug，实际是预期竞态；三层兜底已确保功能正确）。
+ * logger.error（看起来像 bug，实际是预期竞态；三层兜底已确保功能正确）。
  *
  * stub 始终返回 {cancelled:true}，不调 ctx.ui、不捕获任何 ctx，让 trailing ui_request
  * 干净降级为 cancelled（等价于子进程主动取消）。
@@ -794,12 +798,12 @@ export class SubagentService {
       })
       .catch((err: unknown) => {
         // detached 吞错：runAndFinalize 内部已 finalize record（含 emitPendingUnregister），
-        // 且 finalizeRecord 的 manifest 写入已降级为 best-effort（失败仅 console.error + appendEntry，
+        // 且 finalizeRecord 的 manifest 写入已降级为 best-effort（失败仅 logger.error + appendEntry，
         // 不外抛）。因此此处不应走到——但作为最后一道兼底，记录调试日志后吞下，不外抛。
         // 完成通知由 finalizeRecord 内的 emitPendingUnregister 承担（pending-notifications 消费）。
         // cancel 抢先时 status=cancelled，cancelBackground 自己 emit，此处无需重复。
         if (err instanceof Error) {
-          console.debug(`[subagent] background finalize error (record=${record.id}): ${err.message}`);
+          logger.debug(`[subagent] background finalize error (record=${record.id}): ${err.message}`);
         }
       });
   }

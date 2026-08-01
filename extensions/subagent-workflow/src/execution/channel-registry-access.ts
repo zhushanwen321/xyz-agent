@@ -24,7 +24,11 @@
 // handshake 形状： ChannelRegistryHandshake（version=1）
 // version 守卫：    slot.version !== 1 时 console.warn + 丢弃重建（向前兼容未来升级）
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
 import { createUiChannelRegistry, type UiChannelRegistry, type ChannelHandler } from "./ui-channels.ts";
+
+const logger = getLogger("subagents");
 
 /** 进程级 channel 握手的 globalThis key（Symbol.for 跨模块共享）。
  *
@@ -67,14 +71,14 @@ function readHandshakeSlot(): ChannelRegistryHandshake | undefined {
   if (slot === undefined) return undefined;
   // 形状校验：必须是对象且 version===1，否则视为不兼容
   if (typeof slot !== "object" || slot === null) {
-    console.warn(
+    logger.warn(
       "[pi-subagent-workflow] channel handshake slot is not an object; discarding and recreating.",
     );
     return undefined;
   }
   const version = (slot as { version?: unknown }).version;
   if (version !== HANDSHAKE_VERSION) {
-    console.warn(
+    logger.warn(
       `[pi-subagent-workflow] channel handshake version mismatch (got ${String(
         version,
       )}, expected ${HANDSHAKE_VERSION}); discarding and recreating.`,
@@ -84,7 +88,7 @@ function readHandshakeSlot(): ChannelRegistryHandshake | undefined {
   // version 正确，但 pending 可能被恶意/错误地塞了非数组；防御性处理
   const candidate = slot as ChannelRegistryHandshake;
   if (!Array.isArray(candidate.pending)) {
-    console.warn(
+    logger.warn(
       "[pi-subagent-workflow] channel handshake pending is not an array; discarding and recreating.",
     );
     return undefined;

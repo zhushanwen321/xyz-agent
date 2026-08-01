@@ -6,6 +6,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getLogger, setPiHandle } from "@zhushanwen/pi-extension-logger";
 
 // Re-export hook modules for easy access
 
@@ -14,10 +15,16 @@ import { setupSubagentListInjector } from "./hooks/subagent-list-injector";
 import { setupTestTimeoutGuard } from "./hooks/test-timeout-guard";
 import { type HookContext, setupToolErrorHandler } from "./hooks/tool-error-handler";
 
+// 模块级 logger（setPiHandle 注入后自动走 appendEntry）
+const logger = getLogger("unified-hooks");
+
 /**
  * Extension factory - registers all unified hooks
  */
 export default function unifiedHooksExtension(pi: ExtensionAPI): void {
+  // 注入 pi handle 给全局 extension-logger
+  setPiHandle(pi);
+
   // Initialize hook registry
   const hooks: Array<{ name: string; enabled: boolean }> = [];
 
@@ -35,21 +42,25 @@ export default function unifiedHooksExtension(pi: ExtensionAPI): void {
       hook.setup(pi);
       hooks.push({ name: hook.name, enabled: true });
     } catch (err) {
-      console.error(`[unified-hooks] Failed to setup ${hook.name}:`, err);
+      logger.error(`[unified-hooks] Failed to setup ${hook.name}`, {
+        reason: err instanceof Error ? err.message : String(err),
+      });
       hooks.push({ name: hook.name, enabled: false });
     }
   }
 
-  // Hook status surfaced via TUI notify (走通知区，不泄漏到 input area）
-  // + appendEntry 持久化供事后排查。禁止用 console.warn（raw stderr 在 TUI
-  // alternate screen 下会越过渲染层污染 input 区）。
+  // Hook 状态：appendEntry 持久化（事后排查）。
+  // notify 仅在有 disabled hook（setup 失败）时提醒用户——全成功时不刷屏。
+  // 禁止用 console.warn（raw stderr 在 TUI alternate screen 下会越过渲染层污染 input 区）。
   pi.on("session_start", (_event: unknown, ctx: HookContext) => {
     const enabled = hooks.filter((h) => h.enabled).map((h) => h.name);
     const disabled = hooks.filter((h) => !h.enabled).map((h) => h.name);
-    const msg = `[unified-hooks] Loaded: ${enabled.join(", ") || "(none)"}${
-      disabled.length ? ` | Failed: ${disabled.join(", ")}` : ""
-    }`;
-    ctx.ui?.notify(msg, disabled.length ? "warning" : "info");
     pi.appendEntry("unified-hooks:loaded", { enabled, disabled });
+    if (disabled.length > 0) {
+      ctx.ui?.notify(
+        `[unified-hooks] Failed: ${disabled.join(", ")}`,
+        "warning",
+      );
+    }
   });
 }

@@ -17,6 +17,19 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// Mock 共享 logger，让 logger.warn 可被 spy（源码已从 console.warn 改为 logger.warn）
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: {
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+  },
+}));
+vi.mock("@zhushanwen/pi-extension-logger", () => ({
+  getLogger: () => loggerMock,
+}));
+
 import {
   CHANNEL_HANDSHAKE_KEY,
   getOrCreateChannelRegistry,
@@ -31,6 +44,7 @@ function clearSlot(): void {
 
 afterEach(() => {
   clearSlot();
+  loggerMock.warn.mockClear();
 });
 
 /** 读取当前 slot（绕过本模块的 readHandshakeSlot，测试断言用）。 */
@@ -193,7 +207,7 @@ describe("getOrCreateChannelRegistry — 多条 pending flush 顺序与覆盖", 
 describe("getOrCreateChannelRegistry — version 校验（向前兼容）", () => {
   it("version !== 1（如塞 {version:2,...}）→ warn + 重建为新 slot，旧 pending 数据丢弃", () => {
     clearSlot();
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    loggerMock.warn.mockClear();
     // 塞一个 version:2 的 slot，含旧数据
     const staleHandler = vi.fn();
     injectSlot({
@@ -205,7 +219,7 @@ describe("getOrCreateChannelRegistry — version 校验（向前兼容）", () =
     const registry = getOrCreateChannelRegistry();
 
     // warn 被调用
-    expect(warnSpy).toHaveBeenCalled();
+    expect(loggerMock.warn).toHaveBeenCalled();
     // 旧 pending 数据被丢弃（staleHandler 没被注册）
     expect(registry.resolve("ask_user")).toBeUndefined();
     // slot 被重建为 version:1，pending 为空
@@ -213,21 +227,17 @@ describe("getOrCreateChannelRegistry — version 校验（向前兼容）", () =
     expect(slot!.version).toBe(1);
     expect(slot!.pending).toEqual([]);
     expect(slot!.registry).toBe(registry);
-
-    warnSpy.mockRestore();
   });
 
   it("version !== 1 时 warn 消息包含 got/expected 字样", () => {
     clearSlot();
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    loggerMock.warn.mockClear();
     injectSlot({ version: 99 as unknown as 1, pending: [] });
 
     getOrCreateChannelRegistry();
 
-    const msg = warnSpy.mock.calls[0]?.[0] ?? "";
+    const msg = loggerMock.warn.mock.calls[0]?.[0] ?? "";
     expect(String(msg)).toMatch(/got/);
     expect(String(msg)).toMatch(/expected/);
-
-    warnSpy.mockRestore();
   });
 });

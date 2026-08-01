@@ -19,6 +19,7 @@ import * as path from "node:path";
 
 import type { ExtensionAPI, ExtensionContext, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getLogger, setPiHandle } from "@zhushanwen/pi-extension-logger";
 
 import type { AgentRegistry } from "./execution/agent-registry.ts";
 import { bestEffort } from "./execution/best-effort.ts";
@@ -73,7 +74,14 @@ declare module "@earendil-works/pi-coding-agent" {
 
 // ── Factory ──────────────────────────────────────────────────
 
+// 模块级 logger（setPiHandle 注入后自动走 appendEntry）
+const logger = getLogger("subagents");
+
 export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
+  // 注入 pi handle 给全局 extension-logger，让深层代码（best-effort / error-recovery）
+  // 的 getLogger("subagents") 也能走 appendEntry。
+  setPiHandle(pi);
+
   // ════════════════════════════════════════════════════════════
   //  subagents 域：tool + command + messageRenderer
   // ════════════════════════════════════════════════════════════
@@ -260,8 +268,9 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     try {
       maybeCleanupExpiredSessionFiles(agentDir, cwd);
     } catch (err) {
-      void err;
-      console.warn("[subagents] expired session file cleanup failed:", err);
+      logger.warn("[subagents] expired session file cleanup failed", {
+        reason: err instanceof Error ? err.message : String(err),
+      });
     }
 
     // ADR-035 启动恢复：扫描 manifest tmp 残留（崩溃打断的 writeManifest 留下），
@@ -269,19 +278,21 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     try {
       const recovered = await service.recoverManifestTmpFiles();
       if (recovered.recovered > 0 || recovered.deleted > 0) {
-        console.warn(`[subagents] manifest tmp recovery: ${recovered.recovered} promoted, ${recovered.deleted} deleted`);
+        logger.warn(`[subagents] manifest tmp recovery: ${recovered.recovered} promoted, ${recovered.deleted} deleted`);
       }
     } catch (err) {
-      void err;
-      console.warn("[subagents] manifest tmp recovery failed:", err);
+      logger.warn("[subagents] manifest tmp recovery failed", {
+        reason: err instanceof Error ? err.message : String(err),
+      });
     }
 
     try {
       const wtm = new WorktreeManager(agentDir);
       wtm.scan();
     } catch (err) {
-      void err;
-      console.warn("[subagents] worktree reaper scan failed:", err);
+      logger.warn("[subagents] worktree reaper scan failed", {
+        reason: err instanceof Error ? err.message : String(err),
+      });
     }
 
     // ── workflow 域：per-session store + runs ──
@@ -315,7 +326,9 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       }
     } catch (err) {
       // QMF-4 fix: store.loadAll 失败是关键路径错误，workflow 域将未初始化
-      console.error("[subagent-workflow] store.loadAll failed, workflow domain uninitialized:", err);
+      logger.error("[subagent-workflow] store.loadAll failed, workflow domain uninitialized", {
+        reason: err instanceof Error ? err.message : String(err),
+      });
       storeHealthy = false;
     }
 
