@@ -46,7 +46,7 @@
 wave 超时/反复 gate fail 后：
 1. workflow 脚本调 `cw abort --unitId <waveId>` 推终态（cw 已有 abort 命令）
 2. cw abort 后 wave status=aborted（终态）
-3. 父 slice retrospect 的 all-waves-closed gate 需校验"所有子层终态"（含 aborted）——需核实 cw 的 gate 实现是"全 closed"还是"全终态"。如果是"全 closed"需改为"全终态（closed 或 aborted）"
+3. 父 slice retrospect 的 all-waves-closed gate 已确认接受 aborted 终态——cw `retrospect.ts` 的实现是 `childStatuses.filter(s => s !== "closed" && s !== "aborted")`，即只有既非 closed 又非 aborted 才算 nonTerminal。**cw 侧无需改动**（已实测确认，见 §4 allWavesClosed gate 段 + cw 增强设计报告 §2.1 协议 3）
 
 ---
 

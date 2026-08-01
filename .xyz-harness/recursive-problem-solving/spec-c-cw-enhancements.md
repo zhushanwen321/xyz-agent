@@ -148,14 +148,13 @@ Pass 2: 计算 blocked 标记（两类阻塞）
   类型 B — wave 层等依赖 wave 完成（v3 新增，致命缺陷 2 修复）：
   - **关键：wave 没有 plan.split（叶子，cw 自动填 split=[]）**。
     wave 的 dependsOn 信息只存在于**父 slice 的 plan.split[]** 里。
-    frontier 必须做反向查找才能拿到 wave 的 dependsOn：
-    1. 找该 wave 的 parentUnitId（父 slice）
-    2. 读父 slice 的 plan.split[]
-    3. 匹配 childSlug：`<slice.slug>::<split.slug>` === 该 wave 的 slug 部分
-       （wave id 格式 = `wave:<slice.slug>::<split.slug>`，见 core/workunit.ts:207 + slice/execute.ts:49）
-    4. 读匹配到的 Split 项的 dependsOn（兄弟 slug 列表）
-    5. 每个兄弟 slug 映射到 wave unitId：`wave:<slice.slug>::<depSlug>`
-       （映射逻辑与 C1 改动 2 一致）
+    frontier 必须做反向查找才能拿到 wave 的 dependsOn。
+  - **反查方式（childDelivery 显式映射，v6 升级为主方案）**：用 `resolveChildDependsOn(splits, childDelivery)` 经父 slice 的 `evidence.childDelivery` 反查——cw 增强设计报告 §1.3 修正 3/4 确认此方式更鲁棒（不读 childStatus，天然处理 duplicate slug 边界）。调用链：
+    1. findParentSlice(W) → 拿到父 slice S
+    2. resolveChildDependsOn(S.plan.split, S.evidence.childDelivery) → 返回所有子的 `{childUnitId, dependsOn}` 数组
+    3. 在返回数组里 find(item => item.childUnitId === W.id) → 取 W 的 dependsOn（childUnitId 列表）
+    4. 查 dependsOn 里的每个 childUnitId 是否终态 → 有未终态则 W blocked=true
+  - **旧 slug 匹配写法（v5 及之前，已废弃但仍能跑通）**：`<slice.slug>::<split.slug>` 字符串匹配 wave id 的 slug 部分 → 读 split.dependsOn（兄弟 slug）→ 映射回 wave unitId。childDelivery 反查取代它的原因：duplicate slug 会让字符串匹配错配，childDelivery 的 `{splitSlug, childUnitId}` 显式映射无歧义。
   - 查到 wave 的 dependsOn（wave unitId 列表）后：
     - 全部终态 → blocked = false
     - 有未终态 → blocked = true（blockedReason: "依赖 wave:X 未完成"）
@@ -170,7 +169,7 @@ Pass 2: 计算 blocked 标记（两类阻塞）
 
 **反向查找的必要性**（第四轮审查高风险）：wave 是叶子，自身 plan.split 为空。dependsOn 只在父 slice 的 plan.split 里声明（split 项的 dependsOn 字段，存兄弟 slug）。不显式描述反向查找，实现者可能读 `wave.plan.split`（恒空）→ 类型 B 失效 → 致命缺陷 2 未修复。
 
-**实现优化建议**（第五轮审查，非致命）：父 slice 的 `evidence.childDelivery: ChildDeliveryRecord[]` 已存 `{splitSlug, childUnitId, childStatus}` 显式映射（execute 阶段写入）。类型 B 可改用 childDelivery 反查（`parent.evidence.childDelivery.find(r => r.childUnitId === wave.id).splitSlug` → 查 plan.split 的 dependsOn → 再用 childDelivery 反查 depSlug 对应的 childUnitId），比 slug 字符串匹配更鲁棒，且天然处理 duplicate slug 边界。当前 slug 匹配写法能跑通，childDelivery 是可选优化。
+**childDelivery 反查为主方案**（v6 升级，原第五轮审查的"非致命优化建议"已转正）：父 slice 的 `evidence.childDelivery: ChildDeliveryRecord[]` 存 `{splitSlug, childUnitId, childStatus}` 显式映射（execute 阶段写入）。类型 B 经 `resolveChildDependsOn(splits, childDelivery)` 反查（cw 增强设计报告 §1.3 修正 3/4）。显式声明：映射只用 `splitSlug + childUnitId` 两字段，**不读 childStatus**——execute 调用点刚 push 完 childDelivery 时 childStatus=pending，frontier 调用点 childStatus 反映终态，映射逻辑与 childStatus 无关。`resolveChildDependsOn` 封装在新建的 `core/hierarchy.ts`（跨父子 WorkUnit 关系的只读遍历工具），C1 的 execute handler 不调它（execute 循环里直接正向构建 children）。
 
 **旁路发现**（第五轮审查）：cw 无 duplicate-slug gate——split 同 slug 会导致 child wave id 冲突覆盖（store 按 id save）。建议 cw 补 duplicate-slug 校验（design-review gate 层），非本 spec 范围。
 
@@ -236,7 +235,7 @@ feature 的 plan/design-review agent 读 handoff 时能看到 FR/AC 的 id 和�
 - epic: strategicAlignment / featureSplitRationale / scopeBoundary / priorityRationale / resourceEstimate（5 字段）
 - feature: specMeceNote / sliceSplitRationale / acVerifiabilityNote / consistencyNote / frAcCoverageNote / sliceSpecCoverageNote（6 字段）
 - slice: techChoiceRationale / interfaceContractNote / dataModelSoundness / errorCoverage / testabilityNote / crossWaveContractNote（6 字段）
-- wave: implApproachNote / testDesignNote / riskMitigationNote / qualityGateNote（4 字段）
+- wave: testCaseCoverageNote / boundaryConditionNote / mockStrategyNote / tddRedReadinessNote（4 字段，核实自 `WaveDesignReviewLayerSpecific` judgments.ts:53-58，全 optional）
 
 改 `get{Scope}SchemaText` 或对应的 guidance 模板，在 design-review 阶段的 schema 文本里列出该层字段名：
 
