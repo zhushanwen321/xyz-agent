@@ -39,6 +39,8 @@ function onInput(e: Event) {
   draft.value = (e.target as HTMLElement).innerText
 }
 function onSend(e: Event) {
+  // B5 守卫：draft 空且无 stagedAction（+Q）时静默返回，不消费状态
+  if (!draft.value && !stagedAction.value) return
   // demo：无实际发送。stagedAction 消费：+Q 变体随发送生效（composer 直接 enter = 无内容变体）
   clearStagedAction()
   draft.value = ''
@@ -80,6 +82,7 @@ watch(stagedAction, (v) => {
         contenteditable="true"
         data-placeholder="描述任务…（⏎ 发送 / ⇧⏎ 换行）"
         @input="onInput"
+        @keydown.enter.exact.prevent="onSend"
         @focus="focused = true"
         @blur="focused = false"
       ></div>
@@ -142,23 +145,22 @@ watch(stagedAction, (v) => {
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
-/* staging chip：fork/handoff +Q 变体（spec §12.6 · rounded-md bg-surface border-border/50 px-3 py-1.5 flex gap-2 text-xs） */
+/* staging chip：fork/handoff +Q 变体（spec §12.6 · accent 标签，base.css .comp-chip：accent-soft 底 + accent 字 11px 500 + icon 12px + × 14px hover 反色） */
 .stage-chip {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  margin: 8px 14px 0;
-  padding: 6px 12px;
+  gap: 6px;
+  margin: 8px 10px 0;
+  padding: 4px 8px;
   border-radius: var(--radius);
-  background: var(--surface);
-  border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
-  font-size: var(--text-xs);
-  color: var(--neutral-mid);
+  background: var(--accent-soft);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
 }
 .stage-chip-ico {
-  width: 13px;
-  height: 13px;
-  color: var(--accent);
+  width: 12px;
+  height: 12px;
   flex-shrink: 0;
 }
 .stage-chip-text {
@@ -169,17 +171,17 @@ watch(stagedAction, (v) => {
   white-space: nowrap;
 }
 .stage-chip-x {
-  width: 18px;
-  height: 18px;
+  width: 14px;
+  height: 14px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-sm);
-  color: var(--neutral-dim);
+  color: var(--accent);
   transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
 }
-.stage-chip-x svg { width: 11px; height: 11px; }
-.stage-chip-x:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.stage-chip-x svg { width: 10px; height: 10px; }
+.stage-chip-x:hover { background: var(--accent); color: #fff; }
 
 /* contenteditable input */
 .comp-input {

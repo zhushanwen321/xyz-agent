@@ -53,7 +53,7 @@ const turns: SaTurn[] = [
       </svg>
       <span class="sa-agent">researcher</span>
       <span class="sa-slug">· find-auth-flow</span>
-      <span class="sa-meta">glm-5.2 · thinking 3</span>
+      <span class="sa-meta">glm-5.2 · thinking medium</span>
     </div>
 
     <!-- 嵌套 MessageStream（只读） -->

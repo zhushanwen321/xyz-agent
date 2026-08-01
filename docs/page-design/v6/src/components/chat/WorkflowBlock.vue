@@ -59,7 +59,7 @@ const dim = computed(() => failed.value)
   font-size: var(--text-2xs);
   font-weight: 600;
   color: var(--neutral-fg);
-  letter-spacing: 0.04em;
+  margin-right: 2px;
 }
 .wf-prefix.dim { color: var(--neutral-mid); }
 .wf-name, .wf-slug {

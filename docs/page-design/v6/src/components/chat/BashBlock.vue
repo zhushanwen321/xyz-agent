@@ -13,6 +13,8 @@ const cmd = computed(() => (props.data.cmd as string) || '')
 const output = computed(() => (props.data.output as string) || '')
 const exit = computed(() => props.data.exit as number | undefined)
 const running = computed(() => state.value === 'running')
+/** timeout/cancelled 终态：spec 5A 只显 header + 状态标签，不渲染 (无输出) 占位 */
+const isTerminal = computed(() => state.value === 'timeout' || state.value === 'cancelled')
 const truncated = computed(() => props.data.truncated === true)
 const noContext = computed(() => props.data.excludeFromContext === true)
 const hasOutput = computed(() => output.value.length > 0)
@@ -61,7 +63,7 @@ async function copyBlock() {
         <div class="bob-out">{{ output }}</div>
         <div v-if="truncated" class="bob-trunc">⋯ 输出已截断</div>
       </div>
-      <div v-else class="bob-empty">(无输出)</div>
+      <div v-else-if="!isTerminal" class="bob-empty">(无输出)</div>
     </template>
   </div>
 </template>

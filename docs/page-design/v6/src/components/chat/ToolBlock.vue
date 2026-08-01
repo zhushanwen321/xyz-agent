@@ -89,13 +89,20 @@ async function copyTool() {
   min-width: 0;
   cursor: pointer;
 }
-.tool-ico, .tool-loader {
-  width: 13px;
-  height: 13px;
+/* spec base.css：.tool-ico 14px（block header icon 统一）· .tool-loader 13px（running 态略小） */
+.tool-ico {
+  width: 14px;
+  height: 14px;
   color: var(--neutral-ico);
   flex-shrink: 0;
 }
-.tool-loader { color: var(--accent); animation: spin 1.4s linear infinite; }
+.tool-loader {
+  width: 13px;
+  height: 13px;
+  color: var(--accent);
+  flex-shrink: 0;
+  animation: spin 1.4s linear infinite;
+}
 .tool-name {
   font-size: var(--text-sm);
   font-weight: 500;

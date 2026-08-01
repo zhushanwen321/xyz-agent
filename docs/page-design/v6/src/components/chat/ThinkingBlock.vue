@@ -26,7 +26,8 @@ async function copyBody() {
       <!-- Brain icon -->
       <svg class="tk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 18V5"/><path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4"/><path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"/><path d="M17.997 5.125a4 4 0 0 1 2.526 5.77"/><path d="M18 18a4 4 0 0 0 2-7.464"/><path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517"/><path d="M6 18a4 4 0 0 1-2-7.464"/><path d="M6.003 5.125a4 4 0 0 0-2.526 5.77"/></svg>
       <span class="tk-label">Think</span>
-      <span v-if="!expanded" class="tk-preview">{{ preview }}</span>
+      <!-- spec §4：expanded 时 preview 文字 invisible 保留占位（visibility 而非 v-if 移除，防行高跳动） -->
+      <span class="tk-preview" :class="{ hidden: expanded }">{{ preview }}</span>
     </div>
     <div v-if="expanded" class="tk-body">
       <div class="body-toolbar">
@@ -47,7 +48,7 @@ async function copyBody() {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-width: 0;
+  min-height: 24px;
   cursor: pointer;
 }
 .tk-ico {
@@ -72,6 +73,7 @@ async function copyBody() {
   white-space: nowrap;
   min-width: 0;
 }
+.tk-preview.hidden { visibility: hidden; }
 .tk-body {
   padding: 6px 0 0 16px;
 }

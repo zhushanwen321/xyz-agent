@@ -169,7 +169,6 @@ const statusLabel: Record<string, string> = {
   min-width: 0;
   font-family: var(--font-mono);
   font-size: var(--text-sm);
-  font-weight: 600;
   color: var(--neutral-fg);
   overflow: hidden;
   text-overflow: ellipsis;

@@ -80,6 +80,7 @@ function onHandoff() { emit('handoff') }
   justify-content: center;
   border-radius: var(--radius-sm);
   color: var(--neutral-dim);
+  cursor: pointer;
   transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
 }
 .ts-ghost svg { width: 13px; height: 13px; }

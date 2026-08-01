@@ -133,9 +133,9 @@ export const workflows: WorkflowItem[] = [
 ]
 
 // === 对话流消息（MessageStream）===
+/** 注意：block 状态一律放 data.state（组件只读 data），顶层不设 state */
 export interface ChatBlock {
-  type: 'thinking' | 'bash' | 'tool' | 'changeset' | 'subagent' | 'workflow' | 'goal' | 'todo'
-  state?: 'collapsed' | 'expanded' | 'running' | 'done' | 'failed'
+  type: 'thinking' | 'bash' | 'tool' | 'changeset' | 'subagent' | 'workflow'
   data: Record<string, unknown>
 }
 
@@ -180,7 +180,7 @@ export const chatTurns: ChatTurn[] = [
           state: 'collapsed',
           status: 'accumulating',
           title: 'v6 视觉稿修复',
-          count: 5,
+          count: 3, // spec §7「count = fileChanges.length」：files 只有 3 条
           stats: { add: 142, del: 37 },
           files: [
             { name: 'v6-design.md', badge: 'M' as const, add: 24, del: 8 },
@@ -195,6 +195,11 @@ export const chatTurns: ChatTurn[] = [
     id: 'turn-2',
     userMessage: '把这些修复都做了，不用过问我',
     blocks: [
+      {
+        // streaming 帧 think pill 数据源（spec §3 streaming 帧「think · N」）
+        type: 'thinking',
+        data: { state: 'expanded', preview: '…' },
+      },
       {
         // running 态 bash：展示双环 loader + 取消按钮 + no-context tag
         type: 'bash',
@@ -224,6 +229,21 @@ export const chatTurns: ChatTurn[] = [
       {
         type: 'workflow',
         data: { state: 'done', name: 'code-review', slug: 'pr-61-review' },
+      },
+    ],
+  },
+  {
+    id: 'turn-3',
+    userMessage: '并行调研一下 xyz-agent 的 v3 迁移成本',
+    blocks: [
+      {
+        // 帧⑦ subagent 差异帧：done 态 subagent block → turnVariant 命中 'subagent' → TurnSummary 仅 copy（无 fork/handoff）
+        type: 'subagent',
+        data: { state: 'done', name: 'researcher', slug: 'find-migration-cost', model: 'glm-5.2', thinking: 'high' },
+      },
+      {
+        type: 'workflow',
+        data: { state: 'done', name: 'cost-analysis', slug: 'v3-migration' },
       },
     ],
   },
