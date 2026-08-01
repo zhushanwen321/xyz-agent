@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 
 /**
  * §4.6 AskUserOverlay · 内联 companion 覆盖层（非 modal，无遮罩）。
  * 落 companion-band（composer 上方），z-overlay(20)。
  * 根 au-overlay：bg-input + radius-lg + shadow-2。
  * v6 降噪：context 用中性 bg-surface-hover（去 reasoning 软底彩色）；选项 hover/selected 走 §3.2 列表项型。
+ * 单问题：选中即提交（select 时若单问题，立即 emit confirm）。
+ * 多问题（questions 传入多个）：渲染 .au-tab 切换栏（带 7px au-tab-dot），骨架仅做切换。
  * 本组件作为独立可展示组件存在（不在 App.vue 渲染），demo 单选目标环境。
  */
 
@@ -16,6 +18,11 @@ interface OptItem {
   disabled?: boolean
 }
 
+interface AskQuestion {
+  title: string
+  options: OptItem[]
+}
+
 const props = withDefaults(defineProps<{
   question?: string
   context?: string
@@ -24,6 +31,8 @@ const props = withDefaults(defineProps<{
   defaultSelected?: string
   cancelText?: string
   confirmText?: string
+  /** 多问题列表：传入多个时切换为 tab 形态（au-tab + 7px au-tab-dot）*/
+  questions?: AskQuestion[]
 }>(), {
   question: '选择目标环境？',
   context: '当前分支：feat-optimize-ui',
@@ -36,6 +45,7 @@ const props = withDefaults(defineProps<{
   defaultSelected: 'production',
   cancelText: '取消',
   confirmText: '确认',
+  questions: () => [],
 })
 
 const emit = defineEmits<{
@@ -43,11 +53,27 @@ const emit = defineEmits<{
   cancel: []
 }>()
 
+/** 是否多问题形态（questions 传入 ≥2 个） */
+const isMulti = computed(() => (props.questions?.length ?? 0) >= 2)
+
+/** 多问题当前激活 tab idx */
+const activeQ = ref(0)
+
+/** 当前问题（多问题取 tab 项；否则构造单个） */
+const currentQuestion = computed<AskQuestion>(() => {
+  if (isMulti.value) return props.questions[activeQ.value] ?? props.questions[0]
+  return { title: props.question, options: props.options }
+})
+
 const selected = ref<string>(props.defaultSelected)
 
 function select(opt: OptItem) {
   if (opt.disabled) return
   selected.value = opt.value
+  // 单问题：选完即提交（demo 行为）
+  if (!isMulti.value) {
+    emit('confirm', opt.value)
+  }
 }
 
 function onConfirm() {
@@ -61,10 +87,24 @@ function onCancel() {
 <template>
   <div class="au-companion">
     <div class="au-overlay">
+      <!-- 多问题 tab 切换栏（仅 questions ≥2 时渲染，带 7px au-tab-dot） -->
+      <div v-if="isMulti" class="au-tabs">
+        <button
+          v-for="(q, i) in questions"
+          :key="i"
+          class="au-tab"
+          :class="{ on: i === activeQ }"
+          @click="activeQ = i"
+        >
+          <span class="au-tab-dot"></span>
+          <span class="au-tab-label">{{ q.title }}</span>
+        </button>
+      </div>
+
       <!-- head：脉冲点 + 问题标题 -->
       <div class="au-head">
         <span class="au-dot"></span>
-        <span class="au-q">{{ question }}</span>
+        <span class="au-q">{{ currentQuestion.title }}</span>
       </div>
 
       <!-- body -->
@@ -77,7 +117,7 @@ function onCancel() {
         <!-- 单选选项列表 -->
         <div class="au-opts">
           <button
-            v-for="opt in options"
+            v-for="opt in currentQuestion.options"
             :key="opt.value"
             class="au-opt"
             :class="{ sel: opt.value === selected, disabled: opt.disabled }"
@@ -95,8 +135,8 @@ function onCancel() {
 
       <!-- actions -->
       <div class="au-actions">
-        <button class="btn btn-ghost btn-sm" @click="onCancel">{{ cancelText }}</button>
-        <button class="btn btn-default btn-sm" @click="onConfirm">{{ confirmText }}</button>
+        <button class="btn btn-ghost btn-dense" @click="onCancel">{{ cancelText }}</button>
+        <button class="btn btn-default btn-dense" @click="onConfirm">{{ confirmText }}</button>
       </div>
     </div>
   </div>
@@ -119,6 +159,47 @@ function onCancel() {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+/* 多问题 tab 切换栏（questions ≥2 时渲染） */
+.au-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.au-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 6px;
+  border: 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--neutral-mid);
+  transition: all var(--duration-fast) var(--ease);
+}
+.au-tab:hover {
+  color: var(--neutral-fg);
+}
+.au-tab.on {
+  color: var(--neutral-fg);
+}
+/* au-tab-dot：7px 状态点（spec 要求） */
+.au-tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--neutral-dim);
+  flex-shrink: 0;
+  transition: background var(--duration-fast) var(--ease);
+}
+.au-tab.on .au-tab-dot {
+  background: var(--accent);
 }
 
 /* head */

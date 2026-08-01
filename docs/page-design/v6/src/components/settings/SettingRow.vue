@@ -28,7 +28,7 @@ defineProps<{
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  padding: var(--space-3) var(--space-4);
+  padding: 10px 6px;
   min-height: 48px;
 }
 .setting-row + .setting-row {

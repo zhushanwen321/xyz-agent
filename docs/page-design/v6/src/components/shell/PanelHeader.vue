@@ -1,20 +1,37 @@
 <script setup lang="ts">
-import { openSearch } from '@/composables/useStore'
+import { openSearch, sidebarCollapsed } from '@/composables/useStore'
 
-/** PanelHeader：bg-elevated 浮起，status icon + breadcrumb + jsonl + git */
+/** PanelHeader：bg-elevated 浮起，status icon + breadcrumb + jsonl + git
+ * 折叠态 chrome 迁入此 header（展开侧栏/后退/前进），与 AppNavControls 浮层位置一致 */
+
+function toggleSidebar() {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+}
 </script>
 
 <template>
-  <header class="panel-header">
+  <header class="panel-header" :class="{ collapsed: sidebarCollapsed }">
+    <!-- 折叠态 chrome（展开侧栏/后退/前进），位置同 AppNavControls 浮层（起 x=100px）-->
+    <div v-if="sidebarCollapsed" class="collapsed-chrome">
+      <button class="nav-btn" title="展开侧栏" @click="toggleSidebar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+      </button>
+      <button class="nav-btn" title="后退">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+      </button>
+      <button class="nav-btn" title="前进">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+      </button>
+    </div>
     <!-- status icon（success check 绿色对勾）-->
-    <svg class="status-ico" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <svg class="status-ico" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="12" cy="12" r="9"/><polyline points="9 12 11 14 15 9"/>
     </svg>
     <!-- breadcrumb -->
     <div class="breadcrumb">
       <span class="dir">feat-optimize-ui</span>
-      <span class="sep">›</span>
-      <span class="branch">visual-modernization</span>
+      <span class="sep">▸</span>
+      <span class="branch">main</span>
     </div>
     <div class="spacer"></div>
     <!-- jsonl 按钮 -->
@@ -41,6 +58,37 @@ import { openSearch } from '@/composables/useStore'
   gap: 8px;
   padding: 0 14px;
 }
+/* 折叠态：左侧留白让位 chrome（按钮起 x=100px，与 AppNavControls 浮层一致）*/
+.panel-header.collapsed {
+  padding-left: 88px;
+}
+
+/* 折叠态 chrome 按钮组（样式同 AppNavControls 的 nav-btn）*/
+.collapsed-chrome {
+  position: absolute;
+  left: 100px;
+  display: flex;
+  gap: 2px;
+}
+.nav-btn {
+  width: 26px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--neutral-dim);
+  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
+}
+.nav-btn svg { width: 14px; height: 14px; }
+.nav-btn:hover {
+  background: var(--surface-hover);
+  color: var(--neutral-fg);
+}
+.nav-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0, 0, 0, 0.4);
+}
 
 .status-ico {
   width: 13px;
@@ -59,7 +107,7 @@ import { openSearch } from '@/composables/useStore'
 }
 .breadcrumb .dir { color: var(--neutral-fg); font-weight: 600; }
 .breadcrumb .sep { color: var(--neutral-faint); }
-.breadcrumb .branch { color: var(--neutral-mid); font-size: var(--text-xs); }
+.breadcrumb .branch { color: var(--accent); font-size: var(--text-xs); }
 
 .spacer { flex: 1; }
 

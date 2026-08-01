@@ -92,9 +92,9 @@ function onSend(e: Event) {
           <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
 
-        <!-- 发送位（30×30 accent 圆 ArrowUp） -->
+        <!-- 发送位（30×30 accent 圆 · 倾斜 send 箭头） -->
         <button class="send-slot" :class="{ disabled: !draft.length }" :title="draft.length ? '发送 · ⏎' : '输入内容后发送'" @click="onSend">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         </button>
       </div>
     </div>
@@ -161,7 +161,7 @@ function onSend(e: Event) {
   font-size: var(--text-xs);
   transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
 }
-.bar-btn:hover { background: var(--surface-hover); color: var(--neutral-mid); }
+.bar-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 .bar-btn.icon-only { width: 28px; padding: 0; justify-content: center; }
 .bar-btn svg { width: 14px; height: 14px; flex-shrink: 0; }
 .bar-btn .chev { width: 9px; height: 9px; }

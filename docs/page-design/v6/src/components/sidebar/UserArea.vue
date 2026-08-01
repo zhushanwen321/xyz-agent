@@ -14,12 +14,12 @@ withDefaults(defineProps<Props>(), { name: 'user' })
   <div class="user-area">
     <span class="user-area__avatar" aria-hidden="true"></span>
     <span class="user-area__name">{{ name }}</span>
-    <!-- overlay 测试入口（demo 触发 AskUser / Confirm） -->
+    <!-- overlay 测试入口（demo 触发 AskUser / Confirm，调试用途） -->
     <button
       class="user-area__test"
       type="button"
-      title="AskUser 覆盖层"
-      aria-label="打开 AskUser 覆盖层"
+      title="测试 · AskUser 覆盖层"
+      aria-label="打开 AskUser 覆盖层（测试）"
       @click="openAskUser()"
     >
       <svg
@@ -38,8 +38,8 @@ withDefaults(defineProps<Props>(), { name: 'user' })
     <button
       class="user-area__test"
       type="button"
-      title="Confirm 确认框"
-      aria-label="打开 Confirm 确认框"
+      title="测试 · Confirm 确认框"
+      aria-label="打开 Confirm 确认框（测试）"
       @click="openConfirm()"
     >
       <svg
@@ -86,6 +86,7 @@ withDefaults(defineProps<Props>(), { name: 'user' })
   align-items: center;
   gap: 8px;
   padding: 8px;
+  border-top: 1px solid var(--border);
   border-radius: var(--radius);
   font-size: var(--text-sm);
   color: var(--neutral-mid);
@@ -126,7 +127,7 @@ withDefaults(defineProps<Props>(), { name: 'user' })
   width: 14px;
   height: 14px;
 }
-/* overlay 测试入口：与 settings 同尺寸 ghost */
+/* overlay 测试入口：调试用途，更不显眼（opacity 0.5，hover 恢复） */
 .user-area__test {
   width: 24px;
   height: 24px;
@@ -138,12 +139,15 @@ withDefaults(defineProps<Props>(), { name: 'user' })
   background: transparent;
   border: 0;
   cursor: pointer;
+  opacity: 0.5;
   transition: background var(--duration-fast) var(--ease),
-    color var(--duration-fast) var(--ease);
+    color var(--duration-fast) var(--ease),
+    opacity var(--duration-fast) var(--ease);
 }
 .user-area__test:hover {
   background: var(--surface-hover);
   color: var(--neutral-fg);
+  opacity: 1;
 }
 .user-area__test svg {
   width: 14px;

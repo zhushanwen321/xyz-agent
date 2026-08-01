@@ -51,7 +51,7 @@ function onBackdropClick() {
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
-            stroke-width="1.75"
+            stroke-width="2"
             stroke-linecap="round"
             stroke-linejoin="round"
           >
@@ -66,7 +66,7 @@ function onBackdropClick() {
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
-            stroke-width="1.75"
+            stroke-width="2"
             stroke-linecap="round"
             stroke-linejoin="round"
           >

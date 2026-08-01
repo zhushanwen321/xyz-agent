@@ -97,7 +97,8 @@ function resetDelete() {
         <div class="si__main">
           <div class="si__label">{{ s.title }}</div>
           <div class="si__sub" :class="{ 'si__sub--fork': s.forkLineage }">
-            {{ s.branch }}
+            <template v-if="s.forkLineage">↑ fork 自 {{ s.forkSource || s.forkLineage }}</template>
+            <template v-else>{{ s.branch }}</template>
           </div>
         </div>
 
@@ -132,7 +133,7 @@ function resetDelete() {
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
-                stroke-width="1.75"
+                stroke-width="2"
                 stroke-linecap="round"
                 stroke-linejoin="round"
               >
@@ -146,7 +147,7 @@ function resetDelete() {
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
-                stroke-width="1.75"
+                stroke-width="2"
                 stroke-linecap="round"
                 stroke-linejoin="round"
               >
@@ -166,7 +167,7 @@ function resetDelete() {
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
-                stroke-width="1.75"
+                stroke-width="2"
                 stroke-linecap="round"
                 stroke-linejoin="round"
               >
@@ -199,7 +200,6 @@ function resetDelete() {
   align-items: center;
   gap: 6px;
   padding: 8px 8px 2px;
-  background: var(--bg); /* 与侧栏底融合，遮滚过 item */
 }
 .group-head__icon {
   width: 11px;

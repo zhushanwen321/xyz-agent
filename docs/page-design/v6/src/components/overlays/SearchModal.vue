@@ -166,7 +166,7 @@ function iconKind(cmd: SearchCommand): IconKind {
           placeholder="搜索命令、文件、符号、会话…"
           @keydown="onKeydown"
         />
-        <kbd class="sm-kbd">ESC</kbd>
+        <kbd class="sm-kbd">esc</kbd>
       </div>
 
       <!-- 结果区（分组渲染）-->
@@ -209,6 +209,20 @@ function iconKind(cmd: SearchCommand): IconKind {
               <span class="sm-i-title" v-html="highlight(entry.cmd.name)"></span>
               <span class="sm-i-sub" v-html="highlight(entry.cmd.desc)"></span>
             </span>
+            <!-- default 态（无 query）：尾部 12px clock，表最近/历史项 -->
+            <svg
+              v-if="!query.trim()"
+              class="sm-i-clock"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.75"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <polyline points="12 6 12 12 16 14" />
+            </svg>
           </button>
         </div>
       </div>
@@ -222,7 +236,7 @@ function iconKind(cmd: SearchCommand): IconKind {
         <p v-if="!query.trim()" class="sm-e-main">开始搜索命令、文件或会话</p>
         <template v-else>
           <p class="sm-e-main">未找到「<span class="sm-q">{{ query.trim() }}</span>」相关结果</p>
-          <p class="sm-e-sub">试试更换关键词</p>
+          <p class="sm-e-sub">试试更换关键词，或搜索命令 / 文件 / 符号 / 会话</p>
         </template>
       </div>
     </div>
@@ -337,6 +351,14 @@ function iconKind(cmd: SearchCommand): IconKind {
 .sm-item.sel .sm-i-ico {
   color: var(--accent);
 }
+/* default 态尾部 clock（12px，最近/历史项标记）*/
+.sm-i-clock {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  color: var(--neutral-dim);
+  opacity: 0.7;
+}
 .sm-i-body {
   flex: 1;
   min-width: 0;
@@ -358,15 +380,6 @@ function iconKind(cmd: SearchCommand): IconKind {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* 命中高亮：加粗（去彩色，v6 降噪） */
-.sm-hit {
-  font-weight: 600;
-  color: var(--neutral-fg);
-}
-.sm-item.sel .sm-hit {
-  color: var(--accent);
 }
 
 /* loading spinner */
@@ -406,5 +419,17 @@ function iconKind(cmd: SearchCommand): IconKind {
 .sm-e-sub {
   font-size: var(--text-sm);
   color: var(--neutral-dim);
+}
+</style>
+
+<!--
+  全局（非 scoped）样式块。
+  .sm-hit 由 v-html 注入到 .sm-i-title / .sm-i-sub 内，
+  Vue scoped 不给 v-html 后代打 data-v-xxx 标记，匹配不到，故放此全局块。
+  只加粗、不染蓝：颜色继承父元素（.sm-i-title / 选中态 .sm-item.sel .sm-i-title）。
+-->
+<style>
+.sm-hit {
+  font-weight: 600;
 }
 </style>

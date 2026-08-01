@@ -94,14 +94,12 @@ const pinned = ref(true)
 </template>
 
 <style scoped>
-/* D2 一体化：与 main 同色 surface，去 border-l，弱投影分隔。
- * width 默认 360px，min-width:0 防溢出，flex 不设（由父级控制 1:1 等分）。 */
+/* D2 一体化：与 main 同色 surface，去 border-l，弱投影分隔，无自带圆角（在 main 圆角外壳内）。 */
 .sd-drawer {
   flex: 1;
   min-width: 0;
   background: var(--surface);
   box-shadow: var(--shadow-drawer);
-  border-radius: 0 var(--radius) var(--radius) 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;

@@ -32,7 +32,8 @@ const dim = computed(() => failed.value)
 </template>
 
 <style scoped>
-.sa { padding: 8px 0; }
+.sa { padding: 8px 0; transition: opacity var(--duration-fast); }
+.sa:hover { opacity: 0.8; }
 .sa-hd {
   display: flex;
   align-items: center;

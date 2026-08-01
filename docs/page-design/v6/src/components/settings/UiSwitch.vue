@@ -1,10 +1,14 @@
 <script setup lang="ts">
 /** UiSwitch：通用开关控件。
  * track h-5 w-9，checked=bg-accent，unchecked=bg-border-strong；thumb size-4，checked translate-x-[18px]。*/
-defineProps<{
-  checked: boolean
-  disabled?: boolean
-}>()
+withDefaults(
+  defineProps<{
+    checked: boolean
+    disabled?: boolean
+    ariaLabel?: string
+  }>(),
+  { disabled: false, ariaLabel: '' },
+)
 defineEmits<{ (e: 'update:checked', v: boolean): void }>()
 </script>
 
@@ -15,6 +19,7 @@ defineEmits<{ (e: 'update:checked', v: boolean): void }>()
     class="ui-switch"
     :class="{ on: checked, disabled }"
     :aria-checked="checked"
+    :aria-label="ariaLabel"
     :disabled="disabled"
     @click="!disabled && $emit('update:checked', !checked)"
   >
@@ -59,5 +64,8 @@ defineEmits<{ (e: 'update:checked', v: boolean): void }>()
 }
 .ui-switch.on .thumb {
   transform: translateX(18px);
+}
+.ui-switch:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0, 0, 0, 0.4);
 }
 </style>

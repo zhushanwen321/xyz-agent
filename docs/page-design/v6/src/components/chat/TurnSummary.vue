@@ -78,7 +78,8 @@ function onCopy() {
 .ts-ghost:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 .ts-ghost.fork:hover,
 .ts-ghost.handoff:hover { background: var(--accent-soft); color: var(--accent); }
-.ts-ghost.copied,
+.ts-ghost.copied { color: var(--success); }
 .ts-ghost.copied:hover { background: var(--success-soft); color: var(--success); }
+.ts-ghost.disabled { opacity: 0.5; pointer-events: none; }
 @keyframes blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
 </style>

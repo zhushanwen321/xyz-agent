@@ -79,9 +79,6 @@ const ICONS: Record<Props['icon'], string> = {
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   color: var(--neutral-dim);
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  padding: 1px 6px;
+  opacity: 0.6;
 }
 </style>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { settingsPage, closeSettings, type SettingsPage } from '@/composables/useStore'
 import { providers, extensions } from '@/mock/sessions'
 import SettingsNavItem from './SettingsNavItem.vue'
@@ -40,10 +40,18 @@ function select(key: SettingsPage) {
 }
 
 const currentPageTitle = computed(() => NAV.find((n) => n.key === settingsPage.value)?.label ?? '')
+
+const navRoot = ref<HTMLElement | null>(null)
+onMounted(() => {
+  nextTick(() => {
+    const first = navRoot.value?.querySelector<HTMLElement>('.fs-nav .nav-item')
+    first?.focus()
+  })
+})
 </script>
 
 <template>
-  <div class="fso">
+  <div class="fso" ref="navRoot">
     <!-- 左 nav -->
     <nav class="fs-nav">
       <div class="nav-brand">
@@ -67,7 +75,7 @@ const currentPageTitle = computed(() => NAV.find((n) => n.key === settingsPage.v
       <div class="fs-head">
         <span class="fs-title">设置 · {{ currentPageTitle }}</span>
         <button class="xbtn" title="关闭设置（Esc）" @click="closeSettings">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
       <div class="content-col-inner">
@@ -117,7 +125,7 @@ const currentPageTitle = computed(() => NAV.find((n) => n.key === settingsPage.v
 .nav-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 /* 右 content */
@@ -133,7 +141,6 @@ const currentPageTitle = computed(() => NAV.find((n) => n.key === settingsPage.v
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
-  border-bottom: 1px solid var(--border);
 }
 .fs-title {
   font-size: 14px;
@@ -143,7 +150,7 @@ const currentPageTitle = computed(() => NAV.find((n) => n.key === settingsPage.v
 .content-col-inner {
   max-width: var(--content-max-w);
   margin: 0;
-  padding: 0 24px;
+  padding: var(--space-6) 24px 0;
 }
 
 /* X 关闭按钮（fs-head 内右侧） */

@@ -14,10 +14,6 @@ const expandedId = ref<string>(
 
 const showKey = ref<Record<string, boolean>>({})
 const apiKey = ref<Record<string, string>>({ 'p-1': 'sk-zhipu-••••••••••••3f2a', 'p-2': 'sk-ant-••••••••••••8b1c' })
-const modelName = ref<Record<string, string>>({
-  'p-1': 'glm-4.6',
-  'p-2': 'claude-sonnet-4',
-})
 
 function toggleExpand(id: string) {
   expandedId.value = expandedId.value === id ? '' : id
@@ -26,6 +22,7 @@ function toggleEnabled(p: Provider) {
   p.enabled = !p.enabled
   p.dirty = true
 }
+const advOpen = ref<Record<string, boolean>>({})
 </script>
 
 <template>
@@ -60,7 +57,7 @@ function toggleEnabled(p: Provider) {
           <span class="name" @click="toggleExpand(p.id)">{{ p.name }}</span>
           <span v-if="p.isDefault" class="default-pill">默认供应商</span>
           <span class="model-count">{{ p.modelCount }} 个模型</span>
-          <span v-if="p.dirty" class="dirty-badge">未保存</span>
+          <span v-if="p.dirty" class="dirty-badge"><span class="dot"></span>未保存</span>
           <span class="spacer"></span>
           <button class="btn btn-ghost btn-icon expand-btn" :class="{ down: expandedId === p.id }" title="展开" @click="toggleExpand(p.id)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -75,20 +72,41 @@ function toggleEnabled(p: Provider) {
           <!-- 凭据子区 -->
           <div class="sub-section">
             <div class="sub-label">凭据</div>
-            <div class="cred-row">
-              <UiInput
-                :model-value="showKey[p.id] ? apiKey[p.id] : (apiKey[p.id] ? '••••••••••••••••' : '')"
-                placeholder="输入 API Key"
-                :mono="true"
-                class="key-input"
-              />
-              <button class="btn btn-ghost btn-md eye-btn" :title="showKey[p.id] ? '隐藏' : '显示'" @click="showKey[p.id] = !showKey[p.id]">
-                <svg v-if="!showKey[p.id]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-              </button>
-              <button v-if="apiKey[p.id]" class="btn btn-ghost btn-md clear-btn" title="清除">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
+            <div class="cred-grid">
+              <div class="cred-field">
+                <label class="field-label">名称</label>
+                <UiInput :model-value="p.name" placeholder="供应商名称" />
+              </div>
+              <div class="cred-field">
+                <label class="field-label">类型</label>
+                <select class="type-select">
+                  <option>OpenAI Compatible</option>
+                  <option>Anthropic</option>
+                  <option>Custom</option>
+                </select>
+              </div>
+              <div class="cred-field cred-field-wide">
+                <label class="field-label">Base URL</label>
+                <UiInput :model-value="p.id === 'p-1' ? 'https://open.bigmodel.cn/api/paas/v4' : 'https://api.anthropic.com'" :mono="true" />
+              </div>
+              <div class="cred-field cred-field-wide">
+                <label class="field-label">API Key</label>
+                <div class="cred-row">
+                  <UiInput
+                    :model-value="showKey[p.id] ? apiKey[p.id] : (apiKey[p.id] ? '••••••••••••••••' : '')"
+                    placeholder="输入 API Key"
+                    :mono="true"
+                    class="key-input"
+                  />
+                  <button class="btn btn-ghost btn-md eye-btn" :title="showKey[p.id] ? '隐藏' : '显示'" @click="showKey[p.id] = !showKey[p.id]">
+                    <svg v-if="!showKey[p.id]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                  </button>
+                  <button v-if="apiKey[p.id]" class="btn btn-ghost btn-md clear-btn" title="清除">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -96,14 +114,39 @@ function toggleEnabled(p: Provider) {
           <div class="sub-section">
             <div class="sub-label">模型清单</div>
             <div class="model-list">
-              <div v-for="i in 3" :key="i" class="model-row">
-                <UiInput :model-value="i === 1 ? modelName[p.id] : (i === 2 ? 'glm-4.5-air' : 'glm-4-flash')" :mono="true" class="model-name-input" />
-                <span v-if="i === 1" class="thinking-pill">思考</span>
-                <span v-else-if="i === 2" class="compat-chip">兼容</span>
+              <div v-for="m in ['glm-4.6', 'glm-4.5-air', 'glm-4-flash']" :key="m" class="model-row">
+                <UiSwitch :checked="true" :aria-label="'启用 ' + m" />
+                <UiInput :model-value="m" :mono="true" class="model-name-input" />
+                <span v-if="m === 'glm-4.6'" class="default-dot" title="默认模型"></span>
+                <span v-if="m === 'glm-4.6'" class="thinking-pill">思考</span>
+                <span v-else-if="m === 'glm-4.5-air'" class="compat-chip">兼容</span>
                 <span v-else class="spacer-tag"></span>
+                <button class="btn btn-ghost btn-icon adv-chevron" :class="{ down: advOpen[p.id + m] }" :title="'高级 ' + m" @click="advOpen[p.id + m] = !advOpen[p.id + m]">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
                 <button class="btn btn-ghost btn-icon" title="移除模型">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                 </button>
+                <div v-if="advOpen[p.id + m]" class="model-adv-drawer">
+                  <div class="cred-grid">
+                    <div class="cred-field">
+                      <label class="field-label">输入类型</label>
+                      <select class="type-select"><option>text</option><option>multimodal</option></select>
+                    </div>
+                    <div class="cred-field">
+                      <label class="field-label">上下文窗口</label>
+                      <UiInput model-value="128000" :mono="true" />
+                    </div>
+                    <div class="cred-field">
+                      <label class="field-label">思考</label>
+                      <select class="type-select"><option>auto</option><option>on</option><option>off</option></select>
+                    </div>
+                    <div class="cred-field">
+                      <label class="field-label">兼容性</label>
+                      <UiInput model-value="openai" :mono="true" />
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
             <button class="btn btn-ghost btn-sm add-model-btn">
@@ -112,22 +155,39 @@ function toggleEnabled(p: Provider) {
             </button>
           </div>
 
-          <!-- 验证 / 高级（折叠态） -->
-          <details class="adv-details">
-            <summary class="adv-summary">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-              验证 / 高级
-            </summary>
-            <div class="adv-body">
+          <!-- 验证 -->
+          <div class="sub-section">
+            <div class="sub-label">验证</div>
+            <div class="verify-row">
               <button class="btn btn-secondary btn-md">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                 测试连接
               </button>
+              <span class="verify-result">点击「测试连接」验证凭据与可达性。</span>
+            </div>
+          </div>
+
+          <!-- 高级（折叠态） -->
+          <details class="adv-details">
+            <summary class="adv-summary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              高级
+            </summary>
+            <div class="adv-body">
+              <div class="cred-field cred-field-wide">
+                <label class="field-label">自定义 Headers</label>
+                <textarea class="headers-area" rows="3" placeholder="X-Org-Id: …&#10;Authorization: Bearer …"></textarea>
+              </div>
+              <div class="cred-field">
+                <label class="field-label">Coding Plan 额度</label>
+                <UiInput model-value="" placeholder="如 1000" :mono="true" />
+              </div>
             </div>
           </details>
 
           <!-- save-bar -->
           <div class="save-bar">
+            <span class="bar-dirty-badge"><span class="dot"></span>未保存</span>
             <span class="spacer"></span>
             <button class="btn btn-ghost btn-md">取消</button>
             <button class="btn btn-default btn-md">保存</button>
@@ -145,13 +205,17 @@ function toggleEnabled(p: Provider) {
   justify-content: space-between;
   gap: var(--space-4);
   margin-bottom: var(--space-6);
+  position: sticky;
+  top: 0;
+  background: var(--bg-elevated);
+  z-index: var(--z-sticky);
 }
 .head-text {
   min-width: 0;
 }
 .title {
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 20px;
+  font-weight: 600;
   color: var(--neutral-fg);
   letter-spacing: -0.01em;
 }
@@ -186,7 +250,7 @@ function toggleEnabled(p: Provider) {
 .status-dot {
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: 999px;
   flex-shrink: 0;
 }
 .status-dot.ok {
@@ -203,14 +267,14 @@ function toggleEnabled(p: Provider) {
 }
 .default-pill {
   height: 18px;
-  padding: 0 8px;
+  padding: 2px 6px;
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
   background: var(--accent-soft);
   color: var(--accent);
   font-size: var(--text-2xs);
-  font-weight: 600;
+  font-weight: 500;
   flex-shrink: 0;
 }
 .model-count {
@@ -222,11 +286,19 @@ function toggleEnabled(p: Provider) {
   padding: 0 8px;
   display: inline-flex;
   align-items: center;
+  gap: 6px;
   border-radius: 999px;
   background: var(--warn-soft);
   color: var(--warn);
   font-size: var(--text-2xs);
   font-weight: 600;
+  flex-shrink: 0;
+}
+.dirty-badge .dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--warn);
   flex-shrink: 0;
 }
 .spacer {
@@ -263,9 +335,7 @@ function toggleEnabled(p: Provider) {
 .sub-label {
   font-size: var(--text-xs);
   font-weight: 600;
-  color: var(--neutral-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  color: var(--neutral-fg);
 }
 .cred-row {
   display: flex;
@@ -274,6 +344,52 @@ function toggleEnabled(p: Provider) {
 }
 .key-input {
   flex: 1;
+}
+.cred-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+.cred-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.cred-field-wide {
+  grid-column: 1 / -1;
+}
+.field-label {
+  font-size: var(--text-xs);
+  color: var(--neutral-mid);
+  font-weight: 500;
+}
+.type-select {
+  height: 40px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 0 12px;
+  font-size: 13px;
+  color: var(--neutral-fg);
+  outline: none;
+  cursor: pointer;
+}
+.headers-area {
+  width: 100%;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: var(--space-3);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--neutral-fg);
+  line-height: 1.7;
+  resize: vertical;
+  outline: none;
+}
+.headers-area:focus {
+  box-shadow: 0 0 0 1px var(--accent-ring) inset;
 }
 
 .model-list {
@@ -284,6 +400,7 @@ function toggleEnabled(p: Provider) {
 .model-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-2);
 }
 .model-name-input {
@@ -316,6 +433,39 @@ function toggleEnabled(p: Provider) {
 .spacer-tag {
   width: 44px;
   flex-shrink: 0;
+}
+.default-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--info);
+  flex-shrink: 0;
+}
+.adv-chevron svg {
+  width: 14px;
+  height: 14px;
+  transition: transform var(--duration-fast) var(--ease);
+  transform: rotate(-90deg);
+}
+.adv-chevron.down svg {
+  transform: rotate(0deg);
+}
+.model-adv-drawer {
+  grid-column: 1 / -1;
+  width: 100%;
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border-radius: var(--radius);
+}
+.verify-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.verify-result {
+  font-size: var(--text-sm);
+  color: var(--neutral-dim);
 }
 .add-model-btn {
   align-self: flex-start;
@@ -357,5 +507,19 @@ function toggleEnabled(p: Provider) {
   background: var(--surface);
   margin: 0 calc(-1 * var(--space-4)) calc(-1 * var(--space-4));
   padding: var(--space-3) var(--space-4);
+}
+.bar-dirty-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+  color: var(--warn);
+  font-weight: 600;
+}
+.bar-dirty-badge .dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--warn);
 }
 </style>

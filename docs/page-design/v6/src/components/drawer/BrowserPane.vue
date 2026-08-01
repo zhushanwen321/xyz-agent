@@ -359,14 +359,14 @@ const guideDismissed = ref(false)
 }
 .bp-content .bp-page-p {
   margin-bottom: 8px;
-  color: #4b5563;
+  color: #374151;
 }
 .bp-content .bp-page-block {
   background: #fff;
   border-radius: var(--radius-sm);
   padding: 12px;
   margin-bottom: 8px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 .bp-content .bp-block-title {
   font-size: 14px;

@@ -23,7 +23,6 @@
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  border: 1px solid rgba(0,0,0,0.25);
 }
 .tl-dot.close { background: #ff5f57; }
 .tl-dot.min { background: #febc2e; }

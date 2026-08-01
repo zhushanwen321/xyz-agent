@@ -17,9 +17,6 @@ const elapsed = computed(() => (props.streaming ? '12.3s' : '8.1s'))
     <!-- streaming：accent spinner + 「思考中」 -->
     <svg v-if="streaming" class="tm-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg>
     <span class="tm-label" :class="{ streaming }">{{ streaming ? '思考中' : '已工作' }}</span>
-    <button v-if="!streaming" class="tm-chev" title="展开 trace">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-    </button>
     <span class="tm-elapsed">{{ elapsed }}</span>
     <span v-if="thinkCount" class="tm-pill">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/></svg>
@@ -29,6 +26,8 @@ const elapsed = computed(() => (props.streaming ? '12.3s' : '8.1s'))
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76Z"/></svg>
       tool · {{ toolCount }}
     </span>
+    <!-- chevron 在最末（spec：label → elapsed → pill → chev） -->
+    <svg v-if="!streaming" class="tm-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
   </div>
 </template>
 
@@ -52,16 +51,12 @@ const elapsed = computed(() => (props.streaming ? '12.3s' : '8.1s'))
 .tm-label { color: var(--neutral-mid); }
 .tm-label.streaming { color: var(--accent); }
 .tm-chev {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
+  width: 9px;
+  height: 9px;
   color: var(--neutral-dim);
   flex-shrink: 0;
   transition: color var(--duration-fast) var(--ease);
 }
-.tm-chev svg { width: 9px; height: 9px; }
 .tm-chev:hover { color: var(--neutral-fg); }
 .tm-elapsed {
   font-family: var(--font-mono);

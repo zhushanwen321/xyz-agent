@@ -22,7 +22,7 @@ const states = ref<SpState[]>([
     title: '替换系统提示词',
     subtitle: '完全覆盖 pi 默认系统提示词（谨慎使用）。',
     enabled: false,
-    dirty: false,
+    dirty: true,
     text: DEFAULT_REPLACE,
     refOpen: false,
   },
@@ -67,7 +67,7 @@ const totalDirty = computed(() => states.value.filter((s) => s.dirty).length)
       <span v-if="totalDirty" class="head-badge">{{ totalDirty }} 项未保存</span>
     </header>
 
-    <section v-for="s in states" :key="s.key" class="sp-card">
+      <section v-for="(s, idx) in states" :key="s.key" class="sp-card">
       <!-- head -->
       <div class="sp-head">
         <div class="sp-head-text">
@@ -77,7 +77,7 @@ const totalDirty = computed(() => states.value.filter((s) => s.dirty).length)
           </div>
           <p class="sp-subtitle">{{ s.subtitle }}</p>
         </div>
-        <UiSwitch :checked="s.enabled" @update:checked="s.enabled = $event; s.dirty = true" />
+        <UiSwitch :checked="s.enabled" :aria-label="idx === 0 ? '替换系统提示词' : '注入额外提示词'" @update:checked="s.enabled = $event; s.dirty = true" />
       </div>
 
       <!-- textarea -->
@@ -115,10 +115,14 @@ const totalDirty = computed(() => states.value.filter((s) => s.dirty).length)
   flex-wrap: wrap;
   gap: var(--space-2);
   margin-bottom: var(--space-6);
+  position: sticky;
+  top: 0;
+  background: var(--bg-elevated);
+  z-index: var(--z-sticky);
 }
 .title {
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 20px;
+  font-weight: 600;
   color: var(--neutral-fg);
   letter-spacing: -0.01em;
   margin-right: var(--space-4);
@@ -164,8 +168,8 @@ const totalDirty = computed(() => states.value.filter((s) => s.dirty).length)
   gap: var(--space-2);
 }
 .sp-title {
-  font-size: var(--text-md);
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
   color: var(--neutral-fg);
 }
 .dirty-badge {
@@ -191,19 +195,19 @@ const totalDirty = computed(() => states.value.filter((s) => s.dirty).length)
   max-height: 60vh;
   margin-top: var(--space-3);
   padding: var(--space-3);
-  border-radius: var(--radius-sm);
-  background: var(--bg-input);
+  border-radius: var(--radius);
+  background: var(--surface-2);
   border: 1px solid var(--border);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   color: var(--neutral-fg);
-  line-height: 1.6;
+  line-height: 1.7;
   resize: vertical;
   outline: none;
   transition: box-shadow var(--duration-fast) var(--ease);
 }
 .sp-textarea::placeholder {
-  color: var(--neutral-faint);
+  color: var(--neutral-mid);
 }
 .sp-textarea:focus {
   box-shadow: 0 0 0 1px var(--accent-ring) inset;

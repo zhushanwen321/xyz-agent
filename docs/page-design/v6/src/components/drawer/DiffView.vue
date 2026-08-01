@@ -42,9 +42,9 @@ const lines: DiffLine[] = [
   { type: 'ctx', oldNo: 14, newNo: 15, segs: [{ text: '};' }] },
 ]
 
-/** 行 class 工具（避免模板内三元过密） */
+/** 行 class 工具（仅 code 行；hunk 直接渲染为 .dv-hunk-header，无外层行包装） */
 function rowClass(type: DiffLine['type']): string {
-  return type === 'hunk' ? 'dv-hunk-row' : `dv-line ${type}`
+  return `dv-line ${type}`
 }
 /** +/- 符号 */
 function sign(type: DiffLine['type']): string {
@@ -54,13 +54,11 @@ function sign(type: DiffLine['type']): string {
 
 <template>
   <div class="dv-canvas">
-    <div v-for="(line, i) in lines" :key="i" :class="rowClass(line.type)">
-      <!-- hunk header -->
-      <template v-if="line.type === 'hunk'">
-        <div class="dv-hunk-header">{{ line.text }}</div>
-      </template>
+    <template v-for="(line, i) in lines" :key="i">
+      <!-- hunk header：直接作为 canvas 子级渲染（无 dv-hunk-row 外层包装） -->
+      <div v-if="line.type === 'hunk'" class="dv-hunk-header">{{ line.text }}</div>
       <!-- code line -->
-      <template v-else>
+      <div v-else :class="rowClass(line.type)">
         <span class="dv-oldno">{{ line.oldNo ?? '' }}</span>
         <span class="dv-newno">{{ line.newNo ?? '' }}</span>
         <span class="dv-sign">{{ sign(line.type) }}</span>
@@ -71,8 +69,8 @@ function sign(type: DiffLine['type']): string {
             <span v-else>{{ seg.text }}</span>
           </template>
         </span>
-      </template>
-    </div>
+      </div>
+    </template>
   </div>
 </template>
 

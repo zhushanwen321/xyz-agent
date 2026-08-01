@@ -9,6 +9,8 @@ export interface SessionItem {
   cwd?: string
   unread?: boolean
   forkLineage?: boolean
+  /** fork 源会话标题（forkLineage 子行前缀「↑ fork 自 xxx」） */
+  forkSource?: string
   elapsed?: string
 }
 
@@ -18,7 +20,7 @@ export const sessions: SessionItem[] = [
   { id: 'session-3', title: '修复 drawer 投影口径', status: 'done', branch: 'fix-drawer-shadow', cwd: 'xyz-agent', elapsed: '2h' },
   { id: 'session-4', title: 'plugin 渲染架构调研', status: 'error', branch: 'research/plugin', cwd: 'xyz-agent', elapsed: '5h', unread: true },
   { id: 'session-5', title: 'settings 拆分独立 spec', status: 'dead', branch: 'refactor/settings', cwd: 'xyz-agent' },
-  { id: 'session-6', title: 'logo 概念稿设计', status: 'done', branch: 'design/logo', cwd: 'xyz-agent', forkLineage: true },
+  { id: 'session-6', title: 'logo 概念稿设计', status: 'done', branch: 'design/logo', cwd: 'xyz-agent', forkLineage: true, forkSource: '重构 Sidebar 组件' },
 ]
 
 // === 文件树（sidebar files tab）===
@@ -58,13 +60,16 @@ export interface SubagentItem {
   thinking: string
   status: 'running' | 'done' | 'failed' | 'cancelled'
   elapsed?: string
+  /** v6 spec §7：stats 显示 turns · tokens（替代 model·thinking） */
+  turns: number
+  tokens: string
 }
 
 export const subagents: SubagentItem[] = [
-  { id: 'sa-1', name: 'researcher', slug: 'find-auth-flow', model: 'glm-5.2', thinking: '3', status: 'running', elapsed: '45s' },
-  { id: 'sa-2', name: 'implementer', slug: 'fix-drawer-css', model: 'claude-4', thinking: 'all', status: 'done', elapsed: '2m18s' },
-  { id: 'sa-3', name: 'reviewer', slug: 'audit-tokens', model: 'kimi-k2', thinking: 'high', status: 'failed', elapsed: '1m03s' },
-  { id: 'sa-4', name: 'explorer', slug: 'map-sidebar', model: 'glm-5.2', thinking: '2', status: 'cancelled' },
+  { id: 'sa-1', name: 'researcher', slug: 'find-auth-flow', model: 'glm-5.2', thinking: 'medium', status: 'running', elapsed: '45s', turns: 8, tokens: '12.4k' },
+  { id: 'sa-2', name: 'implementer', slug: 'fix-drawer-css', model: 'claude-4', thinking: 'max', status: 'done', elapsed: '2m18s', turns: 23, tokens: '38.1k' },
+  { id: 'sa-3', name: 'reviewer', slug: 'audit-tokens', model: 'kimi-k2', thinking: 'high', status: 'failed', elapsed: '1m03s', turns: 5, tokens: '9.7k' },
+  { id: 'sa-4', name: 'explorer', slug: 'map-sidebar', model: 'glm-5.2', thinking: 'low', status: 'cancelled', turns: 2, tokens: '4.2k' },
 ]
 
 // === Workflow 列表（sidebar workflows tab）===
@@ -74,15 +79,16 @@ export interface WorkflowItem {
   slug: string
   status: 'running' | 'done' | 'failed' | 'paused'
   progress: number
-  phaseCount: number
-  agentCount: number
+  /** v6 spec §7：agents 计数 = 完成数 / 总数（done ≤ total） */
+  agentsDone: number
+  agentsTotal: number
 }
 
 export const workflows: WorkflowItem[] = [
-  { id: 'wf-1', name: 'build-and-deploy', slug: 'release-v6', status: 'running', progress: 65, phaseCount: 4, agentCount: 8 },
-  { id: 'wf-2', name: 'code-review', slug: 'pr-61-review', status: 'done', progress: 100, phaseCount: 3, agentCount: 5 },
-  { id: 'wf-3', name: 'test-coverage', slug: 'audit-blocks', status: 'failed', progress: 40, phaseCount: 2, agentCount: 3 },
-  { id: 'wf-4', name: 'docs-update', slug: 'sync-specs', status: 'paused', progress: 30, phaseCount: 2, agentCount: 2 },
+  { id: 'wf-1', name: 'build-and-deploy', slug: 'release-v6', status: 'running', progress: 65, agentsDone: 3, agentsTotal: 5 },
+  { id: 'wf-2', name: 'code-review', slug: 'pr-61-review', status: 'done', progress: 100, agentsDone: 5, agentsTotal: 5 },
+  { id: 'wf-3', name: 'test-coverage', slug: 'audit-blocks', status: 'failed', progress: 40, agentsDone: 1, agentsTotal: 4 },
+  { id: 'wf-4', name: 'docs-update', slug: 'sync-specs', status: 'paused', progress: 30, agentsDone: 2, agentsTotal: 6 },
 ]
 
 // === 对话流消息（MessageStream）===
@@ -152,7 +158,7 @@ export const chatTurns: ChatTurn[] = [
       {
         type: 'subagent',
         state: 'done',
-        data: { name: 'researcher', slug: 'find-auth-flow', model: 'glm-5.2', thinking: '3' },
+        data: { name: 'researcher', slug: 'find-auth-flow', model: 'glm-5.2', thinking: 'medium' },
       },
       {
         type: 'workflow',

@@ -103,7 +103,7 @@ function resetAbort() {
             :style="{ width: `${wf.progress}%` }"
           ></div>
         </div>
-        <span class="wf-card__meta">{{ wf.agentCount }} / {{ wf.phaseCount }} agents</span>
+        <span class="wf-card__meta">{{ wf.agentsDone }} / {{ wf.agentsTotal }} agents</span>
       </div>
     </div>
   </div>

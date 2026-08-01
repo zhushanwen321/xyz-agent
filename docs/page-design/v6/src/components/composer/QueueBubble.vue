@@ -7,11 +7,13 @@ import { computed } from 'vue'
 
 interface QueueItem { type: 'steer' | 'followup'; text: string }
 
-/** demo 静态数据：混排 steer/followup */
+/** demo 静态数据：混排 steer/followup（5 条以触发 +N 溢出显示） */
 const items = computed<QueueItem[]>(() => [
   { type: 'steer', text: '先处理这个：把 PanelHeader 的 border-b 去掉' },
   { type: 'steer', text: '顺手把 TurnMeta 的 hr 也删了' },
   { type: 'followup', text: '改完跑一下测试，确保没回归' },
+  { type: 'steer', text: 'QueueBubble 的 +N 溢出也要验证' },
+  { type: 'followup', text: '最后跑一遍 vue-tsc 检查类型' },
 ])
 const maxShow = 3
 const visible = computed(() => items.value.slice(0, maxShow))

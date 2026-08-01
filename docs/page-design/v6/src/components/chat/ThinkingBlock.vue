@@ -2,13 +2,22 @@
 /** ThinkingBlock · 思考块（v6 spec-blocks §4）
  *  - Brain icon 14px + 「Think」label
  *  - collapsed：1 行 ellipsis 预览（neutral-mid）
- *  - expanded：neutral-mid 正文 */
+ *  - expanded：copy 按钮 + neutral-mid 正文 */
 import { ref } from 'vue'
 
 const props = defineProps<{ data: Record<string, unknown> }>()
 const expanded = ref(props.data.state === 'expanded' || props.data.expanded === true)
 const preview = (props.data.preview as string) || ''
 const body = (props.data.body as string) || preview
+
+const copied = ref(false)
+async function copyBody() {
+  try {
+    await navigator.clipboard.writeText(body)
+  } catch { /* clipboard 可能被禁用，忽略 */ }
+  copied.value = true
+  setTimeout(() => (copied.value = false), 1400)
+}
 </script>
 
 <template>
@@ -19,7 +28,16 @@ const body = (props.data.body as string) || preview
       <span class="tk-label">Think</span>
       <span v-if="!expanded" class="tk-preview">{{ preview }}</span>
     </div>
-    <div v-if="expanded" class="tk-body">{{ body }}</div>
+    <div v-if="expanded" class="tk-body">
+      <div class="body-toolbar">
+        <button class="copy-btn" :class="{ copied }" title="复制思考正文" @click="copyBody">
+          <svg v-if="!copied" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          <span>{{ copied ? '已复制' : '复制' }}</span>
+        </button>
+      </div>
+      <div class="body-text">{{ body }}</div>
+    </div>
   </div>
 </template>
 
@@ -55,7 +73,31 @@ const body = (props.data.body as string) || preview
   min-width: 0;
 }
 .tk-body {
-  padding: 6px 0 0 20px;
+  padding: 6px 0 0 16px;
+}
+.body-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 4px;
+}
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  color: var(--neutral-dim);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
+}
+.copy-btn svg { width: 12px; height: 12px; }
+.tk-body:hover .copy-btn { opacity: 1; }
+.copy-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
+.copy-btn.copied { color: var(--success); opacity: 1; }
+.body-text {
   font-size: var(--text-sm);
   line-height: 1.7;
   color: var(--neutral-mid);

@@ -43,13 +43,17 @@ function toggleAutoUpgrade(e: Extension) {
           <div class="ext-name-row">
             <span class="ext-name">{{ e.name }}</span>
             <span v-if="e.source === 'user'" class="badge-pill source user">user-installed</span>
-            <span v-if="e.scope === 'mandatory'" class="lock-ico" title="强制安装，不可卸载/关闭">
+            <span v-else-if="e.source === 'disc'" class="badge-pill source disc">discovered</span>
+            <span v-if="e.scope === 'mandatory'" class="mandatory-badge">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              <span class="mtext">Mandatory</span>
+              <span class="tip">强制扩展 · 不可禁用/卸载 · 由 runtime 自动升级</span>
             </span>
             <span
               class="tier-label"
-              :style="{ color: TIER_COLOR[e.tier] }"
-            >{{ TIER_LABEL[e.tier] }}</span>
+            >
+              <span class="tier-dot" :style="{ background: TIER_COLOR[e.tier] }"></span>{{ TIER_LABEL[e.tier] }}
+            </span>
           </div>
           <p class="ext-desc">{{ e.desc }}</p>
         </div>
@@ -106,10 +110,14 @@ function toggleAutoUpgrade(e: Extension) {
 <style scoped>
 .page-head {
   margin-bottom: var(--space-6);
+  position: sticky;
+  top: 0;
+  background: var(--bg-elevated);
+  z-index: var(--z-sticky);
 }
 .title {
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 20px;
+  font-weight: 600;
   color: var(--neutral-fg);
   letter-spacing: -0.01em;
 }
@@ -155,20 +163,63 @@ function toggleAutoUpgrade(e: Extension) {
   font-weight: 600;
 }
 .badge-pill.user {
-  background: var(--surface-2);
-  color: var(--neutral-mid);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
-.lock-ico {
+.badge-pill.disc {
+  background: var(--info-soft);
+  color: var(--info);
+}
+.mandatory-badge {
+  position: relative;
   display: inline-flex;
-  color: var(--neutral-dim);
+  align-items: center;
+  gap: 4px;
+  color: var(--neutral-mid);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  cursor: help;
 }
-.lock-ico svg {
+.mandatory-badge svg {
   width: 13px;
   height: 13px;
 }
+.mandatory-badge .mtext {
+  font-family: var(--font-sans);
+}
+.mandatory-badge .tip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--neutral-fg);
+  color: var(--bg);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) var(--ease);
+  z-index: 10;
+}
+.mandatory-badge:hover .tip {
+  opacity: 1;
+}
 .tier-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
+  color: var(--neutral-mid);
+  flex-shrink: 0;
+}
+.tier-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
   flex-shrink: 0;
 }
 .ext-desc {

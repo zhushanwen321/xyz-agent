@@ -40,7 +40,7 @@ defineProps<{ message: string }>()
   transition: background var(--duration-fast) var(--ease);
 }
 .ub-text {
-  font-size: 14px;
+  font-size: var(--text-base);
   line-height: 1.55;
   color: var(--neutral-fg);
   white-space: pre-wrap;

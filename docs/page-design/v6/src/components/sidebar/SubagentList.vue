@@ -52,9 +52,9 @@ function resetCancel() {
         </svg>
         <span v-else class="sa-card__dot" :class="indicatorClass(sa.status)"></span>
 
-        <!-- name + model·thinking -->
+        <!-- name + stats（spec §7：turns · tokens） -->
         <span class="sa-card__name">{{ sa.name }}</span>
-        <span class="sa-card__stats">{{ sa.model }} · thinking {{ sa.thinking }}</span>
+        <span class="sa-card__stats">{{ sa.turns }} turns · {{ sa.tokens }} tok</span>
 
         <!-- 耗时 -->
         <span v-if="sa.elapsed" class="sa-card__elapsed">{{ sa.elapsed }}</span>

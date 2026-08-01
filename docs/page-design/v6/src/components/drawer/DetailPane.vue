@@ -243,8 +243,8 @@ function copyPath() {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 12px;
-  background: var(--bg);
+  padding: 12px 16px;
+  background: var(--bg-input);
 }
 
 /* 预览模式：mono + 语法高亮占位 */
@@ -253,7 +253,7 @@ function copyPath() {
   font-size: var(--text-sm);
   line-height: 1.6;
   color: var(--neutral-mid);
-  padding: 4px 4px;
+  padding: 12px 16px;
 }
 .dp-preview .kw {
   color: var(--accent);

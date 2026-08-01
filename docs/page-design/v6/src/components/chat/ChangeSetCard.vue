@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** ChangeSetCard · 变更集卡片（v6 spec-blocks §7）
- *  - bg-surface 10px 圆角，无 border
+ *  - bg-elevated 10px 圆角，无 border（浮在 main-panel surface 上）
  *  - 状态 badge 5 态彩色：accumulating/ready/partially-reviewed/resolved/superseded
  *  - collapsed：header only；expanded：文件列表（badge M/A/D/U + 文件名 + ±行数） */
 import { computed, ref } from 'vue'
@@ -53,7 +53,7 @@ const statusLabel: Record<string, string> = {
 <style scoped>
 .cs {
   margin-top: 8px;
-  background: var(--surface);
+  background: var(--bg-elevated);
   border-radius: 10px;
   overflow: hidden;
 }
@@ -107,19 +107,19 @@ const statusLabel: Record<string, string> = {
 .cs-status.superseded { background: var(--bg-elevated); color: var(--neutral-dim); }
 .cs-stats {
   display: inline-flex;
-  gap: 4px;
+  gap: 6px;
   margin-left: auto;
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
 }
 .cs-stats .add { color: var(--success); }
 .cs-stats .del { color: var(--danger); }
-.cs-detail { padding: 0 12px 8px; }
+.cs-detail { padding: 4px 0; }
 .cs-file {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 4px;
+  padding: 6px 12px;
   border-radius: var(--radius-sm);
   transition: background var(--duration-fast) var(--ease);
 }

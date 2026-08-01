@@ -31,7 +31,7 @@ defineEmits<{ (e: 'update:modelValue', v: string): void }>()
   background: var(--surface-2);
   border: 1px solid var(--border);
   padding: 0 12px;
-  font-size: var(--text-sm);
+  font-size: 13px;
   color: var(--neutral-fg);
   width: 100%;
   outline: none;
@@ -47,5 +47,15 @@ defineEmits<{ (e: 'update:modelValue', v: string): void }>()
 .ui-input:focus {
   border-color: transparent;
   box-shadow: 0 0 0 1px var(--accent-ring) inset;
+}
+.ui-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.ui-input.error {
+  border-color: var(--danger);
+}
+.ui-input.error:focus {
+  box-shadow: 0 0 0 1px var(--danger) inset;
 }
 </style>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** MessageStream · 对话流入口（v6 spec-container §1）
- *  - .ms-scroll：flex:1 overflow-y-auto 滚动 + padding 20px，用 flex gap 控制 turn 间距
+ *  - .ms-scroll：flex:1 overflow-y-auto 滚动 + padding 16px，用 flex gap 控制 turn 间距
  *  - 每 turn：UserBubble（720 居中 wrap + 76% 右浮气泡）+ assistant 区（720 居中列）
  *  - 底部留空给 Composer（外层布局控制） */
 import { chatTurns, type ChatBlock } from '@/mock/sessions'
@@ -70,15 +70,15 @@ const doneSummary = '完成。已对照 v6 spec 落地视觉规则，圆角/分�
   flex: 1;
   overflow-y: auto;
   min-height: 0;
-  padding: 20px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 .ms-turn {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 .ms-assistant-col {
   max-width: var(--content-max-w);

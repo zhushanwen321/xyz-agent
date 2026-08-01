@@ -29,7 +29,8 @@ const dim = computed(() => failed.value)
 </template>
 
 <style scoped>
-.wf { padding: 8px 0; }
+.wf { padding: 8px 0; transition: opacity var(--duration-fast); }
+.wf:hover { opacity: 0.8; }
 .wf-hd {
   display: flex;
   align-items: center;

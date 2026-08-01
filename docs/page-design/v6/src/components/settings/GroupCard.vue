@@ -46,7 +46,6 @@ function toggle() {
 .group-card {
   background: var(--bg-card);
   border-radius: 10px;
-  padding: 10px;
   overflow: hidden;
 }
 .group-card + .group-card {
@@ -57,11 +56,8 @@ function toggle() {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
+  padding: 4px 6px 8px;
   min-height: 44px;
-}
-.group-head + .group-body {
-  border-top: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
 }
 .head-left {
   display: flex;
@@ -86,7 +82,7 @@ function toggle() {
 }
 .collapse-btn svg {
   transition: transform var(--duration-fast) var(--ease);
-  transform: rotate(180deg);
+  transform: rotate(-90deg);
 }
 .collapse-btn.down svg {
   transform: rotate(0deg);

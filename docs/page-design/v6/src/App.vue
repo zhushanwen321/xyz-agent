@@ -14,6 +14,7 @@ import {
   openSearch,
   closeAskUser,
   closeConfirm,
+  sidebarCollapsed,
 } from './composables/useStore'
 
 function onKeydown(e: KeyboardEvent) {
@@ -21,6 +22,10 @@ function onKeydown(e: KeyboardEvent) {
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
     e.preventDefault()
     openSearch()
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+    e.preventDefault()
+    sidebarCollapsed.value = !sidebarCollapsed.value
   }
 }
 

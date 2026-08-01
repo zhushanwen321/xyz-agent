@@ -92,7 +92,7 @@ const expanded = ref(state.value === 'expanded')
   flex-shrink: 0;
 }
 .tool-body {
-  padding: 6px 0 0 20px;
+  padding: 6px 0 0 16px;
 }
 .meta-row {
   display: flex;

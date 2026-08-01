@@ -41,7 +41,7 @@ const emit = defineEmits<{ (e: 'update-click'): void }>()
       >
         <path d="M12 19V5M5 12l7-7 7 7" />
       </svg>
-      <span class="brand__update-label">有更新</span>
+      <span class="brand__update-label">可升级</span>
     </button>
   </div>
 </template>
@@ -107,7 +107,7 @@ const emit = defineEmits<{ (e: 'update-click'): void }>()
   content: '';
   position: absolute;
   top: -2px;
-  right: -5px;
+  right: -2px;
   width: 7px;
   height: 7px;
   border-radius: 50%;
