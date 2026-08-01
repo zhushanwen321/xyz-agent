@@ -23,6 +23,33 @@ function toggleEnabled(p: Provider) {
   p.dirty = true
 }
 const advOpen = ref<Record<string, boolean>>({})
+
+/** M4 authHeader：把 API Key 写入 Authorization 头（凭据子区 switch 行） */
+const authHeader = ref<Record<string, boolean>>({ 'p-1': true, 'p-2': true })
+
+/** M5 模型列表：per provider 本地 ref（替代硬编码数组） */
+const models = ref<Record<string, string[]>>({
+  'p-1': ['glm-4.6', 'glm-4.5-air', 'glm-4-flash'],
+  'p-2': ['claude-sonnet-4.5', 'claude-haiku-4'],
+})
+/** 默认模型：spec §0 无独立 defaultProvider，由 defaultModel（providerId/modelId）反推 */
+const defaultModel = ref<Record<string, string>>({ 'p-1': 'glm-4.6' })
+
+/** M5 模型添加表单（本地状态） */
+const newModelName = ref('')
+const newModelInputType = ref<'text' | 'image'>('text')
+
+function addModel(p: Provider) {
+  const name = newModelName.value.trim()
+  if (!name) return
+  models.value[p.id] = [...(models.value[p.id] ?? []), name]
+  newModelName.value = ''
+}
+
+/** M7 设为默认：写 defaultModel（复合键语义，非默认 model 在高级抽屉内显示入口） */
+function setDefaultModel(p: Provider, m: string) {
+  defaultModel.value[p.id] = m
+}
 </script>
 
 <template>
@@ -107,6 +134,19 @@ const advOpen = ref<Record<string, boolean>>({})
                   </button>
                 </div>
               </div>
+              <!-- M4 authHeader：把 API Key 写入 Authorization 头（fld-full switch 行） -->
+              <div class="cred-field cred-field-wide">
+                <div class="auth-header-row">
+                  <span class="auth-header-label">Auth Header</span>
+                  <span class="auth-header-desc">把 API Key 写入 Authorization 头</span>
+                  <span class="spacer"></span>
+                  <UiSwitch
+                    :checked="!!authHeader[p.id]"
+                    aria-label="把 API Key 写入 Authorization 头"
+                    @update:checked="authHeader[p.id] = $event"
+                  />
+                </div>
+              </div>
             </div>
           </div>
 
@@ -114,10 +154,10 @@ const advOpen = ref<Record<string, boolean>>({})
           <div class="sub-section">
             <div class="sub-label">模型清单</div>
             <div class="model-list">
-              <div v-for="m in ['glm-4.6', 'glm-4.5-air', 'glm-4-flash']" :key="m" class="model-row">
+              <div v-for="m in models[p.id] ?? []" :key="m" class="model-row">
                 <UiSwitch :checked="true" :aria-label="'启用 ' + m" />
                 <UiInput :model-value="m" :mono="true" class="model-name-input" />
-                <span v-if="m === 'glm-4.6'" class="default-dot" title="默认模型"></span>
+                <span v-if="defaultModel[p.id] === m" class="default-dot" title="默认模型"></span>
                 <span v-if="m === 'glm-4.6'" class="thinking-pill">思考</span>
                 <span v-else-if="m === 'glm-4.5-air'" class="compat-chip">兼容</span>
                 <span v-else class="spacer-tag"></span>
@@ -146,13 +186,45 @@ const advOpen = ref<Record<string, boolean>>({})
                       <UiInput model-value="openai" :mono="true" />
                     </div>
                   </div>
+                  <!-- M7 设为默认：非默认 model 显示，点击置默认标记 + dot 转移 -->
+                  <button
+                    v-if="defaultModel[p.id] !== m"
+                    class="btn btn-ghost btn-sm set-default-btn"
+                    @click="setDefaultModel(p, m)"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                    设为默认
+                  </button>
                 </div>
               </div>
             </div>
-            <button class="btn btn-ghost btn-sm add-model-btn">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              添加模型
-            </button>
+            <!-- M5 模型添加表单（紧凑：名称 input + 输入 seg + 添加按钮） -->
+            <div class="model-add-row">
+              <UiInput
+                v-model="newModelName"
+                placeholder="模型名称"
+                :mono="true"
+                class="model-add-input"
+              />
+              <div class="input-seg" role="group" aria-label="输入类型">
+                <button
+                  type="button"
+                  class="input-seg__btn"
+                  :class="{ 'input-seg__btn--active': newModelInputType === 'text' }"
+                  @click="newModelInputType = 'text'"
+                >文本</button>
+                <button
+                  type="button"
+                  class="input-seg__btn"
+                  :class="{ 'input-seg__btn--active': newModelInputType === 'image' }"
+                  @click="newModelInputType = 'image'"
+                >图片</button>
+              </div>
+              <button class="btn btn-default btn-dense" @click="addModel(p)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                添加
+              </button>
+            </div>
           </div>
 
           <!-- 验证 -->
@@ -466,6 +538,77 @@ const advOpen = ref<Record<string, boolean>>({})
 .verify-result {
   font-size: var(--text-sm);
   color: var(--neutral-dim);
+}
+
+/* M4 authHeader switch 行（fld-full，底纹浮起） */
+.auth-header-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-2);
+  border-radius: var(--radius);
+}
+.auth-header-label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--neutral-fg);
+}
+.auth-header-desc {
+  font-size: var(--text-sm);
+  color: var(--neutral-mid);
+}
+
+/* M5 模型添加表单 */
+.model-add-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding: var(--space-2);
+  background: var(--surface-2);
+  border-radius: var(--radius);
+}
+.model-add-input {
+  flex: 1;
+  min-width: 0;
+}
+/* 输入 seg：文本/图片 双按钮（bg-input 容器 + 选中浮起） */
+.input-seg {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg-input);
+  border-radius: var(--radius);
+  flex-shrink: 0;
+}
+.input-seg__btn {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  border: 0;
+  background: transparent;
+  font-size: var(--text-xs);
+  color: var(--neutral-mid);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease);
+}
+.input-seg__btn:hover {
+  color: var(--neutral-fg);
+}
+.input-seg__btn--active {
+  background: var(--surface-hover);
+  color: var(--neutral-fg);
+}
+
+/* M7 设为默认（高级抽屉底部） */
+.set-default-btn {
+  margin-top: var(--space-3);
+}
+.set-default-btn svg {
+  width: 14px;
+  height: 14px;
 }
 .add-model-btn {
   align-self: flex-start;

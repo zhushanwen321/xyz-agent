@@ -18,6 +18,29 @@ const paths = ref<LoadPath[]>([
   { id: 'lp-3', path: './.agents/agents', enabled: false, tag: '', scope: 'project' },
 ])
 const manualPath = ref('')
+/** M4 添加路径校验（本地状态） */
+const pathError = ref('')
+const PATH_RE = /^(\/|~\/|[A-Za-z]:\\)/
+
+function addPath() {
+  const v = manualPath.value.trim()
+  // 非空 → 格式 → 去重（spec §3 校验链：空则不操作不报错）
+  if (!v) {
+    pathError.value = ''
+    return
+  }
+  if (!PATH_RE.test(v)) {
+    pathError.value = '路径格式不合法：需为绝对路径（如 /Users/... 或 ~/...）'
+    return
+  }
+  if (paths.value.some((p) => p.path === v)) {
+    pathError.value = `路径已存在：${v} 已在列表中`
+    return
+  }
+  paths.value.push({ id: 'lp-' + Date.now(), path: v, enabled: true, tag: '', scope: 'project' })
+  manualPath.value = ''
+  pathError.value = ''
+}
 
 function moveUp(i: number) {
   if (i <= 0) return
@@ -28,6 +51,19 @@ function moveDown(i: number) {
   const arr = paths.value
   if (i >= arr.length - 1) return
   ;[arr[i + 1], arr[i]] = [arr[i], arr[i + 1]]
+}
+
+/** M6 Layer B 刷新：演示态（1.5s 骨架后恢复） */
+const scanning = ref(false)
+let scanTimer: ReturnType<typeof setTimeout> | undefined
+
+function refresh() {
+  if (scanning.value) return
+  scanning.value = true
+  clearTimeout(scanTimer)
+  scanTimer = setTimeout(() => {
+    scanning.value = false
+  }, 1500)
 }
 
 /** Layer B 资源预览（mock 数据） */
@@ -103,11 +139,31 @@ const filteredRp = computed(() => {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
           选择目录
         </button>
-        <UiInput v-model="manualPath" placeholder="或手动输入路径" :mono="true" class="manual-input" />
-        <button class="btn btn-default btn-md">
+        <UiInput
+          v-model="manualPath"
+          placeholder="或手动输入路径"
+          :mono="true"
+          class="manual-input"
+          :error="!!pathError"
+          @keydown.enter="addPath"
+        />
+        <button class="btn btn-default btn-md" @click="addPath">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           添加
         </button>
+      </div>
+      <!-- M4 错误态：下方错误文案（neutral-mid + AlertCircle 12px danger） -->
+      <div v-if="pathError" class="lp-add-error">
+        <svg
+          class="lp-add-error__icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        ><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span>{{ pathError }}</span>
       </div>
     </section>
 
@@ -116,8 +172,19 @@ const filteredRp = computed(() => {
       <div class="rp-toolbar">
         <span class="rp-title">资源预览</span>
         <span class="rp-count-pill">{{ filteredRp.length }}</span>
-        <button class="btn btn-ghost btn-icon-sm rp-refresh" title="刷新" aria-label="刷新">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        <!-- M6 刷新：secondary dense + RefreshCw 16px · scanning 时 spin + 文案「刷新中」+ disabled -->
+        <button class="btn btn-secondary btn-dense rp-refresh" :disabled="scanning" @click="refresh">
+          <svg
+            class="rp-refresh-icon"
+            :class="{ spin: scanning }"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.75"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          ><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          {{ scanning ? '刷新中' : '刷新' }}
         </button>
         <span class="spacer"></span>
         <div class="rp-tabs">
@@ -131,19 +198,29 @@ const filteredRp = computed(() => {
         </div>
       </div>
 
-      <div class="rp-list">
-        <div v-for="(r, i) in filteredRp" :key="r.name + i" class="rp-item">
-          <div class="rp-name-row">
-            <span class="rp-name">{{ r.name }}</span>
-            <span class="rp-badge" :class="r.source">
-              <span class="dot" :style="{ background: SOURCE_COLOR[r.source] }"></span>
-              {{ r.source }}
-            </span>
+      <!-- M6 扫描中：3 行骨架 shimmer（name 140px / badge 60px / desc flex:1） -->
+      <div v-if="scanning" class="rp-skeleton">
+        <div v-for="i in 3" :key="i" class="rp-skel-row">
+          <span class="rp-skel-name"></span>
+          <span class="rp-skel-badge"></span>
+          <span class="rp-skel-desc"></span>
+        </div>
+      </div>
+      <template v-else>
+        <div class="rp-list">
+          <div v-for="(r, i) in filteredRp" :key="r.name + i" class="rp-item">
+            <div class="rp-name-row">
+              <span class="rp-name">{{ r.name }}</span>
+              <span class="rp-badge" :class="r.source">
+                <span class="dot" :style="{ background: SOURCE_COLOR[r.source] }"></span>
+                {{ r.source }}
+              </span>
+            </div>
+            <p class="rp-desc">{{ r.desc }}</p>
           </div>
-          <p class="rp-desc">{{ r.desc }}</p>
         </div>
         <div v-if="filteredRp.length === 0" class="rp-empty">该来源暂无资源</div>
-      </div>
+      </template>
     </section>
   </div>
 </template>
@@ -316,6 +393,22 @@ const filteredRp = computed(() => {
   flex: 1;
 }
 
+/* M4 添加路径错误文案（spec §3：neutral-mid 配 AlertCircle 12px danger） */
+.lp-add-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 var(--space-4) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--neutral-mid);
+}
+.lp-add-error__icon {
+  width: 12px;
+  height: 12px;
+  color: var(--danger);
+  flex-shrink: 0;
+}
+
 /* Layer B：资源预览 */
 .rp-card {
   background: var(--bg-card);
@@ -354,6 +447,63 @@ const filteredRp = computed(() => {
 }
 .rp-refresh:hover {
   color: var(--neutral-fg);
+}
+.rp-refresh-icon {
+  width: 16px;
+  height: 16px;
+}
+.rp-refresh-icon.spin {
+  animation: spin 0.9s linear infinite;
+}
+/* M6 骨架行：shimmer（surface-2 → surface-hover）· name 140px + badge 60px + desc flex:1 */
+.rp-skeleton {
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border-top: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+}
+.rp-skel-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.rp-skel-name {
+  width: 140px;
+  height: 12px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  flex-shrink: 0;
+}
+.rp-skel-badge {
+  width: 60px;
+  height: 16px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  flex-shrink: 0;
+}
+.rp-skel-desc {
+  flex: 1;
+  height: 12px;
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+.rp-skeleton .rp-skel-row > * {
+  animation: skel-shimmer 1.2s ease-in-out infinite;
+}
+@keyframes skel-shimmer {
+  0%,
+  100% {
+    background: var(--surface-2);
+  }
+  50% {
+    background: var(--surface-hover);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rp-skeleton .rp-skel-row > * {
+    animation: none;
+  }
 }
 .rp-tabs {
   display: flex;

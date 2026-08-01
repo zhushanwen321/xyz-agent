@@ -7,8 +7,9 @@ withDefaults(
     placeholder?: string
     type?: string
     mono?: boolean
+    error?: boolean
   }>(),
-  { modelValue: '', type: 'text', mono: false },
+  { modelValue: '', type: 'text', mono: false, error: false },
 )
 defineEmits<{ (e: 'update:modelValue', v: string): void }>()
 </script>
@@ -17,7 +18,7 @@ defineEmits<{ (e: 'update:modelValue', v: string): void }>()
   <input
     :type="type"
     class="ui-input"
-    :class="{ mono }"
+    :class="{ mono, error }"
     :value="modelValue"
     :placeholder="placeholder"
     @input="$emit('update:modelValue', ($event.target as HTMLInputElement).value)"
