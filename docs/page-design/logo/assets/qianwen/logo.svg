@@ -6,7 +6,7 @@
   描边: 所有 path 用 stroke=black, 营造"线条感"
   viewBox: 缩放成 200x200, 居中
 -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 857 1224" width="200" height="285">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 857 1224" width="857" height="1224" preserveAspectRatio="xMidYMid meet">
   <g fill-rule="evenodd" fill="#000000" stroke="#000000" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
     <!--
       transform 来自 potrace:

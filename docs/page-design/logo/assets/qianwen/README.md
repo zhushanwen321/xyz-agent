@@ -8,8 +8,10 @@
 |------|------|
 | `source.png` | 千问 AI 生成原图 (857x1224)，设计唯一参考 |
 | `source.png.src.txt` | 几何分析数据 (PIL 提取) |
-| `logo.svg` | **最终 logo** (v2 提升版)，双鱼太极，6 条 potrace path + 显式鱼眼 |
+| `logo.svg` | **最终 logo** (矢量)，双鱼太极，6 条 potrace path + 显式鱼眼 |
 | `logo.svg.src.txt` | logo.svg 设计说明 |
+| `logo.png` | **logo.svg 渲染的位图版本** (857x1224)，用于 Markdown/头像/CI 截图等无 SVG 支持场景 |
+| `logo.png.src.txt` | PNG 渲染方法 (headless Chrome + http server) |
 | `logo-autotrace-raw.svg` | potrace 原始输出，**仅作几何参考底稿**，不要直接用 |
 | `logo-autotrace-raw.svg.src.txt` | autotrace 输出说明 |
 | `preview.html` | 浏览器对比验证页面（白底/深色底两种） |
