@@ -126,7 +126,7 @@ hover: text-neutral-fg
 
 - 静态信息容器只用一个表面色（`--surface`/`--bg-input`/`--bg-card`），**不叠加 border**
 - border 仅保留给：浮起可交互容器（popover/dialog/composer）和 focus 态
-- drawer 内 header 分隔：去 `border-b`，改 `bg-surface-2` 浮起分层（DetailPane/CommandDocPanel/GitPanel/TerminalView/BrowserPane 统一）
+- drawer 内 header 分隔：header 同 `surface` 底色 + 底部 `hairline`（rgba(255,255,255,0.04)）分隔（方案 G：暗色下 surface-2 浮起不可见，改 hairline 分层；DetailPane/CommandDocPanel/GitPanel/TerminalView/BrowserPane 统一）
 - 侧栏与主面板间：去硬 border，靠三层明度（stage 深底 + 主面板 surface 浮起）+ SplitterResizeHandle 透明化。**drawer 与 main 间靠弱投影 0.16 + 同色体分隔**（非 border）
 
 ### 3.5 圆角档位
@@ -201,7 +201,7 @@ spec 文档自身的标注元素（state-tag / anno 彩条 / 表头 th）**同�
 |------|---------|
 | SideDrawer 容器 | 与 main 共享同一 surface 浮起体（底色同为 `--surface`），从 main 右缘生长挤占 main 宽度；**保留弱投影 `shadow: -12px 0 24px rgba(0,0,0,0.16)` 做视觉分隔**；去 border-l 硬分隔；SplitterResizeHandle 透明化（仅 hover/drag 显 accent）。v6 调整：移除 tasks tab（goal/todo 回归对话流，见下），新增 subagent（Bot icon）+ workflow（Workflow icon），共 7 个一级 tab |
 | **二级 tab 架构** | 形态 B：icon 一级 + 内层二级（按需出现）。**每个一级 tab 是独立页面，二级 tab 由各 tab 组件自行定制**（drawer 框架不统一管二级）。详见下方二级 tab 策略表 |
-| DetailPane | header 去 border-b 改 bg-surface-2 浮起；**二级 tab：支持多文件 tab**（用户点文件→新开/切换 tab，可关闭），预览/变更 toggle 作为当前 tab 的视图切换。参考 `v6-drawer-tabs-demo.html` 形态 B |
+| DetailPane | header 同 surface 底 + hairline 分隔（方案 G）；**二级 tab：支持多文件 tab**（用户点文件→新开/切换 tab，可关闭），预览/变更 toggle 作为当前 tab 的视图切换。参考 `v6-drawer-tabs-demo.html` 形态 B |
 | DiffView | 行背景 12%（token 自动生效）；canvas `bg-bg-input rounded-lg` + py-2 内距；hunk header 去 bg-surface-2 仅 text-neutral-dim；删 lineRowClass hunk 死代码分支 |
 | TerminalView | 黑色底改 `bg-bg-input`（与画布同源凹陷语义，非纯黑割裂）；工具栏去 border-white/10 改 bg-bg-input 同色；**二级 tab：支持多实例 tab**（点 + 新开终端实例），二级 tab 栏放新增按钮（本期仅放按钮，新增功能后续实现） |
 | BrowserPane | 三处 border-b 全去（guide/nav/login wall），靠各自 bg 分层；guide banner 改中性；登录墙 warn 收敛到单点 |

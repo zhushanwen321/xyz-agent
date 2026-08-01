@@ -38,6 +38,7 @@
   /* 边框/分隔 */
   --border: rgba(255,255,255,0.08);
   --border-strong: rgba(255,255,255,0.15);
+  --hairline: rgba(255,255,255,0.04);
 
   /* 主色（冷蓝）*/
   --accent: #4f8ef7;
@@ -199,16 +200,17 @@ body {
   border-radius: 0 var(--radius) var(--radius) 0;
   display: flex; flex-direction: column; overflow: hidden; min-width: 0;
 }
-/* 一级 icon tab 栏 */
-.sd-l1 { display: flex; align-items: center; gap: 2px; padding: 6px 8px; background: var(--surface-2); }
+/* 一级 icon tab 栏（方案 G：header 与 drawer 体同色 surface，靠底部 hairline 分隔；
+   选中态 surface-hover（差 surface 5.5%），hover 只变文字色不变底，消除 hover 比 selected 亮的反直觉）*/
+.sd-l1 { display: flex; align-items: center; gap: 2px; padding: 6px 8px; background: var(--surface); border-bottom: 1px solid var(--hairline); }
 .sd-l1 .l1-icon {
   width: 30px; height: 30px; border-radius: var(--radius-sm); border: 0; cursor: pointer;
   background: transparent; color: var(--neutral-mid);
   display: flex; align-items: center; justify-content: center; transition: all var(--duration-fast);
 }
-.sd-l1 .l1-icon:hover { color: var(--neutral-fg); background: var(--surface-hover); }
-.sd-l1 .l1-icon.on { color: var(--neutral-fg); background: var(--bg-elevated); }
-.sd-l1 .l1-icon.on:hover { color: var(--neutral-fg); background: var(--bg-elevated); }
+.sd-l1 .l1-icon:hover { color: var(--neutral-fg); }
+.sd-l1 .l1-icon.on { color: var(--neutral-fg); background: var(--surface-hover); }
+.sd-l1 .l1-icon.on:hover { color: var(--neutral-fg); background: var(--surface-hover); }
 .sd-l1 .spacer { flex: 1; }
 .sd-l1 .l1-act {
   width: 28px; height: 28px; border-radius: var(--radius-sm); border: 0; cursor: pointer;
@@ -249,17 +251,18 @@ body {
 .matrix-table .m-note { color: var(--neutral-mid); }
 
 /* ── 形态 B：内层二级 tab 栏（detail 多文件 / terminal 多实例 / browser 多页面）──
-   v6：分割感增强——二级 tab 栏作为独立条带（bg-surface-2 浮起），内容区 bg-input 凹陷底色，
-   与 tab 栏形成明度层次（D2 一体化后去 border-bottom，靠 bg 浮起）。active 用 bg-elevated 中性浮起（R15/D8 tab 型）。 */
-.b-l2 { display: flex; align-items: center; gap: 2px; padding: 6px 8px; background: var(--surface-2); min-height: 36px; }
+   方案 G：header 同 surface 底色 + hairline 分隔，选中 surface-hover
+   （暗色下 surface-2 浮起不可见，改 hairline 分层）。
+   内容区 bg-input 凹陷底色仍作明度层次。active 用 surface-hover（差 surface 5.5%）。 */
+.b-l2 { display: flex; align-items: center; gap: 2px; padding: 6px 8px; background: var(--surface); border-bottom: 1px solid var(--hairline); min-height: 36px; }
 .b-l2-tab {
   display: flex; align-items: center; gap: 6px; max-width: 150px; padding: 4px 8px;
   border-radius: var(--radius-sm); cursor: pointer; font-size: var(--text-xs); color: var(--neutral-mid);
   transition: all var(--duration-fast);
 }
-.b-l2-tab:hover { background: var(--surface-hover); color: var(--neutral-fg); }
-.b-l2-tab.on { background: var(--bg-elevated); color: var(--neutral-fg); }
-.b-l2-tab.on:hover { background: var(--bg-elevated); color: var(--neutral-fg); }
+.b-l2-tab:hover { color: var(--neutral-fg); }
+.b-l2-tab.on { background: var(--surface-hover); color: var(--neutral-fg); }
+.b-l2-tab.on:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 .b-l2-tab .tt-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
 .b-l2-tab .tt-close {
   width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; opacity: 0;
@@ -282,9 +285,9 @@ body {
 /* 内容区：bg-input 凹陷底色（比 tab 栏 surface-2 更深一档），与 tab 栏形成层次分割 */
 .b-l2-content { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; background: var(--bg-input); }
 
-/* ── DetailPane header（v6：去 border-b 改 bg-surface-2 浮起）── */
+/* ── DetailPane header（v6：header 同 surface + hairline 分隔）── */
 .dp-v6 { flex: 1; display: flex; flex-direction: column; background: var(--bg); min-height: 0; }
-.dp-header { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--surface-2); }
+.dp-header { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--surface); border-bottom: 1px solid var(--hairline); }
 .dp-header .dp-ico { width: 14px; height: 14px; color: var(--neutral-dim); flex-shrink: 0; }
 .dp-header .dp-name { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dp-btn { width: 24px; height: 24px; border-radius: var(--radius-sm); border: 0; cursor: pointer; background: transparent; color: var(--neutral-dim); display: flex; align-items: center; justify-content: center; transition: all var(--duration-fast); }
@@ -364,14 +367,14 @@ body {
 
 /* ── §6 BrowserPane：三处 border-b 全去，靠各自 bg 分层 ── */
 .bp-v6 { flex: 1; display: flex; flex-direction: column; background: var(--bg); min-height: 0; overflow: hidden; }
-/* guide banner（v6：去 accent-soft 装饰底改中性 surface-2，去 border-b 靠 bg 浮起）*/
-.bp-guide { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--surface-2); flex-shrink: 0; }
+/* guide banner（方案 G：去 accent-soft 装饰底改中性 surface + 底 hairline 分隔）*/
+.bp-guide { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--surface); border-bottom: 1px solid var(--hairline); flex-shrink: 0; }
 .bp-guide .bp-ico { width: 14px; height: 14px; color: var(--neutral-mid); flex-shrink: 0; }
 .bp-guide .bp-text { flex: 1; min-width: 0; font-size: var(--text-sm); color: var(--neutral-fg); }
 .bp-guide .bp-x { width: 20px; height: 20px; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; color: var(--neutral-dim); cursor: pointer; flex-shrink: 0; transition: all var(--duration-fast); }
 .bp-guide .bp-x:hover { background: var(--surface-hover); color: var(--neutral-fg); }
-/* nav 工具栏（v6：去 border-b，bg-surface-2 浮起分层）*/
-.bp-nav { display: flex; align-items: center; gap: 4px; padding: 6px 8px; background: var(--surface-2); flex-shrink: 0; }
+/* nav 工具栏（方案 G：header 同 surface + 底 hairline 分层）*/
+.bp-nav { display: flex; align-items: center; gap: 4px; padding: 6px 8px; background: var(--surface); border-bottom: 1px solid var(--hairline); flex-shrink: 0; }
 .bp-btn { width: 26px; height: 26px; border-radius: var(--radius-sm); border: 0; cursor: pointer; background: transparent; color: var(--neutral-mid); display: flex; align-items: center; justify-content: center; transition: all var(--duration-fast); flex-shrink: 0; }
 .bp-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 .bp-btn.disabled { opacity: 0.5; cursor: not-allowed; }
@@ -483,8 +486,8 @@ body {
 
 /* ── §8 CommandDocPanel：header 去 border-b + source 标签去 bg 圆角 6px + 元信息 mt-4 ── */
 .cd-v6 { flex: 1; display: flex; flex-direction: column; background: var(--bg); min-height: 0; overflow: hidden; }
-/* header（v6：去 border-b 改 bg-surface-2 浮起）*/
-.cd-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--surface-2); flex-shrink: 0; }
+/* header（v6：header 同 surface + hairline 分隔）*/
+.cd-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--surface); border-bottom: 1px solid var(--hairline); flex-shrink: 0; }
 .cd-header .cd-ico { width: 14px; height: 14px; color: var(--reasoning); flex-shrink: 0; }
 .cd-header .cd-name { font-family: var(--font-mono); font-size: var(--text-md); font-weight: 500; color: var(--neutral-fg); }
 /* source 标签（v6：去 bg-surface-hover，圆角升 6px，纯色文字，去 border）*/
@@ -556,8 +559,8 @@ body {
 
 /* ── §10 SubagentTab：嵌套只读对话流 ── */
 .sa-v6 { flex: 1; display: flex; flex-direction: column; background: var(--bg); min-height: 0; overflow: hidden; }
-/* 标题栏（v6：bg-surface-2 浮起，去 border-b，与 §3/§8 一致）*/
-.sa-header { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--surface-2); flex-shrink: 0; }
+/* 标题栏（v6：header 同 surface + hairline 分隔，与 §3/§8 一致）*/
+.sa-header { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--surface); border-bottom: 1px solid var(--hairline); flex-shrink: 0; }
 .sa-header .sa-back { width: 24px; height: 24px; border-radius: var(--radius-sm); border: 0; cursor: pointer; background: transparent; color: var(--neutral-dim); display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all var(--duration-fast); }
 .sa-header .sa-back:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 .sa-header .sa-ico { width: 14px; height: 14px; color: var(--neutral-dim); flex-shrink: 0; }
@@ -588,8 +591,8 @@ body {
 
 /* ── §11 WorkflowTab：agent call 列表（复用侧栏 WorkflowDetail 结构）── */
 .wf-v6 { flex: 1; display: flex; flex-direction: column; background: var(--bg); min-height: 0; overflow: hidden; }
-/* 标题栏（v6：bg-surface-2 浮起 + 右侧操作 pause/resume + abort）*/
-.wf-header { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--surface-2); flex-shrink: 0; }
+/* 标题栏（v6：header 同 surface + hairline 分隔 + 右侧操作 pause/resume + abort）*/
+.wf-header { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--surface); border-bottom: 1px solid var(--hairline); flex-shrink: 0; }
 .wf-header .wf-ico { width: 14px; height: 14px; color: var(--neutral-dim); flex-shrink: 0; }
 .wf-header .wf-name { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-fg); font-weight: 500; }
 .wf-header .wf-slug { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-dim); }
@@ -805,8 +808,9 @@ body {
       <div class="anno"><b>左侧分隔:</b><br><span class="old">border-l 1px border-border</span> <span class="v6">→ shadow-drawer 弱投影 0.16</span></div>
       <div class="anno"><b>shadow-drawer:</b><br>-12px 0 24px rgba(0,0,0,.16)</div>
       <div class="anno"><b>一级 tab:</b><br>icon-only 7 个 · size-7 (30px) rounded-sm<br>terminal/browser/git/doc/detail/<span class="v6">subagent</span>/<span class="v6">workflow</span></div>
-      <div class="anno"><b>icon active:</b><br>bg-bg-elevated + text-neutral-fg（R15/D8 tab 型，无 ring 无左条）</div>
-      <div class="anno"><b>icon hover:</b><br>bg-surface-hover + text-neutral-fg</div>
+      <div class="anno"><b>一级 tab 栏底:</b><br><span class="v6">方案 G：header 同 surface + 底 hairline（暗色下 surface-2 浮起不可见，改 hairline 分层）</span></div>
+      <div class="anno"><b>icon active:</b><br>bg-surface-hover + text-neutral-fg（方案 G：选中 surface-hover，差 surface 5.5%）</div>
+      <div class="anno"><b>icon hover:</b><br>transparent + text-neutral-fg（方案 G：只变字色不变底，避免 hover 比 selected 亮）</div>
       <div class="anno"><b>icon default:</b><br>transparent + text-neutral-mid</div>
       <div class="anno"><b>icon size:</b><br>15px · stroke-width 1.75（§7 统一）</div>
       <div class="anno"><b>subagent icon:</b><br><span class="v6">Bot（lucide）</span>· 嵌套只读对话流（§10）</div>
@@ -955,8 +959,8 @@ body {
       <div class="anno"><b>二级 tab 自治:</b><br>drawer 框架不统一管，各 tab 组件自行定制</div>
       <div class="anno"><b>按需出现:</b><br>仅 detail/terminal/browser 显二级栏；git/doc/<span class="v6">subagent</span>/<span class="v6">workflow</span> 不显（避免假二级，tasks 已移除见 §9）</div>
       <div class="anno"><b>一级栏:</b><br>icon-only · 6px+6px padding · 高 42px</div>
-      <div class="anno"><b>二级栏:</b><br>bg-surface-2 浮起 · 高 36px · tab rounded-sm</div>
-      <div class="anno"><b>二级 tab active:</b><br>bg-bg-elevated + text-neutral-fg（R15/D8 tab 型，无下划线/无 ring）</div>
+      <div class="anno"><b>二级栏:</b><br><span class="v6">方案 G：bg-surface + 底 hairline 分隔</span>（暗色下 surface-2 浮起不可见）· 高 36px · tab rounded-sm</div>
+      <div class="anno"><b>二级 tab active:</b><br>bg-surface-hover + text-neutral-fg（方案 G：选中 surface-hover，差 surface 5.5%；hover 只变字色不变底）</div>
       <div class="anno"><b>二级 tab close:</b><br>hover/on 显 14px · opacity 0→.6→1</div>
       <div class="anno"><b>垂直成本:</b><br>icon 栏 42px + 二级栏 36px = 78px（仅多实例 tab）</div>
       <div class="anno"><b>架构含义 · 视觉态（实现依赖阶段 B）:</b><br>useDetailPane 单值→按 tab id 索引的 map；terminal 单 PTY→多 PTY 实例（多文件 tab / 多终端实例为视觉态，实现依赖阶段 B）</div>
@@ -969,11 +973,11 @@ body {
        ================================================================ -->
   <section class="spec" id="s3">
     <div class="spec-head"><span class="spec-num">§3</span><h2 class="spec-title">DetailPane（detail tab）</h2></div>
-    <p class="spec-desc">文件预览面板。v6：header 去 <code>border-b</code> 改 <code>bg-surface-2</code> 浮起分层（§3.4 统一）；二级 tab 支持多文件 tab（用户点文件→新开/切换 tab，可关闭）；预览/变更 toggle 作为<b>当前 tab 的视图切换</b>（非全局）。点文件入口来自 git/文件树，故无新增按钮。</p>
+    <p class="spec-desc">文件预览面板。v6：header 与 drawer 体同色 <code>surface</code> + 底部 <code>hairline</code> 分隔（方案 G：暗色下 surface-2 浮起不可见，改 hairline 分层，§3.4 统一）；二级 tab 支持多文件 tab（用户点文件→新开/切换 tab，可关闭）；预览/变更 toggle 作为<b>当前 tab 的视图切换</b>（非全局）。点文件入口来自 git/文件树，故无新增按钮。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> useDetailPane 单例（selectedPath 单值）</span>
       <span class="cp cp-v6"><b>v6</b> 多文件 tab（按 tab id 索引的 map）</span>
-      <span class="cp cp-v6"><b>v6</b> header bg-surface-2 浮起，去 border-b</span>
+      <span class="cp cp-v6"><b>v6</b> header 同 surface + hairline 分隔（方案 G）</span>
       <span class="cp cp-v6"><b>v6</b> 预览/变更是当前 tab 视图切换</span>
     </div>
 
@@ -1068,10 +1072,10 @@ body {
       <div class="anno"><b>多文件 tab:</b><br><span class="v6">点文件→新开/切换 tab，可关闭</span></div>
       <div class="anno"><b>数据模型 · 视觉态（实现依赖阶段 B）:</b><br><span class="old">单值 selectedPath</span> <span class="v6">→ 按 tab id 索引的 map</span>（多文件 tab 为视觉态，实现依赖阶段 B：useDetailPane 单值→map）</div>
       <div class="anno"><b>新增按钮:</b><br>否（文件从 git/文件树点开，无 + 按钮）</div>
-      <div class="anno"><b>header 底色:</b><br><span class="v6">bg-surface-2 浮起</span>（去 border-b）</div>
+      <div class="anno"><b>header 底色:</b><br><span class="v6">方案 G：bg-surface + 底 hairline 分隔</span>（去 border-b）</div>
       <div class="anno"><b>预览/变更 toggle:</b><br>当前 tab 的视图切换（非全局）· 仅 hasGitChange 时显</div>
       <div class="anno"><b>toggle 样式:</b><br>SegmentedTab：bg-bg-input p-3px · on bg-bg-elevated</div>
-      <div class="anno"><b>二级 tab active:</b><br>bg-bg-elevated + text-neutral-fg · close opacity .6</div>
+      <div class="anno"><b>二级 tab active:</b><br>bg-surface-hover + text-neutral-fg · close opacity .6（方案 G：选中 surface-hover）</div>
       <div class="anno"><b>二级 tab 名:</b><br>font-mono 11px · ellipsis · max-w 150px</div>
       <div class="anno"><b>空态:</b><br>无二级栏 · FileText icon 24px + 提示文</div>
       <div class="anno"><b>落点:</b><br>DetailPane.vue · useDetailPane（map 改造）</div>
@@ -1300,7 +1304,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s6">
     <div class="spec-head"><span class="spec-num">§6</span><h2 class="spec-title">BrowserPane（browser tab）</h2></div>
-    <p class="spec-desc">嵌入式浏览器面板（主进程 WebContentsView 覆盖渲染 viewport）。v6 核心改动：三处 <code>border-b</code> 全去（guide banner / nav 工具栏 / 登录墙），改靠各自底色 <code>bg-surface-2</code> / <code>bg-warn-soft</code> 浮起分层（§3.4 统一）；guide banner 去装饰色（<code>bg-accent-soft</code> + 蓝图标）改中性 <code>bg-surface-2</code> + neutral-mid 图标；登录墙 <code>warn</code> 收敛到单点提示（<code>bg-warn-soft</code> 单块 + warn 图标，非 border-b 散布）。<b>二级 tab：支持多页面 tab</b>（每个 tab 一个独立 URL 页面，可关闭；点 + 新开默认页/输入 URL），与 detail/terminal 一致的形态 B 二级 tab 架构。</p>
+    <p class="spec-desc">嵌入式浏览器面板（主进程 WebContentsView 覆盖渲染 viewport）。v6 核心改动：guide banner / nav 工具栏与 drawer 体同色 <code>surface</code> + 底部 <code>hairline</code> 分隔（方案 G：暗色下 surface-2 浮起不可见，改 hairline 分层，§3.4 统一）；guide banner 去装饰色（<code>bg-accent-soft</code> + 蓝图标）改中性 <code>bg-surface</code> + neutral-mid 图标；登录墙 <code>warn</code> 收敛到单点提示（<code>bg-warn-soft</code> 单块 + warn 图标，非 border-b 散布）。<b>二级 tab：支持多页面 tab</b>（每个 tab 一个独立 URL 页面，可关闭；点 + 新开默认页/输入 URL），与 detail/terminal 一致的形态 B 二级 tab 架构。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> guide/nav/login 三处 border-b 分隔</span>
       <span class="cp cp-v6"><b>v6</b> 三处 border-b 全去，靠各自 bg 分层</span>
@@ -1334,13 +1338,13 @@ body {
                   <span>新页面</span>
                 </div>
               </div>
-              <!-- guide banner（v6：中性 bg-surface-2，去 border-b 靠 bg 浮起）-->
+              <!-- guide banner（方案 G：中性 bg-surface + 底 hairline 分隔）-->
               <div class="bp-guide">
                 <svg class="bp-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
                 <span class="bp-text">点击链接在抽屉内打开，主进程安全渲染</span>
                 <span class="bp-x" title="不再提示"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
               </div>
-              <!-- nav 工具栏（v6：bg-surface-2 浮起，去 border-b）-->
+              <!-- nav 工具栏（方案 G：bg-surface + 底 hairline 分隔）-->
               <div class="bp-nav">
                 <button class="bp-btn disabled" title="后退（无历史）"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></button>
                 <button class="bp-btn disabled" title="前进（无历史）"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></button>
@@ -1361,7 +1365,7 @@ body {
                     <div class="bp-page-title" style="font-size:14px;">Getting Started</div>
                     <div class="bp-page-p">页面内容由主进程 view 真实渲染，本面板仅承载位置与状态覆盖层。</div>
                   </div>
-                  <div class="bp-page-p">三层明度：stage(#131316) → drawer(bg) → nav/guide(surface-2) 浮起分层。</div>
+                  <div class="bp-page-p">明度层次：stage(#131316) → drawer(bg) → nav/guide(surface) 同色 + hairline 分隔（方案 G）。</div>
                 </div>
               </div>
             </div>
@@ -1436,14 +1440,14 @@ body {
         <div class="state-tag">v6</div>
         <div class="state-demo">
           <div style="background:var(--bg);border-radius:var(--radius);overflow:hidden;">
-            <!-- guide: 中性 bg-surface-2，无 border-b -->
-            <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:var(--surface-2);">
+            <!-- guide: 方案 G 中性 bg-surface + 底 hairline -->
+            <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:var(--surface);border-bottom:1px solid var(--hairline);">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--neutral-mid)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
-              <span style="font-size:var(--text-sm);color:var(--neutral-fg);">guide · bg-surface-2 中性（去装饰）</span>
+              <span style="font-size:var(--text-sm);color:var(--neutral-fg);">guide · bg-surface + hairline（去装饰，方案 G）</span>
             </div>
-            <!-- nav: bg-surface-2，无 border-b -->
-            <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:var(--surface-2);">
-              <span style="font-size:var(--text-xs);color:var(--neutral-mid);font-family:var(--font-mono);">nav · bg-surface-2（同色浮起）</span>
+            <!-- nav: 方案 G bg-surface + 底 hairline -->
+            <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:var(--surface);border-bottom:1px solid var(--hairline);">
+              <span style="font-size:var(--text-xs);color:var(--neutral-mid);font-family:var(--font-mono);">nav · bg-surface + hairline（同色分层，方案 G）</span>
             </div>
             <!-- viewport bg-bg -->
             <div style="padding:8px;background:var(--bg);min-height:40px;">
@@ -1484,10 +1488,10 @@ body {
     </div>
 
     <div class="anno-grid">
-      <div class="anno"><b>guide 底色:</b><br><span class="old">bg-accent-soft + 蓝图标</span> <span class="v6">→ bg-surface-2 中性</span></div>
-      <div class="anno"><b>guide 分隔:</b><br><span class="old">border-b border-border</span> <span class="v6">→ 删除（bg 浮起）</span></div>
-      <div class="anno"><b>nav 底色:</b><br><span class="v6">bg-surface-2 浮起</span></div>
-      <div class="anno"><b>nav 分隔:</b><br><span class="old">border-b border-border</span> <span class="v6">→ 删除（同色）</span></div>
+      <div class="anno"><b>guide 底色:</b><br><span class="old">bg-accent-soft + 蓝图标</span> <span class="v6">→ bg-surface 中性（方案 G）</span></div>
+      <div class="anno"><b>guide 分隔:</b><br><span class="old">border-b border-border</span> <span class="v6">→ 底 hairline（方案 G：暗色下 surface-2 浮起不可见，改 hairline 分层）</span></div>
+      <div class="anno"><b>nav 底色:</b><br><span class="v6">bg-surface + 底 hairline（方案 G）</span></div>
+      <div class="anno"><b>nav 分隔:</b><br><span class="old">border-b border-border</span> <span class="v6">→ 底 hairline</span></div>
       <div class="anno"><b>login wall:</b><br><span class="v6">bg-warn-soft 整块单点</span>（去 border-b 散布）</div>
       <div class="anno"><b>login 图标:</b><br>warn · AlertTriangle 14px</div>
       <div class="anno"><b>viewport 底:</b><br>bg-bg（画布，承载 view 覆盖）</div>
@@ -1796,10 +1800,10 @@ body {
        ================================================================ -->
   <section class="spec" id="s8">
     <div class="spec-head"><span class="spec-num">§8</span><h2 class="spec-title">CommandDocPanel（doc tab）</h2></div>
-    <p class="spec-desc">命令/skill 文档展示（drawer Doc tab 内容，SKILL.md 经 markdown 渲染）。v6 核心改动：header 去 <code>border-b</code> 改 <code>bg-surface-2</code> 浮起分层（§3.4 统一）；source 标签圆角升 <b>6px</b> 去 <code>bg-surface-hover</code>（纯色文字，去 bg 去 border）；元信息区（sourcePath）去 <code>border-t</code> 改 <code>mt-4</code>（16px）空白分层。单文档，故<b>无二级 tab</b>。</p>
+    <p class="spec-desc">命令/skill 文档展示（drawer Doc tab 内容，SKILL.md 经 markdown 渲染）。v6 核心改动：header 与 drawer 体同色 <code>surface</code> + 底部 <code>hairline</code> 分隔（方案 G：暗色下 surface-2 浮起不可见，改 hairline 分层，§3.4 统一）；source 标签圆角升 <b>6px</b> 去 <code>bg-surface-hover</code>（纯色文字，去 bg 去 border）；元信息区（sourcePath）去 <code>border-t</code> 改 <code>mt-4</code>（16px）空白分层。单文档，故<b>无二级 tab</b>。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> header border-b border-border 分隔</span>
-      <span class="cp cp-v6"><b>v6</b> header 去 border-b 改 bg-surface-2 浮起</span>
+      <span class="cp cp-v6"><b>v6</b> header 同 surface + hairline 分隔（方案 G）</span>
       <span class="cp cp-now"><b>现</b> source 标签 bg-surface-hover 色块 + 圆角 3px</span>
       <span class="cp cp-v6"><b>v6</b> source 圆角 6px 去 bg 去 border，纯色文字</span>
       <span class="cp cp-v6"><b>v6</b> 元信息区 border-t 改 mt-4（16px）空白分层</span>
@@ -1821,7 +1825,7 @@ body {
               <button class="l1-act" title="关闭"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </div>
             <div class="cd-v6">
-              <!-- header（v6：bg-surface-2 浮起，去 border-b）-->
+              <!-- header（方案 G：bg-surface + 底 hairline 分隔）-->
               <div class="cd-header">
                 <svg class="cd-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
                 <span class="cd-name">/build</span>
@@ -1928,7 +1932,7 @@ body {
     </div>
 
     <div class="anno-grid">
-      <div class="anno"><b>header 底色:</b><br><span class="v6">bg-surface-2 浮起</span>（去 border-b）</div>
+      <div class="anno"><b>header 底色:</b><br><span class="v6">方案 G：bg-surface + 底 hairline 分隔</span>（去 border-b）</div>
       <div class="anno"><b>header 分隔:</b><br><span class="old">border-b border-border</span> <span class="v6">→ 删除</span></div>
       <div class="anno"><b>命令名:</b><br>font-mono 14px font-medium neutral-fg</div>
       <div class="anno"><b>命令 icon:</b><br>14px · text-reasoning（slash icon 映射）</div>
@@ -2316,7 +2320,7 @@ body {
       <div class="anno"><b>数据源:</b><br>传 subagent sessionId<br>chat store 已按 sessionId 分区</div>
       <div class="anno"><b>只读:</b><br><span class="v6">无 composer/输入区/发送按钮</span><br>subagent 是 background 任务</div>
       <div class="anno"><b>标题栏字段:</b><br>agent 名 · slug · model · thinking X</div>
-      <div class="anno"><b>标题栏底色:</b><br>bg-surface-2 浮起（去 border-b，§3.4）</div>
+      <div class="anno"><b>标题栏底色:</b><br>方案 G：bg-surface + 底 hairline（去 border-b，§3.4）</div>
       <div class="anno"><b>返回按钮:</b><br><span class="v6">仅从 workflow 进入才显 ← 返回</span>（回 workflow tab）</div>
       <div class="anno"><b>返回 icon:</b><br>ArrowLeft（lucide）· 14px</div>
       <div class="anno"><b>入口 1:</b><br>对话流点 subagent block → drawer.setTab('subagent')</div>
@@ -2511,7 +2515,7 @@ body {
       <div class="anno"><b>新增一级 tab:</b><br><span class="v6">workflow（Workflow icon）</span></div>
       <div class="anno"><b>结构复用:</b><br><span class="v6">侧栏 WorkflowDetail</span>（phase 分组 + agent call 卡片）</div>
       <div class="anno"><b>标题栏字段:</b><br>scriptName · slug</div>
-      <div class="anno"><b>标题栏底色:</b><br>bg-surface-2 浮起（去 border-b，§3.4）</div>
+      <div class="anno"><b>标题栏底色:</b><br>方案 G：bg-surface + 底 hairline（去 border-b，§3.4）</div>
       <div class="anno"><b>操作按钮:</b><br>pause/resume（Pause/Play）+ abort（Square）</div>
       <div class="anno"><b>abort 确认:</b><br><span class="v6">两段式</span>· 首点 bg-danger-soft 高亮，再点执行（3s 自动复位）</div>
       <div class="anno"><b>phase 分组:</b><br>状态点 + phase 名 + agent 数量</div>

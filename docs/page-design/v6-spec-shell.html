@@ -1238,7 +1238,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s7">
     <div class="spec-head"><span class="spec-num">§7</span><h2 class="spec-title">drawer 一体化生长</h2></div>
-    <p class="spec-desc">drawer 与 main-panel 共享同一个 surface 浮起体——drawer 不是独立浮层，而是<b>从 main 右缘生长出来、挤占 main 宽度</b>的一部分。底色同为 <code>--surface</code>，保留弱投影 0.16（<code>--shadow-drawer</code>）+ 同色体分隔（去 border-l 硬分隔），靠 main header 下方的 <code>bg-surface-2</code> 内嵌分层（drawer header 同源）表达边界。展开/收起是宽度过渡：main 内容区收缩 + drawer 宽度生长同步（320ms ease），形成「从 main 内部拉出」的一体感。</p>
+    <p class="spec-desc">drawer 与 main-panel 共享同一个 surface 浮起体——drawer 不是独立浮层，而是<b>从 main 右缘生长出来、挤占 main 宽度</b>的一部分。底色同为 <code>--surface</code>，保留弱投影 0.16（<code>--shadow-drawer</code>）+ 同色体分隔（去 border-l 硬分隔），靠 main header 下方的 hairline 内嵌分层（drawer header 同 surface 底 + hairline 分隔，方案 G）表达边界。展开/收起是宽度过渡：main 内容区收缩 + drawer 宽度生长同步（320ms ease），形成「从 main 内部拉出」的一体感。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> drawer 独立画布色 + shadow-drawer 投影</span>
       <span class="cp cp-v6"><b>v6</b> drawer 共享 surface（与 main 一体）</span>
@@ -1318,7 +1318,7 @@ body {
               </div>
             </div>
           </div>
-          <div class="anno" style="margin-top:10px;"><b>关系:</b> <span class="v6">同 surface 浮起体 · drawer 从 main 右缘生长</span> · 保留弱投影 0.16，去 border-l 靠 header bg-surface-2 内分层</div>
+          <div class="anno" style="margin-top:10px;"><b>关系:</b> <span class="v6">同 surface 浮起体 · drawer 从 main 右缘生长</span> · 保留弱投影 0.16，去 border-l 靠 header hairline 分隔（方案 G：同 surface 底）</div>
         </div>
       </div>
     </div>
@@ -1326,7 +1326,7 @@ body {
     <div class="anno-grid">
       <div class="anno"><b>drawer 底色:</b><br><span class="v6">var(--surface)</span><br>与 main 同色一体</div>
       <div class="anno"><b>浮起体:</b><br>main + drawer 共用<br>border + shadow-1/shadow-2<br>外层一个圆角</div>
-      <div class="anno"><b>边界表达:</b><br>main header 下 bg-surface-2<br>内嵌分隔线（非 border-l）<br>drawer header 同源</div>
+      <div class="anno"><b>边界表达:</b><br>main header 下 hairline 分隔<br>内嵌分隔线（非 border-l）<br>drawer header 同 surface 底</div>
       <div class="anno"><b>去掉:</b><br><span class="old">border-l 硬分隔</span><br><span class="v6">保留弱投影 0.16</span><br>同色体分隔</div>
       <div class="anno"><b>展开动画:</b><br>drawer 宽度 0→200px<br>320ms [var(--duration-slow)]<br>cubic-bezier(--ease)</div>
       <div class="anno"><b>挤占动画:</b><br>main 内容 flex-1 收缩<br>与 drawer 同步过渡<br>无跳动</div>

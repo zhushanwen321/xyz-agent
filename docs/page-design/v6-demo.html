@@ -456,7 +456,8 @@ body[data-density="lift"] .sub-summary { font-size: 9px; opacity: .6; }
 }
 .drawer-head {
   display: flex; align-items: center; gap: var(--space-1);
-  padding: var(--space-2); background: var(--surface-2);
+  padding: var(--space-2); background: var(--surface);
+  border-bottom: 1px solid rgba(255,255,255,0.04);
 }
 .drawer-tab {
   width: 30px; height: 30px; border-radius: var(--radius-sm); border: 0; cursor: pointer;
@@ -464,7 +465,7 @@ body[data-density="lift"] .sub-summary { font-size: 9px; opacity: .6; }
   transition: background var(--duration-fast), color var(--duration-fast);
 }
 .drawer-tab:hover { color: var(--neutral-fg); }
-.drawer-tab.on { background: var(--bg-elevated); color: var(--neutral-fg); }
+.drawer-tab.on { background: var(--surface-hover); color: var(--neutral-fg); }
 .drawer-head .spacer { flex: 1; }
 .drawer-body { flex: 1; overflow-y: auto; padding: var(--space-3); }
 .drawer-body::-webkit-scrollbar { width: 6px; }

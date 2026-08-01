@@ -207,7 +207,7 @@ hover: text-neutral-fg
 
 - 静态信息容器只用一个表面色，**不叠加 border**
 - border 仅保留给：浮起可交互容器 + focus 态
-- drawer 内 header 分隔：去 `border-b`，改 `bg-surface-2` 浮起分层
+- drawer 内 header 分隔：header 同 `surface` + 底部 hairline 分隔（方案 G：暗色下 surface→surface-2 差仅 2% 浮起不可见，改 hairline 分层）
 - 侧栏与主面板间：去硬 border，靠三层明度 + SplitterResizeHandle 透明化（仅 hover/drag 显 accent）
 - **drawer 与 main 间（D2 一体化）**：两者共享 surface 同色体，靠**弱投影 0.16**（非 border）+ SplitterResizeHandle 透明化分隔
 
