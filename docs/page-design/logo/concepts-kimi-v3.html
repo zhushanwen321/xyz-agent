@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>逍遥 FreeWise — LOGO 概念探索 Kimi v3 · 梦蝶两仪</title>
+<title>逍遥 FreeWise — LOGO 概念探索 Kimi v3 · 蝶即两仪</title>
 <style>
   :root {
     /* 对齐 docs/page-design/design-tokens.md v3 */
@@ -143,25 +143,17 @@
 </head>
 <body>
 
-<!-- 共享蝴蝶几何：前视图，头朝上（-y），局部坐标翅展 ±40、体长 ±12 -->
+<!-- 共享几何：前视蝶（头朝 -y，翅展 ±40）+ 太极鱼（局部原点半径 26，右凸、肥头朝上） -->
 <svg width="0" height="0" style="position:absolute">
   <defs>
-    <g id="bfly">
-      <path d="M 4 -4 C 12 -16, 24 -26, 33 -23 C 40 -21, 40 -12, 33 -7 C 26 -2, 13 0, 4 -4 Z"/>
-      <path d="M 4 1 C 14 5, 24 9, 26 17 C 27 25, 17 28, 11 22 C 6 17, 4 8, 4 1 Z"/>
-      <path d="M -4 -4 C -12 -16, -24 -26, -33 -23 C -40 -21, -40 -12, -33 -7 C -26 -2, -13 0, -4 -4 Z"/>
-      <path d="M -4 1 C -14 5, -24 9, -26 17 C -27 25, -17 28, -11 22 C -6 17, -4 8, -4 1 Z"/>
-      <ellipse cx="0" cy="-1" rx="3" ry="11"/>
-    </g>
-    <g id="bf-wr">
-      <path d="M 4 -4 C 12 -16, 24 -26, 33 -23 C 40 -21, 40 -12, 33 -7 C 26 -2, 13 0, 4 -4 Z"/>
-      <path d="M 4 1 C 14 5, 24 9, 26 17 C 27 25, 17 28, 11 22 C 6 17, 4 8, 4 1 Z"/>
-    </g>
-    <g id="bf-wl">
-      <path d="M -4 -4 C -12 -16, -24 -26, -33 -23 C -40 -21, -40 -12, -33 -7 C -26 -2, -13 0, -4 -4 Z"/>
-      <path d="M -4 1 C -14 5, -24 9, -26 17 C -27 25, -17 28, -11 22 C -6 17, -4 8, -4 1 Z"/>
-    </g>
+    <path id="w-ru" d="M 4 -4 C 12 -16, 24 -26, 33 -23 C 40 -21, 40 -12, 33 -7 C 26 -2, 13 0, 4 -4 Z"/>
+    <path id="w-rl" d="M 4 1 C 14 5, 24 9, 26 17 C 27 25, 17 28, 11 22 C 6 17, 4 8, 4 1 Z"/>
+    <path id="w-lu" d="M -4 -4 C -12 -16, -24 -26, -33 -23 C -40 -21, -40 -12, -33 -7 C -26 -2, -13 0, -4 -4 Z"/>
+    <path id="w-ll" d="M -4 1 C -14 5, -24 9, -26 17 C -27 25, -17 28, -11 22 C -6 17, -4 8, -4 1 Z"/>
+    <g id="bf-wl"><use href="#w-lu"/><use href="#w-ll"/></g>
+    <g id="bf-wr"><use href="#w-ru"/><use href="#w-rl"/></g>
     <ellipse id="bf-body" cx="0" cy="-1" rx="3" ry="11"/>
+    <path id="fish" d="M 0 -26 A 26 26 0 0 1 0 26 A 13 13 0 0 1 0 0 A 13 13 0 0 0 0 -26 Z"/>
   </defs>
 </svg>
 
@@ -169,90 +161,95 @@
 
 <h1>逍遥 <span class="cn">·</span> <span class="en">FreeWise</span> — LOGO 概念探索 Kimi v3</h1>
 <p class="subtitle">
-  <b>梦蝶两仪 · 五式</b>。本轮以<b>梦蝶为体</b>（庄子物化）、<b>两仪为骨</b>（太极的圆与对称结构）、<b>虚实为神</b>（实形与虚形互藏）。五式共用同一只蝴蝶几何与同一个圆，区别在于蝶与太极的关系不同：<code>A 双蝶仪</code>双蝶相逐即成两仪 → <code>B 蝶目</code>蝶作太极之眼 → <code>C 物化</code>蝶散为尘穿过虚侧 → <code>D 蝶影</code>水上实蝶水下虚影 → <code>E 简蝶</code>一实一虚双翅极简。
+  <b>蝶即两仪 · 五式</b>。整个 LOGO 就是一只蝶：<b>翅膀本身长成太极两仪</b>，一实一虚。没有外圆、没有容器、没有 S 线描边——太极只以「神」存在：S 形的分界、互藏的异色点、首尾相逐的动势。五式从「最太极」到「最蝶」排开：<code>A 翼仪</code>蝶身骑在太极 S 界上 → <code>B 锁翼</code>四翅斜向互锁成仪 → <code>C 侧影</code>侧视双翅前实后虚 → <code>D 逐翅</code>两枚涡纹相逐成蝶 → <code>E 散翼</code>实翅与虚化散尘的虚翅。
 </p>
 
 <div class="insight">
-  <h2>为什么梦蝶 × 两仪 × 虚实是成立的组合</h2>
+  <h2>「神似而非形似」的三个支点</h2>
   <p>
-    庄生梦蝶的核心是<b>「物化」</b>——周与蝶「必有分矣」，却又互化不分彼此。这与太极两仪的结构天然同构：两仪也是「有分而相生」，阴中藏阳、阳中藏阴。<b>蝶与周，恰好可以坐上两仪的位置</b>——一实一虚，互为对方的「鱼眼」。虚不再只是装饰手法，而是叙事本身：虚的那只蝶，就是梦里的那只。
+    太极的「形」是圆 + S + 两点，全画出来就是太极不是蝶。它的「神」是三样东西：<b>曲线分界</b>（两半不用直线分，用互相咬合的曲线分）、<b>互藏</b>（实的一半里藏一点虚，虚的一半里藏一点实）、<b>追逐</b>（两半不是静止对称，而是首尾相衔、随时可以转起来）。五式都不画圆，只用这三招让翅膀「自己长成两仪」。
   </p>
   <p>
-    手法规矩沿用上一轮：<b>每式只用一种「虚」的手法</b>（虚线 / 散点 / 镜像），蝴蝶保持同一只、不画花纹触角，避免「水墨蝴蝶画」的成品感。五式全部不带文字。
+    「虚」的语义落在梦蝶题眼上：实的那半是<b>醒时的周</b>，虚线的那半是<b>梦中的蝶</b>——看得见、摸不着，但结构完整。这不是装饰手法，是「周与蝶必有分矣」的直接成像。
   </p>
   <p>
-    小尺寸是梦蝶方案的老问题（翅形在 16px 下容易糊），所以每式都附 favicon 等效稿做压力测试：E 式是为此专门设计的极简版，A/D 靠对称骨架硬扛，C 的散点在小尺寸做了删减。
+    色彩语义不变：蓝 = 实 = 醒，紫 = 虚 = 梦。五式全部无文字、无外框，favicon 等效稿照常做 16px 压力测试。
   </p>
 </div>
 
 <div class="grid-2">
 
-  <!-- A. 双蝶仪 -->
+  <!-- A. 翼仪 -->
   <div class="logo">
     <div class="logo-header">
       <span class="logo-num">A</span>
-      <span class="logo-title">双蝶仪</span>
-      <span class="logo-tone">双蝶相逐 · 首尾成仪</span>
+      <span class="logo-title">翼仪</span>
+      <span class="logo-tone">蝶身骑仪 · 最太极</span>
     </div>
     <p class="logo-desc">
-      太极的两条鱼换成两只蝶：<b>实蝶</b>（蓝）与<b>虚蝶</b>（紫，虚线描边）沿圆周首尾相逐，追逐的动势本身就是 S 形的两仪流转。实蝶前方一颗紫点、虚蝶前方一颗蓝点——互藏其根，各含对方之性。外圆右实左虚。
+      两枚翅膀直接就是<b>太极的两条鱼</b>：左翼实心（蓝）、右翼虚线（紫），中间 S 形咬合线上骑着蝶身与触角。轮廓不画外圆——圆由两枚翼形自己围出来，你看得到它，但它不存在。
     </p>
     <div class="showcase">
       <div class="stage elevated">
         <span class="stage-label">主标</span>
         <svg width="80" height="80" viewBox="0 0 120 120" fill="none">
-          <path d="M 79.4 18.3 A 46 46 0 0 1 79.4 101.7" stroke="#4f8ef7" stroke-width="4" stroke-linecap="round"/>
-          <path d="M 40.6 101.7 A 46 46 0 0 1 40.6 18.3" stroke="#a78bfa" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round"/>
-          <use href="#bfly" transform="translate(75,39) rotate(48) scale(0.42)" fill="#4f8ef7"/>
-          <use href="#bfly" transform="translate(45,81) rotate(228) scale(0.42)" fill="none" stroke="#a78bfa" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round"/>
-          <circle cx="87" cy="26" r="3" fill="#a78bfa"/>
-          <circle cx="33" cy="94" r="3" fill="#4f8ef7"/>
+          <use href="#fish" transform="translate(60,60) rotate(180) scale(1.6)" fill="#4f8ef7"/>
+          <use href="#fish" transform="translate(60,60) scale(1.6)" fill="none" stroke="#a78bfa" stroke-width="2.2" stroke-dasharray="2.5 1.9" stroke-linejoin="round"/>
+          <circle cx="60" cy="81" r="4.5" stroke="#e5e7eb" stroke-width="2.5"/>
+          <circle cx="60" cy="39" r="4" fill="#a78bfa"/>
+          <ellipse cx="60" cy="60" rx="4.5" ry="13" fill="#e5e7eb"/>
+          <path d="M 57 49 C 51 39, 45 33, 39 28" stroke="#e5e7eb" stroke-width="2.5" stroke-linecap="round"/>
+          <path d="M 63 49 C 69 39, 75 33, 81 28" stroke="#e5e7eb" stroke-width="2.5" stroke-linecap="round"/>
         </svg>
         <span class="stage-size">80px</span>
       </div>
       <div class="stage app-icon">
         <span class="stage-label">App icon</span>
         <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
-          <path d="M 79.4 18.3 A 46 46 0 0 1 79.4 101.7" stroke="#6ba3ff" stroke-width="4.5" stroke-linecap="round"/>
-          <path d="M 40.6 101.7 A 46 46 0 0 1 40.6 18.3" stroke="#a78bfa" stroke-width="4.5" stroke-dasharray="6 5" stroke-linecap="round"/>
-          <use href="#bfly" transform="translate(75,39) rotate(48) scale(0.44)" fill="#6ba3ff"/>
-          <use href="#bfly" transform="translate(45,81) rotate(228) scale(0.44)" fill="none" stroke="#a78bfa" stroke-width="3.8" stroke-dasharray="5 4" stroke-linejoin="round"/>
-          <circle cx="87" cy="26" r="3.2" fill="#a78bfa"/>
-          <circle cx="33" cy="94" r="3.2" fill="#6ba3ff"/>
+          <use href="#fish" transform="translate(60,60) rotate(180) scale(1.6)" fill="#6ba3ff"/>
+          <use href="#fish" transform="translate(60,60) scale(1.6)" fill="none" stroke="#a78bfa" stroke-width="2.4" stroke-dasharray="2.5 1.9" stroke-linejoin="round"/>
+          <circle cx="60" cy="81" r="5" stroke="#e5e7eb" stroke-width="3"/>
+          <circle cx="60" cy="39" r="4.5" fill="#a78bfa"/>
+          <ellipse cx="60" cy="60" rx="5" ry="13.5" fill="#e5e7eb"/>
+          <path d="M 57 48 C 51 38, 45 32, 39 27" stroke="#e5e7eb" stroke-width="3" stroke-linecap="round"/>
+          <path d="M 63 48 C 69 38, 75 32, 81 27" stroke="#e5e7eb" stroke-width="3" stroke-linecap="round"/>
         </svg>
         <span class="stage-size">64px</span>
       </div>
       <div class="stage">
         <span class="stage-label">favicon</span>
         <svg width="36" height="36" viewBox="0 0 120 120" fill="none">
-          <path d="M 79.4 18.3 A 46 46 0 0 1 79.4 101.7" stroke="#4f8ef7" stroke-width="6" stroke-linecap="round"/>
-          <path d="M 40.6 101.7 A 46 46 0 0 1 40.6 18.3" stroke="#a78bfa" stroke-width="6" stroke-dasharray="7 6" stroke-linecap="round"/>
-          <use href="#bfly" transform="translate(75,39) rotate(48) scale(0.48)" fill="#4f8ef7"/>
-          <use href="#bfly" transform="translate(45,81) rotate(228) scale(0.48)" fill="none" stroke="#a78bfa" stroke-width="4.5" stroke-dasharray="6 5" stroke-linejoin="round"/>
+          <use href="#fish" transform="translate(60,60) rotate(180) scale(1.75)" fill="#4f8ef7"/>
+          <use href="#fish" transform="translate(60,60) scale(1.75)" fill="none" stroke="#a78bfa" stroke-width="2.8" stroke-dasharray="3 2.4" stroke-linejoin="round"/>
+          <circle cx="60" cy="83" r="5.5" stroke="#e5e7eb" stroke-width="3.5"/>
+          <circle cx="60" cy="37" r="5" fill="#a78bfa"/>
+          <ellipse cx="60" cy="60" rx="5.5" ry="15" fill="#e5e7eb"/>
         </svg>
         <span class="stage-size">16px 等效</span>
       </div>
       <div class="stage light">
         <span class="stage-label">浅色</span>
         <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
-          <path d="M 79.4 18.3 A 46 46 0 0 1 79.4 101.7" stroke="#2563eb" stroke-width="4" stroke-linecap="round"/>
-          <path d="M 40.6 101.7 A 46 46 0 0 1 40.6 18.3" stroke="#7c3aed" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round"/>
-          <use href="#bfly" transform="translate(75,39) rotate(48) scale(0.42)" fill="#2563eb"/>
-          <use href="#bfly" transform="translate(45,81) rotate(228) scale(0.42)" fill="none" stroke="#7c3aed" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round"/>
-          <circle cx="87" cy="26" r="3" fill="#7c3aed"/>
-          <circle cx="33" cy="94" r="3" fill="#2563eb"/>
+          <use href="#fish" transform="translate(60,60) rotate(180) scale(1.6)" fill="#2563eb"/>
+          <use href="#fish" transform="translate(60,60) scale(1.6)" fill="none" stroke="#7c3aed" stroke-width="2.2" stroke-dasharray="2.5 1.9" stroke-linejoin="round"/>
+          <circle cx="60" cy="81" r="4.5" stroke="#f8f9fb" stroke-width="2.5"/>
+          <circle cx="60" cy="39" r="4" fill="#7c3aed"/>
+          <ellipse cx="60" cy="60" rx="4.5" ry="13" fill="#1a1b1f"/>
+          <path d="M 57 49 C 51 39, 45 33, 39 28" stroke="#1a1b1f" stroke-width="2.5" stroke-linecap="round"/>
+          <path d="M 63 49 C 69 39, 75 33, 81 28" stroke="#1a1b1f" stroke-width="2.5" stroke-linecap="round"/>
         </svg>
         <span class="stage-size">64px</span>
       </div>
       <div class="stage">
         <span class="stage-label">单色白</span>
         <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
-          <path d="M 79.4 18.3 A 46 46 0 0 1 79.4 101.7" stroke="#e5e7eb" stroke-width="4" stroke-linecap="round"/>
-          <path d="M 40.6 101.7 A 46 46 0 0 1 40.6 18.3" stroke="#e5e7eb" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round" opacity="0.6"/>
-          <use href="#bfly" transform="translate(75,39) rotate(48) scale(0.42)" fill="#e5e7eb"/>
-          <use href="#bfly" transform="translate(45,81) rotate(228) scale(0.42)" fill="none" stroke="#e5e7eb" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round" opacity="0.6"/>
-          <circle cx="87" cy="26" r="3" fill="#e5e7eb" opacity="0.6"/>
-          <circle cx="33" cy="94" r="3" fill="#e5e7eb"/>
+          <use href="#fish" transform="translate(60,60) rotate(180) scale(1.6)" fill="#e5e7eb"/>
+          <use href="#fish" transform="translate(60,60) scale(1.6)" fill="none" stroke="#e5e7eb" stroke-width="2.2" stroke-dasharray="2.5 1.9" stroke-linejoin="round" opacity="0.65"/>
+          <circle cx="60" cy="81" r="4.5" stroke="#1a1b1f" stroke-width="2.5"/>
+          <circle cx="60" cy="39" r="4" fill="#e5e7eb"/>
+          <ellipse cx="60" cy="60" rx="4.5" ry="13" fill="#e5e7eb"/>
+          <path d="M 57 49 C 51 39, 45 33, 39 28" stroke="#e5e7eb" stroke-width="2.5" stroke-linecap="round"/>
+          <path d="M 63 49 C 69 39, 75 33, 81 28" stroke="#e5e7eb" stroke-width="2.5" stroke-linecap="round"/>
         </svg>
         <span class="stage-size">64px</span>
       </div>
@@ -260,284 +257,35 @@
     <div class="logic">
       <b>设计逻辑</b>
       <ul>
-        <li><b>双蝶即双鱼</b>：太极最经典的双鱼互逐结构，鱼换成蝶——识别度最高的一种融合，动势最强</li>
-        <li><b>互逐即物化</b>：实蝶追虚蝶、虚蝶追实蝶，「周之梦为蝶与？蝶之梦为周与？」的循环可视化</li>
-        <li><b>异色点</b>：各含对方一颗种子，阴阳互根的极简表达</li>
-        <li><b>风险</b>：两只蝶 + 两点 + 双弧，元素偏多，favicon 稿已删点保形</li>
+        <li><b>翼即鱼</b>：太极鱼形天然像一瓣翅膀——饱满的肥头是翅面，收窄的鱼尾是翅根。这是太极与蝶形最近的一次重合</li>
+        <li><b>不画的圆</b>：两条鱼围出的圆形轮廓是「虚的圆」——观者自己脑补，恰合「无之以为用」</li>
+        <li><b>蝶身骑界</b>：身体骑在 S 分界上，触角探出圆外——蝶不属于任何一仪，它是「分」本身</li>
+        <li><b>风险</b>：太极感最强但也最容易被读成「太极变体」而非蝶，蝶的识别靠触角和身体撑</li>
       </ul>
     </div>
   </div>
 
-  <!-- B. 蝶目 -->
+  <!-- B. 锁翼 -->
   <div class="logo">
     <div class="logo-header">
       <span class="logo-num">B</span>
-      <span class="logo-title">蝶目</span>
-      <span class="logo-tone">蝶作鱼眼 · 虚水之桥</span>
+      <span class="logo-title">锁翼</span>
+      <span class="logo-tone">四翅互锁 · 蝶形最正</span>
     </div>
     <p class="logo-desc">
-      保留你选定的<b>虚水骨架</b>（右实弧 + 左虚弧 + S 水笔），把两枚鱼眼换成两只小蝶：上眼是<b>实蝶</b>（白），下眼是<b>虚蝶</b>（紫虚线）。水身之内，藏梦为目。这是从 v2 虚水过渡到梦蝶最平滑的一式。
+      标准前视蝶，但虚实不按左右分，按<b>对角互锁</b>分：左上翅 + 右下翅为实（蓝），右上翅 + 左下翅为虚（紫虚线）——太极阴阳鱼对角相咬的动势直接搬进四翅。实翅上一点空环（实中虚），虚翅上一点实心（虚中实）。
     </p>
     <div class="showcase">
       <div class="stage elevated">
         <span class="stage-label">主标</span>
         <svg width="80" height="80" viewBox="0 0 120 120" fill="none">
-          <path d="M 79.4 18.3 A 46 46 0 0 1 79.4 101.7" stroke="#4f8ef7" stroke-width="4" stroke-linecap="round"/>
-          <path d="M 40.6 101.7 A 46 46 0 0 1 40.6 18.3" stroke="#a78bfa" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round"/>
-          <path d="M 60 14 A 23 23 0 0 1 60 60 A 23 23 0 0 0 60 106" stroke="#4f8ef7" stroke-width="6" stroke-linecap="round"/>
-          <use href="#bfly" transform="translate(60,36) scale(0.24)" fill="#e5e7eb"/>
-          <use href="#bfly" transform="translate(60,84) scale(0.24)" fill="none" stroke="#a78bfa" stroke-width="4" stroke-dasharray="3 2.5" stroke-linejoin="round"/>
-        </svg>
-        <span class="stage-size">80px</span>
-      </div>
-      <div class="stage app-icon">
-        <span class="stage-label">App icon</span>
-        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
-          <path d="M 79.4 18.3 A 46 46 0 0 1 79.4 101.7" stroke="#6ba3ff" stroke-width="4.5" stroke-linecap="round"/>
-          <path d="M 40.6 101.7 A 46 46 0 0 1 40.6 18.3" stroke="#a78bfa" stroke-width="4.5" stroke-dasharray="6 5" stroke-linecap="round"/>
-          <path d="M 60 14 A 23 23 0 0 1 60 60 A 23 23 0 0 0 60 106" stroke="#6ba3ff" stroke-width="7" stroke-linecap="round"/>
-          <use href="#bfly" transform="translate(60,36) scale(0.26)" fill="#e5e7eb"/>
-          <use href="#bfly" transform="translate(60,84) scale(0.26)" fill="none" stroke="#a78bfa" stroke-width="4.2" stroke-dasharray="3 2.5" stroke-linejoin="round"/>
-        </svg>
-        <span class="stage-size">64px</span>
-      </div>
-      <div class="stage">
-        <span class="stage-label">favicon</span>
-        <svg width="36" height="36" viewBox="0 0 120 120" fill="none">
-          <path d="M 79.4 18.3 A 46 46 0 0 1 79.4 101.7" stroke="#4f8ef7" stroke-width="6" stroke-linecap="round"/>
-          <path d="M 40.6 101.7 A 46 46 0 0 1 40.6 18.3" stroke="#a78bfa" stroke-width="6" stroke-dasharray="7 6" stroke-linecap="round"/>
-          <path d="M 60 14 A 23 23 0 0 1 60 60 A 23 23 0 0 0 60 106" stroke="#4f8ef7" stroke-width="9" stroke-linecap="round"/>
-          <use href="#bfly" transform="translate(60,36) scale(0.3)" fill="#e5e7eb"/>
-          <use href="#bfly" transform="translate(60,84) scale(0.3)" fill="#a78bfa" opacity="0.85"/>
-        </svg>
-        <span class="stage-size">16px 等效</span>
-      </div>
-      <div class="stage light">
-        <span class="stage-label">浅色</span>
-        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
-          <path d="M 79.4 18.3 A 46 46 0 0 1 79.4 101.7" stroke="#2563eb" stroke-width="4" stroke-linecap="round"/>
-          <path d="M 40.6 101.7 A 46 46 0 0 1 40.6 18.3" stroke="#7c3aed" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round"/>
-          <path d="M 60 14 A 23 23 0 0 1 60 60 A 23 23 0 0 0 60 106" stroke="#2563eb" stroke-width="6" stroke-linecap="round"/>
-          <use href="#bfly" transform="translate(60,36) scale(0.24)" fill="#1a1b1f"/>
-          <use href="#bfly" transform="translate(60,84) scale(0.24)" fill="none" stroke="#7c3aed" stroke-width="4" stroke-dasharray="3 2.5" stroke-linejoin="round"/>
-        </svg>
-        <span class="stage-size">64px</span>
-      </div>
-      <div class="stage">
-        <span class="stage-label">单色白</span>
-        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
-          <path d="M 79.4 18.3 A 46 46 0 0 1 79.4 101.7" stroke="#e5e7eb" stroke-width="4" stroke-linecap="round"/>
-          <path d="M 40.6 101.7 A 46 46 0 0 1 40.6 18.3" stroke="#e5e7eb" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round" opacity="0.6"/>
-          <path d="M 60 14 A 23 23 0 0 1 60 60 A 23 23 0 0 0 60 106" stroke="#e5e7eb" stroke-width="6" stroke-linecap="round"/>
-          <use href="#bfly" transform="translate(60,36) scale(0.24)" fill="#e5e7eb"/>
-          <use href="#bfly" transform="translate(60,84) scale(0.24)" fill="none" stroke="#e5e7eb" stroke-width="4" stroke-dasharray="3 2.5" stroke-linejoin="round" opacity="0.7"/>
-        </svg>
-        <span class="stage-size">64px</span>
-      </div>
-    </div>
-    <div class="logic">
-      <b>设计逻辑</b>
-      <ul>
-        <li><b>鱼眼即蝶</b>：太极「阴中有阳」的那两点，恰是两只蝶——梦藏在水的身体里，体量小但位置极关键</li>
-        <li><b>与虚水同源</b>：若你对 v2 虚水仍有留恋，这式是它的直接进化，骨架不变、只换睛</li>
-        <li><b>favicon 妥协</b>：小尺寸虚线蝶糊，改为实心紫蝶（虚实靠上下两色表达）</li>
-        <li><b>风险</b>：蝶在 80px 主标里只有 ~19px 翅展，「蝶」的识别弱于其他式，更像「太极+翼形目」</li>
-      </ul>
-    </div>
-  </div>
-
-  <!-- C. 物化 -->
-  <div class="logo">
-    <div class="logo-header">
-      <span class="logo-num">C</span>
-      <span class="logo-title">物化</span>
-      <span class="logo-tone">蝶散为尘 · 穿实入虚</span>
-    </div>
-    <p class="logo-desc">
-      圆分两侧：<b>左侧实弧</b>（金，蝶所从来）、<b>右侧虚弧</b>（紫，蝶所去往）。一只金蝶由左向右飞，身后（或说前方）先化作一只<b>虚线残影</b>，再散作一串<b>微尘</b>没入虚侧。蝶 → 影 → 尘，物化的三个时态画在同一帧里。
-    </p>
-    <div class="showcase">
-      <div class="stage elevated">
-        <span class="stage-label">主标</span>
-        <svg width="80" height="80" viewBox="0 0 120 120" fill="none">
-          <path d="M 40.6 18.3 A 46 46 0 0 0 40.6 101.7" stroke="#b08a3e" stroke-width="4" stroke-linecap="round"/>
-          <path d="M 79.4 101.7 A 46 46 0 0 0 79.4 18.3" stroke="#a78bfa" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round"/>
-          <use href="#bfly" transform="translate(42,64) rotate(55) scale(0.46)" fill="#b08a3e"/>
-          <use href="#bfly" transform="translate(62,57) rotate(55) scale(0.46)" fill="none" stroke="#a78bfa" stroke-width="3" stroke-dasharray="4 3" stroke-linejoin="round" opacity="0.75"/>
-          <circle cx="80" cy="52" r="2.8" fill="#a78bfa" opacity="0.8"/>
-          <circle cx="87" cy="57" r="2.3" fill="#a78bfa" opacity="0.65"/>
-          <circle cx="93" cy="50" r="1.9" fill="#a78bfa" opacity="0.5"/>
-          <circle cx="98" cy="56" r="1.5" fill="#a78bfa" opacity="0.4"/>
-          <circle cx="103" cy="49" r="1.1" fill="#a78bfa" opacity="0.3"/>
-        </svg>
-        <span class="stage-size">80px</span>
-      </div>
-      <div class="stage app-icon">
-        <span class="stage-label">App icon</span>
-        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
-          <path d="M 40.6 18.3 A 46 46 0 0 0 40.6 101.7" stroke="#c49a4e" stroke-width="4.5" stroke-linecap="round"/>
-          <path d="M 79.4 101.7 A 46 46 0 0 0 79.4 18.3" stroke="#a78bfa" stroke-width="4.5" stroke-dasharray="6 5" stroke-linecap="round"/>
-          <use href="#bfly" transform="translate(42,64) rotate(55) scale(0.48)" fill="#c49a4e"/>
-          <use href="#bfly" transform="translate(62,57) rotate(55) scale(0.48)" fill="none" stroke="#a78bfa" stroke-width="3.2" stroke-dasharray="4 3" stroke-linejoin="round" opacity="0.75"/>
-          <circle cx="80" cy="52" r="3" fill="#a78bfa" opacity="0.8"/>
-          <circle cx="87" cy="57" r="2.4" fill="#a78bfa" opacity="0.65"/>
-          <circle cx="93" cy="50" r="2" fill="#a78bfa" opacity="0.5"/>
-          <circle cx="98" cy="56" r="1.6" fill="#a78bfa" opacity="0.4"/>
-          <circle cx="103" cy="49" r="1.2" fill="#a78bfa" opacity="0.3"/>
-        </svg>
-        <span class="stage-size">64px</span>
-      </div>
-      <div class="stage">
-        <span class="stage-label">favicon</span>
-        <svg width="36" height="36" viewBox="0 0 120 120" fill="none">
-          <path d="M 40.6 18.3 A 46 46 0 0 0 40.6 101.7" stroke="#b08a3e" stroke-width="6" stroke-linecap="round"/>
-          <path d="M 79.4 101.7 A 46 46 0 0 0 79.4 18.3" stroke="#a78bfa" stroke-width="6" stroke-dasharray="7 6" stroke-linecap="round"/>
-          <use href="#bfly" transform="translate(44,64) rotate(55) scale(0.52)" fill="#b08a3e"/>
-          <use href="#bfly" transform="translate(66,57) rotate(55) scale(0.52)" fill="none" stroke="#a78bfa" stroke-width="4" stroke-dasharray="5 4" stroke-linejoin="round" opacity="0.8"/>
-          <circle cx="86" cy="52" r="3.4" fill="#a78bfa" opacity="0.8"/>
-          <circle cx="95" cy="55" r="2.4" fill="#a78bfa" opacity="0.55"/>
-        </svg>
-        <span class="stage-size">16px 等效</span>
-      </div>
-      <div class="stage light">
-        <span class="stage-label">浅色</span>
-        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
-          <path d="M 40.6 18.3 A 46 46 0 0 0 40.6 101.7" stroke="#b08a3e" stroke-width="4" stroke-linecap="round"/>
-          <path d="M 79.4 101.7 A 46 46 0 0 0 79.4 18.3" stroke="#7c3aed" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round"/>
-          <use href="#bfly" transform="translate(42,64) rotate(55) scale(0.46)" fill="#b08a3e"/>
-          <use href="#bfly" transform="translate(62,57) rotate(55) scale(0.46)" fill="none" stroke="#7c3aed" stroke-width="3" stroke-dasharray="4 3" stroke-linejoin="round" opacity="0.75"/>
-          <circle cx="80" cy="52" r="2.8" fill="#7c3aed" opacity="0.8"/>
-          <circle cx="87" cy="57" r="2.3" fill="#7c3aed" opacity="0.65"/>
-          <circle cx="93" cy="50" r="1.9" fill="#7c3aed" opacity="0.5"/>
-          <circle cx="98" cy="56" r="1.5" fill="#7c3aed" opacity="0.4"/>
-          <circle cx="103" cy="49" r="1.1" fill="#7c3aed" opacity="0.3"/>
-        </svg>
-        <span class="stage-size">64px</span>
-      </div>
-      <div class="stage">
-        <span class="stage-label">单色白</span>
-        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
-          <path d="M 40.6 18.3 A 46 46 0 0 0 40.6 101.7" stroke="#e5e7eb" stroke-width="4" stroke-linecap="round"/>
-          <path d="M 79.4 101.7 A 46 46 0 0 0 79.4 18.3" stroke="#e5e7eb" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round" opacity="0.6"/>
-          <use href="#bfly" transform="translate(42,64) rotate(55) scale(0.46)" fill="#e5e7eb"/>
-          <use href="#bfly" transform="translate(62,57) rotate(55) scale(0.46)" fill="none" stroke="#e5e7eb" stroke-width="3" stroke-dasharray="4 3" stroke-linejoin="round" opacity="0.55"/>
-          <circle cx="80" cy="52" r="2.8" fill="#e5e7eb" opacity="0.55"/>
-          <circle cx="87" cy="57" r="2.3" fill="#e5e7eb" opacity="0.45"/>
-          <circle cx="93" cy="50" r="1.9" fill="#e5e7eb" opacity="0.35"/>
-          <circle cx="98" cy="56" r="1.5" fill="#e5e7eb" opacity="0.28"/>
-          <circle cx="103" cy="49" r="1.1" fill="#e5e7eb" opacity="0.22"/>
-        </svg>
-        <span class="stage-size">64px</span>
-      </div>
-    </div>
-    <div class="logic">
-      <b>设计逻辑</b>
-      <ul>
-        <li><b>一帧三时态</b>：实蝶（昔之周）→ 虚影（化之中）→ 微尘（今之蝶散），「物化」的过程哲学直接成像</li>
-        <li><b>实弧生蝶，虚弧纳尘</b>：外圆的虚实两侧各有职司，不是装饰</li>
-        <li><b>金色蝶</b>：五式中唯一用暖金的主体——「周」的人间温度，与冷色虚侧拉开生死/醒梦温差</li>
-        <li><b>风险</b>：方向性构图（左→右），旋转/镜像场景不适用；散点在极小尺寸仍需删减（favicon 已只留两点）</li>
-      </ul>
-    </div>
-  </div>
-
-  <!-- D. 蝶影 -->
-  <div class="logo">
-    <div class="logo-header">
-      <span class="logo-num">D</span>
-      <span class="logo-title">蝶影</span>
-      <span class="logo-tone">水上实蝶 · 水下虚影</span>
-    </div>
-    <p class="logo-desc">
-      圆即水面：上半圆实线、下半圆虚线，中间一道<b>横 S 水线</b>是水的表面。水上一只<b>实蝶</b>（蓝），水下是它的<b>倒影</b>（紫虚线，镜像）。蝶与影隔着水面相望——周与蝶，究竟哪边是倒影？太极、水、虚、蝶四个概念在这式里各有其位，无一多余。
-    </p>
-    <div class="showcase">
-      <div class="stage elevated">
-        <span class="stage-label">主标</span>
-        <svg width="80" height="80" viewBox="0 0 120 120" fill="none">
-          <path d="M 14 60 A 46 46 0 0 1 106 60" stroke="#4f8ef7" stroke-width="4" stroke-linecap="round"/>
-          <path d="M 106 60 A 46 46 0 0 1 14 60" stroke="#a78bfa" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round"/>
-          <path d="M 14 60 A 23 23 0 0 1 60 60 A 23 23 0 0 0 106 60" stroke="#6ba3ff" stroke-width="3" stroke-linecap="round" opacity="0.85"/>
-          <use href="#bfly" transform="translate(60,38) scale(0.4)" fill="#4f8ef7"/>
-          <use href="#bfly" transform="translate(60,82) scale(0.4,-0.4)" fill="none" stroke="#a78bfa" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round" opacity="0.85"/>
-        </svg>
-        <span class="stage-size">80px</span>
-      </div>
-      <div class="stage app-icon">
-        <span class="stage-label">App icon</span>
-        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
-          <path d="M 14 60 A 46 46 0 0 1 106 60" stroke="#6ba3ff" stroke-width="4.5" stroke-linecap="round"/>
-          <path d="M 106 60 A 46 46 0 0 1 14 60" stroke="#a78bfa" stroke-width="4.5" stroke-dasharray="6 5" stroke-linecap="round"/>
-          <path d="M 14 60 A 23 23 0 0 1 60 60 A 23 23 0 0 0 106 60" stroke="#6ba3ff" stroke-width="3.5" stroke-linecap="round" opacity="0.85"/>
-          <use href="#bfly" transform="translate(60,38) scale(0.42)" fill="#6ba3ff"/>
-          <use href="#bfly" transform="translate(60,82) scale(0.42,-0.42)" fill="none" stroke="#a78bfa" stroke-width="3.8" stroke-dasharray="5 4" stroke-linejoin="round" opacity="0.85"/>
-        </svg>
-        <span class="stage-size">64px</span>
-      </div>
-      <div class="stage">
-        <span class="stage-label">favicon</span>
-        <svg width="36" height="36" viewBox="0 0 120 120" fill="none">
-          <path d="M 14 60 A 46 46 0 0 1 106 60" stroke="#4f8ef7" stroke-width="6" stroke-linecap="round"/>
-          <path d="M 106 60 A 46 46 0 0 1 14 60" stroke="#a78bfa" stroke-width="6" stroke-dasharray="7 6" stroke-linecap="round"/>
-          <path d="M 14 60 A 23 23 0 0 1 60 60 A 23 23 0 0 0 106 60" stroke="#4f8ef7" stroke-width="4.5" stroke-linecap="round" opacity="0.8"/>
-          <use href="#bfly" transform="translate(60,36) scale(0.46)" fill="#4f8ef7"/>
-          <use href="#bfly" transform="translate(60,84) scale(0.46,-0.46)" fill="none" stroke="#a78bfa" stroke-width="4" stroke-dasharray="5 4" stroke-linejoin="round"/>
-        </svg>
-        <span class="stage-size">16px 等效</span>
-      </div>
-      <div class="stage light">
-        <span class="stage-label">浅色</span>
-        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
-          <path d="M 14 60 A 46 46 0 0 1 106 60" stroke="#2563eb" stroke-width="4" stroke-linecap="round"/>
-          <path d="M 106 60 A 46 46 0 0 1 14 60" stroke="#7c3aed" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round"/>
-          <path d="M 14 60 A 23 23 0 0 1 60 60 A 23 23 0 0 0 106 60" stroke="#3b82f6" stroke-width="3" stroke-linecap="round" opacity="0.85"/>
-          <use href="#bfly" transform="translate(60,38) scale(0.4)" fill="#2563eb"/>
-          <use href="#bfly" transform="translate(60,82) scale(0.4,-0.4)" fill="none" stroke="#7c3aed" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round" opacity="0.85"/>
-        </svg>
-        <span class="stage-size">64px</span>
-      </div>
-      <div class="stage">
-        <span class="stage-label">单色白</span>
-        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
-          <path d="M 14 60 A 46 46 0 0 1 106 60" stroke="#e5e7eb" stroke-width="4" stroke-linecap="round"/>
-          <path d="M 106 60 A 46 46 0 0 1 14 60" stroke="#e5e7eb" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round" opacity="0.6"/>
-          <path d="M 14 60 A 23 23 0 0 1 60 60 A 23 23 0 0 0 106 60" stroke="#e5e7eb" stroke-width="3" stroke-linecap="round" opacity="0.7"/>
-          <use href="#bfly" transform="translate(60,38) scale(0.4)" fill="#e5e7eb"/>
-          <use href="#bfly" transform="translate(60,82) scale(0.4,-0.4)" fill="none" stroke="#e5e7eb" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round" opacity="0.55"/>
-        </svg>
-        <span class="stage-size">64px</span>
-      </div>
-    </div>
-    <div class="logic">
-      <b>设计逻辑</b>
-      <ul>
-        <li><b>四概念各就其位</b>：圆 = 太极，横 S = 水，虚线 = 虚，蝶 = 梦蝶——没有堆砌，每个元素只干一件事</li>
-        <li><b>影即虚</b>：倒影天然是「在而非实」的东西，用虚线画倒影，虚实概念与日常经验同构，不需要解释</li>
-        <li><b>上下对称骨架</b>：垂直镜像构图比斜向更稳，小尺寸识别五式中最好</li>
-        <li><b>叙事余味</b>：「哪边是实蝶哪边是影」没有答案——正如周与蝶不知谁梦谁</li>
-      </ul>
-    </div>
-  </div>
-
-  <!-- E. 简蝶 -->
-  <div class="logo">
-    <div class="logo-header">
-      <span class="logo-num">E</span>
-      <span class="logo-title">简蝶</span>
-      <span class="logo-tone">一实一虚 · 双翅极简</span>
-    </div>
-    <p class="logo-desc">
-      删到不能再删：圆（右实左虚）内一只蝶，<b>右翅实心</b>（蓝）、<b>左翅虚线</b>（紫）、蝶身一线（白）。两仪收敛进蝶的身体里——一只蝶自己就是虚实相生。为 favicon / 16px 场景专门设计，也可作其他式的子标。
-    </p>
-    <div class="showcase">
-      <div class="stage elevated">
-        <span class="stage-label">主标</span>
-        <svg width="80" height="80" viewBox="0 0 120 120" fill="none">
-          <path d="M 79.4 18.3 A 46 46 0 0 1 79.4 101.7" stroke="#4f8ef7" stroke-width="4" stroke-linecap="round"/>
-          <path d="M 40.6 101.7 A 46 46 0 0 1 40.6 18.3" stroke="#a78bfa" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round"/>
-          <g transform="translate(60,62) scale(0.5)">
-            <use href="#bf-wr" fill="#4f8ef7"/>
-            <use href="#bf-wl" fill="none" stroke="#a78bfa" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round"/>
+          <g transform="translate(60,62) scale(1.0)">
+            <use href="#w-lu" fill="#4f8ef7"/>
+            <use href="#w-rl" fill="#4f8ef7"/>
+            <use href="#w-ru" fill="none" stroke="#a78bfa" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round"/>
+            <use href="#w-ll" fill="none" stroke="#a78bfa" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round"/>
+            <circle cx="-17" cy="-13" r="4" stroke="#e5e7eb" stroke-width="2.5"/>
+            <circle cx="17" cy="-13" r="3.5" fill="#a78bfa"/>
             <use href="#bf-body" fill="#e5e7eb"/>
           </g>
         </svg>
@@ -546,11 +294,13 @@
       <div class="stage app-icon">
         <span class="stage-label">App icon</span>
         <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
-          <path d="M 79.4 18.3 A 46 46 0 0 1 79.4 101.7" stroke="#6ba3ff" stroke-width="4.5" stroke-linecap="round"/>
-          <path d="M 40.6 101.7 A 46 46 0 0 1 40.6 18.3" stroke="#a78bfa" stroke-width="4.5" stroke-dasharray="6 5" stroke-linecap="round"/>
-          <g transform="translate(60,62) scale(0.54)">
-            <use href="#bf-wr" fill="#6ba3ff"/>
-            <use href="#bf-wl" fill="none" stroke="#a78bfa" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round"/>
+          <g transform="translate(60,62) scale(1.05)">
+            <use href="#w-lu" fill="#6ba3ff"/>
+            <use href="#w-rl" fill="#6ba3ff"/>
+            <use href="#w-ru" fill="none" stroke="#a78bfa" stroke-width="3.8" stroke-dasharray="5 4" stroke-linejoin="round"/>
+            <use href="#w-ll" fill="none" stroke="#a78bfa" stroke-width="3.8" stroke-dasharray="5 4" stroke-linejoin="round"/>
+            <circle cx="-17" cy="-13" r="4.2" stroke="#e5e7eb" stroke-width="2.8"/>
+            <circle cx="17" cy="-13" r="3.8" fill="#a78bfa"/>
             <use href="#bf-body" fill="#e5e7eb"/>
           </g>
         </svg>
@@ -559,11 +309,11 @@
       <div class="stage">
         <span class="stage-label">favicon</span>
         <svg width="36" height="36" viewBox="0 0 120 120" fill="none">
-          <path d="M 79.4 18.3 A 46 46 0 0 1 79.4 101.7" stroke="#4f8ef7" stroke-width="6" stroke-linecap="round"/>
-          <path d="M 40.6 101.7 A 46 46 0 0 1 40.6 18.3" stroke="#a78bfa" stroke-width="6" stroke-dasharray="7 6" stroke-linecap="round"/>
-          <g transform="translate(60,62) scale(0.62)">
-            <use href="#bf-wr" fill="#4f8ef7"/>
-            <use href="#bf-wl" fill="none" stroke="#a78bfa" stroke-width="4.5" stroke-dasharray="6 5" stroke-linejoin="round"/>
+          <g transform="translate(60,62) scale(1.15)">
+            <use href="#w-lu" fill="#4f8ef7"/>
+            <use href="#w-rl" fill="#4f8ef7"/>
+            <use href="#w-ru" fill="none" stroke="#a78bfa" stroke-width="4.5" stroke-dasharray="6 5" stroke-linejoin="round"/>
+            <use href="#w-ll" fill="none" stroke="#a78bfa" stroke-width="4.5" stroke-dasharray="6 5" stroke-linejoin="round"/>
             <use href="#bf-body" fill="#e5e7eb"/>
           </g>
         </svg>
@@ -572,11 +322,13 @@
       <div class="stage light">
         <span class="stage-label">浅色</span>
         <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
-          <path d="M 79.4 18.3 A 46 46 0 0 1 79.4 101.7" stroke="#2563eb" stroke-width="4" stroke-linecap="round"/>
-          <path d="M 40.6 101.7 A 46 46 0 0 1 40.6 18.3" stroke="#7c3aed" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round"/>
-          <g transform="translate(60,62) scale(0.5)">
-            <use href="#bf-wr" fill="#2563eb"/>
-            <use href="#bf-wl" fill="none" stroke="#7c3aed" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round"/>
+          <g transform="translate(60,62) scale(1.0)">
+            <use href="#w-lu" fill="#2563eb"/>
+            <use href="#w-rl" fill="#2563eb"/>
+            <use href="#w-ru" fill="none" stroke="#7c3aed" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round"/>
+            <use href="#w-ll" fill="none" stroke="#7c3aed" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round"/>
+            <circle cx="-17" cy="-13" r="4" stroke="#f8f9fb" stroke-width="2.5"/>
+            <circle cx="17" cy="-13" r="3.5" fill="#7c3aed"/>
             <use href="#bf-body" fill="#1a1b1f"/>
           </g>
         </svg>
@@ -585,11 +337,13 @@
       <div class="stage">
         <span class="stage-label">单色白</span>
         <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
-          <path d="M 79.4 18.3 A 46 46 0 0 1 79.4 101.7" stroke="#e5e7eb" stroke-width="4" stroke-linecap="round"/>
-          <path d="M 40.6 101.7 A 46 46 0 0 1 40.6 18.3" stroke="#e5e7eb" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round" opacity="0.6"/>
-          <g transform="translate(60,62) scale(0.5)">
-            <use href="#bf-wr" fill="#e5e7eb"/>
-            <use href="#bf-wl" fill="none" stroke="#e5e7eb" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round" opacity="0.6"/>
+          <g transform="translate(60,62) scale(1.0)">
+            <use href="#w-lu" fill="#e5e7eb"/>
+            <use href="#w-rl" fill="#e5e7eb"/>
+            <use href="#w-ru" fill="none" stroke="#e5e7eb" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round" opacity="0.65"/>
+            <use href="#w-ll" fill="none" stroke="#e5e7eb" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round" opacity="0.65"/>
+            <circle cx="-17" cy="-13" r="4" stroke="#1a1b1f" stroke-width="2.5"/>
+            <circle cx="17" cy="-13" r="3.5" fill="#e5e7eb"/>
             <use href="#bf-body" fill="#e5e7eb"/>
           </g>
         </svg>
@@ -599,9 +353,273 @@
     <div class="logic">
       <b>设计逻辑</b>
       <ul>
-        <li><b>两仪入蝶身</b>：不借太极的形，蝶自身左右翼即虚实两仪——概念最凝练的一式</li>
-        <li><b>三个图元</b>：一实翅、一虚翅、一身，16px 下依然可数，小尺寸性能五式最佳</li>
-        <li><b>风险</b>：左右不对称用色在旋转场景有方向感；正面蝶形略「徽章化」，禅意弱于 A/D</li>
+        <li><b>对角互锁</b>：太极的两仪从不是左右静对，而是斜向相咬——对角分虚实，四翅立刻有了「正在流转」的动势</li>
+        <li><b>蝶形最正</b>：五式中最标准的前视蝶剪影，不需要解释就知道是蝶；两仪结构藏在填色逻辑里，第二层才被读出——正是「神似」</li>
+        <li><b>异色点互藏</b>：实翅藏空环、虚翅藏实点，阴阳互根落在翅面上</li>
+        <li><b>favicon</b>：小尺寸删点保形，对角蓝紫对比在 16px 下依然可辨</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- C. 侧影 -->
+  <div class="logo">
+    <div class="logo-header">
+      <span class="logo-num">C</span>
+      <span class="logo-title">侧影</span>
+      <span class="logo-tone">侧视双翅 · 前实后虚</span>
+    </div>
+    <p class="logo-desc">
+      侧视角度：前翅<b>实心</b>（蓝，醒时的一切），后翅<b>虚线</b>（紫，梦的残影），蝶身一笔弯曲的书法线，两点触角。两翅一前一后、一实一虚——同一只蝶的两个时态叠在一帧里，像曝光两次的照片。
+    </p>
+    <div class="showcase">
+      <div class="stage elevated">
+        <span class="stage-label">主标</span>
+        <svg width="80" height="80" viewBox="0 0 120 120" fill="none">
+          <path d="M 63 60 C 54 40, 36 23, 21 25 C 8 26, 9 44, 24 55 C 37 64, 55 64, 63 60 Z" fill="#4f8ef7"/>
+          <path d="M 65 67 C 54.7 75.1, 45.5 86.6, 48.9 96.9 C 51.2 105, 62.7 101.5, 68.5 91.2 C 71.9 82, 69.6 72.8, 65 67 Z"
+                fill="none" stroke="#a78bfa" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round"/>
+          <path d="M 74 88 C 68 79, 64 70, 64 59" stroke="#e5e7eb" stroke-width="3.5" stroke-linecap="round"/>
+          <circle cx="64" cy="56" r="3.2" fill="#e5e7eb"/>
+          <path d="M 62 53 C 57 46, 53 42, 47 40" stroke="#e5e7eb" stroke-width="2" stroke-linecap="round"/>
+          <path d="M 65 53 C 63 45, 61 40, 57 35" stroke="#e5e7eb" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <span class="stage-size">80px</span>
+      </div>
+      <div class="stage app-icon">
+        <span class="stage-label">App icon</span>
+        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
+          <path d="M 63 60 C 54 40, 36 23, 21 25 C 8 26, 9 44, 24 55 C 37 64, 55 64, 63 60 Z" fill="#6ba3ff"/>
+          <path d="M 65 67 C 54.7 75.1, 45.5 86.6, 48.9 96.9 C 51.2 105, 62.7 101.5, 68.5 91.2 C 71.9 82, 69.6 72.8, 65 67 Z"
+                fill="none" stroke="#a78bfa" stroke-width="3.8" stroke-dasharray="5 4" stroke-linejoin="round"/>
+          <path d="M 74 88 C 68 79, 64 70, 64 59" stroke="#e5e7eb" stroke-width="4" stroke-linecap="round"/>
+          <circle cx="64" cy="56" r="3.5" fill="#e5e7eb"/>
+          <path d="M 62 53 C 57 46, 53 42, 47 40" stroke="#e5e7eb" stroke-width="2.4" stroke-linecap="round"/>
+          <path d="M 65 53 C 63 45, 61 40, 57 35" stroke="#e5e7eb" stroke-width="2.4" stroke-linecap="round"/>
+        </svg>
+        <span class="stage-size">64px</span>
+      </div>
+      <div class="stage">
+        <span class="stage-label">favicon</span>
+        <svg width="36" height="36" viewBox="0 0 120 120" fill="none">
+          <g transform="translate(56,62) scale(1.12) translate(-56,-60)">
+            <path d="M 63 60 C 54 40, 36 23, 21 25 C 8 26, 9 44, 24 55 C 37 64, 55 64, 63 60 Z" fill="#4f8ef7"/>
+            <path d="M 65 67 C 54.7 75.1, 45.5 86.6, 48.9 96.9 C 51.2 105, 62.7 101.5, 68.5 91.2 C 71.9 82, 69.6 72.8, 65 67 Z"
+                  fill="none" stroke="#a78bfa" stroke-width="4.5" stroke-dasharray="6 5" stroke-linejoin="round"/>
+            <path d="M 74 88 C 68 79, 64 70, 64 59" stroke="#e5e7eb" stroke-width="4.5" stroke-linecap="round"/>
+            <circle cx="64" cy="56" r="4" fill="#e5e7eb"/>
+          </g>
+        </svg>
+        <span class="stage-size">16px 等效</span>
+      </div>
+      <div class="stage light">
+        <span class="stage-label">浅色</span>
+        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
+          <path d="M 63 60 C 54 40, 36 23, 21 25 C 8 26, 9 44, 24 55 C 37 64, 55 64, 63 60 Z" fill="#2563eb"/>
+          <path d="M 65 67 C 54.7 75.1, 45.5 86.6, 48.9 96.9 C 51.2 105, 62.7 101.5, 68.5 91.2 C 71.9 82, 69.6 72.8, 65 67 Z"
+                fill="none" stroke="#7c3aed" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round"/>
+          <path d="M 74 88 C 68 79, 64 70, 64 59" stroke="#1a1b1f" stroke-width="3.5" stroke-linecap="round"/>
+          <circle cx="64" cy="56" r="3.2" fill="#1a1b1f"/>
+          <path d="M 62 53 C 57 46, 53 42, 47 40" stroke="#1a1b1f" stroke-width="2" stroke-linecap="round"/>
+          <path d="M 65 53 C 63 45, 61 40, 57 35" stroke="#1a1b1f" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <span class="stage-size">64px</span>
+      </div>
+      <div class="stage">
+        <span class="stage-label">单色白</span>
+        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
+          <path d="M 63 60 C 54 40, 36 23, 21 25 C 8 26, 9 44, 24 55 C 37 64, 55 64, 63 60 Z" fill="#e5e7eb"/>
+          <path d="M 65 67 C 54.7 75.1, 45.5 86.6, 48.9 96.9 C 51.2 105, 62.7 101.5, 68.5 91.2 C 71.9 82, 69.6 72.8, 65 67 Z"
+                fill="none" stroke="#e5e7eb" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round" opacity="0.65"/>
+          <path d="M 74 88 C 68 79, 64 70, 64 59" stroke="#e5e7eb" stroke-width="3.5" stroke-linecap="round"/>
+          <circle cx="64" cy="56" r="3.2" fill="#e5e7eb"/>
+          <path d="M 62 53 C 57 46, 53 42, 47 40" stroke="#e5e7eb" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
+          <path d="M 65 53 C 63 45, 61 40, 57 35" stroke="#e5e7eb" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
+        </svg>
+        <span class="stage-size">64px</span>
+      </div>
+    </div>
+    <div class="logic">
+      <b>设计逻辑</b>
+      <ul>
+        <li><b>前后即虚实</b>：侧视让两翅天然分出前后——前翅是「此刻」，后翅是「方才」，物化的时间感不需要散点就有了</li>
+        <li><b>书法一笔</b>：蝶身是单条弯曲线，不画节肢不画鳞粉，文人气最重的一式</li>
+        <li><b>两仪在哪里</b>：不借太极的形——实与虚的并置本身就是两仪。五式中「太极形」最弱、「虚实神」最纯</li>
+        <li><b>风险</b>：不对称构图有固定朝向；侧视蝶识别依赖轮廓功力，favicon 已删触角加厚线条</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- D. 逐翅 -->
+  <div class="logo">
+    <div class="logo-header">
+      <span class="logo-num">D</span>
+      <span class="logo-title">逐翅</span>
+      <span class="logo-tone">双涡相逐 · 最抽象</span>
+    </div>
+    <p class="logo-desc">
+      蝶被抽象成<b>两枚相逐的涡纹</b>（先秦双旋涡与太极鱼共用的那个母题）：一实（蓝）一虚（紫虚线），沿对角线首尾相衔，中央一粒白点是蝶身也是两仪的种子。既是展翅的一瞬，也是旋转的太极。
+    </p>
+    <div class="showcase">
+      <div class="stage elevated">
+        <span class="stage-label">主标</span>
+        <svg width="80" height="80" viewBox="0 0 120 120" fill="none">
+          <use href="#fish" transform="translate(46,46) rotate(45) scale(1.15)" fill="#4f8ef7"/>
+          <use href="#fish" transform="translate(74,74) rotate(225) scale(1.15)" fill="none" stroke="#a78bfa" stroke-width="3" stroke-dasharray="4 3" stroke-linejoin="round"/>
+          <circle cx="52" cy="41" r="3.5" stroke="#e5e7eb" stroke-width="2.5"/>
+          <circle cx="65" cy="83" r="3.2" fill="#a78bfa"/>
+          <circle cx="60" cy="60" r="3" fill="#e5e7eb"/>
+        </svg>
+        <span class="stage-size">80px</span>
+      </div>
+      <div class="stage app-icon">
+        <span class="stage-label">App icon</span>
+        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
+          <use href="#fish" transform="translate(46,46) rotate(45) scale(1.18)" fill="#6ba3ff"/>
+          <use href="#fish" transform="translate(74,74) rotate(225) scale(1.18)" fill="none" stroke="#a78bfa" stroke-width="3.2" stroke-dasharray="4 3" stroke-linejoin="round"/>
+          <circle cx="52" cy="41" r="3.8" stroke="#e5e7eb" stroke-width="2.8"/>
+          <circle cx="65" cy="83" r="3.5" fill="#a78bfa"/>
+          <circle cx="60" cy="60" r="3.2" fill="#e5e7eb"/>
+        </svg>
+        <span class="stage-size">64px</span>
+      </div>
+      <div class="stage">
+        <span class="stage-label">favicon</span>
+        <svg width="36" height="36" viewBox="0 0 120 120" fill="none">
+          <use href="#fish" transform="translate(45,45) rotate(45) scale(1.3)" fill="#4f8ef7"/>
+          <use href="#fish" transform="translate(75,75) rotate(225) scale(1.3)" fill="none" stroke="#a78bfa" stroke-width="3.6" stroke-dasharray="5 4" stroke-linejoin="round"/>
+          <circle cx="60" cy="60" r="4" fill="#e5e7eb"/>
+        </svg>
+        <span class="stage-size">16px 等效</span>
+      </div>
+      <div class="stage light">
+        <span class="stage-label">浅色</span>
+        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
+          <use href="#fish" transform="translate(46,46) rotate(45) scale(1.15)" fill="#2563eb"/>
+          <use href="#fish" transform="translate(74,74) rotate(225) scale(1.15)" fill="none" stroke="#7c3aed" stroke-width="3" stroke-dasharray="4 3" stroke-linejoin="round"/>
+          <circle cx="52" cy="41" r="3.5" stroke="#f8f9fb" stroke-width="2.5"/>
+          <circle cx="65" cy="83" r="3.2" fill="#7c3aed"/>
+          <circle cx="60" cy="60" r="3" fill="#1a1b1f"/>
+        </svg>
+        <span class="stage-size">64px</span>
+      </div>
+      <div class="stage">
+        <span class="stage-label">单色白</span>
+        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
+          <use href="#fish" transform="translate(46,46) rotate(45) scale(1.15)" fill="#e5e7eb"/>
+          <use href="#fish" transform="translate(74,74) rotate(225) scale(1.15)" fill="none" stroke="#e5e7eb" stroke-width="3" stroke-dasharray="4 3" stroke-linejoin="round" opacity="0.65"/>
+          <circle cx="52" cy="41" r="3.5" stroke="#1a1b1f" stroke-width="2.5"/>
+          <circle cx="65" cy="83" r="3.2" fill="#e5e7eb"/>
+          <circle cx="60" cy="60" r="3" fill="#e5e7eb"/>
+        </svg>
+        <span class="stage-size">64px</span>
+      </div>
+    </div>
+    <div class="logic">
+      <b>设计逻辑</b>
+      <ul>
+        <li><b>涡即翅</b>：双旋涡纹是「蝶」与「太极」在考古层的共同祖先——两枚涡纹相逐，看成蝶翅的扇动或两仪的流转都成立</li>
+        <li><b>种子居中</b>：中央白点一物三读——蝶身 / 两仪未分之「一」 / 万物之种</li>
+        <li><b>最现代</b>：几何感最强，适合偏科技/工具的品牌气质；「蝶」需要半秒才看出来，但这半秒正是记忆点</li>
+        <li><b>favicon</b>：三图元（双涡 + 一点），16px 下最干净的方案之一</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- E. 散翼 -->
+  <div class="logo">
+    <div class="logo-header">
+      <span class="logo-num">E</span>
+      <span class="logo-title">散翼</span>
+      <span class="logo-tone">左翼为实 · 右翼化尘</span>
+    </div>
+    <p class="logo-desc">
+      前视蝶，<b>左翅完整实心</b>（蓝，醒），<b>右翅只剩虚线轮廓、翅尖散作微尘</b>（紫，梦正在醒来）。蝶身在中间，一半属于实、一半属于虚——「不知周之梦为胡蝶与，胡蝶之梦为周与」的那个「不知」，画在一只蝶身上。
+    </p>
+    <div class="showcase">
+      <div class="stage elevated">
+        <span class="stage-label">主标</span>
+        <svg width="80" height="80" viewBox="0 0 120 120" fill="none">
+          <g transform="translate(54,62) scale(1.0)">
+            <use href="#bf-wl" fill="#4f8ef7"/>
+            <use href="#bf-wr" fill="none" stroke="#a78bfa" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round"/>
+            <use href="#bf-body" fill="#e5e7eb"/>
+          </g>
+          <circle cx="102" cy="38" r="3" fill="#a78bfa" opacity="0.8"/>
+          <circle cx="108" cy="30" r="2.4" fill="#a78bfa" opacity="0.62"/>
+          <circle cx="112" cy="42" r="1.9" fill="#a78bfa" opacity="0.48"/>
+          <circle cx="105" cy="50" r="2.1" fill="#a78bfa" opacity="0.55"/>
+          <circle cx="110" cy="54" r="1.4" fill="#a78bfa" opacity="0.35"/>
+        </svg>
+        <span class="stage-size">80px</span>
+      </div>
+      <div class="stage app-icon">
+        <span class="stage-label">App icon</span>
+        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
+          <g transform="translate(54,62) scale(1.05)">
+            <use href="#bf-wl" fill="#6ba3ff"/>
+            <use href="#bf-wr" fill="none" stroke="#a78bfa" stroke-width="3.8" stroke-dasharray="5 4" stroke-linejoin="round"/>
+            <use href="#bf-body" fill="#e5e7eb"/>
+          </g>
+          <circle cx="102" cy="38" r="3.2" fill="#a78bfa" opacity="0.8"/>
+          <circle cx="108" cy="30" r="2.6" fill="#a78bfa" opacity="0.62"/>
+          <circle cx="112" cy="42" r="2" fill="#a78bfa" opacity="0.48"/>
+          <circle cx="105" cy="50" r="2.2" fill="#a78bfa" opacity="0.55"/>
+        </svg>
+        <span class="stage-size">64px</span>
+      </div>
+      <div class="stage">
+        <span class="stage-label">favicon</span>
+        <svg width="36" height="36" viewBox="0 0 120 120" fill="none">
+          <g transform="translate(56,62) scale(1.15)">
+            <use href="#bf-wl" fill="#4f8ef7"/>
+            <use href="#bf-wr" fill="none" stroke="#a78bfa" stroke-width="4.5" stroke-dasharray="6 5" stroke-linejoin="round"/>
+            <use href="#bf-body" fill="#e5e7eb"/>
+          </g>
+          <circle cx="104" cy="36" r="3.5" fill="#a78bfa" opacity="0.8"/>
+          <circle cx="111" cy="45" r="2.5" fill="#a78bfa" opacity="0.55"/>
+        </svg>
+        <span class="stage-size">16px 等效</span>
+      </div>
+      <div class="stage light">
+        <span class="stage-label">浅色</span>
+        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
+          <g transform="translate(54,62) scale(1.0)">
+            <use href="#bf-wl" fill="#2563eb"/>
+            <use href="#bf-wr" fill="none" stroke="#7c3aed" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round"/>
+            <use href="#bf-body" fill="#1a1b1f"/>
+          </g>
+          <circle cx="102" cy="38" r="3" fill="#7c3aed" opacity="0.8"/>
+          <circle cx="108" cy="30" r="2.4" fill="#7c3aed" opacity="0.62"/>
+          <circle cx="112" cy="42" r="1.9" fill="#7c3aed" opacity="0.48"/>
+          <circle cx="105" cy="50" r="2.1" fill="#7c3aed" opacity="0.55"/>
+          <circle cx="110" cy="54" r="1.4" fill="#7c3aed" opacity="0.35"/>
+        </svg>
+        <span class="stage-size">64px</span>
+      </div>
+      <div class="stage">
+        <span class="stage-label">单色白</span>
+        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
+          <g transform="translate(54,62) scale(1.0)">
+            <use href="#bf-wl" fill="#e5e7eb"/>
+            <use href="#bf-wr" fill="none" stroke="#e5e7eb" stroke-width="3.5" stroke-dasharray="5 4" stroke-linejoin="round" opacity="0.65"/>
+            <use href="#bf-body" fill="#e5e7eb"/>
+          </g>
+          <circle cx="102" cy="38" r="3" fill="#e5e7eb" opacity="0.6"/>
+          <circle cx="108" cy="30" r="2.4" fill="#e5e7eb" opacity="0.48"/>
+          <circle cx="112" cy="42" r="1.9" fill="#e5e7eb" opacity="0.38"/>
+          <circle cx="105" cy="50" r="2.1" fill="#e5e7eb" opacity="0.42"/>
+          <circle cx="110" cy="54" r="1.4" fill="#e5e7eb" opacity="0.28"/>
+        </svg>
+        <span class="stage-size">64px</span>
+      </div>
+    </div>
+    <div class="logic">
+      <b>设计逻辑</b>
+      <ul>
+        <li><b>一蝶两态</b>：左翅是「形」，右翅是「影」，尘是「化」——物化三段论收敛进单只蝶，不借助外圆</li>
+        <li><b>叙事最强</b>：五式中唯一有「正在发生」的时间感——右翼正在散，观者会下意识替它补完</li>
+        <li><b>两仪的另一种读法</b>：左右不是对称的两半，而是同一物的两种存在方式——比左右均分更接近「物化」本意</li>
+        <li><b>风险</b>：方向性构图；散点在极小尺寸删减为两点（favicon 稿已处理）</li>
       </ul>
     </div>
   </div>
@@ -611,23 +629,23 @@
 <div class="summary">
   <h2>五式速览与挑选建议</h2>
   <table>
-    <tr><th>式</th><th>一句话</th><th>太极识别</th><th>小尺寸</th><th>叙事性</th><th>气质</th></tr>
-    <tr><td><b>A 双蝶仪</b></td><td>双蝶相逐即成两仪</td><td>最高</td><td>良（删点后）</td><td>中（追逐循环）</td><td>灵动、有生气</td></tr>
-    <tr><td><b>B 蝶目</b></td><td>虚水骨架，蝶作鱼眼</td><td>高</td><td>良（favicon 改实心）</td><td>弱（点睛式）</td><td>克制、稳妥</td></tr>
-    <tr><td><b>C 物化</b></td><td>蝶 → 影 → 尘，一帧三时态</td><td>中</td><td>中（散点需删减）</td><td>最高</td><td>诗意、有故事</td></tr>
-    <tr><td><b>D 蝶影</b></td><td>水上实蝶、水下虚影</td><td>高</td><td>最佳（上下对称）</td><td>高（谁梦谁）</td><td>静观、禅意</td></tr>
-    <tr><td><b>E 简蝶</b></td><td>一蝶自身即两仪</td><td>中</td><td>最佳（三图元）</td><td>中</td><td>现代、徽章感</td></tr>
+    <tr><th>式</th><th>一句话</th><th>蝶识别</th><th>太极神似</th><th>小尺寸</th><th>气质</th></tr>
+    <tr><td><b>A 翼仪</b></td><td>翼即双鱼，蝶身骑 S 界</td><td>中（靠身与触角）</td><td>最高</td><td>良</td><td>道法、徽章感</td></tr>
+    <tr><td><b>B 锁翼</b></td><td>四翅对角互锁成仪</td><td>最高</td><td>高（填色逻辑层）</td><td>佳</td><td>均衡、现代</td></tr>
+    <tr><td><b>C 侧影</b></td><td>侧视双翅，前实后虚</td><td>高</td><td>弱（虚实并置而已）</td><td>中</td><td>文人、书法</td></tr>
+    <tr><td><b>D 逐翅</b></td><td>双涡相逐，种子居中</td><td>弱（需半秒）</td><td>高</td><td>最佳</td><td>抽象、科技</td></tr>
+    <tr><td><b>E 散翼</b></td><td>左翅为实，右翅化尘</td><td>高</td><td>中</td><td>良（删点后）</td><td>诗意、叙事</td></tr>
   </table>
   <p>
-    <b>主推 D 蝶影</b>：太极（圆）、水（横 S）、虚（虚线倒影）、蝶四个概念各就其位，上下镜像的对称骨架在小尺寸最稳，「蝶与影孰真」的悬念正是梦蝶题眼。<b>A 双蝶仪</b>次之——动感与太极识别最强，适合偏「逍遥游」飞扬气质的定位。<b>E 简蝶</b>建议无论选哪式都保留，作为 favicon / 16px 场景的配套子标。<b>C 物化</b>叙事最动人，适合做 loading 动效（蝶散为尘循环）与品牌故事页，作静态主标略挑场景。<b>B 蝶目</b>是虚水方案的平滑过渡，若对 v2 仍有留恋可取此式。
+    <b>主推 B 锁翼</b>：蝶形最完整（一眼是蝶），两仪不靠轮廓靠填色逻辑藏在第二层（再看是太极）——正是「神似而非形似」的题解；上下左右都对称，小尺寸与单色场景都稳。<b>A 翼仪</b>次之：太极的神最足、最「道」，适合愿意牺牲一点蝶识别度换哲学浓度的定位。<b>E 散翼</b>叙事最动人，若想让 logo 自己会讲故事就选它，并可延伸做 loading 动效（右翼散了又聚）。<b>C 侧影</b>最文雅，适合偏人文的品牌调性。<b>D 逐翅</b>最抽象现代，favicon 性能最好，可作 B 的抽象变体配套使用。
   </p>
   <p>
-    配色均沿用 design tokens（蓝 <code>#4f8ef7</code> / 紫 <code>#a78bfa</code> / 金 <code>#b08a3e</code>，浅色底用 <code>#2563eb</code> / <code>#7c3aed</code>）；全部方案不含文字，蝴蝶为同一几何（defs 共享），选定后可做矢量化精修（锚点优化、光学补偿、网格对齐）。
+    配色沿用 design tokens（蓝 <code>#4f8ef7</code> 实 / 紫 <code>#a78bfa</code> 虚，浅色底用 <code>#2563eb</code> / <code>#7c3aed</code>，蝶身 <code>#e5e7eb</code> / 浅色底 <code>#1a1b1f</code>）。全部方案无文字、无外框容器，翅膀与太极鱼共用 defs 几何，选定后可做矢量化精修（锚点优化、光学补偿、网格对齐）与动效版。
   </p>
 </div>
 
 <p class="note">
-  Kimi v3 · 2026-08 · 梦蝶两仪五式。前两轮：v1 四系十二相（concepts-kimi-v1.html）、v2 虚实相生四式（concepts-kimi-v2.html，D 虚水曾被选定）。本轮应最新决策回到梦蝶基底。所有 SVG 均为手写贝塞尔概念稿，非生产级矢量。
+  Kimi v3 · 2026-08 · 蝶即两仪五式（第三版重写：LOGO 本体即蝶，翅即两仪）。前两轮：v1 四系十二相（concepts-kimi-v1.html）、v2 虚实相生四式（concepts-kimi-v2.html）。所有 SVG 均为手写贝塞尔概念稿，非生产级矢量。
 </p>
 
 </div>
