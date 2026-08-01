@@ -13,6 +13,7 @@ import PresetPage from './PresetPage.vue'
 import WorktreePage from './WorktreePage.vue'
 import UpdatePage from './UpdatePage.vue'
 import SystemPage from './SystemPage.vue'
+import TokenDebugPage from './TokenDebugPage.vue'
 import PlaceholderPage from './PlaceholderPage.vue'
 
 /** SettingsOverlay：fixed inset-0 z-modal bg-bg 全屏覆盖。
@@ -39,6 +40,7 @@ const NAV: NavDef[] = [
   { key: 'worktree', label: '工作区', icon: ic('<line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>') },
   { key: 'update', label: '更新', icon: ic('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>') },
   { key: 'system', label: '系统', icon: ic('<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>') },
+  { key: 'token-debug', label: 'Token 调试', icon: ic('<circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>') },
 ]
 
 function select(key: SettingsPage) {
@@ -154,6 +156,7 @@ onUnmounted(() => {
         <WorktreePage v-else-if="settingsPage === 'worktree'" />
         <UpdatePage v-else-if="settingsPage === 'update'" />
         <SystemPage v-else-if="settingsPage === 'system'" />
+        <TokenDebugPage v-else-if="settingsPage === 'token-debug'" />
         <PlaceholderPage v-else :page="settingsPage" />
       </div>
     </div>
