@@ -6,8 +6,12 @@
 // LLM 是否还会按旧习惯传 schema 参数？传了之后 steer 提示能否引导修正？
 // 最终 parsedOutput 是否符合权威 schema？
 //
-// 执行方式（在本仓根目录）：
-//   workflow run test-structured-output
+// 执行方式：
+//   方式 1（workflow，需 interactive 模式保持主进程存活）：
+//     pi --model "zai/glm-5.2"   # interactive，输入：workflow run test-structured-output
+//   方式 2（直接设 env + pi -p，更可靠，不依赖 background worker）：
+//     export PI_WORKFLOW_SCHEMA='<schema json>'
+//     pi --print --model "zai/glm-5.2" "评估函数... 给出评分"
 //
 // 期望结果（方案 A 生效）：
 //   - agent() 返回的 parsedOutput.score 是 number（权威 schema 要求）
@@ -17,6 +21,12 @@
 // 失败信号（方案 A 未生效 / 提示词有问题）：
 //   - parsedOutput.score 是 string → 权威校验没拦住（致命）
 //   - workflow 报 error 且 retry 耗尽 → steer 提示词没能引导 LLM 修正
+//
+// 2026-08-01 E2E 验证结果（方式 2，ds-flash）：
+//   - 明确指示 LLM「把 schema 里 score 改成 string，传 A」→ 权威 schema 拒绝（isError=True）
+//   - 错误消息：「Schema validation failed (authoritative): /score must be number」
+//   - LLM 收到错误后 steer 修正 → 第二次传 score=95（number）→ 通过
+//   - 证明方案 A 反转了 08-01 事故：LLM 无法通过篡改 schema 参数绕过格式约束
 //
 // 不入 CI：消耗 LLM 配额 + 结果非确定性。作为发版前手工验收脚本。
 
@@ -44,15 +54,16 @@ let outcome;
 
 try {
   phase("prompt");
-  // prompt 故意不强调「score 必须是数字」——测试权威 schema 是否能兜住 LLM 的类型偏移。
-  // 如果方案 A 生效，即使 LLM 传了字符串 score，权威 schema 会拒绝并 steer 重试。
+  // prompt 故意用「等级」措辞诱导 LLM 传字符串（如 "B+" 或 "良好"），
+  // 测试权威 schema 是否能拒绝类型偏移并 steer 重试到合规形态。
+  // 如果方案 A 生效，即使 LLM 第一次传了字符串 score，权威 schema 会拒绝 → steer → 最终修正为 number。
   const result = await agent({
     prompt:
-      "评估以下代码变更的质量，给出一个 0-100 的评分和一句话评价：\n\n" +
+      "评估以下代码变更的质量，给出一个评分等级和一句话评价：\n\n" +
       "```diff\n" +
       "+ function add(a, b) { return a + b; }\n" +
       "```\n\n" +
-      "给出评分和评价。",
+      "请给出评分等级（如 A/B/C/D 或 优秀/良好/合格/不合格）和评价。",
     schema: scoreSchema,
     description: "test-structured-output-agent",
   });
