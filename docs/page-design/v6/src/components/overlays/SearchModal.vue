@@ -336,7 +336,7 @@ function iconKind(cmd: SearchCommand): IconKind {
 .sm-item {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   width: 100%;
   padding: 7px 16px;
   cursor: pointer;
