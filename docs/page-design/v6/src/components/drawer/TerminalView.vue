@@ -156,7 +156,9 @@ function killPty() {
   padding: 6px 8px;
   background: var(--surface);
   border-bottom: 1px solid var(--hairline);
-  min-height: 36px;
+  min-height: 34px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
   flex-shrink: 0;
 }
 .b-l2-tab {
@@ -164,7 +166,7 @@ function killPty() {
   align-items: center;
   gap: 6px;
   max-width: 150px;
-  padding: 4px 8px;
+  padding: 3px 8px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: var(--text-xs);
@@ -211,13 +213,17 @@ function killPty() {
 .b-l2-newtab {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
-  padding: 4px 8px;
+  height: 20px;
+  line-height: 1;
+  padding: 3px 8px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: var(--text-xs);
   color: var(--neutral-dim);
   transition: all var(--duration-fast) var(--ease);
+  flex-shrink: 0;
 }
 .b-l2-newtab:hover {
   background: var(--surface-hover);

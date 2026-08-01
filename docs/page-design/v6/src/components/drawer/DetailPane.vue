@@ -137,7 +137,9 @@ function copyPath() {
   padding: 6px 8px;
   background: var(--surface);
   border-bottom: 1px solid var(--hairline);
-  min-height: 36px;
+  min-height: 34px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
   flex-shrink: 0;
 }
 .b-l2-tab {
@@ -145,7 +147,7 @@ function copyPath() {
   align-items: center;
   gap: 6px;
   max-width: 150px;
-  padding: 4px 8px;
+  padding: 3px 8px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: var(--text-xs);
@@ -197,15 +199,19 @@ function copyPath() {
 .l2-view {
   display: flex;
   gap: 2px;
+  align-items: center;
   background: var(--bg-input);
   border-radius: var(--radius);
   padding: 3px;
+  height: 22px;
+  flex-shrink: 0;
 }
 .l2-view .lv-btn {
   border: 0;
   cursor: pointer;
   font: inherit;
   font-size: var(--text-2xs);
+  line-height: 1;
   padding: 3px 9px;
   border-radius: var(--radius-sm);
   background: transparent;

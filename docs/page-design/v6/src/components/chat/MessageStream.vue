@@ -90,6 +90,7 @@ function stageAction(type: 'fork' | 'handoff') {
   position: relative; /* TurnRail absolute 定位锚点 */
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden; /* 禁止横向滚动（TurnRail 绝对定位 + 代码块等宽内容不撑出滚动条）*/
   min-height: 0;
   padding: 20px;
   display: flex;
