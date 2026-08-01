@@ -64,11 +64,13 @@ return {
 
 ### 效果
 
-agent 调 `cw execute --unitId X` 后，stdout JSON 含 `childUnitIds: ["feature:xxx::a", "feature:xxx::b"]`。agent 直接拿来填 schema children，无需额外调 `cw tree`。
+agent 调 `cw execute --unitId X` 后，stdout JSON 含 `children: [{unitId:"feature:xxx::a", dependsOn:[]}, {unitId:"feature:xxx::b", dependsOn:["feature:xxx::a"]}]`。agent 直接拿来填 schema children，无需额外调 `cw tree`。
 
 ---
 
 ## 2. C2：frontier 命令（核心，含两遍扫描算法）
+
+**改动 3**：新增 frontier 命令。
 
 ### 问题
 
@@ -136,16 +138,27 @@ Pass 1: 收集节点 + 标记基础状态
   - 过滤掉终态（closed/aborted）
   - 对每个非终态节点，用 status→action 映射（render.ts:497-521）算 nextAction
 
-Pass 2: 计算 blocked 标记
+Pass 2: 计算 blocked 标记（两类阻塞）
+  类型 A — planning 层等子层完成：
   - 对每个 planning 层节点（scope = epic/feature/slice）且 status = executing：
     - 查其所有 children（findChildren）
     - 若全部终态 → blocked = false（可推进，nextAction = retrospect）
     - 若有非终态 → blocked = true（等子层完成）
-  - wave 节点：blocked 恒 false（wave 是叶子，不依赖子层）
-  - planning 层非 executing 状态（created/clarifying/planning/design-reviewed）：blocked = false
+
+  类型 B — wave 层等依赖 wave 完成（v3 新增，致命缺陷 2 修复）：
+  - 对每个 wave 节点，查其 dependsOn 列表（从 cw plan.split 映射到 childUnitId）
+    的 wave 是否全部终态：
+    - 若全部终态 → blocked = false（依赖满足，可推进）
+    - 若有未终态 → blocked = true（等依赖 wave 完成）
+  - wave 无 dependsOn → blocked = false
+  - blockedReason: "依赖 wave:X 未完成"
+
+  planning 层非 executing 状态（created/clarifying/planning/design-reviewed）：blocked = false
 
 返回: Pass 1 的节点列表，每个附带 Pass 2 的 blocked 标记
 ```
+
+**类型 B（wave blocked）的必要性**（第三轮审查致命缺陷 2）：frontier 驱动模型下，wave B dependsOn A。若 frontier 只对 planning 标 blocked（类型 A），wave blocked 恒 false → B 在 A 未 closeout 前被标 !blocked → BFS 提前派发 B → B 的 execute 看不到 A 的代码（A 还没写或还没 closeout）。扩展 wave blocked 让 B 在 A closeout 前保持 blocked，A 终态后 B 才解除。
 
 #### 边界情况
 
@@ -171,7 +184,7 @@ design-review agent 填 `frAcCoverageNote` 时看不到 FR/AC，被迫编造。
 
 ### 改动
 
-**改动 3**：`render.ts` renderDecisionsSection 补渲染 FeatureSpec
+**改动 4**：`render.ts` renderDecisionsSection 补渲染 FeatureSpec
 
 在 feature 层（unit.scope === "feature"）时，额外渲染 spec 段：
 
@@ -203,7 +216,7 @@ feature 的 plan/design-review agent 读 handoff 时能看到 FR/AC 的 id 和�
 
 ### 改动
 
-**改动 4**：各层 `get{Scope}SchemaText("design-review")` 注入该层 LayerSpecific
+**改动 5**：各层 `get{Scope}SchemaText("design-review")` 注入该层 LayerSpecific
 
 查 `judgments.ts` 各层 LayerSpecific interface 的字段名：
 - epic: strategicAlignment / featureSplitRationale / scopeBoundary / priorityRationale / resourceEstimate（5 字段）
@@ -290,7 +303,7 @@ cw create slice --slug test --objective "..."
 cw plan --unitId slice:test --input '{"split":[{"slug":"w1"}, {"slug":"w2"}]}'
 cw design-review --unitId slice:test --input '...'
 cw execute --unitId slice:test
-# 验证 stdout JSON 含 childUnitIds: ["wave:test::w1", "wave:test::w2"]
+# 验证 stdout JSON 含 children: [{unitId:"wave:test::w1", dependsOn:[]}, {unitId:"wave:test::w2", dependsOn:[]}]
 ```
 
 ### 里程碑 2：C2 验证

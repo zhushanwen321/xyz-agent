@@ -561,7 +561,7 @@ await parallel(
 ```js
 await parallel(
   waves.map(w => agent({
-    prompt: `你是 wave 执行者，负责 ${w.id}。走完 wave 9 步`,
+    prompt: `你是 wave 执行者，负责 ${w.id}。走完 wave 8 步`,
     schema: { commitHash, summary, artifacts },
     cwd: <wave 专属 worktree>   // ← 关键：每个 wave 独立 worktree，隔离写入
   }))
@@ -699,9 +699,9 @@ cw 的 `dependsOn` 字段当前只用于 design-review 判环，**不驱动执�
 
 ### 10.3 wave-executor 的认知负载边界
 
-当前设计：wave-executor agent 既要走 cw 9 步流程（clarify/plan/design-review/execute/test/exec-review/retrospect/closeout），又要实际写代码。
+当前设计：wave-executor agent 既要走 cw 8 步流程（clarify/plan/design-review/execute/test/exec-review/retrospect/closeout），又要实际写代码。
 
-**问题**：9 步流程的认知开销是否过重？是否应该简化 wave 层的流程（如跳过 clarify/retrospect，只保留 plan/execute/test/closeout）？
+**问题**：8 步流程的认知开销是否过重？是否应该简化 wave 层的流程（如跳过 clarify/retrospect，只保留 plan/execute/test/closeout）？
 
 **决策影响**：决定是否需要定制一个"轻量 wave 流程"，可能需要改 cw 的状态机（wave 的可选步骤）。
 
@@ -810,6 +810,7 @@ CMU 实证：静态单层规划 > 动态多层规划。当前架构是"BFS 逐�
 11. **轮次 13（W3 实测 + 决策 D）**：实测验证 `git rev-parse --git-common-dir` 的 dirname 在 8 种 worktree 场景下一致（W3 方案成立，go/no-go 分水岭通过）。实测发现必须用 `fs.realpathSync` 解析符号链接（macOS `/var`→`/private/var`）。用户决策 D：保持 worktree 隔离方案（不退回同 cwd 串行），集成测试先不做（未来在 slice 层增加集成 test gate，当前不设计）。接受"各 wave 单独 test 通过但 merge 后可能冲突"的残余风险，靠依赖感知调度（有 dependsOn 的 wave 串行）缓解。
 12. **轮次 14（拆分子 spec + 三维审查）**：拆分 3 个子 spec（spec-w/spec-c/spec-f），派 3 个 subagent 从一致性/逻辑正确性/覆盖度三维审查。发现 5 个必须修正的设计缺陷（returnMeta 竞态、postAgentResult 定位错、BFS 缺 planning retrospect、spec-w 漏前 3 处改动、topoSort queue 重置 bug）+ 8 个需补充的设计缺口。确认不需要新增子 spec（W/C/F 覆盖核心需求），runtime 可见性（spec-g）和 deployment（spec-d）延后。
 13. **轮次 15（修复全部审查发现）**：三个子 spec + 主 spec 全部修正。spec-w 改 returnMeta 模式（消除模块级变量竞态，统一 worktreePath+sessionFile 传递）+ 补认领前 3 处改动。spec-c C1 扩展为含 dependsOn、C2 frontier 补 dependsOn 输出、C5 扩展 WAVE_RULES.retrospect。spec-f 补聚合回扫（frontier 驱动统一路径）+ topoSort bug 修复 + worktreeRegistry + 失败传播（cw abort）+ childUnitIds prompt 指示 + 崩溃恢复策略 + replan 禁用（MVP）+ budget 配置 + startLayer 指引。主 spec 补改动编号映射表、R2 更新、spec-g/spec-d 占位。
+14. **轮次 16（第三轮审查 + 修复）**：3 个 subagent 审查 v2，发现 v2 frontier 驱动重写引入 2 个致命缺陷：(1) visited 集合阻断所有多-action 节点推进（节点走完第 1 个 action 后被永久 visited，第 2-8 个 action 永不执行）；(2) frontier 的 blocked 只标 planning 层，wave 间 dependsOn 无法表达（wave B 在 A 未完成时被提前派发）。另发现 allWavesClosed gate 实测本就接受 aborted（C-supplement 是空操作）。修复：spec-f 删 visited 改 retryCount 熔断 + queryFrontier 封装（execSync timeout + 轮次边界不变式）+ split-空检测；spec-c C2 Pass 2 扩展类型 B（wave dependsOn blocked）；主 spec 决策 C 加勘误、"9 步"统一为"8 步"。详见 §14.3。
 
 ---
 
@@ -834,11 +835,25 @@ CMU 实证：静态单层规划 > 动态多层规划。当前架构是"BFS 逐�
 | 6 | frontier 缺 dependsOn → 崩溃恢复 topoSort 失效 | spec-c C2 输出补 dependsOn |
 | 7 | 崩溃恢复后 worktree 绑定丢失 | spec-f §5（丢弃 worktree，wave 从 cw status 重建）|
 | 8 | WAVE_RULES.retrospect 也是 forbidden | spec-c C5 扩展（改动 6b）|
-| 9 | 失败传播未收敛（wave 卡非终态阻断 ascend）| spec-f §4（cw abort + allWavesClosed gate 放宽）|
+| 9 | 失败传播未收敛（wave 卡非终态阻断 ascend）| spec-f §4（cw abort；allWavesClosed gate 实测已接受 aborted，无需改动）|
 | 10 | replan 场景未覆盖 | spec-f §5（MVP 禁用 replan）|
 | 11 | childUnitIds prompt 指示缺失 | spec-f buildActionPrompt 补指示 |
 | 12 | 串行 wave worktree 路径传递未实现 | spec-f findInheritedWorktree + worktreeRegistry |
 | 13 | 超时失败 vs 业务失败无法区分 | spec-f §4（returnMeta 的 error 字段）|
+
+### 14.3 第三轮审查修复（轮次 16，v2 frontier 驱动引入的 2 致命 + 5 中危）
+
+v2 把 BFS 从 schema 驱动改为 frontier 驱动时引入新问题：
+
+| 缺陷 | 问题 | 严重度 | 修复位置 | 修复方式 |
+|------|------|--------|---------|---------|
+| 16-1 | **visited 集合阻断多-action 节点**——节点走完第 1 个 action 后被永久 visited，第 2-8 个 action 永不执行 | 致命 | spec-f §2 | 删 visited，改 retryCount 熔断（同一 nextAction 连续 3 次未推进 → abort）|
+| 16-2 | **frontier blocked 只标 planning 层**——wave 间 dependsOn 无法表达，B 在 A 未完成时被提前派发 | 致命 | spec-c C2 Pass 2 | 扩展类型 B（wave dependsOn blocked）：wave 节点查 dependsOn 的 wave 全终态才 unblocked |
+| 16-3 | C-supplement（allWavesClosed 放宽）是空操作 | —（伪问题）| spec-f §4 | 实测 cw gate 本就接受 aborted（retrospect.ts:206），删除 C-supplement |
+| 16-4 | frontier 强依赖让 C2 升级为主链路必需 | 中 | spec-f §1.1 | 声明 C2 必须首批实现；主 spec 决策 C 加勘误 |
+| 16-5 | execSync 调 frontier 阻塞 worker 线程 | 中 | spec-f queryFrontier | 加轮次边界不变式 + execSync timeout 30s |
+| 16-6 | 空任务 split-空检测纯文字未落地 | 中 | spec-f §2 | 补 retryCount 熔断说明（split 空 → gate 反复 fail → 3 次后 abort → 以 wave 重启）|
+| 16-7 | 崩溃恢复后 worktreeRegistry 丢失致串行 wave 复用断裂 | 中 | spec-f §5 | 显式记录边界（接受断裂，与"崩溃=重跑"一致）|
 
 ---
 
@@ -946,7 +961,7 @@ CMU 实证：静态单层规划 > 动态多层规划。当前架构是"BFS 逐�
 - review 类 action（design-review/exec-review/retrospect）由独立 agent 做，无前序步骤的沉没成本偏见，更客观（补救高估 3）
 - 每个 agent 上下文轻（单一目标），不爆炸
 
-**代价**：agent() 调用数大幅增加。一棵 20 wave 的树，每个 wave 9 步 = 180+ agent() 调用。每个是独立 pi 子进程 spawn（几秒 + LLM 调用）。**接受这个代价**——正确性优先于性能，且单 call 有内置 3 次重试。
+**代价**：agent() 调用数大幅增加。一棵 20 wave 的树，每个 wave 8 步 = 160+ agent() 调用。每个是独立 pi 子进程 spawn（几秒 + LLM 调用）。**接受这个代价**——正确性优先于性能，且单 call 有内置 3 次重试。
 
 #### 决策 B：按任务复杂度选起点层，不跳层（用户决策 2）
 
@@ -964,6 +979,8 @@ cw 固定 4 层（epic/feature/slice/wave），但不同复杂度的任务起点
 #### 决策 C：frontier 一起做完（用户决策 3）
 
 虽然 schema 派发设计（回应 3）让正常 BFS 不需要 frontier，但崩溃恢复需要它。用户决定一起做完。
+
+> **v3 勘误**：spec-f v3（轮次 16）把 BFS 改为 frontier 驱动后，frontier 从"崩溃恢复专用"升级为"**BFS 主循环正常运行必需**"。C2 必须首批实现，不能延后。原"降级"表述已被推翻。
 
 **frontier 的两层用途**：
 1. **崩溃恢复**（必需）：worker 崩溃后 schema 内存态丢失，从 cw store 重建 BFS 队列
@@ -1167,7 +1184,7 @@ return { status: "done", rootUnitId: root.unitId }
 **验证里程碑**：跑真实任务（如"加 winston 日志"），观察：
 - 每个 action agent 能否读 handoff 拿到前序产出
 - design-review gate 的 layerSpecific 字段 agent 能否填对（可能需要几轮 gate fail 试错）
-- wave agent 在 worktree 里能否走完 9 步（含 test gate）
+- wave agent 在 worktree 里能否走完 8 步（含 test gate）
 - gate fail 闭环是否工作
 
 #### 阶段三：完整 BFS 递归 + frontier 崩溃恢复
@@ -1289,7 +1306,7 @@ workflow 的 `agent()` 经 `SubprocessAgentRunner.run`（`subprocess-agent-runne
 - `WorktreeHandle` 是主线程的不可序列化对象
 - worker 线程的 `agent()` 只发消息（postMessage），无法把 handle 对象传给后续 agent()
 
-**后果**：wave 的 9 个 action = 9 个 agent()。若每个都 `worktree:true`，则 9 个独立 worktree：
+**后果**：wave 的 8 个 action = 8 个 agent()。若每个都 `worktree:true`，则 8 个独立 worktree：
 ```
 execute agent → worktree-A（写代码 + commit 到本地分支 pi-sub-xxx）
 test agent    → worktree-B（从 HEAD 新建，看不到 execute 的 commit）→ npm test 找不到代码 → gate fail
@@ -1344,7 +1361,7 @@ agent 无法从 cw execute 的返回值拿到全部子 unit id。要填全 schem
 | §12 假设 | 源码事实 | 涉及阻断 |
 |---------|---------|---------|
 | "ExecuteOptions 有字段 = SubagentService 会消费" | `executeAndAwait`（workflow 入口）不消费 `worktree===true` | 致命 A |
-| "worktree:true 能隔离 wave" | 每 action 新建 worktree，同 wave 9 步互不可见 | 致命 B |
+| "worktree:true 能隔离 wave" | 每 action 新建 worktree，同 wave 8 步互不可见 | 致命 B |
 | "agent() 返回 sessionFile" | 消息层（:144）丢弃 sessionFile，只透传 parsedOutput/content | 高危 D |
 | "cw execute 返回全部子 unit id" | ActionResult 无 childUnitIds，只有 crossLayer 第一个 | 高危 C |
 | "handoff 暴露前序 action 产出" | 不渲染 FeatureSpec（FR/AC），layerSpecific 字段名不注入 | E、F |
@@ -1387,6 +1404,6 @@ agent 无法从 cw execute 的返回值拿到全部子 unit id。要填全 schem
 决策 A（每 action 一个 agent）本身有价值（gate 闭环、review 客观性），但与 worktree 隔离粒度冲突（致命阻断 B）。修正方向：
 
 - **planning 层（epic/feature/slice）**：每 action 一个 agent，共享主 cwd（不 worktree 隔离——planning 不写代码）。✅ 无冲突。
-- **wave 层**：worktree 隔离粒度绑 wave。同 wave 的 9 个 action 不是"9 个独立 agent 在 9 个 worktree"，而是"9 个 agent 复用同一 wave worktree"。agent 粒度仍是每 action 一个（保留 gate 闭环），但 worktree 生命周期绑 wave（第一个 action 建、closeout 后销毁、中间复用）。
+- **wave 层**：worktree 隔离粒度绑 wave。同 wave 的 8 个 action 不是"8 个独立 agent 在 8 个 worktree"，而是"8 个 agent 复用同一 wave worktree"。agent 粒度仍是每 action 一个（保留 gate 闭环），但 worktree 生命周期绑 wave（第一个 action 建、closeout 后销毁、中间复用）。
 
 这不改变决策 A 的"每 action 一个 agent"语义，只改变 worktree 的绑定对象（从 action 提升到 wave）。

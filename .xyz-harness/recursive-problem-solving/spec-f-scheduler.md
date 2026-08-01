@@ -31,9 +31,11 @@
 - **方式 B（schema 驱动 + 回扫）**：正常推进用 schema children 驱动；每轮结束后额外查 frontier 找需要聚合的 planning 节点。
 
 **决策**：采用**方式 A**——正常路径和崩溃恢复路径统一用 frontier 驱动。理由：
-- 消除 schema 驱动与 frontier 驱动的双路径不一致问题（一致性审查 3.1/3.5）
+- 消除 schema 驱动与 frontier 驱动的双路径不一致问题
 - frontier 的 blocked 标记天然解决"planning 节点何时该聚合"的判断
-- 不依赖 agent 正确填写 schema children（逻辑审查 X-1）——frontier 从 cw store 读真相
+- 不依赖 agent 正确填写 schema children——frontier 从 cw store 读真相
+
+**实现优先级声明**（覆盖度审查第 2 点）：v2 的 frontier 驱动让 spec-c C2 从"崩溃恢复专用、可延后"升级为"**BFS 主循环正常运行必需、必须首批实现**"。C2 与 W1/W2 同批完成，不能延后。主 spec §12.2 决策 C 的"降级为崩溃恢复专用"表述已被 v2 推翻。
 
 ### 1.2 returnMeta 模式（缺陷 1/2/13 修复）
 
@@ -73,38 +75,41 @@ const rootUnitId = await createRootUnit(startLayer, task);
 phase("bfs");
 const worktreeRegistry = {};  // unitId → worktreePath（串行 wave 复用）
 const sessionFiles = {};       // unitId → sessionFile（retrospect 用）
-const visited = new Set();     // 已处理的 unitId
+const retryCount = {};         // `${unitId}:${nextAction}` → 连续未推进次数（熔断用）
+const MAX_ACTION_RETRY = 3;    // 同一 (unitId, nextAction) 连续 3 次未推进 → abort
+
+// 不变式：visited 集合已删除。frontier 本身只返回非终态节点，天然保证幂等。
+// 节点到终态（closed/aborted）后 frontier 自动不再返回。去重靠 cw status（唯一真相）。
+// 防 agent 卡死靠 retryCount 熔断 + F4 超时双重保护。
 
 while (true) {
-  // 每轮开头查 frontier，获取 actionable 节点
-  const frontier = JSON.parse(execSync(`cw frontier --root ${rootUnitId} --format json`, { encoding: "utf-8" }));
-  const actionable = frontier.nodes.filter(n => !n.blocked && !visited.has(n.unitId) && !isTerminal(n.status));
+  // 每轮开头查 frontier，获取 actionable 节点（!blocked && 非终态）
+  const frontier = queryFrontier(rootUnitId);
+  const actionable = frontier.nodes.filter(n => !n.blocked && !isTerminal(n.status));
 
   if (actionable.length === 0) {
     // 检查是否全部终态
     const allTerminal = frontier.nodes.every(n => isTerminal(n.status));
     if (allTerminal) break;  // 递归完成
-    // 还有 blocked 节点但无 actionable——等子层（不该发生，说明有节点卡住）
-    log("WARN: 无 actionable 节点但树未完成，可能有节点卡住");
+    // 还有 blocked 节点但无 actionable——不应发生（blocked 节点的依赖迟早完成）
+    log("WARN: 无 actionable 节点但树未完成，可能有节点永久 blocked");
     break;
   }
 
   // 拓扑排序（F3）
-  const { concurrent, sequential } = topoSort(actionable, visited);
+  const { concurrent, sequential } = topoSort(actionable);
 
   // 并发执行无依赖组
   if (concurrent.length > 0) {
-    const results = await parallel(concurrent.map(node => executeNodeNextAction(node, worktreeRegistry, sessionFiles)));
-    for (const node of concurrent) visited.add(node.unitId);
+    const results = await parallel(concurrent.map(node => executeNodeNextAction(node, worktreeRegistry, sessionFiles, retryCount)));
     for (const r of results) {
       if (r.sessionFile) sessionFiles[r.unitId] = r.sessionFile;
     }
   }
 
-  // 串行执行有依赖组（每个执行后释放 visited 再跑下一个）
+  // 串行执行有依赖组（每个执行后下一个才解除 blocked）
   for (const node of sequential) {
-    const r = await executeNodeNextAction(node, worktreeRegistry, sessionFiles);
-    visited.add(node.unitId);
+    const r = await executeNodeNextAction(node, worktreeRegistry, sessionFiles, retryCount);
     if (r.sessionFile) sessionFiles[r.unitId] = r.sessionFile;
   }
 }
@@ -116,26 +121,34 @@ return { status: "done", rootUnitId };
 ### executeNodeNextAction（按 frontier 的 nextAction 执行单个 action）
 
 ```javascript
-async function executeNodeNextAction(node, worktreeRegistry, sessionFiles) {
+async function executeNodeNextAction(node, worktreeRegistry, sessionFiles, retryCount) {
   const isWave = node.scope === "wave";
   const action = node.nextAction;
+  const retryKey = `${node.unitId}:${action}`;
+
+  // 熔断检查：同一 (unitId, nextAction) 连续 MAX_ACTION_RETRY 次未推进 → abort
+  // "未推进" = agent 返回后下一轮 frontier 仍返回该节点的同一 nextAction
+  if ((retryCount[retryKey] ?? 0) >= MAX_ACTION_RETRY) {
+    log(`Node ${node.unitId} stuck at ${action} for ${MAX_ACTION_RETRY} rounds, aborting`);
+    await abortUnit(node.unitId);
+    retryCount[retryKey] = 0;
+    return { unitId: node.unitId, error: `stuck at ${action}` };
+  }
 
   // worktree 复用决策
   let cwd = $WORKSPACE;
   let useWorktree = false;
 
   if (isWave) {
-    // wave：查 worktreeRegistry 是否已有该 wave 的 worktree
     if (worktreeRegistry[node.unitId]) {
-      cwd = worktreeRegistry[node.unitId];  // 复用
+      cwd = worktreeRegistry[node.unitId];
     } else {
-      // 检查是否有依赖的前序 wave 的 worktree 可继承（串行 wave 组）
       const inheritedWt = findInheritedWorktree(node, worktreeRegistry);
       if (inheritedWt) {
         cwd = inheritedWt;
-        worktreeRegistry[node.unitId] = inheritedWt;  // 记录复用关系
+        worktreeRegistry[node.unitId] = inheritedWt;
       } else {
-        useWorktree = true;  // 创建新 worktree
+        useWorktree = true;
       }
     }
   }
@@ -151,17 +164,20 @@ async function executeNodeNextAction(node, worktreeRegistry, sessionFiles) {
     }
   }
 
+  // 空任务检测：planning 层 plan 后若 split 为空（design-review gate 会因 split-non-empty fail）
+  // agent 会在 gate fail 闭环里反复重试，retryCount 熔断会在 3 次后 abort。
+  // 父流程检测到该节点 aborted 且是 planning 层 → 以 wave 层重启（见主循环外层逻辑）
+
   const r = await agent({
     prompt: buildActionPrompt(node, action) + sessionFileHint,
     schema: buildActionSchema(node, action, isWave),
     fork: true,
     worktree: useWorktree,
-    returnMeta: true,  // v2：returnMeta 模式
+    returnMeta: true,
     cwd,
-    timeoutMs: ACTION_TIMEOUT_MS,  // F4：超时保护
+    timeoutMs: ACTION_TIMEOUT_MS,
   });
 
-  // returnMeta 模式：r 是 {value, sessionFile, worktreePath, error}
   const result = {
     unitId: node.unitId,
     value: r.value,
@@ -169,23 +185,42 @@ async function executeNodeNextAction(node, worktreeRegistry, sessionFiles) {
     error: r.error,
   };
 
-  // 记录 worktreePath（第一个 action 建 worktree 时）
   if (isWave && r.worktreePath && !worktreeRegistry[node.unitId]) {
     worktreeRegistry[node.unitId] = r.worktreePath;
   }
 
-  // F4 失败处理：超时或 error
+  // 失败处理
   if (r.error || isTimeoutError(r)) {
     log(`Action ${action} for ${node.unitId} failed: ${r.error ?? "timeout"}`);
-    // 调 cw abort 推终态（失败传播）
     await abortUnit(node.unitId);
-    // 标记 visited 避免重试
-    // 注意：cw abort 后该节点变 aborted，frontier 不再返回它
+    retryCount[retryKey] = 0;  // abort 后重置（节点已终态，不会再被派）
+    return result;
   }
+
+  // 成功返回：重置该 action 的 retryCount（agent 推进了 status，下一轮 nextAction 会变）
+  // 如果 agent 返回了但 cw status 没推进（gate fail 后 agent 放弃但没 abort），
+  // 下一轮 frontier 仍返回同一 nextAction → retryCount 累加 → 最终熔断 abort
+  retryCount[retryKey] = 0;
 
   return result;
 }
 ```
+
+### queryFrontier（封装 execSync + timeout + 轮次边界不变式）
+
+```javascript
+function queryFrontier(rootUnitId) {
+  // 不变式：frontier 只在 BFS 轮次边界调用（parallel() 全部 settle 后），
+  // 不在 parallel() 进行中调用。否则 execSync 阻塞 worker 线程，
+  // 导致 agent-result 消息延迟（虽不丢失但补投递在阻塞结束后）。
+  return JSON.parse(execSync(
+    `cw frontier --root ${rootUnitId} --format json`,
+    { encoding: "utf-8", timeout: 30000 }  // 30s timeout 防 cw hang
+  ));
+}
+```
+
+**execSync 阻塞说明**（覆盖度审查第 4 点实测确认）：worker 线程在 execSync 期间不处理消息（agent-result 排队），但**不丢失**——阻塞结束后一次性补投递。正常路径下 frontier 只在轮次边界调（parallel settle 后），进行中的 agent 不受影响。timeout 30s 防 cw 进程 hang。
 
 ### buildActionPrompt（含 childUnitIds 指示——缺陷 11 修复）
 
@@ -280,34 +315,37 @@ function buildActionSchema(node, action, isWave) {
  * 仅按 cw plan.split.dependsOn 做拓扑排序。
  * 间接冲突由决策 D 接受残余风险（spec.md §12.2 决策 D）。
  */
-function topoSort(actionable, visited) {
+function topoSort(actionable) {
   const concurrent = [];
   const sequential = [];
-
-  // actionable 里的节点都是 frontier 返回的（!blocked）。
-  // frontier 已经过滤了 blocked 节点（子层未完成的 planning），所以这里的节点都是可推进的。
-  // 但 wave 之间可能有 dependsOn（来自 plan.split）。
 
   const actionableIds = new Set(actionable.map(n => n.unitId));
 
   for (const node of actionable) {
     const deps = node.dependsOn ?? [];
-    // 检查同组内依赖（依赖的对象也在 actionable 里）
     const internalDeps = deps.filter(d => actionableIds.has(d));
     if (internalDeps.length > 0) {
-      sequential.push(node);  // 依赖同组其他节点 → 串行
+      sequential.push(node);
     } else {
-      concurrent.push(node);  // 无同组依赖 → 可并发
+      concurrent.push(node);
     }
   }
 
-  // 环检测：sequential 组内若有循环依赖，抛错（防 cw gate 漏检时静默丢节点）
+  // 环检测：sequential 组内若有循环依赖（A→B→A），抛错
+  // 正常情况 cw design-review gate 的 splitDagValid 会拦环，但 replan 后可能漏
   if (sequential.length > 0) {
     const seqIds = new Set(sequential.map(n => n.unitId));
     for (const node of sequential) {
       const cycleDeps = (node.dependsOn ?? []).filter(d => seqIds.has(d));
-      // sequential 节点的 internalDeps 一定在 sequential 组内（否则进 concurrent 了）
-      // 真环（A→B→A）会被 cw design-review gate 拦，但 replan 后可能漏
+      if (cycleDeps.length > 0) {
+        // 简单环检测：如果 node 依赖的 sequential 节点也依赖回 node（直接环），抛错
+        for (const dep of cycleDeps) {
+          const depNode = sequential.find(n => n.unitId === dep);
+          if (depNode && (depNode.dependsOn ?? []).includes(node.unitId)) {
+            throw new Error(`Circular dependency detected: ${node.unitId} ↔ ${dep}`);
+          }
+        }
+      }
     }
   }
 
@@ -373,7 +411,7 @@ async function abortUnit(unitId) {
 }
 ```
 
-**cw gate 适配**：父 slice/feature/epic 的 retrospect `all-waves-closed` gate 需校验"所有子层终态"而非"全 closed"。核实 cw `retrospect.ts:197-217` 的 allWavesClosed gate 实现——如果它只认 closed 不认 aborted，需改为"终态（closed 或 aborted）"。这是 spec-c 的补充改动。
+**allWavesClosed gate 已验证无需改动**（覆盖度审查第 1 点实测确认）：cw `retrospect.ts:206` 的 allWavesClosed gate 本就接受 aborted 为终态——`childStatuses.filter(s => s !== "closed" && s !== "aborted")`，即只有既非 closed 又非 aborted 才算 nonTerminal。**C-supplement 是空操作，无需任何 cw 改动。**
 
 ---
 
@@ -386,12 +424,16 @@ worker 崩溃后：
 2. 重启后调 `cw frontier --root <epicId>` 重建 actionable 队列（frontier 含 nextAction）
 3. 对每个 actionable 节点的 nextAction 重新派 agent
 
-**已 commit 代码的丢失问题**（缺陷 7 / 逻辑审查 X-2）：
+**worktreeRegistry 丢失的边界**（覆盖度审查第 7 点）：
+- worktreeRegistry / sessionFiles / retryCount 都是 worker 进程内存态，崩溃后清空
+- findInheritedWorktree 查空 registry 返回 null → 串行 wave B 建新 worktree（不复用 A 的）
+- **接受**：崩溃恢复后串行 wave 的 worktree 复用断裂。B 从 HEAD 新建 worktree，看不到 A 的产出（A 的 worktree 已丢弃）。B 的 execute 需重跑（A 已 closeout 的代码也在 worktree 本地分支丢失）。这与"崩溃=重跑"取舍一致。
+
+**已 commit 代码的丢失问题**（缺陷 7）：
 - wave execute agent 在 worktree 本地分支 commit 了代码（分支 `pi-sub-xxx`）
 - worktree 丢弃后，这个分支的 commit **不在主 repo 的 refs 里**——丢失
-- **接受这个丢失**：wave execute 要求先 commit 再调 cw execute。崩溃发生在 execute 之后、closeout 之前时，commit 在 worktree 本地分支丢失。恢复时该 wave 从 nextAction（如 test）重新执行——需要重跑 execute 写代码。
-
-**缓解**：wave execute 的 commit 如果 merge 回主分支的一个临时分支（如 `cw/wave-<id>`），新 worktree 能看到。但这需 worktree-manager 改造，MVP 不做。MVP 接受"崩溃 = 未 closeout 的 wave 重跑"。
+- **接受**：崩溃发生在 execute 之后、closeout 之前时，commit 丢失。恢复时该 wave 从 nextAction 重新执行——需重跑 execute 写代码。
+- **缓解**（未来改造）：wave execute 的 commit 如果 merge 回主分支临时分支（如 `cw/wave-<id>`），新 worktree 能看到。需 worktree-manager 改造，MVP 不做。
 
 ### replan 场景（U-1，MVP 禁用）
 
@@ -462,10 +504,7 @@ wave-executor 的 bash 工具配合 prompt 硬约束（spec-w W4）：禁止包�
 | 9 | agent .md 定义（planner + wave-executor）| `~/.pi/agent/agents/` | 无 |
 | 10 | startLayer 判断指引 | 主 agent prompt / AGENTS.md | 无 |
 
-**cw 补充改动**（配合失败传播）：
-| # | 文件 | 改动 |
-|---|------|------|
-| C-supplement | `rules/gates/retrospect.ts` allWavesClosed | 验证是否认 aborted 为终态，若只认 closed 则改为"终态（closed 或 aborted）"|
+**cw 侧无额外改动**：allWavesClosed gate 已验证接受 aborted 为终态（retrospect.ts:206），C-supplement 是空操作已删除。
 
 ---
 
