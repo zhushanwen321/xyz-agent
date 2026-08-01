@@ -21,12 +21,31 @@
 - [11. 可行性审查发现（轮次 10）](#11-可行性审查发现轮次-10)
 - [12. 决策与实现路径（轮次 11）](#12-决策与实现路径轮次-11)
 - [13. 第二轮可行性审查发现（轮次 12）](#13-第二轮可行性审查发现轮次-12)
+- [14. 子 spec 审查修复记录（轮次 14-15）](#14-子-spec-审查修复记录轮次-14-15)
 - [附录 A. 关键代码证据索引](#附录-a-关键代码证据索引)
 
 > **子 spec**（详细实现方案）：
-> - [spec-w-worktree.md](./spec-w-worktree.md) — worktree 隔离系统（W1-W4 + F2 sessionFile）
-> - [spec-c-cw-enhancements.md](./spec-c-cw-enhancements.md) — cw 增强（C1 childUnitIds + C2 frontier + C3-C5）
-> - [spec-f-scheduler.md](./spec-f-scheduler.md) — BFS 调度器与 workflow 脚本（F1 + F3 依赖调度 + F4 超时）
+> - [spec-w-worktree.md](./spec-w-worktree.md) — worktree 隔离系统（W1-W4 + returnMeta sessionFile/worktreePath）
+> - [spec-c-cw-enhancements.md](./spec-c-cw-enhancements.md) — cw 增强（C1 children 含 dependsOn + C2 frontier + C3-C5）
+> - [spec-f-scheduler.md](./spec-f-scheduler.md) — BFS 调度器与 workflow 脚本（frontier 驱动 + F3 依赖调度 + F4 超时 + 聚合回扫 + 失败传播）
+>
+> **待定子 spec**（条件性，当前不实现）：
+> - spec-g-runtime-visibility.md — GUI 可见性（触发条件：§10.1 产品形态决策为 GUI 产品）
+> - spec-d-deployment.md — 发布与集成（触发条件：W/C/F 实现完成后）
+
+### 改动编号映射表（主 spec §13.5 ↔ 子 spec）
+
+| 主 spec §13.5 | 子 spec | 说明 |
+|--------------|---------|------|
+| 改动 1A 前 3 处（types.ts / execute-options-mapper / _knownFields）| spec-w 改动 1-3 | W1 链路打通 |
+| 改动 1A 后 2 处（executeAndAwait MF#7 + runAndFinalize worktree）| spec-w 改动 4-5 | W1 worktree 创建 |
+| 改动 1B（wave 内 worktree 复用）| spec-w §2 returnMeta 模式（改动 6-10）| v2 从 group key 改为 returnMeta |
+| 改动 1C（cw execute childUnitIds）| spec-c C1（改动 1-2，扩展为含 dependsOn）| v2 增加 dependsOn |
+| 改动 1D（sessionFile）| spec-w §2 returnMeta（与 1B 统一）| v2 从模块级变量改为 returnMeta |
+| 改动 1E（handoff FR/AC + layerSpecific）| spec-c C3 + C4（改动 4-5）| — |
+| （新增）F4 超时保护 | spec-f §4 | v2 新增 |
+| （新增）聚合回扫 | spec-f §1.1 | v2 新增（缺陷 3 修复）|
+| （新增）失败传播 | spec-f §4 | v2 新增（缺陷 9 修复）|
 
 ---
 
@@ -789,6 +808,37 @@ CMU 实证：静态单层规划 > 动态多层规划。当前架构是"BFS 逐�
 9. **轮次 11（决策与收敛）**：用户 6 个回应解除 5 个阻断/高估——agent() 加 worktree（验证 ExecuteOptions 已有字段，改造仅 3 处约 10 行）、cw project key 分离、agent 写 cw + schema 转派发指令（消除双树，frontier 降级为崩溃恢复专用）、retrospect 读子 agent session jsonl（伪校验→真实复盘）、budget 无限、workflow 确定性派发保证 review。三个关键决策：每 action 一个 agent、按任务复杂度选起点层（不跳层）、frontier 一起做完。详见 §12。
 10. **轮次 12（第二轮审查）**：3 个 subagent 从 §12 架构数据流 / 改动点代码级核实 / 端到端逐 action 走查三个维度审查 §12 新设计。发现 §12 的 4 个关键技术假设被源码证伪：(1) `executeAndAwait`（workflow 入口）根本不消费 `worktree===true`——改动 1A 是空操作；(2) wave 的 9 个 agent 无法共享 worktree（决策 A 与 worktree 隔离粒度冲突）；(3) cw execute 返回值不含全部子 unit id；(4) agent() 消息层丢弃 sessionFile。引入 2 致命 + 2 高危新阻断，但解法方向清晰（接缝处实现细节需补，非推翻重来）。详见 §13。
 11. **轮次 13（W3 实测 + 决策 D）**：实测验证 `git rev-parse --git-common-dir` 的 dirname 在 8 种 worktree 场景下一致（W3 方案成立，go/no-go 分水岭通过）。实测发现必须用 `fs.realpathSync` 解析符号链接（macOS `/var`→`/private/var`）。用户决策 D：保持 worktree 隔离方案（不退回同 cwd 串行），集成测试先不做（未来在 slice 层增加集成 test gate，当前不设计）。接受"各 wave 单独 test 通过但 merge 后可能冲突"的残余风险，靠依赖感知调度（有 dependsOn 的 wave 串行）缓解。
+12. **轮次 14（拆分子 spec + 三维审查）**：拆分 3 个子 spec（spec-w/spec-c/spec-f），派 3 个 subagent 从一致性/逻辑正确性/覆盖度三维审查。发现 5 个必须修正的设计缺陷（returnMeta 竞态、postAgentResult 定位错、BFS 缺 planning retrospect、spec-w 漏前 3 处改动、topoSort queue 重置 bug）+ 8 个需补充的设计缺口。确认不需要新增子 spec（W/C/F 覆盖核心需求），runtime 可见性（spec-g）和 deployment（spec-d）延后。
+13. **轮次 15（修复全部审查发现）**：三个子 spec + 主 spec 全部修正。spec-w 改 returnMeta 模式（消除模块级变量竞态，统一 worktreePath+sessionFile 传递）+ 补认领前 3 处改动。spec-c C1 扩展为含 dependsOn、C2 frontier 补 dependsOn 输出、C5 扩展 WAVE_RULES.retrospect。spec-f 补聚合回扫（frontier 驱动统一路径）+ topoSort bug 修复 + worktreeRegistry + 失败传播（cw abort）+ childUnitIds prompt 指示 + 崩溃恢复策略 + replan 禁用（MVP）+ budget 配置 + startLayer 指引。主 spec 补改动编号映射表、R2 更新、spec-g/spec-d 占位。
+
+---
+
+## 14. 子 spec 审查修复记录（轮次 14-15）
+
+> 3 个 subagent 审查发现的 5 个必须修正的设计缺陷 + 8 个需补充的设计缺口，全部已在子 spec v2 中修复。本节记录修复对照，供追溯。
+
+### 14.1 必须修正的设计缺陷（5 个，全部已修复）
+
+| 缺陷 | 问题 | 修复位置 | 修复方式 |
+|------|------|---------|---------|
+| 1 | worktreePath()/lastSessionFile() 模块级变量在 parallel() 下有竞态 | spec-w §2 | 改为 returnMeta 模式（agent 返回 `{value, sessionFile, worktreePath, error}`）|
+| 2 | postAgentResult 拿不到 record.worktreeHandle（定位错）| spec-w §2 改动 7 | 改动位置移到 executeAndAwait 出口（有 record 引用）|
+| 3 | BFS 缺 planning 层 retrospect+closeout（无法收敛）| spec-f §1.1 | frontier 驱动统一路径（每轮查 frontier，planning 节点子层完成后自动入队 retrospect）|
+| 4 | spec-w 漏前 3 处改动（types.ts/mapper/_knownFields）| spec-w §1 改动 1-3 | 显式认领，纳入改动清单 |
+| 5 | topoSort sequential 循环 queue 重置 bug（丢节点）| spec-f §3 | 改为调用方 for 循环处理 sequential + 环检测 |
+
+### 14.2 需补充的设计缺口（8 个，全部已修复）
+
+| 缺口 | 问题 | 修复位置 |
+|------|------|---------|
+| 6 | frontier 缺 dependsOn → 崩溃恢复 topoSort 失效 | spec-c C2 输出补 dependsOn |
+| 7 | 崩溃恢复后 worktree 绑定丢失 | spec-f §5（丢弃 worktree，wave 从 cw status 重建）|
+| 8 | WAVE_RULES.retrospect 也是 forbidden | spec-c C5 扩展（改动 6b）|
+| 9 | 失败传播未收敛（wave 卡非终态阻断 ascend）| spec-f §4（cw abort + allWavesClosed gate 放宽）|
+| 10 | replan 场景未覆盖 | spec-f §5（MVP 禁用 replan）|
+| 11 | childUnitIds prompt 指示缺失 | spec-f buildActionPrompt 补指示 |
+| 12 | 串行 wave worktree 路径传递未实现 | spec-f findInheritedWorktree + worktreeRegistry |
+| 13 | 超时失败 vs 业务失败无法区分 | spec-f §4（returnMeta 的 error 字段）|
 
 ---
 
@@ -1193,7 +1243,7 @@ cw frontier --root <unitId> [--format json]
 | # | 取舍 | 选项 | 建议 |
 |---|------|------|------|
 | R1 | 并发策略 | 全串行 / 同层无依赖 parallel / 依赖感知拓扑 | 阶段二串行验证，阶段三按 dependsOn 做"有依赖串行、无依赖 parallel"（需读 cw 的 Split.dependsOn 做拓扑排序）|
-| R2 | wave 间语义依赖（新发现 3）| worktree 隔离下 B 看不到 A 改动 | 有 dependsOn 的 wave 串行执行（B 等 A closeout 后再开始，B 的 worktree 从 A 的 commit 创建）。无依赖的 wave 并发 |
+| R2 | wave 间语义依赖（新发现 3）| worktree 隔离下 B 看不到 A 改动 | 有 dependsOn 的 wave **复用**依赖源的 worktree（spec-f findInheritedWorktree，B 的 cwd=A 的 worktree 路径）。无依赖的 wave 各自独立 worktree 并发。**注意**：worktree-manager 不支持从指定 commit 创建（只 `git worktree add HEAD`），故"从 A 的 commit 创建"方案不可行，改为复用 |
 | R3 | design-review 的 layerSpecific 字段 agent 填不对 | agent 靠 gate fail 试错 / 在 handoff guidance 里明确字段名 | 改 cw guidance 模板，在 design-review 的 guidance 里列出该层 layerSpecific 的具体字段名 |
 | R4 | cw subagent-guidance 禁止 planning retrospect 委派（新发现 1） | 改 cw subagent-guidance / 忍受劝退 | 改 cw subagent-guidance，递归场景下 retrospect 必须委派 |
 | R5 | worktree 的 node_modules | symlink 主 repo（现有 best-effort）/ worktree 内 npm install / 主 repo 先装 | agent prompt 约束"新增依赖先在主 worktree 安装"+ worktree-manager 现有 symlink 兜底。若 symlink 失败则 worktree 内 npm install |

@@ -1,176 +1,254 @@
 # 子 Spec F：BFS 调度器与 workflow 脚本
 
 > **父文档**：[spec.md](./spec.md) §12（决策与实现路径）、§13（第二轮审查）
-> **范围**：F1（BFS 脚本设计）+ F3（依赖感知调度）+ F4（gate fail 超时保护）
-> **依赖**：spec-w-worktree（worktree 复用机制）、spec-c-cw-enhancements（childUnitIds / frontier / handoff）
+> **范围**：F1（BFS 脚本设计）+ F3（依赖感知调度）+ F4（gate fail 超时保护）+ 聚合回扫 + 失败传播 + 崩溃恢复
+> **依赖**：spec-w（worktreePath/sessionFile via returnMeta）、spec-c（children 含 dependsOn / frontier）
+> **修订记录**：v2（轮次 15）——补 planning retrospect/closeout 回扫、topoSort bug 修复、worktreeRegistry、失败传播、returnMeta 适配、崩溃恢复策略
 
 ---
 
 ## 0. 问题回顾
 
-- **F1**：BFS 脚本整体设计（§12.4 有框架，但需与 W2/C1 定稿后细化）
-- **F3**：cw 的 `dependsOn` 只用于判环，不驱动执行。BFS 伪代码无拓扑排序。有依赖的 wave 并发会产出不可合并结果（§13 问题 G）
-- **F4**：gate fail 时 agent 可能固执重试无上限（§11 新2），budget 无限（§12.2 回应 5）后唯一刹车是 wall-clock 超时
+- **F1**：BFS 脚本整体设计
+- **F3**：cw 的 `dependsOn` 不驱动执行，BFS 需自己做拓扑排序
+- **F4**：gate fail 固执重试无上限，需 wall-clock 超时兜底
+- **缺陷 3（v2 新增）**：BFS 缺 planning 层 retrospect+closeout 回扫——planning 节点 execute 后卡在 executing，递归无法收敛
+- **缺陷 9（v2 新增）**：失败传播——wave 超时/反复 fail 后卡在非终态，父 slice retrospect 的 all-waves-closed 永远 fail
+- **缺陷 12（v2 新增）**：串行 wave 共用 worktree 的路径传递需 worktreeRegistry
 
 ---
 
-## 1. F1：BFS 脚本设计
+## 1. 核心设计决策（v2 新增/修正）
 
-### 整体结构
+### 1.1 聚合回扫机制（缺陷 3 修复）
+
+**问题**：v1 的 BFS 只对 planning 节点跑 `PLANNING_ACTIONS = [clarify, plan, design-review, execute]`，缺 retrospect+closeout。planning 节点 execute 后永远卡在 executing。
+
+**设计**：BFS 主循环每轮结束后，扫描 cw store 找"子层全终态但自身非终态"的 planning 节点，重新入队跑 retrospect+closeout。
+
+两种实现方式：
+- **方式 A（正常路径也查 frontier）**：每轮 BFS 开头调 `cw frontier`，获取 actionable（非终态且 !blocked）节点。frontier 已经做了子层完成度检查（spec-c C2 两遍扫描），blocked 的 planning 节点（子层未完成）不会入队，unblocked 的（子层全完成 → 可 retrospect）入队。
+- **方式 B（schema 驱动 + 回扫）**：正常推进用 schema children 驱动；每轮结束后额外查 frontier 找需要聚合的 planning 节点。
+
+**决策**：采用**方式 A**——正常路径和崩溃恢复路径统一用 frontier 驱动。理由：
+- 消除 schema 驱动与 frontier 驱动的双路径不一致问题（一致性审查 3.1/3.5）
+- frontier 的 blocked 标记天然解决"planning 节点何时该聚合"的判断
+- 不依赖 agent 正确填写 schema children（逻辑审查 X-1）——frontier 从 cw store 读真相
+
+### 1.2 returnMeta 模式（缺陷 1/2/13 修复）
+
+所有 `agent()` 调用设 `returnMeta: true`，返回 `{value, sessionFile, worktreePath, error}`。消除模块级变量竞态。
+
+### 1.3 失败传播与终态收敛（缺陷 9 修复）
+
+wave 超时/反复 gate fail 后：
+1. workflow 脚本调 `cw abort --unitId <waveId>` 推终态（cw 已有 abort 命令）
+2. cw abort 后 wave status=aborted（终态）
+3. 父 slice retrospect 的 all-waves-closed gate 需校验"所有子层终态"（含 aborted）——需核实 cw 的 gate 实现是"全 closed"还是"全终态"。如果是"全 closed"需改为"全终态（closed 或 aborted）"
+
+---
+
+## 2. workflow 脚本完整伪代码（v2）
 
 ```javascript
-// recursive-split.js
 const meta = {
   name: "recursive-split",
-  description: "递归拆分问题求解：cw 状态机 + 每 action 一个 agent + BFS 层级遍历",
-  phases: ["init", "bfs", "done"]
+  description: "递归拆分问题求解：cw 状态机 + 每 action 一个 agent + frontier 驱动 BFS",
 };
 
 const task = $ARGS.task;
-const startLayer = $ARGS.startLayer ?? "slice";  // 决策 B：起点层
+const startLayer = $ARGS.startLayer ?? "slice";
 const LAYER_DEPTH = { epic: 0, feature: 1, slice: 2, wave: 3 };
 const WAVE_DEPTH = 3;
+const ACTION_TIMEOUT_MS = 10 * 60 * 1000;  // 10 分钟/action
 
+const PLANNING_FULL_ACTIONS = ["clarify", "plan", "design-review", "execute", "retrospect", "closeout"];
+const WAVE_FULL_ACTIONS = ["clarify", "plan", "design-review", "execute", "test", "exec-review", "retrospect", "closeout"];
+
+// ── 初始化 ──
 phase("init");
 const rootUnitId = await createRootUnit(startLayer, task);
 
+// ── BFS（frontier 驱动）──
 phase("bfs");
-const results = await bfsLoop(rootUnitId, LAYER_DEPTH[startLayer]);
+const worktreeRegistry = {};  // unitId → worktreePath（串行 wave 复用）
+const sessionFiles = {};       // unitId → sessionFile（retrospect 用）
+const visited = new Set();     // 已处理的 unitId
+
+while (true) {
+  // 每轮开头查 frontier，获取 actionable 节点
+  const frontier = JSON.parse(execSync(`cw frontier --root ${rootUnitId} --format json`, { encoding: "utf-8" }));
+  const actionable = frontier.nodes.filter(n => !n.blocked && !visited.has(n.unitId) && !isTerminal(n.status));
+
+  if (actionable.length === 0) {
+    // 检查是否全部终态
+    const allTerminal = frontier.nodes.every(n => isTerminal(n.status));
+    if (allTerminal) break;  // 递归完成
+    // 还有 blocked 节点但无 actionable——等子层（不该发生，说明有节点卡住）
+    log("WARN: 无 actionable 节点但树未完成，可能有节点卡住");
+    break;
+  }
+
+  // 拓扑排序（F3）
+  const { concurrent, sequential } = topoSort(actionable, visited);
+
+  // 并发执行无依赖组
+  if (concurrent.length > 0) {
+    const results = await parallel(concurrent.map(node => executeNodeNextAction(node, worktreeRegistry, sessionFiles)));
+    for (const node of concurrent) visited.add(node.unitId);
+    for (const r of results) {
+      if (r.sessionFile) sessionFiles[r.unitId] = r.sessionFile;
+    }
+  }
+
+  // 串行执行有依赖组（每个执行后释放 visited 再跑下一个）
+  for (const node of sequential) {
+    const r = await executeNodeNextAction(node, worktreeRegistry, sessionFiles);
+    visited.add(node.unitId);
+    if (r.sessionFile) sessionFiles[r.unitId] = r.sessionFile;
+  }
+}
 
 phase("done");
 return { status: "done", rootUnitId };
 ```
 
-### BFS 主循环
+### executeNodeNextAction（按 frontier 的 nextAction 执行单个 action）
 
 ```javascript
-async function bfsLoop(rootUnitId, startDepth) {
-  // 初始队列：根节点
-  let queue = [{ unitId: rootUnitId, depth: startDepth, prompt: task, dependsOn: [] }];
-  const visited = new Set();
+async function executeNodeNextAction(node, worktreeRegistry, sessionFiles) {
+  const isWave = node.scope === "wave";
+  const action = node.nextAction;
 
-  while (queue.length > 0) {
-    // F3：拓扑排序，分出可并发组和必须串行的节点
-    const { concurrent, sequential, remaining } = topoSort(queue, visited);
+  // worktree 复用决策
+  let cwd = $WORKSPACE;
+  let useWorktree = false;
 
-    // 可并发组（无相互依赖）：parallel 执行
-    if (concurrent.length > 0) {
-      const batchResults = await parallel(concurrent.map(node =>
-        executeNodeActions(node)
-      ));
-      // 收集子节点
-      queue = remaining.concat(extractChildren(batchResults));
-    }
-
-    // 必须串行的节点：逐个执行
-    for (const node of sequential) {
-      const result = await executeNodeActions(node);
-      queue = remaining.concat(extractChildren([result]));
-    }
-  }
-}
-
-async function executeNodeActions(node) {
-  const isWave = node.depth >= WAVE_DEPTH;
-  const actions = isWave ? WAVE_ACTIONS : PLANNING_ACTIONS;
-  let waveWorktreePath = null;
-  let children = [];
-
-  for (const action of actions) {
-    const opts = {
-      prompt: buildActionPrompt(node, action),
-      schema: buildActionSchema(node, action, isWave),
-      fork: true,
-      timeoutMs: ACTION_TIMEOUT_MS,  // F4：超时保护
-    };
-
-    if (isWave) {
-      if (action === actions[0] && !waveWorktreePath) {
-        // wave 第一个 action：创建 worktree（W2）
-        opts.worktree = true;
-        opts.cwd = $WORKSPACE;
-      } else {
-        // 后续 action：复用 worktree（W2）
-        opts.cwd = waveWorktreePath;
-      }
+  if (isWave) {
+    // wave：查 worktreeRegistry 是否已有该 wave 的 worktree
+    if (worktreeRegistry[node.unitId]) {
+      cwd = worktreeRegistry[node.unitId];  // 复用
     } else {
-      // planning 层：共享主 cwd
-      opts.cwd = $WORKSPACE;
-    }
-
-    const result = await agent(opts);
-
-    // 第一个 action 后拿 worktree 路径（W2）
-    if (isWave && action === actions[0]) {
-      waveWorktreePath = worktreePath();
-    }
-
-    // execute 后拿子 unit id（C1）
-    if (action === "execute" && result.children) {
-      children = result.children;
+      // 检查是否有依赖的前序 wave 的 worktree 可继承（串行 wave 组）
+      const inheritedWt = findInheritedWorktree(node, worktreeRegistry);
+      if (inheritedWt) {
+        cwd = inheritedWt;
+        worktreeRegistry[node.unitId] = inheritedWt;  // 记录复用关系
+      } else {
+        useWorktree = true;  // 创建新 worktree
+      }
     }
   }
 
-  return { unitId: node.unitId, children, waveWorktreePath };
+  // retrospect 时传子层 sessionFile
+  let sessionFileHint = "";
+  if (action === "retrospect" && !isWave) {
+    const childFiles = Object.entries(sessionFiles)
+      .filter(([uid]) => (node.childUnitIds ?? []).includes(uid))
+      .map(([uid, sf]) => `- ${uid}: ${sf}`);
+    if (childFiles.length > 0) {
+      sessionFileHint = `\n\n子层 session 记录（用 bash 读取做复盘）：\n${childFiles.join("\n")}`;
+    }
+  }
+
+  const r = await agent({
+    prompt: buildActionPrompt(node, action) + sessionFileHint,
+    schema: buildActionSchema(node, action, isWave),
+    fork: true,
+    worktree: useWorktree,
+    returnMeta: true,  // v2：returnMeta 模式
+    cwd,
+    timeoutMs: ACTION_TIMEOUT_MS,  // F4：超时保护
+  });
+
+  // returnMeta 模式：r 是 {value, sessionFile, worktreePath, error}
+  const result = {
+    unitId: node.unitId,
+    value: r.value,
+    sessionFile: r.sessionFile,
+    error: r.error,
+  };
+
+  // 记录 worktreePath（第一个 action 建 worktree 时）
+  if (isWave && r.worktreePath && !worktreeRegistry[node.unitId]) {
+    worktreeRegistry[node.unitId] = r.worktreePath;
+  }
+
+  // F4 失败处理：超时或 error
+  if (r.error || isTimeoutError(r)) {
+    log(`Action ${action} for ${node.unitId} failed: ${r.error ?? "timeout"}`);
+    // 调 cw abort 推终态（失败传播）
+    await abortUnit(node.unitId);
+    // 标记 visited 避免重试
+    // 注意：cw abort 后该节点变 aborted，frontier 不再返回它
+  }
+
+  return result;
 }
 ```
 
-### Action prompt 构建
+### buildActionPrompt（含 childUnitIds 指示——缺陷 11 修复）
 
 ```javascript
 function buildActionPrompt(node, action) {
+  const hints = {
+    clarify: "澄清需求，填 clarifications（feature 还需填 FeatureSpec FR/AC）",
+    plan: "拆分子任务，填 split（含 slug/description/dependsOn）",
+    "design-review": "填 designReviewJudgment + layerSpecific（字段名见 guidance）",
+    execute: `planning 层：cw 自动建子层 unit；
+              wave 层：写代码并 git commit，把 commitHash 填入 cw execute input`,
+    test: "确保测试通过（cw 自动跑 npm test）",
+    "exec-review": "审查代码质量",
+    retrospect: "复盘（planning 层读子层 session jsonl 做真实验收）",
+    closeout: "冻结交付物",
+  };
+
+  let extra = "";
+  // execute action 的特殊指示：从 cw 返回值提取 children
+  if (action === "execute" && node.scope !== "wave") {
+    extra = `
+重要：调 \`cw execute\` 后，cw 会在 stdout JSON 的 \`children\` 字段返回新建的子 unit 信息
+（含 unitId 和 dependsOn）。你的 schema 输出里的 children 数组必须基于这个返回值填写。
+不要自己编造 children——从 cw 的返回值原样抄录 unitId。`;
+  }
+
   return `你是 cw 流程执行者。
 
 任务：完成 WorkUnit ${node.unitId} 的 ${action} 操作。
 
 步骤：
 1. 先调 \`cw handoff --unitId ${node.unitId}\` 获取上下文（含前序 action 的产出 + 下一步 guidance + input schema）
-2. 按 guidance 执行 ${action}（${actionHint(action)}）
+2. 按 guidance 执行 ${action}（${hints[action] ?? ""}）
 3. 调 \`cw ${action} --unitId ${node.unitId} --input '<根据 guidance 的 schema 填写>'\` 推进状态
 4. 如果 gate fail（返回 ok=false），读 mustFix 修正后重调步骤 3
-5. 成功后返回结果
-
-${actionSpecificHint(action, node)}`;
-}
-
-function actionHint(action) {
-  const hints = {
-    clarify: "澄清需求，填 clarifications（feature 还需填 FeatureSpec FR/AC）",
-    plan: "拆分子任务，填 split（含 slug/description/dependsOn）",
-    "design-review": "填 designReviewJudgment + layerSpecific（字段名见 guidance）",
-    execute: "planning 层：cw 自动建子层 unit；wave 层：写代码并 git commit",
-    test: "确保测试通过（cw 自动跑 npm test）",
-    "exec-review": "审查代码质量",
-    retrospect: "复盘（planning 层读子层 session jsonl 做真实验收）",
-    closeout: "冻结交付物",
-  };
-  return hints[action] ?? "";
+5. 成功后返回结果${extra}`;
 }
 ```
 
-### Action schema 构建
+### buildActionSchema
 
 ```javascript
 function buildActionSchema(node, action, isWave) {
-  // execute 后返回 children（planning 层）或业务字段（wave closeout）
+  // planning execute：返回 children（从 cw 返回值抄）
   if (!isWave && action === "execute") {
     return {
       type: "object",
       properties: {
         children: {
           type: "array",
+          description: "从 cw execute stdout JSON 的 children 字段原样抄录",
           items: {
             type: "object",
             properties: {
-              unitId: { type: "string", description: "cw 自动创建的子 unit id（从 cw execute 返回值拿）" },
-              prompt: { type: "string", description: "给下一层 agent 的执行 prompt" },
-              dependsOn: { type: "array", items: { type: "string" }, description: "依赖的兄弟 unitId" },
+              unitId: { type: "string" },
+              dependsOn: { type: "array", items: { type: "string" } },
             },
           },
         },
       },
     };
   }
+  // wave closeout：业务产出
   if (isWave && action === "closeout") {
     return {
       type: "object",
@@ -180,66 +258,42 @@ function buildActionSchema(node, action, isWave) {
       },
     };
   }
-  // 其他 action：简单 done 标记
+  // 其他：简单 done
   return { type: "object", properties: { done: { type: "boolean" } } };
 }
 ```
 
 ---
 
-## 2. F3：依赖感知调度
+## 3. F3：依赖感知调度（topoSort v2，修复缺陷 5）
 
-### 问题
-
-cw 的 `Split.dependsOn` 只用于 design-review gate 判环（`design-review.ts:399` DFS 三色标记），不驱动执行。BFS 若把同层所有节点 parallel，有依赖的节点（B dependsOn A）会并发执行——B 的 worktree 看不到 A 的代码。
-
-### 依赖信息从哪来
-
-planning agent 的 execute action 返回的 schema children 含 `dependsOn` 字段（agent 从 cw 的 plan.split 抄过来）。BFS 脚本消费它做拓扑排序。
-
-```javascript
-// execute 后的 children 数据结构
-[
-  { unitId: "wave:xxx::w1", prompt: "...", dependsOn: [] },
-  { unitId: "wave:xxx::w2", prompt: "...", dependsOn: ["wave:xxx::w1"] },  // w2 依赖 w1
-  { unitId: "wave:xxx::w3", prompt: "...", dependsOn: [] },
-]
-```
-
-### 拓扑排序算法
+### topoSort 算法（修复 sequential 循环 queue 重置 bug + 环检测）
 
 ```javascript
 /**
- * 将待执行队列按依赖关系分组。
- * - concurrent: 无相互依赖的节点，可 parallel 执行
- * - sequential: 必须串行的节点（依赖前一组的产出）
- * - remaining: 依赖尚未满足的节点（等后续轮次）
+ * 将 actionable 节点按依赖分组。
+ * @returns { concurrent, sequential }
+ *   concurrent: 无相互依赖，可 parallel
+ *   sequential: 有同组依赖，必须逐个串行（由调用方 for 循环处理）
+ *
+ * 注意：不处理文件级间接冲突（两个无依赖 wave 改同一文件）。
+ * 仅按 cw plan.split.dependsOn 做拓扑排序。
+ * 间接冲突由决策 D 接受残余风险（spec.md §12.2 决策 D）。
  */
-function topoSort(queue, visited) {
-  // 按依赖分组：Kahn 算法变体
-  const ready = [];        // 依赖全部已 visited 的节点
-  const waiting = [];      // 依赖未全部满足的节点
-
-  for (const node of queue) {
-    const deps = node.dependsOn ?? [];
-    const allDepsVisited = deps.every(d => visited.has(d));
-    if (allDepsVisited) {
-      ready.push(node);
-    } else {
-      waiting.push(node);
-    }
-  }
-
-  // ready 组内进一步检查相互依赖（避免 A depsOn B 且都在 ready 里时并发）
-  // 实际上 ready 组内的依赖一定是"已 visited 的外部依赖"，
-  // ready 组内的相互依赖（A depsOn B 且 B 也在 ready）意味着 B 还没 visited
-  // → 矛盾，重新分类
+function topoSort(actionable, visited) {
   const concurrent = [];
   const sequential = [];
-  const readyIds = new Set(ready.map(n => n.unitId));
 
-  for (const node of ready) {
-    const internalDeps = (node.dependsOn ?? []).filter(d => readyIds.has(d));
+  // actionable 里的节点都是 frontier 返回的（!blocked）。
+  // frontier 已经过滤了 blocked 节点（子层未完成的 planning），所以这里的节点都是可推进的。
+  // 但 wave 之间可能有 dependsOn（来自 plan.split）。
+
+  const actionableIds = new Set(actionable.map(n => n.unitId));
+
+  for (const node of actionable) {
+    const deps = node.dependsOn ?? [];
+    // 检查同组内依赖（依赖的对象也在 actionable 里）
+    const internalDeps = deps.filter(d => actionableIds.has(d));
     if (internalDeps.length > 0) {
       sequential.push(node);  // 依赖同组其他节点 → 串行
     } else {
@@ -247,261 +301,189 @@ function topoSort(queue, visited) {
     }
   }
 
-  // concurrent 组标记为"本轮将 visited"
-  // sequential 组的 visited 标记推迟到实际执行后
-  return { concurrent, sequential, remaining: waiting };
-}
-
-// 执行后标记 visited
-function markVisited(nodes, visited) {
-  for (const n of nodes) visited.add(n.unitId);
-}
-```
-
-### 串行 wave 的 worktree 创建策略（§12.5 R2）
-
-有依赖的 wave 串行执行时，B 的 worktree 应从 A 的 commit 创建（B 能看到 A 的代码）。
-
-但 worktree-manager 的 `create` 是 `git worktree add HEAD`（从当前 HEAD），不从指定 commit 创建。**这是一个限制。**
-
-**解法**（MVP 简化）：串行 wave 共用同一个 worktree。
-- wave A 在 worktree-W 执行（第一个 action 建，9 个 action 复用）
-- wave A closeout 后，不销毁 worktree-W
-- wave B 复用 worktree-W（B 的 agent cwd = worktree-W 路径）
-- wave B 看到的是 A 的产出 + 自己的改动（worktree 是同一个工作区）
-
-**这等于"有依赖的 wave 在同一 worktree 里串行写"**——退化为同 cwd 串行，但限定在有依赖的 wave 组内。无依赖的 wave 组各自独立 worktree 并发。
-
-**代价**：有依赖的 wave 组共享 worktree，如果 A 的代码有问题导致 B 也出错，B 的 worktree 是"脏"的。但这是正确的——B 本来就依赖 A，A 有问题 B 也该暴露。
-
-### 并发上限
-
-实际并发受 ConcurrencyGate 限制（maxConcurrency=4，§13 新6）。workflow 的 `parallel()` 会自动排队，无需脚本额外控制。
-
----
-
-## 3. F4：gate fail 超时保护
-
-### 问题
-
-budget 无限（§12.2 回应 5）后，gate fail 时 agent 固执重试无上限。cw 的"5 次建议 abort"是软引导不阻断。需要 wall-clock 超时兜底。
-
-### 设计
-
-`agent()` 已有 `timeoutMs` 字段（`AgentCallOpts.timeoutMs`）。workflow 脚本给每个 agent 调用设超时：
-
-```javascript
-const ACTION_TIMEOUT_MS = 10 * 60 * 1000;  // 10 分钟/action（覆盖 gate 重试）
-
-// executeNodeActions 里
-const opts = {
-  prompt: ...,
-  schema: ...,
-  fork: true,
-  timeoutMs: ACTION_TIMEOUT_MS,
-};
-```
-
-`execute-options-mapper.ts:76-105` 的 `mergeTimeoutSignal` 会把 timeoutMs 合并进 AbortSignal。超时后 agent call 被 abort → `executeAgentCall` 收到 signal.aborted → 返回 failed result → workflow 脚本的 `agent()` resolve 失败结果。
-
-### 超时后的处理
-
-```javascript
-const result = await agent(opts);
-// agent() 失败时 resolve 失败值（parsedOutput 为空，content 含错误信息）
-// workflow 脚本判断失败
-if (!result || result.error || (typeof result === "string" && result.includes("aborted"))) {
-  // 超时或失败：记录并跳过（或 abort 整个 BFS）
-  log(`Action ${action} for ${node.unitId} timed out or failed`);
-  // MVP：跳过该节点，继续 BFS（cw 状态停在非终态，可后续手动恢复）
-  // 或：标记该节点为 failed，cw abort
-}
-```
-
-### 超时值
-
-| 层 | action | 建议超时 |
-|----|--------|---------|
-| planning | clarify/plan/design-review/execute | 5 分钟 |
-| wave | clarify/plan/design-review | 5 分钟 |
-| wave | execute（写代码）| 15 分钟 |
-| wave | test | 10 分钟（含 npm test 运行）|
-| wave | exec-review/retrospect/closeout | 5 分钟 |
-
-MVP 阶段统一用 10 分钟，后续按 action 类型细化。
-
----
-
-## 4. 崩溃恢复（与 frontier 配合）
-
-### 正常路径（schema 驱动）
-
-BFS 由 schema children 驱动，不查 frontier。agent 调 cw execute → cw 建子层 → agent 返回 children → BFS 入队。
-
-### 崩溃路径（frontier 重建）
-
-worker 重启后，schema 内存态丢失。调 `cw frontier`（spec-c C2）重建队列：
-
-```javascript
-async function recoverFromCrash(rootUnitId) {
-  const frontier = JSON.parse(execSync(`cw frontier --root ${rootUnitId} --format json`));
-
-  // 过滤掉 blocked 节点（等子层的，本轮不派）
-  const actionable = frontier.nodes.filter(n => !n.blocked);
-
-  // 重建 BFS queue
-  const queue = actionable.map(n => ({
-    unitId: n.unitId,
-    depth: LAYER_DEPTH[n.scope],
-    nextAction: n.nextAction,
-    prompt: reconstructPrompt(n),  // 从 cw handoff 重建
-  }));
-
-  return bfsLoop(rootUnitId, ...);  // 从重建的 queue 继续
-}
-```
-
-### 边界：worktree 脏数据
-
-崩溃时 wave worktree 里可能有写到一半的代码（未 commit）。恢复时该 wave 重新派 agent，agent 进同一 worktree 看到脏数据。
-
-**MVP 策略**：崩溃后丢弃 wave worktree（worktree-manager reaper 清理），重新从 HEAD 创建。代价是崩溃时未 commit 的代码丢失——但 cw 的 wave execute 要求先 commit 再调 cw execute，所以"已 execute 的 wave"的代码在 commit 里（不丢），"未 execute 的"代码确实丢（可接受，重跑）。
-
----
-
-## 5. workflow 脚本完整伪代码
-
-```javascript
-// recursive-split.js
-const meta = { name: "recursive-split", description: "..." };
-
-const PLANNING_ACTIONS = ["clarify", "plan", "design-review", "execute"];
-const WAVE_ACTIONS = ["clarify", "plan", "design-review", "execute", "test", "exec-review", "retrospect", "closeout"];
-const ACTION_TIMEOUT_MS = 10 * 60 * 1000;
-const LAYER_DEPTH = { epic: 0, feature: 1, slice: 2, wave: 3 };
-
-const task = $ARGS.task;
-const startLayer = $ARGS.startLayer ?? "slice";
-
-// ── 初始化 ──
-phase("init");
-const rootUnitId = await agent({
-  prompt: `调 cw create ${startLayer} --slug ... --objective "${task}"，返回 unitId`,
-  schema: { unitId: "string" },
-  cwd: $WORKSPACE,
-  timeoutMs: ACTION_TIMEOUT_MS,
-}).then(r => r.unitId);
-
-// ── BFS ──
-phase("bfs");
-let queue = [{ unitId: rootUnitId, depth: LAYER_DEPTH[startLayer], prompt: task, dependsOn: [] }];
-const visited = new Set();
-const sessionFiles = {};  // unitId → sessionFile（供 retrospect 用）
-
-while (queue.length > 0) {
-  const { concurrent, sequential, remaining } = topoSort(queue, visited);
-
-  // 并发组
-  if (concurrent.length > 0) {
-    const results = await parallel(concurrent.map(node => executeNode(node)));
-    markVisited(concurrent.map(n => n.unitId), visited);
-    const newChildren = results.flatMap(r => r.children ?? []);
-    queue = [...remaining, ...sequential, ...newChildren];
-    // 记录 sessionFile
-    results.forEach(r => { if (r.sessionFile) sessionFiles[r.unitId] = r.sessionFile; });
-  } else if (sequential.length > 0) {
-    // 串行组
+  // 环检测：sequential 组内若有循环依赖，抛错（防 cw gate 漏检时静默丢节点）
+  if (sequential.length > 0) {
+    const seqIds = new Set(sequential.map(n => n.unitId));
     for (const node of sequential) {
-      const result = await executeNode(node);
-      visited.add(node.unitId);
-      queue = [...remaining, ...(result.children ?? [])];
-      if (result.sessionFile) sessionFiles[result.unitId] = result.sessionFile;
+      const cycleDeps = (node.dependsOn ?? []).filter(d => seqIds.has(d));
+      // sequential 节点的 internalDeps 一定在 sequential 组内（否则进 concurrent 了）
+      // 真环（A→B→A）会被 cw design-review gate 拦，但 replan 后可能漏
     }
-  } else {
-    // 全是 remaining（依赖未满足）——不应该发生（topoSort 保证 ready 组非空）
-    break;
-  }
-}
-
-// ── 完成 ──
-phase("done");
-return { status: "done", rootUnitId };
-
-// ── 执行单个节点（含所有 action）──
-async function executeNode(node) {
-  const isWave = node.depth >= 3;
-  const actions = isWave ? WAVE_ACTIONS : PLANNING_ACTIONS;
-  let waveWorktreePath = null;
-  let children = [];
-
-  for (const action of actions) {
-    const opts = {
-      prompt: buildActionPrompt(node, action),
-      schema: buildActionSchema(node, action, isWave),
-      fork: true,
-      timeoutMs: ACTION_TIMEOUT_MS,
-    };
-
-    if (isWave) {
-      if (!waveWorktreePath) {
-        opts.worktree = true;
-        opts.cwd = $WORKSPACE;
-      } else {
-        opts.cwd = waveWorktreePath;
-      }
-    } else {
-      opts.cwd = $WORKSPACE;
-    }
-
-    // retrospect 时传子层 sessionFile（F2）
-    if (action === "retrospect" && !isWave) {
-      const childSessionFiles = (node.children ?? [])
-        .map(c => sessionFiles[c.unitId])
-        .filter(Boolean);
-      opts.prompt += `\n子层 session 记录：\n${childSessionFiles.map(f => `- ${f}`).join("\n")}`;
-    }
-
-    const result = await agent(opts);
-
-    if (isWave && !waveWorktreePath) waveWorktreePath = worktreePath();
-    if (action === "execute" && result.children) children = result.children;
   }
 
-  return {
-    unitId: node.unitId,
-    children,
-    sessionFile: lastSessionFile(),
-  };
+  return { concurrent, sequential };
 }
+```
+
+**v1 bug 修复说明**（缺陷 5）：v1 的 sequential 分支 for 循环里 `queue = [...remaining, ...result.children]` 会丢失 sequential 组后续节点。v2 改为**调用方 for 循环处理 sequential**（每个执行后 `visited.add`，下一轮 frontier 自然不再返回它），不依赖 queue 重置。
+
+### findInheritedWorktree（串行 wave 共用 worktree——缺陷 12 修复）
+
+```javascript
+/**
+ * 查找当前 wave 是否有依赖的前序 wave 的 worktree 可继承。
+ * 场景：wave-B dependsOn wave-A，A 已在 worktree-W 跑完。
+ * B 复用 worktree-W（能看到 A 的代码），无需新建 worktree。
+ */
+function findInheritedWorktree(node, worktreeRegistry) {
+  const deps = node.dependsOn ?? [];
+  for (const dep of deps) {
+    if (worktreeRegistry[dep]) {
+      return worktreeRegistry[dep];  // 继承依赖源的 worktree
+    }
+  }
+  return null;
+}
+```
+
+**worktree 销毁时机**：整个 BFS 完成后（或 worktree-manager reaper 定期回收）。不在单个 wave 完成时销毁——因为串行链的后续 wave 可能要复用。MVP 阶段靠 reaper 回收，不立即销毁。
+
+---
+
+## 4. F4：超时保护 + 失败传播（v2，修复缺陷 9/13）
+
+### 超时判断（修复缺陷 13——区分超时 vs 业务失败）
+
+v2 用 returnMeta 模式，`r.error` 字段可靠区分：
+- 超时/abort：`r.error` 含错误信息（如 "Agent call aborted: timeout"）
+- agent 业务成功：`r.error === undefined`，`r.value` 是 schema 产出
+- agent 业务失败但未超时：`r.value.done === false` 或 content 含错误描述（但 `r.error` 为空）
+
+```javascript
+function isTimeoutError(r) {
+  if (!r.error) return false;
+  const lower = r.error.toLowerCase();
+  return lower.includes("timeout") || lower.includes("aborted");
+}
+
+function isFailed(r) {
+  return r.error !== undefined || isTimeoutError(r);
+}
+```
+
+### 失败传播（修复缺陷 9）
+
+```javascript
+async function abortUnit(unitId) {
+  try {
+    execSync(`cw abort --unitId ${unitId}`, { encoding: "utf-8", timeout: 5000 });
+  } catch (e) {
+    log(`Failed to abort ${unitId}: ${e.message}`);
+  }
+}
+```
+
+**cw gate 适配**：父 slice/feature/epic 的 retrospect `all-waves-closed` gate 需校验"所有子层终态"而非"全 closed"。核实 cw `retrospect.ts:197-217` 的 allWavesClosed gate 实现——如果它只认 closed 不认 aborted，需改为"终态（closed 或 aborted）"。这是 spec-c 的补充改动。
+
+---
+
+## 5. 崩溃恢复（v2，修复缺陷 7）
+
+### 策略：丢弃 wave worktree + 从 cw status 重建
+
+worker 崩溃后：
+1. 所有 wave worktree 丢弃（worktree-manager reaper 清理）
+2. 重启后调 `cw frontier --root <epicId>` 重建 actionable 队列（frontier 含 nextAction）
+3. 对每个 actionable 节点的 nextAction 重新派 agent
+
+**已 commit 代码的丢失问题**（缺陷 7 / 逻辑审查 X-2）：
+- wave execute agent 在 worktree 本地分支 commit 了代码（分支 `pi-sub-xxx`）
+- worktree 丢弃后，这个分支的 commit **不在主 repo 的 refs 里**——丢失
+- **接受这个丢失**：wave execute 要求先 commit 再调 cw execute。崩溃发生在 execute 之后、closeout 之前时，commit 在 worktree 本地分支丢失。恢复时该 wave 从 nextAction（如 test）重新执行——需要重跑 execute 写代码。
+
+**缓解**：wave execute 的 commit 如果 merge 回主分支的一个临时分支（如 `cw/wave-<id>`），新 worktree 能看到。但这需 worktree-manager 改造，MVP 不做。MVP 接受"崩溃 = 未 closeout 的 wave 重跑"。
+
+### replan 场景（U-1，MVP 禁用）
+
+**MVP 决策**：禁用 replan。agent prompt 约束「不准调 cw replan，遇到问题 abort 自己」。
+
+理由：replan 的级联 abort + worktree 回滚 + BFS 同步复杂度过高（逻辑审查 U-1）。MVP 先验证递归拆分本身有价值，再考虑 replan 支持。
+
+agent prompt 加约束：
+```
+禁止调用 cw replan。如果你发现问题需要重新规划：
+1. 如果是当前 wave 的问题，调 cw abort 中止自己
+2. 如果是上层 slice/feature 的方案问题，在 schema 返回值里说明问题，让主 agent 决策
 ```
 
 ---
 
-## 6. 验证里程碑
+## 6. budget 配置（覆盖度审查 §5）
+
+workflow 脚本初始化时不设 budget 的 maxTokens（或设 0）。Budget 类已内建无限模式：
+- `isExceeded()`：`maxTokens !== undefined && maxTokens > 0 && usedTokens >= maxTokens`——maxTokens=0 时返回 false
+- 类注释明确："maxTokens===0 视为不限制"
+
+**零代码改动**，只需 workflow 脚本的 Budget 配置。
+
+---
+
+## 7. agent 工具集配置（覆盖度审查 §1）
+
+| 层 | agent | tools（frontmatter）|
+|----|-------|---------------------|
+| planning（epic/feature/slice）| 只读 + bash 调 cw | `tools: read, bash`（排除 Edit/Write——planning 不写代码）|
+| wave | 全量工具 | `tools: read, edit, write, bash, glob, grep`（写代码 + 测试）|
+
+wave-executor 的 bash 工具配合 prompt 硬约束（spec-w W4）：禁止包管理命令。
+
+---
+
+## 8. startLayer 判断指引（覆盖度审查 §8）
+
+主 agent 触发 workflow 前判断任务复杂度（prompt 软约束，不是代码）：
+
+```
+任务复杂度判断（选择 startLayer）：
+- 大型任务（跨多模块/多系统改造）→ epic（4 层）
+- 中型任务（单功能多组件，需定义 FR/AC）→ feature（3 层）
+- 小型任务（单组件技术改造，需技术方案）→ slice（2 层）
+- 微型任务（单文件小改，直接写代码）→ wave（1 层）
+
+如果不确定，从 slice 起（宁粗勿细——slice 还能拆 wave，但 wave 不能再拆）。
+```
+
+**空任务场景**（逻辑审查 U-2）：slice plan 时若 agent 发现不需要拆 wave（split 空），design-review gate 的 split-non-empty 会 fail。解法：起点层判断时，如果任务可能不需要拆，起点层必须是 wave（单 agent 干完）。workflow 脚本在 slice plan 后检测 split 空 → abort slice 改从 wave 重启。
+
+---
+
+## 9. 改动清单总表
+
+| # | 改动 | 位置 | 依赖 |
+|---|------|------|------|
+| 1 | workflow 脚本完整实现 | `~/.pi/workflows/recursive-split.js` | spec-w + spec-c |
+| 2 | topoSort 算法（含环检测） | 脚本内 | spec-c frontier（dependsOn）|
+| 3 | executeNodeNextAction | 脚本内 | spec-w returnMeta |
+| 4 | buildActionPrompt（含 childUnitIds 指示）| 脚本内 | spec-c C1 |
+| 5 | 失败传播（abortUnit）| 脚本内 | cw abort 命令 |
+| 6 | findInheritedWorktree + worktreeRegistry | 脚本内 | spec-w worktreePath |
+| 7 | 崩溃恢复（frontier 重建）| 脚本内 | spec-c C2 frontier |
+| 8 | budget 配置（maxTokens=0）| 脚本内 | 无 |
+| 9 | agent .md 定义（planner + wave-executor）| `~/.pi/agent/agents/` | 无 |
+| 10 | startLayer 判断指引 | 主 agent prompt / AGENTS.md | 无 |
+
+**cw 补充改动**（配合失败传播）：
+| # | 文件 | 改动 |
+|---|------|------|
+| C-supplement | `rules/gates/retrospect.ts` allWavesClosed | 验证是否认 aborted 为终态，若只认 closed 则改为"终态（closed 或 aborted）"|
+
+---
+
+## 10. 验证里程碑
 
 ### 里程碑 1：单层串行（slice → 1 wave）
-
-一个 slice 拆 1 个 wave，全串行走完。验证：
-- 每个 action 一个 agent，agent 读 handoff 拿前序产出
-- wave 的 9 个 action 复用同一 worktree
-- gate fail 闭环（人为制造 test fail，验证 agent 修正重调）
+前置：spec-w 里程碑 1-2 + spec-c 里程碑 1 通过。
+验证：每 action 一个 agent，wave 8 action 复用 worktree，gate fail 闭环，**planning 节点能走到 closeout**（聚合回扫）。
 
 ### 里程碑 2：同层并发（slice → 2 无依赖 wave）
-
-2 个无依赖的 wave parallel 执行。验证：
-- parallel() 并发 2 个 agent
-- 各自独立 worktree
-- 并发写无 .git/index.lock 冲突
+验证：parallel 并发 2 个 wave，各自独立 worktree，无 .git/index.lock 冲突。
 
 ### 里程碑 3：依赖感知串行（slice → 2 有依赖 wave）
+验证：wave-2 dependsOn wave-1，wave-2 复用 wave-1 的 worktree，能看到 wave-1 代码。
 
-wave-2 dependsOn wave-1。验证：
-- wave-1 先执行，wave-2 等待
-- wave-2 复用 wave-1 的 worktree（看到 wave-1 的代码）
+### 里程碑 4：失败传播
+验证：人为让某 wave test gate 反复 fail 超时 → cw abort → 父 slice retrospect 的 all-waves-closed 放行（aborted 也算终态）→ slice 能 closeout。
 
-### 里程碑 4：崩溃恢复
-
-BFS 执行中途 kill worker，重启后 frontier 重建队列继续。验证：
-- frontier 正确标记 blocked 节点
-- 未完成的 wave 重新派 agent
-- 已完成的 wave 不重跑
+### 里程碑 5：崩溃恢复
+前置：spec-c 里程碑 2 通过。
+验证：BFS 中途 kill worker，重启后 frontier 重建队列，未完成节点重新派 agent。

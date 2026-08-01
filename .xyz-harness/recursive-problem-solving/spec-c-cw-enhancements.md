@@ -30,24 +30,37 @@
 ```typescript
 export interface ActionResult {
   // ...现有字段...
-  /** execute 后新建的子层 unit id 列表（仅 execute action 返回，其他 action undefined） */
-  childUnitIds?: string[];
+  /** execute 后新建的子层 unit 信息（仅 execute action 返回，其他 action undefined）。
+   * 含 unitId + dependsOn，供 workflow BFS 拓扑排序消费。 */
+  children?: Array<{ unitId: string; dependsOn: string[] }>;
 }
 ```
 
-**改动 2**：各 execute handler 填入 childUnitIds
+**改动 2**：各 execute handler 填入 children（含 dependsOn）
 
-`epic/execute.ts`、`feature/execute.ts`、`slice/execute.ts` 的 return 语句：
+`epic/execute.ts`、`feature/execute.ts`、`slice/execute.ts` 的 return 语句。从 `unit.plan.split`（含 `dependsOn`）与 `unit.executeResult.childUnitIds` 关联：
 
 ```typescript
+// 关联 plan.split 的 dependsOn 到 childUnitIds
+const children = unit.plan.split.map((s, i) => ({
+  unitId: unit.executeResult.childUnitIds[i],
+  dependsOn: s.dependsOn?.map(d => {
+    // split.dependsOn 存的是 slug，需映射到 childUnitId
+    const depIdx = unit.plan.split.findIndex(ds => ds.slug === d);
+    return unit.executeResult.childUnitIds[depIdx];
+  }).filter(Boolean) ?? [],
+}));
+
 return {
   unitId: unit.id,
   status: unit.status,
   ok: true,
-  childUnitIds: [...unit.executeResult.childUnitIds],  // 新增
+  children,  // 含 unitId + dependsOn
   nextAction: buildXxxNextAction(unit, "execute", { crossLayer }),
 };
 ```
+
+**为什么 children 含 dependsOn**（逻辑审查 X-1/一致性 3.4）：workflow BFS 的 topoSort 依赖 `node.dependsOn` 做拓扑排序（spec-f F3）。如果 execute 返回值只给 childUnitIds 不给 dependsOn，agent 要从 handoff 读 plan.split 获取依赖——但 handoff 的 split 渲染不含 dependsOn 字段（render.ts 只渲染 slug+description）。让 cw execute 直接在 ActionResult 里返回完整的 `{unitId, dependsOn}` 结构，agent 不需要解析——直接从 stdout JSON 拿到。
 
 ### 效果
 
@@ -78,27 +91,39 @@ cw frontier --root <unitId> [--format json]
   "rootUnitId": "epic:xxx",
   "nodes": [
     {
-      "unitId": "feature:xxx::a",
-      "scope": "feature",
+      "unitId": "wave:xxx::w1",
+      "scope": "wave",
       "status": "executing",
-      "nextAction": "retrospect",
+      "nextAction": "test",
       "blocked": false,
-      "parentUnitId": "epic:xxx",
-      "childUnitIds": ["slice:xxx::a::s1", "slice:xxx::a::s2"]
+      "dependsOn": [],
+      "parentUnitId": "slice:xxx::s1"
     },
     {
-      "unitId": "slice:xxx::a::s1",
+      "unitId": "wave:xxx::w2",
+      "scope": "wave",
+      "status": "created",
+      "nextAction": "clarify",
+      "blocked": false,
+      "dependsOn": ["wave:xxx::w1"],
+      "parentUnitId": "slice:xxx::s1"
+    },
+    {
+      "unitId": "slice:xxx::s1",
       "scope": "slice",
       "status": "executing",
       "nextAction": "retrospect",
       "blocked": true,
-      "blockedReason": "子层有未终态节点: wave:xxx::a::s1::w1",
+      "blockedReason": "子层有未终态节点: wave:xxx::w1, wave:xxx::w2",
+      "dependsOn": [],
       "parentUnitId": "feature:xxx::a",
-      "childUnitIds": ["wave:xxx::a::s1::w1"]
+      "childUnitIds": ["wave:xxx::w1", "wave:xxx::w2"]
     }
   ]
 }
 ```
+
+**`dependsOn` 字段**（一致性审查 3.5）：从 cw 的 `plan.split.dependsOn`（slug 列表）映射到 childUnitId 列表。崩溃恢复时 workflow BFS 的 topoSort 依赖此字段做拓扑排序——否则重建的 queue 全是无依赖节点，有依赖的 wave 并发执行导致产出冲突。映射逻辑与 C1 改动 2 相同（slug → childUnitId）。
 
 #### 两遍扫描算法
 
@@ -204,24 +229,39 @@ design-review agent 从 guidance 知道该填哪些 key，不再靠 gate fail �
 
 ---
 
-## 5. C5：subagent-guidance 允许 planning retrospect 委派
+## 5. C5：subagent-guidance 允许 planning + wave retrospect 委派
 
 ### 问题
 
-`subagent-guidance.ts:102-133` PLANNING_RULES：`retrospect: { level: "forbidden", reason: "..." }`。递归方案里 planning retrospect 必须委派给 agent。
+`subagent-guidance.ts` 两层都有 retrospect=forbidden：
+- `PLANNING_RULES`（:102-133）：`retrospect: { level: "forbidden" }`
+- `WAVE_RULES`（:47-93）：`retrospect: { level: "forbidden" }`
+
+递归方案里**每 action 一个 agent**（决策 A），planning 和 wave 的 retrospect 都由独立 agent 执行。cw 的 guidance 会在 agent 读 handoff 时显示"不建议委派给 subagent"——与"这个 agent 本身就是被委派来执行 retrospect 的"自相矛盾。
 
 ### 改动
 
-**改动 5**：`subagent-guidance.ts` PLANNING_RULES retrospect 从 forbidden 改为 optional
+**改动 6a**：`PLANNING_RULES.retrospect` 从 forbidden → optional
 
 ```typescript
 retrospect: {
-  level: "optional",  // 从 forbidden 改
+  level: "optional",
   reason: "planning retrospect 验收子层交付。递归模式下可委派，agent 读 cw handoff + 子层 session jsonl 做复盘",
 },
 ```
 
-execute 保持 forbidden（execute 是拆分+下沉的编排决策，不可卸载）。
+**改动 6b**：`WAVE_RULES.retrospect` 从 forbidden → optional（覆盖度审查发现 C5 原版遗漏了 wave 层）
+
+```typescript
+retrospect: {
+  level: "optional",
+  reason: "wave retrospect 复盘本 wave 执行。递归模式下由独立 agent 执行",
+},
+```
+
+**execute 保持 forbidden**（planning 层）：execute 是拆分+下沉的编排决策，不可卸载。
+
+**mandatory 档位说明**（wave execute/design-review 等）：递归模式下每 action 都是委派的，mandatory（"建议委派"）自动满足，guidance 文案不阻断，可不改。
 
 ---
 
@@ -229,12 +269,13 @@ execute 保持 forbidden（execute 是拆分+下沉的编排决策，不可卸�
 
 | # | 文件 | 改动 | 工作量 |
 |---|------|------|--------|
-| 1 | `handlers/types.ts` | ActionResult 加 childUnitIds | 小 |
-| 2 | `epic/execute.ts` + `feature/execute.ts` + `slice/execute.ts` | return 填 childUnitIds | 小 |
-| 3 | `readonly/render.ts` 或 `readonly/frontier.ts` | 新增 frontier 命令（两遍扫描）| 中 |
+| 1 | `handlers/types.ts` | ActionResult 加 `children: {unitId, dependsOn}[]` | 小 |
+| 2 | `epic/execute.ts` + `feature/execute.ts` + `slice/execute.ts` | return 填 children（含 dependsOn 映射）| 小 |
+| 3 | `readonly/frontier.ts`（新文件）或 `render.ts` | 新增 frontier 命令（两遍扫描 + dependsOn + blocked）| 中 |
 | 4 | `readonly/render.ts` renderDecisionsSection | 补渲染 FeatureSpec FR/AC | 小 |
 | 5 | `feature-internal.ts` / `slice-internal.ts` / `epic-internal.ts` / wave guidance | design-review schema 注入 layerSpecific 字段名 | 小 |
-| 6 | `guidance/subagent-guidance.ts` | PLANNING_RULES retrospect → optional | 小 |
+| 6a | `guidance/subagent-guidance.ts` PLANNING_RULES | retrospect → optional | 小 |
+| 6b | `guidance/subagent-guidance.ts` WAVE_RULES | retrospect → optional | 小 |
 
 **总工作量**：C2（frontier）是中等，其余都是小改动。可以一次 PR 完成。
 
