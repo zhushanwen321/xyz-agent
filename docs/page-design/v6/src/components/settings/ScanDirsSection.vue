@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onBeforeUnmount } from 'vue'
+import { ref, nextTick, watch, onBeforeUnmount } from 'vue'
 import GroupCard from './GroupCard.vue'
 import UiInput from './UiInput.vue'
 
@@ -131,17 +131,23 @@ function moveUp(g: GroupKey, i: number) {
   const list = dirs.value[dirTab.value][g]
   if (!canMoveUp(g, i)) return
   ;[list[i - 1], list[i]] = [list[i], list[i - 1]]
-  flashMoving(list[i].id)
+  // 交换后 list[i-1] 是被移动的行（spec：高亮被移动者，非被挤开者）
+  flashMoving(list[i - 1].id)
 }
 function moveDown(g: GroupKey, i: number) {
   const list = dirs.value[dirTab.value][g]
   if (!canMoveDown(g, i)) return
   ;[list[i + 1], list[i]] = [list[i], list[i + 1]]
+  // 交换后 list[i] 是被移动的行
   flashMoving(list[i].id)
 }
 
 /** 移除两段式确认（spec §9.2 沿用 §6 ConfirmDialog 范式；preset 无移除按钮不进此流） */
 const removeTarget = ref<{ list: ScanDir[]; dir: ScanDir } | null>(null)
+const cdBackdropEl = ref<HTMLElement | null>(null)
+watch(removeTarget, (v) => {
+  if (v) void nextTick(() => cdBackdropEl.value?.focus())
+})
 function confirmRemove() {
   const t = removeTarget.value
   if (!t) return
@@ -184,10 +190,10 @@ onBeforeUnmount(() => clearTimeout(moveTimer))
 
         <!-- preset 锁定行：disabled checkbox + lock + 来源 pill，无操作 -->
         <div v-for="(d, i) in dirs[dirTab][g]" :key="d.id" class="scan-row" :class="{ moving: movingId === d.id }">
-          <button v-if="!d.presetLabel" class="ui-checkbox" :class="{ checked: d.enabled }" @click="d.enabled = !d.enabled">
+          <button v-if="!d.presetLabel" role="checkbox" :aria-checked="d.enabled" class="ui-checkbox" :class="{ checked: d.enabled }" @click="d.enabled = !d.enabled">
             <svg v-if="d.enabled" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
           </button>
-          <span v-else class="ui-checkbox checked disabled">
+          <span v-else role="checkbox" aria-checked="true" aria-disabled="true" class="ui-checkbox checked disabled">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
           </span>
           <span class="scan-path" :class="{ forced: d.presetLabel }">{{ d.path }}</span>
@@ -212,6 +218,7 @@ onBeforeUnmount(() => clearTimeout(moveTimer))
             v-model="addValue[g]"
             :placeholder="GROUP_META[g].addPh"
             :mono="true"
+            :dense="true"
             :error="!!addError[g]"
             @keyup.enter="addDir(g)"
           />
@@ -233,7 +240,7 @@ onBeforeUnmount(() => clearTimeout(moveTimer))
     </GroupCard>
 
     <!-- 移除确认（spec §6/§9.2 ConfirmDialog 范式：bg-surface + border + shadow-2 + radius-lg） -->
-    <div v-if="removeTarget" class="cd-backdrop" @click.self="removeTarget = null">
+    <div v-if="removeTarget" ref="cdBackdropEl" tabindex="-1" class="cd-backdrop" @click.self="removeTarget = null" @keydown.esc="removeTarget = null">
       <div class="cd">
         <div class="cd-header">
           <div class="cd-title-row">

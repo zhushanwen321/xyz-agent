@@ -57,8 +57,13 @@ function toggle() {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: 4px 6px 8px;
-  min-height: 44px;
+  /* spec §2/§3/§9：沿用资源页 .lp-group-head 范式（bg-surface-2 浮起分层 · 不嵌套卡片 · 不叠 border） */
+  padding: 10px 16px;
+  background: var(--surface-2);
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+.group-head:first-child {
+  border-top: 0;
 }
 .head-left {
   display: flex;

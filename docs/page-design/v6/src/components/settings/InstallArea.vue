@@ -216,12 +216,13 @@ onBeforeUnmount(clearTimers)
         :placeholder="placeholder"
         :mono="true"
         :error="!!error"
+        :dense="true"
         :disabled="busy"
         @keyup.enter="submit"
       />
       <button
         v-if="tab === 'npm'"
-        class="btn btn-default btn-md"
+        class="btn btn-default btn-dense"
         :disabled="!canSubmit"
         @click="startNpmInstall"
       >
@@ -231,7 +232,7 @@ onBeforeUnmount(clearTimers)
       </button>
       <button
         v-else
-        class="btn btn-default btn-md"
+        class="btn btn-default btn-dense"
         :disabled="!canSubmit"
         @click="startDiscover"
       >
@@ -316,7 +317,7 @@ onBeforeUnmount(clearTimers)
   padding: 8px 10px;
 }
 .install-tab {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--neutral-mid);
   cursor: pointer;
   padding: 4px 10px;
@@ -342,7 +343,7 @@ onBeforeUnmount(clearTimers)
   flex: 1;
 }
 .install-hint {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--neutral-dim);
   padding: 0 12px 10px;
   font-family: var(--font-mono);
@@ -354,7 +355,7 @@ onBeforeUnmount(clearTimers)
   gap: 6px;
   border-top: 1px solid rgba(255, 255, 255, 0.04);
   padding: 9px 14px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--danger);
   line-height: 1.5;
 }
@@ -371,7 +372,7 @@ onBeforeUnmount(clearTimers)
   gap: 6px;
   border-top: 1px solid rgba(255, 255, 255, 0.04);
   padding: 9px 14px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--success);
   line-height: 1.5;
 }
@@ -427,16 +428,16 @@ onBeforeUnmount(clearTimers)
   flex-wrap: wrap;
 }
 .cand-name {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--neutral-fg);
 }
 .cand-ver {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--text-2xs);
   color: var(--neutral-dim);
   background: var(--surface-2);
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
+  padding: 2px 7px;
+  border-radius: 999px;
   flex-shrink: 0;
 }
 .cand-desc {
@@ -464,11 +465,11 @@ onBeforeUnmount(clearTimers)
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--neutral-dim);
 }
 .cand-count {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--neutral-dim);
   font-family: var(--font-mono);
 }

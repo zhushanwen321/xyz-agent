@@ -170,7 +170,7 @@ const emit = defineEmits<{
 .test-result {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   font-size: var(--text-sm);
 }
 .test-result.ok {

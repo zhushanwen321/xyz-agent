@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   providers as initialProviders,
   discoveredProviders as discoveredMock,
@@ -18,14 +18,12 @@ import ProviderImportDialog from './ProviderImportDialog.vue'
 /** ProviderPage：模型供应商管理。row-head + 展开就地编辑（凭据/模型/验证/高级 4 子区）+ save-bar。
  * 交互状态机：M2 未保存保护 / M8 自动发现 / M9 额度 / M10 headers 行编辑 / M11 save-bar / M13 Switch 乐观更新 / M14 错误反馈。*/
 const providers = ref<Provider[]>(JSON.parse(JSON.stringify(initialProviders)))
-const expandedId = ref<string>(
-  initialProviders.find((p) => p.status === 'connected')?.id ?? initialProviders[0]?.id ?? '',
-)
+const expandedId = ref(initialProviders.find((p) => p.status === 'connected')?.id ?? initialProviders[0]?.id ?? '')
 const showKey = ref<Record<string, boolean>>({})
 const advOpen = ref<Record<string, boolean>>({})
 const apiKey = ref<Record<string, string>>({ 'p-1': 'sk-zhipu-••••••••••••3f2a', 'p-2': 'sk-ant-••••••••••••8b1c' })
 
-// === 编辑态（draft refs + dirty flag；保存时提交到 provider，快照记录已保存值）===
+// 编辑态（draft refs + dirty flag；保存时提交到 provider，快照记录已保存值）
 const nameDraft = ref<Record<string, string>>({})
 const baseUrlDraft = ref<Record<string, string>>({})
 const headers = ref<Record<string, ProviderHeader[]>>({})
@@ -36,12 +34,9 @@ function snapshot(p: Provider) {
   headers.value[p.id] = JSON.parse(JSON.stringify(p.headers ?? []))
   quota.value[p.id] = JSON.parse(JSON.stringify(p.quota ?? []))
   testState.value[p.id] = { busy: false, ok: false, msg: '' }
-  quotaError.value[p.id] = ''
-  quotaOk.value[p.id] = false
+  quotaError.value[p.id] = ''; quotaOk.value[p.id] = false
 }
-function markDirty(p: Provider) {
-  p.dirty = true
-}
+function markDirty(p: Provider) { p.dirty = true }
 function restoreSnapshot(p: Provider) {
   p.name = nameDraft.value[p.id] ?? p.name
   p.baseUrl = baseUrlDraft.value[p.id] ?? ''
@@ -53,31 +48,42 @@ function restoreSnapshot(p: Provider) {
 }
 const anyDirty = computed(() => providers.value.some((x) => x.dirty))
 
-// === M2 未保存保护（ConfirmDialog）===
-const confirmState = ref<null | { kind: 'leave' | 'collapse' | 'switch' | 'delete'; id?: string }>(null)
+// M2 未保存保护（ConfirmDialog）
+const confirmState = ref<null | { kind: 'leave' | 'collapse' | 'switch' | 'delete' | 'confirm-delete'; id?: string }>(null)
 const pendingLeave = ref<SettingsPage | 'close' | null>(null)
-const confirmDesc = computed(() => {
-  const k = confirmState.value?.kind
-  const tail = k === 'leave' ? '离开设置将丢弃这些改动。' : k === 'switch' ? '切换到其他供应商将丢弃这些改动。' : k === 'delete' ? '删除将丢弃这些改动。' : '收起将丢弃这些改动。'
-  return '你正在编辑的供应商有未保存的改动，' + tail + '此操作不可撤销。'
+const pendingAdd = ref(false)
+const nameInputEl = ref<HTMLInputElement | null>(null)
+// 函数 ref：v-for 内组件 ref 会被数组化，用回调直接取 $el
+function setNameInputRef(el: unknown) { nameInputEl.value = (el as { $el?: HTMLInputElement } | null)?.$el ?? null }
+const confirmMeta = computed(() => {
+  const st = confirmState.value
+  const kind = st?.kind
+  if (kind === 'confirm-delete' && st) {
+    return { title: '删除 ' + (providers.value.find((x) => x.id === st.id)?.name ?? '') + '？', desc: '将移除其下所有模型，不可撤销。', kind: 'danger' as const }
+  }
+  const tail = kind === 'leave' ? '离开设置将丢弃这些改动。' : kind === 'switch' ? '切换到其他供应商将丢弃这些改动。' : kind === 'delete' ? '删除将丢弃这些改动。' : '收起将丢弃这些改动。'
+  return { title: '放弃未保存的改动？', desc: '你正在编辑的供应商有未保存的改动，' + tail + '此操作不可撤销。', kind: 'warn' as const }
 })
 function toggleExpand(id: string) {
+  const p = providers.value.find((x) => x.id === id)
   if (expandedId.value === id) {
-    const p = providers.value.find((x) => x.id === id)
     if (p?.dirty) { confirmState.value = { kind: 'collapse', id }; return }
     expandedId.value = ''
-    return
+  } else if (anyDirty.value) {
+    confirmState.value = { kind: 'switch', id }
+  } else {
+    expandedId.value = id
+    if (p) snapshot(p)
   }
-  if (anyDirty.value) { confirmState.value = { kind: 'switch', id }; return }
-  expandedId.value = id
-  const p = providers.value.find((x) => x.id === id)
-  if (p) snapshot(p)
 }
 function confirmDiscard() {
   const st = confirmState.value
   confirmState.value = null
   if (!st) return
   if (st.kind === 'leave') {
+    // 放弃 = 丢弃编辑态：先还原快照 → anyDirty 归零 → sync watch 重入时守卫放行导航。
+    // 不还原会导致守卫拦截自己的导航（弹窗永久重开，无法离开设置）。
+    for (const pp of providers.value) restoreSnapshot(pp)
     if (pendingLeave.value === 'close') closeSettings()
     else if (pendingLeave.value) settingsPage.value = pendingLeave.value
     return
@@ -89,13 +95,29 @@ function confirmDiscard() {
   } else if (st.kind === 'switch') {
     const cur = providers.value.find((x) => x.id === expandedId.value)
     if (cur) restoreSnapshot(cur)
-    expandedId.value = st.id ?? ''
-    if (p) snapshot(p)
-  } else if (st.kind === 'delete') {
+    if (pendingAdd.value) { pendingAdd.value = false; createAndExpand(st.id ?? '') }
+    else { expandedId.value = st.id ?? ''; if (p) snapshot(p) }
+  } else if (st.kind === 'delete' || st.kind === 'confirm-delete') {
     if (p) restoreSnapshot(p)
     if (expandedId.value === st.id) expandedId.value = ''
     providers.value = providers.value.filter((x) => x.id !== st.id)
   }
+}
+function confirmContinue() { pendingAdd.value = false; confirmState.value = null }
+/** 新建空白 provider 并直接展开编辑态（spec §9 旅程 A1：不弹窗；已有未保存改动时先走 M2 确认） */
+function addProvider() {
+  const id = 'new-' + Date.now()
+  if (anyDirty.value) { pendingAdd.value = true; confirmState.value = { kind: 'switch', id }; return }
+  createAndExpand(id)
+}
+function createAndExpand(id: string) {
+  const p: Provider = { id, name: '', status: 'not_configured', enabled: false, isDefault: false, modelCount: 0, dirty: true, baseUrl: '' }
+  providers.value.push(p)
+  providerType.value[id] = 'anthropic-messages'
+  apiKey.value[id] = ''
+  expandedId.value = id
+  snapshot(p)
+  nextTick(() => nameInputEl.value?.focus())
 }
 /** 离开页面拦截：nav 切页 / 关闭设置 → 还原 + 弹确认（watch flush pre，先于 v-if 卸载） */
 watch(
@@ -108,18 +130,14 @@ watch(
     settingsOpen.value = true
     confirmState.value = { kind: 'leave' }
   },
-  // flush: 'sync' —— Vue 3.5 调度中 pre watch job 按组件 uid 排序，
-  // 父组件卸载渲染先执行会 stop 子组件 watcher（回调被跳过）；
-  // sync 在 closeSettings/nav select 的同步调用栈内立即拦截，卸载不发生。
+  // flush: 'sync' —— closeSettings/nav select 同步栈内立即拦截，卸载不发生。
   { flush: 'sync' },
 )
-function onBeforeUnload(e: BeforeUnloadEvent) {
-  if (anyDirty.value) { e.preventDefault(); e.returnValue = '' }
-}
+function onBeforeUnload(e: BeforeUnloadEvent) { if (anyDirty.value) { e.preventDefault(); e.returnValue = '' } }
 onMounted(() => window.addEventListener('beforeunload', onBeforeUnload))
 onUnmounted(() => window.removeEventListener('beforeunload', onBeforeUnload))
 
-// === M13 Switch 乐观更新（provider 级 + model 级，300-600ms mock 延迟）===
+// M13 Switch 乐观更新（provider 级 + model 级，300-600ms mock 延迟）
 const togglingIds = ref<string[]>([])
 const rollbackIds = ref<string[]>([])
 function toggleEnabled(p: Provider) {
@@ -127,6 +145,7 @@ function toggleEnabled(p: Provider) {
   const old = p.enabled
   togglingIds.value = [...togglingIds.value, p.id]
   p.enabled = !old
+  if (!p.enabled && defaultModel.value[p.id]) defaultModel.value[p.id] = ''
   actionError.value = ''
   setTimeout(() => {
     if (p.id === 'p-4') {
@@ -138,10 +157,7 @@ function toggleEnabled(p: Provider) {
     togglingIds.value = togglingIds.value.filter((i) => i !== p.id)
   }, 450)
 }
-const modelEnabled = ref<Record<string, Record<string, boolean>>>({
-  'p-1': { 'glm-4.6': true, 'glm-4.5-air': true, 'glm-4-flash': true },
-  'p-2': { 'claude-sonnet-4.5': true, 'claude-haiku-4': true },
-})
+const modelEnabled = ref<Record<string, Record<string, boolean>>>({ 'p-1': { 'glm-4.6': true, 'glm-4.5-air': true, 'glm-4-flash': true }, 'p-2': { 'claude-sonnet-4.5': true, 'claude-haiku-4': true } })
 const modelToggling = ref<Record<string, boolean>>({})
 function toggleModelEnabled(p: Provider, m: string) {
   const key = p.id + m
@@ -151,7 +167,7 @@ function toggleModelEnabled(p: Provider, m: string) {
   setTimeout(() => { modelToggling.value[key] = false }, 400)
 }
 
-// === M8 自动发现（mock 探测结果，带「发现」来源标识，采纳/忽略）===
+// M8 自动发现（mock 探测结果，带「发现」来源标识，采纳/忽略）
 const discovering = ref(false)
 const discovered = ref<DiscoveredProvider[]>([])
 function runDiscover() {
@@ -167,23 +183,22 @@ function adoptDiscovered(d: DiscoveredProvider) {
   providers.value.push({ id: 'new-' + d.id, name: d.name, status: 'connected', enabled: true, isDefault: false, modelCount: d.modelCount, dirty: true, baseUrl: '' })
   discovered.value = discovered.value.filter((x) => x.id !== d.id)
 }
-function ignoreDiscovered(id: string) {
-  discovered.value = discovered.value.filter((x) => x.id !== id)
-}
+function ignoreDiscovered(id: string) { discovered.value = discovered.value.filter((x) => x.id !== id) }
 
-// === 验证子区：测试连接（与自动发现互斥）===
+// 验证子区：测试连接（与自动发现互斥）
 const testState = ref<Record<string, { busy: boolean; ok: boolean; msg: string }>>({})
 function runTest(p: Provider) {
   if (testState.value[p.id]?.busy || discovering.value) return
   testState.value[p.id] = { busy: true, ok: false, msg: '' }
   setTimeout(() => {
-    if (p.id === 'p-4') testState.value[p.id] = { busy: false, ok: false, msg: '连接失败：无法访问 https://api.moonshot.cn/v1/models（UNREACHABLE）' }
-    else if (p.id === 'p-3') testState.value[p.id] = { busy: false, ok: false, msg: '请求失败：Base URL 或 API Key 包含 HTTP 不支持的字符（INVALID_AUTH_CHARS）' }
-    else testState.value[p.id] = { busy: false, ok: true, msg: '连接成功，找到 ' + (models.value[p.id]?.length ?? 0) + ' 个模型' }
+    const msg = p.id === 'p-4' ? '连接失败：无法访问 https://api.moonshot.cn/v1/models（UNREACHABLE）'
+      : p.id === 'p-3' ? '请求失败：Base URL 或 API Key 包含 HTTP 不支持的字符（INVALID_AUTH_CHARS）'
+        : '连接成功，找到 ' + (models.value[p.id]?.length ?? 0) + ' 个模型'
+    testState.value[p.id] = { busy: false, ok: p.id !== 'p-4' && p.id !== 'p-3', msg }
   }, 450)
 }
 
-// === M9 额度（mock 刷新：p-2 固定失败演示额度超限）===
+// M9 额度（mock 刷新：p-2 固定失败演示凭证无效）
 const quotaBusy = ref<Record<string, boolean>>({})
 const quotaError = ref<Record<string, string>>({})
 const quotaOk = ref<Record<string, boolean>>({})
@@ -194,31 +209,32 @@ function refreshQuota(p: Provider) {
   quotaOk.value[p.id] = false
   setTimeout(() => {
     quotaBusy.value[p.id] = false
-    if (p.id === 'p-2') {
-      quotaError.value[p.id] = '额度查询失败：本月配额已用尽（95%），请升级 Coding Plan'
-      return
-    }
+    if (p.id === 'p-2') { quotaError.value[p.id] = '额度查询失败：凭证无效，请检查 API Key'; return }
     quota.value[p.id] = (quota.value[p.id] ?? []).map((w, i) => ({ ...w, pct: Math.min(100, w.pct + (i === 0 ? 2 : 1)) }))
     quotaOk.value[p.id] = true
   }, 500)
 }
 
-// === M10 headers 行编辑 ===
+// M10 headers 行编辑
 function addHeader(p: Provider) { headers.value[p.id] = [...(headers.value[p.id] ?? []), { key: '', value: '' }]; markDirty(p) }
 function removeHeader(p: Provider, i: number) { headers.value[p.id] = (headers.value[p.id] ?? []).filter((_, idx) => idx !== i); markDirty(p) }
 function changeHeader(p: Provider, i: number, field: 'key' | 'value', v: string) {
   const arr = headers.value[p.id] ?? []
-  if (!arr[i]) return
-  arr[i][field] = v
-  markDirty(p)
+  if (arr[i]) { arr[i][field] = v; markDirty(p) }
 }
 
-// === M11 save-bar（保存/放弃 + 验证错误 + 保存失败）===
+// M11 save-bar（保存/放弃 + 验证错误 + 保存失败）
 const saving = ref(false)
 const saveError = ref<Record<string, string>>({})
 function saveEdit(p: Provider) {
   const name = (nameDraft.value[p.id] ?? '').trim()
   if (!name) { saveError.value[p.id] = '供应商名称不能为空'; return }
+  const seen = new Set<string>()
+  for (const h of headers.value[p.id] ?? []) {
+    const key = h.key.trim()
+    if (key && seen.has(key)) { saveError.value[p.id] = 'Header key 重复：' + key; return }
+    if (key) seen.add(key)
+  }
   if (saving.value) return
   saving.value = true
   saveError.value[p.id] = ''
@@ -235,24 +251,20 @@ function saveEdit(p: Provider) {
 }
 function cancelEdit(p: Provider) { restoreSnapshot(p) }
 
-// === M14 页级动作错误横幅 + 删除 ===
+// M14 页级动作错误横幅 + 删除
 const actionError = ref('')
 const successNote = ref('')
 function removeProvider(p: Provider) {
-  if (p.dirty) { confirmState.value = { kind: 'delete', id: p.id }; return }
   if (p.id === 'p-4') { actionError.value = '删除失败：Kimi 正在被会话使用 · 先关闭相关会话再删除'; return }
-  providers.value = providers.value.filter((x) => x.id !== p.id)
+  confirmState.value = { kind: p.dirty ? 'delete' : 'confirm-delete', id: p.id }
 }
 function onImported(count: number) {
   successNote.value = '导入 ' + count + ' 个 provider'
   setTimeout(() => { successNote.value = '' }, 3000)
 }
 
-// === M5 模型列表 / M7 默认模型 / M6 thinking pill ===
-const models = ref<Record<string, string[]>>({
-  'p-1': ['glm-4.6', 'glm-4.5-air', 'glm-4-flash'],
-  'p-2': ['claude-sonnet-4.5', 'claude-haiku-4'],
-})
+// M5 模型列表 / M7 默认模型 / M6 thinking pill
+const models = ref<Record<string, string[]>>({ 'p-1': ['glm-4.6', 'glm-4.5-air', 'glm-4-flash'], 'p-2': ['claude-sonnet-4.5', 'claude-haiku-4'] })
 const defaultModel = ref<Record<string, string>>({ 'p-1': 'glm-4.6' })
 const newModelName = ref('')
 const newModelInputType = ref<'text' | 'image'>('text')
@@ -268,9 +280,7 @@ function removeModel(p: Provider, m: string) {
   if (defaultModel.value[p.id] === m) defaultModel.value[p.id] = ''
   markDirty(p)
 }
-function setDefaultModel(p: Provider, m: string) {
-  defaultModel.value[p.id] = m
-}
+function setDefaultModel(p: Provider, m: string) { defaultModel.value[p.id] = m; markDirty(p) }
 const THINKING_PRESETS: Record<string, { label: string; cls: string }> = {
   'glm-4.6': { label: '全档', cls: 'tp-all' },
   'glm-4.5-air': { label: '开关', cls: 'tp-toggle' },
@@ -278,20 +288,12 @@ const THINKING_PRESETS: Record<string, { label: string; cls: string }> = {
   'claude-sonnet-4.5': { label: '高/顶', cls: 'tp-hightop' },
   'claude-haiku-4': { label: '开关', cls: 'tp-toggle' },
 }
-function thinkingPreset(m: string) {
-  return THINKING_PRESETS[m] ?? { label: '开关', cls: 'tp-toggle' }
-}
+function thinkingPreset(m: string) { return THINKING_PRESETS[m] ?? { label: '开关', cls: 'tp-toggle' } }
 const authHeader = ref<Record<string, boolean>>({ 'p-1': true, 'p-2': true })
-const providerType = ref<Record<string, string>>({
-  'p-1': 'openai-completions',
-  'p-2': 'anthropic-messages',
-  'p-3': 'openai-completions',
-  'p-4': 'openai-completions',
-})
+const providerType = ref<Record<string, string>>({ 'p-1': 'openai-completions', 'p-2': 'anthropic-messages', 'p-3': 'openai-completions', 'p-4': 'openai-completions' })
 const TYPE_OPTIONS = ['anthropic-messages', 'openai-completions', 'openai-responses']
 const importOpen = ref(false)
 function clearApiKey(p: Provider) { apiKey.value[p.id] = ''; markDirty(p) }
-// 初始展开行加载编辑基线（draft refs），dirty 标记保持 mock 预置值
 const bootP = providers.value.find((x) => x.id === expandedId.value)
 if (bootP) snapshot(bootP)
 </script>
@@ -308,7 +310,7 @@ if (bootP) snapshot(bootP)
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
           从其他 Agent 导入
         </button>
-        <button class="btn btn-default btn-md">
+        <button class="btn btn-default btn-md" @click="addProvider">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           添加供应商
         </button>
@@ -346,10 +348,10 @@ if (bootP) snapshot(bootP)
             <svg class="name-chevron" :class="{ down: expandedId === p.id }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
           </span>
           <span v-if="p.isDefault" class="default-pill">默认供应商</span>
-          <span class="model-count">{{ p.modelCount }} 个模型</span>
+          <span class="model-count">{{ p.modelCount }} 模型</span>
           <span v-if="p.dirty" class="dirty-badge"><span class="dot"></span>未保存</span>
           <span class="spacer"></span>
-          <button class="btn btn-danger btn-icon-sm del-btn" title="删除" @click="removeProvider(p)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+          <button class="btn btn-danger btn-icon-sm del-btn" title="删除供应商" :aria-label="'删除 ' + p.name" @click="removeProvider(p)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
         </div>
 
         <div v-if="expandedId === p.id" class="expand-body">
@@ -359,7 +361,7 @@ if (bootP) snapshot(bootP)
             <div class="cred-grid">
               <div class="cred-field">
                 <label class="field-label">名称</label>
-                <UiInput :model-value="nameDraft[p.id]" :error="!!saveError[p.id]" placeholder="供应商名称" @update:model-value="(v) => { nameDraft[p.id] = v; markDirty(p) }" />
+                <UiInput :ref="setNameInputRef" :model-value="nameDraft[p.id]" :error="!!saveError[p.id]" placeholder="供应商名称" @update:model-value="(v) => { nameDraft[p.id] = v; saveError[p.id] = ''; markDirty(p) }" />
               </div>
               <div class="cred-field">
                 <label class="field-label">类型</label>
@@ -377,12 +379,12 @@ if (bootP) snapshot(bootP)
               <div class="cred-field cred-field-wide">
                 <label class="field-label">API Key</label>
                 <div class="cred-row">
-                  <UiInput :model-value="showKey[p.id] ? apiKey[p.id] : (apiKey[p.id] ? '••••••••••••••••' : '')" placeholder="输入 API Key" :mono="true" class="key-input" />
-                  <button class="btn btn-ghost btn-md eye-btn" :title="showKey[p.id] ? '隐藏' : '显示'" @click="showKey[p.id] = !showKey[p.id]">
+                  <UiInput :model-value="showKey[p.id] ? apiKey[p.id] : (apiKey[p.id] ? '••••••••••••••••' : '')" placeholder="留空保存则保持不变" :mono="true" class="key-input" @update:model-value="(v) => { apiKey[p.id] = v; markDirty(p) }" />
+                  <button class="btn btn-ghost btn-md eye-btn" :title="showKey[p.id] ? '隐藏密钥' : '显示密钥'" :aria-label="showKey[p.id] ? '隐藏密钥' : '显示密钥'" :aria-pressed="showKey[p.id] ? 'true' : 'false'" @click="showKey[p.id] = !showKey[p.id]">
                     <svg v-if="!showKey[p.id]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                     <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
                   </button>
-                  <button v-if="apiKey[p.id]" class="btn btn-ghost btn-md clear-btn" title="清除" @click="clearApiKey(p)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                  <button v-if="apiKey[p.id]" class="btn btn-ghost btn-md clear-btn" title="清除密钥" aria-label="清除密钥" @click="clearApiKey(p)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
                 </div>
               </div>
               <div class="cred-field cred-field-wide">
@@ -514,7 +516,7 @@ if (bootP) snapshot(bootP)
       </section>
     </div>
 
-    <ProviderUnsavedDialog v-if="confirmState" :desc="confirmDesc" @continue="confirmState = null" @discard="confirmDiscard" />
+    <ProviderUnsavedDialog v-if="confirmState" :title="confirmMeta.title" :desc="confirmMeta.desc" :kind="confirmMeta.kind" @continue="confirmContinue" @discard="confirmDiscard" />
     <ProviderImportDialog v-if="importOpen" @close="importOpen = false" @imported="onImported" />
   </div>
 </template>
@@ -554,7 +556,7 @@ if (bootP) snapshot(bootP)
 .success-note {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius);
   background: var(--success-soft);
@@ -564,19 +566,21 @@ if (bootP) snapshot(bootP)
 }
 
 .provider-list { display: flex; flex-direction: column; gap: var(--space-4); }
-.provider-card { background: var(--bg-card); border-radius: 10px; overflow: hidden; }
+.provider-card { background: var(--bg-card); border-radius: var(--radius); overflow: hidden; }
 .row-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); min-height: 48px; }
 .status-dot { width: 7px; height: 7px; border-radius: 999px; flex-shrink: 0; }
 .status-dot.ok { background: var(--success); }
 .status-dot.neutral { background: var(--neutral-dim); }
 .name { font-size: var(--text-md); font-weight: 600; color: var(--neutral-fg); cursor: pointer; }
+.name-chevron { width: 12px; height: 12px; color: var(--neutral-dim); vertical-align: -1px; transition: transform var(--duration-fast) var(--ease); }
+.name-chevron.down { transform: rotate(90deg); }
 .default-pill {
   height: 18px; padding: 2px 6px; display: inline-flex; align-items: center; border-radius: 999px;
   background: var(--accent-soft); color: var(--accent); font-size: var(--text-2xs); font-weight: 500; flex-shrink: 0;
 }
 .model-count { font-size: var(--text-sm); color: var(--neutral-mid); }
 .dirty-badge {
-  height: 18px; padding: 0 8px; display: inline-flex; align-items: center; gap: 6px; border-radius: 999px;
+  height: 18px; padding: 0 8px; display: inline-flex; align-items: center; gap: var(--space-2); border-radius: 999px;
   background: var(--warn-soft); color: var(--warn); font-size: var(--text-2xs); font-weight: 600; flex-shrink: 0;
 }
 .dirty-badge .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--warn); flex-shrink: 0; }
@@ -586,7 +590,7 @@ if (bootP) snapshot(bootP)
 /* M13 乐观更新三态：pending（脉冲 + 禁用） / rollback（danger 外环） */
 .switch-opt { display: inline-flex; flex-shrink: 0; border-radius: 999px; }
 .switch-pending { animation: switch-pulse 1s ease-in-out infinite; }
-.switch-rollback { box-shadow: 0 0 0 2px var(--danger); }
+.switch-rollback { box-shadow: 0 0 0 2px var(--danger-soft); }
 @keyframes switch-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 @media (prefers-reduced-motion: reduce) {
   .switch-pending { animation: none; opacity: 0.55; }
@@ -608,9 +612,14 @@ if (bootP) snapshot(bootP)
 .cred-field-wide { grid-column: 1 / -1; }
 .field-label { font-size: var(--text-xs); color: var(--neutral-mid); font-weight: 500; }
 .fld-hint { font-size: var(--text-2xs); color: var(--neutral-dim); font-weight: 400; }
+.select-wrap { position: relative; }
+.select-chevron {
+  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+  width: 12px; height: 12px; pointer-events: none; color: var(--neutral-dim); opacity: 0.5;
+}
 .type-select {
   height: 40px; border-radius: var(--radius); background: var(--surface-2); border: 1px solid var(--border);
-  padding: 0 12px; font-size: 13px; color: var(--neutral-fg); outline: none; cursor: pointer;
+  padding: 0 28px 0 12px; font-size: var(--text-base); color: var(--neutral-fg); outline: none; cursor: pointer; appearance: none;
 }
 
 .model-list { display: flex; flex-direction: column; gap: var(--space-2); }
@@ -634,7 +643,7 @@ if (bootP) snapshot(bootP)
 .verify-row { display: flex; align-items: center; gap: var(--space-3); }
 .verify-row .btn svg { width: 14px; height: 14px; }
 .verify-result { font-size: var(--text-sm); color: var(--neutral-dim); }
-.test-result { display: flex; align-items: center; gap: 6px; font-size: var(--text-sm); }
+.test-result { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); }
 .test-result.ok { color: var(--success); }
 .test-result.fail { color: var(--danger); }
 
@@ -646,7 +655,7 @@ if (bootP) snapshot(bootP)
 .disc-label { font-size: var(--text-xs); color: var(--neutral-mid); font-weight: 500; }
 .disc-item { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
 .disc-name { font-size: var(--text-sm); font-weight: 600; color: var(--neutral-fg); }
-.disc-proto { font-size: var(--text-2xs); color: var(--neutral-mid); font-family: var(--font-mono); background: var(--bg-input); padding: 1px 6px; border-radius: 4px; }
+.disc-proto { font-size: var(--text-2xs); color: var(--neutral-mid); font-family: var(--font-mono); background: var(--bg-input); padding: 1px 6px; border-radius: var(--radius-sm); }
 .disc-count { font-size: var(--text-xs); color: var(--neutral-mid); }
 .src-badge {
   height: 18px; padding: 0 8px; display: inline-flex; align-items: center; border-radius: 999px;
@@ -699,7 +708,7 @@ if (bootP) snapshot(bootP)
   margin: 0 calc(-1 * var(--space-4)) calc(-1 * var(--space-4));
   padding: var(--space-3) var(--space-4);
 }
-.bar-dirty-badge { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--warn); font-weight: 600; }
+.bar-dirty-badge { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--warn); font-weight: 600; }
 .bar-dirty-badge .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--warn); }
 .sb-error { font-size: var(--text-sm); color: var(--danger); }
 </style>

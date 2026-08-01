@@ -298,7 +298,7 @@ export interface Provider {
 
 export const providers: Provider[] = [
   {
-    id: 'p-1', name: 'Zhipu', status: 'connected', enabled: true, isDefault: true, modelCount: 4, dirty: false,
+    id: 'p-1', name: 'Zhipu', status: 'connected', enabled: true, isDefault: true, modelCount: 3, dirty: false,
     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
     headers: [{ key: 'X-Request-Source', value: 'xyz-agent' }],
     quota: [
@@ -308,7 +308,7 @@ export const providers: Provider[] = [
     ],
   },
   {
-    id: 'p-2', name: 'Anthropic', status: 'connected', enabled: true, isDefault: false, modelCount: 3, dirty: false,
+    id: 'p-2', name: 'Anthropic', status: 'connected', enabled: true, isDefault: false, modelCount: 2, dirty: false,
     baseUrl: 'https://api.anthropic.com',
     quota: [
       { label: '5h 滚动', pct: 100, reset: '已用尽', level: 'full' },
@@ -421,6 +421,8 @@ export const extensions: Extension[] = [
   { id: 'e-3', name: 'pi-subagent-workflow', desc: '子 agent 工作流编排', version: 'v1.0.8', tools: ['workflow_run', 'workflow_script'], scope: 'mandatory', source: 'disc', tier: 'infrastructure', enabled: true, autoUpgrade: true },
   { id: 'e-4', name: 'pi-permission', desc: '权限控制扩展', version: 'v0.9.3', tools: ['permission_check'], scope: 'mandatory', source: 'disc', tier: 'feature', enabled: true, autoUpgrade: true },
   { id: 'e-5', name: 'my-custom-tool', desc: '自定义工具扩展', version: 'v0.3.1', tools: ['my_tool_a', 'my_tool_b'], scope: 'user', source: 'user', tier: 'feature', enabled: false, autoUpgrade: false },
+  // e-6：disc 来源（扫描目录发现）· 演示升级失败路径（offline-sync 固定失败）
+  { id: 'e-6', name: 'offline-sync', desc: '离线场景的本地同步工具', version: 'v0.4.0', tools: ['sync_push', 'sync_pull'], scope: 'user', source: 'disc', tier: 'feature', enabled: true, autoUpgrade: false },
 ]
 
 // === 搜索命令（SearchModal）===

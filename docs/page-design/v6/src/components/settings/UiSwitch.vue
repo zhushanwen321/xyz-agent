@@ -41,12 +41,7 @@ defineEmits<{ (e: 'update:checked', v: boolean): void }>()
 .ui-switch.on {
   background: var(--accent);
 }
-.ui-switch:hover:not(.disabled) {
-  background: var(--neutral-faint);
-}
-.ui-switch.on:hover:not(.disabled) {
-  background: var(--accent-hover);
-}
+/* spec §6.4 精确复刻：无 hover 变色（unchecked/checked 均不响应 hover） */
 .ui-switch.disabled {
   opacity: 0.5;
   cursor: not-allowed;

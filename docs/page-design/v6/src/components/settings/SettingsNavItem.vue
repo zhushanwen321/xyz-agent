@@ -21,6 +21,8 @@ defineEmits<{ (e: 'click'): void }>()
     <span class="ico" v-html="icon" />
     <span class="label">{{ label }}</span>
     <span v-if="count !== undefined && count > 0" class="count">{{ count }}</span>
+    <!-- §2 hover 右侧 chevron（链接提示，纯视觉） -->
+    <svg class="link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
   </button>
 </template>
 
@@ -49,23 +51,26 @@ defineEmits<{ (e: 'click'): void }>()
   opacity: 0.4;
   cursor: not-allowed;
 }
-/* §2 键盘焦点态：ring-2 accent + offset；不可与选中态叠加（选中优先） */
+/* §2 键盘焦点态：ring-2 accent + offset；active 项同样保留 accent ring（spec CSS SSOT，anno 文字靠后） */
 .nav-item:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0, 0, 0, 0.4);
-}
-.nav-item.active:focus-visible {
-  box-shadow: none;
 }
 .ico {
   display: inline-flex;
   width: 16px;
   height: 16px;
   flex-shrink: 0;
+  opacity: 0.85;
+  transition: opacity var(--duration-fast) var(--ease);
 }
 .ico :deep(svg) {
   width: 16px;
   height: 16px;
+}
+.nav-item:hover:not(.disabled) .ico,
+.nav-item.active .ico {
+  opacity: 1;
 }
 .label {
   flex: 1;
@@ -92,5 +97,17 @@ defineEmits<{ (e: 'click'): void }>()
 .nav-item.active .count {
   background: var(--surface);
   color: var(--neutral-dim);
+}
+/* hover 右侧 chevron：opacity 0 → 1（链接提示，无跳转） */
+.link {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  color: var(--neutral-faint);
+  opacity: 0;
+  transition: opacity var(--duration-fast);
+}
+.nav-item:hover .link {
+  opacity: 1;
 }
 </style>

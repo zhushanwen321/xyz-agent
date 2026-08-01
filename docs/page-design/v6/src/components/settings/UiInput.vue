@@ -7,9 +7,10 @@ withDefaults(
     placeholder?: string
     type?: string
     mono?: boolean
+    dense?: boolean
     error?: boolean
   }>(),
-  { modelValue: '', type: 'text', mono: false, error: false },
+  { modelValue: '', type: 'text', mono: false, dense: false, error: false },
 )
 defineEmits<{ (e: 'update:modelValue', v: string): void }>()
 </script>
@@ -18,7 +19,7 @@ defineEmits<{ (e: 'update:modelValue', v: string): void }>()
   <input
     :type="type"
     class="ui-input"
-    :class="{ mono, error }"
+    :class="{ mono, dense, error }"
     :value="modelValue"
     :placeholder="placeholder"
     @input="$emit('update:modelValue', ($event.target as HTMLInputElement).value)"
@@ -45,18 +46,24 @@ defineEmits<{ (e: 'update:modelValue', v: string): void }>()
 .ui-input.mono {
   font-family: var(--font-mono);
 }
-.ui-input:focus {
+.ui-input.dense {
+  height: 32px;
+  font-size: 12px;
+  padding: 0 10px;
+}
+.ui-input:focus-visible {
+  outline: none;
   border-color: transparent;
   box-shadow: 0 0 0 1px var(--accent-ring) inset;
 }
 .ui-input:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 .ui-input.error {
   border-color: var(--danger);
 }
-.ui-input.error:focus {
+.ui-input.error:focus-visible {
   box-shadow: 0 0 0 1px var(--danger) inset;
 }
 </style>

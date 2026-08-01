@@ -161,6 +161,7 @@ function backToSource() {
           <span>{{ topWarnings[0] }}</span>
         </div>
         <div v-if="parseError" class="warn-banner">{{ parseError }}</div>
+        <div v-if="preview.length === 0" class="preview-empty">暂无模型</div>
         <div class="preview-list">
           <div v-for="item in preview" :key="item.id" class="preview-item" :class="{ conflict: item.conflict }">
             <div class="pi-top">
@@ -338,7 +339,7 @@ function backToSource() {
 .warn-banner {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
   background: var(--warn-soft);
@@ -355,6 +356,12 @@ function backToSource() {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+}
+.preview-empty {
+  padding: var(--space-4) 0;
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--neutral-dim);
 }
 .preview-item {
   display: flex;
@@ -411,7 +418,7 @@ function backToSource() {
   font-family: var(--font-mono);
   background: var(--bg-input);
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 .pi-count {
   font-size: var(--text-xs);
@@ -469,7 +476,7 @@ function backToSource() {
 .inline-error {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
   background: var(--danger-soft);
@@ -484,7 +491,7 @@ function backToSource() {
 .import-success {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
   background: var(--success-soft);
