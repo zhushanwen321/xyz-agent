@@ -510,21 +510,21 @@ export class SubagentService {
   ): Promise<WorkflowAgentResult> {
     this.assertReady();
 
-    // [MF#7] worktree:true requires fork:true — symmetric with execute() guard.
-    // Fails fast before any side effect (record creation / worktree creation).
-    if (opts.worktree === true && !opts.fork) {
-      throw new Error(
-        "worktree:true requires fork:true (worktree isolation only applies to forked sessions). " +
-          "Set fork:true together with worktree:true.",
-      );
-    }
-
     // ── BC-12 嵌套护栏：复用 execute() 的 execCtxAls 深度检查 ──
     const parentNesting = this.execCtxAls.getStore();
     const nestingDepth = parentNesting ? parentNesting.depth + 1 : 0;
     if (nestingDepth > MAX_FORK_DEPTH) {
       throw new ForkDepthExceededError(
         `subagent nesting depth ${nestingDepth} > ${MAX_FORK_DEPTH} (max recursion), refusing to spawn deeper`,
+      );
+    }
+
+    // [MF#7] worktree:true requires fork:true — symmetric with execute() guard.
+    // Fails fast before any side effect (record creation / worktree creation).
+    if (opts.worktree === true && !opts.fork) {
+      throw new Error(
+        "worktree:true requires fork:true (worktree isolation only applies to forked sessions). " +
+          "Set fork:true together with worktree:true.",
       );
     }
 
@@ -535,17 +535,22 @@ export class SubagentService {
     const record = this.createRecordForMode(identity, opts, "background");
     emitPendingRegister(this.pi, record.id, record.agent);
 
-    // ── 步骤 2.5: worktree creation (only when worktree===true or pre-supplied handle) ──
-    // Symmetric with execute() :440-458. MF#7 guard above ensures fork===true when worktree===true.
-    // record already created above; on worktree create failure, finalizeFailed cleans up record.
+    // ── 步骤 2.5: worktree creation (only worktree===true; handle injection is execute()'s path) ──
+    // Workflow path receives boolean only (AgentCallOpts.worktree: boolean) — WorktreeHandle is a
+    // main-thread non-serializable object that cannot cross worker postMessage, so no object branch
+    // here (unlike execute() :445-447 which serves the subagent-tool path). MF#7 guard above ensures
+    // fork===true when worktree===true. On create failure, finalizeFailed cleans up the record, then
+    // throw lets SAR.run() convert it to an AgentResult.error (not return-handle like execute()).
     let worktreeHandle: WorktreeHandle | undefined;
-    if (typeof opts.worktree === "object") {
-      worktreeHandle = opts.worktree;
-    } else if (opts.worktree === true) {
+    if (opts.worktree === true) {
       try {
         worktreeHandle = this.worktreeManager.create(this.cwd, record.id);
         record.worktreeHandle = worktreeHandle;
       } catch (err) {
+        // finalizeFailed: CAS→finalizeRecord→emitUnregister (record already registered above).
+        // throw (not return-handle): executeAndAwait's caller SAR.run() catches and wraps into
+        // AgentResult.error. Diverges from execute() :455-456 which returns buildEarlyFailedHandle
+        // because the two methods have different return types.
         await this.finalizeFailed(record, err);
         throw err;
       }

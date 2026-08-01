@@ -185,6 +185,8 @@ export function buildWorkerScript(userScript: string): string {
     '      if (firstArg.prompt) {',
     '        opts = firstArg;',
     '      } else if (firstArg.task || firstArg.agent) {',
+    '        // fork/worktree/returnMeta only effective via agent({prompt,...}) or agent(opts) direct-pass',
+    '        // (firstArg===opts, :185-186 / :199-201); this task/agent shortcut branch does not forward them.',
     '        opts = {',
     '          prompt: firstArg.task || firstArg.prompt || "",',
     '          description: firstArg.label || firstArg.description,',
