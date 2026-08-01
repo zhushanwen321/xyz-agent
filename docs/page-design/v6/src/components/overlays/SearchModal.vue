@@ -346,6 +346,12 @@ function iconKind(cmd: SearchCommand): IconKind {
 .sm-item:hover {
   background: var(--surface-hover);
 }
+.sm-item:hover .sm-i-ico {
+  color: var(--neutral-fg); /* hover icon 提亮一档（dim→fg），增强 hover 反馈 */
+}
+.sm-item:hover .sm-i-sub {
+  color: var(--neutral-mid); /* hover 副标题提亮（dim→mid） */
+}
 /* §3.2 列表项型选中：bg-surface + accent 文字/icon（与 hover 实色块区分）*/
 .sm-item.sel {
   background: var(--surface);
