@@ -23,6 +23,11 @@
 - [13. 第二轮可行性审查发现（轮次 12）](#13-第二轮可行性审查发现轮次-12)
 - [附录 A. 关键代码证据索引](#附录-a-关键代码证据索引)
 
+> **子 spec**（详细实现方案）：
+> - [spec-w-worktree.md](./spec-w-worktree.md) — worktree 隔离系统（W1-W4 + F2 sessionFile）
+> - [spec-c-cw-enhancements.md](./spec-c-cw-enhancements.md) — cw 增强（C1 childUnitIds + C2 frontier + C3-C5）
+> - [spec-f-scheduler.md](./spec-f-scheduler.md) — BFS 调度器与 workflow 脚本（F1 + F3 依赖调度 + F4 超时）
+
 ---
 
 ## 1. 目标与非目标
