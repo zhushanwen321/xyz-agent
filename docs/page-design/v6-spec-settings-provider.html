@@ -472,8 +472,8 @@ body {
 .ml-advanced { max-height: 0; overflow: hidden;
   transition: max-height var(--duration) var(--ease); }
 /* 相邻兄弟（紧随 .ml-row.open 之后的那一个抽屉）· 允许多行同时展开（对比配置）
-   max-height:600px 为抽屉展开过渡上限（CSS transition 需确定值），非视觉尺寸约束 ——
-   实际抽屉高度由内容自适应；超出由 .ml-advanced 自身 overflow 控制。标注：token 化待定（--adv-drawer-max-h）。 */
+   实现备注：max-height 过渡需要确定值，600px 是安全上限（内容超出由 .ml-advanced 自身 overflow 控制），非视觉尺寸约束。
+   实际抽屉高度由内容自适应。该值是 CSS transition 的技术约束，不宜抽为视觉尺寸 token（强行 token 化会误导复用者按视觉尺寸引用）。 */
 .ml-row.open + .ml-advanced { max-height: 600px; }
 .ml-advanced-inner { margin: 2px 0 6px 20px; padding: 10px 12px 10px 14px; background: var(--surface-2);
   border-radius: var(--radius); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: var(--text-xs); }
@@ -564,12 +564,8 @@ body {
    §4 导入流程（Popover 触发 → 预览 → 冲突 → 导入）
    ================================================================ */
 .popover-demo { position: relative; height: 180px; }
-.popover-trigger {
-  display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px;
-  border: 1px solid var(--border); background: var(--surface-2); color: var(--neutral-fg);
-  border-radius: var(--radius); font-size: var(--text-sm); cursor: pointer;
-}
-.popover-trigger svg { width: 14px; height: 14px; }
+/* 导入菜单触发器：归一为 Button 变体（HTML 用 btn btn-secondary btn-dense），不自创类（spec 头部禁令；P2 残留清理）。
+   SVG 尺寸由通用规则 .btn svg(size-4/16px) 统一；弹层定位见 .popover-demo(relative) + .popover-content(absolute)，与 trigger 样式解耦。 */
 .popover-content {
   position: absolute; top: 46px; left: 0; width: 200px; background: var(--bg-elevated);
   border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 4px; box-shadow: var(--shadow-2);
@@ -798,7 +794,7 @@ body {
       <!-- page-header -->
       <div class="page-header">
         <!-- 导入菜单触发器（Popover，secondary 形态，§4 展开） -->
-        <button class="popover-trigger" type="button">
+        <button class="btn btn-secondary btn-dense" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           从其他 Agent 导入
         </button>
@@ -1543,7 +1539,7 @@ body {
     <h3 class="h3">步骤 1 · 多源选择（Popover 触发器）</h3>
     <div class="render-frame">
       <div class="popover-demo">
-        <button class="popover-trigger" type="button">
+        <button class="btn btn-secondary btn-dense" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           从其他 Agent 导入
         </button>
@@ -1886,7 +1882,7 @@ body {
     <div class="render-frame">
       <div class="panel-stage" style="padding:8px;">
         <div class="page-header">
-          <button class="popover-trigger" type="button">
+          <button class="btn btn-secondary btn-dense" type="button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             从其他 Agent 导入
           </button>

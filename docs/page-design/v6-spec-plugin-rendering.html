@@ -57,6 +57,9 @@
   --info-soft: color-mix(in oklch, var(--info) 12%, transparent);
   --reasoning-soft: color-mix(in oklch, var(--reasoning) 12%, transparent);
 
+  /* progress-bar fill 柔化档（对齐 v6-spec-tokens.html --bar-fill-soft）*/
+  --bar-fill-soft: 55%;
+
   /* diff（v6：行背景 18%→12%）*/
   --diff-add-bg: color-mix(in oklch, var(--success) 12%, transparent);
   --diff-del-bg: color-mix(in oklch, var(--danger) 12%, transparent);
@@ -322,15 +325,15 @@ body {
 .gprog-val { margin-left: auto; color: var(--neutral-fg); font-weight: 500; font-variant-numeric: tabular-nums; }
 .gprog-val .gprog-total { color: var(--neutral-dim); }
 .gprog-track { height: 6px; border-radius: var(--radius-sm); background: var(--bg-input); overflow: hidden; }
-/* fill 柔化 55%（本稿独立柔化档，待 design 登记）*/
+/* fill 柔化（已登记为 --bar-fill-soft token）*/
 .gprog-fill { height: 100%; border-radius: var(--radius-sm); transition: width var(--duration-slow) var(--ease); }
-.gprog-fill.f-ok { background: color-mix(in oklch, var(--success) 55%, transparent); }
-.gprog-fill.f-warn { background: color-mix(in oklch, var(--warn) 55%, transparent); }
-.gprog-fill.f-danger { background: color-mix(in oklch, var(--danger) 55%, transparent); }
+.gprog-fill.f-ok { background: color-mix(in oklch, var(--success) var(--bar-fill-soft), transparent); }
+.gprog-fill.f-warn { background: color-mix(in oklch, var(--warn) var(--bar-fill-soft), transparent); }
+.gprog-fill.f-danger { background: color-mix(in oklch, var(--danger) var(--bar-fill-soft), transparent); }
 .gprog-fill.f-done { background: var(--neutral-dim); }
-.gprog-fill.f-accent { background: color-mix(in oklch, var(--accent) 55%, transparent); }
+.gprog-fill.f-accent { background: color-mix(in oklch, var(--accent) var(--bar-fill-soft), transparent); }
 /* indeterminate 动画条（width 40% 为条宽，去 !important，正常值）*/
-.gprog-fill.indet { width: 40%; background: color-mix(in oklch, var(--accent) 55%, transparent); animation: gprog-indet 1.4s var(--ease) infinite; }
+.gprog-fill.indet { width: 40%; background: color-mix(in oklch, var(--accent) var(--bar-fill-soft), transparent); animation: gprog-indet 1.4s var(--ease) infinite; }
 @keyframes gprog-indet { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
 
 /* list-tree v6（缩进留白 16px 非 border-l；icon 12px；status 7px 圆点）*/
@@ -1145,7 +1148,7 @@ body {
     <h3 style="margin-top:32px;">3.3 · progress-bar 原语 <span class="h3-tag">fill 柔化 · done 降中性</span></h3>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> fill 实色 bg-success/warn/danger</span>
-      <span class="cp cp-v6"><b>v6</b> fill 柔化 color-mix 55%（复用 §2.3 diff 柔化）</span>
+      <span class="cp cp-v6"><b>v6</b> fill 柔化 color-mix var(--bar-fill-soft)（复用 §2.3 diff 柔化）</span>
       <span class="cp cp-v6"><b>v6</b> done 态降中性 neutral-dim</span>
       <span class="cp cp-v6"><b>v6</b> 圆角 6px</span>
     </div>
@@ -1182,7 +1185,7 @@ body {
       </div></div></div>
     </div>
     <div class="anno-grid">
-      <div class="anno"><b>fill 柔化:</b> <span class="v6">color-mix(severity 55%, transparent)，复用 §2.3 diff 柔化思路</span></div>
+      <div class="anno"><b>fill 柔化:</b> <span class="v6">color-mix(severity var(--bar-fill-soft), transparent)，复用 §2.3 diff 柔化思路</span></div>
       <div class="anno"><b>done 态:</b> <span class="v6">降中性 neutral-dim（完成非强调，§3.3 彩色降噪）</span></div>
       <div class="anno"><b>圆角:</b> <span class="v6">track + fill 均 6px [var(--radius-sm)]</span></div>
       <div class="anno"><b>track:</b> <span>bg-input 凹陷语义（与画布同源，非纯黑割裂）</span></div>

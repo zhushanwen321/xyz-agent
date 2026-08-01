@@ -95,6 +95,11 @@
   --content-max-w: 720px;
   --composer-btn-size: 30px;
 
+  /* progress-bar fill 柔化档（color-mix 百分比参数，非颜色值）
+     用于 plugin spec/demo 的 progress-bar fill：
+     color-mix(in oklch, var(--success) var(--bar-fill-soft), transparent) */
+  --bar-fill-soft: 55%;
+
   /* z-index 语义化（§5.2 v6 新增）*/
   --z-sticky: 1;
   --z-popover: 10;
@@ -766,9 +771,9 @@ body {
         <div class="radius-val">8px · 按钮 / 卡片</div>
       </div>
       <div class="radius-cell">
-        <div class="radius-demo" style="border-radius: 10px;"></div>
-        <div class="radius-name">任意值 10px</div>
-        <div class="radius-val">ChangeSetCard 等大卡片</div>
+        <div class="radius-demo" style="border-radius: var(--radius-card);"></div>
+        <div class="radius-name">--radius-card</div>
+        <div class="radius-val">10px · ChangeSetCard 等大卡片</div>
       </div>
       <div class="radius-cell">
         <div class="radius-demo" style="border-radius: var(--radius-lg);"></div>

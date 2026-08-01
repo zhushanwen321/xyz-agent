@@ -237,7 +237,7 @@ body {
 .nav-item {
   /* nav 项（v6：bg-sunken 底上，ghost hover；选中 bg-surface + 蓝字，无 ring） */
   display: flex; align-items: center; gap: 10px;
-  padding: 8px 10px; border-radius: var(--radius-sm); font-size: 13px;
+  padding: 8px 10px; border-radius: var(--radius-sm); font-size: var(--text-sm);
   color: var(--neutral-mid); background: transparent; cursor: pointer; text-align: left;
   border: none; font-family: inherit; width: 100%;
   transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
@@ -820,7 +820,7 @@ body {
       <div class="anno"><b>内容列:</b><br>max-w-720 [content-max-w]<br>mx-0 <span class="v6">左对齐</span><br>px-24 · py-16</div>
       <div class="anno"><b>左对齐理由:</b><br>nav 占左 220px，视觉重心偏左<br>居中会右移失衡<br>与对话流 assistant 列对齐</div>
       <div class="anno"><b>滚动触发:</b><br>scrollTop > 8px → 加 sticky class<br>IntersectionObserver 监听 sentinel<br>或 scroll 事件节流</div>
-      <div class="anno"><b>sticky 底色:</b><br>bg-surface <span class="v6">不透明</span><br>禁用 bg-surface/95 + backdrop-blur<br>（滚动透出文字成灰雾）</div>
+      <div class="anno"><b>sticky 底色:</b><br>bg-elevated <span class="v6">不透明</span><br>禁用 bg-elevated/95 + backdrop-blur<br>（滚动透出文字成灰雾）</div>
       <div class="anno"><b>nav 切换:</b><br>切 nav → scrollTop 重置 0<br>page-head 回 default 态<br>新 view 内容淡入 120ms</div>
     </div>
   </section>
