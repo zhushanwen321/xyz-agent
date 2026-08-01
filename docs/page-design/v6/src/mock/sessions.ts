@@ -267,6 +267,19 @@ export const gitFiles: GitFile[] = [
 ]
 
 // === Provider 列表（settings provider page）===
+export interface ProviderQuotaWindow {
+  label: string
+  /** 用量百分比（0-100），视觉等级：high=warn / full=danger */
+  pct: number
+  reset: string
+  level?: 'normal' | 'high' | 'full'
+}
+
+export interface ProviderHeader {
+  key: string
+  value: string
+}
+
 export interface Provider {
   id: string
   name: string
@@ -275,13 +288,117 @@ export interface Provider {
   isDefault: boolean
   modelCount: number
   dirty: boolean
+  /** spec §0：provider 配置字段（demo 展开区可直接编辑） */
+  baseUrl?: string
+  /** M10：自定义 headers（key-value 行编辑） */
+  headers?: ProviderHeader[]
+  /** M9：Coding Plan 三窗口额度（5h 滚动 / 本周 / 本月） */
+  quota?: ProviderQuotaWindow[]
 }
 
 export const providers: Provider[] = [
-  { id: 'p-1', name: 'Zhipu', status: 'connected', enabled: true, isDefault: true, modelCount: 4, dirty: false },
-  { id: 'p-2', name: 'Anthropic', status: 'connected', enabled: true, isDefault: false, modelCount: 3, dirty: true },
-  { id: 'p-3', name: 'OpenAI', status: 'not_configured', enabled: false, isDefault: false, modelCount: 0, dirty: false },
-  { id: 'p-4', name: 'Kimi', status: 'connected', enabled: false, isDefault: false, modelCount: 2, dirty: false },
+  {
+    id: 'p-1', name: 'Zhipu', status: 'connected', enabled: true, isDefault: true, modelCount: 4, dirty: false,
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    headers: [{ key: 'X-Request-Source', value: 'xyz-agent' }],
+    quota: [
+      { label: '5h 滚动', pct: 23, reset: '1h 42m 后重置' },
+      { label: '本周', pct: 51, reset: '3d 12h 后重置' },
+      { label: '本月', pct: 78, reset: '12d 后重置', level: 'high' },
+    ],
+  },
+  {
+    id: 'p-2', name: 'Anthropic', status: 'connected', enabled: true, isDefault: false, modelCount: 3, dirty: false,
+    baseUrl: 'https://api.anthropic.com',
+    quota: [
+      { label: '5h 滚动', pct: 100, reset: '已用尽', level: 'full' },
+      { label: '本周', pct: 82, reset: '2d 4h 后重置', level: 'high' },
+      { label: '本月', pct: 95, reset: '9d 后重置', level: 'high' },
+    ],
+  },
+  { id: 'p-3', name: 'OpenAI', status: 'not_configured', enabled: false, isDefault: false, modelCount: 0, dirty: false, baseUrl: 'https://api.openai.com/v1' },
+  { id: 'p-4', name: 'Kimi', status: 'connected', enabled: false, isDefault: false, modelCount: 2, dirty: false, baseUrl: 'https://api.moonshot.cn/v1' },
+]
+
+// === M8 自动发现（验证子区 · mock 探测结果，带「发现」来源标识）===
+export interface DiscoveredProvider {
+  id: string
+  name: string
+  proto: string
+  modelCount: number
+}
+
+export const discoveredProviders: DiscoveredProvider[] = [
+  { id: 'd-1', name: 'DeepSeek', proto: 'openai-completions', modelCount: 3 },
+  { id: 'd-2', name: 'OpenRouter', proto: 'openai-completions', modelCount: 12 },
+  { id: 'd-3', name: 'Groq', proto: 'openai-completions', modelCount: 6 },
+]
+
+// === M12 导入流程（spec §4 · 4 源解析预览 mock）===
+export type ImportSource = 'pi' | 'zcode' | 'codex' | 'claude'
+
+export interface ImportPreviewItem {
+  id: string
+  name: string
+  proto: string
+  modelCount: number
+  /** 预览只透出布尔，不含 key 值（spec §4 安全红线） */
+  apiKeyExtracted: boolean
+  /** 与现有 provider 同名 → 默认不勾选 + 禁用 */
+  conflict: boolean
+  warnings?: string[]
+}
+
+export interface ImportSourcePreview {
+  source: ImportSource
+  title: string
+  items: ImportPreviewItem[]
+  /** 顶层警告（协议不支持被丢弃等，preview 顶部横幅） */
+  topWarnings?: string[]
+  /** 源配置解析错误（不阻断已解析 providers 导入） */
+  parseError?: string
+}
+
+export const importPreviews: ImportSourcePreview[] = [
+  {
+    source: 'pi', title: 'Pi',
+    topWarnings: ['2 个 provider 因协议不支持等原因被跳过'],
+    items: [
+      { id: 'i-1', name: 'openai-main', proto: 'openai-completions', modelCount: 5, apiKeyExtracted: true, conflict: false },
+      { id: 'i-2', name: 'anthropic-prod', proto: 'anthropic-messages', modelCount: 3, apiKeyExtracted: true, conflict: false },
+      { id: 'i-3', name: 'openai-compatible', proto: 'openai-completions', modelCount: 8, apiKeyExtracted: true, conflict: true },
+      {
+        id: 'i-4', name: 'ollama-local', proto: 'openai-completions', modelCount: 2, apiKeyExtracted: false, conflict: false,
+        warnings: ['contextWindow 字段缺失，使用默认值 8K'],
+      },
+    ],
+  },
+  {
+    source: 'zcode', title: 'ZCode',
+    items: [
+      { id: 'i-1', name: 'zhipu-coder', proto: 'openai-completions', modelCount: 4, apiKeyExtracted: true, conflict: false },
+      { id: 'i-2', name: 'kimi-prod', proto: 'openai-completions', modelCount: 2, apiKeyExtracted: true, conflict: false },
+    ],
+  },
+  {
+    source: 'codex', title: 'Codex',
+    parseError: '源配置解析出错（部分 provider 可能仍可导入）：JSON 第 12 行语法错误',
+    items: [
+      {
+        id: 'i-1', name: 'codex-main', proto: 'openai-responses', modelCount: 1, apiKeyExtracted: false, conflict: false,
+        warnings: ['model 列表需手动补', 'wire_api=chat 已废弃'],
+      },
+    ],
+  },
+  {
+    source: 'claude', title: 'Claude Code',
+    items: [
+      {
+        id: 'i-1', name: 'claude-prod', proto: 'anthropic-messages', modelCount: 1, apiKeyExtracted: false, conflict: false,
+        warnings: ['key 存于 OS keychain，导入后需手动补'],
+      },
+    ],
+  },
 ]
 
 // === Extension 列表（settings extension page）===

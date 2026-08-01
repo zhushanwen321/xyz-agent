@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { settingsPage, closeSettings, type SettingsPage } from '@/composables/useStore'
 import { providers, extensions } from '@/mock/sessions'
 import SettingsNavItem from './SettingsNavItem.vue'
@@ -45,16 +45,72 @@ const currentPageTitle = computed(() => NAV.find((n) => n.key === settingsPage.v
 
 const navRoot = ref<HTMLElement | null>(null)
 const contentEl = ref<HTMLElement | null>(null)
+/** 打开前的焦点元素（触发按钮）——关闭后还焦（spec §8） */
+const triggerEl = ref<HTMLElement | null>(null)
+
+function getFocusables(): HTMLElement[] {
+  if (!navRoot.value) return []
+  return Array.from(
+    navRoot.value.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  )
+}
+
+/** §8 键盘：Tab 循环（焦点陷阱，不逃逸到背景）+ nav 内 ↑↓/Home/End 移动并切换 */
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Tab') {
+    const list = getFocusables()
+    if (list.length === 0) return
+    const first = list[0]
+    const last = list[list.length - 1]
+    const active = document.activeElement
+    if (active === last && !e.shiftKey) {
+      e.preventDefault()
+      first.focus()
+    } else if (active === first && e.shiftKey) {
+      e.preventDefault()
+      last.focus()
+    } else if (navRoot.value && active instanceof HTMLElement && !navRoot.value.contains(active)) {
+      // 焦点已逃出 overlay（如落到 body）→ 拉回首项
+      e.preventDefault()
+      first.focus()
+    }
+    return
+  }
+  // ↑↓ / Home / End：仅当焦点在 nav 项上时处理（spec §8：↑↓ 只在 nav 内移动+切换，Tab 才跨区域）
+  const t = e.target
+  if (!(t instanceof HTMLElement) || !t.classList.contains('nav-item')) return
+  const items = Array.from(navRoot.value?.querySelectorAll<HTMLElement>('.fs-nav .nav-item') ?? [])
+  const i = items.indexOf(t)
+  if (i === -1) return
+  let next = -1
+  if (e.key === 'ArrowDown') next = i + 1
+  else if (e.key === 'ArrowUp') next = i - 1
+  else if (e.key === 'Home') next = 0
+  else if (e.key === 'End') next = items.length - 1
+  if (next < 0 || next >= items.length) return
+  e.preventDefault()
+  items[next].focus()
+  select(NAV[next].key)
+}
+
 onMounted(() => {
+  // 记录触发元素（关闭后还焦给触发器，spec §8）
+  triggerEl.value = document.activeElement instanceof HTMLElement ? document.activeElement : null
   nextTick(() => {
     const first = navRoot.value?.querySelector<HTMLElement>('.fs-nav .nav-item')
     first?.focus()
   })
 })
+onUnmounted(() => {
+  // 覆盖所有关闭路径（ESC / X / 快捷键）：焦点归还触发按钮
+  triggerEl.value?.focus()
+})
 </script>
 
 <template>
-  <div class="fso" ref="navRoot">
+  <div class="fso" ref="navRoot" @keydown="onKeydown">
     <!-- 左 nav -->
     <nav class="fs-nav">
       <div class="nav-brand">
@@ -84,6 +140,7 @@ onMounted(() => {
       <div class="content-col-inner">
         <ProviderPage v-if="settingsPage === 'provider'" />
         <ExtensionPage v-else-if="settingsPage === 'extension'" />
+        <ResourcesPage v-else-if="settingsPage === 'skill'" />
         <SystemPromptPage v-else-if="settingsPage === 'system-prompt'" />
         <PlaceholderPage v-else :page="settingsPage" />
       </div>

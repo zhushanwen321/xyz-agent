@@ -49,6 +49,14 @@ defineEmits<{ (e: 'click'): void }>()
   opacity: 0.4;
   cursor: not-allowed;
 }
+/* §2 键盘焦点态：ring-2 accent + offset；不可与选中态叠加（选中优先） */
+.nav-item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0, 0, 0, 0.4);
+}
+.nav-item.active:focus-visible {
+  box-shadow: none;
+}
 .ico {
   display: inline-flex;
   width: 16px;

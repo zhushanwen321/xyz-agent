@@ -3,15 +3,32 @@ import { ref, computed } from 'vue'
 import { extensions as initialExtensions, type Extension } from '@/mock/sessions'
 import GroupCard from './GroupCard.vue'
 import UiSwitch from './UiSwitch.vue'
-import UiInput from './UiInput.vue'
+import InstallArea, { type InstalledPayload } from './InstallArea.vue'
+import ScanDirsSection from './ScanDirsSection.vue'
 
 /** ExtensionPage：扩展管理。按 scope 分两组（mandatory 系统强制 / user 用户安装），
- * 各自 group 头带 scope pill + count；卡内 version chip + tools 折叠 + 操作簇。*/
+ * 各自 group 头带 scope pill + count；卡内 version chip + tools 折叠 + 操作簇。
+ * 安装流（InstallArea）+ 扫描目录管理（ScanDirsSection）为独立子组件。*/
 const extensions = ref<Extension[]>(JSON.parse(JSON.stringify(initialExtensions)))
-const installTab = ref<'npm' | 'local' | 'git'>('npm')
-const installValue = ref('')
 /** tools 折叠态（spec §2：默认折叠「N tools ▸」，展开显 tool 名 + 收起） */
 const toolsOpen = ref<Record<string, boolean>>({})
+/** 安装区已存在校验用的现有扩展名清单 */
+const installedNames = computed(() => extensions.value.map((e) => e.name))
+/** 安装成功（npm 直装 / dir+git 候选批量）→ 新扩展加入「用户安装」组，实时可见 */
+function handleInstalled(p: InstalledPayload) {
+  extensions.value.push({
+    id: 'e-' + Date.now(),
+    name: p.name,
+    desc: p.desc,
+    version: p.version,
+    tools: p.tools,
+    scope: 'user',
+    source: 'user',
+    tier: 'feature',
+    enabled: true,
+    autoUpgrade: false,
+  })
+}
 
 const TIER_LABEL: Record<Extension['tier'], string> = {
   infrastructure: 'infrastructure',
@@ -150,25 +167,11 @@ function toggleAutoUpgrade(e: Extension) {
       </div>
     </GroupCard>
 
-    <!-- 安装新扩展 -->
-    <GroupCard title="安装新扩展">
-      <div class="install-tabs">
-        <button class="itab" :class="{ active: installTab === 'npm' }" @click="installTab = 'npm'">npm</button>
-        <button class="itab" :class="{ active: installTab === 'local' }" @click="installTab = 'local'">Local Dir</button>
-        <button class="itab" :class="{ active: installTab === 'git' }" @click="installTab = 'git'">Git URL</button>
-      </div>
-      <div class="install-row">
-        <UiInput
-          v-model="installValue"
-          :placeholder="installTab === 'npm' ? '@scope/extension-name' : installTab === 'local' ? '/path/to/extension' : 'https://github.com/org/repo.git'"
-          :mono="true"
-        />
-        <button class="btn btn-default btn-md">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          安装
-        </button>
-      </div>
-    </GroupCard>
+    <!-- M1 多步安装流（InstallArea：npm 单步 + dir/git 发现→选择→安装 + 错误态） -->
+    <InstallArea :installed-names="installedNames" @installed="handleInstalled" />
+
+    <!-- M2 扫描目录管理（ScanDirsSection：discovery.json 三数组 · 项目/全局双分组） -->
+    <ScanDirsSection />
   </div>
 </template>
 
@@ -421,30 +424,4 @@ function toggleAutoUpgrade(e: Extension) {
   color: var(--neutral-mid);
 }
 
-.install-tabs {
-  display: flex;
-  gap: 2px;
-  padding: var(--space-1) var(--space-2) 0;
-}
-.itab {
-  height: 28px;
-  padding: 0 var(--space-3);
-  border-radius: var(--radius-sm);
-  color: var(--neutral-mid);
-  font-size: var(--text-sm);
-  font-weight: 500;
-  transition: all var(--duration-fast) var(--ease);
-}
-.itab:hover {
-  color: var(--neutral-fg);
-}
-.itab.active {
-  background: var(--surface);
-  color: var(--neutral-fg);
-}
-.install-row {
-  display: flex;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-2) var(--space-2);
-}
 </style>

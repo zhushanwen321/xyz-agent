@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onUnmounted } from 'vue'
 import UiSwitch from './UiSwitch.vue'
 
 /** SystemPromptPage：两个编辑器卡（替换 / 追加系统提示词）。
@@ -12,8 +12,23 @@ interface SpState {
   dirty: boolean
   text: string
   refOpen: boolean
+  /** C7：历史是否启用过自定义提示词（一经 true 不回退，判定「首次启用」的 SSOT） */
+  everEnabled: boolean
+  /** C5：保存中（Save disabled + spinner + badge 变「保存中」） */
+  saving: boolean
+  /** C5：保存成功「已保存」反馈（1.5s 后消失） */
+  savedFlash: boolean
 }
-const DEFAULT_REPLACE = `你是 ZCode，一个交互式编码 agent。\n以单次操作完成全部任务，不要做未要求的功能。`
+
+/** C4：replace 卡字符上限（spec §7 · SYSTEM_PROMPT_MAX_LENGTH 对齐 runtime） */
+const REPLACE_MAX = 16000
+/** C4：warn 阈值（spec §7：normal <90% / warn 90-100% / danger >100%） */
+const REPLACE_WARN_AT = REPLACE_MAX * 0.9
+
+/** C7：mock 拉取 pi 当前生效系统提示词（首次启用填充的修改起点） */
+const FETCHED_PI_PROMPT = `你是 pi，一个交互式编码 agent。\n你通过读写文件、执行命令、编辑代码来帮助用户完成任务。\n保持回复简洁，明确展示文件路径。`
+/** C7：append 卡首次启用模板（追加无默认全文，模板更轻，spec §5） */
+const APPEND_TEMPLATE = `请遵循以下额外指引：\n- 回答前先阅读相关文件\n- 修改涉及多文件时先列出改动清单`
 const DEFAULT_APPEND = `\n附加规则：\n- 优先复用现有代码而非新建\n- 修改前先理解上下文`
 
 const states = ref<SpState[]>([
@@ -22,9 +37,12 @@ const states = ref<SpState[]>([
     title: '替换系统提示词',
     subtitle: '完全覆盖 pi 默认系统提示词（谨慎使用）。',
     enabled: false,
-    dirty: true,
-    text: DEFAULT_REPLACE,
+    dirty: false,
+    text: '',
     refOpen: false,
+    everEnabled: false,
+    saving: false,
+    savedFlash: false,
   },
   {
     key: 'append',
@@ -34,6 +52,9 @@ const states = ref<SpState[]>([
     dirty: true,
     text: DEFAULT_APPEND,
     refOpen: false,
+    everEnabled: true,
+    saving: false,
+    savedFlash: false,
   },
 ])
 
@@ -53,17 +74,61 @@ function copyRef(s: SpState) {
   }, 1500)
 }
 
+/** C7：Switch 切换。首次启用（!everEnabled）→ 自动填充 pi 当前提示词作为修改起点 + dirty=true；
+ * 复启用（everEnabled）→ 不动 text（恢复历史内容）。enabled 翻转本身即脏（spec §5 snapshot diff）。*/
+function onToggle(s: SpState, checked: boolean) {
+  s.enabled = checked
+  if (checked && !s.everEnabled) {
+    s.text = s.key === 'replace' ? FETCHED_PI_PROMPT : APPEND_TEMPLATE
+    s.everEnabled = true
+  }
+  s.dirty = true
+}
+
 function onInput(s: SpState) {
   s.dirty = true
+  s.savedFlash = false // 新编辑使「已保存」反馈失效
 }
 function charCount(s: SpState) {
   return s.text.length
 }
-function save(s: SpState) {
-  s.dirty = false
+
+/** C4：计数器三态（仅 replace 卡有上限；append 无上限不进三态，spec §7） */
+function counterState(s: SpState): 'normal' | 'warn' | 'danger' {
+  if (s.key !== 'replace') return 'normal'
+  const len = s.text.length
+  if (len > REPLACE_MAX) return 'danger'
+  if (len >= REPLACE_WARN_AT) return 'warn'
+  return 'normal'
 }
+function overLimit(s: SpState) {
+  return counterState(s) === 'danger'
+}
+
+/** C5：保存（mock 600ms saving → 成功清 dirty + 「已保存」1.5s 反馈） */
+const saveTimers: Record<string, ReturnType<typeof setTimeout>> = {}
+const flashTimers: Record<string, ReturnType<typeof setTimeout>> = {}
+function save(s: SpState) {
+  if (!s.dirty || s.saving || overLimit(s)) return
+  s.saving = true
+  clearTimeout(saveTimers[s.key])
+  saveTimers[s.key] = setTimeout(() => {
+    s.saving = false
+    s.dirty = false
+    s.savedFlash = true
+    clearTimeout(flashTimers[s.key])
+    flashTimers[s.key] = setTimeout(() => {
+      s.savedFlash = false
+    }, 1500)
+  }, 600)
+}
+onUnmounted(() => {
+  Object.values(saveTimers).forEach(clearTimeout)
+  Object.values(flashTimers).forEach(clearTimeout)
+})
+
 function resetDefault(s: SpState) {
-  // M5（spec §6）：清空 replace prompt + 关 switch + dirty=true——编辑操作，不直接写盘
+  // M5（spec §6）：清空 replace prompt + 关 switch + dirty=true——编辑操作，不直接写盘；不重置 everEnabled（spec §5）
   s.text = ''
   s.enabled = false
   s.dirty = true
@@ -89,17 +154,21 @@ const totalDirty = computed(() => states.value.filter((s) => s.dirty).length)
         <div class="sp-head-text">
           <div class="sp-title-row">
             <h2 class="sp-title">{{ s.title }}</h2>
-            <span v-if="s.dirty" class="dirty-badge">未保存</span>
           </div>
           <p class="sp-subtitle">{{ s.subtitle }}</p>
         </div>
-        <UiSwitch :checked="s.enabled" :aria-label="idx === 0 ? '替换系统提示词' : '注入额外提示词'" @update:checked="s.enabled = $event; s.dirty = true" />
+        <span class="sp-head-ctrl">
+          <span v-if="s.saving" class="dirty-badge saving"><span class="spin"></span>保存中</span>
+          <span v-else-if="s.dirty" class="dirty-badge"><span class="dot"></span>未保存</span>
+          <UiSwitch :checked="s.enabled" :aria-label="idx === 0 ? '替换系统提示词' : '注入额外提示词'" @update:checked="onToggle(s, $event)" />
+        </span>
       </div>
 
       <!-- textarea -->
       <textarea
         v-model="s.text"
         class="sp-textarea"
+        :class="{ 'over-limit': overLimit(s) }"
         :disabled="!s.enabled"
         :placeholder="s.key === 'replace' ? '输入替换后的系统提示词…' : '输入要追加的系统提示词…'"
         @input="onInput(s)"
@@ -107,11 +176,25 @@ const totalDirty = computed(() => states.value.filter((s) => s.dirty).length)
 
       <!-- foot -->
       <div class="sp-foot">
-        <span class="counter" :class="{ muted: !s.dirty }">{{ charCount(s) }} 字符</span>
+        <span class="counter" :class="[counterState(s), { muted: !s.dirty }]">
+          <template v-if="s.key === 'replace'">
+            <span class="num">{{ charCount(s).toLocaleString() }}</span> / {{ REPLACE_MAX.toLocaleString() }}
+            <template v-if="counterState(s) === 'warn'"> · 接近上限</template>
+            <template v-else-if="counterState(s) === 'danger'"> · 超出 {{ (charCount(s) - REPLACE_MAX).toLocaleString() }} 字符</template>
+          </template>
+          <template v-else>{{ charCount(s) }} 字符</template>
+        </span>
         <span class="spacer"></span>
-        <button class="btn btn-danger btn-sm" :disabled="!s.dirty" @click="discard(s)">放弃</button>
-        <button v-if="s.key === 'replace'" class="btn btn-secondary btn-sm" :disabled="!s.dirty" @click="resetDefault(s)">恢复默认</button>
-        <button class="btn btn-default btn-sm" :disabled="!s.dirty" @click="save(s)">保存</button>
+        <span v-if="s.savedFlash" class="toast">
+          <svg class="t-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+          已保存
+        </span>
+        <button class="btn btn-danger btn-sm" :disabled="!s.dirty || s.saving" @click="discard(s)">放弃</button>
+        <button v-if="s.key === 'replace'" class="btn btn-secondary btn-sm" :disabled="!s.dirty || s.saving" @click="resetDefault(s)">恢复默认</button>
+        <button class="btn btn-default btn-sm" :disabled="!s.dirty || s.saving || overLimit(s)" @click="save(s)">
+          <svg v-if="s.saving" class="btn-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+          保存
+        </button>
       </div>
 
       <!-- ref-toggle（m11：右箭头，展开 rotate 90°） -->
@@ -202,11 +285,30 @@ const totalDirty = computed(() => states.value.filter((s) => s.dirty).length)
   padding: 0 8px;
   display: inline-flex;
   align-items: center;
+  gap: 5px;
   border-radius: 999px;
   background: var(--warn-soft);
   color: var(--warn);
   font-size: var(--text-2xs);
   font-weight: 600;
+}
+.dirty-badge .dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+/* C5：保存中态（spec §7：accent-soft 底 + accent 字 + 行内 spinner） */
+.dirty-badge.saving {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.sp-head-ctrl {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
 }
 .sp-subtitle {
   margin-top: 2px;
@@ -238,8 +340,17 @@ const totalDirty = computed(() => states.value.filter((s) => s.dirty).length)
   box-shadow: 0 0 0 1px var(--accent-ring) inset;
 }
 .sp-textarea:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: not-allowed;
+  resize: none;
+}
+/* C4：超限态 danger 边框（spec §7：border danger + focus 内环 danger，同 SSOT Input.err 范式） */
+.sp-textarea.over-limit {
+  border-color: var(--danger);
+}
+.sp-textarea.over-limit:focus {
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--danger);
 }
 
 .sp-foot {
@@ -250,14 +361,81 @@ const totalDirty = computed(() => states.value.filter((s) => s.dirty).length)
 }
 .counter {
   font-size: var(--text-xs);
-  color: var(--neutral-fg);
-  font-family: var(--font-mono);
-}
-.counter.muted {
   color: var(--neutral-dim);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.counter .num {
+  color: var(--neutral-mid);
+}
+/* C4：三态色（spec §7：warn 90-100% / danger >100%，数字同色） */
+.counter.warn {
+  color: var(--warn);
+}
+.counter.warn .num {
+  color: var(--warn);
+}
+.counter.danger {
+  color: var(--danger);
+}
+.counter.danger .num {
+  color: var(--danger);
 }
 .spacer {
   flex: 1;
+}
+.sp-foot {
+  position: relative;
+}
+/* C5：保存成功反馈（spec §7 toast：bg-elevated + border-strong + shadow，浮在 foot 上方右侧） */
+.toast {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--neutral-fg);
+}
+.toast .t-ico {
+  width: 15px;
+  height: 15px;
+  color: var(--success);
+  flex-shrink: 0;
+}
+/* spinner（保存中：按钮内 13px / badge 内 9px，spec §7） */
+.btn-spin {
+  width: 13px;
+  height: 13px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+.spin {
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-spin,
+  .spin {
+    animation: none;
+  }
 }
 
 .ref-toggle {
