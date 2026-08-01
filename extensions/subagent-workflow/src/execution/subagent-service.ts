@@ -580,7 +580,12 @@ export class SubagentService {
     //   - CAS 失败（cancel/finalizeFailed/dispose 抢先转终态）→ 那些路径各自已 emit
     //     （cancelBackground L709 / finalizeFailed→finalizeRecord / dispose L240）
     // 旧实现无条件 emit 一次 → CAS 成功分支重复 emit（双注销）。
-    return mapToWorkflowAgentResult(result);
+    const wfResult = mapToWorkflowAgentResult(result);
+    // W2 改动 7：注入 worktreePath（worktree 隔离激活时来自 step 2.5 的 worktreeHandle）。
+    // mapToWorkflowAgentResult 不感知 worktree（它只做 subagents AgentResult → workflow AgentResult
+    // 的 DTO 映射），故在 caller 侧 mutate 刚新建的产物对象（无共享引用，安全）。
+    wfResult.worktreePath = record.worktreeHandle?.path;
+    return wfResult;
   }
 
   // ── 状态查询（TUI 调）──────────────────────────────────

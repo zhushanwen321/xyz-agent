@@ -198,6 +198,11 @@ export interface AgentResult {
  * 窗口期内可能 undefined（session 尚未创建成功）。
  */
   sessionFile?: string;
+ /**
+   * Absolute path of the git worktree used for filesystem isolation (set when
+   * worktree isolation is active). Injected by executeAndAwait from record.worktreeHandle.path.
+   */
+  worktreePath?: string;
  /** All tool calls collected from JSONL stream (FR-7). */
   toolCalls?: ToolCallEntry[];
 }
