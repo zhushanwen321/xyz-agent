@@ -1,9 +1,11 @@
 <script setup lang="ts">
 /** WorkflowListView：从 mock workflows 渲染工作流卡片。
- *  v6（spec §7）：进度条仅 running=accent，done=neutral-dim（降中性），
+ *  v6（spec §7）：状态指示最左，无独立 workflow icon；
+ *  进度条仅 running=accent，done=neutral-dim（降中性），
  *  failed=danger，paused=warn；卡片无 border。
- *  每卡片：Workflow icon + name + slug + 进度条 + phase/agent 计数。 */
+ *  每卡片：状态 + name + slug + 进度条 + agents 计数。 */
 
+import { ref } from 'vue'
 import { workflows, type WorkflowItem } from '@/mock/sessions'
 
 type Status = WorkflowItem['status']
@@ -13,6 +15,17 @@ function fillClass(s: Status) {
 }
 function dotClass(s: Status) {
   return `is-${s}`
+}
+
+// running 卡片 abort 两段式确认（纯 UI 状态）
+const hoveredId = ref<string | null>(null)
+const pendingAbort = ref<string | null>(null)
+
+function confirmAbort(id: string) {
+  pendingAbort.value = id
+}
+function resetAbort() {
+  pendingAbort.value = null
 }
 </script>
 
@@ -24,9 +37,11 @@ function dotClass(s: Status) {
       class="wf-card"
       role="button"
       tabindex="0"
+      @mouseenter="hoveredId = wf.id"
+      @mouseleave="hoveredId = null; pendingAbort = null"
     >
       <div class="wf-card__row">
-        <!-- 状态指示：running=spinner / 其他=圆点 -->
+        <!-- 状态指示（最左）：running=spinner / 其他=圆点 -->
         <svg
           v-if="wf.status === 'running'"
           class="wf-card__spinner"
@@ -45,27 +60,41 @@ function dotClass(s: Status) {
           :class="dotClass(wf.status)"
         ></span>
 
-        <!-- Workflow icon -->
-        <svg
-          class="wf-card__icon"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.75"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <rect x="3" y="3" width="6" height="6" />
-          <rect x="15" y="15" width="6" height="6" />
-          <path d="M9 6h6a2 2 0 0 1 2 2v7" />
-        </svg>
-
         <!-- name + slug -->
         <span class="wf-card__name">{{ wf.name }}</span>
         <span class="wf-card__slug">{{ wf.slug }}</span>
+
+        <!-- running abort 按钮（X ghost，两段式确认） -->
+        <div v-if="wf.status === 'running' && (hoveredId === wf.id || pendingAbort === wf.id)" class="wf-card__abort">
+          <template v-if="pendingAbort === wf.id">
+            <button
+              class="wf-abort wf-abort--confirm"
+              type="button"
+              title="确认中止"
+              @click.stop="resetAbort"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </button>
+          </template>
+          <template v-else>
+            <button
+              class="wf-abort"
+              type="button"
+              title="中止工作流"
+              @click.stop="confirmAbort(wf.id)"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </template>
+        </div>
       </div>
 
-      <!-- 进度条 + phase/agent 计数 -->
+      <!-- 进度条 + agents 计数（去百分比） -->
       <div class="wf-card__prog">
         <div class="wf-card__pb">
           <div
@@ -74,8 +103,7 @@ function dotClass(s: Status) {
             :style="{ width: `${wf.progress}%` }"
           ></div>
         </div>
-        <span class="wf-card__meta">{{ wf.progress }}%</span>
-        <span class="wf-card__meta">{{ wf.phaseCount }} phases · {{ wf.agentCount }} agents</span>
+        <span class="wf-card__meta">{{ wf.agentCount }} / {{ wf.phaseCount }} agents</span>
       </div>
     </div>
   </div>
@@ -101,7 +129,7 @@ function dotClass(s: Status) {
 .wf-card__row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 .wf-card__spinner {
   width: 13px;
@@ -128,12 +156,6 @@ function dotClass(s: Status) {
 .wf-card__dot.is-paused {
   background: var(--warn);
 }
-.wf-card__icon {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  color: var(--neutral-mid);
-}
 .wf-card__name {
   min-width: 0;
   flex: 1;
@@ -153,10 +175,47 @@ function dotClass(s: Status) {
   color: var(--neutral-mid);
 }
 
+/* running abort 按钮 */
+.wf-card__abort {
+  flex-shrink: 0;
+  display: flex;
+}
+.wf-abort {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--neutral-mid);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease);
+}
+.wf-abort:hover {
+  background: var(--surface-hover);
+  color: var(--neutral-fg);
+}
+.wf-abort svg {
+  width: 13px;
+  height: 13px;
+}
+/* 两段式确认：实心 danger */
+.wf-abort--confirm {
+  background: var(--danger);
+  color: #fff;
+}
+.wf-abort--confirm:hover {
+  background: var(--danger);
+  color: #fff;
+}
+
 /* 进度条 + 计数 */
 .wf-card__prog {
   margin-top: 4px;
-  padding-left: 21px; /* 对齐 name（spinner/dot 7 + icon 14 + gaps） */
+  padding-left: 21px; /* 对齐 name（spinner 13/dot 7 + gap 8） */
   display: flex;
   align-items: center;
   gap: 6px;

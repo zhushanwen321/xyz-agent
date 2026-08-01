@@ -36,7 +36,7 @@ function toggleEnabled(p: Provider) {
         <p class="desc">管理模型供应商的连接、凭据与可用模型。</p>
       </div>
       <div class="head-actions">
-        <button class="btn btn-ghost btn-md">
+        <button class="btn btn-secondary btn-sm">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
           导入
         </button>
@@ -58,14 +58,14 @@ function toggleEnabled(p: Provider) {
           ></span>
           <UiSwitch :checked="p.enabled" @update:checked="toggleEnabled(p)" />
           <span class="name" @click="toggleExpand(p.id)">{{ p.name }}</span>
-          <span v-if="p.isDefault" class="default-pill">默认</span>
+          <span v-if="p.isDefault" class="default-pill">默认供应商</span>
           <span class="model-count">{{ p.modelCount }} 个模型</span>
           <span v-if="p.dirty" class="dirty-badge">未保存</span>
           <span class="spacer"></span>
           <button class="btn btn-ghost btn-icon expand-btn" :class="{ down: expandedId === p.id }" title="展开" @click="toggleExpand(p.id)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
-          <button class="btn btn-ghost btn-icon del-btn" title="删除">
+          <button class="btn btn-danger btn-icon-sm del-btn" title="删除">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           </button>
         </div>
@@ -184,8 +184,8 @@ function toggleEnabled(p: Provider) {
   min-height: 48px;
 }
 .status-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -354,7 +354,7 @@ function toggleEnabled(p: Provider) {
   border-top: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
   position: sticky;
   bottom: 0;
-  background: var(--bg-card);
+  background: var(--surface);
   margin: 0 calc(-1 * var(--space-4)) calc(-1 * var(--space-4));
   padding: var(--space-3) var(--space-4);
 }

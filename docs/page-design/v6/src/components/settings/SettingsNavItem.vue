@@ -27,11 +27,10 @@ defineEmits<{ (e: 'click'): void }>()
 <style scoped>
 .nav-item {
   width: 100%;
-  height: 32px;
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 0 var(--space-3);
+  padding: 8px 10px;
   border-radius: var(--radius-sm);
   color: var(--neutral-mid);
   font-size: var(--text-base);
@@ -77,12 +76,13 @@ defineEmits<{ (e: 'click'): void }>()
   border-radius: 999px;
   background: var(--surface);
   color: var(--neutral-dim);
-  font-size: var(--text-2xs);
+  font-family: var(--font-mono);
+  font-size: 10px;
   font-weight: 600;
   flex-shrink: 0;
 }
 .nav-item.active .count {
-  background: color-mix(in oklch, var(--accent) 18%, transparent);
-  color: var(--accent);
+  background: var(--surface);
+  color: var(--neutral-dim);
 }
 </style>

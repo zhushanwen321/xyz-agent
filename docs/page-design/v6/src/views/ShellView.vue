@@ -35,8 +35,8 @@ import { sidebarCollapsed, drawerOpen } from '@/composables/useStore'
             <Composer />
           </div>
           <!-- drawer（与 main 同 surface 浮起体）-->
-          <SplitterHandle v-if="drawerOpen" />
-          <SideDrawer v-if="drawerOpen" />
+          <SplitterHandle v-show="drawerOpen" class="drawer-splitter" />
+          <SideDrawer v-show="drawerOpen" class="drawer-pane" />
         </div>
       </main>
     </div>
@@ -106,4 +106,10 @@ import { sidebarCollapsed, drawerOpen } from '@/composables/useStore'
 .window-frame.sidebar-collapsed {
   gap: 0;
 }
+
+/* TODO(item-18): drawer 开关过渡（width 0 → flex:1，320ms）。
+ * 当前用 v-show 保持 DOM 常驻（drawer 内 terminal 等状态不丢），
+ * 但 v-show 关闭走 display:none 会让 width 过渡瞬时跳变。
+ * 完整方案需把 SideDrawer 包进常驻 wrapper，用 width/max-width + overflow:hidden
+ * 替代 display 切换。此 demo 阶段保留 v-show，过渡留待后续。*/
 </style>

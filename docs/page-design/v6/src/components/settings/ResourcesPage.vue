@@ -172,18 +172,29 @@ const manualPath = ref('')
   padding: 0 8px;
   display: inline-flex;
   align-items: center;
+  gap: 4px;
   border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--neutral-mid);
   font-size: var(--text-2xs);
   font-weight: 600;
   flex-shrink: 0;
 }
-.lp-tag.system {
-  background: var(--surface-2);
-  color: var(--neutral-mid);
+.lp-tag.system::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--neutral-dim);
+  flex-shrink: 0;
 }
-.lp-tag.shared {
-  background: var(--info-soft);
-  color: var(--info);
+.lp-tag.shared::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--info);
+  flex-shrink: 0;
 }
 .lp-tag-spacer {
   width: 44px;

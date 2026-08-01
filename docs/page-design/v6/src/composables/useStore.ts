@@ -9,7 +9,7 @@ export const sidebarTab = ref<SidebarTab>('sessions')
 // drawer
 export const drawerOpen = ref(true)
 export type DrawerTab = 'terminal' | 'browser' | 'git' | 'doc' | 'detail' | 'subagent' | 'workflow'
-export const drawerTab = ref<DrawerTab>('detail')
+export const drawerTab = ref<DrawerTab>('terminal')
 
 // 侧栏折叠
 export const sidebarCollapsed = ref(false)
@@ -17,6 +17,8 @@ export const sidebarCollapsed = ref(false)
 // overlay
 export const searchModalOpen = ref(false)
 export const settingsOpen = ref(false)
+export const askUserOpen = ref(false)
+export const confirmOpen = ref(false)
 export type SettingsPage = 'provider' | 'extension' | 'resources' | 'system-prompt' | 'terminal' | 'preset' | 'worktree' | 'update' | 'system' | 'skill'
 export const settingsPage = ref<SettingsPage>('provider')
 
@@ -42,9 +44,15 @@ export function openSettings(page?: SettingsPage) {
   settingsOpen.value = true
 }
 export function closeSettings() { settingsOpen.value = false }
+export function openAskUser() { askUserOpen.value = true }
+export function closeAskUser() { askUserOpen.value = false }
+export function openConfirm() { confirmOpen.value = true }
+export function closeConfirm() { confirmOpen.value = false }
 
 /** ESC 关闭所有 overlay */
 export function handleEscape() {
   searchModalOpen.value = false
   settingsOpen.value = false
+  askUserOpen.value = false
+  confirmOpen.value = false
 }

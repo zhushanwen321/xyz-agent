@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { settingsPage, closeSettings, type SettingsPage } from '@/composables/useStore'
 import { providers, extensions } from '@/mock/sessions'
 import SettingsNavItem from './SettingsNavItem.vue'
@@ -37,6 +38,8 @@ const NAV: NavDef[] = [
 function select(key: SettingsPage) {
   settingsPage.value = key
 }
+
+const currentPageTitle = computed(() => NAV.find((n) => n.key === settingsPage.value)?.label ?? '')
 </script>
 
 <template>
@@ -61,6 +64,12 @@ function select(key: SettingsPage) {
 
     <!-- 右 content -->
     <div class="fs-content">
+      <div class="fs-head">
+        <span class="fs-title">设置 · {{ currentPageTitle }}</span>
+        <button class="xbtn" title="关闭设置（Esc）" @click="closeSettings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
       <div class="content-col-inner">
         <ProviderPage v-if="settingsPage === 'provider'" />
         <ExtensionPage v-else-if="settingsPage === 'extension'" />
@@ -69,11 +78,6 @@ function select(key: SettingsPage) {
         <PlaceholderPage v-else :page="settingsPage" />
       </div>
     </div>
-
-    <!-- 右上角 X 关闭 -->
-    <button class="xbtn" title="关闭设置（Esc）" @click="closeSettings">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-    </button>
   </div>
 </template>
 
@@ -93,8 +97,8 @@ function select(key: SettingsPage) {
   background: var(--bg-sunken);
   display: flex;
   flex-direction: column;
-  padding: var(--space-4) var(--space-3);
-  gap: var(--space-1);
+  padding: 8px;
+  gap: 1px;
 }
 .nav-brand {
   height: 40px;
@@ -123,31 +127,39 @@ function select(key: SettingsPage) {
   background: var(--bg);
   overflow-y: auto;
 }
+.fs-head {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+.fs-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--neutral-fg);
+}
 .content-col-inner {
   max-width: var(--content-max-w);
-  margin-left: 0;
-  margin-right: auto;
-  padding: var(--space-8) var(--space-6);
+  margin: 0;
+  padding: 0 24px;
 }
 
-/* 右上角 X */
+/* X 关闭按钮（fs-head 内右侧） */
 .xbtn {
-  position: fixed;
-  top: var(--space-3);
-  right: var(--space-4);
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-sm);
   color: var(--neutral-mid);
-  z-index: var(--z-modal);
   transition: all var(--duration-fast) var(--ease);
 }
 .xbtn svg {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 .xbtn:hover {
   background: var(--surface-hover);

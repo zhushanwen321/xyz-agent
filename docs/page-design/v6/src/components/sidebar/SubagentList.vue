@@ -1,15 +1,27 @@
 <script setup lang="ts">
 /** SubagentList：从 mock subagents 渲染子智能体卡片。
  *  v6（spec §7）：卡片 py 统一 6px · 无 border；
- *  状态：running→spinner / done→success 圆点 / failed→danger / cancelled→dim.5。
- *  每卡片：Bot icon + name + slug + model·thinking + 耗时。 */
+ *  状态指示在最左：running→spinner / done→success 圆点 / failed→danger / cancelled→dim.5。
+ *  每卡片：状态 + name + model·thinking + 耗时 + running cancel。 */
 
+import { ref } from 'vue'
 import { subagents, type SubagentItem } from '@/mock/sessions'
 
 type Status = SubagentItem['status']
 
 function indicatorClass(s: Status) {
   return `is-${s}`
+}
+
+// running 卡片 cancel 两段式确认（纯 UI 状态）
+const hoveredId = ref<string | null>(null)
+const pendingCancel = ref<string | null>(null)
+
+function confirmCancel(id: string) {
+  pendingCancel.value = id
+}
+function resetCancel() {
+  pendingCancel.value = null
 }
 </script>
 
@@ -21,30 +33,11 @@ function indicatorClass(s: Status) {
       class="sa-card"
       role="button"
       tabindex="0"
+      @mouseenter="hoveredId = sa.id"
+      @mouseleave="hoveredId = null; pendingCancel = null"
     >
       <div class="sa-card__row">
-        <!-- Bot icon -->
-        <svg
-          class="sa-card__bot"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.75"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <rect x="3" y="11" width="18" height="10" rx="2" />
-          <circle cx="12" cy="5" r="2" />
-          <path d="M12 7v4" />
-          <line x1="8" y1="16" x2="8" y2="16" />
-          <line x1="16" y1="16" x2="16" y2="16" />
-        </svg>
-
-        <!-- name + model·thinking -->
-        <span class="sa-card__name">{{ sa.name }}</span>
-        <span class="sa-card__stats">{{ sa.model }} · thinking {{ sa.thinking }}</span>
-
-        <!-- 状态指示：running=spinner / 其他=圆点 -->
+        <!-- 状态指示（最左）：running=spinner / 其他=圆点 -->
         <svg
           v-if="sa.status === 'running'"
           class="sa-card__spinner"
@@ -59,8 +52,41 @@ function indicatorClass(s: Status) {
         </svg>
         <span v-else class="sa-card__dot" :class="indicatorClass(sa.status)"></span>
 
+        <!-- name + model·thinking -->
+        <span class="sa-card__name">{{ sa.name }}</span>
+        <span class="sa-card__stats">{{ sa.model }} · thinking {{ sa.thinking }}</span>
+
         <!-- 耗时 -->
         <span v-if="sa.elapsed" class="sa-card__elapsed">{{ sa.elapsed }}</span>
+
+        <!-- running cancel 按钮（X ghost，两段式确认） -->
+        <div v-if="sa.status === 'running' && (hoveredId === sa.id || pendingCancel === sa.id)" class="sa-card__cancel">
+          <template v-if="pendingCancel === sa.id">
+            <button
+              class="sa-cancel sa-cancel--confirm"
+              type="button"
+              title="确认取消"
+              @click.stop="resetCancel"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </button>
+          </template>
+          <template v-else>
+            <button
+              class="sa-cancel"
+              type="button"
+              title="取消任务"
+              @click.stop="confirmCancel(sa.id)"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </template>
+        </div>
       </div>
 
       <!-- slug 任务标识 -->
@@ -90,12 +116,6 @@ function indicatorClass(s: Status) {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-.sa-card__bot {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  color: var(--neutral-mid);
 }
 .sa-card__name {
   min-width: 0;
@@ -148,9 +168,45 @@ function indicatorClass(s: Status) {
   font-size: var(--text-2xs);
   color: var(--neutral-dim);
 }
+/* running cancel 按钮 */
+.sa-card__cancel {
+  flex-shrink: 0;
+  display: flex;
+}
+.sa-cancel {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--neutral-mid);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease);
+}
+.sa-cancel:hover {
+  background: var(--surface-hover);
+  color: var(--neutral-fg);
+}
+.sa-cancel svg {
+  width: 13px;
+  height: 13px;
+}
+/* 两段式确认：实心 danger */
+.sa-cancel--confirm {
+  background: var(--danger);
+  color: #fff;
+}
+.sa-cancel--confirm:hover {
+  background: var(--danger);
+  color: #fff;
+}
 .sa-card__slug {
   margin-top: 2px;
-  padding-left: 22px; /* 对齐 name（bot icon 14 + gap 8） */
+  padding-left: 21px; /* 对齐 name（spinner 13/dot 7 + gap 8） */
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   line-height: 1.3;

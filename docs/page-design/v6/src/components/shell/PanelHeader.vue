@@ -12,14 +12,13 @@ import { openSearch } from '@/composables/useStore'
     </svg>
     <!-- breadcrumb -->
     <div class="breadcrumb">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
       <span class="dir">feat-optimize-ui</span>
       <span class="sep">›</span>
       <span class="branch">visual-modernization</span>
     </div>
     <div class="spacer"></div>
     <!-- jsonl 按钮 -->
-    <button class="ph-btn jsonl-btn" title="a3f2c9.jsonl">a3f2c9.jsonl</button>
+    <button class="ph-btn jsonl-btn" title="jsonl">jsonl</button>
     <!-- history -->
     <button class="ph-btn" title="历史">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>
@@ -44,9 +43,9 @@ import { openSearch } from '@/composables/useStore'
 }
 
 .status-ico {
-  width: 14px;
-  height: 14px;
-  color: var(--neutral-ico);
+  width: 13px;
+  height: 13px;
+  color: var(--success);
   flex-shrink: 0;
 }
 
@@ -60,26 +59,35 @@ import { openSearch } from '@/composables/useStore'
 }
 .breadcrumb .dir { color: var(--neutral-fg); font-weight: 600; }
 .breadcrumb .sep { color: var(--neutral-faint); }
-.breadcrumb .branch { color: var(--neutral-mid); }
+.breadcrumb .branch { color: var(--neutral-mid); font-size: var(--text-xs); }
 
 .spacer { flex: 1; }
 
 .ph-btn {
-  height: 26px;
-  padding: 0 8px;
+  width: 26px;
+  height: 22px;
+  padding: 0;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
   border-radius: var(--radius-sm);
   color: var(--neutral-mid);
   font-size: var(--text-2xs);
   font-family: var(--font-mono);
-  transition: all var(--duration-fast) var(--ease);
+  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
 }
-.ph-btn svg { width: 14px; height: 14px; }
+.ph-btn svg { width: 16px; height: 16px; }
 .ph-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 
-.jsonl-btn { font-weight: 500; }
+/* jsonl 按 spec 范式：height 20px / padding 0 4px / font-mono 11px / neutral-dim */
+.jsonl-btn {
+  width: auto;
+  height: 20px;
+  padding: 0 4px;
+  font-weight: 500;
+  color: var(--neutral-dim);
+}
 
 .git-btn { position: relative; }
 .dirty-dot {

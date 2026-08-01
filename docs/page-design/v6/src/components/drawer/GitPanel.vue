@@ -73,7 +73,7 @@ function onCommitKeydown(e: KeyboardEvent) {
             <polyline points="6 9 12 15 18 9" />
           </svg>
         </button>
-        <span class="gp-pill dirty" title="{{ files.length }} changes">dirty</span>
+        <span class="gp-pill dirty" :title="files.length + ' changes'">dirty</span>
         <span class="gp-stats">
           <span class="gp-add">+{{ stats.add }}</span>
           <span class="gp-del">−{{ stats.del }}</span>
@@ -121,7 +121,7 @@ function onCommitKeydown(e: KeyboardEvent) {
       <input
         v-model="commitMsg"
         class="gp-commit-input"
-        placeholder="Commit message"
+        placeholder="提交信息（Cmd/Ctrl+Enter 提交）"
         @keydown="onCommitKeydown"
       />
 

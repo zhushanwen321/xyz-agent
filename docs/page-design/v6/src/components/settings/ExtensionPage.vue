@@ -11,12 +11,12 @@ const installTab = ref<'npm' | 'local' | 'git'>('npm')
 const installValue = ref('')
 
 const TIER_LABEL: Record<Extension['tier'], string> = {
-  infrastructure: '基础设施',
-  feature: '功能',
+  infrastructure: 'infrastructure',
+  feature: 'feature',
 }
 const TIER_COLOR: Record<Extension['tier'], string> = {
-  infrastructure: 'var(--info)',
-  feature: 'var(--accent)',
+  infrastructure: 'var(--neutral-faint)',
+  feature: 'var(--neutral-dim)',
 }
 
 function toggleEnabled(e: Extension) {
@@ -42,35 +42,37 @@ function toggleAutoUpgrade(e: Extension) {
         <div class="ext-info">
           <div class="ext-name-row">
             <span class="ext-name">{{ e.name }}</span>
-            <span class="badge-pill source" :class="e.source">{{ e.source === 'user' ? '用户' : '内置' }}</span>
+            <span v-if="e.source === 'user'" class="badge-pill source user">user-installed</span>
             <span v-if="e.scope === 'mandatory'" class="lock-ico" title="强制安装，不可卸载/关闭">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
             </span>
             <span
-              class="tier-dot"
-              :title="TIER_LABEL[e.tier]"
-              :style="{ background: TIER_COLOR[e.tier] }"
-            ></span>
+              class="tier-label"
+              :style="{ color: TIER_COLOR[e.tier] }"
+            >{{ TIER_LABEL[e.tier] }}</span>
           </div>
           <p class="ext-desc">{{ e.desc }}</p>
         </div>
-        <div class="ext-acts">
+        <!-- mandatory 扩展：单一锁标记操作簇 -->
+        <div v-if="e.scope === 'mandatory'" class="ext-lockafford">
+          <svg class="lockafford-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+          <span class="lockafford-text">自动升级</span>
+        </div>
+        <!-- 可选扩展：启用 / 自动升级 / 升级 / 卸载 -->
+        <div v-else class="ext-acts">
           <div class="act-toggle">
             <span class="act-label">启用</span>
-            <UiSwitch :checked="e.enabled" :disabled="e.scope === 'mandatory'" @update:checked="toggleEnabled(e)" />
+            <UiSwitch :checked="e.enabled" @update:checked="toggleEnabled(e)" />
           </div>
           <div class="act-toggle">
             <span class="act-label">自动升级</span>
-            <UiSwitch :checked="e.autoUpgrade" :disabled="e.scope === 'mandatory'" @update:checked="toggleAutoUpgrade(e)" />
+            <UiSwitch :checked="e.autoUpgrade" @update:checked="toggleAutoUpgrade(e)" />
           </div>
-          <button class="btn btn-ghost btn-md" title="升级">
+          <button class="btn btn-ghost btn-icon-sm" title="升级">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
-            升级
           </button>
           <button
-            class="btn btn-danger btn-icon"
-            :class="{ locked: e.scope === 'mandatory' }"
-            :disabled="e.scope === 'mandatory'"
+            class="btn btn-danger btn-icon-sm"
             title="卸载"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -139,9 +141,9 @@ function toggleAutoUpgrade(e: Extension) {
 }
 .ext-name {
   font-size: var(--text-base);
-  font-weight: 600;
+  font-weight: 500;
   color: var(--neutral-fg);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
 }
 .badge-pill {
   height: 18px;
@@ -153,25 +155,20 @@ function toggleAutoUpgrade(e: Extension) {
   font-weight: 600;
 }
 .badge-pill.user {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.badge-pill.disc {
   background: var(--surface-2);
   color: var(--neutral-mid);
 }
 .lock-ico {
   display: inline-flex;
-  color: var(--warn);
+  color: var(--neutral-dim);
 }
 .lock-ico svg {
   width: 13px;
   height: 13px;
 }
-.tier-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+.tier-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
   flex-shrink: 0;
 }
 .ext-desc {
@@ -186,6 +183,18 @@ function toggleAutoUpgrade(e: Extension) {
   gap: var(--space-3);
   flex-shrink: 0;
 }
+.ext-lockafford {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  color: var(--neutral-dim);
+  font-size: var(--text-sm);
+}
+.lockafford-ico {
+  width: 16px;
+  height: 16px;
+}
 .act-toggle {
   display: flex;
   align-items: center;
@@ -194,13 +203,6 @@ function toggleAutoUpgrade(e: Extension) {
 .act-label {
   font-size: var(--text-sm);
   color: var(--neutral-mid);
-}
-.btn-danger.locked {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-.btn-danger.locked:hover {
-  background: transparent;
 }
 
 .install-tabs {

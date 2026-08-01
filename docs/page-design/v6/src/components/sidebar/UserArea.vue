@@ -1,19 +1,60 @@
 <script setup lang="ts">
-/** 底部用户区：头像（accent 纯色 20px）+ 用户名 + 设置齿轮。
+/** 底部用户区：头像（accent 纯色 20px）+ 用户名 + 设置齿轮 + overlay 测试入口。
  *  对齐 v6-spec-sidebar.html §8 .usr。 */
 
-import { openSettings } from '@/composables/useStore'
+import { openSettings, openAskUser, openConfirm } from '@/composables/useStore'
 
 interface Props {
   name?: string
 }
-withDefaults(defineProps<Props>(), { name: 'Developer' })
+withDefaults(defineProps<Props>(), { name: 'user' })
 </script>
 
 <template>
   <div class="user-area">
     <span class="user-area__avatar" aria-hidden="true"></span>
     <span class="user-area__name">{{ name }}</span>
+    <!-- overlay 测试入口（demo 触发 AskUser / Confirm） -->
+    <button
+      class="user-area__test"
+      type="button"
+      title="AskUser 覆盖层"
+      aria-label="打开 AskUser 覆盖层"
+      @click="openAskUser()"
+    >
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.75"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <circle cx="12" cy="12" r="10" />
+        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+        <line x1="12" y1="17" x2="12.01" y2="17" />
+      </svg>
+    </button>
+    <button
+      class="user-area__test"
+      type="button"
+      title="Confirm 确认框"
+      aria-label="打开 Confirm 确认框"
+      @click="openConfirm()"
+    >
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.75"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+        <line x1="12" y1="9" x2="12" y2="13" />
+        <line x1="12" y1="17" x2="12.01" y2="17" />
+      </svg>
+    </button>
     <button
       class="user-area__settings"
       type="button"
@@ -82,6 +123,29 @@ withDefaults(defineProps<Props>(), { name: 'Developer' })
   color: var(--neutral-fg);
 }
 .user-area__settings svg {
+  width: 14px;
+  height: 14px;
+}
+/* overlay 测试入口：与 settings 同尺寸 ghost */
+.user-area__test {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  display: grid;
+  place-items: center;
+  color: var(--neutral-dim);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease),
+    color var(--duration-fast) var(--ease);
+}
+.user-area__test:hover {
+  background: var(--surface-hover);
+  color: var(--neutral-fg);
+}
+.user-area__test svg {
   width: 14px;
   height: 14px;
 }

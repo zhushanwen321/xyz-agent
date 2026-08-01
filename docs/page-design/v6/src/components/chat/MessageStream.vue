@@ -1,8 +1,7 @@
 <script setup lang="ts">
 /** MessageStream · 对话流入口（v6 spec-container §1）
- *  - flex:1 overflow-y-auto 滚动容器
- *  - .ms-inner：720 居中列
- *  - 每 turn：UserBubble（列内右浮 max-w-76%）+ assistant 区（720 居中 TurnMeta + blocks + TurnSummary）
+ *  - .ms-scroll：flex:1 overflow-y-auto 滚动 + padding 20px，用 flex gap 控制 turn 间距
+ *  - 每 turn：UserBubble（720 居中 wrap + 76% 右浮气泡）+ assistant 区（720 居中列）
  *  - 底部留空给 Composer（外层布局控制） */
 import { chatTurns, type ChatBlock } from '@/mock/sessions'
 import UserBubble from './UserBubble.vue'
@@ -37,9 +36,8 @@ const doneSummary = '完成。已对照 v6 spec 落地视觉规则，圆角/分�
 
 <template>
   <div class="ms-scroll">
-    <div class="ms-inner">
       <div v-for="turn in chatTurns" :key="turn.id" class="ms-turn">
-        <!-- user message：列内右浮 -->
+        <!-- user message：720 居中 wrap，气泡内右浮 max-w-76% -->
         <UserBubble :message="turn.userMessage" />
 
         <!-- assistant 区：720 居中列 -->
@@ -64,7 +62,6 @@ const doneSummary = '完成。已对照 v6 spec 落地视觉规则，圆角/分�
           />
         </div>
       </div>
-    </div>
   </div>
 </template>
 
@@ -73,21 +70,20 @@ const doneSummary = '完成。已对照 v6 spec 落地视觉规则，圆角/分�
   flex: 1;
   overflow-y: auto;
   min-height: 0;
-}
-.ms-inner {
-  max-width: var(--content-max-w);
-  margin: 0 auto;
   padding: 20px;
   display: flex;
   flex-direction: column;
+  gap: 14px;
 }
 .ms-turn {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
 }
-.ms-turn + .ms-turn { margin-top: 28px; }
 .ms-assistant-col {
+  max-width: var(--content-max-w);
+  width: 100%;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
 }

@@ -188,6 +188,7 @@ const totalDirty = computed(() => states.value.filter((s) => s.dirty).length)
 .sp-textarea {
   width: 100%;
   min-height: 200px;
+  max-height: 60vh;
   margin-top: var(--space-3);
   padding: var(--space-3);
   border-radius: var(--radius-sm);

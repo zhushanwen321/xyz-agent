@@ -10,21 +10,28 @@
 
 <style scoped>
 .splitter-handle {
-  width: 1px;
+  width: 6px;
+  margin: 0 -3px;
   position: relative;
   flex-shrink: 0;
   cursor: col-resize;
+  z-index: 1;
 }
 .splitter-line {
   position: absolute;
-  left: -3px;
-  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 0;
   bottom: 0;
-  width: 7px;
+  width: 1px;
   background: transparent;
-  transition: background var(--duration-fast) var(--ease);
+  transition: background var(--duration) var(--ease);
 }
 .splitter-handle:hover .splitter-line {
   background: var(--accent);
+}
+.splitter-handle:active .splitter-line {
+  background: var(--accent);
+  width: 2px;
 }
 </style>

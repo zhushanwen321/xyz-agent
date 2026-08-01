@@ -36,12 +36,16 @@ function toggleSidebar() {
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-sm);
-  color: var(--neutral-ico);
-  transition: all var(--duration-fast) var(--ease);
+  color: var(--neutral-dim);
+  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
 }
-.nav-btn svg { width: 13px; height: 13px; }
+.nav-btn svg { width: 14px; height: 14px; }
 .nav-btn:hover {
   background: var(--surface-hover);
-  color: var(--neutral-ico-hover);
+  color: var(--neutral-fg);
+}
+.nav-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0, 0, 0, 0.4);
 }
 </style>

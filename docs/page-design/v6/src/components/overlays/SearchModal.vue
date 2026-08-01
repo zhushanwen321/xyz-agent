@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { searchCommands, type SearchCommand } from '../../mock/sessions'
 import { closeSearch } from '../../composables/useStore'
 
@@ -14,11 +14,45 @@ const query = ref('')
 const selIdx = ref(0)
 const inputRef = ref<HTMLInputElement | null>(null)
 
+/** query 非空时的 loading 态（200ms 防闪烁）*/
+const loading = ref(false)
+let loadingTimer: ReturnType<typeof setTimeout> | null = null
+watch(query, (q) => {
+  if (!q.trim()) {
+    if (loadingTimer) { clearTimeout(loadingTimer); loadingTimer = null }
+    loading.value = false
+    return
+  }
+  loading.value = true
+  if (loadingTimer) clearTimeout(loadingTimer)
+  loadingTimer = setTimeout(() => {
+    loading.value = false
+    loadingTimer = null
+  }, 200)
+})
+onUnmounted(() => {
+  if (loadingTimer) clearTimeout(loadingTimer)
+})
+
+/** 按 query 过滤命令（匹配 name / desc）*/
+function matchCmd(cmd: SearchCommand, q: string): boolean {
+  if (!q) return true
+  return cmd.name.toLowerCase().includes(q.toLowerCase())
+    || cmd.desc.toLowerCase().includes(q.toLowerCase())
+}
+
+/** 过滤后的命令（query 为空时返回全量）*/
+const filtered = computed<SearchCommand[]>(() => {
+  const q = query.value.trim()
+  if (!q) return searchCommands
+  return searchCommands.filter((cmd) => matchCmd(cmd, q))
+})
+
 /** 按 group 字段聚合（保持 mock 顺序，去重 group key）*/
 const groups = computed<{ name: string; items: SearchCommand[] }[]>(() => {
   const order: string[] = []
   const map = new Map<string, SearchCommand[]>()
-  for (const cmd of searchCommands) {
+  for (const cmd of filtered.value) {
     if (!map.has(cmd.group)) { map.set(cmd.group, []); order.push(cmd.group) }
     map.get(cmd.group)!.push(cmd)
   }
@@ -32,6 +66,28 @@ const flatItems = computed<{ cmd: SearchCommand; idx: number }[]>(() => {
 })
 
 const total = computed(() => flatItems.value.length)
+
+/** 过滤结果变化时重置选中 idx，避免越界 */
+watch(total, () => {
+  if (selIdx.value >= total.value) selIdx.value = 0
+})
+
+/** 命中高亮：把命中 query 的文字用 <span class="sm-hit"> 包裹（返回 HTML 片段）*/
+function highlight(text: string): string {
+  const q = query.value.trim()
+  if (!q) return escapeHtml(text)
+  const escQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const escaped = escapeHtml(text)
+  // 大小写不敏感替换，保留原大小写
+  return escaped.replace(new RegExp(`(${escapeRegexHtml(escQ)})`, 'gi'), '<span class="sm-hit">$1</span>')
+}
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+// escapeHtml 之后再做正则匹配，需对 q 的 HTML 特殊字符也转义
+function escapeRegexHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
 
 function onKeydown(e: KeyboardEvent) {
   if (total.value === 0) return
@@ -91,10 +147,14 @@ function iconKind(cmd: SearchCommand): IconKind {
 
 <template>
   <div class="sm-overlay" @click.self="onBackdropClick">
-    <div class="sm-dialog" role="dialog" aria-modal="true" aria-label="搜索命令或文件" tabindex="-1">
+    <div class="sm-dialog" role="dialog" aria-modal="true" aria-label="搜索命令、文件、符号、会话" tabindex="-1">
       <!-- 输入区：去 border-b 靠 padding 分层 -->
       <div class="sm-input">
-        <svg class="sm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <!-- loading 时显 spinner 替代搜索 icon -->
+        <svg v-if="loading" class="sm-ico sm-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a9 9 0 1 1-6.22-8.56" />
+        </svg>
+        <svg v-else class="sm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="11" cy="11" r="8" />
           <line x1="21" y1="21" x2="16.65" y2="16.65" />
         </svg>
@@ -103,7 +163,7 @@ function iconKind(cmd: SearchCommand): IconKind {
           v-model="query"
           class="sm-field"
           type="text"
-          placeholder="搜索命令或文件…"
+          placeholder="搜索命令、文件、符号、会话…"
           @keydown="onKeydown"
         />
         <kbd class="sm-kbd">ESC</kbd>
@@ -146,15 +206,15 @@ function iconKind(cmd: SearchCommand): IconKind {
             </svg>
 
             <span class="sm-i-body">
-              <span class="sm-i-title">{{ entry.cmd.name }}</span>
-              <span class="sm-i-sub">{{ entry.cmd.desc }}</span>
+              <span class="sm-i-title" v-html="highlight(entry.cmd.name)"></span>
+              <span class="sm-i-sub" v-html="highlight(entry.cmd.desc)"></span>
             </span>
           </button>
         </div>
       </div>
 
-      <!-- 空结果 -->
-      <div v-else class="sm-empty">
+      <!-- 空结果（loading 时不显空态）-->
+      <div v-else-if="!loading" class="sm-empty">
         <svg class="sm-e-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="11" cy="11" r="8" />
           <line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -298,6 +358,27 @@ function iconKind(cmd: SearchCommand): IconKind {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 命中高亮：加粗（去彩色，v6 降噪） */
+.sm-hit {
+  font-weight: 600;
+  color: var(--neutral-fg);
+}
+.sm-item.sel .sm-hit {
+  color: var(--accent);
+}
+
+/* loading spinner */
+.sm-spinner {
+  color: var(--accent);
+  animation: sm-spin 1.4s linear infinite;
+}
+@keyframes sm-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sm-spinner { animation: none; }
 }
 
 /* 空态 */

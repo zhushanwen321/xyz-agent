@@ -79,10 +79,16 @@ const statusLabel: Record<string, string> = {
   color: var(--neutral-fg);
 }
 .cs-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  font-size: 10px;
   font-variant-numeric: tabular-nums;
-  color: var(--neutral-mid);
+  color: var(--neutral-dim);
 }
 .cs-status {
   display: inline-flex;
@@ -122,12 +128,12 @@ const statusLabel: Record<string, string> = {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  min-width: 18px;
+  padding: 2px 4px;
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
-  font-weight: 700;
+  font-weight: 600;
   flex-shrink: 0;
 }
 .cs-fbadge.M { background: var(--info-soft); color: var(--info); }
@@ -141,7 +147,9 @@ const statusLabel: Record<string, string> = {
 .cs-fname {
   flex: 1;
   min-width: 0;
+  font-family: var(--font-mono);
   font-size: var(--text-sm);
+  font-weight: 600;
   color: var(--neutral-fg);
   overflow: hidden;
   text-overflow: ellipsis;

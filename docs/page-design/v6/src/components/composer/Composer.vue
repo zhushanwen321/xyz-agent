@@ -1,21 +1,48 @@
 <script setup lang="ts">
 /** Composer · 输入区（v6 spec-input §9）
  *  - .comp-box（bg-input radius-lg）内含 QueueBubble + contenteditable + composer-bar
- *  - composer-bar：+ 按钮(Plus) / 上下文容量(hover bar) / 模型(glm-5.2) / 思考等级(3) / send-slot(ArrowUp accent)
+ *  - composer-bar：+ 按钮(Plus) / 上下文容量(hover bar) / 模型(glm-5.2) / 思考等级(medium) / send-slot(ArrowUp accent)
  *  - focus 态：3px 外环 box-shadow accent-ring */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import QueueBubble from './QueueBubble.vue'
 
 const focused = ref(false)
 const draft = ref('')
 const showQueue = ref(true)
 
+/** thinking level 枚举映射（数字/档位名 → 标准档位名）
+ *  0=off / 1=minimal / 2=low / 3=medium / 4=high / 5=xhigh / 6=max / 'all'=all */
+const THINKING_LEVEL_MAP: Record<string, string> = {
+  '0': 'off',
+  '1': 'minimal',
+  '2': 'low',
+  '3': 'medium',
+  '4': 'high',
+  '5': 'xhigh',
+  '6': 'max',
+  all: 'all',
+}
+function thinkingLabel(raw: string): string {
+  return THINKING_LEVEL_MAP[raw] ?? raw
+}
+
+/** 当前思考等级（mock 值 '3' → 显示 'medium'） */
+const thinkingRaw = ref('3')
+const thinkingDisplay = computed(() => thinkingLabel(thinkingRaw.value))
+
+/** contenteditable DOM 引用（onSend 时清空 DOM） */
+const inputRef = ref<HTMLDivElement | null>(null)
+
 function onInput(e: Event) {
   draft.value = (e.target as HTMLElement).innerText
 }
-function onSend() {
+function onSend(e: Event) {
   // demo：无实际发送
   draft.value = ''
+  // contenteditable 不受 v-model 控制，需手动清 DOM
+  const el = (e.target as HTMLElement).closest('.comp-input') as HTMLElement | null
+    ?? inputRef.value
+  if (el) el.textContent = ''
 }
 </script>
 
@@ -27,6 +54,7 @@ function onSend() {
 
       <!-- ⑤ Input：contenteditable，min-h-60 max-h-120 -->
       <div
+        ref="inputRef"
         class="comp-input"
         contenteditable="true"
         data-placeholder="描述任务…（⏎ 发送 / ⇧⏎ 换行）"
@@ -60,7 +88,7 @@ function onSend() {
         <!-- 思考等级（click 触发，Brain + label） -->
         <button class="bar-btn text think" title="思考强度">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/></svg>
-          <span>3</span>
+          <span>{{ thinkingDisplay }}</span>
           <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
 
@@ -125,12 +153,12 @@ function onSend() {
 .bar-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   height: 28px;
   padding: 0 8px;
   border-radius: var(--radius-sm);
   color: var(--neutral-dim);
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
 }
 .bar-btn:hover { background: var(--surface-hover); color: var(--neutral-mid); }
@@ -156,7 +184,7 @@ function onSend() {
   flex-shrink: 0;
   transition: background var(--duration-fast) var(--ease), opacity var(--duration-fast) var(--ease);
 }
-.send-slot svg { width: 15px; height: 15px; }
+.send-slot svg { width: 16px; height: 16px; }
 .send-slot:hover { background: var(--accent-hover); }
 .send-slot.disabled {
   background: var(--surface-2);

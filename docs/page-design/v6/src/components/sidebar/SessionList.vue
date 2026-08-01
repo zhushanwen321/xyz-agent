@@ -126,7 +126,8 @@ function resetDelete() {
             </button>
           </template>
           <template v-else>
-            <button class="si-act" type="button" title="fork 分支" @click.stop>
+            <!-- rename：pencil -->
+            <button class="si-act" type="button" title="重命名" @click.stop>
               <svg
                 viewBox="0 0 24 24"
                 fill="none"
@@ -135,12 +136,26 @@ function resetDelete() {
                 stroke-linecap="round"
                 stroke-linejoin="round"
               >
-                <circle cx="12" cy="5" r="2" />
-                <path d="M7 12a2 2 0 0 0-2 2v1a2 2 0 0 0 2 2" />
-                <path d="M17 12a2 2 0 0 1 2 2v1a2 2 0 0 1-2 2" />
-                <path d="M12 7v0a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2" />
+                <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                <path d="m15 5 4 4" />
               </svg>
             </button>
+            <!-- archive：archive-box -->
+            <button class="si-act" type="button" title="归档" @click.stop>
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.75"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <rect x="2" y="3" width="20" height="5" rx="1" />
+                <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" />
+                <line x1="10" y1="12" x2="14" y2="12" />
+              </svg>
+            </button>
+            <!-- delete：trash -->
             <button
               class="si-act si-act--danger"
               type="button"

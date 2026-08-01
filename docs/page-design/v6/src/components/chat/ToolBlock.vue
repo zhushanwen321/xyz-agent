@@ -83,6 +83,7 @@ const expanded = ref(state.value === 'expanded')
   align-items: center;
   height: 18px;
   padding: 0 6px;
+  margin-left: auto;
   border-radius: var(--radius-sm);
   background: var(--bg-elevated);
   font-family: var(--font-mono);

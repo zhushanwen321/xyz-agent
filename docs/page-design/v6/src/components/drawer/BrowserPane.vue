@@ -74,7 +74,7 @@ const guideDismissed = ref(false)
       <svg class="bp-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
       </svg>
-      <span class="bp-text">browser 由 plugin 注册 · 点击链接在抽屉内打开，主进程安全渲染</span>
+      <span class="bp-text">点击链接在抽屉内打开，主进程安全渲染</span>
       <span class="bp-x" title="不再提示" @click="guideDismissed = true">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
           <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
@@ -335,14 +335,14 @@ const guideDismissed = ref(false)
   background: var(--bg);
   overflow: hidden;
 }
-/* 内容展示态（模拟已加载页面，浅色内容） */
+/* 内容展示态（模拟已加载页面，浅色内容模拟真实网页） */
 .bp-content {
   position: absolute;
   inset: 0;
-  background: var(--bg-card);
+  background: #f4f5f7;
   padding: 20px 24px;
   overflow: auto;
-  color: var(--neutral-fg);
+  color: #1f2937;
   font-size: 14px;
   line-height: 1.6;
 }
@@ -350,27 +350,28 @@ const guideDismissed = ref(false)
   font-size: 18px;
   font-weight: 600;
   margin-bottom: 8px;
-  color: var(--neutral-fg);
+  color: #111827;
 }
 .bp-content .bp-page-sub {
   font-size: 12px;
-  color: var(--neutral-mid);
+  color: #6b7280;
   margin-bottom: 12px;
 }
 .bp-content .bp-page-p {
   margin-bottom: 8px;
-  color: var(--neutral-mid);
+  color: #4b5563;
 }
 .bp-content .bp-page-block {
-  background: var(--surface);
+  background: #fff;
   border-radius: var(--radius-sm);
   padding: 12px;
   margin-bottom: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 .bp-content .bp-block-title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--neutral-fg);
+  color: #111827;
   margin-bottom: 4px;
 }
 </style>

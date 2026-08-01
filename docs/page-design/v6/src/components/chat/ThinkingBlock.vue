@@ -43,7 +43,7 @@ const body = (props.data.body as string) || preview
   font-size: var(--text-2xs);
   font-weight: 600;
   color: var(--neutral-fg);
-  letter-spacing: 0.04em;
+  margin-right: 2px;
   flex-shrink: 0;
 }
 .tk-preview {

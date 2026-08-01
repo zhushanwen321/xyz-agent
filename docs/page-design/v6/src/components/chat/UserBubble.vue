@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** UserBubble · 用户消息气泡（v6 spec-input §8）
  *  - bg-surface-hover + 14-14-4-14 不对称圆角，无 border
- *  - 列内右浮 max-w 76%
+ *  - wrap 720 居中，气泡内右浮 max-w 76%
  *  - hover 显 copy/edit action（demo 常驻显出，placeholder 不占 action 位） */
 defineProps<{ message: string }>()
 </script>
@@ -26,20 +26,21 @@ defineProps<{ message: string }>()
 .ub-wrap {
   display: flex;
   justify-content: flex-end;
-  max-width: 76%;
-  margin-left: auto;
+  max-width: var(--content-max-w);
+  width: 100%;
+  margin: 0 auto;
 }
 .ub {
   position: relative;
   display: inline-block;
-  max-width: 100%;
+  max-width: 76%;
   padding: 9px 13px;
   border-radius: 14px 14px 4px 14px;
   background: var(--surface-hover);
   transition: background var(--duration-fast) var(--ease);
 }
 .ub-text {
-  font-size: var(--text-base);
+  font-size: 14px;
   line-height: 1.55;
   color: var(--neutral-fg);
   white-space: pre-wrap;

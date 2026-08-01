@@ -21,9 +21,7 @@ const hasOutput = computed(() => output.value.length > 0)
       <span v-if="exit === 0" class="exit-tag ok">exit 0</span>
       <span v-else-if="typeof exit === 'number' && exit !== 0" class="exit-tag warn">exit {{ exit }}</span>
     </div>
-    <div v-if="hasOutput" class="bob-box">
-      <pre class="bob-out">{{ output }}</pre>
-    </div>
+    <pre v-if="hasOutput" class="bob-out">{{ output }}</pre>
     <div v-else class="bob-empty">(无输出)</div>
   </div>
 </template>
@@ -59,14 +57,11 @@ const hasOutput = computed(() => output.value.length > 0)
 }
 .exit-tag.ok { color: var(--success); }
 .exit-tag.warn { color: var(--warn); }
-.bob-box {
-  margin-top: 6px;
-  max-height: var(--bash-output-max-height);
-  overflow-y: auto;
-}
 .bob-out {
   margin-top: 6px;
   padding-left: 16px;
+  max-height: var(--bash-output-max-height);
+  overflow-y: auto;
   background: transparent;
   border-radius: 0;
   font-family: var(--font-mono);
@@ -78,9 +73,9 @@ const hasOutput = computed(() => output.value.length > 0)
 }
 .bob-empty {
   margin-top: 6px;
-  padding-left: 20px;
+  padding-left: 16px;
   font-size: var(--text-sm);
   font-style: italic;
-  color: var(--neutral-dim);
+  color: var(--neutral-faint);
 }
 </style>
