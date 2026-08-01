@@ -129,6 +129,34 @@ async function abortUnit(unitId) {
 }
 
 /**
+ * replan 后清理 + 覆盖设置（spec-f §5 replan 机制）。
+ * replan 会级联 abort 受影响子节点——清理它们的内存状态（已终态，不再参与 BFS），
+ * 并设 replanOverride 强制该节点下一步走 plan（回 planning 重走 design-review）。
+ */
+function handleReplan(r, replanOverride, worktreeRegistry, sessionFiles, retryCount, prevNextAction) {
+  log("Node " + r.unitId + " triggered replan, aborted children: " + (r.abortedChildren ?? []).join(", "));
+  // 1. 覆盖该节点下一步为 plan（回 planning 重走 design-review）
+  replanOverride[r.unitId] = "plan";
+  // m2：重置触发 replan 节点自身的 retryCount（replan 周期内 execute 反复 fail 不应误杀）
+  for (const key of Object.keys(retryCount)) {
+    if (key.startsWith(r.unitId + ":")) delete retryCount[key];
+  }
+  // 2. 清理被级联 abort 子节点的内存状态（它们已终态，不再参与 BFS）
+  const aborted = new Set();
+  for (const childId of r.abortedChildren ?? []) {
+    aborted.add(childId);
+    delete worktreeRegistry[childId];
+    delete sessionFiles[childId];
+    delete prevNextAction[childId];
+    // 清理该子节点所有 action 的 retryCount（key 格式 unitId:action）
+    for (const key of Object.keys(retryCount)) {
+      if (key.startsWith(childId + ":")) delete retryCount[key];
+    }
+  }
+  return aborted;
+}
+
+/**
  * returnMeta 模式下检测 r.error 是否为超时类错误。
  * agent() 失败不 throw（resolve 回退值），需主动检 r.error。
  */
@@ -166,12 +194,16 @@ function buildActionPrompt(node, action) {
 不要自己编造 children——从 cw 的返回值或 cw tree 原样抄录。`;
   }
 
-  // replan 禁用约束：replan 会破坏 BFS frontier 不变式（重写已调度子树），
-  // 改用 abort（中止当前节点）或在 schema 返回值里上抛问题给主 agent。
-  const replanConstraint = `
-禁止调用 cw replan。如果你发现问题需要重新规划：
-1. 如果是当前 wave 的问题，调 cw abort 中止自己
-2. 如果是上层 slice/feature 的方案问题，在 schema 返回值里说明问题，让主 agent 决策`;
+  // replan 操作指示（spec-f §5：支持 replan，agent 发现方案需调整时主动触发）
+  const replanGuidance = `
+
+如果你在执行 action 时发现 plan 需要调整（技术方案有误、子任务要增减）：
+1. 调 \`cw replan --unitId ${node.unitId} --input '<根据 cw handoff 的 replan input schema 填写>'\`
+2. 在 schema 返回值里设 \`replanTriggered: true\`，并把 \`cw replan\` stdout 的 \`replanImpact.aborted\` 数组（被级联 abort 的子 unitId）抄到 schema 的 \`abortedChildren\` 字段
+3. 不要继续执行当前 action——replan 后 cw 要求回 plan 重走`;
+
+  // m5：replanGuidance 只对可能发现方案问题的 action 注入（retrospect/closeout 注入会诱导不必要 replan）
+  const showReplanHint = ["plan", "design-review", "execute", "test"].includes(action);
 
   return `你是 cw 流程执行者。
 
@@ -182,7 +214,7 @@ function buildActionPrompt(node, action) {
 2. 按 guidance 执行 ${action}（${hints[action] ?? ""}）
 3. 调 \`cw ${action} --unitId ${node.unitId} --input '<根据 guidance 的 schema 填写>'\` 推进状态
 4. 如果 gate fail（返回 ok=false），读 mustFix 修正后重调步骤 3
-5. 成功后返回结果${extra}${replanConstraint}`;
+5. 成功后返回结果${extra}${showReplanHint ? replanGuidance : ""}`;
 }
 
 /**
@@ -190,12 +222,20 @@ function buildActionPrompt(node, action) {
  * planning execute：需 children（供主循环 topoSort）；wave closeout：业务产出；其他：done 哨兵。
  */
 function buildActionSchema(node, action, isWave) {
+  // base 属性：所有 action 都含 replan 信号字段（replan 可在任何 action 触发）
+  const baseProps = {
+    done: { type: "boolean" },
+    replanTriggered: { type: "boolean", description: "如果调了 cw replan 设为 true" },
+    abortedChildren: { type: "array", items: { type: "string" }, description: "被级联 abort 的子 unitId 列表" },
+  };
+
   // planning execute：返回 children（从 cw execute stdout 或 cw tree 抄录）
   if (!isWave && action === "execute") {
     return {
       type: "object",
-      required: ["children"],
+      required: [],
       properties: {
+        ...baseProps,
         children: {
           type: "array",
           description: "从 cw execute stdout 的 children 字段原样抄录（无则从 cw tree 收集 unitId）",
@@ -214,24 +254,27 @@ function buildActionSchema(node, action, isWave) {
   if (isWave && action === "closeout") {
     return {
       type: "object",
-      required: ["commitHash", "summary"],
+      required: [],
       properties: {
+        ...baseProps,
         commitHash: { type: "string" },
         summary: { type: "string" },
       },
     };
   }
-  // 其他 action：简单 done 哨兵（主循环不读具体字段，靠 cw 状态机推进）
-  return { type: "object", required: ["done"], properties: { done: { type: "boolean" } } };
+  // 其他 action：base（done 哨兵 + replan 信号）。m4：展开 baseProps 避免共享引用
+  return { type: "object", required: [], properties: { ...baseProps } };
 }
 
 /**
  * 执行单节点的 nextAction：worktree 决策 + agent 调用 + session 回收 + 失败处理。
- * returnMeta:true → 返回 {unitId, value, sessionFile?, worktreePath?, failedReason?}。
+ * returnMeta:true → 返回 {unitId, value, sessionFile?, worktreePath?, failedReason?, replanTriggered?, abortedChildren?}。
+ * replanTriggered: agent 声明触发 cw replan 时为 true（携 abortedChildren 列表），主循环据此调 handleReplan 清理子节点 + 设 replanOverride。
+ * execute 成功后清除 replanOverride（replan 周期结束，恢复信 frontier）：见下方实现。
  * 失败（r.error / 超时）→ abortUnit + 返回 failedReason（不 throw，主循环继续其他节点）。
  * 注意：失败字段命名 failedReason 而非 error，避免被 parallel() 归一化吞掉其他字段（见 C1）。
  */
-async function executeNodeNextAction(node, worktreeRegistry, sessionFiles) {
+async function executeNodeNextAction(node, worktreeRegistry, sessionFiles, replanOverride) {
   const isWave = node.scope === "wave";
   const action = node.nextAction;
 
@@ -282,6 +325,12 @@ async function executeNodeNextAction(node, worktreeRegistry, sessionFiles) {
     worktreeRegistry[node.unitId] = r.worktreePath;
   }
 
+  // execute 成功后清除 replanOverride（replan 周期结束，恢复信 frontier）：
+  // replan 后节点重走 plan→design-review→execute，execute 成功说明新 plan 已落地建新子节点。
+  if (action === "execute" && !r.error && !(r.value?.replanTriggered === true)) {
+    delete replanOverride[node.unitId];
+  }
+
   // 失败处理：returnMeta 模式 r.error 检测（agent 失败不 throw）。
   // 超时/错误 → abort 该节点（熔断），返回带 failedReason 的结果（主循环记 sessionFile 后继续）。
   // 注意：失败标识字段用 failedReason 而非 error——parallel() 会对含非空 error 字符串字段的对象
@@ -289,10 +338,23 @@ async function executeNodeNextAction(node, worktreeRegistry, sessionFiles) {
   if (r.error || isTimeoutError(r)) {
     log("Action " + action + " for " + node.unitId + " failed: " + (r.error ?? "timeout"));
     await abortUnit(node.unitId);
-    return { unitId: node.unitId, value: r.value, sessionFile: r.sessionFile, failedReason: r.error };
+    return {
+      unitId: node.unitId,
+      value: r.value,
+      sessionFile: r.sessionFile,
+      failedReason: r.error,
+      replanTriggered: false,
+      abortedChildren: undefined,
+    };
   }
 
-  return { unitId: node.unitId, value: r.value, sessionFile: r.sessionFile };
+  return {
+    unitId: node.unitId,
+    value: r.value,
+    sessionFile: r.sessionFile,
+    replanTriggered: r.value?.replanTriggered === true,
+    abortedChildren: r.value?.abortedChildren,
+  };
 }
 
 /**
@@ -389,6 +451,8 @@ try {
   const retryCount = {};
   // prevNextAction: unitId → 上一轮的 nextAction（跨轮对比判定"卡在同一步"）
   const prevNextAction = {};
+  // replanOverride: unitId → "plan"（replan 后覆盖 frontier 的 nextAction）
+  const replanOverride = {};
 
   while (true) {
     // 不变式：queryFrontier 只在轮次边界调（此处 parallel 已全 settle）
@@ -403,7 +467,24 @@ try {
       break;
     }
 
-    // retryCount 熔断检查 + 累加：
+    // m1：replanOverride 覆盖必须先于 retryCount 熔断——
+    // 否则 replan 后 frontier 给 retrospect 但实际走 plan，retryKey 按 retrospect 算（幽灵计数）。
+    // 双重检测：主信号 replanOverride（agent 声明 replanTriggered 时设）+ 后备信号 lastStatusHistoryAction。
+    for (const node of actionable) {
+      if (replanOverride[node.unitId]) {
+        node.nextAction = replanOverride[node.unitId]; // 强制 "plan"，不信 frontier
+      }
+      // 后备检测：frontier 的 lastStatusHistoryAction === "replan" 且 agent 没声明（replanOverride 未设）
+      if (node.lastStatusHistoryAction === "replan" && !replanOverride[node.unitId]) {
+        // C1：后备信号也调 handleReplan——agent 调了 cw replan 但未声明 replanTriggered。
+        // 无法拿 abortedChildren（子节点已从 frontier 消失），用空列表调 handleReplan——
+        // 子节点内存清理靠下轮 frontier 不再返回（frontier 只返回非终态，aborted 的子节点自然消失）。
+        handleReplan({ unitId: node.unitId, abortedChildren: [] }, replanOverride, worktreeRegistry, sessionFiles, retryCount, prevNextAction);
+        node.nextAction = "plan"; // handleReplan 内已设 replanOverride，但需显式覆盖 node.nextAction
+      }
+    }
+
+    // retryCount 熔断检查 + 累加（按覆盖后的 nextAction 算 retryKey）：
     // 同节点连续 N 轮（≥ MAX_ACTION_RETRY）卡在同一 action → abort 该节点。
     // progressive action（clarify/plan/design-review）豁免——它们天然多轮迭代。
     const nodesToAbort = [];
@@ -439,11 +520,12 @@ try {
     if (concurrent.length > 0) {
       log("BFS: " + concurrent.length + " concurrent + " + sequential.length + " sequential");
       const results = await parallel(
-        concurrent.map((node) => executeNodeNextAction(node, worktreeRegistry, sessionFiles))
+        concurrent.map((node) => executeNodeNextAction(node, worktreeRegistry, sessionFiles, replanOverride))
       );
       // 回收 sessionFile + 识别失败（C1+C2）：
       // - executeNodeNextAction 主动失败：返回 {unitId, sessionFile, failedReason}（无 error 字段，避免被 parallel 归一化吞掉）
       // - executeNodeNextAction 意外 throw（如 agent postMessage reject）：parallel 归一化成 {status:"failed", error}，丢失 unitId
+      const abortedThisRound = new Set();
       for (const r of results) {
         if (!r) continue;
         if (r.status === "failed") {
@@ -451,6 +533,13 @@ try {
           log("BFS: concurrent node failed (thrown): " + (r.error ?? "unknown"));
           continue;
         }
+        // 先收集本轮 aborted（replanTriggered 的子节点会被 handleReplan 从内存清理）
+        if (r.replanTriggered) {
+          const a = handleReplan(r, replanOverride, worktreeRegistry, sessionFiles, retryCount, prevNextAction);
+          for (const id of a) abortedThisRound.add(id);
+        }
+        // M2：跳过被 abort 子节点的 sessionFile 回收（已被 handleReplan 清理）
+        if (abortedThisRound.has(r.unitId)) continue;
         if (r.sessionFile) sessionFiles[r.unitId] = r.sessionFile;
         if (r.failedReason) log("BFS: " + r.unitId + " failed: " + r.failedReason);
       }
@@ -459,15 +548,26 @@ try {
     // 串行组：有内部依赖的节点逐个执行（保证依赖顺序：被依赖者先完成推进状态机）
     // sequential 已由 topoSort 按拓扑序排列（被依赖者在前）。
     // 串行 executeNodeNextAction 若意外 throw（非 returnMeta 失败路径），此处 try/catch 兜底记日志继续。
+    const abortedThisRoundSeq = new Set();
     for (const node of sequential) {
+      // M1：跳过被级联 abort 的子节点（前序 replan 的 handleReplan 清了它的内存）
+      if (abortedThisRoundSeq.has(node.unitId)) {
+        log("BFS: skip aborted sequential node " + node.unitId);
+        continue;
+      }
       let r;
       try {
-        r = await executeNodeNextAction(node, worktreeRegistry, sessionFiles);
+        r = await executeNodeNextAction(node, worktreeRegistry, sessionFiles, replanOverride);
       } catch (e) {
         log("BFS: sequential node " + node.unitId + " threw: " + String(e.message || e));
         continue;
       }
-      if (r && r.sessionFile) sessionFiles[r.unitId] = r.sessionFile;
+      if (r && r.replanTriggered) {
+        const a = handleReplan(r, replanOverride, worktreeRegistry, sessionFiles, retryCount, prevNextAction);
+        for (const id of a) abortedThisRoundSeq.add(id);
+      }
+      // M1：被 abort 的子节点不回收 sessionFile（已被 handleReplan 清理）
+      if (r && !abortedThisRoundSeq.has(r.unitId) && r.sessionFile) sessionFiles[r.unitId] = r.sessionFile;
       if (r && r.failedReason) log("BFS: " + r.unitId + " failed: " + r.failedReason);
     }
   }
