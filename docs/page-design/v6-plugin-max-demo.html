@@ -34,7 +34,7 @@
   --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
   --text-2xs: 10px; --text-xs: 11px; --text-sm: 12px;
   --text-base: 13px; --text-md: 14px;
-  --radius-sm: 6px; --radius: 8px; --radius-lg: 12px;
+  --radius-sm: 6px; --radius: 8px; --radius-lg: 12px; --radius-card: 10px;
   --ease: cubic-bezier(0.4,0,0.2,1);
   --duration-fast: 120ms; --duration: 200ms;
 }
@@ -628,7 +628,7 @@ body {
                     </div>
                   </div>
                   <!-- 形态②：confirm（showConfirm，按钮）— 同位置同机制 -->
-                  <div class="companion" style="border-color:var(--success);">
+                  <div class="companion">
                     <div class="companion-label" style="color:var(--success);">✓ confirm · my-ext.deploy（showConfirm）</div>
                     <div class="companion-q" style="margin-bottom:6px;">确认部署到 production？</div>
                     <div style="display:flex;gap:5px;justify-content:flex-end;">

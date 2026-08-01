@@ -174,7 +174,7 @@
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> assistant self-stretch 满宽</span>
       <span class="cp cp-v6"><b>v6</b> assistant mx-auto max-w-720px</span>
-      <span class="cp cp-v6"><b>v6</b> turn 间 hr → gap-3.5</span>
+      <span class="cp cp-v6"><b>v6</b> turn 间 hr → gap-4</span>
       <span class="cp cp-v6"><b>[补全]</b> 容器承载 9 种辅助元素（→ §1.5/§3.5）</span>
     </div>
 
@@ -200,7 +200,7 @@
 
     <div class="anno-grid">
       <div class="anno"><b>ms-scroll padding:</b><br><span class="old">px-5 pt-5 (20px)</span> <span class="v6">→ 不变</span></div>
-      <div class="anno"><b>turn gap:</b><br><span class="old">gap-3.5 + hr border-t</span> <span class="v6">→ gap-3.5，删 hr</span></div>
+      <div class="anno"><b>turn gap:</b><br><span class="old">gap-4 + hr border-t</span> <span class="v6">→ gap-4，删 hr</span></div>
       <div class="anno"><b>assistant 列宽:</b><br><span class="old">self-stretch 满宽</span> <span class="v6">→ mx-auto max-w-720px</span></div>
       <div class="anno"><b>UserBubble:</b><br><span class="v6">保持 items-end 右浮 max-w-76%（在 720 列内右浮，对齐 design 决策 #11）</span></div>
       <div class="anno"><b>滚动条:</b><br><span class="v6">宽 8px · thumb border-strong · 贴右缘</span></div>
@@ -540,10 +540,10 @@
        ================================================================ -->
   <section class="spec" id="s3">
     <div class="spec-head"><span class="spec-num">§3</span><h2 class="spec-title">TurnMeta</h2></div>
-    <p class="spec-desc">turn 元信息条。本身是 ghost 文字行（无 bg/radius），内含 think/tool badge 是 pill。<b>sessionActive（streaming/working/waiting）时整体包在 sticky wrapper 内吸顶</b>，底色绑定内容列背景（<code>--panel-bg</code>，非半透明 blur）。<b>[已裁决：删 hr]</b> turn 间 <code>&lt;hr border-t border-border&gt;</code> 删除——靠加大 turn gap（gap-3.5）做层级分隔（代码 <code>TurnMeta.vue:45</code> 现状仍有 hr 属待落地实现债，spec 权威指引代码后续删除）。</p>
+    <p class="spec-desc">turn 元信息条。本身是 ghost 文字行（无 bg/radius），内含 think/tool badge 是 pill。<b>sessionActive（streaming/working/waiting）时整体包在 sticky wrapper 内吸顶</b>，底色绑定内容列背景（<code>--panel-bg</code>，非半透明 blur）。<b>[已裁决：删 hr]</b> turn 间 <code>&lt;hr border-t border-border&gt;</code> 删除——靠加大 turn gap（gap-4）做层级分隔（代码 <code>TurnMeta.vue:45</code> 现状仍有 hr 属待落地实现债，spec 权威指引代码后续删除）。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> hr border-t 分隔</span>
-      <span class="cp cp-v6"><b>[已裁决：删]</b> 删 hr，靠 gap-3.5 做层级（代码 TurnMeta.vue:45 待删）</span>
+      <span class="cp cp-v6"><b>[已裁决：删]</b> 删 hr，靠 gap-4 做层级（代码 TurnMeta.vue:45 待删）</span>
       <span class="cp cp-v6"><b>v6</b> sticky bg-panel-bg（非 blur）· sessionActive 时生效</span>
       <span class="cp cp-v6"><b>v6</b> chevron 仅 hasFoldable && !sessionActive 时渲染</span>
       <span class="cp cp-v6"><b>[v6 改动]</b> RetryIndicator 从 composer 移除 → 重试信息迁至 TurnMeta「重试中 N/M」+ warn spinner</span>
@@ -696,8 +696,8 @@
       <div class="anno"><b>font:</b><br>12px [--text-sm] font-medium</div>
       <div class="anno"><b>label 色:</b><br>active→accent · inactive→neutral-mid</div>
       <div class="anno"><b>elapsed:</b><br>font-mono 500 fg</div>
-      <div class="anno"><b>badge pill:</b><br><span class="v6">rounded-full bg-surface-2 px-2 py-1 · 10px font-mono 600 neutral-mid</span></div>
-      <div class="anno"><b>[已裁决] turn 间分隔 hr:</b><br><span class="v6">删除 hr</span>——靠 turn gap（gap-3.5）做层级分隔。<span class="old">代码 TurnMeta.vue:45 仍有 hr</span>（待落地实现债，spec 权威指引代码后续删除）。</div>
+      <div class="anno"><b>badge pill:</b><br><span class="v6">rounded-full bg-elevated px-2 py-1 · 10px font-mono 600 neutral-mid</span></div>
+      <div class="anno"><b>[已裁决] turn 间分隔 hr:</b><br><span class="v6">删除 hr</span>——靠 turn gap（gap-4）做层级分隔。<span class="old">代码 TurnMeta.vue:45 仍有 hr</span>（待落地实现债，spec 权威指引代码后续删除）。</div>
       <div class="anno"><b>sticky 触发:</b><br><span class="v6">sessionActive=true 时</span> wrapper 加 sticky top-0 z-[1] bg-[var(--panel-bg)]（非 blur 不透明）· sessionActive=false 时不吸顶</div>
       <div class="anno"><b>sticky wrapper:</b><br>turn-meta 包在同一 div（TurnMeta.vue:8）吸顶固定 · <span class="v6">[已裁决] 不再含 hr</span></div>
       <div class="anno"><b>chevron 显示条件:</b><br><span class="v6">v-if="hasFoldable && !sessionActive"</span> · sessionActive（streaming/waiting）时<b>不渲染</b> · 9px neutral-dim · 展开 rotate-90 + accent</div>

@@ -557,7 +557,7 @@ added 1 package in 2s</div>
       <div class="anno"><b>done:</b><br>icon neutral-ico · toolName neutral-fg</div>
       <div class="anno"><b>failed icon [现状/目标]:</b><br><span style="color:var(--danger);">[现状] 普通 tool 切 AlertTriangle（block-icon.ts:75 + Block.vue:285-289）</span><br><span class="v6">[v6 目标] 不切，与 subagent/workflow 统一，靠 toolName→neutral-mid + exit N 标签 + 内容区无 output 只有 error 区分 [待实现]</span></div>
       <div class="anno"><b>icon stroke:</b><br><span class="v6">1.75（统一，修正注释与实现不一致）</span></div>
-      <div class="anno"><b>exit N 标签:</b><br><span class="v6">mono 10px rounded-sm bg-surface-2 neutral-mid（中性）</span> · <span style="color:var(--danger);">[待实现] 代码 header 现无此 DOM（Block.vue:112-180 仅 icon+toolName+argPath）</span></div>
+      <div class="anno"><b>exit N 标签:</b><br><span class="v6">mono 10px rounded-sm bg-elevated neutral-mid（中性）</span> · <span style="color:var(--danger);">[待实现] 代码 header 现无此 DOM（Block.vue:112-180 仅 icon+toolName+argPath）</span></div>
       <div class="anno"><b>unfinished:</b><br><span class="v6">崩溃/断连态（end_not_received）· toolName neutral-mid + 「未结束」标签</span> · <span style="color:var(--danger);">[待实现] 同上无此 DOM</span></div>
       <div class="anno"><b>copy 按钮 [v6 布局]:</b><br><span class="old">absolute 左上角浮层覆盖内容</span><br><span class="v6">block icon 下方、内容区顶部行内（与正文基线对齐，不覆盖内容）· hover 显 · 复制全部（bash=命令+输出，其余=输出）· 成功切 Check success 色</span></div>
       <div class="anno"><b>meta 条:</b><br><span class="v6">行数 + chars + 耗时 三项（useToolMeta.ts:49-62）· bash 无行数（过滤）· 非 bash 在输出上方，bash 在输出下方（Block.vue:154-177）</span></div>

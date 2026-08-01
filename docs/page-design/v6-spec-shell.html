@@ -40,6 +40,7 @@
   --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
   --text-2xs: 10px; --text-xs: 11px; --text-sm: 12px; --text-base: 13px; --text-md: 14px;
   --radius-sm: 6px; --radius: 8px; --radius-lg: 12px;
+  --radius-card: 10px;
   --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
   --space-6: 24px; --space-8: 32px; --space-12: 48px; --space-16: 64px;
   --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);
@@ -129,6 +130,7 @@ body {
   overflow: hidden;
 }
 /* aside 栏（画布色 = bg-sunken = bg，透明融合）*/
+/* 注：flex: 0 0 220px 是 shell 框架的示意占位宽度，实际 sidebar 宽度见 sidebar spec 的 300px。 */
 .wf-aside {
   position: relative; flex: 0 0 220px; min-width: 0;
   background: transparent;
@@ -137,6 +139,9 @@ body {
   display: flex; flex-direction: column;
   padding-top: 52px;       /* traffic-light 安全区（恒定）*/
 }
+/* 注：这是嵌套圆角构造——aside 透明，inner 落 bg-sunken + rounded。
+   demo 稿直接在 aside 上落 bg-sunken + rounded 无嵌套。
+   aside 应直接 bg-sunken + rounded，inner 层待扁平化（inner 内含多个子元素，HTML 结构改动较大，此处暂留）。 */
 .wf-aside-inner {
   background: var(--bg-sunken);
   border-radius: var(--radius);

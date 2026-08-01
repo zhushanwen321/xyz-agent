@@ -39,7 +39,7 @@
   --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
   --text-2xs: 10px; --text-xs: 11px; --text-sm: 12px; --text-base: 13px; --text-md: 14px;
-  --radius-sm: 6px; --radius: 8px; --radius-lg: 12px;
+  --radius-sm: 6px; --radius: 8px; --radius-lg: 12px; --radius-card: 10px;
   --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
   --space-6: 24px; --space-8: 32px;
   --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
@@ -192,7 +192,7 @@ body {
 
 /* §1/§2 Layer A · 加载路径卡片（扁平单 bg-card，hairline 分行；项目目录/全局目录两组分隔）*/
 .lp-card {
-  background: var(--bg-card); border-radius: 10px;
+  background: var(--bg-card); border-radius: var(--radius-card);
   margin-bottom: 12px; overflow: hidden;
 }
 .lp-head {
@@ -270,7 +270,7 @@ body {
 .rp-tab:hover { color: var(--neutral-fg); }
 .rp-tab.active { background: var(--bg-elevated); color: var(--neutral-fg); }
 
-.rp-list { background: var(--bg-card); border-radius: 10px; overflow: hidden; }
+.rp-list { background: var(--bg-card); border-radius: var(--radius-card); overflow: hidden; }
 .rp-item {
   display: flex; align-items: center; gap: 10px;
   padding: 9px 16px; border-top: 1px solid rgba(255,255,255,0.04); font-size: var(--text-sm);
@@ -1104,19 +1104,19 @@ body {
       <div class="src-legend">
         <div class="src-legend-cell">
           <div class="sl-head"><span class="rp-badge pi">xyz-agent</span><span class="sl-meta">pi · 主色</span></div>
-          <div class="anno"><b>token:</b> <span>bg accent-soft / text accent</span></div>
+          <div class="anno"><b>token:</b> <span>bg surface-2 + 彩色点 accent</span></div>
         </div>
         <div class="src-legend-cell">
           <div class="sl-head"><span class="rp-badge claude">Claude</span><span class="sl-meta">claude · warn</span></div>
-          <div class="anno"><b>token:</b> <span>bg warn-soft / text warn</span></div>
+          <div class="anno"><b>token:</b> <span>bg surface-2 + 彩色点 warn</span></div>
         </div>
         <div class="src-legend-cell">
           <div class="sl-head"><span class="rp-badge agents">Agents</span><span class="sl-meta">agents · success</span></div>
-          <div class="anno"><b>token:</b> <span>bg success-soft / text success</span></div>
+          <div class="anno"><b>token:</b> <span>bg surface-2 + 彩色点 success</span></div>
         </div>
         <div class="src-legend-cell">
           <div class="sl-head"><span class="rp-badge piinstall">pi-install</span><span class="sl-meta">归一化→pi tab</span></div>
-          <div class="anno"><b>token:</b> <span>bg info-soft / text info</span></div>
+          <div class="anno"><b>token:</b> <span>bg surface-2 + 彩色点 info</span></div>
         </div>
         <div class="src-legend-cell">
           <div class="sl-head"><span class="rp-badge effective">生效·xyz-agent</span><span class="sl-meta">effective · 首项</span></div>

@@ -78,6 +78,7 @@
   /* 圆角（v6：sm 3px→6px）*/
   --radius-sm: 6px;
   --radius: 8px;
+  --radius-card: 10px;
   --radius-lg: 12px;
 
   /* 间距（4px 栅格）*/
@@ -865,6 +866,10 @@ body {
     <div class="anno-row">
       <div class="anno"><b>正文提亮规则 (§5.1):</b> <span>thinking 预览/bash 截断/meta 条属正文 → 迁 neutral-mid；dim 仅装饰/极弱</span></div>
       <div class="anno"><b>反写位置:</b> <span>style.css :root + [data-theme=light]</span></div>
+    </div>
+
+    <div class="anno-row">
+      <div class="anno"><b>亮色主题 dim 同步提亮:</b> <span>[data-theme=light] { --neutral-dim: #9a9aa5; }（暗色 #7d8494 → 亮色 #9a9aa5，保持主题明度一致；亮色 neutral-mid 用 #4b5563）</span></div>
     </div>
   </section>
 

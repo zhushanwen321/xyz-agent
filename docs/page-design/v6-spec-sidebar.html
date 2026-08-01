@@ -80,6 +80,7 @@
   --radius-sm: 6px;
   --radius: 8px;
   --radius-lg: 12px;
+  --radius-card: 10px;
 
   /* 间距（4px 栅格）*/
   --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
@@ -334,9 +335,9 @@ body {
 .tr-ico.dim { color: var(--neutral-dim); }
 .tr-name { flex-shrink: 0; white-space: nowrap; font-family: var(--font-mono); font-size: var(--text-sm); color: var(--neutral-fg); }
 .tr-name.ignored { color: var(--neutral-dim); font-style: italic; }
-.tr-row.sel .tr-name { font-weight: 600; color: var(--accent); }
+.tr-row.sel .tr-name { color: var(--accent); }
 /* git badge（v6：保留语义色但缩小为极小圆点/badge）*/
-.tr-git { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 600; padding: 0 4px; border-radius: var(--radius-sm); line-height: 1.5; }
+.tr-git { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 600; padding: 0 4px; border-radius: 999px; line-height: 1.5; }
 .tr-git.M { background: var(--warn-soft); color: var(--warn); }
 .tr-git.A { background: var(--success-soft); color: var(--success); }
 .tr-git.D { background: var(--danger-soft); color: var(--danger); }
@@ -423,7 +424,7 @@ body {
 .wfd-link svg { width: 12px; height: 12px; }
 
 /* ── §8 底部用户区（v6：头像渐变改纯色 bg-accent）── */
-.usr { margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: var(--radius); font-size: var(--text-sm); color: var(--neutral-mid); }
+.usr { margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 8px; border-top: 1px solid var(--border); border-radius: var(--radius); font-size: var(--text-sm); color: var(--neutral-mid); }
 .usr-av { width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%; background: var(--accent); }   /* v6：纯色，去装饰渐变 */
 .usr-av-old { width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--info)); }
 .usr-name { flex: 1; color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -521,11 +522,11 @@ body {
             </span>
           </div>
           <div class="sb-nav">
-            <div class="sb-navitem">
+            <div class="btn btn-default btn-dense">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
               <span class="lbl">新建任务</span><kbd>⌘N</kbd>
             </div>
-            <div class="sb-navitem">
+            <div class="btn btn-ghost btn-dense">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
               <span class="lbl">搜索</span><kbd>⌘K</kbd>
             </div>

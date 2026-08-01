@@ -80,6 +80,7 @@
   --radius-sm: 6px;
   --radius: 8px;
   --radius-lg: 12px;
+  --radius-card: 10px;
 
   /* 间距（4px 栅格）*/
   --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
@@ -194,7 +195,7 @@ body {
 .cell-partial { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: var(--warn-soft); color: var(--warn); font-size: 11px; }
 .cell-l { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 600; padding: 2px 7px; border-radius: 999px; }
 .cell-l.l1 { background: var(--accent-soft); color: var(--accent); }
-.cell-l.l2 { background: var(--reasoning-soft); color: var(--reasoning); }
+.cell-l.l2 { background: var(--accent); color: #fff; }
 .cell-l.l3 { background: var(--warn-soft); color: var(--warn); }
 .ext-yes { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--success); }
 .ext-no { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); }
@@ -204,7 +205,7 @@ body {
 .topo .t-node { color: var(--neutral-fg); }
 .topo .t-mount { color: var(--accent); }
 .topo .t-dim { color: var(--neutral-dim); }
-.topo .t-dim-a { color: var(--reasoning); }
+.topo .t-dim-a { color: var(--accent); }
 .topo .t-dim-b { color: var(--success); }
 .topo .t-dim-c { color: var(--warn); }
 .topo .t-dim-d { color: var(--info); }
@@ -425,7 +426,7 @@ body {
 .ss-switch.on { background: var(--accent); }
 .ss-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left var(--duration-fast); }
 .ss-switch.on::after { left: 18px; }
-.schema-tag { font-family: var(--font-mono); font-size: var(--text-2xs); padding: 1px 5px; border-radius: var(--radius-sm); background: var(--reasoning-soft); color: var(--reasoning); }
+.schema-tag { font-family: var(--font-mono); font-size: var(--text-2xs); padding: 1px 5px; border-radius: var(--radius-sm); background: var(--surface-2); color: var(--neutral-dim); }
 
 /* ============ 嵌套组合（§7 workflow 管理面板）============ */
 .wf-panel { background: var(--surface); border-radius: var(--radius); overflow: hidden; }
@@ -1596,9 +1597,9 @@ body {
     <div class="anno-grid">
       <div class="anno"><b>复用决策:</b> <span class="v6">复用 settings page 控件（Input/Switch/Select），不独立实现</span></div>
       <div class="anno"><b>schema→控件:</b> <span>string→Input / boolean→Switch / enum→Select / number→Input</span></div>
-      <div class="anno"><b>容器:</b> <span>bg-card + 10px 圆角（对齐 §4.5 设置分组卡片）</span></div>
+      <div class="anno"><b>容器:</b> <span>bg-card + 8px 圆角 [var(--radius)]（对齐 §4.5 设置分组卡片）</span></div>
       <div class="anno"><b>行分隔:</b> <span>hairline border-top rgba(255,255,255,.04)（首行无）</span></div>
-      <div class="anno"><b>label:</b> <span>neutral-fg + schema tag（reasoning 色，mono）+ 12px neutral-dim desc</span></div>
+      <div class="anno"><b>label:</b> <span>neutral-fg + schema tag（中性色 surface-2 + neutral-dim，mono）+ 12px neutral-dim desc</span></div>
       <div class="anno"><b>位置:</b> <span>M16 SettingsModal 内 plugin 区段（按 plugin 分组）</span></div>
       <div class="anno"><b>声明:</b> <span>contributes.configuration { title, properties: Record&lt;string, ConfigProperty&gt; }</span></div>
     </div>

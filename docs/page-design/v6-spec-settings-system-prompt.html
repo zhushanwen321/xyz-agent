@@ -38,7 +38,7 @@
   --font-sans: Inter, 'SF Pro Display', 'PingFang SC', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
   --text-2xs: 10px; --text-xs: 11px; --text-sm: 12px; --text-base: 13px; --text-md: 14px;
-  --radius-sm: 6px; --radius: 8px; --radius-lg: 12px;
+  --radius-sm: 6px; --radius: 8px; --radius-lg: 12px; --radius-card: 10px;
   --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
   --space-6: 24px; --space-8: 32px;
   --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
@@ -120,7 +120,7 @@ body {
 
 /* ── 卡片（替换/追加：bg-card 去 border · 10px 圆角）── */
 .sp-card {
-  background: var(--bg-card); border-radius: 10px; margin-bottom: 12px;
+  background: var(--bg-card); border-radius: var(--radius-card); margin-bottom: 12px;
   /* 去 border：与 v6-spec-settings §4 一致，靠 bg-card 层级表达边界 */
 }
 .sp-head {
@@ -725,7 +725,7 @@ body {
         <div class="anno"><b>head padding:</b> <span>14px 16px 12px</span></div>
         <div class="anno"><b>body padding:</b> <span>12px 16px 16px · border-top rgba(255,255,255,.04)</span></div>
         <div class="anno"><b>标题:</b> <span>13px / 500 / neutral-fg（去 uppercase，同 set-label）</span></div>
-        <div class="anno"><b>副标题:</b> <span>11px / neutral-dim / line-height 1.45</span></div>
+        <div class="anno"><b>副标题:</b> <span>12px / neutral-mid / line-height 1.45</span></div>
         <div class="anno"><b>warn 提示:</b> <span class="v6">neutral-mid 正文（过 AA），关键词不染色；仅 corrupted 条用 warn-soft 底（系统级异常才上色）</span></div>
         <div class="anno"><b>Switch aria:</b> <span class="v6">role="switch" aria-label="替换系统提示词"（C6 修复）</span></div>
         <div class="anno"><b>关 switch 行为:</b> <span class="v6">Textarea disabled 但可见（保留内容），dirty=true，Save 启用（C1 修复）</span></div>

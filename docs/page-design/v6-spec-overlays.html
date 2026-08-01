@@ -79,6 +79,7 @@
   --radius-sm: 6px;
   --radius: 8px;
   --radius-lg: 12px;
+  --radius-card: 10px;
 
   /* 间距（4px 栅格）*/
   --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
@@ -220,7 +221,7 @@ body {
 .sm-overlay { position: relative; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px); border-radius: var(--radius); padding: 36px 16px 16px; overflow: hidden; }
 .sm-dialog {
   position: relative; max-width: 620px; margin: 0 auto; background: var(--surface);
-  border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-2);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-2);
   overflow: hidden;
 }
 /* 输入区 v6：去 border-b 靠 padding 分层 */
@@ -354,7 +355,7 @@ body {
 .cd-stage { position: relative; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px); border-radius: var(--radius); padding: 40px 16px; overflow: hidden; }
 .cd-dialog {
   position: relative; max-width: 360px; margin: 0 auto; background: var(--surface);
-  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-2); padding: 24px;
 }
 .cd-header { display: flex; flex-direction: column; gap: 6px; }
@@ -382,7 +383,7 @@ body {
 .mr-fs-stage { position: relative; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px); border-radius: var(--radius); padding: 24px; overflow: hidden; }
 .mr-fs {
   position: relative; max-width: 560px; margin: 0 auto; background: var(--surface);
-  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-2); display: flex; flex-direction: column;
   max-height: 360px; overflow: hidden;
 }
@@ -872,7 +873,7 @@ body {
       <div class="anno"><b>Other 选项:</b><br>末尾追加 · sel 后 label 下展开 Input（自动聚焦）</div>
       <div class="anno"><b>actions:</b><br>justify-end gap-2 px-3.5 pb-2.5 · cancel ghost / next·submit primary（守卫 allAnswered）</div>
       <div class="anno"><b>v6 交互优化:</b><br><span class="v6">最后一个问题选择后直接提交</span><br>（单问题：选完即提交，无需再点提交按钮；多问题：最后一题选完自动提交）<br>非最后问题保持 next 切换<br>提交按钮仅「其他（Other）」输入态需手动点（需显式确认文本）</div>
-      <div class="anno"><b>落点:</b><br>AskUserOverlay.vue · 根 z-[20]→z-overlay · rounded-sm(自动跟 6px) · context / hover 逐处</div>
+      <div class="anno"><b>落点:</b><br>AskUserOverlay.vue · 根 z-[20]→z-overlay · rounded-lg(12px) · context / hover 逐处</div>
       <div class="anno"><b>统一出口:</b><br>companion-band（M11）现为 <b>ask-user + confirm/select/input 四种 plugin 交互</b>的统一落点 · <code>showConfirm / showSelect / showInput</code> 与 ask-user 同位置同机制（顶替 composer · 阻塞 · plugin await）<br>不再用独立全局 modal（M15 ExtensionUIDialog 降级为仅致命错误/系统级提示）</div>
     </div>
   </section>

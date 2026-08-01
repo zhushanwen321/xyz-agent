@@ -83,6 +83,7 @@
   --radius-sm: 6px;
   --radius: 8px;
   --radius-lg: 12px;
+  --radius-card: 10px;
 
   /* 间距（4px 栅格）*/
   --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
@@ -161,7 +162,7 @@ body {
 .anno-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap: 8px 20px; padding: 14px 16px; background: var(--bg-card); border-radius: var(--radius); margin-top: 12px; }
 
 /* ============ 渲染区 ============ */
-.render-frame { background: var(--bg-card); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; overflow: hidden; }
+.render-frame { background: var(--bg); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; overflow: hidden; }
 .panel-stage { background: var(--surface); border-radius: var(--radius); overflow: hidden; }
 .stage-modal { background: #131316; border-radius: var(--radius); padding: 24px 16px; overflow: hidden; }
 
@@ -289,7 +290,7 @@ body {
 .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .provider-card {
   background: var(--bg-card); border: none;
-  border-radius: var(--radius); overflow: hidden; margin-bottom: 8px;
+  border-radius: var(--radius-card); overflow: hidden; margin-bottom: 8px;
 }
 /* 行头 */
 .row-head {
@@ -314,7 +315,7 @@ body {
 /* inline action error（常驻横幅） */
 .inline-error {
   display: flex; align-items: center; gap: 6px; padding: 6px 12px;
-  border: 1px solid var(--border); background: var(--danger-soft);
+  background: var(--danger-soft);
   border-radius: var(--radius); margin-bottom: 12px; font-size: var(--text-xs); color: var(--danger);
 }
 .inline-error svg { width: 14px; height: 14px; flex-shrink: 0; }
@@ -334,9 +335,9 @@ body {
 .set-default-btn { font-size: var(--text-2xs); color: var(--neutral-mid); padding: 2px 6px;
   border-radius: var(--radius-sm); background: transparent; border: 1px solid var(--border); cursor: pointer;
   transition: border-color var(--duration-fast), color var(--duration-fast); }
-.set-default-btn:hover { border-color: var(--info); color: var(--info); }
+.set-default-btn:hover { border-color: var(--accent); color: var(--accent); }
 .set-default-btn:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent-ring); }
-.default-mark { background: var(--info-soft); color: var(--info); padding: 2px 6px;
+.default-mark { background: var(--accent-soft); color: var(--accent); padding: 2px 6px;
   border-radius: 999px; font-size: var(--text-2xs); }
 
 /* ================================================================
@@ -349,7 +350,11 @@ body {
 
 /* 子区分组卡（shell group-card 范式：bg-card + 去 border + 明度差） */
 .eg {
-  background: var(--bg-card); border-radius: 10px; padding: 12px 14px;
+  padding: 0;
+}
+.eg + .eg {
+  margin-top: 12px; padding-top: 12px;
+  border-top: 1px solid rgba(255,255,255,0.04);
 }
 .eg-head {
   display: flex; align-items: center; gap: 8px; padding: 2px 2px 10px;

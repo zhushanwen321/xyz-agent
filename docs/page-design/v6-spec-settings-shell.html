@@ -81,6 +81,7 @@
   --radius-sm: 6px;
   --radius: 8px;
   --radius-lg: 12px;
+  --radius-card: 10px;
 
   /* 间距（4px 栅格）*/
   --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
@@ -292,7 +293,7 @@ body {
    §4 分组卡片（bg-card + 10px + 去 border + hairline）
    ================================================================ */
 .group-card {
-  background: var(--bg-card); border-radius: 10px;
+  background: var(--bg-card); border-radius: var(--radius-card);
   padding: 10px; margin-bottom: 12px;
   /* 去 border：用 bg-card 与 surface 的明度差表达边界（不画 border） */
 }
@@ -533,7 +534,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s1">
     <div class="spec-head"><span class="spec-num">§1</span><h2 class="spec-title">FullSettingsOverlay · 全屏覆盖层容器</h2></div>
-    <p class="spec-desc">手写覆盖层（非 reka Dialog 主体，沿用 SearchModal 手写范式规避 happy-dom + Teleport 测试问题）。根 <code>.fso = fixed inset-0 z-modal bg-bg 纯不透明全屏</code>（<span class="v6">无遮罩 / 无模糊 / 无 max-width</span>，覆盖整个窗口），内部 <code>flex row</code>：左 <code>nav w-220 bg-sunken</code>，右 <code>content flex-1 bg-surface</code> 滚动区。交互核心：ESC 关闭 + X 按钮关闭 + 焦点陷阱（Tab 循环不逃逸）+ 打开时焦点落首个可聚焦元素。X 按钮用 Button <code>variant=ghost</code>（不自创 .btn）。</p>
+    <p class="spec-desc">手写覆盖层（非 reka Dialog 主体，沿用 SearchModal 手写范式规避 happy-dom + Teleport 测试问题）。根 <code>.fso = fixed inset-0 z-modal bg-bg 纯不透明全屏</code>（<span class="v6">无遮罩 / 无模糊 / 无 max-width</span>，覆盖整个窗口），内部 <code>flex row</code>：左 <code>nav w-220 bg-sunken</code>，右 <code>content flex-1 bg-bg</code> 滚动区。交互核心：ESC 关闭 + X 按钮关闭 + 焦点陷阱（Tab 循环不逃逸）+ 打开时焦点落首个可聚焦元素。X 按钮用 Button <code>variant=ghost</code>（不自创 .btn）。</p>
     <div class="change-points">
       <span class="cp cp-key"><b>交互</b> ESC + X 双通道关闭</span>
       <span class="cp cp-key"><b>交互</b> 焦点陷阱 Tab 循环</span>
@@ -620,7 +621,7 @@ body {
 
     <div class="anno-grid">
       <div class="anno"><b>容器根 (.fso):</b><br>fixed inset-0 · z-modal [1000]<br><span class="v6">bg-bg 纯不透明全屏</span><br><span class="old">旧: bg-black/80 + blur + 900px modal</span></div>
-      <div class="anno"><b>布局:</b><br>.fso flex row<br>nav w-220 bg-sunken 无 border-r<br>content flex-1 bg-surface 滚动区</div>
+      <div class="anno"><b>布局:</b><br>.fso flex row<br>nav w-220 bg-sunken 无 border-r<br>content flex-1 bg-bg 滚动区</div>
       <div class="anno"><b>内容 head:</b><br>h-44 · flex items-center<br>border-b border-border · px-14<br>title 14px/600 · 右侧 X ghost 按钮</div>
       <div class="anno"><b>X 按钮:</b><br><span class="key">Button variant=ghost size=icon</span><br>hover:bg-surface-hover<br>focus: ring-2 accent + offset</div>
       <div class="anno"><b>ESC 交互:</b><br>keydown Escape → emit close<br>手写监听（非 reka Dialog）<br><span class="old">旧: 仅 X 可点</span> → <span class="v6">ESC + X 双通道</span></div>
