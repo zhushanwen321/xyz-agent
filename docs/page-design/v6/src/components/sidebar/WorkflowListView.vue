@@ -226,7 +226,7 @@ function resetAbort() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--neutral-mid);
+  color: var(--neutral-dim);
   background: transparent;
   border: 0;
   cursor: pointer;
@@ -234,12 +234,12 @@ function resetAbort() {
     color var(--duration-fast) var(--ease);
 }
 .wf-abort:hover {
-  background: var(--surface-hover);
-  color: var(--neutral-fg);
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 .wf-abort svg {
-  width: 13px;
-  height: 13px;
+  width: 12px;
+  height: 12px;
 }
 /* 两段式确认：实心 danger */
 .wf-abort--confirm {

@@ -85,7 +85,7 @@ function resetDelete() {
         @click="select(s.id)"
         @keydown.enter="select(s.id)"
         @mouseenter="hoveredId = s.id"
-        @mouseleave="hoveredId = null"
+        @mouseleave="hoveredId = null; pendingDelete = null"
       >
         <!-- 状态点 + 未读 badge -->
         <div class="si__status">
