@@ -110,6 +110,18 @@ function tryParseJson(raw: unknown): unknown {
 	}
 }
 
+/**
+ * 把 authoritative schema 的 unknown 收窄为合法 JSON Schema 根类型（object | boolean）。
+ * draft-07 允许 boolean 根 schema（true=接受一切，false=拒绝一切）。
+ * 独立守卫使后续 getOrCompileValidator(authoritative) 在类型层面也成立，
+ * 避免在守卫块外直接用 unknown。非合法形态抛清晰错误（与日常模式第 235 行同构）。
+ */
+function assertJsonSchemaRoot(value: unknown): asserts value is Record<string, unknown> | boolean {
+	if (!(isPlainObject(value) || typeof value === "boolean")) {
+		throw new Error(`authoritative schema must be a JSON Schema object or boolean, got ${typeof value}`);
+	}
+}
+
 /** turn_end event 是否可安全访问 message.stopReason（用于判断模型是否还在调工具链）。 */
 function isTurnEndEvent(e: unknown): e is { message?: { stopReason?: string } } {
 	return typeof e === "object" && e !== null;
@@ -167,13 +179,11 @@ export async function executeStructuredOutput(params: {
 	if (authoritative !== undefined) {
 		let validate: ValidateFunction;
 		try {
-			if (isPlainObject(authoritative) || typeof authoritative === "boolean") {
-				validate = getOrCompileValidator(authoritative);
-			} else {
-				throw new Error(
-					`authoritative schema must be a JSON Schema object or boolean, got ${typeof authoritative}`,
-				);
-			}
+			// 先用 assert 函数把 unknown 收窄为 Record<string,unknown> | boolean，
+			// 使后续 getOrCompileValidator(authoritative) 在类型层面也成立（type-safety）。
+			// 运行时行为不变：非 object/boolean 抛清晰错误，由外层 catch 包成含 echo 的错误。
+			assertJsonSchemaRoot(authoritative);
+			validate = getOrCompileValidator(authoritative);
 		} catch (e) {
 			throw new Error(
 				`Invalid authoritative JSON Schema (from PI_WORKFLOW_SCHEMA): ${(e as Error).message}. `
@@ -263,14 +273,16 @@ export async function executeStructuredOutput(params: {
 
 // ── Tool definition (shared between modes) ─────────────────────
 
-function createToolDefinition() {
+export function createToolDefinition() {
 	return {
 		name: TOOL_NAME,
 		label: "Structured Output",
 		description:
 			"Return structured output validated against a JSON Schema. "
 			+ "Call this tool to produce validated JSON data. "
-			+ "Pass `schema` (a JSON Schema draft-07 object) and `data` (the value to validate).\n\n"
+			+ "Pass `schema` (a JSON Schema draft-07 object) and `data` (the value to validate). "
+			+ "When the schema is system-enforced (workflow mode), pass ONLY `data` — "
+			+ "the `schema` parameter is ignored (the system validates `data` against the authoritative schema).\n\n"
 			+ "schema describes the shape; data fills the values; they must match.\n\n"
 			+ "✅ Correct (full call): structured_output({schema:{type:'object',properties:{name:{type:'string'},age:{type:'number'}},required:['name']}, data:{name:'Alice',age:30}})\n"
 			+ "✅ Correct: schema={type:'array',items:{type:'string'}}, data=['a','b','c']\n"
@@ -307,7 +319,15 @@ function createToolDefinition() {
 		) {
 			// workflow 模式（PI_WORKFLOW_SCHEMA 存在）：权威 schema 成为唯一校验权威，
 			// LLM 传入的 params.schema 被降级为错误回显，无法影响校验结果。
-			const authoritativeSchema = process.env[ENV_SCHEMA];
+			//
+			// 运行假设：workflow 子进程是单 session 进程（由 applySchemaEnvToChildEnv 在
+			// session-runner 注入 PI_WORKFLOW_SCHEMA）。Pi extension 状态在 session_start 重建，
+			// 但 process.env 在进程级共享——这里依赖「workflow 子进程不会复用未注入 env 的 session」
+			// 的单 session 约定，故直接读 process.env 而非维护 per-session 缓存。
+			//
+			// 判空用 `|| undefined` 归一空串为 undefined（truthy 语义），与 entry 的 `if (schemaEnv)`
+			// 和 applySchemaEnvToChildEnv 的 `if (schemaEnv)` 统一：空串 env 视为未设置。
+			const authoritativeSchema = process.env[ENV_SCHEMA] || undefined;
 			return executeStructuredOutput(
 				authoritativeSchema !== undefined
 					? { ...params, authoritativeSchema }

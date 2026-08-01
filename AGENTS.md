@@ -43,7 +43,7 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
   - TUI 交互: `packages/coding-agent/src/modes/interactive/interactive-mode.ts`
 
 **Pi Extension 源码（本项目维护）**:
-- `extensions/` 目录下 17 个 `@zhushanwen/pi-*` extension 包 + `extensions/shared/quota-providers`，由本项目继续发布到 npm（`npm-v*` tag）
+- `extensions/` 目录下 16 个 `@zhushanwen/pi-*` extension 包 + `extensions/shared/quota-providers`，由本项目继续发布到 npm（`npm-v*` tag）
 - **[HISTORICAL] xyz-pi-extensions-workspace 已废弃**：原独立仓库 `~/Code/xyz-pi-extensions-workspace` 已停止维护，本仓 `extensions/` 是 `@zhushanwen/pi-*` 的**统一开发仓库**。所有 extension 的源码改动、bug 修复、版本发布都在本仓进行，不再回写到旧仓。旧仓的 `main` 分支可能滞后于本仓，排查问题时以本仓为准
 - **structured-output 方案 A（权威 schema 校验）[HISTORICAL]**：workflow 模式下 `PI_WORKFLOW_SCHEMA` env 注入的权威 schema 是唯一校验权威，LLM 传入的 `schema` 参数不参与校验（仅错误回显）。2026-08-01 事故：ds-flash 重写 `add_channels.items` schema 后自洽通过，4 条 channel 修复静默丢失。根因是旧实现校验 LLM 自报 schema 而非权威 schema。修复见 `extensions/structured-output/src/index.ts` 的 `executeStructuredOutput` authoritativeSchema 分支
 - **Extension 开发规范**: [docs/extensions/development-guide.md](docs/extensions/development-guide.md)（完整指南）、[docs/extensions/extension-conventions.md](docs/extensions/extension-conventions.md)（强约束）、[docs/extensions/glossary.md](docs/extensions/glossary.md)（术语表）

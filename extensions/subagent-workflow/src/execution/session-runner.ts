@@ -109,6 +109,17 @@ function computeWatchdogMs(maxTurns: number | undefined | null): number {
 /** stderr 累积上限（字符）。防止失控子进程打满父进程内存。保留尾部便于诊断。 */
 const STDERR_MAX_CHARS = 64 * 1024;
 
+/**
+ * 跨包契约 env 名：workflow 子进程把权威 JSON Schema 通过此 env 传给 structured-output 扩展。
+ *
+ * [跨包契约 SSOT] 此字面量是两个独立 npm 包（@zhushanwen/pi-subagent-workflow 与
+ * @zhushanwen/pi-structured-output）之间的隐式 env 契约。structured-output 包内同名常量为
+ * `ENV_SCHEMA = "PI_WORKFLOW_SCHEMA"`（见 extensions/structured-output/src/index.ts）。
+ * 两包是独立 npm 包不能直接 import，故各自保留常量但显式标注此契约关系——
+ * 任一端改名必须同步另一端，否则权威 schema 注入会静默断桥（子进程不注册 tool/hook）。
+ */
+const SCHEMA_ENV_VAR = "PI_WORKFLOW_SCHEMA";
+
 // ============================================================
 // W4: ask_user RPC 系统提示词
 // ============================================================
@@ -266,7 +277,7 @@ export interface RunOptions {
    *  workflow 路径（executeAndAwait）不传此字段——其 onEvent 是开的，
    *  text_delta 经 onEvent 到 workflow liveRecord，不走 streaming 通道。 */
   stream?: SubagentStream;
-  /** D-A6 bridge: workflow schema JSON 字符串，存在时注入 childEnv.PI_WORKFLOW_SCHEMA。
+  /** D-A6 bridge: workflow schema JSON 字符串，存在时注入 childEnv[SCHEMA_ENV_VAR]（PI_WORKFLOW_SCHEMA）。
    *  workflow 编排层通过 ExecuteOptions.schemaEnv 透传此处，
    *  runSpawn 将其注入子进程环境变量，激活 structured-output 扩展注册 tool。
    *  tool 层 execute 不传此字段 → childEnv 不注入 → BC-6 行为不变。 */
@@ -287,7 +298,7 @@ export interface RunOptions {
  * 将 schemaEnv 注入 childEnv（D-A6 bridge）。
  *
  * [模块内直调] —— 纯 env 赋值。从 runSpawn 的 childEnv 构造块调用。
- * 存在时设 childEnv.PI_WORKFLOW_SCHEMA → 子进程 structured-output 扩展读取并注册 tool。
+ * 存在时设 childEnv[SCHEMA_ENV_VAR] → 子进程 structured-output 扩展读取并注册 tool。
  * 不存在时 childEnv 不变（BC-6：tool 层不传 schemaEnv → 行为与合并前一致）。
  */
 export function applySchemaEnvToChildEnv(
@@ -295,7 +306,7 @@ export function applySchemaEnvToChildEnv(
   schemaEnv?: string,
 ): void {
   if (schemaEnv) {
-    childEnv.PI_WORKFLOW_SCHEMA = schemaEnv;
+    childEnv[SCHEMA_ENV_VAR] = schemaEnv;
   }
 }
 
