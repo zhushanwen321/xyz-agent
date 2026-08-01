@@ -584,9 +584,15 @@ export class SubagentService {
     // W2 改动 7：注入 worktreePath（worktree 隔离激活时来自 step 2.5 的 worktreeHandle）。
     // mapToWorkflowAgentResult 不感知 worktree（它只做 subagents AgentResult → workflow AgentResult
     // 的 DTO 映射），故在 caller 侧 mutate 刚新建的产物对象（无共享引用，安全）。
-    // 注意：runAndFinalize 内的 finalizeRecord 已在此时 cleanup worktree（git worktree remove），
-    // worktreePath 是该 worktree 的历史路径标识——目录可能已不存在。消费者（如后续 agent 复用
-    // worktree 做 cwd）应理解为标识符，实际复用需在 cleanup 前捕获路径或由 worktreeRegistry 管理。
+    //
+    // 诊断标识符语义（not cwd）：
+    //   - runAndFinalize 内的 finalizeRecord 在 return 前已 cleanup（git worktree remove --force），
+    //     worktreePath 指向的目录已被删除，不保证存在。
+    //   - worktreePath 仅供日志/trace 关联（如定位某条 session jsonl 的 worktree 来源），无运行时语义。
+    //   - **不可作为后续 agent 的 cwd**——目录已删，复用会 ENOENT。
+    //   - wave 内 worktree 复用（spec-w §2 "wave 内 8 action 共享 worktree"）在 pi 当前架构下
+    //     不可行：worktree 绑定单次 agent() record，每次 executeAndAwait 结束 finalizeRecord
+    //     无条件 cleanup，worktree 无法跨 action 存活。wave 改用主 cwd（见 recursive-split.js）。
     wfResult.worktreePath = record.worktreeHandle?.path;
     return wfResult;
   }
