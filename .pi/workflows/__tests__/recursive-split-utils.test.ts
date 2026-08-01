@@ -1,32 +1,22 @@
 import { describe, it, expect } from "vitest";
 import {
-  MAX_ACTION_RETRY,
-  PROGRESSIVE_ACTIONS,
+  MAX_NODE_ROUNDS,
   VALID_LAYERS,
   isTerminal,
   assertValidUnitId,
   isTimeoutError,
   buildActionPrompt,
   buildActionSchema,
-  handleReplan,
   topoSort,
   selectActionable,
   detectStuckNodes,
-  reduceActionResults,
 } from "../recursive-split-utils.cjs";
 
 // ── 常量 ────────────────────────────────────────────────────────────
 
 describe("常量", () => {
-  it("MAX_ACTION_RETRY = 3", () => {
-    expect(MAX_ACTION_RETRY).toBe(3);
-  });
-
-  it("PROGRESSIVE_ACTIONS 含 clarify/plan/design-review", () => {
-    expect(PROGRESSIVE_ACTIONS.has("clarify")).toBe(true);
-    expect(PROGRESSIVE_ACTIONS.has("plan")).toBe(true);
-    expect(PROGRESSIVE_ACTIONS.has("design-review")).toBe(true);
-    expect(PROGRESSIVE_ACTIONS.has("execute")).toBe(false);
+  it("MAX_NODE_ROUNDS = 3", () => {
+    expect(MAX_NODE_ROUNDS).toBe(3);
   });
 
   it("VALID_LAYERS 含 epic/feature/slice/wave", () => {
@@ -101,81 +91,90 @@ describe("buildActionSchema", () => {
   const waveNode = { unitId: "wave:test", scope: "wave" };
   const sliceNode = { unitId: "slice:test", scope: "slice" };
 
-  it("planning execute 返回含 children 的 schema", () => {
-    const schema = buildActionSchema(sliceNode, "execute", false);
+  it("wave node 返回 base schema（无 children）", () => {
+    const schema = buildActionSchema(waveNode);
+    expect(schema.properties.done).toBeDefined();
+    expect(schema.properties.stopReason).toBeDefined();
+    expect(schema.properties.lastStatus).toBeDefined();
+    expect(schema.properties.replanTriggered).toBeDefined();
+    expect(schema.properties.abortedChildren).toBeDefined();
+    expect(schema.properties.children).toBeUndefined();
+    expect(schema.required).toEqual(["done"]);
+  });
+
+  it("planning node 返回含 children 的 schema", () => {
+    const schema = buildActionSchema(sliceNode);
     expect(schema.properties.children).toBeDefined();
     expect(schema.properties.children.items.properties.unitId).toBeDefined();
     expect(schema.properties.children.items.properties.dependsOn).toBeDefined();
   });
 
-  it("wave 层 execute 不返回 children（wave 是叶子层）", () => {
-    const schema = buildActionSchema(waveNode, "execute", true);
-    expect(schema.properties.children).toBeUndefined();
-  });
-
-  it("wave closeout 返回含 commitHash + summary", () => {
-    const schema = buildActionSchema(waveNode, "closeout", true);
-    expect(schema.properties.commitHash).toBeDefined();
-    expect(schema.properties.summary).toBeDefined();
-  });
-
-  it("所有 action 含 replan 信号字段（baseProps）", () => {
-    const schema = buildActionSchema(waveNode, "clarify", true);
-    expect(schema.properties.replanTriggered).toBeDefined();
-    expect(schema.properties.abortedChildren).toBeDefined();
-    expect(schema.properties.done).toBeDefined();
-  });
-
-  it("非 execute/closeout action 返回 base schema", () => {
-    const schema = buildActionSchema(waveNode, "test", true);
-    expect(schema.properties.done).toBeDefined();
-    expect(schema.properties.commitHash).toBeUndefined();
-    expect(schema.properties.children).toBeUndefined();
+  it("所有 schema 含 done + stopReason（推进到阻塞模型）", () => {
+    for (const node of [waveNode, sliceNode]) {
+      const schema = buildActionSchema(node);
+      expect(schema.properties.done).toBeDefined();
+      expect(schema.properties.stopReason).toBeDefined();
+    }
   });
 });
 
 // ── buildActionPrompt ───────────────────────────────────────────────
 
 describe("buildActionPrompt", () => {
-  const node = { unitId: "wave:test-wave", scope: "wave" };
+  const waveNode = { unitId: "wave:test-wave", scope: "wave" };
+  const sliceNode = { unitId: "slice:test-slice", scope: "slice" };
 
-  it("含 unitId 和 action", () => {
-    const prompt = buildActionPrompt(node, "clarify");
+  it("含 unitId", () => {
+    const prompt = buildActionPrompt(waveNode);
     expect(prompt).toContain("wave:test-wave");
-    expect(prompt).toContain("clarify");
+  });
+
+  it("含停止条件（推进到阻塞模型）", () => {
+    const prompt = buildActionPrompt(waveNode);
+    expect(prompt).toContain("停止条件");
+    expect(prompt).toContain("crossLayer");
+    expect(prompt).toContain("gate fail");
   });
 
   it("含 cw handoff 指令", () => {
-    const prompt = buildActionPrompt(node, "clarify");
+    const prompt = buildActionPrompt(waveNode);
     expect(prompt).toContain("cw handoff --unitId wave:test-wave");
   });
 
-  it("planning execute 含 children 抄录指示", () => {
-    const sliceNode = { unitId: "slice:test", scope: "slice" };
-    const prompt = buildActionPrompt(sliceNode, "execute");
+  it("引导 agent gate pass 后继续推进（不返回）", () => {
+    const prompt = buildActionPrompt(waveNode);
+    expect(prompt).toContain("gate pass 后不要返回");
+    expect(prompt).toContain("继续调");
+  });
+
+  it("含 clarify 前进引导（防止 progressive 循环）", () => {
+    const prompt = buildActionPrompt(waveNode);
+    expect(prompt).toContain("clarify");
+    expect(prompt).toContain("cw plan");
+    expect(prompt).toContain("前进");
+  });
+
+  it("含 test 测试文件产出引导", () => {
+    const prompt = buildActionPrompt(waveNode);
+    expect(prompt).toContain("vitest");
+    expect(prompt).toContain("测试文件");
+  });
+
+  it("planning node 含 children 抄录引导", () => {
+    const prompt = buildActionPrompt(sliceNode);
     expect(prompt).toContain("children");
     expect(prompt).toContain("cw tree");
+    expect(prompt).toContain("crossLayer.descend");
   });
 
-  it("wave execute 不含 children 抄录指示", () => {
-    const prompt = buildActionPrompt(node, "execute");
-    expect(prompt).not.toContain("检查 stdout JSON 的 children");
+  it("wave node 不含 children 抄录引导", () => {
+    const prompt = buildActionPrompt(waveNode);
+    expect(prompt).not.toContain("planning 层的 execute");
   });
 
-  it("replan hint 只对 plan/design-review/execute/test 注入", () => {
-    expect(buildActionPrompt(node, "plan")).toContain("replan");
-    expect(buildActionPrompt(node, "execute")).toContain("replan");
-    expect(buildActionPrompt(node, "test")).toContain("replan");
-    expect(buildActionPrompt(node, "design-review")).toContain("replan");
-    // retrospect/closeout 不注入 replan hint
-    expect(buildActionPrompt(node, "retrospect")).not.toContain("replan");
-    expect(buildActionPrompt(node, "closeout")).not.toContain("replan");
-  });
-
-  it("不硬编码 --input '<JSON>' 字面语法（L0 修复验证）", () => {
-    const prompt = buildActionPrompt(node, "clarify");
+  it("不含 --input '<JSON>' 字面语法（L0 修复验证）", () => {
+    const prompt = buildActionPrompt(waveNode);
     expect(prompt).not.toContain("--input '<");
-    expect(prompt).not.toContain("--input '<根据");
   });
 });
 
@@ -309,192 +308,70 @@ describe("selectActionable", () => {
   });
 });
 
-// ── detectStuckNodes ────────────────────────────────────────────────
+// ── detectStuckNodes（node 级熔断） ─────────────────────────────────
 
 describe("detectStuckNodes", () => {
-  it("progressive action 豁免（不计入熔断）", () => {
-    const actionable = [{ unitId: "a", nextAction: "clarify" }];
-    const retryCount = {};
-    const prevNextAction = {};
-    const stuck = detectStuckNodes(actionable, retryCount, prevNextAction);
-    expect(stuck).toHaveLength(0);
+  it("status 变化时重置计数（node 在推进）", () => {
+    const actionable = [{ unitId: "a", status: "planning" }];
+    const prevStatus = { a: "clarifying" }; // 上一轮 clarifying，本轮 planning → 推进了
+    const nodeRounds = { a: 2 }; // 之前累积了 2 轮没推进
+    detectStuckNodes(actionable, prevStatus, nodeRounds);
+    expect(nodeRounds["a"]).toBe(0); // 重置
   });
 
-  it("首轮建基线不计入累加", () => {
-    // 第一次见到节点 a 的 execute action，不触发熔断
-    const actionable = [{ unitId: "a", nextAction: "execute" }];
-    const retryCount = {};
-    const prevNextAction = {};
-    const stuck = detectStuckNodes(actionable, retryCount, prevNextAction);
-    expect(stuck).toHaveLength(0);
+  it("status 不变时累加计数", () => {
+    const actionable = [{ unitId: "a", status: "clarifying" }];
+    const prevStatus = { a: "clarifying" }; // 没变
+    const nodeRounds = { a: 1 };
+    detectStuckNodes(actionable, prevStatus, nodeRounds);
+    expect(nodeRounds["a"]).toBe(2);
   });
 
-  it("连续 N 轮同 action 触发 abort", () => {
-    const actionable = [{ unitId: "a", nextAction: "execute" }];
-    // 模拟已连续 MAX_ACTION_RETRY 轮
-    const retryCount = { "a:execute": MAX_ACTION_RETRY - 1 };
-    const prevNextAction = { a: "execute" };
-    const stuck = detectStuckNodes(actionable, retryCount, prevNextAction);
+  it("连续 MAX_NODE_ROUNDS 轮 status 不变 → 触发 abort", () => {
+    const actionable = [{ unitId: "a", status: "clarifying" }];
+    const prevStatus = { a: "clarifying" };
+    const nodeRounds = { a: MAX_NODE_ROUNDS - 1 }; // 再加 1 就到阈值
+    const stuck = detectStuckNodes(actionable, prevStatus, nodeRounds);
     expect(stuck).toEqual(["a"]);
   });
 
-  it("action 变化重置计数（新 action key 从 0 开始）", () => {
-    // 上一轮 execute（有计数），本轮 test → 新 key 首轮不累加
-    const actionable = [{ unitId: "a", nextAction: "test" }];
-    const retryCount = { "a:execute": 5 };
-    const prevNextAction = { a: "execute" };
-    detectStuckNodes(actionable, retryCount, prevNextAction);
-    // 新 action key 首轮不累加（prevAction=execute !== test → 走 else 分支设为 0）
-    expect(retryCount["a:test"]).toBe(0);
-    // 旧 key 残留但无害（下次 action 变回 execute 时 prevAction 不匹配会重置）
-    expect(retryCount["a:execute"]).toBe(5);
+  it("首轮（prevStatus 无记录）不触发 abort", () => {
+    const actionable = [{ unitId: "a", status: "created" }];
+    const prevStatus = {}; // 第一次见到这个 node
+    const nodeRounds = {};
+    const stuck = detectStuckNodes(actionable, prevStatus, nodeRounds);
+    expect(stuck).toHaveLength(0);
+    expect(nodeRounds["a"]).toBe(0); // status 设为当前，rounds 归零
   });
 
-  it("prevNextAction 被更新为当前 action", () => {
-    const actionable = [{ unitId: "a", nextAction: "test" }];
-    const prevNextAction = {};
-    detectStuckNodes(actionable, {}, prevNextAction);
-    expect(prevNextAction["a"]).toBe("test");
-  });
-});
-
-// ── handleReplan ────────────────────────────────────────────────────
-
-describe("handleReplan", () => {
-  it("设 replanOverride 为 plan", () => {
-    const replanOverride = {};
-    handleReplan(
-      { unitId: "slice:1", abortedChildren: [] },
-      replanOverride, {}, {}, {}
-    );
-    expect(replanOverride["slice:1"]).toBe("plan");
+  it("prevStatus 被更新为当前 status", () => {
+    const actionable = [{ unitId: "a", status: "planning" }];
+    const prevStatus = {};
+    detectStuckNodes(actionable, prevStatus, {});
+    expect(prevStatus["a"]).toBe("planning");
   });
 
-  it("清理 aborted 子节点的 sessionFile", () => {
-    const sessionFiles = { "wave:child1": "/path/1", "wave:child2": "/path/2" };
-    handleReplan(
-      { unitId: "slice:1", abortedChildren: ["wave:child1"] },
-      {}, sessionFiles, {}, {}
-    );
-    expect(sessionFiles["wave:child1"]).toBeUndefined();
-    expect(sessionFiles["wave:child2"]).toBe("/path/2");
+  it("多个 node 独立计数", () => {
+    const actionable = [
+      { unitId: "a", status: "clarifying" },
+      { unitId: "b", status: "planning" },
+    ];
+    const prevStatus = { a: "clarifying", b: "clarifying" };
+    const nodeRounds = { a: 0, b: 0 };
+    detectStuckNodes(actionable, prevStatus, nodeRounds);
+    // a 没变 → rounds 累加
+    expect(nodeRounds["a"]).toBe(1);
+    // b 变了（clarifying→planning）→ rounds 重置
+    expect(nodeRounds["b"]).toBe(0);
   });
 
-  it("清理 aborted 子节点的 retryCount", () => {
-    const retryCount = { "wave:child1:execute": 2, "wave:child2:test": 1 };
-    handleReplan(
-      { unitId: "slice:1", abortedChildren: ["wave:child1"] },
-      {}, {}, retryCount, {}
-    );
-    expect(retryCount["wave:child1:execute"]).toBeUndefined();
-    expect(retryCount["wave:child2:test"]).toBe(1);
-  });
-
-  it("清理 aborted 子节点的 prevNextAction", () => {
-    const prevNextAction = { "wave:child1": "execute", "wave:child2": "test" };
-    handleReplan(
-      { unitId: "slice:1", abortedChildren: ["wave:child1"] },
-      {}, {}, {}, prevNextAction
-    );
-    expect(prevNextAction["wave:child1"]).toBeUndefined();
-    expect(prevNextAction["wave:child2"]).toBe("test");
-  });
-
-  it("重置触发节点自身的 retryCount（所有 action）", () => {
-    const retryCount = { "slice:1:execute": 3, "slice:1:test": 1, "other:2:plan": 2 };
-    handleReplan(
-      { unitId: "slice:1", abortedChildren: [] },
-      {}, {}, retryCount, {}
-    );
-    expect(retryCount["slice:1:execute"]).toBeUndefined();
-    expect(retryCount["slice:1:test"]).toBeUndefined();
-    expect(retryCount["other:2:plan"]).toBe(2); // 不影响其他节点
-  });
-
-  it("返回 aborted Set", () => {
-    const aborted = handleReplan(
-      { unitId: "slice:1", abortedChildren: ["wave:a", "wave:b"] },
-      {}, {}, {}, {}
-    );
-    expect(aborted instanceof Set).toBe(true);
-    expect(aborted.has("wave:a")).toBe(true);
-    expect(aborted.has("wave:b")).toBe(true);
-  });
-
-  it("空 abortedChildren 返回空 Set", () => {
-    const aborted = handleReplan(
-      { unitId: "slice:1", abortedChildren: [] },
-      {}, {}, {}, {}
-    );
-    expect(aborted.size).toBe(0);
-  });
-});
-
-// ── reduceActionResults ─────────────────────────────────────────────
-
-describe("reduceActionResults", () => {
-  const baseCtx = () => ({
-    replanOverride: {},
-    sessionFiles: {},
-    retryCount: {},
-    prevNextAction: {},
-    logFn: () => {},
-  });
-
-  it("成功结果回收 sessionFile", () => {
-    const ctx = baseCtx();
-    reduceActionResults(
-      { unitId: "wave:1", sessionFile: "/path/session.jsonl" },
-      ctx
-    );
-    expect(ctx.sessionFiles["wave:1"]).toBe("/path/session.jsonl");
-  });
-
-  it("parallel 归一化 throw（status:failed）不 throw，只记日志", () => {
-    const logs: string[] = [];
-    const ctx = { ...baseCtx(), logFn: (msg: string) => logs.push(msg) };
-    // 不应 throw
-    expect(() => reduceActionResults(
-      { status: "failed", error: "crashed" },
-      ctx
-    )).not.toThrow();
-    expect(logs.some((l) => l.includes("crashed"))).toBe(true);
-  });
-
-  it("replanTriggered 触发 handleReplan（设 replanOverride）", () => {
-    const ctx = baseCtx();
-    const result = reduceActionResults(
-      { unitId: "slice:1", replanTriggered: true, abortedChildren: ["wave:child1"] },
-      ctx
-    );
-    expect(ctx.replanOverride["slice:1"]).toBe("plan");
-    expect(result.abortedChildren).toBeDefined();
-    expect(result.abortedChildren!.has("wave:child1")).toBe(true);
-  });
-
-  it("replanTriggered 后 aborted 子节点 sessionFile 不被回收", () => {
-    const ctx = baseCtx();
-    ctx.sessionFiles["wave:child1"] = "/old/path"; // 子节点已有 sessionFile
-    reduceActionResults(
-      { unitId: "slice:1", replanTriggered: true, abortedChildren: ["wave:child1"] },
-      ctx
-    );
-    // handleReplan 清了它
-    expect(ctx.sessionFiles["wave:child1"]).toBeUndefined();
-  });
-
-  it("null 结果安全处理", () => {
-    const ctx = baseCtx();
-    expect(() => reduceActionResults(null as any, ctx)).not.toThrow();
-  });
-
-  it("failedReason 记日志", () => {
-    const logs: string[] = [];
-    const ctx = { ...baseCtx(), logFn: (msg: string) => logs.push(msg) };
-    reduceActionResults(
-      { unitId: "wave:1", failedReason: "test failed" },
-      ctx
-    );
-    expect(logs.some((l) => l.includes("test failed"))).toBe(true);
+  it("progressive action 不再豁免——status 不变就累加", () => {
+    // 旧模型 PROGRESSIVE_ACTIONS 豁免已删除。
+    // clarify 的 status 不推进（clarifying→clarifying）也会累加 → 最终熔断
+    const actionable = [{ unitId: "a", status: "clarifying" }];
+    const prevStatus = { a: "clarifying" };
+    const nodeRounds = { a: MAX_NODE_ROUNDS - 1 };
+    const stuck = detectStuckNodes(actionable, prevStatus, nodeRounds);
+    expect(stuck).toEqual(["a"]); // 不豁免，触发熔断
   });
 });
