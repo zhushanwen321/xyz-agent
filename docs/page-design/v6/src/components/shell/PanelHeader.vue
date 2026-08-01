@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { openSearch, sidebarCollapsed } from '@/composables/useStore'
+import { openSearch, sidebarCollapsed, drawerOpen } from '@/composables/useStore'
 
 /** PanelHeader：bg-elevated 浮起，status icon + breadcrumb + jsonl + git
  * 折叠态 chrome 迁入此 header（展开侧栏/后退/前进），与 AppNavControls 浮层位置一致 */
@@ -11,10 +11,10 @@ function toggleSidebar() {
 
 <template>
   <header class="panel-header" :class="{ collapsed: sidebarCollapsed }">
-    <!-- 折叠态 chrome（展开侧栏/后退/前进），位置同 AppNavControls 浮层（起 x=100px）-->
+    <!-- 折叠态 chrome（展开侧栏/后退/前进）：文档流内元素，pl-[88px] 让位（§5）-->
     <div v-if="sidebarCollapsed" class="collapsed-chrome">
       <button class="nav-btn" title="展开侧栏" @click="toggleSidebar">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
       </button>
       <button class="nav-btn" title="后退">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
@@ -30,10 +30,14 @@ function toggleSidebar() {
     <!-- breadcrumb -->
     <div class="breadcrumb">
       <span class="dir">feat-optimize-ui</span>
-      <span class="sep">▸</span>
+      <span class="sep">›</span>
       <span class="branch">main</span>
     </div>
     <div class="spacer"></div>
+    <!-- drawer toggle（§7 dd-toggle：切换右侧 drawer 展开/收起）-->
+    <button class="ph-btn dd-toggle" :class="{ active: drawerOpen }" title="切换 drawer" @click="drawerOpen = !drawerOpen">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>
+    </button>
     <!-- jsonl 按钮 -->
     <button class="ph-btn jsonl-btn" title="jsonl">jsonl</button>
     <!-- history -->
@@ -58,15 +62,13 @@ function toggleSidebar() {
   gap: 8px;
   padding: 0 14px;
 }
-/* 折叠态：左侧留白让位 chrome（按钮起 x=100px，与 AppNavControls 浮层一致）*/
+/* 折叠态：左侧留白让位 chrome（pl-[88px]，chrome 在文档流内，面包屑被推到其右侧）*/
 .panel-header.collapsed {
   padding-left: 88px;
 }
 
-/* 折叠态 chrome 按钮组（样式同 AppNavControls 的 nav-btn）*/
+/* 折叠态 chrome 按钮组（样式同 AppNavControls 的 nav-btn）：文档流内，pl-[88px] 让位 */
 .collapsed-chrome {
-  position: absolute;
-  left: 100px;
   display: flex;
   gap: 2px;
 }
@@ -107,7 +109,7 @@ function toggleSidebar() {
 }
 .breadcrumb .dir { color: var(--neutral-fg); font-weight: 600; }
 .breadcrumb .sep { color: var(--neutral-faint); }
-.breadcrumb .branch { color: var(--accent); font-size: var(--text-xs); }
+.breadcrumb .branch { color: var(--neutral-mid); font-size: var(--text-xs); }
 
 .spacer { flex: 1; }
 
@@ -126,14 +128,20 @@ function toggleSidebar() {
   transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
 }
 .ph-btn svg { width: 16px; height: 16px; }
+
+/* drawer toggle：13px icon，active（drawer 展开）时 accent */
+.dd-toggle svg { width: 13px; height: 13px; }
+.dd-toggle.active { color: var(--accent); }
+.dd-toggle.active:hover { color: var(--accent); background: var(--accent-soft); }
 .ph-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 
-/* jsonl 按 spec 范式：height 20px / padding 0 4px / font-mono 11px / neutral-dim */
+/* jsonl：height 20px / padding 0 4px / font-mono 11px / neutral-dim */
 .jsonl-btn {
   width: auto;
   height: 20px;
   padding: 0 4px;
   font-weight: 500;
+  font-size: 11px;
   color: var(--neutral-dim);
 }
 

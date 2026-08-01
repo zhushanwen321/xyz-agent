@@ -105,13 +105,13 @@ const pinned = ref(true)
   overflow: hidden;
 }
 
-/* L1 icon tab 栏：bg 浮起（bg 同源层级感），去 border-b */
+/* L1 icon tab 栏：surface-2 浮起分层（去 border-b，§3.4）*/
 .sd-l1 {
   display: flex;
   align-items: center;
   gap: 2px;
   padding: 6px 8px;
-  background: var(--bg);
+  background: var(--surface-2);
   flex-shrink: 0;
 }
 

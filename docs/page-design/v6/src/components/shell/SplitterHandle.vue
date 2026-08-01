@@ -5,6 +5,8 @@
 <template>
   <div class="splitter-handle">
     <div class="splitter-line"></div>
+    <!-- 命中区：6px 宽 + 左右各 2px 内缩 = 10px（spec §6）-->
+    <div class="h-hit"></div>
   </div>
 </template>
 
@@ -14,7 +16,6 @@
   margin: 0 -3px;
   position: relative;
   flex-shrink: 0;
-  cursor: col-resize;
   z-index: 1;
 }
 .splitter-line {
@@ -26,6 +27,15 @@
   width: 1px;
   background: transparent;
   transition: background var(--duration) var(--ease);
+}
+/* 命中区 10px（h-hit 内缩 2px）*/
+.h-hit {
+  position: absolute;
+  left: -2px;
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  cursor: col-resize;
 }
 .splitter-handle:hover .splitter-line {
   background: var(--accent);
