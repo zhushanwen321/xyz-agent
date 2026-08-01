@@ -25,8 +25,8 @@ function onNewTask() {
     <Brand />
 
     <nav class="sidebar__nav">
-      <NavItem icon="plus" label="新建任务" kbd="⌘N" @click="onNewTask" />
-      <NavItem icon="search" label="搜索" kbd="⌘K" @click="openSearch" />
+      <NavItem icon="plus" label="新建任务" kbd="⌘N" variant="primary" @click="onNewTask" />
+      <NavItem icon="search" label="搜索" kbd="⌘K" variant="ghost" @click="openSearch" />
     </nav>
 
     <div class="sidebar__hr"></div>

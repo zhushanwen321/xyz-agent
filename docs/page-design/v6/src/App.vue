@@ -17,6 +17,36 @@ import {
   sidebarCollapsed,
 } from './composables/useStore'
 
+/** AskUserOverlay 多问题 demo（spec §3 多问题 tab 形态：2-3 题，含一道多选 + Other）*/
+const askUserDemoQuestions = [
+  {
+    id: 'commit-strategy',
+    title: '提交策略',
+    options: [
+      { value: 'commit-first', label: '先提交再继续', desc: '创建一个 WIP commit，完成后继续任务' },
+      { value: 'discard', label: '放弃改动', desc: 'git checkout . 丢弃所有未提交变更' },
+      { value: 'stash', label: '暂存到 stash', desc: '不可用：当前已有 stash 冲突', disabled: true },
+    ],
+  },
+  {
+    id: 'runtime',
+    title: '运行环境',
+    options: [
+      { value: 'local-node', label: '本地 Node', desc: '使用当前工作区 Node 22', multiple: true },
+      { value: 'docker', label: 'Docker 容器', desc: '在隔离容器中运行', multiple: true },
+      { value: 'other', label: '其他环境…', desc: '自定义运行环境', multiple: true, isOther: true },
+    ],
+  },
+  {
+    id: 'notify',
+    title: '通知',
+    options: [
+      { value: 'notify-yes', label: '完成后通知', desc: '任务完成时发送通知' },
+      { value: 'notify-no', label: '不通知', desc: '静默完成任务' },
+    ],
+  },
+]
+
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') handleEscape()
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -40,7 +70,13 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
     <SettingsOverlay v-if="settingsOpen" />
     <!-- §4.6 AskUserOverlay · companion 场景（composer 上方 companion-band），demo 全局浮起 -->
     <div v-if="askUserOpen" class="au-band">
-      <AskUserOverlay @confirm="closeAskUser" @cancel="closeAskUser" />
+      <AskUserOverlay
+        :questions="askUserDemoQuestions"
+        context=""
+        confirm-text="提交"
+        @confirm="closeAskUser"
+        @cancel="closeAskUser"
+      />
     </div>
     <!-- §4.6 ConfirmDialog · 确认场景 -->
     <ConfirmDialog

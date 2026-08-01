@@ -23,10 +23,8 @@ function toggleSidebar() {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
       </button>
     </div>
-    <!-- status icon（success check 绿色对勾）-->
-    <svg class="status-ico" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="12" cy="12" r="9"/><polyline points="9 12 11 14 15 9"/>
-    </svg>
+    <!-- status icon（v6 §4.1 灰阶化：window 方块形态，neutral-ico，去绿色对勾）-->
+    <svg class="status-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0H5a2 2 0 0 1-2-2v-4m6 6h10a2 2 0 0 0 2-2v-4"/></svg>
     <!-- breadcrumb -->
     <div class="breadcrumb">
       <span class="dir">feat-optimize-ui</span>
@@ -93,9 +91,9 @@ function toggleSidebar() {
 }
 
 .status-ico {
-  width: 13px;
-  height: 13px;
-  color: var(--success);
+  width: 14px;
+  height: 14px;
+  color: var(--neutral-ico);
   flex-shrink: 0;
 }
 

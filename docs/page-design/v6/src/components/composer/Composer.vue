@@ -38,17 +38,43 @@ const inputRef = ref<HTMLDivElement | null>(null)
 function onInput(e: Event) {
   draft.value = (e.target as HTMLElement).innerText
 }
-function onSend(e: Event) {
-  // B5 守卫：draft 空且无 stagedAction（+Q）时静默返回，不消费状态
-  if (!draft.value && !stagedAction.value) return
-  // demo：无实际发送。stagedAction 消费：+Q 变体随发送生效（composer 直接 enter = 无内容变体）
-  clearStagedAction()
+function clearDraft() {
   draft.value = ''
-  // contenteditable 不受 v-model 控制，需手动清 DOM
-  const el = (e.target as HTMLElement).closest('.comp-input') as HTMLElement | null
-    ?? inputRef.value
-  if (el) el.textContent = ''
+  if (inputRef.value) inputRef.value.textContent = ''
 }
+function onSend(e: Event) {
+  // M2：IME 组合中不拦截（spec §9H），拼音候选上屏回车不得误触发发送
+  if ((e as KeyboardEvent).isComposing) return
+  // B5 守卫：draft 空且无 stagedAction（+Q）时静默返回，不消费状态
+  // §9C fork 禁空发（allowsEmptySend=false）；handoff 允许空发
+  const st = stagedAction.value
+  if (!draft.value && !st) return
+  if (st?.type === 'fork' && !draft.value) return
+  // demo：无实际发送。stagedAction 消费：+Q 变体随发送生效
+  clearStagedAction()
+  clearDraft()
+}
+/** §9C 退出路径②：Esc 清输入 + 退出 staging（staging 活跃时） */
+function onEsc() {
+  if (!stagedAction.value) return
+  clearStagedAction()
+  clearDraft()
+}
+/** §9C 发送位 canSend：staging 活跃时 fork 须有内容 / handoff 允许空发 */
+const canSend = computed(() => draft.value.length > 0 || stagedAction.value?.type === 'handoff')
+/** §9C 发送位 title 三态：普通 / fork / handoff / disabled */
+const sendTitle = computed(() => {
+  if (!canSend.value) return '输入内容后发送'
+  if (stagedAction.value?.type === 'fork') return 'fork 并发送 · ⏎'
+  if (stagedAction.value?.type === 'handoff') return '交接并发送 · ⏎'
+  return '发送 · ⏎'
+})
+/** §9C placeholder 三态：普通 / fork / handoff（data-placeholder 动态绑定） */
+const placeholder = computed(() => {
+  if (stagedAction.value?.type === 'fork') return '想从这条回复 fork 提问什么？（⏎ fork 并发送，Esc 退出）'
+  if (stagedAction.value?.type === 'handoff') return '输入内容将作为新 session 的首条消息…（⏎ 交接，Esc 退出）'
+  return '描述任务…（⏎ 发送 / ⇧⏎ 换行）'
+})
 
 /** fork/handoff 点击后聚焦输入框（staging chip 同时显在输入框上方） */
 watch(stagedAction, (v) => {
@@ -61,7 +87,7 @@ watch(stagedAction, (v) => {
 
 <template>
   <div class="comp-wrap">
-    <div class="comp-box" :class="{ focused, 'has-input': draft.length > 0 }">
+    <div class="comp-box" :class="{ focused, 'has-input': draft.length > 0, staging: !!stagedAction }">
       <!-- ① QueueBubble 内嵌顶部 -->
       <QueueBubble v-if="showQueue" />
 
@@ -69,7 +95,7 @@ watch(stagedAction, (v) => {
       <div v-if="stagedAction" class="stage-chip">
         <svg v-if="stagedAction.type === 'fork'" class="stage-chip-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></svg>
         <svg v-else class="stage-chip-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 12h2a2 2 0 1 0 0-4h-3c-.6 0-1.1.2-1.4.6L3 14"/><path d="m7 18 1.6-1.4c.3-.4.8-.6 1.4-.6h4c1.1 0 2.1-.4 2.8-1.2l4.6-4.4a2 2 0 0 0-2.75-2.91l-4.2 3.9"/><path d="m2 13 6 6"/></svg>
-        <span class="stage-chip-text">{{ stagedAction.type === 'fork' ? 'fork 此会话（+Q）· 输入问题后回车' : 'handoff 此会话（+Q）· 输入问题后回车' }}</span>
+        <span class="stage-chip-text">{{ stagedAction.type === 'fork' ? '将发到新分支 · 与主线隔离' : '交接到新 session · 当前输入将发送到新会话' }}</span>
         <button class="stage-chip-x" title="取消" @click="clearStagedAction()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
         </button>
@@ -80,9 +106,10 @@ watch(stagedAction, (v) => {
         ref="inputRef"
         class="comp-input"
         contenteditable="true"
-        data-placeholder="描述任务…（⏎ 发送 / ⇧⏎ 换行）"
+        :data-placeholder="placeholder"
         @input="onInput"
         @keydown.enter.exact.prevent="onSend"
+        @keydown.esc="onEsc"
         @focus="focused = true"
         @blur="focused = false"
       ></div>
@@ -117,7 +144,7 @@ watch(stagedAction, (v) => {
         </button>
 
         <!-- 发送位（30×30 accent 圆 · 倾斜 send 箭头） -->
-        <button class="send-slot" :class="{ disabled: !draft.length }" :title="draft.length ? '发送 · ⏎' : '输入内容后发送'" @click="onSend">
+        <button class="send-slot" :class="{ disabled: !canSend }" :title="sendTitle" @click="onSend">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         </button>
       </div>
@@ -143,6 +170,12 @@ watch(stagedAction, (v) => {
 .comp-box.focused {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-ring);
+}
+/* §9C/§9A② staging 持久态：accent border + 3px ring + accent-soft 底，独立于输入焦点 */
+.comp-box.staging {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+  background: var(--accent-soft);
 }
 
 /* staging chip：fork/handoff +Q 变体（spec §12.6 · accent 标签，base.css .comp-chip：accent-soft 底 + accent 字 11px 500 + icon 12px + × 14px hover 反色） */
@@ -180,7 +213,7 @@ watch(stagedAction, (v) => {
   color: var(--accent);
   transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
 }
-.stage-chip-x svg { width: 10px; height: 10px; }
+.stage-chip-x svg { width: 12px; height: 12px; }
 .stage-chip-x:hover { background: var(--accent); color: #fff; }
 
 /* contenteditable input */

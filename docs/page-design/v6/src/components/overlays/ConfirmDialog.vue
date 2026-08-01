@@ -16,11 +16,14 @@ const props = withDefaults(defineProps<{
   desc?: string
   confirmText?: string
   cancelText?: string
+  /** 提交中（spec §4）：confirm 按钮禁用 + spinner 14px，防重复提交 */
+  loading?: boolean
 }>(), {
   variant: 'default',
   desc: '',
   confirmText: '确认',
   cancelText: '取消',
+  loading: false,
 })
 
 const emit = defineEmits<{
@@ -80,8 +83,12 @@ function onBackdropClick() {
       </div>
 
       <div class="cd-actions">
-        <button class="btn btn-ghost btn-sm" @click="emit('cancel')">{{ cancelText }}</button>
-        <button :class="confirmBtnClass" @click="emit('confirm')">{{ confirmText }}</button>
+        <button class="btn btn-ghost btn-sm" :disabled="loading" @click="emit('cancel')">{{ cancelText }}</button>
+        <button :class="confirmBtnClass" :disabled="loading" @click="emit('confirm')">
+          <!-- loading：spinner 14px 替代常态内容（防重复提交）-->
+          <svg v-if="loading" class="cd-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg>
+          <template v-else>{{ confirmText }}</template>
+        </button>
       </div>
     </div>
   </div>
@@ -152,5 +159,15 @@ function onBackdropClick() {
   justify-content: flex-end;
   gap: 8px;
   padding-top: 16px;
+}
+/* loading 态：按钮禁用 + spinner 14px（spec §4 防重复提交）*/
+.cd-actions .btn:disabled {
+  pointer-events: none;
+  opacity: 0.5;
+}
+.cd-spin {
+  width: 14px;
+  height: 14px;
+  animation: spin 1s linear infinite;
 }
 </style>

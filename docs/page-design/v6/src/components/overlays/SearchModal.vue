@@ -14,24 +14,32 @@ const query = ref('')
 const selIdx = ref(0)
 const inputRef = ref<HTMLInputElement | null>(null)
 
-/** query 非空时的 loading 态（200ms 防闪烁）*/
+/** query 非空时的 loading 态（spec §2 LOADING_DELAY_MS=200：开扫 200ms 后才显，防连续输入闪 spinner）*/
 const loading = ref(false)
 let loadingTimer: ReturnType<typeof setTimeout> | null = null
+/** mock 搜索时长：加载态可见一段后自动完成（真实实现由搜索 RPC resolve 时清除）*/
+const SEARCH_DURATION_MS = 500
+let doneTimer: ReturnType<typeof setTimeout> | null = null
 watch(query, (q) => {
+  if (loadingTimer) { clearTimeout(loadingTimer); loadingTimer = null }
+  if (doneTimer) { clearTimeout(doneTimer); doneTimer = null }
   if (!q.trim()) {
-    if (loadingTimer) { clearTimeout(loadingTimer); loadingTimer = null }
     loading.value = false
     return
   }
-  loading.value = true
-  if (loadingTimer) clearTimeout(loadingTimer)
+  // 200ms 后才显 loading（快速连续输入不闪 spinner）；随后 mock 搜索完成 → 隐藏
   loadingTimer = setTimeout(() => {
-    loading.value = false
+    loading.value = true
     loadingTimer = null
   }, 200)
+  doneTimer = setTimeout(() => {
+    loading.value = false
+    doneTimer = null
+  }, 200 + SEARCH_DURATION_MS)
 })
 onUnmounted(() => {
   if (loadingTimer) clearTimeout(loadingTimer)
+  if (doneTimer) clearTimeout(doneTimer)
 })
 
 /** 按 query 过滤命令（匹配 name / desc）*/
@@ -150,11 +158,7 @@ function iconKind(cmd: SearchCommand): IconKind {
     <div class="sm-dialog" role="dialog" aria-modal="true" aria-label="搜索命令、文件、符号、会话" tabindex="-1">
       <!-- 输入区：去 border-b 靠 padding 分层 -->
       <div class="sm-input">
-        <!-- loading 时显 spinner 替代搜索 icon -->
-        <svg v-if="loading" class="sm-ico sm-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 12a9 9 0 1 1-6.22-8.56" />
-        </svg>
-        <svg v-else class="sm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg class="sm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="11" cy="11" r="8" />
           <line x1="21" y1="21" x2="16.65" y2="16.65" />
         </svg>
@@ -169,8 +173,14 @@ function iconKind(cmd: SearchCommand): IconKind {
         <kbd class="sm-kbd">esc</kbd>
       </div>
 
-      <!-- 结果区（分组渲染）-->
-      <div v-if="total > 0" class="sm-results">
+      <!-- 结果区：loading（200ms 后显，居中 spinner 14px accent + 正在搜索…）/ 分组 / 空态 -->
+      <div v-if="loading" class="sm-loading">
+        <svg class="sm-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M21 12a9 9 0 1 1-6.2-8.5" />
+        </svg>
+        <span>正在搜索…</span>
+      </div>
+      <div v-else-if="total > 0" class="sm-results">
         <div v-for="g in groups" :key="g.name" class="sm-group">
           <div class="sm-group-hd">
             <span>{{ g.name }}</span>
@@ -228,7 +238,7 @@ function iconKind(cmd: SearchCommand): IconKind {
       </div>
 
       <!-- 空结果（loading 时不显空态）-->
-      <div v-else-if="!loading" class="sm-empty">
+      <div v-else class="sm-empty">
         <svg class="sm-e-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="11" cy="11" r="8" />
           <line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -308,14 +318,14 @@ function iconKind(cmd: SearchCommand): IconKind {
 .sm-group {
   padding: 2px 0;
 }
-/* v6 分组 header：去 uppercase / tracking，普通大小写 */
+/* v6 分组 header：去 uppercase / tracking，普通大小写 11px */
 .sm-group-hd {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 6px 16px 2px;
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   color: var(--neutral-mid);
 }
 .sm-gcount {
@@ -351,13 +361,12 @@ function iconKind(cmd: SearchCommand): IconKind {
 .sm-item.sel .sm-i-ico {
   color: var(--accent);
 }
-/* default 态尾部 clock（12px，最近/历史项标记）*/
+/* default 态尾部 clock（13px，最近/历史项标记）*/
 .sm-i-clock {
-  width: 12px;
-  height: 12px;
+  width: 13px;
+  height: 13px;
   flex-shrink: 0;
   color: var(--neutral-dim);
-  opacity: 0.7;
 }
 .sm-i-body {
   flex: 1;
@@ -375,17 +384,30 @@ function iconKind(cmd: SearchCommand): IconKind {
 }
 .sm-i-sub {
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   color: var(--neutral-dim);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* loading 态（spec §2：结果区居中，spinner 14px accent + 文案）*/
+.sm-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px;
+  font-size: var(--text-sm);
+  color: var(--neutral-dim);
+}
+
 /* loading spinner */
 .sm-spinner {
+  width: 14px;
+  height: 14px;
   color: var(--accent);
-  animation: sm-spin 1.4s linear infinite;
+  animation: sm-spin 1s linear infinite;
 }
 @keyframes sm-spin {
   to { transform: rotate(360deg); }
