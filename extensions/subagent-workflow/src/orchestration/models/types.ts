@@ -135,6 +135,10 @@ export interface AgentCallOpts {
  * undefined 时 spawn 继承 workflow 进程的 cwd（向后兼容）。
  */
   cwd?: string;
+  /** Inherit parent session context (fork mode). Required when worktree isolation is enabled. */
+  fork?: boolean;
+  /** Filesystem isolation: when true, creates a new git worktree for the agent (requires fork: true). */
+  worktree?: boolean;
 }
 
 /**
