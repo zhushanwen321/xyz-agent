@@ -195,8 +195,10 @@ const guideDismissed = ref(false)
   min-height: 34px;
   flex-wrap: nowrap;
   overflow-x: auto;
+  scrollbar-width: none; /* 隐藏滚动条（Firefox）*/
   flex-shrink: 0;
 }
+.b-l2::-webkit-scrollbar { display: none; } /* 隐藏滚动条（Chrome/Safari）*/
 .b-l2-tab {
   display: flex;
   align-items: center;
