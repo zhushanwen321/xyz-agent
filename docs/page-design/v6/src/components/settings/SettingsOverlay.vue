@@ -7,6 +7,12 @@ import ProviderPage from './ProviderPage.vue'
 import ExtensionPage from './ExtensionPage.vue'
 import ResourcesPage from './ResourcesPage.vue'
 import SystemPromptPage from './SystemPromptPage.vue'
+import AgentPage from './AgentPage.vue'
+import TerminalPage from './TerminalPage.vue'
+import PresetPage from './PresetPage.vue'
+import WorktreePage from './WorktreePage.vue'
+import UpdatePage from './UpdatePage.vue'
+import SystemPage from './SystemPage.vue'
 import PlaceholderPage from './PlaceholderPage.vue'
 
 /** SettingsOverlay：fixed inset-0 z-modal bg-bg 全屏覆盖。
@@ -139,9 +145,15 @@ onUnmounted(() => {
       </div>
       <div class="content-col-inner">
         <ProviderPage v-if="settingsPage === 'provider'" />
+        <AgentPage v-else-if="settingsPage === 'agent'" />
         <ExtensionPage v-else-if="settingsPage === 'extension'" />
         <ResourcesPage v-else-if="settingsPage === 'skill'" />
         <SystemPromptPage v-else-if="settingsPage === 'system-prompt'" />
+        <TerminalPage v-else-if="settingsPage === 'terminal'" />
+        <PresetPage v-else-if="settingsPage === 'preset'" />
+        <WorktreePage v-else-if="settingsPage === 'worktree'" />
+        <UpdatePage v-else-if="settingsPage === 'update'" />
+        <SystemPage v-else-if="settingsPage === 'system'" />
         <PlaceholderPage v-else :page="settingsPage" />
       </div>
     </div>
