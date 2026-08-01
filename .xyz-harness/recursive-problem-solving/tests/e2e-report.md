@@ -96,4 +96,28 @@ src/__tests__/renderer.test.ts  # 6 tests pass
 
 **recursive-split workflow 的核心架构验证通过**：BFS 调度 + frontier 驱动 + C1/C2 协议 + 聚合回扫 + wave 8-action 链路 全部端到端跑通。代码产出质量合格（6 测试全绿）。
 
-**阻塞项**：cw 的 TDZ bug 需修复后才能完成 L3 增量场景测试（M2 并发 / M4 失败传播 / M5 replan）。但 L2 已充分证明 recursive-split.js 的编排逻辑正确——失败可归因到 cw 稳定性，不是 BFS 脚本的问题。
+**阻塞项**：cw 的 TDZ bug 需修复后才能完成 L3 增量场景测试（M2 并发 / M5 replan）。但 L2 已充分证明 recursive-split.js 的编排逻辑正确——失败可归因到 cw 稳定性，不是 BFS 脚本的问题。
+
+---
+
+## L3 增量场景评估
+
+### M4 失败传播 — 部分验证（通过自然失败）
+
+wave 3 因 cw TDZ bug 崩溃构成了一次天然的失败传播测试：
+- cw 进程 crash → subagent `agent()` 调用失败
+- workflow worker **没有死循环**（BFS 没卡住无限重试 wave 3）
+- 但 workflow worker **也没有正确发 notifyDone**（runtime 日志无 workflow done/error 记录，前端无完成通知）
+- root unit 仍停留在 `executing`，wave 3 停在 `design-reviewed`
+
+结论：recursive-split.js 的 retryCount 熔断 + failedReason 归约逻辑在单测层（L1）已验证正确。但 **workflow worker 级别的 crash 恢复机制未完全生效**——可能 TDZ 导致的不是普通 `agent()` reject（returnMeta 的 error 路径），而是 worker 线程级异常。需 cw 修复后重跑确认。
+
+### M2/M3/M5 — 未验证
+
+- M2（并发 wave）：当前 workflow 的 3 个 wave 无 dependsOn 关系，topoSort 应分到 concurrent 组。但实际执行顺序是串行的（wave 1→2→3 依次 closed）——可能因为 BFS 每轮只处理 frontier 返回的节点，而 cw 一次只让一个 wave actionable。需 cw 修复后用 `startLayer:slice` + 显式 2 个无依赖 wave 重跑确认
+- M3（依赖串行）：当前 3 个 wave 无 dependsOn，未触发 topoSort 的 sequential 路径。L1 单测已覆盖 Kahn 排序 + 环检测
+- M5（replan）：未触发。L1 单测已覆盖 handleReplan + replanOverride 逻辑
+
+### L3 阻塞项
+
+cw TDZ bug（`feature-internal.js:36` 的 `PLANNING_STATUS_DISPLAY` before initialization）修复后，可重跑完整 L3 场景。
