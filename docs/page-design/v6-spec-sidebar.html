@@ -441,12 +441,15 @@ body {
    ── sidebar 内按钮遵循：variant=default/secondary/ghost/danger · size=default/dense/sm/icon/icon-sm
    ================================================================ */
 .btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  display: inline-flex; align-items: center; justify-content: flex-start; gap: 8px;
   white-space: nowrap; border-radius: var(--radius); font-size: 13px; font-weight: 500;
   font-family: inherit; cursor: pointer; border: none;
   height: 36px; padding: 0 16px;
   transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease);
 }
+.btn svg { display: block; width: 14px; height: 14px; flex-shrink: 0; }
+.btn .lbl { flex: 1; }
+.btn kbd { font-family: var(--font-mono); font-size: 10px; opacity: .7; }
 .btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
 .btn:disabled { pointer-events: none; opacity: 0.5; }
 .btn.btn-default { background: var(--accent); color: #fff; }

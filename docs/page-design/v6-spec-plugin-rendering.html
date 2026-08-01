@@ -195,7 +195,7 @@ body {
 .cell-partial { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: var(--warn-soft); color: var(--warn); font-size: 11px; }
 .cell-l { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 600; padding: 2px 7px; border-radius: 999px; }
 .cell-l.l1 { background: var(--accent-soft); color: var(--accent); }
-.cell-l.l2 { background: var(--accent); color: #fff; }
+.cell-l.l2 { background: var(--info-soft); color: var(--info); }
 .cell-l.l3 { background: var(--warn-soft); color: var(--warn); }
 .ext-yes { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--success); }
 .ext-no { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); }
@@ -411,7 +411,7 @@ body {
 .cmd-pop .cp-row .cp-desc { margin-left: auto; font-size: var(--text-xs); color: var(--neutral-dim); }
 
 /* settings schema 区段（§5 D2，复用 settings 控件）*/
-.settings-section { background: var(--bg-card); border-radius: var(--radius); padding: 18px; }
+.settings-section { background: var(--bg-card); border-radius: var(--radius-card); padding: 18px; }
 .settings-section .ss-title { font-size: var(--text-sm); font-weight: 600; color: var(--neutral-fg); margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
 .settings-section .ss-plugin { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); margin-bottom: 14px; }
 .ss-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border); }
@@ -1597,7 +1597,7 @@ body {
     <div class="anno-grid">
       <div class="anno"><b>复用决策:</b> <span class="v6">复用 settings page 控件（Input/Switch/Select），不独立实现</span></div>
       <div class="anno"><b>schema→控件:</b> <span>string→Input / boolean→Switch / enum→Select / number→Input</span></div>
-      <div class="anno"><b>容器:</b> <span>bg-card + 8px 圆角 [var(--radius)]（对齐 §4.5 设置分组卡片）</span></div>
+      <div class="anno"><b>容器:</b> <span>bg-card + 10px 圆角 [var(--radius-card)]（对齐 §4.5 设置分组卡片）</span></div>
       <div class="anno"><b>行分隔:</b> <span>hairline border-top rgba(255,255,255,.04)（首行无）</span></div>
       <div class="anno"><b>label:</b> <span>neutral-fg + schema tag（中性色 surface-2 + neutral-dim，mono）+ 12px neutral-dim desc</span></div>
       <div class="anno"><b>位置:</b> <span>M16 SettingsModal 内 plugin 区段（按 plugin 分组）</span></div>
