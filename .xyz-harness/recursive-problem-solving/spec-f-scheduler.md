@@ -77,6 +77,7 @@ const worktreeRegistry = {};  // unitId → worktreePath（串行 wave 复用）
 const sessionFiles = {};       // unitId → sessionFile（retrospect 用）
 const retryCount = {};         // `${unitId}:${nextAction}` → 连续未推进次数（熔断用）
 const prevNextAction = {};     // unitId → 上一轮的 nextAction（跨轮对比 status 是否推进）
+const replanOverride = {};     // unitId → "plan"（replan 后覆盖 frontier 的 nextAction）
 const MAX_ACTION_RETRY = 3;    // 同一 (unitId, nextAction) 连续 3 次未推进 → abort
 
 // 不变式：visited 集合已删除。frontier 本身只返回非终态节点，天然保证幂等。
@@ -133,18 +134,33 @@ while (true) {
   // 拓扑排序（F3）
   const { concurrent, sequential } = topoSort(dispatchable);
 
+  // replanOverride 决定实际 nextAction（覆盖 frontier 映射）
+  for (const node of [...concurrent, ...sequential]) {
+    if (replanOverride[node.unitId]) {
+      node.nextAction = replanOverride[node.unitId];  // 强制 "plan"，不信 frontier
+    }
+    // 后备检测：frontier 的 lastStatusHistoryAction === "replan" 且 agent 没声明
+    if (node.lastStatusHistoryAction === "replan" && !replanOverride[node.unitId]) {
+      replanOverride[node.unitId] = "plan";
+      node.nextAction = "plan";
+    }
+  }
+
   // 并发执行无依赖组
   if (concurrent.length > 0) {
-    const results = await parallel(concurrent.map(node => executeNodeNextAction(node, worktreeRegistry, sessionFiles)));
+    const results = await parallel(concurrent.map(node => executeNodeNextAction(node, worktreeRegistry, sessionFiles, replanOverride)));
     for (const r of results) {
       if (r.sessionFile) sessionFiles[r.unitId] = r.sessionFile;
+      // replan 检测
+      if (r.replanTriggered) handleReplan(r, replanOverride, worktreeRegistry, sessionFiles, retryCount, prevNextAction);
     }
   }
 
   // 串行执行有依赖组
   for (const node of sequential) {
-    const r = await executeNodeNextAction(node, worktreeRegistry, sessionFiles);
+    const r = await executeNodeNextAction(node, worktreeRegistry, sessionFiles, replanOverride);
     if (r.sessionFile) sessionFiles[r.unitId] = r.sessionFile;
+    if (r.replanTriggered) handleReplan(r, replanOverride, worktreeRegistry, sessionFiles, retryCount, prevNextAction);
   }
 }
 
@@ -152,10 +168,30 @@ phase("done");
 return { status: "done", rootUnitId };
 ```
 
+### handleReplan（replan 后清理 + 覆盖设置）
+
+```javascript
+function handleReplan(r, replanOverride, worktreeRegistry, sessionFiles, retryCount, prevNextAction) {
+  log(`Node ${r.unitId} triggered replan, aborted children: ${(r.abortedChildren ?? []).join(", ")}`);
+  // 1. 覆盖该节点下一步为 plan（回 planning 重走 design-review）
+  replanOverride[r.unitId] = "plan";
+  // 2. 清理被级联 abort 子节点的内存状态（它们已终态，不再参与 BFS）
+  for (const childId of r.abortedChildren ?? []) {
+    delete worktreeRegistry[childId];
+    delete sessionFiles[childId];
+    delete prevNextAction[childId];
+    // 清理该子节点所有 action 的 retryCount
+    for (const key of Object.keys(retryCount)) {
+      if (key.startsWith(childId + ":")) delete retryCount[key];
+    }
+  }
+}
+```
+
 ### executeNodeNextAction（按 frontier 的 nextAction 执行单个 action）
 
 ```javascript
-async function executeNodeNextAction(node, worktreeRegistry, sessionFiles) {
+async function executeNodeNextAction(node, worktreeRegistry, sessionFiles, replanOverride) {
   const isWave = node.scope === "wave";
   const action = node.nextAction;
 
@@ -209,10 +245,17 @@ async function executeNodeNextAction(node, worktreeRegistry, sessionFiles) {
     value: r.value,
     sessionFile: r.sessionFile,
     error: r.error,
+    replanTriggered: r.value?.replanTriggered === true,
+    abortedChildren: r.value?.abortedChildren,
   };
 
   if (isWave && r.worktreePath && !worktreeRegistry[node.unitId]) {
     worktreeRegistry[node.unitId] = r.worktreePath;
+  }
+
+  // execute 成功后清除 replanOverride（replan 周期结束，恢复信 frontier）
+  if (action === "execute" && !r.error && !result.replanTriggered) {
+    delete replanOverride[node.unitId];  // replanOverride 需作为参数传入
   }
 
   // 失败处理
@@ -286,11 +329,22 @@ function buildActionPrompt(node, action) {
 
 ```javascript
 function buildActionSchema(node, action, isWave) {
+  const base = {
+    type: "object",
+    properties: {
+      done: { type: "boolean" },
+      // replan 信号（所有 action 都可触发）
+      replanTriggered: { type: "boolean", description: "如果调了 cw replan 设为 true" },
+      abortedChildren: { type: "array", items: { type: "string" }, description: "被级联 abort 的子 unitId 列表" },
+    },
+  };
+
   // planning execute：返回 children（从 cw 返回值抄）
   if (!isWave && action === "execute") {
     return {
       type: "object",
       properties: {
+        ...base.properties,
         children: {
           type: "array",
           description: "从 cw execute stdout JSON 的 children 字段原样抄录",
@@ -310,13 +364,13 @@ function buildActionSchema(node, action, isWave) {
     return {
       type: "object",
       properties: {
+        ...base.properties,
         commitHash: { type: "string" },
         summary: { type: "string" },
       },
     };
   }
-  // 其他：简单 done
-  return { type: "object", properties: { done: { type: "boolean" } } };
+  return base;
 }
 ```
 
@@ -457,17 +511,48 @@ worker 崩溃后：
 - **接受**：崩溃发生在 execute 之后、closeout 之前时，commit 丢失。恢复时该 wave 从 nextAction 重新执行——需重跑 execute 写代码。
 - **缓解**（未来改造）：wave execute 的 commit 如果 merge 回主分支临时分支（如 `cw/wave-<id>`），新 worktree 能看到。需 worktree-manager 改造，MVP 不做。
 
-### replan 场景（U-1，MVP 禁用）
+### replan 场景（方向 3：workflow 感知 replan）
 
-**MVP 决策**：禁用 replan。agent prompt 约束「不准调 cw replan，遇到问题 abort 自己」。
+**决策**：支持 replan（不做 MVP 禁用）。replan 是真实开发的常见场景（"做着做着发现方案要改"），禁用它等于遇到方案错误时只能放弃整个节点。
 
-理由：replan 的级联 abort + worktree 回滚 + BFS 同步复杂度过高（逻辑审查 U-1）。MVP 先验证递归拆分本身有价值，再考虑 replan 支持。
+**replan 对 frontier 驱动模型的冲击**：
+- cw 的 replan 是旁路 action——status 不变（`to=undefined`），但 plan 变了（废弃 split 条目 + 级联 abort 受影响子节点）
+- cw replan handler 返回 `nextAction.action='plan'`（回 planning 重走 design-review，`epic/replan.ts:16`）
+- 但 frontier 的 status→action 映射不知道"需要回 plan"——它看到 status=executing 仍映射到 retrospect
+- 被级联 abort 的子节点从 frontier 消失（终态），workflow 不知道它们是被 replan 杀的还是正常完成的
 
-agent prompt 加约束：
+**解法：replanOverride 机制**
+
+workflow 维护 `replanOverride: Map<unitId, "plan">`。检测 replan 发生后，覆盖 frontier 的 nextAction 映射。
+
+replan 的检测信号（双重）：
+1. **主信号**：agent schema 返回 `replanTriggered: true`（agent 主动声明）
+2. **后备信号**：frontier 输出的 `lastStatusHistoryAction === "replan"`（cw replan handler 会 append statusHistory `action='replan'`，spec-c C2 补此字段）
+
+检测到 replan 后：
+1. 清理被 abort 子节点的内存状态（worktreeRegistry / sessionFiles / retryCount / prevNextAction）
+2. 设 `replanOverride.set(node.unitId, "plan")`——该节点下一步强制走 plan
+3. 下一轮 BFS：node 的 nextAction 取 replanOverride 的值（"plan"），不取 frontier 的（"retrospect"）
+4. agent 重走 plan → design-review → execute（cw 建新子节点替代被 abort 的）
+5. execute 成功后 `replanOverride.delete(node.unitId)`——replan 周期结束，恢复信 frontier
+
+**wave 层 replan**（无需 replanOverride）：
+- wave 的 replan 改自己的 plan 条目（testCases/tasks/files/contracts），**无级联 abort**（wave 是叶子，computeImpactCascade 恒空）
+- replan 后 wave status 不变，cw 要求回 planning 重走 design-review
+- 但 wave 的 status→action 映射同样不反映"需回 plan"——同样需要 replanOverride
+- **统一处理**：wave 和 planning 层的 replan 都走 replanOverride 机制
+
+**abort 竞态**：
+- replan 级联 abort 子节点时，那些子节点的 agent 可能还在跑（pi 子进程没被 kill）
+- workflow 清理它们的 worktreeRegistry 条目，agent 进程靠 timeout 兜底（超时后返回 error，但该节点已 abort → frontier 不返回 → 无害）
+- 未来改进：abort 后主动 kill agent 进程（returnMeta 加 pid）
+
+**prompt 指示**（配合 replanTriggered schema 字段）：
 ```
-禁止调用 cw replan。如果你发现问题需要重新规划：
-1. 如果是当前 wave 的问题，调 cw abort 中止自己
-2. 如果是上层 slice/feature 的方案问题，在 schema 返回值里说明问题，让主 agent 决策
+如果你在执行 action 时发现 plan 需要调整（技术方案有误、子任务要增减）：
+1. 调 cw replan --unitId <你的unitId> --input '{"abandonedIds":[...], ...}'
+2. 在 schema 返回值里设 replanTriggered: true，并在 abortedChildren 里列出被级联 abort 的子 unitId
+3. 不要继续执行当前 action——replan 后 cw 要求回 plan 重走
 ```
 
 ---

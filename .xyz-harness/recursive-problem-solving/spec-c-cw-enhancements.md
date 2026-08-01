@@ -127,6 +127,8 @@ cw frontier --root <unitId> [--format json]
 
 **`dependsOn` 字段**（一致性审查 3.5）：从 cw 的 `plan.split.dependsOn`（slug 列表）映射到 childUnitId 列表。崩溃恢复时 workflow BFS 的 topoSort 依赖此字段做拓扑排序——否则重建的 queue 全是无依赖节点，有依赖的 wave 并发执行导致产出冲突。映射逻辑与 C1 改动 2 相同（slug → childUnitId）。
 
+**`lastStatusHistoryAction` 字段**（replan 后备检测，轮次 19 新增）：从 cw 的 `unit.statusHistory` 最后一条记录的 `action` 字段读取。replan handler 会 append 一条 `statusHistory`（`from=to=current, action='replan'`）。workflow BFS 检测 `lastStatusHistoryAction === "replan"` 作为后备信号——如果 agent 没在 schema 里声明 `replanTriggered` 但 cw 记录了 replan，workflow 仍能感知并设 replanOverride。输出格式每个 node 加：`"lastStatusHistoryAction": "replan" | "clarify" | "plan" | ...`。
+
 #### 两遍扫描算法
 
 ```

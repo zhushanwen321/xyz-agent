@@ -22,6 +22,7 @@
 - [12. 决策与实现路径（轮次 11）](#12-决策与实现路径轮次-11)
 - [13. 第二轮可行性审查发现（轮次 12）](#13-第二轮可行性审查发现轮次-12)
 - [14. 子 spec 审查修复记录（轮次 14-15）](#14-子-spec-审查修复记录轮次-14-15)
+- [15. LLM 行为可控性分析与 replan 策略](#15-llm-行为可控性分析与-replan-策略)
 - [附录 A. 关键代码证据索引](#附录-a-关键代码证据索引)
 
 > **子 spec**（详细实现方案）：
@@ -813,6 +814,8 @@ CMU 实证：静态单层规划 > 动态多层规划。当前架构是"BFS 逐�
 14. **轮次 16（第三轮审查 + 修复）**：3 个 subagent 审查 v2，发现 v2 frontier 驱动重写引入 2 个致命缺陷：(1) visited 集合阻断所有多-action 节点推进（节点走完第 1 个 action 后被永久 visited，第 2-8 个 action 永不执行）；(2) frontier 的 blocked 只标 planning 层，wave 间 dependsOn 无法表达（wave B 在 A 未完成时被提前派发）。另发现 allWavesClosed gate 实测本就接受 aborted（C-supplement 是空操作）。修复：spec-f 删 visited 改 retryCount 熔断 + queryFrontier 封装（execSync timeout + 轮次边界不变式）+ split-空检测；spec-c C2 Pass 2 扩展类型 B（wave dependsOn blocked）；主 spec 决策 C 加勘误、"9 步"统一为"8 步"。详见 §14.3。
 15. **轮次 17（第四轮审查 + 修复）**：1 个 subagent 深度验证 v3。发现 retryCount 熔断是空操作（只有 `=0` 重置没有 `++` 累加，熔断永不触发），以及 wave dependsOn 反向查找描述不全。修复：retryCount 累加移到 BFS 主循环（跨轮对比 prevNextAction，nextAction 不变才累加）；spec-c C2 类型 B 补 5 步反向查找显式描述。
 16. **轮次 18（第五轮审查 — 收敛）**：1 个 subagent 对照 cw dist 源码 + pi 源码逐项验证 v4。retryCount 跨轮熔断通过、类型 B 反向查找通过、整体收敛性通过（3 层树逐步推演收敛到 allTerminal）、无 v4 新致命问题。**迭代收敛，方案可跑通。** 4 个非致命改进建议记录为实现注意事项：progressive action 熔断豁免、类型 B 改用 childDelivery、allTerminal 判定简化、cw 补 duplicate-slug gate。
+17. **轮次 19（LLM 行为可控性审查）**：3 个 subagent 从 LLM 行为可控性 / workflow 控制边界 / 真实任务执行三个维度审查。核心结论：流程正确性可靠，产出质量存在系统性盲区（机器 gate 只校验结构不校验内容）。三类问题处理策略：纯 prompt 改造（plan 拆分启发式/越权约束/反编造等，零 cw 改动）、cw 小改造（exec-review 阻塞 closeout/wave 简化）、接受盲区（拆分质量等机器判断不了）。系统价值窗口在大任务（人工≥4h/≥3 wave/边界清晰），不在小任务。详见 §15.1-15.2。
+18. **轮次 20（replan 策略）**：用户提出 replan 是常见场景不应禁用。分析 replan 对 frontier 驱动模型的冲击（status 不变但 plan 变了，frontier 给错误 nextAction）。三个方向对比后选方向 3（workflow 感知 replan）。设计 replanOverride 机制：agent schema 声明 replanTriggered + frontier 后备检测 lastStatusHistoryAction → workflow 覆盖 nextAction 为 plan + 清理被 abort 子节点内存。wave 层 replan 同样适用。详见 §15.3 + spec-f §5。
 
 ---
 
@@ -856,6 +859,59 @@ v2 把 BFS 从 schema 驱动改为 frontier 驱动时引入新问题：
 | 16-5 | execSync 调 frontier 阻塞 worker 线程 | 中 | spec-f queryFrontier | 加轮次边界不变式 + execSync timeout 30s |
 | 16-6 | 空任务 split-空检测纯文字未落地 | 中 | spec-f §2 | 补 retryCount 熔断说明（split 空 → gate 反复 fail → 3 次后 abort → 以 wave 重启）|
 | 16-7 | 崩溃恢复后 worktreeRegistry 丢失致串行 wave 复用断裂 | 中 | spec-f §5 | 显式记录边界（接受断裂，与"崩溃=重跑"一致）|
+
+---
+
+## 15. LLM 行为可控性分析与 replan 策略（轮次 19-20）
+
+### 15.1 LLM 行为可控性三层模型
+
+3 个 subagent 从 LLM 行为可控性 / workflow 控制边界 / 真实任务执行三个维度审查。结论：
+
+| 层 | 机制 | 控制力 | 状态 |
+|---|------|--------|------|
+| **事前**（prompt 指示）| buildActionPrompt 通用模板 + hint 一行 | **弱**——LLM 可能不听，hint 太薄 | 需加强（§15.2）|
+| **事中**（timeout）| timeoutMs | **粗**——只有"全杀"一档 | 按 action 类型分级 |
+| **事后**（cw gate + frontier 读真相 + retryCount 熔断）| 机器校验 + 确定性状态机 | **强（但只限结构）** | 设计扎实，天花板固定 |
+
+**核心结论**：流程正确性可靠（5 轮审查收敛），产出质量存在系统性盲区——机器 gate 只校验结构不校验内容，LLM 会听话地走完流程但产出空壳。
+
+### 15.2 三类问题与处理策略
+
+**纯 prompt 改造（spec-f buildActionPrompt，零 cw 改动，MVP 先做）**：
+- plan 加拆分启发式（拆几个/按什么维度/dependsOn 必标）
+- 所有 action 加"只操作自己的 unitId"越权约束
+- clarify 加最小产量约束、design-review 加反编造约束、test 加反绕过约束、retrospect 加强制读 jsonl
+- timeout 按 action 类型分级（planning 3-5 分钟，wave execute 10 分钟）
+
+**cw 小改造（值得做）**：
+- exec-review 的 needs-followup 改为可选阻塞 closeout
+- wave 流程简化——允许跳过 clarify/retrospect
+
+**接受盲区（不改，如实记录）**：
+- 机器无法判断的：拆分质量、FR/AC 质量、design-review 内容、代码架构合理性
+- 靠 prompt 引导 + LLM 能力，不靠 gate
+- 这是所有 AI coding agent 的共同边界
+
+### 15.3 replan 处理策略（方向 3：workflow 感知 replan）
+
+**问题**：replan 是旁路 action——status 不变但 plan 变了。frontier 的 status→action 映射给出错误 nextAction（说该 retrospect，实际该回 plan）。被级联 abort 的子节点从 frontier 消失，workflow 不知道它们是被 replan 杀的还是正常完成的。
+
+**三种方向**：
+1. 禁用 replan（MVP 原选）——遇方案错误只能放弃节点，太浪费
+2. cw 硬拦截——可靠但改 cw
+3. **workflow 感知 replan（本轮选）**——支持 replan，workflow 通过 replanOverride 机制正确响应
+
+**决策**：选方向 3。replan 是真实开发的常见场景，禁用它不现实。
+
+**replanOverride 机制**（详见 spec-f §5）：
+- workflow 维护 `replanOverride: Map<unitId, "plan">`
+- 检测 replan（双重信号）：agent schema 返回 `replanTriggered: true`（主） + frontier `lastStatusHistoryAction === "replan"`（后备）
+- 检测到 replan 后：清理被 abort 子节点的内存状态（worktreeRegistry/sessionFiles/retryCount）、设 replanOverride 覆盖 frontier 的 nextAction
+- agent 重走 plan → design-review → execute（cw 建新子节点）→ execute 成功后清除 replanOverride
+- wave 层 replan（无级联 abort）同样走 replanOverride 机制
+
+**abort 竞态**：replan 级联 abort 子节点时，那些子节点的 agent 可能还在跑。workflow 清理它们的内存状态，agent 进程靠 timeout 兜底（超时后返回 error，但该节点已 abort → frontier 不返回 → 无害）。未来改进：abort 后主动 kill agent 进程（returnMeta 加 pid）。
 
 ---
 
