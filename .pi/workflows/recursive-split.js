@@ -183,7 +183,7 @@ function buildActionPrompt(node, action) {
   const replanGuidance = `
 
 如果你在执行 action 时发现 plan 需要调整（技术方案有误、子任务要增减）：
-1. 调 \`cw replan --unitId ${node.unitId} --input '<根据 cw handoff 的 replan input schema 填写>'\`
+1. 调 \`cw replan --unitId ${node.unitId}\`（input 格式按 replan guidance 的命令行：cw 的 --input 是文件路径语义，字面 JSON 串会报错；用文件路径或 stdin 提交，或按 guidance 给的 flags）
 2. 在 schema 返回值里设 \`replanTriggered: true\`，并把 \`cw replan\` stdout 的 \`replanImpact.aborted\` 数组（被级联 abort 的子 unitId）抄到 schema 的 \`abortedChildren\` 字段
 3. 不要继续执行当前 action——replan 后 cw 要求回 plan 重走`;
 
@@ -197,7 +197,7 @@ function buildActionPrompt(node, action) {
 步骤：
 1. 先调 \`cw handoff --unitId ${node.unitId}\` 获取上下文（含前序 action 的产出 + 下一步 guidance + input schema）
 2. 按 guidance 执行 ${action}（${hints[action] ?? ""}）
-3. 调 \`cw ${action} --unitId ${node.unitId} --input '<根据 guidance 的 schema 填写>'\` 推进状态
+3. 按 \`cw handoff\` guidance 给的命令格式推进状态（copy guidance 的 "命令" 那行的完整命令，不要自己拼——cw 的 --input 是文件路径语义，字面 JSON 串会报错；execute 用 --commitHash flags，其他 action 用 --input 文件路径或 stdin）
 4. 如果 gate fail（返回 ok=false），读 mustFix 修正后重调步骤 3
 5. 成功后返回结果${extra}${showReplanHint ? replanGuidance : ""}`;
 }
