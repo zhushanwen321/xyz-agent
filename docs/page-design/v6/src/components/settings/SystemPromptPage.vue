@@ -330,10 +330,6 @@ function discard(s: SpState) {
   flex-wrap: wrap;
   gap: var(--space-2);
   margin-bottom: var(--space-6);
-  position: sticky;
-  top: 0;
-  background: var(--bg-elevated);
-  z-index: var(--z-sticky);
 }
 .title {
   font-size: 20px;

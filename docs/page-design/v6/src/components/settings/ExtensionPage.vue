@@ -316,10 +316,6 @@ onBeforeUnmount(() => {
 <style scoped>
 .page-head {
   margin-bottom: var(--space-6);
-  position: sticky;
-  top: 0;
-  background: var(--bg-elevated);
-  z-index: var(--z-sticky);
 }
 .title {
   font-size: 20px;

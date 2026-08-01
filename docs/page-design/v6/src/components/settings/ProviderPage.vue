@@ -528,10 +528,6 @@ if (bootP) snapshot(bootP)
   justify-content: space-between;
   gap: var(--space-4);
   margin-bottom: var(--space-6);
-  position: sticky;
-  top: 0;
-  background: var(--bg-elevated);
-  z-index: var(--z-sticky);
 }
 .head-text { min-width: 0; }
 .title { font-size: 20px; font-weight: 600; color: var(--neutral-fg); letter-spacing: -0.01em; }
