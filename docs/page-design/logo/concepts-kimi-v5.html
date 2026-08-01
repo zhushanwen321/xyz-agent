@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>太极 — LOGO 概念探索 Kimi v5 · 蚀仪深化</title>
+<title>太极 — LOGO 概念探索 Kimi v5 · 蚀仪鱼化</title>
 <style>
   :root {
     --bg: #1a1b1f;
@@ -50,6 +50,14 @@
     font-size: 11px; color: var(--neutral-fg);
     font-family: 'JetBrains Mono', monospace;
   }
+
+  .section-title {
+    font-size: 13px; font-weight: 600; color: var(--neutral-dim);
+    letter-spacing: 0.12em; text-transform: uppercase;
+    font-family: 'JetBrains Mono', monospace;
+    margin: 40px 0 16px;
+  }
+  .section-title:first-of-type { margin-top: 0; }
 
   .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
 
@@ -144,12 +152,22 @@
 </head>
 <body>
 
-<!-- 共享几何：太极半仪 + 双鱼尾（白鱼尾在左下尖梢 (41,102)，黑鱼尾在右上尖梢 (79,18)，互为 180° 对位的对称剪刀尾，stroke 绘制） -->
+<!--
+  共享几何（viewBox 0..120，圆心 60,60，R=46，白仪错位 24°）：
+  #half  太极半仪
+  #tw/#tb  燕尾：顺两鱼自然尖梢的对称剪刀尾（白尾左下 (41,102)，黑尾右上 (79,18)，180° 对位）
+  #fw/#fb  流尾：顺尖梢拖出的长流尾，沿圆的切线方向（鱼游动的反方向）拖曳
+  #ww/#wb  须：鱼首前缘一缕（白鱼鼻 (40,18)，黑鱼鼻 (80,102)，180° 对位）
+-->
 <svg width="0" height="0" style="position:absolute">
   <defs>
     <path id="half" d="M 60 14 A 46 46 0 0 1 60 106 A 23 23 0 0 1 60 60 A 23 23 0 0 0 60 14 Z"/>
     <path id="tw" d="M 41 102 C 39.5 107.5, 39.5 112, 40 116.5 M 41 102 C 36.5 106.5, 33 109.5, 30.5 112"/>
     <path id="tb" d="M 79 18 C 80.5 12.5, 80.5 8, 80 3.5 M 79 18 C 83.5 13.5, 87 10.5, 89.5 8"/>
+    <path id="fw" d="M 41 102 C 37.5 108.5, 39.5 114, 46.5 116.5 C 51 118, 55.5 117, 58 114.5"/>
+    <path id="fb" d="M 79 18 C 82.5 11.5, 80.5 6, 73.5 3.5 C 69 2, 64.5 3, 62 5.5"/>
+    <path id="ww" d="M 40 18 C 34 13, 28 11, 22 12"/>
+    <path id="wb" d="M 80 102 C 86 107, 92 109, 98 108"/>
   </defs>
 </svg>
 
@@ -157,36 +175,37 @@
 
 <h1>太极 <span class="cn">·</span> <span class="en">TAIJI</span> — LOGO 概念探索 Kimi v5</h1>
 <p class="subtitle">
-  <b>蚀仪深化 · 三式</b>。以 v4 选定方案 <b>A 蚀仪</b>（白仪错位 24°）为基底：<code>A1 双鱼尾</code>——顺着两条鱼各自的自然尖梢各添一笔<b>对称剪刀尾</b>（白尾左下、黑尾右上，180° 对位，仅此两笔，不添鳍）；<code>A2 负空间·醒</code>——白底上白色半仪不画轮廓，纯错位太极，只剩黑鱼与两枚眼；<code>A3 负空间·梦</code>——黑底上黑色半仪不画轮廓，只剩白鱼与两枚眼。
+  <b>蚀仪鱼化 · 六式</b>。以选定方案 <b>A 蚀仪</b>（白仪错位 24°）为基底，从双鱼戏参考图中提炼三样灵魂——<b>流尾、须、游势</b>——用单线 stroke 克制地表达，做成一把加法梯：<code>B1 燕尾</code>（最克制）→ <code>B2 流尾</code> → <code>B3 燕尾·须</code> → <code>B4 流尾·须</code>（最接近参考图，仍无鳞无鳍）；另保留负空间双版 <code>C1 醒</code> / <code>C2 梦</code>（一笔不添）。
 </p>
 
 <div class="insight">
-  <h2>鱼尾的位置 与 负空间的代价</h2>
+  <h2>从参考图提炼什么，舍弃什么</h2>
   <p>
-    阴阳「鱼」的尾本来就在太极图的两个尖梢处——逗号形收束成点的那两处。所以鱼尾不该「添」在鱼身上，而该<b>顺着尖梢长出来</b>：白鱼的尖梢在左下 (41,102)，黑鱼的尖梢在右上 (79,18)，各引两笔对称剪刀尾，互为 180° 对位。不画鳍、不画鳞、不画鳃——鱼尾是太极图形本身暗示的延伸，鳍则是外加的装饰。
+    双鱼戏图动人之处在三处：<b>流尾</b>——尾巴不收于形内，顺着游势拖出长线；<b>须</b>——鱼首前缘一缕，是「鱼感」最强的一笔；<b>游势</b>——身体沿圆的切线游动，尾向与游向相反。参考图的「花」在鳞片、鱼鳍、水波与色彩——这些全部舍弃，只取三样灵魂，各用一两笔单线表达。
   </p>
   <p>
-    负空间版则<b>一笔不添</b>：把「太极自带黑白盘面」的特性反过来用，与底色同色的那一半不画轮廓、溶进背景——白底上白鱼消失了，只剩黑鱼孤零零地游，以及两枚眼：一枚在黑鱼头上（白点），一枚浮在空白处（黑点）——<b>消失的鱼只留下它的眼睛</b>。负空间的主角是「缺」，任何加法（尾、鳍）都会把注意力拉回「鱼」，所以保持纯错位太极。
+    四个鱼化变体是一把<b>加法梯</b>：B1 燕尾只添两笔剪刀尾（最克制）；B2 把尾换成一笔长流尾，游势顿生；B3 在燕尾上给两鱼首各点一缕须——须是性价比最高的一笔，有须即是鱼；B4 流尾加须，最接近参考图的神，仍无鳞无鳍无色彩。<b>游势的底色</b>：四式的尾都顺着两鱼的自然尖梢（白尾左下 (41,102)、黑尾右上 (79,18)），流尾的拖曳方向沿圆的切线、与游向相反——尾在先，鱼在后，两鱼首尾相逐。
   </p>
   <p>
-    代价要明说：负空间版<b>锁定底色</b>（A2 只能白/浅底，A3 只能深底），跨底色场景回退 A1（自带盘面，任意底色自洽）。每张卡片的对照 stage 如实展示了失效场景。
+    须的位置：鱼首前缘（白鱼鼻 (40,18)、黑鱼鼻 (80,102)，互为 180° 对位），只一缕，探出圆盘。<b>浅底场景白须近隐</b>（stage 如实展示），favicon 一律删须保尾——16px 下须会糊成噪点。
   </p>
   <p>
-    另：本轮修正了 v4 蚀仪的鱼眼位置——原稿两枚眼未落在鱼首上（各自沉入同色区域而隐形），A1/A2/A3 及 v4 文件均已归位（白鱼首 (50,39)、黑鱼首 (70,80)，经像素采样验证）。
+    负空间双版（C1/C2）维持上轮结论<b>一笔不添</b>：负空间的主角是「缺」，尾与须都会把注意力拉回「鱼」。另：v4 蚀仪鱼眼已归位两枚鱼首（白鱼首 (50,39)、黑鱼首 (70,80)，经像素采样验证），六式统一。
   </p>
 </div>
 
+<p class="section-title">鱼化四式 · 全盘版（任意底色自洽）</p>
 <div class="grid-2">
 
-  <!-- A1. 蚀仪·双鱼尾 -->
+  <!-- B1. 燕尾 -->
   <div class="logo">
     <div class="logo-header">
-      <span class="logo-num">A1</span>
-      <span class="logo-title">蚀仪 · 双鱼尾</span>
-      <span class="logo-tone">双鱼各一尾 · 游出圆外</span>
+      <span class="logo-num">B1</span>
+      <span class="logo-title">蚀仪 · 燕尾</span>
+      <span class="logo-tone">双鱼各一尾 · 最克制</span>
     </div>
     <p class="logo-desc">
-      蚀仪原样，只添两笔：顺着两条鱼各自的自然尖梢，各引一组<b>对称剪刀尾</b>——白尾在左下尖梢 (41,102)，黑尾在右上尖梢 (79,18)，两尾互为 180° 对位，双双探出圆盘边界。鱼眼归位到两枚鱼首。黑盘、错位、灰环全部照旧。
+      只添两笔：顺着两条鱼各自的自然尖梢，各引一组<b>对称剪刀尾</b>——白尾左下 (41,102)，黑尾右上 (79,18)，180° 对位，双双探出圆盘。加法梯的第一级，鱼感点到即止。
     </p>
     <div class="showcase">
       <div class="stage elevated">
@@ -258,19 +277,303 @@
     <div class="logic">
       <b>设计逻辑</b>
       <ul>
-        <li><b>尾在尖梢</b>：阴阳鱼的尾本就在太极图的两个尖梢处——尾顺着尖梢长出来，是图形自身的延伸，不是外加的装饰</li>
-        <li><b>双鱼对位</b>：白尾左下 (41,102)、黑尾右上 (79,18)，互为 180° 对位的对称剪刀尾——与太极的中心对称同源</li>
-        <li><b>鱼尾出盘</b>：两尾探出圆盘边界，是「游」也是「逍遥」——鱼不完全属于这个圆</li>
-        <li><b>鱼眼归位</b>：黑点在白鱼首 (50,39)、白点在黑鱼首 (70,80)，修正 v4 鱼眼沉入同色区域隐形的问题</li>
-        <li><b>favicon</b>：双尾加粗到 3.5——尾是资产，16px 下依然可辨</li>
+        <li><b>尾在尖梢</b>：阴阳鱼的尾本就在太极图的两个尖梢处——尾顺着尖梢长出来，是图形自身的延伸</li>
+        <li><b>双鱼对位</b>：两尾互为 180° 对位，与太极的中心对称同源</li>
+        <li><b>加法梯第一级</b>：只添两笔，是「太极」与「双鱼」之间最少的一步</li>
+        <li><b>favicon</b>：双尾加粗到 3.5，16px 下依然可辨</li>
       </ul>
     </div>
   </div>
 
-  <!-- A2. 负空间·醒（白底） -->
+  <!-- B2. 流尾 -->
   <div class="logo">
     <div class="logo-header">
-      <span class="logo-num">A2</span>
+      <span class="logo-num">B2</span>
+      <span class="logo-title">蚀仪 · 流尾</span>
+      <span class="logo-tone">尾随游势 · 绵长一笔</span>
+    </div>
+    <p class="logo-desc">
+      把剪刀尾换成<b>一笔长流尾</b>：从尖梢拖出，沿圆的切线方向（鱼游动的反方向）拖曳——白尾沿底部弧线向右流，黑尾沿顶部弧线向左流，两尾 180° 对位。参考图里「游」的感觉，主要靠这一笔。
+    </p>
+    <div class="showcase">
+      <div class="stage elevated">
+        <span class="stage-label">主标</span>
+        <svg width="80" height="80" viewBox="0 0 120 120" fill="none">
+          <circle cx="60" cy="60" r="46" fill="#0f1013"/>
+          <use href="#half" transform="rotate(204 60 60)" fill="#f5f6f8"/>
+          <use href="#fw" stroke="#f5f6f8" stroke-width="3" stroke-linecap="round" fill="none"/>
+          <use href="#fb" stroke="#0f1013" stroke-width="3" stroke-linecap="round" fill="none"/>
+          <circle cx="50" cy="39" r="5" fill="#0f1013"/>
+          <circle cx="70" cy="80" r="5" fill="#f5f6f8"/>
+          <circle cx="60" cy="60" r="46" fill="none" stroke="#b9bcc4" stroke-width="1.2" opacity="0.3"/>
+        </svg>
+        <span class="stage-size">80px</span>
+      </div>
+      <div class="stage app-icon">
+        <span class="stage-label">App icon</span>
+        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
+          <circle cx="60" cy="60" r="46" fill="#0f1013"/>
+          <use href="#half" transform="rotate(204 60 60)" fill="#f5f6f8"/>
+          <use href="#fw" stroke="#f5f6f8" stroke-width="3.2" stroke-linecap="round" fill="none"/>
+          <use href="#fb" stroke="#0f1013" stroke-width="3.2" stroke-linecap="round" fill="none"/>
+          <circle cx="50" cy="39" r="5.5" fill="#0f1013"/>
+          <circle cx="70" cy="80" r="5.5" fill="#f5f6f8"/>
+          <circle cx="60" cy="60" r="46" fill="none" stroke="#b9bcc4" stroke-width="1.4" opacity="0.35"/>
+        </svg>
+        <span class="stage-size">64px</span>
+      </div>
+      <div class="stage">
+        <span class="stage-label">favicon</span>
+        <svg width="36" height="36" viewBox="0 0 120 120" fill="none">
+          <circle cx="60" cy="60" r="46" fill="#0f1013"/>
+          <use href="#half" transform="rotate(204 60 60)" fill="#f5f6f8"/>
+          <use href="#fw" stroke="#f5f6f8" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+          <use href="#fb" stroke="#0f1013" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+          <circle cx="50" cy="39" r="6.5" fill="#0f1013"/>
+          <circle cx="70" cy="80" r="6.5" fill="#f5f6f8"/>
+          <circle cx="60" cy="60" r="46" fill="none" stroke="#b9bcc4" stroke-width="2" opacity="0.45"/>
+        </svg>
+        <span class="stage-size">16px 等效</span>
+      </div>
+      <div class="stage light">
+        <span class="stage-label">浅色底</span>
+        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
+          <circle cx="60" cy="60" r="46" fill="#0f1013"/>
+          <use href="#half" transform="rotate(204 60 60)" fill="#f5f6f8"/>
+          <use href="#fw" stroke="#f5f6f8" stroke-width="3" stroke-linecap="round" fill="none"/>
+          <use href="#fb" stroke="#0f1013" stroke-width="3" stroke-linecap="round" fill="none"/>
+          <circle cx="50" cy="39" r="5" fill="#0f1013"/>
+          <circle cx="70" cy="80" r="5" fill="#f5f6f8"/>
+          <circle cx="60" cy="60" r="46" fill="none" stroke="#6b7280" stroke-width="1.2" opacity="0.4"/>
+        </svg>
+        <span class="stage-size">64px</span>
+      </div>
+      <div class="stage mid">
+        <span class="stage-label">中灰底</span>
+        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
+          <circle cx="60" cy="60" r="46" fill="#0f1013"/>
+          <use href="#half" transform="rotate(204 60 60)" fill="#f5f6f8"/>
+          <use href="#fw" stroke="#f5f6f8" stroke-width="3" stroke-linecap="round" fill="none"/>
+          <use href="#fb" stroke="#0f1013" stroke-width="3" stroke-linecap="round" fill="none"/>
+          <circle cx="50" cy="39" r="5" fill="#0f1013"/>
+          <circle cx="70" cy="80" r="5" fill="#f5f6f8"/>
+          <circle cx="60" cy="60" r="46" fill="none" stroke="#f5f6f8" stroke-width="1.4" opacity="0.5"/>
+        </svg>
+        <span class="stage-size">64px</span>
+      </div>
+    </div>
+    <div class="logic">
+      <b>设计逻辑</b>
+      <ul>
+        <li><b>尾向 = 游向的反向</b>：流尾沿圆的切线拖曳，尾在先、鱼在后——静态图形里读出「正在游」</li>
+        <li><b>一笔流尾</b>：比燕尾更绵长，比参考图的飘带尾克制——不带分叉、不带波浪</li>
+        <li><b>首尾相逐</b>：白尾流向黑鱼首一侧，黑尾流向白鱼首一侧，两鱼相逐的环形叙事闭合</li>
+        <li><b>favicon</b>：流尾加粗到 3.5；16px 下流尾辨识度优于燕尾（线长、走向明确）</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- B3. 燕尾·须 -->
+  <div class="logo">
+    <div class="logo-header">
+      <span class="logo-num">B3</span>
+      <span class="logo-title">蚀仪 · 燕尾·须</span>
+      <span class="logo-tone">一须点首 · 有须即鱼</span>
+    </div>
+    <p class="logo-desc">
+      燕尾之上，给两枚鱼首前缘各点<b>一缕须</b>——白须自白鱼鼻 (40,18) 探出，黑须自黑鱼鼻 (80,102) 探出，180° 对位。须是性价比最高的一笔：有须即是鱼，无须仍是图。
+    </p>
+    <div class="showcase">
+      <div class="stage elevated">
+        <span class="stage-label">主标</span>
+        <svg width="80" height="80" viewBox="0 0 120 120" fill="none">
+          <circle cx="60" cy="60" r="46" fill="#0f1013"/>
+          <use href="#half" transform="rotate(204 60 60)" fill="#f5f6f8"/>
+          <use href="#tw" stroke="#f5f6f8" stroke-width="3" stroke-linecap="round" fill="none"/>
+          <use href="#tb" stroke="#0f1013" stroke-width="3" stroke-linecap="round" fill="none"/>
+          <use href="#ww" stroke="#f5f6f8" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+          <use href="#wb" stroke="#0f1013" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+          <circle cx="50" cy="39" r="5" fill="#0f1013"/>
+          <circle cx="70" cy="80" r="5" fill="#f5f6f8"/>
+          <circle cx="60" cy="60" r="46" fill="none" stroke="#b9bcc4" stroke-width="1.2" opacity="0.3"/>
+        </svg>
+        <span class="stage-size">80px</span>
+      </div>
+      <div class="stage app-icon">
+        <span class="stage-label">App icon</span>
+        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
+          <circle cx="60" cy="60" r="46" fill="#0f1013"/>
+          <use href="#half" transform="rotate(204 60 60)" fill="#f5f6f8"/>
+          <use href="#tw" stroke="#f5f6f8" stroke-width="3.2" stroke-linecap="round" fill="none"/>
+          <use href="#tb" stroke="#0f1013" stroke-width="3.2" stroke-linecap="round" fill="none"/>
+          <use href="#ww" stroke="#f5f6f8" stroke-width="2.6" stroke-linecap="round" fill="none"/>
+          <use href="#wb" stroke="#0f1013" stroke-width="2.6" stroke-linecap="round" fill="none"/>
+          <circle cx="50" cy="39" r="5.5" fill="#0f1013"/>
+          <circle cx="70" cy="80" r="5.5" fill="#f5f6f8"/>
+          <circle cx="60" cy="60" r="46" fill="none" stroke="#b9bcc4" stroke-width="1.4" opacity="0.35"/>
+        </svg>
+        <span class="stage-size">64px</span>
+      </div>
+      <div class="stage">
+        <span class="stage-label">favicon</span>
+        <svg width="36" height="36" viewBox="0 0 120 120" fill="none">
+          <circle cx="60" cy="60" r="46" fill="#0f1013"/>
+          <use href="#half" transform="rotate(204 60 60)" fill="#f5f6f8"/>
+          <use href="#tw" stroke="#f5f6f8" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+          <use href="#tb" stroke="#0f1013" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+          <circle cx="50" cy="39" r="6.5" fill="#0f1013"/>
+          <circle cx="70" cy="80" r="6.5" fill="#f5f6f8"/>
+          <circle cx="60" cy="60" r="46" fill="none" stroke="#b9bcc4" stroke-width="2" opacity="0.45"/>
+        </svg>
+        <span class="stage-size">16px 等效</span>
+      </div>
+      <div class="stage light">
+        <span class="stage-label">浅色底</span>
+        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
+          <circle cx="60" cy="60" r="46" fill="#0f1013"/>
+          <use href="#half" transform="rotate(204 60 60)" fill="#f5f6f8"/>
+          <use href="#tw" stroke="#f5f6f8" stroke-width="3" stroke-linecap="round" fill="none"/>
+          <use href="#tb" stroke="#0f1013" stroke-width="3" stroke-linecap="round" fill="none"/>
+          <use href="#ww" stroke="#f5f6f8" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+          <use href="#wb" stroke="#0f1013" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+          <circle cx="50" cy="39" r="5" fill="#0f1013"/>
+          <circle cx="70" cy="80" r="5" fill="#f5f6f8"/>
+          <circle cx="60" cy="60" r="46" fill="none" stroke="#6b7280" stroke-width="1.2" opacity="0.4"/>
+        </svg>
+        <span class="stage-size">64px</span>
+      </div>
+      <div class="stage mid">
+        <span class="stage-label">中灰底</span>
+        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
+          <circle cx="60" cy="60" r="46" fill="#0f1013"/>
+          <use href="#half" transform="rotate(204 60 60)" fill="#f5f6f8"/>
+          <use href="#tw" stroke="#f5f6f8" stroke-width="3" stroke-linecap="round" fill="none"/>
+          <use href="#tb" stroke="#0f1013" stroke-width="3" stroke-linecap="round" fill="none"/>
+          <use href="#ww" stroke="#f5f6f8" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+          <use href="#wb" stroke="#0f1013" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+          <circle cx="50" cy="39" r="5" fill="#0f1013"/>
+          <circle cx="70" cy="80" r="5" fill="#f5f6f8"/>
+          <circle cx="60" cy="60" r="46" fill="none" stroke="#f5f6f8" stroke-width="1.4" opacity="0.5"/>
+        </svg>
+        <span class="stage-size">64px</span>
+      </div>
+    </div>
+    <div class="logic">
+      <b>设计逻辑</b>
+      <ul>
+        <li><b>须在鱼鼻</b>：须点在鱼首前缘（白鼻 (40,18)、黑鼻 (80,102)），不是鱼身两侧——位置错了就像虫子</li>
+        <li><b>一缕即止</b>：参考图的须常画两三缕，这里只一缕——第二缕开始滑向「锦鲤插画」</li>
+        <li><b>须细于尾</b>：须 stroke 2.5、尾 stroke 3——须是点缀，尾是资产，层级不能倒</li>
+        <li><b>favicon 删须保尾</b>：16px 下须糊成噪点，须只属于 ≥64px 的场景</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- B4. 流尾·须 -->
+  <div class="logo">
+    <div class="logo-header">
+      <span class="logo-num">B4</span>
+      <span class="logo-title">蚀仪 · 流尾·须</span>
+      <span class="logo-tone">最接近参考图 · 仍无鳞鳍</span>
+    </div>
+    <p class="logo-desc">
+      加法梯的最后一级：<b>流尾 + 须</b>。流尾给游势，须给鱼感，两者齐备后双鱼戏的神就齐了——但仍然无鳞、无鳍、无水波、无色彩，与参考图的花哨保持最后一道距离。
+    </p>
+    <div class="showcase">
+      <div class="stage elevated">
+        <span class="stage-label">主标</span>
+        <svg width="80" height="80" viewBox="0 0 120 120" fill="none">
+          <circle cx="60" cy="60" r="46" fill="#0f1013"/>
+          <use href="#half" transform="rotate(204 60 60)" fill="#f5f6f8"/>
+          <use href="#fw" stroke="#f5f6f8" stroke-width="3" stroke-linecap="round" fill="none"/>
+          <use href="#fb" stroke="#0f1013" stroke-width="3" stroke-linecap="round" fill="none"/>
+          <use href="#ww" stroke="#f5f6f8" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+          <use href="#wb" stroke="#0f1013" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+          <circle cx="50" cy="39" r="5" fill="#0f1013"/>
+          <circle cx="70" cy="80" r="5" fill="#f5f6f8"/>
+          <circle cx="60" cy="60" r="46" fill="none" stroke="#b9bcc4" stroke-width="1.2" opacity="0.3"/>
+        </svg>
+        <span class="stage-size">80px</span>
+      </div>
+      <div class="stage app-icon">
+        <span class="stage-label">App icon</span>
+        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
+          <circle cx="60" cy="60" r="46" fill="#0f1013"/>
+          <use href="#half" transform="rotate(204 60 60)" fill="#f5f6f8"/>
+          <use href="#fw" stroke="#f5f6f8" stroke-width="3.2" stroke-linecap="round" fill="none"/>
+          <use href="#fb" stroke="#0f1013" stroke-width="3.2" stroke-linecap="round" fill="none"/>
+          <use href="#ww" stroke="#f5f6f8" stroke-width="2.6" stroke-linecap="round" fill="none"/>
+          <use href="#wb" stroke="#0f1013" stroke-width="2.6" stroke-linecap="round" fill="none"/>
+          <circle cx="50" cy="39" r="5.5" fill="#0f1013"/>
+          <circle cx="70" cy="80" r="5.5" fill="#f5f6f8"/>
+          <circle cx="60" cy="60" r="46" fill="none" stroke="#b9bcc4" stroke-width="1.4" opacity="0.35"/>
+        </svg>
+        <span class="stage-size">64px</span>
+      </div>
+      <div class="stage">
+        <span class="stage-label">favicon</span>
+        <svg width="36" height="36" viewBox="0 0 120 120" fill="none">
+          <circle cx="60" cy="60" r="46" fill="#0f1013"/>
+          <use href="#half" transform="rotate(204 60 60)" fill="#f5f6f8"/>
+          <use href="#fw" stroke="#f5f6f8" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+          <use href="#fb" stroke="#0f1013" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+          <circle cx="50" cy="39" r="6.5" fill="#0f1013"/>
+          <circle cx="70" cy="80" r="6.5" fill="#f5f6f8"/>
+          <circle cx="60" cy="60" r="46" fill="none" stroke="#b9bcc4" stroke-width="2" opacity="0.45"/>
+        </svg>
+        <span class="stage-size">16px 等效</span>
+      </div>
+      <div class="stage light">
+        <span class="stage-label">浅色底</span>
+        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
+          <circle cx="60" cy="60" r="46" fill="#0f1013"/>
+          <use href="#half" transform="rotate(204 60 60)" fill="#f5f6f8"/>
+          <use href="#fw" stroke="#f5f6f8" stroke-width="3" stroke-linecap="round" fill="none"/>
+          <use href="#fb" stroke="#0f1013" stroke-width="3" stroke-linecap="round" fill="none"/>
+          <use href="#ww" stroke="#f5f6f8" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+          <use href="#wb" stroke="#0f1013" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+          <circle cx="50" cy="39" r="5" fill="#0f1013"/>
+          <circle cx="70" cy="80" r="5" fill="#f5f6f8"/>
+          <circle cx="60" cy="60" r="46" fill="none" stroke="#6b7280" stroke-width="1.2" opacity="0.4"/>
+        </svg>
+        <span class="stage-size">64px</span>
+      </div>
+      <div class="stage mid">
+        <span class="stage-label">中灰底</span>
+        <svg width="64" height="64" viewBox="0 0 120 120" fill="none">
+          <circle cx="60" cy="60" r="46" fill="#0f1013"/>
+          <use href="#half" transform="rotate(204 60 60)" fill="#f5f6f8"/>
+          <use href="#fw" stroke="#f5f6f8" stroke-width="3" stroke-linecap="round" fill="none"/>
+          <use href="#fb" stroke="#0f1013" stroke-width="3" stroke-linecap="round" fill="none"/>
+          <use href="#ww" stroke="#f5f6f8" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+          <use href="#wb" stroke="#0f1013" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+          <circle cx="50" cy="39" r="5" fill="#0f1013"/>
+          <circle cx="70" cy="80" r="5" fill="#f5f6f8"/>
+          <circle cx="60" cy="60" r="46" fill="none" stroke="#f5f6f8" stroke-width="1.4" opacity="0.5"/>
+        </svg>
+        <span class="stage-size">64px</span>
+      </div>
+    </div>
+    <div class="logic">
+      <b>设计逻辑</b>
+      <ul>
+        <li><b>神似参考图的底线</b>：流尾 + 须是「双鱼戏」神似的最小集合——再减一笔鱼感衰减，再加一笔（鳞/鳍/波）就开始花哨</li>
+        <li><b>尾与须的呼应</b>：尾向后流、须向前探，鱼首鱼尾各有交代，身体的「中段留白」反而成了克制</li>
+        <li><b>层级不变</b>：尾 3 / 须 2.5，favicon 删须保流尾</li>
+        <li><b>风险</b>：四式里最接近插画的一式——若嫌「太鱼」，回退 B2；若嫌「不够鱼」，这是上限，不再加</li>
+      </ul>
+    </div>
+  </div>
+
+</div>
+
+<p class="section-title">负空间双版 · 一笔不添（锁底色）</p>
+<div class="grid-2">
+
+  <!-- C1. 负空间·醒（白底） -->
+  <div class="logo">
+    <div class="logo-header">
+      <span class="logo-num">C1</span>
       <span class="logo-title">负空间 · 醒</span>
       <span class="logo-tone">白底无框 · 黑鱼独游</span>
     </div>
@@ -329,21 +632,21 @@
       <ul>
         <li><b>白鱼去哪了</b>：观者会下意识补全白鱼的轮廓——负空间的参与感，比画出来的圆更有余味</li>
         <li><b>浮眼</b>：黑点孤零零浮在空白处，是全图最「玄」的一笔——鱼的躯体没了，注视还在</li>
-        <li><b>一笔不添</b>：负空间的主角是「缺」——加尾加鳍都会把注意力拉回「鱼」，所以保持纯错位太极，只留 A 方案的旋转</li>
-        <li><b>代价</b>：锁白/浅底。深底下黑鱼隐形（对照 stage 如实展示），深底场景请用 A3</li>
+        <li><b>一笔不添</b>：负空间的主角是「缺」——尾与须都会把注意力拉回「鱼」，故保持纯错位太极</li>
+        <li><b>代价</b>：锁白/浅底。深底下黑鱼隐形（对照 stage 如实展示），深底场景请用 C2</li>
       </ul>
     </div>
   </div>
 
-  <!-- A3. 负空间·梦（黑底） -->
+  <!-- C2. 负空间·梦（黑底） -->
   <div class="logo">
     <div class="logo-header">
-      <span class="logo-num">A3</span>
+      <span class="logo-num">C2</span>
       <span class="logo-title">负空间 · 梦</span>
       <span class="logo-tone">黑底无框 · 白鱼独游</span>
     </div>
     <p class="logo-desc">
-      黑底上的镜像版：黑色半仪溶进背景，只剩一条白鱼（与 A1 同向的纯错位半仪）、白鱼首上的黑点，以及浮在暗处的一枚白点。白鱼更像「梦中那条」——看得见轮廓，没有实体依托。
+      黑底上的镜像版：黑色半仪溶进背景，只剩一条白鱼（与 B 式同向的纯错位半仪）、白鱼首上的黑点，以及浮在暗处的一枚白点。白鱼更像「梦中那条」——看得见轮廓，没有实体依托。
     </p>
     <div class="showcase">
       <div class="stage elevated">
@@ -395,10 +698,10 @@
     <div class="logic">
       <b>设计逻辑</b>
       <ul>
-        <li><b>与 A2 互为醒梦</b>：白底黑鱼是「醒时的太极」，黑底白鱼是「梦中的太极」——同一形体的两种在场方式</li>
+        <li><b>与 C1 互为醒梦</b>：白底黑鱼是「醒时的太极」，黑底白鱼是「梦中的太极」——同一形体的两种在场方式</li>
         <li><b>浮眼在暗处</b>：白点浮在黑底上像星——黑鱼消失了，但它的注视与夜空同色</li>
-        <li><b>中灰底仍可用</b>：白鱼对中灰有足够对比（对照 stage 验证），适应性略优于 A2</li>
-        <li><b>代价</b>：锁深底。白底下白鱼隐形（对照 stage 如实展示），浅色场景请用 A2 或 A1</li>
+        <li><b>中灰底仍可用</b>：白鱼对中灰有足够对比（对照 stage 验证），适应性略优于 C1</li>
+        <li><b>代价</b>：锁深底。白底下白鱼隐形（对照 stage 如实展示），浅色场景请用 C1 或 B 式</li>
       </ul>
     </div>
   </div>
@@ -406,23 +709,26 @@
 </div>
 
 <div class="summary">
-  <h2>三式速览与使用建议</h2>
+  <h2>六式速览与使用建议</h2>
   <table>
     <tr><th>式</th><th>一句话</th><th>底色适应</th><th>小尺寸</th><th>气质</th></tr>
-    <tr><td><b>A1 双鱼尾</b></td><td>蚀仪 + 双鱼尖梢各添一尾，游出圆外</td><td>任意底色自洽</td><td>佳（尾加粗）</td><td>正局带一点生气</td></tr>
-    <tr><td><b>A2 醒</b></td><td>白底上白鱼无形，黑鱼独游</td><td>锁白/浅底</td><td>佳</td><td>极简、文人</td></tr>
-    <tr><td><b>A3 梦</b></td><td>黑底上黑鱼无形，白鱼独游</td><td>锁深底（中灰可用）</td><td>佳</td><td>玄、夜空感</td></tr>
+    <tr><td><b>B1 燕尾</b></td><td>尖梢双剪尾，鱼感点到即止</td><td>任意底色自洽</td><td>佳（尾加粗）</td><td>正局、静</td></tr>
+    <tr><td><b>B2 流尾</b></td><td>一笔长流尾，尾随游势而出</td><td>任意底色自洽</td><td>佳（流尾走向明确）</td><td>动、绵长</td></tr>
+    <tr><td><b>B3 燕尾·须</b></td><td>燕尾 + 鱼鼻各一缕须</td><td>任意（浅底白须近隐）</td><td>删须保尾</td><td>俏、一点生气</td></tr>
+    <tr><td><b>B4 流尾·须</b></td><td>流尾 + 须，神似参考图的底线</td><td>任意（浅底白须近隐）</td><td>删须保流尾</td><td>游、逍遥</td></tr>
+    <tr><td><b>C1 醒</b></td><td>白底上白鱼无形，黑鱼独游</td><td>锁白/浅底</td><td>佳</td><td>极简、文人</td></tr>
+    <tr><td><b>C2 梦</b></td><td>黑底上黑鱼无形，白鱼独游</td><td>锁深底（中灰可用）</td><td>佳</td><td>玄、夜空感</td></tr>
   </table>
   <p>
-    <b>使用组合</b>：<b>A1 为主标</b>（App icon、favicon、任意底色的通用场景——自带黑白盘面，唯一不需要关心底色的版本）；<b>A2 用于白底场景</b>（官网浅色页、文档、名片、浅色启动屏）；<b>A3 用于深底场景</b>（深色启动页、官网 hero、周边）。三式共用同一错位角；双鱼尾是全盘版（A1）的专属资产，负空间版一笔不添——三者是同一资产的三种出场方式，而非三个 logo。
+    <b>选型建议</b>：主标从 B 式中选——求最克制选 <b>B1</b>，求游势选 <b>B2</b>（推荐：流尾是参考图灵魂的最大单笔收益），求「一看就是双鱼」选 <b>B4</b>；B3 居中。<b>C1/C2 按底色专用</b>：官网浅色页/文档用 C1，深色启动页/hero 用 C2，跨底色通用场景回退 B 式（自带黑白盘面，不需要关心底色）。六式共用同一错位角、同一鱼眼位、同一对尖梢——是同一资产的六种出场方式，而非六个 logo。
   </p>
   <p>
-    双鱼尾是本轮唯一的加法，也是这版 logo 区别于一切「太极变体」的资产点——位置顺着两鱼的自然尖梢，白尾左下、黑尾右上，180° 对位，与太极的中心对称同源。鱼眼已归位鱼首。选定后下一步：矢量化精修（尾曲线与错位角的微调、鱼首与眼的同心度），以及动效版（鱼尾摆动 / 蚀的推移 / 浮眼明灭）。
+    尾与须是本轮的全部加法，位置都有出处：尾顺两鱼的自然尖梢（白左下、黑右上），须点两鱼的前缘鼻位（白 (40,18)、黑 (80,102)），皆 180° 对位，与太极的中心对称同源。选定后下一步：矢量化精修（流尾贝塞尔的张力、须的弧度、错位角的微调），以及动效版——流尾与须天然适合做点水摆尾的微动效。
   </p>
 </div>
 
 <p class="note">
-  Kimi v5 · 2026-08 · 蚀仪深化三式（第五轮修订：双鱼尾归位尖梢 + 纯负空间双版）。前轮：v1 四系十二相、v2 虚实相生、v3 蝶即两仪、v4 太极本色（concepts-kimi-v1/v2/v3/v4.html）。v4 蚀仪鱼眼位置已同步修正。所有 SVG 均为手写贝塞尔概念稿，非生产级矢量。
+  Kimi v5 · 2026-08 · 蚀仪鱼化六式（第六轮：B 鱼化四式 + C 负空间双版，参考双鱼戏图提炼流尾/须/游势）。前轮：v1 四系十二相、v2 虚实相生、v3 蝶即两仪、v4 太极本色（concepts-kimi-v1/v2/v3/v4.html）。v4 蚀仪鱼眼位置已同步修正。所有 SVG 均为手写贝塞尔概念稿，非生产级矢量。
 </p>
 
 </div>
