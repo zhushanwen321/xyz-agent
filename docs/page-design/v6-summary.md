@@ -228,7 +228,7 @@ lucide-vue v1.23.0，重命名映射：Loader2→LoaderCircle, FileEdit→FilePe
 
 ## 5. 设计稿完整清单
 
-所有规格 HTML 位于 `docs/page-design/` 根目录（**无 v6 子目录**，平铺）。共 **20 个 v6-* 文件**（1 MD + 19 HTML）。
+所有规格 HTML 位于 `docs/page-design/` 根目录（**无 v6 子目录**，平铺）。共 **20 个 v6-* 文件**（2 MD + 18 HTML）。
 
 ### 5.1 设计文档（MD）
 
@@ -238,7 +238,7 @@ lucide-vue v1.23.0，重命名映射：Loader2→LoaderCircle, FileEdit→FilePe
 | [design-tokens.md](./design-tokens.md) | 原子 SSOT（色/字/距/影/动效） | 待 v6 反写 |
 | [design-system.md](./design-system.md) | 组件原语层 | 待 v6 反写 |
 | [visual-modernization-2026-07.md](./visual-modernization-2026-07.md) | v6 输入，被 v6-design.md 取代 | 保留追溯 |
-| [README.md](./README.md) | 索引（⚠️ 仍以 v3 为准，未提及 v6，待更新） | 滞后 |
+| [README.md](./README.md) | 索引 SSOT（含 v6 章节 + 文件索引，v6 与 v3 并列） | 权威索引 |
 
 ### 5.2 核心布局 / 对话流视觉稿
 
@@ -246,10 +246,10 @@ lucide-vue v1.23.0，重命名映射：Loader2→LoaderCircle, FileEdit→FilePe
 |------|----------|------|
 | [v6-spec-tokens.html](./v6-spec-tokens.html) | Token 集 + 标注规范 + 页面骨架 CSS（**所有 spec 引用的 token SSOT**） | 1,128 |
 | [v6-demo.html](./v6-demo.html) | 综合交互 demo（视觉验收 SSOT） | 1,276 |
-| [v6-spec-container.html](./v6-spec-container.html) | §1 MessageStream / §1.5 瞬时覆盖层 / §2 PanelHeader / §3 TurnMeta / §3.5 TurnRail（R5 保留修范式：active 用 §3.2 bg-surface+蓝字、viewport indicator 用 accent 短粗线非 border-l-2；D11 动态高度拆层：spec 删 h-340 固定值画变体示意，高度=turn 数×行高 renderer 实现） | 1,269 |
-| [v6-spec-blocks.html](./v6-spec-blocks.html) | §4-7, §10, §10.5, §11, §11.5 消息块（thinking/bash/tool/subagent/workflow） | 1,569 |
-| [v6-spec-content.html](./v6-spec-content.html) | assistant 正文 markdown / 代码块 / 表格 / TurnSummary hover actions | 1,081 |
-| [v6-spec-input.html](./v6-spec-input.html) | §8, §8.5, §9 输入区（Composer 6 区 / QueueBubble / CommandPopover） | 1,161 |
+| [v6-spec-container.html](./v6-spec-container.html) | §1 MessageStream / §1.5 瞬时覆盖层 / §2 PanelHeader / §3 TurnMeta / §3.5 TurnRail（R5 保留修范式：active 用 §3.2 bg-surface+蓝字、viewport indicator 用 accent 短粗线非 border-l-2；D11 动态高度拆层：spec 删 h-340 固定值画变体示意，高度=turn 数×行高 renderer 实现） | ~873 |
+| [v6-spec-blocks.html](./v6-spec-blocks.html) | §4-7, §10, §10.5, §11, §11.5 消息块（thinking/bash/tool/subagent/workflow） | ~1,173 |
+| [v6-spec-content.html](./v6-spec-content.html) | assistant 正文 markdown / 代码块 / 表格 / TurnSummary hover actions | ~634 |
+| [v6-spec-input.html](./v6-spec-input.html) | §8, §8.5, §9 输入区（Composer 6 区 / QueueBubble / CommandPopover） | ~759 |
 
 > 原 `v6-spec-conversation.html` 已拆分为上述 blocks/container/content/input 四个 cluster 文件，作为骨架基准（`.doc-sub` 820px / `.spec-desc` 860px / `.page` 1320px / `.doc-title` 28px 600）。
 
@@ -272,9 +272,8 @@ lucide-vue v1.23.0，重命名映射：Loader2→LoaderCircle, FileEdit→FilePe
 
 | 文件 | 覆盖范围 | 行数 | 备注 |
 |------|----------|------|------|
-| [v6-spec-settings-shell.html](./v6-spec-settings-shell.html) | **SSOT 基准**（tokens / design-system / 按钮范式唯一真相源，§6 控件范式 L334-367） | 1,467 | 权威 |
-| [v6-spec-settings.html](./v6-spec-settings.html) | 旧版总览 | 1,289 | ⚠️ 过时 |
-| [v6-spec-settings-provider.html](./v6-spec-settings-provider.html) | Provider 设置页（改动最大，ProviderEdit 改展开就地编辑 R4） | 2,063 | |
+| [v6-spec-settings-shell.html](./v6-spec-settings-shell.html) | **SSOT 基准**（tokens / design-system / 按钮范式唯一真相源，§6 控件范式 L334-367） | ~1,467 | 权威 |
+| [v6-spec-settings-provider.html](./v6-spec-settings-provider.html) | Provider 设置页（改动最大，ProviderEdit 改展开就地编辑 R4） | ~2,063 | |
 | [v6-spec-settings-resources.html](./v6-spec-settings-resources.html) | 资源页（LoadPaths 双分组范式参考） | 1,292 | |
 | [v6-spec-settings-system-prompt.html](./v6-spec-settings-system-prompt.html) | System Prompt 页 | 1,322 | |
 | [v6-spec-settings-extension.html](./v6-spec-settings-extension.html) | 扩展页（§9 新增扫描目录管理） | 1,539 | |
@@ -318,7 +317,7 @@ lucide-vue v1.23.0，重命名映射：Loader2→LoaderCircle, FileEdit→FilePe
 
 ### 6.3 右侧 Drawer（7 tab，新增 subagent + workflow，D3 移除 tasks）
 
-- **D2 一体化**：drawer 与 main **共享 surface 浮起体**（同色 `--surface`，从 main 右缘生长挤占 main 宽度）；保留**弱投影 0.16** 做视觉分隔（R14，弱化自原 -12px 0.24px .25）；去 `border-l` 硬分隔；SplitterResizeHandle 透明化（仅 hover/drag 显 accent）；主面板:drawer 默认宽度比 1:1，可拖拽调整
+- **D2 一体化**：drawer 与 main **共享 surface 浮起体**（同色 `--surface`，从 main 右缘生长挤占 main 宽度）；保留**弱投影 0.16** 做视觉分隔（R14，弱化自原 `-12px 0 24px rgba(0,0,0,0.25)`）；去 `border-l` 硬分隔；SplitterResizeHandle 透明化（仅 hover/drag 显 accent）；主面板:drawer 默认宽度比 1:1，可拖拽调整
 - **形态 B**：icon 一级 + 各 tab 自治二级
   - detail：多文件 tab（点文件新开/切换/关闭）
   - terminal：多实例 tab + 新增按钮占位

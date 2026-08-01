@@ -30,7 +30,7 @@
   --neutral-fg: #e5e7eb;
   --neutral-mid: #9ca3af;
   --neutral-dim: #7d8494;
-  --neutral-dim-old: #6b7280;
+  --neutral-dim-old: #6b7280;   /* 仅 tokens.html 对比展示用，产品 CSS 禁止消费 */
   --neutral-faint: #4b5563;
   --neutral-ico: #8b8d94;
   --neutral-ico-hover: #e5e7eb;
@@ -176,7 +176,7 @@ body {
 .state-row { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
 .state-tag {
   flex-shrink: 0; width: 76px; font-size: var(--text-2xs); font-family: var(--font-mono);
-  color: var(--neutral-dim); text-transform: uppercase; letter-spacing: .05em;
+  color: var(--neutral-dim);   /* 去 uppercase tracking（D7 文档 chrome 规范）*/
   padding-top: 6px;
 }
 .state-demo { flex: 1; min-width: 0; }
@@ -209,7 +209,7 @@ body {
   padding: 0 14px; background: var(--bg-elevated); border-radius: var(--radius);
   margin-bottom: 12px;
 }
-.ph-v6 .ph-status { width: 13px; height: 13px; flex-shrink: 0; }   /* [R26] 13px 对齐 §5.3 scale */
+.ph-v6 .ph-status { width: 13px; height: 13px; flex-shrink: 0; }   /* [R26] PanelHeader 内状态点专用 13px（非 block icon 14px 档，是 header 内小状态点，独立尺寸）*/
 .ph-v6 .ph-status.s-done { color: var(--success); }
 .ph-v6 .ph-status.s-running { color: var(--neutral-ico); }   /* running 中性化（R：仅 done/error/warning 保留语义色，其余 neutral-ico）*/
 .ph-v6 .ph-status.s-warn { color: var(--warn); }
@@ -222,7 +222,7 @@ body {
 .ph-v6 .ph-right { margin-left: auto; display: flex; align-items: center; gap: 2px; }
 .ph-btn { width: 26px; height: 22px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-mid); cursor: pointer; }   /* [R26] 26×22px PanelHeader 右侧操作位 */
 .ph-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
-.ph-btn svg { width: 16px; height: 16px; }   /* [R26] 操作图标档 16px（对齐 §5.3 scale，send-slot 同档）*/
+.ph-btn svg { width: 16px; height: 16px; }   /* [R26] 操作图标档 16px（对齐 §5.3 scale，send-slot.svg 同档）*/
 .ph-jsonl { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 4px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 11px; color: var(--neutral-dim); cursor: pointer; }
 .ph-jsonl:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 .ph-git { position: relative; width: 26px; height: 22px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-mid); }
@@ -235,14 +235,14 @@ body {
 .tm-v6 .tm-label { color: var(--accent); }
 .tm-v6 .tm-elapsed { font-family: var(--font-mono); font-weight: 500; color: var(--neutral-fg); }
 .tm-v6 .tm-chev { width: 9px; height: 9px; color: var(--neutral-dim); }
-.tm-badge { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 999px; background: var(--surface-2); font-family: var(--font-mono); font-size: 10px; font-weight: 600; color: var(--neutral-mid); }
+.tm-badge { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 999px; background: var(--bg-elevated); font-family: var(--font-mono); font-size: 10px; font-weight: 600; color: var(--neutral-mid); }   /* 面上面：bg-elevated 浮起（N2，主面板 surface 上浮起一档）*/
 .tm-badge svg { width: 10px; height: 10px; }
 .tm-spinner { width: 12px; height: 12px; color: var(--accent); animation: spin 1s linear infinite; }
 
 /* ── thinking block（v6：neutral-mid 提亮 + 2 行）── */
 .tk-v6 { padding: 8px 0; }
 .tk-row { display: flex; align-items: center; gap: 6px; min-height: 24px; cursor: pointer; }
-.tk-ico { width: 13px; height: 13px; color: var(--neutral-ico); flex-shrink: 0; }
+.tk-ico { width: 14px; height: 14px; color: var(--neutral-ico); flex-shrink: 0; }   /* block header icon 14px 统一（R11）*/
 .tk-label { font-family: var(--font-mono); font-size: 10px; font-weight: 600; color: var(--neutral-fg); margin-right: 2px; }   /* uppercase → normal-case（产品 UI）*/
 .tk-preview { font-size: 12px; color: var(--neutral-mid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -255,13 +255,13 @@ body {
 /* ── tool block（v6：failed 统一 neutral-ico，exit N 中性标签；running/unfinished 态）── */
 .tool-v6 { padding: 8px 0; }
 .tool-hd { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; cursor: pointer; }
-.tool-ico { width: 13px; height: 13px; color: var(--neutral-ico); flex-shrink: 0; }
+.tool-ico { width: 14px; height: 14px; color: var(--neutral-ico); flex-shrink: 0; }   /* block header icon 14px 统一（R11）*/
 .tool-loader { width: 13px; height: 13px; color: var(--accent); animation: spin 1.4s linear infinite; flex-shrink: 0; }
 .tool-name { color: var(--neutral-fg); }
 .tool-name.running { color: var(--accent); }
 .tool-name.failed { color: var(--neutral-mid); }
 .tool-arg { color: var(--neutral-mid); font-family: var(--font-mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tool-exit { margin-left: auto; font-family: var(--font-mono); font-size: 10px; padding: 2px 6px; border-radius: var(--radius-sm); background: var(--surface-2); color: var(--neutral-mid); }
+.tool-exit { margin-left: auto; font-family: var(--font-mono); font-size: 10px; padding: 2px 6px; border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--neutral-mid); }   /* 面上面：bg-elevated 浮起（N2）*/
 .tool-body { padding: 6px 0 0 16px; }
 .tool-meta { font-size: 11px; color: var(--neutral-dim); font-family: var(--font-mono); margin-bottom: 4px; }
 /* tool-bash 渲染分支（agent 调用的 bash，嵌 tool 块，可折叠）*/
@@ -280,14 +280,14 @@ body {
 .cs-chev { width: 12px; height: 12px; color: var(--neutral-mid); }
 .cs-ico { width: 14px; height: 14px; color: var(--info); }
 .cs-title { font-size: 12px; font-weight: 500; color: var(--neutral-fg); }
-.cs-count { font-size: 10px; padding: 2px 6px; border-radius: var(--radius-sm); background: var(--surface); color: var(--neutral-dim); }
+.cs-count { font-size: 10px; padding: 2px 6px; border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--neutral-dim); }   /* 面上面：bg-elevated（ChangeSetCard bg-surface 上浮起一档）*/
 /* 状态 badge：rounded-sm（非胶囊），与代码 ChangeSetCard.vue:22 一致 */
 .cs-status { font-size: 10px; padding: 2px 6px; border-radius: var(--radius-sm); }
 .cs-status.accumulating { background: var(--accent-soft); color: var(--accent); }
 .cs-status.ready { background: var(--info-soft); color: var(--info); }
 .cs-status.partially-reviewed { background: var(--warn-soft); color: var(--warn); }
 .cs-status.resolved { background: var(--success-soft); color: var(--success); }
-.cs-status.superseded { background: var(--surface); color: var(--neutral-dim); }
+.cs-status.superseded { background: var(--bg-elevated); color: var(--neutral-dim); }   /* 面上面：bg-elevated */
 .cs-stats { margin-left: auto; display: flex; gap: 6px; font-size: 10px; font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
 .cs-stats .add { color: var(--success); }
 .cs-stats .del { color: var(--danger); }
@@ -301,7 +301,7 @@ body {
 .cs-fname { color: var(--neutral-fg); font-family: var(--font-mono); }
 
 /* ── UserBubble（v6：删 border，仅 bg-surface-hover；14-4px 不对称圆角）── */
-.ub-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.ub-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: var(--content-max-w); margin-left: auto; margin-right: auto; width: 100%; }   /* 列内右浮：套进 720 列约束（与 .ms-assistant-col 同宽），气泡在列内贴右缘（design 决策 #11）*/
 .ub-v6 { max-width: 76%; border-radius: 14px 14px 4px 14px; background: var(--surface-hover); padding: 9px 13px; font-size: 13px; line-height: 1.55; color: var(--neutral-fg); }
 .ub-v6.editing { border: 1px solid var(--accent); background: var(--bg-input); box-shadow: 0 0 0 3px var(--accent-ring); border-radius: 14px; padding: 8px; }   /* color-mix 22% 魔数 → --accent-ring token */
 
@@ -309,7 +309,7 @@ body {
 /* 区别于 tool-bash（agent 调用，嵌 tool 块可折叠）*/
 .bob { padding: 8px 0; }
 .bob-head { display: flex; align-items: center; gap: 6px; font-size: 12px; }
-.bob-ico { width: 13px; height: 13px; color: var(--neutral-ico); flex-shrink: 0; }
+.bob-ico { width: 14px; height: 14px; color: var(--neutral-ico); flex-shrink: 0; }   /* block header icon 14px 统一（R11）*/
 .bob-cmd { font-family: var(--font-mono); font-size: 12px; color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .bob-status { font-family: var(--font-mono); font-size: 10px; flex-shrink: 0; }
 .bob-status.running { color: var(--accent); display: inline-flex; align-items: center; gap: 4px; }
@@ -409,7 +409,7 @@ body {
 .bar-spacer { flex: 1; }
 /* 发送位三态：send / stop / spinner */
 .send-slot { width: var(--composer-btn-size); height: var(--composer-btn-size); border-radius: var(--radius); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
-.send-slot svg { width: 15px; height: 15px; }
+.send-slot svg { width: 16px; height: 16px; }   /* 操作图标档 16px（R26/L3.7）*/
 .send-slot.send { background: var(--accent); color: #fff; }
 .send-slot.send:hover { background: var(--accent-hover); }
 .send-slot.send.disabled { background: var(--surface-2); color: var(--neutral-faint); cursor: not-allowed; }
@@ -426,7 +426,7 @@ body {
 .pop-search input { width: 100%; height: 28px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 8px; color: var(--neutral-fg); font-size: 12px; outline: none; }
 .pop-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; font-size: 13px; color: var(--neutral-mid); }
 .pop-item:hover { background: var(--surface-hover); color: var(--neutral-fg); }
-.pop-item.sel { background: var(--accent-soft); color: var(--accent); }
+.pop-item.sel { background: var(--surface); color: var(--accent); }   /* §3.2 列表项型选中（D8）：bg-surface+蓝字，去 accent-soft 蓝染底 */
 .pop-item .ico { width: 14px; height: 14px; flex-shrink: 0; color: var(--neutral-dim); }
 .pop-item.sel .ico { color: var(--accent); }
 .pop-item .check { width: 13px; height: 13px; color: var(--accent); margin-left: auto; opacity: 0; }
@@ -442,7 +442,7 @@ body {
    旧版无 .mid/.dir-inline 子元素，故 HTML 需 Layer 3 改为单行结构；CSS 以 input 版为真值。*/
 .cmd-row-slash { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; font-size: 12px; line-height: 1.4; color: var(--neutral-mid); }
 .cmd-row-slash:hover { background: var(--surface-hover); color: var(--neutral-fg); }
-.cmd-row-slash.sel { background: var(--accent-soft); color: var(--accent); }
+.cmd-row-slash.sel { background: var(--surface); color: var(--accent); }   /* §3.2 列表项型选中（D8）：bg-surface+蓝字，去 accent-soft 蓝染底 */
 .cmd-row-slash .ico { width: 15px; height: 15px; flex-shrink: 0; color: var(--neutral-dim); }
 .cmd-row-slash.sel .ico { color: var(--accent); }
 .cmd-row-slash .name { font-weight: 600; flex-shrink: 0; color: var(--neutral-fg); }
@@ -452,7 +452,7 @@ body {
 /* CommandPopover # 文件行（input 版：单行 icon + basename 加粗 + middot + dir-inline 暗）*/
 .cmd-row-file { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; color: var(--neutral-mid); }
 .cmd-row-file:hover { background: var(--surface-hover); }
-.cmd-row-file.sel { background: var(--accent-soft); }
+.cmd-row-file.sel { background: var(--surface); }   /* §3.2 列表项型选中（D8）*/
 .cmd-row-file .ico { width: 15px; height: 15px; flex-shrink: 0; color: var(--neutral-dim); }
 .cmd-row-file.sel .ico { color: var(--accent); }
 .cmd-row-file .base { font-weight: 600; font-size: 12px; color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }

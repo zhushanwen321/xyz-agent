@@ -93,9 +93,9 @@
 .gui-stats-value.danger { color: var(--danger); }
 .gui-tab-bar { display: flex; gap: 2px; border-bottom: 1px solid var(--border); padding-bottom: 1px; }
 .gui-tab { display: flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: var(--radius-sm) var(--radius-sm) 0 0; font-size: 11px; color: var(--neutral-dim); }
-.gui-tab.active { background: var(--accent-soft); color: var(--accent); }
+.gui-tab.active { background: var(--bg-elevated); color: var(--neutral-fg); }   /* tab 型选中（§3.1）：中性浮起，去 accent-soft 蓝染 */
 .gui-tab.done:not(.active) { color: var(--success); }
-.gui-tab-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+.gui-tab-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }   /* 状态点 7px 统一（N6）*/
 .gui-tab-dot.done { background: var(--success); }
 .gui-tab-dot.pending { background: var(--neutral-dim); opacity: 0.5; }
 .gui-card-box { border-radius: var(--radius-lg); background: var(--surface); overflow: hidden; }   /* 彩色整圈 border → 去 border（v6：靠 bg-soft 整块表达）*/
@@ -151,8 +151,8 @@
 /* ── subagent block（v6：collapsed only，failed 不切 icon 靠颜色表达；去 bg 状态行）── */
 .sa-v6 { padding: 10px 0 8px; margin-bottom: 2px; }
 .sa-hd { display: flex; min-width: 0; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; cursor: pointer; }
-.sa-ico { width: 13px; height: 13px; color: var(--neutral-ico); flex-shrink: 0; }
-.sa-loader { width: 13px; height: 13px; color: var(--accent); animation: spin 1.4s linear infinite; flex-shrink: 0; }
+.sa-ico { width: 14px; height: 14px; color: var(--neutral-ico); flex-shrink: 0; }
+.sa-loader { width: 14px; height: 14px; color: var(--accent); animation: spin 1.4s linear infinite; flex-shrink: 0; }
 .sa-prefix { font-family: var(--font-mono); font-size: 10px; font-weight: 600; color: var(--neutral-fg); margin-right: 2px; }   /* uppercase → normal-case（产品 UI）*/
 .sa-agent { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
 .sa-sep { color: var(--neutral-faint); }
@@ -163,8 +163,8 @@
 /* ── workflow block（v6：collapsed only，failed 不切 icon；GUI 渲染迁至 drawer / extension）── */
 .wf-v6 { padding: 10px 0 8px; margin-bottom: 2px; }
 .wf-hd { display: flex; min-width: 0; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; cursor: pointer; }
-.wf-ico { width: 13px; height: 13px; color: var(--neutral-ico); flex-shrink: 0; }
-.wf-loader { width: 13px; height: 13px; color: var(--accent); animation: spin 1.4s linear infinite; flex-shrink: 0; }
+.wf-ico { width: 14px; height: 14px; color: var(--neutral-ico); flex-shrink: 0; }
+.wf-loader { width: 14px; height: 14px; color: var(--accent); animation: spin 1.4s linear infinite; flex-shrink: 0; }
 .wf-prefix { font-family: var(--font-mono); font-size: 10px; font-weight: 600; color: var(--neutral-fg); margin-right: 2px; }   /* uppercase → normal-case（产品 UI）*/
 .wf-name { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
 .wf-sep { color: var(--neutral-faint); }
@@ -233,7 +233,7 @@
        ================================================================ -->
   <section class="spec" id="s4">
     <div class="spec-head"><span class="spec-num">§4</span><h2 class="spec-title">Block · thinking（思考块）</h2></div>
-    <p class="spec-desc">收起态预览。<b>v6 仅做提亮</b>：预览文本 <code>neutral-dim #6b7280</code> → <code>neutral-mid #9ca3af</code>（过 AA）。<b>行数维持 1 行 ellipsis</b>（60 字符截断 + …，与代码现状一致）。<span style="color:var(--warn);">⚠ 推翻 handoff §4.1「显 2 行」决策</span>——2 行会破坏 turn 内的视觉节奏，1 行 ellipsis 更克制。label 保持 mono。<b>R9</b>：expanded body 也用 <b>neutral-mid</b>（长正文必须过 AA，dim 仅留装饰位；thinking variant 降级排版，MarkdownRenderer 标题用 <code>--reasoning</code> 紫）。</p>
+    <p class="spec-desc">收起态预览。<b>v6 仅做提亮</b>：预览文本 <code>neutral-dim #6b7280</code> → <code>neutral-mid #9ca3af</code>（过 AA）。<b>行数维持 1 行 ellipsis</b>（60 字符截断 + …，与代码现状一致）。<span style="color:var(--warn);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;vertical-align:-0.125em;"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> 推翻 handoff §4.1「显 2 行」决策</span>——2 行会破坏 turn 内的视觉节奏，1 行 ellipsis 更克制。label 保持 mono。<b>R9</b>：expanded body 也用 <b>neutral-mid</b>（长正文必须过 AA，dim 仅留装饰位；thinking variant 降级排版，MarkdownRenderer 标题用 <code>--reasoning</code> 紫）。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> neutral-dim #6b7280 · 1 行 truncate</span>
       <span class="cp cp-v6"><b>v6</b> preview neutral-mid #9ca3af · expanded body neutral-mid（R9，过 AA）</span>
@@ -255,7 +255,7 @@
             <div class="tk-v6">
               <div class="tk-row">
                 <svg class="tk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 18V5"/><path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4"/><path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"/><path d="M17.997 5.125a4 4 0 0 1 2.526 5.77"/><path d="M18 18a4 4 0 0 0 2-7.464"/><path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517"/><path d="M6 18a4 4 0 0 1-2-7.464"/><path d="M6.003 5.125a4 4 0 0 0-2.526 5.77"/></svg>
-                <span class="tk-label">THINK</span>
+                <span class="tk-label">Think</span>
                 <span class="tk-preview">用户要求重构对话流的视觉层，我需要先分析当前的组件结构，确定哪些是表面层的样式调整，哪些涉及到布局变化…</span>
               </div>
             </div>
@@ -267,7 +267,7 @@
             <div class="tk-v6">
               <div class="tk-row">
                 <svg class="tk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 18V5"/><path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4"/><path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"/><path d="M17.997 5.125a4 4 0 0 1 2.526 5.77"/><path d="M18 18a4 4 0 0 0 2-7.464"/><path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517"/><path d="M6 18a4 4 0 0 1-2-7.464"/><path d="M6.003 5.125a4 4 0 0 0-2.526 5.77"/></svg>
-                <span class="tk-label">THINK</span>
+                <span class="tk-label">Think</span>
                 <!-- expanded 态 separator + preview 文字设 invisible（保留占位，Block.vue:24-25）-->
                 <span style="font-size:12px;color:var(--neutral-dim);visibility:hidden;">·</span>
                 <span class="tk-preview" style="visibility:hidden;">（preview 占位，expanded invisible）</span>
@@ -285,7 +285,7 @@
 
     <div class="anno-grid">
       <div class="anno"><b>block padding:</b><br>py-2 (8px 上下)</div>
-      <div class="anno"><b>icon:</b><br>Brain 13px neutral-ico · stroke 1.75 · <b>无 spinner</b>（thinking 块不用 loader）</div>
+      <div class="anno"><b>icon:</b><br>Brain 14px neutral-ico · stroke 1.75 · <b>无 spinner</b>（thinking 块不用 loader）</div>
       <div class="anno"><b>label:</b><br>10px [--text-2xs] mono 600 uppercase tracking-.08em neutral-fg</div>
       <div class="anno"><b>preview 文字:</b><br><span class="old">12px neutral-dim #6b7280</span><br><span class="v6">12px [--text-sm] neutral-mid #9ca3af（仅提亮）</span></div>
       <div class="anno"><b>expanded body:</b><br><span class="v6">12px neutral-mid（R9：长正文过 AA）· MarkdownRenderer variant=thinking（标题用 --reasoning 紫）</span></div>
@@ -436,7 +436,7 @@ added 1 package in 2s</div>
     <div class="anno-grid">
       <div class="anno"><b>两类来源:</b><br><span class="v6">BashOutputBlock（5A，不可折叠）≠ tool-bash（5B，可折叠）</span></div>
       <div class="anno"><b>BashOutputBlock 容器:</b><br>py-2 · <b>无边框无卡片背景</b>（靠 header 语义标识区分）</div>
-      <div class="anno"><b>header:</b><br>SquareTerminal icon 13px neutral-ico · <span class="v6">stroke 1.75（统一，修正 demo 原 2）</span> + 命令 mono 12px neutral-fg</div>
+      <div class="anno"><b>header:</b><br>SquareTerminal icon 14px neutral-ico · <span class="v6">stroke 1.75（统一，修正 demo 原 2）</span> + 命令 mono 12px neutral-fg</div>
       <div class="anno"><b>running:</b><br>双环 loader 12px accent + 取消按钮</div>
       <div class="anno"><b>no-context tag:</b><br><span class="v6">excludeFromContext 时显 border pill（BashOutputBlock.vue:34-38）· rounded-sm border-border neutral-dim · 标记「不进上下文」</span></div>
       <div class="anno"><b>exit 标签:</b><br><span class="v6">exit 0→success绿 / exit N→warn金 / timeout·cancelled→neutral-dim</span></div>
@@ -711,13 +711,13 @@ added 1 package in 2s</div>
       <div class="anno"><b>形态 [v6 改动]:</b><br><span class="v6">background 异步（无 foreground 分支）· collapsed only，无 expanded · 去掉 task 预览/bg 状态行/copy</span></div>
       <div class="anno"><b>点击行为 [v6 改动]:</b><br><span class="v6">整个 block 可点击 → <code>drawer.open('subagent', { subagentId })</code>，drawer 打开 subagent tab 展示该 subagent 完整对话流（不再在对话流内展开）· cursor pointer · hover opacity-80</span></div>
       <div class="anno"><b>header:</b><br>13px [--text-base] font-medium · gap 6px</div>
-      <div class="anno"><b>icon:</b><br>Bot 13px · stroke 1.75 · running 双环 loader · <span class="v6">failed/done 都不切（done 回归中性 icon）</span></div>
+      <div class="anno"><b>icon:</b><br>Bot 14px · stroke 1.75 · running 双环 loader · <span class="v6">failed/done 都不切（done 回归中性 icon）</span></div>
       <div class="anno"><b>prefix:</b><br>「subagent」10px mono 600 uppercase tracking-.08em neutral-fg</div>
       <div class="anno"><b>agent:</b><br>12px mono accent · failed 降 neutral-mid</div>
       <div class="anno"><b>slug:</b><br><span class="v6">12px mono accent（前缀 ·）· 无 slug 则省略 · sep 与 slug</span></div>
       <div class="anno"><b>model:</b><br>11px mono · 「(model · thinking 档位名)」dim · <span class="v6">无 model 则整组省略（含括号）· thinking level 跟在 model 后</span></div>
       <div class="anno"><b>thinking level [枚举]:</b><br><span class="v6">字符串枚举，<b>不是数字</b>：off / minimal / low / medium / high / xhigh / max（pi-preset.ts ThinkingLevel 与 panel/thinking-levels.ts 合集）。展示时显档位名（如 thinking high），不显数字——避免误读为「thinking 3」。minimal 为 pi 侧细档，max 为 UI 最高档（发 pi 的值映射到 xhigh）。</span></div>
-      <div class="anno"><b>running:</b><br>双环 loader 13px accent（替换 Bot icon）</div>
+      <div class="anno"><b>running:</b><br>双环 loader 14px accent（替换 Bot icon）</div>
       <div class="anno"><b>done 态:</b><br><span class="v6">collapsed，回归中性 Bot icon（无 success 绿装饰）；完成结果通知走 §10.5 BgNotifyCard</span></div>
       <div class="anno"><b>failed 色:</b><br><span class="v6">icon + agent + slug 降 neutral-mid（prefix 也降，整体表达失败）</span></div>
       <div class="anno"><b>task 预览 [已移除]:</b><br><span class="old">12px neutral-dim truncate（60 字）第二行</span><br><span class="v6">v6 collapsed only 无展开内容，不在对话流显 task；task 全文看 drawer subagent tab</span></div>
@@ -892,11 +892,11 @@ added 1 package in 2s</div>
       <div class="anno"><b>形态 [v6 改动]:</b><br><span class="v6">collapsed only，无 expanded · 整个 block 是单行精简摘要 · 去 action/runId/args.task 预览</span></div>
       <div class="anno"><b>点击行为 [v6 改动]:</b><br><span class="v6">整个 block 可点击 → <code>drawer.open('workflow', { runId })</code>，drawer 打开 workflow tab 展示该 workflow 的 agent call 列表（不再在对话流内展开）· cursor pointer · hover opacity-80</span></div>
       <div class="anno"><b>header:</b><br>13px [--text-base] font-medium · gap 6px</div>
-      <div class="anno"><b>icon:</b><br>Workflow 13px · stroke 1.75 · running 双环 loader · <span class="v6">failed/done 都不切（done 回归中性 icon）</span></div>
+      <div class="anno"><b>icon:</b><br>Workflow 14px · stroke 1.75 · running 双环 loader · <span class="v6">failed/done 都不切（done 回归中性 icon）</span></div>
       <div class="anno"><b>prefix:</b><br>「workflow」10px mono 600 uppercase neutral-fg</div>
       <div class="anno"><b>name:</b><br><span class="v6">12px mono accent（workflow 脚本名）· 无 name 时只显 slug · failed 降 neutral-mid</span></div>
       <div class="anno"><b>slug:</b><br><span class="v6">12px mono accent（本次运行标识，前缀 ·）· 无 slug 则省略 · sep 与 slug</span><br><span class="old">旧 runId 11px neutral-dim（已去除）</span></div>
-      <div class="anno"><b>running:</b><br>双环 loader 13px accent</div>
+      <div class="anno"><b>running:</b><br>双环 loader 14px accent</div>
       <div class="anno"><b>done 态:</b><br><span class="v6">status=success 无特殊装饰，回归中性 icon（与 failed 对称靠中性色，不显 success 绿）</span></div>
       <div class="anno"><b>failed 色:</b><br><span class="v6">icon + name + slug 降 neutral-mid（prefix 也降，整体表达失败）</span></div>
       <div class="anno"><b>copy 按钮 [已移除]:</b><br><span class="old">absolute 左上角浮层 / block icon 下方内容区顶部行内</span><br><span class="v6">v6 collapsed only 无展开内容，block 本身不带 copy；结果复制走 drawer workflow tab</span></div>
@@ -1128,7 +1128,7 @@ added 1 package in 2s</div>
       </div>
     </div>
 
-    <!-- todo block：list-tree 原语（checkbox 三态 + VERIFY）-->
+    <!-- todo block：list-tree 原语（checkbox 三态 + Verify）-->
     <h3 style="font-size:14px;color:var(--neutral-fg);margin:20px 0 14px;font-weight:500;">12C. todo block · list-tree 原语（checkbox 三态 + VERIFY）</h3>
     <div class="render-frame">
       <div class="panel-stage" style="padding:14px 16px;max-width:var(--content-max-w);margin:0 auto;">

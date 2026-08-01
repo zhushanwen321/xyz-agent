@@ -192,14 +192,14 @@ body {
 .group-title { font-size: var(--text-sm); font-weight: 600; color: var(--neutral-fg); }
 .group-count { font-size: 11px; color: var(--neutral-dim); font-family: var(--font-mono); }
 /* scope pill：复刻资源页 .lp-group-scope（mono · 圆角 999 · letter-spacing .02em）。
-   mandatory=系统强制 → accent（对应资源页 project scope，强语义色）；
-   user=用户安装 → 中性 + inset border（对应资源页 global scope，弱语义色）。 */
+   mandatory=系统强制 → 中性（R17 彩色降级：去 accent，靠 lock icon 表达锁定，不靠彩色底）；
+   user=用户安装 → 纯中性（L3.6 已去内描边，仅中性底；对应资源页 global scope，弱语义色）。 */
 .group-scope {
   font-size: var(--text-2xs); padding: 2px 7px; border-radius: 999px;
   font-family: var(--font-mono); flex-shrink: 0; letter-spacing: .02em;
   display: inline-flex; align-items: center; gap: 4px;
 }
-.group-scope.mandatory { background: var(--accent-soft); color: var(--accent); }
+.group-scope.mandatory { background: var(--surface); color: var(--neutral-mid); }
 .group-scope.user { background: var(--surface); color: var(--neutral-mid); }
 .group-scope svg { width: 11px; height: 11px; }
 .group-aux { margin-left: auto; font-size: 11px; color: var(--neutral-dim); font-family: var(--font-mono); }
@@ -454,7 +454,7 @@ body {
    ================================================================ */
 
 /* scope pill · 项目/全局变体（与 §2 mandatory / §3 user 同形，新增 project/global 两档）
-   project=accent 强语义色（仅当前项目）· global=中性 + inset border（所有项目共享）
+   project=accent 强语义色（仅当前项目）· global=纯中性（所有项目共享）
    与资源页 .lp-group-scope.project / .global 逐字对齐。 */
 .group-scope.project { background: var(--accent-soft); color: var(--accent); }
 .group-scope.global { background: var(--surface); color: var(--neutral-mid); }
@@ -719,7 +719,7 @@ body {
         <div class="anno"><b>tooltip 触发:</b> <span>hover 锁标显「不可禁用/卸载」完整说明</span></div>
         <div class="anno"><b>反 slop:</b> <span class="old">隐藏控件留空</span> → <span class="v6">显式锁定 + 说明</span></div>
         <div class="anno"><b>数据 SSOT:</b> <span>mandatory-extensions.json（9 条 · tier infra/feat）</span></div>
-        <div class="anno"><b>分组头 scope pill:</b> <span class="v6">复刻资源页 .lp-group-scope 范式 · mandatory=accent「系统强制」+ 锁图标 · 与资源页 project scope 同形（强语义色）；不硬加 project/global 维度（extension 配置全局存储）</span></div>
+        <div class="anno"><b>分组头 scope pill:</b> <span class="v6">复刻资源页 .lp-group-scope 范式 · mandatory=中性「系统强制」+ 锁图标（R17 彩色降级：去 accent，靠 lock icon 表达锁定）；不硬加 project/global 维度（extension 配置全局存储）</span></div>
       </div>
     </div>
   </section>
@@ -871,7 +871,7 @@ body {
         <div class="anno"><b>卸载按钮:</b> <span>ghost icon · hover danger-soft + danger · 触发两段式确认 §6</span></div>
         <div class="anno"><b>禁用态:</b> <span>info 块 opacity .6 · 开关 off · 操作仍可用（可再启用/卸载）</span></div>
         <div class="anno"><b>discovery 来源:</b> <span>bd-src info 色 · 不显示卸载（扫描实体非可卸载）</span></div>
-        <div class="anno"><b>分组头 scope pill:</b> <span class="v6">user=中性色 + inset border「用户安装」· 与资源页 global scope 同形（弱语义色）· 与 §2 mandatory accent pill 对偶，视觉二分来源</span></div>
+        <div class="anno"><b>分组头 scope pill:</b> <span class="v6">user=纯中性色「用户安装」· 与资源页 global scope 同形（弱语义色）· 与 §2 mandatory 中性 pill 同形（均中性，靠 lock icon 区分）</span></div>
       </div>
     </div>
   </section>
@@ -1345,7 +1345,7 @@ body {
             <span class="ui-checkbox checked disabled"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
             <span class="scan-path forced">.pi/extensions</span>
             <svg class="scan-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            <span class="group-scope" style="background:var(--surface-2);color:var(--neutral-dim);box-shadow:none;">pi 原生</span>
+            <span class="group-scope" style="background:var(--surface-2);color:var(--neutral-dim);">pi 原生</span>
           </div>
 
           <!-- preset 锁定（.xyz-agent/extensions）：项目级强制目录结构 -->
@@ -1353,7 +1353,7 @@ body {
             <span class="ui-checkbox checked disabled"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
             <span class="scan-path forced">.xyz-agent/extensions</span>
             <svg class="scan-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            <span class="group-scope" style="background:var(--surface-2);color:var(--neutral-dim);box-shadow:none;">强制结构</span>
+            <span class="group-scope" style="background:var(--surface-2);color:var(--neutral-dim);">强制结构</span>
           </div>
 
           <!-- 用户项目目录（可勾选 + ↑↓ + 移除）-->
@@ -1392,7 +1392,7 @@ body {
             <span class="ui-checkbox checked disabled"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
             <span class="scan-path forced">~/.pi/agent/extensions</span>
             <svg class="scan-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            <span class="group-scope" style="background:var(--surface-2);color:var(--neutral-dim);box-shadow:none;">pi 原生</span>
+            <span class="group-scope" style="background:var(--surface-2);color:var(--neutral-dim);">pi 原生</span>
           </div>
 
           <!-- 用户全局目录（已勾选）-->
@@ -1434,7 +1434,7 @@ body {
 
       <div class="anno-grid">
         <div class="anno"><b>容器:</b> <span class="v6">复用 §2/§3 .group-card（bg-card · 10px 圆角 · hairline 分行）· 不嵌套卡片</span></div>
-        <div class="anno"><b>分组头:</b> <span class="v6">复用 .group-head（bg-surface-2 浮起分层）· scope pill project=accent / global=中性+inset border</span></div>
+        <div class="anno"><b>分组头:</b> <span class="v6">复用 .group-head（bg-surface-2 浮起分层）· scope pill project=accent / global=纯中性</span></div>
         <div class="anno"><b>三 tab:</b> <span class="v6">SegmentedTab（design-system：bg-bg-input p-[3px] · active bg-bg-elevated）· extensionDirs/skillDirs/agentDirs 同形列表</span></div>
         <div class="anno"><b>preset 锁定:</b> <span class="v6">.ui-checkbox.checked.disabled + lock 图标 · 锁定在对应组顶部 · 无 ↑↓/移除按钮（不可移不可关）</span></div>
         <div class="anno"><b>用户行:</b> <span>Checkbox（启用/禁用）+ 路径 mono + ↑↓ 移动 + 移除 · hover/focus 显操作组</span></div>

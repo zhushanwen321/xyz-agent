@@ -74,9 +74,11 @@
 
 ## 圆角（C 原仅 3/12，补 8 中间档）
 
+> **v6 预告**：v6 视觉稿体系已将 `--radius-sm` 升至 `6px`（全局默认档），并新增 `--neutral-dim: #7d8494`、`--content-max-w: 720px` 等 token。本文件保留 v3 值作历史参考，v6 真值见 [`v6-spec-tokens.html`](./v6-spec-tokens.html)。实施期 C1 反写后本文件同步更新。
+
 | Token | 值 | 用途 |
 |-------|-----|------|
-| `--radius-sm` | `3px` | 输入框/标签（C） |
+| `--radius-sm` | `3px` | 输入框/标签（C，v6 升至 6px 见上注） |
 | `--radius` | `8px` | 按钮/卡片（补全） |
 | `--radius-lg` | `12px` | 面板/弹层（C） |
 

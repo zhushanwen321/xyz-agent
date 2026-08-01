@@ -20,7 +20,7 @@
   --font-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
   --radius-sm: 6px; --radius: 8px; --radius-lg: 12px;
   --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);
-  --shadow-drawer: -12px 0 24px rgba(0,0,0,0.25);
+  --shadow-drawer: -12px 0 24px rgba(0,0,0,0.16);
 }
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family: var(--font-sans); background: #0e0e11; color: var(--neutral-fg); padding: 20px; font-size: 13px; }
@@ -50,7 +50,7 @@ h1 { font-size: 18px; margin-bottom: 8px; }
 /* mock 舞台：一个 drawer 面板 */
 .stage-row { display: flex; gap: 12px; padding: 16px 20px 20px; }
 .mock-panel { flex: 0 0 200px; background: var(--surface); border-radius: var(--radius); height: 380px; display: flex; align-items: center; justify-content: center; color: var(--neutral-dim); font-size: 12px; }
-.drawer { flex: 1; background: var(--bg); border-radius: var(--radius); box-shadow: var(--shadow-drawer); height: 380px; display: flex; flex-direction: column; overflow: hidden; max-width: 520px; }
+.drawer { flex: 1; background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-drawer); height: 380px; display: flex; flex-direction: column; overflow: hidden; max-width: 520px; }
 
 /* 一级 tab 栏（icon）—— 三种形态共用基础 */
 .drawer-l1 { display: flex; align-items: center; gap: 2px; padding: 6px 8px; }
@@ -95,7 +95,7 @@ h1 { font-size: 18px; margin-bottom: 8px; }
 /* ===== 形态 C：icon 一级 + 面包屑（无二级 tab，单一内容）===== */
 .c-crumb { display: flex; align-items: center; gap: 6px; padding: 8px 12px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 12px; }
 .c-crumb .crumb-sep { color: var(--neutral-faint); }
-.c-crumb .crumb-file { color: var(--neutral-fg); font-family: var(--font-mono); font-size: 11.5px; }
+.c-crumb .crumb-file { color: var(--neutral-fg); font-family: var(--font-mono); font-size: 11px; }
 .c-crumb .crumb-view { margin-left: auto; display: flex; gap: 2px; background: var(--bg-input); border-radius: var(--radius); padding: 3px; }
 .c-crumb .cv-btn { padding: 3px 9px; border-radius: var(--radius-sm); border:0; cursor:pointer; font:inherit; font-size:10px; background:transparent; color: var(--neutral-mid); }
 .c-crumb .cv-btn.on { background: var(--bg-elevated); color: var(--neutral-fg); }
@@ -122,11 +122,11 @@ svg { display:block; }
   <div style="font-size:12px;color:var(--neutral-mid);line-height:1.6;"><b style="color:var(--neutral-fg);">SUPERSEDED · 形态 B 已选定</b>：本文档为早期探索稿（对比 A/B/C 三种形态），数值与最终结论以 <code style="color:var(--accent);">v6-spec-drawer.html</code> 为准。下方「你倾向哪种」等交互仅作历史参照，决策已落地。</div>
 </div>
 <div class="sub">
-  目标：选定 drawer 的「可关闭 tab」交互骨架。<b>注意核实结论</b>：6 个一级 tab 中，只有 <b>detail</b>（文件预览，最强多实例诉求）和 <b>browser</b>（浏览器，中等）天然适合多实例二级 tab；terminal/git/doc/tasks 是单一内容，强行加二级 tab 会变假二级。<br>
+  目标：选定 drawer 的「可关闭 tab」交互骨架。<b>注意核实结论</b>：7 个一级 tab（terminal/browser/git/doc/detail/subagent/workflow，无 tasks）中，只有 <b>detail</b>（文件预览，最强多实例诉求）和 <b>browser</b>（浏览器，中等）天然适合多实例二级 tab；terminal/git/doc/subagent/workflow 是单一内容，强行加二级 tab 会变假二级。<br>
   三种形态展示同一个场景：detail tab 下打开了 3 个文件，当前在第 2 个，要关闭第 3 个。
 </div>
 <div class="note">
-  <b>设计张力提示</b>：你最初说「每个 tab 下面都支持二级 tab」。但核实发现只有 detail/browser 合适。所以形态 B/C 设计为「<b>按需出现</b>二级 tab」——只有当一级 tab 的内容支持多实例时才显示二级 tab 栏；单一内容 tab（terminal/git/tasks）不显示。形态 A 则是所有 tab 统一为可关闭 tab（包括给 terminal/git 硬凑）。看完三种后告诉我你倾向哪种，以及「假二级」能否接受。
+  <b>设计张力提示</b>：你最初说「每个 tab 下面都支持二级 tab」。但核实发现只有 detail/browser 合适。所以形态 B/C 设计为「<b>按需出现</b>二级 tab」——只有当一级 tab 的内容支持多实例时才显示二级 tab 栏；单一内容 tab（terminal/git/subagent/workflow）不显示。形态 A 则是所有 tab 统一为可关闭 tab（包括给 terminal/git 硬凑）。看完三种后告诉我你倾向哪种，以及「假二级」能否接受。
 </div>
 
 <div class="console">
@@ -151,7 +151,7 @@ svg { display:block; }
     <div class="vdesc">取消一级 icon tab，所有打开的面板作为顶部可切换、可关闭的 tab（像浏览器/VS Code 编辑器 tab）。用户可同时打开 detail+git+terminal，在 tab 间切换。点 + 新增。</div>
     <div class="vpros">
       <span class="good">+ 最灵活，真正的多实例</span>
-      <span class="bad">− 6 个一级 tab 的入口在哪？需另设入口（如左缘 icon rail）</span>
+      <span class="bad">− 7 个一级 tab 的入口在哪？需另设入口（如左缘 icon rail）</span>
       <span class="bad">− terminal/git 这种单一内容也要变成 tab，语义牵强</span>
     </div>
   </div>
@@ -180,7 +180,7 @@ svg { display:block; }
 <div class="variant-card" id="form-b">
   <div class="variant-head">
     <h2>形态 B · icon 一级 + 内层二级 tab（IDE 式，按需出现）★推荐</h2>
-    <div class="vdesc">保留顶部一级 icon tab（detail/git/terminal/...）。进入支持多实例的 tab（detail/browser）后，内容区上方出现二级 tab 栏，每个二级 tab 可关闭。单一内容 tab（terminal/git/tasks）<b>不显示</b>二级栏。点 + 在当前一级 tab 下新增实例。</div>
+    <div class="vdesc">保留顶部一级 icon tab（detail/git/terminal/...）。进入支持多实例的 tab（detail/browser）后，内容区上方出现二级 tab 栏，每个二级 tab 可关闭。单一内容 tab（terminal/git/subagent/workflow）<b>不显示</b>二级栏。点 + 在当前一级 tab 下新增实例。</div>
     <div class="vpros">
       <span class="good">+ 一级入口清晰（icon rail 保留）</span>
       <span class="good">+ 二级 tab 按需出现，不强求单一内容 tab 凑数</span>

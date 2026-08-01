@@ -220,7 +220,7 @@ body {
 .seg-tab .seg-item.active { background: var(--bg-elevated); color: var(--neutral-fg); }
 .seg-tab .seg-item svg { width: 12px; height: 12px; }
 .seg-tab .seg-item .count { font-family: var(--font-mono); font-size: 9px; padding: 0 4px; border-radius: 999px; background: var(--surface-2); color: var(--neutral-mid); } /* R26：9px 徽章专用小字（胶囊计数，非正文，低于 --text-2xs 有意为之）*/
-.seg-tab .seg-item.active .count { background: var(--accent-soft); color: var(--accent); }
+.seg-tab .seg-item.active .count { background: var(--surface); color: var(--neutral-fg); }   /* active tab 的 count 保持中性（tab 已 bg-elevated 浮起，count 不再叠 accent-soft 蓝染）*/
 .seg-tab .seg-item.plugin { color: var(--accent); }
 /* sidebar 内容区（plugin view 数据宿主）*/
 .sb-view { background: var(--surface); border-radius: var(--radius); padding: 10px; min-height: 120px; }
@@ -321,7 +321,7 @@ body {
 .gprog-val { margin-left: auto; color: var(--neutral-fg); font-weight: 500; font-variant-numeric: tabular-nums; }
 .gprog-val .gprog-total { color: var(--neutral-dim); }
 .gprog-track { height: 6px; border-radius: var(--radius-sm); background: var(--bg-input); overflow: hidden; }
-/* fill 柔化 55%（插件进度条语义：与对话流 diff 行背景 12% 不同场景，保留独立柔化档；design §2.3 登记）*/
+/* fill 柔化 55%（本稿独立柔化档，待 design 登记）*/
 .gprog-fill { height: 100%; border-radius: var(--radius-sm); transition: width var(--duration-slow) var(--ease); }
 .gprog-fill.f-ok { background: color-mix(in oklch, var(--success) 55%, transparent); }
 .gprog-fill.f-warn { background: color-mix(in oklch, var(--warn) 55%, transparent); }
@@ -374,7 +374,7 @@ body {
 
 /* ============ ANSI 映射表（§8）============ */
 .ansi-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
-.ansi-table th { text-align: left; padding: 8px 12px; font-size: var(--text-xs); color: var(--neutral-dim); font-weight: 500; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--border-strong); }
+.ansi-table th { text-align: left; padding: 8px 12px; font-size: var(--text-xs); color: var(--neutral-dim); font-weight: 500; border-bottom: 1px solid var(--border-strong); }
 .ansi-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 .ansi-table tr:last-child td { border-bottom: 0; }
 .ansi-table .at-name { font-family: var(--font-mono); font-size: var(--text-xs); }
@@ -444,9 +444,9 @@ body {
 
 /* ============ plugin 第 5 独立 tab + 二级 tab（§2 A1 v6 新增）============ */
 /* 一级 Puzzle icon tab（特殊第 5 tab，与 4 个一级 tab 并列但语义独立）*/
-.seg-tab .seg-item.plugin-primary { color: var(--accent); }
-/* v6 active：tab 型 §3.1，bg-elevated 中性浮起（去 accent-soft 蓝染，与其它 tab 范式一致）*/
-.seg-tab .seg-item.plugin-primary.active { background: var(--bg-elevated); color: var(--accent); }
+.seg-tab .seg-item.plugin-primary { color: var(--neutral-mid); }
+/* v6 active：tab 型 §3.1，bg-elevated 中性浮起 + 文字 neutral-fg（统一中性，非 accent 身份色，design §3.7）*/
+.seg-tab .seg-item.plugin-primary.active { background: var(--bg-elevated); color: var(--neutral-fg); }
 .plugin-5th { display: flex; flex-direction: column; gap: 8px; }
 .plugin-5th-label { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--accent); padding: 0 4px; display: flex; align-items: center; gap: 5px; }
 /* 二级 tab 栏（plugin 注册的 view，可关闭/固定）*/
@@ -558,7 +558,7 @@ body {
 
 /* handler 能力表（API → 行为 → 反馈到哪个挂载点）*/
 .cap-api-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
-.cap-api-table th { text-align: left; padding: 9px 12px; font-size: var(--text-xs); color: var(--neutral-dim); font-weight: 500; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--border-strong); }
+.cap-api-table th { text-align: left; padding: 9px 12px; font-size: var(--text-xs); color: var(--neutral-dim); font-weight: 500; border-bottom: 1px solid var(--border-strong); }
 .cap-api-table td { padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
 .cap-api-table tr:last-child td { border-bottom: 0; }
 .cap-api-table .ca-api { font-family: var(--font-mono); font-size: 11px; color: var(--info); white-space: nowrap; }
@@ -1415,7 +1415,7 @@ body {
             <span style="margin-left:auto;font-family:var(--font-mono);font-size:var(--text-2xs);color:var(--accent);">my-ext.deploy</span>
           </div>
           <div style="display:flex;flex-direction:column;gap:4px;">
-            <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--radius-sm);background:var(--accent-soft);color:var(--accent);font-size:var(--text-sm);">
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--radius-sm);background:var(--surface);color:var(--accent);font-size:var(--text-sm);">
               <span style="width:7px;height:7px;border-radius:50%;background:var(--accent);"></span> production（选中）
             </div>
             <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--radius-sm);font-size:var(--text-sm);color:var(--neutral-mid);">
@@ -1476,7 +1476,7 @@ body {
             <div class="overlay-win-bd">
               <div class="ow-prompt">选择目标环境</div>
               <div style="display:flex;flex-direction:column;gap:4px;">
-                <div style="padding:5px 8px;border-radius:var(--radius-sm);background:var(--accent-soft);color:var(--accent);font-size:var(--text-xs);">production（选中）</div>
+                <div style="padding:5px 8px;border-radius:var(--radius-sm);background:var(--surface);color:var(--accent);font-size:var(--text-xs);">production（选中）</div>
                 <div style="padding:5px 8px;border-radius:var(--radius-sm);color:var(--neutral-mid);font-size:var(--text-xs);">staging</div>
               </div>
             </div>

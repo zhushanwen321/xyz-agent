@@ -53,7 +53,6 @@ v3/<模块>/draft-*  ← 验证：模块的可视化原型（HTML）
 | [`v6-spec-input.html`](./v6-spec-input.html) | 输入区（Composer）视觉稿 |
 | [`v6-spec-blocks.html`](./v6-spec-blocks.html) | 消息块族（toolcall/file/diff 等）视觉稿 |
 | [`v6-spec-plugin-rendering.html`](./v6-spec-plugin-rendering.html) | plugin 渲染区视觉稿 |
-| [`v6-spec-settings.html`](./v6-spec-settings.html) | settings（全屏覆盖）总视觉稿 |
 | [`v6-spec-settings-shell.html`](./v6-spec-settings-shell.html) | settings shell 视觉稿 |
 | [`v6-spec-settings-provider.html`](./v6-spec-settings-provider.html) | settings — provider 视觉稿 |
 | [`v6-spec-settings-extension.html`](./v6-spec-settings-extension.html) | settings — extension 视觉稿 |
@@ -64,7 +63,7 @@ v3/<模块>/draft-*  ← 验证：模块的可视化原型（HTML）
 
 | 文件 | 用途 |
 |------|------|
-| `v6-spec-base.css` | 对话流共享 CSS（L2.1 规划中，抽取以根治四文件复制漂移） — *规划中，尚未创建* |
+| `v6-spec-base.css` | 对话流共享 CSS（对话流四文件 container/blocks/content/input 共享，根治复制漂移） |
 | [`v6-demo.html`](./v6-demo.html) | 综合交互 demo（验收 SSOT） |
 | [`v6-drawer-tabs-demo.html`](./v6-drawer-tabs-demo.html) | drawer tabs 交互原型 |
 | [`v6-plugin-max-demo.html`](./v6-plugin-max-demo.html) | plugin 最大化交互原型 |

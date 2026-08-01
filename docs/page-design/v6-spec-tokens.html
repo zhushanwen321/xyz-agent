@@ -340,7 +340,7 @@ body {
   width: 72px;
   height: 72px;
   margin: 0 auto 14px;
-  background: linear-gradient(135deg, var(--accent), var(--info));
+  background: var(--accent);
   border: 1px solid var(--border-strong);
 }
 .radius-name { font-size: var(--text-sm); color: var(--neutral-fg); font-weight: 500; margin-bottom: 2px; }
@@ -468,7 +468,7 @@ body {
 .content-col-marker {
   position: absolute;
   top: 0; bottom: 0;
-  border-left: 1px dashed var(--accent-ring);
+  border-left: 1px dashed var(--border-strong);
 }
 .ccm-left { left: calc(50% - var(--content-max-w) / 2); }
 .ccm-right { right: calc(50% - var(--content-max-w) / 2); }
@@ -1033,6 +1033,7 @@ body {
         <tr><td class="z-name">--z-popover</td><td class="z-val">10</td><td class="z-use">popover / dropdown menu / tooltip</td></tr>
         <tr><td class="z-name">--z-overlay</td><td class="z-val">20</td><td class="z-use">overlay（AskUserOverlay、SideDrawer 抽屉）</td></tr>
         <tr><td class="z-name">--z-modal</td><td class="z-val">1000</td><td class="z-use">modal（SearchModal、FullSettingsOverlay、ConfirmDialog）</td></tr>
+        <tr><td class="z-name" style="color:var(--neutral-dim);">（无 token）</td><td class="z-val" style="color:var(--warn);">9999</td><td class="z-use">Toast · z-9999 固定值例外（跨 modal 层级最顶显示，design §5.2 登记）</td></tr>
       </tbody>
     </table>
     <div class="anno-row">
@@ -1081,7 +1082,7 @@ body {
       </div>
     </div>
     <div class="anno-row">
-      <div class="anno"><b>stroke-width:</b> <span>统一 1.75（v6 决策，修正注释声称 1.7 实际 lucide 默认 2 的不一致；双环 loader SVG 1.7 保留）</span></div>
+      <div class="anno"><b>stroke-width:</b> <span>统一 1.75（v6 决策，修正注释声称 1.7 实际 lucide 默认 2 的不一致；双环 loader SVG stroke-width 1.75（统一，design §4.1））</span></div>
       <div class="anno"><b>color:</b> <span>默认 --neutral-ico，hover --neutral-ico-hover，状态色填充例外</span></div>
     </div>
   </section>

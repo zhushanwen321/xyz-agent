@@ -192,8 +192,8 @@ body {
 }
 /* nav（容器，与 §2 共享）—— w-220 bg-sunken 无 border-r */
 .fs-nav { flex: none; width: 220px; display: flex; flex-direction: column; gap: 1px; background: var(--bg-sunken); padding: 8px; }
-/* 内容列容器 —— bg-surface 滚动区 */
-.fs-content { flex: 1; min-width: 0; background: var(--surface); display: flex; flex-direction: column; overflow: hidden; }
+/* 内容列容器 —— bg 底（bg-card 卡片浮起，surface 会让卡片下沉） */
+.fs-content { flex: 1; min-width: 0; background: var(--bg); display: flex; flex-direction: column; overflow: hidden; }
 .fs-head {
   flex: none; height: 44px; display: flex; align-items: center; gap: 10px;
   padding: 0 14px; border-bottom: 1px solid var(--border);
@@ -255,7 +255,7 @@ body {
 .nav-item .ni-label { flex: 1; min-width: 0; }
 /* count = 中性圆点（bg-surface + neutral-dim，非 accent badge） */
 .nav-item .ni-count { font-family: var(--font-mono); font-size: 10px; color: var(--neutral-dim); background: var(--surface); padding: 1px 6px; border-radius: 999px; flex-shrink: 0; }
-.nav-item.active .ni-count { background: var(--accent-soft); color: var(--accent); }
+.nav-item.active .ni-count { background: var(--surface); color: var(--neutral-dim); }
 .nav-item .ni-link { width: 12px; height: 12px; color: var(--neutral-faint); flex-shrink: 0; opacity: 0; transition: opacity var(--duration-fast); }
 .nav-item:hover .ni-link { opacity: 1; }
 
@@ -276,15 +276,14 @@ body {
 .cct-r { right: calc(50% - var(--content-max-w) / 2 - 8px); transform: translateX(100%); }
 
 /* 标题区（随滚动：default 贴顶 sticky，scrolled 收缩） */
-.page-head { padding: 0 0 16px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+.page-head { padding: 0 0 16px; margin-bottom: 20px; }
 .page-head .ph-title { font-size: 20px; font-weight: 600; color: var(--neutral-fg); letter-spacing: -0.01em; }
 .page-head .ph-desc { font-size: 13px; color: var(--neutral-mid); margin-top: 2px; }
-/* scrolled 态（粘顶变体） */
+/* scrolled 态（粘顶变体）—— 去 border-b 改 bg-elevated 浮起分层（§3.4） */
 .page-head.sticky {
   position: sticky; top: 0; z-index: var(--z-sticky);
-  background: var(--surface); padding: 12px 0;
+  background: var(--bg-elevated); padding: 12px 0;
   /* 收缩：desc 隐藏，title 缩小 */
-  border-bottom: 1px solid var(--border);
 }
 .page-head.sticky .ph-desc { display: none; }
 .page-head.sticky .ph-title { font-size: 15px; }
@@ -413,7 +412,7 @@ body {
   font-size: 13px; color: var(--neutral-fg); cursor: pointer;
 }
 .ui-select-opt:hover { background: var(--surface-hover); }
-.ui-select-opt.selected { background: var(--accent-soft); color: var(--accent); }
+.ui-select-opt.selected { background: var(--surface); color: var(--accent); }   /* §3.2 列表项型选中（D8）：bg-surface+蓝字 */
 .ui-select-opt .uso-check { width: 14px; height: 14px; opacity: 0; }
 .ui-select-opt.selected .uso-check { opacity: 1; }
 
@@ -752,7 +751,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s3">
     <div class="spec-head"><span class="spec-num">§3</span><h2 class="spec-title">内容列 · max-w-720 + 标题随滚动</h2></div>
-    <p class="spec-desc">右侧详情区 <code>flex-1 overflow-hidden</code>，内含 ScrollArea。内容列 <code>max-w-720 mx-0 px-24</code>（左对齐不居中，因 nav 占左 200px，视觉重心已偏左，居中反而失衡）。标题区随滚动：default 态 desc 完整展示；滚动后 sticky 贴顶收缩（desc 隐藏、title 缩小），常驻 <code>border-b</code> 保持上下文。</p>
+    <p class="spec-desc">右侧详情区 <code>flex-1 overflow-hidden</code>，内含 ScrollArea。内容列 <code>max-w-720 mx-0 px-24</code>（左对齐不居中，因 nav 占左 220px，视觉重心已偏左，居中反而失衡）。标题区随滚动：default 态 desc 完整展示；滚动后 sticky 贴顶收缩（desc 隐藏、title 缩小），去 <code>border-b</code> 改 <code>bg-elevated</code> 浮起分层保持上下文（§3.4）。</p>
     <div class="change-points">
       <span class="cp cp-v6"><b>列宽</b> 720px 左对齐</span>
       <span class="cp cp-key"><b>交互</b> 标题随滚动收缩</span>
@@ -786,7 +785,7 @@ body {
               </div>
             </div>
           </div>
-          <div class="anno" style="margin-top:12px;"><b>page-head:</b><br>title 20px/600 · desc 13px/mid<br>padding-bottom 16 · border-b<br>margin-bottom 20</div>
+          <div class="anno" style="margin-top:12px;"><b>page-head:</b><br>title 20px/600 · desc 13px/mid<br>padding-bottom 16 · 去 border-b<br>margin-bottom 20</div>
         </div>
 
         <!-- scrolled 态（sticky 收缩）-->
@@ -810,7 +809,7 @@ body {
               </div>
             </div>
           </div>
-          <div class="anno" style="margin-top:12px;"><b>page-head.sticky:</b><br>position sticky · top-0<br>z-sticky [1] · bg-surface 不透明<br>title 缩 15px · desc 隐藏<br>padding 收 12 · border-b 常驻</div>
+          <div class="anno" style="margin-top:12px;"><b>page-head.sticky:</b><br>position sticky · top-0<br>z-sticky [1] · bg-elevated 浮起<br>title 缩 15px · desc 隐藏<br>padding 收 12 · 去 border-b</div>
         </div>
       </div>
     </div>
@@ -818,7 +817,7 @@ body {
     <div class="anno-grid">
       <div class="anno"><b>容器:</b><br>flex-1 · min-w-0<br>overflow-hidden · flex-col<br>ScrollArea min-h-0 flex-1</div>
       <div class="anno"><b>内容列:</b><br>max-w-720 [content-max-w]<br>mx-0 <span class="v6">左对齐</span><br>px-24 · py-16</div>
-      <div class="anno"><b>左对齐理由:</b><br>nav 占左 200px，视觉重心偏左<br>居中会右移失衡<br>与对话流 assistant 列对齐</div>
+      <div class="anno"><b>左对齐理由:</b><br>nav 占左 220px，视觉重心偏左<br>居中会右移失衡<br>与对话流 assistant 列对齐</div>
       <div class="anno"><b>滚动触发:</b><br>scrollTop > 8px → 加 sticky class<br>IntersectionObserver 监听 sentinel<br>或 scroll 事件节流</div>
       <div class="anno"><b>sticky 底色:</b><br>bg-surface <span class="v6">不透明</span><br>禁用 bg-surface/95 + backdrop-blur<br>（滚动透出文字成灰雾）</div>
       <div class="anno"><b>nav 切换:</b><br>切 nav → scrollTop 重置 0<br>page-head 回 default 态<br>新 view 内容淡入 120ms</div>
@@ -830,7 +829,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s4">
     <div class="spec-head"><span class="spec-num">§4</span><h2 class="spec-title">分组卡片 · bg-card + 10px + 去 border</h2></div>
-    <p class="spec-desc">设置分组用 <code>bg-card</code>（#22242c，介于 bg 与 surface 之间，§5 明度梯度）+ <code>radius-8</code> + <code>p-10</code>。<span class="v6">去 border</span>：靠 bg-card 与 surface 的明度差（Δ≈5%）表达边界，不画 border（减少视觉噪音）。组内多行用 <code>hairline</code>（1px border）分隔。交互：可选展开/折叠（gh-collapse 按钮 = Button ghost）。</p>
+    <p class="spec-desc">设置分组用 <code>bg-card</code>（#22242c，介于 bg 与 surface 之间，§5 明度梯度）+ <code>10px</code> 圆角 + <code>p-10</code>。<span class="v6">去 border</span>：靠 bg-card 与 surface 的明度差（Δ≈5%）表达边界，不画 border（减少视觉噪音）。组内多行用 <code>hairline</code>（1px border）分隔。交互：可选展开/折叠（gh-collapse 按钮 = Button ghost）。</p>
     <div class="change-points">
       <span class="cp cp-v6"><b>背景</b> bg-card #22242c</span>
       <span class="cp cp-v6"><b>去 border</b> 靠明度差</span>

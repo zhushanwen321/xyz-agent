@@ -51,16 +51,16 @@
 
 /* ④ 压缩中提示（abs，shadow，bg-surface）*/
 /* [v6 统一] 瞬时浮层统一骨架：rounded-md bg-surface shadow-sm border border-border/50 · flex items-center gap-2 px-3 py-2 */
-.ms-compact { position: absolute; left: 20px; right: 20px; z-index: 10; display: flex; min-width: 0; align-items: center; gap: 8px; border-radius: var(--radius); border: 1px solid color-mix(in oklch, var(--neutral-faint) 50%, transparent); background: var(--surface); padding: 8px 12px; box-shadow: var(--shadow-2); }
+.ms-compact { position: absolute; left: 20px; right: 20px; z-index: 10; display: flex; min-width: 0; align-items: center; gap: 8px; border-radius: var(--radius); border: 1px solid color-mix(in oklch, var(--border) 50%); background: var(--surface); padding: 8px 12px; box-shadow: var(--shadow-2); }
 .ms-compact svg { width: 12px; height: 12px; color: var(--neutral-mid); flex-shrink: 0; animation: spin 1s linear infinite; }
 .ms-compact .ms-compact-text { flex: 1; min-width: 0; font-size: 12px; color: var(--neutral-mid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ⑤ dispatching 空窗期（abs，accent Loader2）*/
-.ms-dispatch { position: absolute; left: 20px; right: 20px; z-index: 10; display: flex; min-width: 0; align-items: center; gap: 8px; border-radius: var(--radius); border: 1px solid color-mix(in oklch, var(--neutral-faint) 50%, transparent); background: var(--surface); padding: 8px 12px; box-shadow: var(--shadow-2); font-size: 12px; color: var(--neutral-mid); }
+.ms-dispatch { position: absolute; left: 20px; right: 20px; z-index: 10; display: flex; min-width: 0; align-items: center; gap: 8px; border-radius: var(--radius); border: 1px solid color-mix(in oklch, var(--border) 50%); background: var(--surface); padding: 8px 12px; box-shadow: var(--shadow-2); font-size: 12px; color: var(--neutral-mid); }
 .ms-dispatch svg { width: 12px; height: 12px; color: var(--accent); flex-shrink: 0; animation: spin 1s linear infinite; }
 
 /* [v6 统一] 瞬时浮层对比帧：静态（非 abs）统一卡片骨架，凸显同骨架 + leading icon 差异 */
-.ms-cmp { display: flex; align-items: center; gap: 8px; border-radius: var(--radius); border: 1px solid color-mix(in oklch, var(--neutral-faint) 50%, transparent); background: var(--surface); padding: 8px 12px; box-shadow: var(--shadow-2); font-size: 12px; color: var(--neutral-mid); }
+.ms-cmp { display: flex; align-items: center; gap: 8px; border-radius: var(--radius); border: 1px solid color-mix(in oklch, var(--border) 50%); background: var(--surface); padding: 8px 12px; box-shadow: var(--shadow-2); font-size: 12px; color: var(--neutral-mid); }
 .ms-cmp svg { width: 12px; height: 12px; flex-shrink: 0; }
 .ms-cmp .cmp-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-cmp .cmp-text b { font-weight: 550; color: var(--neutral-fg); }
@@ -83,7 +83,7 @@
 
 /* ⑦ ForkNotice（info-soft 底 + border + radius）*/
 /* [v6 统一] ForkNotice 改用统一卡片骨架：bg-surface（原 bg-info-soft 去除）· info 色只落在 GitFork icon + 查看链接 */
-.fn { display: flex; align-items: center; gap: 8px; border-radius: var(--radius); border: 1px solid color-mix(in oklch, var(--neutral-faint) 50%, transparent); background: var(--surface); padding: 8px 12px; box-shadow: var(--shadow-2); }
+.fn { display: flex; align-items: center; gap: 8px; border-radius: var(--radius); border: 1px solid color-mix(in oklch, var(--border) 50%); background: var(--surface); padding: 8px 12px; box-shadow: var(--shadow-2); }
 .fn svg { width: 14px; height: 14px; color: var(--info); flex-shrink: 0; }
 .fn .gitfork-ico { color: var(--info); }
 .fn .fn-text { flex: 1; min-width: 0; font-size: 12px; color: var(--neutral-fg); line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -188,10 +188,10 @@
               <div style="font-size:13px;color:var(--neutral-fg);line-height:1.6;padding:8px 0;">这是 assistant 的正文。无论 panel 多宽，正文都约束在 720px 居中列内，对标 Linear/Claude 的阅读宽度。TurnMeta / trace / summary / ChangeSet 全部落在此列内。</div>
             </div>
           </div>
-          <!-- user turn（右浮窄气泡，不进 720 列）-->
+          <!-- user turn（右浮窄气泡，在 720 列内右浮）-->
           <div class="ms-turn" style="margin-top:14px;">
             <div class="ub-wrap">
-              <div class="ub-v6">用户消息保持右浮窄气泡（max-w 76%），不进入 assistant 居中列，保留用户/助手视觉对称。</div>
+              <div class="ub-v6">用户消息保持右浮窄气泡（max-w 76%），在 assistant 居中列内右浮，保留用户/助手视觉对称。</div>
             </div>
           </div>
         </div>
@@ -202,7 +202,7 @@
       <div class="anno"><b>ms-scroll padding:</b><br><span class="old">px-5 pt-5 (20px)</span> <span class="v6">→ 不变</span></div>
       <div class="anno"><b>turn gap:</b><br><span class="old">gap-3.5 + hr border-t</span> <span class="v6">→ gap-3.5，删 hr</span></div>
       <div class="anno"><b>assistant 列宽:</b><br><span class="old">self-stretch 满宽</span> <span class="v6">→ mx-auto max-w-720px</span></div>
-      <div class="anno"><b>UserBubble:</b><br><span class="v6">保持 items-end 右浮 max-w-76%（不进 720 列）</span></div>
+      <div class="anno"><b>UserBubble:</b><br><span class="v6">保持 items-end 右浮 max-w-76%（在 720 列内右浮，对齐 design 决策 #11）</span></div>
       <div class="anno"><b>滚动条:</b><br><span class="v6">宽 8px · thumb border-strong · 贴右缘</span></div>
       <div class="anno"><b>落点:</b><br>MessageStream.vue · Turn.vue:20 group/ai div</div>
       <div class="anno"><b>虚拟列表:</b><br>virtua &lt;Virtualizer&gt; · :data renderItems · :item-size 200（估算 hint）· :shift 顶部插入</div>

@@ -202,6 +202,8 @@ body {
 .sb-navitem .lbl { flex: 1; }
 .sb-navitem kbd { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-dim); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 1px 6px; }
 .sb-hr { height: 1px; background: var(--border); margin: 8px 10px; }
+/* .sb-overview 仅用于 §4.4 DEPRECATED tombstone 演示（已移除的 Overview 入口，删除线展示）。
+   Overview 已移除（D3），产品代码不再渲染此组件。tombstone 删除后可一并删此 CSS。*/
 .sb-overview { display: flex; align-items: center; gap: 10px; padding: 6px 8px; margin-bottom: 4px; border-radius: var(--radius-sm); font-size: var(--text-sm); color: var(--neutral-mid); cursor: pointer; }
 .sb-overview:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 .sb-overview svg { width: 15px; height: 15px; color: var(--neutral-dim); }
@@ -220,8 +222,8 @@ body {
 .seg-item.act { background: var(--bg-elevated); color: var(--neutral-fg); }
 .seg-item.act .seg-cnt { color: var(--neutral-mid); }
 .seg-item.act.def-active-demo { /* 占位 */ }
-/* running badge（右上角 6px accent 圆点）*/
-.seg-badge { position: absolute; right: 6px; top: 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+/* running badge（右上角 7px accent 圆点）*/
+.seg-badge { position: absolute; right: 6px; top: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .seg-badge.pulse { animation: pulse-accent 1.8s ease-in-out infinite; }
 
 /* ── §3 SessionItem（v6：7px 圆点 + bg+蓝字选中态 + ghost 操作）── */
@@ -236,7 +238,7 @@ body {
 .si-dot.s-waiting { background: var(--warn); }
 .si-dot.s-error { background: var(--danger); }
 .si-dot.s-neutral { background: var(--neutral-dim); opacity: .5; }
-.si-unread { position: absolute; left: -2px; top: -2px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.si-unread { position: absolute; left: -2px; top: -2px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .si-main { min-width: 0; flex: 1; }
 .si-label { font-size: var(--text-sm); line-height: 1.35; color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .si.act .si-label { color: var(--accent); }        /* v6 §3.2：蓝字 */
@@ -282,12 +284,12 @@ body {
 .fg-item:hover { background: var(--surface-hover); }
 .fg-item.fresh { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-ring); }
 .fg-dot-wrap { position: relative; flex-shrink: 0; display: flex; }
-.fg-dot { width: 5px; height: 5px; border-radius: 50%; }
+.fg-dot { width: 7px; height: 7px; border-radius: 50%; }
 .fg-dot.running { background: var(--accent); animation: pulse-accent 1.8s ease-in-out infinite; }
 .fg-dot.done { background: var(--success); }
 .fg-dot.error { background: var(--danger); }
 .fg-dot.stopped { background: var(--neutral-dim); opacity: .5; }
-.fg-dot.unread-ring { position: absolute; right: -4px; top: -4px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); }
+.fg-dot.unread-ring { position: absolute; right: -4px; top: -4px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); }
 .fg-main { min-width: 0; flex: 1; }
 .fg-label { font-size: var(--text-sm); line-height: 1.3; color: var(--neutral-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fg-meta { margin-top: 2px; display: flex; align-items: center; gap: 4px; }
@@ -475,7 +477,7 @@ body {
     <p class="doc-sub">覆盖 §4.2 侧栏全部组件：容器底色（bg 画布色）/ SegmentedTab 新范式 / SessionItem（7px 圆点 + bg 蓝字选中态）/ 组标题（去 uppercase）/ ForkGroup（去嵌套卡片）/ FileView 文件树（缩进 10px gap 4px）/ SubagentList + WorkflowList / 底部用户区（头像纯色）。每个组件展示 v6 目标态 + 全状态变体 + px/token 标注。</p>
     <div class="doc-meta">
       <span><b>SSOT</b> v6-design.md §4.2 + §3.1/§3.2/§3.3/§3.4</span>
-      <span><b>4 tab</b> sessions / files / subagents / workflows</span>
+      <span><b>5 tab</b> sessions / files / subagents / workflows / plugin</span>
       <span><b>核心范式</b> 选中态 bg+蓝字无左条 · 7px 圆点状态 · 文件树紧凑</span>
       <span><b>token</b> 见 v6-spec-tokens.html</span>
     </div>
@@ -515,7 +517,7 @@ body {
             </div>
             <span class="upd">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
-              <span style="position:relative;">可升级<span style="position:absolute;right:-2px;top:-2px;width:5px;height:5px;border-radius:50%;background:var(--danger);"></span></span>
+              <span style="position:relative;">可升级<span style="position:absolute;right:-2px;top:-2px;width:7px;height:7px;border-radius:50%;background:var(--danger);"></span></span>
             </span>
           </div>
           <div class="sb-nav">
@@ -553,6 +555,10 @@ body {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6"/><rect x="15" y="15" width="6" height="6"/><path d="M9 6h6a2 2 0 0 1 2 2v7"/></svg>
               <span class="seg-cnt">1</span>
               <span class="seg-badge pulse"></span>
+            </div>
+            <div class="seg-item def" title="plugin">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg>
+              <span class="seg-cnt">2</span>
             </div>
           </div>
           <!-- 子视图区（占位示意 sessions）-->
@@ -593,6 +599,7 @@ body {
       <div class="anno"><b>宽度:</b><br>w-[300px]（不变）· 折叠态 w-0 opacity-0</div>
       <div class="anno"><b>结构分层:</b><br>Brand → nav → SegmentedTab → 子视图 → 用户区<br>（Overview 入口已移除，§4.4 DEPRECATED）</div>
       <div class="anno"><b>SplitterResizeHandle:</b><br><span class="v6">透明化（仅 hover/drag 显 accent）</span></div>
+      <div class="anno"><b>kbd 保留 border-strong:</b><br>物理按键语义，非容器 border，§5.1 去 border 不覆盖</div>
     </div>
   </section>
 
@@ -601,7 +608,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s2">
     <div class="spec-head"><span class="spec-num">§2</span><h2 class="spec-title">SegmentedTab 新范式</h2></div>
-    <p class="spec-desc">icon-only 4 tab 等宽均分（sessions/files/subagents/workflows），只显 icon + count，label 收进 title（§3.1）。v6 核心改动：外层容器 <code>bg-bg-input rounded-lg p-[3px]</code>，内项无边框；active 用 <code>bg-bg-elevated text-neutral-fg</code> 中性浮起（去 <code>accent-soft</code> 蓝染底），hover <code>text-neutral-fg</code>。count 数字随 active/default 降权；running badge（右上角 6px accent 圆点）仅 running&gt;0 亮。</p>
+    <p class="spec-desc">icon-only 5 tab 等宽均分（sessions/files/subagents/workflows/plugin，第 5 tab 见 v6-spec-plugin-rendering.html §2），只显 icon + count，label 收进 title（§3.1）。v6 核心改动：外层容器 <code>bg-bg-input rounded-lg p-[3px]</code>，内项无边框；active 用 <code>bg-bg-elevated text-neutral-fg</code> 中性浮起（去 <code>accent-soft</code> 蓝染底），hover <code>text-neutral-fg</code>。count 数字随 active/default 降权；running badge（右上角 7px accent 圆点）仅 running&gt;0 亮。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> 每项 border-box · active accent-soft 蓝染底</span>
       <span class="cp cp-v6"><b>v6</b> 内项无边框 · active bg-elevated 中性浮起</span>
@@ -631,6 +638,10 @@ body {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6"/><rect x="15" y="15" width="6" height="6"/><path d="M9 6h6a2 2 0 0 1 2 2v7"/></svg>
               <span class="seg-cnt">1</span>
             </div>
+            <div class="seg-item def" title="plugin">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg>
+              <span class="seg-cnt">2</span>
+            </div>
           </div>
         </div>
       </div>
@@ -656,6 +667,10 @@ body {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6"/><rect x="15" y="15" width="6" height="6"/><path d="M9 6h6a2 2 0 0 1 2 2v7"/></svg>
               <span class="seg-cnt">1</span>
             </div>
+            <div class="seg-item def" title="plugin">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg>
+              <span class="seg-cnt">2</span>
+            </div>
           </div>
         </div>
       </div>
@@ -668,6 +683,7 @@ body {
             <div class="seg-item def"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
             <div class="seg-item def"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg></div>
             <div class="seg-item def"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6"/><rect x="15" y="15" width="6" height="6"/><path d="M9 6h6a2 2 0 0 1 2 2v7"/></svg></div>
+            <div class="seg-item def" title="plugin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg></div>
           </div>
         </div>
       </div>
@@ -679,7 +695,7 @@ body {
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--neutral-fg)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
             <span class="seg-badge pulse" style="right:8px;top:8px;"></span>
           </div>
-          <span class="anno" style="padding-top:0;"><b>running badge:</b> 6px accent 圆点 · 右上角 absolute · 仅 running&gt;0 亮（脉冲 1.8s）<br><b>count badge:</b> mono 10px · active neutral-mid / default neutral-dim opacity-70</span>
+          <span class="anno" style="padding-top:0;"><b>running badge:</b> 7px accent 圆点 · 右上角 absolute · 仅 running&gt;0 亮（脉冲 1.8s）<br><b>count badge:</b> mono 10px · active neutral-mid / default neutral-dim opacity-70</span>
         </div>
       </div>
     </div>
@@ -691,9 +707,9 @@ body {
       <div class="anno"><b>active 文字:</b><br><span class="old">text-accent</span> <span class="v6">→ text-neutral-fg</span></div>
       <div class="anno"><b>hover:</b><br><span class="v6">text-neutral-fg（不变底）</span></div>
       <div class="anno"><b>圆角:</b><br>内项 var(--radius-sm) 6px</div>
-      <div class="anno"><b>icon:</b><br>15px · stroke-width 1.75 · 等宽均分 flex-1<br>MessageSquare · File · Bot · Workflow</div>
+      <div class="anno"><b>icon:</b><br>15px · stroke-width 1.75 · 等宽均分 flex-1<br>MessageSquare · File · Bot · Workflow · Puzzle(plugin)</div>
       <div class="anno"><b>count:</b><br>mono 10px · active opacity / default opacity-70</div>
-      <div class="anno"><b>running badge:</b><br>6px · bg-accent · 右上角 · 仅 running&gt;0</div>
+      <div class="anno"><b>running badge:</b><br>7px · bg-accent · 右上角 · 仅 running&gt;0</div>
       <div class="anno"><b>落点:</b><br>SegmentedTab.vue:7-32</div>
     </div>
   </section>
@@ -848,7 +864,7 @@ body {
       <div class="anno"><b>padding:</b><br>px-2 py-[7px]（不变）· rounded-md</div>
       <div class="anno"><b>label:</b><br>12px / 1.35 · truncate</div>
       <div class="anno"><b>sub/time:</b><br>mono 10px · neutral-dim</div>
-      <div class="anno"><b>未读 badge:</b><br>6px accent 圆点 · 状态点左上角</div>
+      <div class="anno"><b>未读 badge:</b><br>7px accent 圆点 · 状态点左上角</div>
       <div class="anno"><b>dead:</b><br>opacity-50（仍可点击恢复）</div>
       <div class="anno"><b>落点:</b><br>SessionItem.vue:9-101</div>
     </div>
@@ -1036,9 +1052,9 @@ body {
       <div class="anno"><b>容器:</b><br><span class="old">border + bg-accent/5 rounded</span> <span class="v6">→ 无 border 无染底，padding-left 缩进</span></div>
       <div class="anno"><b>折叠头:</b><br>chev + GitFork 11px · accent 文字 · normal-case</div>
       <div class="anno"><b>「分支 N」pill:</b><br><span class="old">bg-accent-soft text-accent</span> <span class="v6">→ text-neutral-dim 无底色</span></div>
-      <div class="anno"><b>pill 圆角:</b><br>3px · mono var(--text-2xs) [10px，原 9px 入 scale] font-semibold</div>
-      <div class="anno"><b>分支状态点:</b><br>5px · running=accent 脉冲 / done=success / error=danger / stopped=dim.5</div>
-      <div class="anno"><b>未读 ring:</b><br>5px accent · 状态点右上 · ring-2 ring-bg</div>
+      <div class="anno"><b>pill 圆角:</b><br>6px · mono var(--text-2xs) [10px，原 9px 入 scale] font-semibold</div>
+      <div class="anno"><b>分支状态点:</b><br>7px · running=accent 脉冲 / done=success / error=danger / stopped=dim.5</div>
+      <div class="anno"><b>未读 ring:</b><br>7px accent · 状态点右上 · ring-2 ring-bg</div>
       <div class="anno"><b>fresh 高亮:</b><br>bg-accent-soft + inset ring-accent-ring · 3.2s 淡出</div>
       <div class="anno"><b>stop 确认:</b><br><span class="old">border border-danger bg-danger</span> <span class="v6">→ 仅 bg-danger</span></div>
       <div class="anno"><b>分支项:</b><br>px-2 py-[6px] · hover bg-surface-hover</div>

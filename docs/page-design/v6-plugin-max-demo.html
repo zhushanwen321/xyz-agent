@@ -172,13 +172,13 @@ body {
 .tool-label { font-family: var(--font-mono); font-size: 9px; color: var(--neutral-dim); display: flex; align-items: center; gap: 5px; }
 .tool-label .tl-name { color: var(--neutral-mid); }
 /* companion-band（ask-user 占位）*/
-.companion { background: var(--surface-hover); border-radius: var(--radius); padding: 10px 12px; border: 1px solid var(--accent-ring); }
+.companion { background: var(--bg-input); border-radius: var(--radius-lg); padding: 10px 12px; border: none; }
 .companion-label { font-family: var(--font-mono); font-size: 9px; color: var(--accent); margin-bottom: 6px; }
 .companion-q { font-size: var(--text-sm); color: var(--neutral-fg); margin-bottom: 8px; }
 .companion-opts { display: flex; flex-direction: column; gap: 3px; }
 .copt { display: flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: var(--radius-sm); font-size: var(--text-xs); color: var(--neutral-mid); cursor: pointer; }
 .copt:hover { background: var(--surface-2); color: var(--neutral-fg); }
-.copt.sel { background: var(--accent-soft); color: var(--accent); }
+.copt.sel { background: var(--surface); color: var(--accent); }
 .copt .copt-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--neutral-ico); flex-shrink: 0; }
 .copt.sel .copt-dot { background: var(--accent); }
 /* composer bar */
@@ -198,7 +198,7 @@ body {
 /* CommandPopover（slash 菜单浮层）*/
 .cmd-pop { position: relative; margin-top: 4px; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: 0 8px 24px rgba(0,0,0,0.4); max-width: 300px; }
 .cp-row { display: flex; align-items: center; gap: 7px; padding: 6px 9px; font-size: var(--text-xs); color: var(--neutral-mid); }
-.cp-row.sel { background: var(--accent-soft); color: var(--accent); }
+.cp-row.sel { background: var(--surface); color: var(--accent); }
 .cp-row .cp-ico { width: 12px; height: 12px; color: var(--neutral-dim); flex-shrink: 0; }
 .cp-row.sel .cp-ico { color: var(--accent); }
 .cp-row .cp-name { font-family: var(--font-mono); color: var(--neutral-fg); }
@@ -415,7 +415,7 @@ body {
     <div class="doc-eyebrow">v6 DEMO · plugin 能力上限全景</div>
     <h1 class="doc-title">Plugin 能定制哪些地方？ · Pipeline Commander</h1>
     <p class="doc-sub">虚构一个最大化自定义的 plugin「<b>Pipeline Commander</b>」（DevOps 流水线管理），在<b>单个 AppShell 全景界面</b>里同时点亮全部 <b>16 个挂载点（M1-M16）</b>，展示 plugin 通过<b>布局位置</b>（5 维度）和<b>组件原语</b>（7 原语）到底能在哪些地方做定制、定制成什么样。每个挂载点贴 <code>M编号</code> 标签，颜色对应所属维度。<b>这不是产品截图</b>，是能力上限的视觉证明——假设一个 plugin 把所有能改的都改了，长这样。</p>
-    <p class="doc-sub" style="margin-top:10px;font-size:var(--text-xs);color:var(--neutral-dim);"><b style="color:var(--warn);">⚠ 范围声明：</b>本页是<b>缩放 mockup</b>（紧凑全景示意），为适配单页同时展示 16 挂载点，部分尺寸做了缩放（字号/间距/圆角偏小）。<b>不承载组件级 CSS 范式</b>——组件真实值（圆角/字号/间距/选中态等）一律以 <code>v6-spec-*.html</code> 为准，勿从此页抄取具体像素值。</p>
+    <p class="doc-sub" style="margin-top:10px;font-size:var(--text-xs);color:var(--neutral-dim);"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="color:var(--warn);vertical-align:-2px;margin-right:2px;"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><b style="color:var(--warn);">范围声明：</b>本页是<b>缩放 mockup</b>（紧凑全景示意），为适配单页同时展示 16 挂载点，部分尺寸做了缩放（字号/间距/圆角偏小）。<b>不承载组件级 CSS 范式</b>——组件真实值（圆角/字号/间距/选中态等）一律以 <code>v6-spec-*.html</code> 为准，勿从此页抄取具体像素值。</p>
     <div class="legend">
       <span class="lg lg-a"><span class="lg-dot"></span>维度 A · 结构容器（sidebar/drawer tab · 工具条 · 底栏）</span>
       <span class="lg lg-b"><span class="lg-dot"></span>维度 B · 对话流内容（tool result · custom message · ask-user）</span>

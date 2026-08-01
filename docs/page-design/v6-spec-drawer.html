@@ -182,7 +182,7 @@ body {
 /* 状态标签（每行变体前的 [状态] 标）*/
 .state-row { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
 .state-tag {
-  flex-shrink: 0; width: 76px; font-size: var(--text-2xs); font-family: var(--font-mono);
+  flex-shrink: 0; width: 84px; font-size: var(--text-2xs); font-family: var(--font-mono);
   color: var(--neutral-dim);
   padding-top: 6px;
 }
@@ -542,7 +542,7 @@ body {
 .ts-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); line-height: 1.4; }
 .ts-text.done { color: var(--neutral-dim); text-decoration: line-through; text-decoration-color: rgba(255,255,255,.2); }
 .ts-text.todo { color: var(--neutral-fg); }
-/* VERIFY 标签（v6：字号提 9px，去 bg-reasoning-soft，纯色文字）*/
+/* Verify 标签（v6：字号提 9px，去 bg-reasoning-soft，纯色文字）*/
 .ts-verify { flex-shrink: 0; font-size: 9px; font-weight: 600; color: var(--reasoning); }
 
 /* ── 辅助：旧 vs v6 对比块（§6/§7/§8 复用）── */
@@ -1069,7 +1069,7 @@ body {
       <div class="anno"><b>新增按钮:</b><br>否（文件从 git/文件树点开，无 + 按钮）</div>
       <div class="anno"><b>header 底色:</b><br><span class="v6">bg-surface-2 浮起</span>（去 border-b）</div>
       <div class="anno"><b>预览/变更 toggle:</b><br>当前 tab 的视图切换（非全局）· 仅 hasGitChange 时显</div>
-      <div class="anno"><b>toggle 样式:</b><br>SegmentedTab：bg-bg-input p-[2px] · on bg-bg-elevated</div>
+      <div class="anno"><b>toggle 样式:</b><br>SegmentedTab：bg-bg-input p-3px · on bg-bg-elevated</div>
       <div class="anno"><b>二级 tab active:</b><br>bg-bg-elevated + text-neutral-fg · close opacity .6</div>
       <div class="anno"><b>二级 tab 名:</b><br>font-mono 11px · ellipsis · max-w 150px</div>
       <div class="anno"><b>空态:</b><br>无二级栏 · FileText icon 24px + 提示文</div>
@@ -1664,27 +1664,27 @@ body {
     <div class="render-frame">
       <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:center;">
         <div style="text-align:center;">
-          <span class="gp-badge M" style="width:auto;padding:2px 6px;border-radius:var(--radius-sm);background:var(--bg-input);">M</span>
+          <span class="gp-badge M" style="width:auto;padding:2px 6px;border-radius:var(--radius-sm);background:var(--bg-input);color:var(--neutral-dim);">M</span>
           <div class="anno" style="margin-top:6px;"><b>M:</b> <span class="v6">neutral-dim</span></div>
         </div>
         <div style="text-align:center;">
-          <span class="gp-badge A" style="width:auto;padding:2px 6px;border-radius:var(--radius-sm);background:var(--bg-input);">A</span>
+          <span class="gp-badge A" style="width:auto;padding:2px 6px;border-radius:var(--radius-sm);background:var(--bg-input);color:var(--neutral-dim);">A</span>
           <div class="anno" style="margin-top:6px;"><b>A:</b> <span class="v6">neutral-dim</span></div>
         </div>
         <div style="text-align:center;">
-          <span class="gp-badge D" style="width:auto;padding:2px 6px;border-radius:var(--radius-sm);background:var(--bg-input);">D</span>
+          <span class="gp-badge D" style="width:auto;padding:2px 6px;border-radius:var(--radius-sm);background:var(--bg-input);color:var(--neutral-dim);">D</span>
           <div class="anno" style="margin-top:6px;"><b>D:</b> <span class="v6">neutral-dim</span></div>
         </div>
         <div style="text-align:center;">
-          <span class="gp-badge R" style="width:auto;padding:2px 6px;border-radius:var(--radius-sm);background:var(--bg-input);">R</span>
+          <span class="gp-badge R" style="width:auto;padding:2px 6px;border-radius:var(--radius-sm);background:var(--bg-input);color:var(--neutral-dim);">R</span>
           <div class="anno" style="margin-top:6px;"><b>R:</b> <span class="v6">neutral-dim</span></div>
         </div>
         <div style="text-align:center;">
-          <span class="gp-badge Q" style="width:auto;padding:2px 6px;border-radius:var(--radius-sm);background:var(--bg-input);">?</span>
+          <span class="gp-badge Q" style="width:auto;padding:2px 6px;border-radius:var(--radius-sm);background:var(--bg-input);color:var(--neutral-dim);">?</span>
           <div class="anno" style="margin-top:6px;"><b>?:</b> <span class="v6">neutral-dim</span></div>
         </div>
         <div style="text-align:center;">
-          <span class="gp-badge U" style="width:auto;padding:2px 6px;border-radius:var(--radius-sm);background:var(--bg-input);">U</span>
+          <span class="gp-badge U" style="width:auto;padding:2px 6px;border-radius:var(--radius-sm);background:var(--bg-input);color:var(--danger);font-weight:700;">U</span>
           <div class="anno" style="margin-top:6px;"><b>U:</b> <span class="v6">danger（仅此保留）</span></div>
         </div>
       </div>
@@ -1859,7 +1859,7 @@ body {
         <div class="state-demo">
           <div style="display:flex;align-items:center;gap:8px;">
             <span style="font-family:var(--font-mono);font-size:var(--text-md);color:var(--neutral-fg);font-weight:500;">/build</span>
-            <span style="background:var(--surface-hover);color:var(--neutral-mid);border-radius:var(--radius-sm);padding:1px 6px;font-size:var(--text-2xs);">Skill</span>
+            <span style="background:var(--surface-hover);color:var(--neutral-mid);border-radius:3px;padding:1px 6px;font-size:var(--text-2xs);">Skill</span>
           </div>
           <div class="anno" style="margin-top:8px;"><b>现:</b> <span class="old">bg-surface-hover 色块 + 圆角 3px</span></div>
         </div>
@@ -1992,7 +1992,7 @@ body {
                     <div class="gc-title-row">
                       <svg class="gc-status-ico blocked" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                       <span class="gc-slug">fix-login-wall-render</span>
-                      <span class="gc-badge blocked">BLOCKED</span>
+                      <span class="gc-badge blocked">Blocked</span>
                     </div>
                     <p class="gc-objective">修复登录墙在 v6 抽屉中的 warn 单点收敛渲染问题</p>
                     <button class="gc-resume">
@@ -2019,7 +2019,7 @@ body {
                     <li class="ts-item">
                       <span class="ts-check pending"></span>
                       <span class="ts-text todo">收敛登录墙 warn 到单点</span>
-                      <span class="ts-verify">VERIFY</span>
+                      <span class="ts-verify">Verify</span>
                     </li>
                   </ul>
                 </section>
@@ -2041,7 +2041,7 @@ body {
               <div class="gc-title-row">
                 <svg class="gc-status-ico active" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                 <span class="gc-slug">build-feature-x</span>
-                <span class="gc-badge">ACTIVE</span>
+                <span class="gc-badge">Active</span>
               </div>
               <p class="gc-objective">实现 feature-x 并通过测试</p>
             </div>
@@ -2056,7 +2056,7 @@ body {
               <div class="gc-title-row">
                 <svg class="gc-status-ico blocked" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                 <span class="gc-slug">fix-login-wall</span>
-                <span class="gc-badge blocked">BLOCKED</span>
+                <span class="gc-badge blocked">Blocked</span>
               </div>
               <p class="gc-objective">等待用户确认方案后继续</p>
               <button class="gc-resume"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>继续目标</button>
@@ -2072,7 +2072,7 @@ body {
               <div class="gc-title-row">
                 <svg class="gc-status-ico paused" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
                 <span class="gc-slug">refactor-module</span>
-                <span class="gc-badge">PAUSED</span>
+                <span class="gc-badge">Paused</span>
               </div>
               <p class="gc-objective">重构 module Y（已暂停）</p>
             </div>
@@ -2087,7 +2087,7 @@ body {
               <div class="gc-title-row">
                 <svg class="gc-status-ico complete" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
                 <span class="gc-slug">setup-ci</span>
-                <span class="gc-badge">COMPLETE</span>
+                <span class="gc-badge">Complete</span>
               </div>
               <p class="gc-objective">CI 配置完成</p>
             </div>
@@ -2131,15 +2131,15 @@ body {
       </div>
     </div>
 
-    <!-- VERIFY 标前后对比 -->
-    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">VERIFY 标：bg-reasoning-soft + 8px → 纯色文字 9px</h3>
+    <!-- Verify 标前后对比 -->
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">Verify 标：bg-reasoning-soft + 8px → 纯色文字 9px</h3>
     <div class="render-frame">
       <div class="state-row">
         <div class="state-tag">现状</div>
         <div class="state-demo">
           <div style="display:flex;align-items:center;gap:8px;">
             <span style="font-size:var(--text-sm);color:var(--neutral-fg);">收敛登录墙 warn</span>
-            <span style="background:var(--reasoning-soft);color:var(--reasoning);border-radius:var(--radius-sm);padding:1px 4px;font-size:8px;font-weight:600;">VERIFY</span>
+            <span style="background:var(--reasoning-soft);color:var(--reasoning);border-radius:var(--radius-sm);padding:1px 4px;font-size:8px;font-weight:600;">Verify</span>
           </div>
           <div class="anno" style="margin-top:6px;"><b>现:</b> <span class="old">bg-reasoning-soft + 8px</span>（色块过重）</div>
         </div>
@@ -2149,7 +2149,7 @@ body {
         <div class="state-demo">
           <div style="display:flex;align-items:center;gap:8px;">
             <span style="font-size:var(--text-sm);color:var(--neutral-fg);">收敛登录墙 warn</span>
-            <span class="ts-verify">VERIFY</span>
+            <span class="ts-verify">Verify</span>
           </div>
           <div class="anno" style="margin-top:6px;"><b>v6:</b> <span class="v6">纯色 text-reasoning · 9px（去 bg）</span></div>
         </div>
@@ -2165,8 +2165,8 @@ body {
       <div class="anno"><b>badge 默认:</b><br><span class="v6">bg-surface-2 + text-neutral-mid</span>（中性）</div>
       <div class="anno"><b>badge blocked:</b><br><span class="v6">bg-warn-soft + text-warn（仅此着色）</span></div>
       <div class="anno"><b>badge 字:</b><br>10px font-semibold（normal-case，产品 UI）</div>
-      <div class="anno"><b>VERIFY 标:</b><br><span class="old">bg-reasoning-soft 8px</span> <span class="v6">→ 纯色 9px</span></div>
-      <div class="anno"><b>VERIFY 色:</b><br>text-reasoning · 去底</div>
+      <div class="anno"><b>Verify 标:</b><br><span class="old">bg-reasoning-soft 8px</span> <span class="v6">→ 纯色 9px</span></div>
+      <div class="anno"><b>Verify 色:</b><br>text-reasoning · 去底</div>
       <div class="anno"><b>checkbox 尺寸:</b><br>13×13px 圆（语义清晰面积小）</div>
       <div class="anno"><b>checkbox pending:</b><br>空心圆 border-neutral-dim</div>
       <div class="anno"><b>checkbox doing:</b><br>bg-warn-soft + 5px 脉冲点</div>
@@ -2417,7 +2417,7 @@ body {
                       <span>14s</span>
                     </div>
                   </div>
-                  <!-- 当前选中 agent call（高亮 accent-soft，点击将切到 subagent tab）-->
+                  <!-- 当前选中 agent call（高亮 bg-surface，点击将切到 subagent tab）-->
                   <div class="wf-call selected" title="点击切到 subagent tab 展示该 agent 对话流">
                     <span class="wf-status running"></span>
                     <span class="wf-agent">e2e-tester</span>
@@ -2520,7 +2520,7 @@ body {
       <div class="anno"><b>摘要行:</b><br>model · tokens ↑in/↓out · turns · duration</div>
       <div class="anno"><b>running loader:</b><br>LoaderCircle（lucide）· 14px · accent</div>
       <div class="anno"><b>点击 agent call:</b><br><span class="v6">高亮 + drawer.setTab('subagent') + 传 sessionId</span></div>
-      <div class="anno"><b>选中态:</b><br>bg-accent-soft · agent 名 text-accent</div>
+      <div class="anno"><b>选中态:</b><br>bg-surface · agent 名 text-accent（§3.2 列表项型，R15）</div>
       <div class="anno"><b>入口:</b><br>对话流点 workflow block → drawer.setTab('workflow')</div>
       <div class="anno"><b>单实例:</b><br><span class="v6">无二级 tab</span></div>
       <div class="anno"><b>落点:</b><br>WorkflowTab.vue（新增/复用侧栏 WorkflowDetail）</div>

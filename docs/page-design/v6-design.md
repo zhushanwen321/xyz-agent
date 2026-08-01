@@ -116,7 +116,7 @@ hover: text-neutral-fg
 
 ### 3.3 状态指示统一
 
-- **会话/任务状态**：7px 圆点替换 15px 饱和图标（统一 7px，无 8/9/6px 例外）。done=success(90% opacity) / running=accent / waiting=warn / error=danger
+- **会话/任务状态**：7px 圆点替换 15px 饱和图标（统一 7px，含 fg-dot / seg-badge / au-tab-dot / rp-badge 等所有状态点/内联标记，无 4/5/6px 例外）。done=success(90% opacity) / running=accent / waiting=warn / error=danger
 - **工具失败（exit≠0）**：图标统一 `--neutral-ico`（删 warn 着色），行尾加 mono `exit N` 小标签（中性，非 danger）
 - **彩色边界**（保留语义但缩小）：
   - 保留彩色：真失败块 danger、待行动状态 accent、git 语义色 M黄/A绿/D红（降为极小圆点或单字 badge）
@@ -145,7 +145,7 @@ spec 文档自身的标注元素（state-tag / anno 彩条 / 表头 th）**同�
 
 ### 3.7 选中态判定规则（D8）
 
-- **tab 型**（SegmentedTab / drawer l1-l2 tab / AskUserOverlay au-tab / plugin seg-tab）= §3.1 `bg-bg-elevated text-neutral-fg`（中性浮起，去 accent-soft 蓝染底）
+- **tab 型**（SegmentedTab / drawer l1-l2 tab / AskUserOverlay au-tab / plugin seg-tab / **plugin 第 5 tab**）= §3.1 `bg-bg-elevated text-neutral-fg`（中性浮起，去 accent-soft 蓝染底；plugin 第 5 tab 不用 accent 身份色，统一中性）
 - **列表项型**（SessionItem / FileTree / SearchModal sm-item / AskUserOverlay au-opt / wf-call / CommandPopover 项）= §3.2 `bg-surface + text-accent`（蓝字）
 - accent-soft 仅留瞬时高亮（fresh / is-current popover 项）
 
@@ -163,7 +163,7 @@ spec 文档自身的标注元素（state-tag / anno 彩条 / 表头 th）**同�
 |------|---------|
 | MessageStream | assistant 区（TurnMeta+trace+summary+ChangeSet）套 `mx-auto max-w-[var(--content-max-w)]`；UserBubble 保持右浮窄气泡（max-w-76%）；滚动条贴右缘 |
 | TurnMeta | pill 默认可见（密度=现状）；删 turn 间 `hr border-border` 分隔线，改加大 turn gap 做层级；sticky 底色绑定内容列背景；**重试中态**：RetryIndicator 从 composer 移除，重试期间 TurnMeta label 切「重试中 N/M」+ warn 色 spinner（区别 streaming 的 accent）。详见 v6-spec-container.html §3 |
-| TurnMeta pill | bg-surface-2（主面板 surface 上浮起一档，解决"面上面"不可见） |
+| TurnMeta pill | bg-bg-elevated（主面板 surface 上浮起一档，解决"面上面"不可见；bg-elevated 比 surface-2 浮起更明确） |
 | Block·thinking | 收起态预览提亮 `text-neutral-mid`（过 AA）；**行数维持 1 行 ellipsis**（60 字符截断，推翻原「显 2 行」决策——2 行破坏 turn 视觉节奏）；**展开态正文用 neutral-mid**（过 AA，非 dim） |
 | Block·bash | **区分两类来源**：① BashOutputBlock（composer `!` 前缀执行，独立系统消息，不可折叠，exit 标签：0→success/N→warn/timeout→dim）② tool-bash（agent 调用，嵌 §6 tool 块，可折叠，border 容器）。详见 v6-spec-blocks.html §5 |
 | Block·tool | 状态矩阵：collapsed/expanded × running(双环 loader)/done/failed/unfinished。**failed 统一不切 icon**（保留原 tool icon，与 subagent/workflow 一致，靠 toolName 降 `neutral-mid` 表达，无红框）；exit≠0 加 mono `exit N` 中性标签；unfinished「未结束」标签 |
@@ -172,7 +172,7 @@ spec 文档自身的标注元素（state-tag / anno 彩条 / 表头 th）**同�
 | Block icon | **v6 全更新**：thinking=Brain / tool-bash=SquareTerminal / tool 通用兜底=SquareFunction / subagent=Bot / workflow=Workflow。stroke-width 统一 1.75。size：block header 14px 统一。展开态统一复制按钮（icon 下、与文字水平对齐、hover 显、复制全部、Check 反馈）。详见 v6-spec-blocks.html |
 | assistant 正文 markdown | `<p>` 恢复段间距 0.5em；h3 提档 1.12em 区分 h4；代码块容器 `bg-input` token 化；行内 code bg 统一 `bg-input`。**表格圆角化**（rounded-lg + thead surface-2 底 + 行间细 border）；blockquote 不动。**内容容器 head 统一**（代码块/mermaid/bash/ChangeSetCard）：轻量 head 栏 h-7 + 半透明背景优化 + 复制按钮右侧统一 + mermaid 按钮右侧归拢。**TurnSummary hover actions 方案 A**：3 扁平 icon button（Copy/GitFork/HandHelping），去 split-button 和 MD/+Q badge；fork/handoff 点击=+Q 带提问变体，composer 直接 enter=无内容变体。详见 v6-spec-content.html §12/§12.5/§12.6 |
 | 动画 | 状态指示（双环 loader 1.4s / 单环 spinner 1s / 脉冲点 1.8s / blink 1s）+ 微交互（hover/折叠 `duration-fast` 120ms，focus `duration` 200ms，easing `--ease`）。reduced-motion 全局兜底。大动效后出 |
-| ChangeSetCard | 去 border，`bg-surface` + 10px 圆角；状态 badge 降灰阶（仅 ±行数保留 success/danger git 语义色）；「待审查」badge 胶囊 accent-soft |
+| ChangeSetCard | 去 border，`bg-surface` + 10px 圆角；状态 badge 保留 5 态彩色（accumulating/ready/partially-reviewed/resolved/superseded，贴代码 ChangeSetCard.vue:22，rounded-sm 非胶囊）——git/审查流程的状态语义色信息密度高，与 git M/A/D badge 同语义体系，彩色降噪不吞功能性状态色 |
 | UserBubble | 删 `border-border-strong`，仅 `bg-surface-hover` 做层级；保持 14px/4px 不对称圆角；**删 pending 态**（排队消息不再进对话流渲染，迁 QueueBubble）；**skill/file badge 与 composer chip 同风格**（纯文字+前缀 icon+无底无边+加粗，skill=Wand紫无斜杠 / file=FileText绿） |
 | QueueBubble | **v6 内嵌 composer-box 顶部**（不再独立卡片）：去独立 border/bg/收起，仅 `border-b` 分隔融入 bg-input；**去脉冲闪烁**，保留 Zap(steer/accent)/Clock(followup/info) icon + truncate 文本，多条显前 2-3 条 +「+N」。详见 v6-spec-input.html §8.5 |
 | Composer | **6 区构成**（RetryIndicator 已移除→迁 TurnMeta）：QueueBubble(内嵌) / staging chip / ContextChipsBar(仅 image) / landing meta-row / Input / composer-bar。**chip 统一风格**：纯文字+前缀 icon+无底无边+文字加粗（skill=Wand紫 / file=FileText绿 / image=Image紫 / @=AtSign蓝）。**CommandPopover**：单行布局（icon+粗体名+·隔开+desc，file 也单行），width=composer，14 命令各配专属 icon（详见 v6-spec-input.html §9H 命令 icon 表）。staging fork/handoff 互斥。发送位 4 态状态机。详见 v6-spec-input.html §9 |
@@ -238,10 +238,10 @@ spec 文档自身的标注元素（state-tag / anno 彩条 / 表头 th）**同�
 |------|---------|
 | SettingsModal → FullSettingsOverlay | 新建，不用 reka Dialog，手写 `fixed inset-0`（类似 SearchModal）。无遮罩/无模糊（纯不透明全屏）。左 nav w-220px 固定 + 右内容滚动。ESC + 右上角 X 关闭 |
 | nav | 底色 bg-sunken；选中态 bg-surface + 蓝字（§3.2）；count badge 去彩色改中性圆点 |
-| 内容区 | 左对齐（mx-0）+ max-w-720px；页面标题作为左对齐内容块顶部（非固定栏） |
+| 内容区 | 左对齐（mx-0）+ max-w-720px；页面标题作为左对齐内容块顶部（非固定栏）；**内容区底色 = `--bg`**（非 surface——bg-card 卡片才能浮起，surface 会让卡片下沉） |
 | 10 个 *Page 分组卡片 | 去 border（双重分隔 AI slop），改 `bg-card` 层级 + 10px 圆角；行分隔 hairline 降 `rgba(255,255,255,.04)` |
 | 设置行 | 每行 label 下加 12px `--neutral-mid` 描述文字（i18n 新增 `*.desc` keys；mid 过 AA，dim 仅装饰位） |
-| ProviderEditModal → 嵌入式面板 | 点编辑→卡片下方手风琴展开编辑区（取代双层 modal），适合密集表单 |
+| ProviderEdit 手风琴展开 | 点编辑→卡片下方手风琴展开编辑区（取代双层 modal），适合密集表单 |
 | 表单 label | 所有 uppercase tracking-wider 改大小写混合 font-medium |
 | SelectTrigger | spec 画目标态：去 border + bg-bg-input + 圆角 8px（对齐本决策；真实 xyz-ui 组件改造留实施阶段，v6 不改 .vue 源码） |
 | LoadPaths/SourceImportSection | 扁平化嵌套卡片为单列表；强制目录自绘 ✓ 改 Checkbox 原生组件 |
@@ -265,7 +265,7 @@ spec 文档自身的标注元素（state-tag / anno 彩条 / 表头 th）**同�
 
 ### 5.2 z-index 语义化
 - 当前混用 `z-[1]`/`z-10`/`z-[1000]` 任意值
-- v6：定义语义 scale `--z-sticky:1 / --z-popover:10 / --z-overlay:20 / --z-modal:1000`，逐处替换（映射：SearchModal/FullSettingsOverlay=z-modal 1000；AskUserOverlay=z-overlay 20；SideDrawer 与 main 同体不单列 z）
+- v6：定义语义 scale `--z-sticky:1 / --z-popover:10 / --z-overlay:20 / --z-modal:1000`，逐处替换（映射：SearchModal/FullSettingsOverlay=z-modal 1000；AskUserOverlay=z-overlay 20；SideDrawer 与 main 同体不单列 z；**Toast 例外**：z-9999 固定值保留，跨 modal 层级在最顶层瞬时显示）
 
 ### 5.3 图标 size scale
 - 当前 trace icon/badge icon/header icon 混用 10/12/13/14px
@@ -275,7 +275,7 @@ spec 文档自身的标注元素（state-tag / anno 彩条 / 表头 th）**同�
 - 补齐 5 个缺失声音 key（soundTitle/successSound/errorSound/soundDefault/soundPreview，中英双语）
 - ConfirmDialog 默认文案改 i18n
 
-### 5.6 SSOT 链文档同步（D9）
+### 5.5 SSOT 链文档同步（D9）
 
 v6 修订需同步：README.md（加 v6 章节+索引）、design-system.md（Card/Button/选中态原语同步 v6 §3）、visual-modernization-2026-07.md（标注被 v6-design 追认/修订）。详见 v6-fix-plan.md L1.7/L1.8/L5.5。
 
@@ -460,7 +460,7 @@ v6 修订需同步：README.md（加 v6 章节+索引）、design-system.md（Ca
 
 ---
 
-## 9. 文档同步清单（实施时更新）
+## 10. 文档同步清单（实施时更新）
 
 - `docs/page-design/design-tokens.md`：§2 全部变更 + 变更日志
 - `docs/page-design/design-system.md`：组件范式修订（§3）+ 新增分隔策略/内容列宽条文

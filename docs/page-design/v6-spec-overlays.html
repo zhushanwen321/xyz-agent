@@ -281,7 +281,7 @@ body {
 .au-tab.idle { color: var(--neutral-dim); }
 .au-tab.idle:hover { background: var(--surface-hover); color: var(--neutral-mid); }
 .au-tab.active { background: var(--bg-elevated); color: var(--neutral-fg); font-weight: 500; }
-.au-tab .au-tab-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--success); display: inline-block; margin-left: 4px; vertical-align: 2px; }
+.au-tab .au-tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); display: inline-block; margin-left: 4px; vertical-align: 2px; }
 .au-body { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 4px; }
 .au-q-multi { font-size: 13px; font-weight: 500; color: var(--neutral-fg); }
 /* v6 context：中性 bg-surface-hover（去 reasoning 软底彩色）*/
@@ -450,7 +450,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s1">
     <div class="spec-head"><span class="spec-num">§1</span><h2 class="spec-title">Overlays 总览 + z-index 分层</h2></div>
-    <p class="spec-desc">v6 把全部覆盖层按语义 z-index scale（§5.2）落到明确层级：modal（SearchModal / ConfirmDialog / Mermaid 全屏 / FullSettingsOverlay）<code>--z-modal:1000</code>；overlay（AskUserOverlay 内联覆盖层 / SideDrawer 抽屉）<code>--z-overlay:20</code>；popover / dropdown / tooltip <code>--z-popover:10</code>。下方的 stage(#131316) → app(--bg) → panel(--surface) 三层是 base 文档流。逐处替换现状任意 <code>z-[1]</code> / <code>z-10</code> / <code>z-[1000]</code> 混用值。</p>
+    <p class="spec-desc">v6 把全部覆盖层按语义 z-index scale（§5.2）落到明确层级：modal（SearchModal / ConfirmDialog / Mermaid 全屏 / FullSettingsOverlay）<code>--z-modal:1000</code>；overlay（AskUserOverlay 内联覆盖层）<code>--z-overlay:20</code>；popover / dropdown / tooltip <code>--z-popover:10</code>。下方的 stage(#131316) → app(--bg) → panel(--surface) 三层是 base 文档流。SideDrawer 与 main 同体，z 归文档流（D2），不单列 overlay 档。逐处替换现状任意 <code>z-[1]</code> / <code>z-10</code> / <code>z-[1000]</code> 混用值。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> z-[1]/z-10/z-[1000] 混用</span>
       <span class="cp cp-v6"><b>v6</b> --z-sticky:1 / popover:10 / overlay:20 / modal:1000</span>
@@ -479,7 +479,7 @@ body {
         <div class="zlayer zl-overlay">
           <span class="z-tag">--z-overlay · 20</span>
           <span class="z-name">Overlay</span>
-          <span class="z-use">AskUserOverlay · SideDrawer</span>
+          <span class="z-use">AskUserOverlay</span>
         </div>
         <div class="zlayer zl-modal">
           <span class="z-tag">--z-modal · 1000</span>
@@ -505,7 +505,7 @@ body {
       </thead>
       <tbody>
         <tr><td class="z-name">--z-popover</td><td class="z-val">10</td><td class="z-use">popover / dropdown / tooltip</td><td class="z-comp">CommandPopover · @mention · #file · 模型选择 · 思考档位 · tooltip（composer 内浮层）</td></tr>
-        <tr><td class="z-name">--z-overlay</td><td class="z-val">20</td><td class="z-use">overlay（内联覆盖 / 抽屉）</td><td class="z-comp"><b style="color:var(--accent);">AskUserOverlay</b>（companion-band，非 modal）· SideDrawer 右抽屉<br><span style="font-size:11px;color:var(--neutral-dim);">注：companion-band 现也承载 confirm/select/input（showConfirm/Select/Input），不再用独立 modal</span></td></tr>
+        <tr><td class="z-name">--z-overlay</td><td class="z-val">20</td><td class="z-use">overlay（内联覆盖）</td><td class="z-comp"><b style="color:var(--accent);">AskUserOverlay</b>（companion-band，非 modal）<br><span style="font-size:11px;color:var(--neutral-dim);">注：companion-band 现也承载 confirm/select/input（showConfirm/Select/Input），不再用独立 modal<br>SideDrawer 与 main 同体，z 归文档流（D2），不单列 overlay 档</span></td></tr>
         <tr><td class="z-name">--z-modal</td><td class="z-val">1000</td><td class="z-use">modal（居中遮罩浮层）</td><td class="z-comp"><b style="color:var(--accent);">SearchModal</b> · <b style="color:var(--accent);">ConfirmDialog</b> · <b style="color:var(--accent);">Mermaid 全屏 viewer</b> · FullSettingsOverlay</td></tr>
         <tr class="fixed"><td class="z-name" style="color:var(--neutral-dim);">（无 token）</td><td class="z-val">9999</td><td class="z-use">toast（固定值，脱离 scale）</td><td class="z-comp">ToastContainer · 右下角通知（v6 保持现状，需永远在最上）</td></tr>
       </tbody>
