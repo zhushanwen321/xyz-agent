@@ -189,11 +189,11 @@ function resetCancel() {
 /* 两段式确认：实心 danger */
 .sa-cancel--confirm {
   background: var(--danger);
-  color: #fff;
+  color: var(--danger-fg);
 }
 .sa-cancel--confirm:hover {
   background: var(--danger);
-  color: #fff;
+  color: var(--danger-fg);
 }
 .sa-card__slug {
   margin-top: 2px;

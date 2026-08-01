@@ -214,7 +214,7 @@ watch(stagedAction, (v) => {
   transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
 }
 .stage-chip-x svg { width: 12px; height: 12px; }
-.stage-chip-x:hover { background: var(--accent); color: #fff; }
+.stage-chip-x:hover { background: var(--accent); color: var(--accent-fg); }
 
 /* contenteditable input */
 .comp-input {
@@ -275,7 +275,7 @@ watch(stagedAction, (v) => {
   justify-content: center;
   border-radius: var(--radius);
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   flex-shrink: 0;
   transition: background var(--duration-fast) var(--ease), opacity var(--duration-fast) var(--ease);
 }

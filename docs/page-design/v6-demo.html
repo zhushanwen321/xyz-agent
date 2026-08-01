@@ -215,7 +215,7 @@ body {
 }
 .seg-tab:hover { color: var(--neutral-fg); }
 .seg-tab.on { background: var(--bg-elevated); color: var(--neutral-fg); }
-.seg-tab .badge-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.seg-tab .badge-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 
 .aside-list { flex: 1; overflow-y: auto; padding: var(--space-1) var(--space-2) var(--space-3); }
 .aside-list::-webkit-scrollbar { width: 6px; }
@@ -297,7 +297,7 @@ body[data-select="d"] .list-item.sel .li-title { color: var(--accent); }
 }
 .panel-header .jsonl-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 .panel-header .git-btn { position: relative; }
-.panel-header .git-btn .dirty-dot { position: absolute; right: 5px; top: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
+.panel-header .git-btn .dirty-dot { position: absolute; right: 5px; top: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
 
 /* ── message stream（对话流，v6 列宽居中）── */
 .msg-stream {
@@ -417,7 +417,7 @@ body[data-density="lift"] .sub-summary { font-size: 9px; opacity: .6; }
 .change-set .cs-icon { width: 16px; height: 16px; color: var(--accent); }
 .change-set .cs-title { font-size: var(--text-sm); color: var(--neutral-fg); }
 .change-set .cs-count { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--neutral-dim); }
-.change-set .cs-badge { margin-left: auto; font-size: var(--text-2xs); padding: 2px 8px; border-radius: 999px; }
+.change-set .cs-badge { margin-left: auto; font-size: var(--text-2xs); padding: 2px 8px; border-radius: var(--radius-sm); }   /* N3：对齐 design 裁决「rounded-sm 非胶囊」+ base.css .cs-status */
 /* 5 态彩色 badge（N3，对齐 base.css ChangeSetCard）*/
 .change-set .cs-badge.accumulating { background: var(--accent-soft); color: var(--accent); }
 .change-set .cs-badge.ready { background: var(--info-soft); color: var(--info); }
@@ -495,7 +495,7 @@ body[data-density="lift"] .sub-summary { font-size: 9px; opacity: .6; }
 /* 彩色降噪变体（决策点 2）*/
 /* calm：极克制 —— pill 全中性 + 极小圆点；badge 全中性仅 U 着色；stats 单色 */
 body[data-color="calm"] .git-pill { background: var(--surface); color: var(--neutral-mid); }
-body[data-color="calm"] .git-pill .gp-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--neutral-mid); }
+body[data-color="calm"] .git-pill .gp-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--neutral-mid); }
 body[data-color="calm"] .git-pill.conflict .gp-dot { background: var(--danger); }
 body[data-color="calm"] .git-file .gf-badge { color: var(--neutral-dim); }
 body[data-color="calm"] .git-file.unmerged .gf-badge { color: var(--danger); }
@@ -504,7 +504,7 @@ body[data-color="calm"] .git-stats .del { color: var(--neutral-mid); }
 body[data-color="calm"] .git-stats .del { color: var(--neutral-dim); }
 /* semantic：保留语义但缩小 —— 软底 pill 但极小 */
 body[data-color="semantic"] .git-pill { background: var(--surface); }
-body[data-color="semantic"] .git-pill .gp-dot { width: 6px; height: 6px; border-radius: 50%; }
+body[data-color="semantic"] .git-pill .gp-dot { width: 7px; height: 7px; border-radius: 50%; }
 body[data-color="semantic"] .git-pill.clean .gp-dot { background: var(--success); }
 body[data-color="semantic"] .git-pill.dirty .gp-dot { background: var(--warn); }
 body[data-color="semantic"] .git-pill.conflict .gp-dot { background: var(--danger); }
@@ -670,7 +670,7 @@ body[data-select="d"] .settings-nav-item.sel { background: var(--surface-hover);
 /* ask-user overlay */
 .ask-user { position: relative; width: 560px; max-width: 90%; background: var(--bg-input); border-radius: var(--radius-lg); padding: var(--space-4); }
 .ask-head { display: flex; align-items: center; gap: 8px; margin-bottom: var(--space-3); }
-.ask-head .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.ask-head .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .ask-head .ask-title { font-size: var(--text-sm); color: var(--neutral-fg); font-weight: 500; }
 .ask-tabs { display: flex; gap: 2px; background: var(--bg-input); border-radius: var(--radius); padding: 2px; margin-bottom: var(--space-3); }
 .ask-tab { padding: 4px 10px; border-radius: var(--radius-sm); font-size: var(--text-xs); color: var(--neutral-mid); cursor: pointer; }

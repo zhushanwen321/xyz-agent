@@ -59,8 +59,8 @@ V3 只解决其中一层（色），另两层是独立工作线，不并进本�
 | `--neutral-ico-hover` | `#dcdce0` | 图标 hover | 现状 `#e5e7eb` → 同 fg |
 | `--border` | `rgba(255,255,255,0.05)` | 分隔线 | 现状 `0.08` → 降到 0.05（更克制） |
 | `--border-strong` | `rgba(255,255,255,0.10)` | 强调分隔 | 现状 `0.15` → 降到 0.10 |
-| `--accent` | `#c0c0c5` | 主色 / 链接 / 聚焦 | **现状 `#4f8ef7` 冷蓝 → 中亮灰（核心变化）** |
-| `--accent-hover` | `#d4d4d8` | 主色悬停 | `color-mix` 可派生，此处显式 |
+| `--accent` | `#c8c8cd` | 主色 / 链接 / 聚焦 | **现状 `#4f8ef7` 冷蓝 → 中亮灰（核心变化）；微提自 #c0c0c5，避免比正文 #dcdce0 更暗致可点击信号偏弱** |
+| `--accent-hover` | `#dcdcde` | 主色悬停 | `color-mix` 可派生，此处显式 |
 | `--accent-soft` | `color-mix(in oklch, var(--accent) 10%, transparent)` | 主色背景填充 | 10%（现状 12%），`color-mix` 自动跟随 `--accent` |
 | `--accent-ring` | `rgba(192,192,197,0.22)` | 选中态内描边 | 自动跟随新 accent |
 | `--accent-fg` | `#1a1a1c` | accent 上的文字色 | **新增 token**（亮色 accent 需深字保证对比度） |

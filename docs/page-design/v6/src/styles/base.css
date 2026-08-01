@@ -7,7 +7,7 @@ html, body, #app {
   font-family: var(--font-sans);
   font-size: var(--text-base);
   color: var(--neutral-fg);
-  background: #131316;
+  background: var(--bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

@@ -225,7 +225,7 @@ body {
   display: inline-flex; align-items: center; gap: 2px; margin-left: 2px;
   padding: 1px 6px; border-radius: 999px; background: var(--accent);
 }
-.sd-unread .pulse-dot { width: 6px; height: 6px; border-radius: 50%; background: #fff; animation: sd-pulse 1.8s ease-in-out infinite; }
+.sd-unread .pulse-dot { width: 7px; height: 7px; border-radius: 50%; background: #fff; animation: sd-pulse 1.8s ease-in-out infinite; }   /* N6：状态点统一 7px（design §3.3）*/
 .sd-unread .count { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-fg); }
 @keyframes sd-pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
 .sd-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
@@ -541,7 +541,7 @@ body {
 .ts-check.pending { border-color: var(--neutral-dim); }
 .ts-check.doing { border-color: var(--warn); background: var(--warn-soft); }
 .ts-check.done { border-color: var(--success); background: var(--success); color: var(--bg); }
-.ts-check .ts-check-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--warn); }
+.ts-check .ts-check-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }   /* N6：状态点统一 7px（design §3.3）*/
 .ts-check .ts-check-mark { width: 8px; height: 8px; color: var(--bg); }
 .ts-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); line-height: 1.4; }
 .ts-text.done { color: var(--neutral-dim); text-decoration: line-through; text-decoration-color: rgba(255,255,255,.2); }

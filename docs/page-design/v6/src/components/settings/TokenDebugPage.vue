@@ -27,16 +27,41 @@ const BG_TOKENS = COLOR_TOKENS.slice(0, 8)
 const NEUTRAL_TOKENS = COLOR_TOKENS.slice(8, 13)
 const STATE_TOKENS = COLOR_TOKENS.slice(13)
 
+/**
+ * 主题机制说明：
+ * - COLOR_TOKENS 进 color picker（hex 可编辑）；
+ * - EFFECT_TOKENS 随主题整体切换但不进 picker（rgba 边框 / hover 派生色 / danger-fg）。
+ * - 主题 entry 未提供的 key 在 applyTheme 时 reset 回 tokens.css :root 默认值。
+ */
+
+/** 太极主题族共用：V3 决策的暗色 border 三件套（比 v6 默认更克制） */
+const TAIJI_BORDERS = { '--border': 'rgba(255,255,255,0.05)', '--border-strong': 'rgba(255,255,255,0.10)', '--hairline': 'rgba(255,255,255,0.04)' }
+/** 太极暗色族共用：水墨降饱和状态色（V3 决策 §三） */
+const TAIJI_STATES = { '--success': '#6a9b73', '--warn': '#a8904a', '--danger': '#b06060', '--danger-fg': '#f0f0f2', '--info': '#5e8a96', '--reasoning': '#80779e' }
+
 const THEMES: Record<string, Record<string, string>> = {
-  '冷蓝暗色（默认）': { '--bg': '#1a1b1f', '--surface': '#272830', '--surface-hover': '#363740', '--surface-2': '#2e2f38', '--bg-elevated': '#313239', '--bg-input': '#1e1f24', '--bg-card': '#22242c', '--bg-sunken': '#1a1b1f', '--neutral-fg': '#e5e7eb', '--neutral-mid': '#9ca3af', '--neutral-dim': '#7d8494', '--neutral-faint': '#4b5563', '--neutral-ico': '#8b8d94', '--accent': '#4f8ef7', '--success': '#22c55e', '--warn': '#b08a3e', '--danger': '#ef4444', '--info': '#38bdf8', '--reasoning': '#a78bfa' },
-  '暖色暗色': { '--bg': '#1c1a17', '--surface': '#2a2622', '--surface-hover': '#3a342e', '--surface-2': '#322c27', '--bg-elevated': '#363029', '--bg-input': '#201d1a', '--bg-card': '#25211d', '--bg-sunken': '#1c1a17', '--neutral-fg': '#f0ede8', '--neutral-mid': '#a8a098', '--neutral-dim': '#857d75', '--neutral-faint': '#4a4540', '--neutral-ico': '#908880', '--accent': '#d97706', '--success': '#22c55e', '--warn': '#eab308', '--danger': '#ef4444', '--info': '#38bdf8', '--reasoning': '#a78bfa' },
-  '紫色暗色': { '--bg': '#1a1a1f', '--surface': '#272730', '--surface-hover': '#363640', '--surface-2': '#2e2e38', '--bg-elevated': '#313140', '--bg-input': '#1e1e24', '--bg-card': '#22222c', '--bg-sunken': '#1a1a1f', '--neutral-fg': '#e5e7eb', '--neutral-mid': '#9ca3af', '--neutral-dim': '#7d7d8c', '--neutral-faint': '#4b4b55', '--neutral-ico': '#8b8b94', '--accent': '#8b5cf6', '--success': '#22c55e', '--warn': '#b08a3e', '--danger': '#ef4444', '--info': '#38bdf8', '--reasoning': '#a78bfa' },
-  '高对比暗色': { '--bg': '#0d0d10', '--surface': '#1e1e24', '--surface-hover': '#2e2e38', '--surface-2': '#262630', '--bg-elevated': '#2a2a35', '--bg-input': '#141418', '--bg-card': '#1a1a20', '--bg-sunken': '#0d0d10', '--neutral-fg': '#ffffff', '--neutral-mid': '#b0b0b8', '--neutral-dim': '#888894', '--neutral-faint': '#505058', '--neutral-ico': '#9898a4', '--accent': '#5b9eff', '--success': '#4ade80', '--warn': '#facc15', '--danger': '#f87171', '--info': '#38bdf8', '--reasoning': '#c4b5fd' },
-  '灰阶无彩色': { '--bg': '#1a1a1a', '--surface': '#262626', '--surface-hover': '#363636', '--surface-2': '#2e2e2e', '--bg-elevated': '#313131', '--bg-input': '#1e1e1e', '--bg-card': '#222222', '--bg-sunken': '#1a1a1a', '--neutral-fg': '#e5e5e5', '--neutral-mid': '#9c9c9c', '--neutral-dim': '#7d7d7d', '--neutral-faint': '#4b4b4b', '--neutral-ico': '#8b8b8b', '--accent': '#9ca3af', '--success': '#9ca3af', '--warn': '#9ca3af', '--danger': '#9ca3af', '--info': '#9ca3af', '--reasoning': '#9ca3af' },
-  '太极': { '--bg': '#0f0f11', '--surface': '#1b1b1d', '--surface-hover': '#29292b', '--surface-2': '#212123', '--bg-elevated': '#262628', '--bg-input': '#141416', '--bg-card': '#18181a', '--bg-sunken': '#0f0f11', '--neutral-fg': '#dcdce0', '--neutral-mid': '#888890', '--neutral-dim': '#5e5e64', '--neutral-faint': '#383840', '--neutral-ico': '#74747c', '--accent': '#c0c0c5', '--accent-fg': '#18181a', '--success': '#6a9b73', '--warn': '#a8904a', '--danger': '#b06060', '--info': '#5e8a96', '--reasoning': '#80779e' },
+  /* ── 太极主题族（2026-08-02 V3 配色决策 + 扩展变体）── */
+  '太极 · 玄（纯灰 · V3 决策）': { '--bg': '#0f0f11', '--surface': '#1b1b1d', '--surface-hover': '#29292b', '--surface-2': '#212123', '--bg-elevated': '#262628', '--bg-input': '#141416', '--bg-card': '#18181a', '--bg-sunken': '#0f0f11', '--neutral-fg': '#dcdce0', '--neutral-mid': '#888890', '--neutral-dim': '#5e5e64', '--neutral-faint': '#383840', '--neutral-ico': '#74747c', '--neutral-ico-hover': '#dcdce0', '--accent': '#c8c8cd', '--accent-hover': '#dcdce0', '--accent-fg': '#1a1a1c', ...TAIJI_STATES, ...TAIJI_BORDERS },
+  '太极 · 青墨（微青相）': { '--bg': '#0e1112', '--surface': '#1a1e1f', '--surface-hover': '#272d2e', '--surface-2': '#202526', '--bg-elevated': '#242a2b', '--bg-input': '#131718', '--bg-card': '#171b1c', '--bg-sunken': '#0e1112', '--neutral-fg': '#d9dfe0', '--neutral-mid': '#858e8f', '--neutral-dim': '#5b6465', '--neutral-faint': '#363d3e', '--neutral-ico': '#717b7c', '--neutral-ico-hover': '#d9dfe0', '--accent': '#93b5b8', '--accent-hover': '#a9c6c8', '--accent-fg': '#101a1c', ...TAIJI_STATES, ...TAIJI_BORDERS },
+  '太极 · 黛蓝（微蓝相）': { '--bg': '#0f1013', '--surface': '#1b1c20', '--surface-hover': '#292b32', '--surface-2': '#212329', '--bg-elevated': '#26272e', '--bg-input': '#14161a', '--bg-card': '#181a20', '--bg-sunken': '#0f1013', '--neutral-fg': '#dcdde3', '--neutral-mid': '#888a93', '--neutral-dim': '#5e6069', '--neutral-faint': '#383a42', '--neutral-ico': '#74767f', '--neutral-ico-hover': '#dcdde3', '--accent': '#9aa7c4', '--accent-hover': '#b2bdd4', '--accent-fg': '#14161d', ...TAIJI_STATES, ...TAIJI_BORDERS },
+  '太极 · 暖墨（微暖相 · 宣纸）': { '--bg': '#121110', '--surface': '#1d1c1a', '--surface-hover': '#2c2b28', '--surface-2': '#242322', '--bg-elevated': '#282723', '--bg-input': '#171615', '--bg-card': '#1b1a18', '--bg-sunken': '#121110', '--neutral-fg': '#e0dfdb', '--neutral-mid': '#918e89', '--neutral-dim': '#65625e', '--neutral-faint': '#413f3b', '--neutral-ico': '#7d7b76', '--neutral-ico-hover': '#e0dfdb', '--accent': '#c9c2b4', '--accent-hover': '#dbd5c8', '--accent-fg': '#1d1b17', ...TAIJI_STATES, ...TAIJI_BORDERS },
+  // 朱印：danger 向玫红偏移 (#a85568)，避免与枯朱 accent 撞色
+  '太极 · 朱印（灰底枯朱 accent）': { '--bg': '#0f0f11', '--surface': '#1b1b1d', '--surface-hover': '#29292b', '--surface-2': '#212123', '--bg-elevated': '#262628', '--bg-input': '#141416', '--bg-card': '#18181a', '--bg-sunken': '#0f0f11', '--neutral-fg': '#dcdce0', '--neutral-mid': '#888890', '--neutral-dim': '#5e5e64', '--neutral-faint': '#383840', '--neutral-ico': '#74747c', '--neutral-ico-hover': '#dcdce0', '--accent': '#bd7b6c', '--accent-hover': '#cf927f', '--accent-fg': '#1f1210', '--success': '#6a9b73', '--warn': '#a8904a', '--danger': '#a85568', '--danger-fg': '#f5f0f1', '--info': '#5e8a96', '--reasoning': '#80779e', ...TAIJI_BORDERS },
+  // 皓：亮色（白鱼）。border 反转为黑色透明；accent 为墨黑（白底深字按钮）
+  '太极 · 皓（亮色 · 白鱼）': { '--bg': '#f2f2f3', '--surface': '#ffffff', '--surface-hover': '#dedee2', '--surface-2': '#e9e9ec', '--bg-elevated': '#ffffff', '--bg-input': '#e9e9ec', '--bg-card': '#f8f8f9', '--bg-sunken': '#f2f2f3', '--neutral-fg': '#26262b', '--neutral-mid': '#6e6e76', '--neutral-dim': '#a0a0a8', '--neutral-faint': '#cfcfd4', '--neutral-ico': '#83838c', '--neutral-ico-hover': '#26262b', '--accent': '#33333a', '--accent-hover': '#4a4a52', '--accent-fg': '#f4f4f5', '--success': '#3e7c4c', '--warn': '#8a6d2a', '--danger': '#a84545', '--danger-fg': '#faf5f5', '--info': '#3f7383', '--reasoning': '#6c6096', '--border': 'rgba(0,0,0,0.07)', '--border-strong': 'rgba(0,0,0,0.14)', '--hairline': 'rgba(0,0,0,0.04)' },
+
+  /* ── v6 遗留主题（对照用，未随太极决策更新）── */
+  '冷蓝暗色（v6 默认）': { '--bg': '#1a1b1f', '--surface': '#272830', '--surface-hover': '#363740', '--surface-2': '#2e2f38', '--bg-elevated': '#313239', '--bg-input': '#1e1f24', '--bg-card': '#22242c', '--bg-sunken': '#1a1b1f', '--neutral-fg': '#e5e7eb', '--neutral-mid': '#9ca3af', '--neutral-dim': '#7d8494', '--neutral-faint': '#4b5563', '--neutral-ico': '#8b8d94', '--accent': '#4f8ef7', '--success': '#22c55e', '--warn': '#b08a3e', '--danger': '#ef4444', '--info': '#38bdf8', '--reasoning': '#a78bfa' },
+  '暖色暗色': { '--bg': '#1c1a17', '--surface': '#2a2622', '--surface-hover': '#3a342e', '--surface-2': '#322c27', '--bg-elevated': '#363029', '--bg-input': '#201d1a', '--bg-card': '#25211d', '--bg-sunken': '#1c1a17', '--neutral-fg': '#f0ede8', '--neutral-mid': '#a8a098', '--neutral-dim': '#857d75', '--neutral-faint': '#4a4540', '--neutral-ico': '#908880', '--accent': '#d97706', '--accent-hover': '#e8963c', '--success': '#22c55e', '--warn': '#eab308', '--danger': '#ef4444', '--info': '#38bdf8', '--reasoning': '#a78bfa' },
+  '紫色暗色': { '--bg': '#1a1a1f', '--surface': '#272730', '--surface-hover': '#363640', '--surface-2': '#2e2e38', '--bg-elevated': '#313140', '--bg-input': '#1e1e24', '--bg-card': '#22222c', '--bg-sunken': '#1a1a1f', '--neutral-fg': '#e5e7eb', '--neutral-mid': '#9ca3af', '--neutral-dim': '#7d7d8c', '--neutral-faint': '#4b4b55', '--neutral-ico': '#8b8b94', '--accent': '#8b5cf6', '--accent-hover': '#a78bfa', '--success': '#22c55e', '--warn': '#b08a3e', '--danger': '#ef4444', '--info': '#38bdf8', '--reasoning': '#a78bfa' },
+  '高对比暗色': { '--bg': '#0d0d10', '--surface': '#1e1e24', '--surface-hover': '#2e2e38', '--surface-2': '#262630', '--bg-elevated': '#2a2a35', '--bg-input': '#141418', '--bg-card': '#1a1a20', '--bg-sunken': '#0d0d10', '--neutral-fg': '#ffffff', '--neutral-mid': '#b0b0b8', '--neutral-dim': '#888894', '--neutral-faint': '#505058', '--neutral-ico': '#9898a4', '--accent': '#5b9eff', '--accent-hover': '#7cb3ff', '--success': '#4ade80', '--warn': '#facc15', '--danger': '#f87171', '--info': '#38bdf8', '--reasoning': '#c4b5fd' },
+  '灰阶无彩色（V4 被否方案 · 仅对照）': { '--bg': '#1a1a1a', '--surface': '#262626', '--surface-hover': '#363636', '--surface-2': '#2e2e2e', '--bg-elevated': '#313131', '--bg-input': '#1e1e1e', '--bg-card': '#222222', '--bg-sunken': '#1a1a1a', '--neutral-fg': '#e5e5e5', '--neutral-mid': '#9c9c9c', '--neutral-dim': '#7d7d7d', '--neutral-faint': '#4b4b4b', '--neutral-ico': '#8b8b8b', '--accent': '#9ca3af', '--accent-hover': '#b0b6bd', '--accent-fg': '#1a1a1c', '--success': '#9ca3af', '--warn': '#9ca3af', '--danger': '#9ca3af', '--info': '#9ca3af', '--reasoning': '#9ca3af' },
 }
 const themeEntries = Object.entries(THEMES)
 const themeSwatch = (t: Record<string, string>) => [t['--accent'], t['--neutral-fg'], t['--surface'], t['--bg']]
+
+/** 随主题整体切换但不进 color picker 的效果 token（rgba 边框 / hover 派生色 / danger-fg） */
+const EFFECT_TOKENS = ['--border', '--border-strong', '--hairline', '--accent-hover', '--neutral-ico-hover', '--danger-fg']
 
 // ── 工具：hex <-> hsl，token 读写 ──
 function hexToHsl(hex: string): { h: number; s: number; l: number } {
@@ -105,11 +130,12 @@ function isDirty(t: string): boolean {
 }
 const dirty = computed(() => COLOR_TOKENS.some(isDirty))
 
-// ── 1. 主题切换：先清空颜色 token，再批量写入；baseline 同步为新主题；滑块归零 ──
-// --accent-fg 不在 COLOR_TOKENS（不需参与滑块 HSL 偏移），单独处理：theme 有则 write，无则 reset 回 tokens.css 默认
+// ── 1. 主题切换：先清空颜色 token + 效果 token，再批量写入；baseline 同步为新主题；滑块归零 ──
+// --accent-fg 不在 COLOR_TOKENS（不需参与滑块 HSL 偏移），与 EFFECT_TOKENS 一起单独处理：theme 有则 write，无则 reset 回 tokens.css 默认
 function applyTheme(theme: Record<string, string>): void {
   for (const t of COLOR_TOKENS) resetToken(t)
   resetToken('--accent-fg')
+  for (const t of EFFECT_TOKENS) resetToken(t)
   for (const [k, v] of Object.entries(theme)) writeToken(k, v)
   refreshBaseline()
   lightness.value = 0; saturation.value = 100; hueShift.value = 0
@@ -183,6 +209,8 @@ function onSizeReset(name: string): void { resetToken(name); sizeValues[name] = 
 function resetAll(): void {
   for (const t of COLOR_TOKENS) resetToken(t)
   for (const s of SIZE_TOKENS) resetToken(s.name)
+  resetToken('--accent-fg')
+  for (const t of EFFECT_TOKENS) resetToken(t)
   refreshBaseline(); refreshColorValues(); refreshSizeValues()
   lightness.value = 0; saturation.value = 100; hueShift.value = 0
   followAccent.value = false; accentInput.value = colorValues['--accent'] || ''

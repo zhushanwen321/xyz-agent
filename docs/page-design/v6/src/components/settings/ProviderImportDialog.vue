@@ -400,7 +400,7 @@ function backToSource() {
 .ui-checkbox.checked {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
 }
 .ui-checkbox.disabled {
   opacity: 0.4;

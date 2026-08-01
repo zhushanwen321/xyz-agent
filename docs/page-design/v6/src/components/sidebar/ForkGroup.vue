@@ -322,11 +322,11 @@ function dotClass(status: ForkStatus) {
 }
 .fg__stop--confirm {
   background: var(--danger);
-  color: #fff; /* accent/danger-on 文字色 token 未建立，spec §5 显式 #fff */
+  color: var(--danger-fg); /* danger-on 文字色（--danger-fg token）*/
 }
 .fg__stop--confirm:hover {
   background: var(--danger);
-  color: #fff;
+  color: var(--danger-fg);
 }
 @keyframes pulse-accent {
   0%,

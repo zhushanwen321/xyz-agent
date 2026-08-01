@@ -376,11 +376,11 @@ function resetDelete() {
 /* 两段式确认：实心 danger */
 .si-act--confirm {
   background: var(--danger);
-  color: #fff; /* accent/danger-on 文字色 token 未建立，spec §3 显式 #fff */
+  color: var(--danger-fg); /* danger-on 文字色（--danger-fg token）*/
 }
 .si-act--confirm:hover {
   background: var(--danger);
-  color: #fff;
+  color: var(--danger-fg);
 }
 
 @keyframes pulse-accent {

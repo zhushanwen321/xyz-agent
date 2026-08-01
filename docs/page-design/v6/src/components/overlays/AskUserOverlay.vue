@@ -448,7 +448,7 @@ function buildPayload(): { values: string[]; otherText: string } | AskUserAnswer
 .au-check svg {
   width: 10px;
   height: 10px;
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 /* Other 输入：选中后 label 下方展开，bg-surface-2 内嵌 */

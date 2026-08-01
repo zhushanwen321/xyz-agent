@@ -58,7 +58,7 @@ const emit = defineEmits<{ (e: 'update-click'): void }>()
   height: 22px;
   border-radius: var(--radius-sm);
   background: var(--accent);
-  color: #fff; /* accent-on 文字色，token 未建立，spec §1 显式保留 #fff */
+  color: var(--accent-fg); /* accent-on 文字色（亮 accent 主题自动转深字）*/
   display: grid;
   place-items: center;
   font-size: 11px;

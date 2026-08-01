@@ -59,6 +59,8 @@ defineEmits<{ (e: 'update:checked', v: boolean): void }>()
 }
 .ui-switch.on .thumb {
   transform: translateX(18px);
+  /* ON 态 knob 用 accent-fg：亮 accent（太极灰）下自动转深色 knob，保持可见 */
+  background: var(--accent-fg);
 }
 .ui-switch:focus-visible {
   box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0, 0, 0, 0.4);

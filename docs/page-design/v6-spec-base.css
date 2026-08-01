@@ -227,7 +227,7 @@ body {
 .ph-jsonl { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 4px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 11px; color: var(--neutral-dim); cursor: pointer; }
 .ph-jsonl:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 .ph-git { position: relative; width: 26px; height: 22px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-mid); }
-.ph-git .dirty-dot { position: absolute; right: 4px; top: 4px; width: 6px; height: 6px; border-radius: 50%; }
+.ph-git .dirty-dot { position: absolute; right: 4px; top: 4px; width: 7px; height: 7px; border-radius: 50%; }   /* N6：状态点统一 7px（design §3.3）*/
 .ph-git .dirty-dot.warn { background: var(--warn); }
 .ph-git .dirty-dot.danger { background: var(--danger); }
 

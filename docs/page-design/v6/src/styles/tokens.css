@@ -26,8 +26,9 @@
   /* 主色（冷蓝）*/
   --accent: #4f8ef7;
   --accent-hover: #6ba3ff;
-  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
-  --accent-ring: rgba(79,142,247,0.30);
+  --accent-soft: color-mix(in oklch, var(--accent) 10%, transparent);
+  /* color-mix 派生：自动跟随 --accent，主题切换无需单独覆盖 */
+  --accent-ring: color-mix(in oklch, var(--accent) 30%, transparent);
   /* accent 实色上的文字色（深色 accent 用白字，亮色 accent 如太极需覆盖为深字）*/
   --accent-fg: #ffffff;
 
@@ -35,6 +36,8 @@
   --success: #22c55e;
   --warn: #b08a3e;
   --danger: #ef4444;
+  /* danger 实色上的文字色（太极等降明度 danger 主题需浅字；亮主题可覆盖）*/
+  --danger-fg: #f0f0f2;
   --info: #38bdf8;
   --reasoning: #a78bfa;
   --success-soft: color-mix(in oklch, var(--success) 12%, transparent);
@@ -74,7 +77,7 @@
   --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);
   --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
   --shadow-drawer: -12px 0 24px rgba(0,0,0,0.16);
-  --shadow-glow: 0 0 0 3px rgba(79,142,247,0.25);
+  --shadow-glow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);
 
   /* 组件尺寸 */
   --content-max-w: 720px;

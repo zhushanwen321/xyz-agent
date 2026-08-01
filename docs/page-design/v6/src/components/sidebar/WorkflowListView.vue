@@ -244,11 +244,11 @@ function resetAbort() {
 /* 两段式确认：实心 danger */
 .wf-abort--confirm {
   background: var(--danger);
-  color: #fff;
+  color: var(--danger-fg);
 }
 .wf-abort--confirm:hover {
   background: var(--danger);
-  color: #fff;
+  color: var(--danger-fg);
 }
 
 /* 进度条 + 计数 */

@@ -446,7 +446,7 @@ onBeforeUnmount(() => clearTimeout(moveTimer))
   justify-content: center;
   flex-shrink: 0;
   cursor: pointer;
-  color: #fff;
+  color: var(--accent-fg);
   padding: 0;
   transition: background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease);
 }
