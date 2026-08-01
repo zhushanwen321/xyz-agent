@@ -260,9 +260,16 @@ const guardContinueRef = ref<HTMLElement | null>(null)
 watch(confirmState, (v) => {
   if (v) nextTick(() => guardContinueRef.value?.focus())
 })
-onMounted(() => window.addEventListener('beforeunload', onBeforeUnload))
+/** ESC 关闭守卫弹窗：window 级监听（mask 上的 @keydown.esc 会先关弹窗、冒泡到 document
+ * 触发 App.vue handleEscape → settingsOpen=false → sync watch 立即重臂 → 弹窗瞬间重开） */
+function onEsc(e: KeyboardEvent) { if (e.key === 'Escape' && confirmState.value) confirmState.value = null }
+onMounted(() => {
+  window.addEventListener('beforeunload', onBeforeUnload)
+  window.addEventListener('keydown', onEsc)
+})
 onUnmounted(() => {
   window.removeEventListener('beforeunload', onBeforeUnload)
+  window.removeEventListener('keydown', onEsc)
   cancelRecording()
   clearTimeout(saveTimer)
   clearTimeout(flashTimer)
@@ -397,7 +404,6 @@ onUnmounted(() => {
       aria-modal="true"
       aria-labelledby="sys-guard-title"
       @click.self="confirmState = null"
-      @keydown.esc="confirmState = null"
     >
       <div class="guard-dialog">
         <div class="guard-icon" aria-hidden="true">

@@ -41,6 +41,12 @@ export const PROXY_TEXT = {
   saveFailed: '保存失败：无法连接到代理服务，请检查地址',
 } as const
 
+/** 检查更新 / 下载失败文案（对齐真实组件 i18n 语义，仿 PROXY_TEXT 模式） */
+export const UPDATE_TEXT = {
+  checkFailed: '检查更新失败：无法连接更新服务，请检查网络后重试',
+  downloadInterrupted: '下载中断：网络连接不稳定，请重试',
+} as const
+
 /** mock 失败演示地址：HTTP 代理填写该地址时，测试/保存模拟失败（demo 状态机触发，正式版无此约定） */
 export const FAIL_PROXY_ADDR = 'http://127.0.0.1:9999'
 

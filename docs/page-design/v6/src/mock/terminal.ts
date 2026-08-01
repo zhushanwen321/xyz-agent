@@ -54,6 +54,49 @@ export function fetchTerminalConfig(): Promise<TerminalConfigResult> {
   })
 }
 
+/** 页面文案（对齐真实组件 i18n 语义，UI 文案按 v6 设计稿润色；仿 mock/worktree.ts TEXT 模式） */
+export const TEXT = {
+  pageTitle: '终端配置',
+  pageDesc: 'Shell、字体与终端偏好。修改仅对新启动的终端会话生效，已启动的终端不动态切换。',
+  corruptedMsg: '终端配置文件已损坏，已回退默认配置',
+  groupShell: 'Shell',
+  shell: '默认 Shell',
+  shellHint: '终端启动时使用的 shell 命令，留空使用 $SHELL 默认。',
+  shellPlaceholder: '留空使用 $SHELL 默认',
+  shellArgs: 'Shell 参数',
+  shellArgsHint: '传递给 shell 的启动参数，逗号分隔（如 -l,-i）。',
+  shellArgsPlaceholder: '逗号分隔，如 -l,-i',
+  groupAppearance: '外观',
+  fontSize: '字号',
+  fontSizeHint: '终端字体大小，范围 6-72。',
+  fontFamily: '字体',
+  fontFamilyHint: '终端字体族，留空使用默认（如 Menlo, monospace）。',
+  fontFamilyPlaceholder: '留空使用默认字体，如 Menlo, monospace',
+  cursorStyle: '光标样式',
+  cursorStyleHint: '终端光标的显示形态：方块 / 下划线 / 竖线。',
+  cursorBlock: '方块',
+  cursorUnderline: '下划线',
+  cursorBar: '竖线',
+  groupBehavior: '终端行为',
+  scrollback: '回滚行数上限',
+  scrollbackHint: '终端回滚缓冲区保留的最大行数，范围 0-100000。',
+  bell: '响铃',
+  bellHint: '收到响铃控制序列（BEL）时发出提示音。',
+  saved: '已保存',
+  unsaved: '未保存',
+  save: '保存',
+  saving: '保存中…',
+  discard: '放弃',
+  discardChanges: '放弃改动',
+  continueEdit: '继续编辑',
+  leaveTitle: '放弃未保存的改动？',
+  leaveDesc: '终端配置有未保存的修改，离开后会丢失。可以先保存再离开，或直接放弃。',
+  errFontSize: '请输入有效的字号',
+  errScrollback: '请输入有效的回滚行数',
+  errLoadFailed: '加载配置失败',
+  errSaveFailed: '保存失败',
+} as const
+
 /** 模拟 config.setTerminalConfig：范围越界 → reject（服务端校验失败分支，页面 save-bar 显示错误条）。
  * 成功后 resolve 保存值（快照以此刷新，dirty 自动归零）。 */
 export function saveTerminalConfig(config: TerminalConfig): Promise<TerminalConfig> {

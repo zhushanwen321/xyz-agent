@@ -9,6 +9,7 @@ import {
   DEFAULT_TERMINAL_CONFIG,
   fetchTerminalConfig,
   saveTerminalConfig,
+  TEXT,
   type TerminalConfig,
 } from '@/mock/terminal'
 
@@ -72,8 +73,8 @@ const barVisible = computed(() => dirty.value || saving.value || savedFlash.valu
 
 /** 客户端输入完整性校验（空/非数字 → 行内错误）；范围越界走服务端 mock 校验分支（真实组件无客户端范围校验） */
 function validate(): string {
-  if (fontSize.value.trim() === '' || Number.isNaN(Number(fontSize.value))) return '请输入有效的字号'
-  if (scrollback.value.trim() === '' || Number.isNaN(Number(scrollback.value))) return '请输入有效的回滚行数'
+  if (fontSize.value.trim() === '' || Number.isNaN(Number(fontSize.value))) return TEXT.errFontSize
+  if (scrollback.value.trim() === '' || Number.isNaN(Number(scrollback.value))) return TEXT.errScrollback
   return ''
 }
 
@@ -97,7 +98,7 @@ async function load() {
     bell.value = res.config.bell
     snapshot.value = { ...res.config }
   } catch (e) {
-    saveError.value = e instanceof Error ? e.message : '加载配置失败'
+    saveError.value = e instanceof Error ? e.message : TEXT.errLoadFailed
   } finally {
     loading.value = false
   }
@@ -125,7 +126,7 @@ async function save() {
       savedFlash.value = false
     }, 1500)
   } catch (e) {
-    saveError.value = e instanceof Error ? e.message : '保存失败'
+    saveError.value = e instanceof Error ? e.message : TEXT.errSaveFailed
   } finally {
     saving.value = false
   }
@@ -194,15 +195,15 @@ onBeforeUnmount(() => {
   <div class="page">
     <header class="page-head">
       <div class="head-text">
-        <h1 class="title">终端配置</h1>
-        <p class="desc">Shell、字体与终端偏好。修改仅对新启动的终端会话生效，已启动的终端不动态切换。</p>
+        <h1 class="title">{{ TEXT.pageTitle }}</h1>
+        <p class="desc">{{ TEXT.pageDesc }}</p>
       </div>
     </header>
 
     <!-- corrupted 提示条（真实：getTerminalConfig.corrupted=true，已回退默认配置） -->
     <div v-if="corrupted" class="corrupted">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-      <span>终端配置文件已损坏，已回退默认配置</span>
+      <span>{{ TEXT.corruptedMsg }}</span>
     </div>
 
     <!-- 初始加载 skeleton（§4.4：显式 skeleton，@keyframes shimmer 全局可用） -->
@@ -216,29 +217,29 @@ onBeforeUnmount(() => {
 
     <template v-else>
       <!-- Shell 组 -->
-      <GroupCard title="Shell">
-        <SettingRow label="默认 Shell" desc="终端启动时使用的 shell 命令，留空使用 $SHELL 默认。">
-          <UiInput v-model="shell" mono placeholder="留空使用 $SHELL 默认" aria-label="默认 Shell" />
+      <GroupCard :title="TEXT.groupShell">
+        <SettingRow :label="TEXT.shell" :desc="TEXT.shellHint">
+          <UiInput v-model="shell" mono :placeholder="TEXT.shellPlaceholder" :aria-label="TEXT.shell" />
         </SettingRow>
-        <SettingRow label="Shell 参数" desc="传递给 shell 的启动参数，逗号分隔（如 -l,-i）。">
-          <UiInput v-model="shellArgsInput" mono placeholder="逗号分隔，如 -l,-i" aria-label="Shell 参数" />
+        <SettingRow :label="TEXT.shellArgs" :desc="TEXT.shellArgsHint">
+          <UiInput v-model="shellArgsInput" mono :placeholder="TEXT.shellArgsPlaceholder" :aria-label="TEXT.shellArgs" />
         </SettingRow>
       </GroupCard>
 
       <!-- 外观组 -->
-      <GroupCard title="外观">
-        <SettingRow label="字号" desc="终端字体大小，范围 6-72。">
-          <UiInput v-model="fontSize" type="number" class="num-input" aria-label="字号" />
+      <GroupCard :title="TEXT.groupAppearance">
+        <SettingRow :label="TEXT.fontSize" :desc="TEXT.fontSizeHint">
+          <UiInput v-model="fontSize" type="number" class="num-input" :aria-label="TEXT.fontSize" />
         </SettingRow>
-        <SettingRow label="字体" desc="终端字体族，留空使用默认（如 Menlo, monospace）。">
-          <UiInput v-model="fontFamily" mono placeholder="留空使用默认字体，如 Menlo, monospace" aria-label="字体" />
+        <SettingRow :label="TEXT.fontFamily" :desc="TEXT.fontFamilyHint">
+          <UiInput v-model="fontFamily" mono :placeholder="TEXT.fontFamilyPlaceholder" :aria-label="TEXT.fontFamily" />
         </SettingRow>
-        <SettingRow label="光标样式" desc="终端光标的显示形态：方块 / 下划线 / 竖线。">
+        <SettingRow :label="TEXT.cursorStyle" :desc="TEXT.cursorStyleHint">
           <div class="sel-wrap">
-            <select v-model="cursorStyle" class="sel" aria-label="光标样式">
-              <option value="block">方块</option>
-              <option value="underline">下划线</option>
-              <option value="bar">竖线</option>
+            <select v-model="cursorStyle" class="sel" :aria-label="TEXT.cursorStyle">
+              <option value="block">{{ TEXT.cursorBlock }}</option>
+              <option value="underline">{{ TEXT.cursorUnderline }}</option>
+              <option value="bar">{{ TEXT.cursorBar }}</option>
             </select>
             <svg class="sel-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </div>
@@ -246,12 +247,12 @@ onBeforeUnmount(() => {
       </GroupCard>
 
       <!-- 终端行为组 -->
-      <GroupCard title="终端行为">
-        <SettingRow label="回滚行数上限" desc="终端回滚缓冲区保留的最大行数，范围 0-100000。">
-          <UiInput v-model="scrollback" type="number" class="num-input num-input--wide" aria-label="回滚行数上限" />
+      <GroupCard :title="TEXT.groupBehavior">
+        <SettingRow :label="TEXT.scrollback" :desc="TEXT.scrollbackHint">
+          <UiInput v-model="scrollback" type="number" class="num-input num-input--wide" :aria-label="TEXT.scrollback" />
         </SettingRow>
-        <SettingRow label="响铃" desc="收到响铃控制序列（BEL）时发出提示音。">
-          <UiSwitch v-model:checked="bell" aria-label="响铃" />
+        <SettingRow :label="TEXT.bell" :desc="TEXT.bellHint">
+          <UiSwitch v-model:checked="bell" :aria-label="TEXT.bell" />
         </SettingRow>
       </GroupCard>
 
@@ -259,16 +260,16 @@ onBeforeUnmount(() => {
       <div v-if="barVisible" class="save-bar" data-testid="terminal-save-bar">
         <span v-if="savedFlash" class="bar-saved">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-          已保存
+          {{ TEXT.saved }}
         </span>
-        <span v-else class="bar-dirty-badge"><span class="dot"></span>未保存</span>
+        <span v-else class="bar-dirty-badge"><span class="dot"></span>{{ TEXT.unsaved }}</span>
         <span v-if="saveError" class="sb-error" data-testid="terminal-save-error">{{ saveError }}</span>
         <span class="spacer"></span>
         <template v-if="!savedFlash">
-          <button class="btn btn-ghost btn-dense" :disabled="saving" @click="discard">放弃</button>
+          <button class="btn btn-ghost btn-dense" :disabled="saving" @click="discard">{{ TEXT.discard }}</button>
           <button class="btn btn-default btn-dense" :disabled="saving" @click="save" data-testid="terminal-save">
             <svg v-if="saving" class="btn-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-            {{ saving ? '保存中…' : '保存' }}
+            {{ saving ? TEXT.saving : TEXT.save }}
           </button>
         </template>
       </div>
@@ -280,11 +281,11 @@ onBeforeUnmount(() => {
         <div class="guard-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
         </div>
-        <div class="guard-title" id="term-guard-title">放弃未保存的改动？</div>
-        <div class="guard-desc">终端配置有未保存的修改，离开后会丢失。可以先保存再离开，或直接放弃。</div>
+        <div class="guard-title" id="term-guard-title">{{ TEXT.leaveTitle }}</div>
+        <div class="guard-desc">{{ TEXT.leaveDesc }}</div>
         <div class="guard-actions">
-          <button ref="guardContinueRef" class="btn btn-default btn-dense" @click="guardOpen = false">继续编辑</button>
-          <button class="btn btn-danger btn-dense" @click="confirmDiscard">放弃改动</button>
+          <button ref="guardContinueRef" class="btn btn-default btn-dense" @click="guardOpen = false">{{ TEXT.continueEdit }}</button>
+          <button class="btn btn-danger btn-dense" @click="confirmDiscard">{{ TEXT.discardChanges }}</button>
         </div>
       </div>
     </div>

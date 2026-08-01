@@ -9,7 +9,7 @@ export interface LoadPath {
   locked?: boolean
 }
 
-/** 系统锁定目录对齐真实组件 forcedDirs（kind=agent）：~/.xyz-agent/agents + .xyz-agent/agents */
+/** 系统锁定目录（demo 单锁 ~/.xyz-agent/agents，spec §8 状态矩阵单例） */
 export const projectPaths: LoadPath[] = [
   { id: 'lp-1', path: '~/.xyz-agent/agents', enabled: true, locked: true },
   { id: 'lp-2', path: './.xyz-agent/agents', enabled: true },
@@ -29,7 +29,7 @@ export interface RpItem {
 }
 
 /** mock 覆盖 6 种 badge 状态（spec §8）：pi / claude / agents / piinstall / effective（多来源链）/ muted。
- * agent 名取自真实项目 .agents/agents/ 下的 agent；piinstall 来源实际无，mock 覆盖 badge 用 */
+ * 部分为真实 agent（code-reviewer/general-purpose），其余为 badge 覆盖演示；piinstall 来源实际无，mock 覆盖 badge 用 */
 export const rpItems: RpItem[] = [
   { name: 'code-reviewer', sources: ['pi'], desc: '通用代码审查专家。读取 git diff 输出，发现潜在 bug 与安全隐患。' },
   { name: 'explorer', sources: ['claude'], desc: '摸清代码库结构、找入口点，返回压缩结构地图。' },

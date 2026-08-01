@@ -126,16 +126,33 @@ const filteredRp = computed(() => {
   return rpItems.value.filter((r) => r.sources.includes(sourceTab.value as RpSource))
 })
 
-/** M10：刷新（demo：1.5s 骨架后恢复，mock 数据静态） */
+/** M10：刷新（demo：1.5s 骨架后恢复；failNextScan 置位 → 900ms 后错误条，重试成功） */
 const scanning = ref(false)
+const scanError = ref('')
 let scanTimer: ReturnType<typeof setTimeout> | undefined
+let failNextScan = false
 function refresh() {
   if (scanning.value) return
   scanning.value = true
+  scanError.value = ''
   clearTimeout(scanTimer)
   scanTimer = setTimeout(() => {
     scanning.value = false
-  }, 1500)
+    if (failNextScan) {
+      failNextScan = false
+      scanError.value = '扫描失败：无法访问加载路径，请检查目录或稍后重试'
+    }
+  }, failNextScan ? 900 : 1500)
+}
+/** 重试 = 重新扫描（failNextScan 已被失败分支消费，重试必然成功） */
+function retryScan() {
+  if (scanning.value) return
+  refresh()
+}
+/** demo 状态机触发：置位后下一次刷新失败（spec §7 错误态；正式版无此入口） */
+function simulateScanFail() {
+  failNextScan = true
+  refresh()
 }
 
 /* ══════════ M5：SourceImport 导入流（spec §4：检测 → 选择 → 确认弹窗 → 进度 → 成功/失败） ══════════ */
@@ -250,6 +267,7 @@ onBeforeUnmount(() => {
   clearTimeout(importTimer)
   clearTimeout(dirPickTimer)
   clearTimeout(quoteTimer)
+  clearTimeout(scanTimer)
   window.removeEventListener('keydown', onEsc)
 })
 </script>
@@ -379,7 +397,7 @@ onBeforeUnmount(() => {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
           从其他 Agent 导入目录
         </button>
-        <button v-else class="btn btn-secondary btn-dense" @click="closeImport">
+        <button v-else class="btn btn-secondary btn-dense" :disabled="importStep === 'importing'" @click="closeImport">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="17" y1="7" x2="7" y2="17"/><polyline points="8 7 17 7 17 16"/></svg>
           收起导入
         </button>
@@ -480,6 +498,10 @@ onBeforeUnmount(() => {
           <svg class="rp-refresh-icon" :class="{ spin: scanning }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           {{ scanning ? '刷新中' : '刷新' }}
         </button>
+        <!-- demo 状态机触发：模拟扫描失败（spec §7 错误态；正式版无此按钮） -->
+        <button class="btn btn-ghost btn-icon-sm" title="模拟扫描失败（demo）" aria-label="模拟扫描失败" :disabled="scanning" @click="simulateScanFail">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/></svg>
+        </button>
         <span class="spacer"></span>
         <div class="rp-tabs">
           <button
@@ -490,6 +512,13 @@ onBeforeUnmount(() => {
             @click="sourceTab = key as RpTab"
           >{{ label }}</button>
         </div>
+      </div>
+
+      <!-- M10：扫描失败（spec §7：danger-soft 错误条 + 重试，仿 import 检测失败 .rp-err 结构） -->
+      <div v-if="scanError" class="rp-err">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+        <span>{{ scanError }}</span>
+        <button class="btn btn-secondary btn-dense imp-retry" :disabled="scanning" @click="retryScan">重试</button>
       </div>
 
       <!-- M10：扫描中骨架（3 行 shimmer） -->
@@ -526,7 +555,7 @@ onBeforeUnmount(() => {
         <!-- M10：空态三要素（图标 28px neutral-faint + 说明 + Primary 刷新）；区分全空 / 筛选空 -->
         <div v-if="filteredRp.length === 0" class="rp-empty">
           <template v-if="rpItems.length === 0">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg>
             <span class="rp-empty-text">未发现任何 Agent</span>
             <span class="rp-empty-hint">勾选加载路径中的目录，或刷新重新扫描</span>
             <button class="btn btn-secondary btn-dense" :disabled="scanning" @click="refresh">
@@ -535,7 +564,7 @@ onBeforeUnmount(() => {
             </button>
           </template>
           <template v-else>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
             <span class="rp-empty-text">{{ TAB_LABEL[sourceTab] }} 来源下暂无 Agent</span>
             <span class="rp-empty-hint">切换到「全部」查看其他来源，或导入 Claude 目录</span>
           </template>

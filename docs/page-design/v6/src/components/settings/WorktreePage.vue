@@ -39,7 +39,8 @@ let savedNoteTimer: ReturnType<typeof setTimeout> | undefined
 function onField(k: keyof WorktreeDraft, v: string) {
   draft[k] = v
   saveError.value = ''
-  if (k === 'timeout') timeoutError.value = false
+  // 任一字段编辑即清 timeoutError（不只是 timeout 字段，否则跨字段编辑残留错误态）
+  timeoutError.value = false
 }
 
 function save() {
@@ -61,6 +62,10 @@ function save() {
       return
     }
     saved.value = { ...draft }
+    // timeout 归一化：'060' → '60'（快照与草案同步归一，字符串态净零翻转不回 dirty）
+    const t = String(Number(draft.timeout))
+    saved.value.timeout = t
+    draft.timeout = t
     savedNote.value = TEXT.saved
     clearTimeout(savedNoteTimer)
     savedNoteTimer = setTimeout(() => { savedNote.value = '' }, SAVED_NOTE_DURATION)
@@ -118,12 +123,14 @@ watch(browseOpen, (v) => {
   if (v) nextTick(() => browseEl.value?.querySelector<HTMLButtonElement>('button.dir-item')?.focus())
 })
 
+let loadTimer: ReturnType<typeof setTimeout> | undefined
 onMounted(() => {
   window.addEventListener('beforeunload', onBeforeUnload)
-  setTimeout(() => { loading.value = false }, LOAD_DELAY)
+  loadTimer = setTimeout(() => { loading.value = false }, LOAD_DELAY)
 })
 onUnmounted(() => {
   window.removeEventListener('beforeunload', onBeforeUnload)
+  clearTimeout(loadTimer)
   clearTimeout(savedNoteTimer)
 })
 </script>
@@ -139,7 +146,7 @@ onUnmounted(() => {
 
     <!-- 保存成功反馈（1.5s） -->
     <div v-if="savedNote" class="success-note" data-testid="worktree-saved-note">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
       {{ savedNote }}
     </div>
 
@@ -297,7 +304,7 @@ onUnmounted(() => {
     >
       <div class="confirm-dialog">
         <div class="confirm-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
         </div>
         <div class="confirm-title">{{ TEXT.leaveTitle }}</div>
         <div class="confirm-desc">{{ TEXT.leaveDesc }}</div>
@@ -378,7 +385,7 @@ onUnmounted(() => {
   background: var(--surface);
   border-top: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
   margin-top: var(--space-6);
-  padding: var(--space-3) 0;
+  padding: var(--space-3) var(--space-4);
 }
 .bar-dirty-badge {
   display: inline-flex;

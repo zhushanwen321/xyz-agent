@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { closeSettings, settingsOpen, settingsPage, type SettingsPage } from '@/composables/useStore'
 import {
   AVAILABLE_EXTENSIONS,
@@ -30,7 +30,8 @@ const anyDirty = computed(() => presets.value.some((p) => isDirty(p)))
 const sorted = computed(() => [...presets.value].sort((a, b) => a.order - b.order))
 function findPreset(id: string): PiLaunchPreset | undefined { return presets.value.find((x) => x.id === id) }
 const defaultPresetId = ref('builtin:full')
-const expandedId = ref('')
+/** 真实 PiPresetsPage 对非 builtin 预设默认展开（mock 种子第一个自定义 =「审查专用」） */
+const expandedId = ref(presets.value.find((p) => !p.builtin)?.id ?? '')
 
 /* ── 加载态（首次 500ms 骨架；demo 触发失败 + 重试） ── */
 const loading = ref(true)
@@ -67,6 +68,7 @@ function note(msg: string) {
 
 /* ── 展开/折叠（dirty 时折叠或切换需确认） ── */
 const pendingExpandId = ref('')
+const pendingAdd = ref(false)
 function toggleExpand(id: string) {
   const p = findPreset(id)
   if (expandedId.value === id) {
@@ -175,16 +177,14 @@ function restorePreset(p: PiLaunchPreset) {
     note('已恢复「' + original.name + '」出厂设置')
   }, 400)
 }
+/** 新建预设（镜像 ProviderPage addProvider）：已有未保存改动 → 先走 switch 确认，还原后 createAndExpand */
 function createPreset() {
-  const uuid = crypto?.randomUUID?.() ?? String(Date.now())
-  const p: PiLaunchPreset = {
-    id: 'custom:' + uuid,
-    name: '新预设',
-    builtin: false,
-    order: presets.value.length,
-    toolMode: 'all',
-    extensionMode: 'all',
-  }
+  const id = 'custom:' + (crypto?.randomUUID?.() ?? String(Date.now()))
+  if (anyDirty.value) { pendingAdd.value = true; confirmState.value = { kind: 'switch', id }; return }
+  createAndExpand(id)
+}
+function createAndExpand(id: string) {
+  const p: PiLaunchPreset = { id, name: '新预设', builtin: false, order: presets.value.length, toolMode: 'all', extensionMode: 'all' }
   presets.value.push(p)
   snapshot(p)
   expandedId.value = p.id
@@ -230,6 +230,7 @@ const confirmMeta = computed(() => {
 function confirmCancel() {
   if (deletingId.value) return
   confirmState.value = null
+  pendingAdd.value = false
   pendingLeave.value = null
 }
 function confirmDiscard() {
@@ -249,12 +250,17 @@ function confirmDiscard() {
     expandedId.value = ''
     return
   }
-  // switch：还原当前 dirty 预设 → 展开目标
+  // switch：还原 dirty 预设 → pendingAdd ? 新建并展开 : 展开目标
   const cur = presets.value.find((p) => isDirty(p))
-
   if (cur) restoreSnapshot(cur)
-  expandedId.value = pendingExpandId.value
+  if (pendingAdd.value) { pendingAdd.value = false; createAndExpand(st.id) }
+  else expandedId.value = pendingExpandId.value
 }
+/* 确认弹窗聚焦安全按钮（btn-ghost = 继续编辑/取消；仿 SystemPage guardContinueRef） */
+const guardContinueRef = ref<HTMLElement | null>(null)
+watch(confirmState, (v) => {
+  if (v) nextTick(() => guardContinueRef.value?.focus())
+})
 
 /* ── 离开守卫（§4.3：切页/关设置拦截 + beforeunload） ── */
 watch(
@@ -271,14 +277,9 @@ watch(
   { flush: 'sync' },
 )
 function onBeforeUnload(e: BeforeUnloadEvent) {
-  if (anyDirty.value) {
-    e.preventDefault()
-    e.returnValue = ''
-  }
+  if (anyDirty.value) { e.preventDefault(); e.returnValue = '' }
 }
-function onEsc(e: KeyboardEvent) {
-  if (e.key === 'Escape' && confirmState.value) confirmCancel()
-}
+function onEsc(e: KeyboardEvent) { if (e.key === 'Escape' && confirmState.value) confirmCancel() }
 onMounted(() => {
   window.addEventListener('beforeunload', onBeforeUnload)
   window.addEventListener('keydown', onEsc)
@@ -503,7 +504,7 @@ onUnmounted(() => {
         <div class="confirm-title">{{ confirmMeta.title }}</div>
         <p class="confirm-desc">{{ confirmMeta.desc }}</p>
         <div class="confirm-actions">
-          <button class="btn btn-ghost btn-dense" :disabled="deletingId !== ''" @click="confirmCancel">{{ confirmMeta.isDelete ? '取消' : '继续编辑' }}</button>
+          <button ref="guardContinueRef" class="btn btn-ghost btn-dense" :disabled="deletingId !== ''" @click="confirmCancel">{{ confirmMeta.isDelete ? '取消' : '继续编辑' }}</button>
           <button class="btn btn-danger btn-dense" :disabled="deletingId !== ''" @click="confirmDiscard">
             {{ confirmMeta.isDelete ? (deletingId !== '' ? '删除中…' : '确认删除') : '放弃改动' }}
           </button>

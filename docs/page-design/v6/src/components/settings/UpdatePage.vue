@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { settingsOpen, settingsPage, closeSettings, type SettingsPage } from '@/composables/useStore'
 import UiInput from './UiInput.vue'
 import UiSwitch from './UiSwitch.vue'
@@ -13,6 +13,7 @@ import {
   RELEASE_NOTES,
   PROXY_MODE_OPTIONS,
   PROXY_TEXT,
+  UPDATE_TEXT,
   FAIL_PROXY_ADDR,
   CHECK_DELAY,
   DOWNLOAD_DELAY,
@@ -86,7 +87,7 @@ function checkForUpdates() {
     lastCheckedAt.value = new Date().toLocaleString('zh-CN', { hour12: false })
     if (failNextCheck) {
       failNextCheck = false
-      checkError.value = '检查更新失败：无法连接更新服务，请检查网络后重试'
+      checkError.value = UPDATE_TEXT.checkFailed
       checkPhase.value = 'check-failed'
       return
     }
@@ -120,7 +121,7 @@ function startUpdate() {
     updateAttempt++
     if (updateAttempt === 1) {
       updateFailed.value = true
-      updateError.value = '下载中断：网络连接不稳定，请重试'
+      updateError.value = UPDATE_TEXT.downloadInterrupted
       return
     }
     installedVersion.value = NEW_VERSION
@@ -153,7 +154,8 @@ function testProxy() {
     testing.value = false
     if (proxy.mode === 'manual' && !proxy.httpProxy.trim()) {
       testResult.value = { status: 'failed', message: PROXY_TEXT.httpRequired }
-    } else if (proxy.httpProxy.includes(FAIL_PROXY_ADDR)) {
+    } else if (proxy.mode === 'manual' && proxy.httpProxy.includes(FAIL_PROXY_ADDR)) {
+      // 非 manual 模式（system/disabled）不触发 9999 失败分支：地址为切模式前的残留值，测试应视为成功
       testResult.value = { status: 'failed', message: PROXY_TEXT.testFailed + '：连接超时，无法访问代理服务' }
     } else {
       testResult.value = { status: 'success' }
@@ -219,6 +221,17 @@ watch(
 function keepEditing() {
   confirmOpen.value = false
 }
+/** ESC 关闭守卫弹窗：window 级监听（mask 上的 @keydown.esc 会先关弹窗、冒泡到 document
+ * 触发 App.vue handleEscape → settingsOpen=false → sync watch 立即重臂 → 弹窗瞬间重开） */
+function onEsc(e: KeyboardEvent) {
+  if (e.key === 'Escape' && confirmOpen.value) keepEditing()
+}
+
+/** 确认弹窗焦点初始落在「继续编辑」（default · 安全选择，仿 WorktreePage 模式） */
+const guardCardRef = ref<HTMLElement | null>(null)
+watch(confirmOpen, (v) => {
+  if (v) nextTick(() => guardCardRef.value?.querySelector<HTMLButtonElement>('button.btn-default')?.focus())
+})
 function discardAndLeave() {
   confirmOpen.value = false
   restore()
@@ -231,8 +244,14 @@ function onBeforeUnload(e: BeforeUnloadEvent) {
     e.returnValue = ''
   }
 }
-onMounted(() => window.addEventListener('beforeunload', onBeforeUnload))
-onUnmounted(() => window.removeEventListener('beforeunload', onBeforeUnload))
+onMounted(() => {
+  window.addEventListener('beforeunload', onBeforeUnload)
+  window.addEventListener('keydown', onEsc)
+})
+onUnmounted(() => {
+  window.removeEventListener('beforeunload', onBeforeUnload)
+  window.removeEventListener('keydown', onEsc)
+})
 onBeforeUnmount(() => {
   clearTimeout(checkTimer)
   clearTimeout(updateTimer)
@@ -404,14 +423,21 @@ onBeforeUnmount(() => {
       <span class="bar-dirty"><span class="dot warn"></span>未保存</span>
       <span v-if="saveError" class="sb-error">{{ saveError }}</span>
       <span class="spacer"></span>
-      <button class="btn btn-ghost btn-md" :disabled="saving" @click="restore">放弃</button>
-      <button class="btn btn-default btn-md" :disabled="saving || !!saveError" @click="save">{{ saving ? '保存中…' : '保存' }}</button>
+      <button class="btn btn-ghost btn-dense" :disabled="saving" @click="restore">放弃</button>
+      <button class="btn btn-default btn-dense" :disabled="saving || !!saveError" @click="save">{{ saving ? '保存中…' : '保存' }}</button>
     </div>
 
-    <!-- 离开守卫确认弹窗（§4.3 内联自建） -->
-    <div v-if="confirmOpen" class="guard-stage" @click.self="keepEditing">
-      <div class="guard-card" role="dialog" aria-modal="true" aria-label="放弃未保存的改动？">
-        <div class="guard-title">放弃未保存的改动？</div>
+    <!-- 离开守卫确认弹窗（§4.3 内联自建，对齐三页范式：alertdialog + esc 关闭 + 焦点落 default 按钮） -->
+    <div
+      v-if="confirmOpen"
+      class="guard-stage"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="update-guard-title"
+      @click.self="keepEditing"
+    >
+      <div ref="guardCardRef" class="guard-card">
+        <div class="guard-title" id="update-guard-title">放弃未保存的改动？</div>
         <p class="guard-desc">自动更新与代理配置有未保存的改动，离开设置将丢弃这些改动，此操作不可撤销。</p>
         <div class="guard-actions">
           <button class="btn btn-default btn-dense" @click="keepEditing">继续编辑</button>
@@ -689,7 +715,7 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-/* 离开守卫弹窗（§4.3 内联自建：fixed inset-0 遮罩 + 居中卡片） */
+/* 离开守卫弹窗（§4.3 内联自建：fixed inset-0 遮罩 + 居中卡片，对齐三页范式） */
 .guard-stage {
   position: fixed;
   inset: 0;
@@ -698,13 +724,12 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  background: rgba(0, 0, 0, 0.8);
-  backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.55);
 }
 .guard-card {
   width: 100%;
   max-width: 400px;
-  background: var(--surface);
+  background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-2);
