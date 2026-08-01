@@ -97,7 +97,7 @@ function onCallClick(call: AgentCall) {
 
 <template>
   <div class="wf-v6">
-    <!-- 标题栏：bg-surface-2 浮起 + 右侧操作 -->
+    <!-- 标题栏：surface + hairline（方案 G） + 右侧操作 -->
     <div class="wf-header">
       <svg class="wf-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
         <rect width="8" height="8" x="3" y="3" rx="2" /><path d="M7 11v4a2 2 0 0 0 2 2h4" /><rect width="8" height="8" x="13" y="13" rx="2" />
@@ -185,13 +185,14 @@ function onCallClick(call: AgentCall) {
   overflow: hidden;
 }
 
-/* 标题栏 */
+/* 标题栏：surface + hairline（方案 G） */
 .wf-header {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  background: var(--surface-2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
   flex-shrink: 0;
 }
 .wf-header .wf-ico {

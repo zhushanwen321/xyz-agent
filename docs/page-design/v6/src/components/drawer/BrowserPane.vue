@@ -184,13 +184,14 @@ const guideDismissed = ref(false)
   overflow: hidden;
 }
 
-/* L2 二级 tab 栏 */
+/* L2 二级 tab 栏：surface + hairline（方案 G） */
 .b-l2 {
   display: flex;
   align-items: center;
   gap: 2px;
   padding: 6px 8px;
-  background: var(--surface-2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
   min-height: 36px;
   flex-shrink: 0;
 }
@@ -207,15 +208,14 @@ const guideDismissed = ref(false)
   transition: all var(--duration-fast) var(--ease);
 }
 .b-l2-tab:hover {
-  background: var(--surface-hover);
   color: var(--neutral-fg);
 }
 .b-l2-tab.on {
-  background: var(--bg-elevated);
+  background: var(--surface-hover);
   color: var(--neutral-fg);
 }
 .b-l2-tab.on:hover {
-  background: var(--bg-elevated);
+  background: var(--surface-hover);
   color: var(--neutral-fg);
 }
 .b-l2-tab .tt-ico {
@@ -265,13 +265,14 @@ const guideDismissed = ref(false)
   color: var(--neutral-fg);
 }
 
-/* guide banner：中性 bg-surface-2 */
+/* guide banner：surface + hairline（方案 G） */
 .bp-guide {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: var(--surface-2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
   flex-shrink: 0;
 }
 .bp-guide .bp-ico {
@@ -303,13 +304,14 @@ const guideDismissed = ref(false)
   color: var(--neutral-fg);
 }
 
-/* nav 工具栏：bg-surface-2 浮起 */
+/* nav 工具栏：surface + hairline（方案 G） */
 .bp-nav {
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 6px 8px;
-  background: var(--surface-2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
   flex-shrink: 0;
 }
 .bp-btn {

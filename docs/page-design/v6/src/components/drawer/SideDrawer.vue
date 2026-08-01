@@ -2,7 +2,7 @@
 /**
  * SideDrawer · 右侧抽屉容器
  * D2 一体化：与 main 共享 surface，去 border-l，仅 shadow-drawer 弱投影分隔。
- * L1 icon tab 栏（bg 浮起分层，去 border-b），active=bg-elevated。
+ * L1 icon tab 栏（surface 同色 + hairline 分隔（方案 G），active=surface-hover）。
  * 宽度由父级 flex:1 与 workspace 等分（1:1），本组件作 flex 子项。
  */
 import { ref } from 'vue'
@@ -105,13 +105,14 @@ const pinned = ref(true)
   overflow: hidden;
 }
 
-/* L1 icon tab 栏：surface-2 浮起分层（去 border-b，§3.4）*/
+/* L1 icon tab 栏：surface 同色 + hairline 分隔（方案 G）*/
 .sd-l1 {
   display: flex;
   align-items: center;
   gap: 2px;
   padding: 6px 8px;
-  background: var(--surface-2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
   flex-shrink: 0;
 }
 
@@ -131,15 +132,14 @@ const pinned = ref(true)
 }
 .sd-l1 .l1-icon:hover {
   color: var(--neutral-fg);
-  background: var(--surface-hover);
 }
 .sd-l1 .l1-icon.on {
   color: var(--neutral-fg);
-  background: var(--bg-elevated);
+  background: var(--surface-hover);
 }
 .sd-l1 .l1-icon.on:hover {
   color: var(--neutral-fg);
-  background: var(--bg-elevated);
+  background: var(--surface-hover);
 }
 
 .sd-l1 .spacer {

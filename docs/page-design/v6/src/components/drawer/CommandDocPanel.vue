@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * CommandDocPanel · doc tab（命令/skill 文档展示）
- * header（命令名 + Skill source 标签，bg-surface-2 浮起去 border-b）
+ * header（命令名 + Skill source 标签，surface + hairline（方案 G），去 border-b）
  * + desc + doc 正文（markdown 占位 + 参数 + 代码块 bg-input）
  * + meta（SKILL.md 路径，mt-4 空白分层去 border-t）
  */
@@ -9,7 +9,7 @@
 
 <template>
   <div class="cd-v6">
-    <!-- header：bg-surface-2 浮起，去 border-b -->
+    <!-- header：surface + hairline（方案 G），去 border-b -->
     <div class="cd-header">
       <svg class="cd-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
         <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
@@ -66,13 +66,14 @@
   overflow: hidden;
 }
 
-/* header：bg-surface-2 浮起，去 border-b */
+/* header：surface + hairline（方案 G），去 border-b */
 .cd-header {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: var(--surface-2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
   flex-shrink: 0;
 }
 .cd-header .cd-ico {

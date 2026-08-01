@@ -16,6 +16,7 @@ import ToolBlock from './ToolBlock.vue'
 import ChangeSetCard from './ChangeSetCard.vue'
 import SubagentBlock from './SubagentBlock.vue'
 import WorkflowBlock from './WorkflowBlock.vue'
+import TurnRail from './TurnRail.vue'
 import { markRaw, type Component } from 'vue'
 
 /** block 类型 → 组件映射（markRaw 避免响应式开销） */
@@ -49,6 +50,8 @@ function stageAction(type: 'fork' | 'handoff') {
 
 <template>
   <div class="ms-scroll">
+      <!-- TurnRail · turn 导航窄条（IF4），贴滚动区右缘，hover 展开 mini-map -->
+      <TurnRail />
       <div v-for="turn in chatTurns" :key="turn.id" class="ms-turn">
         <!-- user message：720 居中 wrap，气泡内右浮 max-w-76% -->
         <UserBubble :message="turn.userMessage" />
@@ -84,6 +87,7 @@ function stageAction(type: 'fork' | 'handoff') {
 
 <style scoped>
 .ms-scroll {
+  position: relative; /* TurnRail absolute 定位锚点 */
   flex: 1;
   overflow-y: auto;
   min-height: 0;

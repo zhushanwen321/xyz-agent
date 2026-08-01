@@ -148,13 +148,14 @@ function killPty() {
   overflow: hidden;
 }
 
-/* L2 二级 tab 栏 */
+/* L2 二级 tab 栏：surface + hairline（方案 G） */
 .b-l2 {
   display: flex;
   align-items: center;
   gap: 2px;
   padding: 6px 8px;
-  background: var(--surface-2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
   min-height: 36px;
   flex-shrink: 0;
 }
@@ -171,15 +172,14 @@ function killPty() {
   transition: all var(--duration-fast) var(--ease);
 }
 .b-l2-tab:hover {
-  background: var(--surface-hover);
   color: var(--neutral-fg);
 }
 .b-l2-tab.on {
-  background: var(--bg-elevated);
+  background: var(--surface-hover);
   color: var(--neutral-fg);
 }
 .b-l2-tab.on:hover {
-  background: var(--bg-elevated);
+  background: var(--surface-hover);
   color: var(--neutral-fg);
 }
 .b-l2-tab .tt-name {

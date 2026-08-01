@@ -54,7 +54,7 @@ const turns: SaTurn[] = [
     </div>
 
     <template v-else>
-    <!-- 标题栏：bg-surface-2 浮起，去 border-b -->
+    <!-- 标题栏：surface + hairline（方案 G），去 border-b -->
     <div class="sa-header">
       <button v-if="fromWorkflow" class="sa-back" title="返回 workflow tab" @click="backToWorkflow">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
@@ -109,13 +109,14 @@ const turns: SaTurn[] = [
   overflow: hidden;
 }
 
-/* 标题栏：bg-surface-2 浮起 */
+/* 标题栏：surface + hairline（方案 G） */
 .sa-header {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  background: var(--surface-2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
   flex-shrink: 0;
 }
 .sa-header .sa-back {

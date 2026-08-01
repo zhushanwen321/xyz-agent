@@ -23,7 +23,7 @@ const elapsed = computed(() => (props.streaming ? '12.3s' : '8.1s'))
       think · {{ thinkCount }}
     </span>
     <span v-if="toolCount" class="tm-pill">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76Z"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 15c1.06 0 2-.6 3-2 1-1.4 1.94-2 3-2"/><path d="M9 9c1.06 0 2-.6 3-2 1-1.4 1.94-2 3-2"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
       tool · {{ toolCount }}
     </span>
     <!-- chevron 在最末（spec：label → elapsed → pill → chev） -->

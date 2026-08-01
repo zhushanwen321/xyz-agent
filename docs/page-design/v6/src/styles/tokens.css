@@ -21,6 +21,7 @@
   /* 边框/分隔 */
   --border: rgba(255,255,255,0.08);
   --border-strong: rgba(255,255,255,0.15);
+  --hairline: rgba(255,255,255,0.04);
 
   /* 主色（冷蓝）*/
   --accent: #4f8ef7;
@@ -61,6 +62,7 @@
   --radius-sm: 6px;
   --radius: 8px;
   --radius-lg: 12px;
+  --radius-card: 10px;
 
   /* 间距（4px 栅格）*/
   --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
@@ -76,6 +78,7 @@
   --content-max-w: 720px;
   --composer-btn-size: 30px;
   --bash-output-max-height: 240px;
+  --bar-fill-soft: 55%;
 
   /* z-index 语义化 */
   --z-sticky: 1;
