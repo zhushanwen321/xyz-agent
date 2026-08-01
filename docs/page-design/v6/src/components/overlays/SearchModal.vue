@@ -339,6 +339,7 @@ function iconKind(cmd: SearchCommand): IconKind {
   gap: 8px;
   width: 100%;
   padding: 7px 16px;
+  text-align: left; /* 覆盖 button UA 默认的 text-align:center */
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease);
 }
