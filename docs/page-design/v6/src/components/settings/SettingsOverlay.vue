@@ -24,8 +24,8 @@ const ic = (p: string) =>
 
 const NAV: NavDef[] = [
   { key: 'provider', label: '供应商', count: providers.length, icon: ic('<rect x="2" y="3" width="20" height="6" rx="2"/><rect x="2" y="15" width="20" height="6" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>') },
-  { key: 'skill', label: '技能', icon: ic('<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>') },
-  { key: 'resources', label: '资源', icon: ic('<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>') },
+  { key: 'skill', label: '技能', count: 12, icon: ic('<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>') },
+  { key: 'agent', label: '代理', count: 5, icon: ic('<rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/>') },
   { key: 'extension', label: '扩展', count: extensions.length, icon: ic('<path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>') },
   { key: 'system-prompt', label: '系统提示词', icon: ic('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>') },
   { key: 'terminal', label: '终端', icon: ic('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>') },
@@ -37,11 +37,14 @@ const NAV: NavDef[] = [
 
 function select(key: SettingsPage) {
   settingsPage.value = key
+  // M5：切 nav 时内容列滚动回顶部（fs-content 是滚动容器）
+  contentEl.value?.scrollTo({ top: 0 })
 }
 
 const currentPageTitle = computed(() => NAV.find((n) => n.key === settingsPage.value)?.label ?? '')
 
 const navRoot = ref<HTMLElement | null>(null)
+const contentEl = ref<HTMLElement | null>(null)
 onMounted(() => {
   nextTick(() => {
     const first = navRoot.value?.querySelector<HTMLElement>('.fs-nav .nav-item')
@@ -71,7 +74,7 @@ onMounted(() => {
     </nav>
 
     <!-- 右 content -->
-    <div class="fs-content">
+    <div class="fs-content" ref="contentEl">
       <div class="fs-head">
         <span class="fs-title">设置 · {{ currentPageTitle }}</span>
         <button class="xbtn" title="关闭设置（Esc）" @click="closeSettings">
@@ -81,7 +84,6 @@ onMounted(() => {
       <div class="content-col-inner">
         <ProviderPage v-if="settingsPage === 'provider'" />
         <ExtensionPage v-else-if="settingsPage === 'extension'" />
-        <ResourcesPage v-else-if="settingsPage === 'resources'" />
         <SystemPromptPage v-else-if="settingsPage === 'system-prompt'" />
         <PlaceholderPage v-else :page="settingsPage" />
       </div>

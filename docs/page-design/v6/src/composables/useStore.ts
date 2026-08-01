@@ -19,7 +19,7 @@ export const searchModalOpen = ref(false)
 export const settingsOpen = ref(false)
 export const askUserOpen = ref(false)
 export const confirmOpen = ref(false)
-export type SettingsPage = 'provider' | 'extension' | 'resources' | 'system-prompt' | 'terminal' | 'preset' | 'worktree' | 'update' | 'system' | 'skill'
+export type SettingsPage = 'provider' | 'extension' | 'system-prompt' | 'terminal' | 'preset' | 'worktree' | 'update' | 'system' | 'skill' | 'agent'
 export const settingsPage = ref<SettingsPage>('provider')
 
 // 选中 session

@@ -7,6 +7,8 @@ import GroupCard from './GroupCard.vue'
 const props = defineProps<{ page: SettingsPage }>()
 
 const LABELS: Record<string, string> = {
+  skill: '技能',
+  agent: '代理',
   terminal: '终端',
   preset: '预设',
   worktree: '工作区',

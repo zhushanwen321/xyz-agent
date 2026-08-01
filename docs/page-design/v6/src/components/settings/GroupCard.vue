@@ -46,6 +46,7 @@ function toggle() {
 .group-card {
   background: var(--bg-card);
   border-radius: 10px;
+  padding: 10px; /* spec §4：bg-card + 10px 圆角 + padding 10px（内容行自带 padding 已按此对齐）*/
   overflow: hidden;
 }
 .group-card + .group-card {
@@ -64,6 +65,7 @@ function toggle() {
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
+  flex: 1;
 }
 .head-right {
   display: flex;
@@ -82,9 +84,10 @@ function toggle() {
 }
 .collapse-btn svg {
   transition: transform var(--duration-fast) var(--ease);
-  transform: rotate(-90deg);
+  transform: rotate(0deg);
 }
 .collapse-btn.down svg {
-  transform: rotate(0deg);
+  /* 折叠态朝右（rotate -90deg），展开态朝下（0deg）—— spec §4 */
+  transform: rotate(-90deg);
 }
 </style>

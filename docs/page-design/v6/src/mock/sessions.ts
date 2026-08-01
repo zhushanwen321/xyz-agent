@@ -289,6 +289,8 @@ export interface Extension {
   id: string
   name: string
   desc: string
+  version?: string
+  tools?: string[]
   scope: 'mandatory' | 'user'
   source: 'user' | 'disc'
   tier: 'infrastructure' | 'feature'
@@ -297,11 +299,11 @@ export interface Extension {
 }
 
 export const extensions: Extension[] = [
-  { id: 'e-1', name: 'pi-goal', desc: '目标管理与意图追踪', scope: 'mandatory', source: 'disc', tier: 'infrastructure', enabled: true, autoUpgrade: true },
-  { id: 'e-2', name: 'pi-todo', desc: '任务清单与进度追踪', scope: 'mandatory', source: 'disc', tier: 'infrastructure', enabled: true, autoUpgrade: true },
-  { id: 'e-3', name: 'pi-subagent-workflow', desc: '子 agent 工作流编排', scope: 'mandatory', source: 'disc', tier: 'infrastructure', enabled: true, autoUpgrade: true },
-  { id: 'e-4', name: 'pi-permission', desc: '权限控制扩展', scope: 'mandatory', source: 'disc', tier: 'feature', enabled: true, autoUpgrade: true },
-  { id: 'e-5', name: 'my-custom-tool', desc: '自定义工具扩展', scope: 'user', source: 'user', tier: 'feature', enabled: false, autoUpgrade: false },
+  { id: 'e-1', name: 'pi-goal', desc: '目标管理与意图追踪', version: 'v1.4.2', tools: ['goal_control'], scope: 'mandatory', source: 'disc', tier: 'infrastructure', enabled: true, autoUpgrade: true },
+  { id: 'e-2', name: 'pi-todo', desc: '任务清单与进度追踪', version: 'v2.1.0', tools: ['todo_create', 'todo_update', 'todo_complete', 'todo_list'], scope: 'mandatory', source: 'disc', tier: 'infrastructure', enabled: true, autoUpgrade: true },
+  { id: 'e-3', name: 'pi-subagent-workflow', desc: '子 agent 工作流编排', version: 'v1.0.8', tools: ['workflow_run', 'workflow_script'], scope: 'mandatory', source: 'disc', tier: 'infrastructure', enabled: true, autoUpgrade: true },
+  { id: 'e-4', name: 'pi-permission', desc: '权限控制扩展', version: 'v0.9.3', tools: ['permission_check'], scope: 'mandatory', source: 'disc', tier: 'feature', enabled: true, autoUpgrade: true },
+  { id: 'e-5', name: 'my-custom-tool', desc: '自定义工具扩展', version: 'v0.3.1', tools: ['my_tool_a', 'my_tool_b'], scope: 'user', source: 'user', tier: 'feature', enabled: false, autoUpgrade: false },
 ]
 
 // === 搜索命令（SearchModal）===

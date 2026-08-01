@@ -24,6 +24,27 @@ function toggleEnabled(p: Provider) {
 }
 const advOpen = ref<Record<string, boolean>>({})
 
+/** M3：provider 类型（spec 语义值：anthropic-messages / openai-completions / openai-responses） */
+const providerType = ref<Record<string, string>>({
+  'p-1': 'openai-completions',
+  'p-2': 'anthropic-messages',
+  'p-3': 'openai-completions',
+  'p-4': 'openai-completions',
+})
+const TYPE_OPTIONS = ['anthropic-messages', 'openai-completions', 'openai-responses']
+
+/** M6：thinking pill 三档预设（spec §2 thinking 语义：全档 / 高/顶 / 开关） */
+const THINKING_PRESETS: Record<string, { label: string; cls: string }> = {
+  'glm-4.6': { label: '全档', cls: 'tp-all' },
+  'glm-4.5-air': { label: '开关', cls: 'tp-toggle' },
+  'glm-4-flash': { label: '开关', cls: 'tp-toggle' },
+  'claude-sonnet-4.5': { label: '高/顶', cls: 'tp-hightop' },
+  'claude-haiku-4': { label: '开关', cls: 'tp-toggle' },
+}
+function thinkingPreset(m: string) {
+  return THINKING_PRESETS[m] ?? { label: '开关', cls: 'tp-toggle' }
+}
+
 /** M4 authHeader：把 API Key 写入 Authorization 头（凭据子区 switch 行） */
 const authHeader = ref<Record<string, boolean>>({ 'p-1': true, 'p-2': true })
 
@@ -71,7 +92,16 @@ function setDefaultModel(p: Provider, m: string) {
       </div>
     </header>
 
-    <div class="provider-list">
+    <!-- M15：空态（spec §7 三要素：虚线圆图标 + 说明 + Primary 入口常驻 page-head） -->
+    <div v-if="providers.length === 0" class="empty-state">
+      <div class="empty-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </div>
+      <p class="empty-title">还没有供应商</p>
+      <p class="empty-desc">添加第一个供应商，连接 AI 模型开始对话。</p>
+    </div>
+
+    <div v-else class="provider-list">
       <section v-for="p in providers" :key="p.id" class="provider-card">
         <!-- row-head -->
         <div class="row-head">
@@ -81,14 +111,20 @@ function setDefaultModel(p: Provider, m: string) {
             :title="p.status === 'connected' ? '已连接' : '未配置'"
           ></span>
           <UiSwitch :checked="p.enabled" @update:checked="toggleEnabled(p)" />
-          <span class="name" @click="toggleExpand(p.id)">{{ p.name }}</span>
+          <span
+            class="name"
+            role="button"
+            :aria-expanded="expandedId === p.id"
+            :aria-label="'展开 ' + p.name + ' 详情'"
+            @click="toggleExpand(p.id)"
+          >{{ p.name }}
+            <!-- M1：展开入口移到名称行内（chevron 在名称旁，点击名称/chevron 展开） -->
+            <svg class="name-chevron" :class="{ down: expandedId === p.id }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </span>
           <span v-if="p.isDefault" class="default-pill">默认供应商</span>
           <span class="model-count">{{ p.modelCount }} 个模型</span>
           <span v-if="p.dirty" class="dirty-badge"><span class="dot"></span>未保存</span>
           <span class="spacer"></span>
-          <button class="btn btn-ghost btn-icon expand-btn" :class="{ down: expandedId === p.id }" title="展开" @click="toggleExpand(p.id)">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
           <button class="btn btn-danger btn-icon-sm del-btn" title="删除">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           </button>
@@ -106,11 +142,12 @@ function setDefaultModel(p: Provider, m: string) {
               </div>
               <div class="cred-field">
                 <label class="field-label">类型</label>
-                <select class="type-select">
-                  <option>OpenAI Compatible</option>
-                  <option>Anthropic</option>
-                  <option>Custom</option>
-                </select>
+                <div class="select-wrap">
+                  <select v-model="providerType[p.id]" class="type-select">
+                    <option v-for="t in TYPE_OPTIONS" :key="t" :value="t">{{ t }}</option>
+                  </select>
+                  <svg class="select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
               </div>
               <div class="cred-field cred-field-wide">
                 <label class="field-label">Base URL</label>
@@ -158,9 +195,8 @@ function setDefaultModel(p: Provider, m: string) {
                 <UiSwitch :checked="true" :aria-label="'启用 ' + m" />
                 <UiInput :model-value="m" :mono="true" class="model-name-input" />
                 <span v-if="defaultModel[p.id] === m" class="default-dot" title="默认模型"></span>
-                <span v-if="m === 'glm-4.6'" class="thinking-pill">思考</span>
-                <span v-else-if="m === 'glm-4.5-air'" class="compat-chip">兼容</span>
-                <span v-else class="spacer-tag"></span>
+                <span class="thinking-pill" :class="thinkingPreset(m).cls" :title="'思考策略：' + thinkingPreset(m).label">{{ thinkingPreset(m).label }}</span>
+                <span class="spacer-tag"></span>
                 <button class="btn btn-ghost btn-icon adv-chevron" :class="{ down: advOpen[p.id + m] }" :title="'高级 ' + m" @click="advOpen[p.id + m] = !advOpen[p.id + m]">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
                 </button>
@@ -484,23 +520,22 @@ function setDefaultModel(p: Provider, m: string) {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-  background: var(--reasoning-soft);
-  color: var(--reasoning);
   font-size: var(--text-2xs);
   font-weight: 600;
   flex-shrink: 0;
 }
-.compat-chip {
-  height: 22px;
-  padding: 0 8px;
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
+/* M6：三档预设（spec §2：全档=info / 高/顶=accent / 开关=surface 中性） */
+.thinking-pill.tp-all {
   background: var(--info-soft);
   color: var(--info);
-  font-size: var(--text-2xs);
-  font-weight: 600;
-  flex-shrink: 0;
+}
+.thinking-pill.tp-hightop {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.thinking-pill.tp-toggle {
+  background: var(--surface);
+  color: var(--neutral-mid);
 }
 .spacer-tag {
   width: 44px;
@@ -612,6 +647,40 @@ function setDefaultModel(p: Provider, m: string) {
 }
 .add-model-btn {
   align-self: flex-start;
+}
+
+/* M15：空态（spec §7 三要素：虚线圆图标 + 说明；Primary 入口 = page-head 常驻按钮） */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 64px 0;
+  text-align: center;
+}
+.empty-icon {
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 2px dashed var(--border-strong);
+  margin-bottom: var(--space-2);
+}
+.empty-icon svg {
+  width: 28px;
+  height: 28px;
+  color: var(--neutral-dim);
+}
+.empty-title {
+  font-size: var(--text-md);
+  font-weight: 500;
+  color: var(--neutral-fg);
+}
+.empty-desc {
+  font-size: var(--text-sm);
+  color: var(--neutral-mid);
+  max-width: 360px;
 }
 
 .adv-summary {

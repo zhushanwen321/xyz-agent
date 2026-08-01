@@ -39,6 +39,20 @@ const states = ref<SpState[]>([
 
 const PI_DEFAULT_REF = `# pi 默认系统提示词（只读参考）\n你是 pi，一个由 ZCode 驱动的 agent……\n[此处为内置系统提示词全文，仅作参考]`
 
+/** M6：复制参考区全文 + 反馈（ghost dense icon+text） */
+const copied = ref<Record<string, boolean>>({})
+let copyTimer: ReturnType<typeof setTimeout> | undefined
+function copyRef(s: SpState) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(PI_DEFAULT_REF).catch(() => {})
+  }
+  copied.value[s.key] = true
+  clearTimeout(copyTimer)
+  copyTimer = setTimeout(() => {
+    copied.value[s.key] = false
+  }, 1500)
+}
+
 function onInput(s: SpState) {
   s.dirty = true
 }
@@ -49,7 +63,9 @@ function save(s: SpState) {
   s.dirty = false
 }
 function resetDefault(s: SpState) {
-  s.text = s.key === 'replace' ? DEFAULT_REPLACE : DEFAULT_APPEND
+  // M5（spec §6）：清空 replace prompt + 关 switch + dirty=true——编辑操作，不直接写盘
+  s.text = ''
+  s.enabled = false
   s.dirty = true
 }
 function discard(s: SpState) {
@@ -94,16 +110,25 @@ const totalDirty = computed(() => states.value.filter((s) => s.dirty).length)
         <span class="counter" :class="{ muted: !s.dirty }">{{ charCount(s) }} 字符</span>
         <span class="spacer"></span>
         <button class="btn btn-danger btn-sm" :disabled="!s.dirty" @click="discard(s)">放弃</button>
-        <button class="btn btn-secondary btn-sm" :disabled="!s.dirty" @click="resetDefault(s)">恢复默认</button>
+        <button v-if="s.key === 'replace'" class="btn btn-secondary btn-sm" :disabled="!s.dirty" @click="resetDefault(s)">恢复默认</button>
         <button class="btn btn-default btn-sm" :disabled="!s.dirty" @click="save(s)">保存</button>
       </div>
 
-      <!-- ref-toggle -->
+      <!-- ref-toggle（m11：右箭头，展开 rotate 90°） -->
       <button class="btn btn-ghost ref-toggle" @click="s.refOpen = !s.refOpen">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" :class="{ down: s.refOpen }"><polyline points="6 9 12 15 18 9"/></svg>
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :class="{ down: s.refOpen }"><path d="m9 18 6-6-6-6"/></svg>
         {{ s.refOpen ? '隐藏' : '查看' }} pi 默认提示词（只读）
       </button>
-      <pre v-if="s.refOpen" class="sp-ref">{{ PI_DEFAULT_REF }}</pre>
+      <div v-if="s.refOpen" class="ref-wrap">
+        <div class="ref-head">
+          <span class="ref-note">这是 pi 的默认核心提示词（身份 + 工具列表 + 指引），仅作参考。</span>
+          <button class="btn btn-ghost btn-dense copy-btn" @click="copyRef(s)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+            {{ copied[s.key] ? '已复制' : '复制' }}
+          </button>
+        </div>
+        <pre class="sp-ref">{{ PI_DEFAULT_REF }}</pre>
+      </div>
     </section>
   </div>
 </template>
@@ -246,16 +271,47 @@ const totalDirty = computed(() => states.value.filter((s) => s.dirty).length)
   padding-top: var(--space-3);
 }
 .ref-toggle svg {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   transition: transform var(--duration-fast) var(--ease);
-  transform: rotate(180deg);
-}
-.ref-toggle svg.down {
   transform: rotate(0deg);
 }
-.sp-ref {
+.ref-toggle svg.down {
+  /* m11：展开态右箭头 rotate 90°（朝下） */
+  transform: rotate(90deg);
+}
+.ref-wrap {
   margin-top: var(--space-2);
+}
+.ref-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.ref-note {
+  flex: 1;
+  min-width: 0;
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--neutral-dim);
+}
+.copy-btn {
+  flex-shrink: 0;
+  font-size: 11px;
+  height: 28px;
+  padding: 0 10px;
+  color: var(--neutral-mid);
+}
+.copy-btn svg {
+  width: 13px;
+  height: 13px;
+}
+.copy-btn:hover {
+  color: var(--neutral-fg);
+}
+.sp-ref {
+  margin-top: 0;
   padding: var(--space-3);
   background: var(--bg-input);
   border-radius: var(--radius-sm);
