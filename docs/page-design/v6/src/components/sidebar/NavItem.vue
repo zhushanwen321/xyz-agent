@@ -94,30 +94,30 @@ const ICONS: Record<Props['icon'], string> = {
   padding: 1px 6px;
 }
 
-/* primary：accent 实色（v6-demo .btn-primary 别名：32px 高 + accent 底 + 白字） */
+/* primary：accent 实色（v6-demo .btn-primary 别名：32px 高 + accent 底 + accent-fg 字）*/
 .nav-item--primary {
   height: 32px;
   padding: 0 12px;
   border-radius: var(--radius);
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   font-weight: 500;
 }
 .nav-item--primary:hover {
   background: var(--accent-hover);
-  color: #fff;
+  color: var(--accent-fg);
 }
 .nav-item--primary .nav-item__icon {
-  color: #fff;
+  color: var(--accent-fg);
 }
 .nav-item--primary:hover .nav-item__icon {
-  color: #fff;
+  color: var(--accent-fg);
 }
 /* primary kbd 弱化（opacity .7，去边框底色） */
 .nav-item--primary .nav-item__kbd {
   background: transparent;
   border: 0;
-  color: #fff;
+  color: var(--accent-fg);
   opacity: 0.7;
 }
 

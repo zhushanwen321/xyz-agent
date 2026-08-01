@@ -28,6 +28,8 @@
   --accent-hover: #6ba3ff;
   --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
   --accent-ring: rgba(79,142,247,0.30);
+  /* accent 实色上的文字色（深色 accent 用白字，亮色 accent 如太极需覆盖为深字）*/
+  --accent-fg: #ffffff;
 
   /* 状态色 */
   --success: #22c55e;

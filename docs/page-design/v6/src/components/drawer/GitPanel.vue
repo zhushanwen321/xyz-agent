@@ -550,7 +550,7 @@ function onCommitKeydown(e: KeyboardEvent) {
 }
 .gp-act.primary {
   background: var(--accent);
-  color: var(--neutral-fg);
+  color: var(--accent-fg);
 }
 .gp-act.primary:hover {
   background: var(--accent-hover);

@@ -33,6 +33,7 @@ const THEMES: Record<string, Record<string, string>> = {
   '紫色暗色': { '--bg': '#1a1a1f', '--surface': '#272730', '--surface-hover': '#363640', '--surface-2': '#2e2e38', '--bg-elevated': '#313140', '--bg-input': '#1e1e24', '--bg-card': '#22222c', '--bg-sunken': '#1a1a1f', '--neutral-fg': '#e5e7eb', '--neutral-mid': '#9ca3af', '--neutral-dim': '#7d7d8c', '--neutral-faint': '#4b4b55', '--neutral-ico': '#8b8b94', '--accent': '#8b5cf6', '--success': '#22c55e', '--warn': '#b08a3e', '--danger': '#ef4444', '--info': '#38bdf8', '--reasoning': '#a78bfa' },
   '高对比暗色': { '--bg': '#0d0d10', '--surface': '#1e1e24', '--surface-hover': '#2e2e38', '--surface-2': '#262630', '--bg-elevated': '#2a2a35', '--bg-input': '#141418', '--bg-card': '#1a1a20', '--bg-sunken': '#0d0d10', '--neutral-fg': '#ffffff', '--neutral-mid': '#b0b0b8', '--neutral-dim': '#888894', '--neutral-faint': '#505058', '--neutral-ico': '#9898a4', '--accent': '#5b9eff', '--success': '#4ade80', '--warn': '#facc15', '--danger': '#f87171', '--info': '#38bdf8', '--reasoning': '#c4b5fd' },
   '灰阶无彩色': { '--bg': '#1a1a1a', '--surface': '#262626', '--surface-hover': '#363636', '--surface-2': '#2e2e2e', '--bg-elevated': '#313131', '--bg-input': '#1e1e1e', '--bg-card': '#222222', '--bg-sunken': '#1a1a1a', '--neutral-fg': '#e5e5e5', '--neutral-mid': '#9c9c9c', '--neutral-dim': '#7d7d7d', '--neutral-faint': '#4b4b4b', '--neutral-ico': '#8b8b8b', '--accent': '#9ca3af', '--success': '#9ca3af', '--warn': '#9ca3af', '--danger': '#9ca3af', '--info': '#9ca3af', '--reasoning': '#9ca3af' },
+  '太极': { '--bg': '#0f0f11', '--surface': '#1b1b1d', '--surface-hover': '#29292b', '--surface-2': '#212123', '--bg-elevated': '#262628', '--bg-input': '#141416', '--bg-card': '#18181a', '--bg-sunken': '#0f0f11', '--neutral-fg': '#dcdce0', '--neutral-mid': '#888890', '--neutral-dim': '#5e5e64', '--neutral-faint': '#383840', '--neutral-ico': '#74747c', '--accent': '#c0c0c5', '--accent-fg': '#18181a', '--success': '#6a9b73', '--warn': '#a8904a', '--danger': '#b06060', '--info': '#5e8a96', '--reasoning': '#80779e' },
 }
 const themeEntries = Object.entries(THEMES)
 const themeSwatch = (t: Record<string, string>) => [t['--accent'], t['--neutral-fg'], t['--surface'], t['--bg']]
@@ -105,8 +106,10 @@ function isDirty(t: string): boolean {
 const dirty = computed(() => COLOR_TOKENS.some(isDirty))
 
 // ── 1. 主题切换：先清空颜色 token，再批量写入；baseline 同步为新主题；滑块归零 ──
+// --accent-fg 不在 COLOR_TOKENS（不需参与滑块 HSL 偏移），单独处理：theme 有则 write，无则 reset 回 tokens.css 默认
 function applyTheme(theme: Record<string, string>): void {
   for (const t of COLOR_TOKENS) resetToken(t)
+  resetToken('--accent-fg')
   for (const [k, v] of Object.entries(theme)) writeToken(k, v)
   refreshBaseline()
   lightness.value = 0; saturation.value = 100; hueShift.value = 0
