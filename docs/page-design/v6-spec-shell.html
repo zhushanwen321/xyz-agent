@@ -272,7 +272,7 @@ body {
 }
 .safe-zone-band {
   position: absolute; left: 0; right: 0; top: 0; height: 52px;
-  background: rgba(79,142,247,0.06);
+  background: color-mix(in oklch, var(--accent) 6%, transparent);
   border-bottom: 1px dashed var(--accent-ring);
 }
 .safe-zone-label {
@@ -305,7 +305,7 @@ body {
 .plat-band {
   position: absolute; left: 0; right: 0; top: 0; height: 52px;
   border-bottom: 1px dashed var(--accent-ring);
-  background: rgba(79,142,247,0.04);
+  background: color-mix(in oklch, var(--accent) 4%, transparent);
 }
 .plat-tl {
   position: absolute; left: 16px; top: 26px; display: flex; gap: 8px;

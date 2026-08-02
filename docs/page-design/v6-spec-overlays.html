@@ -147,7 +147,7 @@ body {
 .cp b { font-weight: 500; }
 
 /* ============ 标注面板 ============
-   标注文字用 neutral-mid（#9ca3af）保证 AA：bg-card 上 6.10:1。
+   标注文字用 neutral-mid（V3 #888890）保证 AA：bg-card 上对比安全。
    标注值属可读正文，不用 dim（dim 仅装饰/极弱位置）。 */
 .anno { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-mid); line-height: 1.8; }
 .anno b { color: var(--neutral-fg); font-weight: 500; }
@@ -1036,16 +1036,16 @@ body {
               <!-- 占位 mermaid 流程图（纯示意）-->
               <svg class="mr-graph" width="360" height="140" viewBox="0 0 360 140" xmlns="http://www.w3.org/2000/svg">
                 <defs>
-                  <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#9ca3af"/></marker>
+                  <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#888890"/></marker>
                 </defs>
-                <rect x="20" y="50" width="80" height="40" rx="6" fill="#2e2f38" stroke="#4f8ef7" stroke-width="1.5"/>
-                <text x="60" y="74" text-anchor="middle" fill="#e5e7eb" font-size="11" font-family="JetBrains Mono">Start</text>
-                <rect x="140" y="50" width="80" height="40" rx="6" fill="#2e2f38" stroke="#8b8d94" stroke-width="1.5"/>
-                <text x="180" y="74" text-anchor="middle" fill="#e5e7eb" font-size="11" font-family="JetBrains Mono">Process</text>
-                <rect x="260" y="50" width="80" height="40" rx="20" fill="#2e2f38" stroke="#22c55e" stroke-width="1.5"/>
-                <text x="300" y="74" text-anchor="middle" fill="#e5e7eb" font-size="11" font-family="JetBrains Mono">Done</text>
-                <line x1="100" y1="70" x2="138" y2="70" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arr)"/>
-                <line x1="220" y1="70" x2="258" y2="70" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arr)"/>
+                <rect x="20" y="50" width="80" height="40" rx="6" fill="#212123" stroke="#c8c8cd" stroke-width="1.5"/>
+                <text x="60" y="74" text-anchor="middle" fill="#dcdce0" font-size="11" font-family="JetBrains Mono">Start</text>
+                <rect x="140" y="50" width="80" height="40" rx="6" fill="#212123" stroke="#8b8d94" stroke-width="1.5"/>
+                <text x="180" y="74" text-anchor="middle" fill="#dcdce0" font-size="11" font-family="JetBrains Mono">Process</text>
+                <rect x="260" y="50" width="80" height="40" rx="20" fill="#212123" stroke="#6a9b73" stroke-width="1.5"/>
+                <text x="300" y="74" text-anchor="middle" fill="#dcdce0" font-size="11" font-family="JetBrains Mono">Done</text>
+                <line x1="100" y1="70" x2="138" y2="70" stroke="#888890" stroke-width="1.5" marker-end="url(#arr)"/>
+                <line x1="220" y1="70" x2="258" y2="70" stroke="#888890" stroke-width="1.5" marker-end="url(#arr)"/>
               </svg>
             </div>
             <div class="mr-hint">点击图像放大查看</div>
@@ -1072,17 +1072,17 @@ body {
               <div class="mr-fs-viewport">
                 <svg class="mr-graph-lg" width="420" height="160" viewBox="0 0 420 160" xmlns="http://www.w3.org/2000/svg">
                   <defs>
-                    <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#9ca3af"/></marker>
+                    <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#888890"/></marker>
                   </defs>
-                  <rect x="20" y="60" width="90" height="44" rx="6" fill="#2e2f38" stroke="#4f8ef7" stroke-width="1.5"/>
-                  <text x="65" y="86" text-anchor="middle" fill="#e5e7eb" font-size="12" font-family="JetBrains Mono">Start</text>
-                  <polygon points="180,60 240,82 180,104 120,82" fill="#2e2f38" stroke="#b08a3e" stroke-width="1.5"/>
-                  <text x="180" y="86" text-anchor="middle" fill="#e5e7eb" font-size="11" font-family="JetBrains Mono">cond?</text>
-                  <rect x="280" y="60" width="90" height="44" rx="22" fill="#2e2f38" stroke="#22c55e" stroke-width="1.5"/>
-                  <text x="325" y="86" text-anchor="middle" fill="#e5e7eb" font-size="12" font-family="JetBrains Mono">Done</text>
-                  <line x1="110" y1="82" x2="120" y2="82" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arr2)"/>
-                  <line x1="240" y1="82" x2="280" y2="82" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#arr2)"/>
-                  <text x="260" y="76" fill="#22c55e" font-size="10" font-family="JetBrains Mono">yes</text>
+                  <rect x="20" y="60" width="90" height="44" rx="6" fill="#212123" stroke="#c8c8cd" stroke-width="1.5"/>
+                  <text x="65" y="86" text-anchor="middle" fill="#dcdce0" font-size="12" font-family="JetBrains Mono">Start</text>
+                  <polygon points="180,60 240,82 180,104 120,82" fill="#212123" stroke="#b08a3e" stroke-width="1.5"/>
+                  <text x="180" y="86" text-anchor="middle" fill="#dcdce0" font-size="11" font-family="JetBrains Mono">cond?</text>
+                  <rect x="280" y="60" width="90" height="44" rx="22" fill="#212123" stroke="#6a9b73" stroke-width="1.5"/>
+                  <text x="325" y="86" text-anchor="middle" fill="#dcdce0" font-size="12" font-family="JetBrains Mono">Done</text>
+                  <line x1="110" y1="82" x2="120" y2="82" stroke="#888890" stroke-width="1.5" marker-end="url(#arr2)"/>
+                  <line x1="240" y1="82" x2="280" y2="82" stroke="#888890" stroke-width="1.5" marker-end="url(#arr2)"/>
+                  <text x="260" y="76" fill="#6a9b73" font-size="10" font-family="JetBrains Mono">yes</text>
                 </svg>
               </div>
             </div>
@@ -1139,7 +1139,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s6">
     <div class="spec-head"><span class="spec-num">§6</span><h2 class="spec-title">shadow token 应用</h2></div>
-    <p class="spec-desc">覆盖层的「浮起」靠 shadow token 表达（§2.4）。两个主 token：①<code>--shadow-2: 0 8px 24px rgba(0,0,0,0.4)</code> 用于全部浮层/modal（SearchModal 浮层 / ConfirmDialog / AskUserOverlay / popover）；②<code>--shadow-glow: 0 0 0 3px rgba(79,142,247,0.25)</code> 用于 focus 态（输入框聚焦环）。另：<code>--shadow-drawer: -12px 0 24px rgba(0,0,0,0.16)</code> 用于 SideDrawer 左投影分隔（与 overlays 同属覆盖层家族，此处一并标注）。v6 不新增 shadow token，仅收敛任意值到语义 token。</p>
+    <p class="spec-desc">覆盖层的「浮起」靠 shadow token 表达（§2.4）。两个主 token：①<code>--shadow-2: 0 8px 24px rgba(0,0,0,0.4)</code> 用于全部浮层/modal（SearchModal 浮层 / ConfirmDialog / AskUserOverlay / popover）；②<code>--shadow-glow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent)</code>（V3 改 color-mix 派生 · 原 accent rgba 已弃用）用于 focus 态（输入框聚焦环）。另：<code>--shadow-drawer: -12px 0 24px rgba(0,0,0,0.16)</code> 用于 SideDrawer 左投影分隔（与 overlays 同属覆盖层家族，此处一并标注）。v6 不新增 shadow token，仅收敛任意值到语义 token。</p>
     <div class="change-points">
       <span class="cp cp-v6"><b>v6</b> 浮层/modal 统一 --shadow-2</span>
       <span class="cp cp-v6"><b>v6</b> focus 统一 --shadow-glow（替代任意 ring 值）</span>
@@ -1169,7 +1169,7 @@ body {
         <div class="shadow-cell">
           <div class="shadow-demo sd-focus">focus</div>
           <div class="shadow-name">--shadow-glow</div>
-          <div class="shadow-val">0 0 0 3px rgba(79,142,247,0.25)</div>
+          <div class="shadow-val">0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent)<br><span style="font-size:10px;color:var(--neutral-dim);">（V3 改 color-mix 派生 · 原 accent rgba 已弃用）</span></div>
           <div class="anno" style="margin-top:8px;"><b>用于:</b> <span>focus 态（输入框聚焦环 · 配合 1px border-accent）</span></div>
         </div>
       </div>
@@ -1212,7 +1212,7 @@ body {
 
     <div class="anno-grid">
       <div class="anno"><b>--shadow-2:</b><br>0 8px 24px rgba(0,0,0,0.4) · 浮层/modal 统一投影<br>偏移 8px + 模糊 24px + 40% 黑</div>
-      <div class="anno"><b>--shadow-glow:</b><br>0 0 0 3px rgba(79,142,247,0.25) · focus 聚焦环<br>0 偏移（四周均匀）+ 3px accent 25%</div>
+      <div class="anno"><b>--shadow-glow:</b><br>0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent) · focus 聚焦环<br>0 偏移（四周均匀）+ 3px accent 25%（V3 改 color-mix 派生）</div>
       <div class="anno"><b>--shadow-drawer:</b><br>-12px 0 24px rgba(0,0,0,0.16) · drawer 左投影<br>仅左侧偏移（抽屉在右侧，向左投）</div>
       <div class="anno"><b>应用规则:</b><br>modal = shadow-2 + 1px border-border（双表达）<br>overlay = shadow-2（无 border，bg 区分）</div>
       <div class="anno"><b>focus 配合:</b><br>1px border-accent + shadow-glow（glow 是外环，border 是实线）<br>替代任意 ring-2/ring-3 混用</div>
