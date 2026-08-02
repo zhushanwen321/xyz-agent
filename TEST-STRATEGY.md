@@ -25,9 +25,11 @@
 | 单元测试 | renderer（happy-dom）/ runtime | 纯逻辑、纯函数、单模块、状态机 | 见下 |
 | 集成测试 | renderer（mount 组件树，`@vue/test-utils`） | 组件协作、store 联动、WS 事件流 | 见下 |
 | E2E（mock 轨）| Playwright `_electron` + VITE_MOCK | 全链路用户旅程（renderer 渲染 + 交互逻辑），OS 原生 dialog 标 `[需手工]` | `npx playwright test` |
-| **dev 冒烟**（闸门）| chromium + vite dev server | 模块加载健康（拦 node:path externalize 类 bug，mock 轨盲区）| `node scripts/dev-smoke.mjs`（待建） |
+| **dev 冒烟**（闸门）| chromium + vite dev server | 模块加载健康（拦 node:path externalize / CSS 变量引用错 / Tailwind 类名错 / Vue template compile 错，mock 轨盲区）| `node scripts/dev-smoke.mjs`（或 `pnpm dev:smoke`）|
 
 > **[HISTORICAL] E2E 从手动升级为 Playwright**：原「E2E 手动，无 playwright/cypress」（2026-06-28 sidebar-project-file-tree W0 引入 Playwright 覆盖）。mock 轨验证渲染/交互，但**验证不了模块加载期副作用**——`node:path` 类错误在 vite build 期被 externalize 成惰性代理，mock 模式不触发 getter，E2E 全绿却 dev 崩溃（2026-06-30 事故）。**必须配套 dev 冒烟闸门**。详见 `.xyz-harness/2026-06-30-e2e-retrospect/`。`[from: 2026-06-28-sidebar-project-file-tree §2/W8]`
+>
+> **dev 冒烟闸门（已实现，S1-W1 交付）**：`scripts/dev-smoke.mjs` 自管理完整生命周期（VITE_MOCK=true spawn vite → 轮询 ready → chromium 连接 → 双通道抓错误 → 断言挂载点 → cleanup），不依赖外部已启动的 dev server。双通道错误捕获：(A) vite 子进程输出正则匹配编译期错误（Module not found / Pre-transform error / Failed to resolve import 等）；(B) `page.on('console')` error + `page.on('pageerror')` 未捕获异常。**exit code 语义**：`0`=ok（零 error + 挂载点全存在）/ `1`=有 error（console/pageerror/编译 pattern 非空 或 挂载点缺失）/ `2`=dev server 启动超时 / `3`=chromium launch 失败。完整用法与错误注入指南见 `scripts/dev-smoke.mjs` 文件头注释。`[from: v6-ui-refactor-test-infra S1-W1 dev-smoke-gate]`
 
 ### 运行命令（cwd 敏感）
 
@@ -65,17 +67,57 @@ cd packages/runtime && npx tsc --noEmit
 3. E2E 用户旅程步骤不可降级，每步必须有 DOM 断言。无法自动化的步标 `[需手工]` + 占位断言，**不得删除步骤**
 4. **渲染 gate DoD**：mount 功能顶层容器，断言 spec 结构章节列出的每个「结构元素」对应 DOM 节点存在。**spec 结构条目 = 渲染断言清单**
 
-**首屏冒烟模板**（每功能必含 1 条）：
+**首屏冒烟模板**（每功能必含 1 条）——观察者视角的操作化定义：mount 功能顶层容器，断言该页面 spec 结构章节列出的「关键交互元素」对应 `[data-testid]` 节点存在于 DOM：
 
 ```typescript
-it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
-  const wrapper = mount(Panel, { props: { sessionId: null } })
-  expect(wrapper.find('[data-testid="composer-input"]').exists()).toBe(true)
-  expect(wrapper.find('[data-testid="chip-directory"]').exists()).toBe(true)
+// 通用模板：把 <KEY_TESTIDS> 换成该页面的关键交互元素 testid 清单
+it('首屏渲染：<页面> DOM 含关键交互元素', () => {
+  const wrapper = mount(<顶层容器>, { props: { /* 必要 props */ } })
+  for (const testid of <KEY_TESTIDS>) {
+    expect(wrapper.find(`[data-testid="${testid}"]`).exists()).toBe(true)
+  }
 })
 ```
 
+**核心页面首屏冒烟 testid 清单**（新功能按所属页面补齐对应 testid 断言）：
+
+| 页面/区域 | 顶层容器 | 关键交互 testid（至少断言这些存在）|
+|-----------|---------|----------------------------------|
+| Landing 态（无 session）| `Panel`（`sessionId:null`）| `composer-input` / `chip-directory` |
+| 激活 session 后 | `Panel`（激活态）| `composer-input` / `message-list` / `turn-*` |
+| 侧边栏 | `Sidebar` / `SessionItem` | `session-list` / `session-item` |
+| 文件树 | `FileTree` | `file-tree` / `tree-node` |
+| 搜索浮层 | `SearchModal` | `search-modal` / `search-input` |
+| Composer slash 浮层 | `Composer` | `composer-input` / `slash-popover` |
+
+> spec 结构条目 = 渲染断言清单（规则#4）。每功能集成/E2E 必含 1 条首屏冒烟，覆盖该页面的关键 testid，防止「测试全绿但功能不可用」。
+>
 > 三视角缺一不可。任一缺失即重蹈「测试全绿但功能不可用」。
+
+## 视觉回归测试（v6 重构期三层互补方案）
+
+> v6 UI 重构的核心质量保障。三层覆盖不同失效模式，互补非替代。S2（visual-regression-baseline slice）交付。`[from: v6-ui-refactor-test-infra S2-W1/W2/W3]`
+
+### A 层：token 落地断言（契约级，CI 内）
+
+- **双轨互补**：(1) **vitest 契约轨** `packages/renderer/src/__tests__/v6-visual/tokens.test.ts`（happy-dom 注入等价 CSS，断言 class→`var()` 消费）；(2) **chromium 真实轨** `scripts/token-consume-check.mjs`（spawn vite 加载真实 JIT CSS，端到端验证 computed style）
+- vitest 轻量快（CI 内跑），chromium 保真（本地/定期跑）。tailwind.config 改映射时 vitest 契约轨不跟随（注入等价 CSS），chromium 轨跟随——两者覆盖不同失效模式
+- **方法论 [from S2-W1]**：涉及 CSS 断言时**先探测 happy-dom 实际能力再选轨**。happy-dom 的 CSS 能力比业界传言强（能解析注入 `<style>` 的 class→`var()` 消费），不盲信「happy-dom 不支持」——探测驱动决策（探测用例推翻预设）避免浪费可行路径
+
+### B 层：minimax-m3 VLM 语义对齐（半自动，非 CI gate）
+
+- **机制**：`scripts/visual-capture.mjs` 截目标页面 PNG → 主 agent 用 `subagent` 工具派发 `minimax-token-plan-router/minimax-m3` VLM，对照 `docs/page-design/v6-master-spec.md` 文字描述逐区域检查 → 返回结构化 JSON（regions/verdict/meta）
+- **派发模板 SSOT**：[docs/testing/visual/vlm-prompt-template.md](docs/testing/visual/vlm-prompt-template.md) ——minimax-m3 VLM 视觉验证标准化派发模板（三段式 task：背景/目标/验收标准 + 内嵌 JSON schema + 自检检查点。VLM 一次返回合规 JSON 无需人工修正）
+- **定位**：半自动形态，重构期 agent/人触发的验收工具链。失败不阻塞，降级人工肉眼对照。**非 CI gate**（成本 + 非确定性）。建的是机制+模板+首例，非可执行断言
+
+### C 层：Playwright 像素 diff（CI 内，形态级）
+
+- **机制**：`playwright.config.ts` 的 `visual-chromium` project（testMatch `visual/**`）+ `e2e/visual/` spec + `e2e/visual-baselines/` baseline 快照（**git tracked**，CI/他人 clone 后无 baseline 则 diff 无意义）
+- **双 project 隔离**：electron 行为轨（testIgnore `visual/**`）/ visual-chromium 像素轨（testMatch `visual/**`）互斥，`npx playwright test e2e/visual` 自动只跑像素轨
+- **阈值**：`maxDiffPixelRatio: 0.01`（容忍字体抗锯齿/caret 闪烁 flaky，抓真回归）+ `caret:'hide'`
+- **方法论 [from S2-W3]**：(1) `snapshotDir`/`snapshotPathTemplate` 是 TestProject **直接属性**（与 name/testMatch 同级），不是 `use` 属性——放 project.use 里静默不生效；(2) `toHaveScreenshot(name)` 的 name 必须带 `.png` 扩展名；(3) baseline 必须 git tracked
+
+> **三层选用**：CI 内跑 A（vitest 契约）+ C（像素 diff）；B（VLM）重构期手动触发做语义对齐验收。A 抓 token 未落地（颜色/间距错乱），B 抓语义不符（如选中态二分规则 D8），C 抓可见像素级回归。基线条目见下方回归基线表。
 
 ## 4. 回归基线用例（破坏即事故）
 
@@ -92,6 +134,9 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 | **切模型后思考等级自动重置** | A 模型(high-max, level=xhigh) 切到 B 模型(on-off: off/high)，xhigh 不在 on-off 可用档 → 自动重置为 high。landing 态(localThinkingLevel=undefined) 切模型 → immediate watch 设最高可用档。on-off 模式 popover 显示「关」「开」而非「关」「高」。破坏=用户看到错误的思考等级/不可用档位被选中 | NFR S-9/S-10/S-11；`[from: 2026-07-02-thinking-level-and-model-select §execution]` | `src/__tests__/composables/use-thinking-level-sync.test.ts`（4 用例：A→B 重置/high 可用不重置/landing 设最高/all-levels 不重置）+ `src/__tests__/panel/thinking-levels.test.ts`（19 用例：resolveAvailableLevels key-based）|
 | **store 必须走 @/api 门面（mock 数据流不断裂）** | 所有 renderer store 访问外部域必须 `import { xxx } from '@/api'`（门面），禁止直接 `import from '@/api/domains/xxx'`。绕门面→ mock 模式下走 real domain transport，而 mock-ws 只处理 ping→pong 不回业务 reply → Promise 永挂 → records 恒空。破坏=E2E mock 轨数据全空，UI 测试假绿（空态本就期望空）。对比：useSidebar 走门面所以 mock 生效 | `2026-07-03-recent-workspaces`（workspaceStore 绕门面致 mockApi.workspace 死代码）`[from: 2026-07-03-recent-workspaces §execution]` | `e2e/workspace.spec.ts` T4.1（records 非 0 断言）+ `workspace-store.test.ts` vi.mock('@/api') |
 | **real E2E fixture（real runtime + pi spawn，create session 无 LLM 依赖）** | real 模式 E2E 不设 XYZ_MOCK（启动 runtime）+ real renderer bundle（VITE_MOCK=false build）。create session（session-lifecycle.create）的 record 是 create 同步收尾，**不调用 LLM**（LLM 调用在 sendPrompt）。real E2E 需预设 pi provider 配置（$dataDir/pi/agent/models.json + settings.json），dialog 走 WS 直连触发等效业务动作。mock/real E2E 分批 build（VITE_MOCK 构建期 define，bundle 输出冲突） | `2026-07-03-recent-workspaces`（T4.6 跨进程持久化 real E2E）`[from: 2026-07-03-recent-workspaces §execution T4.6]` | `e2e/workspace-real.spec.ts` + `e2e/fixtures/launch-app-real.ts` |
+| **v6 token 落地断言（A 层）** | design-tokens 原子值在组件层正确消费（class→`var()`），双轨验证：vitest 契约（注入等价 CSS 断言消费）+ chromium 真实（加载 JIT CSS 验 computed style）。破坏=token 未落地致颜色/间距/圆角错乱 | `v6-ui-refactor-test-infra S2-W1`（happy-dom `var()` 能力探测推翻预设）`[from: S2-W1]` | `packages/renderer/src/__tests__/v6-visual/tokens.test.ts` + `scripts/token-consume-check.mjs` |
+| **v6 像素 diff baseline（C 层）** | `e2e/visual-baselines/` baseline 快照对照（**git tracked**），visual-chromium project + `maxDiffPixelRatio:0.01` + `caret:'hide'`。破坏=可见像素级回归（布局错位/元素消失） | `v6-ui-refactor-test-infra S2-W3`（snapshotDir 是 project 直接属性非 use）`[from: S2-W3]` | `e2e/visual/*.spec.ts` + `e2e/visual-baselines/` |
+| **v6 选中态二分 D8（B 层 VLM）** | sidebar 选中项 bg-surface + 蓝字（D8 二分规则：列表项型），minimax-m3 VLM 对照 v6-master-spec 语义验证。破坏=选中态视觉不符 spec（选中项无背景/颜色错） | `v6-ui-refactor-test-infra S2-W2`（VLM 三段式 task 派发+schema 内嵌）`[from: S2-W2]` | `docs/testing/visual/vlm-prompt-template.md` + `.xyz-harness/visual/` |
 
 ## 5. mock 策略
 
@@ -116,11 +161,34 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 
 taste/no-silent-catch 处理：纯 console.warn 仍报（要求传播/重抛）。项目惯例用 `// eslint-disable-next-line taste/no-silent-catch -- <理由>`（参考 runtime `fetchAndBroadcastCommands`、useSidebar/useNewTaskFlow 的 getCommands catch）。**改 catch 前先 `grep -rn "no-silent-catch"` 看现有写法**。
 
-## 7. 覆盖率
+## 7. 覆盖率与 coverage gate
 
-- 目标 ≥60%（增量核心逻辑应 100%）
-- 全文件覆盖率可能偏低（含大量未测试的 pre-existing 代码），**以增量覆盖率为准**
+> S3-W1 交付 renderer coverage thresholds + CI 收集。`[from: v6-ui-refactor-test-infra S3-W1 coverage-thresholds]`
+
+**coverage gate（renderer，CI 内）**：`packages/renderer/vitest.config.ts` 的 `test.coverage` 块配 v8 provider + thresholds（任一指标 < 阈值则 vitest exit 非0，阻塞 CI）：
+
+| 指标 | threshold | 基线实测 | 余量（最紧标★）|
+|------|-----------|---------|--------------|
+| Lines | 72 | 74.05 | 2.05% |
+| Statements | 70 | ~74 | ~4% |
+| Branches | 59 | 60.87 | 1.87% |
+| Functions | 67 | 68.42 | 1.42% ★ |
+
+- **方法论 [from S3-W1]**：**先测量后设阈**——thresholds 取基线 -2~3%（非卡死基线值），留 flake 缓冲同时保整体不退化底线。卡死基线 CI 偶发红，-2~3% 是平衡点。未来若 Functions/Branches 余量持续收窄，补测试提升覆盖率或评估调整 thresholds（保持基线-2~3% 原则并记录原因）
+- **CI 收集**：`.github/workflows/ci.yml` test job 的 'Test - renderer' 步骤加 `--coverage` flag（与 `--reporter=junit --outputFile=test-results.xml` 共存，vitest 4.x 多 flag 无冲突），新增 'Upload coverage report' 步骤（upload-artifact `coverage-report`，`if:always()` 失败也上传便于排查 gate 红，path `packages/renderer/coverage/`）
+- **产物**：`packages/renderer/coverage/`（index.html + lcov.info + lcov-report/），已被 `.gitignore` 覆盖
+- 通用原则：增量核心逻辑应 100%；全文件覆盖率含大量 pre-existing 代码偏低，**以增量覆盖率为准**
 - 运行：`cd packages/renderer && npx vitest run --coverage`
+
+## E2E CI（mock 轨进 CI）
+
+> S3-W2 交付。ci.yml e2e-visual job 跑 mock 轨 visual-chromium project。`[from: v6-ui-refactor-test-infra S2-W2 e2e-ci]`
+
+**ci.yml e2e-visual job**：CI 内跑 mock 轨 visual-chromium project（`npx playwright test e2e/visual`），复用 lint job 成熟模式（checkout → pnpm/action-setup → setup-node → pnpm install，`fetch-depth:1`/node24/cache pnpm/`ELECTRON_SKIP_BINARY_DOWNLOAD:1` 全一致）。
+
+- **build gate 联动**：e2e-visual job 加入 reusable workflow（`build.yml`）的 needs 数组，任一质量 gate job 失败则 build 不触发（阻塞 release）
+- **artifact 隔离**：upload-artifact name 用 `test-results-visual`（与 test job 的 `test-results` 区分，GitHub Actions artifact name 必须唯一）
+- **方法论 [from S3-W2]**：(1) **CI job 复用成熟模式优于创新**（一致性>品味，reviewer 一眼读懂 job 结构降低配置错误率）；(2) testMatch 隔离是双 project 共存关键（路径参数 + project testMatch 双重过滤自动只跑像素轨）；(3) CI 改动本地能验证 YAML 语法合法 + 配置字段正确 + 本地跑通复验，CI 环境特有行为（chromium 下载时长/字体渲染差异/并发额度）记录为 followup 待 push 后观察，不阻塞 wave 闭环
 
 ## 8. Extension Upgrade 回归基线 [from: extension-upgrade]
 
