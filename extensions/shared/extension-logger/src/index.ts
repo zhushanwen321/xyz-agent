@@ -15,8 +15,8 @@
 // notify（用户操作反馈）刻意不封装——它是 UI 决策，留给各 extension 在命令/视图层
 // 直接调 ctx.ui.notify。
 
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { appendFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 /**
@@ -159,10 +159,12 @@ function prefixMsg(extName: string, msg: string): string {
 }
 
 /**
- * 写文件日志到 `<piAgentDir>/logs/<extName>-YYYY-MM-DD.log`。
+ * 写文件日志到 `<agentDir>/logs/<extName>-YYYY-MM-DD.log`。
  *
  * 仅在 PI_EXT_DEBUG 环境变量为 "1" 时写入（默认 no-op，生产环境零开销）。
- * piAgentDir 默认 `~/.pi/agent`，可通过 PI_AGENT_DIR 覆盖（与 pi 约定一致）。
+ * agentDir 通过 pi 的 SSOT `getAgentDir()` 推导（读
+ * `PI_CODING_AGENT_DIR`/`${APP_NAME}_CODING_AGENT_DIR`，默认 `~/.pi/agent`），
+ * 与其它 extension 的路径派生保持一致。
  * 写失败静默吞错（文件日志是 best-effort，不应影响主流程）。
  *
  * 线程安全：appendFileSync 保证单次写入原子性；多 worker 并发写同文件时
@@ -171,7 +173,7 @@ function prefixMsg(extName: string, msg: string): string {
 function fileLog(extName: string, level: LogLevel, msg: string, data?: unknown): void {
 	if (process.env.PI_EXT_DEBUG !== "1") return;
 	try {
-		const agentDir = process.env.PI_AGENT_DIR ?? join(homedir(), ".pi", "agent");
+		const agentDir = getAgentDir();
 		const logDir = join(agentDir, "logs");
 		mkdirSync(logDir, { recursive: true });
 		// ISO 日期前 10 字符 = "YYYY-MM-DD"
