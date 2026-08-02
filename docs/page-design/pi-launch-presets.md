@@ -10,8 +10,8 @@
 - 预设可自定义，支持黑白名单精细控制
 
 **Demo 预览**：
-- [Settings 页面 Demo](./demo-settings-pi-presets.html) — 预设编辑、工具/Extension 黑白名单配置
-- [Landing 页面 Demo](./demo-landing-preset-chip.html) — 预设选择 Chip、Session 锁定状态
+- Settings 页面 Demo（`demo-settings-pi-presets.html`，已删除）— 预设编辑、工具/Extension 黑白名单配置
+- Landing 页面 Demo（`demo-landing-preset-chip.html`，已删除）— 预设选择 Chip、Session 锁定状态
 
 > **[MANDATORY] 实现前必读**：本设计的所有 pi CLI 参数映射基于源码核实（见 [附录 A](#附录-api-cli-参数事实核实)）。pi 的工具白名单 `--tools` 是**替换语义**，extension 注入 `--extension` 是**追加语义**，两者不能复用同一套映射逻辑。pi **无原生 extension 黑名单**，denylist 必须由调用方（runtime）先枚举全部已启用 extension 再排除后，作为 allowlist 注入。
 

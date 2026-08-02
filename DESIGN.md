@@ -78,7 +78,7 @@ components:
     padding: "2px 8px"
 ---
 
-> ⚠️ **DEPRECATED by [ADR-0018](docs/architecture/adr/0018-visual-direction.md)** (2026-06-18).
+> ⚠️ **DEPRECATED by [ADR-0019](docs/adr/0019-visual-direction.md)** (2026-06-18).
 > Warm & Soft 设计系统已被推翻。真身见 [docs/page-design/design-tokens.md](docs/page-design/design-tokens.md)（原子 SSOT）+ [docs/page-design/design-system.md](docs/page-design/design-system.md)（原语层）。
 > 本文件保留作历史参考，不再作为当前规范。
 
@@ -248,5 +248,4 @@ This system is flat by default. Depth is conveyed through tonal layering (backgr
 
 ## 7. 设计参考文档
 
-- [竞品 UI 分析](docs/templates/competitor-ui-analysis.md) — Claude Code / Codex 逐图拆解对比，提炼 7 条设计原则
-- [UI/UX 设计原则与参考](docs/templates/ui-design-principles-and-references.md) — 认知负荷/格式塔/渐进披露等设计方法论 + 7 个竞品案例 + 20 条行动清单
+- [UI/UX 设计原则与参考](docs/page-design/ui-design-principles.md) — 认知负荷/格式塔/渐进披露等设计方法论 + 竞品案例 + 行动清单

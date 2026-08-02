@@ -21,7 +21,7 @@ task prompt 中必须包含：
    - 边界条件（空输入、极大/极小值、null/undefined）是否处理
    - 异常路径是否正确回退或报错
 4. **回归风险**：检查变更是否可能破坏现有功能（公共 API 签名变更、隐式依赖等）。
-5. **xyz-agent 特定检查**（参考项目 CLAUDE.md「关键规则」、standards.md）：
+5. **xyz-agent 特定检查**（参考项目 AGENTS.md「关键规则」、standards.md）：
    - 错误路径是否重置 `isGenerating` + `streamingMessage`（否则 UI 卡在「思考中」）
    - emit 是否只传单个 payload 对象（禁止 `emit('event', a, b)`）
    - 独立数据源是否用 `Promise.allSettled`（禁止 `Promise.all`）

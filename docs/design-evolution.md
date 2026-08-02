@@ -3,9 +3,10 @@
 > 记录 UI 设计系统从初始到当前形态的完整演变过程。每个阶段记录：方向、为什么转向、关键决策、标志文档。
 >
 > 当前态权威文档：
+> - 范式 SSOT：[docs/page-design/v6-master-spec.md](page-design/v6-master-spec.md)（v6 单一权威源，整合自 28 份过程文档 + demo）
 > - 原子 SSOT：[docs/page-design/design-tokens.md](page-design/design-tokens.md)
-> - 范式 SSOT：[docs/page-design/v6-design.md](page-design/v6-design.md)
-> - 视觉规格：`docs/page-design/v6-spec-*.html`
+> - 过程参考：[v6-design.md](page-design/v6-design.md)（五原则原始定稿，被 master-spec 取代为"实现细节参考"）
+> - 视觉规格：`docs/page-design/v6-spec-*.html`（部分已滞后，以 master-spec + demo 为准）
 
 ---
 
@@ -34,7 +35,7 @@ xyz-agent 最初的设计方向是「温润」——暖奶油底色 + 赤陶（t
 
 impeccable 审查同时介入，禁止了 side-stripe border（AI slop 标志），改为 top border；ThinkingBlock/ToolCallCard 从默认展开改为默认折叠（信息过载）。
 
-**标志文档**：`docs/page-design/archive/frontend-redesign-log.md`（编年史，记录了 Neutral Gray → Cool-Warm 的完整决策日志）
+**标志文档**：项目根 `DESIGN.md`（Warm & Soft 完整设计系统定义，保留作历史标本）
 
 ---
 
@@ -71,7 +72,7 @@ v3 的设计系统工程化程度不弱于竞品（token SSOT、20 波验收）�
 | 4 | 列宽留白 | 无 max-width，宽屏一行 2000+px | 内容列 640-760px 居中 |
 | 5 | 彩色克制 | 大绿勾/警示三角/紫思考/蓝选中高密度共存 | 彩色只给真正需要注意的对象 |
 
-[visual-modernization-2026-07.md](page-design/visual-modernization-2026-07.md)（v6 输入基线提案）提出了五条设计原则：
+visual-modernization 提案（v6 输入基线，内容已合并进 v6-master-spec）提出了五条设计原则：
 
 1. **层级代替边框**——静态信息容器只用表面色，不叠加 1px 边框；边框仅留给浮起可交互容器和 focus 态
 2. **圆角升档**——默认 3px → 6-8px；卡片 8-10px；浮层 12px；徽章胶囊化
@@ -79,19 +80,20 @@ v3 的设计系统工程化程度不弱于竞品（token SSOT、20 波验收）�
 4. **内容列收窄**——对话流 max-width 720px 居中
 5. **彩色降噪**——状态指示极小化（图标 → 圆点），exit≠0 中性化表达
 
-[v6-design.md](page-design/v6-design.md) 在此基线上确立最终决策（D1-D11），成为范式 SSOT。
+[v6-design.md](page-design/v6-design.md) 在此基线上确立最终决策（D1-D16），成为范式 SSOT。后续整合为 [v6-master-spec.md](page-design/v6-master-spec.md)（单一权威源）。
 
 实施过程经历了两轮严格审查：
 - **第一轮**（v6-review-2026-07-31）：5 路并行逐字审查 349 条断言。结论：「五原则的魂保住了，形散了」——发现"被选中"出现三种视觉语言、两份定稿互相否定等问题
-- **修复计划**（v6-fix-plan）：62 个任务，D1-D11 裁决逐条修复
+- **修复计划**（v6-fix-plan）：62 个任务，D1-D16 裁决逐条修复
 - **第二轮复审**（v6-review-round2）：核验修复执行率九成，但留下 6 个新分裂点和 12 处"修了一半"的后遗症
 
 审查过程中发现的核心张力：**五原则的「魂」（设计意图）反复与「形」（具体实现）分裂**。每次修复都会在某个文件里修对，又在另一个文件里引入新的不一致。这成为后续维护的持续关注点。
 
 **标志文档**：
-- [v6-design.md](page-design/v6-design.md)（范式 SSOT，五原则 + D1-D11 决策）
+- [v6-master-spec.md](page-design/v6-master-spec.md)（v6 单一权威源，整合自 28 份过程文档 + demo）
+- [v6-design.md](page-design/v6-design.md)（五原则原始定稿，D1-D16 决策）
 - [v6-summary.md](page-design/v6-summary.md)（索引/摘要）
-- `v6-spec-*.html`（14 个视觉规格稿）
+- `v6-spec-*.html`（15 个视觉规格稿）
 
 ---
 
@@ -102,7 +104,7 @@ v3 的设计系统工程化程度不弱于竞品（token SSOT、20 波验收）�
 [2026-08-02-taiji-v3-color-decision.md](page-design/2026-08-02-taiji-v3-color-decision.md) 经三轮对比后确定方向：
 
 1. **色相方案**：墨青 / 墨朱 / 纯太极 → 选定**纯太极**（纯灰系）。墨青基底仍冷、太极纯粹感不够；墨朱红久盯会燥且与 danger 语义冲突
-2. **克制梯度**：浅 / 中 / 重 / 极简 → 选定**重克制 V3**（`--accent #c0c0c5`）。V4 极简灰度完全零色相，导致 M/A/D 变更集 badge 无法靠颜色分辨，语义损失过大
+2. **克制梯度**：浅 / 中 / 重 / 极简 → 选定**重克制 V3**（`--accent #c8c8cd`）。V4 极简灰度完全零色相，导致 M/A/D 变更集 badge 无法靠颜色分辨，语义损失过大
 
 关键决策：**只换色相，不推翻 v6 范式**。明度阶梯沿用 v6 校准结果（多轮对比度校验），只把色相从「冷蓝灰」换成「纯灰」。状态色保留极弱色相作语义辨识。
 
@@ -121,16 +123,16 @@ v3 的设计系统工程化程度不弱于竞品（token SSOT、20 波验收）�
 **设计系统权威链**：
 
 ```
+v6-master-spec.md（v6 单一权威源：决策与范式）
+  ↑ 整合自 v6-design.md + demo，冲突时以此为准
 design-tokens.md（原子真值：色/字/距/影/动效）
-  ↑ 冲突时以此为准
-design-system.md（原语层：组件如何用 tokens）
-  ↑ 与 v6 冲突时以 v6 为准
-v6-design.md（范式 SSOT：五原则 + D1-D11 决策）
-  ↑ 不可变定稿
-v6-spec-*.html（视觉规格稿：逐组件验收基准）
+  ↑ token 层以此为准
+v6-design.md / v6-spec-*.html（过程文档：实现细节参考）
+  ↑ 已被 master-spec 取代，部分滞后
+.tmp/v6/ demo（token 真值与组件实现的活验证层）
 ```
 
-**色相**：太极 V3 纯灰（`--bg #0f0f11` / `--accent #c0c0c5`）
+**色相**：太极 V3 纯灰（`--bg #0f0f11` / `--accent #c8c8cd`）
 **范式**：v6 五原则（层级代边框 / 圆角升档 / 正文提亮 / 内容收窄 / 彩色降噪）
 **字体**：Inter
 **架构**：三栏 shell（base 平铺 + sidebar 透明融合 + main float-panel 浮起）

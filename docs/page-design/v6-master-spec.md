@@ -21,7 +21,7 @@ xyz-agent：基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作�
 
 **视觉层**：v3 冷蓝暗色设计系统工程化程度不弱于竞品（token SSOT、10 主题预设、20 波视觉验收），但观感「不够现代、不够简洁」。根因不是色相，而是五个「克制」缺失（竞品 Codex/Claude/Linear/分析结论）。v6 不是换色，是把五原则更彻底地应用到全部页面。
 
-**架构层**：renderer 内部复杂度欠债——useChat 违反 per-session 隔离 ADR-0036、stores 间互相 import、Sidebar 上帝组件、settings 与 v6 全屏形态根本冲突。这些欠债影响可维护性，且阻碍 plugin 扩展体系落地。
+**架构层**：renderer 内部复杂度欠债——useChat 违反 per-session 隔离 ADR-0049、stores 间互相 import、Sidebar 上帝组件、settings 与 v6 全屏形态根本冲突。这些欠债影响可维护性，且阻碍 plugin 扩展体系落地。
 
 **扩展层**：项目有两套扩展机制（pi extension 已实现 / plugin-sdk 借鉴 VSCode 但 renderer 零消费），需要统一为可承重的 plugin 渲染体系。
 
@@ -55,7 +55,7 @@ v6 过程文档已积累 28 份（30000+ 行），存在三类问题：
 ### 2.2 架构目标
 
 - renderer 六层清晰（Shell / Workspace / Feature / **ExtensionHost** / **RenderingProtocol** / Foundation）
-- per-session 状态隔离内建（ADR-0036 工厂范式一等公民）
+- per-session 状态隔离内建（ADR-0049 工厂范式一等公民）
 - stores 零互相 import，事件消费逻辑归 composable 层
 - plugin 渲染体系落地（4 视图维度 × 3 自定义级别 × 16 挂载点，见 §7）
 

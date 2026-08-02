@@ -36,7 +36,7 @@
 
 ## 渲染进程（renderer）
 
-Vue 3 + TypeScript + Pinia + Tailwind CSS v3 + xyz-ui 组件库。设计系统遵循 v3 冷蓝暗色（[page-design/](../page-design/README.md)）。
+Vue 3 + TypeScript + Pinia + Tailwind CSS v3 + xyz-ui 组件库。设计系统遵循 v3 冷蓝暗色（[page-design/](./page-design/README.md)）。
 
 | 职责 | 位置 | 说明 |
 |------|------|------|
@@ -88,14 +88,14 @@ Node.js WebSocket 服务，三层架构（端口-适配器模式，[ADR 驱动](
 
 | # | 约束 | 来源 |
 |---|------|------|
-| 1 | emit 只传单个 payload 对象 | [CLAUDE.md §关键规则](../CLAUDE.md) |
+| 1 | emit 只传单个 payload 对象 | [AGENTS.md §关键规则](../AGENTS.md) |
 | 2 | Session 隔离：消息必须带 sessionId，缺失则忽略 | ADR-0016 + 三层隔离机制 |
 | 3 | pi 适配层不信任外部格式：EventAdapter/session-pool 是唯一适配点 | design.md D5 |
 | 4 | 数据目录隔离：`~/.xyz-agent/` 与 `~/.pi/agent/` 完全隔离 | [ADR-0009](adr/0009-xyz-agent-data-dir-isolation-from-pi.md) |
 | 5 | 路径白名单动态化：禁止硬编码 `~/.xyz-agent`，从 `getConfigDir()` 推导 | 安全规则 |
 | 6 | Runtime services 零 infra 直连，经 ports 接口 | runtime 三层铁律 |
 
-完整规则见 [CLAUDE.md](../CLAUDE.md)「关键规则」「架构约定」章节。
+完整规则见 [AGENTS.md](../AGENTS.md)「关键规则」「架构约定」章节。
 
 ## 详细设计文档
 
@@ -107,8 +107,8 @@ Node.js WebSocket 服务，三层架构（端口-适配器模式，[ADR 驱动](
 
 前端视觉层于 2026-06 完成 v3 重建（冷蓝暗色，W01–W20 视觉验收全部 PASS）：
 
-- [v3 UI 设计稿](../page-design/archive/v3/README.md) — L0–L4 递归骨架 + 22 个 draft
-- [设计 Tokens（SSOT）](../page-design/design-tokens.md) · [组件原语层](../page-design/design-system.md)
+- [v3 UI 设计稿](./page-design/archive/v3/README.md) — L0–L4 递归骨架 + 22 个 draft
+- [设计 Tokens（SSOT）](./page-design/design-tokens.md) · [组件原语层](./page-design/design-system.md)
 - v3 视觉/交互 ADR 0019–0023（见下）
 
 ## 架构决策（ADR）
@@ -128,7 +128,7 @@ Node.js WebSocket 服务，三层架构（端口-适配器模式，[ADR 驱动](
 ## 子系统架构
 
 - [Plugin 子系统](architecture/subsystems/plugin/README.md) — Worker Thread 隔离 + Hook 链 + Tool RPC 路由
-- **文件树子系统**（FileService + fileTreeStore）— 三层架构（[ADR-0027](adr/0027-fileservice-three-layer.md)）+ 懒加载（[ADR-0026](adr/0026-file-tree-lazy-loading.md)）。runtime FileService 编排（cwd 守门/越界校验/ignore 双模式）→ 前端 fileTreeStore（D-021 per-session 4 facet + setNodeState 原子入口）→ FileView/FileTreeRow 渲染 + DetailPane 预览（禁 v-html）。工程约束见 [NFR.md](NFR.md) `[from: 2026-06-28-sidebar-project-file-tree §子系统]`
+- **文件树子系统**（FileService + fileTreeStore）— 三层架构（[ADR-0027](adr/0027-fileservice-three-layer.md)）+ 懒加载（[ADR-0026](adr/0026-file-tree-lazy-loading.md)）。runtime FileService 编排（cwd 守门/越界校验/ignore 双模式）→ 前端 fileTreeStore（D-021 per-session 4 facet + setNodeState 原子入口）→ FileView/FileTreeRow 渲染 + DetailPane 预览（禁 v-html）。工程约束见 [NFR.md](../NFR.md) `[from: 2026-06-28-sidebar-project-file-tree §子系统]`
 
 ## 演进 / 调研 / 历史
 

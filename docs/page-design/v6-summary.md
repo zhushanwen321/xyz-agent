@@ -237,7 +237,7 @@ lucide-vue v1.23.0，重命名映射：Loader2→LoaderCircle, FileEdit→FilePe
 | [v6-design.md](./v6-design.md) | **SSOT 主文档**：五原则 + token 变更 + 组件范式 + 分视图设计 + 架构重构 + 实施波次 | 定稿 |
 | [design-tokens.md](./design-tokens.md) | 原子 SSOT（色/字/距/影/动效） | 待 v6 反写 |
 | [design-system.md](./design-system.md) | 组件原语层 | 待 v6 反写 |
-| [visual-modernization-2026-07.md](./visual-modernization-2026-07.md) | v6 输入，被 v6-design.md 取代 | 保留追溯 |
+| visual-modernization-2026-07.md（已删除，内容合并进 v6-master-spec.md） | v6 输入，被 v6-design.md 取代 | 保留追溯 |
 | [README.md](./README.md) | 索引 SSOT（含 v6 章节 + 文件索引，v6 与 v3 并列） | 权威索引 |
 
 ### 5.2 核心布局 / 对话流视觉稿

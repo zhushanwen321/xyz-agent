@@ -3,7 +3,7 @@
 > 日期：2026-08-02
 > 性质：临时决策文档（换色落地前的方向固化，落地后合并进 `design-tokens.md` SSOT）
 > 前置：本决策改变的是**色相**，不改变 v6 的明度阶梯、圆角档位、间距体系、布局拓扑
-> 对比稿：[`palette/taiji-pure-restrained-v3.html`](./palette/taiji-pure-restrained-v3.html)（临时探索稿，不进 git）
+> 对比稿：palette/taiji-pure-restrained-v3.html（临时探索稿，不进 git）
 
 ---
 
@@ -83,7 +83,7 @@ V3 只解决其中一层（色），另两层是独立工作线，不并进本�
 
 **在换色之前，v6 的结构性半改项必须先收敛**，否则冷蓝色会从没改干净的缝隙里冒出，且三真值源（design / spec / demo）已知的 6 个方向性分歧会让换色后的对色工作无法进行。
 
-前置清单（源自 [`v6-review-round2-2026-07-31.md`](./v6-review-round2-2026-07-31.md)）：
+前置清单（源自 v6-review-round2-2026-07-31.md（已删除））：
 
 ### 4.1 硬编码冷蓝值 token 化（最关键）
 

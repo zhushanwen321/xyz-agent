@@ -1,8 +1,8 @@
 # page-design · 页面设计
 
-太极（xyz-agent）前端设计的权威目录。设计系统的 SSOT 与设计稿集中于此。
+xyz-agent 前端设计的权威目录。设计系统的 SSOT 与设计稿集中于此。
 
-> **当前状态（2026-08）**：视觉层已从 v3 冷蓝演进到 **v6 太极纯灰**（accent `#c8c8cd`，三级明度 stage/bg/surface）。v6 SSOT = [`v6-design.md`](./v6-design.md)。v6 Vue 交互 demo 在 `../../.tmp/v6/`（独立可运行项目，不放在文档目录）。下方 archive/v3/ 的视觉稿是 v6 之前的中间态，保留追溯；**但 archive/v3/ 下的能力 spec（fast-*/flow-*/research 等）仍是活跃的功能设计 SSOT，非死稿**。
+> **当前状态（2026-08）**：视觉层已从 v3 冷蓝演进到 **v6 太极纯灰**（accent `#c8c8cd`）。v6 范式 SSOT = [`v6-master-spec.md`](./v6-master-spec.md)（单一权威源）。v6 Vue 交互 demo 在 `../../.tmp/v6/`（独立可运行项目，不放在文档目录）。完整演变叙事见 [design-evolution.md](../design-evolution.md)。
 
 ## 目录结构
 
@@ -11,101 +11,87 @@ page-design/
 ├── README.md                          本文件（索引 + 归属判定）
 ├── design-tokens.md                   原子 SSOT（色/字/距/影/动效）— 所有值的唯一来源
 ├── design-system.md                   组件原语层（Card/Input/Button 等如何用 tokens）
+├── v6-master-spec.md                  ★ v6 单一权威源（决策与范式，整合自 28 份过程文档 + demo）
+├── v6-design.md                       v6 五原则原始定稿（被 master-spec 取代为实现细节参考）
+├── v6-summary.md                      v6 设计稿总览（索引与摘要）
 ├── zcode-ui-spec.md                   ZCode 风格 Chat UI/UX 规格（布局规则）
+├── ui-design-principles.md            UI/UX 设计方法论（认知负荷/格式塔/WCAG，色相无关）
+├── pi-launch-presets.md               pi 启动预设设计（被 packages/ 5 处源文件引用）
 ├── 2026-08-02-taiji-v3-color-decision.md  太极 V3 纯灰配色决策记录
+├── v6-spec-tokens.html                v6 token 集 + 标注规范
+├── v6-spec-*.html                     v6 各视图视觉稿（15 个文件，部分已滞后于 master-spec）
+├── v6-spec-base.css                   对话流共享 CSS
+├── v6-demo.html                       综合交互 demo
+├── v6-drawer-tabs-demo.html           drawer tabs 交互原型
+├── v6-plugin-max-demo.html            plugin 最大化交互原型
 ├── markdown-filepath-redesign/        Markdown 文件路径识别重构设计（已落地）
 ├── logo/                              品牌 logo 素材与设计稿
 │   ├── assets/qianwen/                当前唯一活跃素材库（千问双鱼）
 │   └── archive/pre-2026-08-qianwen/   已淘汰素材（butterfly/taiji/taiji-fish + concepts）
-├── archive/                           历史设计稿归档（见下方详细说明）
-├── v6-design.md                       v6 视觉与架构设计规范（范式 SSOT）
-├── v6-summary.md                      v6 设计稿总览（索引与摘要）
-├── v6-spec-tokens.html                v6 token 集 + 标注规范
-├── v6-spec-*.html                     v6 各视图视觉稿（14 个文件）
-├── v6-spec-base.css                   对话流共享 CSS
-├── v6-demo.html                       综合交互 demo（验收 SSOT）
-├── v6-drawer-tabs-demo.html           drawer tabs 交互原型
-├── v6-plugin-max-demo.html            plugin 最大化交互原型
-├── 2026-08-02-taiji-v3-color-decision.md   V3 配色决策
-├── visual-modernization-2026-07.md    v6 视觉输入/基线提案（历史，SSOT 以 v6-design.md 为准）
-├── v6-review-2026-07-31.md            v6 第一轮审查报告（历史）
-├── v6-review-round2-2026-07-31.md     v6 第二轮复审报告（历史）
-├── v6-fix-plan.md                     v6 全量修复计划（历史，已执行完毕）
-└── v6-review-action-plan.md           v6 旧版修复计划（历史，已被 fix-plan 取代）
+└── archive/                           历史设计稿归档（见下方详细说明）
 ```
 
 > v6 Vue 交互 demo 在 `../../.tmp/v6/`（独立 Vue 3 + Vite 项目，有自己的 package.json / node_modules）。
 
-## 三层关系
+## SSOT 链（v6 权威源优先级）
 
 ```
-design-tokens.md   ← 原子：存在哪些值
-design-system.md   ← 原语：值如何拼成可复用部件
-v6-design.md       ← 范式：五原则 + 视觉/结构决策
-v6-spec-*.html     ← 视觉稿：各视图标注规范
+v6-master-spec.md      ← v6 单一权威源（决策与范式）
+        ↑ 冲突时以此为准
+design-tokens.md       ← 原子真值（色/字/距/影/动效）
+        ↑ token 层以此为准
+v6-design.md / v6-spec-*.html  ← 过程文档（实现细节参考，部分已滞后）
+        ↑ 已被 master-spec 取代
+.tmp/v6/ demo          ← token 真值与组件实现的活验证层
 ```
 
-所有前端实现必须从本目录派生，禁止各处自造变体。
+- **v6-master-spec.md 是 v6 单一权威源**：整合自 v6-design.md / v6-summary.md / v6-review-* / v6-fix-plan / v6-spec-*.html 等 28 份过程文档 + demo。冲突时以 master-spec + demo 为准
+- **design-tokens.md 是值的唯一来源**：CSS 变量必须全部能在此找到
+- **过程文档已降级**：v6-design.md / v6-spec-*.html 作为实现细节参考保留，不代表当前最新决策
 
 ## archive/ 目录说明
 
-archive/ 是历史设计稿归档区，分两大块：
+archive/ 是历史设计稿归档区。pre-v3 探索稿（Warm & Soft 时期 demo HTML、过程审查日志等）已于 2026-08-02 清理，完整演变叙事见 [design-evolution.md](../design-evolution.md)。
 
-### archive/v3/ — v3 设计稿全集（混合：死稿 + 活 spec）
+### archive/v3/ — 能力设计 spec（活跃，非死稿）
 
-| 子目录 | 性质 | 说明 |
-|--------|------|------|
-| `shell/` `sidebar/` `panel/` `settings/` `overlays/` `workspace/` `overview/` `new-task/` `ask-user/` | **视觉稿（已被 v6 取代）** | spec.md + draft-*.html，v6-design.md 已超越 |
-| `fast-fork/` `fast-handoff/` `fast-merge/` | **能力 spec（活跃）** | 跨区联动功能的设计 SSOT，v6 无对应物 |
-| `flow-2-code-review/` `flow-3-subagent/` | **能力 spec（活跃）** | 产品主路径时序设计 |
-| `coding-plan-quota/` | **能力 spec（活跃）** | provider 额度查询设计（packages/ 代码注释引用） |
-| `research/` | **实现调研（活跃）** | pi steer/followUp 机制调研 |
-| `subagent-panel/` | **实现调研（活跃）** | agent-call-streaming + workflow-spec |
-| `handoffs/` | **交接文档** | 19 份叶子 handoff，能力 spec 复活时的接手入口 |
+v3 视觉稿（shell/sidebar/panel/settings 等）已被 v6 取代并删除。仅保留 v6 没有对应物的**功能/能力设计 spec**：
 
-### archive/zcode-demo/ — v3 视觉原型来源（React demo，已被 v6 吸收）
+| 子目录 | 说明 |
+|--------|------|
+| `coding-plan-quota/` | provider 额度查询设计（被 packages/ 7 处代码注释引用） |
+| `flow-2-code-review/` | 产品主路径 Flow-2 时序设计（被 message.ts 引用） |
+| `flow-3-subagent/` | 产品主路径 Flow-3 多 agent 编排 |
+| `ask-user/` | inline ask-user 交互设计（被 AskUserOverlay.vue 引用） |
+| `fast-fork/` `fast-handoff/` `fast-merge/` | 跨区联动能力（待实现） |
+| `subagent-panel/` | agent-call-streaming + workflow-extension-adaptation |
+| `research/` | pi steer/followup 队列机制调研 |
+| `handoffs/` | 各能力 spec 的接手入口文档 |
 
-### archive/ 根目录 — pre-v3 探索稿（Warm & Soft 时期，已废弃）
-
-`frontend-redesign-log.md` 是视觉方向演进的编年史，其余 `views_*.html` / `demo-*-comparison.html` 可安全忽略。
-
-## SSOT 链（v3 → v6 演进）
-
-```
-design-tokens.md        ← 原子层（色/字/距/影/动效值的唯一来源）
-        ↑ 派生
-v6-design.md            ← v6 范式 SSOT（五原则 + 视觉/结构决策）
-        ↑ 派生
-v6-spec-*.html          ← v6 视觉稿（各视图标注规范）
-        ↑ 验证
-v6-demo.html            ← v6 综合交互 demo（验收 SSOT）
-```
-
-- **design-tokens.md 是值的唯一来源**：CSS 变量必须全部能在此找到
-- **v6-design.md 是范式 SSOT**：v6 范式与决策以此为准
-- archive/v3/ 的视觉 spec 为旧范式（已被 v6 追认或修订），但能力 spec 仍活跃
+详见 [archive/v3/README.md](./archive/v3/README.md)。
 
 ## 文档归属判定
 
 | 问题 | 去向 |
 |------|------|
 | 色值/字体/圆角/阴影/动效的值定义？ | `design-tokens.md` |
+| v6 决策与范式？ | `v6-master-spec.md` |
 | 组件原语（Card 族、Input、Button）的形态/状态？ | `design-system.md` |
-| v6 视觉稿（某视图的标注规范）？ | `v6-spec-*.html` |
+| v6 视觉稿（某视图的标注规范）？ | `v6-spec-*.html`（参考，以 master-spec 为准） |
 | 跨模块的用户流程（如 code-review 流）？ | `archive/v3/flow-*/spec.md`（活跃能力 spec） |
 | Fork/Handoff/Merge 联动能力？ | `archive/v3/fast-*/spec.md`（活跃能力 spec） |
-| pre-v3 旧设计探索？ | `archive/`（不再维护） |
 | Logo 素材？ | `logo/assets/qianwen/`（活跃）/ `logo/archive/`（已淘汰） |
+| UI 设计演变历史？ | `../design-evolution.md`（单篇汇总） |
 
 ## 关键约束
 
 1. **tokens 是唯一值源**：`packages/renderer/src/style.css` 的 CSS 变量必须全部能在 `design-tokens.md` 找到（pre-commit hook `check_css_token_ssot.py` 强制校验）
-2. **术语唯一来源**：`archive/v3/architecture-and-terminology.html §1`，新稿禁止用废弃词
-3. **ADR 归架构目录**：设计决策记录放 `docs/adr/`，不放本目录
+2. **ADR 归架构目录**：设计决策记录放 `docs/adr/`，不放本目录
 
 ## 相关文档
 
 - [ADR-0019 视觉方向](../adr/0019-visual-direction.md) — v3 冷蓝暗色确立
 - [太极 V3 配色决策](./2026-08-02-taiji-v3-color-decision.md) — 纯灰配色方向定案
+- [UI 设计演变史](../design-evolution.md) — Warm&Soft → v3 → v6 → 太极纯灰完整叙事
 - [领域术语表](../architecture/context.md) — UI 结构术语
 - [编码规范 §设计](../standards.md) — 前端设计规则

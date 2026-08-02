@@ -2,7 +2,7 @@
 
 - **状态**: Accepted
 - **日期**: 2026-07-16
-- **上下文**: [docs/feature-map/](../../feature-map/) Phase GUI Optimize
+- **上下文**: [docs/feature-map/](../feature-map/) Phase GUI Optimize
 
 ## 背景
 

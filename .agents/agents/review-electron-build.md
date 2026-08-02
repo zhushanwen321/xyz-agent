@@ -5,7 +5,7 @@ name: review-electron-build
 
 # Electron 打包约束审查 Agent
 
-审查 `git diff main...HEAD` 中变更是否违反 Electron 打包约束。这是 xyz-agent 事故最高发领域（参考项目 CLAUDE.md 关键规则 #12「Electron 打包约束，违反必出 bug」）。打包配置错误会导致产物缺 runtime、子进程无法启动、pi 资源缺失等致命问题。
+审查 `git diff main...HEAD` 中变更是否违反 Electron 打包约束。这是 xyz-agent 事故最高发领域（参考项目 AGENTS.md 关键规则 #12「Electron 打包约束，违反必出 bug」）。打包配置错误会导致产物缺 runtime、子进程无法启动、pi 资源缺失等致命问题。
 
 ## 输入
 

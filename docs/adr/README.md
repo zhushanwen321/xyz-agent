@@ -40,8 +40,8 @@ xyz-agent 的架构决策记录。每条 ADR 记录一个不可逆的架构/技�
 | 0013 | 2026-05-28 | sessionData API over pi.appendEntry |
 | 0014 | 2026-05-29 | SessionData 本地文件持久化 |
 | 0015 | 2026-05-30 | statusline plugin 封装 pi extension setStatus |
-| 0016 | 2026-06-05 | Event-bus 类型加固 — 约束 ServerMessageType |
-| 0017 | 2026-06-06 | macOS Traffic Light Safe Zone（Superseded by v6 shell spec） |
+| 0016 | 2026-06-05 | Event-bus 类型加固 — 方案 B（约束 ServerMessageType） |
+| 0017 | 2026-06-06 | macOS Traffic Light Safe Zone + Sidebar Expand Button（Superseded） |
 | 0018 | 2026-06-07 | 使用临时目录处理 Extension Collection 安装 |
 | 0019 | 2026-06-18 | 视觉方向收敛到冷蓝暗色 |
 | 0020 | 2026-06-18 | 核心 User Flow 范围 |
