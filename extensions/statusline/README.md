@@ -220,7 +220,7 @@ shared/quota-providers/    # workspace 共享包
 
 statusline 是 footer 的 **canonical owner**。其他扩展可以通过 **globalThis Symbol 握手协议** 注册自己的 footer 行，避免 `ctx.ui.setFooter` 单例冲突（Pi 只有一个 footer 槽位，多扩展各自 setFooter 会互相覆盖）。
 
-> 供其他扩展作者参考。参考实现见 [ADR-036](../../docs/adr/036-statusline-footer-aggregation.md) 与 `@zhushanwen/pi-permission` 的 `extensions/permission/src/footer-provider.ts`。
+> 供其他扩展作者参考。参考实现见 [pi-ext-036](../../docs/extensions/adr/pi-ext-036-statusline-footer-aggregation.md) 与 `@zhushanwen/pi-permission` 的 `extensions/permission/src/footer-provider.ts`。
 
 ### 协议
 
@@ -242,7 +242,7 @@ session_start → 读 globalThis[FOOTER_HANDSHAKE_KEY]
   └─ 否则 → push 到 slot.pending（statusline 后到时 flush）
 ```
 
-详见 [ADR-036](../../docs/adr/036-statusline-footer-aggregation.md) 和 `@zhushanwen/pi-permission` 的 `extensions/permission/src/footer-provider.ts` 作为参考实现。
+详见 [pi-ext-036](../../docs/extensions/adr/pi-ext-036-statusline-footer-aggregation.md) 和 `@zhushanwen/pi-permission` 的 `extensions/permission/src/footer-provider.ts` 作为参考实现。
 
 ### 时序注意：首帧前 `requestFooterRender()` 为 noop
 

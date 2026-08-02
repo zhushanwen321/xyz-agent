@@ -56,5 +56,5 @@ workflow run map-reduce --args itemsJson=/path/to/items.json --args operation=".
 ## 相关文档
 
 - `skills/workflow-script-format/SKILL.md` — workflow script 完整 API（agent/parallel/pipeline/workflow 签名、$ARGS/$BUDGET、lint 规则）
-- `docs/adr/030-subagents-workflow-merge.md` — 合并决策（决策 3 分层配额 + workflow 嵌套）
-- `docs/adr/032-builtin-orchestration-workflows.md` — 从"参考模板"改为"内置通用编排 workflow"的决策
+- `docs/extensions/adr/pi-ext-030-subagents-workflow-merge.md` — 合并决策（决策 3 分层配额 + workflow 嵌套）
+- `docs/extensions/adr/pi-ext-032-builtin-orchestration-workflows.md` — 从"参考模板"改为"内置通用编排 workflow"的决策

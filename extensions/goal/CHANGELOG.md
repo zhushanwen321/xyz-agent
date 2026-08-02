@@ -144,7 +144,7 @@ cancelled`). Pi adds `time_limited` + `cancelled` vs Codex and deliberately
   type alias is updated to mirror goal's new required-`ctx` signature (no runtime
   change; callers already pass `ctx`).
 
-  See `docs/adr/002-goal-7-state-machine.md` for the 7-state rationale.
+  See `docs/extensions/adr/pi-ext-002-goal-7-state-machine.md` for the 7-state rationale.
 
 ## 0.3.0
 

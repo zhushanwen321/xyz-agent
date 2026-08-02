@@ -4,7 +4,6 @@
 //
 // spawn 改造后：session 在独立子进程跑（进程隔离），事件经 stdout JSON 流回流。
 // runSpawn 是唯一执行入口（sync/background 共用）。mode 分叉在 Runtime.execute 顶部。
-// 设计信息见 docs/subagents/spawn-refactor-plan.md。
 
 import { type ChildProcess,execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
