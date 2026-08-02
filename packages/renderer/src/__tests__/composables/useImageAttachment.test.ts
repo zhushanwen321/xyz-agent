@@ -18,10 +18,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { handleImagePaste } from '@/composables/panel/useImageAttachment'
 
-// writeSessionImage 可被每个测试替换三态：resolve({path,name,id}) / resolve(undefined) / reject
-const writeSessionImageMock = vi.hoisted(() => vi.fn())
-vi.mock('@/lib/ipc', () => ({
-  writeSessionImage: writeSessionImageMock,
+// writeImage 可被每个测试替换三态：resolve({path,name,id}) / resolve(undefined) / reject
+const writeImageMock = vi.hoisted(() => vi.fn())
+vi.mock('@/api/domains/session', () => ({
+  writeImage: writeImageMock,
 }))
 
 /** 构造最小 PNG（8 字节签名 + IHDR 占位，足够 FileReader.readAsArrayBuffer 产出非空 base64） */
@@ -37,36 +37,36 @@ function makePngFile(): File {
 
 describe('useImageAttachment: handleImagePaste 降级矩阵', () => {
   beforeEach(() => {
-    writeSessionImageMock.mockReset()
+    writeImageMock.mockReset()
   })
 
   it('TC1: writeSessionImage 成功（persisted=true）→ {kind:badge, ..., needsMigrate:false}', async () => {
-    writeSessionImageMock.mockResolvedValueOnce({ path: '/tmp/xyz-img-x.png', fileName: 'xyz-img-x.png', displayName: 'xyz-img-x.png', id: 'u1', persisted: true })
+    writeImageMock.mockResolvedValueOnce({ path: '/tmp/xyz-img-x.png', fileName: 'xyz-img-x.png', displayName: 'xyz-img-x.png', id: 'u1', persisted: true })
     const result = await handleImagePaste(makePngFile(), 'sess-1')
     expect(result).toEqual({ kind: 'badge', path: '/tmp/xyz-img-x.png', fileName: 'xyz-img-x.png', displayName: 'xyz-img-x.png', needsMigrate: false })
     // writeSessionImage 收到 base64 非空 + mimeType='image/png'
-    expect(writeSessionImageMock).toHaveBeenCalledTimes(1)
-    const payload = writeSessionImageMock.mock.calls[0][0]
+    expect(writeImageMock).toHaveBeenCalledTimes(1)
+    const payload = writeImageMock.mock.calls[0][0]
     expect(payload.mimeType).toBe('image/png')
     expect(payload.base64.length).toBeGreaterThan(0)
   })
 
   it('W3TC9: sessionId 透传到 writeSessionImage payload', async () => {
-    writeSessionImageMock.mockResolvedValueOnce({ path: '/d/a.png', fileName: 'a.png', displayName: 'a.png', id: 'u1', persisted: true })
+    writeImageMock.mockResolvedValueOnce({ path: '/d/a.png', fileName: 'a.png', displayName: 'a.png', id: 'u1', persisted: true })
     await handleImagePaste(makePngFile(), 'sess-panel-9')
-    expect(writeSessionImageMock.mock.calls[0][0].sessionId).toBe('sess-panel-9')
+    expect(writeImageMock.mock.calls[0][0].sessionId).toBe('sess-panel-9')
   })
 
   it('sessionId=null（landing 态）→ payload.sessionId 为空字符串（IPC 内降级 tmpdir）+ needsMigrate=true', async () => {
     // persisted=false（落 tmpdir）→ needsMigrate=true（session 创建后需迁移到 attachments）
-    writeSessionImageMock.mockResolvedValueOnce({ path: '/tmp/x.png', fileName: 'x.png', displayName: 'x.png', id: 'u1', persisted: false })
+    writeImageMock.mockResolvedValueOnce({ path: '/tmp/x.png', fileName: 'x.png', displayName: 'x.png', id: 'u1', persisted: false })
     const result = await handleImagePaste(makePngFile(), null)
-    expect(writeSessionImageMock.mock.calls[0][0].sessionId).toBe('')
+    expect(writeImageMock.mock.calls[0][0].sessionId).toBe('')
     expect(result).toEqual({ kind: 'badge', path: '/tmp/x.png', fileName: 'x.png', displayName: 'x.png', needsMigrate: true })
   })
 
   it('TC4: writeSessionImage reject → {kind:text, text:[图片粘贴失败]} 降级', async () => {
-    writeSessionImageMock.mockRejectedValueOnce(new Error('write failed'))
+    writeImageMock.mockRejectedValueOnce(new Error('write failed'))
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const result = await handleImagePaste(makePngFile(), 'sess-1')
     expect(result).toEqual({ kind: 'text', text: '[图片粘贴失败]' })
@@ -74,7 +74,7 @@ describe('useImageAttachment: handleImagePaste 降级矩阵', () => {
   })
 
   it('TC5: writeSessionImage resolve(undefined)（非 electron）→ {kind:text, text:[图片粘贴：需桌面环境]}', async () => {
-    writeSessionImageMock.mockResolvedValueOnce(undefined)
+    writeImageMock.mockResolvedValueOnce(undefined)
     const result = await handleImagePaste(makePngFile(), 'sess-1')
     expect(result).toEqual({ kind: 'text', text: '[图片粘贴：需桌面环境]' })
   })

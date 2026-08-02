@@ -390,6 +390,28 @@ export const session = {
   async unsubscribe(_sessionId: string): Promise<void> {
     await sleep(TIMING.ack)
   },
+
+  // ── wave:runtime-patch ipc-converge-a3 W2：业务持久化写 stub（与 real domain 同接口）──
+  /** Mock writeImage：返伪造落地结果（path/fileName/displayName/id/persisted）。 */
+  async writeImage(payload: { sessionId: string; base64: string; mimeType: string; name: string }): Promise<{ path: string; fileName: string; displayName: string; id: string; persisted: boolean }> {
+    await sleep(TIMING.ack)
+    return {
+      path: `/mock/attachments/${payload.sessionId || 'landing'}/mock-image.png`,
+      fileName: 'mock-image.png',
+      displayName: payload.name || 'mock-image.png',
+      id: 'mock-image-id',
+      persisted: !!payload.sessionId,
+    }
+  },
+  /** Mock migrateImage：返 fromPath（不实际迁移）。 */
+  async migrateImage(payload: { fromPath: string; sessionId: string; fileName: string }): Promise<{ path: string }> {
+    await sleep(TIMING.ack)
+    return { path: payload.fromPath }
+  },
+  /** Mock writeSegments：ack 型 stub resolve（void）。 */
+  async writeSegments(_payload: { sessionId: string; entry: import('@xyz-agent/shared').SegmentsMetadataEntry }): Promise<void> {
+    await sleep(TIMING.ack)
+  },
 }
 
 /**

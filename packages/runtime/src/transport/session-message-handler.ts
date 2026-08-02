@@ -44,10 +44,13 @@ export class SessionMessageHandler {
     'session.getSubagents', 'session.getSubagentHistory',
     'session.getWorkflows', 'session.getAgentCallHistory', 'session.getAgentCallFilePath',
     'session.workflowAction', 'session.subagentAction',
+    // wave:runtime-patch ipc-converge-a3 W2：业务持久化写 WS（session 数据单一出口归 runtime）
+    'session.writeImage', 'session.migrateImage', 'session.writeSegments',
     'message.send', 'message.abort', 'message.steer', 'message.follow_up',
     'message.bash', 'message.abortBash',
   ]
 
+  // eslint-disable-next-line max-lines-per-function -- session.* 路由 switch，case 数随业务增长天然偏长，拆分收益低于可读性损失
   async handleSessionMessage(msg: ClientMessage, ws: WsType): Promise<void> {
     switch (msg.type) {
       case 'session.create': {
@@ -260,6 +263,37 @@ export class SessionMessageHandler {
       case 'session.subagentAction': {
         await this.ctx.sessionService.subagentAction(msg.payload.sessionId, msg.payload.action, msg.payload.subagentId)
         return this.ctx.reply(ws, msg.id, 'session.subagentActionDone', { sessionId: msg.payload.sessionId, action: msg.payload.action, subagentId: msg.payload.subagentId })
+      }
+      // ── wave:runtime-patch ipc-converge-a3 W2：业务持久化写（从 main IPC 迁 WS）──
+      case 'session.writeImage': {
+        // 粘贴截图落地 attachments/tmpdir。安全校验在 sessionService.writeImage（mimeType/大小/name sanitize）。
+        const { sessionId, base64, mimeType, name } = msg.payload
+        try {
+          const result = await this.ctx.sessionService.writeImage(sessionId, base64, mimeType, name)
+          return this.ctx.reply(ws, msg.id, 'session.writeImage:result', result)
+        } catch (err) {
+          return this.ctx.sendError(ws, 'write_image_failed', toErrorMessage(err), msg.id, { sessionId })
+        }
+      }
+      case 'session.migrateImage': {
+        // landing tmpdir→attachments 迁移。安全校验在 sessionService.migrateImage（fromPath 白名单）。
+        const { fromPath, sessionId, fileName } = msg.payload
+        try {
+          const result = await this.ctx.sessionService.migrateImage(fromPath, sessionId, fileName)
+          return this.ctx.reply(ws, msg.id, 'session.migrateImage:result', result)
+        } catch (err) {
+          return this.ctx.sendError(ws, 'migrate_image_failed', toErrorMessage(err), msg.id, { sessionId })
+        }
+      }
+      case 'session.writeSegments': {
+        // segments.json sidecar atomic 写。sessionId 空拒绝。
+        const { sessionId, entry } = msg.payload
+        try {
+          await this.ctx.sessionService.writeSegmentsMetadata(sessionId, entry)
+          return this.ctx.reply(ws, msg.id, 'session.writeSegments:result', {})
+        } catch (err) {
+          return this.ctx.sendError(ws, 'write_segments_failed', toErrorMessage(err), msg.id, { sessionId })
+        }
       }
       case 'session.subscribe': {
         // wave:runtime-wiring（IF6）：订阅某 session 的 live 事件流。

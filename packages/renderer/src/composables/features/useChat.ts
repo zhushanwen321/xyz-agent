@@ -21,7 +21,7 @@ import { useToast } from '@/composables/useToast'
 import i18n from '@/i18n'
 import type { Segment } from '@xyz-agent/shared'
 import { segmentsToPrompt } from '@xyz-agent/shared'
-import { writeSegmentsMetadata } from '@/lib/ipc'
+import { session as sessionApi } from '@/api'
 import { markBashError } from '@/stores/chat-bash-effects'
 import {
   subscribeSession,
@@ -235,10 +235,10 @@ export function useChat() {
     // landing 态 session 尚未创建时（sessionId 为占位）不写——submitFirstMessage 在 session.create 后
     // 调 chat.send，send 内部 appendUser 用已创建的 newSid，故 submitSegments 收到的 sessionId 恒有效。
     if (sessionId) {
-      writeSegmentsMetadata({
+      sessionApi.writeSegments({
         sessionId,
         entry: { clientUuid, segments, timestamp: Date.now() },
-      }).catch((e) => console.warn('[useChat] writeSegmentsMetadata failed:', e))
+      }).catch((e) => console.warn('[useChat] writeSegments failed:', e))
     }
     // 加 HTML 注释标记：pi extension 的 input hook 会剥离它（LLM 看不到），并建立
     // clientUuid ↔ userEntryId 映射（重开时按映射回填 segments）。

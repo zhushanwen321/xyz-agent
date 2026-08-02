@@ -28,6 +28,7 @@ import type {
   SystemPromptConfig,
   TerminalConfig,
   BatchDeleteResult,
+  SegmentsMetadataEntry,
 } from '@xyz-agent/shared'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
 
@@ -231,6 +232,14 @@ export interface ISessionService {
   steerMessage(sessionId: string, content: string): Promise<void>
   /** Queue a follow-up message for a session */
   followUpMessage(sessionId: string, content: string): Promise<void>
+
+  // ── wave:runtime-patch ipc-converge-a3 W2：业务持久化写（从 main IPC 迁 WS，安全校验原样搬 TC3）──
+  /** 写入粘贴截图（base64→attachments/tmpdir）。安全校验：mimeType image/* + 20MB 上限 + name sanitize */
+  writeImage(sessionId: string, base64: string, mimeType: string, name: string): Promise<{ path: string; fileName: string; displayName: string; id: string; persisted: boolean }>
+  /** 迁移 tmpdir 图片到 attachments 持久化目录。安全校验：fromPath 白名单（tmpdir/attachments） */
+  migrateImage(fromPath: string, sessionId: string, fileName: string): Promise<{ path: string }>
+  /** 追加/覆盖 segments.json sidecar（atomic 写，同 clientUuid 覆盖） */
+  writeSegmentsMetadata(sessionId: string, entry: SegmentsMetadataEntry): Promise<void>
 }
 
 // ── ISessionServiceInternal ───────────────────────────────────────

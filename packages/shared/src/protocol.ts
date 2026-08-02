@@ -19,6 +19,7 @@ import type {
   ProviderImportPreview,
   ProviderImportResult,
 } from './migration'
+import type { SegmentsMetadataEntry } from './message-metadata'
 
 // ── Client → Runtime message types
 
@@ -52,6 +53,10 @@ export type ClientMessageType =
   | 'session.getSubagents' | 'session.getSubagentHistory'
   | 'session.getWorkflows' | 'session.getAgentCallHistory' | 'session.getAgentCallFilePath'
   | 'session.workflowAction' | 'session.subagentAction'
+  // wave:runtime-patch ipc-converge-a3 W2：业务持久化写迁 WS（session 数据单一出口归 runtime）。
+  // session.writeImage 粘贴截图落地 attachments；session.migrateImage landing tmpdir→attachments 迁移；
+  // session.writeSegments 追加/覆盖 segments.json sidecar。原 main IPC handler，现 runtime session-service。
+  | 'session.writeImage' | 'session.migrateImage' | 'session.writeSegments'
   | 'message.send' | 'message.abort' | 'message.steer' | 'message.follow_up'
   | 'message.bash' | 'message.abortBash'
   | 'config.getProviders' | 'config.setProvider' | 'config.deleteProvider' | 'config.setToolPermissions'
@@ -276,6 +281,13 @@ export interface ClientMessageMap {
   // session.subagentAction：subagent 生命周期操作（当前只 cancel，对称 workflowAction 的扩展 slash command 转发）。
   // runtime 经 client.prompt("/subagents <action> <subagentId>") 调扩展（不经 LLM）。
   'session.subagentAction': { sessionId: string; action: 'cancel'; subagentId: string }
+  // wave:runtime-patch ipc-converge-a3 W2：业务持久化写 WS 请求 payload（从 main IPC 原样搬，零字段变更）。
+  // writeImage：base64 解码后写 attachments（sessionId 空降级 tmpdir，persisted 反映落地位置）。
+  // migrateImage：landing 落 tmpdir 的图，session 创建后 move 到 attachments（fromPath 白名单守门）。
+  // writeSegments：追加/覆盖 segments.json sidecar（同 clientUuid 覆盖，atomic 写）。
+  'session.writeImage': { sessionId: string; base64: string; mimeType: string; name: string }
+  'session.migrateImage': { fromPath: string; sessionId: string; fileName: string }
+  'session.writeSegments': { sessionId: string; entry: SegmentsMetadataEntry }
   // session.subscribe（runtime-message-bus wave:runtime-wiring 补登记，对应 IF6 契约）：
   // renderer 切换/创建 session 时调用，触发 bus.subscribe 注册订阅 + 拉 ring snapshot。
   // fromSeq 可选：重连场景带 lastSeenSeq，bus 返回 seq > fromSeq 的增量
@@ -580,6 +592,8 @@ export type ServerMessageType =
   | 'file.tree:result' | 'file.tree.expand:result' | 'file.search:result'
   | 'git.diff:result'
   | 'file.write.create:result' | 'file.write.rename:result' | 'file.write.delete:result'
+  // wave:runtime-patch ipc-converge-a3 W2：业务持久化写 reply（:result 后缀复用 file.write.create:result 约定）
+  | 'session.writeImage:result' | 'session.migrateImage:result' | 'session.writeSegments:result'
   | 'git.status:result'
   | 'workspace.recentList'
   | 'workspace.bareDetected'
@@ -800,6 +814,13 @@ export interface ServerMessageMapBase {
   'file.write.create:result': { sessionId: string; path: string; implemented: false }
   'file.write.rename:result': { sessionId: string; newPath: string; implemented: false }
   'file.write.delete:result': { sessionId: string; path: string; implemented: false }
+  // wave:runtime-patch ipc-converge-a3 W2：业务持久化写 reply payload（与原 main IPC 返回值零字段变更）
+  /** session.writeImage:result：落地结果。persisted=true 落 attachments（已持久化）；false 落 tmpdir（landing 降级，需迁移） */
+  'session.writeImage:result': { path: string; fileName: string; displayName: string; id: string; persisted: boolean }
+  /** session.migrateImage:result：迁移后新路径（调用方据此更新 segment.path） */
+  'session.migrateImage:result': { path: string }
+  /** session.writeSegments:result：ack 型空 payload（atomic 写成功） */
+  'session.writeSegments:result': Record<string, never>
   'workspace.recentList': { records: RecentWorkspaceRecord[] }
   /** workspace.bareDetected：workspace.detectBare 的向后兼容 reply（isBare/wsRoot/barePath）。 */
   'workspace.bareDetected': { isBare: boolean; wsRoot: string; barePath: string }
@@ -1101,6 +1122,10 @@ export interface ReplyPayloadMap {
   'file.write.create': ServerMessageMap['file.write.create:result']
   'file.write.rename': ServerMessageMap['file.write.rename:result']
   'file.write.delete': ServerMessageMap['file.write.delete:result']
+  // wave:runtime-patch ipc-converge-a3 W2：业务持久化写 request→reply 映射（payload 消费型，domain 读 reply 字段）
+  'session.writeImage': ServerMessageMap['session.writeImage:result']
+  'session.migrateImage': ServerMessageMap['session.migrateImage:result']
+  'session.writeSegments': ServerMessageMap['session.writeSegments:result']
   'file.tree.expand': ServerMessageMap['file.tree.expand:result']
   'git.diff': ServerMessageMap['git.diff:result']
   'git.status': ServerMessageMap['git.status:result']

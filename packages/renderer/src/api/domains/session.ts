@@ -257,3 +257,29 @@ export async function subscribe(
 export function unsubscribe(sessionId: string): Promise<void> {
   return command('session.unsubscribe', { sessionId })
 }
+
+// ── wave:runtime-patch ipc-converge-a3 W2：业务持久化写（从 main IPC 迁 WS）──
+/** 写入粘贴截图（base64→attachments/tmpdir）。安全校验在 runtime sessionService.writeImage */
+export function writeImage(payload: {
+  sessionId: string
+  base64: string
+  mimeType: string
+  name: string
+}): Promise<{ path: string; fileName: string; displayName: string; id: string; persisted: boolean }> {
+  return command('session.writeImage', payload)
+}
+/** 迁移 landing tmpdir 图片到 attachments。安全校验在 runtime sessionService.migrateImage */
+export function migrateImage(payload: {
+  fromPath: string
+  sessionId: string
+  fileName: string
+}): Promise<{ path: string }> {
+  return command('session.migrateImage', payload)
+}
+/** 追加/覆盖 segments.json sidecar（atomic 写） */
+export async function writeSegments(payload: {
+  sessionId: string
+  entry: import('@xyz-agent/shared').SegmentsMetadataEntry
+}): Promise<void> {
+  await command('session.writeSegments', payload)
+}

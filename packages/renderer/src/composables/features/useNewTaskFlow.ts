@@ -28,7 +28,6 @@ import type { Segment } from '@xyz-agent/shared'
 import { useModel } from '@/composables/features/useModel'
 import { useFileTree } from '@/composables/features/useFileTree'
 import { useToast } from '@/composables/useToast'
-import { migrateSessionImage } from '@/lib/ipc'
 import i18n from '@/i18n'
 
 const t = i18n.global.t
@@ -63,7 +62,7 @@ async function migrateTmpdirImages(
   const migrated = new Map<string, string>()
   const results = await Promise.allSettled(
     images.map(async (img) => {
-      const result = await migrateSessionImage({
+      const result = await sessionApi.migrateImage({
         fromPath: img.path,
         sessionId,
         fileName: img.fileName,

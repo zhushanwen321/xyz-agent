@@ -70,6 +70,8 @@ vi.mock('@/api', () => ({
     getCommands: vi.fn().mockResolvedValue({ commands: [] }),
     getSubagents: vi.fn().mockResolvedValue([]),
     getWorkflows: vi.fn().mockResolvedValue([]),
+    // wave:runtime-patch W2：migrateImage 走 @/api（从 @/lib/ipc 迁来）。默认 resolve(undefined)（非迁移路径）。
+    migrateImage: migrateCtrl.migrateSessionImage,
   },
   // submitFirstMessage → useFileTree.loadTree 调 fileApi.tree/gitApi.status（Promise.allSettled）；
   // 给空返回避免 unhandled rejection
@@ -80,7 +82,6 @@ vi.mock('@/api', () => ({
 }))
 vi.mock('@/lib/ipc', () => ({
   pickDirectory: pickCtrl.pickDirectory,
-  migrateSessionImage: migrateCtrl.migrateSessionImage,
 }))
 // submitFirstMessage 终端调用 useChat.send；mock 掉避免拖入 chat 订阅机制（useChat 自有单测）
 vi.mock('@/composables/features/useChat', () => ({
