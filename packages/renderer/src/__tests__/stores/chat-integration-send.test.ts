@@ -46,7 +46,11 @@ vi.mock('@/api', () => ({
   file: {
     read: vi.fn(() => Promise.resolve({ content: '', truncated: false })),
   },
-  session: {},
+  session: {
+    subscribe: vi.fn().mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 }),
+    unsubscribe: vi.fn().mockResolvedValue(undefined),
+    writeSegments: vi.fn().mockResolvedValue(undefined),
+  },
   config: {
     getGlobalSkills: vi.fn().mockResolvedValue([]),
     getProjectSkills: vi.fn().mockResolvedValue([]),

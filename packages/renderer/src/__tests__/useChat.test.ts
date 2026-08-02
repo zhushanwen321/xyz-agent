@@ -49,7 +49,13 @@ vi.mock('@/api', () => ({
     steer: apiMock.steer,
     followUp: apiMock.followUp,
   },
-  session: {},
+  session: {
+    // wave:runtime-patch W2：useChat 现从 @/api import session（writeSegments），
+    // useMessageBusSubscription 调 session.subscribe——补 stub 避免 not-a-function
+    subscribe: vi.fn().mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 }),
+    unsubscribe: vi.fn().mockResolvedValue(undefined),
+    writeSegments: vi.fn().mockResolvedValue(undefined),
+  },
 }))
 
 import { useChatStore } from '@/stores/chat'

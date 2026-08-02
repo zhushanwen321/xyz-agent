@@ -50,7 +50,11 @@ vi.mock('@/api', () => ({
     steer: apiMock.steer,
     followUp: apiMock.followUp,
   },
-  session: {},
+  session: {
+    subscribe: vi.fn().mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 }),
+    unsubscribe: vi.fn().mockResolvedValue(undefined),
+    writeSegments: vi.fn().mockResolvedValue(undefined),
+  },
   config: {
     getGlobalSkills: vi.fn().mockResolvedValue([]),
     getProjectSkills: vi.fn().mockResolvedValue([]),
