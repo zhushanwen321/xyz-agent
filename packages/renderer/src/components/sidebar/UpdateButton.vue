@@ -81,6 +81,18 @@
       <span>{{ t('sidebar.update.restarting') }}</span>
     </span>
 
+    <!-- downloaded：已下载待安装，click 弹确认 Dialog -->
+    <span
+      v-else-if="state.state === 'downloaded'"
+      class="inline-flex items-center gap-0.5 text-[10px] text-success cursor-pointer"
+      data-testid="update-downloaded"
+      :title="t('sidebar.update.downloaded')"
+      @click="onInstallClick"
+    >
+      <CheckCircle2 class="size-3" />
+      <span>{{ t('sidebar.update.downloaded') }}</span>
+    </span>
+
     <!-- error：升级失败，hover 显完整错误信息 -->
     <HoverCard v-else-if="state.state === 'error'">
       <HoverCardTrigger as-child>
@@ -97,6 +109,15 @@
       </HoverCardTrigger>
       <HoverCardContent side="top" class="w-[280px] p-3 text-[11px] text-neutral-mid">
         {{ state.errorMessage }}
+        <Button
+          variant="secondary"
+          size="sm"
+          class="mt-2"
+          data-testid="update-retry"
+          @click="onRetry"
+        >
+          {{ t('sidebar.update.retry') }}
+        </Button>
       </HoverCardContent>
     </HoverCard>
 
@@ -112,19 +133,49 @@
       <ArrowUp class="size-3" />
       <span>{{ t('sidebar.update.goToDownload') }}</span>
     </Button>
+
+    <!-- 确认重启安装 Dialog -->
+    <Dialog :open="showConfirmDialog" @update:open="showConfirmDialog = $event">
+      <DialogContent class="sm:max-w-[400px]">
+        <DialogHeader>
+          <DialogTitle>{{ t('sidebar.update.restartInstall') }}</DialogTitle>
+          <DialogDescription>
+            {{ t('sidebar.update.confirmInstall', { version: state.latestRelease?.version }) }}
+          </DialogDescription>
+        </DialogHeader>
+        <div class="flex justify-end gap-2 pt-2">
+          <Button variant="ghost" size="sm" @click="onLater">
+            {{ t('sidebar.update.installLater') }}
+          </Button>
+          <Button variant="default" size="sm" data-testid="update-confirm-install" @click="onConfirmInstall">
+            {{ t('sidebar.update.installNow') }}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   </span>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowUp, Loader2, CheckCircle2, AlertCircle } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { useAppUpdate } from '@/composables/features/useAppUpdate'
 
 const { t } = useI18n()
-const { state, performDownload, openFallbackUrl } = useAppUpdate()
+const { state, performDownload, performInstall, openFallbackUrl } = useAppUpdate()
+
+/** 确认重启安装 Dialog 开关 */
+const showConfirmDialog = ref(false)
 
 /** idle/checking 不渲染（无可展示信息） */
 const visible = computed(
@@ -139,6 +190,27 @@ async function onPerformUpdate(): Promise<void> {
 /** unsupported click：打开备用下载页 */
 async function onOpenFallbackUrl(): Promise<void> {
   await openFallbackUrl()
+}
+
+/** downloaded click：打开确认 Dialog（不直接执行 install） */
+function onInstallClick(): void {
+  showConfirmDialog.value = true
+}
+
+/** 确认安装：调 performInstall + 关闭 Dialog */
+async function onConfirmInstall(): Promise<void> {
+  showConfirmDialog.value = false
+  await performInstall()
+}
+
+/** 稍后：仅关闭 Dialog */
+function onLater(): void {
+  showConfirmDialog.value = false
+}
+
+/** error 态重试：回 available 态（让用户重新走下载流程） */
+function onRetry(): void {
+  state.state = 'available'
 }
 </script>
 
