@@ -132,7 +132,7 @@ jobs:
         run: pnpm --filter @xyz-agent/runtime run test -- --reporter=junit --outputFile=test-results.xml
 
       - name: Test - renderer
-        run: pnpm --filter @xyz-agent/frontend run test -- --reporter=junit --outputFile=test-results.xml
+        run: pnpm --filter @xyz-agent/frontend run test -- --reporter=junit --outputFile=test-results.xml --coverage
 
       - name: Test - main
         run: pnpm --filter @xyz-agent/electron run test:main
@@ -148,6 +148,14 @@ jobs:
           path: |
             packages/runtime/test-results.xml
             packages/renderer/test-results.xml
+          retention-days: 7
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: packages/renderer/coverage/
           retention-days: 7
 
   # PR 构建检查：完整 electron-builder 打包流程（与 release 一致），不在 PR 上传产物。
