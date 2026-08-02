@@ -20,15 +20,13 @@
     "hooks"
   ],
   "license": "MIT",
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
+  "dependencies": {
     "@zhushanwen/pi-extension-logger": "workspace:*"
   },
-  "peerDependenciesMeta": {
-    "@zhushanwen/pi-extension-logger": {
-      "optional": true
-    }
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
   },
+  "peerDependenciesMeta": {},
   "devDependencies": {
     "vitest": "^4.1.8"
   },

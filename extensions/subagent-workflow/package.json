@@ -44,24 +44,21 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@xyz-agent/extension-protocol": "^0.2.0"
+    "@xyz-agent/extension-protocol": "^0.2.0",
+    "@zhushanwen/pi-extension-logger": "workspace:*"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-tui": "*",
     "typebox": "*",
-    "@zhushanwen/pi-structured-output": "workspace:*",
-    "@zhushanwen/pi-extension-logger": "workspace:*"
+    "@zhushanwen/pi-structured-output": "workspace:*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-coding-agent": {
       "optional": true
     },
     "@zhushanwen/pi-structured-output": {
-      "optional": true
-    },
-    "@zhushanwen/pi-extension-logger": {
       "optional": true
     }
   },
