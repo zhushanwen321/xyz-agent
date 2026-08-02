@@ -29,6 +29,7 @@
         class="nav-btn h-[22px] w-[26px] rounded-md text-neutral-dim hover:bg-surface-hover hover:text-neutral-fg"
         :title="sidebar.collapsed ? t('panel.header.toggleSidebarExpand') : t('panel.header.toggleSidebarCollapse')"
         :aria-label="t('panel.header.toggleSidebarAria')"
+        data-testid="sidebar-collapse-toggle"
         @click="sidebar.toggleCollapsed()"
       >
         <PanelLeftOpen v-if="sidebar.collapsed" class="size-[14px]" />

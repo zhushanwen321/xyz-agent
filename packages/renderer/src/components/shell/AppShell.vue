@@ -11,6 +11,7 @@
   <div
     class="app-shell relative flex h-screen w-screen gap-3 overflow-hidden rounded-[10px] bg-bg p-3"
     :class="sidebar.collapsed ? '!gap-0' : ''"
+    data-testid="app-shell"
   >
     <AsideRegion />
     <AppNavControls />

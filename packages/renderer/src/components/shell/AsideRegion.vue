@@ -14,6 +14,7 @@
       flexShrink: '0',
       minWidth: '0px',
     }"
+    data-testid="app-shell-aside"
   >
     <TrafficLight />
     <Sidebar />
