@@ -486,8 +486,8 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
     - 全屏两态：非全屏（traffic light opacity 1，按钮 left:100px）/ 全屏（opacity 0，按钮左移）。**无第三态**，mac 全屏 hover 红黄绿由系统提供，应用不渲染
     - win/linux 走 mimic_mac：自绘彩色圆点放左侧模拟 mac，三平台左上视觉统一
     - 唤回侧栏：⌘B + header chrome 按钮（**rail-restore 左缘细条已移除**）
-    - 新增或修改任何窗口顶部区域 UI 时，必须读 [shell spec](docs/page-design/archive/v3/shell/spec.md) 确认拓扑一致
-    - 设计决策记录：[ADR 0016](docs/architecture/adr/0016-macos-traffic-light-safe-zone.md)（旧版 padding-left 方案，**已 Superseded**）、[v3 shell spec](docs/page-design/archive/v3/shell/spec.md)（现版 SSOT，2026-06-18 修正）
+    - 新增或修改任何窗口顶部区域 UI 时，必须读 [v6 shell spec](docs/page-design/v6-spec-shell.html) 确认拓扑一致
+    - 设计决策记录：[ADR 0016](docs/architecture/adr/0016-macos-traffic-light-safe-zone.md)（旧版 padding-left 方案，**已 Superseded**）、v6 shell spec（现版 SSOT，2026-06-18 修正）
 12. **reka ScrollAreaViewport 默认 `overflow-x: hidden` [HISTORICAL]** — reka-ui 的 `ScrollAreaViewport` 内联注入 `overflow-x: hidden`，横向溢出的内容被**裁掉不滚动**（非 `scroll` 也非 `auto`）。文件树等需横向滚动看长文件名的场景，必须给 `ScrollArea` 传 `horizontal` prop（`src/components/ui/scroll-area/ScrollArea.vue`，渲染额外横向 ScrollBar + 用 `!overflow-x-auto` 覆盖内联 style）。覆盖用 Tailwind `!` 前缀（`!important` 压过 inline）；scoped `<style>` 的 `:deep()` 不行——会注入 `<style>` 元素破坏 reka Root 的子组件渲染顺序，导致 ScrollBar/Corner 不挂载
 
 ### 自动化检查

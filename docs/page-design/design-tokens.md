@@ -111,8 +111,8 @@
 
 ## 色彩 — 亮色（备选，已校准）
 
-> 暗色优先；亮色为降级变体，保持同色相。值源自 `v3/settings/draft-system.html §token`
-> （draft 已定义完整的 light 块），2026-06-27 回填 SSOT 并落地 `style.css [data-theme="light"]`。
+> 暗色优先；亮色为降级变体，保持同色相。
+> 2026-06-27 回填 SSOT 并落地 `style.css [data-theme="light"]`。
 > 层级关系与暗色镜像：bg 最浅 → surface 纯白 → surface-2 略灰 → surface-hover 更灰；
 > bg-elevated 浮起用接近 surface 的白 + 阴影区分；bg-input 输入区略沉于 surface。
 

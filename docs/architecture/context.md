@@ -110,7 +110,7 @@ Session 级状态，表示 pi 进程正在工作（从用户发送消息到 agen
 
 Panel 联动的浮层抽屉。一个 header + 多 tab 容器，tab 承载不同实体（文件×N / 终端 / 子Agent / 浏览器）。Diff/预览下沉为文件 tab 内部 view-toggle。与 Panel 数据强耦合，从触发它的 Panel 内浮起，固定挂该 Panel，v1 不跨 Panel 覆盖对侧。
 
-**与旧 Side Inspector 的差异**：旧版三 Tab（TaskTree/已完成/请求回应）是运行时状态面板；v3 版是通用容器，旧三 Tab 的能力归入 TaskTree/子Agent tab + Flow-3 进度聚合。规范见 `docs/page-design/archive/v3/panel/spec.md`。
+**与旧 Side Inspector 的差异**：旧版三 Tab（TaskTree/已完成/请求回应）是运行时状态面板；v3 版是通用容器，旧三 Tab 的能力归入 TaskTree/子Agent tab + Flow-3 进度聚合。
 
 ### Session Tree
 pi session 文件（JSONL）中通过 `parentId` 构建的逻辑树结构。同一文件内可存在多个分支（fork 点），唯一的可变状态是内存中的 `leafId` 指针。xyz-agent 通过 runtime 直接读取 JSONL 文件构建树，不依赖 pi RPC。
@@ -140,21 +140,21 @@ pi session 文件（JSONL）中通过 `parentId` 构建的逻辑树结构。同�
 > 以下术语由 v3-demo 设计稿确立，规范源：`docs/page-design/archive/v3/architecture-and-terminology.html §1`（术语唯一来源）。历史 md/draft 中的废弃词见 `docs/page-design/archive/v3/README.md` 术语映射表。
 
 ### Sidebar（侧栏）
-L0/L1。持久容器（非单列表），所有 view 共用。顶部 Logo + 主操作区 → segmented tab（会话|文件）互斥切换 → 子视图列表 → 底部设置/用户。透明融合于 base（无 background）。折叠态 + Overview 入口按钮。规范见 `docs/page-design/archive/v3/sidebar/spec.md`。
+L0/L1。持久容器（非单列表），所有 view 共用。顶部 Logo + 主操作区 → segmented tab（会话|文件）互斥切换 → 子视图列表 → 底部设置/用户。透明融合于 base（无 background）。折叠态 + Overview 入口按钮。
 
 ### Workspace（工作区）
-L1 Region。main 区在 `view=chat` 时的容器。承载双 Panel 主从模式（单 Panel = 默认态，开第二 session 才 split）。规范见 `docs/page-design/archive/v3/workspace/spec.md`。
+L1 Region。main 区在 `view=chat` 时的容器。承载双 Panel 主从模式（单 Panel = 默认态，开第二 session 才 split）。
 
 ### Panel（面板）的 5 zone
-L2 Module。一个 Panel 内部固定 5 个 zone 自上而下：① panel-header（per-session 元信息）② message-stream（消息流 + 回合折叠）③ progress-zone（单 Session 进度，内嵌 composer 上方）④ composer（输入区 + 工具区）⑤ git-zone（暂存/提交/Diff 入口）。规范见 `docs/page-design/archive/v3/panel/spec.md`。
+L2 Module。一个 Panel 内部固定 5 个 zone 自上而下：① panel-header（per-session 元信息）② message-stream（消息流 + 回合折叠）③ progress-zone（单 Session 进度，内嵌 composer 上方）④ composer（输入区 + 工具区）⑤ git-zone（暂存/提交/Diff 入口）。
 
 ### Overview（概览）
-L1 独立 Region（与 Sidebar / Workspace 并列，非 workspace 子视图）。多会话鸟瞰统筹——卡片网格 + 筛选排序 + 后台 agent 聚合。入口由 sidebar 按钮 + ⌘⇧O 触发，激活后覆盖 main 区，sidebar 持久。与 Session List 分工：Session List = 导航切换（紧凑单列），Overview = 统筹监控（信息密集网格）。规范见 `docs/page-design/archive/v3/overview/spec.md`，入口裁决见 [ADR-0022](adr/0022-overview-entry-coverage.md)。
+L1 独立 Region（与 Sidebar / Workspace 并列，非 workspace 子视图）。多会话鸟瞰统筹——卡片网格 + 筛选排序 + 后台 agent 聚合。入口由 sidebar 按钮 + ⌘⇧O 触发，激活后覆盖 main 区，sidebar 持久。与 Session List 分工：Session List = 导航切换（紧凑单列），Overview = 统筹监控（信息密集网格）。入口裁决见 [ADR-0022](adr/0022-overview-entry-coverage.md)。
 
 > **别名**：`Mission Control`（已废弃，统一用 Overview）、`Panel Grid`（概念被 Overview 吸收，见上）。
 
 ### Search Modal（搜索浮层）
-L1 Overlay。⌘K 全局搜索浮层，归 Overlay 层（非 Sidebar 子组件）。Sidebar 仅保留触发入口。规范见 `docs/page-design/archive/v3/overlays/spec.md`。
+L1 Overlay。⌘K 全局搜索浮层，归 Overlay 层（非 Sidebar 子组件）。Sidebar 仅保留触发入口。
 
 ### Extension
 pi 引擎的扩展模块，通过 `ExtensionAPI` 注册工具、监听事件、注册命令。xyz-agent 通过 RPC 透出 pi extension 的能力到 GUI 层。Extension 运行在 pi 子进程内，xyz-agent 不负责加载/执行 extension 代码，只负责 UI 交互桥接和生命周期管理。
