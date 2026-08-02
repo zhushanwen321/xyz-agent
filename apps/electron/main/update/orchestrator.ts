@@ -7,8 +7,8 @@
  *
  * 职责链：
  *   1. pickAsset：按 platform 选 asset（deb 用户选 AppImage 但 APPIMAGE undefined → unsupported）
- *   2. 写 update-result.json status='replacing'（self-healer 启动时检测中断）
- *   3. downloadAsset：下载 + sha256 校验（onProgress 推 downloading 进度）
+ *   2. downloadAsset：下载 + sha256 校验（onProgress 推 downloading 进度）
+ *   3. 写 update-result.json status='replacing'（installUpdate 阶段，self-healer 启动时检测中断）
  *   4. createPlatformUpdater().prepareUpdate：生成脚本 + 触发替换
  *   5. 据 ref.kind 决定返回值（detached-script → triggerRestart / spawn-installer → spawn + triggerRestart）
  *
@@ -71,7 +71,7 @@ export interface IUpdateOrchestrator {
   ): Promise<{ triggerRestart: boolean }>
 
   /**
-   * 下载阶段：选 asset + 写 replacing 标记 + 下载 + sha256 校验。
+   * 下载阶段：选 asset + 下载 + sha256 校验。
    *
    * 供预下载（后台静默下载）复用。下载完成后返回已校验的文件路径，不触发替换。
    *
@@ -122,10 +122,12 @@ let updating = false
 let downloading = false
 
 /**
- * 下载阶段：选 asset + 写 replacing 标记 + 下载 + sha256 校验。
+ * 下载阶段：选 asset + 下载 + sha256 校验。
  *
  * 从原 performUpdate 拆分，供预下载（后台静默下载）复用。下载完成后返回已校验的文件路径，
  * 不触发替换——调用方拿到 filePath 后可立即 installUpdate 或暂存（preloaded-update.json）。
+ * 注意：不写 update-result.json 的 replacing 标记（那是 installUpdate 的职责），
+ * 否则预下载后未安装就崩溃会触发 self-healer 误回滚。
  *
  * 不推 update:progress 事件：预下载是静默后台行为，进度回调由调用方决定如何处理
  * （performUpdate 透传给 handler 推 IPC；预下载不传回调静默）。
@@ -151,33 +153,7 @@ export async function downloadUpdate(
       throw new UpdateError(`no asset for platform ${process.platform}`, 'downloading')
     }
 
-    // 2. 写 update-result.json status='replacing'（self-healer 启动时检测中断）
-    //    replacing 标记是 self-healer 检测中断的关键信号，写入失败必须中止
-    //    （否则崩溃后 self-healer 无法识别需要回滚）。这里不 catch，让异常上抛。
-    try {
-      mkdirSync(UPDATE_DIR, { recursive: true })
-      writeUpdateResult('replacing', release.version)
-    } catch (writeErr) {
-      // 权限错误分类
-      if (writeErr instanceof Error && (writeErr.message.includes('EACCES') || writeErr.message.includes('permission'))) {
-        throw new UpdateError(
-          'permission denied when writing update status',
-          'replacing',
-          'UPDATE_PERMISSION_DENIED',
-        )
-      }
-      // 磁盘空间不足
-      if (writeErr instanceof Error && (writeErr.message.includes('ENOSPC') || writeErr.message.includes('disk space'))) {
-        throw new UpdateError(
-          'insufficient disk space for update status file',
-          'downloading',
-          'UPDATE_DISK_SPACE',
-        )
-      }
-      throw writeErr
-    }
-
-    // 3. 下载 + 校验（downloadAsset 内部已校验 sha256/size）
+    // 2. 下载 + 校验（downloadAsset 内部已校验 sha256/size）
     //    [C1] 读取 proxy-config.json（统一由 ./proxy-config.ts SSOT 负责），
     //    把代理配置传给 downloadAsset，让下载链路真正接入代理
     //    （downloadAsset 内部据此构造 undici ProxyAgent dispatcher）。
@@ -213,6 +189,34 @@ export async function installUpdate(
   }
   updating = true
   try {
+    // 写 update-result.json status='replacing'（self-healer 启动时检测中断）。
+    // replacing 标记是 self-healer 检测「正在替换、崩溃需回滚」的关键信号，
+    // 必须在真正触发替换前写入。预下载阶段（downloadUpdate）只下载不替换，
+    // 不应写 replacing——否则下载后用户未点安装就崩溃，self-healer 会误判
+    // 需要回滚（实际只是下载中断）。此处放在 installUpdate（即将 spawn 替换脚本）才写。
+    try {
+      mkdirSync(UPDATE_DIR, { recursive: true })
+      writeUpdateResult('replacing', release.version)
+    } catch (writeErr) {
+      // 权限错误分类
+      if (writeErr instanceof Error && (writeErr.message.includes('EACCES') || writeErr.message.includes('permission'))) {
+        throw new UpdateError(
+          'permission denied when writing update status',
+          'replacing',
+          'UPDATE_PERMISSION_DENIED',
+        )
+      }
+      // 磁盘空间不足
+      if (writeErr instanceof Error && (writeErr.message.includes('ENOSPC') || writeErr.message.includes('disk space'))) {
+        throw new UpdateError(
+          'insufficient disk space for update status file',
+          'downloading',
+          'UPDATE_DISK_SPACE',
+        )
+      }
+      throw writeErr
+    }
+
     // 平台分发（生成脚本 + 触发替换）
     onProgress?.('replacing', 0)
     const updater = createPlatformUpdater()

@@ -16,7 +16,9 @@
  * 供测试调用，运行时由 initAutoCheck 内部触发。
  *
  * Mock 策略（对齐 useAppUpdate.test.ts）：
- * - vi.mock('@/lib/ipc') 桩 6 个方法（含新增 getPendingUpdate）
+ * - vi.mock('@/lib/ipc') 桩 update 相关方法（两阶段 updateDownload/updateInstall +
+ *   预下载 getPreloaded + pending getPendingUpdate + checkForUpdate 等）。getPreloaded 默认
+ *   null → initAutoCheck 先 restorePreloadedUpdate 无果，再走 restorePendingUpdate 路径
  * - vi.mock('@/composables/logic/markdown') 桩 renderMarkdown 避免 shiki WASM
  * - effectScope 包 useAppUpdate（onScopeDispose 依赖活跃 scope）
  * - _resetForTest 在 beforeEach 重置 module-level 单例 state + pendingRestored flag
@@ -34,6 +36,9 @@ const hoisted = vi.hoisted(() => {
   return {
     checkForUpdate: vi.fn<(opts?: { force?: boolean }) => Promise<LatestReleaseInfo | null>>(),
     performUpdate: vi.fn<(release: LatestReleaseInfo) => Promise<{ triggerRestart: boolean }>>(),
+    updateDownload: vi.fn<(release: LatestReleaseInfo) => Promise<{ downloaded: boolean }>>(),
+    updateInstall: vi.fn<() => Promise<{ triggerRestart: boolean }>>(),
+    getPreloaded: vi.fn<() => Promise<{ release: LatestReleaseInfo; filePath: string } | null>>(),
     getPendingUpdate: vi.fn<() => Promise<LatestReleaseInfo | null>>(),
     openUpdateFallbackUrl: vi.fn<(url: string) => Promise<void>>(),
     onUpdateProgress: vi.fn((cb: typeof progressCb) => {
@@ -51,6 +56,9 @@ const hoisted = vi.hoisted(() => {
 vi.mock('@/lib/ipc', () => ({
   checkForUpdate: hoisted.checkForUpdate,
   performUpdate: hoisted.performUpdate,
+  updateDownload: hoisted.updateDownload,
+  updateInstall: hoisted.updateInstall,
+  getPreloaded: hoisted.getPreloaded,
   getPendingUpdate: hoisted.getPendingUpdate,
   openUpdateFallbackUrl: hoisted.openUpdateFallbackUrl,
   onUpdateProgress: hoisted.onUpdateProgress,
@@ -79,12 +87,20 @@ beforeEach(() => {
   _resetForTest()
   hoisted.checkForUpdate.mockReset()
   hoisted.performUpdate.mockReset()
+  hoisted.updateDownload.mockReset()
+  hoisted.updateInstall.mockReset()
+  hoisted.getPreloaded.mockReset()
   hoisted.getPendingUpdate.mockReset()
   hoisted.openUpdateFallbackUrl.mockReset()
   hoisted.onUpdateProgress.mockClear()
   hoisted.onUpdateError.mockClear()
   hoisted.renderMarkdown.mockReset()
   hoisted.renderMarkdown.mockResolvedValue('<h2>新特性</h2>')
+  // 默认值：getPreloaded null 表示无预下载产物 → initAutoCheck 先 restorePreloadedUpdate
+  // 无果后再 restorePendingUpdate（pending 测试的核心路径）
+  hoisted.getPreloaded.mockResolvedValue(null)
+  hoisted.updateDownload.mockResolvedValue({ downloaded: true })
+  hoisted.updateInstall.mockResolvedValue({ triggerRestart: true })
 })
 
 /** 在 effectScope 内运行 useAppUpdate，返回 result + scope.stop 清理函数 */
@@ -228,8 +244,11 @@ describe('useAppUpdate 功能1：持久化升级提醒标志', () => {
     // initAutoCheck 必须在活跃 effect scope 内调（onScopeDispose 注册 timer 清理）
     result.initAutoCheck()
 
-    // 1. 启动序列立即触发 restorePendingUpdate（30s 红点不等定时器）
-    //    getPendingUpdate 是 async，需 flush 微任务让 await 完成
+    // 1. 启动序列先触发 restorePreloadedUpdate（getPreloaded），无预下载产物后再
+    //    restorePendingUpdate（getPendingUpdate）。两者都是 async，需 flush 微任务
+    await vi.waitFor(() => {
+      expect(hoisted.getPreloaded).toHaveBeenCalledOnce()
+    })
     await vi.waitFor(() => {
       expect(hoisted.getPendingUpdate).toHaveBeenCalledOnce()
     })

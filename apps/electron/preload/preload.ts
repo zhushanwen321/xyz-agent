@@ -136,6 +136,24 @@ export interface ElectronAPI {
    * @returns triggerRestart=true 表示升级已触发、app 即将退出重启
    */
   performUpdate(release: LatestReleaseInfo): Promise<{ triggerRestart: boolean }>
+  /**
+   * 拆分升级流程的下载阶段：下载 + 校验 + 写入预下载产物元信息。
+   * 下载成功后状态进入 'downloaded'，前端可调 updateInstall 触发安装。
+   * @param release checkForUpdate 返回的最新版本信息
+   * @returns downloaded=true 表示下载完成
+   */
+  updateDownload(release: LatestReleaseInfo): Promise<{ downloaded: boolean }>
+  /**
+   * 拆分升级流程的安装阶段：从预下载产物读取 release + filePath，执行替换 + 触发重启。
+   * install 权威源是预下载产物（不信任前端传入的 release，堵装错版本漏洞）。
+   * @returns triggerRestart=true 表示升级已触发、app 即将退出重启
+   */
+  updateInstall(): Promise<{ triggerRestart: boolean }>
+  /**
+   * 读取预下载产物信息（供前端判断是否已下载完成）。
+   * @returns 有效的 { release, filePath }，无预下载产物/损坏返回 null
+   */
+  getPreloaded(): Promise<{ release: LatestReleaseInfo; filePath: string } | null>
   /** 监听升级进度事件（stage + percent 0-100），返回取消订阅函数 */
   onUpdateProgress(callback: (payload: { stage: UpdateStage; percent: number }) => void): () => void
   /** 监听升级错误事件（stage + message + errorCode），返回取消订阅函数 */
@@ -277,6 +295,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── 自动升级执行（w3）──────────────────────────────────────
   performUpdate: (release: LatestReleaseInfo) =>
     ipcRenderer.invoke('update:perform', { release }),
+  // ── 自动升级拆分流程（download → install）──────────────────────
+  updateDownload: (release: LatestReleaseInfo) =>
+    ipcRenderer.invoke('update:download', { release }),
+  updateInstall: () => ipcRenderer.invoke('update:install'),
+  getPreloaded: () => ipcRenderer.invoke('update:getPreloaded'),
   onUpdateProgress: (callback: (payload: { stage: UpdateStage; percent: number }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: { stage: UpdateStage; percent: number }) => callback(payload)
     ipcRenderer.on('update:progress', handler)

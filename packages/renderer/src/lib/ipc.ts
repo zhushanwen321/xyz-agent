@@ -288,6 +288,31 @@ export function performUpdate(release: LatestReleaseInfo): Promise<{ triggerRest
   return api?.performUpdate(release) ?? Promise.resolve({ triggerRestart: false })
 }
 
+/**
+ * 触发下载阶段（下载 → 校验，止于 downloaded 态，不替换/重启）。
+ * @param release checkForUpdate 返回的最新版本信息
+ * @returns downloaded=true 表示产物已下载并校验通过，等待 performInstall 触发替换重启
+ */
+export function updateDownload(release: LatestReleaseInfo): Promise<{ downloaded: boolean }> {
+  return api?.updateDownload(release) ?? Promise.resolve({ downloaded: false })
+}
+
+/**
+ * 触发安装阶段（替换 + 重启）。依赖已下载产物（updateDownload 成功后调用）。
+ * @returns triggerRestart=true 表示替换完成、app 即将退出重启
+ */
+export function updateInstall(): Promise<{ triggerRestart: boolean }> {
+  return api?.updateInstall() ?? Promise.resolve({ triggerRestart: false })
+}
+
+/**
+ * 读取 main 侧预下载产物（app 启动时恢复 downloaded 态用）。
+ * @returns 有有效预下载产物返回 { release, filePath }，无则 null
+ */
+export function getPreloaded(): Promise<{ release: LatestReleaseInfo; filePath: string } | null> {
+  return api?.getPreloaded() ?? Promise.resolve(null)
+}
+
 /** 监听升级进度事件（stage + percent 0-100），返回取消订阅函数。无 IPC 返回 no-op */
 export function onUpdateProgress(cb: (p: { stage: UpdateStage; percent: number }) => void): () => void {
   return api?.onUpdateProgress(cb) ?? (() => {})

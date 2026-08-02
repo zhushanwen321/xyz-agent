@@ -52,6 +52,7 @@ export type UpdateState =
   | 'available'
   | 'downloading'
   | 'verifying'
+  | 'downloaded'
   | 'replacing'
   | 'restarting'
   | 'error'
