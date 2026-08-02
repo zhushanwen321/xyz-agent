@@ -338,7 +338,7 @@ GuiComponent 从「pi extension 专用」提升为「pi extension + plugin 共�
 
 ### 5.2 7 原语的 v6 视觉重设计
 
-> 当前 7 原语组件**已实现**（文档滞后标 P2 待实现，但 gui/ 目录下 Card/TabBar/ProgressBar 等均存在）。v6 重设计是改 CSS/模板，**不改协议类型**——已接入的 extension 零改动自动获得 v6 视觉。
+> 当前 7 原语组件**已实现**（文档滞后标 P2 待实现，但 `components/panel/message-stream/gui/` 下 Card/TabBar/ProgressBar 等 7 个原语 + `GuiComponentRenderer.vue` 均存在）。v6 重设计是改 CSS/模板，**不改协议类型**——已接入的 extension 零改动自动获得 v6 视觉。
 
 依据 v6-design.md §2（token）/§3（组件范式）/§5（横切）：
 

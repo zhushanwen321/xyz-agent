@@ -4,11 +4,13 @@
 
 ## 决策
 
-以 `docs/page-design/zcode-demo/`（冷蓝 `#4f8ef7`、暗色画布、Inter）作为产品**唯一视觉标准 (single source of truth)**，默认主题基调为**暗色优先，亮色为备选**。
+以冷蓝 `#4f8ef7`、暗色画布、Inter 作为产品**唯一视觉标准 (single source of truth)**，默认主题基调为**暗色优先，亮色为备选**。
 
-> **注**：原始画布色值为 `#0d0d0f`，2026-07-09 提亮校准为 `#1a1b1f`（对标 VS Code Dark+，减轻长时间用眼疲劳，详见 `design-tokens.md` 暗色章节）。本 ADR 的视觉方向裁决（冷蓝暗色优先）不变。
+> **2026-08-02 更新**：原始 `docs/page-design/zcode-demo/` 探索稿已删除，视觉规格见 `../page-design/v6-spec-*.html`（15 份 HTML 标注稿）与 `../page-design/v6-master-spec.md`。本 ADR 的视觉方向裁决（冷蓝暗色优先）不变。
 
-完整 token 见 `docs/design-tokens.md`（本 ADR 的规范附件，唯一可引用的色值/字体/圆角源）。
+> **注**：原始画布色值为 `#0d0d0f`，2026-07-09 提亮校准为 `#1a1b1f`（对标 VS Code Dark+，减轻长时间用眼疲劳，详见 `../page-design/design-tokens.md` 暗色章节）。本 ADR 的视觉方向裁决（冷蓝暗色优先）不变。
+
+完整 token 见 `../page-design/design-tokens.md`（本 ADR 的规范附件，唯一可引用的色值/字体/圆角源）。
 
 ## 背景
 
@@ -17,8 +19,8 @@
 | 代号 | 来源 | 方向 | 处置 |
 |------|------|------|------|
 | A · Warm Workbench | `DESIGN.md` + `PRODUCT.md` 品牌 | 暖奶油 + 赤陶 + serif + 亮色 | **归档** |
-| B · 终端/IDE | ~~`docs/design-system.md`~~（已删除） | 纯黑 + 绿 `#22c55e` + 1px 圆角 | **归档** |
-| C · zcode-demo | `docs/page-design/zcode-demo/` | 纯黑 + 蓝 `#4f8ef7` + Inter + 暗色 | **✅ 升级为真身** |
+| B · 终端/IDE | ~~`../page-design/design-system.md`~~（原 Warm & Soft，ADR-0019 推翻） | 纯黑 + 绿 `#22c55e` + 1px 圆角 | **归档** |
+| C · zcode-demo | ~~`docs/page-design/zcode-demo/`~~（探索稿已删除，视觉规格见 `../page-design/v6-spec-*.html`） | 纯黑 + 蓝 `#4f8ef7` + Inter + 暗色 | **✅ 升级为真身** |
 | D · 真实代码漂移 | `src-electron/.../style.css` + `tailwind.config.ts` | 暖底 + 青蓝 accent(195°) + serif + 1px | **改到对齐 C** |
 
 `PRODUCT.md` 原定的「温润赤陶 Warm Workbench」品牌方向**被本决策推翻**，需同步重写。
@@ -33,21 +35,21 @@
 ## 代价与风险
 
 - **品牌一致性**：推翻 `PRODUCT.md` 已固化的 Warm 人格，需重写品牌章节，否则文档自相矛盾。
-- **C 的 token 残缺**：zcode-demo 原始仅 9 个 CSS 变量，缺 warning/danger/info、间距、阴影、动效、亮色变体。已在 `docs/design-tokens.md` 补全，但补全项未经视觉校准，需在高保真阶段验证。
+- **C 的 token 残缺**：zcode-demo 原始仅 9 个 CSS 变量，缺 warning/danger/info、间距、阴影、动效、亮色变体。已在 `../page-design/design-tokens.md` 补全，但补全项未经视觉校准，需在高保真阶段验证。
 - **D 的状态色资产**：真实代码 `style.css` 已有完整的 success/warning/danger + light 体系，比 C 完整——收敛时**继承 D 的状态色结构**，仅替换色相，不全盘推翻。
 
 ## 归档处置
 
-- **A (`DESIGN.md`)**：文件顶部加 `> ⚠️ DEPRECATED by ADR-0019 (2026-06-18). 真身见 docs/design-tokens.md`，保留作历史参考，从所有"当前规范"链接撤下。
-- **B (`docs/design-system.md`，已删除)**：原 Warm & Soft 方案，ADR-0019 推翻后文件已清理。
+- **A (`DESIGN.md`)**：文件顶部加 `> ⚠️ DEPRECATED by ADR-0019 (2026-06-18). 真身见 ../page-design/design-tokens.md`，保留作历史参考，从所有"当前规范"链接撤下。
+- **B (`../page-design/design-system.md`)**：原 Warm & Soft 方案，ADR-0019 推翻后降级为组件原语层参考（不再承载视觉方向）。
 - **`PRODUCT.md`**：品牌章节（Warm & Soft 人格、赤陶、anti-references 中"不是冷色开发者工具"）需重写为冷蓝暗色开发者工具人格——**单独任务，不在此 ADR 范围**。
 
 ## D 的漂移修复清单（精确到行）
 
-目标：`src-electron/renderer/src/style.css` + `tailwind.config.ts` 全部对齐到 `docs/design-tokens.md`。
+目标：`src-electron/renderer/src/style.css` + `tailwind.config.ts` 全部对齐到 `../page-design/design-tokens.md`。
 
 `style.css` :root（L11-30）：
-- L11-15 `--bg/--surface/--fg/--muted/--border`：暖奶油 → 冷蓝暗色底（见 tokens.md 暗色块）
+- L11-15 `--bg/--surface/--fg/--muted/--border`：暖奶油 → 冷蓝暗色底（见 `../page-design/design-tokens.md` 暗色块）
 - L16-17 `--accent(195°)/--accent-light`：青蓝 → `#4f8ef7` 蓝系
 - L25 `--font-display`：serif (Tiempos/Newsreader) → Inter（display 与 body 同族，tech-utility 取向）
 - L28 `--radius: 1px` → `3px/8px/12px` 三档
@@ -60,7 +62,7 @@
 
 ## 后续步骤
 
-1. 落地 tokens.md 到 `style.css :root` + `tailwind.config.ts`（按上清单）
+1. 落地 `../page-design/design-tokens.md` 到 `style.css :root` + `tailwind.config.ts`（按上清单）
 2. 重写 `PRODUCT.md` 品牌章节（Warm → 冷蓝开发者工具人格）
 3. 补交互层规范（组件状态机、空/错/载态、动效时序、响应式断点）——当前最大空白
-4. 从 zcode-demo 提炼 Vue SFC 组件库，补全 8 个状态
+4. 提炼 Vue SFC 组件库，补全 8 个状态（原 zcode-demo 已删除，参考 `../page-design/v6-spec-*.html`）

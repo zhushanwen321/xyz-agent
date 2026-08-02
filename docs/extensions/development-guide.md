@@ -1869,7 +1869,7 @@ const streamSink = ctx.mode === "rpc"
 service.initSession({ pi, streamSink });
 ```
 
-完整章节（含 `ExtensionMode` 字面量定义、进程边界、与 spawn 参数的区别）：见 `docs/pi-tui-development-guide.md` 第四部分第 8 节。
+完整章节（含 `ExtensionMode` 字面量定义、进程边界、与 spawn 参数的区别）：见 `./pi-tui-development-guide.md` 第四部分第 8 节。
 
 ### 22.7 实时进度渲染 🟠
 

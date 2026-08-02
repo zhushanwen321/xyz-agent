@@ -134,7 +134,7 @@ V3 只解决其中一层（色），另两层是独立工作线，不并进本�
 
 ### 第三步：真值源同步 + 验证
 
-1. 18 个 spec HTML 的 token 块同步（都是 `v6-spec-tokens.html` 的拷贝）
+1. 15 个 spec HTML 的 token 块同步（都是 `v6-spec-tokens.html` 的拷贝）
 2. `v6-demo.html`、Vue demo（`v6/`）同步
 3. headless Chrome 截图对比：换色前后，确认无冷蓝色从任何缝隙冒出
 4. WCAG AA 对比度复核（`--neutral-fg` on `--bg`、`--neutral-mid` on `--surface` 等关键组合）
