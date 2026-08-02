@@ -115,12 +115,12 @@ AppShell (flex h-screen)
 │     ├─ Brand 区 (logo + 版本 + UpdateButton)
 │     ├─ 主操作 nav (新建⌘N / 搜索⌘K)
 │     ├─ Overview 入口 Button
-│     ├─ SegmentedTab (4 tab: sessions/files/agents/flows)         ← M1 挂载点
+│     ├─ SegmentedTab (4 tab: sessions/files/subagents/workflows)  ← M1 挂载点
 │     ├─ 子视图区 (按 activeTab 切换)                               ← M2 挂载点
 │     │  ├─ sessions → SessionList
 │     │  ├─ files → FileView
-│     │  ├─ agents → SubagentList
-│     │  └─ flows → WorkflowList
+│     │  ├─ subagents → SubagentList
+│     │  └─ workflows → WorkflowList
 │     └─ footer (头像 + Settings 齿轮)
 ├─ MainPanel (<main>, 唯一浮起面板)
 │  └─ [view 路由: chat / overview]                                  ← M14 挂载点
@@ -138,7 +138,7 @@ AppShell (flex h-screen)
 │           │  │  └─ AskUserOverlay | Composer（含 confirm/select/input） ← M11 挂载点
 │           │  │     └─ Composer
 │           │  │        ├─ CommandPopover (slash 菜单)              ← M10 挂载点
-│           │  │        └─ composer-bar 工具条 (5 按钮)             ← M9 挂载点
+│           │  │        └─ composer-bar 工具条 (6 元素：+添加/spacer/上下文/模型/思考强度/send-slot) ← M9 挂载点
 │           │  └─ main-panel 局部底栏 (composer 下方，不跨 sidebar/drawer) ← M8 挂载点
 │           └─ SideDrawer#drawer (可拖拽)
 │              ├─ header tab栏 (terminal/browser/git/doc/detail/tasks) ← M6 挂载点
