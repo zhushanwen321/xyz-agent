@@ -8,7 +8,7 @@
  * - W4TC6d idle：不渲染（v-if 排除）
  * - W4TC7  downloading：Loader2 + 进度条
  * - W4TC8  unsupported：「前往下载」按钮 + click 触发 openUpdateFallbackUrl
- * - W4TC9  available click：触发 performUpdate
+ * - W4TC9  available click：触发 performDownload
  *
  * Mock 策略：vi.mock('@/composables/features/useAppUpdate') 桩 state 与方法，
  * vi.mock('@/lib/ipc') 避免 ipc.ts 顶层 window.electronAPI 报错。
@@ -33,13 +33,13 @@ const testState = reactive({
   releaseNotesHtml: '',
 })
 
-const performUpdateMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
+const performDownloadMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
 const openFallbackUrlMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
 
 vi.mock('@/composables/features/useAppUpdate', () => ({
   useAppUpdate: () => ({
     state: testState,
-    performUpdate: performUpdateMock,
+    performDownload: performDownloadMock,
     openFallbackUrl: openFallbackUrlMock,
     checkForUpdate: vi.fn(),
     initAutoCheck: vi.fn(),
@@ -113,11 +113,11 @@ describe('UpdateButton', () => {
     // portal 未挂载时不做断言：本用例已覆盖 available 分支 DOM（红点角标 + state 注入），v-html 渲染交由 E2E。
   })
 
-  it('W4TC9：available click 触发 performUpdate', async () => {
+  it('W4TC9：available click 触发 performDownload', async () => {
     setTestState({ state: 'available' })
     const wrapper = mount(UpdateButton)
     await wrapper.find('[data-testid="update-available"]').trigger('click')
-    expect(performUpdateMock).toHaveBeenCalledTimes(1)
+    expect(performDownloadMock).toHaveBeenCalledTimes(1)
   })
 
   it('W4TC7：downloading 渲染 spinner + 进度条 + 百分比文案', () => {

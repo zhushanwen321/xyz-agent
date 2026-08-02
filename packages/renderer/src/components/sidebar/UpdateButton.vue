@@ -8,7 +8,7 @@
     单例：useAppUpdate 的 state 全应用共享（Sidebar initAutoCheck 检测，UpdateButton 消费）。
   -->
   <span v-if="visible" class="update-button inline-flex items-center" data-testid="update-button">
-    <!-- available：可升级，hover 显 release note，click 触发 performUpdate -->
+    <!-- available：可升级，hover 显 release note，click 触发 performDownload -->
     <HoverCard v-if="state.state === 'available'">
       <HoverCardTrigger as-child>
         <Button
@@ -124,16 +124,16 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/h
 import { useAppUpdate } from '@/composables/features/useAppUpdate'
 
 const { t } = useI18n()
-const { state, performUpdate, openFallbackUrl } = useAppUpdate()
+const { state, performDownload, openFallbackUrl } = useAppUpdate()
 
 /** idle/checking 不渲染（无可展示信息） */
 const visible = computed(
   () => state.state !== 'idle' && state.state !== 'checking',
 )
 
-/** available click：触发完整升级流程 */
+/** available click：触发下载阶段（w3 会扩展为下载+安装两步交互） */
 async function onPerformUpdate(): Promise<void> {
-  await performUpdate()
+  await performDownload()
 }
 
 /** unsupported click：打开备用下载页 */

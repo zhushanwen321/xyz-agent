@@ -1,15 +1,20 @@
 /**
- * useAppUpdate 单测（自动升级单例 composable · w4 update-frontend）。
+ * useAppUpdate 单测（自动升级单例 composable · w4 update-frontend · w2 两阶段改造）。
  *
- * 覆盖 W4TC1-5：
- * - W4TC1 checkForUpdate 有新版 → state='available' + latestRelease 填充
- * - W4TC2 checkForUpdate 无新版 → state='idle'
- * - W4TC3 performUpdate stage 转换（模拟 onUpdateProgress 回调：downloading→verifying→replacing）
- * - W4TC4 onUpdateError → state='error' + errorMessage
- * - W4TC5 onUpdateError errorCode='UPDATE_UNSUPPORTED_PLATFORM' → state='unsupported'
+ * 覆盖：
+ * - checkForUpdate 有/无新版 → available/idle
+ * - performDownload 经 onUpdateProgress 做 stage 转换，downloaded:true → state='downloaded'
+ * - performInstall 乐观置 replacing / triggerRestart 置 restarting / 失败置 error
+ * - onUpdateError → error/unsupported（SSOT）
+ * - restorePreloadedUpdate 有效产物 → downloaded / 无效 no-op
+ * - 状态守卫 ES4（downloaded 同版本不覆盖）/ ES5（downloaded 追新版退回 available）
+ * - performDownload catch 兜底 / 传给 ipc 的是 plain object（toRaw 解包）
+ *
+ * w2 改造：旧一键 performUpdate 拆为 performDownload（downloaded 态）+ performInstall（restarting 态）。
+ * ipc 层新增 updateDownload/updateInstall/getPreloaded 三导出，本测试同步补 mock。
  *
  * Mock 策略：
- * - vi.mock('@/lib/ipc') 桩 5 个 update 方法；onUpdateProgress/onUpdateError 捕获 cb 供测试手动触发
+ * - vi.mock('@/lib/ipc') 桩 8 个 update 方法；onUpdateProgress/onUpdateError 捕获 cb 供测试手动触发
  * - vi.mock('@/composables/logic/markdown') 桩 renderMarkdown 避免加载 shiki WASM
  * - effectScope 包 useAppUpdate（onScopeDispose 依赖活跃 scope）
  * - _resetForTest 在 beforeEach 重置 module-level 单例 state
@@ -17,7 +22,6 @@
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/useAppUpdate.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-// vi.waitFor 在 vitest ^4.1.6 可用（见 packages/renderer/package.json），替代固定双 Promise.resolve flush
 import { effectScope } from 'vue'
 import type { LatestReleaseInfo } from '@xyz-agent/shared'
 
@@ -28,7 +32,9 @@ const hoisted = vi.hoisted(() => {
   let errorCb: ((e: { stage: string; message: string; errorCode?: string }) => void) | null = null
   return {
     checkForUpdate: vi.fn<(opts?: { force?: boolean }) => Promise<LatestReleaseInfo | null>>(),
-    performUpdate: vi.fn<(release: LatestReleaseInfo) => Promise<{ triggerRestart: boolean }>>(),
+    updateDownload: vi.fn<(release: LatestReleaseInfo) => Promise<{ downloaded: boolean }>>(),
+    updateInstall: vi.fn<() => Promise<{ triggerRestart: boolean }>>(),
+    getPreloaded: vi.fn<() => Promise<{ release: LatestReleaseInfo; filePath: string } | null>>(),
     openUpdateFallbackUrl: vi.fn<(url: string) => Promise<void>>(),
     onUpdateProgress: vi.fn((cb: typeof progressCb) => {
       progressCb = cb
@@ -55,7 +61,9 @@ const hoisted = vi.hoisted(() => {
 
 vi.mock('@/lib/ipc', () => ({
   checkForUpdate: hoisted.checkForUpdate,
-  performUpdate: hoisted.performUpdate,
+  updateDownload: hoisted.updateDownload,
+  updateInstall: hoisted.updateInstall,
+  getPreloaded: hoisted.getPreloaded,
   openUpdateFallbackUrl: hoisted.openUpdateFallbackUrl,
   onUpdateProgress: hoisted.onUpdateProgress,
   onUpdateError: hoisted.onUpdateError,
@@ -79,201 +87,162 @@ function makeRelease(version = '0.9.0'): LatestReleaseInfo {
   }
 }
 
+/** 在 effectScope 内运行 useAppUpdate，返回 result + scope.stop 清理函数（与 pending.test.ts 对齐） */
+function setupUseAppUpdate(): { result: ReturnType<typeof useAppUpdate>; stop: () => void } {
+  const scope = effectScope()
+  let result: ReturnType<typeof useAppUpdate> | undefined
+  scope.run(() => {
+    result = useAppUpdate()
+  })
+  return { result: result!, stop: () => scope.stop() }
+}
+
 beforeEach(() => {
   _resetForTest()
   hoisted.checkForUpdate.mockReset()
-  hoisted.performUpdate.mockReset()
+  hoisted.updateDownload.mockReset()
+  hoisted.updateInstall.mockReset()
+  hoisted.getPreloaded.mockReset()
   hoisted.openUpdateFallbackUrl.mockReset()
   hoisted.onUpdateProgress.mockClear()
   hoisted.onUpdateError.mockClear()
   hoisted.renderMarkdown.mockReset()
   hoisted.renderMarkdown.mockResolvedValue('<h2>新特性</h2>')
+  // 默认值：两阶段 mock 的合理默认（各用例按需覆盖）
+  hoisted.updateDownload.mockResolvedValue({ downloaded: true })
+  hoisted.updateInstall.mockResolvedValue({ triggerRestart: true })
+  hoisted.getPreloaded.mockResolvedValue(null)
 })
 
 describe('useAppUpdate', () => {
-  it('W4TC1：checkForUpdate 有新版 → state="available" + latestRelease 填充', async () => {
+  it('checkForUpdate 有新版 → state="available" + latestRelease 填充', async () => {
     hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.0'))
-    const scope = effectScope()
-    let result: ReturnType<typeof useAppUpdate> | undefined
-    scope.run(() => {
-      result = useAppUpdate()
-    })
-    await result!.checkForUpdate()
-    // renderMarkdown 异步，用 waitFor 等 releaseNotesHtml 填充（比固定两次 Promise.resolve flush 稳健，
-    // 不依赖具体微任务调度次数）
+    const { result, stop } = setupUseAppUpdate()
+    await result.checkForUpdate()
+    // renderMarkdown 异步，waitFor 等 html 填充
     await vi.waitFor(() => {
-      expect(result!.state.releaseNotesHtml).toBe('<h2>新特性</h2>')
+      expect(result.state.releaseNotesHtml).toBe('<h2>新特性</h2>')
     })
 
-    expect(result!.state.state).toBe('available')
-    expect(result!.state.latestRelease?.version).toBe('0.9.0')
-    expect(result!.state.releaseNotesHtml).toBe('<h2>新特性</h2>')
+    expect(result.state.state).toBe('available')
+    expect(result.state.latestRelease?.version).toBe('0.9.0')
+    expect(result.state.releaseNotesHtml).toBe('<h2>新特性</h2>')
     expect(hoisted.renderMarkdown).toHaveBeenCalledWith('## 新特性\n- 支持 foo')
-    scope.stop()
+    stop()
   })
 
-  it('W4TC2：checkForUpdate 无新版 → state="idle"', async () => {
+  it('checkForUpdate 无新版 → state="idle"', async () => {
     hoisted.checkForUpdate.mockResolvedValue(null)
-    const scope = effectScope()
-    let result: ReturnType<typeof useAppUpdate> | undefined
-    scope.run(() => {
-      result = useAppUpdate()
-    })
-    await result!.checkForUpdate()
-    expect(result!.state.state).toBe('idle')
-    expect(result!.state.latestRelease).toBeNull()
-    scope.stop()
+    const { result, stop } = setupUseAppUpdate()
+    await result.checkForUpdate()
+    expect(result.state.state).toBe('idle')
+    expect(result.state.latestRelease).toBeNull()
+    stop()
   })
 
-  it('W4TC3：performUpdate 经 onUpdateProgress 推送做 stage 转换（downloading→verifying→replacing），resolve 后复位 idle', async () => {
+  it('performDownload 经 onUpdateProgress 推送做 stage 转换（downloading→verifying→replacing），downloaded:true 后置 downloaded', async () => {
     hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.0'))
-    // performUpdate 返回未触发重启（模拟流程在 replacing 后无 error 推送、无后续收口）
-    hoisted.performUpdate.mockImplementation(async () => {
+    hoisted.updateDownload.mockImplementation(async () => {
       // 触发主进程推送：downloading 30% → verifying 70% → replacing 100%
       hoisted.fireProgress({ stage: 'downloading', percent: 30 })
       hoisted.fireProgress({ stage: 'verifying', percent: 70 })
       hoisted.fireProgress({ stage: 'replacing', percent: 100 })
-      return { triggerRestart: false }
+      return { downloaded: true }
     })
-    const scope = effectScope()
-    let result: ReturnType<typeof useAppUpdate> | undefined
-    scope.run(() => {
-      result = useAppUpdate()
-    })
-    await result!.checkForUpdate()
-    await result!.performUpdate()
+    const { result, stop } = setupUseAppUpdate()
+    await result.checkForUpdate()
+    await result.performDownload()
 
-    // 推送过程中 percent 累积到 100；performUpdate resolve 后无 triggerRestart、无 error → 复位 idle（修复卡死）
-    expect(result!.state.percent).toBe(100)
-    expect(result!.state.state).toBe('idle')
-    expect(hoisted.performUpdate).toHaveBeenCalled()
-    scope.stop()
+    // 推送过程中 percent 累积到 100；downloaded:true → state=downloaded（下载止于此，restart 是 install 阶段）
+    expect(result.state.percent).toBe(100)
+    expect(result.state.state).toBe('downloaded')
+    expect(hoisted.updateDownload).toHaveBeenCalled()
+    stop()
   })
 
-  it('W4TC3b（Major 1 回归）：performUpdate 在 progress 推到 verifying 后 resolve {triggerRestart:false}，state 复位 idle 不卡在 verifying', async () => {
-    const release = makeRelease('0.9.0')
-    hoisted.checkForUpdate.mockResolvedValue(release)
-    // 模拟：main 只推了一次 verifying 进度，performUpdate 随即 resolve，既无 error 推送也无 triggerRestart
-    hoisted.performUpdate.mockImplementation(async () => {
+  it('performDownload 在 progress 推到 verifying 后 resolve {downloaded:true}，state 置 downloaded 不卡在 verifying', async () => {
+    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.0'))
+    // 模拟：main 只推了一次 verifying 进度，updateDownload 随即 resolve
+    hoisted.updateDownload.mockImplementation(async () => {
       hoisted.fireProgress({ stage: 'verifying', percent: 50 })
-      return { triggerRestart: false }
+      return { downloaded: true }
     })
-    const scope = effectScope()
-    let result: ReturnType<typeof useAppUpdate> | undefined
-    scope.run(() => {
-      result = useAppUpdate()
-    })
-    await result!.checkForUpdate()
-    await result!.performUpdate()
+    const { result, stop } = setupUseAppUpdate()
+    await result.checkForUpdate()
+    await result.performDownload()
 
-    // 修复前：state 永久卡在 'verifying'；修复后：复位到 'idle'（用户可重试），不卡死
-    expect(result!.state.state).toBe('idle')
-    expect(result!.state.percent).toBe(50)
-    scope.stop()
+    // downloaded:true 覆盖中间态 → state=downloaded（不卡在 verifying）
+    expect(result.state.state).toBe('downloaded')
+    expect(result.state.percent).toBe(50)
+    stop()
   })
 
-  it('W4TC4：onUpdateError 推送 → state="error" + errorMessage（SSOT）', async () => {
-    const release = makeRelease('0.9.0')
-    hoisted.checkForUpdate.mockResolvedValue(release)
-    hoisted.performUpdate.mockImplementation(async () => {
-      // 触发主进程错误推送（SSOT 优先于 performUpdate catch）
+  it('performDownload downloaded=true → state="downloaded"（基础成功路径）', async () => {
+    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.0'))
+    hoisted.updateDownload.mockResolvedValue({ downloaded: true })
+    const { result, stop } = setupUseAppUpdate()
+    await result.checkForUpdate()
+    await result.performDownload()
+
+    expect(result.state.state).toBe('downloaded')
+    stop()
+  })
+
+  it('onUpdateError 推送 → state="error" + errorMessage（SSOT）', async () => {
+    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.0'))
+    hoisted.updateDownload.mockImplementation(async () => {
+      // 触发主进程错误推送（SSOT 优先于 performDownload catch）
       hoisted.fireError({ stage: 'downloading', message: '校验失败：sha256 不匹配' })
-      return { triggerRestart: false }
+      return { downloaded: false }
     })
-    const scope = effectScope()
-    let result: ReturnType<typeof useAppUpdate> | undefined
-    scope.run(() => {
-      result = useAppUpdate()
-    })
-    await result!.checkForUpdate()
-    await result!.performUpdate()
+    const { result, stop } = setupUseAppUpdate()
+    await result.checkForUpdate()
+    await result.performDownload()
 
-    expect(result!.state.state).toBe('error')
-    expect(result!.state.errorMessage).toBe('校验失败：sha256 不匹配')
-    scope.stop()
+    expect(result.state.state).toBe('error')
+    expect(result.state.errorMessage).toBe('校验失败：sha256 不匹配')
+    stop()
   })
 
-  it('W4TC5：onUpdateError errorCode="UPDATE_UNSUPPORTED_PLATFORM" → state="unsupported"', async () => {
-    const release = makeRelease('0.9.0')
-    hoisted.checkForUpdate.mockResolvedValue(release)
-    hoisted.performUpdate.mockImplementation(async () => {
+  it('onUpdateError errorCode="UPDATE_UNSUPPORTED_PLATFORM" → state="unsupported"', async () => {
+    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.0'))
+    hoisted.updateDownload.mockImplementation(async () => {
       hoisted.fireError({
         stage: 'init',
         message: '当前平台不支持自动升级',
         errorCode: 'UPDATE_UNSUPPORTED_PLATFORM',
       })
-      return { triggerRestart: false }
+      return { downloaded: false }
     })
-    const scope = effectScope()
-    let result: ReturnType<typeof useAppUpdate> | undefined
-    scope.run(() => {
-      result = useAppUpdate()
-    })
-    await result!.checkForUpdate()
-    await result!.performUpdate()
+    const { result, stop } = setupUseAppUpdate()
+    await result.checkForUpdate()
+    await result.performDownload()
 
-    expect(result!.state.state).toBe('unsupported')
-    scope.stop()
+    expect(result.state.state).toBe('unsupported')
+    stop()
   })
 
-  it('performUpdate triggerRestart=true → state="restarting"', async () => {
-    const release = makeRelease('0.9.0')
-    hoisted.checkForUpdate.mockResolvedValue(release)
-    hoisted.performUpdate.mockResolvedValue({ triggerRestart: true })
-    const scope = effectScope()
-    let result: ReturnType<typeof useAppUpdate> | undefined
-    scope.run(() => {
-      result = useAppUpdate()
-    })
-    await result!.checkForUpdate()
-    await result!.performUpdate()
+  it('performDownload catch 在 !errorHandled 时兜底置 error（去重：onUpdateError 未触发）', async () => {
+    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.9.0'))
+    // updateDownload reject 且未触发 onUpdateError → 走兜底 error
+    hoisted.updateDownload.mockRejectedValue(new Error('网络中断'))
+    const { result, stop } = setupUseAppUpdate()
+    await result.checkForUpdate()
+    await result.performDownload()
 
-    expect(result!.state.state).toBe('restarting')
-    scope.stop()
-  })
-
-  it('openFallbackUrl 调 ipc.openUpdateFallbackUrl(latestRelease.htmlUrl)', async () => {
-    const release = makeRelease('0.9.0')
-    hoisted.checkForUpdate.mockResolvedValue(release)
-    hoisted.openUpdateFallbackUrl.mockResolvedValue(undefined)
-    const scope = effectScope()
-    let result: ReturnType<typeof useAppUpdate> | undefined
-    scope.run(() => {
-      result = useAppUpdate()
-    })
-    await result!.checkForUpdate()
-    await result!.openFallbackUrl()
-
-    expect(hoisted.openUpdateFallbackUrl).toHaveBeenCalledWith(release.htmlUrl)
-    scope.stop()
-  })
-
-  it('performUpdate catch 在 !errorHandled 时兜底置 error（去重：onUpdateError 未触发）', async () => {
-    const release = makeRelease('0.9.0')
-    hoisted.checkForUpdate.mockResolvedValue(release)
-    // performUpdate reject 且未触发 onUpdateError → 走兜底 error
-    hoisted.performUpdate.mockRejectedValue(new Error('网络中断'))
-    const scope = effectScope()
-    let result: ReturnType<typeof useAppUpdate> | undefined
-    scope.run(() => {
-      result = useAppUpdate()
-    })
-    await result!.checkForUpdate()
-    await result!.performUpdate()
-
-    expect(result!.state.state).toBe('error')
-    expect(result!.state.errorMessage).toBe('网络中断')
-    scope.stop()
+    expect(result.state.state).toBe('error')
+    expect(result.state.errorMessage).toBe('网络中断')
+    stop()
   })
 
   // [HISTORICAL] 回归：传给 ipc 的 release 必须是 plain object，不能是 Vue reactive proxy。
   // 事故：state.latestRelease 存入 reactive(state) 后被 Vue 深度代理化（含嵌套 assets），
-  // performUpdate 把 proxy 传给 ipcRenderer.invoke → Electron structured clone 抛
+  // performDownload 把 proxy 传给 ipcRenderer.invoke → Electron structured clone 抛
   // "an object could not be cloned" → invoke reject 被 catch 吞成 errorMessage，
   // 用户在 UpdateButton hover 看到英文 clone 报错。现有用例 mock @/lib/ipc 接收的是
   // makeRelease() 返回的普通对象，测不到此问题；本用例在 reactive 上下文（effectScope +
   // useAppUpdate 内部 reactive state）下验证传给 ipc 的对象可被 structuredClone。
-  it('performUpdate 传给 ipc 的是 plain object（非 reactive proxy），可过 structured clone', async () => {
+  it('performDownload 传给 ipc 的是 plain object（非 reactive proxy），可过 structured clone', async () => {
     // makeRelease 带嵌套 asset，覆盖「嵌套层也必须 plain」（toRaw 浅解包会漏掉嵌套）
     const releaseWithAsset: LatestReleaseInfo = {
       ...makeRelease('0.9.0'),
@@ -287,26 +256,20 @@ describe('useAppUpdate', () => {
       },
     }
     hoisted.checkForUpdate.mockResolvedValue(releaseWithAsset)
-    // 捕获 performUpdate 实际收到的参数（mock 在 ipc 层，但 useAppUpdate.performUpdate
-    // 内部读 state.latestRelease 后透传给 ipc.performUpdate，捕获点即 IPC 入参）
+    // 捕获 updateDownload 实际收到的参数（useAppUpdate.performDownload 内部读
+    // state.latestRelease 后 toRaw 解包透传给 ipc.updateDownload，捕获点即 IPC 入参）
     const received: LatestReleaseInfo[] = []
-    hoisted.performUpdate.mockImplementation(async (r) => {
+    hoisted.updateDownload.mockImplementation(async (r) => {
       received.push(r)
-      return { triggerRestart: true }
+      return { downloaded: true }
     })
-    const scope = effectScope()
-    let result: ReturnType<typeof useAppUpdate> | undefined
-    scope.run(() => {
-      result = useAppUpdate()
-    })
-    await result!.checkForUpdate()
-    await result!.performUpdate()
+    const { result, stop } = setupUseAppUpdate()
+    await result.checkForUpdate()
+    await result.performDownload()
 
     expect(received).toHaveLength(1)
     const passed = received[0]!
     // 关键断言 1：原型是 Object.prototype（plain object），不是 reactive proxy 的目标
-    // （proxy 的 getPrototypeOf 透传 target，但 structuredClone 对 proxy 本身报错；
-    // 配合断言 2 的 structuredClone 不抛错，双重确认）
     expect(Object.getPrototypeOf(passed)).toBe(Object.prototype)
     // 关键断言 2：可被 structuredClone（IPC 用的同款序列化算法），不抛 DataCloneError
     expect(() => structuredClone(passed)).not.toThrow()
@@ -316,6 +279,108 @@ describe('useAppUpdate', () => {
     // 数据完整性：深拷贝后字段保留
     expect(passed.version).toBe('0.9.0')
     expect(passed.assets.macArm64Zip!.sha256).toBe('a'.repeat(64))
-    scope.stop()
+    stop()
+  })
+
+  it('openFallbackUrl 调 ipc.openUpdateFallbackUrl(latestRelease.htmlUrl)', async () => {
+    const release = makeRelease('0.9.0')
+    hoisted.checkForUpdate.mockResolvedValue(release)
+    hoisted.openUpdateFallbackUrl.mockResolvedValue(undefined)
+    const { result, stop } = setupUseAppUpdate()
+    await result.checkForUpdate()
+    await result.openFallbackUrl()
+
+    expect(hoisted.openUpdateFallbackUrl).toHaveBeenCalledWith(release.htmlUrl)
+    stop()
+  })
+
+  // ── performInstall（安装/重启阶段）──
+  it('performInstall 乐观置 replacing（IPC 往返延迟内 state 立即变 replacing，堵二次点击竞态）', async () => {
+    // updateInstall 返回 pending promise，调 performInstall 后同步检查 state
+    let resolveInstall!: (v: { triggerRestart: boolean }) => void
+    hoisted.updateInstall.mockImplementation(
+      () => new Promise<{ triggerRestart: boolean }>((r) => { resolveInstall = r }),
+    )
+    const { result, stop } = setupUseAppUpdate()
+    const p = result.performInstall()
+    // 同步断言：state 已乐观置 replacing（不等 IPC 往返）
+    expect(result.state.state).toBe('replacing')
+    resolveInstall({ triggerRestart: false })
+    await p
+    stop()
+  })
+
+  it('performInstall triggerRestart=true → state="restarting"', async () => {
+    hoisted.updateInstall.mockResolvedValue({ triggerRestart: true })
+    const { result, stop } = setupUseAppUpdate()
+    await result.performInstall()
+    expect(result.state.state).toBe('restarting')
+    stop()
+  })
+
+  it('performInstall 失败 → state="error" + errorMessage（兜底）', async () => {
+    hoisted.updateInstall.mockRejectedValue(new Error('替换文件失败'))
+    const { result, stop } = setupUseAppUpdate()
+    await result.performInstall()
+    expect(result.state.state).toBe('error')
+    expect(result.state.errorMessage).toBe('替换文件失败')
+    stop()
+  })
+
+  // ── restorePreloadedUpdate（功能 2：预下载恢复）──
+  it('restorePreloadedUpdate 有效预下载产物 → state="downloaded" + latestRelease 填充，返回 true', async () => {
+    const release = makeRelease('0.9.0')
+    hoisted.getPreloaded.mockResolvedValue({ release, filePath: '/tmp/preloaded.zip' })
+    const { result, stop } = setupUseAppUpdate()
+    const restored = await result.restorePreloadedUpdate()
+
+    expect(restored).toBe(true)
+    expect(result.state.state).toBe('downloaded')
+    expect(result.state.latestRelease?.version).toBe('0.9.0')
+    stop()
+  })
+
+  it('restorePreloadedUpdate 无预下载产物（null）→ no-op，state 不变，返回 false', async () => {
+    hoisted.getPreloaded.mockResolvedValue(null)
+    const { result, stop } = setupUseAppUpdate()
+    const restored = await result.restorePreloadedUpdate()
+
+    expect(restored).toBe(false)
+    expect(result.state.state).toBe('idle')
+    expect(result.state.latestRelease).toBeNull()
+    stop()
+  })
+
+  // ── 状态守卫 ES4/ES5（downloaded 态不被联网检测误覆盖）──
+  it('状态守卫 ES4：downloaded 态检测到同版本 → 不被覆盖为 available（保持 downloaded）', async () => {
+    // 通过 restorePreloadedUpdate 恢复 downloaded 态：同时设 pendingRestored=true，
+    // 否则 checkForUpdate 进入时会置 checking 态破坏守卫前提（pendingRestored 守的是 checking 回退）
+    const preloadedRelease = makeRelease('0.8.44')
+    hoisted.getPreloaded.mockResolvedValue({ release: preloadedRelease, filePath: '/tmp/x.zip' })
+    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.8.44')) // 同版本
+    const { result, stop } = setupUseAppUpdate()
+    await result.restorePreloadedUpdate()
+    expect(result.state.state).toBe('downloaded')
+
+    await result.checkForUpdate()
+    // ES4：downloaded + 同版本 → 不覆盖，保持 downloaded（仅刷新 latestRelease）
+    expect(result.state.state).toBe('downloaded')
+    expect(result.state.latestRelease?.version).toBe('0.8.44')
+    stop()
+  })
+
+  it('状态守卫 ES5：downloaded 态检测到更新版本 → 退回 available（追新版）', async () => {
+    const preloadedRelease = makeRelease('0.8.44')
+    hoisted.getPreloaded.mockResolvedValue({ release: preloadedRelease, filePath: '/tmp/x.zip' })
+    hoisted.checkForUpdate.mockResolvedValue(makeRelease('0.8.46')) // 更新版本
+    const { result, stop } = setupUseAppUpdate()
+    await result.restorePreloadedUpdate()
+    expect(result.state.state).toBe('downloaded')
+
+    await result.checkForUpdate()
+    // ES5：downloaded + 更新版本 → 退回 available（追新版，旧 preloaded 由 main 侧下次 download 自动清）
+    expect(result.state.state).toBe('available')
+    expect(result.state.latestRelease?.version).toBe('0.8.46')
+    stop()
   })
 })
