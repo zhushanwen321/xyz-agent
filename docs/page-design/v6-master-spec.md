@@ -4,6 +4,8 @@
 > **性质**：视觉语言层 + 前端架构重构的完整设计。授权大刀阔斧，不考虑兼容性。
 > **取代关系**：本文档是 v6 的单一权威源。过程文档（`v6-design.md` / `v6-summary.md` / `v6-review-*.md` / `v6-fix-plan.md` / `v6-spec-*.html`）降级为**实现细节参考**，与本文档冲突时以本文档 + demo 为准。
 > **真相源优先级**：本文档（决策与范式） > `.tmp/v6/` demo（token 真值与组件实现） > `v6-spec-*.html`（视觉标注稿，部分已滞后） > 过程文档（审查/修复计划，已收敛进本文档）。
+>
+> **2026-08-02 修订**：新增 §3.5 实践原则（8 条，demo 迭代沉淀）；§5.6 状态指示圆点范式范围限缩（SessionList 改用 §3.5.2）；§9 新增 D12/D13/D14 裁决（SessionList 信号编排 / TurnRail 滚动条二合一 / Project 一级导航）。
 
 ---
 
@@ -115,7 +117,77 @@ v6 审查发现「被选中」出现三种视觉语言，统一为二分：
 
 **accent-soft 仅留瞬时高亮**（fresh 新增项 / is-current popover 项），不作持久选中态。
 
-> **demo 落地偏差**：SideDrawer L1 icon tab active 用了 `bg-surface-hover` 而非 `bg-bg-elevated`（因 drawer 与 main 同 surface，bg-elevated 会过亮）。这是实现取舍，范式以 bg-elevated 为准。
+**两类已登记例外**（demo 落地取舍，非范式违反）：
+- **drawer L1 icon tab**：active 用 `bg-surface-hover`（非 bg-elevated）。理由：drawer 与 main 同 surface（D2 一体化），bg-elevated 会过亮；surface-hover + 蓝字足够区分。
+- **TurnRail mini-map 节点**：active 用 `bg-accent-soft + inset accent-ring`（第三种视觉语言）。理由：mini-map 是「当前位置指示器」语义（非持久选中），且节点极小（224px 浮层内），accent-soft 染底 + ring 提供最强可见性。属瞬时高亮的延伸。
+
+> **SearchModal sm-item 选中态**：用 `bg-surface-hover` + accent 蓝字/蓝 icon（非 bg-surface）。理由：dialog 底 = surface，sel 用 bg-surface 会同色淹没，改 surface-hover 靠蓝字区分（Linear/Raycast 范式）。
+
+### 3.5 实践原则（2026-08-02 demo 迭代沉淀）
+
+> 以下 8 条来自 `.tmp/v6/` demo 多轮迭代的实际教训，是 §3.1 视觉五原则在具体场景的展开。涉及状态指示的已在 §5.6 / §9 对齐。
+
+#### 3.5.1 Token 语义归位，不要「就近借色」
+
+实色背景上的前景元素（文字/图形）必须用该色的 `-fg` 变体，不从 neutral 谱系借。
+
+**事故**：drawer unread badge 圆点用 `--neutral-fg`，玄主题下 accent(`#cfcfd4`) 与 neutral-fg(`#dedee2`) 亮度差仅 ~4%，圆点融进胶囊底不可见。`--accent-fg`（`#1a1a1c` 深字）才是 accent 实色上的正确前景色，7 个主题预设都配了对。
+
+**检查**：看到 `background: var(--accent)` + 前景元素，前景应该是 `--accent-fg`，不是 `--neutral-fg`。
+
+#### 3.5.2 信号编排：空间分离 + 异常优先 + 常态归零
+
+多个独立状态维度表达时：
+- **空间分离**：不同维度放不同位置（左/右），物理上不可能重叠
+- **异常优先**：只异常态（running/waiting/error）出现视觉元素；最常见态（done）不占任何视觉
+- **一态一手段**：同一状态只用一种视觉手段（dead 已用 `opacity:0.5` 表达，不再加 badge）
+
+SessionList 列表行遵循本条（左未读圆点 + 右异常态 badge，done 无 badge），具体 badge 矩阵见 §5.6A。ForkGroup 分支行不显示状态（§3.5.4）。非列表主行场景（GitPanel 行级状态等）仍用 §5.6B 的 7px 圆点范式。
+
+#### 3.5.3 视觉对齐看「内容外缘」，不看「容器外缘」
+
+对齐两个区块时对比的是用户实际看到的内容边界，不是 DOM 容器的 border-box。**双重 padding 是最常见的对齐陷阱**。
+
+**事故**：Composer `.comp-wrap` 左右 20px padding 把内层 `.comp-box` 压成 680px，而对话流 `.ms-assistant-col` 直接 720 无内层 padding，导致 composer 比对话流窄一圈。修法：去掉外层水平 padding，box 外缘铺满。
+
+**检查**：用 `getBoundingClientRect()` 测最内层可见元素的 left/right，不测容器。
+
+#### 3.5.4 去掉只服务于「习惯」的元素
+
+一个视觉元素如果存在理由只是「其他组件都有」或「以前这样」，而信息已由别的方式承载，删掉。
+
+**实例**：
+- ChangeSetCard 的 chevron 箭头——header 整行可点击展开/收起，箭头不提供额外信息，占 20px 缩进 + 视觉噪音。删掉后标题和其他 block 左缘对齐（之前缩进 32px）
+- ForkGroup 分支行的状态点 / 未读 ring / stop 按钮——fork 分支只需表达「有分支」，状态归主 session 行。全删，单行 = 序号 + 标题 + 时间
+
+**判断**：遮住这个元素，用户会丢失什么信息？什么都没丢 = 噪音。
+
+#### 3.5.5 固定元素必须移出滚动容器
+
+「固定在可视区」的元素（rail / FAB / 自定义滚动条）不能放在 `overflow: auto` 的内容流里——`position: absolute` 在滚动容器内是相对**内容区**定位，会随内容滚动。
+
+**事故**：TurnRail 原是 `.ms-scroll` 子元素，滚动时跟着内容跑。修法：加一层 `.ms-shell`（不滚动）作定位锚点，TurnRail 移成 `.ms-scroll` 的兄弟。
+
+**通用**：要么 `position: sticky`，要么提到滚动容器外。
+
+#### 3.5.6 滚动条是「环境噪音」，不是「信息」
+
+滚动条目标是「需要时能找到，不需要时不存在」。全局 `::-webkit-scrollbar` 从 8px 改 **4px** + 透明 track + 圆角胶囊 thumb + hover 提亮（`neutral-faint` → hover `neutral-dim`）。进一步：对话流原生滚动条完全隐藏，TurnRail 的 spine（6px 暗条）+ thumb（亮色 accent-soft）物理合并成滚动条（spine=track，thumb=可视区，可拖拽，滚动联动）。
+
+**色阶**：thumb 默认 `neutral-faint`（弱）→ hover `neutral-dim`（中）→ 拖拽 accent（强），三档递进。
+
+#### 3.5.7 分层概念翻译成已有视觉语言
+
+引入新抽象层（Project / Workspace / Worktree）时用已有 token 和范式，不新造视觉系统。同语义的元素用同色，让用户形成「色 = 维度」的直觉：
+- **worktree chip + fork 序号 pill + git-branch 图标** → 都用 `--reasoning`（低饱和紫）= git 分支维度
+- **主 checkout chip** → 中性 `bg-input`（无分支语义）
+- **ProjectSwitcher 状态角标** → 复用 `accent-soft`/`danger-soft`/`success-soft`
+
+#### 3.5.8 静态 demo 的「展示级」边界
+
+demo 阶段功能做到「可见 + 可交互 + 数据 mock」即够。不接 runtime 链路（模型不真筛、附件不走 file picker、命令不真执行），但前端交互必须真——popover 能开能关、选中改 label、chip 能注入能删、query 筛选 + 键盘导航。
+
+**反模式**：要么不做（按钮没反应），要么做满（接 demo 用不上的 RPC）。展示级是中间正确的点。
 
 ---
 
@@ -302,8 +374,8 @@ demo 引入完整多主题系统（spec 无，demo 重大扩展）。机制：�
 |---|---|
 | `UiInput` | h40（dense h32）；`bg-bg-input`；focus = inset 单环；error class `.err` |
 | `UiSwitch` | 36×20；translateX=18px；focus 双环；无 hover 变色 |
-| `UiCheckbox` | 16×16；focus 双环 |
-| `SelectTrigger` | 去 border，`bg-bg-input`，圆角 8px（spec 画目标态，不改 .vue 源码留实施） |
+| `UiCheckbox` | **内联 class 范式（非独立 .vue）**：16×16；checked=`accent` 实心 + `accent-fg` 勾；unchecked=`border-strong` 空心；focus 双环；disabled opacity 0.5 |
+| `SelectTrigger` | **未实现**（demo 无此组件）。目标态：去 border，`bg-bg-input`，圆角 8px。当前分支/模型选择走 popover（GitPanel/Composer） |
 
 ### 5.3 SegmentedTab 新范式（§3.1）
 
@@ -328,9 +400,40 @@ hover: text-neutral-fg
 - drawer 与 main 间：D2 一体化（同 surface）+ 弱投影 `--shadow-drawer`（0.16）+ SplitterResizeHandle 透明化（仅 hover/drag 显 accent）
 - 行分隔 hairline：`--hairline`（0.05）
 
-### 5.6 状态指示统一（§3.3）
+### 5.6 状态指示统一（§3.3 + §3.5.2）
 
-- **状态一律 7px 圆点**（`7px; border-radius: 999px`）+ 语义色：done=`--success`(90% opacity) / running=`--accent` / waiting=`--warn` / error=`--danger`
+状态信号按场景分两套范式：
+
+**A. 列表主行（SessionList）—— 左未读点 + 右异常态 badge**
+
+遵循 §3.5.2「空间分离 + 异常优先 + 常态归零」：
+
+| 位置 | 元素 | 何时出现 |
+|---|---|---|
+| 左侧 | 未读圆点（8px `--accent` 实心，不脉动） | 仅 `unread` 时；常态空 8px 占位保 label 对齐 |
+| 右侧 | 状态 badge（紧凑胶囊） | 仅异常态；done / dead 无 badge |
+
+右侧 badge 矩阵：
+
+| 状态 | badge 形态 | 颜色 | 动画 |
+|---|---|---|---|
+| running | 脉动小条 `▎` + 耗时 | `--accent` / `--accent-soft` 底 | 脉动（`pulse-accent` 1.8s） |
+| waiting | `…` 胶囊 | `--warn` / `--warn-soft` 底 | 无 |
+| error | `!` 胶囊 | `--danger` / `--danger-soft` 底 | 无 |
+| done | **无 badge**（仅耗时文字） | — | — |
+| dead | **无 badge**（整行 `opacity:0.5` 表达） | — | — |
+
+hover 时右侧整单元（badge/耗时）`visibility:hidden` 让位 ghost 操作，`label` 位置稳定不跳。
+
+**B. 非列表主行（GitPanel 行级状态等）—— 7px 圆点**
+
+- `7px; border-radius: 999px` + 语义色：done=`--success`(90% opacity) / running=`--accent` / waiting=`--warn` / error=`--danger`
+
+**C. ForkGroup 分支行 —— 不显示状态**
+
+单行 = 序号 pill（`--reasoning` 紫）+ 标题 + 时间。状态归主 session 行，分支行只表达「有分支」（§3.5.4）。
+
+**通用（全场景）**：
 - **工具失败**（exit≠0）：图标统一 `--neutral-ico`，行尾加 mono `exit N` 中性标签（`bg-bg-elevated` 胶囊）
 - **彩色边界**：保留 = 真 failure danger / 待行动 accent / git 语义色（降极小圆点）；降中性 = workflow done / GoalCard badge / ±stats / 目录改动数
 - **GitPanel badge 中性化**：M/A/D 统一 `neutral-dim`，仅 U（冲突）染 `danger + font-weight 700`
@@ -357,6 +460,51 @@ lucide-vue 内联 SVG，stroke-width 统一 **1.75**。block icon：thinking=Bra
 
 `spin` / `pulse-accent`（2s box-shadow 涟漪）/ `pulse-dot` / `blink` / `shimmer`（骨架屏）。`@media (prefers-reduced-motion: reduce)` 把所有 animation/transition 压到 `0.01ms !important`。
 
+### 5.10 加载态 / 骨架屏
+
+demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫光）+ 组件内 `.shimmer` 类，5 处消费形成范式：
+
+- **骨架行**：`height 10px + radius 999px`（胶囊条），3 行堆叠模拟列表（间距用标准 scale）
+- **骨架卡片**：`bg-card` 卡片 + 内部 shimmer 扫光
+- **loading 防闪**（SearchModal）：`LOADING_DELAY_MS=200`，开扫 200ms 后才显 spinner，防连续输入闪烁
+- **ToolBlock running**：双环 loader（13px，外环 opacity 0.35 + 内环实心，`spin 1.4s`，accent 色），name 染 accent
+- **TaijiLogo 旋转**：8s（reduced-motion 停），`currentColor` 适配主题
+
+### 5.11 内联反馈条（v6 不做全局 toast）
+
+**v6 用内联反馈条替代全局 toast**（demo 故意未做全局 toast 系统）。范式：
+- **成功反馈**（`.install-ok` / `.success-note`）：`*-soft`（success/warn）底 + 语义 icon + 文案（原因 + 下一步），`border-top hairline` 分隔，2s 自动消失
+- **错误反馈**（`.install-err` / `.inline-error`）：danger-soft 底 + TriangleAlert icon，**常驻**可重试，不自动消失
+- **页级横幅**：`*-soft` 底常驻，用于页级错误/成功提示
+
+### 5.12 焦点管理 + 键盘快捷键
+
+#### 焦点管理三要素（modal/dialog 可访问性范式）
+
+| 要素 | 实现 |
+|---|---|
+| **focus trap** | Tab 首末循环、焦点逃逸拉回（SettingsOverlay）；打开时首项 focus |
+| **焦点归还** | 记录触发器 `triggerEl`，关闭时 `onUnmounted focus()` 归还 |
+| **安全默认焦点** | 确认弹窗 onMounted 焦点落「安全选择」（warn→继续编辑 / danger→取消）；Esc = 安全选择 |
+
+#### 全局键盘快捷键
+
+| 快捷键 | 动作 |
+|---|---|
+| `Esc` | 关闭所有 overlay（search/settings/askUser/confirm/quickComposer），退出 staging/fork/handoff 模式 |
+| `⌘/Ctrl+K` | 打开 SearchModal（命令面板） |
+| `⌘/Ctrl+B` | 切 sidebar 折叠 |
+| `⌘/Ctrl+N` | 新建任务 |
+| `⌘/Ctrl+,` | 打开 Settings |
+| `Enter`（Composer） | 发送；`Shift+Enter` 换行 |
+| `⌘/Ctrl+Enter`（GitPanel） | 提交 |
+| `↑↓`（SearchModal/nav） | 键盘导航 + Enter 确认 |
+| `Tab`（SettingsOverlay） | 焦点陷阱；nav 内 `↑↓/Home/End` 移动 |
+
+**IME 守卫**：Composer 的 `isComposing` 期间不拦截回车（中文/日文输入法 composing 态不发送）。
+
+**composer-bar popover 锚点范式**：absolute 相对 composer-bar，`bottom: calc(100% + 6px)`，`z-modal`，`bg-elevated + border-strong + shadow-2 + radius-lg`。popover open 时触发按钮 `.bar-btn--active` = `accent-soft 底 + accent 字`（锁高亮）。
+
 ---
 
 ## §6 分区设计（逐视图：v6 方案）
@@ -373,6 +521,12 @@ lucide-vue 内联 SVG，stroke-width 统一 **1.75**。block icon：thinking=Bra
 - **Block·subagent/workflow**：collapsed only，点击 → drawer tab
 - **UserBubble**：删 border，仅 `bg-surface-hover`；删 pending 态（迁 QueueBubble 内嵌）
 - **Composer**：6 区（QueueBubble / staging chip / inline chip bar / landing meta / input / composer-bar）；宽度对齐 720 居中
+  - **inline chip 四色**（无底无边 + `font-weight 600` + 前缀 icon 13px + × hover 染 danger-soft）：`file`=success 绿 / `image`=reasoning 紫 / `slash`=reasoning 紫 / `@`=accent 蓝
+  - **composer-bar 5 元素**：`+`添加 / spacer / 上下文容量(hover popover) / 模型(click popover, 分组+搜索+选中 check) / 思考强度(click popover, 6 档圆点) / send-slot(30×30 accent 圆 + 倾斜箭头)；bar-btn h28 icon 14px；popover 锚点范式见 §5.12
+  - **contenteditable + slash 触发**：光标位置检测 `/` 或 `#`（行首或空格后）触发 CommandPopover；选中插入 chip + 移除触发文本；IME 守卫见 §5.12
+  - **comp-box 态**：`.has-input`(2px surface-hover 微环) / `.focused`(border-accent + 3px accent-ring 外环) / `.staging`(border-accent + 3px ring + bg-accent-soft，独立于焦点)
+- **ContextBar**（composer 上方，goal/todo 摘要 + plugin foot 挂载点）：与 composer 同宽同中线居中；常态归零（无 goal/todo 时整条隐藏）；slim bar 24px `text-2xs neutral-dim`；点击展开 popover（goal 全文 + 3px 进度条 + todo checklist）
+- **TurnRail**（右侧 turn 导航 + 自定义滚动条接管）：spine(`surface-hover` 6px 暗条 340px，点击翻页) + thumb(`accent-soft + 2px accent border-left`，按滚动比例定位 min-h 24px，可拖拽)；hover 展开 mini-map(6px→224px，turn 节点两行：user 行 + agent 状态图标行)；active 节点见 §3.4 例外
 - **ChangeSetCard**：去 border 改 `bg-surface` + 10px 圆角；5 态 badge 用 `*-soft` 底 + 实色字
 - **PanelHeader**：去 `border-b`，用 `bg-elevated` 浮起分层
 - **goal/todo 回归对话流**（D3）：移除 tasks tab + `HIDDEN_TOOL_NAMES`，走 GuiComponent 统一渲染
@@ -380,9 +534,14 @@ lucide-vue 内联 SVG，stroke-width 统一 **1.75**。block icon：thinking=Bra
 ### 6.2 侧栏（5 tab + 容器）
 
 - 底色 `bg-bg`；SegmentedTab 见 §5.3；SessionItem 选中态见 §5.4
+- **Project 一级导航**（D14）：nav 下方 ProjectSwitcher（折叠态当前 project + 状态聚合角标 / 展开态 project 列表），session 按 workspace（目录）分组，worktree chip 用 `--reasoning` 紫（§3.5.7）
 - **4 内置 tab**（sessions/files/agents/flows）+ **第 5 独立 plugin tab**（Puzzle icon，plugin view 收口于此）
-- 组标题去 uppercase；ForkGroup 去 border 改缩进；FileTree 缩进 10px gap 4px
-- 状态点统一 7px
+- 组标题去 uppercase；ForkGroup 去 border 改缩进，分支行单行（序号 pill + 标题 + 时间，不显示状态，§3.5.4）；FileTree 缩进 10px gap 4px
+- SessionList 状态信号见 §5.6A（左未读点 + 右异常 badge）；非列表行场景（GitPanel 等）用 §5.6B 的 7px 圆点
+- **Brand 区**（顶部）：TaijiLogo 28px 旋转（8s，reduced-motion 停，currentColor 适配主题）+ 产品名(base 600) + 版本号(2xs mid) + 可升级按钮（accent + 7px danger 红点角标）
+- **NavItem**：primary(accent 实色 32px) / ghost(透明) 双层级 + `<kbd>` 快捷键标签（`border-strong` 例外保留，物理按键语义）
+- **UserArea**（footer 钉底）：`margin-top:auto` + 20px accent 纯色头像（去装饰渐变）+ 用户名 + 设置齿轮(24px)
+- **QuickComposer**（workspace 快捷新建 spotlight）：SessionList group head hover「+」触发；spotlight 卡片 560px 宽 `bg-elevated + border-strong + shadow-2 + radius-lg`，backdrop `rgba(0,0,0,0.45)`（比 modal 0.8 轻）；预选 cwd chip + branch 去重；Enter 创建 / Esc 取消
 
 ### 6.3 右侧 Drawer（D2 一体化 + 7 tab）
 
@@ -394,22 +553,30 @@ lucide-vue 内联 SVG，stroke-width 统一 **1.75**。block icon：thinking=Bra
   - subagent（新增）：嵌套只读对话流（无 composer）
   - workflow（新增）：phase 分组 + agent call 列表
 - **tasks tab 移除**（D3）：goal/todo 回归对话流
-- SplitterResizeHandle 透明化（仅 hover/drag 显 accent）
+- **L1 icon 栏结构**：`surface` 同色 + `hairline` 分隔底线（去 border-b，方案 G）+ icon 30×30（active 见 §3.4 例外）+ spacer + unread badge（accent 胶囊 + 6px `accent-fg` 脉动点 + mono 计数）+ pin 按钮（pinned 染 accent）+ close 按钮
+- **SplitterHandle**：6px 宽视觉 + 10px 命中区（margin 负值扩展）；1px transparent → hover `border-strong` → active `accent + 2px`；`cursor: col-resize`
 
 ### 6.4 设置页（D1 全屏覆盖重构）
 
 - **FullSettingsOverlay**：手写 `fixed inset-0 bg-bg z-modal`（不用 reka Dialog）；无遮罩/无模糊（纯不透明全屏）
 - 左 nav `w-220px bg-sunken` 无 border-r；右内容区底色 `--bg`（卡片才能浮起），内容列 `max-w-content-max-w`(720) **左对齐**（非居中）
 - nav 选中态见 §5.4（列表项型）；nav-brand `uppercase 0.08em`（例外）
-- 10 个分组卡片 `bg-card` + 10px 圆角 + 去 border；行分隔 hairline 0.05；每行 label 下加 12px `neutral-mid` 描述
+- **12 个 nav 项**（provider/skill/agent/extension/system-prompt/terminal/preset/worktree/update/system/token-debug），每项 icon + label + 可选 count badge（中性圆点 `bg-surface` + `neutral-dim` mono）；hover 右侧显 chevron（链接提示）
+- 12 个 page 分组卡片 `bg-card` + 10px 圆角 + 去 border；行分隔 hairline 0.05；每行 label 下加 12px `neutral-mid` 描述
 - **ProviderEdit**：展开就地编辑（手风琴，取代 ProviderEditModal 双层 modal）
 - 表单 label 去 uppercase tracking-wider
 - **交互状态机**（有编辑态的页面）：dirty 快照 diff（净零翻转恢复 clean）/ 保存流（mock 延迟 + 已保存反馈）/ 离开守卫（dirty 拦截切页 + 放弃先还原快照防重入）/ beforeunload
 
 ### 6.5 Overlays
 
-- **SearchModal**：手写覆盖层；选中态对齐 §5.4（bg-surface+蓝字，与 hover 区分）；分组 header 去 uppercase；高亮 font-semibold
+- **SearchModal**：手写覆盖层；三源聚合（命令/文件/session）；选中态见 §3.4 例外（surface-hover + 蓝字，dialog 底 surface 上 bg-surface 会淹没）；分组 header 去 uppercase；高亮 `<span class="sm-hit">` font-semibold 不染蓝（颜色继承父元素）；loading 防闪 200ms（见 §5.10）；default 态尾部 clock icon 表最近/历史
 - **AskUserOverlay**：内联（非 modal），companion-band 统一交互出口（B3）
+  - **多问题切 tab**（au-tab：无 border / 全圆角 6px / active=bg-elevated+500 / 已答 tab 显 7px success 绿点）
+  - **单选 radio**：16px，unchecked=`border-strong` 空心，checked=`accent` 实心 + `inset 2px bg-input` 形成环
+  - **多选 checkbox**：16px 方块，checked=`accent` 实心 + `accent-fg` 白勾 10px
+  - **Other 选项**：末尾追加，选中后 label 下方展开 Input（surface-2 内嵌，自动聚焦）
+  - **auto-advance**：单选最后问题选完自动提交；非最后自动下一题；多选不自动推进
+  - **context 降中性**：`bg-surface-hover`（去 reasoning 软底彩色，v6 降噪）
 - **ConfirmDialog**：圆角 12px；danger 三角 icon 降 size-4
 - **MermaidRenderer**：保持现状
 
@@ -538,6 +705,9 @@ lucide-vue 内联 SVG，stroke-width 统一 **1.75**。block icon：thinking=Bra
 | D3 | tasks tab | 移除（goal/todo 回归对话流，删 HIDDEN_TOOL_NAMES） |
 | D4 | plugin 范围 | 补登记架构授权（v6-design 决策 #15） |
 | D8 | 选中态冲突 | 按组件类型二分（tab 型 bg-elevated / 列表项型 bg-surface+蓝字） |
+| D12 | SessionList 状态信号 | **2026-08-02**：左未读圆点 + 右异常态 badge（running 脉动小条 / waiting … / error !），done 无 badge 常态归零，dead 由整行 opacity 表达。详见 §5.6A / §3.5.2 |
+| D13 | TurnRail 二合一 | **2026-08-02**：TurnRail spine+thumb 物理合并成对话流滚动条（详见 §3.5.5/§3.5.6），原生 `::-webkit-scrollbar` 在 `.ms-scroll` 隐藏 |
+| D14 | Project 一级导航 | **2026-08-02**：方案 D——ProjectSwitcher 放 nav 下方（独立区），session 按 workspace（目录）分组，worktree chip 用 `--reasoning` 紫。详见 §3.5.7 |
 
 ### 9.2 数值裁决
 
@@ -605,8 +775,8 @@ lucide-vue 内联 SVG，stroke-width 统一 **1.75**。block icon：thinking=Bra
 ├─ mock/*.ts（8 个 mock 数据文件）
 ├─ components/
 │  ├─ shell/（PanelHeader/SplitterHandle/TrafficLight/AppNavControls）
-│  ├─ sidebar/（Sidebar/SegmentedTab/SessionList/PluginPanel/FileTreeView/...）
-│  ├─ chat/（MessageStream/ToolBlock/ThinkingBlock/ChangeSetCard/Composer/...）
+│  ├─ sidebar/（Sidebar/SegmentedTab/SessionList/ProjectSwitcher/PluginPanel/FileTreeView/...）
+│  ├─ chat/（MessageStream/TurnRail[滚动条二合一]/ToolBlock/ThinkingBlock/ChangeSetCard/...）
 │  ├─ drawer/（SideDrawer/GitPanel/DiffView/DetailPane/TerminalView/BrowserPane/...）
 │  ├─ settings/（SettingsOverlay/GroupCard/ProviderPage/...12 page）
 │  ├─ overlays/（SearchModal/AskUserOverlay/ConfirmDialog）
