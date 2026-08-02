@@ -27,6 +27,13 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 - [领域术语表](docs/architecture/context.md) — Session/Panel/Runtime/v3 UI 结构术语
 - [UI/UX 设计原则与参考](docs/page-design/ui-design-principles.md) — 设计方法论 + 竞品案例 + 行动清单
 
+**前端架构文档**:
+- [Renderer 目标架构（七层）](docs/architecture/renderer-target-architecture.md) — Shell/Workspace/Feature/ExtensionHost/RenderingProtocol/Transport&Coordination/Foundation 七层 + 层归属规则表 + 依赖铁律
+- [v6 架构重构](docs/architecture/v6-architecture-refactor.md) — 现状审查 + 落地改动（阶段 0/A/B/C，B1-B9）
+
+**待执行架构任务**（`docs/todo/`）:
+- [远程化合并架构指引](docs/todo/remote-use-merge-architecture.md) — `feat-remote-use`（86 commits）合并进 main 时的 T&C 层归位清单 + routeInbound 合并设计 + sync 兼容纪律。**合并 remote-use 之后删除此文档**
+
 **页面设计目录**: `docs/page-design/` — 前端设计 SSOT 与设计稿。结构：`design-tokens.md`（原子 SSOT）+ `design-system.md`（原语层）+ `v6-master-spec.md`（v6 单一权威源）+ `v6-spec-*.html`（视觉规格）+ `archive/v3/`（能力设计 spec：fast-*/flow-*/coding-plan-quota 等活跃功能设计）。禁止在项目根目录或其他位置创建 `demos/`、`impeccable/` 等目录
 
 **外部项目源码**:
