@@ -1,5 +1,11 @@
 # @zhushanwen/pi-extension-logger
 
+## 0.2.0
+
+### Minor Changes
+
+- 1e33329: Add shared extension logger package with three-channel routing (appendEntry audit / debug file log / no console).
+
 ## 0.1.0
 
 ### Patch Changes
