@@ -158,11 +158,49 @@ jobs:
           path: packages/renderer/coverage/
           retention-days: 7
 
+  # E2E 视觉回归（mock 轨 visual-chromium）：只跑像素 diff baseline（S2 W3 交付的
+  # visual-chromium project，testMatch **/visual/** + chromium.launch + spawn vite @ VITE_MOCK=true）。
+  # 只需 chromium（无需 electron 二进制/build:e2e），ubuntu-latest 轻量；与 lint/typecheck/test 并行
+  # （非 needs 依赖故并行），但纳入 build 的 needs（E2E 失败阻塞 release 构建）。
+  e2e-visual:
+    name: E2E Visual (mock)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright chromium
+        run: npx playwright install chromium
+
+      - name: Run visual E2E (mock track)
+        run: npx playwright test e2e/visual
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-visual
+          path: test-results/
+          retention-days: 7
+
   # PR 构建检查：完整 electron-builder 打包流程（与 release 一致），不在 PR 上传产物。
-  # needs gate：lint/typecheck/sdk-sync/test 已知失败时不浪费 mac runner（mac 构建 5-8min）。
+  # needs gate：lint/typecheck/sdk-sync/test/e2e-visual 已知失败时不浪费 mac runner（mac 构建 5-8min）。
   build:
     name: Build
-    needs: [lint, typecheck, sdk-sync, test]
+    needs: [lint, typecheck, sdk-sync, test, e2e-visual]
     uses: ./.github/workflows/build.yml
     with:
       upload-artifacts: false
