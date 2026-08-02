@@ -25,35 +25,23 @@
 
 set -euo pipefail
 
-# 定位 node-pty prebuilds（pnpm hoist 到根 node_modules，跨平台 glob）
-NODE_PTY_DIR=""
+# 定位所有 node-pty 副本（pnpm isolated 模式下根 node_modules 和 .pnpm/ 各有一份）。
+# electron-builder 可能从任意副本拷贝，必须全部 patch，否则产物含未 patch 版本。
+# 历史事故：isolated 模式下只 patch 了根 node_modules/node-pty，electron-builder 从
+# .pnpm/ 副本拷贝，产物缺 helperPath guard → posix_spawnp failed。
+NODE_PTY_DIRS=()
 
-# 优先 pnpm 结构（.pnpm/ 下），fallback 顶层 node_modules
 for candidate in \
   node_modules/node-pty \
   node_modules/.pnpm/node-pty@*/node_modules/node-pty; do
   if [ -d "$candidate/prebuilds" ]; then
-    NODE_PTY_DIR="$candidate"
-    break
+    NODE_PTY_DIRS+=("$candidate")
   fi
 done
 
-if [ -z "$NODE_PTY_DIR" ]; then
+if [ ${#NODE_PTY_DIRS[@]} -eq 0 ]; then
   # node-pty 未安装（如纯 renderer 开发），静默退出
   exit 0
-fi
-
-# 给所有平台的 spawn-helper 加 +x（unix 平台需要；win 的不在此 glob）
-FIXED=0
-while IFS= read -r -d '' helper; do
-  if [ ! -x "$helper" ]; then
-    chmod +x "$helper"
-    FIXED=$((FIXED + 1))
-  fi
-done < <(find "$NODE_PTY_DIR/prebuilds" -name spawn-helper -print0 2>/dev/null || true)
-
-if [ "$FIXED" -gt 0 ]; then
-  echo "[fix-node-pty] chmod +x $FIXED spawn-helper binary(ies) (upstream 1.1.0 tarball permission bug)"
 fi
 
 # ── Bug 2: patch helperPath 二次 asar 替换 guard（等价上游 PR #924）─────────
@@ -65,45 +53,67 @@ fi
 OS_TYPE="$(uname -s 2>/dev/null || echo unknown)"
 case "$OS_TYPE" in
   MINGW*|MSYS*|CYGWIN*)
-    # Windows：不需要 helperPath patch（unixTerminal.js 不被 win 加载）
-    exit 0
+    # Windows：不需要 helperPath patch（unixTerminal.js 不被 win 加载），但仍需 chmod
+    SKIP_HELPERPATH_PATCH=1
+    ;;
+  *)
+    SKIP_HELPERPATH_PATCH=0
     ;;
 esac
 
-UNIX_TERMINAL="$NODE_PTY_DIR/lib/unixTerminal.js"
+# 对每个 node-pty 副本执行 chmod + helperPath patch
+TOTAL_FIXED=0
+TOTAL_PATCHED=0
+for NODE_PTY_DIR in "${NODE_PTY_DIRS[@]}"; do
+  # 给所有平台的 spawn-helper 加 +x（unix 平台需要；win 的不在此 glob）
+  FIXED=0
+  while IFS= read -r -d '' helper; do
+    if [ ! -x "$helper" ]; then
+      chmod +x "$helper"
+      FIXED=$((FIXED + 1))
+    fi
+  done < <(find "$NODE_PTY_DIR/prebuilds" -name spawn-helper -print0 2>/dev/null || true)
+  TOTAL_FIXED=$((TOTAL_FIXED + FIXED))
 
-if [ ! -f "$UNIX_TERMINAL" ]; then
-  echo "[fix-node-pty] WARN: $UNIX_TERMINAL not found, skip helperPath patch"
-  exit 0
-fi
+  if [ "$SKIP_HELPERPATH_PATCH" = "1" ]; then
+    continue
+  fi
 
-# 幂等检测：两个 guard 标记都存在才算已 patch（防部分应用的半成品）。
-# patched 形态会在两行 replace 外各包一层 `if (helperPath.indexOf('...unpacked')`，
-# 故 `helperPath.indexOf(` 的出现次数 = 2 时才算完整 patch。
-# 注意：`grep -c` 无匹配时输出 0 但退出码 1，配 `|| true` 防止 set -e 中断；
-# 不能用 `|| echo 0`（会再追加一个 0，得到 "0\n0" 导致整数比较报错）。
-GUARD_COUNT=$(grep -c "helperPath.indexOf('" "$UNIX_TERMINAL" 2>/dev/null || true)
-if [ "$GUARD_COUNT" -ge 2 ]; then
-  : # 已 patch（两个 guard 都在），静默跳过
-else
+  UNIX_TERMINAL="$NODE_PTY_DIR/lib/unixTerminal.js"
+
+  if [ ! -f "$UNIX_TERMINAL" ]; then
+    continue
+  fi
+
+  # 幂等检测：两个 guard 标记都存在才算已 patch（防部分应用的半成品）。
+  GUARD_COUNT=$(grep -c "helperPath.indexOf('" "$UNIX_TERMINAL" 2>/dev/null || true)
+  if [ "$GUARD_COUNT" -ge 2 ]; then
+    continue # 已 patch（两个 guard 都在），跳过
+  fi
+
   # 原始两行（精确匹配，无前导空格——顶层语句）：
   #   helperPath = helperPath.replace('app.asar', 'app.asar.unpacked');
   #   helperPath = helperPath.replace('node_modules.asar', 'node_modules.asar.unpacked');
   # 用 perl 替换（sed 在 macOS BSD 下多行替换转义繁琐，perl 跨平台一致）。
-  # 替换为带 guard 的形态（每个 replace 包一层 indexOf 检查）。
-  PATCHED=$(perl -0777 -i -pe '
+  perl -0777 -i -pe '
     s{helperPath = helperPath\.replace\('"'"'app\.asar'"'"', '"'"'app\.asar\.unpacked'"'"'\);}
-     {if (helperPath.indexOf('"'"'app.asar.unpacked'"'"') === -1) { helperPath = helperPath.replace('"'"'app.asar'"'"', '"'"'app.asar.unpacked'"'"'); }}sg;
+     {if (helperPath.indexOf('"'"'app.asar.unpacked'"'"') === -1) { helperPath = helperPath.replace('"'"'app.asar'"'"', '"'"'app\.asar\.unpacked'"'"'); }}sg;
     s{helperPath = helperPath\.replace\('"'"'node_modules\.asar'"'"', '"'"'node_modules\.asar\.unpacked'"'"'\);}
-     {if (helperPath.indexOf('"'"'node_modules.asar.unpacked'"'"') === -1) { helperPath = helperPath.replace('"'"'node_modules.asar'"'"', '"'"'node_modules.asar.unpacked'"'"'); }}sg;
-  ' "$UNIX_TERMINAL")
+     {if (helperPath.indexOf('"'"'node_modules.asar.unpacked'"'"') === -1) { helperPath = helperPath.replace('"'"'node_modules\.asar'"'"', '"'"'node_modules\.asar\.unpacked'"'"'); }}sg;
+  ' "$UNIX_TERMINAL"
 
-  # 验证 patch 生效：重新计数，两个 guard 都在才算成功
+  # 验证 patch 生效
   GUARD_COUNT_AFTER=$(grep -c "helperPath.indexOf('" "$UNIX_TERMINAL" 2>/dev/null || true)
   if [ "$GUARD_COUNT_AFTER" -ge 2 ]; then
-    echo "[fix-node-pty] patched helperPath double-replace guard (upstream #923/#924)"
+    TOTAL_PATCHED=$((TOTAL_PATCHED + 1))
   else
-    # 匹配失败：node-pty 可能升级改了行格式。只 warn 不 fail（postinstall 不应阻断 install）。
-    echo "[fix-node-pty] WARN: helperPath patch did not apply — unixTerminal.js format may have changed (node-pty upgraded?)"
+    echo "[fix-node-pty] WARN: helperPath patch did not apply for $NODE_PTY_DIR — unixTerminal.js format may have changed"
   fi
+done
+
+if [ "$TOTAL_FIXED" -gt 0 ]; then
+  echo "[fix-node-pty] chmod +x $TOTAL_FIXED spawn-helper binary(ies) across ${#NODE_PTY_DIRS[@]} copies (upstream 1.1.0 tarball permission bug)"
+fi
+if [ "$TOTAL_PATCHED" -gt 0 ]; then
+  echo "[fix-node-pty] patched helperPath double-replace guard in $TOTAL_PATCHED/${#NODE_PTY_DIRS[@]} copies (upstream #923/#924)"
 fi
