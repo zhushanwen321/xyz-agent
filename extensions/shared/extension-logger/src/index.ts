@@ -50,16 +50,30 @@ export interface ExtensionLogger {
 // 全局 singleton registry
 // ============================================================
 
+// ⚠️ 单 session 约束：本 registry 是模块级可变共享态。
+//   - `globalPi`（let）与 `loggerCache`（const Map）被同进程所有 session 共享。
+//   - 多 session 并发时，后注册 session 的 setPiHandle 会覆盖前者，导致先 session
+//     的 logger 路由到错误的 appendEntry（session 隔离缺失）。
+//   - 当前 pi 设计为单主 session，此约束可接受；多 session 是远期场景，届时需把
+//     logger 按 sessionManager 维度分区（如 getLogger(extName, ctx)）。
+//   详见 development-guide §2.3「闭包状态隔离」——本处为已知、有据的例外。
+
 /**
  * 进程级 pi handle（延迟注入）。
  *
  * extension 初始化分两阶段：default export 函数拿到 pi → setPiHandle 注入；
  * 之后深层代码（best-effort / error-recovery）通过 getLogger 拿到的 logger
  * 才能走 appendEntry。注入前 warn/error 降级到文件日志（不丢诊断信息）。
+ *
+ * ⚠️ 模块级共享态：见上方「单 session 约束」——多 session 并发时后注册覆盖前者。
  */
 let globalPi: PiLike | undefined;
 
-/** 各 extension name → logger 实例的缓存（getLogger 多次调用返回同一实例）。 */
+/**
+ * 各 extension name → logger 实例的缓存（getLogger 多次调用返回同一实例）。
+ *
+ * ⚠️ 模块级共享态：见上方「单 session 约束」——多 session 并发时共享同一缓存。
+ */
 const loggerCache = new Map<string, ExtensionLogger>();
 
 /**
@@ -67,6 +81,9 @@ const loggerCache = new Map<string, ExtensionLogger>();
  *
  * 多次调用安全——后调覆盖先调（session_start 可能多次触发，取最新的 pi）。
  * 注入后，已创建的 logger 实例自动生效 appendEntry（闭包读 globalPi 实时值）。
+ *
+ * ⚠️ 单 session 约束：本函数写模块级 `globalPi`。多 session 并发时后调覆盖先调，
+ *    详见上方「单 session 约束」注释。
  */
 export function setPiHandle(pi: PiLike | undefined): void {
 	globalPi = pi;
