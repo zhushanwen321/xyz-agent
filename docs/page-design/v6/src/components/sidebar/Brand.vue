@@ -1,6 +1,8 @@
 <script setup lang="ts">
-/** 品牌区：logo（accent 纯色圆 + accent-fg 占位字「太」）+ 产品名 + 版本号 + 可升级 badge。
+/** 品牌区：太极双鱼 logo（旋转）+ 产品名 + 版本号 + 可升级 badge。
  *  对齐 v6-spec-sidebar.html §1 .sb-brand。 */
+
+import TaijiLogo from '@/components/icons/TaijiLogo.vue'
 
 interface Props {
   name?: string
@@ -18,7 +20,7 @@ const emit = defineEmits<{ (e: 'update-click'): void }>()
 
 <template>
   <div class="brand">
-    <span class="brand__logo">太</span>
+    <TaijiLogo class="brand__logo" :size="28" :duration="8" />
     <span class="brand__text">
       <span class="brand__name">{{ name }}</span>
       <span class="brand__ver">{{ version }}</span>
@@ -54,16 +56,9 @@ const emit = defineEmits<{ (e: 'update-click'): void }>()
   padding: 0 8px 14px;
 }
 .brand__logo {
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-sm);
-  background: var(--accent);
-  color: var(--accent-fg); /* accent-on 文字色（亮 accent 主题自动转深字）*/
-  display: grid;
-  place-items: center;
-  font-size: 11px;
-  font-weight: 700;
+  color: var(--neutral-fg); /* logo 用 currentColor，中性 fg 保证暗/亮主题均可见 */
   flex-shrink: 0;
+  line-height: 0; /* 消除 svg 基线间隙 */
 }
 .brand__text {
   display: flex;
