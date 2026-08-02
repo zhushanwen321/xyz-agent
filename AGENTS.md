@@ -21,7 +21,7 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 - [完整编码规范](docs/standards.md) — 组件使用、样式规则、TypeScript 约束
 - [设计 Tokens（v3 SSOT）](docs/page-design/design-tokens.md) — 冷蓝暗色原子值（色/字/距/影/动效），ADR-0018 确立
 - [设计系统原语层（v3）](docs/page-design/design-system.md) — 组件原语如何使用 tokens
-- [v3 UI 设计稿](docs/page-design/v3/README.md) — L0-L4 递归骨架 spec + draft（shell/sidebar/workspace/panel/overview/settings/overlays/flow-2/flow-3）
+- [v3 UI 设计稿](docs/page-design/archive/v3/README.md) — L0-L4 递归骨架 spec + draft（shell/sidebar/workspace/panel/overview/settings/overlays/flow-2/flow-3）
 - [领域术语表](docs/architecture/context.md) — Session/Panel/Runtime/v3 UI 结构术语
 - [竞品 UI 分析](docs/templates/competitor-ui-analysis.md) — Claude Code / Codex 逐图拆解，7 条设计原则
 - [UI/UX 设计原则与参考](docs/templates/ui-design-principles-and-references.md) — 设计方法论 + 竞品案例 + 行动清单
@@ -420,7 +420,7 @@ xyz-agent runtime 只是旁观转发：它看到 pi 又开始流 `message_start`
 1. xyz-agent runtime 侧（event-interpreter / session-service / message-dispatcher / session-message-handler）：这些只是「旁观 + 转发 + UI 同步」，不主动编排 pi 行为
 2. pi extension 机制（运行在 pi 进程内）：`@zhushanwen/pi-subagent-workflow` / `pi-subagents` 等扩展的 notifier / hook 才是续跑/编排的发起方。**开发期源码**在本项目 `extensions/`（@zhushanwen/pi-* 包），**运行时安装版**在用户机器 `~/.xyz-agent/pi/agent/npm/node_modules/@zhushanwen/pi-*/src/`（排查用户环境问题时看这个）
 3. pi 私有协议（`triggerTurn`/`deliverAs`/`before_agent_start` 等）：`packages/shared/src/message.ts` 的注释会提到这些语义（如「triggerTurn:true 唤醒父 agent 接力处理结果」），但 xyz-agent 不实现它们
-4. 设计文档：`docs/page-design/v3/` 下常有 extension adaptation 文档（如 `subagent-panel/workflow-extension-adaptation.md`）说明跨层协议。extension 的 `ctx.mode`、运行环境、SDK 接口契约等前提知识见 [docs/extensions/extension-conventions.md](docs/extensions/extension-conventions.md)
+4. 设计文档：`docs/page-design/archive/v3/` 下常有 extension adaptation 文档（如 `subagent-panel/workflow-extension-adaptation.md`）说明跨层协议。extension 的 `ctx.mode`、运行环境、SDK 接口契约等前提知识见 [docs/extensions/extension-conventions.md](docs/extensions/extension-conventions.md)
 
 **判断「是 xyz-agent 职责还是 pi 职责」的依据**：如果一个行为涉及 pi 的 session loop / turn 调度 / LLM 调用，它的发起方几乎一定在 pi 进程内（extension 或 pi 核心），xyz-agent runtime 只是通过 RPC/事件流与 pi 交互，不会自己编排 pi 的 turn。xyz-agent 的职责是 UI 状态同步 + 用户命令转发，不是 pi 行为编排。
 
@@ -490,8 +490,8 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
     - 全屏两态：非全屏（traffic light opacity 1，按钮 left:100px）/ 全屏（opacity 0，按钮左移）。**无第三态**，mac 全屏 hover 红黄绿由系统提供，应用不渲染
     - win/linux 走 mimic_mac：自绘彩色圆点放左侧模拟 mac，三平台左上视觉统一
     - 唤回侧栏：⌘B + header chrome 按钮（**rail-restore 左缘细条已移除**）
-    - 新增或修改任何窗口顶部区域 UI 时，必须读 [shell spec](docs/page-design/v3/shell/spec.md) 确认拓扑一致
-    - 设计决策记录：[ADR 0016](docs/architecture/adr/0016-macos-traffic-light-safe-zone.md)（旧版 padding-left 方案，**已 Superseded**）、[v3 shell spec](docs/page-design/v3/shell/spec.md)（现版 SSOT，2026-06-18 修正）
+    - 新增或修改任何窗口顶部区域 UI 时，必须读 [shell spec](docs/page-design/archive/v3/shell/spec.md) 确认拓扑一致
+    - 设计决策记录：[ADR 0016](docs/architecture/adr/0016-macos-traffic-light-safe-zone.md)（旧版 padding-left 方案，**已 Superseded**）、[v3 shell spec](docs/page-design/archive/v3/shell/spec.md)（现版 SSOT，2026-06-18 修正）
 12. **reka ScrollAreaViewport 默认 `overflow-x: hidden` [HISTORICAL]** — reka-ui 的 `ScrollAreaViewport` 内联注入 `overflow-x: hidden`，横向溢出的内容被**裁掉不滚动**（非 `scroll` 也非 `auto`）。文件树等需横向滚动看长文件名的场景，必须给 `ScrollArea` 传 `horizontal` prop（`src/components/ui/scroll-area/ScrollArea.vue`，渲染额外横向 ScrollBar + 用 `!overflow-x-auto` 覆盖内联 style）。覆盖用 Tailwind `!` 前缀（`!important` 压过 inline）；scoped `<style>` 的 `:deep()` 不行——会注入 `<style>` 元素破坏 reka Root 的子组件渲染顺序，导致 ScrollBar/Corner 不挂载
 
 ### 自动化检查

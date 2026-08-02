@@ -107,7 +107,7 @@ Node.js WebSocket 服务，三层架构（端口-适配器模式，[ADR 驱动](
 
 前端视觉层于 2026-06 完成 v3 重建（冷蓝暗色，W01–W20 视觉验收全部 PASS）：
 
-- [v3 UI 设计稿](../page-design/v3/README.md) — L0–L4 递归骨架 + 22 个 draft
+- [v3 UI 设计稿](../page-design/archive/v3/README.md) — L0–L4 递归骨架 + 22 个 draft
 - [设计 Tokens（SSOT）](../page-design/design-tokens.md) · [组件原语层](../page-design/design-system.md)
 - v3 视觉/交互 ADR 0018–0022（见下）
 

@@ -4,7 +4,7 @@
  * 封装 quota.configure / quota.getCached / quota.fetch RPC 调用，
  * 管理 4 种 UI 状态（未启用 / API Key 类已配置 / Cookie 类已配置 / 查询失败）。
  *
- * 设计文档：docs/page-design/v3/coding-plan-quota/design.md §2.2.5
+ * 设计文档：docs/page-design/archive/v3/coding-plan-quota/design.md §2.2.5
  * HANDOFF：.xyz-harness/coding-plan-quota/HANDOFF.md §5 Wave 3
  */
 import { ref, computed, watch, type Ref } from 'vue'

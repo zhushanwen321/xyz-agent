@@ -2,7 +2,7 @@
  * Coding Plan 额度查询 — Provider 预设配置。
  *
  * SSOT：5 个内置 provider 的 fetcher 映射、认证方式、自动关联规则。
- * 设计文档：docs/page-design/v3/coding-plan-quota/design.md §2.2.1
+ * 设计文档：docs/page-design/archive/v3/coding-plan-quota/design.md §2.2.1
  */
 
 /** 单个 provider 的额度查询预设。 */

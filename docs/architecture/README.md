@@ -20,7 +20,7 @@ docs/architecture/
 └── history/             # 历史版本归档（被 supersede 的旧架构）
 ```
 
-> **v3 设计稿** 在 `docs/page-design/v3/`（L0-L4 递归骨架 spec + draft），基础件 `design-tokens.md` / `design-system.md` 在 `docs/page-design/` 根。v3 视觉/交互 ADR（0018-0022）已归位到本目录 `adr/`。
+> **v3 设计稿** 在 `docs/page-design/archive/v3/`（L0-L4 递归骨架 spec + draft），基础件 `design-tokens.md` / `design-system.md` 在 `docs/page-design/` 根。v3 视觉/交互 ADR（0018-0022）已归位到本目录 `adr/`。
 
 ## 三条核心规则
 

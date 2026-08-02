@@ -9,7 +9,7 @@
  * 5. provider 未配置额度查询 → 跳过
  * 6. fetchQuota rejected 时写 error 到 store（UI 区分「从未查询」vs「查询失败」）
  *
- * 设计文档：docs/page-design/v3/coding-plan-quota/design.md §2.2.4
+ * 设计文档：docs/page-design/archive/v3/coding-plan-quota/design.md §2.2.4
  * HANDOFF：.xyz-harness/coding-plan-quota/HANDOFF.md §5 Wave 4
  */
 import { computed } from 'vue'
