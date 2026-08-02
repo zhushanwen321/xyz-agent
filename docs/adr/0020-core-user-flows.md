@@ -1,8 +1,8 @@
-# 0019: 核心 User Flow 范围
+# 0020: 核心 User Flow 范围
 
 **状态**: Accepted
 **日期**: 2026-06-18
-**关联**: ADR-0018（视觉方向）、PRODUCT.md（产品定位）、feature-map
+**关联**: ADR-0019（视觉方向）、PRODUCT.md（产品定位）、feature-map
 
 ## 背景
 

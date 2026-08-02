@@ -1,4 +1,4 @@
-# 0016: macOS Traffic Light Safe Zone + Sidebar Expand Button
+# 0017: macOS Traffic Light Safe Zone + Sidebar Expand Button
 
 **Status**: Superseded（被 v6 shell spec + 2026-06-28 折叠态 chrome 落位取代）
 **Date**: 2026-06-06

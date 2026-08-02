@@ -598,7 +598,7 @@ const skillsSub = makeMockSubscription(() => fixtureSkills.map((s) => ({ ...s })
 const agentsSub = makeMockSubscription(() => fixtureAgents.map((a) => ({ ...a })))
 const defaultsSub = makeMockSubscription(() => 'Anthropic/claude-sonnet-4.5')
 
-// ADR-0020 §1 discovery.json 加载路径配置（目录级管道，UI 层 A 勾选/拖动用）
+// ADR-0021 §1 discovery.json 加载路径配置（目录级管道，UI 层 A 勾选/拖动用）
 // fixtureSkillDirs/fixtureAgentDirs 是「预设候选 + enabled 状态」的 UI 视图，对齐 server.ts buildDirConfigs
 const PRESET_SKILL_DIRS = ['~/.pi/agent/skills', '~/.claude/skills', '~/.agents/skills', '.agents/skills']
 const PRESET_AGENT_DIRS = ['~/.pi/agent/agents', '~/.claude/agents', '~/.agents/agents', '.agents/agents']
@@ -607,7 +607,7 @@ let mockSkillDirPaths = ['~/.pi/agent/skills', '~/.claude/skills', '~/.agents/sk
 let mockAgentDirPaths = ['~/.agents/agents'] // 启用的 agentDirs
 let mockExtensionDirPaths: string[] = [] // 启用的 extensionDirs（Phase 4，默认空——仅强制目录生效）
 function buildMockDirConfigs(preset: string[], enabledPaths: string[]): SkillDirConfig[] {
-  // ADR-0020 §1.1：discovery 数组顺序即优先级（靠前覆盖靠后）。
+  // ADR-0021 §1.1：discovery 数组顺序即优先级（靠前覆盖靠后）。
   // 顺序：启用的按 discovery 顺序（用户拖拽排序）→ 未启用的预设候选按固定顺序追加。
   const enabledSet = new Set(enabledPaths)
   const configs = enabledPaths.map((path) => ({ path, enabled: true }))
@@ -707,7 +707,7 @@ export const config = {
     // 扫描后广播当前 skills 快照（runtime scan 后会刷新 config.skills）
     skillsSub.broadcast(fixtureSkills.map((s) => ({ ...s })))
   },
-  // W2（ADR-0038）：按 session cwd 拉 project skill。mock 返回空（mock 模式无真实文件系统扫描）。
+  // W2（ADR-0051）：按 session cwd 拉 project skill。mock 返回空（mock 模式无真实文件系统扫描）。
   async scanSessionSkills(_cwd: string) {
     await sleep(TIMING.ack)
     return []
@@ -722,7 +722,7 @@ export const config = {
     await sleep(TIMING.ack)
     return []
   },
-  /** ADR-0020 §1 目录级管道写入：更新 mock skillDirs + 广播 skill 列表 + 目录配置 */
+  /** ADR-0021 §1 目录级管道写入：更新 mock skillDirs + 广播 skill 列表 + 目录配置 */
   async setSkillDirs(dirs: string[]) {
     await sleep(TIMING.ack)
     mockSkillDirPaths = dirs
@@ -784,7 +784,7 @@ export const config = {
     broadcastProviders()
     return { result: { source: 'pi' as ProviderSource, imported: [mockImported], failedCount: 0 } }
   },
-  /** ADR-0020 §1 目录级管道写入：更新 mock agentDirs + 广播 agent 列表 + 目录配置 */
+  /** ADR-0021 §1 目录级管道写入：更新 mock agentDirs + 广播 agent 列表 + 目录配置 */
   async setAgentDirs(dirs: string[]) {
     await sleep(TIMING.ack)
     mockAgentDirPaths = dirs

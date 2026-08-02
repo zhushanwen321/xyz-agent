@@ -101,11 +101,11 @@ v6-demo.html            ← v6 综合交互 demo（验收 SSOT）
 
 1. **tokens 是唯一值源**：`packages/renderer/src/style.css` 的 CSS 变量必须全部能在 `design-tokens.md` 找到（pre-commit hook `check_css_token_ssot.py` 强制校验）
 2. **术语唯一来源**：`archive/v3/architecture-and-terminology.html §1`，新稿禁止用废弃词
-3. **ADR 归架构目录**：设计决策记录放 `docs/architecture/adr/`，不放本目录
+3. **ADR 归架构目录**：设计决策记录放 `docs/adr/`，不放本目录
 
 ## 相关文档
 
-- [ADR-0018 视觉方向](../architecture/adr/0018-visual-direction.md) — v3 冷蓝暗色确立
+- [ADR-0019 视觉方向](../adr/0019-visual-direction.md) — v3 冷蓝暗色确立
 - [太极 V3 配色决策](./2026-08-02-taiji-v3-color-decision.md) — 纯灰配色方向定案
 - [领域术语表](../architecture/context.md) — UI 结构术语
 - [编码规范 §设计](../standards.md) — 前端设计规则

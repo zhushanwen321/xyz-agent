@@ -4,7 +4,7 @@
  * 组合 markdown-it（结构解析：标题/列表/表格/链接/行内代码）+ shiki（代码块高亮）。
  * - shiki 用双主题（dark-plus / light-plus）+ defaultColor:false，产出带 CSS 变量
  *   (--shiki-0 暗色 / --shiki-1 亮色) 的 span，由 MarkdownRenderer.vue 的样式层切换
- *   —— 适配 design-tokens 的 :root(暗默认) / [data-theme="light"] 双主题（ADR-0021-B）。
+ *   —— 适配 design-tokens 的 :root(暗默认) / [data-theme="light"] 双主题（ADR-0022-B）。
  * - shiki highlighter 创建是异步的，故 renderMarkdown 返回 Promise；highlighter 全局单例，
  *   首次 await 后后续渲染同步走 markdown-it（仅 shiki 的 codeToHtml 同步可用）。
  *

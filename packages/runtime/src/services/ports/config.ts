@@ -103,7 +103,7 @@ export interface IConfigStore {
   /** 透传 provider type → pi api 标识（前端直接发 pi 终值，runtime 不再翻译别名）。 */
   applyTypeTranslation(type: string): string
 
-  // ── Skill paths（discovery.json SSOT，ADR-0020 §1）──
+  // ── Skill paths（discovery.json SSOT，ADR-0021 §1）──
   getSkillPaths(): string[]
   /** 覆盖 skillDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json + 同步投影 settings.json。 */
   setSkillPaths(paths: string[]): void
@@ -112,12 +112,12 @@ export interface IConfigStore {
   /** 一次性迁移：settings.json.skills → discovery.json（首启用，幂等）。 */
   migrateSettingsSkillsToDiscovery(): void
 
-  // ── Agent dirs（discovery.json SSOT，ADR-0020 §1）──
+  // ── Agent dirs（discovery.json SSOT，ADR-0021 §1）──
   getAgentDirs(): string[]
   /** 覆盖 agentDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json。 */
   setAgentDirs(dirs: string[]): void
 
-  // ── Extension dirs（discovery.json SSOT，ADR-0020 §1）──
+  // ── Extension dirs（discovery.json SSOT，ADR-0021 §1）──
   getExtensionDirs(): string[]
   /** 覆盖 extensionDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json。 */
   setExtensionDirs(dirs: string[]): void

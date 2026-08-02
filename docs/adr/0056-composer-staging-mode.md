@@ -1,10 +1,10 @@
-# ADR-0043: Composer Staging Mode（暂存模式）
+# ADR-0056: Composer Staging Mode（暂存模式）
 
 **状态**: Accepted
 **日期**: 2026-07-29
-**关联**: ADR-0042（MessageBus 架构）、ADR-0028（模型切换 RPC + 乐观更新编排）
+**关联**: ADR-0055（MessageBus 架构）、ADR-0028（模型切换 RPC + 乐观更新编排）
 
-> **范围说明（ADR-0044 补充）**：本 ADR 只覆盖**模型/thinking 暂存层**（stagingModel/stagingThinking refs + enter/exit/getStagingConfig）。模式状态机 + 发送/取消行为路由的抽象见 [ADR-0044](./0044-composer-staging-strategy.md)。两者不同层次，本 ADR 的「不抽象，用 ref 快照」原则仅适用于模型暂存层。
+> **范围说明（ADR-0057 补充）**：本 ADR 只覆盖**模型/thinking 暂存层**（stagingModel/stagingThinking refs + enter/exit/getStagingConfig）。模式状态机 + 发送/取消行为路由的抽象见 [ADR-0044](./0044-composer-staging-strategy.md)。两者不同层次，本 ADR 的「不抽象，用 ref 快照」原则仅适用于模型暂存层。
 
 ## 背景
 

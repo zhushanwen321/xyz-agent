@@ -89,7 +89,7 @@ const props = defineProps<{
   type: CmdType
   /** session 通道订阅键（D8：session.commands 带 sessionId，走 events.on(sessionId)） */
   sessionId?: string
-  /** composer 形态：landing（新建任务页空态）vs panel（对话态）。ADR-0037：slash 命令源按 variant 分支，
+  /** composer 形态：landing（新建任务页空态）vs panel（对话态）。ADR-0050：slash 命令源按 variant 分支，
    *  与 Composer.vue variant prop 同源。landing 合并 globalSkills + projectSkills（W4：FR-5 全局走 skillRegistry globalCache，
    *  不走 settingsStore.skills；W3 移除公共 session 后无 pi extension 命令源）；
    *  panel 用 commandStore + compact，不并入 skills（配置态/运行态不混淆）。默认 'panel' 兼容旧调用。 */
@@ -99,7 +99,7 @@ const props = defineProps<{
   /** landing 态全局 skill（useGlobalSkills 拉取，skillRegistry globalCache 经 RPC，W4 FR-5）。
    *  landing 分支合并两源：globalSkills（全局）∪ projectSkills（当前 cwd）。默认空（向后兼容）。 */
   globalSkills?: SkillInfo[]
-  /** landing 态当前 cwd 的项目 skill（useProjectSkills 按 cwd key 缓存，W3 ADR-0038）。
+  /** landing 态当前 cwd 的项目 skill（useProjectSkills 按 cwd key 缓存，W3 ADR-0051）。
    *  landing 分支合并两源：globalSkills（全局）∪ projectSkills（当前 cwd）。
    *  默认空（Composer 从 useProjectSkills(flow.currentCwd) 取后透传）。 */
   projectSkills?: SkillInfo[]
@@ -143,7 +143,7 @@ watch(() => props.sessionId, () => { loaded = false; void loadCandidates() })
 const variant = computed<ComposerVariant>(() => props.variant ?? 'panel')
 
 /**
- * slash 命令源（ADR-0037：按 variant 分支，替代原按 sessionId 互斥分支）。
+ * slash 命令源（ADR-0050：按 variant 分支，替代原按 sessionId 互斥分支）。
  *
  * 现行分支（判定用 variant，与 Composer.vue:280 范式对齐）：
  * - landing 态：globalSkills（skillRegistry globalCache 经 RPC，W4 FR-5 替代 settingsStore.skills）

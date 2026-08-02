@@ -55,7 +55,7 @@ function setPanelSession(panel: ReturnType<typeof usePanelStore>, sessionId: str
 }
 
 describe('useSubagentListSync — 切会话首拉（不再 clearSubagents，切走不清）', () => {
-  it('focusedSessionId 变化时旧 session 分区保留（ADR-0036：切走不清）', async () => {
+  it('focusedSessionId 变化时旧 session 分区保留（ADR-0049：切走不清）', async () => {
     const panel = usePanelStore()
     const subagentStore = useSubagentStore()
     // 先绑一个 session（immediate watch 会首拉），scope 停后再测切换

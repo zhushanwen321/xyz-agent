@@ -204,7 +204,7 @@ export class SessionLifecycle {
     // try-catch + safeDestroy 保证异常时清理 pi 进程。
     let session: IManagedSessionView
     try {
-      // Staging Mode（ADR-0043）：透传 effectiveModel（presetClientOptions.model，已含 C-RL-6 优先级解析）
+      // Staging Mode（ADR-0056）：透传 effectiveModel（presetClientOptions.model，已含 C-RL-6 优先级解析）
       // 让 session 元数据 modelId 反映实际启动模型，前端 composer chip 正确显示。
       session = await this.svc.initializeManagedSession(
         id, client, sessionCwd, label ?? basename(sessionCwd), sessionFilePath, options?.hidden,
@@ -437,11 +437,11 @@ export class SessionLifecycle {
     label?: string,
     options?: {
       /**
-       * Staging Mode（ADR-0043）：composer 暂存的模型覆盖，优先于源 preset.modelOverride。
+       * Staging Mode（ADR-0056）：composer 暂存的模型覆盖，优先于源 preset.modelOverride。
        * undefined 时 fork 仅继承源 preset（旧行为）。
        */
       modelOverride?: string
-      /** Staging Mode（ADR-0043）：composer 暂存的思考等级覆盖，优先于源 preset.thinkingLevel。 */
+      /** Staging Mode（ADR-0056）：composer 暂存的思考等级覆盖，优先于源 preset.thinkingLevel。 */
       thinkingOverride?: string
     },
   ): Promise<SessionSummary> {
@@ -485,7 +485,7 @@ export class SessionLifecycle {
       ?? BUILTIN_PRESET_IDS.FULL
     const forkResolution = await this.svc.getLaunchPresetOptions(forkPresetId, sessionCwd)
     const allExtPaths = forkResolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
-    // Staging Mode（ADR-0043）：override 优先于源 preset 的 modelOverride/thinkingLevel（见 buildPresetClientOptions
+    // Staging Mode（ADR-0056）：override 优先于源 preset 的 modelOverride/thinkingLevel（见 buildPresetClientOptions
     // 内 C-RL-6 优先级）。undefined 时仅继承源 preset（旧行为），不影响现有 fork。
     const presetClientOptions = this.buildPresetClientOptions(
       forkResolution,
@@ -537,7 +537,7 @@ export class SessionLifecycle {
     const parentSessionKey = sourceActive?.sessionFilePath ?? srcSessionId
     let session: IManagedSessionView
     try {
-      // Staging Mode（ADR-0043）：透传 effectiveModel（presetClientOptions.model）让 fork 新 session
+      // Staging Mode（ADR-0056）：透传 effectiveModel（presetClientOptions.model）让 fork 新 session
       // 元数据 modelId 反映实际启动模型（override > 源 preset.modelOverride）。
       session = await this.svc.initializeManagedSession(
         forkedId, client, sessionCwd, label ?? basename(sessionCwd), forkedFilePath,

@@ -21,7 +21,7 @@ import {
   updateSettingsSync,
   invalidateSettingsCache,
 } from './pi-settings-store.js'
-// discovery.json 是 skill/agent 加载路径的 SSOT（ADR-0020 §1）。
+// discovery.json 是 skill/agent 加载路径的 SSOT（ADR-0021 §1）。
 // skill 路径函数代理 discovery-store，settings.json.skills 仅作派生投影（pi 原生读此加载 skill）。
 import {
   getSkillDirs as getDiscoverySkillDirs,
@@ -318,7 +318,7 @@ export function setDefaultThinkingLevel(level: string): void {
   updateSettingsSync(s => { s.defaultThinkingLevel = level })
 }
 
-// ── Skill 路径管理（ADR-0020：discovery.json 是 SSOT，settings.json 是派生投影）──
+// ── Skill 路径管理（ADR-0021：discovery.json 是 SSOT，settings.json 是派生投影）──
 //
 // 数据流（方案 C 决策）：
 //   UI 读写 → discovery.json.skillDirs（SSOT，有序数组 = 优先级）
@@ -338,7 +338,7 @@ function syncSkillDirsToSettings(): void {
 /**
  * 判断目录是否是「skill 容器」（含 ≥1 个带 SKILL.md 的子目录）。
  * 用于迁移时区分容器目录（如 ~/.pi/agent/skills）与单 skill 目录（如 .../skills/anysearch）。
- * ADR-0020 §1：discovery.json 存容器目录粒度，目录内资源全开。
+ * ADR-0021 §1：discovery.json 存容器目录粒度，目录内资源全开。
  */
 function isSkillContainer(dirPath: string): boolean {
   if (!existsSync(dirPath)) return false
@@ -362,7 +362,7 @@ function isSkillContainer(dirPath: string): boolean {
 
 /**
  * 一次性迁移：把旧版本 settings.json.skills（粒度错误：存的是单 skill 目录）
- * 归并为 ADR-0020 §1 的容器目录粒度，提升为 discovery.json SSOT。
+ * 归并为 ADR-0021 §1 的容器目录粒度，提升为 discovery.json SSOT。
  *
  * 旧数据问题：旧 addSkillPath(dirname(skill.sourcePath)) 把每个 skill 的父目录
  * 单独塞进 settings.json.skills（如 ~/.pi/agent/skills/anysearch），而非容器目录

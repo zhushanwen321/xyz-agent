@@ -1,4 +1,4 @@
-# 0018: 视觉方向收敛到 zcode-demo 冷蓝暗色
+# 0019: 视觉方向收敛到 zcode-demo 冷蓝暗色
 
 **状态:** Accepted　**日期:** 2026-06-18　**决策者:** 产品负责人
 
@@ -38,8 +38,8 @@
 
 ## 归档处置
 
-- **A (`DESIGN.md`)**：文件顶部加 `> ⚠️ DEPRECATED by ADR-0018 (2026-06-18). 真身见 docs/design-tokens.md`，保留作历史参考，从所有"当前规范"链接撤下。
-- **B (`docs/design-system.md`，已删除)**：原 Warm & Soft 方案，ADR-0018 推翻后文件已清理。
+- **A (`DESIGN.md`)**：文件顶部加 `> ⚠️ DEPRECATED by ADR-0019 (2026-06-18). 真身见 docs/design-tokens.md`，保留作历史参考，从所有"当前规范"链接撤下。
+- **B (`docs/design-system.md`，已删除)**：原 Warm & Soft 方案，ADR-0019 推翻后文件已清理。
 - **`PRODUCT.md`**：品牌章节（Warm & Soft 人格、赤陶、anti-references 中"不是冷色开发者工具"）需重写为冷蓝暗色开发者工具人格——**单独任务，不在此 ADR 范围**。
 
 ## D 的漂移修复清单（精确到行）

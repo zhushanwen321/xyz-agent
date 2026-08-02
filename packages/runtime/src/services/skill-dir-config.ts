@@ -1,5 +1,5 @@
 /**
- * ADR-0020 §1/§2/§3 目录级管道配置（discovery.json SSOT）的 UI 视图构建。
+ * ADR-0021 §1/§2/§3 目录级管道配置（discovery.json SSOT）的 UI 视图构建。
  *
  * 此前长在 transport/server.ts（config 域业务逻辑泄漏到传输层），C2 拆分时下沉到 services/。
  * 消费方：sendInitialState（新连接推送 config.skillDirs/config.agentDirs）+
@@ -18,7 +18,7 @@ export { PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS }
 /**
  * 把预设候选目录 + discovery 启用列表 组合成 UI 用的 SkillDirConfig[]。
  *
- * 顺序语义（ADR-0020 §1.1：靠前覆盖靠后）——**discovery 数组顺序即优先级**：
+ * 顺序语义（ADR-0021 §1.1：靠前覆盖靠后）——**discovery 数组顺序即优先级**：
  *   1. discovery 里启用的目录，按 discovery 数组顺序排列（用户拖拽排序的结果）
  *   2. 预设候选中未启用的，按 preset 固定顺序追加在后（供用户勾选）
  *   3. discovery 里有但不在预设里的自定义路径（已启用），紧随其后

@@ -2,7 +2,7 @@
 
 > 方法论：recursive-skeleton。先立骨架（结构+职责+联动），再逐层 deepening。
 > 所有后续 case HTML（flow-2-cases / flow-3-cases / 各模块设计页）都是这棵树的叶子。
-> 决策依据：ADR-0018（冷蓝暗色）、ADR-0019（核心 user flow）、design-tokens.md。
+> 决策依据：ADR-0019（冷蓝暗色）、ADR-0020（核心 user flow）、design-tokens.md。
 >
 > **⚠ 已知失同步（2026-06-19 登记）**：本文件 §3/§5 的「进程面板 Process Panel（★★最高优先级）」已被 `panel/spec.md` 决策推翻——**Process Panel v1 删除**，单 Session 进度走 composer 上方 `progress-zone`，多 SubAgent 编排推迟到 Flow-3（`flow-3-subagent/`）。本文件正文未清理，保留作历史记录，术语批量替换时一并处理（见 `v3/README.md` 术语映射表）。
 

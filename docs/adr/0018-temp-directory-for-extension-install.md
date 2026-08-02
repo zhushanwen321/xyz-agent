@@ -1,4 +1,4 @@
-# ADR 0017: 使用临时目录处理 Extension Collection 安装
+# ADR 0018: 使用临时目录处理 Extension Collection 安装
 
 - **Date**: 2026-06-07
 - **Status**: Proposed

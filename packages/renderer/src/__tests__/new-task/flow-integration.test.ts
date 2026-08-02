@@ -270,7 +270,7 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
     // navigation push chat view
     expect(navigation.current.view).toBe('chat')
     expect(navigation.current.sessionId).toBe('new-1')
-    // chat.send 被调用（显式 sid + segments 原样透传，ADR-0037）
+    // chat.send 被调用（显式 sid + segments 原样透传，ADR-0043）
     expect(chatMock.send).toHaveBeenCalledWith('new-1', textToSegments('hello world'))
     expect(flow.state.value).toBe('completed')
   })

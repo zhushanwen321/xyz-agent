@@ -60,10 +60,10 @@ export function extractSessionName(filePath: string): string | null {
   )
 }
 
-// ── session 终态 entry（W4，ADR 0036）─────────────────────────
+// ── session 终态 entry（W4，ADR 0042）─────────────────────────
 
 /**
- * session 结束时的终态类型（W4，ADR 0036 + W1 sidecar 方案）。
+ * session 结束时的终态类型（W4，ADR 0042 + W1 sidecar 方案）。
  * runtime 在 3 个终态点写 session_end 到 sidecar `.meta.json`（不写 JSONL），scanner
  * 据此派生终态，让前端侧栏无需预加载历史即可显示 done/error/stopped。
  */
@@ -77,7 +77,7 @@ export type SessionOutcome = 'done' | 'error' | 'stopped'
 const VALID_SESSION_OUTCOMES = ['done', 'error', 'stopped'] as const
 
 /**
- * 将 session 终态持久化到 sidecar `.meta.json`（W4，ADR 0036 + W1 sidecar 方案）。
+ * 将 session 终态持久化到 sidecar `.meta.json`（W4，ADR 0042 + W1 sidecar 方案）。
  *
  * 与 JSONL 同目录写 `.meta.json`（存 session_end 元数据），不污染 JSONL——pi 的
  * _persist 永远只写 message/session_info，runtime 的终态独立存 sidecar，避免「pi
@@ -189,7 +189,7 @@ export function readPresetBinding(filePath: string): string | undefined {
 }
 
 /**
- * 从 .jsonl 文件提取最后一条 session_end 的 outcome（W4，ADR 0036）。
+ * 从 .jsonl 文件提取最后一条 session_end 的 outcome（W4，ADR 0042）。
  *
  * W2 尾读优化：先尾读找尾部最后一条 session_end。persistSessionEnd 是 session 结束时
  * 最后写入的 entry → session_end 始终在文件最尾部 → 尾读几乎必中。

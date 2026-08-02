@@ -51,7 +51,7 @@ plugin-sdk 审查发现 3 个致命冲突，统一前必须解决：
 3. **数据驱动渲染**：插件提供数据（GuiComponent 原语树 / 声明式元数据），renderer 用统一渲染器渲染。插件无法直接影响渲染层 DOM。
 4. **单一渲染协议**：pi extension 和 plugin 共用 GuiComponent，一套原语、一套 v6 视觉、一套降级策略，无论数据源。
 5. **API 稳定性分层（stable/proposed/internal）**：主干化即 API 冻结点。借鉴 VSCode 教训1（API 一旦发布无法收回），用 proposed 分层做缓冲，Object.freeze 防篡改。
-6. **per-session 隔离内建**：ADR-0036 的 `useSessionScopedState` 工厂是一等公民，所有 per-session 状态默认隔离，不依赖开发者记得清空。
+6. **per-session 隔离内建**：ADR-0049 的 `useSessionScopedState` 工厂是一等公民，所有 per-session 状态默认隔离，不依赖开发者记得清空。
 
 ---
 
@@ -678,7 +678,7 @@ v6 已决策移除 tasks tab，goal/todo 走 GuiComponent 统一渲染。架构�
 | `extension-gui-protocol.md` | 兼容。本文档 §5 把它的 GuiComponent 提升为共享渲染协议，7 原语视觉按 v6 重设计 |
 | `runtime-three-layer-design.md` | runtime 侧。plugin-sdk 主干化的 runtime 实现基础 |
 | `vscode-extension-analysis.md` | 理论依据。本文档的 contribution 体系/隔离/激活借鉴其结论 |
-| `ADR-0036` | per-session 隔离范式。本文档 §1 原则 6 引用 |
+| `ADR-0049` | per-session 隔离范式。本文档 §1 原则 6 引用 |
 
 ---
 

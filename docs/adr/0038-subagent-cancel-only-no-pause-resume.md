@@ -1,4 +1,4 @@
-# ADR 0033: Subagent 只支持 cancel，不支持 pause/resume
+# ADR 0038: Subagent 只支持 cancel，不支持 pause/resume
 
 **Status**: Accepted
 **Date**: 2026-07-15

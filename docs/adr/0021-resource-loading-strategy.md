@@ -1,6 +1,6 @@
-# 0020: Agent / Skill 资源加载策略
+# 0021: Agent / Skill 资源加载策略
 
-**状态**: Accepted　**日期**: 2026-06-19　**关联**: ADR-0019（核心 flow）、PRODUCT.md（复用 pi 能力）
+**状态**: Accepted　**日期**: 2026-06-19　**关联**: ADR-0020（核心 flow）、PRODUCT.md（复用 pi 能力）
 
 ## 背景
 

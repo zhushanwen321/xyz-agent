@@ -9,7 +9,7 @@
  * 无感（详见 docs/architecture/runtime-similar-code-review.md P0-A）。统一同步，
  * 不拆 sync/async 双子类。
  *
- * 归属：跨层共享叶子层 utils/（ADR 0004），是 fs-utils（atomicWrite）与 errors
+ * 归属：跨层共享叶子层 utils/（ADR 0035），是 fs-utils（atomicWrite）与 errors
  * （isEnoent）的直接组合，无业务语义。
  */
 

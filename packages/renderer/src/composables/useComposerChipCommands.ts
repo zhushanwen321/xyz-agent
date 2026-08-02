@@ -160,7 +160,7 @@ export function useComposerChipCommands(
   }
 
   /**
-   * 插入 # 文件引用内联 chip（结构化 file segment，ADR-0034）。
+   * 插入 # 文件引用内联 chip（结构化 file segment，ADR-0040）。
    *
    * 与旧 insertMentionChip('#', name) 的区别：设 dataset（chipType=file/chipPath/
    * chipLineStart/chipLineEnd）供 getSegmentsFromEl 重建 {type:file} segment，
@@ -268,7 +268,7 @@ export function useComposerChipCommands(
   /**
    * 插入 @ mention 内联 chip（§2d：蓝名，插在当前光标位置）。
    *
-   * # file 引用已迁移到 insertFileChip（结构化，ADR-0034）。本方法只保留 @ 分支——
+   * # file 引用已迁移到 insertFileChip（结构化，ADR-0040）。本方法只保留 @ 分支——
    * @mention 暂无结构化需求（无 Segment 消费方），保持纯文本 chip。
    * # 入口委托 insertFileChip（向后兼容现有 insertMentionChip('#', name) 调用方）。
    */

@@ -1,4 +1,4 @@
-# ADR-0036：Session 隔离统一采用 Map 分区派范式
+# ADR-0049：Session 隔离统一采用 Map 分区派范式
 
 - **Status**: Accepted
 - **Date**: 2026-07-21

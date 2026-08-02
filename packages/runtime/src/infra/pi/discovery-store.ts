@@ -1,5 +1,5 @@
 /**
- * DiscoveryStore — discovery.json 的唯一读写层（ADR-0020 §1 落地）。
+ * DiscoveryStore — discovery.json 的唯一读写层（ADR-0021 §1 落地）。
  *
  * discovery.json 是 skill/agent 加载路径的**唯一真相源（SSOT）**：
  *   - 路径：`<piAgentDir>/discovery.json`（~/.xyz-agent/pi/agent/discovery.json）

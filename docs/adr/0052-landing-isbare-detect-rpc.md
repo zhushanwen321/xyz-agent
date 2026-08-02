@@ -1,4 +1,4 @@
-# ADR 0039：Landing 态 isBare 检测改用独立 RPC（解耦 currentSession）
+# ADR 0052：Landing 态 isBare 检测改用独立 RPC（解耦 currentSession）
 
 - **状态**：Proposed
 - **日期**：2026-07-23

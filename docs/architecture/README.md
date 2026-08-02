@@ -64,4 +64,4 @@ docs/architecture/
 
 ## 与 CLAUDE.md 的关系
 
-`CLAUDE.md`（项目根）是**编码规范 + 关键规则**，引用本目录的 ADR 作为决策依据（如 `docs/architecture/adr/0016-...`）。CLAUDE.md 不重复架构内容，只链接。
+`CLAUDE.md`（项目根）是**编码规范 + 关键规则**，引用本目录的 ADR 作为决策依据（如 `docs/adr/0017-...`）。CLAUDE.md 不重复架构内容，只链接。

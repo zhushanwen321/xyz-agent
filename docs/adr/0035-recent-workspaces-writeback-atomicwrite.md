@@ -1,4 +1,4 @@
-# ADR-0004: recent-workspaces 持久化复用 write-back + atomicWrite 模式
+# ADR-0035: recent-workspaces 持久化复用 write-back + atomicWrite 模式
 
 - **Status**: accepted
 - **Date**: 2026-07-03
@@ -42,5 +42,5 @@ recent-workspaces 需要持久化到本地文件（`recent-workspaces.json`）�
 
 ## 关联
 
-- 复用 `utils/fs-utils.ts` 的 `atomicWrite`（ADR-0004 跨主题复用既有 infra）
+- 复用 `utils/fs-utils.ts` 的 `atomicWrite`（ADR-0035 跨主题复用既有 infra）
 - INV-4（文件损坏降级 []）、INV-5（getConfigDir 动态化路径）均落此模式

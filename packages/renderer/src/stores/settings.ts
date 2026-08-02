@@ -67,10 +67,10 @@ export const useSettingsStore = defineStore('settings', () => {
   const agents = ref<AgentInfo[]>([])
   const extensions = ref<ExtensionItem[]>([])
   const system = ref<SystemSettings>({ ...DEFAULT_SYSTEM })
-  // ADR-0020 §1 加载路径配置（层 A 勾选/拖动用）：预设候选 + enabled 状态
+  // ADR-0021 §1 加载路径配置（层 A 勾选/拖动用）：预设候选 + enabled 状态
   const skillDirs = ref<SkillDirConfig[]>([])
   const agentDirs = ref<SkillDirConfig[]>([])
-  // ADR-0020 §1 extension 加载路径配置（Phase 4）：与 skill/agent 同构，靠前 = 先加载。
+  // ADR-0021 §1 extension 加载路径配置（Phase 4）：与 skill/agent 同构，靠前 = 先加载。
   // extension 的「优先级」语义因资源类型而异（tool 靠前生效、hook 全部执行），故 UI 措辞用「加载顺序」。
   const extensionDirs = ref<SkillDirConfig[]>([])
   // 默认模型（"provider/modelId" 复合串，与 SessionSummary.modelId 同格式）。
@@ -110,7 +110,7 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   /**
-   * 覆盖 skill 加载路径（ADR-0020 §1 目录级管道）。
+   * 覆盖 skill 加载路径（ADR-0021 §1 目录级管道）。
    * dirs 是启用的路径有序数组（靠前覆盖靠后）。
    * 只负责发请求持久化 + 让后端广播推回权威值（buildDirConfigs 补全预设候选）。
    * 拖拽的即时性由 LoadPaths 的本地状态保证，store 不做乐观更新（避免两套本地状态打架）。
@@ -119,7 +119,7 @@ export const useSettingsStore = defineStore('settings', () => {
     await config.setSkillDirs(dirs)
   }
 
-  /** 覆盖 agent 加载路径（ADR-0020 §1 目录级管道），语义同 setSkillDirs。 */
+  /** 覆盖 agent 加载路径（ADR-0021 §1 目录级管道），语义同 setSkillDirs。 */
   async function setAgentDirs(dirs: string[]): Promise<void> {
     await config.setAgentDirs(dirs)
   }

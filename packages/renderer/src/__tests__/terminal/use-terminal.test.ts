@@ -6,7 +6,7 @@
  *
  * 覆盖：per-session 状态 + spawn/write/resize/kill + enqueueWrite 时序。
  * WS handler（terminal.data/alive/exit 路由）的竞态防护由 useSessionEvents + useSessionScopedState
- * 保证（ADR-0036 已测），本测试聚焦 useTerminal 的编排逻辑。
+ * 保证（ADR-0049 已测），本测试聚焦 useTerminal 的编排逻辑。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/terminal/use-terminal.test.ts
  */

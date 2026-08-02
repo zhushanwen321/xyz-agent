@@ -1,4 +1,4 @@
-# ADR 0041: Browser Drawer 采用 WebContentsView
+# ADR 0054: Browser Drawer 采用 WebContentsView
 
 > Status: Accepted (2026-07-24)
 > 相关：`.xyz-harness/2026-07-24-browser-drawer/spec.md`

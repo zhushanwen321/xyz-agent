@@ -189,7 +189,7 @@ export function onDefaults(handler: (defaultModel: string) => void): () => void 
 
 // ── 动作-ack（状态变更由对应订阅通道推回）──
 /**
- * 目录级管道写入（ADR-0020 §1）：覆盖 discovery.json.skillDirs（有序数组 = 优先级，靠前覆盖靠后）。
+ * 目录级管道写入（ADR-0021 §1）：覆盖 discovery.json.skillDirs（有序数组 = 优先级，靠前覆盖靠后）。
  * 状态变更经 onSkills + onSkillDirs 订阅推回（后端 setSkillDirs 后广播）。
  */
 export function setSkillDirs(dirs: string[]): Promise<void> {

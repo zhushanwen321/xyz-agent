@@ -343,7 +343,7 @@ v6 修订需同步：README.md（加 v6 章节+索引）、design-system.md（Ca
 
 | # | 局部问题 | 重构方向 |
 |---|---------|---------|
-| 局部-1 | useChat 模块级单例状态违反 ADR-0036（`useChat.ts:45,52,66-83` + 8 个同类 composable） | per-session 状态迁入 useChatStore 或 useSessionScopedState 工厂；删除 `reset*ModuleState` |
+| 局部-1 | useChat 模块级单例状态违反 ADR-0049（`useChat.ts:45,52,66-83` + 8 个同类 composable） | per-session 状态迁入 useChatStore 或 useSessionScopedState 工厂；删除 `reset*ModuleState` |
 | 局部-2 | stores 间依赖契约被破坏（`chat-message-effects.ts:55,60` store 互相 import） | 抽独立事件消费层；store 回归纯职责 |
 | 局部-3 | routeInbound 100 行巨型 if-else 路由器 | 改声明式路由表 |
 | 局部-4 | Composer 被 16 个 composable 过度拆碎 | 按变化轴合并为 3 个（Input/Dispatch/Context） |

@@ -1,9 +1,9 @@
-# ADR-0032: Monorepo 结构终态（packages/* + apps/electron + pnpm）
+# ADR-0036: Monorepo 结构终态（packages/* + apps/electron + pnpm）
 
 - **状态**: Accepted（实施中，worktree `refactor-package-structure-pnpm`）
 - **日期**: 2026-07-04（Proposed） · 2026-07-04（Accepted，决策修订：改用 pnpm）
 - **决策者**: @zhushanwen321
-- **关联**: ADR-0018（v3 冷蓝暗色设计系统）、AGENTS.md §10/§12
+- **关联**: ADR-0019（v3 冷蓝暗色设计系统）、AGENTS.md §10/§12
 
 ## 背景
 

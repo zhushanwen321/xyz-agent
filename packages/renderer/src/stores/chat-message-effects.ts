@@ -133,7 +133,7 @@ export interface MessageEffectContext {
  * 签名约定：接收上下文 + sessionId + payload，内部执行该 type 的全部副作用
  * （chunk 状态更新 + lifecycle flag）。返回值无意义（统一 void）。
  *
- * payload 类型：ADR-0015 类型基础。ServerMessageMap 对多数 message.* 用
+ * payload 类型：ADR-0016 类型基础。ServerMessageMap 对多数 message.* 用
  * Record<string, unknown> 占位（未收紧），handler 内用 readString 等安全窄化，
  * 与原 applyChunk 完全一致（不引入 any）。
  */
@@ -189,7 +189,7 @@ function openTasksDrawerOnFirstData(sid: string, hadDataBefore: boolean): void {
   if (!tasksStore.hasData(sid)) return // 写入后仍无数据（守卫，理论上不达）
   // FR-2 sid 守卫：事件归属的 sid === 当前 focusedSessionId 才直接开 drawer（用户正看着）；
   // 否则只置 pendingOpen 标记，用户切回该 session 时由 selectSession 的 consumePendingOpen 消费。
-  // 避免后台 session 的 tasks 事件弹窗干扰用户当前正在看的 session（ADR-0040）。
+  // 避免后台 session 的 tasks 事件弹窗干扰用户当前正在看的 session（ADR-0053）。
   const focusedSid = usePanelStore().focusedSessionId
   if (focusedSid === sid) {
     useSideDrawer().open('tasks')
@@ -567,7 +567,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // display 来自 event-adapter.ts 的 custom message 分支（payload.display，~line 509 透传）。
     // FR-2 依赖 event-adapter 已透传；extension 声明 display:false 的 context 消息据此在渲染层隐藏。
     // display 不能用 readBool（缺失时返回 false），需三态保留：
-    // true/false 显式透传，undefined 安全保留显示（!== false 即显示，ADR-0035 决策点 3）。
+    // true/false 显式透传，undefined 安全保留显示（!== false 即显示，ADR-0048 决策点 3）。
     const display = payload['display'] === true || payload['display'] === false ? payload['display'] : undefined
     const prev = messages.value.get(sid) ?? []
     // role:'system' → messageTurns 产出独立 RenderItem（穿插在 turn 间，不并入 user/assistant turn）

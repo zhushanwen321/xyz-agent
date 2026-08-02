@@ -48,7 +48,7 @@ export function forEachScannedDir(
   }
 }
 
-// atomicWrite 已迁至跨层共享层 utils/fs-utils.ts（ADR 0004）：该函数被 infra 和
+// atomicWrite 已迁至跨层共享层 utils/fs-utils.ts（ADR 0035）：该函数被 infra 和
 // services 共用，无业务语义，不属于任一业务层。scanner 自身用不到它。
 
 /** Infer scan source type from the path's directory conventions. */

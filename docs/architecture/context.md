@@ -149,7 +149,7 @@ L1 Region。main 区在 `view=chat` 时的容器。承载双 Panel 主从模式�
 L2 Module。一个 Panel 内部固定 5 个 zone 自上而下：① panel-header（per-session 元信息）② message-stream（消息流 + 回合折叠）③ progress-zone（单 Session 进度，内嵌 composer 上方）④ composer（输入区 + 工具区）⑤ git-zone（暂存/提交/Diff 入口）。
 
 ### Overview（概览）
-L1 独立 Region（与 Sidebar / Workspace 并列，非 workspace 子视图）。多会话鸟瞰统筹——卡片网格 + 筛选排序 + 后台 agent 聚合。入口由 sidebar 按钮 + ⌘⇧O 触发，激活后覆盖 main 区，sidebar 持久。与 Session List 分工：Session List = 导航切换（紧凑单列），Overview = 统筹监控（信息密集网格）。入口裁决见 [ADR-0022](adr/0022-overview-entry-coverage.md)。
+L1 独立 Region（与 Sidebar / Workspace 并列，非 workspace 子视图）。多会话鸟瞰统筹——卡片网格 + 筛选排序 + 后台 agent 聚合。入口由 sidebar 按钮 + ⌘⇧O 触发，激活后覆盖 main 区，sidebar 持久。与 Session List 分工：Session List = 导航切换（紧凑单列），Overview = 统筹监控（信息密集网格）。入口裁决见 [ADR-0023](../adr/0023-overview-entry-coverage.md)。
 
 > **别名**：`Mission Control`（已废弃，统一用 Overview）、`Panel Grid`（概念被 Overview 吸收，见上）。
 

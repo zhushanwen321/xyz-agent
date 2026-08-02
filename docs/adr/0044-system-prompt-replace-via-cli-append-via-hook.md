@@ -1,4 +1,4 @@
-# 0038: 系统提示词替换走 pi 原生 CLI 核心段替换，追加走 before_agent_start hook
+# 0044: 系统提示词替换走 pi 原生 CLI 核心段替换，追加走 before_agent_start hook
 
 ## 状态
 

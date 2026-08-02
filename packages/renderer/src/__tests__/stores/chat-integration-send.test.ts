@@ -87,7 +87,7 @@ import { useChat } from '@/composables/features/useChat'
 import Composer from '@/components/panel/Composer.vue'
 
 // ── Composer 子组件 stub（参照 composer-three-states.test.ts，最小化 mount 开销）──
-// getSegments 通过 emits 验证器捕获 input payload，用 textToSegments 还原（ADR-0037）。
+// getSegments 通过 emits 验证器捕获 input payload，用 textToSegments 还原（ADR-0043）。
 const lastInputText = ref('')
 const ComposerInputMock = defineComponent({
   name: 'ComposerInput',

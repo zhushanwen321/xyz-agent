@@ -9,7 +9,7 @@
 
     代码块增强（fence 规则覆盖，markdown.ts）：语言标签 + 复制按钮（事件委托）。
 
-    双主题（ADR-0021-B：暗为默认）：shiki defaultColor:false 产出 --shiki-dark(暗)/--shiki-light(亮)
+    双主题（ADR-0022-B：暗为默认）：shiki defaultColor:false 产出 --shiki-dark(暗)/--shiki-light(亮)
     双套 span，由 :root(暗默认) / [data-theme="light"] 的 scoped 样式切换，走 design-tokens 体系。
 
     v-html：shiki + markdown-it(html:false) 的输出是 XSS 安全的——

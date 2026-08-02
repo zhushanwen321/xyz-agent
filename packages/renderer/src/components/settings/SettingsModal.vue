@@ -177,7 +177,7 @@ async function onSystemUpdate(patch: Partial<SystemSettings>) {
 }
 
 /**
- * SkillPage 加载路径变更 → 走 store（写 discovery.json，ADR-0020 §1）。
+ * SkillPage 加载路径变更 → 走 store（写 discovery.json，ADR-0021 §1）。
  * W2 D10 修复：setSkillDirs 是 async（store 内 await config.setSkillDirs），原实现未 await 未 catch，
  * reject 时 unhandled rejection + 静默失败。现 await + try/catch + toast error 反馈（CLAUDE.md 规则 #3）。
  */

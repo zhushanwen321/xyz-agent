@@ -1,9 +1,9 @@
-# ADR-0040：SideDrawer 控制态（isOpen/activeTab/docked）改为 per-session 分区
+# ADR-0053：SideDrawer 控制态（isOpen/activeTab/docked）改为 per-session 分区
 
 - **Status**: Accepted
 - **Date**: 2026-07-23
 - **Topic**: `cw-2026-07-23-sidedrawer-per-session`
-- **Supersedes**: 无（是 [ADR-0036](0036-session-isolation-map-partition.md) 在 SideDrawer 控制态上的具体落地）
+- **Supersedes**: 无（是 [ADR-0049](0049-session-isolation-map-partition.md) 在 SideDrawer 控制态上的具体落地）
 
 ## Context
 
@@ -14,7 +14,7 @@
 1. **跨 session 干扰**：`openTasksDrawerOnFirstData`（`chat-message-effects.ts:175`）在后台 session 的 todo/goal 首次数据到达时，无 `sid === focusedSessionId` 守卫直接 `useSideDrawer().open('tasks')`，在用户正看着的别的 session 上强行弹开 drawer。
 2. **切回不恢复**：drawer 开关态不随 session 记忆。从 A 切走再切回，`isOpen` 是上个 session 残留值，不是 A 该有的状态。没有「该 session 有待打开的 drawer」语义。
 
-ADR-0036 已点名 `SideDrawer.vue` 属 watch 清理派反模式，决策是「迁移到 Map 分区派」。但当时只迁移了 widget 数据态（`drawerState`），**控制态（isOpen/activeTab/docked）仍是全局单例**——本 ADR 补齐这块。
+ADR-0049 已点名 `SideDrawer.vue` 属 watch 清理派反模式，决策是「迁移到 Map 分区派」。但当时只迁移了 widget 数据态（`drawerState`），**控制态（isOpen/activeTab/docked）仍是全局单例**——本 ADR 补齐这块。
 
 ## Decision
 
@@ -48,7 +48,7 @@ Map<sessionId, DrawerControlState>
 
 ## Consequences
 
-- **正面**：跨 session 干扰根治（事件只记 pendingOpen，不强行弹窗）；切回恢复完整 drawer 形态（isOpen + activeTab + docked）；对齐 ADR-0036，消除 watch 清理派反模式的最后据点之一。
+- **正面**：跨 session 干扰根治（事件只记 pendingOpen，不强行弹窗）；切回恢复完整 drawer 形态（isOpen + activeTab + docked）；对齐 ADR-0049，消除 watch 清理派反模式的最后据点之一。
 - **正面**：调用方 API 形态不变（仍是 `useSideDrawer().open(...)`），迁移对 10+ 调用方透明——只是底层从单例 ref 变成 per-session 分区。PanelContainer 从「直接解构单例 ref」改为「传 focusedSessionId 给 composable」。
 - **负面**：docked 进 Map 后，tasks tab 强制 docked 的全局副作用消失——如果用户在 session A tasks tab（docked=true）切到 session B（docked 记忆=false），B 的 drawer 不再被强制 docked。这是正确行为（docked 本就该 per-session），但与旧全局行为不同，需在测试覆盖。
 - **负面**：`resetSideDrawer`（测试隔离用）语义变化——从重置全局单例改为清理所有分区。测试需调整。

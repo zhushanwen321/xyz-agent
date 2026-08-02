@@ -7,7 +7,7 @@
  * - 'dead'：pi 进程异常退出（前端收到 session.exited 后标记）。dead session 在侧栏置灰，
  *   panel 显示「进程已退出」占位，点击「重新打开」触发 restore 重新 spawn pi。
  *
- * 终态（W5，ADR 0036，来自 session_end entry）：
+ * 终态（W5，ADR 0042，来自 session_end entry）：
  * - 'done'：正常完成
  * - 'error'：LLM 出错
  * - 'stopped'：用户 abort / 进程崩溃

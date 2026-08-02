@@ -68,7 +68,7 @@ export const IMAGE_LIMITS = {
 } as const
 
 /**
- * ADR-0020 §2/§3 预设可选 skill/agent 目录候选（UI 「可选目录」的固定来源）。
+ * ADR-0021 §2/§3 预设可选 skill/agent 目录候选（UI 「可选目录」的固定来源）。
  *
  * SSOT：services/skill-dir-config.ts（buildDirConfigs 读取端）与 infra/pi/discovery-store.ts
  * （setSkillDirs/setAgentDirs 写入端）共同 import 此常量，消除本地副本漂移风险。

@@ -48,7 +48,7 @@ import type {
 
 // ── Sub-handler types ──────────────────────────────────────────────
 //
-// [ADR-0033] translate() 入参用 pi-protocol.ts 的 PiEvent 联合类型（真契约）。
+// [ADR-0037] translate() 入参用 pi-protocol.ts 的 PiEvent 联合类型（真契约）。
 // 每个 handler 入参窄化为对应的 Pi*Event interface（如 handleToolExecutionEnd →
 // PiToolExecutionEndEvent）。pi 升级时若新增事件类型，PiEvent 联合的 exhaustive
 // 检查会提示补 handler 或登记到 NULL_EVENTS。
@@ -121,7 +121,7 @@ function handleMessageUpdate(event: PiMessageUpdateEvent, sid: string): PiTransl
  */
 function handleToolExecutionStart(event: PiToolExecutionStartEvent, _sid: string): PiTranslatedEvent[] {
   const toolName = event.toolName
-  // pi 用 args 是规范字段名（pi 从不发 input，ADR-0033）。
+  // pi 用 args 是规范字段名（pi 从不发 input，ADR-0037）。
   const input = event.args
   return [{
     kind: 'tool-call-start',
@@ -136,7 +136,7 @@ function handleToolExecutionStart(event: PiToolExecutionStartEvent, _sid: string
  * EventInterpreter 据此跑 onAfterToolResult hook（改写 output）+ 触发 file_changes baseline diff。
  */
 function handleToolExecutionEnd(event: PiToolExecutionEndEvent, _sid: string): PiTranslatedEvent[] {
-  // pi 用 result 是规范字段名（pi 从不发 output，ADR-0033）。
+  // pi 用 result 是规范字段名（pi 从不发 output，ADR-0037）。
   // 三态判定 + stripAnsi + images/details 提取统一委托 normalizePiToolResult（W1）。
   const raw = event.result
   const { output, outputRaw, details, images } = normalizePiToolResult(raw)
@@ -177,7 +177,7 @@ function handleAgentEnd(event: PiAgentEndEvent, sid: string): PiTranslatedEvent[
       stopReason: 'error',
     }]
   }
-  // pi 事件是强类型契约（ADR-0033）。agent_end.messages 的 usage/stopReason 由 PiAgentEndMessage
+  // pi 事件是强类型契约（ADR-0037）。agent_end.messages 的 usage/stopReason 由 PiAgentEndMessage
   // 覆盖（PiUsage 已镜像 pi 字段名 input/output/cacheRead/cacheWrite）。但 pi 在此还附带
   // responseModel / diagnostics / errorMessage 等运行时字段（超出 PiAgentEndMessage 声明范围，
   // pi AgentMessage 实际形态比声明的 union 更宽）——这些用 as 提取。
@@ -236,7 +236,7 @@ function handleAgentEnd(event: PiAgentEndEvent, sid: string): PiTranslatedEvent[
  * totalTokens 缺失时返回空（纯工具结果 turn 可能无 usage）。
  */
 function handleTurnEndPi(event: PiTurnEndEvent, sid: string): PiTranslatedEvent[] {
-  // pi turn_end 事件把 message 放在顶层 message 字段（ADR-0033 契约，pi 从不发 payload）。
+  // pi turn_end 事件把 message 放在顶层 message 字段（ADR-0037 契约，pi 从不发 payload）。
   const message = event.message
   const usage = message?.usage
   if (!usage?.totalTokens) return []
@@ -446,7 +446,7 @@ function handleExtensionUIRequest(event: PiExtensionUiRequestEvent, sid: string)
 
 /** message_start — role-based routing for non-assistant messages */
 function handleMessageStart(event: PiMessageStartEvent, sid: string): PiTranslatedEvent[] {
-  // pi 事件是强类型契约（ADR-0033），但 message_start.message 含 pi 声明之外的运行时字段
+  // pi 事件是强类型契约（ADR-0037），但 message_start.message 含 pi 声明之外的运行时字段
   // （summary / tokensBefore / fromId / customType / details / display），且 assistant turn 开始时
   // message 缺省。此处局部放宽为 Record 提取这些超范围字段。
   const msg = event.message as unknown as Record<string, unknown> | undefined

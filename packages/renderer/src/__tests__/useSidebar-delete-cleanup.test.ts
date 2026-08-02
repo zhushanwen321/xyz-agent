@@ -127,7 +127,7 @@ describe('useSidebar deleteSession 删 active 后 fallback（W1 / S4）', () => 
   })
 })
 
-describe('useSidebar deleteSession 触发 session-scoped cleanup（W5 / ADR-0036）', () => {
+describe('useSidebar deleteSession 触发 session-scoped cleanup（W5 / ADR-0049）', () => {
   it('U5: deleteSession 调 triggerSessionCleanups(id)，注册的 cleanup 被执行', async () => {
     const scope = effectScope()
     const sidebar = scope.run(() => useSidebar())!

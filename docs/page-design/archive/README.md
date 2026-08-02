@@ -1,6 +1,6 @@
 # archive · pre-v3 历史设计稿
 
-本目录存放 v3 重构（ADR-0018，2026-06）**之前**的 UI 探索稿。v3 冷蓝暗色方向确立后，这些稿已被 [`../v3/`](../v3/) 正式设计区全面取代。
+本目录存放 v3 重构（ADR-0019，2026-06）**之前**的 UI 探索稿。v3 冷蓝暗色方向确立后，这些稿已被 [`../v3/`](../v3/) 正式设计区全面取代。
 
 ## 性质
 
@@ -22,7 +22,7 @@
 
 | 阶段 | 文档 | 状态 |
 |------|------|------|
-| Warm & Soft（已推翻） | ~~`docs/design-system.md`~~（已删除）、~~`docs_DESIGN-SYSTEM.md`~~（已删除） | ADR-0018 废弃 |
+| Warm & Soft（已推翻） | ~~`docs/design-system.md`~~（已删除）、~~`docs_DESIGN-SYSTEM.md`~~（已删除） | ADR-0019 废弃 |
 | v3 冷蓝暗色（当前） | [`../design-tokens.md`](../design-tokens.md) + [`../design-system.md`](../design-system.md) | 生效 SSOT |
 
-详细决策见 [ADR-0018](../../architecture/adr/0018-visual-direction.md)。
+详细决策见 [ADR-0019](../../adr/0019-visual-direction.md)。

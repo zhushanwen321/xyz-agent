@@ -19,7 +19,7 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 
 **规范与设计文档**:
 - [完整编码规范](docs/standards.md) — 组件使用、样式规则、TypeScript 约束
-- [设计 Tokens（v3 SSOT）](docs/page-design/design-tokens.md) — 冷蓝暗色原子值（色/字/距/影/动效），ADR-0018 确立
+- [设计 Tokens（v3 SSOT）](docs/page-design/design-tokens.md) — 冷蓝暗色原子值（色/字/距/影/动效），ADR-0019 确立
 - [设计系统原语层（v3）](docs/page-design/design-system.md) — 组件原语如何使用 tokens
 - [v3 UI 设计稿](docs/page-design/archive/v3/README.md) — L0-L4 递归骨架 spec + draft（shell/sidebar/workspace/panel/overview/settings/overlays/flow-2/flow-3）
 - [领域术语表](docs/architecture/context.md) — Session/Panel/Runtime/v3 UI 结构术语
@@ -147,7 +147,7 @@ pi 的 `SessionManager._persist()` 在收到第一个 **assistant** 消息之前
 
 Runtime 侧：`server.ts` 的 `sendError` 必须传入 `sessionId`（外层 catch 从原始消息 `msg.payload.sessionId` 提取）。不带 `sessionId` 的 error 会被前端所有 panel 忽略。
 
-### 7.6 per-session 状态隔离范式 [ADR-0036]
+### 7.6 per-session 状态隔离范式 [ADR-0049]
 
 **所有持有 per-session 状态的 composable 必须用 `useSessionScopedState` 工厂（`composables/useSessionScopedState.ts`），统一采用 Map 分区派范式。** 禁止实例级状态 + watch(sessionId) 手动清空（脆弱模式）。
 
@@ -194,7 +194,7 @@ state.cleanup(sid)  // 移除指定 sid 分区（手动调用，正常由 delete
 - `useSessionEvents.ts`：订阅编排层，不持有 per-session 业务状态（registrations 是 handler 路由表，随实例销毁清）。不套 Map 分区。
 - `useDetailPane` / `useFileTree` 等：已正确隔离（loadToken / 现有 Map 分区），不在本次重构范围。
 
-详见 [ADR-0036](docs/adr/0036-session-isolation-map-partition.md)。
+详见 [ADR-0049](docs/adr/0049-session-isolation-map-partition.md)。
 
 ### 7.5 对话流状态必须可重开恢复 [HISTORICAL]
 
@@ -258,7 +258,7 @@ lsof -i :1420 -P | grep node
 
 #### pnpm workspace 单步安装（2026-07-04 重构后）
 - 项目使用 pnpm workspace（`pnpm-workspace.yaml`），`pnpm install` 一次装完根 + `packages/*` + `apps/*`
-- `.npmrc` 配置 `node-linker=hoisted` 保证 Electron 兼容性（详见 ADR-0032）
+- `.npmrc` 配置 `node-linker=hoisted` 保证 Electron 兼容性（详见 ADR-0036）
 - `git-cwt` 的 `setup-worktree.sh` 会自动跑 `pnpm install`，手动操作时跑一次即可
 
 #### merge-worktree 脚本的 bare repo 兼容
@@ -361,7 +361,7 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 - **禁止创建 `demos/` 或 `impeccable/` 目录** — 页面设计稿统一放 `docs/page-design/`：v3 正式稿在 `v3/<模块>/draft-*.html`，历史探索稿在 `archive/`。pre-commit hook 自动检查
 - **禁止 symlink 指向外部绝对路径** — 项目内 symlink 白名单仅允许 `../` 相对路径（指向同 workspace 内的兄弟 worktree）。外部绝对路径 symlink 打包后目标不存在，导致运行时资源缺失。pre-commit hook 自动检查
 - **`.xyz-harness/` 目录必须提交且不能删除** — 该目录存放所有 spec/plan 的历史设计文档（按 `YYYY-MM-DD-<slug>/` 命名），是项目决策追溯的重要依据。禁止 `git rm -r .xyz-harness/` 或将其加入 `.gitignore`
-- **`DESIGN.md` 必须保留在项目根目录** — ~~产品设计系统的核心定义文件~~（已 DEPRECATED by ADR-0018，Warm & Soft 被推翻）。真身设计系统见 `docs/page-design/design-tokens.md` + `docs/page-design/design-system.md`（v3 冷蓝暗色）。文件保留作历史参考，不作为当前规范
+- **`DESIGN.md` 必须保留在项目根目录** — ~~产品设计系统的核心定义文件~~（已 DEPRECATED by ADR-0019，Warm & Soft 被推翻）。真身设计系统见 `docs/page-design/design-tokens.md` + `docs/page-design/design-system.md`（v3 冷蓝暗色）。文件保留作历史参考，不作为当前规范
 
 ### 14. 项目 skill 必须自包含 [HISTORICAL]
 
@@ -477,7 +477,7 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 7. **Promise.allSettled** — 独立数据源用 `allSettled`，不用 `all`
 8. **禁止硬编码颜色** — 用 CSS 变量（`var(--accent)`）或语义 Tailwind 类
 9. **禁止魔数间距** — 用标准 Tailwind scale，不用 `p-[17px]`
-10. **border-radius 遵循 v3 design-tokens**（`--radius-sm:3px` / `--radius:8px` / `--radius-lg:12px`）— `rounded-sm`(3px) 默认，`rounded-md`/`rounded-lg`(8/12px) 特殊场景。SSOT 见 [docs/page-design/design-tokens.md](docs/page-design/design-tokens.md)，裁决依据 ADR-0018（旧 Warm 时期的 1px/2px 规则已推翻）。详见 docs/standards.md §7.1
+10. **border-radius 遵循 v3 design-tokens**（`--radius-sm:3px` / `--radius:8px` / `--radius-lg:12px`）— `rounded-sm`(3px) 默认，`rounded-md`/`rounded-lg`(8/12px) 特殊场景。SSOT 见 [docs/page-design/design-tokens.md](docs/page-design/design-tokens.md)，裁决依据 ADR-0019（旧 Warm 时期的 1px/2px 规则已推翻）。详见 docs/standards.md §7.1
 11. **窗口顶部 traffic light 安全区（v3 shell 拓扑）** — v3 重建采用 zcode-demo 拓扑：base 平铺全屏 → sidebar 透明融合 → main 是唯一 float-panel 浮起。traffic light 靠 **aside-region 顶部留白**兼容，而非旧版 padding-left 避让。具体要求：
     - `.aside-region` 恒定 `padding-top: 52px`（安全区），**三平台统一，全屏也保留**（mac 全屏 hover 时系统下拉覆盖层会落进这块留白）
     - mac 红黄绿位置由主进程 `titleBarStyle:'hidden'` + `trafficLightPosition:{x:16,y:26}` 精确控制（**不用 hiddenInset**——inset 模式强制水平内缩，`trafficLightPosition.x` 被系统忽略）；win/linux 自绘圆点 `left:16px top:26px`（TrafficLight.vue，与 mac 同位）
@@ -487,7 +487,7 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
     - win/linux 走 mimic_mac：自绘彩色圆点放左侧模拟 mac，三平台左上视觉统一
     - 唤回侧栏：⌘B + header chrome 按钮（**rail-restore 左缘细条已移除**）
     - 新增或修改任何窗口顶部区域 UI 时，必须读 [v6 shell spec](docs/page-design/v6-spec-shell.html) 确认拓扑一致
-    - 设计决策记录：[ADR 0016](docs/architecture/adr/0016-macos-traffic-light-safe-zone.md)（旧版 padding-left 方案，**已 Superseded**）、v6 shell spec（现版 SSOT，2026-06-18 修正）
+    - 设计决策记录：[ADR 0017](docs/adr/0017-macos-traffic-light-safe-zone.md)（旧版 padding-left 方案，**已 Superseded**）、v6 shell spec（现版 SSOT，2026-06-18 修正）
 12. **reka ScrollAreaViewport 默认 `overflow-x: hidden` [HISTORICAL]** — reka-ui 的 `ScrollAreaViewport` 内联注入 `overflow-x: hidden`，横向溢出的内容被**裁掉不滚动**（非 `scroll` 也非 `auto`）。文件树等需横向滚动看长文件名的场景，必须给 `ScrollArea` 传 `horizontal` prop（`src/components/ui/scroll-area/ScrollArea.vue`，渲染额外横向 ScrollBar + 用 `!overflow-x-auto` 覆盖内联 style）。覆盖用 Tailwind `!` 前缀（`!important` 压过 inline）；scoped `<style>` 的 `:deep()` 不行——会注入 `<style>` 元素破坏 reka Root 的子组件渲染顺序，导致 ScrollBar/Corner 不挂载
 
 ### 自动化检查

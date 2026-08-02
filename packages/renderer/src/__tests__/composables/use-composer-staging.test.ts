@@ -2,7 +2,7 @@
  * useComposerStaging 单元测试。
  *
  * 被测对象：composables/panel/useComposerStaging.ts —— Composer Staging 策略模式的
- * 聚合 + 路由层（ADR-0044）。职责：注册表 + activeStagingType 派生 + 互斥编排 + 路由分发。
+ * 聚合 + 路由层（ADR-0057）。职责：注册表 + activeStagingType 派生 + 互斥编排 + 路由分发。
  *
  * 策略：轻量 mock StagingAction 对象（不引入真实 useComposerForkMode/useComposerHandoffMode，
  * 后者依赖 pinia/channel/i18n 过重）。每个 mock action 持有自己的 activeRef / inProgressRef

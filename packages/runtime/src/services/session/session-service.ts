@@ -278,9 +278,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     opts?: {
       fromMessageTimestamp?: number
       fromMessageRole?: string
-      /** Staging Mode（ADR-0043）：composer 暂存的模型覆盖，优先于源 preset.modelOverride。 */
+      /** Staging Mode（ADR-0056）：composer 暂存的模型覆盖，优先于源 preset.modelOverride。 */
       modelOverride?: string
-      /** Staging Mode（ADR-0043）：composer 暂存的思考等级覆盖，优先于源 preset.thinkingLevel。 */
+      /** Staging Mode（ADR-0056）：composer 暂存的思考等级覆盖，优先于源 preset.thinkingLevel。 */
       thinkingOverride?: string
     },
   ): Promise<SessionSummary> {
@@ -718,7 +718,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    *   1. 复位 isGenerating=false —— 不迁移则正常生成完成后 session 永远 isGenerating=true，
    *      下一条消息被 busy 拒绝（message-dispatcher preemptive reject），用户无法继续对话。
    *   2. tryPersistLabel 兜底 —— turn_end 时 pi flush 尚未完成（文件不存在）则在此补写。
-   *   3. session_end 终态写入（W4，ADR 0036）—— 让 scanner 读到终态，前端无需预加载历史。
+   *   3. session_end 终态写入（W4，ADR 0042）—— 让 scanner 读到终态，前端无需预加载历史。
    *
    * @param stopReason pi agent_end 的 stopReason。
    *   outcome 映射：'error'→error，'aborted'→stopped，其余→done。
@@ -738,7 +738,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   /**
-   * 写 session_end 终态 entry（W4，ADR 0036）。
+   * 写 session_end 终态 entry（W4，ADR 0042）。
    * 3 个终态点复用：正常完成（handleTurnEndSideEffects）/ abort（message-dispatcher）/ 进程崩溃（onSessionExit）。
    * sessionFilePath 不存在时静默跳过（首 turn 前崩溃 / pi 延迟写入窗口）。
    */
@@ -941,7 +941,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // #8 G1：传 cwd 给 EventAdapter（write added/modified 判定 + agent_end git 对账用）
     const adapter = this.adapterFactory(id, send, cwd)
     adapter.attach(client)
-    // Staging Mode（ADR-0043）：modelOverride 优先写入 session 元数据，让前端 composer chip
+    // Staging Mode（ADR-0056）：modelOverride 优先写入 session 元数据，让前端 composer chip
     // 正确显示用户选定的模型（create/fork/handoff 路径透传 effectiveModel）。pi 进程的模型
     // 已由 createSession 时 client options.model 设定，此处只补齐元数据层缺口。
     // 无 override 时 fallback 全局默认（与原行为一致）。

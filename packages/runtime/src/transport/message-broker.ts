@@ -3,7 +3,7 @@
  *
  * 职责：
  * - IMessageBroker 三方法：send（单 ws）/ broadcast（所有 ws）/ sendError（统一 error envelope，D10/P0-B）。
- * - reply（D2）：带请求 id 的回复，E1 泛型化收窄 payload（ADR-0015 双向保护）。
+ * - reply（D2）：带请求 id 的回复，E1 泛型化收窄 payload（ADR-0016 双向保护）。
  * - 8 个 broadcast helper：session/provider/skill/agent/skillDirs/agentDirs 列表广播（settings handler 触发）。
  * - sendInitialState（D7）：新连接推送 8 段 descriptor 驱动的初始状态。
  * - pushId 计数器：所有 push 消息的 id 生成（`push_<n>`）。
@@ -105,7 +105,7 @@ export class ServerMessageBroker implements IMessageBroker {
 
   /**
    * D2 reply 惯用法：发送带请求 id 的回复，消灭 46 处 `send(ws,{type,id:msg.id,payload})` 样板。
-   * E1 泛型化：`type` 字面量收窄 `payload` 到 `ServerMessageMap[T]`，构造侧字段错误在编译期暴露（ADR-0015 双向保护）。
+   * E1 泛型化：`type` 字面量收窄 `payload` 到 `ServerMessageMap[T]`，构造侧字段错误在编译期暴露（ADR-0016 双向保护）。
    */
   reply<T extends ServerMessageType>(ws: WsType, id: string | undefined, type: T, payload: ServerMessageMap[T]): void {
     this.send(ws, { type, id, payload })
@@ -144,15 +144,15 @@ export class ServerMessageBroker implements IMessageBroker {
   private buildAgentListMsg(): ServerMessage {
     return { type: 'config.agents', id: this.nextPushId(), payload: { agents: this.services.configService.loadAgents(this.services.projectRoot) } }
   }
-  /** skill 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
+  /** skill 加载路径配置（ADR-0021 §1 discovery.json SSOT 的 UI 视图）。 */
   private buildSkillDirsMsg(): ServerMessage {
     return { type: 'config.skillDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_SKILL_DIRS, this.services.configService.getSkillDirs()) } }
   }
-  /** agent 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
+  /** agent 加载路径配置（ADR-0021 §1 discovery.json SSOT 的 UI 视图）。 */
   private buildAgentDirsMsg(): ServerMessage {
     return { type: 'config.agentDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_AGENT_DIRS, this.services.configService.getAgentDirs()) } }
   }
-  /** extension 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
+  /** extension 加载路径配置（ADR-0021 §1 discovery.json SSOT 的 UI 视图）。 */
   private buildExtensionDirsMsg(): ServerMessage {
     return { type: 'config.extensionDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_EXTENSION_DIRS, this.services.configService.getExtensionDirs()) } }
   }
@@ -185,15 +185,15 @@ export class ServerMessageBroker implements IMessageBroker {
   broadcastAgentList(): void {
     this.broadcast(this.buildAgentListMsg())
   }
-  /** 广播 skill 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
+  /** 广播 skill 加载路径配置（ADR-0021 §1 discovery.json SSOT 的 UI 视图）。 */
   broadcastSkillDirs(): void {
     this.broadcast(this.buildSkillDirsMsg())
   }
-  /** 广播 agent 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
+  /** 广播 agent 加载路径配置（ADR-0021 §1 discovery.json SSOT 的 UI 视图）。 */
   broadcastAgentDirs(): void {
     this.broadcast(this.buildAgentDirsMsg())
   }
-  /** 广播 extension 加载路径配置（ADR-0020 §1 discovery.json SSOT 的 UI 视图）。 */
+  /** 广播 extension 加载路径配置（ADR-0021 §1 discovery.json SSOT 的 UI 视图）。 */
   broadcastExtensionDirs(): void {
     this.broadcast(this.buildExtensionDirsMsg())
   }

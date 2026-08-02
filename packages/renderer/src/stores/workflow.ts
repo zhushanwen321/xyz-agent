@@ -49,7 +49,7 @@ export type SetMessagesFn = (virtualId: string, messages: Message[]) => void
 export const useWorkflowStore = defineStore('workflow', () => {
   // ── state ──
   /**
-   * 按 sessionId 分区的 workflow 列表（ADR-0036 Map 分区派，同 command.ts / subagent.ts 范式）。
+   * 按 sessionId 分区的 workflow 列表（ADR-0049 Map 分区派，同 command.ts / subagent.ts 范式）。
    * 切走不清、切回直接读 Map 分区；deleteSession 经 clearSession(sid) 精确释放。
    */
   const recordsBySession = ref<Map<string, WorkflowRunRecord[]>>(new Map())
@@ -123,7 +123,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     recordsBySession.value = new Map(recordsBySession.value).set(sessionId, list)
   }
 
-  /** 清除指定 session 的 workflow 列表分区（deleteSession 调，防泄漏，ADR-0036 AC-8） */
+  /** 清除指定 session 的 workflow 列表分区（deleteSession 调，防泄漏，ADR-0049 AC-8） */
   function clearSession(sessionId: string): void {
     if (!recordsBySession.value.has(sessionId)) return
     const next = new Map(recordsBySession.value)
@@ -343,7 +343,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     getViewingAgentCallId,
     getActiveAgentCallVirtualId,
     getCurrentWorkflow,
-    // per-session 分区读写（ADR-0036 Map 分区派）
+    // per-session 分区读写（ADR-0049 Map 分区派）
     recordsOf,
     getRecordsBySession,
     hasRunningOrPaused,

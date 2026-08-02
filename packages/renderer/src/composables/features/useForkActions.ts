@@ -99,7 +99,7 @@ export function useForkActions(focusedSessionId: Ref<string | null>) {
       messageTimestamp: forkMsg?.timestamp,
       messageRole: forkMsg?.role,
       includeFrom: true,
-      // Staging Mode（ADR-0043）：composer 暂存的模型覆盖，优先于源 preset。
+      // Staging Mode（ADR-0056）：composer 暂存的模型覆盖，优先于源 preset。
       modelOverride: staging?.modelOverride,
       thinkingOverride: staging?.thinkingOverride,
     })

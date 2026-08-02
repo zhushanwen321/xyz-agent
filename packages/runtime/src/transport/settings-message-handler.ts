@@ -101,7 +101,7 @@ export class SettingsMessageHandler {
         return true
       }
       case 'config.setSkillDirs': {
-        // ADR-0020 §1 目录级管道：覆盖 discovery.json.skillDirs（有序数组 = 优先级）
+        // ADR-0021 §1 目录级管道：覆盖 discovery.json.skillDirs（有序数组 = 优先级）
         this.ctx.configService.setSkillDirs(msg.payload.dirs)
         this.ctx.reply(ws, msg.id, 'config.skillDirs', { dirs: msg.payload.dirs.map((path) => ({ path, enabled: true })) })
         // 触发 SkillRegistry 重建（close 旧 watcher → 重扫 globalCache → 重挂 watcher 含新路径）+ 清 projectCache。
@@ -133,14 +133,14 @@ export class SettingsMessageHandler {
         return true
       }
       case 'config.setSkill': {
-        // @deprecated ADR-0020 §5：保留兼容期，走 deprecated config-service 路径
+        // @deprecated ADR-0021 §5：保留兼容期，走 deprecated config-service 路径
         this.ctx.configService.upsertSkill(msg.payload.skill)
         this.ctx.reply(ws, msg.id, 'config.skillUpdated', { skill: msg.payload.skill, success: true })
         this.ctx.broadcastSkillList()
         return true
       }
       case 'config.deleteSkill': {
-        // @deprecated ADR-0020 §5：保留兼容期
+        // @deprecated ADR-0021 §5：保留兼容期
         this.ctx.configService.deleteSkill(msg.payload.skillId)
         this.ctx.reply(ws, msg.id, 'config.skillDeleted', { skillId: msg.payload.skillId, success: true })
         this.ctx.broadcastSkillList()
@@ -195,7 +195,7 @@ export class SettingsMessageHandler {
         return true
       }
       case 'config.setAgentDirs': {
-        // ADR-0020 §1 目录级管道：覆盖 discovery.json.agentDirs（有序数组 = 优先级）
+        // ADR-0021 §1 目录级管道：覆盖 discovery.json.agentDirs（有序数组 = 优先级）
         this.ctx.configService.setAgentDirs(msg.payload.dirs)
         this.ctx.reply(ws, msg.id, 'config.agentDirs', { dirs: msg.payload.dirs.map((path) => ({ path, enabled: true })) })
         this.ctx.broadcastAgentList()
@@ -203,21 +203,21 @@ export class SettingsMessageHandler {
         return true
       }
       case 'config.setAgent': {
-        // @deprecated ADR-0020 §5：保留兼容期
+        // @deprecated ADR-0021 §5：保留兼容期
         this.ctx.configService.upsertAgent(msg.payload.agent)
         this.ctx.reply(ws, msg.id, 'config.agentUpdated', { agent: msg.payload.agent, success: true })
         this.ctx.broadcastAgentList()
         return true
       }
       case 'config.setExtensionDirs': {
-        // ADR-0020 §1 目录级管道：覆盖 discovery.json.extensionDirs（有序数组 = 优先级）
+        // ADR-0021 §1 目录级管道：覆盖 discovery.json.extensionDirs（有序数组 = 优先级）
         this.ctx.configService.setExtensionDirs(msg.payload.dirs)
         this.ctx.reply(ws, msg.id, 'config.extensionDirs', { dirs: msg.payload.dirs.map((path) => ({ path, enabled: true })) })
         this.ctx.broadcastExtensionDirs()
         return true
       }
       case 'config.deleteAgent': {
-        // @deprecated ADR-0020 §5：保留兼容期
+        // @deprecated ADR-0021 §5：保留兼容期
         this.ctx.configService.deleteAgent(msg.payload.agentId)
         this.ctx.reply(ws, msg.id, 'config.agentDeleted', { agentId: msg.payload.agentId, success: true })
         this.ctx.broadcastAgentList()

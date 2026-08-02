@@ -217,7 +217,7 @@ const forceWorking = computed(() => {
 const isSessionActive = useSessionActive(sessionId, forceWorking)
 
 /** 扁平消息 → 渲染项（turn + system 提示行穿插，纯函数）。
- *  filterDisplayableMessages 过滤 display:false 的 custom message（ADR-0035，读 display 字段非黑名单）。 */
+ *  filterDisplayableMessages 过滤 display:false 的 custom message（ADR-0041，读 display 字段非黑名单）。 */
 const renderItems = computed(() =>
   toRenderItems(filterDisplayableMessages(currentMessages.value), forceWorking.value),
 )

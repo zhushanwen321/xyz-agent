@@ -39,7 +39,7 @@ export function useHandoffActions(focusedSessionId: Ref<string | null>) {
    * 置 handingOff=true 给 UI 即时反馈；完成由 useHandoffEffect 订阅 session.handoffComplete 复位 + 跳转。
    * 失败时复位 handingOff + rethrow（调用方决定 toast 反馈，参照 forkSession 的 rethrow 模式）。
    *
-   * Staging Mode（ADR-0043）：staging 传 composer 暂存的模型/thinking 覆盖，用于新 session 创建。
+   * Staging Mode（ADR-0056）：staging 传 composer 暂存的模型/thinking 覆盖，用于新 session 创建。
    * 源 session turn 仍用源 session 自身模型，不受 override 影响。
    *
    * @param srcSessionId 源 session（runtime 从其 agent_end 提取文档）

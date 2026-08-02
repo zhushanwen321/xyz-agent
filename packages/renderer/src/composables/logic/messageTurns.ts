@@ -51,7 +51,7 @@ export function renderKey(item: RenderItem): string {
  *  agent 仍能读到；此处仅过滤渲染，不丢消息（AGENTS.md 规则 7.5）。 */
 const HIDDEN_NOTIFY_CUSTOM_TYPES = new Set(['subagent-bg-notify', 'workflow-result'])
 
-/** 过滤掉不在对话流展示的消息（ADR-0035：按 pi CustomMessage.display 字段过滤）。
+/** 过滤掉不在对话流展示的消息（ADR-0048：按 pi CustomMessage.display 字段过滤）。
  *  extension 经 pi sendMessage 注入 custom message 时声明 display（pi 协议必填 boolean）：
  *  - display:false = 隐藏（goal/todo extension 的 <goal_context>/<todo_context> 上下文提示，
  *    对 AI 有用但对用户是噪声，状态已由 Tasks tab 展示）

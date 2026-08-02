@@ -86,7 +86,7 @@ export function useSessionEvents(sessionIdRef: Ref<string | null | undefined>): 
     // handler 闭包捕获订阅时 sid 参数，分发时透传给每个命中 handler。
     // 关键：即使 watch(sessionId) 的 flush:pre 异步退订窗口内有旧 sid 的迟到消息进入此 handler，
     // handler 传入的仍是「订阅时 sid」（本闭包的 sid 形参），调用方用此 sid 调 updateFor(sid)
-    // 写入「消息所属 sid」分区，不污染新 sid 分区——从结构上消除 M1 竞态（ADR-0036）。
+    // 写入「消息所属 sid」分区，不污染新 sid 分区——从结构上消除 M1 竞态（ADR-0049）。
     unsub = events.on(sid, (msg) => {
       for (const reg of registrations) {
         if (reg.types.has(msg.type)) reg.handler(msg, sid)

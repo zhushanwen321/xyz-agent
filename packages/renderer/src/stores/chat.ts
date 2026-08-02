@@ -355,7 +355,7 @@ export const useChatStore = defineStore('chat', () => {
   /** 按 sessionId 分区的消息表（UC-2 隔离） */
   // W1: shallowRef——messages 更新全部走 commitMessages（新 Map + set + 赋值 .value），
   // 不再用 messages.value.set（shallowRef 下 Map mutation 不触发响应式）。
-  // 消除万级深 proxy（每条 Message 的嵌套对象不再被代理），降低长对话内存与 GC 压力（ADR 0034）。
+  // 消除万级深 proxy（每条 Message 的嵌套对象不再被代理），降低长对话内存与 GC 压力（ADR 0039）。
   const messages = shallowRef<Map<string, Message[]>>(new Map())
   /** 已 hydrate 的 session（避免切换时重复注入历史） */
   const hydrated = ref<Set<string>>(new Set())
@@ -408,7 +408,7 @@ export const useChatStore = defineStore('chat', () => {
   // ── 派生态（computed scan，D-005，零手动维护）──
 
   /**
-   * 当前所有含 streaming assistant 消息的 session 集合（W2，ADR 0035）。
+   * 当前所有含 streaming assistant 消息的 session 集合（W2，ADR 0041）。
    *
    * computed 派生 Set——单一真相源，物理不可撕裂（任何 messages 写入路径自动覆盖，
    * 含 13+ 处写入点 + 3 个边界点 truncateFrom/disposeSession/hydrate）。messages 变化时
@@ -439,7 +439,7 @@ export const useChatStore = defineStore('chat', () => {
   /**
    * 指定 session 是否有 streaming assistant 实体（派生，无 setter）。
    * 不变式：`isGenerating(sid) ≡ ∃ m ∈ messages[sid], m.role === 'assistant' && m.status === 'streaming'`
-   * W2：改用 streamingSessionIds computed 的 O(1) has 查询（ADR 0035），
+   * W2：改用 streamingSessionIds computed 的 O(1) has 查询（ADR 0041），
    * 取代每次调用 O(n) list.some 扫描。不变式逻辑完全相同，仅加缓存层。
    *
    * [B1] 仅反映 assistant streaming——bash 消息（role:'system'）不计入，确保纯 bash 执行
@@ -531,7 +531,7 @@ export const useChatStore = defineStore('chat', () => {
     prependHistoryMut(messages, sessionId, truncateToolOutputBatch(fullHistory.map((m) => ({ ...m }))))
   }
 
-  /** 追加 user 消息（Segment[]，ADR-0037）。返回 id：useChat 用作 clientUuid 建立重开回填映射。 */
+  /** 追加 user 消息（Segment[]，ADR-0043）。返回 id：useChat 用作 clientUuid 建立重开回填映射。 */
   function appendUser(sessionId: string, segments: Segment[]): string {
     const prev = messages.value.get(sessionId) ?? []
     const id = `u-${crypto.randomUUID()}`

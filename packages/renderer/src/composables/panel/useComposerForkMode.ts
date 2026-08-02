@@ -33,7 +33,7 @@ interface ForkDeps {
   clearInput: () => void
   /** 发送失败时恢复草稿到输入区 */
   restoreInput: (text: string) => void
-  /** Staging Mode（ADR-0043）：进入暂存态（快照模型/thinking） */
+  /** Staging Mode（ADR-0056）：进入暂存态（快照模型/thinking） */
   enterStagingMode: () => void
   /** Staging Mode：退出暂存态（清空快照，恢复常规态） */
   exitStagingMode: () => void
@@ -64,7 +64,7 @@ export function useComposerForkMode(
   handleForkSend: (text: string) => Promise<boolean>
   /**
    * 包装成 StagingAction（fork 实现），供 useComposerStaging 注册消费。
-   * 不改变现有 forkMode/enterForkMode 等 expose 契约（仅追加 adapter，对齐 ADR-0044）。
+   * 不改变现有 forkMode/enterForkMode 等 expose 契约（仅追加 adapter，对齐 ADR-0057）。
    */
   asStagingAction: () => StagingAction
 } {
@@ -79,7 +79,7 @@ export function useComposerForkMode(
   const forkSource = ref<{ srcSessionId: string; fromMessageId: string } | null>(null)
 
   function enterForkMode(srcSessionId: string, fromMessageId: string): void {
-    // Staging Mode（ADR-0043）：快照当前模型/thinking，进入暂存态
+    // Staging Mode（ADR-0056）：快照当前模型/thinking，进入暂存态
     deps.enterStagingMode()
     forkSource.value = { srcSessionId, fromMessageId }
     forkMode.value = true
@@ -139,7 +139,7 @@ export function useComposerForkMode(
     deps.clearInput()
     deps.setSending(true)
     try {
-      // Staging Mode（ADR-0043）：透传暂存的模型/thinking 配置给新 session
+      // Staging Mode（ADR-0056）：透传暂存的模型/thinking 配置给新 session
       const staging = deps.getStagingConfig()
       await forkSessionAsk(srcSessionId, fromMessageId, text, staging)
     } catch (e) {
@@ -164,7 +164,7 @@ export function useComposerForkMode(
   }
 
   /**
-   * 包装成 StagingAction（fork 实现，ADR-0044）。
+   * 包装成 StagingAction（fork 实现，ADR-0057）。
    *
    * adapter 层：把 forkMode/enterForkMode/exitForkMode/handleForkSend/handleForkEsc/
    * forkBoxClass/forkPlaceholder 收敛为单一策略对象，供 useComposerStaging 聚合路由。

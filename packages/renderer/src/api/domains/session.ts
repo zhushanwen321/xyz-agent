@@ -52,7 +52,7 @@ export function switchSession(sessionId: string): Promise<void> {
  * Fork session：从 srcSessionId 截断到 fromPiEntryId，创建新 session（独立 pi 进程）。
  * reply 复用 session.created，解包 .session。
  *
- * Staging Mode（ADR-0043）：modelOverride/thinkingOverride 来自 composer 暂存态，
+ * Staging Mode（ADR-0056）：modelOverride/thinkingOverride 来自 composer 暂存态，
  * 优先于源 session preset 的对应字段。
  */
 export async function fork(
@@ -200,7 +200,7 @@ export function subagentAction(
  * reply sanitize 后拼到 handoff prompt 末尾告知 agent 下一 session 关注点。完成经独立通道 session.handoffComplete 广播（effect 层订阅跳转），
  * reply 是 message.status ack（前端不读 payload，等广播）。
  *
- * Staging Mode（ADR-0043）：modelOverride/thinkingOverride 来自 composer 暂存态的模型选择，
+ * Staging Mode（ADR-0056）：modelOverride/thinkingOverride 来自 composer 暂存态的模型选择，
  * 用于新 session 创建（源 session turn 仍用源 session 自身模型，不受 override 影响）。
  */
 export function handoff(

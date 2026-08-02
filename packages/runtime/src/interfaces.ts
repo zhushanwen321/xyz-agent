@@ -188,9 +188,9 @@ export interface ISessionService {
     opts?: {
       fromMessageTimestamp?: number
       fromMessageRole?: string
-      /** Staging Mode（ADR-0043）：composer 暂存的模型覆盖，优先于源 preset.modelOverride。 */
+      /** Staging Mode（ADR-0056）：composer 暂存的模型覆盖，优先于源 preset.modelOverride。 */
       modelOverride?: string
-      /** Staging Mode（ADR-0043）：composer 暂存的思考等级覆盖，优先于源 preset.thinkingLevel。 */
+      /** Staging Mode（ADR-0056）：composer 暂存的思考等级覆盖，优先于源 preset.thinkingLevel。 */
       thinkingOverride?: string
     },
   ): Promise<SessionSummary>
@@ -256,7 +256,7 @@ export interface IConfigService {
   deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } }
   getProvider(providerId: string): { apiKey?: string; name?: string; type?: string; baseUrl?: string; models?: unknown[]; enabled?: boolean } | undefined
   updateToolPermissions(permissions: Record<string, string>): void
-  // ── Skill/Agent 加载路径（ADR-0020 §1 discovery.json SSOT）──
+  // ── Skill/Agent 加载路径（ADR-0021 §1 discovery.json SSOT）──
   /** 覆盖 skillDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json + 投影 settings.json。 */
   setSkillDirs(dirs: string[]): void
   /** 读取 skillDirs（有序数组）。 */
@@ -273,15 +273,15 @@ export interface IConfigService {
   migrateSettingsSkillsToDiscovery(): void
   loadSkills(projectRoot: string): SkillInfo[]
   saveSkills(projectRoot: string, skills: SkillInfo[]): void
-  /** @deprecated ADR-0020 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
+  /** @deprecated ADR-0021 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
   upsertSkill(skill: SkillInfo): void
-  /** @deprecated ADR-0020 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
+  /** @deprecated ADR-0021 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
   deleteSkill(skillId: string): void
   loadAgents(projectRoot: string): AgentInfo[]
   saveAgents(projectRoot: string, agents: AgentInfo[]): void
-  /** @deprecated ADR-0020 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
+  /** @deprecated ADR-0021 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
   upsertAgent(agent: AgentInfo): void
-  /** @deprecated ADR-0020 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
+  /** @deprecated ADR-0021 §5：目录级管道模型，无文件级 CRUD。保留为兼容 no-op。 */
   deleteAgent(agentId: string): void
   scanSkills(sources: string[], existingIds: Set<string>): ScannedSkillInfo[]
   scanAgents(sources: string[], existingIds: Set<string>): ScannedAgentInfo[]
@@ -316,7 +316,7 @@ export interface IConfigService {
   getPiAgentDir(): string
   /** xyz-agent 配置根目录（~/.xyz-agent/，plugins/session-data 所在地）。 */
   getConfigDir(): string
-  // ── System prompt config（FR-6/FR-7，ADR-0038）──
+  // ── System prompt config（FR-6/FR-7，ADR-0044）──
   /** 读取 system-prompt.json。损坏时 corrupted=true 且返回默认配置。 */
   getSystemPromptConfig(): { config: SystemPromptConfig; corrupted: boolean }
   /** 写入 system-prompt.json。replace.prompt 超长（>SYSTEM_PROMPT_MAX_LENGTH）返回 ok:false + error，不写盘。 */

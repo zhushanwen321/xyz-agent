@@ -126,7 +126,7 @@
 
 ### R5: Overview → PanelGrid
 
-> ⚠️ **过时（v3 重构推翻，2026-06-20）**：v3 把 Overview 升格为 **独立 L1 Region**（与 Sidebar/Workspace 并列），保留 `Overview` 术语；`PanelGrid` 概念废弃（窗口内最多双 Panel，不再需要缩略图网格，鸟瞰能力收敛到 Overview）。真身重建时用 `Overview`，组件目录 `components/overview/`。详见 [ADR-0022](adr/0022-overview-entry-coverage.md)。
+> ⚠️ **过时（v3 重构推翻，2026-06-20）**：v3 把 Overview 升格为 **独立 L1 Region**（与 Sidebar/Workspace 并列），保留 `Overview` 术语；`PanelGrid` 概念废弃（窗口内最多双 Panel，不再需要缩略图网格，鸟瞰能力收敛到 Overview）。真身重建时用 `Overview`，组件目录 `components/overview/`。详见 [ADR-0023](../adr/0023-overview-entry-coverage.md)。
 
 **范围**: ~~组件文件名、settings store 中的 overview 相关变量~~（方向反转，保留 overview）
 

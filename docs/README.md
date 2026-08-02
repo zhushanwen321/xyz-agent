@@ -21,7 +21,7 @@ xyz-agent 的文档统一存放于 `docs/`。按内容性质分目录，全项�
 | 问题 | 去向 |
 |------|------|
 | 全项目通用的架构/规范/排错？ | 根级 `*.md` |
-| 架构设计、分层、不可逆决策？ | `architecture/`（决策进 `architecture/adr/`） |
+| 架构设计、分层、不可逆决策？ | `architecture/`（决策进 `adr/`） |
 | 前端视觉/组件/页面设计？ | `page-design/` |
 | 某次重构的 spec/plan/test/retrospect？ | `.xyz-harness/<date>-<slug>/`（**不进 docs**） |
 | 外部/竞品/技术调研？ | `research/<topic>/` |

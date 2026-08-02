@@ -21,7 +21,7 @@ import { isAbsolute, join, resolve } from 'node:path'
 import { expandHome } from '../utils/path-utils.js'
 
 /**
- * 强制·项目 skill 目录（ADR-0020 §1.1 桥接层硬编码，项目相对路径，最高优先）。
+ * 强制·项目 skill 目录（ADR-0021 §1.1 桥接层硬编码，项目相对路径，最高优先）。
  * 存在则扫，resolve 基准是用户当前项目 cwd（projectRoot）。
  */
 export const FORCED_PROJECT_SKILL_DIR = '.xyz-agent/skills'

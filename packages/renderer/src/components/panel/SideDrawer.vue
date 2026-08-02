@@ -304,7 +304,7 @@ const activeTabMeta = computed(() => tabs.value.find((tab) => tab.key === props.
 
 /**
  * widget/status 缓冲 + extension 事件订阅编排已抽到 useDrawerWidgetBuffers（关注点分离 +
- * `<script setup>` 行数控制）。composable 内部按 ADR-0036 W4 Map 分区派管理 per-session 状态，
+ * `<script setup>` 行数控制）。composable 内部按 ADR-0042 W4 Map 分区派管理 per-session 状态，
  * onMessage handler 调 updateFor(sid) 写订阅时 sid 分区（M1 竞态修复）。本组件只消费四个 computed。
  */
 const { activeGuiComponent, activeLines, activeLinesMeta, statusEntries } = useDrawerWidgetBuffers(

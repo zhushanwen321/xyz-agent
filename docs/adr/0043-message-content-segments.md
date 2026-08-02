@@ -1,4 +1,4 @@
-# ADR-0037: Message.content 重构为 Segment[] 结构化模型
+# ADR-0043: Message.content 重构为 Segment[] 结构化模型
 
 - **状态**: Accepted
 - **日期**: 2026-07-16

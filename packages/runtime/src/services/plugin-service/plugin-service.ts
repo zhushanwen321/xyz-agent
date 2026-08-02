@@ -102,7 +102,7 @@ export class PluginService implements IPluginService {
     // UI 请求队列：广播走 broadcastFn（优先）或 broker.broadcast（回退），与原实现一致。
     this.uiRequestQueue = new UiRequestQueue((type, payload) => this.broadcastOrBroker(type, `ui_${payload.requestId}`, payload))
 
-    // Status bar 注册表：广播保持 `plugin:statusBarUpdate` 契约（ADR-0023）。
+    // Status bar 注册表：广播保持 `plugin:statusBarUpdate` 契约（ADR-0015）。
     this.statusBarRegistry = new StatusBarRegistry((payload) => this.broker.broadcast({
       type: 'plugin:statusBarUpdate', id: `sb_${Date.now()}`, payload,
     } as ServerMessage))

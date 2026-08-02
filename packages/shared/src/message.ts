@@ -217,7 +217,7 @@ export interface Message {
   id: string
   role: MessageRole
   /**
-   * 消息内容。按 role 语义区分（ADR-0037）：
+   * 消息内容。按 role 语义区分（ADR-0043）：
    * - user message → Segment[]（badge 载体，含 skill/file/mention 结构化片段）
    * - assistant message → string（流式 text_delta 热路径）
    * - system/custom message → string（提示文本）
@@ -257,10 +257,10 @@ export interface Message {
   /** pi CustomMessage 的 customType（识别来源扩展，如 "subagent-bg-notify"）。
    *  来自 pi sendMessage 注入的 custom message，role 还原为 system。 */
   customType?: string
-  /** pi CustomMessage 的 display 字段透传（ADR-0035）。
+  /** pi CustomMessage 的 display 字段透传（ADR-0048）。
    *  pi 协议层是必填 boolean：false=隐藏不渲染，true=用区别于 user message 的样式渲染。
    *  xyz-agent 当前只消费 false 分支（filterDisplayableMessages 按 `!== false` 过滤），
-   *  true 与 undefined 在渲染上等价（ADR-0035 决策点 3 scope 只做过滤，未实现区别样式）。
+   *  true 与 undefined 在渲染上等价（ADR-0048 决策点 3 scope 只做过滤，未实现区别样式）。
    *  shared.Message 是聚合类型含非 custom 消息，故 optional——
    *  消费侧（renderer filterDisplayableMessages）按 `display !== false` 判断：
    *  仅 false 隐藏，undefined/true 都显示（undefined 来自无 customType 的普通消息或旧数据）。 */

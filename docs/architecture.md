@@ -53,7 +53,7 @@ Electron 主进程，Node 环境。负责原生生命周期与跨进程编排。
 
 | 模块 | 位置 | 职责 |
 |------|------|------|
-| 窗口管理 | `window/window-manager.ts` + `window-factory.ts` | 多 panel 窗口树、traffic light 安全区（[ADR-0016](architecture/adr/0016-macos-traffic-light-safe-zone.md)） |
+| 窗口管理 | `window/window-manager.ts` + `window-factory.ts` | 多 panel 窗口树、traffic light 安全区（[ADR-0017](adr/0017-macos-traffic-light-safe-zone.md)） |
 | Runtime 监管 | `supervisor/runtime-supervisor.ts` | spawn/重启 Runtime 子进程、健康检查、端口发现 |
 | 安全环境 | `supervisor/safe-env.ts` | 环境变量白名单过滤（[shared/constants.ts](../packages/shared/src/constants.ts) SSOT） |
 | 快捷键 | `shortcuts/shortcut-registry.ts` | 全局/窗口快捷键 |
@@ -68,7 +68,7 @@ Node.js WebSocket 服务，三层架构（端口-适配器模式，[ADR 驱动](
 | transport | `src/transport/` (7 file) | 路由 ClientMessage → service，管理 WS，广播 ServerMessage | 零业务逻辑 |
 | services | `src/services/` (49 file) | 业务逻辑 + 定义 `ports/` 接口（config/session/pi-engine/model/installer/tree/workspace 七域） | **零 infra 直连**，经 ports 访问 |
 
-> **workspace 域（2026-07-03 新增）**：`services/workspace/`（workspace-service 编排 + recent-workspaces-store LRU/去重/持久化）。pull-only RPC（`workspace.listRecent`，不做 broadcast），写入时机挂在 `session-lifecycle.create` + `message-dispatcher.sendPrompt`。详见 [ADR-0003](adr/0003-recent-workspaces-pull-only-rpc.md) / [ADR-0004](adr/0004-recent-workspaces-writeback-atomicwrite.md)。
+> **workspace 域（2026-07-03 新增）**：`services/workspace/`（workspace-service 编排 + recent-workspaces-store LRU/去重/持久化）。pull-only RPC（`workspace.listRecent`，不做 broadcast），写入时机挂在 `session-lifecycle.create` + `message-dispatcher.sendPrompt`。详见 [ADR-0034](adr/0034-recent-workspaces-pull-only-rpc.md) / [ADR-0035](adr/0035-recent-workspaces-writeback-atomicwrite.md)。
 | infra | `src/infra/` (18 file) | 外部系统连接器（pi RPC / npm / git / HTTP），实现 ports 接口 | 唯一与 pi/npm/git 打交道的位置 |
 
 组合根 `index.ts` 构造 infra 实现 → 注入 services → 启动 server。依赖方向：`transport → services → ports ← infra`。
@@ -89,9 +89,9 @@ Node.js WebSocket 服务，三层架构（端口-适配器模式，[ADR 驱动](
 | # | 约束 | 来源 |
 |---|------|------|
 | 1 | emit 只传单个 payload 对象 | [CLAUDE.md §关键规则](../CLAUDE.md) |
-| 2 | Session 隔离：消息必须带 sessionId，缺失则忽略 | ADR-0015 + 三层隔离机制 |
+| 2 | Session 隔离：消息必须带 sessionId，缺失则忽略 | ADR-0016 + 三层隔离机制 |
 | 3 | pi 适配层不信任外部格式：EventAdapter/session-pool 是唯一适配点 | design.md D5 |
-| 4 | 数据目录隔离：`~/.xyz-agent/` 与 `~/.pi/agent/` 完全隔离 | [ADR-0009](architecture/adr/0009-xyz-agent-data-dir-isolation-from-pi.md) |
+| 4 | 数据目录隔离：`~/.xyz-agent/` 与 `~/.pi/agent/` 完全隔离 | [ADR-0009](adr/0009-xyz-agent-data-dir-isolation-from-pi.md) |
 | 5 | 路径白名单动态化：禁止硬编码 `~/.xyz-agent`，从 `getConfigDir()` 推导 | 安全规则 |
 | 6 | Runtime services 零 infra 直连，经 ports 接口 | runtime 三层铁律 |
 
@@ -109,26 +109,26 @@ Node.js WebSocket 服务，三层架构（端口-适配器模式，[ADR 驱动](
 
 - [v3 UI 设计稿](../page-design/archive/v3/README.md) — L0–L4 递归骨架 + 22 个 draft
 - [设计 Tokens（SSOT）](../page-design/design-tokens.md) · [组件原语层](../page-design/design-system.md)
-- v3 视觉/交互 ADR 0018–0022（见下）
+- v3 视觉/交互 ADR 0019–0023（见下）
 
 ## 架构决策（ADR）
 
-[ADR 目录](architecture/adr/) — 共 27 条（0001–0027）。重要的几条：
+[ADR 目录](adr/) — 共 57 条（0001–0057）。重要的几条：
 
-- [ADR-0005 Bun 编译二进制 vs npm 包](architecture/adr/0005-bun-binary-over-npm-package.md)
-- [ADR-0009 xyz-agent 数据目录与 pi 隔离](architecture/adr/0009-xyz-agent-data-dir-isolation-from-pi.md)
-- [ADR-0015 Event-bus 类型加固](architecture/adr/0015-event-bus-typed-severmessagetype.md)
-- [ADR-0018 视觉方向收敛到冷蓝暗色](architecture/adr/0018-visual-direction.md)（推翻旧 Warm & Soft）
-- [ADR-0021 默认主题（暗色冷蓝）](architecture/adr/0021-default-theme-direction.md)
-- [ADR-0024 filechanges 通道](architecture/adr/0024-filechanges-channel.md)
-- [ADR-0025 File View 全项目文件树](architecture/adr/0025-file-view-full-project-tree.md)
-- [ADR-0026 文件树懒加载策略](architecture/adr/0026-file-tree-lazy-loading.md)
-- [ADR-0027 FileService 三层 + ignore 纯函数](architecture/adr/0027-fileservice-three-layer.md)
+- [ADR-0005 Bun 编译二进制 vs npm 包](adr/0005-bun-binary-over-npm-package.md)
+- [ADR-0009 xyz-agent 数据目录与 pi 隔离](adr/0009-xyz-agent-data-dir-isolation-from-pi.md)
+- [ADR-0016 Event-bus 类型加固](adr/0016-event-bus-typed-severmessagetype.md)
+- [ADR-0019 视觉方向收敛到冷蓝暗色](adr/0019-visual-direction.md)（推翻旧 Warm & Soft）
+- [ADR-0022 默认主题（暗色冷蓝）](adr/0022-default-theme-direction.md)
+- [ADR-0024 filechanges 通道](adr/0024-filechanges-channel.md)
+- [ADR-0025 File View 全项目文件树](adr/0025-file-view-full-project-tree.md)
+- [ADR-0026 文件树懒加载策略](adr/0026-file-tree-lazy-loading.md)
+- [ADR-0027 FileService 三层 + ignore 纯函数](adr/0027-fileservice-three-layer.md)
 
 ## 子系统架构
 
 - [Plugin 子系统](architecture/subsystems/plugin/README.md) — Worker Thread 隔离 + Hook 链 + Tool RPC 路由
-- **文件树子系统**（FileService + fileTreeStore）— 三层架构（[ADR-0027](architecture/adr/0027-fileservice-three-layer.md)）+ 懒加载（[ADR-0026](architecture/adr/0026-file-tree-lazy-loading.md)）。runtime FileService 编排（cwd 守门/越界校验/ignore 双模式）→ 前端 fileTreeStore（D-021 per-session 4 facet + setNodeState 原子入口）→ FileView/FileTreeRow 渲染 + DetailPane 预览（禁 v-html）。工程约束见 [NFR.md](NFR.md) `[from: 2026-06-28-sidebar-project-file-tree §子系统]`
+- **文件树子系统**（FileService + fileTreeStore）— 三层架构（[ADR-0027](adr/0027-fileservice-three-layer.md)）+ 懒加载（[ADR-0026](adr/0026-file-tree-lazy-loading.md)）。runtime FileService 编排（cwd 守门/越界校验/ignore 双模式）→ 前端 fileTreeStore（D-021 per-session 4 facet + setNodeState 原子入口）→ FileView/FileTreeRow 渲染 + DetailPane 预览（禁 v-html）。工程约束见 [NFR.md](NFR.md) `[from: 2026-06-28-sidebar-project-file-tree §子系统]`
 
 ## 演进 / 调研 / 历史
 

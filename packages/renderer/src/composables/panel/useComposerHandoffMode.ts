@@ -41,7 +41,7 @@ export interface ComposerHandoffModeReturn {
   handleHandoffSend: (text: string) => Promise<boolean>
   /**
    * 包装成 StagingAction（handoff 实现），供 useComposerStaging 注册消费。
-   * 不改变现有 handoffMode/enterHandoffMode 等 expose 契约（仅追加 adapter，对齐 ADR-0044）。
+   * 不改变现有 handoffMode/enterHandoffMode 等 expose 契约（仅追加 adapter，对齐 ADR-0057）。
    */
   asStagingAction: () => StagingAction
 }
@@ -62,7 +62,7 @@ interface HandoffDeps {
   handoff: (srcSessionId: string, reply?: string, staging?: { modelOverride?: string; thinkingOverride?: string }) => Promise<void>
   /** 取消进行中的 handoff（与 handoff 对称注入，来自 useHandoffActions）：StagingAction.abort 委托 */
   abortHandoff: (sessionId: string) => Promise<void>
-  /** Staging Mode（ADR-0043）：进入暂存态（快照模型/thinking） */
+  /** Staging Mode（ADR-0056）：进入暂存态（快照模型/thinking） */
   enterStagingMode: () => void
   /** Staging Mode：退出暂存态（清空快照，恢复常规态） */
   exitStagingMode: () => void
@@ -94,7 +94,7 @@ export function useComposerHandoffMode(
   function enterHandoffMode(srcSessionId: string): void {
     // 互斥：进 handoff 前退出 fork 模式（避免 forkSource 残留 + 两个模式同时活跃）
     deps.exitForkMode()
-    // Staging Mode（ADR-0043）：快照当前模型/thinking，进入暂存态
+    // Staging Mode（ADR-0056）：快照当前模型/thinking，进入暂存态
     deps.enterStagingMode()
     handoffSource.value = { srcSessionId }
     handoffMode.value = true
@@ -158,7 +158,7 @@ export function useComposerHandoffMode(
     deps.clearInput()
     deps.setSending(true)
     try {
-      // Staging Mode（ADR-0043）：透传暂存的模型/thinking 配置给新 session
+      // Staging Mode（ADR-0056）：透传暂存的模型/thinking 配置给新 session
       const staging = deps.getStagingConfig()
       await handoffAction(srcSessionId, reply, staging)
     } catch (e) {
@@ -187,7 +187,7 @@ export function useComposerHandoffMode(
   }
 
   /**
-   * 包装成 StagingAction（handoff 实现，ADR-0044）。
+   * 包装成 StagingAction（handoff 实现，ADR-0057）。
    *
    * adapter 层：把 handoffMode/enterHandoffMode/exitHandoffMode/handleHandoffSend/
    * handleHandoffEsc/handoffBoxClass/handoffPlaceholder 收敛为单一策略对象，

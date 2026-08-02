@@ -306,5 +306,5 @@ test.describe('文件树 E2E', () => {
 - 组件源码：[`components/sidebar/FileView.vue`](../../packages/renderer/src/components/sidebar/FileView.vue) / [`FileTreeRow.vue`](../../packages/renderer/src/components/sidebar/FileTreeRow.vue)
 - composable：[`composables/features/useFileTree.ts`](../../packages/renderer/src/composables/features/useFileTree.ts)
 - E2E spec：[`e2e/file-tree.spec.ts`](../../e2e/file-tree.spec.ts)（11 用例）
-- ADR：[ADR-0025 文件视图完整项目树](../architecture/adr/0025-file-view-full-project-tree.md) / [ADR-0026 懒加载](../architecture/adr/0026-file-tree-lazy-loading.md) / [ADR-0027 FileService 三层](../architecture/adr/0027-fileservice-three-layer.md)
+- ADR：[ADR-0025 文件视图完整项目树](../adr/0025-file-view-full-project-tree.md) / [ADR-0026 懒加载](../adr/0026-file-tree-lazy-loading.md) / [ADR-0027 FileService 三层](../adr/0027-fileservice-three-layer.md)
 - SideDrawer detail：[05-side-drawer.md](./05-side-drawer.md)（点文件 → drawer 预览）

@@ -7,7 +7,7 @@
  * 暴露动作：
  * - selectSession(id)：push 导航栈 + switchSession api + 更新 session.activeId（UC-3）
  * - newSession()：create api + push + select（UC-2）
- * - goOverview()：push view:'overview'（ADR-0022，main 区被 Overview 覆盖）
+ * - goOverview()：push view:'overview'（ADR-0023，main 区被 Overview 覆盖）
  * - toggleCollapse()：切换 sidebar.collapsed（折叠态 C）
  *
  * 重构演进（2026-07-02 架构返工 C3）：派生状态（derivedStatus / sessionDigest）原在本 composable，
@@ -315,7 +315,7 @@ export function useSidebar() {
     // 跨 store 清理（S3）：fileTree + tasks + subagent + workflow + chat store + WS 流式订阅 + 派生状态缓存
     useFileTreeStore().clearSession(id)
     tasks.clearSession(id)
-    // ADR-0036 Map 分区派：释放 subagent/workflow store 的 per-session records 分区（防泄漏，AC-8）
+    // ADR-0049 Map 分区派：释放 subagent/workflow store 的 per-session records 分区（防泄漏，AC-8）
     subagentStore.clearSession(id)
     workflowStore.clearSession(id)
     // [CW session-active-ssot] 释放 extension UI pending 分区（防泄漏，与 subagent/workflow 同范式）
@@ -335,7 +335,7 @@ export function useSidebar() {
     useChat().disposeSession(id)
     // W3：清除该 session 的 derivedStatus/sessionDigest 缓存，避免已删 session 的 computed 残留
     invalidateStatusCache(id)
-    // ADR-0036 W5：触发所有 useSessionScopedState 实例清理该 sid 的 Map 分区，
+    // ADR-0049 W5：触发所有 useSessionScopedState 实例清理该 sid 的 Map 分区，
     // 防已销毁 session 的 per-session 状态条目在 Map 中积累导致内存泄漏（AC-8）。
     // 与 invalidateStatusCache 并列——两者同构（都是单例 composable 的 per-session Map 分区释放）。
     triggerSessionCleanups(id)
@@ -403,7 +403,7 @@ export function useSidebar() {
     return res
   }
 
-  /** 进入 Overview：push view:'overview'（ADR-0022，sidebar 持久，main 被覆盖） */
+  /** 进入 Overview：push view:'overview'（ADR-0023，sidebar 持久，main 被覆盖） */
   function goOverview(): void {
     navigation.push({ view: 'overview' })
   }

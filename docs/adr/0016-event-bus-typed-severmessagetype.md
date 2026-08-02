@@ -2,7 +2,7 @@
 verdict: pass
 ---
 
-# ADR-0015：Event-bus 类型加固 — 方案 B（约束 ServerMessageType）
+# ADR-0016：Event-bus 类型加固 — 方案 B（约束 ServerMessageType）
 
 ## 上下文
 

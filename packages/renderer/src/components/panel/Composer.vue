@@ -38,7 +38,7 @@
         @drop.prevent="onDrop"
       >
         <!-- Staging 模式标识 chip（fork/handoff 统一）：顶部 accent chip 提示当前 staging 类型 + × 退出。
-             经 useComposerStaging.activeStaging 统一渲染（ADR-0044），退出调 staging.exit() -->
+             经 useComposerStaging.activeStaging 统一渲染（ADR-0057），退出调 staging.exit() -->
         <div
           v-if="staging.activeStaging.value"
           class="composer-mode-chip mx-2.5 mt-2 flex items-center gap-1.5 rounded-md bg-[var(--accent-soft)] px-2 py-1 text-[11px] font-medium text-[var(--accent)]"
@@ -181,7 +181,7 @@ const chatStore = useChatStore()
 const { send, steer, followUp, abort, compact } = useChat()
 const flow = useNewTaskFlow()
 const { error: toastError } = useToast()
-const { projectSkills: landingProjectSkills } = useProjectSkills(flow.currentCwd) // W3 ADR-0038：landing 当前 cwd 项目 skill
+const { projectSkills: landingProjectSkills } = useProjectSkills(flow.currentCwd) // W3 ADR-0051：landing 当前 cwd 项目 skill
 const { globalSkills: landingGlobalSkills } = useGlobalSkills() // W4 FR-5：landing 全局 skill
 const isActive = computed(() => {
   if (!props.sessionId) return false
@@ -316,7 +316,7 @@ const handoff = useComposerHandoffMode(sessionIdRef, {
   getStagingConfig,
 })
 
-// Composer Staging 聚合路由（ADR-0044）：fork/handoff 各自包装成 StagingAction，经 useComposerStaging
+// Composer Staging 聚合路由（ADR-0057）：fork/handoff 各自包装成 StagingAction，经 useComposerStaging
 // 统一编排 activeStaging + 互斥 enter + send/handleEsc/abortIfInProgress 路由。消除原散落的双向 watch +
 // onSend 分流 if-else。
 const staging = useComposerStaging({

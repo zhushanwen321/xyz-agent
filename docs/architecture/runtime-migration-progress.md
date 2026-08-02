@@ -185,7 +185,7 @@ R5 时保留、R6/R7 已清零：
 **审查关键发现**：scanners 不是整体跨层——只有 `atomicWrite` 真跨层（infra 2 处 + services 1 处），skill/agent-scanner 只被 config-service 用。且 scanners 是纯 fs 实现（读 SKILL.md/agents），非外部系统连接器，放 infra 违反 design.md **T4 铁律**。
 
 **修复（合并为 1 commit，避免中间态）**：
-- `atomicWrite` → `utils/fs-utils.ts`（ADR 0004 第 46 行预先授权）。`utils/` 成为合法跨层共享叶子层（零业务语义，infra+services 都可 import）。
+- `atomicWrite` → `utils/fs-utils.ts`（ADR 0035 第 46 行预先授权）。`utils/` 成为合法跨层共享叶子层（零业务语义，infra+services 都可 import）。
 - `skill-scanner`/`agent-scanner` + `expandHome`/`inferSourceType` → `services/scanners/`（纯 fs，只被 config-service 引用，归 services 域）。
 - 不上 port：atomicWrite 是纯无状态函数、scanner 是纯 fs，套 IPort 是过度工程。
 

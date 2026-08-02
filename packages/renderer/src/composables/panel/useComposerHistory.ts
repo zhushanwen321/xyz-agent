@@ -17,7 +17,7 @@
  * 历史来源（spec Glossary H[index]）：chatStore.messages[sessionId] 中
  * role==='user' && status==='complete' 的 content，按时间倒序，连续相同文本去重。
  *
- * per-session 隔离（ADR-0036 W3）：browsing/index/savedDraft 三态收进 reactive 对象，
+ * per-session 隔离（ADR-0049 W3）：browsing/index/savedDraft 三态收进 reactive 对象，
  * 经 useSessionScopedState 分区到 Map<sessionId, {browsing,index,savedDraft}>。
  * history computed 仍从 chatStore 派生（天然 per-session，不迁移）。
  * Map 分区天然隔离：切 sid 自动切分区，切回恢复草稿与浏览指针（AC-5），
@@ -74,7 +74,7 @@ export function useComposerHistory(
     for (let i = msgs.length - 1; i >= 0; i--) {
       const m = msgs[i]
       if (m.role !== 'user' || m.status !== 'complete') continue
-      // content 可能是 string | Segment[]（ADR-0037），归一化为纯文本用于历史导航
+      // content 可能是 string | Segment[]（ADR-0043），归一化为纯文本用于历史导航
       const text = normalizeContent(m.content)
       // 连续相同文本去重
       if (result.length > 0 && result[result.length - 1] === text) continue
@@ -84,7 +84,7 @@ export function useComposerHistory(
   })
 
   /**
-   * per-session 分区导航状态（ADR-0036 W3）。
+   * per-session 分区导航状态（ADR-0049 W3）。
    * init 返回 reactive 容器：下游 isBrowsing computed 在其上建立依赖，
    * handleArrow* 内 mutate 字段时失效重算（W2 useExtensionUI 验证的响应式要点）。
    */

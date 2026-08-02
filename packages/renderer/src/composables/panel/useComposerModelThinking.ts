@@ -6,7 +6,7 @@
  * - currentThinkingLevel：当前思考等级（session 已建读自身 sessionId 对应真值，landing 态用 localThinkingLevel）
  * - currentThinkingLevelMap：当前模型的思考档位映射 + 切模型自动重置（委托 useThinkingLevelSync）
  * - onModelSelect / onThinkingSelect：切换处理，session 已建走 RPC，landing 态延迟到首发提交后 apply
- * - Staging Mode（ADR-0043）：enter/exit 快照隔离 + getStagingConfig 导出暂存配置
+ * - Staging Mode（ADR-0056）：enter/exit 快照隔离 + getStagingConfig 导出暂存配置
  *
  * per-session 隔离：session 已建态按 sessionId 从 sessionStore.list 查真值（非读全局 active），
  * split panel 下两个 Composer 各读各的 session 状态，不串读。底层数据已 per-session
@@ -15,7 +15,7 @@
  * landing 态（sessionId=null）session 尚未 create，无法调 model.switch / setThinkingLevel RPC。
  * 选定值记入 flow.pendingModel + localThinkingLevel，submitFirstMessage create session 后 apply。
  *
- * Staging Mode（ADR-0043）：composer 进入 fork-ask/handoff-ask 暂存态时，模型/thinking chip
+ * Staging Mode（ADR-0056）：composer 进入 fork-ask/handoff-ask 暂存态时，模型/thinking chip
  * 切换只写暂存快照（不影响当前源 session）。退出暂存态时清空快照，chip 恢复读常规态真值。
  * 发送时 getStagingConfig() 导出暂存配置，透传给 fork/handoff RPC 供新 session 使用。
  */
@@ -56,7 +56,7 @@ export function useComposerModelThinking(
    */
   const localThinkingLevel = ref<string | undefined>(undefined)
 
-  // ── Staging Mode（ADR-0043）────────────────────────────────────
+  // ── Staging Mode（ADR-0056）────────────────────────────────────
   /**
    * 暂存快照：进入 fork-ask/handoff-ask 时快照当前模型/thinking。
    * null = 常规态（读 session/landing 真值）；非 null = 暂存态（读快照值）。

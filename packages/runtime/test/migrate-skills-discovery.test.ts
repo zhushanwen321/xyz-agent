@@ -1,5 +1,5 @@
 /**
- * migrateSettingsSkillsToDiscovery 单测 —— ADR-0020 §1 迁移逻辑回归保护。
+ * migrateSettingsSkillsToDiscovery 单测 —— ADR-0021 §1 迁移逻辑回归保护。
  *
  * 关键场景（真实环境踩过的坑）：旧 settings.json.skills 存的是「单 skill 目录」粒度
  * （如 ~/.pi/agent/skills/anysearch），44 条去重父目录后只有 2 个容器。

@@ -1,7 +1,7 @@
 /**
  * useComposerHistory per-session 状态隔离单测（W3 / TDD 红灯）。
  *
- * 覆盖 ADR-0036 迁移：browsing/index/savedDraft 三个状态经 useSessionScopedState 分区。
+ * 覆盖 ADR-0049 迁移：browsing/index/savedDraft 三个状态经 useSessionScopedState 分区。
  * - AC-5: 切 session 后 browsing/index/savedDraft 不串台（切回恢复草稿与浏览指针）
  * - history computed 仍正确从 chatStore 派生（不回归）
  *

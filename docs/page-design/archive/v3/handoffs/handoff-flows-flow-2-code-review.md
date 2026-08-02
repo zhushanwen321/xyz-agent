@@ -22,7 +22,7 @@
 
 ## 4. 关联文档
 - `flow-2-code-review/spec.md`
-- `adr/0019-core-user-flows.md`（flow 范围决策）
+- `../../../../adr/0020-core-user-flows.md`（flow 范围决策）
 
 ## 5. 关联 HTML
 - `panel/draft-message-stream.html`（变更集卡嵌入消息流）

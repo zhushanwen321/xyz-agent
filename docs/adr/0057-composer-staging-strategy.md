@@ -1,12 +1,12 @@
-# ADR-0044: Composer Staging 策略模式（行为层）
+# ADR-0057: Composer Staging 策略模式（行为层）
 
 **状态**: Accepted
 **日期**: 2026-07-29
-**关联**: ADR-0043（Composer Staging Mode 模型暂存层）、ADR-0028（模型切换 RPC）
+**关联**: ADR-0056（Composer Staging Mode 模型暂存层）、ADR-0028（模型切换 RPC）
 
 ## 背景
 
-ADR-0043 解决了「fork-ask/handoff-ask 创建新 session 时模型不传递」的问题，引入了 Staging Mode 的**模型暂存层**（`useComposerModelThinking` 的 stagingModel/stagingThinking refs）。但 fork-ask/handoff-ask 的**模式状态机 + 行为路由**仍散落在多处，随着功能演进暴露出扩展性问题和体验缺口：
+ADR-0056 解决了「fork-ask/handoff-ask 创建新 session 时模型不传递」的问题，引入了 Staging Mode 的**模型暂存层**（`useComposerModelThinking` 的 stagingModel/stagingThinking refs）。但 fork-ask/handoff-ask 的**模式状态机 + 行为路由**仍散落在多处，随着功能演进暴露出扩展性问题和体验缺口：
 
 ### 散落问题
 
@@ -29,17 +29,17 @@ handoff 发送后进行中（源 session 跑 handoff turn 生成文档），Comp
 
 引入 **StagingAction 策略接口**（`staging-types.ts`）：把每种 staging type（fork/handoff）的完整行为契约收敛为单个策略对象，Composer 经 `useComposerStaging` 的 `activeStaging` 统一消费，消除散落判断。
 
-### 与 ADR-0043 的层次区分
+### 与 ADR-0056 的层次区分
 
-ADR-0043 管**模型暂存层**（"进入 staging 时快照模型/thinking"），明确「不抽象，用 ref 快照」。**此决策保留不动。**
+ADR-0056 管**模型暂存层**（"进入 staging 时快照模型/thinking"），明确「不抽象，用 ref 快照」。**此决策保留不动。**
 
 本 ADR 管**更高一层：模式状态机 + 发送/取消行为路由**。两者是不同层次的抽象，互不冲突：
 
 ```
-┌─ 行为层（本 ADR / ADR-0044）─────────────────────┐
+┌─ 行为层（本 ADR / ADR-0057）─────────────────────┐
 │  StagingAction 策略：enter/exit/send/abort/visual │
 │  useComposerStaging 聚合：activeStaging 路由       │
-├─ 模型暂存层（ADR-0043，不变）──────────────────────┤
+├─ 模型暂存层（ADR-0056，不变）──────────────────────┤
 │  stagingModel/stagingThinking refs                 │
 │  enterStagingMode/exitStagingMode/getStagingConfig │
 ├─ 底层模式 composable（不变）───────────────────────┤
@@ -100,7 +100,7 @@ Composer 的 onSend/onAbort/boxClass/title/mode-chip **无需改动**——它�
 ## 不做
 
 - 不拆 useComposerForkMode/useComposerHandoffMode 的内部实现（它们作为 StagingAction 的具体实现保留）
-- 不改 ADR-0043 的模型暂存层（stagingModel/stagingThinking refs）
+- 不改 ADR-0056 的模型暂存层（stagingModel/stagingThinking refs）
 - 不改 useForkActions/useHandoffActions（features 层编排，已是正确的 RPC 调用点）
 - 不清理 runtime 的 session.handoffStarted 广播（前端不再消费，但保留无害；删广播超出前端重构范围）
 

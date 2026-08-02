@@ -66,7 +66,7 @@ interface ComposerSendDeps {
     /** 当前活跃的 staging action（null = 普通态），allowsEmptySend 守卫用 */
     activeStaging: ComputedRef<StagingAction | null>
   }
-  /** 取 staging 模型/thinking 暂存配置（ADR-0043，仅 staging 活跃时调） */
+  /** 取 staging 模型/thinking 暂存配置（ADR-0056，仅 staging 活跃时调） */
   getStagingConfig: () => StagingConfig
   // ── 守卫 ──
   /** 是否可发送（hasInput && !isBusy）—— 非 staging 态发送守卫 */

@@ -3,7 +3,7 @@
  *
  * ## 背景
  * useTerminal（TerminalView 持有）用 useSessionScopedState 维护 per-session scrollback，但分区 Map
- * 是 per-instance（ADR-0036）。Block.vue（消息流 tool 块）需要 enqueueWrite 但不应调 useTerminal
+ * 是 per-instance（ADR-0049）。Block.vue（消息流 tool 块）需要 enqueueWrite 但不应调 useTerminal
  * （会建独立 partition + 重复订阅 alive）。
  *
  * 解法：ptyAlive + pendingWrites 做成全局 Pinia store（单例），Block.vue 和 TerminalView 共享：

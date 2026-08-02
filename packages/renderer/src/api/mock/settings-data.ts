@@ -62,7 +62,7 @@ export const fixtureProviders: ProviderInfo[] = [
 ]
 
 /* ── Skill ── */
-// ADR-0020 §5：目录在 = 启用，enabled 恒 true（前端不再渲染文件级开关）。
+// ADR-0021 §5：目录在 = 启用，enabled 恒 true（前端不再渲染文件级开关）。
 // effective 标生效（多来源时最高优先那条）；sources 是多来源 badge 链（单来源可省略）。
 
 export const fixtureSkills: SkillInfo[] = [

@@ -1,4 +1,4 @@
-# ADR 0035：尊重 extension 的 display 字段，删除 HIDDEN_CUSTOM_TYPES 黑名单
+# ADR 0048：尊重 extension 的 display 字段，删除 HIDDEN_CUSTOM_TYPES 黑名单
 
 - **状态**：Proposed
 - **日期**：2026-07-21

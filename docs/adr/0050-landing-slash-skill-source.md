@@ -1,4 +1,4 @@
-# ADR-0037：landing 态 slash 命令源按 variant 分支 + skill 路由前缀归一化
+# ADR-0050：landing 态 slash 命令源按 variant 分支 + skill 路由前缀归一化
 
 - **状态**：Accepted
 - **日期**：2026-07-21

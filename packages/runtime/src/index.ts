@@ -138,7 +138,7 @@ async function main(): Promise<void> {
     tmpDir: getTmpDir(),
   })
   const configService = new ConfigService(effectiveRoot, configStore)
-  // ADR-0020 §1 一次性迁移：旧版本 skill 路径存在 settings.json.skills，
+  // ADR-0021 §1 一次性迁移：旧版本 skill 路径存在 settings.json.skills，
   // 首启用时提升为 discovery.json SSOT。幂等：discovery 已有数据则 no-op。
   configService.migrateSettingsSkillsToDiscovery()
 
@@ -233,14 +233,14 @@ async function main(): Promise<void> {
         data: { ...context, sessionId },
         timestamp: Date.now(),
       }),
-      // [ADR-0035] ping 探测连续 3 次失败（180s）判定 pi 进程真死，触发 abort。
+      // [ADR-0047] ping 探测连续 3 次失败（180s）判定 pi 进程真死，触发 abort。
       // 复用 sessionService.abort → message-dispatcher.abort 完整路径（client.abort 成功/失败
       // 均有兜底广播 + 复位 isGenerating）。.catch 兜底防 unhandledRejection
       // （abort 内部已 try/catch 广播终态，此处只防极端异常逃逸）。
       onSilentAbort: ({ sessionId: sid }) => {
         sessionService.abort(sid).catch(() => {})
       },
-      // [ADR-0035] ping get_state 进程健康探测（替代事件静默检测）。
+      // [ADR-0047] ping get_state 进程健康探测（替代事件静默检测）。
       // 延迟解析 client：interpreter 在 session 创建时构造，那时 client 可能尚未 spawn。
       // pm（ProcessManager）在本闭包外已创建，getClient 返回 undefined 时计为一次失败
       // （AC-9），但不抛错——client 偶发未就绪不应让 interpret 批次崩溃。

@@ -3,7 +3,7 @@
  *
  * Delegates Provider CRUD to IConfigStore (injected port; impl wraps pi's
  * models.json), Skill/Agent discovery to discovery.json SSOT + scanners
- * (ADR-0020 §1：强制目录 ∪ discovery 目录，按优先级合并去重).
+ * (ADR-0021 §1：强制目录 ∪ discovery 目录，按优先级合并去重).
  * Tool permissions are persisted to ~/.xyz-agent/config.json (xyz-agent own config).
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
@@ -60,7 +60,7 @@ import {
   mergeTerminalConfig,
 } from './config-merge-helpers.js'
 
-// ── ADR-0020 §1.1 强制目录（桥接层硬编码注入，不进 discovery.json）──
+// ── ADR-0021 §1.1 强制目录（桥接层硬编码注入，不进 discovery.json）──
 // 强制·项目（最高优先）> 强制·全局 > 可选（discovery 数组顺序）。
 //
 // ⚠️ 路径修正：ADR 文档写的逻辑路径是 ~/.xyz-agent/skills 等，但 pi 桥接层把 agentDir
@@ -464,21 +464,21 @@ export class ConfigService implements IConfigService {
   /** No-op: skills are discovered from discovery.json + forced dirs, not independently persisted. */
    
   saveSkills(_projectRoot: string, _skills: SkillInfo[]): void {
-    // no-op — skill persistence is managed by discovery.json SSOT (ADR-0020 §1)
+    // no-op — skill persistence is managed by discovery.json SSOT (ADR-0021 §1)
   }
 
-  /** @deprecated ADR-0020 §5 目录级管道：文件级注册已废弃，保留兼容期。新代码用 setSkillDirs。 */
+  /** @deprecated ADR-0021 §5 目录级管道：文件级注册已废弃，保留兼容期。新代码用 setSkillDirs。 */
   upsertSkill(skill: SkillInfo): void {
-    console.warn('[config-service] upsertSkill is deprecated (ADR-0020 §5). Use setSkillDirs for directory-level config.')
+    console.warn('[config-service] upsertSkill is deprecated (ADR-0021 §5). Use setSkillDirs for directory-level config.')
     if (skill.sourcePath) {
       const dir = dirname(skill.sourcePath)
       this.configStore.addSkillPath(dir)
     }
   }
 
-  /** @deprecated ADR-0020 §5 目录级管道：文件级删除已废弃，保留兼容期。新代码用 setSkillDirs。 */
+  /** @deprecated ADR-0021 §5 目录级管道：文件级删除已废弃，保留兼容期。新代码用 setSkillDirs。 */
   deleteSkill(skillId: string): void {
-    console.warn('[config-service] deleteSkill is deprecated (ADR-0020 §5). Use setSkillDirs for directory-level config.')
+    console.warn('[config-service] deleteSkill is deprecated (ADR-0021 §5). Use setSkillDirs for directory-level config.')
     const skills = this.loadSkills(this.projectRoot)
     const skill = skills.find(s => s.id === skillId)
     if (skill?.sourcePath) {
@@ -487,7 +487,7 @@ export class ConfigService implements IConfigService {
     }
   }
 
-  // ── Skill 加载路径（ADR-0020 §1 discovery.json SSOT）──
+  // ── Skill 加载路径（ADR-0021 §1 discovery.json SSOT）──
 
   setSkillDirs(dirs: string[]): void {
     this.configStore.setSkillPaths(dirs)
@@ -562,20 +562,20 @@ export class ConfigService implements IConfigService {
   /** No-op: agents are discovered from discovery.json + forced dirs, not independently persisted. */
    
   saveAgents(_projectRoot: string, _agents: AgentInfo[]): void {
-    // no-op — agent persistence is managed as .md files + discovery.json SSOT (ADR-0020 §1)
+    // no-op — agent persistence is managed as .md files + discovery.json SSOT (ADR-0021 §1)
   }
 
-  /** @deprecated ADR-0020 §5 目录级管道：文件级写入已废弃，保留兼容期。新代码用 setAgentDirs。 */
+  /** @deprecated ADR-0021 §5 目录级管道：文件级写入已废弃，保留兼容期。新代码用 setAgentDirs。 */
   upsertAgent(agent: AgentInfo): void {
-    console.warn('[config-service] upsertAgent is deprecated (ADR-0020 §5). Use setAgentDirs for directory-level config.')
+    console.warn('[config-service] upsertAgent is deprecated (ADR-0021 §5). Use setAgentDirs for directory-level config.')
     if (agent.content) {
       this.configStore.writeAgentFile(agent.name || agent.id, agent.content)
     }
   }
 
-  /** @deprecated ADR-0020 §5 目录级管道：文件级删除已废弃，保留兼容期。新代码用 setAgentDirs。 */
+  /** @deprecated ADR-0021 §5 目录级管道：文件级删除已废弃，保留兼容期。新代码用 setAgentDirs。 */
   deleteAgent(agentId: string): void {
-    console.warn('[config-service] deleteAgent is deprecated (ADR-0020 §5). Use setAgentDirs for directory-level config.')
+    console.warn('[config-service] deleteAgent is deprecated (ADR-0021 §5). Use setAgentDirs for directory-level config.')
     this.configStore.deleteAgentFile(agentId)
   }
 
@@ -610,7 +610,7 @@ export class ConfigService implements IConfigService {
     return applyImportImpl(importId, selectedIds)
   }
 
-  // ── System prompt config（FR-6/FR-7，ADR-0038）──
+  // ── System prompt config（FR-6/FR-7，ADR-0044）──
   // 独立文件 system-prompt.json（不复用 config.json）：replace/append 两段提示词配置，
   // 插件读此文件热生效（replace 启动期注入、append 每轮 before_agent_start 注入）。
   // 默认值 / 合并纯逻辑见 config-merge-helpers.ts。

@@ -1,4 +1,4 @@
-# ADR 0035: watchdog 从「事件静默检测」改为「进程健康探测（ping）」
+# ADR 0047: watchdog 从「事件静默检测」改为「进程健康探测（ping）」
 
 **Status**: Accepted
 **Date**: 2026-07-20

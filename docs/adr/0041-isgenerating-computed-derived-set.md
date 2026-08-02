@@ -1,4 +1,4 @@
-# ADR 0035：isGenerating 改用 computed 派生 Set
+# ADR 0041：isGenerating 改用 computed 派生 Set
 
 - 状态：Accepted
 - 日期：2026-07-16
@@ -48,4 +48,4 @@ function isGenerating(sessionId: string): boolean {
 - 正面：computed 派生是单一真相源，物理不可撕裂——任何写入路径（含未来新增）自动覆盖。与原设计"从 message 派生"理念一致，只是加了缓存层。
 - 正面：消除"每个消费点重复扫描"的浪费——messages 变化时一次扫描，服务所有 isGenerating 查询。
 - 负面：messages 变化时全量扫所有 session（O(总消息数)）。但这个开销本来就有（响应式系统要重新求值），且从"每个消费点各扫一遍"变成"全局扫一次"，净收益为正。
-- 依赖 ADR 0034：shallowRef 下 messages 的 Map.set 仍触发 computed 重算（理论兼容，需测试验证）。
+- 依赖 ADR 0039：shallowRef 下 messages 的 Map.set 仍触发 computed 重算（理论兼容，需测试验证）。

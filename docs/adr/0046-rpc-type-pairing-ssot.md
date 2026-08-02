@@ -2,13 +2,13 @@
 verdict: pass
 ---
 
-# ADR-0040：RPC 类型配对 SSOT（RequestReplyMap + ReplyPayloadMap）
+# ADR-0046：RPC 类型配对 SSOT（RequestReplyMap + ReplyPayloadMap）
 
 ## 上下文
 
 H4 开发（perf-h3-h4-memory-jsonl）引入 `session.history`/`session.fullHistory` reply 时，发现协议类型契约断裂有两层：
 
-1. **协议层缺口**：`ServerMessageMapBase` 未声明约 15 个有 reply 语义的 `ServerMessageType`（含 session.history/fullHistory），走兜底 `Record<string, unknown>`。`reply()` 的泛型收窄（ADR-0015 的延续，`broker.ts:101 reply<T extends ServerMessageType>(...payload: ServerMessageMap[T])`）因此失效——`ServerMessageMap['session.history']` = `Record<string, unknown>`，构造侧 reply 任意字段都通过。
+1. **协议层缺口**：`ServerMessageMapBase` 未声明约 15 个有 reply 语义的 `ServerMessageType`（含 session.history/fullHistory），走兜底 `Record<string, unknown>`。`reply()` 的泛型收窄（ADR-0016 的延续，`broker.ts:101 reply<T extends ServerMessageType>(...payload: ServerMessageMap[T])`）因此失效——`ServerMessageMap['session.history']` = `Record<string, unknown>`，构造侧 reply 任意字段都通过。
 
 2. **消费层断裂**：9 个 domain 手写 `pending.register<{...}>` 泛型参数，与 `ServerMessageMap` 完全脱钩。`useConnection.ts:86 pending.resolve(msg.id, msg.payload)` 把 `unknown` 塞进手写 T，编译器不校验。`historyTruncated` 在协议里该是 required，前端手写成了 optional（靠 `?? false` 兜底）——这种不一致编译器抓不到。
 

@@ -243,7 +243,7 @@ const { info: toastInfo, error: toastError } = useToast()
 const { t } = useI18n()
 
 // ── 加载路径配置（Phase 4，接 store.extensionDirs，回写 store.setExtensionDirs）──
-/** 强制目录（ADR-0020 §1.1 桥接层硬编码注入，UI 只读展示） */
+/** 强制目录（ADR-0021 §1.1 桥接层硬编码注入，UI 只读展示） */
 const forcedExtDirs = ['~/.xyz-agent/extensions', '.xyz-agent/extensions']
 
 /** 加载路径变更 → store 持久化（只写 enabled 路径）。拖拽即时性由 LoadPaths 本地状态保证。 */

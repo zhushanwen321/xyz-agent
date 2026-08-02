@@ -1,7 +1,7 @@
 <template>
   <!--
     Settings · 资源菜单页（合并自 SkillPage/AgentPage，两者同构 ~85%）。
-    ADR-0020 §5：目录级管道模型——目录在 = 启用，无文件级开关。
+    ADR-0021 §5：目录级管道模型——目录在 = 启用，无文件级开关。
     层 A 勾选/排序写 discovery.json（SSOT），层 B 只读预览扫描结果。
     通过 kind 区分 skill/agent，差异仅资源类型/标题/来源配色/扫描 API（统一内聚）。
   -->
@@ -84,7 +84,7 @@ const props = defineProps<{
   kind: 'skill' | 'agent'
   /** 资源列表（skills 或 agents） */
   items: SkillInfo[] | AgentInfo[]
-  /** 加载路径配置（来自 settings store，ADR-0020 §1 discovery.json SSOT 视图） */
+  /** 加载路径配置（来自 settings store，ADR-0021 §1 discovery.json SSOT 视图） */
   dirs: SkillDirConfig[]
 }>()
 
@@ -96,7 +96,7 @@ const emit = defineEmits<{
 // ── kind 驱动的配置（差异内聚于此） ──
 const label = computed(() => (props.kind === 'skill' ? 'Skill' : 'Agent'))
 
-// ADR-0020 §1.1 强制目录（桥接层硬编码注入，UI 只读）
+// ADR-0021 §1.1 强制目录（桥接层硬编码注入，UI 只读）
 const forcedDirs = computed(() =>
   props.kind === 'skill'
     ? ['~/.xyz-agent/skills', '.xyz-agent/skills']
@@ -148,7 +148,7 @@ function onUpdateDirs(dirs: SkillDirConfig[]): void {
   emit('update-dirs', dirs)
 }
 
-/** 刷新已加载列表（ADR-0020 §5 只读模型：扫描只刷新 discovery 目录扫描结果，不做文件级导入）。 */
+/** 刷新已加载列表（ADR-0021 §5 只读模型：扫描只刷新 discovery 目录扫描结果，不做文件级导入）。 */
 async function onScan(): Promise<void> {
   scanning.value = true
   actionError.value = ''
@@ -167,7 +167,7 @@ async function onScan(): Promise<void> {
 }
 
 /**
- * 来源 badge 配色——token 化（ADR-0018）：全部用 design-tokens 语义色，
+ * 来源 badge 配色——token 化（ADR-0019）：全部用 design-tokens 语义色，
  * 禁止直引 Tailwind 调色板（amber/emerald/violet）。
  * skill/agent 配色统一：pi=accent(主色) · claude=warning · agents=success · pi-install=info。
  * /12 软底透明度对齐 FileTreeRow.vue 既有的 badge 模式（bg-success/12 text-success）。

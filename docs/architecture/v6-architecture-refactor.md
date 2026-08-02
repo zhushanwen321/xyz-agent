@@ -35,7 +35,7 @@ handoff 的**定性诊断全部成立**，但**定量数字普遍不可信**（5
 | runtime 三层 | 整体-1 最高优先级 | **核心能力全部架构正确**（10/13 域「架构正确」，3 域「需缝补」，0 域需重构）。22 处直连中 59% 在扩展能力（quota/migration 可裁剪域），进入核心的 8 处中 6 处是良性路径/类型依赖，**仅 session 域 2 处真业务绕过** | runtime **缝补即可**，不推翻 |
 | shared 包 | 整体-2 | git-status-parser/ignore-parser 确实职责越界（放 shared 只被 runtime 用），但 **renderer 零 import，无实际 bundle 污染**。下沉是长期正确但非紧急 | 下沉（机械移动） |
 | IPC 边界 | 整体-3 | 诊断全部属实（45 方法、3 业务持久化、proxy 命名错配、持久化链分裂） | 收敛 |
-| **renderer 编排层** | 「局部，降级」 | **这才是真问题区**：useChat 违反 ADR-0036（编排层中枢用裸 Map）、stores↔composable 双向倒置依赖、Sidebar 全局快捷键 88 行内联、settings 与 v6 全屏覆盖根本形态冲突、bg-accent 98 处危险双义 | **重点重构** |
+| **renderer 编排层** | 「局部，降级」 | **这才是真问题区**：useChat 违反 ADR-0049（编排层中枢用裸 Map）、stores↔composable 双向倒置依赖、Sidebar 全局快捷键 88 行内联、settings 与 v6 全屏覆盖根本形态冲突、bg-accent 98 处危险双义 | **重点重构** |
 
 **一句话**：handoff 把力气放错了位置。runtime 已经够好，renderer 的编排层与状态隔离才是欠债最重的地方。
 
@@ -84,7 +84,7 @@ handoff 的**定性诊断全部成立**，但**定量数字普遍不可信**（5
 | shared 包 | 🟡 职责越界 | 2 个 Node-only 算法放 shared 只被 runtime 用（见 §3） |
 | IPC 边界 | 🟡 过宽 | 45 方法含 3 业务持久化 + proxy 命名错配（见 §5） |
 | **renderer stores** | 🔴 契约破裂 | stores↔composable 双向倒置，事件逻辑泄漏进 store（见 §6.2） |
-| **renderer composables** | 🔴 编排层中枢违规 | useChat 违反 ADR-0036 + routeInbound 巨型路由（见 §6.1/§6.3） |
+| **renderer composables** | 🔴 编排层中枢违规 | useChat 违反 ADR-0049 + routeInbound 巨型路由（见 §6.1/§6.3） |
 | **renderer components** | 🔴 上帝组件 + 形态冲突 | Sidebar 6 职责域 + settings modal 与 v6 冲突（见 §7） |
 | renderer ui/ 双名 | 🟡 危险残留 | bg-accent 98 处双义（见 §8） |
 
@@ -210,7 +210,7 @@ handoff 的**定性诊断全部成立**，但**定量数字普遍不可信**（5
 
 ### B1. chat 编排层状态隔离（局部-1，最高优）
 
-**问题** [实测]：`useChat.ts`（编排层中枢）违反 ADR-0036：
+**问题** [实测]：`useChat.ts`（编排层中枢）违反 ADR-0049：
 - `:45` `const streamSubscriptions = new Map<string, () => void>()`（模块顶层 per-session Map）
 - `:52` `const historyTruncatedSessions = ref<Set<string>>(new Set())`（模块顶层 per-session Set）
 - `:66-83` 导出 `resetChatModuleState()`，注释**自认反模式**：「跨 useChat() 调用共享…测试间不 reset 会泄漏」
@@ -238,7 +238,7 @@ handoff 的**定性诊断全部成立**，但**定量数字普遍不可信**（5
    - useMessageBusSubscription / useNewTaskFlowState / useSideDrawer(剩余) / useSidebar / useForkNoticeEffect
    - 每个迁完删 `reset*ModuleState`，确认无测试显式调用这些 reset（若有，改用 `triggerSessionCleanups`）
 
-3. **范式守护**：在 ADR-0036 补一条 lint 规则或 code-review checklist：禁止新的模块级 per-session Map/Set，必须用工厂。
+3. **范式守护**：在 ADR-0049 补一条 lint 规则或 code-review checklist：禁止新的模块级 per-session Map/Set，必须用工厂。
 
 **验收**：`grep -r "reset.*ModuleState\|reset.*States" packages/renderer/src/composables/` = 0。`grep -r "new Map<string" packages/renderer/src/composables/features/` 仅在 useSessionScopedState 内部。
 
@@ -471,7 +471,7 @@ chat.ts 仍 906 行，*Impl 是为绕 max-lines-per-function lint 而搬出的�
 
 - [ ] `docs/architecture/runtime-three-layer-design.md`：补 logger 豁免声明 + pi-paths kernel 归类 + ISessionStore 收口记录
 - [ ] `ARCHITECTURE.md`：IPC 方法数 45→~41，通信边界表更新
-- [ ] `docs/adr/0036-session-isolation-map-partition.md`：补 lint 规则 / code-review checklist
+- [ ] `docs/adr/0049-session-isolation-map-partition.md`：补 lint 规则 / code-review checklist
 - [ ] `TEST-STRATEGY.md`：重写（阶段 0.4）
 - [ ] `docs/page-design/v6-design.md` §6：本文档落地后回链
 

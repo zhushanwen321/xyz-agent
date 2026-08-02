@@ -1,8 +1,8 @@
-# ADR-0042: MessageBus 架构 — per-session ring buffer + subscribe/reconcile 消息分发
+# ADR-0055: MessageBus 架构 — per-session ring buffer + subscribe/reconcile 消息分发
 
 **状态**: Accepted
 **日期**: 2026-07-29
-**关联**: ADR-0036（per-session 状态隔离 Map 分区）、ADR-0040（RPC 类型配对 SSOT）、ADR-0037（消息内容 Segments）
+**关联**: ADR-0049（per-session 状态隔离 Map 分区）、ADR-0046（RPC 类型配对 SSOT）、ADR-0043（消息内容 Segments）
 
 ## 背景
 

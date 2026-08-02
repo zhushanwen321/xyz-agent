@@ -1,4 +1,4 @@
-# ADR 0034: 统一 file chip 通道——升级 .mention-file 为结构化 file segment
+# ADR 0040: 统一 file chip 通道——升级 .mention-file 为结构化 file segment
 
 - **状态**: Accepted
 - **日期**: 2026-07-16

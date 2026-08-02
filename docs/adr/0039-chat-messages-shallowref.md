@@ -1,4 +1,4 @@
-# ADR 0034：chat messages 改用 shallowRef
+# ADR 0039：chat messages 改用 shallowRef
 
 - 状态：Accepted
 - 日期：2026-07-16

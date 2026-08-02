@@ -27,7 +27,7 @@ export interface ISessionServiceInternal {
    * 经 toSummary 输出到 SessionSummary。
    *
    * modelOverride：新 session 实际启动模型（"provider/modelId" 格式，已含 C-RL-6 优先级解析）。
-   * 传入时写入 session.modelId 元数据，让前端 composer chip 正确显示（Staging Mode ADR-0043）；
+   * 传入时写入 session.modelId 元数据，让前端 composer chip 正确显示（Staging Mode ADR-0056）；
    * 不传时 fallback configStore.getDefaultModel()。注意 pi 进程的模型在 createSession 时已由
    * pi client options 的 model 字段设定，此参数只补齐 session 元数据层的缺口。
    */
@@ -73,7 +73,7 @@ export interface ISessionServiceInternal {
    */
   handleTurnEndSideEffects(sessionId: string, stopReason?: string): void
   /**
-   * 写 session_end 终态 entry（W4，ADR 0036）。3 个终态点复用。
+   * 写 session_end 终态 entry（W4，ADR 0042）。3 个终态点复用。
    */
   persistSessionOutcome(sessionId: string, outcome: SessionOutcome, reason?: string): void
   /**

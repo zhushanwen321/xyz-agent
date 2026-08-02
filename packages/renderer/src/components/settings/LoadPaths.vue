@@ -1,6 +1,6 @@
 <template>
   <!--
-    加载路径配置（层 A）—— Skill/Agent 共享组件（ADR-0020 §5）。
+    加载路径配置（层 A）—— Skill/Agent 共享组件（ADR-0021 §5）。
     强制目录只读置顶 + 可选目录可勾选可拖动排序（靠前覆盖靠后）。
 
     拖拽设计（rethink 后）：纯本地状态驱动，脱离 store 广播回路。
@@ -12,7 +12,7 @@
   <section>
     <h3 class="mb-2 text-[12px] font-medium text-neutral-fg">{{ t('settings.loadPaths.title') }}</h3>
 
-    <!-- 强制目录（ADR-0020 §1.1 层 1-2，桥接层硬编码注入，不可关不可拖）-->
+    <!-- 强制目录（ADR-0021 §1.1 层 1-2，桥接层硬编码注入，不可关不可拖）-->
     <div class="mb-2 rounded-md border border-border bg-bg">
       <div class="px-3 py-2 text-[11px] text-neutral-mid">{{ t('settings.loadPaths.forcedDirs') }}</div>
       <div
@@ -28,7 +28,7 @@
       </div>
     </div>
 
-    <!-- 可选目录（ADR-0020 §1.1 层 3，可勾选可拖排序）-->
+    <!-- 可选目录（ADR-0021 §1.1 层 3，可勾选可拖排序）-->
     <div class="rounded-md border border-border bg-bg">
       <div class="px-3 py-2 text-[11px] text-neutral-mid">{{ t('settings.loadPaths.optionalDirs') }}</div>
       <div
@@ -83,7 +83,7 @@
         />
       </div>
 
-      <!-- 添加自定义路径入口（ADR-0020 §5 自定义 discovery 目录）-->
+      <!-- 添加自定义路径入口（ADR-0021 §5 自定义 discovery 目录）-->
       <div class="border-t border-border px-3 py-2">
         <div class="flex items-center gap-2">
           <Input
@@ -130,7 +130,7 @@ import SourceImportSection from './SourceImportSection.vue'
 import type { SkillDirConfig } from '@xyz-agent/shared'
 
 const props = defineProps<{
-  /** 强制目录路径（只读展示，ADR-0020 §1.1 层 1-2） */
+  /** 强制目录路径（只读展示，ADR-0021 §1.1 层 1-2） */
   forcedDirs: string[]
   /** 可选目录配置（来自 store，可勾选可拖排序） */
   dirs: SkillDirConfig[]
@@ -249,7 +249,7 @@ const newPath = ref('')
 const pathError = ref('')
 
 /**
- * 添加自定义路径（ADR-0020 §5 自定义 discovery 目录）。
+ * 添加自定义路径（ADR-0021 §5 自定义 discovery 目录）。
  * 仅做非空 + 重复校验；存在性提示按 D1 决策不做（无现成 RPC，避免新增通道）。
  * 新路径默认 enabled=true，append 到 localDirs 末尾（最低优先级，可再拖排序）。
  */

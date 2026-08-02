@@ -1,7 +1,7 @@
 /**
  * session 销毁 cleanup 集成单测（W5 / TDD 红灯）。
  *
- * 覆盖 ADR-0036 cleanup 接入 session 销毁链路：
+ * 覆盖 ADR-0049 cleanup 接入 session 销毁链路：
  * - AC-8: triggerSessionCleanups(sid) 后 useSessionScopedState 的 Map 分区移除对应 sid 条目
  * - 多个 composable 注册的 cleanup 都被调用（无内存泄漏）
  * - useSidebar.deleteSession 编排 triggerSessionCleanups（集成验证点，见下方说明）

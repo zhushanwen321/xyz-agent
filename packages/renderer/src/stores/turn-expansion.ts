@@ -109,7 +109,7 @@ export const useTurnExpansionStore = defineStore('turn-expansion', () => {
    *
    * 先 partition.clear() 再 partitions.delete(sid)：
    * - clear() 触发 reactive Map 的 key 变更通知，让所有订阅该 partition 的 effect 失效重算
-   *   （对齐 useSessionScopedState 的 version ref bump 机制，ADR-0036 对称性）
+   *   （对齐 useSessionScopedState 的 version ref bump 机制，ADR-0049 对称性）
    * - delete() 再把分区从外层 Map 移除，释放内存（partition 引用断开）
    * session 销毁时该 session 的 UI 也卸载，影响有限，但保留通知路径避免设计 debt。
    */
@@ -126,7 +126,7 @@ export const useTurnExpansionStore = defineStore('turn-expansion', () => {
   // 保存反注册句柄：Pinia store setup 函数每 Pinia 实例只跑一次，生产环境无 HMR/反复建
   // store 的问题；但测试/HMR/createPinia 反复调用会往模块级 registry 塞废弃闭包，
   // 故暴露 $unregisterCleanup 给测试/HMR 在卸载 Pinia 时反注册（与 useSessionScopedState
-  // 的 onScopeDispose 反注册保持对称，符合 ADR-0036 cleanup 机制）。
+  // 的 onScopeDispose 反注册保持对称，符合 ADR-0049 cleanup 机制）。
   let unregisterCleanup: (() => void) | null = registerSessionCleanup(clearSession)
 
   return {

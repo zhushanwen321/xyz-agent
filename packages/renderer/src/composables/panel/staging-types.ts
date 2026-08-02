@@ -1,7 +1,7 @@
 /**
- * staging-types —— Composer Staging 策略模式的类型契约（ADR-0044）。
+ * staging-types —— Composer Staging 策略模式的类型契约（ADR-0057）。
  *
- * 与 ADR-0043（模型/thinking 暂存层）的关系：ADR-0043 管「模型快照」一个维度
+ * 与 ADR-0056（模型/thinking 暂存层）的关系：ADR-0056 管「模型快照」一个维度
  * （useComposerModelThinking 的 stagingModel/stagingThinking refs），明确「不抽象，用 ref 快照」。
  * 本文件管更高一层：「模式状态机 + 发送/取消行为路由」。两者不同层次，不冲突。
  *
@@ -23,7 +23,7 @@ import type { Component, ComputedRef } from 'vue'
 export type StagingType = 'fork' | 'handoff'
 
 /**
- * 暂存的模型/thinking 配置（ADR-0043 模型暂存层产出）。
+ * 暂存的模型/thinking 配置（ADR-0056 模型暂存层产出）。
  *
  * 由 useComposerModelThinking.getStagingConfig() 返回，send 时透传给 features 层
  * （useForkActions.forkSessionAsk / useHandoffActions.handoff），最终到 runtime 创建新 session。

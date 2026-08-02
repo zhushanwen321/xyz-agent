@@ -1,7 +1,7 @@
 /**
- * useSideDrawer —— SideDrawer 打开/钉住/tab 状态控制（per-session 分区，ADR-0040）。
+ * useSideDrawer —— SideDrawer 打开/钉住/tab 状态控制（per-session 分区，ADR-0053）。
  *
- * 架构演进（ADR-0040）：isOpen/activeTab/docked 从全局模块级单例 ref 改为 per-session
+ * 架构演进（ADR-0053）：isOpen/activeTab/docked 从全局模块级单例 ref 改为 per-session
  * Map 分区（useSessionScopedState），分区键 focusedSessionId（panel store 派生：
  * active panel 绑定的 sessionId）。
  *
@@ -42,7 +42,7 @@ export interface OpenDrawerOptions {
   url?: string
 }
 
-/** per-session 控制态（ADR-0040 Map 分区） */
+/** per-session 控制态（ADR-0053 Map 分区） */
 interface DrawerControlState {
   isOpen: boolean
   activeTab: SideDrawerTab

@@ -1,7 +1,7 @@
 # Design Tokens — 太极 V3 纯灰暗色（Single Source of Truth）
 
 > 真身文件。所有色值/字体/圆角/阴影/动效以此为准。
-> 由 ADR-0018 确立：C(zcode-demo) 视觉方向 + 补全的完整体系。
+> 由 ADR-0019 确立：C(zcode-demo) 视觉方向 + 补全的完整体系。
 > 标注「补全」的项未经视觉校准，需在高保真阶段验证。
 
 ## 色彩 — 暗色（默认 / 优先）
@@ -145,15 +145,15 @@
 
 ## 已知裂缝（需对齐）
 
-- **impl 变量归一**（✅ 已裁决 ADR-0021-B / 选项②，2026-06-20）：真实代码自造的 `--section-bg` / `--divider` / `--accent-light` **迁移到本文件 SSOT 已有名**，不补进 tokens（避免同语义双名）：`--section-bg`→`--surface`、`--divider`→`--border`、`--accent-light`→`--accent-soft`。draft 已用 SSOT 名（无需改）；真身 CSS 待迁移。见 `settings/handoff-system.md §13`。
+- **impl 变量归一**（✅ 已裁决 ADR-0022-B / 选项②，2026-06-20）：真实代码自造的 `--section-bg` / `--divider` / `--accent-light` **迁移到本文件 SSOT 已有名**，不补进 tokens（避免同语义双名）：`--section-bg`→`--surface`、`--divider`→`--border`、`--accent-light`→`--accent-soft`。draft 已用 SSOT 名（无需改）；真身 CSS 待迁移。见 `settings/handoff-system.md §13`。
 - **默认主题方向**（✅ 已落地，2026-06-27；2026-08-02 V3 太极纯灰换色）：**暗色纯灰为真默认**（`--bg #0f0f11` / accent `#c8c8cd`，2026-07-09 提亮校准 + 08-02 换纯灰）。`stores/settings.ts` 重构为单一真相源，DEFAULT_SYSTEM = `{ theme:'dark', themePreset:'cold-blue', locale:'zh-CN' }`（themePreset 名暂留历史，色值已由本文件 :root token 覆盖为 V3 纯灰），`setSystem()` 同步 `<html data-theme>` 到 DOM —— 主题切换已从「死设置」变为实际生效。
 
 ## 待办
 
 - [ ] 补全项（标注「补全」）经高保真视觉校准
 - [x] ~~亮色变体打磨~~（2026-06-27 完成：`--surface-2` / `--surface-hover` / `--bg-elevated` / `--bg-input` / `--subtle` / `--border-strong` / `--accent-hover` / `--accent-soft` / `--accent-ring` 亮色值已回填 SSOT 并落地 `style.css [data-theme="light"]`）
-- [x] 落地到 `style.css :root` + `tailwind.config.ts`（见 ADR-0018 修复清单；新增 3 token 已于 T01 补齐）
-- [x] ~~裁决 impl 变量归一~~（已裁决 ADR-0021-B/选项②，2026-06-20）
+- [x] 落地到 `style.css :root` + `tailwind.config.ts`（见 ADR-0019 修复清单；新增 3 token 已于 T01 补齐）
+- [x] ~~裁决 impl 变量归一~~（已裁决 ADR-0022-B/选项②，2026-06-20）
 - [x] ~~真身落地：settingsStore 初值改 dark/cold-blue~~（2026-06-27 stores/settings.ts 重构完成；CSS `--section-bg`/`--divider`/`--accent-light` 真身代码无残留，全用 SSOT 名）
 - [ ] themePreset（palette）实装：11 个配色 swatch 的 `data-palette` 切换 + `--accent` 覆盖（`--accent-soft`/`--accent-ring` 经 color-mix 已自动跟随，只需覆盖 `--accent`）。当前 SystemPage 选中态落地、实色切换暂缓。
 

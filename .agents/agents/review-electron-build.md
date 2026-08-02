@@ -36,7 +36,7 @@ task prompt 中必须包含：
    - Postbuild：`scripts/postbuild-validate.sh`
    - CI smoke test 是否覆盖
 7. **打包改动规范**：tsup/electron-builder/plugin-host/runtime 相关改动是否**逐个 commit**（禁止一个 commit 改多个打包子系统）。
-8. **资源加载策略（ADR-0020）**：Agent/Skill 资源加载是否遵循 ADR-0020（`docs/architecture/adr/0020-resource-loading-strategy.md`）——bundled pi 资源禁止 fallback 到网络下载、extension/skill 路径是否经正确的资源解析（`extraResources` 拷贝而非 symlink，见步骤 4）。
+8. **资源加载策略（ADR-0021）**：Agent/Skill 资源加载是否遵循 ADR-0021（`docs/adr/0021-resource-loading-strategy.md`）——bundled pi 资源禁止 fallback 到网络下载、extension/skill 路径是否经正确的资源解析（`extraResources` 拷贝而非 symlink，见步骤 4）。
 9. **输出审查报告**到 `output` 路径。
 
 ## 输出格式

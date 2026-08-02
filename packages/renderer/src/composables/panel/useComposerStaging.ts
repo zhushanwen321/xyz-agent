@@ -1,5 +1,5 @@
 /**
- * useComposerStaging —— Composer Staging 策略的聚合 + 路由层（ADR-0044）。
+ * useComposerStaging —— Composer Staging 策略的聚合 + 路由层（ADR-0057）。
  *
  * 职责：
  * - 注册表：持有所有 StagingAction 实现（fork / handoff），按 type 索引。

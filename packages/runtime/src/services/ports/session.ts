@@ -15,7 +15,7 @@ export interface ScannedSessionMeta {
   name: string | null
   lastModified: number
   size: number
-  /** session 终态（W4，ADR 0036）；无 session_end entry（历史/未结束）→ null。 */
+  /** session 终态（W4，ADR 0042）；无 session_end entry（历史/未结束）→ null。 */
   outcome: SessionOutcome | null
   /** 父 session 血缘键（FR-3，与 infra/pi/session-file-utils 版本对齐）。 */
   parentSession?: string
@@ -27,7 +27,7 @@ export interface ScannedSessionMeta {
   launchPresetId?: string
 }
 
-/** session 终态类型（W4，ADR 0036）。与 infra/pi/session-file-utils 的 SessionOutcome 结构对齐。 */
+/** session 终态类型（W4，ADR 0042）。与 infra/pi/session-file-utils 的 SessionOutcome 结构对齐。 */
 export type SessionOutcome = 'done' | 'error' | 'stopped'
 
 /**
@@ -40,7 +40,7 @@ export interface ISessionStore {
   refreshAll(): void
   /** 持久化 session 名称。 */
   persistSessionName(filePath: string, name: string, id?: string, cwd?: string): void
-  /** 持久化 session 终态（W4，ADR 0036）。 */
+  /** 持久化 session 终态（W4，ADR 0042）。 */
   persistSessionEnd(filePath: string, outcome: SessionOutcome, reason?: string): void
   /** 持久化 launch preset 绑定到 .preset.json sidecar（设计文档 §4）。 */
   persistPresetBinding(filePath: string, presetId: string): void

@@ -16,7 +16,7 @@
  * - tool_execution_end uses `result` (pi 的规范字段名，非漂移——pi 从不发 output)
  * - message_update.toolcall_* events are incomplete; prefer tool_execution_* instead
  *
- * 本文件是 pi 协议的真契约（ADR-0033）。PiEvent 联合覆盖 AgentSessionEvent 全部事件类型，
+ * 本文件是 pi 协议的真契约（ADR-0037）。PiEvent 联合覆盖 AgentSessionEvent 全部事件类型，
  * pi 升级时需同步维护（编译器 exhaustive check 会提示）。
  */
 
@@ -265,7 +265,7 @@ export interface PiToolcallEndSubEvent {
 
 /**
  * Tool execution start — provides the canonical tool call info.
- * pi 用 `args` 是规范字段名（非漂移，ADR-0033）。
+ * pi 用 `args` 是规范字段名（非漂移，ADR-0037）。
  */
 export interface PiToolExecutionStartEvent extends PiBaseMessage {
   type: 'tool_execution_start'
@@ -289,7 +289,7 @@ export interface PiToolExecutionUpdateEvent extends PiBaseMessage {
 
 /**
  * Tool execution end — provides the canonical tool result.
- * pi 用 `result` 是规范字段名（非漂移，ADR-0033）。pi 从不发 output。
+ * pi 用 `result` 是规范字段名（非漂移，ADR-0037）。pi 从不发 output。
  *
  * 注意：pi tool_execution_end **从不发 args**（pi types.ts:430 定义无此字段）。
  * write 工具的 content 在 tool_execution_start 事件里（types.ts:428 args: any）。
@@ -659,7 +659,7 @@ export interface GetEntriesResponse {
 /**
  * pi Usage type — mirrors pi 源码字段名（input/output/cacheRead/cacheWrite/totalTokens）。
  *
- * pi-protocol 作为 pi 协议的真契约（ADR-0033），字段名镜像 pi 实际发出的，
+ * pi-protocol 作为 pi 协议的真契约（ADR-0037），字段名镜像 pi 实际发出的，
  * 不用 xyz-agent 的 inputTokens/outputTokens（那是 event-adapter 翻译时的职责）。
  */
 export interface PiUsage {
@@ -672,7 +672,7 @@ export interface PiUsage {
 
 // ── Union types for the adapter layer ──────────────────────────────
 
-/** Union of all unsolicited event types from pi (mirrors AgentSessionEvent, ADR-0033). */
+/** Union of all unsolicited event types from pi (mirrors AgentSessionEvent, ADR-0037). */
 export type PiEvent =
   | PiAgentStartEvent
   | PiAgentEndEvent

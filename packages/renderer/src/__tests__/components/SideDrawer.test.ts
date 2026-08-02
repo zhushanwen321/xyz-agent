@@ -1,7 +1,7 @@
 /**
  * SideDrawer widget 缓冲 per-session 隔离单测（W4 / TDD 红灯）。
  *
- * 覆盖 ADR-0036 迁移：terminalLines/browserLines/unknownWidget/guiWidgetsByTab/statusMap
+ * 覆盖 ADR-0042 迁移：terminalLines/browserLines/unknownWidget/guiWidgetsByTab/statusMap
  * 五个状态经 useSessionScopedState 分区。
  * - AC-4: 切 session 后 widget 缓冲不串台（切回恢复）
  * - AC-4 (时序): 切 sid 时缓冲分区切换与 useSessionEvents 退订时序一致
@@ -33,7 +33,7 @@ beforeEach(() => {
 // 真实 useSessionEvents：subscribe(sid) 闭包捕获订阅时 sid，分发时把它传给 handler（第二参数）。
 // handler 收到的 sid 是「订阅时捕获值」（不随当前 sid 变化），调用方据此调 updateFor(sid) 写
 // 「消息所属 sid」分区——即使 watch flush:pre 异步退订窗口内有旧 sid 迟到消息，也只写旧 sid 分区，
-// 从结构上消除竞态（ADR-0036 W4 M1）。
+// 从结构上消除竞态（ADR-0042 W4 M1）。
 // 本 mock 对齐此语义：注册时快照 sidRef.value（注册时 sid），emitTo(sid) 只触发「快照 sid === sid」
 // 的 handler，并把快照 sid 作为第二参数传给 handler。切 sid 后快照不变，旧 sid 的 handler 仍响应
 // 旧 sid 的 emit（但写入旧 sid 分区，不污染新 sid）——验证 updateFor 的结构性隔离。

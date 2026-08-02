@@ -104,7 +104,7 @@ export type ChatEvictFn = (virtualId: string) => void
 export const useSubagentStore = defineStore('subagent', () => {
   // ── state ──
   /**
-   * 按 sessionId 分区的 subagent 列表（ADR-0036 Map 分区派，同 command.ts 范式）。
+   * 按 sessionId 分区的 subagent 列表（ADR-0049 Map 分区派，同 command.ts 范式）。
    * 切走不清、切回直接读 Map 分区；deleteSession 经 clearSession(sid) 精确释放。
    */
   const recordsBySession = ref<Map<string, SubagentRecord[]>>(new Map())
@@ -167,7 +167,7 @@ export const useSubagentStore = defineStore('subagent', () => {
     recordsBySession.value = new Map(recordsBySession.value).set(sessionId, list)
   }
 
-  /** 清除指定 session 的 subagent 列表分区（deleteSession 调，防泄漏，ADR-0036 AC-8） */
+  /** 清除指定 session 的 subagent 列表分区（deleteSession 调，防泄漏，ADR-0049 AC-8） */
   function clearSession(sessionId: string): void {
     if (!recordsBySession.value.has(sessionId)) return
     const next = new Map(recordsBySession.value)
@@ -420,7 +420,7 @@ export const useSubagentStore = defineStore('subagent', () => {
     getActiveSubagentVirtualId,
     getCurrentSubagent,
     isRunning,
-    // per-session 分区读写（ADR-0036 Map 分区派）
+    // per-session 分区读写（ADR-0049 Map 分区派）
     recordsOf,
     getRecordsBySession,
     hasRunning,

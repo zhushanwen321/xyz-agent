@@ -2,7 +2,7 @@
  * useTerminal —— drawer 集成终端的 per-session 状态 + PTY 控制（Phase 3）。
  *
  * 职责：
- * 1. per-session scrollback buffer + PTY 存活态 + 写队列（useSessionScopedState，ADR-0036）
+ * 1. per-session scrollback buffer + PTY 存活态 + 写队列（useSessionScopedState，ADR-0049）
  * 2. 订阅 terminal.data/exit/alive（useSessionEvents），WS handler 用 updateFor 防竞态
  * 3. 对外暴露 spawn/write/resize/kill/enqueueWrite（TerminalView 调用）
  *
@@ -27,7 +27,7 @@ import { useSessionEvents } from '@/composables/features/useSessionEvents'
 import { useTerminalWriteQueueStore } from '@/stores/terminal-write-queue'
 import { terminalApi } from '@/api/domains/terminal'
 
-/** terminal per-session 状态分区。reactive 容器（ADR-0036 契约）。 */
+/** terminal per-session 状态分区。reactive 容器（ADR-0049 契约）。 */
 interface TerminalPartition {
   /** scrollback 历史输出（PTY 切走期间继续累积，切回回放）。上限由 scrollback 配置裁剪。 */
   scrollback: string[]

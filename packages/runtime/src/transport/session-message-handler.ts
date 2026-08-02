@@ -79,7 +79,7 @@ export class SessionMessageHandler {
         try {
           const session = await this.ctx.sessionService.forkSession(
             srcSessionId, fromPiEntryId, includeFrom ?? true, label,
-            // Staging Mode（ADR-0043）：透传 composer 暂存的 modelOverride/thinkingOverride，
+            // Staging Mode（ADR-0056）：透传 composer 暂存的 modelOverride/thinkingOverride，
             // 让 fork 出的新 session 用用户当前选定的模型/思考等级，而非单纯继承源 preset。
             { fromMessageTimestamp, fromMessageRole, modelOverride, thinkingOverride },
           )
@@ -114,7 +114,7 @@ export class SessionMessageHandler {
           return this.ctx.sendError(ws, 'handoff_unsupported', 'handoff service not available', msg.id, { sessionId })
         }
         try {
-          // Staging Mode（ADR-0043）：透传 modelOverride/thinkingOverride 给新 session 创建。
+          // Staging Mode（ADR-0056）：透传 modelOverride/thinkingOverride 给新 session 创建。
           // 源 session 的 handoff turn 仍用源 session 自身模型，override 只作用于新建的承接 session。
           await hs.runHandoff(sessionId, reply, {
             modelOverride: msg.payload.modelOverride,

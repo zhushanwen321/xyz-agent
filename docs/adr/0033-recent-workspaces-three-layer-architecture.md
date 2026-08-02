@@ -1,4 +1,4 @@
-# ADR-0002: recent-workspaces 采用三层架构（不引入 DDD4）
+# ADR-0033: recent-workspaces 采用三层架构（不引入 DDD4）
 
 - **Status**: accepted
 - **Date**: 2026-07-03

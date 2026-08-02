@@ -53,7 +53,7 @@ vi.mock('@/stores/settings', () => ({
 
 // ── ComposerInput mock：defineExpose + emit ──
 // 追踪 input 事件携带的文本（Composer.onSend/onSteer 调 inputRef.getSegments() 取结构化 segments）。
-// 通过 emits 验证器捕获 input payload，getSegments 用 textToSegments 还原（ADR-0037）。
+// 通过 emits 验证器捕获 input payload，getSegments 用 textToSegments 还原（ADR-0043）。
 const lastInputText = ref('')
 const ComposerInputMock = defineComponent({
   name: 'ComposerInput',

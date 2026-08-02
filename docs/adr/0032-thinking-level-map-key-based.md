@@ -1,4 +1,4 @@
-# ADR-0001: thinkingLevelMap key-based 判定 + value 映射语义
+# ADR-0032: thinkingLevelMap key-based 判定 + value 映射语义
 
 - **Status**: accepted
 - **Date**: 2026-07-02

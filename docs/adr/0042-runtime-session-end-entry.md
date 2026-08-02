@@ -1,4 +1,4 @@
-# ADR 0036：runtime 写 session_end 终态 entry
+# ADR 0042：runtime 写 session_end 终态 entry
 
 - 状态：Accepted
 - 日期：2026-07-16

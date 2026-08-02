@@ -1,10 +1,10 @@
 /**
- * useSessionScopedState —— per-session 状态隔离通用工厂（ADR-0036 W1）。
+ * useSessionScopedState —— per-session 状态隔离通用工厂（ADR-0049 W1）。
  *
  * 设计动机：codebase 存在两套并行的 session 隔离范式（Map 分区派 vs watch 清理派），
  * watch 清理派脆弱（切 session 忘清空字段就泄漏，useExtensionUI bug 即此模式失效）。
  * 本工厂把 Map 分区派抽象为通用 composable，新 per-session 状态用它天然隔离，
- * 从结构上防复发。详见 docs/adr/0036-session-isolation-map-partition.md。
+ * 从结构上防复发。详见 docs/adr/0049-session-isolation-map-partition.md。
  *
  * 契约：
  * - 内部维护 per-instance `Map<string, T>`（每次 useSessionScopedState 调用建自己的 Map）
@@ -43,7 +43,7 @@ const sessionCleanupRegistry = new Set<(sid: string) => void>()
  * 返回反注册函数（调则从注册表移除该 fn）。
  *
  * 用途：session 销毁时统一清理各 composable 的 per-session 分区，防 Map 积累已销毁
- * session 条目导致内存泄漏（ADR-0036 Consequences 负面项「内存管理」的解法）。
+ * session 条目导致内存泄漏（ADR-0049 Consequences 负面项「内存管理」的解法）。
  *
  * @param fn 接收 sid，执行该 session 的清理逻辑
  * @returns 反注册函数（scope dispose 时调，或由注册者显式调）

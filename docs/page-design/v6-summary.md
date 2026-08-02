@@ -290,7 +290,7 @@ lucide-vue v1.23.0，重命名映射：Loader2→LoaderCircle, FileEdit→FilePe
 | 路径 | 用途 |
 |------|------|
 | [docs/architecture/renderer-target-architecture.md](../architecture/renderer-target-architecture.md) | 渲染器目标架构 SSOT（§3/§5/§9.2/§10） |
-| [docs/architecture/adr/0018-*.md](../architecture/adr/) | 冷蓝暗色视觉方向 ADR（2026-06-18，推翻 Warm & Soft） |
+| [docs/adr/0019-*.md](../adr/) | 冷蓝暗色视觉方向 ADR（2026-06-18，推翻 Warm & Soft） |
 
 ---
 

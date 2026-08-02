@@ -5,14 +5,14 @@
  * 把「通用 extension widget/status 渲染管线的状态与事件处理」收敛到本 composable，
  * SideDrawer 组件只管布局 + tab 切换。
  *
- * 范式（ADR-0036 W4：Map 分区派，[HISTORICAL]）：
+ * 范式（ADR-0042 W4：Map 分区派，[HISTORICAL]）：
  * - drawerState = useSessionScopedState(sessionIdRef, init)：init 返回 reactive 容器
  *   （不是 plain object），按 sessionId 分区，切 sid 切分区、切回恢复（AC-4）。
  * - onMessage handler 调 updateFor(sid, ...)（第二参数 sid 是订阅时捕获的消息所属 session），
  *   不用 update()——update 读实时 sessionIdRef.value，退订窗口内旧 sid 迟到消息会污染新 sid
  *   （M1 竞态修复的核心）。
  *
- * 注意：此前有过实例级 ref + watch 清空派的探索产物（ADR-0036 反模式，已删除）。
+ * 注意：此前有过实例级 ref + watch 清空派的探索产物（ADR-0049 反模式，已删除）。
  * 本 composable 是 Map 分区派，不可退化回实例级范式。
  *
  * 依赖方向：useSessionEvents（订阅）+ useSessionScopedState（分区）+ @xyz-agent/extension-protocol（类型）。
@@ -44,7 +44,7 @@ export function useDrawerWidgetBuffers(
   activeTabRef: Ref<SideDrawerTab>,
 ): DrawerWidgetBuffers {
   /**
-   * widget/status 缓冲的 per-session 状态结构（ADR-0036 W4：Map 分区派）。
+   * widget/status 缓冲的 per-session 状态结构（ADR-0042 W4：Map 分区派）。
    * 五个原组件级 ref/reactive（terminalLines/browserLines/unknownWidget/guiWidgetsByTab/statusMap）
    * 收进一个 reactive 对象，经 useSessionScopedState 按 sessionId 分区。
    *

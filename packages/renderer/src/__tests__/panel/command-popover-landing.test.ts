@@ -124,7 +124,7 @@ describe('CommandPopover landing 态用 globalSkills prop（L1-L14，W4）', () 
   })
 
   it('L5 session 态（variant=panel + sessionId=s1）→ 用 commandStore（3 项 pi 命令）+ 前端注入 compact = 4 项，不被 globalSkills(7) 污染', async () => {
-    // AC-3：session 态不并入 globalSkills（配置态/运行态不混淆，ADR-0037 D2）
+    // AC-3：session 态不并入 globalSkills（配置态/运行态不混淆，ADR-0050 D2）
     wrapper = mount(CommandPopover, {
       attachTo: document.body,
       props: { open: true, type: 'slash', variant: 'panel', sessionId: 's1', query: '', globalSkills: LANDING_SKILLS },

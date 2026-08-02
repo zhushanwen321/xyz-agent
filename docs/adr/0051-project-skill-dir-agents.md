@@ -1,4 +1,4 @@
-# ADR-0038：项目级 skill 目录约定为 `.agents/skills`
+# ADR-0051：项目级 skill 目录约定为 `.agents/skills`
 
 - **状态**：Accepted
 - **日期**：2026-07-21

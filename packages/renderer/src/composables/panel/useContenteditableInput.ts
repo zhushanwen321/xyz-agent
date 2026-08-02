@@ -354,7 +354,7 @@ export function getSegmentsFromEl(el: HTMLDivElement | null): Segment[] {
       continue
     }
 
-    // mention-file 元素（结构化 file chip，ADR-0034）：产出 file segment，跳过子树。
+    // mention-file 元素（结构化 file chip，ADR-0040）：产出 file segment，跳过子树。
     // 旧 mention-file 无 dataset 时 chipType 为 undefined → 仍产出 file segment（path 从 chipPath 取，
     // 无 chipPath 时从 textContent 去 # 前缀兜底，向后兼容）。
     if (

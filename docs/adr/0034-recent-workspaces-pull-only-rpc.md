@@ -1,4 +1,4 @@
-# ADR-0003: recent-workspaces 采用 pull-only RPC（不做 broadcast）
+# ADR-0034: recent-workspaces 采用 pull-only RPC（不做 broadcast）
 
 - **Status**: accepted
 - **Date**: 2026-07-03
