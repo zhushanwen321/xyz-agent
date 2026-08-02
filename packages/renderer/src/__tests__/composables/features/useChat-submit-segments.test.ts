@@ -47,15 +47,14 @@ vi.mock('@/api', () => ({
     steer: apiMock.steer,
     followUp: apiMock.followUp,
   },
-  session: {},
+  session: {
+    writeSegments: sessionDomainMock.writeSegments,
+  },
 }))
 
 // ── session domain mock：writeSegments 捕获 sidecar 写入（clientUuid + segments 回填用）──
 const sessionDomainMock = vi.hoisted(() => ({
   writeSegments: vi.fn(() => Promise.resolve()),
-}))
-vi.mock('@/api/domains/session', () => ({
-  writeSegments: sessionDomainMock.writeSegments,
 }))
 
 import { useChatStore } from '@/stores/chat'

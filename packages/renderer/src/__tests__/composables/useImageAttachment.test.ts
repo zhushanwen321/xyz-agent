@@ -20,9 +20,10 @@ import { handleImagePaste } from '@/composables/panel/useImageAttachment'
 
 // writeImage 可被每个测试替换三态：resolve({path,name,id}) / resolve(undefined) / reject
 const writeImageMock = vi.hoisted(() => vi.fn())
-vi.mock('@/api/domains/session', () => ({
-  writeImage: writeImageMock,
-}))
+vi.mock('@/api', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('@/api')>()
+  return { ...orig, session: { ...orig.session, writeImage: writeImageMock } }
+})
 
 /** 构造最小 PNG（8 字节签名 + IHDR 占位，足够 FileReader.readAsArrayBuffer 产出非空 base64） */
 function makePngFile(): File {
