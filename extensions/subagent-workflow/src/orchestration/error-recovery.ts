@@ -436,8 +436,12 @@ function dispatchAgentCall(
  *
  * postResult（workflow-call）与 postAgentResult（agent-call）各自前缀不同，故 prefix 参数化，
  * 共享返回类型与构造逻辑，避免字面量重复导致形状漂移。
+ *
+ * W2 防御关键纯函数——export 供独立单测（error-recovery-serialize-failed-result.test.ts）验证
+ * 返回 shape `{content:"", error:"<prefix>: <errMsg>"}`，确保两条 fallback 路径（workflow-call /
+ * agent-call）共享同一构造逻辑不漂移。
  */
-function makeSerializeFailedResult(
+export function makeSerializeFailedResult(
   prefix: string,
   errMsg: string,
 ): { content: string; error: string } {

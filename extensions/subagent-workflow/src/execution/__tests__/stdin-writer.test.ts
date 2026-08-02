@@ -68,12 +68,13 @@ function readStdinLines(child: ChildProcess): unknown[] {
     .map((l) => JSON.parse(l));
 }
 
-let warnSpy: { mock: { calls: unknown[][] } } & ((...args: unknown[]) => void);
+// vi.fn() 的返回类型原生含 .mock.calls——无需双重断言（ReturnType<typeof vi.fn> 已是强类型）。
+let warnSpy: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   // stdin-writer 在背压 / 序列化失败时 logger.warn；测试 mock logger 避免噪声，且可断言调用。
   loggerMock.warn.mockClear();
-  warnSpy = loggerMock.warn as unknown as { mock: { calls: unknown[][] } } & ((...args: unknown[]) => void);
+  warnSpy = loggerMock.warn;
 });
 
 afterEach(() => {

@@ -99,6 +99,7 @@ vi.mock("../temp-prompt.ts", () => ({
 
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
+import type { RecordStore } from "../record-store.ts";
 import type { WorktreeManager } from "../worktree-manager.ts";
 import { SubagentService } from "../subagent-service.ts";
 
@@ -131,19 +132,25 @@ function setup(): SetupResult {
     getMainSessionFile: () => "/mock/main-session.jsonl",
   });
   service.initSession({ pi: makePi(), sessionId: "exec-await-worktree-it" });
+  // worktreeManager 是 SubagentService 构造时 new 的 private 字段（无外部注入入口），
+  // 测试经 Reflect.get 访问后 cast 到生产导出类型 WorktreeManager（已在文件顶部 import），
+  // 让字段/方法签名与生产类型契约绑定。
   const worktreeManager = Reflect.get(service, "worktreeManager") as WorktreeManager;
   return { service, worktreeManager };
 }
 
 const ctxModel: ModelInfo = { id: "m", name: "M", provider: "p", reasoning: false };
 
-/** 从 service 取出 private store（断言 record 终态用）。 */
-function getStore(service: SubagentService) {
-  return Reflect.get(service, "store") as {
-    getMutable: (id: string) => { status: string } | undefined;
-    listRunning: () => Array<{ status: string }>;
-    archive: (record: { status: string; id: string }) => void;
-  };
+/**
+ * 从 service 取出 private store（断言 record 终态用）。
+ *
+ * worktreeManager 与 store 都是 SubagentService 构造时 new 出的 private 字段——
+ * 无外部注入入口，测试只能经 Reflect.get 访问。这里 cast 到生产导出类型
+ * （RecordStore / WorktreeManager）而非内联匿名 shape，让测试与生产类型契约绑定：
+ * 字段改名/签名变更时 tsc 立即报错（而非静默漂移）。
+ */
+function getStore(service: SubagentService): RecordStore {
+  return Reflect.get(service, "store") as RecordStore;
 }
 
 describe("executeAndAwait worktree 前置守卫 + 失败收尾", () => {
@@ -158,13 +165,15 @@ describe("executeAndAwait worktree 前置守卫 + 失败收尾", () => {
     const { service } = setup();
 
     // guard 在 BC-12 深度检查之后、步骤 1 之前——无需 fork:true，worktree:true 即触发。
+    // 传入完整 ExecuteOptions（补全 slug 必填字段），不再用 `as` 掩盖缺失字段——让缺字段在类型层可见。
     await expect(
       service.executeAndAwait({
         task: "needs worktree without fork",
+        slug: "mf7-worktree-without-fork",
         worktree: true,
         fork: undefined,
         ctxModel,
-      } as Parameters<typeof service.executeAndAwait>[0]),
+      }),
     ).rejects.toThrow(/worktree:true requires fork:true/);
 
     // 无副作用：guard 在 createRecordForMode 之前 → store 无 running record。
@@ -191,15 +200,17 @@ describe("executeAndAwait worktree 前置守卫 + 失败收尾", () => {
     await expect(
       service.executeAndAwait({
         task: "worktree create will fail",
+        slug: "worktree-create-fail",
         worktree: true,
         fork: true,
         ctxModel,
-      } as Parameters<typeof service.executeAndAwait>[0]),
+      }),
     ).rejects.toBe(createErr);
 
     // finalizeFailed 完整执行：record 经 CAS→completeRecord 推到 failed 终态后 archive。
     expect(archiveSpy).toHaveBeenCalledTimes(1);
-    const archivedRecord = archiveSpy.mock.calls[0]![0] as { status: string; id: string };
+    // store 现已强类型为 RecordStore → archive 入参为 ExecutionRecord，无需 `as` 断言。
+    const archivedRecord = archiveSpy.mock.calls[0]![0];
     expect(archivedRecord.status).toBe("failed");
     // archive 后 record 已移出 running map → listRunning 空、getMutable 取不到。
     expect(store.listRunning()).toHaveLength(0);

@@ -589,6 +589,9 @@ export class SubagentService {
     // mapToWorkflowAgentResult 不感知 worktree（它只做 subagents AgentResult → workflow AgentResult
     // 的 DTO 映射），故在 caller 侧 mutate 刚新建的产物对象（无共享引用，安全）。
     //
+    // ⚠️ worktreePath is diagnostic only, may not exist — see AgentResult.worktreePath JSDoc
+    // （orchestration/models/types.ts）。下方诊断标识符语义（not cwd）说明同源。
+    //
     // 诊断标识符语义（not cwd）：
     //   - runAndFinalize 内的 finalizeRecord 在 return 前已 cleanup（git worktree remove --force），
     //     worktreePath 指向的目录已被删除，不保证存在。

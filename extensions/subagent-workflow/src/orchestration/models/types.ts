@@ -204,6 +204,12 @@ export interface AgentResult {
  /**
  * Absolute path of the git worktree used for filesystem isolation (set when
  * worktree isolation is active). Injected by executeAndAwait from record.worktreeHandle.path.
+ *
+ * ⚠️ Diagnostic only, may not exist: executeAndAwait's finalizeRecord cleans up the
+ * worktree (git worktree remove --force) before returning, so by the time this field
+ * reaches the caller the directory has typically been deleted. Use it only for log/trace
+ * correlation (e.g. attributing a session jsonl to its worktree origin) — never as a cwd
+ * for a subsequent agent or filesystem operation (would ENOENT).
  */
   worktreePath?: string;
  /** All tool calls collected from JSONL stream (FR-7). */
