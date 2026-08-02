@@ -8,48 +8,50 @@
 /* ================================================================
    v6 Design Tokens
    ── 沿用项目现役 token 命名（--neutral-* 新谱系）
-   ── 含 v6 提案值：--radius-sm 6px / --neutral-dim #7d8494 / 新增 3 token
-   ── 色相不变（冷蓝暗色 #1a1b1f / accent #4f8ef7）
+   ── 含 v6 提案值：--radius-sm 6px / --neutral-dim #5e5e64 / 新增 3 token
+   ── V3 太极纯灰系（bg #0f0f11 / accent #c8c8cd）
    ================================================================ */
 :root {
   /* 背景层级 */
-  --bg: #1a1b1f;
-  --surface: #272830;
-  --surface-hover: #363740;
-  --surface-2: #2e2f38;
-  --bg-elevated: #313239;
-  --bg-input: #1e1f24;
+  --bg: #0f0f11;
+  --surface: #1b1b1d;
+  --surface-hover: #29292b;
+  --surface-2: #212123;
+  --bg-elevated: #262628;
+  --bg-input: #141416;
   /* v6 新增：层级代替边框用的表面
      注：原设计用 bg 97%+black 把侧栏/drawer「往黑推」，导致比画布还暗、发脏。
      正确方向是侧栏/drawer 与画布同色融合（靠主面板 surface 浮起表达层级），
      对标 Claude/Linear 的干净感。--bg-card 用于 settings 分组卡片，介于 bg 与 surface 之间。 */
   --bg-sunken: var(--bg);
-  --bg-card: #22242c;
+  --bg-card: #18181a;
 
-  /* 文字 neutral 谱系（v6：dim 提亮一档 #6b7280→#7d8494）*/
-  --neutral-fg: #e5e7eb;
-  --neutral-mid: #9ca3af;
-  --neutral-dim: #7d8494;
-  --neutral-faint: #4b5563;
-  --neutral-ico: #8b8d94;
-  --neutral-ico-hover: #e5e7eb;
+  /* 文字 neutral 谱系（V3 太极纯灰）*/
+  --neutral-fg: #dcdce0;
+  --neutral-mid: #888890;
+  --neutral-dim: #5e5e64;
+  --neutral-faint: #383840;
+  --neutral-ico: #74747c;
+  --neutral-ico-hover: #dcdce0;
 
   /* 边框/分隔 */
-  --border: rgba(255,255,255,0.08);
-  --border-strong: rgba(255,255,255,0.15);
+  --border: rgba(255,255,255,0.05);
+  --border-strong: rgba(255,255,255,0.10);
 
-  /* 主色（冷蓝）*/
-  --accent: #4f8ef7;
-  --accent-hover: #6ba3ff;
-  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
-  --accent-ring: rgba(79,142,247,0.30);
+  /* 主色（V3 太极纯灰）*/
+  --accent: #c8c8cd;
+  --accent-hover: #dcdce0;
+  --accent-soft: color-mix(in oklch, var(--accent) 10%, transparent);
+  --accent-ring: color-mix(in oklch, var(--accent) 30%, transparent);
+  --accent-fg: #1a1a1c;
 
   /* 状态色 */
-  --success: #22c55e;
-  --warn: #b08a3e;
-  --danger: #ef4444;
-  --info: #38bdf8;
-  --reasoning: #a78bfa;
+  --success: #6a9b73;
+  --warn: #a8904a;
+  --danger: #b06060;
+  --info: #5e8a96;
+  --reasoning: #80779e;
+  --danger-fg: #f0f0f2;
   --success-soft: color-mix(in oklch, var(--success) 12%, transparent);
   --warn-soft: color-mix(in oklch, var(--warn) 14%, transparent);
   --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
@@ -102,7 +104,7 @@
 html, body { height: 100%; }
 body {
   font-family: var(--font-sans);
-  background: #131316; color: var(--neutral-fg);
+  background: #0a0a0c; color: var(--neutral-fg);
   -webkit-font-smoothing: antialiased;
   display: flex; flex-direction: column;
   font-size: var(--text-base);
@@ -148,7 +150,7 @@ body {
    ================================================================ */
 .stage {
   flex: 1; display: flex; gap: var(--space-3); padding: var(--space-3);
-  background: #131316; overflow: hidden;            /* 窗口底，略深于画布 */
+  background: #0a0a0c; overflow: hidden;            /* 窗口底，略深于画布 */
   min-height: 0;
 }
 .app-shell {
@@ -599,7 +601,7 @@ body[data-color="legacy"] .goal-card.complete .gc-badge { background: var(--succ
 .todo-verify { font-size: 9px; padding: 1px 5px; border-radius: 999px; color: var(--reasoning); margin-left: 6px; }
 
 /* terminal */
-.terminal { background: var(--bg-input); border-radius: var(--radius); padding: var(--space-3); font-family: var(--font-mono); font-size: var(--text-sm); color: #e5e7eb; line-height: 1.5; min-height: 200px; }
+.terminal { background: var(--bg-input); border-radius: var(--radius); padding: var(--space-3); font-family: var(--font-mono); font-size: var(--text-sm); color: #dcdce0; line-height: 1.5; min-height: 200px; }
 .terminal .term-prompt { color: var(--accent); }
 .terminal .term-out { color: var(--neutral-mid); }
 .terminal .term-cwd { color: var(--info); }

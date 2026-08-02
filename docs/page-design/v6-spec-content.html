@@ -87,8 +87,8 @@
    其余 4 条演示 keyframes（working-pulse / pulse-strong / pulse-warn / wiggle）。*/
 /* working-pulse（tailwind:109）：turn-meta working 态，opacity+box-shadow 呼吸 */
 @keyframes working-pulse {
-  0%,100% { opacity: 1; box-shadow: 0 0 0 0 rgba(79,142,247,0.4); }
-  50% { opacity: 0.55; box-shadow: 0 0 0 5px rgba(79,142,247,0); }
+  0%,100% { opacity: 1; box-shadow: 0 0 0 0 color-mix(in oklch, var(--accent) 40%, transparent); }
+  50% { opacity: 0.55; box-shadow: 0 0 0 5px color-mix(in oklch, var(--accent) 0%, transparent); }
 }
 /* pulse-strong（tailwind:128）：TasksPanel in_progress，opacity+scale 呼吸 */
 @keyframes pulse-strong {

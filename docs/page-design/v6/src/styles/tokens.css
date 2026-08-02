@@ -1,45 +1,45 @@
 /* v6 视觉 token 块（逐字对齐 v6-spec-base.css :17-113 SSOT）*/
 :root {
   /* 背景层级 */
-  --bg: #1a1b1f;
-  --surface: #272830;
-  --surface-hover: #363740;
-  --surface-2: #2e2f38;
-  --bg-elevated: #313239;
-  --bg-input: #1e1f24;
+  --bg: #0f0f11;
+  --surface: #1b1b1d;
+  --surface-hover: #29292b;
+  --surface-2: #212123;
+  --bg-elevated: #262628;
+  --bg-input: #141416;
   --bg-sunken: var(--bg);
-  --bg-card: #22242c;
+  --bg-card: #18181a;
 
   /* 文字 neutral 谱系 */
-  --neutral-fg: #e5e7eb;
-  --neutral-mid: #9ca3af;
-  --neutral-dim: #7d8494;
-  --neutral-faint: #4b5563;
-  --neutral-ico: #8b8d94;
-  --neutral-ico-hover: #e5e7eb;
+  --neutral-fg: #dcdce0;
+  --neutral-mid: #888890;
+  --neutral-dim: #5e5e64;
+  --neutral-faint: #383840;
+  --neutral-ico: #74747c;
+  --neutral-ico-hover: #dcdce0;
 
   /* 边框/分隔 */
-  --border: rgba(255,255,255,0.08);
-  --border-strong: rgba(255,255,255,0.15);
+  --border: rgba(255,255,255,0.05);
+  --border-strong: rgba(255,255,255,0.10);
   --hairline: rgba(255,255,255,0.04);
 
-  /* 主色（冷蓝）*/
-  --accent: #4f8ef7;
-  --accent-hover: #6ba3ff;
+  /* 主色（太极玄为默认）*/
+  --accent: #c8c8cd;
+  --accent-hover: #dcdce0;
   --accent-soft: color-mix(in oklch, var(--accent) 10%, transparent);
   /* color-mix 派生：自动跟随 --accent，主题切换无需单独覆盖 */
   --accent-ring: color-mix(in oklch, var(--accent) 30%, transparent);
   /* accent 实色上的文字色（深色 accent 用白字，亮色 accent 如太极需覆盖为深字）*/
-  --accent-fg: #ffffff;
+  --accent-fg: #1a1a1c;
 
   /* 状态色 */
-  --success: #22c55e;
-  --warn: #b08a3e;
-  --danger: #ef4444;
+  --success: #6a9b73;
+  --warn: #a8904a;
+  --danger: #b06060;
   /* danger 实色上的文字色（太极等降明度 danger 主题需浅字；亮主题可覆盖）*/
   --danger-fg: #f0f0f2;
-  --info: #38bdf8;
-  --reasoning: #a78bfa;
+  --info: #5e8a96;
+  --reasoning: #80779e;
   --success-soft: color-mix(in oklch, var(--success) 12%, transparent);
   --warn-soft: color-mix(in oklch, var(--warn) 14%, transparent);
   --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);

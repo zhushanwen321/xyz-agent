@@ -13,18 +13,19 @@
    token 复用 v6-spec-tokens.html 同一集（含 v6 提案值）。标注范式与 conversation 稿一致。
    ================================================================ */
 :root {
-  --bg: #1a1b1f; --surface: #272830; --surface-hover: #363740;
-  --surface-2: #2e2f38; --bg-elevated: #313239; --bg-input: #1e1f24;
-  --bg-sunken: var(--bg); --bg-card: #22242c;
-  --neutral-fg: #e5e7eb; --neutral-mid: #9ca3af; --neutral-dim: #7d8494;
-  --neutral-dim-old: #6b7280; --neutral-faint: #4b5563;
-  --neutral-ico: #8b8d94; --neutral-ico-hover: #e5e7eb;
-  --border: rgba(255,255,255,0.08); --border-strong: rgba(255,255,255,0.15);
-  --accent: #4f8ef7; --accent-hover: #6ba3ff;
-  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
-  --accent-ring: rgba(79,142,247,0.30);
-  --success: #22c55e; --warn: #b08a3e; --danger: #ef4444;
-  --info: #38bdf8; --reasoning: #a78bfa;
+  --bg: #0f0f11; --surface: #1b1b1d; --surface-hover: #29292b;
+  --surface-2: #212123; --bg-elevated: #262628; --bg-input: #141416;
+  --bg-sunken: var(--bg); --bg-card: #18181a;
+  --neutral-fg: #dcdce0; --neutral-mid: #888890; --neutral-dim: #5e5e64;
+  --neutral-dim-old: #6b7280; --neutral-faint: #383840;
+  --neutral-ico: #74747c; --neutral-ico-hover: #dcdce0;
+  --border: rgba(255,255,255,0.05); --border-strong: rgba(255,255,255,0.10);
+  --accent: #c8c8cd; --accent-hover: #dcdce0;
+  --accent-soft: color-mix(in oklch, var(--accent) 10%, transparent);
+  --accent-ring: color-mix(in oklch, var(--accent) 30%, transparent);
+  --accent-fg: #1a1a1c;
+  --success: #6a9b73; --warn: #a8904a; --danger: #b06060;
+  --info: #5e8a96; --reasoning: #80779e; --danger-fg: #f0f0f2;
   --success-soft: color-mix(in oklch, var(--success) 12%, transparent);
   --warn-soft: color-mix(in oklch, var(--warn) 14%, transparent);
   --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
@@ -55,7 +56,7 @@
 html, body { height: 100%; }
 body {
   font-family: var(--font-sans);
-  background: #131316;            /* stage 窗口底，v6 三层明度最深层 */
+  background: #0a0a0c;            /* stage 窗口底，v6 三层明度最深层 */
   color: var(--neutral-fg);
   -webkit-font-smoothing: antialiased;
   font-size: var(--text-base); line-height: 1.5;
@@ -114,9 +115,9 @@ body {
 /* ================================================================
    §1 三栏拓扑 · 窗口轮廓渲染
    ================================================================ */
-/* 窗口底（app-shell p-3 + rounded-[10px] + bg-bg，落在 stage #131316 上）*/
+/* 窗口底（app-shell p-3 + rounded-[10px] + bg-bg，落在 stage #0a0a0c 上）*/
 .window-stage {
-  background: #131316;
+  background: #0a0a0c;
   border-radius: var(--radius);
   padding: 24px;
   position: relative;
@@ -219,7 +220,7 @@ body {
    §2 三层明度堆叠
    ================================================================ */
 .layer-stack {
-  background: #131316;
+  background: #0a0a0c;
   border-radius: var(--radius);
   padding: 24px;
 }
@@ -231,7 +232,7 @@ body {
   flex: 1; padding: 18px; display: flex; flex-direction: column;
   justify-content: space-between; position: relative;
 }
-.ls-stage { background: #131316; }
+.ls-stage { background: #0a0a0c; }
 .ls-canvas { background: var(--bg-sunken); }
 .ls-surface { background: var(--surface); }
 .layer-step .ls-label { font-size: var(--text-sm); font-weight: 500; color: var(--neutral-fg); }
@@ -243,7 +244,7 @@ body {
 
 /* 堆叠示意（嵌套表达包含关系）*/
 .nest-demo {
-  background: #131316; border-radius: var(--radius-lg); padding: 20px;
+  background: #0a0a0c; border-radius: var(--radius-lg); padding: 20px;
   display: flex; justify-content: center;
 }
 .nest-window {
@@ -377,7 +378,7 @@ body {
   display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
 }
 .cc-col {
-  background: #131316; border-radius: var(--radius); padding: 12px;
+  background: #0a0a0c; border-radius: var(--radius); padding: 12px;
   display: flex; flex-direction: column; gap: 8px;
 }
 .cc-label {
@@ -498,7 +499,7 @@ body {
   background: var(--bg-card); border-radius: var(--radius); padding: 16px;
 }
 .dd-stage {
-  background: #131316; border-radius: var(--radius); padding: 12px;
+  background: #0a0a0c; border-radius: var(--radius); padding: 12px;
   display: flex; gap: 12px; height: 220px; overflow: hidden;
 }
 .dd-aside {
@@ -560,7 +561,7 @@ body {
 .sd-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .sd-card-v6 { background: var(--bg-card); border-radius: var(--radius); padding: 18px; }
 .sd-stage-v6 {
-  background: #131316; border-radius: var(--radius); padding: 10px;
+  background: #0a0a0c; border-radius: var(--radius); padding: 10px;
   height: 150px; display: flex; gap: 8px; overflow: hidden;
 }
 .sdv-aside { flex: 0 0 30px; background: var(--bg-sunken); border-radius: var(--radius-sm); }
@@ -675,7 +676,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s1">
     <div class="spec-head"><span class="spec-num">§1</span><h2 class="spec-title">三栏拓扑总览</h2></div>
-    <p class="spec-desc">AppShell 是三栏组合根：<code>aside</code>（侧栏画布）｜<code>app-nav-controls</code>（浮层导航）｜<code>main-panel</code>（surface 浮起，含 Workspace）+ 可选 <code>drawer</code>（与 main 共享同一 surface 浮起体，从 main 右缘生长挤占 main 宽度，详见 §7）。v6 保留 v3 的三栏拓扑不变（§1.1#2），底色语义：aside = 画布色（<code>--bg-sunken</code>），与窗口底同色融合；main-panel + drawer 共享 surface 浮起（同一 border + shadow 外壳、同 <code>--surface</code> 底色），是唯一带 border + shadow 的浮起体。窗口整体落在 stage 深底 #131316 上（app-shell <code>p-3</code> 间隙显露）。<b>view 路由简化</b>：main-panel 仅 chat（Workspace），Overview 概览页已移除（sidebar sessions tab 已覆盖会话列表需求）。</p>
+    <p class="spec-desc">AppShell 是三栏组合根：<code>aside</code>（侧栏画布）｜<code>app-nav-controls</code>（浮层导航）｜<code>main-panel</code>（surface 浮起，含 Workspace）+ 可选 <code>drawer</code>（与 main 共享同一 surface 浮起体，从 main 右缘生长挤占 main 宽度，详见 §7）。v6 保留 v3 的三栏拓扑不变（§1.1#2），底色语义：aside = 画布色（<code>--bg-sunken</code>），与窗口底同色融合；main-panel + drawer 共享 surface 浮起（同一 border + shadow 外壳、同 <code>--surface</code> 底色），是唯一带 border + shadow 的浮起体。窗口整体落在 stage 深底 #0a0a0c 上（app-shell <code>p-3</code> 间隙显露）。<b>view 路由简化</b>：main-panel 仅 chat（Workspace），Overview 概览页已移除（sidebar sessions tab 已覆盖会话列表需求）。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> 三栏拓扑 + traffic-light 安全区</span>
       <span class="cp cp-v6"><b>v6</b> 拓扑不变，底色语义统一三层明度</span>
@@ -683,7 +684,7 @@ body {
     </div>
 
     <!-- 完整窗口轮廓渲染 -->
-    <div class="render-frame" style="background:#131316;padding:0;">
+    <div class="render-frame" style="background:#0a0a0c;padding:0;">
       <div class="window-stage">
         <div class="window-frame">
           <!-- traffic-light 落位 -->
@@ -751,7 +752,7 @@ body {
           </div>
         </div>
         <div style="margin-top:14px;padding:10px 14px;background:rgba(0,0,0,0.4);border-radius:var(--radius);font-family:var(--font-mono);font-size:var(--text-2xs);color:var(--neutral-mid);">
-          窗口底 <span style="color:var(--neutral-fg);">#131316</span>（stage · app-shell p-3 间隙显露）· 三栏落在其上：aside 透明融合（画布色）/ main-panel + drawer 共享同一 surface 浮起体（border + shadow，drawer 从 main 右缘生长）
+          窗口底 <span style="color:var(--neutral-fg);">#0a0a0c</span>（stage · app-shell p-3 间隙显露）· 三栏落在其上：aside 透明融合（画布色）/ main-panel + drawer 共享同一 surface 浮起体（border + shadow，drawer 从 main 右缘生长）
         </div>
       </div>
     </div>
@@ -773,7 +774,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s2">
     <div class="spec-head"><span class="spec-num">§2</span><h2 class="spec-title">三层明度体系</h2></div>
-    <p class="spec-desc">v6 验收基准之一：三层背景肉眼可辨（§9）。从深到浅：<b>stage 深底 #131316</b>（窗口底，app-shell padding 背景，不新增 token）→ <b>画布 #1a1b1f</b>（<code>--bg-sunken</code> = <code>--bg</code>，侧栏落色，与窗口同色融合）→ <b>surface 浮起 #272830</b>（主面板 + drawer 共享，焦点区）。<code>--bg-sunken</code> 语义变更：原 visual-modernization 用 color-mix(bg 97%, black) 把侧栏往黑推导致发脏，v6 改为与画布同色，靠主面板浮起表达层级。drawer 不再独立成层——它与 main 共享同一 surface 浮起体（§7），从 main 右缘生长挤占 main 宽度。不嵌套第四层。</p>
+    <p class="spec-desc">v6 验收基准之一：三层背景肉眼可辨（§9）。从深到浅：<b>stage 深底 #0a0a0c</b>（窗口底，app-shell padding 背景，不新增 token）→ <b>画布 #1a1b1f</b>（<code>--bg-sunken</code> = <code>--bg</code>，侧栏落色，与窗口同色融合）→ <b>surface 浮起 #272830</b>（主面板 + drawer 共享，焦点区）。<code>--bg-sunken</code> 语义变更：原 visual-modernization 用 color-mix(bg 97%, black) 把侧栏往黑推导致发脏，v6 改为与画布同色，靠主面板浮起表达层级。drawer 不再独立成层——它与 main 共享同一 surface 浮起体（§7），从 main 右缘生长挤占 main 宽度。不嵌套第四层。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> bg-sunken color-mix 往黑推（发脏）</span>
       <span class="cp cp-v6"><b>v6</b> bg-sunken = bg（同色融合）</span>
@@ -781,7 +782,7 @@ body {
     </div>
 
     <div class="sub-h">三层堆叠（深 → 浅，每层 Δ≈5% 明度）</div>
-    <div class="render-frame" style="background:#131316;padding:0;">
+    <div class="render-frame" style="background:#0a0a0c;padding:0;">
       <div class="layer-stack">
         <div class="layer-row">
           <div class="layer-step ls-stage">
@@ -790,7 +791,7 @@ body {
               <div class="ls-sub">app-shell padding 背景</div>
             </div>
             <div>
-              <div class="ls-hex">#131316</div>
+              <div class="ls-hex">#0a0a0c</div>
               <div class="ls-use">最深层 · 不新增 token</div>
             </div>
           </div>
@@ -819,10 +820,10 @@ body {
     </div>
 
     <div class="sub-h">嵌套关系（窗口 → 画布 → 浮起面板）</div>
-    <div class="render-frame" style="background:#131316;padding:20px;">
+    <div class="render-frame" style="background:#0a0a0c;padding:20px;">
       <div class="nest-demo">
         <div class="nest-window">
-          <span class="nest-tag" style="top:6px;left:6px;background:var(--neutral-fg);color:#131316;">① stage</span>
+          <span class="nest-tag" style="top:6px;left:6px;background:var(--neutral-fg);color:#0a0a0c;">① stage</span>
           <span class="nest-tag" style="top:6px;right:6px;background:var(--surface-2);color:var(--neutral-mid);">② 画布</span>
           <div class="nest-panel">
             <span style="background:var(--bg-elevated);color:var(--neutral-fg);padding:2px 6px;border-radius:var(--radius-sm);font-size:var(--text-2xs);">③ surface</span>
@@ -837,7 +838,7 @@ body {
       <div class="anno"><b>--bg-sunken:</b><br>var(--bg) <span class="v6">[v6 新增]</span><br>语义：同色融合（非往黑推）</div>
       <div class="anno"><b>--surface:</b><br>#272830 [主面板浮起]</div>
       <div class="anno"><b>明度梯度 Δ:</b><br>每层 ≈5%，肉眼可辨<br><span class="v6">§9 验收基准</span></div>
-      <div class="anno"><b>stage #131316:</b><br>不进 token，app-shell<br>p-3 背景恒定</div>
+      <div class="anno"><b>stage #0a0a0c:</b><br>不进 token，app-shell<br>p-3 背景恒定</div>
       <div class="anno"><b>分隔策略:</b><br>层级 &gt; 留白 &gt; hairline &gt; 边框<br>静态容器不叠加 border</div>
       <div class="anno"><b>反写位置:</b><br>style.css :root 新增<br>--bg-sunken / --bg-card</div>
       <div class="anno"><b>嵌套禁令:</b><br>一个表面色容器<br>不叠加第四层 border</div>

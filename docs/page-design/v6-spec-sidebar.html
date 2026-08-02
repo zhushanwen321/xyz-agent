@@ -16,41 +16,43 @@
    ================================================================ */
 :root {
   /* 背景层级 */
-  --bg: #1a1b1f;
-  --surface: #272830;
-  --surface-hover: #363740;
-  --surface-2: #2e2f38;
-  --bg-elevated: #313239;
-  --bg-input: #1e1f24;
+  --bg: #0f0f11;
+  --surface: #1b1b1d;
+  --surface-hover: #29292b;
+  --surface-2: #212123;
+  --bg-elevated: #262628;
+  --bg-input: #141416;
   /* v6 新增 */
   --bg-sunken: var(--bg);
-  --bg-card: #22242c;
+  --bg-card: #18181a;
 
   /* 文字 neutral 谱系（v6：dim 提亮一档）*/
-  --neutral-fg: #e5e7eb;
-  --neutral-mid: #9ca3af;
-  --neutral-dim: #7d8494;
+  --neutral-fg: #dcdce0;
+  --neutral-mid: #888890;
+  --neutral-dim: #5e5e64;
   --neutral-dim-old: #6b7280;
-  --neutral-faint: #4b5563;
-  --neutral-ico: #8b8d94;
-  --neutral-ico-hover: #e5e7eb;
+  --neutral-faint: #383840;
+  --neutral-ico: #74747c;
+  --neutral-ico-hover: #dcdce0;
 
   /* 边框/分隔 */
-  --border: rgba(255,255,255,0.08);
-  --border-strong: rgba(255,255,255,0.15);
+  --border: rgba(255,255,255,0.05);
+  --border-strong: rgba(255,255,255,0.10);
 
-  /* 主色（冷蓝）*/
-  --accent: #4f8ef7;
-  --accent-hover: #6ba3ff;
-  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
-  --accent-ring: rgba(79,142,247,0.30);
+  /* 主色（V3 太极纯灰）*/
+  --accent: #c8c8cd;
+  --accent-hover: #dcdce0;
+  --accent-soft: color-mix(in oklch, var(--accent) 10%, transparent);
+  --accent-ring: color-mix(in oklch, var(--accent) 30%, transparent);
+  --accent-fg: #1a1a1c;
 
   /* 状态色 */
-  --success: #22c55e;
-  --warn: #b08a3e;
-  --danger: #ef4444;
-  --info: #38bdf8;
-  --reasoning: #a78bfa;
+  --success: #6a9b73;
+  --warn: #a8904a;
+  --danger: #b06060;
+  --info: #5e8a96;
+  --reasoning: #80779e;
+  --danger-fg: #f0f0f2;
   --success-soft: color-mix(in oklch, var(--success) 12%, transparent);
   --warn-soft: color-mix(in oklch, var(--warn) 14%, transparent);
   --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
@@ -90,7 +92,7 @@
   --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);
   --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
   --shadow-drawer: -12px 0 24px rgba(0,0,0,0.16);
-  --shadow-glow: 0 0 0 3px rgba(79,142,247,0.25);
+  --shadow-glow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);
 
   /* 组件尺寸（v6 新增）*/
   --content-max-w: 720px;
@@ -113,7 +115,7 @@
 html, body { height: 100%; }
 body {
   font-family: var(--font-sans);
-  background: #131316;            /* stage 窗口底，v6 三层明度最深层 */
+  background: #0a0a0c;            /* stage 窗口底，v6 三层明度最深层 */
   color: var(--neutral-fg);
   -webkit-font-smoothing: antialiased;
   font-size: var(--text-base);
@@ -176,10 +178,10 @@ body {
 
 /* ── §1 Sidebar 容器（侧栏底色 = bg 画布色，主面板 surface 浮起分隔）── */
 .app-stage {
-  background: #131316; border-radius: var(--radius-lg); padding: 0; overflow: hidden;
+  background: #0a0a0c; border-radius: var(--radius-lg); padding: 0; overflow: hidden;
   display: flex; height: 460px; position: relative;
 }
-.app-gap { width: 6px; background: #131316; flex-shrink: 0; }   /* app-shell 间隙显露 stage 深底 */
+.app-gap { width: 6px; background: #0a0a0c; flex-shrink: 0; }   /* app-shell 间隙显露 stage 深底 */
 .sb-shell {
   width: 300px; flex-shrink: 0; background: var(--bg);  /* = --bg-sunken */
   display: flex; flex-direction: column; padding-left: 2px;
@@ -503,7 +505,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s1">
     <div class="spec-head"><span class="spec-num">§1</span><h2 class="spec-title">容器总览</h2></div>
-    <p class="spec-desc">Sidebar 容器底色 <code>bg-bg</code>（= <code>--bg-sunken</code> 新值，画布色），与主面板靠 surface 浮起分隔——去硬 <code>border-r</code>，靠三层明度（stage 深底 #131316 + 主面板 <code>--surface</code> 浮起）表达层级（§3.4）。整体轮廓：Brand → 主操作 nav（新建/搜索）→ SegmentedTab → 子视图区 → 底部用户区。<strong>Overview 入口已移除</strong>（§4.4 DEPRECATED，任务概览并入 drawer 详情视图）。</p>
+    <p class="spec-desc">Sidebar 容器底色 <code>bg-bg</code>（= <code>--bg-sunken</code> 新值，画布色），与主面板靠 surface 浮起分隔——去硬 <code>border-r</code>，靠三层明度（stage 深底 #0a0a0c + 主面板 <code>--surface</code> 浮起）表达层级（§3.4）。整体轮廓：Brand → 主操作 nav（新建/搜索）→ SegmentedTab → 子视图区 → 底部用户区。<strong>Overview 入口已移除</strong>（§4.4 DEPRECATED，任务概览并入 drawer 详情视图）。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> border-r border-border 硬分隔</span>
       <span class="cp cp-v6"><b>v6</b> 去硬 border，靠 surface 浮起</span>
@@ -599,7 +601,7 @@ body {
     <div class="anno-grid">
       <div class="anno"><b>容器底色:</b><br><span class="old">无（透明融合 bg）</span> <span class="v6">→ var(--bg) [= --bg-sunken]</span></div>
       <div class="anno"><b>与主面板分隔:</b><br><span class="old">border-r border-border</span> <span class="v6">→ 去硬 border，靠 surface 浮起</span></div>
-      <div class="anno"><b>三层明度:</b><br>stage #131316 → 侧栏 bg #1a1b1f → 主面板 surface #272830</div>
+      <div class="anno"><b>三层明度:</b><br>stage #0a0a0c → 侧栏 bg #1a1b1f → 主面板 surface #272830</div>
       <div class="anno"><b>宽度:</b><br>w-[300px]（不变）· 折叠态 w-0 opacity-0</div>
       <div class="anno"><b>结构分层:</b><br>Brand → nav → SegmentedTab → 子视图 → 用户区<br>（Overview 入口已移除，§4.4 DEPRECATED）</div>
       <div class="anno"><b>SplitterResizeHandle:</b><br><span class="v6">透明化（仅 hover/drag 显 accent）</span></div>

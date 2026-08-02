@@ -16,41 +16,43 @@
    ================================================================ */
 :root {
   /* 背景层级 */
-  --bg: #1a1b1f;
-  --surface: #272830;
-  --surface-hover: #363740;
-  --surface-2: #2e2f38;
-  --bg-elevated: #313239;
-  --bg-input: #1e1f24;
+  --bg: #0f0f11;
+  --surface: #1b1b1d;
+  --surface-hover: #29292b;
+  --surface-2: #212123;
+  --bg-elevated: #262628;
+  --bg-input: #141416;
   /* v6 新增 */
   --bg-sunken: var(--bg);
-  --bg-card: #22242c;
+  --bg-card: #18181a;
 
   /* 文字 neutral 谱系（v6：dim 提亮一档）*/
-  --neutral-fg: #e5e7eb;
-  --neutral-mid: #9ca3af;
-  --neutral-dim: #7d8494;
+  --neutral-fg: #dcdce0;
+  --neutral-mid: #888890;
+  --neutral-dim: #5e5e64;
   --neutral-dim-old: #6b7280;
-  --neutral-faint: #4b5563;
-  --neutral-ico: #8b8d94;
-  --neutral-ico-hover: #e5e7eb;
+  --neutral-faint: #383840;
+  --neutral-ico: #74747c;
+  --neutral-ico-hover: #dcdce0;
 
   /* 边框/分隔 */
-  --border: rgba(255,255,255,0.08);
-  --border-strong: rgba(255,255,255,0.15);
+  --border: rgba(255,255,255,0.05);
+  --border-strong: rgba(255,255,255,0.10);
 
-  /* 主色（冷蓝）*/
-  --accent: #4f8ef7;
-  --accent-hover: #6ba3ff;
-  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
-  --accent-ring: rgba(79,142,247,0.30);
+  /* 主色（V3 太极纯灰）*/
+  --accent: #c8c8cd;
+  --accent-hover: #dcdce0;
+  --accent-soft: color-mix(in oklch, var(--accent) 10%, transparent);
+  --accent-ring: color-mix(in oklch, var(--accent) 30%, transparent);
+  --accent-fg: #1a1a1c;
 
   /* 状态色 */
-  --success: #22c55e;
-  --warn: #b08a3e;
-  --danger: #ef4444;
-  --info: #38bdf8;
-  --reasoning: #a78bfa;
+  --success: #6a9b73;
+  --warn: #a8904a;
+  --danger: #b06060;
+  --info: #5e8a96;
+  --reasoning: #80779e;
+  --danger-fg: #f0f0f2;
   --success-soft: color-mix(in oklch, var(--success) 12%, transparent);
   --warn-soft: color-mix(in oklch, var(--warn) 14%, transparent);
   --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
@@ -93,7 +95,7 @@
   --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);
   --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
   --shadow-drawer: -12px 0 24px rgba(0,0,0,0.16);
-  --shadow-glow: 0 0 0 3px rgba(79,142,247,0.25);
+  --shadow-glow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);
 
   /* 组件尺寸（v6 新增）*/
   --content-max-w: 720px;
@@ -116,7 +118,7 @@
 html, body { height: 100%; }
 body {
   font-family: var(--font-sans);
-  background: #131316;
+  background: #0a0a0c;
   color: var(--neutral-fg);
   -webkit-font-smoothing: antialiased;
   font-size: var(--text-base);
@@ -280,7 +282,7 @@ body {
 
 /* ============ GuiComponent 7 原语 v6 视觉（§3 核心）============ */
 /* 三层明度 stage */
-.layer3 { padding: 16px; background: #131316; border-radius: var(--radius); }
+.layer3 { padding: 16px; background: #0a0a0c; border-radius: var(--radius); }
 .layer3 .l-canvas { padding: 14px; background: var(--bg); border-radius: var(--radius); }
 .layer3 .l-surface { padding: 14px; background: var(--surface); border-radius: var(--radius); }
 
@@ -524,7 +526,7 @@ body {
 .float-corner .overlay-badge { position: absolute; right: 12px; bottom: 12px; }
 
 /* ============ AppShell 全局底栏位置示意（§2 A4 v6 新增）============ */
-.appshell-mock { display: flex; flex-direction: column; gap: 4px; background: #131316; padding: 10px; border-radius: var(--radius); }
+.appshell-mock { display: flex; flex-direction: column; gap: 4px; background: #0a0a0c; padding: 10px; border-radius: var(--radius); }
 .appshell-mock .as-label { font-family: var(--font-mono); font-size: 9px; color: var(--neutral-dim); padding: 0 2px; }
 .appshell-mock .as-label.hl { color: var(--accent); }
 .appshell-mock .as-row { display: flex; gap: 4px; }

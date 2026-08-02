@@ -14,17 +14,19 @@
    token 逐字复用 v6-spec-tokens.html；原语 CSS 复用 plugin spec。
    ================================================================ */
 :root {
-  --bg: #1a1b1f; --surface: #272830; --surface-hover: #363740;
-  --surface-2: #2e2f38; --bg-elevated: #313239; --bg-input: #1e1f24;
-  --bg-sunken: var(--bg); --bg-card: #22242c;
-  --neutral-fg: #e5e7eb; --neutral-mid: #9ca3af; --neutral-dim: #7d8494;
-  --neutral-faint: #4b5563; --neutral-ico: #8b8d94; --neutral-ico-hover: #e5e7eb;
-  --border: rgba(255,255,255,0.08); --border-strong: rgba(255,255,255,0.15);
-  --accent: #4f8ef7; --accent-hover: #6ba3ff;
-  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
-  --accent-ring: rgba(79,142,247,0.30);
-  --success: #22c55e; --warn: #b08a3e; --danger: #ef4444;
-  --info: #38bdf8; --reasoning: #a78bfa;
+  --bg: #0f0f11; --surface: #1b1b1d; --surface-hover: #29292b;
+  --surface-2: #212123; --bg-elevated: #262628; --bg-input: #141416;
+  --bg-sunken: var(--bg); --bg-card: #18181a;
+  --neutral-fg: #dcdce0; --neutral-mid: #888890; --neutral-dim: #5e5e64;
+  --neutral-faint: #383840; --neutral-ico: #74747c; --neutral-ico-hover: #dcdce0;
+  --border: rgba(255,255,255,0.05); --border-strong: rgba(255,255,255,0.10);
+  --accent: #c8c8cd; --accent-hover: #dcdce0;
+  --accent-soft: color-mix(in oklch, var(--accent) 10%, transparent);
+  --accent-ring: color-mix(in oklch, var(--accent) 30%, transparent);
+  --accent-fg: #1a1a1c;
+  --success: #6a9b73; --warn: #a8904a; --danger: #b06060;
+  --info: #5e8a96; --reasoning: #80779e;
+  --danger-fg: #f0f0f2;
   --success-soft: color-mix(in oklch, var(--success) 12%, transparent);
   --warn-soft: color-mix(in oklch, var(--warn) 14%, transparent);
   --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
@@ -43,7 +45,7 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { height: 100%; }
 body {
-  font-family: var(--font-sans); background: #131316; color: var(--neutral-fg);
+  font-family: var(--font-sans); background: #0a0a0c; color: var(--neutral-fg);
   -webkit-font-smoothing: antialiased; font-size: var(--text-base); line-height: 1.5;
 }
 
@@ -102,7 +104,7 @@ body {
 /* ============ AppShell 全景 mockup（核心）============ */
 /* AppShell mockup 容器边界（border 仅用于 demo 截图框定 AppShell 外缘，非组件范式，豁免 ④-4）*/
 .appshell {
-  background: #131316; border-radius: var(--radius-lg); padding: 12px;
+  background: #0a0a0c; border-radius: var(--radius-lg); padding: 12px;
   display: flex; flex-direction: column; gap: 6px;
   border: 1px solid var(--border);
 }
@@ -435,7 +437,7 @@ body {
     <p class="section-desc">单个界面里，plugin「Pipeline Commander」触达了它能触达的<b>每一个</b>位置。左 sidebar（M1/M2 一级+二级 tab）/ 中 main（M4/M5/M9/M10/M11/M12 对话流+工具条+命令+companion+<b>M8 main 局部底栏</b>）/ 右 drawer（M6/M7 plugin tab + 日志）。浮层 M13/M14/M15/M16 见 §2。每个 <code>M编号</code> 标签的颜色 = 所属维度。</p>
 
     <div class="appshell">
-      <div class="as-stage-label"><span class="as-prod">●</span> stage #131316 窗口底 · AppShell flex h-screen</div>
+      <div class="as-stage-label"><span class="as-prod">●</span> stage #0a0a0c 窗口底 · AppShell flex h-screen</div>
 
       <!-- 主行：sidebar + main + drawer -->
       <div class="as-row">

@@ -16,42 +16,44 @@
    ================================================================ */
 :root {
   /* 背景层级 */
-  --bg: #1a1b1f;
-  --surface: #272830;
-  --surface-hover: #363740;
-  --surface-2: #2e2f38;
-  --bg-elevated: #313239;
-  --bg-input: #1e1f24;
+  --bg: #0f0f11;
+  --surface: #1b1b1d;
+  --surface-hover: #29292b;
+  --surface-2: #212123;
+  --bg-elevated: #262628;
+  --bg-input: #141416;
   /* v6 新增 */
   --bg-sunken: var(--bg);
-  --bg-card: #22242c;
+  --bg-card: #18181a;
 
   /* 文字 neutral 谱系（v6：dim 提亮一档）*/
-  --neutral-fg: #e5e7eb;
-  --neutral-mid: #9ca3af;
-  --neutral-dim: #7d8494;
+  --neutral-fg: #dcdce0;
+  --neutral-mid: #888890;
+  --neutral-dim: #5e5e64;
   --neutral-dim-old: #6b7280;
-  --neutral-faint: #4b5563;
-  --neutral-ico: #8b8d94;
-  --neutral-ico-hover: #e5e7eb;
+  --neutral-faint: #383840;
+  --neutral-ico: #74747c;
+  --neutral-ico-hover: #dcdce0;
 
   /* 边框/分隔 */
-  --border: rgba(255,255,255,0.08);
-  --border-strong: rgba(255,255,255,0.15);
+  --border: rgba(255,255,255,0.05);
+  --border-strong: rgba(255,255,255,0.10);
   --hairline: rgba(255,255,255,0.04);
 
-  /* 主色（冷蓝）*/
-  --accent: #4f8ef7;
-  --accent-hover: #6ba3ff;
-  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
-  --accent-ring: rgba(79,142,247,0.30);
+  /* 主色（V3 太极纯灰）*/
+  --accent: #c8c8cd;
+  --accent-hover: #dcdce0;
+  --accent-soft: color-mix(in oklch, var(--accent) 10%, transparent);
+  --accent-ring: color-mix(in oklch, var(--accent) 30%, transparent);
+  --accent-fg: #1a1a1c;
 
   /* 状态色 */
-  --success: #22c55e;
-  --warn: #b08a3e;
-  --danger: #ef4444;
-  --info: #38bdf8;
-  --reasoning: #a78bfa;
+  --success: #6a9b73;
+  --warn: #a8904a;
+  --danger: #b06060;
+  --info: #5e8a96;
+  --reasoning: #80779e;
+  --danger-fg: #f0f0f2;
   --success-soft: color-mix(in oklch, var(--success) 12%, transparent);
   --warn-soft: color-mix(in oklch, var(--warn) 14%, transparent);
   --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
@@ -91,7 +93,7 @@
   --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);
   --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
   --shadow-drawer: -12px 0 24px rgba(0,0,0,0.16);   /* R14 弱投影：0.25→0.16，D2 一体化后仅作弱分隔 */
-  --shadow-glow: 0 0 0 3px rgba(79,142,247,0.25);
+  --shadow-glow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);
 
   /* 组件尺寸（v6 新增）*/
   --content-max-w: 720px;
@@ -114,7 +116,7 @@
 html, body { height: 100%; }
 body {
   font-family: var(--font-sans);
-  background: #131316;            /* stage 窗口底，v6 三层明度最深层 */
+  background: #0a0a0c;            /* stage 窗口底，v6 三层明度最深层 */
   color: var(--neutral-fg);
   -webkit-font-smoothing: antialiased;
   font-size: var(--text-base);
@@ -166,7 +168,7 @@ body {
 }
 /* 模拟 stage（窗口底） + 主面板 surface 浮起，drawer 贴右。
  * v6：主面板与 drawer 宽度倾向 1:1（flex:1 等分），中间 SplitterResizeHandle 可拖动调整。*/
-.workspace-stage { background: #131316; border-radius: var(--radius); padding: 16px; overflow: hidden; }
+.workspace-stage { background: #0a0a0c; border-radius: var(--radius); padding: 16px; overflow: hidden; }
 .workspace-row { display: flex; gap: 0; min-height: 340px; }
 .ws-panel { flex: 1; min-width: 0; background: var(--surface); border-radius: var(--radius) 0 0 var(--radius); display: flex; align-items: center; justify-content: center; color: var(--neutral-dim); font-size: var(--text-xs); text-align: center; line-height: 1.6; }
 /* SplitterResizeHandle（默认真透明，仅 hover/drag 显 accent，§6 Splitter 透明化）*/
@@ -1365,7 +1367,7 @@ body {
                     <div class="bp-page-title" style="font-size:14px;">Getting Started</div>
                     <div class="bp-page-p">页面内容由主进程 view 真实渲染，本面板仅承载位置与状态覆盖层。</div>
                   </div>
-                  <div class="bp-page-p">明度层次：stage(#131316) → drawer(bg) → nav/guide(surface) 同色 + hairline 分隔（方案 G）。</div>
+                  <div class="bp-page-p">明度层次：stage(#0a0a0c) → drawer(bg) → nav/guide(surface) 同色 + hairline 分隔（方案 G）。</div>
                 </div>
               </div>
             </div>

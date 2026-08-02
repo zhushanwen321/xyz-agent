@@ -19,46 +19,48 @@
    ================================================================ */
 :root {
   /* 背景层级 */
-  --bg: #1a1b1f;
-  --surface: #272830;
-  --surface-hover: #363740;
-  --surface-2: #2e2f38;
-  --bg-elevated: #313239;
-  --bg-input: #1e1f24;
+  --bg: #0f0f11;
+  --surface: #1b1b1d;
+  --surface-hover: #29292b;
+  --surface-2: #212123;
+  --bg-elevated: #262628;
+  --bg-input: #141416;
   /* v6 新增 */
   --bg-sunken: var(--bg);
-  --bg-card: #22242c;
+  --bg-card: #18181a;
 
   /* 文字 neutral 谱系（v6：dim 提亮一档）*/
-  --neutral-fg: #e5e7eb;
-  --neutral-mid: #9ca3af;
-  --neutral-dim: #7d8494;
+  --neutral-fg: #dcdce0;
+  --neutral-mid: #888890;
+  --neutral-dim: #5e5e64;
   --neutral-dim-old: #6b7280;
-  --neutral-faint: #4b5563;
-  --neutral-ico: #8b8d94;
-  --neutral-ico-hover: #e5e7eb;
+  --neutral-faint: #383840;
+  --neutral-ico: #74747c;
+  --neutral-ico-hover: #dcdce0;
 
   /* 边框/分隔 */
-  --border: rgba(255,255,255,0.08);
-  --border-strong: rgba(255,255,255,0.15);
+  --border: rgba(255,255,255,0.05);
+  --border-strong: rgba(255,255,255,0.10);
 
-  /* 主色（冷蓝）*/
-  --accent: #4f8ef7;
-  --accent-hover: #6ba3ff;
-  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
-  --accent-ring: rgba(79,142,247,0.30);
+  /* 主色（V3 太极纯灰）*/
+  --accent: #c8c8cd;
+  --accent-hover: #dcdce0;
+  --accent-soft: color-mix(in oklch, var(--accent) 10%, transparent);
+  --accent-ring: color-mix(in oklch, var(--accent) 30%, transparent);
+  --accent-fg: #1a1a1c;   /* accent 实色上的文字色（暗主题中亮灰 accent 需深字）*/
 
   /* 状态色 */
-  --success: #22c55e;
-  --warn: #b08a3e;
-  --danger: #ef4444;
-  --info: #38bdf8;
-  --reasoning: #a78bfa;
+  --success: #6a9b73;
+  --warn: #a8904a;
+  --danger: #b06060;
+  --info: #5e8a96;
+  --reasoning: #80779e;
   --success-soft: color-mix(in oklch, var(--success) 12%, transparent);
   --warn-soft: color-mix(in oklch, var(--warn) 14%, transparent);
   --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
   --info-soft: color-mix(in oklch, var(--info) 12%, transparent);
   --reasoning-soft: color-mix(in oklch, var(--reasoning) 12%, transparent);
+  --danger-fg: #f0f0f2;   /* danger 实色上的文字色（降明度 danger 需浅字）*/
 
   /* diff（v6：行背景 18%→12%）*/
   --diff-add-bg: color-mix(in oklch, var(--success) 12%, transparent);
@@ -93,7 +95,7 @@
   --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);
   --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
   --shadow-drawer: -12px 0 24px rgba(0,0,0,0.16);
-  --shadow-glow: 0 0 0 3px rgba(79,142,247,0.25);
+  --shadow-glow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);
 
   /* 组件尺寸（v6 新增）*/
   --content-max-w: 720px;
@@ -118,7 +120,7 @@
 html, body { height: 100%; }
 body {
   font-family: var(--font-sans);
-  background: #131316;
+  background: #0a0a0c;
   color: var(--neutral-fg);
   -webkit-font-smoothing: antialiased;
   font-size: var(--text-base);
@@ -164,7 +166,7 @@ body {
 /* ============ 渲染区 ============ */
 .render-frame { background: var(--bg); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; overflow: hidden; }
 .panel-stage { background: var(--surface); border-radius: var(--radius); overflow: hidden; }
-.stage-modal { background: #131316; border-radius: var(--radius); padding: 24px 16px; overflow: hidden; }
+.stage-modal { background: #0a0a0c; border-radius: var(--radius); padding: 24px 16px; overflow: hidden; }
 
 .state-row { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
 .state-tag { flex-shrink: 0; width: 92px; font-size: var(--text-2xs); font-family: var(--font-mono); color: var(--neutral-mid); letter-spacing: .05em; padding-top: 6px; }

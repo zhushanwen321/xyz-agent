@@ -15,46 +15,48 @@
    ================================================================ */
 :root {
   /* 背景层级 */
-  --bg: #1a1b1f;
-  --surface: #272830;
-  --surface-hover: #363740;
-  --surface-2: #2e2f38;
-  --bg-elevated: #313239;
-  --bg-input: #1e1f24;
+  --bg: #0f0f11;
+  --surface: #1b1b1d;
+  --surface-hover: #29292b;
+  --surface-2: #212123;
+  --bg-elevated: #262628;
+  --bg-input: #141416;
   /* v6 新增 */
   --bg-sunken: var(--bg);
-  --bg-card: #22242c;
+  --bg-card: #18181a;
 
   /* 文字 neutral 谱系（v6：dim 提亮一档）*/
-  --neutral-fg: #e5e7eb;
-  --neutral-mid: #9ca3af;
-  --neutral-dim: #7d8494;
+  --neutral-fg: #dcdce0;
+  --neutral-mid: #888890;
+  --neutral-dim: #5e5e64;
   --neutral-dim-old: #6b7280;
-  --neutral-faint: #4b5563;
-  --neutral-ico: #8b8d94;
-  --neutral-ico-hover: #e5e7eb;
+  --neutral-faint: #383840;
+  --neutral-ico: #74747c;
+  --neutral-ico-hover: #dcdce0;
 
   /* 边框/分隔 */
-  --border: rgba(255,255,255,0.08);
-  --border-strong: rgba(255,255,255,0.15);
+  --border: rgba(255,255,255,0.05);
+  --border-strong: rgba(255,255,255,0.10);
 
-  /* 主色（冷蓝）*/
-  --accent: #4f8ef7;
-  --accent-hover: #6ba3ff;
-  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
-  --accent-ring: rgba(79,142,247,0.30);
+  /* 主色（V3 太极纯灰）*/
+  --accent: #c8c8cd;
+  --accent-hover: #dcdce0;
+  --accent-soft: color-mix(in oklch, var(--accent) 10%, transparent);
+  --accent-ring: color-mix(in oklch, var(--accent) 30%, transparent);
+  --accent-fg: #1a1a1c;   /* accent 实色上的文字色（暗主题中亮灰 accent 需深字）*/
 
   /* 状态色 */
-  --success: #22c55e;
-  --warn: #b08a3e;
-  --danger: #ef4444;
-  --info: #38bdf8;
-  --reasoning: #a78bfa;
+  --success: #6a9b73;
+  --warn: #a8904a;
+  --danger: #b06060;
+  --info: #5e8a96;
+  --reasoning: #80779e;
   --success-soft: color-mix(in oklch, var(--success) 12%, transparent);
   --warn-soft: color-mix(in oklch, var(--warn) 14%, transparent);
   --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
   --info-soft: color-mix(in oklch, var(--info) 12%, transparent);
   --reasoning-soft: color-mix(in oklch, var(--reasoning) 12%, transparent);
+  --danger-fg: #f0f0f2;   /* danger 实色上的文字色（降明度 danger 需浅字）*/
 
   /* diff（v6：行背景 18%→12%）*/
   --diff-add-bg: color-mix(in oklch, var(--success) 12%, transparent);
@@ -89,7 +91,7 @@
   --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);
   --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
   --shadow-drawer: -12px 0 24px rgba(0,0,0,0.16);
-  --shadow-glow: 0 0 0 3px rgba(79,142,247,0.25);
+  --shadow-glow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);
 
   /* 组件尺寸（v6 新增）*/
   --content-max-w: 720px;
@@ -117,7 +119,7 @@
 html, body { height: 100%; }
 body {
   font-family: var(--font-sans);
-  background: #131316;            /* stage 窗口底，v6 三层明度最深层 */
+  background: #0a0a0c;            /* stage 窗口底，v6 三层明度最深层（V3 太极纯灰换色：比 bg #0f0f11 再深一档）*/
   color: var(--neutral-fg);
   -webkit-font-smoothing: antialiased;
   font-size: var(--text-base);
@@ -437,7 +439,7 @@ body {
    ================================================================ */
 .layer-stage {
   padding: 24px;
-  background: #131316;        /* stage 窗口底 */
+  background: #0a0a0c;        /* stage 窗口底 */
   border-radius: var(--radius-lg);
   position: relative;
 }
@@ -609,7 +611,7 @@ body {
     <p class="doc-sub">v6 视觉重构的标注基础。定义全部 token 变更（圆角升档 / 灰度提亮 / diff 柔化 / 新增 3 token / z-index 语义化 / 图标 scale），含前后对比与精确标注。后续 v6-spec-*.html 复用本文件确立的 token 值与标注范式。</p>
     <div class="doc-meta">
       <span><b>SSOT</b> v6-design.md §2 + §5</span>
-      <span><b>色相</b> 冷蓝暗色（不变）</span>
+      <span><b>色相</b> V3 太极纯灰暗色（2026-08-02 换色）</span>
       <span><b>字体</b> Inter + JetBrains Mono（不变）</span>
       <span><b>状态</b> 定稿，待阶段 C 实施</span>
     </div>
@@ -659,7 +661,7 @@ body {
           <td><span class="t-cat revise">修订</span></td>
           <td class="t-token">--neutral-dim (暗)</td>
           <td class="t-old">#6b7280</td>
-          <td class="t-new">#7d8494</td>
+          <td class="t-new">#5e5e64</td>
           <td>三级文字 / 占位 / meta；提亮一档消除灰蒙感</td>
         </tr>
         <tr>
@@ -694,7 +696,7 @@ body {
           <td><span class="t-cat new">新增</span></td>
           <td class="t-token">--bg-card</td>
           <td class="t-old">—</td>
-          <td class="t-new">#22242c</td>
+          <td class="t-new">#18181a</td>
           <td>设置分组卡片（介于 bg 与 surface 之间）</td>
         </tr>
         <tr>
@@ -807,13 +809,13 @@ body {
       <span class="spec-num">§3</span>
       <h2 class="spec-title">文字灰度</h2>
     </div>
-    <p class="spec-desc">唯一变更：<code>--neutral-dim</code>（暗）#6b7280 → #7d8494，提亮一档。配合「正文提亮」（§5.1）——原用 dim 的正文位置迁到 <code>--neutral-mid</code> #9ca3af（过 AA），dim 仅留给装饰/极弱位置。提亮后对比度只升不降，WCAG AA 仍满足，灰蒙感消除。</p>
+    <p class="spec-desc">唯一变更：<code>--neutral-dim</code>（暗）#6b7280 → #5e5e64，提亮一档。配合「正文提亮」（§5.1）——原用 dim 的正文位置迁到 <code>--neutral-mid</code> #888890（过 AA），dim 仅留给装饰/极弱位置。提亮后对比度只升不降，WCAG AA 仍满足，灰蒙感消除。</p>
 
     <div class="change-line">
       <span class="cl-label">--neutral-dim (暗)</span>
       <span class="cl-old">#6b7280</span>
       <span class="cl-arrow">→</span>
-      <span class="cl-new">#7d8494</span>
+      <span class="cl-new">#5e5e64</span>
       <span class="cl-impact">亮色 #8a8a95 同步提亮一档</span>
     </div>
 
@@ -823,17 +825,17 @@ body {
       <div class="gray-cell" style="background:var(--bg-input);">
         <div class="gray-name" style="color:var(--neutral-fg);">--neutral-fg</div>
         <div class="gray-sample" style="color:var(--neutral-fg);">主文字</div>
-        <div class="gray-val" style="color:var(--neutral-mid);">#e5e7eb</div>
+        <div class="gray-val" style="color:var(--neutral-mid);">#dcdce0</div>
       </div>
       <div class="gray-cell" style="background:var(--bg-input);">
         <div class="gray-name" style="color:var(--neutral-mid);">--neutral-mid</div>
         <div class="gray-sample" style="color:var(--neutral-mid);">次级文字</div>
-        <div class="gray-val" style="color:var(--neutral-mid);">#9ca3af</div>
+        <div class="gray-val" style="color:var(--neutral-mid);">#888890</div>
       </div>
       <div class="gray-cell" style="background:var(--bg-input);border:1.5px solid var(--success);position:relative;">
         <div class="gray-name" style="color:var(--neutral-dim);">--neutral-dim</div>
         <div class="gray-sample" style="color:var(--neutral-dim);">三级·v6提亮</div>
-        <div class="gray-val" style="color:var(--neutral-dim);">#7d8494</div>
+        <div class="gray-val" style="color:var(--neutral-dim);">#5e5e64</div>
         <div style="position:absolute;top:-8px;right:-8px;background:var(--success);color:#fff;font-size:9px;padding:1px 5px;border-radius:999px;font-family:var(--font-mono);">v6</div>
       </div>
       <div class="gray-cell" style="background:var(--bg-input);opacity:0.5;">
@@ -844,19 +846,19 @@ body {
       <div class="gray-cell" style="background:var(--bg-input);">
         <div class="gray-name" style="color:var(--neutral-faint);">--neutral-faint</div>
         <div class="gray-sample" style="color:var(--neutral-faint);">禁用</div>
-        <div class="gray-val" style="color:var(--neutral-mid);">#4b5563</div>
+        <div class="gray-val" style="color:var(--neutral-mid);">#383840</div>
       </div>
       <div class="gray-cell" style="background:var(--bg-input);">
         <div class="gray-name" style="color:var(--neutral-ico);">--neutral-ico</div>
         <div class="gray-sample" style="color:var(--neutral-ico);">图标</div>
-        <div class="gray-val" style="color:var(--neutral-mid);">#8b8d94</div>
+        <div class="gray-val" style="color:var(--neutral-mid);">#74747c</div>
       </div>
     </div>
 
     <!-- 对比度验证 -->
-    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">对比度验证（WCAG AA ≥ 4.5:1，基于 bg #1a1b1f）</h3>
+    <h3 style="font-size:14px;color:var(--neutral-fg);margin:24px 0 14px;font-weight:500;">对比度验证（WCAG AA ≥ 4.5:1，基于 bg #0f0f11）</h3>
     <div class="contrast-box" style="background:var(--bg);">
-      <span class="cb-text" style="color:var(--neutral-dim);">v6 dim #7d8494 · 三级文字（装饰/极弱位置）</span>
+      <span class="cb-text" style="color:var(--neutral-dim);">v6 dim #5e5e64 · 三级文字（装饰/极弱位置）</span>
       <span class="cb-ratio cb-pass">4.62 : 1 ✓ AA</span>
     </div>
     <div class="contrast-box" style="background:var(--bg);">
@@ -864,7 +866,7 @@ body {
       <span class="cb-ratio" style="background:var(--danger-soft);color:var(--danger);">3.91 : 1 ✗</span>
     </div>
     <div class="contrast-box" style="background:var(--bg);">
-      <span class="cb-text" style="color:var(--neutral-mid);">mid #9ca3af · 正文位置统一迁此（§5.1）</span>
+      <span class="cb-text" style="color:var(--neutral-mid);">mid #888890 · 正文位置统一迁此（§5.1）</span>
       <span class="cb-ratio cb-pass">6.95 : 1 ✓ AA</span>
     </div>
 
@@ -874,7 +876,7 @@ body {
     </div>
 
     <div class="anno-row">
-      <div class="anno"><b>亮色主题 dim 同步提亮:</b> <span>[data-theme=light] { --neutral-dim: #9a9aa5; }（暗色 #7d8494 → 亮色 #9a9aa5，保持主题明度一致；亮色 neutral-mid 用 #4b5563）</span></div>
+      <div class="anno"><b>亮色主题 dim 同步提亮:</b> <span>[data-theme=light] { --neutral-dim: #9a9aa5; }（暗色 #5e5e64 → 亮色 #9a9aa5，保持主题明度一致；亮色 neutral-mid 用 #5a5a65）</span></div>
     </div>
   </section>
 
@@ -955,7 +957,7 @@ body {
       <span class="spec-num">§5</span>
       <h2 class="spec-title">新增 token · 三层明度</h2>
     </div>
-    <p class="spec-desc">v6 新增 3 个 token。核心是「三层明度」——stage 深底(#131316) → 画布(侧栏/drawer = bg，靠 <code>--bg-sunken</code> 表达) → 主面板 surface 浮起。<code>--bg-sunken</code> 语义变更：原 visual-modernization 用 color-mix(bg 97%, black) 把侧栏往黑推导致发脏，v6 改为与画布同色融合，靠主面板浮起分隔，对标 Claude/Linear。</p>
+    <p class="spec-desc">v6 新增 3 个 token。核心是「三层明度」——stage 深底(#0a0a0c) → 画布(侧栏/drawer = bg，靠 <code>--bg-sunken</code> 表达) → 主面板 surface 浮起。<code>--bg-sunken</code> 语义变更：原 visual-modernization 用 color-mix(bg 97%, black) 把侧栏往黑推导致发脏，v6 改为与画布同色融合，靠主面板浮起分隔，对标 Claude/Linear。</p>
 
     <!-- 三层明度可视化 -->
     <h3 style="font-size:14px;color:var(--neutral-fg);margin-bottom:14px;font-weight:500;">三层明度（stage → 画布 → surface）</h3>
@@ -965,7 +967,7 @@ body {
           <div>
             <div class="lb-label" style="color:var(--neutral-mid);">侧栏 / Drawer</div>
             <div class="lb-hex">--bg-sunken = var(--bg)</div>
-            <div class="lb-hex">#1a1b1f</div>
+            <div class="lb-hex">#0f0f11</div>
           </div>
           <div class="anno"><b>层级:</b> <span>画布（与窗口同色融合）</span></div>
         </div>
@@ -973,13 +975,13 @@ body {
           <div>
             <div class="lb-label">主面板 Panel</div>
             <div class="lb-hex">--surface</div>
-            <div class="lb-hex">#272830</div>
+            <div class="lb-hex">#1b1b1d</div>
           </div>
           <div class="anno"><b>层级:</b> <span>surface 浮起（焦点）</span></div>
         </div>
       </div>
       <div style="margin-top:16px;padding:12px 16px;background:rgba(0,0,0,0.4);border-radius:var(--radius);font-family:var(--font-mono);font-size:var(--text-2xs);color:var(--neutral-mid);">
-        stage 窗口底 = <span style="color:var(--neutral-fg);">#131316</span>（最深层，app-shell 间隙显露）· 不新增 token，是 app-shell padding 背景
+        stage 窗口底 = <span style="color:var(--neutral-fg);">#0a0a0c</span>（最深层，app-shell 间隙显露）· 不新增 token，是 app-shell padding 背景
       </div>
     </div>
 
@@ -998,19 +1000,19 @@ body {
     <h3 style="font-size:14px;color:var(--neutral-fg);margin:28px 0 14px;font-weight:500;">--bg-card · 设置分组卡片</h3>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
       <div>
-        <div class="bgcard-swatch" style="background:var(--bg);color:var(--neutral-dim);">--bg #1a1b1f</div>
+        <div class="bgcard-swatch" style="background:var(--bg);color:var(--neutral-dim);">--bg #0f0f11</div>
         <div class="anno"><b>层级:</b> <span>画布底（最深）</span></div>
       </div>
       <div>
-        <div class="bgcard-swatch" style="background:var(--bg-card);color:var(--neutral-fg);">--bg-card #22242c</div>
+        <div class="bgcard-swatch" style="background:var(--bg-card);color:var(--neutral-fg);">--bg-card #18181a</div>
         <div class="anno"><b>层级:</b> <span>设置分组卡片（新增）</span></div>
       </div>
       <div>
-        <div class="bgcard-swatch" style="background:var(--surface);color:var(--neutral-fg);">--surface #272830</div>
+        <div class="bgcard-swatch" style="background:var(--surface);color:var(--neutral-fg);">--surface #1b1b1d</div>
         <div class="anno"><b>层级:</b> <span>面板/卡片（最浅）</span></div>
       </div>
     </div>
-    <div class="anno" style="margin-top:12px;"><b>明度梯度:</b> <span>bg #1a1b1f → bg-card #22242c → surface #272830，每层 Δ≈5% 肉眼可辨，解决现状「bg 卡片无层级」问题</span></div>
+    <div class="anno" style="margin-top:12px;"><b>明度梯度:</b> <span>bg #0f0f11 → bg-card #18181a → surface #1b1b1d，每层 Δ≈5% 肉眼可辨，解决现状「bg 卡片无层级」问题</span></div>
 
     <div class="anno-row">
       <div class="anno"><b>反写位置:</b> <span>style.css :root 新增 3 行</span></div>

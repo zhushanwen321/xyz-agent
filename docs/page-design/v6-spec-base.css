@@ -16,41 +16,43 @@
    ================================================================ */
 :root {
   /* 背景层级 */
-  --bg: #1a1b1f;
-  --surface: #272830;
-  --surface-hover: #363740;
-  --surface-2: #2e2f38;
-  --bg-elevated: #313239;
-  --bg-input: #1e1f24;
+  --bg: #0f0f11;
+  --surface: #1b1b1d;
+  --surface-hover: #29292b;
+  --surface-2: #212123;
+  --bg-elevated: #262628;
+  --bg-input: #141416;
   /* v6 新增 */
   --bg-sunken: var(--bg);
-  --bg-card: #22242c;
+  --bg-card: #18181a;
 
-  /* 文字 neutral 谱系（v6：dim 提亮一档）*/
-  --neutral-fg: #e5e7eb;
-  --neutral-mid: #9ca3af;
-  --neutral-dim: #7d8494;
+  /* 文字 neutral 谱系（V3 太极纯灰）*/
+  --neutral-fg: #dcdce0;
+  --neutral-mid: #888890;
+  --neutral-dim: #5e5e64;
   --neutral-dim-old: #6b7280;   /* 仅 tokens.html 对比展示用，产品 CSS 禁止消费 */
-  --neutral-faint: #4b5563;
-  --neutral-ico: #8b8d94;
-  --neutral-ico-hover: #e5e7eb;
+  --neutral-faint: #383840;
+  --neutral-ico: #74747c;
+  --neutral-ico-hover: #dcdce0;
 
   /* 边框/分隔 */
-  --border: rgba(255,255,255,0.08);
-  --border-strong: rgba(255,255,255,0.15);
+  --border: rgba(255,255,255,0.05);
+  --border-strong: rgba(255,255,255,0.10);
 
-  /* 主色（冷蓝）*/
-  --accent: #4f8ef7;
-  --accent-hover: #6ba3ff;
-  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
-  --accent-ring: rgba(79,142,247,0.30);
+  /* 主色（V3 太极纯灰）*/
+  --accent: #c8c8cd;
+  --accent-hover: #dcdce0;
+  --accent-soft: color-mix(in oklch, var(--accent) 10%, transparent);
+  --accent-ring: color-mix(in oklch, var(--accent) 30%, transparent);
+  --accent-fg: #1a1a1c;
 
   /* 状态色 */
-  --success: #22c55e;
-  --warn: #b08a3e;
-  --danger: #ef4444;
-  --info: #38bdf8;
-  --reasoning: #a78bfa;
+  --success: #6a9b73;
+  --warn: #a8904a;
+  --danger: #b06060;
+  --info: #5e8a96;
+  --reasoning: #80779e;
+  --danger-fg: #f0f0f2;
   --success-soft: color-mix(in oklch, var(--success) 12%, transparent);
   --warn-soft: color-mix(in oklch, var(--warn) 14%, transparent);
   --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
@@ -90,7 +92,7 @@
   --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);
   --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
   --shadow-drawer: -12px 0 24px rgba(0,0,0,0.16);
-  --shadow-glow: 0 0 0 3px rgba(79,142,247,0.25);
+  --shadow-glow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);
 
   /* 组件尺寸（v6 新增）*/
   --content-max-w: 720px;
@@ -121,7 +123,7 @@
 html, body { height: 100%; }
 body {
   font-family: var(--font-sans);
-  background: #131316; color: var(--neutral-fg);
+  background: #0a0a0c; color: var(--neutral-fg);
   -webkit-font-smoothing: antialiased;
   font-size: var(--text-base); line-height: 1.5;
 }
@@ -157,7 +159,7 @@ body {
 .cp b { font-weight: 500; }
 
 /* ============ 标注面板 ============
-   标注文字用 neutral-mid（#9ca3af）保证 AA：bg-card 上 6.10:1。
+   标注文字用 neutral-mid（#888890）保证 AA：bg-card 上 6.10:1。
    标注值属可读正文，不用 dim（dim 仅装饰/极弱位置）。 */
 .anno { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-mid); line-height: 1.8; }
 .anno b { color: var(--neutral-fg); font-weight: 500; }
@@ -489,9 +491,9 @@ body {
    （对齐 tailwind.config.ts:91-95），圆点本体不透明，外环 0→5px 扩散后透明。
    丢弃 container/blocks 旧版（1.8s opacity 脉冲）。*/
 @keyframes pulse-accent {
-  0% { box-shadow: 0 0 0 0 rgba(79,142,247,0.5); }
-  70% { box-shadow: 0 0 0 5px rgba(79,142,247,0); }
-  100% { box-shadow: 0 0 0 0 rgba(79,142,247,0); }
+  0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--accent) 50%, transparent); }
+  70% { box-shadow: 0 0 0 5px color-mix(in oklch, var(--accent) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--accent) 0%, transparent); }
 }
 
 /* ── blink（streaming cursor / bgstatus blink-dot 共用）── */

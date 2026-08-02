@@ -1,4 +1,4 @@
-# Design Tokens — zcode 冷蓝暗色（Single Source of Truth）
+# Design Tokens — 太极 V3 纯灰暗色（Single Source of Truth）
 
 > 真身文件。所有色值/字体/圆角/阴影/动效以此为准。
 > 由 ADR-0018 确立：C(zcode-demo) 视觉方向 + 补全的完整体系。
@@ -14,37 +14,43 @@
 > 2026-07-12 拉大层级间距：原相邻 token 亮度差 <3%（bg→surface 仅 Δ8），
 > 侧边栏与对话流肉眼不可辨。surface 以上整体上推，bg→surface 拉到 Δ13（≈5%），
 > 每层 ≥Δ5 肉眼可辨。bg / bg-input 保持不变（锚点 + 输入坑凹陷语义）。
+>
+> **2026-08-02 V3 太极纯灰换色**（当前真值）：冷蓝暗色系整体替换为纯灰系，
+> 决策见 `2026-08-02-taiji-v3-color-decision.md` §三。下表「值」列为 V3 真值，
+> 「来源」列末尾以「；2026-08-02 V3 太极纯灰换色」标注改动项。亮色变体本轮不动。
 
 | Token | 值 | 用途 | 来源 |
 |-------|-----|------|------|
-| `--bg` | `#1a1b1f` | 画布底层 | 2026-07-09 提亮（原 C 原始 `#0d0d0f`）。07-12 锚点不变 |
-| `--surface` | `#272830` | 面板/卡片 | 2026-07-12 拉距（原 07-09 `#222329`，+5 拉大与 bg 间距） |
-| `--surface-hover` | `#363740` | 面板悬停 | 2026-07-12 拉距（原 07-09 `#2d2e36`，+9） |
-| `--surface-2` | `#2e2f38` | 二级表面（Card-Elevated） | 2026-07-12 拉距（原 07-09 `#282930`，+6） |
-| `--bg-elevated` | `#313239` | 浮起面板/激活面板底色 | 2026-07-12 拉距（原 07-09 `#2a2b32`，+7） |
-| `--bg-input` | `#1e1f24` | 输入区底色（Input/Textarea/Composer zone） | 2026-07-09 提亮（原 `#101013`）。07-12 不变（Δ4 from bg 凹陷语义） |
-| `--neutral-fg` | `#e5e7eb` | 主文字 | 2026-07-26 W1 重命名（原 `--fg` `#f7f8fc`，调低至冷中性 #e5e7eb 对齐 neutral 谱系） |
-| `--neutral-mid` | `#9ca3af` | 次级文字 | 2026-07-26 W1 重命名（原 `--muted` `#a8a8b5`） |
-| `--neutral-dim` | `#6b7280` | 三级文字/占位 | 2026-07-26 W1 重命名（原 `--subtle` `#82828f`） |
-| `--neutral-faint` | `#4b5563` | 极弱文字/禁用态 | 2026-07-26 W1 新增（neutral 谱系第四阶） |
-| `--neutral-ico` | `#8b8d94` | 默认图标色 | 2026-07-26 W1 新增（图标独立于文字色相，避免文字灰与图标灰混用） |
-| `--neutral-ico-hover` | `#e5e7eb` | 图标 hover 色 | 2026-07-26 W1 新增（hover 回升至 fg 级） |
-| `--border` | `rgba(255,255,255,0.08)` | 分隔线 | 2026-07-09 提亮（原 0.06，提亮 bg 后可见度不足） |
-| `--border-strong` | `rgba(255,255,255,0.15)` | 强调分隔 | 2026-07-09 提亮（原 0.12） |
-| `--accent` | `#4f8ef7` | 主色/链接/聚焦 | C 原始 |
-| `--accent-hover` | `#6ba3ff` | 主色悬停 | 补全 |
-| `--accent-soft` | `color-mix(in oklch, var(--accent) 12%, transparent)` | 主色背景填充（color-mix 派生：palette 切换自动跟随 --accent） | 补全（暗色从 rgba 硬编码改为 color-mix，与亮色一致） |
-| `--accent-ring` | `rgba(79,142,247,0.30)` | 选中态内描边（Card-Active `inset 0 0 0 1px`）| workspace/spec.md（draft 间 0.30/0.45/0.50 不一，以 spec 为准）|
+| `--bg` | `#0f0f11` | 画布底层 | 2026-07-09 提亮（原 C 原始 `#0d0d0f`）。07-12 锚点不变；2026-08-02 V3 太极纯灰换色 |
+| `--surface` | `#1b1b1d` | 面板/卡片 | 2026-07-12 拉距（原 07-09 `#222329`，+5 拉大与 bg 间距）；2026-08-02 V3 太极纯灰换色 |
+| `--surface-hover` | `#29292b` | 面板悬停 | 2026-07-12 拉距（原 07-09 `#2d2e36`，+9）；2026-08-02 V3 太极纯灰换色 |
+| `--surface-2` | `#212123` | 二级表面（Card-Elevated） | 2026-07-12 拉距（原 07-09 `#282930`，+6）；2026-08-02 V3 太极纯灰换色 |
+| `--bg-elevated` | `#262628` | 浮起面板/激活面板底色 | 2026-07-12 拉距（原 07-09 `#2a2b32`，+7）；2026-08-02 V3 太极纯灰换色 |
+| `--bg-input` | `#141416` | 输入区底色（Input/Textarea/Composer zone） | 2026-07-09 提亮（原 `#101013`）。07-12 不变（Δ4 from bg 凹陷语义）；2026-08-02 V3 太极纯灰换色 |
+| `--neutral-fg` | `#dcdce0` | 主文字 | 2026-07-26 W1 重命名（原 `--fg` `#f7f8fc`，调低至冷中性 #e5e7eb 对齐 neutral 谱系）；2026-08-02 V3 太极纯灰换色 |
+| `--neutral-mid` | `#888890` | 次级文字 | 2026-07-26 W1 重命名（原 `--muted` `#a8a8b5`）；2026-08-02 V3 太极纯灰换色 |
+| `--neutral-dim` | `#5e5e64` | 三级文字/占位 | 2026-07-26 W1 重命名（原 `--subtle` `#82828f`）；2026-08-02 V3 太极纯灰换色 |
+| `--neutral-faint` | `#383840` | 极弱文字/禁用态 | 2026-07-26 W1 新增（neutral 谱系第四阶）；2026-08-02 V3 太极纯灰换色 |
+| `--neutral-ico` | `#74747c` | 默认图标色 | 2026-07-26 W1 新增（图标独立于文字色相，避免文字灰与图标灰混用）；2026-08-02 V3 太极纯灰换色 |
+| `--neutral-ico-hover` | `#dcdce0` | 图标 hover 色 | 2026-07-26 W1 新增（hover 回升至 fg 级）；2026-08-02 V3 太极纯灰换色 |
+| `--border` | `rgba(255,255,255,0.05)` | 分隔线 | 2026-07-09 提亮（原 0.06，提亮 bg 后可见度不足）；2026-08-02 V3 太极纯灰换色（0.08→0.05） |
+| `--border-strong` | `rgba(255,255,255,0.10)` | 强调分隔 | 2026-07-09 提亮（原 0.12）；2026-08-02 V3 太极纯灰换色（0.15→0.10） |
+| `--accent` | `#c8c8cd` | 主色/链接/聚焦 | C 原始；2026-08-02 V3 太极纯灰换色（冷蓝 #4f8ef7 → 纯灰亮灰 #c8c8cd） |
+| `--accent-hover` | `#dcdce0` | 主色悬停 | 补全；2026-08-02 V3 太极纯灰换色 |
+| `--accent-soft` | `color-mix(in oklch, var(--accent) 10%, transparent)` | 主色背景填充（color-mix 派生：palette 切换自动跟随 --accent） | 补全（暗色从 rgba 硬编码改为 color-mix，与亮色一致）；2026-08-02 V3 太极纯灰换色（12%→10%） |
+| `--accent-ring` | `color-mix(in oklch, var(--accent) 30%, transparent)` | 选中态内描边（Card-Active `inset 0 0 0 1px`）| workspace/spec.md（draft 间 0.30/0.45/0.50 不一，以 spec 为准）；2026-08-02 V3 太极纯灰换色（改 color-mix 派生跟随 --accent） |
+| `--accent-fg` | `#1a1a1c` | accent 实色上的文字色（暗主题中亮灰 accent 需深字） | 2026-08-02 V3 太极纯灰换色新增 |
 
-## 状态色（继承 D 的结构，色相对齐冷蓝体系）
+## 状态色（继承 D 的结构；2026-08-02 V3 太极纯灰换色：色相全部降饱和至纯灰系）
 
 | Token | 值 | 用途 | 来源 |
 |-------|-----|------|------|
-| `--success` | `#22c55e` | 成功 | C + D 一致 |
-| `--warn` | `#b08a3e` | 警告 | 2026-07-26 W1 重命名调值（原 `--warning` `#f5a524`，降饱和至哑光金 #b08a3e，褪鲜橙） |
-| `--danger` | `#ef4444` | 错误/危险 | 补全 |
-| `--info` | `#38bdf8` | 信息/提示 | 补全 |
-| `--reasoning` | `#a78bfa` | 思考块色相（draft-message-stream §4 + composer 思考等级） | 补全（v3 重建 Wave 1） |
+| `--success` | `#6a9b73` | 成功 | C + D 一致；2026-08-02 V3 太极纯灰换色 |
+| `--warn` | `#a8904a` | 警告 | 2026-07-26 W1 重命名调值（原 `--warning` `#f5a524`，降饱和至哑光金 #b08a3e，褪鲜橙）；2026-08-02 V3 太极纯灰换色 |
+| `--danger` | `#b06060` | 错误/危险 | 补全；2026-08-02 V3 太极纯灰换色 |
+| `--danger-fg` | `#f0f0f2` | danger 实色上的文字色（降明度 danger 需浅字） | 2026-08-02 V3 太极纯灰换色新增 |
+| `--info` | `#5e8a96` | 信息/提示 | 补全；2026-08-02 V3 太极纯灰换色 |
+| `--reasoning` | `#80779e` | 思考块色相（draft-message-stream §4 + composer 思考等级） | 补全（v3 重建 Wave 1）；2026-08-02 V3 太极纯灰换色 |
 | `--reasoning-soft` | `color-mix(in oklch, var(--reasoning) 12%, transparent)` | think badge / slash chip 背景（统一 12% 基准，与状态色 soft 对齐） | 补全（18%→12% 统一） |
 | `--info-soft` | `color-mix(in oklch, var(--info) 12%, transparent)` | 信息/提示软底（badge/提示条背景，12% 基准） | 补全（状态色 soft 归一） |
 | `--success-soft` | `color-mix(in oklch, var(--success) 12%, transparent)` | 成功软底（badge/changeset resolved 背景，12% 基准） | 补全（状态色 soft 归一） |
@@ -91,7 +97,7 @@
 ```css
 --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);           /* C 原始，描边 */
 --shadow-2: 0 8px 24px rgba(0,0,0,0.4);          /* 补全，浮层 */
---shadow-glow: 0 0 0 3px rgba(79,142,247,0.25);  /* 补全，聚焦环 */
+--shadow-glow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);  /* 补全，聚焦环；2026-08-02 V3 改 color-mix 派生跟随 --accent */
 ```
 
 ## 动效
@@ -140,7 +146,7 @@
 ## 已知裂缝（需对齐）
 
 - **impl 变量归一**（✅ 已裁决 ADR-0021-B / 选项②，2026-06-20）：真实代码自造的 `--section-bg` / `--divider` / `--accent-light` **迁移到本文件 SSOT 已有名**，不补进 tokens（避免同语义双名）：`--section-bg`→`--surface`、`--divider`→`--border`、`--accent-light`→`--accent-soft`。draft 已用 SSOT 名（无需改）；真身 CSS 待迁移。见 `settings/handoff-system.md §13`。
-- **默认主题方向**（✅ 已落地，2026-06-27）：**暗色冷蓝为真默认**（`--bg #1a1b1f` / accent `#4f8ef7`，2026-07-09 提亮校准）。`stores/settings.ts` 重构为单一真相源，DEFAULT_SYSTEM = `{ theme:'dark', themePreset:'cold-blue', locale:'zh-CN' }`，`setSystem()` 同步 `<html data-theme>` 到 DOM —— 主题切换已从「死设置」变为实际生效。
+- **默认主题方向**（✅ 已落地，2026-06-27；2026-08-02 V3 太极纯灰换色）：**暗色纯灰为真默认**（`--bg #0f0f11` / accent `#c8c8cd`，2026-07-09 提亮校准 + 08-02 换纯灰）。`stores/settings.ts` 重构为单一真相源，DEFAULT_SYSTEM = `{ theme:'dark', themePreset:'cold-blue', locale:'zh-CN' }`（themePreset 名暂留历史，色值已由本文件 :root token 覆盖为 V3 纯灰），`setSystem()` 同步 `<html data-theme>` 到 DOM —— 主题切换已从「死设置」变为实际生效。
 
 ## 待办
 
@@ -173,7 +179,7 @@
 
 **已知命名冲突（维持 v3，不覆盖）**：
 - `--accent`：v3=主色蓝（强调/品牌，19 处业务代码 + tailwind config 锁定）；shadcn=hover 软底（中性）。语义相反，维持 v3 主色蓝（W01 零回归）。副作用：ghost/outline Button 的 `hover:bg-accent` hover 成主色蓝（既有状态，非本修复引入）。
-- `--neutral-mid`：v3=次级文字色（#9ca3af，2026-07-26 W1 重命名调值后）；shadcn=背景色。维持 v3。副作用：`bg-neutral-mid`（仅 `DropdownMenuSeparator` 1px 分隔线用）渲染为 v3 灰——视觉正确。
+- `--neutral-mid`：v3=次级文字色（#888890，2026-08-02 V3 纯灰换色后；原 07-26 值 #9ca3af）；shadcn=背景色。维持 v3。副作用：`bg-neutral-mid`（仅 `DropdownMenuSeparator` 1px 分隔线用）渲染为 v3 灰——视觉正确。
 
 两项冲突是 shadcn 命名与 v3 命名的根本不兼容，纯 token 别名无法消除；维持 v3 语义保证 W01 零回归，副作用可接受。若未来要 ghost hover 中性化，需在 button variant 改用 `hover:bg-surface-hover`（改组件，非 token 层）。
 

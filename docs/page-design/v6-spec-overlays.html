@@ -15,41 +15,43 @@
    ================================================================ */
 :root {
   /* 背景层级 */
-  --bg: #1a1b1f;
-  --surface: #272830;
-  --surface-hover: #363740;
-  --surface-2: #2e2f38;
-  --bg-elevated: #313239;
-  --bg-input: #1e1f24;
+  --bg: #0f0f11;
+  --surface: #1b1b1d;
+  --surface-hover: #29292b;
+  --surface-2: #212123;
+  --bg-elevated: #262628;
+  --bg-input: #141416;
   /* v6 新增 */
   --bg-sunken: var(--bg);
-  --bg-card: #22242c;
+  --bg-card: #18181a;
 
   /* 文字 neutral 谱系（v6：dim 提亮一档）*/
-  --neutral-fg: #e5e7eb;
-  --neutral-mid: #9ca3af;
-  --neutral-dim: #7d8494;
+  --neutral-fg: #dcdce0;
+  --neutral-mid: #888890;
+  --neutral-dim: #5e5e64;
   --neutral-dim-old: #6b7280;
-  --neutral-faint: #4b5563;
-  --neutral-ico: #8b8d94;
-  --neutral-ico-hover: #e5e7eb;
+  --neutral-faint: #383840;
+  --neutral-ico: #74747c;
+  --neutral-ico-hover: #dcdce0;
 
   /* 边框/分隔 */
-  --border: rgba(255,255,255,0.08);
-  --border-strong: rgba(255,255,255,0.15);
+  --border: rgba(255,255,255,0.05);
+  --border-strong: rgba(255,255,255,0.10);
 
-  /* 主色（冷蓝）*/
-  --accent: #4f8ef7;
-  --accent-hover: #6ba3ff;
-  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
-  --accent-ring: rgba(79,142,247,0.30);
+  /* 主色（V3 太极纯灰）*/
+  --accent: #c8c8cd;
+  --accent-hover: #dcdce0;
+  --accent-soft: color-mix(in oklch, var(--accent) 10%, transparent);
+  --accent-ring: color-mix(in oklch, var(--accent) 30%, transparent);
+  --accent-fg: #1a1a1c;
 
   /* 状态色 */
-  --success: #22c55e;
-  --warn: #b08a3e;
-  --danger: #ef4444;
-  --info: #38bdf8;
-  --reasoning: #a78bfa;
+  --success: #6a9b73;
+  --warn: #a8904a;
+  --danger: #b06060;
+  --info: #5e8a96;
+  --reasoning: #80779e;
+  --danger-fg: #f0f0f2;
   --success-soft: color-mix(in oklch, var(--success) 12%, transparent);
   --warn-soft: color-mix(in oklch, var(--warn) 14%, transparent);
   --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
@@ -89,7 +91,7 @@
   --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);
   --shadow-2: 0 8px 24px rgba(0,0,0,0.4);
   --shadow-drawer: -12px 0 24px rgba(0,0,0,0.16);
-  --shadow-glow: 0 0 0 3px rgba(79,142,247,0.25);
+  --shadow-glow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);
 
   /* 组件尺寸（v6 新增）*/
   --content-max-w: 720px;
@@ -112,7 +114,7 @@
 html, body { height: 100%; }
 body {
   font-family: var(--font-sans);
-  background: #131316; color: var(--neutral-fg);
+  background: #0a0a0c; color: var(--neutral-fg);
   -webkit-font-smoothing: antialiased;
   font-size: var(--text-base); line-height: 1.5;
 }
@@ -159,7 +161,7 @@ body {
   margin-bottom: 16px; overflow: hidden;
 }
 /* 模拟 stage 窗口底（modal/overlay 落其上）*/
-.stage-bg { background: #131316; border-radius: var(--radius); overflow: hidden; position: relative; }
+.stage-bg { background: #0a0a0c; border-radius: var(--radius); overflow: hidden; position: relative; }
 /* 模拟主面板 surface 背景 */
 .panel-stage { background: var(--surface); border-radius: var(--radius); overflow: hidden; }
 
@@ -182,7 +184,7 @@ body {
 /* ================================================================
    §1 z-index 分层图
    ================================================================ */
-.zstack { position: relative; min-height: 300px; background: #131316; border-radius: var(--radius); padding: 20px; overflow: hidden; }
+.zstack { position: relative; min-height: 300px; background: #0a0a0c; border-radius: var(--radius); padding: 20px; overflow: hidden; }
 .zstage-app { position: absolute; inset: 20px; background: var(--bg); border-radius: var(--radius-sm); }
 .zstage-panel { position: absolute; left: 60px; right: 60px; top: 50px; bottom: 50px; background: var(--surface); border-radius: var(--radius); }
 .zlayer {
@@ -451,7 +453,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s1">
     <div class="spec-head"><span class="spec-num">§1</span><h2 class="spec-title">Overlays 总览 + z-index 分层</h2></div>
-    <p class="spec-desc">v6 把全部覆盖层按语义 z-index scale（§5.2）落到明确层级：modal（SearchModal / ConfirmDialog / Mermaid 全屏 / FullSettingsOverlay）<code>--z-modal:1000</code>；overlay（AskUserOverlay 内联覆盖层）<code>--z-overlay:20</code>；popover / dropdown / tooltip <code>--z-popover:10</code>。下方的 stage(#131316) → app(--bg) → panel(--surface) 三层是 base 文档流。SideDrawer 与 main 同体，z 归文档流（D2），不单列 overlay 档。逐处替换现状任意 <code>z-[1]</code> / <code>z-10</code> / <code>z-[1000]</code> 混用值。</p>
+    <p class="spec-desc">v6 把全部覆盖层按语义 z-index scale（§5.2）落到明确层级：modal（SearchModal / ConfirmDialog / Mermaid 全屏 / FullSettingsOverlay）<code>--z-modal:1000</code>；overlay（AskUserOverlay 内联覆盖层）<code>--z-overlay:20</code>；popover / dropdown / tooltip <code>--z-popover:10</code>。下方的 stage(#0a0a0c) → app(--bg) → panel(--surface) 三层是 base 文档流。SideDrawer 与 main 同体，z 归文档流（D2），不单列 overlay 档。逐处替换现状任意 <code>z-[1]</code> / <code>z-10</code> / <code>z-[1000]</code> 混用值。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> z-[1]/z-10/z-[1000] 混用</span>
       <span class="cp cp-v6"><b>v6</b> --z-sticky:1 / popover:10 / overlay:20 / modal:1000</span>
@@ -463,7 +465,7 @@ body {
       <div class="zstack">
         <!-- 三层 base 背景 -->
         <div class="zstage-app"></div>
-        <span class="z-stage-label" style="top:24px;left:28px;">stage #131316</span>
+        <span class="z-stage-label" style="top:24px;left:28px;">stage #0a0a0c</span>
         <span class="z-stage-label" style="top:38px;left:64px;color:var(--neutral-dim);">app --bg</span>
         <div class="zstage-panel"></div>
         <span class="z-stage-label" style="top:56px;left:74px;color:var(--neutral-mid);">panel --surface（base 文档流）</span>
@@ -1178,28 +1180,28 @@ body {
     <div class="render-frame">
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:20px;">
         <!-- SearchModal 浮层 -->
-        <div style="background:#131316;border-radius:var(--radius);padding:24px 16px;">
+        <div style="background:#0a0a0c;border-radius:var(--radius);padding:24px 16px;">
           <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow-2);padding:12px;">
             <div style="font-size:11px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:6px;">SearchModal</div>
             <div style="font-size:12px;color:var(--neutral-fg);">搜索浮层 · shadow-2</div>
           </div>
         </div>
         <!-- ConfirmDialog -->
-        <div style="background:#131316;border-radius:var(--radius);padding:24px 16px;">
+        <div style="background:#0a0a0c;border-radius:var(--radius);padding:24px 16px;">
           <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow-2);padding:12px;">
             <div style="font-size:11px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:6px;">ConfirmDialog</div>
             <div style="font-size:12px;color:var(--neutral-fg);">确认框 · shadow-2 + border</div>
           </div>
         </div>
         <!-- AskUserOverlay -->
-        <div style="background:#131316;border-radius:var(--radius);padding:24px 16px;">
+        <div style="background:#0a0a0c;border-radius:var(--radius);padding:24px 16px;">
           <div style="background:var(--bg-input);border-radius:var(--radius-lg);box-shadow:var(--shadow-2);padding:12px;">
             <div style="font-size:11px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:6px;">AskUserOverlay</div>
             <div style="font-size:12px;color:var(--neutral-fg);">内联覆盖层 · shadow-2</div>
           </div>
         </div>
         <!-- focus ring -->
-        <div style="background:#131316;border-radius:var(--radius);padding:24px 16px;">
+        <div style="background:#0a0a0c;border-radius:var(--radius);padding:24px 16px;">
           <div style="background:var(--bg-input);border:1px solid var(--accent);border-radius:var(--radius);box-shadow:var(--shadow-glow);padding:12px;">
             <div style="font-size:11px;color:var(--neutral-dim);font-family:var(--font-mono);margin-bottom:6px;">input focus</div>
             <div style="font-size:12px;color:var(--neutral-fg);">聚焦环 · shadow-glow</div>
