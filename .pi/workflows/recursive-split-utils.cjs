@@ -15,6 +15,11 @@ const MAX_NODE_ROUNDS = 3;
 // 合法起始层级白名单（C3：startLayer 校验，防 shell 注入）
 const VALID_LAYERS = new Set(["epic", "feature", "slice", "wave"]);
 
+// queryFrontier 连续失败容忍上限：单次 cw frontier 超时只 continue 重试下一轮，
+// 连续失败到 MAX_FRONTIER_RETRIES 才判定为永久性故障并终止整个递归拆分。
+// 避免单次临时性网络/进程抖动永久终止长任务。
+const MAX_FRONTIER_RETRIES = 3;
+
 // ── 纯函数 ──────────────────────────────────────────────────────────
 
 /**
@@ -280,12 +285,52 @@ function detectStuckNodes(actionable, prevStatus, nodeRounds) {
   return nodesToAbort;
 }
 
+/**
+ * 清理 prevStatus / nodeRounds 中已进入终态的节点 entry（防止两 Map 无界增长）。
+ *
+ * 问题：prevStatus / nodeRounds 只增不减，终态节点的 entry 永不清理。超长任务（成百上千
+ * 个 wave node 依次完成）下两 Map 会累积所有历史终态节点的 status，造成内存浪费 + 跨轮
+ * 比对时遍历无意义 entry。
+ *
+ * 终态节点不会出现在 frontier（cw frontier 只返回非终态 actionable/blocked 节点），所以无法
+ * 从"本轮 frontier"直接得知哪些节点刚变终态。本函数用"上一轮见过 + 本轮 frontier 中不存在 +
+ * 在 prevStatus 中有记录"来推断刚消失的节点，再按其 prevStatus 判定是否终态决定是否清理。
+ *
+ * 纯函数：直接 mutate 入参两 Map（与 detectStuckNodes 同样的副作用契约——调用方传入需持久
+ * 化的累加器对象，函数就地修改避免反复浅拷贝大对象）。返回被清理的 unitId 列表（供测试断言）。
+ *
+ * @param prevStatus    unitId → 上一轮 status（mutable）
+ * @param nodeRounds    unitId → 连续未推进轮数（mutable）
+ * @param currentUnitIds 本轮 frontier 中出现的所有 unitId（含 blocked 节点，不含终态）
+ * @returns 被清理掉的 unitId 列表
+ */
+function pruneTerminalEntries(prevStatus, nodeRounds, currentUnitIds) {
+  const present = new Set(currentUnitIds);
+  const pruned = [];
+
+  for (const unitId of Object.keys(prevStatus)) {
+    // 本轮 frontier 仍存在 → 还在调度，保留
+    if (present.has(unitId)) continue;
+    // 本轮没出现 + 上轮 status 是终态 → 已完成/中止，清理 entry
+    if (isTerminal(prevStatus[unitId])) {
+      delete prevStatus[unitId];
+      delete nodeRounds[unitId];
+      pruned.push(unitId);
+    }
+    // 本轮没出现 + 上轮 status 非终态：可能是 queryFrontier 临时失败/抖动漏报，
+    // 保守保留 entry（下轮再判），避免误清掉仍在调度的活跃节点。
+  }
+
+  return pruned;
+}
+
 // ── 导出 ────────────────────────────────────────────────────────────
 
 module.exports = {
   // 常量
   MAX_NODE_ROUNDS,
   VALID_LAYERS,
+  MAX_FRONTIER_RETRIES,
   // 纯函数
   isTerminal,
   assertValidUnitId,
@@ -298,4 +343,5 @@ module.exports = {
   // 主循环辅助
   selectActionable,
   detectStuckNodes,
+  pruneTerminalEntries,
 };

@@ -18,6 +18,7 @@ const { execSync } = require("child_process");
 // 相对路径 "./recursive-split-utils.cjs" 会解析到 <cwd>/recursive-split-utils.cjs 而非脚本同目录。
 const {
   MAX_NODE_ROUNDS,
+  MAX_FRONTIER_RETRIES,
   VALID_LAYERS,
   isTerminal,
   assertValidUnitId,
@@ -28,6 +29,7 @@ const {
   topoSort,
   selectActionable,
   detectStuckNodes,
+  pruneTerminalEntries,
 } = require(process.cwd() + "/.pi/workflows/recursive-split-utils.cjs");
 
 // 单 node 超时（60 分钟）：agent 在 session 内连续跑多个 cw action（8 action + gate 重试），
@@ -70,7 +72,9 @@ function createRootUnit(startLayer, task) {
  * 查询 frontier：返回当前可调度的 actionable 节点列表。
  * 不变式：只在 BFS 轮次边界调用（parallel 全 settle 后），绝不在 parallel 进行中调——
  * 否则 cw 状态机并发读写会脏读。
- * 失败回退空 frontier → BFS 终止（保守停止，不继续调度脏状态）。
+ * 失败返回 null（不回退空 frontier）——空 frontier 会被 selectActionable 判为 allTerminal
+ * 导致 BFS 永久终止。主循环按 MAX_FRONTIER_RETRIES 容忍连续失败：单次临时性超时只 continue
+ * 进入下一轮重试，连续失败到阈值才判定永久性故障并 break。
  */
 function queryFrontier(rootUnitId) {
   try {
@@ -82,7 +86,7 @@ function queryFrontier(rootUnitId) {
     return JSON.parse(out);
   } catch (e) {
     log("queryFrontier failed: " + String(e.message || e));
-    return { rootUnitId, nodes: [] };
+    return null;
   }
 }
 
@@ -136,6 +140,11 @@ async function executeNodeNextAction(node, sessionFiles) {
 try {
   phase("init");
   const task = $ARGS.task;
+  // Info #1：task 未传时 task===undefined → String(undefined)="undefined" 作为 objective，
+  // 会静默创建一个无意义 root WorkUnit。这里 fail-fast 拒绝空/非字符串入参，让调用方尽早感知。
+  if (!task || typeof task !== "string") {
+    throw new Error("Missing required $ARGS.task");
+  }
   const startLayer = $ARGS.startLayer ?? "slice";
   // C3：startLayer 白名单校验（拼进 cw create 命令，防 shell 注入）
   if (!VALID_LAYERS.has(startLayer)) {
@@ -151,10 +160,27 @@ try {
   const prevStatus = {};
   // nodeRounds: unitId → status 未推进的连续轮数（node 级熔断用）
   const nodeRounds = {};
+  // frontierFailures: queryFrontier 连续返回 null 的次数（达 MAX_FRONTIER_RETRIES 才 break）
+  let frontierFailures = 0;
 
   while (true) {
     // 不变式：queryFrontier 只在轮次边界调（此处 parallel 已全 settle）
     const frontier = queryFrontier(rootUnitId);
+
+    // Suggestion #2：queryFrontier 失败返回 null。区分临时抖动与永久故障——
+    // 单次失败 continue 进入下一轮重试，连续 MAX_FRONTIER_RETRIES 次失败才判定永久故障并 break。
+    // 不回退空 frontier（会被误判为 allTerminal 永久终止整个递归拆分）。
+    if (frontier === null) {
+      frontierFailures++;
+      log("queryFrontier null (" + frontierFailures + "/" + MAX_FRONTIER_RETRIES + "), retrying next round");
+      if (frontierFailures >= MAX_FRONTIER_RETRIES) {
+        log("queryFrontier failed " + MAX_FRONTIER_RETRIES + " consecutive times, aborting BFS");
+        break;
+      }
+      continue;
+    }
+    frontierFailures = 0; // 成功一次即重置连续失败计数
+
     const { actionable, shouldBreak } = selectActionable(frontier);
 
     // 无 actionable：全终态 → 正常结束；有非终态但全 blocked → 异常（保守 break）
@@ -203,12 +229,24 @@ try {
       try {
         r = await executeNodeNextAction(node, sessionFiles);
       } catch (e) {
-        log("BFS: sequential node " + node.unitId + " threw: " + String(e.message || e));
+        // Info #4：sequential 节点意外 throw 时纵深防御——对齐 parallel thrown 分支，
+        // 调 abortUnit 中止该节点对应的 WorkUnit（节点状态可能已在半推进态，避免脏状态残留）。
+        log("BFS: sequential node " + node.unitId + " threw: " + String(e.message || e) + ", aborting unit");
+        await abortUnit(node.unitId);
         continue;
       }
       if (r && r.sessionFile) sessionFiles[r.unitId] = r.sessionFile;
       if (r && r.failedReason) log("BFS: " + r.unitId + " failed: " + r.failedReason);
     }
+
+    // Suggestion #3：每轮 BFS 结束后清理已进入终态的节点在 prevStatus / nodeRounds 中的 entry，
+    // 防止两 Map 随任务推进无界累积。frontier.nodes 含本轮所有非终态 actionable+blocked 节点，
+    // 凡不在本轮 frontier 且上轮 status 已终态的节点即已退出调度，安全清理。
+    pruneTerminalEntries(
+      prevStatus,
+      nodeRounds,
+      (frontier.nodes ?? []).map((n) => n.unitId)
+    );
   }
 
   phase("done");

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   MAX_NODE_ROUNDS,
+  MAX_FRONTIER_RETRIES,
   VALID_LAYERS,
   isTerminal,
   assertValidUnitId,
@@ -12,13 +13,28 @@ import {
   topoSort,
   selectActionable,
   detectStuckNodes,
+  pruneTerminalEntries,
 } from "../recursive-split-utils.cjs";
+
+// ── 局部最小类型 ────────────────────────────────────────────────────
+// Suggestion #4：去掉测试中的 `as any[]`，定义与 topoSort/selectActionable 入参契约一致的最小
+// node 形状（fields all optional，覆盖不同测试场景的子集）。
+type FrontierNode = {
+  unitId: string;
+  status?: string;
+  blocked?: boolean;
+  dependsOn?: string[];
+};
 
 // ── 常量 ────────────────────────────────────────────────────────────
 
 describe("常量", () => {
   it("MAX_NODE_ROUNDS = 3", () => {
     expect(MAX_NODE_ROUNDS).toBe(3);
+  });
+
+  it("MAX_FRONTIER_RETRIES = 3", () => {
+    expect(MAX_FRONTIER_RETRIES).toBe(3);
   });
 
   it("VALID_LAYERS 含 epic/feature/slice/wave", () => {
@@ -356,11 +372,11 @@ describe("topoSort", () => {
   });
 
   it("dependsOn 缺省视为空数组", () => {
-    const nodes = [
+    const nodes: FrontierNode[] = [
       { unitId: "a" },
       { unitId: "b" },
     ];
-    const { concurrent } = topoSort(nodes as any[]);
+    const { concurrent } = topoSort(nodes);
     expect(concurrent).toHaveLength(2);
   });
 });
@@ -484,5 +500,92 @@ describe("detectStuckNodes", () => {
     const nodeRounds = { a: MAX_NODE_ROUNDS - 1 };
     const stuck = detectStuckNodes(actionable, prevStatus, nodeRounds);
     expect(stuck).toEqual(["a"]); // 不豁免，触发熔断
+  });
+});
+
+// ── pruneTerminalEntries（终态节点 entry 清理） ─────────────────────
+
+describe("pruneTerminalEntries", () => {
+  it("清理本轮不在 frontier 且上轮 status 终态的节点 entry", () => {
+    // a 上轮 closed → 本轮 frontier 不含 a（已退出调度）→ 清理
+    // b 本轮仍在 frontier（非终态）→ 保留
+    const prevStatus: Record<string, string> = { a: "closed", b: "executing" };
+    const nodeRounds: Record<string, number> = { a: 2, b: 0 };
+    const pruned = pruneTerminalEntries(prevStatus, nodeRounds, ["b"]);
+    expect(pruned).toEqual(["a"]);
+    expect(prevStatus).toEqual({ b: "executing" });
+    expect(nodeRounds).toEqual({ b: 0 });
+  });
+
+  it("aborted 终态也被清理", () => {
+    const prevStatus: Record<string, string> = { a: "aborted" };
+    const nodeRounds: Record<string, number> = { a: 5 };
+    const pruned = pruneTerminalEntries(prevStatus, nodeRounds, []);
+    expect(pruned).toEqual(["a"]);
+    expect(prevStatus).toEqual({});
+    expect(nodeRounds).toEqual({});
+  });
+
+  it("本轮仍在 frontier 的节点保留（即使上轮 status 终态——理论不会发生但保守保留）", () => {
+    const prevStatus: Record<string, string> = { a: "closed" };
+    const nodeRounds: Record<string, number> = { a: 0 };
+    const pruned = pruneTerminalEntries(prevStatus, nodeRounds, ["a"]);
+    expect(pruned).toEqual([]);
+    expect(prevStatus).toEqual({ a: "closed" });
+  });
+
+  it("本轮不在 frontier 但上轮 status 非终态 → 保留（可能 frontier 抖动漏报，下轮再判）", () => {
+    // 保守策略：非终态节点突然消失可能是临时性 frontier 失败/漏报，不清避免误清活跃节点
+    const prevStatus: Record<string, string> = { a: "executing" };
+    const nodeRounds: Record<string, number> = { a: 1 };
+    const pruned = pruneTerminalEntries(prevStatus, nodeRounds, []);
+    expect(pruned).toEqual([]);
+    expect(prevStatus).toEqual({ a: "executing" });
+  });
+
+  it("同时清理 prevStatus 和 nodeRounds 两 Map", () => {
+    const prevStatus: Record<string, string> = {
+      a: "closed",
+      b: "aborted",
+      c: "planning",
+    };
+    const nodeRounds: Record<string, number> = { a: 0, b: 3, c: 1 };
+    const pruned = pruneTerminalEntries(prevStatus, nodeRounds, ["c"]);
+    // a/b 终态且不在本轮 → 清理；c 仍在 → 保留
+    expect(pruned.sort()).toEqual(["a", "b"]);
+    expect(prevStatus).toEqual({ c: "planning" });
+    expect(nodeRounds).toEqual({ c: 1 });
+  });
+
+  it("空 prevStatus 返回空数组", () => {
+    const prevStatus: Record<string, string> = {};
+    const nodeRounds: Record<string, number> = {};
+    const pruned = pruneTerminalEntries(prevStatus, nodeRounds, ["a", "b"]);
+    expect(pruned).toEqual([]);
+  });
+
+  it("空 currentUnitIds + 全终态 prevStatus → 全清", () => {
+    const prevStatus: Record<string, string> = {
+      a: "closed",
+      b: "aborted",
+    };
+    const nodeRounds: Record<string, number> = { a: 0, b: 0 };
+    const pruned = pruneTerminalEntries(prevStatus, nodeRounds, []);
+    expect(pruned.sort()).toEqual(["a", "b"]);
+    expect(prevStatus).toEqual({});
+    expect(nodeRounds).toEqual({});
+  });
+
+  it("纯函数就地 mutate（不返回新 Map，调用方传入的对象被修改）", () => {
+    const prevStatus: Record<string, string> = { a: "closed" };
+    const nodeRounds: Record<string, number> = { a: 9 };
+    const prevRef = prevStatus;
+    const roundsRef = nodeRounds;
+    pruneTerminalEntries(prevStatus, nodeRounds, []);
+    // 同一引用被就地修改（与 detectStuckNodes 一致的副作用契约）
+    expect(prevRef).toBe(prevStatus);
+    expect(roundsRef).toBe(nodeRounds);
+    expect(prevStatus).toEqual({});
+    expect(nodeRounds).toEqual({});
   });
 });
