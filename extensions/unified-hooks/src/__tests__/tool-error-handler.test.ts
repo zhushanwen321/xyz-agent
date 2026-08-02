@@ -40,19 +40,31 @@ describe("setupToolErrorHandler", () => {
 		expect(pi.on).toHaveBeenCalledWith("tool_execution_end", expect.any(Function));
 	});
 
-	it("logs via logger.warn (not ctx.ui.notify) on isError:true", async () => {
+	it("logs via logger.warn and appendEntry with dedicated customType on isError:true", async () => {
 		const pi = createMockPi();
 		loggerMock.warn.mockClear();
+		pi.appendEntry.mockClear();
 
 		setupToolErrorHandler(pi as unknown as ExtensionAPI);
 		const handler = pi.on.mock.calls[0]![1] as (event: unknown) => Promise<void>;
 
 		await handler({ isError: true, toolName: "read", toolCallId: "call-42" });
 
-		// logger.warn 被调一次（内部走 appendEntry，不在 handler 里直接调 pi.appendEntry）
+		// logger.warn 被调一次（内部走泛化 appendEntry customType）
 		expect(loggerMock.warn).toHaveBeenCalledTimes(1);
 		expect(loggerMock.warn).toHaveBeenCalledWith(
 			"[unified-hooks] read error (callId=call-42)",
+			expect.objectContaining({
+				toolName: "read",
+				toolCallId: "call-42",
+				errorText: null,
+			}),
+		);
+		// 额外 appendEntry 用专属 customType "unified-hooks:tool-error"，
+		// 保留按 entry type 过滤 tool 错误的埋点契约
+		expect(pi.appendEntry).toHaveBeenCalledTimes(1);
+		expect(pi.appendEntry).toHaveBeenCalledWith(
+			"unified-hooks:tool-error",
 			expect.objectContaining({
 				toolName: "read",
 				toolCallId: "call-42",

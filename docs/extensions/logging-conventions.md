@@ -96,6 +96,16 @@ PI_EXT_DEBUG=1 pi   # 所有用 getLogger 的 extension 都写文件日志
 
 日志位置：`~/.pi/agent/logs/<extName>-YYYY-MM-DD.log`（或 `$PI_AGENT_DIR/logs/`）。
 
+### best-effort 清理失败默认静默 [IMPORTANT]
+
+`bestEffort` helper（`subagent-workflow/src/execution/best-effort.ts`）默认用 `logger.debug` 记录 sidecar 写入 / worktree remove / alive marker 删除等次要 IO 的失败。`logger.debug` 默认是 no-op——**生产默认配置下这些清理失败完全静默**（既不显 TUI，也不进 appendEntry）。
+
+这是**预期设计**：best-effort 清理失败属预期路径（session 已完成或正在收尾），失败不影响主流程，故不刷屏、不持久化。代价是生产排障看不到这些失败。
+
+**排障方法**：怀疑清理未生效时，用 `PI_EXT_DEBUG=1` 重启 pi，相关失败会写入 `~/.pi/agent/logs/subagents-YYYY-MM-DD.log`，grep `best-effort` 即可定位（如 `best-effort sidecar teardown failed` / `best-effort worktree cleanup failed`）。
+
+> 迁移注记：历史上 `bestEffort` 用 `console.debug`（始终可见），迁移到共享 logger 后改为 `logger.debug`（默认 no-op）。这是 logging-conventions 收敛的副作用——次要清理噪音不再默认可见，换取 TUI 不被污染。
+
 ### notify（不经过 logger）
 
 用户操作反馈直接调 `ctx.ui.notify`，logger 刻意不封装（它是 UI 决策）：

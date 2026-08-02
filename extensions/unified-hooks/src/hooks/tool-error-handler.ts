@@ -88,10 +88,19 @@ export function setupToolErrorHandler(pi: ExtensionAPI): void {
     // errorText 一起存上——事后排查能看到真实原因（如 "hub disposed"）。
     // 不调 ctx.ui.notify——tool error 已在对话流里（pi 原生 tool result），
     // notify 会重复显示且措辞（"bash error"）误导。
-    logger.warn(`[unified-hooks] ${e.toolName} error (callId=${e.toolCallId})`, {
+    //
+    // 注意：除了 logger.warn（内部走泛化 `unified-hooks:log` customType），
+    // 这里额外调一次 `pi.appendEntry("unified-hooks:tool-error", ...)`。
+    // 原因：logger 内部的 appendEntry 用的是泛化 customType，无法区分 entry
+    // 是否为 tool 错误；保留专属 entry type 让事后按 customType 过滤 tool
+    // 错误的脚本/dashboard 仍可工作（埋点契约）。
+    const entry = {
+      timestamp: Date.now(),
       toolName: e.toolName,
       toolCallId: e.toolCallId,
       errorText: errorText ?? null,
-    });
+    };
+    pi.appendEntry("unified-hooks:tool-error", entry);
+    logger.warn(`[unified-hooks] ${e.toolName} error (callId=${e.toolCallId})`, entry);
   });
 }
