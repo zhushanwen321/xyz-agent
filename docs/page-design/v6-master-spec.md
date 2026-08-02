@@ -6,6 +6,7 @@
 > **真相源优先级**：本文档（决策与范式） > `.tmp/v6/` demo（token 真值与组件实现） > `v6-spec-*.html`（视觉标注稿，部分已滞后） > 过程文档（审查/修复计划，已收敛进本文档）。
 >
 > **2026-08-02 修订**：新增 §3.5 实践原则（8 条，demo 迭代沉淀）；§5.6 状态指示圆点范式范围限缩（SessionList 改用 §3.5.2）；§9 新增 D12/D13/D14 裁决（SessionList 信号编排 / TurnRail 滚动条二合一 / Project 一级导航）。
+> **2026-08-02 审查修订**：spec↔demo 全量对照后修正——P0 内部矛盾统一（TurnRail thumb 色阶 / pulse-accent 时长 / badge 图标 / ChangeSetCard vs GitPanel badge 边界）；P1 跟 demo（send-slot 圆角矩形 / comp-box has-input 兑淡 / UiInput surface-2 / UiCheckbox focus 双环 / composer-bar 6 元素）；demo 新增 landing 页 + useTheme composable + ProjectSwitcher 增删 + 6 太极主题 SystemPage 接通，spec 同步记录；P2 笔误修正（7 tab 补 browser / tab 名统一 / keyframes SSOT 约束 / install-ok soft 底统一等）。
 
 ---
 
@@ -172,16 +173,15 @@ SessionList 列表行遵循本条（左未读圆点 + 右异常态 badge，done 
 
 #### 3.5.6 滚动条是「环境噪音」，不是「信息」
 
-滚动条目标是「需要时能找到，不需要时不存在」。全局 `::-webkit-scrollbar` 从 8px 改 **4px** + 透明 track + 圆角胶囊 thumb + hover 提亮（`neutral-faint` → hover `neutral-dim`）。进一步：对话流原生滚动条完全隐藏，TurnRail 的 spine（6px 暗条）+ thumb（亮色 accent-soft）物理合并成滚动条（spine=track，thumb=可视区，可拖拽，滚动联动）。
+滚动条目标是「需要时能找到，不需要时不存在」。全局 `::-webkit-scrollbar` 从 8px 改 **4px** + 透明 track + 圆角胶囊 thumb + hover 提亮（`neutral-faint` → hover `neutral-dim`）。进一步：对话流原生滚动条完全隐藏，TurnRail 的 spine（6px 暗条）+ thumb 物理合并成滚动条（spine=track，thumb=可视区，可拖拽，滚动联动）。
 
-**色阶**：thumb 默认 `neutral-faint`（弱）→ hover `neutral-dim`（中）→ 拖拽 accent（强），三档递进。
+**TurnRail thumb 色阶**（accent 谱系递进）：thumb 默认 `accent-soft`（accent × 10% 透明，弱）+ `border-left: 2px solid var(--accent)` → hover `color-mix(accent 22%)`（中）→ 拖拽 active `color-mix(accent 30%)`（强），三档均在 accent 谱系内递进（对话流内的滚动条与 TurnRail 同语义，用 accent 色而非 neutral）。
 
 #### 3.5.7 分层概念翻译成已有视觉语言
 
 引入新抽象层（Project / Workspace / Worktree）时用已有 token 和范式，不新造视觉系统。同语义的元素用同色，让用户形成「色 = 维度」的直觉：
 - **worktree chip + fork 序号 pill + git-branch 图标** → 都用 `--reasoning`（低饱和紫）= git 分支维度
-- **主 checkout chip** → 中性 `bg-input`（无分支语义）
-- **ProjectSwitcher 状态角标** → 复用 `accent-soft`/`danger-soft`/`success-soft`
+- **主 checkout** → 无 chip（常态归零，仅 worktree 需要标记分支维度）
 
 #### 3.5.8 静态 demo 的「展示级」边界
 
@@ -314,6 +314,10 @@ demo 阶段功能做到「可见 + 可交互 + 数据 mock」即够。不接 run
 
 demo 引入完整多主题系统（spec 无，demo 重大扩展）。机制：改 CSS 变量（resetToken 清空 → writeToken 批量写入），派生色自动跟随。
 
+**切换链路**（demo 已接通）：`useTheme.ts` composable（全局共享）持有 `THEMES`（6 主题定义）+ `currentThemeName` ref + `applyTheme(name, theme)` 函数。SystemPage「配色主题」GroupCard 渲染 6 主题列表行（`theme-row` + `theme-swatches` 四色缩略图），**点击即时切换**（调 applyTheme，不走 draft/save），选中态 `bg-surface + accent 字`（列表项型）。TokenDebugPage 也从 useTheme import 同一份数据（保持调试功能）。
+
+**applyTheme 机制**：先对所有 COLOR_TOKENS(18) + EFFECT_TOKENS(6) 逐个 `removeProperty`（清 inline 值落回 `:root` 默认），再按新主题 entry `setProperty` 写入（entry 没给的 key 保持默认）。每主题覆盖 26 个变量（bg 阶梯 8 + neutral 6 + accent 3 + 状态 6 + border 3）。
+
 **阴 · 暗色族（3 个）**——背景近中性，色相只做「依稀相」(S≤6%)，靠明度阶梯说话：
 | 主题 | accent | 特色 |
 |---|---|---|
@@ -372,9 +376,9 @@ demo 引入完整多主题系统（spec 无，demo 重大扩展）。机制：�
 
 | 控件 | 规格 |
 |---|---|
-| `UiInput` | h40（dense h32）；`bg-bg-input`；focus = inset 单环；error class `.err` |
+| `UiInput` | h40（dense h32）；`bg-surface-2`（浮起分层，比凹陷 bg-input 更符合层级范式）；focus = inset 单环；error class `.error` |
 | `UiSwitch` | 36×20；translateX=18px；focus 双环；无 hover 变色 |
-| `UiCheckbox` | **内联 class 范式（非独立 .vue）**：16×16；checked=`accent` 实心 + `accent-fg` 勾；unchecked=`border-strong` 空心；focus 双环；disabled opacity 0.5 |
+| `UiCheckbox` | **内联 class 范式（非独立 .vue）**：16×16；checked=`accent` 实心 + `accent-fg` 勾；unchecked=`border-strong` 空心；`:focus-visible` 双环（`0 0 0 2px accent` + `0 0 0 4px rgba(0,0,0,0.4)`）；disabled opacity 0.5 |
 | `SelectTrigger` | **未实现**（demo 无此组件）。目标态：去 border，`bg-bg-input`，圆角 8px。当前分支/模型选择走 popover（GitPanel/Composer） |
 
 ### 5.3 SegmentedTab 新范式（§3.1）
@@ -436,18 +440,18 @@ hover 时右侧整单元（badge/耗时）`visibility:hidden` 让位 ghost 操�
 **通用（全场景）**：
 - **工具失败**（exit≠0）：图标统一 `--neutral-ico`，行尾加 mono `exit N` 中性标签（`bg-bg-elevated` 胶囊）
 - **彩色边界**：保留 = 真 failure danger / 待行动 accent / git 语义色（降极小圆点）；降中性 = workflow done / GoalCard badge / ±stats / 目录改动数
-- **GitPanel badge 中性化**：M/A/D 统一 `neutral-dim`，仅 U（冲突）染 `danger + font-weight 700`
+- **GitPanel 行级 badge 中性化**：M/A/D 统一 `neutral-dim`，仅 U（冲突）染 `danger + font-weight 700`
+  > **场景区分**：GitPanel 行级 badge 因信息密度高需中性化降噪；**ChangeSetCard 文件 badge 保留彩色**（M=info / A=success / D=danger），因对话流场景信息密度低，彩色辅助辨识收益大于降噪收益。两条不矛盾，是同一原则在不同信息密度场景的取舍。
 
 ### 5.7 图标 scale（§5.3）
 
 | 用途 | size |
 |---|---|
-| badge | 10px |
 | trace | 12px |
 | block header / header | 14px |
 | 操作按钮 | 16px |
 
-lucide-vue 内联 SVG，stroke-width 统一 **1.75**。block icon：thinking=Brain / tool-bash=SquareTerminal / tool 兜底=SquareFunction / subagent=Bot / workflow=Workflow。
+lucide-vue 内联 SVG，stroke-width 默认 **1.75**（特殊图标如 checkbox 勾/install icon 可加粗到 2-3）。block icon：thinking=Brain / tool-bash=SquareTerminal / tool 兜底=SquareFunction / subagent=Bot / workflow=Workflow。
 
 ### 5.8 GroupCard（设置分组卡片）
 
@@ -458,7 +462,9 @@ lucide-vue 内联 SVG，stroke-width 统一 **1.75**。block icon：thinking=Bra
 
 ### 5.9 动效（全局 keyframes）
 
-`spin` / `pulse-accent`（2s box-shadow 涟漪）/ `pulse-dot` / `blink` / `shimmer`（骨架屏）。`@media (prefers-reduced-motion: reduce)` 把所有 animation/transition 压到 `0.01ms !important`。
+`spin` / `pulse-accent`（1.8s opacity 涟漪，0→0.4→1 明灭）/ `pulse-dot` / `blink` / `shimmer`（骨架屏）。`@media (prefers-reduced-motion: reduce)` 把所有 animation/transition 压到 `0.01ms !important`。
+
+**SSOT 约束**：keyframes 只在 `base.css` 定义一次。组件通过 `animation-name` 引用，**禁止在 scoped style 里重复 `@keyframes` 定义**（demo 中 SegmentedTab/SessionList/ToolBlock 等曾各自重复定义 pulse-accent/spin，违反单源原则，应统一引用 base.css 全局定义）。
 
 ### 5.10 加载态 / 骨架屏
 
@@ -473,7 +479,7 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 ### 5.11 内联反馈条（v6 不做全局 toast）
 
 **v6 用内联反馈条替代全局 toast**（demo 故意未做全局 toast 系统）。范式：
-- **成功反馈**（`.install-ok` / `.success-note`）：`*-soft`（success/warn）底 + 语义 icon + 文案（原因 + 下一步），`border-top hairline` 分隔，2s 自动消失
+- **成功反馈**（`.install-ok` / `.success-note` / `.page-notice`）：统一 `*-soft`（success/warn）底 + 语义 icon + 文案（原因 + 下一步），`border-top hairline` 分隔，2-3s 自动消失
 - **错误反馈**（`.install-err` / `.inline-error`）：danger-soft 底 + TriangleAlert icon，**常驻**可重试，不自动消失
 - **页级横幅**：`*-soft` 底常驻，用于页级错误/成功提示
 
@@ -521,21 +527,24 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 - **Block·subagent/workflow**：collapsed only，点击 → drawer tab
 - **UserBubble**：删 border，仅 `bg-surface-hover`；删 pending 态（迁 QueueBubble 内嵌）
 - **Composer**：6 区（QueueBubble / staging chip / inline chip bar / landing meta / input / composer-bar）；宽度对齐 720 居中
-  - **inline chip 四色**（无底无边 + `font-weight 600` + 前缀 icon 13px + × hover 染 danger-soft）：`file`=success 绿 / `image`=reasoning 紫 / `slash`=reasoning 紫 / `@`=accent 蓝
-  - **composer-bar 5 元素**：`+`添加 / spacer / 上下文容量(hover popover) / 模型(click popover, 分组+搜索+选中 check) / 思考强度(click popover, 6 档圆点) / send-slot(30×30 accent 圆 + 倾斜箭头)；bar-btn h28 icon 14px；popover 锚点范式见 §5.12
+  - **variant 双形态**：`variant="panel"`（正常态，固定 workspace 底部）vs `variant="landing"`（landing 态，垂直水平居中 + meta-row slot）；landing 触发：新建任务按钮设 `landingMode=true`，发送消息后 `landingMode=false` 切回 panel
+  - **landing meta-row**（仅 `variant="landing"` 时渲染，comp-box 内顶部）：ghost chip 行 = directory chip(Folder icon + mono 目录名，空 cwd 时 accent 色) + `meta-sep`(1px border 竖线) + branch chip(GitBranch icon + mono 分支名) + meta-sep + preset chip(Zap icon + 预设名)；chip 样式 h-auto gap-1.5 px-2 py-1 text-xs neutral-mid，hover bg-surface-hover + neutral-fg
+  - **landing 页布局**（LandingView）：`flex items-center justify-center` 垂直水平居中；问候语 h1（22px font-650 neutral-fg，按时段「上午好呀/下午好呀/晚上好呀，有什么想让我帮忙的吗」）+ landing Composer（max-w 720px）
+  - **inline chip 四色**（无底无边 + `font-weight 600` + 前缀 icon 13px + × 删除按钮 hover 染 danger-soft）：`file`=success 绿 / `image`=reasoning 紫 / `slash`=reasoning 紫 / `@`=accent 蓝；四色 chip 都有 × 删除按钮
+  - **composer-bar 6 元素**：`+`添加 / spacer / 上下文容量(hover popover) / 模型(click popover, 分组+搜索+选中 check) / 思考强度(click popover, 6 档圆点) / send-slot(30×30 accent 圆角矩形 radius 8px + 倾斜箭头)；bar-btn h28 icon 14px；popover 锚点范式见 §5.12
   - **contenteditable + slash 触发**：光标位置检测 `/` 或 `#`（行首或空格后）触发 CommandPopover；选中插入 chip + 移除触发文本；IME 守卫见 §5.12
-  - **comp-box 态**：`.has-input`(2px surface-hover 微环) / `.focused`(border-accent + 3px accent-ring 外环) / `.staging`(border-accent + 3px ring + bg-accent-soft，独立于焦点)
+  - **comp-box 态**：`.has-input`(2px `color-mix(surface-hover 40%)` 透明微环) / `.focused`(border-accent + 3px accent-ring 外环) / `.staging`(border-accent + 3px ring + bg-accent-soft，独立于焦点)
 - **ContextBar**（composer 上方，goal/todo 摘要 + plugin foot 挂载点）：与 composer 同宽同中线居中；常态归零（无 goal/todo 时整条隐藏）；slim bar 24px `text-2xs neutral-dim`；点击展开 popover（goal 全文 + 3px 进度条 + todo checklist）
-- **TurnRail**（右侧 turn 导航 + 自定义滚动条接管）：spine(`surface-hover` 6px 暗条 340px，点击翻页) + thumb(`accent-soft + 2px accent border-left`，按滚动比例定位 min-h 24px，可拖拽)；hover 展开 mini-map(6px→224px，turn 节点两行：user 行 + agent 状态图标行)；active 节点见 §3.4 例外
+- **TurnRail**（右侧 turn 导航 + 自定义滚动条接管）：spine(`surface-hover` 6px 暗条 340px，点击翻页) + thumb(`accent-soft + 2px accent border-left`，按滚动比例定位 min-h 24px，可拖拽)；hover 展开 mini-map(6px→224px，turn 节点两行：user 行 + agent 状态图标行，含**折展 toggle** ChevronUp/Down，active 节点常驻可见 toggle)；active 节点见 §3.4 例外；mini-map failed 节点用 `--danger`（非 warn，对齐 §5.6B error=danger）
 - **ChangeSetCard**：去 border 改 `bg-surface` + 10px 圆角；5 态 badge 用 `*-soft` 底 + 实色字
 - **PanelHeader**：去 `border-b`，用 `bg-elevated` 浮起分层
 - **goal/todo 回归对话流**（D3）：移除 tasks tab + `HIDDEN_TOOL_NAMES`，走 GuiComponent 统一渲染
 
 ### 6.2 侧栏（5 tab + 容器）
 
-- 底色 `bg-bg`；SegmentedTab 见 §5.3；SessionItem 选中态见 §5.4
-- **Project 一级导航**（D14）：nav 下方 ProjectSwitcher（折叠态当前 project + 状态聚合角标 / 展开态 project 列表），session 按 workspace（目录）分组，worktree chip 用 `--reasoning` 紫（§3.5.7）
-- **4 内置 tab**（sessions/files/agents/flows）+ **第 5 独立 plugin tab**（Puzzle icon，plugin view 收口于此）
+- 底色 `var(--bg)`；SegmentedTab 见 §5.3；SessionItem 选中态见 §5.4
+- **Project 一级导航**（D14）：nav 下方 ProjectSwitcher。**折叠态** = 当前 project 名 + ChevronDown（点击展开列表）；**展开态** = project 列表（popover 范式 bg-elevated + border-strong + shadow-2），每行 project 名 + hover 显删除按钮（Trash icon，danger 色，点击 window.confirm 后 removeProject），底部「+ 新建项目」按钮（点击变 input，Enter 创建 + 设活跃）；选中态 `bg-surface + accent 字`（列表项型）。session 按 workspace（目录）分组，worktree chip 用 `--reasoning` 紫（§3.5.7）
+- **4 内置 tab**（sessions/files/subagents/workflows）+ **第 5 独立 plugin tab**（Puzzle icon，plugin view 收口于此）
 - 组标题去 uppercase；ForkGroup 去 border 改缩进，分支行单行（序号 pill + 标题 + 时间，不显示状态，§3.5.4）；FileTree 缩进 10px gap 4px
 - SessionList 状态信号见 §5.6A（左未读点 + 右异常 badge）；非列表行场景（GitPanel 等）用 §5.6B 的 7px 圆点
 - **Brand 区**（顶部）：TaijiLogo 28px 旋转（8s，reduced-motion 停，currentColor 适配主题）+ 产品名(base 600) + 版本号(2xs mid) + 可升级按钮（accent + 7px danger 红点角标）
@@ -550,10 +559,11 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
   - detail：多文件 tab（点文件新开/切换/关闭）—— **阶段 B 衔接点**（useDetailPane 单值→map 重构）
   - terminal：多实例 tab + 新增按钮占位 —— **阶段 B 衔接点**（单 PTY→多 PTY）
   - git/doc：无二级 tab
+  - browser：内嵌网页预览（无二级 tab）
   - subagent（新增）：嵌套只读对话流（无 composer）
   - workflow（新增）：phase 分组 + agent call 列表
 - **tasks tab 移除**（D3）：goal/todo 回归对话流
-- **L1 icon 栏结构**：`surface` 同色 + `hairline` 分隔底线（去 border-b，方案 G）+ icon 30×30（active 见 §3.4 例外）+ spacer + unread badge（accent 胶囊 + 6px `accent-fg` 脉动点 + mono 计数）+ pin 按钮（pinned 染 accent）+ close 按钮
+- **L1 icon 栏结构**：`surface` 同色 + `border-bottom: 1px hairline`（0.05，方案 G 弱分隔）+ icon 30×30（active 见 §3.4 例外）+ spacer + unread badge（accent 胶囊 + 6px `accent-fg` 脉动点 + mono 计数）+ pin 按钮（pinned 染 accent）+ close 按钮
 - **SplitterHandle**：6px 宽视觉 + 10px 命中区（margin 负值扩展）；1px transparent → hover `border-strong` → active `accent + 2px`；`cursor: col-resize`
 
 ### 6.4 设置页（D1 全屏覆盖重构）
@@ -707,7 +717,7 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 | D8 | 选中态冲突 | 按组件类型二分（tab 型 bg-elevated / 列表项型 bg-surface+蓝字） |
 | D12 | SessionList 状态信号 | **2026-08-02**：左未读圆点 + 右异常态 badge（running 脉动小条 / waiting … / error !），done 无 badge 常态归零，dead 由整行 opacity 表达。详见 §5.6A / §3.5.2 |
 | D13 | TurnRail 二合一 | **2026-08-02**：TurnRail spine+thumb 物理合并成对话流滚动条（详见 §3.5.5/§3.5.6），原生 `::-webkit-scrollbar` 在 `.ms-scroll` 隐藏 |
-| D14 | Project 一级导航 | **2026-08-02**：方案 D——ProjectSwitcher 放 nav 下方（独立区），session 按 workspace（目录）分组，worktree chip 用 `--reasoning` 紫。详见 §3.5.7 |
+| D14 | Project 一级导航 | **2026-08-02**：方案 D——ProjectSwitcher 放 nav 下方（独立区），无状态聚合（折叠态=当前 project 名 + 展开列表，展开态=增删 project），session 按 workspace（目录）分组，worktree chip 用 `--reasoning` 紫。详见 §3.5.7 / §6.2 |
 
 ### 9.2 数值裁决
 
@@ -770,17 +780,18 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 .tmp/v6/src/
 ├─ styles/tokens.css（token SSOT，太极玄定稿）
 ├─ styles/base.css（.btn SSOT + 全局重置 + keyframes）
-├─ views/ShellView.vue（三栏布局 + 三层明度 + 折叠态）
-├─ composables/useStore.ts（状态管理）
+├─ views/ShellView.vue（三栏布局 + 三层明度 + 折叠态 + landing 条件渲染）
+├─ composables/useStore.ts（状态管理 + landingMode + projects 增删）
+├─ composables/useTheme.ts（6 太极主题定义 + applyTheme 切换机制，全局共享）
 ├─ mock/*.ts（8 个 mock 数据文件）
 ├─ components/
 │  ├─ shell/（PanelHeader/SplitterHandle/TrafficLight/AppNavControls）
-│  ├─ sidebar/（Sidebar/SegmentedTab/SessionList/ProjectSwitcher/PluginPanel/FileTreeView/...）
-│  ├─ chat/（MessageStream/TurnRail[滚动条二合一]/ToolBlock/ThinkingBlock/ChangeSetCard/...）
+│  ├─ sidebar/（Sidebar/SegmentedTab/SessionList/ProjectSwitcher[增删project]/PluginPanel/FileTreeView/...）
+│  ├─ chat/（MessageStream/TurnRail[滚动条二合一+折展toggle]/LandingView[landing页]/ToolBlock/ThinkingBlock/ChangeSetCard/...）
 │  ├─ drawer/（SideDrawer/GitPanel/DiffView/DetailPane/TerminalView/BrowserPane/...）
-│  ├─ settings/（SettingsOverlay/GroupCard/ProviderPage/...12 page）
+│  ├─ settings/（SettingsOverlay/GroupCard/ProviderPage/SystemPage[6太极主题]/TokenDebugPage/...12 page）
 │  ├─ overlays/（SearchModal/AskUserOverlay/ConfirmDialog）
-│  └─ composer/（Composer/CommandPopover/QueueBubble）
+│  └─ composer/（Composer[variant双形态+landing meta-row]/CommandPopover/QueueBubble/QuickComposer）
 └─ SETTINGS-DESIGN-CONTEXT.md（设置页实现基准）
 ```
 
