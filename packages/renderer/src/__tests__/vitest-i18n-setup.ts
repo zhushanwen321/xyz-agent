@@ -8,6 +8,11 @@
 import { vi } from 'vitest'
 import zhCN from '@/i18n/locales/zh-CN'
 
+// __APP_VERSION__ 是 vite define 注入的全局常量（renderer/vite.config.ts），
+// vitest 环境无 vite define 故缺失。统一在此 stub，避免每个使用该常量的组件测试
+// 都要手动 vi.stubGlobal（Sidebar / SystemPage / UpdateButton 等）。
+vi.stubGlobal('__APP_VERSION__', '0.0.0-test')
+
 function resolveFromLocale(key: string): string {
   const parts = key.split('.')
   let obj: unknown = zhCN

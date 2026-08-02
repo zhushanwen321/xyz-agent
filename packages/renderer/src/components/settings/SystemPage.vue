@@ -4,6 +4,9 @@
     两块 Card：语言与外观 / 配色主题。聊天显示整块从 draft 移除（handoff §11a 决议）。
   -->
   <div class="flex max-w-[860px] flex-col gap-3">
+    <!-- 卡 0：版本检查（与侧边栏 UpdateButton 共享 useAppUpdate 单例 state） -->
+    <UpdateCheckCard />
+
     <!-- 卡 1：语言与外观 -->
     <div class="rounded-md border border-border bg-bg">
       <div class="px-4 pb-3 pt-3">
@@ -266,6 +269,7 @@ import { listSystemSounds } from '@/lib/ipc'
 import { playByName } from '@/composables/useCompletionSound'
 import { getDefaultSound, detectPlatform } from '@/composables/sound-defaults'
 import SoundPreviewButton from './SoundPreviewButton.vue'
+import UpdateCheckCard from './UpdateCheckCard.vue'
 import type { SystemSettings } from '@/stores/settings'
 import { getAutoRenameEnabled, setAutoRenameEnabled } from '@/api/domains/settings'
 import { useToast } from '@/composables/useToast'

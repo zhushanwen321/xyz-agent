@@ -94,6 +94,20 @@ export default [
       'max-lines': 'off',
     },
   },
+  // [HISTORICAL] SystemPage.vue 是 Settings 系统页的唯一聚合组件：语言与外观（locale/theme/fontSize/
+  // completionSound/autoRename）+ 系统提示音（success/error 双 Select + 试听）+ 配色主题（muted/colorful
+  // swatches）+ 快捷键重录（录制/重置/onRecordKeydown）。各职责共享 SystemSettings props/emit 与
+  // commandStore 闭包，强行拆分子组件需传递 10+ props/slots（如快捷键段需 recordingId/DEFAULT_KEYS/
+  // shortcutOverrides/startRecording/cancelRecording/onRecordKeydown/resetShortcut 全套），收益不抵成本。
+  // 版本检查卡片已拆出 UpdateCheckCard.vue（独立关注点），剩余 538 行均为系统设置内聚职责。
+  // 原始已 534 行（github/main 基线即超限），同质于 event-adapter/session-service/Turn.vue 的唯一
+  // 聚合中心，短期 max-lines override 避免阻塞。
+  {
+    files: ['packages/renderer/src/components/settings/SystemPage.vue'],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
   // [HISTORICAL] useChatStore 是 Pinia chat store 的唯一 setup 函数（defineStore('chat', () => {...})），
   // 包含所有 chat state（messages Map 分区 / streaming / pending / retry / queue）+ 全部 action
   // （appendUser/appendPending/applyMessageEvent/finalize/hydrate/truncateFrom 等 30+ 方法）。
