@@ -363,7 +363,7 @@ demo 引入完整多主题系统（spec 无，demo 重大扩展）。机制：�
 
 /* 尺寸 */
 .btn-sm   { height: 36px; padding: 0 12px; font-size: var(--text-sm); }
-.btn-md   { height: 32px; padding: 0 12px; }  /* 过渡兼容，新代码用 btn-dense */
+.btn-md   { height: 32px; padding: 0 12px; font-size: 12px; }  /* 过渡兼容，新代码用 btn-dense */
 .btn-dense{ height: 32px; padding: 0 12px; font-size: var(--text-xs); }  /* 新代码首选 */
 .btn-icon { width: 40px; height: 40px; padding: 0; }
 .btn-icon-sm { width: 28px; height: 28px; padding: 0; }
@@ -587,7 +587,7 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 - **AskUserOverlay**：内联（非 modal），companion-band 统一交互出口（B3）
   - **多问题切 tab**（au-tab：无 border / 全圆角 6px / active=bg-elevated+500 / 已答 tab 显 7px success 绿点）
   - **单选 radio**：16px，unchecked=`border-strong` 空心，checked=`accent` 实心 + `inset 2px bg-input` 形成环
-  - **多选 checkbox**：16px 方块，checked=`accent` 实心 + `accent-fg` 白勾 10px
+  - **多选 checkbox**：16px 方块，checked=`accent` 实心 + `accent-fg` 勾 10px
   - **Other 选项**：末尾追加，选中后 label 下方展开 Input（surface-2 内嵌，自动聚焦）
   - **auto-advance**：单选最后问题选完自动提交；非最后自动下一题；多选不自动推进
   - **context 降中性**：`bg-surface-hover`（去 reasoning 软底彩色，v6 降噪）
@@ -800,8 +800,8 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 │  ├─ settings/（SettingsOverlay/GroupCard/ProviderPage/SystemPage[6太极主题]/TokenDebugPage/...11 page）
 │  ├─ overlays/（SearchModal/AskUserOverlay/ConfirmDialog）
 │  ├─ composer/（Composer[variant双形态+landing meta-row]/CommandPopover/QueueBubble/QuickComposer）
-│  ├─ common/（UiInput/UiSwitch/SettingRow/SettingsNavItem 等共享控件）
-│  └─ icons/（TaijiLogo 等图标组件）
+│  ├─ common/（预留共享控件层，当前为空；UiInput/UiSwitch/SettingRow/SettingsNavItem 等暂在 settings/ 下）
+│  └─ icons/（TaijiLogo 图标组件）
 └─ SETTINGS-DESIGN-CONTEXT.md（设置页实现基准）
 ```
 
