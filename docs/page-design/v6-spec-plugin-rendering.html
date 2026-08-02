@@ -158,7 +158,7 @@ body {
 .cp b { font-weight: 500; }
 
 /* ============ 标注面板 ============
-   标注文字用 neutral-mid（#9ca3af）保证 AA：bg-card 上 6.10:1。 */
+   标注文字用 neutral-mid（#888890）保证 AA：bg-card 上 6.10:1。 */
 .anno { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-mid); line-height: 1.8; }
 .anno b { color: var(--neutral-fg); font-weight: 500; }
 .anno .v6 { color: var(--success); }
@@ -1109,7 +1109,7 @@ body {
     </div>
 
     <div class="anno-grid">
-      <div class="anno"><b>背景层级:</b> <span>bg-card(#22242c) → surface(#272830) → surface-2(#2e2f38)，三层明度替代 border</span></div>
+      <div class="anno"><b>背景层级:</b> <span>bg-card(#18181a) → surface(#1b1b1d) → surface-2(#212123)，三层明度替代 border</span></div>
       <div class="anno"><b>圆角:</b> <span class="v6">8px [var(--radius)]（从 12px 降档）；大卡 10px 任意值</span></div>
       <div class="anno"><b>header:</b> <span class="v6">去 border-b，改 bg-surface-2（elevated 用 bg-elevated）浮起分层</span></div>
       <div class="anno"><b>header 文字:</b> <span>mono 11px font-600，去 uppercase tracking（AI slop tell）</span></div>
@@ -1794,7 +1794,7 @@ body {
     </div>
 
     <h3 style="margin-top:20px;">完整映射表（亮色主题）</h3>
-    <p class="spec-desc" style="margin-top:-8px;">暗色镜像。语义 token 与暗色表一一对应（danger/success/accent/warn/neutral-* 等），仅 hex 取值随亮色主题 token 变化。规则：状态色 success/danger/info/reasoning 亮暗共用同一色相（亮色下饱和度足够，不单独覆盖）；<code>--accent</code> 亮色加深至 <code>#2563eb</code>、<code>--warn</code> 加深至 <code>#8a6a2e</code>（保白底对比度）；灰阶在亮色下明度对调（fg 最深、faint 最浅）。<b>bright 变体在亮色下进一步去饱和收敛</b>（白底已浅，再提亮会糊，故收敛到同语义色而非更亮值）。</p>
+    <p class="spec-desc" style="margin-top:-8px;">暗色镜像。语义 token 与暗色表一一对应（danger/success/accent/warn/neutral-* 等），仅 hex 取值随亮色主题 token 变化。规则：状态色 success/danger/info/reasoning 亮暗共用同一色相（亮色下饱和度足够，不单独覆盖）；<code>--accent</code> 为 V3 中性灰、亮暗共用纯灰（不再冷蓝）；<code>--warn</code> 加深至 <code>#8a6a2e</code>（保白底对比度）；灰阶在亮色下明度对调（fg 最深、faint 最浅）。<b>bright 变体在亮色下进一步去饱和收敛</b>（白底已浅，再提亮会糊，故收敛到同语义色而非更亮值）。</p>
     <div class="render-frame">
       <table class="ansi-table">
         <thead>

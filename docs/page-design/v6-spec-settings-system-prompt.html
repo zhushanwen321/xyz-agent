@@ -86,7 +86,7 @@ body {
 .cp b { font-weight: 500; }
 
 /* ============ 标注面板 ============
-   标注文字用 neutral-mid（#9ca3af）保证 AA：bg-card 上 6.10:1。
+   标注文字用 neutral-mid（#888890）保证 AA：bg-card 上 6.10:1。
    标注值属可读正文，不用 dim（dim 仅装饰/极弱位置）。 */
 .anno { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-mid); line-height: 1.8; }
 .anno b { color: var(--neutral-fg); font-weight: 500; }
@@ -1203,7 +1203,7 @@ Follow project conventions. When changing multiple files, list the change set fi
       <div class="anno"><b>C1 落地:</b> <span class="fix">Save disabled 三条件 = !dirty || overLimit || saving（§2 + §8 矩阵印证）</span></div>
       <div class="anno"><b>C7 落地:</b> <span class="fix">首次启用 = !everEnabled → fetchSystemPrompt() 填编辑器；复启用 → 恢复历史 prompt（§5 + §8 矩阵印证）</span></div>
       <div class="anno"><b>组件合规:</b> <span>Button 全用 default/secondary/ghost/danger 4 变体 · Switch 用 xyz-ui h-5 w-9 · Textarea 用 xyz-ui + class 覆写（无自创控件）</span></div>
-      <div class="anno"><b>对比度:</b> <span>辅助文字 neutral-mid（#9ca3af on bg-card 6.10:1 过 AA）；warn 提示关键词不染色（neutral-mid 承载，仅 corrupted 系统异常上色）</span></div>
+      <div class="anno"><b>对比度:</b> <span>辅助文字 neutral-mid（#888890 on bg-card 6.10:1 过 AA）；warn 提示关键词不染色（neutral-mid 承载，仅 corrupted 系统异常上色）</span></div>
       <div class="anno"><b>反写位置:</b> <span>SystemPromptPage.vue（isDirty / snapshot / saving / overLimit / aria-label / 恢复默认 / 首次启用填充 / 离开守卫 hook）</span></div>
     </div>
   </section>

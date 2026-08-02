@@ -774,7 +774,7 @@ body {
        ================================================================ -->
   <section class="spec" id="s2">
     <div class="spec-head"><span class="spec-num">§2</span><h2 class="spec-title">三层明度体系</h2></div>
-    <p class="spec-desc">v6 验收基准之一：三层背景肉眼可辨（§9）。从深到浅：<b>stage 深底 #0a0a0c</b>（窗口底，app-shell padding 背景，不新增 token）→ <b>画布 #1a1b1f</b>（<code>--bg-sunken</code> = <code>--bg</code>，侧栏落色，与窗口同色融合）→ <b>surface 浮起 #272830</b>（主面板 + drawer 共享，焦点区）。<code>--bg-sunken</code> 语义变更：原 visual-modernization 用 color-mix(bg 97%, black) 把侧栏往黑推导致发脏，v6 改为与画布同色，靠主面板浮起表达层级。drawer 不再独立成层——它与 main 共享同一 surface 浮起体（§7），从 main 右缘生长挤占 main 宽度。不嵌套第四层。</p>
+    <p class="spec-desc">v6 验收基准之一：三层背景肉眼可辨（§9）。从深到浅：<b>stage 深底 #0a0a0c</b>（窗口底，app-shell padding 背景，不新增 token）→ <b>画布 #0f0f11</b>（<code>--bg-sunken</code> = <code>--bg</code>，侧栏落色，与窗口同色融合）→ <b>surface 浮起 #1b1b1d</b>（主面板 + drawer 共享，焦点区）。<code>--bg-sunken</code> 语义变更：原 visual-modernization 用 color-mix(bg 97%, black) 把侧栏往黑推导致发脏，v6 改为与画布同色，靠主面板浮起表达层级。drawer 不再独立成层——它与 main 共享同一 surface 浮起体（§7），从 main 右缘生长挤占 main 宽度。不嵌套第四层。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> bg-sunken color-mix 往黑推（发脏）</span>
       <span class="cp cp-v6"><b>v6</b> bg-sunken = bg（同色融合）</span>
@@ -801,7 +801,7 @@ body {
               <div class="ls-sub">--bg-sunken</div>
             </div>
             <div>
-              <div class="ls-hex">#1a1b1f</div>
+              <div class="ls-hex">#0f0f11</div>
               <div class="ls-use">侧栏落色</div>
             </div>
           </div>
@@ -811,7 +811,7 @@ body {
               <div class="ls-sub">主面板 + drawer（焦点）</div>
             </div>
             <div>
-              <div class="ls-hex">#272830</div>
+              <div class="ls-hex">#1b1b1d</div>
               <div class="ls-use">main-panel / drawer / 卡片</div>
             </div>
           </div>
@@ -834,9 +834,9 @@ body {
     </div>
 
     <div class="anno-grid">
-      <div class="anno"><b>--bg:</b><br>#1a1b1f [画布底]</div>
+      <div class="anno"><b>--bg:</b><br>#0f0f11 [画布底]</div>
       <div class="anno"><b>--bg-sunken:</b><br>var(--bg) <span class="v6">[v6 新增]</span><br>语义：同色融合（非往黑推）</div>
-      <div class="anno"><b>--surface:</b><br>#272830 [主面板浮起]</div>
+      <div class="anno"><b>--surface:</b><br>#1b1b1d [主面板浮起]</div>
       <div class="anno"><b>明度梯度 Δ:</b><br>每层 ≈5%，肉眼可辨<br><span class="v6">§9 验收基准</span></div>
       <div class="anno"><b>stage #0a0a0c:</b><br>不进 token，app-shell<br>p-3 背景恒定</div>
       <div class="anno"><b>分隔策略:</b><br>层级 &gt; 留白 &gt; hairline &gt; 边框<br>静态容器不叠加 border</div>

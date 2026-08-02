@@ -148,7 +148,7 @@ body {
 .cp b { font-weight: 500; }
 
 /* ============ 标注面板 ============
-   标注文字用 neutral-mid（#9ca3af）保证 AA：bg-card 上 6.10:1。 */
+   标注文字用 neutral-mid（#888890）保证 AA：bg-card 上 6.10:1。 */
 .anno { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-mid); line-height: 1.8; }
 .anno b { color: var(--neutral-fg); font-weight: 500; }
 .anno .v6 { color: var(--success); }
@@ -832,9 +832,9 @@ body {
        ================================================================ -->
   <section class="spec" id="s4">
     <div class="spec-head"><span class="spec-num">§4</span><h2 class="spec-title">分组卡片 · bg-card + 10px + 去 border</h2></div>
-    <p class="spec-desc">设置分组用 <code>bg-card</code>（#22242c，介于 bg 与 surface 之间，§5 明度梯度）+ <code>10px</code> 圆角 + <code>p-10</code>。<span class="v6">去 border</span>：靠 bg-card 与 surface 的明度差（Δ≈5%）表达边界，不画 border（减少视觉噪音）。组内多行用 <code>hairline</code>（1px border）分隔。交互：可选展开/折叠（gh-collapse 按钮 = Button ghost）。</p>
+    <p class="spec-desc">设置分组用 <code>bg-card</code>（#18181a，介于 bg 与 surface 之间，§5 明度梯度）+ <code>10px</code> 圆角 + <code>p-10</code>。<span class="v6">去 border</span>：靠 bg-card 与 surface 的明度差（Δ≈5%）表达边界，不画 border（减少视觉噪音）。组内多行用 <code>hairline</code>（1px border）分隔。交互：可选展开/折叠（gh-collapse 按钮 = Button ghost）。</p>
     <div class="change-points">
-      <span class="cp cp-v6"><b>背景</b> bg-card #22242c</span>
+      <span class="cp cp-v6"><b>背景</b> bg-card #18181a</span>
       <span class="cp cp-v6"><b>去 border</b> 靠明度差</span>
       <span class="cp cp-v6"><b>padding</b> 10px 紧凑</span>
       <span class="cp cp-key"><b>交互</b> 展开/折叠可选</span>
@@ -893,8 +893,8 @@ body {
     </div>
 
     <div class="anno-grid">
-      <div class="anno"><b>group-card:</b><br>bg-card #22242c<br>rounded [8px] · p-10<br><span class="v6">无 border</span>（明度差表达边界）</div>
-      <div class="anno"><b>明度梯度:</b><br>bg #1a1b1f → bg-card #22242c<br>→ surface #272830<br>每层 Δ≈5% 肉眼可辨</div>
+      <div class="anno"><b>group-card:</b><br>bg-card #18181a<br>rounded [8px] · p-10<br><span class="v6">无 border</span>（明度差表达边界）</div>
+      <div class="anno"><b>明度梯度:</b><br>bg #0f0f11 → bg-card #18181a<br>→ surface #1b1b1d<br>每层 Δ≈5% 肉眼可辨</div>
       <div class="anno"><b>group-head:</b><br>gh-label 12px/600 fg<br>gh-collapse = Button ghost<br>chevron 旋转表达展开态</div>
       <div class="anno"><b>hairline:</b><br>1px border · mx-6<br>组内行间分隔<br>不画整 border（仅分隔线）</div>
       <div class="anno"><b>展开/折叠:</b><br>默认全展开（多数组短）<br>长组（如 provider 模型表）可折叠<br>max-height 过渡 200ms</div>
@@ -909,11 +909,11 @@ body {
        ================================================================ -->
   <section class="spec" id="s5">
     <div class="spec-head"><span class="spec-num">§5</span><h2 class="spec-title">设置行 · label + desc 对比度修正</h2></div>
-    <p class="spec-desc">行结构：<code>label</code>（neutral-fg，主标识）+ <code>desc</code>（说明文字）。<span class="v6">对比度修正</span>：desc 从旧 <code>neutral-dim #6b7280</code>（3.91:1 不达 AA）迁到 <code>neutral-mid #9ca3af</code>（6.95:1 达 AA），消除灰蒙感。控件右对齐（flex row，label/desc 左、control 右）。</p>
+    <p class="spec-desc">行结构：<code>label</code>（neutral-fg，主标识）+ <code>desc</code>（说明文字）。<span class="v6">对比度修正</span>：desc 从旧 <code>neutral-dim #6b7280</code>（3.91:1 不达 AA）迁到 <code>neutral-mid #888890</code>（6.95:1 达 AA），消除灰蒙感。控件右对齐（flex row，label/desc 左、control 右）。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>desc 旧</b> neutral-dim #6b7280</span>
-      <span class="cp cp-v6"><b>desc 新</b> neutral-mid #9ca3af</span>
-      <span class="cp cp-v6"><b>label</b> neutral-fg #e5e7eb</span>
+      <span class="cp cp-v6"><b>desc 新</b> neutral-mid #888890</span>
+      <span class="cp cp-v6"><b>label</b> neutral-fg #dcdce0</span>
       <span class="cp cp-key"><b>对比</b> desc 3.91→6.95 达 AA</span>
     </div>
 
@@ -973,8 +973,8 @@ body {
 
     <div class="anno-grid">
       <div class="anno"><b>setting-row:</b><br>flex · items-center · gap-16<br>px-6 py-10<br>control 右对齐 flex-shrink-0</div>
-      <div class="anno"><b>sr-label:</b><br>13px / weight-500<br><span class="v6">neutral-fg #e5e7eb</span><br>主标识，对比度最高</div>
-      <div class="anno"><b>sr-desc:</b><br>12px / line-1.5<br><span class="v6">neutral-mid #9ca3af</span><br><span class="old">旧 dim #6b7280 (3.91:1)</span><br><span class="v6">→ mid (6.95:1 达 AA)</span></div>
+      <div class="anno"><b>sr-label:</b><br>13px / weight-500<br><span class="v6">neutral-fg #dcdce0</span><br>主标识，对比度最高</div>
+      <div class="anno"><b>sr-desc:</b><br>12px / line-1.5<br><span class="v6">neutral-mid #888890</span><br><span class="old">旧 dim #6b7280 (3.91:1)</span><br><span class="v6">→ mid (6.95:1 达 AA)</span></div>
       <div class="anno"><b>错误态行:</b><br>align-items: flex-start<br>label/desc/error 纵向<br>control 顶部对齐</div>
       <div class="anno"><b>error 文案:</b><br>表单层（非 Input 自带）<br>form-msg 11px / danger<br>说原因 + 下一步</div>
       <div class="anno"><b>控件宽度:</b><br>Switch/Checkbox: 固定<br>Select: 按内容 min-140<br>Input: 按语义 80-200<br>按钮组: auto</div>

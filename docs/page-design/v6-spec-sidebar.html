@@ -152,7 +152,7 @@ body {
 .cp b { font-weight: 500; }
 
 /* ============ 标注面板 ============
-   标注文字用 neutral-mid（#9ca3af）保证 AA。 */
+   标注文字用 neutral-mid（#888890）保证 AA。 */
 .anno { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-mid); line-height: 1.8; }
 .anno b { color: var(--neutral-fg); font-weight: 500; }
 .anno .v6 { color: var(--success); }
@@ -593,7 +593,7 @@ body {
         </div>
         <div class="app-gap"></div>
         <div class="panel-surface">
-          <span class="ps-hint">主面板 Panel · bg var(--surface) #272830 浮起</span>
+          <span class="ps-hint">主面板 Panel · bg var(--surface) #1b1b1d 浮起</span>
         </div>
       </div>
     </div>
@@ -601,7 +601,7 @@ body {
     <div class="anno-grid">
       <div class="anno"><b>容器底色:</b><br><span class="old">无（透明融合 bg）</span> <span class="v6">→ var(--bg) [= --bg-sunken]</span></div>
       <div class="anno"><b>与主面板分隔:</b><br><span class="old">border-r border-border</span> <span class="v6">→ 去硬 border，靠 surface 浮起</span></div>
-      <div class="anno"><b>三层明度:</b><br>stage #0a0a0c → 侧栏 bg #1a1b1f → 主面板 surface #272830</div>
+      <div class="anno"><b>三层明度:</b><br>stage #0a0a0c → 侧栏 bg #0f0f11 → 主面板 surface #1b1b1d</div>
       <div class="anno"><b>宽度:</b><br>w-[300px]（不变）· 折叠态 w-0 opacity-0</div>
       <div class="anno"><b>结构分层:</b><br>Brand → nav → SegmentedTab → 子视图 → 用户区<br>（Overview 入口已移除，§4.4 DEPRECATED）</div>
       <div class="anno"><b>SplitterResizeHandle:</b><br><span class="v6">透明化（仅 hover/drag 显 accent）</span></div>

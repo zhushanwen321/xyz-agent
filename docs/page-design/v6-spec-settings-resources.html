@@ -86,7 +86,7 @@ body {
 .cp b { font-weight: 500; }
 
 /* ============ 标注面板 ============
-   标注文字用 neutral-mid（#9ca3af）保证 AA：bg-card 上 6.10:1。
+   标注文字用 neutral-mid（#888890）保证 AA：bg-card 上 6.10:1。
    标注值属可读正文，不用 dim（dim 仅装饰/极弱位置）。 */
 .anno { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--neutral-mid); line-height: 1.8; }
 .anno b { color: var(--neutral-fg); font-weight: 500; }
@@ -581,7 +581,7 @@ body {
       </div>
 
       <div class="anno-grid">
-        <div class="anno"><b>容器:</b> <span class="old">3 个嵌套 border 卡片</span> → <span class="v6">1 个 bg-card #22242c + hairline rgba(255,255,255,.04)</span></div>
+        <div class="anno"><b>容器:</b> <span class="old">3 个嵌套 border 卡片</span> → <span class="v6">1 个 bg-card #18181a + hairline rgba(255,255,255,.04)</span></div>
         <div class="anno"><b>分组头:</b> <span class="v6">bg-surface-2 浮起分层（不嵌套卡片，不叠 border）· 作用域 scope 标 project=accent / global=中性</span></div>
         <div class="anno"><b>圆角:</b> <span class="v6">10px（卡片档）</span></div>
         <div class="anno"><b>行 padding:</b> <span>9px 16px</span></div>
@@ -597,7 +597,7 @@ body {
 
     <div class="anno-grid">
       <div class="anno"><b>禁嵌套依据:</b> <span>impeccable——禁嵌套卡片；分组头用 bg-surface-2 浮起，不再叠 border 卡片</span></div>
-      <div class="anno"><b>desc 文字:</b> <span>页描述与分组 hint 用 neutral-mid（#9ca3af on surface 6.95:1 过 AA），不用 dim</span></div>
+      <div class="anno"><b>desc 文字:</b> <span>页描述与分组 hint 用 neutral-mid（#888890 on surface 6.95:1 过 AA），不用 dim</span></div>
       <div class="anno"><b>合并去重:</b> <span class="v6">resolveLoadPaths = dedupe([...projectPaths, ...globalPaths]) · 同名资源取项目目录版本</span></div>
       <div class="anno"><b>跨组排序:</b> <span>不可跨组移动（项目/全局是独立数组）；↑↓ 只在组内调整</span></div>
       <div class="anno"><b>agent 复用:</b> <span>kind=agent 时系统路径换 ~/.xyz-agent/agents，SourceImport 只显 claude 一行</span></div>
@@ -1283,7 +1283,7 @@ body {
       <div class="anno"><b>xyz-ui 落地:</b> <span>全部按钮复用 Button 变体（default/secondary/ghost/icon），Input/Checkbox 用原子组件，零自创 .btn 类</span></div>
       <div class="anno"><b>主资源路径:</b> <span>~/.xyz-agent/skills + .xyz-agent/skills（skills）· ~/.xyz-agent/agents（agents）· 非 ~/.pi/skills</span></div>
       <div class="anno"><b>Pi 源检测目录:</b> <span>~/.pi/skills 仅在 §4 SourceImport 检测其他 Agent 时出现（与 SourceImportSection.spec.ts 一致），不与本页主资源路径混淆</span></div>
-      <div class="anno"><b>对比度:</b> <span>desc 与 section label 用 neutral-mid #9ca3af（on surface 6.95:1 / on bg-card 6.10:1，过 AA）</span></div>
+      <div class="anno"><b>对比度:</b> <span>desc 与 section label 用 neutral-mid #888890（on surface 6.95:1 / on bg-card 6.10:1，过 AA）</span></div>
     </div>
   </section>
 

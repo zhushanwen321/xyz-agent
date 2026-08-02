@@ -233,10 +233,10 @@
        ================================================================ -->
   <section class="spec" id="s4">
     <div class="spec-head"><span class="spec-num">§4</span><h2 class="spec-title">Block · thinking（思考块）</h2></div>
-    <p class="spec-desc">收起态预览。<b>v6 仅做提亮</b>：预览文本 <code>neutral-dim #6b7280</code> → <code>neutral-mid #9ca3af</code>（过 AA）。<b>行数维持 1 行 ellipsis</b>（60 字符截断 + …，与代码现状一致）。<span style="color:var(--warn);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;vertical-align:-0.125em;"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> 推翻 handoff §4.1「显 2 行」决策</span>——2 行会破坏 turn 内的视觉节奏，1 行 ellipsis 更克制。label 保持 mono。<b>R9</b>：expanded body 也用 <b>neutral-mid</b>（长正文必须过 AA，dim 仅留装饰位；thinking variant 降级排版，MarkdownRenderer 标题用 <code>--reasoning</code> 紫）。</p>
+    <p class="spec-desc">收起态预览。<b>v6 仅做提亮</b>：预览文本 <code>neutral-dim #6b7280</code> → <code>neutral-mid #888890</code>（过 AA）。<b>行数维持 1 行 ellipsis</b>（60 字符截断 + …，与代码现状一致）。<span style="color:var(--warn);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;vertical-align:-0.125em;"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> 推翻 handoff §4.1「显 2 行」决策</span>——2 行会破坏 turn 内的视觉节奏，1 行 ellipsis 更克制。label 保持 mono。<b>R9</b>：expanded body 也用 <b>neutral-mid</b>（长正文必须过 AA，dim 仅留装饰位；thinking variant 降级排版，MarkdownRenderer 标题用 <code>--reasoning</code> 紫）。</p>
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> neutral-dim #6b7280 · 1 行 truncate</span>
-      <span class="cp cp-v6"><b>v6</b> preview neutral-mid #9ca3af · expanded body neutral-mid（R9，过 AA）</span>
+      <span class="cp cp-v6"><b>v6</b> preview neutral-mid #888890 · expanded body neutral-mid（R9，过 AA）</span>
     </div>
 
     <!-- v6 全局 block icon 更新（适用于所有 block：§4 thinking·§5 bash·§6 tool·§10 subagent·§11 workflow）-->
@@ -287,7 +287,7 @@
       <div class="anno"><b>block padding:</b><br>py-2 (8px 上下)</div>
       <div class="anno"><b>icon:</b><br>Brain 14px neutral-ico · stroke 1.75 · <b>无 spinner</b>（thinking 块不用 loader）</div>
       <div class="anno"><b>label:</b><br>10px [--text-2xs] mono 600 uppercase tracking-.08em neutral-fg</div>
-      <div class="anno"><b>preview 文字:</b><br><span class="old">12px neutral-dim #6b7280</span><br><span class="v6">12px [--text-sm] neutral-mid #9ca3af（仅提亮）</span></div>
+      <div class="anno"><b>preview 文字:</b><br><span class="old">12px neutral-dim #6b7280</span><br><span class="v6">12px [--text-sm] neutral-mid #888890（仅提亮）</span></div>
       <div class="anno"><b>expanded body:</b><br><span class="v6">12px neutral-mid（R9：长正文过 AA）· MarkdownRenderer variant=thinking（标题用 --reasoning 紫）</span></div>
       <div class="anno"><b>expanded 占位:</b><br><span class="v6">separator（·）+ preview 文字 expanded 时 invisible 保留占位（Block.vue:24-25），仅显 body</span></div>
       <div class="anno"><b>预览行数:</b><br><span class="v6">1 行 ellipsis（60 字符截断，维持现状）</span><br><span style="color:var(--warn);">推翻 handoff「2 行」</span></div>
