@@ -96,6 +96,7 @@ mac:
       arch:
         - arm64
   category: public.app-category.developer-tools
+  icon: build/icon.icns
   minimumSystemVersion: 12.0.0
   # 固定文件名（去 ${version}）支持自动升级 + releases/latest/download 静态 URL。
   # zip 和 dmg 共用此 pattern，${ext} 由 electron-builder 按 target 解析为 .zip / .dmg。
@@ -109,6 +110,7 @@ win:
     - target: zip
       arch:
         - x64
+  icon: build/icon.ico
   # 固定文件名（去 ${version}）支持自动升级 + releases/latest/download 静态 URL。
   # nsis target 的 ${ext} 解析为 exe，zip target 的 ${ext} 解析为 zip。
   artifactName: xyz-agent-setup-${arch}.${ext}
@@ -127,6 +129,7 @@ linux:
       arch:
         - x64
   category: Development
+  icon: build/icon-512.png
   # 固定文件名（去 ${version}）支持自动升级 + releases/latest/download 静态 URL。
   # ${arch} 由 electron-builder 按 target ext 解析（getArtifactArchName）：
   # AppImage(x64) -> x86_64，deb(x64) -> amd64，${ext} 解析为 AppImage / deb。
