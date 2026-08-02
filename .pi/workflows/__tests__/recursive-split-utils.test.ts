@@ -5,6 +5,8 @@ import {
   isTerminal,
   assertValidUnitId,
   isTimeoutError,
+  escapeSingleQuotes,
+  decideNodeOutcome,
   buildActionPrompt,
   buildActionSchema,
   topoSort,
@@ -82,6 +84,115 @@ describe("isTimeoutError", () => {
 
   it("非超时错误返回 false", () => {
     expect(isTimeoutError({ error: "file not found" })).toBe(false);
+  });
+});
+
+// ── escapeSingleQuotes ─────────────────────────────────────────────
+
+describe("escapeSingleQuotes", () => {
+  it("空串保持空串", () => {
+    expect(escapeSingleQuotes("")).toBe("");
+  });
+
+  it("不含单引号的正常串原样返回", () => {
+    expect(escapeSingleQuotes("hello world")).toBe("hello world");
+    expect(escapeSingleQuotes("写代码 + 跑测试")).toBe("写代码 + 跑测试");
+  });
+
+  it("单引号被转义为 '\\''", () => {
+    // 每个 ' 替换为 '\''（POSIX 单引号转义约定）
+    expect(escapeSingleQuotes("it's")).toBe("it'\\''s");
+    expect(escapeSingleQuotes("'quoted'")).toBe("'\\''quoted'\\''");
+  });
+
+  it("多个连续单引号逐个转义", () => {
+    expect(escapeSingleQuotes("''")).toBe("'\\'''\\''");
+    expect(escapeSingleQuotes("a'b'c")).toBe("a'\\''b'\\''c");
+  });
+
+  it("含 $() 和反引号的 shell 元字符串不被额外处理（交给单引号包裹防注入）", () => {
+    // task 在 createRootUnit 中被单引号包裹：'${safe}'。
+    // 单引号内 $ ` () 无特殊语义——escapeSingleQuotes 只需保证不产生裸单引号即可。
+    const input = "run $(whoami) and `reboot`";
+    expect(escapeSingleQuotes(input)).toBe(input);
+    expect(escapeSingleQuotes("${HOME}")).toBe("${HOME}");
+  });
+
+  it("非字符串入参强制 String() 转换", () => {
+    // createRootUnit 的 task 来自 $ARGS，可能 undefined → "undefined"。
+    expect(escapeSingleQuotes(undefined)).toBe("undefined");
+    expect(escapeSingleQuotes(null)).toBe("null");
+    expect(escapeSingleQuotes(42)).toBe("42");
+  });
+
+  it("转义后用单引号包裹可安全拼进 shell 命令（行为契约）", () => {
+    // createRootUnit 拼接：`cw create ... --objective '${safeObjective}'`。
+    // POSIX 单引号转义约定：单引号串内不能有裸 '，每个 ' 替换为 '\''（关闭串 → 转义 ' → 重开串）。
+    const task = "don't break; rm -rf /";
+    const wrapped = "'" + escapeSingleQuotes(task) + "'";
+    expect(wrapped).toBe("'don'\\''t break; rm -rf /'");
+    // 契约：包裹后的 token 经 shell 单引号解析后必须还原原 task（无注入、无截断）。
+    // 模拟解析：剥外层引号后把每个 '\'' 还原成 '。
+    const parsed = wrapped.slice(1, -1).replace(/'\\''/g, "'");
+    expect(parsed).toBe(task);
+    // 转义后不再残留裸单引号（即所有 ' 都属于 '\'' 序列的一部分）
+    const stripped = wrapped.slice(1, -1).replace(/'\\''/g, "");
+    expect(stripped).not.toContain("'");
+  });
+});
+
+// ── decideNodeOutcome ──────────────────────────────────────────────
+
+describe("decideNodeOutcome", () => {
+  it("r.error 非空 → 失败，failedReason = r.error", () => {
+    const r = { error: "agent crashed", value: "partial", sessionFile: "s.json" };
+    const outcome = decideNodeOutcome(r);
+    expect(outcome.failed).toBe(true);
+    expect(outcome.failedReason).toBe("agent crashed");
+  });
+
+  it("r.error 含 timeout 关键词 → 失败", () => {
+    const r = { error: "action timeout exceeded" };
+    const outcome = decideNodeOutcome(r);
+    expect(outcome.failed).toBe(true);
+    expect(outcome.failedReason).toBe("action timeout exceeded");
+  });
+
+  it("r.error 含 aborted 关键词 → 失败", () => {
+    const r = { error: "task aborted by caller" };
+    const outcome = decideNodeOutcome(r);
+    expect(outcome.failed).toBe(true);
+    expect(outcome.failedReason).toBe("task aborted by caller");
+  });
+
+  it("无 error（正常）→ failed=false，无 failedReason", () => {
+    const r = { error: undefined, value: "ok", sessionFile: "s.json" };
+    const outcome = decideNodeOutcome(r);
+    expect(outcome.failed).toBe(false);
+    expect(outcome.failedReason).toBeUndefined();
+  });
+
+  it("空串 error → 正常（returnMeta 回退值视为成功）", () => {
+    // 与 isTimeoutError({error:""})===false 对齐：空串 error 不构成失败
+    const r = { error: "", value: "ok" };
+    const outcome = decideNodeOutcome(r);
+    expect(outcome.failed).toBe(false);
+    expect(outcome.failedReason).toBeUndefined();
+  });
+
+  it("缺 error 字段 → 正常", () => {
+    const r = { value: "ok" };
+    const outcome = decideNodeOutcome(r);
+    expect(outcome.failed).toBe(false);
+  });
+
+  it("失败时不读取 value/sessionFile 字段（仅判定失败语义）", () => {
+    // 契约：decideNodeOutcome 只产出 {failed, failedReason?}；
+    // value/sessionFile 由调用方自行从 r 取出组装返回值。
+    const r = { error: "boom", value: "v", sessionFile: "s" };
+    const outcome = decideNodeOutcome(r);
+    expect(outcome).toEqual({ failed: true, failedReason: "boom" });
+    expect(Object.keys(outcome)).toEqual(["failed", "failedReason"]);
   });
 });
 

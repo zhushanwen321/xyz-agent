@@ -47,6 +47,33 @@ function isTimeoutError(r) {
 }
 
 /**
+ * 转义 objective 中的单引号（C2/C4：拼进 cw create 的 shell 命令，防引号破坏 + 注入）。
+ * task 用单引号包裹传入 shell——单引号内只剩单引号需特殊处理：每个 ' 替换为 '\''。
+ * 入参强制 String(task)（task 来自 $ARGS，可能 undefined → "undefined"，调用方应在更上游 fail-fast）。
+ */
+function escapeSingleQuotes(task) {
+  return String(task).replace(/'/g, "'\\''");
+}
+
+/**
+ * 判定 returnMeta 结果 r 的节点结局（W2 核心收尾分支）。
+ * r.error 非空 或 isTimeoutError(r) → 失败，返回 { failed: true, failedReason }。
+ *   failedReason = r.error（超时时为 timeout 关键字串，由 isTimeoutError 判定后回退）。
+ * 否则 → 正常，返回 { failed: false }。
+ *
+ * 与 executeNodeNextAction 内联逻辑严格一致：
+ *   if (r.error || isTimeoutError(r)) failedReason = r.error
+ * 注意 isTimeoutError(r) 仅在 r.error 为真时返回 true，故与 r.error 等价——
+ * 此处保留 || 形态以显式表达"任何 r.error 都视为失败"的契约。
+ */
+function decideNodeOutcome(r) {
+  if (r.error || isTimeoutError(r)) {
+    return { failed: true, failedReason: r.error };
+  }
+  return { failed: false };
+}
+
+/**
  * 为单节点构建 agent prompt（推进到阻塞模型）。
  * agent 在 session 内自主连续推进 cw action，直到遇到停止条件。
  * guidance 是唯一导航源（cw-cli skill 约定），prompt 不硬编码 schema 字段名。
@@ -263,6 +290,8 @@ module.exports = {
   isTerminal,
   assertValidUnitId,
   isTimeoutError,
+  escapeSingleQuotes,
+  decideNodeOutcome,
   buildActionPrompt,
   buildActionSchema,
   topoSort,

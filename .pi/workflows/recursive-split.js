@@ -21,7 +21,8 @@ const {
   VALID_LAYERS,
   isTerminal,
   assertValidUnitId,
-  isTimeoutError,
+  escapeSingleQuotes,
+  decideNodeOutcome,
   buildActionPrompt,
   buildActionSchema,
   topoSort,
@@ -40,8 +41,9 @@ const FRONTIER_TIMEOUT_MS = 30000;
 const ABORT_TIMEOUT_MS = 5000;
 
 // ── 辅助函数（被调函数先定义，避免 TDZ） ──────────────────────────
-// isTerminal / assertValidUnitId / isTimeoutError / buildActionPrompt /
-// buildActionSchema / topoSort / detectStuckNodes 已移至 recursive-split-utils.cjs
+// isTerminal / assertValidUnitId / isTimeoutError / escapeSingleQuotes /
+// decideNodeOutcome / buildActionPrompt / buildActionSchema / topoSort /
+// detectStuckNodes 已移至 recursive-split-utils.cjs（供 vitest 单测）
 
 /**
  * 创建 root WorkUnit：调 cw create <startLayer> 建顶层 unit。
@@ -50,7 +52,7 @@ const ABORT_TIMEOUT_MS = 5000;
  */
 function createRootUnit(startLayer, task) {
   // task 可能含 shell 特殊字符（引号/$/`），用单引号包裹 + 转义内部单引号
-  const safeObjective = String(task).replace(/'/g, "'\\''");
+  const safeObjective = escapeSingleQuotes(task);
   const out = execSync(
     `cw create ${startLayer} --slug recursive-root --objective '${safeObjective}'`,
     { encoding: "utf-8", timeout: FRONTIER_TIMEOUT_MS }
@@ -118,11 +120,12 @@ async function executeNodeNextAction(node, sessionFiles) {
     timeoutMs: NODE_TIMEOUT_MS,
   });
 
-  // 失败处理：returnMeta 模式 r.error 检测（agent 失败不 throw）。
-  if (r.error || isTimeoutError(r)) {
-    log("Node " + node.unitId + " failed: " + (r.error ?? "timeout"));
+  // 失败判定抽到 decideNodeOutcome（utils.cjs，供单测）；此处保留副作用（log + abort）+ 返回值组装。
+  const outcome = decideNodeOutcome(r);
+  if (outcome.failed) {
+    log("Node " + node.unitId + " failed: " + (outcome.failedReason ?? "timeout"));
     await abortUnit(node.unitId);
-    return { unitId: node.unitId, value: r.value, sessionFile: r.sessionFile, failedReason: r.error };
+    return { unitId: node.unitId, value: r.value, sessionFile: r.sessionFile, failedReason: outcome.failedReason };
   }
 
   return { unitId: node.unitId, value: r.value, sessionFile: r.sessionFile };
