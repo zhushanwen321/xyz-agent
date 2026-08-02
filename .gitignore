@@ -6,6 +6,8 @@
 # 旧规则只匹配 2026-04-* 和 brainstorm/，漏 2026-06+（事故：2026-06-22-sidebar-polish/plan.md 漏网被 commit）。
 .superpowers/
 .xyz-harness/gate/
+# visual 验证产物（截图 PNG + result.json），不进 git；追溯副本在 docs/testing/visual/baselines/
+.xyz-harness/visual/
 *.local
 *.log
 dist/
