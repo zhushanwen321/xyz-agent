@@ -7,7 +7,7 @@
 >
 > **2026-08-02 修订**：新增 §3.5 实践原则（8 条，demo 迭代沉淀）；§5.6 状态指示圆点范式范围限缩（SessionList 改用 §3.5.2）；§9 新增 D12/D13/D14 裁决（SessionList 信号编排 / TurnRail 滚动条二合一 / Project 一级导航）。
 > **2026-08-02 审查修订**：spec↔demo 全量对照后修正——P0 内部矛盾统一（TurnRail thumb 色阶 / pulse-accent 时长 / badge 图标 / ChangeSetCard vs GitPanel badge 边界）；P1 跟 demo（send-slot 圆角矩形 / comp-box has-input 兑淡 / UiInput surface-2 / UiCheckbox focus 双环 / composer-bar 6 元素）；demo 新增 landing 页 + useTheme composable + ProjectSwitcher 增删 + 6 太极主题 SystemPage 接通，spec 同步记录；P2 笔误修正（7 tab 补 browser / tab 名统一 / keyframes SSOT 约束 / install-ok soft 底统一等）。
-> **2026-08-01 二次审查修订**：修正 4 处与 demo 真值不符的事实性错误——(1) §6.4 nav 项计数 12→11（demo `SettingsOverlay.vue` NAV 数组实为 11 项）；(2) §5.9 pulse-accent 描述由「opacity 明灭」改为「box-shadow 扩散涟漪」（`base.css:87` 实际是 box-shadow 0%→70%→100%，非 opacity）；(3) §6.1 TurnRail failed 节点色阶——demo 实际用 `warn`（TurnRail.vue:179/195/205），非 spec 声称的 `danger`，改为标注「demo 待对齐 §5.6B」；(4) §4.8 COLOR_TOKENS 计数 18→19（数组实含 19 个，漏算 `--neutral-ico`）；另补 §5.9 SSOT 约束的 3 处现存违反位置 + §6.1 thumb 色阶交叉引用 §3.5.6。
+> **2026-08-02 二次审查修订**：修正 4 处与 demo 真值不符的事实性错误——(1) §6.4 nav 项计数 12→11（demo `SettingsOverlay.vue` NAV 数组实为 11 项）；(2) §5.9 pulse-accent 描述由「opacity 明灭」改为「box-shadow 扩散涟漪」（`base.css:87` 实际是 box-shadow 0%→70%→100%，非 opacity）；(3) §6.1 TurnRail failed 节点色阶——demo 实际用 `warn`（TurnRail.vue:179/195/205），非 spec 声称的 `danger`，改为标注「demo 待对齐 §5.6B」；(4) §4.8 COLOR_TOKENS 计数 18→19（数组实含 19 个，漏算 `--neutral-ico`）；另补 §5.9 SSOT 约束的 3 处现存违反位置 + §6.1 thumb 色阶交叉引用 §3.5.6。
 
 ---
 
@@ -133,7 +133,7 @@ v6 审查发现「被选中」出现三种视觉语言，统一为二分：
 
 实色背景上的前景元素（文字/图形）必须用该色的 `-fg` 变体，不从 neutral 谱系借。
 
-**事故**：drawer unread badge 圆点用 `--neutral-fg`，玄主题下 accent(`#cfcfd4`) 与 neutral-fg(`#dedee2`) 亮度差仅 ~4%，圆点融进胶囊底不可见。`--accent-fg`（`#1a1a1c` 深字）才是 accent 实色上的正确前景色，7 个主题预设都配了对。
+**事故**：drawer unread badge 圆点用 `--neutral-fg`，玄主题下 accent(`#cfcfd4`) 与 neutral-fg(`#dedee2`) 亮度差仅 ~4%，圆点融进胶囊底不可见。`--accent-fg`（`#1a1a1c` 深字）才是 accent 实色上的正确前景色，6 个主题预设都配了对。
 
 **检查**：看到 `background: var(--accent)` + 前景元素，前景应该是 `--accent-fg`，不是 `--neutral-fg`。
 
@@ -319,7 +319,7 @@ demo 引入完整多主题系统（spec 无，demo 重大扩展）。机制：�
 
 **applyTheme 机制**：先对所有 COLOR_TOKENS(19) + EFFECT_TOKENS(6) 逐个 `removeProperty`（清 inline 值落回 `:root` 默认），再按新主题 entry `setProperty` 写入（entry 没给的 key 保持默认）。每主题覆盖 26 个变量（bg 阶梯 8 + neutral 6 含 ico-hover + accent 3 + 状态 6 + border 3）。
 
-> COLOR_TOKENS(19) = bg 8 + neutral 5(fg/mid/dim/faint/ico) + accent 1 + 状态 5(success/warn/danger/info/reasoning)；EFFECT_TOKENS(6) = border 3 + accent-hover + neutral-ico-hover + danger-fg。主题 entry 覆盖的 neutral 是 6（含 `--neutral-ico-hover`，该变量虽在 EFFECT_TOKENS 数组里，但主题 entry 会覆盖它）。
+> COLOR_TOKENS(19) = bg 8 + neutral 5(fg/mid/dim/faint/ico) + accent 1 + 状态 5(success/warn/danger/info/reasoning)；EFFECT_TOKENS(6) = border 3 + accent-hover + neutral-ico-hover + danger-fg。主题 entry 覆盖的 neutral 是 6（含 `--neutral-ico-hover`，该变量虽在 EFFECT_TOKENS 数组里，但主题 entry 会覆盖它）。`--accent-fg` 同理：不在两组数组中，但 6 个主题 entry 均包含，write 时 `setProperty` 直接覆盖（当前不残留；若未来新增不含 accent-fg 的主题，需补入 EFFECT_TOKENS reset）。
 
 **阴 · 暗色族（3 个）**——背景近中性，色相只做「依稀相」(S≤6%)，靠明度阶梯说话：
 | 主题 | accent | 特色 |
@@ -576,7 +576,7 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 - 左 nav `w-220px bg-sunken` 无 border-r；右内容区底色 `--bg`（卡片才能浮起），内容列 `max-w-content-max-w`(720) **左对齐**（非居中）
 - nav 选中态见 §5.4（列表项型）；nav-brand `uppercase 0.08em`（例外）
 - **11 个 nav 项**（provider/skill/agent/extension/system-prompt/terminal/preset/worktree/update/system/token-debug），每项 icon + label + 可选 count badge（中性圆点 `bg-surface` + `neutral-dim` mono）；hover 右侧显 chevron（链接提示）。注意：`skill` 项的 key 是 `'skill'`，但 demo 渲染的是 `ResourcesPage`（技能资源管理页），无独立 `SkillPage` 组件
-- 12 个 page 分组卡片 `bg-card` + 10px 圆角 + 去 border；行分隔 hairline 0.05；每行 label 下加 12px `neutral-mid` 描述
+- 11 个 page 分组卡片 `bg-card` + 10px 圆角 + 去 border；行分隔 hairline 0.05；每行 label 下加 12px `neutral-mid` 描述
 - **ProviderEdit**：展开就地编辑（手风琴，取代 ProviderEditModal 双层 modal）
 - 表单 label 去 uppercase tracking-wider
 - **交互状态机**（有编辑态的页面）：dirty 快照 diff（净零翻转恢复 clean）/ 保存流（mock 延迟 + 已保存反馈）/ 离开守卫（dirty 拦截切页 + 放弃先还原快照防重入）/ beforeunload
@@ -693,7 +693,7 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 | C2 | 对话流（MessageStream/Block/Composer 6 区/ChangeSetCard） |
 | C3 | 侧栏（SegmentedTab/SessionItem/FileTree/第 5 plugin tab） |
 | C4 | Drawer（一体化 + 形态 B + 7 tab + GitPanel MVP） |
-| C5 | 设置页（FullSettingsOverlay + 10 page + GroupCard） |
+| C5 | 设置页（FullSettingsOverlay + 11 page + GroupCard） |
 | C6 | Overlays（SearchModal/AskUserOverlay/ConfirmDialog） |
 | C7 | Plugin 渲染（7 原语 v6 视觉 + ExtensionHost + builtin tasks） |
 | C8 | 横切清理（正文提亮/彩色降噪/uppercase 清除/z-index）+ 全量验收 |
