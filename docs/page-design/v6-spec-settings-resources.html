@@ -12,7 +12,7 @@
      双方式添加 / SourceImport 确认导入）+ Layer B 资源只读预览（扫描/来源 tab/资源项/空错误态）。
    v6 重构：存储模型拆 projectPaths + globalPaths 两字段（项目目录优先级 > 全局目录）；
      拖拽排序改 ↑↓ 按钮移动；添加支持「目录选择 dialog」+「手动填写」双方式；
-     导入弹 ConfirmDialog 明确「写入 xyz-agent 的目录配置」。
+     导入弹 ConfirmDialog 明确「写入太极的目录配置」。
    本稿定位为「交互重新设计 + xyz-ui 组件规范」：所有按钮来自 xyz-ui
      Button（default/secondary/ghost/danger 变体，size default/dense/icon），
      Input/Checkbox 全部用 xyz-ui 原子组件，禁止自创 .btn 类。
@@ -412,7 +412,7 @@ body {
   <header class="doc-head">
     <div class="doc-eyebrow">v6 SPEC · settings · resources</div>
     <h1 class="doc-title">Settings · 资源页（Skill / Agent）</h1>
-    <p class="doc-sub">Skill / Agent 菜单页的交互重新设计稿。Layer A 加载路径重构四要点：①存储模型拆 <code>projectPaths</code>（项目目录）+ <code>globalPaths</code>（全局目录）两字段，项目目录优先级 &gt; 全局目录；②拖拽改 ↑↓ 上下移动按钮；③添加支持「系统目录选择 dialog」+「手动填写校验」双方式；④从其他 Agent 导入弹 ConfirmDialog，明确「写入 xyz-agent 的目录配置」。Layer B 资源只读预览保持不变。所有按钮、输入、勾选全部来自 xyz-ui 原子组件（Button 4 变体 / Input / Checkbox），禁止自创 .btn 类，路径用真实 ~/.xyz-agent/skills。</p>
+    <p class="doc-sub">Skill / Agent 菜单页的交互重新设计稿。Layer A 加载路径重构四要点：①存储模型拆 <code>projectPaths</code>（项目目录）+ <code>globalPaths</code>（全局目录）两字段，项目目录优先级 &gt; 全局目录；②拖拽改 ↑↓ 上下移动按钮；③添加支持「系统目录选择 dialog」+「手动填写校验」双方式；④从其他 Agent 导入弹 ConfirmDialog，明确「写入太极的目录配置」。Layer B 资源只读预览保持不变。所有按钮、输入、勾选全部来自 xyz-ui 原子组件（Button 4 变体 / Input / Checkbox），禁止自创 .btn 类，路径用真实 ~/.xyz-agent/skills。</p>
     <div class="doc-meta">
       <span><b>组件源</b> xyz-ui Button/Input/Checkbox</span>
       <span><b>SSOT</b> SettingsResourcePage / LoadPaths / SourceImportSection</span>
@@ -575,7 +575,7 @@ body {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
               从其他 Agent 导入目录
             </button>
-            <span class="lp-import-hint">导入的是其他 Agent 的目录配置，写入当前 xyz-agent</span>
+            <span class="lp-import-hint">导入的是其他 Agent 的目录配置，写入当前太极</span>
           </div>
         </div>
       </div>
@@ -601,7 +601,7 @@ body {
       <div class="anno"><b>合并去重:</b> <span class="v6">resolveLoadPaths = dedupe([...projectPaths, ...globalPaths]) · 同名资源取项目目录版本</span></div>
       <div class="anno"><b>跨组排序:</b> <span>不可跨组移动（项目/全局是独立数组）；↑↓ 只在组内调整</span></div>
       <div class="anno"><b>agent 复用:</b> <span>kind=agent 时系统路径换 ~/.xyz-agent/agents，SourceImport 只显 claude 一行</span></div>
-      <div class="anno"><b>导入提示:</b> <span class="v6">入口旁常驻灰字「导入的是其他 Agent 的目录配置，写入当前 xyz-agent」（避免导出误解）</span></div>
+      <div class="anno"><b>导入提示:</b> <span class="v6">入口旁常驻灰字「导入的是其他 Agent 的目录配置，写入当前太极」（避免导出误解）</span></div>
     </div>
   </section>
 
@@ -821,12 +821,12 @@ body {
       <span class="spec-num">§4</span>
       <h2 class="spec-title">SourceImport 导入流（含确认弹窗）</h2>
     </div>
-    <p class="spec-desc">从其他 Agent（claude / codex / pi / zcode）检测本机已安装的 skill 目录并一键导入到 xyz-agent。<b>关键改进：导入前弹 ConfirmDialog 明确来源与去向</b>——告知用户「导入的是<b>其他 Agent 的目录配置</b>，将写入<b>当前 xyz-agent</b> 的 projectPaths/globalPaths」（避免误以为是导出到其他 Agent）。交互五步：① 检测 → ② 选择 → ③ <b>确认弹窗</b>（显式 source/target）→ ④ 进度 → ⑤ 成功（导入的行出现在对应分组）。检测失败显错误条。</p>
+    <p class="spec-desc">从其他 Agent（claude / codex / pi / zcode）检测本机已安装的 skill 目录并一键导入到太极。<b>关键改进：导入前弹 ConfirmDialog 明确来源与去向</b>——告知用户「导入的是<b>其他 Agent 的目录配置</b>，将写入<b>当前太极</b> 的 projectPaths/globalPaths」（避免误以为是导出到其他 Agent）。交互五步：① 检测 → ② 选择 → ③ <b>确认弹窗</b>（显式 source/target）→ ④ 进度 → ⑤ 成功（导入的行出现在对应分组）。检测失败显错误条。</p>
 
     <div class="change-points">
       <span class="cp cp-now"><b>现</b> 直接导入选中</span>
       <span class="cp cp-v6"><b>v6</b> 导入前弹 ConfirmDialog</span>
-      <span class="cp cp-v6"><b>文案</b> 明确「写入 xyz-agent 的目录配置」</span>
+      <span class="cp cp-v6"><b>文案</b> 明确「写入太极的目录配置」</span>
       <span class="cp cp-v6"><b>去向</b> 用户选目标组（项目/全局）</span>
     </div>
 
@@ -876,7 +876,7 @@ body {
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
                 导入选中
               </button>
-              <span class="lp-import-hint">已选 1 / 2 可导入 · 将写入 xyz-agent</span>
+              <span class="lp-import-hint">已选 1 / 2 可导入 · 将写入太极</span>
             </div>
           </div>
         </div>
@@ -891,13 +891,13 @@ body {
               <div class="imp-confirm-head">
                 <svg class="imp-confirm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
                 <div>
-                  <div class="imp-confirm-title">导入目录到 xyz-agent？</div>
+                  <div class="imp-confirm-title">导入目录到太极？</div>
                 </div>
               </div>
-              <p class="imp-confirm-desc">将把<b>其他 Agent 的目录配置</b>导入为<b>当前 xyz-agent</b>的加载路径（不会导出到其他 Agent，也不会修改其他 Agent 的配置）。</p>
+              <p class="imp-confirm-desc">将把<b>其他 Agent 的目录配置</b>导入为<b>当前太极</b>的加载路径（不会导出到其他 Agent，也不会修改其他 Agent 的配置）。</p>
               <ul class="imp-confirm-bullets">
                 <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span><b>来源：</b>其他 Agent 的 skill 目录配置（<code>~/.claude/skills</code>）</span></li>
-                <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span><b>去向：</b>写入当前 xyz-agent 的 <code>projectPaths</code>（项目目录组）</span></li>
+                <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span><b>去向：</b>写入当前太极 的 <code>projectPaths</code>（项目目录组）</span></li>
                 <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span><b>去重：</b>已存在的路径会自动跳过</span></li>
               </ul>
               <div class="imp-confirm-actions">
@@ -909,7 +909,7 @@ body {
               </div>
             </div>
           </div>
-          <div class="anno" style="margin-top:6px;"><b>确认弹窗:</b> <span class="v6">点「导入选中」后弹出 · 明确 source（其他 Agent 目录配置）+ target（写入 xyz-agent 的 projectPaths/globalPaths）· 取消 ghost + 确认 default</span></div>
+          <div class="anno" style="margin-top:6px;"><b>确认弹窗:</b> <span class="v6">点「导入选中」后弹出 · 明确 source（其他 Agent 目录配置）+ target（写入太极 的 projectPaths/globalPaths）· 取消 ghost + 确认 default</span></div>
         </div>
       </div>
 
@@ -920,7 +920,7 @@ body {
           <div class="lp-card" style="margin:0;">
             <div class="imp-progress">
               <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;animation:skel 1s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-              <span>正在追加 ~/.claude/skills 到 xyz-agent 的 projectPaths...</span>
+              <span>正在追加 ~/.claude/skills 到太极 的 projectPaths...</span>
               <div class="imp-progress-bar"><div class="imp-progress-fill"></div></div>
             </div>
           </div>
@@ -934,7 +934,7 @@ body {
           <div class="lp-card" style="margin:0;">
             <div class="imp-done">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-              已导入 1 个目录到 xyz-agent：~/.claude/skills（已在「项目目录」组，可 ↑↓ 调整优先级）
+              已导入 1 个目录到太极：~/.claude/skills（已在「项目目录」组，可 ↑↓ 调整优先级）
             </div>
           </div>
         </div>
@@ -956,11 +956,11 @@ body {
         <div class="anno"><b>选择:</b> <span>xyz-ui Checkbox 多选 · Set&lt;source&gt;（source 唯一，避免 dir 冲突）</span></div>
         <div class="anno"><b>共享池:</b> <span>候选 dir 与 existingDirs normalize 后相等 → Checkbox disabled + info 胶囊「共享池已生效」</span></div>
         <div class="anno"><b>导入按钮:</b> <span class="v6">xyz-ui Button variant=secondary size=dense（Download 图标 + 「导入选中」）· 无选中时 disabled</span></div>
-        <div class="anno"><b>确认弹窗:</b> <span class="v6">reka Dialog · 标题「导入目录到 xyz-agent？」· 三条 bullet 显式 source/target/dedup · 取消 ghost + 确认 default</span></div>
-        <div class="anno"><b>提示文案:</b> <span class="v6">「导入的是其他 Agent 的目录配置，写入当前 xyz-agent」——入口常驻灰字 + 弹窗 desc 双重明确</span></div>
+        <div class="anno"><b>确认弹窗:</b> <span class="v6">reka Dialog · 标题「导入目录到太极？」· 三条 bullet 显式 source/target/dedup · 取消 ghost + 确认 default</span></div>
+        <div class="anno"><b>提示文案:</b> <span class="v6">「导入的是其他 Agent 的目录配置，写入当前太极」——入口常驻灰字 + 弹窗 desc 双重明确</span></div>
         <div class="anno"><b>目标组:</b> <span>导入默认写入 projectPaths（项目目录组）；弹窗可加目标组切换（项目/全局），MVP 先固定 projectPaths</span></div>
         <div class="anno"><b>进度:</b> <span>accent 微 spinner + 文案（父组件去重 + append 的瞬时反馈）</span></div>
-        <div class="anno"><b>成功:</b> <span>success 色 CheckCircle + 文案「已导入 N 个目录到 xyz-agent」；导入的行同步出现在 §1 对应分组</span></div>
+        <div class="anno"><b>成功:</b> <span>success 色 CheckCircle + 文案「已导入 N 个目录到太极」；导入的行同步出现在 §1 对应分组</span></div>
         <div class="anno"><b>失败:</b> <span>danger soft 条 + 原因 + 下一步（重试或手动添加）——设计系统 §9 文案规范</span></div>
         <div class="anno"><b>kind 差异:</b> <span>skill 显全部 4 源；agent 只显 claude（取 agentCount，回退 skillCount）</span></div>
         <div class="anno"><b>ESC 行为:</b> <span>弹窗开时 ESC 关弹窗（取消导入，非关 settings）；reka Dialog 内置焦点陷阱</span></div>
@@ -976,7 +976,7 @@ body {
       <span class="spec-num">§5</span>
       <h2 class="spec-title">Layer B · 资源预览</h2>
     </div>
-    <p class="spec-desc">只读预览扫描结果（ADR-0020 §5，无文件级开关无 CRUD）。顶部工具栏：标题 + 计数 pill + 扫描/刷新按钮（xyz-ui Button secondary，RefreshCw 图标，scanning 时图标 spin + 文案转「刷新中」）+ 来源 tab（4 项：全部 / xyz-agent / Claude / Agents）。资源项 hover 显「引用到 composer」ghost icon 操作。多来源资源用 badge 链（首项 effective + ring inset，余项 opacity .6）。</p>
+    <p class="spec-desc">只读预览扫描结果（ADR-0020 §5，无文件级开关无 CRUD）。顶部工具栏：标题 + 计数 pill + 扫描/刷新按钮（xyz-ui Button secondary，RefreshCw 图标，scanning 时图标 spin + 文案转「刷新中」）+ 来源 tab（4 项：全部 / 太极 / Claude / Agents）。资源项 hover 显「引用到 composer」ghost icon 操作。多来源资源用 badge 链（首项 effective + ring inset，余项 opacity .6）。</p>
 
     <div class="change-points">
       <span class="cp cp-now"><b>扫描按钮</b> secondary 常驻</span>
@@ -997,7 +997,7 @@ body {
           </button>
           <div class="rp-tabs">
             <span class="rp-tab active">全部</span>
-            <span class="rp-tab">xyz-agent</span>
+            <span class="rp-tab">太极</span>
             <span class="rp-tab">Claude</span>
             <span class="rp-tab">Agents</span>
           </div>
@@ -1007,7 +1007,7 @@ body {
           <!-- 单来源资源 -->
           <div class="rp-item">
             <span class="rp-name">commit-helper</span>
-            <span class="rp-badge pi">xyz-agent</span>
+            <span class="rp-badge pi">太极</span>
             <span class="rp-desc">按规范生成提交信息</span>
             <span class="rp-item-actions">
               <span class="btn btn-ghost btn-icon-sm" title="引用到 composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 13 6 6"/><path d="m15 13-6 6"/></svg></span>
@@ -1024,7 +1024,7 @@ body {
           <!-- 多来源 badge 链（首项 effective）-->
           <div class="rp-item">
             <span class="rp-name">merge</span>
-            <span class="rp-badge effective">生效·xyz-agent</span>
+            <span class="rp-badge effective">生效·太极</span>
             <span class="rp-badge claude faded">Claude</span>
             <span class="rp-desc">合并分支并发布</span>
             <span class="rp-item-actions">
@@ -1033,7 +1033,7 @@ body {
           </div>
           <div class="rp-item">
             <span class="rp-name">zcommit</span>
-            <span class="rp-badge pi">xyz-agent</span>
+            <span class="rp-badge pi">太极</span>
             <span class="rp-desc">执行 git commit</span>
             <span class="rp-item-actions">
               <span class="btn btn-ghost btn-icon-sm" title="引用到 composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 13 6 6"/><path d="m15 13-6 6"/></svg></span>
@@ -1041,7 +1041,7 @@ body {
           </div>
           <div class="rp-item">
             <span class="rp-name">code-review</span>
-            <span class="rp-badge pi">xyz-agent</span>
+            <span class="rp-badge pi">太极</span>
             <span class="rp-desc">审查代码变更</span>
             <span class="rp-item-actions">
               <span class="btn btn-ghost btn-icon-sm" title="引用到 composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 13 6 6"/><path d="m15 13-6 6"/></svg></span>
@@ -1073,7 +1073,7 @@ body {
           </button>
           <div class="rp-tabs">
             <span class="rp-tab active">全部</span>
-            <span class="rp-tab">xyz-agent</span>
+            <span class="rp-tab">太极</span>
             <span class="rp-tab">Claude</span>
             <span class="rp-tab">Agents</span>
           </div>
@@ -1105,7 +1105,7 @@ body {
     <div class="render-frame">
       <div class="src-legend">
         <div class="src-legend-cell">
-          <div class="sl-head"><span class="rp-badge pi">xyz-agent</span><span class="sl-meta">pi · 主色</span></div>
+          <div class="sl-head"><span class="rp-badge pi">太极</span><span class="sl-meta">pi · 主色</span></div>
           <div class="anno"><b>token:</b> <span>bg surface-2 + 彩色点 accent</span></div>
         </div>
         <div class="src-legend-cell">
@@ -1121,7 +1121,7 @@ body {
           <div class="anno"><b>token:</b> <span>bg surface-2 + 彩色点 info</span></div>
         </div>
         <div class="src-legend-cell">
-          <div class="sl-head"><span class="rp-badge effective">生效·xyz-agent</span><span class="sl-meta">effective · 首项</span></div>
+          <div class="sl-head"><span class="rp-badge effective">生效·太极</span><span class="sl-meta">effective · 首项</span></div>
           <div class="anno"><b>token:</b> <span>accent-soft + accent-ring inset ring</span></div>
         </div>
         <div class="src-legend-cell">
@@ -1272,9 +1272,9 @@ body {
         <!-- SourceImport 流 -->
         <tr><td style="padding:12px;border-bottom:1px solid var(--border);vertical-align:middle;" rowspan="5"><span style="font-weight:500;color:var(--neutral-fg);">SourceImport</span></td><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--neutral-dim);">①检测中</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">accent spinner + 「正在检测...」文案</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§4</td></tr>
         <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--neutral-dim);">②选择</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">Checkbox 多选 · 共享池行 disabled + info 胶囊 · secondary「导入选中」</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§4</td></tr>
-        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">③确认弹窗</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">ConfirmDialog · 标题「导入目录到 xyz-agent？」· 显式 source/target/dedup bullet · 取消 ghost + 确认 default</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§4</td></tr>
-        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">④进度</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">accent spinner + 文案「追加到 xyz-agent 的 projectPaths」+ 进度条（accent fill）</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§4</td></tr>
-        <tr><td style="padding:12px;"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--success);">⑤成功</span></td><td style="padding:12px;color:var(--neutral-mid);">success CheckCircle + 「已导入 N 个目录到 xyz-agent」· 同步行出现在对应分组</td><td style="padding:12px;font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§4</td></tr>
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">③确认弹窗</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">ConfirmDialog · 标题「导入目录到太极？」· 显式 source/target/dedup bullet · 取消 ghost + 确认 default</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§4</td></tr>
+        <tr><td style="padding:12px;border-bottom:1px solid var(--border);"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">④进度</span></td><td style="padding:12px;border-bottom:1px solid var(--border);color:var(--neutral-mid);">accent spinner + 文案「追加到太极 的 projectPaths」+ 进度条（accent fill）</td><td style="padding:12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§4</td></tr>
+        <tr><td style="padding:12px;"><span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--success);">⑤成功</span></td><td style="padding:12px;color:var(--neutral-mid);">success CheckCircle + 「已导入 N 个目录到太极」· 同步行出现在对应分组</td><td style="padding:12px;font-family:var(--font-mono);font-size:var(--text-xs);color:var(--accent);">§4</td></tr>
       </tbody>
     </table>
 

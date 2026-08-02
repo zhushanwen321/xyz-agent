@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 品牌区：logo（accent 纯色圆 + 白字 x）+ 产品名 + 版本号 + 可升级 badge。
+/** 品牌区：logo（accent 纯色圆 + accent-fg 占位字「太」）+ 产品名 + 版本号 + 可升级 badge。
  *  对齐 v6-spec-sidebar.html §1 .sb-brand。 */
 
 interface Props {
@@ -8,7 +8,7 @@ interface Props {
   hasUpdate?: boolean
 }
 withDefaults(defineProps<Props>(), {
-  name: 'xyz-agent',
+  name: '太极',
   version: 'v1.4.0',
   hasUpdate: true,
 })
@@ -18,7 +18,7 @@ const emit = defineEmits<{ (e: 'update-click'): void }>()
 
 <template>
   <div class="brand">
-    <span class="brand__logo">x</span>
+    <span class="brand__logo">太</span>
     <span class="brand__text">
       <span class="brand__name">{{ name }}</span>
       <span class="brand__ver">{{ version }}</span>

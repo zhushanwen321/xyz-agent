@@ -95,7 +95,7 @@ function chooseDir(list: LoadPath[], group: 'project' | 'global') {
 type RpTab = 'all' | 'pi' | 'claude' | 'agents'
 const sourceTab = ref<RpTab>('all')
 const SOURCE_LABEL: Record<RpSource, string> = {
-  pi: 'xyz-agent',
+  pi: '太极',
   claude: 'Claude',
   agents: 'Agents',
   piinstall: 'pi-install',
@@ -103,7 +103,7 @@ const SOURCE_LABEL: Record<RpSource, string> = {
 }
 const TAB_LABEL: Record<RpTab, string> = {
   all: '全部',
-  pi: 'xyz-agent',
+  pi: '太极',
   claude: 'Claude',
   agents: 'Agents',
 }
@@ -401,7 +401,7 @@ onBeforeUnmount(() => {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="17" y1="7" x2="7" y2="17"/><polyline points="8 7 17 7 17 16"/></svg>
           收起导入
         </button>
-        <span v-if="!importOpen" class="lp-import-hint">导入的是其他 Agent 的目录配置，写入当前 xyz-agent</span>
+        <span v-if="!importOpen" class="lp-import-hint">导入的是其他 Agent 的目录配置，写入当前 太极</span>
       </div>
 
       <!-- 导入面板：① 检测中 / 检测失败 / ② 选择 / ④ 导入中 / ⑤ 成功 -->
@@ -441,7 +441,7 @@ onBeforeUnmount(() => {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
               导入选中
             </button>
-            <span class="lp-import-hint">已选 {{ selectedCount }} / {{ importableCount }} 可导入 · 将写入 xyz-agent</span>
+            <span class="lp-import-hint">已选 {{ selectedCount }} / {{ importableCount }} 可导入 · 将写入 太极</span>
             <span class="spacer"></span>
             <!-- demo 状态机触发：模拟检测失败（spec §4 错误态；正式版无此按钮） -->
             <button class="btn btn-ghost btn-icon-sm" title="模拟检测失败（demo）" aria-label="模拟检测失败" @click="simulateDetectFail">
@@ -453,29 +453,29 @@ onBeforeUnmount(() => {
         <!-- ④ 导入中：spinner + 文案 + 进度条 -->
         <div v-else-if="importStep === 'importing'" class="imp-progress">
           <svg class="imp-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-          <span>正在追加 {{ selectedDirs.join('、') }} 到 xyz-agent 的 projectPaths...</span>
+          <span>正在追加 {{ selectedDirs.join('、') }} 到 太极 的 projectPaths...</span>
           <div class="imp-progress-bar"><div class="imp-progress-fill"></div></div>
         </div>
 
         <!-- ⑤ 成功：success 反馈 + 行已出现在项目目录组 -->
         <div v-else-if="importStep === 'done'" class="imp-done">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-          <span>已导入 {{ importDonePaths.length }} 个目录到 xyz-agent：{{ importDonePaths.join('、') }}（已在「项目目录」组，可 ↑↓ 调整优先级）</span>
+          <span>已导入 {{ importDonePaths.length }} 个目录到 太极：{{ importDonePaths.join('、') }}（已在「项目目录」组，可 ↑↓ 调整优先级）</span>
         </div>
       </div>
     </section>
 
     <!-- ③ 确认弹窗（spec §4：浮起 dialog，显式 source/target/dedup；ESC/backdrop 取消） -->
     <div v-if="importStep === 'confirm'" class="imp-confirm-stage" @click.self="cancelConfirm">
-      <div class="imp-confirm" role="dialog" aria-modal="true" aria-label="导入目录到 xyz-agent？">
+      <div class="imp-confirm" role="dialog" aria-modal="true" aria-label="导入目录到 太极？">
         <div class="imp-confirm-head">
           <svg class="imp-confirm-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
-          <div class="imp-confirm-title">导入目录到 xyz-agent？</div>
+          <div class="imp-confirm-title">导入目录到 太极？</div>
         </div>
-        <p class="imp-confirm-desc">将把<b>其他 Agent 的目录配置</b>导入为<b>当前 xyz-agent</b>的加载路径（不会导出到其他 Agent，也不会修改其他 Agent 的配置）。</p>
+        <p class="imp-confirm-desc">将把<b>其他 Agent 的目录配置</b>导入为<b>当前 太极</b>的加载路径（不会导出到其他 Agent，也不会修改其他 Agent 的配置）。</p>
         <ul class="imp-confirm-bullets">
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span><b>来源：</b>其他 Agent 的 agent 目录配置（<code>{{ selectedDirs.join('、') }}</code>）</span></li>
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span><b>去向：</b>写入当前 xyz-agent 的 <code>projectPaths</code>（项目目录组）</span></li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span><b>去向：</b>写入当前 太极 的 <code>projectPaths</code>（项目目录组）</span></li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span><b>去重：</b>已存在的路径会自动跳过</span></li>
         </ul>
         <div class="imp-confirm-actions">

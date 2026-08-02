@@ -1020,7 +1020,7 @@ body {
       <div class="note-foot">
         <b style="color:var(--warn);">原方案：</b>AppShell 底部跨 sidebar+main+drawer 全宽细条（bg-bg-sunken，VSCode 风格全局状态栏）。<br>
         <b style="color:var(--success);">现方案：</b>M8 挂 main-panel 内、composer 下方，不跨 sidebar/drawer。<br>
-        <b>理由：</b>① status 信息语义上属于「当前对话/agent 状态」，跟着 main-panel（对话主体）走比跨全宽更内聚；② sidebar 是导航区、drawer 是辅助区，往那里渗 status 语义不符；③ 全局底栏的 VSCode 范式适合「编辑器全局状态」，xyz-agent 是多 panel 对话工作台，每个 panel 独立 status 更合理（未来 split 多 panel 时各 panel 各自底栏）。<br>
+        <b>理由：</b>① status 信息语义上属于「当前对话/agent 状态」，跟着 main-panel（对话主体）走比跨全宽更内聚；② sidebar 是导航区、drawer 是辅助区，往那里渗 status 语义不符；③ 全局底栏的 VSCode 范式适合「编辑器全局状态」，太极 是多 panel 对话工作台，每个 panel 独立 status 更合理（未来 split 多 panel 时各 panel 各自底栏）。<br>
         <b>代价：</b>drawer 关闭时 status 仍可见（在 main 底部），但 drawer 打开时 status 不延伸到 drawer 下方——drawer 自己的 footer 若需 status 另行处理。
       </div>
     </div>
