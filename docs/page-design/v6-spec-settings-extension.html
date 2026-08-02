@@ -227,7 +227,7 @@ body {
 .btn.btn-icon-sm      { width: 28px; height: 28px; padding: 0; border-radius: var(--radius-sm); }
 .btn.btn-icon-sm svg { width: 14px; height: 14px; }
 /* variant: default（主操作）bg-accent text-white hover accent-hover（SSOT variant=default）*/
-.btn.btn-default { background: var(--accent); color: #fff; }
+.btn.btn-default { background: var(--accent); color: var(--accent-fg); }
 .btn.btn-default:hover { background: var(--accent-hover); }
 /* variant: secondary 透明底 + border-border（SSOT variant=secondary）*/
 .btn.btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--neutral-fg); }
@@ -291,7 +291,7 @@ body {
 .ui-checkbox:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
 .ui-checkbox.checked { background: var(--accent); border-color: var(--accent); }
 .ui-checkbox.indeterminate { background: var(--accent); border-color: var(--accent); }
-.ui-checkbox svg { width: 11px; height: 11px; color: #fff; }
+.ui-checkbox svg { width: 11px; height: 11px; color: var(--accent-fg); }
 
 /* ============ badge 三轴语义体系 ============
    source（分类）→ Pill 圆角 999 soft 底 + 实色字（design-system §5 Pill 语义）

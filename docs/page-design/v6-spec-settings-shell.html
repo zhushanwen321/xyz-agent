@@ -344,7 +344,7 @@ body {
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* variant=default: bg-accent text-white hover:bg-accent-hover */
-.btn-default { background: var(--accent); color: #fff; }
+.btn-default { background: var(--accent); color: var(--accent-fg); }
 .btn-default:hover { background: var(--accent-hover); }
 /* variant=secondary: bg-transparent border border-border text-neutral-fg hover:bg-surface-hover */
 .btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--neutral-fg); }
@@ -453,7 +453,7 @@ body {
 .ui-checkbox.checked { border-color: var(--accent); background: var(--accent); }
 .ui-checkbox:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
 .ui-checkbox:disabled { cursor: not-allowed; opacity: 0.5; }
-.ui-checkbox .uc-check { width: 12px; height: 12px; color: #fff; opacity: 0; transition: opacity var(--duration-fast); }
+.ui-checkbox .uc-check { width: 12px; height: 12px; color: var(--accent-fg); opacity: 0; transition: opacity var(--duration-fast); }
 .ui-checkbox.checked .uc-check { opacity: 1; }
 .ui-checkbox.indeterminate { border-color: var(--accent); background: var(--accent); }
 .ui-checkbox.indeterminate .uc-check { opacity: 1; }
@@ -726,8 +726,8 @@ body {
               <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/></svg>
               <span class="ni-label">disabled · 不可用</span>
             </div>
-            <div class="nav-item" style="background:var(--accent);color:#fff;cursor:default;">
-              <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="color:#fff;"><circle cx="12" cy="12" r="3"/></svg>
+            <div class="nav-item" style="background:var(--accent);color:var(--accent-fg);cursor:default;">
+              <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent-fg);"><circle cx="12" cy="12" r="3"/></svg>
               <span class="ni-label">pressed · 按下瞬间</span>
             </div>
           </div>

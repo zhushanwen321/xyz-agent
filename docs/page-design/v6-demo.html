@@ -189,7 +189,7 @@ body {
 .btn-primary {
   display: inline-flex; align-items: center; justify-content: flex-start; gap: 8px; cursor: pointer;
   height: 32px; padding: 0 12px; border-radius: var(--radius); border: 0;
-  background: var(--accent); color: #fff; font: inherit; font-size: var(--text-sm); font-weight: 500;
+  background: var(--accent); color: var(--accent-fg); font: inherit; font-size: var(--text-sm); font-weight: 500;
   transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
 }
 .btn-primary:hover { background: var(--accent-hover); }
@@ -451,8 +451,8 @@ body[data-density="lift"] .sub-summary { font-size: 9px; opacity: .6; }
 .composer-bar .cb-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 .composer-bar .cb-meta { font-size: var(--text-2xs); color: var(--neutral-dim); }
 .composer-bar .spacer { flex: 1; }
-.composer-bar .send-btn { background: var(--accent); color: #fff; }
-.composer-bar .send-btn:hover { background: var(--accent-hover); color: #fff; }
+.composer-bar .send-btn { background: var(--accent); color: var(--accent-fg); }
+.composer-bar .send-btn:hover { background: var(--accent-hover); color: var(--accent-fg); }
 
 /* ── drawer ──────────────────────────────────────────── */
 .drawer {
@@ -692,7 +692,7 @@ body[data-select="d"] .settings-nav-item.sel { background: var(--surface-hover);
 .ask-btn { padding: 6px 14px; border-radius: var(--radius); font-size: var(--text-sm); cursor: pointer; border: 0; }
 .ask-btn.ghost { background: transparent; color: var(--neutral-mid); }
 .ask-btn.ghost:hover { color: var(--neutral-fg); }
-.ask-btn.primary { background: var(--accent); color: #fff; }
+.ask-btn.primary { background: var(--accent); color: var(--accent-fg); }
 
 /* ── 视图显隐 ────────────────────────────────────────── */
 .view { display: none; flex: 1; min-height: 0; }

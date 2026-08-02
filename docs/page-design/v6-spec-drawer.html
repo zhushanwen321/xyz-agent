@@ -477,7 +477,7 @@ body {
 .gp-act.ghost:hover:not(.disabled) { background: var(--surface-hover); }
 .gp-act.ghost.disabled { opacity: 0.5; cursor: not-allowed; }
 /* primary = SSOT default（bg-accent text-white hover accent-hover）*/
-.gp-act.primary { background: var(--accent); color: #fff; }
+.gp-act.primary { background: var(--accent); color: var(--accent-fg); }
 .gp-act.primary:hover:not(.disabled) { background: var(--accent-hover); }
 .gp-act.primary.disabled { opacity: 0.5; cursor: not-allowed; }
 /* 非 git 仓库空态 */
@@ -649,7 +649,7 @@ body {
 }
 .btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
 .btn:disabled { pointer-events: none; opacity: 0.5; }
-.btn.btn-default { background: var(--accent); color: #fff; }
+.btn.btn-default { background: var(--accent); color: var(--accent-fg); }
 .btn.btn-default:hover { background: var(--accent-hover); }
 .btn.btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--neutral-fg); }
 .btn.btn-secondary:hover { background: var(--surface-hover); }

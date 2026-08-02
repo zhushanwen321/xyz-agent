@@ -386,7 +386,7 @@ body {
 .comp-chip { display: inline-flex; align-items: center; gap: 6px; margin: 8px 10px 0; padding: 4px 8px; border-radius: var(--radius); background: var(--accent-soft); font-size: 11px; font-weight: 500; color: var(--accent); }
 .comp-chip svg { width: 12px; height: 12px; }
 .comp-chip .chip-x { width: 14px; height: 14px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; }
-.comp-chip .chip-x:hover { background: var(--accent); color: #fff; }
+.comp-chip .chip-x:hover { background: var(--accent); color: var(--accent-fg); }
 /* ContextChipsBar（已附上下文 chip 行：@file / #skill / image）*/
 .ctx-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 7px 14px 0; }
 .ctx-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 180px; padding: 2px 6px; border-radius: var(--radius-sm); background: var(--surface-2); font-size: 11px; color: var(--neutral-mid); }
@@ -414,13 +414,13 @@ body {
 /* 发送位三态：send / stop / spinner */
 .send-slot { width: var(--composer-btn-size); height: var(--composer-btn-size); border-radius: var(--radius); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
 .send-slot svg { width: 16px; height: 16px; }   /* 操作图标档 16px（R26/L3.7）*/
-.send-slot.send { background: var(--accent); color: #fff; }
+.send-slot.send { background: var(--accent); color: var(--accent-fg); }
 .send-slot.send:hover { background: var(--accent-hover); }
 .send-slot.send.disabled { background: var(--surface-2); color: var(--neutral-faint); cursor: not-allowed; }
 .send-slot.stop { background: var(--surface-hover); color: var(--neutral-mid); }
 .send-slot.stop:hover { background: var(--danger-soft); color: var(--danger); }
-.send-slot.spinner { background: var(--accent); color: #fff; }
-.send-spinner-ico { width: 13px; height: 13px; color: #fff; animation: spin 1s linear infinite; }
+.send-slot.spinner { background: var(--accent); color: var(--accent-fg); }
+.send-spinner-ico { width: 13px; height: 13px; color: var(--accent-fg); animation: spin 1s linear infinite; }
 
 /* ── Composer 浮层 / popover 内部结构（§9D / §9H）── */
 /* PopoverContent 共用：z-modal(1000) min-w-240 rounded-lg border-border-strong bg-bg-elevated shadow-2 */

@@ -118,10 +118,10 @@
 .gt-goal-title { flex: 1; min-width: 0; font-size: var(--text-sm); font-weight: 500; color: var(--neutral-fg); }
 /* goal-card 操作按钮 = SSOT variant=default dense 化（bg-accent text-white · rounded-md · hover accent-hover）
    warn 卡片的「继续目标」是恢复主操作 → default variant（SSOT 无 warn variant，统一走 default）*/
-.gt-goal-action { font-size: var(--text-xs); padding: 4px 10px; border-radius: var(--radius); background: var(--accent); color: #fff; cursor: pointer; white-space: nowrap; border: 0; font-weight: 500; transition: background var(--duration-fast) var(--ease); }
+.gt-goal-action { font-size: var(--text-xs); padding: 4px 10px; border-radius: var(--radius); background: var(--accent); color: var(--accent-fg); cursor: pointer; white-space: nowrap; border: 0; font-weight: 500; transition: background var(--duration-fast) var(--ease); }
 .gt-goal-action:hover { background: var(--accent-hover); }
 .gt-goal-action:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
-.gt-goal-action.warn { background: var(--accent); color: #fff; }
+.gt-goal-action.warn { background: var(--accent); color: var(--accent-fg); }
 .gt-goal-action.warn:hover { background: var(--accent-hover); }
 .gt-goal-body { padding: 0 14px 12px; }
 .gt-progress-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: var(--text-2xs); font-family: var(--font-mono); color: var(--neutral-mid); }
@@ -183,7 +183,7 @@
 }
 .btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
 .btn:disabled { pointer-events: none; opacity: 0.5; }
-.btn.btn-default { background: var(--accent); color: #fff; }
+.btn.btn-default { background: var(--accent); color: var(--accent-fg); }
 .btn.btn-default:hover { background: var(--accent-hover); }
 .btn.btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--neutral-fg); }
 .btn.btn-secondary:hover { background: var(--surface-hover); }
@@ -509,9 +509,9 @@ added 1 package in 2s</div>
                   <!-- meta 条：行数 + chars + 耗时 三项（useToolMeta.ts:49-62），bash 无行数；非 bash 在输出上方（与 Copy 同行右对齐）-->
                   <span class="tool-meta" style="margin-bottom:0;margin-left:auto;"><span>126 行</span><span>3.4K chars</span><span>1.2s</span></span>
                 </div>
-                <div class="tool-out">--bg: #1a1b1f;
---surface: #272830;
---neutral-fg: #e5e7eb;…</div>
+                <div class="tool-out">--bg: #0f0f11;
+--surface: #1b1b1d;
+--neutral-fg: #dcdce0;…</div>
               </div>
             </div>
           </div>

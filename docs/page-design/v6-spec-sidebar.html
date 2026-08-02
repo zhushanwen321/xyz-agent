@@ -260,8 +260,8 @@ body {
 .si-act svg { width: 13px; height: 13px; }
 .si-act.del { color: var(--danger); }
 .si-act.del:hover { background: var(--danger-soft); color: var(--danger); }
-.si-act.confirm { background: var(--danger); color: #fff; }   /* 两段式确认态：实心 danger（affordance，非默认 variant）*/
-.si-act.confirm:hover { background: var(--danger); color: #fff; }
+.si-act.confirm { background: var(--danger); color: var(--danger-fg); }   /* 两段式确认态：实心 danger（affordance，非默认 variant）*/
+.si-act.confirm:hover { background: var(--danger); color: var(--danger-fg); }
 
 @keyframes pulse-accent { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
 
@@ -307,8 +307,8 @@ body {
 .fg-stop:hover { background: var(--danger-soft); color: var(--danger); }
 .fg-stop:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
 .fg-stop svg { width: 11px; height: 11px; }
-.fg-stop.confirm { background: var(--danger); color: #fff; }
-.fg-stop.confirm:hover { background: var(--danger); color: #fff; }
+.fg-stop.confirm { background: var(--danger); color: var(--danger-fg); }
+.fg-stop.confirm:hover { background: var(--danger); color: var(--danger-fg); }
 
 /* 旧 ForkGroup 对比（嵌套卡片反模式）*/
 .fg-old { margin: 2px 4px; border-radius: var(--radius); border: 1px solid var(--border); background: color-mix(in oklch, var(--accent) 5%, transparent); padding: 4px; }
@@ -457,7 +457,7 @@ body {
 .btn kbd { font-family: var(--font-mono); font-size: 10px; opacity: .7; }
 .btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
 .btn:disabled { pointer-events: none; opacity: 0.5; }
-.btn.btn-default { background: var(--accent); color: #fff; }
+.btn.btn-default { background: var(--accent); color: var(--accent-fg); }
 .btn.btn-default:hover { background: var(--accent-hover); }
 .btn.btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--neutral-fg); }
 .btn.btn-secondary:hover { background: var(--surface-hover); }

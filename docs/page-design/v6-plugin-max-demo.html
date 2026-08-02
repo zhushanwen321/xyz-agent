@@ -86,11 +86,11 @@ body {
   box-shadow: 0 0 0 2px var(--surface);
 }
 /* v6 去硬编码 hex，用 token（彩色徽章上深字用 --bg 深底 token）*/
-.mtag.ma { background: var(--accent); color: #fff; }
+.mtag.ma { background: var(--accent); color: var(--accent-fg); }
 .mtag.mb { background: var(--success); color: var(--bg); }
 .mtag.mc { background: var(--warn); color: var(--bg); }
 .mtag.md { background: var(--info); color: var(--bg); }
-.mtag.me { background: var(--danger); color: #fff; }
+.mtag.me { background: var(--danger); color: var(--danger-fg); }
 /* 标注小标签（说明该挂载点用了什么）*/
 .mlabel {
   display: inline-flex; align-items: center; gap: 5px;
@@ -165,7 +165,7 @@ body {
 .ph-btn { width: 24px; height: 24px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-mid); cursor: pointer; position: relative; }
 .ph-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 .ph-btn svg { width: 13px; height: 13px; }
-.ph-btn .ph-count { position: absolute; top: -2px; right: -2px; min-width: 13px; height: 13px; padding: 0 3px; border-radius: 999px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 8px; display: inline-flex; align-items: center; justify-content: center; }
+.ph-btn .ph-count { position: absolute; top: -2px; right: -2px; min-width: 13px; height: 13px; padding: 0 3px; border-radius: 999px; background: var(--accent); color: var(--accent-fg); font-family: var(--font-mono); font-size: 8px; display: inline-flex; align-items: center; justify-content: center; }
 .ph-divider { width: 1px; height: 14px; background: var(--border); margin: 0 3px; }
 /* message stream */
 .msg-stream { padding: 12px; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
@@ -197,8 +197,8 @@ body {
 .cb-tool-btn { width: 26px; height: 26px; border-radius: var(--radius-sm); display: inline-flex; align-items: center; justify-content: center; color: var(--neutral-dim); cursor: pointer; position: relative; }
 .cb-tool-btn:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 .cb-tool-btn svg { width: 13px; height: 13px; }
-.cb-tool-btn .cb-count { position: absolute; top: -2px; right: -2px; min-width: 13px; height: 13px; padding: 0 3px; border-radius: 999px; background: var(--accent); color: #fff; font-family: var(--font-mono); font-size: 8px; display: inline-flex; align-items: center; justify-content: center; }
-.cb-send { width: 26px; height: 26px; border-radius: var(--radius-sm); background: var(--accent); color: #fff; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; margin-left: 2px; }
+.cb-tool-btn .cb-count { position: absolute; top: -2px; right: -2px; min-width: 13px; height: 13px; padding: 0 3px; border-radius: 999px; background: var(--accent); color: var(--accent-fg); font-family: var(--font-mono); font-size: 8px; display: inline-flex; align-items: center; justify-content: center; }
+.cb-send { width: 26px; height: 26px; border-radius: var(--radius-sm); background: var(--accent); color: var(--accent-fg); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; margin-left: 2px; }
 .cb-send svg { width: 13px; height: 13px; }
 .cb-divider { width: 1px; height: 16px; background: var(--border); margin: 0 3px; }
 /* CommandPopover（slash 菜单浮层）*/
@@ -311,9 +311,9 @@ body {
 .dc-btn { padding: 5px 12px; border-radius: var(--radius-sm); font-size: var(--text-sm); cursor: pointer; }
 .dc-btn.ghost { color: var(--neutral-mid); } .dc-btn.ghost:hover { background: var(--surface-hover); color: var(--neutral-fg); }
 /* default = bg-accent text-white（SSOT variant=default，对齐 plugin spec）*/
-.dc-btn.default { background: var(--accent); color: #fff; } .dc-btn.default:hover { background: var(--accent-hover); }
+.dc-btn.default { background: var(--accent); color: var(--accent-fg); } .dc-btn.default:hover { background: var(--accent-hover); }
 /* overlay 窗口（最小化 badge）*/
-.overlay-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 6px 6px 10px; background: var(--accent); color: #fff; border-radius: 999px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); cursor: pointer; font-size: var(--text-xs); font-weight: 500; }
+.overlay-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 6px 6px 10px; background: var(--accent); color: var(--accent-fg); border-radius: 999px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); cursor: pointer; font-size: var(--text-xs); font-weight: 500; }
 .overlay-badge svg { width: 12px; height: 12px; }
 /* ob-count：accent badge 上的白/25% 计数胶囊（无对应 token，标注为 accent 之上的白色压暗叠层，badge 专用豁免）*/
 .overlay-badge .ob-count { background: rgba(255,255,255,0.25); border-radius: 999px; padding: 0 6px; font-family: var(--font-mono); font-size: 10px; line-height: 14px; }

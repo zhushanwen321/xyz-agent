@@ -133,7 +133,7 @@ body {
 .btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4); }
 .btn:disabled { pointer-events: none; opacity: 0.5; }
 /* 变体（variant 后缀，双 class 等价：HTML 用 `btn btn-default`） */
-.btn-default { background: var(--accent); color: #fff; }
+.btn-default { background: var(--accent); color: var(--accent-fg); }
 .btn-default:hover { background: var(--accent-hover); }
 .btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--neutral-fg); }
 .btn-secondary:hover { background: var(--surface-hover); }
@@ -181,7 +181,7 @@ body {
   flex-shrink: 0; cursor: pointer; transition: background var(--duration-fast), border-color var(--duration-fast);
 }
 .ui-checkbox.checked { background: var(--accent); border-color: var(--accent); }
-.ui-checkbox svg { width: 12px; height: 12px; color: #fff; }
+.ui-checkbox svg { width: 12px; height: 12px; color: var(--accent-fg); }
 .ui-checkbox.disabled { opacity: .5; cursor: not-allowed; }
 
 /* ================================================================
