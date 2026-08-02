@@ -4,7 +4,7 @@ AI Agent 桌面工作台，基于 Electron + Vue 3 + Node.js Runtime 架构。
 
 通过 [pi](https://github.com/badlogic/pi-mono)（npm 包名 `@earendil-works/pi-coding-agent`）的子进程 RPC 协议与各类 AI Agent 通信，提供多 session 管理、split view、focus mode、drawer 面板等功能。
 
-> 本项目使用上游 [pi-mono](https://github.com/badlogic/pi-mono)。详见 [CLAUDE.md](CLAUDE.md)。
+> 本项目使用上游 [pi-mono](https://github.com/badlogic/pi-mono)。详见 [AGENTS.md](AGENTS.md)。
 
 ## 安装
 
@@ -136,7 +136,7 @@ node $PW http://localhost:9222 evaluate "document.title"     # 执行 JS
 
 ## 核心功能（v3 UI）
 
-v3 前端于 2026-06 完成 L0–L4 递归骨架重建（W01–W20 视觉验收全部 PASS），冷蓝暗色设计系统（ADR-0018）。设计 SSOT 见 [docs/page-design/v3/](docs/page-design/v3/)，术语见 [领域术语表](docs/architecture/context.md#v3-ui-结构术语2026-06-重构)。
+v3 前端于 2026-06 完成冷蓝暗色设计系统重建（ADR-0019 视觉方向）。当前视觉 SSOT 见 [docs/page-design/v6-master-spec.md](docs/page-design/v6-master-spec.md)，设计演变见 [docs/design-evolution.md](docs/design-evolution.md)，术语见 [领域术语表](docs/architecture/context.md)。
 
 - **Sidebar（侧栏）** — 持久容器（非单列表），顶部 Logo + 主操作 → segmented tab（会话｜文件）互斥切换 → 子视图列表 → 底部设置/用户。透明融合于 base，支持折叠（⌘B）
 - **Workspace（工作区）** — 双 Panel 主从模式（单 Panel = 默认态，开第二 session 才 split）
@@ -250,7 +250,7 @@ xyz-agent/
 
 ## 编码规范
 
-详见 [docs/standards.md](docs/standards.md) 和 [CLAUDE.md](CLAUDE.md)。
+详见 [docs/standards.md](docs/standards.md) 和 [AGENTS.md](AGENTS.md)。
 
 关键规则摘要：
 

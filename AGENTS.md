@@ -22,12 +22,12 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 - [UI 设计演变史](docs/design-evolution.md) — Warm&Soft → v3 → v6 → 太极纯灰的完整演变叙事
 - [设计 Tokens（太极 V3 SSOT）](docs/page-design/design-tokens.md) — 纯灰暗色原子值（色/字/距/影/动效），ADR-0019 确立
 - [设计系统原语层](docs/page-design/design-system.md) — 组件原语如何使用 tokens
-- [v6 范式 SSOT](docs/page-design/v6-design.md) — 五原则 + D1-D11 决策（不可变定稿）
-- [v6 视觉规格](docs/page-design/v6-spec-shell.html) — 逐组件验收基准（14 个 v6-spec-*.html）
+- [v6 单一权威源](docs/page-design/v6-master-spec.md) — 决策与范式（整合自 28 份过程文档 + demo，D1-D14 裁决）
+- [v6 视觉规格](docs/page-design/v6-spec-shell.html) — 逐组件验收基准（15 个 v6-spec-*.html）
 - [领域术语表](docs/architecture/context.md) — Session/Panel/Runtime/v3 UI 结构术语
 - [UI/UX 设计原则与参考](docs/page-design/ui-design-principles.md) — 设计方法论 + 竞品案例 + 行动清单
 
-**页面设计目录**: `docs/page-design/` — 前端设计 SSOT 与设计稿。结构：`design-tokens.md`（原子 SSOT）+ `design-system.md`（原语层）+ `v6-design.md`（范式 SSOT）+ `v6-spec-*.html`（视觉规格）+ `archive/v3/`（能力设计 spec：fast-*/flow-*/coding-plan-quota 等活跃功能设计）。禁止在项目根目录或其他位置创建 `demos/`、`impeccable/` 等目录
+**页面设计目录**: `docs/page-design/` — 前端设计 SSOT 与设计稿。结构：`design-tokens.md`（原子 SSOT）+ `design-system.md`（原语层）+ `v6-master-spec.md`（v6 单一权威源）+ `v6-spec-*.html`（视觉规格）+ `archive/v3/`（能力设计 spec：fast-*/flow-*/coding-plan-quota 等活跃功能设计）。禁止在项目根目录或其他位置创建 `demos/`、`impeccable/` 等目录
 
 **外部项目源码**:
 - **pi**: [badlogic/pi-mono](https://github.com/badlogic/pi-mono) — AI coding agent CLI，xyz-agent 通过子进程 RPC 调用。session tree / fork / clone 核心能力为 pi 原生，xyz-agent 不依赖任何 fork 特有改动
@@ -359,7 +359,7 @@ SKIP_ALL_CHECKS=1 git commit            # 跳过所有（仅紧急情况）
 
 ### 13. 目录规范（违反必出 bug）
 
-- **禁止创建 `demos/` 或 `impeccable/` 目录** — 页面设计稿统一放 `docs/page-design/`：v3 正式稿在 `v3/<模块>/draft-*.html`，历史探索稿在 `archive/`。pre-commit hook 自动检查
+- **禁止创建 `demos/` 或 `impeccable/` 目录** — 页面设计稿统一放 `docs/page-design/`：视觉规格在 `v6-spec-*.html`，能力设计 spec 在 `archive/v3/`。pre-commit hook 自动检查
 - **禁止 symlink 指向外部绝对路径** — 项目内 symlink 白名单仅允许 `../` 相对路径（指向同 workspace 内的兄弟 worktree）。外部绝对路径 symlink 打包后目标不存在，导致运行时资源缺失。pre-commit hook 自动检查
 - **`.xyz-harness/` 目录必须提交且不能删除** — 该目录存放所有 spec/plan 的历史设计文档（按 `YYYY-MM-DD-<slug>/` 命名），是项目决策追溯的重要依据。禁止 `git rm -r .xyz-harness/` 或将其加入 `.gitignore`
 - **`DESIGN.md` 必须保留在项目根目录** — ~~产品设计系统的核心定义文件~~（已 DEPRECATED by ADR-0019，Warm & Soft 被推翻）。真身设计系统见 `docs/page-design/design-tokens.md` + `docs/page-design/design-system.md`（v3 冷蓝暗色）。文件保留作历史参考，不作为当前规范

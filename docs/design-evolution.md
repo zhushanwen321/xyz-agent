@@ -80,18 +80,18 @@ visual-modernization 提案（v6 输入基线，内容已合并进 v6-master-spe
 4. **内容列收窄**——对话流 max-width 720px 居中
 5. **彩色降噪**——状态指示极小化（图标 → 圆点），exit≠0 中性化表达
 
-[v6-design.md](page-design/v6-design.md) 在此基线上确立最终决策（D1-D16），成为范式 SSOT。后续整合为 [v6-master-spec.md](page-design/v6-master-spec.md)（单一权威源）。
+[v6-design.md](page-design/v6-design.md) 在此基线上确立最终决策（D1-D14），成为范式 SSOT。后续整合为 [v6-master-spec.md](page-design/v6-master-spec.md)（单一权威源）。
 
 实施过程经历了两轮严格审查：
 - **第一轮**（v6-review-2026-07-31）：5 路并行逐字审查 349 条断言。结论：「五原则的魂保住了，形散了」——发现"被选中"出现三种视觉语言、两份定稿互相否定等问题
-- **修复计划**（v6-fix-plan）：62 个任务，D1-D16 裁决逐条修复
+- **修复计划**（v6-fix-plan）：62 个任务，D1-D14 裁决逐条修复
 - **第二轮复审**（v6-review-round2）：核验修复执行率九成，但留下 6 个新分裂点和 12 处"修了一半"的后遗症
 
 审查过程中发现的核心张力：**五原则的「魂」（设计意图）反复与「形」（具体实现）分裂**。每次修复都会在某个文件里修对，又在另一个文件里引入新的不一致。这成为后续维护的持续关注点。
 
 **标志文档**：
 - [v6-master-spec.md](page-design/v6-master-spec.md)（v6 单一权威源，整合自 28 份过程文档 + demo）
-- [v6-design.md](page-design/v6-design.md)（五原则原始定稿，D1-D16 决策）
+- [v6-design.md](page-design/v6-design.md)（五原则原始定稿，D1-D14 决策）
 - [v6-summary.md](page-design/v6-summary.md)（索引/摘要）
 - `v6-spec-*.html`（15 个视觉规格稿）
 
