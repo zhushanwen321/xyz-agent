@@ -37,6 +37,9 @@ interface PreloadedUpdateData {
   size: number
   /** 产物 sha256 hex（完整性校验，可选兜底） */
   sha256?: string
+  /** 完整 release 信息（installUpdate 权威源：update:install 不接收前端 release，
+   *  从 preloaded 读取以堵装错版本漏洞） */
+  release: LatestReleaseInfo
 }
 
 /**
@@ -58,7 +61,9 @@ function isPreloadedUpdateData(x: unknown): x is PreloadedUpdateData {
     typeof obj.filePath === 'string' &&
     typeof obj.downloadedAt === 'string' &&
     typeof obj.size === 'number' &&
-    (typeof obj.sha256 === 'string' || obj.sha256 === undefined)
+    (typeof obj.sha256 === 'string' || obj.sha256 === undefined) &&
+    typeof obj.release === 'object' &&
+    obj.release !== null
   )
 }
 
@@ -82,6 +87,7 @@ export function writePreloadedUpdate(release: LatestReleaseInfo, filePath: strin
       downloadedAt: new Date().toISOString(),
       size: asset.size ?? 0,
       sha256: asset.sha256,
+      release,
     }
     // eslint-disable-next-line no-magic-numbers -- 2 = JSON 缩进空格数（人类可读）
     writeFileSync(PRELOADED_UPDATE_FILE, JSON.stringify(data, null, 2))
@@ -156,6 +162,65 @@ export async function readPreloadedUpdate(release: LatestReleaseInfo): Promise<s
   }
 
   return data.filePath
+}
+
+/**
+ * 读取预下载产物元信息（原始，不做版本匹配），返回 { release, filePath } 或 null。
+ *
+ * 与 {@link readPreloadedUpdate} 区别：本函数不需调用方传 release 做版本匹配，
+ * 而是信任元信息里的 release 字段（writePreloadedUpdate 时写入的完整 release）。
+ * 供 update:install handler 使用——install 不接收前端传入的 release（堵装错版本漏洞），
+ * 而是以 preloaded 记录的 release 为权威源。也供 update:getPreloaded 透传给前端。
+ *
+ * 仍做完整性校验（文件存在 + size + sha256），但不做 version/assetName 匹配
+ * （版本由读取到的 release 字段本身决定）。
+ *
+ * @returns 有效的 { release, filePath }；文件不存在/损坏/旧格式（无 release 字段）返回 null
+ */
+export async function readPreloadedUpdateRaw(): Promise<{ release: LatestReleaseInfo; filePath: string } | null> {
+  if (!existsSync(PRELOADED_UPDATE_FILE)) return null
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(readFileSync(PRELOADED_UPDATE_FILE, 'utf-8')) as unknown
+  } catch (err) {
+    console.warn('[preloaded-update] parse failed, clearing:', err)
+    clearPreloadedUpdate()
+    return null
+  }
+
+  // 类型守卫含 release 字段校验：旧格式（无 release）isPreloadedUpdateData 返回 false → 清除
+  if (!isPreloadedUpdateData(parsed)) {
+    console.warn('[preloaded-update] invalid schema, clearing')
+    clearPreloadedUpdate()
+    return null
+  }
+  const data: PreloadedUpdateData = parsed
+
+  // 产物文件已被外部清理（用户手动删 / 磁盘清理）→ 清除元信息
+  if (!existsSync(data.filePath)) {
+    console.log(`[preloaded-update] file ${data.filePath} no longer exists, clearing`)
+    clearPreloadedUpdate()
+    return null
+  }
+
+  // 完整性校验：先比对 size（便宜），再比对 sha256（若元信息里有）
+  const actualSize = statSync(data.filePath).size
+  if (data.size > 0 && actualSize !== data.size) {
+    console.log(`[preloaded-update] size mismatch (expected ${data.size}, got ${actualSize}), clearing`)
+    clearPreloadedUpdate()
+    return null
+  }
+  if (data.sha256) {
+    const actualSha = await hashFileSha256(data.filePath)
+    if (actualSha !== data.sha256.toLowerCase()) {
+      console.log(`[preloaded-update] sha256 mismatch, clearing`)
+      clearPreloadedUpdate()
+      return null
+    }
+  }
+
+  return { release: data.release, filePath: data.filePath }
 }
 
 /**

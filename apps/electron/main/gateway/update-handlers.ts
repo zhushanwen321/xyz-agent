@@ -5,6 +5,9 @@
  *   - 'update:check'：检测最新版（w2，委托 IReleaseChecker.checkForLatestRelease）
  *   - 'update:perform'：执行升级（w3，委托 IUpdateOrchestrator.performUpdate +
  *     推 update:progress / update:error 事件 + 收到 triggerRestart 后调 app.quit）
+ *   - 'update:download'：拆分后的下载阶段（委托 downloadUpdate + 写 preloaded）
+ *   - 'update:install'：拆分后的安装阶段（从 preloaded 读取 release + filePath，委托 installUpdate）
+ *   - 'update:getPreloaded'：读取预下载产物（readPreloadedUpdateRaw，供前端判断是否已下载完成）
  *
  * [HISTORICAL] 不变量：
  * - 单 payload 对象规则：emit('update:perform', { release })，禁止多 arg
@@ -26,7 +29,7 @@ import { validateRelease } from '../update/validate-release.js'
 import { writePendingUpdate, readPendingUpdate } from '../update/pending-update.js'
 import { getUpdateSettings, setUpdateSettings } from '../update/update-settings.js'
 import type { IUpdateOrchestrator, UpdateProgressCallback } from '../update/orchestrator.js'
-import { writePreloadedUpdate, readPreloadedUpdate, clearPreloadedUpdate } from '../update/preloaded-update.js'
+import { writePreloadedUpdate, readPreloadedUpdate, readPreloadedUpdateRaw, clearPreloadedUpdate } from '../update/preloaded-update.js'
 
 /** 触发重启前留给前端渲染「重启中」状态的延迟（毫秒）。 */
 const RESTART_QUIT_DELAY_MS = 500
@@ -199,6 +202,7 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
     }
   })
 
+  // [DEPRECATED] UI 已改用 update:download + update:install，此 handler 保留供未来静默升级。
   // ── update:perform（w3：执行升级）──────────────────────────────
   ipcMain.handle('update:perform', async (_event, payload: { release: LatestReleaseInfo }) => {
     if (!deps.updateOrchestrator) {
@@ -295,6 +299,129 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
       // invoke reject 只需传递可序列化的错误摘要。
       throw { message: errorPayload.message, stage: errorPayload.stage, errorCode: errorPayload.errorCode, suggestion: errorPayload.suggestion }
     }
+  })
+
+  // ── update:download（拆分后的下载阶段）───────────────────────
+  // 供新版 UI「先下载 → 再安装」两步流程的下载阶段调用。下载成功后写 preloaded-update.json，
+  // 供 update:install 读取（install 权威源是 preloaded，不信任前端传入的 release）。
+  // 复刻 update:perform 的 inFlight-await（避免与后台预下载争抢 downloading 锁）+
+  // 快路径（已有有效预下载产物 → 跳过重复下载）+ 错误转 update:error 事件。
+  ipcMain.handle('update:download', async (_event, payload: { release: LatestReleaseInfo }) => {
+    if (!deps.updateOrchestrator) {
+      throw new Error('updateOrchestrator not configured')
+    }
+    try {
+      // [SECURITY] 校验 renderer payload（与 update:perform 同源逻辑）
+      validateRelease(payload.release)
+
+      // [MUST-FIX #1] 若后台预下载仍在进行，先 await 它：预下载持有 orchestrator 的
+      // downloading 锁，直接走 download 路径会被拒（'download already in progress'）。
+      // await 到锁释放后再决定走快路径（预下载成功写入了产物）还是 download 路径。
+      const inFlight = preDownloadPromise
+      if (inFlight) {
+        console.log('[update:download] background preload in progress, waiting')
+        await inFlight
+      }
+
+      // 快路径：已有有效预下载产物（同版本 + 文件存在 + 完整性通过）→ 不重复下载
+      const preloadedFile = await readPreloadedUpdate(payload.release)
+      if (preloadedFile) {
+        console.log(`[update:download] preloaded file exists for v${payload.release.version}, skip download`)
+        return { downloaded: true }
+      }
+
+      // 下载阶段 onProgress → update:progress 事件（stage='downloading'）
+      console.log(`[update:download] downloading v${payload.release.version}...`)
+      const { filePath } = await deps.updateOrchestrator.downloadUpdate(payload.release, (percent) => {
+        const win = deps.getMainWindow()
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('update:progress', { stage: 'downloading', percent })
+        }
+      })
+
+      // 写 preloaded（供 update:install 和 update:getPreloaded 读）
+      writePreloadedUpdate(payload.release, filePath)
+      console.log(`[update:download] downloaded v${payload.release.version} to ${filePath}`)
+      return { downloaded: true }
+    } catch (err) {
+      // 错误处理与 update:perform catch 一致：推 update:error + throw 可序列化对象。
+      // download 失败不清 preloaded（此时 preloaded 未写或是历史残留，由 readPreloadedUpdate 自管）。
+      const win = deps.getMainWindow()
+      let errorPayload
+      if (err instanceof UpdateError) {
+        const f = err.toUserFriendly()
+        errorPayload = { stage: f.stage, message: f.message, errorCode: f.code, suggestion: f.suggestion }
+      } else {
+        errorPayload = {
+          stage: 'downloading' as const,
+          message: err instanceof Error ? err.message : String(err),
+          errorCode: undefined,
+          suggestion: '请重试或联系技术支持',
+        }
+      }
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('update:error', errorPayload)
+      }
+      throw { message: errorPayload.message, stage: errorPayload.stage, errorCode: errorPayload.errorCode, suggestion: errorPayload.suggestion }
+    }
+  })
+
+  // ── update:install（拆分后的安装阶段）─────────────────────────
+  // install 权威源是 preloaded-update.json（不是前端传入）：从 readPreloadedUpdateRaw 读取
+  // release + filePath，堵「装错版本」漏洞（前端可能传旧/错 release）。
+  // install 失败清 preloaded（防死循环，迁移 perform 的 usedFastPath clearPreloadedUpdate 逻辑）。
+  ipcMain.handle('update:install', async () => {
+    if (!deps.updateOrchestrator) {
+      throw new Error('updateOrchestrator not configured')
+    }
+    try {
+      // 从 preloaded 读 release + filePath（不信任前端传入）
+      const preloaded = await readPreloadedUpdateRaw()
+      if (!preloaded) {
+        throw new Error('No preloaded update available')
+      }
+      const { release, filePath } = preloaded
+
+      // 安装阶段 onProgress → update:progress 事件（stage='replacing'）
+      const onProgress: UpdateProgressCallback = (stage, percent) => {
+        const win = deps.getMainWindow()
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('update:progress', { stage, percent })
+        }
+      }
+      const result = await deps.updateOrchestrator.installUpdate(release, filePath, onProgress)
+      if (result.triggerRestart) {
+        setTimeout(() => app.quit(), RESTART_QUIT_DELAY_MS)
+      }
+      return result
+    } catch (err) {
+      // install 失败清 preloaded：避免重试反复命中同一产物（spawn 失败/权限错误等非完整性失败），
+      // 下次重试强制走完整重下 + 重新校验，杜绝死循环。
+      clearPreloadedUpdate()
+      const win = deps.getMainWindow()
+      let errorPayload
+      if (err instanceof UpdateError) {
+        const f = err.toUserFriendly()
+        errorPayload = { stage: f.stage, message: f.message, errorCode: f.code, suggestion: f.suggestion }
+      } else {
+        errorPayload = {
+          stage: 'replacing' as const,
+          message: err instanceof Error ? err.message : String(err),
+          errorCode: undefined,
+          suggestion: '请重试或联系技术支持',
+        }
+      }
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('update:error', errorPayload)
+      }
+      throw { message: errorPayload.message, stage: errorPayload.stage, errorCode: errorPayload.errorCode, suggestion: errorPayload.suggestion }
+    }
+  })
+
+  // ── update:getPreloaded（读取预下载产物）──────────────────────
+  // 供前端判断是否已下载完成（决定显示「下载中」还是「安装」按钮）。
+  ipcMain.handle('update:getPreloaded', async () => {
+    return readPreloadedUpdateRaw()
   })
 
   // ── update:getProxyConfig（读取代理配置）──────────────────────

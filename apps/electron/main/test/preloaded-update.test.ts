@@ -43,6 +43,7 @@ process.env.XYZ_AGENT_DATA_DIR = TMP_DATA_DIR
 interface PreloadedUpdateModule {
   writePreloadedUpdate: (release: LatestReleaseInfo, filePath: string) => void
   readPreloadedUpdate: (release: LatestReleaseInfo) => Promise<string | null>
+  readPreloadedUpdateRaw: () => Promise<{ release: LatestReleaseInfo; filePath: string } | null>
   clearPreloadedUpdate: () => void
 }
 
@@ -244,5 +245,64 @@ describe('preloaded-update (预下载产物元信息 SSOT)', () => {
     expect(typeof obj.downloadedAt).toBe('string')
     expect(obj.size).toBe(content.length)
     expect(obj.sha256).toBe(sha)
+    // T3：落盘结构含完整 release 信息（update:install 权威源）
+    expect(typeof obj.release).toBe('object')
+    expect(obj.release).not.toBeNull()
+    const rel = obj.release as Record<string, unknown>
+    expect(rel.version).toBe('0.9.0')
+  })
+
+  // ── T3：readPreloadedUpdateRaw 读回 { release, filePath } ──────
+  it('readPreloadedUpdateRaw：writePreloadedUpdate 后读回 { release, filePath }（不做版本匹配）', async () => {
+    const content = 'raw content'
+    const release = makeRelease('0.9.0', { size: content.length, sha256: sha256Hex(content) })
+    const filePath = createProductFile('mac.zip', content)
+    mod.writePreloadedUpdate(release, filePath)
+
+    const result = await mod.readPreloadedUpdateRaw()
+    expect(result).not.toBeNull()
+    expect(result!.filePath).toBe(filePath)
+    // release 字段含完整 release 信息
+    expect(result!.release.version).toBe('0.9.0')
+    expect(result!.release.assets.macArm64Zip?.name).toBe('xyz-agent-mac-arm64.zip')
+  })
+
+  // ── T3：readPreloadedUpdateRaw 拒绝旧格式（无 release 字段）─────
+  it('readPreloadedUpdateRaw：旧格式（无 release 字段）→ 返回 null + 清除元信息', async () => {
+    // 手工构造旧格式 JSON（无 release 字段，模拟 T3 之前的产物）
+    const oldFormat = {
+      version: '0.9.0',
+      assetName: 'xyz-agent-mac-arm64.zip',
+      filePath: createProductFile('mac.zip', 'old'),
+      downloadedAt: '2025-12-01T00:00:00Z',
+      size: 3,
+    }
+    mkdirSync(path.dirname(PRELOADED_UPDATE_FILE), { recursive: true })
+    writeFileSync(PRELOADED_UPDATE_FILE, JSON.stringify(oldFormat))
+    expect(existsSync(PRELOADED_UPDATE_FILE)).toBe(true)
+
+    const result = await mod.readPreloadedUpdateRaw()
+    // 旧格式无 release → isPreloadedUpdateData 返回 false → 清除
+    expect(result).toBeNull()
+    expect(existsSync(PRELOADED_UPDATE_FILE)).toBe(false)
+  })
+
+  // ── T3：readPreloadedUpdateRaw 产物文件不存在 → null + 清除 ──────
+  it('readPreloadedUpdateRaw：产物文件不存在 → 返回 null + 清除', async () => {
+    const release = makeRelease('0.9.0')
+    const ghostPath = path.join(TMP_DATA_DIR, 'products', 'ghost-raw.zip')
+    expect(existsSync(ghostPath)).toBe(false)
+    mod.writePreloadedUpdate(release, ghostPath)
+
+    const result = await mod.readPreloadedUpdateRaw()
+    expect(result).toBeNull()
+    expect(existsSync(PRELOADED_UPDATE_FILE)).toBe(false)
+  })
+
+  // ── T3：readPreloadedUpdateRaw 文件不存在 → null（不抛错）─────
+  it('readPreloadedUpdateRaw：元信息文件不存在 → 返回 null（不抛错）', async () => {
+    expect(existsSync(PRELOADED_UPDATE_FILE)).toBe(false)
+    const result = await mod.readPreloadedUpdateRaw()
+    expect(result).toBeNull()
   })
 })

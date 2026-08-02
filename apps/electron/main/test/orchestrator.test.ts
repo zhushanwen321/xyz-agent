@@ -219,8 +219,9 @@ describe('W3: orchestrator (W3TC8-9)', () => {
     expect(downloadMocks.downloadAsset).toHaveBeenCalledTimes(1)
     const downloadArg = downloadMocks.downloadAsset.mock.calls[0][0]
     expect(downloadArg.name).toBe('mac.zip')
-    // replacing 标记已写（downloadUpdate 内部 writeUpdateResult('replacing')）
-    expect(existsSync(path.join(TMP_DATA_DIR, 'update', 'update-result.json'))).toBe(true)
+    // downloadUpdate 不再写 replacing 标记（T2：迁移到 installUpdate）。
+    // 预下载只下载不替换，写 replacing 会导致 self-healer 误判需要回滚。
+    expect(existsSync(path.join(TMP_DATA_DIR, 'update', 'update-result.json'))).toBe(false)
   })
 
   it('W3TC10b: downloadUpdate onProgress 透传给 downloadAsset（仅下载百分比）', async () => {
@@ -287,6 +288,8 @@ describe('W3: orchestrator (W3TC8-9)', () => {
     // onProgress 推 replacing 阶段（0 起、100 完）
     expect(onProgress).toHaveBeenCalledWith('replacing', 0)
     expect(onProgress).toHaveBeenCalledWith('replacing', 100)
+    // T2：replacing 标记由 installUpdate 写入（self-healer 检测中断的关键信号）
+    expect(existsSync(path.join(TMP_DATA_DIR, 'update', 'update-result.json'))).toBe(true)
   })
 
   it('W3TC11b: installUpdate detached-script 在 prepareUpdate 内 spawn（断言 spawn 被调）', async () => {
