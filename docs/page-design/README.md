@@ -2,7 +2,7 @@
 
 xyz-agent 前端设计的权威目录。设计系统的 SSOT 与设计稿集中于此。
 
-> **当前状态（2026-08）**：视觉层已从 v3 冷蓝演进到 **v6 太极纯灰**（accent `#c8c8cd`）。v6 范式 SSOT = [`v6-master-spec.md`](./v6-master-spec.md)（单一权威源）。v6 Vue 交互 demo 在 `../../.tmp/v6/`（独立可运行项目，不放在文档目录）。完整演变叙事见 [design-evolution.md](../design-evolution.md)。
+> **当前状态（2026-08）**：视觉层已从 v3 冷蓝演进到 **v6 太极纯灰**（accent `#cfcfd4`）。v6 范式 SSOT = [`v6-master-spec.md`](./v6-master-spec.md)（单一权威源）。v6 Vue 交互 demo 在 `../../.tmp/v6/`（独立可运行项目，不放在文档目录）。完整演变叙事见 [design-evolution.md](../design-evolution.md)。
 
 ## 目录结构
 

@@ -3,6 +3,8 @@
 > 真身文件。所有色值/字体/圆角/阴影/动效以此为准。
 > 由 ADR-0019 确立：C(zcode-demo) 视觉方向 + 补全的完整体系。
 > 标注「补全」的项未经视觉校准，需在高保真阶段验证。
+>
+> **2026-08-02 更新**：v6 重构后，token 决策与范式权威源迁至 [`v6-master-spec.md`](./v6-master-spec.md) §4。本文件与 master-spec §4 的值如有差异（如 `--accent` master-spec 定稿 `#cfcfd4` vs 本文件早期值 `#c8c8cd`），**以 master-spec §4 + `.tmp/v6/src/styles/tokens.css` 为准**（demo 实现对早期提案值做了微调）。本文件保留作历史决策追溯。
 
 ## 色彩 — 暗色（默认 / 优先）
 

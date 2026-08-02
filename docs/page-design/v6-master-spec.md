@@ -2,7 +2,7 @@
 
 > **状态**：权威整合主文档（Master Spec）。整合自 28 份 v6 过程文档 + `.tmp/v6/` 可运行 demo（2026-08-02 最新）。
 > **性质**：视觉语言层 + 前端架构重构的完整设计。授权大刀阔斧，不考虑兼容性。
-> **取代关系**：本文档是 v6 的单一权威源。过程文档（`v6-design.md` / `v6-summary.md` / `v6-review-*.md` / `v6-fix-plan.md` / `v6-spec-*.html`）降级为**实现细节参考**，与本文档冲突时以本文档 + demo 为准。
+> **取代关系**：本文档是 v6 的单一权威源。过程文档（`v6-design.md` / `v6-summary.md` / `v6-spec-*.html`）降级为**实现细节参考**，与本文档冲突时以本文档 + demo 为准。（`v6-review-*.md` / `v6-fix-plan.md` 等审查/修复文档已删除，裁决收敛进本文档 §9。）
 > **真相源优先级**：本文档（决策与范式） > `.tmp/v6/` demo（token 真值与组件实现） > `v6-spec-*.html`（视觉标注稿，部分已滞后） > 过程文档（审查/修复计划，已收敛进本文档）。
 >
 > **2026-08-02 修订**：新增 §3.5 实践原则（8 条，demo 迭代沉淀）；§5.6 状态指示圆点范式范围限缩（SessionList 改用 §3.5.2）；§9 新增 D12/D13/D14 裁决（SessionList 信号编排 / TurnRail 滚动条二合一 / Project 一级导航）。
@@ -653,7 +653,7 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 
 ## §8 落地改动点（前端整体架构重构）
 
-> 结合 `v6-architecture-refactor.md`（现状审查+缝补）+ `renderer-target-architecture.md`（终态架构）。
+> 结合 [`v6-architecture-refactor.md`](../architecture/v6-architecture-refactor.md)（现状审查+缝补）+ [`renderer-target-architecture.md`](../architecture/renderer-target-architecture.md)（终态架构）。
 > 时序：阶段 0 → A → B → C。
 
 ### 8.1 阶段 0：测试基础设施（最先，为重构护航）
@@ -743,7 +743,7 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 |---|---|---|
 | D5 | 对话流共享 CSS | 抽取 v6-spec-base.css |
 | D7 | 文档 chrome | 不豁免 impeccable（spec 自身也禁 uppercase/彩条） |
-| D9 | SSOT 链 | 全部同步更新（README/design-system/visual-modernization） |
+| D9 | SSOT 链 | 全部同步更新（README/design-system/design-evolution） |
 
 ---
 
@@ -757,11 +757,11 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 | 可运行参考 | `.tmp/v6/`（demo 项目） | ✅ token 真值与组件实现 |
 | 设计 SSOT | `v6-design.md` | 降级为决策参考（token 值已被本文档 §4 取代） |
 | 设计总览 | `v6-summary.md` | 降级为索引（部分值滞后） |
-| 架构 SSOT | `renderer-target-architecture.md` / `v6-architecture-refactor.md` | ✅ 保留（架构细节本文档 §7-§8 摘要引用） |
+| 架构 SSOT | `../architecture/renderer-target-architecture.md` / `../architecture/v6-architecture-refactor.md` | ✅ 保留（架构细节本文档 §7-§8 摘要引用） |
 | HTML spec（18 份） | `v6-spec-*.html` | 降级为视觉标注参考（部分已滞后于 demo） |
-| 过程文档 | `v6-review-*.md` / `v6-fix-plan.md` / `v6-review-action-plan.md` | 裁决已收敛进本文档 §9，过程文档归档 |
+| 过程文档 | `v6-review-*.md` / `v6-fix-plan.md` / `v6-review-action-plan.md` | 已删除（裁决已收敛进本文档 §9；UI 演变叙事合并至 `../design-evolution.md`） |
 | 共享 CSS | `v6-spec-base.css` | ✅ 保留（对话流四文件共享） |
-| 输入提案 | `visual-modernization-2026-07.md` | 保留追溯（已被 v6-design 取代） |
+| 输入提案 | `visual-modernization-2026-07.md` | 已删除（内容已被 v6-design 取代，无独立保留价值） |
 
 ### 10.2 真相源优先级
 
