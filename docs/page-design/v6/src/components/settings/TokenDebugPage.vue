@@ -60,6 +60,9 @@ const THEMES: Record<string, Record<string, string>> = {
 const themeEntries = Object.entries(THEMES)
 const themeSwatch = (t: Record<string, string>) => [t['--accent'], t['--neutral-fg'], t['--surface'], t['--bg']]
 
+/** 当前激活的主题名（首次加载 = 玄主题，与 tokens.css :root 默认值一致） */
+const currentThemeName = ref('太极 · 玄（纯灰 · V3 决策）')
+
 /** 随主题整体切换但不进 color picker 的效果 token（rgba 边框 / hover 派生色 / danger-fg） */
 const EFFECT_TOKENS = ['--border', '--border-strong', '--hairline', '--accent-hover', '--neutral-ico-hover', '--danger-fg']
 
@@ -132,7 +135,8 @@ const dirty = computed(() => COLOR_TOKENS.some(isDirty))
 
 // ── 1. 主题切换：先清空颜色 token + 效果 token，再批量写入；baseline 同步为新主题；滑块归零 ──
 // --accent-fg 不在 COLOR_TOKENS（不需参与滑块 HSL 偏移），与 EFFECT_TOKENS 一起单独处理：theme 有则 write，无则 reset 回 tokens.css 默认
-function applyTheme(theme: Record<string, string>): void {
+function applyTheme(name: string, theme: Record<string, string>): void {
+  currentThemeName.value = name
   for (const t of COLOR_TOKENS) resetToken(t)
   resetToken('--accent-fg')
   for (const t of EFFECT_TOKENS) resetToken(t)
@@ -214,6 +218,7 @@ function resetAll(): void {
   refreshBaseline(); refreshColorValues(); refreshSizeValues()
   lightness.value = 0; saturation.value = 100; hueShift.value = 0
   followAccent.value = false; accentInput.value = colorValues['--accent'] || ''
+  currentThemeName.value = '太极 · 玄（纯灰 · V3 决策）'
 }
 function exportJson(): void {
   const obj: Record<string, string> = {}
@@ -246,7 +251,7 @@ onMounted(() => {
     </header>
 
     <GroupCard title="预设主题">
-      <div v-for="[name, t] in themeEntries" :key="name" class="theme-row" @click="applyTheme(t)">
+      <div v-for="[name, t] in themeEntries" :key="name" class="theme-row" :class="{ active: name === currentThemeName }" @click="applyTheme(name, t)">
         <span class="theme-name">{{ name }}</span>
         <div class="theme-swatches">
           <span v-for="(c, i) in themeSwatch(t)" :key="i" class="swatch" :style="{ background: c }"></span>
@@ -330,6 +335,8 @@ onMounted(() => {
 .theme-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 6px; min-height: 40px; cursor: pointer; border-radius: var(--radius-sm); transition: background var(--duration-fast) var(--ease); }
 .theme-row + .theme-row { border-top: 1px solid color-mix(in oklch, var(--border) 50%, transparent); }
 .theme-row:hover { background: var(--accent-soft); }
+.theme-row.active { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-ring); }
+.theme-row.active .theme-name { color: var(--accent); }
 .theme-name { font-size: var(--text-base); color: var(--neutral-fg); font-weight: 500; }
 .theme-swatches { display: flex; gap: 4px; }
 .theme-swatches .swatch { width: 14px; height: 14px; border-radius: 3px; border: 1px solid rgba(255, 255, 255, 0.1); }
