@@ -1,7 +1,7 @@
 /**
  * Extension Filter Pipeline — 唯一权威过滤实现
  *
- * 纯函数。所有消费者 import 这里的函数，禁止其他地方写 inline disabled/mandatory/preset 过滤。
+ * 纯函数。所有消费者 import 这里的函数，禁止其他地方写 inline disabled/builtin/preset 过滤。
  *
  * 两阶段管道：
  *   1. resolveExtensions：resolver 发现结果 → disabled 过滤 + tier 推导（一次读盘）
@@ -42,9 +42,9 @@ export interface ResolvedExtension {
   name: string
   /** 扩展来源（透传自 DiscoveredExtension.source），用于 disabled key 命名空间隔离 */
   source: ExtensionSource
-  /** mandatory 分级；undefined = 非 mandatory */
+  /** builtin 分级；undefined = 非 builtin。infrastructure=不可禁的基础包，feature=可禁的功能包 */
   tier: ExtensionTier | undefined
-  /** 是否应加载（infrastructure/feature mandatory 强制 true；普通包看 disabled） */
+  /** 是否应加载（infrastructure 强制 true；feature/user 看 disabled） */
   loadable: boolean
   /** 是否可被 preset 覆盖（false = infrastructure 绝对强加载；true = 其余） */
   presetOverridable: boolean
@@ -66,16 +66,17 @@ export function resolveExtension(dir: string, source: ExtensionSource, disabled:
   const meta = readPkgMeta(dir)
   // S8：package.json name 字段类型未知（JSON.parse 可能返回 number/object），用 typeof 守卫
   const name = typeof meta.name === 'string' ? meta.name : basename(dir)
-  // #4：mandatory 判定排除 discovery 源（discovery 目录扩展即使 name 命中 mandatory SSOT 也不当 mandatory）。
-  // packages[] 安装的 mandatory 包（source='settings'）与打包内置（source='npm'）仍当 mandatory。
+  // #4：builtin（原 mandatory）判定排除 discovery 源（discovery 目录扩展即使 name 命中 builtin SSOT 也不当 builtin）。
+  // packages[] 安装的 builtin 包（source='settings'）与打包内置（source='npm'）仍当 builtin。
   const isMandatory = source !== 'discovery' && isMandatoryExtension(name)
   const tier = !isMandatory ? undefined : isInfrastructureExtension(name) ? 'infrastructure' : 'feature'
   // #2：disabled key 按 source 命名空间隔离（discovery 扩展用 'discovery:' 前缀，避免与 npm 扩展串扰）
   const disabledKey = source === 'discovery' ? `discovery:${name}` : `npm:${name}`
-  // mandatory（infrastructure + feature）无视 disabled 强加载；普通包看 disabled
-  const loadable = isMandatory ? true : !disabled.has(disabledKey)
-  // presetOverridable：只有 mandatory 的 infrastructure 包不可覆盖（discovery 源扩展即使 name
-  // 命中 infrastructure 也可覆盖——它不当 mandatory）
+  // infrastructure builtin 强加载（被依赖的基础包，不可禁）；feature builtin 和 user 看 disabled
+  const isInfraBuiltin = isMandatory && isInfrastructureExtension(name)
+  const loadable = isInfraBuiltin ? true : !disabled.has(disabledKey)
+  // presetOverridable：只有 builtin 的 infrastructure 包不可覆盖（discovery 源扩展即使 name
+  // 命中 infrastructure 也可覆盖——它不当 builtin）
   const presetOverridable = !(isMandatory && isInfrastructureExtension(name))
   return { path: dir, name, source, tier, loadable, presetOverridable }
 }

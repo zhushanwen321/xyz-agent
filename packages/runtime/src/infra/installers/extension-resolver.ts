@@ -189,16 +189,27 @@ export class ExtensionResolver implements IExtensionResolver {
   }
 
   /**
-   * 扫描 bundled extensions
+   * 扫描 bundled extensions（builtin pi-* 包，打包内置）
+   *
+   * packaged 模式：扫描 Resources/extensions/@zhushanwen/<pkg>/。
+   * prepare-builtin-extensions.sh 预先将 9 个 builtin 包 deploy 到该目录，
+   * electron-builder extraResources 拷贝进产物。含真实运行时 deps，不含 peerDeps。
    *
    * dev 模式：projectRoot = apps/electron（runtime 子进程 cwd），bundled extensions
    * 在 repo root 的 resources/pi/agent/extensions/（与 apps/electron 平级的 resources/ 目录）。
    * repo root 相对 apps/electron 是 ../..
    */
   scanBundledExtensions(projectRoot: string, packaged: boolean): ExtensionMap {
-    if (packaged) return new Map()
-
     const result: ExtensionMap = new Map()
+
+    if (packaged) {
+      // builtin 包目录：Resources/extensions/@zhushanwen/<pkg>/
+      const builtinDir = join(projectRoot, 'extensions', '@zhushanwen')
+      if (!existsSync(builtinDir)) return result
+      this.scanDirectory(builtinDir, result, 'bundled')
+      return result
+    }
+
     const bundledDir = join(projectRoot, '..', '..', 'resources', 'pi', 'agent', 'extensions')
 
     if (!existsSync(bundledDir)) return result

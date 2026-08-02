@@ -16,6 +16,9 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
+  "dependencies": {
+    "croner": "^9.0.0"
+  },
   "devDependencies": {
     "vitest": "^4.1.8"
   },
@@ -26,17 +29,13 @@
   ],
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
-    "typebox": "*",
-    "croner": "^9.0.0"
+    "typebox": "*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-coding-agent": {
       "optional": true
     },
     "typebox": {
-      "optional": true
-    },
-    "croner": {
       "optional": true
     }
   }

@@ -1,10 +1,10 @@
 /**
- * ExtensionPage mandatory 扩展 UI 测试。
+ * ExtensionPage 三层权限矩阵 UI 测试。
  *
- * 覆盖：
- *  - mandatory 扩展显示「内置」badge
- *  - mandatory 扩展隐藏卸载/disable/升级/autoUpgrade 按钮
- *  - 非 mandatory 扩展不受影响
+ * 覆盖新的 layer + tier 权限矩阵：
+ *  - builtin/infrastructure：可见、不可禁、不可卸、无 autoUpgrade
+ *  - builtin/feature：可见、可禁、不可卸、无 autoUpgrade（翻转原 mandatory 行为）
+ *  - user：全部操作可见（禁/卸/升级/autoUpgrade）
  *
  * mock 策略：
  *  - vi.mock('@/api') 把 extension 门面替成可断言的 mock（fetchRecommended 空数组避免 onMounted 拉取报错）。
@@ -39,34 +39,52 @@ vi.mock('@/api', () => ({
 import ExtensionPage from '@/components/settings/ExtensionPage.vue'
 import { useToast } from '@/composables/useToast'
 
-/** mandatory 扩展 fixture（强制安装，不可卸载/禁用，应显示内置 badge 且隐藏操作按钮） */
-function mandatoryExt(): ExtensionItem {
+/** infrastructure builtin fixture（layer='builtin' && tier='infrastructure'，不可禁不可卸） */
+function infraBuiltinExt(): ExtensionItem {
+  return {
+    name: '@zhushanwen/pi-pending-notifications',
+    displayName: '@zhushanwen/pi-pending-notifications',
+    dirName: 'pi-pending-notifications',
+    version: '1.0.0',
+    description: 'infra builtin',
+    path: '/exts/pi-pending-notifications',
+    enabled: true,
+    source: 'built-in',
+    layer: 'builtin',
+    tier: 'infrastructure',
+    tools: [],
+  }
+}
+
+/** feature builtin fixture（layer='builtin' && tier='feature'，可禁不可卸） */
+function featureBuiltinExt(): ExtensionItem {
   return {
     name: '@zhushanwen/pi-goal',
     displayName: '@zhushanwen/pi-goal',
     dirName: 'pi-goal',
     version: '0.5.0',
-    description: 'goal extension',
+    description: 'feature builtin',
     path: '/exts/pi-goal',
     enabled: true,
-    source: 'user-installed',
-    autoUpgrade: true,
-    mandatory: true,
+    source: 'built-in',
+    layer: 'builtin',
+    tier: 'feature',
     tools: [],
   }
 }
 
-/** 非 mandatory 扩展 fixture（应保留全部操作按钮） */
-function normalExt(): ExtensionItem {
+/** user 层扩展 fixture（layer='user'，全部操作可见：禁/卸/升级/autoUpgrade） */
+function userExt(): ExtensionItem {
   return {
     name: 'my-tools',
     displayName: 'my-tools',
     dirName: 'my-tools',
     version: '1.0.0',
-    description: 'normal extension',
+    description: 'user extension',
     path: '/exts/my-tools',
     enabled: true,
     source: 'user-installed',
+    layer: 'user',
     autoUpgrade: false,
     tools: ['tool-a'],
   }
@@ -97,54 +115,62 @@ function findExtRow(root: ReturnType<typeof mount>, name: string) {
   return rows.find((r) => r.text().includes(name))
 }
 
-describe('ExtensionPage mandatory UI', () => {
-  it('mandatory 扩展显示「内置」badge', async () => {
-    wrapper = mount(ExtensionPage, { props: { extensions: [mandatoryExt()] } })
+describe('ExtensionPage 三层权限矩阵 UI', () => {
+  it('infrastructure builtin 显示「内置」badge + 隐藏启用开关 + 隐藏卸载/升级/autoUpgrade', async () => {
+    wrapper = mount(ExtensionPage, { props: { extensions: [infraBuiltinExt()] } })
     await flushPromises()
-    const row = findExtRow(wrapper!, '@zhushanwen/pi-goal')
+    const row = findExtRow(wrapper!, '@zhushanwen/pi-pending-notifications')
     expect(row).toBeTruthy()
+    // badge 含「内置」
     expect(row!.text()).toContain('内置')
-  })
-
-  it('mandatory 扩展隐藏卸载按钮', async () => {
-    wrapper = mount(ExtensionPage, { props: { extensions: [mandatoryExt()] } })
-    await flushPromises()
-    const row = findExtRow(wrapper!, '@zhushanwen/pi-goal')
-    expect(row).toBeTruthy()
-    expect(row!.findAll('button[title="卸载"]')).toHaveLength(0)
-  })
-
-  it('mandatory 扩展隐藏 disable 开关', async () => {
-    wrapper = mount(ExtensionPage, { props: { extensions: [mandatoryExt()] } })
-    await flushPromises()
-    const row = findExtRow(wrapper!, '@zhushanwen/pi-goal')
-    expect(row).toBeTruthy()
-    // enable/disable Switch 渲染为 button[role="switch"]；autoUpgrade Switch 已被 v-if 隐藏
+    // 启用开关隐藏（infrastructure 不可禁）
     expect(row!.findAll('button[role="switch"]')).toHaveLength(0)
-  })
-
-  it('mandatory 扩展隐藏升级按钮和自动升级开关', async () => {
-    wrapper = mount(ExtensionPage, { props: { extensions: [mandatoryExt()] } })
-    await flushPromises()
-    const row = findExtRow(wrapper!, '@zhushanwen/pi-goal')
-    expect(row).toBeTruthy()
+    // 卸载/升级按钮隐藏
+    expect(row!.findAll('button[title="卸载"]')).toHaveLength(0)
     expect(row!.findAll('button[title="升级"]')).toHaveLength(0)
-    // 「自动升级」文本仅在 autoUpgrade Switch 行出现，mandatory 应隐藏
+    // autoUpgrade 文案不应出现（开关行整体被 v-if 隐藏）
     expect(row!.text()).not.toContain('自动升级')
   })
 
-  it('非 mandatory 扩展仍显示全部操作按钮', async () => {
-    wrapper = mount(ExtensionPage, { props: { extensions: [normalExt()] } })
+  it('feature builtin 显示「内置」badge + 显示启用开关（可禁）+ 隐藏卸载/升级/autoUpgrade', async () => {
+    wrapper = mount(ExtensionPage, { props: { extensions: [featureBuiltinExt()] } })
+    await flushPromises()
+    const row = findExtRow(wrapper!, '@zhushanwen/pi-goal')
+    expect(row).toBeTruthy()
+    // badge 含「内置」
+    expect(row!.text()).toContain('内置')
+    // 启用开关可见（feature builtin 可禁，翻转原 mandatory 行为）
+    expect(row!.findAll('button[role="switch"]')).toHaveLength(1)
+    // 卸载/升级按钮隐藏（builtin 不可卸，由 runtime 自动升级）
+    expect(row!.findAll('button[title="卸载"]')).toHaveLength(0)
+    expect(row!.findAll('button[title="升级"]')).toHaveLength(0)
+    // autoUpgrade 文案不应出现（开关行整体被 v-if 隐藏）
+    expect(row!.text()).not.toContain('自动升级')
+  })
+
+  it('user 扩展全部操作可见（禁/卸/升级/autoUpgrade）+ 无「内置」badge', async () => {
+    wrapper = mount(ExtensionPage, { props: { extensions: [userExt()] } })
     await flushPromises()
     const row = findExtRow(wrapper!, 'my-tools')
     expect(row).toBeTruthy()
+    // 卸载 1 + 升级 1
     expect(row!.findAll('button[title="卸载"]')).toHaveLength(1)
     expect(row!.findAll('button[title="升级"]')).toHaveLength(1)
-    // enable Switch + autoUpgrade Switch = 2 个
+    // enable Switch + autoUpgrade Switch = 2
     expect(row!.findAll('button[role="switch"]')).toHaveLength(2)
     expect(row!.text()).toContain('自动升级')
-    // 非 mandatory 不显示内置 badge
+    // user 层不显示内置 badge
     expect(row!.text()).not.toContain('内置')
+  })
+
+  it('首屏渲染 gate：[infra, feature, user] 三行均渲染（防 layer 判断异常导致整行消失）', async () => {
+    wrapper = mount(ExtensionPage, {
+      props: { extensions: [infraBuiltinExt(), featureBuiltinExt(), userExt()] },
+    })
+    await flushPromises()
+    expect(findExtRow(wrapper!, '@zhushanwen/pi-pending-notifications')).toBeTruthy()
+    expect(findExtRow(wrapper!, '@zhushanwen/pi-goal')).toBeTruthy()
+    expect(findExtRow(wrapper!, 'my-tools')).toBeTruthy()
   })
 
   it('推荐区为空时不渲染（recommended v-if=false）', async () => {

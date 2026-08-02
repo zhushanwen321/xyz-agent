@@ -150,15 +150,15 @@
             <!-- 来源标签 -->
             <span v-if="ext.source === 'user-installed'" class="rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent">{{ t('settings.extension.sourceUser') }}</span>
             <span v-if="ext.source === 'discovery'" class="rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent">{{ t('settings.extension.sourceDiscovery') }}</span>
-            <!-- 内置 badge：mandatory 扩展（不可卸载/禁用） -->
-            <span v-if="ext.mandatory" class="rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent">{{ t('settings.extension.mandatoryBadge') }}</span>
+            <!-- 内置 badge：builtin 层扩展（layer='builtin'，不可卸载；infrastructure 子级亦不可禁） -->
+            <span v-if="ext.layer === 'builtin'" class="rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent">{{ t('settings.extension.mandatoryBadge') }}</span>
           </div>
           <span class="truncate text-[11px] text-neutral-mid">{{ ext.description }}</span>
           <div v-if="ext.tools?.length" class="mt-1 flex flex-wrap gap-1">
             <span v-for="t in ext.tools" :key="t" class="rounded-sm bg-surface px-1 py-0.5 font-mono text-[10px] text-neutral-dim">{{ t }}</span>
           </div>
-          <!-- 自动升级开关（仅 user-installed 非 mandatory 扩展显示） -->
-          <div v-if="ext.source === 'user-installed' && !ext.mandatory" class="mt-1.5 flex items-center gap-2">
+          <!-- 自动升级开关（仅 user 层 + user-installed 来源扩展显示；builtin 由 runtime 管理） -->
+          <div v-if="ext.layer !== 'builtin' && ext.source === 'user-installed'" class="mt-1.5 flex items-center gap-2">
             <Switch
               :model-value="ext.autoUpgrade ?? false"
               class="shrink-0"
@@ -170,18 +170,19 @@
           </div>
         </div>
         <!-- 启用开关：Switch 原语。乐观更新——点击立即改 store（开关即时滑动），API 失败回滚。
-             mandatory 扩展不可禁用，隐藏开关。 -->
+             三层权限矩阵：仅 infrastructure builtin（layer='builtin' && tier='infrastructure'）隐藏开关；
+             feature builtin 可禁（开关可见可操作）；user 层同理。 -->
         <Switch
-          v-if="!ext.mandatory"
+          v-if="!(ext.layer === 'builtin' && ext.tier === 'infrastructure')"
           :model-value="ext.enabled"
           class="shrink-0"
           :disabled="toggling.has(ext.name)"
           :aria-label="ext.enabled ? t('settings.extension.disableExt') : t('settings.extension.enableExt')"
           @update:model-value="onToggle(ext, $event)"
         />
-        <!-- 升级按钮（仅 user-installed 非 mandatory 扩展显示，mandatory 由 runtime 自动升级） -->
+        <!-- 升级按钮（仅 user 层 + user-installed 来源扩展显示；builtin 由 runtime 自动升级） -->
         <Button
-          v-if="ext.source === 'user-installed' && !ext.mandatory"
+          v-if="ext.layer !== 'builtin' && ext.source === 'user-installed'"
           variant="ghost"
           class="size-7 shrink-0 rounded-sm p-0 text-neutral-dim hover:bg-accent-soft hover:text-accent [&_svg]:size-3.5"
           :title="t('settings.extension.upgradeTitle')"
@@ -191,9 +192,9 @@
           <Loader2 v-if="upgrading.has(ext.name)" class="animate-spin" />
           <ArrowUpCircle v-else />
         </Button>
-        <!-- 卸载按钮（mandatory 扩展不可卸载，隐藏） -->
+        <!-- 卸载按钮（仅 user 层可卸；builtin 不可卸载，discovery 来源不经此入口） -->
         <Button
-          v-if="!ext.mandatory && ext.source !== 'discovery'"
+          v-if="ext.layer !== 'builtin' && ext.source !== 'discovery'"
           variant="ghost"
           class="size-7 shrink-0 rounded-sm p-0 text-neutral-dim hover:bg-danger-soft hover:text-danger [&_svg]:size-3.5"
           :title="t('settings.extension.uninstallTitle')"

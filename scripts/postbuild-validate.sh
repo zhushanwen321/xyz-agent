@@ -189,6 +189,27 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
             echo -e "  ${RED}✗${NC} bin/xyz-settings 缺失（检查 electron-builder.yml from 路径 dist/runtime/cli.cjs）"
             FAILED=1
         fi
+        # builtin pi extensions（9 个 @zhushanwen/pi-* 包，打包内置）
+        # prepare-builtin-extensions.sh 部署 + electron-builder extraResources 拷贝。
+        # 校验关键包目录 + permission 的 wasm 文件（运行时必需）。
+        BUILTIN_EXT_DIR="$APP_PATH/Contents/Resources/extensions/@zhushanwen"
+        for pkg in pi-ask-user pi-goal pi-todo pi-pending-notifications pi-subagent-workflow \
+                   pi-structured-output pi-permission pi-scheduler pi-rename-session; do
+            if [ -d "$BUILTIN_EXT_DIR/$pkg" ]; then
+                echo -e "  ${GREEN}✓${NC} builtin ext: $pkg"
+            else
+                echo -e "  ${RED}✗${NC} builtin ext 缺失: $pkg（检查 prepare-builtin-extensions.sh + electron-builder.yml）"
+                FAILED=1
+            fi
+        done
+        # permission 的 tree-sitter wasm（运行时 bash 解析必需）
+        PERM_WASM="$BUILTIN_EXT_DIR/pi-permission/node_modules/tree-sitter-bash/tree-sitter-bash.wasm"
+        if [ -f "$PERM_WASM" ]; then
+            echo -e "  ${GREEN}✓${NC} permission tree-sitter-bash.wasm"
+        else
+            echo -e "  ${RED}✗${NC} permission tree-sitter-bash.wasm 缺失（permission 扩展将无法解析 bash）"
+            FAILED=1
+        fi
     else
         echo -e "  ${YELLOW}⚠ 未找到 .app 目录${NC}"
     fi
@@ -218,6 +239,17 @@ if [ -d "$OUTPUT_DIR/win-unpacked" ]; then
             echo -e "  ${GREEN}✓${NC} ${required#$WIN_ROOT/}"
         else
             echo -e "  ${RED}✗${NC} ${required#$WIN_ROOT/} 缺失"
+            FAILED=1
+        fi
+    done
+    # builtin pi extensions（Windows 同 mac 校验）
+    WIN_BUILTIN="$WIN_RESOURCES/extensions/@zhushanwen"
+    for pkg in pi-ask-user pi-goal pi-todo pi-pending-notifications pi-subagent-workflow \
+               pi-structured-output pi-permission pi-scheduler pi-rename-session; do
+        if [ -d "$WIN_BUILTIN/$pkg" ]; then
+            echo -e "  ${GREEN}✓${NC} builtin ext: $pkg"
+        else
+            echo -e "  ${RED}✗${NC} builtin ext 缺失: $pkg"
             FAILED=1
         fi
     done

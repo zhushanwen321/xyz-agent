@@ -79,6 +79,22 @@ extraResources:
   # 客户端 message 元数据映射框架：重开 session 时按映射回填 image/file badge。同前两个 extension 模式。
   - from: ../../xyz-client-msg-id-mapper.js
     to: xyz-client-msg-id-mapper.js
+  # builtin pi extensions（9 个 @zhushanwen/pi-* 包，打包内置，不走 npm install）
+  # prepare-builtin-extensions.sh 预先 deploy 到 resources/extensions/@zhushanwen/<pkg>/
+  # 含真实运行时 deps（tree-sitter-bash/ajv/croner 等），不含 peerDeps（pi 进程提供）
+  - from: resources/extensions
+    to: extensions
+    filter:
+      - "**/*"
+      # 排除 tree-sitter-bash 的 C 源码 + grammar（产物不需要，省 10M）
+      - "!**/tree-sitter-bash/src/**"
+      - "!**/tree-sitter-bash/grammar.js"
+      # 排除 web-tree-sitter 的 debug wasm（804K，非运行时需要）
+      - "!**/web-tree-sitter/debug/**"
+      # 排除测试 + 类型声明（运行时不需要）
+      - "!**/__tests__/**"
+      - "!**/*.test.*"
+      - "!**/*.d.ts"
   # xyz-settings CLI（从 tsup 打包的 cli.cjs）
   # packaged app 中位置：resources/bin/xyz-settings
   # pi Skill 通过绝对路径引用此文件

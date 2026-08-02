@@ -11,8 +11,9 @@
 # 7. resources/pi 无指向外部绝对路径的 symlink
 # 8. 磁盘空间
 #
-# 注：builtin pi-extensions（@zhushanwen/pi-*）已改为 Settings 推荐安装（2026-07-04），
-# 不再打包进产物，原 npm packages / 传递依赖检查已移除。
+# 注：builtin pi-extensions（@zhushanwen/pi-*）打包内置（2026-08 重构），
+# 由 prepare-builtin-extensions.sh 部署 + electron-builder extraResources 拷贝。
+# 产物存在性校验在 postbuild-validate.sh；此处不预检（产物由 build 前置步骤生成）。
 #
 # 用法: npm run preflight 或 CI 中单独调用
 # CI 模式: ./scripts/preflight-check.sh --ci（任何失败都非 0）

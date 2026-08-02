@@ -141,6 +141,18 @@ async function main(): Promise<void> {
   // ADR-0020 §1 一次性迁移：旧版本 skill 路径存在 settings.json.skills，
   // 首启用时提升为 discovery.json SSOT。幂等：discovery 已有数据则 no-op。
   configService.migrateSettingsSkillsToDiscovery()
+
+  // 一次性迁移：清理旧版 mandatory npm install 遗留的 9 个 builtin 包记录。
+  // 新版改为打包内置，不再需要 boot 时 npm install；从 settings.json packages[] /
+  // auto-upgrade-packages.json / disabled-packages.json 清除遗留（幂等）。
+  // 不删 ~/.xyz-agent/npm/node_modules/ 物理文件（用户可能有其他依赖）。
+  // 必须在 checkAndAutoUpgrade 前跑（否则 autoUpgrade 仍会尝试升级打包内置包）。
+  try {
+    await extensionService.migrateBuiltinExtensions()
+  } catch (e) {
+    // best-effort：迁移失败不阻塞启动（最坏情况是 builtin 包被重复发现，不影响功能）
+    console.warn('[runtime] builtin extension migration failed:', e)
+  }
   // PresetService（pi-launch-presets 设计 §8.1）：独立 service，与 ConfigService 对称。
   // 依赖 configStore（pi-presets.json 路径推导）+ extensionService（resolve 用 builtin/scanExtensions）。
   // 组合根构造，经 setPresetService 注入 SessionService（与 setConfigService 同模式）。
@@ -433,23 +445,6 @@ async function main(): Promise<void> {
   // eslint-disable-next-line taste/no-silent-catch -- skill 扫描失败不阻塞 runtime，UI 降级空列表
   } catch (e) {
     console.error('[runtime] skill registry initialization failed:', e)
-  }
-
-  // mandatory 扩展：确保强制安装的扩展已装好（在 auto-upgrade 之前，先装再升级）
-  try {
-    const mandatoryResults = await extensionService.ensureMandatoryExtensions()
-    const installed = mandatoryResults.filter(r => r.installed && !r.error)
-    const failed = mandatoryResults.filter(r => !r.installed || r.error)
-    if (installed.length > 0) {
-      console.log(`[runtime] installed ${installed.length} mandatory extension(s):`,
-        installed.map(r => r.name).join(', '))
-    }
-    if (failed.length > 0) {
-      console.warn(`[runtime] ${failed.length} mandatory extension(s) failed to install:`,
-        failed.map(r => `${r.name} (${r.error})`).join(', '))
-    }
-  } catch (e) {
-    console.warn('[runtime] mandatory extension installation encountered an error:', e)
   }
 
   // auto-rename 默认初始化：首次启动默认开启（创建 flag file + initialized 标记）
