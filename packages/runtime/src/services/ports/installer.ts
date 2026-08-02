@@ -11,9 +11,20 @@ export interface InstallerError {
   message: string
 }
 
-/** ExtensionResolver.resolve 返回的路径集合。 */
+/** 扩展发现来源（按优先级降序） */
+export type ExtensionSource = 'npm' | 'user' | 'discovery' | 'settings' | 'third-party' | 'bundled'
+
+/** 发现的扩展目录 + 来源元数据 */
+export interface DiscoveredExtension {
+  /** 扩展目录绝对路径 */
+  path: string
+  /** 发现来源 */
+  source: ExtensionSource
+}
+
+/** ExtensionResolver.resolve 返回的路径集合（全量发现，未做任何策略过滤）。 */
 export interface ExtensionPaths {
-  extensionDirs: string[]
+  extensionDirs: DiscoveredExtension[]
 }
 
 /**

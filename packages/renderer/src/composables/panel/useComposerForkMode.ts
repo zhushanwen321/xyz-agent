@@ -16,9 +16,11 @@
  */
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { GitFork } from '@lucide/vue'
 import { useSidebar } from '@/composables/features/useSidebar'
 import { useToast } from '@/composables/useToast'
 import { useForkModeChannel } from '@/composables/panel/useForkModeChannel'
+import type { StagingAction } from '@/composables/panel/staging-types'
 import type ComposerInput from '@/components/panel/ComposerInput.vue'
 
 /** fork 发送副作用依赖（由 Composer 注入，避免重复持有 draft/isSending 真源） */
@@ -31,6 +33,12 @@ interface ForkDeps {
   clearInput: () => void
   /** 发送失败时恢复草稿到输入区 */
   restoreInput: (text: string) => void
+  /** Staging Mode（ADR-0043）：进入暂存态（快照模型/thinking） */
+  enterStagingMode: () => void
+  /** Staging Mode：退出暂存态（清空快照，恢复常规态） */
+  exitStagingMode: () => void
+  /** Staging Mode：获取暂存配置（供 fork 发送时透传给新 session） */
+  getStagingConfig: () => { modelOverride?: string; thinkingOverride?: string }
 }
 
 /**
@@ -54,6 +62,11 @@ export function useComposerForkMode(
   handleForkEsc: (e: KeyboardEvent) => boolean
   /** fork 模式发送：调 forkSessionAsk + exitForkMode，返回 true 表示已消费；否则返回 false */
   handleForkSend: (text: string) => Promise<boolean>
+  /**
+   * 包装成 StagingAction（fork 实现），供 useComposerStaging 注册消费。
+   * 不改变现有 forkMode/enterForkMode 等 expose 契约（仅追加 adapter，对齐 ADR-0044）。
+   */
+  asStagingAction: () => StagingAction
 } {
   const { t } = useI18n()
   const { error: toastError } = useToast()
@@ -66,6 +79,8 @@ export function useComposerForkMode(
   const forkSource = ref<{ srcSessionId: string; fromMessageId: string } | null>(null)
 
   function enterForkMode(srcSessionId: string, fromMessageId: string): void {
+    // Staging Mode（ADR-0043）：快照当前模型/thinking，进入暂存态
+    deps.enterStagingMode()
     forkSource.value = { srcSessionId, fromMessageId }
     forkMode.value = true
     // 聚焦输入框，让用户立即键入 fork 提问内容
@@ -75,6 +90,8 @@ export function useComposerForkMode(
   function exitForkMode(): void {
     forkMode.value = false
     forkSource.value = null
+    // Staging Mode：退出暂存态，chip 恢复读源 session 模型
+    deps.exitStagingMode()
   }
 
   // 跨组件触发通道：Sidebar 全局快捷键（⌘⇧G → enterForkModeFromLastAssistant）经 signal
@@ -122,7 +139,9 @@ export function useComposerForkMode(
     deps.clearInput()
     deps.setSending(true)
     try {
-      await forkSessionAsk(srcSessionId, fromMessageId, text)
+      // Staging Mode（ADR-0043）：透传暂存的模型/thinking 配置给新 session
+      const staging = deps.getStagingConfig()
+      await forkSessionAsk(srcSessionId, fromMessageId, text, staging)
     } catch (e) {
       deps.restoreInput(text)
       const msg = e instanceof Error ? e.message : String(e)
@@ -144,6 +163,45 @@ export function useComposerForkMode(
     },
   }
 
+  /**
+   * 包装成 StagingAction（fork 实现，ADR-0044）。
+   *
+   * adapter 层：把 forkMode/enterForkMode/exitForkMode/handleForkSend/handleForkEsc/
+   * forkBoxClass/forkPlaceholder 收敛为单一策略对象，供 useComposerStaging 聚合路由。
+   * 不改变底层 ref/方法，仅追加 wrapper，保持 expose 契约 + 测试兼容。
+   */
+  function asStagingAction(): StagingAction {
+    return {
+      type: 'fork',
+      isActive: computed(() => forkMode.value),
+      enter: (source) => {
+        // source 实际是 ForkSource（含 fromMessageId），由 useComposerStaging.enter('fork', source) 调用方保证；
+        // StagingAction.enter 默认泛型为 StagingSource（联合类型），这里收窄取 fromMessageId。
+        const forkSource = source as { srcSessionId: string; fromMessageId: string }
+        enterForkMode(forkSource.srcSessionId, forkSource.fromMessageId)
+      },
+      exit: () => exitForkMode(),
+      /**
+       * send 直接调 handleForkSend(text)，忽略传入的 staging 参数。
+       * 原因：handleForkSend 内部已调 deps.getStagingConfig() 取模型/thinking 快照配置，
+       * 其数据源与 useComposerModelThinking.getStagingConfig 相同，外部传参与内部自取等价，
+       * 故不复用 staging 参数（避免 fork/handoff 在 useComposerStaging.send 处重复透传）。
+       */
+      send: async (text) => { await handleForkSend(text) },
+      allowsEmptySend: false,
+      handleEsc: handleForkEsc,
+      // fork-ask 是前端编排的 fork+send，无独立 inflight 可取消 → 恒 false
+      isInProgress: computed(() => false),
+      abort: undefined,
+      visual: {
+        boxClass: forkBoxClass,
+        placeholder: forkPlaceholder,
+        chipLabelKey: 'panel.composer.forkChip',
+        chipIcon: GitFork,
+      },
+    }
+  }
+
   return {
     forkMode,
     forkModeRef,
@@ -153,5 +211,6 @@ export function useComposerForkMode(
     forkPlaceholder,
     handleForkEsc,
     handleForkSend,
+    asStagingAction,
   }
 }

@@ -1,0 +1,138 @@
+{
+  "$schema": "./extension-dependencies.schema.json",
+  "extensions": [
+    {
+      "name": "@zhushanwen/pi-subagent-workflow",
+      "directory": "extensions/subagent-workflow",
+      "dependsOn": [
+        {
+          "package": "@zhushanwen/pi-extension-logger",
+          "type": "package",
+          "reason": "代码层静态 import getLogger/setPiHandle（src/index.ts、execution/*、orchestration/* 等 15 个文件 top-level import），缺失时模块加载即抛 Cannot find module，是强依赖"
+        },
+        {
+          "package": "@zhushanwen/pi-structured-output",
+          "type": "runtime",
+          "reason": "subagent 执行 + workflow 编排两端均需 structured-output 扩展加载以提供 schema 结构化输出 tool（代码层不 import，仅运行时 tool 名引用）"
+        },
+        {
+          "package": "@zhushanwen/pi-pending-notifications",
+          "type": "runtime",
+          "reason": "T2 通知合并：subagent-workflow 的 subagent-service/lifecycle/error-recovery emit pending:register/pending:unregister 事件，pending-notifications 消费该事件并向用户发送完成通知。缺失时后台操作完成无通知（功能降级，不报错）"
+        }
+      ]
+    },
+    {
+      "name": "@zhushanwen/pi-statusline",
+      "directory": "extensions/statusline",
+      "dependsOn": [
+        {
+          "package": "@zhushanwen/pi-quota-providers",
+          "type": "package",
+          "reason": "直接 import quota-providers 的 provider/quota 配置解析逻辑"
+        }
+      ]
+    },
+    {
+      "name": "@zhushanwen/pi-model-switch",
+      "directory": "extensions/model-switch",
+      "dependsOn": [
+        {
+          "package": "@zhushanwen/pi-quota-providers",
+          "type": "package",
+          "reason": "直接 import quota-providers 的 provider 解析逻辑"
+        }
+      ]
+    },
+    {
+      "name": "@zhushanwen/pi-goal",
+      "directory": "extensions/goal",
+      "dependsOn": [
+        {
+          "package": "@zhushanwen/pi-todo",
+          "type": "optional",
+          "reason": "goal 的 prompt 软建议 AI 使用 todo 工具分解/跟踪任务（见 prompts.ts），无运行时/编译期耦合（不再读 pi.__todoGetList，budget 不接收 todo 进度），缺失时 AI 自行判断任务分解"
+        }
+      ]
+    },
+    {
+      "name": "@zhushanwen/pi-todo",
+      "directory": "extensions/todo",
+      "dependsOn": []
+    },
+    {
+      "name": "@zhushanwen/pi-vision",
+      "directory": "extensions/vision",
+      "dependsOn": []
+    },
+    {
+      "name": "@zhushanwen/pi-context-engineering",
+      "directory": "extensions/context-engineering",
+      "dependsOn": []
+    },
+    {
+      "name": "@zhushanwen/pi-evolve-daily",
+      "directory": "extensions/evolve-daily",
+      "dependsOn": []
+    },
+    {
+      "name": "@zhushanwen/pi-unified-hooks",
+      "directory": "extensions/unified-hooks",
+      "dependsOn": [
+        {
+          "package": "@zhushanwen/pi-extension-logger",
+          "type": "package",
+          "reason": "代码层静态 import getLogger/setPiHandle（src/index.ts、hooks/tool-error-handler.ts、hooks/subagent-list-injector.ts top-level import），缺失时模块加载即抛 Cannot find module，是强依赖"
+        }
+      ]
+    },
+    {
+      "name": "@zhushanwen/pi-plan",
+      "directory": "extensions/plan",
+      "dependsOn": [
+        {
+          "package": "@zhushanwen/pi-goal",
+          "type": "optional",
+          "reason": "complete action 通过 __goalInit 启动 goal，缺失时降级通知用户"
+        }
+      ]
+    },
+    {
+      "name": "@zhushanwen/pi-ask-user",
+      "directory": "extensions/ask-user",
+      "dependsOn": [
+        {
+          "package": "@zhushanwen/pi-subagent-workflow",
+          "type": "optional",
+          "reason": "ask-user 在 session_start 通过 globalThis Symbol 握手协议（CHANNEL_HANDSHAKE_KEY = Symbol.for('@zhushanwen/pi-subagents.channelHandshake')）注册 ask_user channel handler：subagent-workflow 已就绪则直接 register，未就绪则入 pending 队列由 subagent-workflow flush。无代码层 import（纯运行时 globalThis 握手，加载顺序无关）。缺失时 ask_user channel 无 handler，subagent 子进程的 ask_user 请求降级为普通 select 渲染（主进程直接使用 ask_user 工具不受影响）。"
+        }
+      ]
+    },
+    {
+      "name": "@zhushanwen/pi-pending-notifications",
+      "directory": "extensions/pending-notifications",
+      "dependsOn": []
+    },
+    {
+      "name": "@zhushanwen/pi-permission",
+      "directory": "extensions/permission",
+      "dependsOn": [
+        {
+          "package": "@zhushanwen/pi-statusline",
+          "type": "optional",
+          "reason": "permission 模式标签通过 globalThis Symbol 握手协议（FOOTER_HANDSHAKE_KEY = Symbol.for('@zhushanwen/pi-statusline.footerHandshake')）注册为 statusline footer 的一行（order=2，line2 和 line3 之间）。协议沿用 ask-user 的 {version, registry, pending} 模式，permission 是 consumer 不创建 registry 实例，statusline 是 canonical owner。无代码层 import（纯 globalThis 反射，加载顺序无关）。缺失时 silent 降级：permission 功能完整，仅 footer 不显示 mode 标签。"
+        }
+      ]
+    },
+    {
+      "name": "@zhushanwen/pi-scheduler",
+      "directory": "extensions/scheduler",
+      "dependsOn": []
+    },
+    {
+      "name": "@zhushanwen/pi-rename-session",
+      "directory": "extensions/rename-session",
+      "dependsOn": []
+    }
+  ]
+}

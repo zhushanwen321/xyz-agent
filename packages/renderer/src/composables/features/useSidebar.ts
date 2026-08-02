@@ -21,7 +21,6 @@ import type { PanelLeaf, SessionGroup, BatchDeleteResult } from '@xyz-agent/shar
 import { chat as chatApi, session as sessionApi, extension as extensionApi } from '@/api'
 import * as events from '@/api/events'
 import { useChatStore } from '@/stores/chat'
-import { useCommandStore } from '@/stores/command'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore } from '@/stores/panel'
 import { useSessionStore } from '@/stores/session'
@@ -34,7 +33,7 @@ import { useFileTreeStore } from '@/stores/fileTree'
 import { useSubagentStore, clearSubagentTombstones } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useExtensionUIStore } from '@/stores/extension-ui'
-import { useChat } from '@/composables/features/useChat'
+import { useChat, ensureStreamSubscription } from '@/composables/features/useChat'
 import { invalidateStatusCache } from '@/composables/features/useSessionDerivations'
 import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
 import { registerSessionDeleteHandlers } from '@/composables/useConnection'
@@ -118,7 +117,6 @@ export function useSidebar() {
   const tasks = useTasksStore()
   const sidebar = useSidebarStore()
   const panel = usePanelStore()
-  const commandStore = useCommandStore()
   const workspaceStore = useWorkspaceStore()
 
   /**
@@ -162,10 +160,24 @@ export function useSidebar() {
    * 首次进入该 session 时拉取历史注入 chat store（UC-2 切换可见块类型，G2-006）。
    * switchSession 失败（mock id 不存在）抛错，UI 层捕获；不更新 activeId。
    *
-   * NewTaskFlow 联动（#3 AC-3.10）：flow 活跃时（landing/overlay）切 session → cancelFlow，
+   * NewTaskFlow 联动（#3 AC-3.10）：flow 活跃时（landing/overlay）切 session → cancelFlow,
    * 让 flow 退到 cancelled（overlay 自动关 + state 不残留 landing）。
-   * landing 态覆盖：initApp/点新建后停在 landing，此时点侧栏历史会话须 cancelFlow，
+   * landing 态覆盖：initApp/点新建后停在 landing，此时点侧栏历史会话须 cancelFlow,
    * 否则 state 残留 landing → isLandingView 仍 true → composer 被误抑制（new-task 渲染撕裂）。
+   *
+   * commands/context/subagents 由 ensureStreamSubscription → subscribeSession → stateSnapshot dispatch 提供：
+   * selectSession 调 ensureStreamSubscription(sid)（幂等：已注册时跳过），它内部同步注册 events.on
+   * handler（消费 message 点 session 前缀事件）+ fire-and-forget subscribeSession（拉 snapshot 回放 +
+   * stateSnapshot 回流更新 commandStore/contextStore/subagentStore/workflowStore）。
+   * events.on 同步注册先于 subscribeSession 的 async snapshot 回放，保证回放事件到达 handler。
+   *
+   * [HISTORICAL] 2026-07-29 handoff 回复丢失事故：旧实现只调 subscribeSession（拉 snapshot）但不注册
+   * events.on handler，导致 snapshot 回放的事件被 dispatchSession 静默丢弃。handoff 场景中新 session 的
+   * pi 回复已进 bus ring buffer，但 selectSession → subscribeSession 拉 snapshot 后 dispatchSession 无
+   * handler 消费 → 回复永久丢失，UI 卡"进行中…"。改用 ensureStreamSubscription 统一两步（对齐 fork 路径
+   * useForkActions.ts:108 的正确范式）。
+   * workflows 经 streamRing 内 session.workflowUpdate 增量信号 → triggerWorkflowReload → loadWorkflows
+   * RPC（store 自身方法保留），与 useWorkflowListSync focusedSessionId watch 首拉互补覆盖。
    */
   async function selectSession(id: string): Promise<void> {
     // flow 活跃（landing/overlay）时切 session → cancelled（AC-3.10，避免 overlay 卡死 + landing 残留）
@@ -189,6 +201,10 @@ export function useSidebar() {
     }
     // 清除未读标记：用户主动查看该 session，不再显示未读 badge
     clearUnread(id)
+    // ensureStreamSubscription：同步注册 events.on handler + fire-and-forget subscribeSession。
+    // 内部幂等（streamSubscriptions.has(sid) 守卫，已注册跳过）。失败时 subscribeSession 内部
+    // console.warn 消化，不阻塞切会话。
+    ensureStreamSubscription(id, chat, session)
     // W3 H3：更新 LRU recency（在 evictIfNeeded 之前，确保当前 session 不被驱逐，R3/R4 修复）
     chat.touchLru(id)
     syncSessionToPanel(id)
@@ -206,55 +222,19 @@ export function useSidebar() {
         chat.markHistoryFailed(id)
       }
     }
-    // 命令拉取：修复 broadcast 与订阅时序竞争——session.switch 的 ensureActive 内部
-    // broadcast session.commands 发生在本函数 await switchSession resolve 之前，
-    // 此时 session.activeId 还是旧值，CommandPopover 未订阅新 sessionId 通道，broadcast 被丢弃。
-    // 这里在 activeId 更新（订阅已重订）后主动拉取并本地 dispatch，保证命令到达订阅者。
-    // 同时写入 commandStore（持久化，组件 v-if 重建后仍可读，修复 slash 浮层对话后失效）。
-    // getCommands 失败不阻断切 session（命令缺失不致命，输入 / 时浮层空，可后补）。
-    try {
-      const { commands } = await sessionApi.getCommands(id)
-      commandStore.applyCommands(id, commands)
-      events.dispatchSession(id, { type: 'session.commands', payload: { sessionId: id, commands } })
-      // eslint-disable-next-line taste/no-silent-catch -- getCommands 失败不阻断 session 切换（命令缺失仅致 slash 浮层空，可后补）；与 runtime fetchAndBroadcastCommands 同策略
-    } catch (e) {
-      console.warn('[useSidebar] getCommands failed, slash popover will be empty:', e)
-    }
-
-    // 上下文用量拉取：修复 broadcast 与订阅时序竞争——restoreSession 内部的兜底 broadcast
-    // 早于前端订阅新 sessionId 通道被丢弃；这里在 activeId 更新后主动拉取并本地 dispatch，
-    // 保证 ContextCapacityPopover 拿到旧 session 恢复后的当前用量（pi 从历史估算 contextUsage）。
-    // 失败不阻断切 session（用量缺失仅致 popover 不显数字，下个 turn_end 自然刷新）。
-    try {
-      const ctx = await sessionApi.getContext(id)
-      events.dispatchSession(id, { type: 'context.update', payload: ctx })
-      // eslint-disable-next-line taste/no-silent-catch -- context 拉取失败不阻断 session 切换（用量缺失仅致 popover 暂空，等下个 turn_end 刷新）
-    } catch (e) {
-      console.warn('[useSidebar] getContext failed, context popover will be empty:', e)
-    }
 
     // pendingOpen 消费（FR-3）：后台 session 的 tasks 事件到达时若用户不在该 session，只置 pendingOpen
     // 标记不弹 drawer。这里在切到该 session 后消费标记——若有则自动开 tasks tab。
-    // 挂 selectSession 内部（与 commands/context 兜底同位置），不挂独立 watch(focusedSessionId)，
-    // 避免撞 Runtime broadcast 时序竞争。consumePendingOpen 内部已含幂等（消费后清标记）。
+    // 挂 selectSession 内部，不挂独立 watch(focusedSessionId)，避免撞 Runtime broadcast 时序竞争。
+    // consumePendingOpen 内部已含幂等（消费后清标记）。
     consumePendingOpen(id)
 
     // 文件树预加载：切 session 即拉取，使侧栏「文件」tab 计数（fileCount 读 store.getTree）
     // 立即更新——不依赖用户切到文件 tab 才触发 FileView 的 loadTree。loadTree 内部缓存复用
     // （已加载则 rehydrate 直接返回），FileView 挂载时再调会命中缓存，无重复请求。
     // fire-and-forget：失败不阻断切 session（文件树缺失仅致 tab 数字为 0，切到文件 tab 仍可重试）。
+    // 文件树不在此 wave 的 bus stateSnapshot 覆盖范围（无对应 state type），保留主动拉取。
     void useFileTree().loadTree(id)
-
-    // subagent/workflow 列表主动拉取兜底：修复切换 session 后侧栏列表不更新。
-    // useSubagentListSync/useWorkflowListSync 的 watch(focusedSessionId) 是异步触发，
-    // 与 runtime session.subagents/session.workflowUpdate 广播存在时序竞争（AGENTS.md #7
-    // broadcast 早于订阅的历史问题）。这里在 activeId 更新后主动 RPC 拉取，对齐
-    // commands/context 的兜底模式。fire-and-forget：失败不阻断切 session（列表缺失
-    // 仅致 tab 计数为 0，切到对应 tab 时 sync composable 会再拉一次）。
-    const subagentStore = useSubagentStore()
-    const workflowStore = useWorkflowStore()
-    void subagentStore.loadSubagents(id)
-    void workflowStore.loadWorkflows(id)
 
     // [lru-panel-exempt-fix] evictIfNeeded 前刷新 panel 绑定 session 的 LRU recency。
     // panel 绑定 session 是用户当前可见的活跃 session，刷新其 recency 确保不被误驱逐。

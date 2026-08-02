@@ -47,6 +47,10 @@ import { isPackaged, getExtensionFilePath } from '../../utils/runtime-env.js'
 import { detectBareWorkspaceCached } from '../worktree/workspace-detector.js'
 import { MAX_SESSIONS } from '../../constants.js'
 import { PresetService, type PresetResolution } from '../preset-service.js'
+// MessageBus（wave:runtime-wiring）：per-session 消息广播核心。setter 注入（同 setConfigService 模式），
+// 未注入时所有 bus 调用 no-op（this.messageBus?.publish）。type-only import 避免运行时环
+//（MessageBus 不反向依赖 SessionService）。
+import type { MessageBus } from '../message-bus/message-bus.js'
 
 /** Facade 内部完整 session:子模块可见视图 + 运行时句柄(adapter)。 */
 interface ManagedSession extends IManagedSessionView {
@@ -134,6 +138,19 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * 汇聚触发，清掉 pendingReload 残留（running session 入队后被删，永不发 message.complete）。
    */
   private onSessionDelete: ((sessionId: string) => void) | null = null
+  /**
+   * MessageBus 引用（组合根注入，wave:runtime-wiring）。
+   *
+   * session 级消息（带 sessionId payload）走 bus.publish（per-session 单调 seq + ring buffer +
+   * 订阅者广播），全局消息（无 sessionId）仍走 broker.broadcast 盲广播。过渡期双写
+   * （R1 mitigation：bus.publish + broker.broadcast 都发，移除 bandaids wave 后评估删除
+   * broker.broadcast 的 session 级路径）。session 销毁时调 bus.clearSession 彻底清理
+   * （removeSessionEntry 触发，所有删除路径汇聚处）。
+   *
+   * 经 setter 注入（同 setConfigService/setPresetService/setOnMessageComplete 模式），
+   * 避免破坏 SessionService 的 25+ 测试构造调用点。未注入时所有 bus 调用 no-op（this.messageBus?.*）。
+   */
+  private messageBus: MessageBus | null = null
   constructor(
     private readonly pm: IProcessManager,
     private readonly broker: IMessageBroker,
@@ -144,13 +161,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     private readonly sessionStore: ISessionStore,
     private readonly gitInfoReader: IGitInfoReader,
     private readonly workspaceService: WorkspaceService,
+    messageBus?: MessageBus,
   ) {
     // 打包模式:extension 在 Resources 根;开发模式:在 repo root(apps/electron/ 父目录)
     this.extensionPath = getExtensionFilePath(this.projectRoot, isPackaged())
 
     // 子模块注入 this(Facade 半构造时仅存引用,其方法在 Facade 完全构造后才被调用)
     this.lifecycle = new SessionLifecycle(this, this.pm, this.configStore, this.sessionStore, this.workspaceService)
-    this.dispatcher = new MessageDispatcher(this, this.pm, this.broker, this.workspaceService)
+    this.dispatcher = new MessageDispatcher(this, this.pm, this.broker, this.workspaceService, messageBus)
     this.scanner = new SessionScanner(this, this.sessionStore, this.gitInfoReader)
 
     // 进程崩溃清理:协调 adapter detach / Map 删 / 列表刷新 / session.exited 广播
@@ -260,6 +278,17 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return this.leaseManager
   }
 
+  /**
+   * 注入 MessageBus 单例（组合根在所有服务构造后调用，wave:runtime-wiring）。
+   *
+   * session 级消息（带 sessionId payload）经 send 回调 / fetchAndBroadcast* 双写走 bus.publish；
+   * session 销毁时 removeSessionEntry 调 bus.clearSession。未注入时所有 bus 调用 no-op，
+   * 与 setConfigService/setOnMessageComplete 同模式（nullable 注入，不破坏现有测试构造点）。
+   */
+  setMessageBus(bus: MessageBus): void {
+    this.messageBus = bus
+  }
+
   // ── ISessionService:纯委托(lifecycle / dispatcher / scanner)─────
 
   async create(cwd?: string, label?: string, options?: {
@@ -286,7 +315,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     fromPiEntryId: string | undefined,
     includeFrom: boolean,
     label?: string,
-    opts?: { fromMessageTimestamp?: number; fromMessageRole?: string },
+    opts?: {
+      fromMessageTimestamp?: number
+      fromMessageRole?: string
+      /** Staging Mode（ADR-0043）：composer 暂存的模型覆盖，优先于源 preset.modelOverride。 */
+      modelOverride?: string
+      /** Staging Mode（ADR-0043）：composer 暂存的思考等级覆盖，优先于源 preset.thinkingLevel。 */
+      thinkingOverride?: string
+    },
   ): Promise<SessionSummary> {
     // piEntryId 缺失（RPC 路径读取的 session）时，读 JSONL 按 timestamp + role 匹配 entryId
     let resolvedEntryId = fromPiEntryId
@@ -297,7 +333,12 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
         opts?.fromMessageRole,
       )
     }
-    return this.lifecycle.forkSession(srcSessionId, resolvedEntryId, includeFrom, label)
+    // override 透传给 lifecycle.forkSession（而非 resolveEntryIdByTimestamp——override 与 entry 解析无关，
+    // 仅作用于新 session 的 pi 启动参数）。
+    return this.lifecycle.forkSession(srcSessionId, resolvedEntryId, includeFrom, label, {
+      modelOverride: opts?.modelOverride,
+      thinkingOverride: opts?.thinkingOverride,
+    })
   }
 
   /**
@@ -916,6 +957,11 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     // R3：所有删除路径（lifecycle.delete 主动删 + onSessionExit 进程异常退）汇聚于此，
     // 触发 onSessionDelete 清 ReloadOrchestrator.pendingReload 残留。
     this.onSessionDelete?.(sessionId)
+    // wave:runtime-wiring（GAP1 决策）：session 销毁时清理 MessageBus 的该 session 状态
+    // （ring buffer + state snapshot + 订阅者集合 + 反查表）。幂等（ES1：session 不存在 no-op）。
+    // 不在 pi flush / turn 结束时清理——ring 容量 1000 会自然 FIFO 淘汰旧 turn delta，
+    // turn 边界清理是阶段 2 的精细化策略（届时评估）。
+    this.messageBus?.clearSession(sessionId)
   }
 
   getSessionByClient(client: IPiEngine): IManagedSessionView | undefined {
@@ -944,24 +990,38 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   /** 初始化 ManagedSession:建 adapter、注册监听、入 Map、查 commands。 */
   async initializeManagedSession(
     id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string, hidden?: boolean,
-    parentSession?: string, forkEntryId?: string,
+    parentSession?: string, forkEntryId?: string, modelOverride?: string,
   ): Promise<IManagedSessionView> {
     const send = (msg: ServerMessage) => {
+      // wave:runtime-wiring：session 级消息（payload 带 sessionId）双写走 bus.publish。
+      // bus 负责 per-session 单调 seq 分配 + ring buffer 缓存 + 广播给订阅该 session 的 ws；
+      // broker.broadcast 盲广播保留（R1 双写过渡：未迁移到 subscribe 的 renderer 仍能收到）。
+      // 判断依据：payload 是否含 sessionId 字段（全局消息如 config.sessions 无 sessionId 不走 bus）。
+      // remove-bandaids wave 后评估是否删除 broker.broadcast 的 session 级路径。
+      const sid = (msg.payload as { sessionId?: string } | null)?.sessionId
+      if (sid) {
+        this.messageBus?.publish(sid, msg)
+      }
       this.broker.broadcast(msg)
       // W5：message.complete 广播后通知 reload-orchestrator（消费 pendingReload 队）。
       // 覆盖所有 message.complete 路径（event-interpreter turn-end 主路径 + dispatcher abort
       // 手动广播）。onMessageComplete 未注入时为 no-op。
-      if (msg.type === 'message.complete' && msg.payload && typeof msg.payload === 'object' && 'sessionId' in msg.payload) {
-        this.onMessageComplete?.((msg.payload as { sessionId: string }).sessionId)
+      if (msg.type === 'message.complete' && sid) {
+        this.onMessageComplete?.(sid)
       }
     }
     // #8 G1：传 cwd 给 EventAdapter（write added/modified 判定 + agent_end git 对账用）
     const adapter = this.adapterFactory(id, send, cwd)
     adapter.attach(client)
-    const modelRef = this.configStore.getDefaultModel()
+    // Staging Mode（ADR-0043）：modelOverride 优先写入 session 元数据，让前端 composer chip
+    // 正确显示用户选定的模型（create/fork/handoff 路径透传 effectiveModel）。pi 进程的模型
+    // 已由 createSession 时 client options.model 设定，此处只补齐元数据层缺口。
+    // 无 override 时 fallback 全局默认（与原行为一致）。
+    const defaultModelRef = this.configStore.getDefaultModel()
+    const fallbackModelId = defaultModelRef ? `${defaultModelRef.provider}/${defaultModelRef.modelId}` : ''
     const session: ManagedSession = {
       id, cwd, label,
-      modelId: modelRef ? `${modelRef.provider}/${modelRef.modelId}` : '',
+      modelId: modelOverride ?? fallbackModelId,
       createdAt: Date.now(), lastActiveAt: Date.now(),
       tokenCount: 0, inputTokens: 0, isGenerating: false, isCompacting: false, isBashRunning: false, bashRunToken: undefined,
       adapter, sessionFilePath,
@@ -1031,7 +1091,10 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     }
     const inputTokens = this.getInputTokens(sessionId)
     const { usagePercent, contextLimit } = this.computeUsage(sessionId, `${provider}/${modelId}`)
-    this.broker.broadcast({
+    // wave:runtime-wiring：session.state_changed 是 session 级状态，双写走 bus + broker。
+    //（state_changed 不在 bus stateTypeKey 占位映射表，仅进 streamRing 不进 stateSnapshot——
+    // 完整映射在后续 wave 扩展，本 wave 不动占位实现，GAP3 决策。）
+    const stateMsg: ServerMessage = {
       type: 'session.state_changed',
       id: `push_${Date.now()}`,
       payload: {
@@ -1042,7 +1105,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
         inputTokens,
         contextLimit,
       },
-    })
+    }
+    this.messageBus?.publish(sessionId, stateMsg)
+    this.broker.broadcast(stateMsg)
   }
 
   /**
@@ -1077,7 +1142,11 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     try {
       const commands = await this.getCommands(id)
       console.log(`[session-service] getCommands returned ${commands.length} commands:`, commands.map(c => c.name))
-      this.broker.broadcast({ type: 'session.commands', payload: { sessionId: id, commands } })
+      // wave:runtime-wiring：session.commands 是 session 级状态（state topic），双写走 bus
+      //（bus stateSnapshot 用 'commands' typeKey 去重缓存，subscribe 时 reconcile）+ broker（过渡兼容）。
+      const msg: ServerMessage = { type: 'session.commands', payload: { sessionId: id, commands } }
+      this.messageBus?.publish(id, msg)
+      this.broker.broadcast(msg)
     // eslint-disable-next-line taste/no-silent-catch -- getCommands failure must not block session
     } catch (e) {
       console.warn('[session-service] getCommands failed:', e)
@@ -1129,11 +1198,15 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     try {
       const payload = await this.fetchContext(sessionId)
       if (!payload) return
-      this.broker.broadcast({
+      // wave:runtime-wiring：context.update 是 session 级状态（state topic），双写走 bus
+      //（bus stateSnapshot 用 'context' typeKey 去重缓存）+ broker（过渡兼容）。
+      const msg: ServerMessage = {
         type: 'context.update',
         id: `ctx_restore_${Date.now()}`,
         payload: { sessionId, ...payload },
-      })
+      }
+      this.messageBus?.publish(sessionId, msg)
+      this.broker.broadcast(msg)
     // eslint-disable-next-line taste/no-silent-catch -- 兜底广播失败无影响（前端主动拉是主路径）
     } catch (e) {
       console.warn('[session-service] fetchAndBroadcastContext failed:', e)

@@ -33,12 +33,10 @@ jobs:
           fetch-depth: 1
 
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
 
       # pnpm workspace 单步安装：根 + packages/* + apps/* 一次装完
@@ -59,12 +57,10 @@ jobs:
           fetch-depth: 1
 
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
 
       - name: Install dependencies
@@ -81,6 +77,9 @@ jobs:
       - name: TypeCheck - shared
         run: pnpm --filter @xyz-agent/shared run typecheck
 
+      - name: TypeCheck - pi extensions
+        run: pnpm extensions:typecheck
+
   # SDK 类型同步防漂移：runtime 的 plugin-types 是 single source of truth，
   # plugin-sdk/src/types.ts 由 sync-types.sh 自动生成。此 job 重新生成并要求
   # git diff 为空——任何对 runtime plugin-types 的改动必须同步刷新 SDK types，
@@ -94,12 +93,10 @@ jobs:
           fetch-depth: 1
 
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
 
       - name: Install dependencies
@@ -109,7 +106,7 @@ jobs:
 
       - name: Check plugin-sdk types are synced with runtime
         working-directory: packages/plugin-sdk
-        run: npm run check-sync
+        run: pnpm run check-sync
 
   # mobile-renderer 业务核心层同步防漂移提示（P4 spec D2 + plan T2）。
   # best-effort / 非阻塞：mobile-renderer 存在手动分叉点（useConnection.ts 砍本地模式），
@@ -136,12 +133,10 @@ jobs:
           fetch-depth: 1
 
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
 
       - name: Install dependencies
@@ -157,6 +152,9 @@ jobs:
 
       - name: Test - main
         run: pnpm --filter @xyz-agent/electron run test:main
+
+      - name: Test - pi extensions
+        run: pnpm extensions:test
 
       - name: Upload test results
         if: always()

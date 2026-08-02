@@ -14,7 +14,10 @@
  *
  * 运行：cd apps/electron/main && npx vitest run test/update-handlers.test.ts
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { LatestReleaseInfo } from '@xyz-agent/shared'
 
 // 捕获注册的 handler（key=channel, value=handler fn）
@@ -205,11 +208,15 @@ describe('W3: update-handlers IPC update:perform (W3TC10)', () => {
 
     const handler = handlers.get('update:perform')!
     await expect(handler({}, { release: FIXTURE })).rejects.toThrow(/download failed/)
-    // update:error 事件携带 stage + message
+    // update:error 事件携带 stage + message + errorCode + suggestion。
+    // UpdateError('download failed', 'downloading') 未传 errorCode，toUserFriendly() 走
+    // fallback：code 缺省 'UPDATE_INTEGRITY_FAILED'、message 用传入的 'download failed'、
+    // stage 用 this.stage、suggestion 用默认 '请重试或联系技术支持'（见 types.ts:143-148）。
     expect(sendSpy).toHaveBeenCalledWith('update:error', {
       stage: 'downloading',
       message: 'download failed',
-      errorCode: undefined,
+      errorCode: 'UPDATE_INTEGRITY_FAILED',
+      suggestion: '请重试或联系技术支持',
     })
     // 失败时不安排 quit
     expect(capturedQuitTimer).toBeNull()
@@ -222,11 +229,14 @@ describe('W3: update-handlers IPC update:perform (W3TC10)', () => {
     registerWithOrchestrator({ performUpdate } as never)
 
     const handler = handlers.get('update:perform')!
-    await expect(handler({}, { release: FIXTURE })).rejects.toThrow(/deb not supported/)
+    // errorCode 命中 UPDATE_ERROR_MESSAGES 映射表，toUserFriendly() 返回标准化的本地化
+    // message '当前平台不支持自动更新'（types.ts:86-90），而非构造时传入的英文。
+    await expect(handler({}, { release: FIXTURE })).rejects.toThrow(/当前平台不支持自动更新/)
     expect(sendSpy).toHaveBeenCalledWith('update:error', {
       stage: 'replacing',
-      message: 'deb not supported',
+      message: '当前平台不支持自动更新',
       errorCode: 'UPDATE_UNSUPPORTED_PLATFORM',
+      suggestion: '请手动下载最新版本',
     })
   })
 
@@ -252,5 +262,130 @@ describe('W3: update-handlers IPC update:perform (W3TC10)', () => {
 
     // 窗口已销毁 → send 不应被调
     expect(sendSpy).not.toHaveBeenCalled()
+  })
+})
+
+// ── 代理配置 IPC ───────────────────────────────────────────────
+describe('update-handlers: proxy config IPC', () => {
+  // [ISOLATION] getProxyConfig 读 getDataDir()/proxy-config.json，而 getDataDir() 默认
+  // 指向真实 ~/.xyz-agent。本机 ~/.xyz-agent/proxy-config.json 含 manual 配置，
+  // 会导致「文件不存在」的默认值测试失败。把 XYZ_AGENT_DATA_DIR 指向临时目录隔离。
+  let prevDataDir: string | undefined
+  /** 保存/还原 global fetch（testProxy manual 模式测试 mock 它验证 dispatcher 透传） */
+  let originalFetch: typeof globalThis.fetch | undefined
+
+  beforeEach(() => {
+    handlers.clear()
+    vi.clearAllMocks()
+    prevDataDir = process.env.XYZ_AGENT_DATA_DIR
+    process.env.XYZ_AGENT_DATA_DIR = mkdtempSync(join(tmpdir(), 'xyz-proxy-test-'))
+  })
+
+  afterEach(() => {
+    if (prevDataDir === undefined) {
+      delete process.env.XYZ_AGENT_DATA_DIR
+    } else {
+      process.env.XYZ_AGENT_DATA_DIR = prevDataDir
+    }
+    // 还原 global fetch（testProxy manual 模式测试会 mock 它）
+    if (originalFetch !== undefined) {
+      globalThis.fetch = originalFetch
+      originalFetch = undefined
+    }
+  })
+
+  it('update:getProxyConfig 返回默认配置（文件不存在）', async () => {
+    registerUpdateHandlers({} as never)
+    const handler = handlers.get('update:getProxyConfig')!
+    const result = await handler({}, {})
+    expect(result).toEqual({ mode: 'system' })
+  })
+
+  it('update:setProxyConfig 保存配置 + update:getProxyConfig 读取', async () => {
+    registerUpdateHandlers({} as never)
+    const setHandler = handlers.get('update:setProxyConfig')!
+    const getHandler = handlers.get('update:getProxyConfig')!
+
+    // 保存手动配置
+    await setHandler({}, {
+      mode: 'manual',
+      httpProxy: 'http://127.0.0.1:7890',
+      httpsProxy: 'http://127.0.0.1:7890',
+    })
+
+    // 读取验证
+    const result = await getHandler({}, {})
+    expect(result).toEqual({
+      mode: 'manual',
+      httpProxy: 'http://127.0.0.1:7890',
+      httpsProxy: 'http://127.0.0.1:7890',
+    })
+  })
+
+  it('update:setProxyConfig 校验无效模式', async () => {
+    registerUpdateHandlers({} as never)
+    const handler = handlers.get('update:setProxyConfig')!
+    await expect(handler({}, { mode: 'invalid' })).rejects.toThrow('Invalid proxy mode')
+  })
+
+  it('update:setProxyConfig 手动模式缺少 httpProxy 报错', async () => {
+    registerUpdateHandlers({} as never)
+    const handler = handlers.get('update:setProxyConfig')!
+    await expect(handler({}, { mode: 'manual' })).rejects.toThrow('HTTP proxy is required in manual mode')
+  })
+
+  it('update:setProxyConfig 手动模式无效 URL 报错', async () => {
+    registerUpdateHandlers({} as never)
+    const handler = handlers.get('update:setProxyConfig')!
+    await expect(handler({}, {
+      mode: 'manual',
+      httpProxy: 'not-a-url',
+    })).rejects.toThrow('Invalid proxy URL format')
+  })
+
+  it('update:testProxy disabled 模式跳过测试并返回 success:false', async () => {
+    // [B2] disabled 本就无连接可测，不应误报成功（前端据此显示「代理已禁用，跳过测试」）
+    registerUpdateHandlers({} as never)
+    const handler = handlers.get('update:testProxy')!
+    const result = await handler({}, { mode: 'disabled' })
+    expect(result).toEqual({ success: false, message: 'Proxy disabled, skipping test' })
+  })
+
+  // [C2/S-3 回归防护] testProxy 必须真正走代理：fetch 收到含 dispatcher 的 options。
+  // 旧实现只直连（不传 dispatcher）→ 代理不可用也误报成功。
+  it('update:testProxy manual 模式 → fetch 被传含 dispatcher 的 options（真正走代理）', async () => {
+    // mock global fetch：返回 ok Response，让 testProxyConnection 走到 fetch 调用。
+    // 显式声明 fetch 形参类型，mock.calls 才有正确的元组形状（url, init）。
+    const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(null, { status: 200 }),
+    )
+    originalFetch = globalThis.fetch
+    globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch
+
+    registerUpdateHandlers({} as never)
+    const handler = handlers.get('update:testProxy')!
+    const result = await handler({}, {
+      mode: 'manual',
+      httpProxy: 'http://127.0.0.1:7890',
+      httpsProxy: 'http://127.0.0.1:7890',
+    })
+
+    // fetch 被调用且第 2 参数（RequestInit）含 dispatcher 字段 → C2 修复生效
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    const call = fetchSpy.mock.calls[0]
+    expect(call).toBeDefined()
+    const initArg = call![1] as RequestInit & { dispatcher?: unknown } | undefined
+    expect(initArg).toBeDefined()
+    expect(initArg!.dispatcher).toBeDefined()
+    expect(initArg!.dispatcher).not.toBeNull()
+    // 走代理成功
+    expect(result).toEqual({ success: true })
+  })
+
+  it('update:testProxy manual 模式无代理 URL → success:false', async () => {
+    registerUpdateHandlers({} as never)
+    const handler = handlers.get('update:testProxy')!
+    const result = await handler({}, { mode: 'manual' })
+    expect(result).toEqual({ success: false, message: 'No proxy URL configured' })
   })
 })

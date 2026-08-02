@@ -9,6 +9,12 @@ description: >-
 
 执行 9 阶段合并发布流程，最终通过 GitHub Release 交付 Electron 产物（DMG/EXE/AppImage）。
 
+> **双发布线**：本项目同时维护两条独立的发布线：
+> - **Electron 发布线**（`v*` tag → `release.yml` → DMG/EXE/AppImage）—— 阶段 4
+> - **npm 发布线**（`npm-v*` tag → `release-npm.yml` → @xyz-agent/* + @zhushanwen/pi-* npm 包）—— 阶段 4N（可选）
+>
+> 两套 tag 前缀（`v*` vs `npm-v*`）互不干扰，CI concurrency group 隔离。阶段 4N 仅在本次 PR 含 `extensions/` 改动且有 changeset 时执行。
+
 ## 前置条件
 
 - feature 分支有已创建的 PR
@@ -46,6 +52,24 @@ bash .agents/skills/merge/scripts/pre-merge-check.sh <worktree-dir>
 ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install
 ```
 
+### 阶段 1.5: Dev-Link 清理 [OPTIONAL]
+
+> **仅当开发期间用过 dev-link skill（`XYZ_EXTENSION_PATHS` 指向本 worktree 的 extensions/）时执行。**
+> 跳过此步骤会导致阶段 7 删除 worktree 后，`.env.dev-extensions` 中的 link 指向已删除目录，下次 `pnpm dev` 时 pi 加载报 ENOENT。
+
+检查并清理指向当前 worktree 的 dev-link：
+
+```bash
+cd /Users/zhushanwen/Code/xyz-agent-workspace
+# 查看当前 link 状态
+bash .agents/skills/dev-link/link-list.sh
+
+# 如果有指向当前 worktree 的 link，清理（--all 清除所有，或指定包名清理单个）
+bash .agents/skills/dev-link/link-npm.sh --all
+```
+
+如果没有 `.env.dev-extensions` 文件或其中无 link，直接跳过本阶段。
+
 ### 阶段 2: PR CI + 合并
 
 ```bash
@@ -82,7 +106,7 @@ bash scripts/check-version-bump.sh
 
 失败时需要检查：
 1. 是否有 prerelease（`-beta.N`）占用了目标版本号？清理后重试
-2. 是否已经手动 bump 过版本？执行 `npm version <latest_release_version> --no-git-tag-version` 回退
+2. 是否已经手动 bump 过版本？执行 `pnpm version <latest_release_version> --no-git-tag-version` 回退
 3. 可能是之前的 pre-release 测试未还原？运行 `cd $WS_ROOT/main && git reset --hard github/main` 重置
 
 ### 阶段 4: 版本 bump + 发布
@@ -99,8 +123,8 @@ git branch --show-current  # 必须输出 main，否则 git checkout main
 #    的版本号未提交，CI 从 apps/electron/package.json 读取到旧版本号。
 
 # 1. 纯修改文件，不创建 commit 和 tag（pnpm workspace 递归 bump 所有包）
-npm version patch --no-git-tag-version
-cd apps/electron && npm version patch --no-git-tag-version && cd ../..
+pnpm version patch --no-git-tag-version
+cd apps/electron && pnpm version patch --no-git-tag-version && cd ../..
 
 # 2. 原子提交：两个 package.json 在同一个 commit
 VERSION=$(node -p "require('./package.json').version")
@@ -125,6 +149,105 @@ bash scripts/verify-ci-release.sh "v$(node -p "require('./package.json').version
 - DMG/EXE/AppImage 由 CI 构建，不在本地生成
 - 本地构建验证是预防措施，不产生最终交付物
 
+### 阶段 4N: npm Extension 发布（可选）
+
+> **仅在本次 PR 含 extension 改动（`extensions/` 有变更）且有对应 `.changeset/*.md` 时执行。**
+> 纯 Electron 改动（如只改 packages/ 或 apps/）跳过本阶段。
+>
+> npm 发布线与 Electron 发布线**完全独立**：
+> - Electron 走 `v*` tag（阶段 4）→ `release.yml` → DMG/EXE/AppImage
+> - npm 走 `npm-v*` tag（本阶段）→ `release-npm.yml` → npm registry（@xyz-agent/* + @zhushanwen/pi-*）
+
+#### 4N.1 检查 changeset 文件
+
+```bash
+cd $WS_ROOT/main
+git fetch github
+git reset --hard github/main   # 确保本地 main 已同步（阶段 4 的 Electron bump 已合并进 main）
+
+# 列出待消费的 changeset
+find .changeset -name '*.md' ! -name 'README.md'
+```
+
+确认 changeset 文件列表。每个 changeset 的 key 必须是 `package.json` 的 `name` 全名（如 `@zhushanwen/pi-goal`），不是目录名。
+
+⚠️ **如果无 changeset 文件** → extension 不会 bump → `changeset publish` 无新包可发。补救：用 `pnpm changeset`（交互式）或手写 `.changeset/<slug>.md` 创建：
+
+```
+---
+"@zhushanwen/pi-<name>": patch   # 或 minor/major
+---
+
+<变更描述>
+```
+
+写错包名 key 会**静默不 bump** —— 创建后务必用 `pnpm changeset version` 验证目标包版本号确实变化。
+
+#### 4N.2 消费 changeset（bump 版本）
+
+```bash
+cd $WS_ROOT/main
+pnpm changeset version
+
+# 验证：检查变更的 extension 版本号
+git diff --name-only | grep 'package.json'
+git diff -- extensions/*/package.json extensions/shared/*/package.json packages/extension-protocol/package.json | grep '^[+-]  "version"'
+```
+
+#### 4N.3 commit + 打 tag + push
+
+```bash
+cd $WS_ROOT/main
+
+# changeset version 生成 .changeset/*.md 消费记录 + CHANGELOG.md + 版本 bump
+# 按需 git add（只 add changeset 消费的产物，不要 add 认知外的改动）
+git add .changeset extensions/*/package.json extensions/shared/*/package.json packages/extension-protocol/package.json CHANGELOG.md
+
+# commit 版本变更
+pnpm changeset version  # 再跑一次确认无遗漏（幂等：已消费的不再变）
+git status --short       # 确认 working tree 干净（无未暂存的版本改动）
+
+# 取 npm 版本号（用任意已 bump 的包，这里用 extension-protocol 代表）
+NPM_VERSION=$(node -p "require('./packages/extension-protocol/package.json').version")
+# 或如果只发 extension，取某个 extension 的版本
+# NPM_VERSION=$(node -p "require('./extensions/<name>/package.json').version")
+
+git commit -m "chore: pnpm version ${NPM_VERSION}"
+
+# 打 npm-v* tag（注意前缀 npm-，与 Electron 的 v* 区分）
+git tag "npm-v${NPM_VERSION}"
+
+# 推送 commit + tag
+git push github HEAD
+git push github "npm-v${NPM_VERSION}"
+```
+
+#### 4N.4 验证 npm 发布
+
+`npm-v*` tag push 后，`release-npm.yml` CI 自动执行：
+1. `pnpm install --frozen-lockfile`
+2. `pnpm --filter @xyz-agent/extension-protocol build`（有构建的包单独 build）
+3. `pnpm changeset publish`（发布 extension-protocol + @zhushanwen/pi-* extensions + quota-providers，extensions 无构建直接发 .ts 源码）
+
+验证 CI 完成：
+
+```bash
+cd $WS_ROOT/main
+# 轮询 CI（复用 wait-for-ci.sh，但监听 npm-v* tag 对应的 workflow）
+gh run list --workflow=release-npm.yml --repo zhushanwen321/xyz-agent --limit 3
+gh run watch <run-id> --repo zhushanwen321/xyz-agent
+```
+
+CI 成功后验证 npm 版本上线：
+
+```bash
+# 用 curl 查官方 registry（npm view 受镜像影响，新包有同步延迟）
+curl -s -o /dev/null -w "%{http_code}" "https://registry.npmjs.org/@zhushanwen%2fpi-<name>/<version>"
+# 200 = 已上线
+```
+
+**[MANDATORY] 禁止本地 `pnpm changeset publish` / `npm publish`**：npm 发布由 CI 完成（NPM_TOKEN 认证）。本地只做 version bump + tag push。
+
 ### 阶段 5: Release Notes + Release
 
 ```bash
@@ -132,6 +255,57 @@ bash .agents/skills/merge/scripts/release.sh
 ```
 
 从 conventional commits 自动生成 Release Notes（feat/fix/perf/breaking 分组）并创建/更新 GitHub Release。也可指定 tag 和 notes 文件：`bash .agents/skills/merge/scripts/release.sh v0.6.5 --notes ./my-notes.md`。
+
+**[MANDATORY] Release Notes 必须中英双语**
+
+Release Notes 需要同时包含中文和英文版本，使用 `<!-- LANG:zh -->` 和 `<!-- LANG:en -->` 标记分隔。前端会根据用户语言偏好自动提取对应部分。
+
+格式示例：
+```markdown
+<!-- LANG:en -->
+## What's New
+- Fix bug X
+- Add feature Y
+
+<!-- LANG:zh -->
+## 更新内容
+- 修复 bug X
+- 添加功能 Y
+```
+
+注意事项：
+- 英文在前，中文在后（便于 GitHub 默认显示英文）
+- 每个语言部分保持独立的 markdown 结构
+- 标记必须独占一行，前后可有空行
+- 向后兼容：无标记的 release 仍正常显示完整内容
+
+**[MANDATORY] 校验 Release Notes 双语格式**
+
+在创建 Release 后，必须校验 Release Notes 包含双语标记：
+
+```bash
+# 获取刚创建的 release body
+RELEASE_BODY=$(gh release view "v${VERSION}" --json body -q '.body')
+
+# 校验是否包含中英双语标记
+if ! echo "$RELEASE_BODY" | grep -q '<!-- LANG:en -->'; then
+  echo "ERROR: Release Notes 缺少英文标记 <!-- LANG:en -->"
+  exit 1
+fi
+
+if ! echo "$RELEASE_BODY" | grep -q '<!-- LANG:zh -->'; then
+  echo "ERROR: Release Notes 缺少中文标记 <!-- LANG:zh -->"
+  exit 1
+fi
+
+echo "✓ Release Notes 双语格式校验通过"
+```
+
+如果校验失败，需要编辑 release 添加双语标记：
+```bash
+# 编辑 release body（保留原有内容，添加语言标记）
+gh release edit "v${VERSION}" --notes-file ./release-notes-bilingual.md
+```
 
 ### 阶段 6: 交付物验证（Electron 特化）
 
@@ -194,7 +368,8 @@ bash .agents/skills/merge/scripts/remove-worktree.sh <branch-name> --force --ski
 | 3 | PR CI + 合并（阶段 2） | |
 | 4 | Post-merge CI（阶段 3） | |
 | 5 | ⚠️ 版本校验（阶段 3.5） | `bash scripts/check-version-bump.sh` |
-| 6 | 版本 bump + 发布（阶段 4） | `bash scripts/verify-ci-release.sh ...` (在 push 后调用) |
+| 6 | Electron 版本 bump + 发布（阶段 4） | `bash scripts/verify-ci-release.sh ...` (在 push 后调用) |
+| 6N | ⚠️ npm 发布（阶段 4N，可选） | 仅含 extensions/ 改动时执行：changeset version + npm-v* tag |
 | 7 | 创建 Release（阶段 5） | |
 | 8 | ⚠️ 确认交付物（阶段 6） | `bash scripts/verify-ci-release.sh ...` |
 | 9 | 清理 worktree（阶段 7，终结步骤） | 删除后直接输出总结，不再调 bash |
@@ -239,7 +414,7 @@ bash .agents/skills/merge/scripts/remove-worktree.sh <branch-name> --force --ski
 
 - **交付方式**：GitHub Release + Electron 产物（DMG/EXE/AppImage）
 - **版本管理**：根 `package.json` + `apps/electron/package.json`（阶段 4 内联命令原子 bump 两个文件）
-- **构建验证**：本地 `npm run build` + CI 全量构建
+- **构建验证**：本地 `pnpm run build` + CI 全量构建
 
 ---
 

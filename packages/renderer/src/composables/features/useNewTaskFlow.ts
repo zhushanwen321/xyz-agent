@@ -18,10 +18,8 @@
 import { computed, ref } from 'vue'
 import type { ComputedRef } from 'vue'
 import { session as sessionApi } from '@/api'
-import * as events from '@/api/events'
 import { deriveSessionLabel } from '@/lib/utils'
 import { useSessionStore } from '@/stores/session'
-import { useCommandStore } from '@/stores/command'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { usePanelStore } from '@/stores/panel'
 import { useNavigationStore } from '@/stores/navigation'
@@ -29,8 +27,6 @@ import { useChat } from '@/composables/features/useChat'
 import type { Segment } from '@xyz-agent/shared'
 import { useModel } from '@/composables/features/useModel'
 import { useFileTree } from '@/composables/features/useFileTree'
-import { useSubagentStore } from '@/stores/subagent'
-import { useWorkflowStore } from '@/stores/workflow'
 import { useToast } from '@/composables/useToast'
 import { migrateSessionImage } from '@/lib/ipc'
 import i18n from '@/i18n'
@@ -88,7 +84,6 @@ async function migrateTmpdirImages(
 
 export function useNewTaskFlow() {
   const session = useSessionStore()
-  const commandStore = useCommandStore()
   const workspaceStore = useWorkspaceStore()
   const panel = usePanelStore()
   const navigation = useNavigationStore()
@@ -290,28 +285,15 @@ export function useNewTaskFlow() {
       session.activeId = currentSession.value!.id
       panel.loadSession(panel.activePanelId, currentSession.value!.id)
       navigation.push({ view: 'chat', sessionId: currentSession.value!.id })
-      // 命令拉取：修复 broadcast 与订阅时序竞争——session.create 的 RPC 在 runtime 内部
-      // 已 broadcast session.commands（fetchAndBroadcastCommands），但此时 renderer 的
-      // CommandPopover 尚未订阅新 sessionId 通道（panel.loadSession 后才挂 Composer），
-      // broadcast 被丢弃 → 对话流态 slash 浮层空（landing 态用 settingsStore.skills 不受影响）。
-      // 与 useSidebar.selectSession 同策略：activeId 更新 + panel 挂载后主动拉取并本地 dispatch，
-      // 保证命令到达订阅者。失败不阻断发送（命令缺失仅致 slash 浮层空，可后补）。
+      // wave:remove-bandaids：删除 getCommands + loadSubagents/loadWorkflows 主动拉取兜底。
+      // commands/context/subagents 由 useChat.ensureStreamSubscription → subscribeSession →
+      // applySnapshot 的 stateSnapshot dispatch 提供；workflows 经 streamRing 内 session.workflowUpdate
+      // 增量信号 → triggerWorkflowReload → loadWorkflows RPC 闭环。loadTree 保留（文件树无 bus state type）。
       const newSid = currentSession.value!.id
-      try {
-        const { commands } = await sessionApi.getCommands(newSid)
-        commandStore.applyCommands(newSid, commands)
-        events.dispatchSession(newSid, { type: 'session.commands', payload: { sessionId: newSid, commands } })
-        // eslint-disable-next-line taste/no-silent-catch -- getCommands 失败不阻断首发提交（命令缺失仅致 slash 浮层空，可后补）；与 useSidebar.selectSession 同策略
-      } catch (e) {
-        console.warn('[useNewTaskFlow] getCommands failed, slash popover will be empty:', e)
-      }
-      // 文件树/subagent/workflow 列表预加载：新建 session 后侧栏列表不更新的根因之一是
-      // submitFirstMessage 未调 loadTree/loadSubagents/loadWorkflows（newSession 延迟 create
-      // 路径不走 selectSession，兜底全缺）。对齐 useSidebar.selectSession 的兜底模式。
-      // fire-and-forget：失败不阻断首发发送（列表缺失仅致 tab 计数为 0）。
+      // 文件树预加载：新建 session 后侧栏「文件」tab 计数（fileCount 读 store.getTree）立即更新。
+      // fire-and-forget：失败不阻断首发发送（文件树缺失仅致 tab 计数为 0）。
+      // 文件树不在此 wave 的 bus stateSnapshot 覆盖范围，保留主动拉取。
       void useFileTree().loadTree(newSid)
-      void useSubagentStore().loadSubagents(newSid)
-      void useWorkflowStore().loadWorkflows(newSid)
       // per-session sid：显式传 newSid，不依赖全局 activeId（双 panel 隔离）
       // per-session sid：显式传 newSid，不依赖全局 activeId（双 panel 隔离）
       // tmpdir 迁移：landing 态图片可能落 tmpdir（writeSessionImage 在 sessionId 为空时降级 tmpdir）。

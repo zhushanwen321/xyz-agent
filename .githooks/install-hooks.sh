@@ -82,6 +82,7 @@ fi
 # 获取变更文件
 STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
 FRONTEND_FILES=$(echo "$STAGED_FILES" | grep "^packages/renderer/src/" || true)
+EXTENSION_FILES=$(echo "$STAGED_FILES" | grep -E "^extensions/.*\.ts$" | grep -vE "__tests__|\.test\.|/workflows/|/examples/|\.d\.ts$" || true)
 
 # ============================================================================
 # 1. 前端 ESLint 检查
@@ -155,6 +156,220 @@ if [ -n "$FRONTEND_FILES" ]; then
         fi
     else
         echo -e "${YELLOW}[SKIP] vue-tsc 类型检查已跳过${NC}"
+    fi
+fi
+
+# ============================================================================
+# 2b. pi extensions ESLint + tsc 类型检查
+#    extensions 是无构建的 TS 源码（pi 运行时加载），用 extensions/tsconfig.json
+#    + eslint.config.mjs 的 extensions/ override 块检查。
+#    ESLint 只拦 error（--quiet），warning 是迁入时已有的技术债标记（no-magic-numbers
+#    等，源项目基线即 warn），不阻断提交。
+# ============================================================================
+
+if [ -n "$EXTENSION_FILES" ]; then
+    print_section "[pi extensions ESLint + 类型检查]"
+
+    if [ "$SKIP_EXTENSION_LINT" != "1" ]; then
+        ESLINT_EXT_FILES=$(echo "$EXTENSION_FILES" | tr '\n' ' ')
+        echo -e "${BLUE}[INFO] 运行 ESLint 检查（仅拦 error）...${NC}"
+        ESLINT_EXT_OUTPUT=$(npx eslint --quiet --no-warn-ignored $ESLINT_EXT_FILES 2>&1)
+        ESLINT_EXT_EXIT=$?
+        if [ $ESLINT_EXT_EXIT -ne 0 ]; then
+            echo -e "${RED}[ERROR] extensions ESLint 检查失败:${NC}"
+            echo "$ESLINT_EXT_OUTPUT"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}[OK] extensions ESLint 检查通过（warning 为技术债标记，不阻断）${NC}"
+
+        echo -e "${BLUE}[INFO] 运行 tsc 类型检查（extensions 全量）...${NC}"
+        if ! (cd extensions && npx tsc --noEmit 2>&1); then
+            echo ""
+            echo -e "${RED}[ERROR] extensions tsc 类型检查失败${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}[OK] extensions tsc 类型检查通过${NC}"
+    else
+        echo -e "${YELLOW}[SKIP] extensions 检查已跳过${NC}"
+    fi
+fi
+
+# ============================================================================
+# 2c. pi extensions manifest & convention 检查
+#    迁自 xyz-pi-extensions 仓库的 pre-commit，针对已迁移的 extensions/ 包：
+#      (1) 禁止废弃 namespace @mariozechner/pi-*（Pi SDK 已重命名为 @earendil-works/pi-*）
+#      (2) 禁止 extensions 代码用 console.log/info（会泄漏到 TUI，见 standards.md §10）
+#      (3) pi manifest + package.json 深度检查（保 pi.extensions/type/keyword/
+#          peerDependencies/包名/files 字段完整）
+#    仅在 staged extensions/ 文件变更时触发，与 2b 共用 SKIP_EXTENSION_LINT 跳过开关。
+# ============================================================================
+
+EXTENSION_PKG_FILES=$(echo "$STAGED_FILES" | grep -E "^extensions/[^/]+/package\.json$" || true)
+
+if [ -n "$EXTENSION_FILES" ] || [ -n "$EXTENSION_PKG_FILES" ]; then
+    print_section "[pi extensions manifest & convention 检查]"
+
+    if [ "$SKIP_EXTENSION_LINT" != "1" ]; then
+
+        # ── (1) 废弃 namespace 检查：staged extensions .ts + package.json ──
+        echo -e "${BLUE}[INFO] 检查废弃 namespace @mariozechner/pi-*...${NC}"
+        NS_SCAN_TARGETS=""
+        for f in $EXTENSION_FILES $EXTENSION_PKG_FILES; do
+            NS_SCAN_TARGETS="$NS_SCAN_TARGETS $f"
+        done
+        NS_HITS=""
+        for f in $NS_SCAN_TARGETS; do
+            [ -z "$f" ] && continue
+            [ -f "$f" ] || continue
+            hit=$(grep -nE '@mariozechner/pi-' "$f" 2>/dev/null || true)
+            if [ -n "$hit" ]; then
+                while IFS= read -r line; do
+                    NS_HITS="${NS_HITS}  ${f}:${line}\n"
+                done <<< "$hit"
+            fi
+        done
+        if [ -n "$NS_HITS" ]; then
+            echo -e "${RED}[ERROR] 发现废弃 namespace @mariozechner/pi-*（应改用 @earendil-works/pi-*）:${NC}"
+            echo -e "$NS_HITS"
+            echo -e "${YELLOW}[FIX] find extensions -type f \\( -name '*.ts' -o -name '*.json' \\) -exec sed -i '' 's|@mariozechner/pi-|@earendil-works/pi-|g' {} +${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}[OK] namespace 检查通过（无 @mariozechner/pi-* 引用）${NC}"
+
+        # ── (2) console.log/info 禁止检查（extensions/**/*.ts，排除 .d.ts/test）──
+        echo -e "${BLUE}[INFO] 检查 extensions 代码 console.log/info...${NC}"
+        CONSOLE_VIOLATIONS=""
+        for f in $EXTENSION_FILES; do
+            [ -z "$f" ] && continue
+            [ -f "$f" ] || continue
+            hits=$(grep -nE 'console\.(log|info)\(' "$f" 2>/dev/null || true)
+            if [ -n "$hits" ]; then
+                while IFS= read -r line; do
+                    CONSOLE_VIOLATIONS="${CONSOLE_VIOLATIONS}  ${f}:${line}\n"
+                done <<< "$hits"
+            fi
+        done
+        if [ -n "$CONSOLE_VIOLATIONS" ]; then
+            echo -e "${RED}[ERROR] extensions 中禁止使用 console.log/info（会泄漏到 TUI）:${NC}"
+            echo -e "$CONSOLE_VIOLATIONS"
+            echo -e "${YELLOW}[FIX] 用户可见消息 → ctx.ui.notify；内部诊断 → console.warn/error('[ext] ...')；不可恢复错误 → throw${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}[OK] console.log/info 检查通过${NC}"
+
+        # ── (3) pi manifest + package.json 深度检查（仅 staged extensions/*/package.json）──
+        if [ -n "$EXTENSION_PKG_FILES" ]; then
+            echo -e "${BLUE}[INFO] 检查 pi manifest + package.json 字段完整性...${NC}"
+            MANIFEST_FAIL=0
+            while IFS= read -r pkg_json; do
+                [ -z "$pkg_json" ] && continue
+                [ -f "$pkg_json" ] || continue
+                pkg_dir=$(dirname "$pkg_json")
+                pkg_name_short=$(basename "$pkg_dir")
+
+                # 跳过 private 包
+                is_private=$(python3 -c "import json; print(json.load(open('$pkg_json')).get('private', False))" 2>/dev/null || echo "False")
+                [ "$is_private" = "True" ] && continue
+
+                # 检查 pi.extensions 字段（值须为 ["./index.ts"]，入口文件须存在）
+                pi_result=$(python3 -c "
+import json, os
+d=json.load(open('$pkg_json'))
+exts=d.get('pi',{}).get('extensions',[])
+if exts != ['./index.ts']:
+    print('BAD_VALUE:' + repr(exts)); exit(0)
+entry=os.path.join('$pkg_dir', 'index.ts')
+if not os.path.isfile(entry):
+    print('MISSING_ENTRY:./index.ts'); exit(0)
+print('OK')
+" 2>/dev/null || echo "PARSE_ERROR")
+                case "$pi_result" in
+                    OK) ;;
+                    BAD_VALUE:*)
+                        echo -e "  ${RED}[ERROR]${NC} $pkg_name_short: pi.extensions 值非 [\"./index.ts\"]（${pi_result#BAD_VALUE:}）"
+                        MANIFEST_FAIL=1 ;;
+                    MISSING_ENTRY:*)
+                        echo -e "  ${RED}[ERROR]${NC} $pkg_name_short: pi.extensions 入口 ./index.ts 不存在"
+                        MANIFEST_FAIL=1 ;;
+                    *)
+                        echo -e "  ${RED}[ERROR]${NC} $pkg_name_short: package.json 解析失败或缺少 pi.extensions"
+                        echo -e "         ${YELLOW}修复：添加 \"pi\": { \"extensions\": [\"./index.ts\"] }${NC}"
+                        MANIFEST_FAIL=1 ;;
+                esac
+
+                # 检查 type: module
+                has_type_module=$(python3 -c "import json; print(json.load(open('$pkg_json')).get('type') == 'module')" 2>/dev/null || echo "False")
+                [ "$has_type_module" != "True" ] && {
+                    echo -e "  ${RED}[ERROR]${NC} $pkg_name_short: 缺少 \"type\": \"module\""
+                    MANIFEST_FAIL=1
+                }
+
+                # 检查 pi-package keyword
+                has_kw=$(python3 -c "import json; print('pi-package' in json.load(open('$pkg_json')).get('keywords',[]))" 2>/dev/null || echo "False")
+                [ "$has_kw" != "True" ] && {
+                    echo -e "  ${RED}[ERROR]${NC} $pkg_name_short: keywords 缺少 \"pi-package\""
+                    MANIFEST_FAIL=1
+                }
+
+                # 检查包名格式 @zhushanwen/pi-*
+                pkg_name=$(python3 -c "import json; print(json.load(open('$pkg_json')).get('name',''))" 2>/dev/null || echo "")
+                case "$pkg_name" in
+                    @zhushanwen/pi-*) ;;
+                    *)
+                        echo -e "  ${RED}[ERROR]${NC} $pkg_name_short: 包名 '$pkg_name' 不符合 @zhushanwen/pi-* 格式"
+                        MANIFEST_FAIL=1 ;;
+                esac
+
+                # 检查 peerDependencies 含 @earendil-works/pi-coding-agent（且不含旧 namespace）
+                peer_result=$(python3 -c "
+import json
+d=json.load(open('$pkg_json'))
+peers=d.get('peerDependencies',{})
+if '@mariozechner/pi-coding-agent' in peers:
+    print('LEGACY')
+elif '@earendil-works/pi-coding-agent' not in peers:
+    print('MISSING')
+else:
+    print('OK')
+" 2>/dev/null || echo "MISSING")
+                case "$peer_result" in
+                    OK) ;;
+                    LEGACY)
+                        echo -e "  ${RED}[ERROR]${NC} $pkg_name_short: peerDependencies 用旧 namespace @mariozechner/pi-coding-agent"
+                        MANIFEST_FAIL=1 ;;
+                    *)
+                        echo -e "  ${RED}[ERROR]${NC} $pkg_name_short: peerDependencies 缺少 @earendil-works/pi-coding-agent"
+                        MANIFEST_FAIL=1 ;;
+                esac
+
+                # 检查 files 字段包含入口 ./index.ts
+                files_result=$(python3 -c "
+import json
+d=json.load(open('$pkg_json'))
+files=d.get('files',[])
+matched=any('index.ts'==f or 'index.ts'.startswith(f.rstrip('/')) for f in files) if files else False
+print('OK' if matched else 'MISSING')
+" 2>/dev/null || echo "MISSING")
+                [ "$files_result" != "OK" ] && {
+                    echo -e "  ${RED}[ERROR]${NC} $pkg_name_short: files 未包含入口 index.ts（npm publish 后会丢失）"
+                    MANIFEST_FAIL=1
+                }
+            done <<< "$EXTENSION_PKG_FILES"
+
+            if [ $MANIFEST_FAIL -ne 0 ]; then
+                echo ""
+                echo -e "${RED}[ERROR] pi manifest + package.json 检查失败${NC}"
+                echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+                exit 1
+            fi
+            echo -e "${GREEN}[OK] pi manifest + package.json 检查通过${NC}"
+        fi
+    else
+        echo -e "${YELLOW}[SKIP] extensions manifest & convention 检查已跳过${NC}"
     fi
 fi
 
@@ -495,7 +710,7 @@ if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_PREFLIGHT_CHECK" != "1" ]; then
             bash "$RUNTIME_BUNDLE_CHECKER"
             if [ $? -ne 0 ]; then
                 echo -e "${RED}[ERROR] Runtime bundle 验证失败（可能需要重新 build）${NC}"
-                echo -e "${YELLOW}[FIX] cd packages/runtime && npm run build，然后重新 commit${NC}"
+                echo -e "${YELLOW}[FIX] cd packages/runtime && pnpm run build，然后重新 commit${NC}"
                 echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
                 exit 1
             fi
@@ -629,6 +844,8 @@ echo ""
 echo -e "${CYAN}已安装的检查项目:${NC}"
 echo -e "  ${GREEN}[+]${NC} 前端 ESLint 代码检查"
 echo -e "  ${GREEN}[+]${NC} vue-tsc 类型检查（全量，与 CI 等价）"
+echo -e "  ${GREEN}[+]${NC} pi extensions ESLint + tsc 类型检查（extensions/ 目录）"
+echo -e "  ${GREEN}[+]${NC} pi extensions manifest & convention 检查（禁废弃 namespace / 禁 console.log / pi manifest 字段）"
 echo -e "  ${GREEN}[+]${NC} Vue 组件规范检查（禁止原生 HTML、Emoji、自定义 CSS）"
 echo -e "  ${GREEN}[+]${NC} Sidecar session 隔离检查"
 echo -e "  ${GREEN}[+]${NC} CSS tokens 检查"

@@ -8,6 +8,9 @@
  * [cw wave w4] 删 W2TC11b（totalHeight 旧路径）与 W2TC11c（vlistBottom/totalHeight 优先级）：
  * totalHeight 字段已删，基线优先级链简化为 injectedBaseTop > vlistBottom。
  *
+ * [fix-handoff-with-message] 删 handoff notice：isHandingOff / handoffNoticeHeight 已从 deps 移除
+ * （取消入口改由 composer stop 按钮承担）。基线占位链简化为 compacting → dispatching 两段。
+ *
  * FORK_NOTICE_HEIGHT=40（useForkNoticeStream.ts:22 私有常量，未导出）。通过 forkNoticeTop(idx)
  * 的垂直堆叠步进断言：forkNoticeTop(idx) = forkNoticeBaseTop + idx * 40。
  *
@@ -43,7 +46,6 @@ function setup(opts: {
   vlistBottom?: number
   topOffset?: number
   isCompacting?: boolean
-  isHandingOff?: boolean
   isDispatching?: boolean
   hasWorkingTurn?: boolean
 }) {
@@ -55,7 +57,6 @@ function setup(opts: {
   const isCompacting = computed(() => opts.isCompacting ?? false)
   const isDispatching = computed(() => opts.isDispatching ?? false)
   const hasWorkingTurn = computed(() => opts.hasWorkingTurn ?? false)
-  const isHandingOff = computed(() => opts.isHandingOff ?? false)
 
   const scope = effectScope()
   let ret: ReturnType<typeof useForkNoticeStream> | undefined
@@ -67,8 +68,6 @@ function setup(opts: {
       isDispatching,
       hasWorkingTurn,
       compactNoticeHeight: 46,
-      isHandingOff,
-      handoffNoticeHeight: 46,
       injectedBaseTop,
     })
   })
@@ -92,7 +91,6 @@ describe('useForkNoticeStream · W2TC10: injectedBaseTop 短路', () => {
       injectedBaseTop: 500,
       vlistBottom: 8888,
       isCompacting: true,
-      isHandingOff: true,
     })
 
     expect(ret.forkNoticeTop(0)).toBe(500)
@@ -120,13 +118,6 @@ describe('useForkNoticeStream · W2TC11: vlistBottom 基线', () => {
     const { ret } = setup({ vlistBottom: 1200, topOffset: 0, isCompacting: true })
 
     // base=1200 + topOffset 0 + compacting 46 = 1246
-    expect(ret.forkNoticeTop(0)).toBe(1246)
-  })
-
-  it('vlistBottom + isHandingOff=true → 叠 handoff 占位（46）', () => {
-    const { ret } = setup({ vlistBottom: 1200, topOffset: 0, isHandingOff: true })
-
-    // base=1200 + topOffset 0 + handoff 46 = 1246
     expect(ret.forkNoticeTop(0)).toBe(1246)
   })
 

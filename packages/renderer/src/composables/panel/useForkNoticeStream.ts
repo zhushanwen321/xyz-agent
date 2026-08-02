@@ -35,13 +35,9 @@ export interface ForkNoticeStreamDeps {
   hasWorkingTurn: ComputedRef<boolean>
   /** compacting notice 占位高度（容器常量，compacting/dispatching 占位偏移量） */
   compactNoticeHeight: number
-  /** 是否正在交接（fast-handoff notice 占位高度参与基线计算，可选：未传视为 false） */
-  isHandingOff?: ComputedRef<boolean>
-  /** handoff notice 占位高度（容器常量，handoff 占位偏移量；isHandingOff 为 true 时使用） */
-  handoffNoticeHeight?: number
   /** [M2] 注入的 fork notice 首行基线（由 useNoticeStack 计算）。
-   *  传入时跳过内部 baseTop 计算（消除 compacting/handoff/dispatching 占位叠加的三处重复计算，reviewer m4）。
-   *  优先级高于 isCompacting/isHandingOff/isDispatching 等占位依赖（后者降级为兜底）。 */
+   *  传入时跳过内部 baseTop 计算（消除 compacting/dispatching 占位叠加的重复计算，reviewer m4）。
+   *  优先级高于 isCompacting/isDispatching 等占位依赖（后者降级为兜底）。 */
   injectedBaseTop?: ComputedRef<number>
 }
 
@@ -70,12 +66,12 @@ export function useForkNoticeStream(
   const forkNotices = computed(() => forkNoticeFeed(sessionId()))
 
   /**
-   * ForkNotice 起始 top：列表末尾 + topOffset + compacting/handoff/dispatching 占位高度。
-   * compacting / handoff / dispatching 各预留对应 notice 高度量级的占位（与容器占位块对齐）。
-   * 顺序：compacting → handoff → dispatching（垂直堆叠，互不重叠）。
+   * ForkNotice 起始 top：列表末尾 + topOffset + compacting/dispatching 占位高度。
+   * compacting / dispatching 各预留对应 notice 高度量级的占位（与容器占位块对齐）。
+   * 顺序：compacting → dispatching（垂直堆叠，互不重叠）。
    *
-   * [M2] 若注入 injectedBaseTop（来自 useNoticeStack），直接采用——消除占位叠加的三处重复计算
-   * （handoffNoticeTop / dispatchingTop / 此 baseTop，reviewer m4）。未注入时兜底内部计算。
+   * [M2] 若注入 injectedBaseTop（来自 useNoticeStack），直接采用——消除占位叠加的重复计算
+   * （dispatchingTop / 此 baseTop，reviewer m4）。未注入时兜底内部计算。
    *
    * [cw wave w4] 基线优先级简化为 injectedBaseTop > vlistBottom（删 totalHeight 旧路径）。
    * MessageStream.vue 注入 injectedBaseTop 短路；未注入时 base = vlistBottom（virtua 单一滚动 owner）。
@@ -85,7 +81,6 @@ export function useForkNoticeStream(
     const base = deps.vlistBottom.value
     let top = base + deps.topOffset.value
     if (deps.isCompacting.value) top += deps.compactNoticeHeight
-    if (deps.isHandingOff?.value) top += deps.handoffNoticeHeight ?? deps.compactNoticeHeight
     if (deps.isDispatching.value && !deps.hasWorkingTurn.value) top += deps.compactNoticeHeight
     return top
   })

@@ -6,7 +6,7 @@
   -->
   <div
     ref="rootEl"
-    class="session-item group relative flex cursor-pointer items-start gap-2 rounded-md px-2 py-[7px] transition-colors"
+    class="session-item group/item relative flex cursor-pointer items-start gap-2 rounded-md px-2 py-[7px] transition-colors"
     :class="[
       active ? 'bg-surface-2 ring-1 ring-inset ring-accent-ring' : 'hover:bg-surface-hover',
       isDead ? 'opacity-50' : '',
@@ -61,7 +61,7 @@
          删除采用原地两段式确认：首次点击→变红确认态，再次点击才真正 emit delete。 -->
     <div
       class="absolute top-0.5 right-1 gap-1"
-      :class="confirming ? 'flex' : 'flex opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'"
+      :class="confirming ? 'flex' : 'flex opacity-0 group-hover/item:opacity-100 group-focus-within/item:opacity-100'"
     >
       <Button
         v-if="!confirming"

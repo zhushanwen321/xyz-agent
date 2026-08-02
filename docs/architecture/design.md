@@ -547,13 +547,13 @@ API Client（D3）天然是第 2 层的家——它是所有 ingress 的必经�
   ├─ 8 个 composable 的 ws-client send 调用 → 迁到 api.xxx
   ├─ chatStore.markSessionError 落地（D6a）
   └─ VITE_MOCK 下沉到 api 层（D8）
-  验证：npm run dev 全功能 + mock 模式可跑
+  验证：pnpm run dev 全功能 + mock 模式可跑
 
 阶段 2 · Runtime 目录分层（机械重构，低风险）
   ├─ git mv：transport/ · adapters/ · infra/ 分离（D4）
   ├─ SidecarServer → RuntimeServer，迁 transport/server.ts（D7）
   └─ 修正 server.ts「pure Transport」注释
-  验证：npm run build + validate-runtime-bundle.sh
+  验证：pnpm run build + validate-runtime-bundle.sh
   ⚠️ 目录迁移后 import 链需顺畅（见 CLAUDE.md #12）。**tsup 配置本身零改动**（bundle 模式，entry 不含被迁移的 server.ts 等——详见 §3.3 铁律 #2）
 
 阶段 3 · 拆 session-service 巨石（中等风险，需测试）
@@ -753,7 +753,7 @@ main/
 
 > 命名变更：`runtime/` 子目录 → `supervisor/`（避免和顶层 `packages/runtime/` 撞名）；类名 `RuntimeManager` → `RuntimeSupervisor`。
 >
-> 填充进度：M2（window 全部）+ M5（shortcut）+ M1（main 编排）+ 最小可运行 handler 已完成，`npm run dev:mock` 可启动 mock 模式。M3 supervisor 子模块 + M4 特权/桥接 handler 保留 `throw` 骨架，待 B 类填充。
+> 填充进度：M2（window 全部）+ M5（shortcut）+ M1（main 编排）+ 最小可运行 handler 已完成，`pnpm run dev:mock` 可启动 mock 模式。M3 supervisor 子模块 + M4 特权/桥接 handler 保留 `throw` 骨架，待 B 类填充。
 
 ### 细化点 M1–M5
 

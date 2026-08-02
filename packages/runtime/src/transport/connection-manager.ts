@@ -106,6 +106,8 @@ export interface ReplayMeta {
  * （busyOwner 定向投递的前提）。onDisconnect 新增（审查 C3：现状无此回调，close 在
  * attachLifecycleHandlers 内联处理），供 presence 推送（连接下线重推）与 P6 terminal resize
  * owner 清理订阅。本地模式 clientId='local' 同样触发。
+ * - onDisconnect 连接关闭（wave:runtime-wiring）：server 注入实现调 bus.unsubscribeAll(ws) 清理该 ws
+ *   的所有 session 订阅。
  */
 export interface ConnectionCallbacks {
   onConnect(ws: WsType, clientId: string): void

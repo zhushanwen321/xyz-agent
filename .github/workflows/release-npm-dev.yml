@@ -5,6 +5,7 @@ name: Release NPM Dev
 # 触发：push 到 `dev-npm-*` 分支
 # 产出：版本号 `-dev.*` 后缀，发布到 npm `dev` dist-tag
 # 消费者：npm install @xyz-agent/extension-protocol@dev
+#         (及 @zhushanwen/pi-* extensions 的 dev 预发布)
 
 on:
   push:
@@ -31,12 +32,10 @@ jobs:
           fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
           registry-url: https://registry.npmjs.org
 
@@ -45,11 +44,33 @@ jobs:
       - name: Build extension-protocol
         run: pnpm --filter @xyz-agent/extension-protocol build
 
+      - name: Verify prerelease mode is active
+        id: check_pre
+        run: |
+          if [ ! -f ".changeset/pre.json" ]; then
+            echo "::warning::No .changeset/pre.json found — this branch was not prepared via npm-prerelease.sh."
+            echo "::warning::Publishing now would release to the \`latest\` dist-tag instead of \`dev\`."
+            echo "::warning::Aborting to prevent accidental stable release. Run \`bash scripts/npm-prerelease.sh\` locally first."
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Found .changeset/pre.json — prerelease mode active."
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish prerelease to npm
+        if: steps.check_pre.outputs.should_publish == 'true'
         run: pnpm changeset publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Skipped publish (no pre.json)
+        if: steps.check_pre.outputs.should_publish != 'true'
+        run: |
+          echo "## Publish Skipped" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "No \`.changeset/pre.json\` — branch was not prepared via \`npm-prerelease.sh\`." >> "$GITHUB_STEP_SUMMARY"
+          echo "Run \`bash scripts/npm-prerelease.sh\` locally, commit the generated pre.json + version bumps, then push again." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Summary
         run: |
@@ -59,4 +80,7 @@ jobs:
           echo "Branch: \`$BRANCH\`" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Published to npm \`dev\` dist-tag." >> "$GITHUB_STEP_SUMMARY"
+          echo "Includes all packages with pending changesets:" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`@xyz-agent/extension-protocol\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`@zhushanwen/pi-*\` extensions + quota-providers" >> "$GITHUB_STEP_SUMMARY"
           echo "Install: \`npm install @xyz-agent/extension-protocol@dev\`" >> "$GITHUB_STEP_SUMMARY"

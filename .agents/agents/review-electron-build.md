@@ -32,7 +32,7 @@ task prompt 中必须包含：
    - 打包后路径是否用 `process.resourcesPath/app.asar.unpacked/...`（禁止 `app.getAppPath()`，返回 asar 虚拟路径）
 6. **打包验证三阶段**（变更涉及打包时必须确认脚本存在/被调用）：
    - Preflight：`scripts/preflight-check.sh`
-   - Build：`npm run build`
+   - Build：`pnpm run build`
    - Postbuild：`scripts/postbuild-validate.sh`
    - CI smoke test 是否覆盖
 7. **打包改动规范**：tsup/electron-builder/plugin-host/runtime 相关改动是否**逐个 commit**（禁止一个 commit 改多个打包子系统）。

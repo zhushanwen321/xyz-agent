@@ -7,7 +7,7 @@
  *
  * 依赖方向：无下游（读全局 window.electronAPI，类型经 declare global 自动可用）
  */
-import type { LatestReleaseInfo, SegmentsMetadataEntry, UpdateStage } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, SegmentsMetadataEntry, UpdateStage, UpdateSettings } from '@xyz-agent/shared'
 
 /** preload 注入的 electronAPI（web/mock 环境为 undefined） */
 const api = window.electronAPI
@@ -288,6 +288,31 @@ export function performUpdate(release: LatestReleaseInfo): Promise<{ triggerRest
   return api?.performUpdate(release) ?? Promise.resolve({ triggerRestart: false })
 }
 
+/**
+ * 触发下载阶段（下载 → 校验，止于 downloaded 态，不替换/重启）。
+ * @param release checkForUpdate 返回的最新版本信息
+ * @returns downloaded=true 表示产物已下载并校验通过，等待 performInstall 触发替换重启
+ */
+export function updateDownload(release: LatestReleaseInfo): Promise<{ downloaded: boolean }> {
+  return api?.updateDownload(release) ?? Promise.resolve({ downloaded: false })
+}
+
+/**
+ * 触发安装阶段（替换 + 重启）。依赖已下载产物（updateDownload 成功后调用）。
+ * @returns triggerRestart=true 表示替换完成、app 即将退出重启
+ */
+export function updateInstall(): Promise<{ triggerRestart: boolean }> {
+  return api?.updateInstall() ?? Promise.resolve({ triggerRestart: false })
+}
+
+/**
+ * 读取 main 侧预下载产物（app 启动时恢复 downloaded 态用）。
+ * @returns 有有效预下载产物返回 { release, filePath }，无则 null
+ */
+export function getPreloaded(): Promise<{ release: LatestReleaseInfo; filePath: string } | null> {
+  return api?.getPreloaded() ?? Promise.resolve(null)
+}
+
 /** 监听升级进度事件（stage + percent 0-100），返回取消订阅函数。无 IPC 返回 no-op */
 export function onUpdateProgress(cb: (p: { stage: UpdateStage; percent: number }) => void): () => void {
   return api?.onUpdateProgress(cb) ?? (() => {})
@@ -303,6 +328,43 @@ export function openUpdateFallbackUrl(url: string): Promise<void> {
   return api?.openUpdateFallbackUrl(url) ?? Promise.resolve()
 }
 
+// ── 代理配置 ────────────────────────────────────────────────────────
+
+/** 获取当前代理配置。无 IPC 时返回默认配置 */
+export function getProxyConfig(): Promise<import('@xyz-agent/shared').IProxyConfig> {
+  return api?.getProxyConfig() ?? Promise.resolve({ mode: 'system' })
+}
+
+/** 保存代理配置。无 IPC 时 no-op */
+export function setProxyConfig(config: import('@xyz-agent/shared').IProxyConfig): Promise<void> {
+  return api?.setProxyConfig(config) ?? Promise.resolve()
+}
+
+/** 测试代理连接。无 IPC 时返回成功（跳过测试） */
+export function testProxy(config: import('@xyz-agent/shared').IProxyConfig): Promise<{ success: boolean; message?: string }> {
+  return api?.testProxy(config) ?? Promise.resolve({ success: true, message: 'No IPC available' })
+}
+
+// ── 升级提醒持久化标志 + 升级设置（功能 1 常驻提醒 + 功能 2 预下载开关）─────────
+// getPendingUpdate：app 启动时调，读持久化标志恢复「可升级」提醒（离线也能常驻）。
+// getUpdateSettings/setUpdateSettings：读/写升级设置（预下载开关），设置页用。
+// 无 IPC（web/mock）时 getPendingUpdate 返回 null，getUpdateSettings 返回默认值，setUpdateSettings no-op。
+
+/** 读取升级提醒持久化标志。无 IPC 时返回 null（无持久化提醒可恢复） */
+export function getPendingUpdate(): Promise<LatestReleaseInfo | null> {
+  return api?.getPendingUpdate() ?? Promise.resolve(null)
+}
+
+/** 读取升级设置。无 IPC 时返回默认值（预下载关闭） */
+export function getUpdateSettings(): Promise<UpdateSettings> {
+  return api?.getUpdateSettings() ?? Promise.resolve({ preDownload: false })
+}
+
+/** 保存升级设置。无 IPC 时 no-op 返回 success */
+export function setUpdateSettings(settings: UpdateSettings): Promise<{ success: boolean }> {
+  return api?.setUpdateSettings(settings) ?? Promise.resolve({ success: true })
+}
+
 // ── 系统提示音（跨平台：mac afplay / linux paplay / win 返 wav base64）─────────
 // main 侧 sound-handlers.ts 处理平台分发。win 返 wav base64 由 renderer 用 new Audio() 播。
 // 无 IPC（web/mock）时 listSystemSounds 返回空清单，playSystemSound 静默 no-op。
@@ -316,7 +378,7 @@ export async function listSystemSounds(): Promise<{
 }
 
 /**
- * 按名字播放系统提示音。mac/linux 由 main spawn 播；win 返回 wav base64 由调用方播。
+ * 按名字播放系统提示音。mac/linux 由 main spawn 播；win 返 wav base64 由调用方播。
  * name 为空或未知时：若提供 kind，main 回落到平台默认（W3）；否则静默 resolve。
  * 失败静默（提示音失败不阻塞对话流）。
  *

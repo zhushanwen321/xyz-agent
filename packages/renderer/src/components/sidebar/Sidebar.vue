@@ -117,22 +117,26 @@
           />
         </template>
         <template v-else-if="sidebar.activeTab === 'workflows'">
-          <WorkflowDetail
-            v-if="currentWorkflow"
-            :workflow="currentWorkflow"
-            @back="onWorkflowBack"
-            @select-agent-call="onSelectAgentCall"
-            @action="onWorkflowAction"
-          />
-          <WorkflowList
-            v-else
-            :workflows="workflowList"
-            :is-loading="workflowStore.isLoading"
-            :load-error="workflowStore.loadError"
-            @select="onSelectWorkflow"
-            @action="onWorkflowAction"
-            @retry="onRetryWorkflows"
-          />
+          <!-- Transition: 列表 ↔ 详情切换的 slide 过渡（out-in 避免两个视图同时渲染）。
+               Escape hatch：Transition 类无法用 Tailwind 表达，走 <style scoped>（design-system §3）。 -->
+          <Transition name="wf-slide" mode="out-in">
+            <WorkflowDetail
+              v-if="currentWorkflow"
+              :workflow="currentWorkflow"
+              @back="onWorkflowBack"
+              @select-agent-call="onSelectAgentCall"
+              @action="onWorkflowAction"
+            />
+            <WorkflowList
+              v-else
+              :workflows="workflowList"
+              :is-loading="workflowStore.isLoading"
+              :load-error="workflowStore.loadError"
+              @select="onSelectWorkflow"
+              @action="onWorkflowAction"
+              @retry="onRetryWorkflows"
+            />
+          </Transition>
         </template>
         <template v-else>
           <FileView
@@ -469,3 +473,20 @@ function matchOverrideKey(e: KeyboardEvent, override: string): boolean {
   return e.key.toLowerCase() === key
 }
 </script>
+
+<style scoped>
+/* Escape hatch（design-system §3）：Vue Transition 类无法用 Tailwind 表达，走 scoped style。
+ * 列表 ↔ 详情切换：从右滑入/向右滑出，120ms fast（与 design-tokens --duration-fast 一致）。 */
+.wf-slide-enter-active,
+.wf-slide-leave-active {
+  transition: transform var(--duration-fast) var(--ease), opacity var(--duration-fast) var(--ease);
+}
+.wf-slide-enter-from {
+  transform: translateX(16px);
+  opacity: 0;
+}
+.wf-slide-leave-to {
+  transform: translateX(-16px);
+  opacity: 0;
+}
+</style>

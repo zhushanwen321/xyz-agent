@@ -128,7 +128,7 @@ Mock 模式跳过 runtime event-adapter：`run-send-stream.ts` 直接 `pushSessi
 ### 5.4 运行命令
 
 ```bash
-npm run build:e2e                              # 构建 E2E 产物
+pnpm run build:e2e                              # 构建 E2E 产物
 npx playwright test e2e/gui-components.spec.ts # 只跑 GUI 组件 E2E
 npx playwright test                            # 跑全部 E2E
 ```

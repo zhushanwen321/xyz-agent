@@ -25,8 +25,13 @@ export interface ISessionServiceInternal {
    * 初始化 ManagedSession 并写入 sessions Map，返回子模块可见视图。hidden 标记隐藏 session。
    * parentSession/forkEntryId 透传 fork 血缘（FR-2 active 路径回传），存入 session 对象后
    * 经 toSummary 输出到 SessionSummary。
+   *
+   * modelOverride：新 session 实际启动模型（"provider/modelId" 格式，已含 C-RL-6 优先级解析）。
+   * 传入时写入 session.modelId 元数据，让前端 composer chip 正确显示（Staging Mode ADR-0043）；
+   * 不传时 fallback configStore.getDefaultModel()。注意 pi 进程的模型在 createSession 时已由
+   * pi client options 的 model 字段设定，此参数只补齐 session 元数据层的缺口。
    */
-  initializeManagedSession(id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string, hidden?: boolean, parentSession?: string, forkEntryId?: string): Promise<IManagedSessionView>
+  initializeManagedSession(id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string, hidden?: boolean, parentSession?: string, forkEntryId?: string, modelOverride?: string): Promise<IManagedSessionView>
   /** Detach adapter（按 id 查 Map）。pi 事件订阅经 EventAdapter 唯一持有，detach 即收口。 */
   detachSession(sessionId: string): void
   /** 将 ManagedSession 转为对外 SessionSummary（含 git 信息）。 */

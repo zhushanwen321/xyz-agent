@@ -18,6 +18,14 @@ const nodeExternals = [
   ...builtinModules.flatMap((m) => [m, `node:${m}`]),
 ]
 
+// [HISTORICAL] 第三方 npm 包一律打进 main bundle，不放进 external 数组。
+// 曾误以为 "Electron 内置 Node 已自带 undici 可直接 require"，把 'undici' 标为 external，
+// 导致打包产物 main.cjs 保留 require('undici')，但 electron-builder files 白名单不含 undici、
+// Electron 运行时也不把它作为公共 require 目标暴露 → 安装后启动即
+// "Cannot find module 'undici'"。Electron 的 Node 仅把 undici 作为 fetch 的内部实现，
+// 不暴露 require('undici')。auto-update 代理下载（gateway/update-handlers、update/download-asset）
+// 需要 undici 的 ProxyAgent，必须打进 bundle。
+
 export default defineConfig({
   build: {
     outDir: 'dist/main',

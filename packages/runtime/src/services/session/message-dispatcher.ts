@@ -16,6 +16,7 @@ import type { ISessionServiceInternal } from './session-internal.js'
 import type { IPiEngine, IProcessManager } from '../ports/pi-engine.js'
 import type { SendMessageHook } from './types.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
+import type { MessageBus } from '../message-bus/message-bus.js'
 import { toErrorMessage } from '../../utils/errors.js'
 
 /** 生成代次 token 用的进制（base-36：数字 + 小写字母，紧凑且无符号字符）。 */
@@ -39,6 +40,7 @@ export class MessageDispatcher {
     private readonly pm: IProcessManager,
     private readonly broker: IMessageBroker,
     private readonly workspaceService: WorkspaceService,
+    private readonly messageBus?: MessageBus,
   ) {}
 
   /** 注册消息发送前 hook(PluginService 调用,实现 beforeSend 拦截)。 */
@@ -131,10 +133,9 @@ export class MessageDispatcher {
       // 补广播 message.error：让已订阅 session 通道的前端能在聊天流看到错误气泡。
       // 之前只靠 server.ts 外层 handler_error envelope（走 pending.reject，不进聊天流），
       // 导致 ensureActive 失败（如 pi 进程已死、restore 再 spawn 再 exit）时用户在对话流看不到错误。
-      this.broker.broadcast({
-        type: 'message.error',
-        payload: { sessionId, message: errMsg },
-      })
+      const msg = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
+      this.broker.broadcast(msg)
+      this.messageBus?.publish(sessionId, msg)
       throw e
     }
 
@@ -163,10 +164,9 @@ export class MessageDispatcher {
         if (lease.kind === 'not_found') {
           console.warn(`[message-dispatcher] lease acquire rejected (session not found), sid=${sessionId}`)
           const errMsg = 'Session not found'
-          this.broker.broadcast({
-            type: 'message.error',
-            payload: { sessionId, message: errMsg },
-          })
+          const notFoundMsg = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
+          this.broker.broadcast(notFoundMsg)
+          this.messageBus?.publish(sessionId, notFoundMsg)
           // cr-fix 防御性 release：acquire 返回 not_found 表示未持锁（session 不存在），此刻无 lease
           // 可释放——release 对不存在的 session 是 no-op（幂等安全）。保留此行对冲顺序耦合脆弱性：
           // 未来若重排让 acquire 在更早处对已存在 session 持锁，拒绝路径漏 release 会锁死到 TTL。
@@ -198,10 +198,9 @@ export class MessageDispatcher {
           // 收到 session.busy，否则 session 视图 busy 状态不完整。
           // 发起方 B 也会收到 session.busy 广播，但 B 已先收到 send.rejected（点对点），session.busy 对 B
           // 是冗余但无害（B 的 store 会 setSessionBusy，与 send.rejected 的 toast 不冲突）。
-          this.broker.broadcast({
-            type: 'session.busy',
-            payload: { sessionId, clientId: lease.owner, deviceName: ownerDeviceName, expiresAt: lease.expiresAt },
-          })
+          const busyMsg = { type: 'session.busy' as const, payload: { sessionId, clientId: lease.owner, deviceName: ownerDeviceName, expiresAt: lease.expiresAt } }
+          this.broker.broadcast(busyMsg)
+          this.messageBus?.publish(sessionId, busyMsg)
           // cr-fix 顺序约束说明：此处【故意不调 release】。acquire 返回 busy 表示「lease.owner
           //（别的设备/客户端）持锁」，本调用方未获取 lease（busyOwnerId 仍是 lease.owner，非本 clientId）。
           // release 的语义是「释放自己的锁」——对别人持有的锁调 release 会误清 lease.owner 的 lease。
@@ -260,7 +259,9 @@ export class MessageDispatcher {
       // 前端终态一致：session 标空闲 + 聊天气泡错误化。无需特殊处理（不改 release 为静默清字段）。
       this.leaseManager?.release(sessionId, 'send_failed')
       this.presenceRefresh?.()
-      this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: errMsg } })
+      const failedMsg = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
+      this.broker.broadcast(failedMsg)
+      this.messageBus?.publish(sessionId, failedMsg)
       // 与 hook 拦截同等对待：已广播 message.error 气泡，返回 blocked 让 handler 走 error envelope（sendError），
       // renderer pending.reject 触发 Composer 恢复草稿。否则 handler reply success → pending.resolve 误判发送成功。
       return { blocked: true }
@@ -286,7 +287,9 @@ export class MessageDispatcher {
       this.broker.sendToClient(clientId, { type: 'send.rejected', payload })
     } else {
       // 降级：无 clientId（旧调用）走 broadcast（与 w1 前行为一致）。
-      this.broker.broadcast({ type: 'send.rejected', payload })
+      const rejectMsg = { type: 'send.rejected' as const, payload }
+      this.broker.broadcast(rejectMsg)
+      this.messageBus?.publish(sessionId, rejectMsg)
     }
   }
 
@@ -302,19 +305,17 @@ export class MessageDispatcher {
     try {
       const hookResult = await this.sendMessageHook(sessionId, hookContent)
       if (hookResult?.blocked) {
-        this.broker.broadcast({
-          type: 'message.error',
-          payload: { sessionId, message: hookResult.reason ?? 'Message blocked by plugin hook' },
-        })
+        const msg = { type: 'message.error' as const, payload: { sessionId, message: hookResult.reason ?? 'Message blocked by plugin hook' } }
+        this.broker.broadcast(msg)
+        this.messageBus?.publish(sessionId, msg)
         return { blocked: true }
       }
       return { blocked: false }
     } catch (e) {
       console.error('[message-dispatcher] sendMessage hook error:', e)
-      this.broker.broadcast({
-        type: 'message.error',
-        payload: { sessionId, message: 'Plugin hook error: ' + (toErrorMessage(e)) },
-      })
+      const msg = { type: 'message.error' as const, payload: { sessionId, message: 'Plugin hook error: ' + (toErrorMessage(e)) } }
+      this.broker.broadcast(msg)
+      this.messageBus?.publish(sessionId, msg)
       return { blocked: true }
     }
   }
@@ -335,10 +336,9 @@ export class MessageDispatcher {
       this.presenceRefresh?.()
       // W4：abort 失败（异常退出）写 stopped 终态
       this.svc.persistSessionOutcome(sessionId, 'stopped', `Abort failed: ${errMsg}`)
-      this.broker.broadcast({
-        type: 'message.error',
-        payload: { sessionId, message: `Abort failed: ${errMsg}` },
-      })
+      const abortErrMsg = { type: 'message.error' as const, payload: { sessionId, message: `Abort failed: ${errMsg}` } }
+      this.broker.broadcast(abortErrMsg)
+      this.messageBus?.publish(sessionId, abortErrMsg)
       return
     }
     // [HISTORICAL] abort 成功后必须主动广播 message.complete{stopReason:'aborted'} + 重置
@@ -354,10 +354,9 @@ export class MessageDispatcher {
     this.presenceRefresh?.()
     // W4：用户主动 abort 写 stopped 终态
     this.svc.persistSessionOutcome(sessionId, 'stopped', 'User aborted')
-    this.broker.broadcast({
-      type: 'message.complete',
-      payload: { sessionId, stopReason: 'aborted' },
-    })
+    const completeMsg = { type: 'message.complete' as const, payload: { sessionId, stopReason: 'aborted' as const } }
+    this.broker.broadcast(completeMsg)
+    this.messageBus?.publish(sessionId, completeMsg)
   }
 
   /**
@@ -386,10 +385,9 @@ export class MessageDispatcher {
     } catch (e) {
       const errMsg = `Failed to restore session: ${toErrorMessage(e)}`
       console.error(`[message-dispatcher] sendBash: ${errMsg}`)
-      this.broker.broadcast({
-        type: 'message.error',
-        payload: { sessionId, message: errMsg },
-      })
+      const errMsgObj = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
+      this.broker.broadcast(errMsgObj)
+      this.messageBus?.publish(sessionId, errMsgObj)
       throw e
     }
 
@@ -407,10 +405,9 @@ export class MessageDispatcher {
     if (activeSession) {
       if (activeSession.isCompacting || activeSession.isBashRunning) {
         console.warn(`[message-dispatcher] sendBash preemptive reject (busy), sid=${sessionId}`)
-        this.broker.broadcast({
-          type: 'send.rejected',
-          payload: { sessionId, reason: 'busy', message: 'Agent 正在处理' },
-        })
+        const rejectMsg = { type: 'send.rejected' as const, payload: { sessionId, reason: 'busy' as const, message: 'Agent 正在处理' } }
+        this.broker.broadcast(rejectMsg)
+        this.messageBus?.publish(sessionId, rejectMsg)
         return { blocked: true, rejected: true }
       }
       activeSession.isBashRunning = true
@@ -424,10 +421,9 @@ export class MessageDispatcher {
 
     // ── bashStart 广播（实时反馈，与 bashResult 终态对称）──
     const excludeFlag = !!excludeFromContext
-    this.broker.broadcast({
-      type: 'message.bashStart',
-      payload: { sessionId, command, excludeFromContext: excludeFlag, timestamp: Date.now() },
-    })
+    const bashStartMsg = { type: 'message.bashStart' as const, payload: { sessionId, command, excludeFromContext: excludeFlag, timestamp: Date.now() } }
+    this.broker.broadcast(bashStartMsg)
+    this.messageBus?.publish(sessionId, bashStartMsg)
 
     // ── 调 pi bash + 广播终态 ──
     try {
@@ -440,8 +436,8 @@ export class MessageDispatcher {
         console.warn(`[message-dispatcher] sendBash: aborted during await, skip duplicate terminal. sid=${sessionId}`)
         return { blocked: true }
       }
-      this.broker.broadcast({
-        type: 'message.bashResult',
+      const bashResultMsg = {
+        type: 'message.bashResult' as const,
         payload: {
           sessionId,
           command,
@@ -453,7 +449,9 @@ export class MessageDispatcher {
           timestamp: Date.now(),
           ...(result.fullOutputPath !== undefined && { fullOutputPath: result.fullOutputPath }),
         },
-      })
+      }
+      this.broker.broadcast(bashResultMsg)
+      this.messageBus?.publish(sessionId, bashResultMsg)
     } catch (e) {
       const errMsg = toErrorMessage(e)
       console.error(`[message-dispatcher] sendBash failed: sessionId=${sessionId}`, errMsg)
@@ -468,8 +466,8 @@ export class MessageDispatcher {
       // role==='assistant' 过滤），不收口 role==='system' 的 streaming bash 消息——
       // 若只发 message.error，前端 bash 气泡会卡在 streaming 态。故此处补发一条
       // cancelled:false + exitCode:null + output 含错误信息的 bashResult 终态让 bash 收口。
-      this.broker.broadcast({
-        type: 'message.bashResult',
+      const bashResultErrMsg = {
+        type: 'message.bashResult' as const,
         payload: {
           sessionId,
           command,
@@ -480,8 +478,12 @@ export class MessageDispatcher {
           excludeFromContext: excludeFlag,
           timestamp: Date.now(),
         },
-      })
-      this.broker.broadcast({ type: 'message.error', payload: { sessionId, message: errMsg } })
+      }
+      this.broker.broadcast(bashResultErrMsg)
+      this.messageBus?.publish(sessionId, bashResultErrMsg)
+      const bashErrMsg = { type: 'message.error' as const, payload: { sessionId, message: errMsg } }
+      this.broker.broadcast(bashErrMsg)
+      this.messageBus?.publish(sessionId, bashErrMsg)
       return { blocked: true }
     } finally {
       if (activeSession) {
@@ -526,8 +528,8 @@ export class MessageDispatcher {
     }
     // 兑底终态：无论 pi 是否响应 abort_bash，都广播 cancelled=true 的 bashResult。
     // pi 卡死时不发任何事件，靠这条让前端 isBashRunning 复位（与 abort 广播 message.complete 同理）。
-    this.broker.broadcast({
-      type: 'message.bashResult',
+    const cancelMsg = {
+      type: 'message.bashResult' as const,
       payload: {
         sessionId,
         command: '',
@@ -538,7 +540,9 @@ export class MessageDispatcher {
         excludeFromContext: false,
         timestamp: Date.now(),
       },
-    })
+    }
+    this.broker.broadcast(cancelMsg)
+    this.messageBus?.publish(sessionId, cancelMsg)
   }
 
   async steerMessage(sessionId: string, content: string): Promise<void> {
@@ -588,18 +592,16 @@ export class MessageDispatcher {
       const errMsg = `Cannot compact while ${reason}`
       console.warn(`[message-dispatcher] compact preemptive reject (busy), sid=${sessionId}, reason=${reason}`)
       // 广播 session.compacted{error} 让前端流式通道收口（与下方 client.compact 失败路径对称）。
-      this.broker.broadcast({
-        type: 'session.compacted',
-        payload: { sessionId, status: 'compacted', error: errMsg },
-      })
+      const busyMsg = { type: 'session.compacted' as const, payload: { sessionId, status: 'compacted' as const, error: errMsg } }
+      this.broker.broadcast(busyMsg)
+      this.messageBus?.publish(sessionId, busyMsg)
       // 抛错让 session-message-handler 补请求级 error envelope（与 client.compact 失败路径对称）。
       throw new Error(errMsg)
     }
 
-    this.broker.broadcast({
-      type: 'session.compacting',
-      payload: { sessionId, status: 'compacting' },
-    })
+    const compactingMsg = { type: 'session.compacting' as const, payload: { sessionId, status: 'compacting' as const } }
+    this.broker.broadcast(compactingMsg)
+    this.messageBus?.publish(sessionId, compactingMsg)
     // [W3, U6] compact 期间用 isCompacting 互斥 sendPrompt（pi 在压缩上下文，
     // 此时 prompt 会与压缩竞态导致卡死）。与 isGenerating 不同：compact 不开 isGenerating，
     // 否则前端会把 session 误显示为 active（实际在压缩）。finally 兜底确保异常/成功都复位。
@@ -613,35 +615,35 @@ export class MessageDispatcher {
       } catch (e) {
         const errMsg = toErrorMessage(e)
         console.error('[message-dispatcher] compact: failed, sessionId=' + sessionId + ', error=' + errMsg + ', elapsed=' + (Date.now() - startTime) + 'ms')
-        this.broker.broadcast({
-          type: 'session.compacted',
-          payload: { sessionId, status: 'compacted', error: errMsg },
-        })
+        const compactFailMsg = { type: 'session.compacted' as const, payload: { sessionId, status: 'compacted' as const, error: errMsg } }
+        this.broker.broadcast(compactFailMsg)
+        this.messageBus?.publish(sessionId, compactFailMsg)
         throw e
       }
       // 压缩成功：广播 summary 进对话流（SystemNotice）+ 刷新 context 用量。
       // 两件事都在 dispatcher 编排——compact 是主动命令，副作用归位命令编排层（非 event-adapter）。
       // AGENTS.md 规则 7.5：对话流状态必须实时可见 + 可重开恢复（持久化由 pi 写入 JSONL，重开经 converter 还原）。
       if (result?.summary) {
-        this.broker.broadcast({
-          type: 'message.compactionSummary',
+        const summaryMsg = {
+          type: 'message.compactionSummary' as const,
           payload: {
             sessionId,
             summary: result.summary,
             tokensBefore: result.tokensBefore,
             timestamp: Date.now(),
           },
-        })
+        }
+        this.broker.broadcast(summaryMsg)
+        this.messageBus?.publish(sessionId, summaryMsg)
       }
       if (result?.estimatedTokensAfter != null && result.estimatedTokensAfter > 0) {
         // compact 后无 turn_end，context 用量不会自动刷新。用 pi 返回的估算值触发 applyContextUpdate。
         // 注意 estimatedTokensAfter 可能很小（压缩后），applyContextUpdate 对 0 会跳过，故判 > 0。
         this.svc.applyContextUpdate(sessionId, result.estimatedTokensAfter)
       }
-      this.broker.broadcast({
-        type: 'session.compacted',
-        payload: { sessionId, status: 'compacted' },
-      })
+      const compactedMsg = { type: 'session.compacted' as const, payload: { sessionId, status: 'compacted' as const } }
+      this.broker.broadcast(compactedMsg)
+      this.messageBus?.publish(sessionId, compactedMsg)
     } finally {
       // [W3, U6] 无论成功/失败/抛错都复位，避免 session 永远卡在 isCompacting（之后所有消息被拒）
       if (active) active.isCompacting = false

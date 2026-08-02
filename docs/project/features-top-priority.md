@@ -10,14 +10,14 @@
 
 ## TOP 1：生产构建（Production Build）
 
-**问题**：当前只有 `npm run dev` 开发模式，没有可分发、可安装的生产应用。项目无法脱离开发环境使用。
+**问题**：当前只有 `pnpm run dev` 开发模式，没有可分发、可安装的生产应用。项目无法脱离开发环境使用。
 
 **当前状态**：
 
 - `electron-builder` 已配置（`electron-builder.yml`），但 target 只有 `dir`（未打包成 dmg/zip）
 - Sidecar 用 `tsx` 直接运行 TS 源码，没有编译步骤
 - Renderer 有 `vite build`，可以产出前端静态文件
-- `npm run build` 链路：`build:vite → build:main → build:preload → electron-builder`
+- `pnpm run build` 链路：`build:vite → build:main → build:preload → electron-builder`
 
 **需要做的事**：
 
@@ -55,7 +55,7 @@ mac:
 
 ### 1.3 构建流程串通
 
-完整的 `npm run build` 流程：
+完整的 `pnpm run build` 流程：
 
 ```
 1. sidecar:  tsc 编译 → dist/sidecar/
@@ -67,8 +67,8 @@ mac:
 
 ### 1.4 开发体验优化
 
-- `npm run dev` 一键启动（当前已有）
-- `npm run build && npm run start` 本地验证构建产物
+- `pnpm run dev` 一键启动（当前已有）
+- `pnpm run build && pnpm run start` 本地验证构建产物
 - 添加 `.env.production` 配置区分开发/生产环境
 
 **涉及文件**：

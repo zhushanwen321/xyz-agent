@@ -3,6 +3,7 @@ import { createTokenManager } from './transport/token.js'
 import { createFileEndpoint } from './transport/file-endpoint.js'
 import { SessionService } from './services/session/session-service.js'
 import { ConfigService } from './services/config-service.js'
+import { ensureAutoRenameDefault } from './services/worktree-config-helper.js'
 import { PresetService } from './services/preset-service.js'
 import { ModelService } from './services/model-service.js'
 
@@ -41,6 +42,13 @@ import { TerminalService } from './services/terminal/terminal-service.js'
 import { QuotaService } from './services/quota-service.js'
 import { FileService } from './services/file-service.js'
 import { HandoffService } from './services/handoff-service.js'
+// MessageBus（wave:bus-core 产物）：per-session 消息广播核心。
+// wave:runtime-wiring 在组合根创建单例并注入到 SessionService（session 级消息双写走 bus.publish）+
+// RuntimeServer（subscribe/unsubscribe RPC handler + ConnectionManager.onClose → unsubscribeAll）。
+// 保留 re-export 供外部消费（renderer-subscribe wave 等可能 import 类型）。
+import { MessageBus } from './services/message-bus/message-bus.js'
+export { MessageBus } from './services/message-bus/message-bus.js'
+export type { BusClient, SessionBusState } from './services/message-bus/types.js'
 import { getAppVersion } from './services/plugin-service/plugin-version-checker.js'
 import { FsExecutor } from './infra/fs-executor.js'
 import { RecentWorkspacesStore } from './services/workspace/recent-workspaces-store.js'
@@ -113,6 +121,13 @@ export async function main(opts?: { host?: string; port?: number; tokenFile?: st
   // wave1 远程化：host/tokenManager 注入 ConnectionManager。serverVersion 用 appVersion
   // （auth.ok 回复携带），在 appInfo 探测前先用 getAppVersion()，后续无更新需求（版本不变）。
   const server = new RuntimeServer(port, projectRoot, { host, tokenManager, serverVersion: getAppVersion() })
+
+  // MessageBus 单例（wave:runtime-wiring）：per-session 消息广播核心。
+  // 在 server 构造后、setServices 前创建并注入——server 的 ConnectionManager.onDisconnect
+  // 回调经 setMessageBus 拿到引用，setServices 装配 sessionHandler 时读 server.messageBus。
+  // 默认 ring 容量 1000（bus-core DEFAULT_RING_CAPACITY，D4 决策）。
+  const messageBus = new MessageBus()
+  server.setMessageBus(messageBus)
 
   // ── Phase 1: create all service instances (no cross-service deps at construction time) ──
 
@@ -269,6 +284,8 @@ export async function main(opts?: { host?: string; port?: number; tokenFile?: st
     // 与 GitExecutor 同为 git 域 infra，但语义不同（窄查询 vs 通用 exec）——故独立 port（services/ports/git-info.ts）。
     new GitInfoReader(),
     workspaceService,
+    // messageBus：注入 dispatcher 的 session 级事件双写（dispatcher 内部 bus?.publish after broker.broadcast）。
+    messageBus,
   )
 
   // HandoffService：fast-handoff 编排层。依赖 sessionService（create/sendMessage/abort/getHistory/getSession）
@@ -370,6 +387,10 @@ export async function main(opts?: { host?: string; port?: number; tokenFile?: st
   // 注入 PresetService 供 getLaunchPresetOptions 委托（spawn pi 时按 launch preset 构建 args）。
   // 与 setConfigService 同模式（pi-launch-presets 设计 §8.1 + §4.3）。
   sessionService.setPresetService(presetService)
+  // 注入 MessageBus（wave:runtime-wiring）：session 级消息（带 sessionId payload）双写走 bus.publish
+  //（bus 负责 per-session seq 分配 + ring buffer + 订阅者广播），session 销毁时 removeSessionEntry
+  // 调 bus.clearSession。与 setConfigService 同模式（setter 注入，避免破坏 SessionService 测试构造点）。
+  sessionService.setMessageBus(messageBus)
 
   // ── SkillRegistry（W1）：全局 + 项目级 skill 缓存 + chokidar 文件监听 ──
   // 构造在 sessionService 之后（依赖其 getActiveSessionIds/getSessionCwd 窄接口）。
@@ -492,6 +513,30 @@ export async function main(opts?: { host?: string; port?: number; tokenFile?: st
   // eslint-disable-next-line taste/no-silent-catch -- skill 扫描失败不阻塞 runtime，UI 降级空列表
   } catch (e) {
     console.error('[runtime] skill registry initialization failed:', e)
+  }
+
+  // mandatory 扩展：确保强制安装的扩展已装好（在 auto-upgrade 之前，先装再升级）
+  try {
+    const mandatoryResults = await extensionService.ensureMandatoryExtensions()
+    const installed = mandatoryResults.filter(r => r.installed && !r.error)
+    const failed = mandatoryResults.filter(r => !r.installed || r.error)
+    if (installed.length > 0) {
+      console.log(`[runtime] installed ${installed.length} mandatory extension(s):`,
+        installed.map(r => r.name).join(', '))
+    }
+    if (failed.length > 0) {
+      console.warn(`[runtime] ${failed.length} mandatory extension(s) failed to install:`,
+        failed.map(r => `${r.name} (${r.error})`).join(', '))
+    }
+  } catch (e) {
+    console.warn('[runtime] mandatory extension installation encountered an error:', e)
+  }
+
+  // auto-rename 默认初始化：首次启动默认开启（创建 flag file + initialized 标记）
+  try {
+    ensureAutoRenameDefault()
+  } catch (e) {
+    console.warn('[runtime] auto-rename default initialization failed:', e)
   }
 
   // 自动升级：对开启 autoUpgrade 的 user-installed 扩展批量检查 npm latest 版本，

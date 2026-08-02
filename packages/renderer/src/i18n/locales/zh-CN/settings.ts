@@ -1,3 +1,4 @@
+ 
 export default {
   title: '设置',
   close: '关闭',
@@ -25,6 +26,8 @@ export default {
     presetDesc: '管理 Pi 启动参数预设与工具/扩展访问策略',
     worktree: 'Worktree',
     worktreeDesc: '配置 worktree 创建参数与初始化脚本',
+    update: '更新',
+    updateDesc: '配置自动升级与代理设置',
   },
   // ── SystemPrompt 页（SystemPromptPage）──
   systemPrompt: {
@@ -237,6 +240,8 @@ export default {
     installedTitle: '已安装',
     noExtensions: '暂无扩展',
     sourceUser: 'user',
+    sourceDiscovery: 'discovery',
+    mandatoryBadge: '内置',
     autoUpgrade: '自动升级',
     enableExt: '启用扩展',
     disableExt: '禁用扩展',
@@ -274,9 +279,13 @@ export default {
     soundTitle: '提示音',
     successSound: '成功音',
     errorSound: '失败音',
+    soundDefault: '系统默认',
     soundPreview: '试听',
     soundPreviewing: '试听中…',
-    soundDefault: '系统默认',
+    autoRenameSession: '会话自动重命名',
+    autoRenameSessionHint: '首个消息回复后自动生成会话标题（下个新会话生效）',
+    saved: '已保存',
+    saveFailed: '保存失败',
     shortcutTitle: '快捷键',
     shortcutName: '命令',
     shortcutKey: '快捷键',
@@ -370,20 +379,11 @@ export default {
     defaultOff: '默认禁用',
     noExtensions: '暂无扩展',
     builtinExtensionHint: '提示：3 个内置扩展（xyz-agent-extension / xyz-system-prompt-extension / xyz-client-msg-id-mapper）始终加载，不受扩展策略影响。',
-    // ── 折叠卡片摘要行（预设默认折叠态显示的一行 mode 概览）──
     summaryAll: '全部可用',
     summaryNone: '全部禁用',
     summaryAllowlist: '白名单 {count} 项',
     summaryDenylist: '黑名单 {count} 项',
     summarySeparator: ' · ',
-    expand: '展开',
-    collapse: '收起',
-    // ── mode 与清单关系的语义说明（列表上方 hint）──
-    allowlistHint: '仅勾选的工具/扩展可用，其余禁用',
-    denylistHint: '未勾选的工具/扩展可用，勾选的禁用',
-    allListHint: '当前策略下全部可用',
-    noneListHint: '当前策略下全部禁用',
-    readonlyBadge: '只读',
   },
   // ── Worktree 页（WorktreePage）──
   worktree: {
@@ -413,6 +413,34 @@ export default {
     defaultBaseBranchPlaceholder: 'origin/main',
     saved: 'Worktree 配置已保存',
     saveFailed: '保存失败',
+  },
+  // ── 更新代理页（UpdatePage）──
+  update: {
+    sectionTitle: '代理配置',
+    sectionDesc: '配置网络代理以访问 GitHub 服务',
+    proxyMode: '代理模式',
+    proxyModeSystem: '系统代理（自动检测）',
+    proxyModeManual: '手动配置',
+    proxyModeDisabled: '禁用代理',
+    httpProxy: 'HTTP 代理',
+    httpProxyPlaceholder: '如 http://127.0.0.1:7890',
+    httpProxyRequired: '请填写 HTTP 代理地址',
+    invalidUrl: '代理地址格式无效',
+    httpsProxy: 'HTTPS 代理',
+    httpsProxyPlaceholder: '如 http://127.0.0.1:7890',
+    testProxy: '测试代理',
+    testProxyTooltipDisabled: '代理已禁用，无法测试',
+    testing: '测试中...',
+    testSuccess: '代理连接成功',
+    testFailed: '代理连接失败: {msg}',
+    testDisabled: '代理已禁用，跳过测试',
+    save: '保存',
+    saving: '保存中...',
+    saved: '代理配置已保存',
+    saveFailed: '保存失败: {msg}',
+    preDownloadTitle: '预下载更新',
+    preDownloadDesc: '检测到新版本时自动在后台下载安装包，更新时无需等待下载',
+    preDownloadLabel: '启用预下载',
   },
   // ── Compat 编辑器（CompatEditor / CompatField）──
   compat: {

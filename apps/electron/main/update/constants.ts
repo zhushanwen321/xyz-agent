@@ -23,6 +23,15 @@ export const UPDATE_DIR = path.join(getDataDir(), 'update')
 /** 升级结果状态文件（跨进程 SSOT） */
 export const UPDATE_RESULT_FILE = path.join(UPDATE_DIR, 'update-result.json')
 
+/** 升级提醒持久化标志文件（检测到新版时写，启动时读以恢复「可升级」提醒）。 */
+export const PENDING_UPDATE_FILE = path.join(UPDATE_DIR, 'pending-update.json')
+
+/** 预下载产物元信息文件（后台下载完成后写，点击更新时读以跳过重复下载）。 */
+export const PRELOADED_UPDATE_FILE = path.join(UPDATE_DIR, 'preloaded-update.json')
+
+/** 升级设置文件（如预下载开关）。 */
+export const UPDATE_SETTINGS_FILE = path.join(UPDATE_DIR, 'update-settings.json')
+
 /** mac 升级 detached bash 脚本路径 */
 export const UPDATER_SCRIPT_PATH = path.join(UPDATE_DIR, 'updater.sh')
 

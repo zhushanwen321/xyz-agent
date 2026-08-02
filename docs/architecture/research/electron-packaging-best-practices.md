@@ -61,7 +61,7 @@ echo "[2/7] Checking main entry..."
 MAIN_ENTRY=$(node -e "console.log(require('./package.json').main)")
 if [ ! -f "$MAIN_ENTRY" ]; then
   echo "  ✗ Main entry not found: $MAIN_ENTRY"
-  echo "    Run: npm run build:main"
+  echo "    Run: pnpm run build:main"
   exit 1
 fi
 echo "  ✓ $MAIN_ENTRY exists"
@@ -70,7 +70,7 @@ echo "  ✓ $MAIN_ENTRY exists"
 echo "[3/7] Checking runtime bundle..."
 if [ ! -f "dist/runtime/index.cjs" ]; then
   echo "  ✗ Runtime bundle not found: dist/runtime/index.cjs"
-  echo "    Run: npm run build:runtime"
+  echo "    Run: pnpm run build:runtime"
   exit 1
 fi
 echo "  ✓ dist/runtime/index.cjs exists"
@@ -79,7 +79,7 @@ echo "  ✓ dist/runtime/index.cjs exists"
 echo "[4/7] Checking renderer bundle..."
 if [ ! -f "renderer/dist/index.html" ]; then
   echo "  ✗ Renderer not built"
-  echo "    Run: npm run build:vite"
+  echo "    Run: pnpm run build:vite"
   exit 1
 fi
 echo "  ✓ renderer/dist/index.html exists"
@@ -251,14 +251,14 @@ jobs:
           node-version: 22
       
       # 关键：依赖安装要覆盖 src-electron/
-      - run: npm ci
-      - run: cd src-electron && ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
+      - run: pnpm install --frozen-lockfile
+      - run: cd src-electron && ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --frozen-lockfile
       
       # 预检查
       - run: bash scripts/preflight-check.sh
       
       # 构建
-      - run: npm run build
+      - run: pnpm run build
       
       # 产物验证
       - run: bash scripts/postbuild-validate.sh
@@ -829,13 +829,13 @@ strategy:
   matrix:
     include:
       - os: macos-latest    # arm64
-        build: npm run build:mac
+        build: pnpm run build:mac
       - os: macos-13        # x64 (Intel runner)
-        build: npm run build:mac
+        build: pnpm run build:mac
       - os: windows-latest
-        build: npm run build:win
+        build: pnpm run build:win
       - os: ubuntu-latest
-        build: npm run build:linux
+        build: pnpm run build:linux
 ```
 
 #### 4.4.3 自动更新
@@ -871,7 +871,7 @@ publish:
 # 使用 standard-version 或 changeset 管理版本
 npx changeset        # 记录变更
 npx changeset version  # bump 版本
-npm version patch    # 或手动 bump
+pnpm version patch    # 或手动 bump
 
 # electron-builder 自动读取 package.json 的 version
 # CI 中从 git tag 获取版本：
@@ -958,7 +958,7 @@ files:
 ```json
 {
   "scripts": {
-    "build": "npm run preflight && npm run build:runtime && npm run build:vite && npm run build:main && npm run build:preload && npm run postbuild-validate && electron-builder --publish never",
+    "build": "pnpm run preflight && pnpm run build:runtime && pnpm run build:vite && pnpm run build:main && pnpm run build:preload && pnpm run postbuild-validate && electron-builder --publish never",
     "preflight": "bash scripts/preflight-check.sh",
     "postbuild-validate": "bash scripts/postbuild-validate.sh"
   }

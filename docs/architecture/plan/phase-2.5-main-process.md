@@ -38,7 +38,7 @@
 
 - [ ] vitest 全绿（main 编排测试）。
 - [ ] runtime spawn 幂等：activate 时不重复 spawn（测试覆盖）。
-- [ ] `npm run build` + `npm run dev` 正常。
+- [ ] `pnpm run build` + `pnpm run dev` 正常。
 
 ## 回滚
 

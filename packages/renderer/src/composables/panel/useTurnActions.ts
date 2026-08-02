@@ -26,8 +26,8 @@ interface TurnActionsDeps {
   /** Turn 所在 session（fork/handoff 源，双 panel standby 场景不能依赖全局 activeId） */
   sessionId: ComputedRef<string>
   /**
-   * 末条 assistant（存在性守卫用）。handoff 不接收 msg 参数——pi 在 /skill:handoff 内部
-   * 自取末条 assistant 打包，无需 messageId 锚点；前端仍需保证「有 assistant 可交接」才触发。
+   * 末条 assistant（存在性守卫用）。handoff 不接收 msg 参数——runtime 从源 session
+   * agent_end 提取文档打包，无需 messageId 锚点；前端仍需保证「有 assistant 可交接」才触发。
    */
   lastAssistant: ComputedRef<Message | null>
 }
@@ -46,7 +46,7 @@ export function useTurnActions(deps: TurnActionsDeps): {
   handleFork: (msg: Message) => Promise<void>
   /** fork 操作进行中（按钮 disabled 守卫） */
   isForking: Ref<boolean>
-  /** handoff 后台：从末条 assistant 打包文档到新 session（pi 跑 /skill:handoff） */
+  /** handoff 后台：runtime 从末条 assistant 提取文档到新 session（agent-driven） */
   onHandoff: () => Promise<void>
   /** handoff 备注：进 composer handoff 模式（发 signal，可附 focus 说明） */
   onHandoffAsk: (msg: Message) => void
@@ -83,11 +83,11 @@ export function useTurnActions(deps: TurnActionsDeps): {
   }
 
   /**
-   * handoff 后台（fast-handoff）：从末条 assistant 打包文档到新 session（pi 跑 /skill:handoff）。
+   * handoff 后台（fast-handoff）：runtime 从末条 assistant 提取文档到新 session（agent-driven）。
    * 完成经 session.handoffComplete 广播 → useHandoffEffect 跳转新 session。
    * 失败时 toast 反馈（与 onFork 对称）。
    *
-   * 不接收 msg 参数：pi 在 /skill:handoff 内部自取末条 assistant，无 messageId 锚点（与 onFork 用 msg.id 不对称）。
+   * 不接收 msg 参数：runtime 从源 session agent_end 提取文档，无 messageId 锚点（与 onFork 用 msg.id 不对称）。
    * 保留「有 assistant 可交接」存在性守卫，但改读注入的 lastAssistant（模板按钮已 v-if="lastAssistant"，
    * 此守卫作防御性兜底——防止非模板路径/测试无 assistant 时触发）。重复点击由按钮 disabled=isHandingOff 防护。
    */
@@ -105,7 +105,7 @@ export function useTurnActions(deps: TurnActionsDeps): {
    * handoff 备注（fast-handoff）：进入 composer handoff 模式（对称 onForkAsk）。
    * 经 useHandoffModeChannel 发 signal，Composer 监听后调自身 enterHandoffMode（聚焦输入框等用户键入 focus）。
    *
-   * @param msg 保留签名对称性，handoff 无 fromMessageId（pi 自取末条）
+   * @param msg 保留签名对称性，handoff 无 fromMessageId（runtime 从 agent_end 提取文档）
    */
   function onHandoffAsk(msg: Message): void {
     if (!msg) return

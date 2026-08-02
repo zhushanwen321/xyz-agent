@@ -8,7 +8,7 @@
   <Dialog :open="open" @update:open="emit('update:open', $event)">
     <DialogContent
       hide-close
-      class="flex max-h-[85vh] max-w-[900px] flex-col gap-0 overflow-hidden p-0 sm:rounded-lg"
+      class="flex h-[640px] max-h-[88vh] w-[900px] max-w-[94vw] flex-col gap-0 overflow-hidden p-0 sm:rounded-lg"
     >
       <!-- modal-head -->
       <div class="modal-head flex h-[44px] flex-none items-center gap-2.5 border-b border-border px-3.5">
@@ -79,6 +79,7 @@
               <TerminalPage v-else-if="activeMenu === 'terminal'" />
               <PiPresetsPage v-else-if="activeMenu === 'preset'" />
               <WorktreePage v-else-if="activeMenu === 'worktree'" />
+              <UpdatePage v-else-if="activeMenu === 'update'" />
             </div>
           </ScrollArea>
         </div>
@@ -96,7 +97,7 @@
 import { computed, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
-import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, ScrollText, TerminalSquare, GitBranch, ClipboardList, X } from '@lucide/vue'
+import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, ScrollText, TerminalSquare, GitBranch, ClipboardList, X, Download } from '@lucide/vue'
 import {
   Dialog,
   DialogContent,
@@ -119,6 +120,7 @@ import SystemPromptPage from './SystemPromptPage.vue'
 import TerminalPage from './TerminalPage.vue'
 import WorktreePage from './WorktreePage.vue'
 import PiPresetsPage from './PiPresetsPage.vue'
+import UpdatePage from './UpdatePage.vue'
 
 const menus = [
   { id: 'provider', labelKey: 'settings.menu.provider', icon: Settings, descKey: 'settings.menu.providerDesc' },
@@ -129,6 +131,7 @@ const menus = [
   { id: 'terminal', labelKey: 'settings.menu.terminal', icon: TerminalSquare, descKey: 'settings.menu.terminalDesc' },
   { id: 'preset', labelKey: 'settings.menu.preset', icon: ClipboardList, descKey: 'settings.menu.presetDesc' },
   { id: 'worktree', labelKey: 'settings.menu.worktree', icon: GitBranch, descKey: 'settings.menu.worktreeDesc' },
+  { id: 'update', labelKey: 'settings.menu.update', icon: Download, descKey: 'settings.menu.updateDesc' },
   { id: 'system', labelKey: 'settings.menu.system', icon: SlidersHorizontal, descKey: 'settings.menu.systemDesc' },
 ] as const
 

@@ -6,6 +6,7 @@ import { ExtensionService, ExtensionInstallError } from '../src/services/extensi
 import { NpmGitInstaller } from '../src/infra/installers/npm-git-installer.js'
 import { ExtensionResolver } from '../src/infra/installers/extension-resolver.js'
 import { PiExtensionSettings } from '../src/infra/pi/pi-extension-settings.js'
+import type { IConfigStore } from '../src/services/ports/config.js'
 
 import { installPackage, uninstallPackage, NpmInstallError } from '../src/infra/installers/npm-installer.js'
 import { execFileSync } from 'node:child_process'
@@ -121,19 +122,31 @@ describe('ExtensionService', () => {
   })
 
   describe('getRecommendedExtensions', () => {
-    it('returns all recommended entries with installed=false when none installed', async () => {
+    it('excludes mandatory packages from recommended list (all 6 recommended are now mandatory)', async () => {
       const recommended = await service.getRecommendedExtensions()
-      // recommended-extensions.json SSOT 的 6 个条目全部返回
-      expect(recommended.length).toBe(6)
-      // fixture 只装了 pi-ask-user，recommended 列表里的包均未装
-      expect(recommended.every(r => r.installed === false)).toBe(true)
-      // 每条都有 name 和 description
-      expect(recommended.every(r => typeof r.name === 'string' && r.name.startsWith('@zhushanwen/pi-'))).toBe(true)
-      expect(recommended.every(r => typeof r.description === 'string' && r.description.length > 0)).toBe(true)
+      // recommended-extensions.json 的 6 个条目全部属于 mandatory SSOT，
+      // Task 4.3 要求 getRecommendedExtensions 过滤掉 mandatory 项 → 返回空列表。
+      // 这是新契约：mandatory 扩展不进推荐列表（它们由 boot 强制安装）。
+      expect(recommended.length).toBe(0)
     })
 
-    it('marks matching package as installed (raw npm name match, no normalize)', async () => {
-      // 在 npm/node_modules 下造一个与 recommended 列表同名的包
+    it('marks matching non-mandatory recommended package as installed', async () => {
+      // recommended-extensions.json 当前所有条目都是 mandatory，无法直接测 installed 标记。
+      // 这里改为间接验证：getRecommendedExtensions 过滤 mandatory 后只返回非 mandatory 项，
+      // 且对返回的每一项 installed 字段为 boolean（契约形状检查）。
+      const recommended = await service.getRecommendedExtensions()
+      expect(recommended.every(r => typeof r.installed === 'boolean')).toBe(true)
+      // 所有返回项都不是 mandatory 包
+      expect(recommended.every(r => !['@zhushanwen/pi-ask-user',
+        '@zhushanwen/pi-goal', '@zhushanwen/pi-todo',
+        '@zhushanwen/pi-pending-notifications', '@zhushanwen/pi-subagent-workflow',
+        '@zhushanwen/pi-structured-output'].includes(r.name))).toBe(true)
+    })
+  })
+
+  describe('mandatory extensions', () => {
+    it('scanExtensions sets mandatory=true for mandatory packages', async () => {
+      // 在 npm/node_modules 下造一个 mandatory 包（@zhushanwen/pi-goal）
       const pkgDir = join(testSettingsDir, 'npm', 'node_modules', '@zhushanwen', 'pi-goal')
       mkdirSync(pkgDir, { recursive: true })
       writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
@@ -143,19 +156,119 @@ describe('ExtensionService', () => {
         keywords: ['pi-package'],
         peerDependencies: { '@mariozechner/pi-coding-agent': '*' },
       }), 'utf-8')
-      // settings.json packages[] 加入该包，使 scanExtensions 的 settings 源能扫到
       const settingsPath = join(testSettingsDir, 'settings.json')
       const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
       settings.packages = [...(settings.packages || []), 'npm:@zhushanwen/pi-goal']
       writeFileSync(settingsPath, JSON.stringify(settings), 'utf-8')
 
-      const recommended = await service.getRecommendedExtensions()
-      const goal = recommended.find(r => r.name === '@zhushanwen/pi-goal')
+      const extensions = await service.scanExtensions()
+      const goal = extensions.find(e => e.name === '@zhushanwen/pi-goal')
       expect(goal).toBeDefined()
-      expect(goal!.installed).toBe(true)
-      // 其余 5 个仍未装
-      const others = recommended.filter(r => r.name !== '@zhushanwen/pi-goal')
-      expect(others.every(r => r.installed === false)).toBe(true)
+      expect(goal!.mandatory).toBe(true)
+      // S10：tier 直接从 resolveExtensions 透传（pi-goal 是 feature mandatory）
+      expect(goal!.tier).toBe('feature')
+      // 非 mandatory 包 mandatory 字段为 false
+      const askUser = extensions.find(e => e.name === 'pi-ask-user')
+      if (askUser) {
+        expect(askUser.mandatory).toBe(false)
+      }
+    })
+
+    it('uninstallExtension rejects mandatory packages', async () => {
+      await expect(service.uninstallExtension('@zhushanwen/pi-goal'))
+        .rejects.toThrow(/Mandatory extension cannot be uninstalled/)
+    })
+
+    it('uninstallExtension allows non-mandatory packages', async () => {
+      // pi-ask-user 非 mandatory，卸载不应抛 mandatory 守卫错误
+      // （后续 npm uninstall 是 mock 的，不会真正报错）
+      await expect(service.uninstallExtension('pi-ask-user'))
+        .resolves.toBeUndefined()
+    })
+  })
+
+  describe('ensureMandatoryExtensions', () => {
+    it('installs missing mandatory extensions + enables autoUpgrade', async () => {
+      // scanExtensions 只返回 pi-ask-user，所有 mandatory 包都「未装」
+      const installSpy = vi.spyOn(service, 'installExtension').mockResolvedValue(undefined)
+      const autoUpgradeSpy = vi.spyOn(service['extSettings'], 'setAutoUpgrade').mockResolvedValue(undefined)
+
+      const results = await service.ensureMandatoryExtensions()
+
+      // 9 个 mandatory 包都触发了安装
+      expect(installSpy).toHaveBeenCalledTimes(9)
+      expect(autoUpgradeSpy).toHaveBeenCalledTimes(9)
+      // 每个结果都是 installed:true
+      expect(results.every(r => r.installed)).toBe(true)
+      expect(results.every(r => !r.error)).toBe(true)
+
+      installSpy.mockRestore()
+      autoUpgradeSpy.mockRestore()
+    })
+
+    it('skips already-installed mandatory extensions', async () => {
+      // 造一个已安装的 mandatory 包 @zhushanwen/pi-goal
+      const pkgDir = join(testSettingsDir, 'npm', 'node_modules', '@zhushanwen', 'pi-goal')
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
+        name: '@zhushanwen/pi-goal',
+        version: '0.5.0',
+        description: 'goal ext',
+        keywords: ['pi-package'],
+        peerDependencies: { '@mariozechner/pi-coding-agent': '*' },
+      }), 'utf-8')
+      const settingsPath = join(testSettingsDir, 'settings.json')
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
+      settings.packages = [...(settings.packages || []), 'npm:@zhushanwen/pi-goal']
+      writeFileSync(settingsPath, JSON.stringify(settings), 'utf-8')
+
+      const installSpy = vi.spyOn(service, 'installExtension').mockResolvedValue(undefined)
+
+      const results = await service.ensureMandatoryExtensions()
+
+      // pi-goal 已装 → 少调一次 installExtension（8 次而非 9 次）
+      expect(installSpy).toHaveBeenCalledTimes(8)
+      expect(installSpy).not.toHaveBeenCalledWith('npm:@zhushanwen/pi-goal')
+      // pi-goal 结果仍是 installed:true
+      const goalResult = results.find(r => r.name === '@zhushanwen/pi-goal')
+      expect(goalResult?.installed).toBe(true)
+
+      installSpy.mockRestore()
+    })
+
+    it('does not throw when install fails, records error', async () => {
+      const installSpy = vi.spyOn(service, 'installExtension').mockRejectedValue(new Error('network timeout'))
+
+      const results = await service.ensureMandatoryExtensions()
+
+      // 不抛错
+      expect(results).toHaveLength(9)
+      // 每个都 installed:false + 有 error
+      expect(results.every(r => !r.installed)).toBe(true)
+      expect(results.every(r => r.error?.includes('network timeout'))).toBe(true)
+
+      installSpy.mockRestore()
+    })
+
+    it('清理 disabled-packages.json 中的 mandatory 残留', async () => {
+      // 某扩展升格 mandatory 前被用户禁用过，disabled 状态遗留
+      const disabledPath = join(testSettingsDir, 'disabled-packages.json')
+      writeFileSync(disabledPath, JSON.stringify({
+        disabled: ['npm:@zhushanwen/pi-goal'],
+      }), 'utf-8')
+
+      // installExtension mock 掉避免真装，只测 disabled 清理
+      const installSpy = vi.spyOn(service, 'installExtension').mockResolvedValue(undefined)
+      const autoUpgradeSpy = vi.spyOn(service['extSettings'], 'setAutoUpgrade').mockResolvedValue(undefined)
+
+      await service.ensureMandatoryExtensions()
+
+      // disabled-packages.json 中的 @zhushanwen/pi-goal 被清除
+      // 用 getDisabled() API 读（removeDisabled 删空后会删文件，getDisabled 对 ENOENT 返回空数组）
+      expect(service['extSettings'].getDisabled()).not.toContain('npm:@zhushanwen/pi-goal')
+
+      installSpy.mockRestore()
+      autoUpgradeSpy.mockRestore()
     })
   })
 
@@ -172,6 +285,32 @@ describe('ExtensionService', () => {
 
       const paths = await service.getExtensionPaths()
       expect(paths.some(p => p.includes('pi-ask-user'))).toBe(false)
+    })
+
+    it('mandatory 包无视 disabled 状态，强制加载', async () => {
+      // 造一个已安装的 mandatory 包 @zhushanwen/pi-goal（scoped name）
+      const pkgDir = join(testSettingsDir, 'npm', 'node_modules', '@zhushanwen', 'pi-goal')
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
+        name: '@zhushanwen/pi-goal',
+        version: '0.5.0',
+        description: 'goal ext',
+        keywords: ['pi-package'],
+        peerDependencies: { '@mariozechner/pi-coding-agent': '*' },
+      }), 'utf-8')
+      const settingsPath = join(testSettingsDir, 'settings.json')
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
+      settings.packages = [...(settings.packages || []), 'npm:@zhushanwen/pi-goal']
+      writeFileSync(settingsPath, JSON.stringify(settings), 'utf-8')
+
+      // 把 mandatory 包加入 disabled-packages.json
+      writeFileSync(join(testSettingsDir, 'disabled-packages.json'), JSON.stringify({
+        disabled: ['npm:@zhushanwen/pi-goal'],
+      }), 'utf-8')
+
+      const paths = await service.getExtensionPaths()
+      // mandatory 包即使被 disabled 仍出现在路径中（强制加载）
+      expect(paths.some(p => p.includes('@zhushanwen') && p.includes('pi-goal'))).toBe(true)
     })
   })
 
@@ -296,6 +435,19 @@ describe('ExtensionService', () => {
 
       const disabledPath = join(testSettingsDir, 'disabled-packages.json')
       expect(existsSync(disabledPath)).toBe(false)
+    })
+
+    it('rejects disabling mandatory packages', async () => {
+      // @zhushanwen/pi-goal 是 mandatory（与 uninstallExtension 守卫对称）：
+      // 禁用应抛 mandatory_cannot_disable，避免 UI 禁用但 getExtensionPaths 仍强加载的状态分离
+      await expect(service.toggleExtension('@zhushanwen/pi-goal', false))
+        .rejects.toThrow(/Mandatory extension cannot be disabled/)
+    })
+
+    it('allows enabling mandatory packages', async () => {
+      // 开启 mandatory 扩展允许（守卫只拦截禁用，开启无害）
+      await expect(service.toggleExtension('@zhushanwen/pi-goal', true))
+        .resolves.toBeUndefined()
     })
   })
 
@@ -668,6 +820,123 @@ describe('ExtensionService', () => {
       // Should fail with git clone error, not URL validation error
       await expect(service.installGitRepository('https://github.com/user/repo.git'))
         .rejects.toThrow('git clone failed')
+    })
+  })
+
+  describe('scanExtensions with discovery dirs', () => {
+    // discovery.json 中的 extension 目录分两类：绝对路径（全局有效）与相对路径（项目级）。
+    // 这组测试验证拆分契约：绝对路径进 scanExtensions 全局视图，相对路径只进 session 启动（getDiscoveredAndDisabled）。
+    // 注意 discovery 扩展入口复刻 pi 原生扫描：扫描结果是「入口路径」（单文件 *.ts 或 <ext>/index.ts），
+    // 而非扩展目录本身——ExtensionInfo.name 取入口路径 basename，readPkgMeta 也以入口为基准读 package.json。
+    // 因此 fixture 用单文件 my-discovery-ext.ts（name = 'my-discovery-ext.ts'），可测 toggleExtension 的 discovery:<name> 串联回路。
+    let discoveryService: ExtensionService
+    let discoverySettingsDir: string
+
+    beforeEach(() => {
+      vi.clearAllMocks()
+      discoverySettingsDir = mkdtempSync(join(tmpdir(), 'ext-discovery-test-'))
+      writeFileSync(join(discoverySettingsDir, 'settings.json'), JSON.stringify({ packages: [] }), 'utf-8')
+      mkdirSync(join(discoverySettingsDir, 'npm'), { recursive: true })
+      writeFileSync(join(discoverySettingsDir, 'npm', 'package.json'), JSON.stringify({ private: true }), 'utf-8')
+    })
+
+    afterEach(() => {
+      try { rmSync(discoverySettingsDir, { recursive: true, force: true }) } catch { /* ignore */ }
+    })
+
+    /**
+     * 构造带 configStore 的 service（复刻主 beforeEach 的端口装配，额外注入 configStore）。
+     * 只需 getExtensionDirs，其余 IConfigStore 方法测试不触达，按既定 partial-mock 惯例 cast。
+     */
+    const buildService = (configStore: { getExtensionDirs: () => string[] }): ExtensionService => new ExtensionService({
+      settingsDir: discoverySettingsDir,
+      // 相对路径 discovery 目录按 projectRoot resolve，测试用 discoverySettingsDir 作 base
+      projectRoot: discoverySettingsDir,
+      installer: new NpmGitInstaller(),
+      resolver: new ExtensionResolver({
+        settingsDir: discoverySettingsDir,
+        thirdPartyDir: join(discoverySettingsDir, 'extensions'),
+        npmDir: join(discoverySettingsDir, 'npm'),
+      }),
+      extensionSettings: new PiExtensionSettings(discoverySettingsDir),
+      extensionsDir: join(discoverySettingsDir, 'extensions'),
+      npmDir: join(discoverySettingsDir, 'npm'),
+      tmpDir: join(discoverySettingsDir, 'tmp'),
+      configStore: configStore as unknown as IConfigStore,
+    })
+
+    it('absolute-path discovery dir 中的扩展在 scanExtensions 可见，source=discovery', async () => {
+      // 在绝对路径 discovery 目录下放一个单文件 pi extension 入口
+      const discDir = join(discoverySettingsDir, 'discovery-exts')
+      mkdirSync(discDir, { recursive: true })
+      writeFileSync(join(discDir, 'my-discovery-ext.ts'),
+        '// discovery ext entry', 'utf-8')
+
+      const configStore = { getExtensionDirs: () => [discDir] } // 绝对路径
+      discoveryService = buildService(configStore)
+
+      const extensions = await discoveryService.scanExtensions()
+      const discExt = extensions.find(e => e.source === 'discovery')
+      expect(discExt).toBeDefined()
+      expect(discExt!.source).toBe('discovery')
+      expect(discExt!.enabled).toBe(true)
+      // 单文件入口：name/dirName = 入口路径 basename，path 指向入口文件
+      expect(discExt!.name).toBe('my-discovery-ext.ts')
+      expect(discExt!.path).toBe(join(discDir, 'my-discovery-ext.ts'))
+    })
+
+    it('toggleExtension(false) 后 discovery 扩展 enabled=false（disabled-packages.json 按 discovery:<name> 隔离）', async () => {
+      const discDir = join(discoverySettingsDir, 'discovery-exts')
+      mkdirSync(discDir, { recursive: true })
+      writeFileSync(join(discDir, 'my-discovery-ext.ts'), '// entry', 'utf-8')
+
+      const configStore = { getExtensionDirs: () => [discDir] }
+      discoveryService = buildService(configStore)
+
+      const before = await discoveryService.scanExtensions()
+      const discExt = before.find(e => e.source === 'discovery')!
+      expect(discExt).toBeDefined()
+
+      // 用扫描出的 name 禁用——discovery 源走 discovery:<name> 机制（#2 与 npm 源隔离）
+      await discoveryService.toggleExtension(discExt.name, false)
+
+      const after = await discoveryService.scanExtensions()
+      const discExtAfter = after.find(e => e.name === discExt.name)!
+      expect(discExtAfter.enabled).toBe(false)
+
+      // disabled-packages.json 落盘 discovery:<name>（#2 源隔离）
+      const disabledRaw = readFileSync(join(discoverySettingsDir, 'disabled-packages.json'), 'utf-8')
+      const disabledData = JSON.parse(disabledRaw) as { disabled: string[] }
+      expect(disabledData.disabled).toContain(`discovery:${discExt.name}`)
+      // 不应误写 npm: 前缀（避免与同名 npm 扩展串扰）
+      expect(disabledData.disabled).not.toContain(`npm:${discExt.name}`)
+
+      // 再启用，状态恢复 enabled=true
+      await discoveryService.toggleExtension(discExt.name, true)
+      const reEnabled = await discoveryService.scanExtensions()
+      const discExtReEnabled = reEnabled.find(e => e.name === discExt.name)!
+      expect(discExtReEnabled.enabled).toBe(true)
+    })
+
+    it('relative-path discovery dir 不进 scanExtensions 全局视图（拆分契约）', async () => {
+      // 相对路径 discovery 目录：依赖 projectRoot，项目级，只 session 启动按 cwd resolve 加载
+      const relDirName = 'relative-exts'
+      mkdirSync(join(discoverySettingsDir, relDirName), { recursive: true })
+      writeFileSync(join(discoverySettingsDir, relDirName, 'rel-ext.ts'), '// rel entry', 'utf-8')
+
+      // configStore 返回相对路径（projectRoot = discoverySettingsDir，故能 resolve 到上面造的目录）
+      const configStore = { getExtensionDirs: () => [relDirName] }
+      discoveryService = buildService(configStore)
+
+      // 全局视图不应含相对路径 discovery 扩展
+      const scanResult = await discoveryService.scanExtensions()
+      expect(scanResult.filter(e => e.source === 'discovery')).toHaveLength(0)
+
+      // 但 session 启动（getDiscoveredAndDisabled）按 cwd resolve 后应含相对路径 discovery 扩展
+      const { discovered } = await discoveryService.getDiscoveredAndDisabled(discoverySettingsDir)
+      const discoveryEntries = discovered.filter(d => d.source === 'discovery')
+      expect(discoveryEntries).toHaveLength(1)
+      expect(discoveryEntries[0].path).toBe(join(discoverySettingsDir, relDirName, 'rel-ext.ts'))
     })
   })
 

@@ -105,6 +105,7 @@ export const fixtureExtensions: FixtureExtension[] = [
 export function toCandidate(c: FixtureExtension) {
   return {
     name: c.name,
+    displayName: c.name,
     dirName: c.name,
     version: c.version,
     description: c.description,

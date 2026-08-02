@@ -29,6 +29,12 @@ export default {
     restarting: '即将重启',
     error: '升级失败',
     goToDownload: '前往下载',
+    downloaded: '已下载，重启安装',
+    restartInstall: '重启并安装更新',
+    confirmInstall: '新版本 v{version} 已下载完成。立即重启将中断当前所有任务（包括正在进行的 AI 会话），确定继续吗？',
+    installLater: '稍后再说',
+    installNow: '立即重启安装',
+    retry: '重试',
   },
   sessionItem: {
     rename: '重命名',
@@ -116,8 +122,7 @@ export default {
     terminate: '终止',
     terminateConfirm: '确认终止？',
     empty: '暂无工作流',
-    emptyHint: '在对话中运行 workflow 脚本（如 /workflows run xxx）发起工作流，运行进度会显示在这里',
+    emptyHint: '工作流是多步骤自动化脚本，在对话中发起后会显示运行进度',
     agentsLabel: '{done}/{total}',
-    tokUnit: 'tok',
   },
 }

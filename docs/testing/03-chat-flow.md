@@ -58,7 +58,7 @@ Panel.vue (sessionId 存在, messageCount > 0)
 | 收尾 summary | mock 固定前缀「已处理：」+「好的，我来处理这个请求。（mock 模拟回复）」 | `mock/run-send-stream.ts` |
 | turn-meta 工作态 | 「工作中」+ 脉冲点 + elapsed 计时 | `Turn.vue working 态` |
 | turn-meta 完成态 | 「已工作」+ chevron + 「思考 ×1」「工具 ×1」badge | `Turn.vue 完成态` |
-| SystemNotice | `$ npm run build · exit 0` | mock bashExecution |
+| SystemNotice | `$ pnpm run build · exit 0` | mock bashExecution |
 | ChangeSetCard | 「变更集」+「待审查」badge + 文件路径（src/mock-feature.ts） | mock fileChanges |
 
 ## 4. sendMessage 全链路时序
@@ -165,7 +165,7 @@ message.tool_call_update {toolCallId, detail:'读取 42 行'}
   sleep 90ms
 message.tool_call_end {toolCallId, output:'…文件内容…', status:'completed'}
   ↓ 90ms
-extension:widget {widgetKey:'terminal', lines:['$ npm run build', ...]}
+extension:widget {widgetKey:'terminal', lines:['$ pnpm run build', ...]}
 extension:status {statusKey:'build', text:'构建完成（mock）'}
   ↓
 for chunk in '已处理："..."。\n好的，我来处理这个请求。（mock 模拟回复）'（每 chunk 70ms）:
@@ -175,7 +175,7 @@ message.file_changes {messageId, fileChanges:[{src/mock-feature.ts modified +10 
   sleep 120ms
 message.file_changes {messageId, fileChanges:[3 个文件含 unmerged], changeSetStatus:'ready', isFullSet:true}
   ↓ 40ms
-message.bashExecution {command:'npm run build', exitCode:0}
+message.bashExecution {command:'pnpm run build', exitCode:0}
   ↓
 message.complete {messageId, stopReason:'complete', usage:{inputTokens:1280, outputTokens:642, totalTokens:1922}}
 ```
