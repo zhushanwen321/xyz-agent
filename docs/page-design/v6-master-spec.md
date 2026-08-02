@@ -8,6 +8,7 @@
 > **2026-08-02 修订**：新增 §3.5 实践原则（8 条，demo 迭代沉淀）；§5.6 状态指示圆点范式范围限缩（SessionList 改用 §3.5.2）；§9 新增 D12/D13/D14 裁决（SessionList 信号编排 / TurnRail 滚动条二合一 / Project 一级导航）。
 > **2026-08-02 审查修订**：spec↔demo 全量对照后修正——P0 内部矛盾统一（TurnRail thumb 色阶 / pulse-accent 时长 / badge 图标 / ChangeSetCard vs GitPanel badge 边界）；P1 跟 demo（send-slot 圆角矩形 / comp-box has-input 兑淡 / UiInput surface-2 / UiCheckbox focus 双环 / composer-bar 6 元素）；demo 新增 landing 页 + useTheme composable + ProjectSwitcher 增删 + 6 太极主题 SystemPage 接通，spec 同步记录；P2 笔误修正（7 tab 补 browser / tab 名统一 / keyframes SSOT 约束 / install-ok soft 底统一等）。
 > **2026-08-02 二次审查修订**：修正 4 处与 demo 真值不符的事实性错误——(1) §6.4 nav 项计数 12→11（demo `SettingsOverlay.vue` NAV 数组实为 11 项）；(2) §5.9 pulse-accent 描述由「opacity 明灭」改为「box-shadow 扩散涟漪」（`base.css:87` 实际是 box-shadow 0%→70%→100%，非 opacity）；(3) §6.1 TurnRail failed 节点色阶——demo 实际用 `warn`（TurnRail.vue:179/195/205），非 spec 声称的 `danger`，改为标注「demo 待对齐 §5.6B」；(4) §4.8 COLOR_TOKENS 计数 18→19（数组实含 19 个，漏算 `--neutral-ico`）；另补 §5.9 SSOT 约束的 3 处现存违反位置 + §6.1 thumb 色阶交叉引用 §3.5.6。
+> **2026-08-02 三次审查修订（subagent 四路并行审查）**：修正 15 处——P0：§3.4 例外计数两类→三类、§10.1 HTML spec 18→15 份+补登 3 个 demo html、附录 A mock 8→9 + 补 common/icons 子目录、§5.1 `.btn-secondary` 补 `solid`、§6.1 TurnMeta pill `bg-surface-2`→`bg-elevated`；P1：§5.11 install-ok 改为如实记录 demo 透明底现状+目标态、§7.2 A4 状态修正（pi 已实现非未消费）、§9 序言修正来源归因（D12-D14 非 review/fix-plan 来源）、§6.1 ChangeSetCard 补 superseded 例外、§6.5 SearchModal 三源→二源；P2：§6.1 ThinkingBlock 60 字符→CSS ellipsis、§6.5 MermaidRenderer 标注 demo 未实现、§10.2 真相源链删除已删除文档层级、§8.4 阶段 C 补说明 refactor 不含。
 
 ---
 
@@ -119,11 +120,10 @@ v6 审查发现「被选中」出现三种视觉语言，统一为二分：
 
 **accent-soft 仅留瞬时高亮**（fresh 新增项 / is-current popover 项），不作持久选中态。
 
-**两类已登记例外**（demo 落地取舍，非范式违反）：
+**三类已登记例外**（demo 落地取舍，非范式违反）：
 - **drawer L1 icon tab**：active 用 `bg-surface-hover`（非 bg-elevated）。理由：drawer 与 main 同 surface（D2 一体化），bg-elevated 会过亮；surface-hover + 蓝字足够区分。
 - **TurnRail mini-map 节点**：active 用 `bg-accent-soft + inset accent-ring`（第三种视觉语言）。理由：mini-map 是「当前位置指示器」语义（非持久选中），且节点极小（224px 浮层内），accent-soft 染底 + ring 提供最强可见性。属瞬时高亮的延伸。
-
-> **SearchModal sm-item 选中态**：用 `bg-surface-hover` + accent 蓝字/蓝 icon（非 bg-surface）。理由：dialog 底 = surface，sel 用 bg-surface 会同色淹没，改 surface-hover 靠蓝字区分（Linear/Raycast 范式）。
+- **SearchModal sm-item**：用 `bg-surface-hover` + accent 蓝字/蓝 icon（非列表项型默认的 bg-surface）。理由：dialog 底 = surface，sel 用 bg-surface 会同色淹没，改 surface-hover 靠蓝字区分（Linear/Raycast 范式）。
 
 ### 3.5 实践原则（2026-08-02 demo 迭代沉淀）
 
@@ -357,7 +357,7 @@ demo 引入完整多主题系统（spec 无，demo 重大扩展）。机制：�
 
 /* 4 variant */
 .btn-default   { background: var(--accent); color: var(--accent-fg); }       /* Primary */
-.btn-secondary { background: transparent; border: 1px var(--border); color: var(--neutral-fg); }
+.btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--neutral-fg); }
 .btn-ghost     { background: transparent; color: var(--neutral-fg); }        /* hover: bg-surface-hover */
 .btn-danger    { background: transparent; color: var(--danger); }            /* hover: bg-danger-soft */
 
@@ -482,8 +482,8 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 ### 5.11 内联反馈条（v6 不做全局 toast）
 
 **v6 用内联反馈条替代全局 toast**（demo 故意未做全局 toast 系统）。范式：
-- **成功反馈**（`.install-ok` / `.success-note` / `.page-notice`）：统一 `*-soft`（success/warn）底 + 语义 icon + 文案（原因 + 下一步），`border-top hairline` 分隔，2-3s 自动消失
-- **错误反馈**（`.install-err` / `.inline-error`）：danger-soft 底 + TriangleAlert icon，**常驻**可重试，不自动消失
+- **成功反馈**（`.install-ok` / `.success-note` / `.page-notice`）：语义色文字（success/warn）+ `border-top hairline` 分隔 + 语义 icon + 文案（原因 + 下一步），2-3s 自动消失。**目标态**加 `*-soft` 底统一；**demo 现状**（`.install-ok`/`.install-err`）是透明底仅靠语义色文字区分，实施时按目标态补 `*-soft` 底
+- **错误反馈**（`.install-err` / `.inline-error`）：danger 色 + TriangleAlert icon，**常驻**可重试，不自动消失。目标态加 danger-soft 底
 - **页级横幅**：`*-soft` 底常驻，用于页级错误/成功提示
 
 ### 5.12 焦点管理 + 键盘快捷键
@@ -523,9 +523,9 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 ### 6.1 对话流（assistant 居中 720）
 
 - **MessageStream**：整 turn 居中 `max-w-content-max-w`(720) + `margin:0 auto`；UserBubble 列内右浮（max-w-76%）；隐藏原生滚动条由 TurnRail 接管
-- **TurnMeta**：pill 默认可见（`bg-surface-2` 浮起，解决主面板 surface 上「面上面」不可见）；删 turn 间 `hr` 改加大 turn gap
+- **TurnMeta**：pill 默认可见（`bg-elevated` 浮起，解决主面板 surface 上「面上面」不可见）；删 turn 间 `hr` 改加大 turn gap
 - **Block·tool**：状态矩阵 collapsed/expanded × running/done/failed；running 双环 loader（13px）；exit≠0 加 mono 标签
-- **Block·thinking**：收起态 1 行 ellipsis（60 字符截断）；expanded body 用 `neutral-mid`（过 AA）
+- **Block·thinking**：收起态 1 行 CSS ellipsis（`text-overflow: ellipsis` 视觉截断，非硬字符数限制）；expanded body 用 `neutral-mid`（过 AA）
 - **Block·bash**：区分 BashOutputBlock（composer `!` 前缀，不可折叠）vs tool-bash（嵌 tool 块，`bg-bg-input` 无 border）
 - **Block·subagent/workflow**：collapsed only，点击 → drawer tab
 - **UserBubble**：删 border，仅 `bg-surface-hover`；删 pending 态（迁 QueueBubble 内嵌）
@@ -540,7 +540,7 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 - **ContextBar**（composer 上方，goal/todo 摘要 + plugin foot 挂载点）：与 composer 同宽同中线居中；常态归零（无 goal/todo 时整条隐藏）；slim bar 24px `text-2xs neutral-dim`；点击展开 popover（goal 全文 + 3px 进度条 + todo checklist）
 - **TurnRail**（右侧 turn 导航 + 自定义滚动条接管）：spine(`surface-hover` 6px 暗条 340px，点击翻页) + thumb(`accent-soft + 2px accent border-left`，按滚动比例定位 min-h 24px，可拖拽，hover/active 三档色阶详见 §3.5.6)；hover 展开 mini-map(6px→224px，turn 节点两行：user 行 + agent 状态图标行，含**折展 toggle** ChevronUp/Down，active 节点常驻可见 toggle)；active 节点见 §3.4 例外
   > **failed 节点色阶待统一**：§5.6B 规定 error=`--danger`，但 demo `TurnRail.vue` 当前 failed 节点用 `--warn`（`.warn` class，行 179/195/205）。demo 未对齐范式，实施时应按 §5.6B 改为 `--danger`
-- **ChangeSetCard**：去 border 改 `bg-surface` + 10px 圆角；5 态 badge 用 `*-soft` 底 + 实色字
+- **ChangeSetCard**：去 border 改 `bg-surface` + 10px 圆角；5 态 badge 中 accumulating/ready/partially-reviewed/resolved 4 态用 `*-soft` 底 + 实色字，superseded 例外用 `bg-elevated + neutral-dim`（中性降级态，非彩色语义）
 - **PanelHeader**：去 `border-b`，用 `bg-elevated` 浮起分层
 - **goal/todo 回归对话流**（D3）：移除 tasks tab + `HIDDEN_TOOL_NAMES`，走 GuiComponent 统一渲染
 
@@ -583,7 +583,7 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 
 ### 6.5 Overlays
 
-- **SearchModal**：手写覆盖层；三源聚合（命令/文件/session）；选中态见 §3.4 例外（surface-hover + 蓝字，dialog 底 surface 上 bg-surface 会淹没）；分组 header 去 uppercase；高亮 `<span class="sm-hit">` font-semibold 不染蓝（颜色继承父元素）；loading 防闪 200ms（见 §5.10）；default 态尾部 clock icon 表最近/历史
+- **SearchModal**：手写覆盖层；命令/文件聚合（session 源待接入，demo 现有 2 group：建议命令 + 最近打开）；选中态见 §3.4 例外（surface-hover + 蓝字，dialog 底 surface 上 bg-surface 会淹没）；分组 header 去 uppercase；高亮 `<span class="sm-hit">` font-semibold 不染蓝（颜色继承父元素）；loading 防闪 200ms（见 §5.10）；default 态尾部 clock icon 表最近/历史
 - **AskUserOverlay**：内联（非 modal），companion-band 统一交互出口（B3）
   - **多问题切 tab**（au-tab：无 border / 全圆角 6px / active=bg-elevated+500 / 已答 tab 显 7px success 绿点）
   - **单选 radio**：16px，unchecked=`border-strong` 空心，checked=`accent` 实心 + `inset 2px bg-input` 形成环
@@ -592,7 +592,7 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
   - **auto-advance**：单选最后问题选完自动提交；非最后自动下一题；多选不自动推进
   - **context 降中性**：`bg-surface-hover`（去 reasoning 软底彩色，v6 降噪）
 - **ConfirmDialog**：圆角 12px；danger 三角 icon 降 size-4
-- **MermaidRenderer**：保持现状
+- **MermaidRenderer**：保持现状（主产品已有，demo 未实现该组件）
 
 ### 6.6 Plugin 渲染（4 维度 × 3 级别 × 16 挂载点）
 
@@ -614,7 +614,7 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 
 | 维度 | 挂载点 | 级别 | 当前状态 |
 |---|---|---|---|
-| **A 结构容器** | A1 侧栏第 5 tab / A2 drawer tab(proposed) / A3 工具条按钮 / A4 底栏状态 | L1 | panels 声明未消费 |
+| **A 结构容器** | A1 侧栏第 5 tab / A2 drawer tab(proposed) / A3 工具条按钮 / A4 底栏状态 | L1 | A1/A2/A3 panels 声明未消费；A4 pi 已实现（extension:status），plugin 未接入 |
 | **B 对话流+companion** | B1 tool result / B2 消息卡 / B3 companion(统一出口：dialog+ask-user) | L2/L1 | **已实现**（5 闭环） |
 | **D 命令配置** | D1 slash / D2 settings 区段 | L1 | D1 已实现（双轨待统一） |
 | **E 独立 view** | E1 独立 view 路由 | L3 | 未实现（仅 built-in） |
@@ -687,6 +687,8 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 
 ### 8.4 阶段 C：v6 视觉层（token 反写 → 分视图）
 
+> 阶段 C 属 v6 视觉线，`v6-architecture-refactor.md`（架构线）不含此阶段（架构线止于阶段 B）。C1-C8 由本文档定义。
+
 | 波次 | 内容 |
 |---|---|
 | C1 | token 反写（style.css + tailwind.config.ts 同步 demo tokens.css 值） |
@@ -708,7 +710,7 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 
 ## §9 已裁决清单（全部定稿，无待确认）
 
-> 这些裁决来自 v6-review/fix-plan 的 37 项（D1-D11 + R1-R26），已全部定稿。实施时直接遵循。
+> 裁决来自 v6-review/fix-plan（D1-D11 + R1-R26 共 37 项）+ 2026-08-02 demo 迭代新增（D12-D14）。以下收录影响实施的关键裁决子集（非全量罗列），已全部定稿。实施时直接遵循。
 
 ### 9.1 结构裁决
 
@@ -758,7 +760,8 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 | 设计 SSOT | `v6-design.md` | 降级为决策参考（token 值已被本文档 §4 取代） |
 | 设计总览 | `v6-summary.md` | 降级为索引（部分值滞后） |
 | 架构 SSOT | `../architecture/renderer-target-architecture.md` / `../architecture/v6-architecture-refactor.md` | ✅ 保留（架构细节本文档 §7-§8 摘要引用） |
-| HTML spec（18 份） | `v6-spec-*.html` | 降级为视觉标注参考（部分已滞后于 demo） |
+| HTML spec（15 份） | `v6-spec-*.html` | 降级为视觉标注参考（部分已滞后于 demo） |
+| HTML demo（3 份） | `v6-demo.html` / `v6-drawer-tabs-demo.html` / `v6-plugin-max-demo.html` | 降级为早期 HTML 探索稿（已被 `.tmp/v6/` Vue demo 取代） |
 | 过程文档 | `v6-review-*.md` / `v6-fix-plan.md` / `v6-review-action-plan.md` | 已删除（裁决已收敛进本文档 §9；UI 演变叙事合并至 `../design-evolution.md`） |
 | 共享 CSS | `v6-spec-base.css` | ✅ 保留（对话流四文件共享） |
 | 输入提案 | `visual-modernization-2026-07.md` | 已删除（内容已被 v6-design 取代，无独立保留价值） |
@@ -769,10 +772,11 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 本文档（v6-master-spec.md，决策与范式）
   > .tmp/v6/ demo（token 真值与组件实现，2026-08-02 最新）
   > v6-spec-*.html（视觉标注稿，部分滞后）
-  > 过程文档（review/fix-plan，裁决已收敛）
 ```
 
-**冲突处理原则**：本文档与任何过程文档冲突时，以本文档为准；token 值与 HTML spec 冲突时，以 demo 为准（demo 比 spec 新，含太极主题/字号上移/水墨状态色等演进）。
+> 原第 4 级「过程文档（review/fix-plan）」已删除，裁决收敛进本文档 §9，无独立真相源层级。
+
+**冲突处理原则**：本文档与任何降级文档冲突时，以本文档为准；token 值与 HTML spec 冲突时，以 demo 为准（demo 比 spec 新，含太极主题/字号上移/水墨状态色等演进）。
 
 ---
 
@@ -787,15 +791,17 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 ├─ views/ShellView.vue（三栏布局 + 三层明度 + 折叠态 + landing 条件渲染）
 ├─ composables/useStore.ts（状态管理 + landingMode + projects 增删）
 ├─ composables/useTheme.ts（6 太极主题定义 + applyTheme 切换机制，全局共享）
-├─ mock/*.ts（8 个 mock 数据文件）
+├─ mock/*.ts（9 个 mock 数据文件）
 ├─ components/
 │  ├─ shell/（PanelHeader/SplitterHandle/TrafficLight/AppNavControls）
 │  ├─ sidebar/（Sidebar/SegmentedTab/SessionList/ProjectSwitcher[增删project]/PluginPanel/FileTreeView/...）
 │  ├─ chat/（MessageStream/TurnRail[滚动条二合一+折展toggle]/LandingView[landing页]/ToolBlock/ThinkingBlock/ChangeSetCard/...）
 │  ├─ drawer/（SideDrawer/GitPanel/DiffView/DetailPane/TerminalView/BrowserPane/...）
-│  ├─ settings/（SettingsOverlay/GroupCard/ProviderPage/SystemPage[6太极主题]/TokenDebugPage/...12 page）
+│  ├─ settings/（SettingsOverlay/GroupCard/ProviderPage/SystemPage[6太极主题]/TokenDebugPage/...11 page）
 │  ├─ overlays/（SearchModal/AskUserOverlay/ConfirmDialog）
-│  └─ composer/（Composer[variant双形态+landing meta-row]/CommandPopover/QueueBubble/QuickComposer）
+│  ├─ composer/（Composer[variant双形态+landing meta-row]/CommandPopover/QueueBubble/QuickComposer）
+│  ├─ common/（UiInput/UiSwitch/SettingRow/SettingsNavItem 等共享控件）
+│  └─ icons/（TaijiLogo 等图标组件）
 └─ SETTINGS-DESIGN-CONTEXT.md（设置页实现基准）
 ```
 
