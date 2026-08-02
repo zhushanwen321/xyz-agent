@@ -330,6 +330,52 @@ describe('ConnectionManager wave1 auth (TC4: clientId replacement)', () => {
     expect(cm.clients.has('dup')).toBe(true)
     expect(cm.clients.get('dup')?.ws).toBe(ws2)
   })
+
+  it('TC4b: kick 时旧 ws 的 onDisconnect 被显式触发（订阅/资源清理回归）', async () => {
+    // 回归：被踢旧 ws 的 close handler 因 isCurrent=false（新 ws 已占 clientId）跳过 onDisconnect，
+    // 导致旧 ws 持有的 MessageBus session 订阅残留在 wsSubscriptions Map（频繁重连下单调增长）+
+    // terminal resize owner 残留。修复：kickExistingClient 内对旧 ws 显式调用 onDisconnect。
+    const { ConnectionManager } = await import('../src/transport/connection-manager.js')
+    const cb = makeCallbacks()
+    const fixedTm = {
+      load: () => ({ enabled: true as const, token: 'real' }),
+      generate: () => 'real',
+      verify: () => true,
+      persist: () => {},
+    }
+    const cm = new ConnectionManager(0, cb, { tokenManager: fixedTm })
+
+    // 第一个连接认证成功
+    const ws1 = makeMockWs()
+    connect(cm, ws1)
+    emit(ws1, 'message', Buffer.from(JSON.stringify({
+      type: 'auth', id: 'r1', payload: { token: 'real', clientId: 'dup' },
+    })))
+
+    // 第二个同 clientId 连接认证成功 → 踢 ws1
+    const ws2 = makeMockWs()
+    connect(cm, ws2)
+    emit(ws2, 'message', Buffer.from(JSON.stringify({
+      type: 'auth', id: 'r2', payload: { token: 'real', clientId: 'dup' },
+    })))
+
+    // 关键断言：kick 时 onDisconnect 对【旧 ws1】被调用一次（含被踢的 clientId）。
+    // 修复前：onDisconnect 仅在 close handler 内 isCurrent=true 时触发，kick 场景 isCurrent=false → 永不触发。
+    expect(cb.onDisconnect).toHaveBeenCalledTimes(1)
+    expect(cb.onDisconnect).toHaveBeenCalledWith(ws1, 'dup')
+
+    // 模拟旧 ws1 的 close 事件触发：close handler 因 isCurrent=false 跳过 onDisconnect（不重复触发）。
+    emit(ws1, 'close')
+    expect(cb.onDisconnect).toHaveBeenCalledTimes(1)
+
+    // 新 ws2 不受影响（仍是当前连接）
+    expect(cm.clients.get('dup')?.ws).toBe(ws2)
+
+    // 新 ws2 正常断开时 onDisconnect 再次触发（针对 ws2），验证正常路径未受 kick 修复影响。
+    emit(ws2, 'close')
+    expect(cb.onDisconnect).toHaveBeenCalledTimes(2)
+    expect(cb.onDisconnect).toHaveBeenLastCalledWith(ws2, 'dup')
+  })
 })
 
 // ── TC5: pending 隔离 + 上限 20 ───────────────────────────────────

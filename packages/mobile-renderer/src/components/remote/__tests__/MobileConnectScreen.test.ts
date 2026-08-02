@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { ref } from 'vue'
 import MobileConnectScreen from '../MobileConnectScreen.vue'
 
 // Mock connection-config（vi.hoisted 保证 mock 工厂能引用，避免 TDZ）
@@ -27,9 +28,17 @@ vi.mock('@/lib/remote/connection-config', () => ({
   activateRemote: activateRemoteMock,
 }))
 
+// 可控的 failReason ref（连接失败提示测试：auth/network/replaced）
+const failReasonRef = ref<'auth' | 'network' | 'replaced' | null>(null)
+
+vi.mock('@/lib/ws-client', () => ({
+  getFailReason: () => failReasonRef,
+}))
+
 beforeEach(() => {
   saveProfileMock.mockClear()
   activateRemoteMock.mockClear()
+  failReasonRef.value = null
 })
 
 describe('MobileConnectScreen（P4-s2-w2）', () => {
@@ -83,5 +92,46 @@ describe('MobileConnectScreen（P4-s2-w2）', () => {
     // 不 emit / 不 saveProfile
     expect(wrapper.emitted('connected')).toBeUndefined()
     expect(saveProfileMock).not.toHaveBeenCalled()
+  })
+})
+
+// ── 连接失败提示（spec §四 D9：failReason → 显示对应 i18n 文案）──
+describe('MobileConnectScreen 连接失败提示（spec §四 D9）', () => {
+  it('failReason=auth（token 失效）→ 显示 connection.failedAuth 文案', () => {
+    failReasonRef.value = 'auth'
+    const wrapper = mount(MobileConnectScreen)
+    expect(wrapper.find('[data-testid="mobile-connect-failure"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('认证失败')
+  })
+
+  it('failReason=network（网络断开）→ 显示 connection.failedRemoteNetwork 文案', () => {
+    failReasonRef.value = 'network'
+    const wrapper = mount(MobileConnectScreen)
+    expect(wrapper.find('[data-testid="mobile-connect-failure"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('无法连接服务器')
+  })
+
+  it('failReason=replaced（被挤占）→ 显示 connection.failedReplaced 文案', () => {
+    failReasonRef.value = 'replaced'
+    const wrapper = mount(MobileConnectScreen)
+    expect(wrapper.find('[data-testid="mobile-connect-failure"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('其他窗口')
+  })
+
+  it('failReason=null（无失败）→ 不渲染失败提示', () => {
+    failReasonRef.value = null
+    const wrapper = mount(MobileConnectScreen)
+    expect(wrapper.find('[data-testid="mobile-connect-failure"]').exists()).toBe(false)
+  })
+
+  it('用户重新输入 → 清空失败提示（hideFailure）', async () => {
+    failReasonRef.value = 'auth'
+    const wrapper = mount(MobileConnectScreen)
+    // 初始显示失败提示
+    expect(wrapper.find('[data-testid="mobile-connect-failure"]').exists()).toBe(true)
+    // 用户开始输入
+    await wrapper.find('[data-testid="mobile-connect-input"]').setValue('ws://1.2.3.4:7420')
+    // 失败提示被隐藏（failReason 仍为 auth，但 hideFailure=true 本地隐藏）
+    expect(wrapper.find('[data-testid="mobile-connect-failure"]').exists()).toBe(false)
   })
 })

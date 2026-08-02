@@ -86,21 +86,44 @@ describe('SessionMessageHandler session.delete 两步广播 (P6 D6)', () => {
     expect(ctx.broadcastSessionList).toHaveBeenCalled()
   })
 
-  it('TC3b: 广播顺序——deleting 在前，deleted(broadcastExcept) 在 reply 之后', async () => {
+  it('TC3b: 广播顺序——deleting 在前，deleted(broadcastExcept) 在 reply 之后，broadcastSessionList 最后', async () => {
     const { handler, ctx } = makeHandler()
     await handler.handleSessionMessage(deleteMsg('s1'), WS, 'clientA')
 
-    // 顺序：clearExtensionTimeouts → broadcast(deleting) → delete → clearSessionBuffer → reply → broadcastExcept(deleted) → broadcastSessionList
+    // 顺序：clearExtensionTimeouts → broadcast(deleting) → delete → clearSessionBuffer → reply
+    //       → broadcastExcept(deleted) → broadcast(deleted, 入 ring buffer) → broadcastSessionList
+    const deletingCallIdx = ctx.broadcast.mock.calls.findIndex(
+      (c: unknown[]) => (c[0] as ServerMessage).type === 'session.deleting',
+    )
+    const deletedBcastCallIdx = ctx.broadcast.mock.calls.findIndex(
+      (c: unknown[]) => (c[0] as ServerMessage).type === 'session.deleted',
+    )
     const order = {
-      deleting: ctx.broadcast.mock.invocationCallOrder[0],
+      deleting: ctx.broadcast.mock.invocationCallOrder[deletingCallIdx],
       delete: ctx.sessionService.delete.mock.invocationCallOrder[0],
       reply: ctx.reply.mock.invocationCallOrder[0],
       broadcastExcept: ctx.broadcastExcept.mock.invocationCallOrder[0],
+      deletedBcast: ctx.broadcast.mock.invocationCallOrder[deletedBcastCallIdx],
       broadcastSessionList: ctx.broadcastSessionList.mock.invocationCallOrder[0],
     }
     expect(order.deleting).toBeLessThan(order.delete)
     expect(order.delete).toBeLessThan(order.reply)
     expect(order.reply).toBeLessThan(order.broadcastExcept)
-    expect(order.broadcastExcept).toBeLessThan(order.broadcastSessionList)
+    expect(order.broadcastExcept).toBeLessThan(order.deletedBcast)
+    expect(order.deletedBcast).toBeLessThan(order.broadcastSessionList)
+  })
+
+  it('TC4: session.deleted 也走 broadcast（入 ring buffer，供 resume 客户端重放）', async () => {
+    const { handler, ctx } = makeHandler()
+    await handler.handleSessionMessage(deleteMsg('s1'), WS, 'clientA')
+
+    // P2-resume-fix：broadcastExcept 不入 ring buffer，故额外 broadcast(deleted) 入桶，
+    // 让断线重连的客户端（subscribedSessions 仍含 delSid）经 getReplayPlan 取到 tombstone。
+    const deletedBcast = ctx.broadcast.mock.calls.find(
+      (c: unknown[]) => (c[0] as ServerMessage).type === 'session.deleted',
+    )
+    expect(deletedBcast).toBeDefined()
+    const deletedMsg = deletedBcast![0] as ServerMessage
+    expect(deletedMsg.payload).toEqual({ sessionId: 's1' })
   })
 })

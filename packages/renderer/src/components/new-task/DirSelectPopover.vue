@@ -55,12 +55,17 @@ const manualPath = ref('')
  *  双保险：即便 runtime 返超量也只显 6 项 */
 const MAX_DISPLAY = 6
 
+/** 尾部动作项计数（避免 magic number） */
+const REMOTE_CONNECT_ONLY = 1
+const OPEN_DIR_AND_REMOTE_CONNECT = 2
+
 /** 远程模式（一次性求值——modal reload 后整页重建，组件重挂时重新求值；不 watch）。
  *  远程模式：隐藏「打开文件夹」（远程无本地 OS dialog）+ 显「远程连接」+ 搜索框 Enter 支持手动路径。 */
 const isRemote = isRemoteMode()
 
-/** 尾部动作项数（远程模式=远程连接，本地模式=打开文件夹，互斥故恒 1） */
-const ACTION_ITEM_COUNT = 1
+/** 尾部动作项数（spec §九:236「远程连接」两种模式都显示；本地模式另显「打开文件夹」）。
+ *  本地模式 = open-dir + remote-connect，远程模式 = 仅 remote-connect */
+const ACTION_ITEM_COUNT = isRemote ? REMOTE_CONNECT_ONLY : OPEN_DIR_AND_REMOTE_CONNECT
 
 /** W3: 改接 workspaceStore.records（取代旧 session.list 派生） */
 const workspaces = computed<RecentWorkspaceRecord[]>(() => workspaceStore.records)
@@ -77,8 +82,11 @@ const filtered = computed<RecentWorkspaceRecord[]>(() => {
 /** 空态：无最近工作区，或搜索无命中 */
 const isEmpty = computed(() => filtered.value.length === 0)
 
-/** 扁平化索引基准：recent 列表 + 动作项。DOM 顺序：recent items → open-dir */
+/** 扁平化索引基准：recent 列表 + 动作项。DOM 顺序：recent items → open-dir（仅本地）→ remote-connect */
 const openDirIdx = computed(() => filtered.value.length)
+
+/** 「远程连接」动作项扁平索引：本地模式在 open-dir 之后，远程模式紧接 recent 列表 */
+const remoteConnectIdx = computed(() => filtered.value.length + (isRemote ? 0 : 1))
 
 /** basename 出现该次数即视为同名，需追加上级段名消歧 */
 const DUP_THRESHOLD = 2
@@ -123,8 +131,9 @@ function openRemoteConnect(): void {
 }
 
 /**
- * 扁平化激活：列表项区间 → selectWorkspace，尾部动作项（idx === listLen）→ 按模式
- * 调 openFolder（本地）或 openRemoteConnect（远程）。
+ * 扁平化激活：列表项区间 → selectWorkspace，尾部动作项按 idx 分派——
+ * 本地模式：openDirIdx → openFolder，remoteConnectIdx → openRemoteConnect；
+ * 远程模式：remoteConnectIdx（紧接列表）→ openRemoteConnect。
  */
 function activate(idx: number): void {
   const listLen = filtered.value.length
@@ -132,11 +141,12 @@ function activate(idx: number): void {
     selectWorkspace(filtered.value[idx])
     return
   }
-  // 动作项：本地=open-dir，远程=remote-connect（互斥，恒 1 项）
-  if (isRemote) {
-    openRemoteConnect()
-  } else {
+  if (!isRemote && idx === openDirIdx.value) {
     openFolder()
+    return
+  }
+  if (idx === remoteConnectIdx.value) {
+    openRemoteConnect()
   }
 }
 
@@ -250,8 +260,8 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
       <!-- 分隔线 -->
       <div class="my-1 h-px bg-border" />
 
-      <!-- 动作项：本地模式显「打开文件夹」（空态时即 Primary 入口，spec §6），
-           远程模式隐藏（远程无本地 OS dialog 可触发） -->
+      <!-- 动作项：本地模式显「打开文件夹」（空态时即 Primary 入口，spec §6）；
+           远程模式隐藏（pickDirectory 开本地 OS dialog，语义错误，spec §九.2） -->
       <PopoverActionItem
         v-if="!isRemote"
         test-id="action-open-dir"
@@ -265,13 +275,12 @@ const { activeIndex, onKeydown, isActiveItem } = useFlatListNav({
         {{ t('newTask.dirSelect.openFolder') }}
       </PopoverActionItem>
 
-      <!-- 动作项：远程模式显「远程连接」（spec §九:230-239），emit remote-connect 由 Landing 接打开 modal -->
+      <!-- 动作项：「远程连接」两种模式都显示（spec §九:236），emit remote-connect 由 Landing 接打开 modal -->
       <PopoverActionItem
-        v-else
         test-id="action-remote-connect"
-        :active="isActiveItem(openDirIdx)"
+        :active="isActiveItem(remoteConnectIdx)"
         @click="openRemoteConnect"
-        @mouseenter="activeIndex = openDirIdx"
+        @mouseenter="activeIndex = remoteConnectIdx"
       >
         <template #icon>
           <Globe class="shrink-0 text-subtle" />

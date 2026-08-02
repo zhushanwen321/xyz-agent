@@ -122,6 +122,55 @@ describe('createKeyedMutex (P6 D1)', () => {
     await expect(p2).resolves.toBe('done2')
   })
 
+  it('TC7: prev 先于超时完成时不泄漏定时器、不抛 TimeoutError、无 unhandledRejection', async () => {
+    // 反向用例（oracle 指出缺失）：prev 快速完成（50ms）+ fn2 排队超时设 200ms。
+    // 预期 fn2 正常执行（不超时）。关键验证修复正确性：
+    //  - 不抛 TimeoutError（race 由 prev 赢）
+    //  - 悬挂的 timeout 定时器被 clearTimeout（不泄漏至 200ms）
+    //  - timeout Promise 到点 reject 不产生 unhandledRejection（被 .catch 兜底）
+    const mutex = createKeyedMutex()
+    const unhandled: unknown[] = []
+    const onReject = (reason: unknown): void => { unhandled.push(reason) }
+    process.on('unhandledRejection', onReject)
+
+    try {
+      // fn1 快速完成 50ms，fn2 排队但超时阈值 200ms（远大于 fn1）→ prev 必先完成
+      const p1 = mutex.run('reverse', async () => { await delay(50); return 'f1' })
+      const p2 = mutex.run('reverse', async () => 'f2', 200)
+
+      // fn2 应正常 resolve（race 由 prev 赢，未超时）
+      await expect(p2).resolves.toBe('f2')
+      await p1
+
+      // 等待过超时阈值（200ms + 余量），确保悬挂的 timeout 定时器即便存在也到点 reject。
+      // 修复后 timer 已 clearTimeout，不会触发；但若泄漏，此窗口会 fire 一个未捕获 reject。
+      await delay(250)
+      // 再 yield 一次微任务队列，让潜在的 unhandledRejection 事件有机会分发
+      await delay(0)
+
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onReject)
+    }
+  })
+
+  it('TC8: 超时触发后定时器已被清理，不影响后续 run（原超时行为不变）', async () => {
+    // 覆盖 timeout 先触发路径：超时后 timer 已执行（clearTimeout no-op），后续 run 同 key 仍正常工作。
+    const mutex = createKeyedMutex()
+
+    // fn1 长占 100ms，fn2 排队超时 20ms 必先超时
+    const p1 = mutex.run('after-timeout', async () => { await delay(100); return 'f1' })
+    const p2 = mutex.run('after-timeout', async () => 'f2', 20)
+
+    // fn2 超时拒绝（原有行为不变）
+    await expect(p2).rejects.toBeInstanceOf(TimeoutError)
+    await p1
+
+    // fn1 完成后，同 key 再次 run 应全新正常工作（证明 timer 清理逻辑未破坏后续 chain）
+    const r3 = await mutex.run('after-timeout', async () => 'f3')
+    expect(r3).toBe('f3')
+  })
+
   it('TC6: run 超时且无后续排队时，内部 chains Map 清理该 key（无泄漏）', async () => {
     // 覆盖超时后的清理路径：fn1 长占 key，fn2 排队超时（无 fn3 接力）。
     // fn2 的 finally 应判 chains.get(key)?.promise === fn2.next 命中并 delete，否则 Map 残留泄漏。

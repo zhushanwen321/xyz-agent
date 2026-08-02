@@ -43,12 +43,19 @@ const WS_CLOSE_NORMAL = 1000
  * 单连接的运行时上下文（wave1 远程化）。
  * - clientId：开放模式固定 'local'；认证模式来自客户端 auth 消息（client 身份 SSOT）。
  * - connectedAt：连接建立时间戳，便于诊断/日志。
+ * - replaying：C3 修复（review CRITICAL）——认证成功后 replay 段发送期间置 true，
+ *   broker.broadcast 据此跳过该 ws，避免实时广播与 replay 段在 TCP 流上交错
+ *   （replay seq=120 → 实时 seq=151 → replay seq=121 → 非幂等 chat effect 跨 turn
+ *   拼接 → 气泡内容混乱）。replay 段发完（或异常退出）即清回 false。
+ *   缺省 false：开放模式、reset/冷启动路径（onConnect 推 initial state 是同步 send，
+ *   无 await 间隙无竞态）不需置位。
  */
 export interface ConnectionCtx {
   ws: WsType
   clientId: string
   deviceName: string
   connectedAt: number
+  replaying?: boolean
 }
 
 // ── P2-s2 auth replay 编排类型（spec §四时序图） ────────────────────────────
@@ -454,33 +461,49 @@ export class ConnectionManager {
     // P2-s2 回放编排：onAuthSuccess 存在时调 broker.getReplayPlan 决定 resume/reset。
     // ES1：onAuthSuccess 抛错（broker 异常/逻辑错误）→ cleanupPendingAuth + close 4001（与认证失败一致）。
     if (this.callbacks.onAuthSuccess) {
-      let decision: ReplayDecision
+      // C3 修复（review CRITICAL）：replay 段发送期间把该 ws 标记为 replaying，broker.broadcast
+      // 据此跳过，避免实时广播与 replay 段在 TCP 流上交错。窗口必须覆盖 await onAuthSuccess 间隙
+      // （此间隙内其他 client 的 handler 可能触发 broker.broadcast 遍历 pool.clients，会把实时
+      // 消息推给本 ws，与随后到达的 replay 段交错：replay seq=120 → 实时 seq=151 → replay seq=121…）。
+      // replyAuth/replay 段发送是同步的（ws.send 不让出事件循环），故真正竞态只在 await 处；
+      // 但 replaying 标记覆盖整段（含同步发送）更安全，且 try/finally 保证异常路径也复位。
+      // 窗口内被跳过的实时广播仍入 session buffer（broadcast 入桶逻辑不受 replaying 影响），
+      // 客户端下次重连会经 getReplayPlan 补发——当前会话瞬时延迟，远好于交错导致的状态损坏。
+      ctx.replaying = true
       try {
-        decision = await this.callbacks.onAuthSuccess(ws, clientId, input)
-      } catch (e) {
-        console.error('[runtime] onAuthSuccess failed, closing connection:', e)
-        this.cleanupPendingAuth(ws)
-        this.clients.delete(clientId)
-        ws.close(WS_CLOSE_UNAUTHORIZED, 'replay_failed')
-        return
-      }
-      // replyAuth 携带 ReplayMeta（bootId/serverSeq/resumed/replayedCount/seqReset）。
-      this.replyAuth(ws, msg.id, clientId, {
-        resumed: decision.resume,
-        seqReset: decision.seqReset,
-        replayedCount: decision.replayedCount,
-        bootId: decision.bootId,
-        serverSeq: decision.serverSeq,
-      })
-      if (decision.resume) {
-        // resume 路径：直发回放段（已序列化字符串，零再序列化），跳过 onConnect。
-        // ES3：ws.send 前 check readyState（ws 可能在 await 期间已关闭）。
-        for (const data of decision.messages) {
-          if (ws.readyState === WS_OPEN) ws.send(data)
+        let decision: ReplayDecision
+        try {
+          decision = await this.callbacks.onAuthSuccess(ws, clientId, input)
+        } catch (e) {
+          console.error('[runtime] onAuthSuccess failed, closing connection:', e)
+          this.cleanupPendingAuth(ws)
+          this.clients.delete(clientId)
+          ws.close(WS_CLOSE_UNAUTHORIZED, 'replay_failed')
+          return
         }
-      } else {
-        // reset/冷启动路径：调 onConnect 推全量 initial state（含 seqReset 场景，推了无害）。
-        this.callbacks.onConnect(ws, clientId)
+        // replyAuth 携带 ReplayMeta（bootId/serverSeq/resumed/replayedCount/seqReset）。
+        this.replyAuth(ws, msg.id, clientId, {
+          resumed: decision.resume,
+          seqReset: decision.seqReset,
+          replayedCount: decision.replayedCount,
+          bootId: decision.bootId,
+          serverSeq: decision.serverSeq,
+        })
+        if (decision.resume) {
+          // resume 路径：直发回放段（已序列化字符串，零再序列化），跳过 onConnect。
+          // ES3：ws.send 前 check readyState（ws 可能在 await 期间已关闭）。
+          for (const data of decision.messages) {
+            if (ws.readyState === WS_OPEN) ws.send(data)
+          }
+        } else {
+          // reset/冷启动路径：调 onConnect 推全量 initial state（含 seqReset 场景，推了无害）。
+          this.callbacks.onConnect(ws, clientId)
+        }
+      } finally {
+        // replay 段发送完成（含 reset 路径 / 异常路径）→ 清除 replaying 标记，
+        // 该 ws 重新纳入 broker.broadcast 广播池。clients.delete 的路径（replay_failed）
+        // 已把 ctx 移出池，此处赋值对已移出的 ctx 无副作用（无引用者）。
+        ctx.replaying = false
       }
     } else {
       // onAuthSuccess 未注入（理论上认证模式必注入，兜底降级冷启动）。
@@ -497,12 +520,28 @@ export class ConnectionManager {
   /**
    * 挤占同 clientId 的旧连接（单点登录语义）：旧连接收到 4002 replaced 关闭。
    * 不立即从 clients Map delete——让旧 ws 的 close handler 自检 ws 一致性后跳过误删新连接。
+   *
+   * 订阅清理（kick 场景的关键）：旧 ws 的 close handler 因 isCurrent=false（新 ws 已占 clientId）
+   * 跳过 onDisconnect，故被踢旧 ws 持有的 MessageBus session 订阅 + terminal resize owner 不会被
+   * close 路径清理。此处显式对旧 ws 触发 onDisconnect，复用与正常断开相同的清理路径（单一来源）：
+   *   - messageBus.unsubscribeAll(existing.ws)（按 ws 清理其全部 session 订阅）
+   *   - terminalService.clearResizeOwner(existing.clientId)
+   * close 之后再触发也无害（unsubscribeAll 幂等），但放 close 前更直观（先清订阅再关流）。
+   * onDisconnect 是上层注入的副作用回调（不抛则继续），try/catch 包裹防其异常中断 kick 编排。
    */
   private kickExistingClient(clientId: string, newWs: WsType): void {
     const existing = this.clients.get(clientId)
     if (existing && existing.ws !== newWs) {
       this.clearHeartbeat(existing.ws)
       this.clearAuthTimer(existing.ws)
+      // 显式清理旧 ws 的订阅/资源（close handler 因 isCurrent=false 会跳过 onDisconnect，
+      // 不清理则旧 ws 的 session 订阅残留在 MessageBus.wsSubscriptions，频繁重连下单调增长）。
+      try {
+        this.callbacks.onDisconnect(existing.ws, existing.clientId)
+      // eslint-disable-next-line taste/no-silent-catch -- onDisconnect 是上层副作用回调，异常不应阻断 kick 流程（与 attachLifecycleHandlers 内一致）
+      } catch (e) {
+        console.error('[runtime] onDisconnect callback error during kick:', e)
+      }
       existing.ws.close(WS_CLOSE_REPLACED, 'replaced')
     }
   }
@@ -558,12 +597,13 @@ export class ConnectionManager {
       this.clearAuthTimer(ws)
       console.log(`[runtime] client disconnected (total: ${this.clients.size})`)
       // P5 onDisconnect：仅当关闭的是当前连接（非被踢占的旧连接）才回调，避免误通知新连接下线。
-      // 踢占场景：kickExistingClient 关闭旧 ws 时 clientId 已被新 ws 占用（ctx.ws!==ws），跳过回调。
+      // 踢占场景的旧 ws 订阅清理已在 kickExistingClient 内显式调用 onDisconnect 完成（避免 close 路径
+      // 因 isCurrent=false 跳过导致 MessageBus 订阅泄漏）；此处仅保留正常断开的 onDisconnect 触发。
       if (isCurrent) {
         this.activeSessions.delete(clientId)
         try {
           this.callbacks.onDisconnect(ws, clientId)
-        // eslint-disable-next-line taste/no-silent-catch -- onDisconnect 是 presence 推送等副作用，失败不应阻断 close 清理
+          // eslint-disable-next-line taste/no-silent-catch -- onDisconnect 是 presence 推送等副作用，失败不应阻断 close 清理
         } catch (e) {
           console.error('[runtime] onDisconnect callback error:', e)
         }

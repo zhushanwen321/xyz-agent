@@ -81,10 +81,24 @@ export function createKeyedMutex(): KeyedMutex {
       if (timeoutMs !== undefined) {
         // Promise.race：prev 先 resolve（前一个完成）则继续；超时 promise 先 reject 则抛 TimeoutError。
         // 不用 Promise.all（项目禁用）；race 是单值竞速，符合「谁先 settle 谁赢」语义。
+        let timeoutId: ReturnType<typeof setTimeout> | undefined
         const timeout = new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new TimeoutError(`mutex run timed out after ${timeoutMs}ms waiting for key: ${key}`)), timeoutMs)
+          // 记录 timer id，prev 先完成时用 clearTimeout 取消，否则悬挂定时器存活至 timeoutMs（git-service 默认 10s）累积泄漏。
+          timeoutId = setTimeout(
+            () => reject(new TimeoutError(`mutex run timed out after ${timeoutMs}ms waiting for key: ${key}`)),
+            timeoutMs,
+          )
         })
-        await Promise.race([prev, timeout])
+        try {
+          await Promise.race([prev, timeout])
+        } finally {
+          // 无论如何取消悬挂定时器：prev 先完成时 timer 仍未触发；timeout 先触发时 timer 已执行（clearTimeout 是 no-op）。
+          if (timeoutId !== undefined) clearTimeout(timeoutId)
+        }
+        // 吞掉 timeout Promise 可能的无人消费 rejection：prev 先完成时 race 早已 resolve，
+        // timeout 仍 pending，到点 reject 后无人 await → unhandledRejection（Node warning，未来版本可能 crash）。
+        // timeout 先触发时 race 已 reject，timeout 已 settled，此 .catch 是 no-op。
+        timeout.catch(() => {})
       } else {
         await prev
       }

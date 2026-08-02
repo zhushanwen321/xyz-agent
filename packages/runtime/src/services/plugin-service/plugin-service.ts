@@ -472,6 +472,16 @@ export class PluginService implements IPluginService {
     this.sessionDataStore.clearSession(sessionId)
   }
 
+  /**
+   * 清理指定 clientId 的 activeSession resolver cache 条目。
+   *
+   * 客户端断开后其 clientId 对应的 per-key TTL cache 条目已无意义（值过期后 key 仍残留），
+   * 频繁连接/断开的客户端会令 Map 单调增长。在 onDisconnect 时显式删除该 key，避免 stale 残留。
+   */
+  clearClientResolverCache(clientId: string): void {
+    this.activeSessionResolver.clear(clientId)
+  }
+
   /** 处理前端返回的 UI 响应（供 server.ts 调用）。委托 UiRequestQueue。 */
   handleUiResponse(requestId: string, result: unknown): void {
     this.uiRequestQueue.handleResponse(requestId, result)

@@ -138,6 +138,9 @@ export class RuntimeServer implements IMessageBroker {
         this.terminalService?.clearResizeOwner(clientId)
         // wave:runtime-wiring：ws 断开时清理该 ws 的所有 session 订阅（MessageBus.unsubscribeAll）。
         this.messageBus?.unsubscribeAll(ws as unknown as import('../services/message-bus/types.js').BusClient)
+        // 清理断开客户端的 activeSession resolver per-key cache 条目：
+        // 客户端下线后其 clientId 缓存值已无意义，删除避免频繁连接/断开累积 stale key（Map 单调增长）。
+        this.pluginService?.clearClientResolverCache(clientId)
       },
       // P5 presence：connection-manager broadcastPresence 触发时广播 presence.update（全量列表）。
       onPresenceUpdate: (connections) => this.broker.broadcast({ type: 'presence.update', payload: { connections } }),

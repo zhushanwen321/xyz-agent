@@ -43,6 +43,9 @@
  * 16. intercept 的 auth.ok 成功分支消费 P2-s2 扩展字段（IF4/DM3）：保存 bootId、serverSeq 基线对齐
  *     （>lastSeq 才更新）、seqReset=true → 清 lastSeq=0 + window.location.reload()（D6 哲学，renderer
  *     无全局 reset 能力，reload 是构造性正确路径；ERR2 守卫 typeof window）。非浏览器环境降级仅清 lastSeq。
+ * 17. seqReset 静默窗口：seqReset 分支置 isReloading=true（reload 前设，新页面是新 JS 上下文自然重置），
+ *     onmessage intercept 放行后（业务消息路径）检查此标志，命中静默丢弃（不 updateLastSeq、不
+ *     messageHandler）。防 reload 异步窗口内残余增量广播污染即将销毁的旧 stores 触发 UI 闪烁副作用。
  *
  * 依赖方向：依赖 remote/probe（buildAuthMessage）；暴露 connect/disconnect/send/getState/onMessage
  * + failReason/isRemote 只读 ref（远程化扩展）+ getRttStats（RTT 快照）
@@ -162,6 +165,19 @@ let authId: string | null = null
  * onclose 优先检查此标志（超时 close 的 event.code 是 1000/1006 而非 4001，需靠标志区分）。
  */
 let authTimedOut = false
+
+/**
+ * seqReset 触发的 reload 进行中标志（防 reload 完成前残余增量广播污染即将销毁的旧页面）。
+ *
+ * 背景：auth.ok{seqReset:true} 调 window.location.reload() 后，reload 是异步的——JS 继续
+ * 执行，旧 WS 在新页面真正卸载旧页面、断开旧连接前仍存活，server 仍向其推带 seq 的增量广播。
+ * 此时旧 onmessage 若继续执行（updateLastSeq + messageHandler），会把消息应用到即将销毁的旧
+ * stores 上，可能触发副作用（流式计时器、审批弹窗），用户在 reload 冷启动重来前看到瞬时 UI 抖动。
+ *
+ * 解法：seqReset 分支在 reload 前置此标志，onmessage intercept 放行后（业务消息路径）检查它，
+ * 命中则静默丢弃。新页面是新 JS 上下文，标志位自然重置（模块级变量重新初始化为 false）。
+ */
+let isReloading = false
 
 // ── seq 状态（wave3 P2-s4 可靠投递）─────────────────────────
 /**
@@ -414,6 +430,10 @@ export function connect(url: string, opts?: ConnectOpts): void {
       const msg = JSON.parse(event.data) as ServerMessage
       // intercept 优先：远程模式 auth 握手期消化 auth 回复 + 丢弃握手期业务消息
       if (intercept(msg)) return
+      // seqReset 触发的 reload 进行中：旧 WS 仍连、server 仍在推增量广播，但旧页面即将销毁——
+      // 静默丢弃这些残余消息，避免应用到即将销毁的 stores 触发副作用（reload 后冷启动重来）。
+      // 新页面是新 JS 上下文，isReloading 自然重置为 false。
+      if (isReloading) return
       // seq 断点更新（wave3 P2-s4 IF3）：intercept 放行后（auth 已完成或本地模式），
       // 在 pong RTT 配对之前更新 lastSeq。reply（auth.ok/pong）无 seq（undefined）不更新。
       // 业务广播消息带 seq → lastSeq 取最后一条（全局单调递增即最大值）。
@@ -539,6 +559,8 @@ export function __resetForTest(): void {
   lastSeq = 0
   serverBootId = null
   subscribedSessions = []
+  // 复位 reload 标志（防上一用例的 seqReset 残余标志污染下一用例的 onmessage）
+  isReloading = false
   resetRtt()
   clearTimers()
   if (ws) {
@@ -556,14 +578,18 @@ export function __resetForTest(): void {
  * 更新 lastSeq 断点（wave3 P2-s4 IF3/ERR1）。
  *
  * onmessage intercept 放行后调用（auth 已完成或本地模式）。守卫：
- * - typeof seq==='number' && seq>0 && Number.isFinite(seq) → 更新 lastSeq=seq
+ * - typeof seq==='number' && seq>0 && Number.isFinite(seq) → 更新 lastSeq=max(lastSeq, seq)
  * - 否则（undefined/0/负数/NaN/非数字）→ 忽略（ERR1 降级，畸形 seq 不污染断点）
  *
- * seq 全局单调递增，取每条消息的 seq 即取最大值。reply（auth.ok/pong）无 seq 不更新。
+ * C2 修复（review CRITICAL）：取 max 而非直接覆盖。replay 段（seq 101-150）在 auth.ok
+ * 基线对齐（lastSeq 抬到 serverSeq 如 150）之后到达——若直接覆盖，每条 replay 把 lastSeq
+ * 回退成更小值（如 101），下次重连带回远低于实际水位 → 触发超大 replay → 非幂等 chat effect
+ * 重复气泡。取 max 与 serverSeq 守卫（intercept 内 p.serverSeq > lastSeq）口径一致，保证单调递增。
+ * reply（auth.ok/pong）无 seq 不更新。
  */
 function updateLastSeq(seq: number | undefined): void {
   if (typeof seq !== 'number' || !Number.isFinite(seq) || seq <= 0) return
-  lastSeq = seq
+  lastSeq = Math.max(lastSeq, seq)
 }
 
 /**
@@ -598,6 +624,9 @@ function intercept(msg: ServerMessage): boolean {
       if (p.seqReset === true) {
         // 先清 lastSeq=0（防 reload 前残余 onmessage 写回旧值，DM3 不变量）
         lastSeq = 0
+        // 标记 reload 进行中：reload 是异步的，旧 WS 在新页面卸载前仍存活、server 仍推增量广播。
+        // onmessage intercept 放行后检查此标志，命中静默丢弃（见 ws.onmessage）。
+        isReloading = true
         console.warn('[ws] seqReset received, reloading page for full resync')
         // ERR2 守卫：非浏览器环境（SSR/无 location）降级为仅清 lastSeq 不 reload
         if (

@@ -64,13 +64,13 @@ describe('W2 TC1: DirSelectPopover 远程模式隐藏打开文件夹 + 显远程
   })
 })
 
-describe('W2 TC2: DirSelectPopover 本地模式打开文件夹逐字节不变', () => {
-  it('isRemoteMode=false → action-open-dir 存在，action-remote-connect 不存在', () => {
+describe('W2 TC2: DirSelectPopover 本地模式打开文件夹与远程连接并存', () => {
+  it('isRemoteMode=false → action-open-dir 存在，action-remote-connect 也存在（spec §九:236/306 两种模式都显示）', () => {
     remoteMode = false
     setupStore([])
     const w = mount(DirSelectPopover, { props: { currentCwd: null } })
     expect(w.find('[data-testid="action-open-dir"]').exists()).toBe(true)
-    expect(w.find('[data-testid="action-remote-connect"]').exists()).toBe(false)
+    expect(w.find('[data-testid="action-remote-connect"]').exists()).toBe(true)
   })
 })
 

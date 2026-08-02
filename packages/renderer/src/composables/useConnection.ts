@@ -369,6 +369,15 @@ export function useConnection() {
     const stopStateWatch = watch(getState(), (newState, oldState) => {
       if (oldState === 'connected' && newState !== 'connected') {
         pending.rejectAll(new Error(t('connection.disconnectedError')))
+        // 远程模式 WS 断开是唯一的断开信号（无 IPC runtime 崩溃监听兜底——远程分支
+        // 在上方提前 return 跳过 onRuntimeRestarting/onRuntimeFailed 注册）。若不在此收口，
+        // streaming assistant 消息停留 streaming 态（isGenerating=true）→ UI 卡「思考中」，
+        // 直到 10 分钟 streaming timeout 兜底（chat.ts STREAMING_TIMEOUT_MS）才 finalize。
+        // 与本地 runtime-failed 路径（line 439 finalizeAllStreaming('disconnect')）对称。
+        // 仅远程模式：本地模式有 IPC listener 兜底，state watch 不重复 finalize（避免双重）。
+        if (isRemoteMode()) {
+          useChatStore().finalizeAllStreaming('disconnect')
+        }
       }
       // 任意 → connected（首连 + 重连）统一处理 sync + presence + bump。
       //

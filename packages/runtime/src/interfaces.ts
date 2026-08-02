@@ -450,6 +450,11 @@ export interface IPluginService {
   setPluginConfig(pluginId: string, key: string, value: unknown): Promise<void>
   /** Clear cached session data */
   clearSessionData(sessionId: string): void
+  /**
+   * 清理指定 clientId 的 activeSession resolver cache 条目。
+   * 客户端断开时调用，避免 stale per-key cache 条目残留导致 Map 单调增长。
+   */
+  clearClientResolverCache(clientId: string): void
   /** Handle UI response from frontend (confirm/select/input dialogs) */
   handleUiResponse(requestId: string, result: unknown): void
 

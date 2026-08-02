@@ -200,13 +200,29 @@ export class SessionMessageHandler {
           payload: { sessionId: delSid, byClientId: clientId },
         })
         await this.ctx.sessionService.delete(delSid)
-        // P2-s1-w2：session 销毁清 ring buffer 桶（ES6 不推进 watermark——session 已删，
-        // 客户端收到 session.deleted 清分区，不该再期待该 session 消息）。
+        // clearSessionBuffer 在 broadcast(deleted) **之前** 调用：先清掉历史增量（含 deleting）整桶，
+        // 随后的 broadcast(deleted) 重建一个仅含 tombstone 的新桶（P2-resume-fix）——避免 resume 客户端
+        // 把旧 chat 增量（非幂等 effect）连同 tombstone 一起重放。ES6 不推进 watermark。
         this.ctx.clearSessionBuffer(delSid)
         this.ctx.reply(ws, msg.id, 'session.deleted', { sessionId: delSid })
-        // P6 D6：broadcastExcept 排除发起方——发起方已通过 reply 收到 deleted，不重复收广播（避免双投递）。
-        // 其他客户端收广播 session.deleted 触发 cleanupSession 清 store 分区（防内存泄漏）。
+        // broadcastExcept 排除发起方：发起方已通过 reply 收到 deleted（pending.resolve），不重复收广播。
+        // 其他在线客户端收广播 session.deleted 触发 cleanupSession 清 store 分区（防泄漏，幂等）。
         this.ctx.broadcastExcept(clientId, {
+          type: 'session.deleted',
+          id: this.ctx.nextPushId(),
+          payload: { sessionId: delSid },
+        })
+        // P2-resume-fix：broadcastExcept 不入 ring buffer，断线重连（resume）的客户端拿不到 session.deleted
+        // （其 subscribedSessions 仍含 delSid，getReplayPlan 查 delSid 桶为 undefined → 无重放 → delSid 分区
+        // 成僵尸分区）。broadcastSessionList 兜底也不覆盖 resume（config.sessions 无 sessionId，按 D2/D2.2
+        // 不入桶；resume 跳过 sendInitialState，spec D8）。spec D4① R4-m3 时序注承认此缺口。
+        // 额外 broadcast(deleted) 入 ring buffer：上面 clearSessionBuffer 已清空 delSid 桶，此处重建一个
+        // 仅含 tombstone 的新桶；resume 客户端 getReplayPlan 取到 → cleanupSession 清僵尸分区。
+        // 实时客户端会重复收一条 deleted（broadcastExcept 已发 + 此 broadcast 再发），cleanupSession 幂等
+        // （useSidebar.ts:392「重复调对已清 store 是 no-op」），无副作用。
+        // 内存取舍：tombstone 桶不再清（无活跃 session 触发），残留一条直到 runtime 重启或 sessionId 复用。
+        // 受 MAX_SESSIONS 上界（默认 10）限流，单条体积可忽略，可接受取舍（MINOR 级）。
+        this.ctx.broadcast({
           type: 'session.deleted',
           id: this.ctx.nextPushId(),
           payload: { sessionId: delSid },

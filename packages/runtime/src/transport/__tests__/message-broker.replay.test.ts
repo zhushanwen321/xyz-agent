@@ -490,4 +490,40 @@ describe('ServerMessageBroker 分桶 + 回放（P2-s1-w2）', () => {
     expect(JSON.parse(plan.messages[0]).type).toBe('session.busy')
     expect(JSON.parse(plan.messages[1]).type).toBe('session.idle')
   })
+
+  // ── P2-resume-fix: session.deleted tombstone 入 ring buffer，resume 客户端可重放 ──
+
+  it('P2-resume-fix: session 销毁后 clearSessionBuffer + broadcast(deleted)，resume 客户端仍能回放 session.deleted tombstone（清僵尸分区）', async () => {
+    const { ServerMessageBroker } = await import('../message-broker.js')
+    const ws = makeMockWs()
+    const broker = new ServerMessageBroker(singlePool(ws), mockServices)
+    const sid = 's1'
+
+    // 模拟 session-message-handler 的销毁序列（去掉 sessionService/delete 等 handler 侧逻辑，
+    // 聚焦 broker 入桶语义）：
+    // 1) broadcast(deleting) —— 入 s1 桶（旧增量）
+    broker.broadcast(sessionMsg('session.deleting', sid, { byClientId: 'clientA' }))
+    // 2) clearSessionBuffer(sid) —— 整桶移除（含 deleting），不推进 watermark（D4①）
+    broker.clearSessionBuffer(sid)
+    // 3) broadcastExcept(deleted) —— 不入桶（broadcastExcept 不打 seq、不入 ring buffer）
+    broker.broadcastExcept('clientA', sessionMsg('session.deleted', sid))
+    // 4) broadcast(deleted) —— 入 s1 桶（P2-resume-fix：重建仅含 tombstone 的新桶）
+    broker.broadcast(sessionMsg('session.deleted', sid))
+
+    // s1 桶此刻**仅含** session.deleted tombstone（deleting 已被 clearSessionBuffer 清掉，
+    // 不会把旧 chat 增量与非幂等 effect 一起回放给 resume 客户端）
+    const buf = broker.getSessionBuffer(sid)!
+    expect(buf).toBeDefined()
+    expect(buf.size).toBe(1)
+    expect(JSON.parse(buf.entries[0].data).type).toBe('session.deleted')
+
+    // resume 客户端：subscribedSessions 仍含 sid（panel 未清，spec D2.1），getReplayPlan 取到 tombstone
+    const plan = broker.getReplayPlan(0, broker.getBootId(), [sid])
+    expect(plan.kind).toBe('resume')
+    if (plan.kind !== 'resume') return
+    expect(plan.messages).toHaveLength(1)
+    expect(JSON.parse(plan.messages[0]).type).toBe('session.deleted')
+    // watermark 不应被 clearSessionBuffer 推进（D4①），lastSeq=0 仍可 resume
+    expect(broker.getEvictedWatermark()).toBe(0)
+  })
 })

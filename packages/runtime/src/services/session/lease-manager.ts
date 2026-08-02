@@ -120,7 +120,29 @@ export class LeaseManager {
   }
 
   /**
-   * 续租（挂 pingTick 成功路径）。只传 sessionId，内部从 session.busyOwnerId 反查（M4）。
+   * 续租（挂 event-interpreter pingTick 成功路径）。只传 sessionId，内部从 session.busyOwnerId
+   * 反查当前 owner（M4 审查决议：renew 调用方 EventInterpreter 不持有 clientId 上下文，签名只传 sessionId）。
+   *
+   * 【隐式不变量 / 防御性说明（P5 MINOR）】renew 不显式校验 busyOwnerId 是否仍是发起当前 turn 的原 owner。
+   * 这在「设备被抢占」场景下理论上有防御性缺口——抢占方的 turn 会启动新 lease，原 owner 的 renew
+   * 若仍被调用会静默续约错误 owner 的 lease。当前**实际无 bug**，因为 renew 的正确性依赖以下不变量链：
+   *
+   *   renew 仅由 pingTick 调用（event-interpreter.ts:629 onLeaseRenew 回调）
+   *   → pingLoop 由 turn-start 启动（event-interpreter.ts:217 startPingLoop）
+   *   → 设备被抢占 = acquire 返回 busy 拒绝 = 新 turn 不发起 = 原 turn 的 pi prompt 不再推进
+   *     = pi 发 turn-end → event-interpreter.ts:591 stopPingLoop（清 pingTimer）
+   *   → pingTimer 清空后 pingTick 不再调度，pingTick 内 :621 `if (this.pingTimer === null) return`
+   *     兜底已 in-flight 的 tick 也不调 onLeaseRenew
+   *
+   * 即「turn 结束即停 ping」保证了抢占后原 owner 的 renew 不会被调用。
+   *
+   * **若未来改动打破此隐式不变量**（如把 renew 挂到非 turn-scoped 的信号、或 pingLoop 生命周期
+   * 与 turn 解耦），须在此处补 owner 一致性校验。注意：简单地在 renew 加 `clientId` 参数无法堵住缺口——
+   * EventInterpreter 无 turn-scoped clientId（turn-start 事件不携带 clientId，createAdapter 闭包
+   * 也不捕获 clientId），调用方只能反查 busyOwnerId 回传，是同义反复，无校验价值。真正有意义的校验
+   * 需要 EventInterpreter 在 turn-start 快照发起方 clientId 并在 renew 时比对，那是更大的改动面，
+   * 当前收益不匹配，故以注释固化不变量。
+   *
    * @returns true=续租成功；false=无 owner（busyOwnerId 空，不误续空 lease）。
    */
   renew(sessionId: string): boolean {

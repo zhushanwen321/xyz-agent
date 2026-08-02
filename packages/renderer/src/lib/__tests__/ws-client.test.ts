@@ -1,7 +1,7 @@
 /**
  * ws-client auth 握手 + close code 分流 + RTT 测量测试。
  *
- * 覆盖 17 个 TC：
+ * 覆盖 18 个 TC：
  *  - TC1-TC8（wave1 auth 握手）：
  *    - TC1: onopen 远程模式发 auth payload 且不带 lastSeq
  *    - TC2: auth.ok 前不 connected，auth.ok 后翻 connected
@@ -30,6 +30,8 @@
  *    - TC23: setSubscribedSessions 注入去重排序 + 重连 auth 携带
  *    - TC24: mock 模式 lastSeq 恒 0（代码审查 review，不单测）
  *    - TC25: 畸形 seq（负数/0/NaN）忽略不更新 lastSeq
+ *    - TC26: seqReset 后 reload 完成前的增量广播被静默丢弃（防 reload 前 UI 闪烁）
+ *    - TC27: replay 段不使 lastSeq 回退（C2 修复：updateLastSeq 取 max 维持单调）
  *
  * 框架：vitest + happy-dom（禁止 node:test，遵守 AGENTS 测试规范）。
  *
@@ -1077,5 +1079,100 @@ describe('TC25: 畸形 seq 忽略', () => {
     // 正常 seq=15 → 更新
     lastWs!.triggerMessage(JSON.stringify({ type: 'context.update', seq: 15, payload: { sessionId: 's1' } }))
     expect(getSeqState().lastSeq).toBe(15)
+  })
+})
+
+// ──────────────────────────────────────────────────────────
+// TC26: seqReset 后 reload 完成前的增量广播被静默丢弃
+// （防 reload 前 UI 闪烁：旧 WS 仍连、server 仍推，旧 onmessage 不应再应用到即将销毁的 stores）
+// ──────────────────────────────────────────────────────────
+describe('TC26: seqReset 后 onmessage 静默丢弃增量广播', () => {
+  it('auth.ok{seqReset:true} 后再触发 onmessage 业务消息 → messageHandler 未调 + lastSeq 不被写回', async () => {
+    const { connect, getSeqState, onMessage } = await import('@/lib/ws-client')
+    const handler = vi.fn()
+    const unsub = onMessage(handler)
+
+    connect('ws://host:3210', { auth: { token: 't1', clientId: 'c1' } })
+    await waitForWs()
+    lastWs!.triggerOpen()
+    // 桩 reload 防真实刷新中断测试
+    const reloadSpy = vi.spyOn(window.location, 'reload').mockImplementation(() => {})
+    // 触发 seqReset 分支（设 isReloading=true + lastSeq=0 + reload 调用）
+    lastWs!.triggerMessage(
+      JSON.stringify({
+        type: 'auth.ok',
+        id: FIXED_AUTH_ID,
+        payload: { serverVersion: '1.0.0', clientId: 'c1', seqReset: true },
+      }),
+    )
+    expect(reloadSpy).toHaveBeenCalledTimes(1)
+    expect(getSeqState().lastSeq).toBe(0)
+
+    // 模拟 reload 完成前到达的增量广播（旧 WS 仍连、server 仍推）：
+    // intercept 已放行（auth.ok 已完成、authId 清空），若无 isReloading 守卫会走到
+    // updateLastSeq（写回 lastSeq=200）+ messageHandler（触发副作用）。
+    lastWs!.triggerMessage(
+      JSON.stringify({ type: 'context.update', seq: 200, payload: { sessionId: 's1' } }),
+    )
+
+    // 静默丢弃：messageHandler 未被调用，lastSeq 不被写回（仍 0）
+    expect(handler).not.toHaveBeenCalled()
+    expect(getSeqState().lastSeq).toBe(0)
+
+    reloadSpy.mockRestore()
+    unsub()
+  })
+})
+
+// ──────────────────────────────────────────────────────────
+// TC27: replay 段不使 lastSeq 回退（C2 修复：updateLastSeq 取 max）
+// auth.ok serverSeq 基线对齐把 lastSeq 抬到高水位（如 150），随后到达的 replay 段
+// （seq 101-150）每条 seq < lastSeq，updateLastSeq 必须取 max 维持单调，否则下次重连
+// lastSeq 远低于实际水位 → 触发超大 replay → 非幂等 chat effect 重复气泡。
+// ──────────────────────────────────────────────────────────
+describe('TC27: replay 段不使 lastSeq 回退（C2：updateLastSeq 取 max）', () => {
+  it('auth.ok serverSeq=150 后收 replay seq=101/120/150 → lastSeq 恒 150（不回退）', async () => {
+    const { getSeqState } = await import('@/lib/ws-client')
+    // auth.ok 把 lastSeq 基线对齐到 150（intercept 内 p.serverSeq > lastSeq 守卫）
+    await completeRemoteAuth({ serverVersion: '1.0.0', clientId: 'c1', serverSeq: 150, bootId: 'b1' })
+    expect(getSeqState().lastSeq).toBe(150)
+
+    // 模拟 server 直发 replay 段（seq 101/120/150，均 <= 当前 lastSeq）
+    // 修复前（直接覆盖）：lastSeq 会先后被写成 101 → 120 → 150，中间回退到 101。
+    // 修复后（取 max）：lastSeq 恒 150。
+    lastWs!.triggerMessage(JSON.stringify({ type: 'context.update', seq: 101, payload: { sessionId: 's1' } }))
+    expect(getSeqState().lastSeq).toBe(150)
+    lastWs!.triggerMessage(JSON.stringify({ type: 'message.text_delta', seq: 120, payload: { sessionId: 's1' } }))
+    expect(getSeqState().lastSeq).toBe(150)
+    lastWs!.triggerMessage(JSON.stringify({ type: 'context.update', seq: 150, payload: { sessionId: 's1' } }))
+    expect(getSeqState().lastSeq).toBe(150)
+  })
+
+  it('高水位 lastSeq=150 后收到更高 seq=200 → lastSeq 推进到 200（max 仍允许递增）', async () => {
+    const { getSeqState } = await import('@/lib/ws-client')
+    await completeRemoteAuth({ serverVersion: '1.0.0', clientId: 'c1', serverSeq: 150, bootId: 'b1' })
+    expect(getSeqState().lastSeq).toBe(150)
+
+    // 后续实时广播 seq=200 > 150 → lastSeq 推进（max 不阻碍正常递增）
+    lastWs!.triggerMessage(JSON.stringify({ type: 'context.update', seq: 200, payload: { sessionId: 's1' } }))
+    expect(getSeqState().lastSeq).toBe(200)
+    // 再来一条更小 seq（乱序/重传）→ 不回退
+    lastWs!.triggerMessage(JSON.stringify({ type: 'context.update', seq: 180, payload: { sessionId: 's1' } }))
+    expect(getSeqState().lastSeq).toBe(200)
+  })
+
+  it('无 serverSeq 基线（auth.ok 不带 serverSeq）时 replay 段正常推进 lastSeq', async () => {
+    const { getSeqState } = await import('@/lib/ws-client')
+    // auth.ok 不带 serverSeq → lastSeq 仍 0（初始）
+    await completeRemoteAuth({ serverVersion: '1.0.0', clientId: 'c1' })
+    expect(getSeqState().lastSeq).toBe(0)
+
+    // replay 段 seq=5/8/3（含乱序）→ lastSeq 取 max，最终 8
+    lastWs!.triggerMessage(JSON.stringify({ type: 'context.update', seq: 5, payload: { sessionId: 's1' } }))
+    expect(getSeqState().lastSeq).toBe(5)
+    lastWs!.triggerMessage(JSON.stringify({ type: 'context.update', seq: 8, payload: { sessionId: 's1' } }))
+    expect(getSeqState().lastSeq).toBe(8)
+    lastWs!.triggerMessage(JSON.stringify({ type: 'context.update', seq: 3, payload: { sessionId: 's1' } }))
+    expect(getSeqState().lastSeq).toBe(8)
   })
 })

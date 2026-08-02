@@ -162,6 +162,13 @@ export class ServerMessageBroker implements IMessageBroker {
     }
     for (const ctx of this.pool.clients.values()) {
       const ws = ctx.ws
+      // C3 修复（review CRITICAL）：replay 段发送期间跳过该 ws，避免实时广播与 replay 段
+      // 在 TCP 流上交错（replay seq=120 → 实时 seq=151 → replay seq=121…导致非幂等 chat effect
+      // 跨 turn 拼接、气泡内容混乱）。replaying 标记由 ConnectionManager.handleAuthMessage 在
+      // await onAuthSuccess + replay 段发送期间置位，try/finally 保证发送完成即清回。
+      // 本条消息仍已入 session buffer（上方入桶逻辑不受 replaying 影响），客户端下次重连
+      // 经 getReplayPlan 补发——当前会话瞬时延迟，远好于交错导致的状态损坏。
+      if (ctx.replaying) continue
       // M6: 单 client send 失败不中断其余 client 广播。
       // TOCTOU：readyState 检查与 ws.send 间连接可能已关闭，ws.send 抛错，
       // 无 try-catch 会中断整个 for 循环，导致其余 client 收不到消息。
@@ -313,6 +320,10 @@ export class ServerMessageBroker implements IMessageBroker {
     for (const [clientId, ctx] of this.pool.clients) {
       if (clientId === excludeClientId) continue
       const ws = ctx.ws
+      // C3：replay 期间跳过该 ws（同 broadcast），避免定向广播与 replay 段交错。
+      // broadcastExcept 传输非 seq 定向消息（lease/presence），交错不破坏 seq 顺序，
+      // 但仍可能在 replay 流处理期间触发应用层副作用，故统一隔离更安全。
+      if (ctx.replaying) continue
       if (ws.readyState !== WS_OPEN) continue
       try {
         ws.send(payload)

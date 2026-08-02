@@ -12,7 +12,7 @@
  * 依赖：parseConnectionInfo（s1）+ probeConnect（s1）+ saveProfile/activateRemote（s1）。
  * 约束：用 xyz-ui Textarea/Button，禁原生元素/emoji/硬编码颜色；template≤400/script≤300。
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Loader2, AlertCircle } from '@lucide/vue'
 import { Textarea } from '@/components/ui/textarea'
@@ -68,11 +68,11 @@ const probeErrorText = computed<string>(() => {
 })
 
 /**
- * onMounted 剪贴板探测：读 navigator.clipboard.readText()，命中 ws 格式则预填。
+ * 剪贴板探测：读 navigator.clipboard.readText()，命中 ws 格式则预填。
  * 失败静默（Permissions API 拒绝 / 非 HTTPS / SSR 无 navigator）。
+ * onMounted 与 window focus 复用同一实现（spec §7.2：modal onMounted + window focus 时探测）。
  */
-onMounted(async () => {
-  clipboardChecked.value = true
+async function detectClipboard(): Promise<void> {
   try {
     const nav = globalThis.navigator as Navigator & { clipboard?: { readText?: () => Promise<string> } }
     const readText = nav?.clipboard?.readText
@@ -87,6 +87,21 @@ onMounted(async () => {
   } catch {
     // Permissions 拒绝 / 非 HTTPS / 取消选择 → 静默
   }
+}
+
+/** window focus 时重新探测剪贴板（用户可能从其他窗口复制后切回，spec §7.2）。 */
+async function handleFocus(): Promise<void> {
+  await detectClipboard()
+}
+
+onMounted(() => {
+  clipboardChecked.value = true
+  void detectClipboard()
+  window.addEventListener('focus', handleFocus)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('focus', handleFocus)
 })
 
 /**

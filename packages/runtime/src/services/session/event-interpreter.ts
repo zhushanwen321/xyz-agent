@@ -577,6 +577,15 @@ export class EventInterpreter {
    * 发 onSilentAbort。此「不误 abort」语义已由
    * services/session/__tests__/event-interpreter.watchdog.test.ts 固化为防回归契约（TC-AC6 审批
    * 挂起 + TC-AC6b 真死对照基线）。修改 ping 阈值/逻辑时须同步该测试。
+   *
+   * 【隐式不变量 / 防御性说明（P5 MINOR）】pingTick 成功路径会调 onLeaseRenew → leaseManager.renew，
+   * 而 renew 不校验发起 renew 的客户端是否仍是当前 turn 的原 owner。renew 的正确性**依赖本循环的
+   * 生命周期与 turn 严格绑定**：turn-start 启动、turn-end / agent_end / onSilentAbort 停止
+   * （见 stopPingLoop）。设备被抢占场景下原 turn 必先结束（pi prompt 不再推进 → 发 turn-end），
+   * 故 pingLoop 会被 stop，原 owner 的 renew 不会被调用。**若未来改动把 pingLoop 生命周期与 turn
+   * 解耦**（如改用全局定时器或 session-scoped 而非 turn-scoped），leaseManager.renew 的防御性缺口
+   * 会暴露——届时须配合 lease-manager.renew 的注释一并调整（加 owner 一致性校验）。修改本方法 /
+   * stopPingLoop 的生命周期语义时须同步审视 lease-manager.ts renew 的注释。
    */
   private startPingLoop(): void {
     this.stopPingLoop()
@@ -587,7 +596,14 @@ export class EventInterpreter {
     this.pingTimer = setInterval(() => { void this.pingTick() }, PING_INTERVAL_MS)
   }
 
-  /** 停止 ping 探测循环（turn-end / agent_end / onSilentAbort 调用）。幂等。 */
+  /**
+   * 停止 ping 探测循环（turn-end / agent_end / onSilentAbort 调用）。幂等。
+   *
+   * 【隐式不变量（P5 MINOR）】此处清 pingTimer 是 leaseManager.renew 安全性的关键保证：
+   * turn 结束即停 ping → pingTick 不再调度 → 不再调 onLeaseRenew/renew。
+   * 设备被抢占场景下原 turn 必先结束，故原 owner 的 renew 不会被错误调用。详见 startPingLoop
+   * 与 lease-manager.ts renew 的防御性说明。修改此停止时机时须同步审视 renew 的不变量依赖。
+   */
   private stopPingLoop(): void {
     if (this.pingTimer !== null) {
       clearInterval(this.pingTimer)
