@@ -282,6 +282,8 @@ handoff 的**定性诊断全部成立**，但**定量数字普遍不可信**（5
 
 **根因**：没有显式的消息分发注册表，所有 ServerMessageType 的兜底处理都堆在一个函数里。
 
+> **远程化影响**（`feat-remote-use` 合并后）：routeInbound 会新增 5 类消息分支——`session.deleting` / `session.deleted`（软删 + 清 store 分区）/ `session.busy` / `session.idle`（lease acquire/release） / `presence.update`（全局协同态）。B3 的 ROUTE_TABLE 设计必须把这些纳入为路由表条目，而非回退 if-else。routeInbound 归属 **T&C 层**（见 `renderer-target-architecture.md` §2.2）。
+
 **B3 动作**：
 
 1. **声明式路由表**：
@@ -290,6 +292,12 @@ handoff 的**定性诊断全部成立**，但**定量数字普遍不可信**（5
    const ROUTE_TABLE: Record<ServerMessageType, RouteRule> = {
      'message.*': { channels: sid => [sid], handler: dispatchSession },
      'session.exited': { channels: 'global', handler: handleSessionExited },
+     // 远程化分支（合并后纳入）
+     'session.deleting': { channels: sid => [sid], handler: handleSessionDeleting },
+     'session.deleted': { channels: sid => [sid], handler: handleSessionDeleted },
+     'session.busy': { channels: sid => [sid], handler: handleSessionBusy },
+     'session.idle': { channels: sid => [sid], handler: handleSessionIdle },
+     'presence.update': { channels: 'global', handler: handlePresenceUpdate },
      // ...
    }
    ```
@@ -299,7 +307,9 @@ handoff 的**定性诊断全部成立**，但**定量数字普遍不可信**（5
 
 3. **error envelope 下沉**：error 展开逻辑移到 `api/pending.ts`（RPC 通道层），routeInbound 不处理 envelope。
 
-**验收**：routeInbound < 30 行（查表 + 执行）。seq gap / error envelope 独立可测。
+4. **远程协同消息分发下沉事件消费层**：`session.busy`/`session.idle`/`presence.update` 的 store 写入，从 routeInbound 内联代码迁到 B2 抽的独立事件消费层（`useMessageEffects.ts`），routeInbound 只做路由查表，不触达 store 内部方法。lease/presence 是 T&C 层职责，但分发机制走 Feature 层的事件消费层（经依赖铁律允许的 T&C→Foundation 路径）。
+
+**验收**：routeInbound 查表 + 执行，无业务逻辑内联（远程化分支作为 ROUTE_TABLE 条目注入，不回退 if-else）。seq gap / error envelope 独立可测。远程协同消息（busy/idle/presence）经事件消费层分发，不在 routeInbound 内联。
 
 ---
 
@@ -383,8 +393,15 @@ chat.ts 仍 906 行，*Impl 是为绕 max-lines-per-function lint 而搬出的�
 **B9 动作**：
 1. **features/ 按域分子目录**：`features/sidebar/`、`features/chat/`、`features/provider/`、`features/search/`、`features/fork-handoff/` 等。
 2. **panel/ 按子域**：`panel/composer/`、`panel/message-stream/`、`panel/turn/`。
-3. **顶层只留全局基础设施**：useConnection / useToast / usePlatformShortcut / useSessionScopedState / useMessageBusSubscription / useExtensionUI / useSessionMarkers（7 个真·全局）。
-4. **下沉**：useComposerChipCommands → panel/composer/；useCompletionNotify/useCompletionSound → effects/；slashIcons.ts/sound-defaults.ts → logic/ 或新建 constants/。
+3. **顶层只留全局基础设施**：useToast / usePlatformShortcut / useSessionScopedState / useMessageBusSubscription / useExtensionUI / useSessionMarkers（6 个真·全局）。
+4. **T&C 层独立分组**：useConnection 归 **T&C 层**（见 `renderer-target-architecture.md` §2.2），不进 features/panel 桶。建议 `composables/transport/` 子目录收纳 useConnection + 未来远程化 composable。useConnection 当前是 mobile 的 MANUAL_FORK，路径变更需同步 sync 脚本。
+5. **下沉**：useComposerChipCommands → panel/composer/；useCompletionNotify/useCompletionSound → effects/；slashIcons.ts/sound-defaults.ts → logic/ 或新建 constants/。
+
+> **⚠️ sync 兼容纪律**（远程化合并后强制）：以下 B 项改动会影响 `sync-mobile-from-renderer.sh` 的 COPY_MAP（整目录 copy composables/stores/components），重构时必须遵守：
+> - **B4 Composer 合并**：useContenteditableInput 被吸收进 useComposerInput，mobile copy 了 composables 整目录——若 mobile 直接 import 被删文件，需保留 re-export 兼容层或同步更新 mobile。
+> - **B5 Sidebar 拆分**：抽出的 useGlobalShortcuts/useSidebarTabCount 等，若放新子目录（features/sidebar/），COPY_MAP 整目录 copy 会自动带过去，但需确认无遗漏。
+> - **B9 路径重组**：features/panel 按域分子目录后，COPY_MAP 的 `"composables:composables"` 整目录 copy 仍生效（copy 子目录），但**被删/合并的文件**会让 mobile 侧 import 断裂。建议 COPY_MAP 从整目录改为显式文件清单。
+> - **MANUAL_FORK 锁定**：`composables/useConnection.ts` 是 mobile 的人工 fork（砍本地模式分支），B9 重组时**路径锁定不移动**，或同步更新 sync 脚本的 MANUAL_FORK 数组。
 
 ---
 

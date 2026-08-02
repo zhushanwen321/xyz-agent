@@ -55,7 +55,7 @@ plugin-sdk 审查发现 3 个致命冲突，统一前必须解决：
 
 ---
 
-## §2 目标分层架构（renderer 六层）
+## §2 目标分层架构（renderer 七层）
 
 抛开当前 features/panel 巨型桶的现状，按职责重新分层：
 
@@ -80,16 +80,98 @@ plugin-sdk 审查发现 3 个致命冲突，统一前必须解决：
 │  GuiComponentRenderer（7 原语）+ Dialog/AskUser/StatusBar 原语   │
 │  pi extension + plugin 共享，v6 视觉对齐                        │
 ├─────────────────────────────────────────────────────────────────┤
-│  Foundation      store / composable 基础设施 / api(WS) / i18n   │
-│  useSessionScopedState · useConnection · ui 原语(button/dialog)│
-│  Pinia stores(30) · WS client · event-bus                      │
+│  Transport & Coordination Layer ★ 新增（远程化预留）★           │
+│  连接管理 + 可靠投递 + 多客户端协同                              │
+│  useConnection · ws-client · lib/remote/(config/parse/probe)   │
+│  routeInbound(声明式路由表) · seq gap · auth 握手状态机        │
+│  presence store · lease 消费 · ipc-adapter(降级 stub)          │
+├─────────────────────────────────────────────────────────────────┤
+│  Foundation      store / composable 基础设施 / i18n             │
+│  useSessionScopedState · ui 原语(button/dialog)               │
+│  Pinia stores(30) · event-bus                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 **关键变化**：
 - **Extension Host 是新增层**：当前 renderer 没有「扩展宿主」概念，pi extension 的 UI 消费散落在 useExtensionUI/useDrawerWidgetBuffers/extensions/registry.ts 等。新架构把扩展消费收敛为独立层。
 - **Rendering Protocol 从「pi extension 专用片段」提升为「共享层」**：当前 GuiComponentRenderer 只服务 tool result/widget，新架构下 plugin 面板也走它。
+- **Transport & Coordination（T&C）层是远程化预留**：当前 `feat-optimize-ui` 分支是单进程桌面 SPA，连接逻辑（useConnection/ws-client）散落在 Foundation 层一行。远程化（`feat-remote-use` 分支）引入双模式（本地+远程）+ 多客户端协同（lease/presence/seq 可靠投递）+ auth 握手，这些逻辑跨 renderer+runtime，复杂度远超 Foundation 一行能容纳。T&C 层为远程化提供**归位点**——合并时连接/协同逻辑全部归位此层，不散落 Foundation/Feature。
 - **Feature Layer 按业务域切**：解决当前 features(41)/panel(37) 两巨型桶无业务域分组的问题。每个功能域（chat/session/sidebar/...）是容器+composable+store 的内聚单元。
+
+### 2.1 层间依赖铁律
+
+> 合并远程化或新增功能时，先按此规则判定代码归属哪层，再动手。
+
+1. **单向依赖**：上层可依赖下层，**下层不可依赖上层**。依赖方向严格自上而下（Shell → Workspace → Feature → ExtensionHost → RenderingProtocol → T&C → Foundation）。
+2. **同层禁止循环**：同层模块可互相引用，但不能形成环。
+3. **跨层直连反例**（禁止）：
+   - Feature 层组件**不应**直接调 Foundation 的 `ws-client`（应经 T&C 层 `useConnection`）
+   - Foundation 层 store **不应** import Feature 层 composable（倒置依赖）
+   - T&C 层 routeInbound 分发消息**应**经事件消费层（B2 的 useMessageEffects），不直接触达 Feature 层 store 的内部方法
+
+### 2.2 功能归属规则表
+
+> 判定一个文件/模块归属哪层，按「状态作用域 + 依赖方向」两个维度查表。
+
+| 判定维度 | → 归属层 | 典型例子 |
+|---|---|---|
+| **跨 session 全局协同态**（多客户端共享、连接生命周期、断线重连） | **T&C 层** | presence store · lease 消费 · auth 握手 · seq 可靠投递 · ws-client · useConnection · routeInbound · lib/remote/ |
+| **per-session 隔离状态**（每 session 独立分区，切 session 切分区） | **Foundation** | useSessionScopedState 工厂 · chat 流 · streaming 状态 · composer 草稿 |
+| **全局 store 基础设施**（跨功能域共享、本身无业务逻辑） | **Foundation** | settings/panel/navigation store · ui 原语 · event-bus |
+| **业务域容器+交互**（有 UI、用户直接操作、按域内聚） | **Feature 层** | chat 组件树 · session 列表 · sidebar · settings 页 · search |
+| **plugin/pi-extension 渲染消费**（扩展贡献的 UI 接入） | **ExtensionHost 层** | ViewHost · CommandRegistry · StatusBarController · MessageBusBridge |
+| **结构化数据→原语渲染**（GuiComponent 7 原语） | **RenderingProtocol 层** | GuiComponentRenderer · Dialog/AskUser/StatusBar 原语 |
+| **窗口拓扑/路由**（应用级骨架、全局视图切换） | **Shell 层** | AppShell · view 路由 · 全局快捷键 |
+| **双 panel 容器编排**（多 panel 布局、drawer 收展） | **Workspace 层** | PanelContainer · SideDrawer · SplitterGroup |
+
+**模糊归属判定**（一功能可属多层时，按主要职责归一层）：
+- `useConnection`：虽是 composable，但核心职责是连接管理（非业务域交互）→ **T&C 层**（不进 Feature 层 composables/features/）
+- `routeInbound`：消息路由分发，是 T&C 层的「入口路由器」→ **T&C 层**（不进 Foundation）
+- `stores/presence.ts`：全局协同态 → **T&C 层**（不进 Foundation 的通用 store 桶）
+- `stores/session.ts` 的 lease 字段：数据存 Foundation store，但 lease 的**消费逻辑**（acquire/release/过期清理）归 T&C 层
+
+**归属速查表**（已知文件按层归类，合并时直接查）：
+
+| 文件/模块 | 归属层 | 备注 |
+|---|---|---|
+| `composables/useConnection.ts` | T&C | 连接编排 + routeInbound；MANUAL_FORK（mobile 砍本地分支） |
+| `lib/ws-client.ts` | T&C | WS 状态机（远程化后 +auth/seq/RTT/presence） |
+| `lib/remote/*` | T&C | 远程化新增（connection-config/parse-connect-info/probe/ws-origin/types） |
+| `lib/ipc.ts` | T&C | Electron IPC 桥接 + 降级 stub（mobile 全 no-op） |
+| `stores/presence.ts` | T&C | 远程化新增，全局协同态 |
+| `components/remote/*` | T&C | 远程连接 UI（RemoteConnectModal 等） |
+| `stores/chat.ts` · `stores/session.ts` · `stores/panel.ts` | Foundation | 通用 store 基础设施（session.ts 含 lease 字段但 store 本身属 Foundation） |
+| `composables/useSessionScopedState.ts` | Foundation | per-session 隔离工厂（ADR-0049） |
+| `components/ui/*` | Foundation | xyz-ui 原语 |
+| `composables/features/chat/*` · `components/panel/*` | Feature | 业务域（chat/session/sidebar/settings/search） |
+| `extensions/registry.ts` · `composables/useExtensionUI.ts` | ExtensionHost | 扩展消费（当前散落，合并时归位） |
+| `components/panel/message-stream/GuiComponentRenderer.vue` | RenderingProtocol | 7 原语统一渲染器 |
+| `components/panel/message-stream/gui/*` | RenderingProtocol | 7 原语组件（Card/TabBar/ProgressBar 等） |
+| `components/shell/AppShell.vue` · `AppNavControls.vue` | Shell | 窗口拓扑 |
+| `components/workspace/*` | Workspace | 双 panel 容器 |
+
+### 2.3 远程化合并指引（feat-remote-use → main 后）
+
+> `feat-remote-use` 分支（86 commits，P0-P7 全交付）引入远程化功能。合并时按本节归位。
+
+**T&C 层是远程化的归位点**——以下远程化新增/扩展全部归 T&C 层：
+
+| 远程化改动 | 归位到 T&C 层的什么位置 |
+|---|---|
+| `lib/remote/`（5 文件，新增） | 直接进 T&C 层（已在速查表） |
+| `ws-client.ts` auth 握手 / seq / RTT / presence 扩展（+516 行） | T&C 层 ws-client（原地扩展，不拆文件） |
+| `useConnection.ts` routeInbound 远程分支（5 类新增消息） | T&C 层 routeInbound 的 ROUTE_TABLE 条目（见 B3） |
+| `useConnection.ts` 双模式 init() + retryRuntime 分支 | T&C 层 useConnection（本地/远程分支由 connection-mode 驱动） |
+| `stores/presence.ts`（新增） | T&C 层 presence store |
+| `stores/session.ts` lease 字段 + busy/idle 消费 | store 留 Foundation，**消费逻辑**（acquire/release/过期）归 T&C 层 |
+| `components/remote/*`（4 组件，新增） | T&C 层连接 UI |
+| `lib/ipc.ts` 降级机制 | T&C 层 ipc-adapter |
+
+**合并顺序**：remote 先进 main，v6 重构在 remote 之上做。B3 的 routeInbound 声明式路由表重构必须在远程化之上做——先把远程化的 5 类消息分支纳入 ROUTE_TABLE，而非回退 if-else。
+
+**sync 兼容纪律**：被 `sync-mobile-from-renderer.sh` COPY_MAP 覆盖的文件（composables/stores/components/message-stream 等），v6 重构改路径/合并/删除时必须同步更新 sync 脚本。MANUAL_FORK 的 `useConnection.ts` 路径锁定不移动（保持在 `composables/useConnection.ts`），否则 sync 的 `--force` 会误覆盖 mobile 侧的 fork 版本。
+
+**协同状态在 ADR-0049 隔离模型中的位置**：presence（全局协同态）和 lease（runtime TTL 管控，非 renderer 发起）是 ADR-0049 per-session 隔离的**显式例外**——它们不进 `useSessionScopedState` 分区。`triggerSessionCleanups(id)` 必须订阅 `session.deleted` 广播，确保其他客户端删 session 时本地 lease 同步清除。
 
 ---
 

@@ -625,6 +625,8 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 | L2 结构化原语树 | plugin 给 GuiComponent 组合，renderer 原语渲染器 | ✅ |
 | L3 预编译组件 | plugin 给 Vue 组件，编译期打包 | ❌ 仅 built-in |
 
+> **mobile-renderer plugin 子集**（远程化预留）：mobile-renderer（`feat-remote-use` 分支）布局与桌面完全不同（底部 tab/抽屉式，无 drawer/无 sidebar 第 5 tab/无 panel header 按钮组），16 挂载点是**桌面拓扑专属**。mobile 只支持 **B 维度**（对话流 GuiComponent，message-stream 已 copy）+ **D 维度**（slash command），不支持 A 维度（结构容器注入）和 E 维度（独立 view）。mobile 不含 ExtensionHost 层，plugin 渲染降级为 message-stream 内嵌的 GuiComponentRenderer。完整 mobile plugin 拓扑待 `packages/core` 抽取后定义。
+
 ### 7.3 16 挂载点 Tier 分层
 
 - **Tier 1（12 活注入点）**：M1/M2/M4/M5/M7/M8/M9/M10/M11/M12/M14/M16
@@ -677,13 +679,13 @@ demo 用 `@keyframes shimmer`（1.4s ease-in-out infinite，linear-gradient 扫�
 |---|---|
 | **B1 useChat 状态隔离** | per-session 状态迁 useSessionScopedState 工厂；删 reset*ModuleState（6 个） |
 | **B2 stores 契约修复** | 抽独立事件消费层；stores 零互相 import、零 store→composable 倒置 |
-| **B3 routeInbound 路由表** | 104 行 if-else → 声明式路由表 + seq gap 中间件 + error envelope 下沉 |
+| **B3 routeInbound 路由表** | 104 行 if-else → 声明式路由表 + seq gap 中间件 + error envelope 下沉；归 T&C 层（见 renderer-target §2.2）；远程化合并后补 5 类分支（busy/idle/presence/deleting/deleted）纳入路由表 |
 | **B4 Composer 合并** | 20 个 composable → 3 个（Input/Dispatch/Context）；useContenteditableInput 873 行拆解 |
 | **B5 Sidebar 拆分** | 全局快捷键 88 行抽出 + tab 计数抽出 + session handler 抽出 |
 | **B6 chat store 重组** | 流式消息状态机内聚；消除 *Impl（6 个） |
 | **B7 settings 重构** | 目录按域分层 + 数据文件移出 + 全屏覆盖形态（D1）+ ProviderEdit 嵌入式（R4） |
 | **B8 ui/ 双名清洗** | bg-accent 98 处双义消除 + ui/ 内 shadcn 命名清洗 |
-| **B9 composables 分层** | features(41)/panel(37) 按域分子目录；顶层只留全局基础设施 |
+| **B9 composables 分层** | features(41)/panel(37) 按域分子目录；顶层只留全局基础设施；T&C 层（useConnection 等）独立分组不进 features/panel 桶；⚠️ sync 兼容（改 COPY_MAP 文件路径需同步 sync-mobile-from-renderer.sh，见 refactor B9） |
 
 ### 8.4 阶段 C：v6 视觉层（token 反写 → 分视图）
 
