@@ -6,6 +6,8 @@
  * + system/trash。session 域的 pi 文件/状态操作，service 经此 port 访问。
  */
 
+import type { Message, SegmentsMetadataFile } from '@xyz-agent/shared'
+
 /** scanPiSessions 返回的 session 元信息（持久化会话扫描结果）。 */
 export interface ScannedSessionMeta {
   id: string
@@ -31,6 +33,38 @@ export interface ScannedSessionMeta {
 export type SessionOutcome = 'done' | 'error' | 'stopped'
 
 /**
+ * session .jsonl 首行 header entry（type=session）解析结果。
+ *
+ * 纯数据类型（全 string 字段），从 infra/pi/session-file-utils.ts 提升到 port：
+ * parseSessionHeader 收口到 port 后其返回类型必须 port 可见。
+ * infra 原 SessionHeader 与之结构兼容（TS 结构类型，infra 侧无需改 import 源
+ * 即可被 PiSessionStore 委托返回）。
+ */
+export interface SessionHeader {
+  id: string
+  cwd: string
+  timestamp: string
+  /** 父 session 血缘键（fork 出的 session header 指回源文件/源 sessionId）。 */
+  parentSession?: string
+  /** fork 锚点 entry id（截断点）。 */
+  forkEntryId?: string
+}
+
+/**
+ * entry 树重建历史结果。
+ *
+ * 纯数据类型（Message[] + Map），从 infra/pi/entry-tree-builder.ts 提升到 port：
+ * rebuildHistoryFromEntries 收口到 port 后其返回类型必须 port 可见。
+ * 保留 clientUuidMap（userEntryId→clientUuid 映射）——未来增量拉取
+ * （getEntries(since=leafId)）/ branch 完整性判断需用，收口不降级原函数能力。
+ */
+export interface RebuiltHistory {
+  messages: Message[]
+  /** userEntryId → clientUuid 映射（来自 "xyz.client-msg-id" custom entry）。 */
+  clientUuidMap: Map<string, string>
+}
+
+/**
  * session 存储 port。service 经此 port 访问，不直接 import infra。
  */
 export interface ISessionStore {
@@ -52,6 +86,29 @@ export interface ISessionStore {
   patchSessionCwd(filePath: string, newCwd: string): boolean
   /** 翻译 pi 历史（unknown[] → Message[]）。pi 结构只在此实现内部断言。 */
   convertHistory(raw: unknown[]): import('@xyz-agent/shared').Message[]
+  /**
+   * 从 pi get_entries 返回的 entry 树重建 xyz-agent Message[]。
+   *
+   * entries 降级为 unknown[]（port 不暴露 PiSessionEntry，PiSessionStore 实现内
+   * cast 回 PiSessionEntry[]，与 convertHistory 处理 unknown[] 同模式）。
+   * segmentsMetadata 为 segments.json sidecar（null=无 sidecar，全降级为占位文本，
+   * 非硬错误）。返回 RebuiltHistory{messages, clientUuidMap}。
+   */
+  rebuildHistoryFromEntries(entries: unknown[], segmentsMetadata: SegmentsMetadataFile | null): RebuiltHistory
+  /**
+   * 解析 session .jsonl 首行（type=session 的 header entry）。
+   *
+   * 首行非 session 类型 / 文件不存在 / JSON.parse 失败 → catch 返回 null（不抛）。
+   */
+  parseSessionHeader(filePath: string): SessionHeader | null
+  /**
+   * 向源 session JSONL 追加 handoff_marker entry（供 scanner 尾读提取 handedOffTo）。
+   *
+   * filePath 为空 / 文件不存在（pi 延迟写入窗口，规则 #6）→ console.warn + 静默跳过
+   * （绝不创建文件，与 pi 0.80.3 _persist openSync('wx') 竞态防护）。写失败 catch→
+   * console.error 不抛。
+   */
+  persistHandedOff(filePath: string, newSessionId: string): void
   /** 删除文件/目录到废纸篓（session 资源清理）。 */
   trash(path: string): void
 }

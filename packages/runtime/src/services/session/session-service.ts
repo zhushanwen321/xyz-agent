@@ -20,7 +20,6 @@ import { BUILTIN_PRESET_IDS } from '@xyz-agent/shared'
 // Node 端从子路径 import
 import { getAttachmentsDir } from '@xyz-agent/shared/paths'
 import type { PiSessionEntry } from '../../infra/pi/pi-protocol.js'
-import { rebuildHistoryFromEntries } from '../../infra/pi/entry-tree-builder.js'
 import type {
   ISessionService, IMessageBroker,
   IEventAdapter, IExtensionService, IConfigService,
@@ -31,7 +30,6 @@ import { getHistoryFromFilePath, getHistoryTailFromFile } from '../session-histo
 import { parseJsonl } from '../../utils/jsonl.js'
 import { extractSubagentsFromSessionFile } from './subagent-extractor.js'
 import { extractWorkflowsFromSessionFile } from './workflow-extractor.js'
-import { parseSessionHeader, persistHandedOff } from '../../infra/pi/session-file-utils.js'
 import { getSubagentSessionDir, getPiAgentDir } from '../../infra/pi/pi-paths.js'
 import { isStrictlyUnder } from '../../utils/path-utils.js'
 import type { IConfigStore } from '../ports/config.js'
@@ -487,7 +485,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
           // 读 segments.json sidecar（runtime 直接读文件，不经 IPC——IPC 是 renderer→main，runtime 是独立进程）。
           // 文件缺失/损坏 → null（rebuildHistoryFromEntries 全降级为占位文本，非硬错误）。
           const segmentsMetadata = await readSegmentsMetadataFile(sessionId)
-          const rebuilt = rebuildHistoryFromEntries(entries, segmentsMetadata)
+          const rebuilt = this.sessionStore.rebuildHistoryFromEntries(entries, segmentsMetadata)
           // entry 树重建返回全量历史（get_entries 不截断），truncated=false
           return { messages: rebuilt.messages, truncated: false }
         }
@@ -578,7 +576,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       throw new Error(`主 session ${sessionId} 无 cwd，无法推导 subagent session 目录`)
     }
 
-    const filePath = findAgentCallFile(mainSession.cwd, agentCallSessionId)
+    const filePath = findAgentCallFile(mainSession.cwd, agentCallSessionId, this.sessionStore)
     if (!filePath) {
       throw new Error(
         `未找到 agent call 的 session 文件（sessionId=${agentCallSessionId}）。` +
@@ -597,7 +595,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   async getAgentCallFilePath(sessionId: string, agentCallSessionId: string): Promise<string> {
     const mainSession = this.sessionStore.scanSessions().find((s) => s.id === sessionId)
     if (!mainSession?.cwd) return ''
-    return findAgentCallFile(mainSession.cwd, agentCallSessionId) ?? ''
+    return findAgentCallFile(mainSession.cwd, agentCallSessionId, this.sessionStore) ?? ''
   }
 
   /**
@@ -877,7 +875,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       session.handedOffTo = newSessionId
     }
     if (session?.sessionFilePath) {
-      persistHandedOff(session.sessionFilePath, newSessionId)
+      this.sessionStore.persistHandedOff(session.sessionFilePath, newSessionId)
     }
   }
   removeSessionEntry(sessionId: string): void {
@@ -1175,7 +1173,7 @@ async function readSegmentsMetadataFile(sessionId: string): Promise<SegmentsMeta
  *
  * 目录不存在或无匹配文件返回 null。
  */
-function findAgentCallFile(mainCwd: string, agentCallSessionId: string): string | null {
+function findAgentCallFile(mainCwd: string, agentCallSessionId: string, sessionStore: ISessionStore): string | null {
   let dir: string
   try {
     dir = getSubagentSessionDir(mainCwd)
@@ -1193,7 +1191,7 @@ function findAgentCallFile(mainCwd: string, agentCallSessionId: string): string 
 
   for (const file of files) {
     const filePath = join(dir, file)
-    const header = parseSessionHeader(filePath)
+    const header = sessionStore.parseSessionHeader(filePath)
     if (header?.id === agentCallSessionId) return filePath
   }
   return null

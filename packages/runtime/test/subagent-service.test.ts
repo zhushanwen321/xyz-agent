@@ -40,6 +40,9 @@ function createMockSessionStore(mainSessionFile: string, mainSessionId: string, 
     invalidateMetaCache: () => {},
     patchSessionCwd: () => true,
     convertHistory: (raw: unknown[]) => convertPiHistory(raw),
+    rebuildHistoryFromEntries: () => ({ messages: [], clientUuidMap: new Map() }),
+    parseSessionHeader: () => null,
+    persistHandedOff: () => {},
     trash: () => {},
   }
 }
