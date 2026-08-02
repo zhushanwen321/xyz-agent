@@ -23,11 +23,7 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
 - [设计系统原语层（v3）](docs/page-design/design-system.md) — 组件原语如何使用 tokens
 - [v3 UI 设计稿](docs/page-design/archive/v3/README.md) — L0-L4 递归骨架 spec + draft（shell/sidebar/workspace/panel/overview/settings/overlays/flow-2/flow-3）
 - [领域术语表](docs/architecture/context.md) — Session/Panel/Runtime/v3 UI 结构术语
-- [竞品 UI 分析](docs/templates/competitor-ui-analysis.md) — Claude Code / Codex 逐图拆解，7 条设计原则
-- [UI/UX 设计原则与参考](docs/templates/ui-design-principles-and-references.md) — 设计方法论 + 竞品案例 + 行动清单
-- [设计方向](docs/templates/design-direction.md) — 产品定位、主题策略、窗口架构、实施优先级
-- [暗色主题选项 demo](docs/templates/dark-theme-options.html) — 5 种彩色 accent 方案对比
-- [朴素锐利主题 demo](docs/templates/muted-sharp-themes.html) — 5 种低饱和/无彩色方案对比
+- [UI/UX 设计原则与参考](docs/page-design/ui-design-principles.md) — 设计方法论 + 竞品案例 + 行动清单
 
 **页面设计目录**: `docs/page-design/` — v3 设计 SSOT 与设计稿。结构：`design-tokens.md`（原子）+ `design-system.md`（原语）+ `v3/`（正式设计区，L0-L4 骨架）+ `zcode-demo/`（视觉原型）+ `archive/`（pre-v3 历史稿）。禁止在项目根目录或其他位置创建 `demos/`、`impeccable/` 等目录
 
