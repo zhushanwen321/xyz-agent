@@ -121,7 +121,7 @@ node $PW $EP fill "input[name=x]" "value"
 任何错误路径都必须重置状态，否则 UI 卡死在「思考中」。错误作为 assistant 消息插入聊天流，不用顶部 banner。
 
 ### 4. 外部系统对接先验证再编码
-对接 pi RPC 等外部系统时，先写独立验证脚本（`tools/verify-*.cjs`），确认字段名和格式后再写业务代码。
+对接 pi RPC 等外部系统时，先写独立验证脚本（如 `verify-<system>.cjs`，放项目根或临时位置），确认字段名和格式后再写业务代码。验证使命完成后脚本即归档/移除，不长期保留。
 
 ### 5. pi 适配层不信任外部格式
 EventAdapter 和 session-pool 是 pi 协议的唯一适配点。业务代码不直接处理 pi 格式。`sendCommand` 必须检查 `success` 字段。

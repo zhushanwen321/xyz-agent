@@ -48,6 +48,6 @@ WebContentsView 是独立 webContents，与主窗口并列暴露为 CDP target�
 - Electron 启动带 `--remote-debugging-port=<port>`（全局开关，对所有 webContents 生效，含 WebContentsView）
 - `/json/list` 返回所有 targets，WebContentsView 以独立 `type:page` + 独立 `webSocketDebuggerUrl` 出现
 - **验收代码必须按 url/title 选择性 attach**（主窗口和 WebContentsView 都是 `type:page`，不能用"第一个 target"）
-- 验证脚本：`tools/verify-webcontentsview-cdp.cjs`（已跑通，Electron 42.3.3）
+- 验证脚本：`verify-webcontentsview-cdp.cjs`（已跑通,Electron 42.3.3;脚本已完成验证使命,已移除）
 
 这使验收标准可写成"CDP 找到 URL 匹配的 target → 对其 DOM 做断言"，而非依赖 renderer 侧的间接证据。

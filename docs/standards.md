@@ -15,13 +15,13 @@
 - 事件流的时序和嵌套结构
 - 错误时的响应格式（`success: false` 还是 throw）
 
-**脚本存放位置**: `tools/verify-<system>.cjs`（如 `tools/verify-pi-rpc.cjs`）
+**脚本存放位置**: 项目根或临时目录下的 `verify-<system>.cjs`（如 `verify-pi-rpc.cjs`）。验证使命完成后移除,不长期保留。
 
 **示例**：验证 pi RPC 的 prompt 和事件流
 
 ```js
-// tools/verify-pi-rpc.cjs
-// 用法: node tools/verify-pi-rpc.cjs
+// verify-pi-rpc.cjs
+// 用法: node verify-pi-rpc.cjs
 // 验证: prompt 命令格式、事件嵌套结构、tool_execution 字段名
 ```
 

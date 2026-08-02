@@ -44,7 +44,7 @@ pnpm run dev → 起 runtime 子进程 → 连 pi → 真实 session 文件读�
 **约束：**
 - 依赖完整 runtime + pi 环境（pi 必须用 fork 版 `xyz-pi`，见 [AGENTS.md](../../AGENTS.md)「外部项目源码」）
 - CI 不稳定（pi 子进程、端口、文件系统）
-- 适合**手工冒烟** + **关键链路验证脚本**（`tools/verify-*.cjs`）
+- 适合**手工冒烟** + **关键链路验证脚本**（独立 `verify-<system>.cjs`,放项目根或临时位置）
 
 ### 1.3 dev 冒烟闸门（堵 MOCK 盲区的第三轨）
 

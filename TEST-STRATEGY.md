@@ -99,7 +99,7 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 - **禁止**：组件内联硬编码 mock（`const MOCK=[...]`）、panel/composables/lib 静态 fixture、组件直接 import `api/mock/`
 - **测试 mock**：`vi.mock` api domain；复用 `api/mock/` 的 events/fixtures（如 `run-send-stream.ts` 模拟流式 ServerMessage 序列、`mock-ws.ts` 模拟 WS 生命周期）
 - **例外**：UI 固定枚举常量（如 thinking-levels 6 级）、`__tests__/` 测试 mock 不算违规
-- **外部系统对接验证脚本**：`tools/verify-*.cjs`（如 verify-pi-rpc.cjs），先验证字段名/格式再编码
+- **外部系统对接验证脚本**：独立 `verify-<system>.cjs`（放项目根或临时位置），先验证字段名/格式再编码,完成后移除
 
 ### vi.mock 注意事项
 
