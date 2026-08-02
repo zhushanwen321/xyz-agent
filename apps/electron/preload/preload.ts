@@ -278,9 +278,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   openUpdateFallbackUrl: (url: string) => ipcRenderer.invoke('open-external', url),
   // ── 代理配置 ────────────────────────────────────────────────────
-  getProxyConfig: () => ipcRenderer.invoke('update:getProxyConfig'),
-  setProxyConfig: (config) => ipcRenderer.invoke('update:setProxyConfig', config),
-  testProxy: (config) => ipcRenderer.invoke('update:testProxy', config),
+  getProxyConfig: () => ipcRenderer.invoke('proxy:get'),
+  setProxyConfig: (config) => ipcRenderer.invoke('proxy:set', config),
+  testProxy: (config) => ipcRenderer.invoke('proxy:test', config),
   // ── 系统提示音 ──────────────────────────────────────────────
   listSystemSounds: () => ipcRenderer.invoke('sound:list'),
   playSystemSound: (name: string, kind?: 'success' | 'error') => ipcRenderer.invoke('sound:play', name, kind),
