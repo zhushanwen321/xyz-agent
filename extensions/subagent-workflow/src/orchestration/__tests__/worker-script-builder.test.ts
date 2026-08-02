@@ -131,3 +131,94 @@ describe("buildWorkerScript — W1 postMessage defense & parallel degrade", () =
     });
   });
 });
+
+// ── W2: agent() returnMeta 模式 ──
+// 验证 returnMeta 标志：known fields 放行 + handler resolve 分支 + 缓存重放分支，
+// 且两处分支结构对称（returnMeta===true → {value, sessionFile, worktreePath, error}）。
+
+describe("buildWorkerScript — W2 agent() returnMeta mode", () => {
+  const script = buildWorkerScript("// noop user script");
+
+  describe("returnMeta known field whitelist", () => {
+    it("includes returnMeta in _knownFields Set", () => {
+      expect(script).toContain('"returnMeta"');
+    });
+
+    it("includes returnMeta in unknown-fields warning text", () => {
+      expect(script).toContain("cwd, fork, worktree, returnMeta");
+    });
+
+    it("does NOT warn about returnMeta when only returnMeta is passed (parity with fork/worktree)", () => {
+      // fork/worktree 已是 known fields；returnMeta 加入后不应触发 warn 文案中的 returnMeta。
+      // 简化断言：warning 文案里 Known 列表含 returnMeta（即被识别）。
+      expect(script).toMatch(/Known fields:.*returnMeta/);
+    });
+  });
+
+  describe("_pendingCalls stores returnMeta flag", () => {
+    it("stores returnMeta: opts.returnMeta === true in _pendingCalls.set", () => {
+      expect(script).toContain(
+        "returnMeta: opts.returnMeta === true",
+      );
+    });
+  });
+
+  describe("agent-result handler resolve branch (改动 9b)", () => {
+    it("branches on pending.returnMeta", () => {
+      expect(script).toContain("if (pending.returnMeta)");
+    });
+
+    it("resolve branch returns {value, sessionFile, worktreePath, error}", () => {
+      const handlerBlock = script.match(
+        /if \(pending\.returnMeta\) \{[\s\S]*?\} else \{[\s\S]*?pending\.resolve\(_value\);[\s\S]*?\}/,
+      );
+      expect(handlerBlock).toBeTruthy();
+      expect(handlerBlock![0]).toContain("value: _value");
+      expect(handlerBlock![0]).toContain("sessionFile: msg.result.sessionFile");
+      expect(handlerBlock![0]).toContain("worktreePath: msg.result.worktreePath");
+      expect(handlerBlock![0]).toContain("error: msg.result.error");
+    });
+
+    it("fallback resolve single value uses msg.result.parsedOutput ?? msg.result.content", () => {
+      expect(script).toContain(
+        "const _value = msg.result.parsedOutput ?? msg.result.content;",
+      );
+    });
+  });
+
+  describe("cache replay returnMeta branch (改动 9c)", () => {
+    it("early-returns undefined when !cached", () => {
+      expect(script).toContain("if (!cached) return undefined;");
+    });
+
+    it("branches on opts.returnMeta === true", () => {
+      expect(script).toContain("if (opts.returnMeta === true)");
+    });
+
+    it("cache replay returns {value, sessionFile, worktreePath, error} from cached", () => {
+      const cacheBlock = script.match(
+        /if \(opts\.returnMeta === true\) \{[\s\S]*?return _cachedValue;/,
+      );
+      expect(cacheBlock).toBeTruthy();
+      expect(cacheBlock![0]).toContain("value: _cachedValue");
+      expect(cacheBlock![0]).toContain("sessionFile: cached.sessionFile");
+      expect(cacheBlock![0]).toContain("worktreePath: cached.worktreePath");
+      expect(cacheBlock![0]).toContain("error: cached.error");
+    });
+
+    it("cache replay fallback uses cached.parsedOutput ?? cached.content", () => {
+      expect(script).toContain(
+        "const _cachedValue = cached.parsedOutput ?? cached.content;",
+      );
+    });
+  });
+
+  describe("handler (9b) and cache replay (9c) branch symmetry", () => {
+    it("both expose worktreePath field (CL-1/DEC-2 core)", () => {
+      // handler 读 msg.result.worktreePath；cache replay 读 cached.worktreePath。
+      expect(script).toContain("msg.result.worktreePath");
+      expect(script).toContain("cached.worktreePath");
+    });
+  });
+});
+

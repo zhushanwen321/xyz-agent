@@ -13,6 +13,8 @@
 
 import type { ChildProcess } from "node:child_process";
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
 import type { UiRequest } from "./dialog-queue.ts";
 // 类型再导出：dialog-queue.ts 是 UiRequest/UiResponse/UiRequestHandler 的规范来源，
 // 本模块再导出供测试 import（避免测试直接依赖 dialog-queue 内部实现）。
@@ -22,6 +24,8 @@ import type { ExtensionUiRequest } from "./spawn-event-adapter.ts";
 import { respond } from "./stdin-writer.ts";
 import { parseChannel } from "./ui-channels.ts";
 import { notifyMissingHandlerGlobal } from "./ui-request-observability.ts";
+
+const logger = getLogger("subagents");
 
 /**
  * 创建 UI 请求队列。返回 enqueue 函数，调用方将 extension_ui_request 入队。
@@ -142,7 +146,9 @@ async function handleUiRequest(
   } catch (err) {
     // [R3] 子进程已退出，跳过写入
     if (signal?.aborted) return;
-    console.error("[subagents] uiRequestHandler threw:", err);
+    logger.error("[subagents] uiRequestHandler threw", {
+      detail: err instanceof Error ? err.message : String(err),
+    });
     respond(child, id, { cancelled: true }, signal);
   }
 }

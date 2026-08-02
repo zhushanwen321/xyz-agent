@@ -6,6 +6,11 @@
       "directory": "extensions/subagent-workflow",
       "dependsOn": [
         {
+          "package": "@zhushanwen/pi-extension-logger",
+          "type": "package",
+          "reason": "代码层静态 import getLogger/setPiHandle（src/index.ts、execution/*、orchestration/* 等 15 个文件 top-level import），缺失时模块加载即抛 Cannot find module，是强依赖"
+        },
+        {
           "package": "@zhushanwen/pi-structured-output",
           "type": "runtime",
           "reason": "subagent 执行 + workflow 编排两端均需 structured-output 扩展加载以提供 schema 结构化输出 tool（代码层不 import，仅运行时 tool 名引用）"
@@ -73,7 +78,13 @@
     {
       "name": "@zhushanwen/pi-unified-hooks",
       "directory": "extensions/unified-hooks",
-      "dependsOn": []
+      "dependsOn": [
+        {
+          "package": "@zhushanwen/pi-extension-logger",
+          "type": "package",
+          "reason": "代码层静态 import getLogger/setPiHandle（src/index.ts、hooks/tool-error-handler.ts、hooks/subagent-list-injector.ts top-level import），缺失时模块加载即抛 Cannot find module，是强依赖"
+        }
+      ]
     },
     {
       "name": "@zhushanwen/pi-plan",

@@ -12,6 +12,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
+const logger = getLogger("unified-hooks");
+
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 /** Minimal agent info extracted from .md frontmatter */
@@ -83,7 +87,9 @@ function loadAgentsFromDir(dir: string): AgentEntry[] {
 			}
 		} catch (err) {
 			// Individual file read failure should not block the entire agent list injection
-			console.error(`[subagent-list-injector] skip unreadable file ${filePath}:`, err);
+			logger.error(`[subagent-list-injector] skip unreadable file ${filePath}`, {
+				reason: err instanceof Error ? err.message : String(err),
+			});
 		}
 	}
 

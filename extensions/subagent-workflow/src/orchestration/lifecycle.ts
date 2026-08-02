@@ -30,6 +30,8 @@
  * 参考：domain-models.md §1（聚合根状态机）。
  */
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
 import { ConcurrencyGate, DEFAULT_CONCURRENCY } from "./concurrency-gate.ts";
 import {
   handleWorkerError,
@@ -44,6 +46,8 @@ import { Trace } from "./models/trace.ts";
 import type { DoneReason } from "./models/types.ts";
 import { WorkflowRun } from "./models/workflow-run.ts";
 import type { WorkerHandle } from "./worker-handle.ts";
+
+const logger = getLogger("subagents");
 
 // ── 常量 ─────────────────────────────────────────────────────
 
@@ -115,7 +119,7 @@ export function scheduleTimeBudget(
     void abortRun(runId, deps, "Time budget exceeded", "time_limited").catch(
       (err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[workflow] time budget abort failed: ${msg}`);
+        logger.error(`[workflow] time budget abort failed: ${msg}`);
       },
     );
   }, budgetTimeMs);
@@ -174,7 +178,7 @@ export async function runWorkflow(
       () => {
         void abortRun(runId, deps, "External signal aborted").catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
-          console.error(`[workflow] abortRun on signal failed: ${msg}`);
+          logger.error(`[workflow] abortRun on signal failed: ${msg}`);
         });
       },
       { once: true },

@@ -3,7 +3,19 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { setupToolErrorHandler, type HookContext } from "../hooks/tool-error-handler.ts";
+// Mock 共享 logger，让 logger.warn 可被 spy
+const { loggerMock } = vi.hoisted(() => ({
+	loggerMock: {
+		debug: vi.fn(),
+		warn: vi.fn(),
+		error: vi.fn(),
+	},
+}));
+vi.mock("@zhushanwen/pi-extension-logger", () => ({
+	getLogger: () => loggerMock,
+}));
+
+import { setupToolErrorHandler } from "../hooks/tool-error-handler.ts";
 
 // --- helper types ---
 interface MockPi {
@@ -19,12 +31,6 @@ function createMockPi(overrides?: Partial<MockPi>): MockPi {
 	};
 }
 
-function createMockCtx(): { ctx: HookContext; notify: ReturnType<typeof vi.fn> } {
-	const notify = vi.fn();
-	const ctx = { ui: { notify } };
-	return { ctx, notify };
-}
-
 describe("setupToolErrorHandler", () => {
 	it("registers a handler on the tool_execution_end event", () => {
 		const pi = createMockPi();
@@ -34,211 +40,129 @@ describe("setupToolErrorHandler", () => {
 		expect(pi.on).toHaveBeenCalledWith("tool_execution_end", expect.any(Function));
 	});
 
-	it("notifies via ctx.ui.notify and persists via appendEntry on isError:true", async () => {
+	it("logs via logger.warn and appendEntry with dedicated customType on isError:true", async () => {
 		const pi = createMockPi();
-		const { ctx, notify } = createMockCtx();
+		loggerMock.warn.mockClear();
+		pi.appendEntry.mockClear();
 
 		setupToolErrorHandler(pi as unknown as ExtensionAPI);
-		const handler = pi.on.mock.calls[0]![1] as (event: unknown, ctx: HookContext) => Promise<void>;
+		const handler = pi.on.mock.calls[0]![1] as (event: unknown) => Promise<void>;
 
-		await handler(
-			{ isError: true, toolName: "read", toolCallId: "call-42" },
-			ctx,
-		);
+		await handler({ isError: true, toolName: "read", toolCallId: "call-42" });
 
-		expect(notify).toHaveBeenCalledTimes(1);
-		expect(notify).toHaveBeenCalledWith(
+		// logger.warn 被调一次（内部走泛化 appendEntry customType）
+		expect(loggerMock.warn).toHaveBeenCalledTimes(1);
+		expect(loggerMock.warn).toHaveBeenCalledWith(
 			"[unified-hooks] read error (callId=call-42)",
-			"warning",
+			expect.objectContaining({
+				toolName: "read",
+				toolCallId: "call-42",
+				errorText: null,
+			}),
 		);
+		// 额外 appendEntry 用专属 customType "unified-hooks:tool-error"，
+		// 保留按 entry type 过滤 tool 错误的埋点契约
 		expect(pi.appendEntry).toHaveBeenCalledTimes(1);
-		expect(pi.appendEntry).toHaveBeenCalledWith("unified-hooks:tool-error", {
-			toolName: "read",
-			toolCallId: "call-42",
-			errorText: null,
-		});
+		expect(pi.appendEntry).toHaveBeenCalledWith(
+			"unified-hooks:tool-error",
+			expect.objectContaining({
+				toolName: "read",
+				toolCallId: "call-42",
+				errorText: null,
+			}),
+		);
 	});
 
-	it("does nothing on isError:false (no notify, no appendEntry)", async () => {
+	it("does nothing on isError:false (no logger.warn)", async () => {
 		const pi = createMockPi();
-		const { ctx, notify } = createMockCtx();
+		loggerMock.warn.mockClear();
 
 		setupToolErrorHandler(pi as unknown as ExtensionAPI);
-		const handler = pi.on.mock.calls[0]![1] as (event: unknown, ctx: HookContext) => Promise<void>;
+		const handler = pi.on.mock.calls[0]![1] as (event: unknown) => Promise<void>;
 
-		await handler(
-			{ isError: false, toolName: "bash", toolCallId: "call-99" },
-			ctx,
-		);
+		await handler({ isError: false, toolName: "bash", toolCallId: "call-99" });
 
-		expect(notify).not.toHaveBeenCalled();
-		expect(pi.appendEntry).not.toHaveBeenCalled();
-	});
-
-	it("uses the warn notification type for errors", async () => {
-		const pi = createMockPi();
-		const { ctx, notify } = createMockCtx();
-
-		setupToolErrorHandler(pi as unknown as ExtensionAPI);
-		const handler = pi.on.mock.calls[0]![1] as (event: unknown, ctx: HookContext) => Promise<void>;
-
-		await handler(
-			{ isError: true, toolName: "edit", toolCallId: "c1" },
-			ctx,
-		);
-
-		// Second arg of notify is the type — must be "warning" (matches SDK literal union, not info/error).
-		expect(notify.mock.calls[0]![1]).toBe("warning");
+		expect(loggerMock.warn).not.toHaveBeenCalled();
 	});
 
 	// --- edge cases ---
 
 	it("propagates if pi.on throws during registration", () => {
 		const pi = createMockPi({
-		on: vi.fn(() => { throw new Error("registration failed"); }),
+			on: vi.fn(() => { throw new Error("registration failed"); }),
 		});
 
 		expect(() => setupToolErrorHandler(pi as unknown as ExtensionAPI)).toThrow("registration failed");
 	});
 
-	it("does not crash if handler callback throws (notify throws)", async () => {
-		const pi = createMockPi();
-		const { ctx, notify } = createMockCtx();
-		notify.mockImplementation(() => { throw new Error("notify broke"); });
-
-		setupToolErrorHandler(pi as unknown as ExtensionAPI);
-		const handler = pi.on.mock.calls[0]![1] as (event: unknown, ctx: HookContext) => Promise<void>;
-
-		await expect(
-			handler({ isError: true, toolName: "bash", toolCallId: "c2" }, ctx),
-		).rejects.toThrow("notify broke");
-
-		// appendEntry should NOT have been called since notify threw first
-		expect(pi.appendEntry).not.toHaveBeenCalled();
-	});
-
-	it("does not crash if handler callback throws (appendEntry throws)", async () => {
-		const pi = createMockPi();
-		const { ctx, notify } = createMockCtx();
-		pi.appendEntry.mockImplementation(() => { throw new Error("append broke"); });
-
-		setupToolErrorHandler(pi as unknown as ExtensionAPI);
-		const handler = pi.on.mock.calls[0]![1] as (event: unknown, ctx: HookContext) => Promise<void>;
-
-		await expect(
-			handler({ isError: true, toolName: "grep", toolCallId: "c3" }, ctx),
-		).rejects.toThrow("append broke");
-
-		// notify was called before appendEntry threw
-		expect(notify).toHaveBeenCalledTimes(1);
-	});
-
 	it("handles concurrent error events independently", async () => {
 		const pi = createMockPi();
-		const { ctx, notify } = createMockCtx();
+		loggerMock.warn.mockClear();
 
 		setupToolErrorHandler(pi as unknown as ExtensionAPI);
-		const handler = pi.on.mock.calls[0]![1] as (event: unknown, ctx: HookContext) => Promise<void>;
+		const handler = pi.on.mock.calls[0]![1] as (event: unknown) => Promise<void>;
 
 		await Promise.all([
-			handler({ isError: true, toolName: "read", toolCallId: "e1" }, ctx),
-			handler({ isError: true, toolName: "bash", toolCallId: "e2" }, ctx),
-			handler({ isError: false, toolName: "edit", toolCallId: "e3" }, ctx),
+			handler({ isError: true, toolName: "read", toolCallId: "e1" }),
+			handler({ isError: true, toolName: "bash", toolCallId: "e2" }),
+			handler({ isError: false, toolName: "edit", toolCallId: "e3" }),
 		]);
 
-		expect(notify).toHaveBeenCalledTimes(2);
-		expect(pi.appendEntry).toHaveBeenCalledTimes(2);
-
-		// verify both calls persisted independently
-		const calls = pi.appendEntry.mock.calls.map((c) => c[1]);
-		expect(calls).toEqual(
-			expect.arrayContaining([
-				{ toolName: "read", toolCallId: "e1", errorText: null },
-				{ toolName: "bash", toolCallId: "e2", errorText: null },
-			]),
+		expect(loggerMock.warn).toHaveBeenCalledTimes(2);
+		expect(loggerMock.warn).toHaveBeenCalledWith(
+			"[unified-hooks] read error (callId=e1)",
+			expect.objectContaining({ toolName: "read", toolCallId: "e1" }),
+		);
+		expect(loggerMock.warn).toHaveBeenCalledWith(
+			"[unified-hooks] bash error (callId=e2)",
+			expect.objectContaining({ toolName: "bash", toolCallId: "e2" }),
 		);
 	});
 
-	it("falls back to console.warn when ctx.ui is undefined (headless session)", async () => {
-		// [HISTORICAL] headless / RPC 会话 ctx.ui 为 undefined，旧实现直接 ctx.ui.notify 会 NPE。
+	// --- errorText 提取（核心能力）---
+
+	it("从 result.content[0].text 提取错误文本（如 'hub disposed'）", async () => {
 		const pi = createMockPi();
-		const ctx = { ui: undefined } as unknown as HookContext;
-		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		loggerMock.warn.mockClear();
 
 		setupToolErrorHandler(pi as unknown as ExtensionAPI);
-		const handler = pi.on.mock.calls[0]![1] as (event: unknown, ctx: HookContext) => Promise<void>;
+		const handler = pi.on.mock.calls[0]![1] as (event: unknown) => Promise<void>;
 
-		await handler({ isError: true, toolName: "bash", toolCallId: "h1" }, ctx);
-
-		expect(warnSpy).toHaveBeenCalledTimes(1);
-		expect(warnSpy.mock.calls[0]![0]).toContain("bash error");
-		// appendEntry 仍持久化
-		expect(pi.appendEntry).toHaveBeenCalledWith("unified-hooks:tool-error", {
-			toolName: "bash",
-			toolCallId: "h1",
-			errorText: null,
-		});
-		warnSpy.mockRestore();
-	});
-
-	// --- errorText 提取（核心新增能力）---
-
-	it("从 result.content[0].text 提取错误文本并拼到 warning（如 'hub disposed'）", async () => {
-		// [HISTORICAL] subagent execute throw 时 Pi 把 error.message 塞进 result.content[0].text。
-		// 旧实现只打 "(callId=xxx)" 无详情，AI 看不到真实原因（如 hub disposed）只能盲猜。
-		const pi = createMockPi();
-		const { ctx, notify } = createMockCtx();
-
-		setupToolErrorHandler(pi as unknown as ExtensionAPI);
-		const handler = pi.on.mock.calls[0]![1] as (event: unknown, ctx: HookContext) => Promise<void>;
-
-		await handler(
-			{
-				isError: true,
-				toolName: "subagent",
-				toolCallId: "call-disposed",
-				result: { content: [{ type: "text", text: "hub disposed" }] },
-			},
-			ctx,
-		);
-
-		expect(notify).toHaveBeenCalledWith(
-			"[unified-hooks] subagent error (callId=call-disposed): hub disposed",
-			"warning",
-		);
-		expect(pi.appendEntry).toHaveBeenCalledWith("unified-hooks:tool-error", {
+		await handler({
+			isError: true,
 			toolName: "subagent",
 			toolCallId: "call-disposed",
-			errorText: "hub disposed",
+			result: { content: [{ type: "text", text: "hub disposed" }] },
 		});
+
+		expect(loggerMock.warn).toHaveBeenCalledWith(
+			"[unified-hooks] subagent error (callId=call-disposed)",
+			expect.objectContaining({
+				toolName: "subagent",
+				toolCallId: "call-disposed",
+				errorText: "hub disposed",
+			}),
+		);
 	});
 
 	it("result 缺失或无 content 时降级到无详情（不崩）", async () => {
 		const pi = createMockPi();
-		const { ctx, notify } = createMockCtx();
+		loggerMock.warn.mockClear();
 
 		setupToolErrorHandler(pi as unknown as ExtensionAPI);
-		const handler = pi.on.mock.calls[0]![1] as (event: unknown, ctx: HookContext) => Promise<void>;
+		const handler = pi.on.mock.calls[0]![1] as (event: unknown) => Promise<void>;
 
 		// result 为 undefined（某些 headless 路径）
-		await handler({ isError: true, toolName: "bash", toolCallId: "x1" }, ctx);
+		await handler({ isError: true, toolName: "bash", toolCallId: "x1" });
 		// result.content 为空数组
-		await handler(
-			{ isError: true, toolName: "bash", toolCallId: "x2", result: { content: [] } },
-			ctx,
-		);
+		await handler({ isError: true, toolName: "bash", toolCallId: "x2", result: { content: [] } });
 		// result 不是对象
-		await handler(
-			{ isError: true, toolName: "bash", toolCallId: "x3", result: "oops" },
-			ctx,
-		);
+		await handler({ isError: true, toolName: "bash", toolCallId: "x3", result: "oops" });
 
-		// 三次都降级为无详情后缀
-		expect(notify.mock.calls[0]![0]).toBe("[unified-hooks] bash error (callId=x1)");
-		expect(notify.mock.calls[1]![0]).toBe("[unified-hooks] bash error (callId=x2)");
-		expect(notify.mock.calls[2]![0]).toBe("[unified-hooks] bash error (callId=x3)");
-		pi.appendEntry.mock.calls.forEach((c) => {
-			expect(c[1]).toHaveProperty("errorText", null);
-		});
+		// 三次都降级为无详情
+		expect(loggerMock.warn.mock.calls[0]![0]).toBe("[unified-hooks] bash error (callId=x1)");
+		expect(loggerMock.warn.mock.calls[0]![1]).toHaveProperty("errorText", null);
+		expect(loggerMock.warn.mock.calls[1]![1]).toHaveProperty("errorText", null);
+		expect(loggerMock.warn.mock.calls[2]![1]).toHaveProperty("errorText", null);
 	});
 });

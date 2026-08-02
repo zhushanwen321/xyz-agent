@@ -99,6 +99,10 @@ interface RunOptions {
   args?: Record<string, unknown>;
   /** 按 agent-call 顺序回发的 parsedOutput（默认每个回发 {ok:true}）。 */
   agentResults?: unknown[];
+  /** 按 agent-call 顺序回发的完整 agent-result 对象（覆盖 agentResults 的 content/parsedOutput 默认形）。
+   *  用于 returnMeta 测试：回发包含 sessionFile/worktreePath/error 的完整 result，
+   *  worker handler 会原样取这些字段 resolve。未提供该项的索引退回 {content:"fallback", parsedOutput: agentResults[idx]}。 */
+  agentResultObjects?: Record<string, unknown>[];
   /** 主线程对收到的 workflow-call 的处理：回发 workflow-result。 */
   handleWorkflowCall?: (msg: WorkflowCallMsg) => unknown;
   /** 是否在收到首个 agent-call 后立即发 abort（测 abort 路径）。 */
@@ -156,11 +160,14 @@ function runWorker(userScript: string, opts: RunOptions = {}): Promise<RunResult
           return;
         }
         const parsed = opts.agentResults?.[agentCallIdx] ?? { ok: true };
+        // returnMeta 测试路径：若调用方提供完整 result 对象（含 sessionFile/worktreePath/error），
+        // 原样回发；否则用既有 {content, parsedOutput} 默认形。
+        const fullResult = opts.agentResultObjects?.[agentCallIdx];
         agentCallIdx++;
         worker.postMessage({
           type: "agent-result",
           callId: raw.callId,
-          result: { content: "fallback", parsedOutput: parsed },
+          result: fullResult ?? { content: "fallback", parsedOutput: parsed },
           cached: false,
         });
       } else if (isWorkflowCall(raw)) {
@@ -345,3 +352,100 @@ describe("buildWorkerScript runtime — 之前缺失的路径覆盖", () => {
     expect(res.exitCode).not.toBe(1);
   });
 });
+
+// ── W2: agent() returnMeta 模式运行时验证 ───────────────────────────
+// 现有 worker-script-builder.test.ts 的 16 条 returnMeta 断言全是字符串 toContain，
+// 无法验证「真实 Worker 线程执行时 agent({returnMeta:true}) resolve 出对象、
+// 不设 returnMeta resolve 单值」。此处补运行时验证（对称 handler 9b 分支）。
+
+describe("buildWorkerScript runtime — W2 agent() returnMeta mode", () => {
+  it("agent({prompt, returnMeta:true}) resolve 出 {value, sessionFile, worktreePath, error}（非单值）", async () => {
+    // returnMeta:true → worker handler 走 9b 分支，resolve 包含 4 字段的对象。
+    // 主线程回发的 result 带 sessionFile/worktreePath/error，验证它们被原样透传。
+    const script = `
+      const r = await agent({ prompt: "with-meta", returnMeta: true });
+      return r;
+    `;
+    const res = await runWorker(script, {
+      agentResultObjects: [
+        {
+          content: "raw-text",
+          parsedOutput: { ok: true },
+          sessionFile: "/tmp/sess-1.jsonl",
+          worktreePath: "/tmp/wt-abc",
+          error: undefined,
+        },
+      ],
+    });
+    expect(res.agentCalls).toHaveLength(1);
+    // agent-call 消息应透传 returnMeta（验证 m1 修复：prompt 分支本就透传）
+    expect(res.agentCalls[0]!.opts.returnMeta).toBe(true);
+    expect(res.workerError).toBeUndefined();
+    // value = parsedOutput ?? content = {ok:true}（结构化输出优先）
+    expect(res.returnValue).toEqual({
+      value: { ok: true },
+      sessionFile: "/tmp/sess-1.jsonl",
+      worktreePath: "/tmp/wt-abc",
+      error: undefined,
+    });
+    expect(res.exitCode).not.toBe(1);
+  });
+
+  it("不设 returnMeta 时 agent() resolve 单值（向后兼容）", async () => {
+    // 无 returnMeta → handler 走 else 分支，resolve 裸 _value（向后兼容）。
+    const script = `
+      const r = await agent({ prompt: "no-meta" });
+      return r;
+    `;
+    const res = await runWorker(script, {
+      agentResultObjects: [
+        {
+          content: "raw-text",
+          parsedOutput: { ok: true },
+          sessionFile: "/tmp/sess-2.jsonl",
+          worktreePath: "/tmp/wt-def",
+        },
+      ],
+    });
+    expect(res.agentCalls).toHaveLength(1);
+    expect(res.agentCalls[0]!.opts.returnMeta).toBeUndefined();
+    expect(res.workerError).toBeUndefined();
+    // 单值：parsedOutput 优先（{ok:true}），sessionFile/worktreePath 被丢弃
+    expect(res.returnValue).toEqual({ ok: true });
+    expect(res.exitCode).not.toBe(1);
+  });
+
+  it("agent({task, returnMeta:true}) task/agent 快捷分支也透传 returnMeta（m1 修复）", async () => {
+    // m1 修复：task/agent 快捷分支现在透传 returnMeta（之前丢弃）。
+    // 用 task 而非 prompt 触发快捷分支，验证 returnMeta 生效。
+    const script = `
+      const r = await agent({ task: "via-task-branch", returnMeta: true });
+      return r;
+    `;
+    const res = await runWorker(script, {
+      agentResultObjects: [
+        {
+          content: "task-raw",
+          parsedOutput: "task-value",
+          sessionFile: "/tmp/sess-3.jsonl",
+          worktreePath: "/tmp/wt-ghi",
+          error: "soft-fail-msg",
+        },
+      ],
+    });
+    expect(res.agentCalls).toHaveLength(1);
+    // 快捷分支透传 returnMeta（m1 修复点）
+    expect(res.agentCalls[0]!.opts.returnMeta).toBe(true);
+    expect(res.agentCalls[0]!.opts.prompt).toBe("via-task-branch");
+    expect(res.workerError).toBeUndefined();
+    // returnMeta 生效 → resolve 对象（非单值）
+    expect(res.returnValue).toEqual({
+      value: "task-value",
+      sessionFile: "/tmp/sess-3.jsonl",
+      worktreePath: "/tmp/wt-ghi",
+      error: "soft-fail-msg",
+    });
+    expect(res.exitCode).not.toBe(1);
+  });
+});
+

@@ -10,6 +10,19 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+// Mock 共享 logger，让 logger.error 可被 spy（源码已从 console.error 改为 logger.error）
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: {
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+  },
+}));
+vi.mock("@zhushanwen/pi-extension-logger", () => ({
+  getLogger: () => loggerMock,
+}));
+
 import { handleWorkerMessage } from "../orchestration/error-recovery.ts";
 import type { LifecycleDeps, WorkerHandlers } from "../orchestration/models/ports.ts";
 import { Trace } from "../orchestration/models/trace.ts";
@@ -80,10 +93,12 @@ function makeHandlers(): WorkerHandlers {
   } as unknown as WorkerHandlers;
 }
 
-/** 静默 console.error（校验失败会打印 malformed 消息日志，避免污染测试输出）。 */
+/** 清空 logger.error 调用记录（校验失败会打印 malformed 消息日志，避免污染跨用例断言）。 */
 function silenceConsoleError(): () => void {
-  const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-  return () => spy.mockRestore();
+  loggerMock.error.mockClear();
+  return () => {
+    loggerMock.error.mockClear();
+  };
 }
 
 // ── M4: dispatchAgentCall 字段校验 ───────────────────────────
@@ -223,7 +238,7 @@ describe("M4: dispatchAgentCall validates IPC fields before dereferencing", () =
   });
 
   it("校验失败打印 malformed 日志（含 callId）", async () => {
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    loggerMock.error.mockClear();
     try {
       const run = makeRunningRun("wf-m4-007");
       const deps = makeDeps();
@@ -235,12 +250,12 @@ describe("M4: dispatchAgentCall validates IPC fields before dereferencing", () =
         makeHandlers(),
       );
 
-      expect(spy).toHaveBeenCalled();
-      const logged = String(spy.mock.calls[0]![0]);
+      expect(loggerMock.error).toHaveBeenCalled();
+      const logged = String(loggerMock.error.mock.calls[0]![0]);
       expect(logged).toContain("malformed agent-call");
       expect(logged).toContain('"bad"');
     } finally {
-      spy.mockRestore();
+      loggerMock.error.mockClear();
     }
   });
 });
@@ -312,7 +327,7 @@ describe("M4: dispatchWorkflowCall validates IPC fields before dereferencing", (
   });
 
   it("校验失败打印 malformed 日志", async () => {
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    loggerMock.error.mockClear();
     try {
       const run = makeRunningRun("wf-m4-w-004");
       const deps = { onWorkflowCall: vi.fn(async () => ({ content: "ok" })) } as unknown as LifecycleDeps;
@@ -324,11 +339,11 @@ describe("M4: dispatchWorkflowCall validates IPC fields before dereferencing", (
         makeHandlers(),
       );
 
-      expect(spy).toHaveBeenCalled();
-      const logged = String(spy.mock.calls[0]![0]);
+      expect(loggerMock.error).toHaveBeenCalled();
+      const logged = String(loggerMock.error.mock.calls[0]![0]);
       expect(logged).toContain("malformed workflow-call");
     } finally {
-      spy.mockRestore();
+      loggerMock.error.mockClear();
     }
   });
 

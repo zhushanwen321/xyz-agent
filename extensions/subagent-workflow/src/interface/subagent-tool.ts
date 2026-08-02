@@ -12,6 +12,7 @@
 import type { Component } from "@earendil-works/pi-tui";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { type Static, Type } from "typebox";
 
 import { SLUG_MAX_LENGTH } from "../execution/execute-options-mapper.ts";
@@ -236,9 +237,10 @@ A subagent MAY call the \`subagent\` tool itself (each level spawns its own chil
 // 回调实现（模块级 const）
 // ============================================================
 
-// ponytail: renderCall 每次 TUI invalidate 都触发，同一解析错误会重复刷屏。
-// 按错误消息去重（Set），session 内只报第一次。错误消息含 modelStr，足够区分。
-const reportedRenderErrors = new Set<string>();
+// ponytail: renderCall 每次 TUI invalidate 都触发。streaming 中 args 是 partial JSON
+// 解析结果（如 model="deep" 来自未流完的 "deepseek-router/ds-pro"），解析失败是预期。
+// 不走 appendEntry（非真实错误），只走 logger.debug（默认 no-op，PI_EXT_DEBUG=1 写文件）。
+const renderCallLogger = getLogger("subagents");
 
 const subagentRenderCall: SubagentRenderCallCb = (args, theme, ctx) => {
   // 预解析 model（同步）：让标题行能显示 model/thinking，不必等 execute。
@@ -256,14 +258,11 @@ const subagentRenderCall: SubagentRenderCallCb = (args, theme, ctx) => {
     const r = service?.resolveModel(agent, override);
     if (r) resolved = { model: `${r.model.provider}/${r.model.id}`, thinkingLevel: r.thinkingLevel };
   } catch (err) {
-    // service 未注册 / modelRegistry 未注入 / 无可用 model → 降级不显示 model（renderCall 不应崩）。
-    // 去重：同一 err.message 只 console.debug 一次，避免 TUI invalidate 反复刷屏。
-    const msg = err instanceof Error ? err.message : String(err);
-    if (!reportedRenderErrors.has(msg)) {
-      reportedRenderErrors.add(msg);
-      void err; // 显式确认忽略：renderCall 降级是设计意图，不阻断渲染
-      console.debug("[subagents] renderCall model resolution failed, degrading:", err);
-    }
+    // streaming 中间态（partial JSON）或 service 未就绪 → 降级不显示 model（renderCall 不应崩）。
+    // 不阻断渲染，不污染 TUI。开发期开 PI_EXT_DEBUG=1 可写文件日志排查。
+    renderCallLogger.debug("renderCall model resolution failed, degrading", {
+      reason: err instanceof Error ? err.message : String(err),
+    });
   }
   return renderSubagentCall(args, theme, ctx, resolved);
 };

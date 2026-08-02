@@ -44,7 +44,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@xyz-agent/extension-protocol": "^0.2.0"
+    "@xyz-agent/extension-protocol": "^0.2.0",
+    "@zhushanwen/pi-extension-logger": "workspace:*"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

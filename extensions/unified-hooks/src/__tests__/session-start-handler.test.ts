@@ -55,7 +55,7 @@ function getSessionStartHandler(pi: ReturnType<typeof createMockPi>): (event: un
 
 // --- tests ---
 describe("session_start handler", () => {
-	it("notifies 'info' when all hooks are enabled", () => {
+	it("does not notify when all hooks are enabled (only appendEntry)", () => {
 		const pi = createMockPi();
 		const { ctx, notify } = createMockCtx();
 
@@ -70,15 +70,15 @@ describe("session_start handler", () => {
 		const handler = getSessionStartHandler(pi);
 		handler({}, ctx);
 
-		expect(notify).toHaveBeenCalledTimes(1);
-		expect(notify.mock.calls[0]![1]).toBe("info");
+		// 全成功时不 notify（避免刷屏），只 appendEntry
+		expect(notify).not.toHaveBeenCalled();
 		expect(pi.appendEntry).toHaveBeenCalledWith("unified-hooks:loaded", {
 			enabled: ["tool-error-handler", "network-timeout-guard", "test-timeout-guard", "subagent-list-injector"],
 			disabled: [],
 		});
 	});
 
-	it("notifies 'warning' and lists disabled hooks when some hooks fail", () => {
+	it("notifies 'warning' listing only disabled hooks when some hooks fail", () => {
 		const pi = createMockPi();
 		const { ctx, notify } = createMockCtx();
 
@@ -101,14 +101,13 @@ describe("session_start handler", () => {
 		const [msg, level] = notify.mock.calls[0]!;
 		expect(level).toBe("warning");
 		expect(msg).toContain("Failed: network-timeout-guard, test-timeout-guard");
-		expect(msg).toContain("Loaded: tool-error-handler, subagent-list-injector");
 		expect(pi.appendEntry).toHaveBeenCalledWith("unified-hooks:loaded", {
 			enabled: ["tool-error-handler", "subagent-list-injector"],
 			disabled: ["network-timeout-guard", "test-timeout-guard"],
 		});
 	});
 
-	it("notifies 'warning' when all hooks are disabled", () => {
+	it("notifies 'warning' listing all hooks when all are disabled", () => {
 		const pi = createMockPi();
 		const { ctx, notify } = createMockCtx();
 
@@ -133,7 +132,7 @@ describe("session_start handler", () => {
 
 		expect(notify.mock.calls[0]![1]).toBe("warning");
 		const msg = notify.mock.calls[0]![0] as string;
-		expect(msg).toContain("(none)");
+		expect(msg).toContain("Failed: tool-error-handler, network-timeout-guard, test-timeout-guard, subagent-list-injector");
 		expect(pi.appendEntry).toHaveBeenCalledWith("unified-hooks:loaded", {
 			enabled: [],
 			disabled: ["tool-error-handler", "network-timeout-guard", "test-timeout-guard", "subagent-list-injector"],

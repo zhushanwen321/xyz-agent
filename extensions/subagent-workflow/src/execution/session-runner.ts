@@ -9,6 +9,8 @@
 import { type ChildProcess,execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
 import type { ExtensionMode } from "./host-mode.ts";
 
 import { type MirrorFlags, mirrorMainProcessFlags } from "./argv-mirror.ts";
@@ -44,6 +46,8 @@ import type {
 } from "./types.ts";
 import { createTurnLimiter, WRAP_UP_HINT } from "./turn-limiter.ts";
 import { createUiRequestQueue } from "./ui-request-queue.ts";
+
+const logger = getLogger("subagents");
 
 /**
  * 运行时 guard：subscribe 回调收到的 event 形状未知，校验 type 字段后再交给 handle。
@@ -908,8 +912,10 @@ export async function runSpawn(
           );
         } catch (err) {
           // best-effort：identity 写入失败不影响执行结果，但会影响 /subagents list 重建。
-          // 记录到 stderr（非阻断）—— 终态 record 会从 list 消失，这是可观测的退化信号。
-          console.error(`[subagents] identity append failed for ${record.sessionFile}:`, err);
+          // 记录到 logger（非阻断）—— 终态 record 会从 list 消失，这是可观测的退化信号。
+          logger.error(`[subagents] identity append failed for ${record.sessionFile}`, {
+            detail: err instanceof Error ? err.message : String(err),
+          });
         }
       }
     }
