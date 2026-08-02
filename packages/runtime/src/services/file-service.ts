@@ -17,8 +17,9 @@
  *   （listTree 入口对 cwd 自身守门，恒 true，保持入口统一守门模式。）
  */
 import { resolve as resolvePath, join, relative, isAbsolute } from 'node:path'
-import type { FileNode, IgnoreMatcher } from '@xyz-agent/shared'
-import { compileIgnoreRules, matchPath } from '@xyz-agent/shared'
+import type { FileNode } from '@xyz-agent/shared'
+import type { IgnoreMatcher } from '../infra/fs/ignore-parser.js'
+import { compileIgnoreRules, matchPath } from '../infra/fs/ignore-parser.js'
 import { isUnderOrEqual, expandHome } from '../utils/path-utils.js'
 import type { IFileExecutor, FsEntry } from './ports/file-executor.js'
 import type { ISessionService, IFileService } from '../interfaces.js'

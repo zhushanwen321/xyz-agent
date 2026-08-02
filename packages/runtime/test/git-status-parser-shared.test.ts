@@ -5,7 +5,7 @@
  *       staged/unstaged 计数、二进制文件、含 tab 路径。
  */
 import { describe, it, expect } from 'vitest'
-import { parseGitStatus, deriveCounts, parseNumstatEntries, xyToGitStatus } from '../src/git-status-parser'
+import { parseGitStatus, deriveCounts, parseNumstatEntries, xyToGitStatus } from '../src/infra/git/git-status-parser.js'
 
 describe('xyToGitStatus', () => {
   it('?? → untracked', () => {

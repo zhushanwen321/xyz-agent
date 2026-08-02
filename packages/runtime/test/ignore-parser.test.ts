@@ -5,7 +5,7 @@
  * 语义对齐 git：多条规则按顺序求值，最后匹配规则决定结果（取反覆盖正向）。
  */
 import { describe, it, expect } from 'vitest'
-import { compileIgnoreRules, matchPath } from '../src/ignore-parser'
+import { compileIgnoreRules, matchPath } from '../src/infra/fs/ignore-parser.js'
 
 describe('compileIgnoreRules / matchPath', () => {
   describe('empty content', () => {

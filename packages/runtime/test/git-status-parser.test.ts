@@ -4,7 +4,7 @@
  * deriveCounts（staged/unstaged/hasConflict 计数 + 未跟踪计入 unstaged）、parseNumstat。
  */
 import { describe, it, expect } from 'vitest'
-import { parseGitStatus, xyToGitStatus, deriveCounts, parseNumstat, parseNumstatByFile, parseNumstatEntries } from '@xyz-agent/shared'
+import { parseGitStatus, xyToGitStatus, deriveCounts, parseNumstat, parseNumstatByFile, parseNumstatEntries } from '../src/infra/git/git-status-parser.js'
 import type { GitFileStatus } from '@xyz-agent/shared'
 
 describe('xyToGitStatus', () => {

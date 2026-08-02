@@ -57,8 +57,6 @@ export { mandatoryExtensions }
 // 它们依赖 node:os / node:path，而本 barrel 被 renderer（浏览器）整包 import。
 // Node-only 消费方（main/runtime）从子路径 import：'@xyz-agent/shared/paths'
 export * from './file-tree'
-export * from './ignore-parser'
-export * from './git-status-parser'
 export type { RecentWorkspaceRecord } from './workspace'
 export type { SubagentRecord, SubagentStatus } from './subagent'
 // Coding Plan 额度查询类型

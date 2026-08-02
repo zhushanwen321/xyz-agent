@@ -12,8 +12,9 @@
  * 依赖：git CLI（child_process execSync）。非 git 仓库时返回 null（调用方跳过 baseline diff）。
  */
 import { execSync } from 'node:child_process'
-import type { FileChange, FileChangeStatus, NumstatEntry } from '@xyz-agent/shared'
-import { parseNumstatEntries, xyToGitStatus } from '@xyz-agent/shared'
+import type { FileChange, FileChangeStatus } from '@xyz-agent/shared'
+import type { NumstatEntry } from '../git/git-status-parser.js'
+import { parseNumstatEntries, xyToGitStatus } from '../git/git-status-parser.js'
 
 /** git status --porcelain 的单行解析结果（XY 码 + 路径） */
 interface GitStatusEntry {

@@ -18,7 +18,7 @@
  */
 import { resolve as resolvePath } from 'node:path'
 import type { GitStatusResult } from '@xyz-agent/shared'
-import { parseGitStatus, deriveCounts, parseNumstat, parseNumstatByFile } from '@xyz-agent/shared'
+import { parseGitStatus, deriveCounts, parseNumstat, parseNumstatByFile } from '../infra/git/git-status-parser.js'
 import type { ISessionService, IGitService } from '../interfaces.js'
 import type { GitCommand, GitExecutorResult, IGitExecutor } from './ports/git-executor.js'
 import { GitExecutorError } from './ports/git-executor.js'

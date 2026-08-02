@@ -14,7 +14,7 @@
  * 输出：GitFileStatus[]（status 枚举含 untracked/unmerged，比 file-change-reconciler 的
  * FileChangeStatus 更细，服务于 GitZone 四态 + 冲突判定）。
  */
-import type { GitFileStatus } from './git.js'
+import type { GitFileStatus } from '@xyz-agent/shared'
 
 /** branch 头前缀 `## ` 的长度。 */
 const BRANCH_HEADER_PREFIX_LEN = 3
