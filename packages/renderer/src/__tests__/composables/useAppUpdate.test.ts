@@ -21,7 +21,7 @@
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/useAppUpdate.test.ts
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { effectScope } from 'vue'
 import type { LatestReleaseInfo } from '@xyz-agent/shared'
 
@@ -35,6 +35,7 @@ const hoisted = vi.hoisted(() => {
     updateDownload: vi.fn<(release: LatestReleaseInfo) => Promise<{ downloaded: boolean }>>(),
     updateInstall: vi.fn<() => Promise<{ triggerRestart: boolean }>>(),
     getPreloaded: vi.fn<() => Promise<{ release: LatestReleaseInfo; filePath: string } | null>>(),
+    getPendingUpdate: vi.fn<() => Promise<LatestReleaseInfo | null>>(),
     openUpdateFallbackUrl: vi.fn<(url: string) => Promise<void>>(),
     onUpdateProgress: vi.fn((cb: typeof progressCb) => {
       progressCb = cb
@@ -64,6 +65,7 @@ vi.mock('@/lib/ipc', () => ({
   updateDownload: hoisted.updateDownload,
   updateInstall: hoisted.updateInstall,
   getPreloaded: hoisted.getPreloaded,
+  getPendingUpdate: hoisted.getPendingUpdate,
   openUpdateFallbackUrl: hoisted.openUpdateFallbackUrl,
   onUpdateProgress: hoisted.onUpdateProgress,
   onUpdateError: hoisted.onUpdateError,
@@ -87,12 +89,19 @@ function makeRelease(version = '0.9.0'): LatestReleaseInfo {
   }
 }
 
-/** 在 effectScope 内运行 useAppUpdate，返回 result + scope.stop 清理函数（与 pending.test.ts 对齐） */
-function setupUseAppUpdate(): { result: ReturnType<typeof useAppUpdate>; stop: () => void } {
+/** 在 effectScope 内运行 useAppUpdate，返回 result + scope.stop 清理函数（与 pending.test.ts 对齐）。
+ *  options.initAutoCheck=true 时在 scope 内同步调 initAutoCheck（onScopeDispose 需绑定到活跃 scope）。 */
+function setupUseAppUpdate(options?: { initAutoCheck?: boolean }): {
+  result: ReturnType<typeof useAppUpdate>
+  stop: () => void
+} {
   const scope = effectScope()
   let result: ReturnType<typeof useAppUpdate> | undefined
   scope.run(() => {
     result = useAppUpdate()
+    if (options?.initAutoCheck) {
+      result.initAutoCheck()
+    }
   })
   return { result: result!, stop: () => scope.stop() }
 }
@@ -112,6 +121,8 @@ beforeEach(() => {
   hoisted.updateDownload.mockResolvedValue({ downloaded: true })
   hoisted.updateInstall.mockResolvedValue({ triggerRestart: true })
   hoisted.getPreloaded.mockResolvedValue(null)
+  hoisted.getPendingUpdate.mockReset()
+  hoisted.getPendingUpdate.mockResolvedValue(null)
 })
 
 describe('useAppUpdate', () => {
@@ -382,5 +393,81 @@ describe('useAppUpdate', () => {
     expect(result.state.state).toBe('available')
     expect(result.state.latestRelease?.version).toBe('0.8.46')
     stop()
+  })
+})
+
+describe('useAppUpdate initAutoCheck 定时器（递归 setTimeout + 守卫）', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('30s 首次触发 checkForUpdate(force=true)', async () => {
+    hoisted.checkForUpdate.mockResolvedValue(null)
+    // initAutoCheck 必须在 scope 内调（onScopeDispose 需绑定活跃 scope），用 options 触发
+    const { result, stop } = setupUseAppUpdate({ initAutoCheck: true })
+    expect(hoisted.checkForUpdate).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(30000)
+    expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(1)
+    expect(hoisted.checkForUpdate).toHaveBeenCalledWith({ force: true })
+    stop()
+  })
+
+  it('首次完成后 20min 周期触发第二次 checkForUpdate', async () => {
+    hoisted.checkForUpdate.mockResolvedValue(null)
+    const { result, stop } = setupUseAppUpdate({ initAutoCheck: true })
+
+    // 30s 首次触发
+    await vi.advanceTimersByTimeAsync(30000)
+    expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(1)
+
+    // 20min（20 * 60 * 1000ms）周期触发第二次
+    await vi.advanceTimersByTimeAsync(20 * 60 * 1000)
+    expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(2)
+    expect(hoisted.checkForUpdate).toHaveBeenLastCalledWith({ force: true })
+    stop()
+  })
+
+  it('守卫：state.state="downloaded" 时定时器触发跳过 checkForUpdate，但仍排下一次', async () => {
+    hoisted.checkForUpdate.mockResolvedValue(null)
+    const { result, stop } = setupUseAppUpdate({ initAutoCheck: true })
+    // 置为升级流程态（downloaded），定时器触发时不应打断
+    result.state.state = 'downloaded'
+
+    await vi.advanceTimersByTimeAsync(30000)
+    // 守卫跳过本次检查
+    expect(hoisted.checkForUpdate).not.toHaveBeenCalled()
+
+    // 恢复可检测态后，下一个周期应恢复检测（证明仍排了下一次定时器）
+    result.state.state = 'idle'
+    await vi.advanceTimersByTimeAsync(20 * 60 * 1000)
+    expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(1)
+    stop()
+  })
+
+  it('守卫：state.state="replacing" 时定时器触发跳过 checkForUpdate', async () => {
+    hoisted.checkForUpdate.mockResolvedValue(null)
+    const { result, stop } = setupUseAppUpdate({ initAutoCheck: true })
+    result.state.state = 'replacing'
+
+    await vi.advanceTimersByTimeAsync(30000)
+    expect(hoisted.checkForUpdate).not.toHaveBeenCalled()
+    stop()
+  })
+
+  it('onScopeDispose 清理定时器：dispose 后周期不再触发 checkForUpdate', async () => {
+    hoisted.checkForUpdate.mockResolvedValue(null)
+    const { result, stop } = setupUseAppUpdate({ initAutoCheck: true })
+
+    await vi.advanceTimersByTimeAsync(30000)
+    expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(1)
+
+    stop() // 触发 onScopeDispose → clearAutoCheckTimer
+
+    await vi.advanceTimersByTimeAsync(20 * 60 * 1000)
+    expect(hoisted.checkForUpdate).toHaveBeenCalledTimes(1) // 不再触发
   })
 })

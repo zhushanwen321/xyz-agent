@@ -40,8 +40,20 @@ import { getLocale } from '@/i18n'
 /** 不支持当前平台的错误码（main 侧 platform-updater 抛出，preload 透传） */
 const UNSUPPORTED_ERROR_CODE = 'UPDATE_UNSUPPORTED_PLATFORM'
 
-/** 自动检测延迟：应用启动后 30s（避开冷启动资源竞争） */
+/** 自动检测首次延迟：应用启动后 30s（避开冷启动资源竞争） */
 const AUTO_CHECK_DELAY_MS = 30_000
+
+/**
+ * 自动检测周期：每 20 分钟联网检测一次。
+ *
+ * GitHub API 未认证限额 60 次/小时，20min 一次 = 3 次/小时，配额安全。
+ * 用递归 setTimeout 而非 setInterval：checkForUpdate 是 async，setInterval 会在
+ * 上一次未完成时排下一次，可能堆积并发请求；递归 setTimeout 保证「上一次完成后才排下一次」。
+ */
+const CHECK_INTERVAL_MINUTES = 20
+const SECONDS_PER_MINUTE = 60
+const MS_PER_SECOND = 1000
+const AUTO_CHECK_INTERVAL_MS = CHECK_INTERVAL_MINUTES * SECONDS_PER_MINUTE * MS_PER_SECOND // 20min
 
 /**
  * 多语言 release notes 分隔标记。
@@ -161,6 +173,14 @@ let errorHandled = false
  * 除非版本比较已清否则应保持 available）。联网检测确认有更新时正常更新 state。
  */
 let pendingRestored = false
+
+/**
+ * 自动检测定时器 id（递归 setTimeout）。
+ *
+ * 用模块级变量存当前 pending timer，onScopeDispose 时 clearTimeout 避免泄漏
+ * （scope 卸载后定时器不应再触发）。runAutoCheck 每次触发后先置 null 再排下一次。
+ */
+let autoCheckTimer: ReturnType<typeof setTimeout> | null = null
 
 /**
  * 订阅 main 进程的进度 + 错误推送（引用计数管理生命周期）。
@@ -403,11 +423,49 @@ async function restorePendingUpdate(): Promise<void> {
 }
 
 /**
- * 启动自动检测：先恢复持久化提醒（立即），再延迟 30s 联网检测（避开冷启动高峰 + 刷新 release info）。
+ * 清理自动检测定时器（防泄漏）。onScopeDispose 与 _resetForTest 都调它。
+ */
+function clearAutoCheckTimer(): void {
+  if (autoCheckTimer !== null) {
+    clearTimeout(autoCheckTimer)
+    autoCheckTimer = null
+  }
+}
+
+/**
+ * 自动检测单次执行：守卫检查 → 检测（force=true 绕过缓存）→ 排下一个周期定时器。
+ *
+ * 守卫：仅在 idle/available/error/unsupported 态调 checkForUpdate；downloading/verifying/
+ * replacing/restarting/downloaded 态跳过本次检查（不打断升级流程），但仍排下一次定时器，
+ * 保证升级完成后能继续周期检测。
+ *
+ * force=true：绕过 release-checker 的 1h 缓存，确保每次周期真正联网（避免缓存未命中新版）。
+ */
+async function runAutoCheck(): Promise<void> {
+  autoCheckTimer = null // 当前 timer 已触发
+  const canCheck =
+    state.state === 'idle' ||
+    state.state === 'available' ||
+    state.state === 'error' ||
+    state.state === 'unsupported'
+  if (canCheck) {
+    await checkForUpdate(true)
+  }
+  // 无论本次是否检查，都排下一次周期（保证升级完成后继续周期检测）
+  autoCheckTimer = setTimeout(runAutoCheck, AUTO_CHECK_INTERVAL_MS)
+}
+
+/**
+ * 启动自动检测：先恢复持久化提醒（立即），再 30s 首次检测，之后每 20min 周期检测。
+ *
  * 必须在活跃 effect scope 内调用，通常在组件 setup 顶层同步调用（onScopeDispose 依赖活跃 scope）；
- * 30s 定时器不需要等 DOM 挂载，故不必放 onMounted。onScopeDispose 清理定时器避免泄漏。
+ * 定时器不需要等 DOM 挂载，故不必放 onMounted。onScopeDispose 清理定时器避免泄漏。
+ *
+ * 周期机制：30s 首次 → 首次完成（await）→ 20min 周期（递归 setTimeout）。详见 runAutoCheck。
  */
 function initAutoCheck(): void {
+  // 防重复 init：先清已有 timer（多消费者场景只保留最新周期，避免泄漏）
+  clearAutoCheckTimer()
   // 先恢复 preloaded（downloaded 态，优先级高于 pending）
   void restorePreloadedUpdate().then((restored) => {
     if (!restored) {
@@ -415,11 +473,9 @@ function initAutoCheck(): void {
       void restorePendingUpdate()
     }
   })
-  // 30s 后联网检测（刷新 release info + 首次无 pending 时正常检测新版）
-  const timer = setTimeout(() => {
-    void checkForUpdate(false)
-  }, AUTO_CHECK_DELAY_MS)
-  onScopeDispose(() => clearTimeout(timer))
+  // 30s 后首次联网检测（避开冷启动高峰 + 刷新 release info），首次完成后转 20min 周期
+  autoCheckTimer = setTimeout(runAutoCheck, AUTO_CHECK_DELAY_MS)
+  onScopeDispose(clearAutoCheckTimer)
 }
 
 /**
@@ -449,6 +505,7 @@ export function useAppUpdate() {
  * refCount/renderToken/errorHandled 一并重置（module-level 闭包变量同样跨用例残留）。
  */
 export function _resetForTest(): void {
+  clearAutoCheckTimer()
   state.state = 'idle'
   state.latestRelease = null
   state.errorMessage = ''

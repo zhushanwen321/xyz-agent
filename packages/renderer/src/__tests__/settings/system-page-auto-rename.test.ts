@@ -51,6 +51,11 @@ vi.mock('@/lib/ipc', () => ({
   listSystemSounds: vi.fn(() => Promise.resolve({ sounds: [] })),
 }))
 
+// SystemPage 渲染 UpdateCheckCard 子组件（版本检查卡片），其内部调真实 useAppUpdate
+// 订阅 onUpdateProgress/onUpdateError。本测试关注 auto-rename 开关，stub 掉 UpdateCheckCard
+// 避免拉入升级流程的 ipc 订阅（与部分 mock 的 @/lib/ipc 不兼容）。
+const stubUpdateCheckCard = { template: '<div />' }
+
 import SystemPage from '@/components/settings/SystemPage.vue'
 
 /** 最小 SystemSettings fixture。 */
@@ -83,7 +88,7 @@ afterEach(() => {
 
 describe('SystemPage 会话自动重命名开关', () => {
   it('mount 后 DOM 含 auto-rename Switch', async () => {
-    wrapper = mount(SystemPage, { props: { system: systemFixture() } })
+    wrapper = mount(SystemPage, { props: { system: systemFixture() }, global: { stubs: { UpdateCheckCard: stubUpdateCheckCard } } })
     await flushPromises()
     const sw = wrapper.find('[data-testid="setting-auto-rename-session"]')
     expect(sw.exists()).toBe(true)
@@ -91,7 +96,7 @@ describe('SystemPage 会话自动重命名开关', () => {
 
   it('getAutoRenameEnabled 返回 true 时 Switch 为开', async () => {
     settingsMock.getAutoRenameEnabled.mockResolvedValue({ enabled: true })
-    wrapper = mount(SystemPage, { props: { system: systemFixture() } })
+    wrapper = mount(SystemPage, { props: { system: systemFixture() }, global: { stubs: { UpdateCheckCard: stubUpdateCheckCard } } })
     await flushPromises()
     const sw = wrapper.find('[data-testid="setting-auto-rename-session"]')
     expect(sw.attributes('data-state')).toBe('checked')
@@ -99,7 +104,7 @@ describe('SystemPage 会话自动重命名开关', () => {
 
   it('getAutoRenameEnabled 返回 false 时 Switch 为关', async () => {
     settingsMock.getAutoRenameEnabled.mockResolvedValue({ enabled: false })
-    wrapper = mount(SystemPage, { props: { system: systemFixture() } })
+    wrapper = mount(SystemPage, { props: { system: systemFixture() }, global: { stubs: { UpdateCheckCard: stubUpdateCheckCard } } })
     await flushPromises()
     const sw = wrapper.find('[data-testid="setting-auto-rename-session"]')
     expect(sw.attributes('data-state')).toBe('unchecked')
@@ -107,7 +112,7 @@ describe('SystemPage 会话自动重命名开关', () => {
 
   it('切换 Switch 触发 setAutoRenameEnabled', async () => {
     settingsMock.getAutoRenameEnabled.mockResolvedValue({ enabled: true })
-    wrapper = mount(SystemPage, { props: { system: systemFixture() } })
+    wrapper = mount(SystemPage, { props: { system: systemFixture() }, global: { stubs: { UpdateCheckCard: stubUpdateCheckCard } } })
     await flushPromises()
     const sw = wrapper.find('[data-testid="setting-auto-rename-session"]')
     // reka-ui Switch 通过 click 切换并 emit update:model-value
