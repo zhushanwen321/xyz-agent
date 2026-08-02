@@ -15,6 +15,7 @@
     "postinstall": "bash scripts/fix-node-pty-permissions.sh",
     "build:e2e": "pnpm --filter @xyz-agent/electron build:e2e",
     "test:e2e": "playwright test",
+    "dev:smoke": "node scripts/dev-smoke.mjs",
     "changeset": "changeset",
     "changeset:version": "changeset version",
     "release:npm": "pnpm --filter @xyz-agent/extension-protocol build && changeset publish",
