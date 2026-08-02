@@ -8,17 +8,17 @@ AI Agent 桌面工作台，基于 Electron + Vue 3 + Node.js Runtime 架构。
 
 ## 安装
 
-首次安装用以下命令。安装后 app 内会自动检测新版本，提示一键升级。
+从 [Releases 页面](https://github.com/zhushanwen321/xyz-agent/releases/latest) 下载对应平台的安装包（文件名含版本号，如 `xyz-agent-0.8.44-mac-arm64.zip`）。安装后 app 内会自动检测新版本，提示一键升级。
 
 ### macOS（Apple Silicon）
 
+下载 `xyz-agent-*-mac-arm64.zip` 后解压到 `/Applications`：
+
 ```bash
-curl -L https://github.com/zhushanwen321/xyz-agent/releases/latest/download/xyz-agent-mac-arm64.zip -o /tmp/xyz-agent.zip \
-  && unzip /tmp/xyz-agent.zip -d /Applications \
-  && open /Applications/xyz-agent.app
+unzip ~/Downloads/xyz-agent-*-mac-arm64.zip -d /Applications && open /Applications/xyz-agent.app
 ```
 
-若启动时提示「已损坏」或「无法验证开发者」，执行（curl 下载通常不需要，浏览器下载需要）：
+若启动时提示「已损坏」或「无法验证开发者」（浏览器下载常见），执行：
 
 ```bash
 xattr -cr /Applications/xyz-agent.app
@@ -26,25 +26,15 @@ xattr -cr /Applications/xyz-agent.app
 
 ### Linux
 
+下载 `xyz-agent-*-x86_64.AppImage` 后运行：
+
 ```bash
-curl -L https://github.com/zhushanwen321/xyz-agent/releases/latest/download/xyz-agent-x86_64.AppImage -o ~/xyz-agent.AppImage \
-  && chmod +x ~/xyz-agent.AppImage \
-  && ~/xyz-agent.AppImage
+chmod +x ~/Downloads/xyz-agent-*-x86_64.AppImage && ~/Downloads/xyz-agent-*-x86_64.AppImage
 ```
 
 ### Windows
 
-PowerShell（用 Invoke-WebRequest，避免 curl 在 PowerShell 是别名导致的参数冲突）：
-
-```powershell
-Invoke-WebRequest -Uri "https://github.com/zhushanwen321/xyz-agent/releases/latest/download/xyz-agent-setup-x64.exe" -OutFile "$env:TEMP\xyz-agent-setup.exe" -UseBasicParsing; & "$env:TEMP\xyz-agent-setup.exe"
-```
-
-命令提示符（cmd.exe，需系统自带 curl.exe，Win10 1803+ 默认含）：
-
-```cmd
-curl -L https://github.com/zhushanwen321/xyz-agent/releases/latest/download/xyz-agent-setup-x64.exe -o "%TEMP%\xyz-agent-setup.exe" && "%TEMP%\xyz-agent-setup.exe"
-```
+下载 `xyz-agent-*-setup-x64.exe` 后双击运行。
 
 ---
 
