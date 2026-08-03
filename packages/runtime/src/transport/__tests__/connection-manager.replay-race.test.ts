@@ -214,7 +214,7 @@ describe('C3 replay 时序竞态（replay 段发送期间并发广播不交错�
     const { ServerMessageBroker } = await import('../message-broker.js')
     const port = 32000 + Math.floor(Math.random() * 1000)
     const tokenManager = createTokenManager({ tokenFile: fixture.file })
-    const cm = new ConnectionManager(port, callbacks, { tokenManager, serverVersion: 'test' })
+    const cm = new ConnectionManager(port, callbacks, { loopbackAuthBypass: false, tokenManager, serverVersion: 'test' })
     const broker = new ServerMessageBroker(cm, makeBrokerServices())
     brokerBroadcast = (msg) => broker.broadcast(msg as never)
     await cm.start()
@@ -286,7 +286,7 @@ describe('C3 replay 时序竞态（replay 段发送期间并发广播不交错�
     const { ServerMessageBroker } = await import('../message-broker.js')
     const port = 32200 + Math.floor(Math.random() * 1000)
     const tokenManager = createTokenManager({ tokenFile: fixture.file })
-    const cm = new ConnectionManager(port, callbacks, { tokenManager, serverVersion: 'test' })
+    const cm = new ConnectionManager(port, callbacks, { loopbackAuthBypass: false, tokenManager, serverVersion: 'test' })
     const broker = new ServerMessageBroker(cm, makeBrokerServices())
     await cm.start()
     try {
@@ -325,7 +325,7 @@ describe('C3 replay 时序竞态（replay 段发送期间并发广播不交错�
     const { ConnectionManager } = await import('../connection-manager.js')
     const port = 32400 + Math.floor(Math.random() * 1000)
     const tokenManager = createTokenManager({ tokenFile: fixture.file })
-    const cm = new ConnectionManager(port, callbacks, { tokenManager, serverVersion: 'test' })
+    const cm = new ConnectionManager(port, callbacks, { loopbackAuthBypass: false, tokenManager, serverVersion: 'test' })
     await cm.start()
     try {
       const c = await connectWs(`ws://127.0.0.1:${port}`)

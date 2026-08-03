@@ -111,7 +111,7 @@ describe('ConnectionManager wave1 auth (TC1: open mode zero-regression)', () => 
     const { ConnectionManager } = await import('../src/transport/connection-manager.js')
     const cb = makeCallbacks()
     // 无 tokenFile → load() 返回 enabled:false（开放模式）
-    const cm = new ConnectionManager(0, cb, { tokenManager: createTokenManager({}) })
+    const cm = new ConnectionManager(0, cb, { loopbackAuthBypass: false, tokenManager: createTokenManager({}) })
 
     const ws = makeMockWs()
     connect(cm, ws)
@@ -148,7 +148,7 @@ describe('ConnectionManager wave1 auth (TC2: auth happy path)', () => {
       verify: (c: string) => c === token,
       persist: () => {},
     }
-    const cm = new ConnectionManager(0, cb, { tokenManager: fixedTm, serverVersion: '9.9.9' })
+    const cm = new ConnectionManager(0, cb, { loopbackAuthBypass: false, tokenManager: fixedTm, serverVersion: '9.9.9' })
 
     const ws = makeMockWs()
     connect(cm, ws)
@@ -202,7 +202,7 @@ describe('ConnectionManager wave1 auth (TC3: auth failure → close 4001)', () =
       verify: (c: string) => c === 'real',
       persist: () => {},
     }
-    const cm = new ConnectionManager(0, cb, { tokenManager: fixedTm })
+    const cm = new ConnectionManager(0, cb, { loopbackAuthBypass: false, tokenManager: fixedTm })
 
     const ws = makeMockWs()
     connect(cm, ws)
@@ -227,7 +227,7 @@ describe('ConnectionManager wave1 auth (TC3: auth failure → close 4001)', () =
       verify: () => true,
       persist: () => {},
     }
-    const cm = new ConnectionManager(0, cb, { tokenManager: fixedTm })
+    const cm = new ConnectionManager(0, cb, { loopbackAuthBypass: false, tokenManager: fixedTm })
 
     const ws = makeMockWs()
     connect(cm, ws)
@@ -250,7 +250,7 @@ describe('ConnectionManager wave1 auth (TC3: auth failure → close 4001)', () =
       verify: () => true,
       persist: () => {},
     }
-    const cm = new ConnectionManager(0, cb, { tokenManager: fixedTm })
+    const cm = new ConnectionManager(0, cb, { loopbackAuthBypass: false, tokenManager: fixedTm })
 
     const ws = makeMockWs()
     connect(cm, ws)
@@ -277,7 +277,7 @@ describe('ConnectionManager wave1 auth (TC3: auth failure → close 4001)', () =
       verify: () => true,
       persist: () => {},
     }
-    const cm = new ConnectionManager(0, cb, { tokenManager: fixedTm })
+    const cm = new ConnectionManager(0, cb, { loopbackAuthBypass: false, tokenManager: fixedTm })
 
     const ws = makeMockWs()
     connect(cm, ws)
@@ -303,7 +303,7 @@ describe('ConnectionManager wave1 auth (TC4: clientId replacement)', () => {
       verify: () => true,
       persist: () => {},
     }
-    const cm = new ConnectionManager(0, cb, { tokenManager: fixedTm })
+    const cm = new ConnectionManager(0, cb, { loopbackAuthBypass: false, tokenManager: fixedTm })
 
     // 第一个连接认证成功
     const ws1 = makeMockWs()
@@ -343,7 +343,7 @@ describe('ConnectionManager wave1 auth (TC4: clientId replacement)', () => {
       verify: () => true,
       persist: () => {},
     }
-    const cm = new ConnectionManager(0, cb, { tokenManager: fixedTm })
+    const cm = new ConnectionManager(0, cb, { loopbackAuthBypass: false, tokenManager: fixedTm })
 
     // 第一个连接认证成功
     const ws1 = makeMockWs()
@@ -390,7 +390,7 @@ describe('ConnectionManager wave1 auth (TC5: pending isolation + MAX_PENDING=20)
       verify: () => true,
       persist: () => {},
     }
-    const cm = new ConnectionManager(0, cb, { tokenManager: fixedTm })
+    const cm = new ConnectionManager(0, cb, { loopbackAuthBypass: false, tokenManager: fixedTm })
 
     // 投放 20 个未认证连接（pending 上限）
     for (let i = 0; i < 20; i++) {
@@ -419,7 +419,7 @@ describe('ConnectionManager wave1 auth (TC5: pending isolation + MAX_PENDING=20)
       verify: () => false, // 所有 token 都验证失败
       persist: () => {},
     }
-    const cm = new ConnectionManager(0, cb, { tokenManager: fixedTm })
+    const cm = new ConnectionManager(0, cb, { loopbackAuthBypass: false, tokenManager: fixedTm })
     const internal = cm as unknown as { pending: Set<unknown>; authTimers: Map<unknown, unknown> }
 
     // 投放 20 次失败 auth（每次都错误 token）
@@ -487,7 +487,7 @@ describe('ConnectionManager wave1 auth (TC7: origin allowlist via verifyClient)'
     delete process.env.XYZ_AGENT_ALLOWED_ORIGINS
     const { ConnectionManager } = await import('../src/transport/connection-manager.js')
     const cb = makeCallbacks()
-    const cm = new ConnectionManager(0, cb, { tokenManager: createTokenManager({}) })
+    const cm = new ConnectionManager(0, cb, { loopbackAuthBypass: false, tokenManager: createTokenManager({}) })
     expect(cm).toBeDefined()
   })
 
@@ -513,7 +513,7 @@ describe('ConnectionManager wave1 auth (TC7: origin allowlist via verifyClient)'
     process.env.XYZ_AGENT_ALLOWED_ORIGINS = 'http://localhost:5173'
     const { ConnectionManager } = await import('../src/transport/connection-manager.js')
     const cb = makeCallbacks()
-    const cm = new ConnectionManager(0, cb, { tokenManager: createTokenManager({}) })
+    const cm = new ConnectionManager(0, cb, { loopbackAuthBypass: false, tokenManager: createTokenManager({}) })
     expect(cm).toBeDefined()
     delete process.env.XYZ_AGENT_ALLOWED_ORIGINS
   })
@@ -631,7 +631,7 @@ async function setupAuthMode(options?: {
     verify: () => true,
     persist: () => {},
   }
-  const cm = new ConnectionManager(0, cb, { tokenManager: fixedTm, serverVersion: '1.0.0' })
+  const cm = new ConnectionManager(0, cb, { loopbackAuthBypass: false, tokenManager: fixedTm, serverVersion: '1.0.0' })
   return { cm, cb }
 }
 
@@ -749,7 +749,7 @@ describe('P2-s2 auth replay orchestration (TC-W1.1~W1.8)', () => {
     const cb = makeCallbacks()
     cb.onAuthSuccess = vi.fn().mockResolvedValue({ resume: false, messages: [], seqReset: false, replayedCount: 0, bootId: 'b', serverSeq: 0 })
     // 无 tokenFile → 开放模式
-    const cm = new ConnectionManager(0, cb, { tokenManager: createTokenManager({}) })
+    const cm = new ConnectionManager(0, cb, { loopbackAuthBypass: false, tokenManager: createTokenManager({}) })
 
     const ws = makeMockWs()
     connect(cm, ws)
@@ -773,7 +773,7 @@ describe('P2-s2 auth replay orchestration (TC-W1.1~W1.8)', () => {
       verify: () => true,
       persist: () => {},
     }
-    const cm = new ConnectionManager(0, cb, { tokenManager: fixedTm })
+    const cm = new ConnectionManager(0, cb, { loopbackAuthBypass: false, tokenManager: fixedTm })
     const internal = cm as unknown as { pending: Set<unknown>; authTimers: Map<unknown, unknown> }
 
     const ws = makeMockWs()
@@ -853,7 +853,7 @@ describe('P2-s2 replyAuth ReplayMeta serialization (TC-W2.1~W2.4)', () => {
       verify: () => true,
       persist: () => {},
     }
-    const cm = new ConnectionManager(0, cb, { tokenManager: fixedTm, serverVersion: '1.0.0' })
+    const cm = new ConnectionManager(0, cb, { loopbackAuthBypass: false, tokenManager: fixedTm, serverVersion: '1.0.0' })
 
     const ws = makeMockWs()
     connect(cm, ws)
@@ -887,7 +887,7 @@ describe('P2-s2 replyAuth ReplayMeta serialization (TC-W2.1~W2.4)', () => {
     const cb = makeCallbacks()
     cb.onAuthSuccess = vi.fn().mockResolvedValue({ resume: false, messages: [], seqReset: false, replayedCount: 0, bootId: 'b', serverSeq: 0 })
     // 无 tokenFile → 开放模式
-    const cm = new ConnectionManager(0, cb, { tokenManager: createTokenManager({}) })
+    const cm = new ConnectionManager(0, cb, { loopbackAuthBypass: false, tokenManager: createTokenManager({}) })
 
     const ws = makeMockWs()
     connect(cm, ws)

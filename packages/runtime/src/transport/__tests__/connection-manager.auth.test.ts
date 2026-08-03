@@ -134,7 +134,7 @@ async function startAuthHarness(fixture: TokenFixture): Promise<Harness> {
   // 自由端口（与 lease 测试同范式：30000 + random offset；进程退出即释放）
   const port = 31000 + Math.floor(Math.random() * 1000)
   const tokenManager = createTokenManager({ tokenFile: fixture.file })
-  const cm = new ConnectionManager(port, callbacks, { tokenManager, serverVersion: 'test-1.0' })
+  const cm = new ConnectionManager(port, callbacks, { tokenManager, serverVersion: 'test-1.0', loopbackAuthBypass: false })
   await cm.start()
   return {
     cm,
