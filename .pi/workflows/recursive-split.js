@@ -1,12 +1,11 @@
 const meta = {
   name: "recursive-split",
   description: "递归拆分问题求解：cw 状态机 + 每 node 一个 agent + frontier 驱动 BFS",
-  phases: [
-    { title: "init", detail: "创建 root WorkUnit" },
-    { title: "bfs", detail: "frontier 驱动 BFS 主循环" },
-    { title: "done", detail: "返回结果" },
-    { title: "error", detail: "顶层兜底错误返回" },
-  ],
+  // phase 命名：{layer首字母}-{slug}（如 e-auth、w-test-login），每个 WorkUnit 独立 phase。
+  // run-time 由 executeNodeNextAction 内 agent() 的 opts.phase 字段逐 node 设置（per-call
+  // 生效，不靠全局 phase()——parallel 并发时多个 layer 的 node 互不覆盖）。
+  // init/done/error 三段无 agent() 调用，sidebar 不显示（引擎只渲染含 node 的 phase）。
+  phases: ["init", "bfs", "done", "error"],
 };
 
 // ── 常量 ────────────────────────────────────────────────────────────
@@ -114,9 +113,15 @@ async function abortUnit(unitId) {
  * 注意：失败字段命名 failedReason 而非 error，避免被 parallel() 归一化吞掉其他字段。
  */
 async function executeNodeNextAction(node, sessionFiles) {
+  // phase + description 取 layer 首字母 + slug：e-auth-module / f-login / s-auth-api / w-test-login。
+  // 每 WorkUnit 独立 phase（sidebar 一行），同一 node 多轮 dispatch 时 TUI 按 stepIndex 自带序号区分。
+  const slug = node.unitId.split(":")[1] || node.unitId;
+  const phaseName = node.scope[0] + "-" + slug;
   const r = await agent({
     prompt: buildActionPrompt(node),
     schema: buildActionSchema(node),
+    phase: phaseName,
+    description: phaseName,
     fork: true,
     worktree: false,
     returnMeta: true,
