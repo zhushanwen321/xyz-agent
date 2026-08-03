@@ -1,4 +1,5 @@
 import type { ISessionService, IConfigService } from '../../interfaces.js'
+import type { GuiComponent } from '@xyz-agent/extension-protocol'
 
 // 本文件内部仍引用以下「已拆分」域的类型（lifecycle/bridge/agent-api 等
 // 内联类型用到了它们），故在此 import 以供本地使用；对外仍通过文件末尾的
@@ -338,6 +339,17 @@ export interface Phase2AgentAPI extends Phase1AgentAPI {
     readonly rootPath: string
     readonly name: string
     findFiles(pattern: string): Promise<string[]>
+  }
+  readonly commands: {
+    register(
+      command: { id: string; title?: string; category?: string; keybinding?: string; when?: string },
+      handler: (args?: unknown) => unknown | Promise<unknown>,
+    ): Promise<Disposable>
+    unregister(commandId: string): Promise<void>
+  }
+  readonly views: {
+    update(viewId: string, guiTree: GuiComponent[]): Promise<void>
+    listMountPoints(): Promise<string[]>
   }
 }
 

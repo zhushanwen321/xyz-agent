@@ -6,6 +6,7 @@
 #   packages/runtime/src/services/plugin-service/plugin-types/descriptor-types.ts
 #   packages/runtime/src/services/plugin-service/plugin-types/rpc-protocol.ts
 #   packages/runtime/src/services/plugin-service/plugin-types/hook-types.ts
+#   packages/extension-protocol/src/core/types.ts                           (GuiComponent 渲染协议类型)
 #
 # Target (SDK, generated):
 #   packages/plugin-sdk/src/types.ts
@@ -32,15 +33,16 @@ MAIN="$RUNTIME_PLUGINS/plugin-types.ts"
 DESCRIPTOR="$RUNTIME_PLUGINS/plugin-types/descriptor-types.ts"
 RPC="$RUNTIME_PLUGINS/plugin-types/rpc-protocol.ts"
 HOOK="$RUNTIME_PLUGINS/plugin-types/hook-types.ts"
+EXTENSION_PROTOCOL="$PKG_DIR/../extension-protocol/src/core/types.ts"
 
-for f in "$MAIN" "$DESCRIPTOR" "$RPC" "$HOOK"; do
+for f in "$MAIN" "$DESCRIPTOR" "$RPC" "$HOOK" "$EXTENSION_PROTOCOL"; do
   if [ ! -f "$f" ]; then
     echo "Error: Source file not found at $f" >&2
     exit 1
   fi
 done
 
-export DESCRIPTOR RPC HOOK MAIN TARGET
+export DESCRIPTOR RPC HOOK MAIN EXTENSION_PROTOCOL TARGET
 
 python3 - <<'PY'
 import os, re
@@ -49,10 +51,11 @@ DESCRIPTOR = os.environ['DESCRIPTOR']
 RPC        = os.environ['RPC']
 HOOK       = os.environ['HOOK']
 MAIN       = os.environ['MAIN']
+EXTENSION_PROTOCOL = os.environ['EXTENSION_PROTOCOL']
 TARGET     = os.environ['TARGET']
 
-# ---- read order: subdomains first (definitions), then main (inline cross-domain) ----
-sources = [DESCRIPTOR, RPC, HOOK, MAIN]
+# ---- read order: extension-protocol types first (GuiComponent defs), then subdomains, then main ----
+sources = [EXTENSION_PROTOCOL, DESCRIPTOR, RPC, HOOK, MAIN]
 
 def read(path):
     with open(path, encoding='utf-8') as fh:
@@ -130,9 +133,10 @@ header = '''/**
  * 来源（single source of truth）:
  *   packages/runtime/src/services/plugin-service/plugin-types.ts
  *   packages/runtime/src/services/plugin-service/plugin-types/{descriptor-types,rpc-protocol,hook-types}.ts
+ *   packages/extension-protocol/src/core/types.ts（GuiComponent 渲染协议类型）
  *
  * 生成规则：
- *   - 拍平 runtime 主文件的 re-export shim + 3 个子域文件 → 单个自包含文件
+ *   - 拍平 runtime 主文件的 re-export shim + 3 个子域文件 + extension-protocol 协议类型 → 单个自包含文件
  *   - 剥离所有 import（SDK 保持零依赖，第三方插件作者无需装整个 monorepo）
  *   - runtime 内部 service 接口（ISessionService / IConfigService /
  *     IModelService / IPluginInstaller）替换为 `unknown`

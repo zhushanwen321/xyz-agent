@@ -223,6 +223,16 @@ function createAgentAPI(pluginId: string): Phase2AgentAPI {
     ui: createUiApi(rpcClient, pluginId),
     agent: createAgentApi(rpcClient, pluginId),
     workspace: createWorkspaceApi(rpcClient, pluginId),
+    // TODO(s3-w2): IF3 真实现——createCommandsApi/createViewsApi（handler 驻留 worker + invoke 通知监听）。
+    // W1 类型层仅落地签名，此处占位保证 tsc 绿；W2 runtime-circuit 替换。
+    commands: {
+      register: async () => ({ dispose: () => {} }),
+      unregister: async () => {},
+    },
+    views: {
+      update: async () => {},
+      listMountPoints: async () => [],
+    },
   }
 }
 

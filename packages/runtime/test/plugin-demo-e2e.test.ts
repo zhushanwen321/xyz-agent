@@ -145,6 +145,15 @@ function createMockContext(): {
         name: 'test-workspace',
         findFiles: vi.fn(async () => ['file1.ts', 'file2.ts']),
       },
+      // ── commands / views（W1 类型层落地，mock 占位）───────
+      commands: {
+        register: vi.fn(async () => ({ dispose: () => {} })),
+        unregister: vi.fn(async () => {}),
+      },
+      views: {
+        update: vi.fn(async () => {}),
+        listMountPoints: vi.fn(async () => []),
+      },
     },
     subscriptions: [],
   }
