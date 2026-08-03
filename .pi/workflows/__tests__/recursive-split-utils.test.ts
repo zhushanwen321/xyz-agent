@@ -320,6 +320,14 @@ describe("buildActionPrompt", () => {
     expect(prompt).toContain("design-reviewed");
   });
 
+  it("含禁止 spawn subagent 约束（P0-1 修复）", () => {
+    const prompt = buildActionPrompt(waveNode);
+    expect(prompt).toContain("subagent");
+    expect(prompt).toMatch(/禁止|不得|禁止 spawn/);
+    // 确保教 agent 自己做而非委派
+    expect(prompt).toContain("审查就是你这个 agent 的职责");
+  });
+
   it("传入 node.nextAction 时 prompt 含该 action（起点说明）", () => {
     const prompt = buildActionPrompt(waveNode);
     expect(prompt).toContain("execute");
