@@ -1,8 +1,9 @@
 <script setup lang="ts">
 /**
- * 统计行组件——替代 TUI 的 "N turns · Nk · Ns"。
- * 水平排列键值对，item 间用 border-l 分隔（首项无分隔线）。
- * value 按 severity 着色，label 可选。
+ * 统计行组件（v6）——severity 收窄。
+ * 水平排列键值对，item 间用 border-l 分隔（首项无分隔线，hairline 保留）。
+ * value severity 收窄：danger 保留 text-danger，ok/warn 降 text-neutral-fg（弱化非危险态的颜色噪音）。
+ * label 可选。
  */
 import type { StatItem } from '@xyz-agent/extension-protocol'
 
@@ -10,10 +11,10 @@ defineProps<{
   items: StatItem[]
 }>()
 
+/** v6：severity 收窄——danger 保留，ok/warn/无 → neutral-fg */
 const valueClass = (severity?: StatItem['severity']) => {
-  if (!severity) return 'text-neutral-fg'
-  const map = { ok: 'text-success', warn: 'text-warn', danger: 'text-danger' } as const
-  return map[severity]
+  if (severity === 'danger') return 'text-danger'
+  return 'text-neutral-fg'
 }
 </script>
 
