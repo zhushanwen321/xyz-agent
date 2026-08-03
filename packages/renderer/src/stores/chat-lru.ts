@@ -22,7 +22,7 @@
  * 驱逐前 double-check streaming 状态（SR8 竞态防护）。
  */
 
-import { deleteMessages } from './chat-mutations'
+import { deleteMessages } from '@xyz-agent/core'
 
 /**
  * LRU 保留阈值：最近 8 个 session（D6）。

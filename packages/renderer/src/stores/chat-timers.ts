@@ -10,7 +10,7 @@
  *   streaming 的 assistant turn）。L1 放宽 bash↔streaming 并发后，共存期间 bash timer
  *   到期若调 finalizeSession 会把正在生成的 assistant turn 一并收口（C2 回归）。
  */
-import type { FinalizeReason } from './chat-store-types'
+import type { FinalizeReason } from '@xyz-agent/core'
 
 const BASH_TIMEOUT_MS = 300_000
 

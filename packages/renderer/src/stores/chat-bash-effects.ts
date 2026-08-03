@@ -12,8 +12,8 @@
 // type-only import：编译期擦除，不构成运行时循环依赖（主文件 runtime import 本文件的 handler 值）
 import type { Message, ServerMessage } from '@xyz-agent/shared'
 import type { MessageEffectContext, MessageEffectHandler } from './chat-message-effects'
-import { readString, readNumber, readBool } from './chat-readers'
-import { commitMessages, type MessagesRef } from './chat-mutations'
+import { readString, readNumber, readBool } from '@xyz-agent/core'
+import { commitMessages, type MessagesRef } from '@xyz-agent/core'
 
 /** payload 读取用宽松 record（与主文件其他 effect 一致，readers 安全窄化） */
 type Payload = Record<string, unknown>

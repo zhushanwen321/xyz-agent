@@ -26,7 +26,7 @@
  */
 import { defineStore } from 'pinia'
 import { computed, onScopeDispose, ref, shallowRef } from 'vue'
-import { commitMessages, truncateMessagesFrom, prependHistory as prependHistoryMut } from './chat-mutations'
+import { commitMessages, truncateMessagesFrom, prependHistory as prependHistoryMut } from '@xyz-agent/core'
 import { initTimers } from './chat-timers'
 import { truncateToolOutputBatch } from '@/utils/truncate-tool-output'
 import {
@@ -53,8 +53,8 @@ import { findLastStreamingBashIndex } from './chat-bash-effects'
 import { findLastAssistantIndex } from './chat-chunk-processor'
 import { createChangeSetController } from './chat-changeset'
 import { createHandoffController } from './chat-handoff'
-export type { RetryState, QueueState, FinalizeReason } from './chat-store-types'
-import type { RetryState, QueueState, FinalizeReason } from './chat-store-types'
+export type { RetryState, QueueState, FinalizeReason } from '@xyz-agent/core'
+import type { RetryState, QueueState, FinalizeReason } from '@xyz-agent/core'
 
 /**
  * streaming 超时默认值：10min。

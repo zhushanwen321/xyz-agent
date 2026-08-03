@@ -22,7 +22,7 @@ import { ref } from 'vue'
 import type { Ref } from 'vue'
 import type { ChangeSetStatus, FileChange, Message } from '@xyz-agent/shared'
 import { findLastAssistantIndex } from './chat-chunk-processor'
-import { commitMessages } from './chat-mutations'
+import { commitMessages } from '@xyz-agent/core'
 
 /**
  * 合并 FileChange[]（accumulating 增量合并）。同 filePath 取最新项（后者覆盖前者），

@@ -34,7 +34,7 @@ import type {
   ToolCall,
 } from '@xyz-agent/shared'
 import { parseBgNotifyDetails } from '@xyz-agent/shared'
-import type { RetryState, QueueState, FinalizeReason } from './chat-store-types'
+import type { RetryState, QueueState, FinalizeReason } from '@xyz-agent/core'
 import {
   readString,
   readRecord,
@@ -47,9 +47,9 @@ import {
   readBranchSummary,
   readFileChanges,
   readChangeSetStatus,
-} from './chat-readers'
+} from '@xyz-agent/core'
 import { findLastAssistantIndex, findToolCallOwner } from './chat-chunk-processor'
-import { commitMessages } from './chat-mutations'
+import { commitMessages } from '@xyz-agent/core'
 import { truncateToolCall } from '@/utils/truncate-tool-output'
 import { bashStartEffect, bashResultEffect } from './chat-bash-effects'
 import { useTasksStore } from './tasks'
