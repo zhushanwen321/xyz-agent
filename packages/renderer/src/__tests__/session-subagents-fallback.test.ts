@@ -59,6 +59,9 @@ vi.mock('@/lib/ipc', () => ({
 vi.mock('@/api/domains/session', () => ({
   getSubagents: vi.fn(async () => []),
   getSubagentHistory: vi.fn(async () => []),
+  // useConnection.ensureDispatcher 经 sessionApi.subscribe 注入 ports（T2 后）
+  subscribe: vi.fn(async () => {}),
+  unsubscribe: vi.fn(async () => {}),
 }))
 
 // subagent store 经 @/api 门面导入 session，需把门面 session 指回上面 mock 的 domains 命名空间，
