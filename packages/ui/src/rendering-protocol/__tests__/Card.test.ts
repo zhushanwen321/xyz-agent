@@ -1,11 +1,11 @@
 /**
  * Card 组件测试（W2 · U4）。
  *
- * 运行：cd packages/renderer && npx vitest run src/__tests__/components/gui/Card.test.ts
+ * 运行：cd packages/ui && npx vitest run src/rendering-protocol/__tests__/Card.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
-import Card from '@/components/panel/message-stream/gui/Card.vue'
+import Card from '../primitives/Card.vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 
 describe('Card', () => {

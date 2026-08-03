@@ -2,10 +2,16 @@
 /**
  * 双列网格组件——替代 TUI 的 │ 列分隔。
  * flex 布局，ratios 默认等分，通过 style flex-grow 指定比例。
- * children 通过 v-for + GuiComponentRenderer 递归渲染。
+ * children 通过渲染器递归渲染（PRIMITIVE_RENDER_KEY 注入，未注入回退 PrimitiveRouter）。
  */
+import { inject } from 'vue'
+import type { Component } from 'vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
-import GuiComponentRenderer from '../GuiComponentRenderer.vue'
+import { PRIMITIVE_RENDER_KEY } from '../primitive-render-key'
+import PrimitiveRouter from './PrimitiveRouter.vue'
+
+/** 递归渲染器：注入优先（renderer 场景），独立使用回退内置路由 */
+const renderer = inject<Component>(PRIMITIVE_RENDER_KEY, PrimitiveRouter)
 
 const props = defineProps<{
   children: GuiComponent[]
@@ -26,7 +32,7 @@ const flexGrow = (index: number): number => {
       class="columns__child min-w-0 flex-1"
       :style="{ flexGrow: flexGrow(i) }"
     >
-      <GuiComponentRenderer :component="child" />
+      <component :is="renderer" :component="child" />
     </div>
   </div>
 </template>

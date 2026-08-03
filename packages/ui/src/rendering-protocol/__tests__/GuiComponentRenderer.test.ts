@@ -7,13 +7,13 @@
  * - custom 类型未注册 → 降级 AnsiText，content 为 props 的 JSON 文本
  * - custom 类型已注册（provide 'gui-custom-registry'）→ 路由到注册组件
  *
- * 运行：cd packages/renderer && npx vitest run src/__tests__/components/GuiComponentRenderer.test.ts
+ * 运行：cd packages/ui && npx vitest run src/rendering-protocol/__tests__/GuiComponentRenderer.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
-import GuiComponentRenderer from '@/components/panel/message-stream/GuiComponentRenderer.vue'
-import { GUI_CUSTOM_REGISTRY_KEY } from '@xyz-agent/ui'
+import GuiComponentRenderer from '../GuiComponentRenderer.vue'
+import { GUI_CUSTOM_REGISTRY_KEY } from '@xyz-agent/core/rendering-protocol/custom-registry'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 
 describe('GuiComponentRenderer 路由', () => {

@@ -1,11 +1,11 @@
 /**
  * Columns 组件测试（W2 · U5）。
  *
- * 运行：cd packages/renderer && npx vitest run src/__tests__/components/gui/Columns.test.ts
+ * 运行：cd packages/ui && npx vitest run src/rendering-protocol/__tests__/Columns.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
-import Columns from '@/components/panel/message-stream/gui/Columns.vue'
+import Columns from '../primitives/Columns.vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 
 describe('Columns', () => {

@@ -1,11 +1,11 @@
 /**
  * TabBar 组件测试（W1 · U3）。
  *
- * 运行：cd packages/renderer && npx vitest run src/__tests__/components/gui/TabBar.test.ts
+ * 运行：cd packages/ui && npx vitest run src/rendering-protocol/__tests__/TabBar.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
-import TabBar from '@/components/panel/message-stream/gui/TabBar.vue'
+import TabBar from '../primitives/TabBar.vue'
 
 describe('TabBar', () => {
   it('渲染 active + done + pending 三态', () => {

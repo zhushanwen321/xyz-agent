@@ -1,11 +1,11 @@
 /**
  * StatsLine 组件测试（W1 · U2）。
  *
- * 运行：cd packages/renderer && npx vitest run src/__tests__/components/gui/StatsLine.test.ts
+ * 运行：cd packages/ui && npx vitest run src/rendering-protocol/__tests__/StatsLine.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
-import StatsLine from '@/components/panel/message-stream/gui/StatsLine.vue'
+import StatsLine from '../primitives/StatsLine.vue'
 
 describe('StatsLine', () => {
   it('渲染多个 item，值按 severity 着色', () => {

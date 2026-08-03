@@ -1,11 +1,11 @@
 /**
  * ProgressBar 组件测试（W1 · U1）。
  *
- * 运行：cd packages/renderer && npx vitest run src/__tests__/components/gui/ProgressBar.test.ts
+ * 运行：cd packages/ui && npx vitest run src/rendering-protocol/__tests__/ProgressBar.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
-import ProgressBar from '@/components/panel/message-stream/gui/ProgressBar.vue'
+import ProgressBar from '../primitives/ProgressBar.vue'
 
 describe('ProgressBar', () => {
   it('severity=ok 时 fill 着色 success，按比例填充 width', () => {

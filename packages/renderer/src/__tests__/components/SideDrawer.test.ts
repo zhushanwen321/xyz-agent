@@ -70,9 +70,14 @@ vi.mock('@/components/panel/BrowserPane.vue', () => ({
 vi.mock('@/components/message-stream/GuiComponentRenderer.vue', () => ({
   default: { template: '<div data-testid="gui-renderer-stub" />' },
 }))
-vi.mock('@/components/message-stream/gui/AnsiText.vue', () => ({
-  default: { props: ['content'], template: '<span>{{ content }}</span>' },
-}))
+// W1 re-home：AnsiText 迁移到 @xyz-agent/ui 包，mock 目标改为包导出（其余导出原样保留）。
+vi.mock('@xyz-agent/ui', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@xyz-agent/ui')>()
+  return {
+    ...actual,
+    AnsiText: { props: ['content'], template: '<span>{{ content }}</span>' },
+  }
+})
 
 import SideDrawer from '@/components/panel/SideDrawer.vue'
 

@@ -1,12 +1,19 @@
 <script setup lang="ts">
 /**
  * 卡片容器组件——替代 TUI 的 ┌─┐││└─┘ box 边框。
- * variant 映射边框+底色；header 可以是 string 或 GuiComponent（后者递归调 GuiComponentRenderer）；
- * body 通过 v-for + GuiComponentRenderer 递归渲染子组件。
+ * variant 映射边框+底色；header 可以是 string 或 GuiComponent（后者递归调渲染器）；
+ * body 通过 v-for + 渲染器递归渲染子组件。
+ * 渲染器经 PRIMITIVE_RENDER_KEY 注入（renderer 的 GuiComponentRenderer provide 自身），
+ * 未注入时回退内置 PrimitiveRouter。
  */
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
+import type { Component } from 'vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
-import GuiComponentRenderer from '../GuiComponentRenderer.vue'
+import { PRIMITIVE_RENDER_KEY } from '../primitive-render-key'
+import PrimitiveRouter from './PrimitiveRouter.vue'
+
+/** 递归渲染器：注入优先（renderer 场景），独立使用回退内置路由 */
+const renderer = inject<Component>(PRIMITIVE_RENDER_KEY, PrimitiveRouter)
 
 const props = defineProps<{
   variant?: 'default' | 'elevated' | 'danger' | 'success'
@@ -45,10 +52,11 @@ const cardClass = computed(() => {
       <template v-if="isStringHeader">
         <span>{{ header }}</span>
       </template>
-      <GuiComponentRenderer v-else-if="headerComponent" :component="headerComponent" />
+      <component :is="renderer" v-else-if="headerComponent" :component="headerComponent" />
     </div>
     <div class="p-3">
-      <GuiComponentRenderer
+      <component
+        :is="renderer"
         v-for="(child, i) in body"
         :key="i"
         :component="child"

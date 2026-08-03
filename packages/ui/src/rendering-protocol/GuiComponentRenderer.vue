@@ -2,7 +2,7 @@
 /**
  * GUI 组件路由器——按 GuiComponent.type 路由到对应 Vue 组件（spec §9.1）。
  *
- * 已实现 6 种内置组件 + ansi-text 兜底。未识别类型与未注册的 custom 降级到 AnsiText，
+ * 已实现 7 种内置组件 + ansi-text 兜底。未识别类型与未注册的 custom 降级到 AnsiText，
  * 把结构化数据 JSON 序列化为文本展示（保证不丢信息，且不崩渲染）。
  *
  * 降级时的 prop 适配（关键点）：
@@ -15,7 +15,11 @@
  *   一致（AnsiText 用 ansi_up 解析 ANSI 转义着色）。
  *
  * custom 组件注册表通过 provide/inject（key 'gui-custom-registry'）注入，供内置 extension
- * 编译期注册自有组件（P2 实现）。
+ * 编译期注册自有组件（P2 实现）。key 的权威定义在 core（@xyz-agent/core/rendering-protocol/custom-registry），
+ * 本组件从 core 导入（与 renderer 旧 gui-registry.ts 同 Symbol 值，零改动接入）。
+ *
+ * 递归：Card/Columns 等容器原语渲染子组件时 inject PRIMITIVE_RENDER_KEY 取渲染器；
+ * 本组件 provide 自身（markRaw 防响应式代理），保证递归行为与 re-home 前一致。
  */
 import { computed, getCurrentInstance, inject, markRaw, provide } from 'vue'
 import type { Component } from 'vue'
@@ -28,9 +32,9 @@ import {
   Card,
   Columns,
   ListTree,
-  PRIMITIVE_RENDER_KEY,
-  GUI_CUSTOM_REGISTRY_KEY,
-} from '@xyz-agent/ui'
+} from './primitives'
+import { PRIMITIVE_RENDER_KEY } from './primitive-render-key'
+import { GUI_CUSTOM_REGISTRY_KEY } from '@xyz-agent/core/rendering-protocol/custom-registry'
 
 /** 递归渲染注入：渲染 Card/Columns 等容器原语时，其内部子组件递归仍走本组件
  *（保留 custom 注册表 + ansi-text 降级逻辑，与 re-home 前行为一致）。

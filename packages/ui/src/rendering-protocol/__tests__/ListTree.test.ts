@@ -1,11 +1,11 @@
 /**
  * ListTree 组件测试（W3 · U6）。
  *
- * 运行：cd packages/renderer && npx vitest run src/__tests__/components/gui/ListTree.test.ts
+ * 运行：cd packages/ui && npx vitest run src/rendering-protocol/__tests__/ListTree.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
-import ListTree from '@/components/panel/message-stream/gui/ListTree.vue'
+import ListTree from '../primitives/ListTree.vue'
 import type { TreeItem } from '@xyz-agent/extension-protocol'
 
 describe('ListTree', () => {
