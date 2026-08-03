@@ -132,11 +132,20 @@ export interface TreeItem {
 }
 export type TreeItemIcon = 'arrow' | 'check' | 'cross' | 'circle' | 'dot' | 'pause' | 'branch'
 
-// ── Manifest 类型（解析自 package.json 的 xyzAgent 字段）──────────
+/**
+ * 插件描述域类型（manifest/descriptor 契约面）
+ *
+ * 分层标注（IF2）：
+ * - @stable — manifest/descriptor 解析契约（XyzAgentManifest/PluginDescriptor/PluginContributes）
+ * - @internal — runtime 内部扫描态字段（PluginState 引用、compatibilityError）
+ */
 
-/** 插件来源：随应用分发的内置插件 或 用户安装的外部插件 */
+/** @stable — 插件来源：随应用分发的内置插件 或 用户安装的外部插件 */
 export type PluginSource = 'built-in' | 'external'
 
+/**
+ * @stable — 插件 manifest（解析自 package.json 的 xyzAgent 字段）。
+ */
 export interface XyzAgentManifest {
   manifestVersion: 1
   main: string
@@ -150,6 +159,9 @@ export interface XyzAgentManifest {
   extensionDependencies?: string[]
 }
 
+/**
+ * @stable — 插件 package.json 契约。
+ */
 export interface XyzAgentPackageJson {
   name: string
   version: string
@@ -161,6 +173,9 @@ export interface XyzAgentPackageJson {
 
 // ── Descriptor（扫描后产出的完整描述）──────────────────────────
 
+/**
+ * @stable — 完整插件描述（扫描后产出，registry 对外契约面）。
+ */
 export interface PluginDescriptor {
   pluginId: string
   version: string
@@ -182,6 +197,9 @@ export interface PluginDescriptor {
   compatibilityError?: string
 }
 
+/**
+ * @stable — 插件贡献点声明（contributes，schema v2）。
+ */
 export interface PluginContributes {
   slashCommands?: Array<{ name: string; description: string }>
   tools?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>
@@ -193,7 +211,10 @@ export interface PluginContributes {
   statusBarItems?: PluginContributesStatusBarItem[]
 }
 
-/** schema v2：views 声明（panels 演进产物，placement 为开放字符串——挂载点由壳注册） */
+/**
+ * @proposed — schema v2 views 声明（panels 演进产物，placement 为开放字符串——
+ * 挂载点由壳注册）。
+ */
 export interface PluginContributesView {
   id: string
   title: string
@@ -205,20 +226,27 @@ export interface PluginContributesView {
   initialVisibility?: 'visible' | 'hidden'
 }
 
-/** schema v2：menus 按挂载点名分组的命令菜单映射（VSCode contribution points 风格） */
+/**
+ * @proposed — schema v2 menus 按挂载点名分组的命令菜单映射
+ * （VSCode contribution points 风格）。
+ */
 export interface PluginContributesMenu {
   'composer.toolbar'?: PluginMenuItem[]
   'panel.header'?: PluginMenuItem[]
   'sidebar.footer'?: PluginMenuItem[]
 }
 
+/** @proposed — 菜单项 */
 export interface PluginMenuItem {
   command: string
   when?: string
   group?: string
 }
 
-/** schema v2：声明式命令表（与 api.commands.register 互补：声明提供元数据，register 提供 handler） */
+/**
+ * @proposed — schema v2 声明式命令表（与 api.commands.register 互补：
+ * 声明提供元数据，register 提供 handler）。
+ */
 export interface PluginContributesCommand {
   command: string
   title: string
@@ -228,12 +256,16 @@ export interface PluginContributesCommand {
   icon?: string
 }
 
-/** schema v2：JSON Schema 子集（VSCode configuration 风格），驱动设置页表单 */
+/**
+ * @proposed — schema v2 JSON Schema 子集（VSCode configuration 风格），
+ * 驱动设置页表单。
+ */
 export interface PluginContributesConfiguration {
   title?: string
   properties: Record<string, PluginConfigurationProperty>
 }
 
+/** @proposed — 配置属性定义 */
 export interface PluginConfigurationProperty {
   type: 'string' | 'number' | 'boolean' | 'array' | 'object'
   default?: unknown
@@ -242,7 +274,10 @@ export interface PluginConfigurationProperty {
   enumDescriptions?: string[]
 }
 
-/** schema v2：旧三字段（id/text/priority）原样保留保证向后兼容，扩展字段全 optional */
+/**
+ * @proposed — schema v2 status bar 贡献（旧三字段原样保留保证向后兼容，
+ * 扩展字段全 optional）。
+ */
 export interface PluginContributesStatusBarItem {
   id: string
   text: string
@@ -289,7 +324,13 @@ export type RpcMessage = RpcRequest | RpcResponse | RpcNotification
 
 // ── Error Codes ──────────────────────────────────────────────────
 
-export const PluginRpcErrorCodes = {
+/**
+ * @stable — RPC 错误码常量，SDK 契约面。
+ *
+ * 经 Object.freeze 冻结：插件与 runtime 均不可在运行时修改错误码，
+ * 保证错误判定（code 比较）的确定性。
+ */
+export const PluginRpcErrorCodes = Object.freeze({
   RPC_TIMEOUT: -32000,
   PERMISSION_DENIED: -32001,
   PLUGIN_NOT_FOUND: -32010,
@@ -298,16 +339,21 @@ export const PluginRpcErrorCodes = {
   PAYLOAD_TOO_LARGE: -32021,
   METHOD_NOT_FOUND: -32601,
   INTERNAL_ERROR: -32603,
-} as const
+} as const)
 
 export type PluginRpcErrorCode = (typeof PluginRpcErrorCodes)[keyof typeof PluginRpcErrorCodes]
 
-// ── Hook 类型（插件拦截/观察机制）────────────────────────────────────
-//
-// 本文件包含插件 hook 系统的全部类型：可拦截/可观察的 hook 类型、
-// 拦截器/观察者处理函数、执行上下文与返回结果。无跨域依赖。
+/**
+ * Hook 类型（插件拦截/观察机制）
+ *
+ * 分层标注（IF2）：
+ * - @proposed — Hook 机制整体为 Phase 2 扩展面（API 表面仍在演进）
+ * - @internal — runtime 内部执行细节（HookResult/HookBlockedResult 等主线程塑形）
+ */
 
-/** 可拦截的 hook 类型，插件可阻止或修改数据 */
+/**
+ * @proposed — 可拦截的 hook 类型，插件可阻止或修改数据。
+ */
 export type InterceptorHookType =
   | 'onToolCall'
   | 'onSlashCommand'
@@ -317,20 +363,26 @@ export type InterceptorHookType =
   | 'onBeforeAgentStart'
   | 'onAfterToolResult'
 
-/** 只观察的 hook 类型，插件只能读取数据不能阻止 */
+/**
+ * @proposed — 只观察的 hook 类型，插件只能读取数据不能阻止。
+ */
 export type ObserverHookType = 'onMessage' | 'onSessionCreate' | 'onSessionDestroy'
 
-/** 所有 hook 类型 */
+/** @proposed — 所有 hook 类型 */
 export type HookType = InterceptorHookType | ObserverHookType
 
-/** 拦截器返回结果：允许/阻止/修改数据 */
+/**
+ * @proposed — 拦截器返回结果：允许/阻止/修改数据。
+ */
 export interface InterceptorResult {
   proceed: boolean
   reason?: string
   modifiedData?: unknown
 }
 
-/** Hook 执行上下文 */
+/**
+ * @proposed — Hook 执行上下文。
+ */
 export interface HookContext {
   pluginId: string
   hookType: HookType
@@ -341,16 +393,22 @@ export interface HookContext {
   content?: string
 }
 
-/** Hook 拦截器处理函数 — 可阻止或修改数据 */
+/**
+ * @proposed — Hook 拦截器处理函数（可阻止或修改数据）。
+ */
 export type HookInterceptor = (context: HookContext) => Promise<InterceptorResult>
 
-/** Hook 观察者处理函数 — 只能读取数据 */
+/**
+ * @proposed — Hook 观察者处理函数（只能读取数据）。
+ */
 export type HookObserver = (context: HookContext) => Promise<void>
 
-/** PiEvent 处理函数 */
+/**
+ * @proposed — PiEvent 处理函数。
+ */
 export type PiEventCallback = (eventName: string, data: unknown) => Promise<void>
 
-/** Hook 通用返回结果 */
+/** @internal — runtime 内部：Hook 通用返回结果（主线程塑形） */
 export interface HookResult {
   blocked: boolean
   blockedBy?: string
@@ -358,7 +416,7 @@ export interface HookResult {
   transformedData?: unknown
 }
 
-/** Hook 被阻止时的详细结果 */
+/** @internal — runtime 内部：Hook 被阻止时的详细结果 */
 export interface HookBlockedResult extends HookResult {
   blocked: true
   reason: string
@@ -372,6 +430,14 @@ export interface HookBlockedResult extends HookResult {
  *
  * 这些类型仅用于 runtime（主进程/Worker）内部的插件管理，
  * 不出现在前端↔runtime 的共享协议中。
+ *
+ * 分层标注（IF2）：
+ * - @stable — 稳定契约面（Phase1AgentAPI 核心面 storage/notify/sessions/events、
+ *   PermissionConstants、PluginRpcErrorCodes、Disposable、SessionInfo、PluginStateStorage）
+ * - @proposed — 演进中 API（Phase2AgentAPI 扩展面 tools/hooks/config/sessionData/
+ *   ui/agent/workspace、ToolRegistration、HookEntry、StatusBarItemOptions 等）
+ * - @internal — runtime 内部塑形对象（WorkerHandle、PluginContext、Bridge* 等，
+ *   其中 BridgeSyncPayload/IPluginServiceDeps 已在 sync 时从 SDK 剥离）
  */
 
 // ── Descriptor / Manifest 域 ───────────────────────────────────────
@@ -379,6 +445,7 @@ export interface HookBlockedResult extends HookResult {
 // 现有 `from './plugin-types.js'` 导入不破坏（NON-BREAKING）。
 // ── Worker 类型 ─────────────────────────────────────────────────
 
+/** @internal — runtime 内部：Worker 句柄，仅主进程 Worker 池使用 */
 export interface WorkerHandle {
   workerId: string
   threadId: number
@@ -391,8 +458,10 @@ export interface WorkerHandle {
 
 // ── Activation 类型 ────────────────────────────────────────────
 
+/** @internal — runtime 内部：插件激活事件（激活时机声明） */
 export type ActivationEventType = 'onStartupFinished' | 'onSessionCreate' | 'onSlashCommand' | 'onToolCall'
 
+/** @internal — runtime 内部：激活事件载荷 */
 export interface ActivationEvent {
   type: ActivationEventType
   command?: string
@@ -401,6 +470,7 @@ export interface ActivationEvent {
 
 // ── Plugin Context（传递给插件 activate 函数的上下文）──────────
 
+/** @internal — runtime 内部：插件 activate 上下文（不进 SDK 插件作者契约面） */
 export interface PluginContext {
   readonly pluginId: string
   readonly pluginPath: string
@@ -410,6 +480,7 @@ export interface PluginContext {
   readonly subscriptions: Disposable[]
 }
 
+/** @internal — runtime 内部：插件模块加载契约 */
 export interface PluginModule {
   activate(context: PluginContext): void | Promise<void>
   deactivate?(): void | Promise<void>
@@ -423,6 +494,12 @@ export interface PluginModule {
 // 只会搬运耦合、制造 import 纠缠，故本轮 P3 拆分刻意将其保留在此处。
 // 待 tool/hook 域各自稳定、API 表面收敛后再独立。
 
+/**
+ * @stable — Phase 1 最小集 AgentAPI 核心面（storage/notify/sessions/events）。
+ *
+ * 此核心面是插件可依赖的稳定契约：storage（全局/工作区存储）、notify（通知）、
+ * sessions（会话查询与消息发送）、events（事件订阅/发布）。
+ */
 export interface Phase1AgentAPI {
   readonly storage: {
     readonly global: PluginStateStorage
@@ -447,6 +524,9 @@ export interface Phase1AgentAPI {
   }
 }
 
+/**
+ * @stable — 会话信息（sessions 面返回的稳定数据结构）。
+ */
 export interface SessionInfo {
   id: string
   label: string
@@ -459,6 +539,9 @@ export interface SessionInfo {
 
 // ── Storage 类型 ─────────────────────────────────────────────────
 
+/**
+ * @stable — 键值存储接口（storage 面的稳定契约）。
+ */
 export interface PluginStateStorage {
   get<T>(key: string): Promise<T | undefined>
   get<T>(key: string, defaultValue: T): Promise<T>
@@ -472,12 +555,14 @@ export interface PluginStateStorage {
 // 现有 `from './plugin-types.js'` 导入不破坏（NON-BREAKING）。
 // ── Lifecycle 消息类型（Worker ↔ 主线程）────────────────────────
 
+/** @internal — runtime 内部：Worker↔主线程 lifecycle 消息（宿主方向） */
 export type HostToWorkerMessage =
   | { type: 'load'; pluginId: string; pluginPath: string; trustLevel?: 'trusted' | 'sandbox' }
   | { type: 'activate'; pluginId: string; pluginDir: string; event: ActivationEvent }
   | { type: 'deactivate'; pluginId: string }
   | { type: 'rpc'; response?: RpcResponse; notification?: RpcNotification; request?: RpcRequest }
 
+/** @internal — runtime 内部：Worker↔主线程 lifecycle 消息（Worker 方向） */
 export type WorkerToHostMessage =
   | { type: 'loaded'; pluginId: string }
   | { type: 'activated'; pluginId: string }
@@ -493,20 +578,31 @@ export type WorkerToHostMessage =
 // 自动生成、且刻意保持零依赖（第三方插件作者无需装整个 monorepo）。若改 re-export
 // 会让 sync 后的 SDK 引入 @xyz-agent/shared 依赖，破坏独立性。故保留独立定义——
 // 这是有意的跨包契约重复，sync 脚本是它的「真相源」。
+/**
+ * @stable — 可释放资源契约（Disposable 是插件生命周期的基础设施）。
+ */
 export interface Disposable {
   dispose(): void
 }
 
+/** @internal — runtime 内部：权限字符串别名 */
 export type PluginPermission = string
 
+/** @internal — runtime 内部：插件生命周期状态机 */
 export type PluginState = 'UNLOADED' | 'LOADING' | 'ACTIVATING' | 'ACTIVE' | 'DEACTIVATING' | 'CRASHED' | 'DEPS_MISSING'
 
 // ── RPC Error Codes 域 ────────────────────────────────────────────
 // 已拆分到 ./plugin-types/rpc-protocol.ts。const 必须用 export-from 重导出。
 // ── Permission Constants ─────────────────────────────────────────
 
-/** 插件权限常量，用于 PermissionChecker 的权限校验 */
-export const PermissionConstants = {
+/**
+ * 插件权限常量，用于 PermissionChecker 的权限校验。
+ *
+ * @stable — 权限字符串是 SDK 契约面：插件声明 permissions 依赖这些字面量，
+ * runtime 权限校验（PermissionChecker）依赖其确定性。经 Object.freeze 冻结，
+ * 运行时修改会抛错（strict 模式）。
+ */
+export const PermissionConstants = Object.freeze({
   /** 允许注册自定义工具 */
   TOOLS_REGISTER: 'tools.register',
   /** 允许注册 hooks */
@@ -519,11 +615,12 @@ export const PermissionConstants = {
   STORAGE_ACCESS: 'storage.access',
   /** 允许发送通知 */
   NOTIFY: 'notify',
-} as const
+} as const)
 
+/** @stable — 权限常量索引类型（随 PermissionConstants 冻结） */
 export type PermissionConstant = (typeof PermissionConstants)[keyof typeof PermissionConstants]
 
-/** Bridge 拦截响应，包含注入的消息列表 */
+/** @internal — runtime 内部：Bridge 拦截响应（Worker↔主进程桥接协议） */
 export interface BridgeInterceptResponse {
   blocked?: boolean
   reason?: string
@@ -532,28 +629,28 @@ export interface BridgeInterceptResponse {
 
 // ── Bridge 类型（插件 Worker ↔ 主进程桥接）─────────────────────────
 
-/** Bridge 连接状态 */
+/** @internal — runtime 内部：Bridge 连接状态 */
 export interface BridgeState {
   pluginId: string
   connected: boolean
   lastSyncAt: number
 }
 
-/** 插件向主进程同步工具和 hooks 的请求 */
+/** @internal — runtime 内部：插件向主进程同步工具和 hooks 的请求 */
 export interface BridgeSyncRequest {
   type: 'bridge.sync'
   tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>
   hooks: HookType[]
 }
 
-/** 主进程响应 Bridge 同步的结果 */
+/** @internal — runtime 内部：主进程响应 Bridge 同步的结果 */
 export interface BridgeSyncResponse {
   success: boolean
   registeredTools: string[]
   registeredHooks: HookType[]
 }
 
-/** 主进程调用插件注册的工具 */
+/** @internal — runtime 内部：主进程调用插件注册的工具 */
 export interface BridgeToolExecuteRequest {
   type: 'bridge.tool.execute'
   toolName: string
@@ -562,13 +659,14 @@ export interface BridgeToolExecuteRequest {
   toolCallId?: string
 }
 
-/** 插件返回工具执行结果 */
+/** @internal — runtime 内部：插件返回工具执行结果 */
 export interface BridgeToolExecuteResponse {
   content: string
   isError?: boolean
 }
 
 /** Worker 侧 tool 执行处理函数 */
+/** @internal — runtime 内部：Worker 侧 tool 执行处理函数 */
 export type ToolExecuteHandler = (params: {
   arguments: Record<string, unknown>
   sessionId?: string
@@ -577,7 +675,9 @@ export type ToolExecuteHandler = (params: {
 
 // ── Phase 2: Tool 类型 ──────────────────────────────────────────────
 
-/** 工具注册请求（插件通过 api.tools.register() 提交） */
+/**
+ * @proposed — 工具注册请求（Phase 2 扩展面，API 表面仍在演进）。
+ */
 export interface ToolRegistration {
   name: string
   description: string
@@ -586,7 +686,7 @@ export interface ToolRegistration {
   execute?: ToolExecuteHandler
 }
 
-/** 工具注册表中存储的条目（主线程侧） */
+/** @internal — runtime 内部：工具注册表条目（主线程侧） */
 export interface ToolEntry {
   pluginId: string
   handlerId: string
@@ -595,7 +695,9 @@ export interface ToolEntry {
 
 // ── Phase 2: Hook 注册表条目 ──────────────────────────────────────────
 
-/** Status bar item options for plugin API */
+/**
+ * @proposed — status bar item 选项（Phase 2 扩展面）。
+ */
 export interface StatusBarItemOptions {
   tooltip?: string
   commandId?: string
@@ -604,7 +706,7 @@ export interface StatusBarItemOptions {
   sessionId?: string
 }
 
-/** Hook 注册表中存储的条目（主线程侧） */
+/** @internal — runtime 内部：Hook 注册表条目（主线程侧） */
 export interface HookEntry {
   pluginId: string
   handlerId: string
@@ -616,7 +718,10 @@ export interface HookEntry {
 
 // ── Phase 2 AgentAPI（在 Phase 1 基础上增加 tools 和 hooks）─────────
 
-/** Phase 2 AgentAPI，扩展 Phase 1 增加 tools、hooks 和 extended API 代理对象 */
+/**
+ * @proposed — Phase 2 AgentAPI 扩展面（tools/hooks/config/sessionData/ui/agent/
+ * workspace/commands/views），在 Phase 1 核心面上叠加，API 表面仍在演进。
+ */
 export interface Phase2AgentAPI extends Phase1AgentAPI {
   readonly tools: {
     register(registration: ToolRegistration): Promise<string>
@@ -672,7 +777,7 @@ export interface Phase2AgentAPI extends Phase1AgentAPI {
   }
 }
 
-/** 插件向后端请求前端 UI 弹窗 */
+/** @internal — runtime 内部：插件向后端请求前端 UI 弹窗 */
 export interface PluginUIRequest {
   sessionId: string
   requestId: string

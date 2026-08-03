@@ -21,6 +21,14 @@ import type {
  *
  * 这些类型仅用于 runtime（主进程/Worker）内部的插件管理，
  * 不出现在前端↔runtime 的共享协议中。
+ *
+ * 分层标注（IF2）：
+ * - @stable — 稳定契约面（Phase1AgentAPI 核心面 storage/notify/sessions/events、
+ *   PermissionConstants、PluginRpcErrorCodes、Disposable、SessionInfo、PluginStateStorage）
+ * - @proposed — 演进中 API（Phase2AgentAPI 扩展面 tools/hooks/config/sessionData/
+ *   ui/agent/workspace、ToolRegistration、HookEntry、StatusBarItemOptions 等）
+ * - @internal — runtime 内部塑形对象（WorkerHandle、PluginContext、Bridge* 等，
+ *   其中 BridgeSyncPayload/IPluginServiceDeps 已在 sync 时从 SDK 剥离）
  */
 
 // ── Descriptor / Manifest 域 ───────────────────────────────────────
@@ -36,6 +44,7 @@ export type {
 
 // ── Worker 类型 ─────────────────────────────────────────────────
 
+/** @internal — runtime 内部：Worker 句柄，仅主进程 Worker 池使用 */
 export interface WorkerHandle {
   workerId: string
   threadId: number
@@ -48,8 +57,10 @@ export interface WorkerHandle {
 
 // ── Activation 类型 ────────────────────────────────────────────
 
+/** @internal — runtime 内部：插件激活事件（激活时机声明） */
 export type ActivationEventType = 'onStartupFinished' | 'onSessionCreate' | 'onSlashCommand' | 'onToolCall'
 
+/** @internal — runtime 内部：激活事件载荷 */
 export interface ActivationEvent {
   type: ActivationEventType
   command?: string
@@ -58,6 +69,7 @@ export interface ActivationEvent {
 
 // ── Plugin Context（传递给插件 activate 函数的上下文）──────────
 
+/** @internal — runtime 内部：插件 activate 上下文（不进 SDK 插件作者契约面） */
 export interface PluginContext {
   readonly pluginId: string
   readonly pluginPath: string
@@ -67,6 +79,7 @@ export interface PluginContext {
   readonly subscriptions: Disposable[]
 }
 
+/** @internal — runtime 内部：插件模块加载契约 */
 export interface PluginModule {
   activate(context: PluginContext): void | Promise<void>
   deactivate?(): void | Promise<void>
@@ -80,6 +93,12 @@ export interface PluginModule {
 // 只会搬运耦合、制造 import 纠缠，故本轮 P3 拆分刻意将其保留在此处。
 // 待 tool/hook 域各自稳定、API 表面收敛后再独立。
 
+/**
+ * @stable — Phase 1 最小集 AgentAPI 核心面（storage/notify/sessions/events）。
+ *
+ * 此核心面是插件可依赖的稳定契约：storage（全局/工作区存储）、notify（通知）、
+ * sessions（会话查询与消息发送）、events（事件订阅/发布）。
+ */
 export interface Phase1AgentAPI {
   readonly storage: {
     readonly global: PluginStateStorage
@@ -104,6 +123,9 @@ export interface Phase1AgentAPI {
   }
 }
 
+/**
+ * @stable — 会话信息（sessions 面返回的稳定数据结构）。
+ */
 export interface SessionInfo {
   id: string
   label: string
@@ -116,6 +138,9 @@ export interface SessionInfo {
 
 // ── Storage 类型 ─────────────────────────────────────────────────
 
+/**
+ * @stable — 键值存储接口（storage 面的稳定契约）。
+ */
 export interface PluginStateStorage {
   get<T>(key: string): Promise<T | undefined>
   get<T>(key: string, defaultValue: T): Promise<T>
@@ -138,12 +163,14 @@ export type {
 
 // ── Lifecycle 消息类型（Worker ↔ 主线程）────────────────────────
 
+/** @internal — runtime 内部：Worker↔主线程 lifecycle 消息（宿主方向） */
 export type HostToWorkerMessage =
   | { type: 'load'; pluginId: string; pluginPath: string; trustLevel?: 'trusted' | 'sandbox' }
   | { type: 'activate'; pluginId: string; pluginDir: string; event: ActivationEvent }
   | { type: 'deactivate'; pluginId: string }
   | { type: 'rpc'; response?: RpcResponse; notification?: RpcNotification; request?: RpcRequest }
 
+/** @internal — runtime 内部：Worker↔主线程 lifecycle 消息（Worker 方向） */
 export type WorkerToHostMessage =
   | { type: 'loaded'; pluginId: string }
   | { type: 'activated'; pluginId: string }
@@ -159,12 +186,17 @@ export type WorkerToHostMessage =
 // 自动生成、且刻意保持零依赖（第三方插件作者无需装整个 monorepo）。若改 re-export
 // 会让 sync 后的 SDK 引入 @xyz-agent/shared 依赖，破坏独立性。故保留独立定义——
 // 这是有意的跨包契约重复，sync 脚本是它的「真相源」。
+/**
+ * @stable — 可释放资源契约（Disposable 是插件生命周期的基础设施）。
+ */
 export interface Disposable {
   dispose(): void
 }
 
+/** @internal — runtime 内部：权限字符串别名 */
 export type PluginPermission = string
 
+/** @internal — runtime 内部：插件生命周期状态机 */
 export type PluginState = 'UNLOADED' | 'LOADING' | 'ACTIVATING' | 'ACTIVE' | 'DEACTIVATING' | 'CRASHED' | 'DEPS_MISSING'
 
 // ── RPC Error Codes 域 ────────────────────────────────────────────
@@ -174,8 +206,14 @@ export type { PluginRpcErrorCode } from './plugin-types/rpc-protocol.js'
 
 // ── Permission Constants ─────────────────────────────────────────
 
-/** 插件权限常量，用于 PermissionChecker 的权限校验 */
-export const PermissionConstants = {
+/**
+ * 插件权限常量，用于 PermissionChecker 的权限校验。
+ *
+ * @stable — 权限字符串是 SDK 契约面：插件声明 permissions 依赖这些字面量，
+ * runtime 权限校验（PermissionChecker）依赖其确定性。经 Object.freeze 冻结，
+ * 运行时修改会抛错（strict 模式）。
+ */
+export const PermissionConstants = Object.freeze({
   /** 允许注册自定义工具 */
   TOOLS_REGISTER: 'tools.register',
   /** 允许注册 hooks */
@@ -188,11 +226,12 @@ export const PermissionConstants = {
   STORAGE_ACCESS: 'storage.access',
   /** 允许发送通知 */
   NOTIFY: 'notify',
-} as const
+} as const)
 
+/** @stable — 权限常量索引类型（随 PermissionConstants 冻结） */
 export type PermissionConstant = (typeof PermissionConstants)[keyof typeof PermissionConstants]
 
-/** Bridge 拦截响应，包含注入的消息列表 */
+/** @internal — runtime 内部：Bridge 拦截响应（Worker↔主进程桥接协议） */
 export interface BridgeInterceptResponse {
   blocked?: boolean
   reason?: string
@@ -200,7 +239,8 @@ export interface BridgeInterceptResponse {
 }
 
 /**
- * bridge:sync 同步负载（plugin-service 塑形后返回）。
+ * @internal — runtime 内部：bridge:sync 同步负载（plugin-service 塑形后返回，
+ * sync-types.sh 已将其从 SDK 剥离）。
  *
  * transport 只 reply 此对象，不再做 schema 塑形。
  * commands 目前固定为空数组（pi 侧命令发现另走 getCommands）。
@@ -213,28 +253,28 @@ export interface BridgeSyncPayload {
 
 // ── Bridge 类型（插件 Worker ↔ 主进程桥接）─────────────────────────
 
-/** Bridge 连接状态 */
+/** @internal — runtime 内部：Bridge 连接状态 */
 export interface BridgeState {
   pluginId: string
   connected: boolean
   lastSyncAt: number
 }
 
-/** 插件向主进程同步工具和 hooks 的请求 */
+/** @internal — runtime 内部：插件向主进程同步工具和 hooks 的请求 */
 export interface BridgeSyncRequest {
   type: 'bridge.sync'
   tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>
   hooks: HookType[]
 }
 
-/** 主进程响应 Bridge 同步的结果 */
+/** @internal — runtime 内部：主进程响应 Bridge 同步的结果 */
 export interface BridgeSyncResponse {
   success: boolean
   registeredTools: string[]
   registeredHooks: HookType[]
 }
 
-/** 主进程调用插件注册的工具 */
+/** @internal — runtime 内部：主进程调用插件注册的工具 */
 export interface BridgeToolExecuteRequest {
   type: 'bridge.tool.execute'
   toolName: string
@@ -243,13 +283,14 @@ export interface BridgeToolExecuteRequest {
   toolCallId?: string
 }
 
-/** 插件返回工具执行结果 */
+/** @internal — runtime 内部：插件返回工具执行结果 */
 export interface BridgeToolExecuteResponse {
   content: string
   isError?: boolean
 }
 
 /** Worker 侧 tool 执行处理函数 */
+/** @internal — runtime 内部：Worker 侧 tool 执行处理函数 */
 export type ToolExecuteHandler = (params: {
   arguments: Record<string, unknown>
   sessionId?: string
@@ -258,7 +299,9 @@ export type ToolExecuteHandler = (params: {
 
 // ── Phase 2: Tool 类型 ──────────────────────────────────────────────
 
-/** 工具注册请求（插件通过 api.tools.register() 提交） */
+/**
+ * @proposed — 工具注册请求（Phase 2 扩展面，API 表面仍在演进）。
+ */
 export interface ToolRegistration {
   name: string
   description: string
@@ -267,7 +310,7 @@ export interface ToolRegistration {
   execute?: ToolExecuteHandler
 }
 
-/** 工具注册表中存储的条目（主线程侧） */
+/** @internal — runtime 内部：工具注册表条目（主线程侧） */
 export interface ToolEntry {
   pluginId: string
   handlerId: string
@@ -276,7 +319,9 @@ export interface ToolEntry {
 
 // ── Phase 2: Hook 注册表条目 ──────────────────────────────────────────
 
-/** Status bar item options for plugin API */
+/**
+ * @proposed — status bar item 选项（Phase 2 扩展面）。
+ */
 export interface StatusBarItemOptions {
   tooltip?: string
   commandId?: string
@@ -285,7 +330,7 @@ export interface StatusBarItemOptions {
   sessionId?: string
 }
 
-/** Hook 注册表中存储的条目（主线程侧） */
+/** @internal — runtime 内部：Hook 注册表条目（主线程侧） */
 export interface HookEntry {
   pluginId: string
   handlerId: string
@@ -297,7 +342,10 @@ export interface HookEntry {
 
 // ── Phase 2 AgentAPI（在 Phase 1 基础上增加 tools 和 hooks）─────────
 
-/** Phase 2 AgentAPI，扩展 Phase 1 增加 tools、hooks 和 extended API 代理对象 */
+/**
+ * @proposed — Phase 2 AgentAPI 扩展面（tools/hooks/config/sessionData/ui/agent/
+ * workspace/commands/views），在 Phase 1 核心面上叠加，API 表面仍在演进。
+ */
 export interface Phase2AgentAPI extends Phase1AgentAPI {
   readonly tools: {
     register(registration: ToolRegistration): Promise<string>
@@ -371,7 +419,7 @@ export type {
 
 // ── PluginService 依赖注入 ──────────────────────────────────────────
 
-/** PluginService 外部依赖，构造时可选注入 */
+/** @internal — runtime 内部：PluginService 外部依赖（sync 时从 SDK 剥离） */
 export interface IPluginServiceDeps {
   sessionService?: ISessionService
   configService?: IConfigService
@@ -386,7 +434,7 @@ export interface IPluginServiceDeps {
   pluginInstaller?: import('../ports/plugin-installer.js').IPluginInstaller
 }
 
-/** 插件向后端请求前端 UI 弹窗 */
+/** @internal — runtime 内部：插件向后端请求前端 UI 弹窗 */
 export interface PluginUIRequest {
   sessionId: string
   requestId: string
