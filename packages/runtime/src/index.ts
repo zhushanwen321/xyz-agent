@@ -10,7 +10,7 @@ import { getDataDir } from '@xyz-agent/shared/paths'
 import { initLogger, closeLogger } from './infra/logger.js'
 
 import { ProcessManager } from './infra/pi/process-manager.js'
-import { migrateToPiSubdir, getProviderConfig, cleanLeakedPackages } from './infra/pi/pi-provider-store.js'
+import { migrateToPiSubdir, getProviderConfig, cleanLeakedPackages, sanitizeInvalidProviders } from './infra/pi/pi-provider-store.js'
 import { getExtensionsDir, getNpmDir, getTmpDir } from './infra/pi/pi-paths.js'
 import { PiConfigStore } from './infra/pi/pi-config-store.js'
 import { PiSessionStore } from './infra/pi/session-store.js'
@@ -115,6 +115,10 @@ async function main(): Promise<void> {
   migrateToPiSubdir()
   // 清理 settings.json.packages 中泄漏到 pi 全局目录的相对路径项（架构约定 #1 隔离保障）
   cleanLeakedPackages()
+  // 剔除 models.json 里的空壳 provider（五字段全缺）：空壳导致 bundled pi 0.80.3 严格校验时
+  // 整个 models.json 加载失败（Model not found）。系统 pi 0.83 容错但 bundled 不容错，
+  // 重装后必现。sanitize 让 xyz-agent 自愈这种脏数据（如外部脚本写入的测试 fixture）。
+  sanitizeInvalidProviders()
 
   const configStore = new PiConfigStore()
   const sessionStore = new PiSessionStore()

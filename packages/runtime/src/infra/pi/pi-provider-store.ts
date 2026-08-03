@@ -611,4 +611,74 @@ export function cleanLeakedPackages(): { removed: string[] } {
   }
 }
 
+// ── models.json 无效 provider 清理（重装后 "Model not found" 自愈）──────
+//
+// 背景：bundled pi 0.80.3 对 models.json 校验严格——任一 provider 缺五字段
+//（baseUrl/headers/compat/modelOverrides/models）全缺时，整个 models.json 加载失败，
+// 导致所有 model not found。系统 pi 0.83 对此容错，但重装后切换 bundled pi 必现。
+// 典型脏数据：外部脚本写入的测试 fixture provider（如 concurrency-verify-A）。
+// 启动时一次性剔除这类空壳 provider，让 xyz-agent 自愈。
+
+/**
+ * 判定 provider 是否无效（pi 会拒绝加载）。
+ *
+ * pi 0.80.3 报错原文：provider must specify "baseUrl", "headers", "compat",
+ * "modelOverrides", or "models"。五字段全缺则 pi 拒绝该 provider；0.80.3 更严格——
+ * 一个无效 provider 会导致整个 models.json 加载失败。本函数对齐 pi 判定标准，
+ * 供 sanitizeInvalidProviders 启动时剔除空壳 provider（如外部脚本写入的测试 fixture）。
+ *
+ * compat 是 pi 端 provider 级字段（xyz-agent PiProviderConfig 未声明，但运行时脏数据
+ * 可能含），用宽松键检查（as Record<string,unknown>）不遗漏。
+ *
+ * models 空数组（[]）视为未 specify（无法提供任何模型，与 undefined 等效）；
+ * 其余四字段（baseUrl/headers/modelOverrides）用存在性检查（!=null），
+ * 空字符串/空对象视为 specify（代表配置意图，pi 接受）。
+ */
+export function isInvalidProvider(provider: PiProviderConfig): boolean {
+  const raw = provider as Record<string, unknown>
+  const hasModels = Array.isArray(raw.models) && raw.models.length > 0
+  return (
+    raw.baseUrl == null &&
+    raw.headers == null &&
+    raw.compat == null &&
+    raw.modelOverrides == null &&
+    !hasModels
+  )
+}
+
+/**
+ * 启动时剔除 models.json 里的无效 provider（五字段全缺的空壳）。
+ *
+ * 修复根因：空壳 provider（如 {apiKey, name} 无五字段任一）导致 bundled pi 0.80.3
+ * 严格校验时整个 models.json 加载失败。系统 pi 0.83 对此容错但 bundled 0.80.3 不容错，
+ * 重装后切换 bundled pi 必现 "Model not found"。本函数让 xyz-agent 自愈这种脏数据。
+ *
+ * 启动时一次性调用（index.ts cleanLeakedPackages 之后）。幂等：无无效 provider 时不触发写。
+ * 永不抛错：失败仅 warn 不阻塞启动（对齐 cleanLeakedPackages ES1 风格）。
+ *
+ * @returns { removed: string[] } 被剔除的 provider id 列表
+ */
+export function sanitizeInvalidProviders(): { removed: string[] } {
+  try {
+    modelsStore.invalidate()
+    const draft: PiModelsConfig = JSON.parse(JSON.stringify(readModels()))
+    const removed: string[] = []
+    for (const [id, cfg] of Object.entries(draft.providers)) {
+      if (isInvalidProvider(cfg)) {
+        delete draft.providers[id]
+        removed.push(id)
+      }
+    }
+    if (removed.length > 0) {
+      writeModels(draft)
+      console.log('[provider-store] sanitized invalid providers:', removed)
+    }
+    return { removed }
+  } catch (e) {
+    // best-effort 降级：models.json 异常不阻塞启动（pi 自身加载时也会容错或报错）
+    console.warn('[provider-store] sanitizeInvalidProviders failed:', e)
+    return { removed: [] }
+  }
+}
+
 
