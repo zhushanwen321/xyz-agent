@@ -255,6 +255,9 @@ importers:
 
   packages/core:
     dependencies:
+      '@xyz-agent/extension-protocol':
+        specifier: workspace:*
+        version: link:../extension-protocol
       '@xyz-agent/shared':
         specifier: workspace:*
         version: link:../shared

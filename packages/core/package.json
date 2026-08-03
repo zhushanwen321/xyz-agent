@@ -18,6 +18,10 @@
       "types": "./src/platform/port.ts",
       "import": "./src/platform/port.ts"
     },
+    "./rendering-protocol": {
+      "types": "./src/rendering-protocol/index.ts",
+      "import": "./src/rendering-protocol/index.ts"
+    },
     "./rendering-protocol/custom-registry": {
       "types": "./src/rendering-protocol/custom-registry.ts",
       "import": "./src/rendering-protocol/custom-registry.ts"
@@ -36,6 +40,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@xyz-agent/extension-protocol": "workspace:*",
     "@xyz-agent/shared": "workspace:*",
     "vue": "^3.5",
     "pinia": "^3"
