@@ -254,6 +254,16 @@ importers:
   extensions/vision: {}
 
   packages/core:
+    dependencies:
+      '@xyz-agent/shared':
+        specifier: workspace:*
+        version: link:../shared
+      pinia:
+        specifier: ^3
+        version: 3.0.4(typescript@5.9.3)(vue@3.5.39(typescript@5.9.3))
+      vue:
+        specifier: ^3.5
+        version: 3.5.39(typescript@5.9.3)
     devDependencies:
       typescript:
         specifier: ^5.8

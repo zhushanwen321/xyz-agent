@@ -15,10 +15,31 @@ export interface KVStorage {
   remove(key: string): Promise<void>
 }
 
+// WebSocketLike —— WebSocket 抽象（属性式回调，贴合原生 WebSocket 语义）。
+// 平台适配层（ElectronPlatformAdapter/MockPlatform）按本接口实现真实/模拟连接。
+// readyState 数字常量对齐 WHATWG：CONNECTING=0 / OPEN=1 / CLOSING=2 / CLOSED=3。
+export interface WebSocketLike {
+  readonly readyState: number
+  send(data: string): void
+  close(): void
+  onopen: (() => void) | null
+  onclose: (() => void) | null
+  onmessage: ((event: { data: unknown }) => void) | null
+  onerror: ((err: unknown) => void) | null
+}
+
+/** WebSocketLike.readyState 常量（WHATWG 对齐） */
+export const WS_READY_STATE = {
+  CONNECTING: 0,
+  OPEN: 1,
+  CLOSING: 2,
+  CLOSED: 3,
+} as const
+
 // WebSocketFactory —— ws-client 消费 factory.create(url) 而非 new WebSocket(url)（platform-port-spike IF-websocket-factory）。
-// 完整 WebSocketLike（readyState/send/close/addEventListener + OPEN/CONNECTING/CLOSING/CLOSED）待正式实现。
+// mock 模式由 platform 注入 mock factory（platform.kind === 'mock' 时 create 返回模拟实例）。
 export interface WebSocketFactory {
-  create(url: string): unknown
+  create(url: string): WebSocketLike
 }
 
 // IpcBridge —— renderer 对 electronAPI 的唯一正式端口（platform-port-spike IF-ipc-bridge）。

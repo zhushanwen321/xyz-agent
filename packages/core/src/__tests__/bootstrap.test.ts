@@ -2,8 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // namespace import：vi.spyOn(portNs, 'providePlatform') 需 namespace 可写（vitest 支持）。
 import * as portNs from '../platform/port'
 import { bootstrap, bootstrapSteps, type BootstrapOptions } from '../bootstrap'
+import { createFakeWebSocket } from '../transport/__tests__/helpers/fake-websocket'
 
-// 最小 mock PlatformPort（满足 BootstrapOptions.platform 类型）
+// 最小 mock PlatformPort（满足 BootstrapOptions.platform 类型；webSocket stub 返回合法 WebSocketLike）
 function makeOptions(): BootstrapOptions {
   return {
     platform: {
@@ -13,7 +14,7 @@ function makeOptions(): BootstrapOptions {
         set: async () => {},
         remove: async () => {},
       },
-      webSocket: { create: () => ({}) },
+      webSocket: { create: () => createFakeWebSocket() },
       ipc: null,
     },
     connectionMode: 'mock',

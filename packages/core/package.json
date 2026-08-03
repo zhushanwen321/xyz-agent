@@ -24,6 +24,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@xyz-agent/shared": "workspace:*",
     "vue": "^3.5",
     "pinia": "^3"
   },
