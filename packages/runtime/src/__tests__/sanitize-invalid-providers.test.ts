@@ -59,6 +59,18 @@ describe('isInvalidProvider', () => {
     Object.assign(provider, { compat: { foo: 1 } })
     expect(isInvalidProvider(provider)).toBe(false)
   })
+
+  it('WTC13: baseUrl 空字符串判定无效（pi zod minLength=1 实测拒绝：must not have fewer than 1 characters）', () => {
+    expect(isInvalidProvider({ baseUrl: '', apiKey: 'sk' })).toBe(true)
+  })
+
+  it('WTC14: modelOverrides 空对象判定无效（pi applyModelsJson 要求 Object.keys().length>0）', () => {
+    expect(isInvalidProvider({ modelOverrides: {} })).toBe(true)
+  })
+
+  it('WTC15: provider 值为 null 判定无效（zod ProviderConfigSchema 拒绝非对象值）', () => {
+    expect(isInvalidProvider(null as unknown as PiProviderConfig)).toBe(true)
+  })
 })
 
 describe('sanitizeInvalidProviders', () => {
@@ -121,5 +133,18 @@ describe('sanitizeInvalidProviders', () => {
     expect(second.removed).toEqual([])
     // 第二次后文件状态与第一次后一致
     expect(Object.keys(readModelsProviders()).sort()).toEqual(['legal'])
+  })
+
+  it('WTC16: 脏数据含 null provider 不崩溃，null 被剔除且合法 provider 保留', () => {
+    // M2 回归：provider 值为 null 时旧实现整个 sanitize 崩溃 → 外层 catch 吞掉 → {removed:[]}
+    // 同文件后续合法空壳 provider 不被剔除，"Model not found" 复发。
+    writeModelsFixture({
+      'p-null': null,
+      'concurrency-verify-A': { apiKey: 'sk', name: 'Verify A' },
+      legal1: { baseUrl: 'x' },
+    })
+    const result = sanitizeInvalidProviders()
+    expect(result.removed.sort()).toEqual(['concurrency-verify-A', 'p-null'])
+    expect(readModelsProviders()).toEqual({ legal1: { baseUrl: 'x' } })
   })
 })

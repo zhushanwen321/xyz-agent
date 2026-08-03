@@ -168,9 +168,10 @@ const aggregatorSchema = {
 
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 
 const RUN_ID = ($ARGS._runId && typeof $ARGS._runId === "string") ? $ARGS._runId : "run-" + Date.now();
-const RUN_ROOT = "/tmp/review-fix-loop/" + RUN_ID;
+const RUN_ROOT = path.join(os.tmpdir(), "review-fix-loop", RUN_ID);
 const STATE_FILE = RUN_ROOT + "/state.json";
 
 fs.mkdirSync(RUN_ROOT, { recursive: true });

@@ -630,20 +630,23 @@ export function cleanLeakedPackages(): { removed: string[] } {
  * compat 是 pi 端 provider 级字段（xyz-agent PiProviderConfig 未声明，但运行时脏数据
  * 可能含），用宽松键检查（as Record<string,unknown>）不遗漏。
  *
- * models 空数组（[]）视为未 specify（无法提供任何模型，与 undefined 等效）；
- * 其余四字段（baseUrl/headers/modelOverrides）用存在性检查（!=null），
- * 空字符串/空对象视为 specify（代表配置意图，pi 接受）。
+ * 判定与 pi 0.80.3 实测语义对齐（model-registry.ts applyModelsJson + zod schema）：
+ * - baseUrl/headers/compat 用 falsiness：zod `Type.String({ minLength: 1 })` 拒绝空字符串
+ *   （实测 `--list-models` 报 must not have fewer than 1 characters），空串视同未 specify
+ * - modelOverrides 要求 `Object.keys(...).length > 0`（applyModelsJson hasOverrides），
+ *   空对象不视为 specify（实测报 must specify ... "modelOverrides" ...）
+ * - models 空数组（[]）视为未 specify（无法提供任何模型，与 undefined 等效）
+ * - 非对象值（null/string/number）：zod ProviderConfigSchema 直接拒绝 → 无效
  */
 export function isInvalidProvider(provider: PiProviderConfig): boolean {
+  if (typeof provider !== 'object' || provider === null) return true
   const raw = provider as Record<string, unknown>
   const hasModels = Array.isArray(raw.models) && raw.models.length > 0
-  return (
-    raw.baseUrl == null &&
-    raw.headers == null &&
-    raw.compat == null &&
-    raw.modelOverrides == null &&
-    !hasModels
-  )
+  const hasOverrides =
+    typeof raw.modelOverrides === 'object' &&
+    raw.modelOverrides !== null &&
+    Object.keys(raw.modelOverrides as object).length > 0
+  return !raw.baseUrl && !raw.headers && !raw.compat && !hasOverrides && !hasModels
 }
 
 /**
