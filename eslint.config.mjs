@@ -133,6 +133,34 @@ export default [
       'max-lines': 'off',
     },
   },
+  // [HISTORICAL] core 包纯净性强制（AC2，renderer-rebuild v2 §11.4 验收基准）：
+  // core 零 `node:` / 零 window.electronAPI / 零直接 localStorage/WebSocket（lint 强制）。
+  // 平台能力（KVStorage/WebSocketFactory/ipc）经 PlatformPort 注入，禁止绕过。
+  // overrides 按 packages/core/src 路径限定，不触碰 renderer/ui/mobile 存量（ES2）。
+  // 新增规则时必须先确认 core 现有代码零命中（2026-08-03 审计：零实际使用，仅注释提及）。
+  {
+    files: ['packages/core/src/**/*.{ts,vue}'],
+    rules: {
+      'no-restricted-globals': ['error', 'window', 'localStorage'],
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            { group: ['node:*'], message: 'core 包禁止 node: import——平台能力经 PlatformPort 注入' },
+            { group: ['ws'], message: 'core 包禁止直连 ws 包——WebSocket 经 PlatformPort.webSocket.create' },
+            { group: ['electron'], message: 'core 包禁止 import electron——ipc 经 PlatformPort' },
+          ],
+        },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'NewExpression[callee.name="WebSocket"]',
+          message: 'core 包禁止 new WebSocket——经 PlatformPort.webSocket.create 创建',
+        },
+      ],
+    },
+  },
   // pi extensions（extensions/**/*.ts）专用规则块。
   // extensions 是无构建的 TS 源码（pi 运行时直接加载），迁自 xyz-pi-extensions 仓库，
   // 与 renderer/runtime 的 Vue/Electron 代码性质不同：
