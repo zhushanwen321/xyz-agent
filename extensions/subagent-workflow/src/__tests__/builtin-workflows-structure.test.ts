@@ -15,7 +15,7 @@ import { describe, expect, it } from "vitest";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WORKFLOWS_DIR = join(__dirname, "../../workflows");
 
-const SCRIPTS = ["chain.js", "parallel.js", "scatter-gather.js", "map-reduce.js"] as const;
+const SCRIPTS = ["chain.js", "parallel.js", "scatter-gather.js", "map-reduce.js", "review-fix-loop.js"] as const;
 
 function readScript(name: string): string {
   return readFileSync(join(WORKFLOWS_DIR, name), "utf-8");
@@ -28,7 +28,7 @@ function extractMetaName(src: string): string | null {
 }
 
 describe("E1: 内置 workflow 文件结构一致性", () => {
-  it("workflows/ 目录含 4 个 .js 文件", () => {
+  it("workflows/ 目录含 5 个 .js 文件", () => {
     const files = readdirSync(WORKFLOWS_DIR).filter((f) => f.endsWith(".js"));
     expect(files.sort()).toEqual([...SCRIPTS].sort());
   });

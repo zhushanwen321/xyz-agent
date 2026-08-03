@@ -99,7 +99,15 @@ const RUNID_SHORT = 8;
 /** 已知 workflow args 子字段——run action 的 args 顶层键。弱模型常把 task/items 等
  *  平铺到 workflow params 顶层（缺 args 嵌套），actionRun 静默 args={} 启动缺参 run（P0）。
  *  用此清单检测平铺形态，报错带 Correct 正例纠正。 */
-const KNOWN_ARG_KEYS = ["task", "target", "perspectives", "items", "itemsJson", "operation"];
+const KNOWN_ARG_KEYS = [
+  "task", "target", "perspectives", "items", "itemsJson", "operation",
+  // review-fix-loop 参数（内置 workflow，2026-08 新增）
+  "targetType", "agents", "batchNames", "reviewPrompt", "fixPrompt",
+  "autoCommit", "maxRounds", "stuckThreshold", "skipCleanAgents", "recheckAfterFix",
+];
+
+/** 前缀式参数（batch1..batchN 动态编号，无法枚举） */
+const KNOWN_ARG_KEY_PREFIXES = [/^batch\d+$/];
 
 /**
  * 检测弱模型把 args 子字段平铺到 workflow params 顶层（P0 静默失败防护）。
@@ -110,7 +118,9 @@ export function findFlattenedArgKeys(params: unknown): string[] {
   if (typeof params !== "object" || params === null) return [];
   const p = params as Record<string, unknown>;
   const args = typeof p.args === "object" && p.args !== null ? p.args : undefined;
-  return KNOWN_ARG_KEYS.filter((k) => k in p && !(args !== undefined && k in args));
+  const isKnownKey = (k: string) =>
+    KNOWN_ARG_KEYS.includes(k) || KNOWN_ARG_KEY_PREFIXES.some((re) => re.test(k));
+  return Object.keys(p).filter((k) => isKnownKey(k) && !(args !== undefined && k in args));
 }
 
 // ── Types ────────────────────────────────────────────────────
@@ -239,8 +249,11 @@ export function registerWorkflowTool(
       "chain (sequential 3-step: analyze→transform→synthesize; args: task), " +
       "parallel (multi-perspective analysis; args: target, optional perspectives), " +
       "scatter-gather (split→parallel→merge; args: task), " +
-      "map-reduce (parallel map→reduce; args: items/itemsJson + operation). " +
-      "Example: {\"action\":\"run\",\"name\":\"parallel\",\"args\":{\"target\":\"src/auth.ts\"}}.",
+      "map-reduce (parallel map→reduce; args: items/itemsJson + operation), " +
+      "review-fix-loop (multi-batch review→fix loop; args: targetType + target required, optional batch1..batchN). " +
+      "Example: {\"action\":\"run\",\"name\":\"parallel\",\"args\":{\"target\":\"src/auth.ts\"}}." +
+      "Use review-fix-loop when the user wants iterative code/doc review with fixes until clean " +
+      "(it is the ONLY built-in workflow that writes files; autoCommit defaults to false)." +
       "DISCOVERY: If unsure what workflows exist, call the workflow-script tool with " +
       "action:list first — it returns all available scripts (built-in + user-generated) " +
       "with source tags and descriptions. Then use this tool's run action to start one.",
