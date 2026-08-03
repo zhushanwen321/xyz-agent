@@ -30,7 +30,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@xyz-agent/extension-protocol": "^0.3.0"
+    "@xyz-agent/extension-protocol": "workspace:^0.3.0"
   },
   "devDependencies": {
     "@earendil-works/pi-tui": "*",
