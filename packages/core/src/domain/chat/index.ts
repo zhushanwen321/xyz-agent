@@ -23,3 +23,7 @@ export * from './truncate-tool-output'
 export { dispatchMessageEvent } from './effects/registry'
 export { createChatStore, DEFAULT_STREAMING_TIMEOUT_MS } from './store'
 export type { ChatStoreDeps, ChatStoreInstance } from './store'
+// w5 chat-use-chat：useChat composable 迁移（createUseChat factory + ChatApiPort）
+export { createUseChat, ensureStreamSubscription, resetChatModuleStateForTest } from './useChat'
+export type { UseChatDeps, EnsureStreamSubDeps, SessionStoreLike } from './useChat'
+export type { ChatApiPort, WriteSegmentsFn } from './api-port'

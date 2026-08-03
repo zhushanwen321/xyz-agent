@@ -51,7 +51,7 @@ import {
   disposeLruEntry,
 } from './lru'
 import { findLastAssistantIndex } from './chunk-processor'
-import { findLastStreamingBashIndex } from './bash-effects'
+import { findLastStreamingBashIndex, markBashError } from './bash-effects'
 import { createChangeSetController } from './changeset'
 import { createHandoffController } from './handoff'
 import type {
@@ -944,6 +944,11 @@ export function createChatStore(deps: ChatStoreDeps) {
     truncateFrom,
     applyFileChanges,
     disposeSession,
+    // w5 chat-use-chat：abortBash RPC 失败兼底（找最后 streaming bash 消息标 error 态）。
+    // store 持有自己的 messages ref，useChat 经此方法调用不碰 ref（解耦 pinia Store/factory
+    // 产物的 messages 类型鸿沟：pinia Store.messages 被解包为 Map，factory 产物为 ShallowRef）。
+    markStreamingBashError: (sessionId: string, errorText: string) =>
+      markBashError(messages, sessionId, errorText, clearBashTimer),
     // W3 H3 LRU
     touchLru,
     evictIfNeeded,
