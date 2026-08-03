@@ -2,7 +2,7 @@ const meta = {
   name: "recursive-split",
   description: "递归拆分问题求解：cw 状态机 + 每 node 一个 agent + frontier 驱动 BFS",
   // phase 命名：{layer首字母}-{slug}（如 e-auth、w-test-login），每个 WorkUnit 独立 phase。
-  // run-time 由 executeNodeNextAction 内 agent() 的 opts.phase 字段逐 node 设置（per-call
+  // run-time 由 executeActionAgent 内 agent() 的 opts.phase 字段逐 node 设置（per-call
   // 生效，不靠全局 phase()——parallel 并发时多个 layer 的 node 互不覆盖）。
   // init/done/error 三段无 agent() 调用，sidebar 不显示（引擎只渲染含 node 的 phase）。
   phases: ["init", "bfs", "done", "error"],
@@ -23,6 +23,7 @@ const {
   assertValidUnitId,
   escapeSingleQuotes,
   decideNodeOutcome,
+  isProgressive,
   buildActionPrompt,
   buildActionSchema,
   topoSort,
@@ -31,9 +32,10 @@ const {
   pruneTerminalEntries,
 } = require(process.cwd() + "/.pi/workflows/recursive-split-utils.cjs");
 
-// 单 node 超时（60 分钟）：agent 在 session 内连续跑多个 cw action（8 action + gate 重试），
-// 比 per-action 更耗时。对齐 review-fix-loop.js 的 30min/action × 2 的量级。
-const NODE_TIMEOUT_MS = 60 * 60 * 1000;
+// 合并 progressive agent（clarify→plan→design-review）超时：15min（跑 3 个 progressive action）
+const NODE_TIMEOUT_PROGRESSIVE_MS = 15 * 60 * 1000;
+// 非 progressive agent（单 action）超时：10min
+const NODE_TIMEOUT_NONPROGRESSIVE_MS = 10 * 60 * 1000;
 
 // cw frontier 超时：只在 BFS 轮次边界调用，不应阻塞太久
 const FRONTIER_TIMEOUT_MS = 30000;
@@ -107,34 +109,49 @@ async function abortUnit(unitId) {
 }
 
 /**
- * 执行单节点：派 agent 自主连续推进 cw action 直到阻塞。
+ * 执行单节点：派 agent 跑明确的 action（或合并的 progressive action 段）。
+ * description 含 action（{layer首字母}-{action}-{slug}，如 e-execute-auth），
+ * phase（WorkUnit 级）不含 action（{layer首字母}-{slug}）。
+ * timeoutMs 按 isProgressive(node.nextAction) 选 15min / 10min。
  * returnMeta:true → 返回 {unitId, value, sessionFile?, failedReason?}。
- * 失败（r.error / 超时）→ abortUnit + 返回 failedReason（不 throw，主循环继续其他节点）。
+ * 失败两个来源：(1) decideNodeOutcome(r) 检 r.error（pi 层崩溃/timeout）；
+ *              (2) r.value.failedReason（agent 自报 gate fail 耗尽 / cannot-proceed）。
+ * 两者都 abortUnit + 返回 failedReason（不 throw，主循环继续其他节点）。
  * 注意：失败字段命名 failedReason 而非 error，避免被 parallel() 归一化吞掉其他字段。
  */
-async function executeNodeNextAction(node, sessionFiles) {
-  // phase + description 取 layer 首字母 + slug：e-auth-module / f-login / s-auth-api / w-test-login。
-  // 每 WorkUnit 独立 phase（sidebar 一行），同一 node 多轮 dispatch 时 TUI 按 stepIndex 自带序号区分。
+async function executeActionAgent(node, sessionFiles) {
   const slug = node.unitId.split(":")[1] || node.unitId;
+  // phase（WorkUnit 级）不含 action；description（action-centric）含 action。
   const phaseName = node.scope[0] + "-" + slug;
+  const description = node.scope[0] + "-" + node.nextAction + "-" + slug;
+  const timeoutMs = isProgressive(node.nextAction)
+    ? NODE_TIMEOUT_PROGRESSIVE_MS
+    : NODE_TIMEOUT_NONPROGRESSIVE_MS;
   const r = await agent({
     prompt: buildActionPrompt(node),
     schema: buildActionSchema(node),
     phase: phaseName,
-    description: phaseName,
+    description: description,
     fork: true,
     worktree: false,
     returnMeta: true,
     cwd: $WORKSPACE,
-    timeoutMs: NODE_TIMEOUT_MS,
+    timeoutMs: timeoutMs,
   });
 
-  // 失败判定抽到 decideNodeOutcome（utils.cjs，供单测）；此处保留副作用（log + abort）+ 返回值组装。
+  // 失败来源 1：pi 层崩溃/timeout（decideNodeOutcome 检 r.error）
   const outcome = decideNodeOutcome(r);
   if (outcome.failed) {
     log("Node " + node.unitId + " failed: " + (outcome.failedReason ?? "timeout"));
     await abortUnit(node.unitId);
     return { unitId: node.unitId, value: r.value, sessionFile: r.sessionFile, failedReason: outcome.failedReason };
+  }
+
+  // 失败来源 2：agent 自报 failedReason（gate fail 耗尽 / cannot-proceed）
+  if (r.value && r.value.failedReason) {
+    log("Node " + node.unitId + " failed (agent-reported): " + r.value.failedReason);
+    await abortUnit(node.unitId);
+    return { unitId: node.unitId, value: r.value, sessionFile: r.sessionFile, failedReason: r.value.failedReason };
   }
 
   return { unitId: node.unitId, value: r.value, sessionFile: r.sessionFile };
@@ -212,13 +229,13 @@ try {
     if (concurrent.length > 0) {
       log("BFS: " + concurrent.length + " concurrent + " + sequential.length + " sequential");
       const results = await parallel(
-        concurrent.map((node) => executeNodeNextAction(node, sessionFiles))
+        concurrent.map((node) => executeActionAgent(node, sessionFiles))
       );
       // 回收 sessionFile + 识别失败
       for (const r of results) {
         if (!r) continue;
         if (r.status === "failed") {
-          // executeNodeNextAction 意外 throw（parallel 归一化形态），无法拿到 unitId
+          // executeActionAgent 意外 throw（parallel 归一化形态），无法拿到 unitId
           log("BFS: concurrent node failed (thrown): " + (r.error ?? "unknown"));
           continue;
         }
@@ -232,7 +249,7 @@ try {
     for (const node of sequential) {
       let r;
       try {
-        r = await executeNodeNextAction(node, sessionFiles);
+        r = await executeActionAgent(node, sessionFiles);
       } catch (e) {
         // Info #4：sequential 节点意外 throw 时纵深防御——对齐 parallel thrown 分支，
         // 调 abortUnit 中止该节点对应的 WorkUnit（节点状态可能已在半推进态，避免脏状态残留）。

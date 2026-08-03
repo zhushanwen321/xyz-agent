@@ -3,7 +3,9 @@ import {
   MAX_NODE_ROUNDS,
   MAX_FRONTIER_RETRIES,
   VALID_LAYERS,
+  PROGRESSIVE_ACTIONS,
   isTerminal,
+  isProgressive,
   assertValidUnitId,
   isTimeoutError,
   escapeSingleQuotes,
@@ -42,6 +44,24 @@ describe("常量", () => {
       expect(VALID_LAYERS.has(layer)).toBe(true);
     }
     expect(VALID_LAYERS.has("invalid")).toBe(false);
+  });
+
+  it("PROGRESSIVE_ACTIONS 含 clarify/plan/design-review/replan", () => {
+    for (const action of ["clarify", "plan", "design-review", "replan"]) {
+      expect(PROGRESSIVE_ACTIONS.has(action)).toBe(true);
+    }
+    expect(PROGRESSIVE_ACTIONS.has("execute")).toBe(false);
+  });
+
+  it("isProgressive 识别 progressive action", () => {
+    expect(isProgressive("clarify")).toBe(true);
+    expect(isProgressive("execute")).toBe(false);
+    expect(isProgressive("design-review")).toBe(true);
+  });
+
+  it("isProgressive 边界（undefined / 空串）", () => {
+    expect(isProgressive(undefined)).toBe(false);
+    expect(isProgressive("")).toBe(false);
   });
 });
 
@@ -215,88 +235,124 @@ describe("decideNodeOutcome", () => {
 // ── buildActionSchema ───────────────────────────────────────────────
 
 describe("buildActionSchema", () => {
-  const waveNode = { unitId: "wave:test", scope: "wave" };
-  const sliceNode = { unitId: "slice:test", scope: "slice" };
+  const waveNode = { unitId: "wave:test", scope: "wave", nextAction: "execute" };
+  const sliceNode = { unitId: "slice:test", scope: "slice", nextAction: "execute" };
 
-  it("wave node 返回 base schema（无 children）", () => {
-    const schema = buildActionSchema(waveNode);
-    expect(schema.properties.done).toBeDefined();
-    expect(schema.properties.stopReason).toBeDefined();
-    expect(schema.properties.lastStatus).toBeDefined();
-    expect(schema.properties.replanTriggered).toBeDefined();
-    expect(schema.properties.abortedChildren).toBeDefined();
-    expect(schema.properties.children).toBeUndefined();
-    expect(schema.required).toEqual(["done"]);
-  });
-
-  it("planning node 返回含 children 的 schema", () => {
-    const schema = buildActionSchema(sliceNode);
-    expect(schema.properties.children).toBeDefined();
-    expect(schema.properties.children.items.properties.unitId).toBeDefined();
-    expect(schema.properties.children.items.properties.dependsOn).toBeDefined();
-  });
-
-  it("所有 schema 含 done + stopReason（推进到阻塞模型）", () => {
+  it("required: ['stopReason']", () => {
     for (const node of [waveNode, sliceNode]) {
       const schema = buildActionSchema(node);
-      expect(schema.properties.done).toBeDefined();
-      expect(schema.properties.stopReason).toBeDefined();
+      expect(schema.required).toEqual(["stopReason"]);
     }
+  });
+
+  it("stopReason 是 enum（6 个值）", () => {
+    const schema = buildActionSchema(waveNode);
+    expect(schema.properties.stopReason.enum).toEqual([
+      "progressive-done",
+      "action-done",
+      "gate-failed",
+      "crosslayer-descend",
+      "closed",
+      "cannot-proceed",
+    ]);
+  });
+
+  it("含 actionsExecuted / crossLayer / failedReason 属性", () => {
+    const schema = buildActionSchema(waveNode);
+    expect(schema.properties.actionsExecuted).toBeDefined();
+    expect(schema.properties.crossLayer).toBeDefined();
+    expect(schema.properties.failedReason).toBeDefined();
+  });
+
+  it("不含旧字段 done/lastStatus/replanTriggered/abortedChildren/children", () => {
+    const schema = buildActionSchema(waveNode);
+    expect(schema.properties.done).toBeUndefined();
+    expect(schema.properties.lastStatus).toBeUndefined();
+    expect(schema.properties.replanTriggered).toBeUndefined();
+    expect(schema.properties.abortedChildren).toBeUndefined();
+    expect(schema.properties.children).toBeUndefined();
+  });
+
+  it("统一 schema——不再区分 wave/planning", () => {
+    const waveSchema = buildActionSchema(waveNode);
+    const sliceSchema = buildActionSchema(sliceNode);
+    expect(sliceSchema).toEqual(waveSchema);
   });
 });
 
 // ── buildActionPrompt ───────────────────────────────────────────────
 
 describe("buildActionPrompt", () => {
-  const waveNode = { unitId: "wave:test-wave", scope: "wave" };
-  const sliceNode = { unitId: "slice:test-slice", scope: "slice" };
+  const waveNode = { unitId: "wave:test-wave", scope: "wave", nextAction: "execute" };
+  const sliceNode = { unitId: "slice:test-slice", scope: "slice", nextAction: "clarify" };
 
-  it("含 unitId", () => {
+  it("含 node.unitId", () => {
     const prompt = buildActionPrompt(waveNode);
     expect(prompt).toContain("wave:test-wave");
   });
 
-  it("含停止条件（推进到阻塞模型）", () => {
+  it("含 design-review 跑完必须停语义", () => {
     const prompt = buildActionPrompt(waveNode);
-    expect(prompt).toContain("停止条件");
-    expect(prompt).toContain("crossLayer");
-    expect(prompt).toContain("gate fail");
+    expect(prompt).toContain("design-review");
+    expect(prompt.toLowerCase()).toMatch(/停|stop/);
   });
 
-  it("含 cw handoff 指令", () => {
+  it("含读 ActionResult.nextAction 推进指令", () => {
     const prompt = buildActionPrompt(waveNode);
-    expect(prompt).toContain("cw handoff --unitId wave:test-wave");
+    expect(prompt).toContain("ActionResult.nextAction");
   });
 
-  it("引导 agent gate pass 后继续推进（不返回）", () => {
+  it("含不要重新调 cw handoff 防死循环警告", () => {
     const prompt = buildActionPrompt(waveNode);
-    expect(prompt).toContain("gate pass 后不要返回");
-    expect(prompt).toContain("继续调");
+    expect(prompt).toContain("handoff");
+    expect(prompt).toMatch(/死循环|幂等/);
   });
 
-  it("含 clarify 前进引导（防止 progressive 循环）", () => {
+  it("含 gate fail 重试上限（3 次）", () => {
     const prompt = buildActionPrompt(waveNode);
-    expect(prompt).toContain("clarify");
-    expect(prompt).toContain("cw plan");
-    expect(prompt).toContain("前进");
+    expect(prompt).toContain("gate");
+    expect(prompt).toMatch(/3\s*次/);
   });
 
-  it("含 test 测试文件产出引导", () => {
+  it("含 replan 限制（design-reviewed）", () => {
     const prompt = buildActionPrompt(waveNode);
-    expect(prompt).toContain("vitest");
-    expect(prompt).toContain("测试文件");
+    expect(prompt).toContain("replan");
+    expect(prompt).toContain("design-reviewed");
   });
 
-  it("planning node 含 children 抄录引导", () => {
-    const prompt = buildActionPrompt(sliceNode);
-    expect(prompt).toContain("children");
-    expect(prompt).toContain("cw tree");
-    expect(prompt).toContain("crossLayer.descend");
+  it("传入 node.nextAction 时 prompt 含该 action（起点说明）", () => {
+    const prompt = buildActionPrompt(waveNode);
+    expect(prompt).toContain("execute");
   });
 
   it("wave node 不含 children 抄录引导", () => {
     const prompt = buildActionPrompt(waveNode);
     expect(prompt).not.toContain("planning 层的 execute");
+    expect(prompt).not.toContain("cw tree");
+  });
+
+  it("planning node 不含 children 抄录引导", () => {
+    const prompt = buildActionPrompt(sliceNode);
+    expect(prompt).not.toContain("planning 层的 execute");
+    expect(prompt).not.toContain("cw tree");
+    expect(prompt).not.toContain("crossLayer.descend");
+  });
+
+  it("含 test 测试文件产出引导（wave 层）", () => {
+    const prompt = buildActionPrompt(waveNode);
+    expect(prompt).toContain("vitest");
+    expect(prompt).toContain("测试文件");
+  });
+
+  it("含 execute commitHash 引导（wave 层）", () => {
+    const prompt = buildActionPrompt(waveNode);
+    expect(prompt).toContain("commitHash");
+  });
+
+  it("planning node 不含 wave 层 test/execute 提示", () => {
+    const prompt = buildActionPrompt(sliceNode);
+    expect(prompt).not.toContain("vitest");
+    expect(prompt).not.toContain("测试文件");
   });
 
   it("不含 --input '<JSON>' 字面语法（L0 修复验证）", () => {
@@ -500,6 +556,66 @@ describe("detectStuckNodes", () => {
     const nodeRounds = { a: MAX_NODE_ROUNDS - 1 };
     const stuck = detectStuckNodes(actionable, prevStatus, nodeRounds);
     expect(stuck).toEqual(["a"]); // 不豁免，触发熔断
+  });
+});
+
+// ── detectStuckNodes replan 判定 ────────────────────
+
+describe("detectStuckNodes replan 判定", () => {
+  it("lastStatusHistoryAction=replan + status=design-reviewed → 不 abort，不累加 nodeRounds", () => {
+    const actionable = [{ unitId: "a", status: "design-reviewed", lastStatusHistoryAction: "replan" }];
+    const prevStatus: Record<string, string> = {};
+    const nodeRounds: Record<string, number> = {};
+    const stuck = detectStuckNodes(actionable, prevStatus, nodeRounds);
+    expect(stuck).toHaveLength(0);
+    expect(nodeRounds["a"]).toBeUndefined(); // 没有累加
+    expect(prevStatus["a"]).toBe("design-reviewed"); // 基线更新
+  });
+
+  it("lastStatusHistoryAction=replan + status=executing → abort", () => {
+    const actionable = [{ unitId: "a", status: "executing", lastStatusHistoryAction: "replan" }];
+    const stuck = detectStuckNodes(actionable, {}, {});
+    expect(stuck).toEqual(["a"]);
+  });
+
+  it("lastStatusHistoryAction=replan + status=testing → abort", () => {
+    const actionable = [{ unitId: "a", status: "testing", lastStatusHistoryAction: "replan" }];
+    const stuck = detectStuckNodes(actionable, {}, {});
+    expect(stuck).toEqual(["a"]);
+  });
+
+  it("lastStatusHistoryAction=replan + status=tested → abort", () => {
+    const actionable = [{ unitId: "a", status: "tested", lastStatusHistoryAction: "replan" }];
+    const stuck = detectStuckNodes(actionable, {}, {});
+    expect(stuck).toEqual(["a"]);
+  });
+
+  it("lastStatusHistoryAction=replan + status=exec-reviewed → abort", () => {
+    const actionable = [{ unitId: "a", status: "exec-reviewed", lastStatusHistoryAction: "replan" }];
+    const stuck = detectStuckNodes(actionable, {}, {});
+    expect(stuck).toEqual(["a"]);
+  });
+
+  it("lastStatusHistoryAction=replan + status=retrospected → abort", () => {
+    const actionable = [{ unitId: "a", status: "retrospected", lastStatusHistoryAction: "replan" }];
+    const stuck = detectStuckNodes(actionable, {}, {});
+    expect(stuck).toEqual(["a"]);
+  });
+
+  it("lastStatusHistoryAction 非 replan（如 clarify）→ 走原有 status 未推进逻辑", () => {
+    const actionable = [{ unitId: "a", status: "clarifying", lastStatusHistoryAction: "clarify" }];
+    const prevStatus = { a: "clarifying" };
+    const nodeRounds: Record<string, number> = { a: MAX_NODE_ROUNDS - 1 };
+    const stuck = detectStuckNodes(actionable, prevStatus, nodeRounds);
+    expect(stuck).toEqual(["a"]); // 原有熔断触发
+  });
+
+  it("无 lastStatusHistoryAction 字段 → 走原有逻辑（向后兼容）", () => {
+    const actionable = [{ unitId: "a", status: "planning" }];
+    const prevStatus = { a: "clarifying" };
+    const nodeRounds: Record<string, number> = { a: 2 };
+    detectStuckNodes(actionable, prevStatus, nodeRounds);
+    expect(nodeRounds["a"]).toBe(0); // status 变了重置
   });
 });
 

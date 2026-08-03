@@ -20,6 +20,22 @@ const VALID_LAYERS = new Set(["epic", "feature", "slice", "wave"]);
 // 避免单次临时性网络/进程抖动永久终止长任务。
 const MAX_FRONTIER_RETRIES = 3;
 
+// progressive action 集合（从 cw src/rules/state-machine.ts 的 progressive: true 标记抄）。
+// progressive action 的 handler 成功后 status 推进到原地语义（如 clarifying→clarifying），
+// 必须在 session 内合并跑，否则 frontier 会死循环（每轮返回同一 action）。
+// 用途：buildActionPrompt 教 agent 识别可合并 action；executeActionAgent 据 action 类型选 timeout。
+// 注：frontier 的 nextAction 永远只会命中 clarify/plan（progressive）或
+// execute/test/exec-review/retrospect/closeout（非 progressive），
+// 永远不会命中 design-review/replan（STATUS_TO_ACTION 无此映射）。
+const PROGRESSIVE_ACTIONS = new Set(["clarify", "plan", "design-review", "replan"]);
+
+/**
+ * 判断 action 是否 progressive（需在 session 内合并跑）。
+ */
+function isProgressive(action) {
+  return PROGRESSIVE_ACTIONS.has(action);
+}
+
 // ── 纯函数 ──────────────────────────────────────────────────────────
 
 /**
@@ -66,7 +82,7 @@ function escapeSingleQuotes(task) {
  *   failedReason = r.error（超时时为 timeout 关键字串，由 isTimeoutError 判定后回退）。
  * 否则 → 正常，返回 { failed: false }。
  *
- * 与 executeNodeNextAction 内联逻辑严格一致：
+ * 与 executeActionAgent 内联逻辑严格一致：
  *   if (r.error || isTimeoutError(r)) failedReason = r.error
  * 注意 isTimeoutError(r) 仅在 r.error 为真时返回 true，故与 r.error 等价——
  * 此处保留 || 形态以显式表达"任何 r.error 都视为失败"的契约。
@@ -79,90 +95,95 @@ function decideNodeOutcome(r) {
 }
 
 /**
- * 为单节点构建 agent prompt（推进到阻塞模型）。
- * agent 在 session 内自主连续推进 cw action，直到遇到停止条件。
- * guidance 是唯一导航源（cw-cli skill 约定），prompt 不硬编码 schema 字段名。
+ * 为单节点构建 action-centric agent prompt。
+ * agent 跑明确的 action（或合并的 progressive action 段 clarify→plan→design-review）。
+ * 最高优先级：design-review 跑完必须停（对抗 ActionResult.nextAction 的 execute 引导）。
  */
 function buildActionPrompt(node) {
   const isWave = node.scope === "wave";
+  const unitId = node.unitId;
+  const nextAction = node.nextAction;
 
-  // planning 层 execute 后需把 children 信息抄回 schema（供 topoSort 算依赖）。
-  let childrenHint = "";
-  if (!isWave) {
-    childrenHint = `
+  const sections = [
+    `你是 cw 流程执行者，负责推进 WorkUnit ${unitId}.`,
+    ``,
+    `## 你的起点 action：${nextAction}（由调度器根据 cw status 派发）`,
+    ``,
+    `## 执行规则（按优先级）`,
+    ``,
+    `### 最高优先级：design-review 跑完必须停`,
+    `如果你跑的 action 是 design-review 且 gate pass，**立即停止并返回**（stopReason=progressive-done）。`,
+    `**即便 ActionResult.nextAction 推你去 execute，也不要继续。** execute 是下一个 agent 的任务。`,
+    ``,
+    `### progressive 链推进（仅当起点是 clarify/plan）`,
+    `progressive action（clarify/plan/design-review）跑完 gate pass 后，**读 ActionResult.nextAction**（不是重新调 handoff！）：`,
+    `- 若 nextAction 仍是 progressive（plan/design-review）：继续跑`,
+    `- 若 nextAction 是 execute：按上面"最高优先级"停止`,
+    ``,
+    `不要在 progressive 段重新调 cw handoff——它返回的 action 基于 status，在 progressive 区段是幂等的（永远返回同一 action），会导致死循环。推进只靠 ActionResult.nextAction。`,
+    ``,
+    `### 非 progressive action（仅当起点是 execute/test/exec-review/retrospect/closeout）`,
+    `跑完这一个 action（gate pass）后立即停止（stopReason=action-done 或 closed）。不要连续跑下一个 action。`,
+    ``,
+    `### gate fail`,
+    `gate fail 时读 ActionResult 的异常 guidance 四段式（problem + fixCommand）。按 fixCommand 重跑同一 action，最多 3 次。超限则停止（stopReason=gate-failed，填 failedReason）。`,
+    ``,
+    `### replan 限制`,
+    `replan 只允许在 design-reviewed 状态触发。在 executing/testing/tested/exec-reviewed/retrospected 状态**禁止 replan**（会导致不可恢复死路）。若在这些状态遇到问题，停止并返回（stopReason=cannot-proceed）。`,
+    ``,
+    `## 入口`,
+    `调一次 \`cw handoff --unitId ${unitId}\` 拿当前 action 的 guidance + input schema（确认起点）。`,
+  ];
 
-如果你推进到了 planning 层的 execute：
-- 调 \`cw execute\` 后，检查 stdout JSON 的 \`children\` 字段。
-- 如果有 children（含 [{unitId, dependsOn}]）：从中原样抄录 unitId 和 dependsOn 填入你的 schema 输出。
-- 如果没有 children：调 \`cw tree --unitId ${node.unitId}\` 收集子 unitId（无 dependsOn → 全并发）。
-- execute 后 cw 返回 crossLayer.descend（指向第一个子 unit），这是你的停止条件——子层交给主调度器。`;
+  if (isWave) {
+    sections.push(
+      ``,
+      `## 关键提示（wave 层）`,
+      `- test action：为本 wave 的代码**产出 vitest 测试文件**（如果还没有测试的话），覆盖 plan 声明的 testCases，跑 \`npx vitest run\` 确认全绿后才调 \`cw test\`——不要只用 testJudgment 文字判定`,
+      `- execute（wave 层）：写代码后 \`git add -A && git commit\`，拿到 commitHash 后调 \`cw execute --unitId ${unitId} --commitHash <hash>\``
+    );
   }
 
-  return `你是 cw 流程执行者。
+  sections.push(
+    ``,
+    `## 返回 schema`,
+    `按 schema 填：stopReason（按 enum）+ actionsExecuted[]（实际跑过的 action 名列表）+ failedReason（gate-failed/cannot-proceed 时必填）。crossLayer 如有可填（观测用，调度器不消费）。`
+  );
 
-任务：推进 WorkUnit ${node.unitId} 尽可能远，直到遇到以下停止条件之一：
-1. \`cw handoff\` 或 \`cw <action>\` 返回的 nextAction 含 crossLayer（action 为 undefined）——需要跳到另一个 WorkUnit，这是你的停止信号
-2. 同一 action 连续 gate fail 超过 3 次——返回说明哪个 action 反复 fail、mustFix 内容
-3. 你判断无法继续（如需要外部决策）——返回说明原因
-
-方法：
-1. 调 \`cw handoff --unitId ${node.unitId}\` 获取上下文 + guidance + input schema
-2. 按 guidance 的命令行执行当前 action（copy guidance 的"命令"那行，不要自己拼——cw 的 --input 是文件路径语义，字面 JSON 串会报错；execute 用 --commitHash flags，其他 action 用 --input 文件路径或 stdin）
-3. 如果 gate fail（返回 ok=false），读 mustFix 修正后重调同一个 action
-4. gate pass 后不要返回——继续调 \`cw handoff\` 拿下一步 guidance，重复步骤 2-3
-5. 直到遇到上述停止条件才返回${childrenHint}
-
-关键提示：
-- clarify 是 progressive action——调一次 \`cw clarify\` 后如果需求已清晰，**立即调 \`cw plan\` 前进**，不要重复 clarify
-- test action：为本 wave 的代码**产出 vitest 测试文件**（如果还没有测试的话），覆盖 plan 声明的 testCases，跑 \`npx vitest run\` 确认全绿后才调 \`cw test\`——不要只用 testJudgment 文字判定
-- execute（wave 层）：写代码后 \`git add -A && git commit\`，拿到 commitHash 后调 \`cw execute --unitId ${node.unitId} --commitHash <hash>\``;
+  return sections.join("\n");
 }
 
 /**
- * 为单节点构建 agent schema（推进到阻塞模型）。
- * 统一 schema——不再区分 action 类型，agent 在 session 内连续跑多个 action。
+ * 为单节点构建 action-centric agent schema。
+ * 统一 schema（不区分 wave/planning）：stopReason enum + actionsExecuted + crossLayer + failedReason。
+ * 旧字段 done/lastStatus/replanTriggered/abortedChildren/children 全部移除（详见设计文档 §17.1）。
  */
 function buildActionSchema(node) {
-  const isWave = node.scope === "wave";
-
-  const baseProps = {
-    done: { type: "boolean", description: "是否推进到了停止条件" },
-    stopReason: {
-      type: "string",
-      description: "停止原因：crossLayer / gateFailed / blocked / cannotProceed",
-    },
-    lastStatus: { type: "string", description: "最后查到的 cw status" },
-    replanTriggered: { type: "boolean", description: "如果调了 cw replan 设为 true" },
-    abortedChildren: {
-      type: "array",
-      items: { type: "string" },
-      description: "被级联 abort 的子 unitId 列表（replan 时从 cw replan stdout 抄录）",
+  return {
+    type: "object",
+    required: ["stopReason"],
+    properties: {
+      stopReason: {
+        type: "string",
+        enum: ["progressive-done", "action-done", "gate-failed", "crosslayer-descend", "closed", "cannot-proceed"],
+        description:
+          "停止原因。progressive-done=合并 progressive 段完成（design-review 跑完）；action-done=非 progressive action 跑完；gate-failed=gate fail 重试超限；crosslayer-descend=planning execute 后 descend；closed=closeout 终态；cannot-proceed=需外部决策或违规 replan",
+      },
+      actionsExecuted: {
+        type: "array",
+        items: { type: "string" },
+        description: "本次实际跑过的 action 名列表（如 ['clarify','plan','design-review']），供观测",
+      },
+      crossLayer: {
+        type: "string",
+        description: "ActionResult 返回的 crossLayer（descend/ascend/sibling），观测用，调度器不消费",
+      },
+      failedReason: {
+        type: "string",
+        description: "stopReason 为 gate-failed 或 cannot-proceed 时必填，说明失败/无法继续原因",
+      },
     },
   };
-
-  // planning 层需要 children（execute 后供 topoSort）
-  if (!isWave) {
-    return {
-      type: "object",
-      required: ["done"],
-      properties: {
-        ...baseProps,
-        children: {
-          type: "array",
-          description: "planning execute 后从 cw stdout 或 cw tree 抄录的子 unitId + dependsOn",
-          items: {
-            type: "object",
-            properties: {
-              unitId: { type: "string" },
-              dependsOn: { type: "array", items: { type: "string" } },
-            },
-          },
-        },
-      },
-    };
-  }
-
-  return { type: "object", required: ["done"], properties: baseProps };
 }
 
 /**
@@ -260,14 +281,35 @@ function selectActionable(frontier) {
 }
 
 /**
- * node 级熔断：遍历 actionable 节点，识别连续 dispatch 但 status 没推进的 node。
- * 替代旧的 action 级熔断（PROGRESSIVE_ACTIONS 豁免已删除）。
+ * node 级熔断：遍历 actionable 节点，识别两类需 abort 的 node。
  * 返回 nodesToAbort[]（unitId 列表）。mutation prevStatus / nodeRounds。
+ *
+ * 1. replan 判定（按 §17.3）：node.lastStatusHistoryAction === "replan" 时按 status 区分：
+ *    - design-reviewed：合法 replan（plan.from 含 design-reviewed，可恢复）→ 放行，不计数
+ *    - executing/testing/tested/exec-reviewed/retrospected：违规 replan（plan.from 不含这些
+ *      status，agent 调 plan 会被 guard 拒绝 → 死路）→ 立即 abort
+ * 2. status 未推进熔断：跨 BFS 轮 status 不变连续 MAX_NODE_ROUNDS 次 → abort
+ *
+ * 向后兼容：node 无 lastStatusHistoryAction 字段时走 status 未推进逻辑（原行为）。
  */
 function detectStuckNodes(actionable, prevStatus, nodeRounds) {
   const nodesToAbort = [];
 
   for (const node of actionable) {
+    // replan 判定（按 status 区分合法/违规）
+    if (node.lastStatusHistoryAction === "replan") {
+      if (node.status === "design-reviewed") {
+        // 合法 replan：放行，不计数为 stuck
+        prevStatus[node.unitId] = node.status;
+        continue;
+      }
+      // 违规 replan：executing/testing/tested/exec-reviewed/retrospected → 立即 abort
+      nodesToAbort.push(node.unitId);
+      prevStatus[node.unitId] = node.status;
+      continue;
+    }
+
+    // status 未推进熔断
     const prev = prevStatus[node.unitId];
     if (prev === node.status) {
       // status 没变——可能是 agent 只做了 progressive action（如 clarify）没前进
@@ -331,8 +373,10 @@ module.exports = {
   MAX_NODE_ROUNDS,
   VALID_LAYERS,
   MAX_FRONTIER_RETRIES,
+  PROGRESSIVE_ACTIONS,
   // 纯函数
   isTerminal,
+  isProgressive,
   assertValidUnitId,
   isTimeoutError,
   escapeSingleQuotes,
