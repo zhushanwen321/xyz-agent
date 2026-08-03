@@ -25,7 +25,7 @@
  * - result.json 解析失败时，若内容含 'replacing' 且 .old 存在，仍尝试回滚
  *   （写入中断的半截 JSON 不应让破损 app 蒙混过关）
  *
- * 依赖方向：update-self-healer → constants + node:fs/path
+ * 依赖方向：update-self-healer → constants + types + compare-versions + electron + node:fs/path
  */
 import { existsSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
