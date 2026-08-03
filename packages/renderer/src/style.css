@@ -3,13 +3,13 @@
 @tailwind utilities;
 
 /* ============================================================
-   xyz-agent Design Tokens · v3 冷蓝暗色（ADR-0018）
+   xyz-agent Design Tokens · v6 太极·玄暗色（2026-08-02 定稿反写）
    ────────────────────────────────────────────────────────────
-   SSOT: docs/page-design/design-tokens.md
-   暗色为真默认（ADR-0021-B 裁决）。亮色变体待 settingsStore 接入，
-   design-tokens 仅给出部分亮色值，未给全前不臆造落地。
-   命名遵循 SSOT：--fg/--muted/--subtle/--border（非旧 --text* / --divider，
-   ADR-0018 已裁决归一，见 design-tokens.md「已知裂缝」）。
+   SSOT: docs/page-design/v6-master-spec.md §4 + .tmp/v6/src/styles/tokens.css
+   玄主题为默认（v6 §4）。旧 token 名保留改值（ERR1 兼容，v3 消费方
+   拿到新值不断引用），新增 token 只增不改。
+   亮色变体无 v6 真值，[data-theme=light] 槽位保持 v3 值不臆造。
+   字号 --text-* 保持 D17 data-font-size 机制（v6 calc 自适应体系归后续 wave）。
    ============================================================ */
 
 :root {
@@ -18,38 +18,45 @@
      2026-07-12 拉大层级间距：原相邻 token 亮度差 <3%（bg→surface 仅 Δ8），
      侧边栏与对话流肉眼不可辨。surface 以上整体上推，bg→surface 拉到 Δ13（≈5%），
      每层 ≥Δ5 肉眼可辨。bg / bg-input 保持不变（锚点 + 输入坑凹陷语义）。 */
-  --bg: #1a1b1f;                /* 画布底层（锚点，不变） */
-  --surface: #272830;           /* 面板/卡片（原 #222329，+5 拉大与 bg 间距） */
-  --surface-hover: #363740;     /* 面板悬停（原 #2d2e36，+9 最高） */
-  --surface-2: #2e2f38;         /* 二级表面 Card-Elevated（原 #282930，+6） */
-  --bg-elevated: #313239;       /* 浮起面板/激活面板底色（原 #2a2b32，+7） */
-  --bg-input: #1e1f24;          /* 输入区底色（不变，Δ4 from bg 凹陷） */
+  --bg: #131316;                /* 画布底层（v6 玄，侧栏/drawer/settings 内容区底） */
+  --bg-sunken: var(--bg);       /* 同画布色（v6 新增：语义变更，靠 surface 浮起分隔） */
+  --surface: #1f1f22;           /* 主面板/drawer 浮起表面（v6） */
+  --surface-hover: #303033;     /* 面板悬停（v6） */
+  --surface-2: #27272a;         /* 二级表面（header 浮起分层 / SegmentedTab 内项 active） */
+  --bg-elevated: #2b2b2e;       /* tab 型选中态浮起 / popover 浮层 */
+  --bg-input: #17171a;          /* 输入框/凹陷区（比 bg 更深） */
+  /* v6 新增（太极·玄）：卡片底色 / progress-bar fill 柔化档 */
+  --bg-card: #1b1b1e;           /* 设置分组卡片（介于 bg 与 surface） */
+  --bar-fill-soft: 55%;
 
   /* ── 文字（neutral 谱系，DM1 落地）───────────────────────── */
-  --neutral-fg: #e5e7eb;        /* 主文字 */
-  --neutral-mid: #9ca3af;       /* 次级文字 */
-  --neutral-dim: #6b7280;       /* 三级文字/占位 */
-  --neutral-faint: #4b5563;     /* 极弱文字/禁用 */
-  --neutral-ico: #8b8d94;       /* 默认图标色 */
-  --neutral-ico-hover: #e5e7eb; /* 图标 hover 色 */
+  --neutral-fg: #dedee2;        /* 主前景（v6 上抬） */
+  --neutral-mid: #96969c;       /* 正文（过 AA） */
+  --neutral-dim: #74747a;       /* 次要（提亮一档） */
+  --neutral-faint: #46464c;     /* 极弱/装饰 */
+  --neutral-ico: #86868c;       /* 图标默认色 */
+  --neutral-ico-hover: #dedee2; /* 图标 hover 色 */
 
   /* ── 边框/分隔 ─────────────────────────────────────────── */
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.15);
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.13);
+  --hairline: rgba(255, 255, 255, 0.05); /* v6 新增：行分隔 / drawer L1 栏底线 */
 
-  /* ── 主色（冷蓝）───────────────────────────────────────── */
-  --accent: #4f8ef7;
-  --accent-hover: #6ba3ff;
-  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
-  --accent-ring: rgba(79, 142, 247, 0.30); /* 选中态内描边（Card-Active），见 design-system §2 */
+  /* ── 主色（v6 玄：水墨降饱和，克制放开档）────────────── */
+  --accent: #cfcfd4;
+  --accent-hover: #e0e0e4;
+  --accent-soft: color-mix(in oklch, var(--accent) 10%, transparent);
+  --accent-ring: color-mix(in oklch, var(--accent) 30%, transparent); /* 选中态内描边（Card-Active），见 design-system §2 */
+  --accent-fg: #1a1a1c;         /* accent 实色上的文字（玄主题用深字） */
 
   /* ── 状态色 ─────────────────────────────────────────────── */
-  --success: #22c55e;
-  --warn: #b08a3e;
-  --danger: #ef4444;
-  --info: #38bdf8;
+  --success: #78a87e;
+  --warn: #b79c54;
+  --danger: #bf6b6b;
+  --danger-fg: #f0f0f2;         /* danger 实色上的文字（v6 新增） */
+  --info: #6d99a5;
   /* reasoning 紫：思考块色相（draft-message-stream §4 + composer 思考等级） */
-  --reasoning: #a78bfa;
+  --reasoning: #8e85ab;
   /* reasoning 软底：think badge / slash chip 背景（统一 12% 基准，与状态色 soft 对齐） */
   --reasoning-soft: color-mix(in oklch, var(--reasoning) 12%, transparent);
   /* 状态色软底（12% 基准，color-mix 派生：palette 切换 / 亮暗主题自动跟随） */
@@ -69,9 +76,10 @@
   --text-base: 13px;
   --text-md: 14px;
 
-  /* ── 圆角 ───────────────────────────────────────────────── */
-  --radius-sm: 3px;             /* 输入框/标签 */
+  /* ── 圆角（v6：sm 3px→6px，新增 radius-card 10px）───────── */
+  --radius-sm: 6px;             /* 输入框/标签（v6 升档） */
   --radius: 8px;                /* 按钮/卡片（默认）*/
+  --radius-card: 10px;          /* 卡片容器（v6 新增）*/
   --radius-lg: 12px;            /* 面板/弹层 */
 
   /* ── 间距（4px 栅格）───────────────────────────────────── */
@@ -87,11 +95,26 @@
   /* ── 阴影 ───────────────────────────────────────────────── */
   --shadow-1: 0 0 0 1px rgba(0, 0, 0, 0.2);          /* 描边 */
   --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.4);         /* 浮层 */
-  --shadow-glow: 0 0 0 3px rgba(79, 142, 247, 0.25); /* 聚焦环 */
+  --shadow-drawer: -12px 0 24px rgba(0, 0, 0, 0.16); /* v6 新增：弱投影（D2 一体化分隔） */
+  --shadow-glow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent); /* 聚焦环（跟随 accent） */
+
+  /* ── 层级 / 组件尺寸（v6 新增）────────────────────────── */
+  --content-max-w: 720px;       /* 内容列最大宽（settings 等收窄） */
+  --panel-bg: var(--surface);   /* panel 内 sticky 浮层底色契约 */
+  --z-sticky: 1;
+  --z-popover: 10;
+  --z-overlay: 20;
+  --z-modal: 1000;
 
   /* ── 组件尺寸 ───────────────────────────────────────────── */
   --bash-output-max-height: 240px;
   --composer-btn-size: 30px;
+
+  /* ── diff 着色（v6 §4.5 柔化 12%：行背景 + 字符级高饱和）── */
+  --diff-add-bg: color-mix(in oklch, var(--success) 12%, transparent);
+  --diff-del-bg: color-mix(in oklch, var(--danger) 12%, transparent);
+  --diff-add-strong: color-mix(in oklch, var(--success) 45%, transparent);
+  --diff-del-strong: color-mix(in oklch, var(--danger) 45%, transparent);
 
   /* ── 动效 ───────────────────────────────────────────────── */
   --ease: cubic-bezier(0.4, 0, 0.2, 1);

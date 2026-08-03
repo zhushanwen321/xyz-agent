@@ -24,6 +24,7 @@
 | Token | 值 | 用途 | 来源 |
 |-------|-----|------|------|
 | `--bg` | `#131316` | 画布底层 | 2026-07-09 提亮（原 C 原始 `#0d0d0f`）。07-12 锚点不变；2026-08-02 太极·玄（阶梯上抬） |
+| `--bg-sunken` | `var(--bg)` | 同画布色（v6 新增：语义变更，不往黑推，靠 surface 浮起分隔） | 2026-08-02 太极·玄新增 |
 | `--surface` | `#1f1f22` | 面板/卡片 | 2026-07-12 拉距（原 07-09 `#222329`，+5 拉大与 bg 间距）；2026-08-02 太极·玄（阶梯上抬） |
 | `--surface-hover` | `#303033` | 面板悬停 | 2026-07-12 拉距（原 07-09 `#2d2e36`，+9）；2026-08-02 太极·玄（加宽级差） |
 | `--surface-2` | `#27272a` | 二级表面（Card-Elevated） | 2026-07-12 拉距（原 07-09 `#282930`，+6）；2026-08-02 太极·玄（阶梯上抬） |
@@ -38,6 +39,7 @@
 | `--neutral-ico-hover` | `#dedee2` | 图标 hover 色 | 2026-07-26 W1 新增（hover 回升至 fg 级）；2026-08-02 太极·玄（同步 fg） |
 | `--border` | `rgba(255,255,255,0.07)` | 分隔线 | 2026-07-09 提亮（原 0.06，提亮 bg 后可见度不足）；2026-08-02 太极·玄（0.05→0.07） |
 | `--border-strong` | `rgba(255,255,255,0.13)` | 强调分隔 | 2026-07-09 提亮（原 0.12）；2026-08-02 太极·玄（0.10→0.13） |
+| `--hairline` | `rgba(255,255,255,0.05)` | 行分隔 / drawer L1 栏底线（v6 新增，比 border 更弱） | 2026-08-02 太极·玄新增 |
 | `--accent` | `#cfcfd4` | 主色/链接/聚焦 | C 原始；2026-08-02 太极·玄（冷蓝 #4f8ef7 → 纯灰亮灰，微提自 #c8c8cd） |
 | `--accent-hover` | `#e0e0e4` | 主色悬停 | 补全；2026-08-02 太极·玄 |
 | `--accent-soft` | `color-mix(in oklch, var(--accent) 10%, transparent)` | 主色背景填充（color-mix 派生：palette 切换自动跟随 --accent） | 补全（暗色从 rgba 硬编码改为 color-mix，与亮色一致）；2026-08-02 太极·玄（12%→10%） |
@@ -59,6 +61,15 @@
 | `--success-soft` | `color-mix(in oklch, var(--success) 12%, transparent)` | 成功软底（badge/changeset resolved 背景，12% 基准） | 补全（状态色 soft 归一） |
 | `--danger-soft` | `color-mix(in oklch, var(--danger) 12%, transparent)` | 错误/危险软底（失败块/badge 背景，12% 基准） | 补全（状态色 soft 归一） |
 | `--warn-soft` | `color-mix(in oklch, var(--warn) 14%, transparent)` | 警告软底（badge/提示条背景，14% 基准） | 2026-07-26 W1 重命名（原 `--warning-soft` 12%，提到 14% 补偿哑光金的视觉重量不足） |
+
+## diff 着色（2026-08-02 太极·玄：柔化 12%）
+
+| Token | 值 | 用途 | 来源 |
+|-------|-----|------|------|
+| `--diff-add-bg` | `color-mix(in oklch, var(--success) 12%, transparent)` | diff 行背景（新增，柔化档） | 2026-08-02 太极·玄新增 |
+| `--diff-del-bg` | `color-mix(in oklch, var(--danger) 12%, transparent)` | diff 行背景（删除，柔化档） | 2026-08-02 太极·玄新增 |
+| `--diff-add-strong` | `color-mix(in oklch, var(--success) 45%, transparent)` | diff 字符级背景（新增，高饱和） | 2026-08-02 太极·玄新增 |
+| `--diff-del-strong` | `color-mix(in oklch, var(--danger) 45%, transparent)` | diff 字符级背景（删除，高饱和） | 2026-08-02 太极·玄新增 |
 
 ## 字体
 
@@ -83,12 +94,13 @@
 
 ## 圆角（C 原仅 3/12，补 8 中间档）
 
-> **v6 预告**：v6 视觉稿体系已将 `--radius-sm` 升至 `6px`（全局默认档），并新增 `--neutral-dim: #7d8494`、`--content-max-w: 720px` 等 token。本文件保留 v3 值作历史参考，v6 真值见 [`v6-spec-tokens.html`](./v6-spec-tokens.html)。实施期 C1 反写后本文件同步更新。
+> **v6 已落地**（2026-08-02 反写，C1）：`--radius-sm` 已升至 `6px`（全局默认档），新增 `--radius-card: 10px`。下表为当前真值（与 `.tmp/v6/src/styles/tokens.css` 对齐）。
 
 | Token | 值 | 用途 |
 |-------|-----|------|
-| `--radius-sm` | `3px` | 输入框/标签（C，v6 升至 6px 见上注） |
+| `--radius-sm` | `6px` | 输入框/标签（v6 升档） |
 | `--radius` | `8px` | 按钮/卡片（补全） |
+| `--radius-card` | `10px` | 卡片容器（v6 新增） |
 | `--radius-lg` | `12px` | 面板/弹层（C） |
 
 ## 间距（4px 栅格，补全）
@@ -100,6 +112,7 @@
 ```css
 --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);           /* C 原始，描边 */
 --shadow-2: 0 8px 24px rgba(0,0,0,0.4);          /* 补全，浮层 */
+--shadow-drawer: -12px 0 24px rgba(0,0,0,0.16); /* 2026-08-02 太极·玄新增：弱投影（D2 一体化分隔） */
 --shadow-glow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);  /* 补全，聚焦环；2026-08-02 V3 改 color-mix 派生跟随 --accent */
 ```
 
@@ -192,3 +205,15 @@
 |-------|-----|------|
 | `--bash-output-max-height` | `240px` | BashOutputBlock 输出区最大高度 |
 | `--composer-btn-size` | `30px` | Composer 发送/停止按钮尺寸 |
+| `--content-max-w` | `720px` | 内容列最大宽（settings 等收窄；v6 新增） |
+| `--panel-bg` | `var(--surface)` | panel 内 sticky 浮层底色契约（v6 新增） |
+| `--bar-fill-soft` | `55%` | progress-bar fill 柔化档（v6 新增） |
+
+## z-index 层级（2026-08-02 太极·玄新增）
+
+| Token | 值 | 用途 |
+|-------|-----|------|
+| `--z-sticky` | `1` | 吸顶元素 |
+| `--z-popover` | `10` | 弹层 |
+| `--z-overlay` | `20` | 覆盖层 |
+| `--z-modal` | `1000` | 模态 |

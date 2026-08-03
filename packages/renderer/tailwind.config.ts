@@ -6,7 +6,7 @@ import type { Config } from 'tailwindcss'
  * shadcn-vue 装机会在此基础上扩展，此处只落 design-tokens 对齐项。
  */
 export default {
-  content: ['./src/**/*.{vue,ts,tsx}'],
+  content: ['./src/**/*.{vue,ts,tsx}', '../ui/src/**/*.{vue,ts}'],
   darkMode: 'class',
   theme: {
     extend: {
@@ -15,6 +15,7 @@ export default {
           DEFAULT: 'var(--bg)',
           elevated: 'var(--bg-elevated)',
           input: 'var(--bg-input)',
+          card: 'var(--bg-card)', // v6 新增：设置分组卡片
         },
         surface: {
           DEFAULT: 'var(--surface)',
@@ -44,14 +45,15 @@ export default {
         info: { DEFAULT: 'var(--info)', soft: 'var(--info-soft)' },
         // reasoning 紫（draft-message-stream 思考块 / composer 思考等级专属色相）
         reasoning: { DEFAULT: 'var(--reasoning)', soft: 'var(--reasoning-soft)' },
-        // ── diff 行/字符级背景（预混合色，color-mix 派生跟随 --success/--danger）──
-        // 行背景中饱和(18%) + 字符级高饱和(45%)，双层亮度差锁定肉眼可辨。
-        // canvas 用 bg-bg-input（暗 #1e1f24 / 亮 #f1f3f6 自动跟随主题），色块叠加其上。
+        // ── diff 行/字符级背景（引用 style.css 新增 token，v6 §4.5 柔化 12%）──
+        // 行背景中饱和(12%) + 字符级高饱和(45%)，双层亮度差锁定肉眼可辨。
+        // 真值源在 style.css（--diff-* token），config 只做映射不重复定义色值。
+        // canvas 用 bg-bg-input（暗 #17171a / 亮 #f1f3f6 自动跟随主题），色块叠加其上。
         diff: {
-          'add-bg': 'color-mix(in oklch, var(--success) 18%, transparent)',
-          'add-strong': 'color-mix(in oklch, var(--success) 45%, transparent)',
-          'del-bg': 'color-mix(in oklch, var(--danger) 18%, transparent)',
-          'del-strong': 'color-mix(in oklch, var(--danger) 45%, transparent)',
+          'add-bg': 'var(--diff-add-bg)',
+          'add-strong': 'var(--diff-add-strong)',
+          'del-bg': 'var(--diff-del-bg)',
+          'del-strong': 'var(--diff-del-strong)',
         },
 
         // ── shadcn-vue 命名空间（别名映射到 v3 值，不引入新色）──────────
@@ -75,10 +77,11 @@ export default {
         mono: ['JetBrains Mono', 'IBM Plex Mono', 'ui-monospace', 'Menlo', 'monospace'],
       },
       borderRadius: {
-        sm: '3px',
-        DEFAULT: '8px',
+        sm: '6px', // v6 升档（对应 --radius-sm）
+        DEFAULT: '8px', // 按钮/卡片默认档（对应 --radius）
         md: '8px',
-        lg: '12px',
+        lg: '12px', // 面板/弹层（对应 --radius-lg）
+        card: '10px', // v6 新增：卡片容器（对应 --radius-card）
       },
       boxShadow: {
         1: 'var(--shadow-1)',
