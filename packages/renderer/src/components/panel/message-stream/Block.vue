@@ -51,9 +51,8 @@
     <!-- tool_call 块：默认 1 行收起（streaming/running 也收起），header 含摘要，点击展开详情。
          subagent（pi-subagents 的 "subagent" tool）渲染委托给 BlockSubagent（独立样式：users ICON +
          SUBAGENT. prefix + 去卡片化）——subagent 逻辑已抽离到 BlockSubagent.vue。
-         workflow（pi-workflow 的 "workflow" tool）：list-checks ICON + WORKFLOW. prefix + list-tree GUI。
-         HIDDEN_TOOL_NAMES（todo/goal_control 等状态管理类 tool）直接跳过——状态由 SideDrawer Tasks tab 展示。 -->
-    <div v-else-if="!isHidden" class="trace-tool">
+         workflow（pi-workflow 的 "workflow" tool）：list-checks ICON + WORKFLOW. prefix + list-tree GUI。 -->
+    <div v-else class="trace-tool">
       <!-- ── subagent 块：委托 BlockSubagent ── -->
       <BlockSubagent v-if="isSubagent" :tool="tool!" :session-id="sessionId" />
 
@@ -189,8 +188,8 @@ import { Check, Copy as CopyIcon } from '@lucide/vue'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import { extractGui } from '@xyz-agent/extension-protocol'
 import type { ToolCall } from '@xyz-agent/shared'
-import { SUBAGENT_TOOL_NAMES, HIDDEN_TOOL_NAMES, WORKFLOW_TOOL_NAMES } from '@xyz-agent/shared'
-import AnsiText from './gui/AnsiText.vue'
+import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES } from '@xyz-agent/shared'
+import { AnsiText } from '@xyz-agent/ui'
 import GuiComponentRenderer from './GuiComponentRenderer.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import BlockSubagent from './BlockSubagent.vue'
@@ -274,12 +273,9 @@ const filteredMetaItems = computed(() => {
   return metaItems.value.filter((item) => !item.text.endsWith('行'))
 })
 
-/* ── 块类型路由：subagent / workflow / hidden ── */
+/* ── 块类型路由：subagent / workflow ── */
 const isSubagent = computed(() => SUBAGENT_TOOL_NAMES.has(toolName.value))
 const isWorkflow = computed(() => WORKFLOW_TOOL_NAMES.has(toolName.value))
-/** 状态管理类 tool（todo/goal_control）：对话流完全不渲染（v-else-if=!isHidden 跳过）。
- *  其状态变化由 SideDrawer Tasks tab 展示。仅影响渲染层，数据仍完整存储。 */
-const isHidden = computed(() => !isSubagent.value && HIDDEN_TOOL_NAMES.has(toolName.value))
 
 /** 普通 tool header 的块类型 ICON（running 用 loader，其余走 BLOCK_ICON_LUCIDE） */
 const headerBlockIcon = computed(() => {
