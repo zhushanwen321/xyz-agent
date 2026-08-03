@@ -53,6 +53,9 @@ vi.mock('@/lib/ipc', () => ({
 vi.mock('@/api/domains/session', () => ({
   getWorkflows: vi.fn(),
   getAgentCallHistory: vi.fn(),
+  // useConnection.ensureDispatcher 经 sessionApi.subscribe 注入 ports（T2 后）
+  subscribe: vi.fn(async () => {}),
+  unsubscribe: vi.fn(async () => {}),
 }))
 
 // workflow store 经 @/api 门面导入 session，门面指回 domains 命名空间，保证 store 与断言用同一 vi.fn()。

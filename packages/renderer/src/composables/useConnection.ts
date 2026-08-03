@@ -27,22 +27,17 @@ import {
   restartRuntime,
 } from '../lib/ipc'
 import { BASE_PORT, DEV_PORT_OFFSET } from '@xyz-agent/shared'
-import type { ServerMessage } from '@xyz-agent/shared'
 import * as transport from '../api/transport'
 import * as pending from '../api/pending'
 import * as events from '../api/events'
-import {
-  getSubscriptionState,
-  updateLastSeenSeq,
-  subscribeSession,
-} from './useMessageBusSubscription'
+import { session as sessionApi } from '../api'
+import { configureRouteInbound } from '@xyz-agent/core'
 import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
 import { usePanelStore } from '../stores/panel'
 import { useExtensionUIStore } from '../stores/extension-ui'
 import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
-import type { SubagentRecord } from '@xyz-agent/shared'
 import { useToast } from './useToast'
 import { handleCompletion } from './useCompletionNotify'
 
@@ -70,133 +65,6 @@ export type ConnectionStatus =
   | 'restarting'
   | 'failed'
 
-/**
- * 入站消息分发器（features 层串联 transport→pending/events 的唯一桥）。
- *
- * 对每条入站 ServerMessage：
- *   1. 若 msg.id 命中 pending → resolve（普通响应）/ reject（error envelope）
- *   2. 按 payload.sessionId 是否存在分流：
- *      - 有 sessionId → seq gap 检测（IF8/ES3，仅对已 subscribe 的 session 生效）→
- *        events.dispatchSession（session 通道，CLAUDE.md line 98 隔离）+ 4 个兜底
- *      - 无 sessionId → events.dispatchGlobal（global 通道，config.* 及 model.list 等广播）
- *
- * session 隔离规则不变：session 级消息仍按 sessionId 路由；新增的是全局通道，
- * 承接 sendInitialState 推送的 7 条无 sessionId server-push（config.providers/model.list 等），
- * 不再静默丢弃。两通道互不串扰。
- *
- * seq gap 检测（D7 id/seq 互斥）：msg.seq 是 server-push live 事件的序号（per-session，
- * bus.publish 分配）。对已 subscribe 的 session（SubscriptionState.subscribed=true）：
- *   - seq <= lastSeenSeq → 丢弃（reconcile 回放的重复或乱序）
- *   - seq > lastSeenSeq+1 → 触发 subscribeSession(sid, seq-1) reconcile（ES3），当前 msg 仍 dispatch
- *   - seq === lastSeenSeq+1 → 正常递进，dispatch + 更新 lastSeenSeq
- * 未 subscribe 的 session（state 不存在或 subscribed=false）不做 gap 检测，正常 dispatch（渐进迁移，
- * remove-bandaids wave 统一）。pending 路径（msg.id 分支）不受 seq 影响——id/seq 来源互斥（D7）。
- */
-function routeInbound(msg: ServerMessage): void {
-  if (msg.id) {
-    if (msg.type === 'error') {
-      // type==='error' 已窄化 payload 为 error envelope（含 code + message + 可选 details）。
-      // 透传 code 到 reject 的 Error（D-021：NodeState.reason 需要 error code 区分失败类型，
-      // 如 out_of_cwd / permission_denied / timeout）。此前只透传 message 丢了 code。
-      // R2：details.detail 展开到 reject 的 Error 上——
-      // - worktree handler 把 WORKTREE_EXISTS 的 { cwd, dirName } 放 detail（对象，S5 后）；
-      // - 把 SETUP_FAILED/GIT_FAILED 的 { exitCode, stderr } 放 detail。
-      // 不展开则 CreateWorktreeModal error 态读不到 stderr、exists 态「直接开始」读不到 cwd。
-      // 注：object 分支 Object.assign(enriched, d) 会把 cwd 和 dirName 都赋到 Error 上，
-      // lastError.cwd 仍可读（onUseExisting 用），dirName 可用于前端核对是否同分支名碰撞。
-      const payload = msg.payload as {
-        code?: string
-        message?: string
-        details?: { detail?: unknown }
-      }
-      const message = typeof payload.message === 'string' ? payload.message : 'request failed'
-      const code = typeof payload.code === 'string' ? payload.code : 'unknown'
-      const enriched: Record<string, unknown> = { code }
-      const d = payload.details?.detail
-      if (typeof d === 'string') {
-        // 字符串 detail（如 WORKTREE_EXISTS 的 cwd）直接作 cwd 字段
-        enriched.cwd = d
-      } else if (d && typeof d === 'object') {
-        // 对象 detail（如 { exitCode, stderr }）展开到 Error 上
-        Object.assign(enriched, d)
-      }
-      pending.reject(msg.id, Object.assign(new Error(message), enriched))
-    } else {
-      pending.resolve(msg.id, msg.payload)
-    }
-  }
-  // payload 跨多种 type：有的含 sessionId（session 通道），有的不含（global 通道）。
-  // 联合类型无法直接 .sessionId，窄断言为可选字段做路由判定（CLAUDE.md line 98 隔离规则不变）。
-  const sid = (msg.payload as { sessionId?: string }).sessionId
-  if (typeof sid === 'string' && sid) {
-    // seq gap 检测（IF8/ES3）：只对已 subscribe 的 session 生效（渐进迁移，T2）。
-    // state 不存在或 subscribed=false → 跳过检测，正常 dispatch（兼容旧路径）。
-    if (typeof msg.seq === 'number') {
-      const state = getSubscriptionState(sid)
-      if (state && state.subscribed) {
-        if (msg.seq <= state.lastSeenSeq) {
-          // 丢弃：reconcile 回放的重复或乱序（seq 回退）。
-          // 不 dispatch、不更新基线、不触发兜底——这条消息是已处理过的（reconcile 期间重复 dispatch）。
-          return
-        }
-        if (msg.seq > state.lastSeenSeq + 1) {
-          // gap detected（ES3）：中间 seq 缺失 → 触发 subscribeSession(sid, seq-1) reconcile。
-          // fromSeq = seq-1（当前缺失的最早 seq，runtime 从此 seq 回拉到最新）。
-          // 不 return：当前消息仍 dispatch（gap 期间尽量不丢，reconcile 负责补齐缺失段）。
-          // void fire-and-forget：reconcile 是异步 RPC，不阻塞当前 dispatch；失败由 subscribeSession 内部 console.warn。
-          void subscribeSession(sid, msg.seq - 1)
-        }
-        // 正常递进（seq === lastSeenSeq+1）或 gap 后当前消息：更新基线 + 继续 dispatch。
-        updateLastSeenSeq(sid, msg.seq)
-      }
-      // state 不存在或未 subscribed：正常 dispatch（兼容旧路径，未迁移的 session 不做 gap 检测）
-    }
-    events.dispatchSession(sid, msg)
-    // session.exited 兜底：进程退出必须标记 dead + toast，不能只依赖惰性的 session
-    // 通道订阅（首次 send 前可能无订阅者 → dispatchSession no-op → 错误丢弃）。
-    if (msg.type === 'session.exited') {
-      handleSessionExited(sid, msg.payload as { code: number | null; reason: string })
-    }
-    // message.complete：后台完成时提示音 + 未读标记
-    if (msg.type === 'message.complete') {
-      const payload = msg.payload as { sessionId?: string; stopReason?: string }
-      const focusedSid = usePanelStore().panels.find(
-        (p) => p.id === usePanelStore().activePanelId,
-      )?.sessionId ?? null
-      handleCompletion(sid, payload.stopReason ?? 'stop', focusedSid)
-    }
-    // session.subagents 兜底：subagent 终态推送必须在所有 session 生效（含非活跃），
-    // 不能只依赖 per-focus 订阅（切走即退订 → 终态丢弃 → 侧栏卡 running）。
-    // 仿 session.exited / message.complete：dispatchSession 之后无条件 applyRecords。
-    if (msg.type === 'session.subagents') {
-      const payload = msg.payload as { subagents?: SubagentRecord[] }
-      if (Array.isArray(payload.subagents)) {
-        useSubagentStore().applyRecords(sid, payload.subagents)
-      }
-    }
-    // session.workflowUpdate 兜底：workflow 增量信号触发 loadWorkflows + running 延迟重试，
-    // 同样在所有 session（含非活跃）生效，不依赖 per-focus 订阅。
-    if (msg.type === 'session.workflowUpdate') {
-      const payload = msg.payload as { update?: { status?: string } }
-      useWorkflowStore().triggerWorkflowReload(sid, payload.update?.status ?? 'unknown')
-    }
-  } else {
-    events.dispatchGlobal(msg)
-    // L9：session 级消息（type 以 session./message. 开头）缺失 sessionId 时 warn，
-    // 让 runtime bug 可见（违反规则 #7 隔离要求应有 fail-fast 信号，而非静默降级到 global 丢弃）
-    if (msg.type.startsWith('session.') || msg.type.startsWith('message.')) {
-      console.warn('[useConnection] session-level message missing sessionId, routed to global:', msg.type)
-    }
-    // 全局 error 兜底：无 sessionId、无 id 的 server-push error 此前静默丢弃。
-    // 现 toast 提示（如 config 加载失败等全局错误）。
-    if (msg.type === 'error' && !msg.id) {
-      const payload = msg.payload as { message?: string }
-      const message = typeof payload.message === 'string' ? payload.message : t('connection.unknownError')
-      useToast().error(message)
-    }
-  }
-}
-
 let dispatcherInstalled = false
 let removeTransportListener: (() => void) | null = null
 
@@ -204,7 +72,36 @@ let removeTransportListener: (() => void) | null = null
 function ensureDispatcher(): void {
   if (dispatcherInstalled) return
   dispatcherInstalled = true
-  removeTransportListener = transport.on(routeInbound)
+  // 入站路由归位 @xyz-agent/core（wave:renderer-rebuild-v2 W2）：configureRouteInbound 一次性
+  // 注入三件套端口（pending/events/subscribe）+ effect 回调（session.exited/message.complete/
+  // session.subagents/session.workflowUpdate/全局 error），内部 setSubscriptionPorts 把端口灌入
+  // core subscription-state（gap 检测副作用依赖）。返回的 dispatcher 等价原 routeInbound
+  // （pending 分流 + ROUTE_TABLE 精确 type + FALLBACK 兜底），行为不变（AC4/AC5/AC7/AC8/AC10）。
+  const dispatcher = configureRouteInbound(
+    {
+      pending,
+      events,
+      subscribe: sessionApi.subscribe,
+    },
+    {
+      onSessionExited: handleSessionExited,
+      onMessageComplete: (sid, payload) => {
+        const focusedSid =
+          usePanelStore().panels.find((p) => p.id === usePanelStore().activePanelId)?.sessionId ?? null
+        handleCompletion(sid, payload.stopReason ?? 'stop', focusedSid)
+      },
+      onSubagents: (sid, subagents) => {
+        useSubagentStore().applyRecords(sid, subagents)
+      },
+      onWorkflowUpdate: (sid, update) => {
+        useWorkflowStore().triggerWorkflowReload(sid, update.status ?? 'unknown')
+      },
+      onGlobalError: (message) => {
+        useToast().error(message)
+      },
+    },
+  )
+  removeTransportListener = transport.on(dispatcher)
 }
 
 /**
