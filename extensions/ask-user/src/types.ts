@@ -10,7 +10,6 @@ export const SPLIT_PANE_MIN_WIDTH = 84;
 export const SPLIT_PANE_SEPARATOR = " │ ";
 export const SPLIT_PANE_LEFT_MIN = 32;
 export const SPLIT_PANE_RIGHT_MIN = 28;
-export const ANSWER_COMMENT_SEPARATOR = " — ";
 
 // ── Input schema（LLM 调用参数） ─────────────────────
 // description 用英文：这些字符串会进 LLM 的 tool schema，英文更利于模型理解。
@@ -46,9 +45,6 @@ export const QuestionSchema = Type.Object({
 	}),
 	multiSelect: Type.Optional(
 		Type.Boolean({ description: "Default false. Set true only when more than one option can validly apply simultaneously; otherwise leave false for a single best answer." }),
-	),
-	allowComment: Type.Optional(
-		Type.Boolean({ description: "Default false. Set true to let the user append a short free-text comment after selecting (e.g. to note a constraint)." }),
 	),
 });
 
@@ -123,7 +119,7 @@ export interface ThemeLike {
 }
 
 /** 单问题的交互模式 */
-export type QuestionMode = "options" | "freeform" | "comment";
+export type QuestionMode = "options" | "freeform";
 
 /** 单问题的交互状态（每问题一个实例） */
 export interface QuestionState {
@@ -140,8 +136,6 @@ export interface QuestionState {
 	/** freeform Esc 保存的未提交草稿；null=无草稿。
 	 *  与 freeTextValue（已提交答案）分离，避免放弃的草稿污染答案、触发 auto-confirm。 */
 	freeDraft: string | null;
-	/** 可选评论；null=未输入 */
-	commentValue: string | null;
 	/** 当前交互模式 */
 	mode: QuestionMode;
 	/** 编辑器草稿文本（每问题独立持有，进编辑器时预填、退出时清空） */
@@ -159,7 +153,6 @@ export function createQuestionState(): QuestionState {
 		confirmed: false,
 		freeTextValue: null,
 		freeDraft: null,
-		commentValue: null,
 		mode: "options",
 		draftText: "",
 		savedOptionsCursorIndex: 0,

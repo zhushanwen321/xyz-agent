@@ -23,7 +23,11 @@ import {
 } from "@xyz-agent/extension-protocol";
 
 import { AskUserComponent } from "./component";
-import { ANSWER_COMMENT_SEPARATOR, type Option, type Question, type Result, type ThemeLike } from "./types";
+import { type Option, type Question, type Result, type ThemeLike } from "./types";
+
+// wave 2 临时内联：ANSWER_COMMENT_SEPARATOR 已从 types.ts 删除（comment 功能移除中），
+// 本文件的 __comment 重新编码逻辑整体在 wave 3 移除，届时连同本常量一并删除。
+const ANSWER_COMMENT_SEPARATOR = " — ";
 
 /**
  * channel handler 签名——与 subagent-workflow 的 UiChannelRegistry.ChannelHandler 一致
