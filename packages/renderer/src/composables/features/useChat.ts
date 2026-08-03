@@ -22,7 +22,7 @@ import i18n from '@/i18n'
 import type { Segment } from '@xyz-agent/shared'
 import { segmentsToPrompt } from '@xyz-agent/shared'
 import { session as sessionApi } from '@/api'
-import { markBashError } from '@/stores/chat-bash-effects'
+import { markBashError } from '@xyz-agent/core'
 import {
   subscribeSession,
   clearSubscription,

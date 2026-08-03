@@ -12,8 +12,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createPinia, setActivePinia, storeToRefs } from 'pinia'
 import { useChatStore } from '@/stores/chat'
-import { initTimers } from '@/stores/chat-timers'
-import { markBashError } from '@/stores/chat-bash-effects'
+import { initTimers, markBashError } from '@xyz-agent/core'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 describe('w1 timer-decouple: bash timer 不跨域误杀 streaming', () => {

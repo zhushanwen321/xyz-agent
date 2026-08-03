@@ -14,7 +14,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useChatStore } from '@/stores/chat'
-import { findToolCallOwner } from '@/stores/chat-chunk-processor'
+import { findToolCallOwner } from '@xyz-agent/core'
 import { assistantToMarkdown } from '@/composables/logic/messageFormat'
 import { deriveStatus } from '@/composables/logic/sessionStatus'
 import type { Message, ToolCall } from '@xyz-agent/shared'

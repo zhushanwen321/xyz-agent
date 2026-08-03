@@ -24,17 +24,15 @@
  * 完成收口与超时兜底）。
  */
 import type {
-  ChangeSetStatus,
   ContentBlock,
-  FileChange,
   Message,
   ServerMessage,
   ServerMessageType,
-  SteerFollowUpMode,
   ToolCall,
 } from '@xyz-agent/shared'
 import { parseBgNotifyDetails } from '@xyz-agent/shared'
-import type { RetryState, QueueState, FinalizeReason } from '@xyz-agent/core'
+import type { RetryState, QueueState, FinalizeReason, MessageEffectContext, MessageEffectHandler } from '@xyz-agent/core'
+export type { MessageEffectContext, MessageEffectHandler } from '@xyz-agent/core'
 import {
   readString,
   readRecord,
@@ -48,10 +46,10 @@ import {
   readFileChanges,
   readChangeSetStatus,
 } from '@xyz-agent/core'
-import { findLastAssistantIndex, findToolCallOwner } from './chat-chunk-processor'
+import { findLastAssistantIndex, findToolCallOwner } from '@xyz-agent/core'
 import { commitMessages } from '@xyz-agent/core'
 import { truncateToolCall } from '@/utils/truncate-tool-output'
-import { bashStartEffect, bashResultEffect } from './chat-bash-effects'
+import { bashStartEffect, bashResultEffect } from '@xyz-agent/core'
 import { useTasksStore } from './tasks'
 import { isTodoItem } from './tasks-readers'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
@@ -89,59 +87,6 @@ function countDrained(prev: string[], next: string[]): string[] {
   }
   return drained
 }
-
-/**
- * message.* 事件副作用上下文（store refs + 跨方法回调，模块级函数据此更新）。
- *
- * - messages/retryStates/queueStates：原 ChunkContext，chunk 状态写入目标。
- * - applyFileChanges/markChangeSetsSuperseded：原 ChunkContext 回调（store 内合并逻辑）。
- * - finalizeSession + clearPendingSend：统一收口出口（替代 setStreaming flag 翻转）。
- */
-export interface MessageEffectContext {
-  messages: { value: Map<string, Message[]> }
-  retryStates: { value: Map<string, RetryState> }
-  queueStates: { value: Map<string, QueueState> }
-  /** file_changes case 调 store.applyFileChanges（合并逻辑在 store 内） */
-  applyFileChanges: (
-    sessionId: string,
-    messageId: string,
-    changes: FileChange[],
-    changeSetStatus: ChangeSetStatus,
-    isFullSet: boolean,
-  ) => void
-  /** changeSetInvalidated case 调 store.markChangeSetsSuperseded（commit 后旧卡片过期） */
-  markChangeSetsSuperseded: (sessionId: string) => void
-  /** 统一收口出口（替代 setStreaming）。终态 handler 调。
-   *  reason 决定终态映射；handler 自己改 entity status 后调此方法（幂等：entity 已终态则 no-op，
-   *  只清 pendingSend + timer）。errorText 可选：error/stream_error 时写入。 */
-  finalizeSession: (sessionId: string, reason: FinalizeReason, errorText?: string) => void
-  /** message_start 清空窗（替代 setStreaming 隐式清 dispatching）。 */
-  clearPendingSend: (sessionId: string) => void
-  /** message_start 挂载 streaming 超时兜底 timer（防 complete 永不到的 pi 静默卡死）。 */
-  armStreamingTimer: (sessionId: string) => void
-  /** bashStartEffect 挂载 bash 专用超时 timer（防 bash RPC 卡死永久 streaming）。 */
-  armBashTimer: (sessionId: string) => void
-  /** bashResultEffect/markBashError 终态时清 bash 超时 timer（防 300s 后误触发，W3 遗留 bug）。 */
-  clearBashTimer: (sessionId: string) => void
-  /** queue_update 投递信号 */
-  markPendingDelivered: (sessionId: string, text: string, sendMode?: SteerFollowUpMode) => void
-}
-
-/**
- * 单个 message.* type 的 effect handler。
- *
- * 签名约定：接收上下文 + sessionId + payload，内部执行该 type 的全部副作用
- * （chunk 状态更新 + lifecycle flag）。返回值无意义（统一 void）。
- *
- * payload 类型：ADR-0016 类型基础。ServerMessageMap 对多数 message.* 用
- * Record<string, unknown> 占位（未收紧），handler 内用 readString 等安全窄化，
- * 与原 applyChunk 完全一致（不引入 any）。
- */
-export type MessageEffectHandler = (
-  ctx: MessageEffectContext,
-  sessionId: string,
-  payload: Record<string, unknown>,
-) => void
 
 /**
  * message.* type → effect handler 注册表。

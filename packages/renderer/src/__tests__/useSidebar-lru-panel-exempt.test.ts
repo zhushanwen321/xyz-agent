@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { effectScope } from 'vue'
 import type { Message, SessionGroup, SessionSummary } from '@xyz-agent/shared'
-import { _resetLruForTest } from '@/stores/chat-lru'
+import { _resetLruForTest } from '@xyz-agent/core'
 
 // ── mock 无关 store / composable，减少 selectSession 噪音 ──
 const clearSessionMock = vi.hoisted(() => vi.fn())

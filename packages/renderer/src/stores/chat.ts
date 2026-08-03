@@ -27,16 +27,16 @@
 import { defineStore } from 'pinia'
 import { computed, onScopeDispose, ref, shallowRef } from 'vue'
 import { commitMessages, truncateMessagesFrom, prependHistory as prependHistoryMut } from '@xyz-agent/core'
-import { initTimers } from './chat-timers'
 import { truncateToolOutputBatch } from '@/utils/truncate-tool-output'
 import {
+  initTimers,
   LRU_MAX_SESSIONS,
   touchLru as lruTouch,
   evictIfNeeded as lruEvictIfNeeded,
   evictSessionWithVirtual as lruEvictSession,
   makeLruEvictDeps,
   disposeLruEntry,
-} from './chat-lru'
+} from '@xyz-agent/core'
 
 // re-export 供外部消费（测试 / 组件读常量）
 export { LRU_MAX_SESSIONS }
@@ -49,10 +49,12 @@ import type {
 } from '@xyz-agent/shared'
 import { normalizeContent } from '@xyz-agent/shared'
 import { dispatchMessageEvent } from './chat-message-effects'
-import { findLastStreamingBashIndex } from './chat-bash-effects'
-import { findLastAssistantIndex } from './chat-chunk-processor'
-import { createChangeSetController } from './chat-changeset'
-import { createHandoffController } from './chat-handoff'
+import {
+  findLastStreamingBashIndex,
+  findLastAssistantIndex,
+  createChangeSetController,
+  createHandoffController,
+} from '@xyz-agent/core'
 export type { RetryState, QueueState, FinalizeReason } from '@xyz-agent/core'
 import type { RetryState, QueueState, FinalizeReason } from '@xyz-agent/core'
 

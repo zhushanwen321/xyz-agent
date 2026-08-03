@@ -23,7 +23,7 @@ import {
   useSubagentStore,
 } from '@/stores/subagent'
 import { useChatStore } from '@/stores/chat'
-import { isVirtualKeyOf } from '@/stores/chat-lru'
+import { isVirtualKeyOf } from '@xyz-agent/core'
 import { useWorkflowStore } from '@/stores/workflow'
 import type { Message } from '@xyz-agent/shared'
 
