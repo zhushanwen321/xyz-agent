@@ -16,7 +16,7 @@
  * 运行：cd packages/renderer && npx vitest run src/__tests__/utils/truncate-tool-output.test.ts
  */
 import { describe, it, expect } from 'vitest'
-import { truncateToolOutput, TRUNCATE_TOOLS, TOOL_OUTPUT_MAX_BYTES } from '@/utils/truncate-tool-output'
+import { truncateToolOutput, TRUNCATE_TOOLS, TOOL_OUTPUT_MAX_BYTES } from '@xyz-agent/core'
 import type { Message } from '@xyz-agent/shared'
 
 function makeAssistantWithTool(toolName: string, output: string, outputRaw?: string): Message {

@@ -168,7 +168,7 @@ import { AnsiText } from '@xyz-agent/ui'
 import type { SideDrawerTab } from '@/composables/features/useSideDrawer'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import { useDrawerWidgetBuffers } from '@/composables/features/useDrawerWidgetBuffers'
-import { useTasksStore } from '@/stores/tasks'
+import { useTasksStore } from '@xyz-agent/core'
 import { useChatStore } from '@/stores/chat'
 
 const props = defineProps<{

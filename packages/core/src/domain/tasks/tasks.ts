@@ -1,6 +1,11 @@
 /**
  * Tasks store —— 按 sessionId 分区缓存 goal/todo 的 GuiComponent 快照。
  *
+ * [TODO @P4-§6.7-delete] 本 store 为 builtin tasks plugin 化前的过渡存根：P3 chat 域绞杀期
+ * 按 D9 原样迁入 core/src/domain/tasks/（消除 chat effects → tasks 的跨域 import）；
+ * P4 §6.7 将整体删除（goal/todo builtin plugin 化，details.__gui__ 走 RenderingProtocol
+ * 自动渲染）。迁移期内容零改动，仅归位 + 此标记。
+ *
  * 数据源：
  * - todo：todo tool 调用返回的 details.__gui__（list-tree GuiComponent）
  * - goal：goal_control tool 调用返回的 details.__gui__（card / stats-line GuiComponent）

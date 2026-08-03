@@ -104,7 +104,7 @@ import type { Component } from 'vue'
 import type { GuiComponent, StatItem } from '@xyz-agent/extension-protocol'
 import { Button } from '@/components/ui/button'
 import { useCommandStore } from '@/stores/command'
-import type { GoalLiveStatus, GoalSnapshot } from '@/stores/tasks'
+import type { GoalLiveStatus, GoalSnapshot } from '@xyz-agent/core'
 
 const props = defineProps<{
   goal: GoalSnapshot

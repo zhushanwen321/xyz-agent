@@ -81,7 +81,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Check, CheckSquare } from '@lucide/vue'
-import { useTasksStore, type TodoItem } from '@/stores/tasks'
+import { useTasksStore, type TodoItem } from '@xyz-agent/core'
 import GoalCard from './GoalCard.vue'
 
 const props = defineProps<{

@@ -1,6 +1,10 @@
 /**
  * W2 H3：tool result 共享截断工具。
  *
+ * [归位] 迁自 renderer src/utils/truncate-tool-output.ts（P3 chat 域绞杀：chat-message-effects
+ * 迁 core/src/domain/chat/effects/registry.ts 时，tool_call_end handler 依赖 truncateToolCall；
+ * chat.ts 仍依赖 truncateToolOutputBatch，改从 @xyz-agent/core 取）。内容零改动，仅归位。
+ *
  * 对应 FR-2 + D7/D9/D10/D12 + AC-3/4/10/11/13。
  *
  * 核心策略：

@@ -19,7 +19,7 @@ import {
   routeStatus,
   __resetExtensionRegistry,
 } from '@/extensions/registry'
-import { useTasksStore } from '@/stores/tasks'
+import { useTasksStore } from '@xyz-agent/core'
 // import tasks-adapter 触发副作用注册（goal/todo adapter 进 registry）
 import '@/extensions/adapters/tasks-adapter'
 

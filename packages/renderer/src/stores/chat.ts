@@ -26,8 +26,7 @@
  */
 import { defineStore } from 'pinia'
 import { computed, onScopeDispose, ref, shallowRef } from 'vue'
-import { commitMessages, truncateMessagesFrom, prependHistory as prependHistoryMut } from '@xyz-agent/core'
-import { truncateToolOutputBatch } from '@/utils/truncate-tool-output'
+import { commitMessages, truncateMessagesFrom, prependHistory as prependHistoryMut, truncateToolOutputBatch, dispatchMessageEvent } from '@xyz-agent/core'
 import {
   initTimers,
   LRU_MAX_SESSIONS,
@@ -48,7 +47,9 @@ import type {
   SteerFollowUpMode,
 } from '@xyz-agent/shared'
 import { normalizeContent } from '@xyz-agent/shared'
-import { dispatchMessageEvent } from './chat-message-effects'
+import { useTasksStore } from '@xyz-agent/core'
+import { useSideDrawer, setPendingOpenForSid } from '@/composables/features/useSideDrawer'
+import { usePanelStore } from '@/stores/panel'
 import {
   findLastStreamingBashIndex,
   findLastAssistantIndex,
@@ -644,11 +645,11 @@ export const useChatStore = defineStore('chat', () => {
    * useChat.ensureStreamSubscription 收到 message.* 后调本方法，不再自己 switch。
    * 内部经 dispatchMessageEvent 查 effect 注册表，执行该 type 的全部副作用：
    * (a) chunk 状态更新（messages/retryStates/queueStates）+ (b) 终态收口
-   * （finalizeSession）。注册表见 chat-message-effects.ts。
-   *
-   * 行为等价：与原 appendAssistantChunk(applyChunk) + finalizeSession 的串联一致——
-   * handler 内先更新 chunk 状态后收口实体，对应原「先 appendAssistantChunk 再 finalizeSession」顺序。
-   * 非 message.* / 未注册 type no-op（等价原 applyChunk default return）。
+   * （finalizeSession）。注册表见 core/src/domain/chat/effects/registry.ts。
+ *
+ * 行为等价：与原 appendAssistantChunk(applyChunk) + finalizeSession 的串联一致——
+ * handler 内先更新 chunk 状态后收口实体，对应原「先 appendAssistantChunk 再 finalizeSession」顺序。
+ * 非 message.* / 未注册 type no-op（等价原 applyChunk default return）。
    */
   function applyMessageEvent(sessionId: string, msg: ServerMessage): void {
     dispatchMessageEvent(
@@ -664,6 +665,20 @@ export const useChatStore = defineStore('chat', () => {
         armBashTimer,
         clearBashTimer,
         markPendingDelivered,
+        // 首个 todo/goal 数据到达时开 tasks panel（原 chat-message-effects.openTasksDrawerOnFirstData
+        // 逐字逻辑，衔接 renderer 自己的 useSideDrawer/usePanelStore/setPendingOpenForSid，
+        // 保持 pendingOpenMap 单一在 renderer 侧）。
+        openTasksPanelOnFirstData: (sid, hadDataBefore) => {
+          if (hadDataBefore) return // 已有数据，非首次
+          const tasksStore = useTasksStore()
+          if (!tasksStore.hasData(sid)) return // 写入后仍无数据（守卫，理论上不达）
+          const focusedSid = usePanelStore().focusedSessionId
+          if (focusedSid === sid) {
+            useSideDrawer().open('tasks')
+          } else {
+            setPendingOpenForSid(sid)
+          }
+        },
       },
       sessionId,
       msg,

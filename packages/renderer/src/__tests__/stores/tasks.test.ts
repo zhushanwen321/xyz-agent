@@ -16,7 +16,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
-import { useTasksStore } from '@/stores/tasks'
+import { useTasksStore } from '@xyz-agent/core'
 
 // ── fixture 工厂 ────────────────────────────────────
 

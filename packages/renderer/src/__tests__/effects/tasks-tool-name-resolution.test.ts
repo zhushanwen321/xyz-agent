@@ -13,7 +13,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useChatStore } from '@/stores/chat'
-import { useTasksStore } from '@/stores/tasks'
+import { useTasksStore } from '@xyz-agent/core'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 // mock useSideDrawer，捕获 open('tasks') 调用（首数据写入时自动弹 drawer）

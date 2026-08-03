@@ -11,7 +11,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { mount } from '@vue/test-utils'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import GoalCard from '@/components/panel/GoalCard.vue'
-import type { GoalSnapshot } from '@/stores/tasks'
+import type { GoalSnapshot } from '@xyz-agent/core'
 
 // ── fixture 工厂 ────────────────────────────────────
 

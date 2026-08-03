@@ -13,7 +13,7 @@
  * 依赖方向：extensions/registry（注册）+ stores/tasks（数据写入）。不依赖任何 UI 组件。
  */
 import { registerKnownExtension } from '../registry'
-import { useTasksStore } from '@/stores/tasks'
+import { useTasksStore } from '@xyz-agent/core'
 
 /** goal/todo extension 认领的 widgetKey / statusKey（与 extension 源码 setWidget/setStatus 参数一致） */
 const TASKS_WIDGET_KEYS = ['goal', 'todo'] as const

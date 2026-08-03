@@ -1,6 +1,11 @@
 /**
  * message.* 事件 effect 注册表（消除 double-dispatch，架构审查候选 F2）。
  *
+ * [归位] 迁自 renderer stores/chat-message-effects.ts（P3 chat 域绞杀 w3：AC3 达成——
+ * domain/chat/effects 零跨域 import，grep 验证无 @/stores/tasks、@/composables/features/useSideDrawer、
+ * @/stores/panel）。跨域 panel 编排经 MessageEffectContext.openTasksPanelOnFirstData 回调注入
+ * （renderer 实现），tasks store 已迁 core/src/domain/tasks/（intra-core import）。
+ *
  * 背景：原 chat-chunk-processor（21 case，更新 messages/retryStates/queueStates）
  * 与 useChat.ensureStreamSubscription（9 case，翻 isStreaming + updateLabel）对同一
  * ServerMessage 流 switch 两次。新增 message.* type 必须两处同步改，易漏。
@@ -31,8 +36,9 @@ import type {
   ToolCall,
 } from '@xyz-agent/shared'
 import { parseBgNotifyDetails } from '@xyz-agent/shared'
-import type { RetryState, QueueState, FinalizeReason, MessageEffectContext, MessageEffectHandler } from '@xyz-agent/core'
-export type { MessageEffectContext, MessageEffectHandler } from '@xyz-agent/core'
+import type { RetryState, QueueState, FinalizeReason } from '../store-types'
+import type { MessageEffectContext, MessageEffectHandler } from '../effect-types'
+export type { MessageEffectContext, MessageEffectHandler } from '../effect-types'
 import {
   readString,
   readRecord,
@@ -45,24 +51,29 @@ import {
   readBranchSummary,
   readFileChanges,
   readChangeSetStatus,
-} from '@xyz-agent/core'
-import { findLastAssistantIndex, findToolCallOwner } from '@xyz-agent/core'
-import { commitMessages } from '@xyz-agent/core'
-import { truncateToolCall } from '@/utils/truncate-tool-output'
-import { bashStartEffect, bashResultEffect } from '@xyz-agent/core'
-import { useTasksStore } from './tasks'
-import { isTodoItem } from './tasks-readers'
+} from '../readers'
+import { findLastAssistantIndex, findToolCallOwner } from '../chunk-processor'
+import { commitMessages } from '../mutations'
+import { truncateToolCall } from '../truncate-tool-output'
+import { bashStartEffect, bashResultEffect } from '../bash-effects'
+// tasks store 已迁 core/src/domain/tasks/（D9 存根，TODO @P4-§6.7-delete），intra-core import
+import { useTasksStore } from '../../tasks'
+import { isTodoItem } from '../../tasks/tasks-readers'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
-import i18n from '@/i18n'
-import { useSideDrawer, setPendingOpenForSid } from '@/composables/features/useSideDrawer'
-import { usePanelStore } from '@/stores/panel'
-
-const t = i18n.global.t
+// [TODO @i18n-migration] core/i18n 落地后恢复 i18n.global.t 调用（§0.3 列为后续迁移）。
+// 当前 compactionSummary/branchSummary 的 summary 兑底文案用硬编码英文占位（summary 几乎总在场，兑底军见）。
 
 /** debug 日志：status dump 显示最近多少条消息 */
 const DEBUG_TAIL_MSG_COUNT = 5
 /** debug 日志：sid 显示后多少位（截断长 UUID 便于阅读） */
 const SID_TAIL_LENGTH = 8
+
+/**
+ * Vite 注入 import.meta.env.DEV（renderer 侧，dev=true / prod=false）；core 单测/非 Vite 环境
+ * import.meta.env 不存在 → false（不吐 debug 日志）。宽松 cast 避免 core 缺 vite/client 类型报错。
+ * [DEBUG finalize] 场景A诊断日志的开关，仅 renderer 开发态触发。
+ */
+const IS_DEV: boolean = ((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV) ?? false
 
 /**
  * 计数差集：返回 prev 比 next 多出的元素（按出现次数，非子串匹配）。
@@ -122,28 +133,19 @@ function isLastAssistantStreaming(
  * （含 isVerification，list-tree 的 TreeItem 不含此字段）；goal_control 暴露 details.slug。
  */
 /**
- * 首个 todo/goal 数据写入 tasks store 时，自动打开 SideDrawer 并切到 tasks tab。
+ * 首个 todo/goal 数据写入 tasks store 时，经 ctx 回调让 renderer 决定是否开 panel。
  *
- * 仅在 hasData 从 false → true 的瞬间触发（后续 update 不重复弹）。
- * 放在实时路径（routeToolResult/routeToolStart），hydrate（重开 session）不调——用户主动切换
+ * core 只负责「写入前快照 hadDataBefore + 写入 tasks store + 调 ctx.openTasksPanelOnFirstData」，
+ * panel/sideDrawer/focused 判断全在 renderer 回调实现（原 openTasksDrawerOnFirstData 逐字逻辑，
+ * 保持 pendingOpenMap 单一在 renderer，避免 core/renderer Map 分裂）。详见 effect-types.ts
+ * openTasksPanelOnFirstData 注释。
+ *
+ * 仅实时路径（routeToolResult/routeToolStart）调，hydrate（重开 session）不调——用户主动切换
  * session 不应强制弹 drawer，只有「新任务实时到达」才主动提示。
  */
-function openTasksDrawerOnFirstData(sid: string, hadDataBefore: boolean): void {
-  if (hadDataBefore) return // 已有数据，非首次
-  const tasksStore = useTasksStore()
-  if (!tasksStore.hasData(sid)) return // 写入后仍无数据（守卫，理论上不达）
-  // FR-2 sid 守卫：事件归属的 sid === 当前 focusedSessionId 才直接开 drawer（用户正看着）；
-  // 否则只置 pendingOpen 标记，用户切回该 session 时由 selectSession 的 consumePendingOpen 消费。
-  // 避免后台 session 的 tasks 事件弹窗干扰用户当前正在看的 session（ADR-0053）。
-  const focusedSid = usePanelStore().focusedSessionId
-  if (focusedSid === sid) {
-    useSideDrawer().open('tasks')
-  } else {
-    setPendingOpenForSid(sid)
-  }
-}
 
 function routeToolResultToTasks(
+  ctx: MessageEffectContext,
   sid: string,
   toolName: string,
   details: Record<string, unknown> | undefined,
@@ -179,7 +181,7 @@ function routeToolResultToTasks(
     if (slug) tasksStore.setGoalMeta(sid, { slug })
   }
 
-  openTasksDrawerOnFirstData(sid, hadDataBefore)
+  ctx.openTasksPanelOnFirstData(sid, hadDataBefore)
 }
 
 /**
@@ -187,6 +189,7 @@ function routeToolResultToTasks(
  * objective 只在 create action 的 input 里（tool result details 不回传），需单独提取。
  */
 function routeToolStartToTasks(
+  ctx: MessageEffectContext,
   sid: string,
   payload: Record<string, unknown>,
 ): void {
@@ -200,7 +203,7 @@ function routeToolStartToTasks(
     const tasksStore = useTasksStore()
     const hadDataBefore = tasksStore.hasData(sid)
     tasksStore.setGoalMeta(sid, { objective: objective ?? undefined, slug: slug ?? undefined })
-    openTasksDrawerOnFirstData(sid, hadDataBefore)
+    ctx.openTasksPanelOnFirstData(sid, hadDataBefore)
   }
 }
 
@@ -219,7 +222,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // [DEBUG finalize] 场景A诊断：记录 message_start 建新 streaming assistant 时，当前已有多少
     // streaming assistant。多 turn(tool_use)场景下应看到 streamingCount 递增（每 turn 累积一个），
     // 若 message_start 到达前 streamingCount 突然变 0（上一轮被提前收口），即闪烁根因点。
-    if (import.meta.env.DEV) {
+    if (IS_DEV) {
       const streaming = prev.filter((m) => m.status === 'streaming')
       const statusDump = prev.slice(DEBUG_TAIL_MSG_COUNT).map((m) => `${m.role[0]}:${m.status}${m.toolCalls ? `(${m.toolCalls.length}tc)` : ''}`)
       console.log(`[chat-effect] message_start sid=${sid.slice(-SID_TAIL_LENGTH)} existingStreaming=${streaming.length} totalMsgs=${prev.length} lastStatus=[${statusDump.join(',')}]`)
@@ -249,7 +252,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // [DEBUG finalize] 场景A诊断：message.complete 到达时记录 stopReason + 当前所有 streaming
     // assistant 的 toolCall 状态。复现「同一回合中间闪烁已完成」时，若此处 streamingBefore>0 且
     // 仍有 toolCall running，说明 message.complete 提前到达（pi/runtime 在 tool 间隙误发了）。
-    if (import.meta.env.DEV) {
+    if (IS_DEV) {
       const streaming = prev.filter((m) => m.status === 'streaming')
       const lastAssistant = prev[prev.length - 1]?.role === 'assistant' ? prev[prev.length - 1] : null
       const lastTool = lastAssistant?.toolCalls?.[lastAssistant.toolCalls.length - 1]
@@ -430,7 +433,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
       startTime: Date.now(),
     }
     // goal_control create 的 input.objective 只在此刻可得（tool result details 不回传），提前提取。
-    routeToolStartToTasks(sid, payload)
+    routeToolStartToTasks(ctx, sid, payload)
     const next = [...prev]
     const toolCalls = [...(next[idx].toolCalls ?? []), call]
     // push 到 contentBlocks 尾部（callId 复用，与 toolCalls[].id 一致）。
@@ -458,7 +461,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     // （event-adapter 只保证 tool_call_start 带），靠 payload 会 fallback 成 'tool' 导致漏路由。
     const existingCall = prev[idx].toolCalls?.find((c) => c.id === callId)
     const resolvedToolName = existingCall?.toolName ?? readString(payload, 'toolName') ?? 'tool'
-    routeToolResultToTasks(sid, resolvedToolName, details)
+    routeToolResultToTasks(ctx, sid, resolvedToolName, details)
 
     const next = [...prev]
     const toolCalls = (next[idx].toolCalls ?? []).map((c) =>
@@ -554,7 +557,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
       {
         id: `c-${crypto.randomUUID()}`,
         role: 'system',
-        content: summary.summary ?? t('composable.contextCompacted'),
+        content: summary.summary ?? 'Context compacted',
         status: 'complete',
         timestamp: summary.timestamp ?? Date.now(),
         compactionSummary: summary,
@@ -572,7 +575,7 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
       {
         id: `br-${crypto.randomUUID()}`,
         role: 'system',
-        content: summary.summary ?? t('composable.branched'),
+        content: summary.summary ?? 'Branched',
         status: 'complete',
         timestamp: summary.timestamp ?? Date.now(),
         branchSummary: summary,

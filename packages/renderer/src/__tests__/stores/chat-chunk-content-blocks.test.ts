@@ -13,8 +13,8 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import { ref } from 'vue'
-import { dispatchMessageEvent } from '@/stores/chat-message-effects'
-import type { MessageEffectContext } from '@/stores/chat-message-effects'
+import { dispatchMessageEvent } from '@xyz-agent/core'
+import type { MessageEffectContext } from '@xyz-agent/core'
 import type { Message, ServerMessage } from '@xyz-agent/shared'
 
 const SID = 's-test'
@@ -30,7 +30,11 @@ function makeCtx(initial: Message[] = []): MessageEffectContext {
     finalizeSession: vi.fn(),
     clearPendingSend: vi.fn(),
     armStreamingTimer: vi.fn(),
+    armBashTimer: vi.fn(),
+    clearBashTimer: vi.fn(),
     markPendingDelivered: vi.fn(),
+    // contentBlocks 测试不走 tool_call 路径，占位满足类型
+    openTasksPanelOnFirstData: vi.fn(),
   }
 }
 

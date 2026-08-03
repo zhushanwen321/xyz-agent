@@ -11,7 +11,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { mount } from '@vue/test-utils'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import TasksPanel from '@/components/panel/TasksPanel.vue'
-import { useTasksStore } from '@/stores/tasks'
+import { useTasksStore } from '@xyz-agent/core'
 
 // ── fixture 工厂 ────────────────────────────────────
 
