@@ -149,11 +149,6 @@ export interface ConnectionManagerOptions {
    * 未配置时 /file 走 404（向后兼容——本地 Electron 模式不需要此端点）。
    */
   fileEndpoint?: FileEndpoint
-  /**
-   * loopback 客户端豁免 auth：Electron 本地 renderer 连 ws://localhost:port 无需 token。
-   * 默认 true（生产行为）。测试 auth 门场景设 false 强制所有连接走 auth 握手。
-   */
-  loopbackAuthBypass?: boolean
 }
 
 export class ConnectionManager {
@@ -340,7 +335,7 @@ export class ConnectionManager {
   start(): Promise<void> {
     const host = this.opts.host ?? '127.0.0.1'
     return new Promise((resolve, reject) => {
-      this.wss.on('connection', (ws, req) => this.handleConnection(ws, req))
+      this.wss.on('connection', (ws) => this.handleConnection(ws))
       this.httpServer.on('error', (err: NodeJS.ErrnoException) => {
         if (err.code === 'EADDRINUSE') {
           console.error(`[runtime] port ${this.port} already in use, exiting`)
@@ -357,19 +352,15 @@ export class ConnectionManager {
 
   // ── Connection ────────────────────────────────────────────────
 
-  private handleConnection(ws: WsType, req?: IncomingMessage): void {
+  private handleConnection(ws: WsType): void {
     const loaded = this.tokenManager.load()
-    // loopback 客户端豁免 auth（仅 token 模式生效）：Electron 本地 renderer 连 ws://localhost:port 无需 token，
-    // 手机/远程客户端走 LAN IP 仍需 auth。信任边界 = 同机器（loopback = 本地进程）。
-    // 测试 auth 门场景通过 opts.loopbackAuthBypass=false 强制所有连接走 auth。
-    const bypassEnabled = this.opts.loopbackAuthBypass !== false
     if (!loaded.enabled) {
       // 开放模式 loopback 守卫（审查 BLOCKER 2）：与 file-endpoint.ts:212-219 的 /file 防护对齐。
-      // token 文件缺失（开放模式）时，只有 loopback 客户端可无 token 连接。
-      // 非 loopback（LAN/公网）无 token 连接 = 配置错误（远程暴露必须配 token），拒绝。
-      // 开放模式的 loopback 判定不受 loopbackAuthBypass 影响（开放模式本就无 auth）。
-      if (!this.isLoopbackClient(req)) {
-        console.warn(`[runtime] open mode (no token) requires loopback connection, but remoteAddress=${req?.socket.remoteAddress} — refusing WS connection`)
+      // 当 token 文件缺失（开放模式）+ bindHost 非 loopback（如 XYZ_AGENT_HOST=0.0.0.0）时，
+      // 任何网络客户端可无 token 连接获完全 WS 访问——这是配置错误（远程暴露必须配 token）。
+      // 故此处拒绝 WS 连接，与 /file 端点的「开放模式 + 非 loopback 拒绝」语义一致。
+      if (!this.isLoopbackBind()) {
+        console.warn(`[runtime] open mode (no token) requires loopback bind, but host=${this.opts.host ?? '127.0.0.1'} — refusing WS connection`)
         ws.close(WS_CLOSE_UNAUTHORIZED, 'open_mode_requires_loopback')
         return
       }
@@ -379,18 +370,6 @@ export class ConnectionManager {
       console.log(`[runtime] client connected (total: ${this.clients.size})`)
       this.callbacks.onConnect(ws, 'local')
       // P5 presence：连接上线触发 presence 重推（通知其他客户端新设备在线）。
-      this.broadcastPresence()
-      this.resetHeartbeat(ws)
-      this.attachMessageHandler(ws, 'local')
-      this.attachLifecycleHandlers(ws, 'local')
-      return
-    }
-    // token 模式下 loopback 客户端豁免 auth（Electron 本地 renderer 无 token 直连）。
-    if (bypassEnabled && this.isLoopbackClient(req)) {
-      const ctx: ConnectionCtx = { ws, clientId: 'local', deviceName: '', connectedAt: Date.now() }
-      this.clients.set(ctx.clientId, ctx)
-      console.log(`[runtime] loopback client connected, auth bypassed (total: ${this.clients.size})`)
-      this.callbacks.onConnect(ws, 'local')
       this.broadcastPresence()
       this.resetHeartbeat(ws)
       this.attachMessageHandler(ws, 'local')
@@ -678,15 +657,9 @@ export class ConnectionManager {
    * opts.host 缺省时默认 127.0.0.1（loopback），与 start() 的 host 解析口径对齐。
    * 用于开放模式守卫——非 loopback 绑定 + 开放模式 = 配置错误，拒绝 WS 连接。
    */
-  /**
-   * 判断 WS 连接来源是否 loopback（127.0.0.1 / ::1 / ::ffff:127.0.0.1）。
-   * loopback = 同机器进程，豁免 auth（Electron 本地 renderer 无需 token）。
-   * 非 loopback（LAN IP / 公网）必须走 auth 握手。
-   */
-  private isLoopbackClient(req?: IncomingMessage): boolean {
-    const addr = req?.socket.remoteAddress
-    if (!addr) return true // 无法判定时保守放行（测试环境 ws mock 可能无 socket）
-    return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1'
+  private isLoopbackBind(): boolean {
+    const host = this.opts.host ?? '127.0.0.1'
+    return host === '127.0.0.1' || host === '::1' || host === 'localhost'
   }
 
   /** 关闭：清理心跳/认证计时器 + 关闭 pending/已认证 ws + 关闭 WS / HTTP。 */

@@ -32,7 +32,7 @@ async function setup(opts: { enabled: boolean }): Promise<{
     onMessage: (msg, ws, clientId) => cb.onMessage(msg, ws, clientId),
     onDisconnect: (ws, clientId) => cb.onDisconnect(ws, clientId),
     sendError: vi.fn(),
-  } as ConnectionCallbacks, { tokenManager, loopbackAuthBypass: false })
+  } as ConnectionCallbacks, { tokenManager })
   await cm.start()
   return {
     cm,
