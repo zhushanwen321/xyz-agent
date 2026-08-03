@@ -5,7 +5,7 @@
  * - U9: 首屏渲染（问题文本 + 选项列表存在于 DOM）
  * - U10: 单选交互（点击 → Submit → answers 包含 value）
  * - U11: 多选交互（点击多个 → Submit → answers 含 JSON 数组）
- * - U12: Other 输入 + comment
+ * - U12: Other 自由文本
  * - U13: Cancel 取消
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/components/AskUserOverlay.test.ts
@@ -50,7 +50,6 @@ const multiSelectQ: AskUserQuestion = {
 const freeTextQ: AskUserQuestion = {
   header: 'note',
   question: '补充说明',
-  allowComment: true,
 }
 
 function mountOverlay(questions: AskUserQuestion[], allowCancel = true) {
@@ -104,15 +103,13 @@ describe('AskUserOverlay', () => {
     expect(JSON.parse(answers.lang)).toEqual(['ts', 'py'])
   })
 
-  it('U12: Other 自由文本 + comment', async () => {
+  it('U12: Other 自由文本', async () => {
     const wrapper = mountOverlay([freeTextQ])
 
     // 无 options → 渲染自由文本 Textarea
     expect(wrapper.find('[data-testid="ask-user-free-text"]').exists()).toBe(true)
     // 填入自由文本
     await wrapper.find('[data-testid="ask-user-free-text"]').setValue('需要加索引')
-    // 填入评论
-    await wrapper.find('[data-testid="ask-user-comment-note"]').setValue('prod 环境注意')
     // Submit
     await wrapper.find('[data-testid="ask-user-submit"]').trigger('click')
 
@@ -121,8 +118,6 @@ describe('AskUserOverlay', () => {
     const answers = JSON.parse(submitEvents![0][0] as string)
     // 无 options 的纯自由文本问题：输入文本作为主答案（key=header）
     expect(answers.note).toBe('需要加索引')
-    // 评论存到独立 key
-    expect(answers['note__comment']).toBe('prod 环境注意')
   })
 
   it('U13: Cancel → emit cancel 事件', async () => {

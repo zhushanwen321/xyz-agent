@@ -45,6 +45,5 @@ export {
   askUserInteract,
   getAskUserAnswer,
   getAskUserOther,
-  getAskUserComment,
   isAskUserQuestion,
 } from './extensions/ask-user/helpers'

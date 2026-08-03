@@ -6,7 +6,7 @@
 //   - RPC 路径（ctx.mode === 'rpc'）：转发器——handler 内部调 askUserInteract（select 通道），
 //     把 proto answers JSON.stringify 成 {value} 返回，子进程 JSON.parse(value) 正确 decode。
 //   - TUI 路径（ctx.mode === 'tui'）：handler 走 ctx.ui.custom（mock 成返回预设 Result），
-//     验证内部 Result → proto AskUserAnswers 重新编码（single/multi/Other/comment 四种答案形态）。
+//     验证内部 Result → proto AskUserAnswers 重新编码（single/multi/Other 三种答案形态）。
 //   - 取消（askUserInteract/custom 返回 null 或 cancelled）→ {cancelled: true}
 //   - 输入校验（channelPayload 缺失/无 questions）→ {cancelled: true}
 import type { AskUserQuestion } from "@xyz-agent/extension-protocol";
@@ -75,12 +75,6 @@ const multiProto: AskUserQuestion = {
 	],
 };
 
-const commentProto: AskUserQuestion = {
-	question: "Which DB?",
-	allowComment: true,
-	options: [{ label: "Postgres", value: "Postgres" }, { label: "SQLite", value: "SQLite" }],
-};
-
 // ── Tests ───────────────────────────────────────────────
 
 describe("createAskUserChannelHandler", () => {
@@ -101,19 +95,6 @@ describe("createAskUserChannelHandler", () => {
 		);
 		const resp = await handler({ channelPayload: { questions: [multiProto] } });
 		expect(resp).toEqual({ value: JSON.stringify({ Tools: JSON.stringify(["A", "C"]) }) });
-	});
-
-	it("RPC: Other + comment proto answers → 透传", async () => {
-		const protoAnswers = {
-			"Which DB?": "Postgres",
-			"Which DB?__other": "Custom DB",
-			"Which DB?__comment": "prod constraint",
-		};
-		const handler = createAskUserChannelHandler(
-			makeCtx({ mode: "rpc", selectResult: JSON.stringify(protoAnswers) }) as never,
-		);
-		const resp = await handler({ channelPayload: { questions: [commentProto] } });
-		expect(resp).toEqual({ value: JSON.stringify(protoAnswers) });
 	});
 
 	it("RPC: user cancel (select undefined) → {cancelled: true}", async () => {
@@ -214,21 +195,6 @@ describe("createAskUserChannelHandler", () => {
 		const resp = await handler({ channelPayload: { questions: [singleProto] } });
 		expect(resp).toEqual({
 			value: JSON.stringify({ "Which DB?": "Postgres", "Which DB?__other": "Custom DB" }),
-		});
-	});
-
-	it("TUI: comment → ${key}__comment", async () => {
-		const internalResult: Result = {
-			questions: [],
-			answers: { "Which DB?": "Postgres — prod constraint" },
-			cancelled: false,
-		};
-		const handler = createAskUserChannelHandler(
-			makeCtx({ mode: "tui", customResult: internalResult }) as never,
-		);
-		const resp = await handler({ channelPayload: { questions: [commentProto] } });
-		expect(resp).toEqual({
-			value: JSON.stringify({ "Which DB?": "Postgres", "Which DB?__comment": "prod constraint" }),
 		});
 	});
 

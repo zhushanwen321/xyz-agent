@@ -3,7 +3,6 @@ import {
   askUserInteract,
   getAskUserAnswer,
   getAskUserOther,
-  getAskUserComment,
   isAskUserQuestion,
   ASK_USER_MARKER,
   type GuiContext,
@@ -25,7 +24,7 @@ function makeRpcCtx(selectImpl: (header: string, options: string[]) => Promise<s
 
 describe('askUserInteract', () => {
   it('U1: RPC 模式 select 返回 JSON string → 解析出 answers', async () => {
-    const mockAnswers = { db: 'postgres', 'db__comment': 'prod 用 pg' }
+    const mockAnswers = { db: 'postgres' }
     const ctx = makeRpcCtx(async (_header, _options) => JSON.stringify(mockAnswers))
 
     const questions: AskUserQuestion[] = [
@@ -88,7 +87,7 @@ describe('askUserInteract', () => {
   })
 })
 
-describe('getAskUserAnswer / getAskUserOther / getAskUserComment', () => {
+describe('getAskUserAnswer / getAskUserOther', () => {
   it('U5: 单选——返回 string value', () => {
     const q: AskUserQuestion = { header: 'db', question: 'q', options: [{ label: 'PG', value: 'pg' }] }
     const answers = { db: 'pg' }
@@ -124,16 +123,9 @@ describe('getAskUserAnswer / getAskUserOther / getAskUserComment', () => {
     expect(getAskUserOther(answers, q)).toBe('自定义理由')
   })
 
-  it('U5: getAskUserComment 提取评论', () => {
-    const q: AskUserQuestion = { header: 'db', question: 'q' }
-    const answers = { db: 'pg', 'db__comment': 'prod 用 pg' }
-    expect(getAskUserComment(answers, q)).toBe('prod 用 pg')
-  })
-
-  it('U5: Other/Comment 缺失 → undefined', () => {
+  it('U5: Other 缺失 → undefined', () => {
     const q: AskUserQuestion = { header: 'db', question: 'q' }
     expect(getAskUserOther({ db: 'pg' }, q)).toBeUndefined()
-    expect(getAskUserComment({ db: 'pg' }, q)).toBeUndefined()
   })
 
   it('U5: 多选 JSON.parse 成功但非数组 → 降级返回 [raw]', () => {
