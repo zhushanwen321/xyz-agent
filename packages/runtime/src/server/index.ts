@@ -17,7 +17,7 @@
  * runtime index.ts 的 main() 接受编程式 opts，本 CLI 解析后注入。
  */
 import { main } from '../index.js'
-import { createTokenManager } from '../transport/token.js'
+import { createTokenManager, ensureToken } from '../transport/token.js'
 import { findPiExecutable } from '../infra/pi/process-manager.js'
 import { detectUrls } from './detect-url.js'
 import { printStartup } from './bootstrap.js'
@@ -219,15 +219,8 @@ export async function run(): Promise<void> {
   }
 
   // ── 首启 token 生成（spec D1：server CLI 默认启用认证）─────────────
-  let token: string | undefined
-  const loaded = tm.load()
-  if (!loaded.enabled) {
-    // token 文件不存在/空 → 生成 + persist（0600 由 persist 内 chmod 保证）
-    token = tm.generate()
-    tm.persist(token)
-  } else {
-    token = loaded.token
-  }
+  // 与 runtime main() 共用 ensureToken（token.ts），保证两条启动路径首启行为一致。
+  const token = ensureToken(tm)
 
   // ── pi-fetch（findPiExecutable 返 'pi' 兜底时下载）────────────────
   // projectRoot 推导：dataDir 的上级不是可靠的 projectRoot，但 findPiExecutable 主要查

@@ -29,12 +29,37 @@ import type {
 import { command } from '../request'
 import * as events from '../events'
 
+/**
+ * wave 远程分享：可达 URL 项（detectUrls 探测分类后单条）。
+ * 对齐 ServerMessageMap['config.connectionInfo'].urls 元素结构（protocol.ts:1064）。
+ */
+export interface ConnectionUrl {
+  kind: string
+  host: string
+  httpUrl: string
+  wsUrl: string
+}
+
+/** wave 远程分享：config.getConnectionInfo 的 reply 解包后形态（token + 可达 URL 列表）。 */
+export interface ConnectionInfo {
+  token: string
+  urls: ConnectionUrl[]
+}
+
 // ── 请求-响应 ──
 // runtime 请求-响应 reply 均为命名 envelope（settings-message-handler.ts），
 // 此处统一解包对应字段，与 session.list 解包 `.groups` 同构。mock 门面有独立实现不受影响。
 export async function listProviders(): Promise<ProviderInfo[]> {
   const reply = await command('config.getProviders', {})
   return reply.providers
+}
+
+/**
+ * wave 远程分享：拉当前 token + detectUrls 探测的可达 URL 列表，供分享面板展示三种格式
+ * （移动端直达 / 桌面端手动 / APP deep link）。无参请求，reply config.connectionInfo。
+ */
+export async function getConnectionInfo(): Promise<ConnectionInfo> {
+  return command('config.getConnectionInfo', {})
 }
 
 export async function scanSkills(sources: string[]): Promise<ScannedSkillInfo[]> {

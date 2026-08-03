@@ -19,6 +19,17 @@ vi.mock('../../src/index.js', () => ({
 }))
 vi.mock('../../src/transport/token.js', () => ({
   createTokenManager: vi.fn(),
+  // 复刻真实 ensureToken 语义：load enabled → 返回 loaded.token；否则 generate + persist + 返回新 token。
+  // 用真实实现而非 vi.fn() 让 TC8 测试对 printStartup.token 的断言自然成立。
+  ensureToken: vi.fn((tm: { load: () => LoadedToken; generate: () => string; persist: (t: string) => void }): string => {
+    const loaded = tm.load()
+    if (!loaded.enabled) {
+      const token = tm.generate()
+      tm.persist(token)
+      return token
+    }
+    return loaded.token
+  }),
 }))
 vi.mock('../../src/infra/pi/process-manager.js', () => ({
   findPiExecutable: vi.fn(() => 'pi'),

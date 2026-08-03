@@ -16,6 +16,8 @@
     <AppNavControls />
     <MainPanel />
     <SettingsModal v-model:open="settingsOpen" />
+    <!-- wave 远程分享：Sidebar 分享按钮触发（v-if 摘除销毁 RPC 状态） -->
+    <ShareConnectionModal v-if="shareOpen" @close="shareOpen = false" />
   </div>
 </template>
 
@@ -31,6 +33,7 @@ import AppNavControls from './AppNavControls.vue'
 import AsideRegion from './AsideRegion.vue'
 import MainPanel from './MainPanel.vue'
 import SettingsModal from '@/components/settings/SettingsModal.vue'
+import ShareConnectionModal from '@/components/remote/ShareConnectionModal.vue'
 import { useSidebarStore } from '@/stores/sidebar'
 
 const navigation = useNavigationStore()
@@ -41,6 +44,10 @@ const { syncSessionToPanel } = useSidebar()
 /** Settings modal 开关（⌘, / sidebar 用户区触发） */
 const settingsOpen = ref(false)
 provide('openSettings', () => { settingsOpen.value = true })
+
+/** wave 远程分享 modal 开关（Sidebar 用户区分享按钮触发） */
+const shareOpen = ref(false)
+provide('openShare', () => { shareOpen.value = true })
 
 // 平台 + 全屏态同步到 <html>（data-platform / data-fullscreen），驱动 traffic-light / app-nav-controls 两态。
 usePlatformChrome()

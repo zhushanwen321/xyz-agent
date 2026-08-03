@@ -1,5 +1,5 @@
 import { RuntimeServer } from './transport/server.js'
-import { createTokenManager } from './transport/token.js'
+import { createTokenManager, ensureToken } from './transport/token.js'
 import { createFileEndpoint } from './transport/file-endpoint.js'
 import { SessionService } from './services/session/session-service.js'
 import { ConfigService } from './services/config-service.js'
@@ -55,15 +55,17 @@ import { RecentWorkspacesStore } from './services/workspace/recent-workspaces-st
 import { WorkspaceService } from './services/workspace/workspace-service.js'
 import { WorkspaceDetector } from './services/worktree/workspace-detector.js'
 
-function parseArgs(): { port: number; projectRoot?: string; host: string; tokenFile?: string } {
+function parseArgs(): { port: number; projectRoot?: string; host: string; tokenFile: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
   const args = process.argv.slice(2)
   const portOffset = Math.max(0, Math.min(parseInt(process.env.XYZ_AGENT_PORT_OFFSET ?? '0', 10) || 0, MAX_PORT - BASE_PORT))
   let port = BASE_PORT + portOffset
   let projectRoot: string | undefined
-  // wave1 远程化：host 默认 127.0.0.1（Electron 零回归），远程部署经 --host/env 传 0.0.0.0。
-  let host = process.env.XYZ_AGENT_HOST ?? '127.0.0.1'
-  let tokenFile: string | undefined = process.env.XYZ_AGENT_TOKEN_FILE
+  // wave 远程分享：host 默认 0.0.0.0（与 server CLI DEFAULT_HOST 一致），允许远程连接。
+  // 开放模式仍受 connection-manager「open mode requires loopback」守卫保护——默认生成 token（非开放模式），绑 0.0.0.0 安全。
+  let host = process.env.XYZ_AGENT_HOST ?? '0.0.0.0'
+  // wave 远程分享：默认 token 文件 <dataDir>/token（与 server/index.ts 一致），确保 main() 默认启用认证。
+  let tokenFile: string = process.env.XYZ_AGENT_TOKEN_FILE ?? join(getDataDir(), 'token')
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port' && i + 1 < args.length) {
       const parsed = parseInt(args[i + 1], 10)
@@ -106,6 +108,9 @@ export async function main(opts?: { host?: string; port?: number; tokenFile?: st
   const { projectRoot } = parsed
   const effectiveRoot = projectRoot ?? process.cwd()
   const tokenManager = createTokenManager({ tokenFile })
+  // wave 远程分享：首启默认生成 token + persist（spec D1），与 server CLI 共用 ensureToken。
+  // 确保默认走认证模式而非开放模式（开放模式 + 非 loopback 会被 connection-manager 拒绝连接）。
+  ensureToken(tokenManager)
 
   // 日志持久化（架构约定 #4）：组合根最早期初始化 + monkey-patch console。
   // 必须在所有 service 创建前（runtime 内 ~140 处裸 console.log 经 patch 自动落盘）。

@@ -9,6 +9,8 @@ import type { SkillRegistry } from '../services/skill-registry.js'
 import { toErrorMessage } from '../utils/errors.js'
 import { VersionConflictError } from '../services/config-service.js'
 import type { MessageHandlerContext } from './message-context.js'
+import type { TokenManager } from './token.js'
+import { detectUrls } from '../server/detect-url.js'
 
 /** Interface for server methods needed by this handler */
 export interface SettingsHandlerContext extends MessageHandlerContext {
@@ -18,6 +20,12 @@ export interface SettingsHandlerContext extends MessageHandlerContext {
   /** W4：skillRegistry（全局 + 项目级 skill 缓存，带 watcher）。landing 全局 skill 经此拿 globalCache（FR-5）。 */
   skillRegistry: SkillRegistry
   projectRoot: string
+  /** wave 远程分享：token 管理器（config.getConnectionInfo 读当前 token）。 */
+  tokenManager: TokenManager
+  /** wave 远程分享：监听 bind host（config.getConnectionInfo 上下文用）。 */
+  bindHost: string
+  /** wave 远程分享：监听端口（config.getConnectionInfo 探测可达 URL 用）。 */
+  port: number
   nextPushId(): string
   broadcast(msg: import('@xyz-agent/shared').ServerMessage): void
   broadcastProviderList(): void
@@ -384,6 +392,15 @@ export class SettingsMessageHandler {
       }
       case 'config.getAutoRenameEnabled': {
         this.ctx.reply(ws, msg.id, 'config.autoRenameEnabled', { enabled: this.ctx.configService.getAutoRenameEnabled() })
+        return true
+      }
+      case 'config.getConnectionInfo': {
+        // wave 远程分享：探测可达地址 + 当前 token，供设置面板展示分享链接。
+        // detectUrls 是 best-effort（探测失败兜底 localhost），不抛错；token 开放模式时为空串。
+        const detected = await detectUrls(this.ctx.port)
+        const loaded = this.ctx.tokenManager.load()
+        const token = loaded.enabled ? loaded.token : ''
+        this.ctx.reply(ws, msg.id, 'config.connectionInfo', { token, urls: detected })
         return true
       }
       // tool.approve / tool.deny / tool.always_allow：已删除的 no-op 占位。

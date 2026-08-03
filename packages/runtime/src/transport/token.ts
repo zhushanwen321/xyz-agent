@@ -38,6 +38,25 @@ export interface TokenManagerOptions {
   tokenFile?: string
 }
 
+/**
+ * 首启 token 生成（spec D1：默认启用认证）。
+ *
+ * token 文件不存在/空（load().enabled === false）→ 生成新 token + persist（0600 由 persist 内 chmod 保证）；
+ * 已存在 → 复用已加载的 token。
+ *
+ * 返回有效 token 字符串。server CLI（src/server/index.ts）与 runtime main() 共用此逻辑，
+ * 确保两条启动路径的首启行为一致（默认生成 token 而非开放模式）。
+ */
+export function ensureToken(tm: TokenManager): string {
+  const loaded = tm.load()
+  if (!loaded.enabled) {
+    const token = tm.generate()
+    tm.persist(token)
+    return token
+  }
+  return loaded.token
+}
+
 export function createTokenManager(opts: TokenManagerOptions): TokenManager {
   // null = 未加载；首次 load 后缓存结果，后续命中缓存避免重复 IO。
   let cached: LoadedToken | null = null

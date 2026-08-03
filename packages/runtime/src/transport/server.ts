@@ -35,6 +35,7 @@ import { QuotaMessageHandler } from './quota-message-handler.js'
 import { PresetMessageHandler } from './preset-message-handler.js'
 import type { FileEndpoint } from './file-endpoint.js'
 import type { MessageHandlerContext, ErrorDetails } from './message-context.js'
+import type { TokenManager } from './token.js'
 import type { WorkspaceService } from '../services/workspace/workspace-service.js'
 import type { IWorktreeService } from '../services/ports/worktree-service.js'
 import type { HandoffService } from '../services/handoff-service.js'
@@ -58,6 +59,12 @@ export class RuntimeServer implements IMessageBroker {
   private fileService?: FileService
   /** wave2 远程化：HTTP /file 端点（可选，connOpts.fileEndpoint 透传；setServices 时注入 file handler）。 */
   private fileEndpoint?: FileEndpoint
+  /** wave 远程分享：token 管理器引用（config.getConnectionInfo 读当前 token）。来自 connOpts。 */
+  private readonly tokenManager?: TokenManager
+  /** wave 远程分享：监听 bind host（config.getConnectionInfo ctx 透传）。来自 connOpts。 */
+  private readonly bindHost?: string
+  /** wave 远程分享：监听端口（config.getConnectionInfo 探测可达 URL 用）。 */
+  private readonly port: number
 
   /**
    * wave2 远程化：延迟绑定 fileEndpoint（sessionService 在本类构造后才创建，
@@ -122,6 +129,9 @@ export class RuntimeServer implements IMessageBroker {
 
   constructor(port: number, projectRoot?: string, connOpts?: ConnectionManagerOptions) {
     this.projectRoot = projectRoot ?? process.cwd()
+    this.port = port
+    this.tokenManager = connOpts?.tokenManager
+    this.bindHost = connOpts?.host
     // ConnectionManager 注入回调：连接建立 → broker 推送 initial state；
     // 消息到达 → server.handleMessage 路由；解析/兜底错误 → broker.sendError；
     // 连接关闭 → bus.unsubscribeAll(ws) 清理该 ws 的所有 session 订阅（wave:runtime-wiring）。
@@ -247,6 +257,10 @@ export class RuntimeServer implements IMessageBroker {
       // 组合根 index.ts 保证传入；此处断言非空（setServices 编排保证）。若未来 skillRegistry 可选，handler 需守卫。
       skillRegistry: this.skillRegistry!,
       projectRoot: this.projectRoot,
+      // wave 远程分享：注入 tokenManager / bindHost / port（config.getConnectionInfo 用）。
+      tokenManager: this.tokenManager!,
+      bindHost: this.bindHost!,
+      port: this.port,
       nextPushId: () => this.broker.nextPushId(),
       broadcast: (msg) => this.broker.broadcast(msg),
       broadcastProviderList: () => this.broker.broadcastProviderList(),

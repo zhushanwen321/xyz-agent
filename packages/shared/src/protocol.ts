@@ -124,6 +124,9 @@ export type ClientMessageType =
   // 迁移 W2：Provider 导入两步流。Step1 preview（脱敏，apiKey 不进前端）→ Step2 apply（写 models.json）。
   // reply config.providersPreviewed / config.providersImported。
   | 'config.previewImportProviders' | 'config.applyImportProviders'
+  // wave 远程分享：拉取当前连接信息（token + 可达 URL 列表），供设置面板展示分享链接。
+  // reply config.connectionInfo。
+  | 'config.getConnectionInfo'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -510,6 +513,8 @@ export interface ClientMessageMap {
    * importId 来自 Step1 preview 的 reply；selectedIds 是用户勾选的 provider id 列表。
    */
   'config.applyImportProviders': { importId: string; selectedIds: string[] }
+  /** wave 远程分享：无参请求，reply config.connectionInfo。 */
+  'config.getConnectionInfo': Record<string, never>
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -650,6 +655,8 @@ export type ServerMessageType =
   | 'config.sourcesDetected'
   // 迁移 W2：Provider 导入 reply（preview 脱敏 / apply 结果含 imported/skipped/failed 三态）。
   | 'config.providersPreviewed' | 'config.providersImported'
+  // wave 远程分享：config.getConnectionInfo 的 reply（token + 可达 URL 列表，供分享面板展示）。
+  | 'config.connectionInfo'
 
 /** skill 缓存失效广播的作用域：global=全局 skill 变动，project=某项目 cwd 的 skill 变动。 */
 export type SkillCacheScope = 'global' | 'project'
@@ -1051,6 +1058,13 @@ export interface ServerMessageMapBase {
   'config.providersImported':
     | { result: ProviderImportResult }
     | { error: { code: string; message: string } }
+  // config.connectionInfo：config.getConnectionInfo 的 reply（wave 远程分享）。
+  // token：当前生效 token（开放模式空串）；urls：detectUrls 探测的可达地址列表
+  // （kind 是 detectUrls 的分类：public/tailscale/lan/localhost）。
+  'config.connectionInfo': {
+    token: string
+    urls: Array<{ kind: string; host: string; httpUrl: string; wsUrl: string }>
+  }
   // config.discoveredModels：discoverModels reply（settings-message-handler.ts:178/180）。
   // 成功 { models, success: true }；失败 { models: [], success: false, error }（D10 降级响应，非 error envelope）。
   // models 元素形状对齐前端 config.ts:49 DiscoveredModelsResult（id + 可选 name/contextWindow）。
@@ -1360,6 +1374,8 @@ export interface ReplyPayloadMap {
   // presence.list 回 presence.list:result（全量 presence 列表）。
   'session.setActive': ServerMessageMap['session.setActive:result']
   'presence.list': ServerMessageMap['presence.list:result']
+  // wave 远程分享：config.getConnectionInfo → reply config.connectionInfo（payload 消费型）。
+  'config.getConnectionInfo': ServerMessageMap['config.connectionInfo']
 }
 
 /**

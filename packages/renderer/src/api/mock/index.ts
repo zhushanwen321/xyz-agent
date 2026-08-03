@@ -669,6 +669,17 @@ export const config = {
     // mock：返回空模型集 + success（真实发现由 runtime discoverModelsFromApi 驱动）
     return { success: true, models: [], error: undefined }
   },
+  /**
+   * wave 远程分享：mock 同构——返回 localhost 占位 URL + 空 token（开放模式），
+   * 与 real domains getConnectionInfo 签名对齐（facade 三元要求两侧同构）。
+   */
+  async getConnectionInfo(): Promise<{ token: string; urls: Array<{ kind: string; host: string; httpUrl: string; wsUrl: string }> }> {
+    await sleep(TIMING.ack)
+    return {
+      token: '',
+      urls: [{ kind: 'localhost', host: 'localhost', httpUrl: 'http://localhost:3210', wsUrl: 'ws://localhost:3210' }],
+    }
+  },
   // 订阅型（handler 类型与 real domains 对齐：facade 三元要求两侧同构）
   // P6 D3 config CAS：onProviders 第二参 version（mock 不模拟冲突，固定 0 透传）。
   onProviders: (h: (providers: ProviderInfo[], version?: number) => void) => providersSub.subscribe(h),
