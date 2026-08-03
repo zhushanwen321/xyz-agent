@@ -229,10 +229,11 @@ function onSelectWorkspace(payload: { cwd: string }): void {
   flow.selectWorkspace(payload.cwd)
 }
 /**
- * DirSelectPopover「远程连接」动作项（远程模式）：打开 RemoteConnectModal（standalone）。
- * 不关 overlay——popover 与 modal 独立，modal 打开后 popover 由用户 Esc/点外关闭。
+ * DirSelectPopover「远程连接」动作项：打开 RemoteConnectModal（standalone）。
+ * 先关 popover 再开 modal，否则 popover 浮层会遮盖 modal。
  */
 function onRemoteConnect(): void {
+  flow.closeOverlay()
   showRemoteModal.value = true
 }
 function onSelectBranch(payload: { name: string }): void {
