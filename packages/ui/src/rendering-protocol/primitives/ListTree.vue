@@ -1,8 +1,15 @@
 <script setup lang="ts">
 /**
- * 列表树组件——替代 TUI 的 ⎿ ├─ └─ 缩进。
- * 递归渲染 TreeItem：每项含 icon + label + status + 可选 children。
- * 缩进通过 depth * 20px padding-left。children 递归渲染时自动 depth+1。
+ * 列表树组件（v6）——替代 TUI 的 ⎿ ├─ └─ 缩进。
+ * 递归渲染 TreeItem：每项含 icon + label + 可选 status 圆点 + 可选 children。
+ *
+ * v6 改造（§3.4）：
+ * - 缩进 depth × 16px padding-left（从 20px 收，留白档优于 border-l 引导线）。
+ * - icon size-3(12px) 对齐 trace 档，去 statusClass 着色改中性（继承 label neutral-mid），
+ *   状态信息全部由圆点承担（单一信息源，避免 icon 与 status 双重表达）。
+ * - status 从文字标签改为 7px 圆点（done→bg-success / running→bg-accent / failed→bg-danger），
+ *   margin-left:auto 右对齐（对齐 §3.3 状态指示范式）。
+ * - 递归 depth 逻辑不变。
  */
 import type { TreeItem, TreeItemIcon } from '@xyz-agent/extension-protocol'
 import {
@@ -26,20 +33,14 @@ const ICON_MAP: Record<TreeItemIcon, Component> = {
   branch: GitBranch,
 }
 
-const statusClass = (status?: TreeItem['status']) => {
+/** v6：status → 圆点 bg 色（done=success / running=accent / failed=danger）。 */
+const statusDotClass = (status?: TreeItem['status']) => {
   if (!status) return ''
-  const map = { running: 'text-accent', done: 'text-success', failed: 'text-danger' } as const
+  const map = { running: 'bg-accent', done: 'bg-success', failed: 'bg-danger' } as const
   return map[status]
 }
 
-/** status 枚举 → 中文标签（避免直接展示英文 running/done/failed）。 */
-const STATUS_LABEL: Record<NonNullable<TreeItem['status']>, string> = {
-  running: '进行中',
-  done: '完成',
-  failed: '失败',
-}
-
-const INDENT_PX = 20
+const INDENT_PX = 16
 const currentDepth = () => props.depth ?? 0
 const depthPadding = () => ({ paddingLeft: `${currentDepth() * INDENT_PX}px` })
 </script>
@@ -52,16 +53,16 @@ const depthPadding = () => ({ paddingLeft: `${currentDepth() * INDENT_PX}px` })
           <component
             v-if="item.icon"
             :is="ICON_MAP[item.icon]"
-            class="size-[11px]"
-            :class="statusClass(item.status)"
+            class="size-3"
           />
         </span>
         <span class="text-neutral-mid">{{ item.label }}</span>
         <span
           v-if="item.status"
-          class="list-tree__status text-[length:var(--text-2xs)]"
-          :class="statusClass(item.status)"
-        >{{ STATUS_LABEL[item.status] }}</span>
+          data-testid="list-tree-status"
+          class="list-tree__status ml-auto size-[7px] shrink-0 rounded-full"
+          :class="statusDotClass(item.status)"
+        />
       </div>
       <!-- 递归渲染 children：depth + 1 自动缩进 -->
       <template v-if="item.children && item.children.length > 0">

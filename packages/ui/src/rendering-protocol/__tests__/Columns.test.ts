@@ -17,7 +17,10 @@ describe('Columns', () => {
     const wrapper = mount(Columns, {
       props: { children, ratios: [2, 1] },
     })
-    expect(wrapper.find('[data-testid="gui-columns"]').exists()).toBe(true)
+    const container = wrapper.find('[data-testid="gui-columns"]')
+    expect(container.exists()).toBe(true)
+    // v6（§3.5）：容器 gap-3(12px) 标准间距，审计确认已达标
+    expect(container.classes()).toContain('gap-3')
     const kids = wrapper.findAll('.columns__child')
     expect(kids).toHaveLength(2)
     expect(kids[0].attributes('style')).toContain('flex-grow: 2')
@@ -36,6 +39,8 @@ describe('Columns', () => {
     const wrapper = mount(Columns, {
       props: { children },
     })
+    // v6（§3.5）：等分场景容器同样 gap-3 标准间距
+    expect(wrapper.find('[data-testid="gui-columns"]').classes()).toContain('gap-3')
     const kids = wrapper.findAll('.columns__child')
     expect(kids).toHaveLength(3)
     for (const k of kids) {
@@ -47,6 +52,9 @@ describe('Columns', () => {
     const wrapper = mount(Columns, {
       props: { children: [] },
     })
-    expect(wrapper.find('[data-testid="gui-columns"]').exists()).toBe(true)
+    const container = wrapper.find('[data-testid="gui-columns"]')
+    expect(container.exists()).toBe(true)
+    // v6（§3.5）：空容器仍保留 gap-3 标准间距
+    expect(container.classes()).toContain('gap-3')
   })
 })
