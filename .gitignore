@@ -102,6 +102,11 @@ screenshot.png
 
 # 手动测试残留的假数据目录（测试代码用 tmpdir()，不读根目录 session-data/）
 /session-data/
+/packages/runtime/session-data/
+
+# renderer 构建产物（dist 原入口 + dist-new 共存接缝 spike 新壳产物）
+/apps/electron/renderer/dist/
+/apps/electron/renderer/dist-new/
 
 # === npm lock 文件（本项目用 pnpm，package-lock.json 是历史遗留/误生成产物）===
 # 详见 AGENTS.md「包管理器与 lock 文件纪律」。pnpm-lock.yaml 是唯一权威 lock。

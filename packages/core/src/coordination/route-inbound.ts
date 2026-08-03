@@ -112,7 +112,7 @@ interface RouteContext {
  *
  * @returns 是否继续 dispatch（false = drop，调用方直接 return）
  */
-function applySeqGap(sid: string, msg: ServerMessage, ports: TransportPorts): boolean {
+function applySeqGap(sid: string, msg: ServerMessage): boolean {
   const state = getSubscriptionState(sid)
   const decision = evalSeqGap(msg, state)
   if (decision.action === 'drop') {
@@ -142,7 +142,7 @@ const ROUTE_TABLE: RouteTableEntry[] = [
     type: 'session.exited',
     handle(msg, { ports, effects, sid }) {
       if (!sid) return // 无 sid 由 FALLBACK 处理（不会走到这里，防御）
-      if (!applySeqGap(sid, msg, ports)) return
+      if (!applySeqGap(sid, msg)) return
       ports.events.dispatchSession(sid, msg)
       // session.exited 兜底：进程退出必须标记 dead + toast，不能只依赖惰性的 session
       // 通道订阅（首次 send 前可能无订阅者 → dispatchSession no-op → 错误丢弃）。
@@ -153,7 +153,7 @@ const ROUTE_TABLE: RouteTableEntry[] = [
     type: 'message.complete',
     handle(msg, { ports, effects, sid }) {
       if (!sid) return
-      if (!applySeqGap(sid, msg, ports)) return
+      if (!applySeqGap(sid, msg)) return
       ports.events.dispatchSession(sid, msg)
       // message.complete：后台完成时提示音 + 未读标记（renderer 注册回调内实现）。
       effects.onMessageComplete?.(sid, msg.payload as { sessionId?: string; stopReason?: string })
@@ -163,7 +163,7 @@ const ROUTE_TABLE: RouteTableEntry[] = [
     type: 'session.subagents',
     handle(msg, { ports, effects, sid }) {
       if (!sid) return
-      if (!applySeqGap(sid, msg, ports)) return
+      if (!applySeqGap(sid, msg)) return
       ports.events.dispatchSession(sid, msg)
       // session.subagents 兜底：subagent 终态推送必须在所有 session 生效（含非活跃），
       // 不能只依赖 per-focus 订阅（切走即退订 → 终态丢弃 → 侧栏卡 running）。
@@ -177,7 +177,7 @@ const ROUTE_TABLE: RouteTableEntry[] = [
     type: 'session.workflowUpdate',
     handle(msg, { ports, effects, sid }) {
       if (!sid) return
-      if (!applySeqGap(sid, msg, ports)) return
+      if (!applySeqGap(sid, msg)) return
       ports.events.dispatchSession(sid, msg)
       // session.workflowUpdate 兜底：workflow 增量信号触发 loadWorkflows + running 延迟重试，
       // 同样在所有 session（含非活跃）生效，不依赖 per-focus 订阅。
@@ -195,7 +195,7 @@ const ROUTE_TABLE: RouteTableEntry[] = [
  */
 const FALLBACK: RouteTableEntry['handle'] = (msg, { ports, effects, sid }) => {
   if (typeof sid === 'string' && sid) {
-    if (!applySeqGap(sid, msg, ports)) return
+    if (!applySeqGap(sid, msg)) return
     ports.events.dispatchSession(sid, msg)
     return
   }
