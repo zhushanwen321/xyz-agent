@@ -308,10 +308,12 @@ describe("buildActionPrompt", () => {
     expect(prompt).toMatch(/死循环|幂等/);
   });
 
-  it("含 gate fail 重试上限（3 次）", () => {
+  it("含 gate fail 重试引导（3 次上限 + 具体操作）", () => {
     const prompt = buildActionPrompt(waveNode);
-    expect(prompt).toContain("gate");
-    expect(prompt).toMatch(/3\s*次/);
+    expect(prompt).toContain("gate fail");
+    expect(prompt).toContain("3 次");
+    expect(prompt).toContain("ok"); // 教 agent 读 cw 返回的 ok 字段
+    expect(prompt).toContain("input"); // 教 agent 修 input 文件
   });
 
   it("含 replan 限制（design-reviewed）", () => {
