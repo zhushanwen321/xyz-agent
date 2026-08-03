@@ -10,14 +10,12 @@
  * - tab 切换（多问题来回修改）
  * - 单选 / 多选
  * - Other 自由文本（选项末尾追加输入框）
- * - comment 附加评论
  * - Submit 汇总提交 / Cancel 取消
  *
  * answers 格式（ask-user/types.ts AskUserAnswers）：
  * - 单选：value = 选中项 value string
  * - 多选：value = JSON.stringify(value[])
  * - Other：独立 key `${header}__other`
- * - comment：独立 key `${header}__comment`
  *
  * 样式对齐 demo v3（docs/page-design/v3/ask-user/inline-ask-user-demo-v3.html）：
  * - 无边框一体化：去掉 border-b/border-t 分层，单容器 bg-input 靠间距分区
@@ -57,7 +55,6 @@ const activeQuestion = computed(() => props.questions[activeIdx.value])
 interface QState {
   selectedValues: string[]     // 选中的 option value（单选长度 0/1，多选任意）
   otherText: string            // Other 自由文本
-  comment: string              // 附加评论
 }
 const states = ref<Record<string, QState>>({})
 
@@ -66,7 +63,7 @@ watch(() => props.questions, (qs) => {
   const next: Record<string, QState> = {}
   for (const q of qs) {
     const key = qKey(q)
-    next[key] = states.value[key] ?? { selectedValues: [], otherText: '', comment: '' }
+    next[key] = states.value[key] ?? { selectedValues: [], otherText: '' }
   }
   states.value = next
   activeIdx.value = 0
@@ -216,10 +213,6 @@ function onSubmit(): void {
       if (st.otherText) {
         answers[key] = st.otherText
       }
-    }
-    // 评论（独立 key）
-    if (st.comment) {
-      answers[`${key}__comment`] = st.comment
     }
   }
   emit('submit', JSON.stringify(answers))
@@ -404,16 +397,6 @@ function onSubmit(): void {
           :placeholder="t('extensionUI.inputPlaceholder')"
           data-testid="ask-user-free-text"
         />
-
-        <!-- 附加评论 -->
-        <div v-if="activeQuestion.allowComment" class="flex flex-col gap-0.5">
-          <span class="pl-0.5 text-[11px] text-neutral-dim">{{ t('extensionUI.additionalComment') }}</span>
-          <Input
-            v-model="states[qKey(activeQuestion)].comment"
-            :placeholder="t('extensionUI.commentPlaceholder')"
-            :data-testid="`ask-user-comment-${qKey(activeQuestion)}`"
-          />
-        </div>
       </template>
     </div>
 

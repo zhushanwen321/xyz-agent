@@ -54,7 +54,8 @@ const meta = { name: 'workflow-name', description: '...', phases: ['phase1', 'ph
 支持三种签名：
 - `agent(promptString)` — 最简，prompt 字符串，返回 content 字符串
 - `agent(promptString, { label?, schema?, ... })` — 字符串 + opts（`label` 是 `description` 的别名）
-- `agent({ prompt, schema?, description?, agent?, skill?, timeoutMs?, model?, scene? })` — 完整 opts 对象
+- `agent({ prompt, schema?, description?, agent?, skill?, timeoutMs?, model?, scene?, thinkingLevel? })` — 完整 opts 对象
+  - `thinkingLevel?` (`string`) — 思考强度，合法值 `off | minimal | low | medium | high | xhigh`，透传至 pi CLI 拼接为 `--model provider/modelId:thinkingLevel`（与 `model?` 同效，影响子 agent 推理预算）
 
 Returns `parsedOutput` (structured data when schema provided) or `content` (string).
 

@@ -222,3 +222,38 @@ describe("buildWorkerScript — W2 agent() returnMeta mode", () => {
   });
 });
 
+// ── thinkingLevel 参数透传（agent() 三分支） ──
+// 验证 thinkingLevel 在 string / task-agent / object.prompt 三个分支均被透传至
+// agent-call 的 opts，且加入 _knownFields 白名单（object.prompt 分支整体透传，
+// 不被 unknown-fields warn 误报）。底层 AgentCallOpts→mapToExecuteOptions→
+// buildSpawnArgs 拼 pi CLI --model provider/modelId:thinkingLevel 已打通，
+// 此处只验入口层 wiring。
+
+describe("buildWorkerScript — agent() thinkingLevel passthrough (3 branches)", () => {
+  const script = buildWorkerScript("// noop user script");
+
+  it("string branch extracts thinkingLevel from secondArg (parity with model/scene/phase)", () => {
+    // agent("prompt", {thinkingLevel:"high"}) → string 分支 opts 提取 thinkingLevel
+    const stringBranch = script.match(/typeof firstArg === "string"[\s\S]*?\};/);
+    expect(stringBranch).toBeTruthy();
+    expect(stringBranch![0]).toContain(
+      "thinkingLevel: (secondArg && typeof secondArg === \"object\" && secondArg.thinkingLevel) || undefined",
+    );
+  });
+
+  it("task/agent branch includes thinkingLevel in opts (parity with model/skill/timeoutMs)", () => {
+    // agent({task, agent, thinkingLevel}) → task/agent 快捷分支透传 thinkingLevel
+    const taskAgentBranch = script.match(/firstArg\.task \|\| firstArg\.agent[\s\S]*?\};/);
+    expect(taskAgentBranch).toBeTruthy();
+    expect(taskAgentBranch![0]).toContain("thinkingLevel: firstArg.thinkingLevel");
+  });
+
+  it("thinkingLevel is a known field (object.prompt branch passes through without unknown-fields warn)", () => {
+    // object.prompt 分支 opts = firstArg 整体透传，thinkingLevel 自然带入；
+    // 但必须进 _knownFields 白名单，否则 Object.keys(opts) 含 thinkingLevel 会触发
+    // unknown-fields warn（workerLogs 污染）。验证 Set 与 warn 文案均识别 thinkingLevel。
+    expect(script).toContain('"thinkingLevel"');
+    expect(script).toMatch(/Known fields:.*thinkingLevel/);
+  });
+});
+

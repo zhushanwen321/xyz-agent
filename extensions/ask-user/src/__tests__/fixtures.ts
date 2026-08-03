@@ -42,7 +42,6 @@ export const singleQ: Question = {
 
 export const singleQWithComment: Question = {
 	question: "Which DB? (with comment)",
-	allowComment: true,
 	options: [
 		{ label: "Postgres", description: "Battle-tested" },
 		{ label: "SQLite", description: "Embedded" },
@@ -52,7 +51,6 @@ export const singleQWithComment: Question = {
 export const singleQMulti: Question = {
 	question: "Which features?",
 	multiSelect: true,
-	allowComment: true,
 	options: [
 		{ label: "Auth", description: "OAuth + session" },
 		{ label: "Search", description: "Full-text" },
@@ -71,7 +69,7 @@ export const multiQ: Question[] = [
 ];
 
 export const multiQWithComment: Question[] = [
-	{ question: "Q1", header: "First", allowComment: true, options: [{ label: "A" }, { label: "B" }] },
+	{ question: "Q1", header: "First", options: [{ label: "A" }, { label: "B" }] },
 	{ question: "Q2", header: "Second", options: [{ label: "X" }, { label: "Y" }] },
 ];
 
