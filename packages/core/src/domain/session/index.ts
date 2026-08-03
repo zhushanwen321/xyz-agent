@@ -8,8 +8,8 @@
  */
 export * from './store'
 export * from './api-port'
+export type { PanelOrchestrationPort } from './effects/panel-orchestration'
 export {
-  PanelOrchestrationPort,
   setPendingOpenForSid,
   getPendingOpenForSid,
   openPanelOnSessionEvent,
