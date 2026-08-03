@@ -20,6 +20,7 @@ import { HookPipeline } from './hook-pipeline.js'
 import { UiRequestQueue } from './ui-request-queue.js'
 import { StatusBarRegistry } from './status-bar-registry.js'
 import { PermissionStorage } from './plugin-permission-storage.js'
+import { EXTERNAL_PLUGIN_ENABLED, EXTERNAL_PLUGIN_DISABLED_MESSAGE } from './plugin-security.js'
 import { join } from 'node:path'
 import { toErrorMessage } from '../../utils/errors.js'
 
@@ -420,6 +421,11 @@ export class PluginService implements IPluginService {
   }
 
   async installPlugin(packageSpecifier: string): Promise<InstallResult> {
+    // external 安装硬锁（§6.6 排期硬锁）：sandbox 真隔离修复前禁止安装，短路在
+    // installer port 之前（fail-closed）。builtin 不经此入口（TC4），无需 source 判定。
+    if (!EXTERNAL_PLUGIN_ENABLED) {
+      return { success: false, error: EXTERNAL_PLUGIN_DISABLED_MESSAGE }
+    }
     const installer = this.deps.pluginInstaller
     if (!installer) {
       return { success: false, error: 'Plugin installer not configured (pluginInstaller deps missing)' }
