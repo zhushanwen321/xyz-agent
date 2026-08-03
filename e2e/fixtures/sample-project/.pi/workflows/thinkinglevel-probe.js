@@ -16,12 +16,6 @@
 //   - 禁止 bare IIFE（用 top-level await）
 //   - 禁止用 result 作变量名（用 outcome）
 
-const meta = {
-  name: "thinkinglevel-probe",
-  description: "E2E 探针：agent() 传 thinkingLevel=high，subagent 做最小任务",
-  phases: ["probe"],
-};
-
 phase("probe");
 
 const outcome = await agent({
