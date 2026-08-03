@@ -72,6 +72,22 @@ vi.mock('@/api/events', () => ({
 }))
 vi.mock('@/api', () => ({
   extension: { scan: vi.fn() },
+  // w5：useChat 薄包装的 chatApiPort 组装需 chat 全部 10 方法 + session.writeSegments
+  chat: {
+    send: vi.fn(() => Promise.resolve()),
+    steer: vi.fn(() => Promise.resolve()),
+    followUp: vi.fn(() => Promise.resolve()),
+    abort: vi.fn(() => Promise.resolve()),
+    compact: vi.fn(() => Promise.resolve()),
+    bash: vi.fn(() => Promise.resolve()),
+    abortBash: vi.fn(() => Promise.resolve()),
+    getHistory: vi.fn(() => Promise.resolve({ messages: [], historyTruncated: false })),
+    getFullHistory: vi.fn(() => Promise.resolve([])),
+    streamSubscribe: vi.fn(() => () => {}),
+  },
+  session: {
+    writeSegments: vi.fn(() => Promise.resolve()),
+  },
 }))
 
 import Sidebar from '@/components/sidebar/Sidebar.vue'

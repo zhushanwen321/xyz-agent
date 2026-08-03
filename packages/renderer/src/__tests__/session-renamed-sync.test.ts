@@ -38,6 +38,10 @@ const { streamCbHolder, streamSubscribeMock } = vi.hoisted(() => ({
 
 vi.mock('@/api', () => ({
   chat: { send: vi.fn(), streamSubscribe: streamSubscribeMock },
+  // w5：useChat 薄包装 import session.writeSegments（写 segments sidecar），mock 补全
+  session: {
+    writeSegments: vi.fn(() => Promise.resolve()),
+  },
 }))
 
 import { useChat } from '@/composables/features/useChat'

@@ -25,6 +25,10 @@ vi.mock('@/api', () => ({
     send: sendMock,
     getHistory: vi.fn(() => Promise.resolve([])),
   },
+  // w5：useChat 薄包装 import session.writeSegments（写 segments sidecar），mock 补全
+  session: {
+    writeSegments: vi.fn(() => Promise.resolve()),
+  },
 }))
 
 import { useChat, resetChatModuleState } from '@/composables/features/useChat'

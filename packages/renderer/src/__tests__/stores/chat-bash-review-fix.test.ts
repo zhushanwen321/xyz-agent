@@ -28,6 +28,10 @@ vi.mock('@/api', () => ({
     abortBash: apiMock.abortBash,
     streamSubscribe: apiMock.streamSubscribe,
   },
+  // w5：useChat 薄包装 import session.writeSegments（写 segments sidecar），mock 补全
+  session: {
+    writeSegments: vi.fn(() => Promise.resolve()),
+  },
 }))
 
 // ── useToast mock：捕获 error 调用 ──
