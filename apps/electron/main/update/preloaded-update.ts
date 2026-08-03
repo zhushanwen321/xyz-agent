@@ -16,6 +16,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync, statSync } from 'node:fs'
 import path from 'node:path'
+import { compare } from 'compare-versions'
 import type { LatestReleaseInfo } from '@xyz-agent/shared'
 import { PRELOADED_UPDATE_FILE } from './constants.js'
 import { pickPlatformAsset, pickPlatformAssetName } from './pick-platform-asset.js'
@@ -175,9 +176,16 @@ export async function readPreloadedUpdate(release: LatestReleaseInfo): Promise<s
  * 仍做完整性校验（文件存在 + size + sha256），但不做 version/assetName 匹配
  * （版本由读取到的 release 字段本身决定）。
  *
- * @returns 有效的 { release, filePath }；文件不存在/损坏/旧格式（无 release 字段）返回 null
+ * 版本比较（与 readPendingUpdate 对称）：currentVersion >= preloaded.version 说明 app
+ * 已升级到该版本（或更高），产物失效 → unlink + 返回 null。对齐 readPendingUpdate 的
+ * 「版本比较是升级成功的终极真相」策略，防止启动恢复路径误恢复「已下载」态。
+ *
+ * @param currentVersion app.getVersion() 返回的当前版本
+ * @returns 有效的 { release, filePath }；文件不存在/损坏/旧格式/版本已过期返回 null
  */
-export async function readPreloadedUpdateRaw(): Promise<{ release: LatestReleaseInfo; filePath: string } | null> {
+export async function readPreloadedUpdateRaw(
+  currentVersion: string,
+): Promise<{ release: LatestReleaseInfo; filePath: string } | null> {
   if (!existsSync(PRELOADED_UPDATE_FILE)) return null
 
   let parsed: unknown
@@ -218,6 +226,22 @@ export async function readPreloadedUpdateRaw(): Promise<{ release: LatestRelease
       clearPreloadedUpdate()
       return null
     }
+  }
+
+  // 版本比较清除策略：currentVersion >= preloaded.version 说明已升级，产物失效。
+  // 与 readPendingUpdate 对称（见该函数注释），版本比较是升级成功的终极真相。
+  // 非 semver 版本号 catch 后保守保留（不误删），与 readPendingUpdate 一致。
+  try {
+    if (compare(currentVersion, data.release.version, '>=')) {
+      console.log(
+        `[preloaded-update] current ${currentVersion} >= preloaded ${data.release.version}, clearing`,
+      )
+      clearPreloadedUpdate()
+      return null
+    }
+  } catch (err) {
+    // best-effort：版本号非 semver 无法比较 → 保守保留产物（不误删），让用户自行决定是否升级
+    console.warn('[preloaded-update] version compare failed, keeping:', err)
   }
 
   return { release: data.release, filePath: data.filePath }

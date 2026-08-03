@@ -66,7 +66,7 @@ import { BrowserViewManager } from './browser/browser-view-manager.js'
 import { ReleaseChecker } from './release-checker.js'
 import { MockReleaseChecker, DEV_MOCK_UPDATE_ENABLED } from './dev/mock-release-checker.js'
 import { updateOrchestrator } from './update/orchestrator.js'
-import { maybeRollbackInterruptedUpdate } from './update/update-self-healer.js'
+import { maybeRollbackInterruptedUpdate, cleanupCompletedUpdate } from './update/update-self-healer.js'
 import { registerIpcHandlers } from './gateway/ipc-handlers.js'
 import { isPathInAllowedPrefixes } from './gateway/input-validators.js'
 import { fixPathEnv } from './supervisor/shell-env.js'
@@ -231,6 +231,11 @@ app.whenReady().then(async () => {
   // W3：启动自愈——检测上次中断的升级并回滚，必须在 bootstrapMainWindow 之前
   // （确保 .app bundle 已恢复到可用态再创建窗口，避免加载半截 app 崩溃）
   await maybeRollbackInterruptedUpdate()
+
+  // 清理已完成/失败的升级产物（done/failed/rolled-back/no-op 终态）：删除残留的 170MB zip、
+  // preloaded/pending 元信息、updater 脚本日志等，避免磁盘占用与下次启动误恢复「已下载」态。
+  // 必须在 maybeRollbackInterruptedUpdate 之后（replacing 回滚完成转入终态后再清理）。
+  await cleanupCompletedUpdate()
 
   await bootstrapMainWindow()
 })

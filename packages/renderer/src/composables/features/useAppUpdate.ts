@@ -22,6 +22,7 @@
  */
 import { onScopeDispose, reactive, toRaw } from 'vue'
 import type { LatestReleaseInfo, UpdateState } from '@xyz-agent/shared'
+import { compare } from 'compare-versions'
 import {
   checkForUpdate as ipcCheckForUpdate,
   // [NOTE] update:perform IPC 仍在 main 侧（update-handlers.ts 标 DEPRECATED）。
@@ -374,6 +375,15 @@ async function restorePreloadedUpdate(): Promise<boolean> {
   try {
     const preloaded = await ipcGetPreloaded()
     if (!preloaded) return false
+    // 版本守卫：current >= preloaded.version 说明已升级/更旧，产物过期 → return false 回退 pending。
+    // 非 semver 版本号 catch+继续恢复（信任 preloaded，对齐后端 readPreloadedUpdateRaw 的 keep 语义）。
+    try {
+      if (compare(__APP_VERSION__, preloaded.release.version, '>=')) return false
+    } catch (e) {
+      // best-effort 降级：版本号非 semver 无法比较 → 信任 preloaded 继续恢复
+      // （对齐后端 readPreloadedUpdateRaw 的 keep 语义，不阻断用户正常升级流程）
+      console.warn('[useAppUpdate] preloaded version compare failed, keeping:', e)
+    }
     // 有效预下载产物 → 恢复 downloaded 态
     state.latestRelease = preloaded.release
     state.state = 'downloaded'

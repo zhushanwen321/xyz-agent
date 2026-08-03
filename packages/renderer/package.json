@@ -27,6 +27,7 @@
     "ansi_up": "^6.0.6",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2",
+    "compare-versions": "^6.1.1",
     "markdown-it": "^14.2.0",
     "mermaid": "^11.16.0",
     "pinia": "^3",

@@ -18,7 +18,7 @@
  *
  * 运行：cd apps/electron/main && npx vitest run test/preloaded-update.test.ts
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   mkdtempSync,
   mkdirSync,
@@ -43,7 +43,7 @@ process.env.XYZ_AGENT_DATA_DIR = TMP_DATA_DIR
 interface PreloadedUpdateModule {
   writePreloadedUpdate: (release: LatestReleaseInfo, filePath: string) => void
   readPreloadedUpdate: (release: LatestReleaseInfo) => Promise<string | null>
-  readPreloadedUpdateRaw: () => Promise<{ release: LatestReleaseInfo; filePath: string } | null>
+  readPreloadedUpdateRaw: (currentVersion: string) => Promise<{ release: LatestReleaseInfo; filePath: string } | null>
   clearPreloadedUpdate: () => void
 }
 
@@ -259,7 +259,7 @@ describe('preloaded-update (预下载产物元信息 SSOT)', () => {
     const filePath = createProductFile('mac.zip', content)
     mod.writePreloadedUpdate(release, filePath)
 
-    const result = await mod.readPreloadedUpdateRaw()
+    const result = await mod.readPreloadedUpdateRaw('0.0.0')
     expect(result).not.toBeNull()
     expect(result!.filePath).toBe(filePath)
     // release 字段含完整 release 信息
@@ -281,7 +281,7 @@ describe('preloaded-update (预下载产物元信息 SSOT)', () => {
     writeFileSync(PRELOADED_UPDATE_FILE, JSON.stringify(oldFormat))
     expect(existsSync(PRELOADED_UPDATE_FILE)).toBe(true)
 
-    const result = await mod.readPreloadedUpdateRaw()
+    const result = await mod.readPreloadedUpdateRaw('0.0.0')
     // 旧格式无 release → isPreloadedUpdateData 返回 false → 清除
     expect(result).toBeNull()
     expect(existsSync(PRELOADED_UPDATE_FILE)).toBe(false)
@@ -294,7 +294,7 @@ describe('preloaded-update (预下载产物元信息 SSOT)', () => {
     expect(existsSync(ghostPath)).toBe(false)
     mod.writePreloadedUpdate(release, ghostPath)
 
-    const result = await mod.readPreloadedUpdateRaw()
+    const result = await mod.readPreloadedUpdateRaw('0.0.0')
     expect(result).toBeNull()
     expect(existsSync(PRELOADED_UPDATE_FILE)).toBe(false)
   })
@@ -302,7 +302,52 @@ describe('preloaded-update (预下载产物元信息 SSOT)', () => {
   // ── T3：readPreloadedUpdateRaw 文件不存在 → null（不抛错）─────
   it('readPreloadedUpdateRaw：元信息文件不存在 → 返回 null（不抛错）', async () => {
     expect(existsSync(PRELOADED_UPDATE_FILE)).toBe(false)
-    const result = await mod.readPreloadedUpdateRaw()
+    const result = await mod.readPreloadedUpdateRaw('0.0.0')
     expect(result).toBeNull()
+  })
+
+  // ── 版本比较清除策略（与 readPendingUpdate 对称）──────────────
+  it('readPreloadedUpdateRaw：currentVersion >= preloaded.version → 清除元信息 + 返回 null', async () => {
+    const content = 'version-guard-expired'
+    const release = makeRelease('0.9.0', { size: content.length, sha256: sha256Hex(content) })
+    const filePath = createProductFile('mac.zip', content)
+    mod.writePreloadedUpdate(release, filePath)
+    expect(existsSync(PRELOADED_UPDATE_FILE)).toBe(true)
+
+    // currentVersion 0.9.0 >= preloaded 0.9.0 → 产物过期，清除
+    const result = await mod.readPreloadedUpdateRaw('0.9.0')
+    expect(result).toBeNull()
+    expect(existsSync(PRELOADED_UPDATE_FILE)).toBe(false)
+  })
+
+  it('readPreloadedUpdateRaw：currentVersion < preloaded.version → 返回数据（未过期）', async () => {
+    const content = 'version-guard-valid'
+    const release = makeRelease('0.9.0', { size: content.length, sha256: sha256Hex(content) })
+    const filePath = createProductFile('mac.zip', content)
+    mod.writePreloadedUpdate(release, filePath)
+
+    // currentVersion 0.8.0 < preloaded 0.9.0 → 未过期，返回数据
+    const result = await mod.readPreloadedUpdateRaw('0.8.0')
+    expect(result).not.toBeNull()
+    expect(result!.filePath).toBe(filePath)
+    expect(existsSync(PRELOADED_UPDATE_FILE)).toBe(true)
+  })
+
+  it('readPreloadedUpdateRaw：非 semver 版本号 → compare 抛错 catch + 保留元信息（不误删）', async () => {
+    const content = 'version-guard-nonsemver'
+    // version='invalid'：isPreloadedUpdateData 通过（typeof string），但 compare 抛错
+    const release = makeRelease('invalid', { size: content.length, sha256: sha256Hex(content) })
+    const filePath = createProductFile('mac.zip', content)
+    mod.writePreloadedUpdate(release, filePath)
+    expect(existsSync(PRELOADED_UPDATE_FILE)).toBe(true)
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // compare('0.9.0', 'invalid', '>=') 抛错 → catch + warn + 保留
+    const result = await mod.readPreloadedUpdateRaw('0.9.0')
+    expect(result).not.toBeNull()
+    expect(result!.release.version).toBe('invalid')
+    expect(existsSync(PRELOADED_UPDATE_FILE)).toBe(true)
+    expect(warnSpy).toHaveBeenCalled()
+    warnSpy.mockRestore()
   })
 })

@@ -108,6 +108,9 @@ function setupUseAppUpdate(options?: { initAutoCheck?: boolean }): {
 
 beforeEach(() => {
   _resetForTest()
+  // __APP_VERSION__ 是 vite define 注入的全局常量，vitest 下不存在，stub 之。
+  // 默认 '0.0.0' 让版本守卫不拦截（< 任何 preloaded 版本），保持现有用例意图。
+  vi.stubGlobal('__APP_VERSION__', '0.0.0')
   hoisted.checkForUpdate.mockReset()
   hoisted.updateDownload.mockReset()
   hoisted.updateInstall.mockReset()
@@ -123,6 +126,10 @@ beforeEach(() => {
   hoisted.getPreloaded.mockResolvedValue(null)
   hoisted.getPendingUpdate.mockReset()
   hoisted.getPendingUpdate.mockResolvedValue(null)
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
 })
 
 describe('useAppUpdate', () => {
@@ -359,6 +366,50 @@ describe('useAppUpdate', () => {
     expect(restored).toBe(false)
     expect(result.state.state).toBe('idle')
     expect(result.state.latestRelease).toBeNull()
+    stop()
+  })
+
+  // ── restorePreloadedUpdate 版本守卫（w2-frontend-guard：前端兜底拦截过期产物）──
+  it('W2TC1：currentVersion < preloaded.version（0.8.48 < 0.8.49）→ 守卫放行，恢复 downloaded', async () => {
+    vi.stubGlobal('__APP_VERSION__', '0.8.48')
+    hoisted.getPreloaded.mockResolvedValue({ release: makeRelease('0.8.49'), filePath: '/tmp/x.zip' })
+    const { result, stop } = setupUseAppUpdate()
+    const restored = await result.restorePreloadedUpdate()
+
+    expect(restored).toBe(true)
+    expect(result.state.state).toBe('downloaded')
+    expect(result.state.latestRelease?.version).toBe('0.8.49')
+    stop()
+  })
+
+  it('W2TC2：currentVersion >= preloaded.version（0.8.49 >= 0.8.49）→ 守卫拦截，不恢复，回退 pending', async () => {
+    vi.stubGlobal('__APP_VERSION__', '0.8.49')
+    hoisted.getPreloaded.mockResolvedValue({ release: makeRelease('0.8.49'), filePath: '/tmp/x.zip' })
+    const { result, stop } = setupUseAppUpdate()
+    const restored = await result.restorePreloadedUpdate()
+
+    expect(restored).toBe(false)
+    expect(result.state.state).not.toBe('downloaded')
+    expect(result.state.state).toBe('idle')
+    expect(result.state.latestRelease).toBeNull()
+    stop()
+  })
+
+  it('W2TC3：preloaded.version 非 semver → compare 抛错 catch 后继续恢复（对齐后端 keep 语义）', async () => {
+    vi.stubGlobal('__APP_VERSION__', '0.8.49')
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // makeRelease 填合法字段，仅覆盖 version 为非法 semver 触发 compare 抛错
+    hoisted.getPreloaded.mockResolvedValue({
+      release: { ...makeRelease('0.8.49'), version: 'not-a-version' },
+      filePath: '/tmp/x.zip',
+    })
+    const { result, stop } = setupUseAppUpdate()
+    const restored = await result.restorePreloadedUpdate()
+
+    expect(warnSpy).toHaveBeenCalled()
+    expect(restored).toBe(true)
+    expect(result.state.state).toBe('downloaded')
+    warnSpy.mockRestore()
     stop()
   })
 
