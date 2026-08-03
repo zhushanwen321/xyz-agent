@@ -8,7 +8,7 @@
  */
 
 import { existsSync, readdirSync, mkdirSync, renameSync, rmdirSync, cpSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve as pathResolve, sep } from 'node:path'
 import { toErrorMessage } from '../../utils/errors.js'
 import { isPackaged } from '../../utils/runtime-env.js'
 import { JsonStore } from '../../utils/json-store.js'
@@ -246,7 +246,8 @@ export function getApiKeyForProvider(providerId: string): string | undefined {
 // ── Settings.json 操作 ───────────────────────────────────────
 // readSettings/updateSettingsSync 的实现收敛到 pi-settings-store（D17 唯一读写层）。
 // 本文件 re-export，供 pi-config-store 等直接消费。
-export { readSettings, writeSettings, updateSettingsSync } from './pi-settings-store.js'
+// setSettingsPath 一并 re-export，供测试（clean-leaked-packages.test.ts）指向 tmpdir 隔离。
+export { readSettings, writeSettings, updateSettingsSync, setSettingsPath } from './pi-settings-store.js'
 
 /**
  * 纯校验：检查 defaultProvider/defaultModel 在 models.json 中是否有效。
@@ -535,6 +536,78 @@ export function migrateToPiSubdir(): void {
         }
       }
     }
+  }
+}
+
+// ── settings.json.packages 泄漏路径清理（架构约定 #1：xyz-agent/pi 数据隔离）──────
+//
+// 背景：早期从 pi 导入 settings.json 时，packages[] 带入了泄漏到 pi 全局目录
+// （~/.pi/agent/）的相对路径项（如 ../../../.pi/agent/extensions/pending-notifications），
+// 违反隔离原则。runtime 启动时（index.ts migrateToPiSubdir 之后）一次性清理。
+
+/**
+ * pi 全局 agent 目录，泄漏路径的判定目标。
+ *
+ * 结构性推导：从 getPiAgentDir() 向上 3 层（agent→pi→dataDir→parent）再下 .pi/agent，
+ * 即「xyz-agent 数据目录（getConfigDir()）的兄弟 .pi/agent」。
+ *
+ * 生产（XYZ_AGENT_DATA_DIR=~/.xyz-agent）：getPiAgentDir()=~/.xyz-agent/pi/agent，
+ * 向上 3 层到 ~，本函数返回 ~/.pi/agent（pi 全局 agent 目录）。
+ *
+ * [HISTORICAL] 为何不从 homedir() 推导：vitest globalSetup 把 XYZ_AGENT_DATA_DIR 指向 tmp，
+ * getPiAgentDir() 落在 tmp 分区，而 homedir()/.pi/agent 落在真实家目录，两者不同分区——
+ * 相对路径解析后永远无法从 tmp 跨到真实家目录，导致 isLeakedPackage 不可测（tmp 嵌套深度
+ * 还随机器变化）。从 getPiAgentDir() 同源推导后，泄漏路径 ../../../.pi/agent/x 的 ../../../
+ *（向上 3 层）与本函数的向上 3 层天然对齐，depth-structural 一致，任意 dataDir 位置均成立。
+ */
+function getPiGlobalAgentDir(): string {
+  return pathResolve(getPiAgentDir(), '..', '..', '..', '.pi', 'agent')
+}
+
+/**
+ * 判定 packages 项是否为泄漏到 pi 全局目录的相对路径。
+ *
+ * 泄漏特征：以 '../' 开头（相对路径），且相对 settings.json 所在目录（getPiAgentDir()）
+ * 解析后落在 pi 全局目录（~/.pi/agent/）内。
+ *
+ * 合法项不被误杀：npm:@xxx 不以 ../ 开头；extensions/xxx 不以 ../ 开头；
+ * ./local-ext 不以 ../ 开头；../../../other-dir 解析后不在 ~/.pi/agent/ 内。
+ *
+ * @param pkg packages 数组的一项
+ * @returns true = 泄漏项（应删除）
+ */
+export function isLeakedPackage(pkg: string): boolean {
+  if (!pkg.startsWith('../')) return false
+  const resolved = pathResolve(getPiAgentDir(), pkg)
+  return resolved.startsWith(getPiGlobalAgentDir() + sep)
+}
+
+/**
+ * 清理 settings.json.packages 中泄漏到 pi 全局目录的相对路径项。
+ *
+ * 启动时一次性调用（index.ts 的 migrateToPiSubdir 之后）。幂等：filter 后无变化不触发写。
+ *
+ * @returns { removed: string[] } 被删除的项列表（供调用方 log）
+ */
+export function cleanLeakedPackages(): { removed: string[] } {
+  try {
+    let removed: string[] = []
+    updateSettingsSync(s => {
+      const packages = s.packages ?? []
+      const filtered = packages.filter(p => !isLeakedPackage(p))
+      removed = packages.filter(p => isLeakedPackage(p))
+      if (removed.length > 0) {
+        s.packages = filtered
+      }
+    })
+    if (removed.length > 0) {
+      console.log(`[provider-store] cleaned ${removed.length} leaked package(s) from settings.json:`, removed)
+    }
+    return { removed }
+  } catch (e) {
+    // settings.json 读取失败不阻塞启动（ES1）
+    console.warn('[provider-store] cleanLeakedPackages failed:', e)
+    return { removed: [] }
   }
 }
 

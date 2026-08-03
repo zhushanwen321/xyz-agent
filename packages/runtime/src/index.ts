@@ -10,7 +10,7 @@ import { getDataDir } from '@xyz-agent/shared/paths'
 import { initLogger, closeLogger } from './infra/logger.js'
 
 import { ProcessManager } from './infra/pi/process-manager.js'
-import { migrateToPiSubdir, getProviderConfig } from './infra/pi/pi-provider-store.js'
+import { migrateToPiSubdir, getProviderConfig, cleanLeakedPackages } from './infra/pi/pi-provider-store.js'
 import { getExtensionsDir, getNpmDir, getTmpDir } from './infra/pi/pi-paths.js'
 import { PiConfigStore } from './infra/pi/pi-config-store.js'
 import { PiSessionStore } from './infra/pi/session-store.js'
@@ -113,6 +113,8 @@ async function main(): Promise<void> {
   // 必须在首次配置读取（readModels/readSettings/migrateSettingsSkillsToDiscovery）前完成。
   // 幂等：新路径已存在文件则跳过。
   migrateToPiSubdir()
+  // 清理 settings.json.packages 中泄漏到 pi 全局目录的相对路径项（架构约定 #1 隔离保障）
+  cleanLeakedPackages()
 
   const configStore = new PiConfigStore()
   const sessionStore = new PiSessionStore()
