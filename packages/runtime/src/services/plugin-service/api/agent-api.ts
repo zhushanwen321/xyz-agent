@@ -12,8 +12,8 @@
  * setModel / setThinkingLevel 为 trusted 插件专属。sandbox 插件调用时
  * 返回 PERMISSION_DENIED（权限检查由 PluginService dispatch 层完成）。
  *
- * Phase 2 中 get/set 模型和思考级别为 stub 实现（返回/接受假数据）。
- * Phase 3 中对接 IPiEngine（pi 的 setModel 等）。
+ * setModel 经 modelService.switchModel 统一入口（persist + broadcast），
+ * getModel / getThinkingLevel 读取 active session 的 modelId / thinkingLevel。
  */
 
 import type { PluginRpcServer } from '../plugin-rpc-server.js'
