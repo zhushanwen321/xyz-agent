@@ -16,6 +16,9 @@
  * 4. readFileSync/writeFileSync 传状态 → 脆弱（warning）
  * 5. unlinkSync 清理状态 → 与 subprocess 文件读竞态（warning）
  * 6. 顶层未 await 的异步 IIFE + 内部调 agent/parallel/pipeline → 子进程被提前 kill（error）
+ * 7. agent() 缺 description/label → TUI /workflows 显示 '(unnamed)'（warning）
+ * 8. meta.phases 非字符串数组（对象数组等）→ 引擎忽略（warning）
+ * 9. meta.phases 声明与 phase() 调用不一致 → 运行时分组与声明脱节（warning）
  *
  * 层归属：Engine。
  *
@@ -110,20 +113,25 @@ function checkLine(lineText: string, lineNum: number): LintFinding[] {
 }
 
 /**
- * 找出 source 中所有 agent 调用跨度，检查错误的选项 key。
+ * 遍历 source 中所有 agent 调用的行范围，对每个调用执行 callback。
  *
- * agent 调用可能跨多行：
- * agent({
- * prompt: ...,
- * outputSchema, ← error: 应为 schema
- * })
+ * agent 调用可能跨多行，通过括号配对定位起止行：
+ *   agent({
+ *     prompt: ...,
+ *   })
  *
- * 定位 agent 调用边界，检查 outputSchema 是否作为 key（非 value 如 `schema: outputSchema`）。
+ * 单行 agent 调用（如 `agent({ prompt: 'x' })`）的 startLine === endLine。
+ * 与 checkAgentCalls / checkAgentDescription 共享同一套范围定义，确保
+ * outputSchema 检查与 description 检查覆盖完全相同的调用集合（含 parallel/pipeline
+ * 内嵌的 agent() 调用——它们同样被 `\bagent\s*\(` 匹配）。
+ *
+ * @param callback (startLine, endLine) 0-based 行号
  */
-function checkAgentCalls(source: string): LintFinding[] {
-  const findings: LintFinding[] = [];
+function forEachAgentCallRange(
+  source: string,
+  callback: (startLine: number, endLine: number) => void,
+): void {
   const lines = source.split("\n");
-
   let inAgentCall = false;
   let depth = 0;
   let agentStartLine = -1;
@@ -150,7 +158,7 @@ function checkAgentCalls(source: string): LintFinding[] {
       }
       if (depth <= 0) {
  // 单行 agent 调用
-        checkAgentCallOptions(lines, agentStartLine, i, findings);
+        callback(agentStartLine, i);
         inAgentCall = false;
       }
       continue;
@@ -162,12 +170,23 @@ function checkAgentCalls(source: string): LintFinding[] {
         if (ch === ")" || ch === "}" || ch === "]") depth--;
       }
       if (depth <= 0) {
-        checkAgentCallOptions(lines, agentStartLine, i, findings);
+        callback(agentStartLine, i);
         inAgentCall = false;
       }
     }
   }
+}
 
+/**
+ * 找出 source 中所有 agent 调用跨度，检查错误的选项 key（outputSchema）。
+ * 范围遍历委托 forEachAgentCallRange。
+ */
+function checkAgentCalls(source: string): LintFinding[] {
+  const lines = source.split("\n");
+  const findings: LintFinding[] = [];
+  forEachAgentCallRange(source, (startLine, endLine) => {
+    checkAgentCallOptions(lines, startLine, endLine, findings);
+  });
   return findings;
 }
 
@@ -211,6 +230,36 @@ function checkAgentCallOptions(
       });
     }
   }
+}
+
+/**
+ * 检查 agent 调用是否提供 description（或其别名 label）。
+ *
+ * worker-script-builder 取 `firstArg.label || firstArg.description` 作 TUI 显示名，
+ * 两者都缺 → node.agent 为空 → /workflows 视图显示 '(unnamed)'。
+ *
+ * 实现复用 forEachAgentCallRange 的范围定义，在范围内检测 `description:` 或 `label:`
+ * 作为对象 key。正则粗略匹配，已知局限：schema 内嵌的 `description:`（JSON Schema 字段
+ * 说明）会被误判为"已提供"，导致漏报。漏报仅减少提醒、不产生多余 warning，可接受。
+ */
+function checkAgentDescription(source: string): LintFinding[] {
+  const lines = source.split("\n");
+  const findings: LintFinding[] = [];
+  forEachAgentCallRange(source, (startLine, endLine) => {
+    const range = lines.slice(startLine, endLine + 1).join("\n");
+ // 匹配 description 或 label 作为对象 key（后跟冒号）
+    if (!/\b(description|label)\s*:/.test(range)) {
+      findings.push({
+        severity: "warning",
+        line: startLine + 1,
+        message:
+          "agent() call without `description` (or `label`) will show as '(unnamed)' in TUI.",
+        suggestion:
+          "Add `description: 'kebab-case-name'` to agent() opts for readable /workflows display.",
+      });
+    }
+  });
+  return findings;
 }
 
 // ── 顶层未 await 的异步 IIFE 检测 ───────────────────────────
@@ -348,6 +397,103 @@ function analyzeIIFE(source: string, iifeStart: number): LintFinding | undefined
   };
 }
 
+// ── 显示性检查（description / phase）───────────────────────────
+
+/**
+ * 检查 meta.phases 是否字符串数组。
+ *
+ * 引擎 buildPhaseGroups 只按运行时 node.phase 分组，不读 meta.phases 声明。但 meta.phases
+ * 仍用于文档/一致性检查（见 checkPhaseConsistency），且 SSOT 约定为字符串数组。对象数组
+ * （如 [{title,detail}]）是常见误写，提醒作者改为字符串数组。
+ */
+function checkMetaPhases(source: string): LintFinding[] {
+  const lines = source.split("\n");
+  const findings: LintFinding[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")) {
+      continue;
+    }
+ // phases: [ { ← 对象数组（第一个元素是对象）
+    if (/phases\s*:\s*\[\s*\{/.test(line)) {
+      findings.push({
+        severity: "warning",
+        line: i + 1,
+        message:
+          "`meta.phases` should be a string array like ['phase1','phase2']. Object arrays are ignored by the engine.",
+        suggestion:
+          "Use `phases: ['analyze','fix']`. Engine groups nodes by runtime `phase()` calls, not by `meta.phases` declarations.",
+      });
+    }
+  }
+  return findings;
+}
+
+/**
+ * 检查 meta.phases 声明与 phase() 调用的一致性。
+ *
+ * - 声明了但从未 phase() 调用 → warning（运行时分组用不上，声明形同虚设）
+ * - phase() 调用了但未声明 → warning（声明遗漏，meta.phases 失去文档价值）
+ *
+ * 两者都为空时跳过（脚本不使用 phase 机制，不报）。
+ */
+function checkPhaseConsistency(source: string): LintFinding[] {
+  const findings: LintFinding[] = [];
+
+ // 提取 meta.phases 声明的字符串 + 声明所在行号
+  const declared = new Map<string, number>();
+  const phasesArrayMatch = source.match(/phases\s*:\s*\[[^\]]*\]/);
+  if (phasesArrayMatch && phasesArrayMatch.index !== undefined) {
+    const inner = phasesArrayMatch[0];
+ // 对象数组（如 [{title,detail}]）由 checkMetaPhases 单独报，这里跳过提取，
+ // 避免从对象字段里误抽出字符串作 declared。
+    if (!/\[\s*\{/.test(inner)) {
+      const phasesLine = source.slice(0, phasesArrayMatch.index).split("\n").length;
+      for (const m of inner.matchAll(/['"]([^'"]+)['"]/g)) {
+        if (!declared.has(m[1])) declared.set(m[1], phasesLine);
+      }
+    }
+  }
+
+ // 提取所有 phase() 调用实参 + 首次出现的行号
+  const called = new Map<string, number>();
+  for (const m of source.matchAll(/\bphase\s*\(\s*['"]([^'"]+)['"]/g)) {
+    if (m.index === undefined) continue;
+    const lineNum = source.slice(0, m.index).split("\n").length;
+    if (!called.has(m[1])) called.set(m[1], lineNum);
+  }
+
+ // 两者都为空 → 跳过（脚本不使用 phase 机制）
+  if (declared.size === 0 && called.size === 0) return [];
+
+ // 声明了但从未 phase() 调用
+  for (const [name, line] of declared) {
+    if (!called.has(name)) {
+      findings.push({
+        severity: "warning",
+        line,
+        message: `declared phase '${name}' never set via phase().`,
+        suggestion: `Add phase('${name}') before the agent() calls belonging to this phase, or remove it from meta.phases.`,
+      });
+    }
+  }
+
+ // 调用了但未声明
+  for (const [name, line] of called) {
+    if (!declared.has(name)) {
+      findings.push({
+        severity: "warning",
+        line,
+        message: `phase('${name}') called but not in meta.phases.`,
+        suggestion: `Add '${name}' to meta.phases array, e.g. phases: [..., '${name}'].`,
+      });
+    }
+  }
+
+  return findings;
+}
+
 /**
  * 静态检查 workflow 脚本合法性。
  *
@@ -376,6 +522,12 @@ export function lintScript(source: string): LintResult {
  // 诊断耗时 4 轮：先后误判为 model 故障 / 工具缺失 / turn-signal abort / ConcurrencyGate 异常，
  // 最终靠 worker-host → handleReturn → release → abort 的调用栈定位。
   findings.push(...checkBareAsyncIIFE(source));
+
+ // 显示性检查（warning）：agent 缺 description / meta.phases 形式 / phase 一致性。
+ // 目的：让 TUI /workflows 视图避免 unnamed agent 与 (unnamed) phase 分组。
+  findings.push(...checkAgentDescription(source));
+  findings.push(...checkMetaPhases(source));
+  findings.push(...checkPhaseConsistency(source));
 
   // 按行号排序，稳定输出
   findings.sort((a, b) => a.line - b.line);

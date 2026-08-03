@@ -345,3 +345,113 @@ describe("多种错误同时存在", () => {
     expect(lines).toEqual(sorted);
   });
 });
+
+// ── agent description / meta.phases / phase 一致性（新增 warning 检查）─
+
+describe("agent() 缺 description/label — warning", () => {
+  it("agent 无 description/label → 1 warning", () => {
+    const src = `await agent({ prompt: "x" });\n`;
+    const result = lintScript(src);
+
+    const descWarnings = warnings(result.findings).filter((w) =>
+      /description.*unnamed/i.test(w.message));
+    expect(descWarnings).toHaveLength(1);
+    expect(descWarnings[0].line).toBe(1);
+  });
+
+  it("agent 有 description → 0 此类 warning", () => {
+    const src = `await agent({ prompt: "x", description: "review-diff" });\n`;
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).some((w) => /description.*unnamed/i.test(w.message)))
+      .toBe(false);
+  });
+
+  it("agent 有 label（description 别名）→ 0 此类 warning", () => {
+    const src = `await agent({ prompt: "x", label: "review-diff" });\n`;
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).some((w) => /description.*unnamed/i.test(w.message)))
+      .toBe(false);
+  });
+});
+
+describe("meta.phases 非字符串数组 — warning", () => {
+  it("phases: [{...}] 对象数组 → warning", () => {
+    const src = [
+      `const meta = { phases: [{ title: "a" }, { title: "b" }] };`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).some((w) => /meta\.phases.*string array/i.test(w.message)))
+      .toBe(true);
+  });
+
+  it("phases: ['a'] 字符串数组 → 0 此类 warning", () => {
+    const src = [
+      `const meta = { phases: ["a"] };`,
+      `phase("a");`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).some((w) => /meta\.phases.*string array/i.test(w.message)))
+      .toBe(false);
+  });
+});
+
+describe("声明 phases 与 phase() 调用一致性 — warning", () => {
+  it("声明 + 调用一致 → 0 此类 warning", () => {
+    const src = [
+      `const meta = { phases: ["review"] };`,
+      `phase("review");`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).some((w) =>
+      /never set via phase|called but not in meta\.phases/i.test(w.message))).toBe(false);
+  });
+
+  it("声明了但从不 phase() 调用 → warning", () => {
+    const src = [
+      `const meta = { phases: ["review", "fix"] };`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).some((w) => /never set via phase/i.test(w.message)))
+      .toBe(true);
+  });
+
+  it("phase() 调用了但未声明 → warning", () => {
+    const src = [
+      `const meta = { phases: ["review"] };`,
+      `phase("fix");`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).some((w) => /called but not in meta\.phases/i.test(w.message)))
+      .toBe(true);
+  });
+
+  it("对象数组 phases 不触发一致性 warning（由 checkMetaPhases 负责）", () => {
+    // 对象数组场景：checkPhaseConsistency 应跳过提取，不产生 never-set warning
+    const src = [
+      `const meta = { phases: [{ title: "a" }] };`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).some((w) => /never set via phase/i.test(w.message)))
+      .toBe(false);
+  });
+});
