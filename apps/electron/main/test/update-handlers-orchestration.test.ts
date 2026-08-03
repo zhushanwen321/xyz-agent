@@ -69,7 +69,7 @@ vi.mock('../update/pending-update.js', () => ({
 const preloadedMocks = vi.hoisted(() => ({
   writePreloadedUpdate: vi.fn<(release: LatestReleaseInfo, filePath: string) => void>(),
   readPreloadedUpdate: vi.fn<(release: LatestReleaseInfo) => Promise<string | null>>(),
-  readPreloadedUpdateRaw: vi.fn<() => Promise<{ release: LatestReleaseInfo; filePath: string } | null>>(),
+  readPreloadedUpdateRaw: vi.fn<(currentVersion: string) => Promise<{ release: LatestReleaseInfo; filePath: string } | null>>(),
   clearPreloadedUpdate: vi.fn<() => void>(),
 }))
 vi.mock('../update/preloaded-update.js', () => ({
@@ -617,6 +617,8 @@ describe('T4 update-handlers: update:download / update:install / update:getPrelo
     // installUpdate 收到 preloaded 的 release + filePath（不是前端传入）
     expect(orch.installUpdate).toHaveBeenCalledTimes(1)
     expect(orch.installUpdate).toHaveBeenCalledWith(FIXTURE, '/tmp/pre.zip', expect.any(Function))
+    // readPreloadedUpdateRaw 收到 app.getVersion() = '0.8.14'（版本守卫传参，WTC12 集成验证）
+    expect(preloadedMocks.readPreloadedUpdateRaw).toHaveBeenCalledWith('0.8.14')
     // triggerRestart=true → 安排延迟 quit
     expect(capturedQuitTimer).not.toBeNull()
     expect(capturedQuitTimer!.delay).toBe(500)

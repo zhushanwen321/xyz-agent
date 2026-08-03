@@ -14,6 +14,19 @@
 import type { UpdateStage } from '@xyz-agent/shared'
 
 /**
+ * update-result.json 的合法 status 值（跨进程状态 SSOT）。
+ *
+ * - replacing：替换阶段进行中（被中断时由 maybeRollbackInterruptedUpdate 回滚）
+ * - done：升级成功（终态）
+ * - failed：升级失败（终态）
+ * - rolled-back：已回滚（终态，self-healer 写入）
+ * - no-op：中断但无需回滚（终态，self-healer 写入）
+ *
+ * cleanupCompletedUpdate 处理除 replacing 外的全部终态，清理残留产物。
+ */
+export type UpdateResultStatus = 'done' | 'failed' | 'replacing' | 'rolled-back' | 'no-op'
+
+/**
  * 升级错误码枚举。
  *
  * 每个错误码对应一种具体的失败场景，前端可据此展示用户友好的错误提示和解决建议。

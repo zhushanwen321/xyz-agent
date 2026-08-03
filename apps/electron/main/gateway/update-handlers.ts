@@ -376,7 +376,7 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
     }
     try {
       // 从 preloaded 读 release + filePath（不信任前端传入）
-      const preloaded = await readPreloadedUpdateRaw()
+      const preloaded = await readPreloadedUpdateRaw(app.getVersion())
       if (!preloaded) {
         throw new Error('No preloaded update available')
       }
@@ -421,7 +421,7 @@ export function registerUpdateHandlers(deps: IpcHandlerDeps): void {
   // ── update:getPreloaded（读取预下载产物）──────────────────────
   // 供前端判断是否已下载完成（决定显示「下载中」还是「安装」按钮）。
   ipcMain.handle('update:getPreloaded', async () => {
-    return readPreloadedUpdateRaw()
+    return readPreloadedUpdateRaw(app.getVersion())
   })
 
   // ── update:getProxyConfig（读取代理配置）──────────────────────
