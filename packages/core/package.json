@@ -17,6 +17,18 @@
     "./platform/port": {
       "types": "./src/platform/port.ts",
       "import": "./src/platform/port.ts"
+    },
+    "./rendering-protocol/custom-registry": {
+      "types": "./src/rendering-protocol/custom-registry.ts",
+      "import": "./src/rendering-protocol/custom-registry.ts"
+    },
+    "./foundation/use-session-scoped-state": {
+      "types": "./src/foundation/use-session-scoped-state.ts",
+      "import": "./src/foundation/use-session-scoped-state.ts"
+    },
+    "./domain/composer": {
+      "types": "./src/domain/composer/index.ts",
+      "import": "./src/domain/composer/index.ts"
     }
   },
   "scripts": {

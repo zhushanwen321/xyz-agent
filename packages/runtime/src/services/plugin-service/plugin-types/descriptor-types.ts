@@ -54,6 +54,69 @@ export interface PluginContributes {
   slashCommands?: Array<{ name: string; description: string }>
   tools?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>
   hooks?: string[]
-  panels?: Array<{ id: string; title: string; view: string }>
-  statusBarItems?: Array<{ id: string; text: string; priority: number }>
+  views?: PluginContributesView[]
+  menus?: PluginContributesMenu
+  commands?: PluginContributesCommand[]
+  configuration?: PluginContributesConfiguration
+  statusBarItems?: PluginContributesStatusBarItem[]
+}
+
+/** schema v2：views 声明（panels 演进产物，placement 为开放字符串——挂载点由壳注册） */
+export interface PluginContributesView {
+  id: string
+  title: string
+  view?: string
+  /** 挂载点名：'sidebar.tab' | 'panel.header' | 'composer.toolbar' | 'drawer.tab' | 'statusbar' 等，开放字符串（壳注册制） */
+  placement: string
+  viewType?: 'gui' | 'webview' | 'tree'
+  activationEvent?: string
+  initialVisibility?: 'visible' | 'hidden'
+}
+
+/** schema v2：menus 按挂载点名分组的命令菜单映射（VSCode contribution points 风格） */
+export interface PluginContributesMenu {
+  'composer.toolbar'?: PluginMenuItem[]
+  'panel.header'?: PluginMenuItem[]
+  'sidebar.footer'?: PluginMenuItem[]
+}
+
+export interface PluginMenuItem {
+  command: string
+  when?: string
+  group?: string
+}
+
+/** schema v2：声明式命令表（与 api.commands.register 互补：声明提供元数据，register 提供 handler） */
+export interface PluginContributesCommand {
+  command: string
+  title: string
+  category?: string
+  keybinding?: string
+  when?: string
+  icon?: string
+}
+
+/** schema v2：JSON Schema 子集（VSCode configuration 风格），驱动设置页表单 */
+export interface PluginContributesConfiguration {
+  title?: string
+  properties: Record<string, PluginConfigurationProperty>
+}
+
+export interface PluginConfigurationProperty {
+  type: 'string' | 'number' | 'boolean' | 'array' | 'object'
+  default?: unknown
+  description?: string
+  enum?: unknown[]
+  enumDescriptions?: string[]
+}
+
+/** schema v2：旧三字段（id/text/priority）原样保留保证向后兼容，扩展字段全 optional */
+export interface PluginContributesStatusBarItem {
+  id: string
+  text: string
+  priority: number
+  alignment?: 'left' | 'right'
+  scope?: 'per-session' | 'global'
+  commandId?: string
+  tooltip?: string
 }
