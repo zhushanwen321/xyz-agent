@@ -442,7 +442,9 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         }
         agentRoundResults.push({ name: def.name, must_fix: parsed.must_fix, suggestion: parsed.suggestion ?? 0, clean: parsed.must_fix === 0 });
       } else {
-        fail("审查 agent 结果无效（缺 must_fix）: " + active[i].name + " raw=" + String(raw).slice(0, 200));
+        // tools 受限的 agent（如 tools: read）会过滤掉 structured-output → schema 失效，
+        // 结果缺 must_fix。fail 信息完整 dump raw 便于定位。
+        fail("审查 agent 结果无效（缺 must_fix）: " + active[i].name + " raw=" + JSON.stringify(raw).slice(0, 400));
       }
     }
 
