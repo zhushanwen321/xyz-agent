@@ -778,6 +778,76 @@ describe('TC17: getRttStats 统计字段正确性', () => {
 })
 
 // ──────────────────────────────────────────────────────────
+// TC28: 重连/HMR 复连无 opts 时复用 currentAuthOpts（保持远程 auth，不退化为本地模式）
+// reviewer B1：ws-client connect(hmrUrl) 无 opts 已正确复用 currentAuthOpts（line 353-356
+// 仅当显式传 opts 才更新 currentAuthOpts，重连/HMR 复连不传 opts → 复用首次保存的值）。
+// 此 TC 保护该不变量：HMR reconnect 与退避重连共用 connect(url) 无 opts 路径，
+// 必须保持 isRemote=true 且 auth opts 不丢失。
+// ──────────────────────────────────────────────────────────
+describe('TC28: 重连/HMR 复连无 opts 复用 currentAuthOpts', () => {
+  it('首次 connect(remote,{auth}) 后第二次 connect(remote) 不传 opts → isRemote 仍 true + auth 复用', async () => {
+    const { connect, getIsRemote } = await import('@/lib/ws-client')
+    // 首次连接：远程模式 + auth
+    connect('ws://host:3210', { auth: { token: 't1', clientId: 'c1', deviceName: 'dn' } })
+    await waitForWs()
+    lastWs!.triggerOpen()
+    expect(getIsRemote().value).toBe(true)
+
+    // 模拟 HMR 复连 / 退避重连：再次 connect 同 url，不传 opts。
+    // 关键不变量：currentAuthOpts 不被覆盖（opts===undefined 时跳过赋值），isRemote 保持 true。
+    connect('ws://host:3210')
+    await waitForWs()
+    expect(getIsRemote().value).toBe(true)
+    lastWs!.triggerOpen()
+
+    // onopen 仍走远程分支（发 auth，不翻转 connected）——证明 currentAuthOpts 被复用而非退化为 null。
+    const sent = JSON.parse(lastWs!.lastSent!) as {
+      type: string
+      payload: { token: string; clientId: string; deviceName?: string }
+    }
+    expect(sent.type).toBe('auth')
+    expect(sent.payload.token).toBe('t1')
+    expect(sent.payload.clientId).toBe('c1')
+    expect(sent.payload.deviceName).toBe('dn')
+  })
+
+  it('HMR 复连切到不同 url（无 opts）仍保持远程 auth（currentAuthOpts 与 url 解耦）', async () => {
+    const { connect, getIsRemote } = await import('@/lib/ws-client')
+    connect('ws://host:3210', { auth: { token: 't1', clientId: 'c1' } })
+    await waitForWs()
+    lastWs!.triggerOpen()
+
+    // HMR 后 url 可能变化（如端口切换），但不传 opts → 复用首次的 currentAuthOpts。
+    connect('ws://host:9999')
+    await waitForWs()
+    expect(getIsRemote().value).toBe(true)
+    lastWs!.triggerOpen()
+
+    // 新 ws 仍发 auth（remote 分支），证明 currentAuthOpts 跨 connect 调用保留。
+    const sent = JSON.parse(lastWs!.lastSent!) as { type: string }
+    expect(sent.type).toBe('auth')
+  })
+
+  it('本地模式（首次无 opts）后 connect 无 opts → isRemote 仍 false（不误升远程）', async () => {
+    const { connect, getIsRemote } = await import('@/lib/ws-client')
+    connect('ws://host:3210') // 本地模式
+    await waitForWs()
+    lastWs!.triggerOpen()
+    expect(getIsRemote().value).toBe(false)
+
+    connect('ws://host:3210') // 仍无 opts
+    await waitForWs()
+    expect(getIsRemote().value).toBe(false)
+    lastWs!.triggerOpen()
+    // 本地模式 onopen 即 connected（不发 auth）
+    if (lastWs!.lastSent) {
+      const sent = JSON.parse(lastWs!.lastSent) as { type: string }
+      expect(sent.type).not.toBe('auth')
+    }
+  })
+})
+
+// ──────────────────────────────────────────────────────────
 // TC18-TC25: seq 可靠投递（wave3，P2-s4）
 //
 // 共享辅助：远程模式 connect + open + auth.ok，进入 connected 态后驱动 seq 行为。

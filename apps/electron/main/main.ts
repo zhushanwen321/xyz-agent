@@ -183,9 +183,20 @@ async function bootstrapMainWindow(): Promise<void> {
   // 注册全局快捷键
   shortcuts.registerGlobal(win)
 
-  // 启动 runtime（mock 模式跳过）
-  if (process.env.XYZ_MOCK === '1') {
-    console.log('[main] Mock mode — skipping runtime start')
+  // 启动 runtime（mock 模式或显式禁用本地 runtime 时跳过）。
+  // - XYZ_MOCK=1：全 mock（renderer 走 VITE_MOCK fixture，main 跳过 runtime spawn）。
+  // - XYZ_NO_LOCAL_RUNTIME=1：精准开关——只跳过本地 runtime spawn + 端口 IPC 广播，
+  //   renderer 仍走真实代码（连远程 runtime）。E2E 远程模式下用此变量让 dev Electron
+  //   不拉起 dev runtime（3310），renderer 改连指定远程 runtime（spec remote-use）。
+  //   两者都跳过 startAndNotify：不 spawn、不广播 runtime-port（避免 renderer 误连本地端口）。
+  if (process.env.XYZ_MOCK === '1' || process.env.XYZ_NO_LOCAL_RUNTIME === '1') {
+    console.log(
+      '[main] Skipping local runtime start (mock=' +
+        process.env.XYZ_MOCK +
+        ', noLocalRuntime=' +
+        process.env.XYZ_NO_LOCAL_RUNTIME +
+        ')',
+    )
   } else {
     await ctx.runtime.startAndNotify(win)
   }

@@ -32,7 +32,11 @@ function onSessionSelected(sessionId: string): void {
 </script>
 
 <template>
-  <div class="mobile-shell flex flex-col bg-bg text-fg" style="height: 100dvh">
+  <div
+    class="mobile-shell flex flex-col bg-bg text-fg"
+    style="height: 100dvh"
+    data-testid="mobile-shell"
+  >
     <!-- Header（session 标题占位，s3 接 session 名 + 菜单） -->
     <header
       class="flex shrink-0 items-center justify-between border-b border-border bg-surface px-4 py-3"

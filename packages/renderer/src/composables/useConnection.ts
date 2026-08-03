@@ -411,6 +411,11 @@ export function useConnection() {
     // 远程首连必须显式传 auth（ws-client connect 据此设 currentAuthOpts + isRemote，重连复用）。
     if (isRemoteMode()) {
       const profile = getActiveProfile()
+      // 诊断日志：远程模式启动时确认 profile + mode 推导结果（排查远程不生效，XYZ_NO_LOCAL_RUNTIME）。
+      console.log(
+        '[useConnection] init: mode=remote, profile=',
+        profile?.url ?? 'none',
+      )
       lastConnectedUrl = profile!.url
       connect(profile!.url, {
         auth: {
@@ -421,6 +426,9 @@ export function useConnection() {
       })
       return
     }
+
+    // 诊断日志：本地模式启动时打印即将连接的端口来源（排查 dev 模式端口发现）。
+    console.log('[useConnection] init: mode=local')
 
     // 监听 runtime 端口推送（runtime 重启成功后推新端口 → 断开重连）
     removeRuntimePortListener = onRuntimePort((newPort) => {
@@ -452,12 +460,15 @@ export function useConnection() {
     // 尝试从主进程获取已知端口
     const knownPort = await getRuntimePort()
     if (knownPort) {
+      console.log('[useConnection] init: connecting to known runtime port', knownPort)
       connectWs('ws://localhost:' + knownPort)
       return
     }
 
     // Runtime 尚未启动：用 fallback 端口（ws-client 会自动重连，runtime 起来后连上）
-    connectWs('ws://localhost:' + await resolveFallbackPort())
+    const fallbackPort = await resolveFallbackPort()
+    console.log('[useConnection] init: no known port, using fallback', fallbackPort)
+    connectWs('ws://localhost:' + fallbackPort)
   }
 
   /**
