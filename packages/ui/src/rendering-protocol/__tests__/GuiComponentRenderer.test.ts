@@ -28,8 +28,8 @@ describe('GuiComponentRenderer 路由', () => {
     expect(wrapper.find('[data-testid="ansi-text"]').exists()).toBe(true)
     // lines 被 join('\n')：ansi_up 把 ANSI 转成 span，"world" 作为纯文本保留
     expect(wrapper.text()).toContain('world')
-    // ansi_up 着色后应有 style span（绿色）
-    expect(wrapper.html()).toContain('color')
+    // v6：ansi_up use_classes=true 输出 class（绿色 → ansi-green-fg），非 inline color
+    expect(wrapper.html()).toContain('ansi-green-fg')
   })
 
   it('card 类型 → 路由到真实 Card 组件（不再降级 AnsiText JSON）', () => {
