@@ -15,10 +15,13 @@ import {
   connect,
   disconnect,
   getState,
+  onMessage,
   setFailed,
   setRestarting,
   send,
 } from '../ws-client'
+import { configureRouteInbound, type TransportPorts } from '../../coordination/route-inbound'
+import { subscribeSession, resetSubscriptionStates } from '../../coordination/subscription-state'
 import { createFakeWebSocket, type FakeWebSocket } from './helpers/fake-websocket'
 
 // ── 测试平台注入（fake websocket factory，每次 create 产出新 fake 并登记） ──
@@ -111,8 +114,49 @@ describe('ws-client 不变量 ③ close code 分流', () => {
 })
 
 describe('ws-client 不变量 ④ seq 回放', () => {
-  // [C4 deferred] seq 回放属后续迁移 wave（seq/reconcile 能力迁入 core 时激活）
-  it.todo('seq gap 检测后发起 reconcile 请求（拉取缺失区间）')
+  beforeEach(() => {
+    vi.useFakeTimers()
+    installTestPlatform()
+    disconnect()
+    // 清订阅状态 Map（上轮用例残留 subscribed 标记会干扰 gap 判定，RK3）
+    resetSubscriptionStates()
+  })
+  afterEach(() => {
+    disconnect()
+    vi.useRealTimers()
+  })
+
+  it('seq gap 检测后发起 reconcile 请求（拉取缺失区间）', async () => {
+    // spyPorts：pending/events/subscribe 全 vi.fn()，subscribe 返回空 snapshot + lastSeq=10 预置基线
+    const subscribeSpy = vi.fn(async () => ({ snapshot: [], stateSnapshot: [], lastSeq: 10 }))
+    const spyPorts: TransportPorts = {
+      pending: { resolve: vi.fn(), reject: vi.fn(), rejectAll: vi.fn() },
+      events: { dispatchSession: vi.fn(), dispatchGlobal: vi.fn() },
+      subscribe: subscribeSpy,
+    }
+    // 注册 dispatcher（模拟 renderer ensureDispatcher 安装：onMessage(configureRouteInbound(ports))）
+    onMessage(configureRouteInbound(spyPorts))
+
+    connect('ws://test')
+    latestFake().triggerOpen()
+
+    // 预置 subscribed state：经真实 subscribeSession（spy reply lastSeq=10 → state={10, true}）
+    await subscribeSession('s1')
+    expect(subscribeSpy).toHaveBeenCalledWith('s1', undefined)
+
+    // fake WS push seq=13 的 session 通道消息：s1 已 subscribed（lastSeenSeq=10），
+    // 13 > 10+1 → gap，reconcileFromSeq = seq-1 = 12 → fire-and-forget subscribeSession(s1, 12)
+    latestFake().triggerMessage(
+      JSON.stringify({ type: 'message.chunk', seq: 13, payload: { sessionId: 's1' } }),
+    )
+    // flush subscribeSession 内部 await（fire-and-forget 微任务）
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(subscribeSpy).toHaveBeenCalledTimes(2)
+    expect(subscribeSpy).toHaveBeenLastCalledWith('s1', 12)
+  })
+
   it.todo('reconcile 响应 → seqReset → reload 会话历史（重载前静默窗口逻辑保留）')
   it.todo('presence 弱可靠通道不入 seq 桶（靠 auth.ok/presence.list 兜底）')
 })
