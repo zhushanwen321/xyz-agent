@@ -3,11 +3,13 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "rootDir": "./src",
     "strict": true,
     "noEmit": true,
     "declaration": true,
     "resolveJsonModule": true,
     "outDir": "dist"
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/**/__tests__/**", "src/**/*.test.ts"]
 }

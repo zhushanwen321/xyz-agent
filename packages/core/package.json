@@ -33,6 +33,10 @@
     "./domain/composer": {
       "types": "./src/domain/composer/index.ts",
       "import": "./src/domain/composer/index.ts"
+    },
+    "./domain/composer/input": {
+      "types": "./src/domain/composer/input/index.ts",
+      "import": "./src/domain/composer/input/index.ts"
     }
   },
   "scripts": {
@@ -46,6 +50,7 @@
     "pinia": "^3"
   },
   "devDependencies": {
-    "typescript": "^5.8"
+    "typescript": "^5.8",
+    "jsdom": "^29.1.1"
   }
 }

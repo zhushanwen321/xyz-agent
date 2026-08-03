@@ -36,8 +36,6 @@ export type ThemeMode = SystemSettings['theme']
 /** 配色主题：由 settings-shell spec §4 System 菜单定义，默认 cold-blue */
 export type ColorTheme = string
 
-export type { SystemSettings }
-
 /**
  * Extension 类型：直接复用 shared ExtensionInfo（SSOT）。
  * 此前本地重复定义 ExtensionItem（tools 必填），但 shared ExtensionInfo 的 tools

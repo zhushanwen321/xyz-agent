@@ -5,3 +5,4 @@
  * 待旧 Composer 删除后归位。承接架构文档 §10.2（旧层 → core/domain/* 映射）。
  */
 export * from './types'
+export * from './input'
