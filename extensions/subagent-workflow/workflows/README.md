@@ -10,6 +10,9 @@
 | `parallel.js` | 多视角并行分析 → 聚合汇总 | `target`（可选 `perspectives`） | 多维度评估同一目标（安全/性能/可维护性等） |
 | `scatter-gather.js` | scatter 拆分 → parallel 处理 → gather 合并 | `task` | 大任务先拆成子任务再并行处理 |
 | `map-reduce.js` | parallel map → reduce 归约 | `items`/`itemsJson` + `operation` | 对已知数组批量变换后归约成单一结果 |
+| `review-fix-loop.js` | 多批串行（批内并行 review → aggregate → fix → 重审） | `targetType` + `target`（可选 `batch1..batchN`） | 代码/文档审查并修复直到 clean；前置检查先行（fallow 等） |
+
+> ⚠️ **review-fix-loop 是唯一带写操作的内置 workflow**（fix 阶段修改文件，`autoCommit=true` 才 commit）。其他 4 个均为只读分析。
 
 ## 用法
 
@@ -48,6 +51,21 @@ workflow run map-reduce --args itemsJson=/path/to/items.json --args operation=".
 ```
 
 `items` 直接传 JSON 数组，或 `itemsJson` 传 JSON 文件路径（二选一）。`parallel()` 对每个 item 并行执行 `operation` → reduce 阶段用 `agent()` 把各 item 的 map 结果归约成单一结论（LLM 归约，非纯代码拼接）。
+
+### review-fix-loop — 多批审查-修复循环
+
+```
+workflow run review-fix-loop --args targetType=git-diff target=main \
+  --args batch1=fallow-scan --args batch2=reviewer --args autoCommit=true
+workflow run review-fix-loop --args targetType=file target=/path/to/doc.md \
+  --args batch1=reviewer
+```
+
+- `targetType` 枚举：`git-diff`（target=base ref）/ `file`（target=路径）/ `dir`（target=目录）/ `text`（target=自由描述）
+- `batch1..batchN`：批串行，批内并行 review → aggregate → fix → 重审直到 clean；批次用于前置依赖（如 `fallow-scan` 静态分析先行，后续审查才有意义）
+- 批内某 agent 无 must-fix 后后续轮跳过（`skipCleanAgents`，默认 true）；`recheckAfterFix=true` 可在 fix 后重派全批做回归防护
+- agent 项支持：AgentRegistry 名（如 `reviewer`）/ 自定义 .md 文件路径（如 `batch1=/path/to/reviewer.md`）/ 内置 `fallow-scan`
+- ⚠️ **fix 阶段会修改文件；`autoCommit` 默认 false（不 commit）**，需要提交时显式 `autoCommit=true`
 
 ## 编排 API
 

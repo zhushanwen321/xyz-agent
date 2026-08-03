@@ -44,6 +44,20 @@ describe("findFlattenedArgKeys (workflow args flatten detector — P0)", () => {
     expect(findFlattenedArgKeys({ action: "status" })).toEqual([]);
   });
 
+  it("triggers for review-fix-loop args flattened to top level (incl. batchN prefix)", () => {
+    expect(
+      findFlattenedArgKeys({ action: "run", name: "review-fix-loop", targetType: "git-diff", target: "main" }),
+    ).toEqual(["targetType", "target"]);
+    expect(
+      findFlattenedArgKeys({ action: "run", name: "review-fix-loop", batch1: "reviewer", autoCommit: true }),
+    ).toEqual(["batch1", "autoCommit"]);
+    expect(
+      findFlattenedArgKeys({ action: "run", name: "review-fix-loop", args: { targetType: "git-diff", target: "main" } }),
+    ).toEqual([]);
+    // 未知键（如 batchl 拼错）不属于白名单，不触发平铺检测（由 workflow 内白名单校验报错）
+    expect(findFlattenedArgKeys({ action: "run", name: "x", batchl: "reviewer" })).toEqual([]);
+  });
+
   it("returns [] for non-object input", () => {
     expect(findFlattenedArgKeys(null)).toEqual([]);
     expect(findFlattenedArgKeys(undefined)).toEqual([]);

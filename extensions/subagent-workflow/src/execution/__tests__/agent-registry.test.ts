@@ -173,7 +173,7 @@ describe("createPackageBuiltinRegistry", () => {
     expect(builtin.get("orchestrator")?.tools).toEqual([
       "todo", "goal_control", "workflow", "subagent", "ask_user",
     ]);
-    expect(builtin.get("reviewer")?.tools).toEqual(["read"]);
+    expect(builtin.get("reviewer")?.tools).toEqual(["read", "structured-output"]);
     expect(builtin.get("planner")?.tools).toEqual(["read"]);
     expect(builtin.get("oracle")?.tools).toEqual(["read"]);
     expect(builtin.get("context-builder")?.tools).toEqual(["read"]);
