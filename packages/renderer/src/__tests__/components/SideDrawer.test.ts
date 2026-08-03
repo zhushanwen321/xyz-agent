@@ -67,14 +67,14 @@ vi.mock('@/components/panel/DetailPane.vue', () => ({ default: { template: '<div
 vi.mock('@/components/panel/BrowserPane.vue', () => ({
   default: { template: '<div data-testid="browser-pane-stub" />' },
 }))
-vi.mock('@/components/message-stream/GuiComponentRenderer.vue', () => ({
-  default: { template: '<div data-testid="gui-renderer-stub" />' },
-}))
-// W1 re-home：AnsiText 迁移到 @xyz-agent/ui 包，mock 目标改为包导出（其余导出原样保留）。
-vi.mock('@xyz-agent/ui', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@xyz-agent/ui')>()
+// W2 消费收敛：SideDrawer 的 GuiComponentRenderer + AnsiText 均从 @xyz-agent/ui/rendering-protocol
+// 子路径 import（IF3）。合并为单个 mock：透传实际导出（GUI_CUSTOM_REGISTRY_KEY 等），
+// 覆盖 GuiComponentRenderer（stub）+ AnsiText（轻量渲染保留 content 断言）。
+vi.mock('@xyz-agent/ui/rendering-protocol', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@xyz-agent/ui/rendering-protocol')>()
   return {
     ...actual,
+    GuiComponentRenderer: { template: '<div data-testid="gui-renderer-stub" />' },
     AnsiText: { props: ['content'], template: '<span>{{ content }}</span>' },
   }
 })
