@@ -86,7 +86,10 @@ export interface AuthOpts {
 
 /** connect 选项（wave1 远程化：auth opts 供远程握手）。 */
 export interface ConnectOpts {
+  /** 远程模式 auth：走握手 + 设 isRemoteRef=true（触发远程 UI） */
   auth?: AuthOpts
+  /** 本地 auth（Electron 本地模式 + runtime token 认证）：走握手但不设 isRemoteRef */
+  localAuth?: AuthOpts
 }
 
 /**
@@ -351,9 +354,10 @@ export function connect(url: string, opts?: ConnectOpts): void {
   // 仅当显式传 opts 时更新 currentAuthOpts；重连（scheduleReconnect → connect(url) 无 opts）
   // 复用首次 connect 存的 currentAuthOpts，避免重连退化为本地模式（plan R3）。
   if (opts !== undefined) {
-    currentAuthOpts = opts.auth ?? null
+    // auth = 远程 profile（设 isRemoteRef）；localAuth = 本地 token（不设 isRemoteRef）
+    currentAuthOpts = opts.auth ?? opts.localAuth ?? null
+    isRemoteRef.value = opts.auth !== undefined
   }
-  isRemoteRef.value = currentAuthOpts !== null
 
   if (isMock) {
     mockConnect(

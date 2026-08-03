@@ -40,7 +40,8 @@ let failedCb: (() => void) | null = null
 let portCb: ((port: number) => void) | null = null
 vi.mock('@/lib/ipc', () => ({
   getRuntimePort: vi.fn().mockResolvedValue(undefined),
-  getRuntimePortOffset: vi.fn().mockResolvedValue(undefined),
+  getRuntimeToken: vi.fn(),
+    getRuntimePortOffset: vi.fn().mockResolvedValue(undefined),
   onRuntimePort: (cb: (port: number) => void) => {
     portCb = cb
     return () => { portCb = null }

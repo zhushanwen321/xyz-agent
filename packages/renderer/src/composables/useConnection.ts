@@ -22,6 +22,7 @@ const t = i18n.global.t
 import {
   getRuntimePort,
   getRuntimePortOffset,
+  getRuntimeToken,
   onRuntimePort,
   onRuntimeRestarting,
   onRuntimeFailed,
@@ -259,9 +260,15 @@ function ensureDispatcher(): void {
  * 连接 WS 并记录 url（W4 visibility 重连复用）。
  * 包装 ws-client connect：调前把 url 存入 lastConnectedUrl，供用户切回前台时主动重连。
  */
-function connectWs(url: string): void {
+function connectWs(url: string, token?: string): void {
   lastConnectedUrl = url
-  connect(url)
+  // 本地模式也需带 token（runtime 默认 token 模式）。用 localAuth 而非 auth：
+  // 走 auth 握手但不设 isRemoteRef（不触发远程 UI）。
+  if (token) {
+    connect(url, { localAuth: { token, clientId: getClientId(), deviceName: getDeviceName() } })
+  } else {
+    connect(url)
+  }
 }
 
 /** 获取 fallback 端口（考虑 dev 偏移） */
@@ -431,10 +438,11 @@ export function useConnection() {
     console.log('[useConnection] init: mode=local')
 
     // 监听 runtime 端口推送（runtime 重启成功后推新端口 → 断开重连）
-    removeRuntimePortListener = onRuntimePort((newPort) => {
+    removeRuntimePortListener = onRuntimePort(async (newPort) => {
       if (newPort && state.value !== 'disconnected') {
         disconnect()
-        connectWs('ws://localhost:' + newPort)
+        const token = await getRuntimeToken()
+        connectWs('ws://localhost:' + newPort, token)
       }
     })
 
@@ -457,18 +465,21 @@ export function useConnection() {
       useExtensionUIStore().clearAllPending()
     })
 
-    // 尝试从主进程获取已知端口
+    // 尝试从主进程获取已知端口 + token（runtime 默认 token 模式，本地连接需带 auth）
     const knownPort = await getRuntimePort()
     if (knownPort) {
-      console.log('[useConnection] init: connecting to known runtime port', knownPort)
-      connectWs('ws://localhost:' + knownPort)
+      const token = await getRuntimeToken()
+      console.log('[useConnection] init: connecting to known runtime port', knownPort, token ? '(with token)' : '(open mode)')
+      connectWs('ws://localhost:' + knownPort, token)
       return
     }
 
     // Runtime 尚未启动：用 fallback 端口（ws-client 会自动重连，runtime 起来后连上）
     const fallbackPort = await resolveFallbackPort()
-    console.log('[useConnection] init: no known port, using fallback', fallbackPort)
-    connectWs('ws://localhost:' + fallbackPort)
+    // Runtime 未启动时 token 文件可能还未生成，尝试读一次（失败则无 auth 连接，runtime 起来后重连会补 auth）
+    const token = await getRuntimeToken()
+    console.log('[useConnection] init: no known port, using fallback', fallbackPort, token ? '(with token)' : '(open mode)')
+    connectWs('ws://localhost:' + fallbackPort, token)
   }
 
   /**

@@ -71,6 +71,7 @@ vi.mock('../../lib/ws-client', () => ({
 vi.mock('../../lib/ipc', () => ({
   getRuntimePort: getRuntimePortSpy,
   getRuntimePortOffset: getRuntimePortOffsetSpy,
+  getRuntimeToken: vi.fn(() => Promise.resolve(undefined)),
   onRuntimePort: onRuntimePortSpy,
   onRuntimeRestarting: onRuntimeRestartingSpy,
   onRuntimeFailed: onRuntimeFailedSpy,

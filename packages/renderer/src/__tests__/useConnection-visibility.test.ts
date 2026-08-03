@@ -37,7 +37,8 @@ vi.mock('@/lib/ws-client', () => ({
 // ── ipc mock：全部返回空（init 会调 getRuntimePort 等）──────────────
 vi.mock('@/lib/ipc', () => ({
   getRuntimePort: vi.fn().mockResolvedValue(undefined),
-  getRuntimePortOffset: vi.fn().mockResolvedValue(undefined),
+  getRuntimeToken: vi.fn(),
+    getRuntimePortOffset: vi.fn().mockResolvedValue(undefined),
   onRuntimePort: vi.fn().mockReturnValue(() => {}),
   onRuntimeRestarting: vi.fn().mockReturnValue(() => {}),
   onRuntimeFailed: vi.fn().mockReturnValue(() => {}),

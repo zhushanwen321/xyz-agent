@@ -40,7 +40,8 @@ vi.mock('@/lib/terminal-reconnect-signal', () => ({
 // ── ipc mock ──
 vi.mock('@/lib/ipc', () => ({
   getRuntimePort: vi.fn().mockResolvedValue(undefined),
-  getRuntimePortOffset: vi.fn().mockResolvedValue(undefined),
+  getRuntimeToken: vi.fn(),
+    getRuntimePortOffset: vi.fn().mockResolvedValue(undefined),
   onRuntimePort: () => () => {},
   onRuntimeRestarting: () => () => {},
   onRuntimeFailed: () => () => {},
