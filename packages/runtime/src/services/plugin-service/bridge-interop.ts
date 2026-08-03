@@ -18,6 +18,32 @@ import { toErrorMessage } from '../../utils/errors.js'
 const TOOL_EXECUTE_TIMEOUT_MS = 30_000
 
 /**
+ * pi 事件 → plugin HookType 翻译映射表（IF1，D4）。
+ *
+ * pi 侧 bridge extension（resources/pi/agent/extensions/bridge/index.ts EVENTS 列表）
+ * 转发的事件名是 snake_case（before_agent_start），而插件 HookRegistry 按 camelCase
+ * HookType（onBeforeAgentStart/onMessage/onAfterToolResult）注册——不经翻译永远匹配不上。
+ *
+ * kind 语义：
+ * - 'intercept'：可拦截事件，经 handleBridgeIntercept 链路，block/injectedMessages 生效
+ * - 'observe'：纯观察事件，经 handleBridgeEvent 链路，fire-and-forget（不 block）
+ *
+ * 未在表中的事件名不翻译（返回空响应，保持 pi 协议兼容，ERR2）。
+ */
+export const PI_HOOK_EVENT_MAP: Record<string, { hookType: HookType; kind: 'intercept' | 'observe' }> = {
+  before_agent_start: { hookType: 'onBeforeAgentStart', kind: 'intercept' },
+  tool_call: { hookType: 'onAfterToolResult', kind: 'observe' },
+  tool_result: { hookType: 'onAfterToolResult', kind: 'observe' },
+  agent_start: { hookType: 'onMessage', kind: 'observe' },
+  agent_end: { hookType: 'onMessage', kind: 'observe' },
+  message_end: { hookType: 'onMessage', kind: 'observe' },
+  turn_end: { hookType: 'onMessage', kind: 'observe' },
+  session_start: { hookType: 'onMessage', kind: 'observe' },
+  session_compact: { hookType: 'onMessage', kind: 'observe' },
+  session_tree: { hookType: 'onMessage', kind: 'observe' },
+}
+
+/**
  * 工具 schema 缓存 + bridge:sync 负载塑形（P5 从 plugin-service.ts 收口到此）。
  *
  * 持有 bridge 轮询缓存（`bridgeToolSchemas`），并把 ToolRegistration[]
@@ -93,13 +119,17 @@ export function handleBridgeEvent(
   sessionId: string,
   executeHooks: (hookType: string, context: HookContext) => Promise<HookResult>,
 ): void {
+  const mapping = PI_HOOK_EVENT_MAP[eventName]
+  // 有映射条目用翻译后 hookType（camelCase 才能命中 HookRegistry）；
+  // 无映射条目（如 plugin:statusSetUpdate 等非 pi 事件）保持原 eventName，兼容既有行为。
+  const hookType = mapping ? mapping.hookType : (eventName as HookType)
   const context: HookContext = {
     pluginId: '',
-    hookType: eventName as HookType,
+    hookType,
     data: { eventName, data, sessionId },
     timestamp: Date.now(),
   }
-  executeHooks(eventName, context).catch((err: unknown) => {
+  executeHooks(hookType, context).catch((err: unknown) => {
     console.error(`[plugin-service] handleBridgeEvent error:`, err)
   })
 }
@@ -110,14 +140,20 @@ export async function handleBridgeIntercept(
   sessionId: string,
   executeHooks: (hookType: string, context: HookContext) => Promise<HookResult>,
 ): Promise<BridgeInterceptResponse> {
+  const mapping = PI_HOOK_EVENT_MAP[eventName]
+  // 未在映射表中的事件名不翻译、不拦截（ERR2：返回空响应，保持 pi 协议兼容）
+  if (!mapping) {
+    return { injectedMessages: [] }
+  }
+
   const context: HookContext = {
     pluginId: '',
-    hookType: eventName as HookType,
+    hookType: mapping.hookType,
     data: { eventName, data, sessionId },
     timestamp: Date.now(),
   }
 
-  const hookResult = await executeHooks(eventName, context)
+  const hookResult = await executeHooks(mapping.hookType, context)
 
   if (hookResult.blocked) {
     return { blocked: true, reason: hookResult.reason ?? `Blocked by ${hookResult.blockedBy}`, injectedMessages: [] }

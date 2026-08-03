@@ -14,7 +14,7 @@ import { registerAllRpcMethods } from './plugin-rpc-setup.js'
 import { bootstrapPluginService } from './plugin-lifecycle.js'
 import { ActiveSessionResolver } from './api/session-api.js'
 import type { InstallResult } from '../ports/plugin-installer.js'
-import { handleBridgeToolExecute, handleBridgeEvent, handleBridgeIntercept, BridgeToolCache } from './bridge-interop.js'
+import { handleBridgeToolExecute, handleBridgeEvent, handleBridgeIntercept, BridgeToolCache, PI_HOOK_EVENT_MAP } from './bridge-interop.js'
 import { toConfigKey, fromConfigKey, isConfigKey } from './api/config-api.js'
 import { HookPipeline } from './hook-pipeline.js'
 import { UiRequestQueue } from './ui-request-queue.js'
@@ -410,11 +410,19 @@ export class PluginService implements IPluginService {
   /**
    * 处理 bridge 拦截请求。
    *
-   * 仅 before_agent_start 事件需拦截（域能力：哪些事件可被拦截）。该判定下沉到 service，
-   * transport 不再做事件名白名单过滤。非拦截事件返回空响应，保留原协议行为。
+   * 按 PI_HOOK_EVENT_MAP 判定（D4）：无映射条目 → 空响应（ERR2）；kind=observe →
+   * 转 handleBridgeEvent 观察链路（fire-and-forget，不 block）；kind=intercept →
+   * 委托 bridge-interop 拦截链路（block/injectedMessages 生效）。判定下沉到 service，
+   * transport 不再做事件名白名单过滤。
    */
   async handleBridgeIntercept(eventName: string, data: unknown, sessionId: string): Promise<BridgeInterceptResponse> {
-    if (eventName !== 'before_agent_start') {
+    const mapping = PI_HOOK_EVENT_MAP[eventName]
+    if (!mapping) {
+      return { injectedMessages: [] }
+    }
+    if (mapping.kind === 'observe') {
+      // 纯观察事件：走 fire-and-forget 观察链路，不阻塞
+      this.handleBridgeEvent(eventName, data, sessionId)
       return { injectedMessages: [] }
     }
     return handleBridgeIntercept(eventName, data, sessionId, (hookType, context) => this.executeHooks(hookType, context))
