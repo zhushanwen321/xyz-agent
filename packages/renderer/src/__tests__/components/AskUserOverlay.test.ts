@@ -118,6 +118,9 @@ describe('AskUserOverlay', () => {
     const answers = JSON.parse(submitEvents![0][0] as string)
     // 无 options 的纯自由文本问题：输入文本作为主答案（key=header）
     expect(answers.note).toBe('需要加索引')
+    // 负向断言：comment 功能已移除，answers 不应出现任何 __comment key
+    // （comment key 约定为 ${header}__comment；用 endsWith 覆盖所有 header）
+    expect(Object.keys(answers).some((k) => k.endsWith('__comment'))).toBe(false)
   })
 
   it('U13: Cancel → emit cancel 事件', async () => {

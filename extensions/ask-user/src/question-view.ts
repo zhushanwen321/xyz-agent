@@ -285,6 +285,8 @@ export function renderQuestionView(ctx: RenderContext): string[] {
 	if (state.mode === "freeform") {
 		add("");
 		for (const line of buildOptionLines(ctx, false)) add(line);
+		// 选项列表与 help 行之间的视觉空隙（旧 buildEditorBlock freeform 分支返回 [""] 提供）
+		add("");
 		// freeform 模式 help 行：光标锁在 Other 上，正在输入
 		add(t.fg("dim", EDITOR_HINT));
 		return lines;
