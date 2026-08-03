@@ -21,7 +21,9 @@
     "release:npm": "pnpm --filter @xyz-agent/extension-protocol build && changeset publish",
     "extensions:typecheck": "cd extensions && npx tsc --noEmit",
     "extensions:lint": "npx eslint extensions/",
-    "extensions:test": "pnpm -r --filter '@zhushanwen/pi-*' test"
+    "extensions:test": "pnpm -r --filter '@zhushanwen/pi-*' test",
+    "verify:coexistence-flag": "node scripts/verify-coexistence-flag.mjs",
+    "verify:dual-entry": "node scripts/verify-dual-entry.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.0",
