@@ -71,7 +71,10 @@ screenshot.png
 .v3-audit/
 
 # === cw v1 工作流临时产物（根目录散落，应放 .xyz-harness/ 归档）===
-# .cw-*.json/.md 是 cw 跑完手动归档的中间产物，不是源码；.cw/（带斜杠）是 tracked 测试脚本，不忽略。
+# .cw-*.json/.md 是 cw 跑完手动归档的中间产物，不是源码。
+# /.cw/ 目录本身是 cw 中间产物（按 topic 分子目录），整体忽略；
+# 历史遗留的 .cw/run-*.sh 测试脚本仍被 git 跟踪，ignore 不影响已跟踪文件。
+/.cw/
 /.cw-*.json
 /.cw-*.md
 # wave-* / clarify / plan / design-review 等是 cw 当前 wave 的运行时产物。
