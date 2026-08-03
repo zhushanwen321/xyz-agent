@@ -1,13 +1,22 @@
 import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
+import { resolve } from 'path'
 
-// ui 包测试：原语组件为纯组件渲染（mount + props 断言），无 i18n 依赖
-// （W1 re-home 时 ListTree 已去 vue-i18n，STATUS_LABEL 硬编码中文）。
-// @xyz-agent/extension-protocol 的 exports 直接指 src/index.ts，无需 alias。
+// ui 包测试配置（w6 chat-ui-and-shell）。
+// - happy-dom：组件渲染环境（对齐 renderer vitest）
+// - self-alias：@xyz-agent/ui → src，支持包内自引用（features/chat import 同包原语）
+// - shared alias：@xyz-agent/shared → ../shared/src（vitest 不走 workspace symlink）
+// - i18n setup：vitest.setup.ts mock vue-i18n useI18n（ui 组件用 useI18n，测试环境需 t）
 export default defineConfig({
   test: {
     environment: 'happy-dom',
-    // 无 setupFiles：原语组件不依赖全局 mock；如有需要后续追加。
+    setupFiles: ['./vitest.setup.ts'],
   },
   plugins: [vue()],
+  resolve: {
+    alias: {
+      '@xyz-agent/ui': resolve(__dirname, 'src'),
+      '@xyz-agent/shared': resolve(__dirname, '../shared/src'),
+    },
+  },
 })

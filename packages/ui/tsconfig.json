@@ -7,7 +7,12 @@
     "noEmit": true,
     "declaration": true,
     "resolveJsonModule": true,
-    "outDir": "dist"
+    "outDir": "dist",
+    "rootDir": "src",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "skipLibCheck": true,
+    "jsx": "preserve",
+    "types": ["vitest/globals"]
   },
   "include": ["src"]
 }
