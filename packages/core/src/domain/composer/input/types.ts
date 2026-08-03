@@ -100,6 +100,9 @@ export interface ComposerInputInstance {
   insertImageBadge: (path: string, fileName: string, displayName: string, needsMigrate?: boolean) => void
   insertSlashChip: (command: string, icon?: string) => void
   insertFileChip: (path: string, lineRange?: [number, number]) => void
+  /** context 注入消费（focus / insertTextAtCursor），W3 合并 context 版同名接口 */
+  focus: () => void
+  insertTextAtCursor: (text: string) => void
 }
 
 /** restore 模块依赖（draft/inputRef/drafts/sessionId，原契约保持） */

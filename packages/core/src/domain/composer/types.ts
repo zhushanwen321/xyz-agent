@@ -66,12 +66,16 @@ export type StagingSource = ForkSource | HandoffSource
  * KeyboardEventLike —— 结构兼容的键盘事件类型（core 零 DOM 约束替代品）。
  *
  * 原 renderer StagingAction.handleEsc 参数为 DOM KeyboardEvent。core 无 DOM lib，
- * 此处只保留接口消费方实际读取的最小字段（code/key）。真实 KeyboardEvent 结构
- * 包含这两个属性，可直接传入（调用方零改动）。
+ * 此处保留接口消费方实际读取的最小字段：code/key（路由判定）+ preventDefault
+ * （handleEsc 实现消费——Esc 命中时阻止默认行为）。真实 KeyboardEvent 结构
+ * 包含这些属性，可直接传入（调用方零改动）。preventDefault 设为可选：路由层
+ * （useComposerStaging.handleEsc）不调用它，仅具体 action 实现读取。
  */
 export interface KeyboardEventLike {
   code: string
   key: string
+  /** 阻止默认行为（Esc 命中时 handleEsc 实现调用；真实 KeyboardEvent 必有） */
+  preventDefault?: () => void
 }
 
 /**

@@ -37,6 +37,26 @@
     "./domain/composer/input": {
       "types": "./src/domain/composer/input/index.ts",
       "import": "./src/domain/composer/input/index.ts"
+    },
+    "./domain/composer/dispatch": {
+      "types": "./src/domain/composer/dispatch/index.ts",
+      "import": "./src/domain/composer/dispatch/index.ts"
+    },
+    "./domain/composer/context": {
+      "types": "./src/domain/composer/context/index.ts",
+      "import": "./src/domain/composer/context/index.ts"
+    },
+    "./domain/composer/model-thinking": {
+      "types": "./src/domain/composer/model-thinking.ts",
+      "import": "./src/domain/composer/model-thinking.ts"
+    },
+    "./domain/composer/thinking-level-sync": {
+      "types": "./src/domain/composer/thinking-level-sync.ts",
+      "import": "./src/domain/composer/thinking-level-sync.ts"
+    },
+    "./domain/composer/thinking-levels": {
+      "types": "./src/domain/composer/thinking-levels.ts",
+      "import": "./src/domain/composer/thinking-levels.ts"
     }
   },
   "scripts": {
