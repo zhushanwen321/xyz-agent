@@ -43,7 +43,7 @@ jobs:
       # runtime boot 时 ensureMandatoryExtensions() 从 npm 安装 @zhushanwen/pi-ask-user。
       # 若 Electron 发布（v*）先于 npm 发布（npm-v*），产物中 ask_user 评论模式静默降级。
       # 发布顺序约束：先走 merge skill 阶段 4N 发布 npm-v*（本 diff 的 changeset 消费：
-      # protocol 0.3.1 / ask-user 4.0.1 / subagent-workflow 5.0.0），再发 Electron v*。
+      # protocol 0.3.1 / ask-user 5.0.0（linked 组对齐）/ subagent-workflow 5.0.0），再发 Electron v*。
       # （2026-08 事故：protocol 0.3.0 误删 allowComment/getAskUserComment，本地 restore 后
       #   npm 仍长期服务删功能旧版，而打包流程无任何环节校验 npm 产物与 renderer 契约一致性）
       - name: Check npm extension artifacts match renderer contract
@@ -55,12 +55,8 @@ jobs:
         if: ${{ !contains(github.ref, '-') || github.event_name == 'workflow_dispatch' }}
         run: |
           set -euo pipefail
-          # pi-ask-user 4.0.0 是误删 allowComment 的坏版本；restore 从 4.0.1 起
-          ASK_USER_VERSION=$(npm view @zhushanwen/pi-ask-user version 2>/dev/null || echo "none")
-          if [ "${ASK_USER_VERSION}" = "none" ] || [ "${ASK_USER_VERSION}" = "4.0.0" ]; then
-            echo "::error::npm 上的 @zhushanwen/pi-ask-user 仍是 ${ASK_USER_VERSION:-未发布}（误删 allowComment 的 4.0.0 或更早）—— 先发布 npm-v*（4.0.1+）再发 Electron v*"
-            exit 1
-          fi
+          # 注意：坏版本 fast-fail 已收敛到下面的 tarball 内容契约检查（check_pkg 对 ask-user
+          # 源码限定 grep allowComment）——不再硬编码版本字面量（如 4.0.0），随版本推进不产生死代码。
           check_pkg() {
             local pkg="$1" field="$2" version tarball tmpdir
             shift 2
@@ -77,6 +73,14 @@ jobs:
             tmpdir=$(mktemp -d)
             curl -fsSL "${tarball}" -o "${tmpdir}/pkg.tgz"
             tar -xzf "${tmpdir}/pkg.tgz" -C "${tmpdir}"
+            # workspace: 协议残留检查：changeset publish 会把 workspace:^x.y.z 改写为实际版本号；
+            # 若改写遗漏（绕过 pnpm 直接 npm publish 或 changesets 版本解析异常），字面量会进
+            # tarball，运行时用户扩展安装（npm registry）因 workspace: 解析失败。
+            if grep -q 'workspace:' "${tmpdir}/package/package.json"; then
+              echo "::error::npm 上的 ${pkg}@${version} 的 package.json 含 workspace: 协议残留（changeset publish 未改写）—— 消费者 npm 安装会解析失败"
+              rm -rf "${tmpdir}"
+              exit 1
+            fi
             if ! grep -rq "${include_args[@]}" "${field}" "${tmpdir}/package"; then
               echo "::error::npm 上的 ${pkg}@${version} 不含 ${field}（发布产物与本地源码契约不一致）—— 先发布 npm-v* 再发 Electron v*"
               rm -rf "${tmpdir}"
