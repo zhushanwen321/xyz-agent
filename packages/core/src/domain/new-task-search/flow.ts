@@ -20,8 +20,8 @@
 import { computed, ref } from 'vue'
 import type { ComputedRef } from 'vue'
 import type { Segment } from '@xyz-agent/shared'
-// AC10 跨域铁律：session 域经 '@xyz-agent/core' 包入口公开 API 消费（禁内部模块相对路径）
-import type { CreateSessionFlowInput } from '@xyz-agent/core'
+// AC10 跨域铁律：session 域经 '@xyz-agent/core/domain/session' 公开 index API 消费（禁内部模块相对路径）
+import type { CreateSessionFlowInput } from '@xyz-agent/core/domain/session'
 import {
   useNewTaskFlowState,
   useNewTaskFlowController,
