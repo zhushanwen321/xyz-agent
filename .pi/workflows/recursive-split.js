@@ -24,7 +24,9 @@ const {
   escapeSingleQuotes,
   slugFromUnitId,
   decideNodeOutcome,
-  isAgentReportedFailure,
+  decideAbortOnAgentFailure,
+  aggregateNodeFailure,
+  collectFailedUnits,
   resolveNodeTimeoutMs,
   buildActionPrompt,
   buildActionSchema,
@@ -155,18 +157,15 @@ async function executeActionAgent(node, sessionFiles) {
   // 不按 failedReason 非空判定：LLM 结构化输出不受 schema 约束，action 成功
   // （stopReason=action-done/progressive-done/closed）后 failedReason 残留是常见现象，
   // 按 failedReason 判定会把刚成功的节点立即 abortUnit 销毁（MF-3）。
-  // 判定逻辑抽到 isAgentReportedFailure（recursive-split-utils.cjs，供 vitest 单测）。
-  if (isAgentReportedFailure(r.value)) {
-    const failedReason = r.value.failedReason ?? r.value.stopReason;
-    log("Node " + node.unitId + " failed (agent-reported): " + failedReason);
-    // gate-failed：同一 action 重试 3 次仍 fail，节点确已卡死 → abortUnit 熔断销毁。
-    // cannot-proceed：需外部决策/无法继续（如 replan 非法被 cw guard 拒绝），prompt
-    // 契约是「状态机不受破坏，交给上层决策」——不 abort，节点保留在 frontier 等
-    // re-dispatch（外部条件解除后可能成功）；持续无法推进由 detectStuckNodes 熔断。
-    if (r.value.stopReason === "gate-failed") {
+  // abort-vs-retain 非对称副作用抽到 decideAbortOnAgentFailure（utils.cjs，供 vitest 单测）：
+  // gate-failed → abort=true（熔断销毁）；cannot-proceed → abort=false（保留 frontier 等 re-dispatch）。
+  const agentFailure = decideAbortOnAgentFailure(r.value);
+  if (agentFailure) {
+    log("Node " + node.unitId + " failed (agent-reported): " + agentFailure.failedReason);
+    if (agentFailure.abort) {
       await abortUnit(node.unitId);
     }
-    return { unitId: node.unitId, value: r.value, sessionFile: r.sessionFile, failedReason: failedReason };
+    return { unitId: node.unitId, value: r.value, sessionFile: r.sessionFile, failedReason: agentFailure.failedReason };
   }
 
   return { unitId: node.unitId, value: r.value, sessionFile: r.sessionFile };
@@ -204,9 +203,7 @@ try {
   // nodeFailures: unitId → failedReason（BFS 结束时聚合进最终返回值 failedUnits，
   // 供上层（调用方主 agent）决策：哪些节点失败、为什么——cannot-proceed 的上层决策通道）
   const nodeFailures = {};
-  // failedUnits 聚合：Map → {unitId, failedReason}[]（最终返回值用）
-  const collectFailedUnits = () =>
-    Object.entries(nodeFailures).map(([unitId, failedReason]) => ({ unitId, failedReason }));
+  // collectFailedUnits: Map → {unitId, failedReason}[]（done & error 终态返回值共用，utils.cjs）
 
   while (true) {
     // 不变式：queryFrontier 只在轮次边界调（此处 parallel 已全 settle）
@@ -223,7 +220,7 @@ try {
         // status:error（不 break 走 phase("done")），调用方据此区分完整/不完整树。
         log("queryFrontier failed " + MAX_FRONTIER_RETRIES + " consecutive times, aborting BFS");
         phase("error");
-        const failedUnits = collectFailedUnits();
+        const failedUnits = collectFailedUnits(nodeFailures);
         return {
           status: "error",
           error:
@@ -274,14 +271,10 @@ try {
           continue;
         }
         if (r.sessionFile) sessionFiles[r.unitId] = r.sessionFile;
-        if (r.failedReason) {
-          log("BFS: " + r.unitId + " failed: " + r.failedReason);
-          nodeFailures[r.unitId] = r.failedReason;
-        } else {
-          // 曾失败（如 cannot-proceed）后 re-dispatch 恢复成功的节点移出清单——
-          // failedUnits 保持"最终仍处于失败状态"语义，避免误导上层决策。
-          delete nodeFailures[r.unitId];
-        }
+        // nodeFailures 聚合：失败→写入；成功（含 cannot-proceed re-dispatch 恢复）→移出清单。
+        // 抽到 aggregateNodeFailure（utils.cjs，供 vitest 单测）。日志在聚合前打（保留可观测性）。
+        if (r.failedReason) log("BFS: " + r.unitId + " failed: " + r.failedReason);
+        aggregateNodeFailure(nodeFailures, r);
       }
     }
 
@@ -299,13 +292,9 @@ try {
         continue;
       }
       if (r && r.sessionFile) sessionFiles[r.unitId] = r.sessionFile;
-      if (r && r.failedReason) {
-        log("BFS: " + r.unitId + " failed: " + r.failedReason);
-        nodeFailures[r.unitId] = r.failedReason;
-      } else if (r) {
-        // 恢复成功的节点移出清单（与 concurrent 分支同一语义）
-        delete nodeFailures[r.unitId];
-      }
+      // nodeFailures 聚合（与 concurrent 分支同一语义，抽到 aggregateNodeFailure）。
+      if (r && r.failedReason) log("BFS: " + r.unitId + " failed: " + r.failedReason);
+      aggregateNodeFailure(nodeFailures, r);
     }
 
     // Suggestion #3：每轮 BFS 结束后清理已退出调度的节点在 prevStatus / nodeRounds 中的 entry，
@@ -320,7 +309,7 @@ try {
   }
 
   phase("done");
-  const failedUnits = collectFailedUnits();
+  const failedUnits = collectFailedUnits(nodeFailures);
   return {
     status: "done",
     rootUnitId,

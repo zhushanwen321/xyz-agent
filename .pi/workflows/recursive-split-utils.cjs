@@ -144,6 +144,58 @@ function isAgentReportedFailure(value) {
 }
 
 /**
+ * 失败来源 2/3 的副作用编排：agent 自报失败后决定是否 abortUnit（abort-vs-retain 非对称分支）。
+ *
+ * gate-failed：同一 action 重试 3 次仍 fail，节点确已卡死 → abortUnit 熔断销毁（abort=true）。
+ * cannot-proceed：需外部决策/无法继续（如 replan 非法被 cw guard 拒绝），prompt 契约是
+ *   「状态机不受破坏，交给上层决策」→ 不 abort（abort=false），节点保留在 frontier 等 re-dispatch；
+ *   持续无法推进由 detectStuckNodes 熔断（MAX_NODE_ROUNDS 轮）。
+ *
+ * 抽取自 executeActionAgent 内联逻辑（MF-2 抽取，供 vitest 单测 abort-vs-retain 非对称分支——
+ * isAgentReportedFailure 只返回 true/false，无法区分「是否销毁 WorkUnit」这个高影响副作用）。
+ * 非 agent 自报失败（isAgentReportedFailure=false）返回 null（调用方据此跳过整个失败处理）。
+ * 返回 { abort: boolean, failedReason: string }；failedReason 取 value.failedReason，缺省回退 stopReason。
+ */
+function decideAbortOnAgentFailure(value) {
+  if (!isAgentReportedFailure(value)) return null;
+  const failedReason = value.failedReason ?? value.stopReason;
+  const abort = value.stopReason === "gate-failed";
+  return { abort, failedReason };
+}
+
+/**
+ * nodeFailures 聚合：把 executeActionAgent 返回的 per-node 结果写进/移出 failedReason 映射。
+ *
+ * 有 failedReason（失败）→ 写入；无 failedReason（成功，含 cannot-proceed 后 re-dispatch 恢复）
+ * → 删除既有 entry。保持 failedUnits「最终仍处于失败状态」语义，避免恢复成功的节点误导上层决策。
+ * result 为 null/undefined 或无 unitId（parallel 归一化吞掉 / thrown）→ no-op。
+ *
+ * 抽取自 BFS 主循环 concurrent + sequential 两个分支的重复逻辑（MF-2 抽取，供 vitest 单测
+ * failedReason 写入/成功删除聚合——MF-2 场景 c「cannot-proceed 节点 re-dispatch 成功后移出清单」）。
+ * 就地 mutate nodeFailures（与 detectStuckNodes/pruneTerminalEntries 一致的副作用契约）。
+ */
+function aggregateNodeFailure(nodeFailures, result) {
+  if (!result || !result.unitId) return;
+  if (result.failedReason) {
+    nodeFailures[result.unitId] = result.failedReason;
+  } else {
+    delete nodeFailures[result.unitId];
+  }
+}
+
+/**
+ * 把 nodeFailures 映射聚合为 failedUnits 数组（done & error 终态返回值共用）。
+ * 返回 [{unitId, failedReason}]，顺序沿用 Object.entries 的插入序（与内联实现严格一致，不额外排序）。
+ * 抽取自 BFS 主循环 collectFailedUnits 内联箭头函数（MF-2 抽取，供 vitest 单测）。
+ */
+function collectFailedUnits(nodeFailures) {
+  return Object.entries(nodeFailures).map(([unitId, failedReason]) => ({
+    unitId,
+    failedReason,
+  }));
+}
+
+/**
  * 为单节点构建 action-centric agent prompt。
  * agent 跑明确的 action（或合并的 progressive action 段 clarify→plan→design-review）。
  * 最高优先级：design-review 跑完必须停（对抗 ActionResult.nextAction 的 execute 引导）。
@@ -481,6 +533,9 @@ module.exports = {
   slugFromUnitId,
   decideNodeOutcome,
   isAgentReportedFailure,
+  decideAbortOnAgentFailure,
+  aggregateNodeFailure,
+  collectFailedUnits,
   buildActionPrompt,
   buildActionSchema,
   topoSort,
