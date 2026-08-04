@@ -106,6 +106,21 @@ function decideNodeOutcome(r) {
 }
 
 /**
+ * 失败来源 2 判定：agent 自报失败（stopReason=gate-failed/cannot-proceed）。
+ *
+ * 不按 failedReason 非空判定：LLM 结构化输出不受 schema 约束，action 成功
+ * （stopReason=action-done/progressive-done/closed）后 failedReason 残留是常见现象，
+ * 按 failedReason 判定会把刚成功的节点立即 abortUnit 销毁（MF-3 回归教训）。
+ *
+ * 与 executeActionAgent 内联逻辑严格一致（MF-6 抽取，供 vitest 单测）：
+ *   if (r.value && (r.value.stopReason === "gate-failed" || r.value.stopReason === "cannot-proceed"))
+ */
+function isAgentReportedFailure(value) {
+  if (!value) return false;
+  return value.stopReason === "gate-failed" || value.stopReason === "cannot-proceed";
+}
+
+/**
  * 为单节点构建 action-centric agent prompt。
  * agent 跑明确的 action（或合并的 progressive action 段 clarify→plan→design-review）。
  * 最高优先级：design-review 跑完必须停（对抗 ActionResult.nextAction 的 execute 引导）。
@@ -306,31 +321,57 @@ function selectActionable(frontier) {
  * node 级熔断：遍历 actionable 节点，识别需 abort 的 node。
  * 返回 nodesToAbort[]（unitId 列表）。mutation prevStatus / nodeRounds。
  *
- * 1. replan 判定：node.lastStatusHistoryAction === "replan" 时一律放行并重置熔断计数——
+ * 1. replan 判定：node.lastStatusHistoryAction === "replan" 时放行并重置熔断计数——
  *    replan 是 cw 合法旁路 action（不改 status，to=undefined）：wave 层 from 含
  *    design-reviewed/executing/tested/exec-reviewed/retrospected，planning 层 from 含
  *    design-reviewed/executing（state-machine.ts replan.from）。非法状态调 replan 会被
  *    cw guard 拒绝（illegal_transition），根本不产生 history 条目，故能走到这里的
  *    replan 必然合法。replan 是 agent 主动恢复动作（活动信号），不算 stuck。
+ *    但 replan 条目会一直保留在 statusHistory 尾部：若 agent replan 后卡死（每轮只返回
+ *    action-done 不产生新 action），lastStatusHistoryAction 恒为 "replan"，每轮都放行会
+ *    造成熔断永久豁免。故仅放行 replan 后首轮（replanArm 标记），下一轮仍是 replan
+ *    （无新 action）则走 status 未推进熔断逻辑。
  * 2. status 未推进熔断：跨 BFS 轮 status 不变连续 MAX_NODE_ROUNDS 次 → abort
  *
  * 向后兼容：node 无 lastStatusHistoryAction 字段时走 status 未推进逻辑（原行为）。
+ * replanArm 不传时每次调用新建空对象（仅单轮测试用）——运行时必须传持久对象。
  */
-function detectStuckNodes(actionable, prevStatus, nodeRounds) {
+function detectStuckNodes(actionable, prevStatus, nodeRounds, replanArm = {}) {
   const nodesToAbort = [];
 
   for (const node of actionable) {
     // replan 判定：cw 的 replan 是合法旁路 action（wave: design-reviewed/executing/tested/
     // exec-reviewed/retrospected，planning: design-reviewed/executing，state-machine.ts replan.from）。
     // 非法状态调 replan 会被 cw guard 拒绝（illegal_transition），不产生 history 条目——
-    // 故 lastStatusHistoryAction==="replan" 必然合法，一律放行（不 abort 销毁节点）。
-    // replan 不改 status（to=undefined），重置熔断计数：replan 是 agent 主动恢复动作，
-    // 不能因 status 未变被误判 stuck；基线同步当前 status，后续轮次重新累计。
+    // 故 lastStatusHistoryAction==="replan" 必然合法。但 replan 不改 status（to=undefined），
+    // 且条目会保留在 statusHistory 尾部：agent replan 后卡死时该字段恒为 "replan"。
     if (node.lastStatusHistoryAction === "replan") {
-      nodeRounds[node.unitId] = 0;
+      if (!replanArm[node.unitId]) {
+        // 首轮 replan：agent 主动恢复动作（活动信号），放行 + 重置熔断计数；基线同步当前
+        // status，后续轮次重新累计。arm 标记下一轮：若 replan 条目残留（agent 未产生任何
+        // 新 action）则不再豁免，走熔断。
+        nodeRounds[node.unitId] = 0;
+        prevStatus[node.unitId] = node.status;
+        replanArm[node.unitId] = true;
+        continue;
+      }
+      // 已 armed：replan 条目是上一轮残留（replan 后无新 action）→ 不再豁免，
+      // 按 status 未推进熔断逻辑累计。
+      const prev = prevStatus[node.unitId];
+      if (prev === node.status) {
+        nodeRounds[node.unitId] = (nodeRounds[node.unitId] ?? 0) + 1;
+        if (nodeRounds[node.unitId] >= MAX_NODE_ROUNDS) {
+          nodesToAbort.push(node.unitId);
+        }
+      } else {
+        nodeRounds[node.unitId] = 0;
+      }
       prevStatus[node.unitId] = node.status;
       continue;
     }
+
+    // 非 replan 轮：解除 arm（node 已产生新 action，下轮若再出现 replan 视为新的）
+    replanArm[node.unitId] = false;
 
     // status 未推进熔断
     const prev = prevStatus[node.unitId];
@@ -361,15 +402,16 @@ function detectStuckNodes(actionable, prevStatus, nodeRounds) {
  * 从"本轮 frontier"直接得知哪些节点刚变终态。本函数用"上一轮见过 + 本轮 frontier 中不存在 +
  * 在 prevStatus 中有记录"来推断刚消失的节点，再按其 prevStatus 判定是否终态决定是否清理。
  *
- * 纯函数：直接 mutate 入参两 Map（与 detectStuckNodes 同样的副作用契约——调用方传入需持久
+ * 纯函数：直接 mutate 入参 Map（与 detectStuckNodes 同样的副作用契约——调用方传入需持久
  * 化的累加器对象，函数就地修改避免反复浅拷贝大对象）。返回被清理的 unitId 列表（供测试断言）。
  *
  * @param prevStatus    unitId → 上一轮 status（mutable）
  * @param nodeRounds    unitId → 连续未推进轮数（mutable）
  * @param currentUnitIds 本轮 frontier 中出现的所有 unitId（含 blocked 节点，不含终态）
+ * @param replanArm     unitId → replan 首轮放行标记（mutable，与 nodeRounds 同生命周期）
  * @returns 被清理掉的 unitId 列表
  */
-function pruneTerminalEntries(prevStatus, nodeRounds, currentUnitIds) {
+function pruneTerminalEntries(prevStatus, nodeRounds, currentUnitIds, replanArm = {}) {
   const present = new Set(currentUnitIds);
   const pruned = [];
 
@@ -380,6 +422,7 @@ function pruneTerminalEntries(prevStatus, nodeRounds, currentUnitIds) {
     if (isTerminal(prevStatus[unitId])) {
       delete prevStatus[unitId];
       delete nodeRounds[unitId];
+      delete replanArm[unitId];
       pruned.push(unitId);
     }
     // 本轮没出现 + 上轮 status 非终态：可能是 queryFrontier 临时失败/抖动漏报，
@@ -405,6 +448,7 @@ module.exports = {
   escapeSingleQuotes,
   slugFromUnitId,
   decideNodeOutcome,
+  isAgentReportedFailure,
   buildActionPrompt,
   buildActionSchema,
   topoSort,

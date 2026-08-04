@@ -102,6 +102,14 @@ export function getAskUserOther(
   return answers[`${askUserKey(question)}__other`]
 }
 
+/** 从 answers 中提取评论 */
+export function getAskUserComment(
+  answers: AskUserAnswers,
+  question: AskUserQuestion,
+): string | undefined {
+  return answers[`${askUserKey(question)}__comment`]
+}
+
 /**
  * 类型守卫：验证 unknown 是否为合法的 AskUserQuestion。
  * 用于前端从 runtime 透传的 askUserQuestions（unknown[]）中安全收窄。
@@ -114,4 +122,5 @@ export function isAskUserQuestion(value: unknown): value is AskUserQuestion {
     && (q.options === undefined || Array.isArray(q.options))
     && (q.multiSelect === undefined || typeof q.multiSelect === 'boolean')
     && (q.allowOther === undefined || typeof q.allowOther === 'boolean')
+    && (q.allowComment === undefined || typeof q.allowComment === 'boolean')
 }

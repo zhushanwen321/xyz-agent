@@ -17,38 +17,38 @@
 const meta = {
   name: "review-fix-loop",
   description: "审查-修复循环：多批串行（批内并行 review → aggregate → fix → 重审直到 clean）。必填 targetType（git-diff/file/dir/text）+ target。批次由 batch1..batchN 控制（如 batch1=fallow-scan batch2=reviewer），用于前置检查先行的场景。注意：唯一带写操作/commit 副作用的内置 workflow，autoCommit 默认 false。",
-  phases: [
-    { title: "Review", detail: "Batch: parallel review by configured agents" },
-    { title: "Fix", detail: "Fix must-fix issues from aggregated report" },
-  ],
+  phases: ["Review", "Fix"],
 };
 
 // ── 参数解析 + 白名单校验（fail-fast） ────────────────────────────
-
-const TARGET_TYPES = ["git-diff", "file", "dir", "text"];
-const VALID_ARG_KEYS = new Set([
-  "targetType", "target", "agents", "batchNames", "reviewPrompt", "fixPrompt",
-  "autoCommit", "maxRounds", "stuckThreshold", "model", "skipCleanAgents",
-  "recheckAfterFix", "_runId",
-]);
 
 function fail(msg) {
   throw new Error("review-fix-loop: " + msg);
 }
 
-function normalizeBool(v, name, def) {
-  if (v === undefined || v === null || v === "") return def;
-  if (v === true || v === "true") return true;
-  if (v === false || v === "false") return false;
-  fail("参数 " + name + " 必须是布尔值（true/false），实际: " + JSON.stringify(v));
-}
-
-function normalizeInt(v, name, def) {
-  if (v === undefined || v === null || v === "") return def;
-  const n = typeof v === "number" ? v : Number(String(v).trim());
-  if (!Number.isInteger(n) || n <= 0) fail("参数 " + name + " 必须是正整数，实际: " + JSON.stringify(v));
-  return n;
-}
+// ── 可测纯函数模块 ────────────────────────────────────────────────
+// 参数校验（normalizeBool/normalizeInt/白名单）/批次解析/聚合结果解析/审查指令构建
+// 的纯函数在 review-fix-loop-utils.cjs（与 recursive-split-utils.cjs 同款模式，
+// vitest 单测见 src/__tests__/review-fix-loop-utils.test.ts）。
+// worker 运行时经 workerData.scriptPath 定位自身目录——内置 workflow 在 npm 包内，
+// process.cwd() 是用户项目目录，不能作为锚点；其他引擎无 workerData 时回退 cwd。
+const {
+  TARGET_TYPES,
+  VALID_ARG_KEYS,
+  normalizeBool,
+  normalizeInt,
+  parseBatches,
+  resolveBatchNames,
+  validateFallowScan,
+  buildReviewInstruction,
+  parseResult,
+  normalizeAggregatorResult,
+  parseAggregatedMd,
+} = require(
+  (typeof workerData !== "undefined" && workerData && typeof workerData.scriptPath === "string"
+    ? require("path").dirname(workerData.scriptPath)
+    : process.cwd()) + "/review-fix-loop-utils.cjs"
+);
 
 // 白名单校验：未知参数名（防 batchX 拼错如 batchl）→ 报错
 for (const key of Object.keys($ARGS)) {
@@ -70,77 +70,26 @@ const reviewPrompt = typeof $ARGS.reviewPrompt === "string" && $ARGS.reviewPromp
 const fixPrompt = typeof $ARGS.fixPrompt === "string" && $ARGS.fixPrompt.trim()
   ? $ARGS.fixPrompt.trim()
   : "修复全部 must-fix 问题（critical/major）。最小正确修复，不做重构、不做风格改动。";
-const autoCommit = normalizeBool($ARGS.autoCommit, "autoCommit", false);
-const maxRounds = normalizeInt($ARGS.maxRounds, "maxRounds", 10);
-const stuckThreshold = normalizeInt($ARGS.stuckThreshold, "stuckThreshold", 3);
-const skipCleanAgents = normalizeBool($ARGS.skipCleanAgents, "skipCleanAgents", true);
-const recheckAfterFix = normalizeBool($ARGS.recheckAfterFix, "recheckAfterFix", false);
+const autoCommit = normalizeBool($ARGS.autoCommit, "autoCommit", false, fail);
+const maxRounds = normalizeInt($ARGS.maxRounds, "maxRounds", 10, fail);
+const stuckThreshold = normalizeInt($ARGS.stuckThreshold, "stuckThreshold", 3, fail);
+const skipCleanAgents = normalizeBool($ARGS.skipCleanAgents, "skipCleanAgents", true, fail);
+const recheckAfterFix = normalizeBool($ARGS.recheckAfterFix, "recheckAfterFix", false, fail);
 const MODEL = typeof $ARGS.model === "string" && $ARGS.model.trim() ? $ARGS.model.trim() : undefined;
 
-// 审查指令模板（按 targetType 生成，注入每个 review agent 的 prompt）
-function buildReviewInstruction() {
-  switch (targetType) {
-    case "git-diff":
-      return "Review `git diff " + target + "...HEAD` for all committed changes against " + target + ".\n" +
-        "ALSO run `git status --porcelain` and `git diff` to review uncommitted working-tree changes " +
-        "(fixes may be uncommitted when autoCommit=false; uncommitted changes ARE in scope).";
-    case "file":
-      return "Read and review the file: " + target;
-    case "dir":
-      return "Explore and review the directory: " + target + " (list files, then read the relevant ones)";
-    case "text":
-      return "Review target: " + target;
-  }
-}
-const reviewInstruction = buildReviewInstruction();
+const reviewInstruction = buildReviewInstruction(targetType, target);
 
 // 批次解析：batch1..batchN（缺号报错）/ agents 简写 / 默认单批 [reviewer]
-function parseBatches() {
-  const batchKeys = Object.keys($ARGS)
-    .filter((k) => /^batch\d+$/.test(k))
-    .sort((a, b) => parseInt(a.slice(5), 10) - parseInt(b.slice(5), 10));
-  const nums = batchKeys.map((k) => parseInt(k.slice(5), 10));
-  for (let i = 1; i <= nums.length; i++) {
-    if (!nums.includes(i)) fail("批次参数缺号：有 batch" + nums.join("/") + " 但无 batch" + i + "（批次必须连续编号）");
-  }
-  if ($ARGS.agents !== undefined && $ARGS.batch1 !== undefined) {
-    fail("agents 与 batch1 不能同时传（agents 是单批简写）");
-  }
-
-  let rawBatches;
-  if (batchKeys.length > 0) {
-    rawBatches = batchKeys.map((k) => $ARGS[k]);
-  } else if ($ARGS.agents !== undefined) {
-    rawBatches = [$ARGS.agents];
-  } else {
-    rawBatches = ["reviewer"]; // 默认单批：包内置通用审查 agent
-  }
-
-  return rawBatches.map((raw, idx) => {
-    if (typeof raw !== "string" || !raw.trim()) fail("batch" + (idx + 1) + " 不能为空");
-    const names = raw.split(",").map((s) => s.trim()).filter(Boolean);
-    if (names.length === 0) fail("batch" + (idx + 1) + " 为空（逗号分隔 agent 名/文件路径）");
-    if (new Set(names).size !== names.length) fail("batch" + (idx + 1) + " 内存在重复 agent: " + names);
-    return names;
-  });
-}
-const BATCHES = parseBatches();
+const BATCHES = parseBatches($ARGS, fail);
 
 // batchNames（数量校验）
 const rawBatchNames = typeof $ARGS.batchNames === "string" && $ARGS.batchNames.trim()
   ? $ARGS.batchNames.split(",").map((s) => s.trim()).filter(Boolean)
   : [];
-if (rawBatchNames.length > 0 && rawBatchNames.length !== BATCHES.length) {
-  fail("batchNames 数量（" + rawBatchNames.length + "）必须与批数（" + BATCHES.length + "）一致");
-}
-const BATCH_NAMES = rawBatchNames.length ? rawBatchNames : BATCHES.map((_, i) => "batch-" + (i + 1));
+const BATCH_NAMES = resolveBatchNames(rawBatchNames, BATCHES, fail);
 
 // fallow-scan 只在 git-diff 类型下有意义
-for (let i = 0; i < BATCHES.length; i++) {
-  if (BATCHES[i].includes("fallow-scan") && targetType !== "git-diff") {
-    fail("fallow-scan 只支持 targetType=git-diff（它审查 git 变更的静态分析），实际 targetType=" + targetType);
-  }
-}
+validateFallowScan(BATCHES, targetType, fail);
 
 // ── Schemas ─────────────────────────────────────────────────────────
 
@@ -217,48 +166,7 @@ function recordAgentDirty(state, agentName, mustFix, batchIndex) {
   state.agentStatus[agentName] = s;
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────
-
-function parseResult(raw) {
-  if (typeof raw === "object" && raw !== null) return raw;
-  if (typeof raw === "string") {
-    let s = raw.trim();
-    const fence = s.match(/^```(?:json)?\s*\n([\s\S]*?)\n?```\s*$/i);
-    if (fence) s = fence[1].trim();
-    if (!s.startsWith("{") && !s.startsWith("[")) {
-      const first = s.indexOf("{");
-      const last = s.lastIndexOf("}");
-      if (first !== -1 && last > first) s = s.slice(first, last + 1);
-    }
-    try { return JSON.parse(s); } catch { /* fall through */ }
-  }
-  return null;
-}
-
-function normalizeAggregatorResult(raw) {
-  const parsed = parseResult(raw);
-  if (!parsed) return null;
-  const mustFix =
-    typeof parsed.must_fix === "number" ? parsed.must_fix :
-    typeof parsed.totalMustFix === "number" ? parsed.totalMustFix :
-    typeof parsed.mustFix === "number" ? parsed.mustFix : undefined;
-  const suggestion =
-    typeof parsed.suggestion === "number" ? parsed.suggestion :
-    typeof parsed.totalSuggestions === "number" ? parsed.totalSuggestions :
-    typeof parsed.suggestions === "number" ? parsed.suggestions : 0;
-  if (typeof mustFix !== "number") return null;
-  return { report_file: parsed.report_file || parsed.reportFile, must_fix: mustFix, suggestion };
-}
-
-function parseAggregatedMd(content) {
-  const mustFixMatch = content.match(/[-*]\s*Must[-_]fix\s*[:：]\s*(\d+)/i);
-  if (!mustFixMatch) return null;
-  const suggestionMatch = content.match(/[-*]\s*Suggestions?\s*[:：]\s*(\d+)/i);
-  return {
-    must_fix: parseInt(mustFixMatch[1], 10),
-    suggestion: suggestionMatch ? parseInt(suggestionMatch[1], 10) : 0,
-  };
-}
+// ── Helpers（结果解析在 review-fix-loop-utils.cjs） ────────────────
 
 // 自定义 .md agent 加载：frontmatter（name/description/model）+ 正文
 function loadAgentMd(filePath) {
@@ -420,7 +328,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
 
     log("Review: " + active.map((d) => d.name).join(", ") + " (" + active.length + " agent(s) in parallel)...");
     const calls = active.map((def) => buildReviewCall(def, round, maxRounds, batchIndex, roundDir));
-    const allRaw = await parallel(calls);
+    const allRaw = await parallel(calls.map(runReviewAgent));
 
     // per-agent 结果区分：parallel 结果与 calls 一一对应
     const reviewResults = [];

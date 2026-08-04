@@ -24,6 +24,7 @@ const {
   escapeSingleQuotes,
   slugFromUnitId,
   decideNodeOutcome,
+  isAgentReportedFailure,
   isProgressive,
   buildActionPrompt,
   buildActionSchema,
@@ -154,7 +155,8 @@ async function executeActionAgent(node, sessionFiles) {
   // 不按 failedReason 非空判定：LLM 结构化输出不受 schema 约束，action 成功
   // （stopReason=action-done/progressive-done/closed）后 failedReason 残留是常见现象，
   // 按 failedReason 判定会把刚成功的节点立即 abortUnit 销毁（MF-3）。
-  if (r.value && (r.value.stopReason === "gate-failed" || r.value.stopReason === "cannot-proceed")) {
+  // 判定逻辑抽到 isAgentReportedFailure（recursive-split-utils.cjs，供 vitest 单测）。
+  if (isAgentReportedFailure(r.value)) {
     log("Node " + node.unitId + " failed (agent-reported): " + (r.value.failedReason ?? r.value.stopReason));
     await abortUnit(node.unitId);
     return { unitId: node.unitId, value: r.value, sessionFile: r.sessionFile, failedReason: r.value.failedReason };
@@ -188,6 +190,8 @@ try {
   const prevStatus = {};
   // nodeRounds: unitId → status 未推进的连续轮数（node 级熔断用）
   const nodeRounds = {};
+  // replanArm: unitId → replan 首轮放行标记（replan 仅豁免首轮，连续 replan 轮走熔断）
+  const replanArm = {};
   // frontierFailures: queryFrontier 连续返回 null 的次数（达 MAX_FRONTIER_RETRIES 才 break）
   let frontierFailures = 0;
 
@@ -221,7 +225,7 @@ try {
     }
 
     // node 级熔断：同一 node 被 dispatch 多轮 status 没推进 → abort
-    const nodesToAbort = detectStuckNodes(actionable, prevStatus, nodeRounds);
+    const nodesToAbort = detectStuckNodes(actionable, prevStatus, nodeRounds, replanArm);
     for (const unitId of nodesToAbort) {
       log("Node " + unitId + " stuck (status not progressing for " + MAX_NODE_ROUNDS + " rounds), aborting");
       await abortUnit(unitId);
@@ -273,7 +277,8 @@ try {
     pruneTerminalEntries(
       prevStatus,
       nodeRounds,
-      (frontier.nodes ?? []).map((n) => n.unitId)
+      (frontier.nodes ?? []).map((n) => n.unitId),
+      replanArm
     );
   }
 

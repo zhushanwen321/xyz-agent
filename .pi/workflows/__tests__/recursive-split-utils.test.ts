@@ -11,6 +11,7 @@ import {
   escapeSingleQuotes,
   slugFromUnitId,
   decideNodeOutcome,
+  isAgentReportedFailure,
   buildActionPrompt,
   buildActionSchema,
   topoSort,
@@ -265,6 +266,40 @@ describe("decideNodeOutcome", () => {
     const outcome = decideNodeOutcome(r);
     expect(outcome).toEqual({ failed: true, failedReason: "boom" });
     expect(Object.keys(outcome)).toEqual(["failed", "failedReason"]);
+  });
+});
+
+// ── isAgentReportedFailure（失败来源 2：agent 自报失败） ────────────
+
+describe("isAgentReportedFailure", () => {
+  it("stopReason=gate-failed → true", () => {
+    expect(isAgentReportedFailure({ stopReason: "gate-failed" })).toBe(true);
+  });
+
+  it("stopReason=cannot-proceed → true", () => {
+    expect(isAgentReportedFailure({ stopReason: "cannot-proceed", failedReason: "缺依赖" })).toBe(true);
+  });
+
+  it("stopReason=action-done → false（即使 failedReason 残留——MF-3 回归用例）", () => {
+    // LLM 结构化输出不受 schema 约束：action 成功后 failedReason 残留是常见现象，
+    // 按 failedReason 判定会把刚成功的节点立即 abortUnit 销毁。
+    expect(isAgentReportedFailure({ stopReason: "action-done", failedReason: "旧失败原因残留" })).toBe(false);
+  });
+
+  it("stopReason=progressive-done / closed → false", () => {
+    expect(isAgentReportedFailure({ stopReason: "progressive-done" })).toBe(false);
+    expect(isAgentReportedFailure({ stopReason: "closed" })).toBe(false);
+  });
+
+  it("value 为 undefined / null → false", () => {
+    expect(isAgentReportedFailure(undefined)).toBe(false);
+    expect(isAgentReportedFailure(null)).toBe(false);
+  });
+
+  it("value 为空串/非对象 → false（属性访问安全降级）", () => {
+    expect(isAgentReportedFailure("")).toBe(false);
+    expect(isAgentReportedFailure("plain-text")).toBe(false);
+    expect(isAgentReportedFailure({})).toBe(false);
   });
 });
 
@@ -675,6 +710,79 @@ describe("detectStuckNodes replan 判定", () => {
     detectStuckNodes(actionable, prevStatus, nodeRounds);
     expect(nodeRounds["a"]).toBe(0); // status 变了重置
   });
+
+  it("replan 仅豁免首轮——连续 replan 轮（agent replan 后卡死）按未推进累计", () => {
+    const node = { unitId: "a", status: "executing", lastStatusHistoryAction: "replan" };
+    const prevStatus: Record<string, string> = {};
+    const nodeRounds: Record<string, number> = {};
+    const replanArm: Record<string, boolean> = {};
+
+    // 第 1 轮：replan 刚发生 → 放行 + arm
+    detectStuckNodes([node], prevStatus, nodeRounds, replanArm);
+    expect(nodeRounds["a"]).toBe(0);
+    expect(replanArm["a"]).toBe(true);
+
+    // 第 2 轮：replan 条目残留（无新 action）→ 不再豁免，累计 1
+    detectStuckNodes([node], prevStatus, nodeRounds, replanArm);
+    expect(nodeRounds["a"]).toBe(1);
+
+    // 第 3 轮：继续残留 → 累计 2
+    detectStuckNodes([node], prevStatus, nodeRounds, replanArm);
+    expect(nodeRounds["a"]).toBe(2);
+  });
+
+  it("replan 卡死到 MAX_NODE_ROUNDS → 触发 abort（熔断不再被永久豁免）", () => {
+    const node = { unitId: "a", status: "executing", lastStatusHistoryAction: "replan" };
+    const prevStatus: Record<string, string> = {};
+    const nodeRounds: Record<string, number> = {};
+    const replanArm: Record<string, boolean> = {};
+
+    // 首轮 replan 放行 + arm；之后连续 replan 轮累计到阈值 → abort
+    detectStuckNodes([node], prevStatus, nodeRounds, replanArm);
+    for (let i = 0; i < MAX_NODE_ROUNDS - 1; i++) {
+      detectStuckNodes([node], prevStatus, nodeRounds, replanArm);
+    }
+    expect(nodeRounds["a"]).toBe(MAX_NODE_ROUNDS - 1);
+    const stuck = detectStuckNodes([node], prevStatus, nodeRounds, replanArm);
+    expect(stuck).toEqual(["a"]);
+  });
+
+  it("replan 后 agent 产生新 action（非 replan 轮）→ 解除 arm，后续 replan 再次放行", () => {
+    const replanNode = { unitId: "a", status: "executing", lastStatusHistoryAction: "replan" };
+    const actedNode = { unitId: "a", status: "executing", lastStatusHistoryAction: "execute" };
+    const prevStatus: Record<string, string> = {};
+    const nodeRounds: Record<string, number> = {};
+    const replanArm: Record<string, boolean> = {};
+
+    // replan 轮 → 放行 + arm
+    detectStuckNodes([replanNode], prevStatus, nodeRounds, replanArm);
+    expect(replanArm["a"]).toBe(true);
+
+    // 非 replan 轮（agent 执行了 execute，但 status 未变）→ 解除 arm，按未推进累计 1
+    detectStuckNodes([actedNode], prevStatus, nodeRounds, replanArm);
+    expect(replanArm["a"]).toBe(false);
+    expect(nodeRounds["a"]).toBe(1);
+
+    // 再次 replan（新一轮 replan）→ arm 已解除，重新放行并归零
+    detectStuckNodes([replanNode], prevStatus, nodeRounds, replanArm);
+    expect(nodeRounds["a"]).toBe(0);
+    expect(replanArm["a"]).toBe(true);
+  });
+
+  it("replan 轮 status 变化（armed 时 prev 与当前不同）→ 归零不 abort", () => {
+    const prevStatus: Record<string, string> = { a: "executing" };
+    const nodeRounds: Record<string, number> = { a: 0 };
+    const replanArm: Record<string, boolean> = { a: true };
+    const stuck = detectStuckNodes(
+      [{ unitId: "a", status: "testing", lastStatusHistoryAction: "replan" }],
+      prevStatus,
+      nodeRounds,
+      replanArm
+    );
+    expect(stuck).toHaveLength(0);
+    expect(nodeRounds["a"]).toBe(0);
+    expect(prevStatus["a"]).toBe("testing");
+  });
 });
 
 // ── pruneTerminalEntries（终态节点 entry 清理） ─────────────────────
@@ -729,6 +837,15 @@ describe("pruneTerminalEntries", () => {
     expect(pruned.sort()).toEqual(["a", "b"]);
     expect(prevStatus).toEqual({ c: "planning" });
     expect(nodeRounds).toEqual({ c: 1 });
+  });
+
+  it("replanArm 标记随终态节点一并清理", () => {
+    const prevStatus: Record<string, string> = { a: "aborted" };
+    const nodeRounds: Record<string, number> = { a: 5 };
+    const replanArm: Record<string, boolean> = { a: true };
+    const pruned = pruneTerminalEntries(prevStatus, nodeRounds, [], replanArm);
+    expect(pruned).toEqual(["a"]);
+    expect(replanArm).toEqual({});
   });
 
   it("空 prevStatus 返回空数组", () => {
