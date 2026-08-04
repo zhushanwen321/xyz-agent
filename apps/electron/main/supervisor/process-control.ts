@@ -179,17 +179,27 @@ export function spawnRuntimeProcess(port: number, onExit?: (code: number | null)
     const repoRoot = path.join(projectRoot, '..', '..')
     const runtimeEntry = path.join(repoRoot, 'packages', 'runtime', 'src', 'index.ts')
 
-    // [HISTORICAL] 2026-08-04：不依赖 node_modules/.bin/tsx 启动。
-    // .bin 下是 pnpm symlink 还是 npm 风格 shell shim（basedir=$(dirname...)）取决于
-    // 安装工具与布局；`node .bin/tsx` 在 shim 形态下会把 shell 脚本当 JS 解析，
-    // 启动即崩（SyntaxError: missing ) after argument list）。
-    // 正确做法：直接解析 tsx 包内 JS 入口（package.json bin 声明），
-    // 与打包模式用 dist/runtime/index.cjs 同理——跨安装工具/布局稳定。
-    const tsxPkgPath = path.join(repoRoot, 'node_modules', 'tsx', 'package.json')
-    const tsxPath = path.join(repoRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs')
+    // [HISTORICAL] tsx 路径必须用 require.resolve 动态解析，不能写死 repoRoot/node_modules。
+    // 根因链（dev 启动崩溃的真实原因）：
+    //   1. ada6c0466 把 .npmrc 从 hoisted 切到 isolated（控制 builtin extension 的 pnpm deploy 体积），
+    //      但本处写死 repoRoot/node_modules/tsx 的解析未同步更新。
+    //   2. isolated 布局下 repoRoot 没有 node_modules/tsx——tsx 只被 apps/electron（本 supervisor
+    //      所在包）声明为 devDependency，实际位于 node_modules/.pnpm/tsx@x.y.z/node_modules/tsx/。
+    //      旧实现长期靠 root 残留的 hoisted 时代污染物掩盖，干净重装后即刻崩溃。
+    //   3. 33ed23e91 把启动入口从 .bin/tsx 换成 dist/cli.mjs，但路径仍写死 repoRoot，
+    //      干净 isolated 安装下依旧找不到。另注：pnpm isolated 下 .bin 条目本就是
+    //      @pnpm/cmd-shim 生成的跨平台 shell 脚本（非 symlink），「还原 .bin 为 symlink」
+    //      既不可能也不必要——node <任何路径>/.bin/tsx 必然把 shell 当 JS 解析崩溃。
+    // 正确做法：require.resolve 从 projectRoot（= apps/electron，tsx 声明方）按 Node 解析算法
+    // 定位 tsx 真实位置——isolated → .pnpm/tsx@x.y.z/...；hoisted → 向上遍历到 repoRoot。
+    // 与打包模式用 dist/runtime/index.cjs 同思路（解析包内 JS 入口，不依赖 .bin 或固定
+    // node_modules 形态），跨 linker 模式稳定，merge 到 main（hoisted）不坏。
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- 运行时按 Node 解析算法动态定位 tsx 包路径（适配 isolated node-linker），不引入静态依赖；vite CJS 输出下 require 原生可用
+    const tsxPkgPath = require.resolve('tsx/package.json', { paths: [projectRoot] })
+    const tsxPath = path.join(path.dirname(tsxPkgPath), 'dist', 'cli.mjs')
 
-    if (!existsSync(tsxPkgPath) || !existsSync(tsxPath)) {
-      throw new Error(`tsx not found at ${tsxPkgPath}. Run: pnpm install`)
+    if (!existsSync(tsxPath)) {
+      throw new Error(`tsx cli not found at ${tsxPath} (resolved pkg: ${tsxPkgPath}). Run: pnpm install`)
     }
     if (!existsSync(runtimeEntry)) {
       throw new Error(`Runtime entry not found at ${runtimeEntry}`)
