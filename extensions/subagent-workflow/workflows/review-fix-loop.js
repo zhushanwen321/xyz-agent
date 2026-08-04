@@ -318,8 +318,12 @@ function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
   // scoped 分支（recheck 限定）在下方单独处理（含对账段）。
   if (round > 1 && !scoped) {
     const prevRoundDir = RUN_ROOT + "/batch-" + batchIndex + "/round-" + (round - 1);
+    const r2Spec = def.isCustom
+      ? "\n\nReviewer specification (from agent file):\n" + def.systemPrompt
+      : "";
     return {
       ...base,
+      schema: { ...reviewerSchema, required: [...reviewerSchema.required, "reconciliation"] },
       prompt: buildR2ReviewPrompt({
         header, round, max, roundDir,
         reportFile: def.report,
@@ -328,7 +332,7 @@ function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
           ? state.fixResults[state.fixResults.length - 1]
           : null,
         knownRemaining: (state.knownRemaining && Array.isArray(state.knownRemaining)) ? state.knownRemaining : [],
-      }),
+      }) + r2Spec,
       agent: def.isCustom ? undefined : def.name,
     };
   }
@@ -347,7 +351,7 @@ function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
         fixResult: state.fixResults && state.fixResults.length
           ? state.fixResults[state.fixResults.length - 1]
           : null,
-      }),
+      }) + (def.isCustom ? "\n\nReviewer specification (from agent file):\n" + def.systemPrompt : ""),
       agent: def.isCustom ? undefined : def.name,
     };
   }
@@ -444,6 +448,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     const reviewResults = [];
     const agentRoundResults = [];
     const reconSeen = new Set(); // R2+ reconciliation 声明的上轮 ID（status !== fixed）——stuck ID 驱动数据源（5.1）
+    const reconEscalate = new Set(); // 5.1-5 escalate 声明：deferred 条目上下文改变 → 重新 open
     for (let i = 0; i < allRaw.length; i++) {
       const raw = allRaw[i];
       if (raw && typeof raw === "object" && raw.error) {
@@ -472,7 +477,8 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         }
         reviewResults.push(parsed);
         for (const r of parsed.reconciliation) {
-          if (r.status !== "fixed") reconSeen.add(r.prev_id);
+          if (r.status === "escalate") reconEscalate.add(r.prev_id);
+          else if (r.status !== "fixed") reconSeen.add(r.prev_id);
         }
         const def = active[i];
         if (parsed.must_fix === 0) {
@@ -554,13 +560,17 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     // 5.1：R1 的 aggregator must_fix_ids 初始化 state.issues（数字 ID 起点）
     if (round === 1 && agg.must_fix_ids && agg.must_fix_ids.length > 0) {
       if (!state.issues) state.issues = {};
-      for (const id of agg.must_fix_ids) {
-        if (!state.issues[id]) {
-          state.issues[id] = {
-            firstSeen: 1, severity: "must-fix", status: "open",
-            history: [{ round: 1, status: "open" }], fixAttempts: 0,
-          };
-        }
+      for (const entry of agg.must_fix_ids) {
+        const id = typeof entry === "string" ? entry : entry && entry.id;
+        if (!id || state.issues[id]) continue;
+        state.issues[id] = {
+          // severity 结构化（5.7）：aggregator 标注 critical/major/minor，converged 终止的
+          // 「无 critical」判定依赖它；旧格式（string）默认 major（must-fix 语义）。
+          firstSeen: 1,
+          severity: typeof entry === "string" ? "major" : (entry.severity || "major"),
+          status: "open",
+          history: [{ round: 1, status: "open" }], fixAttempts: 0,
+        };
       }
     }
 
@@ -569,6 +579,32 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     // open/regressed）；无 reconciliation 数据（R1 或 reviewer 未填）降级计数式 updateStuckState
     // （现状语义，MF-2 注释保留）。needs-redesign（fixAttempts>=2）在 wave 5 接入。
     let stuck = { stuck: false };
+    if (round > 1 && (reconSeen.size > 0 || reconEscalate.size > 0)) {
+      const rec = reconcileIssues(state.issues || {}, { seenIds: reconSeen, escalateIds: reconEscalate, round, stuckThreshold });
+      state.issues = rec.issues;
+      state.knownRemaining = rec.knownRemaining;
+      stuck = { stuck: rec.stuck, stuckIds: rec.stuckIds };
+      log("Reconcile: " + Object.keys(rec.issues).length + " tracked issue(s), known-remaining: " + rec.knownRemaining.length);
+
+      // 5.1-2 R2+ 新发现 ID 契约：aggregator 的 must_fix_ids（含 R2+ 新发现，续编号）中
+      // 不在 issues 的 ID 创建为新条目（firstSeen=round）——newFindings 统计与
+      // needs-redesign/fixAttempts 追踪对 R2+ 新发现生效，且防与 R1 存量 ID 撞号。
+      if (agg.must_fix_ids && agg.must_fix_ids.length > 0) {
+        let added = 0;
+        for (const entry of agg.must_fix_ids) {
+          const id = typeof entry === "string" ? entry : entry && entry.id;
+          if (!id || state.issues[id]) continue;
+          state.issues[id] = {
+            firstSeen: round,
+            severity: typeof entry === "string" ? "major" : (entry.severity || "major"),
+            status: "open", openStreak: 1,
+            history: [{ round, status: "open" }], fixAttempts: 0,
+          };
+          added++;
+        }
+        if (added > 0) log("New findings tracked: " + added + " new issue(s) in round " + round);
+      }
+    } else {
     if (round > 1 && reconSeen.size > 0) {
       const rec = reconcileIssues(state.issues || {}, { seenIds: reconSeen, round, stuckThreshold });
       state.issues = rec.issues;
@@ -589,7 +625,8 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
       saveState(state);
       terminated = "stuck";
-      finalMessage = "Batch " + batchIndex + " round " + round + ": 问题 " + stuckIds + " 连续 " + stuckThreshold + " 轮未收敛";
+      finalMessage = "Batch " + batchIndex + " round " + round + ": 问题 " + stuckIds + " 连续 " + stuckThreshold + " 轮未收敛。残留: "
+        + (state.knownRemaining && state.knownRemaining.length ? state.knownRemaining.join("; ") : "无 deferred");
       batchIndex = BATCHES.length + 1;
       break;
     }
@@ -600,12 +637,17 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       const redesign = findNeedsRedesign(state.issues, maxFixAttempts);
       if (redesign.length > 0) {
         const ids = redesign.map((r) => r.issue_id).join(", ");
+        // 5.7 message 三要素：ID + 修复历史摘要 + 残留清单（history 全文随 state.json 落盘）
+        const historySummary = redesign.map((r) => {
+          const hist = (r.history || []).map((h) => "R" + h.round + ":" + h.status).join(" -> ");
+          return r.issue_id + " [" + (hist || "no history") + "]";
+        }).join("; ");
         log("Needs redesign: " + ids + " not converging after " + maxFixAttempts + " fix attempts. Stopping.");
         batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
         state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
         saveState(state);
         terminated = "needs-redesign";
-        finalMessage = "Batch " + batchIndex + " round " + round + ": 问题 " + ids + " 经 " + maxFixAttempts
+        finalMessage = "Batch " + batchIndex + " round " + round + ": 问题 " + historySummary + " 经 " + maxFixAttempts
           + " 次修复仍未收敛，属于需要重新设计而非继续补丁的结构性问题，请人工介入。残留: "
           + (state.knownRemaining && state.knownRemaining.length ? state.knownRemaining.join("; ") : "无 deferred");
         batchIndex = BATCHES.length + 1;
@@ -613,9 +655,11 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       }
 
       // 5.7 新发现率收敛：连续 convergeRounds 轮新发现 <= convergeNewIssues → converged
-      const newFindings = Object.values(state.issues).filter((i) => i.firstSeen === round).length;
+      const newIssues = Object.values(state.issues).filter((i) => i.firstSeen === round);
+      const newFindings = newIssues.length;
+      const newFindingsCritical = newIssues.filter((i) => i.severity === "critical").length;
       const conv = checkConvergence({
-        prevStreak: state.convergeStreak || 0, newFindings,
+        prevStreak: state.convergeStreak || 0, newFindings, newFindingsCritical,
         convergeNewIssues, convergeRounds,
       });
       state.convergeStreak = conv.streak;
@@ -701,8 +745,10 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       break;
     }
 
-    // ES3 硬校验（5.3 红线）：deferred 只允许 minor，显式非 minor → fix-failure（结构化终止）
-    const es3Violations = validateFixResult(fixResult);
+    // ES3 硬校验（5.3 红线，恢复 mustFixIds 交叉校验——wave 3 后 agg.must_fix_ids
+    // 已是标准字段）：(1) deferred 只允许 minor；(2) must-fix 必须全进 fixes[]（漏修
+    // 判 violation）。任一违规 → fix-failure（结构化终止）
+    const es3Violations = validateFixResult(fixResult, agg.must_fix_ids);
     if (es3Violations.length > 0) {
       log("ES3 violation: deferred contains non-minor severity — " + JSON.stringify(es3Violations));
       batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
@@ -742,6 +788,27 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
           state.issues[f.issue_id].history.push({ round, status: "fix-attempted" });
         }
       }
+      // 5.3-4 deferred 写入 state.issues（known-remaining 跨轮继承链路）：deferred 条目
+      // 以 status=deferred 入 issues，据此生成 knownRemaining 传给 R2+ prompt。
+      // 若 ID 已存在（曾被修复/降级）→ 更新状态 + reason；不存在（S-x minor）→ 新建。
+      for (const d of fixResult.deferred) {
+        if (!d || typeof d.issue_id !== "string" || !d.issue_id) continue;
+        const reason = typeof d.reason === "string" ? d.reason : "";
+        if (state.issues[d.issue_id]) {
+          state.issues[d.issue_id].status = "deferred";
+          state.issues[d.issue_id].deferredReason = reason;
+          state.issues[d.issue_id].history.push({ round, status: "deferred" });
+        } else {
+          state.issues[d.issue_id] = {
+            firstSeen: round, severity: "minor", status: "deferred",
+            deferredReason: reason,
+            history: [{ round, status: "deferred" }], fixAttempts: 0,
+          };
+        }
+      }
+      // known-remaining 同步更新：deferred 在本轮 fix 后即生效，R2+ prompt 立即消费
+      // （不依赖下轮 reconcile 才生成——否则滞后一轮，reviewer 本轮看不到 deferred 清单）
+      state.knownRemaining = computeKnownRemaining(state.issues);
     }
     if (!state.fixResults) state.fixResults = [];
     state.fixResults.push(fixResult);
@@ -772,8 +839,17 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
 
   terminated = resolveBatchTerminated(batchClean, terminated);
   if (terminated === "max-rounds") {
-    // 该批达到 maxRounds 仍残留 must-fix → fail-fast，不进入后续批
-    finalMessage = "Batch " + batchIndex + " (" + BATCH_NAMES[batchIndex - 1] + ") 达到 maxRounds=" + maxRounds + " 仍有 must-fix，终止整个 workflow";
+    // 该批达到 maxRounds 仍残留 must-fix → fail-fast，不进入后续批。
+    // 5.9 残留清单：未 fixed 的 issues（status != fixed/deferred）+ known-remaining。
+    const remainingIds = state.issues
+      ? Object.entries(state.issues)
+          .filter(([, i]) => i.status !== "fixed" && i.status !== "deferred")
+          .map(([id]) => id)
+      : [];
+    finalMessage = "Batch " + batchIndex + " (" + BATCH_NAMES[batchIndex - 1] + ") 达到 maxRounds=" + maxRounds
+      + " 仍有 must-fix，终止整个 workflow。残留: "
+      + (remainingIds.length ? remainingIds.join(", ") : "(issues 未追踪)")
+      + (state.knownRemaining && state.knownRemaining.length ? "；deferred: " + state.knownRemaining.join("; ") : "");
     log(finalMessage);
     saveState(state);
     batchIndex = BATCHES.length + 1;
@@ -797,7 +873,9 @@ return {
   // （stuck/needs-redesign/converged/max-rounds/*-failure 均由 finalMessage 承载）。
   // 渲染层特判（launcher 对 terminated 非 clean 的视觉区分）留 TODO：当前 tool 结果
   // 已含完整 message，主 agent 可直接感知差异。
+  // 5.9 视觉区分：非 clean 终止加 [UNRESOLVED] 前缀（tool 结果即主 agent 可见层，
+  // launcher 透传 message——无需跨模块渲染特判，W5C3 决策更新）
   message: terminated === "clean"
     ? "All batches clean. " + totalFixed + " issue(s) fixed total. State: " + STATE_FILE
-    : finalMessage + ". State: " + STATE_FILE,
+    : "[UNRESOLVED] " + finalMessage + ". State: " + STATE_FILE,
 };
