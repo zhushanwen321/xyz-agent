@@ -30,8 +30,8 @@ vi.mock('@/api', () => ({
 
 // mock useSidebar（selectSession 是 session 跳转接线点，T4.3/T4.6）
 const selectSessionMock = vi.fn()
-vi.mock('@/composables/features/useSidebar', () => ({
-  useSidebar: () => ({ selectSession: (...args: unknown[]) => selectSessionMock(...args) }),
+vi.mock('@/composables/features/useSidebarNew', () => ({
+  useSidebarNew: () => ({ selectSession: (...args: unknown[]) => selectSessionMock(...args) }),
 }))
 
 // mock useDetailPane：仅占位（AC-6.9 不应被 useSearchJump 调用；此 mock 用于断言 openPreview 未被调）

@@ -38,8 +38,8 @@ const sidebarMock = vi.hoisted(() => ({
   loadSessions: vi.fn(() => Promise.resolve()),
   selectSession: vi.fn(() => Promise.resolve()),
 }))
-vi.mock('@/composables/features/useSidebar', () => ({
-  useSidebar: () => ({
+vi.mock('@/composables/features/useSidebarNew', () => ({
+  useSidebarNew: () => ({
     loadSessions: sidebarMock.loadSessions,
     selectSession: sidebarMock.selectSession,
   }),

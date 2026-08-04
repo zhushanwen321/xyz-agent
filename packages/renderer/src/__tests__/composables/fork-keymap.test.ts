@@ -33,8 +33,8 @@ import path from 'node:path'
 // ── mock useSidebar：暴露 forkFromLastAssistant / enterForkModeFromLastAssistant（W3 新增）──
 const forkFromLastAssistantMock = vi.fn(() => Promise.resolve())
 const enterForkModeFromLastAssistantMock = vi.fn(() => Promise.resolve())
-vi.mock('@/composables/features/useSidebar', () => ({
-  useSidebar: () => ({
+vi.mock('@/composables/features/useSidebarNew', () => ({
+  useSidebarNew: () => ({
     forkFromLastAssistant: forkFromLastAssistantMock,
     enterForkModeFromLastAssistant: enterForkModeFromLastAssistantMock,
     loadSessions: vi.fn(),
