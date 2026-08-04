@@ -489,6 +489,19 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     });
 
     const fx = parseResult(fxRaw);
+    if (fxRaw && typeof fxRaw === "object" && fxRaw.error) {
+      // fix agent 调用失败（AgentRegistry not found / 超时等，agent() 返回 {error}）。
+      // 与 review 路径（raw.error → review-failure）对齐：结构化终止而非静默当成功——
+      // 否则 fixed_count 缺失被 `?? mustFix` 回退，totalFixed 虚增且 must_fix 不降白跑轮次（MF-1）。
+      log("Fix agent failed, stopping.");
+      batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
+      state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
+      saveState(state);
+      terminated = "fix-failure";
+      finalMessage = "Batch " + batchIndex + " round " + round + ": fix agent 调用失败 — " + fxRaw.error;
+      batchIndex = BATCHES.length + 1;
+      break;
+    }
     if (!fx) {
       log("Fix agent failed, stopping.");
       batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
