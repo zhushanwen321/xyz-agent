@@ -72,7 +72,7 @@
       <div v-if="!localModels.length" class="py-8 text-center text-[12px] text-neutral-mid">{{ t('settings.providerEdit.noModels') }}</div>
 
       <!-- 表头。非名称列统一 text-center，与下方行 value 单元格对齐方式一致。 -->
-      <div v-if="localModels.length" class="flex items-center border-b border-border bg-surface px-5 py-2 text-center text-[10px] uppercase tracking-wider text-neutral-dim">
+      <div v-if="localModels.length" class="flex items-center border-b border-border bg-surface px-5 py-2 text-center text-[10px] text-neutral-dim">
         <span class="flex-1 text-left">{{ t('settings.providerEdit.modelLabel') }}</span>
         <span class="w-14">{{ t('settings.providerEdit.headInput') }}</span>
         <span class="w-[80px]">{{ t('settings.providerEdit.headContext') }}</span>

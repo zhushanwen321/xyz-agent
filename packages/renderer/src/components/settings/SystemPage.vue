@@ -5,7 +5,7 @@
   -->
   <div class="flex max-w-[860px] flex-col gap-3">
     <!-- 卡 1：语言与外观 -->
-    <div class="rounded-md border border-border bg-bg">
+    <div class="rounded-card bg-card">
       <div class="px-4 pb-3 pt-3">
         <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.system.languageAppearance') }}</h3>
       </div>
@@ -86,7 +86,7 @@
     </div>
 
     <!-- 卡 2：提示音（系统原生声音选择 + 试听） -->
-    <div class="rounded-md border border-border bg-bg">
+    <div class="rounded-card bg-card">
       <div class="px-4 pb-3 pt-3">
         <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.system.soundTitle') }}</h3>
       </div>
@@ -167,12 +167,12 @@
     </div>
 
     <!-- 卡 2：配色主题 -->
-    <div class="rounded-md border border-border bg-bg">
+    <div class="rounded-card bg-card">
       <div class="px-4 pb-3 pt-3">
         <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.system.themePresetTitle') }}</h3>
       </div>
       <div class="border-t border-border px-4 py-3">
-        <p class="mb-2 text-[11px] uppercase tracking-wider text-neutral-mid">{{ t('settings.system.presetMuted') }}</p>
+        <p class="mb-2 text-[11px] text-neutral-mid">{{ t('settings.system.presetMuted') }}</p>
         <div class="mb-3 flex flex-wrap gap-2">
           <Button
             variant="ghost"
@@ -188,7 +188,7 @@
             <span class="text-neutral-fg">{{ sw.label }}</span>
           </Button>
         </div>
-        <p class="mb-2 text-[11px] uppercase tracking-wider text-neutral-mid">{{ t('settings.system.presetColorful') }}</p>
+        <p class="mb-2 text-[11px] text-neutral-mid">{{ t('settings.system.presetColorful') }}</p>
         <div class="flex flex-wrap gap-2">
           <Button
             variant="ghost"
@@ -208,7 +208,7 @@
     </div>
 
     <!-- 卡 3：快捷键（可重录 + 重置） -->
-    <div class="rounded-md border border-border bg-bg">
+    <div class="rounded-card bg-card">
       <div class="px-4 pb-3 pt-3">
         <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.system.shortcutTitle') }}</h3>
         <p class="mt-0.5 text-[10px] text-neutral-dim">{{ t('settings.system.shortcutRecordingHint') }}</p>

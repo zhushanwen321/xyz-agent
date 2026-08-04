@@ -38,7 +38,7 @@
       v-for="p in presets"
       :key="p.id"
       :open="isExpanded(p.id)"
-      class="rounded-md border border-border bg-bg"
+      class="rounded-card bg-card"
       @update:open="(v) => toggleExpanded(p.id, v)"
     >
       <!-- 预设头部：CollapsibleTrigger as-child 包 Button，构成全宽点击区。
@@ -119,7 +119,7 @@
                改 v-model 会失去 debounce 能力（每次 keystroke 立即触发 RPC）。 -->
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <Label class="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
+              <Label class="mb-1 block text-[11px] font-semibold text-neutral-mid">
                 {{ t('settings.preset.name') }}
               </Label>
               <Input
@@ -131,7 +131,7 @@
               />
             </div>
             <div>
-              <Label class="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
+              <Label class="mb-1 block text-[11px] font-semibold text-neutral-mid">
                 {{ t('settings.preset.id') }}
               </Label>
               <Input
@@ -143,7 +143,7 @@
           </div>
           <!-- 描述（受控写法 + debounce，同 name 字段，见上文注释） -->
           <div>
-            <Label class="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
+            <Label class="mb-1 block text-[11px] font-semibold text-neutral-mid">
               {{ t('settings.preset.description') }}
             </Label>
             <Input

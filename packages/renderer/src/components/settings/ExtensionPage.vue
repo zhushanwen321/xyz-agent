@@ -18,7 +18,7 @@
 
     <!-- 推荐扩展区：快捷一键安装 builtin pi-extensions（SSOT = recommended-extensions.json）。
          onMounted 拉取 installed 状态；install 后 watch(extensions) 刷新。-->
-    <section v-if="recommended.length" class="rounded-md border border-border bg-bg">
+    <section v-if="recommended.length" class="rounded-card bg-card">
       <div class="border-b border-border px-3 py-2">
         <h3 class="text-[12px] font-medium text-neutral-fg">{{ t('settings.extension.recommendedTitle') }}</h3>
       </div>
@@ -49,14 +49,14 @@
     </section>
 
     <!-- 安装区 -->
-    <section class="rounded-md border border-border bg-bg">
+    <section class="rounded-card bg-card">
       <div class="flex items-center gap-1 border-b border-border px-3 py-2">
         <Button
           variant="ghost"
           v-for="tab in tabs"
           :key="tab.id"
           class="h-auto rounded-sm px-2.5 py-1 text-[12px]"
-          :class="activeTab === tab.id ? 'bg-surface-hover text-neutral-fg' : 'text-neutral-mid hover:text-neutral-fg'"
+          :class="activeTab === tab.id ? 'bg-bg-elevated text-neutral-fg' : 'text-neutral-mid hover:text-neutral-fg'"
           @click="activeTab = tab.id"
         >{{ tab.label }}</Button>
       </div>
@@ -85,7 +85,7 @@
     </section>
 
     <!-- 候选内联展开（dir/git 多步第二步，§6.3 点3：安装区下方直接展开） -->
-    <section v-if="discovered" class="rounded-md border border-border bg-bg">
+    <section v-if="discovered" class="rounded-card bg-card">
       <div class="flex items-center justify-between border-b border-border px-3 py-2">
         <h3 class="text-[12px] font-medium text-neutral-fg">{{ t('settings.extension.discoverResultTitle', { count: discovered.candidates.length }) }}</h3>
         <Button variant="ghost" class="h-auto px-2 py-0.5 text-[11px] text-neutral-dim" @click="onCancelInstall">{{ t('settings.extension.cancel') }}</Button>
@@ -142,7 +142,7 @@
 
       <div v-if="!extensions.length" class="py-8 text-center text-[12px] text-neutral-mid">{{ t('settings.extension.noExtensions') }}</div>
 
-      <div v-for="ext in extensions" :key="ext.name" class="flex items-center gap-3 rounded-md border border-border bg-bg px-3 py-2.5">
+      <div v-for="ext in extensions" :key="ext.name" class="flex items-center gap-3 rounded-card bg-card px-3 py-2.5">
         <div class="flex min-w-0 flex-1 flex-col gap-0.5">
           <div class="flex items-center gap-2">
             <span class="truncate text-[12px] font-medium text-neutral-fg">{{ ext.displayName ?? ext.name }}</span>

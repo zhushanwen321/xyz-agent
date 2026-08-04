@@ -19,7 +19,7 @@
     </div>
 
     <!-- 卡 1：替换系统提示词 -->
-    <div class="rounded-md border border-border bg-bg">
+    <div class="rounded-card bg-card">
       <div class="flex items-center justify-between px-4 pb-3 pt-3">
         <div class="min-w-0">
           <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.systemPrompt.replaceTitle') }}</h3>
@@ -92,7 +92,7 @@
     </div>
 
     <!-- 卡 2：注入额外提示词 -->
-    <div class="rounded-md border border-border bg-bg">
+    <div class="rounded-card bg-card">
       <div class="flex items-center justify-between px-4 pb-3 pt-3">
         <div class="min-w-0">
           <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.systemPrompt.appendTitle') }}</h3>

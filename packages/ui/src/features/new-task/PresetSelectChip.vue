@@ -204,7 +204,7 @@ watch(() => defaultPresetId.value, (newDefault) => {
            历史背景：曾用 bg-surface-2 给头部加深色块，视觉上像粗边框/双层条带，与 dir/branch 头部
            透明背景不一致，故去掉对齐。 -->
       <div
-        class="flex items-center justify-between border-b border-border px-3 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-neutral-dim"
+        class="flex items-center justify-between border-b border-border px-3 py-2 font-mono text-[10px] text-neutral-dim"
       >
         <span>{{ t('newTask.presetSelect.title') }}</span>
       </div>

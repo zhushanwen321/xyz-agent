@@ -8,7 +8,7 @@
   <div class="compat-editor flex flex-col gap-3 py-2">
     <!-- 国产模型预设（一键配置）：按 api 类型过滤显示 -->
     <div v-if="presets.length" class="flex flex-wrap items-center gap-1.5 border-b border-border pb-2">
-      <span class="text-[10px] uppercase tracking-wider text-neutral-dim">{{ t('settings.compat.presetLabel') }}</span>
+      <span class="text-[10px] text-neutral-dim">{{ t('settings.compat.presetLabel') }}</span>
       <Button
         v-for="p in presets"
         :key="p.id"
@@ -29,7 +29,7 @@
 
     <!-- 关键字段区（essential，始终露出）-->
     <div v-if="essentialFields.length" class="flex flex-col gap-2">
-      <span class="text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">{{ t('settings.compat.essential') }}</span>
+      <span class="text-[11px] font-semibold text-neutral-mid">{{ t('settings.compat.essential') }}</span>
       <CompatField
         v-for="f in essentialFields"
         :key="f.field"

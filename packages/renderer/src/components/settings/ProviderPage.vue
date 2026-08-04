@@ -38,7 +38,7 @@
     </div>
 
     <!-- 实体列表 -->
-    <div v-for="p in providers" :key="p.id" class="overflow-hidden rounded-md border border-border bg-bg">
+    <div v-for="p in providers" :key="p.id" class="overflow-hidden rounded-card bg-card">
       <!-- 行头 -->
       <div class="flex min-w-0 items-center gap-3 px-4 py-3">
         <span class="size-[7px] shrink-0 rounded-full" :class="statusDot(p.status)" />
@@ -103,7 +103,7 @@
 
         <!-- 模型清单表格 -->
         <div v-if="p.models.length" class="overflow-x-auto border-t border-border px-4 py-3">
-          <p class="mb-2 text-[11px] uppercase tracking-wider text-neutral-mid">{{ t('settings.provider.modelList') }}</p>
+          <p class="mb-2 text-[11px] text-neutral-mid">{{ t('settings.provider.modelList') }}</p>
           <Table class="w-full table-fixed text-[12px]">
             <colgroup>
               <col class="w-[32%]" />

@@ -29,13 +29,13 @@
         <div class="flex w-[340px] shrink-0 flex-col gap-4 border-r border-border p-5">
           <!-- 名称 -->
           <div>
-            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">{{ t('settings.providerEdit.fieldName') }}</Label>
+            <Label class="mb-1.5 block text-[11px] font-semibold text-neutral-mid">{{ t('settings.providerEdit.fieldName') }}</Label>
             <Input v-model="form.name" :placeholder="t('settings.providerEdit.fieldNamePlaceholder')" />
           </div>
 
           <!-- 类型 -->
           <div>
-            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
+            <Label class="mb-1.5 block text-[11px] font-semibold text-neutral-mid">
               {{ t('settings.providerEdit.fieldType') }} <span class="normal-case tracking-normal">{{ t('settings.providerEdit.fieldTypeHint') }}</span>
             </Label>
             <Select v-model="form.api">
@@ -55,13 +55,13 @@
 
           <!-- Base URL -->
           <div>
-            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">{{ t('settings.providerEdit.fieldBaseUrl') }}</Label>
+            <Label class="mb-1.5 block text-[11px] font-semibold text-neutral-mid">{{ t('settings.providerEdit.fieldBaseUrl') }}</Label>
             <Input v-model="form.baseUrl" placeholder="https://api.anthropic.com" />
           </div>
 
           <!-- API Key -->
           <div>
-            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
+            <Label class="mb-1.5 block text-[11px] font-semibold text-neutral-mid">
               {{ t('settings.providerEdit.fieldApiKey') }} <span class="normal-case tracking-normal">{{ t('settings.providerEdit.apiKeyHint') }}</span>
             </Label>
             <div class="flex items-center gap-2">
@@ -100,7 +100,7 @@
 
           <!-- authHeader 开关（W3 D7）：是否把 apiKey 写入 Authorization header -->
           <div class="flex items-center justify-between">
-            <Label class="text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
+            <Label class="text-[11px] font-semibold text-neutral-mid">
               {{ t('settings.providerEdit.fieldAuthHeader') }} <span class="normal-case tracking-normal">{{ t('settings.providerEdit.authHeaderHint') }}</span>
             </Label>
             <Switch
@@ -113,7 +113,7 @@
 
           <!-- headers 编辑区（W3 D7）：key-value 行编辑 + 添加/删除 -->
           <div data-testid="headers-editor">
-            <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
+            <Label class="mb-1.5 block text-[11px] font-semibold text-neutral-mid">
               {{ t('settings.providerEdit.customHeaders') }} <span class="normal-case tracking-normal">{{ t('settings.providerEdit.customHeadersHint') }}</span>
             </Label>
             <div class="flex flex-col gap-1.5">

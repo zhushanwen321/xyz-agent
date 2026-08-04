@@ -18,7 +18,7 @@
     </div>
 
     <!-- 单卡片：终端配置表单 -->
-    <div class="rounded-md border border-border bg-bg">
+    <div class="rounded-card bg-card">
       <div class="px-4 pb-3 pt-3">
         <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.terminal.title') }}</h3>
       </div>

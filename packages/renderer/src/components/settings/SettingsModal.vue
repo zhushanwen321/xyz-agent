@@ -27,7 +27,7 @@
       <!-- modal-body -->
       <div class="flex min-h-0 flex-1">
         <!-- 左导航 -->
-        <nav class="flex w-[200px] flex-shrink-0 flex-col gap-px border-r border-border bg-surface p-2">
+        <nav class="flex w-[200px] flex-shrink-0 flex-col gap-px bg-bg p-2">
           <Button
             v-for="item in menus"
             :key="item.id"
@@ -35,7 +35,7 @@
             class="h-auto justify-start gap-2.5 rounded-md px-2.5 py-2 text-[13px]"
             :class="
               item.id === activeMenu
-                ? 'bg-surface-hover text-neutral-fg ring-1 ring-inset ring-accent hover:bg-surface-hover hover:text-neutral-fg'
+                ? 'bg-surface text-accent hover:bg-surface hover:text-accent'
                 : 'text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg'
             "
             :data-testid="`settings-nav-${item.id}`"

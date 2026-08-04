@@ -162,7 +162,7 @@ function sourceLabel(source: string): string {
           v-for="p in preview.providers"
           :key="p.id"
           data-testid="preview-provider-item"
-          class="rounded-md border border-border bg-bg px-3 py-2 text-[12px]"
+          class="rounded-card bg-card px-3 py-2 text-[12px]"
           :class="{ 'opacity-70': p.conflict === 'duplicate-id' }"
         >
           <div class="flex items-center gap-2">

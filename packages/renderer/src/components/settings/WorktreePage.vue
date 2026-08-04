@@ -6,7 +6,7 @@
 <template>
   <div class="flex max-w-[860px] flex-col gap-3">
     <!-- Section 1：普通 git 仓库 -->
-    <div class="rounded-md border border-border bg-bg">
+    <div class="rounded-card bg-card">
       <div class="px-4 pb-3 pt-3">
         <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.worktree.sectionPlainRepo') }}</h3>
         <p class="mt-0.5 text-[11px] text-neutral-mid">{{ t('settings.worktree.sectionPlainRepoDesc') }}</p>
@@ -52,7 +52,7 @@
     </div>
 
     <!-- Section 2：bare-workspace -->
-    <div class="rounded-md border border-border bg-bg">
+    <div class="rounded-card bg-card">
       <div class="px-4 pb-3 pt-3">
         <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.worktree.sectionBareWorkspace') }}</h3>
         <p class="mt-0.5 text-[11px] text-neutral-mid">{{ t('settings.worktree.sectionBareWorkspaceDesc') }}</p>
@@ -90,7 +90,7 @@
     </div>
 
     <!-- Section 3：通用 -->
-    <div class="rounded-md border border-border bg-bg">
+    <div class="rounded-card bg-card">
       <div class="px-4 pb-3 pt-3">
         <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.worktree.sectionGeneral') }}</h3>
         <p class="mt-0.5 text-[11px] text-neutral-mid">{{ t('settings.worktree.sectionGeneralDesc') }}</p>

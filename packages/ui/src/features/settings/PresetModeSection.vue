@@ -7,7 +7,7 @@
   <div class="flex flex-col gap-4">
     <!-- 工具模式 -->
     <div>
-      <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
+      <Label class="mb-1.5 block text-[11px] font-semibold text-neutral-mid">
         {{ t('settings.preset.toolMode') }}
         <!-- 只读徽章：内置预设 disabled 时显示，替代旧 opacity-50 的隐式只读视觉 -->
         <span v-if="disabled" class="ml-1.5 rounded-sm bg-surface px-1 py-0.5 text-[9px] font-normal normal-case tracking-normal text-neutral-dim">{{ t('settings.preset.readonlyBadge') }}</span>
@@ -19,7 +19,7 @@
           variant="ghost"
           size="dense"
           class="rounded-sm text-[11px]"
-          :class="preset.toolMode === m.value ? 'bg-surface-hover text-neutral-fg ring-1 ring-inset ring-accent' : 'text-neutral-mid hover:text-neutral-fg'"
+          :class="preset.toolMode === m.value ? 'bg-bg-elevated text-neutral-fg' : 'text-neutral-mid hover:text-neutral-fg'"
           :disabled="disabled"
           @click="onToolModeChange(m.value)"
         >
@@ -59,7 +59,7 @@
 
     <!-- 扩展模式 -->
     <div>
-      <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
+      <Label class="mb-1.5 block text-[11px] font-semibold text-neutral-mid">
         {{ t('settings.preset.extensionMode') }}
         <span v-if="disabled" class="ml-1.5 rounded-sm bg-surface px-1 py-0.5 text-[9px] font-normal normal-case tracking-normal text-neutral-dim">{{ t('settings.preset.readonlyBadge') }}</span>
       </Label>
@@ -70,7 +70,7 @@
           variant="ghost"
           size="dense"
           class="rounded-sm text-[11px]"
-          :class="preset.extensionMode === m.value ? 'bg-surface-hover text-neutral-fg ring-1 ring-inset ring-accent' : 'text-neutral-mid hover:text-neutral-fg'"
+          :class="preset.extensionMode === m.value ? 'bg-bg-elevated text-neutral-fg' : 'text-neutral-mid hover:text-neutral-fg'"
           :disabled="disabled"
           @click="onExtModeChange(m.value)"
         >

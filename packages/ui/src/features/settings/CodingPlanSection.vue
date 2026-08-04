@@ -6,7 +6,7 @@
     所有业务逻辑在父组件 useQuotaConfigure 中，本组件纯展示 + 事件转发。
   -->
   <div class="border-t border-border pt-4" data-testid="coding-plan-section">
-    <Label class="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-neutral-mid">
+    <Label class="mb-1.5 block text-[11px] font-semibold text-neutral-mid">
       {{ t('settings.providerEdit.quotaSection') }}
     </Label>
 
@@ -175,7 +175,7 @@
           :key="idx"
           class="flex items-center justify-between py-0.5 text-[11px]"
         >
-          <span class="font-mono text-[10px] uppercase tracking-wide text-neutral-mid">{{ windowLabels[idx] }}</span>
+          <span class="font-mono text-[10px] text-neutral-mid">{{ windowLabels[idx] }}</span>
           <span v-if="win.pct !== null" class="font-semibold tabular-nums text-neutral-fg">
             {{ Math.round(win.pct) }}%
             <span v-if="win.resetSec !== null" class="ml-1 font-normal text-neutral-dim">· {{ formatResetSec(win.resetSec) }}</span>

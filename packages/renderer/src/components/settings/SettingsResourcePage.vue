@@ -36,7 +36,7 @@
             v-for="tab in sourceTabs"
             :key="tab.id"
             class="h-auto rounded-sm px-2 py-0.5 text-[11px]"
-            :class="activeSource === tab.id ? 'bg-surface-hover text-neutral-fg' : 'text-neutral-mid hover:text-neutral-fg'"
+            :class="activeSource === tab.id ? 'bg-bg-elevated text-neutral-fg' : 'text-neutral-mid hover:text-neutral-fg'"
             @click="activeSource = tab.id"
           >{{ t(tab.labelKey) }}</Button>
         </div>
@@ -47,7 +47,7 @@
       <div v-if="!filteredItems.length" class="py-8 text-center text-[12px] text-neutral-mid">{{ t(activeSource === 'all' ? 'settings.resource.notFound' : 'settings.resource.notFoundInSource', { label }) }}</div>
 
       <!-- ADR §5：只读预览，无开关无 CRUD。来源 badge 链 + effective 标生效。 -->
-      <div v-for="item in filteredItems" :key="item.id" class="flex items-center gap-2 rounded-md border border-border bg-bg px-3 py-2">
+      <div v-for="item in filteredItems" :key="item.id" class="flex items-center gap-2 rounded-card bg-card px-3 py-2">
         <span class="flex-1 truncate text-[12px] font-medium text-neutral-fg">{{ item.name }}</span>
         <!-- 来源 badge 链（多来源时展开，第一个标生效） -->
         <span

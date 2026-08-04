@@ -5,7 +5,7 @@
 <template>
   <div class="flex max-w-[860px] flex-col gap-3">
     <!-- 卡 1：代理配置 -->
-    <div class="rounded-md border border-border bg-bg">
+    <div class="rounded-card bg-card">
       <div class="px-4 pb-3 pt-3">
         <h3 class="text-[13px] font-medium text-fg">{{ t('settings.update.sectionTitle') }}</h3>
         <p class="mt-0.5 text-[11px] text-muted">{{ t('settings.update.sectionDesc') }}</p>
