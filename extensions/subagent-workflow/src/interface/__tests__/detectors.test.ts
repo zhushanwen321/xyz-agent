@@ -44,6 +44,13 @@ describe("findFlattenedArgKeys (workflow args flatten detector — P0)", () => {
     expect(findFlattenedArgKeys({ action: "status" })).toEqual([]);
   });
 
+  it("review-fix-loop fixAgent 平铺被识别（TC7）", () => {
+    expect(findFlattenedArgKeys({ action: "run", name: "review-fix-loop", fixAgent: "worker" })).toEqual(["fixAgent"]);
+    expect(
+      findFlattenedArgKeys({ action: "run", name: "review-fix-loop", args: { fixAgent: "worker" } }),
+    ).toEqual([]);
+  });
+
   it("triggers for review-fix-loop args flattened to top level (incl. batchN prefix)", () => {
     expect(
       findFlattenedArgKeys({ action: "run", name: "review-fix-loop", targetType: "git-diff", target: "main" }),

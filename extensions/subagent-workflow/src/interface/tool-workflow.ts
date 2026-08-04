@@ -103,7 +103,7 @@ const KNOWN_ARG_KEYS = [
   "task", "target", "perspectives", "items", "itemsJson", "operation",
   // review-fix-loop 参数（内置 workflow，2026-08 新增）
   "targetType", "agents", "batchNames", "reviewPrompt", "fixPrompt",
-  "autoCommit", "maxRounds", "stuckThreshold", "skipCleanAgents", "recheckAfterFix",
+  "autoCommit", "maxRounds", "stuckThreshold", "skipCleanAgents", "recheckAfterFix", "fixAgent",
 ];
 
 /** 前缀式参数（batch1..batchN 动态编号，无法枚举） */

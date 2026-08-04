@@ -49,6 +49,10 @@ const {
   buildReviewInstruction,
   lockReviewBase,
   buildScopedRecheckPrompt,
+  wrapUntrusted,
+  buildFixPrompt,
+  normalizeFixResult,
+  validateFixResult,
   parseResult,
   normalizeAggregatorResult,
   parseAggregatedMd,
@@ -69,7 +73,7 @@ const {
 for (const key of Object.keys($ARGS)) {
   if (VALID_ARG_KEYS.has(key)) continue;
   if (/^batch\d+$/.test(key)) continue;
-  fail("未知参数: " + key + "（合法参数: targetType/target/batch1..batchN/agents/batchNames/reviewPrompt/fixPrompt/autoCommit/maxRounds/stuckThreshold/model/skipCleanAgents/recheckAfterFix）");
+  fail("未知参数: " + key + "（合法参数: targetType/target/batch1..batchN/agents/batchNames/reviewPrompt/fixPrompt/autoCommit/maxRounds/stuckThreshold/model/skipCleanAgents/recheckAfterFix/fixAgent）");
 }
 
 const targetType = $ARGS.targetType;
@@ -93,6 +97,12 @@ const skipCleanAgents = normalizeBool($ARGS.skipCleanAgents, "skipCleanAgents", 
 // RC-5（fix 后全批全量重审放大 token）在默认场景消失。传 true 启用可选强回归模式：fix 后重派
 // 全批，clean agent 走限定 prompt（buildScopedRecheckPrompt，只审 modifiedFiles，5.5）。
 const recheckAfterFix = normalizeBool($ARGS.recheckAfterFix, "recheckAfterFix", false, fail);
+// fixAgent（5.3）：值语义同 batchN 的 agent 项（内置名 / agent.md 路径），解析复用
+// resolveAgentDefs 白名单与加载逻辑。传入时 fix 阶段用 agent({agent: ...}) 派发（代码场景
+// 的 verify 命令写在该 agent.md 内）；未传保持现状（通用 subagent + 内联 prompt）。
+const FIX_AGENT_RAW = typeof $ARGS.fixAgent === "string" && $ARGS.fixAgent.trim()
+  ? $ARGS.fixAgent.trim() : undefined;
+const FIX_DEF = FIX_AGENT_RAW ? resolveAgentDefs([FIX_AGENT_RAW])[0] : null;
 const MODEL = typeof $ARGS.model === "string" && $ARGS.model.trim() ? $ARGS.model.trim() : undefined;
 
 // base 锁定（RC-6，5.6）：git-diff 场景 run 启动时锁定 base commit，全程用锁定 hash 构造
@@ -140,6 +150,39 @@ const aggregatorSchema = {
     suggestion: { type: "number", description: "Total suggestions after dedup across all dimensions" },
   },
   required: ["report_file", "must_fix", "suggestion"],
+};
+
+// fix schema（5.3）：object[]（issue_id/description/self_check/affected_files）+ deferred。
+// 兼容性：normalizeFixResult 对旧格式（fixes string[]、无 deferred）兜底解析。
+const fixSchema = {
+  type: "object",
+  properties: {
+    fixed_count: { type: "number", description: "Number of issues fixed" },
+    fixes: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          issue_id: { type: "string", description: "Issue identifier from the aggregated report" },
+          description: { type: "string", description: "One-line description of the fix" },
+          self_check: { type: "string", description: "grep command + hit count + sync action proving the fix is complete" },
+          affected_files: { type: "array", items: { type: "string" }, description: "Files touched by this fix + files checked/synced as reference points" },
+        },
+      },
+    },
+    deferred: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          issue_id: { type: "string" },
+          severity: { type: "string", description: "Must be minor — critical/major must not be deferred" },
+          reason: { type: "string", description: "Concrete cost description: which files/mechanisms involved, why high cost, suggested follow-up" },
+        },
+      },
+    },
+  },
+  required: ["fixed_count"],
 };
 
 // ── Per-run isolation: runId-scoped directories ─────────────────────
@@ -231,8 +274,8 @@ function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
     };
   }
 
-  // recheck 限定分支（5.5）：clean agent 重派时只审 fix 改动文件（scope=modifiedFiles 初版，
-  // wave 2 升级为 modifiedFiles ∪ affected_files），不诱导全量重扫。
+  // recheck 限定分支（5.5）：clean agent 重派时只审 fix 改动文件 + 自检关联点
+  // （scope = modifiedFiles ∪ affected_files，后者来自 state.fixImpactFiles），不诱导全量重扫。
   if (scoped) {
     return {
       ...base,
@@ -240,6 +283,7 @@ function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
         header, round, max, roundDir,
         reportFile: def.report,
         modifiedFiles: lastModifiedFiles(),
+        affectedFiles: (state.fixImpactFiles && Array.isArray(state.fixImpactFiles)) ? state.fixImpactFiles : [],
       }),
       agent: def.isCustom ? undefined : def.name,
     };
@@ -511,32 +555,19 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       : "- Do NOT commit. Leave the fixes in the working tree (autoCommit=false).";
 
     const fxRaw = await agent({
-      prompt: [
-        "Fix round " + round + " (batch " + batchIndex + "): Fix ALL must-fix issues from the aggregated review report below.",
-        "",
-        "## Aggregated Review Report",
+      prompt: buildFixPrompt({
+        header: "Fix round " + round + " (batch " + batchIndex + ")",
         reportContent,
-        "",
-        "## Instructions",
-        "- Fix every must-fix issue listed in the report",
-        "- Apply the MINIMAL correct fix (no refactoring, no style changes)",
-        "- Verify each fix by reading the changed file afterwards",
-        fixPrompt,
+        fixPrompt: FIX_DEF && FIX_DEF.isCustom
+          ? fixPrompt + "\n\nFixer specification (from agent file):\n" + FIX_DEF.systemPrompt
+          : fixPrompt,
         commitInstr,
-        "",
-        "Return the count of issues fixed.",
-      ].join("\n"),
-      schema: {
-        type: "object",
-        properties: {
-          fixed_count: { type: "number", description: "Number of issues fixed" },
-          fixes: { type: "array", items: { type: "string" }, description: "One-line description of each fix" },
-        },
-        required: ["fixed_count"],
-      },
+      }),
+      schema: fixSchema,
       model: MODEL,
       description: "fix",
       returnMeta: true,
+      ...(FIX_DEF && !FIX_DEF.isCustom ? { agent: FIX_DEF.name } : {}),
     });
 
     // returnMeta 下 fxRaw = {value, error}：先查 error（失败分支可达，MF-1），再对 value 做 parseResult
@@ -554,7 +585,8 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       break;
     }
     const fx = parseResult(fxRaw.value);
-    if (!fx) {
+    const fixResult = fx ? normalizeFixResult(fx) : null;
+    if (!fixResult) {
       log("Fix agent failed, stopping.");
       batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
       state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
@@ -565,7 +597,40 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       break;
     }
 
-    const fixedCount = fx.fixed_count ?? mustFix;
+    // ES3 硬校验（5.3 红线）：deferred 只允许 minor，显式非 minor → fix-failure（结构化终止）
+    const es3Violations = validateFixResult(fixResult);
+    if (es3Violations.length > 0) {
+      log("ES3 violation: deferred contains non-minor severity — " + JSON.stringify(es3Violations));
+      batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
+      state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
+      saveState(state);
+      terminated = "fix-failure";
+      finalMessage = "Batch " + batchIndex + " round " + round + ": deferred 含非 minor 条目（must-fix 不得 defer）— "
+        + es3Violations.map((v) => v.issue_id + "(" + v.severity + ")").join(", ");
+      batchIndex = BATCHES.length + 1;
+      break;
+    }
+
+    // ES2 软校验（5.3 证据标准）：defer 理由过短/无实质 → warning 日志（不终止）
+    for (const d of fixResult.deferred) {
+      const reason = typeof d.reason === "string" ? d.reason : "";
+      if (reason.trim().length < 20) {
+        log("WARN: deferred reason too short / no concrete cost description: " + JSON.stringify(d));
+      }
+    }
+
+    // affected_files 并入 state.fixImpactFiles（5.3/5.5）：recheck scope = modifiedFiles ∪ fixImpactFiles
+    const impactFiles = [];
+    for (const f of fixResult.fixes) {
+      if (Array.isArray(f.affected_files)) {
+        for (const af of f.affected_files) {
+          if (typeof af === "string" && af.trim() && !impactFiles.includes(af.trim())) impactFiles.push(af.trim());
+        }
+      }
+    }
+    state.fixImpactFiles = impactFiles;
+
+    const fixedCount = fixResult.fixed_count ?? mustFix;
     totalFixed += fixedCount;
     state.fixCount++;
     roundHasFix = true;
