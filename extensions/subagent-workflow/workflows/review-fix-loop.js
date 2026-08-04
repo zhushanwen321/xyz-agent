@@ -131,7 +131,8 @@ if (targetType === "git-diff") {
 }
 const reviewInstruction = buildReviewInstruction(targetType, lockedBase.base);
 
-// 批次解析：batch1..batchN（缺号报错）/ agents 简写 / 默认单批 [reviewer]
+// 批次解析：batch1..batchN（缺号报错）/ agents 简写；无默认批次——缺批次参数时
+// parseBatches 直接 fail-fast（与头注释「batch1..batchN/agents 必传」一致）
 const BATCHES = parseBatches($ARGS, fail);
 
 // batchNames（数量校验）
@@ -620,10 +621,12 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     // 5.1-2 R2+ 新发现 ID 契约（M2 移出 reconcile 分支，独立执行；F1 扩展为
     // 「重新报告 = 未修复」转换）：aggregator 的 must_fix_ids 中
     //   a) 不在 issues → 创建为新条目（firstSeen=round，severity 从 aggregator 标注）
-    //   b) 已存在且 fix-attempted 且本轮无对账数据（reconCount===0，doc-reviewer 场景）
-    //      → 重新报告 = 修复失败：转 regressed + fixAttempts+1 + openStreak+1
+    //   b) 已存在且（fix-attempted 或 fixed）且本轮无对账数据（reconCount===0，
+    //      doc-reviewer 场景）→ 重新报告 = 修复失败：转 regressed + fixAttempts+1 + openStreak+1
     //      （RC-7 needs-redesign 出口在无对账配置下可达；reconciliation 场景由
-    //      reconcileIssues 处理，避免双计）
+    //      reconcileIssues 处理，避免双计）。fixed 重报分支（MF-2）：已确认修复的问题
+    //      再次被报告同样转 regressed——否则 fixed 停留 + 收敛终止组合会在默认配置下
+    //      R3 即以 converged 提前终止而 must-fix 仍活跃。
     // newFindings 统计与 needs-redesign/fixAttempts 追踪对 R2+ 新发现生效。
     if (round > 1 && state.issues && agg.must_fix_ids && agg.must_fix_ids.length > 0) {
       let added = 0;
@@ -631,7 +634,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         const id = typeof entry === "string" ? entry : entry && entry.id;
         if (!id) continue;
         if (state.issues[id]) {
-          if (reconCount === 0 && state.issues[id].status === "fix-attempted") {
+          if (reconCount === 0 && (state.issues[id].status === "fix-attempted" || state.issues[id].status === "fixed")) {
             state.issues[id].status = "regressed";
             state.issues[id].fixAttempts = (state.issues[id].fixAttempts || 0) + 1;
             state.issues[id].openStreak = (state.issues[id].openStreak || 0) + 1;
@@ -710,7 +713,21 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         convergeNewIssues, convergeRounds,
       });
       state.convergeStreak = conv.streak;
-      if (conv.converged) {
+      // MF-2/S-21 收敛门槛：新发现率收敛 ≠ 问题已解决——必须同时满足「无 open/regressed
+      // 活跃条目」才允许 converged 终止。fixed 条目复发（reconcile/merge 已转 regressed）
+      // 后活跃条目存在 → 不收敛，继续修复循环（默认配置下 R3 复发不再提前终止）。
+      // issues 无追踪（aggregator 缺 must_fix_ids）时回退 mustFix===0 数字级判定，
+      // 避免 must_fix>0 照常收敛掩盖未处理问题（S-21）。
+      const trackedCount = Object.keys(state.issues || {}).length;
+      const activeIssues = Object.values(state.issues || {})
+        .filter((i) => i.status === "open" || i.status === "regressed");
+      const noActiveIssues = trackedCount === 0 ? mustFix === 0 : activeIssues.length === 0;
+      if (conv.converged && noActiveIssues) {
+        // MF-2 ④：converged 消息列出 open issue ID（对齐 max-rounds 的 remainingIds 逻辑）。
+        // 门槛保证正常路径此处为空；状态漂移时调用方仍能看到残留而非「无 deferred」误报。
+        const remainingIds = Object.entries(state.issues || {})
+          .filter(([, i]) => i.status !== "fixed" && i.status !== "deferred")
+          .map(([id]) => id);
         log("Converged: new findings <= " + convergeNewIssues + " for " + convergeRounds + " rounds. Stopping.");
         batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
         state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
@@ -718,7 +735,8 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         terminated = "converged";
         finalMessage = "Batch " + batchIndex + " round " + round + ": 新发现率收敛（连续 " + convergeRounds
           + " 轮新问题 ≤" + convergeNewIssues + "）。残留: "
-          + (state.knownRemaining && state.knownRemaining.length ? state.knownRemaining.join("; ") : "无 deferred");
+          + (remainingIds.length ? remainingIds.join(", ") : "无")
+          + (state.knownRemaining && state.knownRemaining.length ? "；deferred: " + state.knownRemaining.join("; ") : "");
         batchIndex = BATCHES.length + 1;
         break;
       }
@@ -761,6 +779,9 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       schema: fixSchema,
       model: MODEL,
       description: "fix",
+      // info #15: 显式 timeoutMs 与 review/aggregator 档位一致（fix 是写操作中最长阶段，
+      // 不依赖引擎默认值——引擎默认值变化不会悄然缩短 fix 预算）
+      timeoutMs: 1_800_000,
       returnMeta: true,
       ...(FIX_DEF && !FIX_DEF.isCustom ? { agent: FIX_DEF.name } : {}),
     });

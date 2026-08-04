@@ -12,6 +12,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import {
   TARGET_TYPES,
+  VALID_ARG_KEYS,
   normalizeBool,
   normalizeInt,
   parseBatches,
@@ -81,6 +82,24 @@ describe("shouldRetryWithReviewPrefix", () => {
     expect(shouldRetryWithReviewPrefix('Agent "x" not found.', "")).toBe(false);
     expect(shouldRetryWithReviewPrefix(undefined, "x")).toBe(false);
     expect(shouldRetryWithReviewPrefix(null, "x")).toBe(false);
+  });
+});
+
+// ── 参数白名单（review-fix-loop.js 顶层未知参数 fail-fast 的 SSOT） ──
+
+describe("VALID_ARG_KEYS（未知参数 fail-fast 白名单）", () => {
+  it("覆盖全部合法参数键（与 review-fix-loop.js 头部 fail 消息列出的合法参数一一对应）", () => {
+    expect([...VALID_ARG_KEYS].sort()).toEqual([
+      "_runId", "agents", "autoCommit", "batchNames", "convergeNewIssues",
+      "convergeRounds", "fixAgent", "fixPrompt", "maxFixAttempts", "maxRounds",
+      "model", "recheckAfterFix", "reviewPrompt", "skipCleanAgents",
+      "stuckThreshold", "target", "targetType",
+    ]);
+  });
+
+  it("batchN 动态键不在白名单（由 /^batch\\d+$/ 正则单独放行），拼错 batchl 会被拒", () => {
+    expect(VALID_ARG_KEYS.has("batch1")).toBe(false);
+    expect(VALID_ARG_KEYS.has("batchl")).toBe(false);
   });
 });
 
@@ -337,7 +356,12 @@ describe("normalizeFixResult", () => {
   it("旧格式 fixes string[]、无 deferred → 兼容（TC4）", () => {
     const r = normalizeFixResult({ fixed_count: 2, fixes: ["fix a", "fix b"] });
     expect(r).not.toBeNull();
-    expect(r!.fixes.map((f: any) => f.description)).toEqual(["fix a", "fix b"]);
+    // normalizeFixResult 已把旧格式 string 归一化为 { description }；联合类型标注
+    // 覆盖「string 原样透传」的防御分支（禁止 any，MF-3）
+    const fixDescriptions = r!.fixes.map((f: string | { description?: unknown }) =>
+      typeof f === "string" ? f : f.description
+    );
+    expect(fixDescriptions).toEqual(["fix a", "fix b"]);
     expect(r!.deferred).toEqual([]);
   });
   it("畸形输入（缺 fixed_count）→ null", () => {
@@ -483,6 +507,37 @@ describe("reconcileIssues", () => {
     expect(r.knownRemaining).toContain("S-1: 需 e2e fixture");
     expect(r.issues["S-1"].status).toBe("deferred");
     expect(r.stuck).toBe(false);
+  });
+  it("fixed 再次被报告（seen）→ 转 regressed + fixAttempts+1 + openStreak 累计（MF-2）", () => {
+    // MF-2 回归：修复前 fixed 条目复发不转换（fixAttempts/openStreak 均不增长），
+    // 与收敛终止组合后在默认配置（maxFixAttempts=2, convergeRounds=2, convergeNewIssues=1）
+    // 下 R3 即以 converged 提前终止而 must-fix 仍活跃。修复后转 regressed：
+    // fixAttempts+1（needs-redesign 可达）、openStreak 由统一 if 累计（首轮回归=1）。
+    const prev = {
+      "MF-1": { firstSeen: 1, status: "fixed", fixAttempts: 1, openStreak: 0, history: [{ round: 2, status: "fixed" }] },
+    };
+    const r = reconcileIssues(prev, { seenIds: new Set(["MF-1"]), round: 3, stuckThreshold: 3 });
+    expect(r.issues["MF-1"].status).toBe("regressed");
+    expect(r.issues["MF-1"].fixAttempts).toBe(2);
+    expect(r.issues["MF-1"].openStreak).toBe(1);
+    expect(r.issues["MF-1"].history.at(-1).status).toBe("regressed");
+    expect(r.stuck).toBe(false);
+  });
+  it("fixed 未再被报告（未 seen）→ 保持 fixed，不误转 regressed（MF-2）", () => {
+    const prev = {
+      "MF-1": { firstSeen: 1, status: "fixed", fixAttempts: 1, openStreak: 0, history: [] },
+    };
+    const r = reconcileIssues(prev, { seenIds: new Set(), round: 3, stuckThreshold: 3 });
+    expect(r.issues["MF-1"].status).toBe("fixed");
+    expect(r.issues["MF-1"].fixAttempts).toBe(1);
+    expect(r.issues["MF-1"].openStreak).toBe(0);
+  });
+  it("fixed 复发达到 maxFixAttempts → needs-redesign 可达（MF-2 与 RC-7 协同）", () => {
+    const prev = {
+      "MF-1": { firstSeen: 1, status: "fixed", fixAttempts: 1, openStreak: 0, history: [] },
+    };
+    const r = reconcileIssues(prev, { seenIds: new Set(["MF-1"]), round: 3, stuckThreshold: 3 });
+    expect(findNeedsRedesign(r.issues, 2).map((x) => x.issue_id)).toEqual(["MF-1"]);
   });
 });
 
@@ -633,6 +688,24 @@ describe("buildAggregatorPrompt", () => {
     expect(p).toContain("must_fix_ids");
     expect(p).toContain("fixes_caution");
     expect(p).toContain("SELF-CHECK");
+  });
+  it("READ FIRST 段：显式要求逐一 read 每个 report_file 再聚合（S-22）", () => {
+    const p = buildAggregatorPrompt(args);
+    // 报告路径清单在 READ FIRST 段（wrapUntrusted 包裹，5.10 防注入）
+    expect(p).toContain("READ FIRST");
+    expect(p).toContain('<untrusted source="sub_review_files">');
+    expect(p).toContain("/tmp/r1.md");
+    expect(p).toContain("READ every sub-review report file listed above (use the read tool)");
+    // 指令位于 PART 1 之前（先读后写）
+    expect(p.indexOf("READ FIRST")).toBeLessThan(p.indexOf("PART 1: WRITE FILE"));
+    // 语义声明：正文在文件里，凭计数聚合会脱节
+    expect(p).toContain("Aggregating from counts alone");
+    expect(p).toContain("disconnected from the reports");
+  });
+  it("无 report_file 的 reviewResults → READ FIRST 段路径清单为空但不报错", () => {
+    const p = buildAggregatorPrompt({ ...args, reviewResults: [{ must_fix: 1, suggestion: 0 }] });
+    expect(p).toContain("READ FIRST");
+    expect(p).toContain('<untrusted source="sub_review_files">');
   });
 });
 
@@ -913,9 +986,23 @@ describe("resolveAgentDefs", () => {
 // ── Clean 快照 / 跨批跳过判定：recordAgentClean / recordAgentDirty / shouldSkipAgent ──
 // （MF：cross-batch skip 核心状态机零测试）
 
+// agent 级 clean/dirty 快照（shouldSkipAgent 判定数据源）
+interface AgentCleanStatus {
+  lastCleanBatch: number;
+  lastCleanFixCount: number;
+  lastActiveRound: number;
+  lastMustFix: number | undefined;
+}
+
+// 跨批 skip 状态机整体状态：agentStatus 按 agent 名分区 + 当前累计 fixCount
+interface AgentSkipState {
+  agentStatus: Record<string, AgentCleanStatus>;
+  fixCount: number;
+}
+
 describe("recordAgentClean / recordAgentDirty / shouldSkipAgent", () => {
-  function freshState() {
-    return { agentStatus: {} as Record<string, { lastCleanBatch: number; lastCleanFixCount: number; lastActiveRound: number; lastMustFix: number | undefined }>, fixCount: 0 };
+  function freshState(): AgentSkipState {
+    return { agentStatus: {}, fixCount: 0 };
   }
 
   it("recordAgentClean 写入 lastCleanBatch + 当时 fixCount 快照", () => {

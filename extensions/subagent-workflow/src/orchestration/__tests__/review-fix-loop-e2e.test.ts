@@ -118,6 +118,28 @@ function classifyCall(opts: { schema?: unknown }): "review" | "aggregate" | "fix
   return "review";
 }
 
+/**
+ * 对 worker 返回的不可信 scriptResult 做最小运行时形状校验（S-16）：
+ * workflow 脚本是 JS（无 TS 类型），scriptResult 形状不受静态约束，直接类型断言
+ * 会在结构漂移时掩盖真实形状。guard 校验 terminated 为 string（所有终止路径必含），
+ * 再返回带可选字段的 view；其余字段由断言侧校验存在性。
+ */
+function assertScriptOutcome(scriptResult: unknown): {
+  terminated: string;
+  totalFixed?: number;
+  message?: string;
+  runDir?: string;
+} {
+  const raw = scriptResult as Record<string, unknown> | null | undefined;
+  if (raw === null || typeof raw !== "object") {
+    throw new Error(`scriptResult 缺失或非对象（worker 输出形状漂移）: ${JSON.stringify(scriptResult)}`);
+  }
+  if (typeof raw.terminated !== "string") {
+    throw new Error(`scriptResult.terminated 非 string（worker 输出形状漂移）: ${JSON.stringify(raw.terminated)}`);
+  }
+  return raw as { terminated: string; totalFixed?: number; message?: string; runDir?: string };
+}
+
 interface Scenario {
   /** review 调用序 → 返回数据生成器；R2+ 回调收到 prompt 文本（可用于对账/传递断言）。 */
   review: Array<(prompt: string) => Record<string, unknown>>;
@@ -314,7 +336,7 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
 
       expect(result.reason).toBe("completed");
       expect(result.error).toBeUndefined();
-      const outcome = result.scriptResult as { terminated: string; totalFixed: number; message: string };
+      const outcome = assertScriptOutcome(result.scriptResult);
       expect(outcome.terminated).toBe("clean");
       expect(outcome.totalFixed).toBe(1);
       expect(outcome.message).toContain("All batches clean");
@@ -387,7 +409,7 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
 
       expect(result.reason).toBe("completed");
       expect(result.error).toBeUndefined();
-      const outcome = result.scriptResult as { terminated: string; totalFixed: number; runDir: string };
+      const outcome = assertScriptOutcome(result.scriptResult);
       expect(outcome.terminated).toBe("clean");
       expect(outcome.totalFixed).toBe(2);
 
@@ -441,7 +463,7 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
 
       expect(result.reason).toBe("completed"); // 结构化终止而非抛错
       expect(result.error).toBeUndefined();
-      const outcome = result.scriptResult as { terminated: string; message: string };
+      const outcome = assertScriptOutcome(result.scriptResult);
       expect(outcome.terminated).toBe("fix-failure");
       // 渲染 gate（5.9）：非 clean 终止 message 带 [UNRESOLVED] 前缀 + 残留原因
       expect(outcome.message).toContain("[UNRESOLVED]");
@@ -511,7 +533,7 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
 
       expect(result.reason).toBe("completed");
       expect(result.error).toBeUndefined();
-      const outcome = result.scriptResult as { terminated: string; totalFixed: number; message: string };
+      const outcome = assertScriptOutcome(result.scriptResult);
       // R2 后仍有 must-fix（MF-2 新发现）且达到 maxRounds → max-rounds 终止
       expect(outcome.terminated).toBe("max-rounds");
       expect(outcome.totalFixed).toBe(2);
@@ -574,7 +596,7 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
 
       expect(result.reason).toBe("completed");
       expect(result.error).toBeUndefined();
-      const outcome = result.scriptResult as { terminated: string; totalFixed: number };
+      const outcome = assertScriptOutcome(result.scriptResult);
       expect(outcome.terminated).toBe("clean");
       expect(outcome.totalFixed).toBe(2);
 
@@ -643,7 +665,7 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
 
       expect(result.reason).toBe("completed");
       expect(result.error).toBeUndefined();
-      const outcome = result.scriptResult as { terminated: string; message: string };
+      const outcome = assertScriptOutcome(result.scriptResult);
       // F1 判别：修复前此处是 converged（提前终止掩盖未修复）；修复后 needs-redesign
       expect(outcome.terminated).toBe("needs-redesign");
       expect(outcome.message).toContain("MF-1");
@@ -651,6 +673,144 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
 
       const { reviewCalls } = runner.stats();
       expect(reviewCalls.length).toBe(3); // R1/R2/R3 各一次，R3 终止不再续轮
+    },
+    RUN_TIMEOUT_MS,
+  );
+
+  it(
+    "E2E-7：fixed 条目复发 → 不收敛 → 继续修复 → needs-redesign（MF-2 回归）",
+    async () => {
+      // MF-2 场景（reconciliation 驱动）：R1 报 MF-1 → R2 确认 fixed + 新发现 MF-2 →
+      // R3 MF-1 复发（reconciliation not-fixed）。修复前：fixed 条目复发不转换（停留
+      // fixed）→ R3 newFindings=0 收敛 streak 达 2 → terminated=converged 提前终止而
+      // must-fix 仍活跃；finalMessage「残留: 无 deferred」掩盖 MF-1。
+      // 修复后：R3 reconcile 把 MF-1 转 regressed（fixAttempts+1）→ 收敛门槛
+      // （无 open/regressed 活跃条目）拦截 → 继续 R4 → MF-1 第 2 次 regressed
+      // （fixAttempts=2）→ needs-redesign 终止（在 converged 之前，顺序正确）。
+      let aggRound = 0;
+      let fixRound = 0;
+      const runner = makeScenarioRunner({
+        review: [
+          // R1：MF-1 首次发现
+          () => ({ report_file: "/tmp/r1.md", must_fix: 1, suggestion: 0, reconciliation: [] }),
+          // R2：MF-1 确认 fixed + 新发现 MF-2
+          () => ({ report_file: "/tmp/r2.md", must_fix: 1, suggestion: 0, reconciliation: [{ prev_id: "MF-1", status: "fixed", evidence: "read confirmed" }] }),
+          // R3：MF-1 复发（修复前此处不转换 → converged 提前终止）+ MF-2 未修
+          () => ({ report_file: "/tmp/r3.md", must_fix: 2, suggestion: 0, reconciliation: [{ prev_id: "MF-1", status: "not-fixed", evidence: "still wrong" }, { prev_id: "MF-2", status: "not-fixed", evidence: "still wrong" }] }),
+          // R4：MF-1 再次复发（第 2 次 regressed → needs-redesign）；MF-2 已修（转 fixed）
+          // ——MF-2 不再累计 openStreak，避免其先触达 stuckThreshold 抢先终止
+          () => ({ report_file: "/tmp/r4.md", must_fix: 1, suggestion: 0, reconciliation: [{ prev_id: "MF-1", status: "not-fixed", evidence: "still wrong" }, { prev_id: "MF-2", status: "fixed", evidence: "read confirmed" }] }),
+        ],
+        aggregate: () => {
+          aggRound++;
+          if (aggRound === 1) return { report_file: "/tmp/agg.md", must_fix: 1, suggestion: 0, must_fix_ids: [{ id: "MF-1", severity: "major" }], fixes_caution: [] };
+          if (aggRound === 2) return { report_file: "/tmp/agg.md", must_fix: 1, suggestion: 0, must_fix_ids: [{ id: "MF-2", severity: "major" }], fixes_caution: [] };
+          if (aggRound === 3) return { report_file: "/tmp/agg.md", must_fix: 2, suggestion: 0, must_fix_ids: [{ id: "MF-1", severity: "major" }, { id: "MF-2", severity: "major" }], fixes_caution: [] };
+          return { report_file: "/tmp/agg.md", must_fix: 1, suggestion: 0, must_fix_ids: [{ id: "MF-1", severity: "major" }], fixes_caution: [] };
+        },
+        fix: () => {
+          fixRound++;
+          if (fixRound === 1) {
+            return { fixed_count: 1, fixes: [{ issue_id: "MF-1", description: "fix1", self_check: "grep: 1 hit; synced", affected_files: [] }], deferred: [] };
+          }
+          if (fixRound === 2) {
+            return { fixed_count: 1, fixes: [{ issue_id: "MF-2", description: "fix2", self_check: "grep: 1 hit; synced", affected_files: [] }], deferred: [] };
+          }
+          if (fixRound === 3) {
+            return {
+              fixed_count: 2,
+              fixes: [
+                { issue_id: "MF-1", description: "fix3", self_check: "grep: 1 hit; synced", affected_files: [] },
+                { issue_id: "MF-2", description: "fix4", self_check: "grep: 1 hit; synced", affected_files: [] },
+              ],
+              deferred: [],
+            };
+          }
+          return { fixed_count: 1, fixes: [{ issue_id: "MF-1", description: "fix5", self_check: "grep: 1 hit; synced", affected_files: [] }], deferred: [] };
+        },
+      });
+      const deps = makeDeps(runner);
+
+      const result = await runAndWait(
+        "review-fix-loop",
+        { targetType: "file", target: "README.md", agents: "reviewer", maxRounds: 4, _runId: RUN_ID() },
+        deps,
+        undefined,
+        RUN_TIMEOUT_MS,
+      );
+
+      expect(result.reason).toBe("completed");
+      expect(result.error).toBeUndefined();
+      const outcome = assertScriptOutcome(result.scriptResult);
+      // 修复前此处是 converged（fixed 停留 + 收敛 streak 2 → 提前终止掩盖活跃 must-fix）；
+      // 修复后 fixed 复发转 regressed → 收敛门槛拦截 → R4 needs-redesign
+      expect(outcome.terminated).toBe("needs-redesign");
+      expect(outcome.message).toContain("MF-1");
+      expect(outcome.message).toContain("2 次修复仍未收敛");
+
+      const { reviewCalls } = runner.stats();
+      expect(reviewCalls.length).toBe(4); // R1/R2/R3/R4——修复前 R3 即 converged（3 次）
+    },
+    RUN_TIMEOUT_MS,
+  );
+
+  it(
+    "fail-fast：未知参数名（batchl 拼错）→ workflow 失败且 error 含未知参数提示（S-19）",
+    async () => {
+      const runner = makeScenarioRunner({
+        review: [() => ({ report_file: "/tmp/r1.md", must_fix: 0, suggestion: 0, reconciliation: [] })],
+        aggregate: () => ({ report_file: "/tmp/agg.md", must_fix: 0, suggestion: 0, must_fix_ids: [], fixes_caution: [] }),
+        fix: () => ({ fixed_count: 0, fixes: [], deferred: [] }),
+      });
+      const deps = makeDeps(runner);
+
+      const result = await runAndWait(
+        "review-fix-loop",
+        { targetType: "file", target: "README.md", agents: "reviewer", batchl: "fallow-scan", _runId: RUN_ID() },
+        deps,
+        undefined,
+        RUN_TIMEOUT_MS,
+      );
+
+      // 脚本顶层白名单校验 fail() 抛错 → worker type:"error" → 重试超限 → reason=failed
+      expect(result.reason).toBe("failed");
+      expect(result.error).toContain("未知参数: batchl");
+      // 校验发生在任何 agent 调用之前（参数校验在脚本最顶部）
+      expect(runner.stats().kinds).toEqual([]);
+    },
+    RUN_TIMEOUT_MS,
+  );
+
+  it(
+    "fail-fast：targetType 非法枚举 / target 空串 → workflow 失败且 error 含必填提示（S-19）",
+    async () => {
+      const deps = makeDeps(makeScenarioRunner({
+        review: [() => ({ report_file: "/tmp/r1.md", must_fix: 0, suggestion: 0, reconciliation: [] })],
+        aggregate: () => ({ report_file: "/tmp/agg.md", must_fix: 0, suggestion: 0, must_fix_ids: [], fixes_caution: [] }),
+        fix: () => ({ fixed_count: 0, fixes: [], deferred: [] }),
+      }));
+
+      // targetType 非法枚举
+      const r1 = await runAndWait(
+        "review-fix-loop",
+        { targetType: "nope", target: "README.md", agents: "reviewer", _runId: RUN_ID() },
+        deps,
+        undefined,
+        RUN_TIMEOUT_MS,
+      );
+      expect(r1.reason).toBe("failed");
+      expect(r1.error).toContain("targetType 必填且必须是枚举之一");
+
+      // target 空串（trim 后为空 → fail）
+      const r2 = await runAndWait(
+        "review-fix-loop",
+        { targetType: "file", target: "   ", agents: "reviewer", _runId: RUN_ID() },
+        deps,
+        undefined,
+        RUN_TIMEOUT_MS,
+      );
+      expect(r2.reason).toBe("failed");
+      expect(r2.error).toContain("target 必填");
     },
     RUN_TIMEOUT_MS,
   );

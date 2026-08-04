@@ -34,6 +34,7 @@ Check: undefined compatibility for existing data / in-flight states, recovery pa
 ## Output
 
 Return your structured result as JSON via structured-output:
+- `report_file`: "" (empty string — you have no write tool; the workflow writes your `report_content` to the report file and fills this field in)
 - `report_content`: the full markdown review report — one checklist section per pass (Pass 1..4), each item with verdict (pass/fail) and fix direction for failed items.
 - `must_fix`: count of critical+major findings.
 - `suggestion`: count of minor findings.
