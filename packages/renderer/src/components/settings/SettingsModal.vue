@@ -95,7 +95,6 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, ScrollText, TerminalSquare, GitBranch, ClipboardList, X, Download } from '@lucide/vue'
 import {
@@ -108,8 +107,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { useSettingsStore, type SystemSettings } from '@/stores/settings'
-import { useSettings } from '@/composables/features/useSettings'
+import { getSettingsStore, useSettings, type SystemSettings } from '@xyz-agent/core'
 import { useToast } from '@/composables/useToast'
 import type { SkillDirConfig } from '@xyz-agent/shared'
 import ProviderPage from './ProviderPage.vue'
@@ -144,9 +142,9 @@ const activeMenu = ref<(typeof menus)[number]['id']>('provider')
 const currentMenu = computed(() => menus.find((m) => m.id === activeMenu.value) ?? menus[0])
 
 // 数据来自 settings store（单一真相源，AppShell 应用级 init 常驻订阅）。
-// storeToRefs 保持响应性解构。
-const settingsStore = useSettingsStore()
-const { providers, skills, agents, extensions, system, skillDirs, agentDirs } = storeToRefs(settingsStore)
+// core getSettingsStore() 返回 refs，直接解构（不再经 pinia storeToRefs）。
+const settingsStore = getSettingsStore()
+const { providers, skills, agents, extensions, system, skillDirs, agentDirs } = settingsStore
 const { refreshProviders } = useSettings()
 
 // 打开时刷新 providers（拿最新快照）；skills/agents/extensions 靠订阅，无需主动拉。

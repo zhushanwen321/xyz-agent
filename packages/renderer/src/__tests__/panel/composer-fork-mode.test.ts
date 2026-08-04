@@ -48,9 +48,6 @@ vi.mock('@/composables/features/useProjectSkills', () => ({
 vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn() }),
 }))
-vi.mock('@/stores/settings', () => ({
-  useSettingsStore: () => ({ defaultModel: '' }),
-}))
 // ── mock useSidebar：forkSessionAsk（W2 新增，当前不存在）──
 const forkSessionAskMock = vi.fn(() => Promise.resolve())
 vi.mock('@/composables/features/useSidebar', () => ({

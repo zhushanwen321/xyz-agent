@@ -41,7 +41,7 @@ import {
 } from '@xyz-agent/core/domain/composer'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
-import { useSettingsStore } from '@/stores/settings'
+import { getSettingsStore } from '@xyz-agent/core'
 import { useChat } from '@/composables/features/useChat'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useModel } from '@/composables/features/useModel'
@@ -124,7 +124,7 @@ export function useComposerShell(params: ComposerShellParams) {
   const { t } = useI18n()
   const chatStore = useChatStore()
   const sessionStore = useSessionStore()
-  const settingsStore = useSettingsStore()
+  const settingsStore = getSettingsStore()
   const flow = useNewTaskFlow()
   const { error: toastError } = useToast()
   const { send, steer, followUp, abort, compact, sendBash } = useChat()
@@ -152,7 +152,7 @@ export function useComposerShell(params: ComposerShellParams) {
       if (!s) return null
       return { modelId: s.modelId, thinkingLevel: s.thinkingLevel }
     },
-    defaultModel: settingsStore.defaultModel,
+    defaultModel: settingsStore.defaultModel.value,
     currentModel: flow.currentModel,
     setPendingModel: (model: string) => flow.setPendingModel(model),
     switchModel,
@@ -162,7 +162,7 @@ export function useComposerShell(params: ComposerShellParams) {
       // 不碰 providers（测试 mock 的 settingsStore 可能无 providers）。
       if (!modelId.includes('/')) return undefined
       const [providerId, modelName] = modelId.split('/')
-      const provider = settingsStore.providers?.find((p: { id: string }) => p.id === providerId)
+      const provider = settingsStore.providers?.value?.find((p: { id: string }) => p.id === providerId)
       return provider?.models.find((m: { id: string }) => m.id === modelName)?.thinkingLevelMap
     },
   })

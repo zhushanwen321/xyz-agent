@@ -266,7 +266,7 @@ import { listSystemSounds } from '@/lib/ipc'
 import { playByName } from '@/composables/useCompletionSound'
 import { getDefaultSound, detectPlatform } from '@/composables/sound-defaults'
 import { SoundPreviewButton } from '@xyz-agent/ui/features/settings'
-import type { SystemSettings } from '@/stores/settings'
+import type { SystemSettings } from '@xyz-agent/core'
 import { getAutoRenameEnabled, setAutoRenameEnabled } from '@/api/domains/settings'
 import { useToast } from '@/composables/useToast'
 

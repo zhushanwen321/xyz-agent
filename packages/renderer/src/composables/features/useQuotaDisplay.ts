@@ -16,7 +16,7 @@ import { useI18n } from 'vue-i18n'
 import type { Ref } from 'vue'
 import type { NormalizedQuotaRow } from '@xyz-agent/shared'
 import { matchQuotaPreset, QUOTA_PRESETS } from '@xyz-agent/shared'
-import { useSettingsStore } from '@/stores/settings'
+import { getSettingsStore } from '@xyz-agent/core'
 import { useQuotaStore } from '@/stores/quota'
 import { useQuotaQuery } from './useQuotaQuery'
 
@@ -66,7 +66,7 @@ export interface UseQuotaDisplayReturn {
  */
 export function useQuotaDisplay(modelIdRef: Ref<string | undefined>): UseQuotaDisplayReturn {
   const { t } = useI18n()
-  const settingsStore = useSettingsStore()
+  const settingsStore = getSettingsStore()
   const quotaStore = useQuotaStore()
 
   /** 从受控 modelId 派生 providerId，命中 quota preset 且 enabled 才启用 coding-plan 区。 */
@@ -75,7 +75,7 @@ export function useQuotaDisplay(modelIdRef: Ref<string | undefined>): UseQuotaDi
     if (!compositeModelId) return null
     const provider = compositeModelId.split('/')[0]
     if (!provider) return null
-    const providerInfo = settingsStore.providers.find((p) => p.id === provider)
+    const providerInfo = settingsStore.providers.value.find((p) => p.id === provider)
     if (!providerInfo) return null
     if (!providerInfo.quota?.enabled) return null
     return provider
@@ -85,7 +85,7 @@ export function useQuotaDisplay(modelIdRef: Ref<string | undefined>): UseQuotaDi
   const matchedPresetLabel = computed<string | null>(() => {
     const pid = matchedProviderId.value
     if (!pid) return null
-    const providerInfo = settingsStore.providers.find((p) => p.id === pid)
+    const providerInfo = settingsStore.providers.value.find((p) => p.id === pid)
     if (!providerInfo) return null
     const manualFetcher = providerInfo.quota?.fetcher
     const preset = manualFetcher

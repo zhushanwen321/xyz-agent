@@ -71,9 +71,6 @@ vi.mock('@/stores/session', () => ({
   // 本测试关注 slash 注入，store 更新为 no-op 即可。
   useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn() }),
 }))
-vi.mock('@/stores/settings', () => ({
-  useSettingsStore: () => ({ defaultModel: '' }),
-}))
 
 // ── ComposerInput mock：defineExpose 暴露 insertSlashChip 为独立 vi.fn() spy ──
 // 每个测试 mount 前重新生成 spy：通过 factory 读取最新 spy 引用。

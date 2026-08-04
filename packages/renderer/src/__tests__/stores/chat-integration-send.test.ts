@@ -68,9 +68,6 @@ vi.mock('@/composables/features/useNewTaskFlow', () => ({
   }),
   resetNewTaskFlow: vi.fn(),
 }))
-vi.mock('@/stores/settings', () => ({
-  useSettingsStore: () => ({ defaultModel: '' }),
-}))
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ toasts: { value: [] }, error: vi.fn(), remove: vi.fn() }),
 }))

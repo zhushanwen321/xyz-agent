@@ -242,7 +242,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Switch } from '@/components/ui/switch'
 import type { ProviderInfo } from '@xyz-agent/shared'
 import { config } from '@/api'
-import { useSettingsStore } from '@/stores/settings'
+import { getSettingsStore } from '@xyz-agent/core'
 import { useQuotaStore } from '@/stores/quota'
 import { useProviderImport } from '@/composables/features/useProviderImport'
 import { useQuotaConfigure } from '@/composables/features/useQuotaConfigure'
@@ -284,12 +284,12 @@ const CONTEXT_M = 1_000_000
 // 默认模型从 settingsStore.defaultModel 派生（"provider/modelId" 复合串）。
 // store.defaultModel 由 config.onDefaults 订阅推回（runtime setDefaultModel 后广播），
 // 故设默认后状态自动回流，组件无需本地乐观更新。
-const settingsStore = useSettingsStore()
+const settingsStore = getSettingsStore()
 /** 当前默认模型复合串（"provider/modelId"），与 defaultModel 同源便于模板直接比对 */
-const defaultModel = computed(() => settingsStore.defaultModel)
+const defaultModel = computed(() => settingsStore.defaultModel.value)
 /** 默认模型所属 provider id（取复合串的 provider 段），用于行头「默认供应商」pill 高亮 */
 const defaultProviderId = computed(() => {
-  const dm = settingsStore.defaultModel
+  const dm = settingsStore.defaultModel.value
   return dm ? dm.split('/')[0] : ''
 })
 
@@ -347,8 +347,8 @@ async function onToggleEnabled(p: ProviderInfo, enabled: boolean) {
   try {
     await config.setProvider(p.id, { enabled })
     // 兜底：禁用 defaultModel 归属 provider 时清空前端 defaultModel（runtime 也会广播修正，幂等覆盖）。
-    if (!enabled && settingsStore.defaultModel.startsWith(`${p.id}/`)) {
-      settingsStore.defaultModel = ''
+    if (!enabled && settingsStore.defaultModel.value.startsWith(`${p.id}/`)) {
+      settingsStore.defaultModel.value = ''
     }
   } catch (e) {
     settingsStore.setProviderEnabled(p.id, old)
@@ -370,8 +370,8 @@ async function confirmDelete() {
   try {
     await config.deleteProvider(target.id)
     // 兜底：删除 defaultModel 归属 provider 时清空前端 defaultModel（runtime 也会广播修正，幂等覆盖）。
-    if (settingsStore.defaultModel.startsWith(`${target.id}/`)) {
-      settingsStore.defaultModel = ''
+    if (settingsStore.defaultModel.value.startsWith(`${target.id}/`)) {
+      settingsStore.defaultModel.value = ''
     }
     // 清除该 provider 的额度缓存（provider 已删除，缓存失效）
     useQuotaStore().clearCache(target.id)
@@ -408,7 +408,7 @@ async function onToggleModelEnabled(
   try {
     // 从 store 读取乐观更新后的新鲜 provider（闭包 p 已过期）。
     // fallback：store 未含该 provider 时（如 props 传入但 store 未同步）用 props 传入的 models。
-    const fresh = settingsStore.providers.find((x) => x.id === providerId)
+    const fresh = settingsStore.providers.value.find((x) => x.id === providerId)
     const modelsToSend = fresh
       ? fresh.models.map((m) => ({
         id: m.id,

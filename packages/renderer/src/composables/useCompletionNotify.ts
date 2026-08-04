@@ -19,7 +19,7 @@
 import { playSuccess, playError } from '@/composables/useCompletionSound'
 import { markUnread } from '@/composables/useSessionMarkers'
 import { useBackgroundWork } from '@/composables/features/useBackgroundWork'
-import { useSettingsStore } from '@/stores/settings'
+import { getSettingsStore } from '@xyz-agent/core'
 
 /** 上次播放提示音的时间戳（模块级，防抖用） */
 let lastPlayTime = 0
@@ -56,8 +56,8 @@ export function handleCompletion(
   markUnread(sessionId)
 
   // 5. 读取设置开关
-  const settingsStore = useSettingsStore()
-  if (settingsStore.system.completionSound === false) return
+  const settingsStore = getSettingsStore()
+  if (settingsStore.system.value.completionSound === false) return
 
   // 6. 1s 防抖
   const now = Date.now()
@@ -65,8 +65,8 @@ export function handleCompletion(
   lastPlayTime = now
 
   // 7. 播放提示音（读用户设置的 successSound/errorSound，空则用平台默认）
-  const successName = settingsStore.system.successSound
-  const errorName = settingsStore.system.errorSound
+  const successName = settingsStore.system.value.successSound
+  const errorName = settingsStore.system.value.errorSound
   if (stopReason === 'error') {
     void playError(errorName)
   } else {

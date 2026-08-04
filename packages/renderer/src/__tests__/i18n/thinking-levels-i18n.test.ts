@@ -16,7 +16,7 @@ import {
   getDisplayLabel,
   type ThinkingLevel,
 } from '@/components/panel/thinking-levels'
-import { THINKING_STRATEGIES } from '@/composables/features/useProviderEdit'
+import { THINKING_STRATEGIES } from '@xyz-agent/core'
 
 beforeEach(() => {
   setActivePinia(createPinia())

@@ -47,9 +47,6 @@ vi.mock('@/api', () => ({
 vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn() }),
 }))
-vi.mock('@/stores/settings', () => ({
-  useSettingsStore: () => ({ defaultModel: '' }),
-}))
 
 // ── ComposerInput mock：defineExpose + emit ──
 // 追踪 input 事件携带的文本（Composer.onSend/onSteer 调 inputRef.getSegments() 取结构化 segments）。

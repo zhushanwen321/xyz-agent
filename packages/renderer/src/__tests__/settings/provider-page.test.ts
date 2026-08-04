@@ -19,7 +19,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import type { ProviderInfo } from '@xyz-agent/shared'
-import { useSettingsStore } from '@/stores/settings'
+import { getSettingsStore, __resetSettingsStoreForTesting } from '@xyz-agent/core'
 
 /** vi.hoisted 保证 configMock 在 vi.mock 工厂执行前就绪。 */
 const configMock = vi.hoisted(() => ({
@@ -72,6 +72,7 @@ const PROVIDERS: ProviderInfo[] = [
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  __resetSettingsStoreForTesting()
   configMock.setDefaultModel.mockClear()
 })
 
@@ -115,7 +116,7 @@ describe('ProviderPage 打开 dialog', () => {
 
 describe('ProviderPage 默认模型从 settingsStore.defaultModel 派生（U5）', () => {
   it('U5: store.defaultModel="anthropic/claude-sonnet-4" → 该 model 行显示「默认模型」标记，其它显示「设为默认」按钮', async () => {
-    useSettingsStore().defaultModel = 'anthropic/claude-sonnet-4'
+    getSettingsStore().defaultModel.value = 'anthropic/claude-sonnet-4'
     wrapper = mount(ProviderPage, {
       props: { providers: PROVIDERS },
       attachTo: document.body,
@@ -134,7 +135,7 @@ describe('ProviderPage 默认模型从 settingsStore.defaultModel 派生（U5）
   })
 
   it('U5b: 改 store.defaultModel 为 "openai/gpt-4o" → 默认标记跟随切换到 gpt-4o 行', async () => {
-    useSettingsStore().defaultModel = 'anthropic/claude-sonnet-4'
+    getSettingsStore().defaultModel.value = 'anthropic/claude-sonnet-4'
     wrapper = mount(ProviderPage, {
       props: { providers: PROVIDERS },
       attachTo: document.body,
@@ -154,7 +155,7 @@ describe('ProviderPage 默认模型从 settingsStore.defaultModel 派生（U5）
     expect(sonnetBtn).toBeUndefined()
 
     // 切默认到 openai/gpt-4o
-    useSettingsStore().defaultModel = 'openai/gpt-4o'
+    getSettingsStore().defaultModel.value = 'openai/gpt-4o'
     await wrapper.vm.$nextTick()
     await flushPromises()
 
@@ -167,7 +168,7 @@ describe('ProviderPage 默认模型从 settingsStore.defaultModel 派生（U5）
   })
 
   it('U5c: 点击 model 行「设为默认」按钮 → 调 config.setDefaultModel(provider, modelId)', async () => {
-    useSettingsStore().defaultModel = ''
+    getSettingsStore().defaultModel.value = ''
     wrapper = mount(ProviderPage, {
       props: { providers: PROVIDERS },
       attachTo: document.body,
@@ -252,8 +253,8 @@ describe('ProviderPage W1 robustness', () => {
   })
 
   it('D14: 删除 defaultModel 归属 provider → 前端清空 defaultModel', async () => {
-    const store = useSettingsStore()
-    store.defaultModel = 'anthropic/claude-sonnet-4'
+    const store = getSettingsStore()
+    store.defaultModel.value = 'anthropic/claude-sonnet-4'
     configMock.deleteProvider.mockResolvedValueOnce(undefined)
     wrapper = mount(ProviderPage, {
       props: { providers: PROVIDERS },
@@ -274,7 +275,7 @@ describe('ProviderPage W1 robustness', () => {
     await flushPromises()
 
     expect(configMock.deleteProvider).toHaveBeenCalledWith('anthropic')
-    expect(store.defaultModel).toBe('')
+    expect(store.defaultModel.value).toBe('')
   })
 })
 

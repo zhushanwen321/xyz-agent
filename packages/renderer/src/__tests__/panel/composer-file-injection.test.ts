@@ -70,9 +70,6 @@ vi.mock('@/stores/chat', () => ({
 vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn() }),
 }))
-vi.mock('@/stores/settings', () => ({
-  useSettingsStore: () => ({ defaultModel: '' }),
-}))
 // commandStore mock：pendingSlash 不触发（本测试关注 file 注入，非 slash）
 vi.mock('@/stores/command', () => ({
   useCommandStore: () => ({

@@ -1,53 +1,88 @@
 /**
- * SettingsModal skill/agent 目录更新错误处理测试（W2 · D10）。
+ * SettingsModal skill/agent 目录更新错误处理测试（W2 · D10，W4 壳接入适配）。
  *
  * bug 根因：onUpdateSkillDirs/onUpdateAgentDirs 调 settingsStore.setSkillDirs(...)
- * 未 await 未 catch。store 内 await config.setSkillDirs 若 reject → unhandled rejection +
- * 静默失败（用户无反馈，discovery.json 未更新）。
+ * 未 await 未 catch。store 内 await 若 reject → unhandled rejection + 静默失败。
  *
- * 验证（U5）：config.setSkillDirs reject 时，onUpdateSkillDirs 触发的 toast 含 error 条目
+ * W4 适配：setSkillDirs 经 core getSettingsTransport().setSkillDirs（不再直连 @/api config）。
+ * 故本测试 provideSettingsTransport(stub)，stub.setSkillDirs reject，验证 toast 反馈。
+ *
+ * 验证（U5）：transport.setSkillDirs reject 时，onUpdateSkillDirs 触发的 toast 含 error 条目
  * （非静默吞，符合 CLAUDE.md 规则 #3：错误必须反馈）。
- *
- * mock 策略：
- *  - vi.mock('@/api')：config.setSkillDirs reject；config.listProviders resolve（refreshProviders 不抛）。
- *  - vi.mock('@/i18n')：避免 setLocale 拉起实例。
- *  - SettingsModal open=true 时 onMounted 不拉数据（仅 watch open），故无需更多 mock。
- *  - 通过 findComponent(SettingsResourcePage) 直接 emit update-dirs，绕开 LoadPaths UI 深链。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/settings/settings-modal-skill-dirs.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-
-vi.mock('@/api', () => ({
-  config: {
-    setSkillDirs: vi.fn(() => Promise.reject(new Error('network down'))),
-    setAgentDirs: vi.fn(() => Promise.reject(new Error('network down'))),
-    listProviders: vi.fn(() => Promise.resolve([])),
-  },
-  settings: {
-    getSystem: vi.fn(async () => ({ locale: 'zh-CN', theme: 'dark', themePreset: 'cold-blue' })),
-    updateSystem: vi.fn(async () => {}),
-  },
-}))
-
-// 保留真实 default（i18n.global.t 等），仅 stub setLocale 避免 SettingsModal onMounted 拉起实例
-vi.mock('@/i18n', async (importOriginal) => ({
-  ...((await importOriginal()) as object),
-  setLocale: vi.fn(),
-}))
-
+import {
+  providePlatform,
+  provideSettingsTransport,
+  __resetPlatformForTesting,
+  __resetSettingsStoreForTesting,
+  __resetSettingsTransportForTesting,
+  type SettingsTransport,
+} from '@xyz-agent/core'
+import {
+  SETTINGS_TOAST_KEY,
+  USE_QUOTA_CONFIGURE_KEY,
+  SETTINGS_CONFIG_API_KEY,
+} from '@xyz-agent/ui/features/settings'
 import SettingsModal from '@/components/settings/SettingsModal.vue'
 import SettingsResourcePage from '@/components/settings/SettingsResourcePage.vue'
 import type { SkillDirConfig } from '@xyz-agent/shared'
 import { useToast } from '@/composables/useToast'
 
+// lib/ipc mock（SystemPage/TerminalPage 读 systemSounds 等 ipc）
+vi.mock('@/lib/ipc', () => ({
+  listSystemSounds: vi.fn(async () => ({ sounds: [] })),
+  getProxyConfig: vi.fn(async () => ({})),
+  setProxyConfig: vi.fn(async () => undefined),
+  testProxy: vi.fn(async () => ({ success: true })),
+}))
+
+/** transport stub：setSkillDirs reject（测试核心），其余 resolve/noop。 */
+function makeTransport(): SettingsTransport {
+  const noop = (): void => {}
+  return {
+    listProviders: vi.fn(async () => []),
+    setProvider: vi.fn(async () => undefined),
+    discoverModels: vi.fn(async () => ({ success: true, models: [] })),
+    setSkillDirs: vi.fn(() => Promise.reject(new Error('network down'))),
+    setAgentDirs: vi.fn(async () => undefined),
+    setExtensionDirs: vi.fn(async () => undefined),
+    onProviders: () => noop,
+    onModels: () => noop,
+    onSkills: () => noop,
+    onAgents: () => noop,
+    onExtensions: () => noop,
+    onSkillDirs: () => noop,
+    onAgentDirs: () => noop,
+    onExtensionDirs: () => noop,
+    onDefaults: () => noop,
+    onSystemPrompt: () => noop,
+    onTerminalConfig: () => noop,
+  }
+}
+
+function inMemoryStorage() {
+  const map = new Map<string, string>()
+  return {
+    get: async (k: string) => map.get(k) ?? null,
+    set: async (k: string, v: string) => { map.set(k, v) },
+    remove: async (k: string) => { map.delete(k) },
+  }
+}
+
 let wrapper: ReturnType<typeof mount> | null = null
 
 beforeEach(() => {
   setActivePinia(createPinia())
-  // 清空全局 toasts（useToast 是模块级单例）
+  __resetPlatformForTesting()
+  __resetSettingsStoreForTesting()
+  __resetSettingsTransportForTesting()
+  providePlatform({ kind: 'mock', storage: inMemoryStorage(), webSocket: { create: () => ({ readyState: 0, send: () => {}, close: () => {}, onopen: null, onclose: null, onmessage: null, onerror: null }) }, ipc: null })
+  provideSettingsTransport(makeTransport())
   const { toasts } = useToast()
   toasts.value = []
 })
@@ -59,21 +94,26 @@ afterEach(() => {
 })
 
 describe('SettingsModal onUpdateSkillDirs 错误反馈（W2 D10）', () => {
-  it('config.setSkillDirs reject → 触发 error toast（非静默失败）', async () => {
+  it('transport.setSkillDirs reject → 触发 error toast（非静默失败）', async () => {
     wrapper = mount(SettingsModal, {
       props: { open: true },
       attachTo: document.body,
+      global: {
+        provide: {
+          [SETTINGS_TOAST_KEY as symbol]: { error: (m: string) => useToast().error(m), info: (m: string) => useToast().info(m), warning: (m: string) => useToast().warning(m) },
+          [USE_QUOTA_CONFIGURE_KEY as symbol]: () => ({ enabled: { value: false }, fetcherId: { value: undefined }, fetcherOptions: [], cookieInput: { value: '' }, apiKeyInput: { value: '' }, apiKeyConfigured: { value: false }, testStatus: { value: 'idle' }, testError: { value: '' }, quotaData: { value: null }, lastFetchAt: { value: null }, isCookieAuth: { value: false }, helpUrl: { value: undefined }, helpText: { value: undefined }, configuring: { value: false }, configureError: { value: '' }, toggleEnabled: vi.fn(), selectFetcher: vi.fn(), saveCookie: vi.fn(), saveApiKey: vi.fn(), testQuery: vi.fn(), reset: vi.fn() }),
+          [SETTINGS_CONFIG_API_KEY as symbol]: { detectSources: vi.fn(async () => []) },
+        },
+      },
     })
     await flushPromises()
 
-    // Dialog 内容经 reka-ui teleport 到 body，故从 document.body 查询。
-    // 找到 skill 菜单按钮（用 testid 定位，与文案解耦——locale 变化不影响测试）。
+    // 切到 skill 菜单（SettingsResourcePage 在 skill 菜单下渲染）
     const skillBtn = document.body.querySelector('[data-testid="settings-nav-skill"]')
     expect(skillBtn).toBeTruthy()
     skillBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flushPromises()
 
-    // 找到 SettingsResourcePage 子组件（teleport 后仍在 wrapper 组件树内），直接 emit update-dirs。
     const resourcePage = wrapper.findComponent(SettingsResourcePage)
     expect(resourcePage.exists()).toBe(true)
     const dirs: SkillDirConfig[] = [{ path: '/x', enabled: true }]

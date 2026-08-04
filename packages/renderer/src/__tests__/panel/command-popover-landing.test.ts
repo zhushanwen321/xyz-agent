@@ -25,7 +25,7 @@ import { defineComponent, h, nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import type { ServerMessage, SkillInfo } from '@xyz-agent/shared'
 import * as events from '@/api/events'
-import { useSettingsStore } from '@/stores/settings'
+import { getSettingsStore, __resetSettingsStoreForTesting } from '@xyz-agent/core'
 import CommandPopover from '@/components/panel/CommandPopover.vue'
 
 // Wave3 TC5：useGlobalSkills 走真实 events 订阅链路（dispatchGlobal → handler → loadGlobal(true) → DOM 刷新）。
@@ -74,6 +74,7 @@ function bodyItemButtons(): HTMLElement[] {
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  __resetSettingsStoreForTesting()
 })
 
 describe('CommandPopover landing 态用 globalSkills prop（L1-L14，W4）', () => {
@@ -404,7 +405,7 @@ describe('CommandPopover landing 态用 globalSkills prop（L1-L14，W4）', () 
 
   it('L17 AC-8 反向：settingsStore.skills 有值但 globalSkills prop 空 → landing 不显示 skill（FR-5 解耦）', async () => {
     // settingsStore.skills 注入 7 条（模拟修复前的数据源）
-    useSettingsStore().skills = LANDING_SKILLS
+    getSettingsStore().skills.value = LANDING_SKILLS
     // globalSkills prop 不传（空）
     await mountLanding('', [])
     const btns = bodyItemButtons()

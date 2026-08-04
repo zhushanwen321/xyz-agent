@@ -71,9 +71,6 @@ vi.mock('@/api', () => ({
 vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn() }),
 }))
-vi.mock('@/stores/settings', () => ({
-  useSettingsStore: () => ({ defaultModel: '' }),
-}))
 
 // ── ComposerInput mock：render testid + emit input 设 draft + emit keydown Enter 触发 onSend ──
 // lastInputText 跟踪最近一次 input 文本，getSegments 还原 text 段（Composer landing 分支取 segments）

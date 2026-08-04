@@ -221,7 +221,6 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, provide } from 'vue'
-import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { Trash2, Loader2, AlertCircle, Check, ArrowUpCircle } from '@lucide/vue'
 import type { ExtensionDiscoveredPayload, RecommendedExtension, SkillDirConfig } from '@xyz-agent/shared'
@@ -235,12 +234,13 @@ import { LoadPaths, SETTINGS_CONFIG_API_KEY } from '@xyz-agent/ui/features/setti
 import { config, extension as extensionApi } from '@/api'
 
 provide(SETTINGS_CONFIG_API_KEY, config) // LoadPaths(SourceImportSection) 迁 ui，config 经 inject
-import { useSettingsStore, type ExtensionItem } from '@/stores/settings'
+import { getSettingsStore } from '@xyz-agent/core'
+import type { ExtensionItem } from '@xyz-agent/core'
 import { useToast } from '@/composables/useToast'
 
 const props = defineProps<{ extensions: ExtensionItem[] }>()
-const settingsStore = useSettingsStore()
-const { extensionDirs } = storeToRefs(settingsStore)
+const settingsStore = getSettingsStore()
+const { extensionDirs } = settingsStore
 const { info: toastInfo, error: toastError } = useToast()
 const { t } = useI18n()
 

@@ -66,7 +66,7 @@ import { Button } from '@/components/ui/button'
 import { useTerminal } from '@/composables/features/useTerminal'
 import { useSessionStore } from '@/stores/session'
 import { useComposerInjectionStore } from '@/composables/panel/composer-injection-store'
-import { useSettingsStore } from '@/stores/settings'
+import { getSettingsStore } from '@xyz-agent/core'
 import { darkTerminalTheme } from '@/composables/terminal/terminal-themes'
 
 /**
@@ -87,11 +87,11 @@ const xtermContainer = ref<HTMLDivElement | null>(null)
 const terminal = useTerminal(toRef(props, 'sessionId'))
 const state = terminal.current
 const composerInjection = useComposerInjectionStore()
-const settingsStore = useSettingsStore()
+const settingsStore = getSettingsStore()
 
 /** 从 settings store 的 terminalConfig 解析 xterm 渲染选项。config 未加载时用默认值。 */
 function resolveXtermFontOptions() {
-  const cfg = settingsStore.terminalConfig?.config
+  const cfg = settingsStore.terminalConfig.value?.config
   return {
     fontFamily: cfg && cfg.fontFamily.trim() !== '' ? cfg.fontFamily : DEFAULT_FONT_FAMILY,
     fontSize: cfg?.fontSize ?? DEFAULT_FONT_SIZE,
@@ -265,7 +265,7 @@ watch(
 // Settings → Terminal 配置变化（字体/字号/scrollback/cursorStyle）：动态应用到已挂载的 xterm。
 // mount 时若 config 尚未加载（null），会用默认值 init；config 广播到达后此处补偿更新。
 watch(
-  () => settingsStore.terminalConfig,
+  () => settingsStore.terminalConfig.value,
   () => {
     if (!xterm) return
     const opts = resolveXtermFontOptions()

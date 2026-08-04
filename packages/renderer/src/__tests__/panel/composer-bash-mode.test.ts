@@ -49,9 +49,6 @@ vi.mock('@/api', () => ({
 vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn() }),
 }))
-vi.mock('@/stores/settings', () => ({
-  useSettingsStore: () => ({ defaultModel: '' }),
-}))
 
 // ── ComposerInput mock：emit input 设 draft + emit keydown Enter 触发 onSend ──
 const lastInputText = ref('')

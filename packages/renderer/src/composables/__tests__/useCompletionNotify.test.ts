@@ -4,7 +4,7 @@ import { handleCompletion, __resetDebounceForTest } from '../useCompletionNotify
 import * as sound from '../useCompletionSound'
 import * as markers from '../useSessionMarkers'
 import { useBackgroundWork } from '../features/useBackgroundWork'
-import { useSettingsStore } from '@/stores/settings'
+import { getSettingsStore, __resetSettingsStoreForTesting } from '@xyz-agent/core'
 
 vi.mock('../useCompletionSound', () => ({
   // playSuccess/playError 现在是 async + 接受可选声音名参数
@@ -25,14 +25,15 @@ vi.mock('../features/useBackgroundWork', () => ({
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  __resetSettingsStoreForTesting()
   vi.clearAllMocks()
   // 重置 useBackgroundWork mock 到默认实现（hasBackgroundWork=false），
   // 避免上一个用例的 mockReturnValue 污染下一个用例。
   vi.mocked(useBackgroundWork).mockReturnValue({ hasBackgroundWork: () => false })
   __resetDebounceForTest()
   // 默认设置 completionSound = true
-  const settingsStore = useSettingsStore()
-  settingsStore.system = { ...settingsStore.system, completionSound: true }
+  const settingsStore = getSettingsStore()
+  settingsStore.system.value = { ...settingsStore.system.value, completionSound: true }
   // 默认 document.visibilityState = 'visible'
   Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
 })
@@ -79,23 +80,23 @@ describe('useCompletionNotify', () => {
   })
 
   it('completionSound=false → 不响但仍然标记未读', () => {
-    const settingsStore = useSettingsStore()
-    settingsStore.system = { ...settingsStore.system, completionSound: false }
+    const settingsStore = getSettingsStore()
+    settingsStore.system.value = { ...settingsStore.system.value, completionSound: false }
     handleCompletion('s1', 'stop', 'other-sid')
     expect(sound.playSuccess).not.toHaveBeenCalled()
     expect(markers.markUnread).toHaveBeenCalledWith('s1')
   })
 
   it('设置 successSound 时透传给 playSuccess', () => {
-    const settingsStore = useSettingsStore()
-    settingsStore.system = { ...settingsStore.system, successSound: 'Hero' }
+    const settingsStore = getSettingsStore()
+    settingsStore.system.value = { ...settingsStore.system.value, successSound: 'Hero' }
     handleCompletion('s1', 'stop', 'other-sid')
     expect(sound.playSuccess).toHaveBeenCalledWith('Hero')
   })
 
   it('设置 errorSound 时透传给 playError', () => {
-    const settingsStore = useSettingsStore()
-    settingsStore.system = { ...settingsStore.system, errorSound: 'Sosumi' }
+    const settingsStore = getSettingsStore()
+    settingsStore.system.value = { ...settingsStore.system.value, errorSound: 'Sosumi' }
     handleCompletion('s1', 'error', 'other-sid')
     expect(sound.playError).toHaveBeenCalledWith('Sosumi')
   })

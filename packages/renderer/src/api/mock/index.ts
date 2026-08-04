@@ -37,9 +37,9 @@ import { makeMockSubscription, type GlobalHandler } from './subscription'
 import * as events from '../events'
 // [W17] 检测 real ws-client 是否已 connected（mock 与 real 同进程时打 warn，防 events 总线污染）
 import * as wsClient from '@/lib/ws-client'
-// settings 的纯前端偏好（getSystem/updateSystem）与 transport 无关，复用 real 实现消除手工同构；
-// mock 域隔离原则针对 transport/events/pending，localStorage 偏好不在此列。
-import { getSystem as realGetSystem, updateSystem as realUpdateSystem } from '../domains/settings'
+// [W4] getSystem/updateSystem 持久化已迁 @xyz-agent/core domain/settings/system-storage
+// （经 PlatformPort.storage KVStorage，renderer 壳 useSettingsShell providePlatform 注入）。
+// mock 不再转发这两个方法（消费方已切 core getSystem(getPlatform().storage)）。
 
 // mock/git.ts 的 git domain + fixtureGitStatus 透出（Wave 1a real git domain 落地后由 api/index 接线）
 export { git, fixtureGitStatus } from './git'
@@ -1025,9 +1025,6 @@ export const settings = {
   listProviders: config.listProviders,
   // 动作
   setProvider: config.setProvider,
-  // 纯前端偏好（localStorage）：复用 real 实现，两侧契约由类型保证一致，不再手工复制。
-  getSystem: realGetSystem,
-  updateSystem: realUpdateSystem,
 }
 
 // Mock workspace domain（W3：最近工作区记录，mock 返回 3 条 records 供 E2E 验证）

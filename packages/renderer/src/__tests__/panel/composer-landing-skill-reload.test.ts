@@ -106,9 +106,6 @@ vi.mock('@/composables/features/useNewTaskFlow', async () => {
 vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn() }),
 }))
-vi.mock('@/stores/settings', () => ({
-  useSettingsStore: () => ({ defaultModel: '' }),
-}))
 
 // ── ComposerInput mock：渲染 data-testid="composer-input"（AGENTS.md 冒烟模板 + 02-composer.md §3
 //    改进建议；真实 ComposerInput.vue 暂无此 testid，按既有 Composer-mount 测试惯例注入）+ emit

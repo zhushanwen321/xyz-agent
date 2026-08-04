@@ -17,7 +17,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import type { SystemSettings } from '@/api/domains/settings'
+import type { SystemSettings } from '@xyz-agent/core'
 
 /** mock 捕获 auto-rename API 调用。vi.hoisted 保证在 vi.mock 工厂执行前就绪。 */
 const settingsMock = vi.hoisted(() => ({

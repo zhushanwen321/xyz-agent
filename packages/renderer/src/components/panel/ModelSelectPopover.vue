@@ -61,7 +61,7 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTriggerButton } from '@/components/ui/popover'
 import { SELECTED_ITEM_CLASS } from '@/composables/logic/popover-styles'
 import type { ModelInfo } from '@/api'
-import { useSettingsStore } from '@/stores/settings'
+import { getSettingsStore } from '@xyz-agent/core'
 
 const emit = defineEmits<{
   select: [payload: { modelId: string; provider: string }]
@@ -73,7 +73,7 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
-const settingsStore = useSettingsStore()
+const settingsStore = getSettingsStore()
 const open = ref(false)
 const query = ref('')
 
@@ -103,7 +103,7 @@ interface ModelGroup {
 const groups = computed<ModelGroup[]>(() => {
   const q = query.value.trim().toLowerCase()
   const map = new Map<string, ModelGroup>()
-  for (const m of settingsStore.models) {
+  for (const m of settingsStore.models.value) {
     if (m.enabled === false) continue
     if (q && !m.name.toLowerCase().includes(q)) continue
     const key = m.providerId
@@ -122,7 +122,7 @@ const selectedValue = computed(() => props.selected ?? '')
 
 const currentName = computed(() => {
   const id = bareModelId(selectedValue.value)
-  return settingsStore.models.find((m) => m.id === id)?.name ?? id
+  return settingsStore.models.value.find((m) => m.id === id)?.name ?? id
 })
 
 /** 列表项是否选中（兼容复合串 "provider/modelId" 与裸 id 两种来源） */

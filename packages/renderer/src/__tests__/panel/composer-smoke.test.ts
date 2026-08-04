@@ -107,9 +107,6 @@ vi.mock('@/api', () => ({
 vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ active: undefined, list: [], updateSessionState: vi.fn(), revive: vi.fn() }),
 }))
-vi.mock('@/stores/settings', () => ({
-  useSettingsStore: () => ({ defaultModel: '' }),
-}))
 
 // ── ComposerInput mock（data-testid 供冒烟断言；emit keydown 驱动 onSend 范式与集成测试一致）──
 const lastInputText = ref('')

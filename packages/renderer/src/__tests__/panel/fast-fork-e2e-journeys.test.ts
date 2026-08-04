@@ -94,7 +94,6 @@ vi.mock('@/composables/features/useNewTaskFlow', () => ({
   }),
   resetNewTaskFlow: vi.fn(),
 }))
-vi.mock('@/stores/settings', () => ({ useSettingsStore: () => ({ defaultModel: '' }) }))
 
 // ── ComposerInput mock（同 composer-fork-mode.test.ts 范式，支持 emit input/keydown + defineExpose）──
 const lastInputText = ref('')

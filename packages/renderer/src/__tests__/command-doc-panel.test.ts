@@ -16,7 +16,7 @@ import { defineComponent } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import CommandDocPanel from '@/components/panel/CommandDocPanel.vue'
 import { useCommandStore } from '@/stores/command'
-import { useSettingsStore } from '@/stores/settings'
+import { getSettingsStore } from '@xyz-agent/core'
 import { useSideDrawer, resetSideDrawer } from '@/composables/features/useSideDrawer'
 import type { SkillInfo } from '@xyz-agent/shared'
 
@@ -73,8 +73,8 @@ async function setup(sessionId: string, withSourceInfo = true): Promise<void> {
     { name: '/commit', description: '提交改动', source: 'extension' },
     { name: '/compact', source: 'builtin' },
   ])
-  const settings = useSettingsStore()
-  settings.skills = SKILLS as typeof settings.skills
+  const settings = getSettingsStore()
+  settings.skills.value = SKILLS as typeof settings.skills.value
 }
 
 describe('CommandDocPanel', () => {

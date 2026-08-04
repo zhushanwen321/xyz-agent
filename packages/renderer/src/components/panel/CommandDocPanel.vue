@@ -53,7 +53,7 @@ import { useI18n } from 'vue-i18n'
 import { Wrench } from '@lucide/vue'
 import type { Component } from 'vue'
 import { useCommandStore } from '@/stores/command'
-import { useSettingsStore } from '@/stores/settings'
+import { getSettingsStore } from '@xyz-agent/core'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import * as fileApi from '@/api/domains/file'
@@ -67,7 +67,7 @@ const props = defineProps<{
 }>()
 
 const commandStore = useCommandStore()
-const settings = useSettingsStore()
+const settings = getSettingsStore()
 const { selectedCommandName } = useSideDrawer()
 
 /** 当前选中的 SessionCommand（从 commandStore 查） */
@@ -104,10 +104,10 @@ const skillPath = computed<string | null>(() => {
   const name = selectedCommandName.value
   if (name?.startsWith('/skill:')) {
     const skillName = name.replace('/skill:', '')
-    return settings.skills.find((s) => s.name === skillName)?.sourcePath ?? null
+    return settings.skills.value.find((s) => s.name === skillName)?.sourcePath ?? null
   }
   const bareName = cmd.name.replace(/^\//, '')
-  return settings.skills.find((s) => s.name === bareName)?.sourcePath ?? null
+  return settings.skills.value.find((s) => s.name === bareName)?.sourcePath ?? null
 })
 
 /** skill 描述：/skill:xxx 从 settings.skills 查，其余用 command.description */
@@ -115,7 +115,7 @@ const skillDescription = computed<string | undefined>(() => {
   const name = selectedCommandName.value
   if (name?.startsWith('/skill:')) {
     const skillName = name.replace('/skill:', '')
-    return settings.skills.find((s) => s.name === skillName)?.description
+    return settings.skills.value.find((s) => s.name === skillName)?.description
   }
   return command.value?.description
 })

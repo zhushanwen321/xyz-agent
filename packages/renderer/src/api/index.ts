@@ -51,6 +51,7 @@ export const preset = isMock ? mockApi.preset : realPreset
 
 // 类型 re-export（供组件 import 类型用）
 export type { ModelInfo } from './domains/model'
-export type { SystemSettings } from './domains/settings'
+// [W4] SystemSettings 类型已迁 @xyz-agent/core；此处保留 re-export 路径兼容（消费方主要已改 import core）。
+export type { SystemSettings } from '@xyz-agent/core'
 // D-028：SearchItem SSOT 归 lib/search-types，门面 re-export 改指领域层（非 mock）
 export type { SearchItem } from '@/lib/search-types'

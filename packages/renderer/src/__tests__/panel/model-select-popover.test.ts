@@ -9,7 +9,7 @@
  *    改从 settingsStore.models 常驻订阅读取。旧实现随 Composer v-if 重新挂载会错过
  *    sendInitialState 一次性推送 → 列表空；新实现读 store，store 已有数据则立即可见。
  *
- * 数据注入：setActivePinia(createPinia()) 后直接赋 useSettingsStore().models（不 mock store，
+ * 数据注入：setActivePinia(createPinia()) 后直接赋 getSettingsStore().models（不 mock store，
  * 与 command-popover-landing.test.ts 同模式——验证组件真实读 store）。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/model-select-popover.test.ts
@@ -18,7 +18,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import type { ModelInfo } from '@xyz-agent/shared'
-import { useSettingsStore } from '@/stores/settings'
+import { getSettingsStore, __resetSettingsStoreForTesting } from '@xyz-agent/core'
 import ModelSelectPopover from '@/components/panel/ModelSelectPopover.vue'
 
 const MODELS: ModelInfo[] = [
@@ -28,11 +28,12 @@ const MODELS: ModelInfo[] = [
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  __resetSettingsStoreForTesting()
 })
 
 describe('ModelSelectPopover 纯受控 + store 数据源', () => {
   it('U18: props.selected 为复合串时，触发器显示对应模型名', async () => {
-    useSettingsStore().models = MODELS
+    getSettingsStore().models.value = MODELS
     const wrapper = mount(ModelSelectPopover, {
       props: { selected: 'anthropic/claude-4' },
     })
@@ -42,7 +43,7 @@ describe('ModelSelectPopover 纯受控 + store 数据源', () => {
   })
 
   it('U18b: props.selected 变化时，触发器文案跟随更新（纯受控，不依赖本地副本）', async () => {
-    useSettingsStore().models = MODELS
+    getSettingsStore().models.value = MODELS
     const wrapper = mount(ModelSelectPopover, {
       props: { selected: 'anthropic/claude-4' },
     })
@@ -56,7 +57,7 @@ describe('ModelSelectPopover 纯受控 + store 数据源', () => {
   })
 
   it('U19: onSelect 后 emit modelId+provider，不依赖本地态回写', async () => {
-    useSettingsStore().models = MODELS
+    getSettingsStore().models.value = MODELS
     const wrapper = mount(ModelSelectPopover, {
       props: { selected: 'anthropic/claude-4' },
     })
@@ -73,7 +74,7 @@ describe('ModelSelectPopover 纯受控 + store 数据源', () => {
   it('U15: props.selected 为空串时，触发器显示空串对应的裸 id（空串场景由 Composer || 兜底处理）', async () => {
     // ModelSelectPopover 本身不兜底空串——它纯受控显示 selected。
     // 空串的裸 id 仍是空串，currentName fallback 到空串。
-    useSettingsStore().models = MODELS
+    getSettingsStore().models.value = MODELS
     const wrapper = mount(ModelSelectPopover, {
       props: { selected: '' },
     })
@@ -85,7 +86,7 @@ describe('ModelSelectPopover 纯受控 + store 数据源', () => {
   it('U9: store 已有数据时 mount，触发器立即显示模型名（竞态回归——模拟 v-if 翻转后重新 mount，无任何推送）', async () => {
     // 旧实现：组件内 onMounted 订阅 onModels，重新挂载会错过 sendInitialState 一次性推送 → 列表空。
     // 新实现：读 settingsStore.models，store 已有数据则立即可见。此处不触发任何推送。
-    useSettingsStore().models = MODELS
+    getSettingsStore().models.value = MODELS
     const wrapper = mount(ModelSelectPopover, {
       props: { selected: 'anthropic/claude-4' },
     })
@@ -94,7 +95,7 @@ describe('ModelSelectPopover 纯受控 + store 数据源', () => {
   })
 
   it('U10: 分组渲染——2 个 provider 各 1 model，groups 有 2 组', async () => {
-    useSettingsStore().models = MODELS
+    getSettingsStore().models.value = MODELS
     const wrapper = mount(ModelSelectPopover, {
       props: { selected: 'anthropic/claude-4' },
     })
@@ -108,7 +109,7 @@ describe('ModelSelectPopover 纯受控 + store 数据源', () => {
   })
 
   it('U11: 搜索过滤——query="cla" 时仅渲染 Claude 相关', async () => {
-    useSettingsStore().models = MODELS
+    getSettingsStore().models.value = MODELS
     const wrapper = mount(ModelSelectPopover, {
       props: { selected: 'anthropic/claude-4' },
     })
@@ -124,7 +125,7 @@ describe('ModelSelectPopover 纯受控 + store 数据源', () => {
   })
 
   it('U12: store 空时渲染「无匹配模型」', async () => {
-    useSettingsStore().models = []
+    getSettingsStore().models.value = []
     const wrapper = mount(ModelSelectPopover, {
       props: { selected: '' },
     })
@@ -147,7 +148,7 @@ describe('ModelSelectPopover 纯受控 + store 数据源', () => {
       { id: 'claude-haiku', name: 'Claude Haiku', providerId: 'anthropic', providerName: 'Anthropic', enabled: false },
       { id: 'gpt-4', name: 'GPT-4', providerId: 'openai', providerName: 'OpenAI', enabled: true },
     ] as unknown as ModelInfo[]
-    useSettingsStore().models = mixed
+    getSettingsStore().models.value = mixed
     const wrapper = mount(ModelSelectPopover, {
       props: { selected: 'anthropic/claude-4' },
     })
