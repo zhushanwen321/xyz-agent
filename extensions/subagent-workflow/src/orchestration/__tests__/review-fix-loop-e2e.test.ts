@@ -17,7 +17,7 @@
  * 已知限制：parallel 的 review 调用顺序不保证——剧本不依赖具体 agent 顺序
  * （E2E-2 只断言调用总数，R1 中先到者 dirty 后到者 clean 均可）。
  */
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -80,11 +80,13 @@ interface Scenario {
  */
 function makeScenarioRunner(scenario: Scenario) {
   const reviewCalls: Array<{ prompt: string; result: Record<string, unknown> }> = [];
-  const calls: Array<{ kind: "review" | "aggregate" | "fix"; prompt: string }> = [];
-  const run = vi.fn(async (opts: { prompt?: string; schema?: unknown }): Promise<AgentResult> => {
+  const calls: Array<{ kind: "review" | "aggregate" | "fix"; prompt: string; agent?: string }> = [];
+  const run = vi.fn(async (opts: { prompt?: string; schema?: unknown; agent?: string }): Promise<AgentResult> => {
     const kind = classifyCall(opts);
     const prompt = opts.prompt ?? "";
-    calls.push({ kind, prompt });
+    // m5：记录 agent 字段（review/fix 派发验证）。内置名（reviewer/doc-reviewer）走
+    // def.name，自定义 .md agent 为 undefined——只断言 fix 调用的（fixAgent 派发）。
+    calls.push({ kind, prompt, agent: opts.agent });
     let parsed: unknown = null;
     if (kind === "review") {
       const idx = reviewCalls.length;
@@ -111,6 +113,7 @@ function makeScenarioRunner(scenario: Scenario) {
       reviewCalls,
       kinds: calls.map((c) => c.kind),
       prompts: calls.map((c) => c.prompt),
+      agents: calls.map((c) => c.agent),
     }),
   };
 }
@@ -263,8 +266,16 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
       expect(reviewPrompts[0]).toContain("Round 1");
       expect(reviewPrompts[1]).toContain("RECONCILE PREVIOUS ROUND");
       expect(reviewPrompts[1]).toContain("S-1"); // 5.3-4 deferred 跨轮继承
+      // m6：aggregator prompt 裁决段（5.4 ADJUDICATION）——裁决证据/降级保真/采信抽查
+      const aggPrompt = prompts[kinds.indexOf("aggregate")];
+      expect(aggPrompt).toContain("ADJUDICATION");
+      // m6：fix prompt 分流文案（trivial 直接修 / involved 标记 deferred）+ 自检要求
       const fixPrompt = prompts[kinds.indexOf("fix")];
       expect(fixPrompt).toContain("Fix scope");
+      expect(fixPrompt).toContain("fix trivial ones");
+      expect(fixPrompt).toContain("mark involved ones as deferred");
+      expect(fixPrompt).toContain("self_check in each fixes[] entry MUST include");
+      expect(fixPrompt).toContain("grep command + hit count + sync action");
       expect(reviewCalls.length).toBe(2);
     },
     RUN_TIMEOUT_MS,
@@ -275,9 +286,16 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
     async () => {
       const runner = makeScenarioRunner({
         review: [
-          // R1 两个 agent（顺序不定）：一个 dirty（2）一个 clean（0）
-          () => ({ report_file: "/tmp/r1a.md", must_fix: 2, suggestion: 0, reconciliation: [] }),
-          () => ({ report_file: "/tmp/r1b.md", must_fix: 0, suggestion: 0, reconciliation: [] }),
+          // R1 两个 agent（顺序不定）：reviewer → dirty（2）；doc-reviewer → clean（0）。
+          // doc-reviewer 走 schema-only 真实形态（M3 回归）：无 write 工具 → report_file="" +
+          // report_content 返回正文，由 workflow 落盘。按 prompt 内的报告路径区分 agent
+          // （顺序无关：两 generator 对同一 agent 返回同一结果）。
+          (prompt) => prompt.includes("doc-reviewer.md")
+            ? { report_content: "# doc-reviewer report\nPass 1 完成", report_file: "", must_fix: 0, suggestion: 0, reconciliation: [] }
+            : { report_file: "/tmp/r1a.md", must_fix: 2, suggestion: 0, reconciliation: [] },
+          (prompt) => prompt.includes("doc-reviewer.md")
+            ? { report_content: "# doc-reviewer report\nPass 1 完成", report_file: "", must_fix: 0, suggestion: 0, reconciliation: [] }
+            : { report_file: "/tmp/r1b.md", must_fix: 2, suggestion: 0, reconciliation: [] },
           // R2：仅 dirty agent 被重派（clean 被 skipCleanAgents 过滤）；返回 clean → 终止。
           // 若 skip 失效，会出现第 4 次 review 调用（断言总数=3 拦截）。
           () => ({
@@ -310,15 +328,26 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
 
       expect(result.reason).toBe("completed");
       expect(result.error).toBeUndefined();
-      const outcome = result.scriptResult as { terminated: string; totalFixed: number };
+      const outcome = result.scriptResult as { terminated: string; totalFixed: number; runDir: string };
       expect(outcome.terminated).toBe("clean");
       expect(outcome.totalFixed).toBe(2);
 
       // skipCleanAgents：R1 两 review + R2 一 review = 3；skip 失效则为 4
-      const { kinds, reviewCalls } = runner.stats();
+      const { kinds, reviewCalls, agents } = runner.stats();
       expect(reviewCalls.length).toBe(3);
       expect(kinds.filter((k) => k === "fix").length).toBe(1);
       expect(kinds.filter((k) => k === "aggregate").length).toBe(1);
+      // m5：fixAgent 派发验证——fix 调用带 agent: "reviewer"（review 调用只记录不断言：
+      // 内置名走 def.name，自定义 .md agent 为 undefined）
+      const fixIdx = kinds.indexOf("fix");
+      expect(agents[fixIdx]).toBe("reviewer");
+      // M3 直接证据：doc-reviewer（schema-only，report_file=""）报告经 report_content
+      // 落盘到 <runDir>/batch-1/round-1/doc-reviewer.md（def.report 文件名 = 内置名剥离
+      // review- 前缀，resolveAgentDefs 默认分支）。修复前 normalizeReviewResult 丢弃
+      // report_content → 落盘内容为空文件，本断言失败。
+      const docReportPath = join(outcome.runDir, "batch-1", "round-1", "doc-reviewer.md");
+      expect(existsSync(docReportPath)).toBe(true);
+      expect(readFileSync(docReportPath, "utf-8")).toContain("doc-reviewer report");
     },
     RUN_TIMEOUT_MS,
   );

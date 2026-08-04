@@ -565,6 +565,10 @@ function findNeedsRedesign(issues, maxFixAttempts) {
 
 /**
  * reviewer 结果归一化：reconciliation（可选，5.1 结构化对账声明）透传，缺省 []。
+ * report_content 透传（M3，5.8 schema-only agent 落盘数据源）：doc-reviewer 等无 write
+ * 工具的 agent 经 report_content 返回完整报告，workflow 写盘到 <roundDir>/<def.report>.md。
+ * 仅字符串透传，缺省 undefined——writer 型 agent（有 report_file）无 report_content 时
+ * 不引入该键值，落盘判断（resolveReviewReportPath）不受影响。
  * 旧格式（无 reconciliation）兼容；缺 must_fix 返回 null（对齐现状缺 must_fix 判定）。
  */
 function normalizeReviewResult(raw) {
@@ -576,6 +580,7 @@ function normalizeReviewResult(raw) {
     : [];
   return {
     report_file: parsed.report_file,
+    report_content: typeof parsed.report_content === "string" ? parsed.report_content : undefined,
     must_fix: parsed.must_fix,
     suggestion: parsed.suggestion ?? 0,
     reconciliation,

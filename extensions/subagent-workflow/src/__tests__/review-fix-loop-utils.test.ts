@@ -491,6 +491,20 @@ describe("normalizeReviewResult", () => {
     const r = normalizeReviewResult({ report_file: "/tmp/r.md", must_fix: 0, suggestion: 0 });
     expect(r!.reconciliation).toEqual([]);
   });
+  it("report_content 透传（M3：schema-only agent 落盘数据源）", () => {
+    const r = normalizeReviewResult({
+      report_file: "", report_content: "# doc-reviewer report\nPass 1 完成", must_fix: 0, suggestion: 0,
+    });
+    expect(r!.report_content).toBe("# doc-reviewer report\nPass 1 完成");
+  });
+  it("writer 型 agent（无 report_content）→ undefined 缺省（不污染落盘判断，M3）", () => {
+    const r = normalizeReviewResult({ report_file: "/tmp/r.md", must_fix: 1, suggestion: 0 });
+    expect(r!.report_content).toBeUndefined();
+  });
+  it("report_content 非字符串（脏数据）→ undefined（仅字符串透传）", () => {
+    const r = normalizeReviewResult({ report_file: "", report_content: 42, must_fix: 0, suggestion: 0 });
+    expect(r!.report_content).toBeUndefined();
+  });
   it("缺 must_fix → null", () => {
     expect(normalizeReviewResult({ report_file: "/tmp/r.md" })).toBeNull();
   });
