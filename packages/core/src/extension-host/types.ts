@@ -17,6 +17,10 @@ export interface StatusBarEntry {
   alignment: 'left' | 'right'
   priority: number
   commandId?: string
+  /** 作用域（W2 扩展，对齐 runtime StatusBarItem.scope + IF8 分流契约）。可选——旧消费方不带。 */
+  scope?: 'per-session' | 'global'
+  /** 所属 session（W2 扩展，对齐 runtime StatusBarItem.sessionId）。可选——global scope 项不带。 */
+  sessionId?: string
 }
 
 /** statusSet 条目（IF2/DM3）。 */
