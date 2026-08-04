@@ -22,7 +22,7 @@
     @input="onInput"
     @keydown="onKeydown"
     @paste="onPaste"
-    @focus="isFocused = true"
+    @focus="onInputFocus"
     @blur="onBlur"
     @compositionstart="composing = true"
     @compositionend="onCompositionEnd"
@@ -56,6 +56,9 @@ const emit = defineEmits<{
   'slash-trigger': [payload: { query: string } | null]
   /** # 文件触发检测：{query} 表示光标前有「空格/行首 + # + 非空白」序列；null 表示应关闭触发浮层 */
   'file-trigger': [payload: { query: string } | null]
+  /** 聚焦/失焦：驱动父 Composer 的 .composer-box 聚焦态（v6 §6.1 .focused 3px ring） */
+  focus: []
+  blur: []
 }>()
 
 /** 壳层依赖注入（pasteImage IPC / getSlashIcon 图标映射 / i18n t）——renderer Composer.vue provide */
@@ -124,7 +127,14 @@ insertImageBadgeFn = chipCommands.insertImageBadge
 /** blur：清聚焦态（隐藏光标 + 末尾不再闪），并保存选区供命令浮层后恢复光标 */
 function onBlur(): void {
   isFocused.value = false
+  emit('blur')
   saveSelection()
+}
+
+/** focus：设内部聚焦态（placeholder 显隐）+ emit 给父 Composer 驱动 .composer-box ring */
+function onInputFocus(): void {
+  isFocused.value = true
+  emit('focus')
 }
 
 // clear / setText / insertTextAtCursor 不再在组件定义：DOM 写入已收口进 core composable
@@ -193,21 +203,20 @@ onMounted(() => {
   pointer-events: none;
 }
 
-/* slash 命令 chip（§2e：紫色整体 chip，backspace 整体删，× 点删） */
+/* slash 命令 chip（§9B v6 统一范式：无底无边 + 加粗 font-weight 600 + 前缀 icon + 语义色 + × 删除）
+   去掉 reasoning-soft 底色块（旧范式），保留语义色文字 + icon。 */
 .composer-input :deep(.slash-chip) {
   display: inline-flex;
   align-items: center;
   /* inline-flex 默认 vertical-align:baseline，chip 底边与文字基线对齐导致偏上。
      middle 让 chip 中线与文字 x-height 中线对齐，视觉与文字水平居中。 */
   vertical-align: middle;
-  gap: 3px;
-  /* 与后续文字空开约一字符宽（4px），避免 chip 边框贴紧正文 */
+  gap: 4px;
+  /* 与后续文字空开约一字符宽（4px），避免 chip 贴紧正文 */
   margin-right: 4px;
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-  background: var(--reasoning-soft);
+  /* 无底色无边框（v6 §9B 统一范式），仅靠 icon + 语义色文字区分类型 */
   color: var(--reasoning);
-  font: 500 12px / 1.4 var(--font-sans);
+  font: 600 11px / 1.4 var(--font-sans);
   user-select: none;
 }
 .composer-input :deep(.slash-chip .chip-icon) {
@@ -216,8 +225,8 @@ onMounted(() => {
   color: var(--reasoning);
 }
 .composer-input :deep(.slash-chip .chip-icon svg) {
-  width: 12px;
-  height: 12px;
+  width: 13px;
+  height: 13px;
 }
 .composer-input :deep(.slash-chip .chip-x) {
   cursor: pointer;
@@ -230,28 +239,27 @@ onMounted(() => {
   color: var(--danger);
 }
 
-/* @ 引用 / # 文件 mention 内联 chip（§2d：蓝名 / 绿名） */
+/* @ 引用 / # 文件 mention 内联 chip（§9B v6 统一范式：无底无边 + 加粗 + 前缀 icon + 语义色） */
 .composer-input :deep(.mention-chip) {
-  display: inline;
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  gap: 4px;
   /* 与后续文字空开约一字符宽（4px），与 slash-chip 对齐 */
   margin-right: 4px;
-  padding: 1px 4px;
-  border-radius: var(--radius-sm);
-  font: 500 12px / 1.4 var(--font-sans);
+  /* 无底色无边框（v6 §9B 统一范式） */
+  font: 600 11px / 1.4 var(--font-sans);
   user-select: none;
 }
 .composer-input :deep(.mention-chip.mention-at) {
   color: var(--accent);
-  background: var(--accent-soft);
 }
 .composer-input :deep(.mention-chip.mention-file) {
   color: var(--success);
-  background: var(--success-soft);
 }
 /* 图片 badge（Cmd+V 富呈现通路）：复用 .mention-chip 基础样式 + .image-chip 紫色修饰，
    覆盖 mention-file 的绿色，与 ContextChipsBar image chip（text-reasoning）视觉一致（TO2）。 */
 .composer-input :deep(.mention-chip.image-chip) {
   color: var(--reasoning);
-  background: var(--reasoning-soft);
 }
 </style>

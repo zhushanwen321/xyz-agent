@@ -15,9 +15,6 @@
     <!-- retry/queue 指示位（spec C10，#13，composer 上方独立行）：
          auto_retry_end / message_start 到达时 store 自动清 → state=undefined → 组件 v-if 消失 -->
     <RetryIndicator :state="retryState" />
-    <QueueBubble :state="queueState" />
-    <!-- compact 待发队列 badge（W2：compaction 期间入队消息预览 + 逐条取消）。
-         v-if count>0 自隐藏（flush 成功/队列取消后消失），QueueBubble 旁独立行 -->
     <CompactQueueBadge :session-id="sessionId" />
     <!-- 命令浮层（§2d @/#//）：anchor = composer-box（slot），reka-ui Popover portal body。
          composer-box 内 focus 算 inside 不触发 dismiss，键盘路由见 onKeydown -->
@@ -35,12 +32,15 @@
       <div
         ref="composerBoxRef"
         class="composer-box relative rounded-lg border bg-bg-input"
-        :class="boxClass"
+        :class="[boxClass, focusRingClass]"
         data-testid="composer-box"
         @dragover.prevent="onDragOver"
         @dragleave.prevent="onDragLeave"
         @drop.prevent="onDrop"
       >
+        <!-- QueueBubble（v6 §8.5：内嵌 composer-box 顶部，去独立卡片/pulse/标签/chevron，
+             仅 border-b 分隔，Zap/Clock icon + truncate 文本）——6 区第 1 位 -->
+        <QueueBubble :state="queueState" />
         <!-- Staging 模式标识 chip（fork/handoff 统一）：顶部 accent chip 提示当前 staging 类型 + × 退出。
              经 staging.activeStaging 统一渲染（ADR-0057），退出调 staging.exit() -->
         <div
@@ -75,6 +75,8 @@
           @keydown="onKeydown"
           @slash-trigger="onSlashTrigger"
           @file-trigger="onFileTrigger"
+          @focus="onBoxFocusIn"
+          @blur="onBoxFocusOut"
         />
 
       <!-- 工具条（panel/spec §composer line 51）：上下文/模型/thinking-level 展示型 + 发送位三态。
@@ -138,7 +140,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, provide, ref, watch, type Ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, provide, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowUp, Loader2, Square, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -204,6 +206,46 @@ const {
 } = useCommandPopoverTrigger(inputRef, sessionIdRef)
 
 const isSending = ref(false)
+/** composer-box 聚焦态（v6 §6.1 .focused：border-accent + 3px accent 外环 --shadow-glow）。
+ *  boxClass（composer-shell）三级链 staging>bash>steer>hasInput 无 focus 分支，故在壳层补：
+ *  focus 优先级低于 staging/steer（二者有独立视觉：staging bg-accent-soft / steer 呼吸），
+ *  用 ! 前缀压过 hasInput 的 2px 微环 Tailwind 内联工具类。 */
+const isFocused = ref(false)
+/** focus ring class：staging/bash/steer 活跃时不叠加（它们已含 accent border + ring），
+ *  否则聚焦时输出 3px accent 外环（覆盖 hasInput 的 2px 微环）。 */
+const focusRingClass = computed<Array<string>>(() => {
+  if (!isFocused.value) return ['']
+  const exclusive = String(boxClass.value[0] ?? '')
+  if (
+    exclusive.includes('animate-steer-breathe')
+    || exclusive.includes('composer-bash-mode')
+    || staging.activeStaging.value
+  ) {
+    return ['']
+  }
+  return ['!border-[var(--accent)] ![box-shadow:var(--shadow-glow)]']
+})
+/** composer-box focusin/focusout：子元素（ComposerInput）聚焦算 box 聚焦（v6 .focused 态）。
+ *  focusout 时 relatedTarget 仍在 box 内则保持（composer-box 内子元素切换不退出聚焦）。 */
+function onBoxFocusIn(): void {
+  isFocused.value = true
+}
+function onBoxFocusOut(): void {
+  isFocused.value = false
+}
+// focusin/focusout 用原生 listener 注册（非 template @focusin）：composer-box 经
+// CommandPopover 的 PopoverAnchor as-child 包裹，Vue template 事件绑定在 clone element 时丢失。
+// ref 指向真实 DOM，addEventListener 稳定生效。
+onMounted(() => {
+  // composerBoxRef 在 CommandPopover PopoverAnchor as-child 包裹下透传丢失（ref 为 null），
+  // 聚焦态改由子组件 ComposerInput emit focus/blur 驱动（见 @focus/@blur 绑定）。
+})
+onBeforeUnmount(() => {
+  composerBoxRef.value?.removeEventListener('focusin', onBoxFocusIn)
+  composerBoxRef.value?.removeEventListener('focusout', onBoxFocusOut)
+})
+/** composer-box 聚焦态：由 ComposerInput @focus/@blur 驱动（composer-box 经 CommandPopover
+ *  PopoverAnchor as-child 包裹，ref 透传丢失，改由子组件 ComposerInput emit focus/blur）。 */
 /** 当前 panel 的 session 是否正在压缩上下文（#6，per-session） */
 const isCompacting = computed(() => (props.sessionId ? chatStore.isCompacting(props.sessionId) : false))
 
