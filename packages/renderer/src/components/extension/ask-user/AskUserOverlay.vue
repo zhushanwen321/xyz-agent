@@ -265,10 +265,11 @@ function onSubmit(): void {
           @click="activeIdx = i"
         >
           {{ q.header ?? q.question.slice(0, 12) }}
+          <!-- v6 §6.5：已答 tab 显 7px success 绿点 -->
           <span
             v-if="isQuestionAnswered(q)"
             data-testid="ask-user-tab-answered"
-            class="size-1 rounded-full bg-success"
+            class="size-[7px] rounded-full bg-success"
           />
         </Button>
       </div>
@@ -279,11 +280,11 @@ function onSubmit(): void {
     <div class="flex flex-col gap-2 px-3.5 pb-1 pt-2.5">
       <!-- 多问题时：当前问题文本 + context -->
       <template v-if="activeQuestion">
-        <!-- context（reasoning-soft 软底，无边框） -->
+        <!-- v6 §6.5：context 降中性 bg-surface-hover（去 reasoning 软底彩色，v6 降噪） -->
         <p
           v-if="activeQuestion.context"
           data-testid="ask-user-context"
-          class="rounded bg-[var(--reasoning-soft)] px-2.5 py-1.5 text-[12px] leading-1.5 text-neutral-mid"
+          class="rounded bg-surface-hover px-2.5 py-1.5 text-[12px] leading-1.5 text-neutral-mid"
         >
           {{ activeQuestion.context }}
         </p>
@@ -323,12 +324,13 @@ function onSubmit(): void {
               class="mt-0.5"
               @update:model-value="toggleOption(activeQuestion, optValue(opt))"
             />
+            <!-- v6 §6.5：单选 radio checked=accent 实心 + inset 2px bg-input 形成环 -->
             <div
               v-else
               :class="[
                 'mt-0.5 size-4 shrink-0 rounded-full border-2 transition-colors',
                 isSelected(activeQuestion, optValue(opt))
-                  ? 'border-accent bg-accent'
+                  ? 'border-accent bg-accent shadow-[inset_0_0_0_2px_var(--bg-input)]'
                   : 'border-border-strong',
               ]"
             />
@@ -371,11 +373,12 @@ function onSubmit(): void {
             class="mt-0.5"
             @update:model-value="toggleOption(activeQuestion, OTHER_VALUE)"
           />
+          <!-- v6 §6.5：单选 radio checked=accent 实心 + inset 2px bg-input 形成环 -->
           <div
             v-else
             :class="[
               'mt-0.5 size-4 shrink-0 rounded-full border-2 transition-colors',
-              isOtherSelected(activeQuestion) ? 'border-accent bg-accent' : 'border-border-strong',
+              isOtherSelected(activeQuestion) ? 'border-accent bg-accent shadow-[inset_0_0_0_2px_var(--bg-input)]' : 'border-border-strong',
             ]"
           />
           <div class="flex min-w-0 flex-1 flex-col">

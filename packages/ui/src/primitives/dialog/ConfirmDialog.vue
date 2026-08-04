@@ -51,9 +51,10 @@ function onCancel(): void {
     <DialogContent hide-close class="max-w-[360px]">
       <DialogHeader>
         <DialogTitle class="flex items-center gap-2">
+          <!-- v6 §6.5：danger 三角 icon 降 size-4 -->
           <AlertTriangle
             v-if="props.variant === 'danger'"
-            class="size-5 shrink-0 text-danger"
+            class="size-4 shrink-0 text-danger"
           />
           {{ props.title }}
         </DialogTitle>

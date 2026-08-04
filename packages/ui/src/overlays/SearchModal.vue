@@ -35,7 +35,7 @@
       aria-modal="true"
       :aria-label="t('search.title')"
       tabindex="-1"
-      class="relative w-full max-w-[620px] overflow-hidden rounded-lg border bg-surface shadow-lg outline-none"
+      class="relative w-full max-w-[620px] overflow-hidden rounded-lg border bg-surface shadow-2 outline-none"
       @click.stop
       @keydown="onGlobalKeydown"
     >
@@ -56,6 +56,8 @@
             :placeholder="t('search.placeholder')"
             @keydown="onKeydown"
           />
+          <!-- v6 §6.5：esc 关闭快捷键提示徽标（对齐 demo） -->
+          <kbd class="ml-auto rounded border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim">esc</kbd>
         </div>
 
         <!-- 结果区 -->
@@ -79,7 +81,7 @@
               class="py-1"
             >
               <div
-                class="flex items-center gap-2 px-4 pb-1 pt-2 font-mono text-[10px] uppercase tracking-wider text-neutral-dim"
+                class="flex items-center gap-2 px-4 pb-1 pt-2 font-mono text-[10px] tracking-wider text-neutral-dim"
               >
                 <span>{{ s.label }}</span>
                 <span class="text-neutral-dim">{{ s.items.length }}</span>
@@ -104,13 +106,14 @@
                 <span class="flex min-w-0 flex-1 flex-col gap-0.5">
                   <span class="truncate text-[13.5px] text-neutral-fg">
                     <template v-for="(seg, i) in segments(it.title, query.trim())" :key="i">
-                      <mark v-if="seg.hit" class="bg-transparent font-semibold text-accent">{{ seg.text }}</mark>
+                      <!-- v6 §6.5：高亮 font-semibold 不染蓝，颜色继承父元素（title=neutral-fg / sub=neutral-dim） -->
+                      <mark v-if="seg.hit" class="bg-transparent font-semibold text-inherit">{{ seg.text }}</mark>
                       <template v-else>{{ seg.text }}</template>
                     </template>
                   </span>
                   <span class="truncate font-mono text-[11px] text-neutral-dim">
                     <template v-for="(seg, i) in segments(it.sub, query.trim())" :key="i">
-                      <mark v-if="seg.hit" class="bg-transparent font-semibold text-accent">{{ seg.text }}</mark>
+                      <mark v-if="seg.hit" class="bg-transparent font-semibold text-inherit">{{ seg.text }}</mark>
                       <template v-else>{{ seg.text }}</template>
                     </template>
                   </span>
