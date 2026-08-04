@@ -27,14 +27,17 @@
       data-testid="drawer-panel"
     >
       <!-- header：tab 栏（仅 icon，左）+ 钉住/关闭（右）。label 收进 title 供 hover 查看。 -->
-      <header class="flex items-center gap-1 border-b border-border px-2 py-1.5">
+      <!-- §5.5 分层策略：header 用 bg-surface-2 浮起分层（去 border-b hairline）。
+           escape hatch scoped（见文件底部）：header 浮起在 SplitterPanel overflow:hidden 容器内，
+           需配合 aside 投影构成 D2 一体化生长的弱分隔语义。 -->
+      <header class="flex items-center gap-1 bg-surface-2 px-2 py-1.5">
         <div class="flex flex-1 gap-0.5">
           <Button
             v-for="tab in tabs"
             :key="tab.key"
             variant="ghost"
             class="size-7 shrink-0 justify-center rounded-sm p-0"
-            :class="activeTab === tab.key ? 'bg-accent-soft text-accent' : 'text-neutral-mid'"
+            :class="activeTab === tab.key ? 'bg-surface-hover text-neutral-fg' : 'text-neutral-mid'"
             :title="tab.label"
             :data-testid="`drawer-tab-${tab.key}`"
             @click="emit('set-tab', tab.key)"

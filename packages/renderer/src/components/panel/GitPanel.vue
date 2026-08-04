@@ -205,13 +205,16 @@ function statusBadge(status: GitFileStatus['status']): string {
 }
 
 function statusBadgeClass(status: GitFileStatus['status']): string {
+  // §5.6B：行级 badge 中性化降噪（信息密度高场景）。
+  // M/A/D/R 统一 neutral-dim，仅 U（冲突）染 danger + font-weight 700 突出真异常。
+  // 注意：与 ChangeSetCard 文件 badge（保留彩色）不矛盾——那是低信息密度对话流场景。
   return (
     {
-      added: 'text-success',
-      modified: 'text-warn',
-      deleted: 'text-danger',
+      added: 'text-neutral-dim',
+      modified: 'text-neutral-dim',
+      deleted: 'text-neutral-dim',
       unmerged: 'text-danger font-bold',
-      renamed: 'text-accent',
+      renamed: 'text-neutral-dim',
       untracked: 'text-neutral-dim',
     } satisfies Record<GitFileStatus['status'], string>
   )[status]

@@ -49,7 +49,7 @@
     <template v-if="drawerOpen">
       <SplitterResizeHandle
         id="drawer-handle"
-        class="workspace-resize-handle relative w-px shrink-0 bg-border transition-colors duration-150 ease hover:bg-border-strong data-[state=drag]:bg-accent"
+        class="workspace-resize-handle relative w-px shrink-0 bg-transparent [box-shadow:var(--shadow-drawer)] transition-colors duration-150 ease hover:bg-border-strong data-[state=drag]:bg-accent"
       />
       <SplitterPanel id="drawer-panel" :order="2" :min-size="20" :max-size="60" :default-size="50">
         <DrawerPanel
