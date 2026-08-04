@@ -6,6 +6,7 @@
  *   2. skipCleanAgents 语义 + fixAgent 参数接受（E2E-2）
  *   3. 渲染 gate：非 clean 终止 message 的 [UNRESOLVED] 透出 + ES3 硬校验拦截（E2E-3）
  *   4. M2 回归：全 fixed + 新发现 → reconcile 门控（reconCount）+ 新发现 merge 独立执行（E2E-4）
+ *   5. M4 回归：recheckAfterFix=true → 全批重派 + clean agent 走 scoped 分支（E2E-5）
  *
  * 与 workflows-e2e.test.ts 同模式：真实 runAndWait + 真实 worker thread +
  * 唯一 mock 是 deps.runner（AgentRunner）。runner 按调用分流：
@@ -523,6 +524,72 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
       expect(reviewCalls.length).toBe(2);
       expect(kinds.filter((k) => k === "aggregate").length).toBe(2);
       expect(kinds.filter((k) => k === "fix").length).toBe(2);
+    },
+    RUN_TIMEOUT_MS,
+  );
+
+  it(
+    "E2E-5：recheckAfterFix=true → 全批重派 + clean agent 走 scoped 分支（M4 回归）",
+    async () => {
+      // R1：reviewer dirty + doc-reviewer clean → fix 后 R2 全批重派（强回归模式），
+      // doc-reviewer（上轮 clean）走 scoped 限定分支（modifiedFiles ∪ affectedFiles）。
+      // M4 修复目标：scoped 分支的 lastModifiedFiles 在批内可读（state.lastModifiedFiles
+      // 即时字段）——修复前读 state.batches（批内未 push）恒空。
+      const runner = makeScenarioRunner({
+        review: [
+          // R1 两 agent（parallel 顺序不定）：按 prompt 内报告路径区分
+          (prompt) => prompt.includes("doc-reviewer.md")
+            ? { report_content: "# doc-reviewer report", report_file: "", must_fix: 0, suggestion: 0, reconciliation: [] }
+            : { report_file: "/tmp/r1a.md", must_fix: 2, suggestion: 0, reconciliation: [] },
+          (prompt) => prompt.includes("doc-reviewer.md")
+            ? { report_content: "# doc-reviewer report", report_file: "", must_fix: 0, suggestion: 0, reconciliation: [] }
+            : { report_file: "/tmp/r1b.md", must_fix: 2, suggestion: 0, reconciliation: [] },
+          // R2 两个调用（reviewer 全量 R2+ / doc-reviewer scoped）：全部 clean
+          () => ({ report_file: "/tmp/r2a.md", must_fix: 0, suggestion: 0, reconciliation: [{ prev_id: "MF-1", status: "fixed", evidence: "read" }, { prev_id: "MF-2", status: "fixed", evidence: "read" }] }),
+          () => ({ report_file: "/tmp/r2b.md", must_fix: 0, suggestion: 0, reconciliation: [] }),
+        ],
+        aggregate: () => ({
+          report_file: "/tmp/agg.md", must_fix: 2, suggestion: 0,
+          must_fix_ids: [{ id: "MF-1", severity: "major" }, { id: "MF-2", severity: "major" }], fixes_caution: [],
+        }),
+        fix: () => ({
+          fixed_count: 2,
+          fixes: [
+            { issue_id: "MF-1", description: "fix1", self_check: "grep: 1 hit", affected_files: ["src/x.ts"] },
+            { issue_id: "MF-2", description: "fix2", self_check: "grep: 1 hit", affected_files: [] },
+          ],
+          deferred: [],
+        }),
+      });
+      const deps = makeDeps(runner);
+
+      const result = await runAndWait(
+        "review-fix-loop",
+        { targetType: "file", target: "README.md", agents: "reviewer,doc-reviewer", recheckAfterFix: true, _runId: RUN_ID() },
+        deps,
+        undefined,
+        RUN_TIMEOUT_MS,
+      );
+
+      expect(result.reason).toBe("completed");
+      expect(result.error).toBeUndefined();
+      const outcome = result.scriptResult as { terminated: string; totalFixed: number };
+      expect(outcome.terminated).toBe("clean");
+      expect(outcome.totalFixed).toBe(2);
+
+      // R1 两 review + R2 两 review（全批重派）= 4；skipCleanAgents 被 recheckAfterFix 覆盖
+      const { prompts, kinds, reviewCalls } = runner.stats();
+      expect(reviewCalls.length).toBe(4);
+      // scoped 分支被触发：prompt 含 "Scoped recheck"（clean agent 限定重审）
+      const scopedPrompt = prompts.filter((p) => p.includes("Scoped recheck"));
+      expect(scopedPrompt.length).toBe(1);
+      // M4 数据通路：affectedFiles（fix 自检标注）进 scoped prompt
+      expect(scopedPrompt[0]).toContain("src/x.ts");
+      // scoped prompt 含 modifiedFiles 结构行（git 实测内容取决于测试环境工作区，
+      // 只断言结构存在——M4 修复的是数据源可读性）
+      expect(scopedPrompt[0]).toContain("Modified files:");
+      // R2+ 全量分支同时被触发（reviewer）
+      expect(prompts.some((p) => p.includes("RECONCILE PREVIOUS ROUND"))).toBe(true);
     },
     RUN_TIMEOUT_MS,
   );

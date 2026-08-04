@@ -269,6 +269,7 @@ function loadState() {
       issues: undefined,
       knownRemaining: [],
       convergeStreak: 0,
+      lastModifiedFiles: [],
     };
   }
 }
@@ -289,6 +290,13 @@ function saveState(state) {
 // 上一轮 fix 的 modifiedFiles（git diff 实测，fix 阶段写入 batchRounds）。
 // recheck 限定 prompt（scoped）的 scope 来源（初版 = modifiedFiles）。
 function lastModifiedFiles() {
+  // M4: 批内轮次循环中 state.batches 尚未 push（仅在终止/批结束 push）——scoped 分支
+  // （recheckAfterFix=true 的下轮 review）执行时读不到本批数据。fix 阶段把
+  // modifiedFiles 同步写入 state.lastModifiedFiles（即时字段，批内立即可用），
+  // 此处优先读它；fallback 旧路径（跨批场景）。
+  if (state.lastModifiedFiles && Array.isArray(state.lastModifiedFiles)) {
+    return state.lastModifiedFiles;
+  }
   const b = state.batches[state.batches.length - 1];
   const r = b && b.rounds && b.rounds[b.rounds.length - 1];
   return (r && Array.isArray(r.modifiedFiles)) ? r.modifiedFiles : [];
@@ -855,6 +863,9 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       } catch { /* empty */ }
     }
     batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles });
+    // M4: 批内即时字段——下轮 scoped 分支（recheckAfterFix=true）从
+    // state.lastModifiedFiles 读本批 fix 的真实改动文件（git 实测兜底）
+    state.lastModifiedFiles = modifiedFiles;
     saveState(state);
 
     log("Fixed " + fixedCount + " issue(s). Total: " + totalFixed + ". Modified " + modifiedFiles.length + " file(s). Continuing...");
