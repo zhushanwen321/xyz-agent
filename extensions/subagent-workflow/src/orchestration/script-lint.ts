@@ -113,6 +113,20 @@ function checkLine(lineText: string, lineNum: number): LintFinding[] {
 }
 
 /**
+ * 剔除字符串字面量与注释内容（MF-4）。逐行处理，不跨行。
+ * 用途：`\bagent\s*\(` 不命中字符串里的 "agent(s)"（review-fix-loop L281 误报根因）；
+ * checkAgentDescription 的 `description\s*:` 不把 schema 内嵌 description 字符串当已提供。
+ */
+function stripStringsAndComments(line: string): string {
+  return line
+    .replace(/"(?:\\.|[^"\\])*"/g, "")
+    .replace(/'(?:\\.|[^'\\])*'/g, "")
+    .replace(/`(?:\\.|[^`\\])*`/g, "")
+    .replace(/\/\/.*$/, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
+/**
  * 遍历 source 中所有 agent 调用的行范围，对每个调用执行 callback。
  *
  * agent 调用可能跨多行，通过括号配对定位起止行：
@@ -124,6 +138,11 @@ function checkLine(lineText: string, lineNum: number): LintFinding[] {
  * 与 checkAgentCalls / checkAgentDescription 共享同一套范围定义，确保
  * outputSchema 检查与 description 检查覆盖完全相同的调用集合（含 parallel/pipeline
  * 内嵌的 agent() 调用——它们同样被 `\bagent\s*\(` 匹配）。
+ *
+ * 匹配前逐行剔除字符串/注释内容（MF-4）：字符串字面量里的 "agent(s)" 不再误触发。
+ * 非字面量实参（agent(callVar) / agent(expr)）跳过不回调：description 等选项在调用点
+ * 静态不可见，checkAgentDescription 无法验证运行时构造的调用——继续报 warning 即误报
+ * （review-fix-loop 的 agent(call) 三连误报根因）。
  *
  * @param callback (startLine, endLine) 0-based 行号
  */
@@ -145,13 +164,23 @@ function forEachAgentCallRange(
       continue;
     }
 
+    // 匹配/计括号都用剔除字符串与注释后的行，避免字面量内容干扰
+    const codeLine = stripStringsAndComments(line);
+
  // 检测 agent 调用开始
-    if (!inAgentCall && /\bagent\s*\(/.test(line)) {
+    if (!inAgentCall && /\bagent\s*\(/.test(codeLine)) {
       inAgentCall = true;
       depth = 0;
       agentStartLine = i;
  // 从 agent( 开始计括号
-      const afterAgent = line.replace(/^.*?\bagent\s*\(/, "(");
+      const afterAgent = codeLine.replace(/^.*?\bagent\s*\(/, "(");
+      // 非字面量实参（agent(callVar) / agent(expr)）→ 跳过（见函数头注释）。
+      // 形如 `agent(` 换行 `{` 的多行字面量调用（argTail 为空）保留原追踪行为。
+      const argTail = afterAgent.trimStart().slice(1).trimStart();
+      if (argTail.length > 0 && !argTail.startsWith("{")) {
+        inAgentCall = false;
+        continue;
+      }
       for (const ch of afterAgent) {
         if (ch === "(" || ch === "{" || ch === "[") depth++;
         if (ch === ")" || ch === "}" || ch === "]") depth--;
@@ -165,7 +194,7 @@ function forEachAgentCallRange(
     }
 
     if (inAgentCall) {
-      for (const ch of line) {
+      for (const ch of codeLine) {
         if (ch === "(" || ch === "{" || ch === "[") depth++;
         if (ch === ")" || ch === "}" || ch === "]") depth--;
       }
@@ -246,7 +275,12 @@ function checkAgentDescription(source: string): LintFinding[] {
   const lines = source.split("\n");
   const findings: LintFinding[] = [];
   forEachAgentCallRange(source, (startLine, endLine) => {
-    const range = lines.slice(startLine, endLine + 1).join("\n");
+    // range 已逐行剔除字符串字面量（MF-4）：schema 内嵌的 `description: "..."` 字符串
+    // 不再被误判为「已提供」——只有真正的对象 key 才算数（修正 I-10 漏报方向）。
+    const range = lines.slice(startLine, endLine + 1).map(stripStringsAndComments).join("\n");
+    // 对象以展开开头（agent({ ...call, ... })）：description 来自运行时对象、调用点静态
+    // 不可见——无法验证即不报（review-fix-loop 的 agent({ ...call, agent: ... }) 即此形态）。
+    if (/\{\s*\.\.\./.test(range)) return;
  // 匹配 description 或 label 作为对象 key（后跟冒号）
     if (!/\b(description|label)\s*:/.test(range)) {
       findings.push({

@@ -392,15 +392,18 @@ function detectStuckNodes(actionable, prevStatus, nodeRounds, replanArm = {}) {
 }
 
 /**
- * 清理 prevStatus / nodeRounds 中已进入终态的节点 entry（防止两 Map 无界增长）。
+ * 清理 prevStatus / nodeRounds 中已退出调度的节点 entry（防止两 Map 无界增长）。
  *
- * 问题：prevStatus / nodeRounds 只增不减，终态节点的 entry 永不清理。超长任务（成百上千
- * 个 wave node 依次完成）下两 Map 会累积所有历史终态节点的 status，造成内存浪费 + 跨轮
+ * 问题：prevStatus / nodeRounds 只增不减，已退出调度的节点 entry 永不清理。超长任务（成百上千
+ * 个 wave node 依次完成）下两 Map 会累积所有历史节点的 status，造成内存浪费 + 跨轮
  * 比对时遍历无意义 entry。
  *
  * 终态节点不会出现在 frontier（cw frontier 只返回非终态 actionable/blocked 节点），所以无法
- * 从"本轮 frontier"直接得知哪些节点刚变终态。本函数用"上一轮见过 + 本轮 frontier 中不存在 +
- * 在 prevStatus 中有记录"来推断刚消失的节点，再按其 prevStatus 判定是否终态决定是否清理。
+ * 从"本轮 frontier"直接得知哪些节点刚变终态。本函数用"上一轮见过（在 prevStatus 中）+ 本轮
+ * frontier 中不存在"来推断刚消失的节点，凡不在本轮 frontier 即视为已退出调度、直接清理。
+ * 不需要再按 prevStatus 判定终态：prevStatus 只由 detectStuckNodes 从本轮 frontier（非终态）
+ * 节点写入，永远不含终态值——按 status 判定会使清理分支恒不可达（防泄漏函数生产不可达，
+ * 两 Map 无界累积）。queryFrontier 失败时主循环 continue 且不调本函数，无抖动漏报场景。
  *
  * 纯函数：直接 mutate 入参 Map（与 detectStuckNodes 同样的副作用契约——调用方传入需持久
  * 化的累加器对象，函数就地修改避免反复浅拷贝大对象）。返回被清理的 unitId 列表（供测试断言）。
@@ -418,15 +421,13 @@ function pruneTerminalEntries(prevStatus, nodeRounds, currentUnitIds, replanArm 
   for (const unitId of Object.keys(prevStatus)) {
     // 本轮 frontier 仍存在 → 还在调度，保留
     if (present.has(unitId)) continue;
-    // 本轮没出现 + 上轮 status 是终态 → 已完成/中止，清理 entry
-    if (isTerminal(prevStatus[unitId])) {
-      delete prevStatus[unitId];
-      delete nodeRounds[unitId];
-      delete replanArm[unitId];
-      pruned.push(unitId);
-    }
-    // 本轮没出现 + 上轮 status 非终态：可能是 queryFrontier 临时失败/抖动漏报，
-    // 保守保留 entry（下轮再判），避免误清掉仍在调度的活跃节点。
+    // 本轮没出现 → 已退出调度（完成/中止），清理 entry。
+    // 不做 isTerminal(prevStatus[unitId]) 再判：prevStatus 永远不含终态值（只由 frontier
+    // 非终态节点写入），按 status 判定 = 清理分支恒不可达（MF-1 防泄漏函数生产不可达）。
+    delete prevStatus[unitId];
+    delete nodeRounds[unitId];
+    delete replanArm[unitId];
+    pruned.push(unitId);
   }
 
   return pruned;

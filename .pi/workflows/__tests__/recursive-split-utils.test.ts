@@ -788,7 +788,7 @@ describe("detectStuckNodes replan 判定", () => {
 // ── pruneTerminalEntries（终态节点 entry 清理） ─────────────────────
 
 describe("pruneTerminalEntries", () => {
-  it("清理本轮不在 frontier 且上轮 status 终态的节点 entry", () => {
+  it("清理本轮不在 frontier 的节点 entry", () => {
     // a 上轮 closed → 本轮 frontier 不含 a（已退出调度）→ 清理
     // b 本轮仍在 frontier（非终态）→ 保留
     const prevStatus: Record<string, string> = { a: "closed", b: "executing" };
@@ -808,7 +808,7 @@ describe("pruneTerminalEntries", () => {
     expect(nodeRounds).toEqual({});
   });
 
-  it("本轮仍在 frontier 的节点保留（即使上轮 status 终态——理论不会发生但保守保留）", () => {
+  it("本轮仍在 frontier 的节点保留", () => {
     const prevStatus: Record<string, string> = { a: "closed" };
     const nodeRounds: Record<string, number> = { a: 0 };
     const pruned = pruneTerminalEntries(prevStatus, nodeRounds, ["a"]);
@@ -816,13 +816,15 @@ describe("pruneTerminalEntries", () => {
     expect(prevStatus).toEqual({ a: "closed" });
   });
 
-  it("本轮不在 frontier 但上轮 status 非终态 → 保留（可能 frontier 抖动漏报，下轮再判）", () => {
-    // 保守策略：非终态节点突然消失可能是临时性 frontier 失败/漏报，不清避免误清活跃节点
+  it("本轮不在 frontier 即清理（queryFrontier 失败时主循环 continue 不调本函数，无抖动漏报）", () => {
+    // prevStatus 只由 detectStuckNodes 从 frontier（非终态）节点写入，不含终态值；
+    // 不在本轮 frontier ⟹ 已退出调度，直接清理（MF-1：不再按 status 判定）
     const prevStatus: Record<string, string> = { a: "executing" };
     const nodeRounds: Record<string, number> = { a: 1 };
     const pruned = pruneTerminalEntries(prevStatus, nodeRounds, []);
-    expect(pruned).toEqual([]);
-    expect(prevStatus).toEqual({ a: "executing" });
+    expect(pruned).toEqual(["a"]);
+    expect(prevStatus).toEqual({});
+    expect(nodeRounds).toEqual({});
   });
 
   it("同时清理 prevStatus 和 nodeRounds 两 Map", () => {

@@ -271,9 +271,9 @@ try {
       if (r && r.failedReason) log("BFS: " + r.unitId + " failed: " + r.failedReason);
     }
 
-    // Suggestion #3：每轮 BFS 结束后清理已进入终态的节点在 prevStatus / nodeRounds 中的 entry，
+    // Suggestion #3：每轮 BFS 结束后清理已退出调度的节点在 prevStatus / nodeRounds 中的 entry，
     // 防止两 Map 随任务推进无界累积。frontier.nodes 含本轮所有非终态 actionable+blocked 节点，
-    // 凡不在本轮 frontier 且上轮 status 已终态的节点即已退出调度，安全清理。
+    // 凡不在本轮 frontier 的节点即已退出调度（queryFrontier 失败时上方 continue 不会走到这里），安全清理。
     pruneTerminalEntries(
       prevStatus,
       nodeRounds,

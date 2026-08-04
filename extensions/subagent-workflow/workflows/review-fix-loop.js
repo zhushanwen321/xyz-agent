@@ -241,7 +241,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
   const defs = resolveAgentDefs(BATCHES[batchIndex - 1]);
   const cleanNames = new Set();
   let round = 0;
-  let prevTotal = -1;
+  let prevMustFix = -1;
   let stuckCount = 0;
   let batchClean = false;
   let roundHasFix = false; // recheckAfterFix 用：上轮是否有 fix
@@ -288,8 +288,15 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     for (let i = 0; i < allRaw.length; i++) {
       const raw = allRaw[i];
       if (raw && typeof raw === "object" && raw.error) {
-        // fail-fast：审查 agent 调用失败（含 AgentRegistry not found）不得静默跳过
-        fail("审查 agent 调用失败: " + active[i].name + " — " + raw.error);
+        // 审查 agent 调用失败（含 AgentRegistry not found / 超时）。不裸 throw——与
+        // aggregator-failure/stuck/fix-failure 路径一致：saveState + terminated 结构化终止，
+        // 保证 state.json 有记录、调用方拿到结构化结果而非裸异常（MF-3）。
+        state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
+        saveState(state);
+        terminated = "review-failure";
+        finalMessage = "Batch " + batchIndex + " round " + round + ": 审查 agent 调用失败 " + active[i].name + " — " + raw.error;
+        batchIndex = BATCHES.length + 1; // 终止外层循环
+        break;
       }
       const parsed = parseResult(raw);
       if (parsed && typeof parsed.must_fix === "number") {
@@ -304,10 +311,17 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         agentRoundResults.push({ name: def.name, must_fix: parsed.must_fix, suggestion: parsed.suggestion ?? 0, clean: parsed.must_fix === 0 });
       } else {
         // tools 受限的 agent（如 tools: read）会过滤掉 structured-output → schema 失效，
-        // 结果缺 must_fix。fail 信息完整 dump raw 便于定位。
-        fail("审查 agent 结果无效（缺 must_fix）: " + active[i].name + " raw=" + JSON.stringify(raw).slice(0, 400));
+        // 结果缺 must_fix。结构化终止（MF-3），raw 完整 dump 便于定位。
+        state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
+        saveState(state);
+        terminated = "review-failure";
+        finalMessage = "Batch " + batchIndex + " round " + round + ": 审查 agent 结果无效（缺 must_fix） " + active[i].name + " raw=" + JSON.stringify(raw).slice(0, 400);
+        batchIndex = BATCHES.length + 1; // 终止外层循环
+        break;
       }
     }
+
+    if (terminated === "review-failure") break; // 已结构化终止，退出 round 循环（MF-3）
 
     if (reviewResults.every((r) => r.must_fix === 0)) {
       log("Batch " + batchIndex + " round " + round + ": all agents clean.");
@@ -402,23 +416,25 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     log("Aggregated: " + mustFix + " must-fix + " + suggestion + " suggestion(s).");
 
     // ── Stuck detection ─────────────────────────────────────
-    const total = mustFix + suggestion;
-    if (prevTotal >= 0 && total >= prevTotal) {
+    // 只跟踪 must_fix：suggestion 是固定噪声（fix agent 只修 must-fix，suggestion 单调不降），
+    // 计入 total 会把合法推进（must_fix 每轮在降）误判为 stuck 提前终止（MF-2）。
+    const total = mustFix;
+    if (prevMustFix >= 0 && total >= prevMustFix) {
       stuckCount++;
       if (stuckCount >= stuckThreshold) {
-        log("Stuck: total issues not decreasing for " + stuckThreshold + " rounds. Stopping.");
+        log("Stuck: must-fix count not decreasing for " + stuckThreshold + " rounds. Stopping.");
         batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
         state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
         saveState(state);
         terminated = "stuck";
-        finalMessage = "Batch " + batchIndex + " round " + round + ": 总问题数连续 " + stuckThreshold + " 轮不下降";
+        finalMessage = "Batch " + batchIndex + " round " + round + ": must_fix 数连续 " + stuckThreshold + " 轮不下降";
         batchIndex = BATCHES.length + 1;
         break;
       }
     } else {
       stuckCount = 0;
     }
-    prevTotal = total;
+    prevMustFix = total;
 
     // ── Fix ─────────────────────────────────────────────────
     phase("Fix");
