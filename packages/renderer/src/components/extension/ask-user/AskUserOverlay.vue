@@ -19,6 +19,11 @@
  * - Other：独立 key `${header}__other`
  * - comment：独立 key `${header}__comment`
  *
+ * 注意：此文件是 4.0.1 comment restore 的一部分（main 已在 4.0.0 删除本文件的 comment UI：
+ *    QState.comment / `${key}__comment` 拼装 / allowComment 输入区）。merge 时本分支的
+ *    改动必须保留（protocol allowComment 已 restore，GUI 消费方在此），
+ *    详见 .changeset/restore-ask-user-comment.md。
+ *
  * 样式对齐 demo v3（docs/page-design/v3/ask-user/inline-ask-user-demo-v3.html）：
  * - 无边框一体化：去掉 border-b/border-t 分层，单容器 bg-input 靠间距分区
  * - head 行：脉冲点 + 单问题标题(或 tab)

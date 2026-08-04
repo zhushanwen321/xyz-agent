@@ -13,6 +13,12 @@
 // ⚠️ 唯一带写操作的内置 workflow：fix 阶段会修改文件（autoCommit=true 时 commit）。
 // ⚠️ lintScript 约束（本脚本已遵守）：含 parallel() 入口，禁止 bare IIFE；
 //    agent() 调用顺序确定（批次按配置顺序稳定排序，callId 重放安全）。
+//
+// ⚠️ 与 main 的 4.0.0 版分叉（merge 时 add/add 冲突，刻意决策记录）：
+//    本版（feat-recursive-optimize）保留——纯函数拆到 review-fix-loop-utils.cjs（vitest 覆盖）、
+//    支持 fallow-scan 前置批次、无默认批次（batch1..batchN/agents 必传）、recheckAfterFix 默认 true。
+//    main 4.0.0 版自包含 677 行、缺批次参数时默认单批 ["reviewer"]、recheckAfterFix 默认 false。
+//    merge 时保留本版（功能更全），详见 .changeset/tidy-waves-description-phase-lint.md。
 
 const meta = {
   name: "review-fix-loop",

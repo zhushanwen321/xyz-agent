@@ -8,6 +8,9 @@
  * - U12: Other 输入 + comment
  * - U13: Cancel 取消
  *
+ * 注意：4.0.1 comment restore 的一部分（main 已在 4.0.0 把 U12 的 comment 断言删除）：
+ *    U12 验证 `${key}__comment` 拼装必须保留，与 AskUserOverlay.vue 的 comment UI 一致。
+ *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/components/AskUserOverlay.test.ts
  */
 import { describe, it, expect } from 'vitest'

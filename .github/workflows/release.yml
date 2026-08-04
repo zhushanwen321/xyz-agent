@@ -43,7 +43,7 @@ jobs:
       # runtime boot 时 ensureMandatoryExtensions() 从 npm 安装 @zhushanwen/pi-ask-user。
       # 若 Electron 发布（v*）先于 npm 发布（npm-v*），产物中 ask_user 评论模式静默降级。
       # 发布顺序约束：先走 merge skill 阶段 4N 发布 npm-v*（本 diff 的 changeset 消费：
-      # protocol 0.3.1 / ask-user 4.0.1 / subagent-workflow 4.1.0），再发 Electron v*。
+      # protocol 0.3.1 / ask-user 4.0.1 / subagent-workflow 5.0.0），再发 Electron v*。
       # （2026-08 事故：protocol 0.3.0 误删 allowComment/getAskUserComment，本地 restore 后
       #   npm 仍长期服务删功能旧版，而打包流程无任何环节校验 npm 产物与 renderer 契约一致性）
       - name: Check npm extension artifacts match renderer contract
