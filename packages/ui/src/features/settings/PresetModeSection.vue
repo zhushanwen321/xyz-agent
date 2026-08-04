@@ -108,13 +108,11 @@
 </template>
 
 <script setup lang="ts">
+import { Button, Label, Checkbox } from '@xyz-agent/ui'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { storeToRefs } from 'pinia'
-import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
-import { Checkbox } from '@/components/ui/checkbox'
-import { useSettingsStore } from '@/stores/settings'
+
+import { getSettingsStore } from '@xyz-agent/core'
 import { BUILTIN_TOOLS, BUILTIN_EXTENSION_FILES } from '@xyz-agent/shared'
 import type { PiLaunchPreset, ToolMode, ExtensionMode } from '@xyz-agent/shared'
 
@@ -136,7 +134,8 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const { extensions } = storeToRefs(useSettingsStore())
+// core settings store 是纯 ref 集合（非 pinia），extensions 本身即为 Ref，无需 storeToRefs
+const { extensions } = getSettingsStore()
 
 const TOOL_MODES = computed(() => [
   { value: 'all' as ToolMode, label: t('settings.preset.modeAll') },

@@ -15,10 +15,10 @@
  * pointer-events-none + aria-busy，视觉上 spinner 已表明进行中，重入由 previewSound
  * 的 previewingKey 判断兜底。
  */
+import { Button } from '@xyz-agent/ui'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Loader2, Volume2 } from '@lucide/vue'
-import { Button } from '@/components/ui/button'
 
 const props = defineProps<{
   /** 是否正在播放（loading 态） */

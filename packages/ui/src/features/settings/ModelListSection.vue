@@ -170,20 +170,18 @@
 </template>
 
 <script setup lang="ts">
+import { Button, Input, Label, Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@xyz-agent/ui'
 import { inject, unref, computed, type Ref, type ComputedRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { FileText, ImageIcon, X, Settings2 } from '@lucide/vue'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
+
 import CompatEditor from './CompatEditor.vue'
 import {
   CONTEXT_OPTIONS,
   THINKING_STRATEGIES,
   type ThinkingStrategy,
   type LocalModel,
-} from '@/composables/features/useProviderEdit'
+} from '@xyz-agent/core'
 
 /**
  * 设计：showAddModel 受控 + update:showAddModel emit；

@@ -74,13 +74,15 @@
 </template>
 
 <script setup lang="ts">
+import { Checkbox, Button } from '@xyz-agent/ui'
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { CheckboxCheckedState as CheckedState } from 'reka-ui'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Button } from '@/components/ui/button'
-import { config } from '@/api'
+
+import { useSettingsConfigApi } from './injection-keys'
 import type { SourceDetectResult, ProviderSource, AgentSource } from '@xyz-agent/shared'
+
+const configApi = useSettingsConfigApi()
 
 const props = defineProps<{
   /** 资源类型，决定渲染哪些候选源 */
@@ -105,7 +107,7 @@ const error = ref(false)
 
 onMounted(async () => {
   try {
-    detectedSources.value = await config.detectSources()
+    detectedSources.value = await (configApi.detectSources() as Promise<SourceDetectResult[]>)
   } catch {
     error.value = true
   } finally {

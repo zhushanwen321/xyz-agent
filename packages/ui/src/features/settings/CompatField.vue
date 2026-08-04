@@ -54,13 +54,11 @@
 </template>
 
 <script setup lang="ts">
+import { Switch, Select, SelectTrigger, SelectValue, SelectContent, SelectItem, Textarea, Label } from '@xyz-agent/ui'
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Switch } from '@/components/ui/switch'
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
-import { Textarea } from '@/components/ui/textarea'
-import { Label } from '@/components/ui/label'
-import type { CompatFieldMeta } from './compat-fields'
+
+import type { CompatFieldMeta } from '@xyz-agent/core'
 
 /**
  * props.value 是 compat 对象里该字段的当前值（unknown），由父组件 getValue 透传。

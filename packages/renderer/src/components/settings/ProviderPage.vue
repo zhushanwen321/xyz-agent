@@ -233,7 +233,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, provide } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Settings, Plus, Pencil, Trash2, FileText, ImageIcon, AlertCircle } from '@lucide/vue'
 import { ConfirmDialog } from '@/components/ui/dialog'
@@ -245,9 +245,20 @@ import { config } from '@/api'
 import { useSettingsStore } from '@/stores/settings'
 import { useQuotaStore } from '@/stores/quota'
 import { useProviderImport } from '@/composables/features/useProviderImport'
-import ProviderEditModal from './ProviderEditModal.vue'
-import ProviderImportMenu from './ProviderImportMenu.vue'
-import ProviderImportPreviewDialog from './ProviderImportPreviewDialog.vue'
+import { useQuotaConfigure } from '@/composables/features/useQuotaConfigure'
+import { useToast } from '@/composables/useToast'
+import {
+  ProviderEditModal,
+  ProviderImportMenu,
+  ProviderImportPreviewDialog,
+  SETTINGS_TOAST_KEY,
+  USE_QUOTA_CONFIGURE_KEY,
+} from '@xyz-agent/ui/features/settings'
+
+// W3：ProviderEditModal 迁入 ui 包，其 renderer 侧依赖（useQuotaConfigure/useToast）经
+// provide/inject 注入（ui 零 renderer import 铁律）。ProviderEditModal 内部调用工厂。
+provide(USE_QUOTA_CONFIGURE_KEY, useQuotaConfigure)
+provide(SETTINGS_TOAST_KEY, useToast())
 
 const props = defineProps<{ providers: ProviderInfo[] }>()
 

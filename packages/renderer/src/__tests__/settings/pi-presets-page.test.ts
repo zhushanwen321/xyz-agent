@@ -35,8 +35,8 @@ vi.mock('@/api', () => ({
   default: { preset: presetMock },
 }))
 
-vi.mock('@/components/settings/PresetModeSection.vue', () => ({
-  default: {
+vi.mock('@xyz-agent/ui/features/settings', () => ({
+  PresetModeSection: {
     name: 'PresetModeSection',
     props: ['preset', 'disabled'],
     template: '<div data-testid="mode-section" />',

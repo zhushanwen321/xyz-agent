@@ -13,13 +13,12 @@
  *
  * 复用 xyz-ui 的 Dialog/Checkbox/Button，禁止原生 form 元素。
  */
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Checkbox, Button } from '@xyz-agent/ui'
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { CheckboxCheckedState as CheckedState } from 'reka-ui'
 import { KeyRound, AlertTriangle, Loader2, ChevronRight, ChevronDown } from '@lucide/vue'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Button } from '@/components/ui/button'
+
 import type { ProviderImportPreview } from '@xyz-agent/shared'
 
 const props = defineProps<{

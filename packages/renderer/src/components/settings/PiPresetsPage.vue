@@ -196,7 +196,7 @@ import { usePiPresets } from '@/composables/features/usePiPresets'
 import { useToast } from '@/composables/useToast'
 import { DEFAULT_PRESETS } from '@xyz-agent/shared'
 import type { PiLaunchPreset, ToolMode, ExtensionMode } from '@xyz-agent/shared'
-import PresetModeSection from './PresetModeSection.vue'
+import { PresetModeSection } from '@xyz-agent/ui/features/settings'
 
 const { t } = useI18n()
 const { info: toastInfo, error: toastError } = useToast()

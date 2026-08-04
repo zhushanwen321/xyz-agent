@@ -120,12 +120,11 @@
 </template>
 
 <script setup lang="ts">
+import { Checkbox, Input, Button } from '@xyz-agent/ui'
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { GripVertical, Trash2 } from '@lucide/vue'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Input } from '@/components/ui/input'
-import { Button } from '@/components/ui/button'
+
 import SourceImportSection from './SourceImportSection.vue'
 import type { SkillDirConfig } from '@xyz-agent/shared'
 

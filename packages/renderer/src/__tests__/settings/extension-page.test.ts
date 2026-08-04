@@ -36,6 +36,7 @@ const extensionMock = vi.hoisted(() => ({
 vi.mock('@/api', () => ({
   extension: extensionMock,
   default: { extension: extensionMock },
+  config: { detectSources: async () => [] },
 }))
 
 import ExtensionPage from '@/components/settings/ExtensionPage.vue'

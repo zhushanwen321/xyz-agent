@@ -36,6 +36,8 @@ export default defineConfig({
     alias: {
       '@': resolve(__dirname, 'src'),
       '@xyz-agent/shared': resolve(__dirname, '../shared/src'),
+      '@xyz-agent/core': resolve(__dirname, '../core/src'),
+      '@xyz-agent/ui': resolve(__dirname, '../ui/src'),
     },
   },
 })

@@ -7,15 +7,11 @@
  *
  * 复用 xyz-ui 的 Popover（PopoverTriggerButton + PopoverActionItem），禁止原生 select/menu。
  */
+import { Popover, PopoverContent, PopoverTriggerButton, PopoverActionItem } from '@xyz-agent/ui'
 import { ref } from 'vue'
 import { Download } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
-import {
-  Popover,
-  PopoverContent,
-  PopoverTriggerButton,
-  PopoverActionItem,
-} from '@/components/ui/popover'
+
 import type { ProviderSource } from '@xyz-agent/shared'
 
 defineProps<{ disabled?: boolean }>()

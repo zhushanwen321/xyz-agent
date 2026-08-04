@@ -10,7 +10,6 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
 import ThinkingLevelPopover from '@/components/panel/ThinkingLevelPopover.vue'
-import ProviderEditModal from '@/components/settings/ProviderEditModal.vue'
 import i18n, { setLocale } from '@/i18n'
 import {
   THINKING_LEVELS,

@@ -246,6 +246,7 @@
 </template>
 
 <script setup lang="ts">
+import { Dialog, DialogContent, DialogTitle, DialogDescription, ConfirmDialog, Button, Input, Select, SelectTrigger, SelectValue, SelectContent, SelectItem, Switch, Label } from '@xyz-agent/ui'
 import { ref, provide } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { computed, toRef } from 'vue'
@@ -254,20 +255,15 @@ import {
   X, Trash2,
 } from '@lucide/vue'
 import { matchQuotaPreset } from '@xyz-agent/shared'
-import { Dialog, DialogContent, DialogTitle, DialogDescription, ConfirmDialog } from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
-import { Label } from '@/components/ui/label'
+
 import type { ProviderInfo } from '@xyz-agent/shared'
 import {
   useProviderEdit,
-} from '@/composables/features/useProviderEdit'
-import { useQuotaConfigure } from '@/composables/features/useQuotaConfigure'
-import CodingPlanSection from '@/components/settings/CodingPlanSection.vue'
-import ModelListSection from '@/components/settings/ModelListSection.vue'
-import { useToast } from '@/composables/useToast'
+} from '@xyz-agent/core'
+import { useQuotaConfigureFactory as useQuotaConfigure } from './injection-keys'
+import CodingPlanSection from './CodingPlanSection.vue'
+import ModelListSection from './ModelListSection.vue'
+import { useSettingsToast as useToast } from './injection-keys'
 
 const props = defineProps<{ open: boolean; provider: ProviderInfo | null }>()
 const emit = defineEmits<{ close: [] }>()
@@ -286,6 +282,8 @@ const matchedPreset = computed(() => {
   const p = props.provider
   return matchQuotaPreset({ baseUrl: p?.baseUrl, name: p?.name })
 })
+
+const quotaFactory = useQuotaConfigure()
 
 const {
   fetcherId: quotaFetcherId,
@@ -308,7 +306,7 @@ const {
   saveCookie: quotaSaveCookie,
   saveApiKey: quotaSaveApiKey,
   testQuery: quotaTestQuery,
-} = useQuotaConfigure(matchedPreset, toRef(props, 'provider'))
+} = quotaFactory(matchedPreset, toRef(props, 'provider'))
 
 // 业务编排全在 composable：本组件只做 props/emit + 调用（受控表单，F1 拆分）
 const {
@@ -342,7 +340,7 @@ const {
   addHeader,
   removeHeader,
   syncHeadersFromRows,
-} = useProviderEdit(toRef(props, 'provider'))
+} = useProviderEdit(toRef(props, 'provider'), { t })
 
 // ── 模型清单区注入：ModelListSection 经 provide('modelListDeps') 拿到这些状态/方法，避免 prop 传 newModel 触发 no-mutating-props
 provide('modelListDeps', {

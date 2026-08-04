@@ -17,6 +17,14 @@
     "./extension-host": {
       "types": "./src/extension-host/index.ts",
       "import": "./src/extension-host/index.ts"
+    },
+    "./features/composer": {
+      "types": "./src/features/composer/index.ts",
+      "import": "./src/features/composer/index.ts"
+    },
+    "./features/settings": {
+      "types": "./src/features/settings/index.ts",
+      "import": "./src/features/settings/index.ts"
     }
   },
   "scripts": {
@@ -40,7 +48,7 @@
   "devDependencies": {
     "@vitejs/plugin-vue": "^6",
     "@vue/test-utils": "^2.4.6",
-    "happy-dom": "^15.0.0",
+    "happy-dom": "^20.9.0",
     "typescript": "^5.8",
     "vitest": "^4.1.6"
   }

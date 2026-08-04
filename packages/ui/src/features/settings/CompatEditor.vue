@@ -74,11 +74,12 @@
 </template>
 
 <script setup lang="ts">
+import { Button } from '@xyz-agent/ui'
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronRight } from '@lucide/vue'
-import { Button } from '@/components/ui/button'
-import { getCompatFields, getPresetsForApi } from './compat-fields'
+
+import { getCompatFields, getPresetsForApi } from '@xyz-agent/core'
 import CompatField from './CompatField.vue'
 
 /**

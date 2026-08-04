@@ -220,7 +220,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onMounted } from 'vue'
+import { computed, ref, watch, onMounted, provide } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { Trash2, Loader2, AlertCircle, Check, ArrowUpCircle } from '@lucide/vue'
@@ -231,8 +231,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Checkbox } from '@/components/ui/checkbox'
-import LoadPaths from './LoadPaths.vue'
-import { extension as extensionApi } from '@/api'
+import { LoadPaths, SETTINGS_CONFIG_API_KEY } from '@xyz-agent/ui/features/settings'
+import { config, extension as extensionApi } from '@/api'
+
+provide(SETTINGS_CONFIG_API_KEY, config) // LoadPaths(SourceImportSection) 迁 ui，config 经 inject
 import { useSettingsStore, type ExtensionItem } from '@/stores/settings'
 import { useToast } from '@/composables/useToast'
 

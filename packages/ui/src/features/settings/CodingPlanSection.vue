@@ -213,18 +213,14 @@
  * - 所有状态由父组件 useQuotaConfigure 管理，本组件纯展示
  * - 事件转发：toggleEnabled / testQuery / saveCookie / update:cookieInput
  */
+import { Button, Switch, Label, Textarea, Input, Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@xyz-agent/ui'
 import { computed } from 'vue'
 import { Loader2, RefreshCw, CheckCircle2, AlertCircle, ExternalLink } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
-import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { Input } from '@/components/ui/input'
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
+
 import type { NormalizedQuotaRow } from '@xyz-agent/shared'
 import { QUOTA_PRESETS } from '@xyz-agent/shared'
-import type { QuotaTestStatus } from '@/composables/features/useQuotaConfigure'
+import type { QuotaTestStatus } from './injection-keys'
 
 const props = withDefaults(defineProps<{
   /** 当前选中的 fetcher id（未选择 = undefined） */
