@@ -306,7 +306,10 @@ body,
   font-family: var(--font-sans);
   font-size: var(--text-base);
   color: var(--neutral-fg);
-  background: var(--bg);
+  /* v6 §2 三层明度：窗口底为 stage 最深层（#0a0a0c），app-shell(bg #131316 + rounded-[10px])
+     落在 stage 上，圆角/padding 区透出 stage 衬底，形成 base(深)→canvas(中)→surface(浅) 阶梯。
+     原 var(--bg) 与 app-shell 同色，stage 层缺失致三层明度扁平。 */
+  background: var(--bg-stage);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
