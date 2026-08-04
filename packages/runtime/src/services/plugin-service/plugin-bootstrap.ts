@@ -34,6 +34,8 @@ import { createAgentApi } from './api/agent-api.js'
 import { createWorkspaceApi } from './api/workspace-api.js'
 import { createStorageApi } from './api/storage-api.js'
 import { createNotifyApi } from './api/notify-api.js'
+import { createCommandsApi } from './api/commands-api.js'
+import { createViewsApi } from './api/views-api.js'
 import { toErrorMessage } from '../../utils/errors.js'
 
 const rpcClient = new PluginRpcClient()
@@ -223,16 +225,9 @@ function createAgentAPI(pluginId: string): Phase2AgentAPI {
     ui: createUiApi(rpcClient, pluginId),
     agent: createAgentApi(rpcClient, pluginId),
     workspace: createWorkspaceApi(rpcClient, pluginId),
-    // TODO(s3-w2): IF3 真实现——createCommandsApi/createViewsApi（handler 驻留 worker + invoke 通知监听）。
-    // W1 类型层仅落地签名，此处占位保证 tsc 绿；W2 runtime-circuit 替换。
-    commands: {
-      register: async () => ({ dispose: () => {} }),
-      unregister: async () => {},
-    },
-    views: {
-      update: async () => {},
-      listMountPoints: async () => [],
-    },
+    // commands/views 两域（IF3）：handler 驻留 worker（commands），RPC 转发主线程（views）
+    commands: createCommandsApi(rpcClient, pluginId),
+    views: createViewsApi(rpcClient, pluginId),
   }
 }
 

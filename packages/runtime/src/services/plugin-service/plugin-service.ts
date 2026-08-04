@@ -13,6 +13,7 @@ import { PluginActivator } from './plugin-activator.js'
 import { registerAllRpcMethods } from './plugin-rpc-setup.js'
 import { bootstrapPluginService } from './plugin-lifecycle.js'
 import { ActiveSessionResolver } from './api/session-api.js'
+import type { CommandRegistration } from './api/commands-api.js'
 import type { InstallResult } from '../ports/plugin-installer.js'
 import { handleBridgeToolExecute, handleBridgeEvent, handleBridgeIntercept, BridgeToolCache, PI_HOOK_EVENT_MAP } from './bridge-interop.js'
 import { toConfigKey, fromConfigKey, isConfigKey } from './api/config-api.js'
@@ -74,6 +75,12 @@ export class PluginService implements IPluginService {
   /** 活跃 session 解析器（P6：取代 plugin-rpc-setup 模块级全局缓存，随实例生命周期） */
   private readonly activeSessionResolver: ActiveSessionResolver
 
+  /** 命令注册表（commandId→CommandRegistration），commands 域 RPC handler 共享（IF2 DM1） */
+  private readonly commandRegistry = new Map<string, CommandRegistration>()
+
+  /** 挂载点集合（renderer 经 plugin.mountPoints.sync 上报，views.listMountPoints 中继查询，AC10） */
+  private mountPoints: string[] = []
+
   constructor(registry: PluginRegistry, broker: IMessageBroker, deps?: IPluginServiceDeps) {
     this.registry = registry
     this.broker = broker
@@ -122,6 +129,18 @@ export class PluginService implements IPluginService {
     } else {
       this.broker.broadcast({ type, id, payload } as ServerMessage)
     }
+  }
+
+  /**
+   * 覆盖式写入挂载点集合（DM3 全量镜像，不合并）。
+   * renderer 壳在注册/注销挂载点后经 plugin.mountPoints.sync WS 上报整表。
+   * 注意：必须原地清空重填（length=0 + push）而非整体替换引用——
+   * registerRpcMethods 已把 this.mountPoints 的引用透传给 ctx → registerViewRpcHandlers，
+   * 替换引用会让 RPC handler 读到旧数组（AC10 中继失效）。
+   */
+  syncMountPoints(mountPoints: string[]): void {
+    this.mountPoints.length = 0
+    this.mountPoints.push(...mountPoints)
   }
 
   /** Wire sessionService after construction (breaks circular dependency at creation time) */
@@ -278,6 +297,12 @@ export class PluginService implements IPluginService {
     for (const [hookType, entries] of this.hookPipeline.registry) {
       this.hookPipeline.registry.set(hookType, entries.filter(e => e.pluginId !== pluginId))
     }
+    // 清理命令注册表（插件卸载后残留命令会导致 invoke 通知发向已死 worker）
+    for (const [commandId, reg] of this.commandRegistry) {
+      if (reg.pluginId === pluginId) {
+        this.commandRegistry.delete(commandId)
+      }
+    }
 
     // 清理 status bar items
     this.statusBarRegistry.clearForPlugin(pluginId)
@@ -371,6 +396,8 @@ export class PluginService implements IPluginService {
       getDescriptor: (pluginId) => this.registry.getDescriptor(pluginId),
       sessionDataStore: this.sessionDataStore,
       activeSessionResolver: this.activeSessionResolver,
+      commandRegistry: this.commandRegistry,
+      mountPoints: this.mountPoints,
     })
   }
 

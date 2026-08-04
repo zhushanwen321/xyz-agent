@@ -82,6 +82,7 @@ export type ClientMessageType =
   | 'plugin.executeCommand'
   | 'plugin.config.get' | 'plugin.config.set'
   | 'plugin.uiResponse'
+  | 'plugin.mountPoints.sync'
   | 'file.read'
   | 'file.tree' | 'file.tree.expand' | 'file.search'
   | 'git.diff'
@@ -369,6 +370,7 @@ export interface ClientMessageMap {
   'plugin.config.get': { pluginId: string; key?: string }
   'plugin.config.set': { pluginId: string; key: string; value: unknown }
   'plugin.uiResponse': { requestId: string; result: unknown }
+  'plugin.mountPoints.sync': { mountPoints: string[] }
   'file.read': { path: string; sessionId?: string }
   'file.tree': { sessionId: string }
   'file.tree.expand': { sessionId: string; path: string }
@@ -1158,6 +1160,7 @@ export interface ReplyPayloadMap {
   'plugin.executeCommand': ServerMessageMap['pong']
   'plugin.config.get': ServerMessageMap['plugin:config']
   'plugin.config.set': ServerMessageMap['plugin:config']
+  'plugin.mountPoints.sync': ServerMessageMap['pong']
   'workspace.listRecent': ServerMessageMap['workspace.recentList']
   'workspace.record': ServerMessageMap['workspace.recentList']
   'workspace.detectBare': ServerMessageMap['workspace.detected']

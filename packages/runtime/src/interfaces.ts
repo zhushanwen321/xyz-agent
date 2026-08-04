@@ -442,6 +442,8 @@ export interface IPluginService {
   getPluginConfig(pluginId: string, key?: string): Promise<unknown>
   /** Set a plugin config value */
   setPluginConfig(pluginId: string, key: string, value: unknown): Promise<void>
+  /** 覆盖式写入挂载点集合（renderer 经 plugin.mountPoints.sync 上报，DM3 全量镜像） */
+  syncMountPoints(mountPoints: string[]): void
   /** Clear cached session data */
   clearSessionData(sessionId: string): void
   /** Handle UI response from frontend (confirm/select/input dialogs) */

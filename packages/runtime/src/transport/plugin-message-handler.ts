@@ -18,6 +18,7 @@ export class PluginMessageHandler {
   readonly handles: ClientMessageType[] = [
     'plugin.list', 'plugin.toggle', 'plugin.uninstall', 'plugin.approvePermissions', 'plugin.revokePermissions',
     'plugin.executeCommand', 'plugin.config.get', 'plugin.config.set', 'plugin.install', 'plugin.uiResponse',
+    'plugin.mountPoints.sync',
   ]
 
   async handlePluginMessage(msg: ClientMessage, ws: WsType): Promise<void> {
@@ -77,6 +78,13 @@ export class PluginMessageHandler {
       case 'plugin.uiResponse': {
         // handleUiResponse 已在 IPluginService 接口声明（interfaces.ts）；顶部 guard 保证 pluginService 非空
         this.ctx.pluginService?.handleUiResponse((msg.payload as { requestId: string; result: unknown }).requestId, (msg.payload as { requestId: string; result: unknown }).result)
+        return this.ctx.reply(ws, msg.id, 'pong', {})
+      }
+      case 'plugin.mountPoints.sync': {
+        // renderer→runtime 挂载点整表上报（DM3：覆盖式写入，不合并）。
+        // renderer 壳层（s2/s5）在 MountPointRegistry 注册/注销后调用；
+        // runtime 存副本供 plugin.views.listMountPoints 中继查询（AC10）。
+        this.ctx.pluginService.syncMountPoints(msg.payload.mountPoints)
         return this.ctx.reply(ws, msg.id, 'pong', {})
       }
     }

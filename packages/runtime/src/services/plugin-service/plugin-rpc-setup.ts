@@ -20,6 +20,10 @@ import { registerSessionDataRpcHandlers } from './api/session-data-api.js'
 import { registerUiRpcHandlers } from './api/ui-api.js'
 import { registerAgentRpcHandlers } from './api/agent-api.js'
 import { registerWorkspaceRpcHandlers } from './api/workspace-api.js'
+import { registerCommandRpcHandlers } from './api/commands-api.js'
+import type { CommandRegistration } from './api/commands-api.js'
+import { registerViewRpcHandlers } from './api/views-api.js'
+import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import type { ToolEntry } from './plugin-types.js'
 
 const MAX_FIND_FILES_RESULTS = 1000
@@ -55,6 +59,10 @@ export interface RpcSetupContext {
   sessionDataStore: SessionDataStore
   /** 活跃 session 解析器（P6：替代模块级全局 _activeSessionCache） */
   activeSessionResolver: ActiveSessionResolver
+  /** 命令注册表（commandId→CommandRegistration），PluginService 实例字段注入 */
+  commandRegistry: Map<string, CommandRegistration>
+  /** 挂载点集合（renderer 经 plugin.mountPoints.sync 上报的副本，AC10） */
+  mountPoints: string[]
 }
 
 export function registerAllRpcMethods(ctx: RpcSetupContext): void {
@@ -214,6 +222,47 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
     },
     getActiveTools: () => {
       return Array.from(toolRegistry.values()).map(e => e.schema.name)
+    },
+  })
+
+  // ── Commands RPC handlers ────────────────────────────────
+  // 主线程侧命令注册表（register 建表 + 下行广播 plugin:commandRegistered）。
+  // worker 侧 invoke 监听在 createCommandsApi（plugin-bootstrap），主线程发送段
+  // （查 commandId→pluginId 映射 → 向 worker 发 plugin.commands.invoke）归后续 wave。
+  registerCommandRpcHandlers(rpcServer, {
+    registry: ctx.commandRegistry,
+    broadcastRegistered: (reg) => {
+      if (deps.broadcastFn) {
+        deps.broadcastFn('plugin:commandRegistered', reg)
+      } else {
+        console.warn('[plugin-rpc-setup] commands.register broadcast dropped: no broadcastFn configured')
+      }
+    },
+  })
+
+  // ── Views RPC handlers ───────────────────────────────────
+  // views.update → handleViewUpdate（ES2：无活跃 session 丢弃广播 + warning）；
+  // listMountPoints → 读挂载点集合副本（AC10：sync 注入→查询一致）。
+  registerViewRpcHandlers(rpcServer, {
+    mountPoints: ctx.mountPoints,
+    handleViewUpdate: (pluginId: string, viewId: string, guiTree: GuiComponent[]) => {
+      const active = ctx.activeSessionResolver.resolve()
+      if (!active) {
+        // ES2: 无活跃 session 时丢弃广播 + warning（含 pluginId+viewId）
+        console.warn(`[plugin-rpc-setup] views.update dropped: no active session (plugin=${pluginId}, view=${viewId})`)
+        return
+      }
+      if (!deps.broadcastFn) {
+        console.warn('[plugin-rpc-setup] views.update broadcast dropped: no broadcastFn configured')
+        return
+      }
+      deps.broadcastFn('plugin:viewUpdate', {
+        sessionId: active.id,
+        viewId,
+        pluginId,
+        guiTree,
+        updatedAt: Date.now(),
+      })
     },
   })
 
