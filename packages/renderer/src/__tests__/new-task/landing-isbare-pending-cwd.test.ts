@@ -76,8 +76,7 @@ beforeEach(() => {
 
 describe('useNewTaskDirSelect — isBare 由 pendingCwd 驱动（W2）', () => {
   it('LB-1: pendingCwd 指向 bare workspace 且 detect 返 mode:bare-workspace → isBare.value===true', async () => {
-    const { resetNewTaskFlow } = await import('@/composables/features/useNewTaskFlow')
-    const { useNewTaskFlowState } = await import('@/composables/new-task/useNewTaskFlowState')
+    const { resetNewTaskFlow, useNewTaskFlowState } = await import('@/composables/new-task/useNewTaskFlowState')
     resetNewTaskFlow()
     const { pendingCwd } = useNewTaskFlowState()
 
@@ -106,8 +105,7 @@ describe('useNewTaskDirSelect — isBare 由 pendingCwd 驱动（W2）', () => {
   })
 
   it('LB-2: pendingCwd 普通目录且 detect 返 mode:plain-repo → isBare.value===false', async () => {
-    const { resetNewTaskFlow } = await import('@/composables/features/useNewTaskFlow')
-    const { useNewTaskFlowState } = await import('@/composables/new-task/useNewTaskFlowState')
+    const { resetNewTaskFlow, useNewTaskFlowState } = await import('@/composables/new-task/useNewTaskFlowState')
     resetNewTaskFlow()
     const { pendingCwd } = useNewTaskFlowState()
 
@@ -134,8 +132,7 @@ describe('useNewTaskDirSelect — isBare 由 pendingCwd 驱动（W2）', () => {
   })
 
   it('LB-3: pendingCwd=null → 不调 detect，isBare.value===false（兜底）', async () => {
-    const { resetNewTaskFlow } = await import('@/composables/features/useNewTaskFlow')
-    const { useNewTaskFlowState } = await import('@/composables/new-task/useNewTaskFlowState')
+    const { resetNewTaskFlow, useNewTaskFlowState } = await import('@/composables/new-task/useNewTaskFlowState')
     resetNewTaskFlow()
     const { pendingCwd } = useNewTaskFlowState()
 

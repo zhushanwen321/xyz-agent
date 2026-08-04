@@ -100,13 +100,14 @@ vi.mock('@/stores/workspace', () => ({
   useWorkspaceStore: vi.fn(() => workspaceStoreMock),
 }))
 
-import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/useNewTaskFlow'
+import { useNewTaskFlow, resetNewTaskFlow, __resetNewTaskFlowForTesting } from '@/composables/features/useNewTaskFlow'
 import { useSessionStore } from '@/stores/session'
 import { usePanelStore } from '@/stores/panel'
 import { useNavigationStore } from '@/stores/navigation'
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  __resetNewTaskFlowForTesting() // 壳单例捕获的 store 引用随 pinia 重建失效
   resetNewTaskFlow()
   vi.clearAllMocks()
   createCtrl.remove.mockResolvedValue(undefined)

@@ -5,7 +5,8 @@
  * AC-2.2：切换 session 时 appCommands 不被重新计算（两区独立 ref）。
  */
 import { computed, type ComputedRef } from 'vue'
-import { useCommandStore, type SessionCommand } from '@/stores/command'
+import { useCommandStore } from '@/composables/features/useCommandStore'
+import type { SessionCommand } from '@xyz-agent/core'
 import type { AppCommand } from '@/lib/search-types'
 
 /** 统一命令视图（供 useSearch 命令源 + Sidebar keydown 共享） */
@@ -24,7 +25,7 @@ export function useCommandRegistry(activeSessionId: { value: string | null }) {
     return computed(() => {
       const sid = activeSessionId.value
       const slash = sid ? store.slashCommandsOf(sid).value : [] // 无 session → slash 空（AC-4.8）
-      return [...store.appCommands, ...slash]
+      return [...store.appCommands.value, ...slash]
     })
   }
 

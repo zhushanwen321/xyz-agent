@@ -13,7 +13,7 @@
  * 不含：发送/steer/abort 编排、模型/思考等级、草稿维护（均留在 Composer.vue / 其他 composable）。
  */
 import { ref, watch, type Ref } from 'vue'
-import { useCommandStore } from '@/stores/command'
+import { useCommandStore } from '@/composables/features/useCommandStore'
 import { pickFile } from '@/lib/ipc'
 // W4：ComposerInput 迁 ui 包，类型 import 改 ui 包路径（旧 renderer 路径已删）
 import type { ComposerInput } from '@xyz-agent/ui/features/composer'
@@ -65,7 +65,7 @@ export function useCommandPopoverTrigger(
    * 注入顺序：先 insertSlashChip 后 clearPendingSlash（防先清后注入读到 null）。
    */
   watch(
-    () => commandStore.pendingSlash,
+    () => commandStore.pendingSlash.value,
     (req) => {
       if (!req) return
       if (req.sessionId !== sessionId.value) return // 仅消费目标 session 的请求

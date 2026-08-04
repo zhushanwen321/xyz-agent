@@ -241,7 +241,7 @@
             >{{ recordingId === cmd.id ? t('settings.providerEdit.cancel') : t('settings.system.shortcutReRecord') }}</Button>
             <!-- 重置按钮（仅自定义覆盖时显示） -->
             <Button
-              v-if="commandStore.shortcutOverrides[cmd.id]"
+              v-if="commandStore.shortcutOverrides.value[cmd.id]"
               variant="ghost"
               class="h-auto rounded-sm px-1.5 py-0.5 text-[10px] text-neutral-dim hover:bg-transparent hover:text-danger"
               @click="resetShortcut(cmd.id)"
@@ -256,12 +256,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { storeToRefs } from 'pinia'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { useCommandStore } from '@/stores/command'
+import { useCommandStore } from '@/composables/features/useCommandStore'
 import { listSystemSounds } from '@/lib/ipc'
 import { playByName } from '@/composables/useCompletionSound'
 import { getDefaultSound, detectPlatform } from '@/composables/sound-defaults'
@@ -368,7 +367,8 @@ async function previewSound(kind: 'success' | 'error', name: string, trackId: st
 // ── 快捷键重录 ──
 
 const commandStore = useCommandStore()
-const { appCommands } = storeToRefs(commandStore)
+// core 实例返回 ref 原样（非 pinia store），直接解构即 ref
+const { appCommands } = commandStore
 
 /** 默认快捷键 key（与 useAppCommands 注册时一致，用于重置时恢复） */
 const DEFAULT_KEYS: Record<string, string> = {
@@ -400,7 +400,7 @@ function formatShortcut(key: string): string {
 
 /** 构建快捷键显示文本：有 override 用 override，否则用默认修饰键 */
 function displayShortcut(cmdId: string): string {
-  const override = commandStore.shortcutOverrides[cmdId]
+  const override = commandStore.shortcutOverrides.value[cmdId]
   if (override) return formatShortcut(override)
   const defaultKey = DEFAULT_KEYS[cmdId]
   if (!defaultKey) return ''

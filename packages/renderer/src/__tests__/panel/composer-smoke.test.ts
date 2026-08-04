@@ -58,6 +58,23 @@ vi.mock('@/composables/features/useNewTaskFlow', () => {
     resetNewTaskFlow: vi.fn(),
   }
 })
+// [w5] Landing 经 useNewTaskDeps 构造 NewTaskDeps + provide（ui 组件 inject 消费）；mock 返回 flowMock + deps 字段
+const depsMock = vi.hoisted(() => ({
+  recentWorkspaces: { value: [] as unknown[] },
+  listBranches: vi.fn(),
+  createWorktree: vi.fn(),
+  detectWorkspace: vi.fn(),
+  pickDirectory: vi.fn(),
+  presets: { value: [] as unknown[] },
+  defaultPresetId: { value: '' },
+  presetOpenRequest: { value: 0 },
+  loadPresets: vi.fn(),
+  setDefaultPreset: vi.fn(),
+  toast: { error: vi.fn() },
+}))
+vi.mock('@/composables/features/useNewTaskDeps', () => ({
+  useNewTaskDeps: () => ({ flow: flowMock, ...depsMock }),
+}))
 
 // ── useExtensionUI mock（Panel 的 ask-user 订阅，ask-user-inline 范式）──
 const uiMock = vi.hoisted(() => ({

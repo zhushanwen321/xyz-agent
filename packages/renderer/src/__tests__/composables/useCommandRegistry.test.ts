@@ -13,11 +13,13 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import { useCommandRegistry } from '@/composables/features/useCommandRegistry'
-import { useCommandStore } from '@/stores/command'
+import { useCommandStore, __resetCommandStoreForTesting } from '@/composables/features/useCommandStore'
 import type { AppCommand } from '@/lib/search-types'
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  // [w5] useCommandRegistry 改经壳单例（core 实例）：reset 隔离跨用例残留
+  __resetCommandStoreForTesting()
 })
 
 const noop = vi.fn()

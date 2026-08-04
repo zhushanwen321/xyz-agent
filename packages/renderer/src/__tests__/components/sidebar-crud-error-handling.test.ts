@@ -90,8 +90,13 @@ vi.mock('@/stores/workflow', () => ({
 vi.mock('@/stores/navigation', () => ({
   useNavigationStore: () => ({ push: vi.fn(), current: { value: { view: 'chat' } }, stack: [] }),
 }))
-vi.mock('@/stores/command', () => ({
-  useCommandStore: () => ({ appCommands: [] }),
+vi.mock('@/composables/features/useCommandStore', () => ({
+  useCommandStore: () => ({
+    appCommands: { value: [] },
+    shortcutOverrides: { value: {} },
+    pendingSlash: { value: null },
+    clearPendingSlash: vi.fn(),
+  }),
 }))
 
 // ── mock composables ──
@@ -108,7 +113,7 @@ vi.mock('@/api/events', () => ({
   dispatchGlobal: vi.fn(),
 }))
 vi.mock('@/api/domains/session', () => ({
-  sessionApi: { workflowAction: vi.fn(() => Promise.resolve()) },
+  list: vi.fn().mockResolvedValue([]),
 }))
 
 import Sidebar from '@/components/sidebar/Sidebar.vue'

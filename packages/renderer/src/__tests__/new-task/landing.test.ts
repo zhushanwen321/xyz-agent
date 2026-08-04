@@ -34,18 +34,41 @@ const flowMock = vi.hoisted(() => ({
   worktreeItems: { value: [] as Array<{ path: string; branch: string; HEAD: boolean; bare: boolean }> },
   openDirPopover: vi.fn(),
   openBranchPopover: vi.fn(),
+  openPresetPopover: vi.fn(),
+  openCreateWorktree: vi.fn(),
   closeOverlay: vi.fn(),
   selectWorkspace: vi.fn(),
   selectBranch: vi.fn(),
   confirmDirtySwitch: vi.fn(),
   openDirDialog: vi.fn(),
   openBranchModal: vi.fn(),
+  setPendingPreset: vi.fn(),
   state: { value: 'idle' as string },
 }))
+// [w5] NewTaskDeps mock（Landing 经 useNewTaskDeps 构造 + provide NewTaskDepsKey；
+// ui 组件（PresetSelectChip 等）inject 消费。flow = flowMock）
+const depsMock = vi.hoisted(() => ({
+  recentWorkspaces: { value: [] as unknown[] },
+  listBranches: vi.fn(),
+  createWorktree: vi.fn(),
+  detectWorkspace: vi.fn(),
+  pickDirectory: vi.fn(),
+  presets: { value: [] as unknown[] },
+  defaultPresetId: { value: '' },
+  presetOpenRequest: { value: 0 },
+  loadPresets: vi.fn(),
+  setDefaultPreset: vi.fn(),
+  toast: { error: vi.fn() },
+}))
+vi.mock('@/composables/features/useNewTaskDeps', () => ({
+  useNewTaskDeps: () => ({ flow: flowMock, ...depsMock }),
+}))
+// Panel.vue 的 isLandingView 读 useNewTaskFlow().state（壳）；mock 回 flowMock 保持与 Landing 同源
 vi.mock('@/composables/features/useNewTaskFlow', () => ({
   useNewTaskFlow: () => flowMock,
   resetNewTaskFlow: vi.fn(),
 }))
+
 
 // mock useToast 捕获 error 调用（W3：openDirDialog IPC 招错 → toastError）
 const toastMock = vi.hoisted(() => ({ error: vi.fn(), info: vi.fn(), warning: vi.fn() }))
@@ -272,8 +295,8 @@ describe('Landing openDirDialog 异常处理（W3: AC-5.6）', () => {
     await flushPromises()
 
     expect(flowMock.openDirDialog).toHaveBeenCalledTimes(1)
-    expect(toastMock.error).toHaveBeenCalledTimes(1)
-    const msg = String(toastMock.error.mock.calls[0]![0])
+    expect(depsMock.toast.error).toHaveBeenCalledTimes(1)
+    const msg = String(depsMock.toast.error.mock.calls[0]![0])
     expect(msg).toContain('无法打开目录选择器')
     expect(msg).toContain('IPC failed')
   })
@@ -288,6 +311,6 @@ describe('Landing openDirDialog 异常处理（W3: AC-5.6）', () => {
     await flushPromises()
 
     expect(flowMock.openDirDialog).toHaveBeenCalledTimes(1)
-    expect(toastMock.error).not.toHaveBeenCalled()
+    expect(depsMock.toast.error).not.toHaveBeenCalled()
   })
 })

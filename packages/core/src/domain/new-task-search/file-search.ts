@@ -13,7 +13,7 @@
  *
  * 依赖方向：fileSearchStore + 注入端口（fileCandidates/watchFileChanges）。
  */
-import { ref, watch, type Ref } from 'vue'
+import { watch, type Ref } from 'vue'
 import type { FileNode } from '@xyz-agent/shared'
 import type { FileCandidatesPort, FileChangeWatchPort } from './search-ports'
 import type { createFileSearchStore } from './file-search-store'

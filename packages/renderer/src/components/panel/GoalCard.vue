@@ -103,7 +103,7 @@ import { Play, AlertTriangle, CheckCircle, Pause, Ban, Hourglass } from '@lucide
 import type { Component } from 'vue'
 import type { GuiComponent, StatItem } from '@xyz-agent/extension-protocol'
 import { Button } from '@/components/ui/button'
-import { useCommandStore } from '@/stores/command'
+import { useCommandStore } from '@/composables/features/useCommandStore'
 import type { GoalLiveStatus, GoalSnapshot } from '@xyz-agent/core'
 
 const props = defineProps<{

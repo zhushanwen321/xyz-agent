@@ -110,7 +110,7 @@ import { Button } from '@/components/ui/button'
 import type { DerivedStatus } from '@/types'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
 import { STATUS_ICON } from '@/composables/logic/sessionStatus'
-import { dirNameOf } from '@/composables/logic/path'
+import { dirNameOf } from '@xyz-agent/ui'
 import { isUnread, isMarkedDone, toggleMarkedDone } from '@/composables/useSessionMarkers'
 
 /** lucide 图标名 → 组件映射（用于 STATUS_ICON 的动态组件渲染） */

@@ -64,3 +64,35 @@ vi.mock('vue-i18n', async (importOriginal) => {
     }),
   }
 })
+
+/**
+ * [w5] 全局 providePlatform（mock 平台端口）。
+ *
+ * new-task-search 域壳接线后，useCommandStore 壳单例 / useSearchModalDeps 在组件 setup
+ * 即调 getPlatform()（fail-fast）。测试环境无 AppShell 的 useSettingsShell providePlatform，
+ * 故在全局 setup 注入 mock platform（InMemoryStorage + fake WS），避免每个受影响测试
+ * 重复 provide。幂等：个别测试自行 providePlatform/__resetPlatformForTesting 覆盖本注入
+ * （settings/ws-client/spike 先例不受影响——spike 的 fail-fast 断言在 reset 后仍成立）。
+ */
+import { providePlatform } from '@xyz-agent/core'
+
+providePlatform({
+  kind: 'mock',
+  storage: {
+    get: async () => null,
+    set: async () => {},
+    remove: async () => {},
+  },
+  webSocket: {
+    create: () => ({
+      readyState: 0,
+      send: () => {},
+      close: () => {},
+      onopen: null,
+      onclose: null,
+      onmessage: null,
+      onerror: null,
+    }),
+  },
+  ipc: null,
+})

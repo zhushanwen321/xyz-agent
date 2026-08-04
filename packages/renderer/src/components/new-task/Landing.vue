@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, provide, watch } from 'vue'
 /**
  * Landing.vue —— 新建任务落地空态（#2，spec §3.1 / §4.5）。
  *
@@ -10,21 +10,28 @@ import { computed, onMounted, watch } from 'vue'
  * UC-7 守卫（AC-2.2）：gitBranch 为空（非 git 目录）→ branch chip 隐藏。
  * NFR④#2 AC-2.6：historyError=true → 显重试按钮，不永久卡住。
  * 首次启动延迟 create（AC-1.7）：currentCwd 为空 → directory chip 显「选择目录」空态。
+ *
+ * [w5 壳接线] 5 个跨端组件 + dirNameOf 从 @xyz-agent/ui import（w4 迁入）；
+ * NewTaskDeps（12 字段壳适配）经 useNewTaskDeps() 构造 + provide NewTaskDepsKey，
+ * ui 组件经 inject 消费（C-W4-1）；flow = deps.flow（core useNewTaskFlow 单例，
+ * 与 useSidebarNew 共享——双状态机断裂防护）。
  */
 
 import { useI18n } from 'vue-i18n'
 import { Folder, GitFork, RefreshCw } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import DirSelectPopover from './DirSelectPopover.vue'
-import BranchSelectPopover from './BranchSelectPopover.vue'
-import CreateBranchModal from './CreateBranchModal.vue'
-import CreateWorktreeModal from './CreateWorktreeModal.vue'
-import PresetSelectChip from './PresetSelectChip.vue'
+import {
+  DirSelectPopover,
+  BranchSelectPopover,
+  CreateBranchModal,
+  CreateWorktreeModal,
+  PresetSelectChip,
+  NewTaskDepsKey,
+  dirNameOf,
+} from '@xyz-agent/ui'
 import Composer from '@/components/panel/Composer.vue'
-import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
-import { useToast } from '@/composables/useToast'
-import { dirNameOf } from '@/composables/logic/path'
+import { useNewTaskDeps } from '@/composables/features/useNewTaskDeps'
 
 const props = withDefaults(
   defineProps<{
@@ -47,8 +54,11 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const flow = useNewTaskFlow()
-const { error: toastError } = useToast()
+// [w5] deps 组装 + provide NewTaskDepsKey（ui 组件经 inject 消费）；flow = deps.flow
+const deps = useNewTaskDeps()
+provide(NewTaskDepsKey, deps)
+const flow = deps.flow
+const toastError = deps.toast.error
 
 /**
  * onOpenDirDialog — 打开 OS 目录选择器（AC-5.6 异常反馈）。

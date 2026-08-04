@@ -17,7 +17,7 @@
  * 不依赖 api，不依赖 useCommandRegistry（registerApp 在 store 层，无需 session 上下文），不依赖 useSidebar（actions 注入破环）。
  */
 import type { AppCommand } from '@/lib/search-types'
-import { useCommandStore } from '@/stores/command'
+import { useCommandStore } from '@/composables/features/useCommandStore'
 import { useSidebarStore } from '@/stores/sidebar'
 import { usePresetStore } from '@/stores/preset'
 import i18n from '@/i18n'
@@ -57,7 +57,7 @@ export function registerAppCommands(actions: AppCommandActions): void {
 
   /** 构建快捷键显示文本：有 override 用 override，否则用默认修饰键 */
   function resolveShortcut(cmdId: string, defaultKey: string): string {
-    const override = commandStore.shortcutOverrides[cmdId]
+    const override = commandStore.shortcutOverrides.value[cmdId]
     if (override) return displayShortcut(override)
     // 默认格式：⌘+Key
     const isMac = navigator.platform.includes('Mac')

@@ -47,7 +47,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import type { FileNode, SessionGroup } from '@xyz-agent/shared'
 import type { AppCommand } from '@/lib/search-types'
-import { useCommandStore } from '@/stores/command'
+import { useCommandStore, __resetCommandStoreForTesting } from '@/composables/features/useCommandStore'
 import { useFileSearchStore } from '@/stores/fileSearch'
 
 // ── mock：api domain ──

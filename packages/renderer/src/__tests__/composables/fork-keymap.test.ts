@@ -91,7 +91,7 @@ vi.mock('@/api', () => ({
 }))
 
 import Sidebar from '@/components/sidebar/Sidebar.vue'
-import { useCommandStore } from '@/stores/command'
+import { useCommandStore } from '@/composables/features/useCommandStore'
 
 beforeEach(() => {
   setActivePinia(createPinia())

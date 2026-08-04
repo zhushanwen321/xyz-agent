@@ -97,7 +97,7 @@ import { Plus, Folder, Trash2, Check } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { dirNameOf } from '@/composables/logic/path'
+import { dirNameOf } from '@xyz-agent/ui'
 import SessionItem from './SessionItem.vue'
 import ForkGroup from './ForkGroup.vue'
 

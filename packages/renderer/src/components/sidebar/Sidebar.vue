@@ -173,7 +173,13 @@
     </div>
 
     <!-- 搜索浮层（⌘K 触发的全局 Overlay，spec §搜索浮层剥离） -->
-    <SearchModal v-model:open="isOpen" :active-session-id="focusedSessionId" />
+    <SearchModal
+      v-model:open="isOpen"
+      :active-session-id="focusedSessionId"
+      :deps="searchDeps"
+      :on-open-drawer="onOpenSearchDrawer"
+      :on-toast-error="toastError"
+    />
 
     <RenameSessionDialog
       v-model:open="renameOpen"
@@ -189,11 +195,12 @@ import { useEventListener } from '@vueuse/core'
 import { Plus, LayoutGrid, Search, Settings, FolderOpen, AlertCircle } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import SearchModal from '@/components/overlays/SearchModal.vue'
+import { SearchModal } from '@xyz-agent/ui'
+import { useSearchModal } from '@xyz-agent/core'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'
-import { useCommandStore } from '@/stores/command'
+import { useCommandStore } from '@/composables/features/useCommandStore'
 import { usePresetStore } from '@/stores/preset'
 import { useSidebarNew } from '@/composables/features/useSidebarNew'
 import { useChat } from '@/composables/features/useChat'
@@ -214,9 +221,10 @@ import { useSubagentListSync } from '@/composables/features/useSubagentListSync'
 import { useWorkflowListSync } from '@/composables/features/useWorkflowListSync'
 import { useSidebarSubagentActions } from '@/composables/features/useSidebarSubagentActions'
 import { useAppUpdate } from '@/composables/features/useAppUpdate'
-import { useSearchModal } from '@/composables/features/useSearchModal'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
+import { useSideDrawer } from '@/composables/features/useSideDrawer'
+import { useSearchModalDeps } from '@/composables/features/useSearchModalDeps'
 import { usePlatformShortcut } from '@/composables/usePlatformShortcut'
 import * as events from '@/api/events'
 
@@ -233,6 +241,17 @@ const panelStore = usePanelStore()
 const subagentStore = useSubagentStore()
 const workflowStore = useWorkflowStore()
 const { selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, deleteFolder, focusedSessionId, focusedSession, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant } = useSidebarNew()
+/** [w5] SearchModal deps 组装（SearchDeps 壳适配）+ drawer/toast 接线（C-NT-3/C-W4-5）：file 跳转开 detail tab；confirm 失败 toast（复用顶部 toastError）。 */
+const searchDeps = useSearchModalDeps({
+  selectSession,
+  newSession: () => { void newSession() },
+  goOverview,
+})
+function onOpenSearchDrawer(tab: string): void {
+  const { open } = useSideDrawer()
+  // SearchModal drawerTab（'tasks'|'sideDrawer'|'detail'）→ SideDrawerTab；实际 file 跳转恒 'detail'，'sideDrawer' 历史抽象值映射 undefined。
+  open(tab === 'sideDrawer' ? undefined : (tab as Parameters<typeof open>[0]))
+}
 const { abort: abortSession } = useChat()
 const { derivedStatus } = useSessionDerivations()
 const openSettings = inject<() => void>('openSettings', () => {})
@@ -422,7 +441,7 @@ useEventListener(window, 'keydown', (e: KeyboardEvent) => {
   // composer 聚焦时禁用全局 fork 快捷键（避免与 composer 输入冲突；⌘K/⌘N/⌘B 仍可用但 fork 专属此守卫）。
   // 检测：activeElement 落在 composer-box（contenteditable 输入区）内 → 不派发任何 keymap。
   if (isComposerFocused()) return
-  const overrides = commandStore.shortcutOverrides
+  const overrides = commandStore.shortcutOverrides.value
   const hit = keymap.find((m) => {
     // 有 override → 解析组合键格式（'mod+n' / 'shift+j' / 'j'）
     if (m.commandId && overrides[m.commandId]) {
