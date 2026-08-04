@@ -5,11 +5,11 @@
     - 常驻右侧窄条，hover 弹出全 turn 列表浮层（mini-map + 快速跳转）
     - 窄条上有 viewport indicator 标记当前 turn 在窄条上的纵向位置
     - 浮层内每个节点两行：user 行（User 图标 + user 文本）+ agent 行（Bot 图标 + agent 摘要）
-    - 状态融入 Bot 图标颜色（失败哑光金 warn 常驻 / 进行中 accent + loader-spin / 完成中性灰 ico）
+    - 状态融入 Bot 图标颜色（失败 danger 红常驻 / 进行中 accent + loader-spin / 完成中性灰 ico）
     - toggle 按钮 hover 浮出（渐进披露），active 节点常驻可见，垂直居中于节点右侧
 
-    灰阶化（W2，§13.2-C + CL5 修正）：
-    - failed 图标常驻 text-warn（非 hover 渐显——rail 是全局导航，一眼可辨失败位置）
+    状态色（W2，§13.2-C + §5.6B failed=danger）：
+    - failed 图标常驻 text-danger（非 hover 渐显——rail 是全局导航，一眼可辨失败位置；§5.6B 统一 error=danger，推翻早期 CL5 的 warn 取舍）
     - failed 文本 text-neutral-mid（hover 升 text-neutral-fg）
     - active 图标 text-accent + 双环 loader-spin 微缩（复用 Block.vue 的 RUNNING_LOADER_SVG）
     - done 图标 text-neutral-ico；user 行图标 text-neutral-ico，文本 text-neutral-fg
@@ -202,8 +202,8 @@ const viewportStyle = computed(() => {
 
 /**
  * agent 行 Bot 图标的着色 class（仅非 active 态调用；active 态走 loader-spin）：
- * - failed（hasFailedTool）→ text-warn（常驻哑光金，CL5 修正——rail 是全局导航，一眼可辨失败位置，
- *   不沿用 §6 Block 块的「hover 渐显」。多个历史 failed 全染红会视觉污染，但 warn 哑光金克制）
+ * - failed（hasFailedTool）→ text-danger（常驻红，§5.6B 统一 error=danger——rail 是全局导航，一眼可辨失败位置，
+ *   不沿用 §6 Block 块的「hover 渐显」。早期 CL5 曾用 warn 哑光金克制，已被 §5.6B 状态色统一推翻）
  * - 其余（done 态）→ text-neutral-ico（中性灰 ICON 色，不抢视觉，区别于 user 行的 text-neutral-fg）
  *
  * 优先级：failed > ok —— 失败信息需要被注意到（即便 turn 正在 streaming，过往失败也要标记）。
@@ -213,7 +213,7 @@ const viewportStyle = computed(() => {
  * 复杂度收益不成正比。开销可接受——调用次数 = rail 节点数（≤ turns 数，通常 <20）。
  */
 function agentIconClass(turn: MessageTurn): string {
-  if (hasFailedTool(turn)) return 'text-warn'
+  if (hasFailedTool(turn)) return 'text-danger'
   return 'text-neutral-ico'
 }
 </script>

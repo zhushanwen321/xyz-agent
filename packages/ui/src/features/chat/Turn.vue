@@ -5,7 +5,9 @@
     保留：trace 区 Block 编排 + ChangeSetCard。
     [cw wave w3] 不再自持 root ref + 高度上报——virta 内部 RO 测高（design §4.4）。
   -->
-  <div class="flex flex-col gap-3.5 pb-5" :data-testid="`turn-${turn.index}`">
+  <!-- 根元素 max-w-[var(--content-max-w)] mx-auto：整 turn 居中 720px（spec §6.1 R4——
+       assistant 居中，UserBubble 列内右浮 max-w-76%）。宽屏下对话流不撑满 panel。 -->
+  <div class="mx-auto flex w-full max-w-[var(--content-max-w)] flex-col gap-3.5 pb-5" :data-testid="`turn-${turn.index}`">
     <!-- user 区：UserBubble 子组件 -->
     <UserBubble
       v-if="turn.user"
