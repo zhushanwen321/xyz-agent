@@ -10,7 +10,7 @@ export const SPLIT_PANE_MIN_WIDTH = 84;
 export const SPLIT_PANE_SEPARATOR = " │ ";
 export const SPLIT_PANE_LEFT_MIN = 32;
 export const SPLIT_PANE_RIGHT_MIN = 28;
-export const ANSWER_COMMENT_SEPARATOR = " — ";
+export const ANSWER_COMMENT_SEPARATOR = " — "; // 答案内联评论分隔符（4.0.1 restore，见 .changeset/restore-ask-user-comment.md）
 
 // ── Input schema（LLM 调用参数） ─────────────────────
 // description 用英文：这些字符串会进 LLM 的 tool schema，英文更利于模型理解。
@@ -48,7 +48,7 @@ export const QuestionSchema = Type.Object({
 		Type.Boolean({ description: "Default false. Set true only when more than one option can validly apply simultaneously; otherwise leave false for a single best answer." }),
 	),
 	allowComment: Type.Optional(
-		Type.Boolean({ description: "Default false. Set true to let the user append a short free-text comment after selecting (e.g. to note a constraint)." }),
+		Type.Boolean({ description: "Default false. Set true to let the user append a short free-text comment after selecting (e.g. to note a constraint). Restored in 4.0.1." }),
 	),
 });
 

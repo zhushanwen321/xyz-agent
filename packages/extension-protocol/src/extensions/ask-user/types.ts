@@ -30,7 +30,7 @@ export interface AskUserQuestion {
    *  - 有 options 时：默认 true，前端在选项末尾追加 Other 输入框；设 false 则不追加
    *  - 无 options 时：整个问题就是自由输入，此字段被忽略 */
   allowOther?: boolean
-  /** 是否允许附加评论。选中后可追加短文本 */
+  /** 是否允许附加评论。选中后可追加短文本（4.0.1 restore：0.3.0 误删导致 pi-ask-user@4.0.0 ESM import 崩溃，见 .changeset/restore-ask-user-comment.md） */
   allowComment?: boolean
 }
 

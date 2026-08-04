@@ -18,12 +18,47 @@ import {
   parseResult,
   normalizeAggregatorResult,
   parseAggregatedMd,
+  shouldRetryWithReviewPrefix,
 } from "../../workflows/review-fix-loop-utils.cjs";
 
 /** 测试用 fail：与 workflow 内 fail() 同语义（抛错终止） */
 function fail(msg: string): never {
   throw new Error("review-fix-loop: " + msg);
 }
+
+// ── review- 前缀兕底判定（MF-1：registry 报错文案锁定） ────────────────
+//
+// agent-registry.ts 的报错文案是 `Agent "${name}" not found. Discovered: ...`
+// （名字夹在 "Agent" 与 "not found" 之间），故匹配条件必须是松散子串 "not found"，
+// 连续子串 "Agent not found" 永远不命中。下面用例锁定两端：registry 文案 + 匹配逻辑。
+
+describe("shouldRetryWithReviewPrefix", () => {
+  it("registry 文案 `Agent \"X\" not found. Discovered: ...`（名字夹在中间）→ 命中重试", () => {
+    expect(
+      shouldRetryWithReviewPrefix('Agent "business-logic" not found. Discovered: reviewer, worker', "business-logic"),
+    ).toBe(true);
+    // 假设性连续子串也命中（防御未来文案变化）
+    expect(shouldRetryWithReviewPrefix("Agent not found", "business-logic")).toBe(true);
+  });
+
+  it("非 not found 错误 → 不重试", () => {
+    expect(shouldRetryWithReviewPrefix("Agent registry failure", "business-logic")).toBe(false);
+    expect(shouldRetryWithReviewPrefix("timeout", "business-logic")).toBe(false);
+  });
+
+  it("已是 review- 前缀 → 不重试（防死循环）", () => {
+    expect(
+      shouldRetryWithReviewPrefix('Agent "review-business-logic" not found. Discovered: reviewer', "review-business-logic"),
+    ).toBe(false);
+  });
+
+  it("agent 名缺失 / 非字符串 → 不重试", () => {
+    expect(shouldRetryWithReviewPrefix('Agent "x" not found.', undefined)).toBe(false);
+    expect(shouldRetryWithReviewPrefix('Agent "x" not found.', "")).toBe(false);
+    expect(shouldRetryWithReviewPrefix(undefined, "x")).toBe(false);
+    expect(shouldRetryWithReviewPrefix(null, "x")).toBe(false);
+  });
+});
 
 // ── 参数校验：normalizeBool / normalizeInt ──────────────────────────
 

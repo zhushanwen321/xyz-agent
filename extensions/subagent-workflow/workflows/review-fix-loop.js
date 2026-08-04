@@ -16,7 +16,7 @@
 
 const meta = {
   name: "review-fix-loop",
-  description: "审查-修复循环：多批串行（批内并行 review → aggregate → fix → 重审直到 clean）。必填 targetType（git-diff/file/dir/text）+ target。批次由 batch1..batchN 控制（如 batch1=fallow-scan batch2=reviewer），用于前置检查先行的场景。注意：唯一带写操作/commit 副作用的内置 workflow，autoCommit 默认 false。",
+  description: "审查-修复循环：多批串行（批内并行 review → aggregate → fix → 重审直到 clean）。必填 targetType（git-diff/file/dir/text）+ target。批次由 batch1..batchN 控制（如 batch1=fallow-scan batch2=reviewer），用于前置检查先行的场景。注意：唯一带写操作/commit 副作用的内置 workflow，autoCommit 默认 false；skipCleanAgents 默认 true + recheckAfterFix 默认 true（fix 后重派全批做回归防护），传 recheckAfterFix=false 会跳过 clean agent 复查，存在回归风险。",
   phases: ["Review", "Fix"],
 };
 
@@ -44,6 +44,7 @@ const {
   parseResult,
   normalizeAggregatorResult,
   parseAggregatedMd,
+  shouldRetryWithReviewPrefix,
 } = require(
   (typeof workerData !== "undefined" && workerData && typeof workerData.scriptPath === "string"
     ? require("path").dirname(workerData.scriptPath)
@@ -74,7 +75,11 @@ const autoCommit = normalizeBool($ARGS.autoCommit, "autoCommit", false, fail);
 const maxRounds = normalizeInt($ARGS.maxRounds, "maxRounds", 10, fail);
 const stuckThreshold = normalizeInt($ARGS.stuckThreshold, "stuckThreshold", 3, fail);
 const skipCleanAgents = normalizeBool($ARGS.skipCleanAgents, "skipCleanAgents", true, fail);
-const recheckAfterFix = normalizeBool($ARGS.recheckAfterFix, "recheckAfterFix", false, fail);
+// 默认 recheckAfterFix=true：fix 后重派全批做回归防护（任何 fix 重新启用全部 agent，含此前 clean 的）。
+// 注意：传 recheckAfterFix=false 时，clean agent 在后续轮不再复查——若修复在其审查维度引入回归（如
+// type-safety clean、business-logic 修复改了类型）则永不暴露。默认组合（skipCleanAgents=true +
+// recheckAfterFix=true）保证每轮 fix 后全维度复查，等价旧定制版 S1 语义。
+const recheckAfterFix = normalizeBool($ARGS.recheckAfterFix, "recheckAfterFix", true, fail);
 const MODEL = typeof $ARGS.model === "string" && $ARGS.model.trim() ? $ARGS.model.trim() : undefined;
 
 const reviewInstruction = buildReviewInstruction(targetType, target);
@@ -267,11 +272,11 @@ function buildReviewCall(def, round, max, batchIndex, roundDir) {
   };
 }
 
-// agent 名解析失败（AgentRegistry not found）时，尝试 review- 前缀兜底
+// agent 名解析失败（AgentRegistry not found，报错文案 `Agent "${name}" not found.`）时，尝试 review- 前缀兜底
 async function runReviewAgent(call) {
   let raw = await agent(call);
-  if (raw && typeof raw === "object" && raw.error && typeof raw.error === "string"
-      && raw.error.includes("Agent not found") && call.agent && !call.agent.startsWith("review-")) {
+  if (raw && typeof raw === "object" && raw.error
+      && shouldRetryWithReviewPrefix(raw.error, call.agent)) {
     log("Agent not found: " + call.agent + " — retrying with review- prefix");
     raw = await agent({ ...call, agent: "review-" + call.agent });
   }

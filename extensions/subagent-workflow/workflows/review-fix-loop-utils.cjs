@@ -131,6 +131,17 @@ function normalizeAggregatorResult(raw) {
   return { report_file: parsed.report_file || parsed.reportFile, must_fix: mustFix, suggestion };
 }
 
+/** review- 前缀兜底判定：agent-registry.ts 的报错文案是 `Agent "${name}" not found. ...`
+ * （名字夹在 "Agent" 与 "not found" 之间），不能用连续子串 "Agent not found" 匹配。
+ * 已带 review- 前缀的 agent 不再重试（防死循环）。 */
+function shouldRetryWithReviewPrefix(error, agentName) {
+  return typeof error === "string"
+    && error.includes("not found")
+    && typeof agentName === "string"
+    && agentName.length > 0
+    && !agentName.startsWith("review-");
+}
+
 /** 从 aggregated.md 内容回退解析（JSON 无效时的兜底，依赖 "- Must-fix: N" 固定格式）。 */
 function parseAggregatedMd(content) {
   const mustFixMatch = content.match(/[-*]\s*Must[-_]fix\s*[:：]\s*(\d+)/i);
@@ -154,4 +165,5 @@ module.exports = {
   parseResult,
   normalizeAggregatorResult,
   parseAggregatedMd,
+  shouldRetryWithReviewPrefix,
 };

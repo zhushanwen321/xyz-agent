@@ -149,7 +149,15 @@ describe('isAskUserQuestion 类型守卫', () => {
     expect(isAskUserQuestion({ question: 'q?' })).toBe(true)
     expect(isAskUserQuestion({ header: 'h', question: 'q?', options: [] })).toBe(true)
     expect(isAskUserQuestion({ question: 'q?', multiSelect: true, allowOther: false })).toBe(true)
-    expect(isAskUserQuestion({ question: 'q?', allowComment: true })).toBe(true)
+  })
+
+  // restore 回归（MF-2）：0.3.0 的删除若在三路合并中胜出，本用例编译即失败——
+  // allowComment 不在 AskUserQuestion 类型上（extensions:typecheck gate 拦截），
+  // 且 getAskUserComment 是 ESM named export，导入缺失在模块加载时即崩溃。
+  it('U6: restore 回归——allowComment 字段存在且 getAskUserComment helper 可调用', () => {
+    const q: AskUserQuestion = { header: 'db', question: 'q?', allowComment: true }
+    expect(q.allowComment).toBe(true)
+    expect(getAskUserComment({ db: 'pg', 'db__comment': 'prod 用 pg' }, q)).toBe('prod 用 pg')
   })
 
   it('缺 question 必填字段 → false', () => {
