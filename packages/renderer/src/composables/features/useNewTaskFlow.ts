@@ -11,14 +11,20 @@
  *
  * 状态机实现见 useNewTaskFlowState；git 分支见 useNewTaskBranch；选目录见 useNewTaskDirSelect。
  *
- * 依赖方向（§2 严格边界）：api/domains（session）+ lib/utils（deriveSessionLabel）+ stores/session/workspace/panel/navigation
+ * 依赖方向（§2 严格边界）：api/domains（session）+ stores/session/workspace/panel/navigation
  * + composables/features(useChat/useModel) + composables/new-task/*（子 composable）。
  * 不直接 import transport（经 api/domains）。
  */
 import { computed, ref } from 'vue'
 import type { ComputedRef } from 'vue'
 import { session as sessionApi } from '@/api'
-import { deriveSessionLabel } from '@/lib/utils'
+import * as events from '@/api/events'
+import { createSessionFlow } from '@xyz-agent/core'
+import type {
+  CreateSessionFlowCtx,
+  CreateSessionFlowInput,
+  SessionApiPort,
+} from '@xyz-agent/core'
 import { useSessionStore } from '@/stores/session'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { usePanelStore } from '@/stores/panel'
@@ -48,10 +54,34 @@ export type { NewTaskFlowState, GitInfo } from '@/composables/new-task/useNewTas
 export { resetNewTaskFlow } from '@/composables/new-task/useNewTaskFlowState'
 
 /**
+ * 构建 SessionApiPort 适配（createSessionFlow ctx.api 注入用，C-W5-2）。
+ *
+ * 与 useSidebarNew.buildSessionApiPort 同一套适配——w5 内联保持最小改动，后续 wave 抽 shared
+ * adapter 复用（见 retrospect 债务）。createSessionFlow 运行时只调 create + migrateImage，
+ * 但 SessionApiPort 类型要求全方法，故全量代理（零转换透传现 api/domains/session）。
+ */
+function buildCreateFlowApiPort(): SessionApiPort {
+  return {
+    list: () => sessionApi.list(),
+    switchSession: (id) => sessionApi.switchSession(id),
+    create: (cwd, label, presetId) => sessionApi.create(cwd, label, presetId),
+    rename: (id, label) => sessionApi.rename(id, label),
+    remove: (id) => sessionApi.remove(id),
+    removeByCwd: (cwd) => sessionApi.removeByCwd(cwd),
+    migrateImage: (p) => sessionApi.migrateImage(p),
+    onConfigSessions: (handler) =>
+      events.onGlobalType('config.sessions', (msg) => handler(msg.payload.groups)),
+  }
+}
+
+/**
  * 把 landing 态落 tmpdir 的图片 move 到 <dataDir>/attachments/<sessionId>/（持久化）。
  *
  * 单文件失败不阻断（OS 可能已清理 tmpdir / 非 electron 环境无 preload），用 Promise.allSettled
  * 收集结果，失败项 console.warn 后跳过。返回成功迁移的 Map<oldPath, newPath>，供调用方更新 segments.path。
+ *
+ * w5 边界（C-W5-2）：创建分支的迁移已下沉 core createSessionFlow（返回 migratedSegments），
+ * 本函数仅保留给 retry/预建分支（session 已存在，不调 createSessionFlow）的 tmpdir image 迁移。
  *
  * migrateSessionImage 在 web/mock 环境返回 undefined（非 reject），不进 migrated；调用方据此保留原 path。
  */
@@ -245,39 +275,69 @@ export function useNewTaskFlow() {
     if (createInFlight.value) return
     controller.setCreateInFlight(true)
     try {
+      let finalSegments = segments
       // 未选目录直接发送（用默认 cwd 兑底 create），或重试场景已绑定
       if (!currentSession.value) {
-        const cwd = pendingCwd.value ?? workspaceStore.defaultCwd
-        // session 名默认取首条提示词前 10 字符（codePoint 计 + 省略号），取代旧的 basename(cwd)。
-        // [S5 PR#116 review] bash 首发（!cmd/!!cmd）时用 command 部分（去 !/!! 前缀）作 label
-        // 来源，避免 session 名带 `!` 前缀（「!ls」体验不佳）。bashCommand.command 已是去前缀后的纯命令。
-        const labelSource = bashCommand ? bashCommand.command : trimmed
-        const label = deriveSessionLabel(labelSource)
-        // preset 透传（B6）：pendingPreset 由 Landing.vue 接 PresetSelectChip @select
-        // → flow.setPendingPreset 写入；startFlow 时清为 null（不残留到下次 landing）。
-        const created = await sessionApi.create(cwd, label, pendingPreset.value ?? undefined)
-        // INV-7: runtime create 内部可能因 cwd 失效降级 homedir，比对 session.cwd
-        // 与请求 cwd 不一致则 toast 通知用户（D-008 选中失效 cwd 降级）。
-        if (cwd && created.cwd !== cwd) {
-          toastError(t('composable.dirNotExist', { dir: cwd }))
+        // C-W5-2 / FU-1（w3 exec-review 承接）：session 创建部分下沉 core createSessionFlow（w4 IF5）。
+        // createSessionFlow 内部做：guard→cwd 兑底→label 派生→create→INV-7 降级→appendSession→
+        // applyModel→migrateImages，返回 {session, migratedSegments} | null（null=空 content guard）。
+        // 壳只补 thinkingLevel apply（C-W4-3 留壳）+ 后续 panel/send 用 result.session.id + migratedSegments。
+        const ctx: CreateSessionFlowCtx = {
+          // pinia useSessionStore cast——createSessionFlow 只调 store.appendSession（方法调用，
+          // pinia proxy 方法调用正常），不碰 ref，故 cast 可行（与 chat 域 useChat cast 同理）。
+          store: session as unknown as CreateSessionFlowCtx['store'],
+          api: buildCreateFlowApiPort(),
+          defaultCwd: workspaceStore.defaultCwd ?? '',
+          // INV-7 cwd 降级比对：runtime create 内部可能降级 homedir，比对不一致 toast 通知用户。
+          onCwdFallback: (reqCwd) =>
+            toastError(t('composable.dirNotExist', { dir: reqCwd })),
+          // apply landing 态选定模型（pendingModel 为 "provider/modelId" 复合串；空跳过）。
+          // RPC + 乐观更新编排统一走 features/useModel（ADR-0028）。
+          applyModel: async (sid, pending) => {
+            const slashIdx = pending.indexOf('/')
+            if (slashIdx > 0) {
+              await switchModel(sid, pending.slice(0, slashIdx), pending.slice(slashIdx + 1))
+            }
+          },
         }
-        controller.bindCurrentSession(created)
-        session.appendSession(created)
-        // apply landing 态选定的模型（session 已 create，可调 model.switch RPC）。
-        // pendingModel 为 "provider/modelId" 复合串；未选（null）则用 runtime 默认，不切换。
-        // RPC + 乐观更新编排统一走 features/useModel（ADR-0028），消除重复。
-        const pending = pendingModel.value
-        if (pending) {
-          const slashIdx = pending.indexOf('/')
-          if (slashIdx > 0) {
-            const provider = pending.slice(0, slashIdx)
-            const modelId = pending.slice(slashIdx + 1)
-            await switchModel(created.id, provider, modelId)
-          }
+        const input: CreateSessionFlowInput = {
+          cwd: pendingCwd.value,
+          presetId: pendingPreset.value,
+          pendingModel: pendingModel.value,
+          segments,
+          bashCommand: bashCommand ?? null,
         }
-        // apply landing 态选定的思考等级（session 已 create，可调 setThinkingLevel RPC）
+        const result = await createSessionFlow(ctx, input)
+        // 空 content guard 命中（createSessionFlow 返回 null）→ abort send（不 send，session 未创建）
+        if (!result) return
+        controller.bindCurrentSession(result.session)
+        // C-W4-3：thinkingLevel apply 留壳（createSessionFlow 不做，只做 model apply）
         if (thinkingLevel) {
-          await setThinkingLevel(created.id, thinkingLevel)
+          await setThinkingLevel(result.session.id, thinkingLevel)
+        }
+        // createSessionFlow 已迁移 needsMigrate image 段（path 更新 + needsMigrate 重置），
+        // 壳直接用 result.migratedSegments 做 send（不重复迁移）。
+        finalSegments = result.migratedSegments
+      } else {
+        // retry/预建分支：session 已存在，不调 createSessionFlow。landing 态 tmpdir image 段
+        // （用户重试时新贴的图）需壳侧迁移（createSessionFlow 未跑，migration 未发生）。
+        const needsMigrateImages = segments.filter(
+          (s): s is Extract<Segment, { type: 'image' }> =>
+            s.type === 'image' && s.needsMigrate === true,
+        )
+        if (needsMigrateImages.length > 0) {
+          const migrated = await migrateTmpdirImages(needsMigrateImages, currentSession.value!.id)
+          finalSegments = segments.map((s) => {
+            if (s.type === 'image' && migrated.has(s.path)) {
+              // 迁移成功：更新 path + 重置 needsMigrate=false（避免后续重发误迁移）。
+              return { ...s, path: migrated.get(s.path)!, needsMigrate: false }
+            }
+            return s
+          })
+          if (migrated.size < needsMigrateImages.length) {
+            // 部分迁移失败：toast 提示（不阻断发送）
+            toastWarning(t('composable.imageMigratePartialFailed', { count: needsMigrateImages.length - migrated.size }))
+          }
         }
       }
       // 载入 panel + 设 activeId（预建或刚建统一处理）
@@ -294,39 +354,10 @@ export function useNewTaskFlow() {
       // 文件树不在此 wave 的 bus stateSnapshot 覆盖范围，保留主动拉取。
       void useFileTree().loadTree(newSid)
       // per-session sid：显式传 newSid，不依赖全局 activeId（双 panel 隔离）
-      // per-session sid：显式传 newSid，不依赖全局 activeId（双 panel 隔离）
-      // tmpdir 迁移：landing 态图片可能落 tmpdir（writeSessionImage 在 sessionId 为空时降级 tmpdir）。
-      // session.create 成功后，扫描 segments 把 needsMigrate=true 的 image move 到 attachments/<sessionId>/。
-      // 迁移判断用 segment.needsMigrate 字段（M1 修复），不再猜路径——+菜单选的用户磁盘文件
-      // needsMigrate 不设（false），不会被误迁移（避免 renameSync 把用户原文件移走——数据丢失）。
-      // 迁移后更新 segments.path（chat.send 的 appendUser 用更新后的 path，segmentsToText 也产出更新后的 path），
-      // 这样 store 里存的就是正确 path，不需要额外的 store update action。
-      // 降级：单文件迁移失败（OS 已清理 tmpdir）不阻断发送，console.warn + toast 提示，path 保留 tmpdir
-      // （路径进 prompt 文本，LLM 调 read 工具时文件不存在会自然报错——但路径本身仍发，非硬错误）。
-      let finalSegments = segments
-      const needsMigrateImages = segments.filter(
-        (s): s is Extract<Segment, { type: 'image' }> =>
-          s.type === 'image' && s.needsMigrate === true,
-      )
-      if (needsMigrateImages.length > 0) {
-        const migrated = await migrateTmpdirImages(needsMigrateImages, newSid)
-        // migrated 是 Map<oldPath, newPath>，更新 segments
-        finalSegments = segments.map((s) => {
-          if (s.type === 'image' && migrated.has(s.path)) {
-            // 迁移成功：更新 path + 重置 needsMigrate=false。
-            // 不重置会导致 store 中 needsMigrate 过期（文件已在 attachments，
-            // 不再需要迁移），后续 editAndResend 重发会保留该 flag 误导（S5 修复）。
-            return { ...s, path: migrated.get(s.path)!, needsMigrate: false }
-          }
-          return s
-        })
-        if (migrated.size < needsMigrateImages.length) {
-          // 部分迁移失败：toast 提示（不阻断发送）
-          toastWarning(t('composable.imageMigratePartialFailed', { count: needsMigrateImages.length - migrated.size }))
-        }
-      }
+      // tmpdir 迁移已在上方分支完成（create 分支=createSessionFlow.migratedSegments，
+      // retry 分支=migrateTmpdirImages），finalSegments 即迁移后的段。bashCommand 无图片段，无副作用。
       // 发送阶段：bash 首发（landing 态 !/!! 前缀）走 sendBash，否则普通 send
-      // bash 不经 segments（原始 shell 文本透传 pi bash RPC），finalSegments 仅用于上面的 tmpdir 迁移流程（bash 无图片段，无副作用）
+      // bash 不经 segments（原始 shell 文本透传 pi bash RPC），finalSegments 仅用于 tmpdir 迁移流程（bash 无图片段，无副作用）
       if (bashCommand) {
         await chat.sendBash(newSid, bashCommand.command, bashCommand.excludeFromContext)
       } else {

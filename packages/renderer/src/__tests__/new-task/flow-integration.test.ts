@@ -445,9 +445,10 @@ describe('submitFirstMessage（landing 态首发提交：延迟 create+载入+�
     const sentSegments = chatMock.send.mock.calls[0][1] as Segment[]
     expect(sentSegments[0]).toMatchObject({ type: 'image', path: '/tmp/img1.png' })
     expect(sentSegments[1]).toMatchObject({ type: 'image', path: '/dataDir/attachments/mig-fail/img2.png' })
-    // 失败项 console.warn（allSettled 硬规则不阻断）
+    // 失败项 console.warn（allSettled 硬规则不阻断）。
+    // w5（C-W5-2）：创建分支的迁移下沉 core createSessionFlow，warn 前缀从 [useNewTaskFlow] 改 [createSessionFlow]。
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[useNewTaskFlow] image migrate failed: /tmp/img1.png'),
+      expect.stringContaining('[createSessionFlow] image migrate failed: /tmp/img1.png'),
       expect.any(Error),
     )
     warnSpy.mockRestore()
