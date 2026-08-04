@@ -18,13 +18,13 @@ describe('SessionApiPort 类型契约', () => {
       rename: async (): Promise<void> => {},
       remove: async (): Promise<void> => {},
       removeByCwd: async (): Promise<BatchDeleteResult> => ({ cwd: '/a', deleted: [], failed: [] }),
-      migrateImage: async (): Promise<unknown> => undefined,
+      migrateImage: async (): Promise<{ path: string }> => ({ path: '/data/x.png' }),
       onConfigSessions: async (): Promise<() => void> => () => {},
     }
     expect(fake).toBeDefined()
   })
 
-  it('migrateImage 参数形状：{path, sessionId, needsMigrate}', () => {
+  it('migrateImage 参数形状：{fromPath, sessionId, fileName} → {path}', () => {
     const received: unknown = undefined
     const fake: SessionApiPort = {
       list: async () => [],
@@ -33,9 +33,9 @@ describe('SessionApiPort 类型契约', () => {
       rename: async () => {},
       remove: async () => {},
       removeByCwd: async (): Promise<BatchDeleteResult> => ({ cwd: '/a', deleted: [], failed: [] }),
-      migrateImage: async (p: { path: string; sessionId: string; needsMigrate: boolean }) => {
+      migrateImage: async (p: { fromPath: string; sessionId: string; fileName: string }): Promise<{ path: string }> => {
         void p
-        return undefined
+        return { path: '/data/x.png' }
       },
       onConfigSessions: async (): Promise<() => void> => () => {},
     }

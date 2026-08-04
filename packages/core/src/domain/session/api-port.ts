@@ -27,8 +27,16 @@ export interface SessionApiPort {
   remove(id: string): Promise<void>
   /** 按 cwd 批量删除（deleteFolder 用；返回 deleted/failed 列表） */
   removeByCwd(cwd: string): Promise<BatchDeleteResult>
-  /** 迁移 session 图片到 attachments/<sessionId>/（createSessionFlow 的 migrateImages 用） */
-  migrateImage(p: { path: string; sessionId: string; needsMigrate: boolean }): Promise<unknown>
+  /**
+   * 迁移 landing 态 tmpdir 图片到 attachments/<sessionId>/（createSessionFlow 的 migrateImages 用）。
+   * 签名对齐 renderer api/domains/session.ts（C-W4-1）：
+   * - fromPath：源 tmpdir 路径（segment.path）
+   * - fileName：磁盘文件全名（segment.fileName，含 uuid 前缀）
+   * - 返回 { path }：迁移后 attachments/<sessionId>/ 新路径
+   * needsMigrate 是 Segment 字段（迁移判断条件，见 shared/segments.ts），不在此入参——
+   * createSessionFlow 内扫描 segment.needsMigrate 命中才调本方法。
+   */
+  migrateImage(p: { fromPath: string; sessionId: string; fileName: string }): Promise<{ path: string }>
   /**
    * 订阅 config.sessions 广播（bindSessionListBroadcast 用，w3 追加）。
    * runtime 在 create/delete/rename 后 broadcastSessionList 推全量分组；
