@@ -441,17 +441,28 @@ function buildR2ReviewPrompt({ header, round, max, roundDir, reportFile, aggPath
 /**
  * 5.1 对账驱动纯函数：基于 reviewer 的 reconciliation 声明（结构化）与上轮 state.issues 更新。
  * 判定：fix-attempted 未再现 → fixed；再现 → regressed（fixAttempts+1）；新 ID → open。
- * deferred 留 known-remaining（不参与判定）。stuck：同一 ID 连续 N 轮 open/regressed。
+ * deferred 留 known-remaining（不参与判定）；escalate（上下文改变，5.1-5）→ 重新 open
+ * （保留 history/fixAttempts 累计）。stuck：同一 ID 连续 N 轮 open/regressed。
  * 未知 ID（不在 prevIssues 中）按新发现处理；stuckThreshold 复用 stuckThreshold 参数。
  * @returns { issues, stuck, stuckIds, knownRemaining }
  */
-function reconcileIssues(prevIssues, { seenIds, round, stuckThreshold }) {
+function reconcileIssues(prevIssues, { seenIds, escalateIds, round, stuckThreshold }) {
   const issues = {};
   const seen = new Set(seenIds || []);
+  const escalated = new Set(escalateIds || []);
   const stuckIds = [];
   for (const [id, issue] of Object.entries(prevIssues || {})) {
     issues[id] = { ...issue, history: [...(issue.history || [])] };
-    if (issue.status === "deferred") continue; // known-remaining，不参与判定
+    if (issue.status === "deferred") {
+      // 5.1-5 显式升级：reconciliation 声明 escalate → 重新 open（保留历史与 fixAttempts），
+      // 进入修复循环；未升级的 deferred 留 known-remaining，不参与判定。
+      if (escalated.has(id)) {
+        issues[id].status = "open";
+        issues[id].openStreak = 0;
+        issues[id].history.push({ round, status: "escalated" });
+      }
+      continue;
+    }
     if (issue.status === "fix-attempted") {
       if (!seen.has(id)) {
         issues[id].status = "fixed";
@@ -459,7 +470,9 @@ function reconcileIssues(prevIssues, { seenIds, round, stuckThreshold }) {
         issues[id].history.push({ round, status: "fixed" });
       } else {
         issues[id].status = "regressed";
-        issues[id].fixAttempts = (issue.fixAttempts || 1) + 1;
+        // fixAttempts 语义 = 修复失败次数：初始 0，每次 regressed +1（RC-7「经 2 次修复
+        // 仍未收敛」= 第 2 次 regressed 后触发，修复见 findNeedsRedesign 阈值）。
+        issues[id].fixAttempts = (issue.fixAttempts || 0) + 1;
         issues[id].history.push({ round, status: "regressed" });
       }
     }
@@ -485,10 +498,15 @@ function reconcileIssues(prevIssues, { seenIds, round, stuckThreshold }) {
 }
 
 /**
- * 5.7 新发现率收敛判定纯函数：连续 convergeRounds 轮新发现 ≤ convergeNewIssues → converged。
- * 新发现 = 本轮 reconcile 新增的 ID（firstSeen === round）。streak 由调用方持久化（state）。
+ * 5.7 新发现率收敛判定纯函数：连续 convergeRounds 轮新发现 ≤ convergeNewIssues 且
+ * 无 critical 新发现 → converged（5.7「新 A 类 ≤1 且无 critical」）。
+ * 新发现 = 本轮 reconcile 新增的 ID（firstSeen === round）；critical 新发现存在时
+ * 不收敛并重置 streak。streak 由调用方持久化（state）。
  */
-function checkConvergence({ prevStreak, newFindings, convergeNewIssues, convergeRounds }) {
+function checkConvergence({ prevStreak, newFindings, newFindingsCritical, convergeNewIssues, convergeRounds }) {
+  if ((newFindingsCritical || 0) > 0) {
+    return { converged: false, streak: 0 };
+  }
   const streak = newFindings <= convergeNewIssues ? (prevStreak || 0) + 1 : 0;
   return { converged: streak >= convergeRounds, streak };
 }
@@ -539,13 +557,21 @@ function normalizeAggregatorResult(raw) {
     typeof parsed.totalSuggestions === "number" ? parsed.totalSuggestions :
     typeof parsed.suggestions === "number" ? parsed.suggestions : 0;
   if (typeof mustFix !== "number") return null;
+  // 5.1/5.7 severity 结构化：must_fix_ids 支持 ["MF-1"]（旧）与 [{id, severity}]（新，
+  // severity: critical/major/minor——converged 终止的「无 critical」判定数据源）。
+  const idsRaw = Array.isArray(parsed.must_fix_ids) ? parsed.must_fix_ids : [];
+  const must_fix_ids = idsRaw.map((x) => {
+    if (typeof x === "string") return { id: x, severity: "major" };
+    if (x && typeof x === "object" && typeof x.id === "string") {
+      return { id: x.id, severity: typeof x.severity === "string" ? x.severity : "major" };
+    }
+    return null;
+  }).filter(Boolean);
   return {
     report_file: parsed.report_file || parsed.reportFile,
     must_fix: mustFix,
     suggestion,
-    must_fix_ids: Array.isArray(parsed.must_fix_ids)
-      ? parsed.must_fix_ids.filter((x) => typeof x === "string")
-      : [],
+    must_fix_ids,
     fixes_caution: Array.isArray(parsed.fixes_caution)
       ? parsed.fixes_caution.filter((x) => typeof x === "string")
       : [],

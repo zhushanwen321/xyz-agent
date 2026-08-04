@@ -386,6 +386,9 @@ async function runReviewAgent(call) {
 // ── Main loop: batches (serial) × rounds (per-batch) ────────────────
 
 const state = loadState();
+// 5.6 锁定结果落 state.meta.baseHash（commit 1 声称与实现一致化，run 后可从 state.json 追溯审查基线）
+state.meta = state.meta || {};
+state.meta.baseHash = lockedBase.hash || "";
 let totalFixed = 0;
 let terminated = "clean";
 let finalMessage = "";

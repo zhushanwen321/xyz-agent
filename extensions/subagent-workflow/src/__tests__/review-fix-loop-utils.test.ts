@@ -483,6 +483,12 @@ describe("checkConvergence", () => {
     expect(checkConvergence({ prevStreak: 0, newFindings: 0, convergeNewIssues: 1, convergeRounds: 1 }))
       .toEqual({ converged: true, streak: 1 });
   });
+  it("critical 新发现存在 → 不收敛且 streak 重置（5.7「且无 critical」）", () => {
+    expect(checkConvergence({ prevStreak: 1, newFindings: 1, newFindingsCritical: 1, convergeNewIssues: 1, convergeRounds: 2 }))
+      .toEqual({ converged: false, streak: 0 });
+    expect(checkConvergence({ prevStreak: 1, newFindings: 0, newFindingsCritical: 1, convergeNewIssues: 1, convergeRounds: 2 }))
+      .toEqual({ converged: false, streak: 0 });
+  });
 });
 
 describe("findNeedsRedesign", () => {
@@ -497,6 +503,43 @@ describe("findNeedsRedesign", () => {
   it("空 issues / 无命中 → []", () => {
     expect(findNeedsRedesign({}, 2)).toEqual([]);
     expect(findNeedsRedesign({ "MF-1": { status: "open", fixAttempts: 0 } }, 2)).toEqual([]);
+  });
+});
+
+describe("reconcileIssues escalate + fixAttempts 起点", () => {
+  it("生产 0 起点：首次 regressed → fixAttempts=1（RC-7 给足 2 次修复机会）", () => {
+    const rec = reconcileIssues(
+      { "MF-1": { status: "fix-attempted", fixAttempts: 0, openStreak: 0, history: [] } },
+      { seenIds: ["MF-1"], round: 2, stuckThreshold: 3 },
+    );
+    expect(rec.issues["MF-1"].status).toBe("regressed");
+    expect(rec.issues["MF-1"].fixAttempts).toBe(1);
+    expect(findNeedsRedesign(rec.issues, 2)).toEqual([]); // 首次失败不触发
+  });
+  it("第二次 regressed → fixAttempts=2 → needs-redesign 触发", () => {
+    const rec = reconcileIssues(
+      { "MF-1": { status: "fix-attempted", fixAttempts: 1, openStreak: 0, history: [] } },
+      { seenIds: ["MF-1"], round: 3, stuckThreshold: 3 },
+    );
+    expect(rec.issues["MF-1"].fixAttempts).toBe(2);
+    expect(findNeedsRedesign(rec.issues, 2).map((r) => r.issue_id)).toEqual(["MF-1"]);
+  });
+  it("deferred + escalate 声明 → 重新 open（保留 history/fixAttempts）", () => {
+    const rec = reconcileIssues(
+      { "S-1": { status: "deferred", fixAttempts: 0, deferredReason: "high cost", history: [{ round: 1, status: "deferred" }] } },
+      { seenIds: [], escalateIds: ["S-1"], round: 3, stuckThreshold: 3 },
+    );
+    expect(rec.issues["S-1"].status).toBe("open");
+    expect(rec.issues["S-1"].history.at(-1).status).toBe("escalated");
+    expect(rec.knownRemaining).toEqual([]);
+  });
+  it("deferred 无 escalate → 留 known-remaining", () => {
+    const rec = reconcileIssues(
+      { "S-1": { status: "deferred", deferredReason: "high cost", history: [] } },
+      { seenIds: [], escalateIds: [], round: 3, stuckThreshold: 3 },
+    );
+    expect(rec.issues["S-1"].status).toBe("deferred");
+    expect(rec.knownRemaining).toEqual(["S-1: high cost"]);
   });
 });
 
@@ -582,7 +625,15 @@ describe("resolveReviewReportPath", () => {
 describe("normalizeAggregatorResult must_fix_ids", () => {
   it("must_fix_ids 透传（TC6）", () => {
     const r = normalizeAggregatorResult({ report_file: "/tmp/agg.md", must_fix: 2, suggestion: 1, must_fix_ids: ["MF-1", "MF-2"] });
-    expect(r!.must_fix_ids).toEqual(["MF-1", "MF-2"]);
+    expect(r!.must_fix_ids).toEqual([{ id: "MF-1", severity: "major" }, { id: "MF-2", severity: "major" }]);
+  });
+  it("must_fix_ids 对象格式 [{id,severity}] 透传（5.7 severity 结构化）", () => {
+    const r = normalizeAggregatorResult({ report_file: "/tmp/agg.md", must_fix: 2, suggestion: 0, must_fix_ids: [{ id: "MF-1", severity: "critical" }, { id: "MF-2", severity: "minor" }] });
+    expect(r!.must_fix_ids).toEqual([{ id: "MF-1", severity: "critical" }, { id: "MF-2", severity: "minor" }]);
+  });
+  it("must_fix_ids 混排 + 非法元素过滤", () => {
+    const r = normalizeAggregatorResult({ report_file: "/tmp/agg.md", must_fix: 2, suggestion: 0, must_fix_ids: ["MF-1", { id: "MF-2", severity: "critical" }, 42, null] });
+    expect(r!.must_fix_ids).toEqual([{ id: "MF-1", severity: "major" }, { id: "MF-2", severity: "critical" }]);
   });
   it("旧格式（无 must_fix_ids）→ 缺省 []（TC6）", () => {
     const r = normalizeAggregatorResult({ report_file: "/tmp/agg.md", must_fix: 2, suggestion: 1 });
