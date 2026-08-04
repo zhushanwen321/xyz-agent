@@ -174,15 +174,22 @@ export function spawnRuntimeProcess(port: number, onExit?: (code: number | null)
   } else {
     // 开发环境：tsx 运行 TS 源码
     // projectRoot = app.getAppPath() = apps/electron。
-    // pnpm workspace + node-linker=hoisted 下，tsx 提升到 repo root 的 node_modules/.bin；
     // runtime 源码在 packages/runtime/src/（与 apps/electron 平级）。
     // repo root 相对 apps/electron 是 ../..
     const repoRoot = path.join(projectRoot, '..', '..')
-    const tsxPath = path.join(repoRoot, 'node_modules', '.bin', 'tsx')
     const runtimeEntry = path.join(repoRoot, 'packages', 'runtime', 'src', 'index.ts')
 
-    if (!existsSync(tsxPath)) {
-      throw new Error(`tsx not found at ${tsxPath}. Run: pnpm install`)
+    // [HISTORICAL] 2026-08-04：不依赖 node_modules/.bin/tsx 启动。
+    // .bin 下是 pnpm symlink 还是 npm 风格 shell shim（basedir=$(dirname...)）取决于
+    // 安装工具与布局；`node .bin/tsx` 在 shim 形态下会把 shell 脚本当 JS 解析，
+    // 启动即崩（SyntaxError: missing ) after argument list）。
+    // 正确做法：直接解析 tsx 包内 JS 入口（package.json bin 声明），
+    // 与打包模式用 dist/runtime/index.cjs 同理——跨安装工具/布局稳定。
+    const tsxPkgPath = path.join(repoRoot, 'node_modules', 'tsx', 'package.json')
+    const tsxPath = path.join(repoRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs')
+
+    if (!existsSync(tsxPkgPath) || !existsSync(tsxPath)) {
+      throw new Error(`tsx not found at ${tsxPkgPath}. Run: pnpm install`)
     }
     if (!existsSync(runtimeEntry)) {
       throw new Error(`Runtime entry not found at ${runtimeEntry}`)
