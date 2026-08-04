@@ -10,6 +10,7 @@
  */
 import type {
   ProviderInfo,
+  ModelInfo,
   SkillInfo,
   AgentInfo,
   ExtensionInfo,
@@ -49,6 +50,8 @@ export interface SettingsTransport {
   setExtensionDirs(dirs: string[]): Promise<void>
   // ── 订阅（返回取消函数）──
   onProviders(h: (p: ProviderInfo[]) => void): () => void
+  /** 聚合模型列表（与 providers 同源，常驻订阅，model.onModels 对应） */
+  onModels(h: (m: ModelInfo[]) => void): () => void
   onSkills(h: (s: SkillInfo[]) => void): () => void
   onAgents(h: (a: AgentInfo[]) => void): () => void
   onExtensions(h: (e: ExtensionInfo[]) => void): () => void

@@ -1,76 +1,80 @@
 {
-  "name": "@xyz-agent/core",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
-  "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "import": "./src/index.ts"
-    },
-    "./bootstrap": {
-      "types": "./src/bootstrap.ts",
-      "import": "./src/bootstrap.ts"
-    },
-    "./platform/port": {
-      "types": "./src/platform/port.ts",
-      "import": "./src/platform/port.ts"
-    },
-    "./rendering-protocol": {
-      "types": "./src/rendering-protocol/index.ts",
-      "import": "./src/rendering-protocol/index.ts"
-    },
-    "./rendering-protocol/custom-registry": {
-      "types": "./src/rendering-protocol/custom-registry.ts",
-      "import": "./src/rendering-protocol/custom-registry.ts"
-    },
-    "./foundation/use-session-scoped-state": {
-      "types": "./src/foundation/use-session-scoped-state.ts",
-      "import": "./src/foundation/use-session-scoped-state.ts"
-    },
-    "./domain/composer": {
-      "types": "./src/domain/composer/index.ts",
-      "import": "./src/domain/composer/index.ts"
-    },
-    "./domain/composer/input": {
-      "types": "./src/domain/composer/input/index.ts",
-      "import": "./src/domain/composer/input/index.ts"
-    },
-    "./domain/composer/dispatch": {
-      "types": "./src/domain/composer/dispatch/index.ts",
-      "import": "./src/domain/composer/dispatch/index.ts"
-    },
-    "./domain/composer/context": {
-      "types": "./src/domain/composer/context/index.ts",
-      "import": "./src/domain/composer/context/index.ts"
-    },
-    "./domain/composer/model-thinking": {
-      "types": "./src/domain/composer/model-thinking.ts",
-      "import": "./src/domain/composer/model-thinking.ts"
-    },
-    "./domain/composer/thinking-level-sync": {
-      "types": "./src/domain/composer/thinking-level-sync.ts",
-      "import": "./src/domain/composer/thinking-level-sync.ts"
-    },
-    "./domain/composer/thinking-levels": {
-      "types": "./src/domain/composer/thinking-levels.ts",
-      "import": "./src/domain/composer/thinking-levels.ts"
-    }
+ "name": "@xyz-agent/core",
+ "version": "0.1.0",
+ "private": true,
+ "type": "module",
+ "main": "src/index.ts",
+ "types": "src/index.ts",
+ "exports": {
+  ".": {
+   "types": "./src/index.ts",
+   "import": "./src/index.ts"
   },
-  "scripts": {
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+  "./bootstrap": {
+   "types": "./src/bootstrap.ts",
+   "import": "./src/bootstrap.ts"
   },
-  "dependencies": {
-    "@xyz-agent/extension-protocol": "workspace:*",
-    "@xyz-agent/shared": "workspace:*",
-    "vue": "^3.5",
-    "pinia": "^3"
+  "./platform/port": {
+   "types": "./src/platform/port.ts",
+   "import": "./src/platform/port.ts"
   },
-  "devDependencies": {
-    "typescript": "^5.8",
-    "jsdom": "^29.1.1"
+  "./rendering-protocol": {
+   "types": "./src/rendering-protocol/index.ts",
+   "import": "./src/rendering-protocol/index.ts"
+  },
+  "./rendering-protocol/custom-registry": {
+   "types": "./src/rendering-protocol/custom-registry.ts",
+   "import": "./src/rendering-protocol/custom-registry.ts"
+  },
+  "./foundation/use-session-scoped-state": {
+   "types": "./src/foundation/use-session-scoped-state.ts",
+   "import": "./src/foundation/use-session-scoped-state.ts"
+  },
+  "./domain/composer": {
+   "types": "./src/domain/composer/index.ts",
+   "import": "./src/domain/composer/index.ts"
+  },
+  "./domain/settings": {
+   "types": "./src/domain/settings/index.ts",
+   "import": "./src/domain/settings/index.ts"
+  },
+  "./domain/composer/input": {
+   "types": "./src/domain/composer/input/index.ts",
+   "import": "./src/domain/composer/input/index.ts"
+  },
+  "./domain/composer/dispatch": {
+   "types": "./src/domain/composer/dispatch/index.ts",
+   "import": "./src/domain/composer/dispatch/index.ts"
+  },
+  "./domain/composer/context": {
+   "types": "./src/domain/composer/context/index.ts",
+   "import": "./src/domain/composer/context/index.ts"
+  },
+  "./domain/composer/model-thinking": {
+   "types": "./src/domain/composer/model-thinking.ts",
+   "import": "./src/domain/composer/model-thinking.ts"
+  },
+  "./domain/composer/thinking-level-sync": {
+   "types": "./src/domain/composer/thinking-level-sync.ts",
+   "import": "./src/domain/composer/thinking-level-sync.ts"
+  },
+  "./domain/composer/thinking-levels": {
+   "types": "./src/domain/composer/thinking-levels.ts",
+   "import": "./src/domain/composer/thinking-levels.ts"
   }
+ },
+ "scripts": {
+  "typecheck": "tsc --noEmit",
+  "test": "vitest run"
+ },
+ "dependencies": {
+  "@xyz-agent/extension-protocol": "workspace:*",
+  "@xyz-agent/shared": "workspace:*",
+  "vue": "^3.5",
+  "pinia": "^3"
+ },
+ "devDependencies": {
+  "typescript": "^5.8",
+  "jsdom": "^29.1.1"
+ }
 }
