@@ -52,6 +52,8 @@ const {
   wrapUntrusted,
   buildFixPrompt,
   buildR2ReviewPrompt,
+  buildAggregatorPrompt,
+  resolveReviewReportPath,
   normalizeFixResult,
   validateFixResult,
   reconcileIssues,
@@ -139,6 +141,7 @@ const reviewerSchema = {
   type: "object",
   properties: {
     report_file: { type: "string", description: "Absolute path to the written review report (.md)" },
+    report_content: { type: "string", description: "Full markdown report body (for schema-only agents without write tool; workflow writes it to <roundDir>/<report>.md)" },
     must_fix: { type: "number", description: "Number of must-fix (critical+major) issues found" },
     suggestion: { type: "number", description: "Number of suggestion-level (minor) issues found" },
     reconciliation: {
@@ -168,6 +171,11 @@ const aggregatorSchema = {
       type: "array",
       items: { type: "string" },
       description: "Issue ids of the deduplicated must-fix list (MF-1..N), matching the first column of the markdown table",
+    },
+    fixes_caution: {
+      type: "array",
+      items: { type: "string" },
+      description: "Caution entries for weak-evidence or high-risk claims (passed to fix stage)",
     },
   },
   required: ["report_file", "must_fix", "suggestion"],
@@ -440,6 +448,17 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       }
       const parsed = normalizeReviewResult(raw.value);
       if (parsed) {
+        // 5.8 通用落盘：schema-only agent（report_content 无 report_file，如 doc-reviewer）→
+        // workflow 写盘到 <roundDir>/<def.report>.md 并填入 report_file（aggregator 读取路径不变）。
+        const reportPath = resolveReviewReportPath(parsed, roundDir, active[i].report);
+        if (reportPath && !(parsed.report_file && parsed.report_file.trim())) {
+          try {
+            fs.writeFileSync(reportPath, parsed.report_content || "", "utf-8");
+            parsed.report_file = reportPath;
+          } catch (e) {
+            log("WARN: failed to write report_content to " + reportPath + " — " + e.message);
+          }
+        }
         reviewResults.push(parsed);
         for (const r of parsed.reconciliation) {
           if (r.status !== "fixed") reconSeen.add(r.prev_id);
@@ -476,52 +495,11 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
 
     // ── Aggregate（内置 prompt，不依赖任何 agent.md） ─────────
     const aggRaw = await agent({
-      prompt: [
-        "Batch " + batchIndex + "/" + BATCHES.length + " Round " + round + "/" + maxRounds + " — AGGREGATE REVIEWS",
-        "",
-        "You have TWO outputs: (1) a markdown report file and (2) a JSON return value.",
-        "",
-        "Sub-review results: " + JSON.stringify(reviewResults, null, 2),
-        "outputDir: " + roundDir,
-        "",
-        "─── PART 1: WRITE FILE ───────────────────────────────────",
-        "Write the human-readable aggregated report to:",
-        roundDir + "/aggregated.md",
-        "",
-        "Top section MUST be:",
-        "```",
-        "## Summary",
-        "- Must-fix: <N>",
-        "- Suggestions: <N>",
-        "- Infos: <N>",
-        "- Dimensions reviewed: <comma-separated>",
-        "- Dedup: <N> duplicates removed",
-        "```",
-        "",
-        "Followed by tables of Must-Fix Issues, Suggestions, Infos, and a Conclusion section.",
-        "The format `- Must-fix: N` and `- Suggestions: N` is critical: a fallback parser depends on it.",
-        "",
-        "─── PART 2: RETURN JSON (CRITICAL — loop reads THIS) ─────",
-        "Your FINAL response MUST be a single JSON object and NOTHING ELSE.",
-        "",
-        "Required shape (exact field names, no aliases, no extras):",
-        "{",
-        '  "report_file": "' + roundDir + '/aggregated.md",',
-        '  "must_fix": <integer>,',
-        '  "suggestion": <integer>',
-        "}",
-        "",
-        "STRICT RULES:",
-        "- Field names MUST be exactly: report_file, must_fix, suggestion",
-        "- must_fix and suggestion MUST be integers — NOT strings, NOT null, NOT undefined",
-        "- The JSON object MUST be the ONLY thing in your final response",
-        "- DO NOT wrap in markdown code fences, DO NOT add prose before/after",
-        "",
-        "─── SELF-CHECK before returning ──────────────────────────",
-        "1. Did you write " + roundDir + "/aggregated.md? If not, do it first.",
-        "2. Is must_fix in your JSON equal to the 'Must-fix: N' in your markdown?",
-        "3. Is your final response the bare JSON object, no fences, no prose?",
-      ].join("\n"),
+      prompt: buildAggregatorPrompt({
+        header: "Batch " + batchIndex + "/" + BATCHES.length + " Round " + round + "/" + maxRounds + " — AGGREGATE REVIEWS",
+        round, max: maxRounds, roundDir,
+        reviewResults,
+      }),
       model: MODEL,
       schema: aggregatorSchema,
       description: "aggregate",
@@ -636,6 +614,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
           ? fixPrompt + "\n\nFixer specification (from agent file):\n" + FIX_DEF.systemPrompt
           : fixPrompt,
         commitInstr,
+        caution: agg.fixes_caution && agg.fixes_caution.length ? agg.fixes_caution : [],
       }),
       schema: fixSchema,
       model: MODEL,

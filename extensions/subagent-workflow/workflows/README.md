@@ -58,13 +58,14 @@ workflow run map-reduce --args itemsJson=/path/to/items.json --args operation=".
 workflow run review-fix-loop --args targetType=git-diff target=main \
   --args batch1=fallow-scan --args batch2=reviewer --args autoCommit=true
 workflow run review-fix-loop --args targetType=file target=/path/to/doc.md \
-  --args batch1=reviewer
+  --args batch1=doc-reviewer
 ```
 
 - `targetType` 枚举：`git-diff`（target=base ref）/ `file`（target=路径）/ `dir`（target=目录）/ `text`（target=自由描述）
 - `batch1..batchN`：批串行，批内并行 review → aggregate → fix → 重审直到 clean；批次用于前置依赖（如 `fallow-scan` 静态分析先行，后续审查才有意义）
-- 批内某 agent 无 must-fix 后后续轮跳过（`skipCleanAgents`，默认 true）；`recheckAfterFix` 默认 true——fix 后重派全批做回归防护（任何 fix 重新启用全部 agent，等价旧定制版 S1 语义）。⚠️ 传 `recheckAfterFix=false` 会跳过 clean agent 复查：若修复在 clean 维度引入回归（如 type-safety clean、business-logic 修复改了类型）则永不暴露，默认组合之外的弱防护需自担风险
-- agent 项支持：AgentRegistry 名（如 `reviewer`）/ 自定义 .md 文件路径（如 `batch1=/path/to/reviewer.md`）/ 内置 `fallow-scan`
+- 批内某 agent 无 must-fix 后后续轮跳过（`skipCleanAgents` 默认 true + `recheckAfterFix` 默认 false）：clean agent 下轮跳过不重派；显式传 `recheckAfterFix=true` 启用强回归模式——fix 后重派全批，clean agent 走限定 prompt（只审 modifiedFiles ∪ 自检关联点，不诱导全量重扫）
+- agent 项支持：AgentRegistry 名（如 `reviewer`）/ 自定义 .md 文件路径（如 `batch1=/path/to/reviewer.md`）/ 内置 `fallow-scan` / **内置 `doc-reviewer`**（文档场景推荐：`targetType=file/dir` + `batch1=doc-reviewer`，四遍审查方法论：事实锚点核实/逻辑断言验证/落地清单完备性/边界与迁移；无 write 工具，报告经 schema 返回由 workflow 落盘）
+- `fixAgent`（可选）：fix 阶段加载指定 agent（内置名或 .md 路径）；代码场景可在该 agent.md 内写 verify 命令（typecheck/test 实测）当轮拦截编译类回归
 - ⚠️ **fix 阶段会修改文件；`autoCommit` 默认 false（不 commit）**，需要提交时显式 `autoCommit=true`
 
 ## 编排 API
