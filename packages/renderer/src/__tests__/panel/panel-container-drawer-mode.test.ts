@@ -19,7 +19,7 @@
  *
  * 控制态经 core drawer 域直连（PanelContainer 自持 bindDrawerSessionId，不消费 useSideDrawer
  * 兼容层——C1）：测试同样直连 core（bindDrawerSessionId + openDrawerTab + _resetDrawerForTest）。
- * 桌面独占面板（GitPanel/CommandDocPanel/DetailPane/BrowserPane/TasksPanel/TerminalView）
+ * 桌面独占面板（GitPanel/CommandDocPanel/DetailPane/BrowserPane/TerminalView）
  * stub 为占位 div（避免真实组件依赖，对齐旧测试 stub 策略）。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/panel/panel-container-drawer-mode.test.ts
@@ -130,7 +130,6 @@ async function mountContainer() {
         CommandDocPanel: DesktopStub('CommandDocPanel', 'doc-panel'),
         DetailPane: DesktopStub('DetailPane', 'detail-panel'),
         BrowserPane: DesktopStub('BrowserPane', 'browser-pane'),
-        TasksPanel: DesktopStub('TasksPanel', 'tasks-panel'),
         TerminalView: DesktopStub('TerminalView', 'terminal-panel'),
       },
     },

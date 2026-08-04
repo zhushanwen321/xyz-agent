@@ -51,18 +51,6 @@ export interface MessageEffectContext {
   clearBashTimer: (sessionId: string) => void
   /** queue_update 投递信号 */
   markPendingDelivered: (sessionId: string, text: string, sendMode?: SteerFollowUpMode) => void
-  /**
-   * 首个 todo/goal 数据写入 tasks store 后触发 panel 打开编排（renderer 注入实现）。
-   *
-   * renderer 实现衔接 useSideDrawer().open('tasks') / usePanelStore().focusedSessionId /
-   * setPendingOpenForSid（原 chat-message-effects.openTasksDrawerOnFirstData 逐字逻辑）。
-   * core effects 仅负责「写入前快照 hadDataBefore + 写入 tasks store + 调本回调」，
-   * panel/sideDrawer/focused 判断全在 renderer 侧（保持 pendingOpenMap 单一，避免 core/renderer
-   * Map 分裂）。PanelOrchestrationPort 的统一接线属 session/sidebar 域 wave。
-   *
-   * hadDataBefore：core 写入 tasks store 前快照（hadDataBefore=true → 非首次 → 不弹）。
-   */
-  openTasksPanelOnFirstData: (sessionId: string, hadDataBefore: boolean) => void
 }
 
 /**

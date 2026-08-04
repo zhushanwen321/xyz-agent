@@ -14,7 +14,7 @@
     壳层职责（W3 C3 裁决，旧 SideDrawer 逻辑迁移至此）：widget 订阅编排（useSessionEvents 接
     extension:widget/widgetGui/status → core createDrawerBuffers 喂数据，D3 留壳注入）+ ESC 关闭
     （window keydown 桌面副作用）+ AC-13 unread badge（chatStore 消息数感知，经 DrawerPanel
-    header-extra slot 挂载）+ hasTasksData 计算（tasksStore，T3 壳裁剪）。控制态（isOpen/
+    header-extra slot 挂载）。控制态（isOpen/
     activeTab/docked）读 core drawer 域（useDrawerControl + coordination 公开 API），分区键经
     useSideDrawer 兼容层模块顶层 bindDrawerSessionId 维持（C1：兼容层本 wave 保留）。
   -->
@@ -61,7 +61,6 @@
           :active-lines="activeLines"
           :active-lines-meta="activeLinesMeta"
           :status-entries="statusEntries"
-          :has-tasks-data="hasTasksData"
           @close="closeDrawer"
           @set-tab="setDrawerTab"
           @toggle-dock="toggleDrawerDock"
@@ -72,7 +71,6 @@
                Detail tab → DetailPane（useDetailPane watch selectedPath 自动加载）
                Browser tab 有 browserUrl → BrowserPane（嵌入式 WebContentsView 导航）；
                  无 browserUrl → 不注入 → DrawerPanel 内置 widget 区 fallback（widget 通路）
-               Tasks tab → TasksPanel（tasks store 按 sessionId 分区只读渲染）
                Terminal tab → TerminalView（PTY 优先，交互式终端） -->
           <GitPanel v-if="drawerTab === 'git'" />
           <CommandDocPanel v-else-if="drawerTab === 'doc'" :session-id="panelSessionId" />
@@ -82,7 +80,6 @@
             :session-id="panelSessionId ?? ''"
             :url="browserUrlForRender"
           />
-          <TasksPanel v-else-if="drawerTab === 'tasks'" :session-id="panelSessionId" />
           <TerminalView v-else-if="drawerTab === 'terminal'" :session-id="panelSessionId" />
           <!-- header-extra：AC-13 unread badge 壳侧挂载点（W4；chatStore 消息数感知，C3 壳层职责） -->
           <template #header-extra>
@@ -118,7 +115,6 @@ import {
   createDrawerBuffers,
   browserUrl,
 } from '@xyz-agent/core/domain/drawer'
-import { useTasksStore } from '@xyz-agent/core'
 import { DrawerPanel } from '@xyz-agent/ui/features/drawer'
 import { usePanelStore } from '@/stores/panel'
 import { useSessionStore } from '@/stores/session'
@@ -132,7 +128,6 @@ import GitPanel from '@/components/panel/GitPanel.vue'
 import CommandDocPanel from '@/components/panel/CommandDocPanel.vue'
 import DetailPane from '@/components/panel/DetailPane.vue'
 import BrowserPane from '@/components/panel/BrowserPane.vue'
-import TasksPanel from '@/components/panel/TasksPanel.vue'
 import TerminalView from '@/components/panel/TerminalView.vue'
 import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
 
@@ -140,7 +135,6 @@ const { t } = useI18n()
 
 const panel = usePanelStore()
 const session = useSessionStore()
-const tasksStore = useTasksStore()
 const chatStore = useChatStore()
 const { derivedStatus } = useSessionDerivations()
 
@@ -220,10 +214,6 @@ const git = provideGitStatus(() => panelSessionId.value)
 function gitIndicatorOf(_l: PanelLeaf): GitIndicator | undefined {
   return git.indicator.value
 }
-
-/** tasks 条件 tab（W3 T3 壳裁剪）：有 goal/todo 数据才显示 tasks tab icon。
- *  TODO(@P4-§6.7-delete)：tasks store 是 D9 存根过渡依赖，P4 时随 tasks 域归位替换。 */
-const hasTasksData = computed(() => (panelSessionId.value ? tasksStore.hasData(panelSessionId.value) : false))
 
 /** browserUrl 瞬时参数（core coordination 模块级单例，消费后清空）。
  *  browser tab 传给 BrowserPane 触发导航；为空（null）时传空字符串让 BrowserPane 显空态。

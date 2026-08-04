@@ -11,9 +11,10 @@
  * `ExtensionRegistry.route*`，命中已注册 adapter 就消费（不向通用管线传播），未命中走默认渲染。
  *
  * 职责边界：只管 extension UI 事件（widget/widgetGui/status）。tool result 通路（pi tool_execution_end
- * → chat-message-effects.routeToolResultToTasks → tasks store）是 message 流，不走本注册表。
+ * → chat store applyMessageEvent）是 message 流，不走本注册表。
  *
- * 注册时机：adapter 模块 import 时副作用注册（`registerTasksAdapter()` 在 adapter 文件顶层调用），
+ * 注册时机：adapter 模块 import 时副作用注册（如 registerTasksAdapter() 在 adapter 文件顶层调用，
+ * [P4 s5 w2] tasks-adapter 已随 tasks 域删除，此机制仍适用于未来 adapter），
  * 首次 import 该 adapter 即生效。消费侧（SideDrawer）只需 import adapter 文件触发注册。
  *
  * 线程模型：单进程 renderer，模块级单例 Map，无需并发保护。

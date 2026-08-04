@@ -21,9 +21,9 @@ import { textToSegments } from '@xyz-agent/shared'
 import type { Message, ServerMessage } from '@xyz-agent/shared'
 
 /** 构造独立 store 实例（effectScope 包裹 onScopeDispose 注册 + 测试隔离）。返回 store + dispose。 */
-function makeStore(openSpy = vi.fn()): { store: ChatStoreInstance; dispose: () => void } {
+function makeStore(): { store: ChatStoreInstance; dispose: () => void } {
   const scope = effectScope(true)
-  const store = scope.run(() => createChatStore({ openTasksPanelOnFirstData: openSpy }))!
+  const store = scope.run(() => createChatStore())!
   return { store, dispose: () => scope.stop() }
 }
 
@@ -279,16 +279,16 @@ describe('createChatStore factory', () => {
   })
 
   describe('applyMessageEvent 经 dispatchMessageEvent 端到端', () => {
-    it('openTasksPanelOnFirstData 回调经 deps 注入透传（factory 契约）', () => {
-      const openSpy = vi.fn()
-      const s = makeStore(openSpy)
+    it('tool_call_start 记录 toolCall（contentBlocks 同步挂 toolCall 块）', () => {
+      const s = makeStore()
       const sid = 's1'
-      // goal_control tool_call_start → routeToolStartToTasks → ctx.openTasksPanelOnFirstData
       s.store.applyMessageEvent(sid, msg(sid, 'message.message_start', { messageId: 'a1' }))
       s.store.applyMessageEvent(sid, msg(sid, 'message.tool_call_start', {
-        toolCallId: 'tc1', toolName: 'goal_control', input: { slug: 'g1', objective: 'do x' },
+        toolCallId: 'tc1', toolName: 'read', input: {},
       }))
-      expect(openSpy).toHaveBeenCalledWith(sid, false)
+      const msgs = s.store.getMessages(sid)
+      const last = msgs[msgs.length - 1]
+      expect(last.toolCalls?.[0]).toMatchObject({ id: 'tc1', toolName: 'read', status: 'running' })
       s.dispose()
     })
   })

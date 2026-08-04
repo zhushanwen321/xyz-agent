@@ -4,12 +4,12 @@
  * [归位] 迁自 renderer src/stores/chat.ts（906 行 defineStore setup 函数体）。P3 chat 域绞杀 w4。
  *
  * factory 模式（IF1 契约）：core 不绑 pinia store id（平台无关，pinia store 注册是 shell 关切），
- * 暴露 createChatStore(deps) factory 返回 store 对象（state + actions）。renderer 经
- * defineStore('chat', () => createChatStore(deps)) 薄包装注册到 pinia + 注入跨域回调。
+ * 暴露 createChatStore() factory 返回 store 对象（state + actions）。renderer 经
+ * defineStore('chat', () => createChatStore()) 薄包装注册到 pinia。
  *
- * 依赖注入（对齐 w3 MessageEffectContext 回调模式）：唯一 renderer 跨域依赖是
- * openTasksPanelOnFirstData 回调（首数据到达开 tasks panel），经 deps 注入。core factory
- * 主体零 renderer 跨域 import（grep 验证，TC3）。
+ * [P4 s5 w2] 原唯一 deps（openTasksPanelOnFirstData 回调，首数据到达开 tasks panel）已随
+ * tasks 域删除一并移除（tasks store 是回调的触发源与消费目标），factory 改无参。
+ * core factory 主体零 renderer 跨域 import（grep 验证，TC3）。
  *
  * per-session 分区：保持 ref(Map<sessionId, T>)（原样迁移）。ADR-0049 把「单例 + Map<sid,T>」
  * 明确列为 Map 分区派（SSOT）正确范式，store 的 ref(Map) 正是此范式的 store 层实现。
@@ -368,32 +368,17 @@ function finalizeMessagesImpl(
 }
 
 /**
- * chat store factory 的依赖注入契约（IF1）。
- *
- * 唯一 renderer 跨域依赖：openTasksPanelOnFirstData 回调（首个 todo/goal 数据写入 tasks store
- * 后触发 panel 打开编排）。core effects/registry 的 routeToolResultToTasks/routeToolStartToTasks
- * 写入 tasks store 后调 ctx.openTasksPanelOnFirstData(sid, hadDataBefore)，本 factory 的
- * applyMessageEvent 把 ctx.openTasksPanelOnFirstData 透传为 deps.openTasksPanelOnFirstData。
- *
- * renderer 实现（defineStore 薄包装内）：衔接 useSideDrawer().open('tasks') /
- * usePanelStore().focusedSessionId / setPendingOpenForSid（原 chat-message-effects
- * openTasksDrawerOnFirstData 逐字逻辑，pendingOpenMap 单一在 renderer，避免 core/renderer
- * Map 分裂）。PanelOrchestrationPort 的统一接线属 session/sidebar 域 wave。
- */
-export interface ChatStoreDeps {
-  /** 首个 todo/goal 数据写入 tasks store 后触发 panel 打开编排（renderer 注入实现） */
-  openTasksPanelOnFirstData: (sessionId: string, hadDataBefore: boolean) => void
-}
-
-/**
  * chat store factory（IF1）：构造 chat 域全部状态 + actions，返回 store 对象。
  *
- * renderer 经 defineStore('chat', () => createChatStore(deps)) 注册到 pinia。
+ * renderer 经 defineStore('chat', () => createChatStore()) 注册到 pinia。
  * core 单测在 effectScope 内直接调 createChatStore 验证 factory 产物（不经 pinia）。
  *
  * 内部用 onScopeDispose（清 timer），调用方需在 effectScope 上下文内执行本 factory。
+ *
+ * [P4 s5 w2] tasks 域删除：原唯一 deps（openTasksPanelOnFirstData 回调）已随 tasks store
+ * 一并移除，factory 改为无参（renderer defineStore 薄包装同步简化）。
  */
-export function createChatStore(deps: ChatStoreDeps) {
+export function createChatStore() {
   /** 按 sessionId 分区的消息表（UC-2 隔离） */
   // W1: shallowRef——messages 更新全部走 commitMessages（新 Map + set + 赋值 .value），
   // 不再用 messages.value.set（shallowRef 下 Map mutation 不触发响应式）。
@@ -704,11 +689,6 @@ export function createChatStore(deps: ChatStoreDeps) {
         armBashTimer,
         clearBashTimer,
         markPendingDelivered,
-        // 首个 todo/goal 数据到达时开 tasks panel（原 chat-message-effects.openTasksDrawerOnFirstData
-        // 逐字逻辑，衔接 renderer 自己的 useSideDrawer/usePanelStore/setPendingOpenForSid，
-        // 保持 pendingOpenMap 单一在 renderer 侧）。
-        // [w4 factory] 回调经 deps 注入（renderer defineStore 薄包装实现），core factory 零跨域 import。
-        openTasksPanelOnFirstData: deps.openTasksPanelOnFirstData,
       },
       sessionId,
       msg,

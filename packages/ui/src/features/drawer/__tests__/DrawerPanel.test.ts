@@ -6,7 +6,7 @@
  *   在 DOM 中存在；点关闭按钮触发 close emit（父组件消费 → isOpen=false → 收起）
  * - 构建者（白盒）：widget 数据 props 注入驱动内容区三态（gui 优先 / lines 兜底 / 空态）
  *   + unknown 徽章 + status footer + 内容面板 slot 注入替换 + 无 slot 时内置区 fallback
- * - 观察者（形态）：isOpen=false 时 aside 不渲染；hasTasksData=true 时 tasks tab 出现
+ * - 观察者（形态）：isOpen=false 时 aside 不渲染；5 基础 tab 常驻（[P4 s5 w2] tasks 条件 tab 已随 tasks 域删除）
  *
  * mock 策略（design-review mockStrategyNote）：零真 store——vitest.setup 已 mock vue-i18n
  * useI18n（t 返回 key，断言 DOM 结构不依赖文案）；GuiComponentRenderer/AnsiText 用真实
@@ -115,7 +115,7 @@ describe('DrawerPanel (status footer + 内容面板 slot)', () => {
   })
 })
 
-describe('DrawerPanel (tab 交互 + tasks 条件)', () => {
+describe('DrawerPanel (tab 交互)', () => {
   it('tab 点击 emit set-tab', async () => {
     const wrapper = mount(DrawerPanel, { props: baseProps() })
     await wrapper.find('[data-testid="drawer-tab-browser"]').trigger('click')
@@ -126,13 +126,6 @@ describe('DrawerPanel (tab 交互 + tasks 条件)', () => {
     const wrapper = mount(DrawerPanel, { props: baseProps() })
     await wrapper.find('[data-testid="drawer-pin"]').trigger('click')
     expect(wrapper.emitted('toggle-dock')).toHaveLength(1)
-  })
-
-  it('hasTasksData=false（默认）无 tasks tab；true 时出现', () => {
-    const without = mount(DrawerPanel, { props: baseProps() })
-    expect(without.find('[data-testid="drawer-tab-tasks"]').exists()).toBe(false)
-    const withTasks = mount(DrawerPanel, { props: baseProps({ hasTasksData: true }) })
-    expect(withTasks.find('[data-testid="drawer-tab-tasks"]').exists()).toBe(true)
   })
 
   it('activeTab 高亮：当前 tab 应用选中样式（bg-accent-soft）', () => {

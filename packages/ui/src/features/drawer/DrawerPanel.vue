@@ -3,7 +3,7 @@
 
   迁移自 renderer components/panel/SideDrawer.vue 的「跨端共享容器」部分（drawer 域归位
   第三步：W1 控制态/协同进 core、W2 widget 缓冲容器进 core、W3 容器组件进 ui 包）。
-  桌面独占内容面板（GitPanel/TerminalView/BrowserPane/CommandDocPanel/DetailPane/TasksPanel）
+  桌面独占内容面板（GitPanel/TerminalView/BrowserPane/CommandDocPanel/DetailPane）
   留壳 slot 挂载（D5 硬编码占位，不走 contribution 路由）——本组件经默认 slot 接收，
   内置 widget 内容区（activeGuiComponent→activeLines→空态）作为 slot fallback（C2）。
 
@@ -12,7 +12,7 @@
     本组件只接收 + emit close/set-tab/toggle-dock，不持有状态（§6.3 点5 架构解耦）
   - widget 缓冲数据（activeGuiComponent/activeLines/activeLinesMeta/statusEntries）
     经 props 注入（D3 壳层 useDrawerWidgetBuffers computed 传入，core widget-buffers 为 SSOT）
-  - hasTasksData 控制 tasks 条件 tab（壳按 tasksStore.hasData 传入，T3 壳裁剪）
+  - [P4 s5 w2] hasTasksData 条件 tab（tasks store 壳裁剪）已随 tasks 域删除移除
 
   不纳入（C3 clarify）：ESC 关闭（window keydown 桌面副作用）+ AC-13 unread badge
   （chatStore 壳层状态）——均为壳层职责，W4 shell-integration 在 PanelContainer 侧处理
@@ -146,7 +146,7 @@
 import { Comment, computed, useSlots } from 'vue'
 import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { BookOpen, CheckSquare, FileText, GitBranch, Globe, Pin, PinOff, Terminal as TerminalIcon, X } from '@lucide/vue'
+import { BookOpen, FileText, GitBranch, Globe, Pin, PinOff, Terminal as TerminalIcon, X } from '@lucide/vue'
 import { Button } from '@xyz-agent/ui'
 import { AnsiText, GuiComponentRenderer } from '../../rendering-protocol'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
@@ -156,7 +156,7 @@ const slots = useSlots()
 
 /**
  * 默认 slot 是否有有效内容（非注释节点）。
- * C2 契约：桌面壳按 tab 经默认 slot 注入独占面板（Git/Doc/Detail/Browser/Tasks/Terminal），
+ * C2 契约：桌面壳按 tab 经默认 slot 注入独占面板（Git/Doc/Detail/Browser/Terminal），
  * 无匹配面板时（如 browser 无 url）不注入 → 应回退内置 widget 内容区。但 Vue `<slot>` 的
  * fallback 只在「父组件未提供 slot 函数」时生效——PanelContainer 的 v-if chain 使 slot 函数
  * 始终存在（运行时渲染为空/注释节点），故需在此显式判断渲染结果，空则走 widget 区。
@@ -183,15 +183,12 @@ const props = withDefaults(
     activeLinesMeta?: { unknown: boolean; key: string }
     /** status footer 条目（extension:status，statusKey 维度聚合） */
     statusEntries?: Array<{ statusKey: string; text: string; textRaw?: string }>
-    /** tasks 条件 tab（壳按 tasksStore.hasData 传入，默认 false 隐藏） */
-    hasTasksData?: boolean
   }>(),
   {
     activeGuiComponent: null,
     activeLines: () => [],
     activeLinesMeta: () => ({ unknown: false, key: '' }),
     statusEntries: () => [],
-    hasTasksData: false,
   },
 )
 
@@ -211,9 +208,9 @@ interface TabMeta {
   emptyHint: string
 }
 
-/** tab 元信息（§6.3 点2：Terminal/Browser/Git/Doc/Detail + tasks 条件）。
+/** tab 元信息（§6.3 点2：Terminal/Browser/Git/Doc/Detail）。
  *  Git tab 内容为 GitPanel（壳 slot 注入，inject 数据）。
- *  Tasks tab 仅在壳传入 hasTasksData=true 时追加（避免空 icon 噪音，T3 壳裁剪）。 */
+ *  [P4 s5 w2] Tasks 条件 tab（T3 壳裁剪）已随 tasks 域删除移除。 */
 const tabs = computed<TabMeta[]>(() => {
   const base: TabMeta[] = [
     {
@@ -252,16 +249,6 @@ const tabs = computed<TabMeta[]>(() => {
       emptyHint: t('panel.sideDrawer.detailHint'),
     },
   ]
-  // Tasks tab 条件 push：壳传入 hasTasksData=true 才显示 icon（避免无数据时占位）
-  if (props.hasTasksData) {
-    base.push({
-      key: 'tasks',
-      label: t('panel.sideDrawer.tabTasks'),
-      icon: CheckSquare,
-      emptyText: t('panel.sideDrawer.noTasks'),
-      emptyHint: t('panel.sideDrawer.tasksHint'),
-    })
-  }
   return base
 })
 

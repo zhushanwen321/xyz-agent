@@ -1,8 +1,8 @@
 /**
  * dispatchMessageEvent 注册表行为单测（core chat/effects 域，P3 w3 迁移锁定）。
  *
- * 迁自 renderer __tests__/stores/chat-chunk-content-blocks.test.ts 的直接调用模式 +
- * 新增 tasks 路由 + openTasksPanelOnFirstData 回调触发断言（w3 核心衔接契约）。
+ * 迁自 renderer __tests__/stores/chat-chunk-content-blocks.test.ts 的直接调用模式。
+ * [P4 s5 w2] tasks 路由 + openTasksPanelOnFirstData 回调断言随 tasks 域删除移除。
  *
  * 覆盖：
  * - message_start：建 streaming assistant（contentBlocks:[]）
@@ -11,23 +11,20 @@
  * - tool_call_start：push toolCall + contentBlocks toolCall 块
  * - tool_call_end：ID 锚定更新 + status/output 填充
  * - sealed guard：finalizeSession 后 text_delta 幂等丢弃（D-010）
- * - tasks 路由：tool_call_end（todo/goal_control）写入 tasks store + 触发 ctx.openTasksPanelOnFirstData
- * - openTasksPanelOnFirstData 回调：首次触发、hadDataBefore=true 不触发
  *
  * 运行：cd packages/core && npx vitest run src/domain/chat/__tests__/effects.test.ts
  */
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { dispatchMessageEvent } from '../effects/registry'
 import type { MessageEffectContext } from '../effect-types'
-import { useTasksStore } from '../../tasks'
 import type { Message, ServerMessage } from '@xyz-agent/shared'
 
 const SID = 's-test'
 
-/** 构造 ctx：真实 vue ref + 回调 mock + 真实 tasks store（setActivePinia 后） */
-function makeCtx(initial: Message[] = [], openSpy = vi.fn()): MessageEffectContext {
+/** 构造 ctx：真实 vue ref + 回调 mock */
+function makeCtx(initial: Message[] = []): MessageEffectContext {
   return {
     messages: ref(new Map([[SID, initial]])),
     retryStates: ref(new Map()),
@@ -40,7 +37,6 @@ function makeCtx(initial: Message[] = [], openSpy = vi.fn()): MessageEffectConte
     armBashTimer: vi.fn(),
     clearBashTimer: vi.fn(),
     markPendingDelivered: vi.fn(),
-    openTasksPanelOnFirstData: openSpy,
   }
 }
 
@@ -117,84 +113,5 @@ describe('dispatchMessageEvent 流式 contentBlocks 填充', () => {
     dispatchMessageEvent(ctx, SID, msg('message.text_delta', { delta: 'AFTER' }))
     // 收口后 delta 被丢弃，content 不变
     expect(lastAssistant(ctx).content).toBe('before')
-  })
-})
-
-describe('tasks 路由 + openTasksPanelOnFirstData 回调（w3 核心衔接契约）', () => {
-  let openSpy: Mock
-  beforeEach(() => {
-    setActivePinia(createPinia())
-    openSpy = vi.fn()
-  })
-
-  it('todo tool_call_end（首数据）→ 写入 tasks store + 触发 openTasksPanelOnFirstData(sid, false)', () => {
-    const ctx = makeCtx([], openSpy)
-    // 预置 streaming assistant（tool_call_start 需要）
-    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc1', toolName: 'todo', input: {} }))
-
-    const tasks = useTasksStore()
-    expect(tasks.hasData(SID)).toBe(false)
-
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_end', {
-      toolCallId: 'tc1', status: 'completed',
-      details: { todos: [{ id: 1, text: '首任务', status: 'pending' }] },
-    }))
-
-    // tasks store 写入
-    expect(tasks.hasData(SID)).toBe(true)
-    expect(tasks.getTodos(SID)).toEqual([{ id: 1, text: '首任务', status: 'pending' }])
-    // 回调触发：首次数据 hadDataBefore=false
-    expect(openSpy).toHaveBeenCalledTimes(1)
-    expect(openSpy).toHaveBeenCalledWith(SID, false)
-  })
-
-  it('goal_control tool_call_start（首数据）→ routeToolStartToTasks 写 goal meta + 触发回调', () => {
-    const ctx = makeCtx([], openSpy)
-    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', {
-      toolCallId: 'tc1', toolName: 'goal_control',
-      input: { action: 'create', objective: '完成 X', slug: 'do-x' },
-    }))
-
-    const tasks = useTasksStore()
-    expect(tasks.hasData(SID)).toBe(true)
-    const goal = tasks.getGoal(SID)
-    expect(goal?.objective).toBe('完成 X')
-    expect(goal?.slug).toBe('do-x')
-    expect(openSpy).toHaveBeenCalledWith(SID, false)
-  })
-
-  it('已有数据后第二次 todo tool_call_end → 回调不触发（hadDataBefore=true 守卫）', () => {
-    const ctx = makeCtx([], openSpy)
-    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
-    // 首次
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc1', toolName: 'todo', input: {} }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_end', {
-      toolCallId: 'tc1', status: 'completed',
-      details: { todos: [{ id: 1, text: '第一', status: 'pending' }] },
-    }))
-    expect(openSpy).toHaveBeenCalledTimes(1)
-
-    // 第二次（已有数据）
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc2', toolName: 'todo', input: {} }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_end', {
-      toolCallId: 'tc2', status: 'completed',
-      details: { todos: [{ id: 1, text: '第一', status: 'completed' }, { id: 2, text: '第二', status: 'pending' }] },
-    }))
-    // 仍只触发 1 次（hadDataBefore=true → 回调虽被调用但 renderer 内会早 return；core 侧验证 hadDataBefore 传入 true）
-    expect(openSpy).toHaveBeenCalledTimes(2)
-    expect(openSpy).toHaveBeenLastCalledWith(SID, true)
-  })
-
-  it('非 todo/goal_control tool → 不写 tasks store + 回调不触发', () => {
-    const ctx = makeCtx([], openSpy)
-    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { toolCallId: 'tc1', toolName: 'read', input: {} }))
-    dispatchMessageEvent(ctx, SID, msg('message.tool_call_end', { toolCallId: 'tc1', status: 'completed', output: 'x' }))
-
-    const tasks = useTasksStore()
-    expect(tasks.hasData(SID)).toBe(false)
-    expect(openSpy).not.toHaveBeenCalled()
   })
 })

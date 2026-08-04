@@ -26,7 +26,7 @@ function summary(id: string, cwd = '/a'): SessionSummary {
 
 function makeHooks(log: string[]): SessionCleanupHooks & Record<string, ReturnType<typeof vi.fn>> {
   const names = [
-    'clearBoundPanelOverlays', 'clearFileTree', 'clearTasks', 'clearSubagent', 'clearWorkflow',
+    'clearBoundPanelOverlays', 'clearFileTree', 'clearSubagent', 'clearWorkflow',
     'clearExtensionUI', 'evictChat', 'clearSubagentTombstones', 'evictVirtualKeys',
     'clearAgentCallMapping', 'disposeChat', 'invalidateStatus',
   ] as const
@@ -62,7 +62,6 @@ interface Fixture {
     getHistory: ReturnType<typeof vi.fn>
     isHydrated: ReturnType<typeof vi.fn>
     hydrate: ReturnType<typeof vi.fn>
-    hydrateTasksFromMessages: ReturnType<typeof vi.fn>
     setHistoryTruncated: ReturnType<typeof vi.fn>
     clearHistoryError: ReturnType<typeof vi.fn>
     markHistoryFailed: ReturnType<typeof vi.fn>
@@ -99,7 +98,6 @@ function makeFixture(opts: { withFlow?: boolean } = {}): Fixture {
     getHistory: vi.fn().mockResolvedValue({ messages: [], historyTruncated: false }),
     isHydrated: vi.fn(() => false),
     hydrate: vi.fn(),
-    hydrateTasksFromMessages: vi.fn(),
     setHistoryTruncated: vi.fn(),
     clearHistoryError: vi.fn(),
     markHistoryFailed: vi.fn(),
@@ -134,7 +132,6 @@ describe('selectSession', () => {
     expect(f.chat.isHydrated).toHaveBeenCalledWith('sid-1')
     expect(f.chat.getHistory).toHaveBeenCalledTimes(1)
     expect(f.chat.hydrate).toHaveBeenCalledWith('sid-1', msgs)
-    expect(f.chat.hydrateTasksFromMessages).toHaveBeenCalledWith('sid-1', msgs)
     expect(f.chat.setHistoryTruncated).toHaveBeenCalledWith('sid-1', true)
     expect(f.chat.clearHistoryError).toHaveBeenCalledWith('sid-1')
     // panel 载入（经 activePanelId 端口）
@@ -208,7 +205,7 @@ describe('deleteSession', () => {
     // S3 全序（log 数组精确顺序断言）
     const expectedOrder = [
       'clearBoundPanelOverlays(p1,del)',
-      'clearFileTree(del)', 'clearTasks(del)', 'clearSubagent(del)', 'clearWorkflow(del)',
+      'clearFileTree(del)', 'clearSubagent(del)', 'clearWorkflow(del)',
       'clearExtensionUI(del)', 'evictChat(del)', 'clearSubagentTombstones(del)',
       'evictVirtualKeys(del)', 'clearAgentCallMapping(del)', 'disposeChat(del)', 'invalidateStatus(del)',
     ]
@@ -319,7 +316,6 @@ describe('loadSessions / retryHistory / renameSession / syncSessionToPanel', () 
     expect(f.chat.clearHistoryError).toHaveBeenCalledWith('s1')
     expect(f.chat.getHistory).toHaveBeenCalledWith('s1')
     expect(f.chat.hydrate).toHaveBeenCalledWith('s1', msgs)
-    expect(f.chat.hydrateTasksFromMessages).toHaveBeenCalledWith('s1', msgs)
     expect(f.chat.setHistoryTruncated).toHaveBeenCalledWith('s1', false)
     expect(f.chat.markHistoryFailed).not.toHaveBeenCalled()
     f.dispose()
@@ -456,7 +452,6 @@ function makeChat(): ChatHydratePort {
     getHistory: vi.fn().mockResolvedValue({ messages: [], historyTruncated: false }),
     isHydrated: vi.fn(() => false),
     hydrate: vi.fn(),
-    hydrateTasksFromMessages: vi.fn(),
     setHistoryTruncated: vi.fn(),
     clearHistoryError: vi.fn(),
     markHistoryFailed: vi.fn(),

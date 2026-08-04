@@ -25,7 +25,6 @@ import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore } from '@/stores/panel'
 import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'
-import { useTasksStore } from '@xyz-agent/core'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useFileTree } from '@/composables/features/useFileTree'
@@ -113,7 +112,6 @@ export function useSidebar() {
   const navigation = useNavigationStore()
   const session = useSessionStore()
   const chat = useChatStore()
-  const tasks = useTasksStore()
   const sidebar = useSidebarStore()
   const panel = usePanelStore()
   const workspaceStore = useWorkspaceStore()
@@ -201,7 +199,6 @@ export function useSidebar() {
       try {
         const { messages, historyTruncated } = await chatApi.getHistory(id)
         chat.hydrate(id, messages)
-        tasks.hydrateFromMessages(id, messages) // 规则 7.5：重开 session 后 goal/todo 快照仍可见
         useChat().setHistoryTruncated(id, historyTruncated) // N1: 截断标记供 MessageStream 显隐
         chat.clearHistoryError(id)
       } catch {
@@ -209,8 +206,8 @@ export function useSidebar() {
       }
     }
 
-    // pendingOpen 消费（FR-3）：后台 session 的 tasks 事件到达时若用户不在该 session，只置 pendingOpen
-    // 标记不弹 drawer。这里在切到该 session 后消费标记——若有则自动开 tasks tab。
+    // pendingOpen 消费（FR-3）：后台 session 的事件到达时若用户不在该 session，只置 pendingOpen
+    // 标记不弹 drawer。这里在切到该 session 后消费标记——若有则自动开对应 tab。
     // 挂 selectSession 内部，不挂独立 watch(focusedSessionId)，避免撞 Runtime broadcast 时序竞争。
     // consumePendingOpen 内部已含幂等（消费后清标记）。
     consumePendingOpen(id)
@@ -240,7 +237,6 @@ export function useSidebar() {
     try {
       const { messages, historyTruncated } = await chatApi.getHistory(sessionId)
       chat.hydrate(sessionId, messages)
-      tasks.hydrateFromMessages(sessionId, messages) // 规则 7.5：重开 session 后 goal/todo 快照仍可见
       useChat().setHistoryTruncated(sessionId, historyTruncated)
     } catch {
       chat.markHistoryFailed(sessionId)
@@ -312,9 +308,8 @@ export function useSidebar() {
     const extensionUIStore = useExtensionUIStore()
     if (boundPanel) clearBoundPanelOverlays(boundPanel, id, subagentStore, workflowStore)
     session.removeFromList(id)
-    // 跨 store 清理（S3）：fileTree + tasks + subagent + workflow + chat store + WS 流式订阅 + 派生状态缓存
+    // 跨 store 清理（S3）：fileTree + subagent + workflow + chat store + WS 流式订阅 + 派生状态缓存（[P4 s5 w2] tasks 已删）
     useFileTreeStore().clearSession(id)
-    tasks.clearSession(id)
     // ADR-0049 Map 分区派：释放 subagent/workflow store 的 per-session records 分区（防泄漏，AC-8）
     subagentStore.clearSession(id)
     workflowStore.clearSession(id)

@@ -46,7 +46,6 @@ import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore } from '@/stores/panel'
 import { useSidebarStore } from '@/stores/sidebar'
 import { useWorkspaceStore } from '@/stores/workspace'
-import { useTasksStore } from '@xyz-agent/core'
 import { useFileTree } from '@/composables/features/useFileTree'
 import { useFileTreeStore } from '@/stores/fileTree'
 import { useSubagentStore, clearSubagentTombstones } from '@/stores/subagent'
@@ -94,7 +93,6 @@ function buildSessionApiPort(): SessionApiPort {
 export function useSidebarNew() {
   const navigation = useNavigationStore()
   const chat = useChatStore()
-  const tasks = useTasksStore()
   const sidebar = useSidebarStore()
   const panel = usePanelStore()
   const workspaceStore = useWorkspaceStore()
@@ -128,7 +126,6 @@ export function useSidebarNew() {
     getHistory: (sid) => chatApi.getHistory(sid),
     isHydrated: (sid) => chat.isHydrated(sid),
     hydrate: (sid, messages) => chat.hydrate(sid, messages),
-    hydrateTasksFromMessages: (sid, messages) => tasks.hydrateFromMessages(sid, messages),
     setHistoryTruncated: (sid, truncated) => useChat().setHistoryTruncated(sid, truncated),
     clearHistoryError: (sid) => chat.clearHistoryError(sid),
     markHistoryFailed: (sid) => chat.markHistoryFailed(sid),
@@ -156,7 +153,6 @@ export function useSidebarNew() {
       }
     },
     clearFileTree: (sid) => useFileTreeStore().clearSession(sid),
-    clearTasks: (sid) => tasks.clearSession(sid),
     clearSubagent: (sid) => useSubagentStore().clearSession(sid),
     clearWorkflow: (sid) => useWorkflowStore().clearSession(sid),
     clearExtensionUI: (sid) => useExtensionUIStore().clearSession(sid),
@@ -236,14 +232,13 @@ export function useSidebarNew() {
       try {
         const { messages, historyTruncated } = await chatApi.getHistory(id)
         chat.hydrate(id, messages)
-        tasks.hydrateFromMessages(id, messages) // 规则 7.5：重开 session 后 goal/todo 快照仍可见
         useChat().setHistoryTruncated(id, historyTruncated)
         chat.clearHistoryError(id)
       } catch {
         chat.markHistoryFailed(id)
       }
     }
-    // pendingOpen 消费（FR-3 / C-SS-3）：切到该 session 后消费标记——若有则自动开 tasks tab
+    // pendingOpen 消费（FR-3 / C-SS-3）：切到该 session 后消费标记——若有则自动开对应 tab
     consumePendingOpen(id, panelPort)
     // 文件树预加载：切 session 即拉取，侧栏「文件」tab 计数立即更新。fire-and-forget 失败不阻断。
     void useFileTree().loadTree(id)

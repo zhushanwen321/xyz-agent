@@ -33,8 +33,6 @@ function makeCtx(initial: Message[] = []): MessageEffectContext {
     armBashTimer: vi.fn(),
     clearBashTimer: vi.fn(),
     markPendingDelivered: vi.fn(),
-    // contentBlocks 测试不走 tool_call 路径，占位满足类型
-    openTasksPanelOnFirstData: vi.fn(),
   }
 }
 

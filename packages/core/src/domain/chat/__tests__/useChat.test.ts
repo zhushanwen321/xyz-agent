@@ -49,7 +49,7 @@ interface Fixture {
 function makeFixture(): Fixture {
   const scope = effectScope(true)
   const streamHandlers = new Map<string, (m: ServerMessage) => void>()
-  const chatStore = scope.run(() => createChatStore({ openTasksPanelOnFirstData: vi.fn() }))!
+  const chatStore = scope.run(() => createChatStore())!
   const chatApi = {
     send: vi.fn().mockResolvedValue(undefined),
     steer: vi.fn().mockResolvedValue(undefined),

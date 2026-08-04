@@ -46,8 +46,9 @@ export interface NavigationRoute {
 
 /**
  * chat 域历史回填端口（selectSession/retryHistory 的 hydrate 经此注入，壳适配
- * useChat() + tasks store：isHydrated/hydrate/markHistoryFailed 等映射 chat store，
- * hydrateTasksFromMessages 映射 tasks.hydrateFromMessages——规则 7.5 持久化链路保持）。
+ * useChat()：isHydrated/hydrate/markHistoryFailed 等映射 chat store。
+ * [P4 s5 w2] hydrateTasksFromMessages 随 tasks 域删除（原映射 tasks.hydrateFromMessages
+ * 规则 7.5 持久化链路——tasks store 已删，goal/todo 快照渲染走 GuiComponentRenderer 历史消息）。
  */
 export interface ChatHydratePort {
   /** 拉取 session 历史（session.history RPC；尾读可能截断） */
@@ -56,8 +57,6 @@ export interface ChatHydratePort {
   isHydrated(sessionId: string): boolean
   /** 注入历史消息（chat store hydrate） */
   hydrate(sessionId: string, messages: Message[]): void
-  /** 注入历史到 tasks 域（goal/todo 快照重开可见） */
-  hydrateTasksFromMessages(sessionId: string, messages: Message[]): void
   /** 记录截断标记（N1：截断标记供 MessageStream 显隐） */
   setHistoryTruncated(sessionId: string, historyTruncated: boolean): void
   /** 清历史加载失败态（retryHistory 先清再拉） */
@@ -74,7 +73,7 @@ export interface ChatHydratePort {
  * - clearBoundPanelOverlays（w3 追加）：useSidebar.clearBoundPanelOverlays 包装
  *   （subagentStore.backToMain / workflowStore.backFromAgentCall + chat evictVirtualKey 回调；
  *   renderer subagent/workflow 的 clearSession 只清 records 分区，panelViewingMap 必须独立清）
- * - clearFileTree → useFileTreeStore().clearSession；clearTasks → tasks.clearSession
+ * - clearFileTree → useFileTreeStore().clearSession（[P4 s5 w2] clearTasks 随 tasks 域删除）
  * - clearSubagent → subagentStore.clearSession；clearWorkflow → workflowStore.clearSession
  * - clearExtensionUI → extensionUIStore.clearSession
  * - evictChat → chatStore.evictSessionWithVirtual（须先于 disposeChat，D5 时序）
@@ -87,7 +86,6 @@ export interface SessionCleanupHooks {
   /** 清 bound panel 上残留的 subagent overlay / agent call overlay viewing 状态（含 streaming 订阅泄漏兜底） */
   clearBoundPanelOverlays(boundPanelId: string, sid: string): void
   clearFileTree(sid: string): void
-  clearTasks(sid: string): void
   clearSubagent(sid: string): void
   clearWorkflow(sid: string): void
   clearExtensionUI(sid: string): void
@@ -222,7 +220,6 @@ export function createUseSession(deps: UseSessionDeps) {
       try {
         const { messages, historyTruncated } = await chat.getHistory(id)
         chat.hydrate(id, messages)
-        chat.hydrateTasksFromMessages(id, messages) // 规则 7.5：重开 session 后 goal/todo 快照仍可见
         chat.setHistoryTruncated(id, historyTruncated) // N1: 截断标记供 MessageStream 显隐
         chat.clearHistoryError(id)
       } catch {
@@ -234,8 +231,7 @@ export function createUseSession(deps: UseSessionDeps) {
     // pendingOpen 消费（FR-3 / C-SS-3）：后台 session 的 tasks 事件到达时若用户不在该 session，
     // 只置 pendingOpen 标记不弹 drawer。这里在切到该 session 后消费标记——若有则自动开 tasks tab。
     // consumePendingOpen 内部已含幂等（消费后清标记）。
-    consumePendingOpen(id, panel)
-  }
+    consumePendingOpen(id, panel)  }
 
   /**
    * 重试加载历史（landing 重试按钮，#2 AC-2.6）：清失败态 + 重新拉取 hydrate。
@@ -245,7 +241,6 @@ export function createUseSession(deps: UseSessionDeps) {
     try {
       const { messages, historyTruncated } = await chat.getHistory(sessionId)
       chat.hydrate(sessionId, messages)
-      chat.hydrateTasksFromMessages(sessionId, messages) // 规则 7.5：重开 session 后 goal/todo 快照仍可见
       chat.setHistoryTruncated(sessionId, historyTruncated)
     } catch {
       chat.markHistoryFailed(sessionId)
@@ -315,10 +310,9 @@ export function createUseSession(deps: UseSessionDeps) {
     store.removeFromList(id)
     // ES3：删 session 前消费/清除 pendingOpen 标记，防切回已删 session 误开 panel
     clearPendingOpen(id)
-    // 跨 store 清理（S3）：fileTree + tasks + subagent + workflow + extensionUI + chat evict
-    // + tombstones + agentcall virtuals + dispose + 派生状态缓存
+    // 跨 store 清理（S3）：fileTree + subagent + workflow + extensionUI + chat evict
+    // + tombstones + agentcall virtuals + dispose + 派生状态缓存（[P4 s5 w2] tasks 已删）
     hooks.clearFileTree(id)
-    hooks.clearTasks(id)
     // ADR-0049 Map 分区派：释放 subagent/workflow/extensionUI 的 per-session 分区（防泄漏，AC-8）
     hooks.clearSubagent(id)
     hooks.clearWorkflow(id)
