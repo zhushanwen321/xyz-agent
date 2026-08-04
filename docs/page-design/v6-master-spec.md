@@ -211,7 +211,7 @@ demo 阶段功能做到「可见 + 可交互 + 数据 mock」即够。不接 run
 ```
 
 **三层明度**（D2 一体化后）：
-- **stage 最深底**：`#131316`（ShellView 硬编码，等于 bg；spec 原三层在玄主题下退化为两层，靠 surface 浮起分隔）
+- **stage 最深底**：`--bg-stage` `#0a0a0c`（tokens.css 新增，ShellView .stage 引用；三层明度在玄主题下完整保留）
 - **画布层**：`--bg` `#131316`（aside/drawer/settings 内容区）
 - **surface 浮起**：`--surface` `#1f1f22`（main-panel + drawer 一体化共享，唯一带 border + shadow）
 
@@ -467,7 +467,7 @@ lucide-vue 内联 SVG，stroke-width 默认 **1.75**（特殊图标如 checkbox 
 
 `spin` / `pulse-accent`（1.8s **box-shadow 扩散涟漪**：`0%` accent-ring 实色 → `70%` 扩散至 5px 透明 → `100%` 收回）/ `pulse-dot` / `blink` / `shimmer`（骨架屏）。`@media (prefers-reduced-motion: reduce)` 把所有 animation/transition 压到 `0.01ms !important`。
 
-**SSOT 约束**：keyframes 只在 `base.css` 定义一次。组件通过 `animation-name` 引用，**禁止在 scoped style 里重复 `@keyframes` 定义**。**demo 现状仍有 3 处违反**（SessionList.vue:519 / SegmentedTab.vue:141 / WorkflowDetail.vue:277 各重复定义 `@keyframes pulse-accent`），实施时需清理为统一引用 base.css 全局定义。
+**SSOT 约束**：keyframes 只在 `base.css` 定义一次。组件通过 `animation-name` 引用，**禁止在 scoped style 里重复 `@keyframes` 定义**。已清理（2026-08-04 修复批次：scoped 重复定义删除，组件改引全局 pulse-dot/spin；通用名 keyframes 仅 base.css 定义一次，组件仅保留带前缀私有动画）。
 
 ### 5.10 加载态 / 骨架屏
 
