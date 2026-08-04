@@ -30,7 +30,7 @@ function normalizeInt(v, name, def, fail) {
 }
 
 /**
- * 批次解析：batch1..batchN（缺号报错）/ agents 简写 / 默认单批 [reviewer]。
+ * 批次解析：batch1..batchN（缺号报错）/ agents 简写。两者必传其一，缺省直接报错（无默认 agent）。
  * @param args $ARGS 形状的对象（batchN 键、agents 键）
  * @param fail 报错回调（抛错终止）
  * @returns string[][] 每批的 agent 名/文件路径数组
@@ -53,7 +53,7 @@ function parseBatches(args, fail) {
   } else if (args.agents !== undefined) {
     rawBatches = [args.agents];
   } else {
-    rawBatches = ["reviewer"]; // 默认单批：包内置通用审查 agent
+    fail("缺少批次参数：必须传 batch1..batchN 或 agents 指定审查 agent（无默认 agent）");
   }
 
   return rawBatches.map((raw, idx) => {

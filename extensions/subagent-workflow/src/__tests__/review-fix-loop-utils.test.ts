@@ -106,8 +106,8 @@ describe("normalizeInt", () => {
 // ── 批次解析：parseBatches ─────────────────────────────────────────
 
 describe("parseBatches", () => {
-  it("默认单批 [reviewer]（无 batchN/agents）", () => {
-    expect(parseBatches({}, fail)).toEqual([["reviewer"]]);
+  it("无 batchN/agents → 报错（无默认 agent，必须显式指定）", () => {
+    expect(() => parseBatches({}, fail)).toThrow("缺少批次参数");
   });
 
   it("batch1..batchN 按编号排序解析为 agent 名数组", () => {
