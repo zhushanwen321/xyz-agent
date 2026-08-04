@@ -20,13 +20,12 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import type { Message } from '@xyz-agent/shared'
 
-// Mock useChat.abortBash（BashOutputBlock 取消按钮的唯一外部依赖）
-const mockAbortBash = vi.fn()
-vi.mock('@/composables/features/useChat', () => ({
-  useChat: () => ({ abortBash: mockAbortBash }),
-}))
+// [w6 chat-ui-and-shell T7] ui 包 BashOutputBlock 经 deps.abortBash inject 消费（原 mock '@/composables/features/useChat' 失效）
+import { BashOutputBlock } from '@xyz-agent/ui'
+import { mockChatProvide } from '@/__tests__/helpers/chat-view-deps'
 
-import BashOutputBlock from '@/components/panel/message-stream/BashOutputBlock.vue'
+// Mock deps.abortBash（BashOutputBlock 取消按钮的唯一外部依赖）
+const mockAbortBash = vi.fn()
 
 function makeMessage(overrides: Partial<Message> = {}): Message {
   return {
@@ -51,7 +50,10 @@ function makeMessage(overrides: Partial<Message> = {}): Message {
 function mountBlock(message: Message) {
   return mount(BashOutputBlock, {
     props: { message, sessionId: 'sess-1' },
-    global: { plugins: [] },
+    global: {
+      plugins: [],
+      provide: mockChatProvide({ abortBash: mockAbortBash }),
+    },
   })
 }
 

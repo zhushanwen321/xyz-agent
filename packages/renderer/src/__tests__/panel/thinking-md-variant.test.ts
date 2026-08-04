@@ -11,41 +11,20 @@
  * - 使用者（黑盒）：thinking 内容里的 bold 被渲染为 strong，列表被渲染为 ul/ol
  * - 构建者（白盒）：variant prop 默认 undefined 时不加 thinking class（向后兼容）
  *
+ * [w6 chat-ui-and-shell T7] ui 包组件经 ChatViewDeps inject 消费 renderMarkdown
+ * （原 mock '@/composables/logic/markdown' + 旧组件路径 vi.mock 失效），改为 provide mock deps；
+ * MermaidRenderer/AmbiguousFilePopover 按组件名 stub（ui 包内部相对 import 无法 vi.mock 路径命中）。
+ *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/thinking-md-variant.test.ts
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick, h } from 'vue'
+import { Block, BgNotifyCard, MarkdownRenderer } from '@xyz-agent/ui'
+import { mockChatProvide } from '@/__tests__/helpers/chat-view-deps'
 
-// renderMarkdownSegments stub：同步返回 markdown 结构（绕过 shiki 异步加载）
-const mockRenderSegments = vi.fn()
-vi.mock('@/composables/logic/markdown', () => ({
-  renderMarkdownSegments: (content: string, opts?: { localFiles?: Set<string> }) =>
-    mockRenderSegments(content, opts),
-}))
-
-// MermaidRenderer stub
-vi.mock('@/components/panel/message-stream/MermaidRenderer.vue', () => ({
-  default: {
-    name: 'MermaidRenderer',
-    props: ['source'],
-    setup(props: { source: string }) {
-      return () => h('div', { class: 'stub-mermaid' }, props.source)
-    },
-  },
-}))
-
-// 依赖 stub（与 markdown-renderer-fallback.test.ts 一致）
-vi.mock('@/composables/features/useFileTree', () => ({ useFileTree: () => ({ selectFile: vi.fn() }) }))
-vi.mock('@/composables/features/useSideDrawer', () => ({ useSideDrawer: () => ({ open: vi.fn() }) }))
-vi.mock('@/lib/ipc', () => ({ openExternal: vi.fn().mockResolvedValue(undefined) }))
-vi.mock('@/composables/features/useFileSearch', () => ({ useFileSearch: () => ({ load: vi.fn().mockResolvedValue([]) }) }))
-vi.mock('@/stores/fileSearch', () => ({ useFileSearchStore: () => ({ get: vi.fn().mockReturnValue(undefined) }) }))
-vi.mock('@/components/panel/message-stream/AmbiguousFilePopover.vue', () => ({
-  default: { name: 'AmbiguousFilePopover', render: () => null },
-}))
-
-import MarkdownRenderer from '@/components/panel/message-stream/MarkdownRenderer.vue'
+// renderMarkdown 经 deps 注入：同步返回 markdown 结构段（绕过 shiki 异步加载）
+const mockRenderMarkdown = vi.fn()
 
 // H2 后 MarkdownRenderer watch 改用 rAF 调度渲染。这些用例不验证节流时序，
 // 只需 rAF 回调同步执行（mount 后 nextTick 即渲染完成）。
@@ -63,15 +42,38 @@ afterAll(() => {
   globalThis.cancelAnimationFrame = _originalCAF
 })
 
-/** 让 mockRenderSegments 返回 markdown 结构段（模拟 markdown-it 解析结果） */
+/** MermaidRenderer stub（ui 包内部相对 import，按组件名 stub） */
+const MermaidStub = {
+  name: 'MermaidRenderer',
+  props: ['source'],
+  setup(props: { source: string }) {
+    return () => h('div', { class: 'stub-mermaid' }, props.source)
+  },
+}
+
+/** AmbiguousFilePopover stub（返回注释 vnode，不占 .md-render 直接子节点） */
+const AmbiguousPopoverStub = { name: 'AmbiguousFilePopover', render: () => null }
+
+/** 让 mockRenderMarkdown 返回 markdown 结构段（模拟 markdown-it 解析结果） */
 function mockMarkdownSegments(html: string): void {
-  mockRenderSegments.mockReturnValue([{ type: 'text', content: html }])
+  mockRenderMarkdown.mockReturnValue([{ type: 'text', content: html }])
+}
+
+/** mount 公共 deps（renderMarkdown mock + 子组件 stub） */
+function mountWithDeps(comp: unknown, props: Record<string, unknown>) {
+  return mount(comp as never, {
+    props,
+    global: {
+      provide: mockChatProvide({ renderMarkdown: mockRenderMarkdown }),
+      stubs: { MermaidRenderer: MermaidStub, AmbiguousFilePopover: AmbiguousPopoverStub },
+    },
+  })
 }
 
 describe('W1: MarkdownRenderer variant="thinking" 降级样式', () => {
   it('variant="thinking" → root div 含 .md-render--thinking class', async () => {
     mockMarkdownSegments('<p>test</p>')
-    const wrapper = mount(MarkdownRenderer, { props: { content: 'test', variant: 'thinking' } })
+    const wrapper = mountWithDeps(MarkdownRenderer, { content: 'test', variant: 'thinking' })
     await nextTick()
     await nextTick()
     // 关键断言：thinking 变体在 root 加 class（当前无 variant prop，红灯）
@@ -80,7 +82,7 @@ describe('W1: MarkdownRenderer variant="thinking" 降级样式', () => {
 
   it('默认（无 variant）→ root 不含 .md-render--thinking class（向后兼容）', async () => {
     mockMarkdownSegments('<p>test</p>')
-    const wrapper = mount(MarkdownRenderer, { props: { content: 'test' } })
+    const wrapper = mountWithDeps(MarkdownRenderer, { content: 'test' })
     await nextTick()
     await nextTick()
     // 无 variant 时不应加 thinking class（现有 7 处调用零影响）
@@ -91,11 +93,13 @@ describe('W1: MarkdownRenderer variant="thinking" 降级样式', () => {
 describe('W2: Block thinking 块走 MarkdownRenderer（不再纯文本插值）', () => {
   it('thinking 内容 **粗体** → 渲染为 <strong> 元素（非字面星号）', async () => {
     mockMarkdownSegments('<p>这是<strong>粗体</strong>内容</p>')
-    const { default: Block } = await import('@/components/panel/message-stream/Block.vue')
     // working=false + collapsed=false 才会渲染 .trace-think-body（MarkdownRenderer）
     // working=true 时内容在 header 行内联显示（plain text），不走 MarkdownRenderer
-    const wrapper = mount(Block, {
-      props: { type: 'thinking', content: '这是**粗体**内容', working: false, collapsed: false },
+    const wrapper = mountWithDeps(Block, {
+      type: 'thinking',
+      content: '这是**粗体**内容',
+      working: false,
+      collapsed: false,
     })
     await nextTick()
     await nextTick()
@@ -110,10 +114,12 @@ describe('W2: Block thinking 块走 MarkdownRenderer（不再纯文本插值）'
 
   it('thinking 内容无全局 italic（md 结构 + italic 可读性差）', async () => {
     mockMarkdownSegments('<p>test</p>')
-    const { default: Block } = await import('@/components/panel/message-stream/Block.vue')
     // working=false + collapsed=false 才渲染 .trace-think-body
-    const wrapper = mount(Block, {
-      props: { type: 'thinking', content: 'test', working: false, collapsed: false },
+    const wrapper = mountWithDeps(Block, {
+      type: 'thinking',
+      content: 'test',
+      working: false,
+      collapsed: false,
     })
     await nextTick()
     await nextTick()
@@ -126,7 +132,6 @@ describe('W2: Block thinking 块走 MarkdownRenderer（不再纯文本插值）'
 describe('W2: BgNotifyCard fullContent 走 MarkdownRenderer', () => {
   it('展开后 fullContent 的 **粗体** → 渲染为 <strong>（非字面星号）', async () => {
     mockMarkdownSegments('<p>已完成<strong>3 个方案</strong></p>')
-    const { default: BgNotifyCard } = await import('@/components/panel/message-stream/BgNotifyCard.vue')
     const message = {
       id: 'm1',
       role: 'system' as const,
@@ -142,7 +147,7 @@ describe('W2: BgNotifyCard fullContent 走 MarkdownRenderer', () => {
       },
       timestamp: 2000,
     }
-    const wrapper = mount(BgNotifyCard, { props: { message } })
+    const wrapper = mountWithDeps(BgNotifyCard, { message })
     // 点击展开
     await wrapper.find('.cursor-pointer').trigger('click')
     await nextTick()

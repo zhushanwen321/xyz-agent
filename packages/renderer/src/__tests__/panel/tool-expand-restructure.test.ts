@@ -15,7 +15,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
-import Block from '@/components/panel/message-stream/Block.vue'
+import { Block } from '@xyz-agent/ui'
 import type { ToolCall } from '@xyz-agent/shared'
 
 function makeTool(over: Partial<ToolCall> = {}): ToolCall {

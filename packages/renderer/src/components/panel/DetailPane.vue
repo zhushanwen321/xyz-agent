@@ -244,7 +244,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, provide, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { FileText, Loader2, AlertCircle, Image as ImageIcon, Copy, Check, Quote } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -254,9 +254,10 @@ import { useCopy } from '@/composables/effects/useCopy'
 import { useComposerInjectionStore } from '@/composables/panel/composer-injection-store'
 import { extToLang } from '@/composables/logic/file-type'
 import { resolvePreviewPath } from '@/lib/path-utils'
-import MarkdownRenderer from '@/components/panel/message-stream/MarkdownRenderer.vue'
+import { MarkdownRenderer, ChatViewDepsKey } from '@xyz-agent/ui'
 import CodeBlock from '@/components/panel/detail-renderers/CodeBlock.vue'
 import DiffView from '@/components/panel/detail-renderers/DiffView.vue'
+import { useChatViewDeps } from '@/composables/panel/useChatViewDeps'
 
 const { t } = useI18n()
 
@@ -276,6 +277,10 @@ const props = defineProps<{
 const { state, toggleView, sessionCwd } = useDetailPane(
   computed(() => props.sessionId),
 )
+
+// [w6 T6] ui MarkdownRenderer 经 ChatViewDeps inject 消费壳层依赖。DetailPane 不在 MessageStream
+// provide 作用域内，需自行 provide（sessionId 可为 null，coalesce '' 后 renderMarkdown 无路径链接降级）
+provide(ChatViewDepsKey, useChatViewDeps(computed(() => props.sessionId ?? '')))
 
 /** 文件名（basename，从 state.path 取） */
 const fileName = computed(() => {

@@ -11,14 +11,42 @@
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { defineComponent, h, nextTick } from 'vue'
+import { defineComponent, h, nextTick, reactive } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
-import Block from '@/components/panel/message-stream/Block.vue'
-import Turn from '@/components/panel/message-stream/Turn.vue'
+// [w6 chat-ui-and-shell T7] ui 包组件：Block 不 inject deps；Turn 经 ChatViewDeps inject（mount 时 provide）
+import { Block, Turn } from '@xyz-agent/ui'
+import { mockChatProvide } from '@/__tests__/helpers/chat-view-deps'
 import MessageStream from '@/components/panel/MessageStream.vue'
 import { useChatStore } from '@/stores/chat'
 import type { ToolCall, Message, ServerMessage } from '@xyz-agent/shared'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
+
+// [w6 chat-ui-and-shell T7] 方案 c mount MessageStream：壳 provide 真 deps（useChatViewDeps）→ mock 装配器
+const chatDepsMock = vi.hoisted(() => ({
+  getMessages: vi.fn(() => []),
+  isActive: vi.fn(() => false),
+  isHandingOff: vi.fn(() => false),
+  getChangeSetStatus: vi.fn(() => undefined),
+  isExpanded: vi.fn(() => false),
+  toggleExpand: vi.fn(),
+  collapse: vi.fn(),
+  abortBash: vi.fn(),
+  editAndResend: vi.fn(),
+  onFork: vi.fn(),
+  onForkAsk: vi.fn(),
+  onHandoff: vi.fn(),
+  onHandoffAsk: vi.fn(),
+  openDrawer: vi.fn(),
+  onFileClick: vi.fn(),
+  onAmbiguousSelect: vi.fn(),
+  loadFileCandidates: vi.fn(() => Promise.resolve([])),
+  renderMarkdown: vi.fn(() => Promise.resolve([])),
+  renderMermaid: vi.fn(() => Promise.resolve({ svg: '' })),
+  toMarkdown: vi.fn(() => ''),
+}))
+vi.mock('@/composables/panel/useChatViewDeps', () => ({
+  useChatViewDeps: () => chatDepsMock,
+}))
 
 const NOW = Date.now()
 
@@ -347,7 +375,12 @@ describe('方案 a: mount Block 组件 — 翻转 props.tool.status', () => {
 })
 
 /* ─────────────────────── 方案 b：mount Turn，改 turn prop 内 tool ─────────────────────── */
+// 展开 trace 需状态化 toggleExpand/isExpanded（reactive Set，同 turn-working U19）
 describe('方案 b: mount Turn 组件 — 翻转 turn.assistants[0].toolCalls[0].status', () => {
+  const expandedTurns = reactive(new Set<number>())
+  beforeEach(() => {
+    expandedTurns.clear()
+  })
   it('running→completed：Turn 内 Block 双环 loader 消失，无终态 icon', async () => {
     const tool = makeTool({ status: 'running' })
     const assistant = makeAssistantWithTool(tool)
@@ -355,7 +388,16 @@ describe('方案 b: mount Turn 组件 — 翻转 turn.assistants[0].toolCalls[0]
 
     const wrapper = mount(Turn, {
       props: { turn, sessionId: 's1' },
-      global: { stubs: { ChangeSetCard: true, MarkdownRenderer: true } },
+      global: {
+        provide: mockChatProvide({
+          isExpanded: (idx: number) => expandedTurns.has(idx),
+          toggleExpand: (idx: number) => {
+            if (expandedTurns.has(idx)) expandedTurns.delete(idx)
+            else expandedTurns.add(idx)
+          },
+        }),
+        stubs: { ChangeSetCard: true, MarkdownRenderer: true },
+      },
     })
 
     // 需展开 trace 才能看到 Block（showTrace = isSessionActive || expanded；这里 isSessionActive=false）
@@ -383,6 +425,10 @@ describe('方案 b: mount Turn 组件 — 翻转 turn.assistants[0].toolCalls[0]
  * 「Turn 把 toolCall 引用的 status 变化（不可变替换）传给 Block」是否响应式。
  * ------------------------------------------------------------------------- */
 describe('方案 c（叶子）: traceBlocks 响应式验证（不可变替换翻转）', () => {
+  const expandedTurns = reactive(new Set<number>())
+  beforeEach(() => {
+    expandedTurns.clear()
+  })
   it('c1: 不可变替换 turn prop（模拟 store commit）— 应翻转', async () => {
     const tool = makeTool({ status: 'running' })
     const assistant = makeAssistantWithTool(tool)
@@ -390,7 +436,16 @@ describe('方案 c（叶子）: traceBlocks 响应式验证（不可变替换翻
 
     const wrapper = mount(Turn, {
       props: { turn, sessionId: 's1' },
-      global: { stubs: { ChangeSetCard: true, MarkdownRenderer: true } },
+      global: {
+        provide: mockChatProvide({
+          isExpanded: (idx: number) => expandedTurns.has(idx),
+          toggleExpand: (idx: number) => {
+            if (expandedTurns.has(idx)) expandedTurns.delete(idx)
+            else expandedTurns.add(idx)
+          },
+        }),
+        stubs: { ChangeSetCard: true, MarkdownRenderer: true },
+      },
     })
     await wrapper.find('button.turn-meta').trigger('click')
     await nextTick()

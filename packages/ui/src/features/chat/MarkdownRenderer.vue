@@ -61,6 +61,16 @@ const props = defineProps<{
 
 const deps = useChatViewDeps()
 
+/** data-path 解码（renderer 壳 linkify 产出 base64 编码路径，HISTORICAL：迁移时丢 decodeBase64 致点击打开错误路径） */
+function decodeB64(b64: string): string {
+  try {
+    const binary = atob(b64)
+    return new TextDecoder().decode(Uint8Array.from(binary, (c) => c.charCodeAt(0)))
+  } catch {
+    return b64
+  }
+}
+
 const segments = ref<MarkdownSegment[]>([])
 let renderSeq = 0
 
@@ -142,11 +152,12 @@ function onClick(e: MouseEvent): void {
     return
   }
 
-  // ② 含/路径文件链接（.md-filepath 带 data-path）
+  // ② 含/路径文件链接（.md-filepath 带 data-path，base64 编码）
   const pathLink = target.closest('.md-filepath') as HTMLElement | null
   if (pathLink) {
     e.preventDefault()
-    const path = pathLink.dataset.path ?? pathLink.textContent ?? ''
+    const raw = pathLink.dataset.path
+    const path = raw ? decodeB64(raw) : (pathLink.textContent ?? '')
     if (path) {
       deps.onFileClick(path)
       deps.openDrawer('detail', { filePath: path })

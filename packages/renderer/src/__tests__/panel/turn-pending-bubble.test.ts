@@ -11,16 +11,11 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
-import Turn from '@/components/panel/message-stream/Turn.vue'
+// [w6 chat-ui-and-shell T7] ui 包 Turn 经 ChatViewDeps/StickGuardDeps inject 消费依赖，mount 时 provide mock deps
+import { Turn } from '@xyz-agent/ui'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
 import type { Message } from '@xyz-agent/shared'
-
-vi.mock('@/composables/features/useChat', () => ({
-  useChat: () => ({ editAndResend: vi.fn() }),
-}))
-vi.mock('@/composables/features/useSidebar', () => ({
-  useSidebar: () => ({ forkSession: vi.fn() }),
-}))
+import { mockChatProvide } from '@/__tests__/helpers/chat-view-deps'
 
 function makeTurn(userOver: Partial<Message> = {}): MessageTurn {
   return {
@@ -44,6 +39,7 @@ function mountTurn(turn: MessageTurn) {
     props: { turn, sessionId: 's1' },
     global: {
       plugins: [createPinia()],
+      provide: mockChatProvide(),
       stubs: { Block: true, ChangeSetCard: true, MarkdownRenderer: true },
     },
   })

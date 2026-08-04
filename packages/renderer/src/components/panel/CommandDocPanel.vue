@@ -57,7 +57,8 @@ import { getSettingsStore } from '@xyz-agent/core'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import * as fileApi from '@/api/domains/file'
-import MarkdownRenderer from './message-stream/MarkdownRenderer.vue'
+// [w6 chat-ui-and-shell T7] MarkdownRenderer 迁 ui 包（经 ChatViewDeps inject 消费 renderMarkdown）
+import { MarkdownRenderer } from '@xyz-agent/ui'
 
 const { t } = useI18n()
 

@@ -8,42 +8,42 @@
  *  - U17 全屏 Dialog 内 fit → 缩放适配
  *  - 渲染失败 → 显示「渲染失败」+ 源码（U12 的组件级验证）
  *
- * mock 策略：vi.mock('@/composables/logic/mermaid') stub renderMermaid/getCurrentTheme；
- *   happy-dom 无真实 SVG getBBox，useMermaidZoom 的 readSvgNaturalSize 走 getBoundingClientRect 回退。
+ * [w6 chat-ui-and-shell T7] ui 包 MermaidRenderer 经 deps.renderMermaid inject 消费
+ * （原 mock '@/composables/logic/mermaid' 失效）；主题读取改 ui 包自持 getCurrentTheme
+ * （纯 DOM 读取），测试直接控制 <html data-theme> 属性。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/mermaid.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
+import { MermaidRenderer } from '@xyz-agent/ui'
+import { mockChatProvide } from '@/__tests__/helpers/chat-view-deps'
 
-// mermaid 逻辑层 stub：renderMermaid 返回可控 svg，getCurrentTheme 可控主题
+// renderMermaid 经 deps 注入：mock 返回可控 svg
 const mockRenderMermaid = vi.fn()
-const mockGetCurrentTheme = vi.fn()
-vi.mock('@/composables/logic/mermaid', () => ({
-  renderMermaid: (...args: unknown[]) => mockRenderMermaid(...args),
-  getCurrentTheme: () => mockGetCurrentTheme(),
-}))
 
-// useCopy 的 navigator.clipboard stub
 beforeEach(() => {
   vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined)
 })
 
-import MermaidRenderer from '@/components/panel/message-stream/MermaidRenderer.vue'
-
 const SAMPLE_SVG = '<svg viewBox="0 0 100 50"><rect width="100" height="50"/></svg>'
+
+function mountMermaid(source: string) {
+  return mount(MermaidRenderer, {
+    props: { source },
+    global: { provide: mockChatProvide({ renderMermaid: mockRenderMermaid }) },
+  })
+}
 
 describe('MermaidRenderer（W5）', () => {
   beforeEach(() => {
     mockRenderMermaid.mockReset()
-    mockGetCurrentTheme.mockReset()
-    mockGetCurrentTheme.mockReturnValue('dark')
     mockRenderMermaid.mockResolvedValue({ svg: SAMPLE_SVG })
   })
 
   it('U14: dark 主题挂载 → renderMermaid 调用 + SVG 注入 DOM', async () => {
-    const wrapper = mount(MermaidRenderer, { props: { source: 'graph TD;A-->B' } })
+    const wrapper = mountMermaid('graph TD;A-->B')
     await nextTick()
     await nextTick() // 等 doRender 的 await resolve
     expect(mockRenderMermaid).toHaveBeenCalledWith('graph TD;A-->B', 'dark')
@@ -52,13 +52,11 @@ describe('MermaidRenderer（W5）', () => {
   })
 
   it('U15: 主题切换 → 重新 renderMermaid（新主题）', async () => {
-    mockGetCurrentTheme.mockReturnValue('dark')
-    const wrapper = mount(MermaidRenderer, { props: { source: 'graph TD;A-->B' } })
+    const wrapper = mountMermaid('graph TD;A-->B')
     await nextTick()
     await nextTick()
     expect(mockRenderMermaid).toHaveBeenLastCalledWith(expect.any(String), 'dark')
-    // 模拟主题切到 light：改 mock 返回 + 触发 MutationObserver
-    mockGetCurrentTheme.mockReturnValue('light')
+    // 模拟主题切到 light：设置 <html data-theme>（ui getCurrentTheme 纯 DOM 读取）
     document.documentElement.setAttribute('data-theme', 'light')
     await nextTick()
     await nextTick()
@@ -68,7 +66,7 @@ describe('MermaidRenderer（W5）', () => {
 
   it('U12: 渲染失败 → 显示「渲染失败」+ 源码可复制', async () => {
     mockRenderMermaid.mockRejectedValue(new Error('parse error'))
-    const wrapper = mount(MermaidRenderer, { props: { source: 'invalid mermaid' } })
+    const wrapper = mountMermaid('invalid mermaid')
     await nextTick()
     await nextTick()
     expect(wrapper.find('.md-mermaid__error').exists()).toBe(true)
@@ -84,7 +82,7 @@ describe('MermaidRenderer（W5）', () => {
   })
 
   it('U16: 全屏 Dialog 打开 + zoom-in → zoomLabel 增大', async () => {
-    const wrapper = mount(MermaidRenderer, { props: { source: 'graph TD;A-->B' } })
+    const wrapper = mountMermaid('graph TD;A-->B')
     await nextTick()
     await nextTick()
     // 点 inline 图打开全屏
@@ -108,7 +106,7 @@ describe('MermaidRenderer（W5）', () => {
   })
 
   it('U17: 全屏 fit → zoomLabel 回到适配值', async () => {
-    const wrapper = mount(MermaidRenderer, { props: { source: 'graph TD;A-->B' } })
+    const wrapper = mountMermaid('graph TD;A-->B')
     await nextTick()
     await nextTick()
     await wrapper.find('.md-mermaid__inline').trigger('click')

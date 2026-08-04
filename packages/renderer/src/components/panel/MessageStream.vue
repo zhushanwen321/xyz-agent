@@ -159,7 +159,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, provide, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronUp, Loader2, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -167,15 +167,14 @@ import { Virtualizer, type VirtualizerHandle } from 'virtua/vue'
 import { useChatStore } from '@/stores/chat'
 import { useVirtuaFollow } from '@/composables/effects/useVirtuaFollow'
 import { useConstantHeightAssert } from '@/composables/effects/useConstantHeightAssert'
-import { provideStickGuard } from '@/composables/effects/useStickGuard'
+import { useTraceTransition } from '@/composables/effects/useStickGuard'
 import { toRenderItems, filterDisplayableMessages } from '@/composables/logic/messageTurns'
 import { isSubagentVirtualId, extractSubagentId, extractMainSessionId, useSubagentStore } from '@/stores/subagent'
-import Turn from './message-stream/Turn.vue'
-import SystemNotice from './message-stream/SystemNotice.vue'
-import BgNotifyCard from './message-stream/BgNotifyCard.vue'
-import BashOutputBlock from './message-stream/BashOutputBlock.vue'
+// [w6 chat-ui-and-shell T6] chat 展示组件迁 @xyz-agent/ui/features/chat，壳层经
+// ChatViewDeps / StickGuardDeps inject token 注入 store/composable 依赖（TD3 inject 裁决）。
+import { Turn, SystemNotice, BgNotifyCard, BashOutputBlock, TurnRail, ChatViewDepsKey, StickGuardDepsKey } from '@xyz-agent/ui'
 import { GuiComponentRenderer } from '@xyz-agent/ui/rendering-protocol'
-import TurnRail from './message-stream/TurnRail.vue'
+import { useChatViewDeps } from '@/composables/panel/useChatViewDeps'
 import ForkNotice from './ForkNotice.vue'
 import { extractGuiComponent } from '@/composables/logic/guiComponent'
 import { useForkNoticeStream } from '@/composables/panel/useForkNoticeStream'
@@ -360,7 +359,14 @@ const { railTurns, activeTurnIndex, panelRightEdge, expandedTurns, onJump, onTog
 
 /** provide stick guard pause/resume 给 Turn.vue（trace 折叠 transition 期间暂停 onScroll 误判）。
  *  [cw wave w3] pause/resume 来源切到 useVirtuaFollow 计数器版（原旧滚动 composable 布尔版有 P5 bug）。 */
-provideStickGuard({ pause: pauseStickGuard, resume: resumeStickGuard })
+// [w6 T6] ui 包 chat 展示组件经 inject token 消费壳层依赖：
+// - ChatViewDepsKey：~20 字段（store 数据 / RPC 回调 / 文件加载 / 重库渲染），
+//   useChatViewDeps 装配器把 renderer store/composable/纯函数绑定到各字段。
+// - StickGuardDepsKey：trace 折叠 transition hooks（pause/resume 绑 useVirtuaFollow 计数器版，
+//   对齐 w3 修复 P5 bug）。ui Turn 经此 inject 消费，替代旧 STICK_GUARD_KEY provide（旧消费方
+//   message-stream/Turn.vue 已随 w6 迁 ui 删除，STICK_GUARD_KEY 通路退役）。
+provide(ChatViewDepsKey, useChatViewDeps(sessionId))
+provide(StickGuardDepsKey, useTraceTransition({ pause: pauseStickGuard, resume: resumeStickGuard }))
 
 /**
  * [cw wave w3] virta scroll 事件聚合 handler（IF7 @scrollEnd 用于 showJumpButton 稳定判定）。

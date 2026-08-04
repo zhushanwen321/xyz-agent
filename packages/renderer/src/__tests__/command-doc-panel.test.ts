@@ -26,14 +26,39 @@ vi.mock('@/api/domains/file', () => ({
   read: vi.fn((path: string, sessionId?: string) => readMock(path, sessionId)),
 }))
 
-// MarkdownRenderer 异步加载 shiki，单测内 stub 成同步渲染 content（断言文档正文到达即可）
-vi.mock('@/components/panel/message-stream/MarkdownRenderer.vue', () => ({
-  default: defineComponent({
-    name: 'MarkdownRenderer',
-    props: { content: { type: String, default: '' } },
-    template: '<div class="md-stub">{{ content }}</div>',
-  }),
+// MarkdownRenderer stub：ui 包 MarkdownRenderer 异步走 deps.renderMarkdown（shiki 在壳），
+// 单测内按名 stub 成同步渲染 content（断言文档正文到达即可）。
+// [w6 chat-ui-and-shell T7] CommandDocPanel 壳经 useChatViewDeps 装配 deps → mock 该装配器。
+const chatDepsMock = vi.hoisted(() => ({
+  getMessages: vi.fn(() => []),
+  isActive: vi.fn(() => false),
+  isHandingOff: vi.fn(() => false),
+  getChangeSetStatus: vi.fn(() => undefined),
+  isExpanded: vi.fn(() => false),
+  toggleExpand: vi.fn(),
+  collapse: vi.fn(),
+  abortBash: vi.fn(),
+  editAndResend: vi.fn(),
+  onFork: vi.fn(),
+  onForkAsk: vi.fn(),
+  onHandoff: vi.fn(),
+  onHandoffAsk: vi.fn(),
+  openDrawer: vi.fn(),
+  onFileClick: vi.fn(),
+  onAmbiguousSelect: vi.fn(),
+  loadFileCandidates: vi.fn(() => Promise.resolve([])),
+  renderMarkdown: vi.fn(() => Promise.resolve([])),
+  renderMermaid: vi.fn(() => Promise.resolve({ svg: '' })),
+  toMarkdown: vi.fn(() => ''),
 }))
+vi.mock('@/composables/panel/useChatViewDeps', () => ({
+  useChatViewDeps: () => chatDepsMock,
+}))
+const mdStub = defineComponent({
+  name: 'MarkdownRenderer',
+  props: { content: { type: String, default: '' } },
+  template: '<div class="md-stub">{{ content }}</div>',
+})
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -86,7 +111,10 @@ describe('CommandDocPanel', () => {
     const drawer = useSideDrawer()
     drawer.open('doc', { commandName: '/fix' })
 
-    const wrapper = mount(CommandDocPanel, { props: { sessionId: 's1' } })
+    const wrapper = mount(CommandDocPanel, {
+      props: { sessionId: 's1' },
+      global: { stubs: { MarkdownRenderer: mdStub } },
+    })
     await flushPromises()
 
     // header 含命令名 + Skill 标签
@@ -112,7 +140,10 @@ describe('CommandDocPanel', () => {
     const drawer = useSideDrawer()
     drawer.open('doc', { commandName: '/fix' })
 
-    const wrapper = mount(CommandDocPanel, { props: { sessionId: 's1' } })
+    const wrapper = mount(CommandDocPanel, {
+      props: { sessionId: 's1' },
+      global: { stubs: { MarkdownRenderer: mdStub } },
+    })
     await flushPromises()
 
     // 至少一次带 sessionId 的调用（cwd 守门尝试），且至少一次不带 sessionId 的调用（白名单 fallback）
@@ -131,7 +162,10 @@ describe('CommandDocPanel', () => {
     const drawer = useSideDrawer()
     drawer.open('doc', { commandName: '/skill:fix' })
 
-    const wrapper = mount(CommandDocPanel, { props: { sessionId: 's1' } })
+    const wrapper = mount(CommandDocPanel, {
+      props: { sessionId: 's1' },
+      global: { stubs: { MarkdownRenderer: mdStub } },
+    })
     await flushPromises()
 
     // sourcePath 来自 settings.skills 的 sourcePath
@@ -147,7 +181,10 @@ describe('CommandDocPanel', () => {
     const drawer = useSideDrawer()
     drawer.open('doc', { commandName: '/commit' })
 
-    const wrapper = mount(CommandDocPanel, { props: { sessionId: 's1' } })
+    const wrapper = mount(CommandDocPanel, {
+      props: { sessionId: 's1' },
+      global: { stubs: { MarkdownRenderer: mdStub } },
+    })
     await flushPromises()
 
     expect(wrapper.text()).toContain('/commit')
@@ -163,7 +200,10 @@ describe('CommandDocPanel', () => {
     const drawer = useSideDrawer()
     drawer.open('doc', { commandName: '/compact' })
 
-    const wrapper = mount(CommandDocPanel, { props: { sessionId: 's1' } })
+    const wrapper = mount(CommandDocPanel, {
+      props: { sessionId: 's1' },
+      global: { stubs: { MarkdownRenderer: mdStub } },
+    })
     await flushPromises()
 
     expect(wrapper.text()).toContain('/compact')
@@ -175,7 +215,10 @@ describe('CommandDocPanel', () => {
     await setup('s1')
     // 不调 open（selectedCommandName 仍为 null）
 
-    const wrapper = mount(CommandDocPanel, { props: { sessionId: 's1' } })
+    const wrapper = mount(CommandDocPanel, {
+      props: { sessionId: 's1' },
+      global: { stubs: { MarkdownRenderer: mdStub } },
+    })
     await flushPromises()
 
     expect(wrapper.text()).toContain('未选择命令')

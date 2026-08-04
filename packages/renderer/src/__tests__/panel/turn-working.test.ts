@@ -18,17 +18,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import Turn from '@/components/panel/message-stream/Turn.vue'
+import { reactive } from 'vue'
+// [w6 chat-ui-and-shell T7] ui 包 Turn 经 ChatViewDeps/StickGuardDeps inject 消费依赖，mount 时 provide mock deps
+import { Turn } from '@xyz-agent/ui'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
 import type { Message } from '@xyz-agent/shared'
-
-// mock 重依赖 composable（只测 Turn 自身响应式逻辑，不测 store 副作用）
-vi.mock('@/composables/features/useChat', () => ({
-  useChat: () => ({ editAndResend: vi.fn() }),
-}))
-vi.mock('@/composables/features/useSidebar', () => ({
-  useSidebar: () => ({ forkSession: vi.fn() }),
-}))
+import { mockChatProvide } from '@/__tests__/helpers/chat-view-deps'
 
 function msg(over: Partial<Message> = {}): Message {
   return { id: 'a1', role: 'assistant', content: '', status: 'streaming', timestamp: Date.now(), ...over }
@@ -57,6 +52,7 @@ function mountTurn(props: { turn: MessageTurn; sessionId?: string; isSessionActi
     },
     global: {
       plugins: [createPinia()],
+      provide: mockChatProvide(),
       stubs: { Block: true, ChangeSetCard: true, MarkdownRenderer: true },
     },
   })
@@ -65,12 +61,22 @@ function mountTurn(props: { turn: MessageTurn; sessionId?: string; isSessionActi
 /**
  * mount Turn 但用真实 Block（仅 stub 重依赖 MarkdownRenderer/ChangeSetCard），
  * 用于断言 trace 内块的 DOM 顺序（三视角之「观察者」视角，防 contentBlocks 乱序回归）。
+ * 展开/折叠经 deps 注入（U19 手动展开需要状态化 toggleExpand/isExpanded mock，
+ * 必须用 reactive Set——普通 Set 非响应式，computed 不重算）。
  */
+const expandedTurns = reactive(new Set<number>())
 function mountTurnWithRealBlock(props: { turn: MessageTurn; sessionId?: string }) {
   return mount(Turn, {
     props: { turn: props.turn, sessionId: props.sessionId ?? 's1' },
     global: {
       plugins: [createPinia()],
+      provide: mockChatProvide({
+        isExpanded: (idx: number) => expandedTurns.has(idx),
+        toggleExpand: (idx: number) => {
+          if (expandedTurns.has(idx)) expandedTurns.delete(idx)
+          else expandedTurns.add(idx)
+        },
+      }),
       stubs: { ChangeSetCard: true, MarkdownRenderer: true },
     },
   })
@@ -294,6 +300,7 @@ describe('Turn · T4 isWorking 拆分（isStreaming vs isSessionActive）', () =
 describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    expandedTurns.clear()
   })
 
   /** 构造 contentBlocks=[text, toolCall] 的 assistant（先 text 后 tool 的真实场景） */

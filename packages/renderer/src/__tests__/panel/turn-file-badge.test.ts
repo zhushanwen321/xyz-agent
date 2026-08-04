@@ -11,24 +11,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import Turn from '@/components/panel/message-stream/Turn.vue'
+// [w6 chat-ui-and-shell T7] ui 包 UserBubble 经 ChatViewDeps inject 消费 onFileClick/openDrawer（原 useSideDrawer/fileTree mock 失效）
+import { Turn } from '@xyz-agent/ui'
 import type { MessageTurn } from '@/composables/logic/messageTurns'
 import type { Message } from '@xyz-agent/shared'
+import { mockChatProvide } from '@/__tests__/helpers/chat-view-deps'
 
 const mockOpenDrawer = vi.fn()
 const mockSelectFile = vi.fn()
-vi.mock('@/composables/features/useChat', () => ({
-  useChat: () => ({ editAndResend: vi.fn() }),
-}))
-vi.mock('@/composables/features/useSidebar', () => ({
-  useSidebar: () => ({ forkSession: vi.fn() }),
-}))
-vi.mock('@/composables/features/useSideDrawer', () => ({
-  useSideDrawer: () => ({ open: mockOpenDrawer }),
-}))
-vi.mock('@/stores/fileTree', () => ({
-  useFileTreeStore: () => ({ selectFile: mockSelectFile }),
-}))
 
 function makeTurn(userOver: Partial<Message> = {}): MessageTurn {
   return {
@@ -50,7 +40,10 @@ function makeTurn(userOver: Partial<Message> = {}): MessageTurn {
 function mountTurn(turn: MessageTurn, sessionId = 's1') {
   return mount(Turn, {
     props: { turn, sessionId },
-    global: { plugins: [createPinia()] },
+    global: {
+      plugins: [createPinia()],
+      provide: mockChatProvide({ onFileClick: mockSelectFile, openDrawer: mockOpenDrawer }),
+    },
   })
 }
 
@@ -112,6 +105,6 @@ describe('W5: Turn file badge 渲染（FR-7）', () => {
 
     await wrapper.find('[data-testid^="msg-file-badge"]').trigger('click')
     expect(mockSelectFile).toHaveBeenCalledWith('src/foo.ts')
-    expect(mockOpenDrawer).toHaveBeenCalledWith('detail')
+    expect(mockOpenDrawer).toHaveBeenCalledWith('detail', { filePath: 'src/foo.ts' })
   })
 })

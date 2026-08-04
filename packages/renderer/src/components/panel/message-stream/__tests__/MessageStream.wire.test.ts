@@ -17,11 +17,12 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { computed, nextTick, ref, shallowRef, defineComponent, h } from 'vue'
+// [w6 chat-ui-and-shell T7] ui 包组件：Turn/TurnRail 迁 ui；Turn 展开态经 deps inject（真实 useTurnExpansion 在 renderer 壳 useChatViewDeps）
+import { computed, nextTick, ref, shallowRef, defineComponent, h, reactive } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import type { VirtualizerHandle } from 'virtua/vue'
-import Turn from '../Turn.vue'
-import TurnRail from '../TurnRail.vue'
+import { Turn, TurnRail } from '@xyz-agent/ui'
+import { mockChatProvide } from '@/__tests__/helpers/chat-view-deps'
 import MessageStream from '../../MessageStream.vue'
 import { useMessageStreamRail } from '@/composables/panel/useMessageStreamRail'
 import { createMockVlist } from '@/__tests__/effects/_virtua-mock-helper'
@@ -43,6 +44,33 @@ vi.mock('@/composables/features/useChat', () => ({
 }))
 vi.mock('@/composables/features/useSidebar', () => ({
   useSidebar: () => ({ forkSession: vi.fn(), abortHandoff: vi.fn() }),
+}))
+
+// [w6] MessageStream 壳装配 useChatViewDeps（TC-w4-9/9b mount 真组件）→ mock 装配器，壳内 ui 组件经 deps inject 消费
+const chatDepsMock = vi.hoisted(() => ({
+  getMessages: vi.fn(() => []),
+  isActive: vi.fn(() => false),
+  isHandingOff: vi.fn(() => false),
+  getChangeSetStatus: vi.fn(() => undefined),
+  isExpanded: vi.fn(() => false),
+  toggleExpand: vi.fn(),
+  collapse: vi.fn(),
+  abortBash: vi.fn(),
+  editAndResend: vi.fn(),
+  onFork: vi.fn(),
+  onForkAsk: vi.fn(),
+  onHandoff: vi.fn(),
+  onHandoffAsk: vi.fn(),
+  openDrawer: vi.fn(),
+  onFileClick: vi.fn(),
+  onAmbiguousSelect: vi.fn(),
+  loadFileCandidates: vi.fn(() => Promise.resolve([])),
+  renderMarkdown: vi.fn(() => Promise.resolve([])),
+  renderMermaid: vi.fn(() => Promise.resolve({ svg: '' })),
+  toMarkdown: vi.fn(() => ''),
+}))
+vi.mock('@/composables/panel/useChatViewDeps', () => ({
+  useChatViewDeps: () => chatDepsMock,
 }))
 
 /** 构造 toolCall（status 可指定，默认 completed） */
@@ -83,6 +111,20 @@ function makeTurn(over: Partial<MessageTurn> = {}): MessageTurn {
   } as MessageTurn
 }
 
+/** [w6] ui Turn 展开态经 deps 注入：stateful mock（reactive Set）驱动展开/收起契约
+ *  （真实 useTurnExpansion 逻辑在 renderer 壳 useChatViewDeps 内，组件层只经 isExpanded/toggleExpand/collapse 消费）。 */
+const expandedTurns = reactive(new Set<number>())
+function statefulExpandDeps() {
+  return {
+    isExpanded: (idx: number) => expandedTurns.has(idx),
+    toggleExpand: (idx: number) => {
+      if (expandedTurns.has(idx)) expandedTurns.delete(idx)
+      else expandedTurns.add(idx)
+    },
+    collapse: (idx: number) => expandedTurns.delete(idx),
+  }
+}
+
 /** mount Turn，stub 掉子组件（Block/ChangeSetCard/MarkdownRenderer），隔离 Turn 自身接线逻辑。 */
 function mountTurn(props: { turn: MessageTurn; sessionId?: string; isSessionActive?: boolean }) {
   return mount(Turn, {
@@ -93,6 +135,7 @@ function mountTurn(props: { turn: MessageTurn; sessionId?: string; isSessionActi
     },
     global: {
       plugins: [createPinia()],
+      provide: mockChatProvide(statefulExpandDeps()),
       stubs: { Block: true, ChangeSetCard: true, MarkdownRenderer: true },
     },
   })
@@ -104,6 +147,7 @@ function mountTurnWithRealBlock(props: { turn: MessageTurn; sessionId?: string }
     props: { turn: props.turn, sessionId: props.sessionId ?? 's1' },
     global: {
       plugins: [createPinia()],
+      provide: mockChatProvide(statefulExpandDeps()),
       stubs: { ChangeSetCard: true, MarkdownRenderer: true },
     },
   })
@@ -111,6 +155,7 @@ function mountTurnWithRealBlock(props: { turn: MessageTurn; sessionId?: string }
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  expandedTurns.clear()
 })
 
 /* ──────────────────────────────────────────────────────────────
@@ -130,7 +175,7 @@ describe('Turn.vue 接线 useTurnExpansion（w1）', () => {
     expect(wrapper.find('.chev').classes()).toContain('rotate-90')
   })
 
-  it('TC-w4-2: 完成态自动收起（isSessionActive true→false 触发 useTurnElapsed.onComplete → collapse）', async () => {
+  it('TC-w4-2: 完成态自动收起（isSessionActive true→false 触发 useTurnElapsed.onComplete → deps.collapse）', async () => {
     // 关键：先让 isExpanded=true（手动展开），才能区分两条路径——
     //   showTrace = sessionActive || isExpanded(idx)。
     //   若不预先展开，sessionActive true→false 时 showTrace 直接 false，与 onComplete 是否调用无关，
@@ -138,42 +183,35 @@ describe('Turn.vue 接线 useTurnExpansion（w1）', () => {
     //   预先 isExpanded=true 后：onComplete 正确触发 collapse → isExpanded 转 false → showTrace=false；
     //   若 onComplete 未触发 → isExpanded 仍 true → showTrace=false||true=true（trace 仍在，测试能捕捉）。
     //
-    // sessionActive=true 时 turn-meta button :disabled（Turn.vue L162），无法用点击触发 toggle，
-    // 故直接用 store.expand 写入（Turn.vue 的 isExpanded 读同一 store，per-instance useTurnExpansion
-    // 共享同一 Pinia store 分区）。
-    //
-    // pinia 实例必须与 mountTurn 用同一个：mountTurn 的 global.plugins:[createPinia()] 会建独立
-    // pinia，故本测自建 pinia 实例，先 expand 再把它传给 mount（绕过 mountTurn 的默认 pinia）。
-    const sessionId = 'sess-w4-2'
-    const pinia = createPinia()
-    setActivePinia(pinia)
-    const store = useTurnExpansionStore()
-    store.expand(sessionId, 1) // makeTurn() 默认 index=1
+    // sessionActive=true 时 turn-meta button :disabled（Turn.vue），无法用点击触发 toggle，
+    // 故直接预置 expandedTurns（makeTurn() 默认 index=1）。
+    expandedTurns.add(1)
     const wrapper = mount(Turn, {
       props: {
         turn: makeTurn({ isStreaming: false }),
-        sessionId,
+        sessionId: 'sess-w4-2',
         isSessionActive: true,
       },
       global: {
-        plugins: [pinia],
+        plugins: [createPinia()],
+        provide: mockChatProvide(statefulExpandDeps()),
         stubs: { Block: true, ChangeSetCard: true, MarkdownRenderer: true },
       },
     })
     // sessionActive=true → showTrace = true || true = true（trace 可见）
     expect(wrapper.find('.trace').exists()).toBe(true)
-    // 对话结束：isSessionActive true→false → useTurnElapsed watch 触发 onComplete → collapse(1)
+    // 对话结束：isSessionActive true→false → useTurnElapsed watch 触发 onComplete → deps.collapse(1)
     //   → isExpanded(1) 变 false → showTrace = false || false = false → trace 消失
     await wrapper.setProps({ isSessionActive: false })
     expect(wrapper.find('.trace').exists()).toBe(false)
-    // 回归守卫：collapse 确实被调用（isExpanded 已被 onComplete 路径复位为 false）。
+    // 回归守卫：collapse 确实被调用（expandedTurns 已被 onComplete 路径复位）。
     // 若 onComplete 被改成 no-op，此处仍为 true，测试会失败（捕捉回归）。
-    expect(store.isExpanded(sessionId, 1)).toBe(false)
+    expect(expandedTurns.has(1)).toBe(false)
   })
 
-  it('TC-w4-7: useTurnExpansion per-session 隔离 —— 两个 Turn（不同 sessionId）展开态互不影响', async () => {
-    // 注意：useTurnExpansion 是 per-instance（每次组件 setup 各自调用），per-session Map 在 composable 内。
-    // 本测验证两个不同 sessionId 的 Turn 展开态独立：展开 turn-A 不影响 turn-B。
+  it('TC-w4-7: 展开态隔离 —— 两个 Turn（不同 turnIndex）展开互不影响', async () => {
+    // [w6] 展开态经 deps 注入（stateful mock 按 turnIndex 分区）；真实 per-session 隔离在
+    // renderer 壳 useChatViewDeps（useTurnExpansion(sessionId)）。组件层契约：不同 turnIndex 独立。
     const turnA = makeTurn({ index: 1 })
     const turnB = makeTurn({ index: 2 })
     const wrapperA = mountTurn({ turn: turnA, sessionId: 'sessA' })
@@ -184,7 +222,7 @@ describe('Turn.vue 接线 useTurnExpansion（w1）', () => {
     // 展开 A
     await wrapperA.find('.turn-meta').trigger('click')
     expect(wrapperA.find('.trace').exists()).toBe(true)
-    // B 仍折叠（不同 session，展开态隔离）
+    // B 仍折叠（不同 turnIndex，展开态隔离）
     expect(wrapperB.find('.trace').exists()).toBe(false)
   })
 

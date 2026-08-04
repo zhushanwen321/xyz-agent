@@ -32,10 +32,11 @@ vi.mock('@/composables/features/useSideDrawer', () => ({
   useSideDrawer: () => ({ open: vi.fn() }),
 }))
 
-// 延迟到 mock 声明之后 import 被测组件。
-// 注意：不 mock useSidebar —— U8/U9 需要测真实 forkSession/forkSessionAsk 行为。
-// Turn 仅在 setup 时取 forkSession 引用（不立即调用），真实 useSidebar 在 pinia 下可工作。
-import Turn from '@/components/panel/message-stream/Turn.vue'
+// [w6 chat-ui-and-shell T7] ui 包 Turn/TurnSummary 经 ChatViewDeps inject 消费 fork 回调
+// （原 useTurnActions/useChat store 依赖失效）。U8/U9 测 useSidebar composable 层真实行为，保留；
+// U7/盲区2 改为 deps 回调契约断言（toast 反馈已迁 renderer 壳 useChatViewDeps.onFork catch）。
+import { Turn } from '@xyz-agent/ui'
+import { mockChatProvide } from '@/__tests__/helpers/chat-view-deps'
 import { useChatStore } from '@/stores/chat'
 
 /** 构造 assistant message（content 是 string，status 可控） */
@@ -66,14 +67,18 @@ function makeTurn(assistants: Message[]): MessageTurn {
   }
 }
 
+const onForkMock = vi.fn()
+const onForkAskMock = vi.fn()
+
 /**
- * mount Turn —— 复用外部 setActivePinia 的 pinia 实例（streaming 态需先在 store 写入状态）。
+ * mount Turn —— provide mock ChatViewDeps（fork 回调经 deps 注入，编排逻辑在 renderer 壳）。
  * 不新建 pinia：组件内 chat.isActive(sessionId) 必须读到 beforeEach 设置的同一 store。
  */
 function mountTurn(turn: MessageTurn, sessionId = 's1') {
   return mount(Turn, {
     props: { turn, sessionId },
     global: {
+      provide: mockChatProvide({ onFork: onForkMock, onForkAsk: onForkAskMock }),
       stubs: {
         Block: true,
         ChangeSetCard: true,
@@ -97,26 +102,18 @@ beforeEach(() => {
   toasts.value = []
 })
 
-// ── U7：首屏冒烟 —— streaming/pending 态每条 assistant 有 fork 按钮 ────────
-describe('U7 首屏冒烟：streaming 态每条 assistant 有 fork 后台 + fork 提问按钮', () => {
-  it('streaming 态（isSessionActive=true）下 fork 按钮可见（当前门控 !isSessionActive 应放宽）', () => {
-    const chat = useChatStore()
-    const sid = 's-stream'
-    // 制造 streaming → isActive=true → isSessionActive=true
-    chat.applyMessageEvent(sid, {
-      type: 'message.message_start',
-      payload: { sessionId: sid, messageId: 'a1' },
-    })
-    expect(chat.isActive(sid)).toBe(true)
-
+// ── U7：首屏冒烟 —— summary action 行恒有 fork 后台 + fork 提问按钮（W2 门控已放宽，ui 版无条件渲染） ────────
+describe('U7 首屏冒烟：fork 后台 + fork 提问按钮恒渲染（门控已放宽）', () => {
+  it('每条 assistant 的 summary action 行有 fork 后台 + fork 提问按钮（ui TurnSummary 无 isSessionActive 门控）', () => {
     const turn = makeTurn([makeAssistant({ id: 'a1', status: 'streaming' })])
-    const wrapper = mountTurn(turn, sid)
-    // 当前实现 v-if="!isSessionActive" 在 streaming 时隐藏 fork 按钮（title=克隆并分叉到另一面板）
-    // W2 放宽门控后 streaming 态也应有 fork 按钮
+    const wrapper = mountTurn(turn, 's-stream')
+    // W2 放宽门控后 streaming 态也应有 fork 按钮（ui 版 fork 按钮恒在 summary action 行）
     const forkBtns = wrapper.findAll('button').filter((b) =>
       b.attributes('title')?.includes('分叉') || b.attributes('title')?.includes('fork'),
     )
     expect(forkBtns.length).toBeGreaterThan(0)
+    expect(wrapper.find('[data-testid="fork-background-btn"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="fork-ask-btn"]').exists()).toBe(true)
   })
 
   it('多条 assistant 消息时，summary action 行有 fork 后台 + fork 提问按钮（与复制同行）', () => {
@@ -128,6 +125,7 @@ describe('U7 首屏冒烟：streaming 态每条 assistant 有 fork 后台 + fork
     // fork 按钮在 summary action 行（与复制/复制MD 同行），末条 assistant 位 1 组
     const forkBackgroundBtns = wrapper.findAll('[data-testid="fork-background-btn"]')
     expect(forkBackgroundBtns.length).toBe(1)
+
     const forkAskBtns = wrapper.findAll('[data-testid="fork-ask-btn"]')
     expect(forkAskBtns.length).toBe(1)
     // fork 按钮与复制按钮在同一容器（action 行）。重构后 fork-bg 是 fork split-button 的 trigger，
@@ -259,39 +257,37 @@ describe('U11：ForkConfirmModal 已删除（文件不存在 + Turn.vue 无 impo
   })
 
   it('Turn.vue 源码不再 import ForkConfirmModal', () => {
+    // [w6] Turn 已迁 ui 包（renderer 旧目录删除），检查 ui 包源码
     const turnPath = path.resolve(
       __dirname,
-      '../../components/panel/message-stream/Turn.vue',
+      '../../../../ui/src/features/chat/Turn.vue',
     )
     const source = fs.readFileSync(turnPath, 'utf-8')
-    // 红灯：当前 Turn.vue:298 `import ForkConfirmModal from './ForkConfirmModal.vue'`
     expect(source).not.toContain('ForkConfirmModal')
   })
 })
 
-// ── 盲区 2（renderer）：fork 失败反馈（W2 修复验证） ──────────────────────
-// sessionApi.fork reject → Turn.onFork 被 catch → toastError 被调（W2 加 try/catch + toastError）。
-// 回归防护：若 W2 回退（onFork 无 catch），reject 变 unhandled rejection，toast 不弹，此用例 fail。
-describe('盲区 2：fork 后台 RPC 失败 → toast 错误反馈（W2 onFork try/catch）', () => {
-  it('点 fork 后台按钮 → sessionApi.fork reject → toast 弹出 fork 失败文案', async () => {
-    const sessionApi = (await import('@/api')).session
-    // fork RPC reject（runtime 侧源文件不存在 / fork 点找不到 等场景透传到此）
-    vi.spyOn(sessionApi, 'fork').mockRejectedValue(new Error('source not found') as never)
-
+// ── 盲区 2（renderer）：fork 触发回调契约（编排 + toast 反馈已迁 renderer 壳 useChatViewDeps） ──────────────────
+describe('盲区 2：fork 按钮点击 → deps.onFork/onForkAsk 回调（编排在 renderer 壳）', () => {
+  it('点 fork 后台按钮 → deps.onFork(sessionId, message) 被调', async () => {
+    onForkMock.mockClear()
     const turn = makeTurn([makeAssistant({ id: 'a1', piEntryId: 'pi-a1' })])
     const wrapper = mountTurn(turn, 's-fork-fail')
 
-    // 点 fork 后台按钮（触发 onFork → forkSession → sessionApi.fork reject）
+    // 点 fork 后台按钮（ui TurnSummary onFork → deps.onFork）
     await wrapper.find('[data-testid="fork-background-btn"]').trigger('click')
-    // onFork 是 async（await forkSession），需 flush 微任务让 catch 跑完 + toast 入列
-    await wrapper.vm.$nextTick()
-    await wrapper.vm.$nextTick()
 
-    // toast 弹出：含 fork 失败语义文案（i18n key panel.message.forkFailed = 「fork 后台失败：…」）
-    const { toasts } = useToast()
-    expect(toasts.value.length).toBeGreaterThan(0)
-    const lastToast = toasts.value[toasts.value.length - 1]
-    expect(lastToast.type).toBe('error')
-    expect(lastToast.message).toContain('fork')
+    // 回调契约：sessionId + 完整 message 透传（编排/失败 toast 在 renderer 壳 useChatViewDeps.onFork）
+    expect(onForkMock).toHaveBeenCalledWith('s-fork-fail', expect.objectContaining({ id: 'a1' }))
+  })
+
+  it('点 fork 提问按钮 → deps.onForkAsk(sessionId, message) 被调', async () => {
+    onForkAskMock.mockClear()
+    const turn = makeTurn([makeAssistant({ id: 'a1', piEntryId: 'pi-a1' })])
+    const wrapper = mountTurn(turn, 's-fork-ask')
+
+    await wrapper.find('[data-testid="fork-ask-btn"]').trigger('click')
+
+    expect(onForkAskMock).toHaveBeenCalledWith('s-fork-ask', expect.objectContaining({ id: 'a1' }))
   })
 })

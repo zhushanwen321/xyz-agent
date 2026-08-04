@@ -11,7 +11,7 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { h } from 'vue'
-import BgNotifyCard from '@/components/panel/message-stream/BgNotifyCard.vue'
+import { BgNotifyCard } from '@xyz-agent/ui'
 import type { Message, BgNotifyRecord } from '@xyz-agent/shared'
 
 /** fullContent 现在走 MarkdownRenderer（W2），stub 掉避免依赖 shiki/useFileSearch 等。
