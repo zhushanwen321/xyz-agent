@@ -61,7 +61,8 @@ task prompt 中必须包含：
 
 ### pi 专属检查（agent-authoring-guide）
 
-- [ ] **frontmatter 合规**（§1）：`name` 与 basename 一致；`description` 是能力摘要**非触发词**（区别于 SKILL.md）；`tools` 是 pi 工具名，**不含 `grep`/`find`/`ls` 等 bash 子命令**（这些不是独立工具）
+- [ ] **frontmatter 合规**（§1）：`name` 与 basename 一致；`description` 是能力摘要**非触发词**（区别于 SKILL.md）；`tools` 是 pi 独立工具名（核实方法：`ls node_modules/@earendil-works/pi-coding-agent/dist/core/tools/*.js`）。注意 `grep`/`find`/`ls`/`fd`/`tree` 既是 bash 子命令**也是 pi 独立工具**（pi 有独立实现），列进 tools 合法——别误判。真正该拦的是 `cat`/`sed`/`awk` 这类纯 shell 命令（pi 无独立实现）
+- [ ] **tools 缺省语义理解正确**：不写 `tools` = 继承 pi 全集（不是“无工具”）。通用埵底 agent（general-purpose/worker）故意不写；专用 agent 应收窄。**审查时不要把“缺 tools”一律当 bug**——先判断该 agent 是否该用全集
 - [ ] **schema 契约声明**（§2）：被 workflow 调用的 agent，正文必须告诉 agent 输出字段（`report_content`/`must_fix`/`suggestion`/`reconciliation`/`report_file`）；schema-only agent 用 report_content，write agent 用 report_file
 - [ ] **防平铺守卫同步**（§4）：新增 workflow 参数时，`src/interface/tool-workflow.ts` 的 `KNOWN_ARG_KEYS` 与 `workflows/<wf>-utils.cjs` 的 `VALID_ARG_KEYS` **两处都加**，否则弱模型平铺时 P0 静默 args={} 漏检
 - [ ] **meta.description 未过载**（§5）：workflow `meta.description` 参数语义别单行塞满（P14 约束衰减），必填项标「必填」，枚举值列出

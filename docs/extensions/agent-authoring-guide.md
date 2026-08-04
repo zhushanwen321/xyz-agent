@@ -23,7 +23,11 @@ meta-prompt-creator 回答「怎么想」「怎么查」，是通用方法论 SS
 | `color` | 否 | 16 进制色值，仅 UI 标识 |
 | `model` | 否 | `inherit`（默认）或 `provider/modelId` |
 
-**tools 语法约束**：只能是 pi 注册的独立工具名（`read`/`bash`/`write`/`edit`/`grep`/`structured-output`/`subagent`/...）。不要写 bash 子命令——`grep`/`find`/`ls`/`cat` 是 `bash` 内的，不是独立工具（实测：把 `grep,find,ls` 列进 tools 无效，工具实际不存在）。
+**tools 语法约束**：列 pi 注册的独立工具名。subagent 启动时经 `--tools` flag 注入（`session-runner.ts` buildSpawnArgs），可用工具集以 pi 已安装版为准——核实方法：`ls node_modules/@earendil-works/pi-coding-agent/dist/core/tools/*.js`（每个文件一个独立工具）。常见的独立工具：`read`/`bash`/`write`/`edit`/`grep`/`find`/`ls`/`glob`/`fd`/`tree`/`structured-output`/`subagent`/`todo`/`goal_control`/`workflow`/`ask_user`/... 注意：`grep`/`find`/`ls` 既是 bash 子命令**也是 pi 独立工具**（pi 用 Rust/独立实现，非调 shell），列进 tools 合法且常见（explorer.md 就这么用）。不要列的是 `cat`/`sed`/`awk` 这类纯 shell 命令（pi 无独立实现，只能经 `bash` 调）。
+
+**tools 缺省语义**（重要）：frontmatter 不写 `tools` → `--tools` flag 不传 → subagent 继承 **pi 完整默认工具集**（不是“无工具”）。这是 `parseAgentFrontmatter`（agent-registry.ts）+ `buildSpawnArgs`（session-runner.ts）的明确行为：`tools` 为 undefined 时 fallback 到全集。通用埵底 agent（general-purpose/worker）故意不写 tools 以保留全集；专用 agent（reviewer/doc-reviewer）显式收窄。**审查时不要把“缺 tools”判为 bug**——先判断该 agent 是否应该用全集。
+
+**核实方法**（审查 agent.md tools 字段前必做，否则误判）：(1) 某工具名是否 pi 独立工具 → `ls dist/core/tools/`；(2) 缺 tools 是刻意继承全集还是遗漏 → 看 agent 职责（通用埵底 = 全集合理；专用 = 应收窄）。
 
 **description 写法**（区别于 SKILL.md）：写「这个 agent 能做什么、领域是什么」，不写「Use when user wants...」。
 
