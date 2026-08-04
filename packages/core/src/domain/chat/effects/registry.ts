@@ -56,9 +56,9 @@ import { findLastAssistantIndex, findToolCallOwner } from '../chunk-processor'
 import { commitMessages } from '../mutations'
 import { truncateToolCall } from '../truncate-tool-output'
 import { bashStartEffect, bashResultEffect } from '../bash-effects'
-// tasks store 已迁 core/src/domain/tasks/（D9 存根，TODO @P4-§6.7-delete），intra-core import
-import { useTasksStore } from '../../tasks'
-import { isTodoItem } from '../../tasks/tasks-readers'
+// tasks store 已迁 core/src/domain/tasks/（D9 存根，TODO @P4-§6.7-delete）。
+// AC10 跨域铁律：tasks 域（含 index）一律经 '@xyz-agent/core' 包入口公开 API 消费（禁内部相对路径）
+import { useTasksStore, isTodoItem } from '@xyz-agent/core'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 // [TODO @i18n-migration] core/i18n 落地后恢复 i18n.global.t 调用（§0.3 列为后续迁移）。
 // 当前 compactionSummary/branchSummary 的 summary 兑底文案用硬编码英文占位（summary 几乎总在场，兑底军见）。

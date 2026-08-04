@@ -149,6 +149,14 @@ export default [
             { group: ['node:*'], message: 'core 包禁止 node: import——平台能力经 PlatformPort 注入' },
             { group: ['ws'], message: 'core 包禁止直连 ws 包——WebSocket 经 PlatformPort.webSocket.create' },
             { group: ['electron'], message: 'core 包禁止 import electron——ipc 经 PlatformPort' },
+            // [HISTORICAL] AC10 跨域铁律（W5 drawer-boundaries-gate，FR7 终验收）：
+            // domain 内文件禁止 import 任何「@xyz-agent/core/domain/<域>/<内部模块>」包名路径（含同域内部路径——
+            // 域内应走相对路径）。合法形态：单层 '@xyz-agent/core/domain/<域>'（index.ts 公开 API，
+            // minimatch * 不跨 / 故单层不匹配下方 pattern）或 '@xyz-agent/core'（包入口 index.ts）。
+            // 相对路径跨域（深度可变，patterns 无法表达）由 scripts/check-domain-boundaries.sh 兜底。
+            // 2026-08-04 审计：domain 下零包名内部路径 import，规则落地零命中。
+            { group: ['@xyz-agent/core/domain/*/*'], message: 'AC10 跨域铁律：domain 内禁 import 域内部模块（包名形式）——经 @xyz-agent/core/domain/<域> 公开 index API 或 @xyz-agent/core 包入口消费' },
+            { group: ['@xyz-agent/core/domain/*/**/*'], message: 'AC10 跨域铁律：domain 内禁 import 域内部深层模块（包名形式）——经公开 index API 消费' },
           ],
         },
       ],

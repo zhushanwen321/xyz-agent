@@ -19,6 +19,29 @@
  *
  * 旧 SideDrawer 删除后本兼容层可一并移除（core/domain/drawer 已是 SSOT，新代码直接 import core）。
  *
+ * ── 兼容层消费方清单（W5 drawer-boundaries-gate 登记，删除前置知识）──
+ * 删除本文件前置条件：B + C + D 全部解除后，本文件可删除（core/domain/drawer 为 SSOT，
+ * 新代码直接 import '@xyz-agent/core/domain/drawer'）。
+ *
+ * A 已直连 core、仅注释提及（无 import）：PanelContainer.vue（line 19/173 注释）、
+ *   PanelContainer.test.ts（注释）、useSearchModal.ts（注释）、stores/panel.ts（注释）、
+ *   turn-skill-badge.test.ts（注释）。无需迁移。
+ * B 待 T5 解除（本 wave 不触碰）：useSidebar.ts:39 import { consumePendingOpen }
+ *   ——T5 阻塞文件，consumePendingOpen 改指向 '@xyz-agent/core/domain/drawer' 后 B 清零。
+ * C 待 chat-w6 迁移（认知外文件，不触碰）：useChatViewDeps.ts:35 import
+ *   { useSideDrawer, type SideDrawerTab }——chat-w6 迁移后改指向 core API。
+ * D 可平滑迁移（改 import 指向 '@xyz-agent/core/domain/drawer' 即可，~11 生产 + ~14 测试）：
+ *   生产：useMarkdownInteractions.ts / useRunInTerminal.ts / useCloseShortcut.ts
+ *   （isOpen/close）/ useDetailPane.ts（detailFilePath）/ useSidebarNew.ts（open）/ stores/chat.ts
+ *   （open('tasks') + setPendingOpenForSid）/ FileTreeRow.vue / Sidebar.vue（open）/ GitPanel.vue /
+ *   CommandDocPanel.vue（selectedCommandName）/ lib/search-types.ts（类型 re-export）。
+ *   测试：useSideDrawer.test.ts（兼容层自身）/ useDetailPane.test.ts / useCloseShortcut.test.ts /
+ *   useMarkdownInteractions-fallback.test.ts / fast-fork-e2e-journeys.test.ts /
+ *   drawer-injection-entries.test.ts / command-doc-panel.test.ts / FileTreeRow.test.ts /
+ *   tasks-tool-name-resolution.test.ts / fork-entry-behavior.test.ts / turn-file-badge.test.ts /
+ *   panel-container-drawer-mode.test.ts（vi.mock 或 re-export 依赖，改 mock core 或随消费方迁移）。
+ * 清单维护：消费方迁移后同步从本清单移除（删除文件时清单应为空）。
+ *
  * 单实例（Q2=A 单例）：core controlState 是模块级单例（控制态物理只有一份），SideDrawer
  * 单实例跟随 active panel。双 panel standby 无独立 drawer 状态——切到 standby（变 active）
  * 时其 session 分区状态自然显示（drawer 物理只有一份）。
