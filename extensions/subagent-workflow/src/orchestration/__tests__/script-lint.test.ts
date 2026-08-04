@@ -412,6 +412,37 @@ describe("MF-4 回归：字符串字面量里的 agent(...) 不误触发", () =>
     expect(warnings(result.findings).filter((w) => /description.*unnamed/i.test(w.message)))
       .toHaveLength(0);
   });
+
+  it("模板串内 agent({...}) 完整调用形态不误触发（反引号剔除路径）", () => {
+    // MF-4 既有用例只覆盖双引号字面量；workflow 脚本 prompt 常用模板串（含 ${} 插值）。
+    // 若 `...` 反引号剔除失效，模板串里的 agent({...}) 会开幻影调用范围并误报缺 description
+    const src = [
+      "const prompt = `agent({ prompt: '${x}' })`;",
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).filter((w) => /description.*unnamed/i.test(w.message)))
+      .toHaveLength(0);
+    expect(errors(result.findings)).toHaveLength(0);
+  });
+
+  it("块注释内 agent({...}) 完整调用形态不误触发（/* */ 剔除路径）", () => {
+    // 行首 /* 注释由行级跳过兜底；行尾块注释（非行首前缀）走 stripStringsAndComments 的
+    // /* */ 剔除路径——若失效，注释里的 agent({...}) 会开幻影调用范围并误报缺 description
+    const src = [
+      `/* agent({ prompt: 'x' }) */`,
+      `const s = "x"; /* agent({ prompt: 'y' }) */`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).filter((w) => /description.*unnamed/i.test(w.message)))
+      .toHaveLength(0);
+    expect(errors(result.findings)).toHaveLength(0);
+  });
 });
 
 describe("MF-4 回归：非字面量实参 agent(callVar) / agent(expr()) 跳过", () => {
@@ -617,5 +648,18 @@ describe("声明 phases 与 phase() 调用一致性 — warning", () => {
 
     expect(warnings(result.findings).some((w) => /never set via phase/i.test(w.message)))
       .toBe(false);
+  });
+
+  it("无 phases 声明 + 无 phase() 调用 → 0 warning（skip 分支）", () => {
+    // checkPhaseConsistency 的 declared/called 都为空 → 提前 return（脚本不使用 phase 机制）。
+    // 断言用全量 warning 而非 message 正则过滤——skip 分支若产生 spurious warning 也会被捕获
+    const src = [
+      `const meta = { name: "x" };`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings)).toHaveLength(0);
   });
 });
