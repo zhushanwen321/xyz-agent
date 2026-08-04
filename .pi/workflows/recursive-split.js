@@ -25,7 +25,7 @@ const {
   slugFromUnitId,
   decideNodeOutcome,
   isAgentReportedFailure,
-  isProgressive,
+  resolveNodeTimeoutMs,
   buildActionPrompt,
   buildActionSchema,
   topoSort,
@@ -34,10 +34,8 @@ const {
   pruneTerminalEntries,
 } = require(process.cwd() + "/.pi/workflows/recursive-split-utils.cjs");
 
-// 合并 progressive agent（clarify→plan→design-review）超时：15min（跑 3 个 progressive action）
-const NODE_TIMEOUT_PROGRESSIVE_MS = 15 * 60 * 1000;
-// 非 progressive agent（单 action）超时：10min
-const NODE_TIMEOUT_NONPROGRESSIVE_MS = 10 * 60 * 1000;
+// 节点 agent 超时预算统一由 resolveNodeTimeoutMs(nextAction) 解析（utils.cjs，已单测）：
+// progressive 段 15min / execute·test 30min / 其余非 progressive 15min。
 
 // cw frontier 超时：只在 BFS 轮次边界调用，不应阻塞太久
 const FRONTIER_TIMEOUT_MS = 30000;
@@ -114,11 +112,15 @@ async function abortUnit(unitId) {
  * 执行单节点：派 agent 跑明确的 action（或合并的 progressive action 段）。
  * description 含 action（{layer首字母}-{action}-{slug}，如 e-execute-auth），
  * phase（WorkUnit 级）不含 action（{layer首字母}-{slug}）。
- * timeoutMs 按 isProgressive(node.nextAction) 选 15min / 10min。
+ * timeoutMs 按 resolveNodeTimeoutMs(node.nextAction) 解析（utils.cjs，已单测）。
  * returnMeta:true → 返回 {unitId, value, sessionFile?, failedReason?}。
- * 失败两个来源：(1) decideNodeOutcome(r) 检 r.error（pi 层崩溃/timeout）；
- *              (2) r.value.stopReason 为 gate-failed/cannot-proceed（agent 自报失败）。
- * 两者都 abortUnit + 返回 failedReason（不 throw，主循环继续其他节点）。
+ * 失败三个来源：(1) decideNodeOutcome(r) 检 r.error（pi 层崩溃/timeout）；
+ *              (2) r.value.stopReason=gate-failed（agent 自报：同一 action 重试 3 次仍 fail）；
+ *              (3) r.value.stopReason=cannot-proceed（agent 自报：需外部决策/无法继续）。
+ * (1)(2) 都 abortUnit + 返回 failedReason；(3) 不 abort——prompt 契约是「交给上层决策」，
+ * abortUnit 会级联销毁健康 WorkUnit；节点保留在 frontier 等 re-dispatch，持续无法推进时
+ * 由 detectStuckNodes 熔断（MAX_NODE_ROUNDS 轮）。failedReason 均进最终返回值的 failedUnits 聚合。
+ * 不 throw（主循环继续其他节点）。
  * 注意：失败字段命名 failedReason 而非 error，避免被 parallel() 归一化吞掉其他字段。
  */
 async function executeActionAgent(node, sessionFiles) {
@@ -128,9 +130,7 @@ async function executeActionAgent(node, sessionFiles) {
   // phase（WorkUnit 级）不含 action；description（action-centric）含 action。
   const phaseName = node.scope[0] + "-" + slug;
   const description = node.scope[0] + "-" + node.nextAction + "-" + slug;
-  const timeoutMs = isProgressive(node.nextAction)
-    ? NODE_TIMEOUT_PROGRESSIVE_MS
-    : NODE_TIMEOUT_NONPROGRESSIVE_MS;
+  const timeoutMs = resolveNodeTimeoutMs(node.nextAction);
   const r = await agent({
     prompt: buildActionPrompt(node),
     schema: buildActionSchema(node),
@@ -151,15 +151,22 @@ async function executeActionAgent(node, sessionFiles) {
     return { unitId: node.unitId, value: r.value, sessionFile: r.sessionFile, failedReason: outcome.failedReason };
   }
 
-  // 失败来源 2：agent 自报失败（stopReason=gate-failed/cannot-proceed）。
+  // 失败来源 2/3：agent 自报失败（stopReason=gate-failed/cannot-proceed）。
   // 不按 failedReason 非空判定：LLM 结构化输出不受 schema 约束，action 成功
   // （stopReason=action-done/progressive-done/closed）后 failedReason 残留是常见现象，
   // 按 failedReason 判定会把刚成功的节点立即 abortUnit 销毁（MF-3）。
   // 判定逻辑抽到 isAgentReportedFailure（recursive-split-utils.cjs，供 vitest 单测）。
   if (isAgentReportedFailure(r.value)) {
-    log("Node " + node.unitId + " failed (agent-reported): " + (r.value.failedReason ?? r.value.stopReason));
-    await abortUnit(node.unitId);
-    return { unitId: node.unitId, value: r.value, sessionFile: r.sessionFile, failedReason: r.value.failedReason };
+    const failedReason = r.value.failedReason ?? r.value.stopReason;
+    log("Node " + node.unitId + " failed (agent-reported): " + failedReason);
+    // gate-failed：同一 action 重试 3 次仍 fail，节点确已卡死 → abortUnit 熔断销毁。
+    // cannot-proceed：需外部决策/无法继续（如 replan 非法被 cw guard 拒绝），prompt
+    // 契约是「状态机不受破坏，交给上层决策」——不 abort，节点保留在 frontier 等
+    // re-dispatch（外部条件解除后可能成功）；持续无法推进由 detectStuckNodes 熔断。
+    if (r.value.stopReason === "gate-failed") {
+      await abortUnit(node.unitId);
+    }
+    return { unitId: node.unitId, value: r.value, sessionFile: r.sessionFile, failedReason: failedReason };
   }
 
   return { unitId: node.unitId, value: r.value, sessionFile: r.sessionFile };
@@ -194,6 +201,12 @@ try {
   const replanArm = {};
   // frontierFailures: queryFrontier 连续返回 null 的次数（达 MAX_FRONTIER_RETRIES 才 break）
   let frontierFailures = 0;
+  // nodeFailures: unitId → failedReason（BFS 结束时聚合进最终返回值 failedUnits，
+  // 供上层（调用方主 agent）决策：哪些节点失败、为什么——cannot-proceed 的上层决策通道）
+  const nodeFailures = {};
+  // failedUnits 聚合：Map → {unitId, failedReason}[]（最终返回值用）
+  const collectFailedUnits = () =>
+    Object.entries(nodeFailures).map(([unitId, failedReason]) => ({ unitId, failedReason }));
 
   while (true) {
     // 不变式：queryFrontier 只在轮次边界调（此处 parallel 已全 settle）
@@ -210,12 +223,14 @@ try {
         // status:error（不 break 走 phase("done")），调用方据此区分完整/不完整树。
         log("queryFrontier failed " + MAX_FRONTIER_RETRIES + " consecutive times, aborting BFS");
         phase("error");
+        const failedUnits = collectFailedUnits();
         return {
           status: "error",
           error:
             "queryFrontier failed " +
             MAX_FRONTIER_RETRIES +
             " consecutive times, tree incomplete",
+          ...(failedUnits.length > 0 ? { failedUnits } : {}),
         };
       }
       continue;
@@ -259,7 +274,14 @@ try {
           continue;
         }
         if (r.sessionFile) sessionFiles[r.unitId] = r.sessionFile;
-        if (r.failedReason) log("BFS: " + r.unitId + " failed: " + r.failedReason);
+        if (r.failedReason) {
+          log("BFS: " + r.unitId + " failed: " + r.failedReason);
+          nodeFailures[r.unitId] = r.failedReason;
+        } else {
+          // 曾失败（如 cannot-proceed）后 re-dispatch 恢复成功的节点移出清单——
+          // failedUnits 保持"最终仍处于失败状态"语义，避免误导上层决策。
+          delete nodeFailures[r.unitId];
+        }
       }
     }
 
@@ -277,7 +299,13 @@ try {
         continue;
       }
       if (r && r.sessionFile) sessionFiles[r.unitId] = r.sessionFile;
-      if (r && r.failedReason) log("BFS: " + r.unitId + " failed: " + r.failedReason);
+      if (r && r.failedReason) {
+        log("BFS: " + r.unitId + " failed: " + r.failedReason);
+        nodeFailures[r.unitId] = r.failedReason;
+      } else if (r) {
+        // 恢复成功的节点移出清单（与 concurrent 分支同一语义）
+        delete nodeFailures[r.unitId];
+      }
     }
 
     // Suggestion #3：每轮 BFS 结束后清理已退出调度的节点在 prevStatus / nodeRounds 中的 entry，
@@ -292,7 +320,12 @@ try {
   }
 
   phase("done");
-  return { status: "done", rootUnitId };
+  const failedUnits = collectFailedUnits();
+  return {
+    status: "done",
+    rootUnitId,
+    ...(failedUnits.length > 0 ? { failedUnits } : {}),
+  };
 } catch (e) {
   // 兜底：topoSort 环检测 / createRootUnit 失败 / startLayer 校验 / 其他未预期错误
   // 不 rethrow——workflow 脚本顶层 return 错误结果，由调用方（主 agent）决策

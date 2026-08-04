@@ -4,8 +4,12 @@ import {
   MAX_FRONTIER_RETRIES,
   VALID_LAYERS,
   PROGRESSIVE_ACTIONS,
+  NODE_TIMEOUT_PROGRESSIVE_MS,
+  NODE_TIMEOUT_HEAVY_MS,
+  NODE_TIMEOUT_LIGHT_MS,
   isTerminal,
   isProgressive,
+  resolveNodeTimeoutMs,
   assertValidUnitId,
   isTimeoutError,
   escapeSingleQuotes,
@@ -64,6 +68,39 @@ describe("常量", () => {
   it("isProgressive 边界（undefined / 空串）", () => {
     expect(isProgressive(undefined)).toBe(false);
     expect(isProgressive("")).toBe(false);
+  });
+});
+
+// ── resolveNodeTimeoutMs（节点 agent 超时预算，S-5/S-7） ───────────────
+
+describe("resolveNodeTimeoutMs", () => {
+  it("progressive action → 15min（合并段预算）", () => {
+    for (const action of ["clarify", "plan", "design-review", "replan"]) {
+      expect(resolveNodeTimeoutMs(action)).toBe(15 * 60 * 1000);
+    }
+  });
+
+  it("execute/test → 30min（大型 wave 重活放宽，S-5 回归）", () => {
+    expect(resolveNodeTimeoutMs("execute")).toBe(30 * 60 * 1000);
+    expect(resolveNodeTimeoutMs("test")).toBe(30 * 60 * 1000);
+  });
+
+  it("exec-review/retrospect/closeout → 15min", () => {
+    for (const action of ["exec-review", "retrospect", "closeout"]) {
+      expect(resolveNodeTimeoutMs(action)).toBe(15 * 60 * 1000);
+    }
+  });
+
+  it("重活 action 预算 ≥ progressive 合并段预算（单 action 不得比合并段更紧）", () => {
+    expect(NODE_TIMEOUT_HEAVY_MS).toBeGreaterThanOrEqual(NODE_TIMEOUT_PROGRESSIVE_MS);
+    expect(NODE_TIMEOUT_PROGRESSIVE_MS).toBeGreaterThanOrEqual(NODE_TIMEOUT_LIGHT_MS);
+    expect(resolveNodeTimeoutMs("execute")).toBeGreaterThanOrEqual(resolveNodeTimeoutMs("clarify"));
+  });
+
+  it("未知/缺省 action 回退轻量档（不抛，调度容错）", () => {
+    expect(resolveNodeTimeoutMs("unknown-action")).toBe(NODE_TIMEOUT_LIGHT_MS);
+    expect(resolveNodeTimeoutMs(undefined)).toBe(NODE_TIMEOUT_LIGHT_MS);
+    expect(resolveNodeTimeoutMs("")).toBe(NODE_TIMEOUT_LIGHT_MS);
   });
 });
 
@@ -289,6 +326,10 @@ describe("isAgentReportedFailure", () => {
   it("stopReason=progressive-done / closed → false", () => {
     expect(isAgentReportedFailure({ stopReason: "progressive-done" })).toBe(false);
     expect(isAgentReportedFailure({ stopReason: "closed" })).toBe(false);
+  });
+
+  it("stopReason=crosslayer-descend → false（语义等价 action-done：正常续接，非失败）", () => {
+    expect(isAgentReportedFailure({ stopReason: "crosslayer-descend" })).toBe(false);
   });
 
   it("value 为 undefined / null → false", () => {

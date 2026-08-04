@@ -36,6 +36,29 @@ function isProgressive(action) {
   return PROGRESSIVE_ACTIONS.has(action);
 }
 
+// ── 节点 agent 超时预算（resolveNodeTimeoutMs 用） ────────────────
+
+// progressive 段（clarify→plan→design-review 合并跑，单 session 最多 3 个 action）15min
+const NODE_TIMEOUT_PROGRESSIVE_MS = 15 * 60 * 1000;
+// 重活 action（execute：写代码 + git commit + cw execute；test：写测试 + 跑 vitest）30min。
+// 大型 wave 上单 action 可能远超 10min，且 gate fail 重试 3 次计入预算（S-5 放宽）。
+const NODE_TIMEOUT_HEAVY_MS = 30 * 60 * 1000;
+// 轻量 action（exec-review/retrospect/closeout）15min
+const NODE_TIMEOUT_LIGHT_MS = 15 * 60 * 1000;
+
+/**
+ * 按 action 解析单节点 agent 超时预算（供 executeActionAgent 接线，纯函数可单测）。
+ * - progressive（clarify/plan/design-review/replan）：合并段 15min
+ * - execute/test：30min（写代码 + commit / 写测试 + vitest，大型 wave 重活）
+ * - 其余非 progressive（exec-review/retrospect/closeout）：15min
+ * 未知 action 回退轻量档（不抛——调度容错，宁可放宽不可误杀）。
+ */
+function resolveNodeTimeoutMs(action) {
+  if (isProgressive(action)) return NODE_TIMEOUT_PROGRESSIVE_MS;
+  if (action === "execute" || action === "test") return NODE_TIMEOUT_HEAVY_MS;
+  return NODE_TIMEOUT_LIGHT_MS;
+}
+
 // ── 纯函数 ──────────────────────────────────────────────────────────
 
 /**
@@ -333,6 +356,10 @@ function selectActionable(frontier) {
  *    （无新 action）则走 status 未推进熔断逻辑。
  * 2. status 未推进熔断：跨 BFS 轮 status 不变连续 MAX_NODE_ROUNDS 次 → abort
  *
+ * [字段来源/验证状态] node.lastStatusHistoryAction 来自 cw frontier JSON 输出（非本仓
+ * 可验证的字段）：本仓无法确认 cw 是否输出该字段。若 cw 缺失该字段，replan 豁免分支
+ * 恒不激活，行为回退旧熔断（安全但豁免失效）——验证 cw frontier 输出后决定补字段或移除分支。
+ *
  * 向后兼容：node 无 lastStatusHistoryAction 字段时走 status 未推进逻辑（原行为）。
  * replanArm 不传时每次调用新建空对象（仅单轮测试用）——运行时必须传持久对象。
  */
@@ -441,9 +468,13 @@ module.exports = {
   VALID_LAYERS,
   MAX_FRONTIER_RETRIES,
   PROGRESSIVE_ACTIONS,
+  NODE_TIMEOUT_PROGRESSIVE_MS,
+  NODE_TIMEOUT_HEAVY_MS,
+  NODE_TIMEOUT_LIGHT_MS,
   // 纯函数
   isTerminal,
   isProgressive,
+  resolveNodeTimeoutMs,
   assertValidUnitId,
   isTimeoutError,
   escapeSingleQuotes,
