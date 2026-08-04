@@ -58,6 +58,7 @@ const {
   validateFixResult,
   reconcileIssues,
   normalizeReviewResult,
+  computeKnownRemaining,
   checkConvergence,
   findNeedsRedesign,
   parseResult,
@@ -604,14 +605,6 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         }
         if (added > 0) log("New findings tracked: " + added + " new issue(s) in round " + round);
       }
-    } else {
-    if (round > 1 && reconSeen.size > 0) {
-      const rec = reconcileIssues(state.issues || {}, { seenIds: reconSeen, round, stuckThreshold });
-      state.issues = rec.issues;
-      state.knownRemaining = rec.knownRemaining;
-      stuck = { stuck: rec.stuck, stuckIds: rec.stuckIds };
-      log("Reconcile: " + Object.keys(rec.issues).length + " tracked issue(s), known-remaining: " + rec.knownRemaining.length);
-
     } else {
       const s = updateStuckState(prevMustFix, stuckCount, mustFix, stuckThreshold);
       stuckCount = s.stuckCount;
