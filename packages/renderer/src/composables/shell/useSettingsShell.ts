@@ -7,11 +7,16 @@
  * matchMedia 系统色监听仍在旧 useSettings，ui ProviderEditModal 的 3 个注入 key 无 provide 点。
  *
  * 本 composable 在 AppShell setup 调用一次，按序完成 settings 域壳接入五件事：
- *  ① providePlatform（LocalStorageAdapter + ipc + wsFactory）—— 先于 init（getPlatform fail-fast）
+ *  ① providePlatform（桌面壳入口 main.ts 已注入；此处保留调用，幂等无害）
  *  ② provideSettingsTransport（转发 @/api 的 adapter）
  *  ③ core useSettings().init()（挂常驻订阅 + 同步 system 偏好到 store）
  *  ④ provide 3 个 ui 注入 key（toast / useQuotaConfigure 工厂 / configApi）—— 向 SettingsModal 子树注入
  *  ⑤ watch system.theme 挂/卸 matchMedia listener（theme=system 时 OS 深浅色实时切换）+ 初始 apply 兜底
+ *
+ * [HISTORICAL] 2026-08-04：providePlatform 原只在此调用，但 AppShell 仅在连接成功后渲染
+ * （App.vue v-if connectionState==='connected'）→ core ws-client.connect 的 getPlatform()
+ * fail-fast 死锁（永远「连接中」）。注入已上提至 main.ts（platform/desktop-platform.ts），
+ * 此处保留原调用（providePlatform 幂等，模块级单例覆盖无害）。
  *
  * core 零 DOM（架构 §11.0.1 DOM 审计）：applySystemToDom + matchMedia 是浏览器 API，下沉壳。
  * 完整 bootstrap.ts 合并（跨域 transport/session/extension-host 统一编排）留给后续壳整合 wave，
@@ -19,20 +24,20 @@
  */
 import { provide, watch, onBeforeUnmount } from 'vue'
 import {
-  providePlatform,
   getSettingsStore,
   useSettings,
 } from '@xyz-agent/core'
 import { provideSettingsTransport } from '@xyz-agent/core/domain/settings'
-import type { WebSocketLike } from '@xyz-agent/core/platform/port'
 import {
   SETTINGS_TOAST_KEY,
   USE_QUOTA_CONFIGURE_KEY,
   SETTINGS_CONFIG_API_KEY,
   applySystemToDom,
 } from '@xyz-agent/ui/features/settings'
-import { LocalStorageAdapter } from './local-storage-adapter'
 import { createSettingsTransport } from './settings-transport-adapter'
+import { provideDesktopPlatform } from '@/platform/desktop-platform'
+import { createMockPlatform } from '@/mock/mock-ws'
+import { providePlatform } from '@xyz-agent/core'
 import { useToast } from '@/composables/useToast'
 import { useQuotaConfigure } from '@/composables/features/useQuotaConfigure'
 import { config } from '@/api'
@@ -45,20 +50,15 @@ import type { Locale } from '@/i18n'
  * providePlatform 幂等（core 模块级单例覆盖），重复调用无害（未来其他域壳接入复用同模式）。
  */
 export function useSettingsShell(): void {
-  // ① providePlatform：LocalStorageAdapter（KVStorage）+ ipc（null）+ wsFactory（透传原生 WebSocket）
-  //    settings 域仅消费 storage（system-storage 经 getPlatform().storage）；ipc 端口由 platform-port-spike
-  //    slice 落地 ElectronPlatformAdapter 时统一接线（lib/ipc.ts 仍直读 window.electronAPI，未走 port）。
-  //    wsFactory 透传原生 WebSocket：core ws-client.connect 经 getPlatform().webSocket.create 取连接，
-  //    native WebSocket 结构上满足 WebSocketLike 端口契约（readyState/send/close/on* 7 成员齐全）。
-  providePlatform({
-    kind: 'electron',
-    storage: new LocalStorageAdapter(),
-    webSocket: {
-      // native WebSocket 是 platform 的具体 WS 实现；WebSocketLike 为抽象端口，此处声明接口满足。
-      create: (url: string): WebSocketLike => new WebSocket(url) as unknown as WebSocketLike,
-    },
-    ipc: null,
-  })
+  // ① providePlatform：桌面壳 main.ts bootstrap 已注入（provideDesktopPlatform / mock 分支
+  //    createMockPlatform）。此处保留调用但按 VITE_MOCK 分支（AppShell 仅在连接成功后渲染，
+  //    mock 模式此处的无条件 provideDesktopPlatform 会覆盖 mock platform → 后续 connect 崩）；
+  //    providePlatform 幂等（模块级单例覆盖），正常模式重复调用无害。
+  if (import.meta.env.VITE_MOCK === 'true') {
+    providePlatform(createMockPlatform())
+  } else {
+    provideDesktopPlatform()
+  }
 
   // ② provideSettingsTransport：转发 @/api 的 adapter
   provideSettingsTransport(createSettingsTransport())
