@@ -62,10 +62,10 @@
         </span>
         <div class="min-w-0 flex-1">
           <div class="truncate text-[12px] leading-[1.3] text-neutral-fg">{{ b.label }}</div>
-          <!-- 分支 N pill（accent-soft 底 + 9px mono，spec §7 branch-pill） -->
+          <!-- 分支 N pill（reasoning-soft 底 + 9px mono，spec §3.5.7/§5.6C branch-pill git 分支维度） -->
           <div class="mt-0.5 flex items-center gap-1">
             <span
-              class="rounded-[3px] bg-accent-soft px-1 font-mono text-[9px] font-semibold leading-[1.4] text-accent"
+              class="rounded-[3px] bg-reasoning-soft px-1 font-mono text-[9px] font-semibold leading-[1.4] text-reasoning"
             >
               {{ t('sidebar.forkGroup.branchN', { n: idx + 1 }) }}
             </span>

@@ -32,7 +32,7 @@
         <!-- W2 目录改动数徽章（子树改动文件数，>0 才显） -->
         <span
           v-if="dirChangeCount > 0"
-          class="shrink-0 rounded-sm bg-accent-soft px-1 py-0.5 font-mono text-[10px] text-accent"
+          class="shrink-0 rounded-sm bg-surface-2 px-1 py-0.5 font-mono text-[10px] text-neutral-dim"
           :data-testid="`file-tree-dir-badge-${node.path}`"
         >{{ dirChangeCount > 999 ? '999+' : dirChangeCount }}</span>
       </div>
@@ -85,7 +85,7 @@
     <div
       v-else
       class="flex w-max min-w-full cursor-pointer items-center gap-1.5 rounded-md py-0.5 pr-2 transition-colors hover:bg-surface-hover"
-      :class="{ 'bg-accent-soft': isSelected }"
+      :class="{ 'bg-surface': isSelected }"
       :style="rowPaddingStyle"
       :data-testid="`file-tree-file-${node.path}`"
       @click="onSelectFile"

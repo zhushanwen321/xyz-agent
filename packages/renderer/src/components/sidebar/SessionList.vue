@@ -18,7 +18,7 @@
              不影响子级 SessionItem 的 group-hover（两者独立 scope）。 -->
         <div class="group/folder sticky top-0 z-[1] flex items-center gap-1.5 bg-bg px-2 pb-0.5 pt-2">
           <Folder class="size-[11px] shrink-0 text-neutral-dim" />
-          <span class="truncate text-[10px] font-medium uppercase tracking-wide text-neutral-dim">
+          <span class="truncate text-[10px] font-medium text-neutral-dim">
             {{ dirNameOf(g.cwd) }}
           </span>
           <span class="font-mono text-[10px] text-neutral-dim opacity-60">{{ g.sessions.length }}</span>

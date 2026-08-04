@@ -13,8 +13,8 @@
       :class="cn(
         'relative h-auto flex-1 justify-center gap-1 rounded-sm px-1 py-1',
         modelValue === tab.value
-          ? 'border border-border-strong bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent'
-          : 'border border-border text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg',
+          ? 'bg-bg-elevated text-neutral-fg hover:bg-bg-elevated hover:text-neutral-fg'
+          : 'text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg',
       )"
       @click="emit('update:modelValue', tab.value)"
     >
@@ -22,7 +22,7 @@
       <span
         v-if="tab.count > 0"
         class="font-mono text-[10px]"
-        :class="modelValue === tab.value ? 'text-accent opacity-80' : 'text-neutral-dim opacity-70'"
+        :class="modelValue === tab.value ? 'text-neutral-fg opacity-80' : 'text-neutral-dim opacity-70'"
       >{{ tab.count }}</span>
       <span
         v-if="tab.badge"

@@ -52,7 +52,7 @@
         :class="cn(
           'group mb-1 h-auto justify-start gap-2.5 rounded-md px-2 py-1.5 text-[12px]',
           isOverviewActive
-            ? 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent'
+            ? 'bg-surface text-accent hover:bg-surface hover:text-accent'
             : 'text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg',
         )"
         @click="goOverview"

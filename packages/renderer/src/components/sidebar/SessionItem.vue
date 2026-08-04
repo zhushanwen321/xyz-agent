@@ -1,14 +1,14 @@
 <template>
   <!--
     展示组件 · 单会话项（draft-eight-states §1）。
-    flex [icon] [main] [time]；active = surface-2 背景（Card-Active，design-system §2）+ inset accent-ring。
+    flex [icon] [main] [time]；active = surface 背景 + text-accent（v6 §5.4 列表项型，无 ring 无左条）。
     状态图标 8 态（方案 C 优化版 v3）：streaming/pending/compacting/waiting/retrying 动态图标，done/stopped/error 静态图标。
   -->
   <div
     ref="rootEl"
     class="session-item group/item relative flex cursor-pointer items-start gap-2 rounded-md px-2 py-[7px] transition-colors"
     :class="[
-      active ? 'bg-surface-2 ring-1 ring-inset ring-accent-ring' : 'hover:bg-surface-hover',
+      active ? 'bg-surface' : 'hover:bg-surface-hover',
       isDead ? 'opacity-50' : '',
     ]"
     :aria-label="ariaLabel"
