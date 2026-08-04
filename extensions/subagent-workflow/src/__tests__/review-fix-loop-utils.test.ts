@@ -360,6 +360,20 @@ describe("validateFixResult", () => {
     expect(validateFixResult({ fixed_count: 1, fixes: [], deferred: [{ issue_id: "S-2" }] })).toEqual([]);
     expect(validateFixResult({ fixed_count: 1, fixes: [], deferred: [] })).toEqual([]);
   });
+  it("must-fix ID 大小写/括号尾注漂移不误杀（m3）", () => {
+    // fixes[] 报 "mf-1"（小写）/ "MF-1 (fixed)"（尾注）→ 归一化后匹配，不判漏修
+    expect(validateFixResult({
+      fixed_count: 2,
+      fixes: [{ issue_id: "mf-1" }, { issue_id: "MF-1 (fixed)" }],
+      deferred: [],
+    }, ["MF-1"])).toEqual([]);
+    // 真漏修仍判
+    expect(validateFixResult({
+      fixed_count: 1,
+      fixes: [{ issue_id: "MF-2" }],
+      deferred: [],
+    }, ["MF-1", "MF-2"])).toEqual([{ issue_id: "mf-1", severity: "must-fix-not-fixed" }]);
+  });
 });
 
 // ── R2+ 三段式 prompt（5.2 + 防护规格） ──
@@ -633,6 +647,13 @@ describe("normalizeAggregatorResult must_fix_ids", () => {
   it("must_fix_ids 对象格式 [{id,severity}] 透传（5.7 severity 结构化）", () => {
     const r = normalizeAggregatorResult({ report_file: "/tmp/agg.md", must_fix: 2, suggestion: 0, must_fix_ids: [{ id: "MF-1", severity: "critical" }, { id: "MF-2", severity: "minor" }] });
     expect(r!.must_fix_ids).toEqual([{ id: "MF-1", severity: "critical" }, { id: "MF-2", severity: "minor" }]);
+  });
+  it("severity 大小写归一（M1: \"Critical\" → \"critical\"）", () => {
+    const r = normalizeAggregatorResult({
+      report_file: "/tmp/agg.md", must_fix: 2, suggestion: 0,
+      must_fix_ids: [{ id: "MF-1", severity: "Critical" }, { id: "MF-2", severity: "MAJOR" }],
+    });
+    expect(r!.must_fix_ids).toEqual([{ id: "MF-1", severity: "critical" }, { id: "MF-2", severity: "major" }]);
   });
   it("must_fix_ids 混排 + 非法元素过滤", () => {
     const r = normalizeAggregatorResult({ report_file: "/tmp/agg.md", must_fix: 2, suggestion: 0, must_fix_ids: ["MF-1", { id: "MF-2", severity: "critical" }, 42, null] });

@@ -266,11 +266,14 @@ function validateFixResult(result, mustFixIds) {
     }
   }
   if (Array.isArray(mustFixIds) && mustFixIds.length > 0) {
+    // m3: ID 归一化比较——大小写 + 尾部括号尾注（如 "(fixed)"）漂移不误杀：
+    // 严格 trim 比较会把 "mf-1"/"MF-1 (fixed)" 判漏修，整轮 fix-failure 误杀
+    const normId = (s) => String(s).toLowerCase().replace(/\s*\([^)]*\)\s*$/, "").trim();
     const fixedIds = new Set((result.fixes || [])
-      .map((f) => (f && typeof f.issue_id === "string" ? f.issue_id.trim() : ""))
+      .map((f) => (f && typeof f.issue_id === "string" ? normId(f.issue_id) : ""))
       .filter(Boolean));
     for (const id of mustFixIds) {
-      const norm = typeof id === "string" ? id.trim() : (id && typeof id.id === "string" ? id.id.trim() : "");
+      const norm = typeof id === "string" ? normId(id) : (id && typeof id.id === "string" ? normId(id.id) : "");
       if (norm && !fixedIds.has(norm)) {
         violations.push({ issue_id: norm, severity: "must-fix-not-fixed" });
       }
@@ -350,17 +353,19 @@ function buildAggregatorPrompt({ header, round, max, roundDir, reviewResults }) 
     '  "report_file": "' + roundDir + '/aggregated.md",',
     '  "must_fix": <integer>,',
     '  "suggestion": <integer>,',
-    '  "must_fix_ids": ["MF-1", "MF-2", ...],',
+    '  "must_fix_ids": [{"id": "MF-1", "severity": "critical|major|minor"}, ...],',
     '  "fixes_caution": ["verify claim X before editing", ...]',
     "}",
     "",
     "- must_fix_ids: issue ids of the deduplicated must-fix list, matching the first column of the Must-Fix table.",
+    "- must_fix_ids: EACH element is an object {id, severity}; severity is one of critical/major/minor",
+    "  (the converged-termination 'no critical' check depends on it). Old string-array format is still accepted.",
     "- fixes_caution: short caution entries for claims with weak evidence or high-risk directions (optional, empty array if none).",
     "",
     "STRICT RULES:",
     "- Field names MUST be exactly: report_file, must_fix, suggestion, must_fix_ids, fixes_caution",
     "- must_fix and suggestion MUST be integers — NOT strings, NOT null, NOT undefined",
-    "- must_fix_ids and fixes_caution MUST be arrays of strings (empty array if none)",
+    "- must_fix_ids MUST be an array of {id, severity} objects (empty array if none); fixes_caution MUST be an array of strings",
     "- The JSON object MUST be the ONLY thing in your final response",
     "- DO NOT wrap in markdown code fences, DO NOT add prose before/after",
     "",
@@ -596,7 +601,10 @@ function normalizeAggregatorResult(raw) {
   const must_fix_ids = idsRaw.map((x) => {
     if (typeof x === "string") return { id: x, severity: "major" };
     if (x && typeof x === "object" && typeof x.id === "string") {
-      return { id: x.id, severity: typeof x.severity === "string" ? x.severity : "major" };
+      // M1: severity 小写归一——LLM 可能返回 "Critical"/"MAJOR"，js 侧 === "critical"
+      // 严格比较（converged 终止判定）依赖小写；缺省回退 major（must-fix 语义）
+      const sev = typeof x.severity === "string" ? x.severity.toLowerCase() : "major";
+      return { id: x.id, severity: sev };
     }
     return null;
   }).filter(Boolean);

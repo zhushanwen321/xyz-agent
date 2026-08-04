@@ -177,7 +177,21 @@ const aggregatorSchema = {
     suggestion: { type: "number", description: "Total suggestions after dedup across all dimensions" },
     must_fix_ids: {
       type: "array",
-      items: { type: "string" },
+      // M1: 支持 [{id, severity}] 对象（severity: critical/major/minor——converged 终止的
+      // 「无 critical」判定数据源）+ 旧格式 string[] 兼容。ajv 权威校验两者皆放行。
+      items: {
+        oneOf: [
+          { type: "string" },
+          {
+            type: "object",
+            required: ["id"],
+            properties: {
+              id: { type: "string" },
+              severity: { type: "string" },
+            },
+          },
+        ],
+      },
       description: "Issue ids of the deduplicated must-fix list (MF-1..N), matching the first column of the markdown table",
     },
     fixes_caution: {
@@ -205,6 +219,8 @@ const fixSchema = {
           self_check: { type: "string", description: "grep command + hit count + sync action proving the fix is complete" },
           affected_files: { type: "array", items: { type: "string" }, description: "Files touched by this fix + files checked/synced as reference points" },
         },
+        // m3: issue_id 是 ES3 交叉校验（must-fix 必须全进 fixes[]）的匹配键，必填
+        required: ["issue_id"],
       },
     },
     deferred: {
@@ -743,13 +759,19 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     // 判 violation）。任一违规 → fix-failure（结构化终止）
     const es3Violations = validateFixResult(fixResult, agg.must_fix_ids);
     if (es3Violations.length > 0) {
-      log("ES3 violation: deferred contains non-minor severity — " + JSON.stringify(es3Violations));
+      // m7: violation 分两类——deferred 非 minor / must-fix 漏修（must-fix-not-fixed），
+      // finalMessage 文案区分：统一文案会把漏修误报成 defer 违规，误导修复方向
+      const parts = es3Violations.map((v) =>
+        v.severity === "must-fix-not-fixed"
+          ? "must-fix 未在 fixes[] 中修复（漏修）— " + v.issue_id
+          : "deferred 含非 minor 条目（must-fix 不得 defer）— " + v.issue_id + "(" + v.severity + ")"
+      );
+      log("ES3 violation: " + JSON.stringify(es3Violations));
       batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
       state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
       saveState(state);
       terminated = "fix-failure";
-      finalMessage = "Batch " + batchIndex + " round " + round + ": deferred 含非 minor 条目（must-fix 不得 defer）— "
-        + es3Violations.map((v) => v.issue_id + "(" + v.severity + ")").join(", ");
+      finalMessage = "Batch " + batchIndex + " round " + round + ": " + parts.join("; ");
       batchIndex = BATCHES.length + 1;
       break;
     }
