@@ -611,8 +611,49 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     // 收敛路径）时 reconSeen 为空，但 reconciliation 有数据仍须调 reconcileIssues：
     // fix-attempted → fixed 的唯一转换点（否则 fix-attempted 永不转 fixed）
     const reconCount = reconAll.size;
+    // F1: 无对账数据（doc-reviewer-only 批 reconciliation 恒空）时，fix-attempted 条目
+    // 存在仍须执行 reconcile——空 seenIds 语义 = 未被重新报告 = 已修复（5.1「未出现→fixed」）
+    const hasFixAttempted = state.issues
+      ? Object.values(state.issues).some((i) => i.status === "fix-attempted")
+      : false;
+
+    // 5.1-2 R2+ 新发现 ID 契约（M2 移出 reconcile 分支，独立执行；F1 扩展为
+    // 「重新报告 = 未修复」转换）：aggregator 的 must_fix_ids 中
+    //   a) 不在 issues → 创建为新条目（firstSeen=round，severity 从 aggregator 标注）
+    //   b) 已存在且 fix-attempted 且本轮无对账数据（reconCount===0，doc-reviewer 场景）
+    //      → 重新报告 = 修复失败：转 regressed + fixAttempts+1 + openStreak+1
+    //      （RC-7 needs-redesign 出口在无对账配置下可达；reconciliation 场景由
+    //      reconcileIssues 处理，避免双计）
+    // newFindings 统计与 needs-redesign/fixAttempts 追踪对 R2+ 新发现生效。
+    if (round > 1 && state.issues && agg.must_fix_ids && agg.must_fix_ids.length > 0) {
+      let added = 0;
+      for (const entry of agg.must_fix_ids) {
+        const id = typeof entry === "string" ? entry : entry && entry.id;
+        if (!id) continue;
+        if (state.issues[id]) {
+          if (reconCount === 0 && state.issues[id].status === "fix-attempted") {
+            state.issues[id].status = "regressed";
+            state.issues[id].fixAttempts = (state.issues[id].fixAttempts || 0) + 1;
+            state.issues[id].openStreak = (state.issues[id].openStreak || 0) + 1;
+            state.issues[id].severity = typeof entry === "string" ? "major" : (entry.severity || "major");
+            state.issues[id].history.push({ round, status: "regressed" });
+            added++;
+          }
+          continue;
+        }
+        state.issues[id] = {
+          firstSeen: round,
+          severity: typeof entry === "string" ? "major" : (entry.severity || "major"),
+          status: "open", openStreak: 1,
+          history: [{ round, status: "open" }], fixAttempts: 0,
+        };
+        added++;
+      }
+      if (added > 0) log("New findings tracked: " + added + " new or re-reported issue(s) in round " + round);
+    }
+
     let stuck = { stuck: false };
-    if (round > 1 && reconCount > 0) {
+    if (round > 1 && (reconCount > 0 || hasFixAttempted)) {
       const rec = reconcileIssues(state.issues || {}, { seenIds: reconSeen, escalateIds: reconEscalate, round, stuckThreshold });
       state.issues = rec.issues;
       state.knownRemaining = rec.knownRemaining;
@@ -623,27 +664,6 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       stuckCount = s.stuckCount;
       prevMustFix = s.prevMustFix;
       stuck = { stuck: s.stuck };
-    }
-
-    // 5.1-2 R2+ 新发现 ID 契约（M2 移出 reconcile 分支，独立执行）：aggregator 的
-    // must_fix_ids（含 R2+ 新发现，续编号）中不在 issues 的 ID 创建为新条目
-    // （firstSeen=round）——与 reconcile 是否触发无关（全 fixed 时 reconcile 仍执行但
-    // reconSeen 空，新发现 merge 必须独立生效）。newFindings 统计与 needs-redesign/
-    // fixAttempts 追踪对 R2+ 新发现生效，且防与 R1 存量 ID 撞号。
-    if (round > 1 && state.issues && agg.must_fix_ids && agg.must_fix_ids.length > 0) {
-      let added = 0;
-      for (const entry of agg.must_fix_ids) {
-        const id = typeof entry === "string" ? entry : entry && entry.id;
-        if (!id || state.issues[id]) continue;
-        state.issues[id] = {
-          firstSeen: round,
-          severity: typeof entry === "string" ? "major" : (entry.severity || "major"),
-          status: "open", openStreak: 1,
-          history: [{ round, status: "open" }], fixAttempts: 0,
-        };
-        added++;
-      }
-      if (added > 0) log("New findings tracked: " + added + " new issue(s) in round " + round);
     }
     if (stuck.stuck) {
       const stuckIds = (stuck.stuckIds || []).join(", ");

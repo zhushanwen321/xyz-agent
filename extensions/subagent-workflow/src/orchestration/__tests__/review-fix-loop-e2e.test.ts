@@ -7,6 +7,7 @@
  *   3. 渲染 gate：非 clean 终止 message 的 [UNRESOLVED] 透出 + ES3 硬校验拦截（E2E-3）
  *   4. M2 回归：全 fixed + 新发现 → reconcile 门控（reconCount）+ 新发现 merge 独立执行（E2E-4）
  *   5. M4 回归：recheckAfterFix=true → 全批重派 + clean agent 走 scoped 分支（E2E-5）
+ *   6. F1 回归：doc-reviewer-only 批（reconciliation 恒空）→ merge 重新报告转换 → needs-redesign（E2E-6）
  *
  * 与 workflows-e2e.test.ts 同模式：真实 runAndWait + 真实 worker thread +
  * 唯一 mock 是 deps.runner（AgentRunner）。runner 按调用分流：
@@ -590,6 +591,66 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
       expect(scopedPrompt[0]).toContain("Modified files:");
       // R2+ 全量分支同时被触发（reviewer）
       expect(prompts.some((p) => p.includes("RECONCILE PREVIOUS ROUND"))).toBe(true);
+    },
+    RUN_TIMEOUT_MS,
+  );
+
+  it(
+    "E2E-6：doc-reviewer-only 批（reconciliation 恒空）→ 重新报告转 regressed → needs-redesign（F1 回归）",
+    async () => {
+      // F1 场景：全部 agent 为 doc-reviewer（§5.8 推荐配置），reconciliation 恒空 →
+      // reconCount 恒 0。MF-1 连续 3 轮被重新报告（must_fix_ids 含 MF-1）：
+      // 修复前：merge 跳过已存在 ID → fixAttempts 恒 0 → needs-redesign 不可达；
+      //   newFindings 恒 0 → R3 触发 converged（streak 2）——提前终止掩盖未修复问题。
+      // 修复后：merge 把 fix-attempted 转 regressed + fixAttempts+1 → R3 时
+      //   fixAttempts=2 → needs-redesign 终止（在 converged 之前，顺序正确）。
+      let aggRound = 0;
+      let fixRound = 0;
+      const runner = makeScenarioRunner({
+        review: [
+          // R1
+          () => ({ report_file: "/tmp/r1-dr.md", must_fix: 1, suggestion: 0, reconciliation: [] }),
+          // R2：MF-1 重新报告（未修复）
+          () => ({ report_file: "/tmp/r2-dr.md", must_fix: 1, suggestion: 0, reconciliation: [] }),
+          // R3：MF-1 再次报告（第 2 次修复失败）
+          () => ({ report_file: "/tmp/r3-dr.md", must_fix: 1, suggestion: 0, reconciliation: [] }),
+        ],
+        aggregate: () => {
+          aggRound++;
+          return {
+            report_file: "/tmp/agg.md", must_fix: 1, suggestion: 0,
+            must_fix_ids: [{ id: "MF-1", severity: "major" }], fixes_caution: [],
+          };
+        },
+        fix: () => {
+          fixRound++;
+          return {
+            fixed_count: 1,
+            fixes: [{ issue_id: "MF-1", description: "fix " + fixRound, self_check: "grep: 1 hit; synced", affected_files: [] }],
+            deferred: [],
+          };
+        },
+      });
+      const deps = makeDeps(runner);
+
+      const result = await runAndWait(
+        "review-fix-loop",
+        { targetType: "file", target: "README.md", agents: "doc-reviewer", _runId: RUN_ID() },
+        deps,
+        undefined,
+        RUN_TIMEOUT_MS,
+      );
+
+      expect(result.reason).toBe("completed");
+      expect(result.error).toBeUndefined();
+      const outcome = result.scriptResult as { terminated: string; message: string };
+      // F1 判别：修复前此处是 converged（提前终止掩盖未修复）；修复后 needs-redesign
+      expect(outcome.terminated).toBe("needs-redesign");
+      expect(outcome.message).toContain("MF-1");
+      expect(outcome.message).toContain("2 次修复仍未收敛");
+
+      const { reviewCalls } = runner.stats();
+      expect(reviewCalls.length).toBe(3); // R1/R2/R3 各一次，R3 终止不再续轮
     },
     RUN_TIMEOUT_MS,
   );
