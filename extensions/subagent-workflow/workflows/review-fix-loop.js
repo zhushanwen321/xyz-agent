@@ -45,6 +45,10 @@ const {
   normalizeAggregatorResult,
   parseAggregatedMd,
   shouldRetryWithReviewPrefix,
+  resolveAgentDefs,
+  recordAgentClean,
+  recordAgentDirty,
+  shouldSkipAgent,
 } = require(
   (typeof workerData !== "undefined" && workerData && typeof workerData.scriptPath === "string"
     ? require("path").dirname(workerData.scriptPath)
@@ -155,67 +159,10 @@ function saveState(state) {
   fs.renameSync(tmp, STATE_FILE);
 }
 
-// clean 记录：lastCleanBatch + 当时全局 fixCount 快照（跨批跳过判定依据）
-function recordAgentClean(state, agentName, batchIndex) {
-  const s = state.agentStatus[agentName] || { lastCleanBatch: 0, lastCleanFixCount: 0, lastActiveRound: 0, lastMustFix: undefined };
-  s.lastCleanBatch = batchIndex;
-  s.lastCleanFixCount = state.fixCount;
-  s.lastActiveRound = batchIndex;
-  state.agentStatus[agentName] = s;
-}
+// clean 记录（recordAgentClean/recordAgentDirty 与跨批跳过判定 shouldSkipAgent
+// 在 review-fix-loop-utils.cjs，vitest 单测见 src/__tests__/review-fix-loop-utils.test.ts）
 
-function recordAgentDirty(state, agentName, mustFix, batchIndex) {
-  const s = state.agentStatus[agentName] || { lastCleanBatch: 0, lastCleanFixCount: 0, lastActiveRound: 0, lastMustFix: undefined };
-  s.lastActiveRound = batchIndex;
-  s.lastMustFix = mustFix;
-  state.agentStatus[agentName] = s;
-}
-
-// ── Helpers（结果解析在 review-fix-loop-utils.cjs） ────────────────
-
-// 自定义 .md agent 加载：frontmatter（name/description/model）+ 正文
-function loadAgentMd(filePath) {
-  let content;
-  try {
-    content = fs.readFileSync(filePath, "utf-8");
-  } catch (e) {
-    fail("agent 文件读取失败: " + filePath + " (" + e.message + ")");
-  }
-  let name = path.basename(filePath, ".md");
-  let model, description;
-  let body = content.trim();
-  if (content.startsWith("---")) {
-    const closeIdx = content.indexOf("---", 3);
-    if (closeIdx !== -1) {
-      const yaml = content.slice(3, closeIdx);
-      body = content.slice(closeIdx + 3).trim();
-      const extract = (key) => {
-        const m = yaml.match(new RegExp("^" + key + ":\\s*(.+)$", "m"));
-        if (!m) return undefined;
-        let v = m[1].trim();
-        if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-        return v || undefined;
-      };
-      name = extract("name") || name;
-      model = extract("model");
-      description = extract("description");
-    }
-  }
-  return { name, model, description, systemPrompt: body, report: name, title: description || name, isCustom: true };
-}
-
-// ── Agent defs 解析（每批元素统一解析） ─────────────────────────────
-
-// fallow-scan：内置工具型 def（无 .md，跑 fallow audit 静态分析）
-const FALLOW_DEF = { name: "fallow-scan", title: "FALLOW STATIC ANALYSIS", report: "fallow-scan", isFallow: true };
-
-function resolveAgentDefs(batchNames) {
-  return batchNames.map((item) => {
-    if (item === "fallow-scan") return FALLOW_DEF;
-    if (item.includes("/") || item.endsWith(".md")) return loadAgentMd(item);
-    return { name: item, report: item.replace(/^review-/, ""), title: item.toUpperCase() };
-  });
-}
+// ── Agent defs（loadAgentMd/resolveAgentDefs 在 review-fix-loop-utils.cjs） ──
 
 // ── Build review calls ──────────────────────────────────────────────
 
@@ -304,7 +251,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
   if (batchIndex > 1) {
     for (const def of defs) {
       const s = state.agentStatus[def.name];
-      if (s && s.lastCleanBatch && s.lastCleanBatch < batchIndex && s.lastCleanFixCount === state.fixCount) {
+      if (shouldSkipAgent(s, state.fixCount, batchIndex)) {
         cleanNames.add(def.name);
         log("Cross-batch skip: " + def.name + " (clean in batch " + s.lastCleanBatch + ", no fix since)");
       }

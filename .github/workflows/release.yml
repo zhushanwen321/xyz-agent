@@ -39,6 +39,46 @@ jobs:
         with:
           fetch-depth: 0
 
+      # npm 产物契约检查：renderer AskUserOverlay.vue 消费 activeQuestion.allowComment，
+      # runtime boot 时 ensureMandatoryExtensions() 从 npm 安装 @zhushanwen/pi-ask-user。
+      # 若 Electron 发布（v*）先于 npm 发布（npm-v*），产物中 ask_user 评论模式静默降级。
+      # 发布顺序约束：先走 merge skill 阶段 4N 发布 npm-v*（本 diff 的 changeset 消费：
+      # protocol 0.3.1 / ask-user 4.0.1 / subagent-workflow 4.1.0），再发 Electron v*。
+      # （2026-08 事故：protocol 0.3.0 误删 allowComment/getAskUserComment，本地 restore 后
+      #   npm 仍长期服务删功能旧版，而打包流程无任何环节校验 npm 产物与 renderer 契约一致性）
+      - name: Check npm extension artifacts match renderer contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          # pi-ask-user 4.0.0 是误删 allowComment 的坏版本；restore 从 4.0.1 起
+          ASK_USER_VERSION=$(npm view @zhushanwen/pi-ask-user version 2>/dev/null || echo "none")
+          if [ "${ASK_USER_VERSION}" = "none" ] || [ "${ASK_USER_VERSION}" = "4.0.0" ]; then
+            echo "::error::npm 上的 @zhushanwen/pi-ask-user 仍是 ${ASK_USER_VERSION:-未发布}（误删 allowComment 的 4.0.0 或更早）—— 先发布 npm-v*（4.0.1+）再发 Electron v*"
+            exit 1
+          fi
+          check_pkg() {
+            local pkg="$1" field="$2" version tarball tmpdir
+            version=$(npm view "${pkg}" version 2>/dev/null || echo "none")
+            if [ "${version}" = "none" ]; then
+              echo "::error::npm 未发布 ${pkg} —— Electron 发布必须晚于 npm 发布（先发 npm-v* 再发 v*）"
+              exit 1
+            fi
+            tarball=$(npm view "${pkg}@latest" dist.tarball)
+            tmpdir=$(mktemp -d)
+            curl -fsSL "${tarball}" -o "${tmpdir}/pkg.tgz"
+            tar -xzf "${tmpdir}/pkg.tgz" -C "${tmpdir}"
+            if ! grep -rq "${field}" "${tmpdir}/package"; then
+              echo "::error::npm 上的 ${pkg}@${version} 不含 ${field}（发布产物与本地源码契约不一致）—— 先发布 npm-v* 再发 Electron v*"
+              rm -rf "${tmpdir}"
+              exit 1
+            fi
+            echo "npm artifact OK: ${pkg}@${version} (contains ${field})"
+            rm -rf "${tmpdir}"
+          }
+          # ask_user 评论模式契约：协议层与扩展层都必须含 allowComment
+          check_pkg @zhushanwen/pi-ask-user "allowComment"
+          check_pkg @xyz-agent/extension-protocol "allowComment"
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:

@@ -6,7 +6,10 @@
 // 这些逻辑原本全部内联在 workflow 脚本里零测试，抽到 utils 模块后与 worker 运行时共用
 //（review-fix-loop.js 经 workerData.scriptPath 定位 require），测试的不是死代码副本。
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import {
   TARGET_TYPES,
   normalizeBool,
@@ -19,6 +22,12 @@ import {
   normalizeAggregatorResult,
   parseAggregatedMd,
   shouldRetryWithReviewPrefix,
+  parseAgentMd,
+  loadAgentMd,
+  resolveAgentDefs,
+  recordAgentClean,
+  recordAgentDirty,
+  shouldSkipAgent,
 } from "../../workflows/review-fix-loop-utils.cjs";
 
 /** 测试用 fail：与 workflow 内 fail() 同语义（抛错终止） */
@@ -262,5 +271,196 @@ describe("parseAggregatedMd", () => {
 describe("TARGET_TYPES", () => {
   it("合法枚举含 git-diff/file/dir/text", () => {
     expect(TARGET_TYPES).toEqual(["git-diff", "file", "dir", "text"]);
+  });
+});
+
+// ── 自定义 agent frontmatter 解析：parseAgentMd / loadAgentMd（MF：loadAgentMd 零测试） ──
+
+describe("parseAgentMd", () => {
+  const full = [
+    "---",
+    'name: "custom-reviewer"',
+    "model: glm-5.1",
+    "description: 自定义审查 agent",
+    "---",
+    "",
+    "Review everything carefully.",
+  ].join("\n");
+
+  it("完整 frontmatter → name/model/description + 正文（report/title/isCustom 派生）", () => {
+    const r = parseAgentMd(full, "fallback-name");
+    expect(r.name).toBe("custom-reviewer");
+    expect(r.model).toBe("glm-5.1");
+    expect(r.description).toBe("自定义审查 agent");
+    expect(r.systemPrompt).toBe("Review everything carefully.");
+    expect(r.report).toBe("custom-reviewer");
+    expect(r.title).toBe("自定义审查 agent");
+    expect(r.isCustom).toBe(true);
+  });
+
+  it("无 frontmatter → basename 兜底 + 全文作正文", () => {
+    const r = parseAgentMd("just body text", "my-agent");
+    expect(r.name).toBe("my-agent");
+    expect(r.model).toBeUndefined();
+    expect(r.description).toBeUndefined();
+    expect(r.systemPrompt).toBe("just body text");
+    expect(r.report).toBe("my-agent");
+    expect(r.title).toBe("my-agent");
+  });
+
+  it("frontmatter 未闭合（无第二个 ---）→ 全文当正文，basename 兜底", () => {
+    const r = parseAgentMd("---\nname: x\nbody continues", "fallback");
+    expect(r.name).toBe("fallback");
+    expect(r.model).toBeUndefined();
+    expect(r.systemPrompt).toBe("---\nname: x\nbody continues");
+  });
+
+  it("引号包裹的值 → 剥引号（双引号与单引号）；非成对引号保留", () => {
+    const r = parseAgentMd(
+      ['---', 'name: "quoted-name"', "model: 'x-model'", 'description: mixed"quote', "---", "body"].join("\n"),
+      "fb",
+    );
+    expect(r.name).toBe("quoted-name");
+    expect(r.model).toBe("x-model");
+    // 起止引号不成对 → 不剥
+    expect(r.description).toBe('mixed"quote');
+  });
+
+  it("空值字段（name:/model: 后无内容或仅空串）→ undefined 回退，name 用 basename", () => {
+    // name: 空值且后跟内容行：不能把下一行误当 name 值（\s* 跨行防护）
+    const r = parseAgentMd(['---', "name:", "model: x", 'description: ""', "---", "body"].join("\n"), "empty-fields");
+    expect(r.name).toBe("empty-fields");
+    expect(r.model).toBe("x");
+    expect(r.description).toBeUndefined(); // 引号包裹的空串 → 剥引号后 || undefined
+    expect(r.systemPrompt).toBe("body");
+  });
+});
+
+describe("loadAgentMd", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "rfl-md-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("读取文件 + 无 frontmatter 时 basename 兜底（custom-reviewer.md → custom-reviewer）", () => {
+    const p = join(dir, "custom-reviewer.md");
+    writeFileSync(p, "---\nname: \"X\"\n---\nbody");
+    const r = loadAgentMd(p, fail);
+    expect(r.name).toBe("X");
+    expect(r.systemPrompt).toBe("body");
+    const plain = join(dir, "plain.md");
+    writeFileSync(plain, "no frontmatter body");
+    const noFm = loadAgentMd(plain, fail);
+    expect(noFm.name).toBe("plain");
+    expect(noFm.systemPrompt).toBe("no frontmatter body");
+  });
+
+  it("文件不存在 → fail 回调报错（fail-fast）", () => {
+    expect(() => loadAgentMd(join(dir, "missing.md"), fail)).toThrow("agent 文件读取失败");
+  });
+});
+
+// ── Agent defs 解析：resolveAgentDefs（MF：三分支零测试） ────────────
+
+describe("resolveAgentDefs", () => {
+  const stubLoader = (p: string) => ({ name: "loaded:" + p, isCustom: true });
+
+  it("fallow-scan → 内置 FALLOW_DEF 常量（不进 loader）", () => {
+    expect(resolveAgentDefs(["fallow-scan"], stubLoader)[0]).toEqual({
+      name: "fallow-scan",
+      title: "FALLOW STATIC ANALYSIS",
+      report: "fallow-scan",
+      isFallow: true,
+    });
+  });
+
+  it("含 / 或 .md 后缀 → 走 loader（相对路径与绝对路径）", () => {
+    expect(resolveAgentDefs([".agents/agents/reviewer.md"], stubLoader)[0].name).toBe("loaded:.agents/agents/reviewer.md");
+    expect(resolveAgentDefs(["/tmp/agents/x.md"], stubLoader)[0].name).toBe("loaded:/tmp/agents/x.md");
+    expect(resolveAgentDefs(["custom-reviewer.md"], stubLoader)[0].name).toBe("loaded:custom-reviewer.md");
+  });
+
+  it("内置 agent 名 → review- 前缀剥离（report 名）+ 大写 title", () => {
+    const r = resolveAgentDefs(["reviewer", "review-business-logic"], stubLoader);
+    expect(r[0]).toEqual({ name: "reviewer", report: "reviewer", title: "REVIEWER" });
+    expect(r[1]).toEqual({ name: "review-business-logic", report: "business-logic", title: "REVIEW-BUSINESS-LOGIC" });
+  });
+
+  it("review-reviewer 双重前缀 → 只剥一层（report=reviewer）", () => {
+    expect(resolveAgentDefs(["review-reviewer"], stubLoader)[0].report).toBe("reviewer");
+  });
+
+  it("默认 loader = loadAgentMd（不传 loader 时 .md 项经 fs 读取）", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rfl-resolve-"));
+    try {
+      const p = join(dir, "a.md");
+      writeFileSync(p, "---\nname: \"FromFile\"\n---\nbody");
+      expect(resolveAgentDefs([p])[0].name).toBe("FromFile");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ── Clean 快照 / 跨批跳过判定：recordAgentClean / recordAgentDirty / shouldSkipAgent ──
+// （MF：cross-batch skip 核心状态机零测试）
+
+describe("recordAgentClean / recordAgentDirty / shouldSkipAgent", () => {
+  function freshState() {
+    return { agentStatus: {} as Record<string, { lastCleanBatch: number; lastCleanFixCount: number; lastActiveRound: number; lastMustFix: number | undefined }>, fixCount: 0 };
+  }
+
+  it("recordAgentClean 写入 lastCleanBatch + 当时 fixCount 快照", () => {
+    const state = freshState();
+    state.fixCount = 3;
+    recordAgentClean(state, "reviewer", 2);
+    expect(state.agentStatus["reviewer"]).toEqual({
+      lastCleanBatch: 2,
+      lastCleanFixCount: 3,
+      lastActiveRound: 2,
+      lastMustFix: undefined,
+    });
+  });
+
+  it("recordAgentDirty 写入 lastActiveRound + lastMustFix，不动 clean 快照", () => {
+    const state = freshState();
+    recordAgentClean(state, "reviewer", 1);
+    recordAgentDirty(state, "reviewer", 4, 2);
+    const s = state.agentStatus["reviewer"];
+    expect(s.lastActiveRound).toBe(2);
+    expect(s.lastMustFix).toBe(4);
+    expect(s.lastCleanBatch).toBe(1);
+    expect(s.lastCleanFixCount).toBe(0); // 快照保持 clean 记录时点的 fixCount，不被 dirty 覆盖
+  });
+
+  it("shouldSkipAgent：clean 快照后无 fix（fixCount 相等）→ 跳过；更晚批次同样跳过", () => {
+    const status = { lastCleanBatch: 1, lastCleanFixCount: 2, lastActiveRound: 1, lastMustFix: undefined };
+    expect(shouldSkipAgent(status, 2, 2)).toBe(true);
+    expect(shouldSkipAgent(status, 2, 3)).toBe(true);
+  });
+
+  it("shouldSkipAgent：clean 后发生 fix（fixCount 变化）→ 不跳过（agent 可能受影响）", () => {
+    const status = { lastCleanBatch: 1, lastCleanFixCount: 2, lastActiveRound: 1, lastMustFix: undefined };
+    expect(shouldSkipAgent(status, 3, 2)).toBe(false);
+  });
+
+  it("shouldSkipAgent：无记录 / lastCleanBatch=0（从未 clean）/ 同批 clean → 不跳过", () => {
+    expect(shouldSkipAgent(undefined, 0, 2)).toBe(false);
+    expect(shouldSkipAgent({ lastCleanBatch: 0, lastCleanFixCount: 0, lastActiveRound: 0, lastMustFix: undefined }, 0, 2)).toBe(false);
+    expect(shouldSkipAgent({ lastCleanBatch: 2, lastCleanFixCount: 0, lastActiveRound: 2, lastMustFix: undefined }, 0, 2)).toBe(false);
+  });
+
+  it("clean→dirty→fix→clean 生命周期：快照与跳过判定协同", () => {
+    const state = freshState();
+    recordAgentClean(state, "r", 1); // batch1 clean，快照 fixCount=0
+    state.fixCount = 1; // fix 发生
+    expect(shouldSkipAgent(state.agentStatus["r"], state.fixCount, 2)).toBe(false); // 不跳过
+    recordAgentDirty(state, "r", 5, 2); // batch2 dirty
+    state.fixCount = 2;
+    recordAgentClean(state, "r", 2); // batch2 末 clean，快照 fixCount=2
+    expect(shouldSkipAgent(state.agentStatus["r"], state.fixCount, 3)).toBe(true); // batch3 跳过
   });
 });

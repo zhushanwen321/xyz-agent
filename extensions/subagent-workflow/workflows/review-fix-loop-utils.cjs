@@ -8,6 +8,9 @@
 // 通过 fail(msg) 回调注入（调用方抛 "review-fix-loop: <msg>"，与 workflow 内 fail() 一致）。
 "use strict";
 
+const fs = require("fs");
+const path = require("path");
+
 const TARGET_TYPES = ["git-diff", "file", "dir", "text"];
 const VALID_ARG_KEYS = new Set([
   "targetType", "target", "agents", "batchNames", "reviewPrompt", "fixPrompt",
@@ -153,6 +156,98 @@ function parseAggregatedMd(content) {
   };
 }
 
+/**
+ * 自定义 .md agent frontmatter 解析（纯函数，不碰 fs）。
+ * 边界：无 `---` 头时 basename 兜底、frontmatter 未闭合（closeIdx === -1）截断、
+ * 引号包裹的值剥引号、空值（`value || undefined`）回退。
+ * @param content 文件原文
+ * @param fallbackName 无 name 字段时的兜底（通常为 basename）
+ * @returns {name, model, description, systemPrompt, report, title, isCustom}
+ */
+function parseAgentMd(content, fallbackName) {
+  let name = fallbackName;
+  let model, description;
+  let body = content.trim();
+  if (content.startsWith("---")) {
+    const closeIdx = content.indexOf("---", 3);
+    if (closeIdx !== -1) {
+      const yaml = content.slice(3, closeIdx);
+      body = content.slice(closeIdx + 3).trim();
+      const extract = (key) => {
+        // 分隔符用 [ \t]* 而非 \s*：\s 含换行，空值 key（如 `name:`）后紧跟的下一行内容
+        // 会被 \s* 吞掉换行后捕获成该 key 的值。仅匹配空格/制表符则空值 → .+ 不匹配 → undefined。
+        const m = yaml.match(new RegExp("^" + key + ":[ \t]*(.+)$", "m"));
+        if (!m) return undefined;
+        let v = m[1].trim();
+        if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+        return v || undefined;
+      };
+      name = extract("name") || name;
+      model = extract("model");
+      description = extract("description");
+    }
+  }
+  return { name, model, description, systemPrompt: body, report: name, title: description || name, isCustom: true };
+}
+
+/** 自定义 .md agent 加载：fs 读取 + parseAgentMd。读取失败经 fail 回调（缺省时直接抛错）。 */
+function loadAgentMd(filePath, fail) {
+  let content;
+  try {
+    content = fs.readFileSync(filePath, "utf-8");
+  } catch (e) {
+    const msg = "agent 文件读取失败: " + filePath + " (" + e.message + ")";
+    if (typeof fail === "function") fail(msg);
+    throw new Error("review-fix-loop: " + msg);
+  }
+  return parseAgentMd(content, path.basename(filePath, ".md"));
+}
+
+/** fallow-scan：内置工具型 def（无 .md，跑 fallow audit 静态分析）。 */
+const FALLOW_DEF = { name: "fallow-scan", title: "FALLOW STATIC ANALYSIS", report: "fallow-scan", isFallow: true };
+
+/**
+ * Agent defs 解析：fallow-scan 常量 / 路径（含 `/` 或 `.md` 后缀）走 loader / 内置 agent 名。
+ * 内置名做 `review-` 前缀剥离（与 runReviewAgent 的 review- 前缀兜底重试配对：
+ * report 文件名用剥离后的名字，兜底重试才落到同一文件）。
+ * @param batchNames 批内 agent 名/文件路径数组
+ * @param loader 自定义 loader（测试注入 stub；缺省用 loadAgentMd）
+ */
+function resolveAgentDefs(batchNames, loader) {
+  const loadFn = loader || loadAgentMd;
+  return batchNames.map((item) => {
+    if (item === "fallow-scan") return FALLOW_DEF;
+    if (item.includes("/") || item.endsWith(".md")) return loadFn(item);
+    return { name: item, report: item.replace(/^review-/, ""), title: item.toUpperCase() };
+  });
+}
+
+/** clean 记录：lastCleanBatch + 当时全局 fixCount 快照（跨批跳过判定依据）。 */
+function recordAgentClean(state, agentName, batchIndex) {
+  const s = state.agentStatus[agentName] || { lastCleanBatch: 0, lastCleanFixCount: 0, lastActiveRound: 0, lastMustFix: undefined };
+  s.lastCleanBatch = batchIndex;
+  s.lastCleanFixCount = state.fixCount;
+  s.lastActiveRound = batchIndex;
+  state.agentStatus[agentName] = s;
+}
+
+/** dirty 记录：lastActiveRound + 最近 mustFix（不写 clean 快照，保留上次 clean 的 fixCount 基准）。 */
+function recordAgentDirty(state, agentName, mustFix, batchIndex) {
+  const s = state.agentStatus[agentName] || { lastCleanBatch: 0, lastCleanFixCount: 0, lastActiveRound: 0, lastMustFix: undefined };
+  s.lastActiveRound = batchIndex;
+  s.lastMustFix = mustFix;
+  state.agentStatus[agentName] = s;
+}
+
+/**
+ * 跨批跳过判定（cross-batch skip 核心状态机）：
+ * agent 在更早批 clean（lastCleanBatch < batchIndex）且此后无 fix（fixCount 快照相等）→ 跳过。
+ * fixCount 快照比较的相等语义决定是否跳过——clean 后发生过 fix 则不能跳过（该 agent 可能受影响）。
+ */
+function shouldSkipAgent(status, fixCount, batchIndex) {
+  return !!(status && status.lastCleanBatch && status.lastCleanBatch < batchIndex && status.lastCleanFixCount === fixCount);
+}
+
 module.exports = {
   TARGET_TYPES,
   VALID_ARG_KEYS,
@@ -166,4 +261,10 @@ module.exports = {
   normalizeAggregatorResult,
   parseAggregatedMd,
   shouldRetryWithReviewPrefix,
+  parseAgentMd,
+  loadAgentMd,
+  resolveAgentDefs,
+  recordAgentClean,
+  recordAgentDirty,
+  shouldSkipAgent,
 };
