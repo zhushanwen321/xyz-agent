@@ -73,9 +73,12 @@ export interface ToastPort {
   warning(msg: string): void
 }
 
-/** 文件树端口（壳适配 useFileTree().loadTree；fire-and-forget 语义由调用方保留）。 */
+/** 文件树端口（壳适配 useFileTree().loadTree / useFileTreeStore().selectFile）。 */
 export interface FileTreePort {
+  /** 加载 session 文件树（fire-and-forget 语义由调用方保留）。 */
   loadTree(sessionId: string): Promise<void>
+  /** 选中文件（search-jump file 分支：selectFile(path) 触发 useDetailPane watch 链渲染；壳适配 fileTreeStore.selectFile） */
+  selectFile(path: string | null): void
 }
 
 /** 域内文案端口（TC3；壳适配 renderer i18n.global.t）。 */
