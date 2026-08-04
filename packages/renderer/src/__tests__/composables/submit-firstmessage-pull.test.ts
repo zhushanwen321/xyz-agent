@@ -61,7 +61,10 @@ vi.mock('@/composables/features/useModel', () => ({
 
 import { session as sessionApi } from '@/api'
 import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/useNewTaskFlow'
-import { transition, useNewTaskFlowController } from '@/composables/new-task/useNewTaskFlowState'
+// w5 壳化后状态机迁移到 core（@xyz-agent/core 是 flow-state 的模块级单例，与壳 useNewTaskFlow
+// 返回的 core flow 同实例）。旧 renderer useNewTaskFlowState 是另一套独立单例，用它会与 core
+// flow 状态脱节（submitFirstMessage 读 core state，永远非 landing）。
+import { transition, useNewTaskFlowController } from '@xyz-agent/core'
 
 beforeEach(() => {
   setActivePinia(createPinia())
