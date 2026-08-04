@@ -17,6 +17,8 @@ import type { PanelOrchestrationPort } from '../effects/panel-orchestration'
 function makePort(focused: string | null) {
   return {
     focusedSessionId: vi.fn(() => focused),
+    activePanelId: vi.fn(() => 'p1'),
+    findPanelBySession: vi.fn(() => null),
     loadSession: vi.fn(),
     openPanel: vi.fn(),
   } satisfies PanelOrchestrationPort

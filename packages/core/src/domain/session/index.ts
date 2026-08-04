@@ -15,3 +15,13 @@ export {
   openPanelOnSessionEvent,
   consumePendingOpen,
 } from './effects/panel-orchestration'
+// w3 use-session：IF4 编排 factory + 端口/hook 类型
+export { createUseSession, resetSessionListSubForTest } from './use-session'
+export type {
+  UseSessionDeps,
+  SessionCleanupHooks,
+  ChatHydratePort,
+  NavigationPort,
+  NavigationRoute,
+  NewTaskFlowPort,
+} from './use-session'

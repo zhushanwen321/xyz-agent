@@ -10,15 +10,24 @@
  * 而非 useSessionScopedState（Map 分区管理是纯额外复杂度）。若 review 认为违反 D3，
  * 改用 useSessionScopedState（见 IF3 契约备注）。
  */
+import type { PanelLeaf } from '@xyz-agent/shared'
 
 /**
  * panel 编排端口（壳注入实现）。
  * 壳侧：focusedSessionId 读 usePanelStore().focusedSessionId、loadSession 调 panel.loadSession、
  * openPanel 调 useSideDrawer().open / tasks panel 打开逻辑。
+ *
+ * w3 追加（additive，w2 语义不变）：activePanelId / findPanelBySession——
+ * use-session 的 syncSessionToPanel（loadSession 需 activePanelId）与
+ * cleanupSessionState（panel 解绑前需按 session 查绑定 panel）编排需要。
  */
 export interface PanelOrchestrationPort {
   /** 当前焦点 session（UI 高亮真相源；null = 无焦点） */
   focusedSessionId(): string | null
+  /** 当前活跃 panel id（syncSessionToPanel 用；null = 无活跃 panel） */
+  activePanelId(): string | null
+  /** 按 session 查绑定 panel（cleanupSessionState 解绑用；null = 未绑定） */
+  findPanelBySession(sid: string): PanelLeaf | null
   /** 让指定 panel 载入 session（syncSessionToPanel / selectSession 用） */
   loadSession(panelId: string, sessionId: string | null): void
   /** 打开 panel 并绑定 sid（tasks drawer / side drawer 统一入口） */
