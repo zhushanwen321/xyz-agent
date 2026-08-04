@@ -29,6 +29,8 @@ import {
   validateFixResult,
   reconcileIssues,
   normalizeReviewResult,
+  checkConvergence,
+  findNeedsRedesign,
   parseResult,
   normalizeAggregatorResult,
   parseAggregatedMd,
@@ -459,6 +461,42 @@ describe("normalizeReviewResult", () => {
   });
   it("缺 must_fix → null", () => {
     expect(normalizeReviewResult({ report_file: "/tmp/r.md" })).toBeNull();
+  });
+});
+
+// ── 5.7 收敛终止判定 ──
+
+describe("checkConvergence", () => {
+  it("连续 2 轮新发现 ≤1 → converged（TC1）", () => {
+    expect(checkConvergence({ prevStreak: 1, newFindings: 1, convergeNewIssues: 1, convergeRounds: 2 }))
+      .toEqual({ converged: true, streak: 2 });
+  });
+  it("单轮不收敛（streak 未达阈值）", () => {
+    expect(checkConvergence({ prevStreak: 0, newFindings: 1, convergeNewIssues: 1, convergeRounds: 2 }))
+      .toEqual({ converged: false, streak: 1 });
+  });
+  it("新发现 > 阈值 → streak 重置（TC2）", () => {
+    expect(checkConvergence({ prevStreak: 1, newFindings: 3, convergeNewIssues: 1, convergeRounds: 2 }))
+      .toEqual({ converged: false, streak: 0 });
+  });
+  it("convergeRounds=1 单轮即收敛", () => {
+    expect(checkConvergence({ prevStreak: 0, newFindings: 0, convergeNewIssues: 1, convergeRounds: 1 }))
+      .toEqual({ converged: true, streak: 1 });
+  });
+});
+
+describe("findNeedsRedesign", () => {
+  it("fixAttempts >= max 且 regressed → 命中（TC3）", () => {
+    const r = findNeedsRedesign({
+      "MF-1": { status: "regressed", fixAttempts: 2, history: [{ round: 1, status: "open" }] },
+      "MF-2": { status: "regressed", fixAttempts: 1, history: [] },
+      "MF-3": { status: "fixed", fixAttempts: 2, history: [] },
+    }, 2);
+    expect(r.map((x) => x.issue_id)).toEqual(["MF-1"]);
+  });
+  it("空 issues / 无命中 → []", () => {
+    expect(findNeedsRedesign({}, 2)).toEqual([]);
+    expect(findNeedsRedesign({ "MF-1": { status: "open", fixAttempts: 0 } }, 2)).toEqual([]);
   });
 });
 

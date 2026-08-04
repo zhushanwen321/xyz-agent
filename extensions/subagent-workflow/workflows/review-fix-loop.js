@@ -58,6 +58,8 @@ const {
   validateFixResult,
   reconcileIssues,
   normalizeReviewResult,
+  checkConvergence,
+  findNeedsRedesign,
   parseResult,
   normalizeAggregatorResult,
   parseAggregatedMd,
@@ -78,7 +80,7 @@ const {
 for (const key of Object.keys($ARGS)) {
   if (VALID_ARG_KEYS.has(key)) continue;
   if (/^batch\d+$/.test(key)) continue;
-  fail("未知参数: " + key + "（合法参数: targetType/target/batch1..batchN/agents/batchNames/reviewPrompt/fixPrompt/autoCommit/maxRounds/stuckThreshold/model/skipCleanAgents/recheckAfterFix/fixAgent）");
+  fail("未知参数: " + key + "（合法参数: targetType/target/batch1..batchN/agents/batchNames/reviewPrompt/fixPrompt/autoCommit/maxRounds/stuckThreshold/model/skipCleanAgents/recheckAfterFix/fixAgent/maxFixAttempts/convergeNewIssues/convergeRounds）");
 }
 
 const targetType = $ARGS.targetType;
@@ -108,6 +110,11 @@ const recheckAfterFix = normalizeBool($ARGS.recheckAfterFix, "recheckAfterFix", 
 const FIX_AGENT_RAW = typeof $ARGS.fixAgent === "string" && $ARGS.fixAgent.trim()
   ? $ARGS.fixAgent.trim() : undefined;
 const FIX_DEF = FIX_AGENT_RAW ? resolveAgentDefs([FIX_AGENT_RAW])[0] : null;
+// 5.7 收敛终止参数：maxFixAttempts（needs-redesign 阈值，RC-7）/ convergeNewIssues +
+// convergeRounds（新发现率收敛阈值）
+const maxFixAttempts = normalizeInt($ARGS.maxFixAttempts, "maxFixAttempts", 2, fail);
+const convergeNewIssues = normalizeInt($ARGS.convergeNewIssues, "convergeNewIssues", 1, fail);
+const convergeRounds = normalizeInt($ARGS.convergeRounds, "convergeRounds", 2, fail);
 const MODEL = typeof $ARGS.model === "string" && $ARGS.model.trim() ? $ARGS.model.trim() : undefined;
 
 // base 锁定（RC-6，5.6）：git-diff 场景 run 启动时锁定 base commit，全程用锁定 hash 构造
@@ -244,6 +251,7 @@ function loadState() {
       fixResults: [],
       issues: undefined,
       knownRemaining: [],
+      convergeStreak: 0,
     };
   }
 }
@@ -564,6 +572,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       state.knownRemaining = rec.knownRemaining;
       stuck = { stuck: rec.stuck, stuckIds: rec.stuckIds };
       log("Reconcile: " + Object.keys(rec.issues).length + " tracked issue(s), known-remaining: " + rec.knownRemaining.length);
+
     } else {
       const s = updateStuckState(prevMustFix, stuckCount, mustFix, stuckThreshold);
       stuckCount = s.stuckCount;
@@ -580,6 +589,45 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       finalMessage = "Batch " + batchIndex + " round " + round + ": 问题 " + stuckIds + " 连续 " + stuckThreshold + " 轮未收敛";
       batchIndex = BATCHES.length + 1;
       break;
+    }
+
+    // 5.7 needs-redesign（RC-7）：fixAttempts >= maxFixAttempts 且 regressed → 终止。
+    // 顺序在 stuck 之后：stuck（一直在）信息更宏观，needs-redesign（修不好）更具体，先 stuck 后 redesign。
+    if (round > 1 && state.issues) {
+      const redesign = findNeedsRedesign(state.issues, maxFixAttempts);
+      if (redesign.length > 0) {
+        const ids = redesign.map((r) => r.issue_id).join(", ");
+        log("Needs redesign: " + ids + " not converging after " + maxFixAttempts + " fix attempts. Stopping.");
+        batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
+        state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
+        saveState(state);
+        terminated = "needs-redesign";
+        finalMessage = "Batch " + batchIndex + " round " + round + ": 问题 " + ids + " 经 " + maxFixAttempts
+          + " 次修复仍未收敛，属于需要重新设计而非继续补丁的结构性问题，请人工介入。残留: "
+          + (state.knownRemaining && state.knownRemaining.length ? state.knownRemaining.join("; ") : "无 deferred");
+        batchIndex = BATCHES.length + 1;
+        break;
+      }
+
+      // 5.7 新发现率收敛：连续 convergeRounds 轮新发现 <= convergeNewIssues → converged
+      const newFindings = Object.values(state.issues).filter((i) => i.firstSeen === round).length;
+      const conv = checkConvergence({
+        prevStreak: state.convergeStreak || 0, newFindings,
+        convergeNewIssues, convergeRounds,
+      });
+      state.convergeStreak = conv.streak;
+      if (conv.converged) {
+        log("Converged: new findings <= " + convergeNewIssues + " for " + convergeRounds + " rounds. Stopping.");
+        batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
+        state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
+        saveState(state);
+        terminated = "converged";
+        finalMessage = "Batch " + batchIndex + " round " + round + ": 新发现率收敛（连续 " + convergeRounds
+          + " 轮新问题 ≤" + convergeNewIssues + "）。残留: "
+          + (state.knownRemaining && state.knownRemaining.length ? state.knownRemaining.join("; ") : "无 deferred");
+        batchIndex = BATCHES.length + 1;
+        break;
+      }
     }
 
     // ── Fix ─────────────────────────────────────────────────
@@ -742,6 +790,10 @@ return {
   targetType,
   target,
   runDir: RUN_ROOT,
+  // 5.9 terminated 透出：非 clean 时 message 含终止原因 + 残留 ID 清单 + deferred 理由
+  // （stuck/needs-redesign/converged/max-rounds/*-failure 均由 finalMessage 承载）。
+  // 渲染层特判（launcher 对 terminated 非 clean 的视觉区分）留 TODO：当前 tool 结果
+  // 已含完整 message，主 agent 可直接感知差异。
   message: terminated === "clean"
     ? "All batches clean. " + totalFixed + " issue(s) fixed total. State: " + STATE_FILE
     : finalMessage + ". State: " + STATE_FILE,

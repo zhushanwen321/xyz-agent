@@ -15,7 +15,7 @@ const TARGET_TYPES = ["git-diff", "file", "dir", "text"];
 const VALID_ARG_KEYS = new Set([
   "targetType", "target", "agents", "batchNames", "reviewPrompt", "fixPrompt",
   "autoCommit", "maxRounds", "stuckThreshold", "model", "skipCleanAgents",
-  "recheckAfterFix", "fixAgent", "_runId",
+  "recheckAfterFix", "fixAgent", "maxFixAttempts", "convergeNewIssues", "convergeRounds", "_runId",
 ]);
 
 function normalizeBool(v, name, def, fail) {
@@ -485,6 +485,29 @@ function reconcileIssues(prevIssues, { seenIds, round, stuckThreshold }) {
 }
 
 /**
+ * 5.7 新发现率收敛判定纯函数：连续 convergeRounds 轮新发现 ≤ convergeNewIssues → converged。
+ * 新发现 = 本轮 reconcile 新增的 ID（firstSeen === round）。streak 由调用方持久化（state）。
+ */
+function checkConvergence({ prevStreak, newFindings, convergeNewIssues, convergeRounds }) {
+  const streak = newFindings <= convergeNewIssues ? (prevStreak || 0) + 1 : 0;
+  return { converged: streak >= convergeRounds, streak };
+}
+
+/**
+ * 5.7 needs-redesign 判定纯函数（RC-7）：fixAttempts >= maxFixAttempts 且 status === regressed
+ * 的 ID → 需要重新设计而非继续补丁。返回含 history 供终止 message 输出。
+ */
+function findNeedsRedesign(issues, maxFixAttempts) {
+  const result = [];
+  for (const [id, issue] of Object.entries(issues || {})) {
+    if (issue.status === "regressed" && (issue.fixAttempts || 0) >= maxFixAttempts) {
+      result.push({ issue_id: id, fixAttempts: issue.fixAttempts, history: issue.history || [] });
+    }
+  }
+  return result;
+}
+
+/**
  * reviewer 结果归一化：reconciliation（可选，5.1 结构化对账声明）透传，缺省 []。
  * 旧格式（无 reconciliation）兼容；缺 must_fix 返回 null（对齐现状缺 must_fix 判定）。
  */
@@ -692,6 +715,8 @@ module.exports = {
   validateFixResult,
   reconcileIssues,
   normalizeReviewResult,
+  checkConvergence,
+  findNeedsRedesign,
   parseResult,
   normalizeAggregatorResult,
   parseAggregatedMd,
