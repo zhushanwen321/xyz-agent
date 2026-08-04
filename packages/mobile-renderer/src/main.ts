@@ -1,22 +1,20 @@
-// mobile-renderer 入口（W1 scaffolding）：createApp + pinia 最小 bootstrap。
+// mobile-renderer 入口（W2：调 bootstrap 编排）。
 //
-// AC1 依赖边：import @xyz-agent/core + @xyz-agent/ui（workspace:* 同源产物，
-// 非 sync-copy 副本）——W1 仅引用符号建立物理依赖边：
-//   - providePlatform：core PlatformPort 注入点（P0 已落地）。真实 adapter
-//     注入归 W2（src/platform/mobile-platform-adapter.ts），此处不调用。
+// W1 建立的 AC1 依赖边（@xyz-agent/core + @xyz-agent/ui 物理依赖边）在 W2 保留：
+//   - providePlatform：core PlatformPort 符号（W1 占位引用，TC-7 回归护栏）。
+//     真实注入由 bootstrap() 内部完成（见 ./bootstrap.ts）。
 //   - UI_PACKAGE_NAME：ui 包占位常量，console 打印消费。
-// App.vue 归 W2（layout-shell-and-stubs），W1 用内联占位渲染。
-import { createApp, h } from 'vue'
-import { createPinia } from 'pinia'
+// bootstrap 接管 App 挂载（W1 的内联 createApp 占位渲染已删除）。
 import { providePlatform } from '@xyz-agent/core'
 import { UI_PACKAGE_NAME } from '@xyz-agent/ui'
+import { bootstrap } from './bootstrap'
 
-// W1 仅确认注入点可达（编译期符号引用），不注入真实 adapter（W2）。
+// W1 依赖边占位：bootstrap 内部会调 providePlatform，此处仅维持 main.ts 的
+// core import（TC-7 回归 + W1 ac1-dependency-edge 护栏）。
 void providePlatform
 
 // eslint-disable-next-line no-console
 console.log(`[mobile-renderer] boot: ui=${UI_PACKAGE_NAME}`)
 
-createApp({
-  render: () => h('div', { 'data-testid': 'mobile-root' }, 'xyz-agent mobile'),
-}).use(createPinia()).mount('#app')
+// 启动壳编排（注入 platform → 注册挂载点 → 挂载 App）。
+void bootstrap()
