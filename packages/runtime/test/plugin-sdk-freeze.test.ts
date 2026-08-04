@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { PermissionConstants, PluginRpcErrorCodes } from '../../plugin-sdk/src/types'
+import { freezeApiSurface } from '../src/services/plugin-service/plugin-api-freeze.js'
+import type { Phase2AgentAPI } from '../src/services/plugin-service/plugin-types.js'
 
 describe('plugin-sdk freeze 分层（AC12 前半：const 冻结）', () => {
   it('PermissionConstants 已冻结（Object.isFrozen === true）', () => {
@@ -51,5 +53,109 @@ describe('plugin-sdk freeze 分层（AC12 前半：const 冻结）', () => {
     // runtime 源经 sync-types.sh 传播：SDK 的 const 就是 runtime 的 const（同一字面量）
     expect(PermissionConstants.TOOLS_REGISTER).toBe('tools.register')
     expect(PluginRpcErrorCodes.INTERNAL_ERROR).toBe(-32603)
+  })
+})
+
+describe('plugin-sdk freeze 运行时侧（AC12 后半：runtime api 对象冻结）', () => {
+  function buildTestApi(): Phase2AgentAPI {
+    // 构造与 createAgentAPI 返回同构的 Phase2AgentAPI 形状对象（freeze 前置形状）
+    return {
+      storage: {
+        global: { get: async () => undefined, set: async () => undefined, delete: async () => undefined, keys: async () => [] },
+        workspace: { get: async () => undefined, set: async () => undefined, delete: async () => undefined, keys: async () => [] },
+      },
+      notify: { info: async () => undefined, warning: async () => undefined, error: async () => undefined },
+      sessions: {
+        list: async () => [],
+        get: async () => undefined,
+        getActive: async () => undefined,
+        sendMessage: async () => undefined,
+        onDidCreateSession: () => ({ dispose: () => undefined }),
+        onDidDestroySession: () => ({ dispose: () => undefined }),
+      },
+      events: { on: () => ({ dispose: () => undefined }), emit: () => undefined },
+      tools: { register: async () => '', unregister: async () => undefined },
+      hooks: {
+        onBeforeSendMessage: async () => ({ dispose: () => undefined }),
+        onBeforeToolCall: async () => ({ dispose: () => undefined }),
+        onBeforeAgentStart: async () => ({ dispose: () => undefined }),
+        onAfterToolResult: async () => ({ dispose: () => undefined }),
+        onPiEvent: async () => ({ dispose: () => undefined }),
+      },
+      config: { get: async () => undefined, getAll: async () => ({}), set: async () => undefined },
+      sessionData: { get: async () => undefined, set: async () => undefined, delete: async () => undefined, keys: async () => [] },
+      ui: {
+        showSelect: async () => undefined,
+        showConfirm: async () => false,
+        showInput: async () => undefined,
+        notify: async () => undefined,
+        updateStatusBarItem: async () => undefined,
+      },
+      agent: {
+        setModel: async () => undefined,
+        getModel: async () => '',
+        getThinkingLevel: async () => '',
+        setThinkingLevel: async () => undefined,
+        getActiveTools: async () => [],
+      },
+      workspace: { rootPath: '', name: '', findFiles: async () => [] },
+      commands: { register: async () => ({ dispose: () => undefined }), unregister: async () => undefined },
+      views: { update: async () => undefined, listMountPoints: async () => [] },
+    }
+  }
+
+  it('freezeApiSurface 后顶层已冻结', () => {
+    const api = freezeApiSurface(buildTestApi())
+    expect(Object.isFrozen(api)).toBe(true)
+  })
+
+  it('全部一级子对象已冻结（storage/notify/sessions/events/tools/hooks/config/sessionData/ui/agent/workspace）', () => {
+    const api = freezeApiSurface(buildTestApi())
+    const subObjects = [
+      api.storage,
+      api.notify,
+      api.sessions,
+      api.events,
+      api.tools,
+      api.hooks,
+      api.config,
+      api.sessionData,
+      api.ui,
+      api.agent,
+      api.workspace,
+    ]
+    for (const sub of subObjects) {
+      expect(Object.isFrozen(sub)).toBe(true)
+    }
+  })
+
+  it('storage 二级子对象已冻结（global/workspace）', () => {
+    const api = freezeApiSurface(buildTestApi())
+    expect(Object.isFrozen(api.storage.global)).toBe(true)
+    expect(Object.isFrozen(api.storage.workspace)).toBe(true)
+  })
+
+  it('freeze 后顶层写入被拒（strict 抛 TypeError，结构不变）', () => {
+    const api = freezeApiSurface(buildTestApi())
+    expect(() => {
+      Object.defineProperty(api, 'newField', { value: 1, enumerable: true })
+    }).toThrow(TypeError)
+    // 结构不变：newField 未写入
+    expect('newField' in api).toBe(false)
+  })
+
+  it('freeze 后子对象写入被拒（strict 抛 TypeError，结构不变）', () => {
+    const api = freezeApiSurface(buildTestApi())
+    expect(() => {
+      Object.defineProperty(api.storage, 'newField', { value: 1, enumerable: true })
+    }).toThrow(TypeError)
+    expect('newField' in api.storage).toBe(false)
+  })
+
+  it('freeze 不破坏方法调用语义（函数引用可用）', () => {
+    const api = freezeApiSurface(buildTestApi())
+    expect(typeof api.notify.info).toBe('function')
+    expect(typeof api.tools.register).toBe('function')
+    expect(typeof api.events.on).toBe('function')
   })
 })

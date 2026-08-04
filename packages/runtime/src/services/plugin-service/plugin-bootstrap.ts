@@ -36,6 +36,7 @@ import { createStorageApi } from './api/storage-api.js'
 import { createNotifyApi } from './api/notify-api.js'
 import { createCommandsApi } from './api/commands-api.js'
 import { createViewsApi } from './api/views-api.js'
+import { freezeApiSurface } from './plugin-api-freeze.js'
 import { toErrorMessage } from '../../utils/errors.js'
 
 const rpcClient = new PluginRpcClient()
@@ -201,8 +202,8 @@ function createPluginContext(pluginId: string, pluginDir: string): PluginContext
   }
 }
 
-function createAgentAPI(pluginId: string): Phase2AgentAPI {
-  return {
+export function createAgentAPI(pluginId: string): Phase2AgentAPI {
+  const api: Phase2AgentAPI = {
     storage: {
       global: createStorageApi(rpcClient, pluginId, 'global'),
       workspace: createStorageApi(rpcClient, pluginId, 'workspace'),
@@ -229,6 +230,7 @@ function createAgentAPI(pluginId: string): Phase2AgentAPI {
     commands: createCommandsApi(rpcClient, pluginId),
     views: createViewsApi(rpcClient, pluginId),
   }
+  return freezeApiSurface(api)
 }
 
 /**
