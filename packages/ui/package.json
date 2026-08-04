@@ -25,6 +25,10 @@
     "./features/settings": {
       "types": "./src/features/settings/index.ts",
       "import": "./src/features/settings/index.ts"
+    },
+    "./features/drawer": {
+      "types": "./src/features/drawer/index.ts",
+      "import": "./src/features/drawer/index.ts"
     }
   },
   "scripts": {

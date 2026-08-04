@@ -1,0 +1,260 @@
+<!--
+  DrawerPanel —— 跨端共享 drawer 容器（W3 · p3-strangler-domains::drawer）。
+
+  迁移自 renderer components/panel/SideDrawer.vue 的「跨端共享容器」部分（drawer 域归位
+  第三步：W1 控制态/协同进 core、W2 widget 缓冲容器进 core、W3 容器组件进 ui 包）。
+  桌面独占内容面板（GitPanel/TerminalView/BrowserPane/CommandDocPanel/DetailPane/TasksPanel）
+  留壳 slot 挂载（D5 硬编码占位，不走 contribution 路由）——本组件经默认 slot 接收，
+  内置 widget 内容区（activeGuiComponent→activeLines→空态）作为 slot fallback（C2）。
+
+  状态/数据契约（IF2 + clarify C1）：
+  - props{isOpen, activeTab, docked, sessionId} 为控制态（父组件 PanelContainer 管理），
+    本组件只接收 + emit close/set-tab/toggle-dock，不持有状态（§6.3 点5 架构解耦）
+  - widget 缓冲数据（activeGuiComponent/activeLines/activeLinesMeta/statusEntries）
+    经 props 注入（D3 壳层 useDrawerWidgetBuffers computed 传入，core widget-buffers 为 SSOT）
+  - hasTasksData 控制 tasks 条件 tab（壳按 tasksStore.hasData 传入，T3 壳裁剪）
+
+  不纳入（C3 clarify）：ESC 关闭（window keydown 桌面副作用）+ AC-13 unread badge
+  （chatStore 壳层状态）——均为壳层职责，W4 shell-integration 在 PanelContainer 侧处理。
+-->
+<template>
+  <Transition name="drawer-slide-right">
+    <aside
+      v-if="isOpen"
+      class="relative flex h-full min-w-0 flex-col bg-surface"
+      :aria-label="t('panel.sideDrawer.title')"
+      data-testid="drawer-panel"
+    >
+      <!-- header：tab 栏（仅 icon，左）+ 钉住/关闭（右）。label 收进 title 供 hover 查看。 -->
+      <header class="flex items-center gap-1 border-b border-border px-2 py-1.5">
+        <div class="flex flex-1 gap-0.5">
+          <Button
+            v-for="tab in tabs"
+            :key="tab.key"
+            variant="ghost"
+            class="size-7 shrink-0 justify-center rounded-sm p-0"
+            :class="activeTab === tab.key ? 'bg-accent-soft text-accent' : 'text-neutral-mid'"
+            :title="tab.label"
+            :data-testid="`drawer-tab-${tab.key}`"
+            @click="emit('set-tab', tab.key)"
+          >
+            <component :is="tab.icon" class="size-3.5" />
+          </Button>
+        </div>
+
+        <Button
+          variant="ghost"
+          class="size-7 shrink-0 rounded-sm p-0"
+          :class="docked ? 'text-accent' : 'text-neutral-dim'"
+          :title="docked ? t('panel.sideDrawer.unpin') : t('panel.sideDrawer.pin')"
+          data-testid="drawer-pin"
+          @click="emit('toggle-dock')"
+        >
+          <PinOff v-if="docked" class="size-3" />
+          <Pin v-else class="size-3" />
+        </Button>
+        <Button
+          variant="ghost"
+          class="size-7 shrink-0 rounded-sm p-0 text-neutral-dim hover:text-neutral-fg"
+          :title="t('panel.sideDrawer.close')"
+          data-testid="drawer-close"
+          @click="emit('close')"
+        >
+          <X class="size-3" />
+        </Button>
+      </header>
+
+      <!-- 内容区：壳按 tab 经默认 slot 注入桌面独占面板（Git/Terminal/Browser 等）；
+           无 slot 内容时（跨端/mobile/冒烟）回退内置 widget 内容区（gui→lines→空态）。 -->
+      <div class="min-h-0 flex-1 overflow-auto" data-testid="drawer-content">
+        <slot>
+          <!-- active tab 有结构化 GUI widget（extension:widgetGui）→ 优先 GuiComponentRenderer 渲染 -->
+          <div
+            v-if="activeGuiComponent"
+            class="flex h-full flex-col gap-0 overflow-auto p-2"
+            data-testid="drawer-widget-gui"
+          >
+            <GuiComponentRenderer :component="activeGuiComponent" />
+          </div>
+          <!-- active tab 有 widget 内容 → 渲染等宽文本输出（每行一个 div，font-mono + pre-wrap） -->
+          <div
+            v-else-if="activeLines.length"
+            class="flex h-full flex-col gap-0 overflow-auto p-2"
+            :class="activeLinesMeta.unknown ? 'opacity-80' : ''"
+            data-testid="drawer-widget-lines"
+          >
+            <div
+              v-if="activeLinesMeta.unknown"
+              class="mb-1 rounded-sm border border-border bg-surface px-1.5 py-0.5 text-[10px] text-neutral-mid"
+              data-testid="drawer-unknown-badge"
+            >
+              {{ t('panel.sideDrawer.unknownWidget') }}：{{ activeLinesMeta.key }}
+            </div>
+            <code
+              v-for="(line, i) in activeLines"
+              :key="i"
+              class="block whitespace-pre-wrap break-all font-mono text-[11px] leading-[1.45] text-neutral-fg/90"
+              >{{ line }}</code
+            >
+          </div>
+          <!-- active tab 无 widget 内容 → 空态占位 -->
+          <div
+            v-else
+            class="flex h-full flex-col items-center justify-center gap-2 p-4 text-center"
+            data-testid="drawer-widget-empty"
+          >
+            <component :is="activeTabMeta.icon" class="size-6 text-neutral-dim opacity-40" />
+            <p class="text-[12px] text-neutral-dim opacity-70">{{ activeTabMeta.emptyText }}</p>
+            <p class="text-[11px] text-neutral-dim opacity-50">{{ activeTabMeta.emptyHint }}</p>
+          </div>
+        </slot>
+      </div>
+
+      <!-- extension status 底栏（按 statusKey 聚合最新 text）。
+           无 status 推送时不占位，避免空态挤压内容区。 -->
+      <footer
+        v-if="statusEntries.length"
+        class="flex flex-col gap-0.5 border-t border-border px-2 py-1"
+        data-testid="drawer-status-footer"
+      >
+        <div
+          v-for="entry in statusEntries"
+          :key="entry.statusKey"
+          class="flex items-center gap-1.5 font-mono text-[10px]"
+        >
+          <span class="shrink-0 text-neutral-dim">{{ entry.statusKey }}</span>
+          <!-- textRaw 有 ANSI 着色 → AnsiText 渲染保留颜色；否则纯文本兜底。
+               容器承载 truncate（min-w-0 + overflow-hidden + ellipsis），避免与 AnsiText 内部 whitespace-pre-wrap 冲突。 -->
+          <div v-if="entry.textRaw" class="min-w-0 flex-1 overflow-hidden">
+            <AnsiText :content="entry.textRaw" class="block truncate text-neutral-mid" />
+          </div>
+          <span v-else class="min-w-0 flex-1 truncate text-neutral-mid">{{ entry.text }}</span>
+        </div>
+      </footer>
+    </aside>
+  </Transition>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import type { Component } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { BookOpen, CheckSquare, FileText, GitBranch, Globe, Pin, PinOff, Terminal as TerminalIcon, X } from '@lucide/vue'
+import { Button } from '@xyz-agent/ui'
+import { AnsiText, GuiComponentRenderer } from '../../rendering-protocol'
+import type { GuiComponent } from '@xyz-agent/extension-protocol'
+import type { SideDrawerTab } from '@xyz-agent/core/domain/drawer'
+
+const props = withDefaults(
+  defineProps<{
+    isOpen: boolean
+    activeTab: SideDrawerTab
+    docked: boolean
+    /** widget 订阅的 session 标识（壳层透传，为 null 不订阅） */
+    sessionId: string | null
+    /** active tab 的结构化 GUI 组件（extension:widgetGui，壳 useDrawerWidgetBuffers 传入） */
+    activeGuiComponent?: GuiComponent | null
+    /** active tab 的文本行（extension:widget，terminal/browser/unknownWidget fallback） */
+    activeLines?: string[]
+    /** active 文本行的元信息（unknown 徽章） */
+    activeLinesMeta?: { unknown: boolean; key: string }
+    /** status footer 条目（extension:status，statusKey 维度聚合） */
+    statusEntries?: Array<{ statusKey: string; text: string; textRaw?: string }>
+    /** tasks 条件 tab（壳按 tasksStore.hasData 传入，默认 false 隐藏） */
+    hasTasksData?: boolean
+  }>(),
+  {
+    activeGuiComponent: null,
+    activeLines: () => [],
+    activeLinesMeta: () => ({ unknown: false, key: '' }),
+    statusEntries: () => [],
+    hasTasksData: false,
+  },
+)
+
+const emit = defineEmits<{
+  close: []
+  'set-tab': [tab: SideDrawerTab]
+  'toggle-dock': []
+}>()
+
+const { t } = useI18n()
+
+interface TabMeta {
+  key: SideDrawerTab
+  label: string
+  icon: Component
+  emptyText: string
+  emptyHint: string
+}
+
+/** tab 元信息（§6.3 点2：Terminal/Browser/Git/Doc/Detail + tasks 条件）。
+ *  Git tab 内容为 GitPanel（壳 slot 注入，inject 数据）。
+ *  Tasks tab 仅在壳传入 hasTasksData=true 时追加（避免空 icon 噪音，T3 壳裁剪）。 */
+const tabs = computed<TabMeta[]>(() => {
+  const base: TabMeta[] = [
+    {
+      key: 'terminal',
+      label: t('panel.sideDrawer.tabTerminal'),
+      icon: TerminalIcon,
+      emptyText: t('panel.sideDrawer.noTerminal'),
+      emptyHint: t('panel.sideDrawer.terminalHint'),
+    },
+    {
+      key: 'browser',
+      label: t('panel.sideDrawer.tabBrowser'),
+      icon: Globe,
+      emptyText: t('panel.sideDrawer.noBrowser'),
+      emptyHint: t('panel.sideDrawer.browserHint'),
+    },
+    {
+      key: 'git',
+      label: t('panel.sideDrawer.tabGit'),
+      icon: GitBranch,
+      emptyText: t('panel.sideDrawer.noGit'),
+      emptyHint: t('panel.sideDrawer.gitHint'),
+    },
+    {
+      key: 'doc',
+      label: t('panel.sideDrawer.tabDoc'),
+      icon: BookOpen,
+      emptyText: t('panel.sideDrawer.noDoc'),
+      emptyHint: t('panel.sideDrawer.docHint'),
+    },
+    {
+      key: 'detail',
+      label: t('panel.sideDrawer.tabDetail'),
+      icon: FileText,
+      emptyText: t('panel.sideDrawer.noFileSelected'),
+      emptyHint: t('panel.sideDrawer.detailHint'),
+    },
+  ]
+  // Tasks tab 条件 push：壳传入 hasTasksData=true 才显示 icon（避免无数据时占位）
+  if (props.hasTasksData) {
+    base.push({
+      key: 'tasks',
+      label: t('panel.sideDrawer.tabTasks'),
+      icon: CheckSquare,
+      emptyText: t('panel.sideDrawer.noTasks'),
+      emptyHint: t('panel.sideDrawer.tasksHint'),
+    })
+  }
+  return base
+})
+
+const activeTabMeta = computed<TabMeta>(() => tabs.value.find((tab) => tab.key === props.activeTab) ?? tabs.value[0])
+</script>
+
+<style scoped>
+/* 抽屉淡入/淡出（panel/spec.md v2）。
+   内容 opacity 淡入足够柔和（布局瞬时切换配合 opacity 淡入）。
+   escape hatch：Vue Transition 类无法用 Tailwind 表达（需 enter-from/leave-to 同时设 opacity）。 */
+.drawer-slide-right-enter-from,
+.drawer-slide-right-leave-to {
+  opacity: 0;
+}
+.drawer-slide-right-enter-active,
+.drawer-slide-right-leave-active {
+  transition: opacity var(--duration-slow) var(--ease);
+}
+</style>
