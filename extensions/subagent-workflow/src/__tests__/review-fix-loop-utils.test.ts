@@ -22,8 +22,11 @@ import {
   buildScopedRecheckPrompt,
   wrapUntrusted,
   buildFixPrompt,
+  buildR2ReviewPrompt,
   normalizeFixResult,
   validateFixResult,
+  reconcileIssues,
+  normalizeReviewResult,
   parseResult,
   normalizeAggregatorResult,
   parseAggregatedMd,
@@ -352,6 +355,122 @@ describe("validateFixResult", () => {
   });
 });
 
+// ── R2+ 三段式 prompt（5.2 + 防护规格） ──
+
+describe("buildR2ReviewPrompt", () => {
+  const args = {
+    header: "Batch 1 Round 2/5 — reviewer",
+    round: 2,
+    max: 5,
+    roundDir: "/tmp/run/batch-1/round-2",
+    reportFile: "reviewer",
+    aggPath: "/tmp/run/batch-1/round-1/aggregated.md",
+    fixResult: { fixed_count: 1, fixes: [{ issue_id: "MF-1", description: "d" }], deferred: [{ issue_id: "S-1", reason: "defer reason" }] },
+    knownRemaining: ["S-1: 需新增 e2e fixture"],
+  };
+  it("三段式结构（TC1）：对账/known-remaining/收敛 hunt", () => {
+    const p = buildR2ReviewPrompt(args);
+    expect(p).toContain("PART 1: RECONCILE PREVIOUS ROUND");
+    expect(p).toContain("PART 2: KNOWN-REMAINING");
+    expect(p).toContain("PART 3: NEW FINDINGS");
+    expect(p).toContain("Read the previous aggregated report: /tmp/run/batch-1/round-1/aggregated.md");
+    expect(p).toContain("S-1: 需新增 e2e fixture");
+  });
+  it("fix 结果 wrapUntrusted 包裹（TC1 防注入）", () => {
+    const p = buildR2ReviewPrompt(args);
+    expect(p).toContain('<untrusted source="fix_result">');
+    expect(p).toContain("</untrusted>");
+  });
+  it("证据标准 + Fidelity + 反模式（TC4）", () => {
+    const p = buildR2ReviewPrompt(args);
+    expect(p).toContain("the fix result claiming 'fixed' is NOT evidence");
+    expect(p).toContain("Reconciliation alone is NOT completion");
+    expect(p).toContain("do NOT re-word them under a different angle");
+    expect(p).toContain("reporting 0 new issues when nothing is wrong is a");
+    expect(p).toContain("business-impact evidence chain");
+  });
+  it("known-remaining 为空 → (none) 占位", () => {
+    const p = buildR2ReviewPrompt({ ...args, knownRemaining: [] });
+    expect(p).toContain("- (none)");
+  });
+});
+
+// ── 5.1 对账驱动：reconcileIssues ──
+
+describe("reconcileIssues", () => {
+  it("fix-attempted 未再现 → fixed；再现 → regressed（TC3）", () => {
+    const prev = {
+      "MF-1": { firstSeen: 1, status: "fix-attempted", fixAttempts: 1, history: [] },
+      "MF-2": { firstSeen: 1, status: "fix-attempted", fixAttempts: 1, history: [] },
+    };
+    const r = reconcileIssues(prev, { seenIds: new Set(["MF-2"]), round: 2, stuckThreshold: 3 });
+    expect(r.issues["MF-1"].status).toBe("fixed");
+    expect(r.issues["MF-2"].status).toBe("regressed");
+    expect(r.issues["MF-2"].fixAttempts).toBe(2);
+    expect(r.stuck).toBe(false);
+  });
+  it("同一 ID 连续 N 轮 → stuck 且 stuckIds 含该 ID（TC3）", () => {
+    const prev = {
+      "MF-1": { firstSeen: 1, status: "regressed", fixAttempts: 2, openStreak: 2, history: [] },
+    };
+    const r = reconcileIssues(prev, { seenIds: new Set(["MF-1"]), round: 3, stuckThreshold: 3 });
+    expect(r.stuck).toBe(true);
+    expect(r.stuckIds).toEqual(["MF-1"]);
+    expect(r.issues["MF-1"].openStreak).toBe(3);
+  });
+  it("计数升降但 ID 不同 → 不 stuck（4→4 churn 盲区，TC3）", () => {
+    // 上轮 MF-1/MF-2 已 fixed（未 seen），本轮全新 MF-3：计数 2→1 无意义，ID 无连续
+    const prev = {
+      "MF-1": { firstSeen: 1, status: "fix-attempted", fixAttempts: 1, history: [] },
+      "MF-2": { firstSeen: 1, status: "fix-attempted", fixAttempts: 1, history: [] },
+    };
+    const r = reconcileIssues(prev, { seenIds: new Set(["MF-3"]), round: 2, stuckThreshold: 3 });
+    expect(r.stuck).toBe(false);
+    expect(r.issues["MF-3"].status).toBe("open");
+    expect(r.issues["MF-3"].firstSeen).toBe(2);
+  });
+  it("deferred 留 known-remaining，不参与判定（TC3）", () => {
+    const prev = {
+      "S-1": { firstSeen: 1, status: "deferred", deferredReason: "需 e2e fixture", fixAttempts: 0, history: [] },
+    };
+    const r = reconcileIssues(prev, { seenIds: new Set(), round: 2, stuckThreshold: 3 });
+    expect(r.knownRemaining).toContain("S-1: 需 e2e fixture");
+    expect(r.issues["S-1"].status).toBe("deferred");
+    expect(r.stuck).toBe(false);
+  });
+});
+
+// ── reviewer 结果归一化（reconciliation 透传） ──
+
+describe("normalizeReviewResult", () => {
+  it("reconciliation 透传，非法条目过滤（TC5）", () => {
+    const r = normalizeReviewResult({
+      report_file: "/tmp/r.md", must_fix: 1, suggestion: 0,
+      reconciliation: [{ prev_id: "MF-1", status: "not-fixed" }, { bad: true }],
+    });
+    expect(r).not.toBeNull();
+    expect(r!.reconciliation).toEqual([{ prev_id: "MF-1", status: "not-fixed" }]);
+  });
+  it("旧格式（无 reconciliation）→ 缺省 []（TC5）", () => {
+    const r = normalizeReviewResult({ report_file: "/tmp/r.md", must_fix: 0, suggestion: 0 });
+    expect(r!.reconciliation).toEqual([]);
+  });
+  it("缺 must_fix → null", () => {
+    expect(normalizeReviewResult({ report_file: "/tmp/r.md" })).toBeNull();
+  });
+});
+
+describe("normalizeAggregatorResult must_fix_ids", () => {
+  it("must_fix_ids 透传（TC6）", () => {
+    const r = normalizeAggregatorResult({ report_file: "/tmp/agg.md", must_fix: 2, suggestion: 1, must_fix_ids: ["MF-1", "MF-2"] });
+    expect(r!.must_fix_ids).toEqual(["MF-1", "MF-2"]);
+  });
+  it("旧格式（无 must_fix_ids）→ 缺省 []（TC6）", () => {
+    const r = normalizeAggregatorResult({ report_file: "/tmp/agg.md", must_fix: 2, suggestion: 1 });
+    expect(r!.must_fix_ids).toEqual([]);
+  });
+});
+
 // ── 结果解析：parseResult ──────────────────────────────────────────
 
 describe("parseResult", () => {
@@ -380,12 +499,12 @@ describe("parseResult", () => {
 describe("normalizeAggregatorResult", () => {
   it("标准字段 must_fix/suggestion → 归一化", () => {
     expect(normalizeAggregatorResult({ report_file: "/r.md", must_fix: 4, suggestion: 2 }))
-      .toEqual({ report_file: "/r.md", must_fix: 4, suggestion: 2 });
+      .toEqual({ report_file: "/r.md", must_fix: 4, suggestion: 2, must_fix_ids: [] });
   });
 
   it("别名字段（totalMustFix/mustFix/reportFile）→ 归一化", () => {
     expect(normalizeAggregatorResult({ reportFile: "/r.md", totalMustFix: 5, totalSuggestions: 1 }))
-      .toEqual({ report_file: "/r.md", must_fix: 5, suggestion: 1 });
+      .toEqual({ report_file: "/r.md", must_fix: 5, suggestion: 1, must_fix_ids: [] });
   });
 
   it("must_fix 缺失/非 number（LLM 返回无效 JSON）→ null", () => {

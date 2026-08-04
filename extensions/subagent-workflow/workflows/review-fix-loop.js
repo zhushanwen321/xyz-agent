@@ -51,8 +51,11 @@ const {
   buildScopedRecheckPrompt,
   wrapUntrusted,
   buildFixPrompt,
+  buildR2ReviewPrompt,
   normalizeFixResult,
   validateFixResult,
+  reconcileIssues,
+  normalizeReviewResult,
   parseResult,
   normalizeAggregatorResult,
   parseAggregatedMd,
@@ -138,6 +141,19 @@ const reviewerSchema = {
     report_file: { type: "string", description: "Absolute path to the written review report (.md)" },
     must_fix: { type: "number", description: "Number of must-fix (critical+major) issues found" },
     suggestion: { type: "number", description: "Number of suggestion-level (minor) issues found" },
+    reconciliation: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          prev_id: { type: "string", description: "Issue id from the previous round (reconciliation continuation)" },
+          status: { type: "string", description: "fixed / not-fixed / regressed — only fixed counts as resolved; fix result claiming fixed is NOT evidence" },
+          evidence: { type: "string", description: "What was read/confirmed (file + what changed)" },
+        },
+        required: ["prev_id", "status"],
+      },
+      description: "R2+ reconciliation table (structured): MANDATORY for R2+ rounds, optional for R1",
+    },
   },
   required: ["report_file", "must_fix", "suggestion"],
 };
@@ -148,6 +164,11 @@ const aggregatorSchema = {
     report_file: { type: "string", description: "Absolute path to aggregated.md" },
     must_fix: { type: "number", description: "Total must-fix after dedup across all dimensions" },
     suggestion: { type: "number", description: "Total suggestions after dedup across all dimensions" },
+    must_fix_ids: {
+      type: "array",
+      items: { type: "string" },
+      description: "Issue ids of the deduplicated must-fix list (MF-1..N), matching the first column of the markdown table",
+    },
   },
   required: ["report_file", "must_fix", "suggestion"],
 };
@@ -212,6 +233,9 @@ function loadState() {
       agentStatus: {},
       fixCount: 0,
       batches: [],
+      fixResults: [],
+      issues: undefined,
+      knownRemaining: [],
     };
   }
 }
@@ -274,6 +298,25 @@ function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
     };
   }
 
+  // R2+ 三段式分支（5.2）：round>1 且非 scoped → verify-first 对账 + known-remaining + 收敛 hunt。
+  // scoped 分支（recheck 限定）在下方单独处理（含对账段）。
+  if (round > 1 && !scoped) {
+    const prevRoundDir = RUN_ROOT + "/batch-" + batchIndex + "/round-" + (round - 1);
+    return {
+      ...base,
+      prompt: buildR2ReviewPrompt({
+        header, round, max, roundDir,
+        reportFile: def.report,
+        aggPath: prevRoundDir + "/aggregated.md",
+        fixResult: state.fixResults && state.fixResults.length
+          ? state.fixResults[state.fixResults.length - 1]
+          : null,
+        knownRemaining: (state.knownRemaining && Array.isArray(state.knownRemaining)) ? state.knownRemaining : [],
+      }),
+      agent: def.isCustom ? undefined : def.name,
+    };
+  }
+
   // recheck 限定分支（5.5）：clean agent 重派时只审 fix 改动文件 + 自检关联点
   // （scope = modifiedFiles ∪ affected_files，后者来自 state.fixImpactFiles），不诱导全量重扫。
   if (scoped) {
@@ -284,6 +327,10 @@ function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
         reportFile: def.report,
         modifiedFiles: lastModifiedFiles(),
         affectedFiles: (state.fixImpactFiles && Array.isArray(state.fixImpactFiles)) ? state.fixImpactFiles : [],
+        aggPath: RUN_ROOT + "/batch-" + batchIndex + "/round-" + (round - 1) + "/aggregated.md",
+        fixResult: state.fixResults && state.fixResults.length
+          ? state.fixResults[state.fixResults.length - 1]
+          : null,
       }),
       agent: def.isCustom ? undefined : def.name,
     };
@@ -377,6 +424,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     // per-agent 结果区分：parallel 结果与 calls 一一对应
     const reviewResults = [];
     const agentRoundResults = [];
+    const reconSeen = new Set(); // R2+ reconciliation 声明的上轮 ID（status !== fixed）——stuck ID 驱动数据源（5.1）
     for (let i = 0; i < allRaw.length; i++) {
       const raw = allRaw[i];
       if (raw && typeof raw === "object" && raw.error) {
@@ -390,9 +438,12 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         batchIndex = BATCHES.length + 1; // 终止外层循环
         break;
       }
-      const parsed = parseResult(raw.value);
-      if (parsed && typeof parsed.must_fix === "number") {
+      const parsed = normalizeReviewResult(raw.value);
+      if (parsed) {
         reviewResults.push(parsed);
+        for (const r of parsed.reconciliation) {
+          if (r.status !== "fixed") reconSeen.add(r.prev_id);
+        }
         const def = active[i];
         if (parsed.must_fix === 0) {
           recordAgentClean(state, def.name, batchIndex);
@@ -511,21 +562,44 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     const suggestion = agg.suggestion ?? 0;
     log("Aggregated: " + mustFix + " must-fix + " + suggestion + " suggestion(s).");
 
+    // 5.1：R1 的 aggregator must_fix_ids 初始化 state.issues（数字 ID 起点）
+    if (round === 1 && agg.must_fix_ids && agg.must_fix_ids.length > 0) {
+      if (!state.issues) state.issues = {};
+      for (const id of agg.must_fix_ids) {
+        if (!state.issues[id]) {
+          state.issues[id] = {
+            firstSeen: 1, severity: "must-fix", status: "open",
+            history: [{ round: 1, status: "open" }], fixAttempts: 0,
+          };
+        }
+      }
+    }
+
     // ── Stuck detection ─────────────────────────────────────
-    // 纯函数 updateStuckState（review-fix-loop-utils.cjs，vitest 单测见
-    // src/__tests__/review-fix-loop-utils.test.ts）：只跟踪 must_fix，不跟踪
-    // suggestion——suggestion 是固定噪声（fix agent 只修 must-fix，suggestion 单调
-    // 不降），计入 total 会把合法推进（must_fix 每轮在降）误判为 stuck 提前终止（MF-2）。
-    const stuck = updateStuckState(prevMustFix, stuckCount, mustFix, stuckThreshold);
-    stuckCount = stuck.stuckCount;
-    prevMustFix = stuck.prevMustFix;
+    // 5.1 ID 驱动：R2+ 用 reconciliation 声明的 seenIds + reconcileIssues（同一 ID 连续 N 轮
+    // open/regressed）；无 reconciliation 数据（R1 或 reviewer 未填）降级计数式 updateStuckState
+    // （现状语义，MF-2 注释保留）。needs-redesign（fixAttempts>=2）在 wave 5 接入。
+    let stuck = { stuck: false };
+    if (round > 1 && reconSeen.size > 0) {
+      const rec = reconcileIssues(state.issues || {}, { seenIds: reconSeen, round, stuckThreshold });
+      state.issues = rec.issues;
+      state.knownRemaining = rec.knownRemaining;
+      stuck = { stuck: rec.stuck, stuckIds: rec.stuckIds };
+      log("Reconcile: " + Object.keys(rec.issues).length + " tracked issue(s), known-remaining: " + rec.knownRemaining.length);
+    } else {
+      const s = updateStuckState(prevMustFix, stuckCount, mustFix, stuckThreshold);
+      stuckCount = s.stuckCount;
+      prevMustFix = s.prevMustFix;
+      stuck = { stuck: s.stuck };
+    }
     if (stuck.stuck) {
-      log("Stuck: must-fix count not decreasing for " + stuckThreshold + " rounds. Stopping.");
+      const stuckIds = (stuck.stuckIds || []).join(", ");
+      log("Stuck: issue(s) not converging for " + stuckThreshold + " rounds: " + stuckIds + ". Stopping.");
       batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
       state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
       saveState(state);
       terminated = "stuck";
-      finalMessage = "Batch " + batchIndex + " round " + round + ": must_fix 数连续 " + stuckThreshold + " 轮不下降";
+      finalMessage = "Batch " + batchIndex + " round " + round + ": 问题 " + stuckIds + " 连续 " + stuckThreshold + " 轮未收敛";
       batchIndex = BATCHES.length + 1;
       break;
     }
@@ -629,6 +703,18 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       }
     }
     state.fixImpactFiles = impactFiles;
+
+    // 5.1：fix 结果标记 fix-attempted（ID 对账驱动）+ fixResults 落库（R2+ prompt 输入）
+    if (state.issues) {
+      for (const f of fixResult.fixes) {
+        if (f && typeof f.issue_id === "string" && state.issues[f.issue_id]) {
+          state.issues[f.issue_id].status = "fix-attempted";
+          state.issues[f.issue_id].history.push({ round, status: "fix-attempted" });
+        }
+      }
+    }
+    if (!state.fixResults) state.fixResults = [];
+    state.fixResults.push(fixResult);
 
     const fixedCount = fixResult.fixed_count ?? mustFix;
     totalFixed += fixedCount;
