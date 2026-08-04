@@ -15,7 +15,8 @@
   - hasTasksData 控制 tasks 条件 tab（壳按 tasksStore.hasData 传入，T3 壳裁剪）
 
   不纳入（C3 clarify）：ESC 关闭（window keydown 桌面副作用）+ AC-13 unread badge
-  （chatStore 壳层状态）——均为壳层职责，W4 shell-integration 在 PanelContainer 侧处理。
+  （chatStore 壳层状态）——均为壳层职责，W4 shell-integration 在 PanelContainer 侧处理
+  （经可选具名 slot header-extra 注入 badge，本组件零 chatStore 依赖）。
 -->
 <template>
   <Transition name="drawer-slide-right">
@@ -62,13 +63,19 @@
         >
           <X class="size-3" />
         </Button>
+        <!-- header-extra：壳层注入点（W4）——unread badge 等桌面形态壳状态经此挂载（C3：壳层职责）。
+             可选具名 slot，无默认内容；ui 容器零 chatStore 感知（D3 纯净性）。 -->
+        <slot name="header-extra" />
       </header>
 
       <!-- 内容区：壳按 tab 经默认 slot 注入桌面独占面板（Git/Terminal/Browser 等）；
-           无 slot 内容时（跨端/mobile/冒烟）回退内置 widget 内容区（gui→lines→空态）。 -->
+           slot 无有效内容时（v-if chain 全 false / 跨端不传 slot）回退内置 widget 内容区（gui→lines→空态）。
+           用 hasDesktopPanelContent() 而非 `<slot>` fallback：父组件提供 slot 函数但运行时为空时，
+           Vue 的 slot fallback 不生效，需显式判断渲染结果。 -->
       <div class="min-h-0 flex-1 overflow-auto" data-testid="drawer-content">
-        <slot>
-          <!-- active tab 有结构化 GUI widget（extension:widgetGui）→ 优先 GuiComponentRenderer 渲染 -->
+        <slot v-if="hasDesktopPanelContent()" />
+        <!-- active tab 有结构化 GUI widget（extension:widgetGui）→ 优先 GuiComponentRenderer 渲染 -->
+        <template v-else>
           <div
             v-if="activeGuiComponent"
             class="flex h-full flex-col gap-0 overflow-auto p-2"
@@ -107,7 +114,7 @@
             <p class="text-[12px] text-neutral-dim opacity-70">{{ activeTabMeta.emptyText }}</p>
             <p class="text-[11px] text-neutral-dim opacity-50">{{ activeTabMeta.emptyHint }}</p>
           </div>
-        </slot>
+        </template>
       </div>
 
       <!-- extension status 底栏（按 statusKey 聚合最新 text）。
@@ -136,7 +143,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { Comment, computed, useSlots } from 'vue'
 import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { BookOpen, CheckSquare, FileText, GitBranch, Globe, Pin, PinOff, Terminal as TerminalIcon, X } from '@lucide/vue'
@@ -144,6 +151,22 @@ import { Button } from '@xyz-agent/ui'
 import { AnsiText, GuiComponentRenderer } from '../../rendering-protocol'
 import type { GuiComponent } from '@xyz-agent/extension-protocol'
 import type { SideDrawerTab } from '@xyz-agent/core/domain/drawer'
+
+const slots = useSlots()
+
+/**
+ * 默认 slot 是否有有效内容（非注释节点）。
+ * C2 契约：桌面壳按 tab 经默认 slot 注入独占面板（Git/Doc/Detail/Browser/Tasks/Terminal），
+ * 无匹配面板时（如 browser 无 url）不注入 → 应回退内置 widget 内容区。但 Vue `<slot>` 的
+ * fallback 只在「父组件未提供 slot 函数」时生效——PanelContainer 的 v-if chain 使 slot 函数
+ * 始终存在（运行时渲染为空/注释节点），故需在此显式判断渲染结果，空则走 widget 区。
+ * 非 computed：slots.default() 返回的 VNode 无响应式依赖，computed 缓存不失效；
+ * 模板表达式每次渲染求值才能反映 tab 切换后的 slot 内容。
+ */
+function hasDesktopPanelContent(): boolean {
+  const children = slots.default?.() ?? []
+  return children.some((v) => v && (v.type as unknown) !== Comment)
+}
 
 const props = withDefaults(
   defineProps<{

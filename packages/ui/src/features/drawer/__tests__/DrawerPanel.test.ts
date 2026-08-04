@@ -141,3 +141,19 @@ describe('DrawerPanel (tab 交互 + tasks 条件)', () => {
     expect(gitTab.classes()).toContain('bg-accent-soft')
   })
 })
+
+describe('DrawerPanel (header-extra slot，W4 壳层挂载点)', () => {
+  it('有 header-extra slot：header 内渲染注入内容（unread badge 等壳状态）', () => {
+    const wrapper = mount(DrawerPanel, {
+      props: baseProps(),
+      slots: { 'header-extra': '<div data-testid="drawer-unread-badge">2</div>' },
+    })
+    expect(wrapper.find('[data-testid="drawer-unread-badge"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="drawer-unread-badge"]').text()).toBe('2')
+  })
+
+  it('无 header-extra slot：不渲染（向后兼容，存量用例零改动）', () => {
+    const wrapper = mount(DrawerPanel, { props: baseProps() })
+    expect(wrapper.find('[data-testid="drawer-unread-badge"]').exists()).toBe(false)
+  })
+})
