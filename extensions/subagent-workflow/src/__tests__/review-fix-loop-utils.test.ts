@@ -430,6 +430,21 @@ describe("reconcileIssues", () => {
     expect(r.issues["MF-2"].fixAttempts).toBe(2);
     expect(r.stuck).toBe(false);
   });
+  it("fix-attempted + 空 seenIds（全 fixed 声明）→ 全部转 fixed（M2 门控回归）", () => {
+    // M2 修复前：全 fixed 时 reconSeen 为空 → reconcile 分支整体跳过 → fix-attempted
+    // 永不转 fixed（reconcileIssues 是唯一转换点）。本用例锁定 reconcileIssues 在空
+    // seenIds 下必须把 fix-attempted 全转 fixed。
+    const prev = {
+      "MF-1": { firstSeen: 1, status: "fix-attempted", fixAttempts: 0, openStreak: 0, history: [] },
+      "MF-2": { firstSeen: 1, status: "fix-attempted", fixAttempts: 0, openStreak: 0, history: [] },
+    };
+    const r = reconcileIssues(prev, { seenIds: new Set(), escalateIds: new Set(), round: 2, stuckThreshold: 3 });
+    expect(r.issues["MF-1"].status).toBe("fixed");
+    expect(r.issues["MF-2"].status).toBe("fixed");
+    expect(r.issues["MF-2"].history.at(-1).status).toBe("fixed");
+    expect(r.stuck).toBe(false);
+    expect(r.knownRemaining).toEqual([]);
+  });
   it("同一 ID 连续 N 轮 → stuck 且 stuckIds 含该 ID（TC3）", () => {
     const prev = {
       "MF-1": { firstSeen: 1, status: "regressed", fixAttempts: 2, openStreak: 2, history: [] },

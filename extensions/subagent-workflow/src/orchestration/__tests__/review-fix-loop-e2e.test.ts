@@ -5,6 +5,7 @@
  *   1. R2 prompt 对账段断言 + defer 跨轮传递 mock 剧本（E2E-1）
  *   2. skipCleanAgents 语义 + fixAgent 参数接受（E2E-2）
  *   3. 渲染 gate：非 clean 终止 message 的 [UNRESOLVED] 透出 + ES3 硬校验拦截（E2E-3）
+ *   4. M2 回归：全 fixed + 新发现 → reconcile 门控（reconCount）+ 新发现 merge 独立执行（E2E-4）
  *
  * 与 workflows-e2e.test.ts 同模式：真实 runAndWait + 真实 worker thread +
  * 唯一 mock 是 deps.runner（AgentRunner）。runner 按调用分流：
@@ -358,6 +359,84 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
       expect(outcome.message).toContain("[UNRESOLVED]");
       expect(outcome.message).toContain("must-fix 不得 defer");
       expect(outcome.message).toContain("MF-1");
+    },
+    RUN_TIMEOUT_MS,
+  );
+
+  it(
+    "E2E-4：全 fixed + 新发现（M2：reconcile 门控 reconCount + 新发现 merge 独立执行）",
+    async () => {
+      // M2 回归场景：R2 所有 prev ID 声明 fixed（reconSeen 空）但仍有新发现 MF-2。
+      // 修复前：reconcile 分支整体跳过 → MF-1 停留 fix-attempted（永不转 fixed）、
+      // MF-2（新发现 merge 在分支内）不创建 → 残留清单含 MF-1 而非 MF-2。
+      // 修复后：reconCount>0 触发 reconcileIssues → MF-1 转 fixed；新发现 merge 独立
+      // 于 reconcile 执行 → MF-2 创建 → 残留仅 MF-2（max-rounds 终止）。
+      let aggRound = 0;
+      let fixRound = 0;
+      const runner = makeScenarioRunner({
+        review: [
+          // R1：1 must-fix
+          () => ({ report_file: "/tmp/r1-reviewer.md", must_fix: 1, suggestion: 0, reconciliation: [] }),
+          // R2：MF-1 声明 fixed（全 fixed → reconSeen 空）+ 1 新发现；走 R2+ 分支
+          (prompt) => {
+            if (!prompt.includes("RECONCILE PREVIOUS ROUND")) {
+              return { report_file: "/tmp/r2-reviewer.md", must_fix: 9, suggestion: 0, reconciliation: [] };
+            }
+            return {
+              report_file: "/tmp/r2-reviewer.md", must_fix: 1, suggestion: 0,
+              reconciliation: [{ prev_id: "MF-1", status: "fixed", evidence: "read confirmed" }],
+            };
+          },
+        ],
+        aggregate: () => {
+          aggRound++;
+          return {
+            report_file: "/tmp/agg.md", must_fix: 1, suggestion: 0,
+            // R1 只含 MF-1；R2 中 MF-1 已被 reconciliation 声明 fixed，must_fix 只剩新发现 MF-2
+            must_fix_ids: aggRound === 1 ? [{ id: "MF-1", severity: "major" }] : [{ id: "MF-2", severity: "major" }],
+            fixes_caution: [],
+          };
+        },
+        fix: () => {
+          fixRound++;
+          return {
+            fixed_count: 1,
+            fixes: [{
+              issue_id: fixRound === 1 ? "MF-1" : "MF-2",
+              description: "mock fix",
+              self_check: "grep: 1 hit; synced",
+              affected_files: [],
+            }],
+            deferred: [],
+          };
+        },
+      });
+      const deps = makeDeps(runner);
+
+      const result = await runAndWait(
+        "review-fix-loop",
+        { targetType: "file", target: "README.md", agents: "reviewer", maxRounds: 2, _runId: RUN_ID() },
+        deps,
+        undefined,
+        RUN_TIMEOUT_MS,
+      );
+
+      expect(result.reason).toBe("completed");
+      expect(result.error).toBeUndefined();
+      const outcome = result.scriptResult as { terminated: string; totalFixed: number; message: string };
+      // R2 后仍有 must-fix（MF-2 新发现）且达到 maxRounds → max-rounds 终止
+      expect(outcome.terminated).toBe("max-rounds");
+      expect(outcome.totalFixed).toBe(2);
+      // M2 直接可观测证据：MF-1 已被 reconcile 转 fixed → 不进残留清单；MF-2 在残留中
+      // （修复前：MF-1 停留 fix-attempted 会出现在残留里、MF-2 不创建 → 本断言失败）
+      expect(outcome.message).toContain("MF-2");
+      expect(outcome.message).not.toContain("MF-1");
+
+      // 两轮 review 各 1 次调用（maxRounds=2 未超轮）；aggregator/fix 各 2 次
+      const { reviewCalls, kinds } = runner.stats();
+      expect(reviewCalls.length).toBe(2);
+      expect(kinds.filter((k) => k === "aggregate").length).toBe(2);
+      expect(kinds.filter((k) => k === "fix").length).toBe(2);
     },
     RUN_TIMEOUT_MS,
   );

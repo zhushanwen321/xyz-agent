@@ -359,6 +359,8 @@ function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
   if (scoped) {
     return {
       ...base,
+      // m2: scoped 分支与 R2+ 分支一致——reconciliation 必填（recheck 也须对账前轮 fix）
+      schema: { ...reviewerSchema, required: [...reviewerSchema.required, "reconciliation"] },
       prompt: buildScopedRecheckPrompt({
         header, round, max, roundDir,
         reportFile: def.report,
@@ -466,6 +468,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     const agentRoundResults = [];
     const reconSeen = new Set(); // R2+ reconciliation 声明的上轮 ID（status !== fixed）——stuck ID 驱动数据源（5.1）
     const reconEscalate = new Set(); // 5.1-5 escalate 声明：deferred 条目上下文改变 → 重新 open
+    const reconAll = new Set(); // M2: 所有 status 条目（含 fixed）的 prev_id 去重——reconcile 门控数据源
     for (let i = 0; i < allRaw.length; i++) {
       const raw = allRaw[i];
       if (raw && typeof raw === "object" && raw.error) {
@@ -496,6 +499,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         for (const r of parsed.reconciliation) {
           if (r.status === "escalate") reconEscalate.add(r.prev_id);
           else if (r.status !== "fixed") reconSeen.add(r.prev_id);
+          reconAll.add(r.prev_id); // M2: 含 fixed——全 fixed 时 reconSeen 空但 reconcile 仍需执行
         }
         const def = active[i];
         if (parsed.must_fix === 0) {
@@ -595,37 +599,43 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     // 5.1 ID 驱动：R2+ 用 reconciliation 声明的 seenIds + reconcileIssues（同一 ID 连续 N 轮
     // open/regressed）；无 reconciliation 数据（R1 或 reviewer 未填）降级计数式 updateStuckState
     // （现状语义，MF-2 注释保留）。needs-redesign（fixAttempts>=2）在 wave 5 接入。
+    // M2: reconCount = 所有 status 条目的 prev_id 去重计数（含 fixed）——全 fixed（最常见
+    // 收敛路径）时 reconSeen 为空，但 reconciliation 有数据仍须调 reconcileIssues：
+    // fix-attempted → fixed 的唯一转换点（否则 fix-attempted 永不转 fixed）
+    const reconCount = reconAll.size;
     let stuck = { stuck: false };
-    if (round > 1 && (reconSeen.size > 0 || reconEscalate.size > 0)) {
+    if (round > 1 && reconCount > 0) {
       const rec = reconcileIssues(state.issues || {}, { seenIds: reconSeen, escalateIds: reconEscalate, round, stuckThreshold });
       state.issues = rec.issues;
       state.knownRemaining = rec.knownRemaining;
       stuck = { stuck: rec.stuck, stuckIds: rec.stuckIds };
       log("Reconcile: " + Object.keys(rec.issues).length + " tracked issue(s), known-remaining: " + rec.knownRemaining.length);
-
-      // 5.1-2 R2+ 新发现 ID 契约：aggregator 的 must_fix_ids（含 R2+ 新发现，续编号）中
-      // 不在 issues 的 ID 创建为新条目（firstSeen=round）——newFindings 统计与
-      // needs-redesign/fixAttempts 追踪对 R2+ 新发现生效，且防与 R1 存量 ID 撞号。
-      if (agg.must_fix_ids && agg.must_fix_ids.length > 0) {
-        let added = 0;
-        for (const entry of agg.must_fix_ids) {
-          const id = typeof entry === "string" ? entry : entry && entry.id;
-          if (!id || state.issues[id]) continue;
-          state.issues[id] = {
-            firstSeen: round,
-            severity: typeof entry === "string" ? "major" : (entry.severity || "major"),
-            status: "open", openStreak: 1,
-            history: [{ round, status: "open" }], fixAttempts: 0,
-          };
-          added++;
-        }
-        if (added > 0) log("New findings tracked: " + added + " new issue(s) in round " + round);
-      }
     } else {
       const s = updateStuckState(prevMustFix, stuckCount, mustFix, stuckThreshold);
       stuckCount = s.stuckCount;
       prevMustFix = s.prevMustFix;
       stuck = { stuck: s.stuck };
+    }
+
+    // 5.1-2 R2+ 新发现 ID 契约（M2 移出 reconcile 分支，独立执行）：aggregator 的
+    // must_fix_ids（含 R2+ 新发现，续编号）中不在 issues 的 ID 创建为新条目
+    // （firstSeen=round）——与 reconcile 是否触发无关（全 fixed 时 reconcile 仍执行但
+    // reconSeen 空，新发现 merge 必须独立生效）。newFindings 统计与 needs-redesign/
+    // fixAttempts 追踪对 R2+ 新发现生效，且防与 R1 存量 ID 撞号。
+    if (round > 1 && state.issues && agg.must_fix_ids && agg.must_fix_ids.length > 0) {
+      let added = 0;
+      for (const entry of agg.must_fix_ids) {
+        const id = typeof entry === "string" ? entry : entry && entry.id;
+        if (!id || state.issues[id]) continue;
+        state.issues[id] = {
+          firstSeen: round,
+          severity: typeof entry === "string" ? "major" : (entry.severity || "major"),
+          status: "open", openStreak: 1,
+          history: [{ round, status: "open" }], fixAttempts: 0,
+        };
+        added++;
+      }
+      if (added > 0) log("New findings tracked: " + added + " new issue(s) in round " + round);
     }
     if (stuck.stuck) {
       const stuckIds = (stuck.stuckIds || []).join(", ");
@@ -795,36 +805,38 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     }
     state.fixImpactFiles = impactFiles;
 
+    // m4: 先初始化容器——aggregator JSON 无效走 parseAggregatedMd 回退时 agg 无
+    // must_fix_ids → R1 初始化跳过 → state.issues undefined；此处初始化保证 deferred
+    // 写入与 knownRemaining 同步链路生效（否则 knownRemaining 恒空，deferred 跨轮继承整链失效）
+    if (!state.issues) state.issues = {};
     // 5.1：fix 结果标记 fix-attempted（ID 对账驱动）+ fixResults 落库（R2+ prompt 输入）
-    if (state.issues) {
-      for (const f of fixResult.fixes) {
-        if (f && typeof f.issue_id === "string" && state.issues[f.issue_id]) {
-          state.issues[f.issue_id].status = "fix-attempted";
-          state.issues[f.issue_id].history.push({ round, status: "fix-attempted" });
-        }
+    for (const f of fixResult.fixes) {
+      if (f && typeof f.issue_id === "string" && state.issues[f.issue_id]) {
+        state.issues[f.issue_id].status = "fix-attempted";
+        state.issues[f.issue_id].history.push({ round, status: "fix-attempted" });
       }
-      // 5.3-4 deferred 写入 state.issues（known-remaining 跨轮继承链路）：deferred 条目
-      // 以 status=deferred 入 issues，据此生成 knownRemaining 传给 R2+ prompt。
-      // 若 ID 已存在（曾被修复/降级）→ 更新状态 + reason；不存在（S-x minor）→ 新建。
-      for (const d of fixResult.deferred) {
-        if (!d || typeof d.issue_id !== "string" || !d.issue_id) continue;
-        const reason = typeof d.reason === "string" ? d.reason : "";
-        if (state.issues[d.issue_id]) {
-          state.issues[d.issue_id].status = "deferred";
-          state.issues[d.issue_id].deferredReason = reason;
-          state.issues[d.issue_id].history.push({ round, status: "deferred" });
-        } else {
-          state.issues[d.issue_id] = {
-            firstSeen: round, severity: "minor", status: "deferred",
-            deferredReason: reason,
-            history: [{ round, status: "deferred" }], fixAttempts: 0,
-          };
-        }
-      }
-      // known-remaining 同步更新：deferred 在本轮 fix 后即生效，R2+ prompt 立即消费
-      // （不依赖下轮 reconcile 才生成——否则滞后一轮，reviewer 本轮看不到 deferred 清单）
-      state.knownRemaining = computeKnownRemaining(state.issues);
     }
+    // 5.3-4 deferred 写入 state.issues（known-remaining 跨轮继承链路）：deferred 条目
+    // 以 status=deferred 入 issues，据此生成 knownRemaining 传给 R2+ prompt。
+    // 若 ID 已存在（曾被修复/降级）→ 更新状态 + reason；不存在（S-x minor）→ 新建。
+    for (const d of fixResult.deferred) {
+      if (!d || typeof d.issue_id !== "string" || !d.issue_id) continue;
+      const reason = typeof d.reason === "string" ? d.reason : "";
+      if (state.issues[d.issue_id]) {
+        state.issues[d.issue_id].status = "deferred";
+        state.issues[d.issue_id].deferredReason = reason;
+        state.issues[d.issue_id].history.push({ round, status: "deferred" });
+      } else {
+        state.issues[d.issue_id] = {
+          firstSeen: round, severity: "minor", status: "deferred",
+          deferredReason: reason,
+          history: [{ round, status: "deferred" }], fixAttempts: 0,
+        };
+      }
+    }
+    // known-remaining 同步更新：deferred 在本轮 fix 后即生效，R2+ prompt 立即消费
+    // （不依赖下轮 reconcile 才生成——否则滞后一轮，reviewer 本轮看不到 deferred 清单）
+    state.knownRemaining = computeKnownRemaining(state.issues);
     if (!state.fixResults) state.fixResults = [];
     state.fixResults.push(fixResult);
 
