@@ -82,8 +82,7 @@ vi.mock('@/api', () => ({
   },
 }))
 
-import { useSidebar } from '@/composables/features/useSidebar'
-import { useSessionStore } from '@/stores/session'
+import { useSidebarNew } from '@/composables/features/useSidebarNew'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
 import { __clearSessionCleanupRegistryForTest } from '@/composables/useSessionScopedState'
@@ -92,11 +91,10 @@ function makeSummary(id: string, cwd = '/p'): SessionSummary {
   return { id, label: id, cwd, status: 'idle', lastActiveAt: 1, modelId: 'm1', tokenCount: 0 }
 }
 
-/** 种入指定 cwd 下若干 session（单组） */
-function seedSessions(ids: string[], cwd = '/p'): void {
-  const store = useSessionStore()
+/** 种入指定 cwd 下若干 session（单组）—— seed 接缝本地 raw store（C-W5-5） */
+function seedSessions(sidebar: ReturnType<typeof useSidebarNew>, ids: string[], cwd = '/p'): void {
   const group: SessionGroup = { cwd, sessions: ids.map((id) => makeSummary(id, cwd)) }
-  store.setGroups([group])
+  sidebar.__testStore.setGroups([group])
 }
 
 beforeEach(() => {
@@ -109,13 +107,12 @@ beforeEach(() => {
 describe('useSidebar.deleteFolder 全成功（W2TC2）', () => {
   it('对 res.deleted 逐个 cleanupSessionState（clearSession/disposeSession 各 2 次），wasActiveInFolder 回退到 next', async () => {
     const scope = effectScope()
-    const sidebar = scope.run(() => useSidebar())!
+    const sidebar = scope.run(() => useSidebarNew())!
     // folder('/p') 下 2 session：s1 persisted + s2 active
-    seedSessions(['s1', 's2'])
-    const session = useSessionStore()
+    seedSessions(sidebar, ['s1', 's2'])
     const panel = usePanelStore()
     panel.loadSession(ROOT_PANEL_ID, 's2')
-    session.activeId = 's2'
+    sidebar.__testStore.activeId.value = 's2'
 
     removeByCwdMock.mockResolvedValueOnce({
       cwd: '/p',
@@ -144,16 +141,15 @@ describe('useSidebar.deleteFolder 全成功（W2TC2）', () => {
 
   it('wasActiveInFolder=true 且删除后有剩余 session → selectSession(next.id)（非 push chat 空态分支）', async () => {
     const scope = effectScope()
-    const sidebar = scope.run(() => useSidebar())!
+    const sidebar = scope.run(() => useSidebarNew())!
     // folder('/p') 下 2 session（s1 + active 的 s2），另一 cwd 有 s3（删除后仍留存）
-    const session = useSessionStore()
-    session.setGroups([
+    sidebar.__testStore.setGroups([
       { cwd: '/p', sessions: [makeSummary('s1', '/p'), makeSummary('s2', '/p')] },
       { cwd: '/other', sessions: [makeSummary('s3', '/other')] },
     ])
     const panel = usePanelStore()
     panel.loadSession(ROOT_PANEL_ID, 's2')
-    session.activeId = 's2'
+    sidebar.__testStore.activeId.value = 's2'
 
     removeByCwdMock.mockResolvedValueOnce({ cwd: '/p', deleted: ['s1', 's2'], failed: [] })
     const navigation = useNavigationStore()
@@ -183,11 +179,10 @@ describe('useSidebar.deleteFolder 全成功（W2TC2）', () => {
 describe('useSidebar.deleteFolder 部分失败（W2TC3）', () => {
   it('deleteFolder 不 reject，返回 failed.length=1，cleanupSessionState 仅对 deleted 调用', async () => {
     const scope = effectScope()
-    const sidebar = scope.run(() => useSidebar())!
-    seedSessions(['s1', 's2'])
+    const sidebar = scope.run(() => useSidebarNew())!
+    seedSessions(sidebar, ['s1', 's2'])
     // active 不在此 folder → wasActiveInFolder=false，不触发回退
-    const session = useSessionStore()
-    session.activeId = 'other'
+    sidebar.__testStore.activeId.value = 'other'
 
     removeByCwdMock.mockResolvedValueOnce({
       cwd: '/p',
@@ -218,8 +213,8 @@ describe('useSidebar.deleteFolder 部分失败（W2TC3）', () => {
 describe('useSidebar.deleteFolder 网络异常（W2TC4）', () => {
   it('removeByCwd reject → deleteFolder rejects，cleanupSessionState 不被调', async () => {
     const scope = effectScope()
-    const sidebar = scope.run(() => useSidebar())!
-    seedSessions(['s1', 's2'])
+    const sidebar = scope.run(() => useSidebarNew())!
+    seedSessions(sidebar, ['s1', 's2'])
 
     removeByCwdMock.mockRejectedValueOnce(new Error('network'))
 

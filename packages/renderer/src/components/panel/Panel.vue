@@ -125,7 +125,7 @@ import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
-import { useSidebar } from '@/composables/features/useSidebar'
+import { useSidebarNew } from '@/composables/features/useSidebarNew'
 import { useToast } from '@/composables/useToast'
 import { useExtensionUI, askUserFilter } from '@/composables/useExtensionUI'
 import { getAgentCallFilePath } from '@/api/domains/session'
@@ -334,16 +334,16 @@ const historyError = computed(() =>
   props.sessionId ? chat.failedHistory.has(props.sessionId) : false,
 )
 
-/** Landing 重试 → useSidebar.retryHistory（#2 AC-2.6） */
+/** Landing 重试 → useSidebarNew.retryHistory（#2 AC-2.6） */
 function onRetryHistory(): void {
-  if (props.sessionId) void useSidebar().retryHistory(props.sessionId)
+  if (props.sessionId) void useSidebarNew().retryHistory(props.sessionId)
 }
 
 /** dead session「重新打开」：调 selectSession 触发 restore（重新 spawn pi），成功后 revive 重置 idle */
 async function onReviveSession(): Promise<void> {
   if (!props.sessionId) return
   try {
-    await useSidebar().selectSession(props.sessionId)
+    await useSidebarNew().selectSession(props.sessionId)
     sessionStore.revive(props.sessionId)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)

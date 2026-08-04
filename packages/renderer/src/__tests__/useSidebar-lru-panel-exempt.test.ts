@@ -67,10 +67,9 @@ vi.mock('@/api', () => ({
   },
 }))
 
-import { useSidebar } from '@/composables/features/useSidebar'
+import { useSidebarNew } from '@/composables/features/useSidebarNew'
 import { useChatStore } from '@/stores/chat'
 import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
-import { useSessionStore } from '@/stores/session'
 
 function makeSummary(id: string): SessionSummary {
   return { id, label: id, cwd: '/proj', status: 'idle', lastActiveAt: 1, modelId: 'm1', tokenCount: 0 }
@@ -80,10 +79,10 @@ function makeMessage(id: string): Message {
   return { id, role: 'assistant', content: `msg-${id}`, status: 'complete', timestamp: Date.now() }
 }
 
-function seedSessions(ids: string[]): void {
-  const store = useSessionStore()
+// seed 接缝本地 raw store（C-W5-5：useSidebarNew 内部 createSessionStore 实例，经 __testStore 暴露）
+function seedSessions(sidebar: ReturnType<typeof useSidebarNew>, ids: string[]): void {
   const group: SessionGroup = { cwd: '/proj', sessions: ids.map(makeSummary) }
-  store.setGroups([group])
+  sidebar.__testStore.setGroups([group])
 }
 
 /** hydrate 指定 session（绕过 selectSession 的 api 拉取，直接注入消息） */
@@ -111,9 +110,9 @@ describe('lru-panel-exempt-fix 方案 C：panel 绑定 session 不被 LRU 误驱
   describe('AC-2: 单 panel LRU 基线不退化（最旧被驱逐）', () => {
     it('单 panel 下切 9 个 session，最旧的 session 被驱逐', async () => {
       const scope = effectScope()
-      const sidebar = scope.run(() => useSidebar())!
+      const sidebar = scope.run(() => useSidebarNew())!
       const ids = Array.from({ length: 9 }, (_, i) => `s${i}`)
-      seedSessions(ids)
+      seedSessions(sidebar, ids)
 
       const panel = usePanelStore()
       // 单 panel（默认 ROOT_PANEL_ID）

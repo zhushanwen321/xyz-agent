@@ -39,7 +39,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Plus, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { useSidebar } from '@/composables/features/useSidebar'
+import { useSidebarNew } from '@/composables/features/useSidebarNew'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useExtensionNotify } from '@/composables/useExtensionUI'
 import { useBrowserFocusSync } from '@/composables/features/useBrowserFocusSync'
@@ -49,7 +49,7 @@ import PanelContainer from './PanelContainer.vue'
 import ExtensionUIDialog from '@/components/extension/ExtensionUIDialog.vue'
 
 const { t } = useI18n()
-const { newSession, focusedSessionId } = useSidebar()
+const { newSession, focusedSessionId } = useSidebarNew()
 const { formatKbd } = usePlatformShortcut()
 const flow = useNewTaskFlow()
 // Extension notify → toast（fire-and-forget，非阻塞通知）

@@ -10,13 +10,13 @@
  *
  * 与 useForkActions / useHandoffActions 的区别：那两个是 sidebar 层的「跨 api + stores 编排」
  * （forkSession / handoff 真源在此）；本 composable 只做 Turn 行级 handler 的薄 wrapper
- * （调 useSidebar 的编排 + 错误 toast），不含跨 api 编排逻辑。
+ * （调 useSidebarNew 的编排 + 错误 toast），不含跨 api 编排逻辑。
  */
 import type { ComputedRef, Ref } from 'vue'
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Message } from '@xyz-agent/shared'
-import { useSidebar } from '@/composables/features/useSidebar'
+import { useSidebarNew } from '@/composables/features/useSidebarNew'
 import { triggerEnterForkMode } from '@/composables/panel/useForkModeChannel'
 import { triggerEnterHandoffMode } from '@/composables/panel/useHandoffModeChannel'
 import { useToast } from '@/composables/useToast'
@@ -54,10 +54,10 @@ export function useTurnActions(deps: TurnActionsDeps): {
   const { sessionId, lastAssistant } = deps
   const { t } = useI18n()
   const { error: toastError } = useToast()
-  const { forkSession, handoff: handoffAction } = useSidebar()
+  const { forkSession, handoff: handoffAction } = useSidebarNew()
 
   /**
-   * fork 后台（低频）：从指定 assistant 处空白 fork，留在原线（useSidebar.forkSession 已不 split）。
+   * fork 后台（低频）：从指定 assistant 处空白 fork，留在原线（useSidebarNew.forkSession 已不 split）。
    * includeFrom=true：保留到该 assistant（含）。反馈行由 session.forkNotice 广播驱动渲染。
    * 失败时 toast 反馈（与 fork-ask 路径对称），避免静默 unhandled rejection。
    */

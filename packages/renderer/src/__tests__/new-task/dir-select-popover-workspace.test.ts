@@ -164,8 +164,7 @@ describe('T4.5: 删派生函数后零残留', () => {
     expect(src).not.toContain('export function recentWorkspaces')
     expect(src).not.toContain('export interface RecentWorkspace')
     expect(src).not.toContain('MAX_RECENT_WORKSPACES')
-    // 保留的函数
+    // 保留的函数（deriveSessionLabel 于 w6 FU-2 删除：label 派生已归位 core create-session-flow）
     expect(src).toContain('export function cn')
-    expect(src).toContain('export function deriveSessionLabel')
   })
 })

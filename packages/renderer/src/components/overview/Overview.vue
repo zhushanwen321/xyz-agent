@@ -69,7 +69,7 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
-import { useSidebar } from '@/composables/features/useSidebar'
+import { useSidebarNew } from '@/composables/features/useSidebarNew'
 import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
 import { usePlatformShortcut } from '@/composables/usePlatformShortcut'
 import SessionCard from './SessionCard.vue'
@@ -78,7 +78,7 @@ const { t } = useI18n()
 const { formatKbd } = usePlatformShortcut()
 const navigation = useNavigationStore()
 const session = useSessionStore()
-const { selectSession, newSession, focusedSessionId } = useSidebar()
+const { selectSession, newSession, focusedSessionId } = useSidebarNew()
 const { derivedStatus, sessionDigest } = useSessionDerivations()
 
 /** 状态点派生（D6）：features 层读 chat+session store 派生 5 态 */

@@ -26,10 +26,10 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useExtensionUI, dialogFilter } from '@/composables/useExtensionUI'
-import { useSidebar } from '@/composables/features/useSidebar'
+import { useSidebarNew } from '@/composables/features/useSidebarNew'
 
 const { t } = useI18n()
-const { focusedSessionId } = useSidebar()
+const { focusedSessionId } = useSidebarNew()
 // B1 防重复入队：ExtensionUIDialog 只收非 askUser 请求（askUser 由 Panel inline 处理）
 const { currentDialogRequest, respond, cancel } = useExtensionUI(focusedSessionId, dialogFilter)
 

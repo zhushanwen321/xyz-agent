@@ -45,10 +45,10 @@ const sidebarMocks = vi.hoisted(() => ({
   loadSessions: vi.fn(() => Promise.resolve()),
   syncSessionToPanel: vi.fn(),
 }))
-vi.mock('@/composables/features/useSidebar', async () => {
+vi.mock('@/composables/features/useSidebarNew', async () => {
   const { ref } = await import('vue')
   return {
-    useSidebar: () => ({
+    useSidebarNew: () => ({
       ...sidebarMocks,
       focusedSessionId: ref<string | null>(null),
       focusedSession: ref(null),

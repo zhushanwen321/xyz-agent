@@ -13,7 +13,7 @@
  *   useComposerContextChips / useComposerDragDrop / useComposerRestore / useComposerForkMode /
  *   useComposerHandoffMode / useComposerStaging / useComposerBash / useComposerSubmit / useComposerSend
  * - renderer store/composable：useChatStore / useSessionStore / useSettingsStore / useNewTaskFlow /
- *   useModel / useHandoffActions / useCompactQueue / useSidebar / useToast / useForkModeChannel /
+ *   useModel / useHandoffActions / useCompactQueue / useSidebarNew / useToast / useForkModeChannel /
  *   useHandoffModeChannel / useImageAttachment / useI18n
  *
  * 视觉派生（D1「视觉派生留壳」）：useComposerBoxClass + useComposerModeVisual 的逻辑并入本文件
@@ -46,7 +46,7 @@ import { useChat } from '@/composables/features/useChat'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useModel } from '@/composables/features/useModel'
 import { useHandoffActions } from '@/composables/features/useHandoffActions'
-import { useSidebar } from '@/composables/features/useSidebar'
+import { useSidebarNew } from '@/composables/features/useSidebarNew'
 import { useCompactQueue } from './useCompactQueue'
 import { useToast } from '@/composables/useToast'
 import { useForkModeChannel } from './useForkModeChannel'
@@ -131,7 +131,7 @@ export function useComposerShell(params: ComposerShellParams) {
   const { handoff: handoffAction, abortHandoff: abortHandoffAction } = useHandoffActions(sessionIdRef)
   const { switchModel, setThinkingLevel } = useModel()
   const compactQueue = useCompactQueue()
-  const sidebar = useSidebar()
+  const sidebar = useSidebarNew()
   const { signal: forkEnterSignal } = useForkModeChannel()
   const { signal: handoffEnterSignal } = useHandoffModeChannel()
 

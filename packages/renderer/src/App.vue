@@ -39,7 +39,7 @@ import AppShell from '@/components/shell/AppShell.vue'
 import ToastContainer from '@/components/ui/ToastContainer.vue'
 import { Button } from '@/components/ui/button'
 import { useConnection } from '@/composables/useConnection'
-import { useSidebar } from '@/composables/features/useSidebar'
+import { useSidebarNew } from '@/composables/features/useSidebarNew'
 import { bindForkNoticeEffect } from '@/composables/effects/useForkNoticeEffect'
 import { bindHandoffEffect } from '@/composables/effects/useHandoffEffect'
 import { bindSessionStreamSync } from '@/composables/effects/useSessionStreamSync'
@@ -51,7 +51,7 @@ const { state: connectionState, init, teardown, retryRuntime } = useConnection()
 // 启动编排（#1/#3）：连接建立后自动进 new-task landing（首次）或恢复最近 session。
 // useConnection.init 是 fire-and-forget（connect 异步），return 时连接未握手指；state==='connected'
 // 是「连接成功」唯一可靠信号——watch 它触发 onConnected，appBootstrapped 守卫保证 HMR/重连幂等。
-const { onConnected } = useSidebar()
+const { onConnected } = useSidebarNew()
 // RV1+RV2：fork 反馈行 + 后台分支通知全局订阅（session.forkNotice 广播 → transient feed；
 // useForkBranchNotify diff 分支状态 → 状态变化反馈行）。App setup 是全局 effect 作用域，
 // onScopeDispose 随 App 卸载退订（单实例，与 events.onGlobalType 范式一致）。

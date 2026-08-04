@@ -16,7 +16,7 @@
  */
 import { computed, type ComputedRef, type DeepReadonly } from 'vue'
 import { useForkNoticeFeed, type ForkNoticeEntry } from '@/composables/effects/useForkNoticeEffect'
-import { useSidebar } from '@/composables/features/useSidebar'
+import { useSidebarNew } from '@/composables/features/useSidebarNew'
 
 /** ForkNotice 每条高度估算（absolute 定位 top 计算用，与 ForkNotice.vue 实际高度对齐） */
 const FORK_NOTICE_HEIGHT = 40
@@ -59,8 +59,8 @@ export function useForkNoticeStream(
   onDismiss: (noticeId: number) => void
   } {
   const { notices: forkNoticeFeed, dismissNotice: dismissForkNotice } = useForkNoticeFeed()
-  // [W6] 顶层实例化 useSidebar：避免在 onView 回调内每次新建实例（composable 工厂模式反模式）。
-  const { selectSession } = useSidebar()
+  // [W6] 顶层实例化 useSidebarNew：避免在 onView 回调内每次新建实例（composable 工厂模式反模式）。
+  const { selectSession } = useSidebarNew()
 
   /** 当前 session 的 ForkNotice 列表（响应式，feed 变化自动更新） */
   const forkNotices = computed(() => forkNoticeFeed(sessionId()))

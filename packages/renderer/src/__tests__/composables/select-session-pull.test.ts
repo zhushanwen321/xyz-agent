@@ -69,7 +69,7 @@ vi.mock('@/api/domains/file', () => ({ tree: vi.fn().mockResolvedValue({}) }))
 vi.mock('@/api/domains/git', () => ({ status: vi.fn().mockResolvedValue({}) }))
 
 import { session as sessionApi, chat as chatApi } from '@/api'
-import { useSidebar } from '@/composables/features/useSidebar'
+import { useSidebarNew } from '@/composables/features/useSidebarNew'
 import { resetChatModuleState } from '@/composables/features/useChat'
 
 beforeEach(() => {
@@ -81,21 +81,21 @@ beforeEach(() => {
 
 describe('selectSession: ensureStreamSubscription 统一注册 events handler + subscribe', () => {
   it('selectSession(sess-A) 不调 getSubagents（subagents 经 subscribe stateSnapshot 提供）', async () => {
-    const sidebar = useSidebar()
+    const sidebar = useSidebarNew()
     await sidebar.selectSession('sess-A')
 
     expect(sessionApi.getSubagents).not.toHaveBeenCalled()
   })
 
   it('selectSession(sess-A) 不调 getWorkflows（workflows 经 streamRing workflowUpdate 增量信号→RPC 闭环）', async () => {
-    const sidebar = useSidebar()
+    const sidebar = useSidebarNew()
     await sidebar.selectSession('sess-A')
 
     expect(sessionApi.getWorkflows).not.toHaveBeenCalled()
   })
 
   it('切到 session B 也不主动拉（多次切换一致性）', async () => {
-    const sidebar = useSidebar()
+    const sidebar = useSidebarNew()
     await sidebar.selectSession('sess-A')
     await sidebar.selectSession('sess-B')
 
@@ -104,7 +104,7 @@ describe('selectSession: ensureStreamSubscription 统一注册 events handler + 
   })
 
   it('selectSession 触发订阅建立（ensureStreamSubscription → chatApi.streamSubscribe）', async () => {
-    const sidebar = useSidebar()
+    const sidebar = useSidebarNew()
     await sidebar.selectSession('sess-A')
 
     // ensureStreamSubscription 内部同步调 chatApi.streamSubscribe 注册 handler
@@ -113,7 +113,7 @@ describe('selectSession: ensureStreamSubscription 统一注册 events handler + 
   })
 
   it('多次切同一 session 不重复注册（幂等守卫）', async () => {
-    const sidebar = useSidebar()
+    const sidebar = useSidebarNew()
     await sidebar.selectSession('sess-A')
     await sidebar.selectSession('sess-A')
 
@@ -126,7 +126,7 @@ describe('selectSession: ensureStreamSubscription 统一注册 events handler + 
     //（ESM 静态绑定，vitest 无法 mock core 内部相对路径模块）。失败路径由 core useChat.ts 的
     // void subscribeSession(sid).catch(console.warn) 消化。renderer 侧验证：selectSession 正常完成
     // + 订阅链路建立（streamSubscribe 注册）不因 subscribeSession 内部失败而中断。
-    const sidebar = useSidebar()
+    const sidebar = useSidebarNew()
     await expect(sidebar.selectSession('sess-A')).resolves.toBeUndefined()
     expect(sessionApi.switchSession).toHaveBeenCalledWith('sess-A')
     expect(chatApi.streamSubscribe).toHaveBeenCalledWith('sess-A', expect.any(Function))
