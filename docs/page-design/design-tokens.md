@@ -23,6 +23,7 @@
 
 | Token | 值 | 用途 | 来源 |
 |-------|-----|------|------|
+| `--bg-stage` | `#0a0a0c` | 舞台深底（最外层衬底，低于 `--bg`） | 2026-08-02 太极·玄新增（demo tokens.css §4） |
 | `--bg` | `#131316` | 画布底层 | 2026-07-09 提亮（原 C 原始 `#0d0d0f`）。07-12 锚点不变；2026-08-02 太极·玄（阶梯上抬） |
 | `--bg-sunken` | `var(--bg)` | 同画布色（v6 新增：语义变更，不往黑推，靠 surface 浮起分隔） | 2026-08-02 太极·玄新增 |
 | `--surface` | `#1f1f22` | 面板/卡片 | 2026-07-12 拉距（原 07-09 `#222329`，+5 拉大与 bg 间距）；2026-08-02 太极·玄（阶梯上抬） |
@@ -79,18 +80,23 @@
 /* display 与 body 同用 --font-sans（tech-utility 取向，开发者工具直觉） */
 ```
 
-## 字号 scale（补全，2026-07-28 W2）
+## 字号 scale（补全，2026-07-28 W2；2026-08-02 太极·玄整体上移一档 + calc 自适应）
 
 > 组件级字号 SSOT。所有 `text-[Npx]` utility 优先用 `text-[var(--text-X)]` 引用本 scale，
 > 禁止 `.5px` 字号（`text-[12.5px]` 等）—— snap 到最近 scale step。
+>
+> 2026-08-02 太极·玄：base 13→14px 整体上移一档；改 calc 自适应公式
+> `calc(Npx × --font-scale-u × --font-scale-mq)`，用户档位与视口档位相乘。
 
 | Token | 值 | 用途 |
 |-------|-----|------|
-| `--text-2xs` | `10px` | 极小字（bash truncation / runId / dirPath） |
-| `--text-xs` | `11px` | 小字（tag / meta / mono detail） |
-| `--text-sm` | `12px` | 次级正文（task preview / bash content / label） |
-| `--text-base` | `13px` | block header 统一字号（消除 13.5px 漂移） |
-| `--text-md` | `14px` | 正文（user message body） |
+| `--font-scale-u` | `1`（默认） | 用户字号档位（data-font-size: small=0.929 / medium=1 / large=1.143） | 2026-08-02 太极·玄新增（demo tokens.css + useTheme） |
+| `--font-scale-mq` | `1`（默认） | 视口自适应档位（@media: ≥2100px=1.08 / ≤1399px=0.95） | 2026-08-02 太极·玄新增（demo tokens.css 底部 @media） |
+| `--text-2xs` | `calc(11px × u × mq)` | 极小字（bash truncation / runId / dirPath） |
+| `--text-xs` | `calc(12px × u × mq)` | 小字（tag / meta / mono detail） |
+| `--text-sm` | `calc(13px × u × mq)` | 次级正文（task preview / bash content / label） |
+| `--text-base` | `calc(14px × u × mq)` | block header 统一字号（2026-08-02 上移：原 13px） |
+| `--text-md` | `calc(15px × u × mq)` | 正文（user message body；2026-08-02 上移：原 14px） |
 
 ## 圆角（C 原仅 3/12，补 8 中间档）
 
