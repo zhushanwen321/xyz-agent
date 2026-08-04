@@ -9,6 +9,7 @@ import {
   assertValidUnitId,
   isTimeoutError,
   escapeSingleQuotes,
+  slugFromUnitId,
   decideNodeOutcome,
   buildActionPrompt,
   buildActionSchema,
@@ -174,6 +175,41 @@ describe("escapeSingleQuotes", () => {
     // 转义后不再残留裸单引号（即所有 ' 都属于 '\'' 序列的一部分）
     const stripped = wrapped.slice(1, -1).replace(/'\\''/g, "");
     expect(stripped).not.toContain("'");
+  });
+});
+
+// ── slugFromUnitId ──────────────────────────────────────────────────
+
+describe("slugFromUnitId", () => {
+  it("根 unitId（无 :: 子分隔符）取冒号后的部分", () => {
+    expect(slugFromUnitId("wave:recursive-root")).toBe("recursive-root");
+    expect(slugFromUnitId("slice:auth-module")).toBe("auth-module");
+  });
+
+  it("子 unitId（含 ::）取完整冒号后部分 + :: 替换为 -", () => {
+    expect(slugFromUnitId("wave:recursive-root::renderer")).toBe("recursive-root-renderer");
+    expect(slugFromUnitId("wave:recursive-root::main")).toBe("recursive-root-main");
+  });
+
+  it("多层嵌套子 unitId（多个 ::）全部替换为 -", () => {
+    expect(slugFromUnitId("wave:root::child::grandchild")).toBe("root-child-grandchild");
+  });
+
+  it("拼成 description 后多个子 wave 可区分（回归 bug 验证）", () => {
+    const ids = [
+      "wave:recursive-root::renderer",
+      "wave:recursive-root::styles",
+      "wave:recursive-root::tests",
+      "wave:recursive-root::main",
+    ];
+    const descs = ids.map((id) => "w-clarify-" + slugFromUnitId(id));
+    expect(new Set(descs).size).toBe(4);
+    expect(descs).toContain("w-clarify-recursive-root-renderer");
+    expect(descs).toContain("w-clarify-recursive-root-main");
+  });
+
+  it("无冒号的异常入参原样返回", () => {
+    expect(slugFromUnitId("no-colon")).toBe("no-colon");
   });
 });
 

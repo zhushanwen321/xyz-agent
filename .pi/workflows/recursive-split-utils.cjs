@@ -77,6 +77,17 @@ function escapeSingleQuotes(task) {
 }
 
 /**
+ * 从 unitId 提取 slug（用于 phase/description 拼接）。
+ * unitId 格式：`<scope>:<rootSlug>` 或 `<scope>:<rootSlug>::<childSlug>`。
+ * 取第一个冒号后的完整部分，并将子 unit 分隔符 `::` 替换为 `-`（避免 description 含 `::` 影响可读性）。
+ * 例：`wave:recursive-root` → `recursive-root`；
+ *     `wave:recursive-root::renderer` → `recursive-root-renderer`（多子 wave 同名 bug 修复）。
+ */
+function slugFromUnitId(unitId) {
+  return unitId.slice(unitId.indexOf(":") + 1).replace(/::/g, "-") || unitId;
+}
+
+/**
  * 判定 returnMeta 结果 r 的节点结局（W2 核心收尾分支）。
  * r.error 非空 或 isTimeoutError(r) → 失败，返回 { failed: true, failedReason }。
  *   failedReason = r.error（超时时为 timeout 关键字串，由 isTimeoutError 判定后回退）。
@@ -391,6 +402,7 @@ module.exports = {
   assertValidUnitId,
   isTimeoutError,
   escapeSingleQuotes,
+  slugFromUnitId,
   decideNodeOutcome,
   buildActionPrompt,
   buildActionSchema,

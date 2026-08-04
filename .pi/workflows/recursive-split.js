@@ -22,6 +22,7 @@ const {
   isTerminal,
   assertValidUnitId,
   escapeSingleQuotes,
+  slugFromUnitId,
   decideNodeOutcome,
   isProgressive,
   buildActionPrompt,
@@ -120,7 +121,9 @@ async function abortUnit(unitId) {
  * 注意：失败字段命名 failedReason 而非 error，避免被 parallel() 归一化吞掉其他字段。
  */
 async function executeActionAgent(node, sessionFiles) {
-  const slug = node.unitId.split(":")[1] || node.unitId;
+  // slug 取第一个冒号后的完整部分，并将子 unit 分隔符 :: 替换为 -（避免 description 含 ::）。
+  // 例：wave:recursive-root::renderer → recursive-root-renderer（多子 wave 同名 bug 修复）
+  const slug = slugFromUnitId(node.unitId);
   // phase（WorkUnit 级）不含 action；description（action-centric）含 action。
   const phaseName = node.scope[0] + "-" + slug;
   const description = node.scope[0] + "-" + node.nextAction + "-" + slug;
