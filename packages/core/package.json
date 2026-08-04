@@ -42,6 +42,10 @@
    "types": "./src/domain/chat/index.ts",
    "import": "./src/domain/chat/index.ts"
   },
+  "./domain/drawer": {
+   "types": "./src/domain/drawer/index.ts",
+   "import": "./src/domain/drawer/index.ts"
+  },
   "./domain/composer/input": {
    "types": "./src/domain/composer/input/index.ts",
    "import": "./src/domain/composer/input/index.ts"
