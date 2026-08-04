@@ -206,8 +206,17 @@ try {
       frontierFailures++;
       log("queryFrontier null (" + frontierFailures + "/" + MAX_FRONTIER_RETRIES + "), retrying next round");
       if (frontierFailures >= MAX_FRONTIER_RETRIES) {
+        // 永久故障：树残留非终态节点，不能伪装成完整完成。与下方 catch 一致返回
+        // status:error（不 break 走 phase("done")），调用方据此区分完整/不完整树。
         log("queryFrontier failed " + MAX_FRONTIER_RETRIES + " consecutive times, aborting BFS");
-        break;
+        phase("error");
+        return {
+          status: "error",
+          error:
+            "queryFrontier failed " +
+            MAX_FRONTIER_RETRIES +
+            " consecutive times, tree incomplete",
+        };
       }
       continue;
     }
