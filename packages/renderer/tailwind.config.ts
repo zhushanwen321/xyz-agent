@@ -32,6 +32,8 @@ export default {
         },
         border: 'var(--border)',
         'border-strong': 'var(--border-strong)',
+        // v6 §4.3：hairline 0.05 弱分隔（drawer L1 栏底线 / 行分隔）。settings wave followup「hairline 语义类补映射」的映射部分。
+        'border-hairline': 'var(--hairline)',
         accent: {
           DEFAULT: 'var(--accent)',
           hover: 'var(--accent-hover)',

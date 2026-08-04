@@ -10,7 +10,7 @@
   -->
   <div class="flex h-full flex-col" data-testid="detail-pane">
     <!-- header：文件名（hover 显绝对路径 + 复制文件名）+ 复制绝对路径按钮 + view toggle -->
-    <div class="flex items-center gap-2 border-b border-border px-2 py-1.5">
+    <div class="flex items-center gap-2 border-b border-hairline px-2 py-1.5">
       <FileText class="size-3.5 shrink-0 text-neutral-dim" />
       <HoverCard :open-delay="0">
         <HoverCardTrigger as-child>
@@ -75,18 +75,18 @@
         <Quote class="size-3.5 text-neutral-dim" />
       </Button>
       <!-- view toggle：有 git 改动时可切换 diff/preview -->
-      <div v-if="state.hasGitChange" class="flex gap-0.5" data-testid="detail-view-toggle">
+      <div v-if="state.hasGitChange" class="flex gap-0.5 rounded-md bg-bg-input p-0.5" data-testid="detail-view-toggle">
         <Button
           variant="ghost"
           class="h-6 rounded-sm px-1.5 text-[10px]"
-          :class="state.viewMode === 'diff' ? 'bg-accent-soft text-accent' : 'text-neutral-mid'"
+          :class="state.viewMode === 'diff' ? 'bg-bg-elevated text-neutral-fg' : 'text-neutral-mid'"
           :title="t('panel.detail.showDiff')"
           @click="onToggleView('diff')"
         >{{ t('panel.detail.tabDiff') }}</Button>
         <Button
           variant="ghost"
           class="h-6 rounded-sm px-1.5 text-[10px]"
-          :class="state.viewMode === 'preview' ? 'bg-accent-soft text-accent' : 'text-neutral-mid'"
+          :class="state.viewMode === 'preview' ? 'bg-bg-elevated text-neutral-fg' : 'text-neutral-mid'"
           :title="t('panel.detail.showPreview')"
           @click="onToggleView('preview')"
         >{{ t('panel.detail.preview') }}</Button>

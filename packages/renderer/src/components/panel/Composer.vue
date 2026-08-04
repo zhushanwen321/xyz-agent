@@ -105,7 +105,7 @@
           v-else-if="isCompacting"
           variant="default"
           size="icon"
-          class="ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-[var(--accent)] text-white transition-colors enabled:hover:bg-[var(--accent-hover)] disabled:bg-transparent disabled:text-[var(--neutral-dim)]"
+          class="ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-accent text-accent-fg transition-colors enabled:hover:bg-accent-hover disabled:bg-transparent disabled:text-[var(--neutral-dim)]"
           :disabled="!canSend"
           :title="canSend ? t('panel.composer.queueSend') : t('panel.composer.sendHint')"
           @click="onSend"
@@ -114,7 +114,7 @@
         </Button>
         <div
           v-else-if="isSending"
-          class="ml-1.5 grid size-[var(--composer-btn-size)] place-items-center rounded-md bg-[var(--accent)] text-white"
+          class="ml-1.5 grid size-[var(--composer-btn-size)] place-items-center rounded-md bg-accent text-accent-fg"
           :title="t('panel.composer.sending')"
         >
           <Loader2 class="size-4 animate-spin" />
@@ -123,7 +123,7 @@
           v-else
           variant="default"
           size="icon"
-          class="ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-[var(--accent)] text-white transition-colors enabled:hover:bg-[var(--accent-hover)] disabled:bg-transparent disabled:text-[var(--neutral-dim)]"
+          class="ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-accent text-accent-fg transition-colors enabled:hover:bg-accent-hover disabled:bg-transparent disabled:text-[var(--neutral-dim)]"
           :disabled="!canSend"
           :title="canSend ? `${staging.activeStaging.value ? (staging.activeStaging.value.type === 'fork' ? t('panel.composer.forkSend') : t('panel.composer.handoffSend')) : t('panel.composer.send')} · ⏎` : t('panel.composer.sendHint')"
           @click="onSend"
