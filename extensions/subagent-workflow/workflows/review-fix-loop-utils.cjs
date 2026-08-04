@@ -101,6 +101,47 @@ function buildReviewInstruction(targetType, target) {
   }
 }
 
+/**
+ * base 锁定（RC-6，设计文档 5.6）：git-diff 场景 run 启动时锁定 base commit hash，
+ * 全程用锁定 hash 构造 diff 指令，防止 run 期间 base ref 被更新导致各轮 diff 范围不一致。
+ * rev-parse 失败（非 git 目录 / ref 不存在）降级用原 ref（hash 空串），不抛异常。
+ * 非 git-diff 类型直接返回原 target（无锁定语义）。
+ * @param run 命令执行器（测试注入 stub；缺省 execSync，timeout 10s）
+ * @returns { base: string, hash: string } base=锁定 hash（失败时原 ref），hash=锁定值（失败时空串）
+ */
+function lockReviewBase(targetType, target, run) {
+  if (targetType !== "git-diff") return { base: target, hash: "" };
+  const exec = run || ((cmd) => require("child_process").execSync(cmd, { encoding: "utf-8", timeout: 10_000 }).trim());
+  try {
+    const hash = String(exec("git rev-parse " + target)).trim();
+    return { base: hash, hash };
+  } catch {
+    return { base: target, hash: "" };
+  }
+}
+
+/**
+ * recheck 限定 prompt（5.5 可选强回归模式）：clean agent 重派时只审 fix 改动文件，
+ * 不诱导全量重扫。scope 初版 = modifiedFiles（git diff 实测）；wave 2 升级为
+ * modifiedFiles ∪ affected_files（fix 自检关联点）。
+ */
+function buildScopedRecheckPrompt({ header, round, max, roundDir, reportFile, modifiedFiles }) {
+  return [
+    header,
+    "",
+    "Scoped recheck (round " + round + "/" + max + "): you were clean last round, and a fix has been applied since.",
+    "Your scope for THIS round is limited to the files changed by the fix:",
+    "- Modified files: " + (modifiedFiles && modifiedFiles.length ? modifiedFiles.join(", ") : "(none detected via git)"),
+    "",
+    "Review ONLY these files for regressions in your dimension (issues the fix may have introduced).",
+    "Do NOT do a full re-scan of the target — scope is limited to the modified files.",
+    "Report issues as usual: critical/major → must_fix, minor → suggestion.",
+    "",
+    "output 路径：" + roundDir + "/" + reportFile + ".md",
+    "Write report to: " + roundDir + "/" + reportFile + ".md",
+  ].join("\n");
+}
+
 /** 结果解析：object 原样返回；字符串剥 fenced json / 提取内嵌 JSON。 */
 function parseResult(raw) {
   if (typeof raw === "object" && raw !== null) return raw;
@@ -286,6 +327,8 @@ module.exports = {
   resolveBatchNames,
   validateFallowScan,
   buildReviewInstruction,
+  lockReviewBase,
+  buildScopedRecheckPrompt,
   parseResult,
   normalizeAggregatorResult,
   parseAggregatedMd,

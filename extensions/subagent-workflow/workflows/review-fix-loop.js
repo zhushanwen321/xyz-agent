@@ -16,13 +16,13 @@
 //
 // ⚠️ 与 main 的 4.0.0 版分叉（merge 时 add/add 冲突，刻意决策记录）：
 //    本版（feat-recursive-optimize）保留——纯函数拆到 review-fix-loop-utils.cjs（vitest 覆盖）、
-//    支持 fallow-scan 前置批次、无默认批次（batch1..batchN/agents 必传）、recheckAfterFix 默认 true。
+//    支持 fallow-scan 前置批次、无默认批次（batch1..batchN/agents 必传）、recheckAfterFix 默认 false。
 //    main 4.0.0 版自包含 677 行、缺批次参数时默认单批 ["reviewer"]、recheckAfterFix 默认 false。
 //    merge 时保留本版（功能更全），详见 .changeset/tidy-waves-description-phase-lint.md。
 
 const meta = {
   name: "review-fix-loop",
-  description: "审查-修复循环：多批串行（批内并行 review → aggregate → fix → 重审直到 clean）。必填 targetType（git-diff/file/dir/text）+ target。批次由 batch1..batchN 控制（如 batch1=fallow-scan batch2=reviewer），用于前置检查先行的场景。注意：唯一带写操作/commit 副作用的内置 workflow，autoCommit 默认 false；skipCleanAgents 默认 true + recheckAfterFix 默认 true（fix 后重派全批做回归防护），传 recheckAfterFix=false 会跳过 clean agent 复查，存在回归风险。",
+  description: "审查-修复循环：多批串行（批内并行 review → aggregate → fix → 重审直到 clean）。必填 targetType（git-diff/file/dir/text）+ target。批次由 batch1..batchN 控制（如 batch1=fallow-scan batch2=reviewer），用于前置检查先行的场景。注意：唯一带写操作/commit 副作用的内置 workflow，autoCommit 默认 false；skipCleanAgents 默认 true + recheckAfterFix 默认 false（clean agent 下轮跳过，与字面语义一致）；传 recheckAfterFix=true 启用可选强回归模式（fix 后重派全批，clean agent 走限定 prompt 只审改动文件）。",
   phases: ["Review", "Fix"],
 };
 
@@ -47,6 +47,8 @@ const {
   resolveBatchNames,
   validateFallowScan,
   buildReviewInstruction,
+  lockReviewBase,
+  buildScopedRecheckPrompt,
   parseResult,
   normalizeAggregatorResult,
   parseAggregatedMd,
@@ -87,14 +89,24 @@ const autoCommit = normalizeBool($ARGS.autoCommit, "autoCommit", false, fail);
 const maxRounds = normalizeInt($ARGS.maxRounds, "maxRounds", 10, fail);
 const stuckThreshold = normalizeInt($ARGS.stuckThreshold, "stuckThreshold", 3, fail);
 const skipCleanAgents = normalizeBool($ARGS.skipCleanAgents, "skipCleanAgents", true, fail);
-// 默认 recheckAfterFix=true：fix 后重派全批做回归防护（任何 fix 重新启用全部 agent，含此前 clean 的）。
-// 注意：传 recheckAfterFix=false 时，clean agent 在后续轮不再复查——若修复在其审查维度引入回归（如
-// type-safety clean、business-logic 修复改了类型）则永不暴露。默认组合（skipCleanAgents=true +
-// recheckAfterFix=true）保证每轮 fix 后全维度复查，等价旧定制版 S1 语义。
-const recheckAfterFix = normalizeBool($ARGS.recheckAfterFix, "recheckAfterFix", true, fail);
+// 默认 recheckAfterFix=false：clean agent 下轮跳过（与 skipCleanAgents=true 字面语义一致），
+// RC-5（fix 后全批全量重审放大 token）在默认场景消失。传 true 启用可选强回归模式：fix 后重派
+// 全批，clean agent 走限定 prompt（buildScopedRecheckPrompt，只审 modifiedFiles，5.5）。
+const recheckAfterFix = normalizeBool($ARGS.recheckAfterFix, "recheckAfterFix", false, fail);
 const MODEL = typeof $ARGS.model === "string" && $ARGS.model.trim() ? $ARGS.model.trim() : undefined;
 
-const reviewInstruction = buildReviewInstruction(targetType, target);
+// base 锁定（RC-6，5.6）：git-diff 场景 run 启动时锁定 base commit，全程用锁定 hash 构造
+// diff 指令，防止 run 期间 base ref 被更新导致各轮 diff 范围不一致。rev-parse 失败（非 git
+// 目录 / ref 不存在）降级用原 ref 并 warn，锁定结果随 state.meta.baseHash 记录。
+const lockedBase = lockReviewBase(targetType, target);
+if (targetType === "git-diff") {
+  if (lockedBase.hash) {
+    log("Locked review base: " + target + " -> " + lockedBase.hash);
+  } else {
+    log("WARN: git rev-parse " + target + " failed, falling back to ref for diff base: " + target);
+  }
+}
+const reviewInstruction = buildReviewInstruction(targetType, lockedBase.base);
 
 // 批次解析：batch1..batchN（缺号报错）/ agents 简写 / 默认单批 [reviewer]
 const BATCHES = parseBatches($ARGS, fail);
@@ -174,7 +186,15 @@ function saveState(state) {
 
 // ── Build review calls ──────────────────────────────────────────────
 
-function buildReviewCall(def, round, max, batchIndex, roundDir) {
+// 上一轮 fix 的 modifiedFiles（git diff 实测，fix 阶段写入 batchRounds）。
+// recheck 限定 prompt（scoped）的 scope 来源（初版 = modifiedFiles）。
+function lastModifiedFiles() {
+  const b = state.batches[state.batches.length - 1];
+  const r = b && b.rounds && b.rounds[b.rounds.length - 1];
+  return (r && Array.isArray(r.modifiedFiles)) ? r.modifiedFiles : [];
+}
+
+function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
   const header = "Batch " + batchIndex + " Round " + round + "/" + max + " — " + BATCH_NAMES[batchIndex - 1];
   const prevBatchesHint = batchIndex > 1
     ? "\nPrior batch reports (optional context): " + RUN_ROOT + "/batch-*/  (use read)"
@@ -201,13 +221,27 @@ function buildReviewCall(def, round, max, batchIndex, roundDir) {
         "Steps:",
         "1. Check if fallow is installed: `which fallow`",
         "2. If NOT installed: write the report with a one-line note, must_fix=0, suggestion=0.",
-        "3. If installed, run: `fallow audit --base " + target + " --format json --quiet`",
+        "3. If installed, run: `fallow audit --base " + lockedBase.base + " --format json --quiet`",
         "4. Extract: complexity hotspots, dead code, unused exports, circular deps",
         "5. Classify findings: critical/major count into must_fix; minor into suggestion.",
         "",
         "output 路径：" + roundDir + "/" + def.report + ".md",
         "Write report to: " + roundDir + "/" + def.report + ".md",
       ].join("\n"),
+    };
+  }
+
+  // recheck 限定分支（5.5）：clean agent 重派时只审 fix 改动文件（scope=modifiedFiles 初版，
+  // wave 2 升级为 modifiedFiles ∪ affected_files），不诱导全量重扫。
+  if (scoped) {
+    return {
+      ...base,
+      prompt: buildScopedRecheckPrompt({
+        header, round, max, roundDir,
+        reportFile: def.report,
+        modifiedFiles: lastModifiedFiles(),
+      }),
+      agent: def.isCustom ? undefined : def.name,
     };
   }
 
@@ -279,8 +313,10 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     fs.mkdirSync(roundDir, { recursive: true });
 
     let active = defs.filter((def) => !(skipCleanAgents && cleanNames.has(def.name)));
+    let scopedClean = new Set(); // recheckAfterFix 重派时：上一轮 clean 的 agent 本轮走限定 prompt
     if (recheckAfterFix && round > 1 && roundHasFix) {
-      active = defs; // fix 后重派全批（回归防护）
+      scopedClean = new Set(cleanNames); // 重派前快照上一轮 clean 集合
+      active = defs; // fix 后重派全批（强回归模式）
       cleanNames.clear();
     }
 
@@ -291,7 +327,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     }
 
     log("Review: " + active.map((d) => d.name).join(", ") + " (" + active.length + " agent(s) in parallel)...");
-    const calls = active.map((def) => buildReviewCall(def, round, maxRounds, batchIndex, roundDir));
+    const calls = active.map((def) => buildReviewCall(def, round, maxRounds, batchIndex, roundDir, scopedClean.has(def.name)));
     const allRaw = await parallel(calls.map(runReviewAgent));
 
     // per-agent 结果区分：parallel 结果与 calls 一一对应

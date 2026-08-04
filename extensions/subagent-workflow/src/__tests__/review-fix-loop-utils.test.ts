@@ -18,6 +18,8 @@ import {
   resolveBatchNames,
   validateFallowScan,
   buildReviewInstruction,
+  lockReviewBase,
+  buildScopedRecheckPrompt,
   parseResult,
   normalizeAggregatorResult,
   parseAggregatedMd,
@@ -198,6 +200,50 @@ describe("buildReviewInstruction", () => {
     expect(buildReviewInstruction("file", "src/a.ts")).toBe("Read and review the file: src/a.ts");
     expect(buildReviewInstruction("dir", "src/")).toContain("Explore and review the directory: src/");
     expect(buildReviewInstruction("text", "优化登录流程")).toBe("Review target: 优化登录流程");
+  });
+});
+
+// ── base 锁定（RC-6，5.6）：git-diff 场景 run 启动锁定 base commit hash ──
+
+describe("lockReviewBase", () => {
+  it("git-diff + rev-parse 成功 → 返回锁定 hash（TC1）", () => {
+    const run = (cmd: string) => { expect(cmd).toBe("git rev-parse main"); return "abc1234\n"; };
+    const r = lockReviewBase("git-diff", "main", run);
+    expect(r).toEqual({ base: "abc1234", hash: "abc1234" });
+  });
+  it("rev-parse 失败 → 降级原 ref、hash 空串（TC2）", () => {
+    const run = () => { throw new Error("fatal: not a git repository"); };
+    const r = lockReviewBase("git-diff", "main", run);
+    expect(r).toEqual({ base: "main", hash: "" });
+  });
+  it("非 git-diff 类型 → 不锁定，原样返回", () => {
+    expect(lockReviewBase("file", "/a/b.md")).toEqual({ base: "/a/b.md", hash: "" });
+    expect(lockReviewBase("dir", "/src")).toEqual({ base: "/src", hash: "" });
+  });
+});
+
+// ── recheck 限定 prompt（5.5 可选强回归模式）：clean agent 重派只审 fix 改动文件 ──
+
+describe("buildScopedRecheckPrompt", () => {
+  const args = {
+    header: "Batch 1 Round 2/5 — reviewer",
+    round: 2,
+    max: 5,
+    roundDir: "/tmp/run/batch-1/round-2",
+    reportFile: "reviewer",
+    modifiedFiles: ["src/a.ts", "docs/b.md"],
+  };
+  it("含 modifiedFiles 列表与限定声明（TC4）", () => {
+    const p = buildScopedRecheckPrompt(args);
+    expect(p).toContain("Scoped recheck (round 2/5)");
+    expect(p).toContain("Modified files: src/a.ts, docs/b.md");
+    expect(p).toContain("Review ONLY these files");
+    expect(p).toContain("Do NOT do a full re-scan");
+    expect(p).toContain("output 路径：/tmp/run/batch-1/round-2/reviewer.md");
+  });
+  it("无 modifiedFiles → (none detected via git) 占位", () => {
+    const p = buildScopedRecheckPrompt({ ...args, modifiedFiles: [] });
+    expect(p).toContain("(none detected via git)");
   });
 });
 
