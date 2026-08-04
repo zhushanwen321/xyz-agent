@@ -5,6 +5,13 @@
     → extensions prop 流入本页，无需本页自建订阅。
   -->
   <div class="flex flex-col gap-4">
+    <header class="page-head">
+      <div class="head-text">
+        <h1 class="title">{{ t('settings.menu.extension') }}</h1>
+        <p class="desc">{{ t('settings.menu.extensionDesc') }}</p>
+      </div>
+    </header>
+
     <!-- 加载路径（Phase 4）：共享 LoadPaths 组件，kind=extension。
          extension 的「优先级」语义因资源类型而异（tool 靠前生效、hook 全部执行），
          故措辞用「加载顺序」而非优先级；新会话生效，无需重启提示。

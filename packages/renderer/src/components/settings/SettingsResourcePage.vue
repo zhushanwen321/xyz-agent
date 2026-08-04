@@ -6,6 +6,13 @@
     通过 kind 区分 skill/agent，差异仅资源类型/标题/来源配色/扫描 API（统一内聚）。
   -->
   <div class="flex flex-col gap-4">
+    <header class="page-head">
+      <div class="head-text">
+        <h1 class="title">{{ kind === 'skill' ? t('settings.menu.skill') : t('settings.menu.agent') }}</h1>
+        <p class="desc">{{ kind === 'skill' ? t('settings.menu.skillDesc') : t('settings.menu.agentDesc') }}</p>
+      </div>
+    </header>
+
     <!-- 层 A · 加载路径（共享组件，接 store *Dirs，emit 回写 store） -->
     <LoadPaths
       :kind="kind"

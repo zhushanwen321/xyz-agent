@@ -5,17 +5,22 @@
     模型表格：输入类型 icon + 上下文 + thinking pill + 默认按钮
   -->
   <div class="flex flex-col gap-3">
-    <!-- page-header -->
-    <div class="flex items-center justify-between">
-      <ProviderImportMenu :disabled="importState !== 'idle'" @select="onImportSelect" />
-      <Button
-        class="gap-1.5 rounded-sm px-2.5 py-1.5 text-[12px] font-medium [&_svg]:size-3.5"
-        @click="openAdd"
-      >
-        <Plus />
-        {{ t('settings.provider.add') }}
-      </Button>
-    </div>
+    <header class="page-head">
+      <div class="head-text">
+        <h1 class="title">{{ t('settings.menu.provider') }}</h1>
+        <p class="desc">{{ t('settings.menu.providerDesc') }}</p>
+      </div>
+      <div class="head-actions">
+        <ProviderImportMenu :disabled="importState !== 'idle'" @select="onImportSelect" />
+        <Button
+          class="gap-1.5 rounded-sm px-2.5 py-1.5 text-[12px] font-medium [&_svg]:size-3.5"
+          @click="openAdd"
+        >
+          <Plus />
+          {{ t('settings.provider.add') }}
+        </Button>
+      </div>
+    </header>
 
     <!-- 常驻 inline error：toggle enabled / 设默认 / 删除 等动作失败时报错可见。
          不再只在删除弹窗 slot 内渲染（弹窗关闭时用户看不到）。 -->

@@ -7,14 +7,18 @@
 -->
 <template>
   <div class="flex flex-col gap-4">
-    <!-- 新建按钮 -->
-    <div class="flex items-center justify-between">
-      <p class="text-[12px] text-neutral-mid">{{ t('settings.preset.pageDesc') }}</p>
-      <Button size="dense" class="rounded-sm text-[12px]" @click="onCreate">
-        <Plus class="size-3.5" />
-        {{ t('settings.preset.new') }}
-      </Button>
-    </div>
+    <header class="page-head">
+      <div class="head-text">
+        <h1 class="title">{{ t('settings.menu.preset') }}</h1>
+        <p class="desc">{{ t('settings.preset.pageDesc') }}</p>
+      </div>
+      <div class="head-actions">
+        <Button size="dense" class="rounded-sm text-[12px]" @click="onCreate">
+          <Plus class="size-3.5" />
+          {{ t('settings.preset.new') }}
+        </Button>
+      </div>
+    </header>
 
     <!-- 加载失败提示（S-RN-7：消费 loadError 错误态） -->
     <div

@@ -5,13 +5,22 @@
 -->
 <template>
   <div class="flex max-w-[860px] flex-col gap-3">
-    <!-- Section 1：普通 git 仓库 -->
-    <div class="rounded-card bg-card">
-      <div class="px-4 pb-3 pt-3">
-        <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.worktree.sectionPlainRepo') }}</h3>
-        <p class="mt-0.5 text-[11px] text-neutral-mid">{{ t('settings.worktree.sectionPlainRepoDesc') }}</p>
+    <header class="page-head">
+      <div class="head-text">
+        <h1 class="title">{{ t('settings.menu.worktree') }}</h1>
+        <p class="desc">{{ t('settings.menu.worktreeDesc') }}</p>
       </div>
-      <div class="border-t border-border">
+    </header>
+
+    <!-- Section 1：普通 git 仓库 -->
+    <GroupCard>
+      <template #head>
+        <div class="gc-head-text">
+          <h3 class="gc-title">{{ t('settings.worktree.sectionPlainRepo') }}</h3>
+          <p class="gc-sub">{{ t('settings.worktree.sectionPlainRepoDesc') }}</p>
+        </div>
+      </template>
+      <div>
         <!-- 专用目录 -->
         <div class="flex items-center justify-between px-4 py-3">
           <div class="flex flex-col gap-0.5">
@@ -49,15 +58,17 @@
           />
         </div>
       </div>
-    </div>
+    </GroupCard>
 
     <!-- Section 2：bare-workspace -->
-    <div class="rounded-card bg-card">
-      <div class="px-4 pb-3 pt-3">
-        <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.worktree.sectionBareWorkspace') }}</h3>
-        <p class="mt-0.5 text-[11px] text-neutral-mid">{{ t('settings.worktree.sectionBareWorkspaceDesc') }}</p>
-      </div>
-      <div class="border-t border-border">
+    <GroupCard>
+      <template #head>
+        <div class="gc-head-text">
+          <h3 class="gc-title">{{ t('settings.worktree.sectionBareWorkspace') }}</h3>
+          <p class="gc-sub">{{ t('settings.worktree.sectionBareWorkspaceDesc') }}</p>
+        </div>
+      </template>
+      <div>
         <!-- 初始化脚本 -->
         <div class="flex items-center justify-between px-4 py-3">
           <div class="flex flex-col gap-0.5">
@@ -87,15 +98,17 @@
           />
         </div>
       </div>
-    </div>
+    </GroupCard>
 
     <!-- Section 3：通用 -->
-    <div class="rounded-card bg-card">
-      <div class="px-4 pb-3 pt-3">
-        <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.worktree.sectionGeneral') }}</h3>
-        <p class="mt-0.5 text-[11px] text-neutral-mid">{{ t('settings.worktree.sectionGeneralDesc') }}</p>
-      </div>
-      <div class="border-t border-border">
+    <GroupCard>
+      <template #head>
+        <div class="gc-head-text">
+          <h3 class="gc-title">{{ t('settings.worktree.sectionGeneral') }}</h3>
+          <p class="gc-sub">{{ t('settings.worktree.sectionGeneralDesc') }}</p>
+        </div>
+      </template>
+      <div>
         <!-- 默认基分支 -->
         <div class="flex items-center justify-between px-4 py-3">
           <div class="flex flex-col gap-0.5">
@@ -110,7 +123,7 @@
           />
         </div>
       </div>
-    </div>
+    </GroupCard>
   </div>
 </template>
 
@@ -120,6 +133,7 @@ import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { GroupCard } from '@xyz-agent/ui/features/settings'
 import { useToast } from '@/composables/useToast'
 import {
   getWorktreeRootDir,

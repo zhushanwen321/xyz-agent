@@ -10,6 +10,7 @@
 export { default as CompatField } from './CompatField.vue'
 export { default as CompatEditor } from './CompatEditor.vue'
 export { default as CodingPlanSection } from './CodingPlanSection.vue'
+export { default as GroupCard } from './GroupCard.vue'
 export { default as LoadPaths } from './LoadPaths.vue'
 export { default as ModelListSection } from './ModelListSection.vue'
 export { default as PresetModeSection } from './PresetModeSection.vue'

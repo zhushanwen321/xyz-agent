@@ -4,13 +4,22 @@
 -->
 <template>
   <div class="flex max-w-[860px] flex-col gap-3">
-    <!-- 卡 1：代理配置 -->
-    <div class="rounded-card bg-card">
-      <div class="px-4 pb-3 pt-3">
-        <h3 class="text-[13px] font-medium text-fg">{{ t('settings.update.sectionTitle') }}</h3>
-        <p class="mt-0.5 text-[11px] text-muted">{{ t('settings.update.sectionDesc') }}</p>
+    <header class="page-head">
+      <div class="head-text">
+        <h1 class="title">{{ t('settings.menu.update') }}</h1>
+        <p class="desc">{{ t('settings.menu.updateDesc') }}</p>
       </div>
-      <div class="border-t border-border">
+    </header>
+
+    <!-- 卡 1：代理配置 -->
+    <GroupCard>
+      <template #head>
+        <div class="gc-head-text">
+          <h3 class="gc-title">{{ t('settings.update.sectionTitle') }}</h3>
+          <p class="gc-sub">{{ t('settings.update.sectionDesc') }}</p>
+        </div>
+      </template>
+      <div>
         <!-- 代理模式 -->
         <div class="flex items-center justify-between px-4 py-3">
           <Label class="text-[12px] text-fg">{{ t('settings.update.proxyMode') }}</Label>
@@ -51,7 +60,7 @@
           />
         </div>
       </div>
-    </div>
+    </GroupCard>
 
     <!-- 操作栏 -->
     <div class="flex items-center justify-between">
@@ -118,6 +127,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { GroupCard } from '@xyz-agent/ui/features/settings'
 import { getProxyConfig, setProxyConfig, testProxy } from '@/api/domains/settings'
 import { useToast } from '@/composables/useToast'
 

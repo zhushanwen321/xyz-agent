@@ -9,6 +9,13 @@
   <!-- max-w-[860px]：设置页内容列标准宽度（与 SystemPage.vue 共用同一约定）。
        非 Tailwind 标准档（3xl=768/4xl=896）——介于两者间为长表单宽度，改需同步 SystemPage。 -->
   <div data-testid="system-prompt-page" class="flex max-w-[860px] flex-col gap-3">
+    <header class="page-head">
+      <div class="head-text">
+        <h1 class="title">{{ t('settings.menu.systemPrompt') }}</h1>
+        <p class="desc">{{ t('settings.menu.systemPromptDesc') }}</p>
+      </div>
+    </header>
+
     <!-- corrupted 提示条：getSystemPrompt 返回 corrupted=true 时显示 -->
     <div
       v-if="corrupted"
@@ -19,19 +26,21 @@
     </div>
 
     <!-- 卡 1：替换系统提示词 -->
-    <div class="rounded-card bg-card">
-      <div class="flex items-center justify-between px-4 pb-3 pt-3">
-        <div class="min-w-0">
-          <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.systemPrompt.replaceTitle') }}</h3>
-          <p class="mt-0.5 text-[11px] text-neutral-dim">{{ t('settings.systemPrompt.replaceSubtitle') }}</p>
+    <GroupCard>
+      <template #head>
+        <div class="gc-head-text">
+          <h3 class="gc-title">{{ t('settings.systemPrompt.replaceTitle') }}</h3>
+          <p class="gc-sub">{{ t('settings.systemPrompt.replaceSubtitle') }}</p>
         </div>
+      </template>
+      <template #actions>
         <Switch
           :data-testid="'system-prompt-replace-switch'"
           :model-value="replaceEnabled"
           @update:model-value="replaceEnabled = $event === true"
         />
-      </div>
-      <div class="border-t border-border px-4 py-3">
+      </template>
+      <div class="px-4 py-3">
         <p class="mb-2 text-[11px] leading-relaxed text-neutral-mid">{{ t('settings.systemPrompt.replaceWarning') }}</p>
         <Label class="mb-1 block text-[11px] text-neutral-dim" for="system-prompt-replace-input">
           {{ t('settings.systemPrompt.replaceLabel') }}
@@ -89,22 +98,24 @@
           </div>
         </div>
       </div>
-    </div>
+    </GroupCard>
 
     <!-- 卡 2：注入额外提示词 -->
-    <div class="rounded-card bg-card">
-      <div class="flex items-center justify-between px-4 pb-3 pt-3">
-        <div class="min-w-0">
-          <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.systemPrompt.appendTitle') }}</h3>
-          <p class="mt-0.5 text-[11px] text-neutral-dim">{{ t('settings.systemPrompt.appendSubtitle') }}</p>
+    <GroupCard>
+      <template #head>
+        <div class="gc-head-text">
+          <h3 class="gc-title">{{ t('settings.systemPrompt.appendTitle') }}</h3>
+          <p class="gc-sub">{{ t('settings.systemPrompt.appendSubtitle') }}</p>
         </div>
+      </template>
+      <template #actions>
         <Switch
           :data-testid="'system-prompt-append-switch'"
           :model-value="appendEnabled"
           @update:model-value="appendEnabled = $event === true"
         />
-      </div>
-      <div class="border-t border-border px-4 py-3">
+      </template>
+      <div class="px-4 py-3">
         <p class="mb-2 text-[11px] leading-relaxed text-neutral-mid">{{ t('settings.systemPrompt.appendHint') }}</p>
         <Label class="mb-1 block text-[11px] text-neutral-dim" for="system-prompt-append-input">
           {{ t('settings.systemPrompt.appendLabel') }}
@@ -130,7 +141,7 @@
           </Button>
         </div>
       </div>
-    </div>
+    </GroupCard>
   </div>
 </template>
 
@@ -142,6 +153,7 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { GroupCard } from '@xyz-agent/ui/features/settings'
 import { config } from '@/api'
 import { useToast } from '@/composables/useToast'
 import { SYSTEM_PROMPT_MAX_LENGTH, DEFAULT_PI_SYSTEM_PROMPT } from '@xyz-agent/shared'

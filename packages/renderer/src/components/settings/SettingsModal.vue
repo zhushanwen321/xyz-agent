@@ -1,112 +1,93 @@
 <!--
-  容器组件 · Settings modal（settings/spec.md · 居中 modal + 模糊背景）。
+  容器组件 · Settings 全屏 overlay（v6 §6.4 D1 + §5.8 GroupCard）。
   数据来自 settings store（单一真相源：providers/skills/agents/extensions/system）。
   store 由 AppShell 应用级 init（常驻订阅），本组件只读 store + open 时刷新 providers。
-  5 菜单导航 + 右侧对应页面组件。
+  形态：fixed inset-0 z-modal bg-bg 全屏覆盖。左 nav 220px（bg-sunken）+ 右 content flex-1（内容列 max-w-720 左对齐）。
+  nav 11 项（含 token-debug）。header 面包屑「设置 · <page>」+ 右侧 X 关闭。
 -->
 <template>
-  <Dialog :open="open" @update:open="emit('update:open', $event)">
-    <DialogContent
-      hide-close
-      class="flex h-[640px] max-h-[88vh] w-[900px] max-w-[94vw] flex-col gap-0 overflow-hidden p-0 sm:rounded-lg"
+  <Teleport to="body">
+    <div
+      v-if="open"
+      class="fso"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="t('settings.title')"
+      @keydown="onKeydown"
     >
-      <!-- modal-head -->
-      <div class="modal-head flex h-[44px] flex-none items-center gap-2.5 border-b border-border px-3.5">
-        <span class="text-[14px] font-semibold tracking-tight text-neutral-fg">{{ t('settings.title') }}</span>
-        <div class="ml-auto flex items-center gap-2">
-          <DialogClose
-            class="grid size-7 place-items-center rounded-sm text-neutral-mid transition-colors hover:bg-surface-hover hover:text-neutral-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            :title="t('settings.closeEsc')"
-          >
-            <X class="size-4" />
-            <span class="sr-only">{{ t('settings.close') }}</span>
-          </DialogClose>
+      <!-- 左 nav -->
+      <nav ref="navRootEl" class="fs-nav" data-settings-nav>
+        <div class="nav-brand">
+          <span class="brand-label">{{ t('settings.title') }}</span>
         </div>
-      </div>
-
-      <!-- modal-body -->
-      <div class="flex min-h-0 flex-1">
-        <!-- 左导航 -->
-        <nav class="flex w-[200px] flex-shrink-0 flex-col gap-px bg-bg p-2">
-          <Button
+        <div class="nav-list">
+          <button
             v-for="item in menus"
             :key="item.id"
-            variant="ghost"
-            class="h-auto justify-start gap-2.5 rounded-md px-2.5 py-2 text-[13px]"
-            :class="
-              item.id === activeMenu
-                ? 'bg-surface text-accent hover:bg-surface hover:text-accent'
-                : 'text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg'
-            "
+            type="button"
+            class="nav-item"
+            :class="{ active: item.id === activeMenu }"
             :data-testid="`settings-nav-${item.id}`"
-            @click="activeMenu = item.id"
+            :aria-current="item.id === activeMenu ? 'page' : undefined"
+            @click="select(item.id)"
           >
-            <component :is="item.icon" class="size-[17px] flex-shrink-0" />
-            <span>{{ t(item.labelKey) }}</span>
-            <span
-              v-if="getItemCount(item.id)"
-              class="ml-auto rounded-full bg-surface px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim"
-            >{{ getItemCount(item.id) }}</span>
-          </Button>
-        </nav>
+            <component :is="item.icon" class="ico" />
+            <span class="label">{{ t(item.labelKey) }}</span>
+            <span v-if="getItemCount(item.id)" class="count">{{ getItemCount(item.id) }}</span>
+          </button>
+        </div>
+      </nav>
 
-        <!-- 右详情 -->
-        <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <div class="border-b border-border px-6 pb-4 pt-5">
-            <h2 class="text-[20px] font-semibold tracking-tight text-neutral-fg">{{ t(currentMenu.labelKey) }}</h2>
-            <p class="mt-0.5 text-[13px] text-neutral-mid">{{ t(currentMenu.descKey) }}</p>
-          </div>
-          <ScrollArea class="min-h-0 flex-1">
-            <div class="px-6 py-4">
-              <ProviderPage v-if="activeMenu === 'provider'" :providers="providers" />
-              <SettingsResourcePage
-                v-else-if="activeMenu === 'skill'"
-                kind="skill"
-                :items="skills"
-                :dirs="skillDirs"
-                @update-dirs="onUpdateSkillDirs"
-              />
-              <SettingsResourcePage
-                v-else-if="activeMenu === 'agent'"
-                kind="agent"
-                :items="agents"
-                :dirs="agentDirs"
-                @update-dirs="onUpdateAgentDirs"
-              />
-              <ExtensionPage v-else-if="activeMenu === 'extension'" :extensions="extensions" />
-              <SystemPage v-else-if="activeMenu === 'system'" :system="system" @update="onSystemUpdate" />
-              <SystemPromptPage v-else-if="activeMenu === 'system-prompt'" />
-              <TerminalPage v-else-if="activeMenu === 'terminal'" />
-              <PiPresetsPage v-else-if="activeMenu === 'preset'" />
-              <WorktreePage v-else-if="activeMenu === 'worktree'" />
-              <UpdatePage v-else-if="activeMenu === 'update'" />
-            </div>
-          </ScrollArea>
+      <!-- 右 content -->
+      <div ref="contentEl" class="fs-content">
+        <div class="fs-head">
+          <span class="fs-title">{{ t('settings.title') }} · {{ t(currentMenu.labelKey) }}</span>
+          <button
+            type="button"
+            class="xbtn"
+            :title="t('settings.closeEsc')"
+            :aria-label="t('settings.close')"
+            data-testid="settings-close-btn"
+            @click="close"
+          >
+            <X class="x-ico" />
+          </button>
+        </div>
+        <div class="content-col-inner">
+          <ProviderPage v-if="activeMenu === 'provider'" :providers="providers" />
+          <SettingsResourcePage
+            v-else-if="activeMenu === 'skill'"
+            kind="skill"
+            :items="skills"
+            :dirs="skillDirs"
+            @update-dirs="onUpdateSkillDirs"
+          />
+          <SettingsResourcePage
+            v-else-if="activeMenu === 'agent'"
+            kind="agent"
+            :items="agents"
+            :dirs="agentDirs"
+            @update-dirs="onUpdateAgentDirs"
+          />
+          <ExtensionPage v-else-if="activeMenu === 'extension'" :extensions="extensions" />
+          <SystemPage v-else-if="activeMenu === 'system'" :system="system" @update="onSystemUpdate" />
+          <SystemPromptPage v-else-if="activeMenu === 'system-prompt'" />
+          <TerminalPage v-else-if="activeMenu === 'terminal'" />
+          <PiPresetsPage v-else-if="activeMenu === 'preset'" />
+          <WorktreePage v-else-if="activeMenu === 'worktree'" />
+          <UpdatePage v-else-if="activeMenu === 'update'" />
+          <TokenDebugPage v-else-if="activeMenu === 'token-debug'" />
         </div>
       </div>
-
-      <DialogHeader class="sr-only">
-        <DialogTitle>{{ t('settings.title') }}</DialogTitle>
-        <DialogDescription>{{ t('settings.dialogDescription') }}</DialogDescription>
-      </DialogHeader>
-    </DialogContent>
-  </Dialog>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, ScrollText, TerminalSquare, GitBranch, ClipboardList, X, Download } from '@lucide/vue'
-import {
-  Dialog,
-  DialogContent,
-  DialogClose,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from '@/components/ui/dialog'
+import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, ScrollText, TerminalSquare, GitBranch, ClipboardList, X, Download, Bug } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { getSettingsStore, useSettings, type SystemSettings } from '@xyz-agent/core'
 import { useToast } from '@/composables/useToast'
 import type { SkillDirConfig } from '@xyz-agent/shared'
@@ -119,38 +100,63 @@ import TerminalPage from './TerminalPage.vue'
 import WorktreePage from './WorktreePage.vue'
 import PiPresetsPage from './PiPresetsPage.vue'
 import UpdatePage from './UpdatePage.vue'
+import TokenDebugPage from './TokenDebugPage.vue'
 
 const menus = [
-  { id: 'provider', labelKey: 'settings.menu.provider', icon: Settings, descKey: 'settings.menu.providerDesc' },
-  { id: 'skill', labelKey: 'settings.menu.skill', icon: Sparkles, descKey: 'settings.menu.skillDesc' },
-  { id: 'agent', labelKey: 'settings.menu.agent', icon: Bot, descKey: 'settings.menu.agentDesc' },
-  { id: 'extension', labelKey: 'settings.menu.extension', icon: Blocks, descKey: 'settings.menu.extensionDesc' },
-  { id: 'system-prompt', labelKey: 'settings.menu.systemPrompt', icon: ScrollText, descKey: 'settings.menu.systemPromptDesc' },
-  { id: 'terminal', labelKey: 'settings.menu.terminal', icon: TerminalSquare, descKey: 'settings.menu.terminalDesc' },
-  { id: 'preset', labelKey: 'settings.menu.preset', icon: ClipboardList, descKey: 'settings.menu.presetDesc' },
-  { id: 'worktree', labelKey: 'settings.menu.worktree', icon: GitBranch, descKey: 'settings.menu.worktreeDesc' },
-  { id: 'update', labelKey: 'settings.menu.update', icon: Download, descKey: 'settings.menu.updateDesc' },
-  { id: 'system', labelKey: 'settings.menu.system', icon: SlidersHorizontal, descKey: 'settings.menu.systemDesc' },
+  { id: 'provider', labelKey: 'settings.menu.provider', icon: Settings },
+  { id: 'skill', labelKey: 'settings.menu.skill', icon: Sparkles },
+  { id: 'agent', labelKey: 'settings.menu.agent', icon: Bot },
+  { id: 'extension', labelKey: 'settings.menu.extension', icon: Blocks },
+  { id: 'system-prompt', labelKey: 'settings.menu.systemPrompt', icon: ScrollText },
+  { id: 'terminal', labelKey: 'settings.menu.terminal', icon: TerminalSquare },
+  { id: 'preset', labelKey: 'settings.menu.preset', icon: ClipboardList },
+  { id: 'worktree', labelKey: 'settings.menu.worktree', icon: GitBranch },
+  { id: 'update', labelKey: 'settings.menu.update', icon: Download },
+  { id: 'system', labelKey: 'settings.menu.system', icon: SlidersHorizontal },
+  { id: 'token-debug', labelKey: 'settings.menu.tokenDebug', icon: Bug },
 ] as const
+
+type MenuId = (typeof menus)[number]['id']
 
 const { t } = useI18n()
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
 
-const activeMenu = ref<(typeof menus)[number]['id']>('provider')
+const activeMenu = ref<MenuId>('provider')
 const currentMenu = computed(() => menus.find((m) => m.id === activeMenu.value) ?? menus[0])
 
-// 数据来自 settings store（单一真相源，AppShell 应用级 init 常驻订阅）。
-// core getSettingsStore() 返回 refs，直接解构（不再经 pinia storeToRefs）。
 const settingsStore = getSettingsStore()
 const { providers, skills, agents, extensions, system, skillDirs, agentDirs } = settingsStore
 const { refreshProviders } = useSettings()
 
-// 打开时刷新 providers（拿最新快照）；skills/agents/extensions 靠订阅，无需主动拉。
+// 打开时刷新 providers + 聚焦首个 nav 项；关闭时还原焦点给触发元素
+const triggerEl = ref<HTMLElement | null>(null)
+const navRootEl = ref<HTMLElement | null>(null)
+const contentEl = ref<HTMLElement | null>(null)
+
 watch(() => props.open, (isOpen) => {
-  if (isOpen) refreshProviders()
+  if (isOpen) {
+    triggerEl.value = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    refreshProviders()
+    nextTick(() => {
+      navRootEl.value?.querySelector<HTMLElement>('.nav-item')?.focus()
+    })
+  } else if (triggerEl.value) {
+    triggerEl.value.focus()
+    triggerEl.value = null
+  }
 })
+
+function close(): void {
+  emit('update:open', false)
+}
+
+function select(id: MenuId): void {
+  activeMenu.value = id
+  // 切 nav 时内容列滚动回顶部
+  contentEl.value?.scrollTo({ top: 0 })
+}
 
 function getItemCount(id: string): number {
   switch (id) {
@@ -162,25 +168,67 @@ function getItemCount(id: string): number {
   }
 }
 
-/** SystemPage 偏好更新 → 走 store（写 localStorage + 同步 DOM data-theme + i18n）+ toast 反馈。 */
+/** 键盘：Tab 循环（焦点陷阱）+ nav 内 ↑↓/Home/End 移动切换 + Esc 关闭 */
+function onKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    close()
+    return
+  }
+  if (e.key === 'Tab') {
+    const list = getFocusables()
+    if (list.length === 0) return
+    const first = list[0]
+    const last = list[list.length - 1]
+    const active = document.activeElement
+    if (active === last && !e.shiftKey) {
+      e.preventDefault()
+      first.focus()
+    } else if (active === first && e.shiftKey) {
+      e.preventDefault()
+      last.focus()
+    }
+    return
+  }
+  const target = e.target
+  if (!(target instanceof HTMLElement) || !target.classList.contains('nav-item')) return
+  const items = Array.from(navRootEl.value?.querySelectorAll<HTMLElement>('.nav-item') ?? [])
+  const i = items.indexOf(target)
+  if (i === -1) return
+  let next = -1
+  if (e.key === 'ArrowDown') next = i + 1
+  else if (e.key === 'ArrowUp') next = i - 1
+  else if (e.key === 'Home') next = 0
+  else if (e.key === 'End') next = items.length - 1
+  if (next < 0 || next >= items.length) return
+  e.preventDefault()
+  items[next].focus()
+  select(menus[next].id)
+}
+
+function getFocusables(): HTMLElement[] {
+  // 整个 overlay（navRoot 的最近 dialog 容器）作为焦点陷阱范围
+  const root = navRootEl.value?.closest('.fso') as HTMLElement | null
+  if (!root) return []
+  return Array.from(
+    root.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  )
+}
+
+/** SystemPage 偏好更新 → 走 store（写 localStorage + 同步 DOM + i18n）+ toast 反馈。 */
 const { info: toastInfo, error: toastError } = useToast()
-async function onSystemUpdate(patch: Partial<SystemSettings>) {
+async function onSystemUpdate(patch: Partial<SystemSettings>): Promise<void> {
   try {
     await settingsStore.setSystem(patch)
     toastInfo(t('settings.applied'))
-   
   } catch (e) {
     toastError(e instanceof Error ? e.message : String(e))
   }
 }
 
-/**
- * SkillPage 加载路径变更 → 走 store（写 discovery.json，ADR-0021 §1）。
- * W2 D10 修复：setSkillDirs 是 async（store 内 await config.setSkillDirs），原实现未 await 未 catch，
- * reject 时 unhandled rejection + 静默失败。现 await + try/catch + toast error 反馈（CLAUDE.md 规则 #3）。
- */
-async function onUpdateSkillDirs(dirs: SkillDirConfig[]) {
-  // 只把 enabled 路径写进 discovery（目录在 = 启用，ADR §5）
+async function onUpdateSkillDirs(dirs: SkillDirConfig[]): Promise<void> {
   try {
     await settingsStore.setSkillDirs(dirs.filter((d) => d.enabled).map((d) => d.path))
   } catch (e) {
@@ -188,12 +236,218 @@ async function onUpdateSkillDirs(dirs: SkillDirConfig[]) {
   }
 }
 
-/** AgentPage 加载路径变更 → 走 store（写 discovery.json），语义同 onUpdateSkillDirs。 */
-async function onUpdateAgentDirs(dirs: SkillDirConfig[]) {
+async function onUpdateAgentDirs(dirs: SkillDirConfig[]): Promise<void> {
   try {
     await settingsStore.setAgentDirs(dirs.filter((d) => d.enabled).map((d) => d.path))
   } catch (e) {
     toastError(e instanceof Error ? e.message : String(e))
   }
 }
+
+onBeforeUnmount(() => {
+  if (props.open && triggerEl.value) triggerEl.value.focus()
+})
+// Button 仅用于类型兼容占位（避免未用 import 被 tree-shake 报错），实际 nav 用原生 button 以控焦点陷阱
+void Button
 </script>
+
+<style>
+/* ── v6 settings 页共享范式（v6 §6.4 + §5.8）──
+   集中定义避免各页 scoped 重复；限定 .content-col-inner 作用域，不污染全局。
+   page-head：各页顶部 H1 + 描述 block；gc-sub：GroupCard head slot 内副标题。 */
+.content-col-inner .page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.content-col-inner .page-head .head-text { min-width: 0; }
+.content-col-inner .page-head .title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--neutral-fg);
+  letter-spacing: -0.01em;
+}
+.content-col-inner .page-head .desc {
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--neutral-mid);
+}
+.content-col-inner .page-head .head-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+.content-col-inner .page-head .head-badge {
+  height: 20px;
+  padding: 0 var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+}
+.content-col-inner .gc-head-text { min-width: 0; }
+.content-col-inner .gc-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--neutral-fg);
+}
+.content-col-inner .gc-sub {
+  margin-top: 2px;
+  font-size: var(--text-2xs);
+  color: var(--neutral-mid);
+  line-height: 1.4;
+}
+</style>
+
+<style scoped>
+.fso {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  background: var(--bg);
+  display: flex;
+}
+
+/* 左 nav */
+.fs-nav {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--bg-sunken);
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  gap: 1px;
+}
+.nav-brand {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+}
+.brand-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--neutral-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.nav-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--neutral-mid);
+  font-size: var(--text-base);
+  text-align: left;
+  transition: all var(--duration-fast) var(--ease);
+}
+.nav-item:hover:not(.active) {
+  background: var(--surface-hover);
+  color: var(--neutral-fg);
+}
+.nav-item.active {
+  background: var(--surface);
+  color: var(--accent);
+}
+.nav-item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0, 0, 0, 0.4);
+}
+.ico {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  opacity: 0.85;
+  transition: opacity var(--duration-fast) var(--ease);
+}
+.nav-item:hover:not(.active) .ico,
+.nav-item.active .ico {
+  opacity: 1;
+}
+.label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.count {
+  height: 16px;
+  min-width: 16px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--neutral-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+/* 右 content */
+.fs-content {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.fs-head {
+  height: 44px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+.fs-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--neutral-fg);
+}
+.content-col-inner {
+  width: 100%;
+  max-width: var(--content-max-w);
+  margin: 0;
+  padding: var(--space-6) 24px var(--space-8);
+}
+.xbtn {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--neutral-mid);
+  transition: all var(--duration-fast) var(--ease);
+}
+.xbtn:hover {
+  background: var(--surface-hover);
+  color: var(--neutral-fg);
+}
+.xbtn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0, 0, 0, 0.4);
+}
+.x-ico {
+  width: 16px;
+  height: 16px;
+}
+</style>

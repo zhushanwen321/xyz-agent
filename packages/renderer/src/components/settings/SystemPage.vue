@@ -1,23 +1,26 @@
 <template>
   <!--
-    Settings · System 菜单页（handoff-system.md · 模式 A+B · 全枚举开关）。
-    两块 Card：语言与外观 / 配色主题。聊天显示整块从 draft 移除（handoff §11a 决议）。
+    Settings · System 菜单页（v6 §6.4 + §5.8）。
+    GroupCard 分组：语言与外观 / 配色主题 / 提示音 / 快捷键。
+    太极主题即时切换（点击即生效，走 store.setSystem 同步 DOM）。
   -->
-  <div class="flex max-w-[860px] flex-col gap-3">
-    <!-- 卡 1：语言与外观 -->
-    <div class="rounded-card bg-card">
-      <div class="px-4 pb-3 pt-3">
-        <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.system.languageAppearance') }}</h3>
+  <div class="flex flex-col gap-4">
+    <header class="page-head">
+      <div class="head-text">
+        <h1 class="title">{{ t('settings.menu.system') }}</h1>
+        <p class="desc">{{ t('settings.menu.systemDesc') }}</p>
       </div>
-      <div class="border-t border-border">
-        <!-- 语言 -->
-        <div class="flex items-center justify-between px-4 py-3">
-          <Label class="text-[12px] text-neutral-fg">{{ t('settings.system.language') }}</Label>
+    </header>
+
+    <!-- 语言与外观 -->
+    <GroupCard title="语言与外观">
+      <div class="sys-rows">
+        <SettingRow label="语言" desc="界面显示语言与区域格式">
           <Select
             :model-value="system.locale"
             @update:model-value="emit('update', { locale: $event as SystemSettings['locale'] })"
           >
-            <SelectTrigger class="h-8 w-[200px] px-2 text-[12px]">
+            <SelectTrigger class="sys-select">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -25,15 +28,13 @@
               <SelectItem value="en-US">{{ t('settings.system.langEnUS') }}</SelectItem>
             </SelectContent>
           </Select>
-        </div>
-        <!-- 外观模式 -->
-        <div class="flex items-center justify-between border-t border-border px-4 py-3">
-          <Label class="text-[12px] text-neutral-fg">{{ t('settings.system.appearance') }}</Label>
+        </SettingRow>
+        <SettingRow label="外观模式" desc="亮色、暗色或跟随系统">
           <Select
             :model-value="system.theme"
             @update:model-value="emit('update', { theme: $event as SystemSettings['theme'] })"
           >
-            <SelectTrigger class="h-8 w-[200px] px-2 text-[12px]">
+            <SelectTrigger class="sys-select">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -42,15 +43,13 @@
               <SelectItem value="system">{{ t('settings.system.themeSystem') }}</SelectItem>
             </SelectContent>
           </Select>
-        </div>
-        <!-- 字体大小 -->
-        <div class="flex items-center justify-between border-t border-border px-4 py-3">
-          <Label class="text-[12px] text-neutral-fg">{{ t('settings.system.fontSize') }}</Label>
+        </SettingRow>
+        <SettingRow label="字体大小" desc="对话与界面正文的字体大小">
           <Select
             :model-value="system.fontSize ?? 'medium'"
             @update:model-value="emit('update', { fontSize: $event as SystemSettings['fontSize'] })"
           >
-            <SelectTrigger class="h-8 w-[200px] px-2 text-[12px]">
+            <SelectTrigger class="sys-select">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -59,220 +58,213 @@
               <SelectItem value="large">{{ t('settings.system.fontLarge') }}</SelectItem>
             </SelectContent>
           </Select>
-        </div>
-        <!-- 后台完成提示音 -->
-        <div class="flex items-center justify-between border-t border-border px-4 py-3">
-          <Label class="text-[12px] text-neutral-fg">{{ t('settings.system.completionSound') }}</Label>
+        </SettingRow>
+        <SettingRow label="后台完成提示音" desc="后台任务完成时播放提示音">
           <Switch
             data-testid="setting-completion-sound"
             :model-value="system.completionSound ?? true"
             @update:model-value="emit('update', { completionSound: $event === true })"
           />
-        </div>
-        <!-- 会话自动重命名 -->
-        <div class="flex items-center justify-between border-t border-border px-4 py-3">
-          <div class="flex flex-col gap-0.5">
-            <Label class="text-[12px] text-neutral-fg">{{ t('settings.system.autoRenameSession') }}</Label>
-            <span class="text-[10px] text-neutral-mid">{{ t('settings.system.autoRenameSessionHint') }}</span>
-          </div>
+        </SettingRow>
+        <SettingRow label="会话自动重命名" desc="首轮对话后自动用主题给会话命名">
           <Switch
             data-testid="setting-auto-rename-session"
             :model-value="autoRenameEnabled"
             :disabled="togglingAutoRename"
             @update:model-value="onSaveAutoRename"
           />
-        </div>
+        </SettingRow>
       </div>
-    </div>
+    </GroupCard>
 
-    <!-- 卡 2：提示音（系统原生声音选择 + 试听） -->
-    <div class="rounded-card bg-card">
-      <div class="px-4 pb-3 pt-3">
-        <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.system.soundTitle') }}</h3>
+    <!-- 配色主题（太极 · 即时切换） -->
+    <GroupCard title="配色主题">
+      <p class="theme-hint">太极配色 · 即时切换（点击即生效，无需保存）</p>
+      <div class="theme-list">
+        <button
+          v-for="th in TAIJI_THEMES"
+          :key="th.label"
+          type="button"
+          class="theme-row"
+          :class="{ active: th.label === currentTheme.label }"
+          :aria-pressed="th.label === currentTheme.label"
+          @click="applyTaijiTheme(th)"
+        >
+          <span class="theme-name">{{ th.label }}</span>
+          <span class="theme-swatches">
+            <span
+              v-for="(c, i) in th.swatch"
+              :key="i"
+              class="swatch"
+              :style="{ background: c }"
+            />
+          </span>
+        </button>
       </div>
-      <div class="border-t border-border">
-        <!-- 成功音 -->
-        <div class="flex items-center justify-between px-4 py-3">
-          <Label class="text-[12px] text-neutral-fg">{{ t('settings.system.successSound') }}</Label>
-          <Select
-            :model-value="system.successSound || SOUND_DEFAULT"
-            @update:model-value="onSuccessSoundChange"
-          >
-            <SelectTrigger class="h-8 w-[200px] px-2 text-[12px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem :value="SOUND_DEFAULT">
-                {{ t('settings.system.soundDefault') }}
-                <template #action>
-                  <SoundPreviewButton
-                    :loading="previewingKey === 'success:default'"
-                    :title="t('settings.system.soundPreview')"
-                    :data-testid="`preview-success-default`"
-                    @click="previewSound('success', getDefaultSound(currentPlatform, 'success'), 'default')"
-                  />
-                </template>
-              </SelectItem>
-              <SelectItem v-for="s in soundList" :key="s.id" :value="s.id">
-                {{ s.name }}
-                <template #action>
-                  <SoundPreviewButton
-                    :loading="previewingKey === `success:${s.id}`"
-                    :title="t('settings.system.soundPreview')"
-                    :data-testid="`preview-success-${s.id}`"
-                    @click="previewSound('success', s.id, s.id)"
-                  />
-                </template>
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <!-- 失败音 -->
-        <div class="flex items-center justify-between border-t border-border px-4 py-3">
-          <Label class="text-[12px] text-neutral-fg">{{ t('settings.system.errorSound') }}</Label>
-          <Select
-            :model-value="system.errorSound || SOUND_DEFAULT"
-            @update:model-value="onErrorSoundChange"
-          >
-            <SelectTrigger class="h-8 w-[200px] px-2 text-[12px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem :value="SOUND_DEFAULT">
-                {{ t('settings.system.soundDefault') }}
-                <template #action>
-                  <SoundPreviewButton
-                    :loading="previewingKey === 'error:default'"
-                    :title="t('settings.system.soundPreview')"
-                    :data-testid="`preview-error-default`"
-                    @click="previewSound('error', getDefaultSound(currentPlatform, 'error'), 'default')"
-                  />
-                </template>
-              </SelectItem>
-              <SelectItem v-for="s in soundList" :key="s.id" :value="s.id">
-                {{ s.name }}
-                <template #action>
-                  <SoundPreviewButton
-                    :loading="previewingKey === `error:${s.id}`"
-                    :title="t('settings.system.soundPreview')"
-                    :data-testid="`preview-error-${s.id}`"
-                    @click="previewSound('error', s.id, s.id)"
-                  />
-                </template>
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-    </div>
+    </GroupCard>
 
-    <!-- 卡 2：配色主题 -->
-    <div class="rounded-card bg-card">
-      <div class="px-4 pb-3 pt-3">
-        <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.system.themePresetTitle') }}</h3>
+    <!-- 提示音 -->
+    <GroupCard title="提示音">
+      <div class="sys-rows">
+        <SettingRow label="成功音" desc="任务成功完成时播放">
+          <div class="sound-wrap">
+            <Select
+              :model-value="system.successSound || SOUND_DEFAULT"
+              @update:model-value="onSuccessSoundChange"
+            >
+              <SelectTrigger class="sys-select">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem :value="SOUND_DEFAULT">
+                  {{ t('settings.system.soundDefault') }}
+                  <template #action>
+                    <SoundPreviewButton
+                      :loading="previewingKey === 'success:default'"
+                      :title="t('settings.system.soundPreview')"
+                      :data-testid="`preview-success-default`"
+                      @click="previewSound('success', getDefaultSound(currentPlatform, 'success'), 'default')"
+                    />
+                  </template>
+                </SelectItem>
+                <SelectItem v-for="s in soundList" :key="s.id" :value="s.id">
+                  {{ s.name }}
+                  <template #action>
+                    <SoundPreviewButton
+                      :loading="previewingKey === `success:${s.id}`"
+                      :title="t('settings.system.soundPreview')"
+                      :data-testid="`preview-success-${s.id}`"
+                      @click="previewSound('success', s.id, s.id)"
+                    />
+                  </template>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              variant="secondary"
+              size="dense"
+              class="preview-btn"
+              :disabled="!!previewingKey"
+              :aria-label="t('settings.system.soundPreview')"
+              @click="previewSound('success', system.successSound || getDefaultSound(currentPlatform, 'success'), system.successSound || 'default')"
+            >
+              <Volume2 v-if="previewingKey !== 'success:default' && previewingKey !== `success:${system.successSound}`" class="size-3.5" />
+              <Loader2 v-else class="size-3.5 animate-spin" />
+              {{ previewingKey?.startsWith('success:') ? t('settings.system.soundPreviewing') : t('settings.system.soundPreview') }}
+            </Button>
+          </div>
+        </SettingRow>
+        <SettingRow label="失败音" desc="任务失败时播放">
+          <div class="sound-wrap">
+            <Select
+              :model-value="system.errorSound || SOUND_DEFAULT"
+              @update:model-value="onErrorSoundChange"
+            >
+              <SelectTrigger class="sys-select">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem :value="SOUND_DEFAULT">
+                  {{ t('settings.system.soundDefault') }}
+                  <template #action>
+                    <SoundPreviewButton
+                      :loading="previewingKey === 'error:default'"
+                      :title="t('settings.system.soundPreview')"
+                      :data-testid="`preview-error-default`"
+                      @click="previewSound('error', getDefaultSound(currentPlatform, 'error'), 'default')"
+                    />
+                  </template>
+                </SelectItem>
+                <SelectItem v-for="s in soundList" :key="s.id" :value="s.id">
+                  {{ s.name }}
+                  <template #action>
+                    <SoundPreviewButton
+                      :loading="previewingKey === `error:${s.id}`"
+                      :title="t('settings.system.soundPreview')"
+                      :data-testid="`preview-error-${s.id}`"
+                      @click="previewSound('error', s.id, s.id)"
+                    />
+                  </template>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              variant="secondary"
+              size="dense"
+              class="preview-btn"
+              :disabled="!!previewingKey"
+              :aria-label="t('settings.system.soundPreview')"
+              @click="previewSound('error', system.errorSound || getDefaultSound(currentPlatform, 'error'), system.errorSound || 'default')"
+            >
+              <Volume2 v-if="previewingKey !== 'error:default' && previewingKey !== `error:${system.errorSound}`" class="size-3.5" />
+              <Loader2 v-else class="size-3.5 animate-spin" />
+              {{ previewingKey?.startsWith('error:') ? t('settings.system.soundPreviewing') : t('settings.system.soundPreview') }}
+            </Button>
+          </div>
+        </SettingRow>
       </div>
-      <div class="border-t border-border px-4 py-3">
-        <p class="mb-2 text-[11px] text-neutral-mid">{{ t('settings.system.presetMuted') }}</p>
-        <div class="mb-3 flex flex-wrap gap-2">
-          <Button
-            variant="ghost"
-            v-for="sw in mutedSwatches"
-            :key="sw.id"
-            class="h-auto gap-2 rounded-sm border px-3 py-1.5 text-[12px] transition-colors hover:bg-transparent"
-            :class="system.themePreset === sw.id
-              ? 'border-[var(--accent)] bg-[var(--accent-soft)] ring-1 ring-[var(--accent)]'
-              : 'border-border bg-bg hover:bg-[var(--accent-soft)]'"
-            @click="emit('update', { themePreset: sw.id })"
-          >
-            <span class="size-4 rounded-full" :style="{ background: sw.color }" />
-            <span class="text-neutral-fg">{{ sw.label }}</span>
-          </Button>
-        </div>
-        <p class="mb-2 text-[11px] text-neutral-mid">{{ t('settings.system.presetColorful') }}</p>
-        <div class="flex flex-wrap gap-2">
-          <Button
-            variant="ghost"
-            v-for="sw in colorfulSwatches"
-            :key="sw.id"
-            class="h-auto gap-2 rounded-sm border px-3 py-1.5 text-[12px] transition-colors hover:bg-transparent"
-            :class="system.themePreset === sw.id
-              ? 'border-[var(--accent)] bg-[var(--accent-soft)] ring-1 ring-[var(--accent)]'
-              : 'border-border bg-bg hover:bg-[var(--accent-soft)]'"
-            @click="emit('update', { themePreset: sw.id })"
-          >
-            <span class="size-4 rounded-full" :style="{ background: sw.color }" />
-            <span class="text-neutral-fg">{{ sw.label }}</span>
-          </Button>
-        </div>
-      </div>
-    </div>
+    </GroupCard>
 
-    <!-- 卡 3：快捷键（可重录 + 重置） -->
-    <div class="rounded-card bg-card">
-      <div class="px-4 pb-3 pt-3">
-        <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.system.shortcutTitle') }}</h3>
-        <p class="mt-0.5 text-[10px] text-neutral-dim">{{ t('settings.system.shortcutRecordingHint') }}</p>
-      </div>
-      <div class="border-t border-border">
+    <!-- 快捷键 -->
+    <GroupCard title="快捷键">
+      <p class="shortcut-hint">{{ t('settings.system.shortcutRecordingHint') }}</p>
+      <div class="sys-rows">
         <div
           v-for="cmd in shortcutRows"
           :key="cmd.id"
-          class="flex items-center justify-between border-b border-border px-4 py-2.5 last:border-b-0"
+          class="setting-row"
         >
-          <span class="text-[12px] text-neutral-fg">{{ t(`settings.command.${cmd.id}`) }}</span>
-          <div class="flex items-center gap-2">
-            <!-- 录态：闪烁提示 -->
-            <span
-              v-if="recordingId === cmd.id"
-              class="animate-pulse text-[11px] text-accent"
-            >{{ t('settings.system.shortcutRecording') }}</span>
-            <!-- 正常态：显示快捷键 kbd -->
-            <kbd
-              v-else-if="cmd.shortcut"
-              class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim"
-            >{{ cmd.shortcut }}</kbd>
-            <span v-else class="text-[11px] text-neutral-dim">-</span>
-            <!-- 重录按钮 -->
+          <div class="sr-left">
+            <div class="sr-label">
+              <span class="label">{{ t(`settings.command.${cmd.id}`) }}</span>
+              <span v-if="recordingId === cmd.id" class="rec-hint">{{ t('settings.system.shortcutRecording') }}</span>
+            </div>
+          </div>
+          <div class="sr-right">
+            <kbd v-if="recordingId !== cmd.id && cmd.shortcut" class="kbd">{{ cmd.shortcut }}</kbd>
+            <span v-else-if="recordingId !== cmd.id" class="text-[11px] text-neutral-dim">-</span>
             <Button
               variant="ghost"
-              class="h-auto rounded-sm px-1.5 py-0.5 text-[10px] text-accent hover:bg-transparent hover:underline"
+              size="dense"
+              class="rec-btn"
               :class="{ 'text-danger': recordingId === cmd.id }"
               @click="recordingId === cmd.id ? cancelRecording() : startRecording(cmd.id)"
             >{{ recordingId === cmd.id ? t('settings.providerEdit.cancel') : t('settings.system.shortcutReRecord') }}</Button>
-            <!-- 重置按钮（仅自定义覆盖时显示） -->
             <Button
               v-if="commandStore.shortcutOverrides.value[cmd.id]"
               variant="ghost"
-              class="h-auto rounded-sm px-1.5 py-0.5 text-[10px] text-neutral-dim hover:bg-transparent hover:text-danger"
+              size="dense"
+              class="reset-btn"
               @click="resetShortcut(cmd.id)"
             >{{ t('settings.system.shortcutReset') }}</Button>
           </div>
         </div>
       </div>
-    </div>
+    </GroupCard>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Volume2, Loader2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
+import { GroupCard, SoundPreviewButton } from '@xyz-agent/ui/features/settings'
+import SettingRow from './SettingRow.vue'
 import { useCommandStore } from '@/composables/features/useCommandStore'
 import { listSystemSounds } from '@/lib/ipc'
 import { playByName } from '@/composables/useCompletionSound'
 import { getDefaultSound, detectPlatform } from '@/composables/sound-defaults'
-import { SoundPreviewButton } from '@xyz-agent/ui/features/settings'
 import type { SystemSettings } from '@xyz-agent/core'
 import { getAutoRenameEnabled, setAutoRenameEnabled } from '@/api/domains/settings'
 import { useToast } from '@/composables/useToast'
+import { TAIJI_THEMES, resolveTaijiTheme, type TaijiTheme } from '@/composables/useTaijiThemes'
 
-/** 系统声音清单项（id=播放标识，name=显示名） */
 interface SoundInfo { id: string; name: string }
 
-defineProps<{
+const props = defineProps<{
   system: SystemSettings
 }>()
 
@@ -283,81 +275,46 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const { info: toastInfo, error: toastError } = useToast()
 
+// ── 太极主题（即时切换：写 store + 同步 DOM）──
+const currentTheme = computed<TaijiTheme>(() => resolveTaijiTheme(props.system))
+function applyTaijiTheme(th: TaijiTheme): void {
+  emit('update', { theme: th.theme, themePreset: th.preset })
+}
+
 // ── 系统提示音 ──
-
-/** 当前平台可用的系统声音清单（onMounted 拉取） */
 const soundList = ref<SoundInfo[]>([])
-
-/** 当前平台标识（用于 resolve 试听「系统默认」项的平台默认声音名） */
 const currentPlatform = detectPlatform()
-
-/**
- * SelectItem 选中「系统默认」时的 sentinel value。
- * reka-ui 禁止 SelectItem value=""（空串是 Select 清空选择的保留值），
- * 故用此 sentinel 占位，change 时映射回空串存入 settings（空串=用平台默认）。
- *
- * 注意：此 sentinel 字符串不得与任何系统声音 id 冲突（系统声音 id 是系统原生名如
- * 'Glass' / 'complete' / 'Windows Notify System Generic'，绝不会是 '__default__'）。
- * 若未来新增自定义声音 id 命名空间，需避开此保留值。
- */
 const SOUND_DEFAULT = '__default__'
 
-/** successSound Select change handler：sentinel → 空串（settings 存空串语义） */
 function onSuccessSoundChange(value: unknown): void {
   const v = typeof value === 'string' ? value : ''
   emit('update', { successSound: v === SOUND_DEFAULT ? '' : v })
 }
-
-/** errorSound Select change handler：sentinel → 空串 */
 function onErrorSoundChange(value: unknown): void {
   const v = typeof value === 'string' ? value : ''
   emit('update', { errorSound: v === SOUND_DEFAULT ? '' : v })
 }
 
-/** 试听 loading 持续时间（ms）：afplay 启动几乎瞬时，给 loading 态一个最小可见窗口 */
 const PREVIEW_LOADING_MS = 300
-
-/**
- * 正在试听的声音复合 key（`<kind>:<soundId | 'default'>`），用于该项 loading 态。
- * 复合 key 区分 success/error 两个 Select 各自的「系统默认」与具体声音项，
- * 任意时刻只允许一个试听（点新的会覆盖旧的 key）。
- */
 const previewingKey = ref<string | null>(null)
 
 onMounted(async () => {
-  // 拉当前平台可用声音清单（existsSync 过滤后的精选）。经 lib/ipc 门面（B1），
-  // web/mock 环境无 IPC 返回空清单，下拉只剩「系统默认」一项。
   try {
     const result = await listSystemSounds()
     if (result.sounds.length) soundList.value = result.sounds
   } catch (err) {
-    // 清单拉取失败不致命：下拉只剩「系统默认」一项
     console.error('[settings] listSystemSounds failed:', err)
   }
 })
 
-/**
- * 试听提示音（下拉项内 per-item 试听）。
- *
- * 设计变更：原方案是「选完声音后点外部试听按钮」，现改为「下拉列表每项右侧带试听按钮」，
- * 用户可直接对比试听每个候选声音，不必先选中。外部独立试听按钮已移除（同时消除试听时
- * 按钮文案变化「试听/试听中」导致的布局位移问题）。
- *
- * @param kind    'success' 成功音 / 'error' 失败音（用于区分两个 Select）
- * @param name    实际播放的声音名（系统默认项传 getDefaultSound 解析出的平台默认）
- * @param trackId 用于 loading 复合 key 的项标识（'default' 或具体声音 id）
- */
 async function previewSound(kind: 'success' | 'error', name: string, trackId: string): Promise<void> {
-  if (!name) return // 未知平台无默认，静默
-  // 防重入：正在播放时拒绝新点击（SoundPreviewButton 的 pointer-events-none 是视觉兜底，
-  // 这里是逻辑兜底——防止键盘/快速连点触发的重叠播放）
+  if (!name) return
   if (previewingKey.value) return
   const key = `${kind}:${trackId}`
   previewingKey.value = key
   try {
     await playByName(name)
   } finally {
-    // 播放是 fire-and-forget，给个短延迟让 loading 态可见（afplay 启动几乎瞬时）
     setTimeout(() => {
       if (previewingKey.value === key) previewingKey.value = null
     }, PREVIEW_LOADING_MS)
@@ -365,24 +322,17 @@ async function previewSound(kind: 'success' | 'error', name: string, trackId: st
 }
 
 // ── 快捷键重录 ──
-
 const commandStore = useCommandStore()
-// core 实例返回 ref 原样（非 pinia store），直接解构即 ref
 const { appCommands } = commandStore
 
-/** 默认快捷键 key（与 useAppCommands 注册时一致，用于重置时恢复） */
 const DEFAULT_KEYS: Record<string, string> = {
   'new-session': 'n',
   'toggle-sidebar': 'b',
 }
 
-/** 当前正在录制的命令 id（null = 未录制） */
 const recordingId = ref<string | null>(null)
-
-/** 平台检测（显示修饰键符号用） */
 const isMac = typeof navigator !== 'undefined' && navigator.platform.includes('Mac')
 
-/** 将存储的 key（如 'n' / 'mod+shift+j'）转为显示用的修饰键符号 */
 function formatShortcut(key: string): string {
   const parts = key.split('+')
   const result: string[] = []
@@ -398,7 +348,6 @@ function formatShortcut(key: string): string {
   return isMac ? result.join('') : result.join('+')
 }
 
-/** 构建快捷键显示文本：有 override 用 override，否则用默认修饰键 */
 function displayShortcut(cmdId: string): string {
   const override = commandStore.shortcutOverrides.value[cmdId]
   if (override) return formatShortcut(override)
@@ -407,41 +356,31 @@ function displayShortcut(cmdId: string): string {
   return isMac ? `⌘${defaultKey.toUpperCase()}` : `Ctrl+${defaultKey.toUpperCase()}`
 }
 
-/** 可重录的命令行（过滤 go-overview，它无默认快捷键） */
 const shortcutRows = computed(() =>
   appCommands.value
     .filter((c) => c.id in DEFAULT_KEYS)
     .map((c) => ({ id: c.id, shortcut: displayShortcut(c.id) })),
 )
 
-/** 开始录制：注册全局 keydown 监听，捕获下一次按键 */
 function startRecording(cmdId: string): void {
   recordingId.value = cmdId
   window.addEventListener('keydown', onRecordKeydown, true)
 }
 
-/** 取消录制 */
 function cancelRecording(): void {
   recordingId.value = null
   window.removeEventListener('keydown', onRecordKeydown, true)
 }
 
-/** 录态 keydown：解析修饰键 + 主键，持久化到 commandStore */
 function onRecordKeydown(e: KeyboardEvent): void {
   e.preventDefault()
   e.stopPropagation()
-
-  // Escape 取消录制
   if (e.key === 'Escape') {
     cancelRecording()
     return
   }
-
-  // 需要至少一个非修饰键
   const mainKey = e.key.toLowerCase()
   if (['meta', 'control', 'shift', 'alt'].includes(mainKey)) return
-
-  // 组合键字符串
   const parts: string[] = []
   if (e.metaKey || e.ctrlKey) parts.push('mod')
   if (e.shiftKey) parts.push('shift')
@@ -451,23 +390,17 @@ function onRecordKeydown(e: KeyboardEvent): void {
 
   const cmdId = recordingId.value!
   commandStore.setShortcutOverride(cmdId, combo)
-
-  // 同步更新 appCommands 中对应命令的 shortcut 显示文本
   const idx = appCommands.value.findIndex((c) => c.id === cmdId)
   if (idx !== -1) {
     const updated = [...appCommands.value]
     updated[idx] = { ...updated[idx], shortcut: formatShortcut(combo) }
     commandStore.registerApp(updated)
   }
-
   cancelRecording()
 }
 
-/** 重置为默认快捷键 */
 function resetShortcut(cmdId: string): void {
   commandStore.setShortcutOverride(cmdId, null)
-
-  // 恢复 appCommands 中的默认显示
   const idx = appCommands.value.findIndex((c) => c.id === cmdId)
   if (idx !== -1) {
     const defaultKey = DEFAULT_KEYS[cmdId]
@@ -480,29 +413,11 @@ function resetShortcut(cmdId: string): void {
   }
 }
 
-/** 组件卸载时清理录制监听器 */
 onBeforeUnmount(() => {
   if (recordingId.value) cancelRecording()
 })
 
-const mutedSwatches = [
-  { id: 'warm-teal', label: 'Warm Teal', color: 'oklch(55% 0.08 195)' },
-  { id: 'cold-teal', label: 'Cold Teal', color: 'oklch(62% 0.10 190)' },
-  { id: 'neutral', label: 'Neutral', color: 'oklch(40% 0 0)' },
-  { id: 'sharp', label: 'Sharp', color: 'oklch(10% 0 0)' },
-  { id: 'warm-neutral', label: 'Warm Neutral', color: 'oklch(45% 0.04 80)' },
-]
-
-const colorfulSwatches = [
-  { id: 'cold-blue', label: 'Cold Blue', color: '#4f8ef7' },
-  { id: 'terracotta', label: 'Terracotta', color: 'oklch(64% 0.13 28)' },
-  { id: 'rose', label: 'Rose', color: 'oklch(65% 0.14 350)' },
-  { id: 'amber', label: 'Amber', color: 'oklch(67% 0.15 65)' },
-  { id: 'blue', label: 'Blue', color: 'oklch(62% 0.15 250)' },
-  { id: 'violet', label: 'Violet', color: 'oklch(62% 0.15 280)' },
-]
-
-// ── 会话自动重命名（独立 flag file，不走 SystemSettings 体系）──
+// ── 会话自动重命名 ──
 const autoRenameEnabled = ref(true)
 const togglingAutoRename = ref(false)
 
@@ -511,12 +426,11 @@ onMounted(async () => {
     const res = await getAutoRenameEnabled()
     autoRenameEnabled.value = res.enabled
   } catch (e) {
-    // best-effort：拉取失败保持默认 true（与 ensureAutoRenameDefault 一致），不阻塞页面
     console.warn('[SystemPage] failed to load auto-rename state:', e)
   }
 })
 
-async function onSaveAutoRename(enabled: boolean) {
+async function onSaveAutoRename(enabled: boolean): Promise<void> {
   if (togglingAutoRename.value) return
   togglingAutoRename.value = true
   const prev = autoRenameEnabled.value
@@ -532,3 +446,149 @@ async function onSaveAutoRename(enabled: boolean) {
   }
 }
 </script>
+
+<style scoped>
+.sys-rows {
+  padding: 4px 10px 8px;
+}
+.sys-rows :deep(.sys-select),
+.sys-select {
+  height: 32px;
+  width: 200px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.sound-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sound-wrap .sys-select {
+  width: 160px;
+}
+.preview-btn {
+  height: 32px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+/* 太极主题列表（列表项型选中范式：bg-surface + accent） */
+.theme-hint {
+  margin: 6px 10px var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--neutral-mid);
+}
+.theme-list {
+  padding: 0 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.theme-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  color: var(--neutral-fg);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease);
+}
+.theme-row:hover {
+  background: var(--surface-hover);
+}
+.theme-row.active {
+  background: var(--surface);
+  color: var(--accent);
+}
+.theme-name {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+.theme-swatches {
+  display: flex;
+  gap: 4px;
+}
+.swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+
+/* 快捷键 */
+.shortcut-hint {
+  margin: 6px 10px var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--neutral-mid);
+}
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 10px 6px;
+  min-height: 48px;
+}
+.setting-row + .setting-row {
+  border-top: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+}
+.sr-left {
+  flex: 1;
+  min-width: 0;
+}
+.sr-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.label {
+  font-size: var(--text-base);
+  color: var(--neutral-fg);
+  font-weight: 500;
+}
+.sr-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--neutral-dim);
+}
+.rec-hint {
+  font-size: var(--text-xs);
+  color: var(--accent);
+  animation: rec-pulse 1s ease-in-out infinite;
+}
+@keyframes rec-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.rec-btn {
+  height: 28px;
+  padding: 0 10px;
+  font-size: var(--text-xs);
+  color: var(--accent);
+}
+.rec-btn:hover {
+  color: var(--accent);
+}
+.reset-btn {
+  height: 28px;
+  padding: 0 10px;
+  font-size: var(--text-xs);
+  color: var(--neutral-dim);
+}
+.reset-btn:hover {
+  color: var(--danger);
+}
+</style>

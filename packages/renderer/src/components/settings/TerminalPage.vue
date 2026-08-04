@@ -8,6 +8,13 @@
 <template>
   <!-- max-w-[860px]：设置页内容列标准宽度（与 SystemPromptPage.vue / SystemPage.vue 共用同一约定）。 -->
   <div data-testid="terminal-page" class="flex max-w-[860px] flex-col gap-3">
+    <header class="page-head">
+      <div class="head-text">
+        <h1 class="title">{{ t('settings.menu.terminal') }}</h1>
+        <p class="desc">{{ t('settings.menu.terminalDesc') }}</p>
+      </div>
+    </header>
+
     <!-- corrupted 提示条：getTerminalConfig 返回 corrupted=true 时显示 -->
     <div
       v-if="corrupted"
@@ -18,11 +25,13 @@
     </div>
 
     <!-- 单卡片：终端配置表单 -->
-    <div class="rounded-card bg-card">
-      <div class="px-4 pb-3 pt-3">
-        <h3 class="text-[13px] font-medium text-neutral-fg">{{ t('settings.terminal.title') }}</h3>
-      </div>
-      <div class="border-t border-border px-4 py-3">
+    <GroupCard>
+      <template #head>
+        <div class="gc-head-text">
+          <h3 class="gc-title">{{ t('settings.terminal.title') }}</h3>
+        </div>
+      </template>
+      <div class="px-4 py-3">
         <div class="flex flex-col gap-4">
           <!-- shell -->
           <div class="flex flex-col gap-1.5">
@@ -143,7 +152,7 @@
           </Button>
         </div>
       </div>
-    </div>
+    </GroupCard>
   </div>
 </template>
 
@@ -156,6 +165,7 @@ import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
+import { GroupCard } from '@xyz-agent/ui/features/settings'
 import { config } from '@/api'
 import { useToast } from '@/composables/useToast'
 import type { TerminalConfig } from '@xyz-agent/shared'
