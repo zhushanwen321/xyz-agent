@@ -150,8 +150,8 @@ function buildActionPrompt(node) {
     `你必须在当前 session 内**同步**完成 action。**绝对禁止**调用 subagent tool（或任何异步委派）然后等待——你是 workflow agent，pi runtime 会在你停止调用工具时强制要求返回 structured-output，异步 subagent 的结果你**永远等不到**。`,
     `如需第二意见或代码品味审查，**自己用 read 工具读代码 + 自行判断**——审查就是你这个 agent 的职责，不得委派。`,
     ``,
-    `### replan 限制`,
-    `replan 只允许在 design-reviewed 状态触发。在 executing/testing/tested/exec-reviewed/retrospected 状态**禁止 replan**（会导致不可恢复死路）。若在这些状态遇到问题，停止并返回（stopReason=cannot-proceed）。`,
+    `### replan`,
+    `replan 是 cw 的合法旁路 action（不改 status，跑完原地停在当前状态）：wave 层从 design-reviewed 起的全部状态（design-reviewed/executing/tested/exec-reviewed/retrospected）、planning 层 design-reviewed/executing 均可触发。replan 后回到 planning 重走 design-review（刷新 designReviewJudgment 匹配新 plan）。**replan 不会卡住流程**——在非法状态调 replan 会被 cw guard 直接拒绝（illegal_transition），状态机不受破坏，改报 cannot-proceed 交给上层决策即可。`,
     ``,
     `## 入口`,
     `调一次 \`cw handoff --unitId ${unitId}\` 拿当前 action 的 guidance + input schema（确认起点）。`,
@@ -189,7 +189,7 @@ function buildActionSchema(node) {
         type: "string",
         enum: ["progressive-done", "action-done", "gate-failed", "crosslayer-descend", "closed", "cannot-proceed"],
         description:
-          "停止原因。progressive-done=合并 progressive 段完成（design-review 跑完）；action-done=非 progressive action 跑完；gate-failed=gate fail 重试超限；crosslayer-descend=planning execute 后 descend；closed=closeout 终态；cannot-proceed=需外部决策或违规 replan",
+          "停止原因。progressive-done=合并 progressive 段完成（design-review 跑完）；action-done=非 progressive action 跑完；gate-failed=gate fail 重试超限；crosslayer-descend=planning execute 后 descend；closed=closeout 终态；cannot-proceed=需外部决策或无法继续",
       },
       actionsExecuted: {
         type: "array",
@@ -303,13 +303,15 @@ function selectActionable(frontier) {
 }
 
 /**
- * node 级熔断：遍历 actionable 节点，识别两类需 abort 的 node。
+ * node 级熔断：遍历 actionable 节点，识别需 abort 的 node。
  * 返回 nodesToAbort[]（unitId 列表）。mutation prevStatus / nodeRounds。
  *
- * 1. replan 判定（按 §17.3）：node.lastStatusHistoryAction === "replan" 时按 status 区分：
- *    - design-reviewed：合法 replan（plan.from 含 design-reviewed，可恢复）→ 放行，不计数
- *    - executing/testing/tested/exec-reviewed/retrospected：违规 replan（plan.from 不含这些
- *      status，agent 调 plan 会被 guard 拒绝 → 死路）→ 立即 abort
+ * 1. replan 判定：node.lastStatusHistoryAction === "replan" 时一律放行并重置熔断计数——
+ *    replan 是 cw 合法旁路 action（不改 status，to=undefined）：wave 层 from 含
+ *    design-reviewed/executing/tested/exec-reviewed/retrospected，planning 层 from 含
+ *    design-reviewed/executing（state-machine.ts replan.from）。非法状态调 replan 会被
+ *    cw guard 拒绝（illegal_transition），根本不产生 history 条目，故能走到这里的
+ *    replan 必然合法。replan 是 agent 主动恢复动作（活动信号），不算 stuck。
  * 2. status 未推进熔断：跨 BFS 轮 status 不变连续 MAX_NODE_ROUNDS 次 → abort
  *
  * 向后兼容：node 无 lastStatusHistoryAction 字段时走 status 未推进逻辑（原行为）。
@@ -318,15 +320,14 @@ function detectStuckNodes(actionable, prevStatus, nodeRounds) {
   const nodesToAbort = [];
 
   for (const node of actionable) {
-    // replan 判定（按 status 区分合法/违规）
+    // replan 判定：cw 的 replan 是合法旁路 action（wave: design-reviewed/executing/tested/
+    // exec-reviewed/retrospected，planning: design-reviewed/executing，state-machine.ts replan.from）。
+    // 非法状态调 replan 会被 cw guard 拒绝（illegal_transition），不产生 history 条目——
+    // 故 lastStatusHistoryAction==="replan" 必然合法，一律放行（不 abort 销毁节点）。
+    // replan 不改 status（to=undefined），重置熔断计数：replan 是 agent 主动恢复动作，
+    // 不能因 status 未变被误判 stuck；基线同步当前 status，后续轮次重新累计。
     if (node.lastStatusHistoryAction === "replan") {
-      if (node.status === "design-reviewed") {
-        // 合法 replan：放行，不计数为 stuck
-        prevStatus[node.unitId] = node.status;
-        continue;
-      }
-      // 违规 replan：executing/testing/tested/exec-reviewed/retrospected → 立即 abort
-      nodesToAbort.push(node.unitId);
+      nodeRounds[node.unitId] = 0;
       prevStatus[node.unitId] = node.status;
       continue;
     }

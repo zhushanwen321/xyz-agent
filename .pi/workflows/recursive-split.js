@@ -116,7 +116,7 @@ async function abortUnit(unitId) {
  * timeoutMs 按 isProgressive(node.nextAction) 选 15min / 10min。
  * returnMeta:true → 返回 {unitId, value, sessionFile?, failedReason?}。
  * 失败两个来源：(1) decideNodeOutcome(r) 检 r.error（pi 层崩溃/timeout）；
- *              (2) r.value.failedReason（agent 自报 gate fail 耗尽 / cannot-proceed）。
+ *              (2) r.value.stopReason 为 gate-failed/cannot-proceed（agent 自报失败）。
  * 两者都 abortUnit + 返回 failedReason（不 throw，主循环继续其他节点）。
  * 注意：失败字段命名 failedReason 而非 error，避免被 parallel() 归一化吞掉其他字段。
  */
@@ -150,9 +150,12 @@ async function executeActionAgent(node, sessionFiles) {
     return { unitId: node.unitId, value: r.value, sessionFile: r.sessionFile, failedReason: outcome.failedReason };
   }
 
-  // 失败来源 2：agent 自报 failedReason（gate fail 耗尽 / cannot-proceed）
-  if (r.value && r.value.failedReason) {
-    log("Node " + node.unitId + " failed (agent-reported): " + r.value.failedReason);
+  // 失败来源 2：agent 自报失败（stopReason=gate-failed/cannot-proceed）。
+  // 不按 failedReason 非空判定：LLM 结构化输出不受 schema 约束，action 成功
+  // （stopReason=action-done/progressive-done/closed）后 failedReason 残留是常见现象，
+  // 按 failedReason 判定会把刚成功的节点立即 abortUnit 销毁（MF-3）。
+  if (r.value && (r.value.stopReason === "gate-failed" || r.value.stopReason === "cannot-proceed")) {
+    log("Node " + node.unitId + " failed (agent-reported): " + (r.value.failedReason ?? r.value.stopReason));
     await abortUnit(node.unitId);
     return { unitId: node.unitId, value: r.value, sessionFile: r.sessionFile, failedReason: r.value.failedReason };
   }

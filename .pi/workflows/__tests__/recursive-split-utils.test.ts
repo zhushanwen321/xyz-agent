@@ -352,10 +352,13 @@ describe("buildActionPrompt", () => {
     expect(prompt).toContain("input"); // 教 agent 修 input 文件
   });
 
-  it("含 replan 限制（design-reviewed）", () => {
+  it("含 replan 合法性说明（design-reviewed 起可用）", () => {
     const prompt = buildActionPrompt(waveNode);
     expect(prompt).toContain("replan");
     expect(prompt).toContain("design-reviewed");
+    // cw 语义：replan 是合法旁路 action，不构成死路（MF-2 修复）
+    expect(prompt).not.toContain("死路");
+    expect(prompt).toMatch(/guard|illegal_transition/);
   });
 
   it("含禁止 spawn subagent 约束（P0-1 修复）", () => {
@@ -608,44 +611,53 @@ describe("detectStuckNodes", () => {
 // ── detectStuckNodes replan 判定 ────────────────────
 
 describe("detectStuckNodes replan 判定", () => {
-  it("lastStatusHistoryAction=replan + status=design-reviewed → 不 abort，不累加 nodeRounds", () => {
+  it("lastStatusHistoryAction=replan + status=design-reviewed → 不 abort，重置 nodeRounds", () => {
     const actionable = [{ unitId: "a", status: "design-reviewed", lastStatusHistoryAction: "replan" }];
     const prevStatus: Record<string, string> = {};
     const nodeRounds: Record<string, number> = {};
     const stuck = detectStuckNodes(actionable, prevStatus, nodeRounds);
     expect(stuck).toHaveLength(0);
-    expect(nodeRounds["a"]).toBeUndefined(); // 没有累加
+    expect(nodeRounds["a"]).toBe(0); // 放行并重置熔断计数
     expect(prevStatus["a"]).toBe("design-reviewed"); // 基线更新
   });
 
-  it("lastStatusHistoryAction=replan + status=executing → abort", () => {
+  it("lastStatusHistoryAction=replan + status=executing → 不 abort（wave replan.from 合法）", () => {
     const actionable = [{ unitId: "a", status: "executing", lastStatusHistoryAction: "replan" }];
     const stuck = detectStuckNodes(actionable, {}, {});
-    expect(stuck).toEqual(["a"]);
+    expect(stuck).toHaveLength(0);
   });
 
-  it("lastStatusHistoryAction=replan + status=testing → abort", () => {
+  it("lastStatusHistoryAction=replan + status=testing → 不 abort（wave replan.from 合法）", () => {
     const actionable = [{ unitId: "a", status: "testing", lastStatusHistoryAction: "replan" }];
     const stuck = detectStuckNodes(actionable, {}, {});
-    expect(stuck).toEqual(["a"]);
+    expect(stuck).toHaveLength(0);
   });
 
-  it("lastStatusHistoryAction=replan + status=tested → abort", () => {
+  it("lastStatusHistoryAction=replan + status=tested → 不 abort（wave replan.from 合法）", () => {
     const actionable = [{ unitId: "a", status: "tested", lastStatusHistoryAction: "replan" }];
     const stuck = detectStuckNodes(actionable, {}, {});
-    expect(stuck).toEqual(["a"]);
+    expect(stuck).toHaveLength(0);
   });
 
-  it("lastStatusHistoryAction=replan + status=exec-reviewed → abort", () => {
+  it("lastStatusHistoryAction=replan + status=exec-reviewed → 不 abort（wave replan.from 合法）", () => {
     const actionable = [{ unitId: "a", status: "exec-reviewed", lastStatusHistoryAction: "replan" }];
     const stuck = detectStuckNodes(actionable, {}, {});
-    expect(stuck).toEqual(["a"]);
+    expect(stuck).toHaveLength(0);
   });
 
-  it("lastStatusHistoryAction=replan + status=retrospected → abort", () => {
+  it("lastStatusHistoryAction=replan + status=retrospected → 不 abort（wave replan.from 合法）", () => {
     const actionable = [{ unitId: "a", status: "retrospected", lastStatusHistoryAction: "replan" }];
     const stuck = detectStuckNodes(actionable, {}, {});
-    expect(stuck).toEqual(["a"]);
+    expect(stuck).toHaveLength(0);
+  });
+
+  it("replan 重置已累积的 nodeRounds（replan 是活动信号，不算 stuck）", () => {
+    const actionable = [{ unitId: "a", status: "executing", lastStatusHistoryAction: "replan" }];
+    const prevStatus: Record<string, string> = { a: "executing" };
+    const nodeRounds: Record<string, number> = { a: 2 }; // 之前已累积 2 轮未推进
+    const stuck = detectStuckNodes(actionable, prevStatus, nodeRounds);
+    expect(stuck).toHaveLength(0);
+    expect(nodeRounds["a"]).toBe(0); // replan 轮重置计数，后续轮重新累计
   });
 
   it("lastStatusHistoryAction 非 replan（如 clarify）→ 走原有 status 未推进逻辑", () => {

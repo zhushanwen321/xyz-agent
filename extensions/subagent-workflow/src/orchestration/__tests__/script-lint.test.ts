@@ -401,6 +401,36 @@ describe("meta.phases 非字符串数组 — warning", () => {
     expect(warnings(result.findings).some((w) => /meta\.phases.*string array/i.test(w.message)))
       .toBe(false);
   });
+
+  it("多行对象数组（phases: [ 换行 { ... }）→ warning（MF-5 跨行匹配）", () => {
+    const src = [
+      `const meta = { phases: [`,
+      `  { title: "a" },`,
+      `  { title: "b" },`,
+      `] };`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).some((w) => /meta\.phases.*string array/i.test(w.message)))
+      .toBe(true);
+  });
+
+  it("多行字符串数组（phases: [ 换行 'a' ]）→ 0 此类 warning", () => {
+    const src = [
+      `const meta = { phases: [`,
+      `  "a",`,
+      `] };`,
+      `phase("a");`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).some((w) => /meta\.phases.*string array/i.test(w.message)))
+      .toBe(false);
+  });
 });
 
 describe("声明 phases 与 phase() 调用一致性 — warning", () => {

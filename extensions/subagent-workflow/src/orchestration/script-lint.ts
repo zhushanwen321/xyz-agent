@@ -407,25 +407,21 @@ function analyzeIIFE(source: string, iifeStart: number): LintFinding | undefined
  * （如 [{title,detail}]）是常见误写，提醒作者改为字符串数组。
  */
 function checkMetaPhases(source: string): LintFinding[] {
-  const lines = source.split("\n");
   const findings: LintFinding[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const trimmed = line.trim();
-    if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")) {
-      continue;
-    }
- // phases: [ { ← 对象数组（第一个元素是对象）
-    if (/phases\s*:\s*\[\s*\{/.test(line)) {
-      findings.push({
-        severity: "warning",
-        line: i + 1,
-        message:
-          "`meta.phases` should be a string array like ['phase1','phase2']. Object arrays are ignored by the engine.",
-        suggestion:
-          "Use `phases: ['analyze','fix']`. Engine groups nodes by runtime `phase()` calls, not by `meta.phases` declarations.",
-      });
-    }
+  // 跨行匹配（\s* 含换行）：`phases: [` 与 `{` 换行分离的多行对象数组同样命中。
+  // 原逐行匹配只命中「`[` 与 `{` 同行」，最常见的格式化写法（phases: [ 换行 { ... }）零检出（MF-5）。
+  // 行号从 match index 反推。字符串数组（phases: [\n "a"）不匹配 \s*\{，不会误报。
+  for (const m of source.matchAll(/phases\s*:\s*\[\s*\{/g)) {
+    if (m.index === undefined) continue;
+    const lineNum = source.slice(0, m.index).split("\n").length;
+    findings.push({
+      severity: "warning",
+      line: lineNum,
+      message:
+        "`meta.phases` should be a string array like ['phase1','phase2']. Object arrays are ignored by the engine.",
+      suggestion:
+        "Use `phases: ['analyze','fix']`. Engine groups nodes by runtime `phase()` calls, not by `meta.phases` declarations.",
+    });
   }
   return findings;
 }

@@ -1,0 +1,677 @@
+// review-fix-loop.js — 通用多批审查-修复循环（内置 workflow）
+//
+// 模式：多批（batch）串行，批内循环（round）：并行 review → aggregate → fix → 重审。
+// 批次用于表达前置依赖（fallow 静态分析等前置检查必须先完成，后续审查才有意义）。
+// 批内某 agent 已无 must-fix（critical/major）则后续轮跳过，优化 token 效率。
+//
+// 用法：
+//   workflow run review-fix-loop --args targetType=git-diff target=main \
+//     batch1=fallow-scan batch2=reviewer autoCommit=true
+//   workflow run review-fix-loop --args targetType=file target=/path/to/doc.md \
+//     batch1=reviewer autoCommit=false
+//
+// ⚠️ 唯一带写操作的内置 workflow：fix 阶段会修改文件（autoCommit=true 时 commit）。
+// ⚠️ lintScript 约束（本脚本已遵守）：含 parallel() 入口，禁止 bare IIFE；
+//    agent() 调用顺序确定（批次按配置顺序稳定排序，callId 重放安全）。
+
+const meta = {
+  name: "review-fix-loop",
+  description: "审查-修复循环：多批串行（批内并行 review → aggregate → fix → 重审直到 clean）。必填 targetType（git-diff/file/dir/text）+ target。批次由 batch1..batchN 控制（如 batch1=fallow-scan batch2=reviewer），用于前置检查先行的场景。注意：唯一带写操作/commit 副作用的内置 workflow，autoCommit 默认 false。",
+  phases: [
+    { title: "Review", detail: "Batch: parallel review by configured agents" },
+    { title: "Fix", detail: "Fix must-fix issues from aggregated report" },
+  ],
+};
+
+// ── 参数解析 + 白名单校验（fail-fast） ────────────────────────────
+
+const TARGET_TYPES = ["git-diff", "file", "dir", "text"];
+const VALID_ARG_KEYS = new Set([
+  "targetType", "target", "agents", "batchNames", "reviewPrompt", "fixPrompt",
+  "autoCommit", "maxRounds", "stuckThreshold", "model", "skipCleanAgents",
+  "recheckAfterFix", "_runId",
+]);
+
+function fail(msg) {
+  throw new Error("review-fix-loop: " + msg);
+}
+
+function normalizeBool(v, name, def) {
+  if (v === undefined || v === null || v === "") return def;
+  if (v === true || v === "true") return true;
+  if (v === false || v === "false") return false;
+  fail("参数 " + name + " 必须是布尔值（true/false），实际: " + JSON.stringify(v));
+}
+
+function normalizeInt(v, name, def) {
+  if (v === undefined || v === null || v === "") return def;
+  const n = typeof v === "number" ? v : Number(String(v).trim());
+  if (!Number.isInteger(n) || n <= 0) fail("参数 " + name + " 必须是正整数，实际: " + JSON.stringify(v));
+  return n;
+}
+
+// 白名单校验：未知参数名（防 batchX 拼错如 batchl）→ 报错
+for (const key of Object.keys($ARGS)) {
+  if (VALID_ARG_KEYS.has(key)) continue;
+  if (/^batch\d+$/.test(key)) continue;
+  fail("未知参数: " + key + "（合法参数: targetType/target/batch1..batchN/agents/batchNames/reviewPrompt/fixPrompt/autoCommit/maxRounds/stuckThreshold/model/skipCleanAgents/recheckAfterFix）");
+}
+
+const targetType = $ARGS.targetType;
+if (!TARGET_TYPES.includes(targetType)) {
+  fail("targetType 必填且必须是枚举之一: " + TARGET_TYPES.join("/") + "（实际: " + JSON.stringify(targetType) + "）");
+}
+const target = typeof $ARGS.target === "string" ? $ARGS.target.trim() : "";
+if (!target) fail("target 必填（git-diff 时传 base ref 如 main；file 传路径；dir 传目录；text 传描述）");
+
+const reviewPrompt = typeof $ARGS.reviewPrompt === "string" && $ARGS.reviewPrompt.trim()
+  ? $ARGS.reviewPrompt.trim()
+  : "审查变更/目标是否存在：逻辑错误、边界条件、类型不安全、遗漏、回归风险、代码规范问题。发现问题分三级：critical（严重，必须修）/ major（重要，应当修）/ minor（轻微，建议修）。critical+major 计入 must_fix。";
+const fixPrompt = typeof $ARGS.fixPrompt === "string" && $ARGS.fixPrompt.trim()
+  ? $ARGS.fixPrompt.trim()
+  : "修复全部 must-fix 问题（critical/major）。最小正确修复，不做重构、不做风格改动。";
+const autoCommit = normalizeBool($ARGS.autoCommit, "autoCommit", false);
+const maxRounds = normalizeInt($ARGS.maxRounds, "maxRounds", 10);
+const stuckThreshold = normalizeInt($ARGS.stuckThreshold, "stuckThreshold", 3);
+const skipCleanAgents = normalizeBool($ARGS.skipCleanAgents, "skipCleanAgents", true);
+const recheckAfterFix = normalizeBool($ARGS.recheckAfterFix, "recheckAfterFix", false);
+const MODEL = typeof $ARGS.model === "string" && $ARGS.model.trim() ? $ARGS.model.trim() : undefined;
+
+// 审查指令模板（按 targetType 生成，注入每个 review agent 的 prompt）
+function buildReviewInstruction() {
+  switch (targetType) {
+    case "git-diff":
+      return "Review `git diff " + target + "...HEAD` for all committed changes against " + target + ".\n" +
+        "ALSO run `git status --porcelain` and `git diff` to review uncommitted working-tree changes " +
+        "(fixes may be uncommitted when autoCommit=false; uncommitted changes ARE in scope).";
+    case "file":
+      return "Read and review the file: " + target;
+    case "dir":
+      return "Explore and review the directory: " + target + " (list files, then read the relevant ones)";
+    case "text":
+      return "Review target: " + target;
+  }
+}
+const reviewInstruction = buildReviewInstruction();
+
+// 批次解析：batch1..batchN（缺号报错）/ agents 简写 / 默认单批 [reviewer]
+function parseBatches() {
+  const batchKeys = Object.keys($ARGS)
+    .filter((k) => /^batch\d+$/.test(k))
+    .sort((a, b) => parseInt(a.slice(5), 10) - parseInt(b.slice(5), 10));
+  const nums = batchKeys.map((k) => parseInt(k.slice(5), 10));
+  for (let i = 1; i <= nums.length; i++) {
+    if (!nums.includes(i)) fail("批次参数缺号：有 batch" + nums.join("/") + " 但无 batch" + i + "（批次必须连续编号）");
+  }
+  if ($ARGS.agents !== undefined && $ARGS.batch1 !== undefined) {
+    fail("agents 与 batch1 不能同时传（agents 是单批简写）");
+  }
+
+  let rawBatches;
+  if (batchKeys.length > 0) {
+    rawBatches = batchKeys.map((k) => $ARGS[k]);
+  } else if ($ARGS.agents !== undefined) {
+    rawBatches = [$ARGS.agents];
+  } else {
+    rawBatches = ["reviewer"]; // 默认单批：包内置通用审查 agent
+  }
+
+  return rawBatches.map((raw, idx) => {
+    if (typeof raw !== "string" || !raw.trim()) fail("batch" + (idx + 1) + " 不能为空");
+    const names = raw.split(",").map((s) => s.trim()).filter(Boolean);
+    if (names.length === 0) fail("batch" + (idx + 1) + " 为空（逗号分隔 agent 名/文件路径）");
+    if (new Set(names).size !== names.length) fail("batch" + (idx + 1) + " 内存在重复 agent: " + names);
+    return names;
+  });
+}
+const BATCHES = parseBatches();
+
+// batchNames（数量校验）
+const rawBatchNames = typeof $ARGS.batchNames === "string" && $ARGS.batchNames.trim()
+  ? $ARGS.batchNames.split(",").map((s) => s.trim()).filter(Boolean)
+  : [];
+if (rawBatchNames.length > 0 && rawBatchNames.length !== BATCHES.length) {
+  fail("batchNames 数量（" + rawBatchNames.length + "）必须与批数（" + BATCHES.length + "）一致");
+}
+const BATCH_NAMES = rawBatchNames.length ? rawBatchNames : BATCHES.map((_, i) => "batch-" + (i + 1));
+
+// fallow-scan 只在 git-diff 类型下有意义
+for (let i = 0; i < BATCHES.length; i++) {
+  if (BATCHES[i].includes("fallow-scan") && targetType !== "git-diff") {
+    fail("fallow-scan 只支持 targetType=git-diff（它审查 git 变更的静态分析），实际 targetType=" + targetType);
+  }
+}
+
+// ── Schemas ─────────────────────────────────────────────────────────
+
+const reviewerSchema = {
+  type: "object",
+  properties: {
+    report_file: { type: "string", description: "Absolute path to the written review report (.md)" },
+    must_fix: { type: "number", description: "Number of must-fix (critical+major) issues found" },
+    suggestion: { type: "number", description: "Number of suggestion-level (minor) issues found" },
+  },
+  required: ["report_file", "must_fix", "suggestion"],
+};
+
+const aggregatorSchema = {
+  type: "object",
+  properties: {
+    report_file: { type: "string", description: "Absolute path to aggregated.md" },
+    must_fix: { type: "number", description: "Total must-fix after dedup across all dimensions" },
+    suggestion: { type: "number", description: "Total suggestions after dedup across all dimensions" },
+  },
+  required: ["report_file", "must_fix", "suggestion"],
+};
+
+// ── Per-run isolation: runId-scoped directories ─────────────────────
+
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+
+const RUN_ID = ($ARGS._runId && typeof $ARGS._runId === "string") ? $ARGS._runId : "run-" + Date.now();
+const RUN_ROOT = path.join(os.tmpdir(), "review-fix-loop", RUN_ID);
+const STATE_FILE = RUN_ROOT + "/state.json";
+
+fs.mkdirSync(RUN_ROOT, { recursive: true });
+log("Run directory: " + RUN_ROOT);
+
+// ── State management (persistent, atomic writes) ────────────────────
+
+function loadState() {
+  try {
+    return JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
+  } catch {
+    return {
+      meta: {
+        runId: RUN_ID, workspace: $WORKSPACE || "", model: MODEL || "(default)",
+        targetType, target, batches: BATCHES, startedAt: new Date().toISOString(),
+      },
+      agentStatus: {},
+      fixCount: 0,
+      batches: [],
+    };
+  }
+}
+
+function saveState(state) {
+  const tmp = STATE_FILE + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+  fs.renameSync(tmp, STATE_FILE);
+}
+
+// clean 记录：lastCleanBatch + 当时全局 fixCount 快照（跨批跳过判定依据）
+function recordAgentClean(state, agentName, batchIndex) {
+  const s = state.agentStatus[agentName] || { lastCleanBatch: 0, lastCleanFixCount: 0, lastActiveRound: 0, lastMustFix: undefined };
+  s.lastCleanBatch = batchIndex;
+  s.lastCleanFixCount = state.fixCount;
+  s.lastActiveRound = batchIndex;
+  state.agentStatus[agentName] = s;
+}
+
+function recordAgentDirty(state, agentName, mustFix, batchIndex) {
+  const s = state.agentStatus[agentName] || { lastCleanBatch: 0, lastCleanFixCount: 0, lastActiveRound: 0, lastMustFix: undefined };
+  s.lastActiveRound = batchIndex;
+  s.lastMustFix = mustFix;
+  state.agentStatus[agentName] = s;
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+function parseResult(raw) {
+  if (typeof raw === "object" && raw !== null) return raw;
+  if (typeof raw === "string") {
+    let s = raw.trim();
+    const fence = s.match(/^```(?:json)?\s*\n([\s\S]*?)\n?```\s*$/i);
+    if (fence) s = fence[1].trim();
+    if (!s.startsWith("{") && !s.startsWith("[")) {
+      const first = s.indexOf("{");
+      const last = s.lastIndexOf("}");
+      if (first !== -1 && last > first) s = s.slice(first, last + 1);
+    }
+    try { return JSON.parse(s); } catch { /* fall through */ }
+  }
+  return null;
+}
+
+function normalizeAggregatorResult(raw) {
+  const parsed = parseResult(raw);
+  if (!parsed) return null;
+  const mustFix =
+    typeof parsed.must_fix === "number" ? parsed.must_fix :
+    typeof parsed.totalMustFix === "number" ? parsed.totalMustFix :
+    typeof parsed.mustFix === "number" ? parsed.mustFix : undefined;
+  const suggestion =
+    typeof parsed.suggestion === "number" ? parsed.suggestion :
+    typeof parsed.totalSuggestions === "number" ? parsed.totalSuggestions :
+    typeof parsed.suggestions === "number" ? parsed.suggestions : 0;
+  if (typeof mustFix !== "number") return null;
+  return { report_file: parsed.report_file || parsed.reportFile, must_fix: mustFix, suggestion };
+}
+
+function parseAggregatedMd(content) {
+  const mustFixMatch = content.match(/[-*]\s*Must[-_]fix\s*[:：]\s*(\d+)/i);
+  if (!mustFixMatch) return null;
+  const suggestionMatch = content.match(/[-*]\s*Suggestions?\s*[:：]\s*(\d+)/i);
+  return {
+    must_fix: parseInt(mustFixMatch[1], 10),
+    suggestion: suggestionMatch ? parseInt(suggestionMatch[1], 10) : 0,
+  };
+}
+
+// 自定义 .md agent 加载：frontmatter（name/description/model）+ 正文
+function loadAgentMd(filePath) {
+  let content;
+  try {
+    content = fs.readFileSync(filePath, "utf-8");
+  } catch (e) {
+    fail("agent 文件读取失败: " + filePath + " (" + e.message + ")");
+  }
+  let name = path.basename(filePath, ".md");
+  let model, description;
+  let body = content.trim();
+  if (content.startsWith("---")) {
+    const closeIdx = content.indexOf("---", 3);
+    if (closeIdx !== -1) {
+      const yaml = content.slice(3, closeIdx);
+      body = content.slice(closeIdx + 3).trim();
+      const extract = (key) => {
+        const m = yaml.match(new RegExp("^" + key + ":\\s*(.+)$", "m"));
+        if (!m) return undefined;
+        let v = m[1].trim();
+        if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+        return v || undefined;
+      };
+      name = extract("name") || name;
+      model = extract("model");
+      description = extract("description");
+    }
+  }
+  return { name, model, description, systemPrompt: body, report: name, title: description || name, isCustom: true };
+}
+
+// ── Agent defs 解析（每批元素统一解析） ─────────────────────────────
+
+// fallow-scan：内置工具型 def（无 .md，跑 fallow audit 静态分析）
+const FALLOW_DEF = { name: "fallow-scan", title: "FALLOW STATIC ANALYSIS", report: "fallow-scan", isFallow: true };
+
+function resolveAgentDefs(batchNames) {
+  return batchNames.map((item) => {
+    if (item === "fallow-scan") return FALLOW_DEF;
+    if (item.includes("/") || item.endsWith(".md")) return loadAgentMd(item);
+    return { name: item, report: item.replace(/^review-/, ""), title: item.toUpperCase() };
+  });
+}
+
+// ── Build review calls ──────────────────────────────────────────────
+
+function buildReviewCall(def, round, max, batchIndex, roundDir) {
+  const header = "Batch " + batchIndex + " Round " + round + "/" + max + " — " + BATCH_NAMES[batchIndex - 1];
+  const prevBatchesHint = batchIndex > 1
+    ? "\nPrior batch reports (optional context): " + RUN_ROOT + "/batch-*/  (use read)"
+    : "";
+  const base = {
+    model: MODEL || def.model,
+    schema: reviewerSchema,
+    description: def.name,
+    timeoutMs: 1_800_000,
+  };
+
+  if (def.isFallow) {
+    return {
+      ...base,
+      prompt: [
+        header,
+        "",
+        "Fallow static-analysis pre-scan (tool-based, NOT a git-diff review).",
+        "",
+        "Steps:",
+        "1. Check if fallow is installed: `which fallow`",
+        "2. If NOT installed: write the report with a one-line note, must_fix=0, suggestion=0.",
+        "3. If installed, run: `fallow audit --base " + target + " --format json --quiet`",
+        "4. Extract: complexity hotspots, dead code, unused exports, circular deps",
+        "5. Classify findings: critical/major count into must_fix; minor into suggestion.",
+        "",
+        "output 路径：" + roundDir + "/" + def.report + ".md",
+        "Write report to: " + roundDir + "/" + def.report + ".md",
+      ].join("\n"),
+    };
+  }
+
+  const spec = def.isCustom
+    ? "\n\nReviewer specification (from agent file):\n" + def.systemPrompt
+    : "";
+  return {
+    ...base,
+    prompt: [
+      header,
+      "",
+      reviewInstruction + prevBatchesHint,
+      "",
+      "Review requirements:",
+      reviewPrompt + spec,
+      "",
+      "output 路径：" + roundDir + "/" + def.report + ".md",
+      "Write report to: " + roundDir + "/" + def.report + ".md",
+    ].join("\n"),
+    agent: def.isCustom ? undefined : def.name,
+  };
+}
+
+// agent 名解析失败（AgentRegistry not found）时，尝试 review- 前缀兜底
+async function runReviewAgent(call) {
+  let raw = await agent(call);
+  if (raw && typeof raw === "object" && raw.error && typeof raw.error === "string"
+      && raw.error.includes("Agent not found") && call.agent && !call.agent.startsWith("review-")) {
+    log("Agent not found: " + call.agent + " — retrying with review- prefix");
+    raw = await agent({ ...call, agent: "review-" + call.agent });
+  }
+  return raw;
+}
+
+// ── Main loop: batches (serial) × rounds (per-batch) ────────────────
+
+const state = loadState();
+let totalFixed = 0;
+let terminated = "clean";
+let finalMessage = "";
+
+for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
+  const defs = resolveAgentDefs(BATCHES[batchIndex - 1]);
+  const cleanNames = new Set();
+  let round = 0;
+  let prevTotal = -1;
+  let stuckCount = 0;
+  let batchClean = false;
+  let roundHasFix = false; // recheckAfterFix 用：上轮是否有 fix
+  const batchRounds = [];
+
+  // 跨批跳过：agent 在更早批 clean 且此后无 fix → 本批不派发
+  if (batchIndex > 1) {
+    for (const def of defs) {
+      const s = state.agentStatus[def.name];
+      if (s && s.lastCleanBatch && s.lastCleanBatch < batchIndex && s.lastCleanFixCount === state.fixCount) {
+        cleanNames.add(def.name);
+        log("Cross-batch skip: " + def.name + " (clean in batch " + s.lastCleanBatch + ", no fix since)");
+      }
+    }
+  }
+
+  while (round < maxRounds) {
+    round++;
+    log("--- Batch " + batchIndex + "/" + BATCHES.length + " (" + BATCH_NAMES[batchIndex - 1] + ") Round " + round + "/" + maxRounds + " ---");
+
+    phase("Review");
+    const roundDir = RUN_ROOT + "/batch-" + batchIndex + "/round-" + round;
+    fs.mkdirSync(roundDir, { recursive: true });
+
+    let active = defs.filter((def) => !(skipCleanAgents && cleanNames.has(def.name)));
+    if (recheckAfterFix && round > 1 && roundHasFix) {
+      active = defs; // fix 后重派全批（回归防护）
+      cleanNames.clear();
+    }
+
+    if (active.length === 0) {
+      log("All agents clean/skipped — batch " + batchIndex + " done.");
+      batchClean = true;
+      break;
+    }
+
+    log("Review: " + active.map((d) => d.name).join(", ") + " (" + active.length + " agent(s) in parallel)...");
+    const calls = active.map((def) => buildReviewCall(def, round, maxRounds, batchIndex, roundDir));
+    const allRaw = await parallel(calls);
+
+    // per-agent 结果区分：parallel 结果与 calls 一一对应
+    const reviewResults = [];
+    const agentRoundResults = [];
+    for (let i = 0; i < allRaw.length; i++) {
+      const raw = allRaw[i];
+      if (raw && typeof raw === "object" && raw.error) {
+        // fail-fast：审查 agent 调用失败（含 AgentRegistry not found）不得静默跳过
+        fail("审查 agent 调用失败: " + active[i].name + " — " + raw.error);
+      }
+      const parsed = parseResult(raw);
+      if (parsed && typeof parsed.must_fix === "number") {
+        reviewResults.push(parsed);
+        const def = active[i];
+        if (parsed.must_fix === 0) {
+          recordAgentClean(state, def.name, batchIndex);
+          cleanNames.add(def.name);
+        } else {
+          recordAgentDirty(state, def.name, parsed.must_fix, batchIndex);
+        }
+        agentRoundResults.push({ name: def.name, must_fix: parsed.must_fix, suggestion: parsed.suggestion ?? 0, clean: parsed.must_fix === 0 });
+      } else {
+        // tools 受限的 agent（如 tools: read）会过滤掉 structured-output → schema 失效，
+        // 结果缺 must_fix。fail 信息完整 dump raw 便于定位。
+        fail("审查 agent 结果无效（缺 must_fix）: " + active[i].name + " raw=" + JSON.stringify(raw).slice(0, 400));
+      }
+    }
+
+    if (reviewResults.every((r) => r.must_fix === 0)) {
+      log("Batch " + batchIndex + " round " + round + ": all agents clean.");
+      batchRounds.push({ round, mustFix: 0, suggestion: reviewResults.reduce((a, r) => a + (r.suggestion ?? 0), 0), agents: agentRoundResults, modifiedFiles: [] });
+      saveState(state);
+      batchClean = true;
+      break;
+    }
+
+    // ── Aggregate（内置 prompt，不依赖任何 agent.md） ─────────
+    const aggRaw = await agent({
+      prompt: [
+        "Batch " + batchIndex + "/" + BATCHES.length + " Round " + round + "/" + maxRounds + " — AGGREGATE REVIEWS",
+        "",
+        "You have TWO outputs: (1) a markdown report file and (2) a JSON return value.",
+        "",
+        "Sub-review results: " + JSON.stringify(reviewResults, null, 2),
+        "outputDir: " + roundDir,
+        "",
+        "─── PART 1: WRITE FILE ───────────────────────────────────",
+        "Write the human-readable aggregated report to:",
+        roundDir + "/aggregated.md",
+        "",
+        "Top section MUST be:",
+        "```",
+        "## Summary",
+        "- Must-fix: <N>",
+        "- Suggestions: <N>",
+        "- Infos: <N>",
+        "- Dimensions reviewed: <comma-separated>",
+        "- Dedup: <N> duplicates removed",
+        "```",
+        "",
+        "Followed by tables of Must-Fix Issues, Suggestions, Infos, and a Conclusion section.",
+        "The format `- Must-fix: N` and `- Suggestions: N` is critical: a fallback parser depends on it.",
+        "",
+        "─── PART 2: RETURN JSON (CRITICAL — loop reads THIS) ─────",
+        "Your FINAL response MUST be a single JSON object and NOTHING ELSE.",
+        "",
+        "Required shape (exact field names, no aliases, no extras):",
+        "{",
+        '  "report_file": "' + roundDir + '/aggregated.md",',
+        '  "must_fix": <integer>,',
+        '  "suggestion": <integer>',
+        "}",
+        "",
+        "STRICT RULES:",
+        "- Field names MUST be exactly: report_file, must_fix, suggestion",
+        "- must_fix and suggestion MUST be integers — NOT strings, NOT null, NOT undefined",
+        "- The JSON object MUST be the ONLY thing in your final response",
+        "- DO NOT wrap in markdown code fences, DO NOT add prose before/after",
+        "",
+        "─── SELF-CHECK before returning ──────────────────────────",
+        "1. Did you write " + roundDir + "/aggregated.md? If not, do it first.",
+        "2. Is must_fix in your JSON equal to the 'Must-fix: N' in your markdown?",
+        "3. Is your final response the bare JSON object, no fences, no prose?",
+      ].join("\n"),
+      model: MODEL,
+      schema: aggregatorSchema,
+      description: "aggregate",
+      timeoutMs: 1_800_000,
+    });
+
+    let agg = normalizeAggregatorResult(aggRaw);
+
+    if (!agg || typeof agg.must_fix !== "number") {
+      const rawPreview = (typeof aggRaw === "string" ? aggRaw : JSON.stringify(aggRaw)).slice(0, 200);
+      log("Aggregator JSON invalid (len=" + (aggRaw?.length ?? 0) + "): " + rawPreview);
+      const fallbackPath = (agg && agg.report_file) || (roundDir + "/aggregated.md");
+      try {
+        const content = fs.readFileSync(fallbackPath, "utf-8");
+        const parsed = parseAggregatedMd(content);
+        if (parsed && typeof parsed.must_fix === "number") {
+          agg = { report_file: fallbackPath, must_fix: parsed.must_fix, suggestion: parsed.suggestion ?? 0 };
+          log("Fallback parsed from " + fallbackPath + ": must_fix=" + agg.must_fix);
+        }
+      } catch { /* fallback read failed */ }
+
+      if (!agg || typeof agg.must_fix !== "number") {
+        log("Aggregator failed and fallback failed, stopping.");
+        state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
+        saveState(state);
+        terminated = "aggregator-failure";
+        finalMessage = "Batch " + batchIndex + " round " + round + ": aggregator 失败且 fallback 解析失败";
+        batchIndex = BATCHES.length + 1; // 终止外层循环
+        break;
+      }
+    }
+
+    const mustFix = agg.must_fix;
+    const suggestion = agg.suggestion ?? 0;
+    log("Aggregated: " + mustFix + " must-fix + " + suggestion + " suggestion(s).");
+
+    // ── Stuck detection ─────────────────────────────────────
+    const total = mustFix + suggestion;
+    if (prevTotal >= 0 && total >= prevTotal) {
+      stuckCount++;
+      if (stuckCount >= stuckThreshold) {
+        log("Stuck: total issues not decreasing for " + stuckThreshold + " rounds. Stopping.");
+        batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
+        state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
+        saveState(state);
+        terminated = "stuck";
+        finalMessage = "Batch " + batchIndex + " round " + round + ": 总问题数连续 " + stuckThreshold + " 轮不下降";
+        batchIndex = BATCHES.length + 1;
+        break;
+      }
+    } else {
+      stuckCount = 0;
+    }
+    prevTotal = total;
+
+    // ── Fix ─────────────────────────────────────────────────
+    phase("Fix");
+    let reportContent;
+    try {
+      reportContent = fs.readFileSync(agg.report_file, "utf-8");
+    } catch {
+      reportContent = "(could not read aggregated report)";
+    }
+
+    let prevHead = "";
+    try {
+      prevHead = require("child_process").execSync(
+        "git rev-parse HEAD", { encoding: "utf-8", timeout: 10_000 }
+      ).trim();
+    } catch {
+      // 非 git 项目（如纯文档目录）：prevHead 为空，跳过 modifiedFiles 统计
+    }
+
+    const commitInstr = autoCommit
+      ? "- After all fixes, stage ONLY the files you modified: `git add <file1> <file2> ...` (explicit paths).\n" +
+        "- NEVER use `git add -A` or `git add .` — the workspace may contain unrelated untracked files.\n" +
+        "- Commit with message: `fix: review batch " + batchIndex + " round " + round + " — " + mustFix + " must-fix`"
+      : "- Do NOT commit. Leave the fixes in the working tree (autoCommit=false).";
+
+    const fxRaw = await agent({
+      prompt: [
+        "Fix round " + round + " (batch " + batchIndex + "): Fix ALL must-fix issues from the aggregated review report below.",
+        "",
+        "## Aggregated Review Report",
+        reportContent,
+        "",
+        "## Instructions",
+        "- Fix every must-fix issue listed in the report",
+        "- Apply the MINIMAL correct fix (no refactoring, no style changes)",
+        "- Verify each fix by reading the changed file afterwards",
+        fixPrompt,
+        commitInstr,
+        "",
+        "Return the count of issues fixed.",
+      ].join("\n"),
+      schema: {
+        type: "object",
+        properties: {
+          fixed_count: { type: "number", description: "Number of issues fixed" },
+          fixes: { type: "array", items: { type: "string" }, description: "One-line description of each fix" },
+        },
+        required: ["fixed_count"],
+      },
+      model: MODEL,
+      description: "fix",
+    });
+
+    const fx = parseResult(fxRaw);
+    if (!fx) {
+      log("Fix agent failed, stopping.");
+      batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
+      state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
+      saveState(state);
+      terminated = "fix-failure";
+      finalMessage = "Batch " + batchIndex + " round " + round + ": fix agent 结果无效";
+      batchIndex = BATCHES.length + 1;
+      break;
+    }
+
+    const fixedCount = fx.fixed_count ?? mustFix;
+    totalFixed += fixedCount;
+    state.fixCount++;
+    roundHasFix = true;
+
+    let modifiedFiles = [];
+    if (prevHead) {
+      try {
+        const out = require("child_process").execSync(
+          "git diff --name-only " + prevHead, { encoding: "utf-8", timeout: 10_000 }
+        ).trim();
+        modifiedFiles = out ? out.split("\n") : [];
+      } catch { /* empty */ }
+    }
+    batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles });
+    saveState(state);
+
+    log("Fixed " + fixedCount + " issue(s). Total: " + totalFixed + ". Modified " + modifiedFiles.length + " file(s). Continuing...");
+  }
+
+  if (batchIndex > BATCHES.length) break; // 已终止
+
+  state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
+
+  if (!batchClean) {
+    // 该批达到 maxRounds 仍残留 must-fix → fail-fast，不进入后续批
+    terminated = "max-rounds";
+    finalMessage = "Batch " + batchIndex + " (" + BATCH_NAMES[batchIndex - 1] + ") 达到 maxRounds=" + maxRounds + " 仍有 must-fix，终止整个 workflow";
+    log(finalMessage);
+    saveState(state);
+    batchIndex = BATCHES.length + 1;
+    break;
+  }
+  saveState(state);
+  log("=== Batch " + batchIndex + " (" + BATCH_NAMES[batchIndex - 1] + ") CLEAN ===");
+}
+
+log("\n=== Loop Complete ===");
+saveState(state);
+
+return {
+  batches: BATCHES.length,
+  totalFixed,
+  terminated,
+  targetType,
+  target,
+  runDir: RUN_ROOT,
+  message: terminated === "clean"
+    ? "All batches clean. " + totalFixed + " issue(s) fixed total. State: " + STATE_FILE
+    : finalMessage + ". State: " + STATE_FILE,
+};
