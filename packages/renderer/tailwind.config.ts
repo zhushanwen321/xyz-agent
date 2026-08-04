@@ -37,6 +37,9 @@ export default {
           hover: 'var(--accent-hover)',
           soft: 'var(--accent-soft)',
           ring: 'var(--accent-ring)', // inset 内描边（Card-Active/Input focus/SessionItem 激活）
+          // v6 §3.5.1：accent 实色上的前景（深字 #1a1a1c）。与下方 foreground（shadcn 别名=neutral-fg，
+          // 服务 ghost hover 蓝底）语义独立，accent 实色 badge/icon 前景必须用 fg 非 foreground。
+          fg: 'var(--accent-fg)',
           foreground: 'var(--accent-foreground)', // shadcn text-accent-foreground
         },
         success: { DEFAULT: 'var(--success)', soft: 'var(--success-soft)' },

@@ -17,7 +17,7 @@
         variant="ghost"
         :aria-label="dot.label"
         :title="dot.label"
-        class="tl-dot h-3 w-3 grid place-items-center rounded-full border border-black/25 p-0 hover:bg-transparent"
+        class="tl-dot h-3 w-3 grid place-items-center rounded-full p-0 hover:bg-transparent"
         :class="dot.bgClass"
         @click="onAction(dot.action)"
       >

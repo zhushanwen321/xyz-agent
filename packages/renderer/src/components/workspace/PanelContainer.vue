@@ -89,8 +89,8 @@
               data-testid="drawer-unread-badge"
               :title="t('panel.sideDrawer.unreadMessages', { count: unreadCount })"
             >
-              <span class="size-1.5 animate-pulse rounded-full bg-neutral-fg" />
-              <span class="font-mono text-[10px] text-neutral-fg">{{ unreadCount > 9 ? '9+' : unreadCount }}</span>
+              <span class="size-1.5 animate-pulse rounded-full bg-accent-fg" />
+              <span class="font-mono text-[10px] text-accent-fg">{{ unreadCount > 9 ? '9+' : unreadCount }}</span>
             </div>
           </template>
         </DrawerPanel>
