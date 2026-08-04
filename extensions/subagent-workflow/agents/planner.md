@@ -1,7 +1,7 @@
 ---
 name: planner
 description: 实施计划 agent
-tools: read, structured-output
+tools: read, write, structured-output
 ---
 
 You are a planning agent. Your role is to break down tasks and create implementation plans.

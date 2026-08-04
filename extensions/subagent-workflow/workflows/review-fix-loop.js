@@ -178,6 +178,10 @@ function buildReviewCall(def, round, max, batchIndex, roundDir) {
     schema: reviewerSchema,
     description: def.name,
     timeoutMs: 1_800_000,
+    // returnMeta: true — 与 recursive-split 脚本的 executeActionAgent 对齐：失败时 resolve
+    // {value, error}，raw.error 可检测（review- 前缀兜底/结构化终止可达）；成功时
+    // value = parsedOutput ?? content，parseResult 作用于 raw.value（MF-1）。
+    returnMeta: true,
   };
 
   if (def.isFallow) {
@@ -300,7 +304,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         batchIndex = BATCHES.length + 1; // 终止外层循环
         break;
       }
-      const parsed = parseResult(raw);
+      const parsed = parseResult(raw.value);
       if (parsed && typeof parsed.must_fix === "number") {
         reviewResults.push(parsed);
         const def = active[i];
@@ -317,7 +321,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
         saveState(state);
         terminated = "review-failure";
-        finalMessage = "Batch " + batchIndex + " round " + round + ": 审查 agent 结果无效（缺 must_fix） " + active[i].name + " raw=" + JSON.stringify(raw).slice(0, 400);
+        finalMessage = "Batch " + batchIndex + " round " + round + ": 审查 agent 结果无效（缺 must_fix） " + active[i].name + " raw=" + JSON.stringify(raw.value).slice(0, 400);
         batchIndex = BATCHES.length + 1; // 终止外层循环
         break;
       }
@@ -385,13 +389,16 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       schema: aggregatorSchema,
       description: "aggregate",
       timeoutMs: 1_800_000,
+      returnMeta: true,
     });
 
-    let agg = normalizeAggregatorResult(aggRaw);
+    // returnMeta 下 aggRaw = {value, error}；失败时 value 为空串、error 在 finalMessage 透出（MF-1）
+    const aggValue = aggRaw?.value ?? aggRaw;
+    let agg = normalizeAggregatorResult(aggValue);
 
     if (!agg || typeof agg.must_fix !== "number") {
-      const rawPreview = (typeof aggRaw === "string" ? aggRaw : JSON.stringify(aggRaw)).slice(0, 200);
-      log("Aggregator JSON invalid (len=" + (aggRaw?.length ?? 0) + "): " + rawPreview);
+      const rawPreview = (aggValue === undefined ? "undefined" : typeof aggValue === "string" ? aggValue : JSON.stringify(aggValue)).slice(0, 200);
+      log("Aggregator JSON invalid (len=" + (typeof aggValue === "string" ? aggValue.length : 0) + "): " + rawPreview);
       const fallbackPath = (agg && agg.report_file) || (roundDir + "/aggregated.md");
       try {
         const content = fs.readFileSync(fallbackPath, "utf-8");
@@ -407,7 +414,8 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
         saveState(state);
         terminated = "aggregator-failure";
-        finalMessage = "Batch " + batchIndex + " round " + round + ": aggregator 失败且 fallback 解析失败";
+        finalMessage = "Batch " + batchIndex + " round " + round + ": aggregator 失败且 fallback 解析失败"
+          + (aggRaw && typeof aggRaw === "object" && aggRaw.error ? " — " + aggRaw.error : "");
         batchIndex = BATCHES.length + 1; // 终止外层循环
         break;
       }
@@ -486,11 +494,12 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       },
       model: MODEL,
       description: "fix",
+      returnMeta: true,
     });
 
-    const fx = parseResult(fxRaw);
+    // returnMeta 下 fxRaw = {value, error}：先查 error（失败分支可达，MF-1），再对 value 做 parseResult
     if (fxRaw && typeof fxRaw === "object" && fxRaw.error) {
-      // fix agent 调用失败（AgentRegistry not found / 超时等，agent() 返回 {error}）。
+      // fix agent 调用失败（AgentRegistry not found / 超时等）。
       // 与 review 路径（raw.error → review-failure）对齐：结构化终止而非静默当成功——
       // 否则 fixed_count 缺失被 `?? mustFix` 回退，totalFixed 虚增且 must_fix 不降白跑轮次（MF-1）。
       log("Fix agent failed, stopping.");
@@ -502,6 +511,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       batchIndex = BATCHES.length + 1;
       break;
     }
+    const fx = parseResult(fxRaw.value);
     if (!fx) {
       log("Fix agent failed, stopping.");
       batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });

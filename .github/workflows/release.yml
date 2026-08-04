@@ -48,6 +48,11 @@ jobs:
       #   npm 仍长期服务删功能旧版，而打包流程无任何环节校验 npm 产物与 renderer 契约一致性）
       - name: Check npm extension artifacts match renderer contract
         shell: bash
+        # prerelease tag（v<version>-beta，ref 含 '-'）跳过 gate：prerelease-test.sh 推送的
+        # beta 打包验证不依赖 npm 产物契约（npm 可能尚未发布，gate 硬拦截会令 prerelease
+        # 流程必然失败）。与下方 prerelease: 标志（contains(github.ref, '-')）同一判断。
+        # workflow_dispatch 手工发布仍执行检查（真实发布路径，npm 契约必须成立）。
+        if: ${{ !contains(github.ref, '-') || github.event_name == 'workflow_dispatch' }}
         run: |
           set -euo pipefail
           # pi-ask-user 4.0.0 是误删 allowComment 的坏版本；restore 从 4.0.1 起
@@ -83,7 +88,9 @@ jobs:
           # ask_user 评论模式契约：协议层与扩展层都必须含 allowComment
           # 源码范围限定：ask-user 只查 *.ts（index.ts + src/），protocol 只查 dist/ 的
           # tsup 产物（*.mjs/*.d.mts）——文档（README/ARCHITECTURE）里的字段字样不再放行坏版本
-          check_pkg @zhushanwen/pi-ask-user "allowComment" --include="*.ts"
+          # （MF-4 防线）。再排除 __tests__ 目录：随包发布的测试文件引用已删字段时也不放行
+          # 坏版本（与 typecheck 的 tsconfig 排除 __tests__ 口径一致，stale 测试不参与编译检查）。
+          check_pkg @zhushanwen/pi-ask-user "allowComment" --include="*.ts" --exclude-dir=__tests__
           check_pkg @xyz-agent/extension-protocol "allowComment" --include="*.mjs" --include="*.d.mts"
 
       - name: Download all artifacts
