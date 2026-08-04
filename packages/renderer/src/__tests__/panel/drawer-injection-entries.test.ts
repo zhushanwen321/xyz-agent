@@ -72,7 +72,7 @@ vi.mock('@/stores/session', () => ({
 import DetailPane from '@/components/panel/DetailPane.vue'
 import DiffView from '@/components/panel/detail-renderers/DiffView.vue'
 import GitPanel from '@/components/panel/GitPanel.vue'
-import { useComposerInjectionStore } from '@/stores/composer-injection'
+import { useComposerInjectionStore } from '@/composables/panel/composer-injection-store'
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -96,11 +96,11 @@ describe('W3: drawer 写入入口', () => {
     expect(btn.exists()).toBe(true)
     await btn.trigger('click')
 
-    expect(store.pendingInjection).not.toBeNull()
-    expect(store.pendingInjection?.path).toBe('src/foo.ts')
-    expect(store.pendingInjection?.target).toBe('current')
-    expect(store.pendingInjection?.sessionId).toBe('s1')
-    expect(store.pendingInjection?.lineStart).toBeUndefined()
+    expect(store.pendingInjection.value).not.toBeNull()
+    expect(store.pendingInjection.value?.path).toBe('src/foo.ts')
+    expect(store.pendingInjection.value?.target).toBe('current')
+    expect(store.pendingInjection.value?.sessionId).toBe('s1')
+    expect(store.pendingInjection.value?.lineStart).toBeUndefined()
   })
 
   it('U11: DiffView 行号点击 emit line-inject（path + lineNo）', async () => {
@@ -127,9 +127,9 @@ describe('W3: drawer 写入入口', () => {
     expect(btn.exists()).toBe(true)
     await btn.trigger('click')
 
-    expect(store.pendingInjection).not.toBeNull()
-    expect(store.pendingInjection?.path).toBe('src/foo.ts')
-    expect(store.pendingInjection?.target).toBe('current')
-    expect(store.pendingInjection?.lineStart).toBeUndefined()
+    expect(store.pendingInjection.value).not.toBeNull()
+    expect(store.pendingInjection.value?.path).toBe('src/foo.ts')
+    expect(store.pendingInjection.value?.target).toBe('current')
+    expect(store.pendingInjection.value?.lineStart).toBeUndefined()
   })
 })

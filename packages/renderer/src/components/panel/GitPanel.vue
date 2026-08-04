@@ -121,7 +121,7 @@ import { useGitStatusOrFail, type GitState } from '@/composables/features/useGit
 import { useFileTreeStore } from '@/stores/fileTree'
 import { useSideDrawer } from '@/composables/features/useSideDrawer'
 import { useSessionStore } from '@/stores/session'
-import { useComposerInjectionStore } from '@/stores/composer-injection'
+import { useComposerInjectionStore } from '@/composables/panel/composer-injection-store'
 import type { GitFileStatus } from '@xyz-agent/shared'
 
 const { t } = useI18n()

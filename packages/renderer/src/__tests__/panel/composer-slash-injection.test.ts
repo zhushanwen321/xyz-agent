@@ -78,8 +78,12 @@ vi.mock('@/stores/settings', () => ({
 // ── ComposerInput mock：defineExpose 暴露 insertSlashChip 为独立 vi.fn() spy ──
 // 每个测试 mount 前重新生成 spy：通过 factory 读取最新 spy 引用。
 let composerInputSpies: Array<{ insertSlashChip: ReturnType<typeof vi.fn> }> = []
-vi.mock('@/components/panel/ComposerInput.vue', () => ({
-  default: defineComponent({
+// W4：ComposerInput 迁 ui 包（@xyz-agent/ui/features/composer），mock 目标改 ui 包路径
+vi.mock('@xyz-agent/ui/features/composer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@xyz-agent/ui/features/composer')>()
+  return {
+    ...actual,
+    ComposerInput: defineComponent({
     name: 'ComposerInput',
     emits: ['input', 'keydown', 'slash-trigger', 'file-trigger'],
     setup() {
@@ -89,8 +93,9 @@ vi.mock('@/components/panel/ComposerInput.vue', () => ({
       return { insertSlashChip }
     },
     template: '<div data-testid="composer-input" />',
-  }),
-}))
+    }),
+  }
+})
 
 import Composer from '@/components/panel/Composer.vue'
 import { useCommandStore } from '@/stores/command'

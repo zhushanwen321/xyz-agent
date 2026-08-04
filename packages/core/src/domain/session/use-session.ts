@@ -23,7 +23,6 @@
  * （createSessionStore/createChatStore/createUseChat 先例），故命名 createUseSession。
  */
 import { computed, onScopeDispose } from 'vue'
-import type { ComputedRef } from 'vue'
 import type { BatchDeleteResult, Message, SessionGroup, SessionSummary } from '@xyz-agent/shared'
 import { triggerSessionCleanups } from '../../foundation/use-session-scoped-state'
 import type { SessionApiPort } from './api-port'

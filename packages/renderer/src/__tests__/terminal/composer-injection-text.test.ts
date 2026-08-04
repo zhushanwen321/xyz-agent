@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
-import { useComposerInjectionStore } from '@/stores/composer-injection'
+import { useComposerInjectionStore } from '@/composables/panel/composer-injection-store'
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -19,44 +19,44 @@ describe('composer-injection text 扩展（Phase 4 联动 1）', () => {
   it('CI-1: requestInjection({ text }) 写入 pendingInjection 含 text 字段', () => {
     const store = useComposerInjectionStore()
     store.requestInjection({ target: 'current', text: 'terminal output line', sessionId: 's1' })
-    expect(store.pendingInjection).toBeTruthy()
-    expect(store.pendingInjection!.text).toBe('terminal output line')
-    expect(store.pendingInjection!.path).toBeUndefined()
-    expect(store.pendingInjection!.sessionId).toBe('s1')
-    expect(store.pendingInjection!.ts).toBeGreaterThan(0)
+    expect(store.pendingInjection.value).toBeTruthy()
+    expect(store.pendingInjection.value!.text).toBe('terminal output line')
+    expect(store.pendingInjection.value!.path).toBeUndefined()
+    expect(store.pendingInjection.value!.sessionId).toBe('s1')
+    expect(store.pendingInjection.value!.ts).toBeGreaterThan(0)
   })
 
   it('CI-2: requestInjection({ path }) 仍正常写入 path（file chip 路径不受影响）', () => {
     const store = useComposerInjectionStore()
     store.requestInjection({ target: 'current', path: '/a/b.ts', lineStart: 1, lineEnd: 5, sessionId: 's1' })
-    expect(store.pendingInjection!.path).toBe('/a/b.ts')
-    expect(store.pendingInjection!.text).toBeUndefined()
-    expect(store.pendingInjection!.lineStart).toBe(1)
-    expect(store.pendingInjection!.lineEnd).toBe(5)
+    expect(store.pendingInjection.value!.path).toBe('/a/b.ts')
+    expect(store.pendingInjection.value!.text).toBeUndefined()
+    expect(store.pendingInjection.value!.lineStart).toBe(1)
+    expect(store.pendingInjection.value!.lineEnd).toBe(5)
   })
 
   it('CI-3: target=new 时 sessionId 强制 null（text 也遵守）', () => {
     const store = useComposerInjectionStore()
     store.requestInjection({ target: 'new', text: 'some output', sessionId: 'ignored-sid' })
-    expect(store.pendingInjection!.sessionId).toBeNull()
-    expect(store.pendingInjection!.text).toBe('some output')
+    expect(store.pendingInjection.value!.sessionId).toBeNull()
+    expect(store.pendingInjection.value!.text).toBe('some output')
   })
 
   it('CI-4: clearInjection 清空 pendingInjection', () => {
     const store = useComposerInjectionStore()
     store.requestInjection({ target: 'current', text: 'x', sessionId: 's1' })
     store.clearInjection()
-    expect(store.pendingInjection).toBeNull()
+    expect(store.pendingInjection.value).toBeNull()
   })
 
   it('CI-5: routeToLanding 把 target new→current + sessionId→null（text 场景）', () => {
     const store = useComposerInjectionStore()
     store.requestInjection({ target: 'new', text: 'error log', sessionId: 'ignored' })
-    const originalTs = store.pendingInjection!.ts
+    const originalTs = store.pendingInjection.value!.ts
     store.routeToLanding()
-    expect(store.pendingInjection!.target).toBe('current')
-    expect(store.pendingInjection!.sessionId).toBeNull()
-    expect(store.pendingInjection!.text).toBe('error log')
-    expect(store.pendingInjection!.ts).toBeGreaterThanOrEqual(originalTs)
+    expect(store.pendingInjection.value!.target).toBe('current')
+    expect(store.pendingInjection.value!.sessionId).toBeNull()
+    expect(store.pendingInjection.value!.text).toBe('error log')
+    expect(store.pendingInjection.value!.ts).toBeGreaterThanOrEqual(originalTs)
   })
 })

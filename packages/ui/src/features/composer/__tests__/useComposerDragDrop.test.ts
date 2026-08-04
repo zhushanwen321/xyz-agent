@@ -7,23 +7,20 @@
  * - TC7: drop 非图片 / 空文件 → insertImageBadge 未调用，isDragOver 复位
  * - TC8: dragleave relatedTarget 在 box 内不复位；null / box 外复位
  *
- * mock 策略：vi.mock('./useImageAttachment') 替换 handleImageBadge 返回 badge/text；
- * inputRef spy insertImageBadge；composerBoxRef 绑真实 DOM div（占位 query 用）。
+ * [W4 迁移] 自 renderer __tests__/composables/useComposerDragDrop.test.ts 迁入 ui 包
+ * features/composer/__tests__/——dragdrop 逻辑在 core input 模块，pasteImage 经 deps 注入
+ * （原 vi.mock useImageAttachment 改为注入 mock pasteImage，零 renderer import）。
  *
- * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/useComposerDragDrop.test.ts
+ * 运行：cd packages/ui && npx vitest run src/features/composer
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { effectScope, ref } from 'vue'
+import { useComposerDragDrop } from '@xyz-agent/core/domain/composer/input'
 
-// handleImagePaste 可被每测试替换返回值
-const handleImagePasteMock = vi.hoisted(() => vi.fn())
-vi.mock('@/composables/panel/useImageAttachment', () => ({
-  handleImagePaste: handleImagePasteMock,
-}))
+/** pasteImage 可被每测试替换返回值（替代原 vi.mock useImageAttachment） */
+const pasteImageMock = vi.fn()
 
-import { useComposerDragDrop } from '@/composables/panel/useComposerDragDrop'
-
-/** sessionId ref（W3：useComposerDragDrop 新增第 4 参数，测试用固定 'test-sess'） */
+/** sessionId ref（固定 'test-sess'） */
 const sessionIdRef = ref<string | null>('test-sess')
 
 /** inputRef mock：spy insertImageBadge */
@@ -53,7 +50,7 @@ function createDomInputMock(box: HTMLElement) {
     label.textContent = displayName
     chip.appendChild(label)
     box.appendChild(chip)
-    // 后跟 ZWSP spacer（同 useContenteditableInput 范式，移除占位时一并清）
+    // 后跟 ZWSP spacer（同 contenteditable 范式，移除占位时一并清）
     box.appendChild(document.createTextNode('\u200B'))
   }
   return { insertImageBadge, __calls: calls }
@@ -91,7 +88,7 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
   let dispose: () => void
 
   beforeEach(() => {
-    handleImagePasteMock.mockReset()
+    pasteImageMock.mockReset()
   })
 
   afterEach(() => {
@@ -102,7 +99,7 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
     const box = document.createElement('div')
     document.body.appendChild(box)
     const { result, dispose: d } = runWithScope(() =>
-      useComposerDragDrop(ref(createInputMock()), ref(box), vi.fn(), sessionIdRef),
+      useComposerDragDrop(ref(createInputMock()) as never, ref(box), vi.fn(), sessionIdRef, { pasteImage: pasteImageMock }),
     )
     dispose = d
     expect(result.isDragOver.value).toBe(false)
@@ -111,14 +108,14 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
   })
 
   it('TC6: drop 图片 → insertImageBadge 占位(needsMigrate=false) + 回填真实 path/fileName/displayName/needsMigrate（走 dataset，不重插）；isDragOver 复位', async () => {
-    handleImagePasteMock.mockResolvedValue({ kind: 'badge', path: '/tmp/x.png', fileName: 'x-uuid.png', displayName: 'x.png', needsMigrate: true })
+    pasteImageMock.mockResolvedValue({ kind: 'badge', path: '/tmp/x.png', fileName: 'x-uuid.png', displayName: 'x.png', needsMigrate: true })
     const box = document.createElement('div')
     document.body.appendChild(box)
     // DOM 感知 insertImageBadge：在 box 内插真实 .image-chip，使占位 query 能定位 → 走 dataset 回填
     const inputMock = createDomInputMock(box)
     const onChanged = vi.fn()
     const { result, dispose: d } = runWithScope(() =>
-      useComposerDragDrop(ref(inputMock) as never, ref(box), onChanged, sessionIdRef),
+      useComposerDragDrop(ref(inputMock) as never, ref(box), onChanged, sessionIdRef, { pasteImage: pasteImageMock }),
     )
     dispose = d
     // 先 dragover 置位 isDragOver
@@ -129,8 +126,8 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
     result.onDrop(makeDropEvent([png]))
     // onDrop 立即复位 isDragOver
     expect(result.isDragOver.value).toBe(false)
-    // 等异步 handleImagePaste 完成 + 回填
-    await vi.waitFor(() => expect(handleImagePasteMock).toHaveBeenCalled())
+    // 等异步 pasteImage 完成 + 回填
+    await vi.waitFor(() => expect(pasteImageMock).toHaveBeenCalled())
     await vi.waitFor(() => expect(onChanged).toHaveBeenCalled())
     // 占位 badge 仅插入 1 次（回填走 dataset，不重插——因占位仍在 DOM）；占位 needsMigrate=false（无迁移语义）
     expect(inputMock.__calls).toHaveBeenCalledTimes(1)
@@ -145,8 +142,8 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
     expect(chip.querySelector('.chip-label')?.textContent).toBe('x.png')
   })
 
-  it('TC6-variant: handleImagePaste 返回 text 降级 → 移除占位 + insertText', async () => {
-    handleImagePasteMock.mockResolvedValue({ kind: 'text', text: '[图片粘贴失败]' })
+  it('TC6-variant: pasteImage 返回 text 降级 → 移除占位 + insertText', async () => {
+    pasteImageMock.mockResolvedValue({ kind: 'text', text: '[图片粘贴失败]' })
     // happy-dom 无 document.execCommand（降级路径调用），直接赋值 mock
     const execCalls: unknown[][] = []
     const origExec = (document as { execCommand?: unknown }).execCommand
@@ -159,7 +156,7 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
       document.body.appendChild(box)
       const inputMock = createDomInputMock(box)
       const { result, dispose: d } = runWithScope(() =>
-        useComposerDragDrop(ref(inputMock) as never, ref(box), vi.fn(), sessionIdRef),
+        useComposerDragDrop(ref(inputMock) as never, ref(box), vi.fn(), sessionIdRef, { pasteImage: pasteImageMock }),
       )
       dispose = d
       const png = new File([new Uint8Array([0x89])], 'bad.png', { type: 'image/png' })
@@ -180,7 +177,7 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
     const box = document.createElement('div')
     document.body.appendChild(box)
     const { result, dispose: d } = runWithScope(() =>
-      useComposerDragDrop(ref(inputMock), ref(box), vi.fn(), sessionIdRef),
+      useComposerDragDrop(ref(inputMock) as never, ref(box), vi.fn(), sessionIdRef, { pasteImage: pasteImageMock }),
     )
     dispose = d
     result.onDragOver(makeDragOverEvent())
@@ -195,7 +192,7 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
     const box = document.createElement('div')
     document.body.appendChild(box)
     const { result, dispose: d } = runWithScope(() =>
-      useComposerDragDrop(ref(inputMock), ref(box), vi.fn(), sessionIdRef),
+      useComposerDragDrop(ref(inputMock) as never, ref(box), vi.fn(), sessionIdRef, { pasteImage: pasteImageMock }),
     )
     dispose = d
     result.onDrop(makeDropEvent([]))
@@ -208,7 +205,7 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
     box.appendChild(child)
     document.body.appendChild(box)
     const { result, dispose: d } = runWithScope(() =>
-      useComposerDragDrop(ref(createInputMock()), ref(box), vi.fn(), sessionIdRef),
+      useComposerDragDrop(ref(createInputMock()) as never, ref(box), vi.fn(), sessionIdRef, { pasteImage: pasteImageMock }),
     )
     dispose = d
     result.onDragOver(makeDragOverEvent())
@@ -222,7 +219,7 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
     const box = document.createElement('div')
     document.body.appendChild(box)
     const { result, dispose: d } = runWithScope(() =>
-      useComposerDragDrop(ref(createInputMock()), ref(box), vi.fn(), sessionIdRef),
+      useComposerDragDrop(ref(createInputMock()) as never, ref(box), vi.fn(), sessionIdRef, { pasteImage: pasteImageMock }),
     )
     dispose = d
     result.onDragOver(makeDragOverEvent())
@@ -235,7 +232,7 @@ describe('useComposerDragDrop（TC5-TC8 slice5）', () => {
     const outside = document.createElement('div')
     document.body.append(box, outside)
     const { result, dispose: d } = runWithScope(() =>
-      useComposerDragDrop(ref(createInputMock()), ref(box), vi.fn(), sessionIdRef),
+      useComposerDragDrop(ref(createInputMock()) as never, ref(box), vi.fn(), sessionIdRef, { pasteImage: pasteImageMock }),
     )
     dispose = d
     result.onDragOver(makeDragOverEvent())

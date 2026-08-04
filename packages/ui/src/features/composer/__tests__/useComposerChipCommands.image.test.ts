@@ -5,12 +5,16 @@
  * - TC6: insertImageBadge(path, fileName, displayName) 创建 .image-chip span + dataset + chip-label + chip-x + ZWSP spacer + 光标定位
  * - TC7: getSegmentsFromEl 解析 image-chip → {type:image,path,fileName,displayName}，跳子树（label/x 文本不污染）
  *
- * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/useComposerChipCommands.image.test.ts
+ * [W4 迁移] 自 renderer __tests__/composables/useComposerChipCommands.image.test.ts 迁入 ui 包
+ * features/composer/__tests__/——chip-commands 逻辑在 core input 模块，ui 包测试直接组合
+ * core 模块（deps getSlashIcon/t 注入，零 renderer import）。
+ *
+ * 运行：cd packages/ui && npx vitest run src/features/composer
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ref } from 'vue'
-import { useComposerChipCommands } from '@/composables/useComposerChipCommands'
-import { getSegmentsFromEl } from '@/composables/panel/useContenteditableInput'
+import { useComposerChipCommands, getSegmentsFromEl } from '@xyz-agent/core/domain/composer/input'
+import type { ChipCallbacks } from '@xyz-agent/core/domain/composer/input'
 
 /** 创建挂载在 document 上的 contenteditable div + chipCommands 实例（同 file-chip.test 范式） */
 function setupChipCommands(): {
@@ -24,7 +28,12 @@ function setupChipCommands(): {
   window.getSelection()?.removeAllRanges()
   const onChanged = vi.fn()
   const restoreSelection = vi.fn()
-  const chipCommands = useComposerChipCommands(elRef as never, { onChanged, restoreSelection })
+  const chipCommands = useComposerChipCommands(elRef as never, {
+    onChanged,
+    restoreSelection,
+    getSlashIcon: () => undefined,
+    t: (key: string) => key,
+  } as ChipCallbacks)
   return { el, chipCommands }
 }
 
@@ -52,7 +61,7 @@ describe('TC6: insertImageBadge DOM 结构', () => {
     expect(chip.dataset.chipNeedsMigrate).toBe('false')
     // C3：chipId 是稳定唯一 uuid（crypto.randomUUID），同一文件附两次时 ContextChipsBar :key 用它区分
     expect(chip.dataset.chipId).toBeTruthy()
-    expect(chip.dataset.chipId.length).toBeGreaterThan(0)
+    expect(chip.dataset.chipId!.length).toBeGreaterThan(0)
     // 子元素：chip-label（显 displayName 用户可读名）+ chip-x
     const label = chip.querySelector('.chip-label') as HTMLElement
     expect(label).toBeTruthy()
@@ -86,12 +95,15 @@ describe('TC6: insertImageBadge DOM 结构', () => {
   })
 
   it('onChanged 被调用', () => {
-    const { chipCommands } = setupChipCommands()
-    // 重新 setup 拿到 onChanged（上面 setupChipCommands 内部已 vi.fn，这里独立验证）
     const onChanged = vi.fn()
     const el = document.createElement('div')
     document.body.appendChild(el)
-    const cc = useComposerChipCommands(ref(el) as never, { onChanged, restoreSelection: vi.fn() })
+    const cc = useComposerChipCommands(ref(el) as never, {
+      onChanged,
+      restoreSelection: vi.fn(),
+      getSlashIcon: () => undefined,
+      t: (key: string) => key,
+    } as ChipCallbacks)
     cc.insertImageBadge('/tmp/a.png', 'a.png', 'a.png')
     expect(onChanged).toHaveBeenCalled()
   })
@@ -165,7 +177,7 @@ describe('TC7: getSegmentsFromEl image 分支', () => {
     ])
     // 关键断言：没有任何 segment 的 path 形如 __paste_pending_ / __drag_pending_
     const allPaths = segments
-      .filter((s): s is { type: 'image'; path: string } => s.type === 'image')
+      .filter((s): s is Extract<typeof s, { type: 'image'; path: string }> => s.type === 'image')
       .map((s) => s.path)
     expect(allPaths.some((p) => /__(?:paste|drag)_pending_/.test(p))).toBe(false)
   })

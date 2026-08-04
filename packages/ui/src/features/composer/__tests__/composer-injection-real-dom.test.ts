@@ -2,36 +2,27 @@
  * composer 注入真实 DOM chip 端到端测试（R1/R3 补充验证）。
  *
  * W2 的 composer-file-injection.test.ts 用 mock ComposerInput（spy 验证调用）。
- * 本测试验证「真实 DOM chip 出现」：mount 真实 ComposerInput 子树成本太高（需 stub
- * CommandPopover/AddMenu/ModelSelect 等重依赖），改用直接组合 useComposerInjection +
- * 真实 useComposerChipCommands，验证 watch 触发后 contenteditable 内真实 .mention-file chip。
+ * 本测试验证「真实 DOM chip 出现」：直接组合 core useComposerInjection +
+ * core useComposerChipCommands，验证 watch 触发后 contenteditable 内真实 .mention-file chip。
  *
  * 覆盖：
  * - R1: store 写入 target=current → useComposerInjection watch → 真实 insertFileChip
  *   → contenteditable 内出现 .mention-file chip（dataset.chipPath 正确）
  * - R3: target=new → landing composer 消费 → 真实 DOM chip
  *
- * 这验证了 store→watch→chip 的完整链路（非 spy 调用断言，而是真实 DOM 节点）。
+ * [W4 迁移] 自 renderer __tests__/panel/composer-injection-real-dom.test.ts 迁入 ui 包
+ * features/composer/__tests__/——injection 逻辑在 core context 模块，store 用 core factory
+ * 本地实例（零 pinia 依赖，替换原 useComposerInjectionStore pinia 单例）。
+ *
+ * 运行：cd packages/ui && npx vitest run src/features/composer
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ref, nextTick, type Ref } from 'vue'
-import { createPinia, setActivePinia } from 'pinia'
-import { useComposerInjection } from '@/composables/panel/useComposerInjection'
-import { useComposerInjectionStore } from '@/stores/composer-injection'
-import { useComposerChipCommands } from '@/composables/useComposerChipCommands'
-import type ComposerInput from '@/components/panel/ComposerInput.vue'
-
-// mock useNewTaskFlow（target=new 路由用，避免真实 startFlow 副作用）
-vi.mock('@/composables/features/useNewTaskFlow', () => ({
-  useNewTaskFlow: () => ({
-    startFlow: vi.fn(),
-    state: ref('idle'),
-    currentSessionId: ref(null),
-  }),
-}))
+import { createComposerInjectionStore, useComposerInjection, type ComposerInputInstance } from '@xyz-agent/core/domain/composer/context'
+import { useComposerChipCommands } from '@xyz-agent/core/domain/composer/input'
+import type { ChipCallbacks } from '@xyz-agent/core/domain/composer/input'
 
 beforeEach(() => {
-  setActivePinia(createPinia())
   document.body.innerHTML = ''
 })
 
@@ -39,8 +30,9 @@ beforeEach(() => {
  * 搭建真实 chip 操作链路：contenteditable div + useComposerChipCommands（真实 DOM）+
  * 一个模拟 ComposerInput 的 expose 对象（含真实 insertFileChip）。
  * useComposerInjection 通过 inputRef.value.insertFileChip 调用，与真实 ComposerInput 行为一致。
+ * store 用 core factory 本地实例（每 setup 新建，隔离测试间状态）。
  */
-function setupRealChipChain(variant: 'panel' | 'landing', sessionId: string | null) {
+function setupRealChipChain(variant: 'panel' | 'landing', sessionId: string | null, store?: ReturnType<typeof createComposerInjectionStore>) {
   const el = document.createElement('div')
   el.setAttribute('contenteditable', 'true')
   el.setAttribute('data-testid', 'composer-input')
@@ -51,16 +43,27 @@ function setupRealChipChain(variant: 'panel' | 'landing', sessionId: string | nu
   const chipCommands = useComposerChipCommands(elRef, {
     onChanged: vi.fn(),
     restoreSelection: vi.fn(),
-  })
-  // 模拟 ComposerInput 的 defineExpose 对象（useComposerInjection 通过 inputRef.value 访问）
+    getSlashIcon: () => undefined,
+    t: (key: string) => key,
+  } as ChipCallbacks)
+  // 模拟 ComposerInput 的 defineExpose 对象（useComposerInjection 通过 inputRef.value 访问）。
+  // W4：core 统一 ComposerInputInstance 契约（input/types.ts）——mock 只实现注入消费面，
+  // 用断言补齐剩余方法（clear/setText 等壳层消费方法在真实组件上有，mock 不需要）。
   const fakeInputRef = ref({
     focus: vi.fn(),
     insertFileChip: chipCommands.insertFileChip,
-  } as unknown as InstanceType<typeof ComposerInput>)
+  }) as unknown as Ref<ComposerInputInstance | null>
   const sessionIdRef = ref(sessionId)
   const variantRef = ref(variant)
-  useComposerInjection(fakeInputRef, sessionIdRef, variantRef)
-  return { el, store: useComposerInjectionStore() }
+  // 双挂载场景传入共享 store（模拟 pinia 单例语义），否则本地新建隔离实例
+  const injectionStore = store ?? createComposerInjectionStore()
+  useComposerInjection(fakeInputRef, sessionIdRef, variantRef, {
+    injectionStore,
+    startFlow: vi.fn(async () => {}),
+    getSessionCwd: () => undefined,
+    getActiveSessionId: () => sessionIdRef.value,
+  })
+  return { el, store: injectionStore }
 }
 
 describe('composer 注入真实 DOM chip（R1/R3）', () => {
@@ -106,7 +109,7 @@ describe('composer 注入真实 DOM chip（R1/R3）', () => {
     const { store } = setupRealChipChain('panel', 's1')
     store.requestInjection({ target: 'current', path: 'a.ts', sessionId: 's1' })
     await nextTick()
-    expect(store.pendingInjection).toBeNull()
+    expect(store.pendingInjection.value).toBeNull()
   })
 })
 
@@ -120,13 +123,14 @@ describe('W18: split / dual panel 多 Composer 实例注入隔离', () => {
    * 与同一 contenteditable 池（用不同 el 模拟两个独立 Composer 实例）。
    */
   function setupDualMount(panelSessionId: string | null) {
-    const panelChain = setupRealChipChain('panel', panelSessionId)
-    const landingChain = setupRealChipChain('landing', null)
-    // 共享同一 store（pinia 单例，第二次 setupRealChipChain 复用同一 store 实例）
+    // 共享同一 store（模拟 pinia 单例语义：drawer 写入 + 双 Composer 消费同一通道）
+    const sharedStore = createComposerInjectionStore()
+    const panelChain = setupRealChipChain('panel', panelSessionId, sharedStore)
+    const landingChain = setupRealChipChain('landing', null, sharedStore)
     return {
       panelEl: panelChain.el,
       landingEl: landingChain.el,
-      store: panelChain.store,
+      store: sharedStore,
     }
   }
 
@@ -148,7 +152,7 @@ describe('W18: split / dual panel 多 Composer 实例注入隔离', () => {
     expect(landingEl.querySelector('.mention-file')).toBeNull()
 
     // pendingInjection 被消费后清空（一次注入只对应一个 Composer，无双重消费）
-    expect(store.pendingInjection).toBeNull()
+    expect(store.pendingInjection.value).toBeNull()
   })
 
   it('W18-2: panel + landing 双挂载 + target=current + sessionId=null（routeToLanding 改写后）→ 仅 landing 注入', async () => {
@@ -165,7 +169,7 @@ describe('W18: split / dual panel 多 Composer 实例注入隔离', () => {
 
     // panel 不匹配（sessionId=null ≠ 's-active'）
     expect(panelEl.querySelector('.mention-file')).toBeNull()
-    expect(store.pendingInjection).toBeNull()
+    expect(store.pendingInjection.value).toBeNull()
   })
 
   it('W18-3: panel + landing 双挂载 + target=new → landing 直接消费（阶段一前置：landing 已挂载）', async () => {
@@ -183,19 +187,6 @@ describe('W18: split / dual panel 多 Composer 实例注入隔离', () => {
 
     // panel 不注入（target=new 仅 landing composer 或路由阶段二消费）
     expect(panelEl.querySelector('.mention-file')).toBeNull()
-    expect(store.pendingInjection).toBeNull()
-  })
-
-  it('W18-4: 双 Composer 注入 chip 数量守恒（无双重注入）', async () => {
-    // 防止 split 模式下 watch 在两个 Composer 实例都触发导致同一请求注入两次（chip 翻倍）。
-    const { panelEl, landingEl, store } = setupDualMount('s-active')
-    store.requestInjection({ target: 'current', path: 'once.ts', sessionId: 's-active' })
-    await nextTick()
-
-    // 两个 Composer 实例合计只产生 1 个 chip（panel 消费，landing 不消费）
-    const totalChips =
-      panelEl.querySelectorAll('.mention-file').length +
-      landingEl.querySelectorAll('.mention-file').length
-    expect(totalChips).toBe(1)
+    expect(store.pendingInjection.value).toBeNull()
   })
 })

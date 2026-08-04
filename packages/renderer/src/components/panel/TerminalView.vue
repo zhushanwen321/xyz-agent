@@ -65,7 +65,7 @@ import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { useTerminal } from '@/composables/features/useTerminal'
 import { useSessionStore } from '@/stores/session'
-import { useComposerInjectionStore } from '@/stores/composer-injection'
+import { useComposerInjectionStore } from '@/composables/panel/composer-injection-store'
 import { useSettingsStore } from '@/stores/settings'
 import { darkTerminalTheme } from '@/composables/terminal/terminal-themes'
 

@@ -55,9 +55,16 @@ vi.mock('@/api', () => ({
   },
 }))
 
-import ComposerInput from '@/components/panel/ComposerInput.vue'
+import { ComposerInput, ComposerInputDepsKey } from '@xyz-agent/ui/features/composer'
 import CommandPopover from '@/components/panel/CommandPopover.vue'
 import Composer from '@/components/panel/Composer.vue'
+
+/** ui ComposerInput deps 注入（W4：ComposerInput 迁 ui 包，deps 经 inject token 提供） */
+const composerInputDeps = {
+  pasteImage: async () => ({ kind: 'text' as const, text: '[测试环境]' }),
+  getSlashIcon: () => undefined,
+  t: (key: string) => key,
+}
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -75,32 +82,32 @@ describe('ComposerInput slash-trigger（U1-U5）', () => {
   }
 
   it('U1 输入 / → emit slash-trigger {query:""}', async () => {
-    const wrapper = mount(ComposerInput)
+    const wrapper = mount(ComposerInput, { global: { provide: { [ComposerInputDepsKey as symbol]: composerInputDeps } } })
     await type(wrapper, '/')
     expect(wrapper.emitted('slash-trigger')!.at(-1)![0]).toEqual({ query: '' })
   })
 
   it('U2 输入 /commit → emit slash-trigger {query:"commit"}', async () => {
-    const wrapper = mount(ComposerInput)
+    const wrapper = mount(ComposerInput, { global: { provide: { [ComposerInputDepsKey as symbol]: composerInputDeps } } })
     await type(wrapper, '/commit')
     expect(wrapper.emitted('slash-trigger')!.at(-1)![0]).toEqual({ query: 'commit' })
   })
 
   it('U3 已有 slash-chip → emit slash-trigger null（不重触发，DOM 查询判定）', async () => {
-    const wrapper = mount(ComposerInput)
+    const wrapper = mount(ComposerInput, { global: { provide: { [ComposerInputDepsKey as symbol]: composerInputDeps } } })
     // chip 本体文本 /commit 会被 getText 读入，但 querySelector 查到 chip → 不触发
     await type(wrapper, '<span class="slash-chip">/commit</span>')
     expect(wrapper.emitted('slash-trigger')!.at(-1)![0]).toBeNull()
   })
 
   it('U4 非 / 开头（foo/）→ emit slash-trigger null', async () => {
-    const wrapper = mount(ComposerInput)
+    const wrapper = mount(ComposerInput, { global: { provide: { [ComposerInputDepsKey as symbol]: composerInputDeps } } })
     await type(wrapper, 'foo/')
     expect(wrapper.emitted('slash-trigger')!.at(-1)![0]).toBeNull()
   })
 
   it('U5 触发后清空 → emit slash-trigger null（关闭浮层）', async () => {
-    const wrapper = mount(ComposerInput)
+    const wrapper = mount(ComposerInput, { global: { provide: { [ComposerInputDepsKey as symbol]: composerInputDeps } } })
     await type(wrapper, '/commit')
     expect(wrapper.emitted('slash-trigger')!.at(-1)![0]).toEqual({ query: 'commit' })
     await type(wrapper, '')
@@ -302,7 +309,7 @@ describe('insertSlashChip / 前缀归一化（U11）', () => {
    * 回归场景：用户选 /goal 命令 → chip 显示 'goal' → 发送 'goal' → pi 不识别。
    */
   it('U11a insertSlashChip("goal") → chip label 显示 "/goal"（补 / 前缀）', async () => {
-    wrapper = mount(ComposerInput, { attachTo: document.body })
+    wrapper = mount(ComposerInput, { attachTo: document.body, global: { provide: { [ComposerInputDepsKey as symbol]: composerInputDeps } } })
     await flushPromises()
     const vm = wrapper.vm as unknown as { insertSlashChip: (cmd: string, icon?: string) => void }
     vm.insertSlashChip('goal', 'terminal')
@@ -313,7 +320,7 @@ describe('insertSlashChip / 前缀归一化（U11）', () => {
   })
 
   it('U11b insertSlashChip("/commit") 已带 / 前缀 → 不重复补', async () => {
-    wrapper = mount(ComposerInput, { attachTo: document.body })
+    wrapper = mount(ComposerInput, { attachTo: document.body, global: { provide: { [ComposerInputDepsKey as symbol]: composerInputDeps } } })
     await flushPromises()
     const vm = wrapper.vm as unknown as { insertSlashChip: (cmd: string, icon?: string) => void }
     vm.insertSlashChip('/commit', 'terminal')

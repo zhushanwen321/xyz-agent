@@ -15,7 +15,8 @@
 import { ref, watch, type Ref } from 'vue'
 import { useCommandStore } from '@/stores/command'
 import { pickFile } from '@/lib/ipc'
-import type ComposerInput from '@/components/panel/ComposerInput.vue'
+// W4：ComposerInput 迁 ui 包，类型 import 改 ui 包路径（旧 renderer 路径已删）
+import type { ComposerInput } from '@xyz-agent/ui/features/composer'
 import type CommandPopover from '@/components/panel/CommandPopover.vue'
 
 /** + 菜单「附件」项的图片类型过滤扩展名（「图片」入口 pickFile filters 用） */

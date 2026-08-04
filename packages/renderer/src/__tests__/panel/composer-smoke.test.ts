@@ -184,6 +184,8 @@ describe('首屏冒烟（TC19）', () => {
 
     // 使用者视角：composer 输入区真实在 DOM（Landing 内嵌的 Composer 子树）
     expect(wrapper.find('[data-testid="composer-input"]').exists()).toBe(true)
+    // AC12：composer-box 容器（chip 行宿主：已附上下文 ContextChipsBar 渲染位）存在
+    expect(wrapper.find('[data-testid="composer-box"]').exists()).toBe(true)
     // Landing 顶部元信息 chip（spec §3.1）
     expect(wrapper.find('[data-testid="chip-directory"]').exists()).toBe(true)
   })

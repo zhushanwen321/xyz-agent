@@ -13,7 +13,7 @@
  * mock 其余 store/composable/api，ComposerInput stub 暴露 insertFileChip spy。
  * R1/R3 用真实 ComposerInput（验证真实 DOM chip）。
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
@@ -83,8 +83,12 @@ vi.mock('@/stores/command', () => ({
 
 // ── ComposerInput mock：defineExpose 暴露 insertFileChip spy（U6-U9 mock 层）──
 let composerInputSpies: Array<{ insertFileChip: ReturnType<typeof vi.fn> }> = []
-vi.mock('@/components/panel/ComposerInput.vue', () => ({
-  default: defineComponent({
+// W4：ComposerInput 迁 ui 包（@xyz-agent/ui/features/composer），mock 目标改 ui 包路径
+vi.mock('@xyz-agent/ui/features/composer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@xyz-agent/ui/features/composer')>()
+  return {
+    ...actual,
+    ComposerInput: defineComponent({
     name: 'ComposerInput',
     emits: ['input', 'keydown', 'slash-trigger', 'file-trigger'],
     setup() {
@@ -94,15 +98,26 @@ vi.mock('@/components/panel/ComposerInput.vue', () => ({
       return { insertFileChip, focus: vi.fn() }
     },
     template: '<div data-testid="composer-input" />',
-  }),
-}))
+    }),
+  }
+})
 
 import Composer from '@/components/panel/Composer.vue'
-import { useComposerInjectionStore } from '@/stores/composer-injection'
+import { useComposerInjectionStore } from '@/composables/panel/composer-injection-store'
 
 beforeEach(() => {
   setActivePinia(createPinia())
   composerInputSpies = []
+  // W4：store 改为模块级单例（composer-injection-store.ts），跨用例需显式清槽
+  // （原 pinia wrapper 每次 setActivePinia 重建实例，单例没有该语义）
+  useComposerInjectionStore().clearInjection()
+})
+
+// W4：模块级单例 store 的 watch 随组件存活——跨用例必须卸载组件，
+// 否则前一用例的 Composer watch 会消费后一用例的注入请求（U6b 0 次调用根因）
+const mountedWrappers: Array<{ unmount: () => void }> = []
+afterEach(() => {
+  mountedWrappers.splice(0).forEach((w) => w.unmount())
 })
 
 const SIMPLE = defineComponent({ name: 'SimpleStub', template: '<div />' })
@@ -120,6 +135,7 @@ const otherStubs = {
 /** mount Composer（mock ComposerInput），返回 wrapper + insertFileChip spy */
 function mountComposer(props: { sessionId: string | null; variant?: 'panel' | 'landing' }) {
   const wrapper = mount(Composer, { props, global: { stubs: otherStubs } })
+  mountedWrappers.push(wrapper)
   const spy = composerInputSpies.at(-1)?.insertFileChip
   if (!spy) throw new Error('ComposerInput spy 未生成')
   return { wrapper, spy }
@@ -134,7 +150,7 @@ describe('Composer file 注入 watch（W2）', () => {
 
     expect(insertSpy).toHaveBeenCalledOnce()
     expect(insertSpy).toHaveBeenCalledWith('foo.ts', undefined)
-    expect(store.pendingInjection).toBeNull()
+    expect(store.pendingInjection.value).toBeNull()
   })
 
   it('U6b target=current 带 lineRange 透传给 insertFileChip', async () => {
@@ -160,7 +176,7 @@ describe('Composer file 注入 watch（W2）', () => {
 
     expect(insertSpy).not.toHaveBeenCalled()
     // pendingInjection 仍在（留给 s2 composer）
-    expect(store.pendingInjection).not.toBeNull()
+    expect(store.pendingInjection.value).not.toBeNull()
   })
 
   it('U8 target=new 仅 landing composer（variant=landing）消费', async () => {

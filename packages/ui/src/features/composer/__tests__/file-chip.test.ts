@@ -7,11 +7,17 @@
  * - U3: getSegmentsFromEl 解析 .mention-file 产出 file segment 无文本污染
  * - U4: @mention 仍走 insertMentionChip 行为不变
  * - R2: 真实 DOM file chip 经 getSegments 产出 file segment（real 层端到端）
+ *
+ * [W4 迁移] 自 renderer __tests__/panel/file-chip.test.ts 迁入 ui 包 features/composer/
+ * __tests__/——chip-commands 逻辑在 core input 模块，ui 包测试直接组合 core 模块
+ * （deps getSlashIcon/t 注入，零 renderer import）。
+ *
+ * 运行：cd packages/ui && npx vitest run src/features/composer
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ref } from 'vue'
-import { useComposerChipCommands } from '@/composables/useComposerChipCommands'
-import { getSegmentsFromEl } from '@/composables/panel/useContenteditableInput'
+import { useComposerChipCommands, getSegmentsFromEl } from '@xyz-agent/core/domain/composer/input'
+import type { ChipCallbacks } from '@xyz-agent/core/domain/composer/input'
 
 /** 创建挂载在 document 上的 contenteditable div + chipCommands 实例 */
 function setupChipCommands(): {
@@ -27,7 +33,12 @@ function setupChipCommands(): {
   window.getSelection()?.removeAllRanges()
   const onChanged = vi.fn()
   const restoreSelection = vi.fn()
-  const chipCommands = useComposerChipCommands(elRef as any, { onChanged, restoreSelection })
+  const chipCommands = useComposerChipCommands(elRef as never, {
+    onChanged,
+    restoreSelection,
+    getSlashIcon: () => undefined,
+    t: (key: string) => key,
+  } as ChipCallbacks)
   return { el, chipCommands }
 }
 

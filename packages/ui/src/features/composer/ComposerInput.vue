@@ -4,6 +4,10 @@
     contenteditable div 取代 Textarea：支持 slash chip（§2e）与 @/# mention 内联 chip（§2d）。
     B 方案：富文本内联 token 必须 contenteditable，Textarea 物理上做不了。
     v-html 被项目规则禁用（vue/no-v-html），所有 DOM 操作走 ref 手动 API。
+
+    [W4 迁移] 自 renderer components/panel/ComposerInput.vue 迁入 ui 包，
+    props/emits/expose 契约不变（C1 契约），壳层 deps（pasteImage/getSlashIcon/t）
+    经 ComposerInputDeps inject token 注入（clarify C1，对齐 w6 ChatViewDeps 范式）。
   -->
   <div
     ref="elRef"
@@ -28,8 +32,12 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { findImageChipElById, useComposerChipCommands } from '@/composables/useComposerChipCommands'
-import { useContenteditableInput } from '@/composables/panel/useContenteditableInput'
+import {
+  useContenteditableInput,
+  useComposerChipCommands,
+  findImageChipElById,
+} from '@xyz-agent/core/domain/composer/input'
+import { useComposerInputDeps } from './composer-input-deps'
 
 const props = withDefaults(
   defineProps<{
@@ -50,16 +58,19 @@ const emit = defineEmits<{
   'file-trigger': [payload: { query: string } | null]
 }>()
 
+/** 壳层依赖注入（pasteImage IPC / getSlashIcon 图标映射 / i18n t）——renderer Composer.vue provide */
+const deps = useComposerInputDeps()
+
 const elRef = ref<HTMLDivElement | null>(null)
 /** 聚焦态：控制 placeholder 显隐（仅未聚焦且空时显）与光标可见性（未聚焦不显光标） */
 const isFocused = ref(false)
 
 // contenteditable 输入机制（getText/syncEmpty/触发检测/光标滚动/选区保存恢复/IME 守卫/换行/粘贴）
-// 提取到 useContenteditableInput（满足 <script setup> 行数上限）。
-// 两个 composable 互依：本 composable 的 onKeydown 要调 chip composable 的 handleBackspaceOnChip，
-// chip composable 的 onChanged/restoreSelection 要用本 composable 的 onInput/restoreSelection。
+// 逻辑在 core input/contenteditable.ts（W2 迁移，deps 注入 pasteImage）。
+// 两个 core 模块互依：contenteditable 的 onKeydown 要调 chip 模块的 handleBackspaceOnChip，
+// chip 模块的 onChanged/restoreSelection 要用 contenteditable 的 onInput/restoreSelection。
 // 解耦：handleBackspaceOnChip 仅在运行期（onKeydown 触发）被调，setup 期可暂留占位再后赋值，
-// 故先声明本 composable，把 handleBackspaceOnChip 经 forwardRef 后赋，再声明 chip composable。
+// 故先声明 contenteditable，把 handleBackspaceOnChip 经 forwardRef 后赋，再声明 chip 模块。
 let handleBackspaceOnChip: () => boolean = () => false
 let insertImageBadgeFn: (path: string, fileName: string, displayName: string, needsMigrate?: boolean) => void = () => {}
 const {
@@ -87,17 +98,20 @@ const {
   onEnterKeydown: (e) => emit('keydown', e),
   onKeydown: (e) => emit('keydown', e),
   handleBackspaceOnChip: () => handleBackspaceOnChip(),
-  // insertImageBadge 经闭包转发，chip composable 声明后回填真实实现（同 handleBackspaceOnChip 范式）
+  // insertImageBadge 经闭包转发，chip 模块声明后回填真实实现（同 handleBackspaceOnChip 范式）
   insertImageBadge: (path, fileName, displayName, needsMigrate) => insertImageBadgeFn(path, fileName, displayName, needsMigrate),
-  // sessionId 透传给 handleImagePaste（决定持久化目录；landing 态 undefined → null → IPC 降级 tmpdir）
+  // sessionId 透传给 pasteImage（决定持久化目录；landing 态 undefined → null → IPC 降级 tmpdir）
   getSessionId: () => props.sessionId ?? null,
+  pasteImage: deps.pasteImage,
 })
 
 // ============ 富文本 chip（§2e slash / §2d mention） ============
-// chip DOM 操作提取到 useComposerChipCommands（满足 <script setup> 行数上限）。
+// chip DOM 操作在 core input/chip-commands.ts（W2 迁移，deps 注入 getSlashIcon/t）。
 const chipCommands = useComposerChipCommands(elRef, {
   onChanged: onInput,
   restoreSelection,
+  getSlashIcon: deps.getSlashIcon,
+  t: deps.t,
 })
 const insertSlashChip = chipCommands.insertSlashChip
 const insertMentionChip = chipCommands.insertMentionChip
@@ -113,8 +127,8 @@ function onBlur(): void {
   saveSelection()
 }
 
-// clear / setText / insertTextAtCursor 不再在组件定义：DOM 写入已收口进 composable
-// （savedRange 闭包在 composable 内，组件层无法重置它；详见 useContenteditableInput 注释）。
+// clear / setText / insertTextAtCursor 不再在组件定义：DOM 写入已收口进 core composable
+// （savedRange 闭包在 composable 内，组件层无法重置它；详见 contenteditable.ts 注释）。
 // 组件通过 defineExpose 透传 composable 返回的同名方法，维持对外 API 契约不变。
 
 function focus(): void {

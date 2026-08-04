@@ -50,9 +50,16 @@ vi.mock('@/api', () => ({
   },
 }))
 
-import ComposerInput from '@/components/panel/ComposerInput.vue'
+import { ComposerInput, ComposerInputDepsKey } from '@xyz-agent/ui/features/composer'
 import CommandPopover from '@/components/panel/CommandPopover.vue'
 import Composer from '@/components/panel/Composer.vue'
+
+/** ui ComposerInput deps 注入（W4：ComposerInput 迁 ui 包，deps 经 inject token 提供） */
+const composerInputDeps = {
+  pasteImage: async () => ({ kind: 'text' as const, text: '[测试环境]' }),
+  getSlashIcon: () => undefined,
+  t: (key: string) => key,
+}
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -88,41 +95,41 @@ async function typeWithCursor(
 
 describe('ComposerInput file-trigger（U1-U6）', () => {
   it('U1 行首敲 #（光标紧随 #）→ emit file-trigger {query:""}', async () => {
-    const wrapper = mount(ComposerInput)
+    const wrapper = mount(ComposerInput, { global: { provide: { [ComposerInputDepsKey as symbol]: composerInputDeps } } })
     // 文本 "#"，光标在 offset=1（# 之后）
     await typeWithCursor(wrapper, '#', 1)
     expect(wrapper.emitted('file-trigger')!.at(-1)![0]).toEqual({ query: '' })
   })
 
   it('U2 #auth（光标在末尾）→ emit file-trigger {query:"auth"}', async () => {
-    const wrapper = mount(ComposerInput)
+    const wrapper = mount(ComposerInput, { global: { provide: { [ComposerInputDepsKey as symbol]: composerInputDeps } } })
     await typeWithCursor(wrapper, '#auth', 5)
     expect(wrapper.emitted('file-trigger')!.at(-1)![0]).toEqual({ query: 'auth' })
   })
 
   it('U3 #auth 后跟空格（光标在空格后）→ emit file-trigger null（终止）', async () => {
-    const wrapper = mount(ComposerInput)
+    const wrapper = mount(ComposerInput, { global: { provide: { [ComposerInputDepsKey as symbol]: composerInputDeps } } })
     // 文本 "#auth "（末尾空格），光标在 offset=6（空格后）
     await typeWithCursor(wrapper, '#auth ', 6)
     expect(wrapper.emitted('file-trigger')!.at(-1)![0]).toBeNull()
   })
 
   it('U4 问题#1（# 前非空格）→ emit file-trigger null', async () => {
-    const wrapper = mount(ComposerInput)
+    const wrapper = mount(ComposerInput, { global: { provide: { [ComposerInputDepsKey as symbol]: composerInputDeps } } })
     // "问题#1"，# 前是"题"（非空格/行首），光标在末尾
     await typeWithCursor(wrapper, '问题#1', 4)
     expect(wrapper.emitted('file-trigger')!.at(-1)![0]).toBeNull()
   })
 
   it('U5 code #a（# 前空格）→ emit file-trigger {query:"a"}', async () => {
-    const wrapper = mount(ComposerInput)
+    const wrapper = mount(ComposerInput, { global: { provide: { [ComposerInputDepsKey as symbol]: composerInputDeps } } })
     // "code #a"，# 前是空格，光标在末尾
     await typeWithCursor(wrapper, 'code #a', 7)
     expect(wrapper.emitted('file-trigger')!.at(-1)![0]).toEqual({ query: 'a' })
   })
 
   it('U6 触发后清空 → emit file-trigger null（关闭浮层）', async () => {
-    const wrapper = mount(ComposerInput)
+    const wrapper = mount(ComposerInput, { global: { provide: { [ComposerInputDepsKey as symbol]: composerInputDeps } } })
     await typeWithCursor(wrapper, '#auth', 5)
     expect(wrapper.emitted('file-trigger')!.at(-1)![0]).toEqual({ query: 'auth' })
     // 清空
