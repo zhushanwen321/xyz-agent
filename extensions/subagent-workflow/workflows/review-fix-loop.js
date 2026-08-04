@@ -435,6 +435,13 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
   let roundHasFix = false; // recheckAfterFix 用：上轮是否有 fix
   const batchRounds = [];
 
+  // MF-1 批级 review 状态隔离：每批开始重置 issue 追踪 / 收敛计数 / known-remaining，
+  // 防止跨批 newFindings 语义污染（firstSeen 用批内 round 号写入、convergeStreak 跨批
+  // 累加会让前批收敛状态泄漏到后批，复合导致 converged 错误跳过后续批次）。
+  state.issues = undefined;
+  state.convergeStreak = 0;
+  state.knownRemaining = [];
+
   // 跨批跳过：agent 在更早批 clean 且此后无 fix → 本批不派发
   if (batchIndex > 1) {
     for (const def of defs) {
@@ -728,16 +735,15 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         const remainingIds = Object.entries(state.issues || {})
           .filter(([, i]) => i.status !== "fixed" && i.status !== "deferred")
           .map(([id]) => id);
-        log("Converged: new findings <= " + convergeNewIssues + " for " + convergeRounds + " rounds. Stopping.");
+        log("Converged: new findings <= " + convergeNewIssues + " for " + convergeRounds + " rounds. Batch " + batchIndex + " done, proceeding to next batch.");
         batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
-        state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
         saveState(state);
         terminated = "converged";
         finalMessage = "Batch " + batchIndex + " round " + round + ": 新发现率收敛（连续 " + convergeRounds
           + " 轮新问题 ≤" + convergeNewIssues + "）。残留: "
           + (remainingIds.length ? remainingIds.join(", ") : "无")
           + (state.knownRemaining && state.knownRemaining.length ? "；deferred: " + state.knownRemaining.join("; ") : "");
-        batchIndex = BATCHES.length + 1;
+        batchClean = true; // MF-1: 与 clean 一致，让外层 for 推进下一批（不跳过后续批次）
         break;
       }
     }
@@ -956,5 +962,7 @@ return {
   // launcher 透传 message——无需跨模块渲染特判，W5C3 决策更新）
   message: terminated === "clean"
     ? "All batches clean. " + totalFixed + " issue(s) fixed total. State: " + STATE_FILE
-    : "[UNRESOLVED] " + finalMessage + ". State: " + STATE_FILE,
+    : terminated === "converged"
+      ? finalMessage + " " + totalFixed + " issue(s) fixed total. State: " + STATE_FILE
+      : "[UNRESOLVED] " + finalMessage + ". State: " + STATE_FILE,
 };
