@@ -24,6 +24,10 @@ export { dispatchMessageEvent } from './effects/registry'
 export { createChatStore, DEFAULT_STREAMING_TIMEOUT_MS } from './store'
 export type { ChatStoreDeps, ChatStoreInstance } from './store'
 // w5 chat-use-chat：useChat composable 迁移（createUseChat factory + ChatApiPort）
+// w6 chat-ui-and-shell：chat 域纯逻辑（turn 分组/摘要）迁入
+export * from './message-turns'
+export * from './summarize-turn'
+
 export { createUseChat, ensureStreamSubscription, resetChatModuleStateForTest } from './useChat'
 export type { UseChatDeps, EnsureStreamSubDeps, SessionStoreLike } from './useChat'
 export type { ChatApiPort, WriteSegmentsFn } from './api-port'

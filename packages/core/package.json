@@ -38,6 +38,10 @@
    "types": "./src/domain/settings/index.ts",
    "import": "./src/domain/settings/index.ts"
   },
+  "./domain/chat": {
+   "types": "./src/domain/chat/index.ts",
+   "import": "./src/domain/chat/index.ts"
+  },
   "./domain/composer/input": {
    "types": "./src/domain/composer/input/index.ts",
    "import": "./src/domain/composer/input/index.ts"

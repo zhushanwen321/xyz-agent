@@ -32,8 +32,19 @@ vi.mock('vue-i18n', () => ({
       } else if (rest[0] && typeof rest[0] === 'object') {
         // 命名参数：t(key, named)
         const named = rest[0] as Record<string, unknown>
+        let replaced = false
         for (const [k, v] of Object.entries(named)) {
+          const before = result
           result = result.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v))
+          if (result !== before) replaced = true
+        }
+        // 无 {占位符} 替换时（mock key 不含占位符），append 非空命名值，
+        // 模拟 {count} 等参数渲染（供 badge count 类断言 toContain('5')）。
+        if (!replaced) {
+          const vals = Object.values(named)
+            .filter((v) => v !== undefined && v !== null && v !== '')
+            .map(String)
+          if (vals.length) result = `${result} ${vals.join(' ')}`
         }
       }
       return result

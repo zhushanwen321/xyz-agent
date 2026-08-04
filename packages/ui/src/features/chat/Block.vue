@@ -1,0 +1,401 @@
+<template>
+  <!--
+    展示组件 · trace 块（message-stream 折叠区内的单个块）。Demo H 视觉：灰阶 + SVG ICON +
+    唯一 accent 蓝（running）+ failed hover muted 暖橙。
+    - thinking：lightbulb ICON + header 可点击 toggle，长块独立再折叠（本地折叠态）。
+    - tool：默认 1 行收起（streaming/running 也收起），点击展开详情。仅 failed 强制展开。
+    - workflow：list-checks ICON + WORKFLOW. prefix + 状态动词 + workflow 名，详情区走 list-tree GUI / 文本。
+    - subagent：渲染委托给 BlockSubagent（users ICON + SUBAGENT. prefix + 去卡片化）。
+    - failed：无鲜红全展开（红框已删），改中性灰默认 + hover 染 warn，错误摘要进 body 文本。
+    审批按钮 DEFERRED（G-018），v1 不渲染。failed 救生按钮不做（agent 自处理，design.md 决策 3）。
+  -->
+  <div class="trace-blk py-2" :class="blockClass" :data-testid="testId">
+    <!-- thinking 块：同行展开（float 布局——第一行环绕 label，第二行起从最左侧开始） -->
+    <div v-if="type === 'thinking'" class="trace-think">
+      <div
+        class="group/think relative cursor-pointer select-none"
+        :title="thinkingExpanded ? t('panel.message.collapseReasoning') : t('panel.message.expandReasoning')"
+        @click="toggleThinking"
+      >
+        <!-- 摘要行：flex 布局，min-h 锁定高度避免展开时跳动 -->
+        <div class="flex items-center gap-1.5 min-h-[1.5rem]">
+          <component :is="BLOCK_ICON_LUCIDE.thinking" class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" />
+          <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">{{ t('panel.message.thinkingBlock') }}</span>
+          <span v-if="!working" class="text-neutral-faint" :class="thinkingExpanded ? 'invisible' : ''">·</span>
+          <span class="flex-1 min-w-0 truncate text-[length:var(--text-sm)] text-neutral-dim" :class="thinkingExpanded ? 'invisible' : ''">{{ previewText }}</span>
+        </div>
+        <!-- 展开内容区：copy 按钮在左上角，始终可见 -->
+        <div v-if="thinkingExpanded" class="group/result relative mt-1 pl-4 text-[length:var(--text-sm)] leading-[1.7] text-neutral-dim">
+          <Button
+            variant="ghost"
+            size="icon"
+            class="absolute top-0 left-0 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover/result:opacity-100"
+            :title="t('panel.message.copy')"
+            @click.stop="content && copy(content, `thinking-${thinkingId ?? 'block'}`)"
+          >
+            <Check v-if="copied === `thinking-${thinkingId ?? 'block'}`" class="size-3 text-success" />
+            <CopyIcon v-else class="size-3" />
+          </Button>
+          <MarkdownRenderer v-if="!working" :content="content ?? ''" :session-id="sessionId ?? undefined" variant="thinking" />
+          <span v-else class="whitespace-pre-wrap">{{ previewText }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 中间产出 text 块（draft §4 Output Text 中间：折进执行流程，下划线行，markdown 渲染）。
+         streaming 光标已移到 Turn.vue trace 末尾（保证永远在最后一行，不受 contentBlocks 时序影响）。 -->
+    <div v-else-if="type === 'text'" class="pb-2 text-[length:var(--text-sm)] leading-relaxed text-neutral-mid">
+      <MarkdownRenderer :content="content ?? ''" :session-id="sessionId ?? undefined" />
+    </div>
+
+    <!-- tool_call 块：默认 1 行收起（streaming/running 也收起），header 含摘要，点击展开详情。
+         subagent（pi-subagents 的 "subagent" tool）渲染委托给 BlockSubagent（独立样式：users ICON +
+         SUBAGENT. prefix + 去卡片化）——subagent 逻辑已抽离到 BlockSubagent.vue。
+         workflow（pi-workflow 的 "workflow" tool）：list-checks ICON + WORKFLOW. prefix + list-tree GUI。 -->
+    <div v-else class="trace-tool">
+      <!-- ── subagent 块：委托 BlockSubagent ── -->
+      <BlockSubagent v-if="isSubagent" :tool="tool!" :session-id="sessionId" />
+
+      <!-- ── workflow 块：action + name + slug + runId + list-tree GUI ── -->
+      <div v-else-if="isWorkflow" class="trace-workflow pb-2.5 mb-0.5" data-testid="workflow-block">
+        <div
+          data-testid="tool-block-header"
+          class="flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[length:var(--text-base)] font-medium transition-opacity hover:opacity-80"
+          :class="isFailed ? 'text-neutral-mid' : 'text-neutral-fg'"
+          :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
+          @click="toggleTool"
+        >
+          <!-- running 态 loader（双环 + accent），其余走 list-checks ICON -->
+          <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
+          <component :is="BLOCK_ICON_LUCIDE.workflow" v-else class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
+          <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">{{ t('panel.message.workflow') }}</span>
+          <!-- action（muted） -->
+          <span v-if="workflowFields.action" class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-xs)] text-neutral-mid">{{ workflowFields.action }}</span>
+          <!-- name（accent） -->
+          <span v-if="workflowFields.name" class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent">{{ workflowFields.name }}</span>
+          <!-- slug（accent，· 分隔，展开时 invisible 保留空间） -->
+          <template v-if="workflowFields.slug">
+            <span class="text-neutral-faint" :class="{ invisible: toolExpanded }">·</span>
+            <span class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-sm)] text-accent" :class="{ invisible: toolExpanded }">{{ workflowFields.slug }}</span>
+          </template>
+          <!-- runId 前 8 位（dim，展开时 invisible 保留空间） -->
+          <span v-if="workflowFields.runId" class="shrink-0 whitespace-nowrap font-mono text-[length:var(--text-xs)] text-neutral-dim" :class="{ invisible: toolExpanded }">{{ workflowFields.runId }}</span>
+        </div>
+        <!-- args.task 首行预览（展开时 invisible 保留空间） -->
+        <div v-if="workflowArgsTaskPreview" class="mt-0.5 pl-4 truncate text-[length:var(--text-sm)] text-neutral-dim" :class="{ invisible: toolExpanded }">
+          {{ workflowArgsTaskPreview }}
+        </div>
+        <template v-if="toolExpanded">
+          <!-- workflow 详情区：copy 按钮在左上角 + list-tree GUI 组件（来自 details.__gui__） -->
+          <div v-if="displayContent || guiComponent" class="group/result relative mt-1 text-[length:var(--text-sm)] leading-snug text-neutral-mid select-text">
+            <Button
+              variant="ghost"
+              size="icon"
+              class="absolute top-0 left-0 size-5 rounded-sm text-neutral-dim opacity-0 transition-opacity hover:text-neutral-fg group-hover/result:opacity-100"
+              :title="t('panel.message.copy')"
+              @click.stop="copy(copyContent, `tool-${tool!.id}`)"
+            >
+              <Check v-if="copied === `tool-${tool!.id}`" class="size-3 text-success" />
+              <CopyIcon v-else class="size-3" />
+            </Button>
+            <div class="pl-4">
+              <GuiComponentRenderer v-if="guiComponent" :component="guiComponent" />
+              <AnsiText v-else-if="outputRaw" :content="outputRaw" />
+              <span v-else class="whitespace-pre-wrap">{{ displayContent }}</span>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- ── 普通 tool 块：1 行收起（header 含 toolName+argPath 摘要+状态），点击展开详情 ── -->
+      <div v-else>
+        <div
+          data-testid="tool-block-header"
+          class="tool-header flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-[length:var(--text-sm)] font-medium transition-opacity hover:opacity-80"
+          :class="toolStatusClass"
+          :title="toolExpanded ? t('panel.message.collapse') : t('panel.message.expand')"
+          @click="toggleTool"
+        >
+          <!-- running 态 loader（双环 + accent），其余走 BLOCK_ICON_LUCIDE[iconKind] -->
+          <span v-if="isRunning" class="inline-flex size-[13px] shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" /> <!-- eslint-disable-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
+          <component :is="headerBlockIcon" v-else class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover" :class="isFailed ? 'hover:text-warn' : ''" />
+          <span class="shrink-0 normal-case tracking-normal">{{ toolName }}</span>
+          <span v-if="argPath" class="min-w-0 normal-case tracking-normal text-neutral-dim truncate" :class="{ invisible: toolExpanded && isBashTool }">· {{ argPath }}</span>
+        </div>
+        <template v-if="toolExpanded">
+          <!-- 内容区：统一 group 包裹，copy 按钮浮在左上角复制全部内容 -->
+          <div v-if="displayContent || guiComponent" class="group/content relative mt-1">
+            <!-- copy 按钮：hover 显示，复制 copyContent（bash=命令+输出，其余=输出） -->
+            <div class="absolute top-0 left-0 z-10 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/content:opacity-100">
+              <Button
+                variant="ghost"
+                size="icon"
+                class="size-5 rounded-sm text-neutral-dim hover:text-neutral-fg"
+                :title="t('panel.message.copy')"
+                @click.stop="copy(copyContent, `tool-${tool!.id}`)"
+              >
+                <Check v-if="copied === `tool-${tool!.id}`" class="size-3 text-success" />
+                <CopyIcon v-else class="size-3" />
+              </Button>
+            </div>
+            <!-- bash 整体容器：命令+输出共用 border+bg -->
+            <div v-if="isBashTool" class="border border-neutral-faint rounded-sm bg-surface-2">
+              <div v-if="argPath" class="pl-4 py-1.5 font-mono text-[length:var(--text-sm)] text-neutral-fg border-b border-neutral-faint">
+                {{ argPath }}
+              </div>
+              <div class="tool-result font-mono text-[length:var(--text-sm)] leading-snug whitespace-pre-wrap pl-4 py-1.5 select-text text-neutral-mid">
+                <AnsiText v-if="outputRaw" :content="outputRaw" />
+                <span v-else>{{ displayContent }}</span>
+              </div>
+            </div>
+            <!-- 非 bash：meta 条 + 输出 -->
+            <template v-else>
+              <div v-if="filteredMetaItems.length" class="flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-4 font-mono text-[length:var(--text-xs)]">
+                <span
+                  v-for="(item, idx) in filteredMetaItems"
+                  :key="idx"
+                  class="text-neutral-dim"
+                >{{ item.text }}</span>
+              </div>
+              <div
+                class="tool-result font-mono text-[length:var(--text-sm)] leading-snug whitespace-pre-wrap pl-4 select-text"
+                :class="isFailed ? 'text-neutral-mid hover:text-neutral-fg' : 'text-neutral-mid'"
+              >
+                <GuiComponentRenderer v-if="guiComponent" :component="guiComponent" />
+                <AnsiText v-else-if="outputRaw" :content="outputRaw" />
+                <span v-else>{{ displayContent }}</span>
+              </div>
+            </template>
+            <!-- bash meta 条（耗时等，内容区内） -->
+            <div v-if="isBashTool && filteredMetaItems.length" class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-4 font-mono text-[length:var(--text-xs)]">
+              <span
+                v-for="(item, idx) in filteredMetaItems"
+                :key="idx"
+                class="text-neutral-dim"
+              >{{ item.text }}</span>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { Check, Copy as CopyIcon } from '@lucide/vue'
+import type { GuiComponent } from '@xyz-agent/extension-protocol'
+import { extractGui } from '@xyz-agent/extension-protocol'
+import type { ToolCall } from '@xyz-agent/shared'
+import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES } from '@xyz-agent/shared'
+import { AnsiText, GuiComponentRenderer } from '../../rendering-protocol'
+import MarkdownRenderer from './MarkdownRenderer.vue'
+import BlockSubagent from './BlockSubagent.vue'
+import { BLOCK_ICON_LUCIDE, RUNNING_LOADER_SVG, getBlockIcon } from './block-icon'
+import { formatDuration } from './format-utils'
+import { Button } from '@xyz-agent/ui'
+import { useToolMeta } from './composables/useToolMeta'
+import { useCopy } from './composables/useCopy'
+
+const { t } = useI18n()
+const { copied, copy } = useCopy()
+
+const props = defineProps<{
+  type: 'thinking' | 'tool' | 'text' | 'agentgraph'
+  /** thinking / text 内容 */
+  content?: string
+  /** thinking 块 id（thinking 类型时由父组件透传，用于 data-testid 精确锚定；其他类型忽略） */
+  thinkingId?: string
+  /** tool_call 数据（type==='tool' 时必填） */
+  tool?: ToolCall
+  /** thinking 块初始折叠态（来自 ThinkingBlock.collapsed，默认收起） */
+  collapsed?: boolean
+  /** working 态（turn 进行中）：thinking 强制全展开且不可手动收（draft §1 无背景下划线展开）。
+   *  tool 块不再因 working 强制展开（改后 streaming 态也 1 行收起，header 自带状态指示）。 */
+  working?: boolean
+  /** @deprecated streaming 光标已移到 Turn.vue trace 末尾独立元素（streaming-tail），
+   *  保证永远在最后一行。此 prop 保留向后兼容，不再被驱动（Turn.vue 不再传入 true）。 */
+  streaming?: boolean
+  /** 所属 session（透传给 MarkdownRenderer 供文件路径打开 DetailPane 用） */
+  sessionId?: string | null
+}>()
+
+/* ── thinking 折叠：working 态强制展开且不可收（draft §1）；非 working 由本地态 toggle ── */
+const thinkingCollapsed = ref(props.collapsed ?? true)
+const thinkingExpanded = computed(() => props.working || !thinkingCollapsed.value)
+
+function toggleThinking(): void {
+  if (props.working) return
+  thinkingCollapsed.value = !thinkingCollapsed.value
+}
+
+/** 收起态的正文预览（截断，draft：收起时显一行摘要） */
+const PREVIEW_LIMIT = 60
+const previewText = computed(() => {
+  const c = props.content?.trim() ?? ''
+  if (c.length <= PREVIEW_LIMIT) return c
+  return `${c.slice(0, PREVIEW_LIMIT)}…`
+})
+
+const isFailed = computed(() => props.tool?.status === 'error')
+const isRunning = computed(() => props.tool?.status === 'running')
+/** 流结束未收到 tool_call_end（进程崩溃/WS 断连/event-adapter 乱序丢消息）。
+ *  诚实态，区别于 running（实时进行中）和 error（明确失败）——未收到结果不代表失败。 */
+const isUnfinished = computed(() => props.tool?.status === 'end_not_received')
+const toolName = computed(() => props.tool?.toolName ?? 'tool')
+const isBashTool = computed(() => toolName.value === 'bash')
+const result = computed(() => props.tool?.output)
+/** 展示用内容：output 优先，failed 时兜底 tool.error（如 read ENOENT 输出为空但 error 有值） */
+const displayContent = computed(() => result.value || (isFailed.value ? (props.tool?.error ?? '') : ''))
+/** 复制用内容：bash 包含命令+输出，其余同 displayContent */
+const copyContent = computed(() => {
+  if (isBashTool.value && argPath.value) {
+    return displayContent.value ? `${argPath.value}\n${displayContent.value}` : argPath.value
+  }
+  return displayContent.value
+})
+/** 原始 ANSI 文本（未经 stripAnsi）。有此字段时用 AnsiText 渲染着色，无则回退 output 纯文本。 */
+const outputRaw = computed(() => props.tool?.outputRaw)
+
+/** 补充细节条 meta 项（耗时 + 工具特化行数/字符数 + 失败错误摘要），逻辑拆到 useToolMeta */
+const { metaItems } = useToolMeta({
+  tool: computed(() => props.tool),
+  toolName,
+  isFailed,
+  formatDuration,
+})
+
+/** bash 展开后去掉行数统计（命令+output 已完整展示，行数无参考价值） */
+const filteredMetaItems = computed(() => {
+  if (!isBashTool.value) return metaItems.value
+  return metaItems.value.filter((item) => !item.text.endsWith('行'))
+})
+
+/* ── 块类型路由：subagent / workflow ── */
+const isSubagent = computed(() => SUBAGENT_TOOL_NAMES.has(toolName.value))
+const isWorkflow = computed(() => WORKFLOW_TOOL_NAMES.has(toolName.value))
+
+/** 普通 tool header 的块类型 ICON（running 用 loader，其余走 BLOCK_ICON_LUCIDE） */
+const headerBlockIcon = computed(() => {
+  const kind = getBlockIcon(toolName.value, props.tool?.status ?? 'completed', false, false)
+  // running 态走模板的 loader 分支（v-if isRunning），不走此 computed
+  return kind === 'running' ? BLOCK_ICON_LUCIDE['tool-other'] : BLOCK_ICON_LUCIDE[kind]
+})
+
+/** 普通 tool header 状态色：running 染 accent，failed/unfinished 中性灰，completed 中性。
+ *  unfinished 用 text-neutral-mid（6.78:1 过 AA），不用 dim（3.56:1 不过 AA，critique 第 3 轮）。 */
+const toolStatusClass = computed(() => {
+  if (isRunning.value) return 'text-accent'
+  if (isFailed.value) return 'text-neutral-mid'
+  if (isUnfinished.value) return 'text-neutral-mid'
+  return 'text-neutral-fg'
+})
+
+/** workflow 顶层 input 安全读取（拍平 schema：action/name/slug/args/runId 都在顶层） */
+const workflowInputObj = computed(() => {
+  const input = props.tool?.input as Record<string, unknown> | undefined
+  return input && typeof input === 'object' ? input : {}
+})
+
+/** workflow runId 显示截断长度（对齐 tool-render.ts 的 RUNID_SHORT） */
+const RUNID_DISPLAY_LENGTH = 8
+
+/** workflow 标题行字段：action / name / slug / runId-short */
+const workflowFields = computed(() => {
+  const input = workflowInputObj.value
+  const action = typeof input.action === 'string' ? input.action : ''
+  const name = typeof input.name === 'string' ? input.name : ''
+  const slug = typeof input.slug === 'string' ? input.slug : ''
+  const runIdRaw = typeof input.runId === 'string' ? input.runId : ''
+  const runIdShort = runIdRaw ? runIdRaw.slice(0, RUNID_DISPLAY_LENGTH) : ''
+  return { action, name, slug, runId: runIdShort }
+})
+
+/** workflow args.task 首行预览（run action，args 是对象取 task 字段，截断 60 字符） */
+const ARGS_TASK_PREVIEW_LIMIT = 60
+const workflowArgsTaskPreview = computed(() => {
+  const input = workflowInputObj.value
+  const args = input.args
+  if (!args || typeof args !== 'object') return ''
+  const task = (args as Record<string, unknown>).task
+  if (typeof task !== 'string') return ''
+  const firstLine = task.split('\n').find((l) => l.trim())?.trim() ?? ''
+  if (firstLine.length <= ARGS_TASK_PREVIEW_LIMIT) return firstLine
+  return `${firstLine.slice(0, ARGS_TASK_PREVIEW_LIMIT)}…`
+})
+
+/**
+ * 从 tool.details.__gui__ 提取结构化渲染组件（extension GUI 协议，spec §9.1）。
+ * extension RPC 模式把 GuiComponent 放进 details.__gui__.component，前端用 extractGui
+ * 统一校验版本后路由到 GuiComponentRenderer。无 __gui__ 时 undefined（走 AnsiText/纯文本兜底）。
+ * 注：ToolCall 的结构化扩展数据存在 details 字段（pi tool_execution_end result.details）。
+ *
+ * streaming __gui__ 仅在 running 态有效——tool_call_end 后若 details 无 __gui__，
+ * 不应回退到过期的 streaming detail（如 extension streaming 推了进度组件但最终返回纯文本）。
+ * 否则已完成工具会错误显示 streaming 过程中的临时 GUI 组件。
+ */
+const guiComponent = computed<GuiComponent | undefined>(() => {
+  // tool_call_end 的 details（复数，最终态）优先
+  const fromEnd = extractGui(props.tool?.details)?.component
+  if (fromEnd) return fromEnd
+  // streaming 态 fallback：仅在 tool 仍在 running 时用 detail（单数）。
+  // tool_call_end 后 detail 残留不应被当作渲染源（最终态无 __gui__ → 不渲染 GUI 组件）。
+  if (isRunning.value) {
+    const streamingDetail = props.tool?.detail
+    if (typeof streamingDetail === 'object' && streamingDetail !== null) {
+      return extractGui(streamingDetail)?.component
+    }
+  }
+  return undefined
+})
+
+/**
+ * tool 折叠：默认 1 行收起（含 streaming/running 态——header 行已含摘要+状态指示，
+ * 1 行即可观察进度，点击才展开详情）。failed 不再强制展开（摘要行已含错误状态色）。
+ */
+const toolCollapsed = ref(true)
+const toolExpanded = computed(() => !toolCollapsed.value)
+
+function toggleTool(): void {
+  toolCollapsed.value = !toolCollapsed.value
+}
+
+/**
+ * 从 input 提取可读参数摘要（header 单行展示）。覆盖高频工具：
+ * bash→command、read/write/edit→path、grep→pattern、todo_write→tasks 数量等。
+ * 未覆盖的工具返回空串（header 只显 toolName）。
+ */
+const argPath = computed(() => {
+  const input = props.tool?.input as Record<string, unknown> | undefined
+  if (!input) return ''
+  if (typeof input.command === 'string') return input.command
+  if (typeof input.path === 'string') return input.path
+  if (typeof input.file_path === 'string') return input.file_path
+  if (typeof input.pattern === 'string') return input.pattern
+  if (Array.isArray(input.tasks)) return `${input.tasks.length} todos`
+  return ''
+})
+
+
+/** Demo H：failed 红框已删（blockClass 不再返回 border-danger/bg-danger-soft）。
+ *  failed 块改中性灰默认 + hover 文字加深（hover:text-neutral-fg）。
+ *  保留 blockClass 钩子以备未来整体块级视觉（如 running 高亮条），当前返回空串。 */
+const blockClass = computed(() => '')
+
+/** data-testid 锚点：按块类型拼接可定位 id，供 E2E 精确断言特定块。
+ *  格式：block-tool-${tool.id}（type==='tool'/'agentgraph' 且有 tool）/ block-thinking-${thinkingId}（type==='thinking'）。
+ *  agentgraph（subagent/workflow）数据结构同 tool（ToolCall 有 id），故共用 block-tool 前缀。
+ *  无 id（text / thinking 无 id）时回退 undefined（不输出 data-testid 属性，避免污染选择器）。 */
+const testId = computed(() => {
+  if (props.type === 'tool' || props.type === 'agentgraph') {
+    const id = props.tool?.id
+    return id ? `block-tool-${id}` : undefined
+  }
+  if (props.type === 'thinking') {
+    return props.thinkingId ? `block-thinking-${props.thinkingId}` : undefined
+  }
+  return undefined
+})
+</script>
+
