@@ -22,25 +22,26 @@
         <UpdateButton class="ml-auto" />
       </div>
 
-      <!-- 主操作 nav：新建任务 ⌘N / 搜索 ⌘K -->
+      <!-- 主操作 nav：新建任务 ⌘N（primary 主操作）/ 搜索 ⌘K（ghost 次操作）。
+           v6-master-spec §6.2 NavItem：primary=accent 实色 / ghost=透明 双层级。 -->
       <nav class="flex flex-col gap-px px-1">
         <Button
           variant="ghost"
-          class="group h-auto justify-start gap-2.5 rounded-md px-2 py-1.5 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
+          class="group h-8 w-full justify-start gap-2.5 rounded-md bg-accent px-3 text-[12px] font-medium text-accent-fg transition-colors hover:bg-accent-hover hover:text-accent-fg"
           @click="onNewSession"
         >
-          <Plus class="size-[15px] text-neutral-dim transition-colors group-hover:text-neutral-mid" />
+          <Plus class="size-[15px] text-accent-fg" />
           <span class="flex-1 text-left">{{ t('sidebar.newTask') }}</span>
-          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim">{{ formatKbd('n') }}</kbd>
+          <kbd class="font-mono text-[10px] text-accent-fg opacity-70">{{ formatKbd('n') }}</kbd>
         </Button>
         <Button
           variant="ghost"
-          class="group h-auto justify-start gap-2.5 rounded-md px-2 py-1.5 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
+          class="group h-8 w-full justify-start gap-2.5 rounded-md px-3 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
           @click="searchModal.open()"
         >
           <Search class="size-[15px] text-neutral-dim transition-colors group-hover:text-neutral-mid" />
           <span class="flex-1 text-left">{{ t('sidebar.search') }}</span>
-          <kbd class="rounded-sm border border-border-strong bg-surface px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim">{{ formatKbd('k') }}</kbd>
+          <kbd class="rounded-sm border border-border-strong px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim">{{ formatKbd('k') }}</kbd>
         </Button>
       </nav>
 
@@ -157,9 +158,9 @@
         </template>
       </div>
 
-      <!-- 用户区（footer）· 齿轮图标打开 Settings（settings/spec.md §1） -->
-      <div class="mt-auto flex items-center gap-2 rounded-md px-2 py-2 text-[12px] text-neutral-mid">
-        <span class="size-5 shrink-0 rounded-full bg-gradient-to-br from-accent to-info" />
+      <!-- 用户区（footer）· §6.2 UserArea：accent 纯色头像（去装饰渐变）+ 用户名 + 设置齿轮。 -->
+      <div class="mt-auto flex items-center gap-2 rounded-md px-2 py-2 text-[12px] text-neutral-mid transition-colors hover:bg-surface-hover">
+        <span class="size-5 shrink-0 rounded-full bg-accent" />
         <span class="flex-1 truncate text-neutral-fg">{{ t('sidebar.developer') }}</span>
         <Button
           variant="ghost"

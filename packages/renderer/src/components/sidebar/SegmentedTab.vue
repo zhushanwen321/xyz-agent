@@ -1,20 +1,21 @@
 <template>
   <!--
-    展示组件 · segmented 视图切换 tab。
+    展示组件 · segmented 视图切换 tab（v6-master-spec §5.3）。
     icon-only 模式：4 tab 等宽均分（flex-1），只显示 icon + count 数字，label 收进 title。
-    active 态 = accent-soft 背景 + accent 文字。
+    外层凹陷容器 bg-bg-input + rounded-lg + p-[3px]；active = bg-bg-elevated 中性浮起（去蓝染）。
+    inactive hover 只提亮文字（text-neutral-fg），不加底色——凹陷槽内加底色会显脏（demo SegmentedTab 同源）。
   -->
-  <div class="flex gap-0.5 px-1 pb-1">
+  <div class="mx-1 mb-1 flex gap-0.5 rounded-lg bg-bg-input p-[3px]">
     <Button
       v-for="tab in tabs"
       :key="tab.value"
       variant="ghost"
       :title="tab.label"
       :class="cn(
-        'relative h-auto flex-1 justify-center gap-1 rounded-sm px-1 py-1',
+        'relative h-7 flex-1 justify-center gap-1 rounded-sm px-1',
         modelValue === tab.value
           ? 'bg-bg-elevated text-neutral-fg hover:bg-bg-elevated hover:text-neutral-fg'
-          : 'text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg',
+          : 'text-neutral-mid hover:bg-transparent hover:text-neutral-fg',
       )"
       @click="emit('update:modelValue', tab.value)"
     >
@@ -26,7 +27,7 @@
       >{{ tab.count }}</span>
       <span
         v-if="tab.badge"
-        class="absolute right-0 top-0 size-[6px] rounded-full bg-accent"
+        class="absolute right-1 top-1 size-[7px] rounded-full bg-accent"
       />
     </Button>
   </div>
