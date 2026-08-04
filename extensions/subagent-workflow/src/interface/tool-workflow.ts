@@ -101,9 +101,13 @@ const RUNID_SHORT = 8;
  *  用此清单检测平铺形态，报错带 Correct 正例纠正。 */
 const KNOWN_ARG_KEYS = [
   "task", "target", "perspectives", "items", "itemsJson", "operation",
-  // review-fix-loop 参数（内置 workflow，2026-08 新增）
+  // review-fix-loop 参数（内置 workflow，2026-08 新增；与 workflows/review-fix-loop-utils.cjs
+  // 的 VALID_ARG_KEYS 保持同步：model/maxFixAttempts/convergeNewIssues/convergeRounds
+  // 补齐于 review round-1 S-13，避免弱模型平铺时 P0 静默 args={} 漏检。
+  // _runId 为内部注入键不在此列）
   "targetType", "agents", "batchNames", "reviewPrompt", "fixPrompt",
   "autoCommit", "maxRounds", "stuckThreshold", "skipCleanAgents", "recheckAfterFix", "fixAgent",
+  "model", "maxFixAttempts", "convergeNewIssues", "convergeRounds",
 ];
 
 /** 前缀式参数（batch1..batchN 动态编号，无法枚举） */
@@ -250,10 +254,11 @@ export function registerWorkflowTool(
       "parallel (multi-perspective analysis; args: target, optional perspectives), " +
       "scatter-gather (split→parallel→merge; args: task), " +
       "map-reduce (parallel map→reduce; args: items/itemsJson + operation), " +
-      "review-fix-loop (multi-batch review→fix loop; args: targetType + target required, optional batch1..batchN). " +
-      "Example: {\"action\":\"run\",\"name\":\"parallel\",\"args\":{\"target\":\"src/auth.ts\"}}." +
+      "review-fix-loop (multi-batch review→fix loop; args: targetType + target required, " +
+      "batch1..batchN required (no default)). " +
+      "Example: {\"action\":\"run\",\"name\":\"parallel\",\"args\":{\"target\":\"src/auth.ts\"}}. " +
       "Use review-fix-loop when the user wants iterative code/doc review with fixes until clean " +
-      "(it is the ONLY built-in workflow that writes files; autoCommit defaults to false)." +
+      "(it is the ONLY built-in workflow that writes files; autoCommit defaults to false). " +
       "DISCOVERY: If unsure what workflows exist, call the workflow-script tool with " +
       "action:list first — it returns all available scripts (built-in + user-generated) " +
       "with source tags and descriptions. Then use this tool's run action to start one.",
