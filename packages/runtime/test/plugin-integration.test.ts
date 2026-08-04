@@ -29,7 +29,9 @@ let activator: PluginActivator
 
 beforeAll(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), 'plugin-integration-test-'))
-  const pluginDir = join(tmpDir, '.xyz-agent', 'plugins', 'hello-world')
+  const pluginDir = join(tmpDir, 'resources', 'plugins', 'hello-world')
+  // resources/plugins 目录由 registry 映射为 built-in（plugin-registry.ts 第三项），
+  // 避免激活锁（IF3 只锁 external）跳过本集成流程的激活步骤。
   await mkdir(pluginDir, { recursive: true })
   await cp(join(FIXTURES_DIR, 'hello-world'), pluginDir, { recursive: true })
 
@@ -179,7 +181,8 @@ describe('Plugin Integration', () => {
       permissions: [],
       engines: { 'xyz-agent': '*' },
       pluginPath: '/tmp/crash-plugin',
-      source: 'external' as const,
+      // 激活机制测试与锁（IF3）正交：锁只拦 external，此处用 built-in 走正常失败路径。
+      source: 'built-in' as const,
       extensionDependencies: [],
     }
     crashActivator.registerDescriptors([desc])

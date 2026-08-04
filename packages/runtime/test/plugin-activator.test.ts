@@ -18,7 +18,9 @@ function makeDescriptor(overrides: Partial<PluginDescriptor> = {}): PluginDescri
     permissions: [],
     engines: { 'xyz-agent': '*' },
     pluginPath: '/tmp/test-plugin',
-    source: 'external',
+    // 默认 built-in：正常激活路径 fixture（激活锁只锁 external，见下方锁语义 describe）。
+    // 锁语义用例显式传 source: 'external'。
+    source: 'built-in',
     extensionDependencies: [],
     ...overrides,
   }
@@ -242,5 +244,46 @@ describe('PluginActivator', () => {
 
     await activator.activatePlugin('nonexistent', { type: 'onStartupFinished' }, host)
     expect(activator.getState('nonexistent')).toBe(undefined)
+  })
+})
+
+describe('external plugin activation hard lock（§6.6 激活侧，IF3）', () => {
+  // ── TC-A: external + 开关 false → 跳过激活 ────────────────────
+  it('TC-A: external plugin + EXTERNAL_PLUGIN_ENABLED=false → skipped (assignWorker/loadPlugin/permissionChecker zero calls, state UNLOADED)', async () => {
+    const activator = new PluginActivator()
+    const desc = makeDescriptor({ pluginId: 'ext-locked', source: 'external' })
+    activator.registerDescriptors([desc])
+
+    const host = createMockHost(activator, 'activated')
+
+    // 锁必须在权限检查之前：即使 permissionChecker 存在也不应被触达
+    const permissionChecker = { getUnapproved: vi.fn(() => ['fs']) }
+    const lockedActivator = new PluginActivator({ permissionChecker })
+    lockedActivator.registerDescriptors([desc])
+
+    await lockedActivator.activatePlugin('ext-locked', { type: 'onStartupFinished' }, host)
+
+    // 状态保持 UNLOADED（跳过，不进入 ACTIVATING）
+    expect(lockedActivator.getState('ext-locked')).toBe('UNLOADED')
+    // Worker 分配与加载零调用
+    expect(host.assignWorker).not.toHaveBeenCalled()
+    expect(host.loadPlugin).not.toHaveBeenCalled()
+    // 锁在权限检查之前（ES2）
+    expect(permissionChecker.getUnapproved).not.toHaveBeenCalled()
+  })
+
+  // ── TC-B: built-in 来源不受影响，正常激活 ─────────────────────
+  it('TC-B: built-in plugin unaffected → normal activation path (assignWorker called, state ACTIVE)', async () => {
+    const activator = new PluginActivator()
+    const desc = makeDescriptor({ pluginId: 'builtin-ok', source: 'built-in' })
+    activator.registerDescriptors([desc])
+
+    const host = createMockHost(activator, 'activated')
+
+    await activator.activatePlugin('builtin-ok', { type: 'onStartupFinished' }, host)
+
+    expect(activator.getState('builtin-ok')).toBe('ACTIVE')
+    expect(host.assignWorker).toHaveBeenCalled()
+    expect(host.loadPlugin).toHaveBeenCalled()
   })
 })
