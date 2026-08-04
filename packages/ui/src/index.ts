@@ -6,6 +6,12 @@ export * from './primitives'
 // ── features/chat（w6 chat-ui-and-shell：chat 域展示组件 + ChatView 薄壳 + deps token）──
 export * from './features/chat'
 
+// ── features/new-task（w4 new-task-search UI 迁移：5 个跨端共享组件 + NewTaskDeps token）──
+export * from './features/new-task'
+
+// ── overlays（w4 new-task-search UI 迁移：SearchModal 全局搜索浮层）──
+export { default as SearchModal } from './overlays/SearchModal.vue'
+
 // RenderingProtocol 层的公共面（GuiComponentRenderer / AnsiText / 注册表机制）经
 // `@xyz-agent/ui/rendering-protocol` 子路径暴露。7 原语是 RenderingProtocol 内部
 // 实现细节，不经顶层导出（AC4：原语不经顶层暴露，消费方走 ./rendering-protocol 子路径）。
