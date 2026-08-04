@@ -49,6 +49,8 @@ const {
   recordAgentClean,
   recordAgentDirty,
   shouldSkipAgent,
+  updateStuckState,
+  resolveBatchTerminated,
 } = require(
   (typeof workerData !== "undefined" && workerData && typeof workerData.scriptPath === "string"
     ? require("path").dirname(workerData.scriptPath)
@@ -416,25 +418,23 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     log("Aggregated: " + mustFix + " must-fix + " + suggestion + " suggestion(s).");
 
     // ── Stuck detection ─────────────────────────────────────
-    // 只跟踪 must_fix：suggestion 是固定噪声（fix agent 只修 must-fix，suggestion 单调不降），
-    // 计入 total 会把合法推进（must_fix 每轮在降）误判为 stuck 提前终止（MF-2）。
-    const total = mustFix;
-    if (prevMustFix >= 0 && total >= prevMustFix) {
-      stuckCount++;
-      if (stuckCount >= stuckThreshold) {
-        log("Stuck: must-fix count not decreasing for " + stuckThreshold + " rounds. Stopping.");
-        batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
-        state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
-        saveState(state);
-        terminated = "stuck";
-        finalMessage = "Batch " + batchIndex + " round " + round + ": must_fix 数连续 " + stuckThreshold + " 轮不下降";
-        batchIndex = BATCHES.length + 1;
-        break;
-      }
-    } else {
-      stuckCount = 0;
+    // 纯函数 updateStuckState（review-fix-loop-utils.cjs，vitest 单测见
+    // src/__tests__/review-fix-loop-utils.test.ts）：只跟踪 must_fix，不跟踪
+    // suggestion——suggestion 是固定噪声（fix agent 只修 must-fix，suggestion 单调
+    // 不降），计入 total 会把合法推进（must_fix 每轮在降）误判为 stuck 提前终止（MF-2）。
+    const stuck = updateStuckState(prevMustFix, stuckCount, mustFix, stuckThreshold);
+    stuckCount = stuck.stuckCount;
+    prevMustFix = stuck.prevMustFix;
+    if (stuck.stuck) {
+      log("Stuck: must-fix count not decreasing for " + stuckThreshold + " rounds. Stopping.");
+      batchRounds.push({ round, mustFix, suggestion, agents: agentRoundResults, modifiedFiles: [] });
+      state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
+      saveState(state);
+      terminated = "stuck";
+      finalMessage = "Batch " + batchIndex + " round " + round + ": must_fix 数连续 " + stuckThreshold + " 轮不下降";
+      batchIndex = BATCHES.length + 1;
+      break;
     }
-    prevMustFix = total;
 
     // ── Fix ─────────────────────────────────────────────────
     phase("Fix");
@@ -537,9 +537,9 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
 
   state.batches.push({ index: batchIndex, name: BATCH_NAMES[batchIndex - 1], rounds: batchRounds });
 
-  if (!batchClean) {
+  terminated = resolveBatchTerminated(batchClean, terminated);
+  if (terminated === "max-rounds") {
     // 该批达到 maxRounds 仍残留 must-fix → fail-fast，不进入后续批
-    terminated = "max-rounds";
     finalMessage = "Batch " + batchIndex + " (" + BATCH_NAMES[batchIndex - 1] + ") 达到 maxRounds=" + maxRounds + " 仍有 must-fix，终止整个 workflow";
     log(finalMessage);
     saveState(state);

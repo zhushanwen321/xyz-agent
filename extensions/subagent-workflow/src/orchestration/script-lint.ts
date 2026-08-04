@@ -262,22 +262,60 @@ function checkAgentCallOptions(
 }
 
 /**
+ * 剔除 agent 选项对象里的 schema 块（`schema: {...}` 嵌套对象，括号配对）。
+ * 用于 checkAgentDescription：JSON Schema 的 properties 里常见 `description:` 字段
+ * （schema 文档字段，不是 agent 选项）——只剔字符串字面量时该 key 仍保留，会把
+ * 内嵌 description 误判为「已提供」导致漏报（I-10 修正的剩余部分）。
+ * 输入为已剔除字符串/注释的 range（无引号内容干扰，括号配对安全）。
+ */
+function stripSchemaBlocks(text: string): string {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const m = text.slice(i).match(/\bschema\s*:\s*\{/);
+    if (!m || m.index === undefined) {
+      out += text.slice(i);
+      break;
+    }
+    const start = i + m.index;
+    const braceIdx = start + m[0].lastIndexOf("{");
+    out += text.slice(i, start);
+    let depth = 0;
+    let j = braceIdx;
+    for (; j < text.length; j++) {
+      if (text[j] === "{") depth++;
+      else if (text[j] === "}") {
+        depth--;
+        if (depth === 0) {
+          j++;
+          break;
+        }
+      }
+    }
+    i = j;
+  }
+  return out;
+}
+
+/**
  * 检查 agent 调用是否提供 description（或其别名 label）。
  *
  * worker-script-builder 取 `firstArg.label || firstArg.description` 作 TUI 显示名，
  * 两者都缺 → node.agent 为空 → /workflows 视图显示 '(unnamed)'。
  *
  * 实现复用 forEachAgentCallRange 的范围定义，在范围内检测 `description:` 或 `label:`
- * 作为对象 key。正则粗略匹配，已知局限：schema 内嵌的 `description:`（JSON Schema 字段
- * 说明）会被误判为"已提供"，导致漏报。漏报仅减少提醒、不产生多余 warning，可接受。
+ * 作为对象 key。两层剔除保证只认 agent 选项层的真正 key：① 字符串字面量（
+ * stripStringsAndComments，MF-4）；② schema 块（stripSchemaBlocks——schema 内嵌的
+ * `description:` 是 JSON Schema 字段说明不是 agent 选项，不剔除会漏报）。
  */
 function checkAgentDescription(source: string): LintFinding[] {
   const lines = source.split("\n");
   const findings: LintFinding[] = [];
   forEachAgentCallRange(source, (startLine, endLine) => {
-    // range 已逐行剔除字符串字面量（MF-4）：schema 内嵌的 `description: "..."` 字符串
-    // 不再被误判为「已提供」——只有真正的对象 key 才算数（修正 I-10 漏报方向）。
-    const range = lines.slice(startLine, endLine + 1).map(stripStringsAndComments).join("\n");
+    // range 逐行剔除字符串字面量（MF-4）后再剔除 schema 块：schema 内嵌的
+    // `description:` 对象 key（JSON Schema 字段说明）不再被误判为「已提供」——
+    // 只有 agent 选项层的真正 description/label key 才算数（修正 I-10 漏报方向）。
+    const range = stripSchemaBlocks(lines.slice(startLine, endLine + 1).map(stripStringsAndComments).join("\n"));
     // 对象以展开开头（agent({ ...call, ... })）：description 来自运行时对象、调用点静态
     // 不可见——无法验证即不报（review-fix-loop 的 agent({ ...call, agent: ... }) 即此形态）。
     if (/\{\s*\.\.\./.test(range)) return;

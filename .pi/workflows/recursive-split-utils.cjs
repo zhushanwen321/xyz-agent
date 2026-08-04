@@ -177,7 +177,7 @@ function buildActionPrompt(node) {
       ``,
       `## 关键提示（wave 层）`,
       `- test action：为本 wave 的代码**产出 vitest 测试文件**（如果还没有测试的话），覆盖 plan 声明的 testCases，跑 \`npx vitest run\` 确认全绿后才调 \`cw test\`——不要只用 testJudgment 文字判定`,
-      `- execute（wave 层）：写代码后 \`git add -A && git commit\`，拿到 commitHash 后调 \`cw execute --unitId ${unitId} --commitHash <hash>\``
+      `- execute（wave 层）：写代码后只 stage 你本次修改的文件：先 \`git status\` 确认改动清单，再 \`git add <文件1> <文件2> ...\`（显式路径）后 commit。**禁止 \`git add -A\` / \`git add .\`**——wave agent 跑在共享工作区（worktree: false），\`git add -A\` 会把其他并发 wave/用户未提交的改动一起 stage，导致 cw 从 commitHash 提取 changedFiles 时归属错乱（影响后续 test/exec-review 判定），并发时还会 "nothing to commit" 失败。拿到 commitHash 后调 \`cw execute --unitId ${unitId} --commitHash <hash>\``
     );
   }
 

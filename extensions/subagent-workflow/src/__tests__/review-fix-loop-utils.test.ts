@@ -28,6 +28,8 @@ import {
   recordAgentClean,
   recordAgentDirty,
   shouldSkipAgent,
+  updateStuckState,
+  resolveBatchTerminated,
 } from "../../workflows/review-fix-loop-utils.cjs";
 
 /** 测试用 fail：与 workflow 内 fail() 同语义（抛错终止） */
@@ -462,5 +464,82 @@ describe("recordAgentClean / recordAgentDirty / shouldSkipAgent", () => {
     state.fixCount = 2;
     recordAgentClean(state, "r", 2); // batch2 末 clean，快照 fixCount=2
     expect(shouldSkipAgent(state.agentStatus["r"], state.fixCount, 3)).toBe(true); // batch3 跳过
+  });
+});
+
+// ── Stuck 检测 / terminated 判定纯函数（MF-5）──────────────────────
+// 原内联在 review-fix-loop.js 主循环里零测试（MF-1/MF-2/MF-3 事故高发区）。
+// 抽为纯函数后与 worker 运行时共用：updateStuckState 只跟踪 must_fix（MF-2 决策），
+// resolveBatchTerminated 是批结束后 5 种 terminated 终态中 max-rounds 分支的判定。
+
+describe("updateStuckState（stuck 检测纯函数）", () => {
+  it("must_fix 连续不降 stuckThreshold 轮 → 第 stuckThreshold 轮 stuck", () => {
+    let s = updateStuckState(-1, 0, 5, 3);
+    expect(s.stuck).toBe(false);
+    expect(s.stuckCount).toBe(0); // 首轮只记基线，不计数
+    expect(s.prevMustFix).toBe(5);
+
+    s = updateStuckState(s.prevMustFix, s.stuckCount, 5, 3);
+    expect(s.stuck).toBe(false);
+    expect(s.stuckCount).toBe(1);
+
+    s = updateStuckState(s.prevMustFix, s.stuckCount, 5, 3);
+    expect(s.stuck).toBe(false);
+    expect(s.stuckCount).toBe(2);
+
+    s = updateStuckState(s.prevMustFix, s.stuckCount, 5, 3);
+    expect(s.stuck).toBe(true);
+    expect(s.stuckCount).toBe(3);
+  });
+
+  it("must_fix 下降 → 计数重置；之后回升不降 → 重新累计（[5,4,4,4] 第 4 轮 stuck）", () => {
+    let s = updateStuckState(-1, 0, 5, 3);
+    s = updateStuckState(s.prevMustFix, s.stuckCount, 4, 3); // 5→4 下降
+    expect(s.stuckCount).toBe(0);
+    expect(s.prevMustFix).toBe(4);
+
+    s = updateStuckState(s.prevMustFix, s.stuckCount, 4, 3); // 4→4 不降
+    expect(s.stuckCount).toBe(1);
+    s = updateStuckState(s.prevMustFix, s.stuckCount, 4, 3);
+    expect(s.stuckCount).toBe(2);
+    s = updateStuckState(s.prevMustFix, s.stuckCount, 4, 3);
+    expect(s.stuck).toBe(true);
+  });
+
+  it("suggestion 变化不触发 stuck（MF-2 回归：签名刻意不含 suggestion）", () => {
+    // 函数签名只接受 must_fix——MF-2 决策是 suggestion 是固定噪声（fix agent 只修
+    // must-fix，suggestion 单调不降），计入 total 会把合法推进误判为 stuck 提前终止。
+    // 若误把 suggestion 计入（suggestion 单调下降会无限重置计数），stuck 永不触发。
+    let s = updateStuckState(-1, 0, 5, 3);
+    s = updateStuckState(s.prevMustFix, s.stuckCount, 5, 3);
+    s = updateStuckState(s.prevMustFix, s.stuckCount, 5, 3);
+    s = updateStuckState(s.prevMustFix, s.stuckCount, 5, 3);
+    expect(s.stuck).toBe(true);
+  });
+
+  it("stuckThreshold=1：单轮不降即 stuck；must_fix 下降则不触发", () => {
+    expect(updateStuckState(5, 0, 5, 1).stuck).toBe(true);
+    expect(updateStuckState(5, 0, 4, 1).stuck).toBe(false);
+  });
+
+  it("prevMustFix 负数（首轮基线）永不触发 stuck", () => {
+    expect(updateStuckState(-1, 999, 0, 1).stuck).toBe(false);
+    expect(updateStuckState(-1, 999, 0, 1).stuckCount).toBe(0);
+  });
+});
+
+describe("resolveBatchTerminated（批结束后 terminated 判定）", () => {
+  it("批未 clean（round >= maxRounds 自然退出）→ max-rounds（fail-fast 不进入后续批）", () => {
+    expect(resolveBatchTerminated(false, "clean")).toBe("max-rounds");
+  });
+
+  it("批 clean → 保持原 terminated（clean）", () => {
+    expect(resolveBatchTerminated(true, "clean")).toBe("clean");
+  });
+
+  it("5 种 terminated 终态中，其余 4 种（review-failure/aggregator-failure/stuck/fix-failure）由更早路径设置并同步 break，不经本判定", () => {
+    // 本判定只在批循环自然结束后调用（此时 terminated 恒为 "clean"）；
+    // 结构化终止路径的 terminated 值在到达这里之前已 break 外层循环。
+    expect(resolveBatchTerminated(true, "clean")).toBe("clean");
   });
 });

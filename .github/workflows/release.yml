@@ -58,6 +58,11 @@ jobs:
           fi
           check_pkg() {
             local pkg="$1" field="$2" version tarball tmpdir
+            shift 2
+            # 限定 grep 范围到源码文件（MF-4 防线）：ask-user 的 README/ARCHITECTURE 文档
+            # 实测含 allowComment 字样，全目录递归 grep 会被文档残留命中——若源码误删该字段
+            # （4.0.0 事故变体），坏版本仍能通过本检查进入 Electron 产物，评论模式静默降级。
+            local include_args=("$@")
             version=$(npm view "${pkg}" version 2>/dev/null || echo "none")
             if [ "${version}" = "none" ]; then
               echo "::error::npm 未发布 ${pkg} —— Electron 发布必须晚于 npm 发布（先发 npm-v* 再发 v*）"
@@ -67,7 +72,7 @@ jobs:
             tmpdir=$(mktemp -d)
             curl -fsSL "${tarball}" -o "${tmpdir}/pkg.tgz"
             tar -xzf "${tmpdir}/pkg.tgz" -C "${tmpdir}"
-            if ! grep -rq "${field}" "${tmpdir}/package"; then
+            if ! grep -rq "${include_args[@]}" "${field}" "${tmpdir}/package"; then
               echo "::error::npm 上的 ${pkg}@${version} 不含 ${field}（发布产物与本地源码契约不一致）—— 先发布 npm-v* 再发 Electron v*"
               rm -rf "${tmpdir}"
               exit 1
@@ -76,8 +81,10 @@ jobs:
             rm -rf "${tmpdir}"
           }
           # ask_user 评论模式契约：协议层与扩展层都必须含 allowComment
-          check_pkg @zhushanwen/pi-ask-user "allowComment"
-          check_pkg @xyz-agent/extension-protocol "allowComment"
+          # 源码范围限定：ask-user 只查 *.ts（index.ts + src/），protocol 只查 dist/ 的
+          # tsup 产物（*.mjs/*.d.mts）——文档（README/ARCHITECTURE）里的字段字样不再放行坏版本
+          check_pkg @zhushanwen/pi-ask-user "allowComment" --include="*.ts"
+          check_pkg @xyz-agent/extension-protocol "allowComment" --include="*.mjs" --include="*.d.mts"
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4

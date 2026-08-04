@@ -248,6 +248,35 @@ function shouldSkipAgent(status, fixCount, batchIndex) {
   return !!(status && status.lastCleanBatch && status.lastCleanBatch < batchIndex && status.lastCleanFixCount === fixCount);
 }
 
+/**
+ * Stuck 检测纯函数（MF-2 决策：只跟踪 must_fix，不跟踪 suggestion——suggestion 是固定噪声，
+ * fix agent 只修 must-fix、suggestion 单调不降，计入 total 会把合法推进（must_fix 每轮在降）
+ * 误判为 stuck 提前终止）。
+ *
+ * @param prevMustFix 上一轮 must_fix（首轮传 -1，不计数直接记录基线）
+ * @param stuckCount 当前连续不降轮数
+ * @param mustFix 本轮 must_fix
+ * @param stuckThreshold 连续不降多少轮判定 stuck（>= 该值）
+ * @returns { stuck, stuckCount, prevMustFix } 新状态；stuck=true 时调用方应结构化终止
+ */
+function updateStuckState(prevMustFix, stuckCount, mustFix, stuckThreshold) {
+  if (prevMustFix >= 0 && mustFix >= prevMustFix) {
+    const nextCount = stuckCount + 1;
+    return { stuck: nextCount >= stuckThreshold, stuckCount: nextCount, prevMustFix: mustFix };
+  }
+  return { stuck: false, stuckCount: 0, prevMustFix: mustFix };
+}
+
+/**
+ * 批结束后 terminated 判定纯函数：批未 clean（while 循环因 round >= maxRounds 自然退出）
+ * → "max-rounds"（fail-fast，不进入后续批）；批 clean → 保持原 terminated（"clean"）。
+ * 其他 terminated 值（review-failure/aggregator-failure/stuck/fix-failure）由更早的结构化
+ * 终止路径设置并同步 break 外层循环，不会到达本判定。
+ */
+function resolveBatchTerminated(batchClean, terminated) {
+  return !batchClean ? "max-rounds" : terminated;
+}
+
 module.exports = {
   TARGET_TYPES,
   VALID_ARG_KEYS,
@@ -267,4 +296,6 @@ module.exports = {
   recordAgentClean,
   recordAgentDirty,
   shouldSkipAgent,
+  updateStuckState,
+  resolveBatchTerminated,
 };
