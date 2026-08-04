@@ -57,7 +57,56 @@ type JsonSchema = {
   type?: string;
   properties?: Record<string, JsonSchema>;
   items?: JsonSchema;
+  oneOf?: JsonSchema[];
+  required?: string[];
 };
+
+/**
+ * 轻量 schema 契约校验（m8）：递归校验 parsed 是否符合 opts.schema，防止 mock runner
+ * 绕过权威 ajv 校验掩盖「实现与契约脱节」（severity 对象被拒、report_content 丢失等
+ * 事故）。支持 type/oneOf/required/properties/items；description 等无关键忽略，
+ * 多出的属性不报错。校验失败抛 Error（测试立即失败，message 含 SCHEMA CONTRACT VIOLATION）。
+ */
+function miniValidator(schema: unknown, value: unknown, path: string): void {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) return; // 无契约不校验
+  const s = schema as JsonSchema;
+  if (Array.isArray(s.oneOf) && s.oneOf.length > 0) {
+    const anyPass = s.oneOf.some((alt) => {
+      try {
+        miniValidator(alt, value, path);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    if (!anyPass) throw new Error(`SCHEMA CONTRACT VIOLATION: ${path} (no oneOf branch matched)`);
+    return;
+  }
+  if (s.type) {
+    const ok =
+      (s.type === "string" && typeof value === "string") ||
+      (s.type === "number" && typeof value === "number") ||
+      (s.type === "integer" && typeof value === "number" && Number.isInteger(value)) ||
+      (s.type === "boolean" && typeof value === "boolean") ||
+      (s.type === "object" && value !== null && typeof value === "object" && !Array.isArray(value)) ||
+      (s.type === "array" && Array.isArray(value));
+    if (!ok) throw new Error(`SCHEMA CONTRACT VIOLATION: ${path} (expected ${s.type})`);
+  }
+  const rec = value as Record<string, unknown> | null;
+  if (Array.isArray(s.required) && rec !== null && typeof rec === "object") {
+    for (const key of s.required) {
+      if (!(key in rec)) throw new Error(`SCHEMA CONTRACT VIOLATION: ${path}.${key} (missing required property)`);
+    }
+  }
+  if (s.properties && rec !== null && typeof rec === "object" && !Array.isArray(rec)) {
+    for (const [key, sub] of Object.entries(s.properties)) {
+      if (rec[key] !== undefined) miniValidator(sub, rec[key], `${path}.${key}`);
+    }
+  }
+  if (s.items && Array.isArray(value)) {
+    value.forEach((item, i) => miniValidator(s.items, item, `${path}[${i}]`));
+  }
+}
 
 /** 按 schema 形状识别调用阶段（review / aggregator / fix）。 */
 function classifyCall(opts: { schema?: unknown }): "review" | "aggregate" | "fix" {
@@ -99,6 +148,9 @@ function makeScenarioRunner(scenario: Scenario) {
     } else {
       parsed = scenario.fix();
     }
+    // m8：schema 契约校验——mock 返回的 parsedOutput 必须符合 workflow 声明的权威 schema
+    // （防止未来 schema 收紧时 E2E 仍绿）。校验失败抛错让测试立即失败。
+    miniValidator(opts.schema, parsed, "parsedOutput");
     return {
       content: "mock",
       parsedOutput: parsed,
@@ -208,7 +260,12 @@ const RUN_ID = () => "rfl-e2e-" + Date.now() + "-" + Math.floor(Math.random() * 
 
 describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () => {
   it("sanity: chain 经本文件基础设施可跑（helper 自检）", async () => {
-    const runner = makeScenarioRunner({ review: [() => ({})], aggregate: () => ({}), fix: () => ({}) });
+    // 返回超集对象同时满足 chain 三段 schema（analyze/transform/synthesize 均被分类为 review）
+    const runner = makeScenarioRunner({
+      review: [() => ({ insights: "i", keyPoints: [], plan: "p", actions: [], summary: "s", recommendation: "r" })],
+      aggregate: () => ({}),
+      fix: () => ({}),
+    });
     const deps = makeDeps(runner);
     const result = await runAndWait("chain", { task: "x" }, deps, undefined, RUN_TIMEOUT_MS);
     expect(result.reason).toBe("completed");

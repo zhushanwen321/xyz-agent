@@ -158,7 +158,7 @@ const reviewerSchema = {
         type: "object",
         properties: {
           prev_id: { type: "string", description: "Issue id from the previous round (reconciliation continuation)" },
-          status: { type: "string", description: "fixed / not-fixed / regressed — only fixed counts as resolved; fix result claiming fixed is NOT evidence" },
+          status: { type: "string", description: "fixed / not-fixed / regressed / escalate — only fixed counts as resolved; fix result claiming fixed is NOT evidence; escalate = a DEFERRED issue whose context was changed by this round's fix (workflow re-opens it for fixing)" },
           evidence: { type: "string", description: "What was read/confirmed (file + what changed)" },
         },
         required: ["prev_id", "status"],

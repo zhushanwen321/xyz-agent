@@ -410,6 +410,16 @@ describe("buildR2ReviewPrompt", () => {
     expect(p).toContain("reporting 0 new issues when nothing is wrong is a");
     expect(p).toContain("business-impact evidence chain");
   });
+  it("escalate 升级教学（m1）：PART 1 对账教学 + PART 2 结构化 status=\"escalate\" 声明", () => {
+    const p = buildR2ReviewPrompt(args);
+    // PART 1：deferred 条目可声明 escalate（重新 open）
+    expect(p).toContain("escalate: for a DEFERRED issue whose context was changed by this round's fix");
+    expect(p).toContain('status "escalate" (re-opens it for fixing)');
+    // PART 2：prose 格式保留提示 + 结构化声明强制（仅 prose 不会被处理）
+    expect(p).toContain("Escalate: <id> → must-fix, reason: context changed by R<n> fix");
+    expect(p).toContain('status="escalate"');
+    expect(p).toContain("A prose-only escalation in the report is NOT processed");
+  });
   it("known-remaining 为空 → (none) 占位", () => {
     const p = buildR2ReviewPrompt({ ...args, knownRemaining: [] });
     expect(p).toContain("- (none)");

@@ -418,6 +418,8 @@ function buildReconciliationSection({ aggPath, fixResult }) {
     "- The reconciliation table is MANDATORY: every previous issue_id must have a status entry.",
     "- State ID continuations explicitly: if a new finding IS the same as a previous issue, declare it",
     "  (prev_id) instead of re-reporting it fresh.",
+    "- escalate: for a DEFERRED issue whose context was changed by this round's fix, declare",
+    "  status \"escalate\" (re-opens it for fixing) — do NOT just re-report it as new.",
   ].join("\n");
 }
 
@@ -448,6 +450,9 @@ function buildR2ReviewPrompt({ header, round, max, roundDir, reportFile, aggPath
     "- Do NOT re-report deferred issues, and do NOT re-word them under a different angle to report them again.",
     "- Escalation is only allowed if THIS round's fix changed the relevant context: declare explicitly",
     "  'Escalate: <id> → must-fix, reason: context changed by R<n> fix: ...'.",
+    "- Structured declaration is REQUIRED: also set status=\"escalate\" for that prev_id in your JSON",
+    "  `reconciliation` field. A prose-only escalation in the report is NOT processed — the workflow",
+    "  only reads status=\"escalate\" from the reconciliation table.",
     "",
     "─── PART 3: NEW FINDINGS (convergent hunt — keep finding real issues) ──",
     "- Report new issues as usual: critical/major/minor unchanged.",
