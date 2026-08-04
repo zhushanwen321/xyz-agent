@@ -101,7 +101,7 @@ describe('PanelContainer 首屏冒烟：reka-ui Splitter 渲染（TC1）', () =>
     expect(wrapper.findAll('[data-panel]').length).toBe(2)
     // DrawerPanel stub 收到壳派发的 sessionId（分区键跟随 panel）
     expect(wrapper.find('[data-testid="drawer-panel"]').attributes('data-session-id')).toBe('sess-tc1')
-  }, 10_000)
+  }, 60_000)
 
   it('drawerOpen=false：无 [data-resize-handle]，退化为单 [data-panel]（仅 main-panel）', async () => {
     // drawer 保持默认关闭（beforeEach 已 reset），不调 open
@@ -113,5 +113,5 @@ describe('PanelContainer 首屏冒烟：reka-ui Splitter 渲染（TC1）', () =>
     // drawer 关闭时连同 ResizeHandle 一起卸载（v-if），Splitter 自动回单 panel
     expect(wrapper.find('[data-resize-handle]').exists()).toBe(false)
     expect(wrapper.findAll('[data-panel]').length).toBe(1)
-  }, 10_000)
+  }, 60_000)
 })

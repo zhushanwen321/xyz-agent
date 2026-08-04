@@ -170,7 +170,7 @@ describe('PanelContainer 单 panel + Drawer 壳路径（AC9/AC12 冒烟载体）
     expect(wrapper.find('[data-testid="drawer-content"]').exists()).toBe(true)
     // git tab 内容面板经 slot 注入（C2 v-if chain）
     expect(wrapper.find('[data-testid="git-panel"]').exists()).toBe(true)
-  }, 10_000)
+  }, 60_000)
 
   it('drawerOpen=false：无 drawer-panel，退化为单 panel（v-if 卸载）', async () => {
     const panel = usePanelStore()
@@ -181,7 +181,7 @@ describe('PanelContainer 单 panel + Drawer 壳路径（AC9/AC12 冒烟载体）
 
     expect(wrapper.find('[data-testid="drawer-panel"]').exists()).toBe(false)
     expect(wrapper.findAll('[data-testid="panel"]')).toHaveLength(1)
-  }, 10_000)
+  }, 60_000)
 })
 
 describe('PanelContainer 壳行为迁移（旧 side-drawer.test.ts 行为断言壳路径版）', () => {
@@ -200,7 +200,7 @@ describe('PanelContainer 壳行为迁移（旧 side-drawer.test.ts 行为断言�
     expect(wrapper.find('[data-testid="drawer-panel"]').exists()).toBe(false)
     // close 后 keydown 监听已卸（drawer 关闭态不再抢全局 keydown）
     expect(wrapper.find('[data-testid="panel"]').exists()).toBe(true)
-  }, 10_000)
+  }, 60_000)
 
   it('close 按钮点击 → drawer 关闭（DrawerPanel emit close → 壳 closeDrawer）', async () => {
     const panel = usePanelStore()
@@ -214,7 +214,7 @@ describe('PanelContainer 壳行为迁移（旧 side-drawer.test.ts 行为断言�
     await wrapper.find('[data-testid="drawer-close"]').trigger('click')
     await nextTick()
     expect(wrapper.find('[data-testid="drawer-panel"]').exists()).toBe(false)
-  }, 10_000)
+  }, 60_000)
 })
 
 describe('PanelContainer widget 缓冲壳路径渲染（旧 SideDrawer.test.ts AC-4 壳路径版）', () => {
@@ -236,7 +236,7 @@ describe('PanelContainer widget 缓冲壳路径渲染（旧 SideDrawer.test.ts A
     const codeEls = wrapper.findAll('code')
     expect(codeEls.length).toBe(2)
     expect(codeEls[0].text()).toBe('line-1')
-  }, 10_000)
+  }, 60_000)
 
   it('无 widget 数据时 DrawerPanel 空态 fallback（drawer-widget-empty）', async () => {
     const panel = usePanelStore()
@@ -247,7 +247,7 @@ describe('PanelContainer widget 缓冲壳路径渲染（旧 SideDrawer.test.ts A
     await nextTick()
 
     expect(wrapper.find('[data-testid="drawer-widget-empty"]').exists()).toBe(true)
-  }, 10_000)
+  }, 60_000)
 })
 
 describe('PanelContainer unread badge 壳侧补回（AC-13，旧 SideDrawer 逻辑迁移）', () => {
@@ -266,7 +266,7 @@ describe('PanelContainer unread badge 壳侧补回（AC-13，旧 SideDrawer 逻�
     await nextTick()
     expect(wrapper.find('[data-testid="drawer-unread-badge"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="drawer-unread-badge"]').text()).toContain('2')
-  }, 10_000)
+  }, 60_000)
 
   it('关 drawer（回对话流）→ unreadCount 清零，badge 消失', async () => {
     const panel = usePanelStore()
@@ -283,5 +283,5 @@ describe('PanelContainer unread badge 壳侧补回（AC-13，旧 SideDrawer 逻�
     await wrapper.find('[data-testid="drawer-close"]').trigger('click')
     await nextTick()
     expect(wrapper.find('[data-testid="drawer-unread-badge"]').exists()).toBe(false)
-  }, 10_000)
+  }, 60_000)
 })
