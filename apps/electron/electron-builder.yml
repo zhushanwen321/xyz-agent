@@ -97,9 +97,9 @@ mac:
         - arm64
   category: public.app-category.developer-tools
   minimumSystemVersion: 12.0.0
-  # 固定文件名（去 ${version}）支持自动升级 + releases/latest/download 静态 URL。
-  # zip 和 dmg 共用此 pattern，${ext} 由 electron-builder 按 target 解析为 .zip / .dmg。
-  artifactName: xyz-agent-mac-arm64.${ext}
+  # 文件名带版本号（release asset 归档识别）。release-checker 用后缀 pattern 匹配
+  # （-mac-arm64.zip），不依赖固定名。${ext} 由 electron-builder 按 target 解析为 .zip / .dmg。
+  artifactName: xyz-agent-${version}-mac-arm64.${ext}
 
 win:
   target:
@@ -109,14 +109,14 @@ win:
     - target: zip
       arch:
         - x64
-  # 固定文件名（去 ${version}）支持自动升级 + releases/latest/download 静态 URL。
-  # nsis target 的 ${ext} 解析为 exe，zip target 的 ${ext} 解析为 zip。
-  artifactName: xyz-agent-setup-${arch}.${ext}
+  # 文件名带版本号（release asset 归档识别）。release-checker 用后缀 pattern 匹配
+  # （-setup-x64.exe）。nsis target 的 ${ext} 解析为 exe，zip target 的 ${ext} 解析为 zip。
+  artifactName: xyz-agent-${version}-setup-${arch}.${ext}
 
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-  artifactName: xyz-agent-setup-${arch}.${ext}
+  artifactName: xyz-agent-${version}-setup-${arch}.${ext}
 
 linux:
   target:
@@ -127,11 +127,11 @@ linux:
       arch:
         - x64
   category: Development
-  # 固定文件名（去 ${version}）支持自动升级 + releases/latest/download 静态 URL。
-  # ${arch} 由 electron-builder 按 target ext 解析（getArtifactArchName）：
-  # AppImage(x64) -> x86_64，deb(x64) -> amd64，${ext} 解析为 AppImage / deb。
-  # 产物：xyz-agent-x86_64.AppImage 和 xyz-agent-amd64.deb。
-  artifactName: xyz-agent-${arch}.${ext}
+  # 文件名带版本号（release asset 归档识别）。release-checker 用后缀 pattern 匹配
+  # （-x86_64.AppImage / -amd64.deb）。${arch} 由 electron-builder 按 target ext 解析
+  # （getArtifactArchName）：AppImage(x64) -> x86_64，deb(x64) -> amd64，
+  # ${ext} 解析为 AppImage / deb。产物：xyz-agent-<version>-x86_64.AppImage 等。
+  artifactName: xyz-agent-${version}-${arch}.${ext}
 
 # 本地构建时 electron-builder 需要至少一个 publish provider
 # 否则 updateInfoBuilder 会因 channel === null 崩溃

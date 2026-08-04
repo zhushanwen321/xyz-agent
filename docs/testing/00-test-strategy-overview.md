@@ -341,8 +341,12 @@ pnpm run build:e2e   # 或删除 dist/ 强制 globalSetup 重建
 | spec | 用例数 | 覆盖功能 | 状态 |
 |---|---|---|---|
 | `workspace-real.spec.ts` | 1 | 跨进程持久化（record → 重启 → list 一致） | ❌ 需真实 runtime（`ECONNREFUSED`） |
+| `ask-user-real.spec.ts` | 3 | ask-user 协议透传（无 allowComment/__comment）+ overlay 渲染 + UI 交互闭环 | ✅ 全绿（需 LLM，flaky skip） |
+| `workflow-thinkinglevel-real.spec.ts` | 3 | workflow agent() thinkingLevel 端到端（state 请求值 + pi 子进程 thinking_level_change + 完整跑通） | ✅ 全绿（需 LLM，flaky skip） |
 
-real 轨当前只有 1 个自动化用例，且需要真实 runtime 在 `3310` 端口运行。real 轨的定位是**验证 mock 轨覆盖不到的盲区**（runtime/pi 真实协议、WS 生命周期、文件系统真实读写），不适合做全量自动化。
+real 轨自动化 spec 的定位是**验证 mock 轨覆盖不到的盲区**（runtime/pi 真实协议、真实 LLM tool 调用、pi 自身产物文件）。由于依赖真实 LLM provider（慢、flaky），运行方式和 bring-up 经验见 [11-real-e2e-specs.md](./11-real-e2e-specs.md)。
+
+real 轨的定位是**验证 mock 轨覆盖不到的盲区**（runtime/pi 真实协议、WS 生命周期、文件系统真实读写），不适合做全量自动化。
 
 ### 7.3 real 轨策略：手工测试文档驱动
 
@@ -363,3 +367,4 @@ real E2E 依赖真实 runtime + pi + provider 配置，环境敏感、CI 不稳�
 - 搜索浮层 → [06-search-modal.md](./06-search-modal.md)
 - GUI 组件渲染 → [07-gui-components.md](./07-gui-components.md)
 - real 轨手工测试 → [08-real-track-manual.md](./08-real-track-manual.md)
+- real 轨 E2E 自动化 spec → [11-real-e2e-specs.md](./11-real-e2e-specs.md)

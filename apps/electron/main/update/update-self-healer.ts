@@ -25,11 +25,23 @@
  * - result.json 解析失败时，若内容含 'replacing' 且 .old 存在，仍尝试回滚
  *   （写入中断的半截 JSON 不应让破损 app 蒙混过关）
  *
- * 依赖方向：update-self-healer → constants + node:fs/path
+ * 依赖方向：update-self-healer → constants + types + compare-versions + electron + node:fs/path
  */
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { UPDATE_RESULT_FILE } from './constants.js'
+import { compare } from 'compare-versions'
+import { app } from 'electron'
+import {
+  LINUX_UPDATER_LOG_PATH,
+  LINUX_UPDATER_SCRIPT_PATH,
+  PENDING_UPDATE_FILE,
+  PRELOADED_UPDATE_FILE,
+  UPDATE_DIR,
+  UPDATE_RESULT_FILE,
+  UPDATER_LOG_PATH,
+  UPDATER_SCRIPT_PATH,
+} from './constants.js'
+import type { UpdateResultStatus } from './types.js'
 
 /** update-result.json 的合法结构（运行时校验） */
 interface UpdateResultData {
@@ -146,6 +158,137 @@ export async function maybeRollbackInterruptedUpdate(): Promise<boolean> {
     // 自愈失败不阻塞启动：仅记录，靠下次启动重试或用户手动恢复
     console.error('[update-self-healer] failed:', e)
     return false
+  }
+}
+
+/** cleanupCompletedUpdate 需处理的终态集合（replacing 由 maybeRollbackInterruptedUpdate 处理） */
+const TERMINAL_CLEANUP_STATUSES: readonly UpdateResultStatus[] = [
+  'done',
+  'failed',
+  'rolled-back',
+  'no-op',
+]
+
+/**
+ * 幂等删除：文件不存在(ENOENT)静默，其他错误 rethrow。
+ *
+ * 升级产物清理场景下，文件已被外部清理（用户手动删 / 上次清理已删）是常态而非异常，
+ * 用本函数避免对每个产物逐一 existsSync 判空。仅吞 ENOENT（预期），其他 IO 错误需暴露
+ * （交由 {@link cleanupCompletedUpdate} 的外层 try/catch 记录）。
+ */
+export function ignoreENOENT(target: string): void {
+  try {
+    unlinkSync(target)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
+  }
+}
+
+/**
+ * 启动时清理已完成/失败的升级产物。
+ *
+ * 修复根因：升级成功后 update-result.json status='done'，但 maybeRollbackInterruptedUpdate
+ * 只处理 'replacing'，done/failed/rolled-back/no-op 终态直接 return false 不清理 → 170MB zip
+ * 永久残留 + preloaded-update.json 残留导致下次启动误恢复「已下载」态。本函数在
+ * maybeRollbackInterruptedUpdate 之后调用，清理这些终态产物。
+ *
+ * 清理矩阵（终态简化为「全部清含 result 自身」，仅 done 做版本校验）：
+ * - done + app.getVersion() >= data.version（真 done，已升级到目标版本）→ 清全部含 result
+ * - done + app.getVersion() < data.version（假 done，app 仍旧版）→ 不清（result 未生效/过期）
+ * - failed / rolled-back / no-op → 清全部含 result
+ * - replacing → 不归本函数（maybeRollbackInterruptedUpdate 处理）
+ *
+ * 路径注入防护：删除 preloaded 记录的下载 zip 前，校验其 path.resolve 结果在 UPDATE_DIR 之内，
+ * 不在则 warn 跳过（防 preloaded 文件被篡改指向任意路径导致误删用户文件）。
+ *
+ * 永不抛错、永不阻塞启动：整体 try/catch + console.warn。在 main.ts 的 whenReady 内、
+ * maybeRollbackInterruptedUpdate 之后调用。
+ */
+export async function cleanupCompletedUpdate(): Promise<void> {
+  try {
+    if (!existsSync(UPDATE_RESULT_FILE)) return
+
+    let data: UpdateResultData
+    try {
+      data = JSON.parse(readFileSync(UPDATE_RESULT_FILE, 'utf-8')) as UpdateResultData
+    } catch {
+      // 文件读失败（existsSync 与 read 间竞态/权限）/ JSON 解析失败（半截写入）：均视为无可清理，no-op
+      return
+    }
+
+    const status = typeof data.status === 'string' ? (data.status as UpdateResultStatus) : undefined
+    if (!status || !TERMINAL_CLEANUP_STATUSES.includes(status)) {
+      return // replacing / 未知状态：不归本函数
+    }
+
+    // done 需版本校验：仅当 app 确已升级到目标版本才清理（version <= current）。
+    // 非 semver 版本号无法判定真假 done → 保守不清（与 readPendingUpdate 的 catch+keep 对称）。
+    if (status === 'done') {
+      let realDone = false
+      try {
+        realDone = compare(
+          app.getVersion(),
+          typeof data.version === 'string' ? data.version : '',
+          '>=',
+        )
+      } catch (e) {
+        console.warn('[update-self-healer] done status version compare failed, skip cleanup:', e)
+        return
+      }
+      if (!realDone) return // 假 done：app 仍旧版，result 可能未生效，不清
+    }
+
+    // ── 清理产物 ────────────────────────────────────────────────
+    // 1. preloaded-update.json：先读其 filePath（指向下载 zip），再删 json + zip
+    if (existsSync(PRELOADED_UPDATE_FILE)) {
+      let preloadedFilePath: string | null = null
+      try {
+        const pre = JSON.parse(readFileSync(PRELOADED_UPDATE_FILE, 'utf-8')) as unknown
+        if (
+          pre &&
+          typeof pre === 'object' &&
+          typeof (pre as Record<string, unknown>).filePath === 'string'
+        ) {
+          preloadedFilePath = (pre as Record<string, unknown>).filePath as string
+        }
+      } catch (e) {
+        // preloaded 损坏：无法取得可信 filePath，仅删 json 本身（zip 留待下次或手动清理）
+        console.warn('[update-self-healer] preloaded parse failed, skip zip deletion:', e)
+      }
+      // 删下载 zip（路径注入防护：必须在 UPDATE_DIR 内）
+      if (preloadedFilePath) {
+        const resolved = path.resolve(preloadedFilePath)
+        const updateDirPrefix = path.resolve(UPDATE_DIR) + path.sep
+        if (resolved.startsWith(updateDirPrefix)) {
+          ignoreENOENT(resolved)
+        } else {
+          console.warn(`[update-self-healer] skip download zip outside UPDATE_DIR: ${resolved}`)
+        }
+      }
+      ignoreENOENT(PRELOADED_UPDATE_FILE)
+    }
+
+    // 2. 其余产物（固定路径，无注入风险）
+    ignoreENOENT(PENDING_UPDATE_FILE)
+    ignoreENOENT(UPDATER_SCRIPT_PATH)
+    ignoreENOENT(LINUX_UPDATER_SCRIPT_PATH)
+    ignoreENOENT(UPDATER_LOG_PATH)
+    ignoreENOENT(LINUX_UPDATER_LOG_PATH)
+
+    // 3. 下载中断残留（.downloading 临时文件）
+    if (existsSync(UPDATE_DIR)) {
+      for (const f of readdirSync(UPDATE_DIR)) {
+        if (f.endsWith('.downloading')) {
+          ignoreENOENT(path.join(UPDATE_DIR, f))
+        }
+      }
+    }
+
+    // 4. result 自身最后删（标记本次清理完成；下次启动无 result → no-op）
+    ignoreENOENT(UPDATE_RESULT_FILE)
+  } catch (e) {
+    // 永不阻塞启动：仅 warn
+    console.warn('[update-self-healer] cleanupCompletedUpdate failed:', e)
   }
 }
 

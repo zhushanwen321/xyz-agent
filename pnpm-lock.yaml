@@ -481,6 +481,9 @@ importers:
       clsx:
         specifier: ^2
         version: 2.1.1
+      compare-versions:
+        specifier: ^6.1.1
+        version: 6.1.1
       markdown-it:
         specifier: ^14.2.0
         version: 14.3.0
