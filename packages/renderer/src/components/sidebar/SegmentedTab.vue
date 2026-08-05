@@ -1,7 +1,7 @@
 <template>
   <!--
     展示组件 · segmented 视图切换 tab（v6-master-spec §5.3）。
-    icon-only 模式：4 tab 等宽均分（flex-1），只显示 icon + count 数字，label 收进 title。
+    icon-only 模式：4 tab 等宽均分（flex-1），只显示 icon，label 收进 title（count 数字已移除，克制原则）。
     外层凹陷容器 bg-bg-input + rounded-lg + p-[3px]；active = bg-bg-elevated 中性浮起（去蓝染）。
     inactive hover 只提亮文字（text-neutral-fg），不加底色——凹陷槽内加底色会显脏（demo SegmentedTab 同源）。
   -->
@@ -21,13 +21,8 @@
     >
       <component :is="tab.icon" class="size-[15px] shrink-0" />
       <span
-        v-if="tab.count > 0"
-        class="font-mono text-[10px]"
-        :class="modelValue === tab.value ? 'text-neutral-fg opacity-80' : 'text-neutral-dim opacity-70'"
-      >{{ tab.count }}</span>
-      <span
         v-if="tab.badge"
-        class="absolute right-1 top-1 size-[7px] rounded-full bg-accent"
+        class="absolute right-1 top-1 size-[7px] rounded-full bg-accent animate-[pulse-dot_1.8s_ease-in-out_infinite] motion-reduce:animate-none"
       />
     </Button>
   </div>

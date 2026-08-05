@@ -36,7 +36,7 @@ describe('SegmentedTab', () => {
     expect(buttons[3].attributes('title')).toBe('工作流')
   })
 
-  it('subagents tab 含 count 数字', () => {
+  it('count 数字不再渲染（克制原则：对切换决策无用、制造视觉噪音）', () => {
     const wrapper = mount(SegmentedTab, {
       props: {
         modelValue: 'subagents' as SidebarTab,
@@ -48,12 +48,14 @@ describe('SegmentedTab', () => {
     })
 
     const buttons = wrapper.findAll('button')
-    // 第三个 tab（subagents）的 count 文本含 '2'
-    const subagentBtn = buttons[2]
-    expect(subagentBtn.text()).toContain('2')
+    // count span 已删：所有 tab 按钮都不渲染 count 数字（此前 subagents 按钮 text 含 '2'）
+    for (const btn of buttons) {
+      expect(btn.text()).not.toContain('2')
+      expect(btn.text()).not.toContain('6')
+    }
   })
 
-  it('subagents count > 0 时显示 badge dot', () => {
+  it('subagents count > 0 时显示 badge dot（带 pulse 动画）', () => {
     const wrapper = mount(SegmentedTab, {
       props: {
         modelValue: 'sessions' as SidebarTab,
@@ -69,9 +71,12 @@ describe('SegmentedTab', () => {
 
     const buttons = wrapper.findAll('button')
     const subagentBtn = buttons[2]
-    // badge dot 是 absolute 定位的 span（组件 class: absolute right-0 top-0）
-    const badge = subagentBtn.find('.absolute.right-0.top-0')
+    // badge dot 是 absolute 定位的 span（组件 class: absolute right-1 top-1）
+    const badge = subagentBtn.find('.absolute.right-1.top-1')
     expect(badge.exists()).toBe(true)
+    // pulse 动画 class（keyframes pulse-dot 在 style.css:375，引用范式同 SessionItem.vue:68）
+    expect(badge.classes()).toContain('animate-[pulse-dot_1.8s_ease-in-out_infinite]')
+    expect(badge.classes()).toContain('motion-reduce:animate-none')
   })
 
   it('subagents count = 0 时不显示 badge dot', () => {
@@ -89,7 +94,7 @@ describe('SegmentedTab', () => {
 
     const buttons = wrapper.findAll('button')
     const subagentBtn = buttons[2]
-    const badge = subagentBtn.find('.absolute.right-0.top-0')
+    const badge = subagentBtn.find('.absolute.right-1.top-1')
     expect(badge.exists()).toBe(false)
   })
 
