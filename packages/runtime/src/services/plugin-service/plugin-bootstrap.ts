@@ -42,6 +42,21 @@ import { toErrorMessage } from '../../utils/errors.js'
 const rpcClient = new PluginRpcClient()
 const loadedModules = new Map<string, PluginModule>()
 
+/**
+ * post 通道（模块级注入）：Worker 版默认 parentPort.postMessage，
+ * 子进程版（plugin-bootstrap-process.ts）经 setPostMessage 注入 process.send。
+ * handleMessage 只经 post() 发消息，与传输解耦——单一真相，零复制。
+ */
+let post: (msg: unknown) => void = (msg) => {
+  parentPort?.postMessage(msg)
+}
+
+/** 注入 post 通道（子进程版 bootstrap 用；Worker 版无需调用，默认 parentPort） */
+export function setPostMessage(fn: (msg: unknown) => void): void {
+  post = fn
+}
+
+
 /** Worker 本地 tool handler 注册表 */
 const toolHandlers = new Map<string, ToolExecuteHandler>()
 
@@ -60,7 +75,7 @@ if (parentPort) {
 
   parentPort.on('message', (msg: HostToWorkerMessage) => {
     handleMessage(msg).catch((e: unknown) => {
-      parentPort!.postMessage({
+      post({
         type: 'fatal_error',
         error: String(e),
         stack: e instanceof Error ? e.stack : undefined,
@@ -81,9 +96,9 @@ export async function handleMessage(msg: HostToWorkerMessage): Promise<void> {
         const moduleUrl = pathToFileURL(msg.pluginPath).href
         const mod = (await import(moduleUrl)) as PluginModule
         loadedModules.set(msg.pluginId, mod)
-        parentPort!.postMessage({ type: 'loaded', pluginId: msg.pluginId })
+        post({ type: 'loaded', pluginId: msg.pluginId })
       } catch (e: unknown) {
-        parentPort!.postMessage({ type: 'error', pluginId: msg.pluginId, error: String(e) })
+        post({ type: 'error', pluginId: msg.pluginId, error: String(e) })
       }
       break
     }
@@ -91,15 +106,15 @@ export async function handleMessage(msg: HostToWorkerMessage): Promise<void> {
     case 'activate': {
       const mod = loadedModules.get(msg.pluginId)
       if (!mod) {
-        parentPort!.postMessage({ type: 'error', pluginId: msg.pluginId, error: 'Module not loaded' })
+        post({ type: 'error', pluginId: msg.pluginId, error: 'Module not loaded' })
         break
       }
       try {
         const context = createPluginContext(msg.pluginId, msg.pluginDir)
         await mod.activate(context)
-        parentPort!.postMessage({ type: 'activated', pluginId: msg.pluginId })
+        post({ type: 'activated', pluginId: msg.pluginId })
       } catch (e: unknown) {
-        parentPort!.postMessage({ type: 'error', pluginId: msg.pluginId, error: String(e) })
+        post({ type: 'error', pluginId: msg.pluginId, error: String(e) })
       }
       break
     }
@@ -111,11 +126,11 @@ export async function handleMessage(msg: HostToWorkerMessage): Promise<void> {
           await mod.deactivate()
         } catch (e: unknown) {
           // deactivate 失败时发送 error 而非 deactivated
-          parentPort!.postMessage({ type: 'error', pluginId: msg.pluginId, error: String(e) })
+          post({ type: 'error', pluginId: msg.pluginId, error: String(e) })
           break
         }
       }
-      parentPort!.postMessage({ type: 'deactivated', pluginId: msg.pluginId })
+      post({ type: 'deactivated', pluginId: msg.pluginId })
       break
     }
 
@@ -177,12 +192,12 @@ function postRpcResponse(
   // JSON-RPC id: 项目内约定为 number，RpcResponse.id 类型为 number
   const numericId = typeof id === 'number' ? id : Number(id)
   if (error) {
-    parentPort!.postMessage({
+    post({
       type: 'rpc',
       response: { jsonrpc: '2.0', id: numericId, error },
     })
   } else {
-    parentPort!.postMessage({
+    post({
       type: 'rpc',
       response: { jsonrpc: '2.0', id: numericId, result },
     })
@@ -249,10 +264,11 @@ function createStateStorageProxy(
 /**
  * 初始化 sandbox 环境：拦截 require 调用和替换 process.env。
  *
- * 在 Worker Thread 的 load 阶段调用，确保后续插件代码的 require
- * 受到 BLOCKED_BUILTINS 和路径边界约束。
+ * 在 sandbox 模式的 Worker/子进程中于 load 阶段调用（handleMessage load 分支），
+ * 确保后续插件代码的 require 受到 BLOCKED_BUILTINS 和路径边界约束。
+ * 导出供 plugin-bootstrap-process.ts 复用（子进程版与 Worker 版同一实现）。
  */
-function initSandbox(pluginDir: string): void {
+export function initSandbox(pluginDir: string): void {
   // Worker Thread 中可用 require()，此处是同步操作
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const Module = require('node:module')
