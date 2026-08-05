@@ -26,11 +26,10 @@
       :aria-label="t('panel.sideDrawer.title')"
       data-testid="drawer-panel"
     >
-      <!-- header：tab 栏（仅 icon，左）+ 钉住/关闭（右）。label 收进 title 供 hover 查看。 -->
-      <!-- §5.5 分层策略：header 用 bg-surface-2 浮起分层（去 border-b hairline）。
-           escape hatch scoped（见文件底部）：header 浮起在 SplitterPanel overflow:hidden 容器内，
-           需配合 aside 投影构成 D2 一体化生长的弱分隔语义。 -->
-      <header class="flex items-center gap-1 bg-surface-2 px-2 py-1.5">
+      <!-- L1 tab 栏：drawer 内部子区（D2 一体化后不再作独立 header）。
+           与 main 共享统一 surface 外壳，去 bg-surface-2 浮起分层，改用 border-b hairline 与内容区分隔（对齐 demo SideDrawer .sd-l1）。
+           escape hatch scoped（见文件底部）：aside 投影构成 D2 一体化生长的弱分隔语义。 -->
+      <div class="flex items-center gap-1 border-b border-border px-2 py-1.5">
         <div class="flex flex-1 gap-0.5">
           <Button
             v-for="tab in tabs"
@@ -69,7 +68,7 @@
         <!-- header-extra：壳层注入点（W4）——unread badge 等桌面形态壳状态经此挂载（C3：壳层职责）。
              可选具名 slot，无默认内容；ui 容器零 chatStore 感知（D3 纯净性）。 -->
         <slot name="header-extra" />
-      </header>
+      </div>
 
       <!-- 内容区：壳按 tab 经默认 slot 注入桌面独占面板（Git/Terminal/Browser 等）；
            slot 无有效内容时（v-if chain 全 false / 跨端不传 slot）回退内置 widget 内容区（gui→lines→空态）。

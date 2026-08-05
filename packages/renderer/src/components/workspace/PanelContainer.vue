@@ -4,6 +4,11 @@
     v2：移除 split 后恒单 Panel（撑满），不再有单/双 panel 状态机。
     active panel 的 sessionId 跟随 session store.activeId（sidebar 选 session → 载入 panel）。
 
+    共享 header（D2 一体化）：PanelHeader 提升到 SplitterGroup 之上，横跨 main + drawer 全宽。
+    main 与 drawer 共处 MainPanel 的统一 surface 外壳（border/radius/shadow 只在最外层 MainPanel），
+    drawer 从 main 右缘生长挤占 main 宽度，不再各有独立 header（对齐 demo ShellView 单外壳 + 单 header）。
+    SplitterGroup 仍用于 main/drawer 宽度调整，视觉上一体化（Panel section 与 DrawerPanel 均无自身 border/radius）。
+
     Drawer 协调（W4 drawer-shell-integration）：drawer 固定挂本容器（单实例），恒作 flex 子项与
     Panel 各占一半并排（mode='split'），贴右展开（direction='right'）。单 panel 下不再有 overlay
     浮层模式。本容器渲染跨端共享容器 DrawerPanel（@xyz-agent/ui/features/drawer，W3 迁移自旧
@@ -17,27 +22,40 @@
     header-extra slot 挂载）。控制态（isOpen/
     activeTab/docked）读 core drawer 域（useDrawerControl + coordination 公开 API），分区键经
     useSideDrawer 兼容层模块顶层 bindDrawerSessionId 维持（C1：兼容层本 wave 保留）。
+
+    subagent/agent call overlay 展示（从 Panel 迁入）：PanelHeader 在本容器渲染，
+    overlay 态的标题/返回/JSONL 路径均在此驱动（subagentStore/workflowStore 按 leaf.id 查询，
+    与 Panel body 内的 effectiveSessionId 同源，天然同步）。
   -->
-  <SplitterGroup
-    direction="horizontal"
-    auto-save-id="workspace-drawer-split"
-    class="panel-container relative min-h-0 flex-1 overflow-hidden"
-    @layout="onSplitterLayout"
-  >
-    <SplitterPanel id="main-panel" :order="1" :min-size="40" :default-size="50">
-      <Panel
-        :panel-id="leaf.id"
-        :session-id="leaf.sessionId"
-        :session-label="sessionLabelOf(leaf)"
-        :session-dir="sessionDirOf(leaf)"
-        :session-file="sessionFileOf(leaf)"
-        :git-branch="gitBranchOf(leaf)"
-        :git-indicator="gitIndicatorOf(leaf)"
-        :status="statusOf(leaf)"
-        @open-git="openDrawerTab('git')"
-        @toggle-drawer="toggleDrawer()"
-      />
-    </SplitterPanel>
+  <div class="panel-container flex h-full w-full flex-col overflow-hidden">
+    <PanelHeader
+      :session-label="sessionLabelOf(leaf)"
+      :session-dir="sessionDirOf(leaf)"
+      :session-file="sessionFileOf(leaf)"
+      :git-branch="gitBranchOf(leaf)"
+      :git-indicator="gitIndicatorOf(leaf)"
+      :status="statusOf(leaf)"
+      :viewing-subagent="isViewingSubagent"
+      :subagent-label="subagentLabel"
+      :overlay-session-file="overlaySessionFile"
+      @open-git="openDrawerTab('git')"
+      @toggle-drawer="toggleDrawer()"
+      @back="onSubagentBack"
+    />
+    <SplitterGroup
+      direction="horizontal"
+      auto-save-id="workspace-drawer-split"
+      class="relative min-h-0 flex-1 overflow-hidden"
+      @layout="onSplitterLayout"
+    >
+      <SplitterPanel id="main-panel" :order="1" :min-size="40" :default-size="50">
+        <Panel
+          :panel-id="leaf.id"
+          :session-id="leaf.sessionId"
+          :session-dir="sessionDirOf(leaf)"
+          :git-branch="gitBranchOf(leaf)"
+        />
+      </SplitterPanel>
 
     <!-- Drawer：workspace-body 级辅助视图容器。单实例，跟随 panel。
          作为 SplitterPanel 子项，宽度可拖动调整（ResizeHandle），autoSaveId 持久化。
@@ -96,7 +114,8 @@
         </DrawerPanel>
       </SplitterPanel>
     </template>
-  </SplitterGroup>
+    </SplitterGroup>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -123,7 +142,11 @@ import { useSessionEvents } from '@/composables/features/useSessionEvents'
 import { provideGitStatus } from '@/composables/features/useGitStatus'
 import type { GitIndicator } from '@/composables/features/useGitStatus'
 import { useChatStore } from '@/stores/chat'
+import { useSubagentStore } from '@/stores/subagent'
+import { useWorkflowStore } from '@/stores/workflow'
+import { getAgentCallFilePath } from '@/api/domains/session'
 import Panel from '@/components/panel/Panel.vue'
+import PanelHeader from '@/components/panel/PanelHeader.vue'
 import GitPanel from '@/components/panel/GitPanel.vue'
 import CommandDocPanel from '@/components/panel/CommandDocPanel.vue'
 import DetailPane from '@/components/panel/DetailPane.vue'
@@ -136,6 +159,8 @@ const { t } = useI18n()
 const panel = usePanelStore()
 const session = useSessionStore()
 const chatStore = useChatStore()
+const subagentStore = useSubagentStore()
+const workflowStore = useWorkflowStore()
 const { derivedStatus } = useSessionDerivations()
 
 // sidebar 选 session → panel 载入的编排在 useSidebar.selectSession（主路径）
@@ -159,6 +184,90 @@ function gitBranchOf(l: PanelLeaf): string | undefined {
 }
 function statusOf(l: PanelLeaf) {
   return l.sessionId ? derivedStatus(l.sessionId).value : 'done'
+}
+
+// ── subagent/agent call overlay 展示（PanelHeader 提升后由本容器驱动）──
+// 从 Panel.vue 迁入：PanelHeader 在本容器渲染，overlay 态的标题/返回/JSONL 路径在此计算。
+// subagentStore/workflowStore 按 leaf.id 查询，与 Panel body 内的 effectiveSessionId 同源，
+// 两处各自计算 isViewingSubagent 等纯 getter 结果一致，天然同步。
+
+/** overlay 视图标题：subagent 或 agent call 的摘要 */
+const SUBAGENT_ID_DISPLAY_LENGTH = 12
+const subagentLabel = computed(() => {
+  const panelId = leaf.value.id
+  const sessionId = leaf.value.sessionId
+  // agent call overlay
+  const agentCallId = workflowStore.getViewingAgentCallId(panelId)
+  if (agentCallId) {
+    return t('panel.overlay.agentCallId', { id: agentCallId.slice(0, SUBAGENT_ID_DISPLAY_LENGTH) })
+  }
+  // subagent overlay
+  const record = sessionId ? subagentStore.getCurrentSubagent(panelId, sessionId) : null
+  if (!record) return t('panel.overlay.subagent')
+  return `${record.agent} · ${record.subagentId.slice(0, SUBAGENT_ID_DISPLAY_LENGTH)}`
+})
+
+/** 本 panel 是否正在查看 overlay（subagent 或 agent call），驱动 PanelHeader overlay 态展示 */
+const isViewingSubagent = computed(
+  () => subagentStore.isViewing(leaf.value.id) || workflowStore.isViewing(leaf.value.id),
+)
+
+/** overlay 态当前展示的 JSONL 文件路径（PanelHeader 文件名按钮用）。
+ *  - subagent overlay：SubagentRecord.sessionFile（store 已持有，同步读）
+ *  - agent call overlay：经 getAgentCallFilePath RPC 拉取（trace 只有 sessionId，路径需 runtime 解析）
+ *  - 正常态（非 overlay）：undefined，PanelHeader 回落用主 sessionFile */
+const agentCallOverlayFile = ref('')
+const viewingAgentCallId = computed(() => workflowStore.getViewingAgentCallId(leaf.value.id))
+watch(
+  viewingAgentCallId,
+  async (agentCallId) => {
+    agentCallOverlayFile.value = ''
+    const sid = leaf.value.sessionId
+    if (!agentCallId || !sid) return
+    // 展示型功能：RPC 失败（runtime 未启动/WS 断开）静默降级，按钮不显示即可
+    try {
+      agentCallOverlayFile.value = await getAgentCallFilePath(sid, agentCallId)
+    } catch {
+      agentCallOverlayFile.value = ''
+    }
+  },
+  { immediate: true },
+)
+const overlaySessionFile = computed(() => {
+  const panelId = leaf.value.id
+  const sessionId = leaf.value.sessionId
+  if (subagentStore.isViewing(panelId) && sessionId) {
+    return subagentStore.getCurrentSubagent(panelId, sessionId)?.sessionFile ?? undefined
+  }
+  if (viewingAgentCallId.value) {
+    return agentCallOverlayFile.value || undefined
+  }
+  return undefined
+})
+
+/** 返回主会话（subagent overlay 或 agent call overlay 均回退）。
+ *  PanelHeader back 事件直达，清虚拟 session 消息 + tombstone 防终态复活。 */
+function onSubagentBack(): void {
+  const panelId = leaf.value.id
+  const sessionId = leaf.value.sessionId
+  if (workflowStore.isViewing(panelId)) {
+    // [M7 FR-4] backFromAgentCall 立即清 messages[agentcallVirtualId]（对称 subagent）
+    // [W2] 传 mainSessionId 清 mainSessionAgentCalls Set（防无界增长）
+    workflowStore.backFromAgentCall(
+      panelId,
+      (acsId) => chatStore.evictVirtualKey(acsId),
+      sessionId ?? undefined,
+    )
+  } else {
+    // [M7] backToMain 立即清 messages[virtualId] + tombstone 防终态复活
+    const subagentId = subagentStore.getViewingSubagentId(panelId)
+    subagentStore.backToMain(
+      panelId,
+      sessionId ?? undefined,
+      subagentId ?? undefined,
+      (sid) => chatStore.evictVirtualKey(sid),
+    )
+  }
 }
 
 /** Drawer 控制态（§6.3 点5 架构解耦）：workspace-body 单实例。
