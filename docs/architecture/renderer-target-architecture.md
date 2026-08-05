@@ -57,6 +57,32 @@ plugin-sdk 审查发现 3 个致命冲突，统一前必须解决：
 
 ## §2 目标分层架构（renderer 七层）
 
+### 2.0 包分层（仓库级，ADR-0058 裁定）
+
+> 七层图（下方）描述 renderer **包内部**结构；本节描述仓库**包级**分层——renderer 只是五包链的顶层装配。两者并存：包链是全局容器，七层是 renderer 包内的职责分层。
+
+五包单向依赖链（依赖方向自下而上，无环）：
+
+```
+@xyz-agent/shared       — 跨端类型/常量/纯函数（零运行时依赖）
+    ↑
+@xyz-agent/core         — 真 headless（chat/session/coordination/transport/new-task-search）
+                           零 DOM 零 electron，node/worker 可跑，三端复用
+    ↑
+@xyz-agent/dom-core     — DOM-bound 前端逻辑（composer/input + 未来候选）
+                           浏览器 DOM API，零 electron，跨 DOM renderer 复用
+    ↑
+@xyz-agent/ui           — Vue 壳组件（原语 + ExtensionHost Vue 壳），三端复用
+    ↑
+renderer / mobile-renderer — 装配层（platform 适配 + 布局容器）
+```
+
+**headless 边界**（core 与 dom-core 的划界）：core 是可在 node/worker 跑、纯单测、无 jsdom 的平台无关内核，**零 DOM 零 electron**；dom-core 承载「需要 DOM API、无 electron、跨 DOM renderer 复用」的前端逻辑（composer/input 的 contenteditable 编排等）。**实现状态：pending**（feature:dom-core-v2 推进中，包未落地，git log 无迁移提交；本文档先行固化分层设计，落地后移除本标注）。
+
+**headless core + shell 范式**：composer 容器组件（ComposerInput.vue 等 Vue 壳）留在 renderer/ui 壳层，headless 逻辑在 core，DOM-bound 逻辑在 dom-core——容器组件只做装配，不承载领域逻辑。
+
+### 2.0.1 七层图（renderer 包内部）
+
 抛开当前 features/panel 巨型桶的现状，按职责重新分层：
 
 ```
@@ -129,6 +155,7 @@ plugin-sdk 审查发现 3 个致命冲突，统一前必须解决：
 - `routeInbound`：消息路由分发，是 T&C 层的「入口路由器」→ **T&C 层**（不进 Foundation）
 - `stores/presence.ts`：全局协同态 → **T&C 层**（不进 Foundation 的通用 store 桶）
 - `stores/session.ts` 的 lease 字段：数据存 Foundation store，但 lease 的**消费逻辑**（acquire/release/过期清理）归 T&C 层
+- `composables/logic/`（13 个零状态纯函数文件：file-tree-utils/file-type/formatTime/guiComponent/markdown/mermaid/messageFormat/messageTurns/parseDiff/popover-styles/session-file-format/sessionStatus/summarizeTurn）→ **合法落点，留在原处**（收尾 7.2 方案 A 裁定）：stores **可 import 纯函数**（无状态无倒置），禁止的是「stores import **有状态** composable」。`findNodeByPath`（composables/logic/file-tree-utils.ts）按此判据**零代码改动**保留。
 
 **归属速查表**（已知文件按层归类，合并时直接查）：
 
