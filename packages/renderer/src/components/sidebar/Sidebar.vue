@@ -193,6 +193,7 @@ import { useSubagentListSync } from '@/composables/features/chat/useSubagentList
 import { useWorkflowListSync } from '@/composables/features/chat/useWorkflowListSync'
 import { useSidebarSubagentActions } from '@/composables/features/sidebar/useSidebarSubagentActions'
 import { useGlobalShortcuts } from '@/composables/shell/useGlobalShortcuts'
+import { useNavigationStore } from '@/stores/navigation'
 import { useSidebarCounts } from '@/composables/features/sidebar/useSidebarCounts'
 import { useSidebarSessionActions } from '@/composables/features/sidebar/useSidebarSessionActions'
 import { useAppUpdate } from '@/composables/features/settings/useAppUpdate'
@@ -221,7 +222,7 @@ const { derivedStatus } = useSessionDerivations()
 function statusOf(id: string) { return derivedStatus(id).value }
 const { onSelectSession, onNewSession, onRenameSession, onDeleteSession, onDeleteFolder, onStopBranch, onConfirmRename, onRetryLoadSessions, onRetryWorkflows, onRetrySubagents, searchDeps, onOpenSearchDrawer } = useSidebarSessionActions({ focusedSessionId, selectSession, newSession, goOverview, loadSessions, renameSession, deleteSession, deleteFolder, renameOpen, targetSessionId })
 const { onSelectSubagent, onCancelSubagent, onSelectWorkflow, onWorkflowBack, onSelectAgentCall, onWorkflowAction } = useSidebarSubagentActions(focusedSessionId)
-useGlobalShortcuts({ onNewSession, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant })
+useGlobalShortcuts({ onNewSession, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant, navigation: useNavigationStore(), openSettings })
 onMounted(() => {
   void loadSessions()
   events.onGlobalType('app.info', (msg) => { piVersion.value = msg.payload.piVersion })

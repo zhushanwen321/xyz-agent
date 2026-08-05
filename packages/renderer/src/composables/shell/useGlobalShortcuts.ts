@@ -14,6 +14,7 @@
  */
 import { useEventListener } from '@vueuse/core'
 import { useCommandStore } from '@/composables/features/command/useCommandStore'
+import { useNavigationStore } from '@/stores/navigation'
 import { usePresetStore } from '@/stores/preset'
 import { useSearchModal } from '@xyz-agent/core'
 import { useSidebarStore } from '@/stores/sidebar'
@@ -28,6 +29,10 @@ export interface UseGlobalShortcutsOptions {
   enterForkModeFromLastAssistant: () => void | Promise<void>
   /** ⌘J 从末条 assistant 打包文档到新 session（来自 useSidebarNew） */
   handoffFromLastAssistant: () => void | Promise<void>
+  /** ⌘[ ⌘] 导航历史（来自 useNavigationStore，Sidebar.vue 注入） */
+  navigation: ReturnType<typeof useNavigationStore>
+  /** ⌘, 打开 Settings（AppShell provide，Sidebar.vue inject 后注入） */
+  openSettings: () => void
 }
 
 interface KeymapEntry {
@@ -56,7 +61,7 @@ interface KeymapEntry {
  * 在 setup 顶层同步调用：useEventListener 需在活跃 effect scope 内绑定，组件卸载时自动解绑。
  */
 export function useGlobalShortcuts(options: UseGlobalShortcutsOptions): void {
-  const { onNewSession, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant } = options
+  const { onNewSession, forkFromLastAssistant, enterForkModeFromLastAssistant, handoffFromLastAssistant, navigation, openSettings } = options
   const searchModal = useSearchModal()
   const sidebar = useSidebarStore()
   const commandStore = useCommandStore()
@@ -77,6 +82,12 @@ export function useGlobalShortcuts(options: UseGlobalShortcutsOptions): void {
     // fast-handoff 快捷键：⌘J 从末条 assistant 打包文档到新 session（完成后跳转新 session）。
     // 用 ⌘J 而非 ⌘H：macOS 系统保留 ⌘H 为「Hide Application」，OS 先拦截 renderer 拦不住。
     { key: 'j', action: () => { void handoffFromLastAssistant() } },
+    // ⌘[ / ⌘] 导航历史（shell spec §八.5 G3-003，从 AppShell 归位收尾 9）。
+    // canBack/canForward 为 false 时静默不触发（AppShell 原语义保留）；不挂 commandId（导航系统键）。
+    { key: '[', action: () => { if (navigation.canBack) navigation.back() } },
+    { key: ']', action: () => { if (navigation.canForward) navigation.forward() } },
+    // ⌘, 打开 Settings（settings/spec.md §1，从 AppShell 归位收尾 9）。
+    { key: ',', action: () => { openSettings() } },
   ]
   useEventListener(window, 'keydown', (e: KeyboardEvent) => {
     // composer 聚焦时禁用全局 fork 快捷键（避免与 composer 输入冲突；⌘K/⌘N/⌘B 仍可用但 fork 专属此守卫）。

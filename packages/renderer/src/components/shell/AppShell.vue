@@ -22,7 +22,6 @@
 
 <script setup lang="ts">
 import { provide, ref, watch } from 'vue'
-import { useEventListener } from '@vueuse/core'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import { usePlatformChrome } from '@/composables/effects/usePlatformChrome'
@@ -65,27 +64,4 @@ watch(
     }
   },
 )
-
-// ⌘[/⌘] 导航历史快捷键（shell spec §八.5 G3-003）。
-// mac ⌘ / win·linux Ctrl，跨平台统一；canBack/canForward 为 false 时静默不触发。
-// useEventListener 自动在组件卸载时移除监听。
-useEventListener(window, 'keydown', (e: KeyboardEvent) => {
-  const mod = e.metaKey || e.ctrlKey
-  if (!mod) return
-  if (e.key === '[') {
-    if (navigation.canBack) {
-      e.preventDefault()
-      navigation.back()
-    }
-  } else if (e.key === ']') {
-    if (navigation.canForward) {
-      e.preventDefault()
-      navigation.forward()
-    }
-  } else if (e.key === ',') {
-    // ⌘, 打开 Settings（settings/spec.md §1）
-    e.preventDefault()
-    settingsOpen.value = true
-  }
-})
 </script>

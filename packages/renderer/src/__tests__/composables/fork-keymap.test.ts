@@ -33,6 +33,8 @@ import path from 'node:path'
 // ── mock useSidebar：暴露 forkFromLastAssistant / enterForkModeFromLastAssistant（W3 新增）──
 const forkFromLastAssistantMock = vi.fn(() => Promise.resolve())
 const enterForkModeFromLastAssistantMock = vi.fn(() => Promise.resolve())
+/** 收尾 9：⌘, 打开 Settings（AppShell provide → Sidebar inject → useGlobalShortcuts 注入） */
+const openSettingsMock = vi.fn()
 vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
   useSidebarNew: () => ({
     forkFromLastAssistant: forkFromLastAssistantMock,
@@ -92,11 +94,17 @@ vi.mock('@/api', () => ({
 
 import Sidebar from '@/components/sidebar/Sidebar.vue'
 import { useCommandStore } from '@/composables/features/command/useCommandStore'
+import { useNavigationStore } from '@/stores/navigation'
 
 beforeEach(() => {
+  // 清理上一用例残留的 Sidebar 实例：未 unmount 的实例其 window keydown handler 注册更早，
+  // dispatch 时会抢先处理并 stopImmediatePropagation，用旧 pinia store（canBack=false）静默吞掉事件
+  for (const w of mountedWrappers) w.unmount()
+  mountedWrappers.length = 0
   setActivePinia(createPinia())
   forkFromLastAssistantMock.mockReset()
   enterForkModeFromLastAssistantMock.mockReset()
+  openSettingsMock.mockReset()
   // happy-dom: 清掉可能残留的 composer 焦点（body.blur 让 activeElement 回到 body）
   document.body.focus?.()
 })
@@ -106,10 +114,17 @@ function globalShortcutsPath(): string {
   return path.resolve(__dirname, '../../composables/shell/useGlobalShortcuts.ts')
 }
 
+/** 已 mount 的 Sidebar wrapper（beforeEach 统一清理，防 window keydown listener 堆积） */
+const mountedWrappers: ReturnType<typeof mount>[] = []
+
 function mountSidebar() {
-  return mount(Sidebar, {
+  const wrapper = mount(Sidebar, {
     global: {
       plugins: [createPinia()],
+      provide: {
+        // 收尾 9：AppShell provide('openSettings') 由测试注入 spy，验证 ⌘, 透传链路
+        openSettings: openSettingsMock,
+      },
       stubs: {
         SegmentedTab: true,
         SessionList: true,
@@ -122,6 +137,8 @@ function mountSidebar() {
       },
     },
   })
+  mountedWrappers.push(wrapper)
+  return wrapper
 }
 
 /** 派发 window keydown（Sidebar useEventListener(window, 'keydown') 监听） */
@@ -189,7 +206,79 @@ describe('U15：⌘G / ⌘⇧G 触发 fork 动作 + shift 守卫', () => {
   })
 })
 
-// ── U16：composer focus 时禁用全局快捷键 ─────────────────────────────────
+// ── 收尾 9：⌘[/⌘]/⌘, 从 AppShell 归位 useGlobalShortcuts ─────────────────
+// spec：05-sidebar-visual.md 收尾 9 —— keymap 加 3 键（mod+[ back / mod+] forward /
+// mod+, openSettings），canBack/canForward 守卫保留，不挂 commandId；AppShell 删散落块。
+describe('收尾 9：⌘[/⌘]/⌘, 全局快捷键（从 AppShell 归位）', () => {
+  it('keymap 含 [ ] , 条目 + canBack/canForward 守卫 + openSettings 注入（源码断言）', () => {
+    const source = fs.readFileSync(globalShortcutsPath(), 'utf-8')
+    expect(source).toMatch(/\bkey:\s*'\['/)
+    expect(source).toMatch(/\bkey:\s*'\]'/)
+    expect(source).toMatch(/\bkey:\s*','/)
+    expect(source).toMatch(/navigation\.canBack/)
+    expect(source).toMatch(/navigation\.canForward/)
+    expect(source).toMatch(/openSettings/)
+  })
+
+  it('⌘[ 触发 navigation.back（canBack=true）', async () => {
+    const wrapper = mountSidebar()
+    const nav = useNavigationStore()
+    nav.push({ view: 'chat', sessionId: 's1' })
+    nav.push({ view: 'chat', sessionId: 's2' })
+    expect(nav.canBack).toBe(true)
+    dispatchKey({ key: '[', meta: true })
+    await wrapper.vm.$nextTick()
+    expect(nav.pointer).toBe(0)
+  })
+
+  it('⌘] 触发 navigation.forward（canForward=true）', async () => {
+    const wrapper = mountSidebar()
+    const nav = useNavigationStore()
+    nav.push({ view: 'chat', sessionId: 's1' })
+    nav.push({ view: 'chat', sessionId: 's2' })
+    nav.back()
+    expect(nav.canForward).toBe(true)
+    dispatchKey({ key: ']', meta: true })
+    await wrapper.vm.$nextTick()
+    // 行为断言：forward 生效 → pointer 从 0 回到 1
+    expect(nav.pointer).toBe(1)
+  })
+
+  it('⌘, 触发 openSettings', async () => {
+    const wrapper = mountSidebar()
+    dispatchKey({ key: ',', meta: true })
+    await wrapper.vm.$nextTick()
+    expect(openSettingsMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('canBack=false 时 ⌘[ 不触发 navigation.back', async () => {
+    const wrapper = mountSidebar()
+    const nav = useNavigationStore()
+    expect(nav.canBack).toBe(false)
+    dispatchKey({ key: '[', meta: true })
+    await wrapper.vm.$nextTick()
+    // 行为断言：canBack=false → back 不生效 → pointer 保持 -1
+    expect(nav.pointer).toBe(-1)
+  })
+
+  it('composer 聚焦时 ⌘, 不触发 openSettings（全局守卫拦截）', async () => {
+    // 前置：非聚焦态 ⌘, 必须正常触发（避免空绿）
+    const wrapperUnfocused = mountSidebar()
+    dispatchKey({ key: ',', meta: true })
+    await wrapperUnfocused.vm.$nextTick()
+    expect(openSettingsMock).toHaveBeenCalledTimes(1)
+    wrapperUnfocused.unmount()
+
+    // 聚焦 composer 后再按 ⌘,：focus 守卫应拦截，不触发 openSettings
+    openSettingsMock.mockClear()
+    const wrapper = mountSidebar()
+    focusComposer()
+    dispatchKey({ key: ',', meta: true })
+    await wrapper.vm.$nextTick()
+    expect(openSettingsMock).not.toHaveBeenCalled()
+  })
+})
+
 describe('U16：composer focus 时 ⌘G 不触发 fork', () => {
   it('composer 输入聚焦时 ⌘G → forkFromLastAssistant 未被调用（非聚焦时正常触发）', async () => {
     // 前置：非聚焦态 ⌘G 必须正常触发（当前 keymap 无 g → 此断言红灯，避免空绿）
