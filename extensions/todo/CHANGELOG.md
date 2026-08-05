@@ -1,5 +1,12 @@
 # @zhushanwen/pi-todo
 
+## 0.5.2
+
+### Patch Changes
+
+- Updated dependencies [6e2e453]
+  - @xyz-agent/extension-protocol@0.3.1
+
 ## 0.5.2-dev.0
 
 ### Patch Changes
