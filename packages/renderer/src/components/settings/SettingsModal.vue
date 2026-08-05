@@ -9,51 +9,55 @@
   <Teleport to="body">
     <div
       v-if="open"
-      class="fso"
+      class="fso fixed inset-0 z-[var(--z-modal)] flex bg-bg"
       role="dialog"
       aria-modal="true"
       :aria-label="t('settings.title')"
       @keydown="onKeydown"
     >
       <!-- 左 nav -->
-      <nav ref="navRootEl" class="fs-nav" data-settings-nav>
-        <div class="nav-brand">
-          <span class="brand-label">{{ t('settings.title') }}</span>
+      <nav ref="navRootEl" class="flex w-[220px] shrink-0 flex-col bg-[var(--bg-sunken)] p-[8px] gap-[1px]" data-settings-nav>
+        <!-- traffic light 安全区：pl-[80px] 让位红黄绿（三平台统一，全屏态保留无害）。
+             本 overlay 是 fixed inset:0 全屏覆盖，不继承 AsideRegion 的 pt-[52px]，故显式让位 -->
+        <div class="flex h-[44px] items-center pl-[80px] pr-[12px]">
+          <span class="text-[11px] font-bold uppercase tracking-[0.08em] text-neutral-dim">{{ t('settings.title') }}</span>
         </div>
-        <div class="nav-list">
-          <button
+        <div class="flex flex-col gap-[1px]">
+          <Button
             v-for="item in menus"
             :key="item.id"
             type="button"
-            class="nav-item"
+            variant="ghost"
+            class="nav-item group h-auto w-full flex items-center gap-[8px] py-[8px] px-[10px] rounded-[var(--radius-sm)] text-[length:var(--text-base)] font-normal leading-[1.5] text-left text-neutral-mid whitespace-normal transition-all duration-[var(--duration-fast)] ease-[var(--ease)] [&:hover:not(.active)]:bg-surface-hover [&:hover:not(.active)]:text-neutral-fg [&.active]:!bg-surface [&.active]:text-accent"
             :class="{ active: item.id === activeMenu }"
             :data-testid="`settings-nav-${item.id}`"
             :aria-current="item.id === activeMenu ? 'page' : undefined"
             @click="select(item.id)"
           >
-            <component :is="item.icon" class="ico" />
-            <span class="label">{{ t(item.labelKey) }}</span>
-            <span v-if="getItemCount(item.id)" class="count">{{ getItemCount(item.id) }}</span>
-          </button>
+            <component :is="item.icon" class="!w-[16px] !h-[16px] shrink-0 opacity-[0.85] transition-opacity duration-[var(--duration-fast)] ease-[var(--ease)] group-hover:opacity-100 group-[.active]:opacity-100" />
+            <span class="flex-1 min-w-0 truncate">{{ t(item.labelKey) }}</span>
+            <span v-if="getItemCount(item.id)" class="inline-flex h-[16px] min-w-[16px] items-center justify-center rounded-full bg-surface px-[5px] font-mono text-[10px] font-semibold text-neutral-dim shrink-0">{{ getItemCount(item.id) }}</span>
+          </Button>
         </div>
       </nav>
 
       <!-- 右 content -->
-      <div ref="contentEl" class="fs-content">
-        <div class="fs-head">
-          <span class="fs-title">{{ t('settings.title') }} · {{ t(currentMenu.labelKey) }}</span>
-          <button
+      <div ref="contentEl" class="flex min-w-0 flex-1 flex-col bg-bg overflow-auto">
+        <div class="flex h-[44px] shrink-0 items-center justify-between px-[14px] border-b border-border">
+          <span class="text-[14px] font-semibold text-neutral-fg">{{ t('settings.title') }} · {{ t(currentMenu.labelKey) }}</span>
+          <Button
             type="button"
-            class="xbtn"
+            variant="ghost"
+            class="xbtn flex h-[28px] w-[28px] p-0 items-center justify-center rounded-[var(--radius-sm)] text-[length:var(--text-base)] font-normal leading-[1.5] text-neutral-mid whitespace-normal transition-all duration-[var(--duration-fast)] ease-[var(--ease)] hover:bg-surface-hover hover:text-neutral-fg"
             :title="t('settings.closeEsc')"
             :aria-label="t('settings.close')"
             data-testid="settings-close-btn"
             @click="close"
           >
-            <X class="x-ico" />
-          </button>
+            <X class="!w-[16px] !h-[16px]" />
+          </Button>
         </div>
-        <div class="content-col-inner">
+        <div class="content-col-inner w-full max-w-[var(--content-max-w)] m-0 pt-[var(--space-6)] px-[24px] pb-[var(--space-8)]">
           <ProviderPage v-if="activeMenu === 'provider'" :providers="providers" />
           <SettingsResourcePage
             v-else-if="activeMenu === 'skill'"
@@ -85,6 +89,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { useEventListener } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { Settings, Sparkles, Bot, Blocks, SlidersHorizontal, ScrollText, TerminalSquare, GitBranch, ClipboardList, X, Download, Bug } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -151,6 +156,21 @@ watch(() => props.open, (isOpen) => {
 function close(): void {
   emit('update:open', false)
 }
+
+/** window 级 ESC 兜底：焦点逃逸到 body（不在 .fso 内）时，.fso 的 @keydown 收不到事件，
+ *  需 window 监听兜底。open=true 时注册、false 时自动卸载（reactive target）。
+ *  与 .fso 的 onKeydown 并存：焦点在 .fso 内时 onKeydown 先 fire（preventDefault），
+ *  本监听检查 defaultPrevented 跳过，避免重复 close。 */
+useEventListener(
+  () => (props.open ? window : null),
+  'keydown',
+  (e: KeyboardEvent) => {
+    if (e.key !== 'Escape') return
+    if (e.defaultPrevented) return
+    e.preventDefault()
+    close()
+  },
+)
 
 function select(id: MenuId): void {
   activeMenu.value = id
@@ -247,8 +267,6 @@ async function onUpdateAgentDirs(dirs: SkillDirConfig[]): Promise<void> {
 onBeforeUnmount(() => {
   if (props.open && triggerEl.value) triggerEl.value.focus()
 })
-// Button 仅用于类型兼容占位（避免未用 import 被 tree-shake 报错），实际 nav 用原生 button 以控焦点陷阱
-void Button
 </script>
 
 <style>
@@ -305,149 +323,17 @@ void Button
 </style>
 
 <style scoped>
-.fso {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-modal);
-  background: var(--bg);
-  display: flex;
-}
-
-/* 左 nav */
-.fs-nav {
-  width: 220px;
-  flex-shrink: 0;
-  background: var(--bg-sunken);
-  display: flex;
-  flex-direction: column;
-  padding: 8px;
-  gap: 1px;
-}
-.nav-brand {
-  height: 44px;
-  display: flex;
-  align-items: center;
-  padding: 0 12px;
-}
-.brand-label {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--neutral-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-.nav-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-.nav-item {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  color: var(--neutral-mid);
-  font-size: var(--text-base);
-  text-align: left;
-  transition: all var(--duration-fast) var(--ease);
-}
-.nav-item:hover:not(.active) {
-  background: var(--surface-hover);
-  color: var(--neutral-fg);
-}
-.nav-item.active {
-  background: var(--surface);
-  color: var(--accent);
-}
+/* [HISTORICAL] 本文件保留 <style scoped> 的原因：.nav-item:focus-visible / .xbtn:focus-visible
+   的双环 box-shadow `0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4)` 是多值叠加（内环
+   accent + 外环半透明黑），Tailwind 单个 box-shadow 工具类无法表达多值叠加，属 AGENTS.md §3
+   明确允许的 escape hatch（与 MainPanel.vue 多值 shadow 同类）。其余几何/颜色/布局/过渡均已
+   迁移至 Tailwind 工具类（见 template 各元素 class）。 */
 .nav-item:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0, 0, 0, 0.4);
 }
-.ico {
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-  opacity: 0.85;
-  transition: opacity var(--duration-fast) var(--ease);
-}
-.nav-item:hover:not(.active) .ico,
-.nav-item.active .ico {
-  opacity: 1;
-}
-.label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.count {
-  height: 16px;
-  min-width: 16px;
-  padding: 0 5px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--neutral-dim);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-/* 右 content */
-.fs-content {
-  flex: 1;
-  min-width: 0;
-  background: var(--bg);
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-}
-.fs-head {
-  height: 44px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 14px;
-  border-bottom: 1px solid var(--border);
-}
-.fs-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--neutral-fg);
-}
-.content-col-inner {
-  width: 100%;
-  max-width: var(--content-max-w);
-  margin: 0;
-  padding: var(--space-6) 24px var(--space-8);
-}
-.xbtn {
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-sm);
-  color: var(--neutral-mid);
-  transition: all var(--duration-fast) var(--ease);
-}
-.xbtn:hover {
-  background: var(--surface-hover);
-  color: var(--neutral-fg);
-}
 .xbtn:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0, 0, 0, 0.4);
-}
-.x-ico {
-  width: 16px;
-  height: 16px;
 }
 </style>

@@ -55,7 +55,11 @@ MAX_SCRIPT_LINES = 300
 # 复用 MarkdownRenderer 的核心 markdown 排版，是 Tailwind 无法表达的 :deep() 后代选择器组 +
 # Firefox 专有 scrollbar-width 属性。属 AGENTS.md §3 escape hatch（与 MarkdownRenderer 同模式）。
 # 待后续抽取轻量只读 MarkdownView 组件后再移出白名单。
-STYLE_SCOPED_WHITELIST: list[str] = ['shell/MainPanel.vue', 'sidebar/UpdateButton.vue']
+# [HISTORICAL] SettingsModal.vue 的 .nav-item:focus-visible / .xbtn:focus-visible 双环
+# box-shadow `0 0 0 2px var(--accent), 0 0 0 4px rgba(0,0,0,0.4)` 是多值叠加（内环 accent +
+# 外环半透明黑），Tailwind 单个 box-shadow 工具类无法表达多值叠加，属 AGENTS.md §3 escape
+# hatch（与 MainPanel.vue 多值 shadow 同类）。其余 scoped 样式已迁移至 Tailwind 工具类。
+STYLE_SCOPED_WHITELIST: list[str] = ['shell/MainPanel.vue', 'sidebar/UpdateButton.vue', 'settings/SettingsModal.vue']
 
 # CSS 选择器检测正则
 RE_STYLE_SELECTOR = re.compile(r'^[.\w\-]+[\s,]*\{')
