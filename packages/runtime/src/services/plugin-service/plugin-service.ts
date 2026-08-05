@@ -8,7 +8,7 @@ import { PluginRegistry } from './plugin-registry.js'
 import { PluginStorage } from './plugin-storage.js'
 import { SessionDataStore } from './session-data-store.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
-import { PluginHost } from './plugin-host.js'
+import { PluginHost, resolveAndValidateFile } from './plugin-host.js'
 import { PluginActivator } from './plugin-activator.js'
 import { registerAllRpcMethods } from './plugin-rpc-setup.js'
 import { bootstrapPluginService } from './plugin-lifecycle.js'
@@ -27,6 +27,33 @@ import { toErrorMessage } from '../../utils/errors.js'
 
 
 const COMMAND_EXECUTE_TIMEOUT_MS = 10_000
+
+/**
+ * 解析 sandbox 子进程 ESM loader 路径，构建 execArgv（--import 注入）。
+ *
+ * loader（plugin-esm-loader.cjs）经 execArgv 注入 fork 子进程，注册 ESM resolve
+ * hook 封堵 node:* 内置模块 + 越界路径 import（重构 3：消除 ESM import 绕过）。
+ * 与 plugin-bootstrap.cjs 同目录约定，路径经 resolveAndValidateFile 动态推导
+ * （AGENTS.md #12：打包后 __dirname → app.asar.unpacked/dist/runtime/，
+ * dev → src/services/plugin-service/）。
+ *
+ * fail-open：loader 缺失时不阻塞 runtime 启动（当前 EXTERNAL_PLUGIN_ENABLED=false
+ * 硬锁期无 sandbox 插件运行，ESM 绕过无入口）；翻转硬锁前 loader 必须存在
+ * （存在性由 validate-runtime-bundle.sh 步骤 1 在 CI 强制校验）。
+ */
+function resolveEsmLoaderExecArgv(): string[] | undefined {
+  try {
+    const loaderPath = resolveAndValidateFile('plugin-esm-loader.cjs')
+    return ['--import', loaderPath]
+  } catch (e: unknown) {
+    console.error(
+      '[plugin-service] plugin-esm-loader.cjs not found; sandbox ESM guard inactive ' +
+      '(EXTERNAL_PLUGIN_ENABLED must stay false until fixed):',
+      e,
+    )
+    return undefined
+  }
+}
 
 /**
  * PluginService — 纯门面 + 初始化编排（ADR-0012/0013/0014/0023/0001）。
@@ -92,7 +119,13 @@ export class PluginService implements IPluginService {
     const pluginsDir = join(configDir, 'plugins')
     this.storage = new PluginStorage()
     this.rpcServer = new PluginRpcServer()
-    this.host = new PluginHost(this.rpcServer)
+    // sandbox 子进程 ESM loader 经 execArgv --import 注入（重构 3：消除 ESM 绕过）。
+    // loader 缺失时降级为 undefined（fail-open，见 resolveEsmLoaderExecArgv 注释）。
+    const esmExecArgv = resolveEsmLoaderExecArgv()
+    this.host = new PluginHost(
+      this.rpcServer,
+      esmExecArgv ? { execArgv: esmExecArgv } : undefined,
+    )
     this.sessionDataStore = new SessionDataStore(configDir)
     this.permissionChecker = new PermissionChecker(registry, new PermissionStorage(pluginsDir))
 
