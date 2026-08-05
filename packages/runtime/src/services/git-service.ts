@@ -4,7 +4,7 @@
  * 深度：调用方只传 sessionId（+ 可选路径/message）；cwd 解析、路径越界校验、git CLI 调用、
  * XY 码解析、numstat 聚合、冲突判定全部隐藏。handler 只需 catch → error envelope。
  *
- * 分层：GitService 调 IGitExecutor（port）做 IO，调 git-status-parser（纯函数，经 @xyz-agent/shared）做解析，
+ * 分层：GitService 调 IGitExecutor（port）做 IO，调 git-status-parser（纯函数 kernel，本仓 infra/git/）做解析，
  * 经 ISessionService 取 cwd。不直接 import infra。
  *
  * 安全：

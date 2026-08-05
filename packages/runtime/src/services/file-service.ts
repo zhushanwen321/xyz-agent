@@ -7,8 +7,8 @@
  *   executor.listDir ×N（1+M 次，F-1：顶层 1 次 + 每个顶层 dir 再 1 次拿一级子）→
  *   ignore-parser 标记（命中的节点标 ignored=true，前端按开关过滤）→ FileNode[]（path 相对 cwd，不含前导斜杠）。
  *
- * 分层：FileService 经 IFileExecutor（port）做 IO，经 shared 纯函数（compileIgnoreRules/matchPath）
- *   做 ignore 计算，经 ISessionService 取 cwd。不直接 import node:fs（AC-2 grep 验证）。
+ * 分层：FileService 经 IFileExecutor（port）做 IO，经 ignore-parser 纯函数 kernel（本仓 infra/fs/，
+ *   compileIgnoreRules/matchPath）做 ignore 计算，经 ISessionService 取 cwd。不直接 import node:fs（AC-2 grep 验证）。
  *
  * 安全（NFR-AC-S2 越界统一守门）：
  * - cwd 取自 sessionService.getSummary(sid).cwd（session.create 时确立的受信工作目录）

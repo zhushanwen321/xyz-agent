@@ -186,7 +186,18 @@ infra/      ← pi 适配（实现 ports，连接 + 翻译合并）
 | `services/session/session-service.ts` | 33 | `getSubagentSessionDir`, `getPiAgentDir` |
 | `services/session/subagent-extractor.ts` | 28 | `getSubagentSessionDir` |
 
-> **新增 services→infra import 时的判断准则**：logger 类横切关注点（无业务语义、process-wide 单例）可直接 import；pi-paths 类纯路径/纯工具函数（无状态、无副作用、无 IO，与 shared 同性质，归 kernel 层）可直接 import。其余 infra 模块——含 pi 协议类型、RPC 子进程、文件解析、安装器等有状态或有 IO 的——一律经 port 访问，不得直接 import。
+#### ③ 纯解析函数（git-status-parser / ignore-parser）—— kernel 纯函数
+
+`infra/git/git-status-parser.ts`（`parseGitStatus` / `deriveCounts` / `parseNumstat` / `parseNumstatByFile`）与 `infra/fs/ignore-parser.ts`（`compileIgnoreRules` / `matchPath` / `IgnoreMatcher`）是纯解析/匹配函数集——**输入字符串/规则，输出结构化数据，无 IO、无状态、无副作用**。与 pi-paths 同性质（纯计算），归 kernel 层，services 可直接 import。
+
+当前 services 层以下依赖这两个模块，属 kernel 直接依赖（合规）：
+
+| 文件 | 行 | 使用的函数 |
+|-----|---|-----------|
+| `services/git-service.ts` | 21 | `parseGitStatus`, `deriveCounts`, `parseNumstat`, `parseNumstatByFile` |
+| `services/file-service.ts` | 21-22 | `IgnoreMatcher`(type), `compileIgnoreRules`, `matchPath` |
+
+> **新增 services→infra import 时的判断准则**：logger 类横切关注点（无业务语义、process-wide 单例）可直接 import；kernel 类纯函数（无状态、无副作用、无 IO，与 shared 同性质）——含 pi-paths 路径解析、git-status-parser/ignore-parser 等纯解析/匹配函数——可直接 import。其余 infra 模块——含 pi 协议类型、RPC 子进程、有状态/有 IO 的文件操作、安装器等——一律经 port 访问，不得直接 import。
 
 **依赖方向**：`transport → services ← infra`（services 定义 ports，infra 实现 ports，箭头都指向接口）。**无环**。
 
