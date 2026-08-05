@@ -1,5 +1,11 @@
 # @zhushanwen/pi-subagent-workflow
 
+## 5.0.0-dev.1
+
+### Patch Changes
+
+- Fix-phase now consumes custom fixer.md `model` frontmatter field (was dropped — only global `--args model=` took effect). Aligns with review-phase semantics (`MODEL || def.model`). Also documents the `fixAgent` + convergence params (`maxFixAttempts`/`convergeNewIssues`/`convergeRounds`) in the workflow tool description so LLMs discover them.
+
 ## 5.0.0-dev.0
 
 ### Major Changes

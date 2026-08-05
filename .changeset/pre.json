@@ -29,6 +29,7 @@
     "@xyz-agent/shared": "0.6.1"
   },
   "changesets": [
+    "fix-phase-model-align",
     "restore-ask-user-comment",
     "structured-output-linked-group-align",
     "tidy-waves-description-phase-lint"
