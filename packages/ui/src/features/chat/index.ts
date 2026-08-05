@@ -16,6 +16,7 @@ export type { StickGuardDeps } from './stick-guard-deps'
 // 纯函数（图标决策 + 耗时格式化）
 export * from './block-icon'
 export * from './format-utils'
+export * from './slash-icons'
 // 类型
 export type { MarkdownSegment } from './markdown-types'
 // 展示组件
