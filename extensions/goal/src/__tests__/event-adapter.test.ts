@@ -65,6 +65,7 @@ function makeFakeCtx(overrides?: {
 	aborted?: boolean;
 	hasUI?: boolean;
 	contextUsage?: { tokens?: number; contextWindow?: number };
+	entries?: unknown[];
 }): { ctx: ExtensionContext; calls: RecordedCall[] } {
 	const calls: RecordedCall[] = [];
 	const signal = { aborted: overrides?.aborted ?? false } as AbortSignal;
@@ -87,7 +88,7 @@ function makeFakeCtx(overrides?: {
 				bold: (text: string) => text,
 			},
 		},
-		sessionManager: { getEntries: () => [], getBranch: () => undefined },
+		sessionManager: { getEntries: () => overrides?.entries ?? [], getBranch: () => undefined },
 	} as unknown as ExtensionContext;
 	return { ctx, calls };
 }
@@ -178,6 +179,153 @@ describe("handleAgentEnd — continuation", () => {
 		const sendContext = all.filter((c) => c.kind === "sendContext");
 		expect(sendContext).toHaveLength(1);
 		expect(sendContext[0]!.content).toContain("[GOAL]");
+	});
+
+	// ── pending 守卫：background subagent/workflow 运行时不死循环 ──
+
+	it("有活跃 pending → 不发 continuation（pending 守卫生效）", async () => {
+		const { pi, calls: piCalls } = makeFakePi();
+		const { ctx, calls: ctxCalls } = makeFakeCtx({
+			entries: [
+				{ type: "custom", customType: "pending:register", data: { id: "bg-1", type: "subagent", name: "worker" } },
+			],
+		});
+		const session = createGoalSession();
+		session.state = makeRunningState({ tokensUsed: 200, lastTurnTokensUsed: 0 });
+
+		await handleAgentEnd(pi, session, ctx);
+		const all = allCalls(piCalls, ctxCalls);
+
+		const followUp = all.filter(
+			(c) => c.kind === "sendContext" && (c.payload as { deliverAs?: string } | undefined)?.deliverAs === "followUp",
+		);
+		expect(followUp).toHaveLength(0); // 有活跃 pending，不发 continuation
+	});
+
+	it("pending register 已 unregister → 差集归零，正常发 continuation", async () => {
+		const { pi, calls: piCalls } = makeFakePi();
+		const { ctx, calls: ctxCalls } = makeFakeCtx({
+			entries: [
+				{ type: "custom", customType: "pending:register", data: { id: "bg-1" } },
+				{ type: "custom", customType: "pending:unregister", data: { id: "bg-1" } },
+			],
+		});
+		const session = createGoalSession();
+		session.state = makeRunningState({ tokensUsed: 200, lastTurnTokensUsed: 0 });
+
+		await handleAgentEnd(pi, session, ctx);
+		const all = allCalls(piCalls, ctxCalls);
+
+		const followUp = all.filter(
+			(c) => c.kind === "sendContext" && (c.payload as { deliverAs?: string } | undefined)?.deliverAs === "followUp",
+		);
+		expect(followUp).toHaveLength(1);
+	});
+
+	it("pending expiresAt 已过期 → 仍判活跃不发 continuation（刻意不校验 TTL）", async () => {
+		const { pi, calls: piCalls } = makeFakePi();
+		const { ctx, calls: ctxCalls } = makeFakeCtx({
+			entries: [
+				{ type: "custom", customType: "pending:register", data: { id: "bg-1", expiresAt: Date.now() - 1000 } },
+			],
+		});
+		const session = createGoalSession();
+		session.state = makeRunningState({ tokensUsed: 200, lastTurnTokensUsed: 0 });
+
+		await handleAgentEnd(pi, session, ctx);
+		const all = allCalls(piCalls, ctxCalls);
+
+		const followUp = all.filter(
+			(c) => c.kind === "sendContext" && (c.payload as { deliverAs?: string } | undefined)?.deliverAs === "followUp",
+		);
+		expect(followUp).toHaveLength(0); // 过期仍判活跃，避免长任务死循环复现
+	});
+
+	it("有活跃 pending → appendEntry goal:log 诊断记录（多元素计数 + ids 透出）", async () => {
+		const { pi, states } = makeFakePi();
+		const { ctx } = makeFakeCtx({
+			entries: [
+				{ type: "custom", customType: "pending:register", data: { id: "bg-1" } },
+				{ type: "custom", customType: "pending:register", data: { id: "bg-2" } },
+			],
+		});
+		const session = createGoalSession();
+		session.state = makeRunningState({ tokensUsed: 200, lastTurnTokensUsed: 0 });
+
+		await handleAgentEnd(pi, session, ctx);
+
+		// goal:log 走 appendEntry（非 goal-history）→ 进 states
+		const deferredLog = states.find(
+			(s) =>
+				(s as { component?: string } | undefined)?.component === "goal:agent-end" &&
+				/continuation deferred/.test(String((s as { message?: string } | undefined)?.message ?? "")),
+		);
+		expect(deferredLog).toBeDefined();
+		const data = (deferredLog as { data?: { activePending?: number; ids?: string[] } } | undefined)?.data;
+		expect(data?.activePending).toBe(2); // 多元素计数（替代原 >=1 弱断言）
+		expect(data?.ids).toEqual(["bg-1", "bg-2"]); // ids 透出
+	});
+
+	it("重复 register 同 id → 去重计为 1（seen.has 守卫）", async () => {
+		const { pi, calls: piCalls, states } = makeFakePi();
+		const { ctx, calls: ctxCalls } = makeFakeCtx({
+			entries: [
+				{ type: "custom", customType: "pending:register", data: { id: "bg-1" } },
+				{ type: "custom", customType: "pending:register", data: { id: "bg-1" } },
+			],
+		});
+		const session = createGoalSession();
+		session.state = makeRunningState({ tokensUsed: 200, lastTurnTokensUsed: 0 });
+
+		await handleAgentEnd(pi, session, ctx);
+		const all = allCalls(piCalls, ctxCalls);
+
+		// 守卫触发：count>0 不发 continuation
+		const followUp = all.filter(
+			(c) => c.kind === "sendContext" && (c.payload as { deliverAs?: string } | undefined)?.deliverAs === "followUp",
+		);
+		expect(followUp).toHaveLength(0);
+		// seen 去重：2 条同 id register 计为 1（非 2）
+		const deferredLog = states.find(
+			(s) => (s as { component?: string } | undefined)?.component === "goal:agent-end",
+		);
+		expect((deferredLog as { data?: { activePending?: number } } | undefined)?.data?.activePending).toBe(1);
+	});
+
+	it("非字符串/缺失 id 的 register → 被忽略，正常发 continuation（typeof id 防御）", async () => {
+		const { pi, calls: piCalls } = makeFakePi();
+		const { ctx, calls: ctxCalls } = makeFakeCtx({
+			entries: [
+				{ type: "custom", customType: "pending:register", data: { id: 123 } }, // 数字 id（非字符串）
+				{ type: "custom", customType: "pending:register", data: {} }, // 无 id
+			],
+		});
+		const session = createGoalSession();
+		session.state = makeRunningState({ tokensUsed: 200, lastTurnTokensUsed: 0 });
+
+		await handleAgentEnd(pi, session, ctx);
+		const all = allCalls(piCalls, ctxCalls);
+
+		// count=0，守卫不触发，走正常 continuation
+		const followUp = all.filter(
+			(c) => c.kind === "sendContext" && (c.payload as { deliverAs?: string } | undefined)?.deliverAs === "followUp",
+		);
+		expect(followUp).toHaveLength(1);
+	});
+
+	it("无 pending entries → 正常发 continuation（回归保护）", async () => {
+		const { pi, calls: piCalls } = makeFakePi();
+		const { ctx, calls: ctxCalls } = makeFakeCtx(); // getEntries 默认空
+		const session = createGoalSession();
+		session.state = makeRunningState({ tokensUsed: 200, lastTurnTokensUsed: 0 });
+
+		await handleAgentEnd(pi, session, ctx);
+		const all = allCalls(piCalls, ctxCalls);
+
+		const followUp = all.filter(
+			(c) => c.kind === "sendContext" && (c.payload as { deliverAs?: string } | undefined)?.deliverAs === "followUp",
+		);
+		expect(followUp).toHaveLength(1);
 	});
 });
 
@@ -339,25 +487,14 @@ describe("handleBeforeAgentStart", () => {
 
 	// ── pending-notifications（W2 跨扩展集成）───────────────────
 
-	it("有活跃 pending operations → 注入提示含 pending 数量", async () => {
+	it("有活跃 pending entries → 注入 content 不含 pending 提示（pendingHint 已移除）", async () => {
 		const { pi } = makeFakePi();
-		// 创建带 pending:register entries 的 ctx
-		const entries = [
-			{ type: "custom", customType: "pending:register", data: { id: "wf-1", type: "workflow", name: "test-wf" } },
-			{ type: "custom", customType: "pending:register", data: { id: "bg-1", type: "subagent", name: "worker" } },
-		];
-		const ctx = {
-			hasUI: true,
-			signal: { aborted: false } as AbortSignal,
-			getContextUsage: () => undefined,
-			ui: {
-				notify: vi.fn(),
-				setStatus: vi.fn(),
-				setWidget: vi.fn(),
-				theme: { fg: (_c: string, t: string) => t, bold: (t: string) => t },
-			},
-			sessionManager: { getEntries: () => entries, getBranch: () => undefined },
-		} as unknown as ExtensionContext;
+		const { ctx } = makeFakeCtx({
+			entries: [
+				{ type: "custom", customType: "pending:register", data: { id: "wf-1", type: "workflow", name: "test-wf" } },
+				{ type: "custom", customType: "pending:register", data: { id: "bg-1", type: "subagent", name: "worker" } },
+			],
+		});
 		const session = createGoalSession();
 		session.state = makeRunningState();
 
@@ -365,34 +502,7 @@ describe("handleBeforeAgentStart", () => {
 
 		expect(result).toBeDefined();
 		expect(result!.message.customType).toBe("goal-context");
-		expect(result!.message.content).toContain("2 pending async operation(s)");
-	});
-
-	it("有 pending register 但已 unregister → 不注入提示", async () => {
-		const { pi } = makeFakePi();
-		const entries = [
-			{ type: "custom", customType: "pending:register", data: { id: "wf-1", type: "workflow", name: "test-wf" } },
-			{ type: "custom", customType: "pending:unregister", data: { id: "wf-1" } },
-		];
-		const ctx = {
-			hasUI: true,
-			signal: { aborted: false } as AbortSignal,
-			getContextUsage: () => undefined,
-			ui: {
-				notify: vi.fn(),
-				setStatus: vi.fn(),
-				setWidget: vi.fn(),
-				theme: { fg: (_c: string, t: string) => t, bold: (t: string) => t },
-			},
-			sessionManager: { getEntries: () => entries, getBranch: () => undefined },
-		} as unknown as ExtensionContext;
-		const session = createGoalSession();
-		session.state = makeRunningState();
-
-		const result = await handleBeforeAgentStart(pi, session, ctx);
-
-		expect(result).toBeDefined();
-		expect(result!.message.customType).toBe("goal-context");
+		// pendingHint 已删除：pending 感知交给 LLM 调 pending_notifications tool（mandatory）
 		expect(result!.message.content).not.toContain("pending async operation");
 	});
 
