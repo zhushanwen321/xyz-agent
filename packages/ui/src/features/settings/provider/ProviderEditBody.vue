@@ -255,10 +255,10 @@ import type { ProviderInfo } from '@xyz-agent/shared'
 import {
   useProviderEdit,
 } from '@xyz-agent/core'
-import { useQuotaConfigureFactory as useQuotaConfigure } from './injection-keys'
-import CodingPlanSection from './CodingPlanSection.vue'
-import ModelListSection from './ModelListSection.vue'
-import { useSettingsToast as useToast } from './injection-keys'
+import { useQuotaConfigureFactory as useQuotaConfigure } from '../injection-keys'
+import CodingPlanSection from '../coding-plan/CodingPlanSection.vue'
+import ModelListSection from '../common/ModelListSection.vue'
+import { useSettingsToast as useToast } from '../injection-keys'
 
 const props = defineProps<{ provider: ProviderInfo | null }>()
 const emit = defineEmits<{

@@ -175,7 +175,7 @@ import { inject, unref, computed, type Ref, type ComputedRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { FileText, ImageIcon, X, Settings2 } from '@lucide/vue'
 
-import CompatEditor from './CompatEditor.vue'
+import CompatEditor from '../compat/CompatEditor.vue'
 import {
   CONTEXT_OPTIONS,
   THINKING_STRATEGIES,

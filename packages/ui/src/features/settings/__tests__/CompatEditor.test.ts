@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
-import CompatEditor from '../CompatEditor.vue'
+import CompatEditor from '../compat/CompatEditor.vue'
 
 describe('CompatEditor', () => {
   it('essential 字段区默认渲染（api=openai-completions）', () => {

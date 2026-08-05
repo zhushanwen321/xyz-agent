@@ -79,7 +79,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { CheckboxCheckedState as CheckedState } from 'reka-ui'
 
-import { useSettingsConfigApi } from './injection-keys'
+import { useSettingsConfigApi } from '../injection-keys'
 import type { SourceDetectResult, ProviderSource, AgentSource } from '@xyz-agent/shared'
 
 const configApi = useSettingsConfigApi()

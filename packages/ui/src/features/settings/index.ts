@@ -6,19 +6,21 @@
  * 并 provide 三条 InjectionKey（toast/quota/config），ui 组件 inject 取用，零 renderer import。
  *
  * 详细迁移决策见 wave w3-ui-settings-components 的 clarify/design-review。
+ * 目录分层（slice ui-settings-dirs）：组件按域归 provider/coding-plan/compat/common，
+ * apply-system-to-dom.ts + injection-keys.ts 留顶层（跨域共享非组件文件）。
  */
-export { default as CompatField } from './CompatField.vue'
-export { default as CompatEditor } from './CompatEditor.vue'
-export { default as CodingPlanSection } from './CodingPlanSection.vue'
-export { default as GroupCard } from './GroupCard.vue'
-export { default as LoadPaths } from './LoadPaths.vue'
-export { default as ModelListSection } from './ModelListSection.vue'
-export { default as PresetModeSection } from './PresetModeSection.vue'
-export { default as ProviderEditBody } from './ProviderEditBody.vue'
-export { default as ProviderImportMenu } from './ProviderImportMenu.vue'
-export { default as ProviderImportPreviewDialog } from './ProviderImportPreviewDialog.vue'
-export { default as SoundPreviewButton } from './SoundPreviewButton.vue'
-export { default as SourceImportSection } from './SourceImportSection.vue'
+export { default as CompatField } from './compat/CompatField.vue'
+export { default as CompatEditor } from './compat/CompatEditor.vue'
+export { default as CodingPlanSection } from './coding-plan/CodingPlanSection.vue'
+export { default as GroupCard } from './common/GroupCard.vue'
+export { default as LoadPaths } from './common/LoadPaths.vue'
+export { default as ModelListSection } from './common/ModelListSection.vue'
+export { default as PresetModeSection } from './coding-plan/PresetModeSection.vue'
+export { default as ProviderEditBody } from './provider/ProviderEditBody.vue'
+export { default as ProviderImportMenu } from './provider/ProviderImportMenu.vue'
+export { default as ProviderImportPreviewDialog } from './provider/ProviderImportPreviewDialog.vue'
+export { default as SoundPreviewButton } from './common/SoundPreviewButton.vue'
+export { default as SourceImportSection } from './common/SourceImportSection.vue'
 
 export {
   applySystemToDom,

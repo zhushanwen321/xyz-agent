@@ -220,7 +220,7 @@ import { useI18n } from 'vue-i18n'
 
 import type { NormalizedQuotaRow } from '@xyz-agent/shared'
 import { QUOTA_PRESETS } from '@xyz-agent/shared'
-import type { QuotaTestStatus } from './injection-keys'
+import type { QuotaTestStatus } from '../injection-keys'
 
 const props = withDefaults(defineProps<{
   /** 当前选中的 fetcher id（未选择 = undefined） */
