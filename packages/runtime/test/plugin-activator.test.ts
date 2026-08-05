@@ -248,28 +248,22 @@ describe('PluginActivator', () => {
 })
 
 describe('external plugin activation hard lock（§6.6 激活侧，IF3）', () => {
-  // ── TC-A: external + 开关 false → 跳过激活 ────────────────────
-  it('TC-A: external plugin + EXTERNAL_PLUGIN_ENABLED=false → skipped (assignWorker/loadPlugin/permissionChecker zero calls, state UNLOADED)', async () => {
+  // ── TC-A: external + 开关 true（sandbox 闭环已落地）→ 正常激活 ────────
+  it('TC-A: external plugin + EXTERNAL_PLUGIN_ENABLED=true（翻转后）→ 正常激活 (assignWorker called, state ACTIVE)', async () => {
     const activator = new PluginActivator()
-    const desc = makeDescriptor({ pluginId: 'ext-locked', source: 'external' })
+    const desc = makeDescriptor({ pluginId: 'ext-allowed', source: 'external' })
     activator.registerDescriptors([desc])
 
     const host = createMockHost(activator, 'activated')
 
-    // 锁必须在权限检查之前：即使 permissionChecker 存在也不应被触达
-    const permissionChecker = { getUnapproved: vi.fn(() => ['fs']) }
-    const lockedActivator = new PluginActivator({ permissionChecker })
-    lockedActivator.registerDescriptors([desc])
+    // 翻转后：external 来源不再被硬锁跳过（sandbox 子进程 + ESM loader 兜底隔离，
+    // 见 plugin-security.ts [翻转记录]）。开关回退 false 时本 guard 重新生效（fail-closed）。
+    await activator.activatePlugin('ext-allowed', { type: 'onStartupFinished' }, host)
 
-    await lockedActivator.activatePlugin('ext-locked', { type: 'onStartupFinished' }, host)
-
-    // 状态保持 UNLOADED（跳过，不进入 ACTIVATING）
-    expect(lockedActivator.getState('ext-locked')).toBe('UNLOADED')
-    // Worker 分配与加载零调用
-    expect(host.assignWorker).not.toHaveBeenCalled()
-    expect(host.loadPlugin).not.toHaveBeenCalled()
-    // 锁在权限检查之前（ES2）
-    expect(permissionChecker.getUnapproved).not.toHaveBeenCalled()
+    // 正常进入激活路径
+    expect(activator.getState('ext-allowed')).toBe('ACTIVE')
+    expect(host.assignWorker).toHaveBeenCalledTimes(1)
+    expect(host.loadPlugin).toHaveBeenCalledTimes(1)
   })
 
   // ── TC-B: built-in 来源不受影响，正常激活 ─────────────────────

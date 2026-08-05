@@ -23,7 +23,7 @@ function createService(installer: IPluginInstaller): PluginService {
 }
 
 describe('external plugin install hard lock（§6.6 排期硬锁）', () => {
-  it('TC-1: EXTERNAL_PLUGIN_ENABLED=false 时 installPlugin 短路返回 success:false 且 installer 零调用', async () => {
+  it('TC-1: EXTERNAL_PLUGIN_ENABLED=true（sandbox 闭环已落地）时 installPlugin 放行到 installer', async () => {
     const installer: IPluginInstaller = {
       install: vi.fn().mockResolvedValue({ success: true, pluginId: 'pkg', path: '/tmp' }),
       uninstall: vi.fn().mockResolvedValue(undefined),
@@ -32,15 +32,18 @@ describe('external plugin install hard lock（§6.6 排期硬锁）', () => {
 
     const result: InstallResult = await service.installPlugin('any-npm-pkg')
 
-    // 用户可见契约：安装被拒
-    expect(result.success).toBe(false)
-    expect(result.error).toContain(EXTERNAL_PLUGIN_DISABLED)
-    // 短路在 installer port 之前：installer mock 零调用
-    expect(installer.install).not.toHaveBeenCalled()
+    // 翻转后契约：安装放行到 installer port（sandbox 子进程 + ESM loader 兜底隔离）
+    expect(result.success).toBe(true)
+    expect(installer.install).toHaveBeenCalledTimes(1)
+    // 硬锁文案常量仍导出（开关回退 false 时复用）
+    expect(EXTERNAL_PLUGIN_DISABLED).toBe('EXTERNAL_PLUGIN_DISABLED')
+    expect(EXTERNAL_PLUGIN_DISABLED_MESSAGE).toContain(EXTERNAL_PLUGIN_DISABLED)
   })
 
-  it('TC-2: 常量契约 —— EXTERNAL_PLUGIN_ENABLED 默认 false、错误码与文案常量导出', () => {
-    expect(EXTERNAL_PLUGIN_ENABLED).toBe(false)
+  it('TC-2: 常量契约 —— EXTERNAL_PLUGIN_ENABLED 已翻转 true（sandbox 真隔离闭环）、错误码与文案常量导出', () => {
+    // 翻转记录见 plugin-security.ts [翻转记录]：fork 子进程 + ESM loader 注入 + env 边界判定
+    // + postbuild 产物校验四环齐备，external 安装放行。任一环节回退须同步翻回 false。
+    expect(EXTERNAL_PLUGIN_ENABLED).toBe(true)
     expect(EXTERNAL_PLUGIN_DISABLED).toBe('EXTERNAL_PLUGIN_DISABLED')
     expect(EXTERNAL_PLUGIN_DISABLED_MESSAGE).toContain(EXTERNAL_PLUGIN_DISABLED)
     expect(EXTERNAL_PLUGIN_DISABLED_MESSAGE).toContain('sandbox isolation')
