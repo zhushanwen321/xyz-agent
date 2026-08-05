@@ -52,6 +52,7 @@
  * 依赖方向：main.ts → context + interfaces + gateway + window-factory + 三个 Facade 实现
  */
 import path from 'node:path'
+import { existsSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { app, protocol, net, BrowserWindow } from 'electron'
 import { DEV_PORT_OFFSET } from '@xyz-agent/shared'
@@ -192,6 +193,16 @@ async function bootstrapMainWindow(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  // dev 模式 Dock 图标：未打包的 Electron 运行时用内置默认图标（蓝色 Electron logo），
+  // 不读 electron-builder 的 build/icon.*（那只在打包产物生效）。macOS dock 图标跟随
+  // app bundle——dev 无 bundle，必须显式 setIcon 才有新 LOGO（双鱼太极）。
+  // 打包版无需此调用：bundle 的 Info.plist + Contents/Resources/icon.icns 自动生效。
+  if (isDev && process.platform === 'darwin') {
+    const dockIcon = path.join(app.getAppPath(), 'build', 'icon-1024.png')
+    if (existsSync(dockIcon)) {
+      app.dock.setIcon(dockIcon)
+    }
+  }
   // 注册 local-file:// 协议，用于渲染进程加载本地文件（如图片）
   protocol.handle('local-file', (request) => {
     const rawPath = decodeURIComponent(new URL(request.url).pathname)
