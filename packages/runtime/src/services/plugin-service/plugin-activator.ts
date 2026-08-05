@@ -185,8 +185,9 @@ export class PluginActivator {
         }
       }
 
-      // 1. 分配 Worker
-      const workerId = await host.assignWorker(pluginId, descriptor.trustLevel)
+      // 1. 分配 Worker（sandbox 传 pluginDir：fork 子进程 env 注入 XYZ_PLUGIN_SANDBOX_DIR，
+      // ESM loader initialize() 在进程启动时读此 env 做路径边界判定）
+      const workerId = await host.assignWorker(pluginId, descriptor.trustLevel, descriptor.pluginPath)
 
       // 2. 加载插件模块到 Worker
       await host.loadPlugin(workerId, descriptor.pluginPath)

@@ -31,7 +31,13 @@ type ReplyCallback = (msg: unknown) => void
  * 由本文件拥有契约，plugin-lifecycle/plugin-service 通过 re-export 消费。
  */
 export interface PluginHostProcessContract {
-  assignProcess(pluginId: string, trustLevel: 'trusted' | 'sandbox'): Promise<string>
+  /**
+   * 为插件分配子进程。
+   * @param pluginDir 插件根目录绝对路径（sandbox 必传，注入 fork env XYZ_PLUGIN_SANDBOX_DIR；
+   *   ESM loader 的 initialize() 在进程启动时读该 env，缺失 fail-closed throw，
+   *   故 sandbox 进程必须在 fork 前拿到 pluginDir——loadPlugin 时机太晚）。
+   */
+  assignProcess(pluginId: string, trustLevel: 'trusted' | 'sandbox', pluginDir?: string): Promise<string>
   loadPlugin(processId: string, pluginPath: string, trustLevel?: 'trusted' | 'sandbox'): Promise<void>
   terminateProcess(processId: string): Promise<void>
   getProcessHandle(pluginId: string): { processId: string; postMessage(message: unknown): void } | undefined
@@ -77,10 +83,11 @@ export class PluginHostProcess implements PluginHostProcessContract {
   /**
    * 为插件分配子进程。
    *
-   * - sandbox: 每个插件独占一个子进程
+   * - sandbox: 每个插件独占一个子进程（pluginDir 注入 fork env XYZ_PLUGIN_SANDBOX_DIR，
+   *   供 ESM loader initialize() 在进程启动时读取——晚于 fork 的 loadPlugin 时机无法注入）
    * - trusted: 查找有空位的 trusted 子进程（≤10），没有则新建
    */
-  async assignProcess(pluginId: string, trustLevel: 'trusted' | 'sandbox'): Promise<string> {
+  async assignProcess(pluginId: string, trustLevel: 'trusted' | 'sandbox', pluginDir?: string): Promise<string> {
     if (trustLevel === 'sandbox') {
       const processId = `sandbox-${pluginId}`
       const existing = this.processes.get(processId)
@@ -88,7 +95,7 @@ export class PluginHostProcess implements PluginHostProcessContract {
         existing.pluginIds.push(pluginId)
         return processId
       }
-      return this.createProcess(processId, 'sandbox', pluginId).processId
+      return this.createProcess(processId, 'sandbox', pluginId, pluginDir).processId
     }
 
     // trusted: 复用空闲子进程
@@ -245,6 +252,7 @@ export class PluginHostProcess implements PluginHostProcessContract {
     processId: string,
     trustLevel: 'trusted' | 'sandbox',
     pluginId: string,
+    pluginDir?: string,
   ): ProcessHandle {
     // bootstrap 路径：测试 override 优先；生产走 resolveAndValidateFile 链
     // （plugin-bootstrap-process.cjs → .js → .ts，与 plugin-host 的 .cjs/.js/.ts 同约定）
@@ -263,13 +271,21 @@ export class PluginHostProcess implements PluginHostProcessContract {
       }
     }
 
+    // sandbox 子进程 env：注入 XYZ_PLUGIN_SANDBOX_DIR（ESM loader initialize() 读此 env
+    // 做路径边界判定，缺失则 fail-closed throw）。trusted 不需要（ESM loader 仅 sandbox
+    // 进程经 execArgv --import 注入；trusted 走 Worker 线程不经此 fork 路径）。
+    const env: NodeJS.ProcessEnv = { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+    if (trustLevel === 'sandbox' && pluginDir) {
+      env.XYZ_PLUGIN_SANDBOX_DIR = pluginDir
+    }
+
     let child: ChildProcess
     try {
       child = fork(bootstrapPath, [], {
         // 打包约束（AGENTS.md #12）：必须 process.execPath + ELECTRON_RUN_AS_NODE=1
         // （打包后无独立 node；node 环境该 env 无害被忽略）
         execPath: process.execPath,
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+        env,
         // R2：stdout/stderr 显式 pipe 接管（防污染 runtime JSONL 事件流），数据转发 logger 落盘
         // 注意：fork 要求 stdio 含 'ipc'（默认自动追加，显式覆盖时必须保留）
         stdio: ['ignore', 'pipe', 'pipe', 'ipc'],

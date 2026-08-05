@@ -121,7 +121,12 @@ type ReplyCallback = (msg: unknown) => void
  * 继续对外暴露，保持所有现有导入（NON-BREAKING）。
  */
 export interface PluginHostContract {
-  assignWorker(pluginId: string, trustLevel: 'trusted' | 'sandbox'): Promise<string>
+  /**
+   * 为插件分配 Worker。
+   * @param pluginDir 插件根目录绝对路径（sandbox 经此注入 fork 子进程 env XYZ_PLUGIN_SANDBOX_DIR；
+   *   trusted 走 Worker 线程，忽略此参数）
+   */
+  assignWorker(pluginId: string, trustLevel: 'trusted' | 'sandbox', pluginDir?: string): Promise<string>
   loadPlugin(workerId: string, pluginPath: string, trustLevel?: 'trusted' | 'sandbox'): Promise<void>
   terminateWorker(workerId: string): Promise<void>
   getWorkerHandle(pluginId: string): { workerId: string; postMessage(message: unknown): void } | undefined
@@ -203,14 +208,15 @@ export class PluginHost implements PluginHostContract {
   /**
    * 为插件分配 Worker。
    *
-   * - sandbox: 每个插件独占一个 Worker
-   * - trusted: 查找有空位的 trusted Worker（≤10），没有则新建
+   * - sandbox: 每个插件独占一个子进程（pluginDir 注入 fork env，ESM loader 边界判定依赖）
+   * - trusted: 查找有空位的 trusted Worker（≤10），没有则新建（pluginDir 忽略）
    */
-  async assignWorker(pluginId: string, trustLevel: 'trusted' | 'sandbox'): Promise<string> {
+  async assignWorker(pluginId: string, trustLevel: 'trusted' | 'sandbox', pluginDir?: string): Promise<string> {
     if (trustLevel === 'sandbox') {
       // sandbox 插件走子进程宿主（fork 隔离），不进 workers Map。
       // 进程复用由 PluginHostProcess.assignProcess 内部处理（sandbox 独占进程）。
-      return this.ensureProcessHost().assignProcess(pluginId, 'sandbox')
+      // pluginDir 注入 fork env XYZ_PLUGIN_SANDBOX_DIR（ESM loader initialize() 读此 env）。
+      return this.ensureProcessHost().assignProcess(pluginId, 'sandbox', pluginDir)
     }
 
     // trusted: 复用空闲 Worker

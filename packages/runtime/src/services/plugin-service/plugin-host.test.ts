@@ -100,4 +100,23 @@ describe('PluginHost sandbox wiring', () => {
     // trusted 走 Worker 线程，不创建 fork 子进程
     expect(vi.mocked(childProcess.fork)).toHaveBeenCalledTimes(0)
   })
+
+  it('TC8: sandbox fork env 注入 XYZ_PLUGIN_SANDBOX_DIR（loader initialize() 依赖）', async () => {
+    await host.assignWorker('p1', 'sandbox', '/fake/plugin-dir')
+    expect(vi.mocked(childProcess.fork)).toHaveBeenCalledTimes(1)
+    const forkCall = vi.mocked(childProcess.fork).mock.calls[0]
+    const opts = forkCall?.[2] as { env?: NodeJS.ProcessEnv } | undefined
+    // ESM loader initialize() 读此 env 做 sandbox 边界判定，缺失则 fail-closed throw
+    expect(opts?.env?.XYZ_PLUGIN_SANDBOX_DIR).toBe('/fake/plugin-dir')
+    // 打包约束（AGENTS.md #12）仍生效
+    expect(opts?.env?.ELECTRON_RUN_AS_NODE).toBe('1')
+  })
+
+  it('TC9: sandbox 未传 pluginDir 时 fork env 不含 XYZ_PLUGIN_SANDBOX_DIR（loader fail-closed 兑现）', async () => {
+    await host.assignWorker('p1', 'sandbox')
+    const forkCall = vi.mocked(childProcess.fork).mock.calls[0]
+    const opts = forkCall?.[2] as { env?: NodeJS.ProcessEnv } | undefined
+    // env 缺失时 ESM loader initialize() throw（子进程启动即崩溃）——fail-closed 安全语义
+    expect(opts?.env?.XYZ_PLUGIN_SANDBOX_DIR).toBeUndefined()
+  })
 })
