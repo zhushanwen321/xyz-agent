@@ -86,9 +86,8 @@ import type { RawCommand } from '@xyz-agent/core'
 import { useFileSearch } from '@/composables/features/useFileSearch'
 import { isInternalSkillName, isInternalSlashName } from '@/lib/internal-command-filter'
 import { useSessionEvents } from '@/composables/features/useSessionEvents'
-import { toFileCandidates } from '@/lib/file-candidates'
+import { toFileCandidates, filterAndSortFileCandidates } from '@xyz-agent/core'
 import type { SkillInfo } from '@xyz-agent/shared'
-import { filterAndSortFileCandidates } from '@/lib/file-match'
 
 type CmdType = 'file' | 'slash'
 

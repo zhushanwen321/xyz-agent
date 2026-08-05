@@ -37,7 +37,7 @@ vi.mock('@/composables/features/useFileSearch', () => ({
 }))
 
 import { useSearch } from '@/composables/features/useSearch'
-import type { Section } from '@/lib/search-types'
+import type { Section } from '@xyz-agent/core'
 
 beforeEach(() => {
   setActivePinia(createPinia())

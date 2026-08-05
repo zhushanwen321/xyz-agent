@@ -14,7 +14,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import { useCommandRegistry } from '@/composables/features/useCommandRegistry'
 import { useCommandStore, __resetCommandStoreForTesting } from '@/composables/features/useCommandStore'
-import type { AppCommand } from '@/lib/search-types'
+import type { AppCommand } from '@xyz-agent/core'
 
 beforeEach(() => {
   setActivePinia(createPinia())

@@ -48,7 +48,7 @@ vi.mock('@/composables/features/useRecents', () => ({
 
 import { useSearchJump } from '@/composables/features/useSearchJump'
 import { useCommandStore } from '@/stores/command'
-import type { AppCommand, SearchItem } from '@/lib/search-types'
+import type { AppCommand, SearchItem } from '@xyz-agent/core'
 
 beforeEach(() => {
   setActivePinia(createPinia())

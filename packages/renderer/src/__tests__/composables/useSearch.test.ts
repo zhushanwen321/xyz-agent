@@ -46,7 +46,7 @@ vi.stubEnv('VITE_MOCK', 'false')
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import type { FileNode, SessionGroup } from '@xyz-agent/shared'
-import type { AppCommand } from '@/lib/search-types'
+import type { AppCommand, SearchItem } from '@xyz-agent/core'
 import { useCommandStore, __resetCommandStoreForTesting } from '@/composables/features/useCommandStore'
 import { useFileSearchStore } from '@/stores/fileSearch'
 
@@ -74,8 +74,6 @@ const mockSetupInvalidation = vi.fn(() => vi.fn()) // 返回 unwatch 函数
 vi.mock('@/composables/features/useFileSearch', () => ({
   useFileSearch: () => ({ setupInvalidation: mockSetupInvalidation }),
 }))
-
-import type { SearchItem } from '@/lib/search-types'
 
 /**
  * 动态加载 useSearch：必须在 vi.stubEnv('VITE_MOCK','false')（见文件顶部）之后，

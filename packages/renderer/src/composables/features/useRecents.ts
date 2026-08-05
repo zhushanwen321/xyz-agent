@@ -15,7 +15,7 @@ import {
   RECENTS_STORAGE_KEY,
   type RecentEntry,
   type SearchType,
-} from '@/lib/search-types'
+} from '@xyz-agent/core'
 
 export function useRecents() {
   /**

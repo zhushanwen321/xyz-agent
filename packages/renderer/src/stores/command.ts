@@ -22,8 +22,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { CommandSourceInfo } from '@xyz-agent/shared'
-import { iconKeyForCommand } from '@xyz-agent/core'
-import type { AppCommand } from '@/lib/search-types'
+import { iconKeyForCommand, type AppCommand } from '@xyz-agent/core'
 
 /** slash 命令项（runtime session.commands payload 归一化 + icon key 推断） */
 export interface SessionCommand {

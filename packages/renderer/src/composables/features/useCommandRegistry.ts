@@ -6,8 +6,7 @@
  */
 import { computed, type ComputedRef } from 'vue'
 import { useCommandStore } from '@/composables/features/useCommandStore'
-import type { SessionCommand } from '@xyz-agent/core'
-import type { AppCommand } from '@/lib/search-types'
+import type { AppCommand, SessionCommand } from '@xyz-agent/core'
 
 /** 统一命令视图（供 useSearch 命令源 + Sidebar keydown 共享） */
 export type UnifiedCommand = AppCommand | SessionCommand

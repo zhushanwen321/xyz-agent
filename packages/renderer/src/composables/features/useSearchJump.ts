@@ -21,7 +21,7 @@
  *
  * 竞态（无）：跳转是用户主动单次操作，非高频。
  */
-import type { SearchItem, JumpCtx, JumpResult, RecentEntry } from '@/lib/search-types'
+import type { SearchItem, JumpCtx, JumpResult, RecentEntry } from '@xyz-agent/core'
 import { file as fileApi, session as sessionApi } from '@/api'
 import { useRecents } from '@/composables/features/useRecents'
 import { useSidebarNew } from '@/composables/features/useSidebarNew'

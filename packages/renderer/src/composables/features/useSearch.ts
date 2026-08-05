@@ -20,19 +20,16 @@
  * 并发（BC-9）：loadSeq 模块级自增序列号，await 后比对，旧响应丢弃。
  */
 import { ref, watch, onScopeDispose } from 'vue'
-import { matchFilter } from '@/lib/match-engine'
-import { toFileCandidates } from '@/lib/file-candidates'
-import type { FileCandidate } from '@/lib/file-candidates'
-import { filterAndSortFileCandidates } from '@/lib/file-match'
+import {
+  matchFilter,
+  toFileCandidates,
+  filterAndSortFileCandidates,
+  WS_SOURCE_TIMEOUT_MS,
+} from '@xyz-agent/core'
+import type { FileCandidate, SearchCtx, Section, SearchItem, AppCommand } from '@xyz-agent/core'
 import i18n from '@/i18n'
 
 const t = i18n.global.t
-import {
-  WS_SOURCE_TIMEOUT_MS,
-  type SearchCtx,
-  type Section,
-  type SearchItem,
-} from '@/lib/search-types'
 import { useCommandRegistry } from '@/composables/features/useCommandRegistry'
 import type { UnifiedCommand } from '@/composables/features/useCommandRegistry'
 import { useRecents } from '@/composables/features/useRecents'
@@ -40,7 +37,6 @@ import { useFileSearch } from '@/composables/features/useFileSearch'
 import { useFileSearchStore } from '@/stores/fileSearch'
 import { composer as composerApi, session as sessionApi } from '@/api'
 import * as mockApi from '@/api/mock'
-import type { AppCommand } from '@/lib/search-types'
 import type { SessionCommand } from '@/stores/command'
 
 /**

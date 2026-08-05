@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useCommandStore, type RawCommand } from '@/stores/command'
-import type { AppCommand } from '@/lib/search-types'
+import type { AppCommand } from '@xyz-agent/core'
 
 beforeEach(() => {
   setActivePinia(createPinia())

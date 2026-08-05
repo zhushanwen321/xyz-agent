@@ -10,7 +10,7 @@
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/lib/file-candidates.test.ts
  */
 import { describe, it, expect } from 'vitest'
-import { toFileCandidates } from '@/lib/file-candidates'
+import { toFileCandidates } from '@xyz-agent/core'
 import type { FileNode } from '@xyz-agent/shared'
 
 describe('toFileCandidates (G16 DTO 映射)', () => {

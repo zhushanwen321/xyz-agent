@@ -13,7 +13,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useRecents } from '@/composables/features/useRecents'
-import { RECENTS_STORAGE_KEY, type RecentEntry, type SearchType } from '@/lib/search-types'
+import { RECENTS_STORAGE_KEY, type RecentEntry, type SearchType } from '@xyz-agent/core'
 
 /** 构造 RecentEntry helper（timestamp 默认 0，write 内部会用计数器兜底重算） */
 function mk(type: SearchType, key: string, title: string, sub: string): RecentEntry {

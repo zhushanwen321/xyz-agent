@@ -16,7 +16,7 @@
  * 依赖方向：stores/command（registerApp）+ stores/sidebar（toggleCollapsed）。
  * 不依赖 api，不依赖 useCommandRegistry（registerApp 在 store 层，无需 session 上下文），不依赖 useSidebar（actions 注入破环）。
  */
-import type { AppCommand } from '@/lib/search-types'
+import type { AppCommand } from '@xyz-agent/core'
 import { useCommandStore } from '@/composables/features/useCommandStore'
 import { useSidebarStore } from '@/stores/sidebar'
 import { usePresetStore } from '@/stores/preset'
