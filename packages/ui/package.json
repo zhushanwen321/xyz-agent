@@ -39,6 +39,7 @@
     "@lucide/vue": "^1.21.0",
     "@vueuse/core": "^13",
     "@xyz-agent/core": "workspace:*",
+    "@xyz-agent/dom-core": "workspace:*",
     "@xyz-agent/extension-protocol": "workspace:*",
     "@xyz-agent/shared": "workspace:*",
     "ansi_up": "^6.0.6",

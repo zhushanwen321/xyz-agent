@@ -65,7 +65,7 @@
         <!-- 已附上下文 chip 行（§2f）。W4：从 segments 派生 image chips，× 删除定位 DOM 节点移除 -->
         <ContextChipsBar :items="attachedItems" @remove="onRemoveContextChip" />
         <!-- 输入区：ui 包 ComposerInput（contenteditable 富文本，draft §1/§2e，支持 slash chip 与 @/# mention 内联）。
-             deps（pasteImage/getSlashIcon/t）经 ComposerInputDeps inject token 注入（clarify C1）。 -->
+             deps（pasteImage/renderIcon/t）经 ComposerInputDeps inject token 注入（ADR-0058）。 -->
         <ComposerInput
           ref="inputRef"
           :placeholder="placeholder"
@@ -140,7 +140,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, provide, ref, watch, type Ref } from 'vue'
+import { computed, createVNode, onBeforeUnmount, onMounted, provide, ref, render, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowUp, Loader2, Square, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -366,10 +366,19 @@ async function onStopClick(): Promise<void> {
   await onAbort()
 }
 
-// ── ui ComposerInput deps 注入（clarify C1：pasteImage/getSlashIcon/t 三壳层能力）──
+// ── ui ComposerInput deps 注入（ADR-0058：pasteImage/renderIcon/t 三壳层能力）──
 const composerInputDeps: ComposerInputDeps = {
   pasteImage: handleImagePaste,
-  getSlashIcon: (iconKey: string) => SLASH_ICON_COMPONENTS[iconKey as keyof typeof SLASH_ICON_COMPONENTS],
+  // renderIcon：图标查找 + vue render 内聚在壳层（dom-core 零 vue render，ADR-0058 边界）。
+  // 返回 true = 已渲染图标（dom-core 侧挂载 host），false = 无图标不渲染。
+  renderIcon: (host: HTMLElement, iconKey?: string) => {
+    const Comp = iconKey
+      ? SLASH_ICON_COMPONENTS[iconKey as keyof typeof SLASH_ICON_COMPONENTS]
+      : undefined
+    if (!Comp) return false
+    render(createVNode(Comp, { size: 12 }), host)
+    return true
+  },
   t: (key: string) => t(key),
 }
 provide(ComposerInputDepsKey, composerInputDeps)

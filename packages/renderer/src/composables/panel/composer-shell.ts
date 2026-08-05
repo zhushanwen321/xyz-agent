@@ -28,10 +28,7 @@ import { normalizeContent } from '@xyz-agent/shared'
 import {
   useComposerModelThinking,
   useComposerInjection,
-  useComposerHistory,
   useComposerContextChips,
-  useComposerDragDrop,
-  useComposerRestore,
   useComposerForkMode,
   useComposerHandoffMode,
   useComposerStaging,
@@ -39,6 +36,12 @@ import {
   useComposerSubmit,
   useComposerSend,
 } from '@xyz-agent/core/domain/composer'
+// input 域 3 个 composable 已迁 @xyz-agent/dom-core（ADR-0058）：history/dragdrop/restore
+import {
+  useComposerHistory,
+  useComposerDragDrop,
+  useComposerRestore,
+} from '@xyz-agent/dom-core/composer/input'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { getSettingsStore } from '@xyz-agent/core'

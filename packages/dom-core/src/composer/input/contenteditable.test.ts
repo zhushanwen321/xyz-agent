@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 /**
  * contenteditable.ts composable 单测 —— composer input 模块 contenteditable 组合逻辑（W2 TC2）。
  *
@@ -9,7 +8,7 @@
  * 不强测）；caretRangeFromPoint 未实现（moveCaretVertical 多行分支不测）。moveCaretVertical 单行
  * at-edge 分支可测。
  *
- * 运行：cd packages/core && npx vitest run src/domain/composer/input/contenteditable.test.ts
+ * 运行：cd packages/dom-core && npx vitest run src/composer/input/contenteditable.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { ref } from 'vue'

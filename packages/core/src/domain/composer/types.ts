@@ -162,6 +162,26 @@ export interface StagingAction<S extends StagingSource = StagingSource> {
 }
 
 /**
+ * ComposerInput 实例最小契约（clear/setText/insertImageBadge/insertSlashChip/insertFileChip
+ * 经 defineExpose 暴露）。用结构类型避免 import .vue 文件（循环依赖 + 类型推断复杂）。
+ *
+ * [ADR-0058 归位] 权威定义原在 input/types.ts（随 composer/input 迁 @xyz-agent/dom-core），
+ * 但 context 子域（注入系统）也消费此类型——类型归属依消费方修正：跨子域共享类型上移
+ * 域级 types.ts，dom-core 经 '@xyz-agent/core/domain/composer' import 并 re-export
+ * （保持 dom-core barrel 对外契约不变）。
+ */
+export interface ComposerInputInstance {
+  clear: () => void
+  setText: (text: string, caretPosition?: 'end' | 'start') => void
+  insertImageBadge: (path: string, fileName: string, displayName: string, needsMigrate?: boolean) => void
+  insertSlashChip: (command: string, icon?: string) => void
+  insertFileChip: (path: string, lineRange?: [number, number]) => void
+  /** context 注入消费（focus / insertTextAtCursor），W3 合并 context 版同名接口 */
+  focus: () => void
+  insertTextAtCursor: (text: string) => void
+}
+
+/**
  * BashCommandExtract —— 从 composer draft 提取 bash 命令的判别联合（迁移自 useComposerBash.ts）。
  *
  * - not-bash：非 bash 前缀（调用方走普通发送）

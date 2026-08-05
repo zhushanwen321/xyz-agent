@@ -23,7 +23,7 @@
  * - 重置：用户在 browsing 态修改内容 → 退出 browsing
  */
 import { computed, reactive, type Ref } from 'vue'
-import { useSessionScopedState } from '../../../foundation/use-session-scoped-state'
+import { useSessionScopedState } from '@xyz-agent/core/foundation/use-session-scoped-state'
 import type { ComposerNavState, HistoryDeps } from './types'
 
 /**

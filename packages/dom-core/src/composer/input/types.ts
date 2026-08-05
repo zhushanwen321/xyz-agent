@@ -11,12 +11,12 @@
  * deps 回调注入。注入字段：
  * - pasteImage：替代 handleImagePaste（走 writeSessionImage IPC），contenteditable/dragdrop 用
  * - getHistoryEntries：替代 chatStore.getMessages 派生，history 用
- * - getSlashIcon：替代 SLASH_ICON_COMPONENTS 查找，chip-commands 用
+ * - renderIcon：替代 createVNode/render 直调 + SLASH_ICON_COMPONENTS 查找，chip-commands 用（ADR-0058 边界：dom-core DOM API only，无 vue render）
  * - t：替代 i18n.global.t，chip-commands 用（× 按钮 aria-label）
  *
  * 零 DOM 约束：本文件只定义类型，不触 DOM。
  */
-import type { Component, Ref } from 'vue'
+import type { Ref } from 'vue'
 
 /**
  * HandleImagePasteResult —— pasteImage 回调返回类型（对齐 renderer useImageAttachment）。
@@ -67,10 +67,11 @@ export interface ContenteditableCallbacks {
 }
 
 /**
- * chip-commands 回调（原 ChipCallbacks 扩展 getSlashIcon/t 注入）。
+ * chip-commands 回调（原 ChipCallbacks 扩展 renderIcon/t 注入）。
  *
- * onChanged/restoreSelection 保持原契约；新增 getSlashIcon（替代 import SLASH_ICON_COMPONENTS）
- * + t（替代 import i18n）。createVNode/render 是 vue API，保留在 core 内（非 DOM 直连）。
+ * onChanged/restoreSelection 保持原契约；新增 renderIcon（替代 createVNode/render 直调 + 
+ * SLASH_ICON_COMPONENTS 查找，ADR-0058 边界修复：dom-core 只做 DOM 编排，图标渲染归壳层）
+ * + t（替代 import i18n）。
  */
 export interface ChipCallbacks {
   /** chip 变更后同步父组件状态（isEmpty/draft/slash-trigger），即 ComposerInput.onInput */
@@ -78,11 +79,13 @@ export interface ChipCallbacks {
   /** 恢复光标到命令浮层夺焦前的位置（insertMentionChip/insertFileChip/insertImageBadge 用） */
   restoreSelection: () => void
   /**
-   * [W2 注入] 取 slash 命令对应的图标组件（替代 import SLASH_ICON_COMPONENTS）。
-   * @param iconKey 图标 key（如 'terminal'/'star'/'wrench'），由调用方（命令选择）透传
-   * @returns 图标 Vue 组件，undefined 表示无图标
+   * [ADR-0058 注入] 把 slash 命令图标渲染进宿主元素（替代 createVNode/render 直调 + 
+   * SLASH_ICON_COMPONENTS 查找）。dom-core 边界纯净：DOM API only，无 vue render。
+   * @param host 已创建的 .chip-icon span（dom-core 侧创建并决定是否挂载）
+   * @param iconKey 图标 key（如 'terminal'/'star'/'wrench'），undefined 表示无图标
+   * @returns 是否渲染了图标（true → dom-core 挂载 host；false → 丢弃 host）
    */
-  getSlashIcon: (iconKey: string) => Component | undefined
+  renderIcon: (host: HTMLElement, iconKey?: string) => boolean
   /**
    * [W2 注入] 国际化文案（替代 import i18n.global.t）。
    * 当前唯一用途：× 按钮 aria-label（composable.removeLabel）。
@@ -93,17 +96,12 @@ export interface ChipCallbacks {
 /**
  * ComposerInput 实例最小契约（clear/setText/insertImageBadge/insertSlashChip/insertFileChip
  * 经 defineExpose 暴露）。用结构类型避免 import .vue 文件（循环依赖 + 类型推断复杂）。
+ *
+ * [ADR-0058 归位] 权威定义已上移 core 域级 types.ts（core context 注入系统同消费），
+ * 此处 re-export 保持 dom-core barrel 对外契约不变（dom-core → core 正向依赖）。
  */
-export interface ComposerInputInstance {
-  clear: () => void
-  setText: (text: string, caretPosition?: 'end' | 'start') => void
-  insertImageBadge: (path: string, fileName: string, displayName: string, needsMigrate?: boolean) => void
-  insertSlashChip: (command: string, icon?: string) => void
-  insertFileChip: (path: string, lineRange?: [number, number]) => void
-  /** context 注入消费（focus / insertTextAtCursor），W3 合并 context 版同名接口 */
-  focus: () => void
-  insertTextAtCursor: (text: string) => void
-}
+import type { ComposerInputInstance } from '@xyz-agent/core/domain/composer'
+export type { ComposerInputInstance }
 
 /** restore 模块依赖（draft/inputRef/drafts/sessionId，原契约保持） */
 export interface ComposerRestoreDeps {

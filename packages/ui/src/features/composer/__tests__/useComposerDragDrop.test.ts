@@ -15,7 +15,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { effectScope, ref } from 'vue'
-import { useComposerDragDrop } from '@xyz-agent/core/domain/composer/input'
+import { useComposerDragDrop } from '@xyz-agent/dom-core/composer/input'
 
 /** pasteImage 可被每测试替换返回值（替代原 vi.mock useImageAttachment） */
 const pasteImageMock = vi.fn()

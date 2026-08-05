@@ -5,19 +5,19 @@
  * image badge 的 DOM 创建与删除。
  *
  * [W2 改造] 原 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons' + i18n，
- * 现经 callbacks.getSlashIcon/t 注入（clarify C1 D3）。createVNode/render 保留（vue API），
+ * 现经 callbacks.renderIcon/t 注入（ADR-0058 边界修复：createVNode/render 收敛为注入 callback，
+ * dom-core 零 vue render import）。
  * DOM 辅助（findImageChipEl/isSpacerNode/placeCursorAfter/removeChipNode）委托 input-dom.ts。
  *
  * 不含：contenteditable 事件处理（contenteditable.ts）、模板结构、props/emits 声明。
  */
 import { type Ref } from 'vue'
-import { createVNode, render } from 'vue'
 import { removeChipNode, isSpacerNode, placeCursorAfter } from './input-dom'
 import type { ChipCallbacks } from './types'
 
 export function useComposerChipCommands(
   elRef: Ref<HTMLDivElement | null>,
-  { onChanged, restoreSelection, getSlashIcon, t }: ChipCallbacks,
+  { onChanged, restoreSelection, renderIcon, t }: ChipCallbacks,
 ) {
   function getEl(): HTMLDivElement | null {
     return elRef.value
@@ -39,18 +39,18 @@ export function useComposerChipCommands(
   }
 
   /**
-   * 把 lucide 图标组件渲染进容器元素（contenteditable chip 走手动 DOM，无法用 <component>）。
-   * render 到空容器再 appendChild：生成的 <svg> 挂到 chip 文本前。
+   * 把 lucide 图标渲染进容器元素（contenteditable chip 走手动 DOM，无法用 <component>）。
+   * 渲染经 callbacks.renderIcon 注入（壳层用 createVNode/render 实现），dom-core 只负责
+   * DOM 编排：创建 host span → 调 renderIcon → 渲染成功才挂载。
    * getText 的 TreeWalker(SHOW_TEXT) 不会读到 svg（无文本子节点），故图标不影响发送文本。
    */
   function renderIconInto(container: HTMLElement, iconKey?: string): void {
-    const Comp = iconKey ? getSlashIcon(iconKey) : undefined
-    if (!Comp) return
     const host = document.createElement('span')
     host.className = 'chip-icon'
     host.setAttribute('aria-hidden', 'true')
-    render(createVNode(Comp, { size: 12 }), host)
-    container.appendChild(host)
+    if (renderIcon(host, iconKey)) {
+      container.appendChild(host)
+    }
   }
 
   /** 插入 slash 命令 chip（§2e：必须在最前，只允许一个，整体可删，× 可点删）。 */

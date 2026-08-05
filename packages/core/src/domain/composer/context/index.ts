@@ -12,6 +12,5 @@
 export * from './context-chips'
 export * from './injection-store'
 export * from './injection'
-// ComposerInputInstance 权威定义在 input/types.ts（input 模块 export），此处 re-export 供
-// context 消费者（shim/壳层）从统一入口取，避免两处同名类型分裂（TS2308 冲突）。
-export type { ComposerInputInstance } from '../input/types'
+// 注意：ComposerInputInstance 由 composer 域 barrel（index.ts 的 export * from './types'）导出，
+// 此处不再 re-export（TS2308 冲突）。

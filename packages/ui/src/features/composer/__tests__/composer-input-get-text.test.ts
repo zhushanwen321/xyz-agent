@@ -6,7 +6,7 @@
  *
  * mock 策略：happy-dom 支持 TreeWalker + createTreeWalker。直接 mount ui ComposerInput，
  * 设 [role="textbox"] 的 innerHTML 构造 contenteditable DOM，调 vm.getText() 断言。
- * deps（pasteImage/getSlashIcon/t）经 ComposerInputDeps provide 注入（W4 迁移：ui 包
+ * deps（pasteImage/renderIcon/t）经 ComposerInputDeps provide 注入（W4 迁移：ui 包
  * 零 renderer import，deps 注入契约见 composer-input-deps.ts）。
  *
  * [W4 迁移] 自 renderer __tests__/panel/composer-input-get-text.test.ts 迁入 ui 包
@@ -16,7 +16,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import type { HandleImagePasteResult } from '@xyz-agent/core/domain/composer'
+import type { HandleImagePasteResult } from '@xyz-agent/dom-core/composer/input'
 import ComposerInput from '../ComposerInput.vue'
 import { ComposerInputDepsKey } from '../composer-input-deps'
 import type { ComposerInputDeps } from '../composer-input-deps'
@@ -31,7 +31,7 @@ beforeEach(() => {
 
 const deps: ComposerInputDeps = {
   pasteImage: async (): Promise<HandleImagePasteResult> => ({ kind: 'text', text: '[图片粘贴：需桌面环境]' }),
-  getSlashIcon: () => undefined,
+  renderIcon: () => false,
   t: (key: string) => key,
 }
 

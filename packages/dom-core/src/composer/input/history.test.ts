@@ -6,7 +6,7 @@
  * computed 来自 vue，vue 在 node 可用）。
  *
  * 范式对齐 renderer use-composer-history.test.ts，getHistoryEntries 替代 chatStore.appendUser。
- * 运行：cd packages/core && npx vitest run src/domain/composer/input/history.test.ts
+ * 运行：cd packages/dom-core && npx vitest run src/composer/input/history.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ref, effectScope, type Ref } from 'vue'
@@ -14,7 +14,7 @@ import {
   useComposerHistory,
   type HistoryDeps,
 } from './index'
-import { __clearSessionCleanupRegistryForTest } from '../../../foundation/use-session-scoped-state'
+import { __clearSessionCleanupRegistryForTest } from '@xyz-agent/core/foundation/use-session-scoped-state'
 
 beforeEach(() => {
   __clearSessionCleanupRegistryForTest()

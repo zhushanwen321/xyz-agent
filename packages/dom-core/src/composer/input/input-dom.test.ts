@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 /**
  * input-dom.ts DOM 函数单测 —— composer input 模块 DOM 直连收敛层（W2 TC1）。
  *
@@ -8,7 +7,7 @@
  * jsdom 支持 TreeWalker/Range/Selection；caretRangeFromPoint 未实现（moveCaretVertical
  * 多行分支不测，见 design review boundaryConditionNote）。
  *
- * 运行：cd packages/core && npx vitest run src/domain/composer/input/input-dom.test.ts
+ * 运行：cd packages/dom-core && npx vitest run src/composer/input/input-dom.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import {

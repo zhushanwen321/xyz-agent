@@ -5,7 +5,7 @@
  * 迁移到 ui 包（props/emits/expose 契约不变，C1 契约），经 @xyz-agent/ui/features/composer
  * 子路径暴露（对齐 ./rendering-protocol / ./extension-host 子路径范式）。
  *
- * deps 注入契约（clarify C1）：ui 包零 renderer import，pasteImage/getSlashIcon/t 三壳层
+ * deps 注入契约（clarify C1）：ui 包零 renderer import，pasteImage/renderIcon/t 三壳层
  * 能力经 ComposerInputDeps inject token 注入（renderer 壳 Composer.vue provide）。
  */
 export { default as ComposerInput } from './ComposerInput.vue'

@@ -57,7 +57,7 @@ import Composer from '@/components/panel/Composer.vue'
 /** ui ComposerInput deps 注入（W4：ComposerInput 迁 ui 包，deps 经 inject token 提供） */
 const composerInputDeps = {
   pasteImage: async () => ({ kind: 'text' as const, text: '[测试环境]' }),
-  getSlashIcon: () => undefined,
+  renderIcon: () => false,
   t: (key: string) => key,
 }
 

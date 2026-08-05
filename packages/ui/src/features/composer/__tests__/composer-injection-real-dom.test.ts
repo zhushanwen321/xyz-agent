@@ -18,9 +18,10 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ref, nextTick, type Ref } from 'vue'
-import { createComposerInjectionStore, useComposerInjection, type ComposerInputInstance } from '@xyz-agent/core/domain/composer/context'
-import { useComposerChipCommands } from '@xyz-agent/core/domain/composer/input'
-import type { ChipCallbacks } from '@xyz-agent/core/domain/composer/input'
+import { createComposerInjectionStore, useComposerInjection } from '@xyz-agent/core/domain/composer/context'
+import type { ComposerInputInstance } from '@xyz-agent/core/domain/composer'
+import { useComposerChipCommands } from '@xyz-agent/dom-core/composer/input'
+import type { ChipCallbacks } from '@xyz-agent/dom-core/composer/input'
 
 beforeEach(() => {
   document.body.innerHTML = ''
@@ -43,7 +44,7 @@ function setupRealChipChain(variant: 'panel' | 'landing', sessionId: string | nu
   const chipCommands = useComposerChipCommands(elRef, {
     onChanged: vi.fn(),
     restoreSelection: vi.fn(),
-    getSlashIcon: () => undefined,
+    renderIcon: () => false,
     t: (key: string) => key,
   } as ChipCallbacks)
   // 模拟 ComposerInput 的 defineExpose 对象（useComposerInjection 通过 inputRef.value 访问）。

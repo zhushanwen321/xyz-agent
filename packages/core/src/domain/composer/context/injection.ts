@@ -45,7 +45,7 @@ import type { ComposerInjectionStore, PendingInjection } from './injection-store
  * 用结构类型避免 import .vue 文件（循环依赖 + 类型推断复杂），同 context-chips/submit 范式。
  * [W3] 合并到 input/types.ts 权威定义（本模块 import，不再重复声明）。
  */
-import type { ComposerInputInstance } from '../input/types'
+import type { ComposerInputInstance } from '../types'
 
 /** useComposerInjection 的注入依赖（壳层 Composer 从各 store/composable 派生后注入）。 */
 export interface InjectionDeps {

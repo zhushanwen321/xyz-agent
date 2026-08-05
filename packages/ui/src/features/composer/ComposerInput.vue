@@ -6,7 +6,7 @@
     v-html 被项目规则禁用（vue/no-v-html），所有 DOM 操作走 ref 手动 API。
 
     [W4 迁移] 自 renderer components/panel/ComposerInput.vue 迁入 ui 包，
-    props/emits/expose 契约不变（C1 契约），壳层 deps（pasteImage/getSlashIcon/t）
+    props/emits/expose 契约不变（C1 契约），壳层 deps（pasteImage/renderIcon/t）
     经 ComposerInputDeps inject token 注入（clarify C1，对齐 w6 ChatViewDeps 范式）。
   -->
   <div
@@ -36,7 +36,7 @@ import {
   useContenteditableInput,
   useComposerChipCommands,
   findImageChipElById,
-} from '@xyz-agent/core/domain/composer/input'
+} from '@xyz-agent/dom-core/composer/input'
 import { useComposerInputDeps } from './composer-input-deps'
 
 const props = withDefaults(
@@ -61,7 +61,7 @@ const emit = defineEmits<{
   blur: []
 }>()
 
-/** 壳层依赖注入（pasteImage IPC / getSlashIcon 图标映射 / i18n t）——renderer Composer.vue provide */
+/** 壳层依赖注入（pasteImage IPC / renderIcon 图标渲染 / i18n t）——renderer Composer.vue provide */
 const deps = useComposerInputDeps()
 
 const elRef = ref<HTMLDivElement | null>(null)
@@ -109,11 +109,11 @@ const {
 })
 
 // ============ 富文本 chip（§2e slash / §2d mention） ============
-// chip DOM 操作在 core input/chip-commands.ts（W2 迁移，deps 注入 getSlashIcon/t）。
+// chip DOM 操作在 dom-core input/chip-commands.ts（ADR-0058 迁移，deps 注入 renderIcon/t）。
 const chipCommands = useComposerChipCommands(elRef, {
   onChanged: onInput,
   restoreSelection,
-  getSlashIcon: deps.getSlashIcon,
+  renderIcon: deps.renderIcon,
   t: deps.t,
 })
 const insertSlashChip = chipCommands.insertSlashChip

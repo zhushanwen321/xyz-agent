@@ -10,14 +10,14 @@
  *
  * [W4 迁移] 自 renderer __tests__/panel/file-chip.test.ts 迁入 ui 包 features/composer/
  * __tests__/——chip-commands 逻辑在 core input 模块，ui 包测试直接组合 core 模块
- * （deps getSlashIcon/t 注入，零 renderer import）。
+ * （deps renderIcon/t 注入，零 renderer import）。
  *
  * 运行：cd packages/ui && npx vitest run src/features/composer
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ref } from 'vue'
-import { useComposerChipCommands, getSegmentsFromEl } from '@xyz-agent/core/domain/composer/input'
-import type { ChipCallbacks } from '@xyz-agent/core/domain/composer/input'
+import { useComposerChipCommands, getSegmentsFromEl } from '@xyz-agent/dom-core/composer/input'
+import type { ChipCallbacks } from '@xyz-agent/dom-core/composer/input'
 
 /** 创建挂载在 document 上的 contenteditable div + chipCommands 实例 */
 function setupChipCommands(): {
@@ -36,7 +36,7 @@ function setupChipCommands(): {
   const chipCommands = useComposerChipCommands(elRef as never, {
     onChanged,
     restoreSelection,
-    getSlashIcon: () => undefined,
+    renderIcon: () => false,
     t: (key: string) => key,
   } as ChipCallbacks)
   return { el, chipCommands }
