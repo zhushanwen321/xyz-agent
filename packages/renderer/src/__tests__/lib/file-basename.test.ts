@@ -4,12 +4,13 @@
  * 覆盖：
  * - findByBasename：0/1/N 匹配场景（含目录同名不应匹配）
  * - collectBasenames：扁平 + 嵌套 children + 只收 file 类型
+ * - collectFilePaths：path 收集（与 basenames 对称，供 env.filePaths 白名单）
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/lib/file-basename.test.ts
  */
 import { describe, it, expect } from 'vitest'
 import type { FileNode } from '@xyz-agent/shared'
-import { findByBasename, collectBasenames } from '@/lib/file-basename'
+import { findByBasename, collectBasenames, collectFilePaths } from '@/lib/file-basename'
 
 /** 构造 file 节点的辅助函数（减少样板） */
 function file(path: string, name = path.split('/').pop()!): FileNode {
@@ -110,5 +111,37 @@ describe('collectBasenames', () => {
 
   it('空列表 → 空 Set', () => {
     expect(collectBasenames([]).size).toBe(0)
+  })
+})
+
+describe('collectFilePaths', () => {
+  it('扁平列表 → 收集全部 file path', () => {
+    const nodes = [file('src/index.ts'), file('README.md')]
+    const paths = collectFilePaths(nodes)
+    expect(paths.has('src/index.ts')).toBe(true)
+    expect(paths.has('README.md')).toBe(true)
+  })
+
+  it('嵌套 children → 递归收集 path', () => {
+    const nodes = [
+      dir('src', [file('src/index.ts'), dir('src/utils', [file('src/utils/helper.ts')])]),
+      file('README.md'),
+    ]
+    const paths = collectFilePaths(nodes)
+    expect(paths.has('src/index.ts')).toBe(true)
+    expect(paths.has('src/utils/helper.ts')).toBe(true)
+    expect(paths.has('README.md')).toBe(true)
+  })
+
+  it('目录 path 不进集合（只收 file）', () => {
+    const nodes = [dir('src', [file('src/index.ts')], 'src'), dir('docs', [], 'docs')]
+    const paths = collectFilePaths(nodes)
+    expect(paths.has('src/index.ts')).toBe(true)
+    expect(paths.has('src')).toBe(false)
+    expect(paths.has('docs')).toBe(false)
+  })
+
+  it('空列表 → 空 Set', () => {
+    expect(collectFilePaths([]).size).toBe(0)
   })
 })
