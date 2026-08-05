@@ -77,7 +77,7 @@ plugin-sdk 审查发现 3 个致命冲突，统一前必须解决：
 renderer / mobile-renderer — 装配层（platform 适配 + 布局容器）
 ```
 
-**headless 边界**（core 与 dom-core 的划界）：core 是可在 node/worker 跑、纯单测、无 jsdom 的平台无关内核，**零 DOM 零 electron**；dom-core 承载「需要 DOM API、无 electron、跨 DOM renderer 复用」的前端逻辑（composer/input 的 contenteditable 编排等）。**实现状态：pending**（feature:dom-core-v2 推进中，包未落地，git log 无迁移提交；本文档先行固化分层设计，落地后移除本标注）。
+**headless 边界**（core 与 dom-core 的划界）：core 是可在 node/worker 跑、纯单测、无 jsdom 的平台无关内核，**零 DOM 零 electron**；dom-core 承载「需要 DOM API、无 electron、跨 DOM renderer 复用」的前端逻辑（composer/input 的 contenteditable 编排等）。**实现状态：已落地**（commit 1acc2cd95，composer/input 已从 core 迁入 @xyz-agent/dom-core，core 恢复真 headless；裁定见 [ADR-0058](../adr/0058-dom-core-package.md)）。
 
 **headless core + shell 范式**：composer 容器组件（ComposerInput.vue 等 Vue 壳）留在 renderer/ui 壳层，headless 逻辑在 core，DOM-bound 逻辑在 dom-core——容器组件只做装配，不承载领域逻辑。
 

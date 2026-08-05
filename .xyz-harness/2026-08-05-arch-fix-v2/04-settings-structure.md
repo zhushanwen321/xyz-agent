@@ -93,6 +93,18 @@ features/settings/
 
 ---
 
+## 实现差异补注（2026-08-05 落地后）
+
+实际落地（commit 4960c5371 目录分层 → eeaf5af45 SystemPage 拆分 → 8e6a0dd50 / 4dd152920 其他页拆分）与本设计两处偏差：
+
+1. **SystemPage Section 划分**：本表 5.2 按「领域功能」拟 CodingPlan/Proxy/Sound/Appearance 4 段。实际按 SystemPage.vue 真实配置块拆为 **Appearance / Sound / Shortcut / AutoRename** 4 段 + SystemPage.vue 38 行容器（仅 header + 4 Section 编排，无业务逻辑）。CodingPlan 直接复用 ui 包 CodingPlanSection（未独立成段）、Proxy 未单列；Shortcut/AutoRename 才是原 SystemPage 真实配置块，拆出后方使 SystemPage 降至 38 行。
+
+2. **顺序铁律后果未发生**：5.1 设「分层 → 拆分」铁律（警告「拆出 Section 无处归档反向加剧平铺」）。实际两 commit 严格依序——4960c5371 先建 system/ 等子目录、eeaf5af45 后拆 Section 入 system/，警告的反噬后果未发生。
+
+ExtensionPage（530 → 5 文件入 extension/）、PiPresetsPage（443 → list/detail 入 preset/）按设计执行，无偏差。
+
+---
+
 ## 主题 4 验收
 
 - 3 个大文件均 < 300 行
