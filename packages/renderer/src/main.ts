@@ -7,6 +7,7 @@ import App from './App.vue'
 import { provideDesktopPlatform } from './platform/desktop-platform'
 import { createMockPlatform } from './mock/mock-ws'
 import { providePlatform, provideDevMode } from '@xyz-agent/core'
+import { initExtensionHostBridge } from './composables/shell/useExtensionHostBridge'
 import './style.css'
 
 // dev 模式注入（core headless 化，audit §15.6）：core 不能读 import.meta.env，
@@ -26,6 +27,9 @@ if (import.meta.env.VITE_MOCK === 'true') {
 }
 
 const app = createApp(App)
+// ExtensionHost bridge 装配（audit §12.1）：WS plugin:* 消息 → bus → ViewHostStore/StatusBarController →
+// app.provide 注入 ui 组件数据源。须在 mount 前（provide 全局生效）。
+initExtensionHostBridge(app)
 app.use(createPinia())
 app.use(i18n)
 app.mount('#app')

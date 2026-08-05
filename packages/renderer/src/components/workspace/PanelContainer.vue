@@ -115,6 +115,9 @@
       </SplitterPanel>
     </template>
     </SplitterGroup>
+    <!-- ExtensionHost 状态栏（audit §12.1）：数据经 app.provide STATUS_BAR_SOURCE_KEY 注入（useExtensionHostBridge），
+         无数据时自隐藏；sessionId 绑定当前 leaf（per-session 项） -->
+    <StatusBar :session-id="leaf.sessionId ?? null" />
   </div>
 </template>
 
@@ -135,6 +138,7 @@ import {
   browserUrl,
 } from '@xyz-agent/core/domain/drawer'
 import { DrawerPanel } from '@xyz-agent/ui/features/drawer'
+import { StatusBar } from '@xyz-agent/ui/extension-host'
 import { usePanelStore } from '@/stores/panel'
 import { useSessionStore } from '@/stores/session'
 import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
