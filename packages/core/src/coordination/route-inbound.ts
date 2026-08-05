@@ -2,7 +2,7 @@
  * route-inbound —— 入站消息分发器（迁移自 renderer useConnection.ts routeInbound，IF1/IF2/IF4 + DM3）。
  *
  * 对每条入站 ServerMessage：
- *   1. 若 msg.id 命中 pending → resolve（普通响应）/ reject（error envelope，ES1）→ return（D7）
+ *   1. 若 msg.id 命中 pending → resolveEnvelope 委托 pending 层（envelope 展开，ES1）→ return（D7）
  *   2. 查 ROUTE_TABLE 精确 type 条目（session.exited/message.complete/session.subagents/
  *      session.workflowUpdate）：seq gap 中间件（evalSeqGap + 副作用）→ dispatchSession →
  *      effect 回调
@@ -55,6 +55,16 @@ export interface TransportPorts {
     rejectAll(error: unknown): void
     /** 该 id 是否对应一个 pending 请求（区分 RPC reply 与带 id 的广播，见 routeInbound 注释）。 */
     has(id: string): boolean
+    /**
+     * 按 envelope 语义 settle pending 请求（收尾 6：envelope 展开下沉 pending 层，R2/ES1）。
+     *
+     * 接受原始 ServerMessage：id 命中 pending 时——
+     * - type==='error'：展开 error envelope（code 提取 + details.detail 展开到 Error）后 reject；
+     * - 其他 type：resolve msg.payload 原样。
+     * id 缺失或未命中 pending（如带 nextPushId 的广播）→ no-op，绝不吞广播。
+     * 实现位于 renderer api/pending（route-inbound 的 pending 分流出口）。
+     */
+    resolveEnvelope(msg: ServerMessage): void
   }
   events: {
     dispatchSession(sessionId: string, msg: ServerMessage): void
@@ -226,8 +236,8 @@ const FALLBACK: RouteTableEntry['handle'] = (msg, { ports, effects, sid }) => {
  * - 幂等由调用方 ensureDispatcher 保证（renderer 侧只安装一次）
  *
  * 处理顺序：
- *   1. msg.id 非空 → pending 分流（error envelope 展开 code+details 到 Error，行为等价现状
- *      R2 注释保留；非 error → resolve(id, payload)），return 不再进路由表（id/seq 来源互斥 D7）
+ *   1. msg.id 命中 pending → resolveEnvelope 委托 pending 层（error envelope 展开 code+details
+ *      到 Error，收尾 6 R2/ES1），return 不再进路由表（id/seq 来源互斥 D7）
  *   2. 查 ROUTE_TABLE 精确 type 条目 → seq gap 中间件 + dispatchSession + effect 回调
  *   3. 恒真 FALLBACK：有 sessionId → seq gap + dispatchSession；无 → dispatchGlobal + L9 warn
  *      + error 无 id → onGlobalError
@@ -254,36 +264,9 @@ export function configureRouteInbound(
     // settingsStore.skills/agents（无 refresh RPC 兜底，区别于有 refresh 的 providers/models）
     // 永空。2026-08 审查报告 R5 问题 9 根因。
     if (msg.id && ports.pending.has(msg.id)) {
-      if (msg.type === 'error') {
-        // type==='error' 已窄化 payload 为 error envelope（含 code + message + 可选 details）。
-        // 透传 code 到 reject 的 Error（D-021：NodeState.reason 需要 error code 区分失败类型，
-        // 如 out_of_cwd / permission_denied / timeout）。此前只透传 message 丢了 code。
-        // R2：details.detail 展开到 reject 的 Error 上——
-        // - worktree handler 把 WORKTREE_EXISTS 的 { cwd, dirName } 放 detail（对象，S5 后）；
-        // - 把 SETUP_FAILED/GIT_FAILED 的 { exitCode, stderr } 放 detail。
-        // 不展开则 CreateWorktreeModal error 态读不到 stderr、exists 态「直接开始」读不到 cwd。
-        // 注：object 分支 Object.assign(enriched, d) 会把 cwd 和 dirName 都赋到 Error 上，
-        // lastError.cwd 仍可读（onUseExisting 用），dirName 可用于前端核对是否同分支名碰撞。
-        const payload = msg.payload as {
-          code?: string
-          message?: string
-          details?: { detail?: unknown }
-        }
-        const message = typeof payload.message === 'string' ? payload.message : 'request failed'
-        const code = typeof payload.code === 'string' ? payload.code : 'unknown'
-        const enriched: Record<string, unknown> = { code }
-        const d = payload.details?.detail
-        if (typeof d === 'string') {
-          // 字符串 detail（如 WORKTREE_EXISTS 的 cwd）直接作 cwd 字段
-          enriched.cwd = d
-        } else if (d && typeof d === 'object') {
-          // 对象 detail（如 { exitCode, stderr }）展开到 Error 上
-          Object.assign(enriched, d)
-        }
-        ports.pending.reject(msg.id, Object.assign(new Error(message), enriched))
-      } else {
-        ports.pending.resolve(msg.id, msg.payload)
-      }
+      // envelope 展开（code 提取 + details.detail → Error）委托 pending 层（收尾 6，R2/ES1），
+      // 实现见 renderer api/pending.ts resolveEnvelope。行为与内联版零差异。
+      ports.pending.resolveEnvelope(msg)
       return // D7：pending 分流后不再进路由表
     }
 

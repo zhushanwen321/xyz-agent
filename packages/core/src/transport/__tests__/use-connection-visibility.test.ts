@@ -83,6 +83,26 @@ function makePorts(): ConnectionPorts {
       reject: (...args: unknown[]) => mockPendingReject(...args),
       // routeInbound 用 has 判定 msg.id 是否命中 pending；测试模拟的带 id error reply 均为 reply
       has: vi.fn().mockReturnValue(true),
+      // 模拟 renderer api/pending.resolveEnvelope 行为（收尾 6 R2/ES1）：route-inbound 委托
+      // envelope 展开到 pending 层（code 提取 + details.detail → Error），此处转发到 reject/resolve。
+      // 真实实现单测在 renderer api/__tests__/pending.test.ts。
+      resolveEnvelope: (msg: ServerMessage) => {
+        if (msg.type === 'error') {
+          const payload = msg.payload as { code?: string; message?: string; details?: { detail?: unknown } }
+          const message = typeof payload.message === 'string' ? payload.message : 'request failed'
+          const code = typeof payload.code === 'string' ? payload.code : 'unknown'
+          const enriched: Record<string, unknown> = { code }
+          const d = payload.details?.detail
+          if (typeof d === 'string') {
+            enriched.cwd = d
+          } else if (d && typeof d === 'object') {
+            Object.assign(enriched, d)
+          }
+          mockPendingReject(msg.id!, Object.assign(new Error(message), enriched))
+        } else {
+          mockPendingResolve(msg.id!, msg.payload)
+        }
+      },
     },
     events: {
       dispatchSession: (...args: unknown[]) => mockDispatchSession(...args),

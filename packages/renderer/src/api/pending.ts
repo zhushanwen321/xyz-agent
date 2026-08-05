@@ -96,7 +96,7 @@ export function reject(id: string, error: unknown): void {
  * id 缺失或未命中 pending（如带 nextPushId 的广播）→ no-op，绝不吞广播。
  *
  * 逻辑从 core/coordination/route-inbound.ts 的 pending 分流分支搬移（行为零变化），
- * 该分支后续将替换为一行 `ports.pending.resolveEnvelope(msg); return`。
+ * core 侧已改为一行 `ports.pending.resolveEnvelope(msg); return`（收尾 6 完成态）。
  */
 export function resolveEnvelope(msg: ServerMessage): void {
   if (!msg.id || !pendingMap.has(msg.id)) return

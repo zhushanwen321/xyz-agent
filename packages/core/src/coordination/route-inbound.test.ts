@@ -2,8 +2,8 @@
  * route-inbound.test.ts —— configureRouteInbound 行为等价断言（F8，TC-2）。
  *
  * 覆盖 IF4 处理顺序全路径：
- * ① msg.id + type==='error' → pending.reject(Error) + error envelope 展开（ES1）+ 不进路由表
- * ② msg.id + 非 error → pending.resolve(id, payload) + 不进路由表
+ * ① msg.id + type==='error' → 委托 pending.resolveEnvelope（收到完整原始 error envelope，不直接 reject）+ 不进路由表
+ * ② msg.id + 非 error → 委托 pending.resolveEnvelope（不直接 resolve）+ 不进路由表
  * ③ 有 sessionId 未注册 type → seq gap 中间件 + dispatchSession + 更新 lastSeenSeq
  * ④ gap（seq>lastSeenSeq+1）→ subscribeSession(sid, seq-1) 被调用 + 当前消息仍 dispatch
  * ⑤ 无 sessionId → dispatchGlobal + L9 warn（session./message. 前缀）
@@ -29,6 +29,9 @@ function makePorts(overrides?: Partial<TransportPorts>): TransportPorts {
       // 默认「命中 pending」对齐现有用例意图（①② 验证 pending 分流，msg.id 均为 RPC reply id）。
       // broadcast-id 走 dispatchGlobal 的场景在专门用例里 mockReturnValue(false)。
       has: vi.fn().mockReturnValue(true),
+      // 委托契约 mock（收尾 6 R2/ES1）：route-inbound 不再做 envelope 展开，只透传原始 msg。
+      // 展开细节（code 提取 + details.detail → Error）由 renderer api/__tests__/pending.test.ts 单测覆盖。
+      resolveEnvelope: vi.fn(),
     },
     events: {
       dispatchSession: vi.fn(),
@@ -65,49 +68,48 @@ describe('configureRouteInbound — pending 分流（①/②/⑧）', () => {
     resetSubscriptionStates()
   })
 
-  it('① error + msg.id：reject(Error) + error envelope 展开（ES1：message/code 默认值、details.detail string→cwd、object→Object.assign）+ 不进路由表', () => {
+  it('① error + msg.id：委托 pending.resolveEnvelope（完整原始 envelope 透传，不直接 reject）+ 不进路由表', () => {
     const ports = makePorts()
     const effects = makeEffects()
     const dispatcher = configureRouteInbound(ports, effects)
 
-    // 默认值分支
+    // 默认值分支（message/code 兜底、details.detail 展开是 pending 层职责，renderer pending.test.ts 覆盖）
     dispatcher({
       type: 'error',
       id: 'req-1',
       payload: {},
     } as unknown as ServerMessage)
-    expect(ports.pending.reject).toHaveBeenCalledTimes(1)
-    const err1 = (ports.pending.reject as ReturnType<typeof vi.fn>).mock.calls[0][1] as Error & Record<string, unknown>
-    expect(err1.message).toBe('request failed')
-    expect(err1.code).toBe('unknown')
+    expect(ports.pending.resolveEnvelope).toHaveBeenCalledTimes(1)
+    expect(ports.pending.resolveEnvelope).toHaveBeenLastCalledWith({ type: 'error', id: 'req-1', payload: {} })
+    // 委托后 route-inbound 不再直接 reject（展开逻辑在 pending 层）
+    expect(ports.pending.reject).not.toHaveBeenCalled()
     // 不进路由表：无 sessionId 也不 dispatchGlobal（D7）
     expect(ports.events.dispatchGlobal).not.toHaveBeenCalled()
     expect(ports.events.dispatchSession).not.toHaveBeenCalled()
 
-    // string detail → cwd
+    // string detail → 原样透传
     dispatcher({
       type: 'error',
       id: 'req-2',
       payload: { code: 'WORKTREE_EXISTS', message: 'exists', details: { detail: '/path/cwd' } },
     } as unknown as ServerMessage)
-    const err2 = (ports.pending.reject as ReturnType<typeof vi.fn>).mock.calls[1][1] as Error & Record<string, unknown>
-    expect(err2.message).toBe('exists')
-    expect(err2.code).toBe('WORKTREE_EXISTS')
-    expect(err2.cwd).toBe('/path/cwd')
+    expect(ports.pending.resolveEnvelope).toHaveBeenLastCalledWith({
+      type: 'error',
+      id: 'req-2',
+      payload: { code: 'WORKTREE_EXISTS', message: 'exists', details: { detail: '/path/cwd' } },
+    })
 
-    // object detail → Object.assign 展开
+    // object detail → 原样透传
     dispatcher({
       type: 'error',
       id: 'req-3',
       payload: { code: 'SETUP_FAILED', message: 'setup', details: { detail: { exitCode: 1, stderr: 'boom' } } },
     } as unknown as ServerMessage)
-    const err3 = (ports.pending.reject as ReturnType<typeof vi.fn>).mock.calls[2][1] as Error & Record<string, unknown>
-    expect(err3.code).toBe('SETUP_FAILED')
-    expect(err3.exitCode).toBe(1)
-    expect(err3.stderr).toBe('boom')
+    expect(ports.pending.resolveEnvelope).toHaveBeenCalledTimes(3)
+    expect(ports.pending.reject).not.toHaveBeenCalled()
   })
 
-  it('② 非 error + msg.id：resolve(id, payload) + 不进路由表', () => {
+  it('② 非 error + msg.id：委托 pending.resolveEnvelope（不直接 resolve）+ 不进路由表', () => {
     const ports = makePorts()
     const dispatcher = configureRouteInbound(ports)
     dispatcher({
@@ -115,7 +117,12 @@ describe('configureRouteInbound — pending 分流（①/②/⑧）', () => {
       id: 'req-9',
       payload: { sessionId: 's1', messages: [] },
     } as unknown as ServerMessage)
-    expect(ports.pending.resolve).toHaveBeenCalledWith('req-9', { sessionId: 's1', messages: [] })
+    expect(ports.pending.resolveEnvelope).toHaveBeenCalledWith({
+      type: 'session.getHistory',
+      id: 'req-9',
+      payload: { sessionId: 's1', messages: [] },
+    })
+    expect(ports.pending.resolve).not.toHaveBeenCalled()
     // D7：pending 分流后 return，不再进路由表（即使 payload 带 sessionId）
     expect(ports.events.dispatchSession).not.toHaveBeenCalled()
   })
@@ -130,12 +137,14 @@ describe('configureRouteInbound — pending 分流（①/②/⑧）', () => {
         reject: vi.fn(),
         rejectAll: vi.fn(),
         has: vi.fn().mockReturnValue(false), // 模拟 push_id 不在 pendingMap
+        resolveEnvelope: vi.fn(),
       },
     })
     const dispatcher = configureRouteInbound(ports)
     dispatcher({ type: 'config.skills', id: 'push_5', payload: { skills: [] } } as unknown as ServerMessage)
     // 未进 pending 分流
     expect(ports.pending.resolve).not.toHaveBeenCalled()
+    expect(ports.pending.resolveEnvelope).not.toHaveBeenCalled()
     // 无 sessionId → FALLBACK → dispatchGlobal（settings store 靠此更新）
     expect(ports.events.dispatchGlobal).toHaveBeenCalledTimes(1)
     expect(ports.events.dispatchGlobal).toHaveBeenCalledWith(

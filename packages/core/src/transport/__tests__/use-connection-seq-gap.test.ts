@@ -48,13 +48,37 @@ vi.mock('../ws-client', () => ({
 }))
 
 // ── pending mock（routeInbound id 路径需要）─────────────────────────
-const pendingMock = vi.hoisted(() => ({
-  resolve: vi.fn(),
-  reject: vi.fn(),
-  rejectAll: vi.fn(),
-  // routeInbound 用 has 判定 msg.id 是否命中 pending（RPC reply）；测试模拟的带 id 消息均为 reply
-  has: vi.fn().mockReturnValue(true),
-}))
+const pendingMock = vi.hoisted(() => {
+  const m = {
+    resolve: vi.fn(),
+    reject: vi.fn(),
+    rejectAll: vi.fn(),
+    // routeInbound 用 has 判定 msg.id 是否命中 pending（RPC reply）；测试模拟的带 id 消息均为 reply
+    has: vi.fn().mockReturnValue(true),
+    // 模拟 renderer api/pending.resolveEnvelope 行为（收尾 6 R2/ES1）：route-inbound 委托
+    // envelope 展开到 pending 层（code 提取 + details.detail → Error），此处转发到 reject/resolve。
+    // 真实实现单测在 renderer api/__tests__/pending.test.ts。
+    resolveEnvelope: vi.fn(),
+  }
+  m.resolveEnvelope.mockImplementation((msg: ServerMessage) => {
+    if (msg.type === 'error') {
+      const payload = msg.payload as { code?: string; message?: string; details?: { detail?: unknown } }
+      const message = typeof payload.message === 'string' ? payload.message : 'request failed'
+      const code = typeof payload.code === 'string' ? payload.code : 'unknown'
+      const enriched: Record<string, unknown> = { code }
+      const d = payload.details?.detail
+      if (typeof d === 'string') {
+        enriched.cwd = d
+      } else if (d && typeof d === 'object') {
+        Object.assign(enriched, d)
+      }
+      m.reject(msg.id!, Object.assign(new Error(message), enriched))
+    } else {
+      m.resolve(msg.id!, msg.payload)
+    }
+  })
+  return m
+})
 
 // ── events mock：捕获 dispatchSession/dispatchGlobal ────────────────
 const eventsMock = vi.hoisted(() => ({
