@@ -50,7 +50,7 @@ const flowMock = vi.hoisted(() => ({
   setPendingModel: vi.fn(),
   submitFirstMessage: vi.fn(),
 }))
-vi.mock('@/composables/features/useNewTaskFlow', () => {
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => {
   // currentCwd 必须是真 ref：useProjectSkills 对它 watch（plain object 触发 Vue warn）
   const currentCwdRef = ref<string | null>(null)
   return {
@@ -72,7 +72,7 @@ const depsMock = vi.hoisted(() => ({
   setDefaultPreset: vi.fn(),
   toast: { error: vi.fn() },
 }))
-vi.mock('@/composables/features/useNewTaskDeps', () => ({
+vi.mock('@/composables/features/new-task/useNewTaskDeps', () => ({
   useNewTaskDeps: () => ({ flow: flowMock, ...depsMock }),
 }))
 
@@ -107,7 +107,7 @@ const chatApiMock = vi.hoisted(() => ({
   abortBash: vi.fn(() => Promise.resolve()),
 }))
 const toastMock = vi.hoisted(() => ({ error: vi.fn(), info: vi.fn(), warning: vi.fn() }))
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => chatApiMock,
   resetChatModuleState: vi.fn(),
 }))

@@ -45,14 +45,14 @@ vi.mock('@/api/domains/file', () => ({ tree: vi.fn().mockResolvedValue({}) }))
 vi.mock('@/api/domains/git', () => ({ status: vi.fn().mockResolvedValue({}) }))
 
 // mock useChat（submitFirstMessage 调 chat.send，stub 为 noop 避免触发 WS）
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: vi.fn(() => ({
     send: vi.fn().mockResolvedValue(undefined),
   })),
 }))
 
 // mock useModel（submitFirstMessage 调 switchModel/setThinkingLevel）
-vi.mock('@/composables/features/useModel', () => ({
+vi.mock('@/composables/features/model/useModel', () => ({
   useModel: vi.fn(() => ({
     switchModel: vi.fn().mockResolvedValue(undefined),
     setThinkingLevel: vi.fn().mockResolvedValue(undefined),
@@ -60,7 +60,7 @@ vi.mock('@/composables/features/useModel', () => ({
 }))
 
 import { session as sessionApi } from '@/api'
-import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/useNewTaskFlow'
+import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
 // w5 壳化后状态机迁移到 core（@xyz-agent/core 是 flow-state 的模块级单例，与壳 useNewTaskFlow
 // 返回的 core flow 同实例）。旧 renderer useNewTaskFlowState 是另一套独立单例，用它会与 core
 // flow 状态脱节（submitFirstMessage 读 core state，永远非 landing）。

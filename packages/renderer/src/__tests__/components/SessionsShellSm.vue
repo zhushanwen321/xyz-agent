@@ -4,7 +4,7 @@
   非生产组件——仅 w5 冒烟测试消费，消费方切换 wave 后随 useSidebarNew 一并归位/删除。
 -->
 <script setup lang="ts">
-import { useSidebarNew } from '@/composables/features/useSidebarNew'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 
 const sidebar = useSidebarNew()
 

@@ -43,14 +43,14 @@ const chatApiMock = vi.hoisted(() => ({
 }))
 const toastMock = vi.hoisted(() => ({ error: vi.fn(), info: vi.fn(), warning: vi.fn() }))
 
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => chatApiMock,
   resetChatModuleState: vi.fn(),
 }))
 vi.mock('@/composables/useToast', () => ({
   useToast: () => toastMock,
 }))
-vi.mock('@/composables/features/useNewTaskFlow', () => ({
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
   useNewTaskFlow: () => ({ submitFirstMessage: vi.fn(), currentModel: { value: null }, setPendingModel: vi.fn(), currentCwd: ref(null) }),
   resetNewTaskFlow: vi.fn(),
 }))
@@ -103,7 +103,7 @@ const otherStubs = {
 
 import Composer from '@/components/panel/Composer.vue'
 // resetChatModuleState 来自被 mock 的 useChat 模块（vi.fn，测试隔离占位）
-import { resetChatModuleState } from '@/composables/features/useChat'
+import { resetChatModuleState } from '@/composables/features/chat/useChat'
 
 beforeEach(() => {
   setActivePinia(createPinia())

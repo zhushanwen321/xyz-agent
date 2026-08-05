@@ -28,7 +28,7 @@ vi.mock('@/api', () => ({
   git: { status: (...args: unknown[]) => mockGitStatus(...args) },
 }))
 
-import { useFileTree } from '@/composables/features/useFileTree'
+import { useFileTree } from '@/composables/features/file-tree/useFileTree'
 import { useFileTreeStore } from '@/stores/fileTree'
 
 beforeEach(() => {

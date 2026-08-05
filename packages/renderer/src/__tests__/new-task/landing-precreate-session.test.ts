@@ -43,11 +43,11 @@ vi.mock('@/api', () => ({
 }))
 
 // mock useChat.send（submitFirstMessage 会调）
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => ({ send: vi.fn(() => Promise.resolve()), steer: vi.fn(), followUp: vi.fn(), abort: vi.fn(), compact: vi.fn() }),
 }))
 
-import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/useNewTaskFlow'
+import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
 import { useSessionStore } from '@/stores/session'
 
 beforeEach(() => {

@@ -33,7 +33,7 @@ import path from 'node:path'
 // ── mock useSidebar：暴露 forkFromLastAssistant / enterForkModeFromLastAssistant（W3 新增）──
 const forkFromLastAssistantMock = vi.fn(() => Promise.resolve())
 const enterForkModeFromLastAssistantMock = vi.fn(() => Promise.resolve())
-vi.mock('@/composables/features/useSidebarNew', () => ({
+vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
   useSidebarNew: () => ({
     forkFromLastAssistant: forkFromLastAssistantMock,
     enterForkModeFromLastAssistant: enterForkModeFromLastAssistantMock,
@@ -50,9 +50,9 @@ vi.mock('@/composables/features/useSidebarNew', () => ({
     focusedSession: { value: null },
   }),
 }))
-vi.mock('@/composables/features/useSubagentListSync', () => ({ useSubagentListSync: vi.fn() }))
-vi.mock('@/composables/features/useWorkflowListSync', () => ({ useWorkflowListSync: vi.fn() }))
-vi.mock('@/composables/features/useSessionDerivations', () => ({
+vi.mock('@/composables/features/chat/useSubagentListSync', () => ({ useSubagentListSync: vi.fn() }))
+vi.mock('@/composables/features/chat/useWorkflowListSync', () => ({ useWorkflowListSync: vi.fn() }))
+vi.mock('@/composables/features/chat/useSessionDerivations', () => ({
   useSessionDerivations: () => ({
     derivedStatus: vi.fn(() => 'idle'),
     sessionDigest: vi.fn(() => ''),
@@ -60,10 +60,10 @@ vi.mock('@/composables/features/useSessionDerivations', () => ({
   }),
   invalidateStatusCache: vi.fn(),
 }))
-vi.mock('@/composables/features/useSidebarSubagentActions', () => ({
+vi.mock('@/composables/features/sidebar/useSidebarSubagentActions', () => ({
   useSidebarSubagentActions: () => ({ stopSubagent: vi.fn() }),
 }))
-vi.mock('@/composables/features/useSearchModal', () => ({
+vi.mock('@/composables/features/search/useSearchModal', () => ({
   useSearchModal: () => ({ open: vi.fn(), toggle: vi.fn(), close: vi.fn(), isOpen: { value: false } }),
 }))
 vi.mock('@/api/events', () => ({
@@ -91,7 +91,7 @@ vi.mock('@/api', () => ({
 }))
 
 import Sidebar from '@/components/sidebar/Sidebar.vue'
-import { useCommandStore } from '@/composables/features/useCommandStore'
+import { useCommandStore } from '@/composables/features/command/useCommandStore'
 
 beforeEach(() => {
   setActivePinia(createPinia())

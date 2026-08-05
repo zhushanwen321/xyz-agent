@@ -33,7 +33,7 @@ vi.mock('@/composables/useExtensionUI', () => ({
 }))
 
 // Mock useSidebar（避免依赖真实 session 状态）
-vi.mock('@/composables/features/useSidebar', () => ({
+vi.mock('@/composables/features/sidebar/useSidebar', () => ({
   useSidebar: () => ({
     focusedSessionId: { value: 'sess-1' },
   }),

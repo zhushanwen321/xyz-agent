@@ -19,7 +19,7 @@ vi.mock('@/api', () => ({
   composer: { getFileCandidates: (...args: unknown[]) => mockGetFileCandidates(...args) },
 }))
 
-import { useFileSearch } from '@/composables/features/useFileSearch'
+import { useFileSearch } from '@/composables/features/search/useFileSearch'
 import { useFileSearchStore } from '@/stores/fileSearch'
 import { useChatStore } from '@/stores/chat'
 

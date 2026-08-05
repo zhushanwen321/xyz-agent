@@ -13,9 +13,9 @@
  * useSideDrawer 为单例/无状态 composable，内部安全调用。
  */
 import type { Ref } from 'vue'
-import { useChat } from '@/composables/features/useChat'
-import { useSearchModalDeps } from '@/composables/features/useSearchModalDeps'
-import { useSideDrawer } from '@/composables/features/useSideDrawer'
+import { useChat } from '@/composables/features/chat/useChat'
+import { useSearchModalDeps } from '@/composables/features/search/useSearchModalDeps'
+import { useSideDrawer } from '@/composables/features/drawer/useSideDrawer'
 import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useToast } from '@/composables/useToast'

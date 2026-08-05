@@ -47,7 +47,7 @@ const chatApiMock = {
   sendBash: vi.fn(() => Promise.resolve()),
   abortBash: vi.fn(() => Promise.resolve()),
 }
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => chatApiMock,
 }))
 
@@ -58,7 +58,7 @@ const flowMock = {
   setPendingModel: vi.fn(),
   currentCwd: ref(null),
 }
-vi.mock('@/composables/features/useNewTaskFlow', () => ({
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
   useNewTaskFlow: () => flowMock,
   resetNewTaskFlow: vi.fn(),
 }))

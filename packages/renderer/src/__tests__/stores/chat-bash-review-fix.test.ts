@@ -41,7 +41,7 @@ vi.mock('@/composables/useToast', () => ({
 }))
 
 import { useChatStore } from '@/stores/chat'
-import { useChat, resetChatModuleState } from '@/composables/features/useChat'
+import { useChat, resetChatModuleState } from '@/composables/features/chat/useChat'
 
 describe('B1: streamingSessionIds 仅扫 role:assistant —— 纯 bash 不阻塞', () => {
   beforeEach(() => setActivePinia(createPinia()))

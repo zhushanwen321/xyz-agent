@@ -10,7 +10,7 @@
  * - W4TC8  unsupported：「前往下载」按钮 + click 触发 openUpdateFallbackUrl
  * - W4TC9  available click：触发 performUpdate
  *
- * Mock 策略：vi.mock('@/composables/features/useAppUpdate') 桩 state 与方法，
+ * Mock 策略：vi.mock('@/composables/features/settings/useAppUpdate') 桩 state 与方法，
  * vi.mock('@/lib/ipc') 避免 ipc.ts 顶层 window.electronAPI 报错。
  * i18n 经 vitest-i18n-setup.ts 全局 mock，t() 取 zh-CN 文案。
  *
@@ -36,7 +36,7 @@ const testState = reactive({
 const performUpdateMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
 const openFallbackUrlMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
 
-vi.mock('@/composables/features/useAppUpdate', () => ({
+vi.mock('@/composables/features/settings/useAppUpdate', () => ({
   useAppUpdate: () => ({
     state: testState,
     performUpdate: performUpdateMock,

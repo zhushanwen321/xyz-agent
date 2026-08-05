@@ -34,7 +34,7 @@ import type { Message, ThinkingBlock, ToolCall } from '@xyz-agent/shared'
 // mock 重依赖 composable（只测组件接线，不测 store 副作用）。
 // useChat mock 需含 loadMoreHistory/hasMoreHistory：useLoadMoreHistory 经 useChat 读这俩，
 // MessageStream 挂载时 useLoadMoreHistory 会立即调 hasMoreHistory（computed）。
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => ({
     editAndResend: vi.fn(),
     loadMoreHistory: vi.fn(),
@@ -42,7 +42,7 @@ vi.mock('@/composables/features/useChat', () => ({
   }),
   resetChatModuleState: vi.fn(),
 }))
-vi.mock('@/composables/features/useSidebar', () => ({
+vi.mock('@/composables/features/sidebar/useSidebar', () => ({
   useSidebar: () => ({ forkSession: vi.fn(), abortHandoff: vi.fn() }),
 }))
 

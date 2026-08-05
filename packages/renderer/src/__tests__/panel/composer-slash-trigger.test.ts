@@ -24,7 +24,7 @@ import * as events from '@/api/events'
 import type { ServerMessage } from '@xyz-agent/shared'
 
 // ── Composer 路径 mock（U9-U10）—— vi.mock factory 必须早于 import ──
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => ({
     send: vi.fn(),
     steer: vi.fn(),
@@ -35,7 +35,7 @@ vi.mock('@/composables/features/useChat', () => ({
     hydrateHistory: vi.fn(),
   }),
 }))
-vi.mock('@/composables/features/useNewTaskFlow', () => ({
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
   useNewTaskFlow: () => ({ submitFirstMessage: vi.fn(), currentModel: { value: null }, currentCwd: ref(null), setPendingModel: vi.fn() }),
   resetNewTaskFlow: vi.fn(),
 }))

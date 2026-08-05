@@ -20,7 +20,7 @@ const appCmdsMock = vi.hoisted(() => ({
   registerApp: vi.fn<(cmds: Array<{ id: string; shortcut?: string }>) => void>(),
 }))
 
-vi.mock('@/composables/features/useCommandStore', () => ({
+vi.mock('@/composables/features/command/useCommandStore', () => ({
   useCommandStore: () => ({
     appCommands: { value: [] },
     shortcutOverrides: { value: {} },
@@ -37,7 +37,7 @@ describe('U12: 快捷键配置（降级只读展示）', () => {
   })
 
   it('registerAppCommands 注册 new-session(⌘N) / toggle-sidebar(⌘B)，含 shortcut 字段', async () => {
-    const { registerAppCommands } = await import('@/composables/features/useAppCommands')
+    const { registerAppCommands } = await import('@/composables/features/command/useAppCommands')
     const { useSidebarStore } = await import('@/stores/sidebar')
 
     const sidebarStore = useSidebarStore()
@@ -66,7 +66,7 @@ describe('U12: 快捷键配置（降级只读展示）', () => {
   })
 
   it('appCommands 含 shortcut 的命令可被 SystemPage 筛选展示', async () => {
-    const { registerAppCommands } = await import('@/composables/features/useAppCommands')
+    const { registerAppCommands } = await import('@/composables/features/command/useAppCommands')
 
     registerAppCommands({ newSession: vi.fn(), goOverview: vi.fn() })
 

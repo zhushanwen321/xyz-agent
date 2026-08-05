@@ -49,7 +49,7 @@ vi.mock('@/i18n', () => ({
 }))
 
 import * as quotaApi from '@/api/domains/quota'
-import { useQuotaQuery } from '@/composables/features/useQuotaQuery'
+import { useQuotaQuery } from '@/composables/features/model/useQuotaQuery'
 import { useQuotaStore } from '@/stores/quota'
 
 beforeEach(() => {

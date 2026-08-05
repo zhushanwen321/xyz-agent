@@ -1,16 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { useMarkdownInteractions } from '@/composables/panel/useMarkdownInteractions'
-import { useSearchModal, resetSearchModal } from '@/composables/features/useSearchModal'
+import { useSearchModal, resetSearchModal } from '@/composables/features/search/useSearchModal'
 import * as fileApi from '@/api/domains/file'
 vi.mock('@/api/domains/file', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@/api/domains/file')>()
   return { ...mod, read: vi.fn() }
 })
 
-vi.mock('@/composables/features/useFileSearch', () => ({ useFileSearch: vi.fn(() => ({ load: vi.fn(() => Promise.resolve([])) })) }))
-vi.mock('@/composables/features/useFileTree', () => ({ useFileTree: vi.fn(() => ({ selectFile: vi.fn() })) }))
-vi.mock('@/composables/features/useSideDrawer', () => ({ useSideDrawer: vi.fn(() => ({ open: vi.fn() })) }))
+vi.mock('@/composables/features/search/useFileSearch', () => ({ useFileSearch: vi.fn(() => ({ load: vi.fn(() => Promise.resolve([])) })) }))
+vi.mock('@/composables/features/file-tree/useFileTree', () => ({ useFileTree: vi.fn(() => ({ selectFile: vi.fn() })) }))
+vi.mock('@/composables/features/drawer/useSideDrawer', () => ({ useSideDrawer: vi.fn(() => ({ open: vi.fn() })) }))
 
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 function noop() {}

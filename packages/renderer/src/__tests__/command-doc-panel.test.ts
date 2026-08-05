@@ -15,9 +15,9 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import CommandDocPanel from '@/components/panel/CommandDocPanel.vue'
-import { useCommandStore, __resetCommandStoreForTesting } from '@/composables/features/useCommandStore'
+import { useCommandStore, __resetCommandStoreForTesting } from '@/composables/features/command/useCommandStore'
 import { getSettingsStore } from '@xyz-agent/core'
-import { useSideDrawer, resetSideDrawer } from '@/composables/features/useSideDrawer'
+import { useSideDrawer, resetSideDrawer } from '@/composables/features/drawer/useSideDrawer'
 import type { SkillInfo } from '@xyz-agent/shared'
 
 // file.read mock：捕获调用参数，返回预设 content。两路守门（带/不带 sessionId）都走这个 mock。

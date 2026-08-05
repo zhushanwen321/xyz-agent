@@ -6,7 +6,7 @@
  * - hover 文件名时 tooltip 展示绝对路径 + 复制文件名按钮
  * - 点击复制按钮写入剪贴板
  *
- * mock 策略：vi.mock('@/composables/features/useDetailPane') 控制 state 与 sessionCwd，
+ * mock 策略：vi.mock('@/composables/features/file-tree/useDetailPane') 控制 state 与 sessionCwd，
  * HoverCard 相关子组件 stub 掉以便断言 tooltip 内容。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/panel/DetailPane.test.ts
@@ -19,7 +19,7 @@ import DetailPane from '@/components/panel/DetailPane.vue'
 
 const mockToggleView = vi.fn()
 
-vi.mock('@/composables/features/useDetailPane', () => ({
+vi.mock('@/composables/features/file-tree/useDetailPane', () => ({
   useDetailPane: () => ({
     state: ref({
       path: 'src/index.ts',

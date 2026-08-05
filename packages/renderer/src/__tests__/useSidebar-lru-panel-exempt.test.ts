@@ -24,7 +24,7 @@ vi.mock('@/stores/fileTree', () => ({
 
 const useChatDisposeMock = vi.hoisted(() => vi.fn())
 const setHistoryTruncatedMock = vi.hoisted(() => vi.fn())
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => ({
     disposeSession: useChatDisposeMock,
     setHistoryTruncated: setHistoryTruncatedMock,
@@ -44,7 +44,7 @@ vi.mock('@/stores/workflow', () => ({
 }))
 
 const loadTreeMock = vi.hoisted(() => vi.fn())
-vi.mock('@/composables/features/useFileTree', () => ({
+vi.mock('@/composables/features/file-tree/useFileTree', () => ({
   useFileTree: () => ({ loadTree: loadTreeMock }),
 }))
 
@@ -67,7 +67,7 @@ vi.mock('@/api', () => ({
   },
 }))
 
-import { useSidebarNew } from '@/composables/features/useSidebarNew'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 import { useChatStore } from '@/stores/chat'
 import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
 

@@ -65,7 +65,7 @@ vi.mock('@/composables/logic/markdown', () => ({
   renderMarkdown: hoisted.renderMarkdown,
 }))
 
-import { useAppUpdate, _resetForTest } from '@/composables/features/useAppUpdate'
+import { useAppUpdate, _resetForTest } from '@/composables/features/settings/useAppUpdate'
 
 /** 构造测试用 LatestReleaseInfo */
 function makeRelease(version = '0.9.0'): LatestReleaseInfo {

@@ -30,23 +30,23 @@ vi.mock('@/api', () => ({
 
 // mock useSidebar（selectSession 是 session 跳转接线点，T4.3/T4.6）
 const selectSessionMock = vi.fn()
-vi.mock('@/composables/features/useSidebarNew', () => ({
+vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
   useSidebarNew: () => ({ selectSession: (...args: unknown[]) => selectSessionMock(...args) }),
 }))
 
 // mock useDetailPane：仅占位（AC-6.9 不应被 useSearchJump 调用；此 mock 用于断言 openPreview 未被调）
 const openPreviewMock = vi.fn()
-vi.mock('@/composables/features/useDetailPane', () => ({
+vi.mock('@/composables/features/file-tree/useDetailPane', () => ({
   useDetailPane: () => ({ openPreview: (...args: unknown[]) => openPreviewMock(...args), state: { value: {} } }),
 }))
 
 // mock useRecents（write 是 AC-6.4 副作用断言点）
 const recentsWriteMock = vi.fn()
-vi.mock('@/composables/features/useRecents', () => ({
+vi.mock('@/composables/features/new-task/useRecents', () => ({
   useRecents: () => ({ read: () => [], write: (...args: unknown[]) => recentsWriteMock(...args) }),
 }))
 
-import { useSearchJump } from '@/composables/features/useSearchJump'
+import { useSearchJump } from '@/composables/features/search/useSearchJump'
 import { useCommandStore } from '@/stores/command'
 import type { AppCommand, SearchItem } from '@xyz-agent/core'
 

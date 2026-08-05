@@ -19,8 +19,8 @@ import { useChatStore } from '@/stores/chat'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore } from '@/stores/panel'
 import { useSessionStore } from '@/stores/session'
-import { useSidebar } from '@/composables/features/useSidebar'
-import { useSessionDerivations } from '@/composables/features/useSessionDerivations'
+import { useSidebar } from '@/composables/features/sidebar/useSidebar'
+import { useSessionDerivations } from '@/composables/features/chat/useSessionDerivations'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
 
 /** useSidebar 经 @/api 门面调真实 transport 会挂起；测试统一替成 mock 实现。

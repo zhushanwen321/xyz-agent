@@ -28,7 +28,7 @@ vi.mock('@/api', () => ({
 }))
 
 import * as events from '@/api/events'
-import { useSidebarNew } from '@/composables/features/useSidebarNew'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 
 beforeEach(() => {
   setActivePinia(createPinia())

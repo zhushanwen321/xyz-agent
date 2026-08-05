@@ -32,11 +32,11 @@ vi.mock('@/stores/fileSearch', () => ({
 }))
 
 const mockSetupInvalidation = vi.fn(() => vi.fn())
-vi.mock('@/composables/features/useFileSearch', () => ({
+vi.mock('@/composables/features/search/useFileSearch', () => ({
   useFileSearch: () => ({ setupInvalidation: mockSetupInvalidation }),
 }))
 
-import { useSearch } from '@/composables/features/useSearch'
+import { useSearch } from '@/composables/features/search/useSearch'
 import type { Section } from '@xyz-agent/core'
 
 beforeEach(() => {

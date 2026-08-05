@@ -29,7 +29,7 @@ vi.mock('@/api', () => ({
 }))
 
 import { usePresetStore } from '@/stores/preset'
-import { usePiPresets } from '@/composables/features/usePiPresets'
+import { usePiPresets } from '@/composables/features/settings/usePiPresets'
 
 const FIXTURE_PRESETS: PiLaunchPreset[] = [
   { id: 'builtin:full', name: '全工具模式', builtin: true, order: 0, toolMode: 'all', extensionMode: 'all' },

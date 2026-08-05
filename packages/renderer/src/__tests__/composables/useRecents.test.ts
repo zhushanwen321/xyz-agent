@@ -12,7 +12,7 @@
  * 禁止 node:test。运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/useRecents.test.ts
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { useRecents } from '@/composables/features/useRecents'
+import { useRecents } from '@/composables/features/new-task/useRecents'
 import { RECENTS_STORAGE_KEY, type RecentEntry, type SearchType } from '@xyz-agent/core'
 
 /** 构造 RecentEntry helper（timestamp 默认 0，write 内部会用计数器兜底重算） */

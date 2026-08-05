@@ -21,7 +21,7 @@ import { nextTick, defineComponent, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 
 // ── Composer 路径 mock（U10）—— vi.mock factory 必须早于 import ──
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => ({
     send: vi.fn(),
     steer: vi.fn(),
@@ -32,7 +32,7 @@ vi.mock('@/composables/features/useChat', () => ({
     hydrateHistory: vi.fn(),
   }),
 }))
-vi.mock('@/composables/features/useNewTaskFlow', () => ({
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
   useNewTaskFlow: () => ({ submitFirstMessage: vi.fn(), currentModel: { value: null }, setPendingModel: vi.fn(), currentCwd: ref(null) }),
   resetNewTaskFlow: vi.fn(),
 }))
@@ -142,7 +142,7 @@ describe('ComposerInput file-trigger（U1-U6）', () => {
 
 // mock useFileSearch：返回可控 FileNode[]（含同名不同路径，验证 path 过滤 + 路径展示）
 const mockLoad = vi.fn()
-vi.mock('@/composables/features/useFileSearch', () => ({
+vi.mock('@/composables/features/search/useFileSearch', () => ({
   useFileSearch: () => ({ load: (...args: unknown[]) => mockLoad(...args) }),
 }))
 

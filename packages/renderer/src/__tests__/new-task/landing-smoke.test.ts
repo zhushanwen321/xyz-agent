@@ -57,7 +57,7 @@ const depsMock = vi.hoisted(() => ({
   setDefaultPreset: vi.fn(),
   toast: { error: vi.fn() },
 }))
-vi.mock('@/composables/features/useNewTaskDeps', () => ({
+vi.mock('@/composables/features/new-task/useNewTaskDeps', () => ({
   useNewTaskDeps: () => ({ flow: flowMock, ...depsMock }),
 }))
 

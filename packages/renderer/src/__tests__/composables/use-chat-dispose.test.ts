@@ -31,7 +31,7 @@ vi.mock('@/api', () => ({
   },
 }))
 
-import { useChat, resetChatModuleState } from '@/composables/features/useChat'
+import { useChat, resetChatModuleState } from '@/composables/features/chat/useChat'
 import { useChatStore } from '@/stores/chat'
 
 describe('useChat disposeSession（W1：取消 streamSubscriptions + 清 chat store）', () => {

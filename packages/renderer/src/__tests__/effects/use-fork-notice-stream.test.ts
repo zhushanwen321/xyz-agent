@@ -32,7 +32,7 @@ vi.mock('@/composables/effects/useForkNoticeEffect', () => ({
 }))
 
 // mock useSidebar：selectSession 不做真实跳转
-vi.mock('@/composables/features/useSidebar', () => ({
+vi.mock('@/composables/features/sidebar/useSidebar', () => ({
   useSidebar: () => ({ selectSession: vi.fn() }),
 }))
 

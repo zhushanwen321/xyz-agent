@@ -16,7 +16,7 @@
  */
 import { computed, type ComputedRef, type DeepReadonly } from 'vue'
 import { useForkNoticeFeed, type ForkNoticeEntry } from '@/composables/effects/useForkNoticeEffect'
-import { useSidebarNew } from '@/composables/features/useSidebarNew'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 
 /** ForkNotice 每条高度估算（absolute 定位 top 计算用，与 ForkNotice.vue 实际高度对齐） */
 const FORK_NOTICE_HEIGHT = 40

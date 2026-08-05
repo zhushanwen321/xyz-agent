@@ -26,7 +26,7 @@ import { storeToRefs } from 'pinia'
 import type { ServerMessage, SessionGroup } from '@xyz-agent/shared'
 import * as events from '@/api/events'
 import { useSessionStore } from '@/stores/session'
-import { useForkBranchNotify, type BranchChangeKind, type BranchStatusChange } from '@/composables/features/useForkBranchNotify'
+import { useForkBranchNotify, type BranchChangeKind, type BranchStatusChange } from '@/composables/features/fork-handoff/useForkBranchNotify'
 
 /** ForkNotice 反馈行 entry（transient，前端内存） */
 export interface ForkNoticeEntry {

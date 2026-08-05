@@ -162,9 +162,9 @@ import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { cn } from '@/lib/utils'
-import { useSessionEvents } from '@/composables/features/useSessionEvents'
+import { useSessionEvents } from '@/composables/features/chat/useSessionEvents'
 import { useQuotaStore } from '@/stores/quota'
-import { useQuotaDisplay } from '@/composables/features/useQuotaDisplay'
+import { useQuotaDisplay } from '@/composables/features/model/useQuotaDisplay'
 import * as quotaApi from '@/api/domains/quota'
 
 interface ContextStats {

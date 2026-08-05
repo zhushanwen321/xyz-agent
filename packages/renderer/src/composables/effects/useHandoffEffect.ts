@@ -19,7 +19,7 @@ import { onScopeDispose } from 'vue'
 import type { ServerMessage } from '@xyz-agent/shared'
 import * as events from '@/api/events'
 import { useChatStore } from '@/stores/chat'
-import { useSidebarNew } from '@/composables/features/useSidebarNew'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 
 /**
  * 注册全局 handoff 效果（handoffComplete + handoffAborted）。

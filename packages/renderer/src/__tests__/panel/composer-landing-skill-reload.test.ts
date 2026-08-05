@@ -84,12 +84,12 @@ const chatApiMock = {
   editAndResend: vi.fn(),
   hydrateHistory: vi.fn(),
 }
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => chatApiMock,
 }))
 
 // ── mock useNewTaskFlow：currentCwd=null（真 ref）使 useProjectSkills 早退不 RPC，聚焦 global 链路 ──
-vi.mock('@/composables/features/useNewTaskFlow', async () => {
+vi.mock('@/composables/features/new-task/useNewTaskFlow', async () => {
   const { ref } = await import('vue')
   return {
     useNewTaskFlow: () => ({

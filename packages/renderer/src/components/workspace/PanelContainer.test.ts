@@ -30,14 +30,14 @@ import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
 import { bindDrawerSessionId, openDrawerTab, _resetDrawerForTest } from '@xyz-agent/core/domain/drawer'
 
 // 壳层依赖在 PanelContainer setup 阶段执行，mock 掉避免真实副作用
-vi.mock('@/composables/features/useGitStatus', () => ({
+vi.mock('@/composables/features/file-tree/useGitStatus', () => ({
   GIT_STATUS_KEY: Symbol('git-status'),
   provideGitStatus: () => ({ indicator: { value: undefined }, state: { value: 'clean' }, lines: { value: [] } }),
 }))
-vi.mock('@/composables/features/useSessionDerivations', () => ({
+vi.mock('@/composables/features/chat/useSessionDerivations', () => ({
   useSessionDerivations: () => ({ derivedStatus: () => ({ value: 'done' }) }),
 }))
-vi.mock('@/composables/features/useSessionEvents', () => ({
+vi.mock('@/composables/features/chat/useSessionEvents', () => ({
   useSessionEvents: () => () => () => {},
 }))
 vi.mock('@/stores/chat', () => ({

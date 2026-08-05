@@ -24,11 +24,11 @@ import { useToast } from '@/composables/useToast'
 // disposeSession 用模块级 spy，让 U9 W7 断言可断言「回滚时被调」（拆流式订阅 + 清 store per-session 状态）。
 // ensureStreamSubscription 导出作 no-op stub：U9 测回滚编排，不验真实流式订阅。
 const disposeSessionMock = vi.fn()
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => ({ editAndResend: vi.fn(), disposeSession: disposeSessionMock, setHistoryTruncated: vi.fn() }),
   ensureStreamSubscription: vi.fn(),
 }))
-vi.mock('@/composables/features/useSideDrawer', () => ({
+vi.mock('@/composables/features/drawer/useSideDrawer', () => ({
   useSideDrawer: () => ({ open: vi.fn() }),
 }))
 
@@ -144,7 +144,7 @@ describe('U7 首屏冒烟：fork 后台 + fork 提问按钮恒渲染（门控已
 describe('U8：forkSession 后台 fork 不切焦点（不切 activeId）', () => {
   it('fork 后台后焦点留在原 session（不切焦点）', async () => {
     // 直接对真实 useSidebar 行为做断言：forkSession 后 activeId 应保持不变。
-    const { useSidebar } = await import('@/composables/features/useSidebar')
+    const { useSidebar } = await import('@/composables/features/sidebar/useSidebar')
     const sidebar = useSidebar()
 
     const sessionStore = (await import('@/stores/session')).useSessionStore()
@@ -176,7 +176,7 @@ describe('U8：forkSession 后台 fork 不切焦点（不切 activeId）', () =>
 // ── U9：forkSessionAsk send 失败自动回滚 ─────────────────────────────────
 describe('U9：forkSessionAsk send 失败自动回滚（disposeSession + sessionApi.remove + removeFromList）', () => {
   it('fork 提问发送失败后不留空白分支（回滚清理）', async () => {
-    const { useSidebar } = await import('@/composables/features/useSidebar')
+    const { useSidebar } = await import('@/composables/features/sidebar/useSidebar')
     const sidebar = useSidebar()
 
     const sessionApi = (await import('@/api')).session

@@ -19,7 +19,7 @@ import { defineComponent, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 
 // ── mock composable / api（防真依赖构造报错）──
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => ({
     send: vi.fn(),
     steer: vi.fn(),
@@ -30,7 +30,7 @@ vi.mock('@/composables/features/useChat', () => ({
     hydrateHistory: vi.fn(),
   }),
 }))
-vi.mock('@/composables/features/useNewTaskFlow', () => ({
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
   useNewTaskFlow: () => ({
     startFlow: vi.fn(),
     submitFirstMessage: vi.fn(),

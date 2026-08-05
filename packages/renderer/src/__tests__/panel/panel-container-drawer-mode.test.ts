@@ -37,11 +37,11 @@ import {
 import type { ServerMessage } from '@xyz-agent/shared'
 
 // ── mock 壳层依赖（PanelContainer setup 阶段执行，避免真实 WS/session 副作用）──
-vi.mock('@/composables/features/useGitStatus', () => ({
+vi.mock('@/composables/features/file-tree/useGitStatus', () => ({
   GIT_STATUS_KEY: Symbol('git-status'),
   provideGitStatus: () => ({ indicator: { value: undefined }, state: { value: 'clean' }, lines: { value: [] } }),
 }))
-vi.mock('@/composables/features/useSessionDerivations', () => ({
+vi.mock('@/composables/features/chat/useSessionDerivations', () => ({
   useSessionDerivations: () => ({ derivedStatus: () => ({ value: 'done' }) }),
 }))
 
@@ -79,7 +79,7 @@ chatMock.registerReader((sid) => reactiveMessages.get(sid) ?? [])
 const mockState = vi.hoisted(() => ({
   registrations: [] as Array<{ sidAtRegistration: string; type: string; handler: (msg: unknown, sid: string) => void }>,
 }))
-vi.mock('@/composables/features/useSessionEvents', () => ({
+vi.mock('@/composables/features/chat/useSessionEvents', () => ({
   useSessionEvents: (sidRef: { value: string | null }) => {
     return (type: string, handler: (msg: unknown, sid: string) => void) => {
       const sid = sidRef.value

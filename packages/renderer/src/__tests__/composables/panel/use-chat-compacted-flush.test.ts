@@ -70,7 +70,7 @@ vi.mock('@/composables/useToast', () => ({
 }))
 
 import { useChatStore } from '@/stores/chat'
-import { useChat, resetChatModuleState } from '@/composables/features/useChat'
+import { useChat, resetChatModuleState } from '@/composables/features/chat/useChat'
 import { useCompactQueue } from '@/composables/panel/useCompactQueue'
 
 let scope: EffectScope

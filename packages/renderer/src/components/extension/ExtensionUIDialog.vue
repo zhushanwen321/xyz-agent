@@ -26,7 +26,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useExtensionUI, dialogFilter } from '@/composables/useExtensionUI'
-import { useSidebarNew } from '@/composables/features/useSidebarNew'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 
 const { t } = useI18n()
 const { focusedSessionId } = useSidebarNew()

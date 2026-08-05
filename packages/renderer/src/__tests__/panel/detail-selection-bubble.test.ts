@@ -23,7 +23,7 @@ const detailState = ref({
   status: 'success',
   hasGitChange: false,
 })
-vi.mock('@/composables/features/useDetailPane', () => ({
+vi.mock('@/composables/features/file-tree/useDetailPane', () => ({
   useDetailPane: () => ({
     state: detailState,
     toggleView: vi.fn(),

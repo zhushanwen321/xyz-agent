@@ -77,7 +77,7 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ error: toastMock.error }),
 }))
 
-import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/useNewTaskFlow'
+import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
 import { useSessionStore } from '@/stores/session'
 
 beforeEach(() => {

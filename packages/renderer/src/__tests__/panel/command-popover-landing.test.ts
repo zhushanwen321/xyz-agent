@@ -26,7 +26,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import type { ServerMessage, SkillInfo } from '@xyz-agent/shared'
 import * as events from '@/api/events'
 import { getSettingsStore, __resetSettingsStoreForTesting } from '@xyz-agent/core'
-import { __resetCommandStoreForTesting } from '@/composables/features/useCommandStore'
+import { __resetCommandStoreForTesting } from '@/composables/features/command/useCommandStore'
 import CommandPopover from '@/components/panel/CommandPopover.vue'
 
 // Wave3 TC5：useGlobalSkills 走真实 events 订阅链路（dispatchGlobal → handler → loadGlobal(true) → DOM 刷新）。
@@ -423,7 +423,7 @@ describe('CommandPopover landing 态用 globalSkills prop（L1-L14，W4）', () 
   // 用 wrapper 组件调 useGlobalSkills() 拿响应式 globalSkills，传给 CommandPopover（模拟 Composer.vue 的接线）。
   it('TC5: 广播 global scope 失效信号 → landing slash 浮层 DOM 反映 globalSkills 刷新', async () => {
     // lazy import：避免顶层 import 触发 useProjectSkills 模块加载（其顶层订阅依赖 mock 已挂载，OK）。
-    const { useGlobalSkills } = await import('@/composables/features/useProjectSkills')
+    const { useGlobalSkills } = await import('@/composables/features/settings/useProjectSkills')
 
     const SKILL_1: SkillInfo[] = [
       { id: 'sk-1', name: 'skill1', description: 'one', enabled: true, source: 'agents', effective: true },

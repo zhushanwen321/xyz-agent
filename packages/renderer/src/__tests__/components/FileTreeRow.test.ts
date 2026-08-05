@@ -25,14 +25,14 @@ import type { FileNode } from '@xyz-agent/shared'
 const mockExpandNode = vi.fn()
 const mockCollapseNode = vi.fn()
 const mockSelectFile = vi.fn()
-vi.mock('@/composables/features/useFileTree', () => ({
+vi.mock('@/composables/features/file-tree/useFileTree', () => ({
   useFileTree: () => ({
     expandNode: mockExpandNode,
     collapseNode: mockCollapseNode,
     selectFile: mockSelectFile,
   }),
 }))
-vi.mock('@/composables/features/useSideDrawer', () => ({
+vi.mock('@/composables/features/drawer/useSideDrawer', () => ({
   useSideDrawer: () => ({ open: vi.fn() }),
 }))
 

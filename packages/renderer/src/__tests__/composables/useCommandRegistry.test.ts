@@ -12,8 +12,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
-import { useCommandRegistry } from '@/composables/features/useCommandRegistry'
-import { useCommandStore, __resetCommandStoreForTesting } from '@/composables/features/useCommandStore'
+import { useCommandRegistry } from '@/composables/features/command/useCommandRegistry'
+import { useCommandStore, __resetCommandStoreForTesting } from '@/composables/features/command/useCommandStore'
 import type { AppCommand } from '@xyz-agent/core'
 
 beforeEach(() => {

@@ -62,8 +62,8 @@ vi.mock('@/stores/workspace', () => ({
 }))
 
 // useNewTaskFlow / useSidebar 真实实现（不 mock）
-import { useSidebar, resetAppBootstrap } from '@/composables/features/useSidebar'
-import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/useNewTaskFlow'
+import { useSidebar, resetAppBootstrap } from '@/composables/features/sidebar/useSidebar'
+import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
 import { useSessionStore } from '@/stores/session'
 
 beforeEach(() => {

@@ -32,7 +32,7 @@ vi.mock('@/api', () => ({
   },
 }))
 
-import { useSidebar } from '@/composables/features/useSidebar'
+import { useSidebar } from '@/composables/features/sidebar/useSidebar'
 import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
 import { useSessionStore } from '@/stores/session'
 

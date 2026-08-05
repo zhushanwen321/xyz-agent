@@ -18,7 +18,7 @@ import SessionItem from '@/components/sidebar/SessionItem.vue'
 import Panel from '@/components/panel/Panel.vue'
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
-import { useSessionDerivations, invalidateStatusCache } from '@/composables/features/useSessionDerivations'
+import { useSessionDerivations, invalidateStatusCache } from '@/composables/features/chat/useSessionDerivations'
 import { DOT_CLASS } from '@/composables/logic/sessionStatus'
 import type { SessionSummary } from '@xyz-agent/shared'
 

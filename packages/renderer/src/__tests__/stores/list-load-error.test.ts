@@ -51,7 +51,7 @@ vi.mock('@/api/events', () => ({
 import { useSessionStore } from '@/stores/session'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useSubagentStore } from '@/stores/subagent'
-import { useSidebar } from '@/composables/features/useSidebar'
+import { useSidebar } from '@/composables/features/sidebar/useSidebar'
 import { effectScope } from 'vue'
 
 function makeWorkflow(id: string): WorkflowRunRecord {

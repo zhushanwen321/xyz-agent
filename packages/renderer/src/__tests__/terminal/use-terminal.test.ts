@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { defineComponent, h, ref } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import type { UseTerminalReturn } from '@/composables/features/useTerminal'
+import type { UseTerminalReturn } from '@/composables/features/terminal/useTerminal'
 
 // ── mock terminalApi（隔离 RPC）────────────────────────────────────────────
 const terminalApiMock = vi.hoisted(() => ({
@@ -28,7 +28,7 @@ vi.mock('@/api/domains/terminal', () => ({
   terminalApi: terminalApiMock,
 }))
 
-import { useTerminal } from '@/composables/features/useTerminal'
+import { useTerminal } from '@/composables/features/terminal/useTerminal'
 
 /** 测试宿主组件：在 setup 内调 useTerminal，expose 返回值。 */
 function makeHost(sessionId: string | null) {

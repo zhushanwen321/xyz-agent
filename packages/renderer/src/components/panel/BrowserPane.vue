@@ -176,9 +176,9 @@ import {
   onBrowserState,
   openExternal,
 } from '@/lib/ipc'
-import { useBrowserZoom } from '@/composables/features/useBrowserZoom'
-import { useBrowserRectSync } from '@/composables/features/useBrowserRectSync'
-import { useUrlBar } from '@/composables/features/useUrlBar'
+import { useBrowserZoom } from '@/composables/features/browser/useBrowserZoom'
+import { useBrowserRectSync } from '@/composables/features/browser/useBrowserRectSync'
+import { useUrlBar } from '@/composables/features/url-bar/useUrlBar'
 
 /** 主进程推送的 browser 加载错误结构（与 BrowserViewState.error 对齐） */
 interface BrowserLoadError {

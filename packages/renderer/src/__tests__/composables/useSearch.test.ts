@@ -22,7 +22,7 @@
  * mock 策略：
  *  - vi.mock('@/api')：composer.getFileCandidates / session.list
  *  - vi.mock('@/stores/fileSearch')：store.get/set/invalidate
- *  - vi.mock('@/composables/features/useFileSearch')：setupInvalidation 返 vi.fn()（验证 AC-4.10 接线）
+ *  - vi.mock('@/composables/features/search/useFileSearch')：setupInvalidation 返 vi.fn()（验证 AC-4.10 接线）
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/useSearch.test.ts
  */
@@ -47,7 +47,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import type { FileNode, SessionGroup } from '@xyz-agent/shared'
 import type { AppCommand, SearchItem } from '@xyz-agent/core'
-import { useCommandStore, __resetCommandStoreForTesting } from '@/composables/features/useCommandStore'
+import { useCommandStore, __resetCommandStoreForTesting } from '@/composables/features/command/useCommandStore'
 import { useFileSearchStore } from '@/stores/fileSearch'
 
 // ── mock：api domain ──
@@ -71,7 +71,7 @@ vi.mock('@/stores/fileSearch', () => ({
 
 // ── mock：useFileSearch（setupInvalidation 验证 AC-4.10 接线） ──
 const mockSetupInvalidation = vi.fn(() => vi.fn()) // 返回 unwatch 函数
-vi.mock('@/composables/features/useFileSearch', () => ({
+vi.mock('@/composables/features/search/useFileSearch', () => ({
   useFileSearch: () => ({ setupInvalidation: mockSetupInvalidation }),
 }))
 
@@ -84,7 +84,7 @@ vi.mock('@/composables/features/useFileSearch', () => ({
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let useSearch: any
 beforeAll(async () => {
-  const mod = await import('@/composables/features/useSearch')
+  const mod = await import('@/composables/features/search/useSearch')
   useSearch = mod.useSearch
 })
 

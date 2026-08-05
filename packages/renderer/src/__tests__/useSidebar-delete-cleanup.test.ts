@@ -20,7 +20,7 @@ vi.mock('@/stores/fileTree', () => ({
 
 // ── mock useChat composable：捕获 disposeSession ──
 const useChatDisposeMock = vi.hoisted(() => vi.fn())
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => ({ disposeSession: useChatDisposeMock }),
 }))
 
@@ -39,7 +39,7 @@ vi.mock('@/api', () => ({
   },
 }))
 
-import { useSidebarNew } from '@/composables/features/useSidebarNew'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
 import { registerSessionCleanup, __clearSessionCleanupRegistryForTest } from '@/composables/useSessionScopedState'

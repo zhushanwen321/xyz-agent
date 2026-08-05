@@ -3,7 +3,7 @@
  * （#1+#3+#4+#5，需求修正后「统一延迟 create」语义）。
  *
  * 集成边界：mock 最外层 @/api（session.create/remove）+ lib/ipc（pickDirectory）+
- * @/composables/features/useChat（chat.send），真用 useSessionStore/usePanelStore/
+ * @/composables/features/chat/useChat（chat.send），真用 useSessionStore/usePanelStore/
  * useNavigationStore/resolveDefaultCwd。验证跨层数据流。
  *
  * 需求修正后的新语义（真相源）：
@@ -84,7 +84,7 @@ vi.mock('@/lib/ipc', () => ({
   pickDirectory: pickCtrl.pickDirectory,
 }))
 // submitFirstMessage 终端调用 useChat.send；mock 掉避免拖入 chat 订阅机制（useChat 自有单测）
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => chatMock,
 }))
 
@@ -100,7 +100,7 @@ vi.mock('@/stores/workspace', () => ({
   useWorkspaceStore: vi.fn(() => workspaceStoreMock),
 }))
 
-import { useNewTaskFlow, resetNewTaskFlow, __resetNewTaskFlowForTesting } from '@/composables/features/useNewTaskFlow'
+import { useNewTaskFlow, resetNewTaskFlow, __resetNewTaskFlowForTesting } from '@/composables/features/new-task/useNewTaskFlow'
 import { useSessionStore } from '@/stores/session'
 import { usePanelStore } from '@/stores/panel'
 import { useNavigationStore } from '@/stores/navigation'

@@ -43,7 +43,7 @@ vi.mock('@/api', () => ({
 
 import { session as sessionMock } from '@/api'
 
-import { useSidebarNew } from '@/composables/features/useSidebarNew'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 
 beforeEach(() => {
   setActivePinia(createPinia())

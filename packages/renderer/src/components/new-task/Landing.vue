@@ -31,7 +31,7 @@ import {
   dirNameOf,
 } from '@xyz-agent/ui'
 import Composer from '@/components/panel/Composer.vue'
-import { useNewTaskDeps } from '@/composables/features/useNewTaskDeps'
+import { useNewTaskDeps } from '@/composables/features/new-task/useNewTaskDeps'
 
 const props = withDefaults(
   defineProps<{

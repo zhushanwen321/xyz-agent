@@ -38,7 +38,7 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ error: toastError }),
 }))
 
-import { useChat, resetChatModuleState } from '@/composables/features/useChat'
+import { useChat, resetChatModuleState } from '@/composables/features/chat/useChat'
 
 beforeEach(() => {
   setActivePinia(createPinia())

@@ -175,7 +175,7 @@ import { useSidebarStore } from '@/stores/sidebar'
 import { usePlatformChrome } from '@/composables/effects/usePlatformChrome'
 import { useCopy } from '@/composables/effects/useCopy'
 import type { DerivedStatus } from '@/types'
-import type { GitIndicator } from '@/composables/features/useGitStatus'
+import type { GitIndicator } from '@/composables/features/file-tree/useGitStatus'
 import { STATUS_ICON } from '@/composables/logic/sessionStatus'
 import { formatShortSessionFile } from '@/composables/logic/session-file-format'
 

@@ -60,11 +60,11 @@ const depsMock = vi.hoisted(() => ({
   setDefaultPreset: vi.fn(),
   toast: { error: vi.fn() },
 }))
-vi.mock('@/composables/features/useNewTaskDeps', () => ({
+vi.mock('@/composables/features/new-task/useNewTaskDeps', () => ({
   useNewTaskDeps: () => ({ flow: flowMock, ...depsMock }),
 }))
 // Panel.vue 的 isLandingView 读 useNewTaskFlow().state（壳）；mock 回 flowMock 保持与 Landing 同源
-vi.mock('@/composables/features/useNewTaskFlow', () => ({
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
   useNewTaskFlow: () => flowMock,
   resetNewTaskFlow: vi.fn(),
 }))

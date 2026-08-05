@@ -54,7 +54,7 @@ import {
   setPendingOpenForSid,
   consumePendingOpen,
   getPendingOpenForSid,
-} from '@/composables/features/useSideDrawer'
+} from '@/composables/features/drawer/useSideDrawer'
 import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
 
 /** 切换当前 focused session（模拟 selectSession 改 active panel 的 session 绑定） */

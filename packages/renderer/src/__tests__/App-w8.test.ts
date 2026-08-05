@@ -34,7 +34,7 @@ vi.mock('@/composables/useConnection', () => ({
   }),
 }))
 
-vi.mock('@/composables/features/useSidebarNew', () => ({
+vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
   useSidebarNew: () => ({ onConnected: mocks.onConnected }),
 }))
 

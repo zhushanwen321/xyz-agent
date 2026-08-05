@@ -52,7 +52,7 @@ const NOW = Date.now()
 
 // ── MessageStream（方案 c）需要的全局 mock ──────────────────────────
 // useChat 仅用 loadMoreHistory / hasMoreHistory，no-op 即可
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => ({ loadMoreHistory: vi.fn(), hasMoreHistory: () => false }),
 }))
 

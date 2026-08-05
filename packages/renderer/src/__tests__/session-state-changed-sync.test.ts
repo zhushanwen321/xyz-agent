@@ -34,7 +34,7 @@ vi.mock('@/api', () => ({
   },
 }))
 
-import { useChat } from '@/composables/features/useChat'
+import { useChat } from '@/composables/features/chat/useChat'
 import { useSessionStore } from '@/stores/session'
 
 beforeEach(() => {

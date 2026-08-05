@@ -22,7 +22,7 @@ import { createPinia, setActivePinia } from 'pinia'
 
 // mock useFileSearch：返回可控 FileNode[]，绕过真实 file.search
 const mockLoad = vi.fn()
-vi.mock('@/composables/features/useFileSearch', () => ({
+vi.mock('@/composables/features/search/useFileSearch', () => ({
   useFileSearch: () => ({ load: (...args: unknown[]) => mockLoad(...args) }),
 }))
 

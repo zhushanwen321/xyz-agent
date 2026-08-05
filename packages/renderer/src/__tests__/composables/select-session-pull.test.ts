@@ -69,8 +69,8 @@ vi.mock('@/api/domains/file', () => ({ tree: vi.fn().mockResolvedValue({}) }))
 vi.mock('@/api/domains/git', () => ({ status: vi.fn().mockResolvedValue({}) }))
 
 import { session as sessionApi, chat as chatApi } from '@/api'
-import { useSidebarNew } from '@/composables/features/useSidebarNew'
-import { resetChatModuleState } from '@/composables/features/useChat'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
+import { resetChatModuleState } from '@/composables/features/chat/useChat'
 
 beforeEach(() => {
   setActivePinia(createPinia())

@@ -35,7 +35,7 @@ vi.mock('@/composables/useToast', () => ({
 }))
 
 // storeToRefs 要求真正的 reactive 属性，故用 ref 暴露 appCommands / shortcutOverrides
-vi.mock('@/composables/features/useCommandStore', () => {
+vi.mock('@/composables/features/command/useCommandStore', () => {
   const { ref } = require('vue') as typeof import('vue')
   return {
     useCommandStore: () => ({

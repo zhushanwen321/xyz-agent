@@ -13,7 +13,7 @@
  * 均为模块级单例，内部安全调用。
  */
 import { useEventListener } from '@vueuse/core'
-import { useCommandStore } from '@/composables/features/useCommandStore'
+import { useCommandStore } from '@/composables/features/command/useCommandStore'
 import { usePresetStore } from '@/stores/preset'
 import { useSearchModal } from '@xyz-agent/core'
 import { useSidebarStore } from '@/stores/sidebar'

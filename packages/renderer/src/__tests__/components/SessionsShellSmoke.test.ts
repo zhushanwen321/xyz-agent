@@ -52,12 +52,12 @@ vi.mock('@/api', async (importActual) => {
   const chat = await import('@/api/domains/chat')
   return { ...actual, session, chat }
 })
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: vi.fn(() => ({ setHistoryTruncated: vi.fn(), disposeSession: vi.fn() })),
   ensureStreamSubscription: mocks.ensureStreamSub,
 }))
-vi.mock('@/composables/features/useFileTree', () => ({ useFileTree: vi.fn(() => ({ loadTree: mocks.loadTree })) }))
-vi.mock('@/composables/features/useNewTaskFlow', () => ({
+vi.mock('@/composables/features/file-tree/useFileTree', () => ({ useFileTree: vi.fn(() => ({ loadTree: mocks.loadTree })) }))
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
   useNewTaskFlow: vi.fn(() => ({
     isActive: { value: false },
     cancelFlow: mocks.cancelFlow,
@@ -66,15 +66,15 @@ vi.mock('@/composables/features/useNewTaskFlow', () => ({
     presetCwd: vi.fn(),
   })),
 }))
-vi.mock('@/composables/features/useForkActions', () => ({
+vi.mock('@/composables/features/fork-handoff/useForkActions', () => ({
   useForkActions: () => ({ forkSession: vi.fn(), forkSessionAsk: vi.fn(), forkFromLastAssistant: vi.fn(), enterForkModeFromLastAssistant: vi.fn() }),
 }))
-vi.mock('@/composables/features/useHandoffActions', () => ({
+vi.mock('@/composables/features/fork-handoff/useHandoffActions', () => ({
   useHandoffActions: () => ({ handoff: vi.fn(), abortHandoff: vi.fn(), handoffFromLastAssistant: vi.fn(), enterHandoffModeFromLastAssistant: vi.fn() }),
 }))
 
 import SessionsShellSm from './SessionsShellSm.vue'
-import { resetSidebarNewForTest } from '@/composables/features/useSidebarNew'
+import { resetSidebarNewForTest } from '@/composables/features/sidebar/useSidebarNew'
 
 function summary(id: string, label: string, cwd = '/a'): SessionSummary {
   return { id, label, cwd, status: 'idle', lastActiveAt: 1, modelId: '' }

@@ -102,7 +102,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import FileTreeRow from './FileTreeRow.vue'
 import { useFileTreeStore } from '@/stores/fileTree'
-import { useFileTree } from '@/composables/features/useFileTree'
+import { useFileTree } from '@/composables/features/file-tree/useFileTree'
 import type { FileNode } from '@xyz-agent/shared'
 
 const { t } = useI18n()

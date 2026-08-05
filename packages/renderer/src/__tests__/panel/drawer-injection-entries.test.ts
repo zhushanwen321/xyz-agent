@@ -15,7 +15,7 @@ import { ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 
 // ── stub 重依赖 ──
-vi.mock('@/composables/features/useDetailPane', () => ({
+vi.mock('@/composables/features/file-tree/useDetailPane', () => ({
   useDetailPane: () => ({
     state: ref({ path: 'src/foo.ts', content: '', viewMode: 'preview', kind: 'code', status: 'success', hasGitChange: false }),
     toggleView: vi.fn(),
@@ -60,7 +60,7 @@ vi.mock('@/composables/panel/useChatViewDeps', () => ({
 }))
 
 // GitPanel 重依赖
-vi.mock('@/composables/features/useGitStatus', () => ({
+vi.mock('@/composables/features/file-tree/useGitStatus', () => ({
   useGitStatusOrFail: () => ({
     result: ref({
       isRepo: true,
@@ -87,7 +87,7 @@ vi.mock('@/composables/features/useGitStatus', () => ({
 vi.mock('@/stores/fileTree', () => ({
   useFileTreeStore: () => ({ selectFile: vi.fn() }),
 }))
-vi.mock('@/composables/features/useSideDrawer', () => ({
+vi.mock('@/composables/features/drawer/useSideDrawer', () => ({
   useSideDrawer: () => ({ open: vi.fn() }),
 }))
 vi.mock('@/stores/session', () => ({

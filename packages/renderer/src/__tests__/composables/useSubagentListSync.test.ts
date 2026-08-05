@@ -27,7 +27,7 @@ vi.mock('@/api', async (importActual) => {
   return { ...actual, session }
 })
 
-import { useSubagentListSync } from '@/composables/features/useSubagentListSync'
+import { useSubagentListSync } from '@/composables/features/chat/useSubagentListSync'
 import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
 import { useSidebarStore } from '@/stores/sidebar'
 import { useSubagentStore } from '@/stores/subagent'

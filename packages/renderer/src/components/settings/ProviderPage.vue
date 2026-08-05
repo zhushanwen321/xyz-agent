@@ -170,8 +170,8 @@ import type { ProviderInfo, ProviderStatus } from '@xyz-agent/shared'
 import { config } from '@/api'
 import { getSettingsStore } from '@xyz-agent/core'
 import { useQuotaStore } from '@/stores/quota'
-import { useProviderImport } from '@/composables/features/useProviderImport'
-import { useQuotaConfigure } from '@/composables/features/useQuotaConfigure'
+import { useProviderImport } from '@/composables/features/settings/useProviderImport'
+import { useQuotaConfigure } from '@/composables/features/model/useQuotaConfigure'
 import { useToast } from '@/composables/useToast'
 import {
   ProviderEditBody,

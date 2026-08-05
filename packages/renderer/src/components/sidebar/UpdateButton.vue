@@ -121,7 +121,7 @@ import { useI18n } from 'vue-i18n'
 import { ArrowUp, Loader2, CheckCircle2, AlertCircle } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
-import { useAppUpdate } from '@/composables/features/useAppUpdate'
+import { useAppUpdate } from '@/composables/features/settings/useAppUpdate'
 
 const { t } = useI18n()
 const { state, performUpdate, openFallbackUrl } = useAppUpdate()

@@ -59,7 +59,7 @@ vi.mock('@/api', () => ({
 }))
 
 // mount(Composer) 用例：mock 较深依赖（useChat 保留真实，验证 send 全链行为）
-vi.mock('@/composables/features/useNewTaskFlow', () => ({
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
   useNewTaskFlow: () => ({
     submitFirstMessage: vi.fn(),
     currentModel: { value: null },
@@ -84,7 +84,7 @@ vi.mock('@/composables/panel/useComposerModelThinking', () => ({
 
 import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
-import { useChat } from '@/composables/features/useChat'
+import { useChat } from '@/composables/features/chat/useChat'
 import Composer from '@/components/panel/Composer.vue'
 
 // ── Composer 子组件 stub（参照 composer-three-states.test.ts，最小化 mount 开销）──

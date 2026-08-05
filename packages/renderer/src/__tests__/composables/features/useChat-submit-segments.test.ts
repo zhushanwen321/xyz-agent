@@ -58,7 +58,7 @@ const sessionDomainMock = vi.hoisted(() => ({
 }))
 
 import { useChatStore } from '@/stores/chat'
-import { useChat, resetChatModuleState } from '@/composables/features/useChat'
+import { useChat, resetChatModuleState } from '@/composables/features/chat/useChat'
 
 beforeEach(() => {
   setActivePinia(createPinia())

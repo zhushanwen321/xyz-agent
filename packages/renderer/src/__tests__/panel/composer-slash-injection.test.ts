@@ -25,7 +25,7 @@ import { nextTick, defineComponent, ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 
 // ── mock：composable / api（与现有 Composer 测试范式一致，防真依赖构造报错）──
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => ({
     send: vi.fn(),
     steer: vi.fn(),
@@ -36,7 +36,7 @@ vi.mock('@/composables/features/useChat', () => ({
     hydrateHistory: vi.fn(),
   }),
 }))
-vi.mock('@/composables/features/useNewTaskFlow', () => ({
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
   useNewTaskFlow: () => ({ submitFirstMessage: vi.fn(), currentModel: { value: null }, currentCwd: { value: null }, setPendingModel: vi.fn() }),
   resetNewTaskFlow: vi.fn(),
 }))
@@ -95,7 +95,7 @@ vi.mock('@xyz-agent/ui/features/composer', async (importOriginal) => {
 })
 
 import Composer from '@/components/panel/Composer.vue'
-import { useCommandStore, __resetCommandStoreForTesting } from '@/composables/features/useCommandStore'
+import { useCommandStore, __resetCommandStoreForTesting } from '@/composables/features/command/useCommandStore'
 
 beforeEach(() => {
   setActivePinia(createPinia())

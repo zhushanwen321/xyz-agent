@@ -23,7 +23,7 @@
 import { watch, onScopeDispose } from 'vue'
 import { useSessionStore } from '@/stores/session'
 import { useChatStore } from '@/stores/chat'
-import { ensureStreamSubscription, useChat } from '@/composables/features/useChat'
+import { ensureStreamSubscription, useChat } from '@/composables/features/chat/useChat'
 import type { SessionSummary } from '@xyz-agent/shared'
 
 /**

@@ -24,7 +24,7 @@ const sidebarMocks = vi.hoisted(() => ({
   loadSessions: loadSessionsMock,
   syncSessionToPanel: vi.fn(),
 }))
-vi.mock('@/composables/features/useSidebarNew', () => ({
+vi.mock('@/composables/features/sidebar/useSidebarNew', () => ({
   useSidebarNew: () => sidebarMocks,
   deriveStatus: () => ({ value: 'done' }),
 }))
@@ -74,7 +74,7 @@ vi.mock('@/stores/workflow', () => ({
 vi.mock('@/stores/navigation', () => ({
   useNavigationStore: () => ({ push: vi.fn(), current: { value: { view: 'chat' } }, stack: [] }),
 }))
-vi.mock('@/composables/features/useCommandStore', () => ({
+vi.mock('@/composables/features/command/useCommandStore', () => ({
   useCommandStore: () => ({
     appCommands: { value: [] },
     shortcutOverrides: { value: {} },
@@ -82,11 +82,11 @@ vi.mock('@/composables/features/useCommandStore', () => ({
     clearPendingSlash: vi.fn(),
   }),
 }))
-vi.mock('@/composables/features/useSessionDerivations', () => ({
+vi.mock('@/composables/features/chat/useSessionDerivations', () => ({
   useSessionDerivations: () => ({ derivedStatus: () => ({ value: 'done' }) }),
 }))
-vi.mock('@/composables/features/useSubagentListSync', () => ({ useSubagentListSync: vi.fn() }))
-vi.mock('@/composables/features/useWorkflowListSync', () => ({ useWorkflowListSync: vi.fn() }))
+vi.mock('@/composables/features/chat/useSubagentListSync', () => ({ useSubagentListSync: vi.fn() }))
+vi.mock('@/composables/features/chat/useWorkflowListSync', () => ({ useWorkflowListSync: vi.fn() }))
 vi.mock('@/api/events', () => ({
   onGlobalType: vi.fn(() => () => {}),
   dispatchSession: vi.fn(),

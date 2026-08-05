@@ -48,7 +48,7 @@ vi.mock('@/api/domains/git', () => ({ status: vi.fn().mockResolvedValue({}) }))
 const sendMock = vi.fn().mockResolvedValue(undefined)
 const sendBashMock = vi.fn().mockResolvedValue(undefined)
 const setThinkingLevelMock = vi.fn().mockResolvedValue(undefined)
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: vi.fn(() => ({
     send: sendMock,
     sendBash: sendBashMock,
@@ -60,12 +60,12 @@ vi.mock('@/composables/features/useChat', () => ({
   ensureStreamSubscription: vi.fn(),
 }))
 // useModel：setThinkingLevel spy（C-W4-3 留壳 apply）
-vi.mock('@/composables/features/useModel', () => ({
+vi.mock('@/composables/features/model/useModel', () => ({
   useModel: vi.fn(() => ({ switchModel: vi.fn().mockResolvedValue(undefined), setThinkingLevel: setThinkingLevelMock })),
 }))
-vi.mock('@/composables/features/useFileTree', () => ({ useFileTree: vi.fn(() => ({ loadTree: vi.fn() })) }))
+vi.mock('@/composables/features/file-tree/useFileTree', () => ({ useFileTree: vi.fn(() => ({ loadTree: vi.fn() })) }))
 
-import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/useNewTaskFlow'
+import { useNewTaskFlow, resetNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
 import { createSessionFlow } from '@xyz-agent/core'
 
 function summary(over: Partial<SessionSummary> = {}): SessionSummary {

@@ -30,7 +30,7 @@ vi.mock('@/stores/fileTree', () => ({
 }))
 
 // ── mock useFileTree composable：selectSession 连锁调 loadTree，stub 为 no-op ──
-vi.mock('@/composables/features/useFileTree', () => ({
+vi.mock('@/composables/features/file-tree/useFileTree', () => ({
   useFileTree: () => ({ loadTree: () => Promise.resolve() }),
 }))
 
@@ -41,7 +41,7 @@ vi.mock('@/composables/features/useFileTree', () => ({
 // 补全 useChat 全部返回方法（与生产 useChat composable 返回签名对齐），确保 selectSession
 // 走「hydrate 成功」路径而非 catch 回退；未来重构移除 try/catch 也不会静默失败。
 const useChatDisposeMock = vi.hoisted(() => vi.fn())
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => ({
     send: vi.fn(),
     steer: vi.fn(),
@@ -82,7 +82,7 @@ vi.mock('@/api', () => ({
   },
 }))
 
-import { useSidebarNew } from '@/composables/features/useSidebarNew'
+import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
 import { __clearSessionCleanupRegistryForTest } from '@/composables/useSessionScopedState'

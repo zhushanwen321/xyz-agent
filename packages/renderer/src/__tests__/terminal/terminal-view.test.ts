@@ -3,7 +3,7 @@
  *
  * mock 策略：
  * - vi.mock('@xterm/xterm' / addon-*) —— happy-dom 无 canvas，xterm.open() 会抛错，必须 mock
- * - vi.mock('@/composables/features/useTerminal') —— 隔离 PTY 逻辑（useTerminal 的 WS 订阅已在 use-terminal.test.ts 覆盖）
+ * - vi.mock('@/composables/features/terminal/useTerminal') —— 隔离 PTY 逻辑（useTerminal 的 WS 订阅已在 use-terminal.test.ts 覆盖）
  * - vi.mock('@/stores/session') —— getSessionCwd 依赖
  *
  * 三视角（规则 5-8）：
@@ -83,7 +83,7 @@ const useTerminalMock = {
   attachTerminal: vi.fn(),
   enqueueWrite: vi.fn(),
 }
-vi.mock('@/composables/features/useTerminal', () => ({
+vi.mock('@/composables/features/terminal/useTerminal', () => ({
   useTerminal: () => useTerminalMock,
 }))
 

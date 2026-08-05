@@ -30,9 +30,9 @@ vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ list: [] }),
 }))
 
-import { useDetailPane } from '@/composables/features/useDetailPane'
+import { useDetailPane } from '@/composables/features/file-tree/useDetailPane'
 import { useFileTreeStore } from '@/stores/fileTree'
-import { useSideDrawer, resetSideDrawer } from '@/composables/features/useSideDrawer'
+import { useSideDrawer, resetSideDrawer } from '@/composables/features/drawer/useSideDrawer'
 
 /** 准备一个 session + gitOverlay 记录，返回 store */
 function setupSession(sid: string, path: string, status: string) {

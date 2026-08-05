@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { useSearchModal, resetSearchModal } from '@/composables/features/useSearchModal'
+import { useSearchModal, resetSearchModal } from '@/composables/features/search/useSearchModal'
 
 describe('useSearchModal', () => {
   beforeEach(() => {

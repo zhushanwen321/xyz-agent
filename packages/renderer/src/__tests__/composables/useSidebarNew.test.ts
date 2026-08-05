@@ -62,7 +62,7 @@ vi.mock('@/api', async (importActual) => {
 })
 
 // ── useChat composable mock（ensureStreamSubscription spy + useChat stubs）──
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: vi.fn(() => ({
     setHistoryTruncated: vi.fn(),
     disposeSession: vi.fn(),
@@ -70,9 +70,9 @@ vi.mock('@/composables/features/useChat', () => ({
   ensureStreamSubscription: mocks.ensureStreamSub,
 }))
 // ── useFileTree mock（loadTree fire-forget spy）──
-vi.mock('@/composables/features/useFileTree', () => ({ useFileTree: vi.fn(() => ({ loadTree: mocks.loadTree })) }))
+vi.mock('@/composables/features/file-tree/useFileTree', () => ({ useFileTree: vi.fn(() => ({ loadTree: mocks.loadTree })) }))
 // ── useNewTaskFlow mock（isActive/cancelFlow/startFlow/currentSession controllable）──
-vi.mock('@/composables/features/useNewTaskFlow', () => ({
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
   useNewTaskFlow: vi.fn(() => ({
     isActive: { value: false },
     cancelFlow: mocks.cancelFlow,
@@ -82,7 +82,7 @@ vi.mock('@/composables/features/useNewTaskFlow', () => ({
   })),
 }))
 // ── fork/handoff mock（正交职责，stub 即可）──
-vi.mock('@/composables/features/useForkActions', () => ({
+vi.mock('@/composables/features/fork-handoff/useForkActions', () => ({
   useForkActions: () => ({
     forkSession: vi.fn(),
     forkSessionAsk: vi.fn(),
@@ -90,7 +90,7 @@ vi.mock('@/composables/features/useForkActions', () => ({
     enterForkModeFromLastAssistant: vi.fn(),
   }),
 }))
-vi.mock('@/composables/features/useHandoffActions', () => ({
+vi.mock('@/composables/features/fork-handoff/useHandoffActions', () => ({
   useHandoffActions: () => ({
     handoff: vi.fn(),
     abortHandoff: vi.fn(),
@@ -100,7 +100,7 @@ vi.mock('@/composables/features/useHandoffActions', () => ({
 }))
 // registerAppCommands 经 commandStore（真实），不需 mock
 
-import { useSidebarNew, resetSidebarNewForTest } from '@/composables/features/useSidebarNew'
+import { useSidebarNew, resetSidebarNewForTest } from '@/composables/features/sidebar/useSidebarNew'
 
 function summary(id: string, cwd = '/a'): SessionSummary {
   return { id, label: `label-${id}`, cwd, status: 'idle', lastActiveAt: 1, modelId: '' }
@@ -145,7 +145,7 @@ describe('useSidebarNew 接缝（TC-1..TC-4）', () => {
   })
 
   it('TC-1b flow 活跃时切 session → cancelFlow（AC-3.10）', async () => {
-    const { useNewTaskFlow } = await import('@/composables/features/useNewTaskFlow')
+    const { useNewTaskFlow } = await import('@/composables/features/new-task/useNewTaskFlow')
     vi.mocked(useNewTaskFlow).mockReturnValueOnce({
       isActive: { value: true },
       cancelFlow: mocks.cancelFlow,

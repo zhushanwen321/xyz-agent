@@ -23,7 +23,7 @@ vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ list: [] }),
 }))
 
-import { useDetailPane } from '@/composables/features/useDetailPane'
+import { useDetailPane } from '@/composables/features/file-tree/useDetailPane'
 import { useFileTreeStore } from '@/stores/fileTree'
 
 beforeEach(() => {

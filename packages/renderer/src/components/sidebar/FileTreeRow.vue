@@ -126,8 +126,8 @@ import { ChevronRight, Folder, FileText, FileCode, FileJson, Loader2, AlertCircl
 import { useI18n } from 'vue-i18n'
 import type { FileNode } from '@xyz-agent/shared'
 import { useFileTreeStore } from '@/stores/fileTree'
-import { useFileTree } from '@/composables/features/useFileTree'
-import { useSideDrawer } from '@/composables/features/useSideDrawer'
+import { useFileTree } from '@/composables/features/file-tree/useFileTree'
+import { useSideDrawer } from '@/composables/features/drawer/useSideDrawer'
 
 const { t } = useI18n()
 

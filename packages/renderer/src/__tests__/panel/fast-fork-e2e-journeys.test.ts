@@ -63,7 +63,7 @@ vi.mock('@/api', () => ({
   composer: { getMentionCandidates: vi.fn().mockResolvedValue([]), getFileCandidates: vi.fn().mockResolvedValue([]) },
 }))
 // main 合并引入 useProjectSkills/useGlobalSkills（landing skill），与 fork 测试无关，stub 掉
-vi.mock('@/composables/features/useProjectSkills', () => ({
+vi.mock('@/composables/features/settings/useProjectSkills', () => ({
   useProjectSkills: () => ({ projectSkills: [] }),
   useGlobalSkills: () => ({ globalSkills: [] }),
 }))
@@ -71,7 +71,7 @@ vi.mock('@/composables/features/useProjectSkills', () => ({
 // ── mock useChat（流式依赖；fork 不走 send/steer，但 Composer setup 取这些引用）──
 // 注意：必须返回稳定对象（同 composer-fork-mode.test.ts），避免每帧新引用导致 watch 抖动。
 // ensureStreamSubscription 导出作 no-op stub：层 1 只验编排（fork RPC → send RPC），真实流式订阅由 useChat.test.ts 覆盖。
-vi.mock('@/composables/features/useChat', () => ({
+vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => ({
     send: vi.fn(),
     steer: vi.fn(),
@@ -85,8 +85,8 @@ vi.mock('@/composables/features/useChat', () => ({
   }),
   ensureStreamSubscription: vi.fn(),
 }))
-vi.mock('@/composables/features/useSideDrawer', () => ({ useSideDrawer: () => ({ open: vi.fn() }) }))
-vi.mock('@/composables/features/useNewTaskFlow', () => ({
+vi.mock('@/composables/features/drawer/useSideDrawer', () => ({ useSideDrawer: () => ({ open: vi.fn() }) }))
+vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
   useNewTaskFlow: () => ({
     submitFirstMessage: vi.fn(),
     currentModel: { value: null },
