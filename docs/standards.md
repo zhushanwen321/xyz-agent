@@ -438,3 +438,29 @@ const MOCK: SearchItem[] = [
 1. 先更新 `shared/src/protocol.ts` 中的类型定义
 2. 确认前端和 runtime 的消费方都已适配
 3. 运行 `pnpm --filter @xyz-agent/frontend run typecheck` 和 `pnpm --filter @xyz-agent/runtime run typecheck` 验证
+
+---
+
+## 10. 重构范式
+
+### 10.1 深模块化三段式
+
+深模块化是项目重构的统一范式（源：`07-cross-cutting-optimizations.md` 优化 4，已由 B4 Composer 验证）。三段式：
+
+1. **逻辑归位**：按职责内聚到深模块（domain/store/state-machine），**非**「为绕 lint 行数限制拆 *Impl」——模块级 `*Impl` 函数拆分是反模式，必须用深模块化替代
+2. **壳装配**：容器组件 / composable 退化为薄装配层，经 deps 注入或 facade 组装深模块
+3. **facade 消费**：消费方只 import 1 个 facade（如 Composer.vue 只 import `useComposerShell`），不直接碰深模块内部
+
+### 10.2 信号识别表（何时该深模块化）
+
+| 信号 | 含义 | 案例 |
+|---|---|---|
+| `*Impl` 后缀函数为绕 max-lines | 模块级函数拆分反模式 | B6 store.ts 6 个 *Impl |
+| 容器组件 > 400 行 + import 多个 composable | 上帝组件 | B5 前 Sidebar.vue 508 行 |
+| 同类逻辑散落多处 | 缺内聚 | ⌘[⌘]⌘, 散落 AppShell + useGlobalShortcuts |
+| 深模块有独立测试价值 | 可抽 | streaming-state-machine（B6） |
+
+### 10.3 落地要求
+
+1. 本文档即范式 SSOT，后续重构（B6 / ViewHost / Settings 拆分）统一遵循三段式
+2. review 检查新代码：发现上述信号时建议深模块化，而非继续拆 *Impl 或堆叠 import
