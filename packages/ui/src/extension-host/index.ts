@@ -31,10 +31,13 @@ export { default as CompanionBand } from './CompanionBand.vue'
 export {
   DIALOG_REQUEST_SOURCE_KEY,
   UI_RESPONSE_TRANSPORT_KEY,
+  OVERLAY_LIFECYCLE_KEY,
   type DialogRequest,
   type DialogRequestOption,
   type DialogRequestSource,
   type UiResponseTransport,
+  type OverlayLifecycleSource,
+  type OverlayState,
 } from './companion-band-source'
 export { default as PermissionRequestDialog } from './PermissionRequestDialog.vue'
 export {

@@ -23,8 +23,10 @@ import CompanionBand from '../CompanionBand.vue'
 import {
   DIALOG_REQUEST_SOURCE_KEY,
   UI_RESPONSE_TRANSPORT_KEY,
+  OVERLAY_LIFECYCLE_KEY,
 } from '../companion-band-source'
 import type { DialogRequest, DialogRequestSource, UiResponseTransport } from '../dialog-request-queue'
+import type { OverlayLifecycleSource, OverlayState } from '../companion-band-source'
 
 // ── Mocks ────────────────────────────────────────────────────────────
 
@@ -64,7 +66,7 @@ function makeTransport(): UiResponseTransport {
   }
 }
 
-function mountBand(sessionId = 'A') {
+function mountBand(sessionId = 'A', overlay?: OverlayLifecycleSource) {
   const source = new MockDialogRequestSource()
   const transport = makeTransport()
   const wrapper = mount(CompanionBand, {
@@ -73,10 +75,20 @@ function mountBand(sessionId = 'A') {
       provide: {
         [DIALOG_REQUEST_SOURCE_KEY as symbol]: source,
         [UI_RESPONSE_TRANSPORT_KEY as symbol]: transport,
+        ...(overlay ? { [OVERLAY_LIFECYCLE_KEY as symbol]: overlay } : {}),
       },
     },
   })
   return { wrapper, source, transport }
+}
+
+/** OverlayLifecycle mock（结构兼容 OverlayLifecycleSource；transition 更新内部状态模拟状态机） */
+class MockOverlayLifecycle {
+  private state: OverlayState | undefined = undefined
+  getState = vi.fn((_sid: string | undefined, _rid: string): OverlayState | undefined => this.state)
+  transition = vi.fn((_sid: string | undefined, _rid: string, to: OverlayState): void => {
+    this.state = to
+  })
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -216,5 +228,65 @@ describe('CompanionBand', () => {
     } finally {
       warnSpy.mockRestore()
     }
+  })
+})
+
+// ── OverlayLifecycle 契约（IF9 状态机，arch-fix-v2 闭环）──────────────
+describe('CompanionBand × OverlayLifecycle 契约（IF9）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('minimize → transition(sessionId, requestId, "minimized") + UI 反映收起态', async () => {
+    const overlay = new MockOverlayLifecycle()
+    const { wrapper, source } = mountBand('A', overlay)
+    source.triggerUiRequest({ sessionId: 'A', requestId: 'r1', method: 'confirm', title: '确认', message: '正文' })
+    await nextTick()
+
+    // 初始未收起（getState undefined）→ minimize 按钮可见、body 可见
+    expect(wrapper.find('[data-testid="companion-minimize"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="companion-band-message"]').exists()).toBe(true)
+
+    // 点击 minimize → transition('minimized') + 状态机更新 + refresh → UI 收起
+    await wrapper.find('[data-testid="companion-minimize"]').trigger('click')
+    expect(overlay.transition).toHaveBeenCalledWith('A', 'r1', 'minimized')
+    expect(wrapper.find('[data-testid="companion-restore"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="companion-minimize"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="companion-band-message"]').exists()).toBe(false)
+    // z-index 状态驱动 → 覆盖层（design-token）
+    expect(wrapper.find('[data-testid="companion-band"]').attributes('style')).toContain('z-index: var(--z-overlay)')
+  })
+
+  it('restore → transition("restored") + body 重新可见', async () => {
+    const overlay = new MockOverlayLifecycle()
+    const { wrapper, source } = mountBand('A', overlay)
+    source.triggerUiRequest({ sessionId: 'A', requestId: 'r2', method: 'confirm', title: '收起测', message: 'm' })
+    await nextTick()
+    // 先收起
+    await wrapper.find('[data-testid="companion-minimize"]').trigger('click')
+    expect(wrapper.find('[data-testid="companion-band-message"]').exists()).toBe(false)
+
+    // restore → transition('restored') + body 重新可见（restored 低层 z-index）
+    await wrapper.find('[data-testid="companion-restore"]').trigger('click')
+    expect(overlay.transition).toHaveBeenCalledWith('A', 'r2', 'restored')
+    expect(wrapper.find('[data-testid="companion-band-message"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="companion-minimize"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="companion-band"]').attributes('style')).toContain('z-index: var(--z-overlay)')
+  })
+
+  it('无 OverlayLifecycle inject：minimize 点击不崩（静默 no-op）', async () => {
+    // mountBand 不传 overlay → OVERLAY_LIFECYCLE_KEY 未 provide → inject 默认 null
+    const { wrapper, source } = mountBand('A')
+    source.triggerUiRequest({ sessionId: 'A', requestId: 'r3', method: 'confirm', title: '无注入' })
+    await nextTick()
+
+    const minBtn = wrapper.find('[data-testid="companion-minimize"]')
+    expect(minBtn.exists()).toBe(true)
+    // 点击不抛错
+    await expect(minBtn.trigger('click')).resolves.toBeUndefined()
+    // band 仍渲染（未崩），无 z-index（undefined 状态 → 不设）
+    const band = wrapper.find('[data-testid="companion-band"]')
+    expect(band.exists()).toBe(true)
+    expect(band.attributes('style')).toBeFalsy()
   })
 })

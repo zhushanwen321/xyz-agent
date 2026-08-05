@@ -45,6 +45,7 @@ import {
   STATUS_BAR_SOURCE_KEY,
   UI_RESPONSE_TRANSPORT_KEY,
   VIEW_HOST_SOURCE_KEY,
+  OVERLAY_LIFECYCLE_KEY,
 } from '@xyz-agent/ui/extension-host'
 import { createDialogRequestSource, createUiResponseTransport } from './extension-host-dialog'
 import type { ServerMessage } from '@xyz-agent/shared'
@@ -154,6 +155,10 @@ export function initExtensionHostBridge(app: App): {
     sessionScoped: createSessionScopedMap(() => new Map<string, OverlayState>()),
   })
   overlayLifecycle.subscribe()
+  // OverlayLifecycle（IF9 状态机）provide 给 CompanionBand 消费（arch-fix-v2 闭环）：
+  // minimize/restore → transition 驱动状态机迁移；getState 派生 z-index。实例结构兼容
+  // ui 包 OverlayLifecycleSource 接口（getState/transition 签名一致，结构型适配无需手写包装）。
+  app.provide(OVERLAY_LIFECYCLE_KEY, overlayLifecycle)
 
   return { bridge, viewHostStore, statusBarController, overlayLifecycle, mountPoints, contributions }
 }

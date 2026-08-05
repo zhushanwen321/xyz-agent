@@ -23,8 +23,9 @@ import {
   findMissingDependencies,
 } from './plugin-deps.js'
 import { PluginHotReloader, type HotReloadHooks, type StatusChangeCallback } from './plugin-hot-reload.js'
-// §6.6 硬锁常量（w1 落地）：external 插件安装/激活总开关，默认 false（fail-closed）。
-// 联动契约见 plugin-security.ts —— sandbox 真隔离修复落地前禁止置 true。
+// §6.6 硬锁常量（w1 落地）：external 插件安装/激活总开关。
+// sandbox 真隔离闭环已落地，EXTERNAL_PLUGIN_ENABLED 已翻转为 true。
+// 联动契约见 plugin-security.ts —— 任一 sandbox 环节回退时须同步改回 false。
 import { EXTERNAL_PLUGIN_ENABLED } from './plugin-security.js'
 // 本地类型别名：方法签名 host: PluginHost 用（re-export 不进本地作用域，需单独 import）
 import type { PluginHostContract as PluginHost } from './plugin-host.js'
@@ -149,7 +150,8 @@ export class PluginActivator {
 
     // §6.6 硬锁（IF3，激活侧）：external 来源 + 开关 false → 跳过激活。
     // 与 w1 安装锁（installPlugin）组成「新装不进 + 已装不跑」双 guard。
-    // 锁在权限检查之前（ES2）——external 插件在 sandbox 真隔离落地前不进入任何激活路径。
+    // 锁在权限检查之前（ES2）。sandbox 真隔离闭环已落地、开关 true 后此 guard 放行；
+    // 开关回退 false 时重新生效。
     if (descriptor.source === 'external' && !EXTERNAL_PLUGIN_ENABLED) {
       console.warn(`[plugin-activator] skipping ${pluginId}: external plugin activation locked (sandbox isolation not yet implemented)`)
       this.pluginStates.set(pluginId, 'UNLOADED')

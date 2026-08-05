@@ -37,9 +37,9 @@ const COMMAND_EXECUTE_TIMEOUT_MS = 10_000
  * （AGENTS.md #12：打包后 __dirname → app.asar.unpacked/dist/runtime/，
  * dev → src/services/plugin-service/）。
  *
- * fail-open：loader 缺失时不阻塞 runtime 启动（当前 EXTERNAL_PLUGIN_ENABLED=false
- * 硬锁期无 sandbox 插件运行，ESM 绕过无入口）；翻转硬锁前 loader 必须存在
- * （存在性由 validate-runtime-bundle.sh 步骤 1 在 CI 强制校验）。
+ * fail-open：loader 缺失时不阻塞 runtime 启动（sandbox 子进程启动时 loader initialize()
+ * 读不到 XYZ_PLUGIN_SANDBOX_DIR 也会 fail-closed throw，双重保险）；loader 存在性由
+ * postbuild-validate.sh（macOS + Windows）+ validate-runtime-bundle.sh 步骤 1 在 CI 强制校验。
  */
 function resolveEsmLoaderExecArgv(): string[] | undefined {
   try {
@@ -48,7 +48,7 @@ function resolveEsmLoaderExecArgv(): string[] | undefined {
   } catch (e: unknown) {
     console.error(
       '[plugin-service] plugin-esm-loader.cjs not found; sandbox ESM guard inactive ' +
-      '(EXTERNAL_PLUGIN_ENABLED must stay false until fixed):',
+      '(sandbox plugins will fail-closed on process start; fix loader packaging before shipping):',
       e,
     )
     return undefined
@@ -489,8 +489,9 @@ export class PluginService implements IPluginService {
   }
 
   async installPlugin(packageSpecifier: string): Promise<InstallResult> {
-    // external 安装硬锁（§6.6 排期硬锁）：sandbox 真隔离修复前禁止安装，短路在
-    // installer port 之前（fail-closed）。builtin 不经此入口（TC4），无需 source 判定。
+    // external 安装硬锁（§6.6 排期硬锁）：sandbox 真隔离闭环已落地、
+    // EXTERNAL_PLUGIN_ENABLED=true 后放行安装；开关回退 false 时短路在 installer port
+    // 之前（fail-closed）。builtin 不经此入口（TC4），无需 source 判定。
     if (!EXTERNAL_PLUGIN_ENABLED) {
       return { success: false, error: EXTERNAL_PLUGIN_DISABLED_MESSAGE }
     }

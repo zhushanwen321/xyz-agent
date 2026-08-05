@@ -20,7 +20,8 @@ import { computed, inject, ref, watch } from 'vue'
 import { isAskUserQuestion } from '@xyz-agent/extension-protocol'
 import type { AskUserQuestion } from '@xyz-agent/extension-protocol'
 import { createDialogRequestQueue } from './dialog-request-queue'
-import { DIALOG_REQUEST_SOURCE_KEY, UI_RESPONSE_TRANSPORT_KEY } from './companion-band-source'
+import { DIALOG_REQUEST_SOURCE_KEY, UI_RESPONSE_TRANSPORT_KEY, OVERLAY_LIFECYCLE_KEY } from './companion-band-source'
+import type { OverlayState } from './companion-band-source'
 import AskUserForm from './AskUserForm.vue'
 import { Button } from '../primitives/button'
 import { Input } from '../primitives/input'
@@ -36,6 +37,8 @@ const { t } = useI18n()
 
 const source = inject(DIALOG_REQUEST_SOURCE_KEY, null)
 const transport = inject(UI_RESPONSE_TRANSPORT_KEY, null)
+// OverlayLifecycle（IF9 状态机，arch-fix-v2 闭环）：inject 缺失 → null（静默，minimize/restore no-op）
+const overlayLifecycle = inject(OVERLAY_LIFECYCLE_KEY, null)
 
 /** sessionId prop → Ref<string|null>（queue 工厂契约：null = 无活跃 session） */
 const sessionIdRef = computed<string | null>(() => props.sessionId)
@@ -61,15 +64,70 @@ watch(
   },
 )
 
+// ── OverlayLifecycle 消费（IF9 状态机，arch-fix-v2 闭环）──
+/** OverlayLifecycle 取值用 sessionId（null → undefined，落 __global__ 分区） */
+const sidForOverlay = computed<string | undefined>(() => props.sessionId ?? undefined)
+
+/** 已知 method（ERR3 判定，控制 minimize chrome 显隐：未知 method 纯只读不显控制） */
+const isKnownMethod = computed(() => {
+  const m = currentRequest.value?.method
+  return m !== undefined && KNOWN_METHODS.includes(m as (typeof KNOWN_METHODS)[number])
+})
+
+/**
+ * 当前 overlay 状态（ref，非 computed）：OverlayLifecycle 是非响应式类，其内部 Map 变更不被
+ * Vue 追踪，故 transition 后需显式 refreshOverlayState 重读 getState 同步本 ref。
+ */
+const overlayState = ref<OverlayState | undefined>(undefined)
+
+/** 重读当前请求的 overlay 状态（inject 缺失或无请求 → undefined） */
+function refreshOverlayState(): void {
+  const r = currentRequest.value
+  overlayState.value = r && overlayLifecycle ? overlayLifecycle.getState(sidForOverlay.value, r.requestId) : undefined
+}
+
+const isMinimized = computed(() => overlayState.value === 'minimized')
+
+/**
+ * z-index 状态驱动（契约闭环）：expanded → 模态层（活跃顶层）；minimized/restored → 覆盖层
+ * （低层级，为多 overlay 编排预留语义）；无状态（undefined）→ 不设 z-index（默认层）。
+ * 单 dialog 场景值实际恒定，但契约要求状态驱动层级（design-token，非硬编码魔数）。
+ */
+const bandStyle = computed<Record<string, string> | undefined>(() => {
+  const s = overlayState.value
+  if (s === undefined) return undefined
+  return { zIndex: s === 'expanded' ? 'var(--z-modal)' : 'var(--z-overlay)' }
+})
+
+/** 收起当前 overlay（transition expanded→minimized；inject 缺失静默跳过） */
+function onMinimize(): void {
+  const r = currentRequest.value
+  if (!r || !overlayLifecycle) return
+  overlayLifecycle.transition(sidForOverlay.value, r.requestId, 'minimized')
+  refreshOverlayState()
+}
+
+/** 展开已收起的 overlay（transition minimized→restored；inject 缺失静默跳过） */
+function onRestore(): void {
+  const r = currentRequest.value
+  if (!r || !overlayLifecycle) return
+  overlayLifecycle.transition(sidForOverlay.value, r.requestId, 'restored')
+  refreshOverlayState()
+}
+
 // ── select/input 交互状态 ──
 const inputValue = ref('')
 const selectValue = ref('')
 
-// 新请求到来时，重置输入状态（对齐旧实现 watch(req) 模式）
+// 新请求到来时，重置输入状态 + 重读 overlay 状态（新请求 OverlayLifecycle 自动建 expanded 分区）
 watch(currentRequest, (r) => {
-  if (!r) return
+  if (!r) {
+    overlayState.value = undefined
+    return
+  }
   inputValue.value = r.default ?? r.prefill ?? ''
   selectValue.value = r.default ?? ''
+  refreshOverlayState()
 })
 
 /** ask-user questions（类型守卫收窄 unknown[] → AskUserQuestion[]，规则同旧 useExtensionUI） */
@@ -110,19 +168,44 @@ function onAskUserSubmit(answersJson: string): void {
 
 <template>
   <!-- v6 无边框一体化：单容器 bg-input 靠间距分区（对齐旧 AskUserOverlay 容器样式）。
-       无请求时 v-if 自隐藏（不占位）。 -->
+       无请求时 v-if 自隐藏（不占位）。z-index 由 OverlayLifecycle 状态驱动（bandStyle）。 -->
   <div
     v-if="currentRequest"
     data-testid="companion-band"
+    :style="bandStyle"
     class="flex flex-col overflow-hidden rounded-lg bg-bg-input motion-reduce:animate-none"
   >
-    <!-- head 行：method 指示 + title -->
-    <div v-if="currentRequest.title" data-testid="companion-band-title" class="px-3.5 pt-2.5">
-      <span class="text-[13px] font-medium text-neutral-fg">{{ currentRequest.title }}</span>
+    <!-- head 行：title（左）+ minimize/restore 控制（右，仅已知 method；ERR3 未知 method 纯只读不显控制） -->
+    <div
+      v-if="currentRequest.title || isKnownMethod"
+      data-testid="companion-band-header"
+      class="flex items-center justify-between gap-2 px-3.5 pt-2.5"
+    >
+      <span
+        v-if="currentRequest.title"
+        data-testid="companion-band-title"
+        class="text-[13px] font-medium text-neutral-fg"
+      >{{ currentRequest.title }}</span>
+      <!-- minimize（收起）：未收起且已知 method 时可见 -->
+      <Button
+        v-if="!isMinimized && isKnownMethod"
+        variant="ghost"
+        size="sm"
+        data-testid="companion-minimize"
+        @click="onMinimize"
+      >{{ t('common.collapse') }}</Button>
+      <!-- restore（展开）：已收起时可见 -->
+      <Button
+        v-if="isMinimized"
+        variant="ghost"
+        size="sm"
+        data-testid="companion-restore"
+        @click="onRestore"
+      >{{ t('common.expand') }}</Button>
     </div>
 
-    <!-- body：按 method 路由 -->
-    <div class="flex flex-col gap-2 px-3.5 pb-2.5 pt-2.5">
+    <!-- body：收起态隐藏（仅 header + restore），展开态按 method 路由 -->
+    <div v-if="!isMinimized" class="flex flex-col gap-2 px-3.5 pb-2.5 pt-2.5">
       <!-- message（confirm/未知 method 共用） -->
       <p
         v-if="currentRequest.message"
