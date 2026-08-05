@@ -169,9 +169,51 @@ async function handleContinuation(
 	// 终态守卫：persistAndUpdate 可能把 goal 转为 budget_limited/time_limited 终态。
 	// 此时不应发 continuation（deliverAs:"followUp" 会触发新 turn，让已耗尽预算的 agent 再跑一轮）。
 	if (isTerminalStatus(state.status)) return;
+	// pending 守卫：有活跃 background subagent/workflow 时不发 continuation。
+	// 靠 subagent/workflow 完成时 sendMessage({triggerTurn:true,deliverAs:"steer"}) 自然唤醒主 agent；
+	// goal 抢先催会与异步任务完成通知叠加，形成“停不下来”的死循环——continuation 排入
+	// _followUpMessages 队列 → _handlePostAgentRun 的 hasQueuedMessages() 返回 true → agent.continue()
+	// 新 turn → 又 agent_end → 又 continuation。
+	// 刻意不校验 expiresAt：长任务 subagent（>1h TTL）完成时仍 triggerTurn 唤醒主 agent，
+	// 按 TTL 判非活跃会让死循环在长任务场景复现。
+	const pendingOps = countActivePendingOps(ctx.sessionManager.getEntries());
+	if (pendingOps.count > 0) {
+		pi.appendEntry("goal:log", {
+			timestamp: Date.now(),
+			level: "debug",
+			component: "goal:agent-end",
+			message: `continuation deferred: ${pendingOps.count} active pending operation(s)`,
+			data: { activePending: pendingOps.count, ids: pendingOps.ids },
+		});
+		return;
+	}
 	// 发 continuation（FR-8.7: 去 debounce 后才发）
 	buildPorts(pi, ctx).messaging.sendContextMessage(
 		continuationPrompt(state, state.timeUsedSeconds),
 		"followUp",
 	);
+}
+
+/** 计算活跃的 pending async operation（background subagent/workflow）数量。
+ *  读 session entries 里 customType="pending:register" 减 "pending:unregister" 的 id 差集。
+ *  刻意不校验 expiresAt（见 handleContinuation 守卫注释）。 */
+function countActivePendingOps(
+	entries: readonly { type: string; customType?: string; data?: unknown }[],
+): { count: number; ids: string[] } {
+	const unregistered = new Set<string>();
+	for (const e of entries) {
+		if (e.type !== "custom" || e.customType !== "pending:unregister") continue;
+		const id = (e.data as Record<string, unknown> | undefined)?.id;
+		if (typeof id === "string") unregistered.add(id);
+	}
+	const activeIds: string[] = [];
+	const seen = new Set<string>();
+	for (const e of entries) {
+		if (e.type !== "custom" || e.customType !== "pending:register") continue;
+		const id = (e.data as Record<string, unknown> | undefined)?.id;
+		if (typeof id !== "string" || unregistered.has(id) || seen.has(id)) continue;
+		seen.add(id);
+		activeIds.push(id);
+	}
+	return { count: activeIds.length, ids: activeIds };
 }
