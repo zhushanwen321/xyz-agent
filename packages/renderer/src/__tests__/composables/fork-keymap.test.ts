@@ -101,8 +101,9 @@ beforeEach(() => {
   document.body.focus?.()
 })
 
-function sidebarPath(): string {
-  return path.resolve(__dirname, '../../components/sidebar/Sidebar.vue')
+/** keymap / composer focus 守卫源码所在（B5 拆分后从 Sidebar.vue 迁至 useGlobalShortcuts composable） */
+function globalShortcutsPath(): string {
+  return path.resolve(__dirname, '../../composables/shell/useGlobalShortcuts.ts')
 }
 
 function mountSidebar() {
@@ -150,13 +151,13 @@ function focusComposer(): void {
 // ── U15：⌘G / ⌘⇧G 触发 + shift 守卫 ────────────────────────────────────
 describe('U15：⌘G / ⌘⇧G 触发 fork 动作 + shift 守卫', () => {
   it('keymap 含 g 条目（源码断言：当前只有 k/n/b，无 g）', () => {
-    const source = fs.readFileSync(sidebarPath(), 'utf-8')
+    const source = fs.readFileSync(globalShortcutsPath(), 'utf-8')
     // 红灯：当前 keymap 无 'g' 条目（尾 \b 对 'g' 形式无效——' 后无词边界，去掉）
     expect(source).toMatch(/\bkey:\s*'g'/)
   })
 
   it('keymap 含 shift 修饰的 g 条目（⌘⇧G）', () => {
-    const source = fs.readFileSync(sidebarPath(), 'utf-8')
+    const source = fs.readFileSync(globalShortcutsPath(), 'utf-8')
     // 红灯：当前无 shift+g / enterForkModeFromLastAssistant
     expect(source).toMatch(/enterForkModeFromLastAssistant/)
     expect(source).toMatch(/forkFromLastAssistant/)
@@ -208,7 +209,7 @@ describe('U16：composer focus 时 ⌘G 不触发 fork', () => {
   })
 
   it('源码含 composer focus 守卫（activeElement / composer-box 检测）', () => {
-    const source = fs.readFileSync(sidebarPath(), 'utf-8')
+    const source = fs.readFileSync(globalShortcutsPath(), 'utf-8')
     // 红灯：当前 keydown handler 无 focus 检测逻辑
     expect(source).toMatch(/composer-box|activeElement|isComposerFocused/i)
   })
