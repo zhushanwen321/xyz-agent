@@ -25,7 +25,7 @@
           <span class="flex-1 min-w-0 truncate text-[length:var(--text-sm)] text-neutral-dim" :class="thinkingExpanded ? 'invisible' : ''">{{ previewText }}</span>
         </div>
         <!-- 展开内容区：copy 按钮在左上角，始终可见 -->
-        <div v-if="thinkingExpanded" class="group/result relative mt-1 pl-4 text-[length:var(--text-sm)] leading-[1.7] text-neutral-dim">
+        <div v-if="thinkingExpanded" class="group/result relative mt-1 pl-4 text-[length:var(--text-sm)] leading-[1.7] text-neutral-mid">
           <Button
             variant="ghost"
             size="icon"

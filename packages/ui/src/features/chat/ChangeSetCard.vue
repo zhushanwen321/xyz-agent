@@ -7,7 +7,7 @@
     渲染：折叠卡（header 计数 + 状态指示 + 展开文件列表，A/M/D badge + 行数）。
     默认收起——用户点击 header 展开，展开后点击文件行在 SideDrawer detail tab 查看 diff。
   -->
-  <div v-if="fileChanges.length > 0" class="change-set-card rounded-md border border-border bg-bg" data-testid="change-set-card">
+  <div v-if="fileChanges.length > 0" class="change-set-card bg-surface rounded-card" data-testid="change-set-card">
     <!-- header：点击折叠/展开 -->
     <div
       class="flex cursor-pointer select-none items-center gap-2 px-3 py-2"

@@ -61,7 +61,7 @@
               {{ summarizeTurnForRail(turn) || ' ' }}
             </span>
           </div>
-          <!-- agent 行：状态图标（failed=warn 常驻 / active=accent loader-spin / done=neutral-ico）+ agent 摘要。
+          <!-- agent 行：状态图标（failed=danger 常驻 / active=accent loader-spin / done=neutral-ico）+ agent 摘要。
                failed 文本 text-neutral-mid（hover 升 text-neutral-fg），其余 text-neutral-mid。
                agent 摘要文本优先（content 截断），空则 fallback 计数（N thoughts · M tools），
                全空显「进行中…」占位（含 assistant=[] 的 pending turn）。 -->
@@ -69,7 +69,7 @@
             <!-- active 态：双环 loader-spin（微缩，复用 Block.vue 的 RUNNING_LOADER_SVG，accent 蓝） -->
             <!-- eslint-disable-next-line vue/no-v-html -- hardcoded constant from block-icon.ts -->
             <span v-if="isActiveTurn(turn, idx)" data-testid="rail-agent-icon" class="inline-flex size-3 shrink-0 items-center justify-center text-accent animate-loader-spin" v-html="RUNNING_LOADER_SVG" />
-            <!-- 非 active 态：Bot 图标（failed=warn 常驻 / done=neutral-ico） -->
+            <!-- 非 active 态：Bot 图标（failed=danger 常驻 / done=neutral-ico） -->
             <Bot
               v-else
               data-testid="rail-agent-icon"
