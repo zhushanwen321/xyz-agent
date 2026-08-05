@@ -48,6 +48,33 @@ const ABORT_TIMEOUT_MS = 5000;
 // detectStuckNodes 已移至 recursive-split-utils.cjs（供 vitest 单测）
 
 /**
+ * CLI 冒烟（C6：防 flag 假设错误逃逸到 BFS 主循环）。
+ * 2026-08-05 事故：queryFrontier 曾用 cw frontier 不存在的 --format flag，
+ * execSync 连续失败 3 次触发熔断，BFS 空跑 22s 返回 status:done（故障被静默降级为成功）。
+ * 用 --help 输出校验 workflow 依赖的 cw flag 存在性（--help 恒 exit 0、输出到 stdout、
+ * 格式「合法 flags（全局共享 + 本 action 专属）」），版本不兼容时提前 fail-fast。
+ */
+function cliSmokeCheck() {
+  const REQUIRED_FLAGS = {
+    "cw create": ["--slug", "--objective"],
+    "cw frontier": ["--root"],
+    "cw abort": ["--unitId"],
+  };
+  for (const [cmd, flags] of Object.entries(REQUIRED_FLAGS)) {
+    const action = cmd.split(" ")[1];
+    const help = execSync(`cw ${action} --help`, {
+      encoding: "utf-8",
+      timeout: FRONTIER_TIMEOUT_MS,
+    });
+    for (const flag of flags) {
+      if (!help.includes(flag)) {
+        throw new Error(`CLI 冒烟失败：${cmd} --help 未列出 ${flag}（cw CLI 版本不兼容）`);
+      }
+    }
+  }
+}
+
+/**
  * 创建 root WorkUnit：调 cw create <startLayer> 建顶层 unit。
  * slug 由 $ARGS.slug 指定，默认 'recursive-root'（重跑恢复场景传新 slug 建全新树）。
  * 返回 unitId string（如 "slice:recursive-root"）。
@@ -66,6 +93,14 @@ function createRootUnit(startLayer, task, slug) {
   }
   // C4：cw stdout 解析出的 unitId 也需校验（防 cw 异常返回被注入命令串）
   assertValidUnitId(parsed.unitId);
+  // C5：cw create 同 slug 幂等返回已有 unit（idempotent: true，guidance 提示「重建请用新 slug」），
+  // 不会新建。不校验 status 会静默复用旧 unit（终态 → frontier 空 → BFS 立即假完成）。
+  // 2026-08-05 事故：第 2 次 run 复用第 1 次 run 留下的 aborted 空壳，0.6s 返回 done。
+  if (parsed.status !== "created") {
+    throw new Error(
+      `cw create 幂等返回已有 unit（status=${parsed.status}）而非新建——请换新 slug 重建，或先清理旧 unit`
+    );
+  }
   return parsed.unitId;
 }
 
@@ -160,10 +195,14 @@ try {
   if (!/^[a-z0-9][a-z0-9-]*$/.test(rootSlug)) {
     throw new Error("Invalid slug (must match ^[a-z0-9][a-z0-9-]*$): " + rootSlug);
   }
+  // C6：CLI 冒烟前置——flag 假设错误在 create 前 fail-fast（防 2026-08-05 --format 事故重演）
+  cliSmokeCheck();
   const rootUnitId = createRootUnit(startLayer, task, rootSlug);
   log("Root WorkUnit created: " + rootUnitId + " (layer=" + startLayer + ", slug=" + rootSlug + ")");
 
   phase("bfs");
+  // fatalError: 主循环异常终止原因（非空 → 返回 status:error 而非 done，防故障被静默降级为成功）
+  let fatalError = null;
   // sessionFiles: unitId → sessionFile（returnMeta 回收，供上层 retrospect 读）
   const sessionFiles = {};
   // prevStatus: unitId → 上一轮 frontier 的 status（跨轮对比判定"node 没推进"）
@@ -185,6 +224,8 @@ try {
       log("queryFrontier null (" + frontierFailures + "/" + MAX_FRONTIER_RETRIES + "), retrying next round");
       if (frontierFailures >= MAX_FRONTIER_RETRIES) {
         log("queryFrontier failed " + MAX_FRONTIER_RETRIES + " consecutive times, aborting BFS");
+        fatalError =
+          "queryFrontier 连续 " + MAX_FRONTIER_RETRIES + " 次失败（cw CLI 不可用或版本不兼容）";
         break;
       }
       continue;
@@ -197,7 +238,10 @@ try {
     if (shouldBreak) {
       if (actionable.length === 0 && frontier.nodes.length > 0) {
         const allTerminal = frontier.nodes.every((n) => isTerminal(n.status));
-        if (!allTerminal) log("WARN: 无 actionable 节点但树未完成，可能有节点永久 blocked");
+        if (!allTerminal) {
+          log("WARN: 无 actionable 节点但树未完成，可能有节点永久 blocked");
+          fatalError = "无 actionable 节点但树未完成（存在非终态 blocked 节点），可能有节点永久 blocked";
+        }
       }
       break;
     }
@@ -259,6 +303,11 @@ try {
     );
   }
 
+  // 异常终止（熔断/永久 blocked）返回 error 而非 done——调用方必须感知故障，不能把空跑当完成
+  if (fatalError) {
+    phase("error");
+    return { status: "error", error: fatalError, rootUnitId };
+  }
   phase("done");
   return { status: "done", rootUnitId };
 } catch (e) {
