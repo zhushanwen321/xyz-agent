@@ -13,7 +13,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { SubagentRecord, WorkflowRunRecord } from '@xyz-agent/shared'
-import { useBackgroundWork } from '../features/useBackgroundWork'
+import { useBackgroundWork } from '../features/chat/useBackgroundWork'
 import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 

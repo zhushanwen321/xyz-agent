@@ -118,9 +118,9 @@ describe('D4: SessionItem hover 按钮定位', () => {
   })
 })
 
-// ── D5: SegmentedTab badge 位置微调 ─────────────────────────
-describe('D5: SegmentedTab badge 微调', () => {
-  it('badge 不再用 right-1 top-1（微调到 right-0 top-0 避免与 count 重叠）', () => {
+// ── D5: SegmentedTab badge 位置 ─────────────────────────
+describe('D5: SegmentedTab badge 位置', () => {
+  it('badge 蓝点在 right-1 top-1（v6 count 数字移除后无重叠，位置保留）', () => {
     const wrapper = mount(SegmentedTab, {
       props: {
         modelValue: 'subagents',
@@ -132,9 +132,24 @@ describe('D5: SegmentedTab badge 微调', () => {
         workflowRunningCount: 0,
       },
     })
-    // badge 蓝点（absolute 定位的 span）
-    const oldBadge = wrapper.find('.absolute.right-1.top-1')
-    expect(oldBadge.exists()).toBe(false)
+    // badge 蓝点（absolute 定位的 span，v6 spec 对齐后回 right-1 top-1，size 7px）
+    const badge = wrapper.find('.absolute.right-1.top-1')
+    expect(badge.exists()).toBe(true)
+  })
+
+  it('badge 精确化：running 为 0 时 subagents tab 不亮蓝点', () => {
+    const wrapper = mount(SegmentedTab, {
+      props: {
+        modelValue: 'subagents',
+        sessionCount: 3,
+        fileCount: 10,
+        subagentCount: 2,
+        workflowCount: 1,
+        subagentRunningCount: 0,
+        workflowRunningCount: 0,
+      },
+    })
+    expect(wrapper.find('.absolute.right-1.top-1').exists()).toBe(false)
   })
 })
 

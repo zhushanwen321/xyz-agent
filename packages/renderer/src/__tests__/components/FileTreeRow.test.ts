@@ -159,11 +159,11 @@ describe('FileTreeRow 视觉一致性（D-007 字号 / D-022 chevron 槽）', ()
     expect(fileNameSpan.classes()).not.toContain('text-[11px]')
   })
 
-  it('目录行 padding-left 用单一公式 depth*14+8（D-022，非文件行 +10 补偿）', () => {
+  it('目录行 padding-left 用单一公式 depth*10+8（D-022，非文件行 +10 补偿）', () => {
     const node: FileNode = { path: 'src', name: 'src', type: 'dir' }
     const wrapper = mountRow({ node, depth: 2 })
     const dirRow = wrapper.find('[data-testid="file-tree-dir-src"]')
-    expect((dirRow.element as HTMLElement).style.paddingLeft).toBe('36px') // 2*14+8
+    expect((dirRow.element as HTMLElement).style.paddingLeft).toBe('28px') // 2*10+8（INDENT_STEP v6 14→10）
   })
 
   it('文件行与目录行同 depth 的 padding-left 一致（icon 垂直对齐前提）', () => {

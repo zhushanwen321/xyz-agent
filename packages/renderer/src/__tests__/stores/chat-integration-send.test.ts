@@ -50,6 +50,8 @@ vi.mock('@/api', () => ({
     subscribe: vi.fn().mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 }),
     unsubscribe: vi.fn().mockResolvedValue(undefined),
     writeSegments: vi.fn().mockResolvedValue(undefined),
+    // useModel.setThinkingLevel 依赖（thinking-level-sync watch 在 mount 时触发）
+    setThinkingLevel: vi.fn().mockResolvedValue(undefined),
   },
   config: {
     getGlobalSkills: vi.fn().mockResolvedValue([]),
