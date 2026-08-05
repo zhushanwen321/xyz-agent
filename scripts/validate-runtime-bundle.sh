@@ -42,12 +42,14 @@ RUNTIME_DIR="$PROJECT_ROOT/packages/runtime"
 DIST_RUNTIME="$PROJECT_ROOT/apps/electron/dist/runtime"
 BUNDLE_PATH="$DIST_RUNTIME/index.cjs"
 BOOTSTRAP_PATH="$DIST_RUNTIME/plugin-bootstrap.cjs"
+BOOTSTRAP_PROCESS_PATH="$DIST_RUNTIME/plugin-bootstrap-process.cjs"
+ESM_LOADER_PATH="$DIST_RUNTIME/plugin-esm-loader.cjs"
 
-# ── 1. Build 产物存在（index.cjs + plugin-bootstrap.cjs）────────────
+# ── 1. Build 产物存在（index.cjs + plugin-bootstrap.cjs + 子进程产物）──
 echo ""
 echo -e "${BLUE}[1/6] 检查 build 产物...${NC}"
 
-if [ ! -f "$BUNDLE_PATH" ] || [ ! -f "$BOOTSTRAP_PATH" ]; then
+if [ ! -f "$BUNDLE_PATH" ] || [ ! -f "$BOOTSTRAP_PATH" ] || [ ! -f "$BOOTSTRAP_PROCESS_PATH" ] || [ ! -f "$ESM_LOADER_PATH" ]; then
     echo -e "${YELLOW}[WARN] 产物不完整，先运行 build...${NC}"
     cd "$RUNTIME_DIR" && pnpm run build
 fi
@@ -61,7 +63,17 @@ if [ ! -f "$BOOTSTRAP_PATH" ]; then
     echo -e "${YELLOW}[FIX] tsup entry 必须包含 plugin-bootstrap.ts，输出为 plugin-bootstrap.cjs${NC}"
     exit 1
 fi
-echo -e "${GREEN}[OK] 产物存在: index.cjs + plugin-bootstrap.cjs${NC}"
+if [ ! -f "$BOOTSTRAP_PROCESS_PATH" ]; then
+    echo -e "${RED}[ERROR] 子进程 bootstrap 不存在: $BOOTSTRAP_PROCESS_PATH${NC}"
+    echo -e "${YELLOW}[FIX] tsup entry 必须包含 plugin-bootstrap-process.ts（fork 子进程入口，host-process resolveAndValidateFile 定位）${NC}"
+    exit 1
+fi
+if [ ! -f "$ESM_LOADER_PATH" ]; then
+    echo -e "${RED}[ERROR] ESM loader 不存在: $ESM_LOADER_PATH${NC}"
+    echo -e "${YELLOW}[FIX] tsup entry 必须包含 plugin-esm-loader.cjs（sandbox 子进程 execArgv --import 注入目标）${NC}"
+    exit 1
+fi
+echo -e "${GREEN}[OK] 产物存在: index.cjs + plugin-bootstrap.cjs + plugin-bootstrap-process.cjs + plugin-esm-loader.cjs${NC}"
 
 # ── 2. 依赖打包检查 ─────────────────────────────────────────────────
 echo ""
@@ -167,6 +179,23 @@ if ! grep -q "worker_threads" "$BOOTSTRAP_PATH"; then
     exit 1
 fi
 echo -e "${GREEN}[OK] plugin-bootstrap.cjs 结构正确${NC}"
+
+# ── 5b. plugin-bootstrap-process.cjs 结构检查（fork 子进程入口）────────
+echo ""
+echo -e "${BLUE}[5b/6] 子进程 bootstrap 结构检查...${NC}"
+
+# fork 子进程入口：必须用 process IPC（process.send 发送 + process.on('message') 接收）。
+# 注意：不能 grep 排除 worker_threads——产物内联了 plugin-bootstrap.ts 的 parentPort import
+# （post 注入改造后 Worker 版复用，fork 进程里 parentPort undefined + 可选链，安全）。
+if ! grep -q "process.send" "$BOOTSTRAP_PROCESS_PATH"; then
+    echo -e "${RED}[ERROR] plugin-bootstrap-process.cjs 缺少 process.send（fork IPC 发送通道）${NC}"
+    exit 1
+fi
+if ! grep -q 'process.on("message"' "$BOOTSTRAP_PROCESS_PATH"; then
+    echo -e "${RED}[ERROR] plugin-bootstrap-process.cjs 缺少 process.on('message')（fork IPC 消息循环）${NC}"
+    exit 1
+fi
+echo -e "${GREEN}[OK] plugin-bootstrap-process.cjs 结构正确（process.send + process.on('message') IPC 通道）${NC}"
 
 # ── 6. 运行时健康检查 ────────────────────────────────────────────────
 echo ""
