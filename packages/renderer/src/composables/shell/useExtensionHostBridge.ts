@@ -14,6 +14,11 @@
  * （runtime 广播 plugin:* 的 ServerMessage 无顶层 sid（payload 含 sessionId）→ 走 route-inbound
  * FALLBACK → dispatchGlobal → events.onGlobal 可订阅。）
  *
+ * OverlayLifecycle（IF9）装配：订阅同一 bus 的 ui-request 事件，per-session/per-requestId
+ * 维护 overlay 状态机（expanded→minimized→restored）+ session-destroyed cleanup。状态机就绪
+ * 供 CompanionBand 后续多 overlay z-index 编排（当前 CompanionBand 单 dialog 队首渲染，
+ * z-index 消费依赖多 overlay 渲染能力，见 02-extension-host-wiring.md）。
+ *
  * CompanionBand（plugin:uiRequest dialog）接线：createDialogRequestSource/createUiResponseTransport
  * 适配（见 extension-host-dialog.ts）经 DIALOG_REQUEST_SOURCE_KEY/UI_RESPONSE_TRANSPORT_KEY 注入。
  */
@@ -29,6 +34,8 @@ import {
   setExtensionRegistries,
   StatusBarController,
   ViewHostStore,
+  OverlayLifecycle,
+  type OverlayState,
   type IncomingPluginMessage,
   type PluginMessageSource,
   type ViewCacheEntry,
@@ -101,6 +108,7 @@ export function initExtensionHostBridge(app: App): {
   bridge: MessageBusBridge
   viewHostStore: ViewHostStore
   statusBarController: StatusBarController
+  overlayLifecycle: OverlayLifecycle
   mountPoints: MountPointRegistry
   contributions: ContributionRegistry
 } {
@@ -137,5 +145,15 @@ export function initExtensionHostBridge(app: App): {
   app.provide(DIALOG_REQUEST_SOURCE_KEY, createDialogRequestSource(bus))
   app.provide(UI_RESPONSE_TRANSPORT_KEY, createUiResponseTransport())
 
-  return { bridge, viewHostStore, statusBarController, mountPoints, contributions }
+  // OverlayLifecycle（IF9，audit §12.1 接线闭环）：订阅同一 bus 的 ui-request → 自动建 per-session
+  // per-requestId 分区（expanded 初始态）+ session-destroyed cleanup（ERR4）。bus 亶久持有 listener
+  // 闭包（闭包捕获 deps.sessionScoped），实例即便不被外部引用也不会被 GC 丢失订阅。subscribe 返回
+  // dispose，正常应用生命周期不调（跟随 app 存活）。CompanionBand 多 overlay z-index 消费待后续。
+  const overlayLifecycle = new OverlayLifecycle({
+    bus,
+    sessionScoped: createSessionScopedMap(() => new Map<string, OverlayState>()),
+  })
+  overlayLifecycle.subscribe()
+
+  return { bridge, viewHostStore, statusBarController, overlayLifecycle, mountPoints, contributions }
 }
