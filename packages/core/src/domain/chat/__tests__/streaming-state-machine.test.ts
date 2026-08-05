@@ -146,6 +146,32 @@ describe('finalizeMessages', () => {
     expect(after[1]).toBe(completeNoTc) // 无 running toolCall 保持引用稳定
   })
 
+  it('TC4c stream_error 收口：streaming → error；toolCall → error + endTime', () => {
+    const { sm, messages } = makeMachine()
+    const assistant = streamingAssistant('a1', { content: 'partial', toolCalls: [runningToolCall('tc1')] })
+    messages.value = new Map([['s1', [assistant]]])
+
+    sm.finalizeMessages('s1', 'stream_error')
+
+    const after = messages.value.get('s1')![0]
+    expect(after.status).toBe('error') // stream_error ∈ isErrorReason
+    expect(after.toolCalls![0].status).toBe('error') // stream_error ∈ tcIsError
+    expect(after.toolCalls![0].endTime).toBeTypeOf('number') // 非 normal/aborted 设 endTime
+  })
+
+  it('TC4d timeout 收口：streaming → error；toolCall → end_not_received + endTime（restart 同族）', () => {
+    const { sm, messages } = makeMachine()
+    const assistant = streamingAssistant('a1', { content: 'partial', toolCalls: [runningToolCall('tc1')] })
+    messages.value = new Map([['s1', [assistant]]])
+
+    sm.finalizeMessages('s1', 'timeout')
+
+    const after = messages.value.get('s1')![0]
+    expect(after.status).toBe('error') // timeout ∈ isErrorReason（restart 同分支）
+    expect(after.toolCalls![0].status).toBe('end_not_received') // 非 error/stream_error → end_not_received
+    expect(after.toolCalls![0].endTime).toBeTypeOf('number')
+  })
+
   it('TC5 normal 收口：streaming → complete；toolCall → end_not_received 且不设 endTime；无 errorText 不追加', () => {
     const { sm, messages } = makeMachine()
     const assistant = streamingAssistant('a1', { content: 'full', toolCalls: [runningToolCall('tc1')] })
