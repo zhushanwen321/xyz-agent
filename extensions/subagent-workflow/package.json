@@ -24,6 +24,7 @@
     "workflows/",
     "src/index.ts",
     "src/execution/",
+    "src/injectors/",
     "src/orchestration/",
     "src/interface/",
     "src/shared/"
