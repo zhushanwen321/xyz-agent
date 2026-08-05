@@ -4,7 +4,7 @@
     当前激活 session 正下方浮出「本会话的分支」折叠区（方案3），不碰全局扁平结构。
 
     规范（spec §2 层③ + §7）：
-    - 容器：4% accent 混底 + border + radius（不用左色条 accent，design-system §2 反模式）
+    - 容器：4% accent 混底 + radius（去 border 改层级，spec §3.5.4；不用左色条 accent，design-system §2 反模式）
     - 折叠头：accent 色 + chev 图标 + 「本会话的分支」+ 计数
     - 子项复用 .si 紧凑变体（padding 6px 8px，font-size 12px），带「分支 N」pill
     - fresh 高亮：accent-soft 底 + inset accent-ring，FRESH_FADE_MS(3.2s) 后淡出
@@ -14,7 +14,7 @@
   -->
   <div
     v-if="branches.length > 0"
-    class="fork-group mx-1 mb-1 mt-0.5 rounded-[var(--radius)] border border-border bg-accent/5"
+    class="fork-group mx-1 mb-1 mt-0.5 rounded-[var(--radius)] bg-accent/5"
   >
     <!-- 折叠头：chev + 「本会话的分支」+ 计数 -->
     <Button

@@ -61,7 +61,7 @@
 <script setup lang="ts">
 /**
  * 状态点 class 映射（D6 五态），与 SessionItem §状态点 同源。
- * running/waiting 带 pulse（@keyframes 见 scoped style，Tailwind 无对应工具类）。
+ * running/waiting 带 pulse（Tailwind 内置 animate-pulse，无需自定义 keyframes）。
  * done/stopped/error 静态语义色（design-tokens SSOT 色，走 CSS 变量不硬编码）。
  */
 import { computed } from 'vue'

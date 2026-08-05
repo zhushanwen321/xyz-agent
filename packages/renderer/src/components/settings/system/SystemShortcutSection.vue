@@ -10,7 +10,7 @@
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-2">
             <span class="text-base text-neutral-fg font-medium">{{ t(`settings.command.${cmd.id}`) }}</span>
-            <span v-if="recordingId === cmd.id" class="rec-hint text-xs text-accent animate-[rec-pulse_1s_ease-in-out_infinite]">{{ t('settings.system.shortcutRecording') }}</span>
+            <span v-if="recordingId === cmd.id" class="rec-hint text-xs text-accent animate-[pulse-dot_1s_ease-in-out_infinite]">{{ t('settings.system.shortcutRecording') }}</span>
           </div>
         </div>
         <div class="flex items-center gap-2 shrink-0">
@@ -151,11 +151,3 @@ onBeforeUnmount(() => {
   if (recordingId.value) cancelRecording()
 })
 </script>
-
-<style scoped>
-/* 快捷键重录状态脉冲（特殊动画，Tailwind 无法表达） */
-@keyframes rec-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
-</style>
