@@ -91,8 +91,8 @@ describe('D3: WorkflowDetail model 降级', () => {
   })
 })
 
-// ── D4: SessionItem hover 按钮 top 定位 ─────────────────────
-describe('D4: SessionItem hover 按钮重定位', () => {
+// ── D4: SessionItem hover 按钮 bottom-right 定位（spec §5.6A）──────
+describe('D4: SessionItem hover 按钮定位', () => {
   function makeSession() {
     return {
       id: 'sess-1',
@@ -102,7 +102,7 @@ describe('D4: SessionItem hover 按钮重定位', () => {
     }
   }
 
-  it('hover 按钮容器不再用 bottom-1 定位（改为 top 定位）', () => {
+  it('hover 按钮容器定位在 bottom-right（遮 meta 而非 dirName，与 demo 一致）', () => {
     const wrapper = mount(SessionItem, {
       props: {
         session: makeSession(),
@@ -110,9 +110,11 @@ describe('D4: SessionItem hover 按钮重定位', () => {
         status: 'done' as never,
       },
     })
-    // hover 按钮容器（absolute 定位的 div）
-    const hoverContainer = wrapper.find('.absolute.bottom-1')
-    expect(hoverContainer.exists()).toBe(false)
+    // spec §5.6A / D12：actions 容器 absolute bottom-0.5 right-1（bottom-right）。
+    // 用 [class~=] 单词匹配避开 happy-dom 对 class 选择器中点（bottom-0.5）转义的脆弱性。
+    const actionsContainer = wrapper.find('.absolute[class~="bottom-0.5"]')
+    expect(actionsContainer.exists()).toBe(true)
+    expect(actionsContainer.classes()).toContain('right-1')
   })
 })
 

@@ -5,7 +5,7 @@
  * 覆盖 cw-2026-07-15-session-status-icons 新增状态：
  * - streaming / pending / compacting / waiting / retrying 派生正确
  * - DOT_CLASS / STATUS_ICON 映射完整
- * - SessionItem 按状态渲染图标（观察者形态视角）
+ * - SessionItem 列表主行按状态渲染右侧 badge（spec §5.6A / D12；图标范式移至非列表场景）
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/panel/session-status-icons.test.ts
  */
@@ -89,7 +89,7 @@ describe('session status icons extended states', () => {
     expect(deriveStatus('sid', chat, true, false, true)).toBe('working')
   })
 
-  it('streaming 状态 SessionItem 渲染 RefreshCw 图标', () => {
+  it('streaming 状态 SessionItem 渲染 running badge（spec §5.6A D12 列表主行范式）', () => {
     const wrapper = mount(SessionItem, {
       props: {
         session: { id: '1', label: 'x', cwd: '/a', lastActiveAt: 0, status: 'active' },
@@ -97,11 +97,13 @@ describe('session status icons extended states', () => {
         status: 'streaming',
       },
     })
-    expect(wrapper.find('[data-testid="sidebar-session-icon"]').attributes('data-icon')).toBe('RefreshCw')
-    expect(wrapper.find('[data-testid="sidebar-session-dot"]').exists()).toBe(false)
+    // 列表主行不再用语义图标（STATUS_ICON 保留给非列表场景）
+    expect(wrapper.find('[data-testid="sidebar-session-icon"]').exists()).toBe(false)
+    // streaming → running badge（脉动小条 + 耗时）
+    expect(wrapper.find('[data-testid="session-badge-running"]').exists()).toBe(true)
   })
 
-  it('waiting 状态 SessionItem 渲染 Wrench 图标', () => {
+  it('waiting 状态 SessionItem 渲染 waiting … badge', () => {
     const wrapper = mount(SessionItem, {
       props: {
         session: { id: '1', label: 'x', cwd: '/a', lastActiveAt: 0, status: 'active' },
@@ -109,6 +111,7 @@ describe('session status icons extended states', () => {
         status: 'waiting',
       },
     })
-    expect(wrapper.find('[data-testid="sidebar-session-icon"]').attributes('data-icon')).toBe('Wrench')
+    expect(wrapper.find('[data-testid="sidebar-session-icon"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="session-badge-waiting"]').exists()).toBe(true)
   })
 })

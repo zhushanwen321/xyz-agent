@@ -1,8 +1,11 @@
 <template>
   <!--
-    展示组件 · 单会话项（draft-eight-states §1）。
-    flex [icon] [main] [time]；active = surface 背景 + text-accent（v6 §5.4 列表项型，无 ring 无左条）。
-    状态图标 8 态（方案 C 优化版 v3）：streaming/pending/compacting/waiting/retrying 动态图标，done/stopped/error 静态图标。
+    展示组件 · 单会话项（spec §5.6A / D12 列表主行范式）。
+    状态信号「左未读点 + 右异常 badge」空间分离（消除双圆点重叠 + 常态归零）：
+    - 左侧：8px 占位圆点，未读时 accent 实心（不脉动，固定占位保 label 对齐）
+    - 右侧：异常态 badge（running 脉动小条 / waiting … / error !），done 无 badge 仅耗时，dead 整行 opacity-50
+    active=bg-surface+text-accent；hover ghost 操作（bottom-right 遮 meta，spec §3 hover 帧）。
+    STATUS_ICON（§5.6B 图标范式）不在此渲染——保留给 PanelHeader / git 等非列表主行场景。
   -->
   <div
     ref="rootEl"
@@ -15,22 +18,16 @@
     @click="emit('select', session.id)"
     @mouseleave="confirming = false"
   >
-    <!-- 状态指示：归档态优先显示 Archive icon（覆盖 derived status），否则按 STATUS_ICON 渲染 -->
-    <div class="relative">
-      <component
-        :is="markedDone ? Archive : ICON_COMPONENTS[iconConfig.icon]"
-        data-testid="sidebar-session-icon"
-        :data-icon="markedDone ? 'archived' : iconConfig.icon"
-        class="mt-[2px] size-[14px] shrink-0"
-        :class="[markedDone ? 'text-neutral-dim' : iconConfig.color, markedDone ? '' : iconConfig.animation]"
-      />
-      <!-- 未读 badge：6px accent 圆点，absolute 定位在状态图标左上角 -->
-      <span
-        v-if="unread"
-        data-testid="session-unread-badge"
-        class="absolute -left-0.5 -top-0.5 size-[6px] rounded-full bg-accent"
-      />
-    </div>
+    <!-- 左侧未读圆点：固定 8px 占位保 label 对齐（spec §5.6A D12），未读 accent 实心，不脉动。
+         不用 absolute + 负偏移（双圆点重叠 bug 的温床），改流内占位。 -->
+    <span
+      v-if="unread"
+      data-testid="session-unread-dot"
+      class="mt-1 size-2 shrink-0 rounded-full bg-accent transition-colors"
+    />
+    <span v-else class="mt-1 size-2 shrink-0 rounded-full bg-transparent" aria-hidden="true" />
+
+    <!-- 主体：label + sub（fork 血缘 / branch） -->
     <div class="min-w-0 flex-1">
       <div
         class="truncate text-[12px] leading-[1.35]"
@@ -43,24 +40,54 @@
       </div>
       <div
         class="mt-0.5 truncate font-mono text-[10px] leading-[1.3] text-neutral-dim"
-        data-testid="sidebar-session-dirname"
+        data-testid="sidebar-session-sub"
       >
-        <!-- 分支血缘元信息（spec §8.5 审查 1-C2：分支 session 自身显示「↑ fork 自 <父名>」）。
-             parentLabel 优先（显式父名），否则回退到 parentSession（路径/id），都没有时显示 dirName。 -->
+        <!-- 分支血缘元信息（spec §8.5：分支 session 自身显示「↑ fork 自 <父名>」）优先；
+             无血缘则显 branch（git 分支）；都无则回退 cwd 末段，避免空行。 -->
         <template v-if="session.parentSession">
           <span class="fork-lineage text-accent/80">{{ t('sidebar.sessionItem.forkFrom') }} {{ session.parentLabel || session.parentSession }}</span>
         </template>
+        <template v-else-if="session.gitBranch">{{ session.gitBranch }}</template>
         <template v-else>{{ dirName }}</template>
       </div>
     </div>
-    <span class="shrink-0 pt-1 font-mono text-[10px] leading-[1.35] text-neutral-dim">
-      {{ timeLabel }}
-    </span>
-    <!-- hover 操作按钮（重命名/删除）放卡片右下角，不再遮盖右上角的时间展示。
-         按钮浮于 dirName/gitBranch 之上，底色保证可读。
-         删除采用原地两段式确认：首次点击→变红确认态，再次点击才真正 emit delete。 -->
+
+    <!-- 右侧 meta 槽位：状态 badge 矩阵（spec §5.6A D12）。
+         running=脉动小条+耗时 / waiting=… 胶囊 / error=! 胶囊 / done·stopped·dead 无 badge 仅耗时。
+         hover 时整单元 visibility:hidden 让位 ghost 操作（保留占位防跳动，spec §3 hover 帧）。 -->
     <div
-      class="absolute top-0.5 right-1 gap-1"
+      class="mt-[3px] shrink-0 font-mono text-[10px] leading-[1.35] text-neutral-dim group-hover/item:invisible"
+      data-testid="sidebar-session-meta"
+    >
+      <!-- running：脉动小条 + 耗时（accent，同色同单元） -->
+      <span
+        v-if="badgeKind === 'running'"
+        data-testid="session-badge-running"
+        class="si-badge inline-flex items-center gap-1 rounded-sm bg-accent-soft px-1 leading-none text-accent"
+      >
+        <span class="inline-block h-[9px] w-[3px] rounded-[2px] bg-accent animate-[pulse-dot_1.8s_ease-in-out_infinite] motion-reduce:animate-none" />
+        <span v-if="timeLabel" class="text-[10px] text-neutral-dim">{{ timeLabel }}</span>
+      </span>
+      <!-- waiting：… 胶囊（warn）— 需要用户介入 -->
+      <span
+        v-else-if="badgeKind === 'waiting'"
+        data-testid="session-badge-waiting"
+        class="inline-flex h-4 min-w-4 items-center justify-center rounded-sm bg-warn-soft px-1 text-[10px] font-semibold leading-none text-warn"
+      >…</span>
+      <!-- error：! 胶囊（danger）— 需要用户介入 -->
+      <span
+        v-else-if="badgeKind === 'error'"
+        data-testid="session-badge-error"
+        class="inline-flex h-4 min-w-4 items-center justify-center rounded-sm bg-danger-soft px-1 text-[10px] font-semibold leading-none text-danger"
+      >!</span>
+      <!-- done / stopped / dead：无 badge，仅耗时文字 -->
+      <span v-else>{{ timeLabel }}</span>
+    </div>
+
+    <!-- hover ghost 操作（spec §3 SessionItem hover 帧）。
+         位置 bottom-right（遮 meta 而非 dirName，与 demo 对齐）；删除走两段式确认。 -->
+    <div
+      class="absolute bottom-0.5 right-1 gap-0.5"
       :class="confirming ? 'flex' : 'flex opacity-0 group-hover/item:opacity-100 group-focus-within/item:opacity-100'"
     >
       <Button
@@ -68,8 +95,8 @@
         variant="ghost"
         size="icon"
         data-testid="mark-done-btn"
-        class="size-[22px] rounded-sm border border-border-strong bg-surface text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
-        :class="markedDone ? 'border-accent bg-accent/10 text-success' : ''"
+        class="size-[22px] rounded-sm text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
+        :class="markedDone ? 'text-success' : ''"
         :title="markedDone ? t('sidebar.sessionItem.unmarkDone') : t('sidebar.sessionItem.markDone')"
         @click.stop="onMarkDone"
       >
@@ -79,7 +106,7 @@
         v-if="!confirming"
         variant="ghost"
         size="icon"
-        class="size-[22px] rounded-sm border border-border-strong bg-surface text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
+        class="size-[22px] rounded-sm text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
         :title="t('sidebar.sessionItem.rename')"
         @click.stop="emit('rename', session.id)"
       >
@@ -89,8 +116,8 @@
         variant="ghost"
         size="icon"
         :class="confirming
-          ? 'size-[22px] rounded-sm border border-danger bg-danger text-neutral-fg'
-          : 'size-[22px] rounded-sm border border-border-strong bg-surface text-neutral-mid hover:bg-surface-hover hover:text-danger'"
+          ? 'size-[22px] rounded-sm bg-danger text-neutral-fg'
+          : 'size-[22px] rounded-sm text-neutral-mid hover:bg-surface-hover hover:text-danger'"
         :title="confirming ? t('sidebar.sessionItem.deleteConfirm') : t('sidebar.sessionItem.delete')"
         @click.stop="onRemoveClick"
       >
@@ -105,30 +132,19 @@
 import { computed, inject, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { onClickOutside } from '@vueuse/core'
-import { Check, Pencil, Trash2, RefreshCw, ArrowUpCircle, Hourglass, Wrench, Zap, CheckCircle2, Ban, AlertCircle, Archive } from '@lucide/vue'
+import { Check, Pencil, Trash2, Archive } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { DerivedStatus } from '@/types'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
-import { STATUS_ICON } from '@/composables/logic/sessionStatus'
 import { dirNameOf } from '@xyz-agent/ui'
 import { isUnread, isMarkedDone, toggleMarkedDone } from '@/composables/useSessionMarkers'
 
-/** lucide 图标名 → 组件映射（用于 STATUS_ICON 的动态组件渲染） */
-const ICON_COMPONENTS: Record<string, unknown> = {
-  RefreshCw,
-  ArrowUpCircle,
-  Hourglass,
-  Wrench,
-  Zap,
-  CheckCircle2,
-  Ban,
-  AlertCircle,
-}
+/** 右侧 badge 矩阵种类（spec §5.6A D12）。 */
+type BadgeKind = 'running' | 'waiting' | 'error' | 'none'
 
 /**
- * 展示组件 · 单会话项（draft-eight-states §1）。
- * flex [icon] [main] [time]；active = surface-2 背景（Card-Active，design-system §2）+ inset accent-ring。
- * 状态图标 8 态（方案 C 优化版 v3），语义图标 + 动画。
+ * 展示组件 · 单会话项（spec §5.6A / D12 列表主行范式）。
+ * 左未读点 + 右异常态 badge，hover ghost 操作。状态图标（§5.6B）不在此渲染。
  */
 const { t } = useI18n()
 
@@ -139,6 +155,7 @@ const props = defineProps<{
     cwd: string
     lastActiveAt: number
     status?: string
+    gitBranch?: string
     /** 父 session 文件路径/id（fork 血缘键）。有值则为分支 session，sub 行显示血缘元信息。 */
     parentSession?: string
     /** 父 session 显示名（血缘展示用，SessionList 容器可注入避免重复查找父 label）。 */
@@ -195,10 +212,34 @@ onClickOutside(rootEl, () => {
   confirming.value = false
 })
 
-/** 当前状态对应的语义图标配置（icon / color / animation） */
-const iconConfig = computed(() => STATUS_ICON[props.status])
+/**
+ * 右侧 badge 矩阵映射（spec §5.6A D12）。
+ * streaming/working/compacting/pending → running 脉动小条；
+ * waiting/retrying → waiting … 胶囊；error → ! 胶囊；
+ * done/stopped → none（仅耗时文字）；dead 由 isDead 抑制 badge（整行 opacity 表达）。
+ */
+const badgeKind = computed<BadgeKind>(() => {
+  // dead 由整行 opacity-50 表达，无 badge（spec §5.6A）
+  if (isDead.value) return 'none'
+  switch (props.status) {
+    case 'streaming':
+    case 'working':
+    case 'compacting':
+    case 'pending':
+      return 'running'
+    case 'waiting':
+    case 'retrying':
+      return 'waiting'
+    case 'error':
+      return 'error'
+    default:
+      // done / stopped：终态，无 badge，仅耗时文字
+      return 'none'
+  }
+})
 
-/** 工作目录名（cwd 末段），长路径只显末段防溢出（dirNameOf 收敛到 logic/path SSOT） */
+/** 工作目录名（cwd 末段），长路径只显末段防溢出（dirNameOf 收敛到 logic/path SSOT）。
+ *  仅在无 fork 血缘且无 gitBranch 时作为副标题兜底（避免空行）。 */
 const dirName = computed(() => dirNameOf(props.session.cwd))
 
 /** 时间格式化：复用 logic 层相对时间纯函数（与 SessionCard 同一信息原子） */
