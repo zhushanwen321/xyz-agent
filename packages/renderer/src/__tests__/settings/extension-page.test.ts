@@ -39,7 +39,7 @@ vi.mock('@/api', () => ({
   config: { detectSources: async () => [] },
 }))
 
-import ExtensionPage from '@/components/settings/ExtensionPage.vue'
+import ExtensionPage from '@/components/settings/extension/ExtensionPage.vue'
 import { useToast } from '@/composables/useToast'
 
 /** user-installed 扩展 fixture（source='user-installed'，应渲染升级按钮 + 自动升级开关） */
