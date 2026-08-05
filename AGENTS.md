@@ -204,6 +204,8 @@ state.cleanup(sid)  // 移除指定 sid 分区（手动调用，正常由 delete
 
 详见 [ADR-0049](docs/adr/0049-session-isolation-map-partition.md)。
 
+**Code Review 强制检查项**：新增/修改 composable 时，reviewer 必须按 ADR-0049 的 [Code Review Checklist](docs/adr/0049-session-isolation-map-partition.md#code-review-checklist范式守护替代-eslint-规则) 逐条确认（是否持有 per-session 状态 / 是否用工厂 / WS handler 是否 updateFor / cleanup 是否挂钩）。例外须在 ADR 例外清单登记审批。
+
 ### 7.5 对话流状态必须可重开恢复 [HISTORICAL]
 
 **所有进入对话流的状态（消息、系统通知、压缩记录、工具结果等），必须同时满足两条：实时可见 + 重开 session 后仍可见。** 只做到实时可见、重开后消失的，视为未完成。

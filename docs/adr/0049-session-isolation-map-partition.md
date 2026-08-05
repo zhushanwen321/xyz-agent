@@ -70,6 +70,31 @@ xyz-agent 前端有大量 per-session 状态（聊天消息、ask-user 队列、
 
 ~~ESLint 自定义规则~~：spec_review D4 放弃。理由：AST 检测"composable 内 ref/let 是 per-session 还是 UI 局部"铺天盖地误报，检测语义问题非 ESLint 所长。防护靠工厂（结构隔离）+ 测试（回归）+ 文档（范式约束）。
 
+### Code Review Checklist（范式守护，替代 ESLint 规则）
+
+ESLint 规则放弃后，per-session 范式靠 **code-review 强制检查项** 守护。以下检查项纳入 PR review（pr-cr-fix / pull-request skill 的 review checklist）与 AGENTS.md §7.6 范式说明：
+
+新增/修改 composable 时，reviewer **必须逐条确认**：
+
+1. **该 composable 是否持有 per-session 状态？** 判据：存在 `ref`/`let`/`reactive`/`Map`/`Set`，且内容按 `sessionId` 区分（如 `Map<sessionId, T>`、`Set<sessionId>`、或字段语义是「当前 session 的 X」）。
+2. **若是，是否用了 `useSessionScopedState` 工厂？** 必须用。禁止：
+   - 模块级 `Map<string, T>` / `Set<string>` 手动管理（除非在工厂 init 函数内部）
+   - `watch(sessionId)` 手动逐字段清空（watch 清理派反模式，见上）
+   - 实例级状态依赖组件树天然隔离（实例级反模式，useExtensionUI 曾因此 bug）
+3. **WS handler 是否用 `updateFor(sid, ...)` 而非 `update(...)`？** WS handler 闭包捕获订阅时 sid，须用 `updateFor(capturedSid, ...)` 显式指定分区，不读 `sid.value` 实时值（防 session 切换退订异步期间的竞态，M1 修复）。
+4. **session 销毁时分区是否 cleanup？** 正常路径由 `useSidebar.deleteSession` → `triggerSessionCleanups(id)` 自动触发（工厂 setup 时自动注册，scope dispose 时反注册）。若 composable 有特殊生命周期，确认 cleanup 已挂钩。
+
+### 例外清单（显式审批记录）
+
+以下 composable **经审批**不采用 `useSessionScopedState` 工厂，记录原因供 review 参考：
+
+| composable | 原因 | 审批
+|-----------|------|------
+| `useSessionEvents.ts` | 订阅编排层，不持有 per-session 业务状态（registrations 是 handler 路由表，随实例销毁清） | spec_review D3
+| `useSessionScopedState` 自身 | 工厂实现，不能自引用 | —
+
+> 新增例外须在此表登记 + 说明理由，否则 review 不通过。
+
 ## Alternatives Considered
 
 ### 替代方案：watch 清理派（单实例状态 + watch 切换清空）
