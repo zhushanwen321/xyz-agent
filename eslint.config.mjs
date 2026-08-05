@@ -40,6 +40,15 @@ export default [
       'max-lines': 'off',
     },
   },
+  // [HISTORICAL] runtime 的 .cjs 文件（plugin-esm-loader.cjs 等）是 Node CJS 模块，
+  // require() 是唯一导入方式——no-require-imports 规则对 .cjs 是误报（2026-08-05 添加，
+  // sandbox ESM loader 落地时确认：tsup entry 直接打包 .cjs 源文件，无 TS 转换层）。
+  {
+    files: ['packages/runtime/**/*.cjs'],
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+    },
+  },
   // [HISTORICAL] runtime 核心服务聚合点：event-adapter（pi 事件→前端消息的唯一适配层）、
   // extension-service（扩展生命周期 + 路径解析 + 热重载）、session-service（session 生命周期/历史/
   // fork/agentcall 的 facade）。三者都是本子系统的唯一聚合中心，职责内聚但行数超 500。
