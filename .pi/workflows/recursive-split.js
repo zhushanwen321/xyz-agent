@@ -250,6 +250,18 @@ try {
     for (const unitId of nodesToAbort) {
       log("Node " + unitId + " stuck (status not progressing for " + MAX_NODE_ROUNDS + " rounds), aborting");
       await abortUnit(unitId);
+      // MF-1: 熔断 abort 写入 nodeFailures——replan/clarify 循环型节点每次 dispatch 返回
+      // 成功、无 failedReason，nodeFailures 从未写入，熔断是这类静默截断节点对上层
+      // failedUnits 决策通道唯一可见点（否则整棵树以 status:done 返回且无 failedUnits
+      // 键，调用方主 agent 把静默截断当完整交付）。守卫防覆盖：sequential catch / 早前
+      // 轮次已记录的节点保持原 failedReason（"threw: ..." / "cannot-proceed" 比熔断
+      // 原因更有语义，且失败状态已对上层可见）。
+      if (!nodeFailures[unitId]) {
+        aggregateNodeFailure(nodeFailures, {
+          unitId,
+          failedReason: "stuck: status not progressing for " + MAX_NODE_ROUNDS + " rounds",
+        });
+      }
     }
 
     // 排除已熔断 abort 的节点
@@ -266,8 +278,23 @@ try {
       for (const r of results) {
         if (!r) continue;
         if (r.status === "failed") {
-          // executeActionAgent 意外 throw（parallel 归一化形态），无法拿到 unitId
-          log("BFS: concurrent node failed (thrown): " + (r.error ?? "unknown"));
+          // executeActionAgent 意外 throw（parallel 归一化形态）。parallel 结果与
+          // concurrent 数组按下标一一对应 → 经 indexOf 恢复 unitId，abort + 写入
+          // nodeFailures（MF-1：与 sequential catch 分支对齐，thrown 节点不能对
+          // failedUnits 决策通道不可见）。
+          const thrownIdx = results.indexOf(r);
+          const thrownUnitId = thrownIdx >= 0 ? concurrent[thrownIdx]?.unitId : undefined;
+          log(
+            "BFS: concurrent node failed (thrown): " + (r.error ?? "unknown") +
+            (thrownUnitId ? " (" + thrownUnitId + ")" : "")
+          );
+          if (thrownUnitId) {
+            await abortUnit(thrownUnitId);
+            aggregateNodeFailure(nodeFailures, {
+              unitId: thrownUnitId,
+              failedReason: "threw: " + String(r.error ?? "unknown"),
+            });
+          }
           continue;
         }
         if (r.sessionFile) sessionFiles[r.unitId] = r.sessionFile;

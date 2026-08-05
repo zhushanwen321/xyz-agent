@@ -209,6 +209,51 @@ describe("parseAnswerParts", () => {
 		});
 	});
 
+	// MF-2（R3 回归）：label 含分隔符 + Other 自由文本 + comment 的混合形态。
+	// R3 的 all-label 单谓词扫描落空 → 回退首分隔符 → 选中项静默丢失；第二级
+	// 「body 含 ≥1 label token」首个命中落在真正分隔选中/Other 与 comment 的分隔符上。
+	describe("MF-2: label with separator + Other free text + comment", () => {
+		const labels = ["Postgres — prod"];
+
+		it("mixed body (label + Other) + comment → label selected, Other kept, comment at later separator", () => {
+			const result = parseAnswerParts("Postgres — prod, custom text — note", labels);
+			expect(result.selected).toEqual(["Postgres — prod"]);
+			expect(result.otherTokens).toEqual(["custom text"]);
+			expect(result.comment).toBe("note");
+		});
+
+		it("comment containing separator keeps full remainder (no over-split at second separator)", () => {
+			// "A, B — note — x"：第一级 all-label body 在第一个分隔符命中，短路第二级
+			// ——若走「≥1 label token 取最后」会在第二个分隔符过切（comment 错位）
+			const result = parseAnswerParts("A, B — note — x", ["A", "B"]);
+			expect(result.selected).toEqual(["A", "B"]);
+			expect(result.comment).toBe("note — x");
+		});
+	});
+
+	// MF-3（pre-existing）：label 含分隔符 + Other 自由文本、无 comment 形态。
+	// 两级扫描均无命中（唯一候选 body "Postgres" 不含 label token）→ 整串含 label
+	// token 时不切分，整串作 body（选中 + Other）——首分隔符切分会把 label 拦腰截断
+	// 产生空选中。S-17 冻结边界：整串无任何 label token 时仍走首分隔符切分。
+	describe("MF-3: label with separator + Other free text, no comment", () => {
+		const labels = ["Postgres — prod"];
+
+		it("no comment variant → whole string as body, label selected + Other kept", () => {
+			const result = parseAnswerParts("Postgres — prod, custom text", labels);
+			expect(result.selected).toEqual(["Postgres — prod"]);
+			expect(result.otherTokens).toEqual(["custom text"]);
+			expect(result.comment).toBeUndefined();
+		});
+
+		it("S-17 freeze intact: whole string without any label token still first-separator split", () => {
+			// "custom — text" 整串无 label token → 不切分回退不触发，保持首分隔符切分
+			const result = parseAnswerParts("custom — text", labels);
+			expect(result.selected).toEqual([]);
+			expect(result.otherTokens).toEqual(["custom"]);
+			expect(result.comment).toBe("text");
+		});
+	});
+
 	// S-17 行为固化：Other 自由文本自身含 " — "（如 "custom — text"）与
 	// 「选中/Other + comment」形态在纯解析层面固有歧义，保持首个分隔符切分行为
 	// （body "custom" + comment "text"），不做解析层区分（见 answer-format.ts 注释）。

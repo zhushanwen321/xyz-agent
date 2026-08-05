@@ -49,27 +49,32 @@ export function parseAnswerParts(
 		return { selected: allTokens, comment: undefined, otherTokens: [] };
 	}
 
-	// body/comment 切分点：取「body 整串可解析为选中项」的最靠后分隔符 = 最长选中 body，
+	// body/comment 切分点：两级扫描 + 不切分回退，语义见各段注释。
+	// 第一级（MF-7 语义）：取「body 整串可解析为选中项」的最靠后分隔符 = 最长选中 body，
 	// 其后的全部剩余文本为 comment。"可解析为选中项" = 整串精确命中单个 label（含逗号
 	// label 如 "A, B"），或全部逗号 token 均为 label（多选 body，如 "Postgres — prod, MySQL"）。
-	// 无任何这样的切分（Other 自由文本 + comment 场景）→ 保持默认第一个分隔符。
-	// MF-7：重叠前缀 label 如 ["Postgres", "Postgres — prod"] 时，"Postgres — prod — x"
-	// 若取首个切分 → 选中 "Postgres" + comment "prod — x"，用户实际更可能是选中长 label
-	// + comment "x"——取最靠后的整串命中即最长匹配。固有歧义取舍：短 label 与长 label
-	// 同时存在且用户意图确实是「选短 label + comment 含长 label 前缀」（"Postgres" +
-	// comment "prod — x"）时此启发会误判为长 label——文本本身无法区分，精确 label body
-	// 优先是更优启发而非完备解；长 label 不在候选时（"Postgres — prod" 非 label）该意图
-	// 解析正确。
+	// 第二级（MF-2 回归修复）：第一级无命中时回退「body 含 ≥1 个 label token」的首个分隔符——
+	// "Postgres — prod, custom text — note"（label 含分隔符 + Other 自由文本 + comment）
+	// 无任何 all-label body，单谓词扫描落空 → 回退首分隔符把 label 拦腰截断，选中项静默丢失；
+	// ≥1 谓词在真正分隔选中/Other 与 comment 的第二个分隔符命中。
+	// 不切分回退（MF-3）：两级都无命中但整串含 label token（"Postgres — prod, custom text"
+	// 无 comment 形态）→ 整串作 body（选中 + Other），不切分——首分隔符切分把 label 拦腰
+	// 截断产生空选中。整串无任何 label token（S-17："custom — text" Other 自由文本自身含
+	// 分隔符）→ 保持首个分隔符切分（body "custom" + comment "text"），不做解析层区分，
+	// 由调用方（TUI encode）按 label 命中情况归属。
+	// MF-7 固有歧义取舍（第一级）：重叠前缀 label 如 ["Postgres", "Postgres — prod"] 时，
+	// "Postgres — prod — x" 取最靠后的整串命中即最长匹配（选中长 label + comment "x"）；
+	// 若用户意图确实是「选短 label + comment 含长 label 前缀」会被误判——文本本身无法区分，
+	// 精确 label body 优先是更优启发而非完备解；长 label 不在候选时（"Postgres — prod" 非
+	// label）该意图解析正确。
 	// 注意：分隔符扫描用原始 answer（不 trim）——comment-only 答案以 " — comment" 开头，
 	// trim 会吃掉前导空格导致 indexOf 失配。
-	// S-17：Other 自由文本自身含 " — "（如 "custom — text"）与「选中/Other + comment」
-	// 形态在纯解析层面固有歧义，此处保持首个分隔符切分行为（body "custom" + comment
-	// "text"），不做解析层区分——由调用方（TUI encode）按 label 命中情况归属。
 	let body = trimmed;
 	let comment: string | undefined;
 	let splitIdx = answer.indexOf(ANSWER_COMMENT_SEPARATOR);
-	let scan = splitIdx;
+	// 第一级：取「body 整串可解析为选中项」的最靠后分隔符
 	let bestSplit = -1;
+	let scan = splitIdx;
 	while (scan >= 0) {
 		const candidateBody = answer.slice(0, scan).trim();
 		if (labelSet.has(candidateBody)) {
@@ -82,10 +87,26 @@ export function parseAnswerParts(
 		}
 		scan = answer.indexOf(ANSWER_COMMENT_SEPARATOR, scan + ANSWER_COMMENT_SEPARATOR.length);
 	}
-	if (bestSplit >= 0) {
-		splitIdx = bestSplit;
+	if (bestSplit < 0) {
+		// 第二级：取「body 含 ≥1 个 label token」的首个分隔符（R2 的 some() 谓词回归，
+		// 仅在第一级无命中时运行——"A, B — note — x" 形态第一级已命中，不会过切）
+		scan = splitIdx;
+		while (scan >= 0) {
+			const candidateTokens = answer.slice(0, scan).trim().split(/[,，]/).map((t) => t.trim()).filter(Boolean);
+			if (candidateTokens.some((t) => labelSet.has(t))) {
+				bestSplit = scan;
+				break;
+			}
+			scan = answer.indexOf(ANSWER_COMMENT_SEPARATOR, scan + ANSWER_COMMENT_SEPARATOR.length);
+		}
 	}
-	if (splitIdx >= 0) {
+	// MF-3 不切分回退：整串含 label token 时以整串为 body（选中 + Other），不切分。
+	// splitIdx >= 0 前置（无分隔符时本就整串为 body，无需走此分支）。
+	const noSplit = bestSplit < 0 && splitIdx >= 0 && allTokens.some((t) => labelSet.has(t));
+	if (!noSplit && splitIdx >= 0) {
+		if (bestSplit >= 0) {
+			splitIdx = bestSplit;
+		}
 		body = answer.slice(0, splitIdx).trim();
 		comment = answer.slice(splitIdx + ANSWER_COMMENT_SEPARATOR.length).trim() || undefined;
 	}

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   MAX_FRONTIER_RETRIES,
+  MAX_NODE_ROUNDS,
   decideAbortOnAgentFailure,
   aggregateNodeFailure,
   collectFailedUnits,
@@ -283,5 +284,77 @@ describe("queryFrontier 永久故障 — failedUnits 聚合 + 阈值", () => {
     };
     expect(errorResult.status).toBe("error");
     expect(errorResult.failedUnits).toBeUndefined();
+  });
+});
+
+// ── MF-1：熔断/stuck-abort 与 concurrent thrown 两条杀路径接入 failedUnits ──
+// recursive-split.js 主循环的两条 kill path（stuck-abort 循环 + concurrent thrown 分支）
+// 在 R2 之前只 abort 不写 nodeFailures，被杀的节点对上层 failedUnits 决策通道不可见，
+// 整棵树以 status:done 返回且无 failedUnits 键。本组测试覆盖 R3 接线形态：
+//   (a) stuck-abort → abortUnit + 写入 "stuck: ..." 前缀 failedReason
+//   (b) stuck-abort 防重复记录：既有 entry（sequential catch 已记 "threw: ..."）不被覆盖
+//   (c) concurrent thrown → 按下标从 concurrent 数组恢复 unitId → abort + 写入
+
+describe("MF-1: 熔断与 thrown 杀路径的 failedUnits 聚合", () => {
+  it("(a) stuck-abort：熔断 abort 的节点写入 failedUnits（done 返回值含该节点，不再静默截断）", () => {
+    // 模拟 recursive-split.js stuck-abort 循环接线：replan/clarify 循环型节点每轮 dispatch
+    // 返回成功、无 failedReason → nodeFailures 从未写入，熔断是唯一失败记录点。
+    const nodeFailures: Record<string, string> = {};
+    const unitId = "wave:loop-replan";
+    const failedReason = "stuck: status not progressing for " + MAX_NODE_ROUNDS + " rounds";
+    aggregateNodeFailure(nodeFailures, { unitId, failedReason });
+
+    const failedUnits = collectFailedUnits(nodeFailures);
+    const doneResult = { status: "done", ...(failedUnits.length > 0 ? { failedUnits } : {}) };
+    expect(doneResult.failedUnits).toContainEqual({ unitId, failedReason });
+  });
+
+  it("(b) stuck-abort 防重复记录：既有 entry 保持原 failedReason（sequential catch 已记录）", () => {
+    // 场景：sequential catch 已 abort + 记录 "threw: ..."，但 abort 失败导致节点留在
+    // frontier，下一轮被 detectStuckNodes 再次熔断。recursive-split.js 接线在记录前
+    // 守卫 nodeFailures[unitId] 已存在（保持 "threw: ..." 而非被 "stuck: ..." 覆盖）。
+    const nodeFailures: Record<string, string> = {};
+    const unitId = "wave:a";
+    aggregateNodeFailure(nodeFailures, { unitId, failedReason: "threw: boom" });
+
+    if (!nodeFailures[unitId]) {
+      aggregateNodeFailure(nodeFailures, {
+        unitId,
+        failedReason: "stuck: status not progressing for " + MAX_NODE_ROUNDS + " rounds",
+      });
+    }
+    expect(nodeFailures[unitId]).toBe("threw: boom");
+  });
+
+  it("(c) concurrent thrown：按下标恢复 unitId → abort + 写入 failedUnits（不再吞掉失败）", () => {
+    // parallel 结果与 concurrent 数组按下标一一对应（allSettled 语义，每结果唯一对象）：
+    // results.indexOf(r) 即原节点下标。模拟 recursive-split.js concurrent thrown 接线。
+    const concurrent = [{ unitId: "wave:a" }, { unitId: "wave:b" }];
+    const results = [
+      { status: "fulfilled", value: { unitId: "wave:a" } },
+      { status: "failed", error: "boom" },
+    ];
+    const nodeFailures: Record<string, string> = {};
+    for (const r of results) {
+      if (!r) continue;
+      if (r.status === "failed") {
+        const thrownIdx = results.indexOf(r);
+        const thrownUnitId = thrownIdx >= 0 ? concurrent[thrownIdx]?.unitId : undefined;
+        if (thrownUnitId) {
+          aggregateNodeFailure(nodeFailures, {
+            unitId: thrownUnitId,
+            failedReason: "threw: " + String(r.error ?? "unknown"),
+          });
+        }
+      } else if (r.value) {
+        aggregateNodeFailure(nodeFailures, r.value);
+      }
+    }
+
+    expect(nodeFailures).toEqual({ "wave:b": "threw: boom" });
+    expect(collectFailedUnits(nodeFailures)).toContainEqual({
+      unitId: "wave:b",
+      failedReason: "threw: boom",
+    });
   });
 });
