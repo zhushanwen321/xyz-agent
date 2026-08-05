@@ -21,7 +21,7 @@
         >
           <ArrowUp class="size-3" />
           <!-- 红点角标（与 SegmentedTab.vue:27-30 同范式） -->
-          <span class="absolute right-0 top-0 size-[5px] rounded-full bg-danger" data-testid="update-badge" />
+          <span class="absolute right-0 top-0 size-[7px] rounded-full bg-danger" data-testid="update-badge" />
         </Button>
       </HoverCardTrigger>
       <HoverCardContent side="top" class="release-notes-content max-h-[360px] w-[360px] overflow-auto p-4 text-[12px] text-neutral-fg">

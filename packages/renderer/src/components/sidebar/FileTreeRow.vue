@@ -16,7 +16,7 @@
     <!-- 目录（行 + 展开子节点同属一个 v-if 块，保证下方文件 v-else 正确绑定） -->
     <template v-if="node.type === 'dir'">
       <div
-        class="flex w-max min-w-full cursor-pointer items-center gap-1.5 rounded-md py-0.5 pr-2 font-mono text-[12px] transition-colors hover:bg-surface-hover"
+        class="flex w-max min-w-full cursor-pointer items-center gap-1 rounded-md py-0.5 pr-2 font-mono text-[12px] transition-colors hover:bg-surface-hover"
         :style="rowPaddingStyle"
         :data-testid="`file-tree-dir-${node.path}`"
         @click="toggle"
@@ -84,7 +84,7 @@
     <!-- 文件（v-else 紧邻上方目录 <template v-if>，绑定到 node.type 判断） -->
     <div
       v-else
-      class="flex w-max min-w-full cursor-pointer items-center gap-1.5 rounded-md py-0.5 pr-2 transition-colors hover:bg-surface-hover"
+      class="flex w-max min-w-full cursor-pointer items-center gap-1 rounded-md py-0.5 pr-2 transition-colors hover:bg-surface-hover"
       :class="{ 'bg-surface': isSelected }"
       :style="rowPaddingStyle"
       :data-testid="`file-tree-file-${node.path}`"
@@ -143,15 +143,16 @@ const store = useFileTreeStore()
 const { expandNode, collapseNode, selectFile } = useFileTree()
 const drawer = useSideDrawer()
 
-/** 缩进步进（px）：每层级增加的 padding-left，对齐 chevron 槽宽度（D-022） */
-const INDENT_STEP = 14
+/** 缩进步进（px）：每层级增加的 padding-left（v6 spec §6.2：14→10）*/
+const INDENT_STEP = 10
 /** 行 padding 基线（px）：depth=0 时的起始 padding-left（D-022） */
 const BASE_PADDING = 8
 /**
  * chevron 槽 Tailwind 类（D-022）：固定宽度 inline-flex 占位，目录放 ChevronRight、
  * 文件空占位，使目录 folder icon 与文件 file icon 垂直对齐。
- * 注意：宽度必须写死 14px 静态字符串，Tailwind JIT 不识别运行时拼接的任意值类。
- * 与 INDENT_STEP 保持同步（缩进单位 = chevron 槽宽度）。
+ * 注意：宽度固定 14px（图标 12px + 留白），与 INDENT_STEP **独立**——缩进步进仅控制
+ * 每层左侧 padding 增量，chevron 槽宽度保证目录/文件图标列对齐，二者无联动关系。
+ * 宽度必须写死静态字符串，Tailwind JIT 不识别运行时拼接的任意值类。
  */
 const chevronSlotClass = 'w-[14px] shrink-0 inline-flex items-center justify-center'
 
