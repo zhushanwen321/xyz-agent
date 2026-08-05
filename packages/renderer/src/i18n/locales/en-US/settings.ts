@@ -104,6 +104,13 @@ export default {
     deleteConfirmTitle: 'Delete {name}?',
     deleteConfirmDesc: 'All model configurations under it will be removed. This cannot be undone.',
     deleteConfirmBtn: 'Confirm delete',
+    // ── Accordion inline edit (R4 · replaces ProviderEditModal) ──
+    unsavedBadge: 'Unsaved',
+    newProvider: 'New provider',
+    discardTitle: 'Discard unsaved changes?',
+    discardDesc: 'The provider you are editing has unsaved changes. Continuing will discard them. This action cannot be undone.',
+    discardConfirm: 'Discard changes',
+    discardCancel: 'Keep editing',
     // ── Import Providers from other Agents (W2) ──
     importFromAgents: 'Import from Agents',
     importPreview: {
@@ -351,6 +358,7 @@ export default {
   // ── Preset page (PiPresetsPage) ──
   preset: {
     pageDesc: 'Manage Pi launch presets, configure tool and extension access policies',
+    groupTitle: 'Launch Presets',
     new: 'New Preset',
     empty: 'No presets',
     builtin: 'Built-in',

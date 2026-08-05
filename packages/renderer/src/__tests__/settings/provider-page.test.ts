@@ -1,17 +1,14 @@
 /**
- * ProviderPage 渲染测试（W9 + W4）。
+ * ProviderPage 渲染测试（W9 + W4 + R4 手风琴就地编辑）。
  *
  * 覆盖：
  *  - 首屏冒烟：providers=[] → 渲染「添加供应商」按钮 + 空状态。
- *  - 打开 dialog：点击添加按钮 → ProviderEditModal 内容 teleport 到 document.body。
- *  - U5（W4）：默认模型标记从 settingsStore.defaultModel 派生（"provider/modelId" 复合串解析），
- *    不再是本地硬编码 ref。改 store.defaultModel 后默认标记跟随切换。
- *  - U5b（W4）：点击 model 行「设为默认」按钮 → 调 config.setDefaultModel(provider, modelId)。
+ *  - R4：点击添加 → 不弹 Dialog，列表底部新建合成行并展开（provider-expand-body 渲染）。
+ *  - R4：点击供应商名称 → 行内展开就地编辑体（无 Dialog teleport）。
+ *  - U5（W4）：默认模型标记从 settingsStore.defaultModel 派生。
  *
  * mock 策略：
- *  - vi.mock('@/api') 替换 config 门面（setProvider/deleteProvider/listProviders/setDefaultModel
- *    等动作 + onProviders 订阅），避免调真实 transport 挂起。
- *  - reka-ui DialogContent teleport 到 body，dialog 文本在 document.body 上查询。
+ *  - vi.mock('@/api') 替换 config 门面。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/settings/provider-page.test.ts
  */
@@ -21,14 +18,13 @@ import { createPinia, setActivePinia } from 'pinia'
 import type { ProviderInfo } from '@xyz-agent/shared'
 import { getSettingsStore, __resetSettingsStoreForTesting } from '@xyz-agent/core'
 
-/** vi.hoisted 保证 configMock 在 vi.mock 工厂执行前就绪。 */
 const configMock = vi.hoisted(() => ({
   onProviders: vi.fn(() => () => {}),
   listProviders: vi.fn(async () => []),
   setProvider: vi.fn(async () => {}),
   deleteProvider: vi.fn(async () => {}),
   testProvider: vi.fn(async () => ({ ok: true })),
-  discoverModels: vi.fn(async () => []),
+  discoverModels: vi.fn(async () => ({ success: true, models: [] })),
   setDefaultModel: vi.fn(async () => {}),
 }))
 
@@ -41,7 +37,6 @@ import ProviderPage from '@/components/settings/ProviderPage.vue'
 
 let wrapper: ReturnType<typeof mount> | null = null
 
-/** 测试用 provider：anthropic 含 2 model，openai 含 1 model，均展开态可点「设为默认」 */
 const PROVIDERS: ProviderInfo[] = [
   {
     id: 'anthropic',
@@ -73,6 +68,8 @@ const PROVIDERS: ProviderInfo[] = [
 beforeEach(() => {
   setActivePinia(createPinia())
   __resetSettingsStoreForTesting()
+  configMock.setProvider.mockClear()
+  configMock.deleteProvider.mockClear()
   configMock.setDefaultModel.mockClear()
 })
 
@@ -92,119 +89,113 @@ describe('ProviderPage 首屏冒烟', () => {
   })
 })
 
-describe('ProviderPage 打开 dialog', () => {
-  it('点击添加供应商按钮 → dialog teleport 到 body 含「添加供应商」标题', async () => {
+describe('ProviderPage R4 手风琴就地编辑（取代 ProviderEditModal）', () => {
+  it('点击「添加供应商」→ 不弹 Dialog，列表底部新建合成行并展开就地编辑体', async () => {
     wrapper = mount(ProviderPage, {
       props: { providers: [] },
       attachTo: document.body,
     })
     await flushPromises()
-    // 关闭态：body 无 dialog 标题
-    expect(document.body.textContent ?? '').not.toContain('配置供应商凭据与模型清单')
+
+    // 初始无展开体
+    expect(wrapper.find('[data-testid="provider-expand-body"]').exists()).toBe(false)
 
     const addBtn = wrapper.findAll('button').find((b) => b.text().includes('添加供应商'))!
     await addBtn.trigger('click')
     await flushPromises()
 
-    // ProviderEditModal open=true → DialogContent teleport 到 body，标题为「添加供应商」（provider=null）
-    const bodyText = document.body.textContent ?? ''
-    expect(bodyText).toContain('添加供应商')
-    // 模型清单标题也在 dialog 内
-    expect(bodyText).toContain('模型清单')
+    // 合成行渲染 + 展开体渲染（就地编辑，非 Dialog teleport）
+    const expandBody = wrapper.find('[data-testid="provider-expand-body"]')
+    expect(expandBody.exists()).toBe(true)
+    // 名称 input 存在（ProviderEditBody 首字段）
+    expect(wrapper.find('[data-testid="provider-edit-name"]').exists()).toBe(true)
+    // body 里不应出现 Dialog（无 [role="dialog"]）
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
   })
-})
 
-describe('ProviderPage 默认模型从 settingsStore.defaultModel 派生（U5）', () => {
-  it('U5: store.defaultModel="anthropic/claude-sonnet-4" → 该 model 行显示「默认模型」标记，其它显示「设为默认」按钮', async () => {
-    getSettingsStore().defaultModel.value = 'anthropic/claude-sonnet-4'
+  it('点击供应商名称 → 行内展开就地编辑体（凭据字段可见，不弹 Dialog）', async () => {
     wrapper = mount(ProviderPage, {
       props: { providers: PROVIDERS },
       attachTo: document.body,
     })
     await flushPromises()
-    // 展开 anthropic 详情（点 provider 名称）让模型表格可见
+
+    // 初始无展开
+    expect(wrapper.find('[data-testid="provider-expand-body"]').exists()).toBe(false)
+
     const name = wrapper.findAll('span').find((s) => s.text() === 'Anthropic')!
     await name.trigger('click')
     await flushPromises()
 
-    const bodyText = document.body.textContent ?? ''
-    // claude-sonnet-4 是默认 → 标记文案「默认模型」出现
-    expect(bodyText).toContain('默认模型')
-    // claude-opus-4 非默认 → 「设为默认」按钮出现（至少 1 个）
-    expect(bodyText).toContain('设为默认')
+    // 展开体渲染
+    expect(wrapper.find('[data-testid="provider-expand-body"]').exists()).toBe(true)
+    // 凭据字段（名称 input）可见
+    expect(wrapper.find('[data-testid="provider-edit-name"]').exists()).toBe(true)
+    // 无 Dialog teleport
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
   })
 
-  it('U5b: 改 store.defaultModel 为 "openai/gpt-4o" → 默认标记跟随切换到 gpt-4o 行', async () => {
+  it('再次点击已展开供应商名称 → 收起展开体', async () => {
+    wrapper = mount(ProviderPage, {
+      props: { providers: PROVIDERS },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    const name = wrapper.findAll('span').find((s) => s.text() === 'Anthropic')!
+    await name.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="provider-expand-body"]').exists()).toBe(true)
+
+    // 再次点击收起
+    await name.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="provider-expand-body"]').exists()).toBe(false)
+  })
+})
+
+describe('ProviderPage 默认模型从 settingsStore.defaultModel 派生（U5）', () => {
+  it('U5: store.defaultModel 归属 provider → 行头显示「默认供应商」pill', async () => {
     getSettingsStore().defaultModel.value = 'anthropic/claude-sonnet-4'
     wrapper = mount(ProviderPage, {
       props: { providers: PROVIDERS },
       attachTo: document.body,
     })
     await flushPromises()
-    // 展开 anthropic + openai
-    const anthropicName = wrapper.findAll('span').find((s) => s.text() === 'Anthropic')!
-    await anthropicName.trigger('click')
-    const openaiName = wrapper.findAll('span').find((s) => s.text() === 'OpenAI')!
-    await openaiName.trigger('click')
-    await flushPromises()
 
-    // 初始默认在 claude-sonnet-4：该行无「设为默认」按钮（显示「默认模型」span）
-    let sonnetRow = wrapper.findAll('tr').find((r) => r.text().includes('claude-sonnet-4'))!
-    expect(sonnetRow.text()).toContain('默认模型')
-    let sonnetBtn = sonnetRow.findAll('button').find((b) => b.text().includes('设为默认'))
-    expect(sonnetBtn).toBeUndefined()
+    // anthropic 行头显示默认 pill（行头常驻，不需展开）
+    expect(wrapper.text()).toContain('默认供应商')
+  })
+
+  it('U5b: 改 store.defaultModel 到 openai → 默认 pill 跟随切换到 openai 行', async () => {
+    getSettingsStore().defaultModel.value = 'anthropic/claude-sonnet-4'
+    wrapper = mount(ProviderPage, {
+      props: { providers: PROVIDERS },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    // 默认 pill 出现在 anthropic 行
+    const cards = wrapper.findAll('[data-testid="provider-card"]')
+    expect(cards[0]!.text()).toContain('默认供应商')
 
     // 切默认到 openai/gpt-4o
     getSettingsStore().defaultModel.value = 'openai/gpt-4o'
     await wrapper.vm.$nextTick()
     await flushPromises()
 
-    // claude-sonnet-4 现在非默认 → 显示「设为默认」按钮
-    sonnetRow = wrapper.findAll('tr').find((r) => r.text().includes('claude-sonnet-4'))!
-    expect(sonnetRow.text()).toContain('设为默认')
-    // gpt-4o 现为默认 → 显示「默认模型」span
-    const gptRow = wrapper.findAll('tr').find((r) => r.text().includes('gpt-4o'))!
-    expect(gptRow.text()).toContain('默认模型')
-  })
-
-  it('U5c: 点击 model 行「设为默认」按钮 → 调 config.setDefaultModel(provider, modelId)', async () => {
-    getSettingsStore().defaultModel.value = ''
-    wrapper = mount(ProviderPage, {
-      props: { providers: PROVIDERS },
-      attachTo: document.body,
-    })
-    await flushPromises()
-    // 展开 anthropic
-    const name = wrapper.findAll('span').find((s) => s.text() === 'Anthropic')!
-    await name.trigger('click')
-    await flushPromises()
-
-    // 找到 claude-sonnet-4 行的「设为默认」按钮（与模型 id 同行）
-    const rows = wrapper.findAll('tr')
-    const sonnetRow = rows.find((r) => r.text().includes('claude-sonnet-4'))
-    expect(sonnetRow).toBeTruthy()
-    const btn = sonnetRow!.findAll('button').find((b) => b.text().includes('设为默认'))
-    expect(btn).toBeTruthy()
-    await btn!.trigger('click')
-    await flushPromises()
-
-    // setDefaultModel 接收 (providerId, modelId)
-    expect(configMock.setDefaultModel).toHaveBeenCalledWith('anthropic', 'claude-sonnet-4')
+    const cardsAfter = wrapper.findAll('[data-testid="provider-card"]')
+    expect(cardsAfter[0]!.text()).not.toContain('默认供应商')
+    expect(cardsAfter[1]!.text()).toContain('默认供应商')
   })
 })
 
 /**
  * W1 robustness pass：
- *  - U1（D4）：toggle enabled 失败时 actionError 经常驻 inline error 区域可见（不再被困在关闭的删除弹窗内）。
- *  - U2（D5）：cycleThinking 死按钮已删除，thinking pill 改为 disabled 展示态。
- *  - D14：删除 / 禁用 defaultModel 归属 provider 时前端兜底清空 defaultModel（幂等，runtime 广播到达时覆盖）。
+ *  - U1（D4）：toggle enabled 失败时 actionError 经常驻 inline error 区域可见。
+ *  - D14：删除 defaultModel 归属 provider 时前端兜底清空 defaultModel。
  */
 describe('ProviderPage W1 robustness', () => {
-  beforeEach(() => {
-    configMock.setProvider.mockClear()
-    configMock.deleteProvider.mockClear()
-  })
-
   it('U1: toggle enabled 失败 → 常驻 inline error 区域可见并含错误文案', async () => {
     configMock.setProvider.mockRejectedValueOnce(new Error('网络错误'))
     wrapper = mount(ProviderPage, {
@@ -213,43 +204,15 @@ describe('ProviderPage W1 robustness', () => {
     })
     await flushPromises()
 
-    // 初始无错误
     expect(wrapper.find('[data-testid="provider-action-error"]').exists()).toBe(false)
 
-    // 点 anthropic 的 enabled Switch（role=switch）
     const sw = wrapper.findAll('[role="switch"]')[0]
     await sw.trigger('click')
     await flushPromises()
 
-    // 错误可见
     const err = wrapper.find('[data-testid="provider-action-error"]')
     expect(err.exists()).toBe(true)
     expect(err.text()).toContain('网络错误')
-  })
-
-  it('U2: thinking pill 处于可交互状态（enabled + 有 title）且 model 行有独立编辑按钮', async () => {
-    wrapper = mount(ProviderPage, {
-      props: { providers: PROVIDERS },
-      attachTo: document.body,
-    })
-    await flushPromises()
-    // 展开 anthropic 让模型表格可见
-    const name = wrapper.findAll('span').find((s) => s.text() === 'Anthropic')!
-    await name.trigger('click')
-    await flushPromises()
-
-    const pill = wrapper.find('[data-testid="thinking-pill"]')
-    expect(pill.exists()).toBe(true)
-    // pill 现在可点击（不再 disabled），点击触发 openEdit 打开编辑弹窗。
-    // 修问题 2：原 disabled pill 让用户误以为「不能编辑」，现改为点击进编辑弹窗。
-    // 注：点击 → 打开 ProviderEditModal 的链路依赖 settingsStore/providers 初始化，
-    // 完整 click→dialog 断言由 provider-edit-modal.test.ts 覆盖；这里只验证 pill 处于
-    // 可交互状态（enabled + 有 title 提示）这一前置契约。
-    expect(pill.attributes('disabled')).toBeUndefined()
-    expect(pill.attributes('title')).toBeDefined()
-    // 同时 model 行新增独立铅笔编辑按钮（data-testid="model-edit-btn"）
-    const editBtn = wrapper.find('[data-testid="model-edit-btn"]')
-    expect(editBtn.exists()).toBe(true)
   })
 
   it('D14: 删除 defaultModel 归属 provider → 前端清空 defaultModel', async () => {
@@ -262,12 +225,10 @@ describe('ProviderPage W1 robustness', () => {
     })
     await flushPromises()
 
-    // 点 anthropic 的删除按钮（trash）打开确认弹窗
     const trashBtns = wrapper.findAll('button[title="删除供应商"]')
     await trashBtns[0]!.trigger('click')
     await flushPromises()
 
-    // 点「确认删除」（teleport 到 body）
     const confirmBtn = Array.from(document.body.querySelectorAll('button'))
       .find((b) => b.textContent?.includes('确认删除')) as HTMLButtonElement | undefined
     expect(confirmBtn).toBeTruthy()
@@ -276,60 +237,5 @@ describe('ProviderPage W1 robustness', () => {
 
     expect(configMock.deleteProvider).toHaveBeenCalledWith('anthropic')
     expect(store.defaultModel.value).toBe('')
-  })
-})
-
-/**
- * W3 U5（D6）：model 级 enabled Switch。
- * 模型表格每行有 enabled Switch（data-testid="model-enabled-switch"），点击后乐观改 store +
- * 调 config.setProvider 持久化。setProvider 传完整 models 数组（runtime setProvider 整体替换 models）。
- */
-describe('ProviderPage W3 model 级 enabled Switch（D6）', () => {
-  beforeEach(() => {
-    configMock.setProvider.mockClear()
-  })
-
-  it('U5: 展开 provider → 每个 model 行有 enabled Switch（data-testid="model-enabled-switch"）', async () => {
-    wrapper = mount(ProviderPage, {
-      props: { providers: PROVIDERS },
-      attachTo: document.body,
-    })
-    await flushPromises()
-    // 展开 anthropic
-    const name = wrapper.findAll('span').find((s) => s.text() === 'Anthropic')!
-    await name.trigger('click')
-    await flushPromises()
-
-    // anthropic 含 2 model → 2 个 model 级 Switch（与 provider 级 Switch 区分用 data-testid）
-    const modelSwitches = wrapper.findAll('[data-testid="model-enabled-switch"]')
-    expect(modelSwitches.length).toBe(2)
-  })
-
-  it('U5b: 点击某 model 的 enabled Switch → config.setProvider 被调用，payload 含完整 models 数组且目标 model enabled=false', async () => {
-    wrapper = mount(ProviderPage, {
-      props: { providers: PROVIDERS },
-      attachTo: document.body,
-    })
-    await flushPromises()
-    // 展开 anthropic
-    const name = wrapper.findAll('span').find((s) => s.text() === 'Anthropic')!
-    await name.trigger('click')
-    await flushPromises()
-
-    // 点第一个 model 的 enabled Switch
-    const modelSwitches = wrapper.findAll('[data-testid="model-enabled-switch"]')
-    await modelSwitches[0]!.trigger('click')
-    await flushPromises()
-
-    expect(configMock.setProvider).toHaveBeenCalledTimes(1)
-    const [providerId, data] = configMock.setProvider.mock.calls[0]
-    expect(providerId).toBe('anthropic')
-    // models 数组完整（runtime 整体替换，不是单 model merge）
-    expect(data.models).toHaveLength(2)
-    // 被点的 model（第一个，claude-sonnet-4）enabled=false，另一个保持原值
-    const sonnet = data.models.find((m: { id: string }) => m.id === 'claude-sonnet-4')
-    const opus = data.models.find((m: { id: string }) => m.id === 'claude-opus-4')
-    expect(sonnet.enabled).toBe(false)
-    expect(opus.enabled).not.toBe(false)
   })
 })

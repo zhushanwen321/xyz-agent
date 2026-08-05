@@ -104,6 +104,13 @@ export default {
     deleteConfirmTitle: '删除 {name}？',
     deleteConfirmDesc: '将移除其下所有模型配置。此操作不可撤销。',
     deleteConfirmBtn: '确认删除',
+    // ── 手风琴就地编辑（R4 · 取代 ProviderEditModal）──
+    unsavedBadge: '未保存',
+    newProvider: '新供应商',
+    discardTitle: '放弃未保存的改动？',
+    discardDesc: '你正在编辑的供应商有未保存的改动，继续将丢弃这些改动。此操作不可撤销。',
+    discardConfirm: '放弃改动',
+    discardCancel: '继续编辑',
     // ── 从其他 Agent 导入 Provider（W2）──
     importFromAgents: '从其他 Agent 导入',
     importPreview: {
@@ -351,6 +358,7 @@ export default {
   // ── Preset 页（PiPresetsPage）──
   preset: {
     pageDesc: '管理 Pi 启动预设，配置工具和扩展的访问策略',
+    groupTitle: '启动预设',
     new: '新建预设',
     empty: '暂无预设',
     builtin: '内置',

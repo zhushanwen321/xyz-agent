@@ -32,17 +32,20 @@
       </Button>
     </div>
 
+    <GroupCard :title="t('settings.preset.groupTitle')">
     <!-- 空态 -->
     <div v-if="!presets.length" class="py-8 text-center text-[12px] text-neutral-mid">
       {{ t('settings.preset.empty') }}
     </div>
 
     <!-- 预设列表（每个卡片独立折叠：自定义默认展开便于编辑，内置默认折叠便于扫视） -->
+    <!-- 卡片层叠：GroupCard 提供 bg-card 容器，单个预设用 bg-bg + border 浮起分层（v6 §5.8） -->
     <Collapsible
       v-for="p in presets"
       :key="p.id"
       :open="isExpanded(p.id)"
-      class="rounded-card bg-card"
+      class="rounded border border-border bg-bg"
+      :class="isExpanded(p.id) ? 'border-border-strong' : ''"
       @update:open="(v) => toggleExpanded(p.id, v)"
     >
       <!-- 预设头部：CollapsibleTrigger as-child 包 Button，构成全宽点击区。
@@ -63,11 +66,11 @@
                 <span class="truncate text-[13px] font-medium">{{ p.name }}</span>
                 <span
                   v-if="p.builtin"
-                  class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-neutral-dim"
+                  class="rounded-sm bg-surface px-1.5 py-0.5 text-[11px] text-neutral-dim"
                 >{{ t('settings.preset.builtin') }}</span>
                 <span
                   v-if="p.id === defaultPresetId"
-                  class="rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent"
+                  class="rounded-sm bg-accent-soft px-1.5 py-0.5 text-[11px] text-accent"
                 >{{ t('settings.preset.default') }}</span>
               </div>
               <!-- 折叠态摘要行：一行 mode 概览（如「工具访问策略: 全部可用 · 扩展访问策略: 白名单 3 项」） -->
@@ -166,9 +169,10 @@
     </Collapsible>
 
     <!-- 3 个内置扩展提示 -->
-    <p class="text-[11px] text-neutral-dim">
+    <p v-if="presets.length" class="text-[11px] text-neutral-dim">
       {{ t('settings.preset.builtinExtensionHint') }}
     </p>
+    </GroupCard>
 
     <!-- 删除确认弹窗 -->
     <ConfirmDialog
@@ -200,7 +204,7 @@ import { usePiPresets } from '@/composables/features/usePiPresets'
 import { useToast } from '@/composables/useToast'
 import { DEFAULT_PRESETS } from '@xyz-agent/shared'
 import type { PiLaunchPreset, ToolMode, ExtensionMode } from '@xyz-agent/shared'
-import { PresetModeSection } from '@xyz-agent/ui/features/settings'
+import { GroupCard, PresetModeSection } from '@xyz-agent/ui/features/settings'
 
 const { t } = useI18n()
 const { info: toastInfo, error: toastError } = useToast()
