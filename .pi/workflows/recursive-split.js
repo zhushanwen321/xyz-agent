@@ -13,8 +13,17 @@ const meta = {
 const { execSync } = require("child_process");
 // 纯逻辑（常量 + 纯函数）从 utils 模块导入，供 vitest 单测覆盖。
 // .cjs 扩展名强制 CommonJS（项目根 package.json 声明 type:module，.js 会被当 ESM 解析）。
-// 用 process.cwd() 拼绝对路径：pi worker 线程继承父线程 cwd（= workspace 根），
-// 相对路径 "./recursive-split-utils.cjs" 会解析到 <cwd>/recursive-split-utils.cjs 而非脚本同目录。
+//
+// 双通道定位 utils（同 review-fix-loop.js 模式）：workerData.scriptPath 优先——按脚本
+// 自身所在目录解析，从子目录启动 pi / 内置 workflow 部署到任意目录均能定位自身 utils；
+// cwd fallback 兜底——其他引擎无 workerData 时从项目根解析 .pi/workflows/。
+// 单一 cwd 锚点的缺陷：pi worker 线程继承父线程 cwd，从子目录启动 pi 时 cwd 变成子目录，
+// "<cwd>/.pi/workflows/recursive-split-utils.cjs" 解析失败（O-1 修复）。
+// 两个分支拼的 suffix 不同（workerData 分支 dirname 已含 .pi/workflows/，cwd 分支需补全）。
+const _utilsPath =
+  typeof workerData !== "undefined" && workerData && typeof workerData.scriptPath === "string"
+    ? require("path").dirname(workerData.scriptPath) + "/recursive-split-utils.cjs"
+    : process.cwd() + "/.pi/workflows/recursive-split-utils.cjs";
 const {
   MAX_NODE_ROUNDS,
   MAX_FRONTIER_RETRIES,
@@ -34,7 +43,7 @@ const {
   selectActionable,
   detectStuckNodes,
   pruneTerminalEntries,
-} = require(process.cwd() + "/.pi/workflows/recursive-split-utils.cjs");
+} = require(_utilsPath);
 
 // 节点 agent 超时预算统一由 resolveNodeTimeoutMs(nextAction) 解析（utils.cjs，已单测）：
 // progressive 段 15min / execute·test 30min / 其余非 progressive 15min。

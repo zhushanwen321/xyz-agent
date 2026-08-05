@@ -27,6 +27,8 @@ import {
   buildAggregatorPrompt,
   resolveReviewReportPath,
   normalizeFixResult,
+  normIssueId,
+  findIssueKey,
   validateFixResult,
   reconcileIssues,
   normalizeReviewResult,
@@ -1176,5 +1178,167 @@ describe("resolveBatchTerminated（批结束后 terminated 判定）", () => {
     // 本判定只在批循环自然结束后调用（此时 terminated 恒为 "clean"）；
     // 结构化终止路径的 terminated 值在到达这里之前已 break 外层循环。
     expect(resolveBatchTerminated(true, "clean")).toBe("clean");
+  });
+});
+
+// ── T-2：normIssueId / findIssueKey 独立直测（fix 阶段漂移 ID 匹配的根基） ──────
+// 这两个函数原只在 validateFixResult 间接测（MF-4 deferred 交叉核对、m3 fixes[] 漏修
+// 判定），分支覆盖不全：空 ID、null issues、双向漂移（表内 key 与查表参数都漂移）、
+// 多尾注只剥最后一个、紧贴尾注无空格等边界无直测。补独立单测 + fix 阶段端到端串联，
+// 证明独立测试覆盖的就是 validateFixResult 真实消费的逻辑（非悬空纯函数）。
+
+describe("normIssueId — issue ID 归一化（大小写 + 尾注剥离）", () => {
+  it("大小写归一：MF-1 / Mf-1 / mf-1 → mf-1", () => {
+    expect(normIssueId("MF-1")).toBe("mf-1");
+    expect(normIssueId("Mf-1")).toBe("mf-1");
+    expect(normIssueId("mf-1")).toBe("mf-1");
+  });
+
+  it("尾部括号尾注剥离：MF-1 (fixed) / MF-1 (by design) → mf-1", () => {
+    expect(normIssueId("MF-1 (fixed)")).toBe("mf-1");
+    expect(normIssueId("MF-1 (by design)")).toBe("mf-1");
+  });
+
+  it("尾注紧贴 ID 无空格也能剥：MF-1(fixed) → mf-1（正则前导 \\s* 可 0 空格）", () => {
+    expect(normIssueId("MF-1(fixed)")).toBe("mf-1");
+  });
+
+  it("首尾空格 trim：' MF-1 ' → mf-1", () => {
+    expect(normIssueId(" MF-1 ")).toBe("mf-1");
+  });
+
+  it("无尾注原样返回（仅小写化）：S-2 → s-2", () => {
+    expect(normIssueId("S-2")).toBe("s-2");
+  });
+
+  it("多个括号尾注只剥最后一个（锚定 $）：MF-1 (a) (b) → mf-1 (a)", () => {
+    // 设计取舍：只剥结尾一个括号段（$ 锚定）。多尾注罕见，不做递归剥离。
+    expect(normIssueId("MF-1 (a) (b)")).toBe("mf-1 (a)");
+  });
+
+  it("空串 / null / undefined → 空串（String(s ?? '') 兜底）", () => {
+    expect(normIssueId("")).toBe("");
+    expect(normIssueId(null)).toBe("");
+    expect(normIssueId(undefined)).toBe("");
+  });
+
+  it("非字符串入参（number）→ String() 包装后归一：123 → '123'", () => {
+    // 防御：调用方传非字符串不抛，降级为字符串（运行时 String(s ?? '') 兜底）。
+    expect(normIssueId(123 as unknown as string)).toBe("123");
+  });
+});
+
+describe("findIssueKey — 归一化键空间查找", () => {
+  it("精确键命中：issues={'MF-1':...}, 查 'MF-1' → 'MF-1'", () => {
+    const issues = { "MF-1": { severity: "major" } };
+    expect(findIssueKey(issues, "MF-1")).toBe("MF-1");
+  });
+
+  it("大小写漂移命中：issues={'MF-1':...}, 查 'mf-1' → 'MF-1'", () => {
+    const issues = { "MF-1": { severity: "major" } };
+    expect(findIssueKey(issues, "mf-1")).toBe("MF-1");
+  });
+
+  it("尾注漂移命中：issues={'MF-1':...}, 查 'MF-1 (fixed)' → 'MF-1'", () => {
+    const issues = { "MF-1": { severity: "major" } };
+    expect(findIssueKey(issues, "MF-1 (fixed)")).toBe("MF-1");
+  });
+
+  it("未命中：issues={'MF-1':...}, 查 'MF-2' → undefined", () => {
+    const issues = { "MF-1": { severity: "major" } };
+    expect(findIssueKey(issues, "MF-2")).toBeUndefined();
+  });
+
+  it("空 issueId（''）→ undefined（短路守卫 !issueId）", () => {
+    const issues = { "MF-1": { severity: "major" } };
+    expect(findIssueKey(issues, "")).toBeUndefined();
+  });
+
+  it("非 string issueId（undefined/null/number）→ undefined（typeof 守卫）", () => {
+    const issues = { "MF-1": { severity: "major" } };
+    expect(findIssueKey(issues, undefined as unknown as string)).toBeUndefined();
+    expect(findIssueKey(issues, null as unknown as string)).toBeUndefined();
+    expect(findIssueKey(issues, 123 as unknown as string)).toBeUndefined();
+  });
+
+  it("null / undefined issues → undefined（属性访问安全降级）", () => {
+    expect(findIssueKey(null, "MF-1")).toBeUndefined();
+    expect(findIssueKey(undefined, "MF-1")).toBeUndefined();
+  });
+
+  it("双向漂移：表内 key 带尾注 + 查表参数也漂移 → 仍命中同一 key", () => {
+    // 核心场景（T-2）：fix 阶段 reconcile 写入追踪表的 key 可能本身带尾注（如 reviewer
+    // 报 "MF-1 (fixed)" 被原样存为 key），后续 deferred/fixes 查 "mf-1" 必须匹配回同一
+    // key。normIssueId 双向归一保证查表参数与表内 key 都归一到 "mf-1"。
+    const issues = { "MF-1 (fixed)": { severity: "major" } };
+    expect(findIssueKey(issues, "mf-1")).toBe("MF-1 (fixed)");
+    expect(findIssueKey(issues, "MF-1")).toBe("MF-1 (fixed)");
+    expect(findIssueKey(issues, "mf-1 (by design)")).toBe("MF-1 (fixed)");
+  });
+});
+
+describe("T-2 端到端：normIssueId/findIssueKey 在 validateFixResult 的真实消费", () => {
+  // 串联说明：上方独立直测的 normIssueId/findIssueKey 正是 validateFixResult 内部
+  // 消费的函数（deferred 侧 findIssueKey → tracked severity；fixes[] 侧 normIssueId
+  // → 漏修判定）。这两个 it 证明独立测试与真实消费一致（非悬空纯函数测试）。
+  it("deferred 漂移 ID 经 findIssueKey 匹配回 tracked 条目（→ tracked severity）", () => {
+    // trackedIssues key 规范 "MF-1"；deferred 报漂移 "mf-1 (fixed)" + 自报 minor →
+    // findIssueKey 匹配回 "MF-1" → tracked major → 违规。
+    const trackedIssues = {
+      "MF-1": { firstSeen: 1, severity: "major", status: "open", history: [], fixAttempts: 0 },
+    };
+    const violations = validateFixResult({
+      fixed_count: 0,
+      fixes: [],
+      deferred: [{ issue_id: "mf-1 (fixed)", severity: "minor", reason: "cannot fix" }],
+    }, [], trackedIssues);
+    expect(violations).toEqual([{ issue_id: "mf-1 (fixed)", severity: "major" }]);
+  });
+
+  it("fixes[] 漂移 ID 经 normIssueId 匹配 mustFixIds（双向漂移 → 不判漏修）", () => {
+    // mustFixIds=["mf-1"]（小写漂移），fixes[] 报 "MF-1 (fixed)"（尾注漂移）→
+    // normIssueId 双向归一均得 "mf-1" → 匹配 → 不判漏修。
+    expect(validateFixResult({
+      fixed_count: 1,
+      fixes: [{ issue_id: "MF-1 (fixed)" }],
+      deferred: [],
+    }, ["mf-1"])).toEqual([]);
+  });
+});
+
+// ── T-3：reconcile 新 ID severity:"unknown" 守卫分支 ──────────────────────
+// validateFixResult 的 tracked severity 交叉核对：trackedIssues 中某 ID 的 severity
+// 为 "unknown"（reconcileIssues 给新发现 ID 的默认值，review-fix-loop-utils.cjs:596
+// `severity: "unknown"`）时不覆盖 fix agent 自报 severity——守卫在 cjs:294-299（仅认
+// critical/major/minor/trivial 为真实等级）。现有 MF-4 测试覆盖了 major/critical/minor
+// tracked + 无此 ID，缺 "unknown" 分支。守卫目的：新发现 ID 的 severity 尚未由 reviewer
+// 结构化确认（reconcile 默认 unknown），不应凭默认值把合法 minor deferral 误升级为违规。
+
+describe("T-3: tracked severity 'unknown' 守卫（reconcile 新 ID 不覆盖自报）", () => {
+  it("tracked severity:'unknown' + 自报 minor → 放行（unknown 不覆盖自报）", () => {
+    // 场景：reconcileIssues 首轮新发现 MF-9（severity 默认 "unknown"），fix 阶段 defer
+    // 它并自报 minor。交叉核对时 tracked severity="unknown" 不在等级白名单 →
+    // effectiveSev 保持自报 "minor" → 放行（不误伤合法 minor deferral）。
+    const trackedIssues = {
+      "MF-9": { firstSeen: 1, severity: "unknown", status: "open", history: [], fixAttempts: 0 },
+    };
+    expect(validateFixResult({
+      fixed_count: 0,
+      fixes: [],
+      deferred: [{ issue_id: "MF-9", severity: "minor", reason: "low priority" }],
+    }, [], trackedIssues)).toEqual([]);
+  });
+
+  it("对照：tracked severity:'major'（真实等级）+ 自报 minor → 仍违规（守卫只放行 unknown）", () => {
+    // 反向佐证：守卫仅对 "unknown" 放行，真实 must-fix 等级（major）仍交叉核对生效，
+    // 不会因为守卫存在而漏放 must-fix deferral。
+    const trackedIssues = {
+      "MF-9": { firstSeen: 1, severity: "major", status: "open", history: [], fixAttempts: 0 },
+    };
+    expect(validateFixResult({
+      fixed_count: 0,
+      fixes: [],
+      deferred: [{ issue_id: "MF-9", severity: "minor", reason: "cannot fix" }],
+    }, [], trackedIssues)).toEqual([{ issue_id: "MF-9", severity: "major" }]);
   });
 });
