@@ -261,9 +261,9 @@ export function registerWorkflowTool(
       "Example: {\"action\":\"run\",\"name\":\"parallel\",\"args\":{\"target\":\"src/auth.ts\"}}. " +
       "Use review-fix-loop when the user wants iterative code/doc review with fixes until clean " +
       "(it is the ONLY built-in workflow that writes files; autoCommit defaults to false). " +
-      "DISCOVERY: If unsure what workflows exist, call the workflow-script tool with " +
-      "action:list first — it returns all available scripts (built-in + user-generated) " +
-      "with source tags and descriptions. Then use this tool's run action to start one.",
+      "DISCOVERY: Use action:list / workflow-script action:list ONLY to check what's " +
+      "RUNNING (active runs), not to discover what's available — built-in workflows are " +
+      "listed above, run them directly with action:run.",
       "run: discover by name/description, then start in background (no user confirmation needed).",
       "Do NOT poll status after starting — results appear automatically via notifyDone.",
       "Call shapes (JSON): " +

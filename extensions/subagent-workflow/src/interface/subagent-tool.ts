@@ -172,13 +172,14 @@ export function registerSubagentTool(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "subagent",
     label: "Subagent",
+    promptSnippet: "Delegate to specialized subagents (explorer/worker/reviewer/oracle)",
     description: `Delegate a task to a specialized subagent — when to delegate rather than do it yourself.
 
 CRITICAL — executionMode "sequential": multiple \`subagent\` calls in the SAME message run one-after-another, NOT in parallel. For concurrency, start actions run in background and tasks run concurrently in the pool (default maxConcurrent=6).
 
 ## When to delegate
 
-Delegate when the task needs a distinct role (researcher/worker), context isolation (fork/worktree), or parallelism while you do other work. Do NOT delegate trivial tasks or one-shot lookups you could do faster yourself.
+Delegate when the task needs a distinct role (researcher/worker), context isolation (fork/worktree), or parallelism while you do other work. Delegate FIRST when the task involves any of: reading 3+ files, writing 100+ lines of implementation, parallel research, or specialized review (reviewer/oracle) — doing these yourself floods your context with implementation detail and loses the orchestration view.
 
 ## Actions
 
@@ -209,7 +210,6 @@ Completion auto-notifies you (steer wakes next turn, even mid-poll). So:
 - Over-generalizing the flatten: ONLY start fields are top-level. list and cancel params stay nested under listParam / cancelParam (e.g. {"action":"list","listParam":{"includeFinished":true}}, NOT {"action":"list","includeFinished":true}).
 - Launching background, then sleeping/polling instead of working or stopping.
 - Treating subagent results as authoritative without verification.
-- Delegating trivial tasks you could do faster yourself.
 - Canceling by guessing a subagentId instead of using action:"list" first.
 
 ## You cannot
