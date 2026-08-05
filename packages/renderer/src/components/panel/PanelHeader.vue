@@ -111,6 +111,15 @@
     </nav>
 
     <div class="ml-auto flex items-center gap-0.5 [-webkit-app-region:no-drag]">
+      <!-- ExtensionHost panel.header 挂载点（audit §12.1，MountPointRegistry panel.header.action）。
+           plugin 经 views.update 贡献 header action 视图 → ViewHost 渲染。
+           empty="hidden"：无贡献时整组件零 DOM，不挤压右侧内置按钮。见 02-extension-host-wiring.md。 -->
+      <ViewHost
+        v-if="sessionId"
+        view-id="panel.header"
+        :session-id="sessionId"
+        empty="hidden"
+      />
       <!-- session JSONL 文件名（id 前 8 位 + .jsonl）：点击复制磁盘真实绝对路径。
            正常态用主 sessionFile，overlay 态（subagent/agent call）用 overlaySessionFile。
            路径为空（pi 延迟写入窗口，规则 #6）时不渲染。放右侧按钮组最前，正常态与 overlay 态复用同一位。 -->
@@ -174,6 +183,7 @@ import { useNavigationStore } from '@/stores/navigation'
 import { useSidebarStore } from '@/stores/sidebar'
 import { usePlatformChrome } from '@/composables/effects/usePlatformChrome'
 import { useCopy } from '@/composables/effects/useCopy'
+import { ViewHost } from '@xyz-agent/ui/extension-host'
 import type { DerivedStatus } from '@/types'
 import type { GitIndicator } from '@/composables/features/file-tree/useGitStatus'
 import { STATUS_ICON } from '@/composables/logic/sessionStatus'
@@ -182,6 +192,8 @@ import { formatShortSessionFile } from '@/composables/logic/session-file-format'
 const props = defineProps<{
   sessionLabel: string
   sessionDir: string
+  /** 当前 session id（ExtensionHost panel.header 挂载点 ViewHost 路由键） */
+  sessionId?: string
   /** session JSONL 绝对路径（pi 延迟写入窗口可能为空，不渲染文件名） */
   sessionFile?: string
   gitBranch?: string

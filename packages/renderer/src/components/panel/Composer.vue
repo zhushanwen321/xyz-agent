@@ -84,6 +84,15 @@
       <div class="composer-bar flex flex-wrap items-center justify-end gap-0 px-2.5 pb-2 mt-1">
         <!-- + 添加内容（左锚定，spec §1 ①，click 出浮层：附件 / 命令；# 文件改走 inline 触发） -->
         <AddMenuPopover @select="onAddSelect" />
+        <!-- ExtensionHost composer.toolbar 挂载点（audit §12.1，MountPointRegistry composer.toolbar）。
+             plugin 贡献工具栏视图 → ViewHost 渲染。empty="hidden"：无贡献时零 DOM 不影响布局。
+             见 02-extension-host-wiring.md 重构 2。 -->
+        <ViewHost
+          v-if="sessionId"
+          view-id="composer.toolbar"
+          :session-id="sessionId"
+          empty="hidden"
+        />
         <span class="flex-1" />
         <!-- 上下文容量（spec §2a：hover 出容量 popover；session 通道订阅 context.update） -->
         <ContextCapacityPopover :session-id="sessionId ?? undefined" :model-id="currentModelId" />
@@ -145,6 +154,7 @@ import { useI18n } from 'vue-i18n'
 import { ArrowUp, Loader2, Square, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { ComposerInput, ComposerInputDepsKey, type ComposerInputDeps } from '@xyz-agent/ui/features/composer'
+import { ViewHost } from '@xyz-agent/ui/extension-host'
 import AddMenuPopover from './AddMenuPopover.vue'
 import CommandPopover from './CommandPopover.vue'
 import ContextCapacityPopover from './ContextCapacityPopover.vue'

@@ -31,6 +31,7 @@
     <PanelHeader
       :session-label="sessionLabelOf(leaf)"
       :session-dir="sessionDirOf(leaf)"
+      :session-id="leaf.sessionId ?? undefined"
       :session-file="sessionFileOf(leaf)"
       :git-branch="gitBranchOf(leaf)"
       :git-indicator="gitIndicatorOf(leaf)"
