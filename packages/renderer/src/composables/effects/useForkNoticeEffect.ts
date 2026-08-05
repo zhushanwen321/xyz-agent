@@ -46,7 +46,16 @@ export interface ForkNoticeEntry {
 
 /** 模块级自增 id（跨 session 全局唯一，dismiss/渲染 key 用） */
 let noticeSeq = 0
-/** 模块级 transient feed：srcSessionId → entries（shallowRef + Map 重赋值触发响应式） */
+/**
+ * 模块级 transient feed：srcSessionId → entries（shallowRef + Map 重赋值触发响应式）。
+ *
+ * [ADR-0049 例外] 保持模块级 Map，不套 useSessionScopedState：本 composable 是「全局 sid
+ * 协调器」（useForkNoticeFeed 各方法显式接收 sessionId，无 sidRef 绑定实例），与 core 的
+ * useChat.streamSubscriptions / coordination/subscription-state.subscriptionStates 同模式。
+ * useSessionScopedState 契约要求 sidRef + per-instance reactive 容器，此处无 sidRef 且
+ * feedMap 是全局 feed SSOT（多 MessageStream 实例共读），强套破坏消费者签名 + 语义错位
+ * （对齐 w4 retrospect 教训 #3：handoff 范式要求需结合代码所在层判断适用性）。
+ */
 const feedMap = shallowRef<Map<string, ForkNoticeEntry[]>>(new Map())
 /** 模块级分支追踪：trackedBranches / unreadByBranch（由 bindForkNoticeEffect 写入，侧栏角标读） */
 const trackedBranchesRef = ref<ReadonlySet<string>>(new Set())

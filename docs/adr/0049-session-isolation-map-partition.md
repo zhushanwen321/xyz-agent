@@ -93,6 +93,16 @@ ESLint 规则放弃后，per-session 范式靠 **code-review 强制检查项** �
 | `useSessionEvents.ts` | 订阅编排层，不持有 per-session 业务状态（registrations 是 handler 路由表，随实例销毁清） | spec_review D3
 | `useSessionScopedState` 自身 | 工厂实现，不能自引用 | —
 
+#### 全局 sid 协调器例外类（模块级 Map 合理）
+
+以下模块持有 per-session 状态但采用**模块级单例 Map**，不套 `useSessionScopedState`。判据：它们是「全局 sid 协调器」——所有方法显式接收 sessionId 参数，无 sidRef 绑定实例，与 per-instance composable（有 sidRef + reactive 容器契约）属不同层。`useSessionScopedState` 要求 sidRef + per-instance reactive 容器，强套会破坏消费者签名 + 语义错位（w4 retrospect 教训 #3：handoff 范式要求需结合代码所在层判断适用性）。
+
+| 模块 | 模块级状态 | 原因 | 审批
+|-----|----------|------|------
+| `core/domain/chat/useChat.ts` | `streamSubscriptions` / `historyTruncatedSessions` | 全局 sid 协调器（无 sidRef，记录非 reactive 的 unsub 函数）；session 销毁由 `disposeSession` + `triggerSessionCleanups` 编排 | w5 clarify Q1/TD2
+| `core/coordination/subscription-state.ts` | `subscriptionStates` | WS 订阅状态（数据完整性层），`routeInbound` 在配置闭包需同步访问；非 per-instance UI 状态（UI 经 events 通道消费，不直接读 lastSeenSeq） | 原实现既定设计（slice TO3）
+| `renderer/composables/effects/useForkNoticeEffect.ts` | `feedMap` / `trackedBranchesRef` / `unreadByBranchRef` | 全局 feed SSOT（多 MessageStream 实例共读），各方法显式接收 sessionId，无 sidRef；同 useChat 模式 | 对齐 useChat w5 clarify
+
 > 新增例外须在此表登记 + 说明理由，否则 review 不通过。
 
 ## Alternatives Considered
