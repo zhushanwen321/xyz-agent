@@ -55,6 +55,16 @@ export interface WorkerHandle {
   memoryUsage?: number
 }
 
+/** @internal — runtime 内部：子进程句柄，仅 PluginHostProcess（fork 版）使用 */
+export interface ProcessHandle {
+  processId: string
+  pid: number
+  trustLevel: 'trusted' | 'sandbox'
+  pluginIds: string[]
+  status: 'active' | 'crashed' | 'terminated'
+  lastActiveAt: number
+}
+
 // ── Activation 类型 ────────────────────────────────────────────
 
 /** @internal — runtime 内部：插件激活事件（激活时机声明） */

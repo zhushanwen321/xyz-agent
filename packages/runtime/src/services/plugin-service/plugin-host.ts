@@ -56,8 +56,10 @@ function resolvePluginHostDir(): string {
  * @param filename - 要查找的文件名（默认 'plugin-bootstrap.js'）
  * @returns 验证通过的绝对路径
  * @throws 包含期望路径和目录实际文件列表的清晰错误
+ *
+ * 同时供 PluginHostProcess（fork 版）复用——bootstrap 文件与 host 同目录的约定两处一致。
  */
-function resolveAndValidateFile(filename: string): string {
+export function resolveAndValidateFile(filename: string): string {
   const hostDir = resolvePluginHostDir()
   const filePath = resolve(hostDir, filename)
 
