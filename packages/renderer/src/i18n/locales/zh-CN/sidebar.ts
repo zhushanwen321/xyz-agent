@@ -52,6 +52,7 @@ export default {
     file: '文件',
     subagent: '子代理',
     workflow: '工作流',
+    plugin: '插件',
   },
   projectSwitcher: {
     defaultName: '默认项目',

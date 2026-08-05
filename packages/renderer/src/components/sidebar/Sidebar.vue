@@ -116,6 +116,27 @@
             />
           </Transition>
         </template>
+        <!-- ExtensionHost sidebar view 宿主（audit §12.1 sidebar.tab 挂载点）。
+             plugin 经 views.update 贡献 sidebar 视图 → ViewHostStore → ViewHost 渲染。
+             empty="hidden"：无贡献时整组件零 DOM（不破坏布局）。sessionId 绑定焦点 session。
+             见 02-extension-host-wiring.md 重构 2。 -->
+        <template v-else-if="sidebar.activeTab === 'plugins'">
+          <ViewHost
+            v-if="focusedSessionId"
+            view-id="sidebar.plugin"
+            :session-id="focusedSessionId"
+            empty="hidden"
+          />
+          <!-- 无焦点 session 时（Overview 态）空态占位，与 files tab 同范式 -->
+          <div
+            v-else
+            class="flex flex-col items-center justify-center gap-2 py-10 text-center"
+            data-testid="sidebar-plugin-no-session"
+          >
+            <Puzzle class="size-5 text-neutral-dim opacity-40" />
+            <p class="text-[11px] text-neutral-dim opacity-55">{{ t('sidebar.selectSessionHint') }}</p>
+          </div>
+        </template>
         <template v-else>
           <FileView
             v-if="focusedSessionId"
@@ -169,9 +190,10 @@
 
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from 'vue'
-import { Plus, Search, Settings, FolderOpen, AlertCircle } from '@lucide/vue'
+import { Plus, Search, Settings, FolderOpen, AlertCircle, Puzzle } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { SearchModal } from '@xyz-agent/ui'
+import { ViewHost } from '@xyz-agent/ui/extension-host'
 import { useSearchModal } from '@xyz-agent/core'
 import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'

@@ -15,7 +15,7 @@ import SegmentedTab from '@/components/sidebar/SegmentedTab.vue'
 import type { SidebarTab } from '@/stores/sidebar'
 
 describe('SegmentedTab', () => {
-  it('渲染 4 个 tab（sessions/files/subagents/workflows）', () => {
+  it('渲染 5 个 tab（sessions/files/subagents/workflows/plugins）', () => {
     const wrapper = mount(SegmentedTab, {
       props: {
         modelValue: 'sessions' as SidebarTab,
@@ -27,13 +27,14 @@ describe('SegmentedTab', () => {
     })
 
     const buttons = wrapper.findAll('button')
-    expect(buttons).toHaveLength(4)
+    expect(buttons).toHaveLength(5)
 
     // tab title 含 label（i18n 中文：与组件 t('sidebar.segmentedTab.*') 输出对齐）
     expect(buttons[0].attributes('title')).toBe('会话')
     expect(buttons[1].attributes('title')).toBe('文件')
     expect(buttons[2].attributes('title')).toBe('子代理')
     expect(buttons[3].attributes('title')).toBe('工作流')
+    expect(buttons[4].attributes('title')).toBe('插件')
   })
 
   it('count 数字不再渲染（克制原则：对切换决策无用、制造视觉噪音）', () => {

@@ -53,6 +53,7 @@ export default {
     file: 'File',
     subagent: 'Subagents',
     workflow: 'Workflows',
+    plugin: 'Plugins',
   },
   projectSwitcher: {
     defaultName: 'Default project',

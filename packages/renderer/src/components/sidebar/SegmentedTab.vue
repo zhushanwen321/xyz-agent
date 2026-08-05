@@ -31,7 +31,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Component } from 'vue'
-import { MessageSquare, File, Bot, Workflow } from '@lucide/vue'
+import { MessageSquare, File, Bot, Workflow, Puzzle } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -72,5 +72,8 @@ const tabs = computed<TabDef[]>(() => [
   { value: 'files', label: t('sidebar.segmentedTab.file'), icon: File, count: props.fileCount, badge: false },
   { value: 'subagents', label: t('sidebar.segmentedTab.subagent'), icon: Bot, count: props.subagentCount, badge: props.subagentRunningCount > 0 },
   { value: 'workflows', label: t('sidebar.segmentedTab.workflow'), icon: Workflow, count: props.workflowCount, badge: props.workflowRunningCount > 0 },
+  // ExtensionHost sidebar view 宿主（MountPointRegistry sidebar.tab，W4 接线）。
+  // 无 plugin 贡献时 ViewHost 空态自隐藏，tab 仅作挂载点占位（count/badge 不适用）。
+  { value: 'plugins', label: t('sidebar.segmentedTab.plugin'), icon: Puzzle, count: 0, badge: false },
 ])
 </script>

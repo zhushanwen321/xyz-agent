@@ -8,7 +8,11 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
-export type SidebarTab = 'sessions' | 'files' | 'subagents' | 'workflows'
+/**
+ * 'plugins' tab：ExtensionHost sidebar view 宿主（挂载点 sidebar.tab，ViewHost view-id=sidebar.plugin）。
+ * 无 plugin 贡献时 ViewHost 空态自隐藏（empty="hidden"），tab 内容区空白不破坏布局。
+ */
+export type SidebarTab = 'sessions' | 'files' | 'subagents' | 'workflows' | 'plugins'
 
 export const useSidebarStore = defineStore('sidebar', () => {
   const activeTab = ref<SidebarTab>('sessions')
