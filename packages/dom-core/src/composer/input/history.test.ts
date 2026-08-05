@@ -2,8 +2,8 @@
  * history.ts 导航状态机单测 —— composer input 模块历史导航（W2 TC3）。
  *
  * 覆盖 shell 风格 ↑/↓ 翻阅状态机 7 路径 + resetBrowsing + per-session 分区隔离（AC-5）。
- * mock deps（getText/setText/clear + getHistoryEntries 替代 chatStore）。node 环境（reactive/
- * computed 来自 vue，vue 在 node 可用）。
+ * mock deps（getText/setText/clear + getHistoryEntries 替代 chatStore）。jsdom 环境（dom-core 全局
+ * vitest 为 jsdom），但本测试不依赖 DOM API，仅覆盖纯状态机（reactive/computed 来自 vue）。
  *
  * 范式对齐 renderer use-composer-history.test.ts，getHistoryEntries 替代 chatStore.appendUser。
  * 运行：cd packages/dom-core && npx vitest run src/composer/input/history.test.ts

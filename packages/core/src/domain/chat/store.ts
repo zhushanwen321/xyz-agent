@@ -155,7 +155,7 @@ export function createChatStore() {
   const pendingSendTimers = new Map<string, ReturnType<typeof setTimeout>>()
   // handingOff 超时兜底 timer + HANDING_OFF_TIMEOUT_MS 阈值内聚在 createHandoffController（chat-handoff.ts）
 
-  // ── streaming 状态机深模块（B6：5 个模块级 *Impl 内聚为 factory，本 store 仅委托）──
+  // ── streaming 状态机深模块（B6：3 个原模块级状态机编排函数 + 2 个新提取的瞬态清理 helper 内聚为 factory，本 store 仅委托）──
   const streamingStateMachine = createStreamingStateMachine({
     messages,
     compactingSessions,
@@ -623,7 +623,7 @@ export function createChatStore() {
     // Map ref：不可变写保证响应式（new Map + delete + 赋值新 Map）。
     // W1 后 messages 是 shallowRef，必须整体替换 .value 才触发；retryStates/queueStates
     // 是深 ref，此写法同样正确触发。统一用"构造新 Map → delete → 赋值"范式。
-    // 显式结构类型（对齐原 disposeSessionImpl 参数）：数组元素统一为 Map<string, unknown>，
+    // 显式结构类型（对齐原 disposeSession 编排参数）：数组元素统一为 Map<string, unknown>，
     // 避免 TS 将不同 Map 元素推断为具体联合类型导致 new Map(ref.value) 不兼容。
     const mapRefs: { value: Map<string, unknown> }[] = [messages, retryStates, queueStates]
     const setRefs: { value: Set<string> }[] = [hydrated, pendingSend, compactingSessions, handingOffSessions, failedHistory]
