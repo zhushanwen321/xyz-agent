@@ -11,6 +11,11 @@ export default defineConfig({
   entry: {
     index: 'src/index.ts',
     'plugin-bootstrap': 'src/services/plugin-service/plugin-bootstrap.ts',
+    // 子进程版 bootstrap + ESM loader（sandbox 真隔离，重构 3）：
+    // fork 子进程入口（host-process resolveAndValidateFile('plugin-bootstrap-process.cjs') 定位）
+    // + ESM loader 经 execArgv --import 注入（沙箱进程启动时加载）
+    'plugin-bootstrap-process': 'src/services/plugin-service/plugin-bootstrap-process.ts',
+    'plugin-esm-loader': 'src/services/plugin-service/plugin-esm-loader.cjs',
     cli: 'src/cli/index.ts',  // xyz-settings CLI 入口（打包后 dist/runtime/cli.cjs）
   },
   // 输出到 apps/electron/dist/runtime（与 main/preload dist 同级，供 electron-builder 打包）
