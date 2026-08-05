@@ -1,0 +1,36 @@
+{
+  "mode": "pre",
+  "tag": "dev",
+  "initialVersions": {
+    "@xyz-agent/electron": "0.8.50",
+    "@zhushanwen/pi-ask-user": "4.0.0",
+    "@zhushanwen/pi-context-engineering": "0.2.0",
+    "@zhushanwen/pi-evolve-daily": "0.3.0",
+    "@zhushanwen/pi-goal": "0.6.1",
+    "@zhushanwen/pi-model-switch": "0.6.0",
+    "@zhushanwen/pi-pending-notifications": "0.3.0",
+    "@zhushanwen/pi-permission": "1.0.0",
+    "@zhushanwen/pi-plan": "0.3.0",
+    "@zhushanwen/pi-rename-session": "0.3.0",
+    "@zhushanwen/pi-scheduler": "0.1.0",
+    "@zhushanwen/pi-extension-logger": "0.2.0",
+    "@zhushanwen/pi-quota-providers": "0.6.0",
+    "@zhushanwen/pi-statusline": "0.6.0",
+    "@zhushanwen/pi-structured-output": "2.0.1",
+    "@zhushanwen/pi-subagent-workflow": "4.0.0",
+    "@zhushanwen/pi-todo": "0.5.1",
+    "@zhushanwen/pi-unified-hooks": "0.2.1",
+    "@zhushanwen/pi-vision": "0.2.0",
+    "create-xyz-plugin": "0.3.15",
+    "@xyz-agent/extension-protocol": "0.3.0",
+    "xyz-agent-plugin-sdk": "0.3.15",
+    "@xyz-agent/frontend": "0.6.0",
+    "@xyz-agent/runtime": "0.6.0",
+    "@xyz-agent/shared": "0.6.1"
+  },
+  "changesets": [
+    "restore-ask-user-comment",
+    "structured-output-linked-group-align",
+    "tidy-waves-description-phase-lint"
+  ]
+}

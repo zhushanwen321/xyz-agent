@@ -1,5 +1,12 @@
 # @zhushanwen/pi-goal
 
+## 0.6.2-dev.0
+
+### Patch Changes
+
+- Updated dependencies [6e2e453]
+  - @xyz-agent/extension-protocol@0.3.1-dev.0
+
 ## 0.6.1
 
 ### Patch Changes
