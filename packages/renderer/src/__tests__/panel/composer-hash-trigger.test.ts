@@ -176,11 +176,12 @@ describe('CommandPopover file query 过滤 + 路径展示（U7-U9）', () => {
     await nextTick()
   }
 
-  /** body 内的 file 候选按钮（含文件名/路径文本） */
+  /** body 内的 file 候选行（含文件名/路径文本）。
+   *  [B3] CommandPopover 行从 <Button> 改为纯 div（.cmd-row），选择器同步从 'button' 改为 '.cmd-row'。 */
   function bodyButtons(): HTMLElement[] {
-    return Array.from(document.body.querySelectorAll('button')).filter((b) => {
+    return Array.from(document.body.querySelectorAll('.cmd-row')).filter((b) => {
       const t = b.textContent ?? ''
-      // 排除空按钮，保留含候选文本的
+      // 排除空行，保留含候选文本的
       return t.includes('.ts') || t.includes('/') || t.includes('utils')
     })
   }

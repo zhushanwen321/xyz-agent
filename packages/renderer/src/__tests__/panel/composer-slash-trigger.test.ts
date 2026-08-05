@@ -142,11 +142,12 @@ function pushCommands(sessionId: string): void {
   events.dispatchSession(sessionId, msg)
 }
 
-/** reka-ui PopoverContent teleport 到 body：在 body 内找 item 按钮（v-for Button 渲染为 native <button>）。
- *  按 item 列表容器（.max-h-[180px]）定位——不依赖 button 文本含 /（skill 项显示去掉了 / 前缀）。 */
+/** reka-ui PopoverContent teleport 到 body：在 body 内找 item 行（v-for 渲染为 .cmd-row div）。
+ *  按 item 列表容器（.max-h-[180px]）定位——不依赖行文本含 /（skill 项显示去掉了 / 前缀）。
+ *  [B3] 行从 <Button> 改为纯 div（对齐 demo .cmd-row），选择器同步从 'button' 改为 '.cmd-row'。 */
 function bodyItemButtons(): HTMLElement[] {
   const list = document.body.querySelector('.max-h-\\[180px\\]')
-  return Array.from((list ?? document.body).querySelectorAll('button'))
+  return Array.from((list ?? document.body).querySelectorAll('.cmd-row'))
 }
 
 describe('CommandPopover slash query 过滤（U6-U8）', () => {

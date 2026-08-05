@@ -153,14 +153,15 @@ beforeEach(() => {
   document.body.innerHTML = ''
 })
 
-/** reka-ui PopoverContent portal 到 body：在 body 内找命令项 button（v-for Button 渲染为 native <button>）。
+/** reka-ui PopoverContent portal 到 body：在 body 内找命令项行（v-for 渲染为 .cmd-row div）。
  *  按 item 列表容器（.max-h-[180px]）定位——**不回退到 document.body**：mount Composer 时工具栏
  *  也会渲染 Button（发送位等 svg-only 按钮文案为空），回退会误抓工具栏按钮污染断言。列表未渲染
- *  （items.length===0）时返回 []，让 vi.waitFor 继续轮询直到 skill 加载、列表出现。 */
+ *  （items.length===0）时返回 []，让 vi.waitFor 继续轮询直到 skill 加载、列表出现。
+ *  [B3] 行从 <Button> 改为纯 div（对齐 demo .cmd-row），选择器同步从 'button' 改为 '.cmd-row'。 */
 function bodyItemButtons(): HTMLElement[] {
   const list = document.body.querySelector('.max-h-\\[180px\\]')
   if (!list) return []
-  return Array.from(list.querySelectorAll('button'))
+  return Array.from(list.querySelectorAll('.cmd-row'))
 }
 
 describe('Composer.vue landing 态 skill reload 集成（PR#123 reviewer-D WARNING-2/3）', () => {

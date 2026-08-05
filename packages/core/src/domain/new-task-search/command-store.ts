@@ -72,8 +72,56 @@ export interface RawCommand {
   sourceInfo?: CommandSourceInfo
 }
 
+/**
+ * builtin / 已知 extension 命令 → 专属 icon key SSOT。
+ *
+ * 对齐 demo v6 CommandPopover：每条命令独立 icon（非泛化 Star/Wrench）。
+ * key 同时是 renderer `SLASH_ICON_COMPONENTS` 的查询键——core 只产出字符串 key，
+ * renderer 把 key 绑定到 lucide 组件（core 不持有 view 资源）。
+ *
+ * 命令名均为去前缀裸名（`/compact`→`compact`、`/skill:commit`→`commit`），
+ * 经 `bareCommandName` 归一化后命中此表。
+ */
+export const BUILTIN_COMMAND_ICON_KEYS = [
+  'compact',
+  'goal',
+  'todos',
+  'permission',
+  'schedule',
+  'auto-rename',
+  'subagents',
+  'workflows',
+  'plan',
+  'context-engineering',
+  'context-stats',
+  'setup-model-policy',
+  'setup-statusline',
+  'commit', // skill 命令但 demo 赋予专属 Wand，单独列出
+] as const
+
+/** BUILTIN_COMMAND_ICON_KEYS 的 Set 视图（O(1) 命中判断） */
+const BUILTIN_COMMAND_ICON_KEY_SET = new Set<string>(BUILTIN_COMMAND_ICON_KEYS)
+
+/** 命令名归一化：剥离 `/` 与 `skill:` 路由前缀，返回裸命令名（icon key 查询用）。 */
+export function bareCommandName(name: string): string {
+  return name.replace(/^\//, '').replace(/^skill:/, '')
+}
+
+/**
+ * 取命令专属 icon key（applyCommands / 视图层 icon 推断 SSOT）。
+ * - builtin 命令命中（compact/goal/todos/...） → 返回命令名（key 直连 renderer 专属组件）
+ * - 其他 skill 命令 → 'star'（泛化，视图层染 reasoning 紫）
+ * - extension 命令 → 'terminal'
+ * - 默认 → 'wrench'
+ */
+export function iconKeyForCommand(name: string, source: string): string {
+  const bare = bareCommandName(name)
+  if (BUILTIN_COMMAND_ICON_KEY_SET.has(bare)) return bare
+  return iconKeyForSource(source)
+}
+
 /** source → icon key（extension→terminal, skill→star, 默认 wrench）。
- *  与 CommandPopover.iconForSource 同源逻辑，集中在此避免漂移。 */
+ *  builtin 未命中时的 fallback（iconKeyForCommand 内部调用）。 */
 function iconKeyForSource(source: string): string {
   if (source === 'extension') return 'terminal'
   if (source === 'skill') return 'star'
@@ -163,7 +211,7 @@ export function createCommandStore(storage: KVStorage) {
       id: c.name,
       name: c.name,
       kind: c.source,
-      icon: iconKeyForSource(c.source),
+      icon: iconKeyForCommand(c.name, c.source),
       description: c.description,
       sourceInfo: c.sourceInfo,
     }))

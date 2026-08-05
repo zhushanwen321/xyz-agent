@@ -22,6 +22,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { CommandSourceInfo } from '@xyz-agent/shared'
+import { iconKeyForCommand } from '@xyz-agent/core'
 import type { AppCommand } from '@/lib/search-types'
 
 /** slash 命令项（runtime session.commands payload 归一化 + icon key 推断） */
@@ -69,14 +70,6 @@ function loadShortcutOverrides(): Record<string, string> {
   } catch {
     return {}
   }
-}
-
-/** source → icon key（extension→terminal, skill→star, 默认 wrench）。
- *  与 CommandPopover.iconForSource 同源逻辑，集中在此避免漂移。 */
-function iconKeyForSource(source: string): string {
-  if (source === 'extension') return 'terminal'
-  if (source === 'skill') return 'star'
-  return 'wrench'
 }
 
 /** localStorage key for shortcut overrides persistence */
@@ -155,7 +148,7 @@ export const useCommandStore = defineStore('command', () => {
       id: c.name,
       name: c.name,
       kind: c.source,
-      icon: iconKeyForSource(c.source),
+      icon: iconKeyForCommand(c.name, c.source),
       description: c.description,
       sourceInfo: c.sourceInfo,
     }))

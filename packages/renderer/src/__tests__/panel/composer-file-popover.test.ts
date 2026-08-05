@@ -51,7 +51,7 @@ describe('CommandPopover file 分支', () => {
     await flushPromises()
     await nextTick()
 
-    const btns = Array.from(document.body.querySelectorAll('button'))
+    const btns = Array.from(document.body.querySelectorAll('.cmd-row'))
     const fileBtn = btns.find((b) => b.textContent?.includes('a.ts'))
     expect(fileBtn).toBeDefined()
     wrapper.unmount()
@@ -67,9 +67,9 @@ describe('CommandPopover file 分支', () => {
     await flushPromises()
     await nextTick()
 
-    // PopoverContent v-if="items.length > 0"，空候选不渲染浮层
-    const btns = Array.from(document.body.querySelectorAll('button'))
-    expect(btns.length).toBe(0)
+    // PopoverContent v-if="items.length > 0"，空候选不渲染浮层（无 .cmd-row 行）
+    const rows = Array.from(document.body.querySelectorAll('.cmd-row'))
+    expect(rows.length).toBe(0)
     wrapper.unmount()
   })
 
@@ -88,7 +88,7 @@ describe('CommandPopover file 分支', () => {
     await nextTick()
 
     // 目录项 name 补斜杠（src/），验证 G16 映射后目录正确识别
-    const dirBtn = Array.from(document.body.querySelectorAll('button')).find((b) =>
+    const dirBtn = Array.from(document.body.querySelectorAll('.cmd-row')).find((b) =>
       b.textContent?.includes('src/'),
     )
     expect(dirBtn).toBeDefined()

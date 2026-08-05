@@ -33,7 +33,7 @@ function raw(name: string, source: string, extra?: Partial<RawCommand>): RawComm
 }
 
 describe('createCommandStore', () => {
-  it('TC-1: applyCommands 归一化（source → icon key 映射 + 字段透传）', () => {
+  it('TC-1: applyCommands 归一化（builtin 命令名优先 → 专属 icon key，否则 source 泛化）', () => {
     const store = createCommandStore(makeMockStorage())
     store.applyCommands('s1', [
       raw('goal', 'extension'),
@@ -42,7 +42,10 @@ describe('createCommandStore', () => {
     ])
 
     const cmds = store.getCommands('s1')
-    expect(cmds.map((c) => c.icon)).toEqual(['terminal', 'star', 'wrench'])
+    // goal 命中 builtin（专属 Target 图标）→ 返回命令名 'goal'，不再是泛化 'terminal'
+    // skill:code-review 未命中 builtin → 走 source fallback 'star'
+    // plain 未命中 builtin 且 source='other' → 默认 'wrench'
+    expect(cmds.map((c) => c.icon)).toEqual(['goal', 'star', 'wrench'])
     expect(cmds.map((c) => c.name)).toEqual(['goal', 'skill:code-review', 'plain'])
     // id = name，kind = source
     expect(cmds[0]).toMatchObject({ id: 'goal', kind: 'extension' })
@@ -53,6 +56,22 @@ describe('createCommandStore', () => {
       description: 'desc',
       sourceInfo: { path: '/x/SKILL.md', source: 'skill' },
     })
+  })
+
+  it('TC-1b: builtin 命令名归一化（剥 / 与 skill: 前缀后命中）', () => {
+    const store = createCommandStore(makeMockStorage())
+    store.applyCommands('s1', [
+      raw('/compact', 'builtin'),
+      raw('/skill:commit', 'skill'),
+      raw('todos', 'extension'),
+      raw('unknown-cmd', 'extension'),
+    ])
+    const cmds = store.getCommands('s1')
+    // /compact → 剥前缀 'compact' 命中 builtin → 'compact'（专属 Layers 图标）
+    // /skill:commit → 剥 skill: 后 'commit' 命中 builtin → 'commit'（专属 Wand 图标）
+    // todos → 命中 builtin → 'todos'（专属 ListChecks）
+    // unknown-cmd → 未命中，source='extension' → 'terminal'
+    expect(cmds.map((c) => c.icon)).toEqual(['compact', 'commit', 'todos', 'terminal'])
   })
 
   it('TC-2: commandsBySession per-session 分区隔离', () => {

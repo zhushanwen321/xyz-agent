@@ -503,19 +503,20 @@ describe('T5.2 占位不随查询变化', () => {
 describe('U5/U6 toCommandItem icon + commandKind 透传', () => {
   it('U5 SessionCommand 映射带 icon（star）+ commandKind:slash', async () => {
     const store = useCommandStore()
-    // applyCommands 把 source:'skill' 归一化为 icon:'star'（iconKeyForSource）。
+    // applyCommands 把 source:'skill' 归一化为 icon:'star'（iconKeyForCommand source fallback）。
+    // name 选非 builtin 命令（builtin 会命中专属图标，测不到 star fallback）。
     // name 不带 / 前缀（对齐 pi get_commands 真实格式）。
-    store.applyCommands('s1', [{ name: 'goal', description: '设定目标', source: 'skill' }])
+    store.applyCommands('s1', [{ name: 'my-custom-skill', description: '自定义 skill', source: 'skill' }])
     const sid = ref<string | null>('s1')
     const { query } = useSearch(sid)
 
-    const sections = await query('goal', { activeSessionId: 's1' })
+    const sections = await query('my-custom-skill', { activeSessionId: 's1' })
 
     const cmdSection = findSection(sections, '命令')
     expect(cmdSection).toBeTruthy()
-    const hit = cmdSection!.items.find((it) => it.title === 'goal')
+    const hit = cmdSection!.items.find((it) => it.title === 'my-custom-skill')
     expect(hit).toBeTruthy()
-    // SessionCommand 分支透传 icon（star）
+    // SessionCommand 分支透传 icon（star：非 builtin skill 命令的 source fallback）
     expect(hit!.icon).toBe('star')
     // commandKind='slash'：useSearchJump 据此走注入分支（不靠 title 前缀猜测）
     expect(hit!.commandKind).toBe('slash')
