@@ -10,12 +10,19 @@
  * - tab 切换（多问题来回修改）
  * - 单选 / 多选
  * - Other 自由文本（选项末尾追加输入框）
+ * - comment 附加评论
  * - Submit 汇总提交 / Cancel 取消
  *
  * answers 格式（ask-user/types.ts AskUserAnswers）：
  * - 单选：value = 选中项 value string
  * - 多选：value = JSON.stringify(value[])
  * - Other：独立 key `${header}__other`
+ * - comment：独立 key `${header}__comment`
+ *
+ * 注意：此文件是 4.0.1 comment restore 的一部分（main 已在 4.0.0 删除本文件的 comment UI：
+ *    QState.comment / `${key}__comment` 拼装 / allowComment 输入区）。merge 时本分支的
+ *    改动必须保留（protocol allowComment 已 restore，GUI 消费方在此），
+ *    详见 .changeset/restore-ask-user-comment.md。
  *
  * 样式对齐 demo v3（docs/page-design/v3/ask-user/inline-ask-user-demo-v3.html）：
  * - 无边框一体化：去掉 border-b/border-t 分层，单容器 bg-input 靠间距分区
@@ -55,6 +62,7 @@ const activeQuestion = computed(() => props.questions[activeIdx.value])
 interface QState {
   selectedValues: string[]     // 选中的 option value（单选长度 0/1，多选任意）
   otherText: string            // Other 自由文本
+  comment: string              // 附加评论
 }
 const states = ref<Record<string, QState>>({})
 
@@ -63,7 +71,7 @@ watch(() => props.questions, (qs) => {
   const next: Record<string, QState> = {}
   for (const q of qs) {
     const key = qKey(q)
-    next[key] = states.value[key] ?? { selectedValues: [], otherText: '' }
+    next[key] = states.value[key] ?? { selectedValues: [], otherText: '', comment: '' }
   }
   states.value = next
   activeIdx.value = 0
@@ -159,6 +167,9 @@ function isQuestionAnswered(q: AskUserQuestion): boolean {
   if (!st) return false
   // 无选项的纯自由文本问题：otherText 有值即答完
   if (!q.options?.length) return st.otherText.trim().length > 0
+  // allowComment 问题：评论即已回答（「无选项适用但想说明原因」场景——只填评论也能提交，
+  // 与协议 allowComment 设计意图一致；RPC 解码 protoAnswersToResult 保留 comment-only 答案）
+  if (q.allowComment && st.comment.trim().length > 0) return true
   // 有选项：Other 选中必须有文本才算答完
   const otherSelected = st.selectedValues.includes(OTHER_VALUE)
   if (otherSelected && !st.otherText.trim()) {
@@ -213,6 +224,10 @@ function onSubmit(): void {
       if (st.otherText) {
         answers[key] = st.otherText
       }
+    }
+    // 评论（独立 key）
+    if (st.comment) {
+      answers[`${key}__comment`] = st.comment
     }
   }
   emit('submit', JSON.stringify(answers))
@@ -397,6 +412,16 @@ function onSubmit(): void {
           :placeholder="t('extensionUI.inputPlaceholder')"
           data-testid="ask-user-free-text"
         />
+
+        <!-- 附加评论 -->
+        <div v-if="activeQuestion.allowComment" class="flex flex-col gap-0.5">
+          <span class="pl-0.5 text-[11px] text-neutral-dim">{{ t('extensionUI.additionalComment') }}</span>
+          <Input
+            v-model="states[qKey(activeQuestion)].comment"
+            :placeholder="t('extensionUI.commentPlaceholder')"
+            :data-testid="`ask-user-comment-${qKey(activeQuestion)}`"
+          />
+        </div>
       </template>
     </div>
 

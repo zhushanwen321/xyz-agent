@@ -27,25 +27,46 @@ git diff main...HEAD --stat
 
 ### 路径 1：pi 环境（有 pi workflow 能力）
 
-**适用条件**：当前主 agent 是 pi agent，且能执行 `.pi/workflows/` 下的 workflow
+**适用条件**：当前主 agent 是 pi agent，且能调用内置 workflow
 （检测：pi CLI 可用 + 主 agent 支持 workflow 调用）。
 
-**执行**：跑 `review-fix-loop.js` workflow（5 agent 并行 → 聚合 → 修 → 重审，直到 clean 或 maxRounds）：
+**执行**：跑内置 `review-fix-loop` workflow（5 agent 并行 → 聚合 → 修 → 重审，直到 clean 或 maxRounds）：
 
 ```bash
-# 主 agent 调用 pi workflow（参数可调）
-# maxRounds 默认 10；skipFallow 默认 true（未装 fallow 时跳过）；baseRef 默认 main
-# model 可选，不传则用当前会话模型
-pi workflow run .pi/workflows/review-fix-loop.js --args '{maxRounds:10, baseRef:"main", skipFallow:true}'
+# 主 agent 调用内置 workflow（用名字，不用文件路径）
+# targetType=git-diff + target=<baseRef> 指定审查 git 变更
+# batch1 传入 5 个维度 agent（pi 从 .agents/agents/review-*.md 解析实体）
+# autoCommit=true：fix 后自动 commit（与旧定制版行为一致）
+# recheckAfterFix=false（默认）：省 token；大改动/担心 fix 引入回归时传 true 开启强回归重审
+# skipCleanAgents=true：单轮 clean 的 agent 下轮跳过（省 token）
+# maxRounds 默认 10；model 可选，不传则用当前会话模型
+pi workflow run review-fix-loop --args '{
+  targetType: "git-diff",
+  target: "main",
+  batch1: "review-arch-boundary,review-business-logic,review-type-safety,review-electron-build,review-test-coverage",
+  maxRounds: 10,
+  autoCommit: true,
+  recheckAfterFix: false,
+  skipCleanAgents: true
+}'
 ```
 
-workflow 内部逻辑（详见 `.pi/workflows/review-fix-loop.js`）：
-- 可选 fallow pre-scan（Scan phase，单独预先跑）
-- 5 agent 全并行单批 `parallel()`（Review phase，无 worktree 约束不需分批）
-- aggregator 聚合去重，产出 `aggregated.md` + `must_fix` 计数
-- `must_fix === 0` 判 clean；否则 fix agent 批量修复并 commit，进入下一轮
-- S1 conservative：连续 2 轮 clean 的 agent 会被跳过；任何 fix 全部重新启用
-- stuck 检测：连续 3 轮问题数不降则停
+> **如何找到内置版**：内置 workflow 用**名字**调用（不带文件路径），pi 解析顺序为
+> 「内置 → npm 包 `@zhushanwen/pi-subagent-workflow/workflows/` → 项目 `.pi/workflows/`」。
+> 项目曾有一个同名定制版 `.pi/workflows/review-fix-loop.js` 会覆盖内置版，**现已删除**，内置版直接生效。
+> `pi workflow list` 中名为 `review-fix-loop`（无 `.js` 路径后缀）的条目即内置版。
+
+内置 workflow 行为（参数 → 效果）：
+- **审查范围**：`targetType=git-diff` + `target=main` → 审查 `git diff main...HEAD`（含未提交的工作区改动）
+- **维度 agent**：`batch1` 逗号分隔 5 个 agent 名，全并行单批 review（无 worktree 约束不需分批）。各 agent 的审查焦点已内置于 `.agents/agents/review-*.md` 正文，无需额外注入 focus
+- **聚合**：内置 aggregator prompt 合并去重 5 份报告为 `aggregated.md` + `must_fix` 计数（workflow 自带，不依赖 `review-aggregator.md`）
+- **clean 判定**：`must_fix === 0` 判 clean；否则 fix agent 批量修复并 `autoCommit` commit，进入下一轮
+- **clean 跳过**（`skipCleanAgents`）：单轮 `must_fix===0` 的 agent 下轮跳过；`recheckAfterFix` 默认 false（省 token，clean agent 下轮跳过不重审），传 true 开启强回归模式（fix 后重派全批，clean agent 走限定 prompt 只审改动文件，覆盖"fix 引入回归"）
+- **stuck 检测**：连续 `stuckThreshold`（默认 3）轮问题数不降则停
+
+> **与旧定制版的差异**（已接受）：旧定制版 S1 conservative 要求「连续 2 轮 clean」才跳过 agent，
+> 内置版「单轮 clean」即跳过。默认 recheckAfterFix=false 时，"fix 引入回归"场景不覆盖
+> （省 token）；担心回归时传 recheckAfterFix=true 开启强回归重审。少审一轮换取 token 效率。
 
 ### 路径 2：非 pi 环境（手工编排，固定 2 轮）[本次新增]
 

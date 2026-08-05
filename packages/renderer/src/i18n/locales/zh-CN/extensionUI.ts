@@ -5,4 +5,6 @@ export default {
   unansweredHint: '还有 {count} 题未答',
   dialogTitle: 'Extension 请求',
   selectPlaceholder: '请选择',
+  additionalComment: '附加评论',
+  commentPlaceholder: '选填，补充说明…',
 }

@@ -40,6 +40,8 @@ import {
 } from "./execution/subagent-service.ts";
 import { SubprocessAgentRunner } from "./execution/subprocess-agent-runner.ts";
 import { WorktreeManager } from "./execution/worktree-manager.ts";
+import { setupSubagentListInjector } from "./injectors/subagent-list-injector.ts";
+import { setupWorkflowListInjector } from "./injectors/workflow-list-injector.ts";
 import { renderBgNotifyMessage } from "./interface/bg-notify-render.ts";
 import { registerWorkflowsCommand } from "./interface/commands.ts";
 import { toGuiCtx } from "./interface/gui-mappers.ts";
@@ -88,6 +90,17 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   registerSubagentTool(pi);
   registerSubagentsCommand(pi);
   pi.registerMessageRenderer("subagent-bg-notify", renderBgNotifyMessage);
+
+  // ════════════════════════════════════════════════════════════
+  //  injectors：before_agent_start 注入 <available_subagents> + <available_workflows>
+  //
+  //  归位自 unified-hooks（subagent-list-injector）+ 新增 workflow-list-injector。
+  //  injector 是 subagent-workflow 的内聚功能（让 LLM 知道有哪些 agent/workflow
+  //  可用），与同包 resource-discovery 同包后直接 import，消除跨包依赖（ADR-031）。
+  //  pi 串联多 before_agent_start handler：各自返回 systemPrompt 链式叠加。
+  // ════════════════════════════════════════════════════════════
+  setupSubagentListInjector(pi);
+  setupWorkflowListInjector(pi);
 
   // 模块级缓存：主 session 的 sessionFile（fork source 解析用）。
   let cachedMainSessionFile: string | undefined;

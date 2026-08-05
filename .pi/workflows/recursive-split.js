@@ -1,12 +1,11 @@
 const meta = {
   name: "recursive-split",
   description: "递归拆分问题求解：cw 状态机 + 每 node 一个 agent + frontier 驱动 BFS",
-  phases: [
-    { title: "init", detail: "创建 root WorkUnit" },
-    { title: "bfs", detail: "frontier 驱动 BFS 主循环" },
-    { title: "done", detail: "返回结果" },
-    { title: "error", detail: "顶层兜底错误返回" },
-  ],
+  // phase 命名：{layer首字母}-{slug}（如 e-auth、w-test-login），每个 WorkUnit 独立 phase。
+  // run-time 由 executeActionAgent 内 agent() 的 opts.phase 字段逐 node 设置（per-call
+  // 生效，不靠全局 phase()——parallel 并发时多个 layer 的 node 互不覆盖）。
+  // init/done/error 三段无 agent() 调用，sidebar 不显示（引擎只渲染含 node 的 phase）。
+  phases: ["init", "bfs", "done", "error"],
 };
 
 // ── 常量 ────────────────────────────────────────────────────────────
@@ -14,8 +13,17 @@ const meta = {
 const { execSync } = require("child_process");
 // 纯逻辑（常量 + 纯函数）从 utils 模块导入，供 vitest 单测覆盖。
 // .cjs 扩展名强制 CommonJS（项目根 package.json 声明 type:module，.js 会被当 ESM 解析）。
-// 用 process.cwd() 拼绝对路径：pi worker 线程继承父线程 cwd（= workspace 根），
-// 相对路径 "./recursive-split-utils.cjs" 会解析到 <cwd>/recursive-split-utils.cjs 而非脚本同目录。
+//
+// 双通道定位 utils（同 review-fix-loop.js 模式）：workerData.scriptPath 优先——按脚本
+// 自身所在目录解析，从子目录启动 pi / 内置 workflow 部署到任意目录均能定位自身 utils；
+// cwd fallback 兜底——其他引擎无 workerData 时从项目根解析 .pi/workflows/。
+// 单一 cwd 锚点的缺陷：pi worker 线程继承父线程 cwd，从子目录启动 pi 时 cwd 变成子目录，
+// "<cwd>/.pi/workflows/recursive-split-utils.cjs" 解析失败（O-1 修复）。
+// 两个分支拼的 suffix 不同（workerData 分支 dirname 已含 .pi/workflows/，cwd 分支需补全）。
+const _utilsPath =
+  typeof workerData !== "undefined" && workerData && typeof workerData.scriptPath === "string"
+    ? require("path").dirname(workerData.scriptPath) + "/recursive-split-utils.cjs"
+    : process.cwd() + "/.pi/workflows/recursive-split-utils.cjs";
 const {
   MAX_NODE_ROUNDS,
   MAX_FRONTIER_RETRIES,
@@ -23,18 +31,22 @@ const {
   isTerminal,
   assertValidUnitId,
   escapeSingleQuotes,
+  slugFromUnitId,
   decideNodeOutcome,
+  decideAbortOnAgentFailure,
+  aggregateNodeFailure,
+  collectFailedUnits,
+  resolveNodeTimeoutMs,
   buildActionPrompt,
   buildActionSchema,
   topoSort,
   selectActionable,
   detectStuckNodes,
   pruneTerminalEntries,
-} = require(process.cwd() + "/.pi/workflows/recursive-split-utils.cjs");
+} = require(_utilsPath);
 
-// 单 node 超时（60 分钟）：agent 在 session 内连续跑多个 cw action（8 action + gate 重试），
-// 比 per-action 更耗时。对齐 review-fix-loop.js 的 30min/action × 2 的量级。
-const NODE_TIMEOUT_MS = 60 * 60 * 1000;
+// 节点 agent 超时预算统一由 resolveNodeTimeoutMs(nextAction) 解析（utils.cjs，已单测）：
+// progressive 段 15min / execute·test 30min / 其余非 progressive 15min。
 
 // cw frontier 超时：只在 BFS 轮次边界调用，不应阻塞太久
 const FRONTIER_TIMEOUT_MS = 30000;
@@ -108,28 +120,61 @@ async function abortUnit(unitId) {
 }
 
 /**
- * 执行单节点：派 agent 自主连续推进 cw action 直到阻塞。
+ * 执行单节点：派 agent 跑明确的 action（或合并的 progressive action 段）。
+ * description 含 action（{layer首字母}-{action}-{slug}，如 e-execute-auth），
+ * phase（WorkUnit 级）不含 action（{layer首字母}-{slug}）。
+ * timeoutMs 按 resolveNodeTimeoutMs(node.nextAction) 解析（utils.cjs，已单测）。
  * returnMeta:true → 返回 {unitId, value, sessionFile?, failedReason?}。
- * 失败（r.error / 超时）→ abortUnit + 返回 failedReason（不 throw，主循环继续其他节点）。
+ * 失败三个来源：(1) decideNodeOutcome(r) 检 r.error（pi 层崩溃/timeout）；
+ *              (2) r.value.stopReason=gate-failed（agent 自报：同一 action 重试 3 次仍 fail）；
+ *              (3) r.value.stopReason=cannot-proceed（agent 自报：需外部决策/无法继续）。
+ * (1)(2) 都 abortUnit + 返回 failedReason；(3) 不 abort——prompt 契约是「交给上层决策」，
+ * abortUnit 会级联销毁健康 WorkUnit；节点保留在 frontier 等 re-dispatch，持续无法推进时
+ * 由 detectStuckNodes 熔断（MAX_NODE_ROUNDS 轮）。failedReason 均进最终返回值的 failedUnits 聚合。
+ * 不 throw（主循环继续其他节点）。
  * 注意：失败字段命名 failedReason 而非 error，避免被 parallel() 归一化吞掉其他字段。
  */
-async function executeNodeNextAction(node, sessionFiles) {
+async function executeActionAgent(node, sessionFiles) {
+  // slug 取第一个冒号后的完整部分，并将子 unit 分隔符 :: 替换为 -（避免 description 含 ::）。
+  // 例：wave:recursive-root::renderer → recursive-root-renderer（多子 wave 同名 bug 修复）
+  const slug = slugFromUnitId(node.unitId);
+  // phase（WorkUnit 级）不含 action；description（action-centric）含 action。
+  const phaseName = node.scope[0] + "-" + slug;
+  const description = node.scope[0] + "-" + node.nextAction + "-" + slug;
+  const timeoutMs = resolveNodeTimeoutMs(node.nextAction);
   const r = await agent({
     prompt: buildActionPrompt(node),
     schema: buildActionSchema(node),
+    phase: phaseName,
+    description: description,
     fork: true,
     worktree: false,
     returnMeta: true,
     cwd: $WORKSPACE,
-    timeoutMs: NODE_TIMEOUT_MS,
+    timeoutMs: timeoutMs,
   });
 
-  // 失败判定抽到 decideNodeOutcome（utils.cjs，供单测）；此处保留副作用（log + abort）+ 返回值组装。
+  // 失败来源 1：pi 层崩溃/timeout（decideNodeOutcome 检 r.error）
   const outcome = decideNodeOutcome(r);
   if (outcome.failed) {
     log("Node " + node.unitId + " failed: " + (outcome.failedReason ?? "timeout"));
     await abortUnit(node.unitId);
     return { unitId: node.unitId, value: r.value, sessionFile: r.sessionFile, failedReason: outcome.failedReason };
+  }
+
+  // 失败来源 2/3：agent 自报失败（stopReason=gate-failed/cannot-proceed）。
+  // 不按 failedReason 非空判定：LLM 结构化输出不受 schema 约束，action 成功
+  // （stopReason=action-done/progressive-done/closed）后 failedReason 残留是常见现象，
+  // 按 failedReason 判定会把刚成功的节点立即 abortUnit 销毁（MF-3）。
+  // abort-vs-retain 非对称副作用抽到 decideAbortOnAgentFailure（utils.cjs，供 vitest 单测）：
+  // gate-failed → abort=true（熔断销毁）；cannot-proceed → abort=false（保留 frontier 等 re-dispatch）。
+  const agentFailure = decideAbortOnAgentFailure(r.value);
+  if (agentFailure) {
+    log("Node " + node.unitId + " failed (agent-reported): " + agentFailure.failedReason);
+    if (agentFailure.abort) {
+      await abortUnit(node.unitId);
+    }
+    return { unitId: node.unitId, value: r.value, sessionFile: r.sessionFile, failedReason: agentFailure.failedReason };
   }
 
   return { unitId: node.unitId, value: r.value, sessionFile: r.sessionFile };
@@ -160,8 +205,14 @@ try {
   const prevStatus = {};
   // nodeRounds: unitId → status 未推进的连续轮数（node 级熔断用）
   const nodeRounds = {};
+  // replanArm: unitId → replan 首轮放行标记（replan 仅豁免首轮，连续 replan 轮走熔断）
+  const replanArm = {};
   // frontierFailures: queryFrontier 连续返回 null 的次数（达 MAX_FRONTIER_RETRIES 才 break）
   let frontierFailures = 0;
+  // nodeFailures: unitId → failedReason（BFS 结束时聚合进最终返回值 failedUnits，
+  // 供上层（调用方主 agent）决策：哪些节点失败、为什么——cannot-proceed 的上层决策通道）
+  const nodeFailures = {};
+  // collectFailedUnits: Map → {unitId, failedReason}[]（done & error 终态返回值共用，utils.cjs）
 
   while (true) {
     // 不变式：queryFrontier 只在轮次边界调（此处 parallel 已全 settle）
@@ -174,8 +225,19 @@ try {
       frontierFailures++;
       log("queryFrontier null (" + frontierFailures + "/" + MAX_FRONTIER_RETRIES + "), retrying next round");
       if (frontierFailures >= MAX_FRONTIER_RETRIES) {
+        // 永久故障：树残留非终态节点，不能伪装成完整完成。与下方 catch 一致返回
+        // status:error（不 break 走 phase("done")），调用方据此区分完整/不完整树。
         log("queryFrontier failed " + MAX_FRONTIER_RETRIES + " consecutive times, aborting BFS");
-        break;
+        phase("error");
+        const failedUnits = collectFailedUnits(nodeFailures);
+        return {
+          status: "error",
+          error:
+            "queryFrontier failed " +
+            MAX_FRONTIER_RETRIES +
+            " consecutive times, tree incomplete",
+          ...(failedUnits.length > 0 ? { failedUnits } : {}),
+        };
       }
       continue;
     }
@@ -193,10 +255,22 @@ try {
     }
 
     // node 级熔断：同一 node 被 dispatch 多轮 status 没推进 → abort
-    const nodesToAbort = detectStuckNodes(actionable, prevStatus, nodeRounds);
+    const nodesToAbort = detectStuckNodes(actionable, prevStatus, nodeRounds, replanArm);
     for (const unitId of nodesToAbort) {
       log("Node " + unitId + " stuck (status not progressing for " + MAX_NODE_ROUNDS + " rounds), aborting");
       await abortUnit(unitId);
+      // MF-1: 熔断 abort 写入 nodeFailures——replan/clarify 循环型节点每次 dispatch 返回
+      // 成功、无 failedReason，nodeFailures 从未写入，熔断是这类静默截断节点对上层
+      // failedUnits 决策通道唯一可见点（否则整棵树以 status:done 返回且无 failedUnits
+      // 键，调用方主 agent 把静默截断当完整交付）。守卫防覆盖：sequential catch / 早前
+      // 轮次已记录的节点保持原 failedReason（"threw: ..." / "cannot-proceed" 比熔断
+      // 原因更有语义，且失败状态已对上层可见）。
+      if (!nodeFailures[unitId]) {
+        aggregateNodeFailure(nodeFailures, {
+          unitId,
+          failedReason: "stuck: status not progressing for " + MAX_NODE_ROUNDS + " rounds",
+        });
+      }
     }
 
     // 排除已熔断 abort 的节点
@@ -207,18 +281,36 @@ try {
     if (concurrent.length > 0) {
       log("BFS: " + concurrent.length + " concurrent + " + sequential.length + " sequential");
       const results = await parallel(
-        concurrent.map((node) => executeNodeNextAction(node, sessionFiles))
+        concurrent.map((node) => executeActionAgent(node, sessionFiles))
       );
       // 回收 sessionFile + 识别失败
       for (const r of results) {
         if (!r) continue;
         if (r.status === "failed") {
-          // executeNodeNextAction 意外 throw（parallel 归一化形态），无法拿到 unitId
-          log("BFS: concurrent node failed (thrown): " + (r.error ?? "unknown"));
+          // executeActionAgent 意外 throw（parallel 归一化形态）。parallel 结果与
+          // concurrent 数组按下标一一对应 → 经 indexOf 恢复 unitId，abort + 写入
+          // nodeFailures（MF-1：与 sequential catch 分支对齐，thrown 节点不能对
+          // failedUnits 决策通道不可见）。
+          const thrownIdx = results.indexOf(r);
+          const thrownUnitId = thrownIdx >= 0 ? concurrent[thrownIdx]?.unitId : undefined;
+          log(
+            "BFS: concurrent node failed (thrown): " + (r.error ?? "unknown") +
+            (thrownUnitId ? " (" + thrownUnitId + ")" : "")
+          );
+          if (thrownUnitId) {
+            await abortUnit(thrownUnitId);
+            aggregateNodeFailure(nodeFailures, {
+              unitId: thrownUnitId,
+              failedReason: "threw: " + String(r.error ?? "unknown"),
+            });
+          }
           continue;
         }
         if (r.sessionFile) sessionFiles[r.unitId] = r.sessionFile;
+        // nodeFailures 聚合：失败→写入；成功（含 cannot-proceed re-dispatch 恢复）→移出清单。
+        // 抽到 aggregateNodeFailure（utils.cjs，供 vitest 单测）。日志在聚合前打（保留可观测性）。
         if (r.failedReason) log("BFS: " + r.unitId + " failed: " + r.failedReason);
+        aggregateNodeFailure(nodeFailures, r);
       }
     }
 
@@ -227,30 +319,43 @@ try {
     for (const node of sequential) {
       let r;
       try {
-        r = await executeNodeNextAction(node, sessionFiles);
+        r = await executeActionAgent(node, sessionFiles);
       } catch (e) {
         // Info #4：sequential 节点意外 throw 时纵深防御——对齐 parallel thrown 分支，
         // 调 abortUnit 中止该节点对应的 WorkUnit（节点状态可能已在半推进态，避免脏状态残留）。
         log("BFS: sequential node " + node.unitId + " threw: " + String(e.message || e) + ", aborting unit");
         await abortUnit(node.unitId);
+        // MF-5: catch 分支同样写入 nodeFailures——abort 的节点若对上层 failedUnits
+        // 决策通道不可见，整棵树会以 status:done 返回而调用方永远不知道节点被静默杀掉。
+        // aggregateNodeFailure 期望 {unitId, failedReason} 形状（与 executeActionAgent
+        // 返回的失败结果一致），failedReason 取异常消息。
+        aggregateNodeFailure(nodeFailures, { unitId: node.unitId, failedReason: "threw: " + String(e.message || e) });
         continue;
       }
       if (r && r.sessionFile) sessionFiles[r.unitId] = r.sessionFile;
+      // nodeFailures 聚合（与 concurrent 分支同一语义，抽到 aggregateNodeFailure）。
       if (r && r.failedReason) log("BFS: " + r.unitId + " failed: " + r.failedReason);
+      aggregateNodeFailure(nodeFailures, r);
     }
 
-    // Suggestion #3：每轮 BFS 结束后清理已进入终态的节点在 prevStatus / nodeRounds 中的 entry，
+    // Suggestion #3：每轮 BFS 结束后清理已退出调度的节点在 prevStatus / nodeRounds 中的 entry，
     // 防止两 Map 随任务推进无界累积。frontier.nodes 含本轮所有非终态 actionable+blocked 节点，
-    // 凡不在本轮 frontier 且上轮 status 已终态的节点即已退出调度，安全清理。
+    // 凡不在本轮 frontier 的节点即已退出调度（queryFrontier 失败时上方 continue 不会走到这里），安全清理。
     pruneTerminalEntries(
       prevStatus,
       nodeRounds,
-      (frontier.nodes ?? []).map((n) => n.unitId)
+      (frontier.nodes ?? []).map((n) => n.unitId),
+      replanArm
     );
   }
 
   phase("done");
-  return { status: "done", rootUnitId };
+  const failedUnits = collectFailedUnits(nodeFailures);
+  return {
+    status: "done",
+    rootUnitId,
+    ...(failedUnits.length > 0 ? { failedUnits } : {}),
+  };
 } catch (e) {
   // 兜底：topoSort 环检测 / createRootUnit 失败 / startLayer 校验 / 其他未预期错误
   // 不 rethrow——workflow 脚本顶层 return 错误结果，由调用方（主 agent）决策

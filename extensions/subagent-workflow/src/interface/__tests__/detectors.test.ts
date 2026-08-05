@@ -44,6 +44,13 @@ describe("findFlattenedArgKeys (workflow args flatten detector — P0)", () => {
     expect(findFlattenedArgKeys({ action: "status" })).toEqual([]);
   });
 
+  it("review-fix-loop fixAgent 平铺被识别（TC7）", () => {
+    expect(findFlattenedArgKeys({ action: "run", name: "review-fix-loop", fixAgent: "worker" })).toEqual(["fixAgent"]);
+    expect(
+      findFlattenedArgKeys({ action: "run", name: "review-fix-loop", args: { fixAgent: "worker" } }),
+    ).toEqual([]);
+  });
+
   it("triggers for review-fix-loop args flattened to top level (incl. batchN prefix)", () => {
     expect(
       findFlattenedArgKeys({ action: "run", name: "review-fix-loop", targetType: "git-diff", target: "main" }),
@@ -56,6 +63,27 @@ describe("findFlattenedArgKeys (workflow args flatten detector — P0)", () => {
     ).toEqual([]);
     // 未知键（如 batchl 拼错）不属于白名单，不触发平铺检测（由 workflow 内白名单校验报错）
     expect(findFlattenedArgKeys({ action: "run", name: "x", batchl: "reviewer" })).toEqual([]);
+  });
+
+  it("review-fix-loop 收敛/模型参数平铺被识别（S-13 补全 4 键）", () => {
+    expect(
+      findFlattenedArgKeys({
+        action: "run",
+        name: "review-fix-loop",
+        model: "ds-flash",
+        maxFixAttempts: 3,
+        convergeNewIssues: 2,
+        convergeRounds: 3,
+      }),
+    ).toEqual(["model", "maxFixAttempts", "convergeNewIssues", "convergeRounds"]);
+    expect(
+      findFlattenedArgKeys({
+        action: "run",
+        name: "review-fix-loop",
+        args: { model: "ds-flash", maxFixAttempts: 3 },
+        convergeRounds: 3,
+      }),
+    ).toEqual(["convergeRounds"]);
   });
 
   it("returns [] for non-object input", () => {

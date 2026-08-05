@@ -11,9 +11,11 @@ import {
 	LEFT,
 	mockTui,
 	multiQ,
+	multiQWithComment,
 	RIGHT,
 	singleQ,
 	singleQMulti,
+	singleQWithComment,
 	stubTheme,
 	TAB,
 	UP,
@@ -161,20 +163,24 @@ describe("AskUserComponent — multi question tab nav", () => {
 		const { c, result } = make([singleQMulti]);
 		// singleQMulti: [Auth, Search]，光标初始在 Auth(0)
 		c.handleInput(DOWN); // 光标移到 Search(1)，未 toggle
-		c.handleInput(ENTER); // Enter 应同时选中 Search + confirm → submit（单问题）
+		c.handleInput(ENTER); // Enter 应同时选中 Search + confirm + allowComment → comment
+		// 断言进入了评论模式（说明 Enter 确认了，而非 no-op）
+		const lines = c.render(60);
+		expect(lines.some((l) => l.toLowerCase().includes("comment"))).toBe(true);
+		c.handleInput(ENTER); // 跳过评论 → submit（单问题）
 		expect(result.val!.answers["Which features?"]).toBe("Search");
 	});
 
-	it("C-S3: auto-confirm（←/→ 切 tab）已答问题自动确认", () => {
-		// S-3 锁定：←/→ 切走时已答问题 auto-confirm
+	it("C-S3: auto-confirm（←/→ 切 tab）跳过评论输入行，仅 Enter 路径才进评论", () => {
+		// S-3 锁定：allowComment 的问题，←/→ 切走只 auto-confirm，不进评论模式
 		const twoQMulti: Question[] = [
-			{ question: "Q1", header: "First", options: [{ label: "A" }, { label: "B" }], multiSelect: true },
+			{ question: "Q1", header: "First", options: [{ label: "A" }, { label: "B" }], multiSelect: true, allowComment: true },
 			{ question: "Q2", header: "Second", options: [{ label: "X" }, { label: "Y" }] },
 		];
 		const { c, result } = make(twoQMulti);
 		c.handleInput(" "); // Q1 toggle A
-		c.handleInput(RIGHT); // → Q2，auto-confirm Q1
-		// 验证：当前在 Q2。Q2 选 X → Submit
+		c.handleInput(RIGHT); // → Q2，auto-confirm Q1，不进评论
+		// 验证：当前在 Q2（非 Q1 的评论模式）。Q2 选 X → Submit
 		c.handleInput(ENTER); // Q2 select X → Submit
 		c.handleInput(ENTER); // Submit
 		expect(result.val!.answers["Q1"]).toBe("A"); // auto-confirm 生效
@@ -262,14 +268,13 @@ describe("AskUserComponent — multi-select toggle", () => {
 		expect(lines.some((l) => l.includes("[ ]") && l.includes("Auth"))).toBe(true);
 	});
 
-	it("C-24 (AC-18): multi-select toggle stays in options mode (no editor)", () => {
+	it("C-24 (AC-18): multi-select toggle does NOT trigger comment mode", () => {
+		// singleQMulti has allowComment:true + multiSelect:true
 		const { c } = make([singleQMulti]);
-		c.handleInput(" "); // toggle — stays in options mode
+		c.handleInput(" "); // toggle — should NOT enter comment mode
 		const lines = c.render(60);
-		// 未进入编辑器模式（无反色光标行）
-		expect(lines.some((l) => l.includes("\x1b[7m"))).toBe(false);
-		// toggle 状态可见
-		expect(lines.some((l) => l.includes("[✓]") && l.includes("Auth"))).toBe(true);
+		// No comment prompt shown
+		expect(lines.some((l) => l.toLowerCase().includes("comment"))).toBe(false);
 	});
 });
 
@@ -467,6 +472,108 @@ describe("AskUserComponent — multi-char paste in editor", () => {
 	});
 });
 
+// ── 5f. 评论流程（FR-4.6 / FR-11 / AC-6/12/17）─────────
+describe("AskUserComponent — comment flow", () => {
+	it("C-33: single-select + allowComment Enter enters comment mode", () => {
+		const { c } = make([singleQWithComment]);
+		c.handleInput(ENTER); // select Postgres
+		const lines = c.render(60);
+		expect(lines.some((l) => l.toLowerCase().includes("comment"))).toBe(true);
+	});
+
+	it("C-34 (AC-12): comment Enter empty skips and submits (single)", () => {
+		const { c, result } = make([singleQWithComment]);
+		c.handleInput(ENTER); // select → comment mode
+		c.handleInput(ENTER); // empty comment → skip → submit
+		expect(result.val).not.toBeUndefined();
+		expect(result.val!.answers["Which DB? (with comment)"]).toBe("Postgres");
+	});
+
+	it("C-35: comment Enter with text saves comment", () => {
+		const { c, result } = make([singleQWithComment]);
+		c.handleInput(ENTER); // select → comment mode
+		c.handleInput("f");
+		c.handleInput("a");
+		c.handleInput("s");
+		c.handleInput("t");
+		c.handleInput(ENTER); // save comment → submit
+		expect(result.val!.answers["Which DB? (with comment)"]).toBe("Postgres — fast");
+	});
+
+	it("C-38: multi-select + allowComment: Enter after toggle enters comment", () => {
+		const { c } = make([singleQMulti]);
+		c.handleInput(" "); // toggle Auth
+		c.handleInput(ENTER); // confirm → comment mode
+		const lines = c.render(60);
+		expect(lines.some((l) => l.toLowerCase().includes("comment"))).toBe(true);
+	});
+
+	it("C-39: Other + allowComment: freeText then comment", () => {
+		const { c, result } = make([singleQWithComment]);
+		// Navigate to Other
+		c.handleInput(DOWN);
+		c.handleInput(DOWN);
+		c.handleInput(ENTER); // open freeform
+		c.handleInput("c");
+		c.handleInput("u");
+		c.handleInput("s");
+		c.handleInput("t");
+		c.handleInput("o");
+		c.handleInput("m");
+		c.handleInput(ENTER); // save freeText → allowComment → comment mode
+		c.handleInput(ENTER); // empty comment → skip → submit
+		expect(result.val!.answers["Which DB? (with comment)"]).toBe("custom");
+	});
+
+	it("C-36 (AC-17): comment Esc skips comment and advances (single)", () => {
+		const { c, result } = make([singleQWithComment]);
+		c.handleInput(ENTER); // select Postgres → comment mode
+		c.handleInput(ESC); // Esc in comment = skip comment → advance → submit
+		expect(result.val).not.toBeUndefined();
+		// commentValue stays null (no prior comment), answer is the selected option
+		expect(result.val!.answers["Which DB? (with comment)"]).toBe("Postgres");
+	});
+
+	it("C-36b (AC-17): comment Esc advances to next tab (multi-question)", () => {
+		const { c, result } = make(multiQWithComment);
+		// Q1 (allowComment): select A → comment mode
+		c.handleInput(ENTER); // select A → comment mode
+		c.handleInput(ESC); // Esc in comment = skip → advance to Q2
+		// Q2: select X → Submit
+		c.handleInput(ENTER); // select X → Submit
+		c.handleInput(ENTER); // Submit
+		expect(result.val).not.toBeUndefined();
+		expect(result.val!.answers["Q1"]).toBe("A");
+		expect(result.val!.answers["Q2"]).toBe("X");
+	});
+
+	it("C-36c (AC-17): Esc-in-comment discards typed text (vs Enter which saves)", () => {
+		// Contrast: typing then Enter would save commentValue and append " — keep".
+		// Esc should discard the typed editor text and advance without attaching it.
+		const { c, result } = make([singleQWithComment]);
+		c.handleInput(ENTER); // select Postgres → comment mode
+		c.handleInput("k");
+		c.handleInput("e");
+		c.handleInput("e");
+		c.handleInput("p");
+		c.handleInput(ESC); // Esc in comment = discard typed text → advance → submit
+		expect(result.val).not.toBeUndefined();
+		// No " — keep" suffix: Esc did not commit the typed text
+		expect(result.val!.answers["Which DB? (with comment)"]).toBe("Postgres");
+	});
+
+	it("C-37: answer + comment combined format 'label — note'", () => {
+		const { c, result } = make([singleQWithComment]);
+		c.handleInput(ENTER); // select Postgres → comment mode
+		c.handleInput("n");
+		c.handleInput("o");
+		c.handleInput("t");
+		c.handleInput("e");
+		c.handleInput(ENTER); // save comment → submit
+		expect(result.val!.answers["Which DB? (with comment)"]).toBe("Postgres — note");
+	});
+});
+
 // ── 5g. 防重入（FR-12）─────────────────────────────────
 describe("AskUserComponent — re-entry guard", () => {
 	it("C-40: ignores input after resolution (submit)", () => {
@@ -551,12 +658,12 @@ describe("AskUserComponent — Submit tab", () => {
 	});
 
 	it("C-46: Submit Enter when all confirmed submits", () => {
-		const { c, result } = make([
-			{ question: "Q1", header: "First", options: [{ label: "A" }, { label: "B" }] },
-			{ question: "Q2", header: "Second", options: [{ label: "X" }, { label: "Y" }] },
-		]);
-		c.handleInput(ENTER); // Q1 select A → Q2
-		c.handleInput(ENTER); // Q2 select X → Submit
+		const { c, result } = make(multiQWithComment);
+		// Q1 (allowComment): select A → comment mode → skip
+		c.handleInput(ENTER); // select A
+		c.handleInput(ENTER); // skip comment → Q2
+		// Q2: select X
+		c.handleInput(ENTER); // → Submit
 		c.handleInput(ENTER); // Submit
 		expect(result.val).not.toBeUndefined();
 		expect(result.val!.answers["Q1"]).toBe("A");
@@ -699,7 +806,7 @@ describe("AskUserComponent — confirm-checkmark, Esc-back, Tab browsing", () =>
 // ── 5l. 新行为：←/→ 不切 tab、Other Enter 切 freeform 原生、Submit tab focus ──
 describe("AskUserComponent — new behavior (post-refactor)", () => {
 	it("C-NEW-1: multi-select Other + Enter opens freeform; Other row turns into [ ] <input>█ in-place", () => {
-		// singleQMulti: [Auth, Search]，多选
+		// singleQMulti: [Auth, Search]，多选 + allowComment
 		const { c, result } = make([singleQMulti]);
 		// 1) Space toggle Auth
 		c.handleInput(" ");
@@ -720,13 +827,14 @@ describe("AskUserComponent — new behavior (post-refactor)", () => {
 		expect(lines.some((l) => l.includes("Search"))).toBe(true);
 		// [✓] 标记的 Auth 仍存在（toggle 状态保留）
 		expect(lines.some((l) => l.includes("[✓]") && l.includes("Auth"))).toBe(true);
-		// 4) 输 "redis" → Enter 保存 → submit（单问题）
+		// 4) 输 "redis" → Enter 保存 → allowComment → comment mode
 		c.handleInput("r");
 		c.handleInput("e");
 		c.handleInput("d");
 		c.handleInput("i");
 		c.handleInput("s");
-		c.handleInput(ENTER); // 保存 freeText → submit（单问题）
+		c.handleInput(ENTER); // 保存 freeText → comment mode
+		c.handleInput(ENTER); // 跳过评论 → submit（单问题）
 		// 答案含多选 toggle 项 + Other 自定义
 		expect(result.val!.answers["Which features?"]).toBe("Auth, redis");
 	});
@@ -769,12 +877,11 @@ describe("AskUserComponent — new behavior (post-refactor)", () => {
 	});
 
 	it("C-NEW-4: Submit tab Enter on Submit focus (all confirmed) submits", () => {
-		const { c, result } = make([
-			{ question: "Q1", header: "First", options: [{ label: "A" }, { label: "B" }] },
-			{ question: "Q2", header: "Second", options: [{ label: "X" }, { label: "Y" }] },
-		]);
+		// multiQWithComment: Q1 allowComment, Q2 plain
+		const { c, result } = make(multiQWithComment);
 		// 答完 Q1 + Q2
-		c.handleInput(ENTER); // Q1 select A → Q2
+		c.handleInput(ENTER); // Q1 select A → comment mode
+		c.handleInput(ENTER); // skip comment → Q2
 		c.handleInput(ENTER); // Q2 select X → Submit tab（Q2 是最后一个问题，advance 到 Submit）
 		// 已经在 Submit tab，focus=Submit，按 Enter 提交
 		c.handleInput(ENTER);

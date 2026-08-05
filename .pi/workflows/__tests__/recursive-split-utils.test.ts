@@ -3,11 +3,19 @@ import {
   MAX_NODE_ROUNDS,
   MAX_FRONTIER_RETRIES,
   VALID_LAYERS,
+  PROGRESSIVE_ACTIONS,
+  NODE_TIMEOUT_PROGRESSIVE_MS,
+  NODE_TIMEOUT_HEAVY_MS,
+  NODE_TIMEOUT_LIGHT_MS,
   isTerminal,
+  isProgressive,
+  resolveNodeTimeoutMs,
   assertValidUnitId,
   isTimeoutError,
   escapeSingleQuotes,
+  slugFromUnitId,
   decideNodeOutcome,
+  isAgentReportedFailure,
   buildActionPrompt,
   buildActionSchema,
   topoSort,
@@ -42,6 +50,57 @@ describe("常量", () => {
       expect(VALID_LAYERS.has(layer)).toBe(true);
     }
     expect(VALID_LAYERS.has("invalid")).toBe(false);
+  });
+
+  it("PROGRESSIVE_ACTIONS 含 clarify/plan/design-review/replan", () => {
+    for (const action of ["clarify", "plan", "design-review", "replan"]) {
+      expect(PROGRESSIVE_ACTIONS.has(action)).toBe(true);
+    }
+    expect(PROGRESSIVE_ACTIONS.has("execute")).toBe(false);
+  });
+
+  it("isProgressive 识别 progressive action", () => {
+    expect(isProgressive("clarify")).toBe(true);
+    expect(isProgressive("execute")).toBe(false);
+    expect(isProgressive("design-review")).toBe(true);
+  });
+
+  it("isProgressive 边界（undefined / 空串）", () => {
+    expect(isProgressive(undefined)).toBe(false);
+    expect(isProgressive("")).toBe(false);
+  });
+});
+
+// ── resolveNodeTimeoutMs（节点 agent 超时预算，S-5/S-7） ───────────────
+
+describe("resolveNodeTimeoutMs", () => {
+  it("progressive action → 15min（合并段预算）", () => {
+    for (const action of ["clarify", "plan", "design-review", "replan"]) {
+      expect(resolveNodeTimeoutMs(action)).toBe(15 * 60 * 1000);
+    }
+  });
+
+  it("execute/test → 30min（大型 wave 重活放宽，S-5 回归）", () => {
+    expect(resolveNodeTimeoutMs("execute")).toBe(30 * 60 * 1000);
+    expect(resolveNodeTimeoutMs("test")).toBe(30 * 60 * 1000);
+  });
+
+  it("exec-review/retrospect/closeout → 15min", () => {
+    for (const action of ["exec-review", "retrospect", "closeout"]) {
+      expect(resolveNodeTimeoutMs(action)).toBe(15 * 60 * 1000);
+    }
+  });
+
+  it("重活 action 预算 ≥ progressive 合并段预算（单 action 不得比合并段更紧）", () => {
+    expect(NODE_TIMEOUT_HEAVY_MS).toBeGreaterThanOrEqual(NODE_TIMEOUT_PROGRESSIVE_MS);
+    expect(NODE_TIMEOUT_PROGRESSIVE_MS).toBeGreaterThanOrEqual(NODE_TIMEOUT_LIGHT_MS);
+    expect(resolveNodeTimeoutMs("execute")).toBeGreaterThanOrEqual(resolveNodeTimeoutMs("clarify"));
+  });
+
+  it("未知/缺省 action 回退轻量档（不抛，调度容错）", () => {
+    expect(resolveNodeTimeoutMs("unknown-action")).toBe(NODE_TIMEOUT_LIGHT_MS);
+    expect(resolveNodeTimeoutMs(undefined)).toBe(NODE_TIMEOUT_LIGHT_MS);
+    expect(resolveNodeTimeoutMs("")).toBe(NODE_TIMEOUT_LIGHT_MS);
   });
 });
 
@@ -157,6 +216,41 @@ describe("escapeSingleQuotes", () => {
   });
 });
 
+// ── slugFromUnitId ──────────────────────────────────────────────────
+
+describe("slugFromUnitId", () => {
+  it("根 unitId（无 :: 子分隔符）取冒号后的部分", () => {
+    expect(slugFromUnitId("wave:recursive-root")).toBe("recursive-root");
+    expect(slugFromUnitId("slice:auth-module")).toBe("auth-module");
+  });
+
+  it("子 unitId（含 ::）取完整冒号后部分 + :: 替换为 -", () => {
+    expect(slugFromUnitId("wave:recursive-root::renderer")).toBe("recursive-root-renderer");
+    expect(slugFromUnitId("wave:recursive-root::main")).toBe("recursive-root-main");
+  });
+
+  it("多层嵌套子 unitId（多个 ::）全部替换为 -", () => {
+    expect(slugFromUnitId("wave:root::child::grandchild")).toBe("root-child-grandchild");
+  });
+
+  it("拼成 description 后多个子 wave 可区分（回归 bug 验证）", () => {
+    const ids = [
+      "wave:recursive-root::renderer",
+      "wave:recursive-root::styles",
+      "wave:recursive-root::tests",
+      "wave:recursive-root::main",
+    ];
+    const descs = ids.map((id) => "w-clarify-" + slugFromUnitId(id));
+    expect(new Set(descs).size).toBe(4);
+    expect(descs).toContain("w-clarify-recursive-root-renderer");
+    expect(descs).toContain("w-clarify-recursive-root-main");
+  });
+
+  it("无冒号的异常入参原样返回", () => {
+    expect(slugFromUnitId("no-colon")).toBe("no-colon");
+  });
+});
+
 // ── decideNodeOutcome ──────────────────────────────────────────────
 
 describe("decideNodeOutcome", () => {
@@ -212,91 +306,178 @@ describe("decideNodeOutcome", () => {
   });
 });
 
+// ── isAgentReportedFailure（失败来源 2：agent 自报失败） ────────────
+
+describe("isAgentReportedFailure", () => {
+  it("stopReason=gate-failed → true", () => {
+    expect(isAgentReportedFailure({ stopReason: "gate-failed" })).toBe(true);
+  });
+
+  it("stopReason=cannot-proceed → true", () => {
+    expect(isAgentReportedFailure({ stopReason: "cannot-proceed", failedReason: "缺依赖" })).toBe(true);
+  });
+
+  it("stopReason=action-done → false（即使 failedReason 残留——MF-3 回归用例）", () => {
+    // LLM 结构化输出不受 schema 约束：action 成功后 failedReason 残留是常见现象，
+    // 按 failedReason 判定会把刚成功的节点立即 abortUnit 销毁。
+    expect(isAgentReportedFailure({ stopReason: "action-done", failedReason: "旧失败原因残留" })).toBe(false);
+  });
+
+  it("stopReason=progressive-done / closed → false", () => {
+    expect(isAgentReportedFailure({ stopReason: "progressive-done" })).toBe(false);
+    expect(isAgentReportedFailure({ stopReason: "closed" })).toBe(false);
+  });
+
+  it("stopReason=crosslayer-descend → false（语义等价 action-done：正常续接，非失败）", () => {
+    expect(isAgentReportedFailure({ stopReason: "crosslayer-descend" })).toBe(false);
+  });
+
+  it("value 为 undefined / null → false", () => {
+    expect(isAgentReportedFailure(undefined)).toBe(false);
+    expect(isAgentReportedFailure(null)).toBe(false);
+  });
+
+  it("value 为空串/非对象 → false（属性访问安全降级）", () => {
+    expect(isAgentReportedFailure("")).toBe(false);
+    expect(isAgentReportedFailure("plain-text")).toBe(false);
+    expect(isAgentReportedFailure({})).toBe(false);
+  });
+});
+
 // ── buildActionSchema ───────────────────────────────────────────────
 
 describe("buildActionSchema", () => {
-  const waveNode = { unitId: "wave:test", scope: "wave" };
-  const sliceNode = { unitId: "slice:test", scope: "slice" };
+  const waveNode = { unitId: "wave:test", scope: "wave", nextAction: "execute" };
+  const sliceNode = { unitId: "slice:test", scope: "slice", nextAction: "execute" };
 
-  it("wave node 返回 base schema（无 children）", () => {
-    const schema = buildActionSchema(waveNode);
-    expect(schema.properties.done).toBeDefined();
-    expect(schema.properties.stopReason).toBeDefined();
-    expect(schema.properties.lastStatus).toBeDefined();
-    expect(schema.properties.replanTriggered).toBeDefined();
-    expect(schema.properties.abortedChildren).toBeDefined();
-    expect(schema.properties.children).toBeUndefined();
-    expect(schema.required).toEqual(["done"]);
-  });
-
-  it("planning node 返回含 children 的 schema", () => {
-    const schema = buildActionSchema(sliceNode);
-    expect(schema.properties.children).toBeDefined();
-    expect(schema.properties.children.items.properties.unitId).toBeDefined();
-    expect(schema.properties.children.items.properties.dependsOn).toBeDefined();
-  });
-
-  it("所有 schema 含 done + stopReason（推进到阻塞模型）", () => {
+  it("required: ['stopReason']", () => {
     for (const node of [waveNode, sliceNode]) {
       const schema = buildActionSchema(node);
-      expect(schema.properties.done).toBeDefined();
-      expect(schema.properties.stopReason).toBeDefined();
+      expect(schema.required).toEqual(["stopReason"]);
     }
+  });
+
+  it("stopReason 是 enum（6 个值）", () => {
+    const schema = buildActionSchema(waveNode);
+    expect(schema.properties.stopReason.enum).toEqual([
+      "progressive-done",
+      "action-done",
+      "gate-failed",
+      "crosslayer-descend",
+      "closed",
+      "cannot-proceed",
+    ]);
+  });
+
+  it("含 actionsExecuted / crossLayer / failedReason 属性", () => {
+    const schema = buildActionSchema(waveNode);
+    expect(schema.properties.actionsExecuted).toBeDefined();
+    expect(schema.properties.crossLayer).toBeDefined();
+    expect(schema.properties.failedReason).toBeDefined();
+  });
+
+  it("不含旧字段 done/lastStatus/replanTriggered/abortedChildren/children", () => {
+    const schema = buildActionSchema(waveNode);
+    expect(schema.properties.done).toBeUndefined();
+    expect(schema.properties.lastStatus).toBeUndefined();
+    expect(schema.properties.replanTriggered).toBeUndefined();
+    expect(schema.properties.abortedChildren).toBeUndefined();
+    expect(schema.properties.children).toBeUndefined();
+  });
+
+  it("统一 schema——不再区分 wave/planning", () => {
+    const waveSchema = buildActionSchema(waveNode);
+    const sliceSchema = buildActionSchema(sliceNode);
+    expect(sliceSchema).toEqual(waveSchema);
   });
 });
 
 // ── buildActionPrompt ───────────────────────────────────────────────
 
 describe("buildActionPrompt", () => {
-  const waveNode = { unitId: "wave:test-wave", scope: "wave" };
-  const sliceNode = { unitId: "slice:test-slice", scope: "slice" };
+  const waveNode = { unitId: "wave:test-wave", scope: "wave", nextAction: "execute" };
+  const sliceNode = { unitId: "slice:test-slice", scope: "slice", nextAction: "clarify" };
 
-  it("含 unitId", () => {
+  it("含 node.unitId", () => {
     const prompt = buildActionPrompt(waveNode);
     expect(prompt).toContain("wave:test-wave");
   });
 
-  it("含停止条件（推进到阻塞模型）", () => {
+  it("含 design-review 跑完必须停语义", () => {
     const prompt = buildActionPrompt(waveNode);
-    expect(prompt).toContain("停止条件");
-    expect(prompt).toContain("crossLayer");
+    expect(prompt).toContain("design-review");
+    expect(prompt.toLowerCase()).toMatch(/停|stop/);
+  });
+
+  it("含读 ActionResult.nextAction 推进指令", () => {
+    const prompt = buildActionPrompt(waveNode);
+    expect(prompt).toContain("ActionResult.nextAction");
+  });
+
+  it("含不要重新调 cw handoff 防死循环警告", () => {
+    const prompt = buildActionPrompt(waveNode);
+    expect(prompt).toContain("handoff");
+    expect(prompt).toMatch(/死循环|幂等/);
+  });
+
+  it("含 gate fail 重试引导（3 次上限 + 具体操作）", () => {
+    const prompt = buildActionPrompt(waveNode);
     expect(prompt).toContain("gate fail");
+    expect(prompt).toContain("3 次");
+    expect(prompt).toContain("ok"); // 教 agent 读 cw 返回的 ok 字段
+    expect(prompt).toContain("input"); // 教 agent 修 input 文件
   });
 
-  it("含 cw handoff 指令", () => {
+  it("含 replan 合法性说明（design-reviewed 起可用）", () => {
     const prompt = buildActionPrompt(waveNode);
-    expect(prompt).toContain("cw handoff --unitId wave:test-wave");
+    expect(prompt).toContain("replan");
+    expect(prompt).toContain("design-reviewed");
+    // cw 语义：replan 是合法旁路 action，不构成死路（MF-2 修复）
+    expect(prompt).not.toContain("死路");
+    expect(prompt).toMatch(/guard|illegal_transition/);
   });
 
-  it("引导 agent gate pass 后继续推进（不返回）", () => {
+  it("含禁止 spawn subagent 约束（P0-1 修复）", () => {
     const prompt = buildActionPrompt(waveNode);
-    expect(prompt).toContain("gate pass 后不要返回");
-    expect(prompt).toContain("继续调");
+    expect(prompt).toContain("subagent");
+    expect(prompt).toMatch(/禁止|不得|禁止 spawn/);
+    // 确保教 agent 自己做而非委派
+    expect(prompt).toContain("审查就是你这个 agent 的职责");
   });
 
-  it("含 clarify 前进引导（防止 progressive 循环）", () => {
+  it("传入 node.nextAction 时 prompt 含该 action（起点说明）", () => {
     const prompt = buildActionPrompt(waveNode);
-    expect(prompt).toContain("clarify");
-    expect(prompt).toContain("cw plan");
-    expect(prompt).toContain("前进");
-  });
-
-  it("含 test 测试文件产出引导", () => {
-    const prompt = buildActionPrompt(waveNode);
-    expect(prompt).toContain("vitest");
-    expect(prompt).toContain("测试文件");
-  });
-
-  it("planning node 含 children 抄录引导", () => {
-    const prompt = buildActionPrompt(sliceNode);
-    expect(prompt).toContain("children");
-    expect(prompt).toContain("cw tree");
-    expect(prompt).toContain("crossLayer.descend");
+    expect(prompt).toContain("execute");
   });
 
   it("wave node 不含 children 抄录引导", () => {
     const prompt = buildActionPrompt(waveNode);
     expect(prompt).not.toContain("planning 层的 execute");
+    expect(prompt).not.toContain("cw tree");
+  });
+
+  it("planning node 不含 children 抄录引导", () => {
+    const prompt = buildActionPrompt(sliceNode);
+    expect(prompt).not.toContain("planning 层的 execute");
+    expect(prompt).not.toContain("cw tree");
+    expect(prompt).not.toContain("crossLayer.descend");
+  });
+
+  it("含 test 测试文件产出引导（wave 层）", () => {
+    const prompt = buildActionPrompt(waveNode);
+    expect(prompt).toContain("vitest");
+    expect(prompt).toContain("测试文件");
+  });
+
+  it("含 execute commitHash 引导（wave 层）", () => {
+    const prompt = buildActionPrompt(waveNode);
+    expect(prompt).toContain("commitHash");
+  });
+
+  it("planning node 不含 wave 层 test/execute 提示", () => {
+    const prompt = buildActionPrompt(sliceNode);
+    expect(prompt).not.toContain("vitest");
+    expect(prompt).not.toContain("测试文件");
   });
 
   it("不含 --input '<JSON>' 字面语法（L0 修复验证）", () => {
@@ -503,10 +684,152 @@ describe("detectStuckNodes", () => {
   });
 });
 
+// ── detectStuckNodes replan 判定 ────────────────────
+
+describe("detectStuckNodes replan 判定", () => {
+  it("lastStatusHistoryAction=replan + status=design-reviewed → 不 abort，重置 nodeRounds", () => {
+    const actionable = [{ unitId: "a", status: "design-reviewed", lastStatusHistoryAction: "replan" }];
+    const prevStatus: Record<string, string> = {};
+    const nodeRounds: Record<string, number> = {};
+    const stuck = detectStuckNodes(actionable, prevStatus, nodeRounds);
+    expect(stuck).toHaveLength(0);
+    expect(nodeRounds["a"]).toBe(0); // 放行并重置熔断计数
+    expect(prevStatus["a"]).toBe("design-reviewed"); // 基线更新
+  });
+
+  it("lastStatusHistoryAction=replan + status=executing → 不 abort（wave replan.from 合法）", () => {
+    const actionable = [{ unitId: "a", status: "executing", lastStatusHistoryAction: "replan" }];
+    const stuck = detectStuckNodes(actionable, {}, {});
+    expect(stuck).toHaveLength(0);
+  });
+
+  it("lastStatusHistoryAction=replan + status=testing → 不 abort（wave replan.from 合法）", () => {
+    const actionable = [{ unitId: "a", status: "testing", lastStatusHistoryAction: "replan" }];
+    const stuck = detectStuckNodes(actionable, {}, {});
+    expect(stuck).toHaveLength(0);
+  });
+
+  it("lastStatusHistoryAction=replan + status=tested → 不 abort（wave replan.from 合法）", () => {
+    const actionable = [{ unitId: "a", status: "tested", lastStatusHistoryAction: "replan" }];
+    const stuck = detectStuckNodes(actionable, {}, {});
+    expect(stuck).toHaveLength(0);
+  });
+
+  it("lastStatusHistoryAction=replan + status=exec-reviewed → 不 abort（wave replan.from 合法）", () => {
+    const actionable = [{ unitId: "a", status: "exec-reviewed", lastStatusHistoryAction: "replan" }];
+    const stuck = detectStuckNodes(actionable, {}, {});
+    expect(stuck).toHaveLength(0);
+  });
+
+  it("lastStatusHistoryAction=replan + status=retrospected → 不 abort（wave replan.from 合法）", () => {
+    const actionable = [{ unitId: "a", status: "retrospected", lastStatusHistoryAction: "replan" }];
+    const stuck = detectStuckNodes(actionable, {}, {});
+    expect(stuck).toHaveLength(0);
+  });
+
+  it("replan 重置已累积的 nodeRounds（replan 是活动信号，不算 stuck）", () => {
+    const actionable = [{ unitId: "a", status: "executing", lastStatusHistoryAction: "replan" }];
+    const prevStatus: Record<string, string> = { a: "executing" };
+    const nodeRounds: Record<string, number> = { a: 2 }; // 之前已累积 2 轮未推进
+    const stuck = detectStuckNodes(actionable, prevStatus, nodeRounds);
+    expect(stuck).toHaveLength(0);
+    expect(nodeRounds["a"]).toBe(0); // replan 轮重置计数，后续轮重新累计
+  });
+
+  it("lastStatusHistoryAction 非 replan（如 clarify）→ 走原有 status 未推进逻辑", () => {
+    const actionable = [{ unitId: "a", status: "clarifying", lastStatusHistoryAction: "clarify" }];
+    const prevStatus = { a: "clarifying" };
+    const nodeRounds: Record<string, number> = { a: MAX_NODE_ROUNDS - 1 };
+    const stuck = detectStuckNodes(actionable, prevStatus, nodeRounds);
+    expect(stuck).toEqual(["a"]); // 原有熔断触发
+  });
+
+  it("无 lastStatusHistoryAction 字段 → 走原有逻辑（向后兼容）", () => {
+    const actionable = [{ unitId: "a", status: "planning" }];
+    const prevStatus = { a: "clarifying" };
+    const nodeRounds: Record<string, number> = { a: 2 };
+    detectStuckNodes(actionable, prevStatus, nodeRounds);
+    expect(nodeRounds["a"]).toBe(0); // status 变了重置
+  });
+
+  it("replan 仅豁免首轮——连续 replan 轮（agent replan 后卡死）按未推进累计", () => {
+    const node = { unitId: "a", status: "executing", lastStatusHistoryAction: "replan" };
+    const prevStatus: Record<string, string> = {};
+    const nodeRounds: Record<string, number> = {};
+    const replanArm: Record<string, boolean> = {};
+
+    // 第 1 轮：replan 刚发生 → 放行 + arm
+    detectStuckNodes([node], prevStatus, nodeRounds, replanArm);
+    expect(nodeRounds["a"]).toBe(0);
+    expect(replanArm["a"]).toBe(true);
+
+    // 第 2 轮：replan 条目残留（无新 action）→ 不再豁免，累计 1
+    detectStuckNodes([node], prevStatus, nodeRounds, replanArm);
+    expect(nodeRounds["a"]).toBe(1);
+
+    // 第 3 轮：继续残留 → 累计 2
+    detectStuckNodes([node], prevStatus, nodeRounds, replanArm);
+    expect(nodeRounds["a"]).toBe(2);
+  });
+
+  it("replan 卡死到 MAX_NODE_ROUNDS → 触发 abort（熔断不再被永久豁免）", () => {
+    const node = { unitId: "a", status: "executing", lastStatusHistoryAction: "replan" };
+    const prevStatus: Record<string, string> = {};
+    const nodeRounds: Record<string, number> = {};
+    const replanArm: Record<string, boolean> = {};
+
+    // 首轮 replan 放行 + arm；之后连续 replan 轮累计到阈值 → abort
+    detectStuckNodes([node], prevStatus, nodeRounds, replanArm);
+    for (let i = 0; i < MAX_NODE_ROUNDS - 1; i++) {
+      detectStuckNodes([node], prevStatus, nodeRounds, replanArm);
+    }
+    expect(nodeRounds["a"]).toBe(MAX_NODE_ROUNDS - 1);
+    const stuck = detectStuckNodes([node], prevStatus, nodeRounds, replanArm);
+    expect(stuck).toEqual(["a"]);
+  });
+
+  it("replan 后 agent 产生新 action（非 replan 轮）→ 解除 arm，后续 replan 再次放行", () => {
+    const replanNode = { unitId: "a", status: "executing", lastStatusHistoryAction: "replan" };
+    const actedNode = { unitId: "a", status: "executing", lastStatusHistoryAction: "execute" };
+    const prevStatus: Record<string, string> = {};
+    const nodeRounds: Record<string, number> = {};
+    const replanArm: Record<string, boolean> = {};
+
+    // replan 轮 → 放行 + arm
+    detectStuckNodes([replanNode], prevStatus, nodeRounds, replanArm);
+    expect(replanArm["a"]).toBe(true);
+
+    // 非 replan 轮（agent 执行了 execute，但 status 未变）→ 解除 arm，按未推进累计 1
+    detectStuckNodes([actedNode], prevStatus, nodeRounds, replanArm);
+    expect(replanArm["a"]).toBe(false);
+    expect(nodeRounds["a"]).toBe(1);
+
+    // 再次 replan（新一轮 replan）→ arm 已解除，重新放行并归零
+    detectStuckNodes([replanNode], prevStatus, nodeRounds, replanArm);
+    expect(nodeRounds["a"]).toBe(0);
+    expect(replanArm["a"]).toBe(true);
+  });
+
+  it("replan 轮 status 变化（armed 时 prev 与当前不同）→ 归零不 abort", () => {
+    const prevStatus: Record<string, string> = { a: "executing" };
+    const nodeRounds: Record<string, number> = { a: 0 };
+    const replanArm: Record<string, boolean> = { a: true };
+    const stuck = detectStuckNodes(
+      [{ unitId: "a", status: "testing", lastStatusHistoryAction: "replan" }],
+      prevStatus,
+      nodeRounds,
+      replanArm
+    );
+    expect(stuck).toHaveLength(0);
+    expect(nodeRounds["a"]).toBe(0);
+    expect(prevStatus["a"]).toBe("testing");
+  });
+});
+
 // ── pruneTerminalEntries（终态节点 entry 清理） ─────────────────────
 
 describe("pruneTerminalEntries", () => {
-  it("清理本轮不在 frontier 且上轮 status 终态的节点 entry", () => {
+  it("清理本轮不在 frontier 的节点 entry", () => {
     // a 上轮 closed → 本轮 frontier 不含 a（已退出调度）→ 清理
     // b 本轮仍在 frontier（非终态）→ 保留
     const prevStatus: Record<string, string> = { a: "closed", b: "executing" };
@@ -526,7 +849,7 @@ describe("pruneTerminalEntries", () => {
     expect(nodeRounds).toEqual({});
   });
 
-  it("本轮仍在 frontier 的节点保留（即使上轮 status 终态——理论不会发生但保守保留）", () => {
+  it("本轮仍在 frontier 的节点保留", () => {
     const prevStatus: Record<string, string> = { a: "closed" };
     const nodeRounds: Record<string, number> = { a: 0 };
     const pruned = pruneTerminalEntries(prevStatus, nodeRounds, ["a"]);
@@ -534,13 +857,15 @@ describe("pruneTerminalEntries", () => {
     expect(prevStatus).toEqual({ a: "closed" });
   });
 
-  it("本轮不在 frontier 但上轮 status 非终态 → 保留（可能 frontier 抖动漏报，下轮再判）", () => {
-    // 保守策略：非终态节点突然消失可能是临时性 frontier 失败/漏报，不清避免误清活跃节点
+  it("本轮不在 frontier 即清理（queryFrontier 失败时主循环 continue 不调本函数，无抖动漏报）", () => {
+    // prevStatus 只由 detectStuckNodes 从 frontier（非终态）节点写入，不含终态值；
+    // 不在本轮 frontier ⟹ 已退出调度，直接清理（MF-1：不再按 status 判定）
     const prevStatus: Record<string, string> = { a: "executing" };
     const nodeRounds: Record<string, number> = { a: 1 };
     const pruned = pruneTerminalEntries(prevStatus, nodeRounds, []);
-    expect(pruned).toEqual([]);
-    expect(prevStatus).toEqual({ a: "executing" });
+    expect(pruned).toEqual(["a"]);
+    expect(prevStatus).toEqual({});
+    expect(nodeRounds).toEqual({});
   });
 
   it("同时清理 prevStatus 和 nodeRounds 两 Map", () => {
@@ -555,6 +880,15 @@ describe("pruneTerminalEntries", () => {
     expect(pruned.sort()).toEqual(["a", "b"]);
     expect(prevStatus).toEqual({ c: "planning" });
     expect(nodeRounds).toEqual({ c: 1 });
+  });
+
+  it("replanArm 标记随终态节点一并清理", () => {
+    const prevStatus: Record<string, string> = { a: "aborted" };
+    const nodeRounds: Record<string, number> = { a: 5 };
+    const replanArm: Record<string, boolean> = { a: true };
+    const pruned = pruneTerminalEntries(prevStatus, nodeRounds, [], replanArm);
+    expect(pruned).toEqual(["a"]);
+    expect(replanArm).toEqual({});
   });
 
   it("空 prevStatus 返回空数组", () => {

@@ -55,8 +55,8 @@ describe("U2: 内置脚本 agent() 返回值属性访问含 null guard", () => {
 
   // 仍含 agent() 返回值属性访问、需 ?. guard 的脚本：chain（analysis/plan/final）、
   // scatter-gather（split 的 subtasks、gather 的 mergedResult/completeness）、
-  // map-reduce（reduce 的 reduced/stats）。
-  const GUARD_SCRIPTS = ["chain.js", "scatter-gather.js", "map-reduce.js"] as const;
+  // map-reduce（reduce 的 reduced/stats）、review-fix-loop（aggRaw?.length 等）。
+  const GUARD_SCRIPTS = ["chain.js", "scatter-gather.js", "map-reduce.js", "review-fix-loop.js"] as const;
 
   it.each(GUARD_SCRIPTS)("%s 含 optional chaining（?.）null guard 模式", (filename) => {
     const src = readScript(filename);

@@ -30,6 +30,8 @@ export interface AskUserQuestion {
    *  - 有 options 时：默认 true，前端在选项末尾追加 Other 输入框；设 false 则不追加
    *  - 无 options 时：整个问题就是自由输入，此字段被忽略 */
   allowOther?: boolean
+  /** 是否允许附加评论。选中后可追加短文本（4.0.1 restore：0.3.0 误删导致 pi-ask-user@4.0.0 ESM import 崩溃，见 .changeset/restore-ask-user-comment.md） */
+  allowComment?: boolean
 }
 
 export interface AskUserOption {
@@ -49,9 +51,11 @@ export interface AskUserOption {
  * - 多选：value = JSON.stringify(选中项 value 数组)，如 '["pg","mysql"]'
  *   （不用逗号 join——option value 可能含逗号导致 split 歧义）
  * - Other 文本：单独 key `${header}__other`，value = 自由文本（不混进选中项数组）
+ * - comment：单独 key `${header}__comment`，value = 评论文本
  *
  * extension 解析示例：
  *   const selected = JSON.parse(answers[header])  // 多选 → string[]
  *   const other = answers[`${header}__other`]     // Other 自由文本
+ *   const comment = answers[`${header}__comment`] // 评论
  */
 export type AskUserAnswers = Record<string, string>

@@ -69,11 +69,22 @@ fi
 # ── 若 --review-report 提供，把它的内容 append 到 body 末尾
 if [[ -n "$REVIEW_REPORT" && -r "$REVIEW_REPORT" ]]; then
     REVIEW_SECTION="$(mktemp -t pr-review.XXXXXX)"
+    # 维度列表从 report 的 "Dimensions reviewed:" 行动态解析（维度数随 batch 配置变化，
+    # pr-cr-fix 7 维 / code-review 5 维等，不能写死）。解析失败降级为通用文案。
+    DIMENSIONS_LINE="$(grep -m1 -i 'Dimensions reviewed:' "$REVIEW_REPORT" 2>/dev/null || true)"
+    if [[ -n "$DIMENSIONS_LINE" ]]; then
+        DIM_LIST="${DIMENSIONS_LINE#*Dimensions reviewed:}"
+        DIM_LIST="$(echo "$DIM_LIST" | sed 's/^ *//;s/ *$//;s/, */ \/ /g')"
+        DIM_COUNT="$(echo "$DIM_LIST" | awk -F' / ' '{print NF}')"
+        DIM_DESC="$DIM_COUNT dimensions ($DIM_LIST)"
+    else
+        DIM_DESC="multi-dimension review"
+    fi
     {
         echo ""
         echo "## Review Summary"
         echo ""
-        echo "Aggregated review across 5 dimensions (business-logic / monorepo-impact / type-safety / extension-api / test-coverage):"
+        echo "Aggregated review across $DIM_DESC:"
         echo ""
         # 只抓 Summary 段，避免污染（其余表格留给 reviewer 直接看 PR conversation）
         awk '/^## Summary/,/^## [^S]/' "$REVIEW_REPORT" \
@@ -87,12 +98,20 @@ fi
 log() { echo "[pr-submit] $*" >&2; }
 
 # ── 1. push（force-with-lease 安全推送，禁止 --force）
-log "pushing $BRANCH to origin..."
+# Push remote 选择：bare repo workspace 模式下 origin 是本地 bare repo（非 GitHub），
+# github remote 才是真正的 GitHub 远程（见 CLAUDE.md §10）。有 github remote 优先用，
+# 否则 fallback origin（普通 repo 场景，origin 即 GitHub）。
+if git remote get-url github >/dev/null 2>&1; then
+    PUSH_REMOTE="github"
+else
+    PUSH_REMOTE="origin"
+fi
+log "pushing $BRANCH to $PUSH_REMOTE..."
 if [[ "$DRY_RUN" == "1" ]]; then
     log "(dry-run) skip push"
 else
-    if ! git push origin "HEAD" --force-with-lease; then
-        log "git push failed; check upstream tracking" >&2
+    if ! git push "$PUSH_REMOTE" "HEAD" --force-with-lease; then
+        log "git push to $PUSH_REMOTE failed; check upstream tracking" >&2
         exit 2
     fi
 fi

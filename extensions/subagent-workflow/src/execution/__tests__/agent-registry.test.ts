@@ -168,14 +168,14 @@ describe("createPackageBuiltinRegistry", () => {
     // 改 frontmatter 时这里会立即报错，拦住拼写错误或字段遗漏。
     expect(builtin.get("worker")?.tools).toBeUndefined();
     expect(builtin.get("general-purpose")?.tools).toBeUndefined();
-    expect(builtin.get("explorer")?.tools).toEqual(["read", "bash", "grep", "find", "ls"]);
-    expect(builtin.get("researcher")?.tools).toEqual(["read", "bash"]);
+    expect(builtin.get("explorer")?.tools).toEqual(["read", "bash", "grep", "find", "ls", "structured-output"]);
+    expect(builtin.get("researcher")?.tools).toEqual(["read", "bash", "structured-output"]);
     expect(builtin.get("orchestrator")?.tools).toEqual([
-      "todo", "goal_control", "workflow", "subagent", "ask_user",
+      "todo", "goal_control", "workflow", "subagent", "ask_user", "structured-output",
     ]);
-    expect(builtin.get("reviewer")?.tools).toEqual(["read", "structured-output"]);
-    expect(builtin.get("planner")?.tools).toEqual(["read"]);
-    expect(builtin.get("oracle")?.tools).toEqual(["read"]);
-    expect(builtin.get("context-builder")?.tools).toEqual(["read"]);
+    expect(builtin.get("reviewer")?.tools).toEqual(["read", "bash", "write", "structured-output"]);
+    expect(builtin.get("planner")?.tools).toEqual(["read", "write", "structured-output"]);
+    expect(builtin.get("oracle")?.tools).toEqual(["read", "write", "structured-output"]);
+    expect(builtin.get("context-builder")?.tools).toEqual(["read", "write", "structured-output"]);
   });
 });

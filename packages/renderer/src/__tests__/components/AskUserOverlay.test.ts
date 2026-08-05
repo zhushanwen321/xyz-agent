@@ -5,8 +5,11 @@
  * - U9: 首屏渲染（问题文本 + 选项列表存在于 DOM）
  * - U10: 单选交互（点击 → Submit → answers 包含 value）
  * - U11: 多选交互（点击多个 → Submit → answers 含 JSON 数组）
- * - U12: Other 自由文本
+ * - U12: Other 输入 + comment
  * - U13: Cancel 取消
+ *
+ * 注意：4.0.1 comment restore 的一部分（main 已在 4.0.0 把 U12 的 comment 断言删除）：
+ *    U12 验证 `${key}__comment` 拼装必须保留，与 AskUserOverlay.vue 的 comment UI 一致。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/components/AskUserOverlay.test.ts
  */
@@ -50,6 +53,18 @@ const multiSelectQ: AskUserQuestion = {
 const freeTextQ: AskUserQuestion = {
   header: 'note',
   question: '补充说明',
+  allowComment: true,
+}
+
+// allowComment + 有选项：评论可作为「无选项适用但想说明原因」的唯一答案（MF-1）
+const optionCommentQ: AskUserQuestion = {
+  header: 'db',
+  question: '选哪个数据库?',
+  allowComment: true,
+  options: [
+    { label: 'Postgres', value: 'pg' },
+    { label: 'MySQL', value: 'mysql' },
+  ],
 }
 
 function mountOverlay(questions: AskUserQuestion[], allowCancel = true) {
@@ -103,13 +118,15 @@ describe('AskUserOverlay', () => {
     expect(JSON.parse(answers.lang)).toEqual(['ts', 'py'])
   })
 
-  it('U12: Other 自由文本', async () => {
+  it('U12: Other 自由文本 + comment', async () => {
     const wrapper = mountOverlay([freeTextQ])
 
     // 无 options → 渲染自由文本 Textarea
     expect(wrapper.find('[data-testid="ask-user-free-text"]').exists()).toBe(true)
     // 填入自由文本
     await wrapper.find('[data-testid="ask-user-free-text"]').setValue('需要加索引')
+    // 填入评论
+    await wrapper.find('[data-testid="ask-user-comment-note"]').setValue('prod 环境注意')
     // Submit
     await wrapper.find('[data-testid="ask-user-submit"]').trigger('click')
 
@@ -118,9 +135,26 @@ describe('AskUserOverlay', () => {
     const answers = JSON.parse(submitEvents![0][0] as string)
     // 无 options 的纯自由文本问题：输入文本作为主答案（key=header）
     expect(answers.note).toBe('需要加索引')
-    // 负向断言：comment 功能已移除，answers 不应出现任何 __comment key
-    // （comment key 约定为 ${header}__comment；用 endsWith 覆盖所有 header）
-    expect(Object.keys(answers).some((k) => k.endsWith('__comment'))).toBe(false)
+    // 评论存到独立 key
+    expect(answers['note__comment']).toBe('prod 环境注意')
+  })
+
+  it('U30: comment-only 提交——allowComment 问题只填评论也能答完并提交（MF-1）', async () => {
+    const wrapper = mountOverlay([optionCommentQ])
+
+    // 未选任何选项时 Submit disabled（未答）
+    const submit = wrapper.find('[data-testid="ask-user-submit"]')
+    expect(submit.attributes('disabled')).toBeDefined()
+    // 只填评论 → 视为已答（「无选项适用但想说明原因」场景）
+    await wrapper.find('[data-testid="ask-user-comment-db"]').setValue('生产环境都不能用，需评估新方案')
+    expect(submit.attributes('disabled')).toBeUndefined()
+    // 提交：主答案 key 不写，评论进独立 key（RPC 解码侧保留 comment-only，不静默丢失）
+    await submit.trigger('click')
+    const submitEvents = wrapper.emitted('submit')
+    expect(submitEvents).toHaveLength(1)
+    const answers = JSON.parse(submitEvents![0][0] as string)
+    expect(answers.db).toBeUndefined()
+    expect(answers['db__comment']).toBe('生产环境都不能用，需评估新方案')
   })
 
   it('U13: Cancel → emit cancel 事件', async () => {

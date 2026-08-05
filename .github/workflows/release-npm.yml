@@ -46,6 +46,11 @@ jobs:
       - name: Build extension-protocol
         run: pnpm --filter @xyz-agent/extension-protocol build
 
+      # MF-4 防线：发布前 typecheck gate（与 Electron 线 pre-commit validate-runtime-bundle.sh 同级）。
+      # 历史教训：无 gate 时 TS 编译错误直接随源码发布成坏包（pi-ask-user@4.0.0 ESM 加载即崩）。
+      - name: Typecheck extensions
+        run: pnpm extensions:typecheck
+
       - name: Publish to npm
         run: pnpm changeset publish
         env:

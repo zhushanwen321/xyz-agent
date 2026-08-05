@@ -345,3 +345,321 @@ describe("多种错误同时存在", () => {
     expect(lines).toEqual(sorted);
   });
 });
+
+// ── agent description / meta.phases / phase 一致性（新增 warning 检查）─
+
+describe("agent() 缺 description/label — warning", () => {
+  it("agent 无 description/label → 1 warning", () => {
+    const src = `await agent({ prompt: "x" });\n`;
+    const result = lintScript(src);
+
+    const descWarnings = warnings(result.findings).filter((w) =>
+      /description.*unnamed/i.test(w.message));
+    expect(descWarnings).toHaveLength(1);
+    expect(descWarnings[0].line).toBe(1);
+  });
+
+  it("agent 有 description → 0 此类 warning", () => {
+    const src = `await agent({ prompt: "x", description: "review-diff" });\n`;
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).some((w) => /description.*unnamed/i.test(w.message)))
+      .toBe(false);
+  });
+
+  it("agent 有 label（description 别名）→ 0 此类 warning", () => {
+    const src = `await agent({ prompt: "x", label: "review-diff" });\n`;
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).some((w) => /description.*unnamed/i.test(w.message)))
+      .toBe(false);
+  });
+});
+
+// ── MF-4 重构核心回归：字符串剔除 / 非字面量实参跳过 ──────────────
+//
+// review-fix-loop L281 误报根因：字符串字面量里的 "agent(s)" 被 `\bagent\s*\(` 命中，
+// 误开 agent 调用范围；三连误报根因：agent(callVar) 非字面量实参在调用点静态不可见。
+// forEachAgentCallRange 对两者都有专门分支（stripStringsAndComments / argTail 非 `{` 跳过），
+// 下面用例锁定这些新增逻辑（MF-3）。
+
+describe("MF-4 回归：字符串字面量里的 agent(...) 不误触发", () => {
+  it("`const s = \"agent(s)\";` 字符串不触发 description 检测（review-fix-loop L281 回归）", () => {
+    const src = [
+      `const s = "agent(s)";`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    // 字符串不产生幻影调用范围：真实调用只有 1 个且有 description → 0 warning
+    expect(warnings(result.findings).filter((w) => /description.*unnamed/i.test(w.message)))
+      .toHaveLength(0);
+    // 也不产生 outputSchema 等连带误报
+    expect(errors(result.findings)).toHaveLength(0);
+  });
+
+  it("字符串字面量里含完整调用形态 agent({...}) 同样不误触发（剔除逻辑真正生效的用例）", () => {
+    // 若 stripStringsAndComments 失效，此串会被当成字面量调用（argTail 以 { 开头）
+    // 并因缺 description 报 warning——本用例即失败
+    const src = [
+      `const s = "agent({ prompt: 'x' })";`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).filter((w) => /description.*unnamed/i.test(w.message)))
+      .toHaveLength(0);
+  });
+
+  it("模板串内 agent({...}) 完整调用形态不误触发（反引号剔除路径）", () => {
+    // MF-4 既有用例只覆盖双引号字面量；workflow 脚本 prompt 常用模板串（含 ${} 插值）。
+    // 若 `...` 反引号剔除失效，模板串里的 agent({...}) 会开幻影调用范围并误报缺 description
+    const src = [
+      "const prompt = `agent({ prompt: '${x}' })`;",
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).filter((w) => /description.*unnamed/i.test(w.message)))
+      .toHaveLength(0);
+    expect(errors(result.findings)).toHaveLength(0);
+  });
+
+  it("块注释内 agent({...}) 完整调用形态不误触发（/* */ 剔除路径）", () => {
+    // 行首 /* 注释由行级跳过兜底；行尾块注释（非行首前缀）走 stripStringsAndComments 的
+    // /* */ 剔除路径——若失效，注释里的 agent({...}) 会开幻影调用范围并误报缺 description
+    const src = [
+      `/* agent({ prompt: 'x' }) */`,
+      `const s = "x"; /* agent({ prompt: 'y' }) */`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).filter((w) => /description.*unnamed/i.test(w.message)))
+      .toHaveLength(0);
+    expect(errors(result.findings)).toHaveLength(0);
+  });
+});
+
+describe("MF-4 回归：非字面量实参 agent(callVar) / agent(expr()) 跳过", () => {
+  it("agent(callVar) 不产生 description warning，且不误伤后续真实 agent 调用", () => {
+    const src = [
+      `const call = { prompt: "x" };`,
+      `await agent(call);`,
+      `await agent({ prompt: "y", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    // 三连误报根因：非字面量实参被当成缺 description 报 warning
+    expect(warnings(result.findings).filter((w) => /description.*unnamed/i.test(w.message)))
+      .toHaveLength(0);
+  });
+
+  it("agent(expr()) 表达式实参同样跳过", () => {
+    const src = [
+      `await agent(buildCall());`,
+      `await agent({ prompt: "y", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).filter((w) => /description.*unnamed/i.test(w.message)))
+      .toHaveLength(0);
+  });
+
+  it("非字面量实参 + 后续真实调用缺 description → 只对真实调用报 1 条", () => {
+    // 跳过逻辑不能吞掉后面真正缺 description 的调用
+    const src = [
+      `await agent(call);`,
+      `await agent({ prompt: "y" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    const descWarnings = warnings(result.findings).filter((w) => /description.*unnamed/i.test(w.message));
+    expect(descWarnings).toHaveLength(1);
+    expect(descWarnings[0].line).toBe(2);
+  });
+});
+
+// ── MF-4 回归：checkAgentDescription 的两个跳过分支 ────────────────
+
+describe("MF-4 回归：展开形态 / schema 内嵌 description", () => {
+  it("agent({ ...call, agent: ... }) 展开形态 → 0 description warning（review-fix-loop 三连误报根因修复点）", () => {
+    const src = [
+      `const call = { prompt: "x", model: "m" };`,
+      `await agent({ ...call, agent: "reviewer" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    // 展开形态 description 来自运行时对象、调用点静态不可见——无法验证即不报
+    expect(warnings(result.findings).filter((w) => /description.*unnamed/i.test(w.message)))
+      .toHaveLength(0);
+  });
+
+  it("多行 agent 调用内 schema properties 含 description 字符串 → 仍报「无 description」warning（I-10 回归）", () => {
+    const src = [
+      `await agent({`,
+      `  prompt: "x",`,
+      `  schema: {`,
+      `    type: "object",`,
+      `    properties: {`,
+      `      result: { type: "string", description: "the result" },`,
+      `    },`,
+      `  },`,
+      `});`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    // schema 内嵌的 description 是 JSON Schema 字段说明，不是 agent 选项——
+    // 若被误判为「已提供」则漏报（无 warning），本用例锁定仍报 warning
+    const descWarnings = warnings(result.findings).filter((w) => /description.*unnamed/i.test(w.message));
+    expect(descWarnings).toHaveLength(1);
+    expect(descWarnings[0].line).toBe(1);
+  });
+
+  it("schema 块剔除后，真正的 agent 选项 description 仍被识别（不误伤）", () => {
+    const src = [
+      `await agent({`,
+      `  prompt: "x",`,
+      `  schema: { properties: { r: { description: "d" } } },`,
+      `  description: "review-diff",`,
+      `});`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).filter((w) => /description.*unnamed/i.test(w.message)))
+      .toHaveLength(0);
+  });
+});
+
+describe("meta.phases 非字符串数组 — warning", () => {
+  it("phases: [{...}] 对象数组 → warning", () => {
+    const src = [
+      `const meta = { phases: [{ title: "a" }, { title: "b" }] };`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).some((w) => /meta\.phases.*string array/i.test(w.message)))
+      .toBe(true);
+  });
+
+  it("phases: ['a'] 字符串数组 → 0 此类 warning", () => {
+    const src = [
+      `const meta = { phases: ["a"] };`,
+      `phase("a");`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).some((w) => /meta\.phases.*string array/i.test(w.message)))
+      .toBe(false);
+  });
+
+  it("多行对象数组（phases: [ 换行 { ... }）→ warning（MF-5 跨行匹配）", () => {
+    const src = [
+      `const meta = { phases: [`,
+      `  { title: "a" },`,
+      `  { title: "b" },`,
+      `] };`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).some((w) => /meta\.phases.*string array/i.test(w.message)))
+      .toBe(true);
+  });
+
+  it("多行字符串数组（phases: [ 换行 'a' ]）→ 0 此类 warning", () => {
+    const src = [
+      `const meta = { phases: [`,
+      `  "a",`,
+      `] };`,
+      `phase("a");`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).some((w) => /meta\.phases.*string array/i.test(w.message)))
+      .toBe(false);
+  });
+});
+
+describe("声明 phases 与 phase() 调用一致性 — warning", () => {
+  it("声明 + 调用一致 → 0 此类 warning", () => {
+    const src = [
+      `const meta = { phases: ["review"] };`,
+      `phase("review");`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).some((w) =>
+      /never set via phase|called but not in meta\.phases/i.test(w.message))).toBe(false);
+  });
+
+  it("声明了但从不 phase() 调用 → warning", () => {
+    const src = [
+      `const meta = { phases: ["review", "fix"] };`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).some((w) => /never set via phase/i.test(w.message)))
+      .toBe(true);
+  });
+
+  it("phase() 调用了但未声明 → warning", () => {
+    const src = [
+      `const meta = { phases: ["review"] };`,
+      `phase("fix");`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).some((w) => /called but not in meta\.phases/i.test(w.message)))
+      .toBe(true);
+  });
+
+  it("对象数组 phases 不触发一致性 warning（由 checkMetaPhases 负责）", () => {
+    // 对象数组场景：checkPhaseConsistency 应跳过提取，不产生 never-set warning
+    const src = [
+      `const meta = { phases: [{ title: "a" }] };`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings).some((w) => /never set via phase/i.test(w.message)))
+      .toBe(false);
+  });
+
+  it("无 phases 声明 + 无 phase() 调用 → 0 warning（skip 分支）", () => {
+    // checkPhaseConsistency 的 declared/called 都为空 → 提前 return（脚本不使用 phase 机制）。
+    // 断言用全量 warning 而非 message 正则过滤——skip 分支若产生 spurious warning 也会被捕获
+    const src = [
+      `const meta = { name: "x" };`,
+      `await agent({ prompt: "x", description: "d" });`,
+      ``,
+    ].join("\n");
+    const result = lintScript(src);
+
+    expect(warnings(result.findings)).toHaveLength(0);
+  });
+});

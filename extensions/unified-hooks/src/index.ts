@@ -11,7 +11,6 @@ import { getLogger, setPiHandle } from "@zhushanwen/pi-extension-logger";
 // Re-export hook modules for easy access
 
 import { setupNetworkTimeoutGuard } from "./hooks/network-timeout-guard";
-import { setupSubagentListInjector } from "./hooks/subagent-list-injector";
 import { setupTestTimeoutGuard } from "./hooks/test-timeout-guard";
 import { type HookContext, setupToolErrorHandler } from "./hooks/tool-error-handler";
 
@@ -34,7 +33,6 @@ export default function unifiedHooksExtension(pi: ExtensionAPI): void {
     { name: "tool-error-handler", setup: setupToolErrorHandler },
     { name: "network-timeout-guard", setup: setupNetworkTimeoutGuard },
     { name: "test-timeout-guard", setup: setupTestTimeoutGuard },
-    { name: "subagent-list-injector", setup: setupSubagentListInjector },
   ];
 
   for (const hook of hookModules) {

@@ -7,6 +7,7 @@ import {
 	askUserInteract,
 	type AskUserQuestion,
 	getAskUserAnswer,
+	getAskUserComment,
 	getAskUserOther,
 } from "@xyz-agent/extension-protocol";
 
@@ -127,14 +128,15 @@ function toProtoQuestions(questions: Question[]): AskUserQuestion[] {
 		})),
 		multiSelect: q.multiSelect,
 		allowOther: true,
+		allowComment: q.allowComment ?? false,
 	}));
 }
 
 /**
  * 把协议包 AskUserAnswers 转换为 ask-user 内部 Result.answers。
  *
- * 协议格式：key=header/question, 单选=string, 多选=JSON数组, Other=__other
- * ask-user 格式：key=question 全文, value=逗号分隔 label + Other
+ * 协议格式：key=header/question, 单选=string, 多选=JSON数组, Other=__other, comment=__comment（5.0.0-dev.1 restore）
+ * ask-user 格式：key=question 全文, value=逗号分隔 label + Other, comment 内联（` — `）
  *
  * 拼装逻辑复用 formatAnswer（与 TUI 版 getAnswerText 共享同一格式函数），
  * 确保 RPC 和 TUI 两条路径产出的 Result.answers 格式一致。
@@ -150,6 +152,7 @@ function protoAnswersToResult(
 		const iq = protoQuestions[i]!;
 		const selected = getAskUserAnswer(answers, iq);
 		const other = getAskUserOther(answers, iq);
+		const comment = getAskUserComment(answers, iq);
 
 		const parts: string[] = [];
 		if (Array.isArray(selected)) {
@@ -167,7 +170,7 @@ function protoAnswersToResult(
 			parts.push(selected);
 		}
 		if (other) parts.push(other);
-		const formatted = formatAnswer(parts);
+		const formatted = formatAnswer(parts, comment);
 		if (formatted !== null) out[q.question] = formatted;
 	}
 	return out;

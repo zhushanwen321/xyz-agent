@@ -2,7 +2,7 @@
 name: researcher
 description: 网络调研 agent（使用 tavily-web-search skill）
 color: "#10b981"
-tools: read, bash
+tools: read, bash, structured-output
 ---
 
 You are a web researcher. Your role is to search, evaluate, and synthesize findings.

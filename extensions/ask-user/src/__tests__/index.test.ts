@@ -645,6 +645,57 @@ describe("execute — RPC mode (askUserInteract via select channel)", () => {
 		expect(result.details.answers["Which DB?"]).toBe("Postgres, Custom DB");
 	});
 
+	it("R-4: comment → inlined with ' — ' separator", async () => {
+		const tool = getTool();
+		const withComment = {
+			questions: [
+				{
+					question: "Which DB?",
+					options: [{ label: "Postgres" }, { label: "SQLite" }],
+					allowComment: true,
+				},
+			],
+		};
+		const protoAnswers = JSON.stringify({
+			"Which DB?": "Postgres",
+			"Which DB?__comment": "prod constraint",
+		});
+		const result = await tool.execute(
+			"id",
+			withComment,
+			undefined,
+			undefined,
+			makeCtx({ mode: "rpc", selectResult: protoAnswers }),
+		);
+		expect(result.details.answers["Which DB?"]).toBe("Postgres — prod constraint");
+	});
+
+	it("R-4b: comment-only answer → 保留（MF-1 回归：无选中 + comment 不静默丢失）", async () => {
+		const tool = getTool();
+		const withComment = {
+			questions: [
+				{
+					question: "Which DB?",
+					options: [{ label: "Postgres" }, { label: "SQLite" }],
+					allowComment: true,
+				},
+			],
+		};
+		// GUI 只填评论提交（无选中）：answers 只有 __comment key、无主 key
+		const protoAnswers = JSON.stringify({
+			"Which DB?__comment": "生产环境都不能用，需评估新方案",
+		});
+		const result = await tool.execute(
+			"id",
+			withComment,
+			undefined,
+			undefined,
+			makeCtx({ mode: "rpc", selectResult: protoAnswers }),
+		);
+		// formatAnswer 空 parts 不再返回 null——comment-only 以 " — comment" 形式保留
+		expect(result.details.answers["Which DB?"]).toBe(" — 生产环境都不能用，需评估新方案");
+	});
+
 	it("R-5: user cancel (select returns undefined) → cancelled details", async () => {
 		const tool = getTool();
 		const result = await tool.execute(
@@ -696,7 +747,7 @@ describe("execute — RPC mode (askUserInteract via select channel)", () => {
 		expect(result.details.answers["Which database?"]).toBe("Postgres");
 	});
 
-	it("R-8: multi-question mixed (single-select + multi-select + Other)", async () => {
+	it("R-8: multi-question mixed (single-select + multi-select + Other + comment)", async () => {
 		const tool = getTool();
 		const mixed = {
 			questions: [
@@ -715,6 +766,7 @@ describe("execute — RPC mode (askUserInteract via select channel)", () => {
 					question: "Which region?",
 					header: "Region",
 					options: [{ label: "US" }, { label: "EU" }],
+					allowComment: true,
 				},
 			],
 		};
@@ -742,5 +794,41 @@ describe("execute — RPC mode (askUserInteract via select channel)", () => {
 		expect(result.details.answers["Which tools?"]).toBe("A, C, Custom");
 		// Q3: 无选中 → 跳过（不在 answers map 中）
 		expect(result.details.answers["Which region?"]).toBeUndefined();
+	});
+
+	it("R-9: multi-question with comment on one question", async () => {
+		const tool = getTool();
+		const multiQ = {
+			questions: [
+				{
+					question: "Which DB?",
+					header: "DB",
+					options: [{ label: "Postgres" }],
+				},
+				{
+					question: "Why?",
+					header: "Reason",
+					options: [{ label: "Performance" }],
+					allowComment: true,
+				},
+			],
+		};
+		const protoAnswers = JSON.stringify({
+			DB: "Postgres",
+			Reason: "Performance",
+			"Reason__comment": "benchmarked",
+		});
+		const result = await tool.execute(
+			"id",
+			multiQ,
+			undefined,
+			undefined,
+			makeCtx({ mode: "rpc", selectResult: protoAnswers }),
+		);
+
+		// Q1: 无 comment
+		expect(result.details.answers["Which DB?"]).toBe("Postgres");
+		// Q2: 有 comment → 内联
+		expect(result.details.answers["Why?"]).toBe("Performance — benchmarked");
 	});
 });

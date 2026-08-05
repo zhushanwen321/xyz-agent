@@ -5,4 +5,6 @@ export default {
   unansweredHint: '{count} questions unanswered',
   dialogTitle: 'Extension request',
   selectPlaceholder: 'Please select',
+  additionalComment: 'Additional comment',
+  commentPlaceholder: 'Optional, add a note…',
 }

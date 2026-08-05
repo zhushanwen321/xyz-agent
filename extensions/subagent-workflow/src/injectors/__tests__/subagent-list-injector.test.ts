@@ -1,0 +1,94 @@
+// subagent-list-injector 单测
+//
+// 覆盖纯函数：parseAgentFrontmatter（frontmatter 解析）+ formatAgentList（P3 正向
+// 触发引导语 + 名字约束 + XML 结构 + 转义）。discoverAllAgents 依赖文件系统 +
+// resource-discovery，属集成层，此处聚焦可快速回归的格式化契约。
+
+import { describe, expect, it } from "vitest";
+
+import {
+	formatAgentList,
+	parseAgentFrontmatter,
+} from "../subagent-list-injector";
+
+describe("parseAgentFrontmatter", () => {
+	it("解析双引号包裹的 name + description", () => {
+		const md = `---
+name: worker
+description: "编码执行者"
+---
+body`;
+		expect(parseAgentFrontmatter(md)).toEqual({
+			name: "worker",
+			description: "编码执行者",
+		});
+	});
+
+	it("解析单引号包裹的 name + description", () => {
+		const md = `---
+name: 'reviewer'
+description: '代码审查'
+---`;
+		expect(parseAgentFrontmatter(md)).toEqual({
+			name: "reviewer",
+			description: "代码审查",
+		});
+	});
+
+	it("缺 name 或 description 时返回 null", () => {
+		expect(parseAgentFrontmatter("---\nname: worker\n---")).toBeNull();
+		expect(parseAgentFrontmatter("---\ndescription: x\n---")).toBeNull();
+	});
+
+	it("无 frontmatter（不以 --- 开头）返回 null", () => {
+		expect(parseAgentFrontmatter("just markdown")).toBeNull();
+	});
+
+	it("frontmatter 未闭合（无结束 ---）返回 null", () => {
+		expect(parseAgentFrontmatter("---\nname: worker\ndescription: x")).toBeNull();
+	});
+});
+
+describe("formatAgentList", () => {
+	it("空列表返回空串（不注入）", () => {
+		expect(formatAgentList([])).toBe("");
+	});
+
+	it("包含 P3 正向触发引导语（何时该 delegate）", () => {
+		const out = formatAgentList([{ name: "worker", description: "d" }]);
+		expect(out).toContain("PRIORITY");
+		expect(out).toContain("3+ files");
+		expect(out).toContain("delegate");
+		expect(out).toContain("FIRST");
+	});
+
+	it("保留原 'ONLY use agent names from this list' 名字约束", () => {
+		const out = formatAgentList([{ name: "worker", description: "d" }]);
+		expect(out).toContain("ONLY use agent names from this list");
+	});
+
+	it("包含 'Do NOT call list to discover' 引导语", () => {
+		const out = formatAgentList([{ name: "worker", description: "d" }]);
+		expect(out).toContain("Do NOT call list to discover");
+		expect(out).toContain("use list only for running state");
+	});
+
+	it("用 <available_subagents> 标签包裹并列出每个 agent", () => {
+		const out = formatAgentList([
+			{ name: "worker", description: "does work" },
+			{ name: "reviewer", description: "reviews code" },
+		]);
+		expect(out).toContain("<available_subagents>");
+		expect(out).toContain("</available_subagents>");
+		expect(out).toContain("<name>worker</name>");
+		expect(out).toContain("<description>does work</description>");
+		expect(out).toContain("<name>reviewer</name>");
+		expect(out).toContain("<description>reviews code</description>");
+	});
+
+	it("转义 XML 特殊字符", () => {
+		const out = formatAgentList([{ name: "a&b<c>", description: "\"q\"" }]);
+		expect(out).toContain("<name>a&amp;b&lt;c&gt;</name>");
+		expect(out).toContain("&quot;q&quot;");
+	});
+});
