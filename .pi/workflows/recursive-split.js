@@ -80,7 +80,8 @@ function createRootUnit(startLayer, task, slug) {
 function queryFrontier(rootUnitId) {
   try {
     assertValidUnitId(rootUnitId); // C4：rootUnitId 拼进 execSync，防 shell 注入
-    const out = execSync(`cw frontier --root ${rootUnitId} --format json`, {
+    // 注意：cw frontier 不支持 --format flag（默认输出即纯 JSON），加了会 unknown flag 报错
+    const out = execSync(`cw frontier --root ${rootUnitId}`, {
       encoding: "utf-8",
       timeout: FRONTIER_TIMEOUT_MS,
     });
