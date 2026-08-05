@@ -18,7 +18,7 @@ import { useExtensionUIStore } from '@/stores/extension-ui'
 import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useToast } from '@/composables/useToast'
-import { handleCompletion } from '@/composables/useCompletionNotify'
+import { handleCompletion } from '@/composables/effects/useCompletionNotify'
 import type { InboundEffects } from '@xyz-agent/core'
 import type { SubagentRecord } from '@xyz-agent/shared'
 

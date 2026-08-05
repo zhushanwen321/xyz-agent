@@ -53,7 +53,7 @@ vi.mock('@/stores/workflow', () => ({
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ error: storeMocks.toastError }),
 }))
-vi.mock('@/composables/useCompletionNotify', () => ({
+vi.mock('@/composables/effects/useCompletionNotify', () => ({
   handleCompletion: storeMocks.handleCompletion,
 }))
 

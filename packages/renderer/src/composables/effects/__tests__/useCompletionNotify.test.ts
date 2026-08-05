@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { handleCompletion, __resetDebounceForTest } from '../useCompletionNotify'
 import * as sound from '../useCompletionSound'
-import * as markers from '../useSessionMarkers'
-import { useBackgroundWork } from '../features/useBackgroundWork'
+import * as markers from '../../useSessionMarkers'
+import { useBackgroundWork } from '../../features/chat/useBackgroundWork'
 import { getSettingsStore, __resetSettingsStoreForTesting } from '@xyz-agent/core'
 
 vi.mock('../useCompletionSound', () => ({
@@ -12,14 +12,14 @@ vi.mock('../useCompletionSound', () => ({
   playError: vi.fn<(name?: string) => Promise<void>>().mockResolvedValue(undefined),
 }))
 
-vi.mock('../useSessionMarkers', () => ({
+vi.mock('../../useSessionMarkers', () => ({
   markUnread: vi.fn(),
 }))
 
 // useBackgroundWork 默认 mock：hasBackgroundWork 返回 false。
 // 既有 10 个用例默认假设无 background work（非 background 场景），保持行为不变。
 // TC6/TC7/TC8 用 vi.mocked(useBackgroundWork).mockReturnValue 覆盖返回值。
-vi.mock('../features/useBackgroundWork', () => ({
+vi.mock('../../features/chat/useBackgroundWork', () => ({
   useBackgroundWork: vi.fn(() => ({ hasBackgroundWork: () => false })),
 }))
 

@@ -14,7 +14,7 @@
  * 平台默认声音映射 SSOT 在 @xyz-agent/shared（sound-defaults.ts），
  * main 与 renderer 共享同一份（W4 去重）。
  */
-import { getDefaultSound, detectPlatform } from './sound-defaults'
+import { getDefaultSound, detectPlatform } from '../sound-platform'
 import { playSystemSound } from '@/lib/ipc'
 
 /** playSystemSound 返回类型（win 返 wav base64，mac/linux 无） */

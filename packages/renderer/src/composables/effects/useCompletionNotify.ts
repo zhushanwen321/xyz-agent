@@ -16,9 +16,9 @@
  *   1s 防抖（多 session 同时完成只响一次）
  *   读取 settingsStore.system.completionSound 开关
  */
-import { playSuccess, playError } from '@/composables/useCompletionSound'
+import { playSuccess, playError } from '@/composables/effects/useCompletionSound'
 import { markUnread } from '@/composables/useSessionMarkers'
-import { useBackgroundWork } from '@/composables/features/useBackgroundWork'
+import { useBackgroundWork } from '@/composables/features/chat/useBackgroundWork'
 import { getSettingsStore } from '@xyz-agent/core'
 
 /** 上次播放提示音的时间戳（模块级，防抖用） */
