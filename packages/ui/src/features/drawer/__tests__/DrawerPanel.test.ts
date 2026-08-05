@@ -128,10 +128,10 @@ describe('DrawerPanel (tab 交互)', () => {
     expect(wrapper.emitted('toggle-dock')).toHaveLength(1)
   })
 
-  it('activeTab 高亮：当前 tab 应用选中样式（bg-accent-soft）', () => {
+  it('activeTab 高亮：当前 tab 应用选中样式（bg-surface-hover）', () => {
     const wrapper = mount(DrawerPanel, { props: baseProps({ activeTab: 'git' }) })
     const gitTab = wrapper.find('[data-testid="drawer-tab-git"]')
-    expect(gitTab.classes()).toContain('bg-accent-soft')
+    expect(gitTab.classes()).toContain('bg-surface-hover')
   })
 })
 

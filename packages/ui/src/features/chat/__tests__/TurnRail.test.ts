@@ -167,8 +167,8 @@ describe('TurnRail (IF4)', () => {
     const icons = wrapper.findAll('[data-testid="rail-agent-icon"]')
     // done turn → text-neutral-ico（完成态中性灰 ICON 色）
     expect(icons[0].classes()).toContain('text-neutral-ico')
-    // failed turn → text-warn（常驻哑光金，rail 全局导航一眼可辨失败位置）
-    expect(icons[1].classes()).toContain('text-warn')
+    // failed turn → text-danger（agentIconClass hasFailedTool 分支，v6 视觉重构后 danger 色）
+    expect(icons[1].classes()).toContain('text-danger')
     // active turn → text-accent + animate-loader-spin（双环微缩 loader，进行中信号）
     expect(icons[2].classes()).toContain('text-accent')
     expect(icons[2].classes()).toContain('animate-loader-spin')
