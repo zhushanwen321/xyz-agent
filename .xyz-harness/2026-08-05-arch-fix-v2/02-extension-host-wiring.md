@@ -36,7 +36,7 @@ ViewHost.vue 空态自隐藏（已实现），未挂载 view 不破坏布局。
 1. `useExtensionHostBridge.ts` 补 CompanionBand 接线：
    - 创建 `DialogRequestQueue` + `UiResponseTransport`
    - 订阅 bus `ui-request` 事件入队
-   - `app.provide COMPANION_BAND_SOURCE_KEY`
+   - `app.provide COMPANION_BAND_SOURCE_KEY`（实现落地注：实际 key 为 `DIALOG_REQUEST_SOURCE_KEY`（请求源）+ `UI_RESPONSE_TRANSPORT_KEY`（回传通道），定义于 `packages/ui/src/extension-host/companion-band-source.ts`，语义更准——dialog 请求与响应是两个职责）
 2. 全局 overlay 挂载 `<CompanionBand>`（经 OverlayLifecycle 管 z-index）
 3. `useExtensionUI.ts` 改为消费 `ui-request` bus 事件（删除只消费 extension.ui_request 旧路径）
    - ask-user 走 Panel inline / 其余走 CompanionBand modal 的分流逻辑保留
@@ -90,7 +90,7 @@ ESM import 漏洞理论存在（plugin-bootstrap.ts:82 `await import` 绕过 CJS
 
 改动范围：
 - `plugin-host.ts`：assignWorker(pluginId, trustLevel) 分流 trusted（Worker）/ untrusted（子进程）
-- `plugin-lifecycle.ts`：trustLevel 驱动分配
+- `plugin-lifecycle.ts`：trustLevel 驱动分配（实现落地注：实际驱动点在 `plugin-activator.ts:189` `host.assignWorker(pluginId, descriptor.trustLevel)`；plugin-lifecycle.ts 不含 trustLevel 逻辑）
 - `plugin-bootstrap.ts`：子进程版 bootstrap（IPC 消息循环）
 
 ### ⚠ Electron 打包约束（AGENTS.md #12，项目高危区）
