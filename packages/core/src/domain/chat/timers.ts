@@ -14,8 +14,8 @@ import type { FinalizeReason } from '@xyz-agent/core'
 
 const BASH_TIMEOUT_MS = 300_000
 
-/** 清除 per-session timer */
-function clearSessionTimer(timers: Map<string, ReturnType<typeof setTimeout>>, sessionId: string): void {
+/** 清除 per-session timer（export：store.ts 复用，消除本地双份副本——两版语义等价，clearTimeout(undefined) 是 no-op） */
+export function clearSessionTimer(timers: Map<string, ReturnType<typeof setTimeout>>, sessionId: string): void {
   const t = timers.get(sessionId)
   if (t !== undefined) {
     clearTimeout(t)

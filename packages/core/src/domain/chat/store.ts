@@ -42,7 +42,9 @@ import { truncateToolOutputBatch } from './truncate-tool-output'
 import { dispatchMessageEvent } from './effects/registry'
 import {
   initTimers,
+  clearSessionTimer,
 } from './timers'
+import { createStreamingStateMachine } from './streaming-state-machine'
 import {
   touchLru as lruTouch,
   evictIfNeeded as lruEvictIfNeeded,
@@ -55,7 +57,6 @@ import { findLastStreamingBashIndex, markBashError } from './bash-effects'
 import { createChangeSetController } from './changeset'
 import { createHandoffController } from './handoff'
 import type {
-  ContentBlock,
   Message,
   Segment,
   ServerMessage,
@@ -179,189 +180,6 @@ function appendSystemNoticeImpl(
 }
 
 /**
- * subagent streaming delta 纯逻辑（W4，模块作用域）。
- *
- * 全量替换虚拟 session 最后一条 streaming assistant 的 content + 幂等补 text contentBlock；
- * 无 streaming assistant 时 push 新的。吸收自原 subagent store applyStreamDelta（去
- * getMessages/setMessages 回调参数，直接操作传入的 messages ref），让 chat store 成为所有
- * assistant content mutation 的唯一入口。
- *
- * 扩展层传的 lines 是 buffer 的 split('\n')，每次都是完整文本 → 用替换而非追加。
- * contentBlock 幂等：已有 text 块则不重复 push（与主流式 text_delta handler 对齐）。
- * 留在模块作用域以控制 setup 函数行数（max-lines-per-function），store action 仅做 ref 委托。
- */
-function applySubagentStreamDeltaImpl(
-  messages: { value: Map<string, Message[]> },
-  virtualId: string,
-  lines: string[],
-): void {
-  const fullText = lines.join('\n')
-  const prev = messages.value.get(virtualId) ?? []
-  const lastAssistantIdx = findLastAssistantIndex(prev)
-  const next = [...prev]
-  if (lastAssistantIdx >= 0 && next[lastAssistantIdx].status === 'streaming') {
-    const prevMsg = next[lastAssistantIdx]
-    // 不可变写法（W1）：shallowRef 下不依赖字段级 mutate，整体构造新对象
-    const contentBlocks: ContentBlock[] = prevMsg.contentBlocks?.some((b) => b.type === 'text')
-      ? prevMsg.contentBlocks
-      : [...(prevMsg.contentBlocks ?? []), { type: 'text', refId: 'text' }]
-    next[lastAssistantIdx] = { ...prevMsg, content: fullText, contentBlocks }
-  } else {
-    next.push({
-      id: `sa-${crypto.randomUUID()}`,
-      role: 'assistant',
-      content: fullText,
-      status: 'streaming',
-      contentBlocks: [{ type: 'text', refId: 'text' }],
-      timestamp: Date.now(),
-    })
-  }
-  commitMessages(messages, virtualId, next)
-}
-
-/**
- * subagent streaming 收口纯逻辑（W4，模块作用域）：把虚拟 session 最后一条 streaming
- * assistant 翻成 complete。
- *
- * sealed 守卫对齐（D-010 parity）：实体一旦 complete 不再被后续 delta 污染。无 streaming
- * 实体时幂等 no-op。不走 finalizeSession：subagent 虚拟 session 无 pendingSend / streaming
- * timer 生命周期（由 subagent store 的 panelStreamUnsub 管理），只翻 status。
- */
-function finalizeSubagentStreamImpl(
-  messages: { value: Map<string, Message[]> },
-  virtualId: string,
-): void {
-  const prev = messages.value.get(virtualId)
-  if (!prev || prev.length === 0) return
-  const lastAssistantIdx = findLastAssistantIndex(prev)
-  if (lastAssistantIdx < 0 || prev[lastAssistantIdx].status !== 'streaming') return
-  const next = [...prev]
-  next[lastAssistantIdx] = { ...next[lastAssistantIdx], status: 'complete' }
-  commitMessages(messages, virtualId, next)
-}
-
-/**
- * finalizeAllStreaming 的候选 session 集合构造（W3 / W-S3，模块作用域）。
- *
- * 遍历所有可能持有瞬态态的 session 的 key 并集：messages.keys() ∪ compactingSessions ∪
- * retryStates ∪ queueStates ∪ pendingSend。不能只遍历 messages.keys()——compacting /
- * retry / queue / pendingSend 可能独立于消息存在，仅遍历 messages 会漏掉这些 session。
- *
- * [W3 / W-S3] pendingSend 并入：纯 pendingSend 态（用户已发起、message_start 空窗、无消息实体）
- * 不在 messages.keys() 内，断连时不会立即收口，UI 卡「发送中」。
- *
- * 抽到模块作用域以控制 setup 函数行数（max-lines-per-function），store action 仅做 ref 委托。
- */
-function collectFinalizeCandidates(
-  messages: { value: Map<string, Message[]> },
-  compactingSessions: { value: Set<string> },
-  handingOffSessions: { value: Set<string> },
-  retryStates: { value: Map<string, unknown> },
-  queueStates: { value: Map<string, unknown> },
-  pendingSend: { value: Set<string> },
-): Set<string> {
-  const candidateSids = new Set<string>(messages.value.keys())
-  for (const sid of compactingSessions.value) candidateSids.add(sid)
-  for (const sid of handingOffSessions.value) candidateSids.add(sid)
-  for (const sid of retryStates.value.keys()) candidateSids.add(sid)
-  for (const sid of queueStates.value.keys()) candidateSids.add(sid)
-  for (const sid of pendingSend.value) candidateSids.add(sid)
-  return candidateSids
-}
-
-/**
- * resetTransientStates 的 session 级独立瞬态清理（W3，模块作用域）。
- * 清 compacting / handingOff / retry / queue（断连兜底：这些态在断连后无事件驱动清理）。
- * 抽到模块作用域以控制 setup 函数行数（max-lines-per-function），store action 仅做 ref 委托。
- */
-function clearIndependentTransient(
-  sessionId: string,
-  retryStates: { value: Map<string, unknown> },
-  queueStates: { value: Map<string, unknown> },
-  setCompacting: (sessionId: string, value: boolean) => void,
-  setHandingOff: (sessionId: string, value: boolean) => void,
-): void {
-  setCompacting(sessionId, false)
-  setHandingOff(sessionId, false)
-  if (retryStates.value.has(sessionId)) {
-    const next = new Map(retryStates.value)
-    next.delete(sessionId)
-    retryStates.value = next
-  }
-  if (queueStates.value.has(sessionId)) {
-    const next = new Map(queueStates.value)
-    next.delete(sessionId)
-    queueStates.value = next
-  }
-}
-
-/**
- * per-session timer Map 清理 helper（模块作用域，控制 setup 行数）。
- * 取出 timer → clearTimeout → delete。无 timer 时 no-op（幂等）。
- * 复用于 clearPendingSendTimer / clearStreamingTimer（对称 chat-handoff.clearHandingOffTimer）。
- */
-function clearSessionTimer(timers: Map<string, ReturnType<typeof setTimeout>>, sessionId: string): void {
-  const timer = timers.get(sessionId)
-  if (timer) {
-    clearTimeout(timer)
-    timers.delete(sessionId)
-  }
-}
-
-/**
- * finalizeSession 的 message 终态映射纯逻辑（模块作用域）。
- *
- * 把 streaming/running 实体推到终态（reason 决定 message.status + toolCall.status 映射），
- * 同步收口 running toolCall。幂等（sealed 后实体不变）。
- * 抽到模块作用域以控制 setup 函数行数（max-lines-per-function），store action 仅做 ref 委托。
- */
-function finalizeMessagesImpl(
-  messages: { value: Map<string, Message[]> },
-  sessionId: string,
-  reason: FinalizeReason,
-  errorText?: string,
-): void {
-  const prev = messages.value.get(sessionId)
-  if (!prev) return
-  const next = prev.map((m) => {
-    // [M1 PR#116 review] 跳过 bash 消息：bash 消息（role:'system' + bashExecution）的生命周期
-    // 由 finalizeBashOnly / bashResultEffect / markBashError 独立管理（W1 timer-decouple 解耦）。
-    // 若此处统一翻终态，L1 放宽 bash↔assistant 并发后，assistant error → finalizeSession('error')
-    // 会把共存中的 streaming bash 一并翻成 error，bashResult 到达时找不到 streaming bash →
-    // 真实结果被丢弃。与 W1 的 finalizeBashOnly 解耦对称。
-    if (m.bashExecution) return m
-    const isStreaming = m.status === 'streaming'
-    // toolCall 统一收口（无论 message 是否还 streaming；[W4] 收敛到此处单一路径，
-    // 避免 message.complete 局部 finalizeToolCalls 与此两套映射漂移）。
-    // - error/stream_error → toolCall 'error'；其它非 normal/aborted → 'end_not_received'（设 endTime）；
-    //   normal/aborted 不设 endTime（与原逻辑一致）。
-    // 延迟到达的真实 tool_call_end 会用真实 output 覆盖收口值（end_not_received → completed）。
-    const toolCalls = m.toolCalls?.map((tc): typeof tc => {
-      if (tc.status !== 'running') return tc
-      const tcIsError = reason === 'error' || reason === 'stream_error'
-      return {
-        ...tc,
-        status: tcIsError ? 'error' : 'end_not_received',
-        ...(reason !== 'normal' && reason !== 'aborted' ? { endTime: Date.now() } : {}),
-      }
-    })
-    if (!isStreaming) {
-      // message 已终态（如 message.complete handler 已改 status），只补 toolCall 收口。
-      // 无 running toolCall 则原样返回（保持引用稳定，避免无谓 re-render）。
-      return m.toolCalls?.some((tc) => tc.status === 'running') ? { ...m, toolCalls } : m
-    }
-    // message 仍 streaming → 转终态 + 收口 toolCall
-    const isErrorReason = reason === 'error' || reason === 'stream_error' || reason === 'timeout' || reason === 'disconnect' || reason === 'restart'
-    const finalStatus = isErrorReason ? 'error' : 'complete'
-    const finalContent = errorText && m.role === 'assistant'
-      ? (m.content ? `${m.content}\n\n${errorText}` : errorText)
-      : m.content
-    return { ...m, status: finalStatus, content: finalContent, toolCalls } satisfies Message
-  })
-  commitMessages(messages, sessionId, next)
-}
-
-/**
  * chat store factory（IF1）：构造 chat 域全部状态 + actions，返回 store 对象。
  *
  * renderer 经 defineStore('chat', () => createChatStore()) 注册到 pinia。
@@ -425,6 +243,18 @@ export function createChatStore() {
   /** pendingSend 空窗期 timer（按 sessionId 隔离） */
   const pendingSendTimers = new Map<string, ReturnType<typeof setTimeout>>()
   // handingOff 超时兜底 timer + HANDING_OFF_TIMEOUT_MS 阈值内聚在 createHandoffController（chat-handoff.ts）
+
+  // ── streaming 状态机深模块（B6：5 个模块级 *Impl 内聚为 factory，本 store 仅委托）──
+  const streamingStateMachine = createStreamingStateMachine({
+    messages,
+    compactingSessions,
+    handingOffSessions,
+    retryStates,
+    queueStates,
+    pendingSend,
+    setCompacting,
+    setHandingOff,
+  })
 
   // ── 派生态（computed scan，D-005，零手动维护）──
 
@@ -700,7 +530,7 @@ export function createChatStore() {
    * @param reason 决定 message.status + toolCall.status 终态映射（见 FinalizeReason）
    */
   function finalizeSession(sessionId: string, reason: FinalizeReason, errorText?: string): void {
-    finalizeMessagesImpl(messages, sessionId, reason, errorText)
+    streamingStateMachine.finalizeMessages(sessionId, reason, errorText)
     // 清 pendingSend + streaming timer（bash timer 不清：W1 timer-decouple 解耦，bash timer 由
     // bashResultEffect/markBashError/finalizeBashOnly 独立清，不应被 assistant 收口误清）。
     // [M2 PR#116 review] clearStreamingTimer 此前被误删：正常 message.complete 路径不再清
@@ -749,9 +579,7 @@ export function createChatStore() {
    * 直接置位、auto_retry_start 只写 retryStates 不写 messages），仅遍历 messages 会漏掉这些 session。
    */
   function finalizeAllStreaming(reason: FinalizeReason): void {
-    const candidateSids = collectFinalizeCandidates(
-      messages, compactingSessions, handingOffSessions, retryStates, queueStates, pendingSend,
-    )
+    const candidateSids = streamingStateMachine.collectFinalizeCandidates()
     for (const sid of candidateSids) {
       if (isGenerating(sid) || isCompacting(sid) || isHandingOff(sid) || retryStates.value.has(sid) || queueStates.value.has(sid) || pendingSend.value.has(sid)) {
         resetTransientStates(sid, reason)
@@ -777,7 +605,7 @@ export function createChatStore() {
     // 先走 finalizeSession 收口 streaming 实体 + 清 pendingSend + 清 timer（保留其幂等语义）
     finalizeSession(sessionId, reason)
     // 再清 session 级独立瞬态（断连兜底：这些态在断连后无事件驱动清理）
-    clearIndependentTransient(sessionId, retryStates, queueStates, setCompacting, setHandingOff)
+    streamingStateMachine.clearIndependentTransient(sessionId)
   }
 
   // ── pendingSend 生命周期（useChat/effects 经 ctx/port 调）──
@@ -892,8 +720,8 @@ export function createChatStore() {
     isHydrated, markHistoryFailed, clearHistoryError,
     hydrate, setMessages,
     prependHistory,
-    applySubagentStreamDelta: (virtualId: string, lines: string[]) => applySubagentStreamDeltaImpl(messages, virtualId, lines),
-    finalizeSubagentStream: (virtualId: string) => finalizeSubagentStreamImpl(messages, virtualId),
+    applySubagentStreamDelta: (virtualId: string, lines: string[]) => streamingStateMachine.applySubagentStreamDelta(virtualId, lines),
+    finalizeSubagentStream: (virtualId: string) => streamingStateMachine.finalizeSubagentStream(virtualId),
     appendUser,
     appendPending,
     markPendingDelivered,
