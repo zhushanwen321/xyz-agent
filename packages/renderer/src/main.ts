@@ -6,8 +6,12 @@ import i18n from './i18n'
 import App from './App.vue'
 import { provideDesktopPlatform } from './platform/desktop-platform'
 import { createMockPlatform } from './mock/mock-ws'
-import { providePlatform } from '@xyz-agent/core'
+import { providePlatform, provideDevMode } from '@xyz-agent/core'
 import './style.css'
+
+// dev 模式注入（core headless 化，audit §15.6）：core 不能读 import.meta.env，
+// 由壳启动时注入 dev 标志（chat effects/store 诊断日志据此开关）
+provideDevMode(Boolean(import.meta.env.DEV))
 
 // [HISTORICAL] 2026-08-04 bootstrap 时序：platform 注入必须先于连接编排（useConnection.init）。
 // 原注入点在 AppShell setup（useSettingsShell），但 AppShell 仅在连接成功后渲染（App.vue v-if）——

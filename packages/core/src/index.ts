@@ -3,6 +3,7 @@
 // Vue reactivity 可用（双端 Vue），零 DOM / 零 electron / 零浏览器 API 直连（经 PlatformPort 注入）。
 export * from './bootstrap'
 export * from './platform/port'
+export * from './platform/dev-mode'
 export * from './coordination'
 export * from './transport/ws-client'
 export * from './domain/chat'

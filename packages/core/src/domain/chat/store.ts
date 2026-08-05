@@ -63,13 +63,7 @@ import type {
 } from '@xyz-agent/shared'
 import { normalizeContent } from '@xyz-agent/shared'
 import type { RetryState, QueueState, FinalizeReason } from './store-types'
-
-/**
- * Vite 注入 import.meta.env.DEV（renderer 侧，dev=true / prod=false）；core 单测/非 Vite 环境
- * import.meta.env 不存在 → false（不吐 debug 日志）。宽松 cast 避免 core 缺 vite/client 类型报错。
- * 对齐 w3 effects/registry.ts IS_DEV 模式（core 环境无关化过渡）。
- */
-const IS_DEV: boolean = ((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV) ?? false
+import { isDevMode } from '../../platform/dev-mode'
 
 /**
  * streaming 超时默认值：10min。
@@ -715,7 +709,7 @@ export function createChatStore() {
     clearPendingSend(sessionId)
     clearStreamingTimer(sessionId)
     // 收口日志：仅异常 reason 打 dev warn（保留诊断价值），normal/aborted 正常路径不打（去长对话噪音）
-    if (IS_DEV && reason !== 'normal' && reason !== 'aborted') console.warn(`[chat] finalizeSession sid=${sessionId} reason=${reason}`)
+    if (isDevMode() && reason !== 'normal' && reason !== 'aborted') console.warn(`[chat] finalizeSession sid=${sessionId} reason=${reason}`)
   }
 
   /**
