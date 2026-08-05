@@ -22,8 +22,8 @@ describe('U10: settings UI 文案经 i18n 渲染', () => {
     // 菜单 tab 名（中文化）
     expect(i18n.global.t('settings.menu.provider')).toBe('供应商')
     expect(i18n.global.t('settings.menu.skill')).toBe('技能')
-    expect(i18n.global.t('settings.menu.agent')).toBe('子代理')
-    expect(i18n.global.t('settings.menu.extension')).toBe('Pi 扩展')
+    expect(i18n.global.t('settings.menu.agent')).toBe('代理')
+    expect(i18n.global.t('settings.menu.extension')).toBe('扩展')
     expect(i18n.global.t('settings.menu.system')).toBe('系统')
     // provider 页
     expect(i18n.global.t('settings.provider.add')).toBe('添加供应商')
@@ -53,8 +53,8 @@ describe('U10: settings UI 文案经 i18n 渲染', () => {
     expect(i18n.global.t('settings.dialogDescription')).toBe('Configure Provider / Skill / Agent / Pi Extension / System Prompt / System')
     expect(i18n.global.t('settings.menu.providerDesc')).toBe('Configure model providers and API keys')
     expect(i18n.global.t('settings.menu.systemDesc')).toBe('Appearance, language and shortcut preferences')
-    // Extension tab renamed to Pi Extension
-    expect(i18n.global.t('settings.menu.extension')).toBe('Pi Extension')
+    // 注：tab 名曾为 Pi Extension（b416f8cdb），后改回 Extension（dialogDescription 仍保留 Pi Extension 措辞）
+    expect(i18n.global.t('settings.menu.extension')).toBe('Extension')
     expect(i18n.global.t('settings.provider.add')).toBe('Add Provider')
     expect(i18n.global.t('settings.provider.modelsCount', { count: 5 })).toBe('5 models')
     expect(i18n.global.t('settings.provider.deleteConfirmTitle', { name: 'OpenAI' })).toBe('Delete OpenAI?')
