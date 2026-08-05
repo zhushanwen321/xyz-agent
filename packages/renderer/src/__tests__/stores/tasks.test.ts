@@ -439,13 +439,13 @@ describe('tasks store', () => {
     })
   })
 
-  // ── 原始 todos 数组（VERIFY 标签 + 准确三态） ──
+  // ── 原始 todos 数组（准确三态） ──
 
   describe('setTodos / getTodos（原始 todo 数组）', () => {
     it('setTodos 后 getTodos 返回原始数组（deep equal）', () => {
       const store = useTasksStore()
       const todos = [
-        { id: 1, text: 'task a', status: 'completed' as const, isVerification: true },
+        { id: 1, text: 'task a', status: 'completed' as const },
         { id: 2, text: 'task b', status: 'pending' as const },
       ]
       store.setTodos('s1', todos)
@@ -470,17 +470,6 @@ describe('tasks store', () => {
       const store = useTasksStore()
       expect(store.getTodos('nope')).toEqual([])
     })
-
-    it('isVerification 字段保留（TasksPanel 渲染 VERIFY 标签依据）', () => {
-      const store = useTasksStore()
-      store.setTodos('s1', [
-        { id: 1, text: 'verify task', status: 'pending', isVerification: true },
-        { id: 2, text: 'normal task', status: 'pending' },
-      ])
-      const todos = store.getTodos('s1')
-      expect(todos[0].isVerification).toBe(true)
-      expect(todos[1].isVerification).toBeUndefined()
-    })
   })
 
   // ── goal objective / slug 元数据 ──
@@ -501,7 +490,7 @@ describe('tasks store', () => {
             action: 'add', nextId: 2,
             todos: [
               { id: 1, text: '历史任务1', status: 'completed' },
-              { id: 2, text: '历史任务2', status: 'pending', isVerification: true },
+              { id: 2, text: '历史任务2', status: 'pending' },
             ],
             __gui__: { type: 'list-tree', props: { items: [{ label: '#1: 历史任务1' }] } },
           },
@@ -511,7 +500,7 @@ describe('tasks store', () => {
       expect(store.hasData('s1')).toBe(true)
       expect(store.getTodos('s1')).toEqual([
         { id: 1, text: '历史任务1', status: 'completed' },
-        { id: 2, text: '历史任务2', status: 'pending', isVerification: true },
+        { id: 2, text: '历史任务2', status: 'pending' },
       ])
       expect(store.getTodoCount('s1')).toEqual({ done: 1, total: 2 })
       expect(store.getTodo('s1')?.type).toBe('list-tree')

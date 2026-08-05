@@ -95,7 +95,7 @@ export async function runSendStream(sessionId: string, text: string, deps: SendS
   // 默认（read）：tool_call_start/update/end（card 嵌套 GUI）+ terminal widget + widgetGui × 2 + status
   //   → 覆盖 gui-components.spec.ts 的路径 A/B 验证（零回归）
   // 含 'todo'/'任务'：todo tool_call 序列（details.todos + __gui__ list-tree），不推 extension widget
-  //   → 让 Tasks Drawer P0 Case 1 验证 5 项 + 三态 + VERIFY
+  //   → 让 Tasks Drawer P0 Case 1 验证 5 项 + 三态
   // 含 'goal'/'目标'：goal_control tool_call 序列（details.slug + __gui__ card）+ goal ANSI widget
   //   → 让 Tasks Drawer P0 Case 2/3 验证 GoalCard + objective 提取
   if (isCancelled(sessionId)) return
@@ -345,13 +345,13 @@ async function emitTodoBranch(sessionId: string, deps: BranchDeps): Promise<void
   })
   await sleep(TIMING.toolGap)
   if (isCancelled(sessionId)) return
-  // 5 项任务，覆盖三态 + 2 个 isVerification（#3 #4）
+  // 5 项任务，覆盖三态
   // 对齐 chat-message-effects.isTodoItem 类型守卫：id:number / text:string / status 枚举
   const todos = [
     { id: 1, text: '复现 token 过期场景', status: 'completed' as const },
     { id: 2, text: '定位 refreshToken 循环点', status: 'completed' as const },
-    { id: 3, text: '添加 maxRetry 守卫', status: 'completed' as const, isVerification: true },
-    { id: 4, text: '编写单元测试覆盖边界', status: 'in_progress' as const, isVerification: true },
+    { id: 3, text: '添加 maxRetry 守卫', status: 'completed' as const },
+    { id: 4, text: '编写单元测试覆盖边界', status: 'in_progress' as const },
     { id: 5, text: '更新 auth 模块文档', status: 'pending' as const },
   ]
   emit(sessionId, {
@@ -361,7 +361,7 @@ async function emitTodoBranch(sessionId: string, deps: BranchDeps): Promise<void
       toolCallId,
       toolName: 'todo',
       status: 'completed',
-      // routeToolResultToTasks 读 details.todos（含 isVerification）+ details.__gui__.component（list-tree）
+      // routeToolResultToTasks 读 details.todos + details.__gui__.component（list-tree）
       details: {
         action: 'add',
         nextId: 6,

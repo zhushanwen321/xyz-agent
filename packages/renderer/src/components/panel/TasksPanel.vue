@@ -6,12 +6,11 @@
 
   数据源（只读不写，session 级分区）：
   · goal → tasksStore.getGoal(sessionId)（含 liveStatus/widget 实时字段）
-  · todos → tasksStore.getTodos(sessionId)（原始数组，含 isVerification + 准确三态）
+  · todos → tasksStore.getTodos(sessionId)（原始数组，准确三态）
   · 计数 → tasksStore.getTodoCount(sessionId)（done/total）
 
   blocked goal 视觉置顶：goal 卡片用 Tailwind order-first，确保余光优先捕获（即使 DOM 顺序在后）。
   todo 三态：pending 空心圆 / in_progress 脉冲点 / completed 划线。
-  isVerification 项加 VERIFY 紫标（reasoning 色）。
 -->
 <template>
   <div class="tasks-panel flex flex-col gap-3 p-3" data-testid="tasks-panel">
@@ -54,14 +53,6 @@
           <span class="todo-text min-w-0 flex-1 truncate text-[12px] leading-[1.4]">
             {{ todo.text }}
           </span>
-          <!-- VERIFY 标签（reasoning 色，hover 显 tooltip） -->
-          <span
-            v-if="todo.isVerification"
-            class="verify-tag shrink-0 rounded-sm bg-reasoning-soft px-1 py-px text-[8px] font-semibold tracking-wide text-reasoning"
-            :title="t('panel.panel.tasks.verifyTooltip')"
-          >
-            {{ t('panel.panel.tasks.verifyTag') }}
-          </span>
         </li>
       </ul>
     </section>
@@ -100,7 +91,7 @@ const goal = computed(() =>
 /** 是否 blocked（用于 goal 卡片视觉置顶 order-first） */
 const isGoalBlocked = computed<boolean>(() => goal.value?.liveStatus === 'blocked')
 
-/** todo 原始数组（含 isVerification + 准确三态） */
+/** todo 原始数组（准确三态） */
 const todos = computed<TodoItem[]>(() =>
   props.sessionId ? tasksStore.getTodos(props.sessionId) : [],
 )

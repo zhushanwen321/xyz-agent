@@ -57,7 +57,7 @@ describe('ExtensionRegistry 分流', () => {
       const store = useTasksStore()
       const consumed = routeWidget('s1', 'todo', ['✓ 3/3'])
       expect(consumed).toBe(true)
-      // todo widget 不该写 store（无 isVerification，权威数据来自 tool result）
+      // todo widget 不该写 store（权威数据来自 tool result）
       expect(store.hasData('s1')).toBe(false)
     })
 
