@@ -10,6 +10,7 @@ import { resolve, dirname } from 'node:path'
 import { existsSync, readdirSync } from 'node:fs'
 import type { WorkerHandle, RpcRequest } from './plugin-types.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
+import { PluginHostProcess, type PluginHostProcessOptions } from './plugin-host-process.js'
 
 /**
  * 解析 plugin-host.ts 所在目录（即 dist/runtime/）。
@@ -135,6 +136,10 @@ export class PluginHost implements PluginHostContract {
   private memoryMonitorTimer: ReturnType<typeof setInterval> | null = null
   private trustedCounter = 0
 
+  /** sandbox 插件子进程宿主（fork 版，惰性创建；无 sandbox 插件时不创建） */
+  private processHost: PluginHostProcess | null = null
+  private readonly processHostOptions?: PluginHostProcessOptions
+
   /** Per-plugin crash counter */
   private crashCounts = new Map<string, number>()
   /** Saved pluginIds from crashed trusted workers for rebuild */
@@ -144,8 +149,9 @@ export class PluginHost implements PluginHostContract {
   private static readonly REBUILD_COOLDOWN_MS = REBUILD_COOLDOWN_MS
   private rebuildCooldownMs = PluginHost.REBUILD_COOLDOWN_MS
 
-  constructor(rpcServer: PluginRpcServer) {
+  constructor(rpcServer: PluginRpcServer, processHostOptions?: PluginHostProcessOptions) {
     this.rpcServer = rpcServer
+    this.processHostOptions = processHostOptions
   }
 
   /** 设置 crash callback（含 Worker 重建后的重新加载） */
@@ -166,6 +172,24 @@ export class PluginHost implements PluginHostContract {
     this.onReply = cb
   }
 
+  /**
+   * 惰性创建子进程宿主（sandbox 插件首次分配时）。
+   * crash/reply 回调转发到 PluginHost 自己的回调——sandbox 崩溃不计数不 rebuild
+   * （rebuild 仅 trusted 语义，见 handleWorkerCrash）；幂等守卫在 PluginHostProcess 内部。
+   */
+  private ensureProcessHost(): PluginHostProcess {
+    if (this.processHost) return this.processHost
+    const host = new PluginHostProcess(this.rpcServer, this.processHostOptions)
+    host.setCrashCallback((processId, pluginIds, error) => {
+      this.onCrash?.(processId, pluginIds, error)
+    })
+    host.setReplyCallback((msg) => {
+      this.onReply?.(msg)
+    })
+    this.processHost = host
+    return host
+  }
+
   /** 覆盖重建冷却时间（测试用） */
   setRebuildCooldownMs(ms: number): void {
     this.rebuildCooldownMs = ms
@@ -184,13 +208,9 @@ export class PluginHost implements PluginHostContract {
    */
   async assignWorker(pluginId: string, trustLevel: 'trusted' | 'sandbox'): Promise<string> {
     if (trustLevel === 'sandbox') {
-      const workerId = `sandbox-${pluginId}`
-      const existing = this.workers.get(workerId)
-      if (existing && existing.status === 'active') {
-        existing.pluginIds.push(pluginId)
-        return workerId
-      }
-      return this.createWorker(workerId, 'sandbox', pluginId).workerId
+      // sandbox 插件走子进程宿主（fork 隔离），不进 workers Map。
+      // 进程复用由 PluginHostProcess.assignProcess 内部处理（sandbox 独占进程）。
+      return this.ensureProcessHost().assignProcess(pluginId, 'sandbox')
     }
 
     // trusted: 复用空闲 Worker
@@ -215,6 +235,10 @@ export class PluginHost implements PluginHostContract {
    * 超时 10 秒后 reject。
    */
   async loadPlugin(workerId: string, pluginPath: string, trustLevel?: 'trusted' | 'sandbox'): Promise<void> {
+    if (workerId.startsWith('sandbox-')) {
+      await this.ensureProcessHost().loadPlugin(workerId, pluginPath, trustLevel ?? 'sandbox')
+      return
+    }
     const worker = this.workerInstances.get(workerId)
     if (!worker) throw new Error(`Worker not found: ${workerId}`)
 
@@ -243,6 +267,10 @@ export class PluginHost implements PluginHostContract {
   }
 
   async terminateWorker(workerId: string): Promise<void> {
+    if (workerId.startsWith('sandbox-')) {
+      await this.ensureProcessHost().terminateProcess(workerId)
+      return
+    }
     const worker = this.workerInstances.get(workerId)
     if (!worker) return
 
@@ -263,6 +291,14 @@ export class PluginHost implements PluginHostContract {
           workerId: handle.workerId,
           postMessage: (message: unknown) => worker?.postMessage(message),
         }
+      }
+    }
+    // sandbox 插件：转调子进程宿主（字段映射 processId → workerId，activator 消费 handle.workerId）
+    const processHandle = this.processHost?.getProcessHandle(pluginId)
+    if (processHandle) {
+      return {
+        workerId: processHandle.processId,
+        postMessage: processHandle.postMessage,
       }
     }
     return undefined
@@ -301,6 +337,8 @@ export class PluginHost implements PluginHostContract {
       clearInterval(this.memoryMonitorTimer)
       this.memoryMonitorTimer = null
     }
+    // 子进程宿主先关（内部也 dispose rpcServer——dispose 幂等，重复调用无害）
+    await this.processHost?.shutdown()
     await Promise.allSettled(
       [...this.workerInstances.values()].map(w => w.terminate()),
     )
@@ -322,6 +360,8 @@ export class PluginHost implements PluginHostContract {
     trustLevel: 'trusted' | 'sandbox',
     pluginId: string,
   ): WorkerHandle {
+    // 注意：本函数仅 trusted 路径调用（assignWorker 的 sandbox 分支已转调子进程宿主），
+    // trustLevel 参数保留用于 handle 记录；sandbox 不会经过 new Worker。
     // plugin-bootstrap.js 与本文件（plugin-host）同目录
     // resolveAndValidateFile 在文件不存在时抛出含诊断信息的错误
     // 生产环境（CJS bundle）用 .cjs，开发/测试（JS 源码直跑）用 .js，

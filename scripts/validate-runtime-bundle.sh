@@ -116,7 +116,9 @@ echo -e "${BLUE}[3/6] 检查 CJS 兼容性（禁止 import.meta / fileURLToPath�
 
 # 允许的 import.meta 用法：有 __dirname 兼容层或 getAppVersion/getPluginHostDir 的注释说明
 # plugin-host.ts 和 plugin-version-checker.ts 有专门的 __dirname 兼容层，予以排除
-IMPORTS_META=$(grep -rn "import\.meta" "$RUNTIME_DIR/src" --include="*.ts" 2>/dev/null | grep -v "plugin-host.ts\|plugin-version-checker.ts" || true)
+# [HISTORICAL] 2026-08-05：排除 __tests__ 目录——测试文件不走 tsup CJS bundle（entry 只含 index.ts + bootstrap），
+# vitest 在 ESM 环境直接跑源码，import.meta 有效；此前误扫 plugin-esm-loader.test.ts（fixture 路径定位用 import.meta）导致误报。
+IMPORTS_META=$(grep -rn "import\.meta" "$RUNTIME_DIR/src" --include="*.ts" --exclude-dir=__tests__ 2>/dev/null | grep -v "plugin-host.ts\|plugin-version-checker.ts" || true)
 
 if [ -n "$IMPORTS_META" ]; then
     echo -e "${RED}[ERROR] runtime 源码使用了 import.meta，CJS bundle 会变成 undefined：${NC}"
@@ -125,7 +127,7 @@ if [ -n "$IMPORTS_META" ]; then
     exit 1
 fi
 
-FILE_URL_USAGE=$(grep -rn "fileURLToPath" "$RUNTIME_DIR/src" --include="*.ts" 2>/dev/null | grep -v "plugin-host.ts" || true)
+FILE_URL_USAGE=$(grep -rn "fileURLToPath" "$RUNTIME_DIR/src" --include="*.ts" --exclude-dir=__tests__ 2>/dev/null | grep -v "plugin-host.ts" || true)
 if [ -n "$FILE_URL_USAGE" ]; then
     echo -e "${RED}[ERROR] runtime 源码使用了 fileURLToPath（CJS 中需要 import.meta.url）：${NC}"
     echo "$FILE_URL_USAGE" | sed 's/^/  /'
