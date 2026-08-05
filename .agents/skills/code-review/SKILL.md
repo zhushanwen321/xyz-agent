@@ -37,7 +37,7 @@ git diff main...HEAD --stat
 # targetType=git-diff + target=<baseRef> 指定审查 git 变更
 # batch1 传入 5 个维度 agent（pi 从 .agents/agents/review-*.md 解析实体）
 # autoCommit=true：fix 后自动 commit（与旧定制版行为一致）
-# recheckAfterFix=true：fix 后重审全部 agent（回归防护，等价旧版 reactivateAll）
+# recheckAfterFix=false（默认）：省 token；大改动/担心 fix 引入回归时传 true 开启强回归重审
 # skipCleanAgents=true：单轮 clean 的 agent 下轮跳过（省 token）
 # maxRounds 默认 10；model 可选，不传则用当前会话模型
 pi workflow run review-fix-loop --args '{
@@ -46,7 +46,7 @@ pi workflow run review-fix-loop --args '{
   batch1: "review-arch-boundary,review-business-logic,review-type-safety,review-electron-build,review-test-coverage",
   maxRounds: 10,
   autoCommit: true,
-  recheckAfterFix: true,
+  recheckAfterFix: false,
   skipCleanAgents: true
 }'
 ```
@@ -61,12 +61,12 @@ pi workflow run review-fix-loop --args '{
 - **维度 agent**：`batch1` 逗号分隔 5 个 agent 名，全并行单批 review（无 worktree 约束不需分批）。各 agent 的审查焦点已内置于 `.agents/agents/review-*.md` 正文，无需额外注入 focus
 - **聚合**：内置 aggregator prompt 合并去重 5 份报告为 `aggregated.md` + `must_fix` 计数（workflow 自带，不依赖 `review-aggregator.md`）
 - **clean 判定**：`must_fix === 0` 判 clean；否则 fix agent 批量修复并 `autoCommit` commit，进入下一轮
-- **clean 跳过**（`skipCleanAgents`）：单轮 `must_fix===0` 的 agent 下轮跳过；`recheckAfterFix=true` 保证 fix 后重审全部 agent，覆盖"fix 引入回归"
+- **clean 跳过**（`skipCleanAgents`）：单轮 `must_fix===0` 的 agent 下轮跳过；`recheckAfterFix` 默认 false（省 token，clean agent 下轮跳过不重审），传 true 开启强回归模式（fix 后重派全批，clean agent 走限定 prompt 只审改动文件，覆盖"fix 引入回归"）
 - **stuck 检测**：连续 `stuckThreshold`（默认 3）轮问题数不降则停
 
 > **与旧定制版的差异**（已接受）：旧定制版 S1 conservative 要求「连续 2 轮 clean」才跳过 agent，
-> 内置版「单轮 clean」即跳过。配合 `recheckAfterFix=true`，"fix 引入回归"场景已被覆盖；
-> 少审一轮换取 token 效率，对审查正确性无影响。
+> 内置版「单轮 clean」即跳过。默认 recheckAfterFix=false 时，"fix 引入回归"场景不覆盖
+> （省 token）；担心回归时传 recheckAfterFix=true 开启强回归重审。少审一轮换取 token 效率。
 
 ### 路径 2：非 pi 环境（手工编排，固定 2 轮）[本次新增]
 
