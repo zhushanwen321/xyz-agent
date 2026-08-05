@@ -462,5 +462,6 @@ const MOCK: SearchItem[] = [
 
 ### 10.3 落地要求
 
-1. 本文档即范式 SSOT，后续重构（B6 / ViewHost / Settings 拆分）统一遵循三段式
-2. review 检查新代码：发现上述信号时建议深模块化，而非继续拆 *Impl 或堆叠 import
+1. 范式写入 `docs/standards.md` 的「重构」章节（本文档即固化产物）
+2. 后续重构（B6 / ViewHost / Settings 拆分）统一遵循三段式
+3. review 检查新代码：是否有上述信号 → 建议深模块化，而非继续拆 *Impl 或堆叠 import
