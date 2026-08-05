@@ -1,7 +1,7 @@
 /**
  * Todo 数据模型 — 纯函数，不依赖 Pi 运行时。
  * 四态: pending → in_progress → completed；任一状态 → cancelled
- * （cancelled 不可恢复；isVerification 标记验证任务，FR-6 completion audit 用）
+ * （cancelled 不可恢复）
  */
 
 import { guiComponent, type GuiRenderResult, guiResult, type TreeItem } from "@xyz-agent/extension-protocol";
@@ -12,8 +12,6 @@ export interface Todo {
 	id: number;
 	text: string;
 	status: "pending" | "in_progress" | "completed" | "cancelled";
-	/** 验证任务标记（FR-6 completion audit）。验证任务必须 completed，不可 cancelled。 */
-	isVerification?: boolean;
 }
 
 export interface TodoDetails {
@@ -55,8 +53,6 @@ export function migrateTodo(raw: Todo): Todo {
 		id: record.id as number,
 		text: record.text as string,
 		status,
-		// FR-6: 保留 isVerification 标记（可选字段，旧数据可能缺失）
-		isVerification: record.isVerification === true ? true : undefined,
 	};
 }
 
@@ -115,7 +111,6 @@ export function addTodos(
 	currentTodos: Todo[],
 	currentNextId: number,
 	texts: string[],
-	isVerification?: boolean,
 ): AddResult {
 	if (!texts || texts.length === 0) {
 		return {
@@ -144,8 +139,6 @@ export function addTodos(
 			id: nextId++,
 			text: trimmed[i],
 			status: "pending" as const,
-			// FR-6: isVerification 标记验证任务（可选，仅 add 时可设）
-			isVerification: isVerification === true ? true : undefined,
 		});
 	}
 	const endId = nextId - 1;
@@ -200,19 +193,12 @@ export function updateTodos(
 				resultText: `Error: invalid status '${u.status}' for update item id ${u.id}`,
 			};
 		}
-		// FR-6 不变量守卫：(a) cancelled 不可恢复；(b) 验证任务不可 cancelled
+		// cancelled 不可恢复
 		if (todo.status === "cancelled" && u.status !== undefined) {
 			return {
 				updatedTodos: currentTodos,
 				error: `id ${u.id} is cancelled`,
 				resultText: `Error: Todo #${u.id} is cancelled and cannot be restored`,
-			};
-		}
-		if (todo.isVerification && u.status === "cancelled") {
-			return {
-				updatedTodos: currentTodos,
-				error: `id ${u.id} is verification todo`,
-				resultText: `Error: Todo #${u.id} is a verification todo and cannot be cancelled`,
 			};
 		}
 	}

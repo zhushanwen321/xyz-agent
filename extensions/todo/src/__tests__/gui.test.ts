@@ -31,9 +31,4 @@ describe("buildGui", () => {
 		expect(gui.component.props.items).toEqual([]);
 	});
 
-	it("isVerification todo still maps correctly", () => {
-		const todos: Todo[] = [{ id: 1, text: "verify", status: "pending", isVerification: true }];
-		const gui = buildGui(todos);
-		expect(gui.component.props.items[0]).toMatchObject({ icon: "dot", label: "#1: verify" });
-	});
 });

@@ -42,10 +42,6 @@ describe("todo description — 给完整 JSON 正例", () => {
 		expect(DESCRIPTION_REGION).toContain('{"action":"add","texts"');
 	});
 
-	it("add+verification 正例：含 isVerification", () => {
-		expect(DESCRIPTION_REGION).toContain('"isVerification":true');
-	});
-
 	it("update single 正例：含 {\"action\":\"update\",\"id\"", () => {
 		expect(DESCRIPTION_REGION).toContain('{"action":"update","id"');
 	});
