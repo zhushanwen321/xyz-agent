@@ -57,6 +57,8 @@ vi.mock('@/api/pending', () => ({
   rejectAll: vi.fn(),
   resolve: (...args: unknown[]) => mockPendingResolve(...args),
   reject: (...args: unknown[]) => mockPendingReject(...args),
+  // routeInbound 用 has 判定 msg.id 是否命中 pending；测试模拟的带 id error reply 均为 reply
+  has: vi.fn().mockReturnValue(true),
 }))
 vi.mock('@/api/events', () => ({
   dispatchSession: vi.fn(),

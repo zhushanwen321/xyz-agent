@@ -64,6 +64,18 @@ export function resolve<T>(id: string, value: T): void {
   req.resolve(value)
 }
 
+/**
+ * 是否存在该 id 的 pending 请求。
+ *
+ * 用于入站路由区分「RPC reply（id 命中 pending）」与「带 id 的 server-push 广播」——
+ * runtime 的 broadcast 消息（config.skills/agents/...）也携带 nextPushId 作为 id，
+ * 若仅凭 msg.id 存在就判定为 reply，会把广播误吞进 pending 分流（pendingMap 无此 id → 静默丢弃），
+ * 导致靠广播推送的 store（skills/agents 等，无 RPC 兜底）永空。
+ */
+export function has(id: string): boolean {
+  return pendingMap.has(id)
+}
+
 /** 按 id reject pending 请求（id 不存在时 no-op） */
 export function reject(id: string, error: unknown): void {
   const req = pendingMap.get(id)

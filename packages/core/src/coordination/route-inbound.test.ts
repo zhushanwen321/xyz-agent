@@ -26,6 +26,9 @@ function makePorts(overrides?: Partial<TransportPorts>): TransportPorts {
       resolve: vi.fn(),
       reject: vi.fn(),
       rejectAll: vi.fn(),
+      // 默认「命中 pending」对齐现有用例意图（①② 验证 pending 分流，msg.id 均为 RPC reply id）。
+      // broadcast-id 走 dispatchGlobal 的场景在专门用例里 mockReturnValue(false)。
+      has: vi.fn().mockReturnValue(true),
     },
     events: {
       dispatchSession: vi.fn(),
@@ -115,6 +118,29 @@ describe('configureRouteInbound — pending 分流（①/②/⑧）', () => {
     expect(ports.pending.resolve).toHaveBeenCalledWith('req-9', { sessionId: 's1', messages: [] })
     // D7：pending 分流后 return，不再进路由表（即使 payload 带 sessionId）
     expect(ports.events.dispatchSession).not.toHaveBeenCalled()
+  })
+
+  it('⑨ broadcast 带 id 但未命中 pending（如 config.skills 携带 nextPushId）：不进 pending 分流，无 sessionId → 走 dispatchGlobal（回归 2026-08 R5 问题 9）', () => {
+    // 根因：runtime broadcast（config.skills/agents/...）都带 `id: nextPushId()`。
+    // 旧实现 `if (msg.id)` 误吞，广播被 pending 静默丢弃，skills/agents store 永空。
+    // 修复后：msg.id 未命中 pending → 继续路由 → FALLBACK → dispatchGlobal。
+    const ports = makePorts({
+      pending: {
+        resolve: vi.fn(),
+        reject: vi.fn(),
+        rejectAll: vi.fn(),
+        has: vi.fn().mockReturnValue(false), // 模拟 push_id 不在 pendingMap
+      },
+    })
+    const dispatcher = configureRouteInbound(ports)
+    dispatcher({ type: 'config.skills', id: 'push_5', payload: { skills: [] } } as unknown as ServerMessage)
+    // 未进 pending 分流
+    expect(ports.pending.resolve).not.toHaveBeenCalled()
+    // 无 sessionId → FALLBACK → dispatchGlobal（settings store 靠此更新）
+    expect(ports.events.dispatchGlobal).toHaveBeenCalledTimes(1)
+    expect(ports.events.dispatchGlobal).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'config.skills', id: 'push_5' }),
+    )
   })
 
   it('⑧ configureRouteInbound 返回可调用 dispatcher；effects 可选（不传不崩）', () => {

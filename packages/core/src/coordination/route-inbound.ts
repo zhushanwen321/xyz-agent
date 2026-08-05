@@ -53,6 +53,8 @@ export interface TransportPorts {
     resolve(id: string, payload: unknown): void
     reject(id: string, error: unknown): void
     rejectAll(error: unknown): void
+    /** 该 id 是否对应一个 pending 请求（区分 RPC reply 与带 id 的广播，见 routeInbound 注释）。 */
+    has(id: string): boolean
   }
   events: {
     dispatchSession(sessionId: string, msg: ServerMessage): void
@@ -243,8 +245,15 @@ export function configureRouteInbound(
   const ctx: RouteContext = { ports, effects: effects ?? {} }
 
   return function routeInbound(msg: ServerMessage): void {
-    // ── 1. pending 分流（D7：id/seq 互斥，带 id 的 RPC reply 不进路由表） ──
-    if (msg.id) {
+    // ── 1. pending 分流（D7：id/seq 互斥，命中 pending 的 RPC reply 不进路由表） ──
+    // [HISTORICAL] 必须用 ports.pending.has(msg.id) 收紧判定，不能只看 msg.id 是否存在：
+    // runtime 的 broadcast（config.skills/agents/providers/dirs/defaults 等）也携带 nextPushId
+    // 作为 id（message-broker.buildXxxMsg 给所有广播加 `id: nextPushId()`）。若只凭 msg.id
+    // 存在就判为 reply，广播会被 pending 分流吞掉（pendingMap 无 push_* 条目 → resolve/reject
+    // 静默 no-op），消息不进 ROUTE_TABLE/FALLBACK → dispatchGlobal 永不调用 → 靠广播推送的
+    // settingsStore.skills/agents（无 refresh RPC 兜底，区别于有 refresh 的 providers/models）
+    // 永空。2026-08 审查报告 R5 问题 9 根因。
+    if (msg.id && ports.pending.has(msg.id)) {
       if (msg.type === 'error') {
         // type==='error' 已窄化 payload 为 error envelope（含 code + message + 可选 details）。
         // 透传 code 到 reject 的 Error（D-021：NodeState.reason 需要 error code 区分失败类型，

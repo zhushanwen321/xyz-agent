@@ -63,6 +63,8 @@ vi.mock('@/api/pending', () => ({
   rejectAll: (...args: unknown[]) => mockRejectAll(...args),
   resolve: vi.fn(),
   reject: vi.fn(),
+  // routeInbound 用 has 判定 msg.id 是否命中 pending；测试模拟的带 id 消息均为 reply
+  has: vi.fn().mockReturnValue(true),
 }))
 vi.mock('@/api/events', () => ({
   dispatchSession: vi.fn(),

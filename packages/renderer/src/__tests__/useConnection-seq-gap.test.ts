@@ -58,6 +58,8 @@ const pendingMock = vi.hoisted(() => ({
   resolve: vi.fn(),
   reject: vi.fn(),
   rejectAll: vi.fn(),
+  // routeInbound 用 has 判定 msg.id 是否命中 pending（RPC reply）；测试模拟的带 id 消息均为 reply
+  has: vi.fn().mockReturnValue(true),
 }))
 vi.mock('@/api/pending', () => pendingMock)
 
