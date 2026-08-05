@@ -19,7 +19,9 @@
  * linkify fuzzyLink:false：只识别带 scheme（http(s)://、ftp://、//）的 URL，不识别裸域名，
  * 避免 .md/.io 等 ccTLD 把文件名误判成 URL（见 getMarkdown 内注释）。
  */
+import katex from 'katex'
 import MarkdownIt from 'markdown-it'
+import markdownItKatex from 'markdown-it-katex'
 import type Token from 'markdown-it/lib/token.mjs'
 import type StateCore from 'markdown-it/lib/rules_core/state_core.mjs'
 import { createHighlighter } from 'shiki'
@@ -158,6 +160,14 @@ async function getMarkdown(): Promise<MarkdownIt> {
       `</div>\n`
     )
   }
+
+  // ── KaTeX 公式渲染（13-①） ──
+  // 插件注册 math_inline（行内 $...$）+ math_block（块级 $$...$$）解析规则（分隔符校验 /
+  // 转义处理 / 块检测，逻辑非平凡，复用插件）。renderer 由本处覆盖为调 katex.renderToString，
+  // 控制displayMode 与错误降级（插件默认的 <p> 包裹 + console.log 错误不适用本项目）。
+  md.use(markdownItKatex)
+  md.renderer.rules.math_inline = (tokens, idx): string => renderKatex(tokens[idx].content, false)
+  md.renderer.rules.math_block = (tokens, idx): string => `${renderKatex(tokens[idx].content, true)}\n`
 
   // 外链安全属性：linkify 产生的 <a> 加 target/rel，防 opener 钓鱼
   const defaultLinkOpen =
@@ -392,6 +402,28 @@ function escapeHtml(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
+}
+
+/**
+ * 用 KaTeX 渲染一段 LaTeX 公式，返回 HTML 字符串。
+ *
+ * - displayMode:true（块级 `$$...$$`）→ katex 产出 `<span class="katex-display">`（katex.css
+ *   设为 display:block + margin:1em 0，天然块级居左排版）
+ * - displayMode:false（行内 `$...$`）→ katex 产出 `<span class="katex">`（行内）
+ *
+ * throwOnError:false：KaTeX 遇到非法 LaTeX 时不抛错，而是渲染自身内置的红色错误提示
+ * （优雅降级，不中断整条消息渲染）。catch 兜底仅覆盖极端场景（内存等）→ 转义纯文本。
+ *
+ * 颜色：katex.css 的 `.katex` 设 `color: inherit`，公式符号走 currentColor，自动跟随
+ * 正文颜色（暗主题白字 / 亮主题黑字），无需额外主题适配。
+ */
+function renderKatex(tex: string, displayMode: boolean): string {
+  try {
+    return katex.renderToString(tex, { displayMode, throwOnError: false })
+  } catch {
+    // 极端兜底（throwOnError:false 下几乎不会到达）：转义原始 LaTeX 文本，保证可读
+    return escapeHtml(tex)
+  }
 }
 
 /**
