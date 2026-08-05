@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { fork, type ChildProcess } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
@@ -150,4 +151,14 @@ describe('plugin-esm-loader sandbox interception', () => {
     const code = await exitPromise
     expect(code).not.toBe(0)
   }, TIMEOUT_MS)
+
+  it('TC7: loader 源文件结构正确（hooks 导出 + self-register + realpath 规范化）', () => {
+    // 对应 TC7（打包验证的源文件层检查）：hooks 先赋值后 self-register 是
+    // resolve 生效的前提，realpath 规范化修复 macOS /var→/private/var 失配。
+    // 不 require 该模块（self-register 会污染 vitest 的 ESM loader），读源断言。
+    const src = readFileSync(LOADER_PATH, 'utf-8')
+    expect(src).toContain('module.exports = { initialize, resolve }')
+    expect(src).toContain('register(pathToFileURL(__filename).href)')
+    expect(src).toContain('realpathSync')
+  })
 })
