@@ -99,3 +99,27 @@ describe("todo runtime — throw 含 Correct 纠错正例", () => {
 		expect(TOOL_SRC).toContain('"id" — that field is for update');
 	});
 });
+
+// ── promptSnippet / promptGuidelines 验证引导（verification guidance）──
+// DESCRIPTION_REGION 截取止于 promptSnippet:，不含这两个字段，故对完整 TOOL_SRC 断言。
+
+describe("todo tool prompt — verification guidance", () => {
+	it("promptSnippet 引导验证步骤建 todo", () => {
+		expect(TOOL_SRC).toContain(
+			"Consider adding a separate todo for verification checks like running tests or typecheck.",
+		);
+	});
+
+	it("promptSnippet 声明多步骤工作场景", () => {
+		expect(TOOL_SRC).toContain("Use todo when breaking multi-step work into trackable items.");
+	});
+
+	it("promptGuidelines 含 [验证任务] 条目（完成前确保验证通过）", () => {
+		expect(TOOL_SRC).toContain("[验证任务] 为测试 / 类型检查等验证步骤单独建 todo，完成前确保验证通过");
+	});
+
+	it("promptGuidelines 含 [自动闭合] / [批量优先] 核心条目", () => {
+		expect(TOOL_SRC).toContain("[自动闭合] 全部完成后工具自动清理，无需手动 clear");
+		expect(TOOL_SRC).toContain("[批量优先] 完成多项任务时使用 updates[] 批量更新");
+	});
+});

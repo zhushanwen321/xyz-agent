@@ -58,6 +58,12 @@ describe("Todo data model", () => {
 		const migrated = migrateTodo(todo);
 		expect(migrated.status).toBe("cancelled");
 	});
+
+	it("should throw on null/primitive input (dirty data guard)", () => {
+		expect(() => migrateTodo(null)).toThrow(TypeError);
+		expect(() => migrateTodo(undefined)).toThrow(TypeError);
+		expect(() => migrateTodo("garbage")).toThrow(TypeError);
+	});
 });
 
 // ── todo add ────────────────────────────────────────

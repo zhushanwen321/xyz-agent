@@ -24,9 +24,14 @@ const REMINDER_INTERVAL = 2;
 
 export type RefreshDisplayFn = (ctx: ExtensionContext) => void;
 
+/** 未完成任务判定：pending / in_progress（cancelled 不可恢复，从提醒排除） */
+function isPending(t: TodoDetails["todos"][number]): boolean {
+	return t.status === "pending" || t.status === "in_progress";
+}
+
 /** 构建极简提醒：只含下一个推荐任务 + 行动指令 */
 export function buildMinimalReminder(state: TodoSessionState): string {
-	const pendingTodos = state.todos.filter((t) => t.status !== "completed");
+	const pendingTodos = state.todos.filter(isPending);
 	if (pendingTodos.length === 0) return "";
 
 	const next = pendingTodos[0];
@@ -36,7 +41,7 @@ export function buildMinimalReminder(state: TodoSessionState): string {
 export function buildBeforeAgentStartMessage(state: TodoSessionState): { message: { customType: string; content: string; display: boolean } } | undefined {
 	if (state.todos.length === 0) return undefined;
 
-	const pendingTodos = state.todos.filter((t) => t.status !== "completed");
+	const pendingTodos = state.todos.filter(isPending);
 	if (pendingTodos.length === 0) return undefined;
 
 	const lines = pendingTodos.map((t) => `#${t.id}: ${t.text}`);
@@ -75,9 +80,21 @@ export function reconstructState(state: TodoSessionState, ctx: ExtensionContext)
 
 		const details = msg.details as TodoDetails | undefined;
 		if (details?.todos && Array.isArray(details.todos)) {
-			state.todos = details.todos.map((t) => migrateTodo(t));
-			state.nextId = details.nextId ?? (state.todos.length > 0 ? Math.max(...state.todos.map((t) => t.id)) + 1 : 1);
-			latestIdx = i;
+			// 脏数据降级：单条迁移失败（null/primitive）跳过该条，全部失败则忽略整个快照，不中断回放
+			const migrated: TodoDetails["todos"] = [];
+			for (const t of details.todos) {
+				try {
+					migrated.push(migrateTodo(t));
+				} catch (e) {
+					// best-effort 降级：脏数据（null/primitive）跳过该条，不中断会话回放
+					console.debug("[todo] reconstructState: skipping dirty todo entry:", e);
+				}
+			}
+			if (migrated.length > 0) {
+				state.todos = migrated;
+				state.nextId = details.nextId ?? Math.max(...migrated.map((t) => t.id)) + 1;
+				latestIdx = i;
+			}
 		}
 	}
 
@@ -176,7 +193,7 @@ export function registerTodoEventHandlers(
 
 	pi.on("before_agent_start", async (_event: unknown, ctx: ExtensionContext) => {
 		try {
-			const pendingTodos = state.todos.filter((t) => t.status !== "completed");
+			const pendingTodos = state.todos.filter(isPending);
 			if (pendingTodos.length > 0) {
 				ctx.ui.setStatus("todo", `📋 ${pendingTodos.length} pending`);
 			}

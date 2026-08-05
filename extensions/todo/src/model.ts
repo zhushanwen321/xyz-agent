@@ -31,6 +31,12 @@ export type ValidStatus = (typeof VALID_STATUSES)[number];
 /** 旧格式迁移：verifying → in_progress，failed → pending，done:boolean → status */
 export function migrateTodo(raw: unknown): Todo {
 	// raw 是任意旧格式数据（兼容 done:boolean 等历史结构），以 Record 方式安全访问字段
+	// 守卫：null/原始类型（typeof null === 'object'，必须显式排除 null）→ 明确报错而非混淆的 TypeError
+	if (raw === null || typeof raw !== "object") {
+		throw new TypeError(
+			`migrateTodo: expected object, got ${raw === null ? "null" : typeof raw}`,
+		);
+	}
 	const record = raw as Record<string, unknown>;
 	const hasValidStatus =
 		typeof record.status === "string" &&
