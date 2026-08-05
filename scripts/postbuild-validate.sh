@@ -123,6 +123,16 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
                 echo -e "  ${RED}✗${NC} runtime/plugin-bootstrap-process.cjs 缺失"
                 FAILED=1
             fi
+
+            # plugin-esm-loader.cjs：sandbox 子进程 ESM resolve hook（execArgv --import 注入）。
+            # 缺失则 sandbox ESM import 绕过未封堵（node:fs 等越权 import 放行），
+            # plugin-service.resolveEsmLoaderExecArgv fail-open 仅 console.error 不阻断启动。
+            if [ -f "$APP_PATH/Contents/Resources/app.asar.unpacked/dist/runtime/plugin-esm-loader.cjs" ]; then
+                echo -e "  ${GREEN}✓${NC} runtime/plugin-esm-loader.cjs"
+            else
+                echo -e "  ${RED}✗${NC} runtime/plugin-esm-loader.cjs 缺失"
+                FAILED=1
+            fi
         else
             echo -e "  ${RED}✗${NC} app.asar.unpacked/dist/runtime 缺失"
             FAILED=1
@@ -240,6 +250,7 @@ if [ -d "$OUTPUT_DIR/win-unpacked" ]; then
         "$WIN_UNPACKED/dist/runtime/index.cjs" \
         "$WIN_UNPACKED/dist/runtime/plugin-bootstrap.cjs" \
         "$WIN_UNPACKED/dist/runtime/plugin-bootstrap-process.cjs" \
+        "$WIN_UNPACKED/dist/runtime/plugin-esm-loader.cjs" \
         "$WIN_RESOURCES/pi/pi-windows-x64.exe" \
         "$WIN_RESOURCES/xyz-agent-extension.js" \
         "$WIN_RESOURCES/xyz-system-prompt-extension.js" \
