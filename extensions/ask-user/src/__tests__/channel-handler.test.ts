@@ -232,6 +232,31 @@ describe("createAskUserChannelHandler", () => {
 		});
 	});
 
+	it("TUI: label containing ' — ' keeps full selection (MF-2)", async () => {
+		// label 含 ANSWER_COMMENT_SEPARATOR（"Postgres — prod"）时，首分隔符切分
+		// 会拦腰截断 label → 无法精确匹配 → 选中值静默丢失；修复后选中保留、comment 完整
+		const sepLabelProto: AskUserQuestion = {
+			question: "Which DB?",
+			allowComment: true,
+			options: [{ label: "Postgres — prod", value: "Postgres — prod" }, { label: "SQLite", value: "SQLite" }],
+		};
+		const internalResult: Result = {
+			questions: [],
+			answers: { "Which DB?": "Postgres — prod — constraint" },
+			cancelled: false,
+		};
+		const handler = createAskUserChannelHandler(
+			makeCtx({ mode: "tui", customResult: internalResult }) as never,
+		);
+		const resp = await handler({ channelPayload: { questions: [sepLabelProto] } });
+		expect(resp).toEqual({
+			value: JSON.stringify({
+				"Which DB?": "Postgres — prod",
+				"Which DB?__comment": "constraint",
+			}),
+		});
+	});
+
 	it("TUI: user cancel (custom returns null) → {cancelled: true}", async () => {
 		const handler = createAskUserChannelHandler(
 			makeCtx({ mode: "tui", customResult: null }) as never,

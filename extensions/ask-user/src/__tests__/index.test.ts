@@ -670,6 +670,32 @@ describe("execute — RPC mode (askUserInteract via select channel)", () => {
 		expect(result.details.answers["Which DB?"]).toBe("Postgres — prod constraint");
 	});
 
+	it("R-4b: comment-only answer → 保留（MF-1 回归：无选中 + comment 不静默丢失）", async () => {
+		const tool = getTool();
+		const withComment = {
+			questions: [
+				{
+					question: "Which DB?",
+					options: [{ label: "Postgres" }, { label: "SQLite" }],
+					allowComment: true,
+				},
+			],
+		};
+		// GUI 只填评论提交（无选中）：answers 只有 __comment key、无主 key
+		const protoAnswers = JSON.stringify({
+			"Which DB?__comment": "生产环境都不能用，需评估新方案",
+		});
+		const result = await tool.execute(
+			"id",
+			withComment,
+			undefined,
+			undefined,
+			makeCtx({ mode: "rpc", selectResult: protoAnswers }),
+		);
+		// formatAnswer 空 parts 不再返回 null——comment-only 以 " — comment" 形式保留
+		expect(result.details.answers["Which DB?"]).toBe(" — 生产环境都不能用，需评估新方案");
+	});
+
 	it("R-5: user cancel (select returns undefined) → cancelled details", async () => {
 		const tool = getTool();
 		const result = await tool.execute(

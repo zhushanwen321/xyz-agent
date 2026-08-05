@@ -56,6 +56,7 @@ const {
   resolveReviewReportPath,
   normalizeFixResult,
   validateFixResult,
+  findIssueKey,
   reconcileIssues,
   normalizeReviewResult,
   computeKnownRemaining,
@@ -823,8 +824,10 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
 
     // ES3 硬校验（5.3 红线，恢复 mustFixIds 交叉校验——wave 3 后 agg.must_fix_ids
     // 已是标准字段）：(1) deferred 只允许 minor；(2) must-fix 必须全进 fixes[]（漏修
-    // 判 violation）。任一违规 → fix-failure（结构化终止）
-    const es3Violations = validateFixResult(fixResult, agg.must_fix_ids);
+    // 判 violation）。任一违规 → fix-failure（结构化终止）。trackedIssues 传入
+    // state.issues——deferred severity 与追踪表交叉核对（MF-4）：must-fix 被标 minor
+    // 塞进 deferred 的逃逸路径在追踪表面前失效（追踪 severity 为准）。
+    const es3Violations = validateFixResult(fixResult, agg.must_fix_ids, state.issues);
     if (es3Violations.length > 0) {
       // m7: violation 分两类——deferred 非 minor / must-fix 漏修（must-fix-not-fixed），
       // finalMessage 文案区分：统一文案会把漏修误报成 defer 违规，误导修复方向
@@ -867,22 +870,30 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
     // 写入与 knownRemaining 同步链路生效（否则 knownRemaining 恒空，deferred 跨轮继承整链失效）
     if (!state.issues) state.issues = {};
     // 5.1：fix 结果标记 fix-attempted（ID 对账驱动）+ fixResults 落库（R2+ prompt 输入）
+    // 归一化查表（findIssueKey，与 ES3 同键空间）：fix agent ID 漂移（"mf-1"/
+    // "MF-1 (fixed)"）不再丢匹配——精确键查表时 issue 停留 open，reconcile 无
+    // fix-attempted 可转 fixed/regressed，needs-redesign 出口对该类 ID 静默失效。
     for (const f of fixResult.fixes) {
-      if (f && typeof f.issue_id === "string" && state.issues[f.issue_id]) {
-        state.issues[f.issue_id].status = "fix-attempted";
-        state.issues[f.issue_id].history.push({ round, status: "fix-attempted" });
+      if (f && typeof f.issue_id === "string") {
+        const trackedKey = findIssueKey(state.issues, f.issue_id);
+        if (trackedKey) {
+          state.issues[trackedKey].status = "fix-attempted";
+          state.issues[trackedKey].history.push({ round, status: "fix-attempted" });
+        }
       }
     }
     // 5.3-4 deferred 写入 state.issues（known-remaining 跨轮继承链路）：deferred 条目
     // 以 status=deferred 入 issues，据此生成 knownRemaining 传给 R2+ prompt。
-    // 若 ID 已存在（曾被修复/降级）→ 更新状态 + reason；不存在（S-x minor）→ 新建。
+    // ID 已存在（曾被修复/降级，含大小写/尾注漂移）→ 更新状态 + reason；
+    // 不存在（S-x minor）→ 新建。漂移 ID 归一化匹配防止幽灵条目（原条目仍 open 阻塞收敛）。
     for (const d of fixResult.deferred) {
       if (!d || typeof d.issue_id !== "string" || !d.issue_id) continue;
       const reason = typeof d.reason === "string" ? d.reason : "";
-      if (state.issues[d.issue_id]) {
-        state.issues[d.issue_id].status = "deferred";
-        state.issues[d.issue_id].deferredReason = reason;
-        state.issues[d.issue_id].history.push({ round, status: "deferred" });
+      const trackedKey = findIssueKey(state.issues, d.issue_id);
+      if (trackedKey) {
+        state.issues[trackedKey].status = "deferred";
+        state.issues[trackedKey].deferredReason = reason;
+        state.issues[trackedKey].history.push({ round, status: "deferred" });
       } else {
         state.issues[d.issue_id] = {
           firstSeen: round, severity: "minor", status: "deferred",

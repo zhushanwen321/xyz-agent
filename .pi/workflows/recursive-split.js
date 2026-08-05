@@ -289,6 +289,11 @@ try {
         // 调 abortUnit 中止该节点对应的 WorkUnit（节点状态可能已在半推进态，避免脏状态残留）。
         log("BFS: sequential node " + node.unitId + " threw: " + String(e.message || e) + ", aborting unit");
         await abortUnit(node.unitId);
+        // MF-5: catch 分支同样写入 nodeFailures——abort 的节点若对上层 failedUnits
+        // 决策通道不可见，整棵树会以 status:done 返回而调用方永远不知道节点被静默杀掉。
+        // aggregateNodeFailure 期望 {unitId, failedReason} 形状（与 executeActionAgent
+        // 返回的失败结果一致），failedReason 取异常消息。
+        aggregateNodeFailure(nodeFailures, { unitId: node.unitId, failedReason: "threw: " + String(e.message || e) });
         continue;
       }
       if (r && r.sessionFile) sessionFiles[r.unitId] = r.sessionFile;

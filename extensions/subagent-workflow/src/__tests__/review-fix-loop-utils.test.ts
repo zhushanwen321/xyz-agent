@@ -398,6 +398,51 @@ describe("validateFixResult", () => {
       deferred: [],
     }, ["MF-1", "MF-2"])).toEqual([{ issue_id: "mf-1", severity: "must-fix-not-fixed" }]);
   });
+  it("MF-4: deferred 自报 minor 但追踪表为 major → 违规（tracked severity 交叉核对）", () => {
+    // fix agent 把 must-fix 标 severity:"minor" 塞进 deferred 即过旧校验；
+    // trackedIssues 传入后以追踪 severity 为准 → 违规
+    const trackedIssues = {
+      "MF-1": { firstSeen: 1, severity: "major", status: "open", history: [], fixAttempts: 0 },
+    };
+    const violations = validateFixResult({
+      fixed_count: 0,
+      fixes: [],
+      deferred: [{ issue_id: "MF-1", severity: "minor", reason: "cannot fix in this round" }],
+    }, [], trackedIssues);
+    expect(violations).toEqual([{ issue_id: "MF-1", severity: "major" }]);
+  });
+  it("MF-4: 追踪表 severity 漂移 ID 也能命中（归一化查表）", () => {
+    const trackedIssues = {
+      "MF-1": { firstSeen: 1, severity: "critical", status: "open", history: [], fixAttempts: 0 },
+    };
+    // deferred 报 "mf-1 (by design)" → 归一化匹配追踪条目 → critical → 违规
+    const violations = validateFixResult({
+      fixed_count: 0,
+      fixes: [],
+      deferred: [{ issue_id: "mf-1 (by design)", severity: "minor" }],
+    }, [], trackedIssues);
+    expect(violations).toEqual([{ issue_id: "mf-1 (by design)", severity: "critical" }]);
+  });
+  it("MF-4: 追踪表无此 ID（S-x minor）→ 采信自报，放行", () => {
+    const trackedIssues = {
+      "MF-1": { firstSeen: 1, severity: "major", status: "open", history: [], fixAttempts: 0 },
+    };
+    expect(validateFixResult({
+      fixed_count: 0,
+      fixes: [],
+      deferred: [{ issue_id: "S-1", severity: "minor", reason: "needs new mechanism, high cost" }],
+    }, [], trackedIssues)).toEqual([]);
+  });
+  it("MF-4: 追踪 severity 为 minor → deferral 放行（红线段位正确）", () => {
+    const trackedIssues = {
+      "S-2": { firstSeen: 1, severity: "minor", status: "deferred", history: [], fixAttempts: 0 },
+    };
+    expect(validateFixResult({
+      fixed_count: 0,
+      fixes: [],
+      deferred: [{ issue_id: "S-2", severity: "minor", reason: "high cost" }],
+    }, [], trackedIssues)).toEqual([]);
+  });
 });
 
 // ── R2+ 三段式 prompt（5.2 + 防护规格） ──

@@ -23,7 +23,8 @@ import {
 } from "@xyz-agent/extension-protocol";
 
 import { AskUserComponent } from "./component";
-import { ANSWER_COMMENT_SEPARATOR, type Option, type Question, type Result, type ThemeLike } from "./types";
+import { parseAnswerParts } from "./answer-format";
+import { type Option, type Question, type Result, type ThemeLike } from "./types";
 
 /**
  * channel handler 签名——与 subagent-workflow 的 UiChannelRegistry.ChannelHandler 一致
@@ -97,29 +98,21 @@ function encodeTuiResultToProto(
 			if (o.value !== undefined) knownLabels.add(o.value);
 		}
 
-		// 切 body / comment（comment 在 ANSWER_COMMENT_SEPARATOR 之后）
-		const sepIdx = internalText.indexOf(ANSWER_COMMENT_SEPARATOR);
-		const body = sepIdx >= 0 ? internalText.slice(0, sepIdx) : internalText;
-		const comment = sepIdx >= 0
-			? internalText.slice(sepIdx + ANSWER_COMMENT_SEPARATOR.length).trim() || undefined
-			: undefined;
+		// body/comment 切分 + 选中/Other 识别：复用 parseAnswerParts（answer-format.ts 是
+		// 唯一权威切分实现——label 含 ANSWER_COMMENT_SEPARATOR 时首分隔符切分会把 label
+		// 拦腰截断导致选中丢失，两处各自实现必然漂移；复用保证 TUI/RPC 解码行为一致，
+		// comment 自身含分隔符也正确往返）。knownLabels 传 label+value 并集（value 缺失时
+		// 用 label）。
+		const { selected: matchedLabels, comment, otherTokens } = parseAnswerParts(internalText, [...knownLabels]);
 
-		// body tokens：匹配 knownLabels 的为 selected，其余为 Other 自由文本
-		const tokens = body.split(/[,，]/).map((t: string) => t.trim()).filter((t: string) => t !== "");
-		const selected: string[] = [];
-		const otherTokens: string[] = [];
-		for (const t of tokens) {
-			if (knownLabels.has(t)) {
-				// 回查 proto option 的 value（PR #85 #8）：TUI 渲染用 label，但 RPC 路径
-				// （askUserInteract）回传的是 option.value。value≠label 时若直接 push label，
-				// TUI/RPC 两条路径产出分裂。value 缺失时 fallback label（保持 ask-user 自身
-				// toProtoQuestions 的 value=label 语义，以及历史行为）。
-				const opt = pq.options?.find(o => o.label === t || o.value === t);
-				selected.push(opt?.value ?? t);
-			} else {
-				otherTokens.push(t);
-			}
-		}
+		// matched label 回查 proto option 的 value（PR #85 #8）：TUI 渲染用 label，但 RPC 路径
+		// （askUserInteract）回传的是 option.value。value≠label 时若直接 push label，
+		// TUI/RPC 两条路径产出分裂。value 缺失时 fallback label（保持 ask-user 自身
+		// toProtoQuestions 的 value=label 语义，以及历史行为）。
+		const selected = matchedLabels.map((t: string) => {
+			const opt = pq.options?.find(o => o.label === t || o.value === t);
+			return opt?.value ?? t;
+		});
 		const otherText = otherTokens.join(", ") || undefined;
 
 		// 主 key：单选 = 首个选中 value；多选 = JSON 数组（即便为空也写入，与 RPC 契约一致）

@@ -246,34 +246,69 @@ function normalizeFixResult(raw) {
 }
 
 /**
- * ES3 硬校验（5.3 红线）：deferred 只允许 minor。deferred[].severity 显式非 minor
- * （critical/major）→ 违规（调用方结构化终止 fix-failure）。缺省 severity 视为 minor
- * （放行，由 ES2 软校验记 warning）。wave 3 接入数字 ID 后可升级为对账级判定。
- * @returns [{ issue_id, severity }] 违规列表；空数组 = 通过
+ * issue ID 归一化（ES3 校验与 fix 阶段对账共用键空间）：小写 + 剥尾部 "(...)" 尾注。
+ * LLM 产出的 ID 漂移形态：大小写（"mf-1"/"MF-1"）、尾注（"MF-1 (fixed)"）。空串返回 ""。
  */
+function normIssueId(s) {
+  return String(s ?? "").toLowerCase().replace(/\s*\([^)]*\)\s*$/, "").trim();
+}
+
+/**
+ * 在 issues 键空间中查找 issue_id 的归一化匹配键（不存在返回 undefined）。
+ * fix 阶段（fix-attempted/deferred 标记）与 ES3 校验共用——精确键查表会把
+ * "mf-1"/"MF-1 (fixed)" 等漂移 ID 判为未追踪，导致 fix-attempted → fixed/regressed
+ * → needs-redesign 状态链静默失效；deferred 侧漂移则创建幽灵条目（原条目仍 open 阻塞收敛）。
+ */
+function findIssueKey(issues, issueId) {
+  if (!issues || typeof issueId !== "string" || !issueId) return undefined;
+  if (issues[issueId]) return issueId;
+  const norm = normIssueId(issueId);
+  if (!norm) return undefined;
+  for (const key of Object.keys(issues)) {
+    if (normIssueId(key) === norm) return key;
+  }
+  return undefined;
+}
+
 /**
  * ES3 硬校验（5.3-P1 红线）：(1) deferred 只允许 minor/trivial；(2) must-fix 必须全进
  * fixes[]——mustFixIds 中未修复且未显式处理的 ID 判 violation（漏修）。mustFixIds
  * 为 null/undefined 时仅做 (1)（无 aggregator 数据的降级路径，wave 2 限制）。
+ * trackedIssues（state.issues）可选：deferred 的 severity 与追踪表交叉核对（MF-4）——
+ * 追踪条目以追踪 severity 为准（must-fix 追踪皆 critical/major，defer 即违规），
+ * 仅追踪无此 ID（S-x minor）时采信 fix agent 自报。
  */
-function validateFixResult(result, mustFixIds) {
+function validateFixResult(result, mustFixIds, trackedIssues) {
   const violations = [];
   for (const d of result.deferred || []) {
     if (!d) continue;
     const sev = typeof d.severity === "string" ? d.severity.toLowerCase() : "";
-    if (sev && sev !== "minor" && sev !== "trivial") {
-      violations.push({ issue_id: d.issue_id || "(unnamed)", severity: sev });
+    // m9: 自报 severity 可被单边绕过（fix agent 与审核方同一 LLM，有少干活动机，
+    // 把 must-fix 标 minor 塞进 deferred 即过旧校验）——与追踪表交叉核对：
+    // trackedIssues 中能找到的 ID 以其追踪 severity 为准；追踪表无此 ID 采信自报。
+    let effectiveSev = sev;
+    if (trackedIssues && typeof d.issue_id === "string" && d.issue_id) {
+      const trackedKey = findIssueKey(trackedIssues, d.issue_id);
+      const trackedSev = trackedKey ? trackedIssues[trackedKey].severity : undefined;
+      const ts = typeof trackedSev === "string" ? trackedSev.toLowerCase() : "";
+      // 仅认真实 severity 等级（critical/major/minor/trivial）；"unknown"（reconcile 新
+      // ID 默认）等非等级值不覆盖自报，避免误伤合法 minor deferral
+      if (ts === "critical" || ts === "major" || ts === "minor" || ts === "trivial") {
+        effectiveSev = ts;
+      }
+    }
+    if (effectiveSev && effectiveSev !== "minor" && effectiveSev !== "trivial") {
+      violations.push({ issue_id: d.issue_id || "(unnamed)", severity: effectiveSev });
     }
   }
   if (Array.isArray(mustFixIds) && mustFixIds.length > 0) {
     // m3: ID 归一化比较——大小写 + 尾部括号尾注（如 "(fixed)"）漂移不误杀：
     // 严格 trim 比较会把 "mf-1"/"MF-1 (fixed)" 判漏修，整轮 fix-failure 误杀
-    const normId = (s) => String(s).toLowerCase().replace(/\s*\([^)]*\)\s*$/, "").trim();
     const fixedIds = new Set((result.fixes || [])
-      .map((f) => (f && typeof f.issue_id === "string" ? normId(f.issue_id) : ""))
+      .map((f) => (f && typeof f.issue_id === "string" ? normIssueId(f.issue_id) : ""))
       .filter(Boolean));
     for (const id of mustFixIds) {
-      const norm = typeof id === "string" ? normId(id) : (id && typeof id.id === "string" ? normId(id.id) : "");
+      const norm = typeof id === "string" ? normIssueId(id) : (id && typeof id.id === "string" ? normIssueId(id.id) : "");
       if (norm && !fixedIds.has(norm)) {
         violations.push({ issue_id: norm, severity: "must-fix-not-fixed" });
       }
@@ -820,6 +855,8 @@ module.exports = {
   resolveReviewReportPath,
   normalizeFixResult,
   validateFixResult,
+  normIssueId,
+  findIssueKey,
   reconcileIssues,
   normalizeReviewResult,
   computeKnownRemaining,

@@ -56,6 +56,17 @@ const freeTextQ: AskUserQuestion = {
   allowComment: true,
 }
 
+// allowComment + 有选项：评论可作为「无选项适用但想说明原因」的唯一答案（MF-1）
+const optionCommentQ: AskUserQuestion = {
+  header: 'db',
+  question: '选哪个数据库?',
+  allowComment: true,
+  options: [
+    { label: 'Postgres', value: 'pg' },
+    { label: 'MySQL', value: 'mysql' },
+  ],
+}
+
 function mountOverlay(questions: AskUserQuestion[], allowCancel = true) {
   return mount(AskUserOverlay, {
     props: { questions, allowCancel },
@@ -126,6 +137,24 @@ describe('AskUserOverlay', () => {
     expect(answers.note).toBe('需要加索引')
     // 评论存到独立 key
     expect(answers['note__comment']).toBe('prod 环境注意')
+  })
+
+  it('U30: comment-only 提交——allowComment 问题只填评论也能答完并提交（MF-1）', async () => {
+    const wrapper = mountOverlay([optionCommentQ])
+
+    // 未选任何选项时 Submit disabled（未答）
+    const submit = wrapper.find('[data-testid="ask-user-submit"]')
+    expect(submit.attributes('disabled')).toBeDefined()
+    // 只填评论 → 视为已答（「无选项适用但想说明原因」场景）
+    await wrapper.find('[data-testid="ask-user-comment-db"]').setValue('生产环境都不能用，需评估新方案')
+    expect(submit.attributes('disabled')).toBeUndefined()
+    // 提交：主答案 key 不写，评论进独立 key（RPC 解码侧保留 comment-only，不静默丢失）
+    await submit.trigger('click')
+    const submitEvents = wrapper.emitted('submit')
+    expect(submitEvents).toHaveLength(1)
+    const answers = JSON.parse(submitEvents![0][0] as string)
+    expect(answers.db).toBeUndefined()
+    expect(answers['db__comment']).toBe('生产环境都不能用，需评估新方案')
   })
 
   it('U13: Cancel → emit cancel 事件', async () => {

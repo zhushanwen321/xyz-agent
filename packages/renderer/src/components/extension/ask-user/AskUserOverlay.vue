@@ -167,6 +167,9 @@ function isQuestionAnswered(q: AskUserQuestion): boolean {
   if (!st) return false
   // 无选项的纯自由文本问题：otherText 有值即答完
   if (!q.options?.length) return st.otherText.trim().length > 0
+  // allowComment 问题：评论即已回答（「无选项适用但想说明原因」场景——只填评论也能提交，
+  // 与协议 allowComment 设计意图一致；RPC 解码 protoAnswersToResult 保留 comment-only 答案）
+  if (q.allowComment && st.comment.trim().length > 0) return true
   // 有选项：Other 选中必须有文本才算答完
   const otherSelected = st.selectedValues.includes(OTHER_VALUE)
   if (otherSelected && !st.otherText.trim()) {
