@@ -58,10 +58,6 @@
    "types": "./src/domain/new-task-search/index.ts",
    "import": "./src/domain/new-task-search/index.ts"
   },
-  "./domain/composer/input": {
-   "types": "./src/domain/composer/input/index.ts",
-   "import": "./src/domain/composer/input/index.ts"
-  },
   "./domain/composer/dispatch": {
    "types": "./src/domain/composer/dispatch/index.ts",
    "import": "./src/domain/composer/dispatch/index.ts"
@@ -94,7 +90,6 @@
   "pinia": "^3"
  },
  "devDependencies": {
-  "typescript": "^5.8",
-  "jsdom": "^29.1.1"
+  "typescript": "^5.8"
  }
 }
