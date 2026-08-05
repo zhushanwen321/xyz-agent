@@ -241,11 +241,12 @@ describe("handleAgentEnd — continuation", () => {
 		expect(followUp).toHaveLength(0); // 过期仍判活跃，避免长任务死循环复现
 	});
 
-	it("有活跃 pending → appendEntry goal:log 诊断记录", async () => {
+	it("有活跃 pending → appendEntry goal:log 诊断记录（多元素计数 + ids 透出）", async () => {
 		const { pi, states } = makeFakePi();
 		const { ctx } = makeFakeCtx({
 			entries: [
 				{ type: "custom", customType: "pending:register", data: { id: "bg-1" } },
+				{ type: "custom", customType: "pending:register", data: { id: "bg-2" } },
 			],
 		});
 		const session = createGoalSession();
@@ -260,7 +261,56 @@ describe("handleAgentEnd — continuation", () => {
 				/continuation deferred/.test(String((s as { message?: string } | undefined)?.message ?? "")),
 		);
 		expect(deferredLog).toBeDefined();
-		expect((deferredLog as { data?: { activePending?: number } } | undefined)?.data?.activePending).toBeGreaterThanOrEqual(1);
+		const data = (deferredLog as { data?: { activePending?: number; ids?: string[] } } | undefined)?.data;
+		expect(data?.activePending).toBe(2); // 多元素计数（替代原 >=1 弱断言）
+		expect(data?.ids).toEqual(["bg-1", "bg-2"]); // ids 透出
+	});
+
+	it("重复 register 同 id → 去重计为 1（seen.has 守卫）", async () => {
+		const { pi, calls: piCalls, states } = makeFakePi();
+		const { ctx, calls: ctxCalls } = makeFakeCtx({
+			entries: [
+				{ type: "custom", customType: "pending:register", data: { id: "bg-1" } },
+				{ type: "custom", customType: "pending:register", data: { id: "bg-1" } },
+			],
+		});
+		const session = createGoalSession();
+		session.state = makeRunningState({ tokensUsed: 200, lastTurnTokensUsed: 0 });
+
+		await handleAgentEnd(pi, session, ctx);
+		const all = allCalls(piCalls, ctxCalls);
+
+		// 守卫触发：count>0 不发 continuation
+		const followUp = all.filter(
+			(c) => c.kind === "sendContext" && (c.payload as { deliverAs?: string } | undefined)?.deliverAs === "followUp",
+		);
+		expect(followUp).toHaveLength(0);
+		// seen 去重：2 条同 id register 计为 1（非 2）
+		const deferredLog = states.find(
+			(s) => (s as { component?: string } | undefined)?.component === "goal:agent-end",
+		);
+		expect((deferredLog as { data?: { activePending?: number } } | undefined)?.data?.activePending).toBe(1);
+	});
+
+	it("非字符串/缺失 id 的 register → 被忽略，正常发 continuation（typeof id 防御）", async () => {
+		const { pi, calls: piCalls } = makeFakePi();
+		const { ctx, calls: ctxCalls } = makeFakeCtx({
+			entries: [
+				{ type: "custom", customType: "pending:register", data: { id: 123 } }, // 数字 id（非字符串）
+				{ type: "custom", customType: "pending:register", data: {} }, // 无 id
+			],
+		});
+		const session = createGoalSession();
+		session.state = makeRunningState({ tokensUsed: 200, lastTurnTokensUsed: 0 });
+
+		await handleAgentEnd(pi, session, ctx);
+		const all = allCalls(piCalls, ctxCalls);
+
+		// count=0，守卫不触发，走正常 continuation
+		const followUp = all.filter(
+			(c) => c.kind === "sendContext" && (c.payload as { deliverAs?: string } | undefined)?.deliverAs === "followUp",
+		);
+		expect(followUp).toHaveLength(1);
 	});
 
 	it("无 pending entries → 正常发 continuation（回归保护）", async () => {
