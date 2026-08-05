@@ -1,0 +1,143 @@
+/**
+ * CW wave `session-active-ssot` T5：runtime 重连清理 ask-user pending
+ * （自 renderer __tests__/useConnection-clear-pending.test.ts 迁入 core）。
+ *
+ * 锁定改动：onRuntimeRestarting / onRuntimeFailed 分支除原有 pending.rejectAll 外，
+ * 额外经 onRuntimeUnavailable 端口触发对话流清理（renderer 实现：
+ * chatStore.finalizeAllStreaming + extensionUIStore.clearAllPending）。原因：pi 进程死了
+ * 之后 ask-user 的 extension.ui_request Promise 永远不会被 resolve（runtime 重启是全新
+ * 实例），必须清空 pending，否则 UI 卡 waiting 态 + Promise 永挂。
+ *
+ * 注意：onRuntimePort（正常端口重连，pi 还活着）不清 pending、不触发清理。
+ *
+ * 迁移改造（§10.2 D-1）：store 调用已迁 renderer useMessageEffects（该层由
+ * useMessageEffects.test.ts 覆盖），本测试断言 core 侧端口行为：
+ * onRuntimeUnavailable(reason) 调用 + pending.rejectAll。
+ *
+ * 运行：cd packages/core && npx vitest run src/transport/__tests__/use-connection-clear-pending.test.ts
+ */
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { ref, type Ref } from 'vue'
+import type { ServerMessage } from '@xyz-agent/shared'
+import type { ConnectionState } from '../ws-client'
+import { useConnection, setConnectionPorts, type ConnectionPorts } from '../use-connection'
+
+// ── ws-client mock：最小占位（init 需要）──────────────────────────────
+const mockConnect = vi.fn()
+const mockDisconnect = vi.fn()
+let mockStateRef: Ref<ConnectionState> = ref('disconnected')
+vi.mock('../ws-client', () => ({
+  connect: (...args: unknown[]) => mockConnect(...args),
+  disconnect: (...args: unknown[]) => mockDisconnect(...args),
+  getState: () => mockStateRef,
+  setRestarting: vi.fn(),
+  setFailed: vi.fn(),
+  onMessage: vi.fn(() => () => {}),
+}))
+
+// ── 端口 mock：捕获 onRuntimeRestarting/onRuntimeFailed/onRuntimePort 注册的回调 ──
+// 每个 onRuntime* 返回一个 unregister，同时把传入的 cb 暴露给测试触发。
+let restartingCb: (() => void) | null = null
+let failedCb: (() => void) | null = null
+let portCb: ((port: number) => void) | null = null
+const mockRejectAll = vi.fn()
+const mockRuntimeCleanup = vi.fn()
+const mockT = vi.fn((key: string) => `[${key}]`)
+
+function makePorts(): ConnectionPorts {
+  return {
+    ipc: {
+      getRuntimePort: vi.fn().mockResolvedValue(undefined),
+      getRuntimePortOffset: vi.fn().mockResolvedValue(undefined),
+      onRuntimePort: (cb: (port: number) => void) => {
+        portCb = cb
+        return () => {
+          portCb = null
+        }
+      },
+      onRuntimeRestarting: (cb: () => void) => {
+        restartingCb = cb
+        return () => {
+          restartingCb = null
+        }
+      },
+      onRuntimeFailed: (cb: () => void) => {
+        failedCb = cb
+        return () => {
+          failedCb = null
+        }
+      },
+      restartRuntime: vi.fn().mockResolvedValue(undefined),
+    },
+    visibility: {
+      isVisible: () => true,
+      onVisibilityChange: () => () => {},
+    },
+    // 非 mock 路径：init 才注册 onRuntimePort/onRuntimeRestarting/onRuntimeFailed 监听
+    env: { isMock: false, isDev: false },
+    pending: {
+      rejectAll: (...args: unknown[]) => mockRejectAll(...args),
+      resolve: vi.fn(),
+      reject: vi.fn(),
+      has: vi.fn().mockReturnValue(true),
+    },
+    events: {
+      dispatchSession: vi.fn(),
+      dispatchGlobal: vi.fn(),
+    },
+    subscribe: vi.fn().mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 }),
+    effects: {},
+    toast: { error: vi.fn() },
+    t: mockT,
+    onRuntimeUnavailable: mockRuntimeCleanup,
+  }
+}
+
+describe('T5: runtime 重连清理 ask-user pending（clearAllPending）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockStateRef = ref('disconnected')
+    restartingCb = null
+    failedCb = null
+    portCb = null
+    setConnectionPorts(makePorts())
+  })
+
+  it('onRuntimeRestarting → onRuntimeUnavailable("restart") + rejectAll（pi 死了 ask-user Promise 永挂，必须清）', async () => {
+    const { init, teardown } = useConnection()
+    await init()
+    expect(restartingCb).not.toBeNull()
+
+    restartingCb!()
+    expect(mockRuntimeCleanup).toHaveBeenCalledTimes(1)
+    expect(mockRuntimeCleanup).toHaveBeenCalledWith('restart')
+    expect(mockRejectAll).toHaveBeenCalledTimes(1)
+    teardown()
+  })
+
+  it('onRuntimeFailed → onRuntimeUnavailable("disconnect") + rejectAll（runtime 重启用尽，pending 同样永挂）', async () => {
+    const { init, teardown } = useConnection()
+    await init()
+    expect(failedCb).not.toBeNull()
+
+    failedCb!()
+    expect(mockRuntimeCleanup).toHaveBeenCalledTimes(1)
+    expect(mockRuntimeCleanup).toHaveBeenCalledWith('disconnect')
+    expect(mockRejectAll).toHaveBeenCalledTimes(1)
+    teardown()
+  })
+
+  it('onRuntimePort（正常端口变化）→ 不触发清理（pi 还活着，pending 有效）', async () => {
+    const { init, teardown } = useConnection()
+    await init()
+    expect(portCb).not.toBeNull()
+
+    // 模拟 runtime 重启成功推新端口（state 非 disconnected 才会重连，但清理与 connect 无关）
+    mockStateRef.value = 'connected'
+    portCb!(9999)
+    // 关键断言：正常端口重连不清 pending、不触发清理
+    expect(mockRuntimeCleanup).not.toHaveBeenCalled()
+    expect(mockRejectAll).not.toHaveBeenCalled()
+    teardown()
+  })
+})
