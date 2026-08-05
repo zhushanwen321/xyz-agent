@@ -31,6 +31,7 @@ const tStub = vi.fn((key: string) => key)
 function makeFakeTransport(): SettingsTransport {
   return {
     listProviders: vi.fn(async () => []),
+    listModels: vi.fn(async () => []),
     setProvider: vi.fn(async () => {}),
     discoverModels: vi.fn(async () => ({ success: true, models: [] })),
     setSkillDirs: vi.fn(async () => {}),

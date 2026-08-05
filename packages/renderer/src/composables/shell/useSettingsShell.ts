@@ -6,12 +6,16 @@
  * platform/transport（core settings-lifecycle.init 内 getSystem(getPlatform().storage) 会 fail-fast），
  * matchMedia 系统色监听仍在旧 useSettings，ui ProviderEditModal 的 3 个注入 key 无 provide 点。
  *
- * 本 composable 在 AppShell setup 调用一次，按序完成 settings 域壳接入五件事：
- *  ① providePlatform（桌面壳入口 main.ts 已注入；此处保留调用，幂等无害）
- *  ② provideSettingsTransport（转发 @/api 的 adapter）
- *  ③ core useSettings().init()（挂常驻订阅 + 同步 system 偏好到 store）
- *  ④ provide 3 个 ui 注入 key（toast / useQuotaConfigure 工厂 / configApi）—— 向 SettingsModal 子树注入
- *  ⑤ watch system.theme 挂/卸 matchMedia listener（theme=system 时 OS 深浅色实时切换）+ 初始 apply 兜底
+ * 本模块导出两个函数：
+ *  - bootstrapSettingsCore()：在 App.vue setup（连接前）调用——platform 注入 + transport 注入 +
+ *    core useSettings().init()（挂常驻订阅）。上提是为消除「订阅注册晚于 sendInitialState 首推」竞态
+ *    （[HISTORICAL] 2026-08-05，详见该函数注释）。
+ *  - useSettingsShell()：在 AppShell setup（连接后渲染）调用——provide 3 个 ui 注入 key +
+ *    watch system.theme 挂/卸 matchMedia listener + 初始 applySystemToDom 兜底（需组件实例）。
+ *
+ * 拆分原因：init()（订阅注册）不依赖组件实例，但原与 provide 一起放在 AppShell setup → AppShell
+ * 仅在 connected 后渲染 → 订阅永远晚于 WS 连接首推。把 init() 上提到 App.vue setup（连接前），
+ * provide/matchMedia（依赖组件实例）留 AppShell。
  *
  * [HISTORICAL] 2026-08-04：providePlatform 原只在此调用，但 AppShell 仅在连接成功后渲染
  * （App.vue v-if connectionState==='connected'）→ core ws-client.connect 的 getPlatform()
@@ -22,7 +26,7 @@
  * 完整 bootstrap.ts 合并（跨域 transport/session/extension-host 统一编排）留给后续壳整合 wave，
  * 本 wave 仅满足 settings 域 platform/transport 注入（strangler 逐域收编，架构 §9）。
  */
-import { provide, watch, onBeforeUnmount } from 'vue'
+import { provide, watch } from 'vue'
 import {
   getSettingsStore,
   useSettings,
@@ -45,29 +49,38 @@ import { setLocale } from '@/i18n'
 import type { Locale } from '@/i18n'
 
 /**
- * settings 域壳接入（AppShell setup 调用一次）。
+ * settings 域核心初始化（platform 注入 + transport 注入 + 订阅注册）。
  *
- * providePlatform 幂等（core 模块级单例覆盖），重复调用无害（未来其他域壳接入复用同模式）。
+ * [HISTORICAL] 2026-08-05 模型选择器数据丢失修复：原订阅注册（useSettings().init）在 AppShell setup
+ * 调用，但 AppShell 仅在 connectionState==='connected' 时渲染（App.vue v-if）→ 订阅注册永远晚于
+ * WS 连接 sendInitialState 首推 → 首条 model.list / config.defaults 投递到空 handler Set → 丢失 →
+ * settingsStore.models / defaultModel 永空 → 模型选择器下拉空 + landing 按钮文案空。
+ *
+ * 本函数上提到 App.vue setup（与 useConnection().init 同级、在 onMounted 连接前）调用，确保订阅在
+ * 首推前注册，从根因消除竞态。dispose 不在此触发（留 App.vue onBeforeUnmount），订阅跨断重连常驻
+ * （global handler 存于模块级 Map，dispatcher 重连后复用同一 handler，无需重注册）。
+ *
+ * providePlatform 幂等（main.ts 已先注入，模块级单例覆盖），重复调用无害。
  */
-export function useSettingsShell(): void {
-  // ① providePlatform：桌面壳 main.ts bootstrap 已注入（provideDesktopPlatform / mock 分支
-  //    createMockPlatform）。此处保留调用但按 VITE_MOCK 分支（AppShell 仅在连接成功后渲染，
-  //    mock 模式此处的无条件 provideDesktopPlatform 会覆盖 mock platform → 后续 connect 崩）；
-  //    providePlatform 幂等（模块级单例覆盖），正常模式重复调用无害。
+export function bootstrapSettingsCore(): void {
   if (import.meta.env.VITE_MOCK === 'true') {
     providePlatform(createMockPlatform())
   } else {
     provideDesktopPlatform()
   }
-
-  // ② provideSettingsTransport：转发 @/api 的 adapter
   provideSettingsTransport(createSettingsTransport())
+  void useSettings().init()
+}
 
-  // ③ core useSettings().init()：挂 11 域常驻订阅 + 同步 system 偏好到 store（fire-and-forget）
-  const { init, dispose } = useSettings()
-  void init()
-
-  // ④ provide 3 个 ui 注入 key（向 SettingsModal 子树注入；ui 零 renderer import 铁律的依赖注入侧）
+/**
+ * settings 域壳接入（AppShell setup 调用一次）。
+ *
+ * 仅承接需组件实例的副作用：provide 3 个 ui 注入 key + watch system.theme 挂/卸 matchMedia listener +
+ * 初始 applySystemToDom 兜底。核心订阅注册已上提至 bootstrapSettingsCore（App.vue setup，连接前），
+ * 此处不再调 init/dispose（dispose 留 App.vue onBeforeUnmount，订阅跨断重连常驻）。
+ */
+export function useSettingsShell(): void {
+  // provide 3 个 ui 注入 key（向 SettingsModal 子树注入；ui 零 renderer import 铁律的依赖注入侧）
   const toast = useToast()
   provide(SETTINGS_TOAST_KEY, {
     error: (m: string) => toast.error(m),
@@ -77,7 +90,7 @@ export function useSettingsShell(): void {
   provide(USE_QUOTA_CONFIGURE_KEY, useQuotaConfigure)
   provide(SETTINGS_CONFIG_API_KEY, { detectSources: () => config.detectSources() })
 
-  // ⑤ matchMedia 系统色监听 + applySystemToDom 兜底
+  // matchMedia 系统色监听 + applySystemToDom 兜底
   const store = getSettingsStore()
 
   /** apply 当前 system 偏好到 DOM（theme/themePreset/fontSize + locale） */
@@ -105,9 +118,5 @@ export function useSettingsShell(): void {
     },
     { flush: 'pre' },
   )
-
-  // AppShell 卸载时销毁 settings 订阅（应用生命周期内通常不触发，HMR/测试场景兜底）
-  onBeforeUnmount(() => {
-    dispose()
-  })
 }
+

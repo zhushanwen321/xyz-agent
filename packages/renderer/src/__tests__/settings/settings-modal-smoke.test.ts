@@ -76,6 +76,7 @@ function stubTransport(): SettingsTransport {
   const noopUnsub = (): void => {}
   return {
     listProviders: async () => [],
+    listModels: async () => [],
     setProvider: async () => undefined,
     discoverModels: async () => ({ success: true, models: [] }),
     setSkillDirs: async () => undefined,

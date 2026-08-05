@@ -23,6 +23,7 @@ import type { ProviderInfo, ExtensionInfo } from '@xyz-agent/shared'
 function makeFakeTransport(): SettingsTransport {
   return {
     listProviders: vi.fn(async () => []),
+    listModels: vi.fn(async () => []),
     setProvider: vi.fn(async () => {}),
     discoverModels: vi.fn(async () => ({ success: true })),
     setSkillDirs: vi.fn(async () => {}),

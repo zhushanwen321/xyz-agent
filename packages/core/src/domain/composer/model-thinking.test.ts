@@ -34,7 +34,7 @@ function makeDeps(opts: {
   const setThinkingLevel = vi.fn().mockResolvedValue(undefined)
   const deps: ModelThinkingDeps = {
     getSessionState,
-    defaultModel: opts.defaultModel ?? 'provider-D/model-D',
+    defaultModel: computed(() => opts.defaultModel ?? 'provider-D/model-D'),
     currentModel: computed(() => opts.currentModel ?? null),
     setPendingModel,
     switchModel,

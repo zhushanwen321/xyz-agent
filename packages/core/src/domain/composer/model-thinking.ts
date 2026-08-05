@@ -35,8 +35,8 @@ import { useThinkingLevelSync } from './thinking-level-sync'
 export interface ModelThinkingDeps {
   /** 按 sessionId 查 session 真值（per-session 隔离核心：壳层从 sessionStore.list.find 派生） */
   getSessionState: (sessionId: string) => { modelId: string; thinkingLevel?: string } | null
-  /** 全局默认模型（壳层从 settingsStore.defaultModel 取） */
-  defaultModel: string
+  /** 全局默认模型（壳层从 settingsStore.defaultModel 派生，响应式：landing 按钮需在 store 异步填充后更新） */
+  defaultModel: ComputedRef<string>
   /** landing 态 flow 选定模型（壳层从 useNewTaskFlow().currentModel 取） */
   currentModel: ComputedRef<string | null>
   /** landing 态记 pendingModel（壳层从 useNewTaskFlow().setPendingModel 取） */
@@ -111,7 +111,7 @@ export function useComposerModelThinking(
    * 用 || 而非 ??：session.list 广播里的已退出/磁盘 session 的 modelId 硬编码为 ''（空串）。
    */
   const regularModelId = computed(
-    () => sessionState.value?.modelId || currentModel.value || defaultModel || '',
+    () => sessionState.value?.modelId || currentModel.value || defaultModel.value || '',
   )
 
   /** 当前思考等级：staging 活跃时读快照，否则读常规态真值 */

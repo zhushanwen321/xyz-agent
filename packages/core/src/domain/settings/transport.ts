@@ -43,6 +43,8 @@ export interface DiscoverModelsResponse {
 export interface SettingsTransport {
   // ── 请求 ──
   listProviders(): Promise<ProviderInfo[]>
+  /** 聚合模型列表主动拉取（对齐 listProviders，连接后兜底防订阅时序竞态） */
+  listModels(): Promise<ModelInfo[]>
   setProvider(id: string, data: SetProviderData): Promise<void>
   discoverModels(req: DiscoverModelsRequest): Promise<DiscoverModelsResponse>
   setSkillDirs(dirs: string[]): Promise<void>
@@ -84,3 +86,4 @@ export function getSettingsTransport(): SettingsTransport {
 export function __resetSettingsTransportForTesting(): void {
   currentTransport = null
 }
+

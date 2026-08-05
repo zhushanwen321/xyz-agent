@@ -152,7 +152,7 @@ export function useComposerShell(params: ComposerShellParams) {
       if (!s) return null
       return { modelId: s.modelId, thinkingLevel: s.thinkingLevel }
     },
-    defaultModel: settingsStore.defaultModel.value,
+    defaultModel: computed(() => settingsStore.defaultModel.value),
     currentModel: flow.currentModel,
     setPendingModel: (model: string) => flow.setPendingModel(model),
     switchModel,

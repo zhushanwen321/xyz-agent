@@ -35,6 +35,7 @@ function makeRecordingTransport() {
   })
   const transport: SettingsTransport = {
     listProviders: vi.fn(async () => []),
+    listModels: vi.fn(async () => []),
     setProvider: vi.fn(async () => {}),
     discoverModels: vi.fn(async () => ({ success: true })),
     setSkillDirs: vi.fn(async () => {}),
@@ -201,6 +202,34 @@ describe('refreshProviders 分支', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const { refreshProviders } = useSettings()
     await expect(refreshProviders()).resolves.toBeUndefined()
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+})
+
+describe('refreshModels 分支', () => {
+  it('成功：listModels 结果写 store.models', async () => {
+    provideBase()
+    const { transport } = makeRecordingTransport()
+    ;(transport.listModels as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      { id: 'm1', name: 'M1', providerId: 'p1', providerName: 'P1' },
+    ])
+    provideSettingsTransport(transport)
+    const { refreshModels } = useSettings()
+    await refreshModels()
+    const store = getSettingsStore()
+    expect(store.models.value).toHaveLength(1)
+    expect(store.models.value[0].id).toBe('m1')
+  })
+
+  it('失败：不抛错（console.warn 兜底）', async () => {
+    provideBase()
+    const { transport } = makeRecordingTransport()
+    ;(transport.listModels as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('net'))
+    provideSettingsTransport(transport)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { refreshModels } = useSettings()
+    await expect(refreshModels()).resolves.toBeUndefined()
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
   })

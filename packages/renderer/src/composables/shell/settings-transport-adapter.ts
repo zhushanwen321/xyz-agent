@@ -21,6 +21,7 @@ export function createSettingsTransport(): SettingsTransport {
   return {
     // ── 请求 ──
     listProviders: () => configApi.listProviders(),
+    listModels: () => modelApi.listModels(),
     setProvider: (id, data) => configApi.setProvider(id, data),
     discoverModels: async (req: DiscoverModelsRequest): Promise<DiscoverModelsResponse> => {
       // core DiscoverModelsRequest（baseUrl? / providerType 必）与 @/api config.discoverModels
@@ -54,3 +55,4 @@ export function createSettingsTransport(): SettingsTransport {
     onTerminalConfig: (h) => configApi.onTerminalConfig(h),
   }
 }
+

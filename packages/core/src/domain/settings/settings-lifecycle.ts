@@ -104,6 +104,24 @@ async function refreshProviders(): Promise<void> {
   }
 }
 
+/**
+ * 连接后主动拉取模型列表（对齐 refreshProviders 范式的兜底）。
+ *
+ * [HISTORICAL] 2026-08-05：onModels 订阅曾因「注册晚于 sendInitialState 首推」竞态丢首条 model.list，
+ * 导致 settingsStore.models 永空（根因已由 bootstrapSettingsCore 上提订阅注册到 App.vue setup 修复）。
+ * 本方法作为防御纵深：即使订阅时序未来被回归，连接后的显式拉取仍能填充 models。
+ * 由 App.vue onConnected 首次连接后调一次（非 mock 模式）。失败不阻塞（onModels 订阅兜底）。
+ */
+async function refreshModels(): Promise<void> {
+  const store = getSettingsStore()
+  try {
+    store.models.value = await getSettingsTransport().listModels()
+  // eslint-disable-next-line taste/no-silent-catch -- 拉取失败不阻塞 UI：onModels 订阅会兜底推回最新数据，无需打扰用户
+  } catch (e) {
+    console.warn('[settings] listModels 失败，依赖订阅兜底', e)
+  }
+}
+
 /** 销毁订阅（AppShell 卸载时调用，应用生命周期内通常不触发）。 */
 function dispose(): void {
   unsubs.splice(0).forEach((u) => u())
@@ -128,7 +146,9 @@ export function useSettings() {
   return {
     init,
     refreshProviders,
+    refreshModels,
     dispose,
     resetSettingsInit,
   }
 }
+

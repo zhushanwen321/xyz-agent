@@ -40,18 +40,29 @@ import ToastContainer from '@/components/ui/ToastContainer.vue'
 import { Button } from '@/components/ui/button'
 import { useConnection } from '@/composables/useConnection'
 import { useSidebarNew } from '@/composables/features/useSidebarNew'
+import { bootstrapSettingsCore } from '@/composables/shell/useSettingsShell'
+import { useSettings } from '@xyz-agent/core'
 import { bindForkNoticeEffect } from '@/composables/effects/useForkNoticeEffect'
 import { bindHandoffEffect } from '@/composables/effects/useHandoffEffect'
 import { bindSessionStreamSync } from '@/composables/effects/useSessionStreamSync'
 import { useCompactQueue } from '@/composables/panel/useCompactQueue'
 
 // 应用挂载即初始化连接（mock 模式 200ms 直进 connected；真 runtime 走端口发现）。
+// settings 域核心初始化（platform + transport + 订阅注册）必须在 WS 连接前完成：
+// AppShell 仅在 connected 后渲染，若订阅注册留在 AppShell setup 会晚于 sendInitialState 首推 →
+// 首条 model.list / config.defaults 丢失 → settingsStore.models / defaultModel 永空
+// （模型选择器下拉空 + landing 按钮文案空，[HISTORICAL] 2026-08-05）。
+bootstrapSettingsCore()
+
 const { t } = useI18n()
 const { state: connectionState, init, teardown, retryRuntime } = useConnection()
 // 启动编排（#1/#3）：连接建立后自动进 new-task landing（首次）或恢复最近 session。
 // useConnection.init 是 fire-and-forget（connect 异步），return 时连接未握手指；state==='connected'
 // 是「连接成功」唯一可靠信号——watch 它触发 onConnected，appBootstrapped 守卫保证 HMR/重连幂等。
 const { onConnected } = useSidebarNew()
+// settings 订阅的 dispose（HMR/App 卸载销毁）+ models 兜底拉取（防订阅时序竞态）。
+// 订阅注册在 bootstrapSettingsCore（上见），此处只持有 dispose/refreshModels 句柄。
+const { dispose: disposeSettings, refreshModels } = useSettings()
 // RV1+RV2：fork 反馈行 + 后台分支通知全局订阅（session.forkNotice 广播 → transient feed；
 // useForkBranchNotify diff 分支状态 → 状态变化反馈行）。App setup 是全局 effect 作用域，
 // onScopeDispose 随 App 卸载退订（单实例，与 events.onGlobalType 范式一致）。
@@ -75,7 +86,12 @@ onMounted(() => { void init() })
 //   hasConnectedBefore 与 appBootstrapped 同为模块级，组件卸载重挂（非模块重载）时保留值，
 //   避免新实例误判为「首次」再调 initApp（被守卫吞）导致 load 不刷新。
 watch(connectionState, (s) => {
-  if (s === 'connected') void onConnected()
+  if (s === 'connected') {
+    void onConnected()
+    // 兜底：连接后主动拉一次 models（对齐 refreshProviders 范式，防订阅时序竞态未来回归）。
+    // mock 模式 WS 不回 model.list reply（mockSend 仅 ping/pong）→ pending 65s 超时，跳过避免 boot 卡顿。
+    if (import.meta.env.VITE_MOCK !== 'true') void refreshModels()
+  }
 })
 
 /** 用户点击「重试」：委托 IPC runtime-restart → 主进程 supervisor.restartRuntime。
@@ -84,5 +100,11 @@ function onRetry(): void {
   void retryRuntime()
 }
 
-onBeforeUnmount(() => teardown())
+onBeforeUnmount(() => {
+  teardown()
+  // settings 订阅随 App 卸载销毁（HMR/测试场景）。不断在 AppShell unmount（断连）时销毁——
+  // 订阅跨断重连常驻（global handler 存于模块级 Map，重连后 dispatcher 复用，无需重注册）。
+  disposeSettings()
+})
 </script>
+
