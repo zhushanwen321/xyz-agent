@@ -51,14 +51,12 @@ export interface GoalSnapshot {
 
 /**
  * todo 原始项（来自 todo tool result 的 details.todos，对齐 todo extension model.ts Todo）。
- * 用于 TasksPanel 渲染 VERIFY 标签 + 准确三态（list-tree 的 TreeItem 不含 isVerification）。
+ * 用于 TasksPanel 渲染准确三态（list-tree 的 TreeItem.status 是可选展示字段，不可靠）。
  */
 export interface TodoItem {
   id: number
   text: string
   status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
-  /** 验证任务标记（VERIFY 标签渲染依据，goal extension 要求完成前不可标记 goal complete） */
-  isVerification?: boolean
 }
 
 /** goal 的实时状态枚举（对齐 goal extension engine/types.ts GoalStatus，去掉 cancelled/active 默认态） */
@@ -74,7 +72,7 @@ export type GoalLiveStatus =
 export interface SessionTasksState {
   goal: GoalSnapshot | undefined
   todo: GuiComponent | undefined
-  /** todo 原始项数组（含 isVerification，TasksPanel 渲染 VERIFY 标签用） */
+  /** todo 原始项数组（TasksPanel 渲染用） */
   todos: TodoItem[]
   /** todo 的 done/total 计数（从 todos 聚合，completed 计为 done） */
   todoDone: number
@@ -260,7 +258,7 @@ export const useTasksStore = defineStore('tasks', () => {
 
   /**
    * chat-message-effects 检测到 todo tool result 的 details.todos（原始数组）时调用。
-   * 存原始项用于 TasksPanel 渲染 VERIFY 标签 + 准确三态（list-tree 的 TreeItem 不含 isVerification）。
+   * 存原始项用于 TasksPanel 渲染准确三态（list-tree 的 TreeItem.status 不可靠）。
    * 同时重算 done/total（以原始 todos 为准，覆盖 list-tree 聚合结果——原始数据更可靠）。
    */
   function setTodos(sessionId: string, todos: TodoItem[]): void {
@@ -390,7 +388,7 @@ export const useTasksStore = defineStore('tasks', () => {
       }
     }
 
-    // todo 原始数组（含 isVerification）
+    // todo 原始数组
     if (tc.toolName === 'todo') {
       const rawTodos = details['todos']
       if (Array.isArray(rawTodos)) {
@@ -406,7 +404,7 @@ export const useTasksStore = defineStore('tasks', () => {
     }
   }
 
-  /** 读取 session 的原始 todo 项数组（TasksPanel 渲染 VERIFY 标签用） */
+  /** 读取 session 的原始 todo 项数组 */
   function getTodos(sessionId: string): TodoItem[] {
     return sessions.value.get(sessionId)?.todos ?? []
   }

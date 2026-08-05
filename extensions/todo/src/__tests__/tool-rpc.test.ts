@@ -20,7 +20,7 @@ interface ExecuteResult {
 	content: Array<{ type: "text"; text: string }>;
 	details: {
 		action: string;
-		todos: Array<{ id: number; text: string; status: string; isVerification?: boolean }>;
+		todos: Array<{ id: number; text: string; status: string }>;
 		nextId: number;
 		__gui__?: {
 			v: number;

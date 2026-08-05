@@ -272,7 +272,7 @@ test('R2: 真实 todo tool 调用 → 协议格式含 __gui__ list-tree', async 
     // 诊断：dump 完整 tool_call_end payload 供协议分析
     fs.writeFileSync('/tmp/r2-tool-end.json', JSON.stringify(todoToolEnd, null, 2))
 
-    // details.todos 原始数组（TasksPanel 渲染主数据源，含 isVerification + 准确三态）
+    // details.todos 原始数组（TasksPanel 渲染主数据源，含准确 status）
     const todos = details.todos
     expect(Array.isArray(todos), 'details.todos 应为数组（TasksPanel 渲染数据源）').toBe(true)
     expect(todos.length, '至少 1 个 todo').toBeGreaterThan(0)

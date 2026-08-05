@@ -42,6 +42,8 @@ describe("handleCompletionSteer", () => {
 		expect(handleCompletionSteer(s)).toBe(true);
 		expect(s.completionSteered).toBe(true);
 		expect(s.pendingSteerMessage).toContain("交付质量");
+		expect(s.pendingSteerMessage).toContain("检查实际产出");
+		expect(s.pendingSteerMessage).toContain("不要凭印象");
 	});
 
 	it("does not steer twice (single-shot lock)", () => {
@@ -148,13 +150,40 @@ describe("handleReminder", () => {
 
 // ── reminder / context builders ─────────────────────
 
-describe("buildMinimalReminder", () => {
-	it("mentions the next pending task", () => {
+	describe("buildMinimalReminder", () => {
+	it("mentions the next pending task with action directive", () => {
 		const s = makeState([
 			{ id: 1, text: "done", status: "completed" },
 			{ id: 2, text: "next", status: "pending" },
 		]);
-		expect(buildMinimalReminder(s)).toContain("#2 next");
+		const out = buildMinimalReminder(s);
+		expect(out).toContain("#2 next");
+		expect(out).toContain("必须处理");
+		expect(out).toContain("todo update");
+	});
+
+	it("includes in_progress todos as pending", () => {
+		const s = makeState([
+			{ id: 1, text: "working", status: "in_progress" },
+			{ id: 2, text: "next", status: "pending" },
+		]);
+		expect(buildMinimalReminder(s)).toContain("#1 working");
+	});
+
+	it("excludes cancelled todos from reminder", () => {
+		const s = makeState([
+			{ id: 1, text: "cancelled task", status: "cancelled" },
+			{ id: 2, text: "active", status: "in_progress" },
+		]);
+		const out = buildMinimalReminder(s);
+		expect(out).toContain("#2 active");
+		expect(out).not.toContain("#1");
+	});
+
+	it("returns empty string when only cancelled remain", () => {
+		expect(
+			buildMinimalReminder(makeState([{ id: 1, text: "x", status: "cancelled" }])),
+		).toBe("");
 	});
 
 	it("returns empty string when no pending", () => {
@@ -174,6 +203,31 @@ describe("buildBeforeAgentStartMessage", () => {
 		expect(m!.message.customType).toBe("todo-context");
 		expect(m!.message.content).toContain("#1: a");
 		expect(m!.message.content).not.toContain("#2");
+	});
+
+	it("injects action directives (process first / mark completed / stalled != done)", () => {
+		const s = makeState([{ id: 1, text: "a", status: "in_progress" }]);
+		const m = buildBeforeAgentStartMessage(s);
+		expect(m!.message.content).toContain("开始工作前先推进 pending 任务");
+		expect(m!.message.content).toContain("todo update 标记 completed");
+		expect(m!.message.content).toContain("搁置不等于完成");
+	});
+
+	it("excludes cancelled todos from context injection", () => {
+		const s = makeState([
+			{ id: 1, text: "cancelled", status: "cancelled" },
+			{ id: 2, text: "active", status: "pending" },
+		]);
+		const m = buildBeforeAgentStartMessage(s);
+		expect(m).toBeDefined();
+		expect(m!.message.content).toContain("#2: active");
+		expect(m!.message.content).not.toContain("#1");
+	});
+
+	it("returns undefined when only cancelled remain", () => {
+		expect(
+			buildBeforeAgentStartMessage(makeState([{ id: 1, text: "x", status: "cancelled" }])),
+		).toBeUndefined();
 	});
 
 	it("returns undefined when list empty", () => {
@@ -224,6 +278,29 @@ describe("reconstructState", () => {
 		const s = createTodoSessionState();
 		reconstructState(s, makeCtx(entries));
 		expect(s.todos[0].status).toBe("pending");
+	});
+
+	it("skips dirty (null/primitive) elements without throwing", () => {
+		const entries = [
+			todoEntry([null, { id: 1, text: "ok", status: "pending" }] as unknown as Todo[], 3),
+		];
+		const s = createTodoSessionState();
+		expect(() => reconstructState(s, makeCtx(entries))).not.toThrow();
+		expect(s.todos).toHaveLength(1);
+		expect(s.todos[0].id).toBe(1);
+		expect(s.nextId).toBe(3);
+	});
+
+	it("ignores snapshot when all elements are dirty (replay continues)", () => {
+		const entries = [
+			todoEntry([null, "garbage"] as unknown as Todo[], 5),
+			todoEntry([{ id: 9, text: "valid", status: "pending" }], 10),
+		];
+		const s = createTodoSessionState();
+		expect(() => reconstructState(s, makeCtx(entries))).not.toThrow();
+		expect(s.todos).toHaveLength(1);
+		expect(s.todos[0].id).toBe(9);
+		expect(s.nextId).toBe(10);
 	});
 });
 

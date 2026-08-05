@@ -168,13 +168,13 @@ function isLastAssistantStreaming(
 /**
  * tool result 到达时按 toolName 路由 details 到 tasks store。
  *
- * - toolName === 'todo' → setTodoFromGui（details.__gui__ list-tree）+ setTodos（details.todos 原始数组，含 isVerification）
+ * - toolName === 'todo' → setTodoFromGui（details.__gui__ list-tree）+ setTodos（details.todos 原始数组）
  * - toolName === 'goal_control' → setGoalFromGui（details.__gui__ card/stats-line）+ setGoalMeta（details.slug）
  * - 其他 tool / 无 details → no-op
  *
  * details 是 pi tool_execution_end 的 result.details。todo/goal extension 把结构化快照放进
  * details.__gui__.component（guiResult helper 产物）；todo 额外暴露 details.todos 原始数组
- * （含 isVerification，list-tree 的 TreeItem 不含此字段）；goal_control 暴露 details.slug。
+ * （含准确 status，list-tree 的 TreeItem 不含此字段）；goal_control 暴露 details.slug。
  */
 /**
  * 首个 todo/goal 数据写入 tasks store 时，自动打开 SideDrawer 并切到 tasks tab。
@@ -219,7 +219,7 @@ function routeToolResultToTasks(
     }
   }
 
-  // todo 原始数组（含 isVerification，TasksPanel 渲染 VERIFY 标签依据）
+  // todo 原始数组（准确 status，TasksPanel 渲染依据）
   if (toolName === 'todo') {
     const rawTodos = details['todos']
     if (Array.isArray(rawTodos)) {

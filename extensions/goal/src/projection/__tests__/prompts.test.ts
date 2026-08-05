@@ -212,12 +212,11 @@ describe("contextInjectionPrompt", () => {
 		expect(out).toContain("test objective");
 	});
 
-	it("要求建 todo（含 verification todo，FR-6/#10）", () => {
+	it("要求建 todo（含 verification todo）", () => {
 		const state = makeState();
 		const out = contextInjectionPrompt(state, 0);
 		expect(out).toContain("todo tool");
-		expect(out).toContain("verification todos");
-		expect(out).toContain("isVerification intent");
+		expect(out).toContain("separate todo for verification checks");
 	});
 
 	it("无 goal_manager 引用（#1 清理后）", () => {

@@ -79,7 +79,7 @@ Agent 声明 goal 完成时必须提供的具体验证信息。防止无证据�
 Goal 的资源约束：Token Budget（token 上限）+ Time Budget（时间上限）。
 
 **Verification Todo（验证任务）**
-Todo 清单中标记 `isVerification: true` 的任务项。Goal 完成前的硬检查依据，不可取消。
+通过提示词引导 AI 为验证步骤（如跑测试 / typecheck）单独添加的 todo 项。无结构化标记字段，验证任务与普通任务在数据模型上无区别。
 
 ### Todo（pi-todo）
 
@@ -210,4 +210,4 @@ Plan Mode 的需求探索阶段。包含 Quick Overview、渐进式提问、方�
 Compaction 在 agent loop 外做 token 级 LLM 摘要（不可逆），Context Engineering 在 agent loop 内做消息级规则化处理（可逆 Recall）。两者互补不冲突。
 
 **"任务"统一到 Todo**
-Goal 不内嵌任务系统，任务管理统一到 Todo 扩展。Goal 通过只读快照接口读取 Todo 进度，验证任务由 Todo 的 `isVerification` 标记承载。
+Goal 不内嵌任务系统，任务管理统一到 Todo 扩展。Goal 通过只读快照接口读取 Todo 进度，验证任务通过提示词引导由 AI 以独立 todo 承载（无结构化标记字段）。

@@ -61,6 +61,22 @@ describe("goal_control description — 含参数结构反例（Don't 段）", ()
 	});
 });
 
+describe("goal_control promptGuidelines — complete/report_blocked 主动触发引导（防不主动收尾）", () => {
+	// promptGuidelines 进 system prompt guidelines 段（强信号），是修复 complete/report_blocked
+	// 「该主动调但不调」的核心载体。用源码断言锁定两条正向触发引导，防止后续重构删掉。
+	it("源码含 promptGuidelines 字段", () => {
+		expect(ADAPTER_SRC).toMatch(/promptGuidelines:\s*\[/);
+	});
+
+	it("promptGuidelines 含 complete 主动触发信号（proactively + objective is actually achieved）", () => {
+		expect(ADAPTER_SRC).toMatch(/complete:.*proactively call.*objective is actually achieved/s);
+	});
+
+	it("promptGuidelines 含 report_blocked 主动触发信号（proactively + ≥3 approaches）", () => {
+		expect(ADAPTER_SRC).toMatch(/report_blocked:.*proactively call.*≥3 distinct alternative approaches/s);
+	});
+});
+
 describe("goal_control runtime 错误文案 — 含 'Correct:' 纠正正例（≥4 处）", () => {
 	it("源码含 ≥4 处 'Correct:' 纠错文案（4 条 required throw 各一带正例）", () => {
 		// objective/slug/evidence/reason 四条必填 throw 各应带完整 JSON 正例，

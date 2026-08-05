@@ -376,6 +376,18 @@ Don't:
 - complete when no goal is active — create or resume one first (fails with 'Goal mode not active').`,
 		promptSnippet:
 			"Use goal_control to manage the thread goal: create (with slug + objective, only when user asks) or complete (with evidence) or report_blocked (with reason, after trying alternatives).",
+		// promptGuidelines：进 system prompt guidelines 段（强信号位）。
+		// 聚焦 complete/report_blocked 的正向触发引导——这两个 action 是「该主动调但实际不调」
+		// 的核心症结（contextInjectionPrompt 规则 3/4 虽引导，但属 goal 活跃时才注入的 steering，
+		// 措辞被动；此处给 system prompt 层的常驻强信号）。
+		// create 不列：其劝退已在 description + promptSnippet 双重覆盖，此处第三重冗余反而稀释
+		// complete/report_blocked 的注意力权重（P14 约束衰减）。
+		promptGuidelines: [
+			// 全解耦下 todo 非硬前置——objective 实际达成才算（与 handleComplete「todo 由 AI 自判」一致）
+			"complete: proactively call when the active goal's objective is actually achieved, not merely in progress. Evidence must be concrete artifacts (files changed, tests green, commands run). Finishing all todos (incl. verification todos) is the usual readiness signal, but the real bar is the objective being met — you decide.",
+			// P3 数字阈值 ≥3，与 params.reason description 的 "at least 3 approaches" 双重冗余
+			"report_blocked: proactively call when genuinely blocked after ≥3 distinct alternative approaches — not for hard/slow work or uncertainty. State the blocker and what you tried. Do NOT silently stop or leave the goal hanging.",
+		],
 		executionMode: "sequential",
 		parameters: GoalControlParams,
 

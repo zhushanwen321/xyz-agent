@@ -28,7 +28,6 @@ export interface TodoActionParams {
 	texts?: string[];
 	ids?: number[];
 	status?: string;
-	isVerification?: boolean;
 	updates?: Array<{ id: number; status?: string; text?: string }>;
 }
 
@@ -43,11 +42,6 @@ const TodoParams = Type.Object({
 	status: Type.Optional(
 			StringEnum(VALID_STATUSES, { description: "Target status (for update action)" }),
 		),
-	isVerification: Type.Optional(
-		Type.Boolean({
-			description: "Mark added todos as verification tasks (for add action). Verification todos must be completed (not cancelled) before goal completion.",
-		}),
-	),
 	updates: Type.Optional(
 			Type.Array(
 				Type.Object({
@@ -88,7 +82,7 @@ export function handleAdd(state: TodoSessionState, params: TodoActionParams): st
 			'add requires texts parameter (non-empty array). Correct: {"action":"add","texts":["..."]}',
 		);
 	}
-	const r = addTodos(state.todos, state.nextId, params.texts, params.isVerification);
+	const r = addTodos(state.todos, state.nextId, params.texts);
 	if (r.error) throw new Error(r.resultText);
 	state.todos = r.newTodos;
 	state.nextId = r.newNextId;
@@ -124,12 +118,9 @@ export function handleSingleUpdate(state: TodoSessionState, params: TodoActionPa
 	const todo = state.todos.find((t) => t.id === params.id);
 	if (!todo) throw new Error(`Todo #${params.id} not found`);
 
-	// FR-6 不变量守卫（失败抛错）：(a) cancelled 不可恢复；(b) 验证任务不可 cancelled
+	// cancelled 不可恢复（失败抛错）
 	if (todo.status === "cancelled" && params.status !== undefined) {
 		throw new Error(`#${params.id} is cancelled (cannot restore)`);
-	}
-	if (todo.isVerification && params.status === "cancelled") {
-		throw new Error(`#${params.id} is verification todo (cannot cancel)`);
 	}
 
 	if (params.status !== undefined) todo.status = params.status as Todo["status"];
@@ -260,13 +251,12 @@ export function registerTodoTool(
 			"Manage a todo list." +
 			"\n\nAvailable actions:" +
 			"\n- list: View all todos" +
-			"\n- add: Batch add todos (requires texts array; optional isVerification marks verification tasks)" +
+			"\n- add: Batch add todos (requires texts array)" +
 			"\n- update: Update todo(s) — single (id + optional status/text) or batch (updates[], takes priority)" +
 			"\n- delete: Batch delete todos (requires ids array)" +
 			"\n- clear: Clear all todos and reset IDs" +
 			"\n\nExamples:" +
 			'\n{"action":"add","texts":["write spec","implement"]}' +
-			'\n{"action":"add","texts":["run tests"],"isVerification":true}' +
 			'\n{"action":"update","id":1,"status":"in_progress"}' +
 			'\n{"action":"update","updates":[{"id":1,"status":"completed"},{"id":2,"status":"in_progress"}]}' +
 			'\n{"action":"delete","ids":[3]}' +
@@ -274,10 +264,10 @@ export function registerTodoTool(
 			'\n{"action":"add","text":"x"} ← text is for update; add uses texts:[...]' +
 			'\n{"action":"delete","id":3} ← id is for update; delete uses ids:[...]' +
 			'\n{"action":"update","status":"x"} ← missing id',
-		promptSnippet: "Use todo when breaking multi-step work into trackable items. Add verification todos (isVerification=true) for checks like running tests.",
+		promptSnippet: "Use todo when breaking multi-step work into trackable items. Consider adding a separate todo for verification checks like running tests or typecheck.",
 		promptGuidelines: [
 			"[Usage] 多步骤工作（3+步）时使用。AI 自发创建，无需用户触发",
-			"[验证任务] 执行任务 + 验证任务（isVerification=true，如 run tests / typecheck）一起建",
+			"[验证任务] 为测试 / 类型检查等验证步骤单独建 todo，完成前确保验证通过",
 			"[批量优先] 完成多项任务时使用 updates[] 批量更新，减少工具调用次数",
 			"[自动闭合] 全部完成后工具自动清理，无需手动 clear",
 			"[Not for] 单步操作、简单对话",

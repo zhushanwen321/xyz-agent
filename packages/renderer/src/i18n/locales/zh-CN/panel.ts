@@ -338,9 +338,7 @@ export default {
   panel: {
     tasks: {
       todoListTitle: '任务清单',
-      verifyTag: 'VERIFY',
       resumeGoal: '恢复',
-      verifyTooltip: '验证任务 — 必须完成才能结束 goal',
       goalStatusActive: '进行中',
       goalStatusBlocked: '已阻塞',
       goalStatusPaused: '已暂停',

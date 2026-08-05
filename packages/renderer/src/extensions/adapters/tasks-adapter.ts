@@ -3,7 +3,7 @@
  *
  * 把原本散在 SideDrawer 的 goal/todo 特判收敛到此处：
  * - extension:widget widgetKey='goal' → tasksStore.mergeGoalWidget（解析实时 status/token%/time%）
- * - extension:widget widgetKey='todo' → no-op（权威数据是 tool result 的 details.todos，含 isVerification）
+ * - extension:widget widgetKey='todo' → no-op（权威数据是 tool result 的 details.todos）
  * - extension:widgetGui widgetKey='goal'/'todo' → no-op（结构化快照走 tool result 的 details.__gui__，
  *   widgetGui 通路当前 extension 不推，但若未来推送也归 tasks 管不进通用管线）
  * - extension:status statusKey='goal'/'todo' → no-op（TasksPanel 已展示更完整信息，footer 不重复）
@@ -35,8 +35,8 @@ export function registerTasksAdapter(): void {
       if (widgetKey.toLowerCase() === 'goal') {
         useTasksStore().mergeGoalWidget(sessionId, lines)
       }
-      // todo widget：no-op。权威数据是 tool result 的 details.todos（含准确 status + isVerification），
-      // widget 与 tool result 同步推送，解析 widget 冗余且更弱（无 isVerification）。
+      // todo widget：no-op。权威数据是 tool result 的 details.todos（含准确 status），
+      // widget 与 tool result 同步推送，解析 widget 冗余且更弱。
     },
 
     // widgetGui：goal/todo 的结构化快照走 tool result（details.__gui__），不经 widgetGui 通路。

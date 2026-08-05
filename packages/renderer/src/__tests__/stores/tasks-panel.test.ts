@@ -61,7 +61,7 @@ describe('TasksPanel 首屏渲染', () => {
     expect(wrapper.find('[data-testid="goal-card"]').exists()).toBe(true)
   })
 
-  it('有 todo 数据时渲染 todo 列表 + VERIFY 标签数量', () => {
+  it('有 todo 数据时渲染 todo 列表', () => {
     const store = useTasksStore()
     store.setTodoFromGui('s1', flatTodoList())
     // 手动设置 todos 数组（setTodoFromGui 只设 gui，不设 todos 数组）
@@ -70,7 +70,7 @@ describe('TasksPanel 首屏渲染', () => {
       { id: 2, text: 'done task', status: 'completed' },
       { id: 3, text: 'in progress', status: 'in_progress' },
       { id: 4, text: 'pending', status: 'pending' },
-      { id: 5, text: 'verify done', status: 'completed', isVerification: true },
+      { id: 5, text: 'verify done', status: 'completed' },
     ])
 
     const wrapper = mount(TasksPanel, { props: { sessionId: 's1' } })

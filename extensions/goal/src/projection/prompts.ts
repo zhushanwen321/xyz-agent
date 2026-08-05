@@ -239,7 +239,7 @@ export function contextInjectionPrompt(
 		`Track work with todos:\n` +
 		`Before working, create todos for the task breakdown using the todo tool:\n` +
 		`- Each concrete step becomes a todo item\n` +
-		`- Include verification todos (e.g., 'run tests', 'typecheck') with isVerification intent\n` +
+		`- Add a separate todo for verification checks (e.g., 'run tests', 'typecheck')\n` +
 		`- Track progress by updating todo status as you complete items\n` +
 		planSection +
 		`\n` +
