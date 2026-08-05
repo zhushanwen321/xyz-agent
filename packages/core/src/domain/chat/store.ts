@@ -91,95 +91,6 @@ function readStreamingTimeoutMs(): number {
 }
 
 /**
- * disposeSession 所需清理的 per-session ref 集合。
- * 留在模块作用域以控制 setup 函数行数（max-lines-per-function，对齐 readStreamingTimeoutMs 模式）。
- */
-interface DisposableRefs<T> {
-  value: T
-}
-
-/**
- * 清理指定 session 的全部 per-session 状态（deleteSession 调用，S3）。
- *
- * deleteSession 此前只清 session 列表 + panel 绑定，chat store 的 per-session 状态
- * （messages / hydrated / pendingSend / compactingSessions / retryStates / queueStates /
- * failedHistory / changeSetStatuses）永久残留。频繁建删 session 后内存单调增长。
- * 此函数一次性清理该 session 的所有分区数据 + 取消 timer。
- */
-function disposeSessionImpl(
-  sessionId: string,
-  mapRefs: DisposableRefs<Map<string, unknown>>[],
-  setRefs: DisposableRefs<Set<string>>[],
-  changeSetStatuses: DisposableRefs<Map<string, unknown>>,
-  clearTimers: (() => void)[],
-): void {
-  // Map ref：不可变写保证响应式（new Map + delete + 赋值新 Map）。
-  // W1 后 messages 是 shallowRef，必须整体替换 .value 才触发；retryStates/queueStates
-  // 是深 ref，此写法同样正确触发。统一用"构造新 Map → delete → 赋值"范式。
-  for (const ref of mapRefs) {
-    if (ref.value.has(sessionId)) {
-      const next = new Map(ref.value)
-      next.delete(sessionId)
-      ref.value = next
-    }
-  }
-  // Set ref：不可变写保证响应式
-  for (const ref of setRefs) {
-    if (ref.value.has(sessionId)) {
-      const next = new Set(ref.value)
-      next.delete(sessionId)
-      ref.value = next
-    }
-  }
-  // changeSetStatuses：key 格式 `${sessionId}:${messageId}`，前缀过滤删除
-  if (changeSetStatuses.value.size > 0) {
-    const prefix = `${sessionId}:`
-    let changed = false
-    const next = new Map(changeSetStatuses.value)
-    for (const key of next.keys()) {
-      if (key.startsWith(prefix)) {
-        next.delete(key)
-        changed = true
-      }
-    }
-    if (changed) changeSetStatuses.value = next
-  }
-  // timer 清理（模块级 Map，非响应式）
-  for (const clear of clearTimers) clear()
-}
-
-/**
- * [M7] 仅删单个虚拟 key 的 messages（模块级，控制 setup 行数）。
- * backToMain/backFromAgentCall 退出 overlay 时调，避免误删主 session 消息。
- * 与 evictSessionWithVirtual 的区别：后者删主 session + 联动虚拟 key，本方法只删传入的虚拟 key。
- */
-function evictVirtualKeyImpl(deps: { deleteMessageKey: (sid: string) => void }, virtualId: string): void {
-  deps.deleteMessageKey(virtualId)
-}
-
-/**
- * 追加 system 提示行纯逻辑（模块级，控制 setup 行数）。
- * runtime 主动推送的元信息反馈（如 compactionSummary），作 SystemNotice 渲染。
- */
-function appendSystemNoticeImpl(
-  messages: DisposableRefs<Map<string, Message[]>>,
-  sessionId: string,
-  text: string,
-): void {
-  const prev = messages.value.get(sessionId) ?? []
-  commitMessages(messages, sessionId, [
-    ...prev,
-    {
-      id: `sys-${crypto.randomUUID()}`,
-      role: 'system',
-      content: text,
-      status: 'complete',
-      timestamp: Date.now(),
-    },
-  ])
-}
-
-/**
  * chat store factory（IF1）：构造 chat 域全部状态 + actions，返回 store 对象。
  *
  * renderer 经 defineStore('chat', () => createChatStore()) 注册到 pinia。
@@ -330,7 +241,7 @@ export function createChatStore() {
   /** W3 H3：LRU 驱逐（阈值触发）/ 显式驱逐（带虚拟 key）/ [M7] 单虚拟 key 删除 */
   function evictIfNeeded(): void { lruEvictIfNeeded(lruEvictDeps) }
   function evictSessionWithVirtual(sessionId: string): void { lruEvictSession(sessionId, lruEvictDeps) }
-  function evictVirtualKey(virtualId: string): void { evictVirtualKeyImpl(lruEvictDeps, virtualId) }
+  function evictVirtualKey(virtualId: string): void { lruEvictDeps.deleteMessageKey(virtualId) }
 
   /** 取指定 session 的自动重试态（无则 undefined） */
   function getRetryState(sessionId: string): RetryState | undefined {
@@ -682,24 +593,70 @@ export function createChatStore() {
 
   // isHandingOff / setHandingOff / clearHandingOffTimer 委托 createHandoffController（chat-handoff.ts）。
 
-  /** 追加 system 提示行（与规则 #3「错误作为消息插入聊天流」一致：不用顶部 banner）。委托 appendSystemNoticeImpl。 */
-  const appendSystemNotice = (sessionId: string, text: string): void => appendSystemNoticeImpl(messages, sessionId, text)
+  /** 追加 system 提示行（与规则 #3「错误作为消息插入聊天流」一致：不用顶部 banner）。 */
+  const appendSystemNotice = (sessionId: string, text: string): void => {
+    const prev = messages.value.get(sessionId) ?? []
+    commitMessages(messages, sessionId, [
+      ...prev,
+      {
+        id: `sys-${crypto.randomUUID()}`,
+        role: 'system',
+        content: text,
+        status: 'complete',
+        timestamp: Date.now(),
+      },
+    ])
+  }
 
   /** 截断 session 消息到 messageId（编辑重发用）。委托 chat-mutations.truncateMessagesFrom。 */
   const truncateFrom = (sessionId: string, messageId: string, inclusive: boolean): void => truncateMessagesFrom(messages, sessionId, messageId, inclusive)
 
   /**
    * 清理指定 session 的全部 per-session 状态（deleteSession 调用，S3）。
-   * 委托 disposeSessionImpl（模块级，控制 setup 函数行数）。
+   *
+   * deleteSession 此前只清 session 列表 + panel 绑定，chat store 的 per-session 状态
+   * （messages / hydrated / pendingSend / compactingSessions / retryStates / queueStates /
+   * failedHistory / changeSetStatuses）永久残留。频繁建删 session 后内存单调增长。
+   * 此函数一次性清理该 session 的所有分区数据 + 取消 timer。
    */
   function disposeSession(sessionId: string): void {
-    disposeSessionImpl(
-      sessionId,
-      [messages, retryStates, queueStates],
-      [hydrated, pendingSend, compactingSessions, handingOffSessions, failedHistory],
-      changeSetStatuses,
-      [() => clearPendingSendTimer(sessionId), () => clearStreamingTimer(sessionId), () => clearBashTimer(sessionId), () => clearHandingOffTimer(sessionId)],
-    )
+    // Map ref：不可变写保证响应式（new Map + delete + 赋值新 Map）。
+    // W1 后 messages 是 shallowRef，必须整体替换 .value 才触发；retryStates/queueStates
+    // 是深 ref，此写法同样正确触发。统一用"构造新 Map → delete → 赋值"范式。
+    // 显式结构类型（对齐原 disposeSessionImpl 参数）：数组元素统一为 Map<string, unknown>，
+    // 避免 TS 将不同 Map 元素推断为具体联合类型导致 new Map(ref.value) 不兼容。
+    const mapRefs: { value: Map<string, unknown> }[] = [messages, retryStates, queueStates]
+    const setRefs: { value: Set<string> }[] = [hydrated, pendingSend, compactingSessions, handingOffSessions, failedHistory]
+    for (const ref of mapRefs) {
+      if (ref.value.has(sessionId)) {
+        const next = new Map(ref.value)
+        next.delete(sessionId)
+        ref.value = next
+      }
+    }
+    // Set ref：不可变写保证响应式
+    for (const ref of setRefs) {
+      if (ref.value.has(sessionId)) {
+        const next = new Set(ref.value)
+        next.delete(sessionId)
+        ref.value = next
+      }
+    }
+    // changeSetStatuses：key 格式 `${sessionId}:${messageId}`，前缀过滤删除
+    if (changeSetStatuses.value.size > 0) {
+      const prefix = `${sessionId}:`
+      let changed = false
+      const next = new Map(changeSetStatuses.value)
+      for (const key of next.keys()) {
+        if (key.startsWith(prefix)) {
+          next.delete(key)
+          changed = true
+        }
+      }
+      if (changed) changeSetStatuses.value = next
+    }
+    // timer 清理（模块级 Map，非响应式）
+    for (const clear of [() => clearPendingSendTimer(sessionId), () => clearStreamingTimer(sessionId), () => clearBashTimer(sessionId), () => clearHandingOffTimer(sessionId)]) clear()
     disposeLruEntry(sessionId) // R5: 清理 LRU 时序记录，防止内存泄漏
   }
 

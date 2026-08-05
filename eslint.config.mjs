@@ -120,6 +120,17 @@ export default [
       'max-lines-per-function': 'off',
     },
   },
+  // [HISTORICAL] createChatStore 是 core 域 chat store 的唯一 setup 函数（自 renderer stores/chat.ts 迁入，
+  // P3 chat 域绞杀 w4）。与 renderer chat.ts 同性质——唯一聚合中心，setup 天然是单一大函数，
+  // max-lines-per-function 规则不适用（项目已裁定该场景为误报，对齐 renderer chat.ts 同款 override）。
+  // B6 *Impl 消除（FR2 内联）后函数体 345 行；深模块化已由 streaming-state-machine 承担（FR1），
+  // 不再为绕行数拆分模块级函数（B6 反模式）。
+  {
+    files: ['packages/core/src/domain/chat/store.ts'],
+    rules: {
+      'max-lines-per-function': 'off',
+    },
+  },
   // [HISTORICAL] i18n settings 字典（zh-CN/en-US 镜像）是 settings 全文案的 SSOT，
   // 每新增一个设置项需双语同步追加。auto-rename-session 开关追加后行数微超 500（501 行），
   // 属唯一聚合中心、结构内聚（扁平 key），强行拆分需设计 per-section 文件组织，

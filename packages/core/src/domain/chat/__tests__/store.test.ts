@@ -217,6 +217,33 @@ describe('createChatStore factory', () => {
     })
   })
 
+  describe('appendSystemNotice（追加 system 提示行）', () => {
+    it('追加 role=system 消息到会话消息流（sys- 前缀 id + complete 状态）', () => {
+      const sid = 's1'
+      sut.store.hydrate(sid, [userMsg('u1', 'hello')])
+
+      sut.store.appendSystemNotice(sid, 'compaction summary')
+
+      const messages = sut.store.getMessages(sid)
+      expect(messages).toHaveLength(2)
+      const notice = messages[1]
+      expect(notice.role).toBe('system')
+      expect(notice.content).toBe('compaction summary')
+      expect(notice.status).toBe('complete')
+      expect(notice.id.startsWith('sys-')).toBe(true)
+      expect(typeof notice.timestamp).toBe('number')
+    })
+
+    it('空会话追加 system 提示行（prev 为空数组）', () => {
+      const sid = 's1'
+      sut.store.appendSystemNotice(sid, 'notice on empty')
+      const messages = sut.store.getMessages(sid)
+      expect(messages).toHaveLength(1)
+      expect(messages[0].role).toBe('system')
+      expect(messages[0].content).toBe('notice on empty')
+    })
+  })
+
   describe('pendingSend 生命周期', () => {
     it('addPendingSend → isActive=true（pendingSend 计入活跃态）', () => {
       sut.store.addPendingSend('s1')
