@@ -41,11 +41,29 @@ import type { ServerMessage } from '@xyz-agent/shared'
 import { onGlobal } from '@/api/events'
 
 /** 把 renderer 的 WS 消息流（events global 通道的 plugin:* 下行）适配成 PluginMessageSource。 */
-function createWsPluginMessageSource(): PluginMessageSource {
+
+/**
+ * extension:* 下行进 bridge 的精确白名单（与 core MessageBusBridge 的 EXTENSION_HANDLERS
+ * 5 个 key 一致，见 message-bus-bridge.ts）。plugin:* 前缀全放行，extension:* 只放行白名单内 type——
+ * 其余（如 extension.error）由 source filter 静默丢弃，不进 bridge（source 职责边界）。
+ */
+export const EXTENSION_BRIDGE_TYPES: readonly string[] = [
+  'extension:widget',
+  'extension:widgetGui',
+  'extension:status',
+  'extension:notify',
+  'extension.ui_request',
+]
+
+/** 过滤条件：plugin:* 前缀 OR EXTENSION_BRIDGE_TYPES 精确白名单。 */
+export function createWsPluginMessageSource(): PluginMessageSource {
   return {
     subscribe(handler: (msg: IncomingPluginMessage) => void): () => void {
       return onGlobal((msg: ServerMessage) => {
-        if (typeof msg.type === 'string' && msg.type.startsWith('plugin:')) {
+        if (
+          typeof msg.type === 'string' &&
+          (msg.type.startsWith('plugin:') || EXTENSION_BRIDGE_TYPES.includes(msg.type))
+        ) {
           const payload = (msg.payload ?? {}) as { sessionId?: string }
           handler({
             type: msg.type,
