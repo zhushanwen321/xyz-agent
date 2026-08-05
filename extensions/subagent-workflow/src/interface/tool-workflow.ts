@@ -255,7 +255,9 @@ export function registerWorkflowTool(
       "scatter-gather (split→parallel→merge; args: task), " +
       "map-reduce (parallel map→reduce; args: items/itemsJson + operation), " +
       "review-fix-loop (multi-batch review→fix loop; args: targetType + target required, " +
-      "batch1..batchN required (no default)). " +
+      "batch1..batchN required (no default); optional fixAgent (builtin agent name or agent.md " +
+      "path — same value semantics as batchN agents, consumed in fix phase) + " +
+      "maxFixAttempts/convergeNewIssues/convergeRounds for fix convergence control). " +
       "Example: {\"action\":\"run\",\"name\":\"parallel\",\"args\":{\"target\":\"src/auth.ts\"}}. " +
       "Use review-fix-loop when the user wants iterative code/doc review with fixes until clean " +
       "(it is the ONLY built-in workflow that writes files; autoCommit defaults to false). " +

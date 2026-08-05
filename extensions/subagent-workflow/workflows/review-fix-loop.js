@@ -783,8 +783,10 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
         caution: agg.fixes_caution && agg.fixes_caution.length ? agg.fixes_caution : [],
       }),
       schema: fixSchema,
-      model: MODEL,
-      description: "fix",
+      // 与 buildReviewCall 的 model: MODEL || def.model 对齐：custom fixer.md 的
+      // frontmatter model 字段同样生效（之前丢弃了 FIX_DEF.model，只在 review 阶段消费）
+      model: MODEL || (FIX_DEF && FIX_DEF.model),
+      description: (FIX_DEF && FIX_DEF.name) || "fix",
       // info #15: 显式 timeoutMs 与 review/aggregator 档位一致（fix 是写操作中最长阶段，
       // 不依赖引擎默认值——引擎默认值变化不会悄然缩短 fix 预算）
       timeoutMs: 1_800_000,
