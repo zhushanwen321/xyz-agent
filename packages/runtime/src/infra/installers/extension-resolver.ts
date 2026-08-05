@@ -191,30 +191,32 @@ export class ExtensionResolver implements IExtensionResolver {
   /**
    * 扫描 bundled extensions（builtin pi-* 包，打包内置）
    *
-   * packaged 模式：扫描 Resources/extensions/@zhushanwen/<pkg>/。
-   * prepare-builtin-extensions.sh 预先将 9 个 builtin 包 deploy 到该目录，
-   * electron-builder extraResources 拷贝进产物。含真实运行时 deps，不含 peerDeps。
+   * dev 与 packaged 同源——都读 prepare-builtin-extensions.sh 的 staged 产物：
+   *   packaged：Resources/extensions/@zhushanwen/<pkg>/（electron-builder extraResources 拷贝）
+   *   dev：apps/electron/resources/extensions/@zhushanwen/<pkg>/（脚本直接产出）
+   * 两者目录结构一致（@zhushanwen/pi-* scope + 真实运行时 deps，不含 peerDeps），
+   * 保证开发期所见即生产期所得。
    *
-   * dev 模式：projectRoot = apps/electron（runtime 子进程 cwd），bundled extensions
-   * 在 repo root 的 resources/pi/agent/extensions/（与 apps/electron 平级的 resources/ 目录）。
-   * repo root 相对 apps/electron 是 ../..
+   * [HISTORICAL] dev 模式曾读 repoRoot/resources/pi/agent/extensions/（projectRoot/../..
+   * /resources/pi/agent/extensions/）。该目录只含 bridge（仅 index.ts，无 package.json，
+   * isValidPiExtension 返回 false），导致 dev 下 scanBundledExtensions 恒返回空，
+   * ExtensionPage 显示「暂无扩展」——而磁盘上 staged builtins 实有 9 个有效包。
+   * 修复：dev 分支指向同一 staged 目录（apps/electron/resources/ 被 .gitignore 忽略，
+   * 开发者需先跑 prepare-builtin-extensions.sh；未跑时 existsSync 兜底返回空，
+   * 与旧行为一致，不破坏全新 dev 环境）。
    */
   scanBundledExtensions(projectRoot: string, packaged: boolean): ExtensionMap {
     const result: ExtensionMap = new Map()
 
-    if (packaged) {
-      // builtin 包目录：Resources/extensions/@zhushanwen/<pkg>/
-      const builtinDir = join(projectRoot, 'extensions', '@zhushanwen')
-      if (!existsSync(builtinDir)) return result
-      this.scanDirectory(builtinDir, result, 'bundled')
-      return result
-    }
+    // builtin 包目录：packaged = Resources/extensions/@zhushanwen/，
+    // dev = apps/electron/resources/extensions/@zhushanwen/（projectRoot 皆为 apps/electron）
+    const builtinDir = packaged
+      ? join(projectRoot, 'extensions', '@zhushanwen')
+      : join(projectRoot, 'resources', 'extensions', '@zhushanwen')
 
-    const bundledDir = join(projectRoot, '..', '..', 'resources', 'pi', 'agent', 'extensions')
+    if (!existsSync(builtinDir)) return result
 
-    if (!existsSync(bundledDir)) return result
-
-    this.scanDirectory(bundledDir, result, 'bundled')
+    this.scanDirectory(builtinDir, result, 'bundled')
     return result
   }
 
