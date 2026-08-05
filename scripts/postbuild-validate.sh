@@ -114,6 +114,15 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
                 echo -e "  ${RED}✗${NC} runtime/plugin-bootstrap.cjs 缺失"
                 FAILED=1
             fi
+
+            # plugin-bootstrap-process.cjs：sandbox 子进程（fork）入口，重构 3 新增产物。
+            # 缺失则 sandbox 插件子进程无法启动（host-process resolveAndValidateFile 定位失败）。
+            if [ -f "$APP_PATH/Contents/Resources/app.asar.unpacked/dist/runtime/plugin-bootstrap-process.cjs" ]; then
+                echo -e "  ${GREEN}✓${NC} runtime/plugin-bootstrap-process.cjs"
+            else
+                echo -e "  ${RED}✗${NC} runtime/plugin-bootstrap-process.cjs 缺失"
+                FAILED=1
+            fi
         else
             echo -e "  ${RED}✗${NC} app.asar.unpacked/dist/runtime 缺失"
             FAILED=1
@@ -230,6 +239,7 @@ if [ -d "$OUTPUT_DIR/win-unpacked" ]; then
         "$WIN_ROOT/xyz-agent.exe" \
         "$WIN_UNPACKED/dist/runtime/index.cjs" \
         "$WIN_UNPACKED/dist/runtime/plugin-bootstrap.cjs" \
+        "$WIN_UNPACKED/dist/runtime/plugin-bootstrap-process.cjs" \
         "$WIN_RESOURCES/pi/pi-windows-x64.exe" \
         "$WIN_RESOURCES/xyz-agent-extension.js" \
         "$WIN_RESOURCES/xyz-system-prompt-extension.js" \
