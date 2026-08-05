@@ -13,6 +13,8 @@
  * 依赖方向：bridge-handlers → electron(ipcMain) + interfaces
  */
 import { ipcMain, BrowserWindow } from 'electron'
+import { homedir } from 'node:os'
+import { getDataDir } from '@xyz-agent/shared/paths'
 import type { IpcHandlerDeps } from '../interfaces.js'
 
 /**
@@ -24,6 +26,15 @@ export function registerBridgeHandlers(deps: IpcHandlerDeps): void {
   // ── runtime 端口（只读 supervisor 状态）─────────────────────────
   ipcMain.handle('get-runtime-port', () => deps.runtime.port)
   ipcMain.handle('get-runtime-port-offset', () => deps.runtime.portOffset)
+
+  // ── 数据目录（只读，Settings 强制目录展示动态化用）─────────────────
+  // 返回 ~ 缩写的展示路径（home 前缀 → ~），dev 下为 ~/.xyz-agent-dev，prod 为 ~/.xyz-agent。
+  // 修复 SettingsResourcePage forcedDirs 硬编码 '~/.xyz-agent/skills' 在 dev 下误导的问题。
+  ipcMain.handle('get-data-dir', () => {
+    const dir = getDataDir()
+    const home = homedir()
+    return dir.startsWith(home) ? '~' + dir.slice(home.length) : dir
+  })
 
   // ── runtime 手动重启（崩溃重启用尽后，用户从状态条点重试触发）─────────
   // 委托 supervisor.restartRuntime：重置策略 + start + 广播端口/失败

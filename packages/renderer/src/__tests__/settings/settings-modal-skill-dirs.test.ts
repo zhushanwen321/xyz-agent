@@ -39,6 +39,8 @@ vi.mock('@/lib/ipc', () => ({
   getProxyConfig: vi.fn(async () => ({})),
   setProxyConfig: vi.fn(async () => undefined),
   testProxy: vi.fn(async () => ({ success: true })),
+  // SettingsResourcePage forcedDirs 动态化调用（返回 undefined 走默认值兜底）
+  getDataDir: vi.fn(async () => undefined),
 }))
 
 /** transport stub：setSkillDirs reject（测试核心），其余 resolve/noop。 */
@@ -46,6 +48,7 @@ function makeTransport(): SettingsTransport {
   const noop = (): void => {}
   return {
     listProviders: vi.fn(async () => []),
+    listModels: vi.fn(async () => []),
     setProvider: vi.fn(async () => undefined),
     discoverModels: vi.fn(async () => ({ success: true, models: [] })),
     setSkillDirs: vi.fn(() => Promise.reject(new Error('network down'))),

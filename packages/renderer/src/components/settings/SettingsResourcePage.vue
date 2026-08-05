@@ -74,13 +74,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, provide } from 'vue'
+import { computed, ref, provide, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RefreshCw } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { LoadPaths, SETTINGS_CONFIG_API_KEY } from '@xyz-agent/ui/features/settings'
 import type { SkillInfo, AgentInfo, SkillDirConfig } from '@xyz-agent/shared'
 import { config } from '@/api'
+import { getDataDir } from '@/lib/ipc'
 
 // W3：LoadPaths（含 SourceImportSection）迁入 ui 包，其 config(@/api) 依赖经 inject 注入。
 // 此处把 renderer 的 config 作为 SettingsConfigApi provide 给 ui 组件（detectSources 等方法）。
@@ -108,10 +109,18 @@ const emit = defineEmits<{
 const label = computed(() => (props.kind === 'skill' ? 'Skill' : 'Agent'))
 
 // ADR-0021 §1.1 强制目录（桥接层硬编码注入，UI 只读）
+// 动态推导数据目录（dev=~/.xyz-agent-dev，prod=~/.xyz-agent），修复原硬编码 '~/.xyz-agent/skills'
+// 在 dev 下与实际扫描路径不一致、误导排查的问题。getDataDir 为 async（IPC），初始用默认值兜底，
+// 拉取完成后更新。
+const dataDirDisplay = ref('~/.xyz-agent')
+onMounted(async () => {
+  const dir = await getDataDir()
+  if (dir) dataDirDisplay.value = dir
+})
 const forcedDirs = computed(() =>
   props.kind === 'skill'
-    ? ['~/.xyz-agent/skills', '.xyz-agent/skills']
-    : ['~/.xyz-agent/agents', '.xyz-agent/agents'],
+    ? [`${dataDirDisplay.value}/skills`, '.xyz-agent/skills']
+    : [`${dataDirDisplay.value}/agents`, '.xyz-agent/agents'],
 )
 
 const { t } = useI18n()

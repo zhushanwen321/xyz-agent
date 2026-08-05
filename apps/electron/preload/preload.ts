@@ -19,6 +19,11 @@ export interface ElectronAPI {
   getRuntimePort(): Promise<number>
   /** 获取 runtime 端口偏移（dev 模式 +100） */
   getRuntimePortOffset(): Promise<number>
+  /**
+   * 获取数据目录（~ 缩写展示路径）。dev=~/.xyz-agent-dev，prod=~/.xyz-agent。
+   * Settings 强制目录展示动态化用（避免硬编码 ~/.xyz-agent 误导 dev 排查）。
+   */
+  getDataDir(): Promise<string>
   // ── 窗口管理 ──────────────────────────────────────────────────
   /** 创建新窗口，可选携带 sessionId 迁移 */
   createWindow(sessionId?: string): Promise<{ windowId: string }>
@@ -167,6 +172,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   getRuntimePort: () => ipcRenderer.invoke('get-runtime-port'),
   getRuntimePortOffset: () => ipcRenderer.invoke('get-runtime-port-offset'),
+  getDataDir: () => ipcRenderer.invoke('get-data-dir'),
 
   // ── 窗口管理 ──────────────────────────────────────────────────
   createWindow: (sessionId?: string) => ipcRenderer.invoke('create-window', { sessionId }),

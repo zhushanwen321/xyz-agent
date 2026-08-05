@@ -22,6 +22,14 @@ export function getRuntimePortOffset(): Promise<number | undefined> {
   return api ? api.getRuntimePortOffset() : Promise.resolve(undefined)
 }
 
+/**
+ * 读取数据目录（~ 缩写展示路径，如 ~/.xyz-agent-dev）。
+ * Settings 强制目录展示动态化用。无 IPC（web/mock）返回 undefined，调用方需 fallback。
+ */
+export function getDataDir(): Promise<string | undefined> {
+  return api ? api.getDataDir() : Promise.resolve(undefined)
+}
+
 /** 监听 runtime 端口推送（runtime 重启后 main 推新端口触发重连），返回取消函数 */
 export function onRuntimePort(cb: (port: number) => void): () => void {
   return api?.onRuntimePort(cb) ?? (() => {})
