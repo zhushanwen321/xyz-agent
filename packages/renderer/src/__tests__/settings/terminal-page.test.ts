@@ -41,7 +41,7 @@ vi.mock('@/api', () => ({
   config: configMock,
 }))
 
-import TerminalPage from '@/components/settings/TerminalPage.vue'
+import TerminalPage from '@/components/settings/terminal/TerminalPage.vue'
 
 let wrapper: ReturnType<typeof mount> | null = null
 

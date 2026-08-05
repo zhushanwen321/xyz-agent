@@ -30,6 +30,14 @@ export default {
     updateDesc: '配置自动升级与代理设置',
     tokenDebug: 'Token 调试',
     tokenDebugDesc: '检查与调试设计 Token 取值',
+    // ── TokenDebugPage 模板文案（U8 CJK 扫描强制 i18n）──
+    tokenDebugPage: {
+      subtitle: '实时调整四层颜色系统 token（预设 / 字体 / 取值）。调试改动不持久化，重置即还原。',
+      resetAll: '重置全部',
+      presetTitle: '预设主题',
+      fontTitle: '字体大小',
+      fontHint: '正文当前实际渲染 {size}。自适应已开启：视口 ≥2100px 自动 ×1.08、<1400px 自动 ×0.95，与所选档位相乘、互不屏蔽。',
+    },
   },
   // ── SystemPrompt 页（SystemPromptPage）──
   systemPrompt: {

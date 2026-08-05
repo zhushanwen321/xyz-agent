@@ -30,6 +30,14 @@ export default {
     updateDesc: 'Configure auto-update and proxy settings',
     tokenDebug: 'Token Debug',
     tokenDebugDesc: 'Inspect and debug design token values',
+    // ── TokenDebugPage template copy (U8 CJK scan forces i18n) ──
+    tokenDebugPage: {
+      subtitle: 'Tune the four-layer color system tokens in real time (presets / fonts / values). Debug changes are not persisted; reset restores.',
+      resetAll: 'Reset all',
+      presetTitle: 'Theme presets',
+      fontTitle: 'Font size',
+      fontHint: 'Body text currently renders at {size}. Auto-adaptation enabled: viewport ≥2100px scales ×1.08, <1400px scales ×0.95, multiplied with the selected tier, mutually non-blocking.',
+    },
   },
   // ── SystemPrompt page (SystemPromptPage) ──
   systemPrompt: {

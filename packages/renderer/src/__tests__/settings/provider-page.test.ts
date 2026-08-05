@@ -33,7 +33,7 @@ vi.mock('@/api', () => ({
   default: { config: configMock },
 }))
 
-import ProviderPage from '@/components/settings/ProviderPage.vue'
+import ProviderPage from '@/components/settings/provider/ProviderPage.vue'
 
 let wrapper: ReturnType<typeof mount> | null = null
 

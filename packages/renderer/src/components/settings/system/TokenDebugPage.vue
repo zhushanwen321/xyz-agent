@@ -12,8 +12,11 @@
  * 完整滑块版留作后续增强（TODO）。
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { GroupCard } from '@xyz-agent/ui/features/settings'
 import { TAIJI_THEMES } from '@/composables/useTaijiThemes'
+
+const { t } = useI18n()
 
 /** 写 / 删 :root CSS 变量（仅本调试页用，不持久化） */
 function writeToken(name: string, value: string): void {
@@ -114,57 +117,59 @@ onUnmounted(() => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <header class="page-head">
-      <div class="head-text">
-        <h1 class="title">Token 调试</h1>
-        <p class="desc">实时调整四层颜色系统 token（预设 / 字体 / 取值）。调试改动不持久化，重置即还原。</p>
+    <header class="flex items-start justify-between gap-4 mb-4">
+      <div class="min-w-0">
+        <h1 class="text-xl font-semibold text-neutral-fg">{{ t('settings.tokenDebug') }}</h1>
+        <p class="mt-1 text-sm text-neutral-mid">{{ t('settings.tokenDebugPage.subtitle') }}</p>
       </div>
-      <div class="head-actions">
-        <Button variant="ghost" size="dense" @click="resetAll">重置全部</Button>
+      <div class="flex gap-2 shrink-0">
+        <Button variant="ghost" size="dense" @click="resetAll">{{ t('settings.tokenDebugPage.resetAll') }}</Button>
       </div>
     </header>
 
-    <GroupCard title="预设主题">
-      <div class="theme-list">
-        <button
+    <GroupCard :title="t('settings.tokenDebugPage.presetTitle')">
+      <div class="flex flex-col gap-0.5 px-2.5 pt-1.5 pb-2.5">
+        <UiButton
           v-for="th in TAIJI_THEMES"
           :key="th.label"
           type="button"
-          class="theme-row"
-          :class="{ active: th.label === activeThemeLabel }"
+          variant="ghost"
+          class="h-auto flex items-center justify-between px-3 py-2.5 rounded-md text-neutral-fg cursor-pointer transition-colors"
+          :class="{ active: th.label === activeThemeLabel, 'bg-surface text-accent': th.label === activeThemeLabel }"
           :aria-pressed="th.label === activeThemeLabel"
           @click="applyThemeNow(th.label)"
         >
-          <span class="theme-name">{{ th.label }}</span>
-          <span class="theme-swatches">
+          <span class="text-sm font-medium">{{ th.label }}</span>
+          <span class="flex gap-1">
             <span
               v-for="(c, i) in th.swatch"
               :key="i"
-              class="swatch"
+              class="size-4 rounded-full border border-border"
               :style="{ background: c }"
             />
           </span>
-        </button>
+        </UiButton>
       </div>
     </GroupCard>
 
-    <GroupCard title="字体大小">
-      <div class="font-scale-row">
-        <button
+    <GroupCard :title="t('settings.tokenDebugPage.fontTitle')">
+      <div class="grid grid-cols-4 gap-2 px-2.5 pt-1.5 pb-1">
+        <UiButton
           v-for="f in FONT_SCALES"
           :key="f.name"
           type="button"
-          class="fs-btn"
-          :class="{ active: fontScale === f.value }"
+          variant="ghost"
+          class="h-auto flex flex-col items-start gap-0.5 px-3 py-2.5 rounded-md border border-border text-neutral-fg transition-all"
+          :class="{ 'border-accent bg-accent-soft': fontScale === f.value }"
           :aria-pressed="fontScale === f.value"
           @click="applyFontScale(f.value)"
         >
-          <span class="fs-name">{{ f.name }}</span>
-          <span class="fs-desc">{{ f.desc }}</span>
-        </button>
+          <span class="text-sm font-semibold">{{ f.name }}</span>
+          <span class="text-xs text-neutral-mid">{{ f.desc }}</span>
+        </UiButton>
       </div>
-      <p class="font-hint">
-        正文当前实际渲染 {{ resolvedBasePx }}。自适应已开启：视口 ≥2100px 自动 ×1.08、&lt;1400px 自动 ×0.95，与所选档位相乘、互不屏蔽。
+      <p class="px-2.5 pb-2.5 text-xs text-neutral-mid">
+        {{ t('settings.tokenDebugPage.fontHint', { size: resolvedBasePx }) }}
       </p>
     </GroupCard>
 
@@ -173,14 +178,14 @@ onUnmounted(() => {
       :key="g.title"
       :title="g.title"
     >
-      <div class="token-list">
-        <div v-for="row in g.rows" :key="row.name" class="token-row">
-          <span class="tk-name">{{ row.name }}</span>
+      <div class="px-2.5 pt-1 pb-2 divide-y divide-border/50">
+        <div v-for="row in g.rows" :key="row.name" class="flex items-center gap-2.5 py-1.5 px-1.5 font-mono text-xs">
+          <span class="flex-1 text-neutral-fg">{{ row.name }}</span>
           <span
-            class="tk-chip"
+            class="size-[18px] rounded-sm border border-border shrink-0"
             :style="{ background: row.value.startsWith('#') || row.value.startsWith('rgb') ? row.value : 'transparent' }"
           />
-          <span class="tk-value">{{ row.value || '—' }}</span>
+          <span class="text-neutral-mid min-w-[120px] text-right">{{ row.value || '—' }}</span>
         </div>
       </div>
     </GroupCard>
@@ -188,146 +193,7 @@ onUnmounted(() => {
 </template>
 
 <script lang="ts">
-import { Button } from '@/components/ui/button'
-export default { components: { Button } }
+import { Button as UiButton } from '@/components/ui/button'
+export default { components: { UiButton } }
 </script>
 
-<style scoped>
-.page-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-4);
-  margin-bottom: var(--space-4);
-}
-.head-text {
-  min-width: 0;
-}
-.title {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--neutral-fg);
-}
-.desc {
-  margin-top: 4px;
-  font-size: var(--text-sm);
-  color: var(--neutral-mid);
-}
-.head-actions {
-  display: flex;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-/* 太极主题列表（同 SystemPage 范式） */
-.theme-list {
-  padding: 6px 10px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.theme-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 12px;
-  border-radius: var(--radius);
-  color: var(--neutral-fg);
-  cursor: pointer;
-  transition: background var(--duration-fast) var(--ease);
-}
-.theme-row:hover {
-  background: var(--surface-hover);
-}
-.theme-row.active {
-  background: var(--surface);
-  color: var(--accent);
-}
-.theme-name {
-  font-size: var(--text-sm);
-  font-weight: 500;
-}
-.theme-swatches {
-  display: flex;
-  gap: 4px;
-}
-.swatch {
-  width: 16px;
-  height: 16px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-}
-
-/* 字体大小 */
-.font-scale-row {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-  padding: 6px 10px 4px;
-}
-.fs-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  padding: 10px 12px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--neutral-fg);
-  cursor: pointer;
-  transition: all var(--duration-fast) var(--ease);
-}
-.fs-btn:hover {
-  background: var(--surface-hover);
-}
-.fs-btn.active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-.fs-name {
-  font-size: var(--text-sm);
-  font-weight: 600;
-}
-.fs-desc {
-  font-size: var(--text-xs);
-  color: var(--neutral-mid);
-}
-.font-hint {
-  padding: 0 10px 10px;
-  font-size: var(--text-xs);
-  color: var(--neutral-mid);
-}
-
-/* token 取值列表 */
-.token-list {
-  padding: 4px 10px 8px;
-}
-.token-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 6px;
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-}
-.token-row + .token-row {
-  border-top: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
-}
-.tk-name {
-  flex: 1;
-  color: var(--neutral-fg);
-}
-.tk-chip {
-  width: 18px;
-  height: 18px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.tk-value {
-  color: var(--neutral-mid);
-  min-width: 120px;
-  text-align: right;
-}
-</style>

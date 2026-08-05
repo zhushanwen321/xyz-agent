@@ -29,7 +29,7 @@ import {
   SETTINGS_CONFIG_API_KEY,
 } from '@xyz-agent/ui/features/settings'
 import SettingsModal from '@/components/settings/SettingsModal.vue'
-import SettingsResourcePage from '@/components/settings/SettingsResourcePage.vue'
+import SettingsResourcePage from '@/components/settings/resource/SettingsResourcePage.vue'
 import type { SkillDirConfig } from '@xyz-agent/shared'
 import { useToast } from '@/composables/useToast'
 

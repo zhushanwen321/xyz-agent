@@ -45,7 +45,7 @@ vi.mock('@/api', () => ({
   config: configMock,
 }))
 
-import ProviderPage from '@/components/settings/ProviderPage.vue'
+import ProviderPage from '@/components/settings/provider/ProviderPage.vue'
 import { useToast } from '@/composables/useToast'
 
 let wrapper: ReturnType<typeof mount> | null = null
