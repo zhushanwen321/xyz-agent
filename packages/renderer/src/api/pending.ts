@@ -5,7 +5,10 @@
  *
  * 注：将 ServerMessage(id) 路由到 pending.resolve 的 dispatcher 由 features 层
  * （useChat/useSidebar）在订阅 transport.on 时串联，本层只提供注册表。
+ * resolveEnvelope 例外：它是 core route-inbound 委托的 pending 分流出口（R2/ES1），
+ * 由 useConnection 装配的 TransportPorts.pending.resolveEnvelope 调用。
  */
+import type { ServerMessage } from '@xyz-agent/shared'
 
 /** 注册中的 pending 请求 */
 export interface PendingRequest<T = unknown> {
@@ -82,6 +85,47 @@ export function reject(id: string, error: unknown): void {
   if (!req) return
   pendingMap.delete(id)
   req.reject(error)
+}
+
+/**
+ * 按 envelope 语义 settle pending 请求（收尾 6：envelope 展开下沉 pending 层）。
+ *
+ * 接受原始 ServerMessage：id 命中 pending 时——
+ * - type==='error'：展开 error envelope（code 提取 + details.detail 展开到 Error）后 reject；
+ * - 其他 type：resolve msg.payload 原样。
+ * id 缺失或未命中 pending（如带 nextPushId 的广播）→ no-op，绝不吞广播。
+ *
+ * 逻辑从 core/coordination/route-inbound.ts 的 pending 分流分支搬移（行为零变化），
+ * 该分支后续将替换为一行 `ports.pending.resolveEnvelope(msg); return`。
+ */
+export function resolveEnvelope(msg: ServerMessage): void {
+  if (!msg.id || !pendingMap.has(msg.id)) return
+  if (msg.type === 'error') {
+    // type==='error' 已窄化 payload 为 error envelope（含 code + message + 可选 details）。
+    // 透传 code 到 reject 的 Error（D-021：NodeState.reason 需要 error code 区分失败类型，
+    // 如 out_of_cwd / permission_denied / timeout）。此前只透传 message 丢了 code。
+    // details.detail 展开：string（如 WORKTREE_EXISTS 的 cwd）→ Error.cwd；object（如
+    // SETUP_FAILED 的 { exitCode, stderr }）→ Object.assign 展开到 Error 上。
+    const payload = msg.payload as {
+      code?: string
+      message?: string
+      details?: Record<string, unknown>
+    }
+    const message = typeof payload.message === 'string' ? payload.message : 'request failed'
+    const code = typeof payload.code === 'string' ? payload.code : 'unknown'
+    const enriched: Record<string, unknown> = { code }
+    const d = payload.details?.detail
+    if (typeof d === 'string') {
+      // 字符串 detail（如 WORKTREE_EXISTS 的 cwd）直接作 cwd 字段
+      enriched.cwd = d
+    } else if (d && typeof d === 'object') {
+      // 对象 detail（如 { exitCode, stderr }）展开到 Error 上
+      Object.assign(enriched, d)
+    }
+    reject(msg.id, Object.assign(new Error(message), enriched))
+  } else {
+    resolve(msg.id, msg.payload)
+  }
 }
 
 /** 批量 reject 所有 pending 请求（WS 断连 / runtime 崩溃时调）。 */
