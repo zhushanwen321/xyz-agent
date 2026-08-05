@@ -54,6 +54,16 @@ export default {
     subagent: 'Subagents',
     workflow: 'Workflows',
   },
+  projectSwitcher: {
+    defaultName: 'Default project',
+    newProject: 'New project',
+    namePlaceholder: 'Project name',
+    deleteProject: 'Delete project',
+    deleteTitle: 'Delete project',
+    deleteDesc: 'Delete project "{name}"? This cannot be undone.',
+    deleteConfirm: 'Delete',
+    cancel: 'Cancel',
+  },
   fileTree: {
     loading: 'Loading…',
     loadFailed: 'Load failed (click to retry)',

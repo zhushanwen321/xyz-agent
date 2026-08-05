@@ -11,16 +11,13 @@
     :class="{ 'w-0 opacity-0 overflow-hidden': sidebar.collapsed }"
   >
     <div class="sidebar__inner flex h-full w-[300px] flex-col pl-0.5">
-      <!-- Brand -->
-      <div class="flex items-center gap-2 px-2 pb-3.5">
-        <span class="grid size-[22px] shrink-0 place-items-center rounded-md bg-accent text-[11px] font-bold text-neutral-fg">x</span>
-        <div class="flex flex-col leading-tight">
-          <span class="text-[13px] font-semibold text-neutral-fg">xyz-agent</span>
-          <span class="text-[10px] text-neutral-mid">v{{ appVersion }}<template v-if="piVersion"> · pi v{{ piVersion }}</template></span>
-        </div>
-        <!-- 升级状态指示器（useAppUpdate 单例 state，idle/checking 不渲染） -->
-        <UpdateButton class="ml-auto" />
-      </div>
+      <!-- Brand（太极 logo + 产品名 + 版本号 + 升级指示器，v6 §6.2） -->
+      <Brand :version-label="versionLabel">
+        <template #trailing>
+          <!-- 升级状态指示器（useAppUpdate 单例 state，idle/checking 不渲染） -->
+          <UpdateButton class="ml-auto" />
+        </template>
+      </Brand>
 
       <!-- 主操作 nav：新建任务 ⌘N（primary 主操作）/ 搜索 ⌘K（ghost 次操作）。
            v6-master-spec §6.2 NavItem：primary=accent 实色 / ghost=透明 双层级。 -->
@@ -47,28 +44,8 @@
 
       <div class="my-2 mx-2.5 h-px bg-border" />
 
-      <!-- Overview 入口按钮（外部 L1 Region 入口，≠ segmented tab） -->
-      <Button
-        variant="ghost"
-        :class="cn(
-          'group mb-1 h-auto justify-start gap-2.5 rounded-md px-2 py-1.5 text-[12px]',
-          isOverviewActive
-            ? 'bg-surface text-accent hover:bg-surface hover:text-accent'
-            : 'text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg',
-        )"
-        @click="goOverview"
-      >
-        <LayoutGrid
-          class="size-[15px] transition-colors"
-          :class="isOverviewActive ? 'text-accent' : 'text-neutral-dim group-hover:text-neutral-mid'"
-        />
-        <span class="flex-1 text-left">{{ t('sidebar.overview') }}</span>
-        <span
-          v-if="session.list.length"
-          class="font-mono text-[10px]"
-          :class="isOverviewActive ? 'text-accent' : 'text-neutral-dim'"
-        >{{ session.list.length }}</span>
-      </Button>
+      <!-- ProjectSwitcher（v6 D14：nav 下方 Project 一级导航，spec §6.2） -->
+      <ProjectSwitcher />
 
       <!-- segmented tab（会话 | 文件 | Agents | Flows） -->
       <SegmentedTab
@@ -193,12 +170,10 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from 'vue'
 import { useEventListener } from '@vueuse/core'
-import { Plus, LayoutGrid, Search, Settings, FolderOpen, AlertCircle } from '@lucide/vue'
+import { Plus, Search, Settings, FolderOpen, AlertCircle } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
 import { SearchModal } from '@xyz-agent/ui'
 import { useSearchModal } from '@xyz-agent/core'
-import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import { useSidebarStore } from '@/stores/sidebar'
 import { useCommandStore } from '@/composables/features/useCommandStore'
@@ -209,6 +184,8 @@ import { useSessionDerivations } from '@/composables/features/useSessionDerivati
 import SegmentedTab from './SegmentedTab.vue'
 import SessionList from './SessionList.vue'
 import UpdateButton from './UpdateButton.vue'
+import Brand from './Brand.vue'
+import ProjectSwitcher from './ProjectSwitcher.vue'
 import FileView from './FileView.vue'
 import SubagentList from './SubagentList.vue'
 import WorkflowList from './WorkflowList.vue'
@@ -233,7 +210,6 @@ const { t } = useI18n()
 const searchModal = useSearchModal()
 const { formatKbd } = usePlatformShortcut()
 const { isOpen } = searchModal
-const navigation = useNavigationStore()
 const session = useSessionStore()
 const { error: toastError } = useToast()
 const sidebar = useSidebarStore()
@@ -260,9 +236,12 @@ const openSettings = inject<() => void>('openSettings', () => {})
 /** pi 版本（runtime 启动时经 app.info 推送）+ xyz-agent 版本（vite define 注入） */
 const piVersion = ref('')
 const appVersion = __APP_VERSION__
+/** 版本号文案：v{appVersion} · pi v{piVersion}（piVersion 为空时只显 app 部分） */
+const versionLabel = computed(() =>
+  piVersion.value ? `v${appVersion} · pi v${piVersion.value}` : `v${appVersion}`,
+)
 const renameOpen = ref(false)
 const targetSessionId = ref('')
-const isOverviewActive = computed(() => navigation.current.view === 'overview')
 const currentSession = focusedSession
 
 /** tab 计数（fileTree / subagent / workflow） */

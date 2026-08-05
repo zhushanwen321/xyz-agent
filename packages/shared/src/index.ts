@@ -107,3 +107,5 @@ export type {
 // 系统提示音默认映射 SSOT（main + renderer 共享，纯数据/类型无 node 依赖）
 export type { SoundPlatform, SoundKind } from './sound-defaults'
 export { DEFAULT_SUCCESS_PLATFORM, DEFAULT_ERROR_PLATFORM, getDefaultSound } from './sound-defaults'
+// v6 D14 Project 一级导航数据模型（Project/Workspace/SessionItem 三层）
+export type { Project, Workspace, ProjectStoreState } from './project'

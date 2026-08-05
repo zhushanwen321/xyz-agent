@@ -53,6 +53,16 @@ export default {
     subagent: '子代理',
     workflow: '工作流',
   },
+  projectSwitcher: {
+    defaultName: '默认项目',
+    newProject: '新建项目',
+    namePlaceholder: '项目名称',
+    deleteProject: '删除项目',
+    deleteTitle: '删除项目',
+    deleteDesc: '确认删除项目「{name}」？该操作不可撤销。',
+    deleteConfirm: '删除',
+    cancel: '取消',
+  },
   fileTree: {
     loading: '加载…',
     loadFailed: '加载失败（点击重试）',
