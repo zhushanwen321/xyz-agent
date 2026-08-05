@@ -94,7 +94,7 @@
               :title="t('panel.message.handoff')"
               @click="onHandoff()"
             >
-              <Upload class="size-3.5 fill-current" />
+              <HandHelping class="size-3.5 fill-current" />
             </Button>
           </HoverCardTrigger>
           <HoverCardContent side="top" align="center" :side-offset="6" class="min-w-0 p-1">
@@ -106,7 +106,7 @@
               :title="t('panel.message.handoffAsk')"
               @click="onHandoffAsk(lastAssistant)"
             >
-              <Upload class="size-3 fill-current" />
+              <HandHelping class="size-3 fill-current" />
               <span class="absolute -right-0.5 -bottom-0.5 rounded-sm bg-accent px-[2px] text-[8px] font-bold leading-[8px] text-accent-foreground">+Q</span>
             </Button>
           </HoverCardContent>
@@ -119,7 +119,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, Copy, GitFork, Upload } from '@lucide/vue'
+import { Check, Copy, GitFork, HandHelping } from '@lucide/vue'
 import { Button, HoverCard, HoverCardContent, HoverCardTrigger } from '@xyz-agent/ui'
 import type { MessageTurn } from '@xyz-agent/core/domain/chat'
 import type { Message } from '@xyz-agent/shared'

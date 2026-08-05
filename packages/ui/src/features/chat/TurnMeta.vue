@@ -39,7 +39,7 @@
         <Brain class="size-2.5" />{{ t('panel.message.thinkCount', { count: thinkCount }) }}
       </span>
       <span v-if="toolCount > 0" class="badge badge-tool inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-1 font-mono text-[length:var(--text-2xs)] font-semibold tracking-[0.02em] text-neutral-mid">
-        <Wrench class="size-2.5" />{{ t('panel.message.toolCount', { count: toolCount }) }}
+        <SquareFunction class="size-2.5" />{{ t('panel.message.toolCount', { count: toolCount }) }}
       </span>
     </Button>
     <hr class="border-0 border-t border-border" />
@@ -47,7 +47,7 @@
 </template>
 
 <script setup lang="ts">
-import { Brain, ChevronRight, Loader2, Wrench } from '@lucide/vue'
+import { Brain, ChevronRight, Loader2, SquareFunction } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@xyz-agent/ui'
 import type { MessageTurn } from '@xyz-agent/core/domain/chat'

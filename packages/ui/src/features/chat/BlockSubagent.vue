@@ -19,7 +19,7 @@
       <component
         :is="BLOCK_ICON_LUCIDE.subagent"
         v-else
-        class="size-[13px] shrink-0 text-neutral-ico hover:text-neutral-ico-hover"
+        class="size-3.5 shrink-0 text-neutral-ico hover:text-neutral-ico-hover"
         :class="isFailed ? 'hover:text-warn' : ''"
       />
       <span class="mr-0.5 inline-block shrink-0 whitespace-nowrap font-mono text-[length:var(--text-2xs)] font-semibold uppercase tracking-[0.08em] text-neutral-fg">subagent</span>

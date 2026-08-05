@@ -28,8 +28,8 @@
     <!-- 头部行：command 文本 + 状态标签（+ no context 标记 + 取消按钮） -->
     <div class="flex items-start justify-between gap-2">
       <div class="flex min-w-0 flex-1 items-center gap-1.5">
-        <!-- S9：Terminal 图标前缀增强 shell prompt 语义（灰阶 neutral-ico，§13.2-D） -->
-        <Terminal class="size-3 shrink-0 text-neutral-ico" />
+        <!-- S9：SquareTerminal 图标前缀增强 shell prompt 语义（灰阶 neutral-ico，§13.2-D，对齐 demo BashBlock 14px） -->
+        <SquareTerminal class="size-3.5 shrink-0 text-neutral-ico" />
         <span class="min-w-0 flex-1 truncate font-mono text-[length:var(--text-xs)] leading-snug text-neutral-fg">{{ bash?.command || t('panel.message.bashUnknownCommand') }}</span>
         <span
           v-if="bash?.excludeFromContext"
@@ -107,7 +107,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Terminal } from '@lucide/vue'
+import { SquareTerminal } from '@lucide/vue'
 import { Button } from '@xyz-agent/ui'
 import { RUNNING_LOADER_SVG } from './block-icon'
 import { useChatViewDeps } from './chat-view-deps'

@@ -1,10 +1,10 @@
 import type { Component } from 'vue'
 import {
-  Lightbulb,
+  Brain,
   BookOpen,
-  Terminal,
+  SquareTerminal,
   Pencil,
-  Wrench,
+  SquareFunction,
   Users,
   ListChecks,
   AlertTriangle,
@@ -18,8 +18,8 @@ import type { ToolCallStatus } from '@xyz-agent/shared'
  * 10 类 BlockIconKind 对应 trace 流里所有块的图标语义。getBlockIcon 按「状态 > 类型」的
  * 固定优先级决策（running 覆盖一切 → failed → subagent → workflow → toolName 映射）。
  *
- * BLOCK_ICON_LUCIDE 是 H 最终图标（lightbulb/book-open/terminal/pencil/users/list-checks/
- * alert-triangle/arrow-right），统一规格 13×13 / stroke-width 1.7 / currentColor。
+ * BLOCK_ICON_LUCIDE 是 H 最终图标（brain/book-open/square-terminal/pencil/users/list-checks/
+ * alert-triangle/arrow-right），统一规格 14×14 / stroke-width 1.7 / currentColor。
  * running 态不走该映射，消费方改用 RUNNING_LOADER_SVG（双环 loader，1.4s 旋转 + accent 蓝）。
  *
  * 归属：本文件是图标决策的 SSOT（IF1/IF2 契约）。消费方拿 BlockIconKind 后，running 用
@@ -60,16 +60,16 @@ export function getBlockIcon(
 
 /**
  * BlockIconKind → lucide 组件映射（不含 running——running 用 RUNNING_LOADER_SVG）。
- * Demo H 最终值：thinking=lightbulb / tool-read=book-open / tool-bash=terminal /
- * tool-edit=pencil / tool-other=wrench / subagent=users / workflow=list-checks /
+ * Demo H 最终值：thinking=brain / tool-read=book-open / tool-bash=square-terminal /
+ * tool-edit=pencil / tool-other=square-function / subagent=users / workflow=list-checks /
  * failed=alert-triangle / text=arrow-right。
  */
 export const BLOCK_ICON_LUCIDE: Record<Exclude<BlockIconKind, 'running'>, Component> = {
-  thinking: Lightbulb,
+  thinking: Brain,
   'tool-read': BookOpen,
-  'tool-bash': Terminal,
+  'tool-bash': SquareTerminal,
   'tool-edit': Pencil,
-  'tool-other': Wrench,
+  'tool-other': SquareFunction,
   subagent: Users,
   workflow: ListChecks,
   failed: AlertTriangle,

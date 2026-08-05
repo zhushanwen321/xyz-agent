@@ -5,7 +5,7 @@
  * 零 mock，仅改 import path（@/components/.../block-icon → @xyz-agent/ui）。
  */
 import { describe, it, expect } from 'vitest'
-import { Lightbulb, BookOpen, Terminal, Pencil, Wrench, Users, ListChecks, AlertTriangle, ArrowRight } from '@lucide/vue'
+import { Brain, BookOpen, SquareTerminal, Pencil, SquareFunction, Users, ListChecks, AlertTriangle, ArrowRight } from '@lucide/vue'
 import { getBlockIcon, BLOCK_ICON_LUCIDE, RUNNING_LOADER_SVG } from '@xyz-agent/ui'
 
 describe('block-icon.ts', () => {
@@ -43,14 +43,14 @@ describe('block-icon.ts', () => {
     expect(getBlockIcon('read', 'end_not_received', false, false)).toBe('tool-read')
   })
 
-  it('BLOCK_ICON_LUCIDE: 图标映射（subagent=Users, thinking=Lightbulb, failed=AlertTriangle 等）', () => {
+  it('BLOCK_ICON_LUCIDE: 图标映射（subagent=Users, thinking=Brain, failed=AlertTriangle 等）', () => {
     expect(BLOCK_ICON_LUCIDE.subagent).toBe(Users)
-    expect(BLOCK_ICON_LUCIDE.thinking).toBe(Lightbulb)
+    expect(BLOCK_ICON_LUCIDE.thinking).toBe(Brain)
     expect(BLOCK_ICON_LUCIDE.failed).toBe(AlertTriangle)
     expect(BLOCK_ICON_LUCIDE['tool-read']).toBe(BookOpen)
-    expect(BLOCK_ICON_LUCIDE['tool-bash']).toBe(Terminal)
+    expect(BLOCK_ICON_LUCIDE['tool-bash']).toBe(SquareTerminal)
     expect(BLOCK_ICON_LUCIDE['tool-edit']).toBe(Pencil)
-    expect(BLOCK_ICON_LUCIDE['tool-other']).toBe(Wrench)
+    expect(BLOCK_ICON_LUCIDE['tool-other']).toBe(SquareFunction)
     expect(BLOCK_ICON_LUCIDE.workflow).toBe(ListChecks)
     expect(BLOCK_ICON_LUCIDE.text).toBe(ArrowRight)
   })
