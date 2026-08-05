@@ -34,7 +34,8 @@ export const PING_INTERVAL_MS = 60_000
 export const PING_FAIL_THRESHOLD = 3
 /** [AC-8] 连续 2 次失败（120s）→ 广播 message.stream_warn 一次（提示性，不中断）。export 供测试（SR6）。 */
 export const PING_WARN_FAIL_COUNT = 2
-import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, parseBgNotifyDetails, normalizeSubagentStatus } from '@xyz-agent/shared'
+import { SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, parseBgNotifyDetails } from '@xyz-agent/shared'
+import { normalizeSubagentStatus } from './subagent-status.js'
 import type { SubagentRecord, SubagentStatus, BgNotifyRecord } from '@xyz-agent/shared'
 import { toErrorMessage } from '../../utils/errors.js'
 import type { IFileChangeDiff, FileChangeSnapshot } from '../ports/file-change-diff.js'

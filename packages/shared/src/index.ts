@@ -68,7 +68,6 @@ export type {
 } from './quota-types'
 export type { QuotaPreset } from './quota-presets'
 export { QUOTA_PRESETS, matchQuotaPreset } from './quota-presets'
-export { normalizeSubagentStatus } from './subagent'
 export type {
   WorkflowRunStatus,
   WorkflowDoneReason,
