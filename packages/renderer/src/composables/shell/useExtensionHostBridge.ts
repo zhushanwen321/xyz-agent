@@ -77,6 +77,19 @@ export function createWsPluginMessageSource(): PluginMessageSource {
 }
 
 /**
+ * 模块级共享 bus（IF1，slice companion-band-mount TC1）：惰性单例。
+ * 首次调用 new InternalEventBus() 缓存，后续返回同一实例。
+ * initExtensionHostBridge 与 useExtensionUI（ui-request 订阅）以及 sibling slice
+ * （bridge-ui-request-wiring 的 DialogRequestSource 适配）共享同一实例——
+ * 若各自 new，消息流分裂（bridge 的事件进不了消费方的 bus）。
+ */
+let sharedBus: InternalEventBus | null = null
+export function getExtensionBus(): InternalEventBus {
+  if (!sharedBus) sharedBus = new InternalEventBus()
+  return sharedBus
+}
+
+/**
  * 装配 ExtensionHost bridge（main.ts 挂载前调用一次，app.provide 全局注入）。
  *
  * 返回 stores/registries 供调试与后续接线（§12.3 dialog 闭环复用同一 bus）。
@@ -88,7 +101,7 @@ export function initExtensionHostBridge(app: App): {
   mountPoints: MountPointRegistry
   contributions: ContributionRegistry
 } {
-  const bus = new InternalEventBus()
+  const bus = getExtensionBus() // IF1：复用模块级惰性单例（不再局部 new）
   const source = createWsPluginMessageSource()
   // bridge 构造即订阅 source（source.subscribe → handleMessage → bus.emit）
   const bridge = new MessageBusBridge({ source, bus })
