@@ -29,8 +29,9 @@ export type ValidStatus = (typeof VALID_STATUSES)[number];
 // ── 迁移/兼容 ───────────────────────────────────────
 
 /** 旧格式迁移：verifying → in_progress，failed → pending，done:boolean → status */
-export function migrateTodo(raw: Todo): Todo {
-	const record = raw as unknown as Record<string, unknown>;
+export function migrateTodo(raw: unknown): Todo {
+	// raw 是任意旧格式数据（兼容 done:boolean 等历史结构），以 Record 方式安全访问字段
+	const record = raw as Record<string, unknown>;
 	const hasValidStatus =
 		typeof record.status === "string" &&
 		VALID_STATUSES.includes(record.status as ValidStatus);
@@ -40,7 +41,7 @@ export function migrateTodo(raw: Todo): Todo {
 		status = record.status as ValidStatus;
 	} else {
 		// 极旧格式 done: boolean
-		const { done } = record as { done?: boolean };
+		const done = typeof record.done === "boolean" ? record.done : undefined;
 		status = done === true ? "completed" : "pending";
 	}
 
