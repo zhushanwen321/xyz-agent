@@ -14,8 +14,8 @@
  * （runtime 广播 plugin:* 的 ServerMessage 无顶层 sid（payload 含 sessionId）→ 走 route-inbound
  * FALLBACK → dispatchGlobal → events.onGlobal 可订阅。）
  *
- * CompanionBand（plugin:uiRequest dialog）完整接线（DialogRequestQueue + UiResponseTransport）
- * 属 audit §12.3，本次不 provide（组件 inject 缺失自隐藏，不崩）。
+ * CompanionBand（plugin:uiRequest dialog）接线：createDialogRequestSource/createUiResponseTransport
+ * 适配（见 extension-host-dialog.ts）经 DIALOG_REQUEST_SOURCE_KEY/UI_RESPONSE_TRANSPORT_KEY 注入。
  */
 import type { App } from 'vue'
 import {
@@ -34,9 +34,12 @@ import {
   type ViewCacheEntry,
 } from '@xyz-agent/core'
 import {
+  DIALOG_REQUEST_SOURCE_KEY,
   STATUS_BAR_SOURCE_KEY,
+  UI_RESPONSE_TRANSPORT_KEY,
   VIEW_HOST_SOURCE_KEY,
 } from '@xyz-agent/ui/extension-host'
+import { createDialogRequestSource, createUiResponseTransport } from './extension-host-dialog'
 import type { ServerMessage } from '@xyz-agent/shared'
 import { onGlobal } from '@/api/events'
 
@@ -130,6 +133,9 @@ export function initExtensionHostBridge(app: App): {
     // 两 scope 重载（ui 契约）：直接委托 StatusBarController（签名对齐 IF8）
     getItems: statusBarController.getItems.bind(statusBarController),
   })
+  // CompanionBand 数据源：bus 'ui-request' 适配（无 sid 跳过 / askUser 过滤）+ 回传双通道（FR2/FR7）
+  app.provide(DIALOG_REQUEST_SOURCE_KEY, createDialogRequestSource(bus))
+  app.provide(UI_RESPONSE_TRANSPORT_KEY, createUiResponseTransport())
 
   return { bridge, viewHostStore, statusBarController, mountPoints, contributions }
 }

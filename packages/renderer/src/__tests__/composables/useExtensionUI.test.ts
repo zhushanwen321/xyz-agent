@@ -8,7 +8,7 @@
  * - T4: 按 requestId 精确 respond/cancel（U2 bus 版）
  * - T5/T6: onUITimeout/getPendingRequests 保留 WS/RPC 路径（C3，U3/TC4 bus 版）
  * - T7: 同实例切 session 隔离（AC-1/AC-2 bus 版）
- * - T8: filter 第二道闸语义（askUserFilter 放行 / dialogFilter 拒绝）
+ * - T8: filter 第二道闸语义（askUserFilter 放行；dialog 通道已随 CompanionBand 迁移删除）
  * - T9: 模块级 refCount 注册/注销（项目规则 #2）
  * - T10: requestId dedup 双通路（TC4 bus 版）
  *
@@ -56,7 +56,7 @@ vi.mock('@/composables/shell/useExtensionHostBridge', async (importOriginal) => 
   }
 })
 
-import { useExtensionUI, askUserFilter, dialogFilter, __resetExtensionBusSubscriptionForTesting } from '@/composables/useExtensionUI'
+import { useExtensionUI, askUserFilter, __resetExtensionBusSubscriptionForTesting } from '@/composables/useExtensionUI'
 import { sendExtensionUIResponse, getPendingRequests } from '@/api/domains/extension'
 import { useExtensionUIStore } from '@/stores/extension-ui'
 
@@ -128,12 +128,11 @@ describe('useExtensionUI T1/T2 bus 事件入队与 C4 分流', () => {
   })
 
   it('T2: 非 askUser 请求不入 store（C4 分流）', () => {
-    const { currentAskUserRequest, currentDialogRequest } = useExtensionUI(ref('sessionA'))
+    const { currentAskUserRequest } = useExtensionUI(ref('sessionA'))
 
     emitBusUIRequest('sessionA', mkDialogReq('r2', 'confirm'))
 
     expect(currentAskUserRequest.value).toBeUndefined()
-    expect(currentDialogRequest.value).toBeUndefined()
     expect(useExtensionUIStore().getRequestsBySession('sessionA')).toHaveLength(0)
   })
 
@@ -272,20 +271,16 @@ describe('useExtensionUI T7 同实例切 session 隔离（AC-1/AC-2 bus 版）',
 })
 
 describe('useExtensionUI T8 filter 第二道闸语义', () => {
-  it('askUserFilter 实例放行 ask-user；dialogFilter 实例拒绝（dialog 不再经 store）', () => {
+  it('askUserFilter 实例放行 ask-user（dialog 不再经 store）', () => {
     const sid = ref<string | null>('shared')
     const { result: askPanel } = runWithScope(() => useExtensionUI(sid, askUserFilter))
-    const { result: dlgInstance } = runWithScope(() => useExtensionUI(sid, dialogFilter))
 
     emitBusUIRequest('shared', mkAskUserReq('r-ask'))
 
     // askUserFilter 放行（askUser 恒 true）
     expect(askPanel.currentAskUserRequest.value?.requestId).toBe('r-ask')
-    // dialogFilter 对 ask-user 恒拒绝（askUser !== true 为 false）→ 不入队
-    expect(dlgInstance.currentAskUserRequest.value).toBeUndefined()
-    expect(dlgInstance.currentDialogRequest.value).toBeUndefined()
 
-    // store 只有一条（askUserFilter 实例写入；dialogFilter 实例被 filter 拒绝）
+    // store 只有一条（askUserFilter 实例写入）
     expect(useExtensionUIStore().getRequestsBySession('shared')).toHaveLength(1)
   })
 })

@@ -157,7 +157,7 @@ const effectiveMessageCount = computed(() =>
 )
 
 // W1 useExtensionUI per-sessionId 订阅：本 Panel 绑定的 session 的 UI 请求队列。
-// B1 防重复入队：Panel 只收 askUser 请求（非 askUser 由 ExtensionUIDialog modal 处理）
+// B1 防重复入队：Panel 只收 askUser 请求（非 askUser 由 CompanionBand 处理）
 // landing 态 sessionId=null 时内部 null 守卫已处理，不订阅。
 const { currentAskUserRequest, respond: respondExtensionUI, cancel: cancelExtensionUI } =
   useExtensionUI(computed(() => props.sessionId), askUserFilter)

@@ -59,7 +59,7 @@ export const useExtensionUIStore = defineStore('extension-ui', () => {
     return getRequestsBySession(sessionId).some((r) => r.askUser === true)
   }
 
-  /** 该 session 是否有非 ask-user 的简单原语 dialog pending（供 ExtensionUIDialog 消费者查询） */
+  /** 该 session 是否有非 ask-user 的简单原语 dialog pending（供外部消费者查询；当前无消费方，公共接口保留） */
   function hasPendingDialog(sessionId: string): boolean {
     return getRequestsBySession(sessionId).some((r) => r.askUser !== true)
   }

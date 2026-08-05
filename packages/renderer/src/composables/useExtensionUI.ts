@@ -21,7 +21,7 @@
  *
  * filter 仅用于读取分流 + 入队第二道闸（askUser 硬过滤之后）：store 存全量 pending，
  * 多个 composable 实例（Panel 入 askUser 读取）各按 filter 读同一份 store 分区。
- * currentDialogRequest/dialogFilter 保留至 wave2（companion-band-workspace-mount）删除。
+ * dialog 请求（非 askUser）已由 CompanionBand 消费 bus 直连（wave1 起），不再经 store。
  */
 import { computed, watch, onScopeDispose, type Ref } from 'vue'
 import type { InternalEvent, DialogRequest } from '@xyz-agent/core'
@@ -36,8 +36,6 @@ export type UIRequestFilter = (req: ExtensionUIRequest) => boolean
 
 /** ask-user 富交互请求过滤器（Panel 用） */
 export const askUserFilter: UIRequestFilter = (req) => req.askUser === true
-/** 非 ask-user 的简单原语请求过滤器（ExtensionUIDialog 用；wave2 删除） */
-export const dialogFilter: UIRequestFilter = (req) => req.askUser !== true
 
 // ── 模块级 refCount bus 订阅（项目规则 #2：多实例共享单次注册，防事件处理翻倍） ──
 // split 双 panel 多实例各自订阅同一 bus 事件，若每实例直接 bus.on 则同一事件被 N 个
@@ -121,8 +119,8 @@ export function useExtensionUI(
     if (!sid) return
     // bus 订阅（IF2）：ui-request 事件按**事件 sid** 入 store 分区（M1 竞态语义——
     // 切 session 后旧 sid 迟到事件写旧分区，不污染新分区；事件自带归属，无需捕获订阅时 sid）。
-    // C4 分流：askUser 硬过滤先行（bus 路径只入 askUser，dialog 由 CompanionBand wave 消费 bus），
-    // filter 是第二道闸（askUserFilter 放行 / dialogFilter 恒拒——dialog 不再经 store）。
+    // C4 分流：askUser 硬过滤先行（bus 路径只入 askUser，dialog 由 CompanionBand 消费 bus），
+    // filter 是第二道闸（askUserFilter 放行——非 askUser 不再经 store）。
     // C2：事件 sid 缺失（无 sid 的 ui-request）跳过入队（warn）——ask-user 渲染依赖 session 分区。
     unsubFns.push(
       subscribeBus((e) => {
@@ -170,7 +168,7 @@ export function useExtensionUI(
     unsubFns = []
   })
 
-  // ── 分流渲染：ask-user 走 Panel inline，其余走 ExtensionUIDialog modal ──
+  // ── 分流渲染：ask-user 走 Panel inline，其余由 CompanionBand（bus 直连）──
   // 从 store 分区派生：store 存全量 pending，computed 内按 askUser 取 + filter 过滤。
   // 读 sessionId.value 建立响应式依赖，sid 变化时重算读新分区。
   /** 队列中第一个 ask-user 富交互请求（Panel inline 渲染用）；无则 undefined */
@@ -179,13 +177,6 @@ export function useExtensionUI(
     if (!sid) return undefined
     const records = store.recordsOf(sid).value
     return (filter ? records.filter(filter) : records).find(r => r.askUser === true)
-  })
-  /** 队列中第一个非 ask-user 的简单原语请求（ExtensionUIDialog modal 渲染用）；无则 undefined */
-  const currentDialogRequest = computed(() => {
-    const sid = sessionId.value
-    if (!sid) return undefined
-    const records = store.recordsOf(sid).value
-    return (filter ? records.filter(filter) : records).find(r => r.askUser !== true)
   })
 
   /** 用户回复指定请求（按 requestId 精确定位，不假设队首） */
@@ -207,7 +198,6 @@ export function useExtensionUI(
 
   return {
     currentAskUserRequest,
-    currentDialogRequest,
     respond,
     cancel,
   }
@@ -216,7 +206,7 @@ export function useExtensionUI(
 /**
  * Extension notify composable——订阅 fire-and-forget 的 extension.notify 推送，渲染为 toast。
  *
- * pi notify 是 fire-and-forget（pi rpc-mode.ts notify 发后不等回复），不走 ExtensionUIDialog。
+ * pi notify 是 fire-and-forget（pi rpc-mode.ts notify 发后不等回复），不走 dialog 模态。
  * 按 sessionId 订阅，level 映射到 toast 类型：
  * - error → error toast
  * - warning/warn → warning toast

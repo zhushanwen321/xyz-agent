@@ -28,8 +28,8 @@ import { Textarea } from '../primitives/textarea'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
-  /** 当前活跃 session id（队列按此分区隔离） */
-  sessionId: string
+  /** 当前活跃 session id（队列按此分区隔离）；null = 无活跃 session（静默空态） */
+  sessionId: string | null
 }>()
 
 const { t } = useI18n()
@@ -65,7 +65,7 @@ watch(
 const inputValue = ref('')
 const selectValue = ref('')
 
-// 新请求到来时，重置输入状态（对齐旧 ExtensionUIDialog watch(req) 模式）
+// 新请求到来时，重置输入状态（对齐旧实现 watch(req) 模式）
 watch(currentRequest, (r) => {
   if (!r) return
   inputValue.value = r.default ?? r.prefill ?? ''

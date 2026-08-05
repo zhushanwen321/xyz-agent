@@ -5,9 +5,8 @@
  * 消费 S2 ViewHostStore（经注入 ViewHostSource）的 per viewId per-session
  * GuiComponent 树缓存，交 ui/src/rendering-protocol/ GuiComponentRenderer 渲染。
  *
- * 空态占位（clarify Q3）：store 无 view 时渲染 props.title（无则 fallback view-id）
- * + 等待提示文案。标题由父层（壳/P5）从 view contribution（DM1 view: {viewType; title}）
- * 或挂载点注册处取得传入，组件不查 ContributionRegistry（props 注入模式，TC4）。
+ * 空态语义（IF1）：store 无 view 时按 empty prop 分流——'placeholder'（默认）渲染标题
+ * + 等待提示；'hidden'（挂载点用）整组件零 DOM，不占布局空间。
  *
  * 数据源经 inject 注入（VIEW_HOST_SOURCE_KEY），壳 provide 真实实现，单测
  * global.provide mock；无注入时静默空态不崩（design-review R3）。
@@ -24,8 +23,10 @@ const props = withDefaults(
     sessionId: string
     /** view 标题（空态占位展示）；缺省 fallback view-id */
     title?: string
+    /** 空态行为：'placeholder' 渲染占位（默认）｜'hidden' 无 view 时整组件零 DOM（挂载点用） */
+    empty?: 'placeholder' | 'hidden'
   }>(),
-  { title: undefined },
+  { title: undefined, empty: 'placeholder' },
 )
 
 const source = inject(VIEW_HOST_SOURCE_KEY, null)
@@ -37,16 +38,21 @@ const emptyTitle = computed(() => props.title ?? props.viewId)
 </script>
 
 <template>
-  <div data-testid="view-host" class="flex min-h-0 flex-1 flex-col">
-    <template v-if="view">
+  <template v-if="view">
+    <div data-testid="view-host" class="flex min-h-0 flex-1 flex-col">
       <GuiComponentRenderer
         v-for="(component, i) in view.guiTree"
         :key="i"
         :component="component"
       />
-    </template>
+    </div>
+  </template>
+  <div
+    v-else-if="empty === 'placeholder'"
+    data-testid="view-host"
+    class="flex min-h-0 flex-1 flex-col"
+  >
     <div
-      v-else
       data-testid="view-host-empty"
       class="flex flex-col items-center justify-center gap-1 py-10 text-sm"
     >

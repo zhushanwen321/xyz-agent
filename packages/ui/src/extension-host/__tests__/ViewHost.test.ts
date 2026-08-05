@@ -36,9 +36,9 @@ function makeStore(entry?: ViewCacheEntry) {
   return store
 }
 
-function mountHost(store: ViewHostSource, title?: string) {
+function mountHost(store: ViewHostSource, title?: string, empty?: 'placeholder' | 'hidden') {
   return mount(ViewHost, {
-    props: { viewId: VIEW_ID, sessionId: SESSION, title },
+    props: { viewId: VIEW_ID, sessionId: SESSION, title, empty },
     global: {
       provide: { [VIEW_HOST_SOURCE_KEY as symbol]: store },
     },
@@ -115,5 +115,44 @@ describe('ViewHost', () => {
   it('R3 无注入 source 时静默空态不崩', () => {
     const wrapper = mount(ViewHost, { props: { viewId: VIEW_ID, sessionId: SESSION } })
     expect(wrapper.find('[data-testid="view-host-empty"]').exists()).toBe(true)
+  })
+
+  it('TC1 empty=hidden 且无 view：组件整体零 DOM（含根节点不渲染）', async () => {
+    const store = makeStore(undefined)
+    const wrapper = mountHost(store, undefined, 'hidden')
+    await wrapper.vm.$nextTick()
+
+    // 零 DOM：仅剩 Vue 的 v-if 注释节点（非元素），无任何 view-host 痕迹
+    expect(wrapper.html()).not.toContain('view-host')
+    expect(wrapper.find('[data-testid="view-host"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="view-host-empty"]').exists()).toBe(false)
+  })
+
+  it('TC2 empty=hidden 但有 view：正常渲染 GuiComponent 树', async () => {
+    const entry: ViewCacheEntry = {
+      viewId: VIEW_ID,
+      pluginId: 'p1',
+      guiTree: makeTree(),
+      updatedAt: 789,
+    }
+    const store = makeStore(entry)
+    const wrapper = mountHost(store, undefined, 'hidden')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('[data-testid="view-host"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Hello')
+    expect(wrapper.text()).toContain('CPU')
+    expect(wrapper.find('[data-testid="view-host-empty"]').exists()).toBe(false)
+  })
+
+  it('TC3 默认 empty（不传）无 view：placeholder 占位回归', async () => {
+    const store = makeStore(undefined)
+    const wrapper = mountHost(store, '我的视图')
+    await wrapper.vm.$nextTick()
+
+    const empty = wrapper.find('[data-testid="view-host-empty"]')
+    expect(empty.exists()).toBe(true)
+    expect(empty.text()).toContain('我的视图')
+    expect(empty.text()).toContain('等待插件渲染')
   })
 })

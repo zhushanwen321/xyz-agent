@@ -4,7 +4,7 @@
  *
  * askUserInteract() 通过 select 通道携带 AskUserQuestion[] 数据，
  * runtime event-adapter 检测 ASK_USER_MARKER 后透传 questions 数据到 extension.ui_request。
- * W2 起 Panel.vue 直接 inline 挂载此组件（覆盖 composer 位置），不再经 ExtensionUIDialog modal 包裹。
+ * W2 起 Panel.vue 直接 inline 挂载此组件（覆盖 composer 位置），不再经 dialog 模态包裹。
  *
  * 交互能力（对齐 TUI 版 AskUserComponent）：
  * - tab 切换（多问题来回修改）

@@ -12,7 +12,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { InternalEventBus, MessageBusBridge } from '@xyz-agent/core'
 import type { InternalEvent } from '@xyz-agent/core'
 import { dispatchGlobal } from '@/api/events'
-import { createWsPluginMessageSource, EXTENSION_BRIDGE_TYPES } from '../useExtensionHostBridge'
+import { createWsPluginMessageSource, EXTENSION_BRIDGE_TYPES, initExtensionHostBridge } from '../useExtensionHostBridge'
+import { DIALOG_REQUEST_SOURCE_KEY, UI_RESPONSE_TRANSPORT_KEY } from '@xyz-agent/ui/extension-host'
 
 function makeBridge() {
   const bus = new InternalEventBus()
@@ -129,5 +130,40 @@ describe('createWsPluginMessageSource 过滤条件（FR1/AC1）', () => {
       expect(emitted).toHaveLength(1)
       expect(emitted[0].kind).not.toBe('error')
     }
+  })
+})
+
+describe('initExtensionHostBridge provide CompanionBand 契约（FR2/FR7，TC10）', () => {
+  let bridge: MessageBusBridge | null = null
+
+  afterEach(() => {
+    bridge?.dispose()
+    bridge = null
+  })
+
+  it('TC10: provide DIALOG_REQUEST_SOURCE_KEY + UI_RESPONSE_TRANSPORT_KEY（形状正确）', () => {
+    const provided: Array<{ key: unknown; value: unknown }> = []
+    const app = {
+      provide(key: unknown, value: unknown) {
+        provided.push({ key, value })
+        return app
+      },
+    }
+
+    const result = initExtensionHostBridge(app as never)
+    bridge = result.bridge
+
+    const sourceProvided = provided.find((p) => p.key === DIALOG_REQUEST_SOURCE_KEY)
+    const transportProvided = provided.find((p) => p.key === UI_RESPONSE_TRANSPORT_KEY)
+
+    expect(sourceProvided).toBeDefined()
+    const source = sourceProvided?.value as { onUiRequest: unknown; onUiTimeout: unknown }
+    expect(typeof source.onUiRequest).toBe('function')
+    expect(typeof source.onUiTimeout).toBe('function')
+
+    expect(transportProvided).toBeDefined()
+    const transport = transportProvided?.value as { sendPiResponse: unknown; sendPluginResponse: unknown }
+    expect(typeof transport.sendPiResponse).toBe('function')
+    expect(typeof transport.sendPluginResponse).toBe('function')
   })
 })

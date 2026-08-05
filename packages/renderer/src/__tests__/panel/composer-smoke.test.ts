@@ -86,12 +86,10 @@ const uiMock = vi.hoisted(() => ({
 vi.mock('@/composables/useExtensionUI', () => ({
   useExtensionUI: () => ({
     currentAskUserRequest: uiMock.askUserReq,
-    currentDialogRequest: uiMock.dialogReq,
     respond: uiMock.respond,
     cancel: uiMock.cancel,
   }),
   askUserFilter: (req: { askUser?: boolean } | undefined) => req?.askUser === true,
-  dialogFilter: (req: { askUser?: boolean } | undefined) => req?.askUser !== true,
 }))
 
 // ── useChat / useToast / @/api / stores mock（Composer 的 chat RPC + 队列 flush）──

@@ -1,7 +1,7 @@
 /**
  * Panel inline ask-user 渲染测试（W2: U4-U5）。
  *
- * W2 把 ask-user 富交互从 ExtensionUIDialog modal 搬到 Panel.vue 的 composer-band
+ * W2 把 ask-user 富交互从 dialog modal 搬到 Panel.vue 的 composer-band
  * （inline，覆盖 composer 位置）。当前 AskUserRequest 存在时渲染 AskUserOverlay，
  * 互斥隐藏 Composer；无 AskUserRequest 时渲染 Composer（原行为不变）。
  *
@@ -32,12 +32,10 @@ const mockState = vi.hoisted(() => ({
 vi.mock('@/composables/useExtensionUI', () => ({
   useExtensionUI: () => ({
     currentAskUserRequest: mockState.askUserReq,
-    currentDialogRequest: mockState.dialogReq,
     respond: mockState.respond,
     cancel: mockState.cancel,
   }),
   askUserFilter: (req: { askUser?: boolean }) => req.askUser === true,
-  dialogFilter: (req: { askUser?: boolean }) => req.askUser !== true,
 }))
 
 // stub 子组件（除 AskUserOverlay，断言其挂载）

@@ -31,6 +31,8 @@ export { default as CompanionBand } from './CompanionBand.vue'
 export {
   DIALOG_REQUEST_SOURCE_KEY,
   UI_RESPONSE_TRANSPORT_KEY,
+  type DialogRequest,
+  type DialogRequestOption,
   type DialogRequestSource,
   type UiResponseTransport,
 } from './companion-band-source'

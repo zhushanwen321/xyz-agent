@@ -21,4 +21,4 @@ export const DIALOG_REQUEST_SOURCE_KEY: InjectionKey<DialogRequestSource> = Symb
 /** dialog 响应回传通道（pi 源 sendPiResponse / plugin 源 sendPluginResponse）。 */
 export const UI_RESPONSE_TRANSPORT_KEY: InjectionKey<UiResponseTransport> = Symbol('ui-response-transport')
 
-export type { DialogRequestSource, UiResponseTransport } from './dialog-request-queue'
+export type { DialogRequest, DialogRequestOption, DialogRequestSource, UiResponseTransport } from './dialog-request-queue'
