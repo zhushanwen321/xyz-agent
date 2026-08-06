@@ -178,7 +178,7 @@ export function createUseSession(deps: UseSessionDeps) {
 
   /** 焦点 session 的 summary（FileView label/branch 用）；找不到则 null */
   const focusedSession = computed<SessionSummary | null>(
-    () => store.list.value.find((s) => s.id === focusedSessionId.value) ?? null,
+    () => store.getList().find((s) => s.id === focusedSessionId.value) ?? null,
   )
 
   /**
@@ -214,7 +214,7 @@ export function createUseSession(deps: UseSessionDeps) {
    */
   async function selectSession(id: string): Promise<void> {
     await api.switchSession(id)
-    store.activeId.value = id
+    store.setActiveId(id)
     // 历史回填：features 层跨 api+stores，是 hydrate 的正确编排点
     if (!chat.isHydrated(id)) {
       try {
@@ -346,10 +346,10 @@ export function createUseSession(deps: UseSessionDeps) {
    */
   async function deleteSession(id: string): Promise<void> {
     await api.remove(id)
-    const wasActive = store.activeId.value === id
+    const wasActive = store.getActiveId() === id
     cleanupSessionState(id)
     if (wasActive) {
-      const next = store.list.value[0]
+      const next = store.getList()[0]
       if (next) {
         try {
           await selectSession(next.id)
@@ -374,15 +374,15 @@ export function createUseSession(deps: UseSessionDeps) {
   async function deleteFolder(cwd: string): Promise<BatchDeleteResult> {
     // 用已派生的 store.list（单一真源 groups → list，与下文回退 store.list[0] 同源），
     // 避免再 flatMap 一次重复 groups.flatMap(g => g.sessions)。
-    const wasActiveInFolder = store.list.value
+    const wasActiveInFolder = store.getList()
       .filter((s) => s.cwd === cwd)
-      .some((s) => s.id === store.activeId.value)
+      .some((s) => s.id === store.getActiveId())
     const res = await api.removeByCwd(cwd)
     for (const sid of res.deleted) {
       cleanupSessionState(sid)
     }
     if (wasActiveInFolder) {
-      const next = store.list.value[0]
+      const next = store.getList()[0]
       if (next) {
         try {
           await selectSession(next.id)

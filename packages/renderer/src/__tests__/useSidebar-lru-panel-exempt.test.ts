@@ -15,6 +15,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { effectScope } from 'vue'
 import type { Message, SessionGroup, SessionSummary } from '@xyz-agent/shared'
 import { _resetLruForTest } from '@xyz-agent/core'
+import { useSessionStore } from '@/stores/session'
 
 // ── mock 无关 store / composable，减少 selectSession 噪音 ──
 const clearSessionMock = vi.hoisted(() => vi.fn())
@@ -79,10 +80,10 @@ function makeMessage(id: string): Message {
   return { id, role: 'assistant', content: `msg-${id}`, status: 'complete', timestamp: Date.now() }
 }
 
-// seed 接缝本地 raw store（C-W5-5：useSidebarNew 内部 createSessionStore 实例，经 __testStore 暴露）
-function seedSessions(sidebar: ReturnType<typeof useSidebarNew>, ids: string[]): void {
+// seed pinia session store（ADR-0059：useSessionStore 单例）
+function seedSessions(_sidebar: ReturnType<typeof useSidebarNew>, ids: string[]): void {
   const group: SessionGroup = { cwd: '/proj', sessions: ids.map(makeSummary) }
-  sidebar.__testStore.setGroups([group])
+  useSessionStore().setGroups([group])
 }
 
 /** hydrate 指定 session（绕过 selectSession 的 api 拉取，直接注入消息） */

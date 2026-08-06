@@ -58,6 +58,12 @@ export function createSessionStore() {
     if (target) target.label = label
   }
 
+  /** 更新 session 归属 project（乐观更新，setProject RPC 后调用；广播全量覆盖幂等）。 */
+  function updateProjectId(id: string, projectId: string): void {
+    const target = list.value.find((s) => s.id === id)
+    if (target) target.projectId = projectId || undefined
+  }
+
   /**
    * 更新 session 的模型/思考等级状态（session.state_changed 广播驱动）。
    * 局部更新，非全量 setGroups —— 模型切换后 runtime 推送新 modelId/thinkingLevel，
@@ -119,5 +125,20 @@ export function createSessionStore() {
     }
   }
 
-  return { groups, list, activeId, active, listLoadError, setGroups, setListLoadError, appendSession, updateLabel, updateSessionState, removeFromList, markDead, revive }
+  // ── 方法访问层（ADR-0059 决策 2）──
+  // createUseSession 经这些 getter/action 访问响应式字段，不直访内部 ref（store 封装原则）。
+  // 方法内部在 setup 闭包里 .value 访问自己的 ref——pinia setup store 会 unwrap 对外暴露的
+  // ref/computed（外部拿到值非 ref），但方法闭包持原始 ref，.value 在 pinia/raw 双模式下都正常。
+  // 故 createUseSession 经 cast 接缝注入 pinia store 后，方法访问仍正确工作。
+  function getActiveId(): string | null {
+    return activeId.value
+  }
+  function setActiveId(id: string | null): void {
+    activeId.value = id
+  }
+  function getList(): SessionSummary[] {
+    return list.value
+  }
+
+  return { groups, list, activeId, active, listLoadError, setGroups, setListLoadError, appendSession, updateLabel, updateProjectId, updateSessionState, removeFromList, markDead, revive, getActiveId, setActiveId, getList }
 }

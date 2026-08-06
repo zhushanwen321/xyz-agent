@@ -13,6 +13,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { SessionGroup, SessionSummary } from '@xyz-agent/shared'
 import { useSidebarStore } from '@/stores/sidebar'
+import { useSessionStore } from '@/stores/session'
 import { useNavigationStore } from '@/stores/navigation'
 
 // vi.hoisted 保证 mock fn 在 vi.mock factory（hoisted 到顶部）执行时已初始化
@@ -119,7 +120,7 @@ describe('useSidebarNew 接缝（TC-1..TC-4）', () => {
   it('TC-1 selectSession 全编排：ensureStreamSubscription 先于 panel.loadSession；首次 hydrate；focusedSessionId 派生', async () => {
     const sidebar = useSidebarNew()
     // seed 接缝本地 store（C-W5-5 raw createSessionStore 实例）
-    sidebar.__testStore.setGroups([group([summary('s1'), summary('s2')])])
+    useSessionStore().setGroups([group([summary('s1'), summary('s2')])])
     // panel 绑定模拟：selectSession 内 syncSessionToPanel 调 panel.loadSession(activePanelId, id)
     // focusedSessionId 读 panel.focusedSessionId（= active panel leaf.sessionId）
 
@@ -130,7 +131,7 @@ describe('useSidebarNew 接缝（TC-1..TC-4）', () => {
     // switchSession api 调用
     expect(mocks.switchSession).toHaveBeenCalledWith('s2')
     // 接缝本地 store activeId 更新（C-W5-5 raw store .value 生效）
-    expect(sidebar.__testStore.activeId.value).toBe('s2')
+    expect(useSessionStore().getActiveId()).toBe('s2')
     // 首次 hydrate：getHistory 调用
     expect(mocks.getHistory).toHaveBeenCalledWith('s2')
     // 文件树预加载 fire-forget
@@ -154,7 +155,7 @@ describe('useSidebarNew 接缝（TC-1..TC-4）', () => {
       presetCwd: vi.fn(),
     } as unknown as ReturnType<typeof useNewTaskFlow>)
     const sidebar = useSidebarNew()
-    sidebar.__testStore.setGroups([group([summary('s1')])])
+    useSessionStore().setGroups([group([summary('s1')])])
 
     await sidebar.selectSession('s1')
 
@@ -165,7 +166,7 @@ describe('useSidebarNew 接缝（TC-1..TC-4）', () => {
     const removeMock = (await import('@/api/domains/session')).remove as ReturnType<typeof vi.fn>
     removeMock.mockResolvedValue(undefined)
     const sidebar = useSidebarNew()
-    sidebar.__testStore.setGroups([group([summary('s1'), summary('s2')])])
+    useSessionStore().setGroups([group([summary('s1'), summary('s2')])])
     // 先 select s1 使其 active（触发 wasActive 回退路径）
     await sidebar.selectSession('s1')
     mocks.switchSession.mockClear()
@@ -177,25 +178,25 @@ describe('useSidebarNew 接缝（TC-1..TC-4）', () => {
     // wasActive 回退：selectSession(s2) → switchSession('s2')
     expect(mocks.switchSession).toHaveBeenCalledWith('s2')
     // s1 从列表移除
-    expect(sidebar.__testStore.list.value.find((s) => s.id === 's1')).toBeUndefined()
+    expect(useSessionStore().getList().find((s) => s.id === 's1')).toBeUndefined()
   })
 
   it('TC-3 loadSessions 成功填 groups 清 error；失败 setListLoadError 不抛', async () => {
     const sidebar = useSidebarNew()
     mocks.list.mockResolvedValueOnce([group([summary('s1')])])
     await sidebar.loadSessions()
-    expect(sidebar.__testStore.list.value.length).toBe(1)
-    expect(sidebar.__testStore.listLoadError.value).toBeNull()
+    expect(useSessionStore().getList().length).toBe(1)
+    expect(useSessionStore().listLoadError).toBeNull()
 
     // 失败分支
     mocks.list.mockRejectedValueOnce(new Error('rpc down'))
     await sidebar.loadSessions()
-    expect(sidebar.__testStore.listLoadError.value).toBe('rpc down')
+    expect(useSessionStore().listLoadError).toBe('rpc down')
   })
 
   it('TC-4 返回签名对齐 useSidebar（含全字段）+ toggleCollapse/goOverview 行为', () => {
     const sidebar = useSidebarNew()
-    const keys = Object.keys(sidebar).filter((k) => k !== '__testStore')
+    const keys = Object.keys(sidebar)
     const expected = [
       'focusedSessionId', 'focusedSession', 'selectSession', 'newSession', 'retryHistory',
       'goOverview', 'loadSessions', 'initApp', 'onConnected', 'toggleCollapse',

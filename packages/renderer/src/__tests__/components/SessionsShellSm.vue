@@ -5,8 +5,10 @@
 -->
 <script setup lang="ts">
 import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
+import { useSessionStore } from '@/stores/session'
 
 const sidebar = useSidebarNew()
+const sessionStore = useSessionStore()
 
 function pick(id: string): void {
   void sidebar.selectSession(id)
@@ -22,7 +24,7 @@ defineExpose({ sidebar })
     </div>
     <ul data-testid="session-list">
       <li
-        v-for="s in sidebar.__testStore.list.value"
+        v-for="s in sessionStore.list"
         :key="s.id"
         data-testid="session-item"
         :data-id="s.id"

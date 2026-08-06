@@ -75,6 +75,7 @@ vi.mock('@/composables/features/fork-handoff/useHandoffActions', () => ({
 
 import SessionsShellSm from './SessionsShellSm.vue'
 import { resetSidebarNewForTest } from '@/composables/features/sidebar/useSidebarNew'
+import { useSessionStore } from '@/stores/session'
 
 function summary(id: string, label: string, cwd = '/a'): SessionSummary {
   return { id, label, cwd, status: 'idle', lastActiveAt: 1, modelId: '' }
@@ -89,8 +90,7 @@ describe('SessionsShellSm 首屏冒烟（TC-6 / 渲染 gate）', () => {
 
   it('session-list DOM 存在 + 渲染 seeded session 项；初始 focusedSessionId===null', async () => {
     const wrapper = mount(SessionsShellSm)
-    const sidebar = (wrapper.vm as unknown as { sidebar: { __testStore: { setGroups: (g: SessionGroup[]) => void } } }).sidebar
-    sidebar.__testStore.setGroups([
+    useSessionStore().setGroups([
       { cwd: '/a', label: '/a', sessions: [summary('s1', '任务一'), summary('s2', '任务二'), summary('s3', '任务三')] },
     ])
     await wrapper.vm.$nextTick()
@@ -107,8 +107,8 @@ describe('SessionsShellSm 首屏冒烟（TC-6 / 渲染 gate）', () => {
 
   it('切换 session 后 focused chip 更新 + focusedSessionId 变化（AC6 语义）', async () => {
     const wrapper = mount(SessionsShellSm)
-    const sidebar = (wrapper.vm as unknown as { sidebar: { __testStore: { setGroups: (g: SessionGroup[]) => void }, focusedSessionId: { value: string | null }, selectSession: (id: string) => Promise<void> } }).sidebar
-    sidebar.__testStore.setGroups([
+    const sidebar = (wrapper.vm as unknown as { sidebar: { focusedSessionId: { value: string | null }, selectSession: (id: string) => Promise<void> } }).sidebar
+    useSessionStore().setGroups([
       { cwd: '/a', label: '/a', sessions: [summary('s1', '任务一'), summary('s2', '任务二')] },
     ])
     await wrapper.vm.$nextTick()

@@ -42,16 +42,17 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
 import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore, ROOT_PANEL_ID } from '@/stores/panel'
+import { useSessionStore } from '@/stores/session'
 import { registerSessionCleanup, __clearSessionCleanupRegistryForTest } from '@/composables/useSessionScopedState'
 
 function makeSummary(id: string): SessionSummary {
   return { id, label: id, cwd: '/proj', status: 'idle', lastActiveAt: 1, modelId: 'm1', tokenCount: 0 }
 }
 
-// seed 接缝本地 raw store（C-W5-5：useSidebarNew 内部 createSessionStore 实例，经 __testStore 暴露）
-function seedSessions(sidebar: ReturnType<typeof useSidebarNew>, ids: string[]): void {
+// seed pinia session store（ADR-0059：useSessionStore 单例）
+function seedSessions(_sidebar: ReturnType<typeof useSidebarNew>, ids: string[]): void {
   const group: SessionGroup = { cwd: '/proj', sessions: ids.map(makeSummary) }
-  sidebar.__testStore.setGroups([group])
+  useSessionStore().setGroups([group])
 }
 
 beforeEach(() => {
@@ -89,7 +90,7 @@ describe('useSidebar deleteSession 删 active 后 fallback（W1 / S4）', () => 
     const panel = usePanelStore()
     panel.loadSession(ROOT_PANEL_ID, 's1')
     // 让 s1 成为 active（接缝本地 raw store，C-W5-5）
-    sidebar.__testStore.activeId.value = 's1'
+    useSessionStore().setActiveId('s1')
     // switchSession reject 模拟网络抖动
     switchSessionMock.mockRejectedValue(new Error('network'))
 
@@ -111,7 +112,7 @@ describe('useSidebar deleteSession 删 active 后 fallback（W1 / S4）', () => 
     const scope = effectScope()
     const sidebar = scope.run(() => useSidebarNew())!
     seedSessions(sidebar, ['s1'])
-    sidebar.__testStore.activeId.value = 's1'
+    useSessionStore().setActiveId('s1')
 
     const navigation = useNavigationStore()
     const pushSpy = vi.spyOn(navigation, 'push')

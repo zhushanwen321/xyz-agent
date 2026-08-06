@@ -11,9 +11,9 @@
  *   clearUnread / fileTree 预加载 / flow.cancelFlow）无法插入其内部。core.selectSession 留
  *   headless/mobile 消费。deleteSession/deleteFolder 代理 core（wasActive 回退走 core.selectSession
  *   headless 路径——w5 接缝期接受，消费方切换 wave 升级为 shell.selectSession，见 retrospect 债务）。
- * - C-W5-5：sessionStore 自建 raw createSessionStore() 实例（接缝本地，与 pinia useSessionStore
- *   并存）——core createUseSession 碰 ref（store.activeId.value），pinia proxy 实测不保留 .value，
- *   cast 静默失效；raw 实例使 .value 生效。其他 store 经端口适配以方法调用访问（pinia/raw 均可）。
+ * - C-W5-5（ADR-0059 重构）：sessionStore 经 pinia useSessionStore() cast 成 core factory 类型。
+ *   core createUseSession 经方法访问 store（getActiveId/setActiveId/getList，ADR-0059 决策 1），
+ *   方法闭包持原始 ref，pinia unwrap 不影响方法内部 .value。消除原 raw 双轨 + config.sessions 桥接。
  *
  * 边界（C-W4-3 / FU-1）：thinkingLevel apply / panel.loadSession / navigation.push / send /
  * transition 留 useNewTaskFlow 壳（submitFirstMessage 改调 core createSessionFlow，见该文件）。
@@ -22,7 +22,6 @@
  *
  * 命名说明：useSidebarNew 是临时接缝名，消费方切换完成后（后续 wave）重命名取代 useSidebar。
  */
-import { onScopeDispose } from 'vue'
 import type { ComputedRef } from 'vue'
 import type { SessionSummary } from '@xyz-agent/shared'
 import {
@@ -60,49 +59,15 @@ import { useHandoffActions } from '@/composables/features/fork-handoff/useHandof
 import { useNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
 import type { NavEntry } from '@/types'
 
-// ── App 启动编排幂等守卫（与 useSidebar 同模式；接缝期独立，不与 useSidebar 共享——
-// useSidebarNew 未被生产消费方接线，两套守卫不会并发触发）──
+// ── App 启动编排幂等守卫 ──
 let appBootstrapped = false
 let hasConnectedBefore = false
 
-/** 测试隔离：重置启动编排守卫 + session.list 订阅计数 + 桥接计数器（beforeEach 调）。 */
+/** 测试隔离：重置启动编排守卫 + session.list 订阅计数（beforeEach 调）。 */
 export function resetSidebarNewForTest(): void {
   appBootstrapped = false
   hasConnectedBefore = false
   resetSessionListSubForTest()
-  resetSessionListBroadcastForTest()
-}
-
-/** 测试隔离：重置 config.sessions→pinia 桥接的模块级 refCount（防跨测试监听残留）。 */
-export function resetSessionListBroadcastForTest(): void {
-  sessionListUnsub?.()
-  sessionListUnsub = null
-  broadcastRefCount = 0
-}
-
-// ── config.sessions 广播桥接 → pinia useSessionStore（CLAUDE.md 规则 #2 防重复注册）──
-// 双 store 断裂修复：core createUseSession 经 onConfigSessions 把 config.sessions 广播写入
-// 接缝本地 raw store（C-W5-5），而 Sidebar SessionList 读 pinia useSessionStore —— 两 store
-// 完全独立导致侧栏永远空列表。此桥接把同一广播镜像 setGroups 到 pinia store，双 store 数据一致。
-// 模块级 refCount：多实例共享同一监听（首个注册、末个卸载），防止事件处理翻倍。
-let broadcastRefCount = 0
-let sessionListUnsub: (() => void) | null = null
-
-function bindSessionListBroadcast(): void {
-  broadcastRefCount += 1
-  if (broadcastRefCount === 1) {
-    sessionListUnsub = events.onGlobalType('config.sessions', (msg) => {
-      useSessionStoreSafe().setGroups(msg.payload?.groups ?? [])
-    })
-  }
-}
-
-function unbindSessionListBroadcast(): void {
-  broadcastRefCount = Math.max(0, broadcastRefCount - 1)
-  if (broadcastRefCount === 0 && sessionListUnsub) {
-    sessionListUnsub()
-    sessionListUnsub = null
-  }
 }
 
 /**
@@ -207,10 +172,11 @@ export function useSidebarNew() {
     currentSession: () => useNewTaskFlow().currentSession.value,
   }
 
-  // ── 接缝本地 sessionStore（raw createSessionStore 实例，C-W5-5）──
-  // core createUseSession 碰 ref（store.activeId.value），pinia proxy 不保留 .value，
-  // 故自建 raw 实例。pinia useSessionStore 不动（旧消费方继续读），合并留后续 wave。
-  const sessionStore = createSessionStore()
+  // ── sessionStore：pinia useSessionStore cast 成 core factory 类型（ADR-0059 cast 接缝）──
+  // pinia setup store unwrap ref（外部拿值非 ref），与 core createSessionStore 返回的 ref 类型不兼容。
+  // cast 是 pinia + core factory 结合的固有类型鸿沟（ADR-0059 决策 3）。createUseSession 内部经方法
+  // 访问（getActiveId/setActiveId/getList），方法闭包持原始 ref，pinia/raw 双模式下都正常工作。
+  const sessionStore = useSessionStore() as unknown as ReturnType<typeof createSessionStore>
 
   // ── core createUseSession（headless 编排；proxy 无 renderer 时序的方法）──
   const core = createUseSession({
@@ -251,7 +217,7 @@ export function useSidebarNew() {
     if (newTaskFlow.isActive.value) newTaskFlow.cancelFlow()
 
     await sessionApi.switchSession(id)
-    sessionStore.activeId.value = id
+    sessionStore.setActiveId(id)
     // 清除未读标记：用户主动查看该 session，不再显示未读 badge
     clearUnread(id)
     // ensureStreamSubscription：同步注册 events.on handler + fire-and-forget subscribeSession
@@ -322,7 +288,7 @@ export function useSidebarNew() {
    */
   async function assignSessionToProject(sessionId: string, projectId: string): Promise<void> {
     await sessionApi.setProject(sessionId, projectId)
-    useSessionStoreSafe().updateProjectId(sessionId, projectId)
+    sessionStore.updateProjectId(sessionId, projectId)
   }
 
   /** 进入 Overview：push view:'overview'（ADR-0023，sidebar 持久，main 被覆盖） */
@@ -359,7 +325,7 @@ export function useSidebarNew() {
       await loadSessions()
       await workspaceStore.load()
       // 预填 cwd（G1.1「沿用最近 session 目录」）：取 sessionStore.list 中 lastActiveAt 最大者
-      const sessions = sessionStore.list.value
+      const sessions = sessionStore.getList()
       let recentCwd: string | undefined
       if (sessions.length > 0) {
         const latest = sessions.reduce((a, b) => (a.lastActiveAt >= b.lastActiveAt ? a : b))
@@ -398,18 +364,6 @@ export function useSidebarNew() {
     enterHandoffModeFromLastAssistant,
   } = useHandoffActions(focusedSessionId as ComputedRef<string | null>)
 
-  // ── 桥接注册：config.sessions 广播镜像到 pinia useSessionStore（refCount 防翻倍）──
-  // 与 core 的 onConfigSessions（写 raw store）并存：同一广播双写，pinia store 供 SessionList 读。
-  bindSessionListBroadcast()
-
-  // 持有引用避免 onScopeDispose 前实例被回收（core.createUseSession 内部已 bind + dispose）
-  onScopeDispose(() => {
-    // 桥接解绑：refCount 减一，减到 0 才真正 off
-    unbindSessionListBroadcast()
-    // core.createUseSession 内部 onScopeDispose(unbindSessionListBroadcast) 已注册，
-    // 此处空 dispose 占位保持显式生命周期锚点（未来壳级 cleanup 扩展点）。
-  })
-
   return {
     focusedSessionId,
     focusedSession,
@@ -434,11 +388,6 @@ export function useSidebarNew() {
     abortHandoff,
     handoffFromLastAssistant,
     enterHandoffModeFromLastAssistant,
-    /**
-     * @internal 测试句柄：暴露接缝本地 raw sessionStore 供集成测试 seed（setGroups/断言 activeId）。
-     * 生产消费方不读此字段。接缝本地 store 与 pinia useSessionStore 并存（C-W5-5）。
-     */
-    __testStore: sessionStore,
   }
 }
 

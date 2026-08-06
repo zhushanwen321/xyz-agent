@@ -29,6 +29,7 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
 
 import * as events from '@/api/events'
 import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
+import { useSessionStore } from '@/stores/session'
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -50,33 +51,34 @@ function broadcastSessionList(groups: SessionGroup[]): void {
 
 it('config.sessions 广播经 useSidebar 订阅更新 session store', () => {
   const scope = effectScope()
-  const sidebar = scope.run(() => useSidebarNew())!
-  // 接缝本地 raw store（C-W5-5：useSidebarNew 内部 createSessionStore 实例）
-  expect(sidebar.__testStore.groups.value).toEqual([])
+  scope.run(() => useSidebarNew())
+  // pinia session store（ADR-0059：薄壳 useSessionStore 单例）
+  expect(useSessionStore().groups).toEqual([])
 
   broadcastSessionList(makeGroups())
-  expect(sidebar.__testStore.groups.value).toEqual(makeGroups())
+  expect(useSessionStore().groups).toEqual(makeGroups())
 
   scope.stop()
 })
 
-it('多实例 refCount 去重：N 次 useSidebarNew() 一次广播只触发 1 次 setGroups', () => {
-  // 去重的可观测行为：refCount 保证 handler 只绑定首个实例的 store，广播只更新它，
-  // 其余实例的接缝本地 store 保持初始空态（若去重失效，3 个实例的 store 都会被更新）。
-  // 注：不 spy setGroups——core bindSessionListBroadcast 捕获的是注册时刻的函数引用，
-  // 注册后 vi.spyOn(store,'setGroups') 替换属性对已捕获引用无效（raw store 非 pinia proxy）。
+it('多实例 refCount 去重：N 次 useSidebarNew() 只注册 1 个 config.sessions handler', () => {
+  // 薄壳化后 sessionStore 是 pinia 单例（所有实例共享同一 store），去重的可观测行为变为
+  // 「config.sessions handler 只注册 1 次」（core bindSessionListBroadcast 模块级 sessionListSubCount），
+  // 而非旧 per-instance raw store 的「不同实例 store 值不同」（ADR-0059 消除双轨）。
+  const onGlobalTypeSpy = vi.spyOn(events, 'onGlobalType').mockReturnValue(() => {})
+
   const a = effectScope()
-  const sidebarA = a.run(() => useSidebarNew())!
+  a.run(() => useSidebarNew())!
   const b = effectScope()
   const c = effectScope()
-  const sidebarB = b.run(() => useSidebarNew())!
-  const sidebarC = c.run(() => useSidebarNew())!
+  b.run(() => useSidebarNew())!
+  c.run(() => useSidebarNew())!
 
-  broadcastSessionList(makeGroups())
-  // 首个实例 store 收到广播；B/C 未被更新 = 只注册了 1 个 handler
-  expect(sidebarA.__testStore.groups.value).toEqual(makeGroups())
-  expect(sidebarB.__testStore.groups.value).toEqual([])
-  expect(sidebarC.__testStore.groups.value).toEqual([])
+  // 3 个实例只注册 1 个 config.sessions handler（refCount 去重）
+  const sessionHandlerCount = onGlobalTypeSpy.mock.calls.filter(
+    ([type]) => type === 'config.sessions',
+  ).length
+  expect(sessionHandlerCount).toBe(1)
 
   a.stop()
   b.stop()
@@ -85,13 +87,13 @@ it('多实例 refCount 去重：N 次 useSidebarNew() 一次广播只触发 1 �
 
 it('全部 scope 释放后监听取消：广播不再更新 store', () => {
   const scope = effectScope()
-  const sidebar = scope.run(() => useSidebarNew())!
+  scope.run(() => useSidebarNew())
   // 先填入一组数据，释放后广播应保持不变
-  sidebar.__testStore.setGroups(makeGroups())
-  const before = sidebar.__testStore.groups.value
+  useSessionStore().setGroups(makeGroups())
+  const before = useSessionStore().groups
 
   scope.stop() // onScopeDispose → refCount 1→0 → 取消监听
   broadcastSessionList([{ cwd: '/other', sessions: [makeSummary('x')] }])
 
-  expect(sidebar.__testStore.groups.value).toEqual(before) // 未变 = 监听已取消
+  expect(useSessionStore().groups).toEqual(before) // 未变 = 监听已取消
 })
