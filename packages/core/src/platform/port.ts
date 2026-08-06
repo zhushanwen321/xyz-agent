@@ -42,20 +42,28 @@ export interface WebSocketFactory {
   create(url: string): WebSocketLike
 }
 
-// IpcBridge —— renderer 对 electronAPI 的唯一正式端口（platform-port-spike IF-ipc-bridge）。
-// 方法集 = lib/ipc.ts 35 签名。非 electron 环境 PlatformPort.ipc = null。
-// P0 stub 用索引签名占位，正式实现用完整方法签名替换。
+// IpcBridge —— renderer 对 electronAPI 的端口抽象（platform-port-spike IF-ipc-bridge）。
+//
+// 【现状：deferred，非 P0 已完成】spike③（把 lib/ipc.ts 调用点收编进 PlatformPort.ipc）
+// 未通过验证：lib/ipc.ts 39 个 electronAPI 包装方法被 17 个 renderer 文件直接 import 消费，
+// 全量改走 getPlatform().ipc 的改动量超出 P0 可控范围，且 core 内 getPlatform().ipc 零消费。
+// 按架构文档 §9「三项验证任一失败即回退隐式降级方案重估，不硬推」规则，本字段标记 deferred。
+//
+// 【当前主路径】packages/renderer/src/lib/ipc.ts 仍是 electronAPI 的实际访问点（未进
+// PlatformPort，工作正常，勿动）。本字段预留给未来迭代收编，当前桌面/mobile 两壳均注入 null。
+// P0 stub 用索引签名占位，正式落地时用完整方法签名替换。
 export interface IpcBridge {
   [method: string]: (...args: unknown[]) => unknown
 }
 
 // PlatformPort —— 平台适配核心端口（platform-port-spike IF-platform-port）。
-// kind 标识运行平台；storage/webSocket/ipc 为 P0 落地的 3 个核心端口。
+// kind 标识运行平台；storage/webSocket 为 P0 已落地的 2 个核心端口。
 // 迭代收编区（notify/sound/clipboard/filePicker/terminal，§9）以注释预留，不进接口字段。
 export interface PlatformPort {
   readonly kind: 'electron' | 'mobile' | 'web' | 'mock'
   storage: KVStorage
   webSocket: WebSocketFactory
+  // ipc：deferred（spike③ 未通过，core 内零消费），当前两壳均 null；详见上方 IpcBridge 注释。
   ipc: IpcBridge | null
 }
 

@@ -68,6 +68,8 @@ export function createMobilePlatformAdapter(): PlatformPort {
     kind: 'mobile',
     storage: new InMemoryStorage(),
     webSocket: new MobileWebSocketFactory(),
-    ipc: null, // mobile 无 electron 主进程
+    // ipc: null —— mobile 无 electron 主进程；且 ipc 字段整体 deferred（spike③ 未通过），
+    // 见 core/platform/port.ts 的 IpcBridge 注释。
+    ipc: null,
   }
 }
