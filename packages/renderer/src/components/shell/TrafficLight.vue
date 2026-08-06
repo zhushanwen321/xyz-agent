@@ -2,12 +2,12 @@
   <!--
     TrafficLight · 跨平台窗口控制（shell spec §五方案 X）
     - mac：空占位 div（保留 .traffic-light 定位 + opacity transition 语义，红黄绿由 OS 绘制）
-    - win/linux：自绘 3 彩色圆点 mimic mac，hover 整组显 close/min/max 符号，点击 IPC 控窗口
+    - win/linux：自绘 3 彩色圆点 mimic mac（mac 原生位置 {8,8}；aside 顶已在窗口 y=8，故 left-0/top-0 即窗口 8,8），hover 整组显 close/min/max 符号，点击 IPC 控窗口
     全屏态 isFullscreen=true 时 opacity→0（响应式 :class 绑定，替代旧 [data-fullscreen] 祖先选择器），
     mac 系统 hover 浮层独立不参与。
   -->
   <div
-    class="traffic-light absolute left-[16px] top-[26px] flex gap-2 z-10 transition-opacity duration-[var(--duration-slow)] ease-[var(--ease)] group"
+    class="traffic-light absolute left-0 top-0 flex gap-2 z-10 transition-opacity duration-[var(--duration-slow)] ease-[var(--ease)] group"
     :class="{ 'opacity-0': isFullscreen }"
   >
     <template v-if="!isMac">

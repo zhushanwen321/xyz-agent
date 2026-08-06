@@ -9,8 +9,8 @@
     拖拽区（shell/spec §七-6）：header 空白 -webkit-app-region:drag，交互元素 no-drag。
     折叠态 chrome 落位（sidebar/spec.md §收起态 + draft-collapsed-state.html 卡 A/B/C）：
     sidebar 折叠时，收起/←/→ 三按钮迁入此 header 最左侧（chrome 槽位）。
-    安全区 padding：非全屏留 pl-[88px] 让位窗口左上 traffic-light（红黄绿 x16~68，header 内容从 x12+88=100 起，
-    chrome 按钮与红黄绿拉开 32px 呼吸）；全屏态红黄绿 OS 隐藏，header pl-4（卡 B「h-nav 紧贴左」）。
+    安全区 padding：非全屏留 pl-[88px] 让位窗口左上 traffic-light（红黄绿原生 x8~60，header 内容起 x≈88，
+    chrome 按钮与红黄绿拉开约 28px 呼吸）；全屏态红黄绿 OS 隐藏，header pl-4（卡 B「h-nav 紧贴左」）。
     唤回侧栏靠 ⌘B + 此 chrome 按钮（rail-restore 已移除）。
   -->
   <header

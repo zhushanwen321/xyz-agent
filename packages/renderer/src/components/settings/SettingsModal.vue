@@ -18,7 +18,8 @@
       <!-- 左 nav -->
       <nav ref="navRootEl" class="flex w-[220px] shrink-0 flex-col bg-[var(--bg-sunken)] p-[8px] gap-[1px]" data-settings-nav>
         <!-- traffic light 安全区：pl-[80px] 让位红黄绿（三平台统一，全屏态保留无害）。
-             本 overlay 是 fixed inset:0 全屏覆盖，不继承 AsideRegion 的 pt-[52px]，故显式让位 -->
+             本 overlay 是 fixed inset:0 全屏覆盖，不继承 AsideRegion 的 pt-6 安全区，故显式让位。
+             红黄绿原生位置 x8~60，pl-80 仍足够让位。 -->
         <div class="flex h-[44px] items-center pl-[80px] pr-[12px]">
           <span class="text-[11px] font-bold uppercase tracking-[0.08em] text-neutral-dim">{{ t('settings.title') }}</span>
         </div>
