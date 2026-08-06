@@ -4,10 +4,10 @@
     无 background，继承 app-shell 的 bg-bg，视觉上与窗口底色融合（spec §一）。
     traffic light 绝对定位在此组件顶部安全区（spec §六 z-index:10）；
     app-nav-controls 已提升至 AppShell 层避免折叠态 overflow:hidden 裁剪。
-    Wave 3：在此挂载 Sidebar 容器（FG3），padding-top:28px(pt-7) 安全区让出 traffic light（原生位置 y=8~20，aside 顶 y=4，Sidebar 内容从 y=32 起避免遮挡）。
+    Wave 3：在此挂载 Sidebar 容器（FG3），padding-top:44px(pt-11) 安全区让出 traffic light（红黄绿原生 y=8~20），并拉开 trafficlight 行（nav 按钮 bottom y27）与 LOGO 行视觉间距（约 12px）。
   -->
   <aside
-    class="relative flex flex-col overflow-hidden pt-7"
+    class="relative flex flex-col overflow-hidden pt-11"
     :style="{
       flexBasis: sidebar.collapsed ? '0px' : '300px',
       flexGrow: '0',
@@ -23,7 +23,7 @@
 
 <script setup lang="ts">
 // aside flex-basis 联动 sidebar.collapsed（spec §收起态：折叠 width→0，main 占满全宽；
-// pt-7(28px) traffic light 安全区：AppShell py-1 使 aside 顶在窗口 y=4，红黄绿原生 y=8~20，Sidebar 内容从 y=32(=4+28) 起避免遮挡；
+// pt-11(44px) traffic light 安全区：AppShell py-1 使 aside 顶在窗口 y=4，红黄绿原生 y=8~20，安全区让出；
 // position:relative 为 traffic-light 的 offset parent；
 // app-nav-controls 已提升至 AppShell 层（避免折叠态 overflow:hidden 裁剪）。
 // flex-basis（非 width）：flex 子 width:0 被 min-content 撑开，必须显式 flex-basis:0 才能真正归零。

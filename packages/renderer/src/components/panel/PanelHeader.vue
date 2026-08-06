@@ -7,6 +7,9 @@
     v2：移除 split 后无 split/新建会话/关闭按钮（原双 panel 专属操作）。
     更多菜单（G2-005 rename 等）DEFERRED hide。
     拖拽区（shell/spec §七-6）：header 空白 -webkit-app-region:drag，交互元素 no-drag。
+    高度对齐 trafficlight 行（AGENTS.md #11）：h-[22px] 使 header 与窗口红黄绿+nav 按钮行共线。
+      main-panel 顶=AppShell p-1(4)+border(1)=y5，h-22 → bottom y27 = AppNavControls 按钮 bottom（top-5+h-22），
+      内容中线 y16 ≈ 红黄绿实测中线 y15.75。右侧 drawer/git 按钮 size-22 适配（不溢出 22 高 header）。
     折叠态 chrome 落位（sidebar/spec.md §收起态 + draft-collapsed-state.html 卡 A/B/C）：
     sidebar 折叠时，收起/←/→ 三按钮迁入此 header 最左侧（chrome 槽位）。
     安全区 padding：非全屏留 pl-[88px] 让位窗口左上 traffic-light（红黄绿原生 x8~60，header 内容起 x≈88，
@@ -14,7 +17,7 @@
     唤回侧栏靠 ⌘B + 此 chrome 按钮（rail-restore 已移除）。
   -->
   <header
-    class="flex h-[38px] flex-shrink-0 items-center gap-2 bg-bg-elevated px-3.5 [-webkit-app-region:drag]"
+    class="flex h-[22px] flex-shrink-0 items-center gap-2 bg-bg-elevated px-3.5 [-webkit-app-region:drag]"
     :class="showChrome && !isFullscreen ? 'pl-[88px]' : 'pl-4'"
   >
     <!-- 折叠态 P1 chrome 槽位：收起/←/→ 三按钮（sidebar/spec §收起态「导航能力迁移」）。
@@ -64,7 +67,7 @@
       v-if="viewingSubagent"
       variant="ghost"
       size="icon"
-      class="shrink-0 gap-1 rounded-md text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg [-webkit-app-region:no-drag]"
+      class="h-[22px] w-[22px] shrink-0 gap-1 rounded-md text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg [-webkit-app-region:no-drag]"
       :title="t('panel.header.backToMain')"
       data-testid="subagent-back-btn"
       @click="emit('back')"
@@ -141,7 +144,7 @@
         v-if="!showChrome"
         variant="ghost"
         size="icon"
-        class="size-[26px] rounded-md text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg [-webkit-app-region:no-drag]"
+        class="size-[22px] rounded-md text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg [-webkit-app-region:no-drag]"
         data-testid="drawer-toggle"
         :title="t('panel.sideDrawer.title')"
         @click="emit('toggleDrawer')"
@@ -156,7 +159,7 @@
         v-if="gitIndicator?.hasRepo"
         variant="ghost"
         size="icon"
-        class="relative size-[26px] rounded-md text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg [-webkit-app-region:no-drag]"
+        class="relative size-[22px] rounded-md text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg [-webkit-app-region:no-drag]"
         :title="t('panel.header.gitStatus')"
         @click="emit('openGit')"
       >
