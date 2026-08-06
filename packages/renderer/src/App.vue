@@ -6,7 +6,7 @@
        连接后渲染 AppShell。 -->
   <div v-if="connectionState !== 'connected'" class="connecting-screen grid h-screen w-screen place-items-center bg-bg">
     <div class="flex flex-col items-center gap-4">
-      <span class="grid size-12 place-items-center rounded-xl bg-accent text-2xl font-bold text-white">x</span>
+      <TaijiLogo :size="48" class="text-accent" />
       <!-- runtime 重启中 -->
       <template v-if="connectionState === 'restarting'">
         <Loader2 class="size-4 animate-spin text-neutral-dim" />
@@ -38,6 +38,7 @@
 import { onBeforeUnmount, onMounted, watch } from 'vue'
 import { Loader2, AlertCircle } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
+import TaijiLogo from '@/components/icons/TaijiLogo.vue'
 import AppShell from '@/components/shell/AppShell.vue'
 import ToastContainer from '@/components/ui/ToastContainer.vue'
 import { Button } from '@/components/ui/button'
@@ -59,7 +60,9 @@ import { useCompactQueue } from '@/composables/panel/useCompactQueue'
 // （模型选择器下拉空 + landing 按钮文案空，[HISTORICAL] 2026-08-05）。
 bootstrapSettingsCore()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
+// 窗口标题随语言切换：太极（zh）/ TaiJi（en）。index.html 的 <title> 是渲染前的 fallback。
+watch(locale, () => { document.title = t('app.title') }, { immediate: true })
 const { state: connectionState, init, teardown, retryRuntime } = useConnection()
 // 启动编排（#1/#3）：连接建立后自动进 new-task landing（首次）或恢复最近 session。
 // useConnection.init 是 fire-and-forget（connect 异步），return 时连接未握手指；state==='connected'

@@ -69,7 +69,7 @@ export async function createWindow(
     minWidth: 800,
     minHeight: 600,
     show: false,
-    title: 'xyz-agent',
+    title: 'TaiJi',
     // 跨平台窗口装饰（shell spec §五方案 X）
     // mac：hidden + trafficLightPosition 精确控制红黄绿位置（对齐 chrome 按钮中线 + 侧边栏左缘）。
     //   不用 hiddenInset：inset 模式强制红黄绿水平内缩，trafficLightPosition.x 被系统忽略。
