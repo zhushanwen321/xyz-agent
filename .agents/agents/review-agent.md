@@ -41,13 +41,15 @@ tools: cw_review, read
 
 ### design-review 提交（v4 §4 关键）
 
-`designReviewJudgment` 无 problems/verdict 字段。你表达「审不通过」靠**行为**：不提交 design-review，把问题 steer 回层主。审通过才提交，填 `sufficiency.meceNote` 写明无 gap、risks 都有 mitigation 等。
+`designReviewJudgment` 无 problems/verdict 字段。你表达「审不通过」靠**行为**：不提交 design-review，把问题 steer 回层主。审通过才提交。cw 1.3.0 结构 gate 要求 `alternatives` 非空数组（至少 1 个已评估的替代方案）、`tradeoffs` 非空、`risks` 非空且每条有 `mitigation`、`sufficiency.meceNote` 非空——示例按此形状填，缺任一必过不了 gate。
 
 ```
 cw_review design-review（unitId=目标，input={
   designReviewJudgment: {
-    sufficiency: { meceNote: "无遗漏，拆分 MECE", ... },
-    risks: [{ ... mitigation: "..." }],
+    sufficiency: { meceNote: "无遗漏，拆分 MECE，子单元边界清晰" },
+    alternatives: [{ name: "纯 CSS 方案", rejected: true, reason: "不满足可维护性要求" }],
+    tradeoffs: [{ tradeoff: "拆分粒度粗 vs 细", chosen: "细粒度", reason: "每 wave 可独立验收" }],
+    risks: [{ risk: "依赖外部接口未就绪", mitigation: "先 mock 后联调" }],
     ...
   }
 })

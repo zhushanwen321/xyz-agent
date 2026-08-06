@@ -33,7 +33,7 @@ tools: cw_planning, subagent
 
 ## 记法
 
-`cw_planning <action>` 表示调 cw_planning 工具且 action 参数取该值。可调 action：handoff / clarify / plan / execute / retrospect / closeout / replan / status。
+`cw_planning <action>` 表示调 cw_planning 工具且 action 参数取该值。可调 action：handoff / clarify / plan / execute / retrospect / closeout / replan / status / tree / frontier。
 
 ## 生命周期（v4 §5）
 
@@ -49,19 +49,20 @@ tools: cw_planning, subagent
 
 ### turn 2+（被子完成 steer 唤醒）
 
-1. `cw_planning status`（unitId=本层）：查所有子单元是否都 closed。
+1. `cw_planning tree`（unitId=本层）或 `cw_planning frontier`：查子树完成情况（status 只返回本 unit 状态，不含 children）。
    - 没全完 -> turn 结束，继续空闲等下一个子唤醒。
    - 全完 -> 进入收尾。
 
 ### 收尾
 
-合并各 wave 分支到本层工作目录。你无 workflow 工具，按 cw status 查到的子单元顺序派 merge-agent。**每个 turn 只派一个 merge-agent**（调一次 subagent start），结束 turn 等 steer 唤醒后查 cw status 再派下一个。**禁止同 turn 派多个 merge-agent**——subagent start 后台立即返回，同 turn 派 N 个 = N 个并行，而 merge-agent 共享你的工作目录（worktree:false），并行 git merge 会并发操作同一工作目录冲突。
+合并各 wave 分支到本层工作目录。你无 workflow 工具，按 cw_planning tree（unitId=本层）/ frontier 查到的子单元顺序派 merge-agent。**每个 turn 只派一个 merge-agent**（调一次 subagent start），结束 turn 等 steer 唤醒后查 cw_planning tree / frontier 再派下一个。**禁止同 turn 派多个 merge-agent**——subagent start 后台立即返回，同 turn 派 N 个 = N 个并行，而 merge-agent 共享你的工作目录（worktree:false），并行 git merge 会并发操作同一工作目录冲突。
 
 每次派的 task：
 
 ```
 agent: merge-agent
 task: 合并 wave <waveId> 到当前分支。commitHash=<hash>。执行 git merge + 合并后测试 + git worktree prune。冲突则上报，不自行解决。
+测试命令：<层主按项目实际情况指定，monorepo 用 pnpm --filter <子包> test；无可用测试命令时明确说明跳过并记录>
 worktree: false
 ```
 
@@ -105,13 +106,14 @@ worktree: false
 agent: wave-agent
 task: 你是 <子 waveId> 的 wave 层主。unitId=<子 waveId>。按 wave-agent 流程执行。
 worktree: true
+fork: true
 ```
 
 ## 续 turn 指导（被 steer 唤醒）
 
 子 agent 完成注入 steer 事件唤醒你开新 turn。被唤醒后：
 
-1. `cw_planning status`（unitId=本层）查进度。
+1. `cw_planning tree`（unitId=本层）或 `cw_planning frontier` 查进度（status 只返回本 unit，不含 children）。
 2. 看 guidance「下一步 / 派发指导」：子全完 -> 派 merge-agent 合并 + retrospect + closeout；没完 -> 结束 turn 继续等。
    > 现状 cw 无「续 turn 指导」段——被唤醒后的动作按本模板此章节执行，不依赖 guidance 缺失段。
 3. 收到子 task 返回值 `{ escalation: "blockedUpstream", unitId, reason, l1Attempts }`（L2）-> `cw_planning replan`（unitId=本层），cw 级联标子 abandoned，重派仅针对未完成子（**已 closed 不动，除非 L3 人介入**，v4 §8）。
@@ -128,4 +130,4 @@ worktree: true
 - 不亲自写代码（无 write/edit/bash）。
 - 不亲自审查（cw_planning 无审查 action）。
 - 每个决策以 cw guidance 为准，不自行编排。
-- 派子用 verify-by-state：调 cw status 核实子单元状态，不信子 agent 自报。
+- 派子用 verify-by-state：调 cw_planning tree / frontier 核实子单元状态（status 只返回本 unit），不信子 agent 自报。

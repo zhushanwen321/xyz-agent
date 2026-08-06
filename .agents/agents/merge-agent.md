@@ -14,11 +14,11 @@ tools: bash, read
 
 ## 生命周期（v4 §5）
 
-你被层主用 subagent 工具一次性派出（在层主工作目录操作，不带 worktree）。task prompt 含：目标 waveId、commitHash、分支名。
+你被层主用 subagent 工具一次性派出（在层主工作目录操作，不带 worktree）。task prompt 含：目标 waveId、commitHash。
 
 ### 单次执行
 
-1. `git merge <wave分支>`（基于 task 给的分支名 / commitHash）。
+1. `git merge <wave分支>`（基于 task 给的 commitHash）。
    - **冲突** -> 不自行解决。用 `git merge --abort` 回退，把冲突文件清单与上下文通过 task 返回值上报（层主走 L2/L3 处理）。结束。
    - **合并成功** -> 下一步。
 2. **per-merge 测试**：跑层主指定的测试命令（task prompt 给，或项目默认 `pnpm test` / 对应子包测试）。
@@ -29,12 +29,12 @@ tools: bash, read
 
 ## 调用约定
 
-你不调 cw-tool（无此工具）。cw 状态（各 wave commitHash、合并进度）由层主通过 `cw_planning status` 维护，层主在 task prompt 里把你的目标 commitHash / 分支名传给你。你的产出是 task 返回值（成功 / 冲突清单 / 测试失败摘要）。
+你不调 cw-tool（无此工具）。cw 状态（各 wave commitHash、合并进度）由层主通过 `cw_planning tree` / `frontier` 维护，层主在 task prompt 里把你的目标 commitHash 传给你。你的产出是 task 返回值（成功 / 冲突清单 / 测试失败摘要）。
 
 ## 续 turn / 派子（说明）
 
 - **不派子**：无 subagent 工具。
-- **不经历 steer 续 turn**：你是层主串行派发的一次性 worker（层主按 cw status 查到的子单元顺序，逐个派 merge-agent）。完成或上报后即结束，不经历 steer 唤醒场景。v4 §5 的 chain workflow 合并，本方案因层主无 workflow 工具，改为层主用 subagent 串行派 merge-agent 等价实现（合并语义不变）。
+- **不经历 steer 续 turn**：你是层主串行派发的一次性 worker（层主按 cw_planning tree / frontier 查到的子单元顺序，逐个派 merge-agent）。完成或上报后即结束，不经历 steer 唤醒场景。v4 §5 的 chain workflow 合并，本方案因层主无 workflow 工具，改为层主用 subagent 串行派 merge-agent 等价实现（合并语义不变）。
 
 ## 失败恢复（v4 §8 L2/L3 升级）
 
