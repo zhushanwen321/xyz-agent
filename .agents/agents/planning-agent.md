@@ -31,7 +31,7 @@ tools: cw_planning, subagent
 
 ## 记法
 
-`cw_planning <action>` 表示调 cw_planning 工具且 action 参数取该值。可调 action：handoff / design / execute / retrospect / closeout / replan / status。
+`cw_planning <action>` 表示调 cw_planning 工具且 action 参数取该值。可调 action：handoff / clarify / plan / execute / retrospect / closeout / replan / status。
 
 ## 生命周期（v4 §5）
 
@@ -40,7 +40,7 @@ tools: cw_planning, subagent
 ### turn 1（编排本层）
 
 1. `cw_planning handoff`（unitId=本层）：拿上下文与 guidance。
-2. `cw_planning design`（unitId=本层，input=需求澄清+方案+拆分）。cw 现状若 clarify/plan 分开，连续调（当作一个 design 阶段）。
+2. `cw_planning clarify` → `cw_planning plan`（unitId=本层，input=需求澄清+方案+拆分，连续两步当一个 design 阶段）。cw 合并 design action 后可单步调（现状 cw 无 design，只有 clarify/plan）。
 3. **派 review-agent 审 design**（派子模板见下）。review-agent 主观审；通过才调 cw design-review 过结构 gate。
 4. `cw_planning execute`（unitId=本层）：cw 自动建子单元（下层 planning 或 wave）。
 5. 对每个子单元派 subagent（下层 planning-agent 或 wave-agent），后台启动。turn 结束，进入空闲。
@@ -53,7 +53,9 @@ tools: cw_planning, subagent
 
 ### 收尾
 
-合并各 wave 分支到本层工作目录。你无 workflow 工具，按 cw status 查到的子单元顺序，用 subagent 工具串行派 merge-agent（每个 wave 一个，executionMode 默认串行）：
+合并各 wave 分支到本层工作目录。你无 workflow 工具，按 cw status 查到的子单元顺序派 merge-agent。**每个 turn 只派一个 merge-agent**（调一次 subagent start），结束 turn 等 steer 唤醒后查 cw status 再派下一个。**禁止同 turn 派多个 merge-agent**——subagent start 后台立即返回，同 turn 派 N 个 = N 个并行，而 merge-agent 共享你的工作目录（worktree:false），并行 git merge 会并发操作同一工作目录冲突。
+
+每次派的 task：
 
 ```
 agent: merge-agent
@@ -68,7 +70,7 @@ worktree: false
 ## 调 cw-tool 约定
 
 - `unitId` 必传，从 task prompt 或上一次 cw 响应获取。
-- input 数据走文件：写入 `.cw/<slug>/<action>.json`，以文件路径传给 cw-tool（避免命令行长度限制，保证结构完整）。具体 flag 以 cw-tool 实现为准。
+- input 作为**参数**（JSON 字符串）传给 cw-tool 的 `input` 参数，cw-tool 经 stdin 传给 cw（`--input -`）。你无 write 工具，不自己写文件。
 - 每次调用后读返回 guidance，按其中「下一步 + 派发指导」行动。
 
 ## 派子模板
@@ -109,13 +111,13 @@ worktree: true
 
 1. `cw_planning status`（unitId=本层）查进度。
 2. 看 guidance「续 turn 指导」：子全完 -> 派 merge-agent 合并 + retrospect + closeout；没完 -> 结束 turn 继续等。
-3. 收到 blockedUpstream 信号（L2）-> cw replan 本层，cw 级联标子 abandoned，对受影响未完成子重派（已 closed 不动）。
+3. 收到子 task 返回值 `{ escalation: "blockedUpstream", unitId, reason, l1Attempts }`（L2）-> `cw_planning replan`（unitId=本层），cw 级联标子 abandoned，重派仅针对未完成子（**已 closed 不动，除非 L3 人介入**，v4 §8）。
 
 ## 失败恢复（v4 §8 L0-L3）
 
-- **L0**（cw gate fail 或 review 审出 must-fix）：turn 内处理。读 mustFix / 审查问题 -> `cw_planning design` 改方案 -> 重派 review-agent 重审。unit 不销毁。
+- **L0**（cw gate fail 或 review 审出 must-fix）：turn 内处理。读 mustFix / 审查问题 -> `cw_planning clarify` → `cw_planning plan` 改方案 -> 重派 review-agent 重审。unit 不销毁。
 - **L1**（L0 重试 ≤2 次不行，方案缺陷）：`cw_planning replan`（unitId=本层）就地改方案（标记废弃条目，不销毁）-> 重审。
-- **L2**（根源在上游父拆错，或 L1 超限）：你是父时被 blockedUpstream 唤醒 -> `cw_planning replan`（unitId=本层）-> cw 级联标子 abandoned -> 对受影响未完成子重派。
+- **L2**（根源在上游父拆错，或 L1 超限）：你是父时被子 task 返回值 `{ escalation: "blockedUpstream", unitId, reason, l1Attempts }` 唤醒 -> `cw_planning replan`（unitId=本层）-> cw 级联标子 abandoned -> 重派仅针对未完成子，**已 closed 不动，除非 L3 人介入**（v4 §8）。
 - **L3**（反复失败/超预算/波及已合并代码）：停下，通过 task 返回值上报，等人决定。
 
 ## 约束

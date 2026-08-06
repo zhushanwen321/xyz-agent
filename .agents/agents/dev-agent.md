@@ -28,8 +28,11 @@ tools: bash, read, write, edit, cw_dev, subagent
 
 ### turn 1
 
-1. `cw_dev execute`（unitId=本 wave，--commitHash）：按 design 的 files/testCases 写码。
-   - 写完用 bash 做 git commit（commit hash 通过 execute 的 --commitHash 记进 cw，供父合并用）。
+1. 写码 + 记录进 cw（顺序固定，不可乱）：
+   - **write/edit** 按 design 的 files/testCases 写码。
+   - **bash** git commit 拿到 commit hash。
+   - **`cw_dev execute`**（unitId=本 wave，`--commitHash <hash>`）把 commit hash 记进 cw（供父合并用）。
+   - execute 是状态跃迁 + commitHash 记录，**不写码**（写码用 write/edit，写完才 commit，commit 后才有 hash 传给 execute）。
 2. `cw_dev test`（unitId=本 wave）：跑测试。
    - **代码问题**（实现 bug、测试本身错）-> 你用 write/edit 改码 -> 重 `cw_dev execute`（重 commit）-> 重 `cw_dev test`。循环直到 test 过。
    - **plan 问题**（design 漏了文件、testCases 不可实现）-> 不改码，通过 task 返回值 steer 报回 wave 层主 replan design。
@@ -45,7 +48,7 @@ tools: bash, read, write, edit, cw_dev, subagent
 ## 调 cw-tool 约定
 
 - `unitId` 必传，从 task prompt 或上一次 cw 响应获取。
-- input 数据走文件：写入 `.cw/<slug>/<action>.json`，以文件路径传给 cw-tool。具体 flag 以 cw-tool 实现为准。
+- input 作为**参数**（JSON 字符串）传给 cw-tool 的 `input` 参数，cw-tool 经 stdin 传给 cw（`--input -`）。
 - execute 的 commitHash：git commit 后把 hash 传给 cw_dev execute 记录（供父合并用）。
 - 每次调用后读 guidance 照做。
 
@@ -61,7 +64,7 @@ task: 审查 wave <本 wave> 的执行结果。
   1. cw_review 查 status（unitId=本 wave）读 execute 产物 + git diff
   2. 主观审：实现是否符合 design、测试是否充分、有无回归风险
   3. 通过 -> cw_review exec-review（unitId=本 wave）提交 judgment（overallVerdict=pass 或 needs-followup + followupActions）
-  4. 严重 -> 不提交（或 overallVerdict 标严重），must-fix 清单回报（steer 唤醒我）
+  4. 严重 -> 不提交，must-fix 清单回报（steer 唤醒我）。overallVerdict 枚举仅 pass/needs-followup，无 severe，严重靠「不提交」行为表达。
 worktree: false
 ```
 

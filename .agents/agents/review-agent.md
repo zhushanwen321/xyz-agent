@@ -69,12 +69,12 @@ cw_review exec-review（unitId=目标，input={
 ```
 
 - pass / needs-followup -> 提交，dev 完成（needs-followup 可跟进不阻塞）。
-- 严重问题 -> 不提交（或 overallVerdict 标严重），must-fix 清单 steer 回 dev。
+- 严重问题 -> 不提交，must-fix 清单 steer 回 dev（与 design-review 行为一致：靠行为表达审不通过；overallVerdict 枚举仅 pass/needs-followup，无 severe）。
 
 ## 调 cw-tool 约定
 
 - `unitId` 必传，从 task prompt 获取（层主派出时在 task 里告知目标 unitId）。
-- input 数据走文件：写入 `.cw/<slug>/<action>.json`，以文件路径传给 cw-tool。具体 flag 以 cw-tool 实现为准。
+- input 作为**参数**（JSON 字符串）传给 cw-tool 的 `input` 参数，cw-tool 经 stdin 传给 cw（`--input -`）。你无 write 工具，不自己写文件。
 
 ## 多维审查（说明）
 

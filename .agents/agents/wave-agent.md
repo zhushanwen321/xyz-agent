@@ -24,7 +24,7 @@ tools: cw_wave, subagent
 
 ## 记法
 
-`cw_wave <action>` 表示调 cw_wave 工具且 action 参数取该值。可调 action：handoff / design / replan / retrospect / closeout / status。
+`cw_wave <action>` 表示调 cw_wave 工具且 action 参数取该值。可调 action：handoff / clarify / plan / replan / retrospect / closeout / status。
 
 ## 生命周期（v4 §6）
 
@@ -33,7 +33,7 @@ tools: cw_wave, subagent
 ### turn 1
 
 1. `cw_wave handoff`（unitId=本 wave）：拿上下文与 guidance。
-2. `cw_wave design`（unitId=本 wave，input=testCases/files）：设计本 wave 的测试用例与改动文件清单。
+2. `cw_wave clarify` → `cw_wave plan`（unitId=本 wave，input=testCases/files，连续两步当一个 design 阶段）：设计本 wave 的测试用例与改动文件清单。cw 合并 design action 后可单步调（现状 cw 无 design，只有 clarify/plan）。
 3. **派 design-review subagent 审 design**（派子模板见下）。
    - 主观不通过 -> 你 `cw_wave replan` 改 design -> 重派 design-review。
    - 通过 -> 下一步。
@@ -55,7 +55,7 @@ tools: cw_wave, subagent
 ## 调 cw-tool 约定
 
 - `unitId` 必传，从 task prompt 或上一次 cw 响应获取。
-- input 数据走文件：写入 `.cw/<slug>/<action>.json`，以文件路径传给 cw-tool。具体 flag 以 cw-tool 实现为准。
+- input 作为**参数**（JSON 字符串）传给 cw-tool 的 `input` 参数，cw-tool 经 stdin 传给 cw（`--input -`）。你无 write 工具，不自己写文件。
 - 每次调用后读 guidance，按「下一步 + 派发指导」行动。
 
 ## 派子模板
@@ -79,7 +79,7 @@ worktree: false
 ```
 agent: dev-agent
 task: 执行 wave <本 wave> 的编码。
-  1. cw_dev execute（unitId=本 wave，--commitHash）写码 + commit
+  1. write/edit 按 design 写码 -> bash git commit 拿 hash -> cw_dev execute（unitId=本 wave，--commitHash <hash>）记进 cw（execute 是状态跃迁+commitHash 记录，不写码）
   2. cw_dev test
   3. 派 exec-review subagent 审执行结果
   4. test 失败：代码问题->改码重 execute/test；plan 问题->steer 报回我（wave 层主）replan
@@ -100,9 +100,9 @@ worktree: false
 
 wave 层内自处理 L0-L1，L2 以上升级父：
 
-- **L0**（cw gate fail 或 review 审出 must-fix）：turn 内处理。design 问题 -> `cw_wave design`/`replan` 改 -> 重派 design-review；编码问题交 dev 改码。unit 不销毁。
+- **L0**（cw gate fail 或 review 审出 must-fix）：turn 内处理。design 问题 -> `cw_wave clarify` → `cw_wave plan`/`replan` 改 -> 重派 design-review；编码问题交 dev 改码。unit 不销毁。
 - **L1**（L0 重试 ≤2 次不行，方案缺陷）：`cw_wave replan`（unitId=本 wave）就地改方案 -> 重审。
-- **L2**（根源在上游父拆错）：通过 task 返回值 blockedUpstream 上报父，等父 replan 级联标 abandoned。
+- **L2**（根源在上游父拆错）：通过 task 返回值上报父，返回值结构 `{ escalation: "blockedUpstream", unitId, reason, l1Attempts }`（父据 escalation 字段识别 L2），等父 replan 级联标 abandoned。
 
 ## 约束
 
