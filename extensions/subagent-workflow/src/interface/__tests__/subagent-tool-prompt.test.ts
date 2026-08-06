@@ -107,8 +107,8 @@ describe("subagent tool description — 行为约束器（非功能说明书）"
     // 注意：agent 列表在 schema field description 里，不在主 description: 模板字符串里——
     // 断言源码全文（含 schema field description）而非 DESCRIPTION。
     const expected = [
-      "general-purpose", "worker", "researcher", "explorer",
-      "planner", "reviewer", "oracle", "context-builder", "orchestrator",
+      "general-purpose", "coder", "researcher", "explorer",
+      "planner", "reviewer", "debugger", "analyst", "orchestrator",
     ];
     for (const name of expected) {
       expect(SUBAGENT_TOOL_SRC).toContain(name);

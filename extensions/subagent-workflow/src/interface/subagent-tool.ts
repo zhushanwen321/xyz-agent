@@ -85,7 +85,7 @@ const SubagentParams = Type.Object({
     maxLength: SLUG_MAX_LENGTH,
   })),
   agent: Type.Optional(Type.String({
-    description: 'Agent name (system prompt + tools). If omitted, defaults to "general-purpose" — a generic agent that inherits the main agent\'s model and project context. Available: general-purpose (default fallback), worker, researcher, explorer, planner, reviewer, oracle, context-builder, orchestrator. Custom agents configurable.',
+    description: 'Agent name (system prompt + tools). If omitted, defaults to "general-purpose". Pick by task nature (改不改代码 × 看代码还是看外部): explorer=理解代码(只读) | coder=写改代码+测试 | reviewer=审查/验收(只读) | debugger=查bug根因(只读) | analyst=深度分析(只读) | planner=复杂任务拆解 | researcher=外部调研 | orchestrator=多agent编排. Available: general-purpose (default fallback), coder, researcher, explorer, planner, reviewer, debugger, analyst, orchestrator. Custom agents configurable.',
   })),
   model: Type.Optional(Type.String({
     description: 'Model override in "provider/modelId" format. Resolution order (top wins): (1) this param, (2) agent .md frontmatter model, (3) the main agent\'s current model (zero-config default). An explicit model (param or frontmatter) that is missing or unauthorized THROWS — there is no silent fallback to the main model. Omit this param to inherit the main model.',
@@ -177,7 +177,7 @@ CRITICAL — executionMode "sequential": multiple \`subagent\` calls in the SAME
 
 ## When to delegate
 
-Delegate when the task needs a distinct role (researcher/worker), context isolation (fork/worktree), or parallelism while you do other work. Do NOT delegate trivial tasks or one-shot lookups you could do faster yourself.
+Delegate when the task needs a distinct role (researcher/coder), context isolation (fork/worktree), or parallelism while you do other work. Do NOT delegate trivial tasks or one-shot lookups you could do faster yourself.
 
 ## Actions
 
@@ -189,7 +189,7 @@ Delegate when the task needs a distinct role (researcher/worker), context isolat
 
 \`\`\`
 {"action":"start","task":"<your task>","slug":"<kebab-case>"}
-{"action":"start","task":"...","slug":"fix-login","agent":"worker","model":"anthropic/claude-3.5-sonnet","fork":true}
+{"action":"start","task":"...","slug":"fix-login","agent":"coder","model":"anthropic/claude-3.5-sonnet","fork":true}
 {"action":"list","listParam":{"includeFinished":false,"limit":20}}
 {"action":"cancel","cancelParam":{"subagentId":"sa-550e8400"}}
 \`\`\`

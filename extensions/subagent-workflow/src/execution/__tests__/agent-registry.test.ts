@@ -147,16 +147,16 @@ describe("AgentRegistry.discoverAll", () => {
 // ============================================================
 
 describe("createPackageBuiltinRegistry", () => {
-  it("discovers packaged agents/*.md (worker, reviewer, explorer, etc.)", () => {
+  it("discovers packaged agents/*.md (coder, reviewer, explorer, etc.)", () => {
     // [HISTORICAL] S6: 包内 agents/ 此前未被接通——discoverAll 从未调用，
     // 导致 pi install 后包内 agent 定义开箱不可用。
     const builtin = createPackageBuiltinRegistry();
     const names = builtin.list();
     // 包内 9 个 agent 必须全部被发现
     expect(names).toEqual(expect.arrayContaining([
-      "worker", "general-purpose", "orchestrator",
+      "coder", "general-purpose", "orchestrator",
       "reviewer", "explorer", "researcher",
-      "planner", "oracle", "context-builder",
+      "planner", "debugger", "analyst",
     ]));
     // 每个 agent 都有 systemPrompt
     for (const name of names) {
@@ -166,16 +166,16 @@ describe("createPackageBuiltinRegistry", () => {
     }
     // tools 字段精确匹配：未声明的为 undefined，声明的为具体数组。
     // 改 frontmatter 时这里会立即报错，拦住拼写错误或字段遗漏。
-    expect(builtin.get("worker")?.tools).toBeUndefined();
     expect(builtin.get("general-purpose")?.tools).toBeUndefined();
-    expect(builtin.get("explorer")?.tools).toEqual(["read", "bash", "grep", "find", "ls"]);
+    expect(builtin.get("explorer")?.tools).toEqual(["read", "bash", "grep", "glob"]);
     expect(builtin.get("researcher")?.tools).toEqual(["read", "bash"]);
     expect(builtin.get("orchestrator")?.tools).toEqual([
       "todo", "goal_control", "workflow", "subagent", "ask_user",
     ]);
-    expect(builtin.get("reviewer")?.tools).toEqual(["read"]);
-    expect(builtin.get("planner")?.tools).toEqual(["read"]);
-    expect(builtin.get("oracle")?.tools).toEqual(["read"]);
-    expect(builtin.get("context-builder")?.tools).toEqual(["read"]);
+    expect(builtin.get("reviewer")?.tools).toEqual(["read", "bash", "grep", "glob"]);
+    expect(builtin.get("planner")?.tools).toEqual(["read", "bash", "grep", "glob"]);
+    expect(builtin.get("analyst")?.tools).toEqual(["read", "bash", "grep", "glob"]);
+    expect(builtin.get("coder")?.tools).toEqual(["read", "write", "edit", "bash", "grep", "glob"]);
+    expect(builtin.get("debugger")?.tools).toEqual(["read", "write", "edit", "bash", "grep", "glob"]);
   });
 });
