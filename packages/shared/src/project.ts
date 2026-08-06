@@ -34,6 +34,12 @@ export interface Project {
   name: string
   /** 该 project 下的 workspace 实例（按显示顺序） */
   workspaces: Workspace[]
+  /** 最后活跃时间戳（ms）。0 = 未用过。
+   *
+   * setActiveProject(id) 切换 / addProject(name) 新建时更新为 Date.now()。
+   * loadFromStorage 用 `p.lastUsedAt ?? 0` 兼容旧持久化数据（无该字段视为未用过）。
+   * 用于 recentProjects 排序（降序，最新在前）。 */
+  lastUsedAt: number
 }
 
 /** project store 持久化结构（localStorage / 未来 runtime projects.json） */

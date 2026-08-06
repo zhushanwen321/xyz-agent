@@ -13,7 +13,7 @@
  *  - store 持久化迁移到 runtime RPC（~/.xyz-agent/projects.json，跨设备一致）。
  */
 import { computed, nextTick, ref, type ComponentPublicInstance } from 'vue'
-import { Folder, ChevronDown, Trash2, Plus } from '@lucide/vue'
+import { Trash2, Plus } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -23,10 +23,7 @@ import { useProjectStore } from '@/stores/project'
 const { t } = useI18n()
 const projectStore = useProjectStore()
 
-// ── 展开态 ──
-const expanded = ref(false)
-
-// ── 当前 project（name 空时 fallback i18n defaultName，store 不依赖 i18n）──
+// ── 当前 project（name 空时 fallback i18n defaultName，store 不依赖 i18n）——
 const current = computed(() => projectStore.activeProject)
 const currentName = computed(
   () => current.value?.name || t('sidebar.projectSwitcher.defaultName'),
@@ -44,15 +41,8 @@ const creating = ref(false)
 const draft = ref('')
 const inputRef = ref<ComponentPublicInstance | null>(null)
 
-function toggle() {
-  expanded.value = !expanded.value
-  // 折叠时一并取消未提交的新建输入
-  if (!expanded.value) creating.value = false
-}
-
 function select(id: string) {
   projectStore.setActiveProject(id)
-  expanded.value = false
 }
 
 function requestDelete(id: string) {
@@ -91,30 +81,18 @@ function cancelCreate() {
 
 <template>
   <div class="mx-1 mb-1 overflow-hidden rounded-md border border-border bg-bg-input">
-    <!-- 折叠态：当前 project 行 -->
-    <Button
-      variant="ghost"
-      class="h-auto w-full justify-start gap-1.5 rounded-none px-2 py-1.5 text-[12px] text-neutral-fg hover:bg-surface-hover"
-      :aria-expanded="expanded"
-      @click="toggle"
-    >
-      <Folder class="size-3.5 shrink-0 text-neutral-mid" />
-      <span class="flex-1 truncate text-left font-medium">{{ currentName }}</span>
-      <ChevronDown
-        class="size-3 shrink-0 text-neutral-dim transition-transform duration-[var(--duration-fast)] ease-[var(--ease)]"
-        :class="{ 'rotate-180': expanded }"
-      />
-    </Button>
-
-    <!-- 展开态：project 列表 + 新建（popover 范式：bg-elevated + border-strong + shadow-2） -->
+    <!-- project 列表（常驻默认展开，无折叠下拉）。
+         按 recentProjects 排序（activeProject 第一 + 其余 lastUsedAt 降序）；
+         max-h-32 限可视区约 5 项（5×~24px），overflow-y-auto 超出滚动。 -->
     <div
-      v-if="expanded"
-      class="flex flex-col gap-px border-t border-border-strong bg-bg-elevated p-1 shadow-2"
+      data-testid="project-list"
+      class="flex max-h-32 flex-col gap-px overflow-y-auto bg-bg-elevated p-1"
     >
       <!-- list item：div role=button + 行内删除 Button（避免 button 嵌套 button 无效 DOM） -->
       <div
-        v-for="p in projectStore.projects"
+        v-for="p in projectStore.recentProjects"
         :key="p.id"
+        data-testid="project-item"
         role="button"
         tabindex="0"
         class="group flex cursor-pointer items-center gap-1.5 rounded-sm px-1.5 py-1 text-[11px] transition-colors duration-[var(--duration-fast)] ease-[var(--ease)]"
@@ -137,13 +115,15 @@ function cancelCreate() {
           <Trash2 class="size-3.5" />
         </Button>
       </div>
+    </div>
 
-      <!-- 新建项目：input / 按钮 互斥 -->
+    <!-- 新建项目（滚动区外，常驻底部；input / 按钮 互斥） -->
+    <div class="border-t border-border-strong p-1">
       <Input
         v-if="creating"
         ref="inputRef"
         v-model="draft"
-        class="mt-px h-[26px] rounded-sm border-border-strong bg-bg-input px-2 py-0 text-[11px] leading-none text-neutral-fg"
+        class="h-[26px] rounded-sm border-border-strong bg-bg-input px-2 py-0 text-[11px] leading-none text-neutral-fg"
         :placeholder="t('sidebar.projectSwitcher.namePlaceholder')"
         @keydown.enter.prevent="commitCreate"
         @keydown.esc.prevent="cancelCreate"
@@ -152,7 +132,7 @@ function cancelCreate() {
       <Button
         v-else
         variant="ghost"
-        class="mt-px h-auto w-full justify-start gap-1.5 rounded-sm px-1.5 py-1 text-[11px] text-neutral-dim hover:bg-surface-hover hover:text-neutral-mid"
+        class="h-auto w-full justify-start gap-1.5 rounded-sm px-1.5 py-1 text-[11px] text-neutral-dim hover:bg-surface-hover hover:text-neutral-mid"
         @click="startCreate"
       >
         <Plus class="size-3" />

@@ -29,7 +29,11 @@ function loadFromStorage(): ProjectStoreState {
     if (raw) {
       const parsed = JSON.parse(raw) as ProjectStoreState
       if (Array.isArray(parsed.projects) && parsed.projects.length > 0) {
-        return parsed
+        // 兼容旧持久化数据：Project.lastUsedAt 是后加字段，旧数据无该 key → 补 0（视为未用过）
+        return {
+          projects: parsed.projects.map((p) => ({ ...p, lastUsedAt: p.lastUsedAt ?? 0 })),
+          activeProjectId: parsed.activeProjectId,
+        }
       }
     }
   } catch (e) {
@@ -37,7 +41,7 @@ function loadFromStorage(): ProjectStoreState {
     console.warn('[project-store] failed to parse projects from localStorage, falling back to default', e)
   }
   return {
-    projects: [{ id: DEFAULT_PROJECT_ID, name: '', workspaces: [] }],
+    projects: [{ id: DEFAULT_PROJECT_ID, name: '', workspaces: [], lastUsedAt: 0 }],
     activeProjectId: DEFAULT_PROJECT_ID,
   }
 }
@@ -51,6 +55,32 @@ export const useProjectStore = defineStore('project', () => {
   const activeProject = computed<Project>(
     () => projects.value.find((p) => p.id === activeProjectId.value) ?? projects.value[0],
   )
+
+  /**
+   * 按「最近使用」排序的 project 列表（供 ProjectSwitcher 列表渲染）。
+   *
+   * 排序规则：
+   *  1. activeProject 强制第一（用户当前/上次最后关注的项目，无论 lastUsedAt 值）；
+   *  2. 其余按 lastUsedAt 降序（最新在前）；
+   *  3. lastUsedAt 相同（如旧数据升级全 0）时保持原数组顺序（稳定兜底）。
+   *
+   * activeProject 永远第一的设计同时解决两件事：
+   *  - 正常态：刚切换/新建的 project 既是 active 又是 lastUsedAt 最新，二者吻合；
+   *  - 兜底态（旧数据全 0）：active 仍是上次最后用的，排第一符合直觉。
+   */
+  const recentProjects = computed<Project[]>(() => {
+    const activeId = activeProjectId.value
+    const active = projects.value.find((p) => p.id === activeId)
+    const rest = projects.value.filter((p) => p.id !== activeId)
+    // 稳定排序：用原 index 做 tiebreaker，保证 lastUsedAt 相同时不乱序
+    const indexed = rest.map((p, i) => ({ p, i }))
+    indexed.sort((a, b) => {
+      const diff = b.p.lastUsedAt - a.p.lastUsedAt
+      return diff !== 0 ? diff : a.i - b.i
+    })
+    const sortedRest = indexed.map((x) => x.p)
+    return active ? [active, ...sortedRest] : sortedRest
+  })
 
   /** localStorage 持久化（deep watch；写入失败如隐私模式/配额超限忽略） */
   watch(
@@ -71,7 +101,10 @@ export const useProjectStore = defineStore('project', () => {
   )
 
   function setActiveProject(id: string): void {
-    if (projects.value.some((p) => p.id === id)) {
+    const target = projects.value.find((p) => p.id === id)
+    if (target) {
+      // 切换即「最近使用」：更新时间戳，驱动 recentProjects 排序 + 持久化（deep watch）
+      target.lastUsedAt = Date.now()
       activeProjectId.value = id
     }
   }
@@ -81,7 +114,7 @@ export const useProjectStore = defineStore('project', () => {
     const trimmed = name.trim()
     if (!trimmed) return activeProjectId.value
     const id = `proj-${Date.now()}`
-    projects.value.push({ id, name: trimmed, workspaces: [] })
+    projects.value.push({ id, name: trimmed, workspaces: [], lastUsedAt: Date.now() })
     activeProjectId.value = id
     return id
   }
@@ -97,5 +130,5 @@ export const useProjectStore = defineStore('project', () => {
     }
   }
 
-  return { projects, activeProjectId, activeProject, setActiveProject, addProject, removeProject }
+  return { projects, activeProjectId, activeProject, recentProjects, setActiveProject, addProject, removeProject }
 })
