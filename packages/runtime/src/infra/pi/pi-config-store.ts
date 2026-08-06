@@ -18,6 +18,7 @@ import type {
   ConfigProviderConfig,
   ConfigModelsConfig,
 } from '../../services/ports/config.js'
+import type { SkillDirConfig } from '@xyz-agent/shared'
 import { KNOWN_PI_API_TYPES } from '@xyz-agent/shared'
 import {
   getDefaultModel,
@@ -27,6 +28,7 @@ import {
   upsertProvider,
   removeProvider,
   getSkillPaths,
+  getSkillPathScopes,
   setSkillPaths,
   addSkillPath,
   removeSkillPath,
@@ -36,8 +38,10 @@ import { listAgentFiles, writeAgentFile, deleteAgentFile } from './agent-crud.js
 import { getConfigDir, getPiAgentDir } from './pi-paths.js'
 import {
   getAgentDirs as getDiscoveryAgentDirs,
+  getAgentPathScopes as getDiscoveryAgentPathScopes,
   setAgentDirs as setDiscoveryAgentDirs,
   getExtensionDirs as getDiscoveryExtensionDirs,
+  getExtensionPathScopes as getDiscoveryExtensionPathScopes,
   setExtensionDirs as setDiscoveryExtensionDirs,
 } from './discovery-store.js'
 
@@ -98,8 +102,12 @@ export class PiConfigStore implements IConfigStore {
     return getSkillPaths()
   }
 
-  setSkillPaths(paths: string[]): void {
-    setSkillPaths(paths)
+  getSkillPathScopes() {
+    return getSkillPathScopes()
+  }
+
+  setSkillPaths(dirs: SkillDirConfig[]): void {
+    setSkillPaths(dirs)
   }
 
   addSkillPath(dir: string): void {
@@ -120,7 +128,11 @@ export class PiConfigStore implements IConfigStore {
     return getDiscoveryAgentDirs()
   }
 
-  setAgentDirs(dirs: string[]): void {
+  getAgentPathScopes() {
+    return getDiscoveryAgentPathScopes()
+  }
+
+  setAgentDirs(dirs: SkillDirConfig[]): void {
     setDiscoveryAgentDirs(dirs)
   }
 
@@ -130,7 +142,11 @@ export class PiConfigStore implements IConfigStore {
     return getDiscoveryExtensionDirs()
   }
 
-  setExtensionDirs(dirs: string[]): void {
+  getExtensionPathScopes() {
+    return getDiscoveryExtensionPathScopes()
+  }
+
+  setExtensionDirs(dirs: SkillDirConfig[]): void {
     setDiscoveryExtensionDirs(dirs)
   }
 

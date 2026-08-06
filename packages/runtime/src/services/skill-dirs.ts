@@ -10,15 +10,15 @@
  * watcher（SkillRegistry）都从这里取目录列表，从结构上保证 watch 范围 = scan 范围，
  * 不再有 watch 整个 cwd 的可能。
  *
- * 目录分类（与 loadSkills 的优先级链一致）：
- * - 全局目录（resolveGlobalSkillDirs）：不依赖 projectRoot，固定几个绝对路径
- *   （piAgentDir/skills、configDir/skills、discovery 中的绝对/~ 路径）。
- * - 项目目录（resolveProjectSkillDirs）：依赖 projectRoot resolve 的相对路径
- *   （强制项目目录 .xyz-agent/skills + discovery 中的相对路径如 .agents/skills）。
+ * v2 显式 scope（方案 §2.5 / §3.2 Must-Fix #1）：project/global 归属不再靠 isAbsolute/startsWith('~/')
+ * 推断，而是直接读 discovery.json v2 的 projectPaths/globalPaths——用户在 UI 显式标注的 scope
+ * 才真正决定加载归属与优先级。相对路径（projectPaths）resolve 到 projectRoot；绝对/~ 路径
+ * （globalPaths）经 expandHome 展开。
  */
 import { isAbsolute, join, resolve } from 'node:path'
 
 import { expandHome } from '../utils/path-utils.js'
+import type { DirScopes } from './skill-dir-config.js'
 
 /**
  * 强制·项目 skill 目录（ADR-0021 §1.1 桥接层硬编码，项目相对路径，最高优先）。
@@ -28,18 +28,24 @@ export const FORCED_PROJECT_SKILL_DIR = '.xyz-agent/skills'
 
 /**
  * configStore 的窄接口（与 PiConfigStore / SkillRegistryConfigStore 对齐）。
- * 只需要目录发现相关的两个方法。
+ * 只需要目录发现相关的方法。
  */
 export interface SkillDirConfigSource {
   /** pi agent 配置目录（~/.xyz-agent/pi/agent）。 */
   getPiAgentDir(): string
-  /** discovery.json skillDirs（全局，无 cwd 参数）。 */
-  getSkillPaths(): string[]
+  /**
+   * discovery.json skill 的 v2 分 scope 结构（projectPaths / globalPaths）。
+   * v2：消费端直接读显式 scope 决定加载归属，不再 isAbsolute 推断（方案 §2.5 路径 A 配套）。
+   */
+  getSkillPathScopes(): DirScopes
 }
 
 /**
  * 全局 skill 目录列表（不依赖 projectRoot）。
  * scanner 扫描这些 + 项目目录；watcher（initGlobal）只 watch 这些。
+ *
+ * v2：直接读 discovery.skill.globalPaths（显式 global scope），不再用 isAbsolute 推断。
+ * 加上两个强制全局目录（piAgentDir/skills、configDir/skills）。
  *
  * @param configDir xyz-agent 配置根目录（~/.xyz-agent/，由调用方传入——ConfigService 传
  *   getConfigDir()，SkillRegistry 传 options.configDir；两者值相同，显式传入避免隐式 env 依赖）。
@@ -53,10 +59,7 @@ export function resolveGlobalSkillDirs(
   return [
     join(configStore.getPiAgentDir(), 'skills'),
     join(configDir, 'skills'),
-    ...configStore
-      .getSkillPaths()
-      .filter(d => isAbsolute(d) || d.startsWith('~'))
-      .map(d => expandHome(d)),
+    ...configStore.getSkillPathScopes().globalPaths.map(d => expandHome(d)),
   ]
 }
 
@@ -65,9 +68,9 @@ export function resolveGlobalSkillDirs(
  * scanner 扫描这些 + 全局目录；watcher（getProjectSkills）只 watch 这些，
  * 不再 watch 整个 cwd。
  *
- * 包含强制项目目录（.xyz-agent/skills）+ discovery 中所有相对路径（如 .agents/skills），
- * 统一 resolve 到绝对路径。绝对路径 / ~ 开头的 discovery 路径属于全局（见 resolveGlobalSkillDirs），
- * 此处不含。
+ * v2：直接读 discovery.skill.projectPaths（显式 project scope），不再用 isAbsolute 排除绝对路径。
+ * projectPaths 允许相对+绝对（项目级语义）：相对路径 resolve 到 projectRoot，绝对路径原样保留。
+ * 加上强制项目目录（.xyz-agent/skills）。
  */
 export function resolveProjectSkillDirs(
   projectRoot: string,
@@ -77,9 +80,6 @@ export function resolveProjectSkillDirs(
     isAbsolute(dir) ? dir : resolve(projectRoot, dir)
   return [
     resolve(projectRoot, FORCED_PROJECT_SKILL_DIR),
-    ...configStore
-      .getSkillPaths()
-      .filter(d => !isAbsolute(d) && !d.startsWith('~'))
-      .map(resolveDir),
+    ...configStore.getSkillPathScopes().projectPaths.map(resolveDir),
   ]
 }

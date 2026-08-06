@@ -29,7 +29,9 @@ import type {
   TerminalConfig,
   BatchDeleteResult,
   SegmentsMetadataEntry,
+  SkillDirConfig,
 } from '@xyz-agent/shared'
+import type { DirScopes } from './services/skill-dir-config.js'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
 
 /**
@@ -265,19 +267,25 @@ export interface IConfigService {
   deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } }
   getProvider(providerId: string): { apiKey?: string; name?: string; type?: string; baseUrl?: string; models?: unknown[]; enabled?: boolean } | undefined
   updateToolPermissions(permissions: Record<string, string>): void
-  // ── Skill/Agent 加载路径（ADR-0021 §1 discovery.json SSOT）──
-  /** 覆盖 skillDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json + 投影 settings.json。 */
-  setSkillDirs(dirs: string[]): void
-  /** 读取 skillDirs（有序数组）。 */
+  // ── Skill/Agent 加载路径（ADR-0021 §1 discovery.json v2 SSOT）──
+  /** 覆盖 skill 路径（SkillDirConfig[] 带 scope，按 scope 分发写 projectPaths/globalPaths）。写 discovery.json + 投影 settings.json。 */
+  setSkillDirs(dirs: SkillDirConfig[]): void
+  /** 读取 skill 合并路径（project ∪ global 去重，项目在前）。 */
   getSkillDirs(): string[]
-  /** 覆盖 agentDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json。 */
-  setAgentDirs(dirs: string[]): void
-  /** 读取 agentDirs（有序数组）。 */
+  /** 读取 skill 的 v2 分 scope 结构（projectPaths / globalPaths）。 */
+  getSkillPathScopes(): DirScopes
+  /** 覆盖 agent 路径（SkillDirConfig[] 带 scope）。写 discovery.json。 */
+  setAgentDirs(dirs: SkillDirConfig[]): void
+  /** 读取 agent 合并路径（project ∪ global 去重，项目在前）。 */
   getAgentDirs(): string[]
-  /** 覆盖 extensionDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json。 */
-  setExtensionDirs(dirs: string[]): void
-  /** 读取 extensionDirs（有序数组）。 */
+  /** 读取 agent 的 v2 分 scope 结构（projectPaths / globalPaths）。 */
+  getAgentPathScopes(): DirScopes
+  /** 覆盖 extension 路径（SkillDirConfig[] 带 scope）。写 discovery.json。 */
+  setExtensionDirs(dirs: SkillDirConfig[]): void
+  /** 读取 extension 合并路径（project ∪ global 去重，项目在前）。 */
   getExtensionDirs(): string[]
+  /** 读取 extension 的 v2 分 scope 结构（projectPaths / globalPaths）。 */
+  getExtensionPathScopes(): DirScopes
   /** 一次性迁移：settings.json.skills → discovery.json（首启用，幂等）。 */
   migrateSettingsSkillsToDiscovery(): void
   loadSkills(projectRoot: string): SkillInfo[]

@@ -5,7 +5,8 @@
  * pi 的协议类型（PiProviderConfig/PiModelDefinition）只存在于 infra 实现内部，
  * service 只见本文件定义的 ConfigProviderConfig / ConfigModelDefinition。
  */
-import type { ScanSourceType } from '@xyz-agent/shared'
+import type { ScanSourceType, SkillDirConfig } from '@xyz-agent/shared'
+import type { DirScopes } from '../skill-dir-config.js'
 
 /** service 侧的 provider 配置形状（pi-provider-store 的 PiProviderConfig 的 service 视图）。 */
 export interface ConfigProviderConfig {
@@ -103,24 +104,33 @@ export interface IConfigStore {
   /** 透传 provider type → pi api 标识（前端直接发 pi 终值，runtime 不再翻译别名）。 */
   applyTypeTranslation(type: string): string
 
-  // ── Skill paths（discovery.json SSOT，ADR-0021 §1）──
+  // ── Skill paths（discovery.json v2 SSOT，ADR-0021 §1）──
+  /** 读取 skill 合并路径（project ∪ global 去重，项目在前）。供 session-service pi 启动参数等消费。 */
   getSkillPaths(): string[]
-  /** 覆盖 skillDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json + 同步投影 settings.json。 */
-  setSkillPaths(paths: string[]): void
+  /** 读取 skill 的 v2 分 scope 结构（projectPaths / globalPaths）。 */
+  getSkillPathScopes(): DirScopes
+  /** 覆盖 skill 路径（SkillDirConfig[] 带 scope，按 scope 分发写 projectPaths/globalPaths + 脏数据过滤）。写 discovery.json + 同步投影 settings.json。 */
+  setSkillPaths(dirs: SkillDirConfig[]): void
   addSkillPath(dir: string): void
   removeSkillPath(dir: string): void
   /** 一次性迁移：settings.json.skills → discovery.json（首启用，幂等）。 */
   migrateSettingsSkillsToDiscovery(): void
 
-  // ── Agent dirs（discovery.json SSOT，ADR-0021 §1）──
+  // ── Agent dirs（discovery.json v2 SSOT，ADR-0021 §1）──
+  /** 读取 agent 合并路径（project ∪ global 去重，项目在前）。 */
   getAgentDirs(): string[]
-  /** 覆盖 agentDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json。 */
-  setAgentDirs(dirs: string[]): void
+  /** 读取 agent 的 v2 分 scope 结构（projectPaths / globalPaths）。 */
+  getAgentPathScopes(): DirScopes
+  /** 覆盖 agent 路径（SkillDirConfig[] 带 scope，按 scope 分发 + 脏数据过滤）。写 discovery.json。 */
+  setAgentDirs(dirs: SkillDirConfig[]): void
 
-  // ── Extension dirs（discovery.json SSOT，ADR-0021 §1）──
+  // ── Extension dirs（discovery.json v2 SSOT，ADR-0021 §1）──
+  /** 读取 extension 合并路径（project ∪ global 去重，项目在前）。 */
   getExtensionDirs(): string[]
-  /** 覆盖 extensionDirs（有序数组 = 优先级，靠前覆盖靠后）。写 discovery.json。 */
-  setExtensionDirs(dirs: string[]): void
+  /** 读取 extension 的 v2 分 scope 结构（projectPaths / globalPaths）。 */
+  getExtensionPathScopes(): DirScopes
+  /** 覆盖 extension 路径（SkillDirConfig[] 带 scope，按 scope 分发 + 脏数据过滤）。写 discovery.json。 */
+  setExtensionDirs(dirs: SkillDirConfig[]): void
 
   // ── Agent files（强制目录 + discovery 多目录扫描）──
   /**

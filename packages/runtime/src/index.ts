@@ -334,7 +334,7 @@ async function main(): Promise<void> {
   // initGlobal() 在 server.start 后调（下文），启动期扫描全局 skill 目录挂 watcher。
   const skillRegistry = new SkillRegistry({
     configStore: {
-      getSkillPaths: () => configService.getSkillDirs(),
+      getSkillPathScopes: () => configService.getSkillPathScopes(),
       getPiAgentDir: () => configService.getPiAgentDir(),
     },
     configDir,

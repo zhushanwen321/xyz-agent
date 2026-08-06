@@ -251,7 +251,10 @@ describe('pi-provider-store — models.json', () => {
       const realDir2 = join(tmpDir, 'skills-b')
       mkdirSync(realDir1, { recursive: true })
       mkdirSync(realDir2, { recursive: true })
-      setSkillPaths([realDir1, realDir2])
+      setSkillPaths([
+        { path: realDir1, enabled: true, scope: 'global' },
+        { path: realDir2, enabled: true, scope: 'global' },
+      ])
       expect(getSkillPaths()).toEqual([realDir1, realDir2])
     })
   })

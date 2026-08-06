@@ -146,15 +146,15 @@ export class ServerMessageBroker implements IMessageBroker {
   }
   /** skill 加载路径配置（ADR-0021 §1 discovery.json SSOT 的 UI 视图）。 */
   private buildSkillDirsMsg(): ServerMessage {
-    return { type: 'config.skillDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_SKILL_DIRS, this.services.configService.getSkillDirs()) } }
+    return { type: 'config.skillDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_SKILL_DIRS, this.services.configService.getSkillPathScopes()) } }
   }
   /** agent 加载路径配置（ADR-0021 §1 discovery.json SSOT 的 UI 视图）。 */
   private buildAgentDirsMsg(): ServerMessage {
-    return { type: 'config.agentDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_AGENT_DIRS, this.services.configService.getAgentDirs()) } }
+    return { type: 'config.agentDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_AGENT_DIRS, this.services.configService.getAgentPathScopes()) } }
   }
   /** extension 加载路径配置（ADR-0021 §1 discovery.json SSOT 的 UI 视图）。 */
   private buildExtensionDirsMsg(): ServerMessage {
-    return { type: 'config.extensionDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_EXTENSION_DIRS, this.services.configService.getExtensionDirs()) } }
+    return { type: 'config.extensionDirs', id: this.nextPushId(), payload: { dirs: buildDirConfigs(PRESET_EXTENSION_DIRS, this.services.configService.getExtensionPathScopes()) } }
   }
 
   // ── Broadcast helpers ──────────────────────────────────────────

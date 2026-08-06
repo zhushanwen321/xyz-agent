@@ -23,9 +23,11 @@ import {
   type ProviderSource,
   type ProviderImportPreview,
   type ProviderImportResult,
+  type SkillDirConfig,
 } from '@xyz-agent/shared'
 import type { IConfigService } from '../interfaces.js'
 import type { IConfigStore, ConfigModelDefinition } from './ports/config.js'
+import type { DirScopes } from './skill-dir-config.js'
 import { atomicWrite } from '../utils/fs-utils.js'
 import { extractFrontmatter, extractDescription } from '../utils/frontmatter.js'
 import { expandHome } from '../utils/path-utils.js'
@@ -487,9 +489,9 @@ export class ConfigService implements IConfigService {
     }
   }
 
-  // ── Skill 加载路径（ADR-0021 §1 discovery.json SSOT）──
+  // ── Skill 加载路径（ADR-0021 §1 discovery.json v2 SSOT）──
 
-  setSkillDirs(dirs: string[]): void {
+  setSkillDirs(dirs: SkillDirConfig[]): void {
     this.configStore.setSkillPaths(dirs)
   }
 
@@ -497,11 +499,19 @@ export class ConfigService implements IConfigService {
     return this.configStore.getSkillPaths()
   }
 
+  getSkillPathScopes(): DirScopes {
+    return this.configStore.getSkillPathScopes()
+  }
+
   getAgentDirs(): string[] {
     return this.configStore.getAgentDirs()
   }
 
-  setAgentDirs(dirs: string[]): void {
+  getAgentPathScopes(): DirScopes {
+    return this.configStore.getAgentPathScopes()
+  }
+
+  setAgentDirs(dirs: SkillDirConfig[]): void {
     this.configStore.setAgentDirs(dirs)
   }
 
@@ -509,7 +519,11 @@ export class ConfigService implements IConfigService {
     return this.configStore.getExtensionDirs()
   }
 
-  setExtensionDirs(dirs: string[]): void {
+  getExtensionPathScopes(): DirScopes {
+    return this.configStore.getExtensionPathScopes()
+  }
+
+  setExtensionDirs(dirs: SkillDirConfig[]): void {
     this.configStore.setExtensionDirs(dirs)
   }
 

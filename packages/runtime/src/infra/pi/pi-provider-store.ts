@@ -25,9 +25,11 @@ import {
 // skill 路径函数代理 discovery-store，settings.json.skills 仅作派生投影（pi 原生读此加载 skill）。
 import {
   getSkillDirs as getDiscoverySkillDirs,
+  getSkillPathScopes as getDiscoverySkillScopes,
   setSkillDirs as setDiscoverySkillDirs,
   readDiscovery,
 } from './discovery-store.js'
+import type { SkillDirConfig } from '@xyz-agent/shared'
 
 // ── 类型定义（对齐 pi models.json / settings.json 的 schema）────
 
@@ -375,9 +377,10 @@ function isSkillContainer(dirPath: string): boolean {
 export function migrateSettingsSkillsToDiscovery(): void {
   const discovery = readDiscovery()
   // discovery 已有「有效容器」数据则 no-op（幂等）。
-  // 注意：不能仅凭 skillDirs.length>0 判定——可能存有脏数据（/path/a 等测试残留），
+  // 注意：不能仅凭数组长度>0 判定——可能存有脏数据（/path/a 等测试残留），
   // 故用 isSkillContainer 校验每条；全无效则继续迁移覆盖。
-  if (discovery.skillDirs.length > 0 && discovery.skillDirs.some(c => isSkillContainer(c))) return
+  const existingSkillPaths = [...discovery.skill.projectPaths, ...discovery.skill.globalPaths]
+  if (existingSkillPaths.length > 0 && existingSkillPaths.some(c => isSkillContainer(c))) return
   const legacy = readSettings().skills ?? []
   if (legacy.length === 0) return
 
@@ -394,7 +397,12 @@ export function migrateSettingsSkillsToDiscovery(): void {
   if (validContainers.length === 0) return
   // 归一化为 ~ 形式（家目录下的路径用 ~ 前缀），与预设候选 ~/.pi/agent/skills 等保持一致，
   // 避免 buildDirConfigs 的字符串匹配因 ~ vs 绝对路径失配而重复显示。
-  const normalized = validContainers.map(normalizeToHome)
+  // 容器目录均为绝对/~路径 → scope global（写入端按路径特征归类，与 migrateDiscoveryV1ToV2 一致）。
+  const normalized = validContainers.map(normalizeToHome).map(path => ({
+    path,
+    enabled: true,
+    scope: 'global' as const,
+  }))
   setDiscoverySkillDirs(normalized)
   syncSkillDirsToSettings()
   console.log(`[provider-store] migrated ${legacy.length} legacy skill paths → ${normalized.length} container dirs in discovery.json`)
@@ -404,20 +412,39 @@ export function getSkillPaths(): string[] {
   return getDiscoverySkillDirs()
 }
 
-export function setSkillPaths(paths: string[]): void {
-  setDiscoverySkillDirs(paths)
+/** discovery.skill 的 v2 分 scope 结构（projectPaths / globalPaths）。 */
+export function getSkillPathScopes() {
+  return getDiscoverySkillScopes()
+}
+
+export function setSkillPaths(dirs: SkillDirConfig[]): void {
+  setDiscoverySkillDirs(dirs)
   syncSkillDirsToSettings()
 }
 
+/** 判定单路径 scope 归属（与 migrateDiscoveryV1ToV2 一致）：/ 或 ~ 开头 → global，其余 → project。 */
+function isGlobalPath(p: string): boolean {
+  return p.startsWith('/') || p.startsWith('~')
+}
+
+/** 读当前 skill 启用列表为 SkillDirConfig[]（保留 v2 scope），供 add/remove 单路径操作。 */
+function readSkillDirConfigs(): SkillDirConfig[] {
+  const scopes = getDiscoverySkillScopes()
+  return [
+    ...scopes.projectPaths.map(path => ({ path, enabled: true, scope: 'project' as const })),
+    ...scopes.globalPaths.map(path => ({ path, enabled: true, scope: 'global' as const })),
+  ]
+}
+
 export function addSkillPath(path: string): void {
-  const paths = getDiscoverySkillDirs()
-  if (!paths.includes(path)) {
-    setSkillPaths([...paths, path])
-  }
+  const current = readSkillDirConfigs()
+  if (current.some(c => c.path === path)) return
+  const scope = isGlobalPath(path) ? 'global' : 'project'
+  setSkillPaths([...current, { path, enabled: true, scope }])
 }
 
 export function removeSkillPath(path: string): void {
-  setSkillPaths(getDiscoverySkillDirs().filter(p => p !== path))
+  setSkillPaths(readSkillDirConfigs().filter(c => c.path !== path))
 }
 
 // ── 缓存控制 ─────────────────────────────────────────────────

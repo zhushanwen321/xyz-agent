@@ -103,7 +103,7 @@ export class SettingsMessageHandler {
       case 'config.setSkillDirs': {
         // ADR-0021 §1 目录级管道：覆盖 discovery.json.skillDirs（有序数组 = 优先级）
         this.ctx.configService.setSkillDirs(msg.payload.dirs)
-        this.ctx.reply(ws, msg.id, 'config.skillDirs', { dirs: msg.payload.dirs.map((path) => ({ path, enabled: true })) })
+        this.ctx.reply(ws, msg.id, 'config.skillDirs', { dirs: msg.payload.dirs })
         // 触发 SkillRegistry 重建（close 旧 watcher → 重扫 globalCache → 重挂 watcher 含新路径）+ 清 projectCache。
         // rebuildGlobal 内部 notifyGlobalChange → onChange → 广播 config.skillCacheInvalidated('global') + reloadOrchestrator。
         // 显式广播 ('project')——让前端 useProjectSkills 也失效重拉。
@@ -197,7 +197,7 @@ export class SettingsMessageHandler {
       case 'config.setAgentDirs': {
         // ADR-0021 §1 目录级管道：覆盖 discovery.json.agentDirs（有序数组 = 优先级）
         this.ctx.configService.setAgentDirs(msg.payload.dirs)
-        this.ctx.reply(ws, msg.id, 'config.agentDirs', { dirs: msg.payload.dirs.map((path) => ({ path, enabled: true })) })
+        this.ctx.reply(ws, msg.id, 'config.agentDirs', { dirs: msg.payload.dirs })
         this.ctx.broadcastAgentList()
         this.ctx.broadcastAgentDirs()
         return true
@@ -212,7 +212,7 @@ export class SettingsMessageHandler {
       case 'config.setExtensionDirs': {
         // ADR-0021 §1 目录级管道：覆盖 discovery.json.extensionDirs（有序数组 = 优先级）
         this.ctx.configService.setExtensionDirs(msg.payload.dirs)
-        this.ctx.reply(ws, msg.id, 'config.extensionDirs', { dirs: msg.payload.dirs.map((path) => ({ path, enabled: true })) })
+        this.ctx.reply(ws, msg.id, 'config.extensionDirs', { dirs: msg.payload.dirs })
         this.ctx.broadcastExtensionDirs()
         return true
       }
