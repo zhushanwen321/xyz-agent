@@ -10,6 +10,7 @@ import { type ChildProcess,execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
 
 import { getLogger } from "@zhushanwen/pi-extension-logger";
+import { readActivePendingFromSessionFile } from "./session-pending.ts";
 
 import type { ExtensionMode } from "./host-mode.ts";
 
@@ -91,6 +92,12 @@ const SPAWN_WATCHDOG_FLOOR_MS = 30 * 60 * 1000;
  *  5 分钟是经验值——复杂 tool（大文件读写/长 bash）+ 长 LLM 响应约 3-4 分钟，
  *  留 1-2 分钟余量。下限与按 turn 计算取 max，避免 maxTurns 过小时 watchdog 紧到误杀。 */
 const WATCHDOG_MS_PER_TURN = 5 * 60 * 1000;
+
+// [recursive-orchestration] agent_end 有活跃后代时的等待超时（不 kill 分支的兑底）。
+// 层主 subagent 空闲等待后代完成（steer 唤醒）期间不产生 turn，原 watchdog 已清；
+// 此后代卡死（永不完成）时此 timer 保证进程最终回收。超时 kill → finalize 视为正常
+// 完成 → 通知父（父查 cw status 发现未 closed 会走 L2/L3 重派，见 planning-agent 模板）。
+const WAIT_DESCENDANT_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2h
 
 /**
  * [M-1] 基于 maxTurns 动态计算 watchdog 超时。
@@ -710,8 +717,13 @@ export async function runSpawn(
     // 主进程退出时（session_shutdown reason=quit）dispose 会 abort running controller
     // → 本监听器 kill 子进程。无此 unref，watchdog timer 会拖住 event loop 阻止退出。
     const watchdogMs = computeWatchdogMs(opts.maxTurns);
-    const watchdog = setTimeout(() => child.kill("SIGTERM"), watchdogMs);
+    let watchdog = setTimeout(() => child.kill("SIGTERM"), watchdogMs);
     watchdog.unref();
+
+    // [recursive-orchestration] agent_end 有活跃后代时的等待超时（不 kill 分支的兑底）。
+    // 层主 subagent 空闲等待后代完成（steer 唤醒）期间不产生 turn，原 watchdog 已清；
+    // 此后代卡死（永不完成）时此 timer 保证进程最终回收。超时 kill → finalize 视为正常
+    // 完成 → 通知父（父查 cw status 发现未 closed 会走 L2/L3 重派，见 planning-agent 模板）。
 
     // stdout pump：逐行解析 → handleSdkEvent / enqueueUiRequest
     const enqueueUiRequest = createUiRequestQueue(child, ctx);
@@ -796,7 +808,32 @@ export async function runSpawn(
           //（runRpcMode 末尾 return new Promise(() => {}) 长驻等命令），需主动 kill
           // 触发 close → runSpawn resolve。willRetry=true 时 agent 会重试，不能 kill。
           if (isAgentEndEvt(evt)) {
-            if (!evt.willRetry) child.kill("SIGTERM");
+            if (evt.willRetry) {
+              // agent 会重试，不能 kill。
+            } else {
+              // [recursive-orchestration] 条件 kill：读子进程 session 文件算活跃后代
+              // （pending:register − unregister 差集）。有活跃后代（background subagent /
+              // workflow）→ 保持进程 idle，等后代完成时 notifier triggerTurn steer 唤醒；
+              // 无 → 正常完成，kill 触发 close → runSpawn resolve。
+              const pending = readActivePendingFromSessionFile(record.sessionFile);
+              if (pending.count > 0 || pending.error) {
+                if (pending.error) {
+                  logger.warn(
+                    `[session-runner] agent_end: keep alive (sessionFile unreadable, conservative): ${pending.error}`,
+                  );
+                } else {
+                  logger.debug(
+                    `[session-runner] agent_end: keep alive, ${pending.count} active descendant(s) pending`,
+                  );
+                }
+                // 空闲等待期间不消耗 turn：清原 watchdog，换等待后代超时（每次 agent_end 重新计时）
+                clearTimeout(watchdog);
+                watchdog = setTimeout(() => child.kill("SIGTERM"), WAIT_DESCENDANT_TIMEOUT_MS);
+                watchdog.unref();
+              } else {
+                child.kill("SIGTERM");
+              }
+            }
           }
           if (isSdkEvent(parsed.event)) handleSdkEvent(parsed.event);
         } else if (parsed.kind === "response") {

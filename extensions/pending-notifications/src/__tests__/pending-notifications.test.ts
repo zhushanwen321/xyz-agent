@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import pendingNotificationsExtension from "../index";
 import type { PendingEntry } from "../state";
-import { createRegistry, getActive, rebuildFromEntries, register, unregister } from "../state";
+import { countActiveFromEntries, createRegistry, getActive, rebuildFromEntries, register, unregister } from "../state";
 
 // ── Mock 工具 ───────────────────────────────────────
 
@@ -419,5 +419,73 @@ describe("pendingNotificationsExtension factory", () => {
 			const unregisterCalls = setup.appendEntryMock.mock.calls.filter((c) => c[0] === "pending:unregister");
 			expect(unregisterCalls).toHaveLength(0);
 		});
+	});
+});
+
+describe("countActiveFromEntries（纯差集，供 goal / subagent-workflow 复用）", () => {
+	const mkRegister = (id: string, type: "subagent" | "workflow" = "subagent", overrides: Record<string, unknown> = {}) => ({
+		type: "custom",
+		customType: "pending:register",
+		data: { id, type, name: id, registeredAt: 1000, expiresAt: 1000 + 3_600_000, sessionId: "s-1", ...overrides },
+	});
+	const mkUnregister = (id: string, reason = "completed") => ({
+		type: "custom",
+		customType: "pending:unregister",
+		data: { id, reason },
+	});
+
+	it("空 entries → 0 活跃", () => {
+		expect(countActiveFromEntries([])).toEqual({ count: 0, ids: [], entries: [] });
+	});
+
+	it("纯 register → count = register 数，返回完整 entry", () => {
+		const res = countActiveFromEntries([mkRegister("bg-1"), mkRegister("bg-2", "workflow")]);
+		expect(res.count).toBe(2);
+		expect(res.ids).toEqual(["bg-1", "bg-2"]);
+		expect(res.entries[0]).toMatchObject({ id: "bg-1", type: "subagent" });
+	});
+
+	it("register + unregister 同 id → 差集抵消", () => {
+		expect(countActiveFromEntries([mkRegister("bg-1"), mkUnregister("bg-1")]).count).toBe(0);
+	});
+
+	it("混合：部分注销 → 只统计仍活跃的", () => {
+		const res = countActiveFromEntries([
+			mkRegister("bg-1"),
+			mkRegister("bg-2"),
+			mkUnregister("bg-1"),
+		]);
+		expect(res.count).toBe(1);
+		expect(res.ids).toEqual(["bg-2"]);
+	});
+
+	it("types 过滤：只统计指定类型的活跃 pending", () => {
+		const entries = [mkRegister("bg-1", "subagent"), mkRegister("wf-1", "workflow")];
+		expect(countActiveFromEntries(entries, { types: ["subagent"] }).ids).toEqual(["bg-1"]);
+		expect(countActiveFromEntries(entries, { types: ["workflow"] }).ids).toEqual(["wf-1"]);
+		expect(countActiveFromEntries(entries, { types: ["subagent", "workflow"] }).count).toBe(2);
+	});
+
+	it("TTL 过期仍判活跃（刻意不校验 expiresAt，对齐 goal continuation 守卫语义）", () => {
+		const expired = mkRegister("bg-1", "subagent", { registeredAt: 0, expiresAt: 1 });
+		expect(countActiveFromEntries([expired]).count).toBe(1);
+	});
+
+	it("同 id 重复 register → 只算一次", () => {
+		expect(countActiveFromEntries([mkRegister("bg-1"), mkRegister("bg-1")]).count).toBe(1);
+	});
+
+	it("malformed register（id 非 string）→ 跳过", () => {
+		const bad = { type: "custom", customType: "pending:register", data: { id: 42 } };
+		const good = mkRegister("bg-1");
+		expect(countActiveFromEntries([bad, good]).ids).toEqual(["bg-1"]);
+	});
+
+	it("跨 session 残留（fork 继承的 register）不校验 sessionId——由 session_start 重建流程补 expired unregister 抵消", () => {
+		// 模拟 P fork 主 session：继承来主 session 的 register（sessionId=s-0），已被 rebuild 补 unregister(expired)
+		const inherited = mkRegister("parent-bg", "subagent", { sessionId: "s-0" });
+		const flushed = mkUnregister("parent-bg", "expired");
+		const own = mkRegister("my-bg");
+		expect(countActiveFromEntries([inherited, flushed, own]).ids).toEqual(["my-bg"]);
 	});
 });

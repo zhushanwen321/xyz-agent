@@ -48,6 +48,11 @@ vi.mock("../alive-store.ts", () => ({
   writeAliveMarker: vi.fn(),
 }));
 
+// [recursive-orchestration] agent_end 后代判定独立 mock（判定函数本身在 session-pending.test.ts 单独测）。
+vi.mock("../session-pending.ts", () => ({
+  readActivePendingFromSessionFile: vi.fn(() => ({ count: 0 })),
+}));
+
 vi.mock("../temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
@@ -57,6 +62,7 @@ vi.mock("../temp-prompt.ts", () => ({
 }));
 
 import { killAllSpawnedChildren, runSpawn, spawnedChildren } from "../session-runner.ts";
+import { readActivePendingFromSessionFile } from "../session-pending.ts";
 import {
   emitStdoutLine,
   type FakeChild,
@@ -366,7 +372,12 @@ describe("runSpawn", () => {
   // 主动 child.kill("SIGTERM") 让子进程退出，触发 close → runSpawn resolve。
   // willRetry=true 时 agent 会重试，不能 kill。
   describe("agent_end 自然完成", () => {
-    it("agent_end（willRetry=false）→ child.kill(SIGTERM) 被调用，close 后 success=true", async () => {
+    // [recursive-orchestration] 条件 kill：agent_end 时读子进程 session 文件算活跃后代
+    // （pending:register − unregister 差集）。有活跃后代 → 保持进程 idle 等 steer 唤醒。
+    const mockPending = vi.mocked(readActivePendingFromSessionFile);
+
+    it("agent_end（willRetry=false，无活跃后代）→ child.kill(SIGTERM) 被调用，close 后 success=true", async () => {
+      mockPending.mockReturnValue({ count: 0 });
       const record = makeRecord();
       const promise = runSpawn(record, "Task: done", makeOpts(), makeCtx());
 
@@ -389,7 +400,38 @@ describe("runSpawn", () => {
       expect(result.success).toBe(true);
     });
 
+    it("agent_end（willRetry=false，有活跃后代）→ 不 kill，进程保持 idle 等 steer 唤醒；后代完成后 kill", async () => {
+      // 第一次 agent_end：有活跃后代（count=1）→ 不 kill
+      mockPending.mockReturnValueOnce({ count: 1 });
+      // 第二次 agent_end：后代已 unregister（count=0）→ kill
+      mockPending.mockReturnValueOnce({ count: 0 });
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: orchestrate", makeOpts(), makeCtx());
+
+      await waitForSpawn();
+      const child = lastSpawnedChild();
+
+      emitStdoutLine(child, sessionHeader());
+      emitStdoutLine(child, { type: "agent_end", messages: [], willRetry: false });
+      // 给事件 pump 一点时间处理 agent_end（判定读 session 文件）
+      await new Promise((r) => setTimeout(r, 20));
+      expect(child.killed).toBe(false);
+
+      // 后代完成（unregister 已写入）后再次 agent_end → 无活跃后代 → kill
+      emitStdoutLine(child, { type: "agent_end", messages: [], willRetry: false });
+      child.stdout.end();
+      child.stderr.end();
+      child.emit("close", 143);
+
+      const result = await promise;
+
+      expect(child.killed).toBe(true);
+      expect(child.killSignal).toBe("SIGTERM");
+      expect(result.success).toBe(true);
+    });
+
     it("agent_end（willRetry=true）→ child.kill 不被调用（agent 会重试，等下一个 agent_end）", async () => {
+      mockPending.mockReturnValue({ count: 0 });
       const record = makeRecord();
       const promise = runSpawn(record, "Task: retry", makeOpts(), makeCtx());
 
@@ -418,6 +460,7 @@ describe("runSpawn", () => {
     });
 
     it("agent_end 后的后续 event 仍被 handleSdkEvent 处理（kill 不阻塞 event pump）", async () => {
+      mockPending.mockReturnValue({ count: 0 });
       const record = makeRecord();
       const promise = runSpawn(record, "Task: flush", makeOpts(), makeCtx());
 

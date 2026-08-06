@@ -108,6 +108,62 @@ export function getActive(registry: PendingRegistry): PendingEntry[] {
 	return Array.from(registry.operations.values()).filter((op) => op.status === "active");
 }
 
+/** countActiveFromEntries 的过滤选项。 */
+export interface CountActiveOptions {
+	/** 只统计指定类型的活跃 pending；缺省 = 全部类型（subagent + workflow） */
+	types?: PendingType[];
+}
+
+/** countActiveFromEntries 的结果。 */
+export interface CountActiveResult {
+	count: number;
+	ids: string[];
+	/** 活跃的完整 entry（含类型/名称/TTL，供调用方展示或后续判断） */
+	entries: PendingEntry[];
+}
+
+/**
+ * 从持久化 entries 计算活跃 pending 数（register − unregister 差集）。
+ *
+ * 与 rebuildFromEntries 的分工：本函数只做「有没有活跃 pending」的只读判断，
+ * 不写 registry、不判 sessionId/expiresAt（TTL 刻意不校验——长任务 subagent >1h
+ * 仍应视为活跃，对齐 goal agent-end 的 continuation 守卫语义）。
+ * 调用方：goal（agent_end 时判断是否发 continuation）、subagent-workflow
+ * （agent_end 时判断子进程是否有活跃后代，决定是否保持进程等 steer 唤醒）。
+ *
+ * 注：跨 session 残留（fork 继承的 register）由 index.ts 的 session_start 重建
+ * 流程补 unregister(expired) 抵消；本函数只做纯差集，不重复处理。
+ */
+export function countActiveFromEntries(
+	entries: unknown[],
+	opts?: CountActiveOptions,
+): CountActiveResult {
+	const unregistered = new Set<string>();
+	for (const raw of entries as EntryLike[]) {
+		if (raw.customType !== "pending:unregister") continue;
+		const data = (raw.data ?? {}) as UnregisterEntryData;
+		if (typeof data.id === "string") unregistered.add(data.id);
+	}
+
+	const active: PendingEntry[] = [];
+	const seen = new Set<string>();
+	for (const raw of entries as EntryLike[]) {
+		if (raw.customType !== "pending:register") continue;
+		const data = (raw.data ?? {}) as RegisterEntryData;
+		if (typeof data.id !== "string" || unregistered.has(data.id) || seen.has(data.id)) continue;
+		seen.add(data.id);
+		const entry = normalizeRegisterEntry(data, "");
+		if (opts?.types && !opts.types.includes(entry.type)) continue;
+		active.push(entry);
+	}
+
+	return {
+		count: active.length,
+		ids: active.map((e) => e.id),
+		entries: active,
+	};
+}
+
 /** rebuildFromEntries 的结果：重建后的活跃列表 + 需要补注销的 entry */
 export interface RebuildResult {
 	/** 重建后识别为 active 的 id 列表（已写入 registry） */

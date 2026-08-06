@@ -53,7 +53,8 @@
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-tui": "*",
     "typebox": "*",
-    "@zhushanwen/pi-structured-output": "workspace:*"
+    "@zhushanwen/pi-structured-output": "workspace:*",
+    "@zhushanwen/pi-pending-notifications": "workspace:*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-coding-agent": {

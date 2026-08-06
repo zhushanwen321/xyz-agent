@@ -19,6 +19,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { countActiveFromEntries } from "@zhushanwen/pi-pending-notifications";
 
 import { checkBudgetOnTurnEnd } from "../../engine/budget";
 import { isActiveStatus, isTerminalStatus } from "../../engine/goal";
@@ -28,7 +29,6 @@ import {
 } from "../../projection/prompts";
 import { persistAndUpdate, tickState } from "../../service";
 import type { GoalSession } from "../../session";
-import type { SessionEntryLike } from "../../ports";
 import { buildPorts } from "../ports";
 import { makeStaleChecker } from "./shared";
 
@@ -177,7 +177,7 @@ async function handleContinuation(
 	// 新 turn → 又 agent_end → 又 continuation。
 	// 刻意不校验 expiresAt：长任务 subagent（>1h TTL）完成时仍 triggerTurn 唤醒主 agent，
 	// 按 TTL 判非活跃会让死循环在长任务场景复现。
-	const pendingOps = countActivePendingOps(ctx.sessionManager.getEntries());
+	const pendingOps = countActiveFromEntries(ctx.sessionManager.getEntries());
 	if (pendingOps.count > 0) {
 		pi.appendEntry("goal:log", {
 			timestamp: Date.now(),
@@ -199,32 +199,4 @@ async function handleContinuation(
 		continuationPrompt(state, state.timeUsedSeconds),
 		"followUp",
 	);
-}
-
-/** 类型守卫：unknown → Record<string, unknown>（替代裸 as 断言访问 entry.data.id）。 */
-const isRecord = (x: unknown): x is Record<string, unknown> =>
-	typeof x === "object" && x !== null;
-
-/** 计算活跃的 pending async operation（background subagent/workflow）数量。
- *  读 session entries 里 customType="pending:register" 减 "pending:unregister" 的 id 差集。
- *  刻意不校验 expiresAt（见 handleContinuation 守卫注释）。 */
-function countActivePendingOps(
-	entries: readonly SessionEntryLike[],
-): { count: number; ids: string[] } {
-	const unregistered = new Set<string>();
-	for (const e of entries) {
-		if (e.type !== "custom" || e.customType !== "pending:unregister") continue;
-		const id = isRecord(e.data) ? e.data.id : undefined;
-		if (typeof id === "string") unregistered.add(id);
-	}
-	const activeIds: string[] = [];
-	const seen = new Set<string>();
-	for (const e of entries) {
-		if (e.type !== "custom" || e.customType !== "pending:register") continue;
-		const id = isRecord(e.data) ? e.data.id : undefined;
-		if (typeof id !== "string" || unregistered.has(id) || seen.has(id)) continue;
-		seen.add(id);
-		activeIds.push(id);
-	}
-	return { count: activeIds.length, ids: activeIds };
 }
