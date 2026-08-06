@@ -4,13 +4,13 @@
     base 平铺（bg-bg）+ aside 透明融合 + main float-panel 浮起。
     traffic light 安全区在 AsideRegion 内（padding-top:52px 恒定，spec §三）。
   -->
-  <!-- padding：左右 px-2(8) 使 aside 左缘 x=8 对齐红黄绿左缘；上下 py-0 让 main-panel 贴窗口顶/底（极限紧凑，原生 mac 感）。
-       gap 折叠态→0 + !p-0：收起态 aside 归零、main-panel 四周全贴窗口边（极限，用户要求「非常极限可接受」）。
-       !important 必须：gap-0/p-0 与 gap-3/px-2 同特异性，Tailwind 源码顺序前者先于后者生成，
+  <!-- padding：左右 px-2(8) 使 aside 左缘 x=8 对齐红黄绿左缘；上下 py-1(4) 紧凑但有呼吸（main-panel 顶 y=4，红黄绿 y=8~20 落在其顶部带内）。
+       折叠态 !gap-0 + !px-0：收起态 aside 归零、main-panel 左右贴窗口边（上下保持 py-1 4px 呼吸）。
+       !important 必须：gap-0/px-0 与 gap-3/px-2 同特异性，Tailwind 源码顺序前者先于后者生成，
        不加 ! 会被后者永久覆盖（死代码 bug）。 -->
   <div
-    class="app-shell relative flex h-screen w-screen gap-3 overflow-hidden rounded-[10px] bg-bg px-2"
-    :class="sidebar.collapsed ? '!gap-0 !p-0' : ''"
+    class="app-shell relative flex h-screen w-screen gap-3 overflow-hidden rounded-[10px] bg-bg px-2 py-1"
+    :class="sidebar.collapsed ? '!gap-0 !px-0' : ''"
     data-testid="app-shell"
   >
     <AsideRegion />
