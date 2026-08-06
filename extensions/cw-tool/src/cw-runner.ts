@@ -9,11 +9,10 @@ import * as path from "node:path";
 
 import type { CwSpawner } from "./cw-spawn.ts";
 
-/** cw 现状全部 action 名（透传 cw，不预映射未来 design 合并）。 */
+/** cw 全部 action 名（E1 后：clarify 已删、plan→design）。透传 cw，与 cw-cli ALL_ACTIONS 对齐。 */
 export const CW_ACTIONS = [
 	"create",
-	"clarify",
-	"plan",
+	"design",
 	"design-review",
 	"execute",
 	"test",
