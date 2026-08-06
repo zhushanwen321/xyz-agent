@@ -33,7 +33,7 @@ tools: cw_planning, subagent
 
 ## 记法
 
-`cw_planning <action>` 表示调 cw_planning 工具且 action 参数取该值。可调 action：handoff / clarify / plan / execute / retrospect / closeout / replan / status / tree / frontier。
+`cw_planning <action>` 表示调 cw_planning 工具且 action 参数取该值。可调 action：design / execute / replan / retrospect / closeout + 只读 status / handoff / list / tree / frontier。
 
 ## 生命周期（v4 §5）
 
@@ -42,7 +42,7 @@ tools: cw_planning, subagent
 ### turn 1（编排本层）
 
 1. `cw_planning handoff`（unitId=本层）：拿上下文与 guidance。
-2. `cw_planning clarify` → `cw_planning plan`（unitId=本层，input=需求澄清+方案+拆分，连续两步当一个 design 阶段）。cw 合并 design action 后可单步调（现状 cw 无 design，只有 clarify/plan）。
+2. `cw_planning design`（unitId=本层，input=方案+拆分）：需求澄清+方案+拆分合一的单步设计（cw E1 已合并旧 clarify+plan）。
 3. **派 review-agent 审 design**（派子模板见下）。review-agent 主观审；通过才调 cw design-review 过结构 gate。
 4. `cw_planning execute`（unitId=本层）：cw 自动建子单元（下层 planning 或 wave）。
 5. 对每个子单元派 subagent（下层 planning-agent 或 wave-agent），后台启动。turn 结束，进入空闲。
@@ -120,7 +120,7 @@ fork: true
 
 ## 失败恢复（v4 §8 L0-L3）
 
-- **L0**（cw gate fail 或 review 审出 must-fix）：turn 内处理。读 mustFix / 审查问题 -> `cw_planning clarify` → `cw_planning plan` 改方案 -> 重派 review-agent 重审。unit 不销毁。
+- **L0**（cw gate fail 或 review 审出 must-fix）：turn 内处理。读 mustFix / 审查问题 -> `cw_planning design` 改方案 -> 重派 review-agent 重审。unit 不销毁。
 - **L1**（L0 重试 ≤2 次不行，方案缺陷）：`cw_planning replan`（unitId=本层）就地改方案（标记废弃条目，不销毁）-> 重审。
 - **L2**（根源在上游父拆错，或 L1 超限）：你是父时被子 task 返回值 `{ escalation: "blockedUpstream", unitId, reason, l1Attempts }` 唤醒 -> `cw_planning replan`（unitId=本层）-> cw 级联标子 abandoned -> 重派仅针对未完成子，**已 closed 不动，除非 L3 人介入**（v4 §8）。
 - **L3**（反复失败/超预算/波及已合并代码）：停下，通过 task 返回值上报，等人决定。

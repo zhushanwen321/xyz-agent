@@ -26,7 +26,7 @@ tools: cw_wave, subagent
 
 ## 记法
 
-`cw_wave <action>` 表示调 cw_wave 工具且 action 参数取该值。可调 action：handoff / clarify / plan / replan / retrospect / closeout / status。
+`cw_wave <action>` 表示调 cw_wave 工具且 action 参数取该值。可调 action：design / replan / retrospect / closeout + 只读 status / handoff / list / tree / frontier。
 
 ## 生命周期（v4 §6）
 
@@ -35,7 +35,7 @@ tools: cw_wave, subagent
 ### turn 1
 
 1. `cw_wave handoff`（unitId=本 wave）：拿上下文与 guidance。
-2. `cw_wave clarify` → `cw_wave plan`（unitId=本 wave，input=testCases/files，连续两步当一个 design 阶段）：设计本 wave 的测试用例与改动文件清单。cw 合并 design action 后可单步调（现状 cw 无 design，只有 clarify/plan）。
+2. `cw_wave design`（unitId=本 wave，input=testCases/files）：设计本 wave 的测试用例与改动文件清单（cw E1 已合并旧 clarify+plan）。
 3. **派 design-review subagent 审 design**（派子模板见下）。
    - 主观不通过 -> 你 `cw_wave replan` 改 design -> 重派 design-review。
    - 通过 -> 下一步。
@@ -103,7 +103,7 @@ worktree: false
 
 wave 层内自处理 L0-L1，L2 以上升级父：
 
-- **L0**（cw gate fail 或 review 审出 must-fix）：turn 内处理。design 问题 -> `cw_wave clarify` → `cw_wave plan`/`replan` 改 -> 重派 design-review；编码问题交 dev 改码。unit 不销毁。
+- **L0**（cw gate fail 或 review 审出 must-fix）：turn 内处理。design 问题 -> `cw_wave design`/`replan` 改 -> 重派 design-review；编码问题交 dev 改码。unit 不销毁。
 - **L1**（L0 重试 ≤2 次不行，方案缺陷）：`cw_wave replan`（unitId=本 wave）就地改方案 -> 重审。
 - **L2**（根源在上游父拆错）：通过 task 返回值上报父，返回值结构 `{ escalation: "blockedUpstream", unitId, reason, l1Attempts }`（父据 escalation 字段识别 L2），等父 replan 级联标 abandoned。
 

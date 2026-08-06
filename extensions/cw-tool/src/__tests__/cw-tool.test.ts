@@ -125,9 +125,9 @@ describe("白名单拦截（executeCwAction）", () => {
 
 describe("允许的 action（mock spawn）", () => {
 	const okCases: Array<{ name: string; allowed: readonly string[]; action: string }> = [
-		{ name: "cw_planning", allowed: PLANNING_ALLOWED, action: "plan" },
+		{ name: "cw_planning", allowed: PLANNING_ALLOWED, action: "design" },
 		{ name: "cw_planning", allowed: PLANNING_ALLOWED, action: "execute" },
-		{ name: "cw_wave", allowed: WAVE_ALLOWED, action: "plan" },
+		{ name: "cw_wave", allowed: WAVE_ALLOWED, action: "design" },
 		{ name: "cw_dev", allowed: DEV_ALLOWED, action: "execute" },
 		{ name: "cw_dev", allowed: DEV_ALLOWED, action: "test" },
 		{ name: "cw_review", allowed: REVIEW_ALLOWED, action: "design-review" },
@@ -258,7 +258,7 @@ describe("失败路径", () => {
 	it("input 与 inputFile 同时给 → ok:false（互斥）", async () => {
 		const spawner = forbiddenSpawner();
 		const details = await executeCwAction(
-			"plan",
+			"design",
 			PLANNING_ALLOWED,
 			"cw_planning",
 			"u1",
@@ -308,8 +308,8 @@ describe("buildCwArgs", () => {
 	});
 
 	it("input 内容 → --input - （经 stdin）", () => {
-		expect(buildCwArgs("plan", "u1", { input: '{"a":1}' })).toEqual([
-			"plan",
+		expect(buildCwArgs("design", "u1", { input: '{"a":1}' })).toEqual([
+			"design",
 			"--unitId",
 			"u1",
 			"--input",
@@ -318,8 +318,8 @@ describe("buildCwArgs", () => {
 	});
 
 	it("inputFile 路径 → --input <path>", () => {
-		expect(buildCwArgs("plan", "u1", { inputFile: "/tmp/in.json" })).toEqual([
-			"plan",
+		expect(buildCwArgs("design", "u1", { inputFile: "/tmp/in.json" })).toEqual([
+			"design",
 			"--unitId",
 			"u1",
 			"--input",
@@ -372,7 +372,7 @@ describe("stdin 透传", () => {
 	it("input 内容写入 spawner 的 input 参数", async () => {
 		const { spawner, calls } = fakeSpawner([{ stdout: "{}", stderr: "", exitCode: 0 }]);
 		await executeCwAction(
-			"plan",
+			"design",
 			PLANNING_ALLOWED,
 			"cw_planning",
 			"u1",
@@ -544,16 +544,16 @@ describe("工厂与工具注册", () => {
 // ── 白名单表格逐字一致性 ────────────────────────────────────────
 
 describe("白名单与方案表格逐字一致", () => {
-	it("cw_planning = clarify/plan/execute/replan/retrospect/closeout + status/handoff/list/tree/frontier", () => {
+	it("cw_planning = design/execute/replan/retrospect/closeout + status/handoff/list/tree/frontier", () => {
 		expect([...PLANNING_ALLOWED]).toEqual([
-			"clarify", "plan", "execute", "replan", "retrospect", "closeout",
+			"design", "execute", "replan", "retrospect", "closeout",
 			"status", "handoff", "list", "tree", "frontier",
 		]);
 	});
 
 	it("cw_wave = 同 planning 但无 execute（也无 test/design-review/exec-review）", () => {
 		expect([...WAVE_ALLOWED]).toEqual([
-			"clarify", "plan", "replan", "retrospect", "closeout",
+			"design", "replan", "retrospect", "closeout",
 			"status", "handoff", "list", "tree", "frontier",
 		]);
 		for (const forbidden of ["execute", "test", "design-review", "exec-review"]) {

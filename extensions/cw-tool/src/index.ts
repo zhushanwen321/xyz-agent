@@ -26,8 +26,7 @@ import { type CwDetails, type CwToolOptions, executeCwAction } from "./cw-runner
 
 /** cw_planning：epic/feature/slice 层主。可 execute 下沉，但不含审查命令。 */
 const PLANNING_ALLOWED = [
-	"clarify",
-	"plan",
+	"design",
 	"execute",
 	"replan",
 	"retrospect",
@@ -41,8 +40,7 @@ const PLANNING_ALLOWED = [
 
 /** cw_wave：wave 层主。无 execute/test/design-review/exec-review（不亲自写码/测试/审查）。 */
 const WAVE_ALLOWED = [
-	"clarify",
-	"plan",
+	"design",
 	"replan",
 	"retrospect",
 	"closeout",
@@ -73,7 +71,7 @@ const PLANNING_META: ToolMeta = {
 	label: "CW Planning",
 	description: `运行 cw 编码流程 action（planning 层主：epic/feature/slice）。
 
-允许的 action：clarify / plan / execute / replan / retrospect / closeout + 只读 status / handoff / list / tree / frontier。
+允许的 action：design / execute / replan / retrospect / closeout + 只读 status / handoff / list / tree / frontier。
 不含 design-review / exec-review —— 审查必须派独立 review-agent（cw_review），不可自审。
 
 参数：
@@ -85,7 +83,7 @@ const PLANNING_META: ToolMeta = {
 
 返回 details.ok 区分成功/失败；成功时 details.data 为 cw stdout 解析出的 JSON（若可解析），details.stdout 为原始输出。`,
 	promptSnippet:
-		"用 cw_planning 推进编码流程（clarify/plan/execute/replan/retrospect/closeout + 只读查询）。审查须派独立 review-agent，本工具不含审查命令。",
+		"用 cw_planning 推进编码流程（design/execute/replan/retrospect/closeout + 只读查询）。审查须派独立 review-agent，本工具不含审查命令。",
 };
 
 const WAVE_META: ToolMeta = {
@@ -93,12 +91,12 @@ const WAVE_META: ToolMeta = {
 	label: "CW Wave",
 	description: `运行 cw 编码流程 action（wave 层主）。
 
-允许的 action：clarify / plan / replan / retrospect / closeout + 只读 status / handoff / list / tree / frontier。
+允许的 action：design / replan / retrospect / closeout + 只读 status / handoff / list / tree / frontier。
 **不含** execute / test / design-review / exec-review —— wave 层主不亲自写码/测试/审查：写码派 dev-agent（cw_dev），审查派 review-agent（cw_review）。
 
 参数同 cw_planning（action / unitId / input / inputFile / commitHash）。`,
 	promptSnippet:
-		"用 cw_wave 推进 wave 层流程（clarify/plan/replan/retrospect/closeout + 只读查询）。写码派 dev、审查派 review，本工具不含 execute/test/审查。",
+		"用 cw_wave 推进 wave 层流程（design/replan/retrospect/closeout + 只读查询）。写码派 dev、审查派 review，本工具不含 execute/test/审查。",
 };
 
 const DEV_META: ToolMeta = {
@@ -119,7 +117,7 @@ const REVIEW_META: ToolMeta = {
 	description: `运行 cw 审查 action（design-review / exec-review）。
 
 允许的 action：design-review / exec-review + 只读 status。
-供独立 review-agent 提交审查 judgment（designReviewJudgment / execReviewJudgment 经 input 传入）。不含 execute/test/plan 等 —— review 只审查，不改被审物。
+供独立 review-agent 提交审查 judgment（designReviewJudgment / execReviewJudgment 经 input 传入）。不含 execute/test/design 等 —— review 只审查，不改被审物。
 
 参数：action / unitId / input（审查 judgment JSON）/ inputFile。`,
 	promptSnippet: "用 cw_review 提交审查（design-review/exec-review）+ 只读 status。仅审查，不执行/不写码。",

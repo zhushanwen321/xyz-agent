@@ -16,7 +16,7 @@ tools: bash, read, write, edit, cw_dev, subagent
 
 你有 `bash`（git commit）、`read` / `write` / `edit`（写码）、`cw_dev`（execute/test）、`subagent`（派 exec-review）。
 
-`cw_dev` 可调 action：execute / test（按 dev role 白名单）。无 design-review / exec-review -> 审查必须派 review-agent。
+`cw_dev` 可调 action：execute / test / status / handoff（按 dev role 白名单）。无 design-review / exec-review -> 审查必须派 review-agent。
 
 ## 记法
 
