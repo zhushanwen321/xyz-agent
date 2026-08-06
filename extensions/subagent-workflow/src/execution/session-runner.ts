@@ -816,14 +816,20 @@ export async function runSpawn(
               // workflow）→ 保持进程 idle，等后代完成时 notifier triggerTurn steer 唤醒；
               // 无 → 正常完成，kill 触发 close → runSpawn resolve。
               const pending = readActivePendingFromSessionFile(record.sessionFile);
-              if (pending.count > 0 || pending.error) {
+              if (pending.count > 0 || pending.recentUnregister || pending.error) {
                 if (pending.error) {
                   logger.warn(
                     `[session-runner] agent_end: keep alive (sessionFile unreadable, conservative): ${pending.error}`,
                   );
-                } else {
+                } else if (pending.count > 0) {
                   logger.debug(
                     `[session-runner] agent_end: keep alive, ${pending.count} active descendant(s) pending`,
+                  );
+                } else {
+                  // 差集 0 但最近有 unregister：后代刚完成，notify 唤醒可能在路上（竞态窗口），
+                  // 保持进程——父被唤醒后的下一次 agent_end 会正常判定。
+                  logger.debug(
+                    "[session-runner] agent_end: keep alive, recent descendant completion (wake-up in flight)",
                   );
                 }
                 // 空闲等待期间不消耗 turn：清原 watchdog，换等待后代超时（每次 agent_end 重新计时）

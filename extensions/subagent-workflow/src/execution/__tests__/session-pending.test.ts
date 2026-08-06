@@ -21,8 +21,8 @@ function makeTmpSessionFile(lines: string[]): string {
 const mkRegister = (id: string, type: "subagent" | "workflow" = "subagent") =>
   JSON.stringify({ type: "custom", customType: "pending:register", data: { id, type, name: id } });
 
-const mkUnregister = (id: string, reason = "completed") =>
-  JSON.stringify({ type: "custom", customType: "pending:unregister", data: { id, reason } });
+const mkUnregister = (id: string, reason = "completed", ts = "2026-08-06T08:00:00.000Z") =>
+  JSON.stringify({ type: "custom", customType: "pending:unregister", data: { id, reason }, timestamp: ts });
 
 const mkMessage = (role: string, text: string) =>
   JSON.stringify({ type: "message", id: `m-${Date.now()}-${Math.random()}`, message: { role, content: [{ type: "text", text }] } });
@@ -43,19 +43,19 @@ describe("readActivePendingFromSessionFile", () => {
   it("无 pending entries → count 0", () => {
     const file = makeTmpSessionFile([mkMessage("user", "hi"), mkMessage("assistant", "hello")]);
     tmpFiles.push(file);
-    expect(readActivePendingFromSessionFile(file)).toEqual({ count: 0 });
+    expect(readActivePendingFromSessionFile(file)).toEqual({ count: 0, recentUnregister: false });
   });
 
   it("纯 register → count = 活跃后代数", () => {
     const file = makeTmpSessionFile([mkRegister("bg-1"), mkRegister("bg-2", "workflow")]);
     tmpFiles.push(file);
-    expect(readActivePendingFromSessionFile(file)).toEqual({ count: 2 });
+    expect(readActivePendingFromSessionFile(file)).toEqual({ count: 2, recentUnregister: false });
   });
 
   it("register + unregister 同 id → 差集抵消", () => {
     const file = makeTmpSessionFile([mkRegister("bg-1"), mkUnregister("bg-1")]);
     tmpFiles.push(file);
-    expect(readActivePendingFromSessionFile(file)).toEqual({ count: 0 });
+    expect(readActivePendingFromSessionFile(file)).toEqual({ count: 0, recentUnregister: false });
   });
 
   it("混合：部分注销 → 只统计仍活跃的（真实 e2e 场景：P 的 agent_end 时 explorer 未注销）", () => {
@@ -66,7 +66,7 @@ describe("readActivePendingFromSessionFile", () => {
       mkMessage("assistant", "waiting for explorer..."),
     ]);
     tmpFiles.push(file);
-    expect(readActivePendingFromSessionFile(file)).toEqual({ count: 1 });
+    expect(readActivePendingFromSessionFile(file)).toEqual({ count: 1, recentUnregister: false });
   });
 
   it("fork 继承的主 session register 已被 expired unregister 抵消 → 不干扰", () => {
@@ -77,7 +77,7 @@ describe("readActivePendingFromSessionFile", () => {
       mkRegister("my-bg"),
     ]);
     tmpFiles.push(file);
-    expect(readActivePendingFromSessionFile(file)).toEqual({ count: 1 });
+    expect(readActivePendingFromSessionFile(file)).toEqual({ count: 1, recentUnregister: false });
   });
 
   it("坏行（截断 JSON）跳过，不影响其余判定", () => {
@@ -86,7 +86,7 @@ describe("readActivePendingFromSessionFile", () => {
       mkRegister("bg-2"),
     ]);
     tmpFiles.push(file);
-    expect(readActivePendingFromSessionFile(file)).toEqual({ count: 1 });
+    expect(readActivePendingFromSessionFile(file)).toEqual({ count: 1, recentUnregister: false });
   });
 
   it("sessionFile 未回填（undefined）→ error（调用方保守不 kill）", () => {
@@ -99,5 +99,23 @@ describe("readActivePendingFromSessionFile", () => {
     const res = readActivePendingFromSessionFile("/nonexistent/path/session.jsonl");
     expect(res.count).toBe(0);
     expect(res.error).toBeDefined();
+  });
+
+  it("最近 60s 内有 unregister → recentUnregister=true（后代刚完成，唤醒在路上——竞态窗口不 kill）", () => {
+    const file = makeTmpSessionFile([
+      mkRegister("bg-live"),
+      mkUnregister("bg-live", "completed", new Date().toISOString()),
+    ]);
+    tmpFiles.push(file);
+    expect(readActivePendingFromSessionFile(file)).toEqual({ count: 0, recentUnregister: true });
+  });
+
+  it("unregister 在 60s 窗口外 → recentUnregister=false（正常 kill 路径）", () => {
+    const file = makeTmpSessionFile([
+      mkRegister("bg-live"),
+      mkUnregister("bg-live", "completed", "2020-01-01T00:00:00.000Z"),
+    ]);
+    tmpFiles.push(file);
+    expect(readActivePendingFromSessionFile(file)).toEqual({ count: 0, recentUnregister: false });
   });
 });

@@ -17,9 +17,17 @@ import * as fs from "node:fs";
 
 import { countActiveFromEntries } from "@zhushanwen/pi-pending-notifications";
 
+/** 后代刚完成（unregister）后，notify 唤醒父 agent 可能仍在路上（triggerTurn steer
+ *  经进程内 EventBus 发送，与主进程处理 agent_end 行存在毫秒级竞态——explorer 3 秒完成
+ *  时实测 unregister 先于 agent_end 判定写入，导致差集 0 误判完成）。此窗口内的
+ *  agent_end 不 kill，等父被唤醒后的下一次 agent_end 再判。 */
+const RECENT_UNREGISTER_WINDOW_MS = 60_000;
+
 /** 判定结果：count > 0 = 有活跃后代（应保持进程等唤醒）。 */
 export interface ActivePendingResult {
 	count: number;
+	/** 最近窗口内（60s）有 pending:unregister——后代刚完成，唤醒通知可能在路上。 */
+	recentUnregister: boolean;
 	/** 读取/解析失败的原因（undefined = 成功）。调用方对 error 采取保守策略（不 kill）。 */
 	error?: string;
 }
@@ -37,7 +45,7 @@ export function readActivePendingFromSessionFile(
 	sessionFile: string | undefined,
 ): ActivePendingResult {
 	if (!sessionFile) {
-		return { count: 0, error: "no sessionFile (handshake not settled)" };
+		return { count: 0, recentUnregister: false, error: "no sessionFile (handshake not settled)" };
 	}
 	let raw: string;
 	try {
@@ -45,20 +53,32 @@ export function readActivePendingFromSessionFile(
 	} catch (err) {
 		return {
 			count: 0,
+			recentUnregister: false,
 			error: `session file unreadable: ${err instanceof Error ? err.message : String(err)}`,
 		};
 	}
 
 	const entries: unknown[] = [];
+	let latestUnregisterMs = 0;
 	for (const line of raw.split("\n")) {
 		if (!line.includes('"customType":"pending:')) continue;
 		try {
-			entries.push(JSON.parse(line));
+			const entry = JSON.parse(line) as { customType?: string; timestamp?: string };
+			entries.push(entry);
+			if (entry.customType === "pending:unregister" && entry.timestamp) {
+				const ts = Date.parse(entry.timestamp);
+				if (Number.isFinite(ts) && ts > latestUnregisterMs) latestUnregisterMs = ts;
+			}
 		} catch {
 			// 截断行/坏行跳过——不影响其余 entry 的差集判定（罕见：append 中途崩溃）
 			console.debug("[session-pending] skipped malformed pending line in", sessionFile);
 		}
 	}
 
-	return { count: countActiveFromEntries(entries).count };
+	const active = countActiveFromEntries(entries);
+	return {
+		count: active.count,
+		recentUnregister:
+			latestUnregisterMs > 0 && Date.now() - latestUnregisterMs < RECENT_UNREGISTER_WINDOW_MS,
+	};
 }
