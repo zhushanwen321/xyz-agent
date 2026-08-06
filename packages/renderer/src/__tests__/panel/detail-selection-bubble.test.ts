@@ -30,7 +30,7 @@ vi.mock('@/composables/features/file-tree/useDetailPane', () => ({
     sessionCwd: () => '/cwd',
   }),
 }))
-vi.mock('@/composables/effects/useCopy', () => ({
+vi.mock('@/composables/panel/useCopy', () => ({
   useCopy: () => ({ copied: ref(null), copy: vi.fn() }),
 }))
 vi.mock('@/composables/logic/file-type', () => ({ extToLang: () => 'ts' }))

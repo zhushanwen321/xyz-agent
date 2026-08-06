@@ -21,7 +21,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ref, type Ref } from 'vue'
 import type { VirtualizerHandle } from 'virtua/vue'
-import { useVirtuaFollow } from '@/composables/effects/useVirtuaFollow'
+import { useVirtuaFollow } from '@/composables/panel/useVirtuaFollow'
 // createMockVlist 共享工厂（w2 提取至此，避免与 rail-virtua 测试重复定义）
 import { createMockVlist } from './_virtua-mock-helper'
 
