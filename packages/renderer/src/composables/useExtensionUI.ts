@@ -214,6 +214,14 @@ export function useExtensionUI(
  *
  * 全局单例（Workspace 层单次调用，跟 focusedSessionId）。notify 是非阻塞 toast，
  * 不需要 per-panel 隔离（toast 本就是全局浮层）。
+ *
+ * [新旧线] 新 bus 线已覆盖：NotificationHostController（core）订阅 bus 'extension-notify'
+ * → toast（经 useExtensionHostBridge 装配注入 useToast），是全局统一消费点，功能上覆盖本旧线
+ * （甚至更完整——不限于 focused session）。本旧线走 WS session 通道 onNotify(sid) 直连，
+ * 与新线（bus global 通道）数据源关系取决于 routeInbound 对 extension:notify 的路由判定
+ * （events.ts 注释「按 payload.sessionId 有无」与 useExtensionHostBridge 注释「无顶层 sid → global」
+ * 存在措辞张力，彻底确认需 trace routeInbound 实现）。保留本旧线不删（避免破坏 Workspace.vue:57
+ * 现有调用），后续 P5 统一清理时移除，统一走 NotificationHostController。
  */
 export function useExtensionNotify(focusedSessionId: Ref<string | null>) {
   const { error, info, warning } = useToast()

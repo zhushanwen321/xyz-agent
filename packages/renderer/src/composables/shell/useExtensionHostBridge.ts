@@ -33,6 +33,7 @@ import {
   scanContributions,
   setExtensionRegistries,
   StatusBarController,
+  NotificationHostController,
   ViewHostStore,
   OverlayLifecycle,
   type OverlayState,
@@ -50,6 +51,7 @@ import {
 import { createDialogRequestSource, createUiResponseTransport } from './extension-host-dialog'
 import type { ServerMessage } from '@xyz-agent/shared'
 import { onGlobal } from '@/api/events'
+import { useToast } from '@/composables/useToast'
 
 /** 把 renderer 的 WS 消息流（events global 通道的 plugin:* 下行）适配成 PluginMessageSource。 */
 
@@ -110,6 +112,7 @@ export function initExtensionHostBridge(app: App): {
   viewHostStore: ViewHostStore
   statusBarController: StatusBarController
   overlayLifecycle: OverlayLifecycle
+  notificationController: NotificationHostController
   mountPoints: MountPointRegistry
   contributions: ContributionRegistry
 } {
@@ -160,5 +163,22 @@ export function initExtensionHostBridge(app: App): {
   // ui 包 OverlayLifecycleSource 接口（getState/transition 签名一致，结构型适配无需手写包装）。
   app.provide(OVERLAY_LIFECYCLE_KEY, overlayLifecycle)
 
-  return { bridge, viewHostStore, statusBarController, overlayLifecycle, mountPoints, contributions }
+  // NotificationHostController（DM3 消费端补齐）：订阅同一 bus 的 6 类通知/生命周期事件。
+  // toast 经 deps 注入——core 零 UI 依赖，壳用 useToast（模块级单例，命令式 API）实现 showToast。
+  // level 映射对齐旧线 useExtensionNotify（error→error / warn|warning→warning / 其余→info）。
+  const { error: toastError, info: toastInfo, warning: toastWarning } = useToast()
+  const notificationController = new NotificationHostController({
+    bus,
+    deps: {
+      showToast: (message, level) => {
+        if (level === 'error') toastError(message)
+        else if (level === 'warning' || level === 'warn') toastWarning(message)
+        else toastInfo(message)
+      },
+      log: console.warn,
+    },
+  })
+  notificationController.subscribe()
+
+  return { bridge, viewHostStore, statusBarController, overlayLifecycle, notificationController, mountPoints, contributions }
 }
