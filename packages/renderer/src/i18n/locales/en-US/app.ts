@@ -1,5 +1,5 @@
 export default {
-  title: 'xyz-agent',
+  title: 'TaiJi',
   waiting: 'Waiting for Runtime…',
   greetingMorning: 'Good morning',
   greetingAfternoon: 'Good afternoon',
