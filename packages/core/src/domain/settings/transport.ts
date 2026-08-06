@@ -47,9 +47,9 @@ export interface SettingsTransport {
   listModels(): Promise<ModelInfo[]>
   setProvider(id: string, data: SetProviderData): Promise<void>
   discoverModels(req: DiscoverModelsRequest): Promise<DiscoverModelsResponse>
-  setSkillDirs(dirs: string[]): Promise<void>
-  setAgentDirs(dirs: string[]): Promise<void>
-  setExtensionDirs(dirs: string[]): Promise<void>
+  setSkillDirs(dirs: SkillDirConfig[]): Promise<void>
+  setAgentDirs(dirs: SkillDirConfig[]): Promise<void>
+  setExtensionDirs(dirs: SkillDirConfig[]): Promise<void>
   // ── 订阅（返回取消函数）──
   onProviders(h: (p: ProviderInfo[]) => void): () => void
   /** 聚合模型列表（与 providers 同源，常驻订阅，model.onModels 对应） */

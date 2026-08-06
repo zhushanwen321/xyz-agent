@@ -345,6 +345,17 @@ export default {
     enableDir: 'Enable directory {path}',
     removeDir: 'Remove directory {path}',
     pathExists: 'Path already exists',
+    // ── v2 grouping/sort/dir-picker/validation (LoadPaths ↑↓ + scope groups) ──
+    groupProject: 'Project directories',
+    groupGlobal: 'Global directories',
+    scopeProject: 'Project',
+    scopeGlobal: 'Global',
+    moveUp: 'Move up',
+    moveDown: 'Move down',
+    chooseDirectory: 'Choose directory',
+    systemTag: 'System',
+    pathFormatError: 'Invalid path format (project: relative/absolute; global: absolute only)',
+    priorityHint: 'Earlier entries have higher priority',
     // ── Import from other Agents (SourceImportSection, W1) ──
     importFromAgents: {
       title: 'Import from other Agents',
@@ -356,6 +367,16 @@ export default {
       skillCount: '{count} skills',
       agentCount: '{count} agents',
       agentOnlyClaudeHint: 'Agent import supports Claude Code only',
+    },
+    // ── Import confirmation dialog (v2 §4 SourceImport ConfirmDialog) ──
+    importConfirm: {
+      title: 'Import directories?',
+      description: 'Import directory config from other Agents into the current project',
+      confirm: 'Import',
+      cancel: 'Cancel',
+      bulletSource: 'Source: directory config from other Agents',
+      bulletTarget: 'Target: written to project directories',
+      bulletDedup: 'Dedup: existing directories are skipped',
     },
     sourceLabels: {
       claude: 'Claude Code',

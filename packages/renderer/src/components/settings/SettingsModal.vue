@@ -250,7 +250,7 @@ async function onSystemUpdate(patch: Partial<SystemSettings>): Promise<void> {
 
 async function onUpdateSkillDirs(dirs: SkillDirConfig[]): Promise<void> {
   try {
-    await settingsStore.setSkillDirs(dirs.filter((d) => d.enabled).map((d) => d.path))
+    await settingsStore.setSkillDirs(dirs)
   } catch (e) {
     toastError(e instanceof Error ? e.message : String(e))
   }
@@ -258,7 +258,7 @@ async function onUpdateSkillDirs(dirs: SkillDirConfig[]): Promise<void> {
 
 async function onUpdateAgentDirs(dirs: SkillDirConfig[]): Promise<void> {
   try {
-    await settingsStore.setAgentDirs(dirs.filter((d) => d.enabled).map((d) => d.path))
+    await settingsStore.setAgentDirs(dirs)
   } catch (e) {
     toastError(e instanceof Error ? e.message : String(e))
   }

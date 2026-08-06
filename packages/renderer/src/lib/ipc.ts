@@ -101,6 +101,16 @@ export async function pickFile(
   return api.pickFile(options)
 }
 
+/**
+ * 选择目录（v2 §3 LoadPaths 注入用）：返回选中目录路径或 null（取消/无聚焦窗口/web mock）。
+ * 薄包装 preload chooseDirectory（其复用 pick-directory handler），取 path 字段（canceled→null），
+ * 对齐 ui 层 ChooseDirectoryFn 契约。web/mock 环境无 preload → 返回 null，LoadPaths 守 null 静默 return。
+ */
+export async function chooseDirectory(): Promise<string | null> {
+  if (!api?.chooseDirectory) return null
+  return api.chooseDirectory()
+}
+
 /** win/linux 自绘 traffic light 点击：最小化窗口（mac 系统圆点不走此处） */
 export function windowMinimize(): Promise<void> {
   return api?.windowMinimize() ?? Promise.resolve()

@@ -189,20 +189,21 @@ export function onDefaults(handler: (defaultModel: string) => void): () => void 
 
 // ── 动作-ack（状态变更由对应订阅通道推回）──
 /**
- * 目录级管道写入（ADR-0021 §1）：覆盖 discovery.json.skillDirs（有序数组 = 优先级，靠前覆盖靠后）。
+ * 目录级管道写入（ADR-0021 §1）：覆盖 skill 加载路径配置（含 scope 的 SkillDirConfig[]，靠前覆盖靠后）。
+ * v2 scope 穿越：整体透传 SkillDirConfig[]（不降维为 string[]），让用户显式 scope 决定加载归属与优先级。
  * 状态变更经 onSkills + onSkillDirs 订阅推回（后端 setSkillDirs 后广播）。
  */
-export function setSkillDirs(dirs: string[]): Promise<void> {
+export function setSkillDirs(dirs: SkillDirConfig[]): Promise<void> {
   return command('config.setSkillDirs', { dirs })
 }
 
-export function setAgentDirs(dirs: string[]): Promise<void> {
+export function setAgentDirs(dirs: SkillDirConfig[]): Promise<void> {
   return command('config.setAgentDirs', { dirs })
 }
 
-/** 覆盖 extension 加载路径（Phase 4 目录级管道），语义同 setSkillDirs/setAgentDirs。
+/** 覆盖 extension 加载路径（Phase 4 目录级管道，v2 scope 穿越），语义同 setSkillDirs/setAgentDirs。
  *  reply 为 config.extensionDirs（广播），状态变更经 onExtensionDirs 订阅推回。 */
-export function setExtensionDirs(dirs: string[]): Promise<void> {
+export function setExtensionDirs(dirs: SkillDirConfig[]): Promise<void> {
   return command('config.setExtensionDirs', { dirs })
 }
 

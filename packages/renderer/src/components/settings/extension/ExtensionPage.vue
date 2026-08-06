@@ -36,10 +36,13 @@
 import { provide } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { SkillDirConfig } from '@xyz-agent/shared'
-import { LoadPaths, SETTINGS_CONFIG_API_KEY } from '@xyz-agent/ui/features/settings'
+import { LoadPaths, SETTINGS_CONFIG_API_KEY, SETTINGS_CHOOSE_DIRECTORY_KEY } from '@xyz-agent/ui/features/settings'
 import { config } from '@/api'
+import { chooseDirectory } from '@/lib/ipc'
 
 provide(SETTINGS_CONFIG_API_KEY, config) // LoadPaths(SourceImportSection) 迁 ui，config 经 inject
+// v2 §3 目录选择 dialog：LoadPaths 经 inject 调 chooseDirectory（lib/ipc 封装，preload 复用 pick-directory handler）
+provide(SETTINGS_CHOOSE_DIRECTORY_KEY, chooseDirectory)
 import { getSettingsStore } from '@xyz-agent/core'
 import type { ExtensionItem } from '@xyz-agent/core'
 import { useToast } from '@/composables/useToast'
@@ -56,10 +59,10 @@ const { t } = useI18n()
 /** 强制目录（ADR-0021 §1.1 桥接层硬编码注入，UI 只读展示） */
 const forcedExtDirs = ['~/.xyz-agent/extensions', '.xyz-agent/extensions']
 
-/** 加载路径变更 → store 持久化（只写 enabled 路径）。拖拽即时性由 LoadPaths 本地状态保证。 */
+/** 加载路径变更 → store 持久化（整体透传 SkillDirConfig[]，含 scope）。拖拽即时性由 LoadPaths 本地状态保证。 */
 async function onUpdateExtensionDirs(dirs: SkillDirConfig[]): Promise<void> {
   try {
-    await settingsStore.setExtensionDirs(dirs.filter((d) => d.enabled).map((d) => d.path))
+    await settingsStore.setExtensionDirs(dirs)
   } catch (e) {
     toastError(e instanceof Error ? e.message : String(e))
   }

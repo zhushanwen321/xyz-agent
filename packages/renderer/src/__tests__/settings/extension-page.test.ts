@@ -179,7 +179,7 @@ describe('ExtensionPage 候选项点击不双触发（W2 D3）', () => {
 
     expect(wrapper.text()).toContain('发现 1 个候选')
 
-    const checkboxBtn = wrapper.find('button[role="checkbox"]')
+    const checkboxBtn = wrapper.find('[data-testid="install-candidates"] button[role="checkbox"]')
     expect(checkboxBtn.exists()).toBe(true)
     // 初始未选中
     expect(checkboxBtn.attributes('data-state')).toBe('unchecked')

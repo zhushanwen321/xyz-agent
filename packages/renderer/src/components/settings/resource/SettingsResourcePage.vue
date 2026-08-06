@@ -78,14 +78,16 @@ import { computed, ref, provide, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RefreshCw } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { LoadPaths, SETTINGS_CONFIG_API_KEY } from '@xyz-agent/ui/features/settings'
+import { LoadPaths, SETTINGS_CONFIG_API_KEY, SETTINGS_CHOOSE_DIRECTORY_KEY } from '@xyz-agent/ui/features/settings'
 import type { SkillInfo, AgentInfo, SkillDirConfig } from '@xyz-agent/shared'
 import { config } from '@/api'
-import { getDataDir } from '@/lib/ipc'
+import { chooseDirectory, getDataDir } from '@/lib/ipc'
 
 // W3：LoadPaths（含 SourceImportSection）迁入 ui 包，其 config(@/api) 依赖经 inject 注入。
 // 此处把 renderer 的 config 作为 SettingsConfigApi provide 给 ui 组件（detectSources 等方法）。
 provide(SETTINGS_CONFIG_API_KEY, config)
+// v2 §3 目录选择 dialog：LoadPaths 经 inject 调 chooseDirectory（lib/ipc 封装，preload 复用 pick-directory handler）
+provide(SETTINGS_CHOOSE_DIRECTORY_KEY, chooseDirectory)
 
 /**
  * 资源类型。用 kind 单 prop 内部 switch（而非 props 爆炸）：

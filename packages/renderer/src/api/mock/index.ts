@@ -620,27 +620,54 @@ const skillsSub = makeMockSubscription(() => fixtureSkills.map((s) => ({ ...s })
 const agentsSub = makeMockSubscription(() => fixtureAgents.map((a) => ({ ...a })))
 const defaultsSub = makeMockSubscription(() => 'Anthropic/claude-sonnet-4.5')
 
-// ADR-0021 §1 discovery.json 加载路径配置（目录级管道，UI 层 A 勾选/拖动用）
-// fixtureSkillDirs/fixtureAgentDirs 是「预设候选 + enabled 状态」的 UI 视图，对齐 server.ts buildDirConfigs
-const PRESET_SKILL_DIRS = ['~/.pi/agent/skills', '~/.claude/skills', '~/.agents/skills', '.agents/skills']
-const PRESET_AGENT_DIRS = ['~/.pi/agent/agents', '~/.claude/agents', '~/.agents/agents', '.agents/agents']
-const PRESET_EXTENSION_DIRS = ['~/.pi/agent/extensions', '~/.claude/extensions', '~/.agents/extensions', '.agents/extensions']
-let mockSkillDirPaths = ['~/.pi/agent/skills', '~/.claude/skills', '~/.agents/skills'] // 启用的 skillDirs（有序 = 优先级）
-let mockAgentDirPaths = ['~/.agents/agents'] // 启用的 agentDirs
-let mockExtensionDirPaths: string[] = [] // 启用的 extensionDirs（Phase 4，默认空——仅强制目录生效）
-function buildMockDirConfigs(preset: string[], enabledPaths: string[]): SkillDirConfig[] {
-  // ADR-0021 §1.1：discovery 数组顺序即优先级（靠前覆盖靠后）。
-  // 顺序：启用的按 discovery 顺序（用户拖拽排序）→ 未启用的预设候选按固定顺序追加。
-  const enabledSet = new Set(enabledPaths)
-  const configs = enabledPaths.map((path) => ({ path, enabled: true }))
-  for (const path of preset) {
-    if (!enabledSet.has(path)) configs.push({ path, enabled: false })
+// ADR-0021 §1 discovery 加载路径配置（v2 嵌套 project/global，UI 层 A 勾选/↑↓ 用）。
+// preset 按 §2.3 路径特征拆 project（相对）/ global（绝对 ~ 或 / 开头），对齐 runtime buildDirConfigs 归属。
+const PRESET_SKILL_DIRS_PROJECT = ['.agents/skills']
+const PRESET_SKILL_DIRS_GLOBAL = ['~/.pi/agent/skills', '~/.claude/skills', '~/.agents/skills']
+const PRESET_AGENT_DIRS_PROJECT = ['.agents/agents']
+const PRESET_AGENT_DIRS_GLOBAL = ['~/.pi/agent/agents', '~/.claude/agents', '~/.agents/agents']
+const PRESET_EXTENSION_DIRS_PROJECT = ['.agents/extensions']
+const PRESET_EXTENSION_DIRS_GLOBAL = ['~/.pi/agent/extensions', '~/.claude/extensions', '~/.agents/extensions']
+
+// v2 mock 当前态：完整 SkillDirConfig[]（含 enabled + scope）。初始 fixture 与 runtime buildDirConfigs 顺序一致。
+// setSkillDirs 等整体透传 SkillDirConfig[]（v2 scope 穿越路 A，不降维为 string[]）。
+let mockSkillDirs: SkillDirConfig[] = [
+  { path: '~/.pi/agent/skills', enabled: true, scope: 'global' },
+  { path: '~/.claude/skills', enabled: true, scope: 'global' },
+  { path: '~/.agents/skills', enabled: true, scope: 'global' },
+]
+let mockAgentDirs: SkillDirConfig[] = [
+  { path: '~/.agents/agents', enabled: true, scope: 'global' },
+]
+// extension 默认空（Phase 4，仅强制目录生效）
+let mockExtensionDirs: SkillDirConfig[] = []
+
+/**
+ * v2 buildMockDirConfigs：产带 scope 的 SkillDirConfig[]，顺序对齐 runtime buildDirConfigs
+ * `[project.enabled → global.enabled → project 未启用 → global 未启用]`（项目优先级 > 全局）。
+ * current 是用户最新下发的完整态；preset 中缺失的路径补为 enabled:false（scope 按所属组）。
+ */
+function buildMockDirConfigs(
+  current: SkillDirConfig[],
+  presetProject: string[],
+  presetGlobal: string[],
+): SkillDirConfig[] {
+  const byKey = new Map<string, SkillDirConfig>()
+  for (const d of current) byKey.set(d.path, { ...d })
+  for (const path of presetProject) {
+    if (!byKey.has(path)) byKey.set(path, { path, enabled: false, scope: 'project' })
   }
-  return configs
+  for (const path of presetGlobal) {
+    if (!byKey.has(path)) byKey.set(path, { path, enabled: false, scope: 'global' })
+  }
+  const all = [...byKey.values()]
+  const pick = (scope: 'project' | 'global', enabled: boolean) =>
+    all.filter((d) => d.scope === scope && d.enabled === enabled)
+  return [...pick('project', true), ...pick('global', true), ...pick('project', false), ...pick('global', false)]
 }
-const skillDirsSub = makeMockSubscription(() => buildMockDirConfigs(PRESET_SKILL_DIRS, mockSkillDirPaths).map((d) => ({ ...d })))
-const agentDirsSub = makeMockSubscription(() => buildMockDirConfigs(PRESET_AGENT_DIRS, mockAgentDirPaths).map((d) => ({ ...d })))
-const extensionDirsSub = makeMockSubscription(() => buildMockDirConfigs(PRESET_EXTENSION_DIRS, mockExtensionDirPaths).map((d) => ({ ...d })))
+const skillDirsSub = makeMockSubscription(() => buildMockDirConfigs(mockSkillDirs, PRESET_SKILL_DIRS_PROJECT, PRESET_SKILL_DIRS_GLOBAL).map((d) => ({ ...d })))
+const agentDirsSub = makeMockSubscription(() => buildMockDirConfigs(mockAgentDirs, PRESET_AGENT_DIRS_PROJECT, PRESET_AGENT_DIRS_GLOBAL).map((d) => ({ ...d })))
+const extensionDirsSub = makeMockSubscription(() => buildMockDirConfigs(mockExtensionDirs, PRESET_EXTENSION_DIRS_PROJECT, PRESET_EXTENSION_DIRS_GLOBAL).map((d) => ({ ...d })))
 
 /** 默认系统提示词配置（与 W7 system-prompt-page.test defaultConfig 同构）。 */
 function defaultSystemPromptConfig(): SystemPromptConfig {
@@ -744,11 +771,11 @@ export const config = {
     await sleep(TIMING.ack)
     return []
   },
-  /** ADR-0021 §1 目录级管道写入：更新 mock skillDirs + 广播 skill 列表 + 目录配置 */
-  async setSkillDirs(dirs: string[]) {
+  /** ADR-0021 §1 目录级管道写入（v2 scope 穿越）：更新 mock skillDirs + 广播 skill 列表 + 目录配置 */
+  async setSkillDirs(dirs: SkillDirConfig[]) {
     await sleep(TIMING.ack)
-    mockSkillDirPaths = dirs
-    skillDirsSub.broadcast(buildMockDirConfigs(PRESET_SKILL_DIRS, dirs).map((d) => ({ ...d })))
+    mockSkillDirs = dirs.map((d) => ({ ...d }))
+    skillDirsSub.broadcast(buildMockDirConfigs(mockSkillDirs, PRESET_SKILL_DIRS_PROJECT, PRESET_SKILL_DIRS_GLOBAL).map((d) => ({ ...d })))
     skillsSub.broadcast(fixtureSkills.map((s) => ({ ...s })))
   },
   async setSkill(skill: SkillInfo) {
@@ -806,18 +833,18 @@ export const config = {
     broadcastProviders()
     return { result: { source: 'pi' as ProviderSource, imported: [mockImported], failedCount: 0 } }
   },
-  /** ADR-0021 §1 目录级管道写入：更新 mock agentDirs + 广播 agent 列表 + 目录配置 */
-  async setAgentDirs(dirs: string[]) {
+  /** ADR-0021 §1 目录级管道写入（v2 scope 穿越）：更新 mock agentDirs + 广播 agent 列表 + 目录配置 */
+  async setAgentDirs(dirs: SkillDirConfig[]) {
     await sleep(TIMING.ack)
-    mockAgentDirPaths = dirs
-    agentDirsSub.broadcast(buildMockDirConfigs(PRESET_AGENT_DIRS, dirs).map((d) => ({ ...d })))
+    mockAgentDirs = dirs.map((d) => ({ ...d }))
+    agentDirsSub.broadcast(buildMockDirConfigs(mockAgentDirs, PRESET_AGENT_DIRS_PROJECT, PRESET_AGENT_DIRS_GLOBAL).map((d) => ({ ...d })))
     agentsSub.broadcast(fixtureAgents.map((a) => ({ ...a })))
   },
-  /** Phase 4 目录级管道写入：更新 mock extensionDirs + 广播目录配置（靠后端权威值推回） */
-  async setExtensionDirs(dirs: string[]) {
+  /** Phase 4 目录级管道写入（v2 scope 穿越）：更新 mock extensionDirs + 广播目录配置（靠后端权威值推回） */
+  async setExtensionDirs(dirs: SkillDirConfig[]) {
     await sleep(TIMING.ack)
-    mockExtensionDirPaths = dirs
-    extensionDirsSub.broadcast(buildMockDirConfigs(PRESET_EXTENSION_DIRS, dirs).map((d) => ({ ...d })))
+    mockExtensionDirs = dirs.map((d) => ({ ...d }))
+    extensionDirsSub.broadcast(buildMockDirConfigs(mockExtensionDirs, PRESET_EXTENSION_DIRS_PROJECT, PRESET_EXTENSION_DIRS_GLOBAL).map((d) => ({ ...d })))
   },
   async setAgent(agent: AgentInfo) {
     await sleep(TIMING.ack)

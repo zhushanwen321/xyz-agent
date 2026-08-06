@@ -345,6 +345,17 @@ export default {
     enableDir: '启用目录 {path}',
     removeDir: '删除目录 {path}',
     pathExists: '路径已存在',
+    // ── v2 分组/排序/目录选择/校验（LoadPaths ↑↓ + scope 分组）──
+    groupProject: '项目目录',
+    groupGlobal: '全局目录',
+    scopeProject: '项目',
+    scopeGlobal: '全局',
+    moveUp: '上移',
+    moveDown: '下移',
+    chooseDirectory: '选择目录',
+    systemTag: '系统',
+    pathFormatError: '路径格式错误（项目允许相对/绝对；全局限绝对路径）',
+    priorityHint: '靠前优先级更高',
     // ── 从其他 Agent 导入（SourceImportSection，W1）──
     importFromAgents: {
       title: '从其他 Agent 导入',
@@ -356,6 +367,16 @@ export default {
       skillCount: '{count} 个 skill',
       agentCount: '{count} 个 agent',
       agentOnlyClaudeHint: 'Agent 导入仅支持 Claude Code',
+    },
+    // ── 导入确认弹窗（v2 §4 SourceImport ConfirmDialog）──
+    importConfirm: {
+      title: '导入目录到太极？',
+      description: '将从其他 Agent 导入目录配置到当前项目',
+      confirm: '导入',
+      cancel: '取消',
+      bulletSource: '来源：其他 Agent 的目录配置',
+      bulletTarget: '目标：写入项目目录',
+      bulletDedup: '去重：已存在的目录自动跳过',
     },
     sourceLabels: {
       claude: 'Claude Code',

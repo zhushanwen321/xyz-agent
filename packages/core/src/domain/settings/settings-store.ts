@@ -94,24 +94,26 @@ export function createSettingsStore() {
   }
 
   /**
-   * 覆盖 skill 加载路径（ADR-0021 §1 目录级管道）。
-   * dirs 是启用的路径有序数组（靠前覆盖靠后）。
+   * 覆盖 skill 加载路径（ADR-0021 §1 目录级管道，v2 scope 穿越路 A）。
+   * dirs 是含 scope 的目录配置有序数组（带 enabled 态与 project/global 归属，靠前覆盖靠后）。
+   * 整体透传 SkillDirConfig[]（不降维为 string[]），让用户显式标记的 scope 真正决定加载归属与优先级。
    * 只负责发请求持久化 + 让后端广播推回权威值（buildDirConfigs 补全预设候选）。
    * 拖拽的即时性由 LoadPaths 的本地状态保证，store 不做乐观更新（避免两套本地状态打架）。
    */
-  async function setSkillDirs(dirs: string[]): Promise<void> {
+  async function setSkillDirs(dirs: SkillDirConfig[]): Promise<void> {
     await getSettingsTransport().setSkillDirs(dirs)
   }
 
-  /** 覆盖 agent 加载路径（ADR-0021 §1 目录级管道），语义同 setSkillDirs。 */
-  async function setAgentDirs(dirs: string[]): Promise<void> {
+  /** 覆盖 agent 加载路径（ADR-0021 §1 目录级管道，v2 scope 穿越路 A），语义同 setSkillDirs。 */
+  async function setAgentDirs(dirs: SkillDirConfig[]): Promise<void> {
     await getSettingsTransport().setAgentDirs(dirs)
   }
 
-  /** 覆盖 extension 加载路径（Phase 4 目录级管道），语义同 setSkillDirs/setAgentDirs。
-   *  dirs 是启用的路径有序数组（靠前先加载）。只发请求持久化，靠后端广播推回权威值。
+  /** 覆盖 extension 加载路径（Phase 4 目录级管道，v2 scope 穿越路 A），语义同 setSkillDirs/setAgentDirs。
+   *  dirs 是含 scope 的目录配置有序数组（带 enabled 态与 project/global 归属，靠前先加载）。
+   *  整体透传 SkillDirConfig[]（不降维为 string[]）。只发请求持久化，靠后端广播推回权威值。
    *  extension 不需要重启提示——新 session 生效（与 agent 的「重开会话」提示不同）。 */
-  async function setExtensionDirs(dirs: string[]): Promise<void> {
+  async function setExtensionDirs(dirs: SkillDirConfig[]): Promise<void> {
     await getSettingsTransport().setExtensionDirs(dirs)
   }
 

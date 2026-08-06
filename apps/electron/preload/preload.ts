@@ -48,6 +48,12 @@ export interface ElectronAPI {
     path: string | null
   }>
   /**
+   * 目录选择 dialog（v2 §3 LoadPaths 注入用）：返回选中目录路径，取消/无聚焦窗口返回 null。
+   * 复用 pick-directory handler（dialog.showOpenDialog openDirectory），封装为 string|null 形态
+   * 对齐 ui 层 ChooseDirectoryFn 契约（LoadPaths onChooseDirectory 消费）。
+   */
+  chooseDirectory(): Promise<string | null>
+  /**
    * 把剪贴板图片（base64）写到 <getDataDir>/attachments/<sessionId>/（持久化），返回 {path, fileName, displayName, id, persisted}。
    * Cmd+V/Ctrl+V 粘贴截图走此 IPC（renderer 读 blob → base64 → 落地文件）。
    * 主进程校验 mimeType image/* 前缀 + 20MB 上限，写失败 throw。
@@ -190,6 +196,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     defaultPath?: string
     filters?: Array<{ name: string; extensions: string[] }>
   }) => ipcRenderer.invoke('pick-file', options),
+  // v2 §3：chooseDirectory 薄包装 pick-directory handler，返回 path（canceled→null），对齐 ui ChooseDirectoryFn 契约
+  chooseDirectory: () =>
+    ipcRenderer.invoke('pick-directory').then((r: { canceled: boolean; path: string | null }) => r.path),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   onFullscreenChanged: (callback: (payload: { isFullscreen: boolean }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: { isFullscreen: boolean }) => callback(payload)
