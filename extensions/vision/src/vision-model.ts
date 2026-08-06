@@ -10,8 +10,9 @@
  */
 
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
+
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 // ──────────────────────── Types ────────────────────────
 
@@ -41,7 +42,7 @@ export interface VisionModelApi {
 
 // ──────────────────────── Constants ────────────────────────
 
-export const VISION_MODELS_PATH = path.join(os.homedir(), ".pi", "agent", "vision-models.json");
+export const VISION_MODELS_PATH = path.join(getAgentDir(), "vision-models.json");
 export const VISION_ALLOWED_TOOLS = "read,bash,grep";
 
 export const VISION_SYSTEM_PROMPT = [

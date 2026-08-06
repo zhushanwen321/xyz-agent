@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 // ── 配置嵌套类型 ──
 
@@ -119,7 +120,7 @@ export function loadConfig(
   settingsPath?: string,
 ): ContextEngineeringConfig {
   const filePath =
-    settingsPath ?? join(homedir(), ".pi", "agent", "extensions", "context-engineering", "config.json");
+    settingsPath ?? join(getAgentDir(), "extensions", "context-engineering", "config.json");
 
   let raw: string;
   try {

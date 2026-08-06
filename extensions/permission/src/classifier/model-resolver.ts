@@ -3,7 +3,7 @@
  *
  * 移植自 pi-coding-agent 的 ModelRegistry 思路，但只读 models.json（不刷新 OAuth、
  * 不合并内置模型），保持轻量。核心：
- *   - agentDir()：解析 agent 根目录（与 config.ts 同逻辑，G2 自实现，不依赖未导出的 getAgentDir）
+ *   - agentDir：解析 agent 根目录（直接用 pi 的 getAgentDir：PI_CODING_AGENT_DIR 覆盖，缺省回退 ~/.pi/agent）
  *   - loadModelsJson()：读 <agentDir>/models.json，含 onWarning 回调（G6）
  *   - findCheapestModel()：拍平 providers → 过滤 hasApiKey → 按 input cost 升序
  *   - resolveClassifierModel()：'auto' / 'provider/model-id' 两路解析
@@ -13,22 +13,11 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
-// ──────────────────────── agentDir（G2 自实现） ────────────────────────
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
-/**
- * 解析 agent 根目录。
- *
- * 与 config.ts 的 getAgentDir 逻辑一致（env override 优先，否则 ~/.pi/agent），
- * 但此处显式 export 供 classifier 子模块复用——config.ts 的 getAgentDir 未导出。
- */
-export function agentDir(): string {
-	const override = process.env.PI_CODING_AGENT_DIR?.trim();
-	if (override) return override;
-	return join(homedir(), ".pi", "agent");
-}
+// ──────────────────────── agentDir（pi 的 getAgentDir） ────────────────────────
 
 // ──────────────────────── models.json schema（最小子集） ────────────────────────
 
@@ -100,7 +89,7 @@ export function loadModelsJson(
 	onWarning?: (msg: string) => void,
 	filePath?: string,
 ): ModelsJsonFile | null {
-	const path = filePath ?? join(agentDir(), "models.json");
+	const path = filePath ?? join(getAgentDir(), "models.json");
 	if (!existsSync(path)) {
 		return null;
 	}

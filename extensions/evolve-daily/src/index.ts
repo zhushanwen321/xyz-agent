@@ -1,11 +1,10 @@
 // packages/evolve-daily/src/index.ts
 
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { createCompactDetector } from "./detectors/compact";
 import { createGoalQualityDetector } from "./detectors/goal-quality";
@@ -19,8 +18,8 @@ import { skillExecutionConfig } from "./trackers/skill-execution";
 const EXT_DIR = dirname(fileURLToPath(import.meta.url)); // src/
 const ANALYZER_PATH = join(EXT_DIR, "..", "analyzer", "analyze.py");
 
-// 运行时数据目录使用 Pi 平台约定路径（homedir + .pi/agent/）
-const REPORTS_DIR = join(homedir(), ".pi", "agent", "evolution-data", "daily-reports");
+// 运行时数据目录使用 Pi 约定的 agent 根目录（getAgentDir：读 PI_CODING_AGENT_DIR，缺省回退 ~/.pi/agent）
+const REPORTS_DIR = join(getAgentDir(), "evolution-data", "daily-reports");
 
 const DATE_SLICE_END = 10;
 const ANALYZER_TIMEOUT_MS = 30_000;

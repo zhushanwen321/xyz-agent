@@ -6,8 +6,9 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 import {
 	DEFAULT_CLASSIFIER_CONFIG,
@@ -20,14 +21,7 @@ import {
 
 // ──────────────────────── 路径解析 ────────────────────────
 
-/** PI_CODING_AGENT_DIR 环境变量覆盖 ~/.pi/agent 基础路径 */
-function getAgentDir(): string {
-	const override = process.env.PI_CODING_AGENT_DIR?.trim();
-	if (override) return override;
-	return join(homedir(), ".pi", "agent");
-}
-
-/** 配置文件完整路径 */
+/** 配置文件完整路径（agent 根目录由 pi 的 getAgentDir 解析：PI_CODING_AGENT_DIR 覆盖，缺省回退 ~/.pi/agent） */
 export function getConfigPath(): string {
 	return join(getAgentDir(), "permission-config.json");
 }

@@ -12,7 +12,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 /** Minimal agent info extracted from .md frontmatter */
 interface AgentEntry {
@@ -107,12 +107,12 @@ function escapeXml(str: string): string {
 function discoverAllAgents(cwd: string): AgentEntry[] {
 	// Builtin agents from pi-subagents package
 	const builtinDir = path.join(
-		os.homedir(),
-		".pi/agent/npm/node_modules/pi-subagents/agents",
+		getAgentDir(),
+		"npm/node_modules/pi-subagents/agents",
 	);
 
 	// User scope (both legacy and new paths)
-	const userDirLegacy = path.join(os.homedir(), ".pi/agent/agents");
+	const userDirLegacy = path.join(getAgentDir(), "agents");
 	const userDirNew = path.join(os.homedir(), ".agents");
 
 	// Project scope (both legacy and new paths)

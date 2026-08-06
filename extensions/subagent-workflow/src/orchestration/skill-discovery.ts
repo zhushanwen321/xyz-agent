@@ -6,8 +6,9 @@
  */
 
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
+
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 // ── Skill path resolution (with npm dir cache) ─────────────────────
 
@@ -41,11 +42,11 @@ export function resolveSkillPath(skillName: string): string | undefined {
  // Project-level
     path.resolve(process.cwd(), ".agents/skills", skillName),
  // Global user skills
-    path.join(os.homedir(), ".pi/agent/skills", skillName),
+    path.join(getAgentDir(), "skills", skillName),
   ];
 
  // npm package skills (cached)
-  const npmSkillsDir = path.join(os.homedir(), ".pi/agent/npm/node_modules");
+  const npmSkillsDir = path.join(getAgentDir(), "npm/node_modules");
   for (const pkgSkillsBase of getNpmSkillCandidates(npmSkillsDir)) {
     candidates.push(path.join(pkgSkillsBase, skillName));
   }
