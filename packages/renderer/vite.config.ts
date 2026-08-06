@@ -40,6 +40,13 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 1420,
       strictPort: true,
+      // HMR file watcher：本机环境（Node 24 + macOS 15）下 Vite 8 默认的 fsevents 后端不派发变更事件
+      //（独立 chokidar 同路径/同 fsevents 绑定可正常收到，问题仅在 Vite 运行时触发），导致改 .vue/.ts 不热更新。
+      // 强制轮询模式绕过 fsevents，保证 HMR 可靠触发。轮询 209 个源目录 ~每 100ms，CPU 开销可忽略。
+      watch: {
+        usePolling: true,
+        interval: 100,
+      },
     },
     build: {
       target: 'esnext',
