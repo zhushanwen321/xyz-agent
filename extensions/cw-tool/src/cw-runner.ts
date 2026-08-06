@@ -107,6 +107,9 @@ function tryParseJson(text: string): unknown | undefined {
 	}
 }
 
+/** cw spawn 默认超时（5 分钟）。cw 卡死时避免永久挂起 agent turn。 */
+const DEFAULT_CW_TIMEOUT_MS = 300_000;
+
 /**
  * 执行 cw action 的核心逻辑：白名单校验 → 参数冲突校验 → spawn → 解析。
  *
@@ -118,8 +121,10 @@ function tryParseJson(text: string): unknown | undefined {
  * @param toolName 工具名（错误消息归属用）。
  * @param unitId   cw unit id（必传）。
  * @param opts     可选 flags。
- * @param spawner  spawn 实现（默认走真实 cw，测试注入 fake）。
- * @param cwd      子进程工作目录。
+ * @param spawner   spawn 实现（默认走真实 cw，测试注入 fake）。
+ * @param cwd       子进程工作目录。
+ * @param signal    可选 SDK abort signal；与超时合并后透传给 spawner，abort 时 spawner kill 子进程。
+ * @param timeoutMs spawn 超时（ms），默认 5 分钟；0 表示不限时。超时返回 ok:false "cw 超时"。
  */
 export async function executeCwAction(
 	action: string,
@@ -129,6 +134,8 @@ export async function executeCwAction(
 	opts: CwToolOptions,
 	spawner: CwSpawner,
 	cwd: string,
+	signal?: AbortSignal,
+	timeoutMs: number = DEFAULT_CW_TIMEOUT_MS,
 ): Promise<CwDetails> {
 	const base = { action, unitId };
 
@@ -141,13 +148,36 @@ export async function executeCwAction(
 	const args = buildCwArgs(action, unitId, opts);
 	const stdinPayload = opts.input !== undefined ? opts.input : undefined;
 
+	// 合并 SDK abort signal 与超时为单个 signal 传给 spawner：spawner（默认实现）在 abort
+	// 时 kill 子进程，避免 abort/超时后僵尸 cw 继续推进状态机。
+	const combined = new AbortController();
+	let timedOut = false;
+	const onSdkAbort = (): void => combined.abort();
+	if (signal) {
+		if (signal.aborted) combined.abort();
+		else signal.addEventListener("abort", onSdkAbort, { once: true });
+	}
+	const timer =
+		timeoutMs > 0
+			? setTimeout(() => {
+					timedOut = true;
+					combined.abort();
+				}, timeoutMs)
+			: undefined;
+
 	let result;
 	try {
-		result = await spawner(args, stdinPayload, cwd);
+		result = await spawner(args, stdinPayload, cwd, combined.signal);
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err);
 		return { ok: false, ...base, error: `cw spawn 失败: ${msg}` };
+	} finally {
+		if (timer) clearTimeout(timer);
+		if (signal) signal.removeEventListener("abort", onSdkAbort);
 	}
+
+	// 超时优先于结果判定（spawner 被 kill 后 resolve，exitCode 通常为 null）。
+	if (timedOut) return { ok: false, ...base, error: "cw 超时" };
 
 	const { stdout, stderr, exitCode } = result;
 

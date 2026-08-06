@@ -22,11 +22,19 @@ export interface CwSpawnResult {
 /**
  * spawn cw 的可注入抽象。
  *
- * @param args  传给 cw 的参数（不含 `cw` 本身，由实现补上）。
- * @param input 要写入子进程 stdin 的内容；undefined 表示不写（cw 不读 stdin）。
- * @param cwd   子进程工作目录。
+ * @param args   传给 cw 的参数（不含 `cw` 本身，由实现补上）。
+ * @param input  要写入子进程 stdin 的内容；undefined 表示不写（cw 不读 stdin）。
+ * @param cwd    子进程工作目录。
+ * @param signal 可选 abort signal；实现应在 abort 时 kill 子进程（见 defaultCwSpawner），
+ *               避免 abort 后僵尸 cw 子进程继续推进状态机（executeCwAction 把 SDK signal +
+ *               超时合并为此 signal 传入）。
  */
-export type CwSpawner = (args: string[], input: string | undefined, cwd: string) => Promise<CwSpawnResult>;
+export type CwSpawner = (
+	args: string[],
+	input: string | undefined,
+	cwd: string,
+	signal?: AbortSignal,
+) => Promise<CwSpawnResult>;
 
 /**
  * 默认 cw spawner：用 child_process.spawn 执行 PATH 中的 `cw`。
@@ -34,8 +42,10 @@ export type CwSpawner = (args: string[], input: string | undefined, cwd: string)
  * - stdout/stderr 设 utf8 编码后全量捕获（data 回调收 string，无需 Buffer 处理）。
  * - input（若提供）写入 stdin 后关闭；未提供则直接 end（cw 不阻塞等待 stdin）。
  * - spawn 自身失败（如 cw 不在 PATH）走 'error' 事件，拼进 stderr、exitCode=-1 标记异常。
+ * - signal abort 时 kill 子进程（SIGTERM），避免 abort 后僵尸 cw 继续推进状态机；
+ *   signal 进入时已 aborted 则立即 kill。listener 在 settle 时移除防泄漏。
  */
-export const defaultCwSpawner: CwSpawner = (args, input, cwd) =>
+export const defaultCwSpawner: CwSpawner = (args, input, cwd, signal) =>
 	new Promise<CwSpawnResult>((resolve) => {
 		const child = spawn("cw", args, {
 			cwd,
@@ -55,16 +65,37 @@ export const defaultCwSpawner: CwSpawner = (args, input, cwd) =>
 			stderr += chunk;
 		});
 
+		// abort → kill 子进程，防止 cw 状态机被已 abort 的僵尸子进程推进。
+		const onAbort = (): void => {
+			child.kill("SIGTERM");
+		};
+		if (signal) {
+			if (signal.aborted) {
+				child.kill("SIGTERM");
+			} else {
+				signal.addEventListener("abort", onAbort, { once: true });
+			}
+		}
+
 		if (input !== undefined) {
 			child.stdin.write(input, "utf8");
 		}
 		child.stdin.end();
 
+		// error 与 close 可能先后触发；用 settled 守卫保证只 resolve 一次并清理 listener。
+		let settled = false;
+		const finish = (result: CwSpawnResult): void => {
+			if (settled) return;
+			settled = true;
+			signal?.removeEventListener("abort", onAbort);
+			resolve(result);
+		};
+
 		child.on("error", (err: NodeJS.ErrnoException) => {
 			// spawn 失败（cw 不在 PATH / 无执行权限等）。exitCode=-1 区分于正常退出码。
-			resolve({ stdout, stderr: `${stderr}\n[spawn error] ${err.message}`, exitCode: -1 });
+			finish({ stdout, stderr: `${stderr}\n[spawn error] ${err.message}`, exitCode: -1 });
 		});
 		child.on("close", (code: number | null) => {
-			resolve({ stdout, stderr, exitCode: code });
+			finish({ stdout, stderr, exitCode: code });
 		});
 	});

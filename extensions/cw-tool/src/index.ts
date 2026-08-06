@@ -11,6 +11,7 @@
  */
 import type {
 	AgentToolResult,
+	AgentToolUpdateCallback,
 	ExtensionAPI,
 	ExtensionContext,
 	ToolDefinition,
@@ -165,7 +166,7 @@ function buildTool<A extends readonly string[]>(
 			_toolCallId: string,
 			params: Params,
 			signal: AbortSignal | undefined,
-			_onUpdate: unknown,
+			_onUpdate: AgentToolUpdateCallback<CwDetails> | undefined,
 			ctx: ExtensionContext,
 		): Promise<AgentToolResult<CwDetails>> {
 			if (signal?.aborted) {
@@ -192,6 +193,7 @@ function buildTool<A extends readonly string[]>(
 				opts,
 				spawner,
 				ctx.cwd,
+				signal,
 			);
 
 			const text = details.ok

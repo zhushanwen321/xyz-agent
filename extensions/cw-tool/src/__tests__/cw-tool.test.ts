@@ -4,7 +4,15 @@
  * 测试框架：vitest（从 vitest 导入 describe/it/expect/vi）。
  * 不真调 cw：通过 fake spawner 注入。白名单拦截在 spawn 之前，故拒绝用例断言 spawner 未被调用。
  */
-import { describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
+import type * as cp from "node:child_process";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+// node:child_process 是原生 CJS 模块，ESM 命名导出不可重定义（vi.spyOn 报 "not configurable"）。
+// 改用 vi.mock + vi.hoisted：工厂替换整个模块，hoisted vi.fn 作为 spawn，测试内动态配置实现。
+const spawnMock = vi.hoisted(() => vi.fn());
+vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 
 import {
 	buildCwArgs,
@@ -35,7 +43,7 @@ interface CapturedCall {
 function fakeSpawner(responses: CwSpawnResult[]): { spawner: CwSpawner; calls: CapturedCall[] } {
 	const calls: CapturedCall[] = [];
 	let i = 0;
-	const spawner: CwSpawner = vi.fn(async (args, input, cwd): Promise<CwSpawnResult> => {
+	const spawner: CwSpawner = vi.fn(async (args, input, cwd, _signal): Promise<CwSpawnResult> => {
 		calls.push({ args, input, cwd });
 		const r = responses[i] ?? { stdout: "", stderr: "", exitCode: 0 };
 		i += 1;
@@ -64,6 +72,7 @@ describe("白名单拦截（executeCwAction）", () => {
 		{ name: "cw_planning", allowed: PLANNING_ALLOWED, reject: "design-review" },
 		{ name: "cw_planning", allowed: PLANNING_ALLOWED, reject: "exec-review" },
 		{ name: "cw_wave", allowed: WAVE_ALLOWED, reject: "execute" },
+		{ name: "cw_wave", allowed: WAVE_ALLOWED, reject: "test" },
 		{ name: "cw_wave", allowed: WAVE_ALLOWED, reject: "design-review" },
 		{ name: "cw_wave", allowed: WAVE_ALLOWED, reject: "exec-review" },
 		{ name: "cw_dev", allowed: DEV_ALLOWED, reject: "design-review" },
@@ -252,6 +261,33 @@ describe("失败路径", () => {
 		expect(details.error).toContain("互斥");
 		expect(spawner).not.toHaveBeenCalled();
 	});
+
+	it("spawn 超时（timeoutMs）→ ok:false 'cw 超时'", async () => {
+		// spawner 模拟 cw 卡死：挂起直到 signal abort 才 resolve（默认实现行为）。
+		const hangingSpawner: CwSpawner = vi.fn((_args, _input, _cwd, signal) =>
+			new Promise<CwSpawnResult>((resolve) => {
+				signal?.addEventListener("abort", () =>
+					resolve({ stdout: "", stderr: "", exitCode: null }),
+				);
+			}),
+		) as unknown as CwSpawner;
+
+		const details = await executeCwAction(
+			"status",
+			DEV_ALLOWED,
+			"cw_dev",
+			"u1",
+			{},
+			hangingSpawner,
+			fakeCtx.cwd,
+			undefined,
+			50,
+		);
+
+		expect(details.ok).toBe(false);
+		if (details.ok) throw new Error("unreachable");
+		expect(details.error).toBe("cw 超时");
+	});
 });
 
 // ── 参数构造 ────────────────────────────────────────────────────
@@ -341,23 +377,24 @@ describe("stdin 透传", () => {
 describe("工厂与工具注册", () => {
 	it("cwToolExtension(pi) 注册 4 个工具（cw_planning/cw_wave/cw_dev/cw_review）", async () => {
 		const { default: cwToolExtension } = await import("../index.ts");
-		const registered: Array<{ name: string; allowedCount: number }> = [];
+		const registered: Array<{ name: string; actionEnum: string[] }> = [];
 		const fakePi = {
 			registerTool(tool: { name: string; parameters: { properties?: Record<string, unknown> } }): void {
 				const enumVal = (tool.parameters.properties?.action as { enum?: string[] })?.enum;
-				registered.push({ name: tool.name, allowedCount: enumVal?.length ?? -1 });
+				registered.push({ name: tool.name, actionEnum: enumVal ?? [] });
 			},
 		};
 		cwToolExtension(fakePi as never);
 
 		const names = registered.map((r) => r.name);
 		expect(names).toEqual(["cw_planning", "cw_wave", "cw_dev", "cw_review"]);
-		// schema 的 action 枚举与白名单一致（运行时 schema 即第一道约束）
-		const byName = Object.fromEntries(registered.map((r) => [r.name, r.allowedCount]));
-		expect(byName.cw_planning).toBe(PLANNING_ALLOWED.length);
-		expect(byName.cw_wave).toBe(WAVE_ALLOWED.length);
-		expect(byName.cw_dev).toBe(DEV_ALLOWED.length);
-		expect(byName.cw_review).toBe(REVIEW_ALLOWED.length);
+		// schema 的 action 枚举值与白名单数组逐项深相等（schema 即运行时第一道约束，
+		// 与 executeCwAction 第二道 rejectDisallowedAction 同源）。
+		const byName = Object.fromEntries(registered.map((r) => [r.name, r.actionEnum]));
+		expect(byName.cw_planning).toEqual([...PLANNING_ALLOWED]);
+		expect(byName.cw_wave).toEqual([...WAVE_ALLOWED]);
+		expect(byName.cw_dev).toEqual([...DEV_ALLOWED]);
+		expect(byName.cw_review).toEqual([...REVIEW_ALLOWED]);
 	});
 
 	it("buildTool execute 端到端：拒绝路径返回 ok:false（带工具名）", async () => {
@@ -451,10 +488,52 @@ describe("白名单与方案表格逐字一致", () => {
 	});
 });
 
-// ── cw 路径无硬编码（defaultCwSpawner 用 PATH 解析）─────────────
+// ── cw 路径无硬编码 + 子进程生命周期（defaultCwSpawner）────────
 
 describe("cw 路径解析", () => {
-	it("defaultCwSpawner 是函数（运行时 spawn 'cw' 裸名，经 PATH 解析）", () => {
-		expect(typeof defaultCwSpawner).toBe("function");
+	// 造一个满足 defaultCwSpawner 调用的假子进程（stdout/stderr 带 setEncoding，stdin write/end，可选 kill）。
+	function makeFakeChild(): EventEmitter {
+		const child = new EventEmitter();
+		const stdio = (): EventEmitter => {
+			const s = new EventEmitter();
+			(s as unknown as { setEncoding: (_e: string) => void }).setEncoding = () => {};
+			return s;
+		};
+		Object.assign(child, {
+			stdout: stdio(),
+			stderr: stdio(),
+			stdin: { write() {}, end() {} },
+		});
+		return child;
+	}
+
+	afterEach(() => {
+		spawnMock.mockReset();
+	});
+
+	it("defaultCwSpawner spawn 裸名 'cw'（经 PATH 解析，无硬编码绝对路径）", async () => {
+		const child = makeFakeChild();
+		spawnMock.mockImplementation(() => child as unknown as cp.ChildProcess);
+		queueMicrotask(() => child.emit("close", 0));
+		await defaultCwSpawner(["status", "--unitId", "u1"], undefined, "/tmp");
+		expect(spawnMock).toHaveBeenCalledTimes(1);
+		// 第一参是命令名：裸名 "cw"，不是任何绝对路径
+		expect((spawnMock.mock.calls[0] as unknown[])[0]).toBe("cw");
+	});
+
+	it("abort signal 触发时 defaultCwSpawner kill 子进程（SIGTERM）", async () => {
+		const child = makeFakeChild();
+		// kill 模拟真实子进程收到信号后退出：调度 close 事件让 promise resolve
+		const killed = vi.fn((_sig: string) => {
+			queueMicrotask(() => child.emit("close", null));
+		});
+		(child as unknown as { kill: (s: string) => void }).kill = killed;
+		spawnMock.mockImplementation(() => child as unknown as cp.ChildProcess);
+
+		const controller = new AbortController();
+		const pending = defaultCwSpawner(["status"], undefined, "/tmp", controller.signal);
+		controller.abort();
+		await pending;
+		expect(killed).toHaveBeenCalledWith("SIGTERM");
 	});
 });
