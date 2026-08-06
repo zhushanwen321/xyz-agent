@@ -13,12 +13,15 @@ vi.mock('node:fs', () => ({
   mkdirSync: vi.fn(),
 }))
 
+// 固定 agent 目录，避免断言依赖真实 homedir fallback（环境设置 PI_CODING_AGENT_DIR 时挂）
+vi.mock('@earendil-works/pi-coding-agent', () => ({
+  getAgentDir: () => '/home/test/.pi/agent',
+}))
+
 describe('getStorePath', () => {
-  it('returns path under ~/.pi/agent/scheduler/', () => {
+  it('returns path under <agentDir>/scheduler/', () => {
     const p = getStorePath('/Users/test/project')
-    expect(p).toContain('.pi')
-    expect(p).toContain('agent')
-    expect(p).toContain('scheduler')
+    expect(p).toContain('/home/test/.pi/agent/scheduler')
     expect(p).toContain('scheduler.json')
   })
 

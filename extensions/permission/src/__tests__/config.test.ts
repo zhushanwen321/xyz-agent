@@ -6,7 +6,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_CONFIG } from "../types.js";
 import {
@@ -15,6 +15,11 @@ import {
 	loadAndWatchConfig,
 	saveConfig,
 } from "../config.js";
+
+// 固定 agent 目录，避免 getConfigPath 断言依赖真实 homedir fallback（环境设置 PI_CODING_AGENT_DIR 时挂）
+vi.mock("@earendil-works/pi-coding-agent", () => ({
+	getAgentDir: () => "/home/test/.pi/agent",
+}));
 
 let tempDir: string;
 
@@ -221,9 +226,9 @@ describe("WT7: 保存配置", () => {
 });
 
 describe("getConfigPath", () => {
-	it("返回 ~/.pi/agent/permission-config.json 路径", () => {
+	it("返回 <agentDir>/permission-config.json 路径", () => {
 		const path = getConfigPath();
 		expect(path).toContain("permission-config.json");
-		expect(path).toContain(".pi");
+		expect(path).toBe(join("/home/test/.pi/agent", "permission-config.json"));
 	});
 });

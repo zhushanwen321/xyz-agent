@@ -1,13 +1,15 @@
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+
 import {
 	type NormalizedQuotaRow,
 	type QuotaProvider,
 } from "./types.js";
 
-const HOME = homedir();
-const SECRETS_DIR = join(HOME, ".pi", "agent", "secrets");
+// 凭据文件位于当前 pi agent 数据目录的 secrets/ 下（getAgentDir 读 PI_CODING_AGENT_DIR，缺省 ~/.pi/agent）
+const SECRETS_DIR = join(getAgentDir(), "secrets");
 
 /** 默认 fetch 超时（毫秒） */
 const FETCH_TIMEOUT_MS = 8000;

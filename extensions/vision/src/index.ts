@@ -219,7 +219,7 @@ export default function visionExtension(pi: ExtensionAPI) {
 			"The image is processed by the vision model only — it never enters the main session context.",
 			"Returns text-only analysis conclusions.",
 			"",
-			"Requires ~/.pi/agent/vision-models.json with at least one vision model entry.",
+			`Requires ${VISION_MODELS_PATH} with at least one vision model entry.`,
 			"",
 			"Context modes:",
 			"- 'fresh' (default): clean session, no prior context.",

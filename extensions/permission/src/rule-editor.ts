@@ -8,6 +8,7 @@
 
 import { RuleEditorComponent } from "./rule-editor-component.js";
 import { ALL_TEMPLATES, applyOps, PRESET_COMMANDS, type RuleOp } from "./rule-templates.js";
+import { getConfigPath } from "./config.js";
 import type { Rule } from "./types.js";
 
 // ──────────────────────── 类型 ────────────────────────
@@ -64,7 +65,7 @@ export async function editRulesViaOverlay(
 		case "json":
 		case "print":
 		default:
-			ctx.ui.notify("[pi-permission] Rule editor not available in headless mode. Edit ~/.pi/agent/permission-config.json directly.", "warning");
+			ctx.ui.notify(`[pi-permission] Rule editor not available in headless mode. Edit ${getConfigPath()} directly.`, "warning");
 			return undefined;
 	}
 }

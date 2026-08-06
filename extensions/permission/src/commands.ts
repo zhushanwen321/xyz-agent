@@ -13,6 +13,10 @@
  *   /permission status       显示当前配置详情
  */
 
+import { join } from "node:path";
+
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+
 import type { ResolvedModelEntry } from "./classifier/model-resolver.js";
 import { type ModelPickerContext,pickModelViaOverlay } from "./model-picker.js";
 import { type RuleEditorContext,type RuleEditorResult } from "./rule-editor.js";
@@ -145,7 +149,7 @@ export async function handlePermissionModelCommand(
 	const models = deps.listModels();
 	if (models.size === 0) {
 		ctx.ui.notify(
-			"[pi-permission] No available models. Configure ~/.pi/agent/models.json first.",
+			`[pi-permission] No available models. Configure ${join(getAgentDir(), "models.json")} first.`,
 			"warning",
 		);
 		return;
