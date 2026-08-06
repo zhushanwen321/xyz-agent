@@ -36,6 +36,7 @@ function makePorts(overrides?: Partial<TransportPorts>): TransportPorts {
     events: {
       dispatchSession: vi.fn(),
       dispatchGlobal: vi.fn(),
+      dispatchCrossSession: vi.fn(),
     },
     subscribe: vi.fn().mockResolvedValue({
       snapshot: [],
@@ -296,5 +297,60 @@ describe('configureRouteInbound — global 通道 + L9 + effects（⑤/⑦）', 
     // message 缺失 → 默认 'Unknown error'
     dispatcher({ type: 'error', payload: {} } as unknown as ServerMessage)
     expect(effects.onGlobalError).toHaveBeenLastCalledWith('Unknown error')
+  })
+})
+
+describe('configureRouteInbound — crossSession 通道（ADR-0060）', () => {
+  beforeEach(() => {
+    resetSubscriptionStates()
+  })
+
+  it('⑩a 带 sid + CROSS_SESSION_TYPES type（extension:widget）→ dispatchSession + dispatchCrossSession', () => {
+    const ports = makePorts()
+    const dispatcher = configureRouteInbound(ports)
+    dispatcher(sessionMsg('extension:widget', { widgetKey: 'w', lines: [] }))
+    expect(ports.events.dispatchSession).toHaveBeenCalledTimes(1)
+    expect(ports.events.dispatchCrossSession).toHaveBeenCalledTimes(1)
+    expect(ports.events.dispatchCrossSession).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'extension:widget' }),
+    )
+  })
+
+  it('⑩b 带 sid + 非 CROSS_SESSION_TYPES type → 只 dispatchSession，不 dispatchCrossSession', () => {
+    const ports = makePorts()
+    const dispatcher = configureRouteInbound(ports)
+    dispatcher(sessionMsg('config.providers', { providers: [] }))
+    expect(ports.events.dispatchSession).toHaveBeenCalledTimes(1)
+    expect(ports.events.dispatchCrossSession).not.toHaveBeenCalled()
+  })
+
+  it('⑩c extension.ui_request（点号）命中白名单 → dispatchCrossSession', () => {
+    // 点号是 runtime wire 实际格式（event-adapter.ts），ADR 文档冒号为笔误
+    const ports = makePorts()
+    const dispatcher = configureRouteInbound(ports)
+    dispatcher(sessionMsg('extension.ui_request', { requestId: 'r', method: 'input' }))
+    expect(ports.events.dispatchCrossSession).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'extension.ui_request' }),
+    )
+  })
+
+  it('⑩d seq gap drop 的 CROSS_SESSION_TYPES 消息 → dispatchSession / dispatchCrossSession 均不调', async () => {
+    const ports = makePorts()
+    const dispatcher = configureRouteInbound(ports)
+    ;(ports.subscribe as ReturnType<typeof vi.fn>).mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 10 })
+    await subscribeSession('s1')
+    // seq<=lastSeenSeq → applySeqGap drop，crossSession 也不发（防 ExtensionHost 重复处理）
+    dispatcher(sessionMsg('extension:widget', { widgetKey: 'w', lines: [] }, { seq: 8 }))
+    expect(ports.events.dispatchSession).not.toHaveBeenCalled()
+    expect(ports.events.dispatchCrossSession).not.toHaveBeenCalled()
+  })
+
+  it('⑩e 无 sid 的 CROSS_SESSION_TYPES type → 走 dispatchGlobal，不 dispatchCrossSession', () => {
+    // crossSession 只在有 sid 分支触发；无 sid 走 global 通道
+    const ports = makePorts()
+    const dispatcher = configureRouteInbound(ports)
+    dispatcher({ type: 'extension:widget', payload: { widgetKey: 'w', lines: [] } } as unknown as ServerMessage)
+    expect(ports.events.dispatchGlobal).toHaveBeenCalledTimes(1)
+    expect(ports.events.dispatchCrossSession).not.toHaveBeenCalled()
   })
 })

@@ -84,6 +84,7 @@ const pendingMock = vi.hoisted(() => {
 const eventsMock = vi.hoisted(() => ({
   dispatchSession: vi.fn(),
   dispatchGlobal: vi.fn(),
+  dispatchCrossSession: vi.fn(),
 }))
 
 // ── subscribe mock（subscribeSession reconcile 用）──────────────────

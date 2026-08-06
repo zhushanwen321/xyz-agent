@@ -35,7 +35,7 @@ function setup() {
   const dispatchSession = vi.fn()
   setSubscriptionPorts({
     subscribe,
-    events: { dispatchSession, dispatchGlobal: vi.fn() },
+    events: { dispatchSession, dispatchGlobal: vi.fn(), dispatchCrossSession: vi.fn() },
   })
   return { subscribe, dispatchSession }
 }

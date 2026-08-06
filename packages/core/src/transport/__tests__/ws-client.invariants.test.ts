@@ -131,7 +131,7 @@ describe('ws-client 不变量 ④ seq 回放', () => {
     const subscribeSpy = vi.fn(async () => ({ snapshot: [], stateSnapshot: [], lastSeq: 10 }))
     const spyPorts: TransportPorts = {
       pending: { resolve: vi.fn(), reject: vi.fn(), rejectAll: vi.fn() },
-      events: { dispatchSession: vi.fn(), dispatchGlobal: vi.fn() },
+      events: { dispatchSession: vi.fn(), dispatchGlobal: vi.fn(), dispatchCrossSession: vi.fn() },
       subscribe: subscribeSpy,
     }
     // 注册 dispatcher（模拟 renderer ensureDispatcher 安装：onMessage(configureRouteInbound(ports))）

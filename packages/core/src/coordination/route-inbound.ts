@@ -69,6 +69,8 @@ export interface TransportPorts {
   events: {
     dispatchSession(sessionId: string, msg: ServerMessage): void
     dispatchGlobal(msg: ServerMessage): void
+    /** 带 sid 消息的全局消费者分发（ADR-0060 crossSession 通道）。 */
+    dispatchCrossSession(msg: ServerMessage): void
   }
   subscribe(
     sessionId: string,
@@ -200,15 +202,46 @@ const ROUTE_TABLE: RouteTableEntry[] = [
 ]
 
 /**
+ * CROSS_SESSION_TYPES —— 带 sid 但需同时分发到全局消费者的消息 type 白名单（ADR-0060 决策1）。
+ *
+ * 这些 type 虽带 sessionId（走 session 通道），但 ExtensionHost 是全局单例消费者
+ * （ViewHostStore 按 per-session Map 分区，需收所有 session 的下行，不随 session 切换退订），
+ * 故 FALLBACK 有 sid 分支在 dispatchSession 后额外 dispatchCrossSession。
+ *
+ * type 分隔符与 runtime wire 实际格式一致（shared/protocol.ts ServerMessageType）：
+ * extension:widget/widgetGui/status/notify 用冒号；extension.ui_request 用**点号**
+ * （runtime event-adapter.ts 实发 'extension.ui_request'，ADR-0060 文档里的冒号为笔误，
+ * 以 protocol.ts + MessageBusBridge EXTENSION_HANDLERS 为准）。
+ *
+ * 不进 ROUTE_TABLE：它们不需 InboundEffects 兜底（无 effect 回调），与现有条目结构不同
+ * （只需 dispatchSession + dispatchCrossSession），硬塞会产出雷同 handle 函数。
+ */
+const CROSS_SESSION_TYPES = new Set([
+  'extension:widget',
+  'extension:widgetGui',
+  'extension:status',
+  'extension:notify',
+  'extension.ui_request', // 点号：runtime wire 实际格式（见上方注释）
+])
+
+/**
  * FALLBACK —— 恒真兜底条目（DM3，TC1）。
  *
  * 等价现状行为：有 sid → seq gap + dispatchSession；无 sid → dispatchGlobal + L9 warn +
  * onGlobalError。未注册的新 type 自动落入现状语义，零行为回归。
+ *
+ * ADR-0060 增量：有 sid 且 type ∈ CROSS_SESSION_TYPES 时，dispatchSession 后额外
+ * dispatchCrossSession（在 applySeqGap 之后——seq gap drop 的重复消息 crossSession 也不发，
+ * 防 ExtensionHost 重复处理，与 session 通道 drop 语义一致）。
  */
 const FALLBACK: RouteTableEntry['handle'] = (msg, { ports, effects, sid }) => {
   if (typeof sid === 'string' && sid) {
     if (!applySeqGap(sid, msg)) return
     ports.events.dispatchSession(sid, msg)
+    // ADR-0060：带 sid 的 extension:* 下行同时分发到全局消费者（ExtensionHost 单例）。
+    if (CROSS_SESSION_TYPES.has(msg.type)) {
+      ports.events.dispatchCrossSession(msg)
+    }
     return
   }
   ports.events.dispatchGlobal(msg)

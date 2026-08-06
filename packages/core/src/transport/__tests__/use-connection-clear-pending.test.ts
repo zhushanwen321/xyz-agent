@@ -84,6 +84,7 @@ function makePorts(): ConnectionPorts {
     events: {
       dispatchSession: vi.fn(),
       dispatchGlobal: vi.fn(),
+      dispatchCrossSession: vi.fn(),
     },
     subscribe: vi.fn().mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 }),
     effects: {},

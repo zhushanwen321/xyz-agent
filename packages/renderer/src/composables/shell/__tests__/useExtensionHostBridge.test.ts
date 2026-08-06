@@ -1,19 +1,18 @@
 /**
  * useExtensionHostBridge.test.ts —— createWsPluginMessageSource 过滤条件单测（FR1/AC1）。
  *
- * 链路：getRawMessageTap().emit（模拟 transport 层 routeInbound 前的只读旁路）→ source →
- * MessageBusBridge → bus。不 mock tap 层——AC1 明确要求经 raw tap 全链路验证
- * （source 数据源已从 onGlobal 改为 raw message tap：routeInbound 用 payload.sessionId 路由，
- * 有 sid 的 plugin:/extension: 下行走 dispatchSession 不触发 onGlobal，故改用 routeInbound
- * 前的只读旁路 tap 捕获不分通道的全部下行）。
+ * 链路：events.dispatchCrossSession（模拟 route-inbound crossSession 通道分发）→ source →
+ * MessageBusBridge → bus。经 events 正规通道全链路验证（ADR-0060：source 双订阅 onGlobal +
+ * onCrossSession，crossSession 通道注入可触发 source adapt，与 global 等价）。
  *
  * 覆盖：TC1 plugin:uiRequest 前缀放行 / TC2 extension.ui_request 白名单放行（归一 kind=ui-request）/
  * TC3 extension.error 非白名单拒绝 / TC4 plugin:statusBarUpdate 前缀回归 /
  * TC5 白名单 5 项字面量 + 行为级验证（防与 core EXTENSION_HANDLERS 漂移）。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { InternalEventBus, MessageBusBridge, getRawMessageTap } from '@xyz-agent/core'
+import { InternalEventBus, MessageBusBridge } from '@xyz-agent/core'
 import type { InternalEvent } from '@xyz-agent/core'
+import { dispatchCrossSession } from '@/api/events'
 import { createWsPluginMessageSource, EXTENSION_BRIDGE_TYPES, initExtensionHostBridge } from '../useExtensionHostBridge'
 import { DIALOG_REQUEST_SOURCE_KEY, UI_RESPONSE_TRANSPORT_KEY } from '@xyz-agent/ui/extension-host'
 
@@ -52,7 +51,7 @@ describe('createWsPluginMessageSource 过滤条件（FR1/AC1）', () => {
     bridge = b
     const { emitted } = spyEmit(bus)
 
-    getRawMessageTap().emit({
+    dispatchCrossSession({
       type: 'plugin:uiRequest',
       payload: { sessionId: 's1', requestId: 'r1', method: 'select', options: ['a', 'b'] },
     })
@@ -67,7 +66,7 @@ describe('createWsPluginMessageSource 过滤条件（FR1/AC1）', () => {
     bridge = b
     const { emitted } = spyEmit(bus)
 
-    getRawMessageTap().emit({
+    dispatchCrossSession({
       type: 'extension.ui_request',
       payload: { sessionId: 's1', requestId: 'r1', method: 'confirm', title: '确认?' },
     })
@@ -82,7 +81,7 @@ describe('createWsPluginMessageSource 过滤条件（FR1/AC1）', () => {
     bridge = b
     const { emitted } = spyEmit(bus)
 
-    getRawMessageTap().emit({ type: 'extension.error', payload: { sessionId: 's1', code: 'boom' } })
+    dispatchCrossSession({ type: 'extension.error', payload: { sessionId: 's1', code: 'boom' } })
 
     expect(emitted).toHaveLength(0)
   })
@@ -92,7 +91,7 @@ describe('createWsPluginMessageSource 过滤条件（FR1/AC1）', () => {
     bridge = b
     const { emitted } = spyEmit(bus)
 
-    getRawMessageTap().emit({
+    dispatchCrossSession({
       type: 'plugin:statusBarUpdate',
       payload: {
         items: [{ id: 'sb1', pluginId: 'tasks', text: 'ready', priority: 100, scope: 'per-session', sessionId: 's1' }],
@@ -128,7 +127,7 @@ describe('createWsPluginMessageSource 过滤条件（FR1/AC1）', () => {
       const { bus, bridge: b } = makeBridge()
       bridge = b
       const { emitted } = spyEmit(bus)
-      getRawMessageTap().emit({ type: s.type, payload: s.payload } as never)
+      dispatchCrossSession({ type: s.type, payload: s.payload } as never)
       expect(emitted).toHaveLength(1)
       expect(emitted[0].kind).not.toBe('error')
     }

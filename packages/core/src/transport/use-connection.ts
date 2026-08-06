@@ -25,7 +25,6 @@
  */
 import { watch } from 'vue'
 import { connect, disconnect, getState, onMessage, setFailed, setRestarting } from './ws-client'
-import { getRawMessageTap } from './raw-message-tap'
 import {
   configureRouteInbound,
   type InboundEffects,
@@ -125,12 +124,9 @@ function ensureDispatcher(ports: ConnectionPorts): void {
     { pending: ports.pending, events: ports.events, subscribe: ports.subscribe },
     ports.effects,
   )
-  // raw tap：routeInbound 前的只读旁路（ExtensionHost source 从此订阅，替代 onGlobal）。
-  // emit 在 dispatcher 前；tap handler 抛错已被 emit 内部 try-catch 隔离，不影响 dispatcher 主流程。
-  removeTransportListener = onMessage((msg) => {
-    getRawMessageTap().emit(msg)
-    dispatcher(msg)
-  })
+  // route-inbound 是消息分发单一真相源（ADR-0060：raw-message-tap 旁路已移除）。
+  // ExtensionHost 经 events.onCrossSession/onGlobal 正规通道订阅。
+  removeTransportListener = onMessage(dispatcher)
 }
 
 /**

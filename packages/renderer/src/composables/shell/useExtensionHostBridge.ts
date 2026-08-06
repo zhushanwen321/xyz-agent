@@ -9,11 +9,10 @@
  * - 注入 MountPointRegistry/ContributionRegistry 到 core bootstrap（setExtensionRegistries）+ 触发注册
  * - app.provide ViewHost/StatusBar 的 inject key
  *
- * 消息流：WS plugin:viewUpdate → raw message tap（routeInbound 前的只读旁路）→ 本适配器 →
+ * 消息流：WS 下行 → route-inbound（events 正规通道）→ 本适配器 →
  * MessageBusBridge → bus 'extension-widget' → ViewHostStore → <ViewHost> getView。
- * （数据源从 events.onGlobal 改为 raw message tap：routeInbound 用 payload.sessionId 路由，
- * 有 sid 的 plugin:/extension: per-session 下行走 dispatchSession 不触发 onGlobal；tap 是
- * routeInbound 前的只读旁路，不分通道，per-session 下行也能捕获。）
+ * （ADR-0060：数据源从 raw-message-tap 旁路改为 events 双订阅——onGlobal 收无 sid 的 plugin:*，
+ * onCrossSession 收带 sid 的 extension:*。route-inbound 成为消息分发单一真相源。）
  *
  * OverlayLifecycle（IF9）装配：订阅同一 bus 的 ui-request 事件，per-session/per-requestId
  * 维护 overlay 状态机（expanded→minimized→restored）+ session-destroyed cleanup。状态机就绪
@@ -27,7 +26,6 @@ import type { App } from 'vue'
 import {
   ContributionRegistry,
   createSessionScopedMap,
-  getRawMessageTap,
   InternalEventBus,
   MessageBusBridge,
   MountPointRegistry,
@@ -52,9 +50,10 @@ import {
 } from '@xyz-agent/ui/extension-host'
 import { createDialogRequestSource, createUiResponseTransport } from './extension-host-dialog'
 import type { ServerMessage } from '@xyz-agent/shared'
+import { onCrossSession, onGlobal } from '@/api/events'
 import { useToast } from '@/composables/useToast'
 
-/** 把 renderer 的 WS 消息流（raw message tap 的 plugin:/extension: 下行）适配成 PluginMessageSource。 */
+/** 把 renderer 的 WS 消息流（events 通道的 plugin:/extension: 下行）适配成 PluginMessageSource。 */
 
 /**
  * extension:* 下行进 bridge 的精确白名单（与 core MessageBusBridge 的 EXTENSION_HANDLERS
@@ -72,15 +71,17 @@ export const EXTENSION_BRIDGE_TYPES: readonly string[] = [
 /**
  * 过滤条件：plugin:* 前缀 OR EXTENSION_BRIDGE_TYPES 精确白名单。
  *
- * 数据源从 events.onGlobal 换成 raw message tap（routeInbound 前的只读旁路）：routeInbound 用
- * payload.sessionId 路由，有 sessionId 的下行（如 extension:notify/widget/status/ui_request）
- * 走 dispatchSession 不触发 onGlobal，pi extension 的 per-session 下行此前收不到。tap 不分通道，
- * per-session 下行也能捕获。前缀过滤逻辑（plugin:/extension:）保持不变。
+ * ADR-0060：数据源从 raw-message-tap 旁路改为 events 正规双订阅（route-inbound 单一真相源）：
+ * - onGlobal：收无 sid 的 plugin:*（statusBarUpdate/notification/uiRequest 等走 global 通道）
+ * - onCrossSession：收带 sid 的 extension:*（widget/widgetGui/status/notify/ui_request，
+ *   route-inbound CROSS_SESSION_TYPES 白名单分发，全局单例消费者 ExtensionHost 接收）
+ * 经 source filter 后消息集合与旧 raw-tap 全量订阅等价（plugin:* 无 sid + extension.* 带 sid）。
  */
 export function createWsPluginMessageSource(): PluginMessageSource {
   return {
     subscribe(handler: (msg: IncomingPluginMessage) => void): () => void {
-      return getRawMessageTap().subscribe((msg: ServerMessage) => {
+      // 适配 raw ServerMessage → IncomingPluginMessage（source filter：plugin:* 前缀 OR 白名单 type）
+      const adapt = (msg: ServerMessage): void => {
         if (
           typeof msg.type === 'string' &&
           (msg.type.startsWith('plugin:') || EXTENSION_BRIDGE_TYPES.includes(msg.type))
@@ -92,7 +93,13 @@ export function createWsPluginMessageSource(): PluginMessageSource {
             payload: msg.payload,
           })
         }
-      })
+      }
+      const offGlobal = onGlobal(adapt)
+      const offCrossSession = onCrossSession(adapt)
+      return () => {
+        offGlobal()
+        offCrossSession()
+      }
     },
   }
 }
