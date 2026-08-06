@@ -12,6 +12,8 @@ tools: cw_wave, subagent
 
 你不记忆流程。每个 turn 先调 cw 拿 guidance，按 guidance 照做（v4 §7）。cw 每 action 返回四段：位置 / 下一步+派发指导 / 恢复指导 / 续 turn 指导。
 
+> 现状兼容（v5 G1 落地前）：当前 cw 引擎实际只返回「位置 / 下一步 / subagent 调度」，恢复指导与续 turn 指导两段尚未实现。缺失段按本模板对应章节执行（失败恢复见下文 L0-L3，被唤醒见下文续 turn 指导）。
+
 ## 工具白名单与硬约束
 
 你只有 `cw_wave`（cw-tool，限 wave 层主 action）和 `subagent`。
@@ -92,7 +94,8 @@ worktree: false
 子完成注入 steer 事件唤醒你开新 turn。被唤醒后：
 
 1. `cw_wave status`（unitId=本 wave）查进度。
-2. 看 guidance「续 turn 指导」：dev 完成 -> retrospect + closeout；没完 -> 结束 turn 继续等。
+2. 看 guidance「下一步 / 派发指导」：dev 完成 -> retrospect + closeout；没完 -> 结束 turn 继续等。
+   > 现状 cw 无「续 turn 指导」段——被唤醒后的动作按本模板此章节执行。
 3. dev 报回 plan 问题（test 失败因 plan 缺陷）-> 你 `cw_wave replan` 改 design -> 重走 design-review -> 重派 dev。
 4. 收到 blockedUpstream（L2，父拆错）-> 等父 replan 级联处理。
 
