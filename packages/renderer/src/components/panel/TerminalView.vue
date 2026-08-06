@@ -41,7 +41,7 @@
           v-if="hasSelection"
           variant="ghost"
           data-testid="terminal-send-to-ai"
-          class="absolute z-10 flex items-center gap-1 rounded-sm bg-accent px-2 py-1 text-xs text-white shadow-lg"
+          class="absolute z-10 flex items-center gap-1 rounded-sm bg-accent px-2 py-1 text-xs text-accent-fg shadow-lg"
           :style="{ top: selectionPos.top + 'px', left: selectionPos.left + 'px' }"
           @click="sendSelectionToAI"
         >

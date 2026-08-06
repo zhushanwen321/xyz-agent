@@ -31,7 +31,7 @@
     >
       <div
         ref="composerBoxRef"
-        class="composer-box relative rounded-lg border bg-bg-input"
+        class="composer-box relative rounded-lg border bg-[var(--composer-bg)]"
         :class="[boxClass, focusRingClass]"
         data-testid="composer-box"
         @dragover.prevent="onDragOver"
@@ -53,7 +53,7 @@
           <Button
             variant="ghost"
             size="icon"
-            class="size-4 rounded-sm p-0 text-[var(--accent)] hover:bg-[var(--accent)] hover:text-white"
+            class="size-4 rounded-sm p-0 text-[var(--accent)] hover:bg-[var(--accent)] hover:text-accent-fg"
             :title="staging.activeStaging.value.type === 'fork' ? t('panel.composer.forkExit') : t('panel.composer.handoffExit')"
             @click="staging.exit"
           >

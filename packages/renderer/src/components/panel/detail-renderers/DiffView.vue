@@ -228,13 +228,15 @@ watch(
 
 <style scoped>
 /* shiki 高亮 span 双主题切换（与 CodeBlock/MarkdownRenderer 同机制）。
-   Tailwind 无法表达跨 :deep + [data-theme] 的 CSS 变量切换，属 escape hatch。
+   [HISTORICAL] 亮色规则曾写 :global([data-theme="light"]) X :deep(Y)，Vue scoped 编译
+   退化成裸 [data-theme="light"]，亮色主题下 diff 代码恒用暗色 token（浅字浅底不可读）。
+   修复：整条选择器包进 :global。
    diff 行/字符级背景色（bg-bg-input / bg-diff-* / bg-surface-2）全部用 Tailwind 工具类，
    色值在 tailwind.config.ts 注册为 color-mix 派生，跟随 --success/--danger/--bg-input 自动适配主题。 */
 .diff-code :deep(span) {
   color: var(--shiki-dark);
 }
-:global([data-theme="light"]) .diff-code :deep(span) {
+:global([data-theme="light"] .diff-code span) {
   color: var(--shiki-light);
 }
 </style>

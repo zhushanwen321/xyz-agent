@@ -52,7 +52,7 @@ describe('W4TC3: UserBubble 展示态', () => {
     // 气泡容器：rounded + border + bg-surface-hover
     const bubble = wrapper.find('.rounded-\\[14px_14px_4px_14px\\]')
     expect(bubble.exists()).toBe(true)
-    expect(bubble.classes()).toContain('bg-surface-hover')
+    expect(bubble.classes()).toContain('bg-\[var\(--bubble-bg\)\]')
   })
 
   it('展示态 hover actions 容器存在（group-hover 可见）', () => {

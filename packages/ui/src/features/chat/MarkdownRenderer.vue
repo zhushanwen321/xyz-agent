@@ -135,11 +135,15 @@ function onClick(e: MouseEvent): void {
   const btn = target.closest('.md-codeblock__copy') as HTMLElement | null
   if (btn) {
     e.preventDefault()
+    // base64 解码失败（无合法 data-code）：code 保持空串，跳过剪贴板写入，仅保留反馈态
+    let code = ''
     try {
-      const code = atob(btn.dataset.code ?? '')
-      navigator.clipboard.writeText(code).catch(() => { /* 剪贴板失败静默 */ })
+      code = atob(btn.dataset.code ?? '')
     } catch {
-      /* base64 解码失败静默 */
+      code = ''
+    }
+    if (code) {
+      navigator.clipboard.writeText(code).catch(() => { /* 剪贴板失败静默 */ })
     }
     btn.classList.add('is-copied')
     if (copiedBtn && copiedBtn !== btn) copiedBtn.classList.remove('is-copied')
@@ -319,8 +323,8 @@ onScopeDispose(() => {
 /* ── 代码块容器（fence 规则覆盖产出 .md-codeblock）──
    shiki 产出的 <pre class="shiki"> 被包在 .md-codeblock 内，外层统一控制圆角/边框/overflow。
    header 含语言标签（左）+ 复制按钮（右）。复制按钮 icon 用 CSS 伪元素 + .is-copied 切换。
-   注：shiki 的 --shiki-dark-bg 定义在 pre 的 inline style（子元素），父容器读不到，
-   故 .md-codeblock 不设 bg——代码区底色由 pre 的 shiki bg 提供，header 用 --surface-2。 */
+   代码区底色：pre 用 var(--bg-input)（min-dark/min-light 透明底，跟随全部主题/preset），
+   header 用 --surface-2。 */
 .md-render :deep(.md-codeblock) {
   margin: 0.7em 0;
   border: 1px solid var(--border);
@@ -382,7 +386,8 @@ onScopeDispose(() => {
   mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>") center / contain no-repeat;
 }
 
-/* shiki <pre>：被容器包住后去掉自身 margin/圆角，仅保留内边距 + 横向滚动 */
+/* shiki <pre>：被容器包住后去掉自身 margin/圆角，仅保留内边距 + 横向滚动。
+   背景用 --bg-input（凹陷容器语义，跟随 6 套主题；min 系列 shiki 主题背景透明）。 */
 .md-render :deep(.md-codeblock pre.shiki) {
   margin: 0;
   padding: 0.8em 1em;
@@ -391,6 +396,7 @@ onScopeDispose(() => {
   font-family: var(--font-mono);
   font-size: 0.85em;
   line-height: 1.6;
+  background: var(--bg-input);
 }
 .md-render :deep(.md-codeblock pre.shiki code) {
   font-family: inherit;
@@ -429,21 +435,18 @@ onScopeDispose(() => {
   margin: 1em 0;
 }
 
-/* ── shiki 双主题切换（defaultColor:false）──
-   shiki 产出的 span 带 --shiki-dark(暗色 token) / --shiki-light(亮色 token)，
-   pre.shiki 带 --shiki-dark-bg / --shiki-light-bg。暗为默认，亮主题经 [data-theme] 覆盖。
-   走 design-tokens 的主题切换机制（style.css :root / [data-theme="light"]），不新增硬编码色。 */
-.md-render :deep(.shiki) {
-  background-color: var(--shiki-dark-bg) !important;
-}
+/* ── shiki 双主题切换（defaultColor:false，min-dark/min-light 透明底）──
+   [HISTORICAL] 亮色切换曾写 :global([data-theme="light"]) X :deep(Y)，Vue scoped 编译
+   把「:global 开头 + :deep 结尾」的组合退化成裸 [data-theme="light"]（只匹配 html 元素），
+   亮色规则从未作用于代码块——亮色主题下代码块恒为暗色画布。修复：整条选择器包进
+   :global（compileStyle 验证输出 [data-theme="light"] .md-render .shiki span）。
+   代码块底色由 .md-codeblock pre.shiki 的 var(--bg-input) 提供（跟随全部主题），
+   shiki 只提供语法 token 色（明暗两档，独立彩色通道不跟 accent 走）。 */
 .md-render :deep(.shiki span) {
   color: var(--shiki-dark);
 }
 
-:global([data-theme="light"]) .md-render :deep(.shiki) {
-  background-color: var(--shiki-light-bg) !important;
-}
-:global([data-theme="light"]) .md-render :deep(.shiki span) {
+:global([data-theme="light"] .md-render .shiki span) {
   color: var(--shiki-light);
 }
 

@@ -38,7 +38,7 @@
     <!-- 展示态气泡 -->
     <div
       v-else
-      class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-border-strong bg-surface-hover px-[13px] py-[9px] text-[length:var(--text-base)] leading-[1.55] text-neutral-fg"
+      class="max-w-[76%] rounded-[14px_14px_4px_14px] border border-border-strong bg-[var(--bubble-bg)] px-[13px] py-[9px] text-[length:var(--text-base)] leading-[1.55] text-neutral-fg"
     >
       <template v-for="(seg, i) in userSegments" :key="i">
         <span

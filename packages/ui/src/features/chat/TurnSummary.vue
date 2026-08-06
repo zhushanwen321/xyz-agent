@@ -78,7 +78,7 @@
               @click="onForkAsk(lastAssistant)"
             >
               <GitFork class="size-3 fill-current" />
-              <span class="absolute -right-0.5 -bottom-0.5 rounded-sm bg-accent px-[2px] text-[8px] font-bold leading-[8px] text-accent-foreground">+Q</span>
+              <span class="absolute -right-0.5 -bottom-0.5 rounded-sm bg-accent px-[2px] text-[8px] font-bold leading-[8px] text-accent-fg">+Q</span>
             </Button>
           </HoverCardContent>
         </HoverCard>
@@ -107,7 +107,7 @@
               @click="onHandoffAsk(lastAssistant)"
             >
               <HandHelping class="size-3 fill-current" />
-              <span class="absolute -right-0.5 -bottom-0.5 rounded-sm bg-accent px-[2px] text-[8px] font-bold leading-[8px] text-accent-foreground">+Q</span>
+              <span class="absolute -right-0.5 -bottom-0.5 rounded-sm bg-accent px-[2px] text-[8px] font-bold leading-[8px] text-accent-fg">+Q</span>
             </Button>
           </HoverCardContent>
         </HoverCard>

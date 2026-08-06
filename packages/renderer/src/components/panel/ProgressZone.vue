@@ -65,7 +65,7 @@
             class="grid size-3.5 shrink-0 place-items-center rounded-full"
             :class="{
               'bg-success text-[#06251a]': todo.status === 'done',
-              'bg-accent text-white': todo.status === 'active',
+              'bg-accent text-accent-fg': todo.status === 'active',
               'border border-border-strong': todo.status === 'pending',
             }"
           >

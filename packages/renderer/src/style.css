@@ -28,6 +28,11 @@
   --bg-elevated: #2b2b2e;       /* tab 型选中态浮起 / popover 浮层 */
   --bg-input: #17171a;          /* 输入框/凹陷区（比 bg 更深） */
   --bg-card: #1b1b1e;           /* 设置分组卡片（介于 bg 与 surface） */
+  /* 用户气泡/输入区专用底色（暗：浮起灰 / 亮：纯白，见 [data-theme="light"] 覆盖）。
+     亮色下灰底（surface-hover/bg-input）易读作禁用态，故白纸化——气泡/输入框是内容载体，
+     白色浮起与米白面板区分，墨绿链接对比度同步从 4.24 升至 5.53。 */
+  --bubble-bg: var(--surface-hover);
+  --composer-bg: var(--bg-input);
   --bar-fill-soft: 55%;         /* progress-bar fill 柔化档 */
 
   /* ── 文字（neutral 谱系，上抬，dim 对比度 ~4.4:1）────────── */
@@ -163,6 +168,9 @@
   --bg-elevated: #faf9f6;
   --bg-input: #e5e3df;
   --bg-card: #f1efec;
+  /* 亮色白纸：用户气泡与 composer 输入区用纯白（灰底读作禁用态，见 :root 注释） */
+  --bubble-bg: #ffffff;
+  --composer-bg: #ffffff;
 
   --neutral-fg: #2b2a28;
   --neutral-mid: #706e6a;

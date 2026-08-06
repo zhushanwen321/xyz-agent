@@ -278,18 +278,20 @@ async function onOpenFallbackUrl(): Promise<void> {
   margin: 0.8em 0;
 }
 
-/* shiki 双主题切换（与 MarkdownRenderer 一致） */
-.release-notes-markdown :deep(.shiki) {
-  background-color: var(--shiki-dark-bg) !important;
-}
+/* shiki 双主题切换（与 MarkdownRenderer 一致，min-dark/min-light 透明底）。
+   [HISTORICAL] 亮色规则曾写 :global([data-theme="light"]) X :deep(Y)，Vue scoped 编译
+   退化成裸 [data-theme="light"]，亮色切换从未生效。修复：整条选择器包进 :global。
+   代码块底色由下方 .release-notes-markdown .md-codeblock pre.shiki 的 --bg-input 提供。 */
 .release-notes-markdown :deep(.shiki span) {
   color: var(--shiki-dark);
 }
 
-:global([data-theme="light"]) .release-notes-markdown :deep(.shiki) {
-  background-color: var(--shiki-light-bg) !important;
-}
-:global([data-theme="light"]) .release-notes-markdown :deep(.shiki span) {
+:global([data-theme="light"] .release-notes-markdown .shiki span) {
   color: var(--shiki-light);
+}
+
+/* release notes 代码块：背景跟随主题 token（--bg-input 凹陷容器语义） */
+.release-notes-markdown :deep(.md-codeblock pre.shiki) {
+  background: var(--bg-input);
 }
 </style>

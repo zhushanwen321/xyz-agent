@@ -52,9 +52,16 @@ export interface MarkdownEnv {
 /** 代码块高亮覆盖的语言（按 wave review 要点：ts/vue/json/bash/md + 常见派生） */
 const SHIKI_LANGS = ['typescript', 'javascript', 'vue', 'json', 'bash', 'shell', 'markdown', 'css', 'html', 'yaml', 'python', 'go', 'rust']
 
-/** 双主题：dark-plus（VSCode 暗默认，review 要求的 VSCode 级高亮）/ light-plus（亮配套） */
-const SHIKI_DARK = 'dark-plus'
-const SHIKI_LIGHT = 'light-plus'
+/**
+ * 双主题：min-dark / min-light（透明底，v6 代码块底色走 token 体系）。
+ * [HISTORICAL] 曾用 dark-plus/light-plus（VSCode 级高亮但底色硬编码 #1e1e1e/#fff，
+ * 不随 6 套太极主题 token 变化：暖墨面板嵌冷灰块、皓/青墨米白面板嵌纯白块）。
+ * min 系列背景透明（--shiki-dark-bg/--shiki-light-bg 为透明），代码块容器底色由
+ * MarkdownRenderer/CodeBlock 的 var(--bg-input) 提供——跟随全部主题/preset；
+ * 语法 token 色保持明暗两档（代码高亮是独立彩色通道，不跟 accent 走，见 PRODUCT.md）。
+ */
+const SHIKI_DARK = 'min-dark'
+const SHIKI_LIGHT = 'min-light'
 
 /** shiki 单例（全局一次，避免重复 WASM/语法加载） */
 let highlighterPromise: Promise<Highlighter> | null = null
