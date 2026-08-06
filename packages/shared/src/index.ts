@@ -29,8 +29,10 @@ export type {
   ProviderStatus, ProviderInfo, ModelInfo,
   SkillInfo, AgentInfo,
   ScanSourceType, ScannedSkillInfo, ScannedAgentInfo,
-  DiscoveryConfig, SkillDirConfig,
+  DiscoveryConfig, DiscoveryConfigV1, SkillDirConfig,
 } from './provider'
+// v1→v2 discovery.json 迁移纯函数（discovery-migrate.ts）
+export { migrateDiscoveryV1ToV2 } from './discovery-migrate'
 export type { ToolPermission, ThemeMode, ThemePreset } from './settings'
 export type {
   PanelLeaf, WindowState,

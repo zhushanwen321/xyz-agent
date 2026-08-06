@@ -95,15 +95,35 @@ export interface SkillInfo {
 export type ScanSourceType = 'pi' | 'claude' | 'agents' | 'custom'
 
 /**
- * discovery.json schema（ADR-0021 §1）—— skill/agent/extension 加载路径的唯一真相源。
+ * discovery.json schema v2（ADR-0021 §1）—— skill/agent/extension 加载路径的唯一真相源。
  * 位于 `<piAgentDir>/discovery.json`（~/.xyz-agent/pi/agent/discovery.json）。
- * skillDirs / agentDirs / extensionDirs 是有序数组，靠前覆盖靠后（§1.1 层 3）。
+ *
+ * v2 嵌套结构：每个 kind 拆 projectPaths（项目级，跟随 cwd，可含相对路径如 .agents/skills）
+ * 与 globalPaths（全局级，限绝对路径如 ~/.pi/agent/skills）。
+ * 合并语义：resolveLoadPaths(cfg, kind) = dedupe([...cfg[kind].projectPaths, ...cfg[kind].globalPaths])，
+ * 项目在前 = 项目优先级 > 全局（靠前覆盖靠后，§1.1 层 3）。
+ *
  * 强制目录不进此文件（桥接层硬编码注入）。
  *
- * extensionDirs：用户勾选的外部 extension 扫描目录（P1 pi 原生 + P2 xyz-agent + 自定义），
+ * extension：用户勾选的外部 extension 扫描目录（P1 pi 原生 + P2 xyz-agent + 自定义），
  * 复刻 pi 的 collectAutoExtensionEntries 扫描。npm 安装的 extension 不进此文件（走 settings.json packages[]）。
+ *
+ * 从 v1 迁移见 migrateDiscoveryV1ToV2（discovery-migrate.ts）。
  */
 export interface DiscoveryConfig {
+  version: 2
+  skill: { projectPaths: string[]; globalPaths: string[] }
+  agent: { projectPaths: string[]; globalPaths: string[] }
+  extension: { projectPaths: string[]; globalPaths: string[] }
+}
+
+/**
+ * discovery.json schema v1（旧扁平结构，保留供迁移用）。
+ * skillDirs / agentDirs / extensionDirs 是有序扁平数组，靠前覆盖靠后。
+ * 读取 v1 时经 migrateDiscoveryV1ToV2 按路径特征归类（相对→project / 绝对→global）后升级为 v2。
+ * 不再有新代码直接构造 v1；保留类型仅为 deserialize 兼容旧文件。
+ */
+export interface DiscoveryConfigV1 {
   version: 1
   skillDirs: string[]
   agentDirs: string[]
@@ -114,11 +134,15 @@ export interface DiscoveryConfig {
  * UI 加载路径配置项（层 A）。
  * path: 目录路径（~/.pi/agent/skills 等）。
  * enabled: 是否进 discovery.json 数组（目录在 = 加载，ADR-0021 §5）。
+ * scope: 路径归属（v2）——'project' 写入 cfg[kind].projectPaths，'global' 写入 cfg[kind].globalPaths。
+ *   由生产端（UI/settings-message-handler）显式标注，消费端（skill-dirs.ts）直接读 scope 决定加载归属，
+ *   不再按 isAbsolute 推断（方案 §2.5 路径 A 配套）。必填，强制所有生产端显式标注。
  * 排序由数组顺序承载（可拖排序），故 UI 侧是有序 SkillDirConfig[]。
  */
 export interface SkillDirConfig {
   path: string
   enabled: boolean
+  scope: 'project' | 'global'
 }
 
 export interface ScannedSkillInfo {

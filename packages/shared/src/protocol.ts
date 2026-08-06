@@ -335,10 +335,13 @@ export interface ClientMessageMap {
   'config.scanAgents': { sources: string[] }
   'config.setAgent': { agent: AgentInfo }
   'config.deleteAgent': { agentId: string }
-  /** 目录级管道写入（ADR-0021 §5）：dirs 为有序数组，靠前覆盖靠后。写 discovery.json。 */
-  'config.setSkillDirs': { dirs: string[] }
-  'config.setAgentDirs': { dirs: string[] }
-  'config.setExtensionDirs': { dirs: string[] }
+  /**
+   * 目录级管道写入（ADR-0021 §5）：dirs 为有序 SkillDirConfig[]（含 scope），靠前覆盖靠后。写 discovery.json。
+   * v2：写入侧带 scope，消费端（skill-dirs.ts）直接读 scope 决定 project/global 归属，不再推断（方案 §2.5 路径 A）。
+   */
+  'config.setSkillDirs': { dirs: SkillDirConfig[] }
+  'config.setAgentDirs': { dirs: SkillDirConfig[] }
+  'config.setExtensionDirs': { dirs: SkillDirConfig[] }
   'config.getSystemPrompt': Record<string, never>
   'config.setSystemPrompt': { config: SystemPromptConfig }
   'model.list': Record<string, never>
