@@ -65,11 +65,19 @@ import type { NavEntry } from '@/types'
 let appBootstrapped = false
 let hasConnectedBefore = false
 
-/** 测试隔离：重置启动编排守卫 + session.list 订阅计数（beforeEach 调）。 */
+/** 测试隔离：重置启动编排守卫 + session.list 订阅计数 + 桥接计数器（beforeEach 调）。 */
 export function resetSidebarNewForTest(): void {
   appBootstrapped = false
   hasConnectedBefore = false
   resetSessionListSubForTest()
+  resetSessionListBroadcastForTest()
+}
+
+/** 测试隔离：重置 config.sessions→pinia 桥接的模块级 refCount（防跨测试监听残留）。 */
+export function resetSessionListBroadcastForTest(): void {
+  sessionListUnsub?.()
+  sessionListUnsub = null
+  broadcastRefCount = 0
 }
 
 // ── config.sessions 广播桥接 → pinia useSessionStore（CLAUDE.md 规则 #2 防重复注册）──
