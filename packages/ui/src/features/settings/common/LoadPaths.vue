@@ -1,118 +1,173 @@
 <template>
   <!--
-    加载路径配置（层 A）—— Skill/Agent 共享组件（ADR-0021 §5）。
-    强制目录只读置顶 + 可选目录可勾选可拖动排序（靠前覆盖靠后）。
+    加载路径（层 A）—— Skill/Agent 共享组件（ADR-0021 §5）。
+    v6 重构（v6-spec-settings-resources §1/§2/§3）：
+    - 按 scope 分两组渲染（项目目录 / 全局目录），项目优先级 > 全局
+    - 排序改 ↑↓ 组内移动（组首↑ / 组末↓ disabled），取代 HTML5 拖拽
+    - 每组添加区 = 目录选择 dialog（Folder）+ 手动填写（Input + 添加）
+    - forcedDirs 只读置顶于项目目录组（Checkbox checked+disabled + Lock + 「系统」tag）
+    - §1.1 可见性修复：Checkbox 传局部 class 覆盖未选态边框（不改全局 token）
 
-    拖拽设计（rethink 后）：纯本地状态驱动，脱离 store 广播回路。
-    - 拖拽期间只改 localDirs（即时生效，零网络往返）
-    - dragend 时把最终顺序 emit 给父组件持久化（发后即忘）
-    - 外部 props.dirs 变化同步进 localDirs，但拖拽进行中跳过（避免广播覆盖用户操作）
-    这把「交互即时性」与「状态持久化」彻底解耦。
+    零回路：每次勾选/移动/添加/移除都立即改 localDirs 并 emit update-dirs 持久化（发后即忘）。
   -->
-  <section>
-    <h3 class="mb-2 text-[12px] font-medium text-neutral-fg">{{ t('settings.loadPaths.title') }}</h3>
-
-    <!-- 强制目录（ADR-0021 §1.1 层 1-2，桥接层硬编码注入，不可关不可拖）-->
-    <div class="mb-2 rounded-card bg-card">
-      <div class="px-3 py-2 text-[11px] text-neutral-mid">{{ t('settings.loadPaths.forcedDirs') }}</div>
-      <div
-        v-for="dir in forcedDirs"
-        :key="dir"
-        class="flex items-center gap-2 border-t border-border px-3 py-2 text-[12px]"
-      >
-        <span class="size-4 shrink-0 rounded bg-surface-hover text-center text-[10px] leading-4 text-neutral-dim">
-          &#10003;
-        </span>
-        <span class="font-mono text-neutral-fg opacity-60">{{ dir }}</span>
-        <span class="ml-auto text-[10px] text-neutral-dim">{{ t('settings.loadPaths.forced') }}</span>
-      </div>
+  <section data-testid="load-paths">
+    <div class="mb-1.5 flex items-baseline gap-2">
+      <h3 class="text-[12px] font-medium text-neutral-fg">{{ t('settings.loadPaths.title') }}</h3>
+      <span class="text-[11px] text-neutral-mid">{{ t('settings.loadPaths.priorityHint') }}</span>
     </div>
 
-    <!-- 可选目录（ADR-0021 §1.1 层 3，可勾选可拖排序）-->
-    <div class="rounded-card bg-card">
-      <div class="px-3 py-2 text-[11px] text-neutral-mid">{{ t('settings.loadPaths.optionalDirs') }}</div>
+    <div class="overflow-hidden rounded-card bg-card">
       <div
-        v-for="(dir, index) in localDirs"
-        :key="dir.path"
-        class="flex items-center gap-2 border-t border-border px-3 py-2 text-[12px] transition-colors"
-        :class="{
-          'border-t-2 border-t-accent bg-surface-hover/50': dragOverIndex === index,
-          'opacity-40': dragIndex === index,
-        }"
-        :draggable="!disabled"
-        @dragstart="onDragStart($event, index)"
-        @dragenter.prevent="onDragOver($event, index)"
-        @dragover.prevent="onDragOver($event, index)"
-        @dragleave="onDragLeave"
-        @drop.prevent="onDrop(index)"
-        @dragend="onDragEnd"
+        v-for="scope in SCOPES"
+        :key="scope"
+        data-testid="dir-group"
+        :data-scope="scope"
       >
-        <GripVertical
-          class="size-4 shrink-0 cursor-grab text-neutral-dim hover:text-neutral-fg active:cursor-grabbing"
-          :class="{ 'cursor-not-allowed opacity-40': disabled }"
-          :aria-label="t('settings.loadPaths.dragSort')"
-        />
-        <Checkbox
-          :model-value="dir.enabled"
-          class="shrink-0"
-          :disabled="disabled"
-          :aria-label="t('settings.loadPaths.enableDir', { path: dir.path })"
-          @update:model-value="onToggle(index, $event)"
-        />
-        <span class="font-mono text-neutral-fg">{{ dir.path }}</span>
-        <Button
-          variant="ghost"
-          data-testid="remove-path-btn"
-          class="ml-auto size-6 shrink-0 p-0 text-neutral-dim hover:bg-surface-hover hover:text-danger"
-          :class="{ 'cursor-not-allowed opacity-40': disabled }"
-          :disabled="disabled"
-          :aria-label="t('settings.loadPaths.removeDir', { path: dir.path })"
-          @click="onRemove(index)"
+        <!-- 组头（作用域标：project=accent-soft / global=中性）-->
+        <div
+          class="flex items-center gap-2 bg-surface-2 px-3 py-2"
+          :class="{ 'border-t border-border': scope === 'global' }"
+          :data-testid="`group-head-${scope}`"
         >
-          <Trash2 class="size-3.5" />
-        </Button>
-      </div>
+          <span class="text-[12px] font-semibold text-neutral-fg">
+            {{ scope === 'project' ? t('settings.loadPaths.groupProject') : t('settings.loadPaths.groupGlobal') }}
+          </span>
+          <span
+            class="rounded-full px-1.5 py-0.5 font-mono text-[10px]"
+            :class="scope === 'project' ? 'bg-accent-soft text-accent' : 'bg-surface text-neutral-mid'"
+          >
+            {{ scope === 'project' ? t('settings.loadPaths.scopeProject') : t('settings.loadPaths.scopeGlobal') }}
+          </span>
+          <span class="ml-auto font-mono text-[10px] text-neutral-dim">
+            {{ scope === 'project' ? 'projectPaths' : 'globalPaths' }}
+          </span>
+        </div>
 
-      <!-- 从其他 Agent 导入（W1：Skill/Agent 目录导入，cw-2026-07-26-migration-other-agents）-->
-      <div class="border-t border-border px-3 py-2">
-        <SourceImportSection
-          :kind="kind"
-          :existing-dirs="localDirs.filter((d) => d.enabled).map((d) => d.path)"
-          :disabled="disabled"
-          @import="onImportFromAgents"
-        />
-      </div>
+        <!-- 系统锁定目录（仅项目目录组顶部；不可关不可移不可排序）-->
+        <template v-if="scope === 'project'">
+          <div
+            v-for="dir in forcedDirs"
+            :key="`forced:${dir}`"
+            data-testid="forced-dir-row"
+            class="flex items-center gap-2 border-t border-border px-3 py-2 text-[12px]"
+          >
+            <Checkbox
+              :model-value="true"
+              disabled
+              class="shrink-0 data-[state=unchecked]:border-neutral-dim"
+              :aria-label="t('settings.loadPaths.enableDir', { path: dir })"
+            />
+            <span class="flex-1 truncate font-mono text-neutral-fg opacity-60">{{ dir }}</span>
+            <Lock class="size-3.5 shrink-0 text-neutral-dim" />
+            <span class="rounded-full bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim">
+              {{ t('settings.loadPaths.systemTag') }}
+            </span>
+          </div>
+        </template>
 
-      <!-- 添加自定义路径入口（ADR-0021 §5 自定义 discovery 目录）-->
-      <div class="border-t border-border px-3 py-2">
-        <div class="flex items-center gap-2">
-          <Input
-            v-model="newPath"
-            data-testid="new-path-input"
-            placeholder="/absolute/path/to/dir"
-            class="h-8 font-mono text-[12px]"
+        <!-- 用户可选目录（Checkbox + ↑↓ + 移除）-->
+        <div
+          v-for="(dir, i) in dirsFor(scope)"
+          :key="dir.path"
+          data-testid="dir-row"
+          :data-scope="scope"
+          class="flex items-center gap-2 border-t border-border px-3 py-2 text-[12px]"
+        >
+          <Checkbox
+            :model-value="dir.enabled"
+            class="shrink-0 data-[state=unchecked]:border-neutral-dim"
             :disabled="disabled"
-            @keydown.enter="onAddPath"
+            :aria-label="t('settings.loadPaths.enableDir', { path: dir.path })"
+            @update:model-value="onToggle(scope, i, $event)"
+          />
+          <span class="flex-1 truncate font-mono text-neutral-fg">{{ dir.path }}</span>
+          <div class="flex shrink-0 items-center gap-0.5">
+            <Button
+              variant="ghost"
+              size="icon"
+              data-testid="move-up-btn"
+              class="size-7 rounded-sm p-0 text-neutral-dim hover:text-neutral-fg"
+              :disabled="disabled || i === 0"
+              :aria-label="t('settings.loadPaths.moveUp')"
+              @click="moveUp(scope, i)"
+            >
+              <ChevronUp />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              data-testid="move-down-btn"
+              class="size-7 rounded-sm p-0 text-neutral-dim hover:text-neutral-fg"
+              :disabled="disabled || i === dirsFor(scope).length - 1"
+              :aria-label="t('settings.loadPaths.moveDown')"
+              @click="moveDown(scope, i)"
+            >
+              <ChevronDown />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              data-testid="remove-path-btn"
+              class="size-7 rounded-sm p-0 text-danger hover:bg-danger-soft"
+              :disabled="disabled"
+              :aria-label="t('settings.loadPaths.removeDir', { path: dir.path })"
+              @click="onRemove(scope, i)"
+            >
+              <Trash2 />
+            </Button>
+          </div>
+        </div>
+
+        <!-- 添加路径区（目录选择 dialog + 手动填写校验）-->
+        <div class="flex flex-wrap items-center gap-2 border-t border-border px-3 py-2">
+          <Input
+            v-model="newPath[scope]"
+            :data-testid="`new-path-input-${scope}`"
+            :placeholder="scope === 'project' ? './relative/or/~/or/abs/path' : '/abs/or/~/path'"
+            class="h-8 min-w-[180px] flex-1 font-mono text-[12px]"
+            :error="!!pathError[scope]"
+            :disabled="disabled"
+            @keydown.enter="onAddPath(scope)"
           />
           <Button
             variant="secondary"
             size="dense"
-            data-testid="add-path-btn"
-            :disabled="disabled"
-            @click="onAddPath"
+            :data-testid="`choose-dir-btn-${scope}`"
+            :disabled="disabled || !chooseDirectoryFn"
+            @click="onChooseDirectory(scope)"
           >
+            <Folder />
+            {{ t('settings.loadPaths.chooseDirectory') }}
+          </Button>
+          <Button
+            size="dense"
+            :data-testid="`add-path-btn-${scope}`"
+            :disabled="disabled"
+            @click="onAddPath(scope)"
+          >
+            <Plus />
             {{ t('settings.loadPaths.addPath') }}
           </Button>
+          <p
+            v-if="pathError[scope]"
+            :data-testid="`path-error-${scope}`"
+            class="flex w-full items-center gap-1 text-[11px] text-danger"
+          >
+            <AlertCircle class="size-3 shrink-0" />
+            {{ pathError[scope] }}
+          </p>
         </div>
-        <p
-          v-if="pathError"
-          data-testid="path-error"
-          class="mt-1 text-[11px] text-danger"
-        >
-          {{ pathError }}
-        </p>
       </div>
     </div>
+
+    <!-- 从其他 Agent 导入（独立卡片，避免嵌套；§4 确认弹窗内置于该组件）-->
+    <SourceImportSection
+      class="mt-2"
+      :kind="kind"
+      :existing-dirs="localDirs.filter((d) => d.enabled).map((d) => d.path)"
+      :disabled="disabled"
+      @import="onImportFromAgents"
+    />
 
     <p v-if="kind === 'agent'" class="mt-1.5 text-[11px] text-neutral-dim">{{ t('settings.loadPaths.agentRestartHint') }}</p>
     <p v-else-if="kind === 'extension'" class="mt-1.5 text-[11px] text-neutral-dim">{{ t('settings.loadPaths.extensionLoadOrderHint') }}</p>
@@ -121,161 +176,156 @@
 
 <script setup lang="ts">
 import { Checkbox, Input, Button } from '@xyz-agent/ui'
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { GripVertical, Trash2 } from '@lucide/vue'
+import { ChevronUp, ChevronDown, Trash2, Lock, Folder, Plus, AlertCircle } from '@lucide/vue'
 
 import SourceImportSection from './SourceImportSection.vue'
+import { useChooseDirectory } from '../injection-keys'
 import type { SkillDirConfig } from '@xyz-agent/shared'
 
+type Scope = 'project' | 'global'
+
 const props = defineProps<{
-  /** 强制目录路径（只读展示，ADR-0021 §1.1 层 1-2） */
+  /** 强制目录路径（只读置顶于项目目录组，ADR-0021 §1.1 层 1-2） */
   forcedDirs: string[]
-  /** 可选目录配置（来自 store，可勾选可拖排序） */
+  /** 可选目录配置（来自 store，元素含 scope） */
   dirs: SkillDirConfig[]
-  /** 资源类型：skill 即时生效，agent 需重开会话，extension 新会话生效（ADR §理由） */
+  /** 资源类型：skill 即时生效，agent 需重开会话，extension 新会话生效 */
   kind: 'skill' | 'agent' | 'extension'
   /** 操作禁用（扫描中等场景） */
   disabled?: boolean
 }>()
 
 const emit = defineEmits<{
-  /** 目录配置变更（勾选或排序），父组件写回 store */
+  /** 目录配置变更（勾选/排序/添加/移除），父组件写回 store */
   'update-dirs': [dirs: SkillDirConfig[]]
 }>()
 
 const { t } = useI18n()
+const chooseDirectoryFn = useChooseDirectory()
 
-// ── 本地状态（拖拽即时性的关键）──
-// localDirs 是 dirs 的可写副本：拖拽/勾选只改它（即时），props.dirs 变化时同步进来。
+const SCOPES: Scope[] = ['project', 'global']
+
+// 单一数组（含 scope）—— emit 透传整个有序数组；渲染按 scope 分组
 const localDirs = ref<SkillDirConfig[]>([...props.dirs])
 
-// 同步外部变更（store 广播），但拖拽进行中跳过——避免广播覆盖用户正在拖拽的顺序。
-watch(() => props.dirs, (next) => {
-  if (dragIndex.value !== null) return // 拖拽中，不覆盖
-  // 广播回显抑制（竞态修复 W2）：onDragEnd emit 后 dragIndex 已清成 null，
-  // 此时若广播回来（props.dirs 因 store→WS→runtime 回路而变），原守卫失效会覆盖 localDirs。
-  // awaitingBroadcast 在 onDragEnd emit 前置位：广播回来时若 enabled 路径顺序与 localDirs
-  // 一致 → 这是自己刚 emit 的回显，跳过覆盖（保留 localDirs 对象，避免回弹/对象重建）；
-  // 顺序不一致 → 外部真实变更，落到下面正常同步。标志无论走哪条分支都复位。
-  if (awaitingBroadcast.value) {
-    const nextEnabled = next.filter((d) => d.enabled).map((d) => d.path)
-    const localEnabled = localDirs.value.filter((d) => d.enabled).map((d) => d.path)
-    const sameOrder =
-      nextEnabled.length === localEnabled.length &&
-      nextEnabled.every((p, i) => p === localEnabled[i])
-    awaitingBroadcast.value = false
-    if (sameOrder) return // 广播顺序与用户拖拽一致 → 跳过覆盖
-    // 顺序不一致 = 外部真实变更 → 落到下面覆盖
+watch(
+  () => props.dirs,
+  (next) => {
+    localDirs.value = next.map((d) => ({ ...d }))
+  },
+  { deep: true },
+)
+
+const projectDirs = computed(() => localDirs.value.filter((d) => d.scope === 'project'))
+const globalDirs = computed(() => localDirs.value.filter((d) => d.scope === 'global'))
+
+function dirsFor(scope: Scope): SkillDirConfig[] {
+  return scope === 'project' ? projectDirs.value : globalDirs.value
+}
+
+/** 显示索引 → localDirs 真实索引（组内过滤后定位）*/
+function realIndex(scope: Scope, displayIdx: number): number {
+  let count = 0
+  for (let i = 0; i < localDirs.value.length; i++) {
+    if (localDirs.value[i].scope === scope) {
+      if (count === displayIdx) return i
+      count++
+    }
   }
-  localDirs.value = next.map((d) => ({ ...d }))
-}, { deep: true })
-
-// ── 原生 HTML5 拖拽（本地状态驱动，零回路）──
-const dragIndex = ref<number | null>(null)
-const dragOverIndex = ref<number | null>(null)
-/**
- * 拖拽 emit 后等待广播回显的标志（竞态修复 W2）。
- * onDragEnd emit 前置位 true；watch(props.dirs) 据此判断：广播值的 enabled 顺序与 localDirs
- * 一致 → 跳过覆盖（防 onDragEnd 清 dragIndex 后广播把刚拖的顺序覆盖回去）。任何分支都复位。
- */
-const awaitingBroadcast = ref(false)
-const DND_MIME = 'application/x-loadpaths-index'
-
-function onDragStart(e: DragEvent, index: number): void {
-  if (props.disabled || !e.dataTransfer) return
-  // 必须 dataTransfer 写数据，否则浏览器判定拖拽无效 → drop 事件永不触发。
-  e.dataTransfer.effectAllowed = 'move'
-  e.dataTransfer.setData(DND_MIME, String(index))
-  e.dataTransfer.setData('text/plain', String(index))
-  dragIndex.value = index
+  return -1
 }
 
-function onDragOver(e: DragEvent, index: number): void {
-  if (dragIndex.value === null || dragIndex.value === index) return
-  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
-  dragOverIndex.value = index
-}
-
-function onDragLeave(): void {
-  dragOverIndex.value = null
-}
-
-/**
- * 放下：立即重排 localDirs（即时生效，零回路）。
- * 不在此 emit——顺序的最终持久化留到 dragend（拖拽完全结束后一次性 emit）。
- */
-function onDrop(targetIndex: number): void {
-  const from = dragIndex.value
-  if (from === null || from === targetIndex) {
-    dragOverIndex.value = null
-    return
-  }
-  // 重排 localDirs：把 from 移到 target 位置（靠前 = 高优先级，ADR §1.1）
-  const next = [...localDirs.value]
-  const [moved] = next.splice(from, 1)
-  next.splice(targetIndex, 0, moved)
-  localDirs.value = next
-  // 不清 dragIndex——留给 dragend 统一清理 + emit
-}
-
-/**
- * 拖拽完全结束：清状态 + 把最终顺序一次性 emit 持久化（发后即忘）。
- * 持久化是异步副作用，不阻塞 UI（localDirs 已是最终态）。
- */
-function onDragEnd(): void {
-  const wasDragging = dragIndex.value !== null
-  dragIndex.value = null
-  dragOverIndex.value = null
-  if (wasDragging) {
-    // 先置位 awaitingBroadcast 再 emit：emit 触发 store→WS→runtime→props.dirs 广播回路，
-    // 回来时 watch 检查 awaitingBroadcast，若 enabled 顺序一致则跳过覆盖（防竞态回弹）。
-    awaitingBroadcast.value = true
-    emit('update-dirs', localDirs.value.map((d) => ({ ...d })))
-  }
-}
-
-/** Checkbox 勾选 → 立即改 localDirs + emit 持久化。目录在 = 启用（ADR §5）。 */
-function onToggle(index: number, value: string | boolean): void {
-  const enabled = value === true
-  const next = localDirs.value.map((d, i) => (i === index ? { ...d, enabled } : d))
+/** 写入 + emit（发后即忘，零回路）*/
+function commit(next: SkillDirConfig[]): void {
   localDirs.value = next
   emit('update-dirs', next.map((d) => ({ ...d })))
 }
 
-// ── 自定义路径入口（W5/D1）──
-const newPath = ref('')
-const pathError = ref('')
+// ── 组内 ↑↓ 移动（splice 交换相邻，组首↑/组末↓ disabled 由模板守卫）──
+function moveUp(scope: Scope, displayIdx: number): void {
+  if (props.disabled || displayIdx <= 0) return
+  const a = realIndex(scope, displayIdx - 1)
+  const b = realIndex(scope, displayIdx)
+  if (a < 0 || b < 0) return
+  const next = [...localDirs.value]
+  ;[next[a], next[b]] = [next[b], next[a]]
+  commit(next)
+}
 
-/**
- * 添加自定义路径（ADR-0021 §5 自定义 discovery 目录）。
- * 仅做非空 + 重复校验；存在性提示按 D1 决策不做（无现成 RPC，避免新增通道）。
- * 新路径默认 enabled=true，append 到 localDirs 末尾（最低优先级，可再拖排序）。
- */
-function onAddPath(): void {
-  const path = newPath.value.trim()
-  if (!path) return // 空路径：无操作、不报错
+function moveDown(scope: Scope, displayIdx: number): void {
+  if (props.disabled) return
+  if (displayIdx >= dirsFor(scope).length - 1) return
+  const a = realIndex(scope, displayIdx)
+  const b = realIndex(scope, displayIdx + 1)
+  if (a < 0 || b < 0) return
+  const next = [...localDirs.value]
+  ;[next[a], next[b]] = [next[b], next[a]]
+  commit(next)
+}
+
+/** Checkbox 勾选 → 立即改 localDirs + emit 持久化 */
+function onToggle(scope: Scope, displayIdx: number, value: string | boolean): void {
+  const idx = realIndex(scope, displayIdx)
+  if (idx < 0) return
+  const enabled = value === true
+  const next = localDirs.value.map((d, i) => (i === idx ? { ...d, enabled } : d))
+  commit(next)
+}
+
+/** 彻底移除条目（区别于取消勾选）*/
+function onRemove(scope: Scope, displayIdx: number): void {
+  if (props.disabled) return
+  const idx = realIndex(scope, displayIdx)
+  if (idx < 0) return
+  commit(localDirs.value.filter((_, i) => i !== idx))
+}
+
+// ── 添加路径（手动填写）──
+const newPath = ref<Record<Scope, string>>({ project: '', global: '' })
+const pathError = ref<Record<Scope, string>>({ project: '', global: '' })
+
+/** 全局目录限绝对路径（spec §3 校验正则）；项目目录允许相对+绝对 */
+const ABSOLUTE_RE = /^(\/|~\/|[A-Za-z]:\\)/
+
+function onAddPath(scope: Scope): void {
+  const path = newPath.value[scope].trim()
+  if (!path) return
   if (localDirs.value.some((d) => d.path === path)) {
-    pathError.value = t('settings.loadPaths.pathExists')
+    pathError.value[scope] = t('settings.loadPaths.pathExists')
     return
   }
-  pathError.value = ''
-  localDirs.value = [...localDirs.value, { path, enabled: true }]
-  newPath.value = ''
-  emit('update-dirs', localDirs.value.map((d) => ({ ...d })))
+  if (scope === 'global' && !ABSOLUTE_RE.test(path)) {
+    pathError.value[scope] = t('settings.loadPaths.pathFormatError')
+    return
+  }
+  pathError.value = { ...pathError.value, [scope]: '' }
+  newPath.value = { ...newPath.value, [scope]: '' }
+  commit([...localDirs.value, { path, enabled: true, scope }])
 }
 
-/** 彻底移除条目（区别于取消勾选：删后条目不再出现在列表） */
-function onRemove(index: number): void {
-  if (props.disabled) return
-  localDirs.value = localDirs.value.filter((_, i) => i !== index)
-  emit('update-dirs', localDirs.value.map((d) => ({ ...d })))
+/** 目录选择 dialog（经注入；选完直接 push 该 scope 组末尾）*/
+async function onChooseDirectory(scope: Scope): Promise<void> {
+  if (props.disabled || !chooseDirectoryFn) return
+  let selected: string | null
+  try {
+    selected = await chooseDirectoryFn()
+  } catch {
+    return
+  }
+  if (!selected) return
+  if (localDirs.value.some((d) => d.path === selected)) {
+    pathError.value = { ...pathError.value, [scope]: t('settings.loadPaths.pathExists') }
+    return
+  }
+  pathError.value = { ...pathError.value, [scope]: '' }
+  commit([...localDirs.value, { path: selected, enabled: true, scope }])
 }
 
 /**
- * 从其他 Agent 导入（W1）：把源 agent 候选目录 append 到 localDirs。
- * 去重——已存在的 path 跳过；默认 enabled=true；append 到末尾（最低优先级，可再拖排序）。
- * 去重模式与 onAddPath 一致（按 path 字面相等）。
+ * 从其他 Agent 导入（§4：SourceImportSection 确认后 emit）。
+ * 按 spec §4 anno，导入默认写入 projectPaths（项目目录组）；去重按 path 字面相等。
  */
 function onImportFromAgents(paths: string[]): void {
   if (props.disabled) return
@@ -284,10 +334,9 @@ function onImportFromAgents(paths: string[]): void {
   for (const path of paths) {
     if (existing.has(path)) continue
     existing.add(path)
-    additions.push({ path, enabled: true })
+    additions.push({ path, enabled: true, scope: 'project' })
   }
   if (additions.length === 0) return
-  localDirs.value = [...localDirs.value, ...additions]
-  emit('update-dirs', localDirs.value.map((d) => ({ ...d })))
+  commit([...localDirs.value, ...additions])
 }
 </script>

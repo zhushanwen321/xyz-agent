@@ -70,14 +70,45 @@
         </Button>
       </div>
     </template>
+
+    <!-- §4 确认弹窗：明确 source（其他 Agent 目录配置）/ target（写入太极 projectPaths）/ dedup -->
+    <ConfirmDialog
+      :open="confirmOpen"
+      :title="t('settings.loadPaths.importConfirm.title')"
+      :description="t('settings.loadPaths.importConfirm.description')"
+      :confirm-text="t('settings.loadPaths.importConfirm.confirm')"
+      :cancel-text="t('settings.loadPaths.importConfirm.cancel')"
+      variant="default"
+      @update:open="confirmOpen = $event"
+      @confirm="onConfirmImport"
+    >
+      <ul
+        data-testid="import-confirm-bullets"
+        class="flex flex-col gap-1.5 text-[12px] text-neutral-mid"
+      >
+        <li class="flex items-start gap-2">
+          <CheckCircle2 class="mt-0.5 size-3 shrink-0 text-neutral-dim" />
+          <span>{{ t('settings.loadPaths.importConfirm.bulletSource') }}</span>
+        </li>
+        <li class="flex items-start gap-2">
+          <CheckCircle2 class="mt-0.5 size-3 shrink-0 text-neutral-dim" />
+          <span>{{ t('settings.loadPaths.importConfirm.bulletTarget') }}</span>
+        </li>
+        <li class="flex items-start gap-2">
+          <CheckCircle2 class="mt-0.5 size-3 shrink-0 text-neutral-dim" />
+          <span>{{ t('settings.loadPaths.importConfirm.bulletDedup') }}</span>
+        </li>
+      </ul>
+    </ConfirmDialog>
   </section>
 </template>
 
 <script setup lang="ts">
-import { Checkbox, Button } from '@xyz-agent/ui'
+import { Checkbox, Button, ConfirmDialog } from '@xyz-agent/ui'
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { CheckboxCheckedState as CheckedState } from 'reka-ui'
+import { CheckCircle2 } from '@lucide/vue'
 
 import { useSettingsConfigApi } from '../injection-keys'
 import type { SourceDetectResult, ProviderSource, AgentSource } from '@xyz-agent/shared'
@@ -177,16 +208,36 @@ function countLabel(item: SourceDetectResult): string {
   return ''
 }
 
-// ── 导入 ──
-// 收集勾选且非共享池已生效的路径，emit 给父组件（父负责去重 + append）。
-function onImport(): void {
+// ── 导入（§4 确认弹窗）──
+// 点「导入选中」不立即 emit，先开 ConfirmDialog 明确 source/target/dedup，确认后才 emit。
+const confirmOpen = ref(false)
+const pendingPaths = ref<string[]>([])
+
+/** 收集勾选且非共享池已生效的路径（确认弹窗用） */
+function collectPaths(): string[] {
   const paths: string[] = []
   for (const item of candidates.value) {
     if (selected.value.has(item.source) && item.installed && !isShared(item.dir)) {
       paths.push(item.dir)
     }
   }
+  return paths
+}
+
+/** 「导入选中」→ 开确认弹窗（明确「写入太极」语义，防误以为导出到其他 Agent）*/
+function onImport(): void {
+  const paths = collectPaths()
   if (paths.length === 0) return
-  emit('import', paths)
+  pendingPaths.value = paths
+  confirmOpen.value = true
+}
+
+/** 确认导入 → emit 给父组件（父负责去重 + append 到 projectPaths）+ 关弹窗 */
+function onConfirmImport(): void {
+  if (pendingPaths.value.length > 0) {
+    emit('import', pendingPaths.value)
+  }
+  pendingPaths.value = []
+  confirmOpen.value = false
 }
 </script>

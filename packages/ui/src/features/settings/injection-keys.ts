@@ -137,5 +137,18 @@ export function useSettingsConfigApi(): SettingsConfigApi {
   return v ?? NOOP_CONFIG_API
 }
 
+// ── ④ 目录选择 dialog（§3 双方式添加：Electron showOpenDialog 经 renderer provide）──
+// ui 包零 renderer import：LoadPaths 的「选择目录」按钮调此注入函数打开 OS 目录选择器。
+// renderer 壳（SettingsResourcePage）provide 真实实现（window.electronAPI.chooseDirectory）。
+// 缺失时返回 undefined——LoadPaths 据此把「选择目录」按钮置 disabled（UI 完整，IPC 接线由后续 wave）。
+export type ChooseDirectoryFn = () => Promise<string | null>
+
+export const SETTINGS_CHOOSE_DIRECTORY_KEY: InjectionKey<ChooseDirectoryFn> =
+  Symbol('settingsChooseDirectory')
+
+export function useChooseDirectory(): ChooseDirectoryFn | undefined {
+  return inject(SETTINGS_CHOOSE_DIRECTORY_KEY, undefined)
+}
+
 // ComputedRef 未在本文件直接使用（类型来自 vue 顶层 import），保留 import 供未来扩展。
 export type { ComputedRef }
