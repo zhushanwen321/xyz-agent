@@ -9,7 +9,7 @@
  *
  * 运行：cd packages/dom-core && npx vitest run src/composer/input/input-dom.test.ts
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   getSegmentsFromEl,
   getTextFromEl,
@@ -17,7 +17,10 @@ import {
   findImageChipEl,
   findImageChipElById,
   isSpacerNode,
+  applyImagePersistResult,
+  CHIP_SPACER_ZWSP,
 } from './input-dom'
+import type { HandleImagePasteResult } from './types'
 
 /** 构造 contenteditable div + 设 innerHTML */
 function setupEl(html: string): HTMLDivElement {
@@ -258,5 +261,108 @@ describe('isSpacerNode', () => {
   it('null / element 节点非 spacer', () => {
     expect(isSpacerNode(null)).toBe(false)
     expect(isSpacerNode(document.createElement('span'))).toBe(false)
+  })
+})
+
+describe('applyImagePersistResult', () => {
+  let execSpy: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    // jsdom 未实现 document.execCommand，手动挂 spy（applyImagePersistResult 的 text 分支会调）
+    execSpy = vi.fn().mockReturnValue(false)
+    Object.defineProperty(document, 'execCommand', {
+      value: execSpy,
+      configurable: true,
+      writable: true,
+    })
+  })
+
+  afterEach(() => {
+    // 清理测试注入的 execCommand，避免污染其他测试
+    delete (document as { execCommand?: unknown }).execCommand
+  })
+
+  /** 构造一个带 .chip-label 子元素的占位 badge 元素 */
+  function makePlaceholder(labelText = '粘贴中...'): HTMLElement {
+    const placeholder = document.createElement('div')
+    placeholder.classList.add('image-chip')
+    const label = document.createElement('span')
+    label.classList.add('chip-label')
+    label.textContent = labelText
+    placeholder.appendChild(label)
+    return placeholder
+  }
+
+  it('kind=badge + placeholderEl 存在：回填 dataset + 更新 label，不调 insertImageBadge', () => {
+    const placeholder = makePlaceholder('粘贴中...')
+    const insertImageBadge = vi.fn()
+    const result: HandleImagePasteResult = {
+      kind: 'badge',
+      path: '/tmp/abc.png',
+      fileName: 'abc.png',
+      displayName: '图片.png',
+      needsMigrate: true,
+    }
+
+    applyImagePersistResult({ placeholderEl: placeholder, result, insertImageBadge })
+
+    expect(placeholder.dataset.chipPath).toBe('/tmp/abc.png')
+    expect(placeholder.dataset.chipFileName).toBe('abc.png')
+    expect(placeholder.dataset.chipDisplayName).toBe('图片.png')
+    expect(placeholder.dataset.chipNeedsMigrate).toBe('true')
+    expect(placeholder.querySelector('.chip-label')?.textContent).toBe('图片.png')
+    expect(insertImageBadge).not.toHaveBeenCalled()
+  })
+
+  it('kind=badge + placeholderEl 为 null：调 insertImageBadge 一次，参数 = result 各字段', () => {
+    const insertImageBadge = vi.fn()
+    const result: HandleImagePasteResult = {
+      kind: 'badge',
+      path: '/p/x.png',
+      fileName: 'x.png',
+      displayName: 'x.png',
+      needsMigrate: false,
+    }
+
+    applyImagePersistResult({ placeholderEl: null, result, insertImageBadge })
+
+    expect(insertImageBadge).toHaveBeenCalledTimes(1)
+    expect(insertImageBadge).toHaveBeenCalledWith('/p/x.png', 'x.png', 'x.png', false)
+  })
+
+  it('kind=text + placeholderEl 存在 + nextSibling 是 ZWSP 文本节点：移除 nextSibling + placeholder + 调 execCommand', () => {
+    const placeholder = makePlaceholder()
+    const zwsp = document.createTextNode(CHIP_SPACER_ZWSP)
+    const parent = document.createElement('div')
+    parent.appendChild(placeholder)
+    parent.appendChild(zwsp)
+
+    const insertImageBadge = vi.fn()
+    const result: HandleImagePasteResult = { kind: 'text', text: 'fallback text' }
+
+    applyImagePersistResult({ placeholderEl: placeholder, result, insertImageBadge })
+
+    expect(parent.contains(placeholder)).toBe(false)
+    expect(parent.contains(zwsp)).toBe(false)
+    expect(execSpy).toHaveBeenCalledWith('insertText', false, 'fallback text')
+    expect(insertImageBadge).not.toHaveBeenCalled()
+  })
+
+  it('kind=text + placeholderEl 存在 + nextSibling 非 ZWSP：只移除 placeholder，nextSibling 不动 + 调 execCommand', () => {
+    const placeholder = makePlaceholder()
+    const other = document.createTextNode('普通文本')
+    const parent = document.createElement('div')
+    parent.appendChild(placeholder)
+    parent.appendChild(other)
+
+    const insertImageBadge = vi.fn()
+    const result: HandleImagePasteResult = { kind: 'text', text: 't' }
+
+    applyImagePersistResult({ placeholderEl: placeholder, result, insertImageBadge })
+
+    expect(parent.contains(placeholder)).toBe(false)
+    expect(parent.contains(other)).toBe(true)
+    expect(execSpy).toHaveBeenCalledWith('insertText', false, 't')
+    expect(insertImageBadge).not.toHaveBeenCalled()
   })
 })

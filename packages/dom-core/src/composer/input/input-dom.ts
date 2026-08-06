@@ -20,7 +20,7 @@
  */
 import { segmentsToText } from '@xyz-agent/shared'
 import type { Segment } from '@xyz-agent/shared'
-import type { VerticalMoveResult } from './types'
+import type { VerticalMoveResult, HandleImagePasteResult } from './types'
 
 /** ZWSP spacer 文本（image-chip / slash-chip 后跟的零宽空格，移除占位 badge 时一并清） */
 export const CHIP_SPACER_ZWSP = '\u200B'
@@ -369,4 +369,38 @@ export function removeChipNode(chip: Node, onChanged: () => void): void {
   }
   chip.parentNode?.removeChild(chip)
   onChanged()
+}
+
+/**
+ * 图片持久化占位 badge 的异步回填/降级 —— paste 与 drop 共享编排。
+ * result.kind='badge'：占位存在则回填 dataset + 更新 label，不存在则 fallback 重建 badge。
+ * result.kind='text'：移除占位（含相邻 ZWSP spacer）+ insertText 降级。
+ */
+export function applyImagePersistResult(opts: {
+  placeholderEl: HTMLElement | null
+  result: HandleImagePasteResult
+  insertImageBadge: (path: string, fileName: string, displayName: string, needsMigrate?: boolean) => void
+}): void {
+  const { placeholderEl: placeholder, result, insertImageBadge } = opts
+  if (result.kind === 'badge') {
+    if (placeholder) {
+      placeholder.dataset.chipPath = result.path
+      placeholder.dataset.chipFileName = result.fileName
+      placeholder.dataset.chipDisplayName = result.displayName
+      placeholder.dataset.chipNeedsMigrate = result.needsMigrate ? 'true' : 'false'
+      const label = placeholder.querySelector('.chip-label')
+      if (label) label.textContent = result.displayName
+    } else {
+      insertImageBadge(result.path, result.fileName, result.displayName, result.needsMigrate)
+    }
+  } else if (result.kind === 'text') {
+    if (placeholder) {
+      const next = placeholder.nextSibling
+      if (next && next.nodeType === Node.TEXT_NODE && next.textContent === CHIP_SPACER_ZWSP) {
+        next.remove()
+      }
+      placeholder.remove()
+    }
+    document.execCommand('insertText', false, result.text)
+  }
 }

@@ -13,7 +13,7 @@
  * 检查防子元素冒泡误触发。
  */
 import { ref, type Ref } from 'vue'
-import { findImageChipEl, CHIP_SPACER_ZWSP } from './input-dom'
+import { findImageChipEl, applyImagePersistResult } from './input-dom'
 import type { ComposerInputInstance, DragDropDeps } from './types'
 
 /**
@@ -68,27 +68,11 @@ export function useComposerDragDrop(
         const placeholder = composerBoxRef.value
           ? findImageChipEl(composerBoxRef.value, placeholderMark)
           : null
-        if (result.kind === 'badge') {
-          if (placeholder) {
-            placeholder.dataset.chipPath = result.path
-            placeholder.dataset.chipFileName = result.fileName
-            placeholder.dataset.chipDisplayName = result.displayName
-            placeholder.dataset.chipNeedsMigrate = result.needsMigrate ? 'true' : 'false'
-            const label = placeholder.querySelector('.chip-label')
-            if (label) label.textContent = result.displayName
-          } else {
-            inputRef.value?.insertImageBadge(result.path, result.fileName, result.displayName, result.needsMigrate)
-          }
-        } else if (result.kind === 'text') {
-          if (placeholder) {
-            const next = placeholder.nextSibling
-            if (next && next.nodeType === Node.TEXT_NODE && next.textContent === CHIP_SPACER_ZWSP) {
-              next.remove()
-            }
-            placeholder.remove()
-          }
-          document.execCommand('insertText', false, result.text)
-        }
+        applyImagePersistResult({
+          placeholderEl: placeholder,
+          result,
+          insertImageBadge: (p, f, d, m) => inputRef.value?.insertImageBadge(p, f, d, m),
+        })
       }
       onChanged()
     })()

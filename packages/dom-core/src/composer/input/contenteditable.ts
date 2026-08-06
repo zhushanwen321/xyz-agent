@@ -31,7 +31,7 @@ import {
   moveCaretVerticalOf,
   pickClipboardImageItem,
   findImageChipEl,
-  CHIP_SPACER_ZWSP,
+  applyImagePersistResult,
 } from './input-dom'
 import type { ContenteditableCallbacks, HandleImagePasteResult } from './types'
 
@@ -64,27 +64,11 @@ function handleImagePasteEvent(
     const result = await deps.pasteImage(file, sessionId)
     const el = deps.getEl()
     const placeholder = el ? findImageChipEl(el, placeholderMark) : null
-    if (result.kind === 'badge') {
-      if (placeholder) {
-        placeholder.dataset.chipPath = result.path
-        placeholder.dataset.chipFileName = result.fileName
-        placeholder.dataset.chipDisplayName = result.displayName
-        placeholder.dataset.chipNeedsMigrate = result.needsMigrate ? 'true' : 'false'
-        const label = placeholder.querySelector('.chip-label')
-        if (label) label.textContent = result.displayName
-      } else {
-        deps.insertImageBadge(result.path, result.fileName, result.displayName, result.needsMigrate)
-      }
-    } else if (result.kind === 'text') {
-      if (placeholder) {
-        const next = placeholder.nextSibling
-        if (next && next.nodeType === Node.TEXT_NODE && next.textContent === CHIP_SPACER_ZWSP) {
-          next.remove()
-        }
-        placeholder.remove()
-      }
-      document.execCommand('insertText', false, result.text)
-    }
+    applyImagePersistResult({
+      placeholderEl: placeholder,
+      result,
+      insertImageBadge: deps.insertImageBadge,
+    })
     deps.onInput()
   })()
   return true
