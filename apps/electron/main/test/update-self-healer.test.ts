@@ -99,7 +99,7 @@ describe('W3: update-self-healer (W3TC11)', () => {
 
     // 用 tmp 目录模拟 AppImage（半截态）+ .old（备份）
     const tmpAppDir = mkdtempSync(path.join(tmpdir(), 'w3-linux-app-'))
-    const appImage = path.join(tmpAppDir, 'xyz-agent-x86_64.AppImage')
+    const appImage = path.join(tmpAppDir, 'TaiJi-x86_64.AppImage')
     const oldImage = `${appImage}.old`
     writeFileSync(appImage, 'half-installed')
     writeFileSync(oldImage, 'old-good-version')

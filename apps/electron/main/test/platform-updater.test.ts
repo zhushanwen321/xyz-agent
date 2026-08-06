@@ -55,7 +55,7 @@ const MAC_RELEASE = {
   htmlUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/tag/v0.9.0',
   assets: {
     macArm64Zip: {
-      name: 'xyz-agent-mac-arm64.zip',
+      name: 'TaiJi-mac-arm64.zip',
       downloadUrl: 'https://example.com/mac.zip',
       size: 1000,
       sha256: 'a'.repeat(64),
@@ -67,7 +67,7 @@ const WIN_RELEASE = {
   ...MAC_RELEASE,
   assets: {
     winX64Exe: {
-      name: 'xyz-agent-setup-x64.exe',
+      name: 'TaiJi-setup-x64.exe',
       downloadUrl: 'https://example.com/setup.exe',
       size: 2000,
     },
@@ -79,7 +79,7 @@ const LINUX_RELEASE = {
   htmlUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/tag/v0.9.0',
   assets: {
     linuxX64AppImage: {
-      name: 'xyz-agent-x86_64.AppImage',
+      name: 'TaiJi-x86_64.AppImage',
       downloadUrl: 'https://example.com/appimage',
       size: 3000,
       sha256: 'a'.repeat(64),
@@ -188,8 +188,8 @@ describe('W3: platform-updater (W3TC5-7)', () => {
 
   // ── W3TC7：LinuxAppImageUpdater ────────────────────────────────
   it('W3TC7a: APPIMAGE 存在 → detached-script + spawn', async () => {
-    setPlatform('linux', '/home/test/xyz-agent-x86_64.AppImage')
-    process.env.APPIMAGE = '/home/test/xyz-agent-x86_64.AppImage'
+    setPlatform('linux', '/home/test/TaiJi-x86_64.AppImage')
+    process.env.APPIMAGE = '/home/test/TaiJi-x86_64.AppImage'
     const { LinuxAppImageUpdater } = await loadModule()
     const updater = new LinuxAppImageUpdater()
 

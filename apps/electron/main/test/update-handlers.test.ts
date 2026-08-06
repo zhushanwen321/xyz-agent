@@ -64,8 +64,8 @@ const FIXTURE: LatestReleaseInfo = {
   htmlUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/tag/v0.9.0',
   assets: {
     macArm64Zip: {
-      name: 'xyz-agent-mac-arm64.zip',
-      downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/xyz-agent-mac-arm64.zip',
+      name: 'TaiJi-mac-arm64.zip',
+      downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v0.9.0/TaiJi-mac-arm64.zip',
       size: 1000,
       sha256: 'a'.repeat(64),
     },

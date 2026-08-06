@@ -28,33 +28,33 @@ function makeReleaseJson(overrides: Record<string, unknown> = {}): Record<string
     html_url: 'https://github.com/zhushanwen321/xyz-agent/releases/tag/v0.9.0',
     assets: [
       {
-        name: 'xyz-agent-mac-arm64.zip',
+        name: 'TaiJi-mac-arm64.zip',
         browser_download_url: 'https://example.com/mac-arm64.zip',
         size: 1000,
         // 合法 64 位 hex（全 a 便于断言）
         digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       },
       {
-        name: 'xyz-agent-setup-x64.exe',
+        name: 'TaiJi-setup-x64.exe',
         browser_download_url: 'https://example.com/setup-x64.exe',
         size: 2000,
         digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       },
       {
-        name: 'xyz-agent-x86_64.AppImage',
+        name: 'TaiJi-x86_64.AppImage',
         browser_download_url: 'https://example.com/x86_64.AppImage',
         size: 3000,
         digest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
       },
       {
-        name: 'xyz-agent-amd64.deb',
+        name: 'TaiJi-amd64.deb',
         browser_download_url: 'https://example.com/amd64.deb',
         size: 4000,
         digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
       },
       // 干扰：blockmap 不应被选中（digest 用 sha512 以验证不会被误当 sha256）
       {
-        name: 'xyz-agent-mac-arm64.zip.blockmap',
+        name: 'TaiJi-mac-arm64.zip.blockmap',
         browser_download_url: 'https://example.com/mac-arm64.zip.blockmap',
         size: 10,
         digest: 'sha512:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
@@ -278,28 +278,28 @@ describe('W2: ReleaseChecker 自动升级检测', () => {
         makeReleaseJson({
           assets: [
             {
-              name: 'xyz-agent-mac-arm64.zip',
+              name: 'TaiJi-mac-arm64.zip',
               browser_download_url: 'https://example.com/mac.zip',
               size: 1000,
               // sha512 前缀 → 必须拒绝，不能原样返回
               digest: `sha512:${sha512Hex}`,
             },
             {
-              name: 'xyz-agent-setup-x64.exe',
+              name: 'TaiJi-setup-x64.exe',
               browser_download_url: 'https://example.com/exe',
               size: 2000,
               // sha256 前缀但 hex 长度不对（6 位）→ 拒绝
               digest: 'sha256:abc123',
             },
             {
-              name: 'xyz-agent-x86_64.AppImage',
+              name: 'TaiJi-x86_64.AppImage',
               browser_download_url: 'https://example.com/appimage',
               size: 3000,
               // 无前缀、纯 64 位 hex → 接受
               digest: 'f'.repeat(64),
             },
             {
-              name: 'xyz-agent-amd64.deb',
+              name: 'TaiJi-amd64.deb',
               browser_download_url: 'https://example.com/deb',
               size: 4000,
               // 无前缀、垃圾数据 → 拒绝

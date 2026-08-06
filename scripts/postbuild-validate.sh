@@ -246,7 +246,7 @@ if [ -d "$OUTPUT_DIR/win-unpacked" ]; then
     WIN_UNPACKED="$WIN_RESOURCES/app.asar.unpacked"
 
     for required in \
-        "$WIN_ROOT/xyz-agent.exe" \
+        "$WIN_ROOT/TaiJi.exe" \
         "$WIN_UNPACKED/dist/runtime/index.cjs" \
         "$WIN_UNPACKED/dist/runtime/plugin-bootstrap.cjs" \
         "$WIN_UNPACKED/dist/runtime/plugin-bootstrap-process.cjs" \

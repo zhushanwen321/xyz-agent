@@ -41,7 +41,7 @@ const MANIFEST_URL =
 const GITHUB_HEADERS = {
   Accept: 'application/vnd.github+json',
   'X-GitHub-Api-Version': '2022-11-28',
-  'User-Agent': 'xyz-agent-updater',
+  'User-Agent': 'TaiJi-updater',
 } as const
 
 /** fetch 超时（AbortController） */
@@ -62,7 +62,7 @@ const STRICT_VERSION_RE = /^\d+\.\d+\.\d+(?:\.\d+)?$/
 // ── GitHub API 响应类型（仅取关心的字段）─────────────────────────────
 
 interface GitHubAsset {
-  /** 文件名（如 'xyz-agent-mac-arm64.zip'） */
+  /** 文件名（如 'TaiJi-mac-arm64.zip'） */
   name: string
   /** 下载直链 */
   browser_download_url: string
@@ -96,10 +96,10 @@ interface GitHubRelease {
 // ── 固定 asset 文件名（与 CI 产物命名对齐）─────────────────────────
 
 const ASSET_NAME = {
-  macArm64Zip: 'xyz-agent-mac-arm64.zip',
-  winX64Exe: 'xyz-agent-setup-x64.exe',
-  linuxX64AppImage: 'xyz-agent-x86_64.AppImage',
-  linuxX64Deb: 'xyz-agent-amd64.deb',
+  macArm64Zip: 'TaiJi-mac-arm64.zip',
+  winX64Exe: 'TaiJi-setup-x64.exe',
+  linuxX64AppImage: 'TaiJi-x86_64.AppImage',
+  linuxX64Deb: 'TaiJi-amd64.deb',
 } as const
 
 // ── 缓存条目类型 ──────────────────────────────────────────────────

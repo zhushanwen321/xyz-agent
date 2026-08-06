@@ -13,23 +13,23 @@ AI Agent 桌面工作台，基于 Electron + Vue 3 + Node.js Runtime 架构。
 ### macOS（Apple Silicon）
 
 ```bash
-curl -L https://github.com/zhushanwen321/xyz-agent/releases/latest/download/xyz-agent-mac-arm64.zip -o /tmp/xyz-agent.zip \
-  && unzip /tmp/xyz-agent.zip -d /Applications \
-  && open /Applications/xyz-agent.app
+curl -L https://github.com/zhushanwen321/xyz-agent/releases/latest/download/TaiJi-mac-arm64.zip -o /tmp/TaiJi.zip \
+  && unzip /tmp/TaiJi.zip -d /Applications \
+  && open /Applications/太极.app
 ```
 
 若启动时提示「已损坏」或「无法验证开发者」，执行（curl 下载通常不需要，浏览器下载需要）：
 
 ```bash
-xattr -cr /Applications/xyz-agent.app
+xattr -cr /Applications/太极.app
 ```
 
 ### Linux
 
 ```bash
-curl -L https://github.com/zhushanwen321/xyz-agent/releases/latest/download/xyz-agent-x86_64.AppImage -o ~/xyz-agent.AppImage \
-  && chmod +x ~/xyz-agent.AppImage \
-  && ~/xyz-agent.AppImage
+curl -L https://github.com/zhushanwen321/xyz-agent/releases/latest/download/TaiJi-x86_64.AppImage -o ~/TaiJi.AppImage \
+  && chmod +x ~/TaiJi.AppImage \
+  && ~/TaiJi.AppImage
 ```
 
 ### Windows
@@ -37,13 +37,13 @@ curl -L https://github.com/zhushanwen321/xyz-agent/releases/latest/download/xyz-
 PowerShell（用 Invoke-WebRequest，避免 curl 在 PowerShell 是别名导致的参数冲突）：
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/zhushanwen321/xyz-agent/releases/latest/download/xyz-agent-setup-x64.exe" -OutFile "$env:TEMP\xyz-agent-setup.exe" -UseBasicParsing; & "$env:TEMP\xyz-agent-setup.exe"
+Invoke-WebRequest -Uri "https://github.com/zhushanwen321/xyz-agent/releases/latest/download/TaiJi-setup-x64.exe" -OutFile "$env:TEMP\TaiJi-setup.exe" -UseBasicParsing; & "$env:TEMP\TaiJi-setup.exe"
 ```
 
 命令提示符（cmd.exe，需系统自带 curl.exe，Win10 1803+ 默认含）：
 
 ```cmd
-curl -L https://github.com/zhushanwen321/xyz-agent/releases/latest/download/xyz-agent-setup-x64.exe -o "%TEMP%\xyz-agent-setup.exe" && "%TEMP%\xyz-agent-setup.exe"
+curl -L https://github.com/zhushanwen321/xyz-agent/releases/latest/download/TaiJi-setup-x64.exe -o "%TEMP%\TaiJi-setup.exe" && "%TEMP%\TaiJi-setup.exe"
 ```
 
 ---

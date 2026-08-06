@@ -32,7 +32,7 @@ export interface LatestReleaseInfo {
  * sha256 来自 GitHub asset.digest strip 'sha256:' 前缀；缺失时为 undefined。
  */
 export interface ReleaseAsset {
-  /** 文件名（如 'xyz-agent-mac-arm64.zip'） */
+  /** 文件名（如 'TaiJi-mac-arm64.zip'） */
   name: string
   /** 下载直链（browser_download_url） */
   downloadUrl: string

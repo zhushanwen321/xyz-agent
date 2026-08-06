@@ -48,8 +48,8 @@ const MOCK_RELEASE: LatestReleaseInfo = {
     // downloadUrl 用合法的 GitHub URL（即使 404），以便通过 validateRelease
     // 白名单校验（update:perform handler 在 performUpdate 前会校验 payload）。
     macArm64Zip: {
-      name: 'xyz-agent-mac-arm64.zip',
-      downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v999.999.999/xyz-agent-mac-arm64.zip',
+      name: 'TaiJi-mac-arm64.zip',
+      downloadUrl: 'https://github.com/zhushanwen321/xyz-agent/releases/download/v999.999.999/TaiJi-mac-arm64.zip',
       size: 0,
       sha256: 'a'.repeat(SHA256_HEX_LENGTH),
     },

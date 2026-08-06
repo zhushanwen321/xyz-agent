@@ -2,13 +2,11 @@ appId: com.xyz-agent.app
 productName: 太极
 # electron-builder 在 linux AppImage 上 fallback 用 package.json name（@xyz-agent/electron）
 # 去斜杠后变成 @xyz-agentelectron，AppImage 拒绝 @ 字符，故显式指定。
-# executableName / artifactName 故意保留 xyz-agent（不跟 productName「太极」走中文）：
-# - executableName 是 .app/Contents/MacOS/ 内部可执行文件名（用户不可见），中文路径有 spawn
-#   风险，且 postbuild-validate.sh 按 xyz-agent 校验产物路径。
-# - artifactName 是下载包名，release-checker.ts ASSET_NAME 常量硬编码 xyz-agent-* ，改名会
-#   切断 ≤0.8.40 旧版本自动更新（旧客户端按旧名查 GitHub Release 找不到新包）。
-# 仅 productName 作系统显示名（Dock/菜单栏/About）跟随品牌「太极」，发布工程链路保持稳定。
-executableName: xyz-agent
+# executableName / artifactName 统一用 TaiJi（拼音），与 productName「太极」品牌一致：
+# - 用拼音而非中文：可执行文件名 / 下载包名含中文有路径编码与跨工具链风险，拼音零风险。
+# - 不考虑 ≤0.8.40 旧版本自动升级兼容（旧版需手动下载新版重装），故 artifactName 可直接改名；
+#   release-checker.ts ASSET_NAME / postbuild-validate.sh / README 下载指引已同步改为 TaiJi-*。
+executableName: TaiJi
 directories:
   output: dist/builder-output
 asar: true
@@ -121,7 +119,7 @@ mac:
   minimumSystemVersion: 12.0.0
   # 固定文件名（去 ${version}）支持自动升级 + releases/latest/download 静态 URL。
   # zip 和 dmg 共用此 pattern，${ext} 由 electron-builder 按 target 解析为 .zip / .dmg。
-  artifactName: xyz-agent-mac-arm64.${ext}
+  artifactName: TaiJi-mac-arm64.${ext}
 
 win:
   target:
@@ -134,12 +132,12 @@ win:
   icon: build/icon.ico
   # 固定文件名（去 ${version}）支持自动升级 + releases/latest/download 静态 URL。
   # nsis target 的 ${ext} 解析为 exe，zip target 的 ${ext} 解析为 zip。
-  artifactName: xyz-agent-setup-${arch}.${ext}
+  artifactName: TaiJi-setup-${arch}.${ext}
 
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-  artifactName: xyz-agent-setup-${arch}.${ext}
+  artifactName: TaiJi-setup-${arch}.${ext}
 
 linux:
   target:
@@ -154,8 +152,8 @@ linux:
   # 固定文件名（去 ${version}）支持自动升级 + releases/latest/download 静态 URL。
   # ${arch} 由 electron-builder 按 target ext 解析（getArtifactArchName）：
   # AppImage(x64) -> x86_64，deb(x64) -> amd64，${ext} 解析为 AppImage / deb。
-  # 产物：xyz-agent-x86_64.AppImage 和 xyz-agent-amd64.deb。
-  artifactName: xyz-agent-${arch}.${ext}
+  # 产物：TaiJi-x86_64.AppImage 和 TaiJi-amd64.deb。
+  artifactName: TaiJi-${arch}.${ext}
 
 # 本地构建时 electron-builder 需要至少一个 publish provider
 # 否则 updateInfoBuilder 会因 channel === null 崩溃

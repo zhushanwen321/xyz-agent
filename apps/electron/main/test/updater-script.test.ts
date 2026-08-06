@@ -21,7 +21,7 @@ import {
 /** 标准变量 fixture */
 const MAC_VARS = {
   appBundle: '/Applications/xyz-agent.app',
-  zipPath: '/Users/test/.xyz-agent/update/xyz-agent-mac-arm64.zip',
+  zipPath: '/Users/test/.xyz-agent/update/TaiJi-mac-arm64.zip',
   sha256: 'a'.repeat(64),
   logPath: '/Users/test/.xyz-agent/update/updater.log',
   resultPath: '/Users/test/.xyz-agent/update/update-result.json',
@@ -30,8 +30,8 @@ const MAC_VARS = {
 }
 
 const LINUX_VARS = {
-  appImagePath: '/home/test/xyz-agent-x86_64.AppImage',
-  newFilePath: '/home/test/.xyz-agent/update/xyz-agent-x86_64.AppImage',
+  appImagePath: '/home/test/TaiJi-x86_64.AppImage',
+  newFilePath: '/home/test/.xyz-agent/update/TaiJi-x86_64.AppImage',
   sha256: 'a'.repeat(64),
   logPath: '/home/test/.xyz-agent/update/updater-linux.log',
   resultPath: '/home/test/.xyz-agent/update/update-result.json',
@@ -110,7 +110,7 @@ describe('W3: updater-script (W3TC4)', () => {
     // 无 {{ 残留
     expect(script).not.toMatch(/\{\{[^}]+\}\}/)
     // 实际 AppImage 路径注入
-    expect(script).toContain('/home/test/xyz-agent-x86_64.AppImage')
+    expect(script).toContain('/home/test/TaiJi-x86_64.AppImage')
 
     // 消除上方 expectedFragments 未使用告警（保留意图文档化）
     expect(expectedFragments.length).toBeGreaterThan(0)

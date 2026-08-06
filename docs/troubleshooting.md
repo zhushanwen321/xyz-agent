@@ -6,7 +6,7 @@
 
 | 层级 | 开发模式 | 打包模式 |
 |------|---------|---------|
-| **Electron 主进程** | 终端直接看 | 终端启动 `/Applications/xyz-agent.app/Contents/MacOS/xyz-agent` 或 `log show --process xyz-agent` |
+| **Electron 主进程** | 终端直接看 | 终端启动 `/Applications/太极.app/Contents/MacOS/TaiJi` 或 `log show --process TaiJi` |
 | **Runtime（原 Sidecar）** | 终端 `[runtime:out]` / `[runtime:err]` 前缀 | 同主进程，stdout/stderr 转发到主进程 console |
 | **pi 子进程** | 终端 pi 自身输出 | pi 日志目录 `~/.xyz-agent/pi/agent/logs/` |
 | **前端 DevTools** | Cmd+Option+I 打开 | 同左 |
@@ -15,7 +15,7 @@
 
 ```bash
 # 方法 1：终端启动（推荐，直接看到所有 console 输出）
-/Applications/xyz-agent.app/Contents/MacOS/xyz-agent
+/Applications/太极.app/Contents/MacOS/TaiJi
 
 # 方法 2：macOS 系统日志（过滤 xyz-agent 和 runtime 子进程）
 log stream --predicate 'process == "xyz-agent"' --level debug
@@ -25,7 +25,7 @@ log stream --predicate 'process == "xyz-agent"' --level debug
 
 ## 关键诊断路径
 
-**打包后应用结构** (`/Applications/xyz-agent.app/Contents/Resources/`)：
+**打包后应用结构** (`/Applications/太极.app/Contents/Resources/`)：
 
 ```
 Resources/
@@ -61,17 +61,17 @@ Resources/
 
 ```bash
 # 检查 pi 二进制是否存在
-ls -la /Applications/xyz-agent.app/Contents/Resources/pi/pi-darwin-*
+ls -la /Applications/太极.app/Contents/Resources/pi/pi-darwin-*
 
 # 检查 pi 二进制是否可执行
-file /Applications/xyz-agent.app/Contents/Resources/pi/pi-darwin-arm64
-chmod +x /Applications/xyz-agent.app/Contents/Resources/pi/pi-darwin-arm64  # 如果权限丢失
+file /Applications/太极.app/Contents/Resources/pi/pi-darwin-arm64
+chmod +x /Applications/太极.app/Contents/Resources/pi/pi-darwin-arm64  # 如果权限丢失
 
 # 检查是否架构不匹配（Intel Mac 上只有 arm64 二进制）
 uname -m  # arm64 还是 x86_64
 
 # 终端启动看完整错误
-/Applications/xyz-agent.app/Contents/MacOS/xyz-agent
+/Applications/太极.app/Contents/MacOS/TaiJi
 ```
 
 常见原因：
@@ -84,12 +84,12 @@ uname -m  # arm64 还是 x86_64
 
 ```bash
 # 检查 runtime bundle 是否存在于 unpacked 目录
-ls -la /Applications/xyz-agent.app/Contents/Resources/app.asar.unpacked/dist/runtime/
+ls -la /Applications/太极.app/Contents/Resources/app.asar.unpacked/dist/runtime/
 
 # 手动启动 runtime 做冒烟测试
 XYZ_AGENT_PACKAGED=1 ELECTRON_RUN_AS_NODE=1 \
-  /Applications/xyz-agent.app/Contents/MacOS/xyz-agent \
-  /Applications/xyz-agent.app/Contents/Resources/app.asar.unpacked/dist/runtime/index.cjs \
+  /Applications/太极.app/Contents/MacOS/TaiJi \
+  /Applications/太极.app/Contents/Resources/app.asar.unpacked/dist/runtime/index.cjs \
   --port=9999
 # 然后 curl http://localhost:9999/health
 ```

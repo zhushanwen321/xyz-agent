@@ -107,7 +107,7 @@ node $PW $EP click "[data-testid=chip-branch]"
 node $PW $EP fill "input[name=x]" "value"
 ```
 
-**注意多个 xyz-agent 实例**：打包版 `/Applications/xyz-agent.app` 也可能同时在跑（占 3210 端口）。dev 实例的 renderer 在 9222、runtime 在 3310（tsx 跑 `packages/runtime/src/index.ts`）。连错实例会看到旧代码——先确认 `list-pages` 的 URL 是 `localhost:1420`（vite dev server）。
+**注意多个 xyz-agent 实例**：打包版 `/Applications/太极.app` 也可能同时在跑（占 3210 端口）。dev 实例的 renderer 在 9222、runtime 在 3310（tsx 跑 `packages/runtime/src/index.ts`）。连错实例会看到旧代码——先确认 `list-pages` 的 URL 是 `localhost:1420`（vite dev server）。
 
 **runtime 代码改动不热重载**：dev runtime 用 `tsx`（非 `tsx watch`）运行，改 runtime 源码后**必须重启 dev**（`pnpm dev` 重跑）才生效。renderer 走 vite HMR 自动热重载。
 
