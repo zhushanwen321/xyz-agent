@@ -14,7 +14,7 @@ import { createPinia, setActivePinia } from 'pinia'
 
 // mock composer api（store 不直接调 api，但 useFileSearch 调；store 测试通过 useFileSearch 间接验证缓存）
 const mockGetFileCandidates = vi.fn()
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   composer: { getFileCandidates: (...args: unknown[]) => mockGetFileCandidates(...args) },
 }))
 

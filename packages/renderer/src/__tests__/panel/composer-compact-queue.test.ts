@@ -54,7 +54,7 @@ vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
   useNewTaskFlow: () => ({ submitFirstMessage: vi.fn(), currentModel: { value: null }, setPendingModel: vi.fn(), currentCwd: ref(null) }),
   resetNewTaskFlow: vi.fn(),
 }))
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   // chat: useCompactQueue.flush 依赖（TC15 flush 真实路径，非仅 useChat mock）
   chat: { send: chatApiMock.send, steer: chatApiMock.steer },
   model: { switchModel: vi.fn() },

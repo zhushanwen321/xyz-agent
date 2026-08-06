@@ -23,7 +23,7 @@ import { createPinia, setActivePinia } from 'pinia'
 // mock @/api：file（AC-6.9 直调 read）+ session（session.list 反查 id）
 const fileReadMock = vi.fn()
 const sessionListMock = vi.fn()
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   file: { read: (...args: unknown[]) => fileReadMock(...args) },
   session: { list: (...args: unknown[]) => sessionListMock(...args) },
 }))

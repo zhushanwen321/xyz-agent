@@ -40,7 +40,7 @@ vi.mock('@/composables/features/new-task/useNewTaskFlow', () => ({
   useNewTaskFlow: () => ({ submitFirstMessage: vi.fn(), currentModel: { value: null }, currentCwd: { value: null }, setPendingModel: vi.fn() }),
   resetNewTaskFlow: vi.fn(),
 }))
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   model: { switchModel: vi.fn() },
   session: { setThinkingLevel: vi.fn() },
   composer: {

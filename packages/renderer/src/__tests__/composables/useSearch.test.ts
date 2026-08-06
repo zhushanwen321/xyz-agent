@@ -53,7 +53,7 @@ import { useFileSearchStore } from '@/stores/fileSearch'
 // ── mock：api domain ──
 const mockGetFileCandidates = vi.fn()
 const mockSessionList = vi.fn()
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   composer: { getFileCandidates: (...args: unknown[]) => mockGetFileCandidates(...(args as [string])) },
   session: { list: () => mockSessionList() },
 }))

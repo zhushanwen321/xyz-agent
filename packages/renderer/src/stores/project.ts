@@ -1,21 +1,24 @@
 /**
- * Project store —— v6 D14 Project 一级导航的状态层（2026-08-04 语义修正）。
+ * Project store —— v6 D14 Project 一级导航的状态层（2026-08-04 语义修正 + 持久化迁移）。
  *
- * 职责：Project CRUD + activeProjectId 切换 + renderer localStorage 持久化。
+ * 职责：Project CRUD + activeProjectId 切换 + runtime 持久化（projects.json）。
  *
- * 关系模型（SSOT 见 shared/project.ts）：Project 直接关联 Session（session.projectId，
- * 创建时归属，runtime sidecar 持久化）。本 store 只管 project 列表本身，**不持有**
- * session 归属（无 workspaces 字段——cwd 只是前端展示聚合，不是模型层级）。
+ * 关系模型（SSOT 见 shared/project.ts + docs/architecture/project-session-model.md）：
+ * Project 直接关联 Session（session.projectId，创建时归属，runtime sidecar 持久化）。
+ * 本 store 只管 project 列表本身，**不持有** session 归属（无 workspaces 字段——
+ * cwd 只是前端展示聚合，不是模型层级）。
  *
- * Followup：
- *  - 持久化迁移到 runtime RPC（~/.xyz-agent/projects.json，跨设备/跨实例一致）。
+ * 持久化（2026-08-04 迁 runtime）：runtime `<configDir>/projects.json`（WriteBackCache
+ * debounce 落盘，跨实例一致）。localStorage 仅作首启迁移源（一次读取后废弃，不再写入）。
  *
- * 历史：早期实现有 Project.workspaces[]（目录集合）+ addWorkspace/removeWorkspace，
- * 2026-08-04 按用户语义修正删除（workspace 是展示概念，不该进模型）。
+ * 历史：
+ * - 2026-08-04 前：Project.workspaces[]（目录集合）+ localStorage 持久化——两者均已废弃
+ *   （workspace 是展示概念不该进模型；project 列表应与 session 归属同层持久化）。
  */
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import type { Project, ProjectStoreState } from '@xyz-agent/shared'
+import { project as projectApi } from '@/api'
 
 export const STORAGE_KEY = 'xyz-agent:projects'
 export const DEFAULT_PROJECT_ID = 'proj-default'
@@ -23,46 +26,45 @@ export const DEFAULT_PROJECT_ID = 'proj-default'
 /** 同毫秒内多次 addProject 的 id 去重（模块级自增，避免 Date.now() 碰撞）。 */
 let projectSeq = 0
 
-/** 从 localStorage 读初始态；损坏/空时回退单个默认 project（保证 UI 永远有项可显）。
- *  默认 project name 留空，由 ProjectSwitcher 渲染时 fallback 到 i18n defaultName。 */
-function loadFromStorage(): ProjectStoreState {
+/** 默认 project 工厂（name 空 = 未命名默认项目，未归类 session 的兜底聚合）。 */
+function makeDefaultProject(): Project {
+  return { id: DEFAULT_PROJECT_ID, name: '', lastUsedAt: 0 }
+}
+
+/**
+ * 从 localStorage 读取旧数据（2026-08-04 前持久化层，仅首启迁移源）。
+ * 兼容：剥离旧 workspaces 字段、lastUsedAt 补 0。损坏/空 → null。
+ */
+function loadLegacyFromStorage(): ProjectStoreState | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) {
-      const parsed = JSON.parse(raw) as ProjectStoreState
-      if (Array.isArray(parsed.projects) && parsed.projects.length > 0) {
-        // 兼容旧持久化数据：Project.lastUsedAt 是后加字段，旧数据无该 key → 补 0（视为未用过）。
-        // 旧数据可能含 workspaces 字段（2026-08-04 前模型）→ 剥掉（模型已无此字段）。
-        return {
-          projects: parsed.projects.map((p) => {
-            const { workspaces: _legacy, ...rest } = p as Project & { workspaces?: unknown[] }
-            return { ...rest, lastUsedAt: rest.lastUsedAt ?? 0 }
-          }),
-          activeProjectId: parsed.activeProjectId,
-        }
-      }
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as ProjectStoreState
+    if (!Array.isArray(parsed.projects) || parsed.projects.length === 0) return null
+    return {
+      projects: parsed.projects.map((p) => {
+        const { workspaces: _legacy, ...rest } = p as Project & { workspaces?: unknown[] }
+        return { ...rest, lastUsedAt: rest.lastUsedAt ?? 0 }
+      }),
+      activeProjectId: parsed.activeProjectId,
     }
   } catch (e) {
-    // 损坏 JSON 忽略，回退默认（warn 便于排查，不影响功能）
-    console.warn('[project-store] failed to parse projects from localStorage, falling back to default', e)
-  }
-  return {
-    projects: [{ id: DEFAULT_PROJECT_ID, name: '', lastUsedAt: 0 }],
-    activeProjectId: DEFAULT_PROJECT_ID,
+    console.warn('[project-store] failed to parse legacy localStorage projects, ignoring', e)
+    return null
   }
 }
 
 export const useProjectStore = defineStore('project', () => {
-  const init = loadFromStorage()
-  const projects = ref<Project[]>(init.projects)
-  const activeProjectId = ref<string>(init.activeProjectId)
+  // 同步初始态：默认 project 兜底（UI 永不空态）；init() RPC 加载后替换。
+  const projects = ref<Project[]>([makeDefaultProject()])
+  const activeProjectId = ref<string>(DEFAULT_PROJECT_ID)
 
   /** 当前活跃 project（id 失配时回退首个，保证非空） */
   const activeProject = computed<Project>(
     () => projects.value.find((p) => p.id === activeProjectId.value) ?? projects.value[0],
   )
 
-  /** 默认 project 判定（name 空 = 未命名默认 project）。默认项目是未归类 session 的兑底聚合。 */
+  /** 默认 project 判定（name 空 = 未命名默认 project）。默认项目是未归类 session 的兜底聚合。 */
   const isDefaultProject = computed(() => !activeProject.value.name)
 
   /**
@@ -72,10 +74,6 @@ export const useProjectStore = defineStore('project', () => {
    *  1. activeProject 强制第一（用户当前/上次最后关注的项目，无论 lastUsedAt 值）；
    *  2. 其余按 lastUsedAt 降序（最新在前）；
    *  3. lastUsedAt 相同（如旧数据升级全 0）时保持原数组顺序（稳定兜底）。
-   *
-   * activeProject 永远第一的设计同时解决两件事：
-   *  - 正常态：刚切换/新建的 project 既是 active 又是 lastUsedAt 最新，二者吻合；
-   *  - 兜底态（旧数据全 0）：active 仍是上次最后用的，排第一符合直觉。
    */
   const recentProjects = computed<Project[]>(() => {
     const activeId = activeProjectId.value
@@ -91,23 +89,51 @@ export const useProjectStore = defineStore('project', () => {
     return active ? [active, ...sortedRest] : sortedRest
   })
 
-  /** localStorage 持久化（deep watch；写入失败如隐私模式/配额超限忽略） */
+  /**
+   * 运行时持久化（2026-08-04 迁 runtime projects.json）：deep watch 变化 → 全量 RPC save。
+   * runtime WriteBackCache debounce 落盘；RPC 失败降级静默（下次变化重试）。
+   * 初始化 watch 不触发（无 immediate），首启迁移由 init() 显式 save。
+   */
   watch(
     [projects, activeProjectId],
     () => {
-      try {
-        const state: ProjectStoreState = {
-          projects: projects.value,
-          activeProjectId: activeProjectId.value,
-        }
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
-      } catch (e) {
-        // 配额超限 / 隐私模式忽略（project 数据非关键，丢失可重建）
-        console.warn('[project-store] failed to persist projects to localStorage', e)
+      const state: ProjectStoreState = {
+        projects: projects.value,
+        activeProjectId: activeProjectId.value,
       }
+      void projectApi.save(state).catch(() => {
+        console.warn('[project-store] save failed, will retry on next change')
+      })
     },
     { deep: true },
   )
+
+  /**
+   * 启动加载（initApp 调用，必须在 newSession 之前——create 归属读 activeProjectId）。
+   * 优先级：runtime projects.json → 旧 localStorage（一次性迁移）→ 默认 project。
+   * RPC 失败降级为默认（不抛，不阻断启动，对齐 workspaceStore.load 语义）。
+   */
+  async function init(): Promise<void> {
+    try {
+      const state = await projectApi.load()
+      if (state.projects.length > 0) {
+        // runtime 权威：直接用（含 activeProjectId；id 失配由 activeProject computed 兜底）
+        projects.value = state.projects
+        if (state.activeProjectId) activeProjectId.value = state.activeProjectId
+        return
+      }
+    } catch (e) {
+      // RPC 失败（runtime 未就绪/首启竞态）→ 降级，不阻断启动
+      console.warn('[project-store] load failed, falling back to default', e)
+    }
+    // runtime 空（首启）：localStorage 一次性迁移（有则用之 + 写回 runtime；无则默认）
+    const legacy = loadLegacyFromStorage()
+    if (legacy) {
+      projects.value = legacy.projects
+      activeProjectId.value = legacy.activeProjectId || DEFAULT_PROJECT_ID
+      void projectApi.save({ projects: projects.value, activeProjectId: activeProjectId.value }).catch(() => {})
+    }
+  }
 
   function setActiveProject(id: string): void {
     const target = projects.value.find((p) => p.id === id)
@@ -142,5 +168,5 @@ export const useProjectStore = defineStore('project', () => {
     }
   }
 
-  return { projects, activeProjectId, activeProject, isDefaultProject, recentProjects, setActiveProject, addProject, removeProject }
+  return { projects, activeProjectId, activeProject, isDefaultProject, recentProjects, init, setActiveProject, addProject, removeProject }
 })

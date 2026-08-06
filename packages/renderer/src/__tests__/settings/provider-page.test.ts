@@ -28,7 +28,7 @@ const configMock = vi.hoisted(() => ({
   setDefaultModel: vi.fn(async () => {}),
 }))
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   config: configMock,
   default: { config: configMock },
 }))

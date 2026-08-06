@@ -31,7 +31,7 @@ const extensionMock = vi.hoisted(() => ({
   setAutoUpgrade: vi.fn(() => Promise.resolve()),
 }))
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   extension: extensionMock,
   default: { extension: extensionMock },
   config: { detectSources: async () => [] },

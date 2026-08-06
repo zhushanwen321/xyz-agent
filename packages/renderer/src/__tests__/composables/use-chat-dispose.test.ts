@@ -19,7 +19,7 @@ const unsubscribeMock = vi.hoisted(() => vi.fn())
 const streamSubscribeMock = vi.hoisted(() => vi.fn(() => unsubscribeMock))
 const sendMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   chat: {
     streamSubscribe: streamSubscribeMock,
     send: sendMock,

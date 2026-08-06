@@ -20,7 +20,7 @@ import { createPinia, setActivePinia } from 'pinia'
 const mockFileTree = vi.fn()
 const mockFileExpand = vi.fn()
 const mockGitStatus = vi.fn()
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   file: {
     tree: (...args: unknown[]) => mockFileTree(...args),
     expand: (...args: unknown[]) => mockFileExpand(...args),

@@ -56,7 +56,7 @@ const { sessionApiMock, chatApiMock } = vi.hoisted(() => ({
     compact: vi.fn(() => Promise.resolve()),
   },
 }))
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   session: sessionApiMock,
   chat: chatApiMock,
   model: { switchModel: vi.fn() },

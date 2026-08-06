@@ -7,14 +7,15 @@
  *  - 删除：点击 trash → ConfirmDialog（variant danger）确认 → removeProject；
  *    删活跃项自动切首个；保底不删最后一个（store.removeProject 守卫）。
  *
- * TODO（followup，本次只做 UI + store + 自动归因 + 过滤）：
- *  - workspace 管理 UI（手动添加/移除 workspace 到 project）。
- *  - store 持久化迁移到 runtime RPC（~/.xyz-agent/projects.json，跨设备一致）。
+ * TODO（followup）：
+ *  - workspace 管理 UI（手动添加/移除 workspace 到 project）——已随 2026-08-04 语义修正
+ *    废弃（无 Workspace 实体，session 直接关联 project）。
  *
  * 已实现（2026-08-04）：
- *  - session 按 activeProject.workspaces 过滤分组（SessionList 消费 activeWorkspaceCwds，
- *    默认 project 显示全部，命名 project 只显示归入 cwd 的 session）。
- *  - 自动归因：新建 session 成功后把 cwd 归入 activeProject（useNewTaskFlow createSession 端口）。
+ *  - session 按 projectId 直接关联过滤（SessionList 消费，默认项目 = 未归类 + 孤儿聚合）。
+ *  - 自动归因：新建 session 归属当前 activeProject（create 透传 projectId）。
+ *  - 手动归类：SessionItem「归入项目」菜单（session.setProject RPC）。
+ *  - project 列表持久化迁 runtime projects.json（ProjectStore，localStorage 仅首启迁移）。
  */
 import { computed, nextTick, ref, type ComponentPublicInstance } from 'vue'
 import { Trash2, Plus } from '@lucide/vue'

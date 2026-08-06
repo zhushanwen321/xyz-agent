@@ -1120,6 +1120,17 @@ export const workspace = {
   },
 }
 
+// project 域 mock 占位（D14，2026-08-04）：mock 模式无 runtime，project 列表回退默认空态。
+// 与 real 轨 api/domains/project.ts 签名同构（load/save），避免门面三元崩溃。
+export const project = {
+  async load(): Promise<import('@xyz-agent/shared').ProjectStoreState> {
+    return { projects: [], activeProjectId: '' }
+  },
+  async save(state: import('@xyz-agent/shared').ProjectStoreState): Promise<import('@xyz-agent/shared').ProjectStoreState> {
+    return { ...state }
+  },
+}
+
 // preset 域 mock 占位（pi-launch-presets wave1）：返回空预设列表 + 默认全工具模式 id。
 // 与 real 轨 api/domains/preset.ts 签名同构（list/getDefault/setDefault + CRUD），避免门面三元崩溃。
 // mock 模式无 runtime，preset 演示由 real 轨驱动；此处仅供 landing 渲染不崩。

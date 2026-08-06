@@ -20,7 +20,7 @@ const apiMock = vi.hoisted(() => ({
   streamSubscribe: vi.fn((_sid: string, _handler: (msg: ServerMessage) => void) => () => {}),
 }))
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   chat: {
     bash: apiMock.bash,
     abortBash: apiMock.abortBash,

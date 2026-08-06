@@ -25,7 +25,7 @@ import type { SkillInfo } from '@xyz-agent/shared'
 // onSkillCacheInvalidated 顶层 stub（Wave3 模块级订阅调用；W4 用例不验证订阅，stub 为空实现）。
 const getProjectSkillsMock = vi.hoisted(() => vi.fn())
 const onSkillCacheInvalidatedMock = vi.hoisted(() => vi.fn().mockReturnValue(() => {}))
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   config: {
     getProjectSkills: getProjectSkillsMock,
     onSkillCacheInvalidated: onSkillCacheInvalidatedMock,

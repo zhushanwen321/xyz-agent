@@ -72,7 +72,7 @@ vi.mock('@/api/events', () => ({
   onGlobalType: vi.fn(() => () => {}),
   dispatchSession: vi.fn(),
 }))
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   extension: { scan: vi.fn() },
   // w5：useChat 薄包装的 chatApiPort 组装需 chat 全部 10 方法 + session.writeSegments
   chat: {

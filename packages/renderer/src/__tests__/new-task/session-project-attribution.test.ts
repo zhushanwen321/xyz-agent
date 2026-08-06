@@ -35,7 +35,7 @@ const apiMock = vi.hoisted(() => ({
   chatAbortBash: vi.fn((): Promise<void> => Promise.resolve()),
 }))
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   session: { create: apiMock.create, remove: apiMock.remove, subscribe: vi.fn().mockResolvedValue({ snapshot: [], stateSnapshot: [], lastSeq: 0 }), unsubscribe: vi.fn().mockResolvedValue(undefined), migrateImage: vi.fn().mockResolvedValue(undefined), writeSegments: vi.fn().mockResolvedValue(undefined) },
   file: { tree: vi.fn().mockResolvedValue([]), expand: vi.fn().mockResolvedValue([]) },
   git: { status: vi.fn().mockResolvedValue({ isRepo: false }) },

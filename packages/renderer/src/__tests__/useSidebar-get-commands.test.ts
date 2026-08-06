@@ -18,7 +18,7 @@ import type { SessionGroup, SessionSummary } from '@xyz-agent/shared'
 import * as events from '@/api/events'
 
 // mock sessionApi：getCommands/getContext 用 spy 断言「不被调用」。
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   session: {
     list: vi.fn(() => Promise.resolve([])),
     switchSession: vi.fn(() => Promise.resolve()),

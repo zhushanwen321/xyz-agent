@@ -21,7 +21,7 @@ import { createPinia, setActivePinia } from 'pinia'
 // 覆盖 file/git 导出，否则 mock 不生效（会走 mockApi 基于文件名的 fixture 内容）。
 const mockFileRead = vi.fn()
 const mockGitGetDiff = vi.fn()
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   file: { read: (...args: unknown[]) => mockFileRead(...(args as [string, string?])) },
   git: { getDiff: (...args: unknown[]) => mockGitGetDiff(...(args as [string, string])) },
 }))

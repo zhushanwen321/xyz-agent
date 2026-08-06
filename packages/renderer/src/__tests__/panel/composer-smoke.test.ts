@@ -112,7 +112,7 @@ vi.mock('@/composables/features/chat/useChat', () => ({
 vi.mock('@/composables/useToast', () => ({
   useToast: () => toastMock,
 }))
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   chat: { send: chatApiMock.send, steer: chatApiMock.steer },
   model: { switchModel: vi.fn() },
   session: { setThinkingLevel: vi.fn() },

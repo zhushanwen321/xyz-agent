@@ -31,7 +31,7 @@ const chatCtrl = vi.hoisted(() => ({
   getHistory: vi.fn<(id: string) => Promise<unknown[]>>().mockResolvedValue([]),
 }))
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   session: {
     list: sessionCtrl.list,
     create: sessionCtrl.create,

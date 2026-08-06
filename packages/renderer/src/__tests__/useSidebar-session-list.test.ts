@@ -16,7 +16,7 @@ import { effectScope } from 'vue'
 import type { SessionGroup, SessionSummary } from '@xyz-agent/shared'
 
 // features 层调用 api 域；本测试只验订阅链路，把 api 域全 mock 成 no-op（订阅走真实的 @/api/events）。
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   chat: { getHistory: vi.fn(() => Promise.resolve([])) },
   session: {
     create: vi.fn(() => Promise.resolve(makeSummary('mock'))),

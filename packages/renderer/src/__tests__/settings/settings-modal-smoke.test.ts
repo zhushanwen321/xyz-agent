@@ -29,7 +29,7 @@ import {
 } from '@xyz-agent/ui/features/settings'
 
 // @/api 门面 mock：所有 config/extension/model/settings 域返回空/resolved，避免 WS 调用。
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   config: {
     listProviders: vi.fn(async () => []),
     setProvider: vi.fn(async () => undefined),

@@ -27,7 +27,7 @@ vi.mock('@/composables/features/chat/useChat', () => ({
 // ── mock api 域 ──
 const removeMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
 const switchSessionMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   chat: { getHistory: vi.fn(() => Promise.resolve([])) },
   session: {
     create: vi.fn(() => Promise.resolve(makeSummary('mock'))),

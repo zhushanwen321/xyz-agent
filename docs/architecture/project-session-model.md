@@ -50,12 +50,15 @@ cwd（session 属性）→ 仅前端展示聚合（侧栏按目录分组 Session
 - **session 归属**：runtime sidecar `<sessionFile>.project.json`（磁盘权威），与
   `.preset.json`（launch preset）、`.meta.json`（终态）并列独立。
   - 写入：`persistProjectBinding(filePath, projectId)`（复制 preset binding 模式：
-    原子写 + 缓存失效 + [规则 #6] JSONL 未落盘时 existsSync 守卫跳过）
+    原子写 + 缓存失效 + [规则 #6] JSONL 未落盘时 existsSync 守卫跳过；
+    turn_end/agent_end 兜底补写，见 session-service.tryPersistProjectBinding）
   - 读取：`scanSessionMeta` 第五读（与 header/name/outcome/preset 同批次，共享
     `sessionMetaCache`）；active session 内存态兜底（`ManagedSession.projectId`）
   - 空 projectId 不写 sidecar（等价未归类，读取侧统一兑底默认项目）
-- **project 列表**：renderer localStorage（`xyz-agent:projects`）。Followup：迁移到
-  runtime RPC（`~/.xyz-agent/projects.json`，跨设备一致）。
+- **project 列表**：runtime `<configDir>/projects.json`（2026-08-04 迁 runtime，
+  ProjectStore 对齐 recent-workspaces.json 模式：WriteBackCache debounce 落盘，
+  跨实例一致）。前端 deep watch 变化 → `project.save` RPC 全量写入；
+  localStorage 仅作首启一次性迁移源（2026-08-04 前旧数据），迁移后废弃。
 
 ## 数据流
 
@@ -90,6 +93,7 @@ fork：runtime forkSession 读源归属（内存态 → 扫描值）→ 写 fork
 | runtime sidecar | `packages/runtime/src/infra/pi/session-file-utils.ts`（projectSidecarPath/persistProjectBinding/readProjectBinding） |
 | runtime 创建/继承 | `session-lifecycle.ts`（create 写绑定、fork 继承） |
 | runtime 手动归类 | `session-service.ts`（setProject） |
+| runtime project 持久化 | `services/project/project-store.ts` + `transport/project-message-handler.ts` |
 | 前端过滤 | `packages/renderer/src/components/sidebar/SessionList.vue`（visibleGroups） |
 | 前端归类菜单 | `packages/renderer/src/components/sidebar/SessionItem.vue`（Popover 归入项目） |
 | project store | `packages/renderer/src/stores/project.ts` |

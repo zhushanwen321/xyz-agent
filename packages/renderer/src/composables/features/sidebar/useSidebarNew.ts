@@ -338,7 +338,8 @@ export function useSidebarNew() {
   /**
    * 应用启动编排（#1/#3 启动钩子）：永远进入新建任务落地页。
    * 对照 useSidebar.initApp，newSession 调壳版（含 renderer 专属编排）。
-   * 时序：registerAppCommands → newSession（同步进 landing）→ loadSessions → workspaceStore.load → presetCwd。
+   * 时序：registerAppCommands → projectStore.init（D14：create 归属读 activeProjectId，必须最前）
+   * → newSession（同步进 landing）→ loadSessions → workspaceStore.load → presetCwd。
    */
   async function initApp(): Promise<void> {
     if (appBootstrapped) return
@@ -349,6 +350,10 @@ export function useSidebarNew() {
         newSession: () => { void newSession() },
         goOverview,
       })
+      // D14（2026-08-04）：project 列表迁 runtime 持久化。init 必须在 newSession 之前——
+      // createSessionFlow 读 activeProjectId 做归属透传，未 init 时 active 是默认项目（归属丢失）。
+      // init 内部 RPC 失败降级默认，不抛不阻断启动。
+      await useProjectStoreSafe().init()
       // 同步进 landing（空 chip 态），必须先于 await loadSessions（消除 state=idle 启动窗口）
       await newSession()
       await loadSessions()
@@ -442,10 +447,14 @@ export function useSidebarNew() {
 // useSidebar 实例化时机一致，避免测试时无 pinia 报错）。
 import { useSideDrawer } from '@/composables/features/drawer/useSideDrawer'
 import { useSessionStore } from '@/stores/session'
+import { useProjectStore } from '@/stores/project'
 
 function useSideDrawerSafe(): ReturnType<typeof useSideDrawer> {
   return useSideDrawer()
 }
 function useSessionStoreSafe(): ReturnType<typeof useSessionStore> {
   return useSessionStore()
+}
+function useProjectStoreSafe(): ReturnType<typeof useProjectStore> {
+  return useProjectStore()
 }

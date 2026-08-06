@@ -30,7 +30,7 @@ const presetMock = vi.hoisted(() => ({
   remove: vi.fn(() => Promise.resolve()),
 }))
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   preset: presetMock,
   default: { preset: presetMock },
 }))

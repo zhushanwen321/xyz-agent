@@ -28,7 +28,7 @@ vi.mock('@/api/domains/session', () => ({
   rename: vi.fn(() => Promise.resolve()),
   remove: vi.fn(() => Promise.resolve()),
 }))
-vi.mock('@/api', () => ({
+vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   chat: { getHistory: vi.fn(() => Promise.resolve([])) },
   session: {
     create: vi.fn(() => Promise.resolve({})),
