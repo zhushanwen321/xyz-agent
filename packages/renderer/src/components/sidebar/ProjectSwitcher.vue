@@ -2,7 +2,7 @@
 /**
  * ProjectSwitcher —— v6 D14 Project 一级导航（spec §6.2）。
  *
- * 折叠态 = 当前 project 名 + 展开箭头；展开态 = project 列表（hover 出删除）+ 底部「+ 新建项目」。
+ * 常驻默认展开（无折叠下拉）：project 列表（按最近使用排序，hover 出删除）+ 「+ 新建项目」。
  *  - 新建：点击展开 input，Enter 创建（Esc 取消 / blur 提交），创建后设为活跃 project。
  *  - 删除：点击 trash → ConfirmDialog（variant danger）确认 → removeProject；
  *    删活跃项自动切首个；保底不删最后一个（store.removeProject 守卫）。
@@ -80,28 +80,35 @@ function cancelCreate() {
 </script>
 
 <template>
-  <div class="mx-1 mb-1 overflow-hidden rounded-md border border-border bg-bg-input">
+  <div class="mb-1 flex flex-col gap-px px-1">
     <!-- project 列表（常驻默认展开，无折叠下拉）。
-         按 recentProjects 排序（activeProject 第一 + 其余 lastUsedAt 降序）；
-         max-h-32 限可视区约 5 项（5×~24px），overflow-y-auto 超出滚动。 -->
+         遵循 sidebar 范式（对齐 nav/SessionItem）：无边框、明度差分隔、rounded-md、
+         active=bg-surface+accent 圆点指示、ghost 次操作。按 recentProjects 排序
+         （activeProject 第一 + 其余 lastUsedAt 降序）；max-h-36 限可视区约 5 项，overflow-y-auto 滚动。 -->
     <div
       data-testid="project-list"
-      class="flex max-h-32 flex-col gap-px overflow-y-auto bg-bg-elevated p-1"
+      class="flex max-h-36 flex-col gap-px overflow-y-auto"
     >
-      <!-- list item：div role=button + 行内删除 Button（避免 button 嵌套 button 无效 DOM） -->
+      <!-- list item：div role=button + active 圆点指示 + 行内删除 Button（避免 button 嵌套 button） -->
       <div
         v-for="p in projectStore.recentProjects"
         :key="p.id"
         data-testid="project-item"
         role="button"
         tabindex="0"
-        class="group flex cursor-pointer items-center gap-1.5 rounded-sm px-1.5 py-1 text-[11px] transition-colors duration-[var(--duration-fast)] ease-[var(--ease)]"
+        class="group flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] transition-colors duration-[var(--duration-fast)] ease-[var(--ease)]"
         :class="p.id === projectStore.activeProjectId
-          ? 'bg-surface text-accent hover:bg-surface hover:text-accent'
+          ? 'bg-surface text-accent'
           : 'text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg'"
         @click="select(p.id)"
         @keydown.enter="select(p.id)"
       >
+        <!-- active 指示圆点（对齐 SessionItem：active=accent 实心 / 非 active=透明占位，阴阳分明） -->
+        <span
+          class="size-2 shrink-0 rounded-full transition-colors duration-[var(--duration-fast)] ease-[var(--ease)]"
+          :class="p.id === projectStore.activeProjectId ? 'bg-accent' : 'bg-transparent'"
+          aria-hidden="true"
+        />
         <span class="flex-1 truncate">{{ p.name || t('sidebar.projectSwitcher.defaultName') }}</span>
         <!-- 删除按钮：多 project 时才显（保底不删最后一个）；hover item 淡入 -->
         <Button
@@ -117,28 +124,26 @@ function cancelCreate() {
       </div>
     </div>
 
-    <!-- 新建项目（滚动区外，常驻底部；input / 按钮 互斥） -->
-    <div class="border-t border-border-strong p-1">
-      <Input
-        v-if="creating"
-        ref="inputRef"
-        v-model="draft"
-        class="h-[26px] rounded-sm border-border-strong bg-bg-input px-2 py-0 text-[11px] leading-none text-neutral-fg"
-        :placeholder="t('sidebar.projectSwitcher.namePlaceholder')"
-        @keydown.enter.prevent="commitCreate"
-        @keydown.esc.prevent="cancelCreate"
-        @blur="commitCreate"
-      />
-      <Button
-        v-else
-        variant="ghost"
-        class="h-auto w-full justify-start gap-1.5 rounded-sm px-1.5 py-1 text-[11px] text-neutral-dim hover:bg-surface-hover hover:text-neutral-mid"
-        @click="startCreate"
-      >
-        <Plus class="size-3" />
-        <span>{{ t('sidebar.projectSwitcher.newProject') }}</span>
-      </Button>
-    </div>
+    <!-- 新建项目（ghost 次操作，对齐 nav 搜索按钮范式；滚动区外常驻；input / 按钮 互斥） -->
+    <Input
+      v-if="creating"
+      ref="inputRef"
+      v-model="draft"
+      class="h-8 rounded-md border-border-strong bg-bg-input px-2.5 text-[12px] text-neutral-fg"
+      :placeholder="t('sidebar.projectSwitcher.namePlaceholder')"
+      @keydown.enter.prevent="commitCreate"
+      @keydown.esc.prevent="cancelCreate"
+      @blur="commitCreate"
+    />
+    <Button
+      v-else
+      variant="ghost"
+      class="h-8 w-full justify-start gap-2.5 rounded-md px-2.5 text-[12px] text-neutral-dim transition-colors hover:bg-surface-hover hover:text-neutral-mid"
+      @click="startCreate"
+    >
+      <Plus class="size-[15px] text-neutral-dim" />
+      <span>{{ t('sidebar.projectSwitcher.newProject') }}</span>
+    </Button>
 
     <!-- 删除确认 -->
     <ConfirmDialog
