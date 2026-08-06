@@ -32,6 +32,20 @@ export function initTimers(
   finalizeBashOnly: (sessionId: string) => void,
   streamingTimeoutMs: number,
 ) {
+  /**
+   * [ADR-0049 例外] 以下两个 Map 不套 useSessionScopedState。判据：initTimers() factory 由
+   * createChatStore（renderer defineStore('chat') 包装，Pinia 按 id 缓存——见 renderer
+   * stores/chat.ts）在 setup 内调用一次（store.ts），factory body 全应用只执行一次，两 Map
+   * 实质单例。factory 体内非 Vue setup 上下文、无 sidRef: Ref<string|null>；Map 存的是 timer
+   * handle（ReturnType<typeof setTimeout>，非 reactive 业务状态）。useSessionScopedState 是
+   * setup-scoped 工厂（要求 sidRef + reactive 容器契约），factory 体内不适用——强套需把 factory
+   * 改造成 setup composable（破坏 Pinia store 单例语义：每次 useStore() 重新执行会重建 Map
+   * 丢失单例）+ reactive 容器语义错位（timer handle 不是响应式状态）。与 lru/coordination/
+   * panel-orchestration 同属 ADR-0049 例外（单例性来源不同：那几处是模块级 ES module 单例，
+   * 本处是 Pinia defineStore factory 单例）。session 销毁清理：disposeAllTimers() 由
+   * createChatStore onScopeDispose 编排调用（store.ts）；测试隔离：factory 模式 per-instance
+   * （测试直接调 initTimers() 构造新实例）。
+   */
   const streamingTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const bashTimers = new Map<string, ReturnType<typeof setTimeout>>()
 

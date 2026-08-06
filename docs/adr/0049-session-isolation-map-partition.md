@@ -106,6 +106,17 @@ ESLint 规则放弃后，per-session 范式靠 **code-review 强制检查项** �
 | `core/domain/drawer/coordination.ts` | `pendingOpenMap` | 纯函数模块（`setPendingOpenForSid`/`consumePendingOpen`/`openTasksDrawerOnFirstData` 独立导出，非 composable，无 setup/sidRef）；Map 存 boolean 路由标记（非 reactive）；清理走 `registerSessionCleanup` 挂载（见文件尾）+ 测试 `_resetDrawerForTest()` | renderer 重做审查
 | `core/domain/session/effects/panel-orchestration.ts` | `pendingOpenMap` | 纯函数模块（`openPanelOnSessionEvent`/`consumePendingOpen`/`clearPendingOpen` 独立导出，非 composable，无 setup/sidRef）；Map 存临时路由标记（`'tasks'`\|`'sideDrawer'`，存在即消费、随 `consumePendingOpen` 即删、不跨 session 存活，非 reactive）；清理走 `clearPendingOpen(sid)` 由 `use-session.ts` `cleanupSessionState` 编排（ES3）| renderer 重做审查
 
+#### Pinia defineStore 单例 factory 例外类（factory 体内 Map 合理）
+
+以下模块的 per-session Map 声明在 **factory 函数体内**（非模块级），单例性来自调用方——factory 经 Pinia defineStore 按 id 缓存包装，factory body 全应用只执行一次，Map 实质单例。判据：factory 体内非 Vue setup 上下文、无 sidRef: Ref<string|null>；Map 存非 reactive 数据（timer handle / plain object queue state）。与上一小节「全局 sid 协调器例外类」同属 ADR-0049 例外，区别仅在单例性来源（ES module 单例 vs Pinia defineStore factory 单例）。`useSessionScopedState` 是 setup-scoped 工厂（要求 sidRef + reactive 容器契约），factory 体内不适用——强套需把 factory 改造成 setup composable（破坏 Pinia store 单例语义：每次 useStore() 重新执行会重建 Map 丢失单例）+ reactive 容器语义错位（timer handle / queue state 不是响应式状态）。延伸自「renderer 重做审查」延伸项 3——与 c6af1b9 登记的模块级 Map 例外同批判定，仅因当时不在 w4 范围而推迟登记。
+
+| 模块 | factory | Map 变量 | 数据类型 | session 销毁清理 | 审批
+|-----|---------|---------|---------|----------------|------
+| `core/domain/chat/timers.ts` | `initTimers()`（由 createChatStore setup 调用） | `streamingTimers` / `bashTimers` | timer handle（`ReturnType<typeof setTimeout>`，非 reactive） | `disposeAllTimers()` 由 createChatStore `onScopeDispose` 编排调用（store.ts） | renderer 重做审查 延伸项3
+| `core/domain/chat/handoff.ts` | `createHandoffController()`（由 createChatStore setup 调用） | `handingOffTimers` | timer handle（非 reactive） | `clearHandingOffTimer(sid)`（per-session）/ `clearAllTimers()`（全量）由 createChatStore `onScopeDispose` 编排调用（store.ts） | renderer 重做审查 延伸项3
+| `core/domain/chat/store.ts` | `createChatStore()`（renderer `defineStore('chat')` 包装） | `pendingSendTimers` | timer handle（非 reactive） | 本文件 `onScopeDispose`（for + clearTimeout + clear） | renderer 重做审查 延伸项3
+| `core/domain/drawer/terminal-write-queue.ts` | `createTerminalWriteQueue()`（renderer `defineStore('terminal-write-queue')` 包装；core 是纯 TS 工厂，不 import vue/pinia） | `sessions` | `TerminalSessionState` plain object（`{ ptyAlive, pendingWrites }`，非 reactive，core 零 reactivity 依赖） | `removeSession(sid)`（per-session，session 销毁编排点调） | renderer 重做审查 延伸项3
+
 > 新增例外须在此表登记 + 说明理由，否则 review 不通过。
 
 ## Alternatives Considered

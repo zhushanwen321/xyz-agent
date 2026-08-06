@@ -102,7 +102,22 @@ export function createChatStore() {
   const STREAMING_TIMEOUT_MS = readStreamingTimeoutMs()
   /** pendingSend 空窗期 timer 阈值（D-015/F4，接管 dispatchingTimer 30s 语义） */
   const PENDING_SEND_TIMEOUT_MS = 30_000
-  /** pendingSend 空窗期 timer（按 sessionId 隔离） */
+  /**
+   * pendingSend 空窗期 timer（按 sessionId 隔离）。
+   *
+   * [ADR-0049 例外] 本 Map 不套 useSessionScopedState。判据：createChatStore() factory 由
+   * renderer defineStore('chat', () => createChatStore()) 包装（renderer stores/chat.ts），
+   * Pinia 按 store id 缓存——factory body 全应用只执行一次，本 Map 实质单例。factory 体内非
+   * Vue setup 上下文（虽在 effectScope 内用 onScopeDispose，但无 sidRef: Ref<string|null>）；
+   * Map 存的是 timer handle（ReturnType<typeof setTimeout>，非 reactive 业务状态）。
+   * useSessionScopedState 是 setup-scoped 工厂（要求 sidRef + reactive 容器契约），factory
+   * 体内不适用——强套需把 factory 改造成 setup composable（破坏 Pinia store 单例语义：
+   * 每次 useStore() 重新执行会重建 Map 丢失单例）+ reactive 容器语义错位（timer handle 不是
+   * 响应式状态）。与 lru/coordination/panel-orchestration 同属 ADR-0049 例外（单例性来源不同：
+   * 那几处是模块级 ES module 单例，本处是 Pinia defineStore factory 单例）。session 销毁清理：
+   * 本文件 onScopeDispose（见末尾）for + clearTimeout + clear；测试隔离：createChatStore()
+   * per-instance（core 单测直接调 factory 构造新 store）。
+   */
   const pendingSendTimers = new Map<string, ReturnType<typeof setTimeout>>()
   // handingOff 超时兜底 timer + HANDING_OFF_TIMEOUT_MS 阈值内聚在 createHandoffController（chat-handoff.ts）
 

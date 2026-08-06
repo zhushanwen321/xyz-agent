@@ -46,7 +46,24 @@ export interface TerminalWriteQueue {
  *                （renderer 兼容层传 terminalApi.write 包装）
  */
 export function createTerminalWriteQueue(writeFn: TerminalWriteFn): TerminalWriteQueue {
-  /** per-session 状态表（工厂实例内共享，跨组件共享语义由调用方持有实例保证）。 */
+  /**
+   * per-session 状态表（工厂实例内共享，跨组件共享语义由调用方持有实例保证）。
+   *
+   * [ADR-0049 例外] 本 Map 不套 useSessionScopedState。判据：createTerminalWriteQueue() factory
+   * 在 core 是纯 TS 工厂（不绑 pinia，无 Vue setup 上下文）；renderer 兼容层由
+   * defineStore('terminal-write-queue', () => createTerminalWriteQueue(...)) 包装（renderer
+   * stores/terminal-write-queue.ts），Pinia 按 store id 缓存——factory body 全应用只执行一次，
+   * 本 Map 实质单例。factory 体内无 sidRef: Ref<string|null>；Map 存的是 TerminalSessionState
+   * plain object（{ ptyAlive, pendingWrites }，非 reactive 业务状态，core 零 reactivity 依赖）。
+   * useSessionScopedState 是 setup-scoped 工厂（要求 sidRef + reactive 容器契约 + Vue setup
+   * 上下文），factory 体内不适用——强套需把 core 纯 TS 工厂改造成 Vue composable（破坏 core
+   * 平台无关内核定位：core 不 import vue/pinia，丢失 headless 可测试性）+ 破坏 Pinia store 单例
+   * 语义 + reactive 容器语义错位。与 lru/coordination/panel-orchestration 同属 ADR-0049 例外
+   * （单例性来源不同：那几处是模块级 ES module 单例，本处是 Pinia defineStore factory 单例）。
+   * session 销毁清理：removeSession(sid)（per-session，session 销毁编排点调）；测试隔离：
+   * core factory per-instance（测试直接调 createTerminalWriteQueue() 构造新实例）+ renderer
+   * 测试换 createPinia() 得新 store 实例。
+   */
   const sessions = new Map<string, TerminalSessionState>()
 
   function getOrCreate(sid: string): TerminalSessionState {
