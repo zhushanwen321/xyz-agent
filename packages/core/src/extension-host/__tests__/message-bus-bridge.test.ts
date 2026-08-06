@@ -67,15 +67,16 @@ describe('MessageBusBridge', () => {
       expect(e).toMatchObject({ kind: 'plugin-status-set-update', sessionId: 's1', status: [{ id: 'session', pluginId: '', text: 'ready' }] })
     })
 
-    it('permissionRequest → plugin-permission-request（permissions[0]→permission、合成 requestId）', () => {
+    it('permissionRequest → plugin-permission-request（permissions 数组完整透传、合成 requestId）', () => {
       const { source, bus } = makeBridge()
       const { emitted } = spyEmit(bus)
+      // 多权限场景：runtime 一次可申请多个权限，数组必须完整透传（不收敛为单数）
       source.emit({ type: 'plugin:permissionRequest', payload: { pluginId: 'tasks', permissions: ['fs.write', 'shell.exec'] } })
       const e = emitted.find((x) => x.kind === 'plugin-permission-request')
       expect(e).toBeDefined()
       expect(e).toMatchObject({
         kind: 'plugin-permission-request',
-        request: { pluginId: 'tasks', permission: 'fs.write', requestId: 'perm_tasks' },
+        request: { pluginId: 'tasks', permissions: ['fs.write', 'shell.exec'], requestId: 'perm_tasks' },
       })
     })
 

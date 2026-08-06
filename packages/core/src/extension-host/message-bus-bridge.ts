@@ -22,7 +22,7 @@
  * - statusSetUpdate payload = { sessionId, key, text, textRaw? }（bridge-handler 形状）
  *   → StatusSetEntry：id←key、text←text、pluginId←''（wire 无 pluginId）
  * - permissionRequest payload = { pluginId, permissions: string[] }（activator 形状）
- *   → PermissionRequest：permission←permissions[0] ?? ''、requestId←合成 perm_${pluginId}
+ *   → PermissionRequest：permissions 原样透传整个数组、requestId←合成 perm_${pluginId}
  * - crashed payload = { pluginId, workerId, error } → { pluginId, error }
  * - notification payload = { pluginId, level, message } → NotificationPayload
  * - config payload = { pluginId, config } → { pluginId, config }
@@ -125,7 +125,7 @@ function parsePermissionRequest(msg: IncomingPluginMessage): InternalEvent | nul
   return {
     kind: 'plugin-permission-request',
     sessionId: resolveSessionId(msg, payload),
-    request: { pluginId, permission: permissions[0] ?? '', requestId: `perm_${pluginId}` },
+    request: { pluginId, permissions, requestId: `perm_${pluginId}` },
   }
 }
 

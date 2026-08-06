@@ -37,10 +37,11 @@ export interface ExtensionStatusEntry {
   detail?: string
 }
 
-/** 权限请求（IF2/DM3）。 */
+/** 权限请求（IF2/DM3）。runtime 一次可申请多个权限（插件 manifest.permissions 通常多个），
+ *  数组完整透传，不收敛为单数。 */
 export interface PermissionRequest {
   pluginId: string
-  permission: string
+  permissions: string[]
   requestId: string
 }
 

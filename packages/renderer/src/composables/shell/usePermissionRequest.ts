@@ -26,7 +26,7 @@ import * as pluginApi from '@/api/domains/plugin'
 interface PermissionRequestState {
   /** 申请权限的插件 id */
   pluginId: string
-  /** 插件申请的权限列表（单数→数组还原后） */
+  /** 插件申请的权限列表 */
   permissions: string[]
   /** 请求是否挂起（true=弹窗打开；RPC 回传成功/失败后置 false） */
   pending: boolean
@@ -59,16 +59,10 @@ export function initPermissionRequest(app: App, bus: InternalEventBus): void {
   // 幂等：重复初始化先退订（HMR/测试场景防 listener 翻倍，项目规则#2）
   unsubscribe?.()
   unsubscribe = bus.on('plugin-permission-request', (e) => {
-    // 单数→数组适配：bridge parsePermissionRequest 把 runtime 的 permissions: string[]
-    // 取 [0] 收敛成 permission（单数 string，见 core message-bus-bridge.ts:122-129）。
-    // 这里还原为数组供 PermissionRequestDialog（props.permissions: string[]）消费。
-    //
-    // 已知妥协：bridge 砍掉了 permissions[1..n]，多权限场景只透出第一项；
-    // 本次按任务约束在消费层适配（不动 bridge / core types），根治需后续改 bridge
-    // 保留整个数组 + 同步 InternalEvent.PermissionRequest 类型（permission: string → permissions: string[]）。
-    const perm = e.request.permission
+    // bridge 已保留整个 permissions 数组（见 core message-bus-bridge.ts parsePermissionRequest），
+    // 直接透传给 PermissionRequestDialog（props.permissions: string[]）消费。
     state.pluginId = e.request.pluginId
-    state.permissions = perm ? [perm] : []
+    state.permissions = e.request.permissions
     state.pending = true
   })
 
