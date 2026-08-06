@@ -47,7 +47,7 @@
           >
             <Check v-if="copied === aiMdKey" class="size-3 text-success" />
             <Copy v-else class="size-3" />
-            <span class="absolute -right-0.5 -bottom-0.5 rounded-sm bg-accent px-[2px] text-[8px] font-bold leading-[8px] text-accent-foreground">MD</span>
+            <span class="absolute -right-0.5 -bottom-0.5 rounded-sm bg-accent px-[2px] text-[8px] font-bold leading-[8px] text-accent-fg">MD</span>
           </Button>
         </HoverCardContent>
       </HoverCard>
