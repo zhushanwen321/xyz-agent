@@ -12,7 +12,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // node:child_process 是原生 CJS 模块，ESM 命名导出不可重定义（vi.spyOn 报 "not configurable"）。
 // 改用 vi.mock + vi.hoisted：工厂替换整个模块，hoisted vi.fn 作为 spawn，测试内动态配置实现。
 const spawnMock = vi.hoisted(() => vi.fn());
-vi.mock("node:child_process", () => ({ spawn: spawnMock }));
+// detectRepoWorkspace 的 git 探测同样走 node:child_process（spawnSync），mock 掉以保持纯单元；
+// 默认返回失败（非 git 目录语义），executeCwAction 因此不附加 --workspace，现有断言不受影响。
+const spawnSyncMock = vi.hoisted(() => vi.fn());
+vi.mock("node:child_process", () => ({ spawn: spawnMock, spawnSync: spawnSyncMock }));
+
+// 默认：git 探测失败（status 128）→ detectRepoWorkspace 返回 undefined。
+spawnSyncMock.mockImplementation((_cmd: string, _args: string[], _opts: object) => ({
+	status: 128,
+	stdout: "",
+	stderr: "not a git repository",
+}));
 
 import {
 	buildCwArgs,
@@ -338,6 +348,22 @@ describe("buildCwArgs", () => {
 			"abc",
 		]);
 	});
+
+	it("workspace → 追加 --workspace <path>（位于 --commitHash 之后）", () => {
+		expect(buildCwArgs("execute", "u1", { commitHash: "abc" }, "/tmp/repo-root")).toEqual([
+			"execute",
+			"--unitId",
+			"u1",
+			"--commitHash",
+			"abc",
+			"--workspace",
+			"/tmp/repo-root",
+		]);
+	});
+
+	it("workspace 不传 → 无 --workspace", () => {
+		expect(buildCwArgs("status", "u1", {})).toEqual(["status", "--unitId", "u1"]);
+	});
 });
 
 // ── stdin 透传 ──────────────────────────────────────────────────
@@ -369,6 +395,62 @@ describe("stdin 透传", () => {
 			fakeCtx.cwd,
 		);
 		expect(calls[0].input).toBeUndefined();
+	});
+});
+
+// ── executeCwAction 接线：spawnSync 探测结果 → --workspace 附加 ─────
+
+// 说明：本文件 mock 了 node:child_process（spawnSync 默认失败），此处验证接线逻辑；
+// 真实 git 探测行为见 detect-repo-workspace.test.ts（真实 git repo + worktree）。
+describe("executeCwAction 附加 --workspace（spawnSync mock）", () => {
+	afterEach(() => {
+		spawnSyncMock.mockReset();
+		spawnSyncMock.mockImplementation((_cmd: string, _args: string[], _opts: object) => ({
+			status: 128,
+			stdout: "",
+			stderr: "not a git repository",
+		}));
+	});
+
+	it("cwd 在 git repo 内 → args 含 --workspace <repo 根>（--commitHash 之后）", async () => {
+		spawnSyncMock.mockImplementationOnce((_cmd: string, _args: string[], _opts: object) => ({
+			status: 0,
+			stdout: "/tmp/repo-root/.git\n",
+			stderr: "",
+		}));
+		const { spawner, calls } = fakeSpawner([{ stdout: "{}", stderr: "", exitCode: 0 }]);
+		await executeCwAction(
+			"execute",
+			DEV_ALLOWED,
+			"cw_dev",
+			"u1",
+			{ commitHash: "abc123" },
+			spawner,
+			"/tmp/repo-root/worktrees/wt1",
+		);
+		expect(calls[0].args).toEqual([
+			"execute",
+			"--unitId",
+			"u1",
+			"--commitHash",
+			"abc123",
+			"--workspace",
+			"/tmp/repo-root",
+		]);
+	});
+
+	it("cwd 非 git（探测失败）→ 无 --workspace", async () => {
+		const { spawner, calls } = fakeSpawner([{ stdout: "{}", stderr: "", exitCode: 0 }]);
+		await executeCwAction(
+			"status",
+			DEV_ALLOWED,
+			"cw_dev",
+			"u1",
+			{},
+			spawner,
+			"/tmp/not-a-repo",
+		);
+		expect(calls[0].args).toEqual(["status", "--unitId", "u1"]);
 	});
 });
 

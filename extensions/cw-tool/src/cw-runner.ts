@@ -4,6 +4,9 @@
  * 与 Pi SDK 解耦（不 import pi 类型），纯逻辑 + 可注入 spawner，便于单测。
  * 所有错误路径返回 `{ ok: false, error }`，不抛异常（由调用方映射为 tool 返回）。
  */
+import { spawnSync } from "node:child_process";
+import * as path from "node:path";
+
 import type { CwSpawner } from "./cw-spawn.ts";
 
 /** cw 现状全部 action 名（透传 cw，不预映射未来 design 合并）。 */
@@ -64,6 +67,35 @@ export function rejectDisallowedAction(
 	return undefined;
 }
 
+/** git 探测超时（ms）：git 卡死时避免阻塞 agent turn。 */
+const GIT_PROBE_TIMEOUT_MS = 5000;
+
+/**
+ * 探测 cwd 所属 repo 的主目录（repo 级 workspace）。
+ *
+ * 用 `git rev-parse --path-format=absolute --git-common-dir` 取 git common dir：
+ * 同一 repo 的所有 worktree 返回相同路径，dirname 即 repo 主目录。cw store 键控
+ * 从 per-cwd 升级为 repo 级（ADR-0045）后，spawn cw 时附带 --workspace 让 cw
+ * 在 repo 主目录解析/共享状态，避免同一 repo 的 worktree 间状态各自为政。
+ *
+ * 任何失败（非 git 目录、git 不在 PATH、路径不存在、超时）→ undefined（不抛）。
+ */
+export function detectRepoWorkspace(cwd: string): string | undefined {
+	try {
+		const result = spawnSync(
+			"git",
+			["-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+			{ encoding: "utf8", timeout: GIT_PROBE_TIMEOUT_MS },
+		);
+		if (result.status !== 0) return undefined;
+		const gitCommonDir = result.stdout.trim();
+		if (gitCommonDir.length === 0) return undefined;
+		return path.dirname(gitCommonDir);
+	} catch {
+		return undefined;
+	}
+}
+
 /** input / inputFile 互斥校验。 */
 export function rejectConflictingInput(opts: CwToolOptions): string | undefined {
 	if (opts.input !== undefined && opts.inputFile !== undefined) {
@@ -79,8 +111,14 @@ export function rejectConflictingInput(opts: CwToolOptions): string | undefined 
  * - input 内容 → `--input -`（经 stdin，见 executeCwAction）
  * - inputFile 路径 → `--input <path>`
  * - commitHash → `--commitHash <sha>`
+ * - workspace（repo 主目录，由调用方经 detectRepoWorkspace 探测）→ `--workspace <path>`，位于 --commitHash 之后
  */
-export function buildCwArgs(action: string, unitId: string, opts: CwToolOptions): string[] {
+export function buildCwArgs(
+	action: string,
+	unitId: string,
+	opts: CwToolOptions,
+	workspace?: string,
+): string[] {
 	const args: string[] = [action, "--unitId", unitId];
 
 	if (opts.inputFile) {
@@ -91,6 +129,10 @@ export function buildCwArgs(action: string, unitId: string, opts: CwToolOptions)
 
 	if (opts.commitHash) {
 		args.push("--commitHash", opts.commitHash);
+	}
+
+	if (workspace) {
+		args.push("--workspace", workspace);
 	}
 
 	return args;
@@ -145,7 +187,10 @@ export async function executeCwAction(
 	const inputErr = rejectConflictingInput(opts);
 	if (inputErr) return { ok: false, ...base, error: inputErr };
 
-	const args = buildCwArgs(action, unitId, opts);
+	// repo 级 workspace（ADR-0045）：cwd 在 git repo 内则附加 --workspace <repo 主目录>，
+	// 让 cw 跨 worktree 共享状态；探测失败（非 git 目录等）静默跳过。
+	const workspace = detectRepoWorkspace(cwd);
+	const args = buildCwArgs(action, unitId, opts, workspace);
 	const stdinPayload = opts.input !== undefined ? opts.input : undefined;
 
 	// 合并 SDK abort signal 与超时为单个 signal 传给 spawner：spawner（默认实现）在 abort
