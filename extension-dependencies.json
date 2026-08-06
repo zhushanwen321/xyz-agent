@@ -154,6 +154,11 @@
       "name": "@zhushanwen/pi-rename-session",
       "directory": "extensions/rename-session",
       "dependsOn": []
+    },
+    {
+      "name": "@zhushanwen/pi-cw-tool",
+      "directory": "extensions/cw-tool",
+      "dependsOn": []
     }
   ]
 }
