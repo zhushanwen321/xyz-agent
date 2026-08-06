@@ -9,10 +9,11 @@
  * - 注入 MountPointRegistry/ContributionRegistry 到 core bootstrap（setExtensionRegistries）+ 触发注册
  * - app.provide ViewHost/StatusBar 的 inject key
  *
- * 消息流：WS plugin:viewUpdate → events global 通道 → 本适配器 → MessageBusBridge →
- * bus 'extension-widget' → ViewHostStore → <ViewHost> getView。
- * （runtime 广播 plugin:* 的 ServerMessage 无顶层 sid（payload 含 sessionId）→ 走 route-inbound
- * FALLBACK → dispatchGlobal → events.onGlobal 可订阅。）
+ * 消息流：WS plugin:viewUpdate → raw message tap（routeInbound 前的只读旁路）→ 本适配器 →
+ * MessageBusBridge → bus 'extension-widget' → ViewHostStore → <ViewHost> getView。
+ * （数据源从 events.onGlobal 改为 raw message tap：routeInbound 用 payload.sessionId 路由，
+ * 有 sid 的 plugin:/extension: per-session 下行走 dispatchSession 不触发 onGlobal；tap 是
+ * routeInbound 前的只读旁路，不分通道，per-session 下行也能捕获。）
  *
  * OverlayLifecycle（IF9）装配：订阅同一 bus 的 ui-request 事件，per-session/per-requestId
  * 维护 overlay 状态机（expanded→minimized→restored）+ session-destroyed cleanup。状态机就绪
@@ -26,6 +27,7 @@ import type { App } from 'vue'
 import {
   ContributionRegistry,
   createSessionScopedMap,
+  getRawMessageTap,
   InternalEventBus,
   MessageBusBridge,
   MountPointRegistry,
@@ -50,10 +52,9 @@ import {
 } from '@xyz-agent/ui/extension-host'
 import { createDialogRequestSource, createUiResponseTransport } from './extension-host-dialog'
 import type { ServerMessage } from '@xyz-agent/shared'
-import { onGlobal } from '@/api/events'
 import { useToast } from '@/composables/useToast'
 
-/** 把 renderer 的 WS 消息流（events global 通道的 plugin:* 下行）适配成 PluginMessageSource。 */
+/** 把 renderer 的 WS 消息流（raw message tap 的 plugin:/extension: 下行）适配成 PluginMessageSource。 */
 
 /**
  * extension:* 下行进 bridge 的精确白名单（与 core MessageBusBridge 的 EXTENSION_HANDLERS
@@ -68,11 +69,18 @@ export const EXTENSION_BRIDGE_TYPES: readonly string[] = [
   'extension.ui_request',
 ]
 
-/** 过滤条件：plugin:* 前缀 OR EXTENSION_BRIDGE_TYPES 精确白名单。 */
+/**
+ * 过滤条件：plugin:* 前缀 OR EXTENSION_BRIDGE_TYPES 精确白名单。
+ *
+ * 数据源从 events.onGlobal 换成 raw message tap（routeInbound 前的只读旁路）：routeInbound 用
+ * payload.sessionId 路由，有 sessionId 的下行（如 extension:notify/widget/status/ui_request）
+ * 走 dispatchSession 不触发 onGlobal，pi extension 的 per-session 下行此前收不到。tap 不分通道，
+ * per-session 下行也能捕获。前缀过滤逻辑（plugin:/extension:）保持不变。
+ */
 export function createWsPluginMessageSource(): PluginMessageSource {
   return {
     subscribe(handler: (msg: IncomingPluginMessage) => void): () => void {
-      return onGlobal((msg: ServerMessage) => {
+      return getRawMessageTap().subscribe((msg: ServerMessage) => {
         if (
           typeof msg.type === 'string' &&
           (msg.type.startsWith('plugin:') || EXTENSION_BRIDGE_TYPES.includes(msg.type))
