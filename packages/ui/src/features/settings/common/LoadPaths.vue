@@ -54,7 +54,7 @@
             <Checkbox
               :model-value="true"
               disabled
-              class="shrink-0 data-[state=unchecked]:border-neutral-dim"
+              class="shrink-0"
               :aria-label="t('settings.loadPaths.enableDir', { path: dir })"
             />
             <span class="flex-1 truncate font-mono text-neutral-fg opacity-60">{{ dir }}</span>
@@ -75,7 +75,7 @@
         >
           <Checkbox
             :model-value="dir.enabled"
-            class="shrink-0 data-[state=unchecked]:border-neutral-dim"
+            class="shrink-0"
             :disabled="disabled"
             :aria-label="t('settings.loadPaths.enableDir', { path: dir.path })"
             @update:model-value="onToggle(scope, i, $event)"

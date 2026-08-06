@@ -9,7 +9,10 @@ import { cn } from '../../lib/utils'
 /**
  * Checkbox —— 勾选原语（reka-ui CheckboxRoot 封装）。
  * 替代 SkillPage/AgentPage 加载路径的裸 <input type=checkbox>。
- * 样式：size-4 / border-border / 选中 bg-accent，Check icon 白色。对齐冷蓝暗色规范。
+ * 样式：size-4 / 未选态 border neutral-mid（1px !important，绕过 renderer 全局
+ * `*{border-width:0}` unlayered 规则对该 button 的覆盖——CSS Cascade Layers 导致
+ * 普通 .border(1px) 被 unlayered `*`(0px) 压过，未选态边框宽度塌成 0 不可见）/
+ * 选中 bg-accent + border-accent。Check icon 白色。对齐冷蓝暗色规范。
  */
 const props = withDefaults(
   defineProps<CheckboxRootProps & { class?: HTMLAttributes['class'] }>(),
@@ -25,7 +28,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
     v-bind="forwarded"
     :class="
       cn(
-        'peer size-4 shrink-0 rounded-sm border border-border-strong bg-transparent outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-accent data-[state=checked]:bg-accent data-[state=unchecked]:bg-transparent',
+        'peer size-4 shrink-0 rounded-sm !border border-neutral-mid bg-transparent outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-accent data-[state=checked]:bg-accent data-[state=unchecked]:border-neutral-mid data-[state=unchecked]:bg-transparent',
         props.class,
       )
     "
