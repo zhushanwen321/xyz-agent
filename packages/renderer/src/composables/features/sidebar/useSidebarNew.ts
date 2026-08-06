@@ -65,11 +65,44 @@ import type { NavEntry } from '@/types'
 let appBootstrapped = false
 let hasConnectedBefore = false
 
-/** 测试隔离：重置启动编排守卫 + session.list 订阅计数（beforeEach 调）。 */
+/** 测试隔离：重置启动编排守卫 + session.list 订阅计数 + 桥接计数器（beforeEach 调）。 */
 export function resetSidebarNewForTest(): void {
   appBootstrapped = false
   hasConnectedBefore = false
   resetSessionListSubForTest()
+  resetSessionListBroadcastForTest()
+}
+
+/** 测试隔离：重置 config.sessions→pinia 桥接的模块级 refCount（防跨测试监听残留）。 */
+export function resetSessionListBroadcastForTest(): void {
+  sessionListUnsub?.()
+  sessionListUnsub = null
+  broadcastRefCount = 0
+}
+
+// ── config.sessions 广播桥接 → pinia useSessionStore（CLAUDE.md 规则 #2 防重复注册）──
+// 双 store 断裂修复：core createUseSession 经 onConfigSessions 把 config.sessions 广播写入
+// 接缝本地 raw store（C-W5-5），而 Sidebar SessionList 读 pinia useSessionStore —— 两 store
+// 完全独立导致侧栏永远空列表。此桥接把同一广播镜像 setGroups 到 pinia store，双 store 数据一致。
+// 模块级 refCount：多实例共享同一监听（首个注册、末个卸载），防止事件处理翻倍。
+let broadcastRefCount = 0
+let sessionListUnsub: (() => void) | null = null
+
+function bindSessionListBroadcast(): void {
+  broadcastRefCount += 1
+  if (broadcastRefCount === 1) {
+    sessionListUnsub = events.onGlobalType('config.sessions', (msg) => {
+      useSessionStoreSafe().setGroups(msg.payload?.groups ?? [])
+    })
+  }
+}
+
+function unbindSessionListBroadcast(): void {
+  broadcastRefCount = Math.max(0, broadcastRefCount - 1)
+  if (broadcastRefCount === 0 && sessionListUnsub) {
+    sessionListUnsub()
+    sessionListUnsub = null
+  }
 }
 
 /**
@@ -350,8 +383,14 @@ export function useSidebarNew() {
     enterHandoffModeFromLastAssistant,
   } = useHandoffActions(focusedSessionId as ComputedRef<string | null>)
 
+  // ── 桥接注册：config.sessions 广播镜像到 pinia useSessionStore（refCount 防翻倍）──
+  // 与 core 的 onConfigSessions（写 raw store）并存：同一广播双写，pinia store 供 SessionList 读。
+  bindSessionListBroadcast()
+
   // 持有引用避免 onScopeDispose 前实例被回收（core.createUseSession 内部已 bind + dispose）
   onScopeDispose(() => {
+    // 桥接解绑：refCount 减一，减到 0 才真正 off
+    unbindSessionListBroadcast()
     // core.createUseSession 内部 onScopeDispose(unbindSessionListBroadcast) 已注册，
     // 此处空 dispose 占位保持显式生命周期锚点（未来壳级 cleanup 扩展点）。
   })
