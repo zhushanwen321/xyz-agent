@@ -8,6 +8,7 @@
 import { Worker } from 'node:worker_threads'
 import { resolve, dirname } from 'node:path'
 import { existsSync, readdirSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import type { WorkerHandle, RpcRequest } from './plugin-types.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
 import { PluginHostProcess, type PluginHostProcessOptions } from './plugin-host-process.js'
@@ -33,10 +34,10 @@ function resolvePluginHostDir(): string {
   // ESM 源码路径（开发/测试直跑 tsx）
   // 注意：tsup CJS 输出中 import.meta 被替换为 var import_meta = {}
   // 所以 import.meta.url 在生产 bundle 中为 undefined，不会误入此分支
+  // fileURLToPath 用顶层 import：node:url 是内置模块，tsup platform:'node' 自动 external 化；
+  // CJS bundle 编译为 require('node:url')（运行时可用），但本分支在 CJS 中不执行（import.meta.url 为 undefined）
   if (typeof import.meta !== 'undefined' && import.meta.url) {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports -- 动态 require 避免顶层 import 在 CJS bundle 中报错
-      const { fileURLToPath } = require('node:url') as typeof import('node:url')
       return dirname(fileURLToPath(import.meta.url))
     // eslint-disable-next-line taste/no-silent-catch -- ESM path detection: fallthrough to CJS path is expected
     } catch (e: unknown) {
