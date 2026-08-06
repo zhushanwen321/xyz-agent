@@ -286,6 +286,15 @@ export const session = {
     pushSessionList()
   },
 
+  /** Mock：归入项目（D14 语义修正）——与 real session.setProject 同构，更新归属 + 广播。 */
+  async setProject(sessionId: string, projectId: string): Promise<void> {
+    await sleep(TIMING.ack)
+    const target = fixtureSessions.find((s) => s.id === sessionId)
+    if (!target) throw new Error(`mock: session ${sessionId} 不存在`)
+    target.projectId = projectId || undefined
+    pushSessionList()
+  },
+
   async remove(sessionId: string): Promise<void> {
     await sleep(TIMING.ack)
     const idx = fixtureSessions.findIndex((s) => s.id === sessionId)

@@ -20,7 +20,7 @@ export interface SessionApiPort {
   /** 切换 session（selectSession 用；hydrate 不在此端口） */
   switchSession(id: string): Promise<void>
   /** 新建 session（createSessionFlow 用；返回含 cwd 用于 INV-7 降级比对） */
-  create(cwd: string, label: string, presetId?: string): Promise<SessionSummary>
+  create(cwd: string, label: string, presetId?: string, projectId?: string): Promise<SessionSummary>
   /** 重命名 session（乐观更新后调） */
   rename(id: string, label: string): Promise<void>
   /** 删除单个 session（deleteSession 用） */

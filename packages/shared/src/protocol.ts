@@ -42,7 +42,7 @@ export interface CommandSourceInfo {
 
 export type ClientMessageType =
   | 'session.create' | 'session.delete' | 'session.deleteByCwd' | 'config.sessions' | 'session.switch' | 'session.history' | 'session.getFullHistory' | 'session.getCommands' | 'session.getContext'
-  | 'session.compact' | 'session.rename' | 'session.fork'
+  | 'session.compact' | 'session.rename' | 'session.fork' | 'session.setProject'
   | 'session.handoff' | 'session.abortHandoff'
   // runtime-message-bus（slice:runtime-message-bus，wave:protocol-seq）：
   // session.subscribe 订阅某 session 的 live 事件流（bus.publish 推送的带 seq 消息），
@@ -213,6 +213,8 @@ export interface ClientMessageMap {
     label?: string
     hidden?: boolean
     presetId?: string
+    /** 归属 project id（D14 语义修正）：创建时归属当前 activeProject；空 = 默认项目兑底。 */
+    projectId?: string
     modelOverride?: string
     thinkingOverride?: ThinkingLevel
   }
@@ -227,6 +229,9 @@ export interface ClientMessageMap {
   'session.getContext': { sessionId: string }
   'session.compact': { sessionId: string; customInstructions?: string }
   'session.rename': { sessionId: string; name: string }
+  // session.setProject：手动归类（SessionItem「归入项目」菜单）。
+  // runtime 写 `<sessionFile>.project.json` sidecar + 刷新列表广播。projectId 空 = 归回默认项目。
+  'session.setProject': { sessionId: string; projectId: string }
   // fork：从 srcSessionId 截断到 fromPiEntryId（pi JSONL entry id，前端 Message.piEntryId），
   // includeFrom=true 保留到该 entry（含），false 保留到该 entry 前（不含）。
   // runtime 按 fromPiEntryId 在源 session JSONL 树回溯截断，写新 JSONL，switch_session 加载。
@@ -540,7 +545,7 @@ export type WorktreeEnvelopeCode = WorktreeErrorCode | WorktreeUnknownErrorCode
 
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'session.deletedByCwd' | 'config.sessions' | 'session.history' | 'session.fullHistory'
-  | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.handoffStarted' | 'session.handoffComplete' | 'session.handoffAborted'
+  | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.handoffStarted' | 'session.handoffComplete' | 'session.handoffAborted' | 'session.setProject'
   | 'session.subagents' | 'session.subagentHistory'
   | 'session.workflows' | 'session.agentCallHistory' | 'session.agentCallFilePath'
   | 'session.workflowUpdate' | 'session.workflowActionDone' | 'session.subagentActionDone'
@@ -909,6 +914,8 @@ export interface ServerMessageMapBase {
   'session.deletedByCwd': BatchDeleteResult
   // session.renamed：session.rename reply（session-message-handler.ts:162 reply { sessionId, name }）。
   'session.renamed': { sessionId: string; name: string }
+  // session.setProject：session.setProject reply（确认即可；归属更新经 config.sessions 全量广播）。
+  'session.setProject': { sessionId: string; projectId: string }
   // session.forkNotice：session.fork 成功后的广播（FR-12 修订 PR2），通知 srcSession 所在 panel
   // 在对话流插一条 ForkNotice 反馈行。广播时机：fork RPC 成功创建 newSession 之后。
   // branchName/preview optional——纯后台 fork 传 branchName，fork-ask 传 preview（提问预览）。
@@ -1266,6 +1273,7 @@ export interface ReplyPayloadMap {
   // 不读 reply payload，取消订阅的副作用由后续 live 事件停发体现。
   'session.unsubscribe': void     // reply message.status
   'session.rename': void          // reply session.renamed
+  'session.setProject': void      // reply session.setProject
   'session.setThinkingLevel': void // reply session.thinkingLevelSet
   'session.subagentAction': void  // reply session.subagentActionDone
   'session.switch': void          // reply session.history（前端不读 payload）

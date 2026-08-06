@@ -1,9 +1,14 @@
 # xyz-agent 领域术语表
 
+> **关系模型 SSOT**：Project – Session 直接关联（跨目录逻辑分组，cwd 仅展示聚合）见
+> [project-session-model.md](project-session-model.md)（D14 语义修正，2026-08-04）。
+
 ## 核心概念
 
 ### Session
 一个与 pi 引擎的对话实例。xyz-agent 不存在脱离 pi 的纯本地 session。每个 session 始终绑定一个 pi 进程（活跃时可实时通信，休眠时从 `.jsonl` 文件恢复历史）。持久化在 `~/.xyz-agent/sessions/` 下，扁平文件结构。
+
+**归属**：session 创建时归属当前 activeProject（`projectId`，与 cwd 无关；无值 = 未归类，展示层归入默认项目）。持久化在 `<sessionFile>.project.json` sidecar。详见 [project-session-model.md](project-session-model.md)。
 
 **生命周期**: create → active/idle → compact → restore → delete
 

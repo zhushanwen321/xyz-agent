@@ -129,6 +129,70 @@ export function presetSidecarPath(filePath: string): string {
 }
 
 /**
+ * 计算 session project 归属 sidecar 路径（D14 语义修正，2026-08-04）。
+ * `<sessionFile>.project.json`：session 归属的 project id（与 preset/meta sidecar 并列独立）。
+ */
+export function projectSidecarPath(filePath: string): string {
+  return filePath + '.project.json'
+}
+
+/**
+ * 将 session 归属 project 持久化到 sidecar `.project.json`（D14：Project 直接关联 Session）。
+ *
+ * session create 成功 / 手动归类（session.setProject）时调用。归属是 session 级数据，
+ * 跟 session 走（删除 session 归属自动消失，fork 继承父归属）。
+ *
+ * [规则 #6] session JSONL 文件不存在时**绝不创建 sidecar**（与 persistPresetBinding 同守则）：
+ * pi 延迟写入窗口内 existsSync=false → 静默跳过；active session 归属经内存态兑底
+ *（ManagedSession.projectId），不阻断主流程。
+ *
+ * @param filePath session JSONL 绝对路径（sidecar = projectSidecarPath(filePath)）
+ * @param projectId 归属 project id（空串 = 归回默认项目，等价于删除绑定）
+ */
+export function persistProjectBinding(filePath: string, projectId: string): void {
+  if (!filePath) return
+  // 空 projectId（归回默认项目）= 删除绑定，不写 sidecar（读取侧一致兑底默认项目）。
+  if (!projectId) return
+  if (!existsSync(filePath)) {
+    // 文件不存在（pi 延迟写入窗口）：绝不创建文件，直接跳过（ES-RL-1 同款）。
+    return
+  }
+  const binding = { projectId, version: 1 as const }
+  try {
+    atomicWrite(projectSidecarPath(filePath), JSON.stringify(binding), `project-${Date.now()}`)
+    // sidecar 写入后主动失效 sessionMetaCache（缓存键只含 JSONL 的 (mtimeMs, size)，
+    // sidecar 变更不变 JSONL stat → 命中缓存返回旧值，与 persistPresetBinding 同处理）。
+    sessionMetaCache.delete(filePath)
+  // eslint-disable-next-line taste/no-silent-catch -- file write: failure must not crash caller
+  } catch (e) {
+    console.error(`[session-file-utils] persistProjectBinding failed: ${filePath}`, e)
+  }
+}
+
+/**
+ * 从 `.project.json` sidecar 读取 session 归属 project id。
+ *
+ * scanSessionMeta 第五读：与 launchPresetId 同批次提取，结果合并进 ScannedSessionMeta.projectId，
+ * 享受 sessionMetaCache 缓存（禁止在 scannedToSummary 独立读文件）。
+ *
+ * @returns projectId 字符串；sidecar 不存在/损坏/projectId 非字符串 → undefined
+ */
+export function readProjectBinding(filePath: string): string | undefined {
+  const sidecarPath = projectSidecarPath(filePath)
+  try {
+    const raw = readFileSync(sidecarPath, 'utf-8')
+    const binding = JSON.parse(raw)
+    // 类型守卫：projectId 必须是字符串（sidecar 是文件，内容可能损坏/被篡改）
+    if (binding && typeof binding.projectId === 'string') {
+      return binding.projectId
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * 将 launch preset 绑定持久化到 sidecar `.preset.json`（设计文档 §4）。
  *
  * session create 成功后调用，记录该 session 启动时使用的 preset id。与 `.meta.json`
@@ -445,6 +509,11 @@ export interface ScannedSessionMeta {
    * undefined 表示无 sidecar（历史 session / create 时未绑定 preset）。
    */
   launchPresetId?: string
+  /**
+   * 归属 project id（从 .project.json sidecar 读，D14 语义修正 2026-08-04）。
+   * undefined = 未归类（展示层归入默认项目 proj-default 兑底）。
+   */
+  projectId?: string
 }
 
 /**
@@ -520,6 +589,8 @@ function scanSessionMeta(filePath: string): ScannedSessionMeta | null {
   // 第四读：preset binding sidecar（设计文档 §4），与 name/outcome/handedOffTo 同批次
   // 提取，结果合并进 meta.launchPresetId，享受 sessionMetaCache 缓存。
   const launchPresetId = readPresetBinding(filePath)
+  // 第五读：project binding sidecar（D14 语义修正），同批次提取进 meta.projectId。
+  const projectId = readProjectBinding(filePath)
   const meta: ScannedSessionMeta = {
     id: header.id,
     filePath,
@@ -533,6 +604,7 @@ function scanSessionMeta(filePath: string): ScannedSessionMeta | null {
     forkEntryId: header.forkEntryId,
     handedOffTo,
     launchPresetId,
+    projectId,
   }
   sessionMetaCache.set(filePath, { mtimeMs: fstat.mtimeMs, size: fstat.size, meta })
   return meta

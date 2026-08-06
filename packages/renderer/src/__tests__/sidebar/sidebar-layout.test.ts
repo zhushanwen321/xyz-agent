@@ -5,13 +5,19 @@
  * 测试框架：vitest（从 vitest 导入 describe/it/expect/vi）。
  * 运行：cd packages/renderer && npx vitest run src/__tests__/sidebar/sidebar-layout.test.ts
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import SubagentList from '@/components/sidebar/SubagentList.vue'
 import WorkflowDetail from '@/components/sidebar/WorkflowDetail.vue'
 import SessionItem from '@/components/sidebar/SessionItem.vue'
 import SegmentedTab from '@/components/sidebar/SegmentedTab.vue'
 import type { SubagentRecord, WorkflowRunRecord } from '@xyz-agent/shared'
+
+beforeEach(() => {
+  // SessionItem setup 内 useProjectStore（D14 归入项目菜单），mount 需激活 pinia
+  setActivePinia(createPinia())
+})
 
 // ── D2: SubagentList 去掉 slug 列 ──────────────────────────
 describe('D2: SubagentList slug 降级', () => {

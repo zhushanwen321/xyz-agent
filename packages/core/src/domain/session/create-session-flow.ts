@@ -94,6 +94,8 @@ export interface CreateSessionFlowInput {
   cwd: string | null
   /** preset id（landing 态 pendingPreset；空传 undefined 给 create） */
   presetId?: string | null
+  /** 归属 project id（D14 语义修正 2026-08-04：创建时归属当前 activeProject；空 = 默认项目兑底） */
+  projectId?: string | null
   /** landing 态选定的模型（"provider/modelId" 复合串；空跳过 applyModel） */
   pendingModel?: string | null
   /** 首发消息段（含 text/image/skill 等；label 从首条 text 段取，image 段需迁移） */
@@ -147,8 +149,8 @@ export async function createSessionFlow(
   const labelSource = input.bashCommand ? input.bashCommand.command : trimmed
   const label = deriveSessionLabel(labelSource)
 
-  // 4. create session
-  const created = await ctx.api.create(cwd, label, input.presetId ?? undefined)
+  // 4. create session（projectId 归属透传：D14 语义修正，创建时归属当前 activeProject）
+  const created = await ctx.api.create(cwd, label, input.presetId ?? undefined, input.projectId ?? undefined)
 
   // 5. INV-7 cwd 降级比对（runtime create 内部可能降级 homedir）
   if (cwd && created.cwd !== cwd) {

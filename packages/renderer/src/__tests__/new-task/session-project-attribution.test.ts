@@ -1,11 +1,11 @@
 /**
- * useNewTaskFlow 自动归因测试（D14：新建 session 成功后 cwd 归入 activeProject）。
+ * useNewTaskFlow 归属 project 透传测试（D14 语义修正 2026-08-04：session 创建时归属 activeProject）。
  *
- * 用户主诉求回归防护：在命名 project 下新建任务 → 目录自动归入该 project →
- * 切回该 project 时 session 列表能看到（SessionList 过滤消费 activeWorkspaceCwds）。
+ * 用户主诉求回归防护：在命名 project 下新建任务 → create 请求携带 projectId →
+ * runtime 写 sidecar → 切回该 project 时 session 列表能看到。
  *
  * mock 策略：与 use-new-task-flow.test.ts 同套（vi.hoisted + vi.mock('@/api')），
- * 真用 useProjectStore（localStorage 默认 project name='' → addWorkspace 守卫不归因）。
+ * 真用 useProjectStore（默认 project name='' → 不传 projectId）。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/new-task/session-project-attribution.test.ts
  */
@@ -16,7 +16,7 @@ import type { SessionSummary, SessionGroup } from '@xyz-agent/shared'
 
 const apiMock = vi.hoisted(() => ({
   create: vi.fn(
-    (cwd?: string): Promise<SessionSummary> =>
+    (cwd?: string, _label?: string, _presetId?: string, projectId?: string): Promise<SessionSummary> =>
       Promise.resolve({
         id: `s-${Math.random().toString(36).slice(2, 8)}`,
         label: '新会话',
@@ -25,6 +25,7 @@ const apiMock = vi.hoisted(() => ({
         lastActiveAt: Date.now(),
         modelId: 'm',
         tokenCount: 0,
+        projectId: projectId || undefined,
       }),
   ),
   remove: vi.fn((): Promise<void> => Promise.resolve()),
@@ -68,7 +69,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   resetNewTaskFlow()
   // renderer 壳 cachedFlow 单例（捕获首次调用时的 pinia store）必须重建，
-  // 否则归因写入旧 pinia 的 projectStore，断言读新 pinia 不一致（dedup 测试红过）
+  // 否则 projectId 读取旧 pinia 的 projectStore（dedup 测试红过）
   __resetNewTaskFlowForTesting()
   vi.clearAllMocks()
   workspaceStoreMock.records = []
@@ -82,8 +83,8 @@ function setGroups(cwd: string): void {
   ] as SessionGroup[])
 }
 
-describe('useNewTaskFlow: 新建 session 自动归因到 activeProject（D14）', () => {
-  it('命名 project 下新建任务 → cwd 归入 activeProject.workspaces', async () => {
+describe('useNewTaskFlow: create 透传归属 projectId（D14 语义修正）', () => {
+  it('命名 project 下新建任务 → create 第 4 参数携带 activeProjectId', async () => {
     const projectStore = useProjectStore()
     projectStore.addProject('Test') // 命名 project 成为 active
     setGroups('/repo')
@@ -94,30 +95,10 @@ describe('useNewTaskFlow: 新建 session 自动归因到 activeProject（D14）'
     await flow.submitFirstMessage(textToSegments('修 bug'))
 
     expect(apiMock.create).toHaveBeenCalledTimes(1)
-    expect(projectStore.activeProject!.workspaces.map((w) => w.cwd)).toEqual(['/repo'])
-    expect(projectStore.activeWorkspaceCwds).toEqual(['/repo'])
+    expect(apiMock.create).toHaveBeenCalledWith('/repo', '修 bug', undefined, projectStore.activeProjectId)
   })
 
-  it('同目录重复建任务 → 不重复归因（dedup）', async () => {
-    const projectStore = useProjectStore()
-    projectStore.addProject('Test')
-    setGroups('/repo')
-    workspaceStoreMock.defaultCwd = '/repo'
-
-    const flow = useNewTaskFlow()
-    await flow.startFlow()
-    await flow.submitFirstMessage(textToSegments('任务一'))
-    // 第二个任务（同目录）——重建 flow（completed 终态需销毁重建，T8.5）
-    resetNewTaskFlow()
-    __resetNewTaskFlowForTesting()
-    await useNewTaskFlow().startFlow()
-    await useNewTaskFlow().submitFirstMessage(textToSegments('任务二'))
-
-    expect(projectStore.activeProject!.workspaces).toHaveLength(1)
-  })
-
-  it('默认 project（name 空）→ 不归因（显示全部语义，workspaces 保持空）', async () => {
-    const projectStore = useProjectStore()
+  it('默认项目下新建任务 → create 第 4 参数为 undefined（未归类，不写 sidecar）', async () => {
     // localStorage 空 → 默认 project name=''
     setGroups('/repo')
     workspaceStoreMock.defaultCwd = '/repo'
@@ -126,21 +107,35 @@ describe('useNewTaskFlow: 新建 session 自动归因到 activeProject（D14）'
     await flow.startFlow()
     await flow.submitFirstMessage(textToSegments('修 bug'))
 
-    expect(projectStore.activeProject!.name).toBe('')
-    expect(projectStore.activeProject!.workspaces).toHaveLength(0)
+    expect(apiMock.create).toHaveBeenCalledTimes(1)
+    expect(apiMock.create).toHaveBeenCalledWith('/repo', '修 bug', undefined, undefined)
   })
 
-  it('create 失败（返回 null）→ 不归因', async () => {
+  it('切到另一个命名 project 后新建 → 携带新 project id', async () => {
+    const projectStore = useProjectStore()
+    const a = projectStore.addProject('A')
+    projectStore.addProject('B')
+    projectStore.setActiveProject(a)
+    setGroups('/repo')
+    workspaceStoreMock.defaultCwd = '/repo'
+
+    const flow = useNewTaskFlow()
+    await flow.startFlow()
+    await flow.submitFirstMessage(textToSegments('任务一'))
+
+    expect(apiMock.create).toHaveBeenCalledWith('/repo', '任务一', undefined, a)
+  })
+
+  it('create 失败（空 content guard 返回 null）→ 无 create 调用', async () => {
     const projectStore = useProjectStore()
     projectStore.addProject('Test')
     setGroups('/repo')
     workspaceStoreMock.defaultCwd = '/repo'
-    // 空 content guard：createSessionFlow 对空 segments 返回 null
+
     const flow = useNewTaskFlow()
     await flow.startFlow()
-
     await flow.submitFirstMessage(textToSegments(''))
 
-    expect(projectStore.activeProject!.workspaces).toHaveLength(0)
+    expect(apiMock.create).not.toHaveBeenCalled()
   })
 })

@@ -61,7 +61,7 @@ function buildCreateFlowApiPort(): SessionApiPort {
   return {
     list: () => sessionApi.list(),
     switchSession: (id) => sessionApi.switchSession(id),
-    create: (cwd, label, presetId) => sessionApi.create(cwd, label, presetId),
+    create: (cwd, label, presetId, projectId) => sessionApi.create(cwd, label, presetId, projectId),
     rename: (id, label) => sessionApi.rename(id, label),
     remove: (id) => sessionApi.remove(id),
     removeByCwd: (cwd) => sessionApi.removeByCwd(cwd),
@@ -115,12 +115,14 @@ export function useNewTaskFlow() {
               }
             },
           }
-          // 自动归因（D14）：create 成功后把 cwd 归入 activeProject（命名 project 才归，
-          // 默认 project 显示全部无需归因；addWorkspace 内部 dedup + 空 name 守卫）。
-          // fork 路径不走 createSessionFlow（useForkActions 直接 sessionApi.fork），
-          // fork cwd 与父相同——父已归因则该 cwd 已在 project，无需处理。
-          const result = await createSessionFlow(ctx, input)
-          if (result) projectStore.addWorkspace(result.session.cwd)
+          // D14 语义修正（2026-08-04）：归属 project 经 input 透传——创建时归属当前
+          // activeProject（与 cwd 无关，project 可跨目录）。默认项目不传（undefined = 未归类，
+          // 读取侧统一兑底默认项目，不写 sidecar）。fork 路径不走 createSessionFlow
+          //（useForkActions 直接 sessionApi.fork），fork 在 runtime 侧继承父归属。
+          const result = await createSessionFlow(ctx, {
+            ...input,
+            projectId: projectStore.isDefaultProject ? undefined : projectStore.activeProjectId,
+          })
           return result
         },
         setThinkingLevel: (sid, level) => setThinkingLevel(sid, level),

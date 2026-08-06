@@ -112,6 +112,41 @@
       >
         <Pencil class="size-[13px]" />
       </Button>
+      <!-- 归入项目（D14 语义修正 2026-08-04）：Popover 菜单列全部 project，点击即归类。
+           归类可逆（可再点其他 project / 默认项目），无需两段确认。 -->
+      <Popover v-if="!confirming" :open="assignOpen" @update:open="assignOpen = $event">
+        <PopoverTrigger as-child>
+          <Button
+            variant="ghost"
+            size="icon"
+            data-testid="assign-project-btn"
+            class="size-[22px] rounded-sm text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
+            :title="t('sidebar.sessionItem.assignToProject')"
+            @click.stop="assignOpen = true"
+          >
+            <FolderKanban class="size-[13px]" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent side="right" align="start" :collision-padding="8" class="w-44 p-1">
+          <div class="flex flex-col gap-px">
+            <Button
+              v-for="p in assignTargets"
+              :key="p.id"
+              variant="ghost"
+              data-testid="assign-project-option"
+              class="h-auto w-full justify-start gap-2 rounded-sm px-2 py-1.5 text-[12px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
+              :class="session.projectId === p.id ? 'text-accent' : ''"
+              @click="onAssign(p.id)"
+            >
+              <span
+                class="size-2 shrink-0 rounded-full"
+                :class="session.projectId === p.id ? 'bg-accent' : 'bg-transparent'"
+              />
+              <span class="truncate">{{ p.name || t('sidebar.projectSwitcher.defaultName') }}</span>
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
       <Button
         variant="ghost"
         size="icon"
@@ -132,8 +167,10 @@
 import { computed, inject, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { onClickOutside } from '@vueuse/core'
-import { Check, Pencil, Trash2, Archive } from '@lucide/vue'
+import { Check, Pencil, Trash2, Archive, FolderKanban } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
+import { useProjectStore } from '@/stores/project'
 import type { DerivedStatus } from '@/types'
 import { formatRelativeTime } from '@/composables/logic/formatTime'
 import { dirNameOf } from '@xyz-agent/ui'
@@ -160,6 +197,8 @@ const props = defineProps<{
     parentSession?: string
     /** 父 session 显示名（血缘展示用，SessionList 容器可注入避免重复查找父 label）。 */
     parentLabel?: string
+    /** 归属 project id（D14 语义修正；空/undefined = 未归类，归入默认项目聚合）。 */
+    projectId?: string
   }
   active: boolean
   status: DerivedStatus
@@ -169,7 +208,23 @@ const emit = defineEmits<{
   select: [sessionId: string]
   rename: [sessionId: string]
   delete: [sessionId: string]
+  /** 归入项目（D14 语义修正）：payload 单对象（规则 #1）。projectId 空串 = 归回默认项目。 */
+  setProject: [{ sessionId: string; projectId: string }]
 }>()
+
+// ── 归入项目菜单（D14 语义修正 2026-08-04）──
+const projectStore = useProjectStore()
+const assignOpen = ref(false)
+/** 归类目标列表：默认项目（未归类聚合）+ 全部命名 project。归回默认 = projectId 空串。 */
+const assignTargets = computed(() => [
+  { id: '', name: t('sidebar.projectSwitcher.defaultName') },
+  ...projectStore.projects.filter((p) => p.name).map((p) => ({ id: p.id, name: p.name })),
+])
+/** 点击归类：emit + 关菜单（归类可逆，无需两段确认） */
+function onAssign(projectId: string): void {
+  emit('setProject', { sessionId: props.session.id, projectId })
+  assignOpen.value = false
+}
 
 /** dead session（进程已退出）置灰，仍可点击（点击触发 restore 重开） */
 const isDead = computed(() => props.session.status === 'dead')

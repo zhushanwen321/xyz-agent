@@ -1,45 +1,55 @@
 /**
- * SessionList.vue 按 activeProject 过滤测试（D14：Project → Workspace(cwd) → Session 关联）。
+ * SessionList.vue 按 activeProject 过滤测试（D14 语义修正 2026-08-04：session.projectId 直接关联）。
  *
- * 用户主诉求回归防护：切换项目时，session 列表必须跟随 activeProject 变化——
- * 默认 project（name 空）显示全部；命名 project 只显示其 workspaces 对应 cwd 的组。
+ * 用户主诉求回归防护：切换项目时，session 列表必须跟随 activeProject 变化。
+ * 过滤粒度是 **session 级**（同一 cwd 组内可混合不同归属，逐 session 过滤后重组分组）。
  *
- * 覆盖（含渲染 gate：断言 DOM 中实际渲染的分组标题）：
- * - 默认 project → 全部组渲染（现有体验不破坏）
- * - 命名 project + 归因 cwd → 只渲染匹配组
- * - 命名 project 无归因 → 空态（暂无会话 + 新建按钮）
- * - 切 project（A → B）→ 列表实时变化
+ * 覆盖（含渲染 gate：断言 DOM 中实际渲染的分组/session）：
+ * - 默认项目（未命名）→ 未归类（无 projectId）+ 孤儿（归属已删 project）聚合
+ * - 命名 project → 只渲染归属它的 session（同 cwd 组内混合归属时精确过滤）
+ * - 命名 project 无归属 → 空态
+ * - 切 project → 列表实时变化
  *
+ * fixture 语义：sa/sd 归属 proj-a；sc 归属 proj-b；sb 未归类。
  * 运行：cd packages/renderer && npx vitest run src/__tests__/sidebar/session-list-project-filter.test.ts
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
-import type { SessionGroup } from '@xyz-agent/shared'
+import type { SessionGroup, SessionSummary } from '@xyz-agent/shared'
 import SessionList from '@/components/sidebar/SessionList.vue'
 import { useProjectStore } from '@/stores/project'
-import type { Project } from '@xyz-agent/shared'
 
+function makeSession(id: string, cwd: string, over: Partial<SessionSummary> = {}): SessionSummary {
+  return {
+    id,
+    label: `会话 ${id}`,
+    cwd,
+    status: 'idle',
+    lastActiveAt: 1,
+    modelId: 'm',
+    tokenCount: 0,
+    ...over,
+  }
+}
+
+/** 同 cwd 组：sa 归属 proj-a，sb 未归类，sc 归属 proj-b（混合归属验证 session 级过滤） */
 function makeGroups(): SessionGroup[] {
   return [
     {
-      cwd: '/repo-a',
+      cwd: '/repo',
       sessions: [
-        { id: 's1', label: '会话 A1', cwd: '/repo-a', status: 'idle', lastActiveAt: 1, modelId: 'm', tokenCount: 0 } as SessionGroup['sessions'][number],
+        makeSession('sa', '/repo', { projectId: 'proj-a' }),
+        makeSession('sb', '/repo'), // 未归类
+        makeSession('sc', '/repo', { projectId: 'proj-b' }),
       ],
     },
     {
-      cwd: '/repo-b',
-      sessions: [
-        { id: 's2', label: '会话 B1', cwd: '/repo-b', status: 'idle', lastActiveAt: 2, modelId: 'm', tokenCount: 0 } as SessionGroup['sessions'][number],
-      ],
+      cwd: '/repo2',
+      sessions: [makeSession('sd', '/repo2', { projectId: 'proj-a' })],
     },
   ]
-}
-
-function makeProject(id: string, name: string): Project {
-  return { id, name, workspaces: [], lastUsedAt: 0 }
 }
 
 function mountList() {
@@ -52,9 +62,15 @@ function mountList() {
   })
 }
 
-/** 分组标题（cwd 末段）断言：目录名文本渲染在 folder 标题行 */
-function groupTitles(wrapper: ReturnType<typeof mountList>): string[] {
-  return wrapper.findAll('.group-section').map((w) => w.text())
+/** 建默认项目 + 命名项目（proj-a/proj-b 均存在，孤儿判定不误伤） */
+function setupProjects(activeId: string, names: Array<[string, string]>): ReturnType<typeof useProjectStore> {
+  const store = useProjectStore()
+  store.projects = [
+    { id: 'proj-default', name: '', lastUsedAt: 0 },
+    ...names.map(([id, name]) => ({ id, name, lastUsedAt: 0 })),
+  ]
+  store.activeProjectId = activeId
+  return store
 }
 
 beforeEach(() => {
@@ -62,93 +78,71 @@ beforeEach(() => {
   localStorage.removeItem('xyz-agent:projects')
 })
 
-describe('SessionList: 默认 project 显示全部（现状不破坏）', () => {
-  it('默认 project（name 空）→ 两组 session 全部渲染', () => {
+describe('SessionList: 默认项目 = 未归类 + 孤儿聚合', () => {
+  it('默认项目只显示无归属的 session（归属现存命名 project 的隐藏）', () => {
+    setupProjects('proj-default', [['proj-a', 'Alpha'], ['proj-b', 'Beta']])
     const wrapper = mountList()
-    expect(wrapper.text()).toContain('会话 A1')
-    expect(wrapper.text()).toContain('会话 B1')
+    const text = wrapper.text()
+    expect(text).toContain('会话 sb') // 未归类可见
+    expect(text).not.toContain('会话 sa') // 归属 proj-a（存在）→ 隐藏
+    expect(text).not.toContain('会话 sc') // 归属 proj-b（存在）→ 隐藏
+    expect(text).not.toContain('会话 sd') // 归属 proj-a → 隐藏
+  })
+
+  it('孤儿 session（归属的 project 已删除）在默认项目可见，不丢失可见性', () => {
+    // proj-b 不存在（sc 的归属是孤儿）；proj-a 存在（sa/sd 正常归属）
+    setupProjects('proj-default', [['proj-a', 'Alpha']])
+    const wrapper = mountList()
+    const text = wrapper.text()
+    expect(text).toContain('会话 sc') // 孤儿可见（归属已删 project）
+    expect(text).toContain('会话 sb') // 未归类可见
+    expect(text).not.toContain('会话 sa') // 归属现存项目 → 隐藏
   })
 })
 
-describe('SessionList: 命名 project 按 workspaces 过滤', () => {
-  it('命名 project + 归因 cwd → 只渲染匹配组的 session', () => {
-    const store = useProjectStore()
-    store.projects = [makeProject('a', 'Alpha')]
-    store.activeProjectId = 'a'
-    store.addWorkspace('/repo-a')
-
+describe('SessionList: 命名 project 按 projectId 过滤', () => {
+  it('命名 project → 只渲染归属它的 session（同 cwd 组内混合归属精确过滤）', () => {
+    setupProjects('proj-a', [['proj-a', 'Alpha'], ['proj-b', 'Beta']])
     const wrapper = mountList()
-
-    // 渲染 gate：匹配组在 DOM，非匹配组不渲染
-    expect(wrapper.text()).toContain('会话 A1')
-    expect(wrapper.text()).not.toContain('会话 B1')
+    const text = wrapper.text()
+    expect(text).toContain('会话 sa') // proj-a 归属
+    expect(text).toContain('会话 sd') // proj-a 归属（另一 cwd 组）
+    expect(text).not.toContain('会话 sb') // 未归类
+    expect(text).not.toContain('会话 sc') // proj-b 归属
   })
 
-  it('命名 project + 未归因任何目录 → 空态（暂无会话 + 新建按钮）', () => {
-    const store = useProjectStore()
-    store.projects = [makeProject('a', 'Alpha')]
-    store.activeProjectId = 'a'
-
+  it('命名 project 无任何归属 session → 空态（暂无会话 + 新建按钮）', () => {
+    setupProjects('proj-empty', [['proj-empty', 'Empty']])
     const wrapper = mountList()
-
-    expect(wrapper.text()).not.toContain('会话 A1')
-    expect(wrapper.text()).not.toContain('会话 B1')
-    // 空态占位文案（sidebar.sessionList.empty）
+    expect(wrapper.text()).not.toContain('会话 sa')
     expect(wrapper.text()).toContain('暂无会话')
-  })
-
-  it('归因目录后实时出现（addWorkspace 触发重渲染）', async () => {
-    const store = useProjectStore()
-    store.projects = [makeProject('a', 'Alpha')]
-    store.activeProjectId = 'a'
-
-    const wrapper = mountList()
-    expect(wrapper.text()).not.toContain('会话 A1')
-
-    store.addWorkspace('/repo-a')
-    await nextTick()
-
-    expect(wrapper.text()).toContain('会话 A1')
   })
 })
 
 describe('SessionList: 切换 project 列表实时变化（用户主诉求回归防护）', () => {
-  it('切 project（A 归因 repo-a → B 归因 repo-b）→ 列表从 A 组变为 B 组', async () => {
-    const store = useProjectStore()
-    store.projects = [
-      { ...makeProject('a', 'Alpha'), workspaces: [{ id: 'w1', cwd: '/repo-a', dir: 'repo-a', repo: '', isMain: false }] },
-      { ...makeProject('b', 'Beta'), workspaces: [{ id: 'w2', cwd: '/repo-b', dir: 'repo-b', repo: '', isMain: false }] },
-    ]
-    store.activeProjectId = 'a'
-
+  it('切 project（a → b）→ 列表从 a 的 session 变为 b 的 session', async () => {
+    setupProjects('proj-a', [['proj-a', 'Alpha'], ['proj-b', 'Beta']])
     const wrapper = mountList()
-    // A 项目：只显示 repo-a 组
-    expect(wrapper.text()).toContain('会话 A1')
-    expect(wrapper.text()).not.toContain('会话 B1')
+    expect(wrapper.text()).toContain('会话 sa')
+    expect(wrapper.text()).not.toContain('会话 sc')
 
-    // 切到 B 项目：列表实时变为 repo-b 组
-    store.setActiveProject('b')
+    useProjectStore().setActiveProject('proj-b')
     await nextTick()
 
-    expect(wrapper.text()).toContain('会话 B1')
-    expect(wrapper.text()).not.toContain('会话 A1')
+    expect(wrapper.text()).toContain('会话 sc')
+    expect(wrapper.text()).not.toContain('会话 sa')
   })
 
-  it('切回默认 project → 恢复显示全部', async () => {
-    const store = useProjectStore()
-    store.projects = [
-      { ...makeProject('a', 'Alpha'), workspaces: [{ id: 'w1', cwd: '/repo-a', dir: 'repo-a', repo: '', isMain: false }] },
-      { ...makeProject('def', ''), workspaces: [] },
-    ]
-    store.activeProjectId = 'a'
-
+  it('切回默认项目 → 未归类 + 孤儿聚合视图（归属现存项目的隐藏）', async () => {
+    setupProjects('proj-a', [['proj-a', 'Alpha'], ['proj-b', 'Beta']])
     const wrapper = mountList()
-    expect(wrapper.text()).not.toContain('会话 B1')
+    expect(wrapper.text()).not.toContain('会话 sb')
 
-    store.setActiveProject('def')
+    useProjectStore().setActiveProject('proj-default')
     await nextTick()
 
-    expect(wrapper.text()).toContain('会话 A1')
-    expect(wrapper.text()).toContain('会话 B1')
+    expect(wrapper.text()).toContain('会话 sb') // 未归类可见
+    expect(wrapper.text()).not.toContain('会话 sa') // 归属 proj-a（存在）→ 隐藏
+    expect(wrapper.text()).not.toContain('会话 sc') // 归属 proj-b（存在）→ 隐藏
   })
 })

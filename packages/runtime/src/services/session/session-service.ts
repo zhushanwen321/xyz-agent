@@ -65,6 +65,14 @@ interface ManagedSession extends IManagedSessionView {
    * 见 lifecycle W-RT-4/5 实现注释）。toSummary 一并透传到 SessionSummary.launchPresetId。
    */
   launchPresetId?: string
+  /**
+   * 归属 project id 的内存态持有（D14 语义修正，2026-08-04）。
+   *
+   * 与 launchPresetId 同模式：.project.json sidecar 可能因 pi 延迟写入未 flush 而无法写入
+   *（persistProjectBinding 的 existsSync 守卫跳过），内存态兑底持有 projectId，
+   * 供 forkSession 继承 / toSummary 透传 / setProject 同步。
+   */
+  projectId?: string
 }
 
 /** 百分比上限（usagePercent 计算唯一常量，消除 model-service / index.ts 的重复）。 */
@@ -260,6 +268,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   async create(cwd?: string, label?: string, options?: {
     hidden?: boolean
     presetId?: string
+    /** 归属 project id（D14 语义修正，2026-08-04）。 */
+    projectId?: string
     /** Landing Model Chip 传入值，覆盖 preset.modelOverride（设计文档 §5.2 优先级）。 */
     modelOverride?: string
     /** Landing Thinking Chip 传入值，覆盖 preset.thinkingLevel（设计文档 §5.2 优先级）。 */
@@ -708,6 +718,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const session = this.sessions.get(sessionId)
     if (!session) return
     this.tryPersistLabel(session)
+    // D14 语义修正：turn_end 时 pi 已完成 flush（文件存在）→ 兜底补写归属 project sidecar
+    //（create 时文件未落盘被 existsSync 守卫跳过，内存态 projectId 在此落盘）。
+    this.tryPersistProjectBinding(session)
   }
 
   /**
@@ -729,6 +742,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     if (!session) return
     session.isGenerating = false
     this.tryPersistLabel(session)
+    // D14 语义修正：agent_end 兜底补写归属（turn_end 时仍未落盘则在此补写）。
+    this.tryPersistProjectBinding(session)
     // W4：写 session_end 终态。aborted→stopped（与 abort 路径一致），error→error，其余→done
     const outcome = stopReason === 'error' ? 'error'
       : stopReason === 'aborted' ? 'stopped'
@@ -831,6 +846,29 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return this.sessionStore.scanSessions().find(s => s.id === sessionId)
   }
 
+  /**
+   * 手动归类（D14 语义修正，2026-08-04）：写 session 归属 project 到 `.project.json` sidecar。
+   *
+   * active session 同步内存态（toSummary 从内存透传，广播后 summary 立即携带新归属）；
+   * 磁盘 session 经扫描拿 filePath 写 sidecar（scanner 下次扫描读到）。
+   * 空 projectId = 归回默认项目（等价删除绑定，persistProjectBinding 空值守卫跳过）。
+   * session 不存在/文件未落盘（延迟写入窗口）→ 静默跳过（不阻断归类流程，下次 create 兑底）。
+   */
+  async setProject(sessionId: string, projectId: string): Promise<void> {
+    const active = this.sessions.get(sessionId) as (IManagedSessionView & { projectId?: string }) | undefined
+    if (active) {
+      active.projectId = projectId || undefined
+      if (active.sessionFilePath) {
+        this.sessionStore.persistProjectBinding(active.sessionFilePath, projectId)
+      }
+      return
+    }
+    const scanned = this.findScannedSession(sessionId)
+    if (scanned?.filePath) {
+      this.sessionStore.persistProjectBinding(scanned.filePath, projectId)
+    }
+  }
+
   toSummary(s: IManagedSessionView): SessionSummary {
     const git = this.gitInfoReader.readGitInfo(s.cwd)
     return {
@@ -850,6 +888,8 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       // W-RT-4/§4.2：active session 的 launchPresetId 透传到 summary（内存态与 sidecar 并列）。
       // ManagedSession 实例携带此字段；普通 IManagedSessionView 无此字段时为 undefined（安全）。
       launchPresetId: (s as ManagedSession).launchPresetId,
+      // D14 语义修正：归属 project 透传到 summary（内存态兑底，sidecar 扫描路径在 scanner）。
+      projectId: (s as ManagedSession).projectId,
     }
   }
 
@@ -1051,6 +1091,24 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     if (s.labelPersisted || !s.sessionFilePath || !existsSync(s.sessionFilePath)) return
     this.sessionStore.persistSessionName(s.sessionFilePath, s.label, s.id, s.cwd)
     s.labelPersisted = true
+  }
+
+  /**
+   * 归属 project sidecar 延迟写入兑底（D14 语义修正，2026-08-04）。
+   *
+   * create 时 session 文件可能未落盘（pi 延迟写入窗口）→ persistProjectBinding 的
+   * existsSync 守卫跳过（规则 #6 禁止提前建文件），只有内存态 projectId。
+   * 本方法在 turn_end（主路径）/ agent_end（兑底）时补写——此时 pi 已完成 flush，
+   * 文件存在，写 sidecar 安全。无归属（undefined）或文件仍不存在 → 跳过（下次兑底）。
+   *
+   * 用 projectBindingPersisted 标记防重复写（对齐 labelPersisted 模式）。
+   */
+  private tryPersistProjectBinding(s: IManagedSessionView): void {
+    const projectId = (s as IManagedSessionView & { projectId?: string }).projectId
+    const persisted = (s as IManagedSessionView & { projectBindingPersisted?: boolean }).projectBindingPersisted
+    if (persisted || !projectId || !s.sessionFilePath || !existsSync(s.sessionFilePath)) return
+    this.sessionStore.persistProjectBinding(s.sessionFilePath, projectId)
+    ;(s as IManagedSessionView & { projectBindingPersisted?: boolean }).projectBindingPersisted = true
   }
 
   /**

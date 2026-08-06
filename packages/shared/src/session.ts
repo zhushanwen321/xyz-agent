@@ -44,6 +44,13 @@ export interface SessionSummary {
    */
   sessionFile?: string
   /**
+   * 归属 project id（D14 语义修正，2026-08-04）：session 创建时归属当前 activeProject，
+   * 与 cwd 无关（project 可跨目录）。无值 = 未归类，展示层归入默认项目（proj-default 兑底）。
+   * 持久化在独立 sidecar `<sessionFile>.project.json`（与 preset sidecar 同模式），
+   * runtime 扫描时读取填充。fork 继承父归属。
+   */
+  projectId?: string
+  /**
    * 隐藏 session（如公共 session）：不显示在 sidebar session 列表，仅供内部使用（如
    * landing 态命令源）。scanner listAll 过滤掉 hidden:true 的 session。
    */

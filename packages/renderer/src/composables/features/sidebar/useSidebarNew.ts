@@ -315,6 +315,16 @@ export function useSidebarNew() {
   const deleteFolder = core.deleteFolder
   const loadSessions = core.loadSessions
 
+  /**
+   * 归入项目（D14 语义修正 2026-08-04）：RPC 写归属 sidecar + 乐观更新 pinia store。
+   * projectId 空串 = 归回默认项目（runtime 删除绑定）。广播 config.sessions 全量覆盖，幂等。
+   * 乐观更新写 pinia store（SessionList 数据源）；raw sessionStore 由广播统一刷新。
+   */
+  async function assignSessionToProject(sessionId: string, projectId: string): Promise<void> {
+    await sessionApi.setProject(sessionId, projectId)
+    useSessionStoreSafe().updateProjectId(sessionId, projectId)
+  }
+
   /** 进入 Overview：push view:'overview'（ADR-0023，sidebar 持久，main 被覆盖） */
   function goOverview(): void {
     navigation.push({ view: 'overview' })
@@ -410,6 +420,7 @@ export function useSidebarNew() {
     renameSession,
     deleteSession,
     deleteFolder,
+    assignSessionToProject,
     forkSession,
     forkSessionAsk,
     forkFromLastAssistant,

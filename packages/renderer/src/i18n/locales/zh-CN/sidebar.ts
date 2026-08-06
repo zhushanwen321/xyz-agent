@@ -35,12 +35,14 @@ export default {
     markDone: '标记完成',
     unmarkDone: '取消标记',
     archived: '已归档',
+    assignToProject: '归入项目',
   },
   sessionList: {
     empty: '暂无会话',
     newSession: '新建会话',
     deleteFolderConfirm: '确认删除此文件夹下所有会话？',
   },
+  assignProjectFailed: '归入项目失败',
   forkGroup: {
     title: '本会话的分支',
     branchN: '分支 {n}',

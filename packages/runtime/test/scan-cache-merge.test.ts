@@ -161,13 +161,12 @@ describe('W3 scanPiSessions mtime+size 缓存', () => {
 
     fsState.readCount = 0
     scanPiSessions()
-    // B7 sidecar 方案后每文件读取：parseSessionHeader(1) + extractSessionName 尾读/fallback(1)
-    // + extractSessionOutcome sidecar(1) + JSONL fallback(1) = 4 readFileSync/文件。
-    // wave2 preset sidecar 四读合一：+ readPresetBinding(1) = 5 readFileSync/文件。
-    // 此用例的 makeSessionFile 写 outcome 到 sidecar 且保留 JSONL session_end →
-    // extractSessionOutcome 先读 sidecar(1) 再 fallback JSONL(1)，加上 handedOffTo
-    // 尾读 fallback(1) → 实际每文件 6 readFileSync。
+    // B7 sidecar 方案后每文件读取（真实读，mock 计数×2——vitest Proxy 转发双计）：
+    // parseSessionHeader(1) + extractSessionName 尾读(0) + extractSessionOutcome sidecar(1)
+    // + extractHandedOff 仅尾读(0) + readPresetBinding(1) = 3 真实读/文件（计数 6）。
+    // D14 语义修正（2026-08-04）project sidecar 第五读：+ readProjectBinding(1) 真实读
+    // → 4 真实读/文件（计数 8）。基线（无 project 读）3 文件计数 18 = 3 × 6。
     // 关键约束：缓存命中时（下一个用例）readFileSync 不增加。
-    expect(fsState.readCount).toBeLessThanOrEqual(18) // 3 文件 × 6
+    expect(fsState.readCount).toBeLessThanOrEqual(24) // 3 文件 × 4 真实读 × 2 计数
   })
 })

@@ -31,6 +31,8 @@ export interface UseSidebarSessionActionsOptions {
   renameSession: (id: string, label: string) => Promise<void>
   deleteSession: (id: string) => Promise<void>
   deleteFolder: (cwd: string) => Promise<{ failed: Array<{ error?: string }> }>
+  /** 归入项目（D14 语义修正，2026-08-04）：RPC + 乐观更新编排在 useSidebarNew。 */
+  assignSessionToProject: (sessionId: string, projectId: string) => Promise<void>
   /** RenameSessionDialog 开关 ref（Sidebar.vue 本地 UI 状态） */
   renameOpen: Ref<boolean>
   /** RenameSessionDialog 目标 session ref（Sidebar.vue 本地 UI 状态） */
@@ -47,6 +49,7 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
     renameSession,
     deleteSession,
     deleteFolder,
+    assignSessionToProject,
     renameOpen,
     targetSessionId,
   } = options
@@ -120,6 +123,16 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
     }
   }
 
+  /** 归入项目（D14 语义修正）：SessionItem 菜单选择后 RPC + 乐观更新；失败 toast。 */
+  async function onAssignProject(payload: { sessionId: string; projectId: string }): Promise<void> {
+    try {
+      await assignSessionToProject(payload.sessionId, payload.projectId)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      toastError(t('sidebar.assignProjectFailed', { msg }))
+    }
+  }
+
   /** S5：重试加载会话列表（loadSessions 失败后用户点击重试） */
   function onRetryLoadSessions(): void {
     void loadSessions()
@@ -157,6 +170,7 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
     onDeleteFolder,
     onStopBranch,
     onConfirmRename,
+    onAssignProject,
     onRetryLoadSessions,
     onRetryWorkflows,
     onRetrySubagents,

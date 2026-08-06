@@ -15,7 +15,7 @@ import { useProjectStore } from '@/stores/project'
 import type { Project } from '@xyz-agent/shared'
 
 function makeProject(id: string, name: string, lastUsedAt = 0): Project {
-  return { id, name, workspaces: [], lastUsedAt }
+  return { id, name, lastUsedAt }
 }
 
 describe('ProjectSwitcher: 默认展开 + 最近使用排序 + 滚动', () => {

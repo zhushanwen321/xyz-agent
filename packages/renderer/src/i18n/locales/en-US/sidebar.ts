@@ -36,12 +36,14 @@ export default {
     markDone: 'Mark done',
     unmarkDone: 'Unmark done',
     archived: 'Archived',
+    assignToProject: 'Assign to project',
   },
   sessionList: {
     empty: 'No sessions',
     newSession: 'New session',
     deleteFolderConfirm: 'Delete all sessions in this folder?',
   },
+  assignProjectFailed: 'Failed to assign to project',
   forkGroup: {
     title: 'Branches',
     branchN: 'Branch {n}',
