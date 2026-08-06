@@ -14,7 +14,9 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { GroupCard } from '@xyz-agent/ui/features/settings'
-import { TAIJI_THEMES } from '@/composables/useTaijiThemes'
+import { TAIJI_THEMES, resolveTaijiTheme } from '@/composables/useTaijiThemes'
+import { getSettingsStore } from '@xyz-agent/core'
+import { applySystemToDom } from '@xyz-agent/ui/features/settings'
 
 const { t } = useI18n()
 
@@ -35,20 +37,17 @@ function applyThemeNow(label: string): void {
   activeThemeLabel.value = label
   const th = TAIJI_THEMES.find((t) => t.label === label)
   if (!th) return
-  // 暗色族玄、亮色族皓为 :root/[data-theme=light] 默认，preset='' 时清掉所有 preset 覆盖
-  // 其余 4 主题通过 data-theme + data-theme-preset 触发 style.css 规则（与 store 路径一致），
-  // 但调试页不走 store，直接写 :root inline override（reset 时清掉）
+  // 清之前 inline token override（防干扰 data-theme 规则的 token 值）
   resetToken('--accent')
   resetToken('--accent-hover')
   resetToken('--accent-fg')
   resetToken('--bg')
   resetToken('--surface')
   resetToken('--neutral-fg')
-  // 用 inline override 模拟主题切换（取 TAIJI_THEMES.swatch 的 accent/fg/surface/bg 近似）
-  writeToken('--accent', th.swatch[0])
-  writeToken('--neutral-fg', th.swatch[1])
-  writeToken('--surface', th.swatch[2])
-  writeToken('--bg', th.swatch[3])
+  // 写 data-theme + data-theme-preset（触发 style.css 完整 preset 规则，与 store 路径一致）。
+  // 不走 store（调试页不持久化），仅 DOM 层完整切换；resetAll/onUnmounted 经 applySystemToDom 恢复 store 主题。
+  document.documentElement.setAttribute('data-theme', th.theme)
+  document.documentElement.setAttribute('data-theme-preset', th.preset)
   refreshTokens()
 }
 
@@ -97,7 +96,10 @@ function resetAll(): void {
   resetToken('--accent'); resetToken('--accent-hover'); resetToken('--accent-fg')
   resetToken('--bg'); resetToken('--surface'); resetToken('--neutral-fg')
   resetToken('--font-scale-u')
-  activeThemeLabel.value = TAIJI_THEMES[0].label
+  // 恢复 store 主题到 DOM（applyThemeNow 改了 data-theme/data-theme-preset，重置/离开时需恢复持久化主题）
+  const sys = getSettingsStore().system.value
+  applySystemToDom(sys)
+  activeThemeLabel.value = resolveTaijiTheme(sys).label
   fontScale.value = null
   refreshFontInfo()
   refreshTokens()

@@ -103,6 +103,15 @@ export function useSettingsShell(): void {
   // 此处兜底首次 apply（init 的 setSystem 与本调用竞态时，watch 会再纠正）。
   applyCurrent()
 
+  // watch system 外观字段（theme/themePreset/fontSize）→ applyCurrent 同步 <html data-*> 属性。
+  // 修复：原仅 watch theme=system 的 matchMedia，light↔dark 切换、太极主题（themePreset）切换、
+  // 字号切换都不触发 applySystemToDom，导致系统页选主题后 data-theme/data-theme-preset 不更新，整页主题不变。
+  watch(
+    () => [store.system.value.theme, store.system.value.themePreset, store.system.value.fontSize] as const,
+    () => applyCurrent(),
+    { flush: 'pre' },
+  )
+
   // watch system.theme：theme=system 时挂 matchMedia listener（OS 深浅色实时切换），非 system 时卸载。
   // watch 的 onCleanup 自动在 theme 变化/组件卸载时卸载旧 listener，避免泄漏。
   watch(
