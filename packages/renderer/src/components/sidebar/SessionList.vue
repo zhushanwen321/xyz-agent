@@ -2,13 +2,15 @@
   <!--
     展示组件 · 会话列表（子视图 A，draft-five-states 卡 A/D）。
     按 cwd 分组渲染（D7：对齐后端 SessionGroup[]）—— 每组一个标题（cwd 末段）+ 组内 SessionItem 列表。
+    按 activeProject.workspaces 过滤（v6 D14）：默认 project（name 空）显示全部；命名 project 只显示
+    其 workspaces 对应 cwd 的组（session 与 project 的关联键 = cwd，见 shared/project.ts）。
     ScrollArea 包裹；空态（D，session 数=0）显示极淡「暂无会话」占位。
     v-model 语义用 activeId（单向：子→父 select）。
   -->
   <ScrollArea class="session-list h-full">
     <div class="flex flex-col px-1">
       <div
-        v-for="g in groups"
+        v-for="g in visibleGroups"
         :key="g.cwd"
         class="group/folder group-section flex flex-col gap-0.5"
       >
@@ -98,10 +100,12 @@ import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { dirNameOf } from '@xyz-agent/ui'
+import { useProjectStore } from '@/stores/project'
 import SessionItem from './SessionItem.vue'
 import ForkGroup from './ForkGroup.vue'
 
 const { t } = useI18n()
+const projectStore = useProjectStore()
 
 const props = defineProps<{
   /** 按 cwd 分组的会话（D7，对齐后端 SessionGroup[]） */
@@ -122,9 +126,22 @@ const emit = defineEmits<{
   deleteFolder: [cwd: string]
 }>()
 
+/**
+ * 按 activeProject 过滤后的分组（D14 关联键 = cwd）：
+ * - 默认 project（name 空）→ 全部（未归类聚合，兼容现有体验）
+ * - 命名 project → 只保留 cwd ∈ activeWorkspaceCwds 的组
+ * 过滤后无匹配组 → totalCount=0 走空态（「暂无会话」+ 新建按钮）。
+ */
+const visibleGroups = computed<SessionGroup[]>(() => {
+  if (projectStore.isDefaultProject) return props.groups
+  const cwds = new Set(projectStore.activeWorkspaceCwds)
+  if (cwds.size === 0) return []
+  return props.groups.filter((g) => cwds.has(g.cwd))
+})
+
 /** 全部 session 总数（空态判定，跨组汇总） */
 const totalCount = computed(() =>
-  props.groups.reduce((sum, g) => sum + g.sessions.length, 0),
+  visibleGroups.value.reduce((sum, g) => sum + g.sessions.length, 0),
 )
 
 /**

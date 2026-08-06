@@ -32,6 +32,7 @@ import { createSessionFlow, useNewTaskFlow as useCoreNewTaskFlow } from '@xyz-ag
 import type { CreateSessionFlowCtx, SessionApiPort } from '@xyz-agent/core'
 import { useSessionStore } from '@/stores/session'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { useProjectStore } from '@/stores/project'
 import { usePanelStore } from '@/stores/panel'
 import { useNavigationStore } from '@/stores/navigation'
 import { useChat } from '@/composables/features/chat/useChat'
@@ -85,6 +86,7 @@ export function useNewTaskFlow() {
   if (cachedFlow) return cachedFlow
   const session = useSessionStore()
   const workspaceStore = useWorkspaceStore()
+  const projectStore = useProjectStore()
   const panel = usePanelStore()
   const navigation = useNavigationStore()
   const chat = useChat()
@@ -113,7 +115,13 @@ export function useNewTaskFlow() {
               }
             },
           }
-          return createSessionFlow(ctx, input)
+          // 自动归因（D14）：create 成功后把 cwd 归入 activeProject（命名 project 才归，
+          // 默认 project 显示全部无需归因；addWorkspace 内部 dedup + 空 name 守卫）。
+          // fork 路径不走 createSessionFlow（useForkActions 直接 sessionApi.fork），
+          // fork cwd 与父相同——父已归因则该 cwd 已在 project，无需处理。
+          const result = await createSessionFlow(ctx, input)
+          if (result) projectStore.addWorkspace(result.session.cwd)
+          return result
         },
         setThinkingLevel: (sid, level) => setThinkingLevel(sid, level),
       },

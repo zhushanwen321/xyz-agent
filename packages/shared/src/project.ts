@@ -7,18 +7,25 @@
  *  - Session：现有 session 模型（当前按 cwd 分组），未来按 workspace.id 关联。
  *
  * 本次（UI + store 阶段）实现 ProjectSwitcher UI + project store（CRUD + renderer localStorage 持久化）。
- * Session 按 activeProject.workspaces 过滤分组的改造（替代当前按 cwd 分组）作为 followup，
- * 见 ProjectSwitcher.vue 内 TODO。
+ * Session 按 activeProject.workspaces 过滤分组（cwd 精确匹配）：默认 project（name 空）显示全部，
+ * 命名 project 只显示其 workspaces 对应 cwd 的 session；新建 session 成功后自动归因 cwd 到
+ * activeProject（create 成功即 addWorkspace）。
  *
- * 数据流（当前）：projectStore（localStorage）↔ ProjectSwitcher UI
+ * 数据流（当前）：projectStore（localStorage）↔ ProjectSwitcher UI + SessionList 过滤 + 自动归因
  * 数据流（完整，followup）：runtime（~/.xyz-agent/projects.json）↔ projectStore ↔ ProjectSwitcher；
- *   sessionStore 按 activeProject.workspaces 过滤分组
+ *   workspace 管理 UI（手动添加/移除目录）
  */
 
 /** 目录实体：bare repo 下的 main checkout 或 worktree 分支目录 */
 export interface Workspace {
   id: string
-  /** 目录显示名，如 main/、feat-optimize-ui/ */
+  /**
+   * 目录绝对路径（与 session.cwd 关联的唯一键）。
+   * 自动归因（create 成功后）只填 cwd + dir；repo/branch/isMain 留给未来
+   * workspace 管理 UI 经 workspace.detect 填充。
+   */
+  cwd: string
+  /** 目录显示名，如 main/、feat-optimize-ui/（cwd basename） */
   dir: string
   /** 所属 repo 根名，如 xyz-agent-workspace */
   repo: string

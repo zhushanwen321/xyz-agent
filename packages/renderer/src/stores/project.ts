@@ -1,15 +1,17 @@
 /**
  * Project store —— v6 D14 Project 一级导航的状态层。
  *
- * 职责：Project CRUD + activeProjectId 切换 + renderer localStorage 持久化。
+ * 职责：Project CRUD + activeProjectId 切换 + workspace 归因（addWorkspace/removeWorkspace）
+ *        + renderer localStorage 持久化。
  *
  * 本次范围（UI + store 阶段）：
  *  - 持久化用 localStorage（renderer 侧轻量持久化，数据不跨设备）。
- *  - session 按 activeProject.workspaces 过滤分组尚未接入（当前 session 仍按 cwd 分组）。
+ *  - session 按 activeProject.workspaces 过滤分组已接入（SessionList 消费 activeWorkspaceCwds）。
+ *  - 自动归因：新建 session 成功后把 cwd 加入 activeProject（useNewTaskFlow 编排）。
  *
  * Followup（完整阶段）：
  *  - 持久化迁移到 runtime RPC（~/.xyz-agent/projects.json，跨设备/跨实例一致）。
- *  - sessionStore 接入 activeProject.workspaces 做分组过滤。
+ *  - workspace 管理 UI（手动添加/移除目录到 project；现有自动归因覆盖新建路径）。
  *  见 ProjectSwitcher.vue 内 TODO。
  *
  * 依赖方向：无（stores 间禁止互相 import）。
@@ -22,7 +24,8 @@ const STORAGE_KEY = 'xyz-agent:projects'
 const DEFAULT_PROJECT_ID = 'proj-default'
 
 /** 从 localStorage 读初始态；损坏/空时回退单个默认 project（保证 UI 永远有项可显）。
- *  默认 project name 留空，由 ProjectSwitcher 渲染时 fallback 到 i18n defaultName。 */
+ *  默认 project name 留空，由 ProjectSwitcher 渲染时 fallback 到 i18n defaultName。
+ *  Workspace 兼容：旧持久化数据可能含无 cwd 的 workspace（模型升级前）→ 过滤掉（无关联键无效）。 */
 function loadFromStorage(): ProjectStoreState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -130,5 +133,58 @@ export const useProjectStore = defineStore('project', () => {
     }
   }
 
-  return { projects, activeProjectId, activeProject, recentProjects, setActiveProject, addProject, removeProject }
+  /**
+   * 当前 activeProject 的 workspace cwd 集合（SessionList 过滤依据）。
+   * 默认 project（name 空）返回空数组——但其过滤语义由消费方区分：
+   * name 空 → 显示全部 session（未归类聚合）；命名 project → 只显示匹配 cwd 的 session。
+   * 兼容旧数据：无 cwd 的 workspace 过滤掉（无关联键无效）。
+   */
+  const activeWorkspaceCwds = computed<string[]>(() =>
+    activeProject.value.workspaces
+      .map((w) => w.cwd)
+      .filter((cwd): cwd is string => typeof cwd === 'string' && cwd.length > 0),
+  )
+
+  /** 默认 project 判定（name 空 = 未命名默认 project，语义为「未归类聚合」） */
+  const isDefaultProject = computed(() => !activeProject.value.name)
+
+  /**
+   * 把目录归入 activeProject（自动归因入口：新建 session 成功后调用）。
+   * 按 cwd dedup（同目录不重复添加）；只在命名 project 上生效（默认 project 显示全部，无需归因）。
+   * @returns true = 新增归因；false = 已存在 / 默认 project / cwd 无效
+   */
+  function addWorkspace(cwd: string): boolean {
+    const target = activeProject.value
+    if (!cwd || !target.name) return false
+    if (target.workspaces.some((w) => w.cwd === cwd)) return false
+    target.workspaces.push({
+      id: `ws-${Date.now()}-${target.workspaces.length}`,
+      cwd,
+      dir: cwd.split('/').filter(Boolean).pop() ?? cwd,
+      repo: '',
+      isMain: false,
+    })
+    return true
+  }
+
+  /** 从 activeProject 移除目录（手动管理 UI 预留；自动归因不触发移除）。 */
+  function removeWorkspace(cwd: string): void {
+    const target = activeProject.value
+    const idx = target.workspaces.findIndex((w) => w.cwd === cwd)
+    if (idx !== -1) target.workspaces.splice(idx, 1)
+  }
+
+  return {
+    projects,
+    activeProjectId,
+    activeProject,
+    recentProjects,
+    activeWorkspaceCwds,
+    isDefaultProject,
+    addWorkspace,
+    removeWorkspace,
+    setActiveProject,
+    addProject,
+    removeProject,
+  }
 })
