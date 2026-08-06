@@ -93,11 +93,21 @@ const SPAWN_WATCHDOG_FLOOR_MS = 30 * 60 * 1000;
  *  留 1-2 分钟余量。下限与按 turn 计算取 max，避免 maxTurns 过小时 watchdog 紧到误杀。 */
 const WATCHDOG_MS_PER_TURN = 5 * 60 * 1000;
 
-// [recursive-orchestration] agent_end 有活跃后代时的等待超时（不 kill 分支的兑底）。
+// [recursive-orchestration] agent_end keep-alive 的两类等待超时（不 kill 分支的兑底）。
 // 层主 subagent 空闲等待后代完成（steer 唤醒）期间不产生 turn，原 watchdog 已清；
 // 此后代卡死（永不完成）时此 timer 保证进程最终回收。超时 kill → finalize 视为正常
 // 完成 → 通知父（父查 cw status 发现未 closed 会走 L2/L3 重派，见 planning-agent 模板）。
-const WAIT_DESCENDANT_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2h
+// 两类超时分挂不同分支（见 agent_end handler）：
+//   - 有活跃后代（count>0 / error）→ computeWatchdogMs(maxTurns) 动态超时（MF-4，不误杀慢后代）
+//   - 仅 recentUnregister 竞态 → WAKEUP_GRACE_MS 秒级宽限（MF-3，不空等 2h）
+
+/** [MF-3] agent_end keep-alive 的 recentUnregister 竞态宽限（ms）。
+ *  notify steer 唤醒的竞态宽限——15s 内无新 agent_end（未被唤醒）即 kill；
+ *  被唤醒后下一次 agent_end 重新评估。不用长超时：层主 closeout 的最终 agent_end
+ *  必然命中此分支（距最后一次 unregister <60s），挂长超时 = 空等 2h 才回收
+ *  + 冒牌完成通知级联。
+ *  [export] 测试可观测（run-spawn-edges MF-3 用例用 fake timers 断言 15s 后 kill）。 */
+export const WAKEUP_GRACE_MS = 15_000;
 
 /**
  * [M-1] 基于 maxTurns 动态计算 watchdog 超时。
@@ -110,9 +120,13 @@ const WAIT_DESCENDANT_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2h
  * - maxTurns=20 → 100 分钟
  * - maxTurns=100 → 500 分钟（8 小时+，覆盖全量重构）
  *
+ * [MF-4] 同时是 agent_end keep-alive 的「有活跃后代」等待超时（不 kill 分支），
+ * 替代旧固定 2h（WAIT_DESCENDANT_TIMEOUT_MS，已删除）——wave 开发 >2h 不被误杀。
+ * [export] 测试可观测（run-spawn-edges MF-4 用例断言 keep-alive 等待超时 = 动态值）。
+ *
  * @param maxTurns 调用方指定的 turn 上限；undefined/null/0 视为默认 10 turns
  */
-function computeWatchdogMs(maxTurns: number | undefined | null): number {
+export function computeWatchdogMs(maxTurns: number | undefined | null): number {
   const effectiveTurns = maxTurns && maxTurns > 0 ? maxTurns : 10;
   return Math.max(SPAWN_WATCHDOG_FLOOR_MS, effectiveTurns * WATCHDOG_MS_PER_TURN);
 }
@@ -816,25 +830,34 @@ export async function runSpawn(
               // workflow）→ 保持进程 idle，等后代完成时 notifier triggerTurn steer 唤醒；
               // 无 → 正常完成，kill 触发 close → runSpawn resolve。
               const pending = readActivePendingFromSessionFile(record.sessionFile);
-              if (pending.count > 0 || pending.recentUnregister || pending.error) {
+              if (pending.count > 0 || pending.error) {
                 if (pending.error) {
                   logger.warn(
                     `[session-runner] agent_end: keep alive (sessionFile unreadable, conservative): ${pending.error}`,
                   );
-                } else if (pending.count > 0) {
+                } else {
                   logger.debug(
                     `[session-runner] agent_end: keep alive, ${pending.count} active descendant(s) pending`,
                   );
-                } else {
-                  // 差集 0 但最近有 unregister：后代刚完成，notify 唤醒可能在路上（竞态窗口），
-                  // 保持进程——父被唤醒后的下一次 agent_end 会正常判定。
-                  logger.debug(
-                    "[session-runner] agent_end: keep alive, recent descendant completion (wake-up in flight)",
-                  );
                 }
-                // 空闲等待期间不消耗 turn：清原 watchdog，换等待后代超时（每次 agent_end 重新计时）
+                // 空闲等待期间不消耗 turn：清原 watchdog，换等待后代超时（每次 agent_end 重新计时）。
+                // [MF-4] 动态超时 = computeWatchdogMs(maxTurns)：真实后代在跑，慢任务（wave 开发
+                // 数小时）不能被固定 2h 误杀——2h 到点 kill 会连坐 SubagentService.dispose 的
+                // killAllSpawnedChildren 杀全部子进程，L2 重派丢在途工作。maxTurns 大则超时长。
                 clearTimeout(watchdog);
-                watchdog = setTimeout(() => child.kill("SIGTERM"), WAIT_DESCENDANT_TIMEOUT_MS);
+                watchdog = setTimeout(() => child.kill("SIGTERM"), computeWatchdogMs(opts.maxTurns));
+                watchdog.unref();
+              } else if (pending.recentUnregister) {
+                // 差集 0 但最近有 unregister：后代刚完成，notify 唤醒可能在路上（竞态窗口），
+                // 保持进程——父被唤醒后的下一次 agent_end 会正常判定。
+                // [MF-3] 秒级宽限：此分支在每层「最终 turn」必命中（closeout 的 agent_end 距
+                // 最后一次 unregister <60s），挂长超时 = 空等 2h 才 kill + 冒牌完成通知级联。
+                // 15s 内无新 agent_end（未被唤醒）即 kill；被唤醒后下一次 agent_end 重新评估。
+                logger.debug(
+                  "[session-runner] agent_end: keep alive, recent descendant completion (wake-up in flight)",
+                );
+                clearTimeout(watchdog);
+                watchdog = setTimeout(() => child.kill("SIGTERM"), WAKEUP_GRACE_MS);
                 watchdog.unref();
               } else {
                 child.kill("SIGTERM");

@@ -215,6 +215,17 @@ describe("state pure functions", () => {
 			expect(comp.activeIds).toEqual([]);
 			expect(comp.expiredToFlush).toEqual([{ id: "w-1", status: "expired" }]);
 		});
+
+		it("entries 含 null/undefined 元素 → 跳过不抛 TypeError（S-10）", () => {
+			const comp = rebuildFromEntries(
+				createRegistry(),
+				[null, makeRegisterEntry("w-1"), undefined],
+				"sess-current",
+				NOW,
+			);
+			expect(comp.activeIds).toEqual(["w-1"]);
+			expect(comp.expiredToFlush).toEqual([]);
+		});
 	});
 
 	describe("normalizeRegisterEntry defaults (via rebuild)", () => {
@@ -473,6 +484,17 @@ describe("countActiveFromEntries（纯差集，供 goal / subagent-workflow 复�
 
 	it("同 id 重复 register → 只算一次", () => {
 		expect(countActiveFromEntries([mkRegister("bg-1"), mkRegister("bg-1")]).count).toBe(1);
+	});
+
+	it("entries 含 null/undefined 元素 → 跳过不抛 TypeError（S-10）", () => {
+		// S-10 回归：外部调用方可能传入含 null/undefined 的 entries（session 文件坏行/脏数据），
+		// 遍历时访问 raw.customType 前必须守卫，否则 TypeError 炸掉整个差集判定。
+		const withNulls = [null, undefined, mkRegister("bg-1"), mkUnregister("bg-1"), null];
+		expect(countActiveFromEntries(withNulls).count).toBe(0);
+		const mixed = [undefined, null, mkRegister("bg-2")];
+		expect(countActiveFromEntries(mixed).ids).toEqual(["bg-2"]);
+		// register 循环同样守卫：unregister 遍历前的 null 不污染差集
+		expect(countActiveFromEntries([null, undefined]).count).toBe(0);
 	});
 
 	it("malformed register（id 非 string）→ 跳过", () => {

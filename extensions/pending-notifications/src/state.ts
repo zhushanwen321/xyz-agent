@@ -140,6 +140,9 @@ export function countActiveFromEntries(
 ): CountActiveResult {
 	const unregistered = new Set<string>();
 	for (const raw of entries as EntryLike[]) {
+		// S-10：entries 元素可能是 null/undefined（外部调用方/坏数据），
+		// EntryLike 断言前先守卫，避免访问 raw.customType 抛 TypeError 炸掉差集判定。
+		if (!raw || typeof raw !== "object") continue;
 		if (raw.customType !== "pending:unregister") continue;
 		const data = (raw.data ?? {}) as UnregisterEntryData;
 		if (typeof data.id === "string") unregistered.add(data.id);
@@ -148,6 +151,7 @@ export function countActiveFromEntries(
 	const active: PendingEntry[] = [];
 	const seen = new Set<string>();
 	for (const raw of entries as EntryLike[]) {
+		if (!raw || typeof raw !== "object") continue;
 		if (raw.customType !== "pending:register") continue;
 		const data = (raw.data ?? {}) as RegisterEntryData;
 		if (typeof data.id !== "string" || unregistered.has(data.id) || seen.has(data.id)) continue;
@@ -196,6 +200,8 @@ export function rebuildFromEntries(
 	const unregisteredIds = new Set<string>();
 
 	for (const raw of entries as EntryLike[]) {
+		// S-10：同 countActiveFromEntries——null/undefined 元素先守卫再访问字段。
+		if (!raw || typeof raw !== "object") continue;
 		if (raw.customType === "pending:register") {
 			registerEntries.push({ data: (raw.data ?? {}) as RegisterEntryData });
 		} else if (raw.customType === "pending:unregister") {
