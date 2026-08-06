@@ -36,6 +36,15 @@ export const LRU_MAX_SESSIONS = 8
  * key = sessionId，value = 最后访问时间戳。
  * Map 的插入顺序天然反映首次访问顺序，但 LRU 需要按最后访问排序，
  * 所以用 touchLru 维护时间戳，evictIfNeeded 按时间戳排序。
+ *
+ * [ADR-0049 例外] 本模块级 Map 不套 useSessionScopedState。判据：lru.ts 是纯函数模块
+ * （touchLru/evictIfNeeded/evictSessionWithVirtual/disposeLruEntry 均为独立导出函数，非
+ * composable，无 Vue setup 上下文、无 sidRef: Ref<string|null>）；Map 存的是时序戳
+ * （number，非 reactive 业务状态）。useSessionScopedState 是 setup-scoped 工厂（要求 sidRef
+ * + reactive 容器契约），本模块无法满足——强套需把纯函数改造成 composable + 破坏所有调用方
+ * 签名 + reactive 容器语义错位（时序戳不是响应式状态）。与 useChat/subscription-state
+ * 同属 ADR-0049「全局 sid 协调器例外类（模块级 Map 合理）」。session 销毁清理：disposeLruEntry(sid)
+ * 由 disposeSession 编排调用（R5 内存泄漏修复）；测试隔离：_resetLruForTest()。
  */
 const sessionLastAccessed = new Map<string, number>()
 

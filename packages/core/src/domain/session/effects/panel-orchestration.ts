@@ -5,10 +5,16 @@
  * + chat-message-effects.ts openTasksDrawerOnFirstData（FR-2 sid 守卫 + ADR-0053）。
  * 迁移约束：core 不 import renderer 任何 store（D4 零跨域 import），壳层经 PanelOrchestrationPort 注入实现。
  *
- * ⚠️ D3 例外标注：pendingOpen 是**临时路由标记**（非业务 per-session 状态）——
- * 存在即消费、随 consumePendingOpen 即删、不跨 session 存活，用模块级 Map<sid, panelId>
- * 而非 useSessionScopedState（Map 分区管理是纯额外复杂度）。若 review 认为违反 D3，
- * 改用 useSessionScopedState（见 IF3 契约备注）。
+ * [ADR-0049 例外：明确判定，不再悬置] pendingOpen 是**临时路由标记**（非业务 per-session 状态）——
+ * 存在即消费、随 consumePendingOpen 即删、不跨 session 存活。用模块级 Map<sid, panelId> 而非
+ * useSessionScopedState。判据：本文件是纯函数模块（setPendingOpenForSid/openPanelOnSessionEvent/
+ * consumePendingOpen/clearPendingOpen 均为独立导出函数，非 composable，无 Vue setup 上下文、无
+ * sidRef: Ref<string|null>）；Map 存的是路由标记（'tasks'|'sideDrawer'，非 reactive 业务状态）。
+ * useSessionScopedState 是 setup-scoped 工厂（要求 sidRef + reactive 容器契约），本模块无法
+ * 满足——强套需把纯函数改造成 composable + 破坏所有调用方签名 + reactive 容器语义错位（路由
+ * 标记不是响应式状态）。与 useChat/subscription-state 同属 ADR-0049「全局 sid 协调器例外类
+ * （模块级 Map 合理）」。session 销毁清理：clearPendingOpen(sid) 由 use-session.ts
+ * cleanupSessionState 编排调用（ES3：删 session 前清标记，防切回已删 session 误开 panel）。
  */
 import type { PanelLeaf } from '@xyz-agent/shared'
 
@@ -34,7 +40,7 @@ export interface PanelOrchestrationPort {
   openPanel(panelId: 'tasks' | 'sideDrawer', sid: string): void
 }
 
-/** DM1：pendingOpen 路由标记（模块级 Map，D3 例外——临时路由标记非业务 per-session 状态） */
+/** DM1：pendingOpen 路由标记（模块级 Map，ADR-0049 例外——临时路由标记非业务 per-session 状态，详见文件头） */
 const pendingOpenMap = new Map<string, 'tasks' | 'sideDrawer'>()
 
 /** 置某 session 的 pendingOpen 标记（openPanelOnSessionEvent 非 focused 分支调） */

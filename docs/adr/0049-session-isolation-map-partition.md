@@ -95,13 +95,16 @@ ESLint 规则放弃后，per-session 范式靠 **code-review 强制检查项** �
 
 #### 全局 sid 协调器例外类（模块级 Map 合理）
 
-以下模块持有 per-session 状态但采用**模块级单例 Map**，不套 `useSessionScopedState`。判据：它们是「全局 sid 协调器」——所有方法显式接收 sessionId 参数，无 sidRef 绑定实例，与 per-instance composable（有 sidRef + reactive 容器契约）属不同层。`useSessionScopedState` 要求 sidRef + per-instance reactive 容器，强套会破坏消费者签名 + 语义错位（w4 retrospect 教训 #3：handoff 范式要求需结合代码所在层判断适用性）。
+以下模块持有 per-session 状态但采用**模块级单例 Map**，不套 `useSessionScopedState`。判据：它们是「全局 sid 协调器 / 纯函数模块」（无 Vue setup 上下文、无 sidRef 绑定实例的模块级单例）——所有方法显式接收 sessionId 参数（或经绑定查询拿 sid），存的是**非 reactive 数据**（unsub 函数 / 时序戳 / 路由标记），与 per-instance composable（有 sidRef + reactive 容器契约）属不同层。`useSessionScopedState` 要求 sidRef + per-instance reactive 容器，强套会破坏消费者签名 + 语义错位（w4 retrospect 教训 #3：handoff 范式要求需结合代码所在层判断适用性）。
 
 | 模块 | 模块级状态 | 原因 | 审批
 |-----|----------|------|------
 | `core/domain/chat/useChat.ts` | `streamSubscriptions` / `historyTruncatedSessions` | 全局 sid 协调器（无 sidRef，记录非 reactive 的 unsub 函数）；session 销毁由 `disposeSession` + `triggerSessionCleanups` 编排 | w5 clarify Q1/TD2
 | `core/coordination/subscription-state.ts` | `subscriptionStates` | WS 订阅状态（数据完整性层），`routeInbound` 在配置闭包需同步访问；非 per-instance UI 状态（UI 经 events 通道消费，不直接读 lastSeenSeq） | 原实现既定设计（slice TO3）
 | `renderer/composables/effects/useForkNoticeEffect.ts` | `feedMap` / `trackedBranchesRef` / `unreadByBranchRef` | 全局 feed SSOT（多 MessageStream 实例共读），各方法显式接收 sessionId，无 sidRef；同 useChat 模式 | 对齐 useChat w5 clarify
+| `core/domain/chat/lru.ts` | `sessionLastAccessed` | 纯函数模块（`touchLru`/`evictIfNeeded`/`evictSessionWithVirtual`/`disposeLruEntry` 独立导出，非 composable，无 setup/sidRef）；Map 存时序戳（number，非 reactive）；清理走 `disposeLruEntry(sid)` 由 `disposeSession` 编排（R5）+ 测试 `_resetLruForTest()` | renderer 重做审查
+| `core/domain/drawer/coordination.ts` | `pendingOpenMap` | 纯函数模块（`setPendingOpenForSid`/`consumePendingOpen`/`openTasksDrawerOnFirstData` 独立导出，非 composable，无 setup/sidRef）；Map 存 boolean 路由标记（非 reactive）；清理走 `registerSessionCleanup` 挂载（见文件尾）+ 测试 `_resetDrawerForTest()` | renderer 重做审查
+| `core/domain/session/effects/panel-orchestration.ts` | `pendingOpenMap` | 纯函数模块（`openPanelOnSessionEvent`/`consumePendingOpen`/`clearPendingOpen` 独立导出，非 composable，无 setup/sidRef）；Map 存临时路由标记（`'tasks'`\|`'sideDrawer'`，存在即消费、随 `consumePendingOpen` 即删、不跨 session 存活，非 reactive）；清理走 `clearPendingOpen(sid)` 由 `use-session.ts` `cleanupSessionState` 编排（ES3）| renderer 重做审查
 
 > 新增例外须在此表登记 + 说明理由，否则 review 不通过。
 

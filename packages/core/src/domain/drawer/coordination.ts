@@ -26,6 +26,15 @@ import type { SideDrawerTab, OpenDrawerOptions } from './types'
 // 语义：某 session 有「未展示给用户的 tasks 到达事件」。sid !== focusedSessionId 时事件
 // 不直接 open，只置此标记；selectSession 切回时 consumePendingOpen 消费（open tasks + 清标记）。
 // 用户手动 open（任意 tab）即清当前 session 标记（FR-9：已注意，不再打扰）。
+//
+// [ADR-0049 例外] 本模块级 Map 不套 useSessionScopedState。判据：coordination.ts 是纯函数模块
+// （setPendingOpenForSid/consumePendingOpen/openTasksDrawerOnFirstData/openDrawerTab 均为独立
+// 导出函数，非 composable，无 Vue setup 上下文、无 sidRef: Ref<string|null>）；Map 存的是路由
+// 标记（boolean，非 reactive 业务状态）。useSessionScopedState 是 setup-scoped 工厂（要求 sidRef
+// + reactive 容器契约），本模块无法满足——强套需把纯函数改造成 composable + 破坏所有调用方
+// 签名 + reactive 容器语义错位（路由标记不是响应式状态）。与 useChat/subscription-state 同属
+// ADR-0049「全局 sid 协调器例外类（模块级 Map 合理）」。session 销毁清理：registerSessionCleanup
+// 挂载（见文件尾 pendingOpenMap.delete(sid)）；测试隔离：_resetDrawerForTest()。
 const pendingOpenMap = new Map<string, boolean>()
 
 /** 置某 session 的 pendingOpen 标记（openTasksDrawerOnFirstData 调，sid 守卫不通过时） */
