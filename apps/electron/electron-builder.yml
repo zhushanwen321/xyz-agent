@@ -1,8 +1,13 @@
 appId: com.xyz-agent.app
-productName: xyz-agent
+productName: 太极
 # electron-builder 在 linux AppImage 上 fallback 用 package.json name（@xyz-agent/electron）
-# 去斜杠后变成 @xyz-agentelectron，AppImage 拒绝 @ 字符。显式指定与 productName 一致，
-# mac/linux/win 三平台统一。mac 产物验证：Contents/MacOS/xyz-agent（改动前已是此值，无行为变化）。
+# 去斜杠后变成 @xyz-agentelectron，AppImage 拒绝 @ 字符，故显式指定。
+# executableName / artifactName 故意保留 xyz-agent（不跟 productName「太极」走中文）：
+# - executableName 是 .app/Contents/MacOS/ 内部可执行文件名（用户不可见），中文路径有 spawn
+#   风险，且 postbuild-validate.sh 按 xyz-agent 校验产物路径。
+# - artifactName 是下载包名，release-checker.ts ASSET_NAME 常量硬编码 xyz-agent-* ，改名会
+#   切断 ≤0.8.40 旧版本自动更新（旧客户端按旧名查 GitHub Release 找不到新包）。
+# 仅 productName 作系统显示名（Dock/菜单栏/About）跟随品牌「太极」，发布工程链路保持稳定。
 executableName: xyz-agent
 directories:
   output: dist/builder-output
