@@ -17,9 +17,11 @@ vi.mock("node:fs", () => ({
   readFileSync: mockReadFileSync,
 }));
 
-vi.mock("node:os", () => ({
-  homedir: () => "/home/test",
-}));
+// VISION_MODELS_PATH 在模块加载时经 pi 的 getAgentDir() 求值（读 PI_CODING_AGENT_DIR env）。
+// 必须在 import 前 stub env——pi 包内部不经过 vitest 的 node:os mock。
+vi.hoisted(() => {
+  vi.stubEnv("PI_CODING_AGENT_DIR", "/home/test/.pi/agent");
+});
 
 // Import AFTER mocks
 import {

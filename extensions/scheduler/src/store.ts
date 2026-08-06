@@ -1,6 +1,7 @@
 import * as fs from 'node:fs'
-import * as os from 'node:os'
 import * as path from 'node:path'
+
+import { getAgentDir } from '@earendil-works/pi-coding-agent'
 
 import type { ScheduledTask, SchedulerStore } from './types.js'
 
@@ -8,11 +9,11 @@ const HISTORY_LIMIT = 20
 const DEBOUNCE_MS = 2000
 
 /**
- * 获取 store 文件路径：~/.pi/agent/scheduler/<root>/<segments>/scheduler.json
+ * 获取 store 文件路径：<agentDir>/scheduler/<root>/<segments>/scheduler.json
  * workspace 路径隔离，不同 cwd 存不同文件。
  */
 export function getStorePath(cwd: string): string {
-  const home = os.homedir()
+  const agentDir = getAgentDir()
   const resolved = path.resolve(cwd)
   const parsed = path.parse(resolved)
   const segments = resolved.slice(parsed.root.length)
@@ -21,7 +22,7 @@ export function getStorePath(cwd: string): string {
     .replaceAll(/[^a-zA-Z0-9]+/g, '-')
     .replaceAll(/^-+|-+$/g, '')
     .toLowerCase() || 'root'
-  return path.join(home, '.pi', 'agent', 'scheduler', root, ...segments, 'scheduler.json')
+  return path.join(agentDir, 'scheduler', root, ...segments, 'scheduler.json')
 }
 
 /**

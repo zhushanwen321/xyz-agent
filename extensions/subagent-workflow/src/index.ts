@@ -14,7 +14,6 @@
  */
 
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 
 import type { ExtensionAPI, ExtensionContext, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent } from "@earendil-works/pi-coding-agent";
@@ -149,9 +148,9 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   }
 
   function resolveSessionDir(): string {
-    const defaultDir = path.join(os.homedir(), ".pi", "agent");
+    const defaultDir = getAgentDir();
     const sessionSlug = `--${process.cwd().replace(/^\//, "").replace(/\//g, "-")}--`;
-    const sessionScopedDir = path.join(os.homedir(), ".pi", "agent", "sessions", sessionSlug);
+    const sessionScopedDir = path.join(getAgentDir(), "sessions", sessionSlug);
     return fs.existsSync(sessionScopedDir) ? sessionScopedDir : defaultDir;
   }
 

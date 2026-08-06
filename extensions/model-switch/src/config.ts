@@ -7,12 +7,13 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 import type { ModelPolicy, PlanConfig,ProviderConfig } from "./types";
 
-const CONFIG_DIR = join(homedir(), ".pi", "agent");
+const CONFIG_DIR = getAgentDir();
 const CONFIG_PATH = join(CONFIG_DIR, "model-policy.json");
 
 export { CONFIG_DIR, CONFIG_PATH };

@@ -1,6 +1,7 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 /** 配置：开关文件路径、标题最大长度、rename 指令。readonly，集中管理便于测试注入。 */
 export interface RenameConfig {
@@ -9,9 +10,8 @@ export interface RenameConfig {
 	readonly renameInstruction: string;
 }
 
-/** pi 实际使用的根数据目录（与 pi 的 getAgentDir 同源，读 PI_CODING_AGENT_DIR env） */
-const ROOT = process.env.PI_CODING_AGENT_DIR
-	?? path.join(os.homedir(), ".pi", "agent");
+/** pi 实际使用的根数据目录（getAgentDir：读 PI_CODING_AGENT_DIR env，缺省回退 ~/.pi/agent） */
+const ROOT = getAgentDir();
 
 export const CONFIG: RenameConfig = {
 	switchFilePath: path.join(ROOT, "auto-rename-enabled"),
