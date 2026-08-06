@@ -7,7 +7,8 @@ import App from './App.vue'
 import { provideDesktopPlatform } from './platform/desktop-platform'
 import { createMockPlatform } from './mock/mock-ws'
 import { providePlatform, provideDevMode } from '@xyz-agent/core'
-import { initExtensionHostBridge } from './composables/shell/useExtensionHostBridge'
+import { initExtensionHostBridge, getExtensionBus } from './composables/shell/useExtensionHostBridge'
+import { initPermissionRequest } from './composables/shell/usePermissionRequest'
 import './style.css'
 
 // dev 模式注入（core headless 化，audit §15.6）：core 不能读 import.meta.env，
@@ -30,6 +31,10 @@ const app = createApp(App)
 // ExtensionHost bridge 装配（audit §12.1）：WS plugin:* 消息 → bus → ViewHostStore/StatusBarController →
 // app.provide 注入 ui 组件数据源。须在 mount 前（provide 全局生效）。
 initExtensionHostBridge(app)
+// permissionRequest 闭环（audit §12.1）：订阅 bus plugin-permission-request → 驱动 Dialog →
+// app.provide 真实 PermissionTransport（转发 plugin.approvePermissions/revokePermissions WS 命令）。
+// 须在 mount 前 provide（Dialog 经 inject 取 transport）；复用 ExtensionHost 同一 bus 单例。
+initPermissionRequest(app, getExtensionBus())
 app.use(createPinia())
 app.use(i18n)
 app.mount('#app')

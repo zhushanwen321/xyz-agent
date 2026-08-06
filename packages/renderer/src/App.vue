@@ -29,6 +29,9 @@
     <AppShell />
   </template>
   <ToastContainer />
+  <!-- 权限请求弹窗（全局，session 无关）：bridge bus plugin-permission-request 驱动 pending；
+       transport 经 PERMISSION_TRANSPORT_KEY inject 调 WS approve/revoke（main.ts provide）。 -->
+  <PermissionRequestDialog :plugin-id="perm.pluginId" :permissions="perm.permissions" :pending="perm.pending" />
 </template>
 
 <script setup lang="ts">
@@ -41,6 +44,8 @@ import { Button } from '@/components/ui/button'
 import { useConnection } from '@/composables/useConnection'
 import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 import { bootstrapSettingsCore } from '@/composables/shell/useSettingsShell'
+import { usePermissionRequest } from '@/composables/shell/usePermissionRequest'
+import { PermissionRequestDialog } from '@xyz-agent/ui/extension-host'
 import { useSettings } from '@xyz-agent/core'
 import { bindForkNoticeEffect } from '@/composables/effects/useForkNoticeEffect'
 import { bindHandoffEffect } from '@/composables/effects/useHandoffEffect'
@@ -78,6 +83,9 @@ bindSessionStreamSync()
 // 首次调用绑定 app 级 scope（onScopeDispose 随 App 卸载触发，registerSessionCleanup 常驻，
 // 防模块级 onScopeDispose 警告与过早反注册）。
 useCompactQueue()
+// permissionRequest 全局弹窗状态（bus plugin-permission-request 驱动，session 无关）。
+// App 根挂载 PermissionRequestDialog，复用 ExtensionHost bridge 的 bus 单例。
+const perm = usePermissionRequest()
 onMounted(() => { void init() })
 // [W8] onConnected 内部用模块级 hasConnectedBefore 区分首次 vs 重连：
 // - 首次 connected → initApp（内部含 workspaceStore.load + presetCwd）
