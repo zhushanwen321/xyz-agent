@@ -7,7 +7,9 @@
  * GuiComponentRenderer provide 自身（含 custom 注册表 + ansi-text 降级逻辑），
  * 递归行为与 re-home 前完全一致。
  *
- * 降级：未识别类型 / 未注册 custom → PrimitiveFallback（JSON 序列化文本）。
+ * 降级 SSOT 在 core resolveComponent（§7.2）：未注册 custom / 未知 type / 脏数据
+ * 统一降级为 AnsiText——与顶层 GuiComponentRenderer 行为一致。此前本组件降级到
+ * PrimitiveFallback（第三份不一致实现），现已收敛，容器内与顶层降级行为统一。
  */
 import { computed, inject } from 'vue'
 import type { Component } from 'vue'
@@ -20,12 +22,16 @@ import Card from './Card.vue'
 import Columns from './Columns.vue'
 import ListTree from './ListTree.vue'
 import { GUI_CUSTOM_REGISTRY_KEY } from '../registry'
-import { PrimitiveFallback } from '../primitive-render-key'
+import { resolveComponent } from '@xyz-agent/core/rendering-protocol'
 
 const props = defineProps<{ component: GuiComponent }>()
 
-/** 已实现的内置组件映射。键钉到 GuiComponentType，新增 type 时编译期可见。 */
-const BUILTIN_MAP: Partial<Record<GuiComponentType, Component>> = {
+/** core resolveComponent 保证可渲染的 builtin type（ansi-text + 6 布局原语）。 */
+type RenderableBuiltinType = Exclude<GuiComponentType, 'custom'>
+
+/** builtin type → Vue 组件纯映射表（无降级分支，降级 SSOT 在 core resolveComponent）。
+ * 键钉到 RenderableBuiltinType，新增 type 时编译期可见。 */
+const BUILTIN_MAP: Record<RenderableBuiltinType, Component> = {
   'ansi-text': AnsiText,
   'progress-bar': ProgressBar,
   'stats-line': StatsLine,
@@ -35,36 +41,23 @@ const BUILTIN_MAP: Partial<Record<GuiComponentType, Component>> = {
   'list-tree': ListTree,
 }
 
-/** custom 组件注册表（内置 extension 编译期注册，P2 实现）。默认空表。 */
+/** custom 组件注册表（内置 extension 编译期注册）。默认空表。 */
 const CUSTOM_MAP = inject(GUI_CUSTOM_REGISTRY_KEY, {})
 
-/**
- * 解析出实际渲染组件：
- * - custom 类型 → 查注册表，未注册降级 PrimitiveFallback
- * - 已注册内置类型 → 对应组件
- * - 未识别类型 → PrimitiveFallback
- */
-const resolved = computed<Component>(() => {
-  if (props.component.type === 'custom') {
-    const name = (props.component.props as { component?: string }).component
-    return CUSTOM_MAP[name ?? ''] ?? PrimitiveFallback
-  }
-  return BUILTIN_MAP[props.component.type] ?? PrimitiveFallback
-})
+/** core 解析结果：{ type, props }。type 为最终渲染键，props 已适配。 */
+const resolved = computed(() => resolveComponent(props.component, CUSTOM_MAP))
 
-/** 适配后的 props——ansi-text 期望 { lines: string[] } 时 join 成 content。 */
-const resolvedProps = computed<Record<string, unknown>>(() => {
-  if (
-    props.component.type === 'ansi-text' &&
-    Array.isArray((props.component.props as { lines?: unknown }).lines)
-  ) {
-    const lines = (props.component.props as { lines: string[] }).lines
-    return { content: lines.join('\n') }
+/** resolved.type → Vue Component 纯查表（降级决策在 core，统一 AnsiText）：
+ * custom → CUSTOM_MAP 按 props.component 查（core 已保证已注册）；其余 → BUILTIN_MAP。 */
+const renderComponent = computed<Component>(() => {
+  const { type, props: resolvedProps } = resolved.value
+  if (type === 'custom') {
+    return CUSTOM_MAP[(resolvedProps as { component: string }).component]
   }
-  return props.component.props as Record<string, unknown>
+  return BUILTIN_MAP[type]
 })
 </script>
 
 <template>
-  <component :is="resolved" v-bind="resolvedProps" />
+  <component :is="renderComponent" v-bind="resolved.props" />
 </template>
