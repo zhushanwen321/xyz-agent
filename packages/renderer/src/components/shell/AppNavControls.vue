@@ -2,7 +2,7 @@
   <!--
     AppNavControls · 三平台统一应用导航按钮（shell spec §二）。
     收起侧栏 / ← 后退 / → 前进，浮在 traffic-light 右侧。
-    top-[3px]：按钮高 22，中线 y=3+11=14，与红黄绿原生位置中线（y=8+6=14）水平对齐。
+    top-[5px]：按钮高 22，中线 y=5+11=16，对齐红黄绿实测中线（macOS 渲染 trafficLightPosition{8,8} 实际圆点中线 ≈y15.75，比理论 y14 低 ~2pt；实测 nav 原中 13.8 +2 = 15.8 ≈ 红黄绿）。
     left-[72px]：红黄绿右缘 x=60 + 12px 呼吸。折叠态 header pl-[88px] 让位红黄绿（右缘 60），chrome 按钮起 x≈88。
     全屏态 isFullscreen=true 时 left→8px（红黄绿 OS 隐藏，按钮左移占红黄绿位 x=8）。
     !important 必须：left-[8px]（动态）与 left-[72px]（静态）同特异性，
@@ -17,7 +17,7 @@
   -->
   <div
     v-if="!sidebar.collapsed"
-    class="app-nav-controls absolute top-[3px] left-[72px] z-10 flex gap-0.5 transition-[left] duration-[var(--duration-slow)] ease-[var(--ease)]"
+    class="app-nav-controls absolute top-[5px] left-[72px] z-10 flex gap-0.5 transition-[left] duration-[var(--duration-slow)] ease-[var(--ease)]"
     :class="{ '!left-[8px]': isFullscreen }"
   >
     <Button

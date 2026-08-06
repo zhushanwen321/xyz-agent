@@ -489,11 +489,11 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 9. **禁止魔数间距** — 用标准 Tailwind scale，不用 `p-[17px]`
 10. **border-radius 遵循 v3 design-tokens**（`--radius-sm:3px` / `--radius:8px` / `--radius-lg:12px`）— `rounded-sm`(3px) 默认，`rounded-md`/`rounded-lg`(8/12px) 特殊场景。SSOT 见 [docs/page-design/design-tokens.md](docs/page-design/design-tokens.md)，裁决依据 ADR-0019（旧 Warm 时期的 1px/2px 规则已推翻）。详见 docs/standards.md §7.1
 11. **窗口顶部 traffic light 安全区（v3 shell 拓扑）** — v3 重建采用 zcode-demo 拓扑：base 平铺全屏 → sidebar 透明融合 → main 是唯一 float-panel 浮起。traffic light 靠 **aside-region 顶部留白**兼容，而非旧版 padding-left 避让。具体要求：
-    - AppShell `p-2`(8)：上下贴近窗口边（原生 mac 紧凑感）；左右 8px 使 aside 左缘 x=8 与红黄绿左缘对齐
-    - `.aside-region` 恒定 `padding-top: 24px`(pt-6)（安全区），**三平台统一，全屏也保留**（mac 全屏 hover 时系统下拉覆盖层会落进这块留白）。红黄绿原生位置 y=8~20，Sidebar 内容从 y=24 起避免遮挡
-    - mac 红黄绿位置由主进程 `titleBarStyle:'hidden'` + `trafficLightPosition:{x:8,y:8}` 放到 macOS 原生左上角（**不用 hiddenInset**——inset 模式强制水平内缩，`trafficLightPosition.x` 被系统忽略）；win/linux 自绘圆点 `left:0 top:0`（TrafficLight.vue，aside 顶已在窗口 y=8，故与 mac 同位）。圆点 12px，顶 y=8 / 中线 y=14 / 右缘 x=60
-    - app-nav-controls（收起侧栏/←/→）浮在 AppShell 层（aside 外），**非折叠态** `left:72px top:3px`（按钮中线 y=14 与红黄绿中线对齐；红黄绿右缘 60 + 12 呼吸），全屏 `left:8px`（320ms 平移与 traffic-light opacity 同步）。**对齐基准是红黄绿中线 y=14，不再对齐 PanelHeader 中线 y=32**（原生 mac 红黄绿在 titlebar 顶、工具栏在其下方，二者不同高）
-    - **折叠态** chrome 迁入 P1 PanelHeader 内（header `pl-[88px]` 让位红黄绿右缘 60），切换折叠 chrome 按钮在 header 中线（与红黄绿有高度差，属原生 mac 预期）；AppShell 折叠态 `!gap-0`（强制覆盖 gap-3，否则 MainPanel 左右不对称）
+    - AppShell `px-2`：左右 8px 使 aside 左缘 x=8 与红黄绿左缘对齐；上下 `py-0`（main-panel 贴窗口顶/底，极限紧凑）；折叠态 `!gap-0 !p-0`（aside 归零 + main-panel 四周全贴窗口边，用户要求「极限」）
+    - `.aside-region` 恒定 `padding-top: 32px`(pt-8)（安全区），**三平台统一，全屏也保留**（mac 全屏 hover 时系统下拉覆盖层会落进这块留白）。AppShell py-0 使 aside 顶在窗口 y=0，红黄绿 y=8~20，Sidebar 内容从 y=32 起避免遮挡
+    - mac 红黄绿位置由主进程 `titleBarStyle:'hidden'` + `trafficLightPosition:{x:8,y:8}` 放到 macOS 原生左上角（**不用 hiddenInset**——inset 模式强制水平内缩，`trafficLightPosition.x` 被系统忽略）；win/linux 自绘圆点 `left:0 top:[8px]`（TrafficLight.vue，aside 顶在窗口 y=0，故 top-8 = 窗口 y8，与 mac 同位）。圆点 12px，顶理论 y=8 / **实测中线 y≈15.75**（macOS 渲染亚像素偏置，比理论 y14 低 ~2pt）/ 右缘 x=60
+    - app-nav-controls（收起侧栏/←/→）浮在 AppShell 层（aside 外），**非折叠态** `left:72px top:5px`（按钮中线 y=5+11=16，对齐红黄绿**实测**中线 ~15.75；红黄绿右缘 60 + 12 呼吸），全屏 `left:8px`（320ms 平移与 traffic-light opacity 同步）。**对齐基准是红黄绿实测中线 ~16（nav 适配 macOS 渲染偏移），不再对齐 PanelHeader 中线 y=32**（原生 mac 红黄绿在 titlebar 顶、工具栏在其下方，二者不同高）
+    - **折叠态** chrome 迁入 P1 PanelHeader 内（header `pl-[88px]` 让位红黄绿右缘 60），切换折叠 chrome 按钮在 header 中线（与红黄绿有高度差，属原生 mac 预期）；AppShell 折叠态 `!gap-0 !p-0`（强制覆盖 gap-3/px-2，否则 MainPanel 左右不对称 + 收起态极限贴边）
     - 全屏两态：非全屏（traffic light opacity 1，按钮 left:72px）/ 全屏（opacity 0，按钮左移 left:8px）。**无第三态**，mac 全屏 hover 红黄绿由系统提供，应用不渲染
     - win/linux 走 mimic_mac：自绘彩色圆点放左侧模拟 mac，三平台左上视觉统一
     - 唤回侧栏：⌘B + header chrome 按钮（**rail-restore 左缘细条已移除**）
