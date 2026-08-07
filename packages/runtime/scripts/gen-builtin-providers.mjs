@@ -14,15 +14,17 @@ import { dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 // 镜像 pi-ai 0.82.1 dist/env-api-keys.js 的 getApiKeyEnvVars 映射。
-// 升级 pi-ai 后 verifyEnvKeys() 会用 findEnvKeys 守卫校验一致性，不一致则报错 exit 1。
-// ambient provider（google-vertex / amazon-bedrock）走云凭证（ADC/AWS profile），
-// 不消费 env var，显式标注为 []；openai-codex 是 oauth-only，同样 []。
+// 升级 pi-ai 后 verifyEnvVars() 做双向守卫校验（镜像表 ⊆ pi-ai 且 pi-ai ⊆ 镜像表），
+// 任一方向不一致则报错 exit 1。
+// 特殊标注：google-vertex 有显式 API key 路径（GOOGLE_CLOUD_API_KEY，envMap 有条目），
+// 但主要凭据是 ADC 云凭证，故 authMode 仍为 ambient；amazon-bedrock 纯 ambient（AWS profile/IAM，
+// envMap 无条目）为 []；openai-codex 是 oauth-only（envMap 无条目）为 []。
 const PROVIDER_ENV_VARS = {
   openai: ['OPENAI_API_KEY'],
   anthropic: ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'],
   deepseek: ['DEEPSEEK_API_KEY'],
   google: ['GEMINI_API_KEY'],
-  'google-vertex': [],
+  'google-vertex': ['GOOGLE_CLOUD_API_KEY'],
   'amazon-bedrock': [],
   'github-copilot': ['COPILOT_GITHUB_TOKEN'],
   'openai-codex': [],
@@ -74,14 +76,22 @@ function deriveAuthMode(provider) {
   return 'api_key'
 }
 
+// 提取 model 的 11 个字段（design §4.2 / 附录 A.4；pi-ai Model 类型见 dist/types.d.ts:637）。
+// id/name/api/baseUrl/reasoning/input/cost/contextWindow/maxTokens 在 pi-ai 是必填；
+// thinkingLevelMap/compat 可选——缺省时置 null（保持 11 键恒定，前端契约简单）。
 function summarizeModel(m) {
   return {
     id: m.id,
     name: m.name,
     api: m.api,
-    contextWindow: m.contextWindow,
+    baseUrl: m.baseUrl ?? '',
     reasoning: m.reasoning,
     input: Array.isArray(m.input) ? m.input : [],
+    cost: m.cost ?? null,
+    contextWindow: m.contextWindow,
+    maxTokens: m.maxTokens ?? null,
+    thinkingLevelMap: m.thinkingLevelMap ?? null,
+    compat: m.compat ?? null,
   }
 }
 
@@ -122,27 +132,48 @@ export function generateBuiltinProviders() {
 }
 
 /**
- * 用 pi-ai findEnvKeys 守卫校验 PROVIDER_ENV_VARS 镜像表与运行时一致。
- * 对每个非空 envVar 传 {[envVar]:'x'} 调 findEnvKeys，断言返回值含该 var。
- * 不一致则 console.error 明确报错 + exit 1（阻断 build）。
+ * 双向守卫校验 PROVIDER_ENV_VARS 镜像表与 pi-ai findEnvKeys 一致。
+ *
+ * 方向 1（pi-ai → 镜像表）：对 catalog 每个 provider 调 findEnvKeys，得到 pi-ai 实际识别的
+ * 全部 env var 名（probeEnv 用 Proxy——任意属性读都返回真值，等价于「所有变量均已设置」，
+ * 见 dist/utils/provider-env.js getProviderEnvValue 的 env?.[name] 访问），镜像表漏配即 M-1 类遗漏。
+ * 方向 2（镜像表 → pi-ai）：镜像表有、findEnvKeys 不认识的 = 镜像表错配（pi-ai 改名/删除后残留）。
+ * 额外：镜像表条目不在 catalog（孤儿条目）也报错（pi-ai provider 改名后旧条目残留）。
+ * 任一不一致 console.error 明确报错 + exit 1（阻断 build）。
  */
 export function verifyEnvVars() {
   const catalogIds = getBuiltinProviders()
   const failures = []
+  // Proxy env：任意属性读返回真值 → findEnvKeys 返回该 provider 的完整 env var 列表
+  const probeEnv = new Proxy({}, { get: () => 'x' })
   for (const id of catalogIds) {
-    const envVars = PROVIDER_ENV_VARS[id] ?? []
-    for (const envVar of envVars) {
-      const got = findEnvKeys(id, { [envVar]: 'x' })
-      if (!Array.isArray(got) || !got.includes(envVar)) {
-        failures.push({ provider: id, envVar, got: JSON.stringify(got) })
-      }
+    const actual = findEnvKeys(id, probeEnv) ?? []
+    const mirror = PROVIDER_ENV_VARS[id] ?? []
+    const missing = actual.filter((v) => !mirror.includes(v)) // pi-ai 有、镜像表漏（M-1 类遗漏）
+    const extra = mirror.filter((v) => !actual.includes(v)) // 镜像表有、pi-ai 无（错配）
+    if (missing.length > 0 || extra.length > 0) {
+      failures.push({ provider: id, missing, extra, actual, mirror })
+    }
+  }
+  // 镜像表条目不在 pi-ai catalog（孤儿）：provider 改名/删除后旧条目残留，同样阻断
+  for (const id of Object.keys(PROVIDER_ENV_VARS)) {
+    if (!catalogIds.includes(id)) {
+      failures.push({ provider: id, orphan: true })
     }
   }
   if (failures.length > 0) {
     for (const f of failures) {
-      console.error(
-        `[verifyEnvVars] provider '${f.provider}' envVar '${f.envVar}' 应被 findEnvKeys 识别，实际返回: ${f.got}`,
-      )
+      if (f.orphan) {
+        console.error(
+          `[verifyEnvVars] provider '${f.provider}' 在镜像表但不在 pi-ai catalog —— 镜像表残留孤儿条目，请移除`,
+        )
+      } else {
+        console.error(
+          `[verifyEnvVars] provider '${f.provider}' 镜像表与 pi-ai 不一致：` +
+            `镜像表漏配=${JSON.stringify(f.missing)} 镜像表错配=${JSON.stringify(f.extra)} ` +
+            `(pi-ai 实际=${JSON.stringify(f.actual)} 镜像表=${JSON.stringify(f.mirror)})`,
+        )
+      }
     }
     console.error(
       `[verifyEnvVars] ${failures.length} 处不一致 —— PROVIDER_ENV_VARS 镜像表与 pi-ai findEnvKeys 不匹配，` +

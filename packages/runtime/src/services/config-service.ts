@@ -175,9 +175,24 @@ export class ConfigService implements IConfigService {
   /**
    * 列出内置 provider 模板（wave 2，import generated JSON，无参只读，纯函数）。
    * builtinData 模块级 import 即缓存，不触 ConfigStore 依赖。wave 1 生成时已排除 radius。
+   *
+   * 浅校验 guard（review M-9 修复）：生成物损坏/格式不符（非数组、条目缺 id/name）时
+   * 返回空列表（前端隐藏内置入口），不抛错——内置模板是增强能力，坏了不能拖垮 Settings。
    */
   listBuiltinProviders(): BuiltinProviderTemplate[] {
-    return builtinData.providers as unknown as BuiltinProviderTemplate[]
+    const raw = builtinData.providers
+    if (!Array.isArray(raw)) {
+      console.warn('[config-service] builtin-providers.json malformed (providers is not an array), falling back to empty list')
+      return []
+    }
+    for (const p of raw) {
+      if (typeof p !== 'object' || p === null || typeof p.id !== 'string' || typeof p.name !== 'string') {
+        console.warn('[config-service] builtin-providers.json malformed (provider missing id/name), falling back to empty list')
+        return []
+      }
+    }
+    // JSON import 的推断类型与 BuiltinProviderTemplate 有 optional 字段差异，浅校验后断言
+    return raw as unknown as BuiltinProviderTemplate[]
   }
 
   setProvider(providerId: string, data: {

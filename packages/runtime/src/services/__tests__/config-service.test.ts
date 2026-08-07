@@ -42,8 +42,9 @@ describe('ConfigService.listBuiltinProviders', () => {
     expect(anthropic!.oauthSupported).toBe(true)
   })
 
-  it('t5: 每个 provider 含全字段，models 元素含 id/name/api/contextWindow/reasoning/input', () => {
+  it('t5: 每个 provider 含全字段，models 元素含 11 字段契约（id/name/api/baseUrl/reasoning/input/cost/contextWindow/maxTokens/thinkingLevelMap/compat）', () => {
     expect(providers.length).toBeGreaterThan(0)
+    const ALL_11 = ['id', 'name', 'api', 'baseUrl', 'reasoning', 'input', 'cost', 'contextWindow', 'maxTokens', 'thinkingLevelMap', 'compat']
     for (const p of providers) {
       // provider 级字段
       expect(typeof p.id).toBe('string')
@@ -60,15 +61,28 @@ describe('ConfigService.listBuiltinProviders', () => {
       if (p.logoUrl !== undefined) expect(typeof p.logoUrl).toBe('string')
       expect(Array.isArray(p.models)).toBe(true)
       expect(p.models.length).toBe(p.modelCount)
-      // model 级字段
+      // model 级 11 字段契约（生成脚本恒输出 11 键；可选字段缺省为 null）
       for (const m of p.models) {
+        for (const key of ALL_11) {
+          expect(m, `${p.id} model ${m.id} 应含字段 ${key}`).toHaveProperty(key)
+        }
         expect(typeof m.id).toBe('string')
         expect(typeof m.name).toBe('string')
         expect(typeof m.api).toBe('string')
-        expect(typeof m.contextWindow).toBe('number')
+        if (m.baseUrl !== undefined) expect(typeof m.baseUrl).toBe('string')
         expect(typeof m.reasoning).toBe('boolean')
         expect(Array.isArray(m.input)).toBe(true)
+        expect(m.contextWindow).toBeTypeOf('number')
+        if (m.maxTokens !== null && m.maxTokens !== undefined) expect(typeof m.maxTokens).toBe('number')
+        if (m.thinkingLevelMap !== null && m.thinkingLevelMap !== undefined) expect(typeof m.thinkingLevelMap).toBe('object')
+        if (m.compat !== null && m.compat !== undefined) expect(typeof m.compat).toBe('object')
       }
     }
+  })
+
+  it('t6: google-vertex envVars 含 GOOGLE_CLOUD_API_KEY（镜像表漏配回归，M-1）', () => {
+    const gv = providers.find(p => p.id === 'google-vertex')
+    expect(gv).toBeDefined()
+    expect(gv!.envVars).toContain('GOOGLE_CLOUD_API_KEY')
   })
 })
