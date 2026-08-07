@@ -142,6 +142,32 @@ export default {
       failed: '{count} 个导入失败',
       partialKeyMissing: '部分 provider 需手动补 API Key',
     },
+    // ── 内置 provider 模板（wave 3 builtin-provider-ui）──
+    addCustom: '+ 自定义',
+    builtinTemplate: {
+      trigger: '+ 内置模板',
+      searchPlaceholder: '搜索...',
+      noResult: '没有匹配的模板',
+      modelsSuffix: '{count} 模型',
+      setupTitle: '快速配置 {name}',
+      infoApi: 'API',
+      infoBaseUrl: 'Base URL',
+      infoModels: '内置模型',
+      credentialModeLabel: '凭据方式',
+      credentialModePlaintext: 'API Key',
+      credentialModeEnv: '环境变量',
+      envVarPlaceholder: '选择环境变量',
+      envUnsupported: '该模板不支持环境变量方式',
+      save: '保存',
+      toastSuccess: '已添加 {name}',
+      fetchFailed: '加载内置模板失败',
+      authMode: {
+        api_key: 'API Key',
+        oauth: 'OAuth',
+        both: 'API Key · OAuth',
+        ambient: '云凭证',
+      },
+    },
   },
   // ── Provider 编辑弹窗（ProviderEditModal）──
   providerEdit: {

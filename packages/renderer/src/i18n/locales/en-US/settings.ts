@@ -142,6 +142,32 @@ export default {
       failed: '{count} failed to import',
       partialKeyMissing: 'Some providers need manual API Key',
     },
+    // ── Built-in provider templates (wave 3 builtin-provider-ui) ──
+    addCustom: '+ Custom',
+    builtinTemplate: {
+      trigger: '+ Built-in Template',
+      searchPlaceholder: 'Search...',
+      noResult: 'No matching template',
+      modelsSuffix: '{count} models',
+      setupTitle: 'Quick Setup · {name}',
+      infoApi: 'API',
+      infoBaseUrl: 'Base URL',
+      infoModels: 'Built-in models',
+      credentialModeLabel: 'Credential',
+      credentialModePlaintext: 'API Key',
+      credentialModeEnv: 'Env Var',
+      envVarPlaceholder: 'Select env var',
+      envUnsupported: 'This template does not support env var',
+      save: 'Save',
+      toastSuccess: 'Added {name}',
+      fetchFailed: 'Failed to load built-in templates',
+      authMode: {
+        api_key: 'API Key',
+        oauth: 'OAuth',
+        both: 'API Key · OAuth',
+        ambient: 'Cloud Credentials',
+      },
+    },
   },
   // ── Provider edit dialog (ProviderEditModal) ──
   providerEdit: {

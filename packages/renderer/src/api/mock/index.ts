@@ -17,7 +17,7 @@
  * connected），打一次 console.warn 提示。
  */
 import type {
-  Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup, ProviderInfo,
+  Message, ModelInfo, ServerMessage, SessionSummary, SessionGroup, ProviderInfo, BuiltinProviderTemplate,
   SkillInfo, AgentInfo, PluginInfo, SetProviderData,
   SkillDirConfig, FileNode, RecommendedExtension, SubagentRecord, WorkflowRunRecord,
   SystemPromptConfig,
@@ -710,6 +710,11 @@ export const config = {
   async listProviders() {
     await sleep(TIMING.ack)
     return fixtureProviders.map((p) => ({ ...p, models: p.models.map((m) => ({ ...m })) }))
+  },
+  // wave 3：内置 provider 模板。mock 模式不接 runtime generated JSON，返空数组保持签名同构（facade 三元）。
+  async listBuiltinProviders(): Promise<BuiltinProviderTemplate[]> {
+    await sleep(TIMING.ack)
+    return []
   },
   async discoverModels(req: { baseUrl: string; apiKey?: string; providerType?: string; providerId?: string }) {
     await sleep(TIMING.ack)

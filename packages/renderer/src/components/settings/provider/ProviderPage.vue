@@ -13,12 +13,13 @@
       </div>
       <div class="flex shrink-0 gap-2">
         <ProviderImportMenu :disabled="importState !== 'idle'" @select="onImportSelect" />
+        <ProviderTemplatePicker :providers="builtinProviders" @select="onTemplateSelect" />
         <Button
           class="gap-1.5 rounded-sm px-2.5 py-1.5 text-[12px] font-medium [&_svg]:size-3.5"
           @click="createAndExpand"
         >
           <Plus />
-          {{ t('settings.provider.add') }}
+          {{ t('settings.provider.addCustom') }}
         </Button>
       </div>
     </header>
@@ -155,18 +156,27 @@
       @update:open="onPreviewDialogToggle"
       @confirm="onImportConfirm"
     />
+
+    <!-- 内置模板快速配置（wave 3） -->
+    <ProviderQuickSetup
+      v-if="selectedTemplate"
+      :template="selectedTemplate"
+      :open="showQuickSetup"
+      @save="onQuickSetupSave"
+      @cancel="onQuickSetupCancel"
+    />
     <!-- R4 手风琴就地编辑 -->
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, provide } from 'vue'
+import { computed, ref, provide, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Settings, Plus, Trash2, AlertCircle } from '@lucide/vue'
 import { ConfirmDialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import type { ProviderInfo, ProviderStatus } from '@xyz-agent/shared'
+import type { BuiltinProviderTemplate, ProviderInfo, ProviderStatus, SetProviderData } from '@xyz-agent/shared'
 import { config } from '@/api'
 import { getSettingsStore } from '@xyz-agent/core'
 import { useQuotaStore } from '@/stores/quota'
@@ -177,6 +187,8 @@ import {
   ProviderEditBody,
   ProviderImportMenu,
   ProviderImportPreviewDialog,
+  ProviderTemplatePicker,
+  ProviderQuickSetup,
   SETTINGS_TOAST_KEY,
   USE_QUOTA_CONFIGURE_KEY,
 } from '@xyz-agent/ui/features/settings'
@@ -184,7 +196,8 @@ import {
 // ProviderEditBody 迁入 ui 包，其 renderer 侧依赖（useQuotaConfigure/useToast）经
 // provide/inject 注入（ui 零 renderer import 铁律）。ProviderEditBody 内部调用工厂。
 provide(USE_QUOTA_CONFIGURE_KEY, useQuotaConfigure)
-provide(SETTINGS_TOAST_KEY, useToast())
+const toast = useToast()
+provide(SETTINGS_TOAST_KEY, toast)
 
 const props = defineProps<{ providers: ProviderInfo[] }>()
 
@@ -198,6 +211,53 @@ const {
   onImportConfirm,
   onPreviewDialogToggle,
 } = useProviderImport()
+
+// ── 内置 provider 模板（wave 3 builtin-provider-ui）──
+/** 内置 provider 模板列表（onMounted 拉取，传给 ProviderTemplatePicker） */
+const builtinProviders = ref<BuiltinProviderTemplate[]>([])
+/** 当前选中的模板（非 null 时渲染 ProviderQuickSetup） */
+const selectedTemplate = ref<BuiltinProviderTemplate | null>(null)
+/** QuickSetup 开关（与 selectedTemplate 配合控制 Dialog） */
+const showQuickSetup = ref(false)
+
+onMounted(async () => {
+  try {
+    builtinProviders.value = await config.listBuiltinProviders()
+  } catch (e) {
+    // 拉取失败静默降级（Picker 渲染空列表），不阻断页面
+    toast.error(e instanceof Error ? e.message : String(e))
+  }
+})
+
+/** 选中内置模板 → 打开 QuickSetup */
+function onTemplateSelect(tpl: BuiltinProviderTemplate): void {
+  selectedTemplate.value = tpl
+  showQuickSetup.value = true
+}
+
+/** QuickSetup 保存 → config.setProvider（方案 B 占位 data），成功后关闭 + toast */
+async function onQuickSetupSave({
+  providerId,
+  data,
+}: {
+  providerId: string
+  data: SetProviderData
+}): Promise<void> {
+  try {
+    await config.setProvider(providerId, data)
+    showQuickSetup.value = false
+    selectedTemplate.value = null
+    toast.info(t('settings.provider.builtinTemplate.toastSuccess', { name: data.name ?? providerId }))
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : String(e))
+  }
+}
+
+/** QuickSetup 取消/关闭 → 清空选中态 */
+function onQuickSetupCancel(): void {
+  showQuickSetup.value = false
+  selectedTemplate.value = null
+}
 
 /** toggle 中的 provider id 集合（防双击：API 期间 disable Switch） */
 const toggling = ref<Set<string>>(new Set())
