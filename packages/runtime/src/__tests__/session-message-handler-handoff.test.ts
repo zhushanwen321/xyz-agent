@@ -67,6 +67,7 @@ describe('SessionMessageHandler —— session.abortHandoff 路由', () => {
     await handler.handleSessionMessage(
       msg('session.abortHandoff', { sessionId: 's1' }),
       WS,
+      'local',
     )
 
     // abortHandoff 被调一次，参数透传
@@ -99,6 +100,7 @@ describe('SessionMessageHandler —— session.abortHandoff 路由', () => {
     await handler.handleSessionMessage(
       msg('session.abortHandoff', { sessionId: 's1' }),
       WS,
+      'local',
     )
 
     // abortHandoff 仍被调（handler 不预判，由 service 返回值决定是否广播）
@@ -124,6 +126,7 @@ describe('SessionMessageHandler —— session.abortHandoff 路由', () => {
     await handler.handleSessionMessage(
       msg('session.abortHandoff', { sessionId: 's1' }),
       WS,
+      'local',
     )
 
     // sendError 被调
@@ -146,6 +149,7 @@ describe('SessionMessageHandler —— session.abortHandoff 路由', () => {
     await handler.handleSessionMessage(
       msg('session.abortHandoff', { sessionId: 's1' }),
       WS,
+      'local',
     )
 
     // abortHandoff 被调一次（即使最终失败）

@@ -25,7 +25,6 @@ export default {
     createBtn: 'Create and switch',
   },
   dirSelect: {
-    remoteNotSupported: 'Remote connections not supported in v1',
     searchPlaceholder: 'Search workspaces',
     noRecent: 'No recent workspaces · Select a local directory to start',
     openFolder: 'Open folder',
@@ -33,6 +32,8 @@ export default {
     remoteConnect: 'Remote connect',
     existingWorktrees: 'Existing worktrees',
     noWorktrees: 'No existing worktrees',
+    manualPathPlaceholder: 'Enter a server path, e.g. ~/projects/xyz-agent',
+    manualPathConfirm: 'Confirm',
   },
   createWorktree: {
     title: 'New worktree',

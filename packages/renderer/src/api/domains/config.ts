@@ -29,12 +29,37 @@ import type {
 import { command } from '../request'
 import * as events from '../events'
 
+/**
+ * wave 远程分享：可达 URL 项（detectUrls 探测分类后单条）。
+ * 对齐 ServerMessageMap['config.connectionInfo'].urls 元素结构（protocol.ts:1064）。
+ */
+export interface ConnectionUrl {
+  kind: string
+  host: string
+  httpUrl: string
+  wsUrl: string
+}
+
+/** wave 远程分享：config.getConnectionInfo 的 reply 解包后形态（token + 可达 URL 列表）。 */
+export interface ConnectionInfo {
+  token: string
+  urls: ConnectionUrl[]
+}
+
 // ── 请求-响应 ──
 // runtime 请求-响应 reply 均为命名 envelope（settings-message-handler.ts），
 // 此处统一解包对应字段，与 session.list 解包 `.groups` 同构。mock 门面有独立实现不受影响。
 export async function listProviders(): Promise<ProviderInfo[]> {
   const reply = await command('config.getProviders', {})
   return reply.providers
+}
+
+/**
+ * wave 远程分享：拉当前 token + detectUrls 探测的可达 URL 列表，供分享面板展示三种格式
+ * （移动端直达 / 桌面端手动 / APP deep link）。无参请求，reply config.connectionInfo。
+ */
+export async function getConnectionInfo(): Promise<ConnectionInfo> {
+  return command('config.getConnectionInfo', {})
 }
 
 export async function scanSkills(sources: string[]): Promise<ScannedSkillInfo[]> {
@@ -128,9 +153,13 @@ export function discoverModels(req: {
 }
 
 // ── 订阅-推送（sendInitialState 主动推 + 运行时广播）──
-export function onProviders(handler: (providers: ProviderInfo[]) => void): () => void {
+/**
+ * P6 D3 config CAS：handler 第二参 version 是当前 models.json version（广播/reply 携带）。
+ * 调用方据此时同步缓存到 settings store，作为下次 setProvider 的 expectedVersion。
+ */
+export function onProviders(handler: (providers: ProviderInfo[], version?: number) => void): () => void {
   return events.onGlobalType('config.providers', (msg) => {
-    handler(msg.payload.providers)
+    handler(msg.payload.providers, msg.payload.version)
   })
 }
 
@@ -206,17 +235,30 @@ export function setExtensionDirs(dirs: string[]): Promise<void> {
   return command('config.setExtensionDirs', { dirs })
 }
 
-export function setProvider(providerId: string, data: SetProviderData): Promise<void> {
-  return command('config.setProvider', { providerId, ...data })
+/**
+ * P6 D3 config CAS：setProvider 携带 expectedVersion（客户端缓存的当前 config version）。
+ * 服务端对比 currentVersion，不等则 reject（error code='version_conflict'），相等则成功并 version++。
+ * expectedVersion 从 settings store 的 configVersion 取（onProviders 推送时缓存）。
+ *
+ * 兜底（缺省 0）：config.providers.version 在协议层 optional（runtime 可省略），若广播/reply 未带 version，
+ * settingsStore.configVersion 保持初始 0。此处 expectedVersion 缺省时按 0 处理，避免传 undefined 被
+ * runtime CAS 判 mismatch（undefined !== number）导致永远 version_conflict。
+ */
+export function setProvider(providerId: string, data: SetProviderData, expectedVersion?: number): Promise<void> {
+  return command('config.setProvider', { providerId, expectedVersion: expectedVersion ?? 0, ...data })
 }
 
 // W3 默认模型持久化：动作-ack，状态变更经 onDefaults 订阅推回（runtime 广播 config.defaults）。
+// P6 D3：setDefaultModel 改 settings.json（独立文件），不纳入 config CAS（无 expectedVersion）。
 export function setDefaultModel(provider: string, modelId: string): Promise<void> {
   return command('config.setDefaultModel', { provider, modelId })
 }
 
-export function deleteProvider(providerId: string): Promise<void> {
-  return command('config.deleteProvider', { providerId })
+/**
+ * P6 D3 config CAS：deleteProvider 同 setProvider 携带 expectedVersion。缺省兜底 0（见 setProvider）。
+ */
+export function deleteProvider(providerId: string, expectedVersion?: number): Promise<void> {
+  return command('config.deleteProvider', { providerId, expectedVersion: expectedVersion ?? 0 })
 }
 
 export function setSkill(skill: SkillInfo): Promise<void> {

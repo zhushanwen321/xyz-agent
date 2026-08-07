@@ -112,6 +112,12 @@ export interface EventInterpreterOptions {
    * 详见 ADR-0035「ping 可行性验证」。
    */
   pingPi?: () => Promise<Record<string, unknown> | undefined> | undefined
+  /**
+   * P5 lease：pingTick 成功时调（组合根注入 leaseManager.renew）。
+   * 续租挂 ping 成功路径（spec D4）：pi 健康响应 → 续 lease 90s（TTL > 2×ping 间隔，见 lease-manager 注释）。失败时不调（lease 自然过期）。
+   * 只传 sessionId——renew 内部从 session.busyOwnerId 反查 owner（M4）。
+   */
+  onLeaseRenew?: (sessionId: string) => void
 }
 
 /** 可能改文件的工具（baseline diff 触发判定，与原 event-adapter 一致）。 */
@@ -565,6 +571,21 @@ export class EventInterpreter {
    *
    * 幂等：若已有循环在跑（如上一 turn 未正常 stop），先清。每次 turn-start 重置
    * 失败计数与 warned，确保跨 turn 独立计数（本 turn 第 1 次失败 = 新一轮，不继承上 turn）。
+   *
+   * [P3 spec D6 / AC6] watchdog 与审批挂起共存：pi 等待 extension 响应时 RPC 读循环仍处理
+   * stdin，ping get_state 可穿透（见本文件 :110-114 pingPi 设计权衡）——故审批挂起不会误触
+   * 发 onSilentAbort。此「不误 abort」语义已由
+   * services/session/__tests__/event-interpreter.watchdog.test.ts 固化为防回归契约（TC-AC6 审批
+   * 挂起 + TC-AC6b 真死对照基线）。修改 ping 阈值/逻辑时须同步该测试。
+   *
+   * 【隐式不变量 / 防御性说明（P5 MINOR）】pingTick 成功路径会调 onLeaseRenew → leaseManager.renew，
+   * 而 renew 不校验发起 renew 的客户端是否仍是当前 turn 的原 owner。renew 的正确性**依赖本循环的
+   * 生命周期与 turn 严格绑定**：turn-start 启动、turn-end / agent_end / onSilentAbort 停止
+   * （见 stopPingLoop）。设备被抢占场景下原 turn 必先结束（pi prompt 不再推进 → 发 turn-end），
+   * 故 pingLoop 会被 stop，原 owner 的 renew 不会被调用。**若未来改动把 pingLoop 生命周期与 turn
+   * 解耦**（如改用全局定时器或 session-scoped 而非 turn-scoped），leaseManager.renew 的防御性缺口
+   * 会暴露——届时须配合 lease-manager.renew 的注释一并调整（加 owner 一致性校验）。修改本方法 /
+   * stopPingLoop 的生命周期语义时须同步审视 lease-manager.ts renew 的注释。
    */
   private startPingLoop(): void {
     this.stopPingLoop()
@@ -575,7 +596,14 @@ export class EventInterpreter {
     this.pingTimer = setInterval(() => { void this.pingTick() }, PING_INTERVAL_MS)
   }
 
-  /** 停止 ping 探测循环（turn-end / agent_end / onSilentAbort 调用）。幂等。 */
+  /**
+   * 停止 ping 探测循环（turn-end / agent_end / onSilentAbort 调用）。幂等。
+   *
+   * 【隐式不变量（P5 MINOR）】此处清 pingTimer 是 leaseManager.renew 安全性的关键保证：
+   * turn 结束即停 ping → pingTick 不再调度 → 不再调 onLeaseRenew/renew。
+   * 设备被抢占场景下原 turn 必先结束，故原 owner 的 renew 不会被错误调用。详见 startPingLoop
+   * 与 lease-manager.ts renew 的防御性说明。修改此停止时机时须同步审视 renew 的不变量依赖。
+   */
   private stopPingLoop(): void {
     if (this.pingTimer !== null) {
       clearInterval(this.pingTimer)
@@ -611,6 +639,14 @@ export class EventInterpreter {
       // 健康响应 → 清零（AC-8b：中途成功后需重新累积 2 次才 WARN）
       this.pingFailCount = 0
       this.pingWarned = false
+      // P5 lease：ping 成功续租（spec D4）。renew 只传 sessionId，内部反查 busyOwnerId（M4）。
+      // 无 owner 时 renew return false（不误续），故无副作用。
+      try {
+        this.opts.onLeaseRenew?.(this.sessionId)
+      // eslint-disable-next-line taste/no-silent-catch -- 续租失败不应中断 ping 探测（lease 自然过期兜底）
+      } catch (e) {
+        console.warn('[event-interpreter] onLeaseRenew failed:', e)
+      }
       return
     }
     this.pingFailCount += 1

@@ -19,6 +19,11 @@ function mockContext(overrides?: Partial<WorktreeHandlerContext>): WorktreeHandl
     send: vi.fn(),
     sendError: vi.fn(),
     reply: vi.fn(),
+    // P5 lease/presence ctx 方法（worktree handler 不调用，给 stub 满足 MessageHandlerContext 接口）。
+    getClientId: vi.fn(() => 'local'),
+    getClient: vi.fn(() => undefined),
+    broadcastExcept: vi.fn(),
+    sendToClient: vi.fn(),
     worktreeService: {
       create: vi.fn(async () => ({ cwd: '/project/feat-x', branch: 'feat/x' })),
       detect: vi.fn(async () => ({

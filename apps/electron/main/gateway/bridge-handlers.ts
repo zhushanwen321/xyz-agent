@@ -13,6 +13,9 @@
  * 依赖方向：bridge-handlers → electron(ipcMain) + interfaces
  */
 import { ipcMain, BrowserWindow } from 'electron'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { getDataDir } from '@xyz-agent/shared/paths'
 import type { IpcHandlerDeps } from '../interfaces.js'
 
 /**
@@ -24,6 +27,16 @@ export function registerBridgeHandlers(deps: IpcHandlerDeps): void {
   // ── runtime 端口（只读 supervisor 状态）─────────────────────────
   ipcMain.handle('get-runtime-port', () => deps.runtime.port)
   ipcMain.handle('get-runtime-port-offset', () => deps.runtime.portOffset)
+  // ── runtime token（读 <dataDir>/token 文件，renderer 本地连接需带 auth）──
+  ipcMain.handle('get-runtime-token', () => {
+    try {
+      const tokenFile = join(getDataDir(), 'token')
+      return readFileSync(tokenFile, 'utf-8').trim() || undefined
+    } catch {
+      // token 文件不存在（开放模式）或读取失败 → undefined，renderer 走无 auth 连接
+      return undefined
+    }
+  })
 
   // ── runtime 手动重启（崩溃重启用尽后，用户从状态条点重试触发）─────────
   // 委托 supervisor.restartRuntime：重置策略 + start + 广播端口/失败

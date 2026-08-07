@@ -103,7 +103,7 @@ check_dir() {
 (
     check_file "$ELECTRON_DIR/dist/main/main.cjs" "main entry" || true
     check_file "$ELECTRON_DIR/dist/preload/preload.cjs" "preload entry" || true
-    check_file "$ELECTRON_DIR/dist/runtime/index.cjs" "runtime bundle" || true
+    check_file "$PROJECT_ROOT/packages/runtime/dist/index.cjs" "runtime bundle" || true
     check_file "$ELECTRON_DIR/renderer/dist/index.html" "renderer index" || true
 ) || FAILED=1
 

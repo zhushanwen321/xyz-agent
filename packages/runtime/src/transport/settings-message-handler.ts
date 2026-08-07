@@ -7,7 +7,10 @@ import type { ClientMessage, ProviderSource, SkillCacheScope } from '@xyz-agent/
 import type { IConfigService, ISessionService, IModelService } from '../interfaces.js'
 import type { SkillRegistry } from '../services/skill-registry.js'
 import { toErrorMessage } from '../utils/errors.js'
+import { VersionConflictError } from '../services/config-service.js'
 import type { MessageHandlerContext } from './message-context.js'
+import type { TokenManager } from './token.js'
+import { detectUrls } from '../server/detect-url.js'
 
 /** Interface for server methods needed by this handler */
 export interface SettingsHandlerContext extends MessageHandlerContext {
@@ -17,6 +20,12 @@ export interface SettingsHandlerContext extends MessageHandlerContext {
   /** W4：skillRegistry（全局 + 项目级 skill 缓存，带 watcher）。landing 全局 skill 经此拿 globalCache（FR-5）。 */
   skillRegistry: SkillRegistry
   projectRoot: string
+  /** wave 远程分享：token 管理器（config.getConnectionInfo 读当前 token）。 */
+  tokenManager: TokenManager
+  /** wave 远程分享：监听 bind host（config.getConnectionInfo 上下文用）。 */
+  bindHost: string
+  /** wave 远程分享：监听端口（config.getConnectionInfo 探测可达 URL 用）。 */
+  port: number
   nextPushId(): string
   broadcast(msg: import('@xyz-agent/shared').ServerMessage): void
   broadcastProviderList(): void
@@ -31,37 +40,59 @@ export interface SettingsHandlerContext extends MessageHandlerContext {
 export class SettingsMessageHandler {
   constructor(private ctx: SettingsHandlerContext) {}
 
-  async handleSettingsMessage(msg: ClientMessage, ws: WsType): Promise<boolean> {
+  async handleSettingsMessage(msg: ClientMessage, ws: WsType, _clientId?: string): Promise<boolean> {
     switch (msg.type) {
       case 'config.getProviders':
-        this.ctx.reply(ws, msg.id, 'config.providers', { providers: this.ctx.configService.listProviders() })
+        // P6 D3：reply 携带 version（客户端首次拉取 / version_conflict 后刷新时缓存）。
+        this.ctx.reply(ws, msg.id, 'config.providers', { providers: this.ctx.configService.listProviders(), version: this.ctx.configService.getConfigVersion() })
         return true
       case 'config.setProvider': {
-        const { providerId, ...data } = msg.payload
-        const setResult = this.ctx.configService.setProvider(providerId, data as Parameters<IConfigService['setProvider']>[1])
-        this.ctx.reply(ws, msg.id, 'config.providerUpdated', { providerId })
-        this.ctx.broadcastProviderList()
-        // 如果 fallback 修正了 defaultModel，广播到所有 panel
-        if (setResult.newDefault) {
-          this.ctx.broadcast({
-            type: 'config.defaults',
-            id: this.ctx.nextPushId(),
-            payload: { defaultModel: `${setResult.newDefault.provider}/${setResult.newDefault.modelId}`, source: 'provider-updated' },
-          })
+        const { providerId, expectedVersion, ...data } = msg.payload
+        try {
+          const setResult = this.ctx.configService.setProvider(providerId, data as Parameters<IConfigService['setProvider']>[1], expectedVersion)
+          // P6 D3：reply 携带 newVersion 让发起方更新本地缓存（避免下次 set 再拉一次 version）。
+          this.ctx.reply(ws, msg.id, 'config.providerUpdated', { providerId, newVersion: setResult.newVersion })
+          // 广播 provider 列表 + version 给所有客户端（其他客户端需感知 version 变化刷新本地缓存）。
+          this.ctx.broadcastProviderList()
+          // 如果 fallback 修正了 defaultModel，广播到所有 panel
+          if (setResult.newDefault) {
+            this.ctx.broadcast({
+              type: 'config.defaults',
+              id: this.ctx.nextPushId(),
+              payload: { defaultModel: `${setResult.newDefault.provider}/${setResult.newDefault.modelId}`, source: 'provider-updated' },
+            })
+          }
+        } catch (e) {
+          // P6 D3：VersionConflictError → reply error{code:'version_conflict', currentVersion}。
+          // 客户端收到后重新拉 config.list 刷新本地 version + toast 提示用户重试。
+          if (e instanceof VersionConflictError) {
+            this.ctx.sendError(ws, 'version_conflict', e.message, msg.id, { currentVersion: e.currentVersion })
+            return true
+          }
+          throw e
         }
         return true
       }
       case 'config.deleteProvider': {
-        const delResult = this.ctx.configService.deleteProvider(msg.payload.providerId)
-        this.ctx.reply(ws, msg.id, 'config.providerUpdated', { providerId: msg.payload.providerId, deleted: true })
-        this.ctx.broadcastProviderList()
-        // 如果 fallback 修正了 defaultModel，广播到所有 panel
-        if (delResult.newDefault) {
-          this.ctx.broadcast({
-            type: 'config.defaults',
-            id: this.ctx.nextPushId(),
-            payload: { defaultModel: `${delResult.newDefault.provider}/${delResult.newDefault.modelId}`, source: 'provider-deleted' },
-          })
+        const { providerId, expectedVersion } = msg.payload
+        try {
+          const delResult = this.ctx.configService.deleteProvider(providerId, expectedVersion)
+          this.ctx.reply(ws, msg.id, 'config.providerUpdated', { providerId, deleted: true, newVersion: delResult.newVersion })
+          this.ctx.broadcastProviderList()
+          // 如果 fallback 修正了 defaultModel，广播到所有 panel
+          if (delResult.newDefault) {
+            this.ctx.broadcast({
+              type: 'config.defaults',
+              id: this.ctx.nextPushId(),
+              payload: { defaultModel: `${delResult.newDefault.provider}/${delResult.newDefault.modelId}`, source: 'provider-deleted' },
+            })
+          }
+        } catch (e) {
+          if (e instanceof VersionConflictError) {
+            this.ctx.sendError(ws, 'version_conflict', e.message, msg.id, { currentVersion: e.currentVersion })
+            return true
+          }
+          throw e
         }
         return true
       }
@@ -361,6 +392,15 @@ export class SettingsMessageHandler {
       }
       case 'config.getAutoRenameEnabled': {
         this.ctx.reply(ws, msg.id, 'config.autoRenameEnabled', { enabled: this.ctx.configService.getAutoRenameEnabled() })
+        return true
+      }
+      case 'config.getConnectionInfo': {
+        // wave 远程分享：探测可达地址 + 当前 token，供设置面板展示分享链接。
+        // detectUrls 是 best-effort（探测失败兜底 localhost），不抛错；token 开放模式时为空串。
+        const detected = await detectUrls(this.ctx.port)
+        const loaded = this.ctx.tokenManager.load()
+        const token = loaded.enabled ? loaded.token : ''
+        this.ctx.reply(ws, msg.id, 'config.connectionInfo', { token, urls: detected })
         return true
       }
       // tool.approve / tool.deny / tool.always_allow：已删除的 no-op 占位。

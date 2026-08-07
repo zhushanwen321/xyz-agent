@@ -168,7 +168,7 @@ export type PluginState = 'UNLOADED' | 'LOADING' | 'ACTIVATING' | 'ACTIVE' | 'DE
 
 // ── RPC Error Codes 域 ────────────────────────────────────────────
 // 已拆分到 ./plugin-types/rpc-protocol.ts。const 必须用 export-from 重导出。
-export { PluginRpcErrorCodes } from './plugin-types/rpc-protocol.js'
+export { PluginRpcErrorCodes, CLIENT_ID_PARAM_KEY } from './plugin-types/rpc-protocol.js'
 export type { PluginRpcErrorCode } from './plugin-types/rpc-protocol.js'
 
 // ── Permission Constants ─────────────────────────────────────────
@@ -372,6 +372,27 @@ export interface IPluginServiceDeps {
    * （NpmPluginInstaller）。installPlugin 在缺省时返回 { success:false } 而非 spawn。
    */
   pluginInstaller?: import('../ports/plugin-installer.js').IPluginInstaller
+  /**
+   * P7 per-client active session：连接管理器（结构类型最小接口，避免 import
+   * transport/connection-manager 具体类形成环）。组合根 index.ts 从
+   * server.getConnectionManager() 注入。getActiveSession 返回该 clientId 的活跃
+   * sessionId（P5 activeSessions Map），null（主动取消选中）/undefined（未 setActive）
+   * 都视为 miss。未注入时 resolver 走 lease/global fallback（零回归）。
+   */
+  connectionManager?: { getActiveSession(clientId: string): string | null | undefined }
+  /**
+   * P7 lease fallback：租约管理器（结构类型最小接口，避免 import session/lease-manager
+   * 具体类形成环）。组合根 index.ts 注入 LeaseManager 实例。getBusySession 反查
+   * clientId 持有 lease 的 session（P5 busyOwnerId）。未注入时跳过 lease fallback。
+   *
+   * P7 长期方案 A：getLeaseOwner(sessionId) 反查 session 的 lease owner clientId，
+   * bridge-interop 据此把 clientId 塞进 bridge.tool.execute invoke params，绕开 ALS
+   * 跨独立 I/O tick 断裂。未注入时 bridge invoke 不带 clientId（resolver 全局 fallback）。
+   */
+  leaseManager?: {
+    getBusySession(clientId: string): { sessionId: string } | undefined
+    getLeaseOwner(sessionId: string): string | undefined
+  }
 }
 
 /** 插件向后端请求前端 UI 弹窗 */

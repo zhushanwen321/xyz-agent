@@ -108,6 +108,22 @@ jobs:
         working-directory: packages/plugin-sdk
         run: pnpm run check-sync
 
+  # mobile-renderer 业务核心层同步防漂移提示（P4 spec D2 + plan T2）。
+  # best-effort / 非阻塞：mobile-renderer 存在手动分叉点（useConnection.ts 砍本地模式），
+  # renderer 改动后此 job 跑 sync 脚本 --dry-run 输出 diff 状态（CHANGED/NEW/SRC-MISSING）。
+  # 不进 build needs gate（不阻塞 CI），仅提示「renderer 改动后记得跑 sync-mobile-from-renderer.sh」。
+  # MANUAL_FORK 项（useConnection.ts）需人工 diff 合并，脚本 --force 会跳过并警告。
+  mobile-sync-notify:
+    name: Mobile renderer sync (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Check mobile-renderer sync state (dry-run, non-blocking)
+        run: npm run check-mobile-sync
+
   test:
     name: Test
     runs-on: ubuntu-latest

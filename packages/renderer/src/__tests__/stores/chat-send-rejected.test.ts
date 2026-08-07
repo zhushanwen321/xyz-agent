@@ -146,7 +146,7 @@ describe('send.rejected 回滚（D-006 独立通道）', () => {
     // runtime 预检拒绝
     emit({
       type: 'send.rejected',
-      payload: { sessionId: 's-reject-1', reason: 'busy', message: 'Agent 正在处理' },
+      payload: { sessionId: 's-reject-1', reason: 'busy', message: 'Agent 正在处理', busyOwnerId: 'other', busyOwnerDevice: 'Mac', leaseExpiresAt: Date.now() + 30000 },
     })
     // clearPendingSend 后 isActive=false
     expect(chat.isActive('s-reject-1')).toBe(false)
@@ -159,7 +159,7 @@ describe('send.rejected 回滚（D-006 独立通道）', () => {
     const msgsBefore = chat.getMessages('s-reject-2')
     emit({
       type: 'send.rejected',
-      payload: { sessionId: 's-reject-2', reason: 'busy', message: 'Agent 正在处理' },
+      payload: { sessionId: 's-reject-2', reason: 'busy', message: 'Agent 正在处理', busyOwnerId: 'other', busyOwnerDevice: 'Mac', leaseExpiresAt: Date.now() + 30000 },
     })
     // send.rejected 不进对话流：消息列表不新增 error/system 气泡
     expect(chat.getMessages('s-reject-2')).toEqual(msgsBefore)
@@ -173,7 +173,7 @@ describe('send.rejected 回滚（D-006 独立通道）', () => {
     expect(chat.isGenerating('s-reject-3')).toBe(false)
     emit({
       type: 'send.rejected',
-      payload: { sessionId: 's-reject-3', reason: 'busy', message: 'busy' },
+      payload: { sessionId: 's-reject-3', reason: 'busy', message: 'busy', busyOwnerId: 'other', busyOwnerDevice: 'Mac', leaseExpiresAt: Date.now() + 30000 },
     })
     // 仍然 false（send.rejected 不产生 streaming entity）
     expect(chat.isGenerating('s-reject-3')).toBe(false)
@@ -190,7 +190,7 @@ describe('send.rejected 回滚（D-006 独立通道）', () => {
     // session A 收到 send.rejected
     emit({
       type: 'send.rejected',
-      payload: { sessionId: 's-reject-4', reason: 'busy', message: 'busy' },
+      payload: { sessionId: 's-reject-4', reason: 'busy', message: 'busy', busyOwnerId: 'other', busyOwnerDevice: 'Mac', leaseExpiresAt: Date.now() + 30000 },
     })
     // session B 的 pendingSend 不受影响（session 隔离）
     expect(chat.isActive('s-other')).toBe(true)
@@ -224,7 +224,7 @@ describe('send.rejected Composer DOM 断言（用户可见行为）', () => {
     // runtime 预检拒绝：注入 send.rejected
     emit({
       type: 'send.rejected',
-      payload: { sessionId: 's-dom-reject', reason: 'busy', message: 'Agent 正在处理' },
+      payload: { sessionId: 's-dom-reject', reason: 'busy', message: 'Agent 正在处理', busyOwnerId: 'other', busyOwnerDevice: 'Mac', leaseExpiresAt: Date.now() + 30000 },
     })
     await wrapper.vm.$nextTick()
     // store 侧：clearPendingSend → isActive=false

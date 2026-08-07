@@ -1,5 +1,9 @@
 export default {
   agentProcessing: 'Agent is processing',
+  deviceProcessing: '{device} is processing ({seconds}s remaining)',
+  // P6 D7 terminal resize rejected by another device's resize lock (DoD #6)
+  resizeLocked: '{device} is controlling the terminal size',
+  resizeLockedUnknown: 'Another device is controlling the terminal size',
   sendFailed: 'Failed to send message: {msg}',
   supplementSendFailed: 'Failed to send supplement: {msg}',
   nextTurnSendFailed: 'Failed to send next turn: {msg}',

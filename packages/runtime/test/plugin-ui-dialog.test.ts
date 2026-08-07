@@ -22,6 +22,8 @@ function createMockBroker(): IMessageBroker & { messages: Array<{ type: string; 
       messages.push({ type: msg.type, payload: msg.payload })
     }),
     sendError: vi.fn(),
+    sendToClient: vi.fn(),
+    broadcastExcept: vi.fn(),
   }
 }
 

@@ -121,6 +121,9 @@ function buildHeadersFromRows(
  * @param providerRef 当前编辑的 provider（null = 弹窗关闭）。变化时重置全部编辑态。
  */
 export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
+  // P6 D3 config CAS：settings store 提供 configVersion（setProvider 的 expectedVersion 来源）。
+  // 提前声明到顶部，供 save() 与 watch 引用（避免 TDZ）。
+  const settingsStore = useSettingsStore()
   // ── 表单 / 列表状态 ──
 
   /** form.headers/authHeader（D7）：provider 级自定义请求头 + 是否把 apiKey 写入 Authorization。
@@ -370,6 +373,8 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
     actionError.value = ''
     const providerId = providerRef.value?.id ?? form.name
     try {
+      // P6 D3 config CAS：回传当前缓存的 version 作为 expectedVersion。
+      // 服务端不等则 reject（version_conflict），onProviders 广播会刷新本地 version 供重试。
       await config.setProvider(providerId, {
         name: form.name,
         type: form.api,
@@ -392,7 +397,7 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
           compat: m.compat,
           enabled: m.enabled,
         })),
-      })
+      }, settingsStore.configVersion)
       return true
     } catch (e) {
       actionError.value = e instanceof Error ? e.message : String(e)
@@ -491,7 +496,7 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>) {
   // 弹窗打开期间若外部广播更新了同 provider（onProviders 整体替换 store.providers），
   // 弹窗表单不刷新会覆盖并发变更。watch store.providers，仅在「用户未手动改」（!isDirty）时
   // 重新快照 form（name/api/baseUrl/headers/authHeader/models），用户改动优先（isDirty=true 不刷新）。
-  const settingsStore = useSettingsStore()
+  // settingsStore 已在函数顶部声明（P6 D3 config CAS 复用 configVersion）。
   watch(
     () => settingsStore.providers,
     (list) => {

@@ -36,6 +36,7 @@ import { useExtensionUIStore } from '@/stores/extension-ui'
 import { useChat, ensureStreamSubscription } from '@/composables/features/useChat'
 import { invalidateStatusCache } from '@/composables/features/useSessionDerivations'
 import { triggerSessionCleanups } from '@/composables/useSessionScopedState'
+import { registerSessionDeleteHandlers } from '@/composables/useConnection'
 import { consumePendingOpen } from '@/composables/features/useSideDrawer'
 import { clearUnread } from '@/composables/useSessionMarkers'
 import { registerAppCommands } from '@/composables/features/useAppCommands'
@@ -185,6 +186,19 @@ export function useSidebar() {
 
     await sessionApi.switchSession(id)
     session.activeId = id
+    // P5 presence：上报活跃 session（runtime 据此更新 presence.update 的 activeSessionId）。
+    // setActive 失败不阻断切 session（presence 是瞬态，下次切/上下线会重推）。
+    // try/catch 防御：部分测试 mock 的 sessionApi 未实现 setActive（vitest 严格 mock 代理），
+    // 访问未导出成员会抛错，此处兜底吞掉（presence 是瞬态增强，不应阻断 selectSession 主流程）。
+    try {
+      const setActive = (sessionApi as unknown as { setActive?: (id: string | null) => Promise<void> }).setActive
+      if (typeof setActive === 'function') {
+        setActive(id).catch(() => { /* presence 瞬态，失败不阻断 */ })
+      }
+    // eslint-disable-next-line taste/no-silent-catch -- setActive 未实现（vitest 严格 mock 代理）时跳过，presence 是瞬态增强
+    } catch {
+      /* setActive 未实现（mock），跳过 */
+    }
     // 清除未读标记：用户主动查看该 session，不再显示未读 badge
     clearUnread(id)
     // ensureStreamSubscription：同步注册 events.on handler + fire-and-forget subscribeSession。
@@ -371,12 +385,44 @@ export function useSidebar() {
   }
 
   /**
+   * P6 D6：session 删除后的统一清理（发起方 reply 路径 + 其他客户端广播路径复用）。
+   *
+   * 在 cleanupSessionState（纯本地清理）之上叠加 active 切换：删 active 后切下一个 session
+   * （若无则空态）。广播路径（handleSessionDeleted）复用本函数——其他客户端收到 deleted 时若
+   * active 正是该 sid 也需切换。幂等：重复调对已清 store 是 no-op。
+   * 不含 sessionApi.remove（广播路径 session 已在服务端删了；发起方 deleteSession 自行 remove）。
+   */
+  async function cleanupSession(id: string): Promise<void> {
+    const wasActive = session.activeId === id
+    cleanupSessionState(id)
+    if (wasActive) {
+      const next = session.list[0]
+      if (next) {
+        try {
+          await selectSession(next.id)
+        } catch {
+          // selectSession 失败（网络抖动）→ fallback 到 chat 空态，避免 activeId=next 但 panel 空载撕裂（S4）
+          navigation.push({ view: 'chat' })
+        }
+      } else {
+        navigation.push({ view: 'chat' })
+      }
+    }
+  }
+
+  /**
    * 批量删除指定 cwd（folder）下所有 session。
    *
    * 调 sessionApi.removeByCwd 拿 BatchDeleteResult，对 res.deleted 逐个调
    * cleanupSessionState（复用 deleteSession 提取的清理逻辑）。wasActiveInFolder
    * 在调 WS 前快照，循环结束后统一回退（不依赖 removeFromList 中间态）。
    * 返回 BatchDeleteResult——caller（Sidebar.onDeleteFolder）读 res.failed 决定 toast。
+   *
+   * CR-fix WARNING6：循环前若 activeId 命中 deleted 集合，立即清 activeId=null。
+   * 否则循环中 cleanupSessionState → removeFromList 删首个命中项时会回退 activeId=list[0]，
+   * 而 list[0] 可能同属 deleted 集合 → 后续迭代读到指向已删/将删 id 的中间态 activeId
+   * （响应式消费者如 focusedSessionId 派生会看到悬空 sid）。循环后再由 wasActiveInFolder
+   * 分支 selectSession(list[0]) 统一切到幸存项（此时 list 已无 deleted 项，list[0] 稳定）。
    */
   async function deleteFolder(cwd: string): Promise<BatchDeleteResult> {
     // 用已派生的 session.list（单一真源 groups → list，与下文回退 session.list[0] 同源），
@@ -385,6 +431,11 @@ export function useSidebar() {
       .filter((s) => s.cwd === cwd)
       .some((s) => s.id === session.activeId)
     const res = await sessionApi.removeByCwd(cwd)
+    // CR-fix WARNING6：循环前清 activeId（若命中 deleted），避免循环中 removeFromList 回退到
+    // 同属 deleted 的 list[0] 造成中间态悬空。循环后 wasActiveInFolder 分支统一 selectSession。
+    if (wasActiveInFolder) {
+      session.activeId = null
+    }
     for (const sid of res.deleted) {
       cleanupSessionState(sid)
     }
@@ -401,6 +452,24 @@ export function useSidebar() {
       }
     }
     return res
+  }
+
+  /**
+   * P6 D6：收到广播 session.deleting（预告）→ soft close panel（panel unmount，暂不清 store）。
+   * 其他客户端收到 deleting 时 session 还在，先卸载 panel 避免 deleted 到达时 panel 操作 404。
+   * 幂等：panel 已卸载时 findPanelBySession 返回 undefined，no-op。
+   */
+  function handleSessionDeleting(id: string): void {
+    const boundPanel = panel.findPanelBySession(id)
+    if (boundPanel) panel.loadSession(boundPanel.id, null)
+  }
+
+  /**
+   * P6 D6：收到广播 session.deleted → cleanupSession（清 store 分区，防其他客户端内存泄漏）。
+   * 幂等：cleanupSession 对已清 store 是 no-op。
+   */
+  async function handleSessionDeleted(id: string): Promise<void> {
+    await cleanupSession(id)
   }
 
   /** 进入 Overview：push view:'overview'（ADR-0022，sidebar 持久，main 被覆盖） */
@@ -525,6 +594,12 @@ export function useSidebar() {
    * hasConnectedBefore 与 appBootstrapped 同为模块级，跨 useSidebar 实例共享。
    */
   async function onConnected(): Promise<void> {
+    // P6 D6：注册 session.delete 广播处理器（routeInbound 收到 deleting/deleted 广播时全局调用）。
+    // 注册幂等（覆盖旧 handler），每次连接重置一次 handler（闭包捕获最新 store 实例）。
+    registerSessionDeleteHandlers({
+      onDeleting: (sid) => handleSessionDeleting(sid),
+      onDeleted: (sid) => { void handleSessionDeleted(sid) },
+    })
     if (!hasConnectedBefore) {
       hasConnectedBefore = true
       await initApp()

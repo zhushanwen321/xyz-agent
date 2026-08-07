@@ -29,6 +29,8 @@ vi.mock('@/lib/ws-client', () => ({
   getState: () => mockStateRef,
   setRestarting: vi.fn(),
   setFailed: vi.fn(),
+  // wave3 P2-s4：syncSubscribedSessions（init 调）需 setSubscribedSessions 在 mock 中导出
+  setSubscribedSessions: vi.fn(),
 }))
 
 // ── ipc mock：捕获 onRuntimeRestarting/onRuntimeFailed/onRuntimePort 注册的回调 ──
@@ -38,7 +40,8 @@ let failedCb: (() => void) | null = null
 let portCb: ((port: number) => void) | null = null
 vi.mock('@/lib/ipc', () => ({
   getRuntimePort: vi.fn().mockResolvedValue(undefined),
-  getRuntimePortOffset: vi.fn().mockResolvedValue(undefined),
+  getRuntimeToken: vi.fn(),
+    getRuntimePortOffset: vi.fn().mockResolvedValue(undefined),
   onRuntimePort: (cb: (port: number) => void) => {
     portCb = cb
     return () => { portCb = null }
@@ -86,6 +89,10 @@ vi.mock('@/stores/session', () => ({
 const mockClearAllPending = vi.fn()
 vi.mock('@/stores/extension-ui', () => ({
   useExtensionUIStore: () => ({ clearAllPending: mockClearAllPending }),
+}))
+// wave3 P2-s4：syncSubscribedSessions（init 调）读 usePanelStore().panels，需 mock 避免无 active pinia。
+vi.mock('@/stores/panel', () => ({
+  usePanelStore: () => ({ panels: [], activePanelId: 'root', focusedSessionId: null }),
 }))
 
 import { useConnection } from '@/composables/useConnection'

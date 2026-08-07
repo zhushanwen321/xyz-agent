@@ -143,6 +143,9 @@ function createService(): SessionService {
     send: vi.fn(),
     broadcast: vi.fn(),
     sendError: vi.fn(),
+    // P5 lease/presence 定向投递（restoreSession 测试不涉及，给 no-op stub 满足接口）。
+    sendToClient: vi.fn(),
+    broadcastExcept: vi.fn(),
   }
   const adapterFactory = (_sessionId: string, _interceptor: unknown): IEventAdapter => {
     return {

@@ -61,6 +61,17 @@ export interface IMessageBroker {
   broadcast(msg: ServerMessage): void
   /** D10/P0-B: 第 5 参数从 sessionId(string) 改为 details(ErrorDetails)，sessionId 进 details.sessionId。 */
   sendError(ws: unknown, code: string, message: string, id?: string, details?: { sessionId?: string; [key: string]: unknown }): void
+  /**
+   * P5 lease/presence：定向投递给指定 clientId（点对点，不打 seq、不入 P2 ring buffer 桶——
+   * 与 reply/send 同语义，非广播）。目标 clientId 不存在或 ws 已关闭时 no-op 不抛错（fire-and-forget）。
+   * 用于 send.rejected（发起方专属 reply）等定向投递。
+   */
+  sendToClient(clientId: string, msg: ServerMessage): void
+  /**
+   * P5 lease/presence：广播给除 excludeClientId 外的所有客户端（点对点集合，不打 seq、不入桶）。
+   * 用于 session.busy（排除发起方，发起方已 reply send.rejected）等定向广播。
+   */
+  broadcastExcept(excludeClientId: string, msg: ServerMessage): void
 }
 
 // ── IEventAdapter ─────────────────────────────────────────────────
@@ -106,9 +117,11 @@ export interface ISessionService {
    * images 透传给 pi prompt（message.send 的 images 字段，shared 形状 {data;base64;mimeType}）。
    * 类型组装（补 pi 私有 type:'image'）在 infra 层 RpcClient 内完成，本接口只暴露 shared 形状。
    * undefined 时不传 images，走原路径。
+   *
+   * clientId/deviceName：P5 lease 用，透传给 dispatcher（acquire + busy 定向投递）。
    */
-  sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>): Promise<{ blocked: boolean; rejected?: boolean }>
-  sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean; rejected?: boolean }>
+  sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>, clientId?: string, deviceName?: string): Promise<{ blocked: boolean; rejected?: boolean }>
+  sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string, clientId?: string, deviceName?: string): Promise<{ blocked: boolean; rejected?: boolean }>
   abort(sessionId: string): Promise<void>
   /**
    * 直接执行 bash 命令（pi bash RPC，不经 LLM turn）。
@@ -244,6 +257,8 @@ export type { ISessionServiceInternal } from './services/session/session-interna
 export interface IConfigService {
   listProviders(): ProviderInfo[]
   getDefaultModel(): { provider: string; modelId: string } | null
+  /** P6 D3 config CAS：当前 models.json version（旧文件 default 0）。广播 config.providers 时携带。 */
+  getConfigVersion(): number
   setDefaultModel(provider: string, modelId: string): void
   setProvider(providerId: string, data: {
     name?: string
@@ -252,8 +267,8 @@ export interface IConfigService {
     baseUrl?: string
     models?: Array<string | { id: string; name?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null> }>
     enabled?: boolean
-  }): { newDefault?: { provider: string; modelId: string } }
-  deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } }
+  }, expectedVersion: number): { newDefault?: { provider: string; modelId: string }; newVersion: number }
+  deleteProvider(providerId: string, expectedVersion: number): { removed: boolean; newDefault?: { provider: string; modelId: string }; newVersion: number }
   getProvider(providerId: string): { apiKey?: string; name?: string; type?: string; baseUrl?: string; models?: unknown[]; enabled?: boolean } | undefined
   updateToolPermissions(permissions: Record<string, string>): void
   // ── Skill/Agent 加载路径（ADR-0020 §1 discovery.json SSOT）──
@@ -435,6 +450,11 @@ export interface IPluginService {
   setPluginConfig(pluginId: string, key: string, value: unknown): Promise<void>
   /** Clear cached session data */
   clearSessionData(sessionId: string): void
+  /**
+   * 清理指定 clientId 的 activeSession resolver cache 条目。
+   * 客户端断开时调用，避免 stale per-key cache 条目残留导致 Map 单调增长。
+   */
+  clearClientResolverCache(clientId: string): void
   /** Handle UI response from frontend (confirm/select/input dialogs) */
   handleUiResponse(requestId: string, result: unknown): void
 

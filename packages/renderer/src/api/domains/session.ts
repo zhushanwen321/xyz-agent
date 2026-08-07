@@ -7,7 +7,7 @@
  * 注：ServerMessage(id) → pending.resolve 的回灌由 features 层 dispatcher 串联（Wave 3）。
  *      mock 模式下不走本域（api/index 切到 mock 门面）。
  */
-import type { SessionSummary, SessionGroup, SubagentRecord, WorkflowRunRecord, Message, BatchDeleteResult, ServerMessage } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup, SubagentRecord, WorkflowRunRecord, Message, PresenceConnection, BatchDeleteResult, ServerMessage } from '@xyz-agent/shared'
 import { command } from '../request'
 
 /**
@@ -46,6 +46,23 @@ export async function create(cwd?: string, label?: string, presetId?: string): P
 /** 切换到指定 session（id 无效时由 runtime/pending reject） */
 export function switchSession(sessionId: string): Promise<void> {
   return command('session.switch', { sessionId })
+}
+
+/**
+ * P5 presence：上报客户端当前活跃 session（切 panel 时调）。
+ * sessionId=null 表示在看非 session 视图（如 settings）。runtime 据此更新 presence.update 的 activeSessionId。
+ */
+export function setActive(sessionId: string | null): Promise<void> {
+  return command('session.setActive', { sessionId }).then(() => undefined)
+}
+
+/**
+ * P5 presence：主动拉取 presence 全量列表（resume 路径短断线无 auth.ok 时调）。
+ * reply presence.list:result { connections }，解包 .connections。
+ */
+export async function listPresence(): Promise<PresenceConnection[]> {
+  const reply = await command('presence.list', {})
+  return reply.connections
 }
 
 /**

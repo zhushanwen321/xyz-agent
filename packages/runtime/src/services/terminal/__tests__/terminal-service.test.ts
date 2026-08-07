@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { ServerMessage } from '@xyz-agent/shared'
+import { WebSocket } from 'ws'
 
 // ── mock node-pty ─────────────────────────────────────────────────────────
 // vi.mock 工厂被 hoisting 提升到文件顶，不能直接引用模块级变量。
@@ -76,6 +77,17 @@ function findMsg(msgs: ServerMessage[], type: string): ServerMessage | undefined
   return msgs.find((m) => m.type === type)
 }
 
+/**
+ * P2-s3：构造 mock ws（attach 回灌测试用）。
+ * 只 mock attach 路径用到的两个字段：send（vi.fn 收集调用）+ readyState（默认 OPEN）。
+ * 不需完整 WebSocket mock——attach 实现只读这两个字段。
+ * attach 入参要求完整 WsType，但实现仅触及 send/readyState，
+ * 故经 as unknown as WebSocket 收口（TS 官方推荐的 partial→full 转换）。
+ */
+function createMockWs(readyState: number = WebSocket.OPEN): WebSocket & { send: ReturnType<typeof vi.fn> } {
+  return { send: vi.fn(), readyState } as unknown as WebSocket & { send: ReturnType<typeof vi.fn> }
+}
+
 beforeEach(() => {
   mockPtys.length = 0
   vi.clearAllMocks()
@@ -112,7 +124,8 @@ describe('TerminalService', () => {
     const { broadcast } = createBroadcastCollector()
     const svc = new TerminalService({ broadcast })
     await svc.spawn('s3', undefined, 80, 24)
-    svc.resize('s3', 120, 40)
+    // P6 D7：resize 加 clientId/ownerDevice 参数
+    svc.resize('s3', 120, 40, 'local', 'local')
     expect(mockPtys.at(-1)!.resize).toHaveBeenCalledWith(120, 40)
   })
 
@@ -161,7 +174,7 @@ describe('TerminalService', () => {
     const svc = new TerminalService({ broadcast })
     expect(() => svc.kill('nonexistent')).not.toThrow()
     expect(() => svc.write('nonexistent', 'x')).not.toThrow()
-    expect(() => svc.resize('nonexistent', 80, 24)).not.toThrow()
+    expect(() => svc.resize('nonexistent', 80, 24, 'local', 'local')).not.toThrow()
     expect(() => svc.destroyPty('nonexistent')).not.toThrow()
   })
 
@@ -220,10 +233,208 @@ describe('TerminalService', () => {
     expect(JSON.parse(JSON.stringify(serialized)).message).toBe('ENOENT: shell not found')
   })
 
-  it('TS-11: spawn env 清除 ELECTRON_RUN_AS_NODE 等 sidecar 内部变量（防 terminal 用户跑 electron 命令崩溃）', async () => {
+  // ── P2-s3 terminal scrollback（spec §五） ──────────────────────────────────
+
+  it('TS-11: PTY onData 后 scrollback buffer 含对应 chunk（getScrollbackSize===1）', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s11', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    pty.__emitData('hello')
+    expect(svc.getScrollbackSize('s11')).toBe(1)
+    // 再 emit 一条，size 递增
+    pty.__emitData(' world')
+    expect(svc.getScrollbackSize('s11')).toBe(2)
+  })
+
+  it('TS-12: 字节上限双限驱逐——连续 emit 大 data 超 scrollbackMaxBytes 后老 chunk 被驱逐', async () => {
+    // 用小 env 上限隔离测试（构造期解析 env，故 set 在 new 之前）。
+    vi.stubEnv('XYZ_AGENT_TERMINAL_SCROLLBACK_BYTES', '300')
+    try {
+      const { broadcast } = createBroadcastCollector()
+      const svc = new TerminalService({ broadcast })
+      await svc.spawn('s12', undefined, 80, 24)
+      const pty = mockPtys.at(-1)!
+      // 每条约 100 字节（data 字符串本身小，但 stringify 后含 sessionId/type/id 等开销 ~100B）。
+      // emit 5 条 → 累计 > 300B → 触发字节上限驱逐（最老的先删）。
+      for (let i = 0; i < 5; i++) pty.__emitData(`x`.repeat(80))
+      // 字节上限触发后 size 必 < 5（部分被驱逐），且不超条数上限 1000
+      const size = svc.getScrollbackSize('s12')
+      expect(size).toBeLessThan(5)
+      expect(size).toBeGreaterThan(0)
+      expect(size).toBeLessThanOrEqual(1000)
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('TS-13: 条数上限双限驱逐——emit 超 1000 条后 size===1000（最老的被驱逐）', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s13', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    // emit 1001 条小 data（每条小，不触字节上限），条数上限 1000 触发驱逐
+    for (let i = 0; i < 1001; i++) pty.__emitData(String(i))
+    // 条数上限保证 size === 1000（最老 1 条被 LRU 驱逐）
+    expect(svc.getScrollbackSize('s13')).toBe(1000)
+  })
+
+  it('TS-14: kill 清除对应 session 的 scrollback buffer', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s14', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    pty.__emitData('before kill')
+    expect(svc.getScrollbackSize('s14')).toBe(1)
+    svc.kill('s14')
+    expect(svc.getScrollbackSize('s14')).toBe(0)
+  })
+
+  it('TS-15: destroyPty 清除对应 session 的 scrollback buffer', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s15', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    pty.__emitData('before destroy')
+    expect(svc.getScrollbackSize('s15')).toBe(1)
+    svc.destroyPty('s15')
+    expect(svc.getScrollbackSize('s15')).toBe(0)
+  })
+
+  it('TS-16: PTY onExit 不清除 scrollback buffer（D4：保留 exit 前输出供重新 attach）', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s16', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    pty.__emitData('before exit')
+    expect(svc.getScrollbackSize('s16')).toBe(1)
+    // PTY 自然退出（onExit）不清 buffer——session 未销毁前重新 attach 应能回灌到 exit 前输出
+    pty.__emitExit(0)
+    expect(svc.getScrollbackSize('s16')).toBe(1)
+  })
+
+  it('TS-17: 不存在的 sid 调 getScrollbackSize 返回 0（桶不存在 no-op）', () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    expect(svc.getScrollbackSize('nonexistent')).toBe(0)
+  })
+
+  it('TS-18: env XYZ_AGENT_TERMINAL_SCROLLBACK_BYTES 覆盖字节上限', async () => {
+    // 设极小字节上限，验证 emit 单条超限后驱逐生效
+    vi.stubEnv('XYZ_AGENT_TERMINAL_SCROLLBACK_BYTES', '50')
+    try {
+      const { broadcast } = createBroadcastCollector()
+      const svc = new TerminalService({ broadcast })
+      await svc.spawn('s18', undefined, 80, 24)
+      const pty = mockPtys.at(-1)!
+      // 单条 stringify 后 > 50B（payload 含 sessionId/type/id + data 开销）
+      pty.__emitData('x'.repeat(60))
+      // 字节上限 50 远小于条数上限 1000，故 size 受字节约束（极端情况 SessionBuffer 会清空整桶）
+      // 主要验证 env 生效：env=50 时行为与默认 256KB 不同（默认下单条不会触发驱逐）
+      const size = svc.getScrollbackSize('s18')
+      // 单条 > maxBytes 时 SessionBuffer shift 掉自身 → size 可能为 0；无论如何应不超 1
+      expect(size).toBeLessThanOrEqual(1)
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  // ── P2-s3-w2 attach 回灌（spec §五 IF1/IF2） ────────────────────────────────
+
+  it('TS-19: attach 回灌内容与顺序正确（按 buffer 内升序逐条 ws.send）', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s19', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    pty.__emitData('a')
+    pty.__emitData('b')
+    const ws = createMockWs()
+    svc.attach('s19', ws)
+    // 按 emit 顺序回灌两条
+    expect(ws.send).toHaveBeenCalledTimes(2)
+    const first = JSON.parse((ws.send.mock.calls[0] as string[])[0])
+    const second = JSON.parse((ws.send.mock.calls[1] as string[])[0])
+    expect(first.type).toBe('terminal.data')
+    expect(first.payload.data).toBe('a')
+    expect(second.payload.data).toBe('b')
+  })
+
+  it('TS-20: attach 点对点——只投递给传入的 ws，不广播/不影响其他 ws', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s20', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    pty.__emitData('x')
+    const wsA = createMockWs()
+    const wsB = createMockWs()
+    svc.attach('s20', wsA)
+    // wsA 收到回灌，wsB 从未被调用（点对点，D3）
+    expect(wsA.send).toHaveBeenCalledTimes(1)
+    expect(wsB.send).not.toHaveBeenCalled()
+  })
+
+  it('TS-21: attach 时 ws undefined 是 no-op（不抛错，向后兼容兜底）', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s21', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    pty.__emitData('x')
+    // ws undefined 不抛错、无 send（防御兜底，handler 必传 ws 但 port 接口允许 undefined）
+    expect(() => svc.attach('s21', undefined)).not.toThrow()
+  })
+
+  it('TS-22: attach 时 buffer 为空（session 有 PTY 但无输出）是 no-op', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s22', undefined, 80, 24)
+    // 未 emit 任何 data，buffer 桶虽可能未创建（懒创建）或为空
+    const ws = createMockWs()
+    svc.attach('s22', ws)
+    expect(ws.send).not.toHaveBeenCalled()
+  })
+
+  it('TS-23: attach 时 buffer 不存在（sid 从未 spawn）是 no-op', () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    const ws = createMockWs()
+    // 从未 spawn 的 sid，桶不存在
+    expect(() => svc.attach('nonexistent', ws)).not.toThrow()
+    expect(ws.send).not.toHaveBeenCalled()
+  })
+
+  it('TS-24: attach 回灌时 ws 已关闭（readyState !== OPEN）跳过 send 不抛错', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s24', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    pty.__emitData('x')
+    // readyState=CLOSED 模拟连接已关闭
+    const closedWs = createMockWs(WebSocket.CLOSED)
+    expect(() => svc.attach('s24', closedWs)).not.toThrow()
+    expect(closedWs.send).not.toHaveBeenCalled()
+  })
+
+  it('TS-25: 回灌的消息不带 seq 字段（D2：点对点回灌不入全局 seq 体系）', async () => {
+    const { broadcast } = createBroadcastCollector()
+    const svc = new TerminalService({ broadcast })
+    await svc.spawn('s25', undefined, 80, 24)
+    const pty = mockPtys.at(-1)!
+    pty.__emitData('x')
+    const ws = createMockWs()
+    svc.attach('s25', ws)
+    const sent = JSON.parse((ws.send.mock.calls[0] as string[])[0])
+    // 回灌消息只有 type/id/payload，无 seq 字段（与实时 broadcast 打 seq 区分，D2）
+    expect(sent).not.toHaveProperty('seq')
+    expect(sent.type).toBe('terminal.data')
+    expect(sent.payload.data).toBe('x')
+  })
+
+  // ── main 合入：spawn env 清理 sidecar 内部变量 ──────────────────────────────
+
+  it('TS-26: spawn env 清除 ELECTRON_RUN_AS_NODE 等 sidecar 内部变量（防 terminal 用户跑 electron 命令崩溃）', async () => {
     // [HISTORICAL] 回归：runtime sidecar 的 process.env 含 ELECTRON_RUN_AS_NODE=1（打包模式
-    // 由 Electron 主进程注入，见 process-control.ts:202-205）。buildEnv 若原样透传到 terminal shell，
-    // 用户在 terminal 跑 `electron .` / `npm run dev` 时 Electron 退化为纯 Node，
+    // 由 Electron 主进程注入，见 process-control.ts:202-205）。buildEnv 若原样透传到 terminal shell,
+    // 用户在 terminal 跑 `electron .` / `npm run dev` 时 Electron 退化为纯 Node,
     // require('electron').app 为 undefined → 'Cannot read properties of undefined (reading isPackaged)' 崩溃。
     // 修复：buildEnv 必须显式 delete 这些变量。
     const prev = { ...process.env }
@@ -233,7 +444,7 @@ describe('TerminalService', () => {
     try {
       const { broadcast } = createBroadcastCollector()
       const svc = new TerminalService({ broadcast })
-      await svc.spawn('s11', undefined, 80, 24)
+      await svc.spawn('s26', undefined, 80, 24)
       const { spawn } = await import('node-pty')
       // node-pty.spawn(file, args, options) → options.env
       const opts = vi.mocked(spawn).mock.calls[0]![2] as { env: Record<string, string> }

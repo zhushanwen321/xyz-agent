@@ -157,10 +157,23 @@
         </template>
       </div>
 
+      <!-- P5 presence：在线设备列表（多设备时显示，spec §4.2 最小实现） -->
+      <PresenceList />
+
       <!-- 用户区（footer）· 齿轮图标打开 Settings（settings/spec.md §1） -->
       <div class="mt-auto flex items-center gap-2 rounded-md px-2 py-2 text-[12px] text-neutral-mid">
         <span class="size-5 shrink-0 rounded-full bg-gradient-to-br from-accent to-info" />
         <span class="flex-1 truncate text-neutral-fg">{{ t('sidebar.developer') }}</span>
+        <!-- wave 远程分享：分享本机连接信息（openShare 由 AppShell provide） -->
+        <Button
+          data-testid="share-connection-btn"
+          variant="ghost"
+          class="grid size-6 shrink-0 place-items-center rounded-sm p-0 text-neutral-dim transition-colors hover:bg-surface-hover hover:text-neutral-fg [&_svg]:size-[14px]"
+          :title="t('connection.share.title')"
+          @click="openShare()"
+        >
+          <Share2 class="size-[14px]" />
+        </Button>
         <Button
           variant="ghost"
           class="grid size-6 shrink-0 place-items-center rounded-sm p-0 text-neutral-dim transition-colors hover:bg-surface-hover hover:text-neutral-fg [&_svg]:size-[14px]"
@@ -186,7 +199,7 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from 'vue'
 import { useEventListener } from '@vueuse/core'
-import { Plus, LayoutGrid, Search, Settings, FolderOpen, AlertCircle } from '@lucide/vue'
+import { Plus, LayoutGrid, Search, Settings, FolderOpen, AlertCircle, Share2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import SearchModal from '@/components/overlays/SearchModal.vue'
@@ -206,6 +219,7 @@ import SubagentList from './SubagentList.vue'
 import WorkflowList from './WorkflowList.vue'
 import WorkflowDetail from './WorkflowDetail.vue'
 import RenameSessionDialog from './RenameSessionDialog.vue'
+import PresenceList from './PresenceList.vue'
 import { useFileTreeStore } from '@/stores/fileTree'
 import { usePanelStore } from '@/stores/panel'
 import { useSubagentStore } from '@/stores/subagent'
@@ -236,6 +250,8 @@ const { selectSession, newSession, goOverview, loadSessions, renameSession, dele
 const { abort: abortSession } = useChat()
 const { derivedStatus } = useSessionDerivations()
 const openSettings = inject<() => void>('openSettings', () => {})
+/** wave 远程分享：由 AppShell provide，打开 ShareConnectionModal。 */
+const openShare = inject<() => void>('openShare', () => {})
 
 /** pi 版本（runtime 启动时经 app.info 推送）+ xyz-agent 版本（vite define 注入） */
 const piVersion = ref('')

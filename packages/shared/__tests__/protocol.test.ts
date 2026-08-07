@@ -11,9 +11,12 @@ import { describe, it, expect } from 'vitest'
 import type {
   ClientMessageMap,
   ServerMessageMapBase,
+  ServerMessageType,
+  ServerMessageMap,
   ReplyPayloadMap,
   WorktreeErrorCode,
 } from '../src/protocol'
+import type { PendingUiRequest } from '../src/extension'
 
 // ── 编译期类型断言辅助 ─────────────────────────────────────────
 // 如果类型不存在于映射中，条件类型求值为 never → 赋值失败 → tsc 报错。
@@ -60,6 +63,15 @@ type _Assert_DetectedShape = AssertExtends<
 type _Assert_BaseBranchIsString = AssertExtends<
   ClientMessageMap['worktree.create']['baseBranch'],
   string | undefined
+>
+
+// P3 D3：extension.pendingRequestsBatch（initial state 第 14 段，独立 type 非复用 extension.pendingRequests）
+// ServerMessageType 联合含该 type；ServerMessageMapBase 含精确 payload { requests: PendingUiRequest[] }
+type _Assert_ServerType_pendingBatch = AssertExtends<'extension.pendingRequestsBatch', ServerMessageType>
+type _Assert_ServerMapBase_pendingBatch = AssertHasKey<ServerMessageMapBase, 'extension.pendingRequestsBatch'>
+type _Assert_PendingBatchShape = AssertExtends<
+  ServerMessageMap['extension.pendingRequestsBatch'],
+  { requests: PendingUiRequest[] }
 >
 
 // ── 运行期测试 ─────────────────────────────────────────────────

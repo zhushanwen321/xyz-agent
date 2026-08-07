@@ -13,56 +13,132 @@
 import type { PluginRpcServer } from '../plugin-rpc-server.js'
 import type { PluginRpcClient } from '../plugin-rpc-client.js'
 import type { SessionInfo, Disposable } from '../plugin-types.js'
+import { CLIENT_ID_PARAM_KEY } from '../plugin-types.js'
 import type { IPluginServiceDeps } from '../plugin-types.js'
 import type { SessionSummary } from '../../../../../shared/src/session.js'
 import { registerHandler, dispatchHandler } from '../handler-registry.js'
+import { sessionContext } from '../../../infra/async-context.js'
+
+/**
+ * 解析当前 plugin RPC 调用的发起方 clientId（P7 长期方案 A）。
+ *
+ * ALS 跨独立 I/O tick 断裂的解法：plugin 工具执行经 pi bridge_request 事件触发（独立
+ * I/O tick，不在任何 WS 请求的 ALS 作用域内）。bridge-interop 从 session lease owner
+ * 反查 clientId 塞进 invoke params → Worker 存为执行上下文 → RPC 回主线程时注入到
+ * params[CLIENT_ID_PARAM_KEY]。handler 据此显式取 clientId per-client resolve。
+ *
+ * 优先级：
+ * ① params 显式 clientId（Worker 注入，plugin 工具执行路径）—— 真相源
+ * ② ALS sessionContext.getStore()?.clientId（WS 请求同步链路内的 plugin 操作）
+ * ③ undefined（hook/定时器/生命周期触发）→ resolver 全局 fallback（D7 例外，零回归）
+ *
+ * @param params Worker RPC 请求 params（可能含 CLIENT_ID_PARAM_KEY）
+ */
+export function resolveClientId(params: Record<string, unknown> | undefined): string | undefined {
+  const explicit = params?.[CLIENT_ID_PARAM_KEY]
+  if (typeof explicit === 'string' && explicit.length > 0) return explicit
+  return sessionContext.getStore()?.clientId
+}
 
 // eslint-disable-next-line no-magic-numbers -- 2 seconds TTL for active session cache
 const ACTIVE_SESSION_CACHE_TTL_MS = 2 * 1000
 
 /**
- * 活跃 session 解析器（P6 收口：消除 plugin-rpc-setup.ts 的模块级可变全局状态）。
+ * 活跃 session 解析器（P6 收口：消除 plugin-rpc-setup.ts 的模块级可变全局状态；
+ * P7 per-client 化：resolve 绑 clientId，从 P5 activeSessions Map 取 per-client session）。
  *
  * 此前 `_activeSessionCache` 是 plugin-rpc-setup.ts 的隐藏模块全局——跨 service
  * 实例共享、测试间泄漏、无法注入。现收口为可注入实例：每个 PluginService 持有
  * 自己的 resolver，缓存随实例生命周期生灭。
  *
- * 提供 TTL 缓存：命中时按缓存 sessionId 查 summary（避免全盘扫描），过期或失效
- * 则回退全盘扫描并刷新缓存。
+ * P7 改造（spec §2.1）：
+ * - resolve 签名加 clientId（undefined 走全局 fallback，零回归）
+ * - 数据源：有 clientId 时优先 connectionManager.getActiveSession(clientId)（P5 activeSessions Map）
+ *   → leaseManager.getBusySession(clientId)（lease fallback）→ 全局 active（扫描 isGenerating）→ undefined
+ * - TTL cache 改为 per-key（Map<clientId|'global', {sessionId, ts}>），避免客户端间污染
+ *
+ * 复用 P5 已交付基础设施（activeSessions Map + lease busyOwnerId），零新机制。
  */
 export class ActiveSessionResolver {
-  private cache: { sessionId: string; ts: number } | null = null
+  /**
+   * per-key TTL cache：key = clientId 或 'global'（clientId undefined 时）。
+   * 替换原全局单值 cache——多客户端各自的 active session 独立缓存，避免污染。
+   */
+  private readonly cache = new Map<string, { sessionId: string; ts: number }>()
 
   constructor(private readonly deps: IPluginServiceDeps) {}
 
-  /** 清除缓存（测试在 beforeEach 调用以保证干净起点） */
-  clear(): void {
-    this.cache = null
+  /**
+   * 清除缓存。
+   * @param clientId 指定则只清该 clientId 的 cache key；不传则清整个 Map（测试 beforeEach 用）。
+   */
+  clear(clientId?: string): void {
+    if (clientId === undefined) {
+      this.cache.clear()
+    } else {
+      this.cache.delete(clientId)
+    }
   }
 
   /**
-   * 查找当前活跃 session。返回 SessionSummary 或 undefined。
-   * 命中 TTL 缓存时按缓存 id 查 summary；否则全盘扫描。
+   * 查找当前活跃 session（P7 per-clientId）。
+   *
+   * 四级 fallback（spec D3）：
+   * ① 有 clientId → connectionManager.getActiveSession(clientId)（P5 Map 命中，setActive 过）
+   * ② lease fallback → leaseManager.getBusySession(clientId)（busyOwnerId=clientId，刚连上未 setActive 但正操作）
+   * ③ 全局 active → findGlobalActiveSession（扫描 isGenerating，现状行为；clientId undefined 时直接走此级）
+   * ④ 都 miss → undefined
+   *
+   * clientId undefined（hook/定时器/生命周期触发，ALS 无 store）时直接走第三级，与现状行为等价（D7 例外）。
+   * 命中 per-key TTL 缓存时按 sessionId 查 summary（O(1)），过期则重算并刷新该 key。
+   *
+   * @returns SessionSummary 或 undefined（四级 fallback 都 miss）
    */
-  resolve(): SessionSummary | undefined {
+  resolve(clientId: string | undefined): SessionSummary | undefined {
     if (!this.deps.sessionService) return undefined
     const now = Date.now()
-    if (this.cache && (now - this.cache.ts) < ACTIVE_SESSION_CACHE_TTL_MS) {
-      // Cache hit — look up session summary by cached ID (no full disk scan)
-      const summary = this.deps.sessionService.getSummary(this.cache.sessionId)
+    const cacheKey = clientId ?? 'global'
+    const cached = this.cache.get(cacheKey)
+    if (cached && (now - cached.ts) < ACTIVE_SESSION_CACHE_TTL_MS) {
+      // Cache hit — look up session summary by cached ID (no full scan)
+      const summary = this.deps.sessionService.getSummary(cached.sessionId)
       if (summary) return summary
-      // Cached session no longer valid — fall through to full scan
-      this.cache = null
+      // Cached session no longer valid — fall through to fallback chain
+      this.cache.delete(cacheKey)
     }
-    // Cache miss or expired — do the full scan
+
+    // D3 四级 fallback
+    let sessionId: string | undefined
+    if (clientId) {
+      // ① P5 activeSessions Map 命中（setActive 过）。null（主动取消选中）和 undefined（从未 setActive）都视为 miss。
+      const fromMap = this.deps.connectionManager?.getActiveSession(clientId)
+      if (fromMap) {
+        sessionId = fromMap
+      } else {
+        // ② lease fallback（busyOwnerId=clientId）
+        sessionId = this.deps.leaseManager?.getBusySession(clientId)?.sessionId
+      }
+    }
+    // ③ 无 clientId（D7 例外）或 per-client 链路都 miss → 全局 active fallback（现状行为）
+    if (!sessionId) {
+      sessionId = this.findGlobalActiveSession()
+    }
+    // ④ 仍无 → undefined
+    if (!sessionId) return undefined
+
+    this.cache.set(cacheKey, { sessionId, ts: now })
+    return this.deps.sessionService.getSummary(sessionId) ?? undefined
+  }
+
+  /**
+   * 全局 active session 扫描（现状 resolve() 的扫描逻辑，D3 第三级 fallback 复用）。
+   * 扫描 listPersistedSessions 找第一个 status==='active'（即 isGenerating）。
+   */
+  private findGlobalActiveSession(): string | undefined {
+    if (!this.deps.sessionService) return undefined
     const groups = this.deps.sessionService.listPersistedSessions()
     const active = groups.flatMap(g => g.sessions).find(s => s.status === 'active')
-    if (active) {
-      this.cache = { sessionId: active.id, ts: now }
-    } else {
-      this.cache = null
-    }
-    return active
+    return active?.id
   }
 }
 
@@ -70,7 +146,11 @@ export class ActiveSessionResolver {
 export interface SessionHandlers {
   listSessions(): SessionInfo[] | Promise<SessionInfo[]>
   getSession(id: string): SessionInfo | undefined | Promise<SessionInfo | undefined>
-  getActiveSession(): SessionInfo | undefined | Promise<SessionInfo | undefined>
+  /**
+   * P7：clientId 透传给 ActiveSessionResolver.resolve(clientId)。
+   * clientId undefined（ALS 无 store）时走全局 fallback。
+   */
+  getActiveSession(clientId?: string): SessionInfo | undefined | Promise<SessionInfo | undefined>
   sendMessage(sessionId: string | undefined, role: string, content: string): Promise<void>
 }
 
@@ -88,15 +168,29 @@ export function registerSessionRpcHandlers(
     return deps.getSession(sessionId)
   })
 
-   
-  rpcServer.registerMethod('plugin.sessions.getActive', async (_params) => {
-    return deps.getActiveSession()
+
+  rpcServer.registerMethod('plugin.sessions.getActive', async (params) => {
+    // P7 长期方案 A：优先用 params 显式 clientId（Worker 经执行上下文注入，绕开 ALS
+    // 跨独立 I/O tick 断裂）；ALS 作为 fallback（WS 请求同步链路内的 plugin 操作）。
+    // 两者都无（hook/定时器/生命周期，D7 例外）→ clientId undefined → resolver 全局 fallback。
+    const clientId = resolveClientId(params)
+    return deps.getActiveSession(clientId)
   })
 
   rpcServer.registerMethod('plugin.sessions.sendMessage', async (params) => {
-    const sessionId = params.sessionId as string | undefined
+    let sessionId = params.sessionId as string | undefined
     const role = params.role as string
     const content = params.content as string
+    // sessionId 缺失时解析 active session：优先用 params 显式 clientId（长期方案 A），
+    // ALS 作 fallback。解析失败（四级 fallback 都 miss）→ throw（plugin 代码自行处理）。
+    if (!sessionId) {
+      const clientId = resolveClientId(params)
+      const active = await deps.getActiveSession(clientId)
+      if (!active) {
+        throw new Error('no_active_session')
+      }
+      sessionId = active.id
+    }
     await deps.sendMessage(sessionId, role, content)
   })
 }

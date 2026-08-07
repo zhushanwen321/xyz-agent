@@ -3,10 +3,10 @@
  * Extracted from RuntimeServer to reduce file size.
  */
 import type { WebSocket as WsType } from 'ws'
-import type { ClientMessage, ClientMessageType, ServerMessage } from '@xyz-agent/shared'
+import type { ClientMessage, ClientMessageType, ServerMessage, PresenceConnection } from '@xyz-agent/shared'
 import type { ISessionService } from '../interfaces.js'
 import type { HandoffService } from '../services/handoff-service.js'
-import { toErrorMessage, isEnoent, MODEL_NOT_CONFIGURED } from '../utils/errors.js'
+import { toErrorMessage, isEnoent, MODEL_NOT_CONFIGURED, SESSION_LIMIT_REACHED } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
 // MessageBus（wave:runtime-wiring）：session.subscribe/unsubscribe RPC handler 用它注册订阅。
 // type-only import（handler 不持有 bus 实例的创建，只调它的方法）。
@@ -30,6 +30,24 @@ export interface SessionHandlerContext extends MessageHandlerContext {
   clearExtensionTimeoutsForSession(sessionId: string): void
   /** 广播一条 ServerMessage 给所有连接（FR-12：fork 后广播 session.forkNotice）。 */
   broadcast(msg: ServerMessage): void
+  /**
+   * 清除某 session 的 ring buffer 桶（P2-s1-w2 / PC-W2.6）。
+   * session 销毁时调，移除整桶不推进 evictedWatermark（ES6：session 已删，客户端清分区不再期待其消息）。
+   */
+  clearSessionBuffer(sessionId: string): void
+  /**
+   * P5 lease：取某 clientId 连接的设备名（message.send 透传给 dispatcher lease acquire + session.busy 广播）。
+   * 可选——未注入时 deviceName 兜底 ''。
+   */
+  getDeviceName?(clientId: string): string | undefined
+  /**
+   * P5 presence：设置 clientId 的活跃 session（session.setActive RPC 调，触发 presence 重推）。
+   */
+  setActiveSession(clientId: string, sessionId: string | null): void
+  /**
+   * P5 presence：构造全量 presence 列表（presence.list RPC reply 用）。
+   */
+  buildPresenceList(): PresenceConnection[]
 }
 
 export class SessionMessageHandler {
@@ -46,9 +64,11 @@ export class SessionMessageHandler {
     'session.workflowAction', 'session.subagentAction',
     'message.send', 'message.abort', 'message.steer', 'message.follow_up',
     'message.bash', 'message.abortBash',
+    // P5 presence：客户端切 panel 上报活跃 session（触发 presence 重推）；resume 路径主动拉 presence。
+    'session.setActive', 'presence.list',
   ]
 
-  async handleSessionMessage(msg: ClientMessage, ws: WsType): Promise<void> {
+  async handleSessionMessage(msg: ClientMessage, ws: WsType, clientId: string): Promise<void> {
     switch (msg.type) {
       case 'session.create': {
         try {
@@ -68,6 +88,11 @@ export class SessionMessageHandler {
           const code = (e as Error & { code?: string }).code
           if (code === MODEL_NOT_CONFIGURED) {
             this.ctx.sendError(ws, MODEL_NOT_CONFIGURED, toErrorMessage(e), msg.id)
+            return
+          }
+          // W1-T6: session 数量超上限时返回 session_limit_reached，前端引导关闭旧 session。
+          if (code === SESSION_LIMIT_REACHED) {
+            this.ctx.sendError(ws, SESSION_LIMIT_REACHED, toErrorMessage(e), msg.id)
             return
           }
           throw e
@@ -166,8 +191,42 @@ export class SessionMessageHandler {
       case 'session.delete': {
         const delSid = msg.payload.sessionId
         this.ctx.clearExtensionTimeoutsForSession(delSid)
+        // P6 D6 两步广播：deleting 预告（全量广播，含发起方）让客户端先收 panel + 清 store 分区准备。
+        // 在 sessionService.delete 之前广播——客户端收到 deleting 时 session 还在，panel 卸载安全。
+        // byClientId = 发起删除的客户端（与 session.busy 的 clientId=lease 持有者语义不同，刻意区分）。
+        this.ctx.broadcast({
+          type: 'session.deleting',
+          id: this.ctx.nextPushId(),
+          payload: { sessionId: delSid, byClientId: clientId },
+        })
         await this.ctx.sessionService.delete(delSid)
+        // clearSessionBuffer 在 broadcast(deleted) **之前** 调用：先清掉历史增量（含 deleting）整桶，
+        // 随后的 broadcast(deleted) 重建一个仅含 tombstone 的新桶（P2-resume-fix）——避免 resume 客户端
+        // 把旧 chat 增量（非幂等 effect）连同 tombstone 一起重放。ES6 不推进 watermark。
+        this.ctx.clearSessionBuffer(delSid)
         this.ctx.reply(ws, msg.id, 'session.deleted', { sessionId: delSid })
+        // broadcastExcept 排除发起方：发起方已通过 reply 收到 deleted（pending.resolve），不重复收广播。
+        // 其他在线客户端收广播 session.deleted 触发 cleanupSession 清 store 分区（防泄漏，幂等）。
+        this.ctx.broadcastExcept(clientId, {
+          type: 'session.deleted',
+          id: this.ctx.nextPushId(),
+          payload: { sessionId: delSid },
+        })
+        // P2-resume-fix：broadcastExcept 不入 ring buffer，断线重连（resume）的客户端拿不到 session.deleted
+        // （其 subscribedSessions 仍含 delSid，getReplayPlan 查 delSid 桶为 undefined → 无重放 → delSid 分区
+        // 成僵尸分区）。broadcastSessionList 兜底也不覆盖 resume（config.sessions 无 sessionId，按 D2/D2.2
+        // 不入桶；resume 跳过 sendInitialState，spec D8）。spec D4① R4-m3 时序注承认此缺口。
+        // 额外 broadcast(deleted) 入 ring buffer：上面 clearSessionBuffer 已清空 delSid 桶，此处重建一个
+        // 仅含 tombstone 的新桶；resume 客户端 getReplayPlan 取到 → cleanupSession 清僵尸分区。
+        // 实时客户端会重复收一条 deleted（broadcastExcept 已发 + 此 broadcast 再发），cleanupSession 幂等
+        // （useSidebar.ts:392「重复调对已清 store 是 no-op」），无副作用。
+        // 内存取舍：tombstone 桶不再清（无活跃 session 触发），残留一条直到 runtime 重启或 sessionId 复用。
+        // 受 MAX_SESSIONS 上界（默认 10）限流，单条体积可忽略，可接受取舍（MINOR 级）。
+        this.ctx.broadcast({
+          type: 'session.deleted',
+          id: this.ctx.nextPushId(),
+          payload: { sessionId: delSid },
+        })
         return this.ctx.broadcastSessionList()
       }
       case 'session.deleteByCwd': {
@@ -253,6 +312,16 @@ export class SessionMessageHandler {
         const filePath = await this.ctx.sessionService.getAgentCallFilePath(msg.payload.sessionId, msg.payload.agentCallSessionId)
         return this.ctx.reply(ws, msg.id, 'session.agentCallFilePath', { sessionId: msg.payload.sessionId, agentCallSessionId: msg.payload.agentCallSessionId, filePath })
       }
+      case 'session.setActive': {
+        // P5 presence：客户端切 panel 时上报活跃 session（presence.update 依赖 activeSessionId）。
+        // setActiveSession 内部触发 broadcastPresence（全量 presence.update 广播）。
+        this.ctx.setActiveSession(clientId, msg.payload.sessionId)
+        return this.ctx.reply(ws, msg.id, 'session.setActive:result', {})
+      }
+      case 'presence.list': {
+        // P5 presence：resume 路径（短断线无 auth.ok）主动拉 presence 全量列表。
+        return this.ctx.reply(ws, msg.id, 'presence.list:result', { connections: this.ctx.buildPresenceList() })
+      }
       case 'session.workflowAction': {
         await this.ctx.sessionService.workflowAction(msg.payload.sessionId, msg.payload.action, msg.payload.runId)
         return this.ctx.reply(ws, msg.id, 'session.workflowActionDone', { sessionId: msg.payload.sessionId, action: msg.payload.action, runId: msg.payload.runId })
@@ -331,9 +400,12 @@ export class SessionMessageHandler {
       }
       case 'message.send': {
         const { sessionId, content, subagent, images } = msg.payload
+        // P5 lease：透传 clientId + deviceName 给 dispatcher（lease acquire + busy 定向投递用）。
+        // deviceName 从连接池取（ctx.getClient 拿 ws 后无法直接取 deviceName，故经 sessionService 取连接 ctx）。
+        const deviceName = this.ctx.getDeviceName?.(clientId) ?? ''
         const result = subagent
-          ? await this.ctx.sessionService.sendSubagentMessage(sessionId, subagent.agent, subagent.task, content)
-          : await this.ctx.sessionService.sendMessage(sessionId, content, images)
+          ? await this.ctx.sessionService.sendSubagentMessage(sessionId, subagent.agent, subagent.task, content, clientId, deviceName)
+          : await this.ctx.sessionService.sendMessage(sessionId, content, images, clientId, deviceName)
         // D(round7-must-fix-3): hook 拦截时 dispatcher 已广播 message.error（错误气泡），
         // 此处必须走 error envelope（带 msg.id）让 renderer pending.reject，不得 reply success。
         // 否则 renderer 见 msg.id 且非 error → pending.resolve → composer 清空，与错误气泡矛盾。

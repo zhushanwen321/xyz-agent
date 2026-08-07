@@ -6,7 +6,7 @@ import type { FileChange, ChangeSetStatus, Message } from './message'
 import type { FileNode } from './file-tree'
 // 领域 DTO 已下沉到各自领域文件（E2 架构候选）：protocol.ts 仅保留 type→payload 映射 SSOT，
 // 领域形状（ExtensionInfo / GitStatusResult / PluginInfo …）按领域就近归属。
-import type { ExtensionInfo, RecommendedExtension, ExtensionInteractMethod } from './extension'
+import type { ExtensionInfo, RecommendedExtension, ExtensionInteractMethod, PendingUiRequest } from './extension'
 import type { GitStatusResult } from './git'
 import type { PluginInfo } from './plugin'
 import type { RecentWorkspaceRecord } from './workspace'
@@ -35,6 +35,20 @@ export interface CommandSourceInfo {
   origin?: string
   /** 基础目录（pi 用于相对路径解析的基准） */
   baseDir?: string
+}
+
+/**
+ * P5 presence：单个在线连接的描述（presence.update / auth.ok.presence 共用）。
+ * - isOperating：该 clientId 当前持有某 session 的 lease（busyOwnerId===clientId）。
+ *   前端据此在在线设备列表显示「正在操作」指示器。
+ *   瞬态字段：由 runtime 实时计算（基于内存 lease 状态），resume 后可能与 session.busy（入 P2 桶可靠回放）
+ *   的占用态短暂不一致——权威态以 session.busy/idle 为准（isOperating 仅作设备列表的即时指示）。
+ */
+export interface PresenceConnection {
+  clientId: string
+  deviceName: string
+  activeSessionId: string | null
+  isOperating: boolean
 }
 
 // ── ClientMessageType（保持向后兼容）──────────────────────────
@@ -92,7 +106,13 @@ export type ClientMessageType =
   | 'config.setBareSetupScript' | 'config.getBareSetupScript'
   | 'config.setTimeout' | 'config.getTimeout'
   | 'config.setDefaultBaseBranch' | 'config.getDefaultBaseBranch'
+  // wave1 远程化：auth（客户端首次连接认证）+ file.signUrl（临时可访问的文件签名 URL）。
+  // P5 lease/presence：客户端切 panel 上报活跃 session（presence.update 依赖）；resume 路径主动拉 presence。
+  | 'auth' | 'file.signUrl'
+  | 'session.setActive' | 'presence.list'
+  // autoRename：session 自动重命名开关（前端读写）。
   | 'config.setAutoRenameEnabled' | 'config.getAutoRenameEnabled'
+  // pi 启动预设域（设计文档 pi-launch-presets.md）：CRUD + 默认预设 + per-cwd 默认 + 使用统计 + 导入/导出。
   | 'preset.list' | 'preset.getDefault' | 'preset.setDefault'
   | 'preset.create' | 'preset.update' | 'preset.delete'
   | 'preset.recordUsage' | 'preset.getUsage'
@@ -104,6 +124,9 @@ export type ClientMessageType =
   // 迁移 W2：Provider 导入两步流。Step1 preview（脱敏，apiKey 不进前端）→ Step2 apply（写 models.json）。
   // reply config.providersPreviewed / config.providersImported。
   | 'config.previewImportProviders' | 'config.applyImportProviders'
+  // wave 远程分享：拉取当前连接信息（token + 可达 URL 列表），供设置面板展示分享链接。
+  // reply config.connectionInfo。
+  | 'config.getConnectionInfo'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -173,6 +196,7 @@ export type TerminalErrorCode =
   | 'not_found'        // 操作的 sessionId 无对应 PTY
   | 'resize_failed'    // pty.resize 失败
   | 'kill_failed'      // pty.kill 失败
+  | 'terminal_unavailable' // node-pty native 模块缺失/加载失败（宿主机缺 build-essential）
 /** handler 对未知错误归一的兜底字面量（非 TerminalService 主动抛出，单列让 renderer switch 可穷尽） */
 export type TerminalUnknownErrorCode = 'terminal_failed'
 /** envelope code 字段的完整联合（业务码 + 兜底） */
@@ -300,8 +324,12 @@ export interface ClientMessageMap {
   // message.abortBash：取消进行中的 bash 执行（调 pi abort_bash）。
   'message.abortBash': { sessionId: string }
   'config.getProviders': Record<string, never>
-  'config.setProvider': { providerId: string } & SetProviderData
-  'config.deleteProvider': { providerId: string }
+  // P6 D3 config CAS：setProvider/deleteProvider 携带 expectedVersion（客户端缓存的当前 version）。
+  // 不等则 reply error{code:'version_conflict', currentVersion}，相等则成功并 version++。
+  // expectedVersion 必填：v0.8.x+ runtime/renderer 同仓库同步部署，无「旧 renderer 配新 runtime」兼容压力。
+  // （renderer 侧 expectedVersion 已统一经 settingsStore.configVersion 传入，并由 config.ts ?? 0 兜底缺省。）
+  'config.setProvider': { providerId: string; expectedVersion: number } & SetProviderData
+  'config.deleteProvider': { providerId: string; expectedVersion: number }
   'config.setToolPermissions': { permissions: Record<string, string> }
   'config.discoverModels': { baseUrl: string; apiKey?: string; providerType?: string; providerId?: string }
   // W3 默认模型持久化：前端设置全局默认模型，runtime 调 configService.setDefaultModel 写 settings.json。
@@ -434,6 +462,17 @@ export interface ClientMessageMap {
   'config.setDefaultBaseBranch': { baseBranch: string }
   /** config.getDefaultBaseBranch：读取默认基分支配置（前端读取）。 */
   'config.getDefaultBaseBranch': Record<string, never>
+  /**
+   * auth：客户端首次连接携带 token + clientId 完成认证（wave1 远程化）。
+   * P2-s2 扩展重连凭据：lastSeq/bootId 成对携带（同页面生命周期重连），subscribedSessions 限定回放范围。
+   */
+  auth: { token: string; clientId: string; deviceName?: string; lastSeq?: number; bootId?: string; subscribedSessions?: string[] }
+  /** file.signUrl：请求一个临时可访问的文件签名 URL（wave1 远程化预留）。 */
+  'file.signUrl': { path: string }
+  /** P5 session.setActive：客户端切 panel 时上报活跃 session（presence.update 依赖 activeSessionId）。sessionId=null 表示在看非 session 视图（如 settings）。 */
+  'session.setActive': { sessionId: string | null }
+  /** P5 presence.list：resume 路径（短断线无 auth.ok）主动拉 presence 全量列表。 */
+  'presence.list': Record<string, never>
   /** config.setAutoRenameEnabled：设置 session 自动重命名开关（前端写入）。 */
   'config.setAutoRenameEnabled': { enabled: boolean }
   /** config.getAutoRenameEnabled：读取 session 自动重命名开关配置（前端读取）。 */
@@ -474,6 +513,8 @@ export interface ClientMessageMap {
    * importId 来自 Step1 preview 的 reply；selectedIds 是用户勾选的 provider id 列表。
    */
   'config.applyImportProviders': { importId: string; selectedIds: string[] }
+  /** wave 远程分享：无参请求，reply config.connectionInfo。 */
+  'config.getConnectionInfo': Record<string, never>
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -516,13 +557,15 @@ export type WorktreeErrorCode =
   | 'SETUP_FAILED'      // .bare/custom-hooks/setup-worktree.sh 失败（detail: {exitCode, stderr}）
   | 'GIT_FAILED'        // git worktree add 失败（detail: {exitCode, stderr}）
   | 'INVALID_BRANCH'    // 分支名非法（INVALID_BRANCH_REGEX 拦截，含路径遍历防护）
-/** handler 对未知错误归一的兜底字面量（非 WorktreeService 主动抛出，单列让 renderer switch 可穷尽） */
-export type WorktreeUnknownErrorCode = 'worktree_failed'
+/** handler 对未知错误归一的兜底字面量（非 WorktreeService 主动抛出，单列让 renderer switch 可穷尽）。
+ * 含 P6 D11 的 worktree_busy（mutex 排队超时，由 handler 捕获 TimeoutError 转换，非 WorktreeService 主动抛出）。 */
+export type WorktreeUnknownErrorCode = 'worktree_failed' | 'worktree_busy'
 /** envelope code 字段的完整联合（业务码 + 兜底） */
 export type WorktreeEnvelopeCode = WorktreeErrorCode | WorktreeUnknownErrorCode
 
 export type ServerMessageType =
   | 'session.created' | 'session.deleted' | 'session.deletedByCwd' | 'config.sessions' | 'session.history' | 'session.fullHistory'
+  | 'session.deleting'
   | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.handoffStarted' | 'session.handoffComplete' | 'session.handoffAborted'
   | 'session.subagents' | 'session.subagentHistory'
   | 'session.workflows' | 'session.agentCallHistory' | 'session.agentCallFilePath'
@@ -557,6 +600,7 @@ export type ServerMessageType =
   | 'extension.discovered' | 'extension.installCancelled'
   | 'extension.recommended'
   | 'extension.pendingRequests'
+  | 'extension.pendingRequestsBatch'
   | 'message.tool_call_update' | 'config.extensions'
   | 'session.commands'
   | 'session.exited'
@@ -573,6 +617,9 @@ export type ServerMessageType =
   | 'message.stream_error'
   | 'message.stream_warn'
   | 'send.rejected'
+  // P5 lease/presence：session.busy/idle 是 lease 状态广播（session 级，入 P2 ring buffer 桶）；
+  // presence.update 是连接列表全量广播（全局，不入桶，resume 路径丢失可接受——客户端 auth.ok 带 presence 或 presence.list RPC 补）。
+  | 'session.busy' | 'session.idle' | 'presence.update'
   | 'message.file_changes'
   | 'message.changeSetInvalidated'
   | 'message.customStart'
@@ -595,6 +642,10 @@ export type ServerMessageType =
   | 'config.bareSetupScript'
   | 'config.worktreeTimeout'
   | 'config.defaultBaseBranch'
+  // wave1 远程化 reply：auth.ok（认证通过）+ file.signUrl:result（签名 URL 回复）。
+  // P5 presence RPC reply：session.setActive ack（空 payload，前端按 id 匹配）；presence.list reply 全量列表。
+  | 'auth.ok' | 'file.signUrl:result'
+  | 'session.setActive:result' | 'presence.list:result'
   | 'config.autoRenameEnabled'
   | 'preset.list' | 'preset.getDefault' | 'preset.setDefault'
   | 'preset.create' | 'preset.update' | 'preset.delete'
@@ -604,6 +655,8 @@ export type ServerMessageType =
   | 'config.sourcesDetected'
   // 迁移 W2：Provider 导入 reply（preview 脱敏 / apply 结果含 imported/skipped/failed 三态）。
   | 'config.providersPreviewed' | 'config.providersImported'
+  // wave 远程分享：config.getConnectionInfo 的 reply（token + 可达 URL 列表，供分享面板展示）。
+  | 'config.connectionInfo'
 
 /** skill 缓存失效广播的作用域：global=全局 skill 变动，project=某项目 cwd 的 skill 变动。 */
 export type SkillCacheScope = 'global' | 'project'
@@ -632,7 +685,9 @@ export interface SkillCacheInvalidatedPayload {
  */
 export interface ServerMessageMapBase {
   // ── sendInitialState 推送 / domain 订阅（精确）──
-  'config.providers': { providers: ProviderInfo[] }
+  // version：广播/reply 携带（optional，runtime 可省略），缺省时客户端按 0 处理（renderer api/domains/config.ts
+  // 的 setProvider/deleteProvider expectedVersion ?? 0 兜底）。
+  'config.providers': { providers: ProviderInfo[]; version?: number }
   'config.skills': { skills: SkillInfo[] }
   /**
    * skill 缓存失效信号（landing useGlobalSkills/useProjectSkills 失效缓存重拉）。
@@ -679,7 +734,31 @@ export interface ServerMessageMapBase {
   // send.rejected：runtime 预检拦截（busy 时发送），防御性反馈通道（D-006）。
   // 语义：操作拒绝，区别于 message.error（流终止）。不进对话流，不翻流式态。
   // useChat 收到后回滚 pendingSend + toast。
-  'send.rejected': { sessionId: string; reason: 'busy'; message: string }
+  // 【P5 C4 投递语义变更】send.rejected 从 broker.broadcast 改为 ctx.reply（发起方专属点对点，不广播）。
+  // 其他客户端的 busy 感知由新增的 session.busy 广播承担。
+  // busy 拒绝时的负载形状：当前业务只有 busy 一种 reason（dispatcher 的 rejectBusy 走 busy 路径，
+  // compacting 等其他原因走独立类型，不混入 send.rejected），故扁平单 interface——reason 为单值非联合，
+  // 不能作 discriminated union 的 discriminant（TS 不会收窄）。
+  // busyOwnerId/busyOwnerDevice/leaseExpiresAt 必填（非全可选，避免类型歧义）。
+  'send.rejected': {
+    sessionId: string
+    message: string
+    reason: 'busy'
+    busyOwnerId: string
+    busyOwnerDevice: string
+    /** lease 到期时间（unix ms）。 */
+    leaseExpiresAt: number
+  }
+  // P5 session.busy：lease acquire 成功后广播，让其他客户端更新 session 占用指示器（设备名 + 剩余秒数）。
+  // session 级消息（带 sessionId）→ 入 P2 ring buffer 桶，resume 路径可靠回放。
+  // expiresAt 为 lease 到期时间（unix ms）。注意：与 send.rejected.leaseExpiresAt 同义但命名不同（历史遗留，改名是 breaking change）。
+  'session.busy': { sessionId: string; clientId: string; deviceName: string; expiresAt: number }
+  // P5 session.idle：lease 释放后广播（四释放路径：turn_end/lease_expired/aborted/send_failed）。
+  // 前端清除占用指示器。session 级消息 → 入 P2 桶可靠回放。
+  'session.idle': { sessionId: string; reason: 'turn_end' | 'lease_expired' | 'aborted' | 'send_failed' }
+  // P5 presence.update：连接列表全量广播（上线/下线/setActive/lease 变化触发）。全局消息无 sessionId，
+  // 不入 P2 ring buffer 桶（resume 路径会丢——客户端重连后 auth.ok 带 presence 或主动调 presence.list 补）。
+  'presence.update': { connections: PresenceConnection[] }
   // session.exited：pi 进程异常退出（区别于 message.error 的「单次消息失败」）。
   // 前端 routeInbound 收到后标记 session 为 dead 态 + 插入 error 消息 + toast。
   // reason: 人类可读的错误原因（含 stderr 尾部截断），供诊断面板展开显示。
@@ -877,7 +956,12 @@ export interface ServerMessageMapBase {
   // session 是 SessionSummary（session-message-handler.ts:36/56 reply { session }）。
   'session.created': { session: SessionSummary }
   // session.deleted：session.delete reply（session-message-handler.ts:72 reply { sessionId: delSid }）。
+  // P6 D6：用法从 reply 扩展为 reply（发起方点对点）+ broadcastExcept（排除发起方给其他客户端）。
+  // payload 不变（{ sessionId }），向后兼容旧客户端。
   'session.deleted': { sessionId: string }
+  // session.deleting：P6 D6 新增广播（session.delete 前预告，让客户端先收 panel）。
+  // byClientId = 发起删除的客户端 id（区别于 session.busy 的 clientId=lease 持有者，刻意区分命名）。
+  'session.deleting': { sessionId: string; byClientId: string }
   // session.deletedByCwd：session.deleteByCwd reply（session-message-handler.ts reply BatchDeleteResult，
   // 含 deleted/failed 聚合列表，前端据此 toast 部分失败）。
   'session.deletedByCwd': BatchDeleteResult
@@ -936,6 +1020,12 @@ export interface ServerMessageMapBase {
   // requests 元素是 runtime PendingUIRequest（runtime 专有类型，未下沉 shared），
   // 用 unknown[] 保持 shared 依赖最小化（与 extension.ui_request 的 askUserQuestions:unknown[] 先例一致）。
   'extension.pendingRequests': { sessionId: string; requests: unknown[] }
+  // extension.pendingRequestsBatch：sendInitialState 第 14 段点对点推送（P3 D3 决策）。
+  // 与 extension.pendingRequests（getPendingRequests RPC reply，单 session 带 sessionId）形态区分：
+  // 本 type 是全局聚合（跨所有 session），payload 不带顶层 sessionId。
+  // requests 元素是精确类型 PendingUiRequest（与 extension.pendingRequests 的 unknown[] 占位对比——
+  // 新 type 主动设计给精确类型，实现 tsc 双向保护：构造侧字段错误编译期暴露，消费侧 payload 精确收窄）。
+  'extension.pendingRequestsBatch': { requests: PendingUiRequest[] }
   // file.read:result：file.read reply（file-message-handler.ts:86 reply { content, truncated, path }，runtime 不发 sessionId）。
   // sessionId optional 对齐前端 file.ts:47 register（无 sessionId）+ rpc-type-pairing.test U1（带 sessionId 样本）。
   'file.read:result': { sessionId?: string; content: string; truncated: boolean; path: string }
@@ -968,6 +1058,13 @@ export interface ServerMessageMapBase {
   'config.providersImported':
     | { result: ProviderImportResult }
     | { error: { code: string; message: string } }
+  // config.connectionInfo：config.getConnectionInfo 的 reply（wave 远程分享）。
+  // token：当前生效 token（开放模式空串）；urls：detectUrls 探测的可达地址列表
+  // （kind 是 detectUrls 的分类：public/tailscale/lan/localhost）。
+  'config.connectionInfo': {
+    token: string
+    urls: Array<{ kind: string; host: string; httpUrl: string; wsUrl: string }>
+  }
   // config.discoveredModels：discoverModels reply（settings-message-handler.ts:178/180）。
   // 成功 { models, success: true }；失败 { models: [], success: false, error }（D10 降级响应，非 error envelope）。
   // models 元素形状对齐前端 config.ts:49 DiscoveredModelsResult（id + 可选 name/contextWindow）。
@@ -979,7 +1076,7 @@ export interface ServerMessageMapBase {
   // config.providerUpdated：setProvider/deleteProvider reply（settings-message-handler.ts:37/51/65）。
   // 三种 shape：setProvider 成功 { saved: true }；deleteProvider { providerId, deleted: true }；
   // setProvider 首启用 fallback { providerId }（统一并集，字段均 optional 除共性外）。
-  'config.providerUpdated': { providerId?: string; saved?: boolean; deleted?: boolean }
+  'config.providerUpdated': { providerId?: string; saved?: boolean; deleted?: boolean; newVersion?: number }
   // config.skillUpdated：setSkill reply（settings-message-handler.ts:86 reply { skill, success: true }）。
   'config.skillUpdated': { skill: SkillInfo; success: boolean }
   // config.skillDeleted：deleteSkill reply（settings-message-handler.ts:93 reply { skillId, success: true }）。
@@ -1026,6 +1123,31 @@ export interface ServerMessageMapBase {
     details?: Record<string, unknown>
     display?: boolean
   }
+  /**
+   * auth.ok：客户端认证通过后服务端回复（wave1 远程化），含服务端版本 + 已确认 clientId。
+   * P2-s2 扩展 ReplayMeta（全可选）：bootId/serverSeq 供客户端下次重连带回；
+   * resumed=true 走增量回放（replayedCount 是回放段数）；seqReset=true 客户端应清 seq + reload。
+   * 【R1-M2/P5 累积结构】P5 在 P2 字段（bootId/serverSeq/resumed/seqReset/replayedCount）基础上
+   * 追加 presence? 字段（顺带推 presence 全量列表省首次 round-trip）。runtime 构造 auth.ok 必须同时
+   * 填 P2 字段（否则 P2 回放逻辑失效：客户端拿不到 serverSeq 基线、bootId 无法比对）。
+   */
+  'auth.ok': {
+    serverVersion: string
+    clientId: string
+    bootId?: string
+    serverSeq?: number
+    resumed?: boolean
+    replayedCount?: number
+    seqReset?: boolean
+    /** P5 presence 全量列表（顺带推，省首次 round-trip）。缺省 = 未启用 presence（旧客户端忽略）。 */
+    presence?: PresenceConnection[]
+  }
+  /** file.signUrl:result：file.signUrl 请求的回复，含临时可访问 URL + 过期时间戳（ms）。 */
+  'file.signUrl:result': { url: string; expiresAt: number }
+  /** P5 session.setActive:result：setActive ack（空 payload，前端 command() 按 id 匹配 resolve）。 */
+  'session.setActive:result': Record<string, never>
+  /** P5 presence.list:result：presence 全量列表 reply（同 presence.update.connections，resume 路径补拉）。 */
+  'presence.list:result': { connections: PresenceConnection[] }
 }
 
 /**
@@ -1245,6 +1367,15 @@ export interface ReplyPayloadMap {
   'terminal.resize': ServerMessageMap['terminal.ack']
   'terminal.spawn': ServerMessageMap['terminal.ack']
   'terminal.write': ServerMessageMap['terminal.ack']
+  // wave1 远程化：auth 回 auth.ok；file.signUrl 回 file.signUrl:result。
+  'auth': ServerMessageMap['auth.ok']
+  'file.signUrl': ServerMessageMap['file.signUrl:result']
+  // P5：session.setActive 回 session.setActive:result（ack 空 payload）；
+  // presence.list 回 presence.list:result（全量 presence 列表）。
+  'session.setActive': ServerMessageMap['session.setActive:result']
+  'presence.list': ServerMessageMap['presence.list:result']
+  // wave 远程分享：config.getConnectionInfo → reply config.connectionInfo（payload 消费型）。
+  'config.getConnectionInfo': ServerMessageMap['config.connectionInfo']
 }
 
 /**

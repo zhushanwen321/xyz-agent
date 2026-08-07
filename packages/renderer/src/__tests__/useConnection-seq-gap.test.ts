@@ -30,12 +30,15 @@ vi.mock('@/lib/ws-client', () => ({
   getState: () => mockStateRef,
   setRestarting: vi.fn(),
   setFailed: vi.fn(),
+  // wave3 P2-s4：syncSubscribedSessions（init 调）需 setSubscribedSessions 在 mock 中导出
+  setSubscribedSessions: vi.fn(),
 }))
 
 // ── ipc mock（init 监听需要）────────────────────────────────────────
 vi.mock('@/lib/ipc', () => ({
   getRuntimePort: vi.fn().mockResolvedValue(undefined),
-  getRuntimePortOffset: vi.fn().mockResolvedValue(undefined),
+  getRuntimeToken: vi.fn(),
+    getRuntimePortOffset: vi.fn().mockResolvedValue(undefined),
   onRuntimePort: () => () => {},
   onRuntimeRestarting: () => () => {},
   onRuntimeFailed: () => () => {},

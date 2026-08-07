@@ -1,4 +1,6 @@
 import { RuntimeServer } from './transport/server.js'
+import { createTokenManager, ensureToken } from './transport/token.js'
+import { createFileEndpoint } from './transport/file-endpoint.js'
 import { SessionService } from './services/session/session-service.js'
 import { ConfigService } from './services/config-service.js'
 import { ensureAutoRenameDefault } from './services/worktree-config-helper.js'
@@ -22,6 +24,7 @@ import { PiExtensionSettings } from './infra/pi/pi-extension-settings.js'
 import { EventAdapter } from './infra/pi/event-adapter.js'
 import { FileChangeDiffAdapter } from './infra/pi/file-change-diff-adapter.js'
 import { EventInterpreter } from './services/session/event-interpreter.js'
+import { LeaseManager, REAPER_INTERVAL_MS } from './services/session/lease-manager.js'
 import { join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
 import * as fs from 'node:fs'
@@ -52,12 +55,17 @@ import { RecentWorkspacesStore } from './services/workspace/recent-workspaces-st
 import { WorkspaceService } from './services/workspace/workspace-service.js'
 import { WorkspaceDetector } from './services/worktree/workspace-detector.js'
 
-function parseArgs(): { port: number; projectRoot?: string } {
+function parseArgs(): { port: number; projectRoot?: string; host: string; tokenFile: string } {
   // eslint-disable-next-line no-magic-numbers -- argv[0] is node, argv[1] is script
   const args = process.argv.slice(2)
   const portOffset = Math.max(0, Math.min(parseInt(process.env.XYZ_AGENT_PORT_OFFSET ?? '0', 10) || 0, MAX_PORT - BASE_PORT))
   let port = BASE_PORT + portOffset
   let projectRoot: string | undefined
+  // wave 远程分享：host 默认 0.0.0.0（与 server CLI DEFAULT_HOST 一致），允许远程连接。
+  // 开放模式仍受 connection-manager「open mode requires loopback」守卫保护——默认生成 token（非开放模式），绑 0.0.0.0 安全。
+  let host = process.env.XYZ_AGENT_HOST ?? '0.0.0.0'
+  // wave 远程分享：默认 token 文件 <dataDir>/token（与 server/index.ts 一致），确保 main() 默认启用认证。
+  let tokenFile: string = process.env.XYZ_AGENT_TOKEN_FILE ?? join(getDataDir(), 'token')
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port' && i + 1 < args.length) {
       const parsed = parseInt(args[i + 1], 10)
@@ -77,14 +85,32 @@ function parseArgs(): { port: number; projectRoot?: string } {
       projectRoot = args[i + 1]
     } else if (args[i].startsWith('--project-root=')) {
       projectRoot = args[i].split('=')[1]
+    } else if (args[i] === '--host' && i + 1 < args.length) {
+      host = args[i + 1]
+    } else if (args[i].startsWith('--host=')) {
+      host = args[i].split('=')[1]
+    } else if (args[i] === '--token-file' && i + 1 < args.length) {
+      tokenFile = args[i + 1]
+    } else if (args[i].startsWith('--token-file=')) {
+      tokenFile = args[i].split('=')[1]
     }
   }
-  return { port, projectRoot }
+  return { port, projectRoot, host, tokenFile }
 }
 
-async function main(): Promise<void> {
-  const { port, projectRoot } = parseArgs()
+export async function main(opts?: { host?: string; port?: number; tokenFile?: string; serveWeb?: string }): Promise<void> {
+  const parsed = parseArgs()
+  // opts（外部编程式调用）优先于 parseArgs（CLI/env），无参时完全走 parseArgs 默认（Electron 零回归）。
+  const port = opts?.port ?? parsed.port
+  const host = opts?.host ?? parsed.host
+  const tokenFile = opts?.tokenFile ?? parsed.tokenFile
+  const serveWeb = opts?.serveWeb
+  const { projectRoot } = parsed
   const effectiveRoot = projectRoot ?? process.cwd()
+  const tokenManager = createTokenManager({ tokenFile })
+  // wave 远程分享：首启默认生成 token + persist（spec D1），与 server CLI 共用 ensureToken。
+  // 确保默认走认证模式而非开放模式（开放模式 + 非 loopback 会被 connection-manager 拒绝连接）。
+  ensureToken(tokenManager)
 
   // 日志持久化（架构约定 #4）：组合根最早期初始化 + monkey-patch console。
   // 必须在所有 service 创建前（runtime 内 ~140 处裸 console.log 经 patch 自动落盘）。
@@ -97,7 +123,9 @@ async function main(): Promise<void> {
   const pm = new ProcessManager(effectiveRoot)
 
   // Transport layer
-  const server = new RuntimeServer(port, projectRoot)
+  // wave1 远程化：host/tokenManager 注入 ConnectionManager。serverVersion 用 appVersion
+  // （auth.ok 回复携带），在 appInfo 探测前先用 getAppVersion()，后续无更新需求（版本不变）。
+  const server = new RuntimeServer(port, projectRoot, { host, tokenManager, serverVersion: getAppVersion() })
 
   // MessageBus 单例（wave:runtime-wiring）：per-session 消息广播核心。
   // 在 server 构造后、setServices 前创建并注入——server 的 ConnectionManager.onDisconnect
@@ -171,6 +199,10 @@ async function main(): Promise<void> {
     configDir,
     pluginInstaller,
     broadcastFn: (type, payload) => server.broadcast({ type: type as 'config.sessions', id: `push_${Date.now()}`, payload } as import('@xyz-agent/shared').ServerMessage),
+    // P7 per-client active session：注入 connectionManager（server 在 PluginService 构造前已存在）。
+    // resolver 读 P5 activeSessions Map（getActiveSession(clientId)）。leaseManager 创建时序晚（下方），
+    // 经 pluginService.setLeaseManager 后置注入。
+    connectionManager: server.getConnectionManager(),
   })
 
   // ── R1 重构：EventAdapter（infra 纯翻译）+ EventInterpreter（service 编排）──
@@ -243,6 +275,9 @@ async function main(): Promise<void> {
         if (!client) return undefined
         return client.getState()
       },
+      // P5 lease：pingTick 成功续租（spec D4 挂 ping 成功路径）。renew 只传 sessionId，
+      // 内部从 session.busyOwnerId 反查 owner（M4）。sessionService 在 setLeaseManager 后持有 leaseManager。
+      onLeaseRenew: (sid) => sessionService.getLeaseManager()?.renew(sid),
     })
     // EventAdapter：纯翻译器，把翻译结果喂给 interpreter 编排。
     return new EventAdapter(sessionId, (events) => interpreter.interpret(events))
@@ -280,6 +315,51 @@ async function main(): Promise<void> {
 
   // ── Phase 3: wire cross-service runtime deps ──
   pluginService.setSessionService(sessionService)
+  // P5 lease：实例化 LeaseManager（注入 sessionService 内部接口 + server broker）+ reaper 定时器。
+  // sessionService 经 setter 持有 leaseManager（转发给 dispatcher + adapterFactory 闭包取）。
+  // reaper 每 5s 扫过期 lease（spec D7②），进程退出时 clear（与 recentWorkspacesStore flush timer 同模式）。
+  const leaseManager = new LeaseManager(sessionService, server)
+  sessionService.setLeaseManager(leaseManager)
+  // P7 lease fallback：leaseManager 创建时序晚于 PluginService，经 setter 后置注入到 resolver。
+  pluginService.setLeaseManager(leaseManager)
+  // P5 presence：lease 变化（acquire/release）触发 presence 重推（spec D9 触发点 4：isOperating 变化）。
+  // sessionService 转发给 dispatcher + handleTurnEndSideEffects，回调调 conn.broadcastPresence。
+  sessionService.setPresenceRefreshCallback(() => server.broadcastPresence())
+  // P5 lease（审查 Major1）：注入 deviceName 反查回调——busy 拒绝时 dispatcher 据 lease.owner 反查
+  // 连接池取 owner（A）的设备名，而非发起方（B）的设备名（spec D6：session.busy/send.rejected 的
+  // deviceName 应是 owner 的）。复用 session-handler 同源 conn.clients.get(id)?.deviceName。
+  sessionService.setDeviceNameLookup((clientId) => server.getClientDeviceName(clientId))
+  const leaseReaperTimer = setInterval(() => {
+    try {
+      leaseManager.sweepExpired()
+    // eslint-disable-next-line taste/no-silent-catch -- reaper 是后台清理，异常不应中断进程
+    } catch (e) {
+      console.error('[runtime] lease reaper sweep failed:', e)
+    }
+  }, REAPER_INTERVAL_MS)
+  leaseReaperTimer.unref?.()
+  // wave2 远程化：FileEndpoint（HTTP /file + signUrl HMAC）。依赖 sessionService（取活跃 cwd 作白名单前缀）
+  // + tokenManager（与 WS 认证同源签名），故在此 Phase 创建（sessionService 刚 new 完）。
+  // server 构造时 sessionService 尚未存在，故 fileEndpoint 经 setFileEndpoint 延迟绑定：
+  //   - HTTP 路由侧：conn.setFileEndpoint（start 监听前生效，回调读 this.fileEndpoint 非构造期捕获）
+  //   - RPC 侧：setServices 时读 this.fileEndpoint 注入 FileMessageHandler（file.signUrl）
+  const fileEndpoint = createFileEndpoint({ tokenManager, sessionService, bindHost: host })
+  server.setFileEndpoint(fileEndpoint)
+  // wave4 远程化：server CLI --serve-web <dist> 模式注入静态 Web handler（SPA 资源 + 客户端路由 fallback）。
+  // 与 setFileEndpoint 同模式：start() 前注入即生效；serveWeb 缺省（Electron 默认）时不注入，零回归。
+  // P4 D10/§5.1：serve-web 支持「desktop:mobile」冒号分隔双 dist 格式——/ 走桌面、/m/ 走移动（同源托管）。
+  //   无冒号 → 单 dist（P0 行为零回归，DM1/R1）；有冒号 → createDualStaticWebHandler 双 dist 路由。
+  if (serveWeb) {
+    const { createStaticWebHandler, createDualStaticWebHandler } = await import('./server/static-web.js')
+    const colonIdx = serveWeb.indexOf(':')
+    if (colonIdx > 0) {
+      const desktopDist = serveWeb.slice(0, colonIdx)
+      const mobileDist = serveWeb.slice(colonIdx + 1)
+      server.setStaticHandler(createDualStaticWebHandler(desktopDist, mobileDist))
+    } else {
+      server.setStaticHandler(createStaticWebHandler(serveWeb))
+    }
+  }
   // GitService：composition root 注入 infra executor（数组参数防注入）+ sessionService（取 cwd）。
   // 经 server.setServices 注入到 GitMessageHandler（git.* 路由）。
   const gitService = new GitService({ sessionService, executor: new GitExecutor() })
@@ -361,9 +441,12 @@ async function main(): Promise<void> {
   })
   // R3：session 删除（主动 delete / 进程异常退出）清 pendingReload 残留。
   // Terminal：同步销毁该 session 绑定的 PTY（kill 进程 + 清 ptyMap）。
+  // P3 SC4：清该 session 的 pending UI 请求缓存（孤儿 pending 修复——pi 崩溃时 pending 残留会
+  // 随下次 sendInitialState 第 14 段推给新连接的客户端，前端按 sessionId 写 store 但该 session 已死）。
   sessionService.setOnSessionDelete((sid) => {
     reloadOrchestrator.clearPending(sid)
     terminalService.destroyPty(sid)
+    server.clearExtensionTimeoutsForSession(sid)
   })
 
   // 探测 pi 版本（启动时一次，失败不阻塞 —— fallback 'unknown'）
@@ -405,6 +488,8 @@ async function main(): Promise<void> {
     try {
       recentWorkspacesStore.flushAll()
       recentWorkspacesStore.stopFlushTimer()
+      // P5 lease：清 reaper 定时器（与 recentWorkspacesStore flush timer 同模式，防句柄泄漏）。
+      clearInterval(leaseReaperTimer)
       // R1：关闭 SkillRegistry 的 chokidar watcher（global + project），防句柄泄漏阻塞退出。
       skillRegistry.dispose()
       await server.stop()
@@ -489,7 +574,41 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((e) => {
-  console.error('[runtime] fatal:', e)
-  process.exit(1)
-})
+/**
+ * 判定当前进程是否应以「runtime 主入口」身份自动执行 main()。
+ *
+ * 背景（Bug 1, CRITICAL）：原正则 `/index(\.cjs|\.js|\.ts)?$/` 匹配任何以 index 结尾的
+ * 路径，导致 dev 模式跑 `tsx src/server/index.ts`（server CLI 入口）时，server/index.ts
+ * import 本模块（`../index.js`），被 import 的本模块因 argv[1]='.../src/server/index.ts'
+ * 匹配正则，顶层 main() 误触发，与 server/index.ts 自身的 main() 重复启动 → EADDRINUSE。
+ *
+ * 修复：正则严格锚定「真正的 runtime 入口」路径片段：
+ *  - packaged：`<sep>index.cjs`（dist/runtime/index.cjs，Electron spawn 或 CLI 直跑）
+ *  - dev：`<sep>src<sep>index.ts`（tsx src/index.ts，严格匹配 src/index.ts）
+ * 用 `<sep>src<sep>index` 锚定（路径分隔符 + src + 分隔符 + index），不会匹配
+ * `src/server/index.ts`（CLI bin，会显式调 main()）。
+ *
+ * 导出纯函数（前缀 _ 表示内部 API）：便于单测，避免动态 import + 模块缓存副作用复杂度。
+ *
+ * @param scriptPath process.argv[1]（脚本入口路径），可能为 undefined/''
+ */
+export function _isRuntimeMainEntry(scriptPath: string): boolean {
+  if (!scriptPath) return false
+  // packaged runtime 入口：.../index.cjs（跨平台分隔符 [\\/]）
+  if (/[\\/]index\.cjs$/.test(scriptPath)) return true
+  // dev runtime 入口：.../src/index.ts（严格锚定 src/index.ts，排除 src/server/index.ts）
+  if (/[\\/]src[\\/]index\.ts$/.test(scriptPath)) return true
+  return false
+}
+
+// 自动执行入口：仅当本模块被 Electron supervisor / CLI 直接作为 runtime 入口运行时触发。
+// 被 server/index.ts（dev）或 server.cjs（packaged）import 时，argv[1] 是 server 入口，
+// _isRuntimeMainEntry 返回 false → 跳过顶层 main()，仅暴露 export（server 侧显式调 main）。
+const __isRuntimeMainEntry = _isRuntimeMainEntry(process.argv[1] ?? '')
+
+if (__isRuntimeMainEntry) {
+  main().catch((e) => {
+    console.error('[runtime] fatal:', e)
+    process.exit(1)
+  })
+}

@@ -23,6 +23,7 @@ import {
   getDefaultModel,
   setDefaultModel,
   readModels,
+  writeModels,
   getProviderConfig,
   upsertProvider,
   removeProvider,
@@ -61,6 +62,23 @@ export class PiConfigStore implements IConfigStore {
     // Record<string, PiProviderConfig>。PiProviderConfig 与 ConfigProviderConfig
     // 字段结构一致（name/apiKey/baseUrl/api/models），直接 as 即可（结构同构）。
     return readModels() as unknown as ConfigModelsConfig
+  }
+
+  /**
+   * P6 D3 config CAS：自增 models.json 的 version 字段并落盘。
+   *
+   * setProvider/deleteProvider 成功后由 ConfigService facade 调用。
+   * 读当前 models（含 upsert/remove 刚写入的 providers）→ 计算 newVersion = (version ?? 0) + 1
+   * → 写回带 version 的完整 models。返回 newVersion 供 facade 透传给客户端缓存。
+   *
+   * 全同步（Node 单线程无竞态）：upsert/remove 已 writeModels 一次，此处 read 最新（含刚才写入）
+   * 再 writeModels 一次追加 version——两次 write 同步执行不交错。
+   */
+  bumpModelsVersion(): number {
+    const models = readModels()
+    const newVersion = (models.version ?? 0) + 1
+    writeModels({ ...models, version: newVersion })
+    return newVersion
   }
 
   getProviderConfig(providerId: string): ConfigProviderConfig | undefined {

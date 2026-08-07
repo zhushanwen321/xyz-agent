@@ -42,9 +42,10 @@ import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { SessionLifecycle } from './session-lifecycle.js'
 import { MessageDispatcher } from './message-dispatcher.js'
 import { SessionScanner } from './session-scanner.js'
-import { toErrorMessage, isEnoent } from '../../utils/errors.js'
+import { toErrorMessage, isEnoent, errorWithCode, SESSION_LIMIT_REACHED } from '../../utils/errors.js'
 import { isPackaged, getExtensionFilePath } from '../../utils/runtime-env.js'
 import { detectBareWorkspaceCached } from '../worktree/workspace-detector.js'
+import { MAX_SESSIONS } from '../../constants.js'
 import { PresetService, type PresetResolution } from '../preset-service.js'
 // MessageBus（wave:runtime-wiring）：per-session 消息广播核心。setter 注入（同 setConfigService 模式），
 // 未注入时所有 bus 调用 no-op（this.messageBus?.publish）。type-only import 避免运行时环
@@ -246,6 +247,38 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   /**
+   * P5 lease：注入 LeaseManager（组合根在 SessionService 构造后调用）。
+   * 转发给内部 dispatcher（acquire/release）。interpreter（renew/release）经 getLeaseManager
+   * 由 adapterFactory 闭包取（interpreter 在 session 创建时构造，那时 leaseManager 已注入）。
+   * 经 setter 注入（与 setModelContextWindowResolver 同模式）避免构造参数环。
+   */
+  private leaseManager: import('./lease-manager.js').LeaseManager | null = null
+  setLeaseManager(lm: import('./lease-manager.js').LeaseManager): void {
+    this.leaseManager = lm
+    this.dispatcher.setLeaseManager(lm)
+  }
+  /**
+   * P5 presence：注入 presence 刷新回调（lease 变化时触发 presence 重推，spec D9 触发点 4）。
+   * 转发给 dispatcher（acquire/release 后调）+ handleTurnEndSideEffects（turn_end release 后调）。
+   */
+  setPresenceRefreshCallback(cb: () => void): void {
+    this.dispatcher.setPresenceRefreshCallback(cb)
+    this.presenceRefresh = cb
+  }
+  /**
+   * P5 lease：注入 deviceName 反查回调（按 clientId 取连接的 deviceName）。
+   * 转发给 dispatcher（busy 拒绝时反查 owner 的 deviceName）。组合根注入 conn.clients.get(id)?.deviceName。
+   */
+  setDeviceNameLookup(cb: (clientId: string) => string | undefined): void {
+    this.dispatcher.setDeviceNameLookup(cb)
+  }
+  private presenceRefresh: (() => void) | null = null
+  /** 取注入的 LeaseManager（adapterFactory 闭包构造 interpreter 时取，供 pingTick renew + turn-end release）。 */
+  getLeaseManager(): import('./lease-manager.js').LeaseManager | null {
+    return this.leaseManager
+  }
+
+  /**
    * 注入 MessageBus 单例（组合根在所有服务构造后调用，wave:runtime-wiring）。
    *
    * session 级消息（带 sessionId payload）经 send 回调 / fetchAndBroadcast* 双写走 bus.publish；
@@ -265,7 +298,14 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     modelOverride?: string
     /** Landing Thinking Chip 传入值，覆盖 preset.thinkingLevel（设计文档 §5.2 优先级）。 */
     thinkingOverride?: string
-  }): Promise<SessionSummary> { return this.lifecycle.create(cwd, label, options) }
+  }): Promise<SessionSummary> {
+    // W1-T6: session 数量上限保护。在 lifecycle.create（含 model 检查/spawn）前快速失败，
+    // 避免资源已分配才发现超限。抛 SESSION_LIMIT_REACHED，handler 据此回差异化 error code。
+    if (this.sessions.size >= MAX_SESSIONS) {
+      throw errorWithCode(`max ${MAX_SESSIONS} sessions reached`, SESSION_LIMIT_REACHED)
+    }
+    return this.lifecycle.create(cwd, label, options)
+  }
   async delete(sessionId: string): Promise<void> { return this.lifecycle.delete(sessionId) }
   async deleteByCwd(cwd: string): Promise<BatchDeleteResult> { return this.lifecycle.deleteByCwd(cwd) }
   async renameSession(sessionId: string, newName: string): Promise<void> { return this.lifecycle.renameSession(sessionId, newName) }
@@ -357,9 +397,11 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     return last.id as string
   }
 
-  async sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>): Promise<{ blocked: boolean; rejected?: boolean }> { return this.dispatcher.sendMessage(sessionId, content, images) }
-  async sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string): Promise<{ blocked: boolean; rejected?: boolean }> {
-    return this.dispatcher.sendSubagentMessage(sessionId, agent, task, content)
+  async sendMessage(sessionId: string, content: string, images?: Array<{ data: string; mimeType: string }>, clientId?: string, deviceName?: string): Promise<{ blocked: boolean; rejected?: boolean }> {
+    return this.dispatcher.sendMessage(sessionId, content, images, clientId, deviceName)
+  }
+  async sendSubagentMessage(sessionId: string, agent: string, task: string, content?: string, clientId?: string, deviceName?: string): Promise<{ blocked: boolean; rejected?: boolean }> {
+    return this.dispatcher.sendSubagentMessage(sessionId, agent, task, content, clientId, deviceName)
   }
   async abort(sessionId: string): Promise<void> { return this.dispatcher.abort(sessionId) }
   async sendBash(sessionId: string, command: string, excludeFromContext?: boolean): Promise<{ blocked: boolean; rejected?: boolean }> {
@@ -729,6 +771,11 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
     const session = this.sessions.get(sessionId)
     if (!session) return
     session.isGenerating = false
+    // P5 lease：turn-end（agent_end）释放 lease（spec D7①）。leaseManager 经组合根 setLeaseManager 注入，
+    // 未注入时 no-op（向后兼容）。release 广播 session.idle{reason:'turn_end'}。
+    this.leaseManager?.release(sessionId, 'turn_end')
+    // P5 presence：lease 释放 isOperating 变化，触发 presence 重推。
+    this.presenceRefresh?.()
     this.tryPersistLabel(session)
     // W4：写 session_end 终态。aborted→stopped（与 abort 路径一致），error→error，其余→done
     const outcome = stopReason === 'error' ? 'error'
@@ -848,6 +895,9 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
       forkEntryId: s.forkEntryId,
       handedOffTo: s.handedOffTo,
       sessionFile: s.sessionFilePath,
+      // P5 lease 透传（R1-C2：与 isBareWorkspace 透传范式一致，冷启动 config.sessions 段带 lease 状态）。
+      busyOwnerId: s.busyOwnerId,
+      leaseExpiresAt: s.leaseExpiresAt,
       // W-RT-4/§4.2：active session 的 launchPresetId 透传到 summary（内存态与 sidecar 并列）。
       // ManagedSession 实例携带此字段；普通 IManagedSessionView 无此字段时为 undefined（安全）。
       launchPresetId: (s as ManagedSession).launchPresetId,
@@ -855,6 +905,28 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
   }
 
   getSession(sessionId: string): IManagedSessionView | undefined { return this.sessions.get(sessionId) }
+  /**
+   * P5 lease：部分更新 session 的 lease 字段。patch 值 undefined 即清字段（release 路径清 lease）。
+   * session 不存在时 no-op（acquire 前已 ensureActive 保证存在，此处防御性）。
+   * 单写者仍是 Facade（LeaseManager 经 ISessionServiceInternal 调用，不直接持有 Map）。
+   *
+   * cr-fix orphan-pi 续租：lastOwnerId 是 release 时从 busyOwnerId 快照的「上一任 owner」，
+   * acquire 据此判定 orphan-pi（lease 被 reaper 释放但 pi 仍在 turn）场景下原 owner 的续租。
+   */
+  updateSession(sessionId: string, patch: Partial<Pick<IManagedSessionView, 'busyOwnerId' | 'leaseExpiresAt' | 'lastOwnerId'>>): void {
+    const session = this.sessions.get(sessionId)
+    if (!session) return
+    if ('busyOwnerId' in patch) session.busyOwnerId = patch.busyOwnerId
+    if ('leaseExpiresAt' in patch) session.leaseExpiresAt = patch.leaseExpiresAt
+    if ('lastOwnerId' in patch) session.lastOwnerId = patch.lastOwnerId
+  }
+  /**
+   * P5 lease：遍历所有活跃 session（供 LeaseManager.sweepExpired 扫过期 + getBusySession 反查 owner）。
+   * 返回 sessions Map.values() 迭代器（只读遍历，不改 Map）。
+   */
+  allSessions(): IterableIterator<IManagedSessionView> {
+    return this.sessions.values()
+  }
 
   /**
    * M3：标记源 session 已交接给新 session。

@@ -146,12 +146,30 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
             echo -e "  ${GREEN}✓${NC} pi binary in Resources"
 
             # 致命：pi 目录中不能有指向外部绝对路径的 symlink
-            PI_SYMLINK=$(find "$APP_PATH/Contents/Resources/pi" -maxdepth 1 -type l 2>/dev/null | head -1)
-            if [ -n "$PI_SYMLINK" ]; then
-                echo -e "  ${RED}✗${NC} Resources/pi 存在 symlink: $(basename "$PI_SYMLINK")"
+            # 但豁免 setup-worktree.sh 创建的 dev-cache symlink（指向 .pi-binary-cache/，
+            # .gitignore 忽略、不进 git）。CI 由 prepare-pi-resources.sh 重新生成真文件，
+            # 故打包产物里不会有这些 symlink——本地 dev 才会出现。
+            # 判断依据：源文件 apps/electron/resources/pi/<name> 被 git check-ignore 忽略
+            # （与 preflight [6/7] 一致）。被 gitignored 的 symlink 仅本地 dev 可达，
+            # 不构成发布可移植性风险。
+            PI_LINKS="$(find "$APP_PATH/Contents/Resources/pi" -maxdepth 1 -type l 2>/dev/null)"
+            PI_SYMLINK_FATAL=false
+            if [ -n "$PI_LINKS" ]; then
+                for link in $PI_LINKS; do
+                    link_name="$(basename "$link")"
+                    src_link="$PROJECT_ROOT/apps/electron/resources/pi/$link_name"
+                    if git check-ignore -q "$src_link" 2>/dev/null; then
+                        echo -e "  ${YELLOW}ℹ${NC} Resources/pi 含 dev-cache symlink: $link_name (gitignored, CI 由 prepare-pi-resources.sh 生成真文件)"
+                    else
+                        echo -e "  ${RED}✗${NC} Resources/pi 存在 symlink: $link_name (指向外部绝对路径，发布会破损)"
+                        PI_SYMLINK_FATAL=true
+                    fi
+                done
+            fi
+            if [ "$PI_SYMLINK_FATAL" = true ]; then
                 FAILED=1
             else
-                echo -e "  ${GREEN}✓${NC} Resources/pi 无 symlink"
+                echo -e "  ${GREEN}✓${NC} Resources/pi 无 fatal symlink"
             fi
         fi
 

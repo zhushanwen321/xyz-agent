@@ -42,12 +42,14 @@ vi.mock('@/composables/features/useSidebar', () => ({
 vi.mock('@/components/shell/AppShell.vue', () => ({ default: { name: 'AppShell', template: '<div />' } }))
 vi.mock('@/components/ui/ToastContainer.vue', () => ({ default: { name: 'ToastContainer', template: '<div />' } }))
 
-// 捕获全局 effect 注册 spy（W2：断言 App setup 顶层调用了 bindForkNoticeEffect/bindHandoffEffect/bindSessionStreamSync）。
+// 捕获全局 effect 注册 spy（W2：断言 App setup 顶层调用了 bindForkNoticeEffect/bindHandoffEffect/bindSessionStreamSync
+// + HEAD P3 bindPendingRequestsBatchEffect）。
 // vi.hoisted 保证在 vi.mock 工厂执行前就绪（mock 工厂引用闭包内的 spy）。
 const effectSpies = vi.hoisted(() => ({
   bindForkNoticeEffect: vi.fn(),
   bindHandoffEffect: vi.fn(),
   bindSessionStreamSync: vi.fn(),
+  bindPendingRequestsBatchEffect: vi.fn(),
 }))
 // stub fork-notice 全局效果（App setup 调用，依赖 pinia/session store）；spy 捕获调用次数
 vi.mock('@/composables/effects/useForkNoticeEffect', () => ({
@@ -65,6 +67,12 @@ vi.mock('@/composables/effects/useHandoffEffect', () => ({
 vi.mock('@/composables/effects/useSessionStreamSync', () => ({
   bindSessionStreamSync: (...args: unknown[]) => {
     effectSpies.bindSessionStreamSync(...args)
+  },
+}))
+// stub pending-batch 全局效果（P3 D3，App setup 调用，依赖 pinia/extension-ui store）；spy 捕获调用次数
+vi.mock('@/composables/effects/usePendingRequestsBatchEffect', () => ({
+  bindPendingRequestsBatchEffect: (...args: unknown[]) => {
+    effectSpies.bindPendingRequestsBatchEffect(...args)
   },
 }))
 
@@ -86,11 +94,12 @@ describe('W8: App.vue 连接建立调 onConnected', () => {
 
   it('connected → onConnected 被调用 1 次', async () => {
     wrapper = mount(App)
-    // [W2] App setup 顶层注册了全局 effect（fork-notice + handoff + session-stream-sync），各调用 1 次。
-    // mount 触发 setup，断言对称（三个 bind effect 都已挂载，与 bindForkNoticeEffect 范式一致）。
+    // [W2] App setup 顶层注册了全局 effect（fork-notice + handoff + session-stream-sync + P3 pending-batch），各调用 1 次。
+    // mount 触发 setup，断言对称（四个 bind effect 都已挂载，与 bindForkNoticeEffect 范式一致）。
     expect(effectSpies.bindForkNoticeEffect).toHaveBeenCalledTimes(1)
     expect(effectSpies.bindHandoffEffect).toHaveBeenCalledTimes(1)
     expect(effectSpies.bindSessionStreamSync).toHaveBeenCalledTimes(1)
+    expect(effectSpies.bindPendingRequestsBatchEffect).toHaveBeenCalledTimes(1)
     connectionState.value = 'connected'
     await new Promise((r) => setTimeout(r, 0))
     expect(mocks.onConnected).toHaveBeenCalledTimes(1)

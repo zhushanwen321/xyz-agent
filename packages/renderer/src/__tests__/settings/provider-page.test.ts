@@ -273,7 +273,8 @@ describe('ProviderPage W1 robustness', () => {
     confirmBtn!.click()
     await flushPromises()
 
-    expect(configMock.deleteProvider).toHaveBeenCalledWith('anthropic')
+    // P6 D3 CAS：deleteProvider 第二参 expectedVersion（store.configVersion 初始 0）
+    expect(configMock.deleteProvider).toHaveBeenCalledWith('anthropic', 0)
     expect(store.defaultModel).toBe('')
   })
 })

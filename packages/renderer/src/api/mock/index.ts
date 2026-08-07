@@ -22,6 +22,7 @@ import type {
   SkillDirConfig, FileNode, RecommendedExtension, SubagentRecord, WorkflowRunRecord,
   SystemPromptConfig,
   TerminalConfig,
+  PresenceConnection,
   BatchDeleteResult,
   ProviderSource, ProviderImportPreview, ProviderImportResult, ProviderImportedItem,
   SkillCacheInvalidatedPayload,
@@ -263,6 +264,15 @@ export const session = {
     }
     // 模拟 runtime session 激活后的 server-push（session.commands + context.update）
     pushSessionState(id)
+  },
+
+  // P5 presence：mock setActive/listPresence（local mock 无多客户端，setActive no-op，listPresence 返回自己）。
+  async setActive(_sessionId: string | null): Promise<void> {
+    await sleep(TIMING.switchCmd)
+  },
+  async listPresence(): Promise<PresenceConnection[]> {
+    await sleep(TIMING.switchCmd)
+    return [{ clientId: 'local', deviceName: '本机', activeSessionId: null, isOperating: false }]
   },
 
   /** 拉取 session 扩展命令（与 real domain 同接口，mock 返回 MOCK_COMMANDS） */
@@ -659,8 +669,20 @@ export const config = {
     // mock：返回空模型集 + success（真实发现由 runtime discoverModelsFromApi 驱动）
     return { success: true, models: [], error: undefined }
   },
+  /**
+   * wave 远程分享：mock 同构——返回 localhost 占位 URL + 空 token（开放模式），
+   * 与 real domains getConnectionInfo 签名对齐（facade 三元要求两侧同构）。
+   */
+  async getConnectionInfo(): Promise<{ token: string; urls: Array<{ kind: string; host: string; httpUrl: string; wsUrl: string }> }> {
+    await sleep(TIMING.ack)
+    return {
+      token: '',
+      urls: [{ kind: 'localhost', host: 'localhost', httpUrl: 'http://localhost:3210', wsUrl: 'ws://localhost:3210' }],
+    }
+  },
   // 订阅型（handler 类型与 real domains 对齐：facade 三元要求两侧同构）
-  onProviders: (h: (providers: ProviderInfo[]) => void) => providersSub.subscribe(h),
+  // P6 D3 config CAS：onProviders 第二参 version（mock 不模拟冲突，固定 0 透传）。
+  onProviders: (h: (providers: ProviderInfo[], version?: number) => void) => providersSub.subscribe(h),
   onSkills: (h: (skills: SkillInfo[]) => void) => skillsSub.subscribe(h),
   onAgents: (h: (agents: AgentInfo[]) => void) => agentsSub.subscribe(h),
   onDefaults: (h: (defaultModel: string) => void) => defaultsSub.subscribe(h),
@@ -671,7 +693,8 @@ export const config = {
   onAgentDirs: (h: (dirs: SkillDirConfig[]) => void) => agentDirsSub.subscribe(h),
   onExtensionDirs: (h: (dirs: SkillDirConfig[]) => void) => extensionDirsSub.subscribe(h),
   // 动作型：mock 同构——更新 fixture 后经订阅广播推回（与 real sendInitialState/广播一致）
-  async setProvider(providerId: string, data: SetProviderData) {
+  // P6 D3 config CAS：setProvider/deleteProvider 第三参 expectedVersion（mock 不模拟冲突，接受忽略）。
+  async setProvider(providerId: string, data: SetProviderData, _expectedVersion?: number) {
     await sleep(TIMING.ack)
     const target = fixtureProviders.find((p) => p.id === providerId)
     if (target) {
@@ -687,7 +710,7 @@ export const config = {
     }
     broadcastProviders()
   },
-  async deleteProvider(providerId: string) {
+  async deleteProvider(providerId: string, _expectedVersion?: number) {
     await sleep(TIMING.ack)
     const idx = fixtureProviders.findIndex((p) => p.id === providerId)
     if (idx >= 0) fixtureProviders.splice(idx, 1)

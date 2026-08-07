@@ -21,6 +21,7 @@ import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType, WorktreeEnvelopeCode } from '@xyz-agent/shared'
 import type { MessageHandlerContext } from './message-context.js'
 import type { IWorktreeService } from '../services/ports/worktree-service.js'
+import { TimeoutError } from '../infra/async-mutex.js'
 
 /** Worktree handler 依赖的 context（messaging + worktreeService）。 */
 export interface WorktreeHandlerContext extends MessageHandlerContext {
@@ -98,14 +99,20 @@ export class WorktreeMessageHandler {
   /**
    * 统一 worktree 错误回复。
    *
-   * WorktreeService 的错误是 `Object.assign(new Error(msg), { code, detail })` 扁平模式，
-   * 没有 class 可供 sendHandlerError 的 instanceof 匹配。这里手动提取 code：
-   * - 有 code（NOT_BARE_REPO / NOT_GIT_REPO / WORKTREE_EXISTS / SETUP_FAILED / GIT_FAILED）→ 透传作 error.code
-   * - 无 code → 归为 'worktree_failed'
+   * - TimeoutError（P6 D11）→ 'worktree_busy'（mutex 排队超时，让客户端区分并发冲突）
+   * - WorktreeService 的错误是 `Object.assign(new Error(msg), { code, detail })` 扁平模式，
+   *   没有 class 可供 sendHandlerError 的 instanceof 匹配。这里手动提取 code：
+   *   - 有 code（NOT_BARE_REPO / NOT_GIT_REPO / WORKTREE_EXISTS / SETUP_FAILED / GIT_FAILED）→ 透传作 error.code
+   *   - 无 code → 归为 'worktree_failed'
    *
    * detail 透传到 details 字段（前端按 code 分流：WORKTREE_EXISTS 走 exists 态，其余走 error 态）。
    */
   private sendWorktreeError(ws: WsType, id: string | undefined, e: unknown): void {
+    // P6 D11：worktree mutex 排队超时 → reply error code worktree_busy。
+    if (e instanceof TimeoutError) {
+      this.ctx.sendError(ws, 'worktree_busy', e.message, id)
+      return
+    }
     const err = e as CodedError & Error
     const code: WorktreeEnvelopeCode = (err && typeof err.code === 'string')
       ? (err.code as WorktreeEnvelopeCode)

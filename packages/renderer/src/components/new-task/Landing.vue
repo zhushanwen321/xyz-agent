@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 /**
  * Landing.vue —— 新建任务落地空态（#2，spec §3.1 / §4.5）。
  *
@@ -13,18 +13,22 @@ import { computed, onMounted, watch } from 'vue'
  */
 
 import { useI18n } from 'vue-i18n'
-import { Folder, GitFork, RefreshCw } from '@lucide/vue'
+import { Folder, GitFork, RefreshCw, Globe, Unplug } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import DirSelectPopover from './DirSelectPopover.vue'
 import BranchSelectPopover from './BranchSelectPopover.vue'
 import CreateBranchModal from './CreateBranchModal.vue'
 import CreateWorktreeModal from './CreateWorktreeModal.vue'
+import RemoteConnectModal from '@/components/remote/RemoteConnectModal.vue'
 import PresetSelectChip from './PresetSelectChip.vue'
 import Composer from '@/components/panel/Composer.vue'
 import { useNewTaskFlow } from '@/composables/features/useNewTaskFlow'
 import { useToast } from '@/composables/useToast'
 import { dirNameOf } from '@/composables/logic/path'
+import { useWorkspaceStore } from '@/stores/workspace'
+import { isRemoteMode, getActiveProfile, deactivateRemote } from '@/lib/remote/connection-config'
+import { getRttStats, type RttStats } from '@/lib/ws-client'
 
 const props = withDefaults(
   defineProps<{
@@ -70,22 +74,104 @@ const composerSid = computed(() => flow.currentSessionId.value ?? props.sessionI
 const cwd = computed(() => flow.currentCwd.value ?? props.currentCwd)
 
 /**
+ * 远程模式（spec §八:218-228 状态条 + §presetCwd 远程分支）。
+ *
+ * - isRemote 一次性求值（modal reload 后整页重建，组件重挂时重新求值；不 watch）。
+ * - 读 connection-config.isRemoteMode（持久化模式）非 ws-client.getIsRemote（当前 WS 状态）——
+ *   landing 渲染时 WS 可能重连中，用持久化模式避免状态条闪烁（D5）。
+ */
+const isRemote = isRemoteMode()
+const workspaceStore = useWorkspaceStore()
+
+/** RemoteConnectModal 开关（状态条「切换」按钮 + DirSelectPopover emit remote-connect 触发）。 */
+const showRemoteModal = ref(false)
+
+/** RTT 统计快照（getRttStats 非响应式，UI 轮询消费，wave2 设计意图）。 */
+const rttStats = ref<RttStats>({ count: 0 })
+/** RTT 轮询 timer（onMounted 启动 / onBeforeUnmount 清理，防内存泄漏）。 */
+let rttTimer: ReturnType<typeof setInterval> | null = null
+
+/**
+ * 远程主机名（getActiveProfile url 经 new URL 取 hostname）。
+ * isRemote=true 时 getActiveProfile 必非空（isRemoteMode 内部短路 mode==='remote' && getActiveProfile()!==null），
+ * 仍守卫 try/catch 防 url 畸形 + profile 边界 null → 状态条 v-if=isRemote && remoteHost 兜底不渲染。
+ */
+const remoteHost = computed<string>(() => {
+  const profile = getActiveProfile()
+  if (!profile) return ''
+  try {
+    return new URL(profile.url).hostname || profile.url
+     
+  } catch {
+    return profile.url
+  }
+})
+
+/** RTT last 值（count=0 时无样本返 null，状态条显「-」）。 */
+const rttLast = computed<number | null>(() => (rttStats.value.count > 0 ? rttStats.value.last ?? null : null))
+
+/**
+ * presetCwd 决策（远程分支 IF6）：
+ * - 远程模式：records[0] 存在 → 预选 records[0].cwd；records 空 → 保持空 chip 态（不用 props.currentCwd 兑底，
+ *   远程 server 的 cwd 语义不同，不能兑本地 defaultCwd）。
+ * - 本地模式：逐字节不变（用 props.currentCwd）。
+ */
+function applyPresetCwd(): void {
+  if (flow.currentCwd.value) return // 已有 cwd 不覆盖
+  if (isRemote) {
+    const firstRecord = workspaceStore.records[0]
+    if (firstRecord) {
+      flow.presetCwd(firstRecord.cwd)
+    }
+    // records 空保持空 chip 态（不调 presetCwd）
+    return
+  }
+  if (props.currentCwd) {
+    flow.presetCwd(props.currentCwd)
+  }
+}
+
+/** 「断开」按钮：deactivateRemote + location.reload（切回本地模式，reload 后 isRemoteMode=false）。 */
+function onDisconnectRemote(): void {
+  deactivateRemote()
+  location.reload()
+}
+
+/**
  * landing 态进入保障 + cwd 同步：
  * app 启动 / 空 session 时 Panel 因 !sessionId 渲染 Landing，但 flow.state 可能还是 idle
  * （未走 startFlow）→ presetCwd 不执行（要求 state=landing）→ cwd 未同步 → mode 恒 not-repo →
  * Git chip 不显示 + 点 chip 时 idle→branch-popover 非法转换报错。
  * startFlow 幂等（已 landing 不翻 state，只刷新 cwd），idle 态调它会 idle→landing + presetCwd。
+ *
+ * 远程模式：presetCwd 走 applyPresetCwd 的远程分支（records[0] 预选 / 空保持空 chip）。
  */
 onMounted(() => {
   if (flow.state.value !== 'landing') {
     flow.startFlow(props.currentCwd ?? undefined)
-  } else if (!flow.currentCwd.value && props.currentCwd) {
-    flow.presetCwd(props.currentCwd)
+  } else {
+    applyPresetCwd()
+  }
+  // 远程模式启动 RTT 轮询（2s 间隔，D4；本地模式不轮询省 CPU）
+  if (isRemote) {
+    rttStats.value = getRttStats()
+    rttTimer = setInterval(() => {
+      rttStats.value = getRttStats()
+    }, RTT_POLL_INTERVAL_MS)
   }
 })
-watch(() => props.currentCwd, (newCwd) => {
-  if (!flow.currentCwd.value && newCwd) {
-    flow.presetCwd(newCwd)
+watch(() => props.currentCwd, () => {
+  if (!flow.currentCwd.value) {
+    applyPresetCwd()
+  }
+})
+/** RTT 轮询间隔（spec §八 + D4：2s 平衡及时性与 CPU，心跳 15s 间隔下能看到最近样本）。 */
+const RTT_POLL_INTERVAL_MS = 2000
+
+onBeforeUnmount(() => {
+  if (rttTimer) {
+    clearInterval(rttTimer)
+    rttTimer = null
   }
 })
 /**
@@ -142,6 +228,14 @@ const worktreeItems = computed(() => flow.worktreeItems?.value ?? [])
 function onSelectWorkspace(payload: { cwd: string }): void {
   flow.selectWorkspace(payload.cwd)
 }
+/**
+ * DirSelectPopover「远程连接」动作项：打开 RemoteConnectModal（standalone）。
+ * 先关 popover 再开 modal，否则 popover 浮层会遮盖 modal。
+ */
+function onRemoteConnect(): void {
+  flow.closeOverlay()
+  showRemoteModal.value = true
+}
 function onSelectBranch(payload: { name: string }): void {
   flow.selectBranch(payload.name)
 }
@@ -192,6 +286,41 @@ function onPresetSelect(payload: { presetId: string }): void {
       {{ greetingPrefix }}，{{ t('app.greetingPrompt') }}
     </h1>
 
+    <!-- 远程状态条（spec §八:218-228，仅 isRemoteMode=true 渲染）：
+         host + RTT last ms + 切换/断开按钮。RTT 2s 轮询刷新（D4）。 -->
+    <div
+      v-if="isRemote && remoteHost"
+      data-testid="remote-status-bar"
+      class="z-10 flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-1.5 text-[12px] text-muted"
+    >
+      <Globe class="size-3.5 shrink-0 text-accent" />
+      <span data-testid="remote-host" class="font-mono">{{ remoteHost }}</span>
+      <span aria-hidden="true" class="h-3 w-px bg-border" />
+      <span data-testid="remote-rtt" class="tabular-nums">
+        {{ t('connection.remoteConnect.rttLabel') }}:
+        {{ rttLast !== null ? `${rttLast}ms` : '-' }}
+      </span>
+      <Button
+        data-testid="remote-switch-btn"
+        variant="ghost"
+        size="sm"
+        class="ml-1 h-auto gap-1 px-2 py-1 text-[11px]"
+        @click="showRemoteModal = true"
+      >
+        {{ t('connection.remoteConnect.switchBtn') }}
+      </Button>
+      <Button
+        data-testid="remote-disconnect-btn"
+        variant="ghost"
+        size="sm"
+        class="h-auto gap-1 px-2 py-1 text-[11px] text-danger hover:text-danger"
+        @click="onDisconnectRemote"
+      >
+        <Unplug class="size-3" />
+        {{ t('connection.remoteConnect.disconnectBtn') }}
+      </Button>
+    </div>
+
     <!-- getHistory 失败重试出口（AC-2.6，不永久卡住） -->
     <Button
       v-if="historyError"
@@ -227,6 +356,7 @@ function onPresetSelect(payload: { presetId: string }): void {
                 :current-cwd="currentCwd ?? null"
                 @select="onSelectWorkspace"
                 @open-dir-dialog="onOpenDirDialog"
+                @remote-connect="onRemoteConnect"
                 @close="flow.closeOverlay()"
               />
             </PopoverContent>
@@ -278,6 +408,14 @@ function onPresetSelect(payload: { presetId: string }): void {
       @close="flow.closeOverlay()"
       @success="onWorktreeActivated"
       @use-existing="onWorktreeActivated"
+    />
+
+    <!-- 远程连接配置 modal（spec §七，远程状态条「切换」按钮 / DirSelectPopover「远程连接」动作项触发）。
+         standalone 模式，@close 摘除。W1 组件复用，含粘贴/手填/已保存三 tab。 -->
+    <RemoteConnectModal
+      v-if="showRemoteModal"
+      standalone
+      @close="showRemoteModal = false"
     />
   </div>
 </template>

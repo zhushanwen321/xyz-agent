@@ -137,6 +137,16 @@ lsof -i :1420 -P | grep node
 # 检查进程 cwd 是否指向当前 worktree 的 renderer 目录
 ```
 
+### 6. 客户端断开后 session 是否继续跑？
+
+**是。** pi 与 WS 连接解耦（P3 设计 D1）——客户端全断开时 pi 继续跑到 turn_end，事件照常翻译广播入 P2 ring buffer，重连后自动按 seq 回放补齐断线期间的增量。
+
+- pi 的终止仅由 5 条路径触发：session.delete / restore 重建 / 同 id 冲突 / 创建失败清理 / runtime 关停，**无一依赖 WS 连接状态**。
+- 审批挂起时所有客户端离线：pi 无限期挂起等待（不超时，P3 设计 D2），任一设备重连后 runtime 主动补发挂起的审批请求（`extension.pendingRequestsBatch`）弹出审批 UI。
+- **runtime 重启会中断进行中的 turn**（所有 pi 子进程被清理，见 P3 设计 D4），但 session 历史不丢，重开即 restore 恢复。
+
+详见 [P3 spec §一决策表](../../.xyz-harness/2026-07-26-remote-p3/spec.md) 与 [deployment/server.md §8](./server.md#8-pi-与连接生命周期语义)。
+
 ## 环境变量速查
 
 | 变量 | 用途 | 生产默认值 | 开发默认值 |

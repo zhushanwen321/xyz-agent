@@ -128,6 +128,18 @@ export class PluginService implements IPluginService {
     this.deps.sessionService = sessionService
   }
 
+  /**
+   * P7 lease fallback：后置注入 leaseManager（组合根 index.ts 在 PluginService 构造后
+   * 才创建 LeaseManager，时序晚于 PluginService）。resolver 持有 deps 引用，此处 mutate
+   * 对 resolver 可见。未注入时 resolver 跳过 lease fallback（零回归）。
+   */
+  setLeaseManager(leaseManager: {
+    getBusySession(clientId: string): { sessionId: string } | undefined
+    getLeaseOwner(sessionId: string): string | undefined
+  }): void {
+    this.deps.leaseManager = leaseManager
+  }
+
   async initialize(): Promise<void> {
     if (this.initialized) return
 
@@ -397,9 +409,18 @@ export class PluginService implements IPluginService {
 
   /**
    * 处理 bridge 发起的工具执行请求（ADR-0012 契约不变）。委托 bridge-interop。
+   *
+   * P7 长期方案 A：注入 clientIdResolver——从 session lease owner（busyOwnerId）反查
+   * 发起方 clientId，塞进 invoke params 经 Worker RPC 透传，绕开 ALS 跨独立 tick 断裂。
    */
   async handleBridgeToolExecute(request: BridgeToolExecuteRequest): Promise<BridgeToolExecuteResponse> {
-    return handleBridgeToolExecute(request, this.toolRegistry, this.host, this.rpcServer)
+    return handleBridgeToolExecute(
+      request,
+      this.toolRegistry,
+      this.host,
+      this.rpcServer,
+      (sessionId) => this.deps.leaseManager?.getLeaseOwner(sessionId ?? ''),
+    )
   }
 
   handleBridgeEvent(eventName: string, data: unknown, sessionId: string): void {
@@ -449,6 +470,16 @@ export class PluginService implements IPluginService {
   /** 清理指定 session 的数据缓存、dirty 跟踪和 size 记录 */
   clearSessionData(sessionId: string): void {
     this.sessionDataStore.clearSession(sessionId)
+  }
+
+  /**
+   * 清理指定 clientId 的 activeSession resolver cache 条目。
+   *
+   * 客户端断开后其 clientId 对应的 per-key TTL cache 条目已无意义（值过期后 key 仍残留），
+   * 频繁连接/断开的客户端会令 Map 单调增长。在 onDisconnect 时显式删除该 key，避免 stale 残留。
+   */
+  clearClientResolverCache(clientId: string): void {
+    this.activeSessionResolver.clear(clientId)
   }
 
   /** 处理前端返回的 UI 响应（供 server.ts 调用）。委托 UiRequestQueue。 */

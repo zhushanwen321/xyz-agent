@@ -39,6 +39,10 @@ import type {
   WorktreeListResult,
   WorkspaceDetectResult as WorkspaceDetectResultPort,
 } from '../ports/worktree-service.js'
+import { createKeyedMutex, type KeyedMutex } from '../../infra/async-mutex.js'
+
+/** P6 D11：worktree mutex 排队超时默认 10s（env XYZ_AGENT_MUTEX_TIMEOUT_MS 可配）。 */
+const DEFAULT_MUTEX_TIMEOUT_MS = 10_000
 
 /** WorktreeService 依赖（全注入，可 mock）。 */
 export interface WorktreeServiceDeps {
@@ -52,6 +56,15 @@ export interface WorktreeServiceDeps {
     /** statSync 用于区分文件/目录（existsSync 无法区分）。ENOENT 时应抛 Error 并设 code='ENOENT'。 */
     statSync: (path: string) => { isDirectory: () => boolean; isFile: () => boolean }
   }
+  /**
+   * P6 D5：worktree in-flight 去重 mutex（keyed by `${repoRoot}:${branch}`）。可选——缺省 createKeyedMutex()。
+   * 同分支并发 create 串行化：第二个等第一个完成后看到分支已存在正常报错。
+   */
+  worktreeMutex?: KeyedMutex
+  /**
+   * P6 D11：worktree mutex 排队超时阈值（ms）。可选——缺省读 env XYZ_AGENT_MUTEX_TIMEOUT_MS（默认 10_000）。
+   */
+  mutexTimeoutMs?: number
 }
 
 /** 主分支 fallback（origin/main ref 不存在时用本地 main）。 */
@@ -117,7 +130,18 @@ function computePlainRepoWorktreeDir(
 }
 
 export class WorktreeService implements IWorktreeService {
-  constructor(private deps: WorktreeServiceDeps) {}
+  /**
+   * P6 D5：worktree in-flight 去重 mutex（keyed by `${repoRoot}:${branch}`）。
+   * 缺省 createKeyedMutex()——构造注入可 mock。
+   */
+  private readonly worktreeMutex: KeyedMutex
+  /** P6 D11：worktree mutex 排队超时阈值（ms），超时抛 TimeoutError 转 worktree_busy。 */
+  private readonly mutexTimeoutMs: number
+
+  constructor(private deps: WorktreeServiceDeps) {
+    this.worktreeMutex = deps.worktreeMutex ?? createKeyedMutex()
+    this.mutexTimeoutMs = deps.mutexTimeoutMs ?? Number(process.env.XYZ_AGENT_MUTEX_TIMEOUT_MS ?? DEFAULT_MUTEX_TIMEOUT_MS)
+  }
 
   /**
    * 检测 cwd 所在仓库的三态模式（bare-workspace / plain-repo / not-repo）。
@@ -140,11 +164,14 @@ export class WorktreeService implements IWorktreeService {
     const baseBranch = rawBaseBranch ?? this.deps.configService.getDefaultBaseBranch()
 
     // 0. 分支名校验（安全边界，防 Windows 路径遍历）。前端校验只是 UX，runtime 必须独立校验。
+    // 前置在 mutex 外（非法名快速失败不占锁）。
     if (INVALID_BRANCH_REGEX.test(branch)) {
       throw worktreeError('INVALID_BRANCH', `非法分支名: ${branch}`)
     }
 
-    // 1. 检测三态
+    // 1. 检测三态——前置在 mutex 外。
+    // detection 只读（statSync + git rev-parse --show-toplevel，均无写入副作用），并发安全，不需串行化。
+    // 提前 detection 是为了从结果推导 repoRoot 作为 mutex key（见下）。
     const detector = this.createDetector()
     const detection = await detector.detect(workspaceHint ?? process.cwd())
 
@@ -152,13 +179,23 @@ export class WorktreeService implements IWorktreeService {
       throw worktreeError('NOT_GIT_REPO', '当前目录既不是 .bare workspace 也不是 git 仓库，无法创建 worktree')
     }
 
-    // 2. 按模式分支处理
-    if (detection.mode === 'bare-workspace') {
-      return this.createBareWorktree(detection, branch, baseBranch, locationMode, workspaceHint)
-    }
+    // P6 D5：worktree in-flight 去重——同 `${repoRoot}:${branch}` 的并发 create 串行化。
+    // 同分支并发第二个等第一个完成后看到分支已存在正常报错（靠串行化自然消解竞态，不引入显式 pending Map）。
+    // key 用 detection 推导的 repoRoot（runtime 侧权威值），**不用 workspaceHint**——
+    // workspaceHint 是前端传入的不稳定检测起点（同一 repo 可能传 /project 或 /project/src 子目录），
+    // 用它做 key 会导致同一 repo+branch 的并发因 hint 不同而落到不同 key，绕过串行化。
+    // repoRoot 由 WorkspaceDetector.detect 从 .bare 父目录 / git rev-parse --show-toplevel 推导，
+    // 同一 repo 的任意子目录都收敛到同一 repoRoot，串行化覆盖才完整。
+    const mutexKey = `${detection.repoRoot}:${branch}`
+    return this.worktreeMutex.run(mutexKey, async () => {
+      // 2. 按模式分支处理（detection 在 mutex 外已完成，此处复用）
+      if (detection.mode === 'bare-workspace') {
+        return this.createBareWorktree(detection, branch, baseBranch, locationMode, workspaceHint)
+      }
 
-    // mode === 'plain-repo'
-    return this.createPlainRepoWorktree(detection, branch, baseBranch, locationMode, workspaceHint)
+      // mode === 'plain-repo'
+      return this.createPlainRepoWorktree(detection, branch, baseBranch, locationMode, workspaceHint)
+    }, this.mutexTimeoutMs)
   }
 
   /**

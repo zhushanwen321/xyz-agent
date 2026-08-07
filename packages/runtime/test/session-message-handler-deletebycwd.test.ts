@@ -44,7 +44,7 @@ describe('W1: SessionMessageHandler — session.deleteByCwd', () => {
       type: 'session.deleteByCwd', id: 'm1', payload: { cwd: '/p' },
     } as unknown as ClientMessage
 
-    await handler.handleSessionMessage(msg, WS)
+    await handler.handleSessionMessage(msg, WS, 'local')
 
     // 循环 clearExtensionTimeoutsForSession：对 deleted 中每个 id 调一次
     expect(ctx.clearExtensionTimeoutsForSession).toHaveBeenCalledTimes(2)
@@ -69,7 +69,7 @@ describe('W1: SessionMessageHandler — session.deleteByCwd', () => {
       type: 'session.deleteByCwd', id: 'm1', payload: { cwd: '/p' },
     } as unknown as ClientMessage
 
-    await handler.handleSessionMessage(msg, WS)
+    await handler.handleSessionMessage(msg, WS, 'local')
 
     // 失败的 s2 不应触发 clearExtensionTimeoutsForSession，只调 1 次（s1）
     expect(ctx.clearExtensionTimeoutsForSession).toHaveBeenCalledTimes(1)

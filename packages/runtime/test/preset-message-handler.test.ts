@@ -77,6 +77,10 @@ function createMockContext() {
     send: vi.fn(),
     sendError: vi.fn(),
     reply: vi.fn(),
+    getClientId: vi.fn(() => 'local'),
+    getClient: vi.fn(() => undefined),
+    broadcastExcept: vi.fn(),
+    sendToClient: vi.fn(),
   }
 }
 

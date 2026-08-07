@@ -19,6 +19,7 @@ import type { ClientMessage, ClientMessageType } from '@xyz-agent/shared'
 import type { MessageHandlerContext } from './message-context.js'
 import type { ISessionService, IGitService } from '../interfaces.js'
 import { GitError } from '../services/git-service.js'
+import { TimeoutError } from '../infra/async-mutex.js'
 import { sendHandlerError } from './handler-utils.js'
 
 /** Interface for server methods needed by this handler */
@@ -122,11 +123,19 @@ export class GitMessageHandler {
 
   /**
    * 统一 git 错误回复（D10/P0-B）。
+   * - TimeoutError（P6 D11）→ 'git_busy'（mutex 排队超时，让客户端区分并发冲突）
    * - GitError → 取其 code（session_not_found / path_not_allowed / git_conflict / commit_message_required / *_failed / invalid_branch_name / git_unavailable / git_failed）
    * - 其它 → 'git_failed' + toErrorMessage
    * sessionId 透传 details（matched 与 fallback 两分支都带）。
    */
   private sendGitError(ws: WsType, id: string | undefined, sessionId: string | undefined, e: unknown): void {
+    // P6 D11：git mutex 排队超时 → reply error code git_busy（让客户端 UI 提示「git 操作繁忙」）。
+    if (e instanceof TimeoutError) {
+      // details===undefined（sessionId 缺省）表示 landing 态错误（git.checkoutCwd 无绑定 session）：
+      // 前端消费时不应路由到特定 session panel，而是走全局 toast；带 sessionId 时则归集到对应 session。
+      this.ctx.sendError(ws, 'git_busy', e.message, id, sessionId ? { sessionId } : undefined)
+      return
+    }
     sendHandlerError(this.ctx, ws, GitError, 'git_failed', e, id, sessionId ? { sessionId } : undefined)
   }
 }

@@ -60,6 +60,7 @@ describe('SessionMessageHandler —— message.bash 路由', () => {
     await handler.handleSessionMessage(
       msg('message.bash', { sessionId: 's1', command: 'ls', excludeFromContext: false }),
       WS,
+      'local',
     )
 
     // sendBash 被调，参数透传
@@ -83,6 +84,7 @@ describe('SessionMessageHandler —— message.bash 路由', () => {
     await handler.handleSessionMessage(
       msg('message.bash', { sessionId: 's1', command: 'git status' }),
       WS,
+      'local',
     )
 
     // sendError 而非 reply status
@@ -105,6 +107,7 @@ describe('SessionMessageHandler —— message.bash 路由', () => {
     await handler.handleSessionMessage(
       msg('message.bash', { sessionId: 's1', command: 'ls' }),
       WS,
+      'local',
     )
 
     expect(cap.replies[0]).toMatchObject({
@@ -120,6 +123,7 @@ describe('SessionMessageHandler —— message.bash 路由', () => {
     await handler.handleSessionMessage(
       msg('message.bash', { sessionId: 's1', command: 'pwd' }),
       WS,
+      'local',
     )
     expect(ctx.sessionService.sendBash).toHaveBeenCalledWith('s1', 'pwd', undefined)
   })
@@ -132,6 +136,7 @@ describe('SessionMessageHandler —— message.abortBash 路由', () => {
     await handler.handleSessionMessage(
       msg('message.abortBash', { sessionId: 's1' }),
       WS,
+      'local',
     )
 
     // abortBash 被调

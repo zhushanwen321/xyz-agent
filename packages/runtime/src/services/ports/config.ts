@@ -53,6 +53,11 @@ export interface ConfigModelDefinition {
 /** pi models.json 的 service 视图。 */
 export interface ConfigModelsConfig {
   providers: Record<string, ConfigProviderConfig>
+  /**
+   * P6 D3 config CAS 版本字段（乐观锁）。可选——旧文件无此字段时 facade 层用 `?? 0` 兜底。
+   * setProvider/deleteProvider 成功后 +1 落盘。
+   */
+  version?: number
 }
 
 /** 默认模型引用。 */
@@ -97,6 +102,12 @@ export interface IConfigStore {
 
   // ── Provider CRUD ──
   readModels(): ConfigModelsConfig
+  /**
+   * P6 D3 config CAS：自增 models.json 的 version 字段并落盘。
+   * 由 ConfigService facade 在 setProvider/deleteProvider 成功后调用。
+   * 返回自增后的新 version（= 写入前的 currentVersion + 1）。
+   */
+  bumpModelsVersion(): number
   getProviderConfig(providerId: string): ConfigProviderConfig | undefined
   upsertProvider(providerId: string, merged: ConfigProviderConfig): UpsertProviderResult
   removeProvider(providerId: string): RemoveProviderResult

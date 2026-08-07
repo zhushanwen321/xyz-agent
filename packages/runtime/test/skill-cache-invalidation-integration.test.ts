@@ -26,7 +26,7 @@ async function makeRealBroker() {
   const { ServerMessageBroker } = await import('../src/transport/message-broker.js')
   // 空连接池：broadcast 仍会序列化 msg 并遍历 clients（空集 → 无 ws.send），构造路径完整执行。
   // 我们 spy broadcast 入口验消息，不依赖真实 ws。
-  const pool: ClientPool = { clients: new Set() }
+  const pool: ClientPool = { clients: new Map() }
   const services = {
     sessionService: { listPersistedSessions: () => [] },
     configService: {

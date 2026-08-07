@@ -76,6 +76,10 @@ function makeHandler() {
     modelService,
     skillRegistry: { getGlobalSkills: () => [], getProjectSkills: vi.fn().mockResolvedValue([]) } as unknown as SettingsHandlerContext['skillRegistry'],
     projectRoot: '/proj',
+    // wave 远程分享：config.getConnectionInfo ctx 字段（本测试不触发，给 stub 满足接口）。
+    tokenManager: { load: () => ({ enabled: false }) } as unknown as SettingsHandlerContext['tokenManager'],
+    bindHost: '127.0.0.1',
+    port: 3210,
     nextPushId: vi.fn().mockReturnValue('push-1'),
     broadcast: vi.fn((m: ServerMessage) => broadcasts.push(m)),
     broadcastProviderList: vi.fn(),
@@ -85,6 +89,11 @@ function makeHandler() {
     broadcastSkillDirs: vi.fn(),
     broadcastAgentDirs: vi.fn(),
     broadcastExtensionDirs: vi.fn(),
+    // P5 lease/presence ctx 方法（settings handler 不调用，给 stub 满足 MessageHandlerContext 接口）。
+    getClientId: vi.fn(() => 'local'),
+    getClient: vi.fn(() => undefined),
+    broadcastExcept: vi.fn(),
+    sendToClient: vi.fn(),
   }
 
   const handler = new SettingsMessageHandler(ctx)

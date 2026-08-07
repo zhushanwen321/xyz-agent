@@ -20,6 +20,8 @@ function createMockBroker(): IMessageBroker {
     send: vi.fn(),
     broadcast: vi.fn(),
     sendError: vi.fn(),
+    sendToClient: vi.fn(),
+    broadcastExcept: vi.fn(),
   }
 }
 

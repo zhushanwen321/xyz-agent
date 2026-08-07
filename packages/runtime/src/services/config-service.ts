@@ -89,6 +89,23 @@ const FONT_SIZE_MAX = 72
 const SCROLLBACK_MAX = 100000
 
 /**
+ * P6 D3 config CAS 版本冲突错误。
+ *
+ * setProvider/deleteProvider 读 currentVersion 对比 expectedVersion，不等时抛出。
+ * settings-message-handler 捕获后 reply error{code:'version_conflict', currentVersion}，
+ * 客户端收到后重新拉 config 刷新 + toast 提示「配置已被其他设备修改，已刷新，请重试」。
+ *
+ * 扁平错误模式（code 挂在实例上），与 worktreeError/terminalError 同构——handler 用 instanceof 判定。
+ */
+export class VersionConflictError extends Error {
+  readonly code = 'version_conflict' as const
+  constructor(public readonly currentVersion: number) {
+    super(`config version conflict: expected version mismatch, current version is ${currentVersion}`)
+    this.name = 'VersionConflictError'
+  }
+}
+
+/**
  * 生成 atomicWrite 的唯一 tmp 后缀（时间戳 + 随机串），避免并发写入撞固定 .tmp 文件。
  * saveAppConfig / setSystemPromptConfig 共用。
  */
@@ -131,6 +148,24 @@ export class ConfigService implements IConfigService {
     return this.configStore.getDefaultModel()
   }
 
+  /**
+   * P6 D3 config CAS：返回当前 models.json 的 version（旧文件无字段时 default 0）。
+   * broker 广播 config.providers 时携带，客户端据此缓存 version 用于下次 set 的 expectedVersion。
+   */
+  getConfigVersion(): number {
+    return this.configStore.readModels().version ?? 0
+  }
+
+  /**
+   * 持久化默认模型（写 settings.json，非 models.json）。
+   *
+   * **P6 D3 CAS 范围说明**：本方法**不纳入 config CAS**（无 expectedVersion / 不抛 VersionConflictError）。
+   * spec §3.3 列举 set 路径时提到 setDefaultModel，但 §2.3 R3-M2 已澄清 setDefaultModel 改的是
+   * settings.json（与 models.json 是两个独立 JsonStore 实例，version 不共享）。实施决策（与客户端
+   * `renderer/src/api/domains/config.ts` 对齐）：setDefaultModel 不走 CAS，状态变更经
+   * config.defaults 广播推回。models.json 的 version 字段（getConfigVersion）只覆盖
+   * setProvider/deleteProvider，与 spec §2.3 目标 schema 一致。
+   */
   setDefaultModel(provider: string, modelId: string): void {
     this.configStore.setDefaultModel(provider, modelId)
   }
@@ -174,7 +209,21 @@ export class ConfigService implements IConfigService {
     enabled?: boolean
     /** Coding Plan 额度查询配置（手动选择 fetcher + 启用状态）。 */
     quota?: { fetcher?: string; enabled: boolean; cookieSet?: boolean }
-  }): { newDefault?: { provider: string; modelId: string } } {
+  }, expectedVersion: number): { newDefault?: { provider: string; modelId: string }; newVersion: number } {
+    // P6 D3 config CAS：先校验 expectedVersion，不等抛 VersionConflictError（handler 转 version_conflict）。
+    // 必须在 upsert 前校验——避免冲突时仍写入 providers（version 自增只在成功路径触发）。
+    //
+    // cr-fix CAS 原子性说明（readModels 校验 → upsertProvider 写 providers → bumpModelsVersion 写 version
+    // 三步独立）：此 CAS 安全性依赖 IConfigStore 实现的全同步语义——readModels/upsertProvider/
+    // bumpModelsVersion 均为同步函数（无 await），底层 JsonStore.read/writeModels/atomicWrite 全同步
+    //（readFileSync + writeFileSync + renameSync），updateSettingsSync 同步 RMW。Node 单线程下同步代码
+    // 不被 event loop 中断，三步之间无其他代码插入，故「第二读仍是第一读快照」成立，CAS 有效。
+    // 若未来 configStore 改为异步（如引入 fs/promises 或 lazy flush），此 CAS 会失效——届时需把
+    // check + upsert + bumpVersion 合并成 configStore 层单次同步 RMW（upsertProviderWithCas）。
+    const currentVersion = this.configStore.readModels().version ?? 0
+    if (currentVersion !== expectedVersion) {
+      throw new VersionConflictError(currentVersion)
+    }
     const existing = this.configStore.getProviderConfig(providerId) ?? {}
     // TODO: 当 pi models.json 支持 schema 后收窄类型（现有 Record<string, unknown> 是架构限制）
     const merged: Record<string, unknown> = { ...existing }
@@ -237,11 +286,29 @@ export class ConfigService implements IConfigService {
         return model as unknown as ConfigModelDefinition
       })
     }
-    return this.configStore.upsertProvider(providerId, merged)
+    const result = this.configStore.upsertProvider(providerId, merged)
+    // P6 D3：upsert 成功后自增 version 落盘（bumpModelsVersion 内部 read+write 同步无竞态）。
+    const newVersion = this.configStore.bumpModelsVersion()
+    return { ...result, newVersion }
   }
 
-  deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } } {
-    return this.configStore.removeProvider(providerId)
+  deleteProvider(providerId: string, expectedVersion: number): { removed: boolean; newDefault?: { provider: string; modelId: string }; newVersion: number } {
+    // P6 D3 config CAS：先校验 expectedVersion（与 setProvider 同模式）。
+    // cr-fix CAS 原子性说明同 setProvider：依赖 configStore 全同步语义（readModels/removeProvider/
+    // bumpModelsVersion 均同步，Node 单线程不交错）。详见 setProvider 注释。
+    const currentVersion = this.configStore.readModels().version ?? 0
+    if (currentVersion !== expectedVersion) {
+      throw new VersionConflictError(currentVersion)
+    }
+    const result = this.configStore.removeProvider(providerId)
+    // remove 返回 removed=false（provider 不存在）时仍走 version 自增？
+    // 决策：removed=false 不自增 version（无实际写入，version 不变避免误报冲突）。
+    // 但 CAS 校验已通过（expectedVersion 匹配），调用方拿到 removed=false 知道 provider 不存在。
+    if (!result.removed) {
+      return { ...result, newVersion: currentVersion }
+    }
+    const newVersion = this.configStore.bumpModelsVersion()
+    return { ...result, newVersion }
   }
 
   getProvider(providerId: string): { apiKey?: string; name?: string; type?: string; baseUrl?: string; models?: unknown[]; enabled?: boolean } | undefined {

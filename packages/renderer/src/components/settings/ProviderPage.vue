@@ -334,7 +334,7 @@ async function onToggleEnabled(p: ProviderInfo, enabled: boolean) {
   toggling.value = next
   const old = settingsStore.setProviderEnabled(p.id, enabled)
   try {
-    await config.setProvider(p.id, { enabled })
+    await config.setProvider(p.id, { enabled }, settingsStore.configVersion)
     // 兜底：禁用 defaultModel 归属 provider 时清空前端 defaultModel（runtime 也会广播修正，幂等覆盖）。
     if (!enabled && settingsStore.defaultModel.startsWith(`${p.id}/`)) {
       settingsStore.defaultModel = ''
@@ -357,7 +357,7 @@ async function confirmDelete() {
   deleting.value = true
   actionError.value = ''
   try {
-    await config.deleteProvider(target.id)
+    await config.deleteProvider(target.id, settingsStore.configVersion)
     // 兜底：删除 defaultModel 归属 provider 时清空前端 defaultModel（runtime 也会广播修正，幂等覆盖）。
     if (settingsStore.defaultModel.startsWith(`${target.id}/`)) {
       settingsStore.defaultModel = ''
@@ -421,7 +421,7 @@ async function onToggleModelEnabled(
         compat: m.compat,
         enabled: m.id === modelId ? enabled : (m.enabled ?? true),
       })) ?? []
-    await config.setProvider(providerId, { models: modelsToSend })
+    await config.setProvider(providerId, { models: modelsToSend }, settingsStore.configVersion)
   } catch (e) {
     settingsStore.setModelEnabled(providerId, modelId, old)
     actionError.value = e instanceof Error ? e.message : String(e)

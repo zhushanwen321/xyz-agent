@@ -28,6 +28,14 @@ export const HIDDEN_TOOL_NAMES: ReadonlySet<string> = new Set(['todo', 'goal_con
  *  捕获发起时刻（action=run → 广播 session.workflows 增量信号）。 */
 export const WORKFLOW_TOOL_NAMES: ReadonlySet<string> = new Set(['workflow'])
 
+/** pi 可执行文件的版本。
+ *  server/pi-fetch.ts 下载 pi 二进制 + bootstrap 首启输出均 import 此常量，避免硬编码漂移。
+ *
+ *  注意：本常量不是严格 SSOT——scripts/prepare-pi-resources.sh 的 PI_VERSION 默认值（shell 无法 import
+ *  TS 常量）与本值是两份独立硬编码。升级 pi 时必须同步改此常量 + prepare-pi-resources.sh 默认值，否则
+ *  CI 下载的 pi 版本会与本常量漂移。 */
+export const PI_VERSION = '0.80.3'
+
 /** pi 支持的 provider api 标识全集（前后端共享 SSOT）。
  *  runtime 的 applyTypeTranslation 改为透传后，前端 Select 必须直接发送此集合内的终值。
  *  注意：pi 不支持 ollama；ollama 的前端适配在 W4 处理，runtime 不做别名翻译。 */

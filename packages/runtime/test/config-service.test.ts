@@ -108,8 +108,8 @@ describe('ConfigService.setProvider · provider 级 enabled 读写链路（U2）
     })
     refreshModels()
 
-    // 写入 enabled:false
-    configService.setProvider('p1', { enabled: false })
+    // 写入 enabled:false（P6 D3 CAS：旧文件无 version default 0，expectedVersion=0）
+    configService.setProvider('p1', { enabled: false }, 0)
 
     const providers = configService.listProviders()
     expect(providers[0]!.enabled).toBe(false)
@@ -128,8 +128,8 @@ describe('ConfigService.setProvider · provider 级 enabled 读写链路（U2）
     })
     refreshModels()
 
-    // 写入 enabled:true
-    configService.setProvider('p1', { enabled: true })
+    // 写入 enabled:true（P6 D3 CAS：expectedVersion=0）
+    configService.setProvider('p1', { enabled: true }, 0)
 
     const providers = configService.listProviders()
     expect(providers[0]!.enabled).toBe(true)
@@ -146,7 +146,7 @@ describe('ConfigService.setProvider · provider 级 enabled 读写链路（U2）
     })
     refreshModels()
 
-    configService.setProvider('p1', { enabled: false })
+    configService.setProvider('p1', { enabled: false }, 0)
     refreshModels()
 
     // 直接读盘验证（绕过 service 缓存）
@@ -223,13 +223,13 @@ describe('ConfigService.setProvider · model 级字段写路径（U3b，修复 r
     })
     refreshModels()
 
-    // setProvider 传入含 enabled 的 model（新模型，base={}）
+    // setProvider 传入含 enabled 的 model（新模型，base={}）。P6 D3 CAS：expectedVersion=0
     configService.setProvider('p1', {
       models: [
         { id: 'm1', enabled: false },
         { id: 'm2', enabled: true },
       ],
-    })
+    }, 0)
 
     const providers = configService.listProviders()
     const models = providers[0]!.models
@@ -250,12 +250,12 @@ describe('ConfigService.setProvider · model 级字段写路径（U3b，修复 r
     })
     refreshModels()
 
-    // 编辑 m1，补 model 级 api/baseUrl（覆盖 provider 默认）
+    // 编辑 m1，补 model 级 api/baseUrl（覆盖 provider 默认）。P6 D3 CAS：expectedVersion=0
     configService.setProvider('p1', {
       models: [
         { id: 'm1', name: 'M1', api: 'openai-completions', baseUrl: 'https://m1.example.com' },
       ],
-    })
+    }, 0)
 
     const providers = configService.listProviders()
     const m1 = providers[0]!.models.find(m => m.id === 'm1')
@@ -286,7 +286,7 @@ describe('ConfigService.setProvider · model 级字段写路径（U3b，修复 r
       models: [
         { id: 'm1', name: 'M1', compat: { supportsDeveloperRole: false, thinkingFormat: 'deepseek' } },
       ],
-    })
+    }, 0)
 
     const providers = configService.listProviders()
     const m1 = providers[0]!.models.find(m => m.id === 'm1')
@@ -310,7 +310,7 @@ describe('ConfigService.setProvider · model 级字段写路径（U3b，修复 r
       models: [
         { id: 'm1', compat: { supportsDeveloperRole: false } },
       ],
-    })
+    }, 0)
 
     const m1 = configService.listProviders()[0]!.models.find(m => m.id === 'm1')
     expect(m1?.compat).toEqual({ supportsDeveloperRole: false })
@@ -334,7 +334,7 @@ describe('ConfigService.setProvider · model 级字段写路径（U3b，修复 r
     //    该 model 无 compat 键，应触发 else if 删除分支。
     configService.setProvider('p1', {
       models: [{ id: 'm1' }],
-    })
+    }, 0)
 
     // 3. 读回的 compat 应为 undefined（被 delete，而非保留盘上旧值）
     const m1 = configService.listProviders()[0]!.models.find(m => m.id === 'm1')

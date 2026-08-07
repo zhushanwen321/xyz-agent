@@ -186,6 +186,15 @@ describe('wave:runtime-wiring · TC3/TC4/TC5 session.subscribe/unsubscribe RPC',
       broadcastSessionList: vi.fn(),
       clearExtensionTimeoutsForSession: vi.fn(),
       broadcast: vi.fn(),
+      // P5 lease/presence 字段（SessionHandlerContext + MessageHandlerContext 新增）
+      getClientId: vi.fn(() => 'test-client'),
+      getClient: vi.fn(() => undefined),
+      broadcastExcept: vi.fn(),
+      sendToClient: vi.fn(),
+      clearSessionBuffer: vi.fn(),
+      setActiveSession: vi.fn(),
+      buildPresenceList: vi.fn(() => []),
+      getDeviceName: vi.fn(() => undefined),
     }
     const handler = new SessionMessageHandler(ctx)
     return { handler, ctx, reply, sendError, messageBus }
@@ -199,7 +208,7 @@ describe('wave:runtime-wiring · TC3/TC4/TC5 session.subscribe/unsubscribe RPC',
     })
     const ws = createMockWs()
     const msg = { type: 'session.subscribe', id: 'rpc-1', payload: { sessionId: 's1' } } as unknown as ClientMessage
-    await handler.handleSessionMessage(msg, ws as never)
+    await handler.handleSessionMessage(msg, ws as never, 'test-client')
 
     expect(messageBus.subscribe).toHaveBeenCalledTimes(1)
     expect(messageBus.subscribe).toHaveBeenCalledWith('s1', ws)
@@ -219,7 +228,7 @@ describe('wave:runtime-wiring · TC3/TC4/TC5 session.subscribe/unsubscribe RPC',
     })
     const ws = createMockWs()
     const msg = { type: 'session.subscribe', id: 'rpc-2', payload: { sessionId: 's1', fromSeq: 1 } } as unknown as ClientMessage
-    await handler.handleSessionMessage(msg, ws as never)
+    await handler.handleSessionMessage(msg, ws as never, 'test-client')
 
     // 过滤后 snapshot 只含 seq>1；stateSnapshot 是 last-value 不受 fromSeq 影响
     const replyCall = reply.mock.calls[0]
@@ -245,7 +254,7 @@ describe('wave:runtime-wiring · TC3/TC4/TC5 session.subscribe/unsubscribe RPC',
     })
     const ws = createMockWs()
     const msg = { type: 'session.subscribe', id: 'rpc-3', payload: { sessionId: 's1', fromSeq: 0 } } as unknown as ClientMessage
-    await handler.handleSessionMessage(msg, ws as never)
+    await handler.handleSessionMessage(msg, ws as never, 'test-client')
 
     const payload = reply.mock.calls[0][3] as { snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; lastSeq: number; gap: boolean }
     expect(payload.gap).toBe(true)
@@ -261,7 +270,7 @@ describe('wave:runtime-wiring · TC3/TC4/TC5 session.subscribe/unsubscribe RPC',
     })
     const ws = createMockWs()
     const msg = { type: 'session.subscribe', id: 'rpc-4', payload: { sessionId: 's1', fromSeq: 0 } } as unknown as ClientMessage
-    await handler.handleSessionMessage(msg, ws as never)
+    await handler.handleSessionMessage(msg, ws as never, 'test-client')
     const payload = reply.mock.calls[0][3] as { snapshot: ServerMessage[]; stateSnapshot: ServerMessage[]; gap: boolean }
     expect(payload.gap).toBe(false)
     expect(payload.snapshot).toEqual([])
@@ -272,7 +281,7 @@ describe('wave:runtime-wiring · TC3/TC4/TC5 session.subscribe/unsubscribe RPC',
     const { handler, reply, messageBus } = createHandlerWithMocks()
     const ws = createMockWs()
     const msg = { type: 'session.unsubscribe', id: 'rpc-5', payload: { sessionId: 's1' } } as unknown as ClientMessage
-    await handler.handleSessionMessage(msg, ws as never)
+    await handler.handleSessionMessage(msg, ws as never, 'test-client')
 
     expect(messageBus.unsubscribe).toHaveBeenCalledTimes(1)
     expect(messageBus.unsubscribe).toHaveBeenCalledWith('s1', ws)
@@ -296,7 +305,7 @@ describe('wave:runtime-wiring · TC3/TC4/TC5 session.subscribe/unsubscribe RPC',
     const handler = new SessionMessageHandler(ctx)
     const ws = createMockWs()
     const msg = { type: 'session.subscribe', id: 'rpc-6', payload: { sessionId: 's1' } } as unknown as ClientMessage
-    await handler.handleSessionMessage(msg, ws as never)
+    await handler.handleSessionMessage(msg, ws as never, 'test-client')
     expect(sendError).toHaveBeenCalledWith(ws, 'subscribe_unsupported', 'message bus not available', 'rpc-6', { sessionId: 's1' })
   })
 })
@@ -315,7 +324,7 @@ describe('wave:runtime-wiring · TC6 ConnectionManager.onClose → bus.unsubscri
       onMessage: vi.fn(),
       sendError: vi.fn(),
       onDisconnect: (ws) => messageBus.unsubscribeAll(ws as unknown as BusClient),
-    })
+    }, {})
     await conn.start()
     // 直接从 clients 池取一个 ws 模拟 close 事件（clients 是 readonly Set，handleConnection 时 add）。
     // 由于无法轻易构造真实 ws 进 connection 回调，改为验证 onDisconnect 回调本身接线正确：
@@ -333,7 +342,8 @@ describe('wave:runtime-wiring · TC6 ConnectionManager.onClose → bus.unsubscri
       onConnect: () => {},
       onMessage: vi.fn(),
       sendError: vi.fn(),
-    })
+      onDisconnect: () => {},
+    }, {})
     await conn.start()
     expect(() => {
       ;(conn as unknown as { callbacks: { onDisconnect?: (ws: unknown) => void } }).callbacks.onDisconnect?.(createMockWs())

@@ -44,6 +44,28 @@ export interface IManagedSessionView {
    */
   isCompacting: boolean
   /**
+   * P5 lease：持有 lease 的 clientId（无 lease 时 undefined）。与 leaseExpiresAt 成对。
+   * LeaseManager.acquire 成功时设，release/release 清 undefined。toSummary 透传到 SessionSummary。
+   * 审查 M1：不引入 leaseFence（fence 推迟到真正消费方，P5-P7 无消费方）。
+   */
+  busyOwnerId?: string
+  /** P5 lease：lease TTL 到期时间（unix ms，无 lease 时 undefined）。续租挂 pingTick 成功路径。 */
+  leaseExpiresAt?: number
+  /**
+   * P5 lease：上一次持有 lease 的 clientId（release 时从 busyOwnerId 快照写入）。
+   *
+   * 用途（cr-fix orphan-pi 续租）：reaper 把过期 lease release('lease_expired') 时清空
+   * busyOwnerId，但 pi turn 未必同步结束（orphan pi 场景：isGenerating=true，
+   * busyOwnerId=undefined，lease 已被释放）。若原 owner 此时再发 follow_up，acquire 走
+   * `busyOwnerId(undefined) !== clientId` → 返回 busy + `<orphan-pi>`，同设备用户被自己阻塞。
+   * acquire 检查 `isGenerating && busyOwnerId===undefined && lastOwnerId===clientId` 时
+   * 视为续租（renew 而非 busy 拒绝），把 lease 交还给原 owner。
+   *
+   * 不进 toSummary：纯运行时态，前端不消费（前端只看 busyOwnerId/leaseExpiresAt 推占用指示器）。
+   * 新 acquire 会覆盖它（同一 session 的 owner 切换时更新快照）。
+   */
+  lastOwnerId?: string
+  /**
    * bash 执行进行中标记（composer-bash-execute W1）。
    *
    * composer 直接执行 bash（pi bash RPC，不经 LLM turn）期间置 true，与 isGenerating/isCompacting

@@ -1,6 +1,6 @@
 /**
- * Extension UI request timeout manager.
- * Handles registration, clearing, and session-scoped cleanup of extension timeouts.
+ * Extension UI request manager.
+ * Handles registration, clearing, and session-scoped cleanup of extension UI requests.
  *
  * Extension UI requests block indefinitely waiting for user response.
  * Interactive methods (confirm/select/input/editor/ask-user) no longer set a timer;
@@ -10,18 +10,11 @@
  * 当 session 重新激活时（前端重新订阅时），runtime 主动推送缓存的请求，
  * 解决「切换 session 后 ask-user 请求丢失」问题。
  *
- * TODO（死代码现状，待重新设计或彻底移除）：registerTimeout 改为同步 `void onTimeout`
- * 不排定时器后，下列字段/方法成了事实上的死代码——
- *   - extensionTimeouts Map：registerTimeout 不再写入，clearTimeout/clearForSession 内的
- *     `extensionTimeouts.get` 恒为 undefined（保留无害但无意义）
- *   - timedOutIds Set / markTimedOut / isTimedOut / clearTimedOut：由 transport/
- *     extension-message-handler.handleExtensionTimeout（经 server.ts 的 dead 回调闭包）
- *     调用，但该闭包随 registerTimeout 改为同步触发后永不再被调用，整条链不触发
- *   - handleExtensionTimeout / ui_timeout 广播分支：同上
- * 故意保留而非删除，原因：(1) TIMEOUT_MS / EXTENSION_UI_TIMEOUT_MS 仍被单测
- * （extension-timeout-manager.test.ts 用 advanceTimersByTime 验证「不触发」）引用；
- * (2) 超时编排链跨 transport/extension-message-handler.ts + server.ts 两个文件，
- * 整链移除需协同改动且超出本 PR scope。待超时机制重新设计或确认废弃后统一清理。
+ * [2026-07-28] 清理死代码：registerTimeout 改为同步 `void onTimeout` 不排定时器后，
+ * extensionTimeouts Map / timedOutIds Set / markTimedOut / isTimedOut / clearTimedOut /
+ * handleExtensionTimeout 链路（extension-message-handler + server.ts 回调闭包）均为死代码，
+ * 已统一移除。clearForSession 简化为只清 pendingRequests + session 请求跟踪表。
+ * onTimeout 参数保留为签名稳定占位（调用方 server.ts 不改），但永不被调用。
  */
 
 /**
@@ -43,27 +36,11 @@ export interface PendingUIRequest {
  */
 export type PendingUIRequestResolved = PendingUIRequest & Record<string, unknown>
 
-/**
- * 历史 5min UI 超时常量（300_000ms）。交互式 method 已不再排定时器，
- * 此常量仅保留供单测（extension-timeout-manager.test.ts 用 vi.advanceTimersByTime
- * 推进超大偏移验证回调不触发）使用——不得删除。
- */
-const EXTENSION_UI_TIMEOUT_MS = 300_000
-
 export class ExtensionTimeoutManager {
-  private extensionTimeouts = new Map<string, NodeJS.Timeout>()
   private extensionSessionRequests = new Map<string, Set<string>>()
   private bridgeRequestIds = new Set<string>()
-  /** 已超时的 requestId 集合——防止前端 race window 内迟到的 ui_response 再发一次（双响应） */
-  private timedOutIds = new Set<string>()
   /** 缓存 pending 的 UI 请求（per-session），用于 session 重新激活时推送 */
   private pendingRequests = new Map<string, Map<string, PendingUIRequest>>()
-
-  /**
-   * 历史 5min UI 超时常量。交互式 method 已不再排定时器，
-   * 此属性仅保留供单测使用——不得删除。值见模块级 EXTENSION_UI_TIMEOUT_MS。
-   */
-  readonly TIMEOUT_MS = EXTENSION_UI_TIMEOUT_MS
 
   /** Check if a requestId is a bridge request */
   isBridgeRequest(requestId: string): boolean {
@@ -76,8 +53,7 @@ export class ExtensionTimeoutManager {
   }
 
   /**
-   * Register a timeout for an extension UI request.
-   * Returns cleanup info or undefined if no timer needed (notify/bridge methods).
+   * Register a session-scoped tracking entry for an extension UI request.
    *
    * [2026-07-16] 取消所有 extension UI 超时：confirm/select/input/editor/ask-user
    * 统一不超时，block 等待用户决策。保留 session 跟踪以便 clearForSession 清理。
@@ -102,13 +78,12 @@ export class ExtensionTimeoutManager {
     this.trackSessionRequest(sessionId, requestId)
   }
 
-  /** Clear the timeout timer for a specific requestId */
+  /**
+   * Clear the session-scoped tracking entry for a specific requestId.
+   * 历史上还清过 setTimeout 定时器，但定时器已不再创建（registerTimeout 不排 timer），
+   * 故此处只清 session 请求跟踪表 + bridge 标记。
+   */
   clearTimeout(requestId: string): void {
-    const timer = this.extensionTimeouts.get(requestId)
-    if (timer) {
-      clearTimeout(timer)
-      this.extensionTimeouts.delete(requestId)
-    }
     for (const [sid, reqs] of this.extensionSessionRequests) {
       if (reqs.delete(requestId)) {
         if (reqs.size === 0) this.extensionSessionRequests.delete(sid)
@@ -117,22 +92,7 @@ export class ExtensionTimeoutManager {
     }
   }
 
-  /** 标记 requestId 已超时（handleExtensionTimeout 调用，防止后续迟到的 ui_response 双响应） */
-  markTimedOut(requestId: string): void {
-    this.timedOutIds.add(requestId)
-  }
-
-  /** 检查 requestId 是否已超时（extension.ui_response handler 调用，丢弃迟到响应） */
-  isTimedOut(requestId: string): boolean {
-    return this.timedOutIds.has(requestId)
-  }
-
-  /** 清除已超时标记（丢弃迟到响应后调用，防止集合无限增长） */
-  clearTimedOut(requestId: string): void {
-    this.timedOutIds.delete(requestId)
-  }
-
-  /** Clear all pending timeouts for a session */
+  /** Clear all pending requests + session tracking for a session */
   clearForSession(sessionId: string): void {
     // 清除缓存的 pending 请求（必须在 extensionSessionRequests 早退之前执行，
     // 否则只 cachePendingRequest 而未 registerTimeout 的 session 会漏清 pending 缓存）
@@ -140,11 +100,6 @@ export class ExtensionTimeoutManager {
     const requestIds = this.extensionSessionRequests.get(sessionId)
     if (!requestIds) return
     for (const reqId of requestIds) {
-      const timer = this.extensionTimeouts.get(reqId)
-      if (timer) {
-        clearTimeout(timer)
-        this.extensionTimeouts.delete(reqId)
-      }
       this.bridgeRequestIds.delete(reqId)
     }
     this.extensionSessionRequests.delete(sessionId)
@@ -210,5 +165,36 @@ export class ExtensionTimeoutManager {
     if (!sessionCache || sessionCache.size === 0) return []
     const requests = Array.from(sessionCache.values())
     return requests.map(r => ({ ...r, ...r.payload }))
+  }
+
+  /**
+   * 聚合所有 session 的 pending UI 请求（跨 session 全局快照，非破坏只读）。
+   *
+   * 用于 sendInitialState 第 14 段（P3 D3）：新连接 auth 后随 initial state 点对点推送，
+   * 让冷启动/长断线/页面 reload 的客户端恢复审批挂起状态（短断线由 P2 ring buffer 回放覆盖）。
+   *
+   * 遍历 pendingRequests Map 各子 Map 收集条目，返回原始 PendingUIRequest 结构（requestId/
+   * sessionId/method/payload/receivedAt，不解包——跨 session 聚合后前端按 sessionId 分流填入
+   * 对应 store 分区，解包形态 PendingUIRequestResolved 会拍平 payload 与现有 onUIRequest 的
+   * ExtensionUIRequest 形状不一致）。
+   *
+   * 异常容忍（ES1）：单条 try/catch 跳过结构异常条目（如并发 race 塞入 undefined），不中断聚合。
+   * 返回顺序依赖 Map 插入序（ES2015+ 规范保证），同一状态多次调用结果序一致。
+   */
+  getAllPendingRequests(): PendingUIRequest[] {
+    const all: PendingUIRequest[] = []
+    for (const sessionCache of this.pendingRequests.values()) {
+      for (const req of sessionCache.values()) {
+        try {
+          // 防御：并发 race 可能使 req 为 undefined 或缺字段。异常条目跳过不中断聚合。
+          if (!req || typeof req.requestId !== 'string') continue
+          all.push(req)
+        // eslint-disable-next-line taste/no-silent-catch -- 聚合是 best-effort 快照，单条异常不能丢弃其余条目
+        } catch {
+          continue
+        }
+      }
+    }
+    return all
   }
 }

@@ -19,6 +19,7 @@ import type { SkillRegistry } from '../services/skill-registry.js'
 import type { MessageBus } from '../services/message-bus/message-bus.js'
 import { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
 import { ConnectionManager } from './connection-manager.js'
+import type { ConnectionManagerOptions, AuthReplayInput, ReplayDecision } from './connection-manager.js'
 import { ServerMessageBroker } from './message-broker.js'
 import { BridgeHandler } from './bridge-handler.js'
 import { SettingsMessageHandler } from './settings-message-handler.js'
@@ -32,7 +33,9 @@ import { WorktreeMessageHandler } from './worktree-message-handler.js'
 import { TerminalMessageHandler } from './terminal-message-handler.js'
 import { QuotaMessageHandler } from './quota-message-handler.js'
 import { PresetMessageHandler } from './preset-message-handler.js'
+import type { FileEndpoint } from './file-endpoint.js'
 import type { MessageHandlerContext, ErrorDetails } from './message-context.js'
+import type { TokenManager } from './token.js'
 import type { WorkspaceService } from '../services/workspace/workspace-service.js'
 import type { IWorktreeService } from '../services/ports/worktree-service.js'
 import type { HandoffService } from '../services/handoff-service.js'
@@ -40,6 +43,7 @@ import type { ITerminalService } from '../services/ports/terminal-service.js'
 import type { QuotaService } from '../services/quota-service.js'
 import type { PresetService } from '../services/preset-service.js'
 import { toErrorMessage } from '../utils/errors.js'
+import { sessionContext } from '../infra/async-context.js'
 
 export class RuntimeServer implements IMessageBroker {
   private projectRoot: string
@@ -53,6 +57,32 @@ export class RuntimeServer implements IMessageBroker {
   private pluginService!: IPluginService
   private gitService?: GitService
   private fileService?: FileService
+  /** wave2 远程化：HTTP /file 端点（可选，connOpts.fileEndpoint 透传；setServices 时注入 file handler）。 */
+  private fileEndpoint?: FileEndpoint
+  /** wave 远程分享：token 管理器引用（config.getConnectionInfo 读当前 token）。来自 connOpts。 */
+  private readonly tokenManager?: TokenManager
+  /** wave 远程分享：监听 bind host（config.getConnectionInfo ctx 透传）。来自 connOpts。 */
+  private readonly bindHost?: string
+  /** wave 远程分享：监听端口（config.getConnectionInfo 探测可达 URL 用）。 */
+  private readonly port: number
+
+  /**
+   * wave2 远程化：延迟绑定 fileEndpoint（sessionService 在本类构造后才创建，
+   * fileEndpoint 依赖它）。透传给 ConnectionManager.setFileEndpoint（HTTP 路由）。
+   * 必须在 setServices（注入 FileMessageHandler RPC 侧）+ start（HTTP 监听）前调用。
+   */
+  setFileEndpoint(ep: FileEndpoint): void {
+    this.fileEndpoint = ep
+    this.conn.setFileEndpoint(ep)
+  }
+
+  /**
+   * wave4 远程化：注入静态 Web 资源 handler（server CLI --serve-web 模式）。
+   * 透传给 ConnectionManager.setStaticHandler（HTTP 路由）。必须在 start（HTTP 监听）前调用。
+   */
+  setStaticHandler(handler: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => Promise<void>): void {
+    this.conn.setStaticHandler(handler)
+  }
   /** fast-handoff 编排层（session.handoff / session.abortHandoff 路由用）。 */
   private handoffService?: HandoffService
   /** W4：skillRegistry（可选，landing 全局/项目 skill 缓存源） */
@@ -79,6 +109,12 @@ export class RuntimeServer implements IMessageBroker {
   private workspaceMessageHandler!: WorkspaceMessageHandler
   private worktreeMessageHandler?: WorktreeMessageHandler
   private terminalMessageHandler?: TerminalMessageHandler
+  /**
+   * P6 D7：terminal service 引用（onDisconnect 时 clearResizeOwner 用）。
+   * terminalMessageHandler 在 setServices 后创建，但 handler 的 ctx 是 private，
+   * 故单独持有 terminalService 引用供 onDisconnect 直接调 clearResizeOwner。
+   */
+  private terminalService?: ITerminalService
   private quotaMessageHandler!: QuotaMessageHandler
   private presetMessageHandler!: PresetMessageHandler
 
@@ -89,19 +125,72 @@ export class RuntimeServer implements IMessageBroker {
    * - ping/file.read 走内联（无对应 handler），settings 走兜底（return false 表示未认领）。
    * 注意：handler 内部的 switch 保留——它们提供编译期类型收窄 + 含真实领域逻辑。
    */
-  private routes!: Map<ClientMessageType, (msg: ClientMessage, ws: WsType) => Promise<unknown> | unknown>
+  private routes!: Map<ClientMessageType, (msg: ClientMessage, ws: WsType, clientId: string) => Promise<unknown> | unknown>
 
-  constructor(port: number, projectRoot?: string) {
+  constructor(port: number, projectRoot?: string, connOpts?: ConnectionManagerOptions) {
     this.projectRoot = projectRoot ?? process.cwd()
+    this.port = port
+    this.tokenManager = connOpts?.tokenManager
+    this.bindHost = connOpts?.host
     // ConnectionManager 注入回调：连接建立 → broker 推送 initial state；
     // 消息到达 → server.handleMessage 路由；解析/兜底错误 → broker.sendError；
     // 连接关闭 → bus.unsubscribeAll(ws) 清理该 ws 的所有 session 订阅（wave:runtime-wiring）。
+    // connOpts 透传 host/tokenManager/serverVersion/fileEndpoint；缺省时 ConnectionManager 内部解析默认值。
+    // fileEndpoint 由本类持引用，setServices 时注入 FileMessageHandler（RPC 侧 signUrl）。
+    this.fileEndpoint = connOpts?.fileEndpoint
     this.conn = new ConnectionManager(port, {
-      onConnect: (ws) => this.broker.sendInitialState(ws),
-      onMessage: (msg, ws) => this.handleMessage(msg, ws),
+      onConnect: (ws, _clientId) => this.broker.sendInitialState(ws),
+      onMessage: (msg, ws, clientId) => this.handleMessage(msg, ws, clientId),
+      // P5 onDisconnect：连接下线回调（presence-client slice 接 presence 重推；本 wave 空实现避免 server 持 presence 依赖）。
+      // P6 D7：terminal resize owner 清理——释放断开客户端持有的 resize 锁（防永久持锁）。
+      // this.terminalService 在 setServices 后赋值（运行时必已初始化）。
+      onDisconnect: (ws, clientId) => {
+        this.terminalService?.clearResizeOwner(clientId)
+        // wave:runtime-wiring：ws 断开时清理该 ws 的所有 session 订阅（MessageBus.unsubscribeAll）。
+        this.messageBus?.unsubscribeAll(ws as unknown as import('../services/message-bus/types.js').BusClient)
+        // 清理断开客户端的 activeSession resolver per-key cache 条目：
+        // 客户端下线后其 clientId 缓存值已无意义，删除避免频繁连接/断开累积 stale key（Map 单调增长）。
+        this.pluginService?.clearClientResolverCache(clientId)
+      },
+      // P5 presence：connection-manager broadcastPresence 触发时广播 presence.update（全量列表）。
+      onPresenceUpdate: (connections) => this.broker.broadcast({ type: 'presence.update', payload: { connections } }),
       sendError: (ws, code, message, id, details) => this.broker.sendError(ws, code, message, id, details),
-      onDisconnect: (ws) => this.messageBus?.unsubscribeAll(ws as unknown as import('../services/message-bus/types.js').BusClient),
-    })
+      // P2-s2：认证成功后调 broker.getReplayPlan 决定 resume/reset/冷启动。
+      // this.broker 在 setServices 构造（lazy），onAuthSuccess 运行时读取（auth 发生在 start 后，
+      // start 在 setServices 后调用，故 this.broker 必已初始化）。
+      onAuthSuccess: (_ws, _clientId, input) => this.handleAuthReplay(input),
+    }, connOpts ?? {})
+  }
+
+  /**
+   * P2-s2：onAuthSuccess 回调实现（connection-manager 认证成功后调用）。
+   * 调 broker.getReplayPlan 决定 resume（增量回放）/reset（全量重推）；冷启动（无 lastSeq/bootId）
+   * 直接返回 resume:false 不调 getReplayPlan（推全量 initial state，无 seqReset 标志）。
+   *
+   * @returns ReplayDecision：connection-manager 据此 replyAuth + 直发回放段/调 onConnect。
+   */
+  private async handleAuthReplay(input: AuthReplayInput): Promise<ReplayDecision> {
+    const bootId = this.broker.getBootId()
+    const serverSeq = this.broker.getSeq()
+    // 冷启动判定（ES5：lastSeq/bootId 缺失 → 推全量，无 seqReset 标志）。
+    // 不调 getReplayPlan（无重连凭据，回放无意义）。
+    if (input.lastSeq === undefined || input.bootId === undefined) {
+      return { resume: false, messages: [], seqReset: false, replayedCount: 0, bootId, serverSeq }
+    }
+    // resume/reset 判定：broker.getReplayPlan 内部判 bootId 不匹配 / lastSeq<watermark → reset。
+    const plan = this.broker.getReplayPlan(input.lastSeq, input.bootId, input.subscribedSessions)
+    if (plan.kind === 'resume') {
+      return {
+        resume: true,
+        messages: plan.messages,
+        seqReset: false,
+        replayedCount: plan.messages.length,
+        bootId,
+        serverSeq,
+      }
+    }
+    // reset：客户端 lastSeq 失效（bootId 不匹配或被驱逐），推全量 + seqReset 标志。
+    return { resume: false, messages: [], seqReset: true, replayedCount: 0, bootId, serverSeq }
   }
 
   /**
@@ -121,6 +210,9 @@ export class RuntimeServer implements IMessageBroker {
     this.configService = config
     this.modelService = model
     this.skillRegistry = skillRegistry
+    // P5 presence：注入 sessionService 内部接口给 connection-manager（buildPresenceList 算 isOperating 用）。
+    // session 经 setServices 传入，此处转为 ISessionServiceInternal（SessionService 实现两接口）。
+    this.conn.setSessionService(session as unknown as import('../services/session/session-internal.js').ISessionServiceInternal)
     if (extension) this.extensionService = extension
     if (plugin) this.pluginService = plugin
 
@@ -131,6 +223,7 @@ export class RuntimeServer implements IMessageBroker {
       modelService: this.modelService,
       pluginService: this.pluginService,
       extensionService: this.extensionService,
+      extensionTimeoutMgr: this.extensionTimeoutMgr,
       projectRoot: this.projectRoot,
       appInfo: appInfo ?? { appVersion: 'unknown', piVersion: 'unknown' },
     })
@@ -148,6 +241,12 @@ export class RuntimeServer implements IMessageBroker {
       send: (ws, msg) => this.broker.send(ws, msg),
       sendError: (ws, code, message, id, details) => this.broker.sendError(ws, code, message, id, details),
       reply: (ws, id, type, payload) => this.broker.reply(ws, id, type, payload),
+      // P5 lease/presence：getClientId 从 ALS 取当前请求 clientId（handleMessage 入口 sessionContext.run 注入）。
+      // getClient/broadcastExcept/sendToClient 经 broker 访问连接池（按 clientId 而非 ws）。
+      getClientId: () => sessionContext.getStore()?.clientId ?? 'local',
+      getClient: (clientId) => this.conn.clients.get(clientId)?.ws,
+      broadcastExcept: (excludeClientId, msg) => this.broker.broadcastExcept(excludeClientId, msg),
+      sendToClient: (clientId, msg) => this.broker.sendToClient(clientId, msg),
     }
     this.settingsHandler = new SettingsMessageHandler({
       ...messaging,
@@ -158,6 +257,10 @@ export class RuntimeServer implements IMessageBroker {
       // 组合根 index.ts 保证传入；此处断言非空（setServices 编排保证）。若未来 skillRegistry 可选，handler 需守卫。
       skillRegistry: this.skillRegistry!,
       projectRoot: this.projectRoot,
+      // wave 远程分享：注入 tokenManager / bindHost / port（config.getConnectionInfo 用）。
+      tokenManager: this.tokenManager!,
+      bindHost: this.bindHost!,
+      port: this.port,
       nextPushId: () => this.broker.nextPushId(),
       broadcast: (msg) => this.broker.broadcast(msg),
       broadcastProviderList: () => this.broker.broadcastProviderList(),
@@ -178,14 +281,18 @@ export class RuntimeServer implements IMessageBroker {
       broadcastSessionList: () => this.broker.broadcastSessionList(),
       clearExtensionTimeoutsForSession: (sessionId) => this.clearExtensionTimeoutsForSession(sessionId),
       broadcast: (msg) => this.broker.broadcast(msg),
+      clearSessionBuffer: (sessionId) => this.broker.clearSessionBuffer(sessionId),
+      // P5 lease：取 clientId 连接的 deviceName（message.send 透传 dispatcher）。
+      getDeviceName: (clientId) => this.conn.clients.get(clientId)?.deviceName,
+      // P5 presence：setActiveSession（session.setActive RPC）+ buildPresenceList（presence.list RPC）委托 conn。
+      setActiveSession: (clientId, sessionId) => this.conn.setActiveSession(clientId, sessionId),
+      buildPresenceList: () => this.conn.buildPresenceList(),
     })
     this.extensionHandler = new ExtensionMessageHandler({
       ...messaging,
       sessionService: this.sessionService,
       extensionService: this.extensionService,
       extensionTimeoutMgr: this.extensionTimeoutMgr,
-      broadcast: (msg) => this.broker.broadcast(msg),
-      nextPushId: () => this.broker.nextPushId(),
     })
     this.pluginMessageHandler = new PluginMessageHandler({
       ...messaging,
@@ -207,9 +314,13 @@ export class RuntimeServer implements IMessageBroker {
       })
     }
     if (this.fileService) {
+      // wave2：FileMessageHandler 同时处理 file.read/tree/write.*（依赖 fileService）和
+      // file.signUrl（依赖 fileEndpoint）。组合根 index.ts 保证两者同时装配；
+      // fileEndpoint 缺省（如未配置远程模式）时 file.signUrl case 会运行时报错（极少数 dev 场景）。
       this.fileMessageHandler = new FileMessageHandler({
         ...messaging,
         fileService: this.fileService,
+        fileEndpoint: this.fileEndpoint!,
       })
     }
     if (workspace) {
@@ -228,7 +339,12 @@ export class RuntimeServer implements IMessageBroker {
       this.terminalMessageHandler = new TerminalMessageHandler({
         ...messaging,
         terminalService: terminal,
+        // P6 D7 resize owner：取 clientId 连接的 deviceName（resize 记录 ownerDevice 用）。
+        // 复用 session-handler 同源 getDeviceName（conn.clients.get(clientId)?.deviceName）。
+        getDeviceName: (clientId) => this.conn.clients.get(clientId)?.deviceName,
       })
+      // P6 D7：持有引用供 onDisconnect 调 clearResizeOwner。
+      this.terminalService = terminal
     }
     if (quota) {
       this.quotaMessageHandler = new QuotaMessageHandler({
@@ -257,17 +373,17 @@ export class RuntimeServer implements IMessageBroker {
     this.routes = new Map([
       ['ping', (msg, ws) => this.broker.reply(ws, msg.id, 'pong', {})],
       ['session.compact', (msg, ws) => this.sessionHandler.handleSessionCompact(msg as Extract<ClientMessage, { type: 'session.compact' }>, ws)],
-      ...this.sessionHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.sessionHandler.handleSessionMessage(msg, ws)] as const),
-      ...this.extensionHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.extensionHandler.handleExtensionMessage(msg, ws)] as const),
-      ...this.pluginMessageHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.pluginMessageHandler.handlePluginMessage(msg, ws)] as const),
-      ...(gitHandler ? gitHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => gitHandler.handleGitMessage(msg, ws)] as const) : []),
-      ...(fileHandler ? fileHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => fileHandler.handleFileMessage(msg, ws)] as const) : []),
-      ...(workspaceHandler ? workspaceHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => workspaceHandler.handleWorkspaceMessage(msg, ws)] as const) : []),
-      ...(worktreeHandler ? worktreeHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => worktreeHandler.handleWorktreeMessage(msg, ws)] as const) : []),
-      ...(terminalHandler ? terminalHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => terminalHandler.handleTerminalMessage(msg, ws)] as const) : []),
-      ...(quotaHandler ? quotaHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => quotaHandler.handleQuotaMessage(msg, ws)] as const) : []),
-      ...(presetHandler ? presetHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => presetHandler.handlePresetMessage(msg, ws)] as const) : []),
-    ] as Array<[ClientMessageType, (msg: ClientMessage, ws: WsType) => Promise<unknown> | unknown]>)
+      ...this.sessionHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, clientId: string) => this.sessionHandler.handleSessionMessage(msg, ws, clientId)] as const),
+      ...this.extensionHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, _clientId: string) => this.extensionHandler.handleExtensionMessage(msg, ws)] as const),
+      ...this.pluginMessageHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, _clientId: string) => this.pluginMessageHandler.handlePluginMessage(msg, ws)] as const),
+      ...(gitHandler ? gitHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, _clientId: string) => gitHandler.handleGitMessage(msg, ws)] as const) : []),
+      ...(fileHandler ? fileHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, _clientId: string) => fileHandler.handleFileMessage(msg, ws)] as const) : []),
+      ...(workspaceHandler ? workspaceHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, _clientId: string) => workspaceHandler.handleWorkspaceMessage(msg, ws)] as const) : []),
+      ...(worktreeHandler ? worktreeHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, _clientId: string) => worktreeHandler.handleWorktreeMessage(msg, ws)] as const) : []),
+      ...(terminalHandler ? terminalHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, clientId: string) => terminalHandler.handleTerminalMessage(msg, ws, clientId)] as const) : []),
+      ...(quotaHandler ? quotaHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, _clientId: string) => quotaHandler.handleQuotaMessage(msg, ws)] as const) : []),
+      ...(presetHandler ? presetHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType, _clientId: string) => presetHandler.handlePresetMessage(msg, ws)] as const) : []),
+    ] as Array<[ClientMessageType, (msg: ClientMessage, ws: WsType, clientId: string) => Promise<unknown> | unknown]>)
   }
 
   // ── IMessageBroker 委托（index.ts 把 server 当 broker 注入 PluginService/SessionService）──
@@ -276,6 +392,27 @@ export class RuntimeServer implements IMessageBroker {
   broadcast(msg: ServerMessage): void { this.broker.broadcast(msg) }
   sendError(ws: WsType, code: string, message: string, id?: string, details?: ErrorDetails): void {
     this.broker.sendError(ws, code, message, id, details)
+  }
+  // P5 lease/presence：定向投递委托（点对点，不打 seq 不入桶）。
+  sendToClient(clientId: string, msg: ServerMessage): void { this.broker.sendToClient(clientId, msg) }
+  broadcastExcept(excludeClientId: string, msg: ServerMessage): void { this.broker.broadcastExcept(excludeClientId, msg) }
+  /** P5 presence：触发 presence 全量重推（lease 变化/setActive/上下线经 connection-manager 调）。 */
+  broadcastPresence(): void { this.conn.broadcastPresence() }
+  /**
+   * P5 lease（审查 Major1）：按 clientId 反查连接的 deviceName。
+   * dispatcher busy 拒绝时据此取 owner 的设备名（spec D6）。复用 session-handler 同源实现。
+   */
+  getClientDeviceName(clientId: string): string | undefined {
+    return this.conn.clients.get(clientId)?.deviceName
+  }
+
+  /**
+   * P7 plugin per-client active session：暴露 ConnectionManager 引用，供组合根 index.ts
+   * 注入到 PluginService.deps.connectionManager（resolver 读 activeSessions Map）。
+   * 仅用于 P7 resolver 注入路径，不鼓励其他用途（封装边界）。
+   */
+  getConnectionManager(): ConnectionManager {
+    return this.conn
   }
   /**
    * fast-handoff（BLOCKER 2 / WARNING nextPushId）：暴露 broker 的 broadcast helper / push id 生成器，
@@ -291,21 +428,34 @@ export class RuntimeServer implements IMessageBroker {
 
   // ── Message routing ───────────────────────────────────────────
 
-  private async handleMessage(msg: ClientMessage, ws: WsType): Promise<void> {
+  private async handleMessage(msg: ClientMessage, ws: WsType, clientId: string): Promise<void> {
+    // P5 ALS 注入（审查 P7 D6 反向需求）：把当前请求 clientId 注入异步上下文，
+    // 供深层 handler（如 P7 plugin RPC）经 sessionContext.getStore()?.clientId 取值，无需显式参数透传。
+    return this.alsRun(clientId, () => this.routeMessage(msg, ws, clientId))
+  }
+
+  private alsRun<T>(clientId: string, fn: () => Promise<T>): Promise<T> {
+    return sessionContext.run({ clientId }, fn)
+  }
+
+  private async routeMessage(msg: ClientMessage, ws: WsType, clientId: string): Promise<void> {
     try {
       const route = this.routes.get(msg.type)
       if (route) {
-        await route(msg, ws)
+        await route(msg, ws, clientId)
         return
       }
       // Settings 是兜底 handler：它内部 switch 命中返回 true，未命中返回 false（→ unknown_type）。
-      if (!await this.settingsHandler.handleSettingsMessage(msg, ws)) {
+      if (!await this.settingsHandler.handleSettingsMessage(msg, ws, clientId)) {
         const rawMsg = msg as { type: string; payload?: { sessionId?: string } }
         this.broker.sendError(ws, 'unknown_type', `Unknown message type: ${rawMsg.type}`, msg.id, { sessionId: rawMsg.payload?.sessionId })
       }
     } catch (e) {
       const message = toErrorMessage(e)
-      const sessionId = ('sessionId' in msg.payload ? msg.payload.sessionId : undefined) as string | undefined
+      // 空安全提取 sessionId：多个 ClientMessage 类型 payload 是 void/Record<string,never>，
+      // 运行时 msg.payload 可能为 undefined（如 preset.setDefault/config.setProvider/extension.cancelInstall），
+      // 此时 `'sessionId' in undefined` 会抛 TypeError 掩盖 handler 的原始错误。先判空再 `in`。
+      const sessionId = (msg.payload && typeof msg.payload === 'object' && 'sessionId' in msg.payload ? msg.payload.sessionId : undefined) as string | undefined
       // L4 增强：error 自带 code（如 MODEL_NOT_CONFIGURED）时透传，前端据此差异化引导；否则回退 handler_error。
       const code = (e as Error & { code?: string }).code ?? 'handler_error'
       this.broker.sendError(ws, code, message, msg.id, sessionId ? { sessionId } : undefined)
@@ -315,11 +465,11 @@ export class RuntimeServer implements IMessageBroker {
   // ── Extension timeout delegation ─────────────────────────────────
 
   registerExtensionTimeout(sessionId: string, requestId: string, method: string, payload: Record<string, unknown>): void {
-    // 只注册 timer + 委托：超时后的扩展响应编排（默认值 / RPC / 广播）已下沉到
-    // extensionHandler.handleExtensionTimeout，不再让 transport 层承载扩展响应业务逻辑。
-    this.extensionTimeoutMgr.registerTimeout(sessionId, requestId, method, () => {
-      this.extensionHandler.handleExtensionTimeout(sessionId, requestId, method)
-    })
+    // 注册 session-scoped 请求跟踪 + 缓存 pending 请求。
+    // [2026-07-28] 交互式 method 不再超时（block 等待用户决策），registerTimeout 的 onTimeout
+    // 回调已为 dead 占位（永不被调用），故此处不再传业务回调。超时编排链（handleExtensionTimeout
+    // / markTimedOut / ui_timeout 广播）已随 ExtensionTimeoutManager 死代码清理统一移除。
+    this.extensionTimeoutMgr.registerTimeout(sessionId, requestId, method, () => {})
     // 缓存 pending 请求（ask-user 等阻塞式请求），session 重新激活时推送
     this.extensionTimeoutMgr.cachePendingRequest(sessionId, requestId, method, payload)
   }

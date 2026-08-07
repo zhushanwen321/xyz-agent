@@ -130,6 +130,25 @@ describe('ExtensionService.getExtensionPaths system-prompt extension', () => {
     expect(paths.some(p => p.endsWith('xyz-agent-extension.js'))).toBe(true)
     expect(paths.some(p => p.endsWith('xyz-system-prompt-extension.js'))).toBe(false)
   })
+
+  it('TC5: 两个文件型 extension 都不存在时，各 warn 一次（不再静默 skip）', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(existsSync(agentExtensionPath())).toBe(false)
+    expect(existsSync(systemPromptExtensionPath())).toBe(false)
+
+    const paths = await service.getExtensionPaths()
+
+    // 两个文件都不在结果里
+    expect(paths.some(p => p.endsWith('xyz-agent-extension.js'))).toBe(false)
+    expect(paths.some(p => p.endsWith('xyz-system-prompt-extension.js'))).toBe(false)
+    // 各 warn 一次，含 'builtin extension not found, skipping' 与对应路径
+    // （main 重构 getBuiltinExtensionPaths 后文案从 'extension file not found' 改为 'builtin extension not found'）
+    // log.warn 调用形式：console.warn('[extension-service]', msg)——c[0] 是 prefix，c[1] 才是 msg，需拼接检查。
+    const warnCalls = warnSpy.mock.calls.map(c => c.map(String).join(' '))
+    expect(warnCalls.some(s => s.includes('builtin extension not found, skipping') && s.includes('xyz-agent-extension.js'))).toBe(true)
+    expect(warnCalls.some(s => s.includes('builtin extension not found, skipping') && s.includes('xyz-system-prompt-extension.js'))).toBe(true)
+    warnSpy.mockRestore()
+  })
 })
 
 describe('ExtensionService.getExtensionPaths client-msg-id-mapper extension', () => {

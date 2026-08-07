@@ -1,0 +1,21 @@
+# apps/server/.dockerignore — informational pointer (DO NOT edit expecting effect)
+#
+# IMPORTANT: Docker only honors a single .dockerignore located at the BUILD CONTEXT
+# ROOT, not next to the Dockerfile. The server image is built with:
+#
+#     docker build -f apps/server/Dockerfile -t xyz-agent-server:dev .        # from repo root
+#     docker compose -f apps/server/compose.yml build                          # context: ../.. (repo root)
+#
+# Both invoke the repo root as context, so the EFFECTIVE .dockerignore is:
+#
+#     <repo-root>/.dockerignore
+#
+# This file exists only to make that explicit to anyone looking next to the
+# Dockerfile (a common reflex). The real exclusion rules (node_modules, .git,
+# apps/electron/resources pi binary, dist, docs, tools, .xyz-harness, test
+# artifacts, etc.) live in the root .dockerignore. Keep that file in sync if
+# you add new large or sensitive paths.
+#
+# Why a pointer instead of a duplicate: a copy here would be silently ignored
+# by Docker and inevitably drift out of sync with the root file, giving a false
+# sense of context filtering.

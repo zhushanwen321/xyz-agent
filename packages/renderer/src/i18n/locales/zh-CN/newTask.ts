@@ -25,7 +25,6 @@ export default {
     createBtn: '创建并切换',
   },
   dirSelect: {
-    remoteNotSupported: 'v1 暂未支持远程连接',
     searchPlaceholder: '搜索工作区',
     noRecent: '暂无最近工作区 · 选择一个本地目录开始',
     openFolder: '打开文件夹',
@@ -33,6 +32,8 @@ export default {
     remoteConnect: '远程连接',
     existingWorktrees: '已有 worktree',
     noWorktrees: '暂无已有 worktree',
+    manualPathPlaceholder: '输入服务器路径，如 ~/projects/xyz-agent',
+    manualPathConfirm: '确认',
   },
   createWorktree: {
     title: '新建 worktree',

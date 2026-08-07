@@ -34,6 +34,9 @@ vi.mock('@/lib/ws-client', () => ({
   getState: () => mockHolder.stateRef!,
   setRestarting: vi.fn(),
   setFailed: vi.fn(),
+  // wave3 P2-s4：useConnection.init() → syncSubscribedSessions() 调 setSubscribedSessions，
+  // mock 必须提供该导出，否则 initAndConnect 报「No export defined」
+  setSubscribedSessions: vi.fn(),
   onMessage: vi.fn((cb: (msg: ServerMessage) => void) => {
     mockHolder.routeHandler = cb
     return () => { mockHolder.routeHandler = null }

@@ -1,0 +1,79 @@
+# .dockerignore — context filter for `docker build -f apps/server/Dockerfile .`
+#
+# Goal: keep the build context lean. The server image only needs pnpm workspace
+# manifests + packages/* to build the runtime bundle. Everything Electron-
+# specific (695MB dist, renderer, main, preload), test harnesses, docs, and
+# tooling is excluded.
+#
+# Exceptions (`!`) re-include files the Dockerfile explicitly COPYs.
+
+# ── Build artifacts & dependencies (will be installed inside the image) ───────
+**/node_modules
+**/dist
+**/.cache
+**/.turbo
+**/.parcel-cache
+**/coverage
+**/.nyc_output
+
+# ── Electron app (only apps/electron/package.json is needed by tsup) ──────────
+apps/electron/dist
+apps/electron/renderer
+apps/electron/main
+apps/electron/preload
+apps/electron/resources
+apps/electron/scripts
+apps/electron/node_modules
+# Re-include the manifest tsup reads for XYZ_AGENT_VERSION injection.
+!apps/electron/package.json
+
+# NOTE: packages/renderer (4.6MB, @xyz-agent/frontend) is intentionally kept —
+# it is an apps/electron workspace dependency and the lockfile resolution fails
+# without it. It is never executed in the server image.
+
+# ── Version control & OS cruft ────────────────────────────────────────────────
+**/.git
+**/.gitignore
+**/.DS_Store
+**/Thumbs.db
+
+# ── Docs, harnesses, tooling, CI (not needed to build the runtime) ────────────
+docs
+e2e
+tools
+scripts
+# Note: scripts/ used to be re-included for fix-node-pty-permissions.sh, but the
+# Dockerfile now uses `pnpm install --ignore-scripts` (root postinstall skipped),
+# so neither scripts/ nor the helper is needed in the build context.
+.github
+.changeset
+.cw
+.agents
+.zcode
+.impeccable
+.superpowers
+.v3-audit
+.xyz-harness
+session-data
+taste-lint
+playwright-report
+test-results
+blob-report
+
+# ── Top-level markdown (keep runtime README so the tgz ships it) ──────────────
+*.md
+!packages/runtime/README.md
+!apps/server/README.md
+!README.md
+
+# ── Env, logs, local state ────────────────────────────────────────────────────
+**/.env
+**/.env.*
+**/*.log
+**/playwright/.cache
+.env.example
+
+# ── pi binary cache & local installs (never needed in the image) ──────────────
+.pi
+.pi-binary-cache
+resources/pi

@@ -24,6 +24,7 @@ import type { GitCommand, GitExecutorResult, IGitExecutor } from './ports/git-ex
 import { GitExecutorError } from './ports/git-executor.js'
 import { isUnderOrEqual } from '../utils/path-utils.js'
 import { toErrorMessage } from '../utils/errors.js'
+import { createKeyedMutex, type KeyedMutex } from '../infra/async-mutex.js'
 
 /** git 操作失败分类错误。handler 按 code 转 error envelope（D10/P0-B）。 */
 export class GitError extends Error {
@@ -38,6 +39,16 @@ export class GitError extends Error {
 export interface GitServiceOptions {
   sessionService: ISessionService
   executor: IGitExecutor
+  /**
+   * P6 D2：per-cwd git mutex（串行化写入命令）。可选——缺省时内部 createKeyedMutex()。
+   * 生产注入共享实例；测试可传 mock 或不传（缺省行为正确）。
+   */
+  gitMutex?: KeyedMutex
+  /**
+   * P6 D11：git mutex 排队超时阈值（ms）。可选——缺省读 env XYZ_AGENT_MUTEX_TIMEOUT_MS（默认 10_000）。
+   * 超时抛 TimeoutError 由 handler 转 reply error code git_busy。
+   */
+  mutexTimeoutMs?: number
 }
 
 /**
@@ -60,8 +71,22 @@ function notRepoResult(sessionId: string): GitStatusResult {
   }
 }
 
+/** P6 D11：mutex 排队超时默认 10s（env XYZ_AGENT_MUTEX_TIMEOUT_MS 可配）。 */
+const DEFAULT_MUTEX_TIMEOUT_MS = 10_000
+
 export class GitService implements IGitService {
-  constructor(private opts: GitServiceOptions) {}
+  /**
+   * P6 D2：per-cwd git mutex（串行化写入命令，消除 commit TOCTOU）。
+   * 缺省 createKeyedMutex()——构造注入可 mock（测试隔离）。
+   */
+  private readonly gitMutex: KeyedMutex
+  /** P6 D11：git mutex 排队超时阈值（ms），超时抛 TimeoutError 转 git_busy。 */
+  private readonly mutexTimeoutMs: number
+
+  constructor(private opts: GitServiceOptions) {
+    this.gitMutex = opts.gitMutex ?? createKeyedMutex()
+    this.mutexTimeoutMs = opts.mutexTimeoutMs ?? Number(process.env.XYZ_AGENT_MUTEX_TIMEOUT_MS ?? DEFAULT_MUTEX_TIMEOUT_MS)
+  }
 
   private getCwd(sessionId: string): string {
     const summary = this.opts.sessionService.getSummary(sessionId)
@@ -197,11 +222,14 @@ export class GitService implements IGitService {
   async stage(sessionId: string, filePaths?: string[]): Promise<void> {
     const cwd = this.requireCwd(sessionId)
     const paths = this.resolveFilePaths(cwd, filePaths)
-    const args = paths.length > 0 ? ['--', ...paths] : ['-A']
-    const res = await this.execSafe(cwd, 'add', args)
-    if (res.exitCode !== 0) {
-      throw new GitError('stage_failed', res.stderr.trim() || 'git add 失败')
-    }
+    // P6 D2：写入命令经 per-cwd mutex 串行化（防抢 index.lock）。
+    return this.gitMutex.run(cwd, async () => {
+      const args = paths.length > 0 ? ['--', ...paths] : ['-A']
+      const res = await this.execSafe(cwd, 'add', args)
+      if (res.exitCode !== 0) {
+        throw new GitError('stage_failed', res.stderr.trim() || 'git add 失败')
+      }
+    }, this.mutexTimeoutMs)
   }
 
   /**
@@ -210,11 +238,14 @@ export class GitService implements IGitService {
   async unstage(sessionId: string, filePaths?: string[]): Promise<void> {
     const cwd = this.requireCwd(sessionId)
     const paths = this.resolveFilePaths(cwd, filePaths)
-    const args = paths.length > 0 ? ['HEAD', '--', ...paths] : ['HEAD']
-    const res = await this.execSafe(cwd, 'reset', args)
-    if (res.exitCode !== 0) {
-      throw new GitError('unstage_failed', res.stderr.trim() || 'git reset 失败')
-    }
+    // P6 D2：写入命令经 per-cwd mutex 串行化（防抢 index.lock）。
+    return this.gitMutex.run(cwd, async () => {
+      const args = paths.length > 0 ? ['HEAD', '--', ...paths] : ['HEAD']
+      const res = await this.execSafe(cwd, 'reset', args)
+      if (res.exitCode !== 0) {
+        throw new GitError('unstage_failed', res.stderr.trim() || 'git reset 失败')
+      }
+    }, this.mutexTimeoutMs)
   }
 
   /**
@@ -230,27 +261,31 @@ export class GitService implements IGitService {
       throw new GitError('commit_message_required', '提交需要非空 commit message')
     }
 
-    // 先查冲突态：冲突时 git commit 会拒绝（exitCode 1），但显式判定给更清晰的错误码
-    const statusRes = await this.execSafe(cwd, 'status', ['--porcelain=v1', '-z'])
-    if (statusRes.exitCode === 0) {
-      const { hasConflict } = deriveCounts(parseGitStatus(statusRes.stdout).files)
-      if (hasConflict) {
-        throw new GitError('git_conflict', '存在未解决的冲突文件，请先解决冲突再提交')
+    // P6 D2：整个 status 查冲突 + commit spawn 经 per-cwd mutex 串行化（消除 TOCTOU——
+    // 原两次 spawn 间无锁，并发 commit 会抢 index.lock 或 status 读到中间态）。
+    return this.gitMutex.run(cwd, async () => {
+      // 先查冲突态：冲突时 git commit 会拒绝（exitCode 1），但显式判定给更清晰的错误码
+      const statusRes = await this.execSafe(cwd, 'status', ['--porcelain=v1', '-z'])
+      if (statusRes.exitCode === 0) {
+        const { hasConflict } = deriveCounts(parseGitStatus(statusRes.stdout).files)
+        if (hasConflict) {
+          throw new GitError('git_conflict', '存在未解决的冲突文件，请先解决冲突再提交')
+        }
       }
-    }
 
-    const res = await this.execSafe(cwd, 'commit', ['-m', msg])
-    if (res.exitCode !== 0) {
-      const stderr = res.stderr.trim()
-      // 兜底：commit 时刚产生冲突（race）或 nothing to commit
-      if (/nothing to commit|no changes/i.test(stderr)) {
-        throw new GitError('nothing_to_commit', stderr || '没有可提交的改动')
+      const res = await this.execSafe(cwd, 'commit', ['-m', msg])
+      if (res.exitCode !== 0) {
+        const stderr = res.stderr.trim()
+        // 兜底：commit 时刚产生冲突（race）或 nothing to commit
+        if (/nothing to commit|no changes/i.test(stderr)) {
+          throw new GitError('nothing_to_commit', stderr || '没有可提交的改动')
+        }
+        if (/conflict|unmerged|merge/i.test(stderr)) {
+          throw new GitError('git_conflict', stderr || '存在冲突，提交失败')
+        }
+        throw new GitError('commit_failed', stderr || 'git commit 失败')
       }
-      if (/conflict|unmerged|merge/i.test(stderr)) {
-        throw new GitError('git_conflict', stderr || '存在冲突，提交失败')
-      }
-      throw new GitError('commit_failed', stderr || 'git commit 失败')
-    }
+    }, this.mutexTimeoutMs)
   }
 
   /**
@@ -269,10 +304,13 @@ export class GitService implements IGitService {
    */
   async checkout(sessionId: string, name: string): Promise<void> {
     const cwd = this.requireCwd(sessionId)
-    const res = await this.execSafe(cwd, 'checkout', [name])
-    if (res.exitCode !== 0) {
-      throw new GitError('git_failed', res.stderr.trim() || `git checkout ${name} 失败`)
-    }
+    // P6 D2：写入命令经 per-cwd mutex 串行化（checkout 改 HEAD + worktree）。
+    return this.gitMutex.run(cwd, async () => {
+      const res = await this.execSafe(cwd, 'checkout', [name])
+      if (res.exitCode !== 0) {
+        throw new GitError('git_failed', res.stderr.trim() || `git checkout ${name} 失败`)
+      }
+    }, this.mutexTimeoutMs)
   }
 
   /**
@@ -281,10 +319,13 @@ export class GitService implements IGitService {
    * 用于 BranchSelectPopover plain-repo 模式 landing 态选分支。
    */
   async checkoutByCwd(cwd: string, name: string): Promise<void> {
-    const res = await this.execSafe(cwd, 'checkout', [name])
-    if (res.exitCode !== 0) {
-      throw new GitError('git_failed', res.stderr.trim() || `git checkout ${name} 失败`)
-    }
+    // P6 D2：写入命令经 per-cwd mutex 串行化（同 checkout，但 cwd 直接传入，landing 态无 session）。
+    return this.gitMutex.run(cwd, async () => {
+      const res = await this.execSafe(cwd, 'checkout', [name])
+      if (res.exitCode !== 0) {
+        throw new GitError('git_failed', res.stderr.trim() || `git checkout ${name} 失败`)
+      }
+    }, this.mutexTimeoutMs)
   }
 
   /**
@@ -310,10 +351,13 @@ export class GitService implements IGitService {
     if (!VALID_BRANCH_NAME.test(trimmed) || trimmed.includes('..')) {
       throw new GitError('invalid_branch_name', `非法分支名: ${name}`)
     }
-    const res = await this.execSafe(cwd, 'checkout', ['-b', trimmed])
-    if (res.exitCode !== 0) {
-      throw new GitError('git_failed', res.stderr.trim() || `git checkout -b ${trimmed} 失败`)
-    }
+    // P6 D2：写入命令经 per-cwd mutex 串行化（checkout -b 改 HEAD + worktree + 创建 ref）。
+    return this.gitMutex.run(cwd, async () => {
+      const res = await this.execSafe(cwd, 'checkout', ['-b', trimmed])
+      if (res.exitCode !== 0) {
+        throw new GitError('git_failed', res.stderr.trim() || `git checkout -b ${trimmed} 失败`)
+      }
+    }, this.mutexTimeoutMs)
   }
 
   private async execSafe(cwd: string, command: GitCommand, args: string[] = []): Promise<GitExecutorResult> {

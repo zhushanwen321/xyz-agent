@@ -14,23 +14,27 @@
  * 依赖方向：useConnection → ws-client + ipc + shared（BASE_PORT/DEV_PORT_OFFSET）
  */
 import { watch } from 'vue'
-import { connect, disconnect, getState, setRestarting, setFailed } from '../lib/ws-client'
+import { connect, disconnect, getState, setRestarting, setFailed, setSubscribedSessions } from '../lib/ws-client'
+import { bumpReconnectEpoch } from '../lib/terminal-reconnect-signal'
 import i18n from '@/i18n'
 
 const t = i18n.global.t
 import {
   getRuntimePort,
   getRuntimePortOffset,
+  getRuntimeToken,
   onRuntimePort,
   onRuntimeRestarting,
   onRuntimeFailed,
   restartRuntime,
 } from '../lib/ipc'
 import { BASE_PORT, DEV_PORT_OFFSET } from '@xyz-agent/shared'
-import type { ServerMessage } from '@xyz-agent/shared'
+import type { ServerMessage, PresenceConnection } from '@xyz-agent/shared'
+import { isRemoteMode, getActiveProfile, getClientId, getDeviceName } from '../lib/remote/connection-config'
 import * as transport from '../api/transport'
 import * as pending from '../api/pending'
 import * as events from '../api/events'
+import { session as sessionApi } from '@/api'
 import {
   getSubscriptionState,
   updateLastSeenSeq,
@@ -40,6 +44,7 @@ import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
 import { usePanelStore } from '../stores/panel'
 import { useExtensionUIStore } from '../stores/extension-ui'
+import { usePresenceStore } from '../stores/presence'
 import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
 import type { SubagentRecord } from '@xyz-agent/shared'
@@ -60,6 +65,24 @@ function handleSessionExited(sessionId: string, payload: { code: number | null; 
   // reason 可能含多行 stderr，toast 只取首行（完整内容在聊天流 error 消息里）
   const shortReason = payload.reason.split('\n')[0]
   useToast().error(t('connection.runtimeExited', { reason: shortReason }))
+}
+
+// ── P6 D6 session.delete 两步广播：全局兜底处理 ──────────────────
+// session.deleting（预告，soft close panel）/ session.deleted（确认，cleanupSession）
+// 是广播消息（broadcastExcept 排除发起方），含 sessionId 走 dispatchSession，
+// 但其他客户端可能无订阅者（panel 未开该 session），故 routeInbound 全局兜底调用注册的 handler。
+// useSidebar 在 onConnected 注册 cleanupSession + softClosePanel，避免 useConnection 依赖 useSidebar。
+interface SessionDeleteHandlers {
+  onDeleting: (sessionId: string) => void
+  onDeleted: (sessionId: string) => void
+}
+let sessionDeleteHandlers: SessionDeleteHandlers | null = null
+/**
+ * 注册 session.delete 广播处理器（useSidebar.onConnected 调用）。
+ * routeInbound 收到 session.deleting/deleted 广播时全局调用，不依赖 panel 订阅。
+ */
+export function registerSessionDeleteHandlers(handlers: SessionDeleteHandlers): void {
+  sessionDeleteHandlers = handlers
 }
 
 export type ConnectionStatus =
@@ -157,6 +180,23 @@ function routeInbound(msg: ServerMessage): void {
     if (msg.type === 'session.exited') {
       handleSessionExited(sid, msg.payload as { code: number | null; reason: string })
     }
+    // P6 D6 session.delete 两步广播：全局兜底（不依赖 panel 订阅）。
+    // session.deleting：soft close panel（预告，暂不清 store）。
+    // session.deleted：cleanupSession（清 store 分区，防其他客户端内存泄漏）。
+    // 发起方不收广播 deleted（broadcastExcept 排除），只走 reply → pending.resolve → deleteSession。
+    if (msg.type === 'session.deleting') {
+      sessionDeleteHandlers?.onDeleting(sid)
+    } else if (msg.type === 'session.deleted') {
+      sessionDeleteHandlers?.onDeleted(sid)
+    }
+    // P5 lease：session.busy/idle 更新 session store 占用状态（UI 标题旁占用指示器）。
+    // busy：lease acquire 成功，payload 含 clientId（busyOwnerId）；idle：lease 释放，清除占用。
+    if (msg.type === 'session.busy') {
+      const p = msg.payload as { clientId: string; expiresAt?: number }
+      useSessionStore().setSessionBusy(sid, p.clientId, p.expiresAt)
+    } else if (msg.type === 'session.idle') {
+      useSessionStore().clearSessionBusy(sid)
+    }
     // message.complete：后台完成时提示音 + 未读标记
     if (msg.type === 'message.complete') {
       const payload = msg.payload as { sessionId?: string; stopReason?: string }
@@ -182,6 +222,15 @@ function routeInbound(msg: ServerMessage): void {
     }
   } else {
     events.dispatchGlobal(msg)
+    // P5 presence：presence.update 是全局消息（无 sessionId），全量替换 presence store。
+    // 来源：connection-manager broadcastPresence（上下线/setActive/lease 变化）+ ws-client 合成
+    // （auth.ok presence 字段）。spec D9 全量替换语义。
+    if (msg.type === 'presence.update') {
+      const payload = msg.payload as { connections?: PresenceConnection[] }
+      if (Array.isArray(payload.connections)) {
+        usePresenceStore().setConnections(payload.connections)
+      }
+    }
     // L9：session 级消息（type 以 session./message. 开头）缺失 sessionId 时 warn，
     // 让 runtime bug 可见（违反规则 #7 隔离要求应有 fail-fast 信号，而非静默降级到 global 丢弃）
     if (msg.type.startsWith('session.') || msg.type.startsWith('message.')) {
@@ -211,9 +260,15 @@ function ensureDispatcher(): void {
  * 连接 WS 并记录 url（W4 visibility 重连复用）。
  * 包装 ws-client connect：调前把 url 存入 lastConnectedUrl，供用户切回前台时主动重连。
  */
-function connectWs(url: string): void {
+function connectWs(url: string, token?: string): void {
   lastConnectedUrl = url
-  connect(url)
+  // 本地模式也需带 token（runtime 默认 token 模式）。用 localAuth 而非 auth：
+  // 走 auth 握手但不设 isRemoteRef（不触发远程 UI）。
+  if (token) {
+    connect(url, { localAuth: { token, clientId: getClientId(), deviceName: getDeviceName() } })
+  } else {
+    connect(url)
+  }
 }
 
 /** 获取 fallback 端口（考虑 dev 偏移） */
@@ -239,12 +294,57 @@ let lastConnectedUrl: string | null = null
 /** visibilitychange handler 引用（teardown 时 removeEventListener 用） */
 let visibilityHandler: (() => void) | null = null
 
+/**
+ * 同步当前已订阅 session 列表到 ws-client（wave3 P2-s4 IF1，spec §6.1/FC2）。
+ *
+ * 把当前打开的 panel 承载的 sessionId 列表注入 ws-client.setSubscribedSessions，
+ * 重连时 auth 携带此列表限定 server 回放范围（只回放订阅 session 的增量）。
+ * 列表来源：usePanelStore().panels（已打开/可见的 panel 对应的 session 即已订阅），
+ * 不用 sessionStore.all（未打开 panel 的 session 无 terminal 消费者，回放其 terminal.data 无意义）。
+ *
+ * 调用点：(1) init 末尾（初始注入）；(2) 首次连接成功；(3) 重连成功（确保重连 auth 携带最新订阅）。
+ */
+function syncSubscribedSessions(): void {
+  const panels = usePanelStore().panels
+  const sessionIds = panels
+    .map((p) => p.sessionId)
+    .filter((s): s is string => typeof s === 'string' && s.length > 0)
+  setSubscribedSessions(sessionIds)
+}
+
+/**
+ * P5 presence（审查 Major3）：远程模式连接成功后主动调 presence.list RPC 拉一次全量 presence。
+ *
+ * spec §五要求 resume 路径（短断线，无 auth.ok 的 presence 字段）主动拉一次 presence——短断线 resume
+ * 的客户端 presence store 仍是断线前的旧列表（resume 不走 onConnect，auth.ok 只在冷启动带 presence 兜底）。
+ * 此前 renderer 无任何 listPresence 调用点，导致 resume 后 presence 不刷新。
+ *
+ * 取舍：远程模式每次连接成功都调一次（冷启动有 auth.ok.presence 兜底，resume 有 listPresence 兜底，
+ * 两者幂等——setConnections 全量替换）。本地模式（isRemoteMode()===false）不调（本地单客户端无多端 presence 需求）。
+ * 失败仅 warn，不阻断连接主流程（presence 是辅助视图，拉取失败可由后续 presence.update 广播自愈）。
+ */
+function refreshPresenceOnConnect(): void {
+  if (!isRemoteMode()) return
+  // fire-and-forget：连接成功后异步拉取，不阻塞 init；失败 warn 不传播。
+  sessionApi.listPresence()
+    .then((connections) => {
+      usePresenceStore().setConnections(connections)
+    })
+    .catch((e) => {
+      console.warn('[useConnection] listPresence on connect failed (non-blocking):', e)
+    })
+}
+
 export function useConnection() {
   const state = getState()
 
   async function init(): Promise<void> {
     // 入站消息分发器在任何模式下都安装（mock 模式仅收到 pong，无副作用）
     ensureDispatcher()
+
+    // wave3 P2-s4：初始注入当前已订阅 session 列表（供首连/重连 auth 携带，限定 server 回放范围）。
+    // 后续 panel 变化由 watch(getState()) 的连接成功分支重新 sync（重连时拿最新 panel 列表）。
+    syncSubscribedSessions()
 
     // W4：安装 visibilitychange 监听（幂等——visibilityHandler 守卫防重复注册）。
     // 用户从其它标签页 / 系统切回应用（visibilityState 变 visible）且当前未连接时，
@@ -276,6 +376,30 @@ export function useConnection() {
     const stopStateWatch = watch(getState(), (newState, oldState) => {
       if (oldState === 'connected' && newState !== 'connected') {
         pending.rejectAll(new Error(t('connection.disconnectedError')))
+        // 远程模式 WS 断开是唯一的断开信号（无 IPC runtime 崩溃监听兜底——远程分支
+        // 在上方提前 return 跳过 onRuntimeRestarting/onRuntimeFailed 注册）。若不在此收口，
+        // streaming assistant 消息停留 streaming 态（isGenerating=true）→ UI 卡「思考中」，
+        // 直到 10 分钟 streaming timeout 兜底（chat.ts STREAMING_TIMEOUT_MS）才 finalize。
+        // 与本地 runtime-failed 路径（line 439 finalizeAllStreaming('disconnect')）对称。
+        // 仅远程模式：本地模式有 IPC listener 兜底，state watch 不重复 finalize（避免双重）。
+        if (isRemoteMode()) {
+          useChatStore().finalizeAllStreaming('disconnect')
+        }
+      }
+      // 任意 → connected（首连 + 重连）统一处理 sync + presence + bump。
+      //
+      // CR-fix BLOCKER1：原先按 oldState 拆两条 if（disconnected/reconnecting→connected 视为重连调 bump；
+      // connecting→connected 视为首连不 bump），但 Vue watch flush:'pre' 可能在同一 tick 合并多次状态
+      // 变化（如 disconnected→connecting→connected），oldState 直接是上一次状态（如 connected），导致两条
+      // if 都不命中 → bump + sync + presence 三者全丢。合并为单一条件避免漏判。
+      //
+      // bump 无条件调（首连也 bump 无害——bumpReconnectEpoch 只让 useTerminal 清 scrollback，首连场景
+      // 本就无 scrollback，清空 no-op）。sync/presence 两类连接都需要：首连注入订阅供下次重连 auth 携带，
+      // 重连刷新订阅（panel 可能变）+ 拉 presence（resume 路径 auth.ok 不带 presence 兜底）。
+      if (newState === 'connected' && oldState !== 'connected') {
+        bumpReconnectEpoch()
+        syncSubscribedSessions()
+        refreshPresenceOnConnect()
       }
     })
     removeStateWatch = stopStateWatch
@@ -286,11 +410,39 @@ export function useConnection() {
       return
     }
 
+    // 远程模式：连远程 server（auth 握手），不走本地 IPC 端口发现、不注册 runtime 崩溃监听
+    // （远程无本地 runtime 进程，IPC 监听空转 + restartRuntime 无 supervisor 无效）。
+    // isRemoteMode() 内部 short-circuit mode==='remote' && getActiveProfile()!==null，
+    // 进入分支时 profile 必非空（同步代码无 await 间隙，TOCTOU 风险极低 → profile! 非空断言安全）。
+    // 直接调 connect(url, {auth}) 而非 connectWs(url)：connectWs 不传 auth opts 会让首连退化本地模式，
+    // 远程首连必须显式传 auth（ws-client connect 据此设 currentAuthOpts + isRemote，重连复用）。
+    if (isRemoteMode()) {
+      const profile = getActiveProfile()
+      // 诊断日志：远程模式启动时确认 profile + mode 推导结果（排查远程不生效，XYZ_NO_LOCAL_RUNTIME）。
+      console.log(
+        '[useConnection] init: mode=remote, profile=',
+        profile?.url ?? 'none',
+      )
+      lastConnectedUrl = profile!.url
+      connect(profile!.url, {
+        auth: {
+          token: profile!.token,
+          clientId: getClientId(),
+          deviceName: getDeviceName(),
+        },
+      })
+      return
+    }
+
+    // 诊断日志：本地模式启动时打印即将连接的端口来源（排查 dev 模式端口发现）。
+    console.log('[useConnection] init: mode=local')
+
     // 监听 runtime 端口推送（runtime 重启成功后推新端口 → 断开重连）
-    removeRuntimePortListener = onRuntimePort((newPort) => {
+    removeRuntimePortListener = onRuntimePort(async (newPort) => {
       if (newPort && state.value !== 'disconnected') {
         disconnect()
-        connectWs('ws://localhost:' + newPort)
+        const token = await getRuntimeToken()
+        connectWs('ws://localhost:' + newPort, token)
       }
     })
 
@@ -313,23 +465,45 @@ export function useConnection() {
       useExtensionUIStore().clearAllPending()
     })
 
-    // 尝试从主进程获取已知端口
+    // 尝试从主进程获取已知端口 + token（runtime 默认 token 模式，本地连接需带 auth）
     const knownPort = await getRuntimePort()
     if (knownPort) {
-      connectWs('ws://localhost:' + knownPort)
+      const token = await getRuntimeToken()
+      console.log('[useConnection] init: connecting to known runtime port', knownPort, token ? '(with token)' : '(open mode)')
+      connectWs('ws://localhost:' + knownPort, token)
       return
     }
 
     // Runtime 尚未启动：用 fallback 端口（ws-client 会自动重连，runtime 起来后连上）
-    connectWs('ws://localhost:' + await resolveFallbackPort())
+    const fallbackPort = await resolveFallbackPort()
+    // Runtime 未启动时 token 文件可能还未生成，尝试读一次（失败则无 auth 连接，runtime 起来后重连会补 auth）
+    const token = await getRuntimeToken()
+    console.log('[useConnection] init: no known port, using fallback', fallbackPort, token ? '(with token)' : '(open mode)')
+    connectWs('ws://localhost:' + fallbackPort, token)
   }
 
   /**
-   * 手动重试（用户从「runtime 不可用」状态条点重试触发）。
-   * 委托 IPC runtime-restart → 主进程 supervisor.restartRuntime。
-   * supervisor 重启成功会广播 runtime-port（onRuntimePort 监听自动重连）。
+   * 手动重试（用户从「runtime 不可用」/远程 failed 状态条点重试触发）。
+   *
+   * 分模式：
+   * - 远程：disconnect() + connect(activeProfile, {auth})（重连，非 IPC restart）。
+   *   远程无本地 supervisor，restartRuntime IPC 无效；断开重连让 ws-client 重新走 auth 握手。
+   * - 本地：委托 IPC runtime-restart → 主进程 supervisor.restartRuntime。
+   *   supervisor 重启成功会广播 runtime-port（onRuntimePort 监听自动重连），逐字节不变。
    */
   async function retryRuntime(): Promise<void> {
+    if (isRemoteMode()) {
+      const profile = getActiveProfile()
+      disconnect()
+      connect(profile!.url, {
+        auth: {
+          token: profile!.token,
+          clientId: getClientId(),
+          deviceName: getDeviceName(),
+        },
+      })
+      return
+    }
     await restartRuntime()
   }
 

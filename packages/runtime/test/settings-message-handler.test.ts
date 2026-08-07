@@ -17,8 +17,10 @@ function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; delete
   const replies: { id: string; type: string; payload: Record<string, unknown> }[] = []
   const configService = {
     listProviders: vi.fn().mockReturnValue([{ id: 'p1' }]),
-    setProvider: overrides.setProvider ?? vi.fn().mockReturnValue({}),
-    deleteProvider: overrides.deleteProvider ?? vi.fn().mockReturnValue({}),
+    // P6 D3 CAS：setProvider/deleteProvider 默认返回 newVersion（mock 不模拟冲突）。
+    setProvider: overrides.setProvider ?? vi.fn().mockReturnValue({ newVersion: 1 }),
+    deleteProvider: overrides.deleteProvider ?? vi.fn().mockReturnValue({ newVersion: 1 }),
+    getConfigVersion: vi.fn().mockReturnValue(0),
     setDefaultModel: vi.fn(),
     getProvider: vi.fn().mockReturnValue(undefined),
     updateToolPermissions: vi.fn(),
@@ -79,17 +81,17 @@ const WS = {} as never
 describe('SettingsMessageHandler', () => {
   describe('provider 副作用广播（最该补）', () => {
     it('setProvider 无 newDefault → 仅 reply + broadcastProviderList，不广播 config.defaults', async () => {
-      const { ctx, broadcasts, handler } = makeHandler({ setProvider: vi.fn().mockReturnValue({}) })
-      await handler.handleSettingsMessage(msg('config.setProvider', { providerId: 'p1', name: 'x' }), WS)
+      const { ctx, broadcasts, handler } = makeHandler({ setProvider: vi.fn().mockReturnValue({ newVersion: 1 }) })
+      await handler.handleSettingsMessage(msg('config.setProvider', { providerId: 'p1', name: 'x', expectedVersion: 0 }), WS)
       expect(ctx.broadcastProviderList).toHaveBeenCalledOnce()
       expect(broadcasts.filter(b => b.type === 'config.defaults')).toHaveLength(0)
     })
 
     it('setProvider 有 newDefault → 广播 config.defaults (source=provider-updated)', async () => {
       const { broadcasts, handler } = makeHandler({
-        setProvider: vi.fn().mockReturnValue({ newDefault: { provider: 'p1', modelId: 'm1' } }),
+        setProvider: vi.fn().mockReturnValue({ newDefault: { provider: 'p1', modelId: 'm1' }, newVersion: 1 }),
       })
-      await handler.handleSettingsMessage(msg('config.setProvider', { providerId: 'p1', name: 'x' }), WS)
+      await handler.handleSettingsMessage(msg('config.setProvider', { providerId: 'p1', name: 'x', expectedVersion: 0 }), WS)
       const d = broadcasts.find(b => b.type === 'config.defaults')
       expect(d).toBeDefined()
       expect(d?.payload).toMatchObject({ defaultModel: 'p1/m1', source: 'provider-updated' })
@@ -97,9 +99,9 @@ describe('SettingsMessageHandler', () => {
 
     it('deleteProvider 有 newDefault → 广播 config.defaults (source=provider-deleted)', async () => {
       const { broadcasts, handler } = makeHandler({
-        deleteProvider: vi.fn().mockReturnValue({ newDefault: { provider: 'p2', modelId: 'm2' } }),
+        deleteProvider: vi.fn().mockReturnValue({ newDefault: { provider: 'p2', modelId: 'm2' }, newVersion: 1 }),
       })
-      await handler.handleSettingsMessage(msg('config.deleteProvider', { providerId: 'p1' }), WS)
+      await handler.handleSettingsMessage(msg('config.deleteProvider', { providerId: 'p1', expectedVersion: 0 }), WS)
       const d = broadcasts.find(b => b.type === 'config.defaults')
       expect(d?.payload).toMatchObject({ defaultModel: 'p2/m2', source: 'provider-deleted' })
     })
@@ -126,7 +128,8 @@ describe('SettingsMessageHandler', () => {
     it('config.getProviders → reply config.providers', async () => {
       const { replies, handler } = makeHandler()
       await handler.handleSettingsMessage(msg('config.getProviders', {}), WS)
-      expect(replies[0]).toMatchObject({ type: 'config.providers', payload: { providers: [{ id: 'p1' }] } })
+      // P6 D3 CAS：reply 携带 version（getConfigVersion mock 返回 0）
+      expect(replies[0]).toMatchObject({ type: 'config.providers', payload: { providers: [{ id: 'p1' }], version: 0 } })
     })
     it('model.list → aggregateModels + reply', async () => {
       const { replies, handler } = makeHandler()

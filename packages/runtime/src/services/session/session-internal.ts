@@ -88,6 +88,18 @@ export interface ISessionServiceInternal {
   /** 从 Map 删除条目（仅删条目，不 detach adapter / 不 destroy 进程）。 */
   removeSessionEntry(sessionId: string): void
   /**
+   * P5 lease：部分更新 session 的 lease 字段（busyOwnerId/leaseExpiresAt/lastOwnerId）。
+   * patch 值 undefined 即清字段（release 路径）。session 不存在时 no-op。
+   * 供 LeaseManager.acquire/renew/release 调用——单写者仍是 Facade（LeaseManager 经此接口改字段）。
+   * lastOwnerId：release 时从 busyOwnerId 快照，acquire 据此判定 orphan-pi 续租（cr-fix）。
+   */
+  updateSession(sessionId: string, patch: Partial<Pick<IManagedSessionView, 'busyOwnerId' | 'leaseExpiresAt' | 'lastOwnerId'>>): void
+  /**
+   * P5 lease：遍历所有活跃 session（sessions Map.values() 迭代器）。
+   * 供 LeaseManager.sweepExpired（扫过期 lease）+ getBusySession（反查 clientId 持有的 session）。
+   */
+  allSessions(): IterableIterator<IManagedSessionView>
+  /**
    * M3：标记源 session 已交接给新 session（内存写 handedOffTo + 磁盘写 handoff_marker）。
    * HandoffService 经此接口写交接态，而非直接改具体类内部对象（依赖倒置 + 所有权收口）。
    * 仅 active session 生效；非 active 源 session 按 no-op 处理（见具体类 docstring）。

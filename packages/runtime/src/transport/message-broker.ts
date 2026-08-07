@@ -11,16 +11,28 @@
  * 不含：连接生命周期（ConnectionManager）、消息路由（server.ts）、业务逻辑（handlers）。
  * broadcast 遍历 ConnectionManager.clients；sendInitialState 依赖 services 取数据。
  */
+import { randomUUID } from 'node:crypto'
 import type { WebSocket as WsType } from 'ws'
 import type { ServerMessage, ServerMessageMap, ServerMessageType, SkillCacheScope } from '@xyz-agent/shared'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IPluginService, IExtensionService } from '../interfaces.js'
 import { buildDirConfigs, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS } from '../services/skill-dir-config.js'
+import { ExtensionTimeoutManager } from '../services/extension-timeout-manager.js'
 import type { ErrorDetails } from './message-context.js'
-import { WS_OPEN } from './connection-manager.js'
+import { WS_OPEN, type ConnectionCtx } from './connection-manager.js'
+import { SeqCounter } from './seq-counter.js'
+import { SessionBuffer } from './session-buffer.js'
 
-/** broker 访问连接池的最小契约（由 ConnectionManager 实现：clients Set）。 */
+/**
+ * per-session replay buffer 默认上限（spec §八）。
+ * 提为模块常量避免 no-magic-numbers 警告；env 可覆盖（XYZ_AGENT_REPLAY_MAX_*_PER_SESSION）。
+ */
+const DEFAULT_MAX_MESSAGES_PER_SESSION = 1000
+// eslint-disable-next-line no-magic-numbers -- spec §八 默认 8MB/session = 8 * 1024 * 1024
+const DEFAULT_MAX_BYTES_PER_SESSION = 8 * 1024 * 1024
+
+/** broker 访问连接池的最小契约（由 ConnectionManager 实现：clients Map<clientId, ConnectionCtx>）。 */
 export interface ClientPool {
-  readonly clients: Set<WsType>
+  readonly clients: Map<string, ConnectionCtx>
 }
 
 /**
@@ -34,6 +46,11 @@ export interface BrokerServices {
   pluginService: IPluginService | undefined
   /** extension service（sendInitialState 推 config.extensions 段需要；可选，未注入则跳过该段）。 */
   extensionService: IExtensionService | undefined
+  /**
+   * extension timeout manager（sendInitialState 第 14 段聚合 pending UI 请求需要，P3 D3）。
+   * 必填：第 14 段恒定推送（即使空数组），getAllPendingRequests 总可调（server.ts:78 字段构造即初始化）。
+   */
+  extensionTimeoutMgr: ExtensionTimeoutManager
   projectRoot: string
   /** 应用 + pi 版本号（sendInitialState 推 app.info）。 */
   appInfo: { appVersion: string; piVersion: string }
@@ -41,6 +58,42 @@ export interface BrokerServices {
 
 export class ServerMessageBroker implements IMessageBroker {
   private pushId = 0
+  /**
+   * 广播消息的全局单调 seq 计数器（P2 可靠投递层）。
+   * 仅 broadcast 入口调用；reply/sendInitialState 点对点不打 seq（见 spec D1）。
+   */
+  private readonly seqCounter = new SeqCounter()
+
+  /**
+   * runtime 实例 id（D9）：启动生成 crypto.randomUUID()，auth.ok 携带，客户端重连带回。
+   * 不匹配 → seqReset（runtime 重启后内存 buffer 清零、seq 归 0，旧 lastSeq 无意义）。
+   */
+  private readonly bootId = randomUUID()
+
+  /**
+   * per-session ring buffer 分桶（D2）：Map<sessionId, SessionBuffer>。
+   * 分桶键 = payload.sessionId（动态判定）。无 sessionId 的全局消息不入桶。
+   * 桶数天然受 XYZ_AGENT_MAX_SESSIONS（P0 §七，默认 10）上限保护——session 销毁调 clearSessionBuffer 清桶。
+   */
+  private readonly sessionBuffers = new Map<string, SessionBuffer>()
+
+  /**
+   * 全局 evictedWatermark（D4）：所有 session 桶因 LRU 驱逐产生的最大被驱逐 seq。
+   * 重连判定：客户端 lastSeq < watermark → 不可回放 → seqReset。
+   * 仅 LRU 驱逐推进；clearSessionBuffer（session 销毁）与巨消息豁免不推进（D4①②）。
+   */
+  private evictedWatermark = 0
+
+  /**
+   * per-session 条数上限默认值（spec §八：1000 条）。
+   * 提为模块常量便于 eslint no-magic-numbers 合规 + 自文档。
+   */
+  private readonly maxCountPerSession = Number(process.env.XYZ_AGENT_REPLAY_MAX_MESSAGES_PER_SESSION ?? DEFAULT_MAX_MESSAGES_PER_SESSION)
+
+  /**
+   * per-session 字节上限默认值（spec §八：8MB）。
+   */
+  private readonly maxBytesPerSession = Number(process.env.XYZ_AGENT_REPLAY_MAX_BYTES_PER_SESSION ?? DEFAULT_MAX_BYTES_PER_SESSION)
 
   constructor(
     private pool: ClientPool,
@@ -62,18 +115,60 @@ export class ServerMessageBroker implements IMessageBroker {
     // 序列化同一对象。session.list 等大 payload 广播时主线程被重复 stringify 阻塞。
     // 现在循环前序列化一次得 payload 字符串，循环内直接 ws.send(payload)。
     let payload: string
+    let sequencedSeq: number
     try {
-      payload = JSON.stringify(msg)
+      // P2 可靠投递层：broadcast 入口给 envelope 打全局单调 seq。
+      // 在 stringify 之前注入 → 客户端收到的 JSON 含 seq；stringify 失败时 seq 已自增留空洞。
+      // reply（send）/sendInitialState 不经此路径，天然无 seq（spec D1）。
+      const sequenced = { ...msg, seq: this.seqCounter.assignSeq() }
+      sequencedSeq = sequenced.seq
+      payload = JSON.stringify(sequenced)
     // D4（不等价语义，刻意取舍）：提级后整次广播只 stringify 一次，
     // 一旦失败 → 本次广播对**所有 client 都丢弃**（连原本可正常收的 client 也收不到）。
     // 旧实现（循环内 per-client send 各自 stringify）失败只影响那一个 client，其余 client 照常收到。
     // 取舍：减少 N×stringify 主线程开销（大 payload 广播时显著）换取 per-client 失败隔离性损失。
     // 失败时显眼告警（[broadcast] 前缀，便于运维日志检索排查）。
     } catch (e) {
-      console.error('[broadcast] payload serialization failed — entire broadcast dropped for all clients:', e)
+      // WARNING 6（审查静默丢弃）：整个广播对所有客户端静默丢弃，对 session.busy/idle 等关键
+      // lease 消息可能完全无运维可观测线索。补充结构化上下文（消息 type + payload.sessionId
+      // 如有），便于运营排查丢失的关键消息。仍是 error 级别（比 warn 更显眼，与原有取舍一致）。
+      const failedType = msg.type
+      const failedSid = (msg.payload as { sessionId?: string } | null | undefined)?.sessionId
+      console.error(`[broadcast] payload serialization failed — entire broadcast dropped for all clients (type=${failedType}${failedSid ? `, sessionId=${failedSid}` : ''}):`, e)
       return
     }
-    for (const ws of this.pool.clients) {
+    // P2-s1-w2：per-session 分桶入桶（spec §3.1）。
+    // 三条排除规则（CT-W2.4 不变式，不可绕过）：
+    //   (1) 无 sid 的全局消息（config.*/model.*/workspace.*）不入桶（ES1，靠 initial state 兜底）；
+    //   (2) terminal.data 不入 session 桶（D3，走独立 scrollback，P2-s3）——唯一 type 名硬编码；
+    //   (3) 巨消息（byteLength > maxBytesPerSession）不入桶（ES4，避免清空整桶，不推进 watermark）。
+    // 入桶读 sequencedSeq（w1 assignSeq 已分配值），SessionBuffer 不得再调 seqCounter.assignSeq
+    // （w1 retrospect 约定：多入口调 assignSeq 会破坏全局单调性）。
+    // 字节口径：用 Buffer.byteLength(payload, 'utf8') 而非 payload.length（UTF-16 code unit 计数）。
+    // env 名 XYZ_AGENT_REPLAY_MAX_BYTES_PER_SESSION 是字节语义，CJK/emoji 的 .length 显著小于真实
+    // UTF-8 字节数（如「你好」length=2 但 byteLength=6），用 .length 会让内存上限语义偏松。性能可接受
+    // （广播频率不高，每条消息一次 Buffer.byteLength 调用）。与 SessionBuffer.bytes 累加口径一致。
+    const sid = (msg.payload as { sessionId?: string } | null)?.sessionId
+    if (sid && msg.type !== 'terminal.data' && Buffer.byteLength(payload, 'utf8') <= this.maxBytesPerSession) {
+      let buf = this.sessionBuffers.get(sid)
+      if (!buf) {
+        buf = new SessionBuffer(this.maxCountPerSession, this.maxBytesPerSession, (s) => {
+          // 只 LRU 驱逐推进 watermark（D4）；取 max 防回退（理论上 seq 单调，max 等同赋值，防御性写法）。
+          if (s > this.evictedWatermark) this.evictedWatermark = s
+        })
+        this.sessionBuffers.set(sid, buf)
+      }
+      buf.append(sequencedSeq, payload)
+    }
+    for (const ctx of this.pool.clients.values()) {
+      const ws = ctx.ws
+      // C3 修复（review CRITICAL）：replay 段发送期间跳过该 ws，避免实时广播与 replay 段
+      // 在 TCP 流上交错（replay seq=120 → 实时 seq=151 → replay seq=121…导致非幂等 chat effect
+      // 跨 turn 拼接、气泡内容混乱）。replaying 标记由 ConnectionManager.handleAuthMessage 在
+      // await onAuthSuccess + replay 段发送期间置位，try/finally 保证发送完成即清回。
+      // 本条消息仍已入 session buffer（上方入桶逻辑不受 replaying 影响），客户端下次重连
+      // 经 getReplayPlan 补发——当前会话瞬时延迟，远好于交错导致的状态损坏。
+      if (ctx.replaying) continue
       // M6: 单 client send 失败不中断其余 client 广播。
       // TOCTOU：readyState 检查与 ws.send 间连接可能已关闭，ws.send 抛错，
       // 无 try-catch 会中断整个 for 循环，导致其余 client 收不到消息。
@@ -85,6 +180,83 @@ export class ServerMessageBroker implements IMessageBroker {
         // 单 client 已断连/异常，跳过继续广播给其余 client
       }
     }
+  }
+
+  // ── P2-s1-w2: per-session buffer 回放 API（IF4/IF5）─────────────────
+
+  /**
+   * 计算重连回放计划（spec §3.2 / CT-W2.2）。
+   *
+   * - bootId !== this.bootId → reset（runtime 重启，旧 lastSeq 无意义）。
+   * - lastSeq < evictedWatermark → reset（缺失段已被 LRU 驱逐，无法增量回放，只能全量）。
+   * - 否则 resume：只遍历 subscribedSessions 对应桶（D2.1，防僵尸分区——回放未订阅 session
+   *   会触发前端为该 session 创建僵尸分区），收集 seq > lastSeq 条目按全局 seq 升序合并。
+   *
+   * messages 元素是已序列化字符串（与 ws.send 入参同一产物），auth 握手层直接 ws.send(data)。
+   * 本 wave 只实现计算，不接 auth 编排（s2 slice 调用此方法决定 resumed/seqReset）。
+   *
+   * @param lastSeq 客户端已收到的最大 seq（同页面生命周期重连携带）
+   * @param bootId 客户端记录的 runtime 实例 id（与 lastSeq 成对）
+   * @param subscribedSessions 客户端持有分区的 session 列表（messages.keys() 并集）
+   * @returns {kind:'resume', messages} 或 {kind:'reset'}；resume 的 messages 可为空数组（无缺失）
+   */
+  getReplayPlan(
+    lastSeq: number,
+    bootId: string,
+    subscribedSessions: string[],
+  ): { kind: 'resume'; messages: string[] } | { kind: 'reset' } {
+    if (bootId !== this.bootId || lastSeq < this.evictedWatermark) {
+      // 短路返回，不遍历桶（bootId 不匹配或 lastSeq 失效，回放无意义）
+      return { kind: 'reset' }
+    }
+    // 只遍历订阅 session 桶（D2.1），收集 seq>lastSeq 条目
+    const collected: { seq: number; data: string }[] = []
+    for (const sid of subscribedSessions) {
+      const buf = this.sessionBuffers.get(sid)
+      if (buf) collected.push(...buf.getReplayPlan(lastSeq))
+    }
+    // 多桶间 seq 全局唯一单调（D1），按 seq 升序合并即全局序
+    collected.sort((a, b) => a.seq - b.seq)
+    return { kind: 'resume', messages: collected.map((e) => e.data) }
+  }
+
+  /**
+   * session 销毁时清桶（CT-W2.3 / ES6）。
+   * 移除整桶，**不推进 evictedWatermark**（session 已删，客户端收到 session.deleted 清分区，
+   * 不该再期待该 session 消息——watermark 推进会导致误判其他 session 不可回放）。
+   * 桶不存在时 no-op 不抛异常。
+   */
+  clearSessionBuffer(sessionId: string): void {
+    this.sessionBuffers.delete(sessionId)
+  }
+
+  /** runtime 实例 id（auth.ok 携带给客户端，重连带回判定）。 */
+  getBootId(): string {
+    return this.bootId
+  }
+
+  /**
+   * 全局 evictedWatermark（D4）：所有桶 LRU 驱逐过的最大 seq。
+   * 客户端 lastSeq < watermark → seqReset。s2 auth 层据此决定 resumed/seqReset。
+   */
+  getEvictedWatermark(): number {
+    return this.evictedWatermark
+  }
+
+  /**
+   * 当前已分配的最大 seq（只读，P2-s2 auth.ok 携带 serverSeq 用）。
+   * 客户端下次重连带回作 lastSeq；未广播过任何消息时返回 0。
+   */
+  getSeq(): number {
+    return this.seqCounter.current
+  }
+
+  /**
+   * 取某 session 的缓冲桶（测试断言用 / 调试用）。
+   * 桶不存在返回 undefined（无消息入过桶或已被 clearSessionBuffer 删除）。
+   */
+  getSessionBuffer(sessionId: string): SessionBuffer | undefined {
+    return this.sessionBuffers.get(sessionId)
   }
 
   /**
@@ -111,6 +283,57 @@ export class ServerMessageBroker implements IMessageBroker {
     this.send(ws, { type, id, payload })
   }
 
+  /**
+   * P5 lease/presence：定向投递给指定 clientId（点对点，不打 seq、不入 P2 ring buffer 桶）。
+   *
+   * 与 broadcast 的差异：①只发一个目标 client（按 clientId 从连接池取 ctx.ws）；
+   * ②不调 seqCounter.assignSeq（定向投递非广播，与 reply/send 同语义）；③不入 session 桶
+   * （定向投递不参与 resume 回放——send.rejected 是发起方瞬时反馈，重连无意义）。
+   * 目标 clientId 不存在或 ws 已关闭时 no-op 不抛错（fire-and-forget，ES3 同 broadcast）。
+   *
+   * 用于 send.rejected（发起方专属 reply）等定向投递场景。
+   */
+  sendToClient(clientId: string, msg: ServerMessage): void {
+    const ctx = this.pool.clients.get(clientId)
+    if (!ctx) return // 目标不在线：no-op（定向投递是 fire-and-forget，离线丢失可接受）
+    this.send(ctx.ws, msg)
+  }
+
+  /**
+   * P5 lease/presence：广播给除 excludeClientId 外的所有客户端（点对点集合，不打 seq、不入桶）。
+   *
+   * 与 broadcast 的差异：①跳过 excludeClientId；②不打 seq、不入 session 桶（同 sendToClient 语义）。
+   * 单 client send 失败不中断其余（M6 同 broadcast）。用于 session.busy（排除发起方）等定向广播。
+   */
+  broadcastExcept(excludeClientId: string, msg: ServerMessage): void {
+    let payload: string
+    try {
+      payload = JSON.stringify(msg)
+    } catch (e) {
+      // 序列化失败整次丢弃（同 broadcast 取舍）：定向广播是 fire-and-forget，失败仅记日志。
+      // WARNING 6：补充 type/sessionId 结构化上下文，便于排查定向广播（如 session.busy）静默丢失。
+      const failedType = msg.type
+      const failedSid = (msg.payload as { sessionId?: string } | null | undefined)?.sessionId
+      console.error(`[broadcastExcept] payload serialization failed — entire broadcast dropped (type=${failedType}${failedSid ? `, sessionId=${failedSid}` : ''}):`, e)
+      return
+    }
+    for (const [clientId, ctx] of this.pool.clients) {
+      if (clientId === excludeClientId) continue
+      const ws = ctx.ws
+      // C3：replay 期间跳过该 ws（同 broadcast），避免定向广播与 replay 段交错。
+      // broadcastExcept 传输非 seq 定向消息（lease/presence），交错不破坏 seq 顺序，
+      // 但仍可能在 replay 流处理期间触发应用层副作用，故统一隔离更安全。
+      if (ctx.replaying) continue
+      if (ws.readyState !== WS_OPEN) continue
+      try {
+        ws.send(payload)
+      // eslint-disable-next-line taste/no-silent-catch -- broadcast 是 fire-and-forget 推送，单 client 失败不能影响其余 client
+      } catch {
+        // 单 client 已断连/异常，跳过继续广播给其余 client
+      }
+    }
+  }
+
   // ── Shared payload builders ─────────────────────────────────────
   // broadcast helpers 与 sendInitialState 此前各自重建同一组 provider/skill/agent/dir/model
   // payload（两份「initial/config state」表示）。现抽取私有 builder：只负责 load + 构造
@@ -134,7 +357,8 @@ export class ServerMessageBroker implements IMessageBroker {
   private buildProviderListMsgs(): ServerMessage[] {
     const providers = this.services.configService.listProviders()
     return [
-      { type: 'config.providers', id: this.nextPushId(), payload: { providers } },
+      // P6 D3：广播携带 config version（客户端缓存用于下次 setProvider 的 expectedVersion）。
+      { type: 'config.providers', id: this.nextPushId(), payload: { providers, version: this.services.configService.getConfigVersion() } },
       { type: 'model.list', id: this.nextPushId(), payload: { models: this.services.modelService.aggregateModels(providers) } },
     ]
   }
@@ -295,6 +519,21 @@ export class ServerMessageBroker implements IMessageBroker {
               this.send(ws, { type: 'config.extensions', id: this.nextPushId(), payload: { extensions } })
             })
             .catch((e) => console.error(`[runtime] sendInitialState: config.extensions scan failed:`, e))
+        },
+      },
+      {
+        // step 14: 挂起的 extension UI 请求（审批/ask-user/select/input/editor）—— P3 D3。
+        // 【R1-C1】独立 type extension.pendingRequestsBatch（非 extension.pendingRequests reply 形态）。
+        // 数据源 = ExtensionTimeoutManager.getAllPendingRequests（跨 session 聚合，与 getPendingRequests
+        // RPC 同源 pendingRequests Map）。点对点 send（随 initial state 发给新连接），不打 seq、不入 buffer
+        // （与现有 13 段一致）。冷启动/长断线/页面 reload 场景补发审批挂起请求唤醒 pi。
+        // 短断线由 P2 ring buffer 回放覆盖（extension.ui_request 是广播，天然入 buffer）；
+        // 冷启动时序竞争（AppShell 未挂载）由 onConnected 后 getPendingRequests 兜底（D4 双通路）。
+        // requests 为空时推空数组（保持段顺序确定性，前端 handler no-op）。
+        label: 'extension.pendingRequestsBatch',
+        run: () => {
+          const requests = this.services.extensionTimeoutMgr.getAllPendingRequests()
+          this.send(ws, { type: 'extension.pendingRequestsBatch', id: this.nextPushId(), payload: { requests } })
         },
       },
     ]

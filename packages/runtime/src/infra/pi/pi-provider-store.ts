@@ -80,6 +80,13 @@ export interface PiProviderConfig {
 
 export interface PiModelsConfig {
   providers: Record<string, PiProviderConfig>
+  /**
+   * P6 D3 config CAS 版本字段（乐观锁）。
+   * 初始/旧文件无此字段时读取 default 0（configService 用 `?? 0` 兜底）。
+   * 每次 setProvider/deleteProvider 成功后 +1 落盘。
+   * 可选字段——旧客户端 JSON 宽松忽略，deserialize 只校验 providers 不受影响。
+   */
+  version?: number
 }
 
 export type { PiSettings } from './pi-settings-store.js'

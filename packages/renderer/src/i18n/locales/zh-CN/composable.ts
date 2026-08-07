@@ -1,5 +1,9 @@
 export default {
   agentProcessing: 'Agent 正在处理',
+  deviceProcessing: '{device} 正在处理（剩余 {seconds}s）',
+  // P6 D7 resize 被持锁拒绝时的终端尺寸控制提示（DoD #6）
+  resizeLocked: '{device} 正在控制终端大小',
+  resizeLockedUnknown: '其它设备正在控制终端大小',
   sendFailed: '消息发送失败：{msg}',
   supplementSendFailed: '补充消息发送失败：{msg}',
   nextTurnSendFailed: '下轮消息发送失败：{msg}',

@@ -63,6 +63,24 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   /**
+   * P5 lease：标记 session 的 busy 占用状态（session.busy 广播 → setBusy，session.idle → clearBusy）。
+   * busyOwnerId 非空时 session 被占用（UI 标题旁显示占用指示器）；clearBusy 清除。
+   * SessionSummary 已含 busyOwnerId?/leaseExpiresAt?（P5 w1 透传字段）。
+   */
+  function setSessionBusy(id: string, busyOwnerId: string, leaseExpiresAt?: number): void {
+    const target = list.value.find((s) => s.id === id)
+    if (!target) return
+    target.busyOwnerId = busyOwnerId
+    if (leaseExpiresAt !== undefined) target.leaseExpiresAt = leaseExpiresAt
+  }
+  function clearSessionBusy(id: string): void {
+    const target = list.value.find((s) => s.id === id)
+    if (!target) return
+    target.busyOwnerId = undefined
+    target.leaseExpiresAt = undefined
+  }
+
+  /**
    * 从分组移除 session；移空组时连同组移除（不留空组标题）。
    * 若移除的是 active，回退到列表首项。
    */
@@ -110,5 +128,5 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  return { groups, list, activeId, active, listLoadError, setGroups, setListLoadError, appendSession, updateLabel, updateSessionState, removeFromList, markDead, revive }
+  return { groups, list, activeId, active, listLoadError, setGroups, setListLoadError, appendSession, updateLabel, updateSessionState, setSessionBusy, clearSessionBusy, removeFromList, markDead, revive }
 })

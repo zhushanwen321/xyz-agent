@@ -22,6 +22,11 @@ export function getRuntimePortOffset(): Promise<number | undefined> {
   return api ? api.getRuntimePortOffset() : Promise.resolve(undefined)
 }
 
+/** 读取 runtime token（Electron 本地连接需带 auth）。无 IPC 或开放模式返回 undefined */
+export function getRuntimeToken(): Promise<string | undefined> {
+  return api ? api.getRuntimeToken() : Promise.resolve(undefined)
+}
+
 /** 监听 runtime 端口推送（runtime 重启后 main 推新端口触发重连），返回取消函数 */
 export function onRuntimePort(cb: (port: number) => void): () => void {
   return api?.onRuntimePort(cb) ?? (() => {})

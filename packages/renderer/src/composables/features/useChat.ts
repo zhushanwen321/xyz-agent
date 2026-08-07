@@ -110,11 +110,33 @@ export function ensureStreamSubscription(
   )
   const unsub = chatApi.streamSubscribe(sid, (msg) => {
     // [send.rejected] 防御性反馈通道（D-006 独立类型，不进对话流）
+    // P5 lease：toast 升级为「{deviceName} 正在处理（剩余 Xs）」。
+    // 注：send.rejected.reason 为单值 'busy'（非判别联合），此处 if 作运行时 defensive check（协议层
+    // 类型不可信，payload 字段以宽松 optional 断言 + typeof 守卫消费，防御脏数据/协议漂移）。
     if (msg.type === 'send.rejected') {
-      const payload = msg.payload as { sessionId: string; reason: string; message: string }
+      const payload = msg.payload as {
+        sessionId: string
+        reason: 'busy'
+        message: string
+        busyOwnerId?: string
+        busyOwnerDevice?: string
+        leaseExpiresAt?: number
+      }
       chat.clearPendingSend(sid)
       const { error } = useToast()
-      error(payload.message ?? t('composable.agentProcessing'))
+      // defensive check：reason==='busy' 时用 busyOwnerDevice + leaseExpiresAt 算剩余秒数。
+      if (payload.reason === 'busy' && payload.busyOwnerDevice) {
+        const remainingMs = typeof payload.leaseExpiresAt === 'number'
+          ? payload.leaseExpiresAt - Date.now()
+          : 0
+        // eslint-disable-next-line no-magic-numbers -- ms→s 换算，剩余秒数向上取整（最少显示 0s）
+        const remainingSec = Math.max(0, Math.ceil(remainingMs / 1000))
+        const device = payload.busyOwnerDevice
+        // busyOwnerDevice 为空串（孤儿 pi / 设备名缺失）时回退通用文案。
+        error(device ? t('composable.deviceProcessing', { device, seconds: remainingSec }) : (payload.message ?? t('composable.agentProcessing')))
+      } else {
+        error(payload.message ?? t('composable.agentProcessing'))
+      }
       return
     }
     // message.* → 单一入口（F2 重构：消除 double-dispatch）。

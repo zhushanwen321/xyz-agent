@@ -19,10 +19,56 @@
  *
  * 日志：直接用 console.*（initLogger 已 patch 全局，tee 到文件，见架构约定 #4）。
  */
-import * as pty from 'node-pty'
 import { execFileSync } from 'node:child_process'
+import type { WebSocket as WsType } from 'ws'
+import { WebSocket } from 'ws'
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { ITerminalService } from '../ports/terminal-service.js'
+import { TERMINAL_UNAVAILABLE } from '../../utils/errors.js'
+import { SessionBuffer } from '../../transport/session-buffer.js'
+
+// ── P2-s3 terminal scrollback 容量常量（spec §五） ────────────────────────────
+// 复用 P2-s1 的 SessionBuffer 类（双限 ring buffer），但在 terminal-service 内持
+// 独立 Map 实例（与 broker.sessionBuffers 物理隔离，见 D6）。终端 chunk 平均字节
+// 远大于 chat event，故字节上限 256KB（远小于 broker 的 8MB）；条数固定 1000 不开
+// 放 env（防误调造成无限增长）。
+const DEFAULT_SCROLLBACK_MAX_COUNT = 1000
+// eslint-disable-next-line no-magic-numbers -- 256KB = 256 * 1024，spec §五默认
+const DEFAULT_SCROLLBACK_MAX_BYTES = 256 * 1024
+
+// node-pty 是 native 模块，@xyz-agent/runtime 单独 npm 全局安装时若宿主机缺
+// build-essential，加载会抛 MODULE_NOT_FOUND。此处用「懒加载动态 import + 哨兵」
+// 而非顶层静态 import：模块加载不崩，terminal.* RPC 在首次 spawn 时检测到 pty=null
+// 抛 terminal_unavailable，其余 runtime 功能（file/session/...）不受影响。
+//
+// 为什么懒加载而非模块加载时 require？
+//   1. tsup 产物是 CJS（format: cjs），esbuild 拒绝顶层 await（CJS 不支持）；
+//   2. vitest 的 vi.mock/vi.doMock 不拦截 require()（仅拦截 ESM import），用 require
+//      会让测试无法模拟 node-pty 缺失；动态 import() 同时被 tsup 保留（external）和
+//      vitest 拦截，是唯一两环境都 OK 的加载方式。
+//   3. validate-runtime-bundle.sh 禁用 ESM 元信息 API（运行时不可用），故不能走
+//      createRequire 路线（需 ESM 模块 URL）。
+//
+// ptyLoadAttempted 用于同步方法（write/resize/kill/destroyPty）的守卫：
+// 若 spawn 已尝试加载且失败，ptyMap 必为空，这些方法抛 terminal_unavailable；
+// 若从未 spawn 过（懒加载未触发），保持原 no-op 契约（防竞态）。
+let pty: typeof import('node-pty') | null = null
+let ptyLoadAttempted = false
+
+/**
+ * 懒加载 node-pty（首次 spawn 调用）。结果缓存到模块级 `pty`，后续调用幂等。
+ * 失败（native 模块缺失/编译失败）置 `pty=null`，不抛——由调用方守卫决定降级行为。
+ */
+async function loadPty(): Promise<typeof import('node-pty') | null> {
+  if (ptyLoadAttempted) return pty
+  ptyLoadAttempted = true
+  try {
+    pty = await import('node-pty')
+  } catch {
+    pty = null
+  }
+  return pty
+}
 
 /** TerminalService 依赖。 */
 export interface TerminalServiceDeps {
@@ -38,6 +84,34 @@ export interface TerminalServiceDeps {
 /** terminal 业务错误工厂（扁平模式，仿 worktreeError）。 */
 function terminalError(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
+}
+
+/**
+ * P6 D7 terminal resize owner 记录（先到先得模型）。
+ * per-session 单 owner：第一个 resize 的客户端持有，其他客户端 resize 被拒（ResizeLockedError）。
+ * owner 释放时机：该客户端断开连接（onDisconnect → clearResizeOwner）。
+ * 字段名 ownerDevice（R1-m1 统一，非 resizeOwnerDevice）。
+ */
+export interface ResizeOwner {
+  clientId: string
+  ownerDevice: string
+}
+
+/**
+ * P6 D7 resize owner 冲突错误。
+ * resize 时 session 已有 owner 且 clientId !== owner.clientId 抛出。
+ * handler 捕获后 reply error{code:'resize_locked', owner, ownerDevice}，
+ * 前端提示「{ownerDevice} 正在控制终端大小」。
+ */
+export class ResizeLockedError extends Error {
+  readonly code = 'resize_locked' as const
+  constructor(
+    public readonly owner: string,
+    public readonly ownerDevice: string,
+  ) {
+    super(`terminal resize locked by ${ownerDevice} (${owner})`)
+    this.name = 'ResizeLockedError'
+  }
 }
 
 /** 把 Error 序列化为 plain object，避免 logger 的 JSON.stringify 把 Error 实例变成 {}。
@@ -62,7 +136,37 @@ function nextPushId(): string {
 }
 
 export class TerminalService implements ITerminalService {
-  private readonly ptyMap = new Map<string, pty.IPty>()
+  private readonly ptyMap = new Map<string, import('node-pty').IPty>()
+
+  /**
+   * P6 D7：per-session terminal resize owner 记录（先到先得模型）。
+   * key=sessionId，value=ResizeOwner{clientId, ownerDevice}。
+   * 第一个 resize 的客户端持有 owner，其他 clientId resize 被拒（ResizeLockedError）。
+   * 释放时机：onDisconnect → clearResizeOwner(clientId) 遍历清理；destroyPty(sid) 清该 sid 条目。
+   */
+  private readonly resizeOwners = new Map<string, ResizeOwner>()
+
+  /**
+   * P2-s3：per-session terminal scrollback ring buffer 池（spec §五）。
+   *
+   * 与 broker.sessionBuffers 物理隔离（D6）——两个独立 Map 实例 + 独立容量参数：
+   * - broker 桶：8MB，为带 seq 的 chat event 回放设计；terminal.data 被 D3 排除规则
+   *   挡在 broker 桶外（message-broker.ts broadcast 中 msg.type !== 'terminal.data'）。
+   * - 本桶：256KB（默认），为无 seq 的终端 scrollback 回灌设计；不维护 evictedWatermark，
+   *   不参与 seq 回放体系（D2：回灌消息不带 seq、不入 broker 桶）。
+   *
+   * 复用 SessionBuffer 类（双限 LRU 驱逐已验证），onEvict 传 no-op（terminal scrollback
+   * 无 watermark 概念，驱逐只需删数据，不需推进全局 watermark）。
+   *
+   * 桶数受 XYZ_AGENT_MAX_SESSIONS 上限保护——kill/destroyPty 调 clearScrollback 清桶。
+   */
+  private readonly scrollbacks = new Map<string, SessionBuffer>()
+
+  /**
+   * scrollback 字节上限（构造期一次性解析 env，与 broker.maxBytesPerSession 同模式）。
+   * env XYZ_AGENT_TERMINAL_SCROLLBACK_BYTES 覆盖默认 256KB。
+   */
+  private readonly scrollbackMaxBytes = Number(process.env.XYZ_AGENT_TERMINAL_SCROLLBACK_BYTES ?? DEFAULT_SCROLLBACK_MAX_BYTES)
 
   constructor(private deps: TerminalServiceDeps) {}
 
@@ -73,13 +177,20 @@ export class TerminalService implements ITerminalService {
       return
     }
 
+    // node-pty 缺失守卫：npm 全局安装无 build-essential 时加载失败，terminal 功能禁用。
+    // 抛 terminal_unavailable（错误码常量见 utils/errors.ts），不崩溃整个 runtime。
+    const ptyImpl = await loadPty()
+    if (!ptyImpl) {
+      throw terminalError(TERMINAL_UNAVAILABLE, 'node-pty not installed, terminal features disabled')
+    }
+
     const { shell, shellArgs } = this.resolveShell()
     const spawnCwd = cwd ?? process.cwd()
     console.log(`[terminal] spawn: sid=${sid} shell=${shell} cwd=${spawnCwd} cols=${cols} rows=${rows}`)
 
-    let proc: pty.IPty
+    let proc: import('node-pty').IPty
     try {
-      proc = pty.spawn(shell, shellArgs, {
+      proc = ptyImpl.spawn(shell, shellArgs, {
         name: 'xterm-256color',
         cols,
         rows,
@@ -94,13 +205,24 @@ export class TerminalService implements ITerminalService {
 
     this.ptyMap.set(sid, proc)
 
-    // PTY 输出 → 广播 terminal.data（高频流）
+    // PTY 输出 → 广播 terminal.data（高频流）+ 追加到 scrollback buffer（P2-s3）
     proc.onData((data) => {
-      this.deps.broadcast({
+      const msg: ServerMessage = {
         type: 'terminal.data',
         id: nextPushId(),
         payload: { sessionId: sid, data },
-      })
+      }
+      // 先广播保证实时性（broadcast 内部 stringify 打全局 seq）
+      this.deps.broadcast(msg)
+      // 再追加到 scrollback（D2：存不带 seq 的副本，回灌零再序列化）。
+      // 独立 stringify 一次（broadcast 不返回序列化产物，terminal-service 拿不到）；
+      // append 失败（理论不抛，JSON.stringify 扁平消息无环形引用风险）best-effort 不影响已广播。
+      try {
+        this.getOrCreateScrollback(sid).append(0, JSON.stringify(msg))
+      // eslint-disable-next-line taste/no-silent-catch -- scrollback 是 best-effort 历史缓存，失败不能影响实时 PTY 输出链路
+      } catch (e) {
+        console.error(`[terminal] scrollback append failed: sid=${sid}`, serializeError(e))
+      }
     })
 
     // PTY 退出 → 广播 terminal.exit + 清理 ptyMap
@@ -123,6 +245,11 @@ export class TerminalService implements ITerminalService {
   }
 
   write(sid: string, data: string): void {
+    // node-pty 加载失败守卫（spawn 已尝试且 pty=null 时 ptyMap 必空，抛错而非静默 no-op）。
+    // 未尝试加载时保持 no-op 契约（防 spawn 尚未就绪的竞态）。
+    if (ptyLoadAttempted && !pty) {
+      throw terminalError(TERMINAL_UNAVAILABLE, 'node-pty not installed, terminal features disabled')
+    }
     const proc = this.ptyMap.get(sid)
     if (!proc) return // no-op：PTY 未就绪或已退出（竞态安全）
     try {
@@ -133,9 +260,19 @@ export class TerminalService implements ITerminalService {
     }
   }
 
-  resize(sid: string, cols: number, rows: number): void {
+  resize(sid: string, cols: number, rows: number, clientId: string, ownerDevice: string): void {
+    if (ptyLoadAttempted && !pty) {
+      throw terminalError(TERMINAL_UNAVAILABLE, 'node-pty not installed, terminal features disabled')
+    }
     const proc = this.ptyMap.get(sid)
-    if (!proc) return
+    if (!proc) return // no-op：PTY 未就绪或已退出（不记录 owner——无 PTY 谈不上 resize）
+    // P6 D7 resize owner（先到先得）：已有 owner 且 clientId !== owner.clientId → 拒绝。
+    const existing = this.resizeOwners.get(sid)
+    if (existing && existing.clientId !== clientId) {
+      throw new ResizeLockedError(existing.clientId, existing.ownerDevice)
+    }
+    // 无 owner 或同 clientId → set/更新 owner（同 clientId 重复 resize 覆盖 ownerDevice，幂等）。
+    this.resizeOwners.set(sid, { clientId, ownerDevice })
     try {
       proc.resize(cols, rows)
     } catch (e) {
@@ -144,7 +281,23 @@ export class TerminalService implements ITerminalService {
     }
   }
 
+  /**
+   * P6 D7：清理某 clientId 持有的所有 session resize owner（onDisconnect 调用）。
+   * 遍历 resizeOwners 删 owner.clientId===clientId 的条目，释放崩溃/断开客户端持有的 resize 锁。
+   * session 数受 MAX_SESSIONS 上限（默认 10），O(N) 遍历无性能影响（无反向索引 clientId→sessions）。
+   */
+  clearResizeOwner(clientId: string): void {
+    for (const [sid, owner] of this.resizeOwners) {
+      if (owner.clientId === clientId) {
+        this.resizeOwners.delete(sid)
+      }
+    }
+  }
+
   kill(sid: string): void {
+    if (ptyLoadAttempted && !pty) {
+      throw terminalError(TERMINAL_UNAVAILABLE, 'node-pty not installed, terminal features disabled')
+    }
     const proc = this.ptyMap.get(sid)
     if (!proc) return
     try {
@@ -153,14 +306,47 @@ export class TerminalService implements ITerminalService {
       // best-effort：重复 kill 或进程已退出时抛错，onExit 回调幂等清理 ptyMap + 广播 terminal.exit
       console.error(`[terminal] kill failed: sid=${sid}`, serializeError(e))
     }
+    // P2-s3：kill 清除 scrollback（D4：用户主动 kill 视为放弃该 session 历史）。
+    // 注意 onExit 回调不调 clearScrollback（PTY 自然退出时保留 exit 前输出供重新 attach）。
+    this.clearScrollback(sid)
     // onExit 回调会清理 ptyMap + 广播 terminal.exit
   }
 
-  attach(_sid: string): void {
-    // 预留：流量控制（高频 terminal.data 拥塞时仅推活跃 sid）。当前 no-op。
+  /**
+   * 通知 PTY 当前有活跃视图并回灌该 session 的 scrollback 历史（spec §五 IF1）。
+   *
+   * P2-s3 实化：ws 传入且 readyState===OPEN 时，取该 session 的 scrollback buffer，
+   * 按 entries 升序逐条 ws.send(已序列化字符串)（D2：零再序列化）。
+   *
+   * 点对点（D3）：只投递给传入的 ws，不广播其他客户端（其他客户端未开该 tab）。
+   * 回灌消息形态同实时 terminal.data 但不带全局 seq、不入 broker session 桶。
+   *
+   * no-op 边界：ws 未传（兜底）/ 桶不存在（sid 无 PTY 输出）/ readyState 非 OPEN → 静默跳过。
+   * send 用 try/catch 守卫 TOCTOU（连接在 readyState 检查后、send 前关闭），单条失败跳过继续。
+   */
+  attach(sid: string, ws?: WsType): void {
+    if (!ws) return // ws undefined 兜底 no-op（保持向后兼容）
+    const buf = this.scrollbacks.get(sid)
+    if (!buf) return // 桶不存在（sid 从未 spawn 或已清除）no-op
+    // 逐条 ws.send：entries 已按 seq 升序（w1 append 顺序即升序），保 chunk 边界完整。
+    // readyState 守卫 + try/catch：WS_OPEN 挡绝大多数情况，残余 TOCTOU 由 catch 兜底。
+    for (const entry of buf.entries) {
+      if (ws.readyState !== WebSocket.OPEN) break // 连接已关闭，后续条目也无意义，提前退出
+      try {
+        ws.send(entry.data)
+      // eslint-disable-next-line taste/no-silent-catch -- 点对点回灌 best-effort，单条失败（TOCTOU 断连）跳过继续，attach 幂等可重试
+      } catch (e) {
+        console.error(`[terminal] scrollback replay send failed: sid=${sid}`, serializeError(e))
+      }
+    }
   }
 
   destroyPty(sid: string): void {
+    // 无 node-pty 缺失守卫：destroyPty 被 sessionService.setOnSessionDelete 回调调用
+    // （index.ts:343-346 removeSessionEntry → onSessionDelete → destroyPty），路径无 try/catch。
+    // 抛错会中断 session 删除/进程退出清理（session 文件终态缺失、前端收不到 session.exited）。
+    // 即便 ptyLoadAttempted=true 且 pty=null（node-pty 缺失），ptyMap 必空 → 下行 if (!proc) return 自然兜底，
+    // 保持 ports 契约「sid 无 PTY 时 no-op」。
     const proc = this.ptyMap.get(sid)
     if (!proc) return
     console.log(`[terminal] destroyPty (session delete): sid=${sid}`)
@@ -171,7 +357,49 @@ export class TerminalService implements ITerminalService {
       console.error(`[terminal] destroyPty kill failed: sid=${sid}`, serializeError(e))
     }
     this.ptyMap.delete(sid)
+    // P2-s3：session 销毁清除 scrollback（D4：session 已删，buffer 不该残留）。
+    this.clearScrollback(sid)
+    // P6 D7：session 销毁清该 sid 的 resize owner（PTY 没了，owner 无意义）。
+    this.resizeOwners.delete(sid)
     // session 销毁不广播 terminal.exit（前端已在 session.deleted 清理分区）
+  }
+
+  // ── P2-s3 terminal scrollback（spec §五） ──────────────────────────────────
+
+  /**
+   * 惰性取/建该 session 的 scrollback buffer（spec §五 IF3）。
+   *
+   * 首次 PTY onData 才建桶（session 无 PTY 输出不占内存）。onEvict 传 no-op：
+   * terminal scrollback 不维护 evictedWatermark（与 broker 不同——broker 用 onEvict
+   * 推进全局 watermark 做 seq 回放判定；scrollback 无 seq、不参与 seq 回放体系，D2）。
+   * 条数上限固定 DEFAULT_SCROLLBACK_MAX_COUNT，字节上限用构造期解析的 scrollbackMaxBytes。
+   */
+  private getOrCreateScrollback(sid: string): SessionBuffer {
+    let buf = this.scrollbacks.get(sid)
+    if (!buf) {
+      // onEvict no-op：scrollback 驱逐只需删数据，不需回调通知（无 watermark 概念）。
+      // eslint-disable-next-line @typescript-eslint/no-empty-function -- SessionBuffer 构造要求 onEvict 回调，scrollback 无需动作
+      buf = new SessionBuffer(DEFAULT_SCROLLBACK_MAX_COUNT, this.scrollbackMaxBytes, () => {})
+      this.scrollbacks.set(sid, buf)
+    }
+    return buf
+  }
+
+  /**
+   * 清除该 session 的 scrollback buffer（spec §五 IF3）。
+   * kill（用户主动 kill）和 destroyPty（session 销毁）调用；PTY onExit 不调用（D4）。
+   * 桶不存在时 Map.delete 是 no-op，不抛异常。
+   */
+  private clearScrollback(sid: string): void {
+    this.scrollbacks.delete(sid)
+  }
+
+  /**
+   * 返回该 session scrollback buffer 当前条数（只读测试钩子，spec §五 W1CT1）。
+   * 桶不存在返回 0。只暴露 size 不暴露内部 SessionBuffer 实例，避免测试耦合实现细节。
+   */
+  getScrollbackSize(sid: string): number {
+    return this.scrollbacks.get(sid)?.size ?? 0
   }
 
   /**

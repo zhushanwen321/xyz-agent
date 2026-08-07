@@ -18,14 +18,32 @@
  * - PTY 未活 → 入 pendingWrites，等 terminal.alive flush
  * 解决 TerminalView 首次打开时 spawn 异步、命令写入的时序问题。
  *
- * 依赖方向：useSessionScopedState + useSessionEvents + terminalApi（@/api）。
+ * [wave3 seq 回放去重] 重连清缓冲 + 重新 attach（spec §6.3 + §七改善表）：WS 重连后 server
+ * 全量回灌 terminal.data 会与断线前本地累积的 scrollback 重复显示。useTerminal setup 内 watch
+ * 全局重连信号（useReconnectEpoch），信号变化时：
+ *   1. 清当前 sid 分区 scrollback（保留 reactive 容器 + ptyAlive/cols/rows 不动）
+ *   2. 若该 session 的 terminal 处于活跃态（ptyAlive=true，即用户之前打开过 terminal 且 PTY
+ *      已 spawn）→ 重新 attachTerminal() 触发服务端回灌全量 scrollback（spec §6.3「重新 attach
+ *      → 服务端回灌全量」+ §七「重连后切到 terminal tab → attach 回灌补齐」）。
+ * 不无条件 attach：若用户未打开过 terminal tab（PTY 未 spawn），attach 会浪费资源（无对应
+ * PTY session，服务端 scrollback ring buffer 无关紧要）。判断依据 ptyAlive（PTY 是否存活）
+ * ——这是 TerminalView mount 后 spawn 成功的服务端反馈，是「terminal 确实被用户使用」的可靠信号。
+ * 信号由 useConnection 重连成功时 bumpReconnectEpoch 触发。
+ *
+ * 依赖方向：useSessionScopedState + useSessionEvents + terminalApi（@/api）
+ * + terminal-reconnect-signal（重连信号 watch）。
  * 必须在组件 setup 同步调用（依赖 useSessionEvents 的 onBeforeUnmount）。
  */
-import { reactive, type Ref } from 'vue'
+import { reactive, watch, type Ref } from 'vue'
 import { useSessionScopedState } from '@/composables/useSessionScopedState'
 import { useSessionEvents } from '@/composables/features/useSessionEvents'
 import { useTerminalWriteQueueStore } from '@/stores/terminal-write-queue'
 import { terminalApi } from '@/api/domains/terminal'
+import { useReconnectEpoch } from '@/lib/terminal-reconnect-signal'
+import { useToast } from '@/composables/useToast'
+import i18n from '@/i18n'
+
+const t = i18n.global.t
 
 /** terminal per-session 状态分区。reactive 容器（ADR-0036 契约）。 */
 interface TerminalPartition {
@@ -92,6 +110,38 @@ export function useTerminal(sessionIdRef: Ref<string | null>) {
     writeQueue.markExited(sid)
   })
 
+  /**
+   * 清指定 session 分区的 scrollback（wave3 P2-s4 IF5，spec §6.3）。
+   *
+   * splice(0) 清空数组保留 reactive 容器（下游 computed 依赖不丢）。不清 ptyAlive/cols/rows
+   *（这些是 PTY 状态非缓冲数据，重连后 PTY 重新 spawn 会重置）。
+   *
+   * 触发点：(1) 全局重连信号 watch（下方）—— WS 重连成功后清当前 sid 分区，防 server 回灌
+   * 与本地缓冲重复显示；(2) 测试直接调用断言。
+   */
+  function clearScrollback(sessionId: string): void {
+    state.updateFor(sessionId, (s) => {
+      s.scrollback.splice(0)
+    })
+  }
+
+  // wave3 P2-s4：watch 全局重连信号，重连成功时清当前 sid 分区 scrollback。
+  // 信号由 useConnection 重连成功（getState 非 connected→connected）bumpReconnectEpoch 触发。
+  // watch 跟随 setup 的 effect scope（组件卸载自动清理，与 useSessionEvents 同模式）。
+  watch(useReconnectEpoch(), () => {
+    const sid = sessionIdRef.value
+    if (!sid) return
+    clearScrollback(sid)
+    // 重新 attach 触发服务端回灌全量 scrollback（spec §6.3 + §七改善表）。
+    // 仅在该 session 的 terminal 活跃时 attach——ptyAlive=true 表示 PTY 已 spawn（TerminalView
+    // mount 后 spawn 成功的服务端反馈），是「terminal 确实被用户使用」的可靠信号。未打开过
+    // terminal tab 时 PTY 未 spawn，attach 无意义（无 PTY session 可回灌，浪费资源）。
+    // 注意：attachTerminal 读 sessionIdRef.value（即上方 sid），此处复用同一调用路径。
+    if (state.current.value.ptyAlive) {
+      attachTerminal()
+    }
+  })
+
   /** 创建 PTY（TerminalView mount 且 !ptyAlive 时调）。cwd 取 session.cwd。 */
   async function spawnTerminal(cwd: string | undefined, cols: number, rows: number): Promise<void> {
     const sid = sessionIdRef.value
@@ -109,12 +159,34 @@ export function useTerminal(sessionIdRef: Ref<string | null>) {
     void terminalApi.write(sid, data)
   }
 
-  /** 调整尺寸（xterm fit addon 触发）。 */
+  /**
+   * 调整尺寸（xterm fit addon 触发）。
+   *
+   * P6 D7 DoD #6：resize 被其它客户端持锁拒绝时提示用户。runtime reply
+   * error{code:'resize_locked', details:{detail:{owner, ownerDevice}}}，useConnection
+   * dispatcher 把 details.detail 对象展开到 reject 的 Error 上（enriched），故此处
+   * catch 到的 error 形如 { code:'resize_locked', owner, ownerDevice }。
+   * 消费 ownerDevice → toast「{device} 正在控制终端大小」（ownerDevice 为空串兜底通用文案）。
+   * 参考 P5 send.rejected busy toast 模式（useChat.ts）。
+   */
   function resizeTerminal(cols: number, rows: number): void {
     const sid = sessionIdRef.value
     if (!sid) return
     state.update((s) => { s.cols = cols; s.rows = rows })
-    void terminalApi.resize(sid, cols, rows)
+    void terminalApi.resize(sid, cols, rows).catch((e: unknown) => {
+      const err = e as { code?: string; ownerDevice?: string; message?: string }
+      if (err && err.code === 'resize_locked') {
+        const { warning } = useToast()
+        const device = typeof err.ownerDevice === 'string' && err.ownerDevice.length > 0
+          ? err.ownerDevice
+          : ''
+        warning(device
+          ? t('composable.resizeLocked', { device })
+          : t('composable.resizeLockedUnknown'))
+        return
+      }
+      // 其它错误（timeout / terminal_failed / ...）best-effort 不卡 UI（resize 是高频低风险操作）。
+    })
   }
 
   /** kill PTY（工具栏 kill 按钮）。 */

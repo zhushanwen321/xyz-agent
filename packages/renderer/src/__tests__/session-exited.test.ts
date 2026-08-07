@@ -42,10 +42,16 @@ vi.mock('@/lib/ws-client', () => ({
   getState: () => mockHolder.stateRef!,
   setRestarting: vi.fn(),
   setFailed: vi.fn(),
+  // wave3 P2-s4：syncSubscribedSessions（init 调）需 setSubscribedSessions 在 mock 中导出
+  setSubscribedSessions: vi.fn(),
   onMessage: vi.fn((cb: (msg: ServerMessage) => void) => {
     mockHolder.routeHandler = cb
     return () => { mockHolder.routeHandler = null }
   }),
+}))
+// wave3 P2-s4：syncSubscribedSessions（init 调）读 usePanelStore().panels，需 mock 避免无 active pinia。
+vi.mock('@/stores/panel', () => ({
+  usePanelStore: () => ({ panels: [], activePanelId: 'root', focusedSessionId: null }),
 }))
 
 vi.mock('@/lib/ipc', () => ({

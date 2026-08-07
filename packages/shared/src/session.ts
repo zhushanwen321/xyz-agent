@@ -61,6 +61,13 @@ export interface SessionSummary {
   /** 上次 merge 时间（占位，痛点2 基础层）。 */
   lastMergedAt?: number
   /**
+   * P5 lease：持有 lease 的 clientId（无 lease 时 undefined）。toSummary 从 IManagedSessionView 透传
+   * （与 isBareWorkspace 透传范式一致），冷启动 config.sessions 段带 lease 状态。审查 M1：无 leaseFence。
+   */
+  busyOwnerId?: string
+  /** P5 lease：lease TTL 到期时间（unix ms，无 lease 时 undefined）。toSummary 透传。 */
+  leaseExpiresAt?: number
+  /**
    * session 创建时锁定的预设 ID。
    *
    * 持久化在独立 sidecar `<sessionFile>.preset.json`（不是 .meta.json——.meta.json 是

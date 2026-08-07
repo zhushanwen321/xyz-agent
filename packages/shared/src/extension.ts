@@ -24,6 +24,24 @@ export const EXTENSION_EVENTS = {
  */
 export type ExtensionInteractMethod = 'confirm' | 'select' | 'input' | 'editor'
 
+/**
+ * 跨 session 聚合的 pending UI 请求（initial state 第 14 段 payload 元素 + renderer 消费）。
+ *
+ * 与 runtime PendingUIRequest 同构（runtime 专有类型，shared 下沉副本——字段契约一致，
+ * 避免 shared→runtime 运行时依赖）。runtime 侧保留独立 PendingUIRequest 定义，
+ * 本类型是新 ServerMessageType extension.pendingRequestsBatch 的契约。
+ *
+ * 字段来源：runtime cachePendingRequest 写入的 5 字段。method 是 pi extension interact method
+ * （confirm/select/input/editor/ask-user），payload 形状随 method 变（前端按 method 收窄解包）。
+ */
+export interface PendingUiRequest {
+  requestId: string
+  sessionId: string
+  method: string
+  payload: Record<string, unknown>
+  receivedAt: number
+}
+
 export interface ExtensionInfo {
   name: string
   /** 展示用名称（UI 渲染）。有 package.json 时 = name；无 package.json 的 discovery 入口智能推导
