@@ -83,13 +83,16 @@ export function previewImport(
   // 冲突检测：读现有 models.json provider ids
   const existingIds = new Set(getProviderNames())
 
-  // 构造脱敏 preview（关键：不含 apiKey 值，只留 apiKeyExtracted 布尔）
+  // 构造脱敏 preview（关键：不含 apiKey 值，只留 apiKeyExtracted 布尔 + credentialType 五态）
   const items: ProviderPreviewItem[] = parsed.providers.map((p) => ({
     id: p._sourceName,
     name: p._sourceName,
     protocol: p.api ?? 'unknown',
     modelCount: p.models?.length ?? 0,
+    // parser 已按 credentialType 计算 _apiKeyExtracted（computed：plaintext/env/command 时 true），直接透传
     apiKeyExtracted: p._apiKeyExtracted,
+    credentialType: p._credentialType,
+    ...(p._envVarName !== undefined ? { envVarName: p._envVarName } : {}),
     conflict: existingIds.has(p._sourceName) ? 'duplicate-id' : 'none',
     warnings: p._warnings,
   }))
@@ -157,7 +160,7 @@ export function applyImport(importId: string, selectedIds: string[]): ApplyImpor
 
     try {
       // 剥离 _ 前缀元数据（对象解构，剩余即干净的 PiProviderConfig）
-      const { _sourceName, _apiKeyExtracted, _warnings, ...piConfig } = provider
+      const { _sourceName, _apiKeyExtracted, _credentialType, _envVarName, _warnings, ...piConfig } = provider
       upsertProvider(_sourceName, piConfig)
       imported.push({ id: _sourceName, name: _sourceName, status: 'imported' })
     } catch (e) {

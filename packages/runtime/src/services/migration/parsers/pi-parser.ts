@@ -21,11 +21,27 @@ import type { PiProviderConfig, PiModelsConfig } from '../../../infra/pi/pi-prov
 import type { ParseResult, ParsedProvider } from '../provider-parser.js'
 
 /**
- * Pi auth.json 形状：providerId → { type, key（明文）}。
- * type 通常是 'api_key' / 'oauth' 等，这里不消费，只取 key。
+ * Pi auth.json 形状：providerId → 凭据条目。
+ *
+ * type 通常为 'api_key' / 'oauth' / 'env'（wave 4 import-credential-types 起开始消费 type 决定凭据形态）。
+ * - api_key：key 为明文 / $VAR 占位 / !command 前缀 / ${VAR} 占位。
+ * - oauth：token + refreshToken（Phase 1 不支持，warnings 提示 Phase 2）。
+ * - env：env 包（env: { VAR: 'value' }），Phase 1 不支持落盘，apiKey 不写。
  */
 interface PiAuthJson {
-  [providerId: string]: { type?: string; key?: string }
+  [providerId: string]: {
+    type?: 'api_key' | 'oauth' | 'env'
+    /** 明文 key / $VAR 占位 / ${VAR} 占位 / !command 前缀。 */
+    key?: string
+    /** env 包：{ VAR: 'value' }，Phase 1 不支持（不落盘 models.json）。 */
+    env?: Record<string, string>
+    /** OAuth access token（type==='oauth'）。Phase 1 不取。 */
+    token?: string
+    /** OAuth refresh token（type==='oauth'）。Phase 1 不取。 */
+    refreshToken?: string
+    /** OAuth token 过期时间戳（ms，type==='oauth'）。Phase 1 不取。 */
+    expires?: number
+  }
 }
 
 /** pi 支持的终值协议（与 pi-provider-store 注释对齐）。 */
@@ -107,16 +123,58 @@ export function parsePiProviders(homeDir: string): ParseResult | null {
         continue
       }
 
-      // auth.json 合并：若 authData 有对应 key 则填入（优先于 models.json 的 apiKey）
+      // auth.json 合并 + 凭据三态识别（wave 4 import-credential-types）
+      // WC1：替换单行 `apiKey = authEntry?.key ?? config.apiKey` 为五态分支。
+      //   优先级：env 包 > oauth > !command > $ENV > plaintext > missing
+      //   （env 包 / oauth 不落盘 apiKey，避免 models.json 落盘后 resolveConfigValueOrThrow 硬抛错）
       const authEntry = authData[providerId]
-      const apiKey = authEntry?.key ?? config.apiKey
-      const apiKeyExtracted = !!apiKey
+      const rawKey = authEntry?.key ?? config.apiKey
+      const hasEnvBundle = authEntry?.env != null && typeof authEntry.env === 'object' && Object.keys(authEntry.env).length > 0
+      const isOauth = authEntry?.type === 'oauth' || (!authEntry?.key && !!authEntry?.token)
+
+      let credentialType: 'plaintext' | 'env' | 'missing' | 'oauth' | 'command'
+      let envVarName: string | undefined
+      let apiKey: string | undefined
+
+      if (hasEnvBundle) {
+        // env 包凭据：Phase 1 不支持落盘，apiKey 不写（undefined），避免 pi 运行时 resolveConfigValueOrThrow 硬抛错
+        credentialType = 'missing'
+        warnings.push(`provider ${providerId}: env bundle credentials not supported in Phase 1, apiKey omitted (will be supported in Phase 2)`)
+      } else if (isOauth) {
+        // OAuth 凭据：Phase 1 不支持，不取 token 作 apiKey（token 不是 api_key 语义）
+        credentialType = 'oauth'
+        warnings.push(`provider ${providerId}: OAuth credentials, apiKey not extracted (OAuth support planned for Phase 2)`)
+      } else if (rawKey) {
+        // 有 key：按前缀判 plaintext / env($VAR/${VAR}) / command(!)
+        // 边界：同时 $ 和 ! → 优先 command（更危险保守判定）
+        if (rawKey.startsWith('!')) {
+          credentialType = 'command'
+          apiKey = rawKey // 保留原样，pi 运行时执行 shell 命令取值
+          warnings.push(`provider ${providerId}: apiKey starts with '!' — pi executes this as a shell command at runtime (command injection surface), imported as-is`)
+        } else if (rawKey.startsWith('$')) {
+          credentialType = 'env'
+          apiKey = rawKey // 保留原占位串（pi 运行时解析 $VAR / ${VAR}）
+          envVarName = rawKey.startsWith('${') ? rawKey.replace(/^\$\{/, '').replace(/\}$/, '') : rawKey.replace(/^\$/, '')
+          warnings.push(`provider ${providerId}: apiKey is an env var reference (${rawKey}) — ensure ${envVarName} is set in the environment after import`)
+        } else {
+          credentialType = 'plaintext'
+          apiKey = rawKey
+        }
+      } else {
+        // 无 authEntry 且无 config.apiKey：无任何 key 线索
+        credentialType = 'missing'
+      }
+
+      // computed：plaintext/env/command = 已拿到可用凭据（落盘可用 / 运行时读环境变量）；missing/oauth = 需手填或 Phase 2
+      const apiKeyExtracted = credentialType === 'plaintext' || credentialType === 'env' || credentialType === 'command'
 
       providers.push({
         ...config,
         apiKey,
         _sourceName: providerId,
         _apiKeyExtracted: apiKeyExtracted,
+        _credentialType: credentialType,
+        ...(envVarName !== undefined ? { _envVarName: envVarName } : {}),
         _warnings: warnings,
       })
     } catch (e) {

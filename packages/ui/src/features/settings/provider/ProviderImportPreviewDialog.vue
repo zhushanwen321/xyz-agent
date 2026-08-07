@@ -9,7 +9,7 @@
  * - selected 用 Set<id>：默认勾选 conflict='none' 的项，冲突项默认不勾。
  * - watch(preview) 重置 selected（每次新 preview 进来都重新初始化默认勾选）。
  * - 冲突项 Checkbox 禁用（已存在同名，导入必然 skipped）。
- * - apiKeyExtracted=false 显示 key 警告图标；warnings 非空用 div toggle 展开。
+ * - credentialType 多态徽章：plaintext 不显 / env 蓝「$ENV」/ missing 橙「需手填」/ oauth 灰「OAuth·Phase2」/ command 红「!命令」；warnings 非空用 div toggle 展开。
  *
  * 复用 xyz-ui 的 Dialog/Checkbox/Button，禁止原生 form 元素。
  */
@@ -85,7 +85,8 @@ function toggleWarnings(id: string): void {
 // ── 统计（底部摘要）──
 const statImportable = computed(() => props.preview?.providers.filter((p) => p.conflict === 'none').length ?? 0)
 const statConflict = computed(() => props.preview?.providers.filter((p) => p.conflict === 'duplicate-id').length ?? 0)
-const statKeyMissing = computed(() => props.preview?.providers.filter((p) => !p.apiKeyExtracted).length ?? 0)
+const statKeyMissing = computed(() => props.preview?.providers.filter((p) => p.credentialType === 'missing').length ?? 0)
+const statEnvCount = computed(() => props.preview?.providers.filter((p) => p.credentialType === 'env').length ?? 0)
 
 /** 是否有可确认的勾选（≥1 选中且非 applying） */
 const canConfirm = computed(() => selected.value.size > 0 && !props.loading)
@@ -176,15 +177,33 @@ function sourceLabel(source: string): string {
             <span class="rounded-sm bg-surface px-1.5 py-0.5 text-[10px] text-neutral-mid">{{ p.protocol }}</span>
             <span class="text-neutral-dim">{{ t('settings.provider.modelsCount', { count: p.modelCount }) }}</span>
 
-            <!-- API Key 未提取警告 -->
+            <!-- 凭据形态徽章（wave 4 import-credential-types）：plaintext 不渲染，其余四态多态徽章 -->
             <span
-              v-if="!p.apiKeyExtracted"
-              data-testid="key-warning"
-              class="flex items-center gap-0.5 text-warn"
+              v-if="p.credentialType === 'env'"
+              data-testid="credential-badge-env"
+              class="rounded-sm bg-info-soft px-1.5 py-0.5 text-[10px] text-info"
+              :title="t('settings.provider.importPreview.credentialEnvHint', { var: p.envVarName })"
+            >$ENV</span>
+            <span
+              v-else-if="p.credentialType === 'missing'"
+              data-testid="credential-badge-missing"
+              class="flex items-center gap-0.5 rounded-sm bg-warn-soft px-1.5 py-0.5 text-[10px] text-warn"
               :title="t('settings.provider.importPreview.keyNotExtracted')"
             >
-              <KeyRound class="size-3.5" />
+              <KeyRound class="size-3" />
+              {{ t('settings.provider.importPreview.credentialMissing') }}
             </span>
+            <span
+              v-else-if="p.credentialType === 'oauth'"
+              data-testid="credential-badge-oauth"
+              class="rounded-sm bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent-fg"
+            >{{ t('settings.provider.importPreview.credentialOauth') }}</span>
+            <span
+              v-else-if="p.credentialType === 'command'"
+              data-testid="credential-badge-command"
+              class="rounded-sm bg-danger-soft px-1.5 py-0.5 text-[10px] text-danger"
+              :title="t('settings.provider.importPreview.credentialCommandHint')"
+            >{{ t('settings.provider.importPreview.credentialCommand') }}</span>
 
             <!-- 冲突标记 -->
             <span
@@ -219,6 +238,7 @@ function sourceLabel(source: string): string {
           <span>{{ t('settings.provider.importPreview.statImportable', { count: statImportable }) }}</span>
           <span>{{ t('settings.provider.importPreview.statConflict', { count: statConflict }) }}</span>
           <span>{{ t('settings.provider.importPreview.statKeyMissing', { count: statKeyMissing }) }}</span>
+          <span v-if="statEnvCount > 0">{{ t('settings.provider.importPreview.statEnvCount', { count: statEnvCount }) }}</span>
         </div>
         </div>
       </template>

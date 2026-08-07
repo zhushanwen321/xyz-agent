@@ -27,7 +27,7 @@ const PREVIEW: ProviderImportPreview = {
   providers: [
     {
       id: 'openai', name: 'OpenAI', protocol: 'openai-completions', modelCount: 3,
-      apiKeyExtracted: true, conflict: 'none', warnings: [],
+      apiKeyExtracted: true, credentialType: 'plaintext', conflict: 'none', warnings: [],
     },
   ],
 }

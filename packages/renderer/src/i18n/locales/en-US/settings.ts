@@ -131,6 +131,13 @@ export default {
       statImportable: '{count} importable',
       statConflict: '{count} conflict',
       statKeyMissing: '{count} key missing',
+      // wave 4 import-credential-types: credential-type badge labels
+      statEnvCount: '{count} env var',
+      credentialEnvHint: 'Env var reference: ensure ${var} is set after import',
+      credentialMissing: 'Manual key',
+      credentialOauth: 'OAuth·Phase2',
+      credentialCommand: '!Command',
+      credentialCommandHint: 'apiKey starts with !, pi runs it as a shell command at runtime (injection surface)',
       warnings: 'Warnings',
       // B2/W7: source config parse-time fatal error banner (preview?.parseError; does not block import of parsed providers)
       parseError: 'Source config parse error (some providers may still be importable): {message}',
@@ -141,6 +148,9 @@ export default {
       success: 'Imported {count} providers',
       failed: '{count} failed to import',
       partialKeyMissing: 'Some providers need manual API Key',
+      // wave 4 import-credential-types: credential-type post-import hints
+      envVarNeeded: '{count} provider(s) use env vars, ensure they are set',
+      oauthSkipped: '{count} OAuth credential(s) unsupported (Phase 2)',
     },
     // ── Built-in provider templates (wave 3 builtin-provider-ui) ──
     addCustom: '+ Custom',

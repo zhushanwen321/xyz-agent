@@ -131,6 +131,13 @@ export default {
       statImportable: '{count} 个可导入',
       statConflict: '{count} 个冲突',
       statKeyMissing: '{count} 个 key 未提取',
+      // wave 4 import-credential-types：凭据形态多态徽章文案
+      statEnvCount: '{count} 个 $ENV',
+      credentialEnvHint: '环境变量引用：导入后请确保 ${var} 已设置',
+      credentialMissing: '需手填',
+      credentialOauth: 'OAuth·Phase2',
+      credentialCommand: '!命令',
+      credentialCommandHint: 'apiKey 以 ! 开头，pi 运行时执行 shell 命令取值（命令注入面）',
       warnings: '警告',
       // B2/W7：源配置解析期致命错误横幅（preview?.parseError 触发，不阻断已解析 providers 导入）
       parseError: '源配置解析出错（部分 provider 可能仍可导入）：{message}',
@@ -141,6 +148,9 @@ export default {
       success: '导入 {count} 个 provider',
       failed: '{count} 个导入失败',
       partialKeyMissing: '部分 provider 需手动补 API Key',
+      // wave 4 import-credential-types：凭据形态分类提示
+      envVarNeeded: '{count} 个 provider 使用环境变量，请确保已设置',
+      oauthSkipped: '{count} 个 OAuth 凭据暂不支持（Phase 2）',
     },
     // ── 内置 provider 模板（wave 3 builtin-provider-ui）──
     addCustom: '+ 自定义',

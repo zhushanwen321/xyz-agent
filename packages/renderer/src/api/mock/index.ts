@@ -827,6 +827,7 @@ export const config = {
         protocol: 'openai-completions',
         modelCount: 1,
         apiKeyExtracted: true,
+        credentialType: 'plaintext',
         conflict: 'none',
         warnings: [],
       }],

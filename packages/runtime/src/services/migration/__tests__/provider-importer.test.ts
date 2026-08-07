@@ -44,6 +44,7 @@ function fp(overrides: Partial<ParsedProvider> = {}): ParsedProvider {
   return {
     _sourceName: 'p1',
     _apiKeyExtracted: true,
+    _credentialType: 'plaintext',
     _warnings: [],
     api: 'anthropic-messages',
     baseUrl: 'https://example.com',
@@ -325,5 +326,47 @@ describe('provider-importer', () => {
     if ('error' in out) {
       expect(out.error.code).toBe('INVALID_REQUEST')
     }
+  })
+
+  // ── wave 4 import-credential-types：_credentialType/_envVarName → ProviderPreviewItem 映射（t6）──
+  it('wave4-t6: previewImport 映射 _credentialType/_envVarName → ProviderPreviewItem + apiKeyExtracted computed', () => {
+    vi.mocked(parseProviders).mockReturnValue(
+      result([
+        fp({ _sourceName: 'plain', _credentialType: 'plaintext' }),
+        fp({ _sourceName: 'envp', _credentialType: 'env', _envVarName: 'MY_VAR', apiKey: '$MY_VAR' }),
+        fp({ _sourceName: 'miss', _credentialType: 'missing', _apiKeyExtracted: false, apiKey: undefined }),
+        fp({ _sourceName: 'oau', _credentialType: 'oauth', _apiKeyExtracted: false, apiKey: undefined }),
+        fp({ _sourceName: 'cmd', _credentialType: 'command', apiKey: '!op read xxx' }),
+      ]),
+    )
+
+    const out = previewImport('pi')
+    if (!('preview' in out)) throw new Error('preview should succeed')
+    const byId = Object.fromEntries(out.preview.providers.map((p) => [p.id, p]))
+
+    // credentialType 逐态映射
+    expect(byId.plain.credentialType).toBe('plaintext')
+    expect(byId.envp.credentialType).toBe('env')
+    expect(byId.miss.credentialType).toBe('missing')
+    expect(byId.oau.credentialType).toBe('oauth')
+    expect(byId.cmd.credentialType).toBe('command')
+
+    // envVarName 仅 env 态有值
+    expect(byId.envp.envVarName).toBe('MY_VAR')
+    expect(byId.plain.envVarName).toBeUndefined()
+    expect(byId.cmd.envVarName).toBeUndefined()
+
+    // apiKeyExtracted computed（parser 已算好，importer 透传）：plaintext/env/command=true，missing/oauth=false
+    expect(byId.plain.apiKeyExtracted).toBe(true)
+    expect(byId.envp.apiKeyExtracted).toBe(true)
+    expect(byId.cmd.apiKeyExtracted).toBe(true)
+    expect(byId.miss.apiKeyExtracted).toBe(false)
+    expect(byId.oau.apiKeyExtracted).toBe(false)
+
+    // 脱敏红线：apiKey 明文 / !command / $ENV 占位串都不进 preview 序列化
+    const serialized = JSON.stringify(out)
+    expect(serialized).not.toContain('sk-real-key-123')
+    expect(serialized).not.toContain('!op read xxx')
+    expect(serialized).not.toContain('$MY_VAR')
   })
 })

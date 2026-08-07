@@ -44,6 +44,7 @@ function fakeResult(tag: string): ParseResult {
       {
         _sourceName: tag,
         _apiKeyExtracted: false,
+        _credentialType: 'missing',
         _warnings: [],
         api: 'openai-completions',
         models: [{ id: 'm', name: 'm' }],

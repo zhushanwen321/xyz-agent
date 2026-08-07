@@ -11,10 +11,8 @@
  *
  * ParsedProvider 结构：
  *   - 继承 PiProviderConfig（models.json provider 配置形状，含 apiKey 明文）。
- *   - 加 3 个 _ 前缀元数据字段（apply 时剥离，不写 models.json）：
- *     - _sourceName：源里的 provider 名（导入后作为 xyz-agent models.json 的 provider id）。
- *     - _apiKeyExtracted：是否成功提取 apiKey（脱敏布尔，preview 用）。
- *     - _warnings：解析期警告（preview 展示）。
+ *   - 加 5 个 _ 前缀元数据字段（apply 时剥离，不写 models.json）：_sourceName / _apiKeyExtracted /
+ *     _credentialType / _envVarName / _warnings（字段语义详见下方 ParsedProvider 接口 JSDoc）。
  */
 import type { ProviderSource } from '@xyz-agent/shared'
 import type { PiProviderConfig } from '../../infra/pi/pi-provider-store.js'
@@ -30,14 +28,24 @@ import { parseClaudeProviders as parseClaudeProvidersImpl } from './parsers/clau
  * 解析后的单个 provider（含元数据）。
  *
  * extends PiProviderConfig 以便 apply 时直接透传给 upsertProvider（剥离 _ 字段后）。
- * 三个 _ 前缀字段是 runtime 内部元数据，apply 时解构剥离，不写 models.json。
+ * _ 前缀字段是 runtime 内部元数据，apply 时解构剥离，不写 models.json。
  */
 export interface ParsedProvider extends PiProviderConfig {
   /** 源里的 provider 名（如 Pi 的 'deepseek-router'），导入后作 xyz-agent models.json 的 provider id。 */
   _sourceName: string
-  /** 源里是否成功提取到 apiKey 明文（脱敏布尔，preview 用；apply 时 apiKey 字段照原样写）。 */
+  /** computed 布尔：_credentialType ∈ plaintext/env/command 时 true（脱敏布尔，preview 用）。 */
   _apiKeyExtracted: boolean
-  /** 解析期警告（如「env_key 未设置」「key 加密无法提取」），preview 逐条展示。 */
+  /** 凭据形态五态（wave 4 import-credential-types，真相源）：
+   * - plaintext：明文 key 已提取。
+   * - env：$VAR / ${VAR} 占位，_envVarName 记变量名。
+   * - command：!command 前缀（shell 命令取值，命令注入面）。
+   * - oauth：type==='oauth'，Phase 1 不支持。
+   * - missing：env 包凭据或无 key 线索，apiKey 不写。
+   */
+  _credentialType: 'plaintext' | 'env' | 'missing' | 'oauth' | 'command'
+  /** _credentialType==='env' 时的环境变量名（已去 $ / ${} 前缀），其他态为 undefined。 */
+  _envVarName?: string
+  /** 解析期警告（如「env_key 未设置」「!command 命令注入」「OAuth Phase 2」），preview 逐条展示。 */
   _warnings: string[]
 }
 

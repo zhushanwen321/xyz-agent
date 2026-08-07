@@ -162,6 +162,8 @@ export function parseCodexProviders(homeDir: string): ParseResult | null {
         models,
         _sourceName: id,
         _apiKeyExtracted: apiKeyExtracted,
+        // wave 4：codex 源暂只识别 plaintext/missing 二态（$ENV/!command/oauth 留给后续 wave）
+        _credentialType: apiKey ? 'plaintext' : 'missing',
         _warnings: warnings,
       })
     } catch (e) {

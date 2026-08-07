@@ -228,4 +228,93 @@ describe('parsePiProviders', () => {
     expect(result!.warnings).toBeDefined()
     expect(result!.warnings!.some((w) => w.includes('unknown protocol some-unknown-protocol'))).toBe(true)
   })
+
+  // ══ wave 4 import-credential-types：credential 三态识别（t1-t5）══
+  // 五场景覆盖 pi-parser authEntry 五态分支：plaintext / env($VAR,${VAR}) / missing(env 包) / oauth / command(!)
+
+  it('wave4-t1: auth.json {type:api_key, key:明文} → _credentialType=plaintext', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: { openai: { name: 'OpenAI', api: 'openai-completions', models: [{ id: 'gpt-4', name: 'GPT-4' }] } },
+    }))
+    writePiAgentFile('auth.json', JSON.stringify({ openai: { type: 'api_key', key: 'sk-plain-xxx' } }))
+
+    const result = parsePiProviders(home)!
+    const p = result.providers.find((x) => x._sourceName === 'openai')!
+    expect(p._credentialType).toBe('plaintext')
+    expect(p.apiKey).toBe('sk-plain-xxx')
+    expect(p._apiKeyExtracted).toBe(true)
+    expect(p._envVarName).toBeUndefined()
+  })
+
+  it('wave4-t2: auth.json key=$VAR / ${VAR} → _credentialType=env + _envVarName 去前缀', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: {
+        openai: { name: 'OpenAI', api: 'openai-completions', models: [{ id: 'gpt-4', name: 'GPT-4' }] },
+        openai2: { name: 'OpenAI2', api: 'openai-completions', models: [{ id: 'gpt-4o', name: 'GPT-4o' }] },
+      },
+    }))
+    writePiAgentFile('auth.json', JSON.stringify({
+      openai: { type: 'api_key', key: '$OPENAI_API_KEY' },
+      openai2: { type: 'api_key', key: '${OPENAI_API_KEY_BRACE}' },
+    }))
+
+    const result = parsePiProviders(home)!
+    const p1 = result.providers.find((x) => x._sourceName === 'openai')!
+    expect(p1._credentialType).toBe('env')
+    expect(p1._envVarName).toBe('OPENAI_API_KEY')
+    expect(p1.apiKey).toBe('$OPENAI_API_KEY') // 保留原占位串
+    expect(p1._apiKeyExtracted).toBe(true)
+
+    const p2 = result.providers.find((x) => x._sourceName === 'openai2')!
+    expect(p2._credentialType).toBe('env')
+    expect(p2._envVarName).toBe('OPENAI_API_KEY_BRACE') // ${VAR} → VAR
+    expect(p2.apiKey).toBe('${OPENAI_API_KEY_BRACE}')
+    expect(p2._apiKeyExtracted).toBe(true)
+  })
+
+  it('wave4-t3: auth.json env 包 → _credentialType=missing + apiKey 不写 + warning', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: { deepseek: { name: 'DeepSeek', api: 'openai-completions', models: [{ id: 'ds', name: 'DS' }] } },
+    }))
+    writePiAgentFile('auth.json', JSON.stringify({
+      deepseek: { type: 'api_key', key: '$DEEPSEEK_API_KEY', env: { DEEPSEEK_API_KEY: 'sk-real-from-bundle' } },
+    }))
+
+    const result = parsePiProviders(home)!
+    const p = result.providers.find((x) => x._sourceName === 'deepseek')!
+    expect(p._credentialType).toBe('missing') // env 包优先于 $ENV key
+    expect(p.apiKey).toBeUndefined() // 不落盘，避免 resolveConfigValueOrThrow 硬抛错
+    expect(p._apiKeyExtracted).toBe(false)
+    expect(p._warnings.some((w) => w.includes('env bundle') && w.includes('Phase 1'))).toBe(true)
+  })
+
+  it('wave4-t4: auth.json type=oauth → _credentialType=oauth + 不取 token + warning', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: { 'github-copilot': { name: 'Copilot', api: 'openai-completions', models: [{ id: 'c', name: 'C' }] } },
+    }))
+    writePiAgentFile('auth.json', JSON.stringify({
+      'github-copilot': { type: 'oauth', token: 'tok-xxx', refreshToken: 'ref-yyy', expires: 1234567890 },
+    }))
+
+    const result = parsePiProviders(home)!
+    const p = result.providers.find((x) => x._sourceName === 'github-copilot')!
+    expect(p._credentialType).toBe('oauth')
+    expect(p.apiKey).toBeUndefined() // 不取 token 作 apiKey
+    expect(p._apiKeyExtracted).toBe(false)
+    expect(p._warnings.some((w) => w.includes('OAuth') && w.includes('Phase 2'))).toBe(true)
+  })
+
+  it('wave4-t5: auth.json key=!command → _credentialType=command + apiKey 保留 + warning', () => {
+    writePiAgentFile('models.json', JSON.stringify({
+      providers: { openai: { name: 'OpenAI', api: 'openai-completions', models: [{ id: 'gpt-4', name: 'GPT-4' }] } },
+    }))
+    writePiAgentFile('auth.json', JSON.stringify({ openai: { type: 'api_key', key: '!op read xxx' } }))
+
+    const result = parsePiProviders(home)!
+    const p = result.providers.find((x) => x._sourceName === 'openai')!
+    expect(p._credentialType).toBe('command')
+    expect(p.apiKey).toBe('!op read xxx') // 保留原样，pi 运行时执行 shell 命令
+    expect(p._apiKeyExtracted).toBe(true)
+    expect(p._warnings.some((w) => w.includes('!') && w.includes('shell command'))).toBe(true)
+  })
 })

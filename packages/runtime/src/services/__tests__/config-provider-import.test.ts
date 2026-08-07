@@ -83,6 +83,7 @@ describe('config.previewImportProviders / config.applyImportProviders WS round-t
           protocol: 'anthropic-messages',
           modelCount: 2,
           apiKeyExtracted: true,
+          credentialType: 'plaintext',
           conflict: 'none',
           warnings: [],
         },

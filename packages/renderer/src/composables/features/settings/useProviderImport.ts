@@ -84,12 +84,20 @@ export function useProviderImport() {
       if (failedCount > 0) {
         toastError(t('settings.provider.importToast.failed', { count: failedCount }))
       }
-      // 若有 key 未提取的导入项，额外提示需手动补
-      const keyMissing = importPreview.value?.providers.some(
-        (p) => selectedIds.includes(p.id) && !p.apiKeyExtracted,
-      )
-      if (keyMissing) {
+      // wave 4 import-credential-types：分类提示选中 provider 的凭据形态
+      // - missing：apiKey 空，需手填；env：$ENV 引用，需确保环境变量已设；oauth：Phase 2 跳过
+      const selectedProviders = importPreview.value?.providers.filter((p) => selectedIds.includes(p.id)) ?? []
+      const missingCount = selectedProviders.filter((p) => p.credentialType === 'missing').length
+      const envCount = selectedProviders.filter((p) => p.credentialType === 'env').length
+      const oauthCount = selectedProviders.filter((p) => p.credentialType === 'oauth').length
+      if (missingCount > 0) {
         toastInfo(t('settings.provider.importToast.partialKeyMissing'))
+      }
+      if (envCount > 0) {
+        toastInfo(t('settings.provider.importToast.envVarNeeded', { count: envCount }))
+      }
+      if (oauthCount > 0) {
+        toastInfo(t('settings.provider.importToast.oauthSkipped', { count: oauthCount }))
       }
       resetImportState()
     } catch (e) {

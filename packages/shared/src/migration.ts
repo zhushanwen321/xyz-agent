@@ -57,10 +57,18 @@ export interface SourceDetectResult {
  * - id/name：源里的 provider 标识（导入后作为 xyz-agent models.json 的 provider id）。
  * - protocol：pi api 终值（anthropic-messages / openai-completions / ...），前端展示用。
  * - modelCount：解析出的 model 数量。
- * - apiKeyExtracted：源里是否成功提取到 apiKey 明文。false 时导入后 provider.apiKey 为空，
- *   需用户手动填（前端据此提示）。
+ * - apiKeyExtracted：**computed 布尔**，credentialType ∈ plaintext/env/command 时 true（已拿到可用凭据，
+ *   落盘 models.json 后开箱可用或运行时读环境变量），missing/oauth 时 false（需手填或 Phase 2 跳过）。
+ *   保留布尔字段兼容现有消费方「是否需提示用户补 key」的判断；credentialType 是更细粒度的真相源。
+ * - credentialType：凭据形态五态（import-credential-types wave 4 新增，解析器按 auth.json 条目识别）：
+ *     - plaintext：明文 API key 已提取（apiKey 字段有值，开箱可用）。
+ *     - env：key 是 $VAR / ${VAR} 占位，apiKey 保留原占位串，envVarName 记录变量名（导入后需确保该环境变量已设）。
+ *     - command：key 是 !command 前缀（pi 运行时执行 shell 命令取值），apiKey 保留原串，warnings 含命令注入提示。
+ *     - oauth：type==='oauth'，Phase 1 不支持，apiKey 不取 token，warnings 含 Phase 2 提示。
+ *     - missing：env 包凭据或无任何 key 线索，apiKey 不写（undefined），warnings 含原因。
+ * - envVarName：credentialType==='env' 时的环境变量名（已去 $ / ${} 前缀），其他态为 undefined。
  * - conflict：与现有 models.json provider id 的冲突。'duplicate-id' = 已存在同名 provider。
- * - warnings：解析期警告（如「env_key 未设置」「key 加密无法提取」），前端逐条展示。
+ * - warnings：解析期警告（如「env_key 未设置」「!command 命令注入」「OAuth Phase 2」），前端逐条展示。
  */
 export interface ProviderPreviewItem {
   id: string
@@ -68,8 +76,12 @@ export interface ProviderPreviewItem {
   /** pi api 终值（anthropic-messages / openai-completions / ...）。 */
   protocol: string
   modelCount: number
-  /** 源里是否成功提取到 apiKey 明文（脱敏：只有布尔，无 key 值）。 */
+  /** computed 布尔：credentialType ∈ plaintext/env/command 时 true，missing/oauth 时 false。 */
   apiKeyExtracted: boolean
+  /** 凭据形态五态（import-credential-types wave 4 新增，真相源）。 */
+  credentialType: 'plaintext' | 'env' | 'missing' | 'oauth' | 'command'
+  /** credentialType==='env' 时的环境变量名（已去前缀），其他态为 undefined。 */
+  envVarName?: string
   conflict: 'none' | 'duplicate-id'
   warnings: string[]
 }
