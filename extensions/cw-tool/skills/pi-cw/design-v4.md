@@ -4,6 +4,7 @@
 > 日期:2026-08-06
 > 依据:pi 源码(explorer sa-4bf20c0a / sa-60edc8ef)+ cw 源码(explorer sa-ca0f0a92)
 > 适用:cw 引擎 v2(本项目假设 cw 现状,不依赖 E1-E6)+ recursive-split 重写
+> 注:本设计中编排 skill 原名 recursive-split,后更名为 pi-cw(随 @zhushanwen/pi-cw-tool 发布)。文中 recursive-split 多指编排方案代号或已删除的 workflow 脚本(recursive-split.js),skill 实体即 pi-cw。
 
 ---
 
