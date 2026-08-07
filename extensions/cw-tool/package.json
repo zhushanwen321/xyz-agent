@@ -7,6 +7,12 @@
   "pi": {
     "extensions": [
       "./index.ts"
+    ],
+    "agents": [
+      "./agents"
+    ],
+    "skills": [
+      "./skills"
     ]
   },
   "keywords": [
@@ -20,7 +26,9 @@
   "license": "MIT",
   "files": [
     "index.ts",
-    "src/"
+    "src/",
+    "agents/",
+    "skills/"
   ],
   "scripts": {
     "typecheck": "npx tsc --noEmit && npx tsc --noEmit -p tsconfig.test.json",
