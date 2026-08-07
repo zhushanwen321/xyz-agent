@@ -1,5 +1,14 @@
 # @zhushanwen/pi-subagent-workflow
 
+## 5.0.2
+
+### Patch Changes
+
+- 4231ad1: Adjust review-fix-loop stage timeouts to accommodate longer retry backoff and long-running write operations:
+
+  - reviewer / aggregate: 30min → 1h (read-only review stages; gives retry backoff more room before wall-clock cutoff)
+  - fix: 30min → unlimited (remove `timeoutMs`; write operations such as large refactors / multi-file edits must not be interrupted by a wall-clock timeout)
+
 ## 5.0.1
 
 ### Patch Changes
