@@ -313,7 +313,7 @@ function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
     model: MODEL || def.model,
     schema: reviewerSchema,
     description: def.name,
-    timeoutMs: 1_800_000,
+    timeoutMs: 3_600_000, // 1h（只读审查 + retry 退避余量）
     // returnMeta: true — 与 recursive-split 脚本的 executeActionAgent 对齐：失败时 resolve
     // {value, error}，raw.error 可检测（review- 前缀兜底/结构化终止可达）；成功时
     // value = parsedOutput ?? content，parseResult 作用于 raw.value（MF-1）。
@@ -558,7 +558,7 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       model: MODEL,
       schema: aggregatorSchema,
       description: "aggregate",
-      timeoutMs: 1_800_000,
+      timeoutMs: 3_600_000, // 1h
       returnMeta: true,
     });
 
@@ -788,9 +788,8 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       // frontmatter model 字段同样生效（之前丢弃了 FIX_DEF.model，只在 review 阶段消费）
       model: MODEL || (FIX_DEF && FIX_DEF.model),
       description: (FIX_DEF && FIX_DEF.name) || "fix",
-      // info #15: 显式 timeoutMs 与 review/aggregator 档位一致（fix 是写操作中最长阶段，
-      // 不依赖引擎默认值——引擎默认值变化不会悄然缩短 fix 预算）
-      timeoutMs: 1_800_000,
+      // fix 不设 timeoutMs = 不限时（execute-options-mapper: undefined/<=0 → 不设超时）。
+      // 带写操作（改项目代码）可能很久（大重构/多文件），不应被墙钟超时打断。
       returnMeta: true,
       ...(FIX_DEF && !FIX_DEF.isCustom ? { agent: FIX_DEF.name } : {}),
     });
