@@ -36,14 +36,12 @@ export default {
     markDone: 'Mark done',
     unmarkDone: 'Unmark done',
     archived: 'Archived',
-    assignToProject: 'Assign to project',
   },
   sessionList: {
     empty: 'No sessions',
     newSession: 'New session',
     deleteFolderConfirm: 'Delete all sessions in this folder?',
   },
-  assignProjectFailed: 'Failed to assign to project',
   forkGroup: {
     title: 'Branches',
     branchN: 'Branch {n}',
@@ -56,16 +54,6 @@ export default {
     subagent: 'Subagents',
     workflow: 'Workflows',
     plugin: 'Plugins',
-  },
-  projectSwitcher: {
-    defaultName: 'Default project',
-    newProject: 'New project',
-    namePlaceholder: 'Project name',
-    deleteProject: 'Delete project',
-    deleteTitle: 'Delete project',
-    deleteDesc: 'Delete project "{name}"? This cannot be undone.',
-    deleteConfirm: 'Delete',
-    cancel: 'Cancel',
   },
   fileTree: {
     loading: 'Loading…',

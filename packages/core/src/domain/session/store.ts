@@ -58,12 +58,6 @@ export function createSessionStore() {
     if (target) target.label = label
   }
 
-  /** 更新 session 归属 project（乐观更新，setProject RPC 后调用；广播全量覆盖幂等）。 */
-  function updateProjectId(id: string, projectId: string): void {
-    const target = list.value.find((s) => s.id === id)
-    if (target) target.projectId = projectId || undefined
-  }
-
   /**
    * 更新 session 的模型/思考等级状态（session.state_changed 广播驱动）。
    * 局部更新，非全量 setGroups —— 模型切换后 runtime 推送新 modelId/thinkingLevel，
@@ -140,5 +134,5 @@ export function createSessionStore() {
     return list.value
   }
 
-  return { groups, list, activeId, active, listLoadError, setGroups, setListLoadError, appendSession, updateLabel, updateProjectId, updateSessionState, removeFromList, markDead, revive, getActiveId, setActiveId, getList }
+  return { groups, list, activeId, active, listLoadError, setGroups, setListLoadError, appendSession, updateLabel, updateSessionState, removeFromList, markDead, revive, getActiveId, setActiveId, getList }
 }

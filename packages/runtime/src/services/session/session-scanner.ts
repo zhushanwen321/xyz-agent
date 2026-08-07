@@ -87,8 +87,6 @@ export class SessionScanner {
       // 透传 launch preset 绑定（wave2 scanSessionMeta 四读合一已提取进 meta）。
       // 严禁在此独立读文件——会破坏缓存契约 W3（每 session 多一次 readFileSync）。
       launchPresetId: s.launchPresetId,
-      // D14 语义修正：归属 project（scanSessionMeta 第五读，同缓存契约）。
-      projectId: s.projectId,
     }
   }
 }

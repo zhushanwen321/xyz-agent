@@ -2,16 +2,13 @@
   <!--
     展示组件 · 会话列表（子视图 A，draft-five-states 卡 A/D）。
     按 cwd 分组渲染（D7：对齐后端 SessionGroup[]）—— 每组一个标题（cwd 末段）+ 组内 SessionItem 列表。
-    【D14 语义修正 2026-08-04】按 activeProject 过滤 session（session.projectId，cwd 只是展示聚合）：
-    命名 project → 只显示归属它的 session（同 cwd 组内可混合不同归属，逐 session 过滤）；
-    默认项目 → 未归类（无 projectId）+ 孤儿（归属的 project 已删除）聚合。
     ScrollArea 包裹；空态（D，session 数=0）显示极淡「暂无会话」占位。
     v-model 语义用 activeId（单向：子→父 select）。
   -->
   <ScrollArea class="session-list h-full">
     <div class="flex flex-col px-1">
       <div
-        v-for="g in visibleGroups"
+        v-for="g in props.groups"
         :key="g.cwd"
         class="group-section flex flex-col gap-0.5"
       >
@@ -61,7 +58,6 @@
             @select="emit('select', $event)"
             @rename="emit('rename', $event)"
             @delete="emit('delete', $event)"
-            @set-project="emit('setProject', $event)"
           />
           <!-- 当前 session 的分支：从组内 sessions filter parentSession 指向当前 session
                （sessionFile 路径或 sessionId，FR-20 fallback）。无分支时不渲染空容器。 -->
@@ -103,12 +99,10 @@ import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { dirNameOf } from '@xyz-agent/ui'
-import { useProjectStore } from '@/stores/project'
 import SessionItem from './SessionItem.vue'
 import ForkGroup from './ForkGroup.vue'
 
 const { t } = useI18n()
-const projectStore = useProjectStore()
 
 const props = defineProps<{
   /** 按 cwd 分组的会话（D7，对齐后端 SessionGroup[]） */
@@ -127,40 +121,11 @@ const emit = defineEmits<{
   stopBranch: [sessionId: string]
   /** 删除指定 cwd 下所有 session（folder 维度批量删除，两段式确认后由 Sidebar 调 deleteFolder） */
   deleteFolder: [cwd: string]
-  /** 归入项目（D14 语义修正）：透传 SessionItem 的 setProject */
-  setProject: [{ sessionId: string; projectId: string }]
 }>()
-
-/**
- * 按 activeProject 过滤后的分组（D14 语义修正 2026-08-04，SSOT 见 shared/project.ts）。
- *
- * 过滤粒度是 **session 级**：同一 cwd 组内可混合不同归属的 session（project 可跨目录，
- * 同一目录下不同 session 可服务不同 project），按 session.projectId 逐条匹配后重组分组。
- *
- * - 命名 project：只保留 projectId === activeProjectId 的 session
- * - 默认项目（name 空）：未归类（无 projectId）+ 孤儿（归属的 project 已删除）聚合——
- *   保证任何 session 都至少在一个项目视图中可见，不因 project 删除而丢失可见性
- *
- * 过滤后无匹配 → totalCount=0 走空态（「暂无会话」+ 新建按钮）。
- */
-const visibleGroups = computed<SessionGroup[]>(() => {
-  const pid = projectStore.activeProjectId
-  const isDefault = projectStore.isDefaultProject
-  const knownIds = new Set(
-    projectStore.projects.filter((p) => p.name).map((p) => p.id),
-  )
-  const matches = (s: SessionGroup['sessions'][number]): boolean => {
-    if (isDefault) return !s.projectId || !knownIds.has(s.projectId)
-    return s.projectId === pid
-  }
-  return props.groups
-    .map((g) => ({ cwd: g.cwd, sessions: g.sessions.filter(matches) }))
-    .filter((g) => g.sessions.length > 0)
-})
 
 /** 全部 session 总数（空态判定，跨组汇总） */
 const totalCount = computed(() =>
-  visibleGroups.value.reduce((sum, g) => sum + g.sessions.length, 0),
+  props.groups.reduce((sum, g) => sum + g.sessions.length, 0),
 )
 
 /**
@@ -175,7 +140,7 @@ const totalCount = computed(() =>
  * 仅在当前 session 所在组内 filter（分支与父同 cwd，不需跨组扫描）。
  */
 function branchesOf(s: SessionSummary): SessionSummary[] {
-  return visibleGroups.value
+  return props.groups
     .filter((g) => g.cwd === s.cwd)
     .flatMap((g) => g.sessions)
     .filter(
@@ -199,7 +164,7 @@ function branchesOf(s: SessionSummary): SessionSummary[] {
  */
 function parentLabelOf(s: SessionSummary): string {
   if (!s.parentSession) return ''
-  const parent = visibleGroups.value
+  const parent = props.groups
     .filter((g) => g.cwd === s.cwd)
     .flatMap((g) => g.sessions)
     .find((p) => p.sessionFile === s.parentSession || p.id === s.parentSession)

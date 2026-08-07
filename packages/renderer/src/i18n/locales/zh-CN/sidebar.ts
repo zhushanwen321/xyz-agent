@@ -35,14 +35,12 @@ export default {
     markDone: '标记完成',
     unmarkDone: '取消标记',
     archived: '已归档',
-    assignToProject: '归入项目',
   },
   sessionList: {
     empty: '暂无会话',
     newSession: '新建会话',
     deleteFolderConfirm: '确认删除此文件夹下所有会话？',
   },
-  assignProjectFailed: '归入项目失败',
   forkGroup: {
     title: '本会话的分支',
     branchN: '分支 {n}',
@@ -55,16 +53,6 @@ export default {
     subagent: '子代理',
     workflow: '工作流',
     plugin: '插件',
-  },
-  projectSwitcher: {
-    defaultName: '默认项目',
-    newProject: '新建项目',
-    namePlaceholder: '项目名称',
-    deleteProject: '删除项目',
-    deleteTitle: '删除项目',
-    deleteDesc: '确认删除项目「{name}」？该操作不可撤销。',
-    deleteConfirm: '删除',
-    cancel: '取消',
   },
   fileTree: {
     loading: '加载…',

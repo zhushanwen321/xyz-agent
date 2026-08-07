@@ -164,9 +164,7 @@ describe('W3 scanPiSessions mtime+size 缓存', () => {
     // B7 sidecar 方案后每文件读取（真实读，mock 计数×2——vitest Proxy 转发双计）：
     // parseSessionHeader(1) + extractSessionName 尾读(0) + extractSessionOutcome sidecar(1)
     // + extractHandedOff 仅尾读(0) + readPresetBinding(1) = 3 真实读/文件（计数 6）。
-    // D14 语义修正（2026-08-04）project sidecar 第五读：+ readProjectBinding(1) 真实读
-    // → 4 真实读/文件（计数 8）。基线（无 project 读）3 文件计数 18 = 3 × 6。
     // 关键约束：缓存命中时（下一个用例）readFileSync 不增加。
-    expect(fsState.readCount).toBeLessThanOrEqual(24) // 3 文件 × 4 真实读 × 2 计数
+    expect(fsState.readCount).toBeLessThanOrEqual(18) // 3 文件 × 3 真实读 × 2 计数
   })
 })

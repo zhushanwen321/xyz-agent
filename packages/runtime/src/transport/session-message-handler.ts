@@ -37,7 +37,7 @@ export class SessionMessageHandler {
 
   /** D1: 本 handler 认领的 ClientMessageType 清单（session.compact 单独路由，故不在此列）。 */
   readonly handles: ClientMessageType[] = [
-    'session.create', 'session.delete', 'session.deleteByCwd', 'config.sessions', 'session.switch', 'session.history', 'session.getFullHistory', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork', 'session.setProject',
+    'session.create', 'session.delete', 'session.deleteByCwd', 'config.sessions', 'session.switch', 'session.history', 'session.getFullHistory', 'session.rename', 'session.getCommands', 'session.getContext', 'session.fork',
     'session.handoff', 'session.abortHandoff',
     // wave:runtime-wiring：session.subscribe/unsubscribe RPC（IF6/IF7）。
     'session.subscribe', 'session.unsubscribe',
@@ -58,11 +58,9 @@ export class SessionMessageHandler {
           // B3：透传 modelOverride / thinkingOverride（Landing Chip 覆盖值，设计文档 §5.2）。
           // 优先级：Landing Chip override > preset.modelOverride/thinkingLevel > 全局默认。
           // 之前只透传了 hidden/presetId，覆盖值在 transport 层被丢弃，导致 Landing Chip 选型不生效。
-          // projectId：D14 语义修正（2026-08-04），创建时归属当前 activeProject（空 = 默认项目兑底）。
           const session = await this.ctx.sessionService.create(msg.payload.cwd, msg.payload.label, {
             hidden: msg.payload.hidden,
             presetId: msg.payload.presetId,
-            projectId: msg.payload.projectId,
             modelOverride: msg.payload.modelOverride,
             thinkingOverride: msg.payload.thinkingOverride,
           })
@@ -363,16 +361,6 @@ export class SessionMessageHandler {
       case 'session.rename': {
         await this.ctx.sessionService.renameSession(msg.payload.sessionId, msg.payload.name)
         this.ctx.reply(ws, msg.id, 'session.renamed', { sessionId: msg.payload.sessionId, name: msg.payload.name })
-        return this.ctx.broadcastSessionList()
-      }
-      case 'session.setProject': {
-        // D14 语义修正：手动归类（SessionItem「归入项目」菜单）。
-        // runtime 写 .project.json sidecar + 内存态同步，列表经 broadcastSessionList 全量刷新。
-        await this.ctx.sessionService.setProject(msg.payload.sessionId, msg.payload.projectId)
-        this.ctx.reply(ws, msg.id, 'session.setProject', {
-          sessionId: msg.payload.sessionId,
-          projectId: msg.payload.projectId,
-        })
         return this.ctx.broadcastSessionList()
       }
       case 'message.send': {
