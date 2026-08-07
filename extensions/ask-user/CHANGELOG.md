@@ -1,5 +1,12 @@
 # @zhushanwen/pi-ask-user
 
+## 5.0.1
+
+### Patch Changes
+
+- Updated dependencies [b5c36a2]
+  - @zhushanwen/pi-subagent-workflow@5.0.1
+
 ## 5.0.0
 
 ### Patch Changes

@@ -1,11 +1,13 @@
 {
   "name": "@zhushanwen/pi-cw-tool",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Pi extension wrapping the `cw` CLI as role-restricted tools (cw_planning / cw_wave / cw_dev / cw_review) with per-tool action whitelists — hard-guarantees no self-review by layer-owner agents.",
   "type": "module",
   "main": "src/index.ts",
   "pi": {
-    "extensions": ["./index.ts"]
+    "extensions": [
+      "./index.ts"
+    ]
   },
   "keywords": [
     "pi-package",
