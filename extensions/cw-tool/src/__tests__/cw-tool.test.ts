@@ -9,6 +9,8 @@ import type * as cp from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+
 // node:child_process 是原生 CJS 模块，ESM 命名导出不可重定义（vi.spyOn 报 "not configurable"）。
 // 改用 vi.mock + vi.hoisted：工厂替换整个模块，hoisted vi.fn 作为 spawn，测试内动态配置实现。
 const spawnMock = vi.hoisted(() => vi.fn());
@@ -27,11 +29,12 @@ spawnSyncMock.mockImplementation((_cmd: string, _args: string[], _opts: object) 
 import {
 	buildCwArgs,
 	type CwDetails,
-	type CwSpawner,
-	type CwSpawnResult,
 	executeCwAction,
+	isReadonlyAction,
 	rejectDisallowedAction,
+	rejectMissingUnitId,
 } from "../cw-runner.ts";
+import { type CwSpawner, type CwSpawnResult } from "../cw-spawn.ts";
 import {
 	DEV_ALLOWED,
 	PLANNING_ALLOWED,
@@ -64,12 +67,18 @@ function fakeSpawner(responses: CwSpawnResult[]): { spawner: CwSpawner; calls: C
 
 /** 造一个「若被调用即失败」的 spawner（用于白名单拒绝用例，断言不该被调到）。 */
 function forbiddenSpawner(): CwSpawner {
-	return vi.fn(async (): Promise<CwSpawnResult> => {
+	// 回调签名由变量类型 CwSpawner 提供 contextual typing；签名漂移会编译失败（消除假绿）。
+	const spawner: CwSpawner = vi.fn(async (_args, _input, _cwd, _signal): Promise<CwSpawnResult> => {
 		throw new Error("spawner must not be called for a rejected action");
-	}) as unknown as CwSpawner;
+	});
+	return spawner;
 }
 
-const fakeCtx = { cwd: "/tmp/fake-workspace" } as { cwd: string };
+// execute 的 ctx 是完整 ExtensionContext（SDK 类型，字段多）；测试仅消费 cwd。
+// satisfies 校验 cwd 形状，再经 unknown 桥接到完整类型（partial mock of SDK type）。
+const fakeCtx = ({
+	cwd: "/tmp/fake-workspace",
+} satisfies Pick<ExtensionContext, "cwd">) as unknown as ExtensionContext;
 
 // ── 白名单拦截：每个工具至少 1 个被拒 action ────────────────────
 
@@ -221,7 +230,7 @@ describe("失败路径", () => {
 		expect(details.error).toContain("unit not found");
 	});
 
-	it("stderr 非空（即使 exit 0）→ ok:false", async () => {
+	it("stderr 非空但 exitCode 0 → ok:true（S-2：按 exitCode 判定，stderr 不导致失败）", async () => {
 		const { spawner } = fakeSpawner([
 			{ stdout: "{}", stderr: "warning: something", exitCode: 0 },
 		]);
@@ -234,13 +243,13 @@ describe("失败路径", () => {
 			spawner,
 			fakeCtx.cwd,
 		);
-		expect(details.ok).toBe(false);
+		expect(details.ok).toBe(true);
 	});
 
 	it("spawner 抛异常 → ok:false + spawn 失败消息", async () => {
-		const spawner: CwSpawner = vi.fn(async (): Promise<CwSpawnResult> => {
+		const spawner: CwSpawner = vi.fn(async (_args, _input, _cwd, _signal): Promise<CwSpawnResult> => {
 			throw new Error("ENOENT");
-		}) as unknown as CwSpawner;
+		});
 		const details = await executeCwAction(
 			"status",
 			DEV_ALLOWED,
@@ -274,13 +283,13 @@ describe("失败路径", () => {
 
 	it("spawn 超时（timeoutMs）→ ok:false 'cw 超时'", async () => {
 		// spawner 模拟 cw 卡死：挂起直到 signal abort 才 resolve（默认实现行为）。
-		const hangingSpawner: CwSpawner = vi.fn((_args, _input, _cwd, signal) =>
+		const hangingSpawner: CwSpawner = vi.fn((_args, _input, _cwd, signal): Promise<CwSpawnResult> =>
 			new Promise<CwSpawnResult>((resolve) => {
 				signal?.addEventListener("abort", () =>
 					resolve({ stdout: "", stderr: "", exitCode: null }),
 				);
 			}),
-		) as unknown as CwSpawner;
+		);
 
 		const details = await executeCwAction(
 			"status",
@@ -364,6 +373,10 @@ describe("buildCwArgs", () => {
 	it("workspace 不传 → 无 --workspace", () => {
 		expect(buildCwArgs("status", "u1", {})).toEqual(["status", "--unitId", "u1"]);
 	});
+
+	it("unitId 为 undefined → 不加 --unitId（只读 action，S-5）", () => {
+		expect(buildCwArgs("list", undefined, {})).toEqual(["list"]);
+	});
 });
 
 // ── stdin 透传 ──────────────────────────────────────────────────
@@ -439,7 +452,26 @@ describe("executeCwAction 附加 --workspace（spawnSync mock）", () => {
 		]);
 	});
 
-	it("cwd 非 git（探测失败）→ 无 --workspace", async () => {
+	it("cwd 非 git（探测失败）→ write action 无 --workspace", async () => {
+		const { spawner, calls } = fakeSpawner([{ stdout: "{}", stderr: "", exitCode: 0 }]);
+		await executeCwAction(
+			"execute",
+			DEV_ALLOWED,
+			"cw_dev",
+			"u1",
+			{},
+			spawner,
+			"/tmp/not-a-repo",
+		);
+		expect(calls[0].args).toEqual(["execute", "--unitId", "u1"]);
+	});
+
+	it("read-only action（status）即使在 git repo 内也不附加 --workspace（S-3）", async () => {
+		spawnSyncMock.mockImplementationOnce((_cmd: string, _args: string[], _opts: object) => ({
+			status: 0,
+			stdout: "/tmp/repo-root/.git\n",
+			stderr: "",
+		}));
 		const { spawner, calls } = fakeSpawner([{ stdout: "{}", stderr: "", exitCode: 0 }]);
 		await executeCwAction(
 			"status",
@@ -448,9 +480,71 @@ describe("executeCwAction 附加 --workspace（spawnSync mock）", () => {
 			"u1",
 			{},
 			spawner,
-			"/tmp/not-a-repo",
+			"/tmp/repo-root/worktrees/wt1",
 		);
-		expect(calls[0].args).toEqual(["status", "--unitId", "u1"]);
+		expect(calls[0].args).not.toContain("--workspace");
+	});
+});
+
+// ── unitId 运行时校验（S-5）────────────────────────────────────
+
+describe("unitId 运行时校验（S-5）", () => {
+	it("写 action 缺 unitId → ok:false + 清晰错误（含 action 名 + unitId），spawner 不被调用", async () => {
+		const spawner = forbiddenSpawner();
+		const details = await executeCwAction(
+			"execute",
+			DEV_ALLOWED,
+			"cw_dev",
+			undefined,
+			{},
+			spawner,
+			fakeCtx.cwd,
+		);
+		expect(details.ok).toBe(false);
+		if (details.ok) throw new Error("unreachable");
+		expect(details.error).toContain("execute");
+		expect(details.error).toContain("unitId");
+		expect(spawner).not.toHaveBeenCalled();
+	});
+
+	it("只读 action 缺 unitId → ok:true，args 不含 --unitId", async () => {
+		const { spawner, calls } = fakeSpawner([{ stdout: "{}", stderr: "", exitCode: 0 }]);
+		const details = await executeCwAction(
+			"status",
+			DEV_ALLOWED,
+			"cw_dev",
+			undefined,
+			{},
+			spawner,
+			fakeCtx.cwd,
+		);
+		expect(details.ok).toBe(true);
+		expect(calls[0].args).not.toContain("--unitId");
+	});
+
+	it("只读 action 传 unitId 仍附加 --unitId（Optional 非禁止）", async () => {
+		const { spawner, calls } = fakeSpawner([{ stdout: "{}", stderr: "", exitCode: 0 }]);
+		await executeCwAction("list", PLANNING_ALLOWED, "cw_planning", "u1", {}, spawner, fakeCtx.cwd);
+		expect(calls[0].args).toContain("--unitId");
+		expect(calls[0].args).toContain("u1");
+	});
+
+	it("rejectMissingUnitId：写 action 缺 → 错误消息；只读 action 缺 → undefined", () => {
+		expect(rejectMissingUnitId("execute", undefined)).toContain("unitId");
+		expect(rejectMissingUnitId("design", undefined)).toContain("unitId");
+		expect(rejectMissingUnitId("execute", "u1")).toBeUndefined();
+		expect(rejectMissingUnitId("list", undefined)).toBeUndefined();
+		expect(rejectMissingUnitId("status", undefined)).toBeUndefined();
+		expect(rejectMissingUnitId("frontier", undefined)).toBeUndefined();
+	});
+
+	it("isReadonlyAction：READONLY_ACTIONS → true，写 action / 未知 action → false", () => {
+		for (const ro of ["list", "tree", "status", "handoff", "frontier"]) {
+			expect(isReadonlyAction(ro)).toBe(true);
+		}
+		expect(isReadonlyAction("execute")).toBe(false);
+		expect(isReadonlyAction("design")).toBe(false);
+		expect(isReadonlyAction("unknown-action")).toBe(false);
 	});
 });
 
@@ -460,13 +554,15 @@ describe("工厂与工具注册", () => {
 	it("cwToolExtension(pi) 注册 4 个工具（cw_planning/cw_wave/cw_dev/cw_review）", async () => {
 		const { default: cwToolExtension } = await import("../index.ts");
 		const registered: Array<{ name: string; actionEnum: string[] }> = [];
+		// 仅 mock registerTool（ExtensionAPI 其余成员测试不消费）；显式声明 tool 参数形状，
+		// 让对 tool.name / parameters 的访问受类型检查；经 unknown 桥接到完整 ExtensionAPI。
 		const fakePi = {
 			registerTool(tool: { name: string; parameters: { properties?: Record<string, unknown> } }): void {
 				const enumVal = (tool.parameters.properties?.action as { enum?: string[] })?.enum;
 				registered.push({ name: tool.name, actionEnum: enumVal ?? [] });
 			},
-		};
-		cwToolExtension(fakePi as never);
+		} as unknown as ExtensionAPI;
+		cwToolExtension(fakePi);
 
 		const names = registered.map((r) => r.name);
 		expect(names).toEqual(["cw_planning", "cw_wave", "cw_dev", "cw_review"]);
@@ -488,11 +584,14 @@ describe("工厂与工具注册", () => {
 		}, forbiddenSpawner());
 
 		// execute 全签名：(_toolCallId, params, signal, onUpdate, ctx)
-		const params = { action: "execute", unitId: "u1" } as { action: string; unitId: string };
-		const result = await tool.execute("call-1", params as never, undefined, undefined, fakeCtx as never);
+		// 故意传 review 工具不允许的 action "execute" 验证运行时拒绝；类型层须逃逸（Params 的 action 枚举不含 execute）。
+		type Params = Parameters<(typeof tool)["execute"]>[1];
+		const params = { action: "execute", unitId: "u1" } as unknown as Params;
+		const result = await tool.execute("call-1", params, undefined, undefined, fakeCtx);
 
 		const details = result.details as CwDetails;
 		expect(details.ok).toBe(false);
+		if (details.ok) throw new Error("unreachable");
 		expect(details.error).toContain("execute");
 		expect(details.error).toContain("cw_review");
 	});
@@ -506,12 +605,9 @@ describe("工厂与工具注册", () => {
 			promptSnippet: "x",
 		}, spawner);
 
-		const params = { action: "design-review", unitId: "u9", input: '{"verdict":"pass"}' } as {
-			action: string;
-			unitId: string;
-			input?: string;
-		};
-		const result = await tool.execute("call-2", params as never, undefined, undefined, fakeCtx as never);
+		type Params = Parameters<(typeof tool)["execute"]>[1];
+		const params: Params = { action: "design-review", unitId: "u9", input: '{"verdict":"pass"}' };
+		const result = await tool.execute("call-2", params, undefined, undefined, fakeCtx);
 
 		const details = result.details as CwDetails;
 		expect(details.ok).toBe(true);
@@ -529,15 +625,30 @@ describe("工厂与工具注册", () => {
 
 		const controller = new AbortController();
 		controller.abort();
-		const params = { action: "status", unitId: "u1" } as { action: string; unitId: string };
+		type Params = Parameters<(typeof tool)["execute"]>[1];
+		const params: Params = { action: "status", unitId: "u1" };
 		const result = await tool.execute(
 			"call-3",
-			params as never,
+			params,
 			controller.signal,
 			undefined,
-			fakeCtx as never,
+			fakeCtx,
 		);
 		expect((result.details as CwDetails).ok).toBe(false);
+	});
+
+	it("schema：unitId 是 Optional（不在 required），action 是 required（S-5）", () => {
+		const tool = buildTool(DEV_ALLOWED, {
+			name: "cw_dev",
+			label: "CW Dev",
+			description: "x",
+			promptSnippet: "x",
+		}, forbiddenSpawner());
+		const required = (tool.parameters as { required?: string[] }).required ?? [];
+		expect(required).toContain("action");
+		expect(required).not.toContain("unitId");
+		// unitId 属性仍存在（Optional 不是删除）
+		expect(tool.parameters.properties?.unitId).toBeDefined();
 	});
 });
 
@@ -617,5 +728,21 @@ describe("cw 路径解析", () => {
 		controller.abort();
 		await pending;
 		expect(killed).toHaveBeenCalledWith("SIGTERM");
+	});
+
+	it("spawn error（cw 不在 PATH / ENOENT）→ exitCode:-1 + stderr 含 [spawn error]", async () => {
+		// 模拟 cw 不在 PATH（用户首要失败模式）：node 对失败的 spawn 触发 child 'error' 事件。
+		// 若 defaultCwSpawner 的 error handler 被删，promise 永不 resolve（直到 5min 超时）→ 用例挂死暴露回归。
+		const child = makeFakeChild();
+		spawnMock.mockImplementation(() => child as unknown as cp.ChildProcess);
+		const err = Object.assign(new Error("spawn cw ENOENT"), { code: "ENOENT" });
+		queueMicrotask(() => child.emit("error", err));
+
+		const result = await defaultCwSpawner(["status", "--unitId", "u1"], undefined, "/tmp");
+
+		expect(result.exitCode).toBe(-1);
+		expect(result.stderr).toContain("[spawn error]");
+		expect(result.stderr).toContain("spawn cw ENOENT");
+		expect(result.stdout).toBe("");
 	});
 });

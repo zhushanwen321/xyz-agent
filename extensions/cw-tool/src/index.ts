@@ -138,7 +138,12 @@ function buildTool<A extends readonly string[]>(
 ): ToolDefinition<typeof parameters, CwDetails> {
 	const parameters = Type.Object({
 		action: StringEnum(allowed, { description: "要执行的 cw action（受限于此工具的白名单）。" }),
-		unitId: Type.String({ description: "目标 cw unit id。大多数 action 必传。" }),
+		unitId: Type.Optional(
+			Type.String({
+				description:
+					"目标 cw unit id。写 action（design/execute/replan/retrospect/closeout/test/design-review/exec-review）必传，缺失返回错误；只读 action（list/tree/frontier/status/handoff）可省略。",
+			}),
+		),
 		input: Type.Optional(
 			Type.String({
 				description: "cw action 的 JSON 输入内容（字符串），经 stdin 传给 cw（cw --input -）。与 inputFile 互斥。",

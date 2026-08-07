@@ -32,6 +32,20 @@ export type CwAction = (typeof CW_ACTIONS)[number];
 /** 只读 action（不推进状态机，query only）。 */
 export const READONLY_ACTIONS = ["list", "tree", "status", "handoff", "frontier"] as const;
 
+/**
+ * 判断 action 是否为只读（属于 {@link READONLY_ACTIONS}）。
+ *
+ * 只读 action 的两个边界复用此判定（S-3/S-5）：
+ * - 不附加 `--workspace`（保守避免 cw 子命令拒收未知选项导致 readonly 查询失败，S-3）；
+ * - 不强制 unitId（list/tree/frontier 等全局查询不需要具体 unit，S-5）。
+ *
+ * 用 `.some(===)` 而非 `.includes()` 以保持 string 入参的类型安全（readonly tuple 的
+ * `.includes()` 要求字面量联合类型，传 string 会报错，无需 `as` 宽化）。
+ */
+export function isReadonlyAction(action: string): boolean {
+	return READONLY_ACTIONS.some((a) => a === action);
+}
+
 /** 透传给 cw 的可选参数（flags）。 */
 export interface CwToolOptions {
 	/** JSON 内容字符串，经 stdin 传给 cw（`cw --input -`）。与 inputFile 互斥。 */
@@ -44,9 +58,9 @@ export interface CwToolOptions {
 
 /** 工具返回的 details 结构（结构化成功/失败，调用方按 `ok` 区分）。 */
 export type CwDetails =
-	| { ok: true; action: string; unitId: string; stdout: string; parsed: true; data: unknown }
-	| { ok: true; action: string; unitId: string; stdout: string; parsed: false }
-	| { ok: false; action: string; unitId: string; error: string };
+	| { ok: true; action: string; unitId: string | undefined; stdout: string; parsed: true; data: unknown }
+	| { ok: true; action: string; unitId: string | undefined; stdout: string; parsed: false }
+	| { ok: false; action: string; unitId: string | undefined; error: string };
 
 /**
  * 白名单校验。返回错误消息（string）或 undefined（放行）。
@@ -104,9 +118,22 @@ export function rejectConflictingInput(opts: CwToolOptions): string | undefined 
 }
 
 /**
+ * unitId 缺失校验（S-5）。写 action 缺 unitId → 返回错误消息；只读 action 或已传 unitId → undefined（放行）。
+ *
+ * schema 已把 unitId 改为 Optional（只读 action 不需要），此函数是写 action 的运行时第二道约束
+ * （直接/程序化调用、宽松 provider 兜底），与 rejectDisallowedAction / rejectConflictingInput 同族。
+ */
+export function rejectMissingUnitId(action: string, unitId: string | undefined): string | undefined {
+	if (unitId === undefined && !isReadonlyAction(action)) {
+		return `action "${action}" 需要 unitId（只读 action ${READONLY_ACTIONS.join("/")} 可省略）`;
+	}
+	return undefined;
+}
+
+/**
  * 构建 cw 命令行参数（action 后接 flags）。
  *
- * - unitId 必传 → `--unitId <id>`
+ * - unitId（若提供）→ `--unitId <id>`；undefined 则省略（只读 action 不需要，S-5）
  * - input 内容 → `--input -`（经 stdin，见 executeCwAction）
  * - inputFile 路径 → `--input <path>`
  * - commitHash → `--commitHash <sha>`
@@ -114,11 +141,14 @@ export function rejectConflictingInput(opts: CwToolOptions): string | undefined 
  */
 export function buildCwArgs(
 	action: string,
-	unitId: string,
+	unitId: string | undefined,
 	opts: CwToolOptions,
 	workspace?: string,
 ): string[] {
-	const args: string[] = [action, "--unitId", unitId];
+	const args: string[] = [action];
+	if (unitId !== undefined) {
+		args.push("--unitId", unitId);
+	}
 
 	if (opts.inputFile) {
 		args.push("--input", opts.inputFile);
@@ -154,13 +184,13 @@ const DEFAULT_CW_TIMEOUT_MS = 300_000;
 /**
  * 执行 cw action 的核心逻辑：白名单校验 → 参数冲突校验 → spawn → 解析。
  *
- * 失败判定：非零退出码（含被信号终止的 null）或 stderr 非空 → ok:false（cw 错误信息走 stderr）。
+ * 失败判定：非零退出码（含被信号终止的 null）→ ok:false（stderr 折进错误消息；S-2 按 exitCode 判定）。
  * 成功后 stdout 尝试 JSON.parse：成功 → parsed:true + data；失败 → parsed:false + 原样 stdout。
  *
  * @param action   调用方请求的 action（运行时再校验白名单）。
  * @param allowed  该工具允许的 action 白名单。
  * @param toolName 工具名（错误消息归属用）。
- * @param unitId   cw unit id（必传）。
+ * @param unitId   cw unit id（写 action 必传；只读 action 可省略，见 rejectMissingUnitId）。
  * @param opts     可选 flags。
  * @param spawner   spawn 实现（默认走真实 cw，测试注入 fake）。
  * @param cwd       子进程工作目录。
@@ -171,7 +201,7 @@ export async function executeCwAction(
 	action: string,
 	allowed: readonly string[],
 	toolName: string,
-	unitId: string,
+	unitId: string | undefined,
 	opts: CwToolOptions,
 	spawner: CwSpawner,
 	cwd: string,
@@ -186,9 +216,13 @@ export async function executeCwAction(
 	const inputErr = rejectConflictingInput(opts);
 	if (inputErr) return { ok: false, ...base, error: inputErr };
 
-	// repo 级 workspace（ADR-0045）：cwd 在 git repo 内则附加 --workspace <repo 主目录>，
-	// 让 cw 跨 worktree 共享状态；探测失败（非 git 目录等）静默跳过。
-	const workspace = detectRepoWorkspace(cwd);
+	// unitId 运行时校验（S-5）：写 action 缺 unitId → 清晰错误（schema 已把 unitId 改 Optional）。
+	const unitIdErr = rejectMissingUnitId(action, unitId);
+	if (unitIdErr) return { ok: false, ...base, error: unitIdErr };
+
+	// repo 级 workspace（ADR-0045）：仅写 action 附加（S-3：只读 action 保守不加，避免 cw 子命令
+	// 拒收未知选项导致 readonly 查询失败）；cwd 在 git repo 内才探测，探测失败静默跳过。
+	const workspace = isReadonlyAction(action) ? undefined : detectRepoWorkspace(cwd);
 	const args = buildCwArgs(action, unitId, opts, workspace);
 	const stdinPayload = opts.input !== undefined ? opts.input : undefined;
 
@@ -225,10 +259,10 @@ export async function executeCwAction(
 
 	const { stdout, stderr, exitCode } = result;
 
-	// 非零退出码（含 null=被信号终止）或 stderr 非空 → 失败。
-	if (exitCode !== 0 || stderr.trim().length > 0) {
-		const parts: string[] = [];
-		if (exitCode !== 0) parts.push(`exit code ${exitCode ?? "null"}`);
+	// S-2：按 exitCode 判定失败（防御性，不依赖 cw 是否向 stderr 写非错误诊断信息）。
+	// 非零退出码（含 null=被信号终止）→ 失败；stderr 折进错误消息（成功时 stderr 不导致失败）。
+	if (exitCode !== 0) {
+		const parts: string[] = [`exit code ${exitCode ?? "null"}`];
 		if (stderr.trim()) parts.push(stderr.trim());
 		return { ok: false, ...base, error: parts.join(" | ") };
 	}

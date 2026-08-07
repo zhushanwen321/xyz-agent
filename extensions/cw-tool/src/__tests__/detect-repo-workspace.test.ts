@@ -17,8 +17,8 @@ import {
 	buildCwArgs,
 	detectRepoWorkspace,
 	executeCwAction,
-	type CwSpawner,
 } from "../cw-runner.ts";
+import { type CwSpawner } from "../cw-spawn.ts";
 import { DEV_ALLOWED } from "../index.ts";
 
 // ── 临时目录管理 ────────────────────────────────────────────────
@@ -111,38 +111,46 @@ describe("executeCwAction 集成（真实 git cwd）", () => {
 		return { spawner, calls };
 	}
 
-	it("cwd 在 git repo 内 → args 含 --workspace <repo 根>", async () => {
+	it("cwd 在 git repo 内 → write action args 含 --workspace <repo 根>", async () => {
 		const base = makeTempDir("cw-int-");
 		const repo = createGitRepo(base, "repo");
 		const { spawner, calls } = recordingSpawner();
-		await executeCwAction("status", DEV_ALLOWED, "cw_dev", "u1", {}, spawner, repo);
+		await executeCwAction("execute", DEV_ALLOWED, "cw_dev", "u1", {}, spawner, repo);
 		expect(calls[0].args).toContain("--workspace");
 		expect(calls[0].args[calls[0].args.indexOf("--workspace") + 1]).toBe(repo);
 	});
 
-	it("cwd 在 linked worktree 内 → --workspace 指向 repo 主目录", async () => {
+	it("cwd 在 linked worktree 内 → write action --workspace 指向 repo 主目录", async () => {
 		const base = makeTempDir("cw-int-");
 		const repo = createGitRepo(base, "repo");
 		const wtDir = path.join(base, "wt1");
 		execSync(`git worktree add -q ${wtDir}`, { cwd: repo });
 		const { spawner, calls } = recordingSpawner();
-		await executeCwAction("status", DEV_ALLOWED, "cw_dev", "u1", {}, spawner, wtDir);
+		await executeCwAction("execute", DEV_ALLOWED, "cw_dev", "u1", {}, spawner, wtDir);
 		expect(calls[0].args).toContain("--workspace");
 		expect(calls[0].args[calls[0].args.indexOf("--workspace") + 1]).toBe(repo);
 	});
 
-	it("cwd 为非 git 目录 → args 不含 --workspace", async () => {
-		const plain = makeTempDir("cw-int-plain-");
+	it("read-only action（status）即使在 git repo 内也不附加 --workspace（S-3）", async () => {
+		const base = makeTempDir("cw-int-");
+		const repo = createGitRepo(base, "repo");
 		const { spawner, calls } = recordingSpawner();
-		await executeCwAction("status", DEV_ALLOWED, "cw_dev", "u1", {}, spawner, plain);
+		await executeCwAction("status", DEV_ALLOWED, "cw_dev", "u1", {}, spawner, repo);
 		expect(calls[0].args).not.toContain("--workspace");
 	});
 
-	it("cwd 不存在 → args 不含 --workspace（探测失败不抛）", async () => {
+	it("cwd 为非 git 目录 → write action 不含 --workspace", async () => {
+		const plain = makeTempDir("cw-int-plain-");
+		const { spawner, calls } = recordingSpawner();
+		await executeCwAction("execute", DEV_ALLOWED, "cw_dev", "u1", {}, spawner, plain);
+		expect(calls[0].args).not.toContain("--workspace");
+	});
+
+	it("cwd 不存在 → write action 不含 --workspace（探测失败不抛）", async () => {
 		const base = makeTempDir("cw-int-");
 		const { spawner, calls } = recordingSpawner();
 		await executeCwAction(
-			"status",
+			"execute",
 			DEV_ALLOWED,
 			"cw_dev",
 			"u1",

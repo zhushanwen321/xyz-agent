@@ -21,7 +21,7 @@
     "src/"
   ],
   "scripts": {
-    "typecheck": "npx tsc --noEmit",
+    "typecheck": "npx tsc --noEmit && npx tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest"
   },
