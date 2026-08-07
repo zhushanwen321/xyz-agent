@@ -11,6 +11,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
 import { getCurrentActivity, getDisplayItems, getEventLog, markReconstructedStatus, snapshot as toSnapshot } from "./execution-record.ts";
 import type { ManifestRecord, ManifestStore } from "./manifest-store.ts";
 import { reconstructFromFile } from "./session-reconstructor.ts";
@@ -23,6 +25,8 @@ import type {
 import { isProcessAlive, readAliveMarker } from "./alive-store.ts";
 import { readFinalized } from "./finalized-marker.ts";
 import { readCancelledTombstone } from "./tombstone-store.ts";
+
+const logger = getLogger("subagents");
 
 // ============================================================
 // 常量
@@ -209,10 +213,12 @@ export class RecordStore {
         if (!rec) {
           // manifest status 越界=数据损坏（含历史 "error"、意外 crashed 值）：跳过而非降级 failed，
           // 避免损坏 record 被误显示为 failed（触发错误重试/告警）。
-          // 双通道上报：console.warn 给开发者（终端调试）；pi.appendEntry 给用户（session 内可见，
-          // 即使退出后也能从 session.jsonl 复盘事故原因）。SubagentService 构造时 pi 未注入
-          // （session_start 之前），appendEntry 走可选链安全降级。
-          console.warn("[subagents] skip manifest with invalid status:", manifest.id, manifest.status);
+          // 双通道上报：logger.warn 给开发者（事后排查，appendEntry 持久化，不显 TUI）；
+          // pi.appendEntry 给用户（session 内可见，即使退出后也能从 session.jsonl 复盘事故原因）。
+          // SubagentService 构造时 pi 未注入（session_start 之前），appendEntry 走可选链安全降级。
+          logger.warn("[subagents] skip manifest with invalid status", {
+            detail: { id: manifest.id, status: manifest.status },
+          });
           this.pi?.appendEntry?.("subagent:manifest-invalid-status", {
             id: manifest.id,
             status: manifest.status,

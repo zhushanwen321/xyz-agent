@@ -47,6 +47,48 @@ const meta = { name: 'workflow-name', description: '...', phases: ['phase1', 'ph
 
 `name` must match the filename stem. `phases` is for display only.
 
+## [MANDATORY] Display: description + phase
+
+TUI `/workflows` 视图按**运行时 `phase()` 调用**分组（非 `meta.phases`），每个 agent node 的显示名取自 `description`/`label`。缺这两者 → 所有 node 挤在 `(unnamed)` phase、显示为 unnamed agent。
+
+### MUST 规则
+
+1. **每个 `agent()` 必须传 `description`（必填，非可选）**。命名规范见下方 [`description` naming convention](#description-naming-convention-mandatory)（kebab-case、无 round 后缀）。
+2. **每个含 agent 调用的逻辑段，必须在该段第一个 agent 调用前调 `phase('xxx')`**，且 `'xxx'` 出现在 `meta.phases` 字符串数组里。
+
+### Minimal 示例（三者齐备）
+
+```javascript
+const meta = {
+  name: 'review-fix',
+  description: 'review then fix',
+  phases: ['review', 'fix'],
+};
+
+phase('review');
+const r = await agent({ prompt: 'review diff', description: 'review-diff' });
+
+phase('fix');
+await agent({ prompt: `apply fix: ${r}`, description: 'apply-fix' });
+return { done: true };
+```
+
+### 反面教材 ❌
+
+```javascript
+// ❌ agent() 无 description → TUI 显示 unnamed agent
+await agent({ prompt: 'review diff' });
+
+// ❌ meta.phases 用对象数组 → 引擎忽略，全部归入 (unnamed)
+const meta = { name: 'x', phases: [{ title: 'review' }, { title: 'fix' }] };
+
+// ❌ 声明了 phases 但从不 phase() 调用 → 运行时分组失效
+const meta = { name: 'x', phases: ['review', 'fix'] };
+// ... 直接 await agent(...) 从不调 phase('review') / phase('fix')
+```
+
+以上三项由 `lintScript` 静态检查（warning 级），详见 `script-lint.ts` 的 `checkAgentDescription` / `checkMetaPhases` / `checkPhaseConsistency`。
+
 ## Injected Globals (pre-defined, do NOT redeclare)
 
 ### `agent(...)` — Call an AI agent
@@ -54,7 +96,8 @@ const meta = { name: 'workflow-name', description: '...', phases: ['phase1', 'ph
 支持三种签名：
 - `agent(promptString)` — 最简，prompt 字符串，返回 content 字符串
 - `agent(promptString, { label?, schema?, ... })` — 字符串 + opts（`label` 是 `description` 的别名）
-- `agent({ prompt, schema?, description?, agent?, skill?, timeoutMs?, model?, scene? })` — 完整 opts 对象
+- `agent({ prompt, schema?, description?, agent?, skill?, timeoutMs?, model?, scene?, thinkingLevel? })` — 完整 opts 对象
+  - `thinkingLevel?` (`string`) — 思考强度，合法值 `off | minimal | low | medium | high | xhigh`，透传至 pi CLI 拼接为 `--model provider/modelId:thinkingLevel`（与 `model?` 同效，影响子 agent 推理预算）
 
 Returns `parsedOutput` (structured data when schema provided) or `content` (string).
 

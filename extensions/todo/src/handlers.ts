@@ -24,24 +24,29 @@ const REMINDER_INTERVAL = 2;
 
 export type RefreshDisplayFn = (ctx: ExtensionContext) => void;
 
-/** 构建极简提醒：只含下一个推荐任务 */
+/** 未完成任务判定：pending / in_progress（cancelled 不可恢复，从提醒排除） */
+function isPending(t: TodoDetails["todos"][number]): boolean {
+	return t.status === "pending" || t.status === "in_progress";
+}
+
+/** 构建极简提醒：只含下一个推荐任务 + 行动指令 */
 export function buildMinimalReminder(state: TodoSessionState): string {
-	const pendingTodos = state.todos.filter((t) => t.status !== "completed");
+	const pendingTodos = state.todos.filter(isPending);
 	if (pendingTodos.length === 0) return "";
 
 	const next = pendingTodos[0];
-	return `<todo_context>\n[TODO] 你有 ${pendingTodos.length} 个未完成任务。下一个应处理：#${next.id} ${next.text}\n</todo_context>`;
+	return `<todo_context>\n[TODO] 你有 ${pendingTodos.length} 个未完成任务已搁置。下一个必须处理：#${next.id} ${next.text}。完成后用 todo update 标记 completed，不要继续搁置。\n</todo_context>`;
 }
 
 export function buildBeforeAgentStartMessage(state: TodoSessionState): { message: { customType: string; content: string; display: boolean } } | undefined {
 	if (state.todos.length === 0) return undefined;
 
-	const pendingTodos = state.todos.filter((t) => t.status !== "completed");
+	const pendingTodos = state.todos.filter(isPending);
 	if (pendingTodos.length === 0) return undefined;
 
 	const lines = pendingTodos.map((t) => `#${t.id}: ${t.text}`);
 	const contextStr =
-		`<todo_context>\n[TODO] ${pendingTodos.length} tasks pending\n${lines.join("\n")}\n</todo_context>`;
+		`<todo_context>\n[TODO] ${pendingTodos.length} 个未完成任务待处理：\n${lines.join("\n")}\n处理规则：开始工作前先推进 pending 任务；任务做完后立即用 todo update 标记 completed，不要搁置 pending 状态（搁置不等于完成）。\n</todo_context>`;
 
 	return {
 		message: {
@@ -75,9 +80,21 @@ export function reconstructState(state: TodoSessionState, ctx: ExtensionContext)
 
 		const details = msg.details as TodoDetails | undefined;
 		if (details?.todos && Array.isArray(details.todos)) {
-			state.todos = details.todos.map((t) => migrateTodo(t));
-			state.nextId = details.nextId ?? (state.todos.length > 0 ? Math.max(...state.todos.map((t) => t.id)) + 1 : 1);
-			latestIdx = i;
+			// 脏数据降级：单条迁移失败（null/primitive）跳过该条，全部失败则忽略整个快照，不中断回放
+			const migrated: TodoDetails["todos"] = [];
+			for (const t of details.todos) {
+				try {
+					migrated.push(migrateTodo(t));
+				} catch (e) {
+					// best-effort 降级：脏数据（null/primitive）跳过该条，不中断会话回放
+					console.debug("[todo] reconstructState: skipping dirty todo entry:", e);
+				}
+			}
+			if (migrated.length > 0) {
+				state.todos = migrated;
+				state.nextId = details.nextId ?? Math.max(...migrated.map((t) => t.id)) + 1;
+				latestIdx = i;
+			}
 		}
 	}
 
@@ -124,7 +141,7 @@ export function handleCompletionSteer(state: TodoSessionState): boolean {
 	if (!allCompleted) return false;
 
 	state.completionSteered = true;
-	state.pendingSteerMessage = `<todo_context>\n[TODO] 所有任务已完成。请快速检查每项任务的交付质量。\n</todo_context>`;
+	state.pendingSteerMessage = `<todo_context>\n[TODO] 所有任务已标记完成。请逐项核对交付质量（不要凭印象，检查实际产出），确认无误后向用户汇报结果。\n</todo_context>`;
 	return true;
 }
 
@@ -176,7 +193,7 @@ export function registerTodoEventHandlers(
 
 	pi.on("before_agent_start", async (_event: unknown, ctx: ExtensionContext) => {
 		try {
-			const pendingTodos = state.todos.filter((t) => t.status !== "completed");
+			const pendingTodos = state.todos.filter(isPending);
 			if (pendingTodos.length > 0) {
 				ctx.ui.setStatus("todo", `📋 ${pendingTodos.length} pending`);
 			}
@@ -208,6 +225,7 @@ export function registerTodoEventHandlers(
 			if (handleStallDetection(state)) return;
 			handleReminder(state);
 		} catch (e) {
+			// best-effort：agent_end 事件处理器出错不阻断会话主流程，仅记录调试日志
 			console.debug("[todo] agent_end error:", e);
 		}
 	});

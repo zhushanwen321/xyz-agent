@@ -10,8 +10,9 @@
 import Ajv from "ajv";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// 被测主入口（src/index.ts 导出 executeStructuredOutput 供直接调用）
-import { executeStructuredOutput } from "../src/index.js";
+// 被测主入口（src/index.ts 导出 executeStructuredOutput 供直接调用；
+// createToolDefinition 供 env→execute 桥接测试调用）
+import { createToolDefinition, executeStructuredOutput } from "../src/index.js";
 
 // ── 纯逻辑测试：Schema 解析 + Ajv 校验 ──────────────────────
 
@@ -328,7 +329,9 @@ describe("Workflow hook: structured-output failure retry", () => {
     const [msg, opts] = pi.sendUserMessage.mock.calls[0]!;
     expect(msg).toContain("FAILED validation");
     expect(msg).toContain("Schema validation failed: /count must be number");
-    expect(msg).toContain(`The correct schema is: ${SCHEMA}`);
+    // 新文案：告知 schema 由系统注入，引导只传 data
+    expect(msg).toContain(`The required schema for your \`data\` is: ${SCHEMA}`);
+    expect(msg).toContain("ONLY the `data` parameter");
     expect(opts).toEqual({ deliverAs: "steer" });
   });
 
@@ -343,6 +346,9 @@ describe("Workflow hook: structured-output failure retry", () => {
     const msg = pi.sendUserMessage.mock.calls[0]![0] as string;
     expect(msg).toContain("MUST call the structured-output tool");
     expect(msg).not.toContain("FAILED validation");
+    // 与 failed 分支对齐：断言新增的 steer 关键文案（schema 由系统注入，只传 data）
+    expect(msg).toContain("ONLY `data`");
+    expect(msg).toContain("Do NOT pass a `schema`");
   });
 
   it("does NOT steer when structured-output succeeded", async () => {
@@ -526,5 +532,190 @@ describe("Tool execute (real call via executeStructuredOutput)", () => {
   it("accepts boolean root schema (draft-07: true = accept all)", async () => {
     const result = await executeStructuredOutput({ schema: true, data: { ok: 1 } });
     expect(result.details).toEqual({ ok: 1 });
+  });
+});
+
+// ── 权威 schema（workflow 模式）测试 ──────────────────────────
+//
+// [HISTORICAL] 2026-08-01 事故回归：workflow 模式下 PI_WORKFLOW_SCHEMA 注入权威 schema，
+// executeStructuredOutput 用它校验 data，LLM 传入的 schema 参数不参与校验。
+// 核心保障：LLM 无法通过自报 schema 自洽绕过格式约束。
+// 直接调 executeStructuredOutput 显式传 authoritativeSchema 模拟 env 注入路径。
+
+describe("Authoritative schema (workflow mode)", () => {
+  // 08-01 事故的 schema 形态：add_channels.items 要求 object，LLM 篡改成 string
+  const authoritativeSchema = {
+    type: "object",
+    properties: {
+      channels: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            action: { type: "string", enum: ["add", "remove", "fix"] },
+          },
+          required: ["name", "action"],
+        },
+      },
+    },
+    required: ["channels"],
+  };
+
+  it("authoritativeSchema 存在 + data 合规 → 通过，details = data", async () => {
+    const result = await executeStructuredOutput({
+      schema: authoritativeSchema, // LLM 传的 schema（碰巧和权威一致）
+      data: { channels: [{ name: "ch1", action: "add" }] },
+      authoritativeSchema,
+    });
+    expect(result.content[0]!.text).toContain("recorded successfully");
+    expect(result.details).toEqual({ channels: [{ name: "ch1", action: "add" }] });
+  });
+
+  // 核心回归用例：直接复现 08-01 事故——LLM 篡改 schema（items 改成 string）
+  // + data 跟着篡改（传字符串数组），必须被权威 schema 拒绝。
+  // 旧实现（校验 LLM schema）会让其通过 → 静默腐败；方案 A 必须拒绝。
+  it("rejects LLM-rewritten schema even when data matches the rewritten schema", async () => {
+    const rewrittenSchema = {
+      type: "object",
+      properties: {
+        channels: {
+          type: "array",
+          items: { type: "string" }, // LLM 篡改：object → string
+        },
+      },
+      required: ["channels"],
+    };
+    // data 符合篡改后的 schema（字符串数组），但不符合权威 schema（要求对象数组）
+    await expect(
+      executeStructuredOutput({
+        schema: rewrittenSchema,
+        data: { channels: ["ch1", "ch2"] },
+        authoritativeSchema,
+      }),
+    ).rejects.toThrow(/Schema validation failed \(authoritative\)/);
+  });
+
+  it("authoritativeSchema error includes authoritative schema echo for LLM guidance", async () => {
+    await expect(
+      executeStructuredOutput({
+        schema: { type: "object" }, // LLM 宽松 schema
+        data: { channels: "not-an-array" }, // 不符合权威 schema
+        authoritativeSchema,
+      }),
+    ).rejects.toThrow(/authoritative schema \(PI_WORKFLOW_SCHEMA\) is:/);
+  });
+
+  it("authoritativeSchema absent → falls through to daily-mode defense (regression guard)", async () => {
+    // 不传 authoritativeSchema → 走日常防御链（LLM schema 校验）。
+    // 用一个 LLM schema + 合规 data 应通过（证明没误入权威分支抛错）。
+    const result = await executeStructuredOutput({
+      schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+      data: { ok: true },
+    });
+    expect(result.details).toEqual({ ok: true });
+  });
+
+  it("authoritativeSchema present but LLM omits schema param → still validates data", async () => {
+    // 方案 A 后 schema 参数非必需。LLM 只传 data（schema=undefined）也应正常校验。
+    // 这对应提示词引导的新用法：「只需传 data」。
+    const result = await executeStructuredOutput({
+      schema: undefined,
+      data: { channels: [{ name: "ch1", action: "fix" }] },
+      authoritativeSchema,
+    });
+    expect(result.details).toEqual({ channels: [{ name: "ch1", action: "fix" }] });
+  });
+
+  // ── 权威分支类型边界（draft-07 允许 boolean 根；非 object/boolean 必须拒绝）──
+  // 覆盖 src/index.ts assertJsonSchemaRoot 的三个分支：boolean true / boolean false / 非法类型。
+
+  it("authoritativeSchema = boolean true → accepts any data (draft-07 accept-all root)", async () => {
+    const result = await executeStructuredOutput({
+      schema: undefined,
+      data: { anything: "goes", n: 42 },
+      authoritativeSchema: true,
+    });
+    expect(result.details).toEqual({ anything: "goes", n: 42 });
+  });
+
+  it("authoritativeSchema = boolean false → rejects all data (draft-07 reject-all root)", async () => {
+    await expect(
+      executeStructuredOutput({
+        schema: undefined,
+        data: { anything: "goes" },
+        authoritativeSchema: false,
+      }),
+    ).rejects.toThrow(/Schema validation failed \(authoritative\)/);
+  });
+
+  it("authoritativeSchema = non object/boolean (string) → throws clear type error", async () => {
+    // 非法形态（如 "invalid"）经 tryParseJson 保留原值 → assertJsonSchemaRoot 抛错，
+    // 外层 catch 包成 "Invalid authoritative JSON Schema" 含 echo 的错误。
+    await expect(
+      executeStructuredOutput({
+        schema: undefined,
+        data: {},
+        authoritativeSchema: "invalid",
+      }),
+    ).rejects.toThrow(/Invalid authoritative JSON Schema.*got string/s);
+  });
+});
+
+// ── env → execute 桥接测试（createToolDefinition.execute 读 PI_WORKFLOW_SCHEMA）──
+//
+// Must-fix #1：createToolDefinition().execute() 里读 process.env[PI_WORKFLOW_SCHEMA]
+// 注入 authoritativeSchema 的桥接分支此前无测试覆盖——5 个权威用例都直接调
+// executeStructuredOutput({...authoritativeSchema}) 绕过了这个 env→execute 注入点。
+// 若该行被误删/改错，整个方案 A 会静默回退到旧实现（LLM 自报 schema 校验），
+// 与本次修复要消除的静默腐败属同一类失败模式。本组用 createToolDefinition().execute()
+// 驱动真实 env 注入路径，断言权威校验生效。
+
+describe("createToolDefinition.execute env bridge (PI_WORKFLOW_SCHEMA → authoritative)", () => {
+  const SCHEMA_ENV_NAME = "PI_WORKFLOW_SCHEMA";
+  const originalSchemaEnv = process.env[SCHEMA_ENV_NAME];
+
+  // 用真实的 execute（不 mock executeStructuredOutput），覆盖 env 读取 + 注入 + 校验全链路。
+  // createToolDefinition().execute 签名是 (toolCallId, params)；toolCallId 在内部未使用。
+  const toolDef = createToolDefinition();
+  const exec = (params: { schema?: unknown; data: unknown }) =>
+    toolDef.execute("call-id-1", params);
+
+  afterEach(() => {
+    if (originalSchemaEnv === undefined) delete process.env[SCHEMA_ENV_NAME];
+    else process.env[SCHEMA_ENV_NAME] = originalSchemaEnv;
+  });
+
+  const AUTHORITY = JSON.stringify({
+    type: "object",
+    properties: { count: { type: "number" } },
+    required: ["count"],
+  });
+
+  it("env set + data non-conformant → throws 'Schema validation failed (authoritative)'", async () => {
+    process.env[SCHEMA_ENV_NAME] = AUTHORITY;
+    // data 缺 required count → 权威校验失败。
+    // 注意：即便 LLM 传了一个自洽的宽松 schema，权威分支也只用 env 的 schema 校验。
+    await expect(
+      exec({ schema: { type: "object" }, data: {} }),
+    ).rejects.toThrow(/Schema validation failed \(authoritative\)/);
+  });
+
+  it("env set + data conformant → passes, details = data", async () => {
+    process.env[SCHEMA_ENV_NAME] = AUTHORITY;
+    const result = await exec({ schema: undefined, data: { count: 7 } });
+    expect(result.content[0]!.text).toContain("recorded successfully");
+    expect(result.details).toEqual({ count: 7 });
+  });
+
+  it("env unset → falls through to daily mode (no authoritativeSchema injected)", async () => {
+    delete process.env[SCHEMA_ENV_NAME];
+    // env 未设 → execute 不注入 authoritativeSchema → 走日常防御链。
+    // 用一个合规的 LLM schema + 合规 data 验证它通过（证明没误入权威分支）。
+    const result = await exec({
+      schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+      data: { ok: true },
+    });
+    expect(result.details).toEqual({ ok: true });
   });
 });

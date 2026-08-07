@@ -12,6 +12,19 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// Mock 共享 logger，让 logger.error 可被 spy（源码已从 console.error 改为 logger.error）
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: {
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+  },
+}));
+vi.mock("@zhushanwen/pi-extension-logger", () => ({
+  getLogger: () => loggerMock,
+}));
+
 import { doFinalizeRecord } from "../finalize-record.ts";
 import { ManifestStore } from "../manifest-store.ts";
 import type { AgentResult, ExecutionRecord } from "../types.ts";
@@ -129,7 +142,7 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
       finalizedBeforeManifestWrite.value = fs.existsSync(`${sessionFile}.finalized`);
       throw new Error("disk full");
     });
-    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    loggerMock.error.mockClear();
 
     const deps = makeDeps();
 
@@ -147,9 +160,9 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
     // ── 核心 claim 4：pending-notifications 注销仍触发（emitUnregister）──
     expect(deps.emitUnregister).toHaveBeenCalledWith("rec-cleanup-first", "done");
 
-    // ── 核心 claim 5：manifest 写失败被 console.error 记录（含 record id + error）──
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("manifest 写入失败"));
-    const errMsg = consoleErrorSpy.mock.calls[0]?.[0];
+    // ── 核心 claim 5：manifest 写失败被 logger.error 记录（含 record id + error）──
+    expect(loggerMock.error).toHaveBeenCalledWith(expect.stringContaining("manifest 写入失败"));
+    const errMsg = loggerMock.error.mock.calls[0]?.[0];
     expect(errMsg).toContain("rec-cleanup-first");
     expect(errMsg).toContain("disk full");
 
@@ -167,7 +180,7 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
     // .finalized 尚未被 Step 3 写入），保护 Critical #1 时序不变量。
     expect(finalizedBeforeManifestWrite.value).toBe(true);
 
-    // 清理 spy 防止污染其他测试
-    consoleErrorSpy.mockRestore();
+    // 清理 mock 调用记录防污染
+    loggerMock.error.mockClear();
   });
 });

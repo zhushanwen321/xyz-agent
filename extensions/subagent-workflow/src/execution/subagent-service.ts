@@ -4,6 +4,8 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
 import type { ExtensionMode } from "./host-mode.ts";
 
 import type { AgentResult as WorkflowAgentResult } from "../orchestration/models/types.ts";
@@ -51,6 +53,8 @@ import { DEFAULT_AGENT_NAME } from "./types.ts";
 import { registerGlobalObservability, UiRequestObservability } from "./ui-request-observability.ts";
 import { WorktreeManager } from "./worktree-manager.ts";
 
+const logger = getLogger("subagents");
+
 /** dispose 后注入的 stub UI 请求 handler。
  *
  * [背景] Pi 单进程 session 串行接管。session A shutdown 时 SIGTERM 子进程后、
@@ -58,7 +62,7 @@ import { WorktreeManager } from "./worktree-manager.ts";
  * 子进程的 trailing extension_ui_request 仍可能被父进程 pump 解析，调到 A 的 handler 闭包。
  * 若 dispose 不清 uiRequestHandler，旧 handler 闭包仍持有 A 的 ctx，触发
  * ui-request-queue.ts 的 catch 分支打 `[subagents] uiRequestHandler threw` 误导性
- * console.error（看起来像 bug，实际是预期竞态；三层兜底已确保功能正确）。
+ * logger.error（看起来像 bug，实际是预期竞态；三层兜底已确保功能正确）。
  *
  * stub 始终返回 {cancelled:true}，不调 ctx.ui、不捕获任何 ctx，让 trailing ui_request
  * 干净降级为 cancelled（等价于子进程主动取消）。
@@ -519,12 +523,42 @@ export class SubagentService {
       );
     }
 
+    // [MF#7] worktree:true requires fork:true — symmetric with execute() guard.
+    // Fails fast before any side effect (record creation / worktree creation).
+    if (opts.worktree === true && !opts.fork) {
+      throw new Error(
+        "worktree:true requires fork:true (worktree isolation only applies to forked sessions). " +
+          "Set fork:true together with worktree:true.",
+      );
+    }
+
     // ── 步骤 1: IDENTITY 解析 ──
     const identity = await this.resolveIdentity(opts);
 
     // ── 步骤 2: RECORD 创建（mode="background" 进池）──
     const record = this.createRecordForMode(identity, opts, "background");
     emitPendingRegister(this.pi, record.id, record.agent);
+
+    // ── 步骤 2.5: worktree creation (only worktree===true; handle injection is execute()'s path) ──
+    // Workflow path receives boolean only (AgentCallOpts.worktree: boolean) — WorktreeHandle is a
+    // main-thread non-serializable object that cannot cross worker postMessage, so no object branch
+    // here (unlike execute() :445-447 which serves the subagent-tool path). MF#7 guard above ensures
+    // fork===true when worktree===true. On create failure, finalizeFailed cleans up the record, then
+    // throw lets SAR.run() convert it to an AgentResult.error (not return-handle like execute()).
+    let worktreeHandle: WorktreeHandle | undefined;
+    if (opts.worktree === true) {
+      try {
+        worktreeHandle = this.worktreeManager.create(this.cwd, record.id);
+        record.worktreeHandle = worktreeHandle;
+      } catch (err) {
+        // finalizeFailed: CAS→finalizeRecord→emitUnregister (record already registered above).
+        // throw (not return-handle): executeAndAwait's caller SAR.run() catches and wraps into
+        // AgentResult.error. Diverges from execute() :455-456 which returns buildEarlyFailedHandle
+        // because the two methods have different return types.
+        await this.finalizeFailed(record, err);
+        throw err;
+      }
+    }
 
     // ── 步骤 3: SessionRunnerContext ──
     const ctx = this.buildSessionRunnerContext(opts.cwd);
@@ -535,7 +569,7 @@ export class SubagentService {
     // 步骤 5: runAndFinalize（await，不 detached）。onUpdate=undefined（BC-11），onEvent 独立传，stream 透传。
     const result = await this.runAndFinalize(
       record,
-      { ...opts, onUpdate: undefined },
+      { ...opts, onUpdate: undefined, worktree: worktreeHandle },
       ctx,
       identity,
       effectiveSignal,
@@ -550,7 +584,24 @@ export class SubagentService {
     //   - CAS 失败（cancel/finalizeFailed/dispose 抢先转终态）→ 那些路径各自已 emit
     //     （cancelBackground L709 / finalizeFailed→finalizeRecord / dispose L240）
     // 旧实现无条件 emit 一次 → CAS 成功分支重复 emit（双注销）。
-    return mapToWorkflowAgentResult(result);
+    const wfResult = mapToWorkflowAgentResult(result);
+    // W2 改动 7：注入 worktreePath（worktree 隔离激活时来自 step 2.5 的 worktreeHandle）。
+    // mapToWorkflowAgentResult 不感知 worktree（它只做 subagents AgentResult → workflow AgentResult
+    // 的 DTO 映射），故在 caller 侧 mutate 刚新建的产物对象（无共享引用，安全）。
+    //
+    // ⚠️ worktreePath is diagnostic only, may not exist — see AgentResult.worktreePath JSDoc
+    // （orchestration/models/types.ts）。下方诊断标识符语义（not cwd）说明同源。
+    //
+    // 诊断标识符语义（not cwd）：
+    //   - runAndFinalize 内的 finalizeRecord 在 return 前已 cleanup（git worktree remove --force），
+    //     worktreePath 指向的目录已被删除，不保证存在。
+    //   - worktreePath 仅供日志/trace 关联（如定位某条 session jsonl 的 worktree 来源），无运行时语义。
+    //   - **不可作为后续 agent 的 cwd**——目录已删，复用会 ENOENT。
+    //   - wave 内 worktree 复用（spec-w §2 "wave 内 8 action 共享 worktree"）在 pi 当前架构下
+    //     不可行：worktree 绑定单次 agent() record，每次 executeAndAwait 结束 finalizeRecord
+    //     无条件 cleanup，worktree 无法跨 action 存活。wave 改用主 cwd（见 recursive-split.js）。
+    wfResult.worktreePath = record.worktreeHandle?.path;
+    return wfResult;
   }
 
   // ── 状态查询（TUI 调）──────────────────────────────────
@@ -750,12 +801,12 @@ export class SubagentService {
       })
       .catch((err: unknown) => {
         // detached 吞错：runAndFinalize 内部已 finalize record（含 emitPendingUnregister），
-        // 且 finalizeRecord 的 manifest 写入已降级为 best-effort（失败仅 console.error + appendEntry，
+        // 且 finalizeRecord 的 manifest 写入已降级为 best-effort（失败仅 logger.error + appendEntry，
         // 不外抛）。因此此处不应走到——但作为最后一道兼底，记录调试日志后吞下，不外抛。
         // 完成通知由 finalizeRecord 内的 emitPendingUnregister 承担（pending-notifications 消费）。
         // cancel 抢先时 status=cancelled，cancelBackground 自己 emit，此处无需重复。
         if (err instanceof Error) {
-          console.debug(`[subagent] background finalize error (record=${record.id}): ${err.message}`);
+          logger.debug(`[subagent] background finalize error (record=${record.id}): ${err.message}`);
         }
       });
   }

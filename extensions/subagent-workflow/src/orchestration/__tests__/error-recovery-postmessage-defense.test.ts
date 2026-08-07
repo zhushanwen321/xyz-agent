@@ -23,6 +23,19 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 
+// Mock 共享 logger，让 logger.error 可被 spy（源码已从 console.error 改为 logger.error）
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: {
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+  },
+}));
+vi.mock("@zhushanwen/pi-extension-logger", () => ({
+  getLogger: () => loggerMock,
+}));
+
 import { handleWorkerMessage, postBudgetUpdate } from "../error-recovery.ts";
 import type { LifecycleDeps, WorkerHandlers } from "../models/ports.ts";
 import type { WorkflowRun } from "../models/workflow-run.ts";
@@ -98,10 +111,12 @@ function postedAt(postMessage: ReturnType<typeof vi.fn>, idx: number): PostedMsg
   return postMessage.mock.calls[idx]![0] as PostedMsg;
 }
 
-/** 静默 console.error（防御路径会打印诊断，避免污染测试输出）。 */
+/** 清空 logger.error 调用记录（防御路径会打印诊断，避免污染跨用例断言）。 */
 function silenceConsoleError(): () => void {
-  const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-  return () => spy.mockRestore();
+  loggerMock.error.mockClear();
+  return () => {
+    loggerMock.error.mockClear();
+  };
 }
 
 // ── W2a: postBudgetUpdate try/catch ──
@@ -140,8 +155,8 @@ describe("W2a: postBudgetUpdate 防御 DataCloneError", () => {
 
       postBudgetUpdate(run);
 
-      expect(console.error).toHaveBeenCalledTimes(1);
-      const diag = (console.error as ReturnType<typeof vi.fn>).mock.calls[0]![0] as string;
+      expect(loggerMock.error).toHaveBeenCalledTimes(1);
+      const diag = loggerMock.error.mock.calls[0]![0] as string;
       expect(diag).toContain("postBudgetUpdate failed");
       expect(diag).toContain("Could not clone object");
     } finally {
@@ -243,7 +258,7 @@ describe("W2b: dispatchWorkflowCall postResult 防御 DataCloneError", () => {
 
       // 至少 2 次尝试（原始 + fallback），fallback 失败也记日志
       expect(postMessage.mock.calls.length).toBeGreaterThanOrEqual(2);
-      const errorCalls = (console.error as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0] as string);
+      const errorCalls = loggerMock.error.mock.calls.map((c) => c[0] as string);
       expect(errorCalls.some((s) => s.includes("fallback also failed"))).toBe(true);
     } finally {
       restore();
@@ -345,7 +360,7 @@ describe("W2c: postAgentResult 行为测试（cached replay 路径）", () => {
 
       // 至少 2 次尝试（原始 + fallback），fallback 失败也记日志
       expect(postMessage.mock.calls.length).toBeGreaterThanOrEqual(2);
-      const errorCalls = (console.error as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0] as string);
+      const errorCalls = loggerMock.error.mock.calls.map((c) => c[0] as string);
       expect(errorCalls.some((s) => s.includes("postAgentResult failed"))).toBe(true);
       expect(errorCalls.some((s) => s.includes("fallback also failed"))).toBe(true);
     } finally {

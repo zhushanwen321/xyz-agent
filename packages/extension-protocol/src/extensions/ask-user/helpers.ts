@@ -102,7 +102,7 @@ export function getAskUserOther(
   return answers[`${askUserKey(question)}__other`]
 }
 
-/** 从 answers 中提取评论 */
+/** 从 answers 中提取评论（4.0.1 restore：ask-user TUI 评论模式与 renderer AskUserOverlay 仍消费此 helper） */
 export function getAskUserComment(
   answers: AskUserAnswers,
   question: AskUserQuestion,

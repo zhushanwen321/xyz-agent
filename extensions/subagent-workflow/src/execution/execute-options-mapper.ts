@@ -55,6 +55,8 @@ export function mapToExecuteOptions(
     schema: opts.schema,
     schemaEnv: opts.schemaEnv,
     cwd: opts.cwd,
+    fork: opts.fork,
+    worktree: opts.worktree,
     model: opts.model,
     ctxModel,
     skillPath: opts.skillPath,

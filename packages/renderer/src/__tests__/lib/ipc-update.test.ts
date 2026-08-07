@@ -71,6 +71,21 @@ describe('lib/ipc update 方法 · web/mock 降级（electronAPI=undefined）', 
     const ipc = await import('@/lib/ipc')
     await expect(ipc.openUpdateFallbackUrl('https://example.com')).resolves.toBeUndefined()
   })
+
+  it('updateDownload → { downloaded: false }', async () => {
+    const ipc = await import('@/lib/ipc')
+    await expect(ipc.updateDownload(release)).resolves.toEqual({ downloaded: false })
+  })
+
+  it('updateInstall → { triggerRestart: false }', async () => {
+    const ipc = await import('@/lib/ipc')
+    await expect(ipc.updateInstall()).resolves.toEqual({ triggerRestart: false })
+  })
+
+  it('getPreloaded → null', async () => {
+    const ipc = await import('@/lib/ipc')
+    await expect(ipc.getPreloaded()).resolves.toBeNull()
+  })
 })
 
 describe('lib/ipc update 方法 · 转发到 electronAPI', () => {
@@ -145,5 +160,35 @@ describe('lib/ipc update 方法 · 转发到 electronAPI', () => {
 
     await ipc.openUpdateFallbackUrl('https://example.com/x')
     expect(spy).toHaveBeenCalledWith('https://example.com/x')
+  })
+
+  it('updateDownload 转发 release 并透传返回值', async () => {
+    const spy = vi.fn((r: LatestReleaseInfo) =>
+      Promise.resolve({ downloaded: r.version === '0.9.0' }),
+    )
+    ;(window as { electronAPI?: unknown }).electronAPI = { updateDownload: spy }
+    const ipc = await import('@/lib/ipc')
+
+    await expect(ipc.updateDownload(release)).resolves.toEqual({ downloaded: true })
+    expect(spy).toHaveBeenCalledWith(release)
+  })
+
+  it('updateInstall 转发（无参）并透传返回值', async () => {
+    const spy = vi.fn(() => Promise.resolve({ triggerRestart: true }))
+    ;(window as { electronAPI?: unknown }).electronAPI = { updateInstall: spy }
+    const ipc = await import('@/lib/ipc')
+
+    await expect(ipc.updateInstall()).resolves.toEqual({ triggerRestart: true })
+    expect(spy).toHaveBeenCalledWith()
+  })
+
+  it('getPreloaded 转发（无参）并透传返回值', async () => {
+    const preloaded = { release, filePath: '/tmp/preloaded.zip' }
+    const spy = vi.fn(() => Promise.resolve(preloaded))
+    ;(window as { electronAPI?: unknown }).electronAPI = { getPreloaded: spy }
+    const ipc = await import('@/lib/ipc')
+
+    await expect(ipc.getPreloaded()).resolves.toEqual(preloaded)
+    expect(spy).toHaveBeenCalledWith()
   })
 })

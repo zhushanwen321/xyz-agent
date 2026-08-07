@@ -27,25 +27,53 @@ git diff main...HEAD --stat
 
 ### 路径 1：pi 环境（有 pi workflow 能力）
 
-**适用条件**：当前主 agent 是 pi agent，且能执行 `.pi/workflows/` 下的 workflow
+**适用条件**：当前主 agent 是 pi agent，且能调用内置 workflow
 （检测：pi CLI 可用 + 主 agent 支持 workflow 调用）。
 
-**执行**：跑 `review-fix-loop.js` workflow（5 agent 并行 → 聚合 → 修 → 重审，直到 clean 或 maxRounds）：
+**执行**：跑内置 `review-fix-loop` workflow（7 维并行 review → 聚合 → fix → 重审，直到 clean / 收敛 / maxRounds）：
 
 ```bash
-# 主 agent 调用 pi workflow（参数可调）
-# maxRounds 默认 10；skipFallow 默认 true（未装 fallow 时跳过）；baseRef 默认 main
-# model 可选，不传则用当前会话模型
-pi workflow run .pi/workflows/review-fix-loop.js --args '{maxRounds:10, baseRef:"main", skipFallow:true}'
+# 在 pi agent 内用 workflow 工具调用（action:"run", name:"review-fix-loop"）；
+# 下方 CLI 形式 pi workflow run ... 仅供识别，实际执行用 workflow 工具
+#
+# ⚠️ batch1 必须传 **.md 文件路径**（相对仓库根），禁止裸名：
+#   review-fix-loop 的 resolveAgentDefs 只对「含 / 或 .md 后缀」的项调 loadAgentMd
+#   加载文件内容；裸名（如 review-arch-boundary）不读 .agents/agents/ 下的定义，
+#   且 pi AgentRegistry 未注册这些 agent（available_subagents 无），裸名会失败。
+#
+# targetType=git-diff + target=main：审查 git diff main...HEAD（base 启动时锁 hash 防 ref 漂移）
+# batch1 逗号分隔 7 个维度 agent 的 .md 路径，批内全并行 review
+# autoCommit=true：fix 后自动 commit；recheckAfterFix=false（默认省 token）
+# skipCleanAgents=true：单轮 clean 的 agent 下轮跳过；maxRounds 默认 10
+pi workflow run review-fix-loop --args '{
+  targetType: "git-diff",
+  target: "main",
+  batch1: ".agents/agents/review-arch-boundary.md,.agents/agents/review-business-logic.md,.agents/agents/review-extension-api.md,.agents/agents/review-monorepo-impact.md,.agents/agents/review-type-safety.md,.agents/agents/review-electron-build.md,.agents/agents/review-test-coverage.md",
+  maxRounds: 10,
+  autoCommit: true,
+  recheckAfterFix: false,
+  skipCleanAgents: true
+}'
 ```
 
-workflow 内部逻辑（详见 `.pi/workflows/review-fix-loop.js`）：
-- 可选 fallow pre-scan（Scan phase，单独预先跑）
-- 5 agent 全并行单批 `parallel()`（Review phase，无 worktree 约束不需分批）
-- aggregator 聚合去重，产出 `aggregated.md` + `must_fix` 计数
-- `must_fix === 0` 判 clean；否则 fix agent 批量修复并 commit，进入下一轮
-- S1 conservative：连续 2 轮 clean 的 agent 会被跳过；任何 fix 全部重新启用
-- stuck 检测：连续 3 轮问题数不降则停
+> **如何找到内置版**：内置 workflow 用**名字**调用（不带文件路径），pi 解析顺序为
+> 「内置 → npm 包 `@zhushanwen/pi-subagent-workflow/workflows/` → 项目 `.pi/workflows/`」。
+> 项目曾有一个同名定制版 `.pi/workflows/review-fix-loop.js` 会覆盖内置版，**现已删除**，内置版直接生效。
+> `pi workflow list` 中名为 `review-fix-loop`（无 `.js` 路径后缀）的条目即内置版。
+
+内置 workflow 行为（参数 → 效果，对照 `~/.pi/agent/npm/node_modules/@zhushanwen/pi-subagent-workflow/workflows/review-fix-loop.js` 核实）：
+- **审查范围**：`targetType=git-diff` + `target=main` → 审查 `git diff main...HEAD`（base 在 run 启动时锁定 hash，防 run 期间 ref 漂移）；同时含未提交工作区改动
+- **维度 agent**：`batch1` 逗号分隔 7 个 **.md 路径**，批内全并行 review。各 agent 审查焦点内置于 `.agents/agents/review-*.md` 正文，workflow 用 loadAgentMd 加载，无需额外注入 focus
+- **聚合**：内置 aggregator prompt 合并去重 7 份报告为 `aggregated.md` + `must_fix` 计数（workflow 自带，不依赖 `review-aggregator.md`）
+- **clean 判定**：某 agent `must_fix === 0` 判该 agent clean；否则 fix agent 批量修复并 `autoCommit` commit，进入下一轮
+- **clean 跳过**（`skipCleanAgents` 默认 true）：单轮 clean 的 agent 下轮跳过；`recheckAfterFix` 默认 false（省 token），传 true 开启强回归模式（fix 后重派全批，clean agent 走限定 prompt 只审 fix 改动文件 ∪ 自检关联点）
+- **stuck 检测**：连续 `stuckThreshold`（默认 3）轮 must_fix 不降则终止（`terminated=stuck`）
+- **收敛终止**（脚本支持，README 未列）：`convergeNewIssues`(默认1)+`convergeRounds`(默认2) → 连续 N 轮新发现 ≤ 阈值且无活跃条目则 `terminated=converged`；`maxFixAttempts`(默认2) → 问题经 N 次修复未收敛则 `terminated=needs-redesign`（结构性问题需人工介入）
+- **fixAgent**（可选）：fix 阶段加载指定 agent（内置名 / .md 路径）；代码场景可在该 .md 内写 verify 命令（typecheck/test）当轮拦截编译类回归（⚠️ 命令须在目标项目可运行）
+
+> **与旧定制版的差异**（已接受）：旧定制版 S1 conservative 要求「连续 2 轮 clean」才跳过 agent，
+> 内置版「单轮 clean」即跳过。默认 recheckAfterFix=false 时，"fix 引入回归"场景不覆盖
+> （省 token）；担心回归时传 recheckAfterFix=true 开启强回归重审。少审一轮换取 token 效率。
 
 ### 路径 2：非 pi 环境（手工编排，固定 2 轮）[本次新增]
 
@@ -104,6 +132,8 @@ git diff <baseRef>...HEAD --stat   # baseRef 默认 main，bare repo workspace �
 | 类型安全 | `review-type-safety` | 完整类型标注、禁止 any（显式/隐式）、类型守卫、tsc/vue-tsc、Pi* 类型分层约束（仅 infra 层可见） |
 | Electron 打包 | `review-electron-build` | tsup 配置（noExternal/Worker entry/CJS 兼容）、electron-builder（files/asarUnpack/symlink）、子进程启动、打包验证三阶段 |
 | 测试覆盖 | `review-test-coverage` | 新增逻辑有测试、边缘情况覆盖、vitest 合规（禁 node:test）、领域测试点（session 双状态/Extension vs Plugin/ports 接口） |
+| 扩展接口 | `review-extension-api` | Pi 扩展 tool/command schema 完整性、向后兼容性、扩展规范合规（参考 docs/extensions/extension-conventions.md + development-guide.md） |
+| Monorepo 影响 | `review-monorepo-impact` | workspace 包间依赖（packages/* + apps/* + extensions/* + extensions/shared/*）、循环依赖、公共 API 变更对下游影响 |
 
 每个 agent 的完整 checklist 见 `.agents/agents/review-<维度>.md`。
 

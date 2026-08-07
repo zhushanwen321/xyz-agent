@@ -18,6 +18,7 @@ import * as path from "node:path";
 
 import type { ExtensionAPI, ExtensionContext, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getLogger, setPiHandle } from "@zhushanwen/pi-extension-logger";
 
 import type { AgentRegistry } from "./execution/agent-registry.ts";
 import { bestEffort } from "./execution/best-effort.ts";
@@ -38,6 +39,8 @@ import {
 } from "./execution/subagent-service.ts";
 import { SubprocessAgentRunner } from "./execution/subprocess-agent-runner.ts";
 import { WorktreeManager } from "./execution/worktree-manager.ts";
+import { setupSubagentListInjector } from "./injectors/subagent-list-injector.ts";
+import { setupWorkflowListInjector } from "./injectors/workflow-list-injector.ts";
 import { renderBgNotifyMessage } from "./interface/bg-notify-render.ts";
 import { registerWorkflowsCommand } from "./interface/commands.ts";
 import { toGuiCtx } from "./interface/gui-mappers.ts";
@@ -72,13 +75,31 @@ declare module "@earendil-works/pi-coding-agent" {
 
 // ── Factory ──────────────────────────────────────────────────
 
+// 模块级 logger（setPiHandle 注入后自动走 appendEntry）
+const logger = getLogger("subagents");
+
 export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
+  // 注入 pi handle 给全局 extension-logger，让深层代码（best-effort / error-recovery）
+  // 的 getLogger("subagents") 也能走 appendEntry。
+  setPiHandle(pi);
+
   // ════════════════════════════════════════════════════════════
   //  subagents 域：tool + command + messageRenderer
   // ════════════════════════════════════════════════════════════
   registerSubagentTool(pi);
   registerSubagentsCommand(pi);
   pi.registerMessageRenderer("subagent-bg-notify", renderBgNotifyMessage);
+
+  // ════════════════════════════════════════════════════════════
+  //  injectors：before_agent_start 注入 <available_subagents> + <available_workflows>
+  //
+  //  归位自 unified-hooks（subagent-list-injector）+ 新增 workflow-list-injector。
+  //  injector 是 subagent-workflow 的内聚功能（让 LLM 知道有哪些 agent/workflow
+  //  可用），与同包 resource-discovery 同包后直接 import，消除跨包依赖（ADR-031）。
+  //  pi 串联多 before_agent_start handler：各自返回 systemPrompt 链式叠加。
+  // ════════════════════════════════════════════════════════════
+  setupSubagentListInjector(pi);
+  setupWorkflowListInjector(pi);
 
   // 模块级缓存：主 session 的 sessionFile（fork source 解析用）。
   let cachedMainSessionFile: string | undefined;
@@ -259,8 +280,9 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     try {
       maybeCleanupExpiredSessionFiles(agentDir, cwd);
     } catch (err) {
-      void err;
-      console.warn("[subagents] expired session file cleanup failed:", err);
+      logger.warn("[subagents] expired session file cleanup failed", {
+        reason: err instanceof Error ? err.message : String(err),
+      });
     }
 
     // ADR-035 启动恢复：扫描 manifest tmp 残留（崩溃打断的 writeManifest 留下），
@@ -268,19 +290,21 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     try {
       const recovered = await service.recoverManifestTmpFiles();
       if (recovered.recovered > 0 || recovered.deleted > 0) {
-        console.warn(`[subagents] manifest tmp recovery: ${recovered.recovered} promoted, ${recovered.deleted} deleted`);
+        logger.warn(`[subagents] manifest tmp recovery: ${recovered.recovered} promoted, ${recovered.deleted} deleted`);
       }
     } catch (err) {
-      void err;
-      console.warn("[subagents] manifest tmp recovery failed:", err);
+      logger.warn("[subagents] manifest tmp recovery failed", {
+        reason: err instanceof Error ? err.message : String(err),
+      });
     }
 
     try {
       const wtm = new WorktreeManager(agentDir);
       wtm.scan();
     } catch (err) {
-      void err;
-      console.warn("[subagents] worktree reaper scan failed:", err);
+      logger.warn("[subagents] worktree reaper scan failed", {
+        reason: err instanceof Error ? err.message : String(err),
+      });
     }
 
     // ── workflow 域：per-session store + runs ──
@@ -314,7 +338,9 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       }
     } catch (err) {
       // QMF-4 fix: store.loadAll 失败是关键路径错误，workflow 域将未初始化
-      console.error("[subagent-workflow] store.loadAll failed, workflow domain uninitialized:", err);
+      logger.error("[subagent-workflow] store.loadAll failed, workflow domain uninitialized", {
+        reason: err instanceof Error ? err.message : String(err),
+      });
       storeHealthy = false;
     }
 

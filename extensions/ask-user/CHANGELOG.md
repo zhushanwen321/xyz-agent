@@ -1,5 +1,76 @@
 # @zhushanwen/pi-ask-user
 
+## 5.0.2
+
+### Patch Changes
+
+- Updated dependencies [4231ad1]
+  - @zhushanwen/pi-subagent-workflow@5.0.2
+
+## 5.0.1
+
+### Patch Changes
+
+- Updated dependencies [b5c36a2]
+  - @zhushanwen/pi-subagent-workflow@5.0.1
+
+## 5.0.0
+
+### Patch Changes
+
+- 6e2e453: Restore `getAskUserComment` helper and `AskUserQuestion.allowComment` field removed in 0.3.0: consumers (pi-ask-user TUI comment mode, renderer AskUserOverlay) still implement the comment interaction end-to-end, so the protocol deletion broke the contract (pi-ask-user@4.0.0 ESM import crash).
+
+  **Version alignment note**: pi-ask-user is linked with `@zhushanwen/pi-subagent-workflow` and `@zhushanwen/pi-structured-output` in `.changeset/config.json`. The subagent-workflow major changeset (tidy-waves-description-phase-lint, 4.0.0 → 5.0.0) forces the whole linked group to 5.0.0, so pi-ask-user will actually be published as **5.0.0**, not the originally expected 4.0.1 — the original 4.0.1 expectation is absorbed by the linked-group major bump.
+
+  Renderer side: `packages/renderer/src/components/extension/ask-user/AskUserOverlay.vue` and its test carry branch-side changes (comment UI + U12 `__comment` assertion) that conflict with main's 4.0.0 deletion — resolve the merge keeping the comment UI, since the restored `allowComment` field's GUI consumer lives there.
+
+- Updated dependencies [531cd86]
+- Updated dependencies [6e2e453]
+- Updated dependencies [ab166bf]
+  - @zhushanwen/pi-subagent-workflow@5.0.0
+  - @xyz-agent/extension-protocol@0.3.1
+
+## 5.0.0-dev.1
+
+### Patch Changes
+
+- Updated dependencies
+  - @zhushanwen/pi-subagent-workflow@5.0.0-dev.1
+
+## 5.0.0-dev.0
+
+### Patch Changes
+
+- 6e2e453: Restore `getAskUserComment` helper and `AskUserQuestion.allowComment` field removed in 0.3.0: consumers (pi-ask-user TUI comment mode, renderer AskUserOverlay) still implement the comment interaction end-to-end, so the protocol deletion broke the contract (pi-ask-user@4.0.0 ESM import crash).
+
+  **Version alignment note**: pi-ask-user is linked with `@zhushanwen/pi-subagent-workflow` and `@zhushanwen/pi-structured-output` in `.changeset/config.json`. The subagent-workflow major changeset (tidy-waves-description-phase-lint, 4.0.0 → 5.0.0) forces the whole linked group to 5.0.0, so pi-ask-user will actually be published as **5.0.0**, not the originally expected 4.0.1 — the original 4.0.1 expectation is absorbed by the linked-group major bump.
+
+  Renderer side: `packages/renderer/src/components/extension/ask-user/AskUserOverlay.vue` and its test carry branch-side changes (comment UI + U12 `__comment` assertion) that conflict with main's 4.0.0 deletion — resolve the merge keeping the comment UI, since the restored `allowComment` field's GUI consumer lives there.
+
+- Updated dependencies [6e2e453]
+- Updated dependencies [ab166bf]
+  - @xyz-agent/extension-protocol@0.3.1-dev.0
+  - @zhushanwen/pi-subagent-workflow@5.0.0-dev.0
+
+## 3.0.0
+
+### Patch Changes
+
+- Updated dependencies [e33b3a6]
+- Updated dependencies [07ee286]
+  - @zhushanwen/pi-subagent-workflow@3.0.0
+
+## 2.0.1
+
+### Patch Changes
+
+- deafa7f: Fix silent schema-bypass in workflow mode: structured-output now validates data against the authoritative schema from PI_WORKFLOW_SCHEMA env instead of the LLM-supplied schema parameter. Workflow-mode prompts updated to guide LLM to pass only data.
+
+  Workflow-mode structured-output prompt sync (subagent-workflow): the system-prompt instruction written by `resolveAgentOpts` for the `agent({schema})` override and the `formatSchemaInstruction` helper now instruct the LLM to pass ONLY the `data` parameter and do NOT pass a `schema` parameter, because the schema is enforced by the system.
+
+- Updated dependencies [deafa7f]
+  - @zhushanwen/pi-subagent-workflow@2.0.1
+
 ## 2.0.0
 
 ### Minor Changes

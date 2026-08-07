@@ -135,6 +135,13 @@ export interface AgentCallOpts {
  * undefined 时 spawn 继承 workflow 进程的 cwd（向后兼容）。
  */
   cwd?: string;
+  /** Inherit parent session context (fork mode). Required when worktree isolation is enabled. */
+  fork?: boolean;
+  /** Filesystem isolation: when true, creates a new git worktree for the agent (requires fork: true). */
+  worktree?: boolean;
+  /** When true, agent() resolves {value, sessionFile, worktreePath, error} instead of a bare value.
+   * Worker-layer flag only — not forwarded to ExecuteOptions (mapToExecuteOptions drops it). */
+  returnMeta?: boolean;
 }
 
 /**
@@ -194,6 +201,17 @@ export interface AgentResult {
  * 窗口期内可能 undefined（session 尚未创建成功）。
  */
   sessionFile?: string;
+ /**
+ * Absolute path of the git worktree used for filesystem isolation (set when
+ * worktree isolation is active). Injected by executeAndAwait from record.worktreeHandle.path.
+ *
+ * ⚠️ Diagnostic only, may not exist: executeAndAwait's finalizeRecord cleans up the
+ * worktree (git worktree remove --force) before returning, so by the time this field
+ * reaches the caller the directory has typically been deleted. Use it only for log/trace
+ * correlation (e.g. attributing a session jsonl to its worktree origin) — never as a cwd
+ * for a subsequent agent or filesystem operation (would ENOENT).
+ */
+  worktreePath?: string;
  /** All tool calls collected from JSONL stream (FR-7). */
   toolCalls?: ToolCallEntry[];
 }

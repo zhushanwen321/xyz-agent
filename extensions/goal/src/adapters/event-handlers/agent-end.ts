@@ -19,6 +19,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { countActiveFromEntries } from "@zhushanwen/pi-pending-notifications";
 
 import { checkBudgetOnTurnEnd } from "../../engine/budget";
 import { isActiveStatus, isTerminalStatus } from "../../engine/goal";
@@ -169,6 +170,30 @@ async function handleContinuation(
 	// 终态守卫：persistAndUpdate 可能把 goal 转为 budget_limited/time_limited 终态。
 	// 此时不应发 continuation（deliverAs:"followUp" 会触发新 turn，让已耗尽预算的 agent 再跑一轮）。
 	if (isTerminalStatus(state.status)) return;
+	// pending 守卫：有活跃 background subagent/workflow 时不发 continuation。
+	// 靠 subagent/workflow 完成时 sendMessage({triggerTurn:true,deliverAs:"steer"}) 自然唤醒主 agent；
+	// goal 抢先催会与异步任务完成通知叠加，形成“停不下来”的死循环——continuation 排入
+	// _followUpMessages 队列 → _handlePostAgentRun 的 hasQueuedMessages() 返回 true → agent.continue()
+	// 新 turn → 又 agent_end → 又 continuation。
+	// 刻意不校验 expiresAt：长任务 subagent（>1h TTL）完成时仍 triggerTurn 唤醒主 agent，
+	// 按 TTL 判非活跃会让死循环在长任务场景复现。
+	const pendingOps = countActiveFromEntries(ctx.sessionManager.getEntries());
+	if (pendingOps.count > 0) {
+		pi.appendEntry("goal:log", {
+			timestamp: Date.now(),
+			level: "debug",
+			component: "goal:agent-end",
+			message: `continuation deferred: ${pendingOps.count} active pending operation(s)`,
+			data: { activePending: pendingOps.count, ids: pendingOps.ids },
+		});
+		// 用户可见反馈：goal 在等待后台任务完成而非卡死（deferred 无反馈时用户只看到
+		// goal active 但无产出，无法区分等待 vs 死循环）。
+		ctx.ui.notify(
+			`Goal waiting for ${pendingOps.count} background task(s) to complete.`,
+			"info",
+		);
+		return;
+	}
 	// 发 continuation（FR-8.7: 去 debounce 后才发）
 	buildPorts(pi, ctx).messaging.sendContextMessage(
 		continuationPrompt(state, state.timeUsedSeconds),

@@ -18,6 +18,15 @@ import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync, readFileSync
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
+// ── electron mock：cleanupCompletedUpdate 调 app.getVersion()，需桩为可控版本 ──
+// vi.hoisted 保证 vi.mock 工厂能引用（vitest 会把 vi.mock 提升到文件顶部）。
+const electronMock = vi.hoisted(() => ({ appVersion: '0.8.49' }))
+vi.mock('electron', () => ({
+  app: {
+    getVersion: () => electronMock.appVersion,
+  },
+}))
+
 // ── 必须在 import constants（间接被 self-healer import）前设 ────────
 const TMP_DATA_DIR = mkdtempSync(path.join(tmpdir(), 'w3-healer-'))
 process.env.XYZ_AGENT_DATA_DIR = TMP_DATA_DIR
@@ -218,5 +227,169 @@ describe('W3: update-self-healer (W3TC11)', () => {
     expect(result).toBe(false)
     expect(errSpy).toHaveBeenCalled()
     errSpy.mockRestore()
+  })
+})
+
+// ── cleanupCompletedUpdate：启动时清理已完成/失败的升级产物 ──────
+// 覆盖终态清理矩阵（done 真假 / failed / rolled-back / no-op / 无 result / 幂等 / 路径注入）。
+describe('cleanupCompletedUpdate', () => {
+  const updateDir = path.join(TMP_DATA_DIR, 'update')
+  const resultFile = path.join(updateDir, 'update-result.json')
+  const preloadedFile = path.join(updateDir, 'preloaded-update.json')
+  const pendingFile = path.join(updateDir, 'pending-update.json')
+  const updaterScript = path.join(updateDir, 'updater.sh')
+  const linuxUpdaterScript = path.join(updateDir, 'updater-linux.sh')
+  const updaterLog = path.join(updateDir, 'updater.log')
+  const linuxUpdaterLog = path.join(updateDir, 'updater-linux.log')
+  const zipFile = path.join(updateDir, 'xyz-agent-mac-arm64.zip')
+
+  beforeEach(() => {
+    // 默认 app 版本 = 0.8.49（done 用例默认真 done：current >= target）
+    electronMock.appVersion = '0.8.49'
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+    mkdirSync(updateDir, { recursive: true })
+  })
+
+  afterEach(() => {
+    if (existsSync(updateDir)) rmSync(updateDir, { recursive: true, force: true })
+  })
+
+  /** 写 update-result.json */
+  function writeResult(data: Record<string, unknown>): void {
+    writeFileSync(resultFile, JSON.stringify(data))
+  }
+
+  /**
+   * 写入全套升级产物。
+   * - preloadedFilePath：preloaded.filePath 指向的下载 zip（默认 updateDir 内的 zipFile）
+   * - createZip：是否在 zipFile 处创建实体文件（路径注入用例传 false，用 outside 文件代替）
+   */
+  function seedArtifacts(opts: { preloadedFilePath?: string; createZip?: boolean } = {}): void {
+    const fp = opts.preloadedFilePath ?? zipFile
+    if (opts.createZip !== false) writeFileSync(zipFile, 'fake-zip-content')
+    writeFileSync(preloadedFile, JSON.stringify({
+      version: '0.8.49',
+      assetName: 'xyz-agent-mac-arm64.zip',
+      filePath: fp,
+      downloadedAt: '2025-12-01T00:00:00Z',
+      size: 'fake-zip-content'.length,
+      release: { version: '0.8.49' },
+    }))
+    writeFileSync(pendingFile, '{}')
+    writeFileSync(updaterScript, '#!/bin/bash')
+    writeFileSync(linuxUpdaterScript, '#!/bin/bash')
+    writeFileSync(updaterLog, 'log')
+    writeFileSync(linuxUpdaterLog, 'log')
+  }
+
+  /** 断言全套产物（含 result 自身）已被清理 */
+  function expectAllCleaned(extra: string[] = []): void {
+    expect(existsSync(resultFile)).toBe(false)
+    expect(existsSync(preloadedFile)).toBe(false)
+    expect(existsSync(zipFile)).toBe(false)
+    expect(existsSync(pendingFile)).toBe(false)
+    expect(existsSync(updaterScript)).toBe(false)
+    expect(existsSync(linuxUpdaterScript)).toBe(false)
+    expect(existsSync(updaterLog)).toBe(false)
+    expect(existsSync(linuxUpdaterLog)).toBe(false)
+    for (const f of extra) expect(existsSync(f)).toBe(false)
+  }
+
+  it('1. done + version <= current（真 done）→ 清全部产物含 result 自身', async () => {
+    seedArtifacts()
+    writeResult({ status: 'done', version: '0.8.49', at: '2025-12-01T00:00:00Z' })
+    const { cleanupCompletedUpdate } = await loadModule()
+    await cleanupCompletedUpdate()
+    expectAllCleaned()
+  })
+
+  it('2. done + version > current（假 done，app 仍旧版）→ 不清', async () => {
+    electronMock.appVersion = '0.8.48' // app 仍旧版，target 0.8.49 未生效
+    seedArtifacts()
+    writeResult({ status: 'done', version: '0.8.49', at: '2025-12-01T00:00:00Z' })
+    const { cleanupCompletedUpdate } = await loadModule()
+    await cleanupCompletedUpdate()
+    // 全部产物仍在（未清理）
+    expect(existsSync(resultFile)).toBe(true)
+    expect(existsSync(preloadedFile)).toBe(true)
+    expect(existsSync(zipFile)).toBe(true)
+    expect(existsSync(pendingFile)).toBe(true)
+  })
+
+  it('3. failed → 清全部含 result', async () => {
+    seedArtifacts()
+    writeResult({ status: 'failed', version: '0.9.0', at: '2025-12-01T00:00:00Z', error: 'sha mismatch' })
+    const { cleanupCompletedUpdate } = await loadModule()
+    await cleanupCompletedUpdate()
+    expectAllCleaned()
+  })
+
+  it('4. rolled-back → 清全部含 result', async () => {
+    seedArtifacts()
+    writeResult({ status: 'rolled-back', version: '0.9.0', at: '2025-12-01T00:00:00Z' })
+    const { cleanupCompletedUpdate } = await loadModule()
+    await cleanupCompletedUpdate()
+    expectAllCleaned()
+  })
+
+  it('5. no-op → 清全部含 result + 清 .downloading 残留', async () => {
+    seedArtifacts()
+    const downloading1 = path.join(updateDir, 'asset.zip.downloading')
+    const downloading2 = path.join(updateDir, 'other.downloading')
+    writeFileSync(downloading1, 'partial')
+    writeFileSync(downloading2, 'partial')
+    writeResult({ status: 'no-op', version: '0.9.0', at: '2025-12-01T00:00:00Z' })
+    const { cleanupCompletedUpdate } = await loadModule()
+    await cleanupCompletedUpdate()
+    expectAllCleaned([downloading1, downloading2])
+  })
+
+  it('6. 无 update-result.json → no-op 不抛错（也不误删现存产物）', async () => {
+    // 不写 result，但写一些产物（验证无 result 时不触发清理）
+    writeFileSync(pendingFile, '{}')
+    writeFileSync(updaterLog, 'log')
+    const { cleanupCompletedUpdate } = await loadModule()
+    await expect(cleanupCompletedUpdate()).resolves.toBeUndefined()
+    // 无 result → 不清理，产物仍在
+    expect(existsSync(pendingFile)).toBe(true)
+    expect(existsSync(updaterLog)).toBe(true)
+  })
+
+  it('7. 幂等：连续两次调用不抛错', async () => {
+    seedArtifacts()
+    writeResult({ status: 'done', version: '0.8.49', at: '2025-12-01T00:00:00Z' })
+    const { cleanupCompletedUpdate } = await loadModule()
+    await cleanupCompletedUpdate()
+    // 第二次（产物已无，ignoreENOENT 吞 ENOENT）不抛错
+    await expect(cleanupCompletedUpdate()).resolves.toBeUndefined()
+    expectAllCleaned()
+  })
+
+  it('8. filePath 路径注入（preloaded.filePath 在 UPDATE_DIR 外）→ outside 文件不删、其余产物仍清', async () => {
+    // outside 文件放在 OS tmpdir（明确在 UPDATE_DIR 之外）
+    const outsideDir = mkdtempSync(path.join(tmpdir(), 'outside-inject-'))
+    const outsideFile = path.join(outsideDir, 'outside.txt')
+    writeFileSync(outsideFile, 'should-not-delete')
+    // createZip=false：本次 preloaded.filePath 指向 outside，updateDir 内无真实 zip
+    seedArtifacts({ preloadedFilePath: outsideFile, createZip: false })
+    writeResult({ status: 'done', version: '0.8.49', at: '2025-12-01T00:00:00Z' })
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { cleanupCompletedUpdate } = await loadModule()
+    await cleanupCompletedUpdate()
+    // 路径注入防护：outside 文件未被删
+    expect(existsSync(outsideFile)).toBe(true)
+    // warn 记录了跳过
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/skip download zip outside UPDATE_DIR/),
+    )
+    warnSpy.mockRestore()
+    // 其余产物仍清
+    expect(existsSync(resultFile)).toBe(false)
+    expect(existsSync(preloadedFile)).toBe(false)
+    expect(existsSync(pendingFile)).toBe(false)
+    expect(existsSync(updaterScript)).toBe(false)
+
+    rmSync(outsideDir, { recursive: true, force: true })
   })
 })

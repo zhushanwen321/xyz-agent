@@ -73,17 +73,27 @@ try:
 except Exception:
     pass
 
-# local vs origin/HEAD
+# local vs remote HEAD
+# [HISTORICAL] bare repo workspace：origin 指向本地 bare repo（不随 push 更新），
+# GitHub 远程叫 github（见 AGENTS.md §14）。必须先查 github，fallback origin（普通 repo）。
+# 否则 push 成功后 local_ahead_of_origin 仍 > 0，ready_to_submit 恒 false。
 commit_ahead = 0
 push_state = "unknown"
 try:
-    rev = subprocess.run(
-        ["git", "rev-parse", "--verify", f"origin/{branch}"],
-        capture_output=True, text=True, cwd=git_root,
-    )
-    if rev.returncode == 0:
+    remote_ref = None
+    remote_name = None
+    for cand in ("github", "origin"):
+        rev = subprocess.run(
+            ["git", "rev-parse", "--verify", f"{cand}/{branch}"],
+            capture_output=True, text=True, cwd=git_root,
+        )
+        if rev.returncode == 0:
+            remote_ref = f"{cand}/{branch}"
+            remote_name = cand
+            break
+    if remote_ref:
         ahead = subprocess.run(
-            ["git", "rev-list", "--count", f"origin/{branch}..HEAD"],
+            ["git", "rev-list", "--count", f"{remote_ref}..HEAD"],
             capture_output=True, text=True, cwd=git_root,
         )
         commit_ahead = int((ahead.stdout or "0").strip() or 0)

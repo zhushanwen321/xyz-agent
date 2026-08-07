@@ -21,6 +21,19 @@ import { PassThrough } from "node:stream";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// Mock 共享 logger，让 logger.warn 可被 spy（源码已从 console.warn 改为 logger.warn）
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: {
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+  },
+}));
+vi.mock("@zhushanwen/pi-extension-logger", () => ({
+  getLogger: () => loggerMock,
+}));
+
 import { respond, sendGetStateCommand, sendPromptCommand } from "../stdin-writer.ts";
 
 // ── helpers ──
@@ -55,13 +68,13 @@ function readStdinLines(child: ChildProcess): unknown[] {
     .map((l) => JSON.parse(l));
 }
 
-let warnSpy: ReturnType<typeof vi.spyOn>;
+// vi.fn() 的返回类型原生含 .mock.calls——无需双重断言（ReturnType<typeof vi.fn> 已是强类型）。
+let warnSpy: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
-  // stdin-writer 在背压 / 序列化失败时 console.warn；测试 stub 避免 noise，且可断言调用。
-  // console.error（manifest 写失败路径）也 stub 静音，但测试不断言其调用。
-  warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-  vi.spyOn(console, "error").mockImplementation(() => {});
+  // stdin-writer 在背压 / 序列化失败时 logger.warn；测试 mock logger 避免噪声，且可断言调用。
+  loggerMock.warn.mockClear();
+  warnSpy = loggerMock.warn;
 });
 
 afterEach(() => {

@@ -338,9 +338,7 @@ export default {
   panel: {
     tasks: {
       todoListTitle: 'Task list',
-      verifyTag: 'VERIFY',
       resumeGoal: 'Resume',
-      verifyTooltip: 'Verification task — must complete before goal completion',
       goalStatusActive: 'ACTIVE',
       goalStatusBlocked: 'BLOCKED',
       goalStatusPaused: 'PAUSED',

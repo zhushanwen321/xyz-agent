@@ -20,11 +20,17 @@
  *
  * 依赖方向：lib/ipc（renderer→main 唯一适配点）+ composables/logic/markdown（releaseNotes 渲染）。
  */
-import { onScopeDispose, reactive } from 'vue'
+import { onScopeDispose, reactive, toRaw } from 'vue'
 import type { LatestReleaseInfo, UpdateState } from '@xyz-agent/shared'
+import { compare } from 'compare-versions'
 import {
   checkForUpdate as ipcCheckForUpdate,
-  performUpdate as ipcPerformUpdate,
+  // [NOTE] update:perform IPC 仍在 main 侧（update-handlers.ts 标 DEPRECATED）。
+  // renderer 当前走两阶段 update:download/update:install。切回一键模式时重新 import performUpdate。
+  updateDownload as ipcUpdateDownload,
+  updateInstall as ipcUpdateInstall,
+  getPreloaded as ipcGetPreloaded,
+  getPendingUpdate,
   onUpdateProgress,
   onUpdateError,
   openUpdateFallbackUrl as ipcOpenUpdateFallbackUrl,
@@ -35,8 +41,20 @@ import { getLocale } from '@/i18n'
 /** 不支持当前平台的错误码（main 侧 platform-updater 抛出，preload 透传） */
 const UNSUPPORTED_ERROR_CODE = 'UPDATE_UNSUPPORTED_PLATFORM'
 
-/** 自动检测延迟：应用启动后 30s（避开冷启动资源竞争） */
+/** 自动检测首次延迟：应用启动后 30s（避开冷启动资源竞争） */
 const AUTO_CHECK_DELAY_MS = 30_000
+
+/**
+ * 自动检测周期：每 20 分钟联网检测一次。
+ *
+ * GitHub API 未认证限额 60 次/小时，20min 一次 = 3 次/小时，配额安全。
+ * 用递归 setTimeout 而非 setInterval：checkForUpdate 是 async，setInterval 会在
+ * 上一次未完成时排下一次，可能堆积并发请求；递归 setTimeout 保证「上一次完成后才排下一次」。
+ */
+const CHECK_INTERVAL_MINUTES = 20
+const SECONDS_PER_MINUTE = 60
+const MS_PER_SECOND = 1000
+const AUTO_CHECK_INTERVAL_MS = CHECK_INTERVAL_MINUTES * SECONDS_PER_MINUTE * MS_PER_SECOND // 20min
 
 /**
  * 多语言 release notes 分隔标记。
@@ -148,6 +166,24 @@ let refCount = 0
 let errorHandled = false
 
 /**
+ * pendingRestored flag：restorePendingUpdate 成功恢复「可升级」提醒后置 true。
+ *
+ * 防覆盖守卫：恢复 pending 后若 30s 联网检测失败/无新版（断网等），checkForUpdate 的
+ * 默认逻辑会把 state 从 available 回退到 idle，丢失已恢复的提醒。此 flag 让 checkForUpdate
+ * 在 !info 分支判断：若已从 pending 恢复，不回退 idle（pending 标志证明曾检测到更新，
+ * 除非版本比较已清否则应保持 available）。联网检测确认有更新时正常更新 state。
+ */
+let pendingRestored = false
+
+/**
+ * 自动检测定时器 id（递归 setTimeout）。
+ *
+ * 用模块级变量存当前 pending timer，onScopeDispose 时 clearTimeout 避免泄漏
+ * （scope 卸载后定时器不应再触发）。runAutoCheck 每次触发后先置 null 再排下一次。
+ */
+let autoCheckTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
  * 订阅 main 进程的进度 + 错误推送（引用计数管理生命周期）。
  * 首个消费者订阅，后续消费者只增计数；最后一个消费者 dispose 时退订。
  * onScopeDispose 注册在每个调用 useAppUpdate 的组件作用域上，随该作用域卸载而清理。
@@ -195,13 +231,39 @@ function subscribeProgress(): void {
 let renderToken = 0
 
 async function checkForUpdate(force = false): Promise<void> {
-  state.state = 'checking'
   const myToken = ++renderToken
+  // 防覆盖守卫：若已从 pending 恢复 available 态，联网检测不进入 checking 态
+  // （否则 available→checking→idle 会短暂隐藏提醒，且失败/无更新会丢失已恢复的提醒）。
+  // 仅当未恢复 pending（首次检测 / 正常流程）时才进入 checking 态。
+  if (!pendingRestored) {
+    state.state = 'checking'
+  }
   try {
     const info = await ipcCheckForUpdate({ force })
     // 防陈旧：若期间又发了新 checkForUpdate，丢弃本次结果
     if (myToken !== renderToken) return
     if (info) {
+      // 状态守卫 ES4：downloaded/replacing/restarting 不被覆盖（除非检测到更新版本=ES5）
+      const currentVersion = state.latestRelease?.version
+      const isUpgrading = info.version !== currentVersion // 检测到不同（更新）版本
+      if (
+        state.state === 'downloaded' ||
+        state.state === 'replacing' ||
+        state.state === 'restarting'
+      ) {
+        if (state.state === 'downloaded' && isUpgrading) {
+          // ES5：downloaded 态检测到更新版本 → 退回 available（追新版，旧 preloaded 由 main 侧下次 download 时自动清）
+          console.log(
+            `[useAppUpdate] newer version ${info.version} detected during downloaded, rolling back to available`,
+          )
+          // 继续走下面的 available 设置（不 return）
+        } else {
+          // ES4：正在替换/重启 或 downloaded 同版本 → 不覆盖当前态
+          // 但更新 state.latestRelease（刷新 release info，如 releaseNotes 可能有变化）
+          state.latestRelease = info
+          return
+        }
+      }
       state.latestRelease = info
       state.state = 'available'
       // releaseNotes 异步渲染（markdown-it + shiki WASM 首次加载），不阻塞 UI；
@@ -212,7 +274,9 @@ async function checkForUpdate(force = false): Promise<void> {
         if (myToken !== renderToken) return  // 丢弃陈旧解析
         state.releaseNotesHtml = html
       })
-    } else {
+    } else if (!pendingRestored) {
+      // 无新版：回退 idle。但若已从 pending 恢复（pendingRestored=true），保持 available——
+      // pending 标志证明曾检测到更新，联网检测此刻未发现可能是缓存/网络问题，不应丢失提醒。
       state.state = 'idle'
     }
   } catch (e) {
@@ -221,17 +285,21 @@ async function checkForUpdate(force = false): Promise<void> {
     // 检测失败不算升级流程错误（不打 error 态）。
     // 不设 errorMessage：idle 态 UpdateButton 隐藏，设了也看不到，且会残留到下次。
     // 失败信息仅 console.warn 便于诊断。
-    state.state = 'idle'
+    // 防覆盖守卫：pendingRestored 时不回退 idle（见上文理由）。
+    if (!pendingRestored) {
+      state.state = 'idle'
+    }
     console.warn('[useAppUpdate] checkForUpdate failed:', e)
   }
 }
 
 /**
- * 执行升级流程。state='downloading' + errorHandled=false，调 ipc.performUpdate。
- * triggerRestart=true → state='restarting'（main 即将退出重启）。
+ * 执行下载阶段。state='downloading' + errorHandled=false，调 ipc.updateDownload。
+ * downloaded=true → state='downloaded'（产物已下载并校验通过，等待 performInstall 触发替换重启）。
+ * 下载止于 downloaded，不触发替换/重启（那是 performInstall 的职责）。
  * catch：!errorHandled 时兜底置 error（onUpdateError 已处理则不覆盖）。
  */
-async function performUpdate(): Promise<void> {
+async function performDownload(): Promise<void> {
   const release = state.latestRelease
   if (!release) return
   state.state = 'downloading'
@@ -239,20 +307,47 @@ async function performUpdate(): Promise<void> {
   state.errorMessage = ''
   errorHandled = false
   try {
-    const result = await ipcPerformUpdate(release)
-    if (result.triggerRestart) {
-      state.state = 'restarting'
-    } else if (!errorHandled) {
-      // 重新读取 state.state（await 期间 onUpdateProgress 回调可能已把它推进到 verifying/replacing）。
-      // 未触发重启、无错误推送、且非终态（error/unsupported 由 onUpdateError 经 errorHandled=true 设置）→ 复位 idle。
-      // 覆盖 progress 推到中间态后 performUpdate resolve 但无后续收口的卡死场景。
-      const currentState = state.state
-      if (currentState === 'downloading' || currentState === 'verifying' || currentState === 'replacing') {
-        state.state = 'idle'
-      }
+    // [HISTORICAL] toRaw 解包 reactive proxy 后再传 IPC。
+    // state 是 reactive，state.latestRelease 读取时 Vue 返回 proxy（含按需代理的嵌套
+    // assets.*）。ipcUpdateDownload → ipcRenderer.invoke('update:download', { release })
+    // 经 Electron structured clone 序列化，Proxy 不可克隆 → 抛 "an object could not
+    // be cloned" → invoke reject 被 catch 吞成 errorMessage，用户在 UpdateButton hover
+    // 看到英文 clone 报错（而非中文错误体系文案）。
+    // toRaw 拿回 reactive target 的原始 plain 引用（嵌套层也是原始引用，Vue 3 惰性代理
+    // 不改写 target 内部），structured clone 可正常序列化。不能用 JSON.parse(JSON.stringify)
+    // 做源头深拷贝替代——赋值给 reactive state 后读取仍会重新代理化（实测无效）。
+    const result = await ipcUpdateDownload(toRaw(release))
+    if (result.downloaded) {
+      state.state = 'downloaded'
     }
   } catch (e) {
     // 去重：onUpdateError 已置 errorHandled=true 则不覆盖（SSOT 优先）
+    if (!errorHandled) {
+      state.state = 'error'
+      state.errorMessage = e instanceof Error ? e.message : String(e)
+    }
+  }
+}
+
+/**
+ * 执行安装阶段（替换 + 重启）。依赖已下载产物（performDownload 成功后调用）。
+ * 乐观置 replacing（漏洞6修复）：IPC 往返延迟内 state 立即变 replacing，堵二次点击竞态。
+ * triggerRestart=true → state='restarting'（main 即将退出重启）。
+ * catch：!errorHandled 时兜底置 error（onUpdateError 已处理则不覆盖）。
+ */
+async function performInstall(): Promise<void> {
+  // 乐观置 replacing（漏洞6修复）：IPC 往返延迟内 state 立即变 replacing，堵二次点击竞态
+  state.state = 'replacing'
+  errorHandled = false
+  try {
+    const result = await ipcUpdateInstall()
+    if (result.triggerRestart) {
+      state.state = 'restarting'
+    } else if (!errorHandled) {
+      // 未触发重启且无错误 → 复位（极少见，install 无 triggerRestart 通常伴随 error 事件）
+      state.state = 'idle'
+    }
+  } catch (e) {
     if (!errorHandled) {
       state.state = 'error'
       state.errorMessage = e instanceof Error ? e.message : String(e)
@@ -268,15 +363,129 @@ async function openFallbackUrl(): Promise<void> {
 }
 
 /**
- * 启动 30s 自动检测（应用启动后延迟检测，避开冷启动高峰）。
+ * 从 main 侧预下载产物恢复 downloaded 态（功能 2：预下载）。
+ *
+ * app 启动时调用（经 initAutoCheck 触发，优先级高于 restorePendingUpdate）：读取 main 侧
+ * 预下载产物（getPreloaded），若有效 → 置 state.state='downloaded' + 填充 latestRelease +
+ * 异步渲染 releaseNotes，并设 pendingRestored=true 启用防覆盖守卫（防 30s 联网检测回退）。
+ *
+ * @returns true 表示已恢复（initAutoCheck 据此跳过 restorePendingUpdate）
+ */
+async function restorePreloadedUpdate(): Promise<boolean> {
+  try {
+    const preloaded = await ipcGetPreloaded()
+    if (!preloaded) return false
+    // 版本守卫：current >= preloaded.version 说明已升级/更旧，产物过期 → return false 回退 pending。
+    // 非 semver 版本号 catch+继续恢复（信任 preloaded，对齐后端 readPreloadedUpdateRaw 的 keep 语义）。
+    try {
+      if (compare(__APP_VERSION__, preloaded.release.version, '>=')) return false
+    } catch (e) {
+      // best-effort 降级：版本号非 semver 无法比较 → 信任 preloaded 继续恢复
+      // （对齐后端 readPreloadedUpdateRaw 的 keep 语义，不阻断用户正常升级流程）
+      console.warn('[useAppUpdate] preloaded version compare failed, keeping:', e)
+    }
+    // 有效预下载产物 → 恢复 downloaded 态
+    state.latestRelease = preloaded.release
+    state.state = 'downloaded'
+    pendingRestored = true
+    // 异步渲染 releaseNotes（与 restorePendingUpdate/checkForUpdate 命中分支一致）
+    const localizedNotes = extractLocalizedNotes(preloaded.release.releaseNotes)
+    void renderMarkdown(localizedNotes).then((html) => {
+      state.releaseNotesHtml = html
+    })
+    console.log(`[useAppUpdate] restored downloaded state for v${preloaded.release.version}`)
+    return true
+  } catch (e) {
+    console.warn('[useAppUpdate] restorePreloadedUpdate failed:', e)
+    return false
+  }
+}
+
+/**
+ * 从持久化标志恢复「可升级」提醒（功能 1：常驻提醒）。
+ *
+ * app 启动时调用（经 initAutoCheck 触发）：读取 main 侧 pending-update.json，
+ * 若有有效 pending release（版本仍 > 当前版本）→ 置 state.state='available' + 填充
+ * latestRelease + 异步渲染 releaseNotes，并设 pendingRestored=true 启用防覆盖守卫。
+ *
+ * 离线也能恢复（pending 存完整 release info，不依赖网络）。恢复后仍跑 30s 联网检测
+ * 作为刷新（修正 release 被编辑等不一致），但防覆盖守卫保证联网检测失败不丢失提醒。
+ */
+async function restorePendingUpdate(): Promise<void> {
+  try {
+    const pending = await getPendingUpdate()
+    if (!pending) return
+    // 版本比较已在 main 侧 readPendingUpdate 完成（currentVersion >= pending.version → 清除返回 null），
+    // 此处拿到的 pending 必然是仍有效的「有待升级版本」。
+    state.latestRelease = pending
+    state.state = 'available'
+    pendingRestored = true
+    // 异步渲染 releaseNotes（与 checkForUpdate 命中分支一致）
+    const localizedNotes = extractLocalizedNotes(pending.releaseNotes)
+    void renderMarkdown(localizedNotes).then((html) => {
+      state.releaseNotesHtml = html
+    })
+    console.log(`[useAppUpdate] restored pending update reminder for v${pending.version}`)
+  } catch (e) {
+    // best-effort：恢复失败不影响后续联网检测，仅 warn
+    console.warn('[useAppUpdate] restorePendingUpdate failed:', e)
+  }
+}
+
+/**
+ * 清理自动检测定时器（防泄漏）。onScopeDispose 与 _resetForTest 都调它。
+ */
+function clearAutoCheckTimer(): void {
+  if (autoCheckTimer !== null) {
+    clearTimeout(autoCheckTimer)
+    autoCheckTimer = null
+  }
+}
+
+/**
+ * 自动检测单次执行：守卫检查 → 检测（force=true 绕过缓存）→ 排下一个周期定时器。
+ *
+ * 守卫：仅在 idle/available/error/unsupported 态调 checkForUpdate；downloading/verifying/
+ * replacing/restarting/downloaded 态跳过本次检查（不打断升级流程），但仍排下一次定时器，
+ * 保证升级完成后能继续周期检测。
+ *
+ * force=true：绕过 release-checker 的 1h 缓存，确保每次周期真正联网（避免缓存未命中新版）。
+ */
+async function runAutoCheck(): Promise<void> {
+  autoCheckTimer = null // 当前 timer 已触发
+  const canCheck =
+    state.state === 'idle' ||
+    state.state === 'available' ||
+    state.state === 'error' ||
+    state.state === 'unsupported'
+  if (canCheck) {
+    await checkForUpdate(true)
+  }
+  // 无论本次是否检查，都排下一次周期（保证升级完成后继续周期检测）
+  autoCheckTimer = setTimeout(runAutoCheck, AUTO_CHECK_INTERVAL_MS)
+}
+
+/**
+ * 启动自动检测：先恢复持久化提醒（立即），再 30s 首次检测，之后每 20min 周期检测。
+ *
  * 必须在活跃 effect scope 内调用，通常在组件 setup 顶层同步调用（onScopeDispose 依赖活跃 scope）；
- * 内部用 setTimeout 延迟 30s，不需要等 DOM 挂载，故不必放 onMounted。onScopeDispose 清理定时器避免泄漏。
+ * 定时器不需要等 DOM 挂载，故不必放 onMounted。onScopeDispose 清理定时器避免泄漏。
+ *
+ * 周期机制：30s 首次 → 首次完成（await）→ 20min 周期（递归 setTimeout）。详见 runAutoCheck。
  */
 function initAutoCheck(): void {
-  const timer = setTimeout(() => {
-    void checkForUpdate(false)
-  }, AUTO_CHECK_DELAY_MS)
-  onScopeDispose(() => clearTimeout(timer))
+  // 防重复 init：先清已有 timer（多消费者场景只保留最新周期，避免泄漏）
+  clearAutoCheckTimer()
+  // 先恢复 preloaded（downloaded 态，优先级高于 pending）
+  void restorePreloadedUpdate().then((restored) => {
+    if (!restored) {
+      // preloaded 无效 → 回退 restorePendingUpdate（available 态）
+      void restorePendingUpdate()
+    }
+  })
+  // 30s 后首次联网检测（避开冷启动高峰 + 刷新 release info），首次完成后转 20min 周期
+  autoCheckTimer = setTimeout(runAutoCheck, AUTO_CHECK_DELAY_MS)
+  onScopeDispose(clearAutoCheckTimer)
 }
 
 /**
@@ -289,9 +498,14 @@ export function useAppUpdate() {
   return {
     state,
     checkForUpdate,
-    performUpdate,
+    performDownload,
+    performInstall,
     openFallbackUrl,
     initAutoCheck,
+    // restorePendingUpdate/restorePreloadedUpdate 暴露供测试直接调用（绕过 initAutoCheck 的 30s 定时器），
+    // 运行时由 initAutoCheck 内部触发，组件通常不需要直接调。
+    restorePendingUpdate,
+    restorePreloadedUpdate,
   }
 }
 
@@ -301,6 +515,7 @@ export function useAppUpdate() {
  * refCount/renderToken/errorHandled 一并重置（module-level 闭包变量同样跨用例残留）。
  */
 export function _resetForTest(): void {
+  clearAutoCheckTimer()
   state.state = 'idle'
   state.latestRelease = null
   state.errorMessage = ''
@@ -309,4 +524,5 @@ export function _resetForTest(): void {
   errorHandled = false
   refCount = 0
   renderToken = 0
+  pendingRestored = false
 }

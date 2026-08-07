@@ -1,5 +1,153 @@
 # @zhushanwen/pi-subagent-workflow
 
+## 5.0.2
+
+### Patch Changes
+
+- 4231ad1: Adjust review-fix-loop stage timeouts to accommodate longer retry backoff and long-running write operations:
+
+  - reviewer / aggregate: 30min → 1h (read-only review stages; gives retry backoff more room before wall-clock cutoff)
+  - fix: 30min → unlimited (remove `timeoutMs`; write operations such as large refactors / multi-file edits must not be interrupted by a wall-clock timeout)
+
+## 5.0.1
+
+### Patch Changes
+
+- b5c36a2: Land cw recursive orchestration tooling and harden subagent-workflow keep-alive.
+
+  - **pi-cw-tool** (new): role-restricted wrapper around the `cw` CLI. Forwards
+    `--workspace <repo root>` so cw operates on the caller's repo regardless of
+    the agent's cwd, and maps cw E1 actions (`design`/`execute`/`review`/...) to
+    capability-restricted tool surfaces for each recursive-split agent role
+    (planning/wave/dev/review/merge).
+  - **pi-subagent-workflow**: split the single `agent_end` keep-alive timeout
+    into spawn grace (MF-3) and long-running descendants grace (MF-4); add a
+    recent-unregister window so a subagent that just unregistered does not
+    immediately kill its layer-owner agent (race fix); keep layer-owner agents
+    alive while descendants are still pending; guard null entries (S-10).
+  - **pi-goal**: align `agent_end` handler with the new keep-alive contract.
+  - **pi-pending-notifications**: track pending-descendants state consumed by
+    the keep-alive guard.
+
+- Updated dependencies [b5c36a2]
+  - @zhushanwen/pi-pending-notifications@0.3.1
+
+## 5.0.0
+
+### Major Changes
+
+- ab166bf: Add workflow-script lint warnings: missing agent() description (nodes unnamed in TUI), meta.phases as object array (ignored by engine), declared phases vs phase() calls mismatch; document description + phase display conventions in workflow-script-format SKILL.md.
+
+  **Breaking change — review-fix-loop built-in workflow behavior (vs 4.0.0):**
+
+  1. **No default batch**: 4.0.0 defaulted to a single `["reviewer"]` batch when no `batch1..batchN`/`agents` args were passed. Now `batch1..batchN` or `agents` is **required** — invoking without them fails fast with `缺少批次参数`. Update existing invocations to pass an explicit batch.
+  2. **`recheckAfterFix` default stays `false` (same as 4.0.0)**: strong regression protection is opt-in — pass `recheckAfterFix=true` to re-dispatch all agents (including previously clean ones) after a fix round. No call-site change needed for existing invocations.
+  3. `meta.phases` changed from object array to string array (`["Review", "Fix"]`) per the new lint rule.
+  4. Pure functions (arg validation / batch parsing / aggregation parsing / review-instruction building) extracted into `review-fix-loop-utils.cjs` with vitest coverage — no behavior change, internal refactor.
+
+  The implementation intentionally diverges from main's 4.0.0 version (branch version keeps the utils module + tests + `fallow-scan` support). The two versions conflict on merge (add/add); resolve keeping this branch's version.
+
+### Patch Changes
+
+- 531cd86: Fix-phase now consumes custom fixer.md `model` frontmatter field (was dropped — only global `--args model=` took effect). Aligns with review-phase semantics (`MODEL || def.model`). Also documents the `fixAgent` + convergence params (`maxFixAttempts`/`convergeNewIssues`/`convergeRounds`) in the workflow tool description so LLMs discover them.
+- Updated dependencies [6e2e453]
+- Updated dependencies [2eff0c7]
+  - @xyz-agent/extension-protocol@0.3.1
+  - @zhushanwen/pi-structured-output@5.0.0
+
+## 5.0.0-dev.1
+
+### Patch Changes
+
+- Fix-phase now consumes custom fixer.md `model` frontmatter field (was dropped — only global `--args model=` took effect). Aligns with review-phase semantics (`MODEL || def.model`). Also documents the `fixAgent` + convergence params (`maxFixAttempts`/`convergeNewIssues`/`convergeRounds`) in the workflow tool description so LLMs discover them.
+
+## 5.0.0-dev.0
+
+### Major Changes
+
+- ab166bf: Add workflow-script lint warnings: missing agent() description (nodes unnamed in TUI), meta.phases as object array (ignored by engine), declared phases vs phase() calls mismatch; document description + phase display conventions in workflow-script-format SKILL.md.
+
+  **Breaking change — review-fix-loop built-in workflow behavior (vs 4.0.0):**
+
+  1. **No default batch**: 4.0.0 defaulted to a single `["reviewer"]` batch when no `batch1..batchN`/`agents` args were passed. Now `batch1..batchN` or `agents` is **required** — invoking without them fails fast with `缺少批次参数`. Update existing invocations to pass an explicit batch.
+  2. **`recheckAfterFix` default stays `false` (same as 4.0.0)**: strong regression protection is opt-in — pass `recheckAfterFix=true` to re-dispatch all agents (including previously clean ones) after a fix round. No call-site change needed for existing invocations.
+  3. `meta.phases` changed from object array to string array (`["Review", "Fix"]`) per the new lint rule.
+  4. Pure functions (arg validation / batch parsing / aggregation parsing / review-instruction building) extracted into `review-fix-loop-utils.cjs` with vitest coverage — no behavior change, internal refactor.
+
+  The implementation intentionally diverges from main's 4.0.0 version (branch version keeps the utils module + tests + `fallow-scan` support). The two versions conflict on merge (add/add); resolve keeping this branch's version.
+
+### Patch Changes
+
+- Updated dependencies [6e2e453]
+- Updated dependencies [2eff0c7]
+  - @xyz-agent/extension-protocol@0.3.1-dev.0
+  - @zhushanwen/pi-structured-output@5.0.0-dev.0
+
+## 4.0.0
+
+### Minor Changes
+
+- 74a0b10: Two changes ship in this PR:
+
+  1. Remove the ask-user comment feature end-to-end:
+
+     - `@xyz-agent/extension-protocol`: remove `getAskUserComment` helper and
+       `allowComment` field from the ask-user protocol (breaking — package is
+       still 0.x, so a `minor` bump denotes a breaking change per semver).
+     - `@zhushanwen/pi-ask-user`: remove the public tool-schema field
+       `allowComment`, the `ANSWER_COMMENT_SEPARATOR` split, the comment
+       interaction mode, and `getAskUserComment` usage (breaking — public API
+       removal, `major` bump).
+
+  2. Add `thinkingLevel` support to subagent-workflow's `agent()`:
+     - `@zhushanwen/pi-subagent-workflow`: `agent()` now accepts an optional
+       `thinkingLevel` option (off|minimal|low|medium|high|xhigh) propagated
+       through to the pi CLI spawn args (additive feature, `minor` bump).
+
+  `@zhushanwen/pi-structured-output` is in the same changeset `linked` group as
+  the two `@zhushanwen/pi-*` packages and has no code changes; `changeset
+version` will reconcile it to the group's highest bump automatically.
+
+### Patch Changes
+
+- 8e222bc: Add review-fix-loop built-in workflow (multi-batch serial review-fix loop); grant reviewer agent structured-output tool; improve review-fix-loop failure diagnostics.
+- Updated dependencies [74a0b10]
+  - @xyz-agent/extension-protocol@0.3.0
+
+## 3.0.0
+
+### Minor Changes
+
+- 07ee286: Add worktree support and returnMeta mode to workflow agent() calls.
+
+  - **W1 — worktree support for `agent()` calls**: subagent-service and worker-script-builder now accept a `worktree` option, allowing workflow-spawned agents to run in dedicated git worktrees instead of the main worktree.
+  - **W2 — `returnMeta` mode**: a new execution mode that returns `worktreePath` and `sessionFile` metadata from spawned subagents, so parent workflows can reference the child's worktree and session.
+
+### Patch Changes
+
+- e33b3a6: Migrate bare console.\* to shared extension-logger (three-channel routing via appendEntry/file-log). Eliminates TUI raw stderr pollution and redundant tool-error notify.
+
+  <!-- TODO(monorepo-impact): 三个包不在同一 linked 组。pi-extension-logger 作为 -->
+  <!-- 静态强依赖出现在 subagent-workflow/unified-hooks 的 dependencies，值为 -->
+  <!-- `workspace:*`，发布时会被 workspace 工具替换为精确版本号（无 `^`/`>=` 范围保护）。 -->
+  <!-- logger 未来若发 breaking，已装 consumer 不感知。logger 语义稳定前可接受。 -->
+  <!-- 如需加固：发布后人工核对 consumer package.json 产物是否带 caret，必要时 -->
+  <!-- 改 `publishConfig` 或发布后手动改成 `^0.1.0`。提示非阻塞。 -->
+
+- Updated dependencies [1e33329]
+  - @zhushanwen/pi-extension-logger@0.2.0
+
+## 2.0.1
+
+### Patch Changes
+
+- deafa7f: Fix silent schema-bypass in workflow mode: structured-output now validates data against the authoritative schema from PI_WORKFLOW_SCHEMA env instead of the LLM-supplied schema parameter. Workflow-mode prompts updated to guide LLM to pass only data.
+
+  Workflow-mode structured-output prompt sync (subagent-workflow): the system-prompt instruction written by `resolveAgentOpts` for the `agent({schema})` override and the `formatSchemaInstruction` helper now instruct the LLM to pass ONLY the `data` parameter and do NOT pass a `schema` parameter, because the schema is enforced by the system.
+
+- Updated dependencies [deafa7f]
+  - @zhushanwen/pi-structured-output@2.0.1
+
 ## 2.0.0
 
 ### Minor Changes

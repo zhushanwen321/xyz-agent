@@ -11,7 +11,7 @@
  *      b. release.prerelease / draft 字段校验
  *      c. tag_name strip 前导 v 后正则 /^\d+\.\d+\.\d+$/（拒绝 rc/beta 后缀）
  *   4. compare-versions 比较：latest > current 才继续
- *   5. 按平台分流 asset（固定名匹配）
+ *   5. 按平台分流 asset（后缀 pattern 匹配，兼容带/不带版本号的文件名）
  *   6. sha256 优先取 asset.digest（strip 'sha256:' 前缀）；digest 缺失时 fallback fetch manifest.json
  *
  * [HISTORICAL] 不变量：
@@ -41,7 +41,7 @@ const MANIFEST_URL =
 const GITHUB_HEADERS = {
   Accept: 'application/vnd.github+json',
   'X-GitHub-Api-Version': '2022-11-28',
-  'User-Agent': 'TaiJi-updater',
+  'User-Agent': 'xyz-agent-updater',
 } as const
 
 /** fetch 超时（AbortController） */
@@ -62,7 +62,7 @@ const STRICT_VERSION_RE = /^\d+\.\d+\.\d+(?:\.\d+)?$/
 // ── GitHub API 响应类型（仅取关心的字段）─────────────────────────────
 
 interface GitHubAsset {
-  /** 文件名（如 'TaiJi-mac-arm64.zip'） */
+  /** 文件名（如 'xyz-agent-mac-arm64.zip'） */
   name: string
   /** 下载直链 */
   browser_download_url: string
@@ -93,13 +93,16 @@ interface GitHubRelease {
   assets?: GitHubAsset[]
 }
 
-// ── 固定 asset 文件名（与 CI 产物命名对齐）─────────────────────────
+// ── asset 文件名 pattern（按平台后缀匹配）──────────────────────────
+// release asset 文件名格式：xyz-agent-<version>-<platform-suffix>.<ext>
+// 用后缀匹配而非精确文件名，解耦文件名版本号格式与 asset 定位逻辑——
+// 兼容带版本号（xyz-agent-0.8.44-mac-arm64.zip）与不带（xyz-agent-mac-arm64.zip）。
 
-const ASSET_NAME = {
-  macArm64Zip: 'TaiJi-mac-arm64.zip',
-  winX64Exe: 'TaiJi-setup-x64.exe',
-  linuxX64AppImage: 'TaiJi-x86_64.AppImage',
-  linuxX64Deb: 'TaiJi-amd64.deb',
+const ASSET_PATTERNS = {
+  macArm64Zip: (name: string): boolean => name.endsWith('-mac-arm64.zip'),
+  winX64Exe: (name: string): boolean => name.endsWith('-setup-x64.exe'),
+  linuxX64AppImage: (name: string): boolean => name.endsWith('-x86_64.AppImage'),
+  linuxX64Deb: (name: string): boolean => name.endsWith('-amd64.deb'),
 } as const
 
 // ── 缓存条目类型 ──────────────────────────────────────────────────
@@ -215,19 +218,20 @@ export class ReleaseChecker implements IReleaseChecker {
     // 判断是否需要 manifest fallback：仅检查我们关心的 4 个目标 asset 的 digest
     // （忽略 blockmap 等干扰资产——它们的 digest 即便非法也不影响升级 sha256）。
     // 任一目标 asset 缺 sha256（digest 缺失或非法）则 fetch manifest 一次（lazy）。
-    const targetNames: Set<string> = new Set(Object.values(ASSET_NAME))
+    const isTargetAsset = (name: string): boolean =>
+      Object.values(ASSET_PATTERNS).some((match) => match(name))
     const needsManifest = assets.some(
-      (a) => targetNames.has(a.name) && extractSha256(a.digest) === undefined,
+      (a) => isTargetAsset(a.name) && extractSha256(a.digest) === undefined,
     )
     let manifestMap: Map<string, string> | null = null
     if (needsManifest) {
       manifestMap = await this.fetchManifestSha256()
     }
 
-    const macArm64Zip = pickAsset(assets, ASSET_NAME.macArm64Zip, manifestMap)
-    const winX64Exe = pickAsset(assets, ASSET_NAME.winX64Exe, manifestMap)
-    const linuxX64AppImage = pickAsset(assets, ASSET_NAME.linuxX64AppImage, manifestMap)
-    const linuxX64Deb = pickAsset(assets, ASSET_NAME.linuxX64Deb, manifestMap)
+    const macArm64Zip = pickAsset(assets, ASSET_PATTERNS.macArm64Zip, manifestMap)
+    const winX64Exe = pickAsset(assets, ASSET_PATTERNS.winX64Exe, manifestMap)
+    const linuxX64AppImage = pickAsset(assets, ASSET_PATTERNS.linuxX64AppImage, manifestMap)
+    const linuxX64Deb = pickAsset(assets, ASSET_PATTERNS.linuxX64Deb, manifestMap)
 
     return {
       version,
@@ -283,17 +287,18 @@ export class ReleaseChecker implements IReleaseChecker {
 }
 
 /**
- * 按文件名从 asset 列表中挑选单个资产，转成 ReleaseAsset（含 sha256 提取）。
+ * 按 pattern 从 asset 列表中挑选单个资产，转成 ReleaseAsset（含 sha256 提取）。
  * 找不到返回 undefined。
  *
+ * @param match 文件名匹配函数（来自 ASSET_PATTERNS，按平台后缀匹配）
  * @param manifestMap manifest.json fallback（asset.digest 缺失时查此 Map），可为 null
  */
 function pickAsset(
   assets: GitHubAsset[],
-  name: string,
+  match: (name: string) => boolean,
   manifestMap: Map<string, string> | null,
 ): ReleaseAsset | undefined {
-  const found = assets.find((a) => a.name === name)
+  const found = assets.find((a) => match(a.name))
   if (!found) return undefined
   // 优先 asset.digest；缺失或非法时查 manifest fallback
   const sha256 = extractSha256(found.digest) ?? manifestMap?.get(found.name)

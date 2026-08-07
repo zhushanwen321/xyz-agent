@@ -52,6 +52,7 @@ export type UpdateState =
   | 'available'
   | 'downloading'
   | 'verifying'
+  | 'downloaded'
   | 'replacing'
   | 'restarting'
   | 'error'
@@ -71,4 +72,16 @@ export interface IProxyConfig {
   httpProxy?: string
   /** 手动模式下的 HTTPS 代理地址（如 http://127.0.0.1:7890） */
   httpsProxy?: string
+}
+
+/**
+ * 升级设置接口（main 进程持久化，前端经 IPC 读写）。
+ *
+ * 字段：
+ * - preDownload：检测到新版时是否自动在后台预下载安装包。开启后点击更新跳过下载等待。
+ *   默认 false（新用户不自动消耗流量/磁盘，需主动开启）。
+ */
+export interface UpdateSettings {
+  /** 检测到新版时自动后台预下载 */
+  preDownload: boolean
 }

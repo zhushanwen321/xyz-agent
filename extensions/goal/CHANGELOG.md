@@ -1,5 +1,85 @@
 # @zhushanwen/pi-goal
 
+## 0.6.5
+
+### Patch Changes
+
+- b5c36a2: Land cw recursive orchestration tooling and harden subagent-workflow keep-alive.
+
+  - **pi-cw-tool** (new): role-restricted wrapper around the `cw` CLI. Forwards
+    `--workspace <repo root>` so cw operates on the caller's repo regardless of
+    the agent's cwd, and maps cw E1 actions (`design`/`execute`/`review`/...) to
+    capability-restricted tool surfaces for each recursive-split agent role
+    (planning/wave/dev/review/merge).
+  - **pi-subagent-workflow**: split the single `agent_end` keep-alive timeout
+    into spawn grace (MF-3) and long-running descendants grace (MF-4); add a
+    recent-unregister window so a subagent that just unregistered does not
+    immediately kill its layer-owner agent (race fix); keep layer-owner agents
+    alive while descendants are still pending; guard null entries (S-10).
+  - **pi-goal**: align `agent_end` handler with the new keep-alive contract.
+  - **pi-pending-notifications**: track pending-descendants state consumed by
+    the keep-alive guard.
+
+- Updated dependencies [b5c36a2]
+  - @zhushanwen/pi-pending-notifications@0.3.1
+
+## 0.6.4
+
+### Patch Changes
+
+- dc86803: Fix goal continuation loop while background subagents/workflows are running.
+
+  `agent_end` unconditionally queued a `followUp` continuation even when
+  background subagents/workflows were still active. The queued message drove
+  `_handlePostAgentRun`'s `hasQueuedMessages()` loop, so the main agent spun
+  (continuation -> new turn -> agent_end -> continuation) on top of the
+  subagent completion notifications.
+
+  Add a pending guard in `handleContinuation`: read the pending
+  register/unregister entry diff from session entries (deliberately NOT
+  checking `expiresAt` — long-running subagents over the 1h TTL still
+  `triggerTurn` on completion, so treating them as inactive would reintroduce
+  the loop). When active pending > 0, emit a `goal:log` diagnostic and skip
+  the followUp; rely on the subagent/workflow completion
+  `sendMessage({triggerTurn:true})` to resume the main agent.
+
+  Also remove the redundant `pendingHint` from `before_agent_start` context
+  injection: it was a second, possibly-inconsistent source next to the
+  `pending_notifications` tool (mandatory) and the tool-call history. Goal no
+  longer summarizes pending state for the LLM.
+
+## 0.6.3
+
+### Patch Changes
+
+- 16f2254: Add `promptGuidelines` to the `goal_control` tool so the agent proactively calls `complete` / `report_blocked`:
+
+  - `complete`: call when the active goal's objective is actually achieved with concrete evidence (finishing all todos incl. verification todos is the usual readiness signal, but the objective being met is the real bar)
+  - `report_blocked`: call when genuinely blocked after ≥3 distinct alternative approaches — do not silently stop or leave the goal hanging
+
+  `create` deliberately omitted — its "only when user asks" deterrence is already covered by the tool description and promptSnippet.
+
+## 0.6.2
+
+### Patch Changes
+
+- Updated dependencies [6e2e453]
+  - @xyz-agent/extension-protocol@0.3.1
+
+## 0.6.2-dev.0
+
+### Patch Changes
+
+- Updated dependencies [6e2e453]
+  - @xyz-agent/extension-protocol@0.3.1-dev.0
+
+## 0.6.1
+
+### Patch Changes
+
+- Updated dependencies [74a0b10]
+  - @xyz-agent/extension-protocol@0.3.0
+
 ## 0.6.0
 
 ### Minor Changes

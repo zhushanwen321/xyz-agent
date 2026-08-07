@@ -16,6 +16,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
 import { removeAliveMarker } from "./alive-store.ts";
 import { bestEffort } from "./best-effort.ts";
 import { completeRecord } from "./execution-record.ts";
@@ -27,6 +29,8 @@ import type { RecordStore } from "./record-store.ts";
 import { writeCancelledTombstone } from "./tombstone-store.ts";
 import type { AgentResult, ExecutionRecord } from "./types.ts";
 import type { WorktreeManager } from "./worktree-manager.ts";
+
+const logger = getLogger("subagents");
 
 /** doFinalizeRecord 的依赖（从 SubagentService 注入，避免 this 绑定 + 解耦可测试）。 */
 export interface FinalizeDeps {
@@ -151,7 +155,7 @@ export async function doFinalizeRecord(
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[subagent] manifest 写入失败 (record=${record.id}): ${msg}`);
+    logger.error(`[subagent] manifest 写入失败 (record=${record.id}): ${msg}`);
     deps.pi?.appendEntry?.("subagent:manifest-write-failed", {
       id: record.id,
       error: msg,

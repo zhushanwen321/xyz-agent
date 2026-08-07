@@ -11,6 +11,8 @@
       </div>
     </header>
 
+    <UpdateCheckCard />
+
     <SystemAppearanceSection :system="system" @update="emit('update', $event)" />
     <SystemSoundSection :system="system" @update="emit('update', $event)" />
     <SystemShortcutSection :system="system" @update="emit('update', $event)" />
@@ -20,6 +22,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
+import UpdateCheckCard from '../UpdateCheckCard.vue'
 import SystemAppearanceSection from './SystemAppearanceSection.vue'
 import SystemSoundSection from './SystemSoundSection.vue'
 import SystemShortcutSection from './SystemShortcutSection.vue'

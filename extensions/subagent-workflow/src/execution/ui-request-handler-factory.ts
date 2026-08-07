@@ -19,11 +19,14 @@
 //   setUiRequestHandler——/resume /fork 复用 existingService 时旧 handler 可能已失效。
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { DialogGlobalQueue, type UiRequest, type UiRequestHandler, type UiResponse } from "./dialog-queue.ts";
 import { type HostMode, resolveHostMode } from "./host-mode.ts";
 import type { UiChannelRegistry } from "./ui-channels.ts";
 import { isDialogMethod } from "./ui-interaction-model.ts";
+
+const logger = getLogger("subagents");
 
 /** 按 ctx.mode 创建 UI 请求 handler（透传 + 排队总控）。
  *
@@ -100,7 +103,7 @@ function createRealHandler(
  *    - 形状不匹配 → 降级 {cancelled:true}（保守，不阻塞队列） */
 function coerceUiResponse(raw: unknown, reqId: string): UiResponse {
   if (typeof raw !== "object" || raw === null) {
-    console.warn("[subagents] channel handler returned non-object, coercing to cancelled (req=", reqId, ")");
+    logger.warn("[subagents] channel handler returned non-object, coercing to cancelled", { detail: { reqId } });
     return { cancelled: true };
   }
   const obj = raw as Record<string, unknown>;
@@ -108,7 +111,7 @@ function coerceUiResponse(raw: unknown, reqId: string): UiResponse {
   if (typeof obj.confirmed === "boolean") return { confirmed: obj.confirmed };
   if (obj.cancelled === true) return { cancelled: true };
   if (obj.ack === true) return { ack: true };
-  console.warn("[subagents] channel handler returned unrecognized shape, coercing to cancelled (req=", reqId, ")");
+  logger.warn("[subagents] channel handler returned unrecognized shape, coercing to cancelled", { detail: { reqId } });
   return { cancelled: true };
 }
 
@@ -153,21 +156,18 @@ async function defaultDialogForward(
         const text = await ui.editor(req.title ?? "", req.prefill);
         return text === undefined ? { cancelled: true } : { value: text };
       } catch (err) {
-        console.warn(
-          "[subagents] ctx.ui.editor unavailable/threw, returning cancelled for",
-          req.id,
-          err,
+        logger.warn(
+          "[subagents] ctx.ui.editor unavailable/threw, returning cancelled",
+          { detail: { id: req.id, error: err instanceof Error ? err.message : String(err) } },
         );
         return { cancelled: true };
       }
     }
     default: {
       // 未知 dialog method（非 select/confirm/input/editor）——保守 cancelled 不阻塞子进程
-      console.warn(
+      logger.warn(
         "[subagents] defaultDialogForward: unknown dialog method",
-        req.method,
-        "for",
-        req.id,
+        { detail: { method: req.method, id: req.id } },
       );
       return { cancelled: true };
     }

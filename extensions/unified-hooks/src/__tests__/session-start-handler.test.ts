@@ -18,15 +18,10 @@ vi.mock("../hooks/test-timeout-guard.ts", () => ({
 	setupTestTimeoutGuard: vi.fn(),
 }));
 
-vi.mock("../hooks/subagent-list-injector.ts", () => ({
-	setupSubagentListInjector: vi.fn(),
-}));
-
 // Re-import after mocking so the mocked versions are used
 import { setupToolErrorHandler } from "../hooks/tool-error-handler.ts";
 import { setupNetworkTimeoutGuard } from "../hooks/network-timeout-guard.ts";
 import { setupTestTimeoutGuard } from "../hooks/test-timeout-guard.ts";
-import { setupSubagentListInjector } from "../hooks/subagent-list-injector.ts";
 
 import unifiedHooksExtension from "../index.ts";
 
@@ -55,7 +50,7 @@ function getSessionStartHandler(pi: ReturnType<typeof createMockPi>): (event: un
 
 // --- tests ---
 describe("session_start handler", () => {
-	it("notifies 'info' when all hooks are enabled", () => {
+	it("does not notify when all hooks are enabled (only appendEntry)", () => {
 		const pi = createMockPi();
 		const { ctx, notify } = createMockCtx();
 
@@ -63,22 +58,21 @@ describe("session_start handler", () => {
 		(setupToolErrorHandler as ReturnType<typeof vi.fn>).mockImplementation(() => {});
 		(setupNetworkTimeoutGuard as ReturnType<typeof vi.fn>).mockImplementation(() => {});
 		(setupTestTimeoutGuard as ReturnType<typeof vi.fn>).mockImplementation(() => {});
-		(setupSubagentListInjector as ReturnType<typeof vi.fn>).mockImplementation(() => {});
 
 		unifiedHooksExtension(pi as unknown as ExtensionAPI);
 
 		const handler = getSessionStartHandler(pi);
 		handler({}, ctx);
 
-		expect(notify).toHaveBeenCalledTimes(1);
-		expect(notify.mock.calls[0]![1]).toBe("info");
+		// 全成功时不 notify（避免刷屏），只 appendEntry
+		expect(notify).not.toHaveBeenCalled();
 		expect(pi.appendEntry).toHaveBeenCalledWith("unified-hooks:loaded", {
-			enabled: ["tool-error-handler", "network-timeout-guard", "test-timeout-guard", "subagent-list-injector"],
+			enabled: ["tool-error-handler", "network-timeout-guard", "test-timeout-guard"],
 			disabled: [],
 		});
 	});
 
-	it("notifies 'warning' and lists disabled hooks when some hooks fail", () => {
+	it("notifies 'warning' listing only disabled hooks when some hooks fail", () => {
 		const pi = createMockPi();
 		const { ctx, notify } = createMockCtx();
 
@@ -90,7 +84,6 @@ describe("session_start handler", () => {
 		(setupTestTimeoutGuard as ReturnType<typeof vi.fn>).mockImplementation(() => {
 			throw new Error("timeout");
 		});
-		(setupSubagentListInjector as ReturnType<typeof vi.fn>).mockImplementation(() => {});
 
 		unifiedHooksExtension(pi as unknown as ExtensionAPI);
 
@@ -101,14 +94,13 @@ describe("session_start handler", () => {
 		const [msg, level] = notify.mock.calls[0]!;
 		expect(level).toBe("warning");
 		expect(msg).toContain("Failed: network-timeout-guard, test-timeout-guard");
-		expect(msg).toContain("Loaded: tool-error-handler, subagent-list-injector");
 		expect(pi.appendEntry).toHaveBeenCalledWith("unified-hooks:loaded", {
-			enabled: ["tool-error-handler", "subagent-list-injector"],
+			enabled: ["tool-error-handler"],
 			disabled: ["network-timeout-guard", "test-timeout-guard"],
 		});
 	});
 
-	it("notifies 'warning' when all hooks are disabled", () => {
+	it("notifies 'warning' listing all hooks when all are disabled", () => {
 		const pi = createMockPi();
 		const { ctx, notify } = createMockCtx();
 
@@ -122,9 +114,6 @@ describe("session_start handler", () => {
 		(setupTestTimeoutGuard as ReturnType<typeof vi.fn>).mockImplementation(() => {
 			throw new Error("c");
 		});
-		(setupSubagentListInjector as ReturnType<typeof vi.fn>).mockImplementation(() => {
-			throw new Error("d");
-		});
 
 		unifiedHooksExtension(pi as unknown as ExtensionAPI);
 
@@ -133,10 +122,10 @@ describe("session_start handler", () => {
 
 		expect(notify.mock.calls[0]![1]).toBe("warning");
 		const msg = notify.mock.calls[0]![0] as string;
-		expect(msg).toContain("(none)");
+		expect(msg).toContain("Failed: tool-error-handler, network-timeout-guard, test-timeout-guard");
 		expect(pi.appendEntry).toHaveBeenCalledWith("unified-hooks:loaded", {
 			enabled: [],
-			disabled: ["tool-error-handler", "network-timeout-guard", "test-timeout-guard", "subagent-list-injector"],
+			disabled: ["tool-error-handler", "network-timeout-guard", "test-timeout-guard"],
 		});
 	});
 

@@ -67,7 +67,7 @@ test.describe('Tasks Drawer P0', () => {
     await expect(page).toHaveTitle(/xyz-agent|xyz/i)
   })
 
-  test('Case 1: todo tool call → drawer 渲染 5 项 + 三态 + VERIFY', async ({ page }) => {
+  test('Case 1: todo tool call → drawer 渲染 5 项 + 三态', async ({ page }) => {
     await activateSession(page)
     await sendMessageAndWaitComplete(page, '测 todo')
 
@@ -90,8 +90,8 @@ test.describe('Tasks Drawer P0', () => {
     // completed 项（#1/#2/#3）含 line-through（todoItemClass）
     await expect(aside.locator('.todo-item.line-through')).toHaveCount(3)
 
-    // VERIFY 标签 2 个（#3 #4 是 isVerification）
-    await expect(aside.locator('.verify-tag')).toHaveCount(2)
+    // isVerification 已移除：VERIFY 标签不再渲染（负向锁定，防回归）
+    await expect(aside.locator('.verify-tag')).toHaveCount(0)
 
     // 文案断言：#4 文本可见（确认渲染了 in_progress 项）
     await expect(aside.getByText('编写单元测试覆盖边界')).toBeVisible()

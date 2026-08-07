@@ -8,7 +8,7 @@
  */
 
 import { existsSync, readdirSync, mkdirSync, renameSync, rmdirSync, cpSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve as pathResolve, sep } from 'node:path'
 import { toErrorMessage } from '../../utils/errors.js'
 import { isPackaged } from '../../utils/runtime-env.js'
 import { JsonStore } from '../../utils/json-store.js'
@@ -248,7 +248,8 @@ export function getApiKeyForProvider(providerId: string): string | undefined {
 // ── Settings.json 操作 ───────────────────────────────────────
 // readSettings/updateSettingsSync 的实现收敛到 pi-settings-store（D17 唯一读写层）。
 // 本文件 re-export，供 pi-config-store 等直接消费。
-export { readSettings, writeSettings, updateSettingsSync } from './pi-settings-store.js'
+// setSettingsPath 一并 re-export，供测试（clean-leaked-packages.test.ts）指向 tmpdir 隔离。
+export { readSettings, writeSettings, updateSettingsSync, setSettingsPath } from './pi-settings-store.js'
 
 /**
  * 纯校验：检查 defaultProvider/defaultModel 在 models.json 中是否有效。
@@ -562,6 +563,151 @@ export function migrateToPiSubdir(): void {
         }
       }
     }
+  }
+}
+
+// ── settings.json.packages 泄漏路径清理（架构约定 #1：xyz-agent/pi 数据隔离）──────
+//
+// 背景：早期从 pi 导入 settings.json 时，packages[] 带入了泄漏到 pi 全局目录
+// （~/.pi/agent/）的相对路径项（如 ../../../.pi/agent/extensions/pending-notifications），
+// 违反隔离原则。runtime 启动时（index.ts migrateToPiSubdir 之后）一次性清理。
+
+/**
+ * pi 全局 agent 目录，泄漏路径的判定目标。
+ *
+ * 结构性推导：从 getPiAgentDir() 向上 3 层（agent→pi→dataDir→parent）再下 .pi/agent，
+ * 即「xyz-agent 数据目录（getConfigDir()）的兄弟 .pi/agent」。
+ *
+ * 生产（XYZ_AGENT_DATA_DIR=~/.xyz-agent）：getPiAgentDir()=~/.xyz-agent/pi/agent，
+ * 向上 3 层到 ~，本函数返回 ~/.pi/agent（pi 全局 agent 目录）。
+ *
+ * [HISTORICAL] 为何不从 homedir() 推导：vitest globalSetup 把 XYZ_AGENT_DATA_DIR 指向 tmp，
+ * getPiAgentDir() 落在 tmp 分区，而 homedir()/.pi/agent 落在真实家目录，两者不同分区——
+ * 相对路径解析后永远无法从 tmp 跨到真实家目录，导致 isLeakedPackage 不可测（tmp 嵌套深度
+ * 还随机器变化）。从 getPiAgentDir() 同源推导后，泄漏路径 ../../../.pi/agent/x 的 ../../../
+ *（向上 3 层）与本函数的向上 3 层天然对齐，depth-structural 一致，任意 dataDir 位置均成立。
+ */
+function getPiGlobalAgentDir(): string {
+  return pathResolve(getPiAgentDir(), '..', '..', '..', '.pi', 'agent')
+}
+
+/**
+ * 判定 packages 项是否为泄漏到 pi 全局目录的相对路径。
+ *
+ * 泄漏特征：以 '../' 开头（相对路径），且相对 settings.json 所在目录（getPiAgentDir()）
+ * 解析后落在 pi 全局目录（~/.pi/agent/）内。
+ *
+ * 合法项不被误杀：npm:@xxx 不以 ../ 开头；extensions/xxx 不以 ../ 开头；
+ * ./local-ext 不以 ../ 开头；../../../other-dir 解析后不在 ~/.pi/agent/ 内。
+ *
+ * @param pkg packages 数组的一项
+ * @returns true = 泄漏项（应删除）
+ */
+export function isLeakedPackage(pkg: string): boolean {
+  if (!pkg.startsWith('../')) return false
+  const resolved = pathResolve(getPiAgentDir(), pkg)
+  return resolved.startsWith(getPiGlobalAgentDir() + sep)
+}
+
+/**
+ * 清理 settings.json.packages 中泄漏到 pi 全局目录的相对路径项。
+ *
+ * 启动时一次性调用（index.ts 的 migrateToPiSubdir 之后）。幂等：filter 后无变化不触发写。
+ *
+ * @returns { removed: string[] } 被删除的项列表（供调用方 log）
+ */
+export function cleanLeakedPackages(): { removed: string[] } {
+  try {
+    let removed: string[] = []
+    updateSettingsSync(s => {
+      const packages = s.packages ?? []
+      const filtered = packages.filter(p => !isLeakedPackage(p))
+      removed = packages.filter(p => isLeakedPackage(p))
+      if (removed.length > 0) {
+        s.packages = filtered
+      }
+    })
+    if (removed.length > 0) {
+      console.log(`[provider-store] cleaned ${removed.length} leaked package(s) from settings.json:`, removed)
+    }
+    return { removed }
+  } catch (e) {
+    // settings.json 读取失败不阻塞启动（ES1）
+    console.warn('[provider-store] cleanLeakedPackages failed:', e)
+    return { removed: [] }
+  }
+}
+
+// ── models.json 无效 provider 清理（重装后 "Model not found" 自愈）──────
+//
+// 背景：bundled pi 0.80.3 对 models.json 校验严格——任一 provider 缺五字段
+//（baseUrl/headers/compat/modelOverrides/models）全缺时，整个 models.json 加载失败，
+// 导致所有 model not found。系统 pi 0.83 对此容错，但重装后切换 bundled pi 必现。
+// 典型脏数据：外部脚本写入的测试 fixture provider（如 concurrency-verify-A）。
+// 启动时一次性剔除这类空壳 provider，让 xyz-agent 自愈。
+
+/**
+ * 判定 provider 是否无效（pi 会拒绝加载）。
+ *
+ * pi 0.80.3 报错原文：provider must specify "baseUrl", "headers", "compat",
+ * "modelOverrides", or "models"。五字段全缺则 pi 拒绝该 provider；0.80.3 更严格——
+ * 一个无效 provider 会导致整个 models.json 加载失败。本函数对齐 pi 判定标准，
+ * 供 sanitizeInvalidProviders 启动时剔除空壳 provider（如外部脚本写入的测试 fixture）。
+ *
+ * compat 是 pi 端 provider 级字段（xyz-agent PiProviderConfig 未声明，但运行时脏数据
+ * 可能含），用宽松键检查（as Record<string,unknown>）不遗漏。
+ *
+ * 判定与 pi 0.80.3 实测语义对齐（model-registry.ts applyModelsJson + zod schema）：
+ * - baseUrl/headers/compat 用 falsiness：zod `Type.String({ minLength: 1 })` 拒绝空字符串
+ *   （实测 `--list-models` 报 must not have fewer than 1 characters），空串视同未 specify
+ * - modelOverrides 要求 `Object.keys(...).length > 0`（applyModelsJson hasOverrides），
+ *   空对象不视为 specify（实测报 must specify ... "modelOverrides" ...）
+ * - models 空数组（[]）视为未 specify（无法提供任何模型，与 undefined 等效）
+ * - 非对象值（null/string/number）：zod ProviderConfigSchema 直接拒绝 → 无效
+ */
+export function isInvalidProvider(provider: PiProviderConfig): boolean {
+  if (typeof provider !== 'object' || provider === null) return true
+  const raw = provider as Record<string, unknown>
+  const hasModels = Array.isArray(raw.models) && raw.models.length > 0
+  const hasOverrides =
+    typeof raw.modelOverrides === 'object' &&
+    raw.modelOverrides !== null &&
+    Object.keys(raw.modelOverrides as object).length > 0
+  return !raw.baseUrl && !raw.headers && !raw.compat && !hasOverrides && !hasModels
+}
+
+/**
+ * 启动时剔除 models.json 里的无效 provider（五字段全缺的空壳）。
+ *
+ * 修复根因：空壳 provider（如 {apiKey, name} 无五字段任一）导致 bundled pi 0.80.3
+ * 严格校验时整个 models.json 加载失败。系统 pi 0.83 对此容错但 bundled 0.80.3 不容错，
+ * 重装后切换 bundled pi 必现 "Model not found"。本函数让 xyz-agent 自愈这种脏数据。
+ *
+ * 启动时一次性调用（index.ts cleanLeakedPackages 之后）。幂等：无无效 provider 时不触发写。
+ * 永不抛错：失败仅 warn 不阻塞启动（对齐 cleanLeakedPackages ES1 风格）。
+ *
+ * @returns { removed: string[] } 被剔除的 provider id 列表
+ */
+export function sanitizeInvalidProviders(): { removed: string[] } {
+  try {
+    modelsStore.invalidate()
+    const draft: PiModelsConfig = JSON.parse(JSON.stringify(readModels()))
+    const removed: string[] = []
+    for (const [id, cfg] of Object.entries(draft.providers)) {
+      if (isInvalidProvider(cfg)) {
+        delete draft.providers[id]
+        removed.push(id)
+      }
+    }
+    if (removed.length > 0) {
+      writeModels(draft)
+      console.log('[provider-store] sanitized invalid providers:', removed)
+    }
+    return { removed }
+  } catch (e) {
+    // best-effort 降级：models.json 异常不阻塞启动（pi 自身加载时也会容错或报错）
+    console.warn('[provider-store] sanitizeInvalidProviders failed:', e)
+    return { removed: [] }
   }
 }
 

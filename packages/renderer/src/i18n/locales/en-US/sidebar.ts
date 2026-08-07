@@ -27,6 +27,12 @@ export default {
     restarting: 'Restarting',
     error: 'Update failed',
     goToDownload: 'Go to download',
+    downloaded: 'Downloaded, restart to install',
+    restartInstall: 'Restart and install update',
+    confirmInstall: 'Version v{version} is downloaded. Restarting now will interrupt all current tasks (including AI sessions). Continue?',
+    installLater: 'Later',
+    installNow: 'Restart and install now',
+    retry: 'Retry',
   },
   sessionItem: {
     rename: 'Rename',

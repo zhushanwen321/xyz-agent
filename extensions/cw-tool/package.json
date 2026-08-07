@@ -1,0 +1,46 @@
+{
+  "name": "@zhushanwen/pi-cw-tool",
+  "version": "0.2.0",
+  "description": "Pi extension wrapping the `cw` CLI as role-restricted tools (cw_planning / cw_wave / cw_dev / cw_review) with per-tool action whitelists — hard-guarantees no self-review by layer-owner agents.",
+  "type": "module",
+  "main": "src/index.ts",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "keywords": [
+    "pi-package",
+    "cw",
+    "coding-workflow",
+    "tool",
+    "whitelist",
+    "role-restriction"
+  ],
+  "license": "MIT",
+  "files": [
+    "index.ts",
+    "src/"
+  ],
+  "scripts": {
+    "typecheck": "npx tsc --noEmit && npx tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "vitest": "^4.1.8"
+  }
+}

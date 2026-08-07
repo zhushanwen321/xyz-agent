@@ -1,7 +1,7 @@
 {
   "name": "@zhushanwen/pi-ask-user",
-  "version": "2.0.0",
-  "description": "Inline adaptive ask_user tool for Pi — single/multi-question structured input with split-pane preview, inline editor, and optional comments.",
+  "version": "5.0.2",
+  "description": "Inline adaptive ask_user tool for Pi — single/multi-question structured input with split-pane preview, inline editor and optional comments.",
   "type": "module",
   "main": "index.ts",
   "pi": {
@@ -30,7 +30,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@xyz-agent/extension-protocol": "^0.2.0"
+    "@xyz-agent/extension-protocol": "workspace:^0.3.1"
   },
   "devDependencies": {
     "@earendil-works/pi-tui": "*",

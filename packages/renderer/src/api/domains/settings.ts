@@ -11,8 +11,14 @@
 import * as configDomain from './config'
 import * as extensionDomain from './extension'
 import { command } from '../request'
-import type { ServerMessageMap, IProxyConfig } from '@xyz-agent/shared'
-import { getProxyConfig as getProxyConfigIpc, setProxyConfig as setProxyConfigIpc, testProxy as testProxyIpc } from '@/lib/ipc'
+import type { ServerMessageMap, IProxyConfig, UpdateSettings } from '@xyz-agent/shared'
+import {
+  getProxyConfig as getProxyConfigIpc,
+  setProxyConfig as setProxyConfigIpc,
+  testProxy as testProxyIpc,
+  getUpdateSettings as getUpdateSettingsIpc,
+  setUpdateSettings as setUpdateSettingsIpc,
+} from '@/lib/ipc'
 
 // [W4] SystemSettings 类型 + SYSTEM_KEY/DEFAULT_SYSTEM/getSystem/updateSystem 持久化已迁
 // @xyz-agent/core（domain/settings system-storage + types）。本文件仅保留 transport 转发与
@@ -128,3 +134,16 @@ export async function testProxy(config: IProxyConfig): Promise<{ success: boolea
 // [W4] getSystem/updateSystem（纯前端 localStorage 持久化）已迁 @xyz-agent/core
 // domain/settings/system-storage（经 PlatformPort.storage KVStorage）。renderer 壳 useSettingsShell
 // providePlatform 注入 LocalStorageAdapter 后，core settings-lifecycle.init 直接读 storage。
+
+// ── 升级设置（update:getSettings / update:setSettings）──
+// 预下载开关等升级偏好，通过 Electron IPC 直接与 main 进程通信（不走 runtime WS）。
+
+/** 读取升级设置。 */
+export async function getUpdateSettings(): Promise<UpdateSettings> {
+  return getUpdateSettingsIpc()
+}
+
+/** 保存升级设置。 */
+export async function setUpdateSettings(settings: UpdateSettings): Promise<void> {
+  await setUpdateSettingsIpc(settings)
+}

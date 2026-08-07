@@ -185,21 +185,21 @@ else
     FAILED=1
 fi
 
-# ── 5. artifactName 固定名检查（不含 ${version}）────────────────────
-# 自动升级要求固定文件名（支持 releases/latest/download 静态 URL），
-# artifactName 含 ${version} 会导致每个版本文件名变化，无法用静态 URL 升级。
+# ── 5. artifactName 版本号检查（含 ${version}）──────────────────────
+# release asset 文件名需带版本号（便于归档识别）。release-checker 用 pattern 匹配
+# 平台后缀（如 -mac-arm64.zip）定位 asset，不依赖固定文件名。
 echo ""
-echo -e "${BLUE}[5/8] artifactName fixed-name (no \${version})...${NC}"
+echo -e "${BLUE}[5/8] artifactName versioned (contains \${version})...${NC}"
 
 if [ -f "$EB_YML" ]; then
     # grep 正则匹配 artifactName.*${version}（${ 在 BRE 中是字面量，无需转义）。
     # 排除注释行（以 # 开头）避免误报。
     if grep -v '^[[:space:]]*#' "$EB_YML" | grep -q 'artifactName.*${version}'; then
-        echo -e "  ${RED}✗ electron-builder.yml artifactName 含 \${version}，自动升级要求固定文件名（支持 releases/latest/download 静态 URL），请去掉 \${version}${NC}"
-        echo -e "  ${YELLOW}  FIX: 将 artifactName 中的 '\${version}' 移除，仅保留 \${arch}/\${ext} 等 target 相关变量${NC}"
-        FAILED=1
+        echo -e "  ${GREEN}✓ artifactName 含 \${version}（release asset 文件名带版本号）${NC}"
     else
-        echo -e "  ${GREEN}✓ artifactName 不含 \${version}（固定文件名，支持静态升级 URL）${NC}"
+        echo -e "  ${RED}✗ electron-builder.yml artifactName 不含 \${version}，release asset 需带版本号${NC}"
+        echo -e "  ${YELLOW}  FIX: 在 artifactName 中加入 '\${version}'（如 xyz-agent-\${version}-mac-arm64.\${ext}）${NC}"
+        FAILED=1
     fi
 else
     echo -e "  ${YELLOW}⚠ 跳过（electron-builder.yml 不存在）${NC}"

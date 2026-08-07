@@ -19,6 +19,11 @@
  * - Other：独立 key `${header}__other`
  * - comment：独立 key `${header}__comment`
  *
+ * 注意：此文件是 4.0.1 comment restore 的一部分（main 已在 4.0.0 删除本文件的 comment UI：
+ *    QState.comment / `${key}__comment` 拼装 / allowComment 输入区）。merge 时本分支的
+ *    改动必须保留（protocol allowComment 已 restore，GUI 消费方在此），
+ *    详见 .changeset/restore-ask-user-comment.md。
+ *
  * 样式对齐 demo v3（docs/page-design/archive/v3/ask-user/inline-ask-user-demo-v3.html）：
  * - 无边框一体化：去掉 border-b/border-t 分层，单容器 bg-input 靠间距分区
  * - head 行：脉冲点 + 单问题标题(或 tab)
@@ -162,6 +167,9 @@ function isQuestionAnswered(q: AskUserQuestion): boolean {
   if (!st) return false
   // 无选项的纯自由文本问题：otherText 有值即答完
   if (!q.options?.length) return st.otherText.trim().length > 0
+  // allowComment 问题：评论即已回答（「无选项适用但想说明原因」场景——只填评论也能提交，
+  // 与协议 allowComment 设计意图一致；RPC 解码 protoAnswersToResult 保留 comment-only 答案）
+  if (q.allowComment && st.comment.trim().length > 0) return true
   // 有选项：Other 选中必须有文本才算答完
   const otherSelected = st.selectedValues.includes(OTHER_VALUE)
   if (otherSelected && !st.otherText.trim()) {

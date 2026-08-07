@@ -1,6 +1,6 @@
 // apps/electron/preload/preload.ts
 import { contextBridge, ipcRenderer } from 'electron'
-import type { LatestReleaseInfo, UpdateStage } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, SegmentsMetadataEntry, UpdateStage, UpdateSettings } from '@xyz-agent/shared'
 
 export interface ElectronAPI {
   /** 监听 runtime 端口事件 */
@@ -19,11 +19,6 @@ export interface ElectronAPI {
   getRuntimePort(): Promise<number>
   /** 获取 runtime 端口偏移（dev 模式 +100） */
   getRuntimePortOffset(): Promise<number>
-  /**
-   * 获取数据目录（~ 缩写展示路径）。dev=~/.xyz-agent-dev，prod=~/.xyz-agent。
-   * Settings 强制目录展示动态化用（避免硬编码 ~/.xyz-agent 误导 dev 排查）。
-   */
-  getDataDir(): Promise<string>
   // ── 窗口管理 ──────────────────────────────────────────────────
   /** 创建新窗口，可选携带 sessionId 迁移 */
   createWindow(sessionId?: string): Promise<{ windowId: string }>
@@ -48,12 +43,6 @@ export interface ElectronAPI {
     path: string | null
   }>
   /**
-   * 目录选择 dialog（v2 §3 LoadPaths 注入用）：返回选中目录路径，取消/无聚焦窗口返回 null。
-   * 复用 pick-directory handler（dialog.showOpenDialog openDirectory），封装为 string|null 形态
-   * 对齐 ui 层 ChooseDirectoryFn 契约（LoadPaths onChooseDirectory 消费）。
-   */
-  chooseDirectory(): Promise<string | null>
-  /**
    * 把剪贴板图片（base64）写到 <getDataDir>/attachments/<sessionId>/（持久化），返回 {path, fileName, displayName, id, persisted}。
    * Cmd+V/Ctrl+V 粘贴截图走此 IPC（renderer 读 blob → base64 → 落地文件）。
    * 主进程校验 mimeType image/* 前缀 + 20MB 上限，写失败 throw。
@@ -62,6 +51,31 @@ export interface ElectronAPI {
    * - displayName：用户可读名（badge/alt 显示，无 uuid 前缀）；粘贴截图无原文件名时为 截图-时间戳.ext
    * - persisted：sessionId 非空 true（落 attachments 已持久化）；空 false（落 tmpdir，session 创建后需迁移）
    */
+  writeSessionImage(payload: {
+    sessionId: string
+    base64: string
+    mimeType: string
+    name: string
+  }): Promise<{ path: string; fileName: string; displayName: string; id: string; persisted: boolean }>
+  /**
+   * 把 landing 态落在 tmpdir 的图片 move 到 <dataDir>/attachments/<sessionId>/（持久化）。
+   * session 创建后调用，解决 landing 粘图 path 仍指 tmpdir 的缺口（OS 会清理 tmpdir 导致丢图）。
+   * fromPath 不存在（OS 已清理）或 move 失败会 throw，调用方 catch 后降级。
+   */
+  migrateSessionImage(payload: {
+    fromPath: string
+    sessionId: string
+    fileName: string
+  }): Promise<{ path: string }>
+  /**
+   * 追加/覆盖一条 segments 元数据到 sidecar（<dataDir>/attachments/<sessionId>/segments.json）。
+   * 发送 user message 时调用，把完整 Segment[]（含 image/file 私有元信息）落盘，重开 session 时回填。
+   * 同 clientUuid 重发（editAndResend）→ 后者覆盖前者。主进程 atomic 写（tmp + rename）。
+   */
+  writeSegmentsMetadata(payload: {
+    sessionId: string
+    entry: SegmentsMetadataEntry
+  }): Promise<void>
   /** 在默认浏览器中打开外部链接 */
   openExternal(url: string): Promise<void>
   /** 监听 macOS 全屏状态变化 */
@@ -122,6 +136,24 @@ export interface ElectronAPI {
    * @returns triggerRestart=true 表示升级已触发、app 即将退出重启
    */
   performUpdate(release: LatestReleaseInfo): Promise<{ triggerRestart: boolean }>
+  /**
+   * 拆分升级流程的下载阶段：下载 + 校验 + 写入预下载产物元信息。
+   * 下载成功后状态进入 'downloaded'，前端可调 updateInstall 触发安装。
+   * @param release checkForUpdate 返回的最新版本信息
+   * @returns downloaded=true 表示下载完成
+   */
+  updateDownload(release: LatestReleaseInfo): Promise<{ downloaded: boolean }>
+  /**
+   * 拆分升级流程的安装阶段：从预下载产物读取 release + filePath，执行替换 + 触发重启。
+   * install 权威源是预下载产物（不信任前端传入的 release，堵装错版本漏洞）。
+   * @returns triggerRestart=true 表示升级已触发、app 即将退出重启
+   */
+  updateInstall(): Promise<{ triggerRestart: boolean }>
+  /**
+   * 读取预下载产物信息（供前端判断是否已下载完成）。
+   * @returns 有效的 { release, filePath }，无预下载产物/损坏返回 null
+   */
+  getPreloaded(): Promise<{ release: LatestReleaseInfo; filePath: string } | null>
   /** 监听升级进度事件（stage + percent 0-100），返回取消订阅函数 */
   onUpdateProgress(callback: (payload: { stage: UpdateStage; percent: number }) => void): () => void
   /** 监听升级错误事件（stage + message + errorCode），返回取消订阅函数 */
@@ -130,11 +162,33 @@ export interface ElectronAPI {
   openUpdateFallbackUrl(url: string): Promise<void>
   // ── 代理配置 ────────────────────────────────────────────────────
   /** 获取当前代理配置 */
+  /**
+   * 获取数据目录（~ 缩写展示路径）。dev=~/.xyz-agent-dev，prod=~/.xyz-agent。
+   * Settings 强制目录展示动态化用（避免硬编码 ~/.xyz-agent 误导 dev 排查）。
+   */
+  getDataDir(): Promise<string>
+  /**
+   * 目录选择 dialog（v2 §3 LoadPaths 注入用）：返回选中目录路径，取消/无聚焦窗口返回 null。
+   * 复用 pick-directory handler（dialog.showOpenDialog openDirectory），封装为 string|null 形态
+   * 对齐 ui 层 ChooseDirectoryFn 契约（LoadPaths onChooseDirectory 消费）。
+   */
+  chooseDirectory(): Promise<string | null>
   getProxyConfig(): Promise<import('@xyz-agent/shared').IProxyConfig>
   /** 保存代理配置 */
   setProxyConfig(config: import('@xyz-agent/shared').IProxyConfig): Promise<void>
   /** 测试代理连接 */
   testProxy(config: import('@xyz-agent/shared').IProxyConfig): Promise<{ success: boolean; message?: string }>
+  // ── 升级提醒持久化标志（功能 1：常驻提醒）──────────────────────────
+  /**
+   * 读取升级提醒持久化标志（app 启动时调用以恢复「可升级」提醒）。
+   * @returns 仍有效的 pending release（有新版待升级），无新版/已升级/失败返回 null
+   */
+  getPendingUpdate(): Promise<LatestReleaseInfo | null>
+  // ── 升级设置（功能 2：预下载开关）──────────────────────────────
+  /** 读取升级设置（预下载开关等） */
+  getUpdateSettings(): Promise<UpdateSettings>
+  /** 保存升级设置 */
+  setUpdateSettings(settings: UpdateSettings): Promise<{ success: boolean }>
   // ── 系统提示音（跨平台：mac afplay / linux paplay / win 返 wav base64）──
   /** 列出当前平台可用的系统提示音（existsSync 过滤后的精选清单） */
   listSystemSounds(): Promise<{ platform: string; sounds: Array<{ id: string; name: string }> }>
@@ -178,7 +232,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   getRuntimePort: () => ipcRenderer.invoke('get-runtime-port'),
   getRuntimePortOffset: () => ipcRenderer.invoke('get-runtime-port-offset'),
-  getDataDir: () => ipcRenderer.invoke('get-data-dir'),
 
   // ── 窗口管理 ──────────────────────────────────────────────────
   createWindow: (sessionId?: string) => ipcRenderer.invoke('create-window', { sessionId }),
@@ -196,9 +249,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     defaultPath?: string
     filters?: Array<{ name: string; extensions: string[] }>
   }) => ipcRenderer.invoke('pick-file', options),
-  // v2 §3：chooseDirectory 薄包装 pick-directory handler，返回 path（canceled→null），对齐 ui ChooseDirectoryFn 契约
-  chooseDirectory: () =>
-    ipcRenderer.invoke('pick-directory').then((r: { canceled: boolean; path: string | null }) => r.path),
+  writeSessionImage: (payload: { sessionId: string; base64: string; mimeType: string; name: string }) =>
+    ipcRenderer.invoke('write-session-image', payload),
+  migrateSessionImage: (payload: { fromPath: string; sessionId: string; fileName: string }) =>
+    ipcRenderer.invoke('migrate-session-image', payload),
+  writeSegmentsMetadata: (payload: { sessionId: string; entry: SegmentsMetadataEntry }) =>
+    ipcRenderer.invoke('write-segments-metadata', payload),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   onFullscreenChanged: (callback: (payload: { isFullscreen: boolean }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: { isFullscreen: boolean }) => callback(payload)
@@ -250,6 +306,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── 自动升级执行（w3）──────────────────────────────────────
   performUpdate: (release: LatestReleaseInfo) =>
     ipcRenderer.invoke('update:perform', { release }),
+  // ── 自动升级拆分流程（download → install）──────────────────────
+  updateDownload: (release: LatestReleaseInfo) =>
+    ipcRenderer.invoke('update:download', { release }),
+  updateInstall: () => ipcRenderer.invoke('update:install'),
+  getPreloaded: () => ipcRenderer.invoke('update:getPreloaded'),
   onUpdateProgress: (callback: (payload: { stage: UpdateStage; percent: number }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: { stage: UpdateStage; percent: number }) => callback(payload)
     ipcRenderer.on('update:progress', handler)
@@ -262,9 +323,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   openUpdateFallbackUrl: (url: string) => ipcRenderer.invoke('open-external', url),
   // ── 代理配置 ────────────────────────────────────────────────────
-  getProxyConfig: () => ipcRenderer.invoke('proxy:get'),
-  setProxyConfig: (config) => ipcRenderer.invoke('proxy:set', config),
-  testProxy: (config) => ipcRenderer.invoke('proxy:test', config),
+  getDataDir: () => ipcRenderer.invoke('get-data-dir'),
+  // v2 §3：chooseDirectory 薄包装 pick-directory handler，返回 path（canceled→null），对齐 ui ChooseDirectoryFn 契约
+  chooseDirectory: () =>
+    ipcRenderer.invoke('pick-directory').then((r: { canceled: boolean; path: string | null }) => r.path),
+  getProxyConfig: () => ipcRenderer.invoke('update:getProxyConfig'),
+  setProxyConfig: (config) => ipcRenderer.invoke('update:setProxyConfig', config),
+  testProxy: (config) => ipcRenderer.invoke('update:testProxy', config),
+  // ── 升级提醒持久化标志 + 升级设置 ────────────────────────────────
+  getPendingUpdate: () => ipcRenderer.invoke('update:getPending'),
+  getUpdateSettings: () => ipcRenderer.invoke('update:getSettings'),
+  setUpdateSettings: (settings: UpdateSettings) => ipcRenderer.invoke('update:setSettings', settings),
   // ── 系统提示音 ──────────────────────────────────────────────
   listSystemSounds: () => ipcRenderer.invoke('sound:list'),
   playSystemSound: (name: string, kind?: 'success' | 'error') => ipcRenderer.invoke('sound:play', name, kind),

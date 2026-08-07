@@ -131,3 +131,129 @@ describe("buildWorkerScript — W1 postMessage defense & parallel degrade", () =
     });
   });
 });
+
+// ── W2: agent() returnMeta 模式 ──
+// 验证 returnMeta 标志：known fields 放行 + handler resolve 分支 + 缓存重放分支，
+// 且两处分支结构对称（returnMeta===true → {value, sessionFile, worktreePath, error}）。
+
+describe("buildWorkerScript — W2 agent() returnMeta mode", () => {
+  const script = buildWorkerScript("// noop user script");
+
+  describe("returnMeta known field whitelist", () => {
+    it("includes returnMeta in _knownFields Set", () => {
+      expect(script).toContain('"returnMeta"');
+    });
+
+    it("includes returnMeta in unknown-fields warning text", () => {
+      expect(script).toContain("cwd, fork, worktree, returnMeta");
+    });
+
+    it("does NOT warn about returnMeta when only returnMeta is passed (parity with fork/worktree)", () => {
+      // fork/worktree 已是 known fields；returnMeta 加入后不应触发 warn 文案中的 returnMeta。
+      // 简化断言：warning 文案里 Known 列表含 returnMeta（即被识别）。
+      expect(script).toMatch(/Known fields:.*returnMeta/);
+    });
+  });
+
+  describe("_pendingCalls stores returnMeta flag", () => {
+    it("stores returnMeta: opts.returnMeta === true in _pendingCalls.set", () => {
+      expect(script).toContain(
+        "returnMeta: opts.returnMeta === true",
+      );
+    });
+  });
+
+  describe("agent-result handler resolve branch (改动 9b)", () => {
+    it("branches on pending.returnMeta", () => {
+      expect(script).toContain("if (pending.returnMeta)");
+    });
+
+    it("resolve branch returns {value, sessionFile, worktreePath, error}", () => {
+      const handlerBlock = script.match(
+        /if \(pending\.returnMeta\) \{[\s\S]*?\} else \{[\s\S]*?pending\.resolve\(_value\);[\s\S]*?\}/,
+      );
+      expect(handlerBlock).toBeTruthy();
+      expect(handlerBlock![0]).toContain("value: _value");
+      expect(handlerBlock![0]).toContain("sessionFile: msg.result.sessionFile");
+      expect(handlerBlock![0]).toContain("worktreePath: msg.result.worktreePath");
+      expect(handlerBlock![0]).toContain("error: msg.result.error");
+    });
+
+    it("fallback resolve single value uses msg.result.parsedOutput ?? msg.result.content", () => {
+      expect(script).toContain(
+        "const _value = msg.result.parsedOutput ?? msg.result.content;",
+      );
+    });
+  });
+
+  describe("cache replay returnMeta branch (改动 9c)", () => {
+    it("early-returns undefined when !cached", () => {
+      expect(script).toContain("if (!cached) return undefined;");
+    });
+
+    it("branches on opts.returnMeta === true", () => {
+      expect(script).toContain("if (opts.returnMeta === true)");
+    });
+
+    it("cache replay returns {value, sessionFile, worktreePath, error} from cached", () => {
+      const cacheBlock = script.match(
+        /if \(opts\.returnMeta === true\) \{[\s\S]*?return _cachedValue;/,
+      );
+      expect(cacheBlock).toBeTruthy();
+      expect(cacheBlock![0]).toContain("value: _cachedValue");
+      expect(cacheBlock![0]).toContain("sessionFile: cached.sessionFile");
+      expect(cacheBlock![0]).toContain("worktreePath: cached.worktreePath");
+      expect(cacheBlock![0]).toContain("error: cached.error");
+    });
+
+    it("cache replay fallback uses cached.parsedOutput ?? cached.content", () => {
+      expect(script).toContain(
+        "const _cachedValue = cached.parsedOutput ?? cached.content;",
+      );
+    });
+  });
+
+  describe("handler (9b) and cache replay (9c) branch symmetry", () => {
+    it("both expose worktreePath field (CL-1/DEC-2 core)", () => {
+      // handler 读 msg.result.worktreePath；cache replay 读 cached.worktreePath。
+      expect(script).toContain("msg.result.worktreePath");
+      expect(script).toContain("cached.worktreePath");
+    });
+  });
+});
+
+// ── thinkingLevel 参数透传（agent() 三分支） ──
+// 验证 thinkingLevel 在 string / task-agent / object.prompt 三个分支均被透传至
+// agent-call 的 opts，且加入 _knownFields 白名单（object.prompt 分支整体透传，
+// 不被 unknown-fields warn 误报）。底层 AgentCallOpts→mapToExecuteOptions→
+// buildSpawnArgs 拼 pi CLI --model provider/modelId:thinkingLevel 已打通，
+// 此处只验入口层 wiring。
+
+describe("buildWorkerScript — agent() thinkingLevel passthrough (3 branches)", () => {
+  const script = buildWorkerScript("// noop user script");
+
+  it("string branch extracts thinkingLevel from secondArg (parity with model/scene/phase)", () => {
+    // agent("prompt", {thinkingLevel:"high"}) → string 分支 opts 提取 thinkingLevel
+    const stringBranch = script.match(/typeof firstArg === "string"[\s\S]*?\};/);
+    expect(stringBranch).toBeTruthy();
+    expect(stringBranch![0]).toContain(
+      "thinkingLevel: (secondArg && typeof secondArg === \"object\" && secondArg.thinkingLevel) || undefined",
+    );
+  });
+
+  it("task/agent branch includes thinkingLevel in opts (parity with model/skill/timeoutMs)", () => {
+    // agent({task, agent, thinkingLevel}) → task/agent 快捷分支透传 thinkingLevel
+    const taskAgentBranch = script.match(/firstArg\.task \|\| firstArg\.agent[\s\S]*?\};/);
+    expect(taskAgentBranch).toBeTruthy();
+    expect(taskAgentBranch![0]).toContain("thinkingLevel: firstArg.thinkingLevel");
+  });
+
+  it("thinkingLevel is a known field (object.prompt branch passes through without unknown-fields warn)", () => {
+    // object.prompt 分支 opts = firstArg 整体透传，thinkingLevel 自然带入；
+    // 但必须进 _knownFields 白名单，否则 Object.keys(opts) 含 thinkingLevel 会触发
+    // unknown-fields warn（workerLogs 污染）。验证 Set 与 warn 文案均识别 thinkingLevel。
+    expect(script).toContain('"thinkingLevel"');
+    expect(script).toMatch(/Known fields:.*thinkingLevel/);
+  });
+});
+

@@ -4,22 +4,32 @@
 -->
 <template>
   <div class="flex max-w-[860px] flex-col gap-3">
-    <header class="page-head">
-      <div class="head-text">
-        <h1 class="title">{{ t('settings.menu.update') }}</h1>
-        <p class="desc">{{ t('settings.menu.updateDesc') }}</p>
+    <!-- 卡 1：预下载设置 -->
+    <div class="rounded-md border border-border bg-bg">
+      <div class="px-4 pb-3 pt-3">
+        <h3 class="text-[13px] font-medium text-fg">{{ t('settings.update.preDownloadTitle') }}</h3>
+        <p class="mt-0.5 text-[11px] text-muted">{{ t('settings.update.preDownloadDesc') }}</p>
       </div>
-    </header>
-
-    <!-- 卡 1：代理配置 -->
-    <GroupCard>
-      <template #head>
-        <div class="gc-head-text">
-          <h3 class="gc-title">{{ t('settings.update.sectionTitle') }}</h3>
-          <p class="gc-sub">{{ t('settings.update.sectionDesc') }}</p>
+      <div class="border-t border-border">
+        <div class="flex items-center justify-between px-4 py-3">
+          <Label class="text-[12px] text-fg">{{ t('settings.update.preDownloadLabel') }}</Label>
+          <Switch
+            data-testid="switch-pre-download"
+            :model-value="preDownload"
+            :disabled="preDownloadSaving"
+            @update:model-value="onTogglePreDownload"
+          />
         </div>
-      </template>
-      <div>
+      </div>
+    </div>
+
+    <!-- 卡 2：代理配置 -->
+    <div class="rounded-md border border-border bg-bg">
+      <div class="px-4 pb-3 pt-3">
+        <h3 class="text-[13px] font-medium text-fg">{{ t('settings.update.sectionTitle') }}</h3>
+        <p class="mt-0.5 text-[11px] text-muted">{{ t('settings.update.sectionDesc') }}</p>
+      </div>
+      <div class="border-t border-border">
         <!-- 代理模式 -->
         <div class="flex items-center justify-between px-4 py-3">
           <Label class="text-[12px] text-fg">{{ t('settings.update.proxyMode') }}</Label>
@@ -60,7 +70,7 @@
           />
         </div>
       </div>
-    </GroupCard>
+    </div>
 
     <!-- 操作栏 -->
     <div class="flex items-center justify-between">
@@ -126,9 +136,9 @@ import type { IProxyConfig } from '@xyz-agent/shared'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { GroupCard } from '@xyz-agent/ui/features/settings'
-import { getProxyConfig, setProxyConfig, testProxy } from '@/api/domains/settings'
+import { getProxyConfig, setProxyConfig, testProxy, getUpdateSettings, setUpdateSettings } from '@/api/domains/settings'
 import { useToast } from '@/composables/useToast'
 
 const { t } = useI18n()
@@ -151,22 +161,54 @@ const saving = ref(false)
 type TestResult = { status: 'success' } | { status: 'failed'; message?: string } | { status: 'skipped'; message?: string }
 const testResult = ref<TestResult | null>(null)
 
+/** 预下载开关（从 main 进程加载，切换时立即持久化） */
+const preDownload = ref(false)
+/** 预下载开关持久化中（切换时短暂 disable 控件） */
+const preDownloadSaving = ref(false)
+
 // ── Lifecycle ──
 
 /** 加载当前配置 */
 async function loadConfig() {
-  try {
-    const config = await getProxyConfig()
+  // 代理配置与预下载设置并行加载（独立数据源）
+  const results = await Promise.allSettled([
+    getProxyConfig(),
+    getUpdateSettings(),
+  ])
+  // 代理配置
+  if (results[0].status === 'fulfilled') {
+    const config = results[0].value
     localConfig.mode = config.mode
     localConfig.httpProxy = config.httpProxy ?? ''
     localConfig.httpsProxy = config.httpsProxy ?? ''
-  } catch (err) {
+  } else {
     // best-effort：加载失败时使用默认配置（system mode），不影响页面渲染
-    console.error('[UpdatePage] loadConfig failed:', err)
+    console.error('[UpdatePage] load proxy config failed:', results[0].reason)
+  }
+  // 预下载设置
+  if (results[1].status === 'fulfilled') {
+    preDownload.value = results[1].value.preDownload
+  } else {
+    console.error('[UpdatePage] load update settings failed:', results[1].reason)
   }
 }
 
 onMounted(loadConfig)
+
+/** 切换预下载开关（立即持久化到 main 进程） */
+async function onTogglePreDownload(value: boolean | string): Promise<void> {
+  const enabled = value === true
+  preDownloadSaving.value = true
+  try {
+    await setUpdateSettings({ preDownload: enabled })
+    preDownload.value = enabled
+  } catch (err) {
+    // 持久化失败：恢复控件到原值，toast 提示
+    toastError(err instanceof Error ? err.message : String(err))
+  } finally {
+    preDownloadSaving.value = false
+  }
+}
 
 // ── Actions ──
 

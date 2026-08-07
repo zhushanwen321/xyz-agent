@@ -7,7 +7,7 @@
  *
  * 依赖方向：无下游（读全局 window.electronAPI，类型经 declare global 自动可用）
  */
-import type { LatestReleaseInfo, UpdateStage } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, SegmentsMetadataEntry, UpdateStage, UpdateSettings } from '@xyz-agent/shared'
 
 /** preload 注入的 electronAPI（web/mock 环境为 undefined） */
 const api = window.electronAPI
@@ -20,14 +20,6 @@ export function getRuntimePort(): Promise<number | undefined> {
 /** 读取端口偏移（dev +100）。无 IPC 返回 undefined */
 export function getRuntimePortOffset(): Promise<number | undefined> {
   return api ? api.getRuntimePortOffset() : Promise.resolve(undefined)
-}
-
-/**
- * 读取数据目录（~ 缩写展示路径，如 ~/.xyz-agent-dev）。
- * Settings 强制目录展示动态化用。无 IPC（web/mock）返回 undefined，调用方需 fallback。
- */
-export function getDataDir(): Promise<string | undefined> {
-  return api ? api.getDataDir() : Promise.resolve(undefined)
 }
 
 /** 监听 runtime 端口推送（runtime 重启后 main 推新端口触发重连），返回取消函数 */
@@ -102,13 +94,52 @@ export async function pickFile(
 }
 
 /**
- * 选择目录（v2 §3 LoadPaths 注入用）：返回选中目录路径或 null（取消/无聚焦窗口/web mock）。
- * 薄包装 preload chooseDirectory（其复用 pick-directory handler），取 path 字段（canceled→null），
- * 对齐 ui 层 ChooseDirectoryFn 契约。web/mock 环境无 preload → 返回 null，LoadPaths 守 null 静默 return。
+ * 把剪贴板图片（base64）写到 <getDataDir>/attachments/<sessionId>/（持久化），返回 {path, fileName, displayName, id, persisted}。
+ * web/mock 环境无 preload → api 或 api.writeSessionImage 不存在 → 返回 undefined，
+ * 让上层（useImageAttachment）降级为文本提示，不 throw。
+ *
+ * sessionId 为空时（landing 态）主进程降级走 OS tmpdir。主进程写失败会 throw
+ * （经 ipcRenderer.invoke reject），调用方 catch 后降级。
+ *
+ * persisted：sessionId 非空 true（落 attachments 已持久化）；空 false（落 tmpdir，session 创建后需迁移）。
+ * 调用方据 !persisted 标记 segment.needsMigrate，避免后续用路径猜测误迁移用户磁盘文件。
  */
-export async function chooseDirectory(): Promise<string | null> {
-  if (!api?.chooseDirectory) return null
-  return api.chooseDirectory()
+export async function writeSessionImage(payload: {
+  sessionId: string
+  base64: string
+  mimeType: string
+  name: string
+}): Promise<{ path: string; fileName: string; displayName: string; id: string; persisted: boolean } | undefined> {
+  return api?.writeSessionImage?.(payload)
+}
+
+/**
+ * 把 landing 态落在 tmpdir 的图片 move 到 <dataDir>/attachments/<sessionId>/（持久化）。
+ * session 创建后调用，解决 landing 粘图 path 仍指 tmpdir 的缺口。
+ *
+ * web/mock 环境无 preload → 返回 undefined，调用方（useNewTaskFlow）降级（保留原 path 不迁移）。
+ * 主进程 move 失败（文件已被 OS 清理等）会 throw，调用方 catch 后降级 + toast。
+ */
+export async function migrateSessionImage(payload: {
+  fromPath: string
+  sessionId: string
+  fileName: string
+}): Promise<{ path: string } | undefined> {
+  return api?.migrateSessionImage?.(payload)
+}
+
+/**
+ * 追加/覆盖一条 segments 元数据到 sidecar（<dataDir>/attachments/<sessionId>/segments.json）。
+ * web/mock 环境无 preload → api 或方法不存在 → 返回 undefined（调用方降级）。
+ *
+ * 注意：只保留 write 通路。read sidecar 由 runtime 直接读文件（session-service.ts
+ * readSegmentsMetadataFile），不经 IPC，故无 readSegmentsMetadata 包装（W6 清理）。
+ */
+export async function writeSegmentsMetadata(payload: {
+  sessionId: string
+  entry: SegmentsMetadataEntry
+}): Promise<void | undefined> {
+  return api?.writeSegmentsMetadata?.(payload)
 }
 
 /** win/linux 自绘 traffic light 点击：最小化窗口（mac 系统圆点不走此处） */
@@ -257,6 +288,31 @@ export function performUpdate(release: LatestReleaseInfo): Promise<{ triggerRest
   return api?.performUpdate(release) ?? Promise.resolve({ triggerRestart: false })
 }
 
+/**
+ * 触发下载阶段（下载 → 校验，止于 downloaded 态，不替换/重启）。
+ * @param release checkForUpdate 返回的最新版本信息
+ * @returns downloaded=true 表示产物已下载并校验通过，等待 performInstall 触发替换重启
+ */
+export function updateDownload(release: LatestReleaseInfo): Promise<{ downloaded: boolean }> {
+  return api?.updateDownload(release) ?? Promise.resolve({ downloaded: false })
+}
+
+/**
+ * 触发安装阶段（替换 + 重启）。依赖已下载产物（updateDownload 成功后调用）。
+ * @returns triggerRestart=true 表示替换完成、app 即将退出重启
+ */
+export function updateInstall(): Promise<{ triggerRestart: boolean }> {
+  return api?.updateInstall() ?? Promise.resolve({ triggerRestart: false })
+}
+
+/**
+ * 读取 main 侧预下载产物（app 启动时恢复 downloaded 态用）。
+ * @returns 有有效预下载产物返回 { release, filePath }，无则 null
+ */
+export function getPreloaded(): Promise<{ release: LatestReleaseInfo; filePath: string } | null> {
+  return api?.getPreloaded() ?? Promise.resolve(null)
+}
+
 /** 监听升级进度事件（stage + percent 0-100），返回取消订阅函数。无 IPC 返回 no-op */
 export function onUpdateProgress(cb: (p: { stage: UpdateStage; percent: number }) => void): () => void {
   return api?.onUpdateProgress(cb) ?? (() => {})
@@ -274,6 +330,23 @@ export function openUpdateFallbackUrl(url: string): Promise<void> {
 
 // ── 代理配置 ────────────────────────────────────────────────────────
 
+/**
+ * 读取数据目录（~ 缩写展示路径，如 ~/.xyz-agent-dev）。
+ * Settings 强制目录展示动态化用。无 IPC（web/mock）返回 undefined，调用方需 fallback。
+ */
+export function getDataDir(): Promise<string | undefined> {
+  return api ? api.getDataDir() : Promise.resolve(undefined)
+}
+
+/**
+ * 薄包装 preload chooseDirectory（其复用 pick-directory handler），取 path 字段（canceled→null），
+ * 对齐 ui 层 ChooseDirectoryFn 契约。web/mock 环境无 preload → 返回 null，LoadPaths 守 null 静默 return。
+ */
+export async function chooseDirectory(): Promise<string | null> {
+  if (!api?.chooseDirectory) return null
+  return api.chooseDirectory()
+}
+
 /** 获取当前代理配置。无 IPC 时返回默认配置 */
 export function getProxyConfig(): Promise<import('@xyz-agent/shared').IProxyConfig> {
   return api?.getProxyConfig() ?? Promise.resolve({ mode: 'system' })
@@ -287,6 +360,26 @@ export function setProxyConfig(config: import('@xyz-agent/shared').IProxyConfig)
 /** 测试代理连接。无 IPC 时返回成功（跳过测试） */
 export function testProxy(config: import('@xyz-agent/shared').IProxyConfig): Promise<{ success: boolean; message?: string }> {
   return api?.testProxy(config) ?? Promise.resolve({ success: true, message: 'No IPC available' })
+}
+
+// ── 升级提醒持久化标志 + 升级设置（功能 1 常驻提醒 + 功能 2 预下载开关）─────────
+// getPendingUpdate：app 启动时调，读持久化标志恢复「可升级」提醒（离线也能常驻）。
+// getUpdateSettings/setUpdateSettings：读/写升级设置（预下载开关），设置页用。
+// 无 IPC（web/mock）时 getPendingUpdate 返回 null，getUpdateSettings 返回默认值，setUpdateSettings no-op。
+
+/** 读取升级提醒持久化标志。无 IPC 时返回 null（无持久化提醒可恢复） */
+export function getPendingUpdate(): Promise<LatestReleaseInfo | null> {
+  return api?.getPendingUpdate() ?? Promise.resolve(null)
+}
+
+/** 读取升级设置。无 IPC 时返回默认值（预下载关闭） */
+export function getUpdateSettings(): Promise<UpdateSettings> {
+  return api?.getUpdateSettings() ?? Promise.resolve({ preDownload: false })
+}
+
+/** 保存升级设置。无 IPC 时 no-op 返回 success */
+export function setUpdateSettings(settings: UpdateSettings): Promise<{ success: boolean }> {
+  return api?.setUpdateSettings(settings) ?? Promise.resolve({ success: true })
 }
 
 // ── 系统提示音（跨平台：mac afplay / linux paplay / win 返 wav base64）─────────

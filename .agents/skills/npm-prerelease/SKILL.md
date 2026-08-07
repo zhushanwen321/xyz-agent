@@ -4,7 +4,8 @@ description: >-
   发布 npm 预发布版本（dev dist-tag）用于测试。创建 dev-npm-* 分支，
   changeset 生成 prerelease 版本号，push 触发 CI 发布到 npm @dev tag，
   轮询验证后还原代码。触发词："npm 预发布"、"发 npm beta"、"npm prerelease"。
-  仅用于 xyz-agent 项目的 npm 包发布（@xyz-agent/extension-protocol 等）。
+  仅用于 xyz-agent 项目的 npm 包发布：支持 @xyz-agent/* 和 @zhushanwen/pi-* 两类 scope
+  （脚本自动定位 packages/* 或 extensions/* 下的包目录）。
   不用于 Electron 打包预发布——那个用 prerelease-test skill。
 ---
 
@@ -13,8 +14,12 @@ description: >-
 ## 概述
 
 发布 npm 包的预发布版本（`-dev.*` 后缀），发布到 npm `dev` dist-tag。
-消费者通过 `npm install @xyz-agent/extension-protocol@dev` 安装测试版本。
-测试通过后自动还原代码版本，不占用正式版本号。
+支持两类包：
+- `@xyz-agent/*`（如 `extension-protocol`，位于 `packages/`）
+- `@zhushanwen/pi-*`（如 `pi-subagent-workflow`、`pi-goal`，位于 `extensions/`）
+
+脚本自动按包名定位 workspace 目录，无需手动指定路径。消费者通过
+`npm install <pkg>@dev` 安装测试版本。测试通过后自动还原代码版本，不占用正式版本号。
 
 **与 prerelease-test skill 的区别**：
 
@@ -42,8 +47,16 @@ description: >-
 ```bash
 # <workspace-root> = bare-repo workspace 根目录（含 main、各 feature worktree 子目录）
 cd <workspace-root>/main
+
+# 默认发布 @xyz-agent/extension-protocol
 bash scripts/npm-prerelease.sh
+
+# 或指定包名（支持 @xyz-agent/* 和 @zhushanwen/pi-*）
+bash scripts/npm-prerelease.sh @zhushanwen/pi-subagent-workflow
+bash scripts/npm-prerelease.sh @xyz-agent/extension-protocol
 ```
+
+脚本自动按包名定位 workspace 目录（`packages/*` 或 `extensions/*`），无需手动指定路径。
 
 脚本自动执行所有阶段。AI 只需执行这一步，等待脚本完成。
 

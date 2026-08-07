@@ -450,7 +450,7 @@ export class AskUserComponent implements Component {
 		this.rerender();
 	}
 
-	/** 选中确认后的处理：若 allowComment，进入评论模式（可重入编辑/清除已有评论）；否则前进。 */
+	/** 选中确认后的处理：若 allowComment（4.0.1 restore 字段），进入评论模式（可重入编辑/清除已有评论）；否则前进。 */
 	private afterConfirm(state: QuestionState, q: Question): void {
 		state.confirmed = true;
 		if (q.allowComment && state.mode !== "comment") {

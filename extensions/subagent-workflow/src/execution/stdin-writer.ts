@@ -10,7 +10,11 @@
 import type { ChildProcess } from "node:child_process";
 import * as crypto from "node:crypto";
 
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
 import type { UiResponse } from "./dialog-queue.ts";
+
+const logger = getLogger("subagents");
 
 /**
  * 按 UiResponse 形状构造 Pi 原生 extension_ui_response 并写 stdin。
@@ -37,7 +41,9 @@ export function respond(child: ChildProcess, id: string, out: UiResponse, signal
     else if ("cancelled" in out) line = JSON.stringify({ type: "extension_ui_response", id, cancelled: true });
   } catch (err) {
     // [R2] out.value 含循环引用/BigInt 等不可序列化结构——降级 cancelled，避免父进程崩溃。
-    console.warn(`[subagents] JSON.stringify failed for ui response ${id}, degrading to cancelled:`, err);
+    logger.warn(`[subagents] JSON.stringify failed for ui response ${id}, degrading to cancelled`, {
+      detail: err instanceof Error ? err.message : String(err),
+    });
     line = JSON.stringify({ type: "extension_ui_response", id, cancelled: true });
   }
   // ack: fire-and-forget，不写 stdin（SR-5）
@@ -102,5 +108,5 @@ export function sendGetStateCommand(child: ChildProcess): string {
 function writeStdinLine(child: ChildProcess, line: string, warnTag: string): void {
   if (!child.stdin || child.stdin.destroyed) return;
   const ok = child.stdin.write(line + "\n");
-  if (!ok) console.warn(`[subagents] stdin backpressure on ${warnTag}`);
+  if (!ok) logger.warn(`[subagents] stdin backpressure on ${warnTag}`);
 }

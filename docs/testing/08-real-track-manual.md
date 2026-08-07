@@ -14,16 +14,17 @@
 |---|---|---|
 | `e2e/fixtures/launch-app-real.ts` + `waitForRuntime` | **保留代码不删** | 基础设施，未来扩展 real 用例时复用 |
 | `e2e/workspace-real.spec.ts` T4.6 | **保留，标注"需前置 runtime"** | 跨进程持久化——不依赖 LLM 但依赖真实 runtime/文件系统，且手工难以模拟（需两个 app 实例 + WS 直连 + 文件落盘对比） |
+| `e2e/ask-user-real.spec.ts` + `e2e/workflow-thinkinglevel-real.spec.ts` | **自动化 spec（flaky skip 容忍）** | 协议透传 + pi 产物文件断言——见 [11-real-e2e-specs.md](./11-real-e2e-specs.md)。虽然依赖 LLM 触发（flaky 时 skip），但断言表面是确定性的（协议字段 / pi 写的文件），非输出风格 |
 | 其他 real 场景（RT-01~RT-08） | **走本文档手工执行** | 依赖 LLM/pi 真实执行，结果不可预测，自动化断言无法稳定 |
-| real spec 扩展 | **不主动扩展**，有明确需求时再加 | 每加一个 real 用例都要维护环境依赖，ROI 低 |
+| real spec 扩展 | **有明确需求时再加**（参照 11 的 checklist） | 每加一个 real 用例都要维护环境依赖 + LLM 触发 flaky，需评估 ROI |
 
 ### 0.2 判断标准：什么场景值得 real 自动化？
 
 一个 real 场景值得写自动化脚本，需同时满足：
 
-1. **不依赖 LLM**——结果可预测（如 session.create 的 record 是同步收尾，不调 LLM）
-2. **依赖真实 runtime/文件系统**——mock 轨覆盖不了
-3. **手工难以模拟**——如跨进程持久化需要两个 app 实例
+1. **断言表面确定性**——可预测、可精确比对。**注意**：触发可以依赖 LLM（flaky 时 skip 容忍），但断言不能依赖 LLM 输出风格（如 thinkingLevel 对输出长度的影响不可断言）；断言 pi 自己写的产物文件（session JSONL entry / workflow state JSONL）是最佳表面（见 11 §6）
+2. **依赖真实 runtime/文件系统/pi**——mock 轨覆盖不了
+3. **手工难以模拟**——如跨进程持久化需要两个 app 实例、真实协议透传需要真 pi 调 tool
 
 三条都满足才写自动化。否则走本文档手工执行。
 
