@@ -38,6 +38,24 @@ import {
 	unregister,
 } from "./state.ts";
 
+// 跨扩展消费 API：goal（continuation 守卫）/ subagent-workflow（agent_end 后代判定）
+// 直接 import 本包的导出，避免各自复制差集逻辑。
+export {
+	countActiveFromEntries,
+	createRegistry,
+	getActive,
+	PENDING_TTL_MS,
+	type CountActiveOptions,
+	type CountActiveResult,
+	type PendingEntry,
+	type PendingRegistry,
+	type PendingStatus,
+	type PendingType,
+	rebuildFromEntries,
+	register,
+	unregister,
+} from "./state.ts";
+
 /** 工具参数 schema */
 const PendingNotificationsParams = Type.Object({
 	action: Type.Union([

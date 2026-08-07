@@ -9,6 +9,10 @@ export const Type = {
 	Array: (_item: unknown, _opts?: unknown) => ([]),
 	Optional: (_item: unknown) => ({}),
 	Boolean: (_opts?: unknown) => ({}),
+	// 跨扩展依赖（@zhushanwen/pi-pending-notifications 的 registerTool schema）需要：
+	// Literal/Union 返回可序列化的 schema 对象即可（测试不校验 schema 语义）。
+	Literal: (_value: unknown) => ({ type: "literal" }),
+	Union: (_items: unknown[]) => ({ type: "union" }),
 };
 
 export type Static<_T> = Record<string, unknown>;

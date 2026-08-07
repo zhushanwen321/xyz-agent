@@ -48,6 +48,11 @@ vi.mock("../alive-store.ts", () => ({
   writeAliveMarker: vi.fn(),
 }));
 
+// [recursive-orchestration] agent_end 后代判定独立 mock（判定函数本身在 session-pending.test.ts 单独测）。
+vi.mock("../session-pending.ts", () => ({
+  readActivePendingFromSessionFile: vi.fn(() => ({ count: 0 })),
+}));
+
 vi.mock("../temp-prompt.ts", () => ({
   writePromptToTempFile: vi.fn(async (agent: string) => {
     const safeName = agent.replace(/[^\w.-]+/g, "_");
@@ -56,7 +61,8 @@ vi.mock("../temp-prompt.ts", () => ({
   cleanupTempPrompt: vi.fn(async () => {}),
 }));
 
-import { killAllSpawnedChildren, runSpawn, spawnedChildren } from "../session-runner.ts";
+import { killAllSpawnedChildren, runSpawn, spawnedChildren, WAKEUP_GRACE_MS, computeWatchdogMs } from "../session-runner.ts";
+import { readActivePendingFromSessionFile } from "../session-pending.ts";
 import {
   emitStdoutLine,
   type FakeChild,
@@ -366,7 +372,177 @@ describe("runSpawn", () => {
   // 主动 child.kill("SIGTERM") 让子进程退出，触发 close → runSpawn resolve。
   // willRetry=true 时 agent 会重试，不能 kill。
   describe("agent_end 自然完成", () => {
-    it("agent_end（willRetry=false）→ child.kill(SIGTERM) 被调用，close 后 success=true", async () => {
+    // [recursive-orchestration] 条件 kill：agent_end 时读子进程 session 文件算活跃后代
+    // （pending:register − unregister 差集）。有活跃后代 → 保持进程 idle 等 steer 唤醒。
+    const mockPending = vi.mocked(readActivePendingFromSessionFile);
+
+    // [MF-3] recentUnregister 竞态分支的秒级宽限：count=0 + recentUnregister=true → keep alive
+    // 挂 WAKEUP_GRACE_MS（15s）定时器，到期无新 agent_end（未被唤醒）即 kill。
+    // 背景：旧实现挂固定 2h（WAIT_DESCENDANT_TIMEOUT_MS）——层主 closeout 的最终 agent_end
+    // 距最后一次 unregister <60s 必命中此分支，空等 2h 才 kill + 冒牌完成通知级联。
+    it("MF-3: agent_end（count=0 + recentUnregister）→ 15s 宽限到期后 kill", async () => {
+      mockPending.mockReturnValue({ count: 0, recentUnregister: true });
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: wake-grace", makeOpts(), makeCtx());
+
+      await waitForSpawn();
+      const child = lastSpawnedChild();
+
+      // 必须在 emit agent_end 之前启用 fake timers——keep-alive 定时器在 agent_end 处理器里
+      // 新建，新建时若已是 fake 定时器才可被 advance。不 fake setImmediate：stream .write() 的
+      // data flush 靠真实事件循环（微任务/nextTick）交付，用真实 setImmediate 让出事件循环。
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      try {
+        emitStdoutLine(child, sessionHeader());
+        emitStdoutLine(child, { type: "agent_end", messages: [], willRetry: false });
+        // 让事件 pump 处理 agent_end（stream flush 是异步的）
+        await new Promise((r) => setImmediate(r));
+        // keep alive：宽限挂起，不 kill
+        expect(child.killed).toBe(false);
+
+        // 宽限未到（14999ms）：仍不 kill
+        await vi.advanceTimersByTimeAsync(WAKEUP_GRACE_MS - 1);
+        expect(child.killed).toBe(false);
+
+        // 第 15000ms 到期：无新 agent_end（未被唤醒）→ kill
+        await vi.advanceTimersByTimeAsync(1);
+        expect(child.killed).toBe(true);
+        expect(child.killSignal).toBe("SIGTERM");
+
+        // 收尾：close 让 runSpawn resolve
+        child.stdout.end();
+        child.stderr.end();
+        child.emit("close", 143);
+
+        const result = await promise;
+        expect(result.success).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // [MF-3] 唤醒重评估：宽限挂起期间父被 steer 唤醒（续跑产出新一轮）→ 下一次 agent_end
+    // 重新判定；此时后代已完成（count=0，recentUnregister=false）→ 正常 kill，不等宽限到期。
+    it("MF-3: 宽限期内被唤醒 → 下一次 agent_end 重新评估（后代已完成 → kill）", async () => {
+      mockPending
+        .mockReturnValueOnce({ count: 0, recentUnregister: true })
+        .mockReturnValueOnce({ count: 0, recentUnregister: false });
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: wake-then-done", makeOpts(), makeCtx());
+
+      await waitForSpawn();
+      const child = lastSpawnedChild();
+
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      try {
+        emitStdoutLine(child, sessionHeader());
+        // 第一次 agent_end：recentUnregister 竞态 → keep alive（宽限挂起）
+        emitStdoutLine(child, { type: "agent_end", messages: [], willRetry: false });
+        await new Promise((r) => setImmediate(r));
+        expect(child.killed).toBe(false);
+
+        // 被唤醒后父续跑产出新一轮 agent_end：后代已 unregister → 立即 kill（不等宽限）
+        emitStdoutLine(child, { type: "agent_end", messages: [], willRetry: false });
+        await new Promise((r) => setImmediate(r));
+        expect(child.killed).toBe(true);
+        expect(child.killSignal).toBe("SIGTERM");
+
+        child.stdout.end();
+        child.stderr.end();
+        child.emit("close", 143);
+
+        const result = await promise;
+        expect(result.success).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // [MF-4] count>0 分支的动态超时：等待超时 = computeWatchdogMs(maxTurns)，非固定 2h。
+    // maxTurns=20 → 20×5min = 100min 到期 kill。若回归到固定 2h 常量，100min 处不会 kill，
+    // 本用例 advance(computeWatchdogMs − 1) 后仍不 kill、再 +1 才 kill 的断言会失败。
+    it("MF-4: agent_end（count>0）→ 等待超时 = computeWatchdogMs(maxTurns)（动态，非固定 2h）", async () => {
+      const maxTurns = 20;
+      const expected = computeWatchdogMs(maxTurns);
+      mockPending.mockReturnValue({ count: 2 });
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: slow-desc", makeOpts({ maxTurns }), makeCtx());
+
+      await waitForSpawn();
+      const child = lastSpawnedChild();
+
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      try {
+        emitStdoutLine(child, sessionHeader());
+        emitStdoutLine(child, { type: "agent_end", messages: [], willRetry: false });
+        await new Promise((r) => setImmediate(r));
+        // keep alive：动态超时挂起，不 kill
+        expect(child.killed).toBe(false);
+
+        // 未到动态超时（100min−1ms）：不 kill
+        await vi.advanceTimersByTimeAsync(expected - 1);
+        expect(child.killed).toBe(false);
+
+        // 动态超时到期：kill。若误用固定 2h，此处不会 kill → 用例失败
+        await vi.advanceTimersByTimeAsync(1);
+        expect(child.killed).toBe(true);
+        expect(child.killSignal).toBe("SIGTERM");
+
+        child.stdout.end();
+        child.stderr.end();
+        child.emit("close", 143);
+
+        const result = await promise;
+        expect(result.success).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // [S-9] pending.error 分支（sessionFile 不可读 → 保守 keep-alive + re-arm dynamic watchdog）
+    // 集成行为 guard：session-pending 单测覆盖 error 返回值，但 session-runner 的 no-kill +
+    // re-arm 到 computeWatchdogMs(maxTurns) 行为无集成 guard。若 re-arm 误删/误用固定超时，
+    // 保守 keep-alive 会退化成永久挂起或被固定超时误杀。
+    it("S-9: agent_end（count=0 + error）→ 保守不 kill + watchdog re-arm 到动态超时", async () => {
+      const maxTurns = 20;
+      const expected = computeWatchdogMs(maxTurns);
+      mockPending.mockReturnValue({ count: 0, error: "session file unreadable: EACCES" });
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: unreadable", makeOpts({ maxTurns }), makeCtx());
+
+      await waitForSpawn();
+      const child = lastSpawnedChild();
+
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      try {
+        emitStdoutLine(child, sessionHeader());
+        emitStdoutLine(child, { type: "agent_end", messages: [], willRetry: false });
+        await new Promise((r) => setImmediate(r));
+        // 保守策略：sessionFile 不可读时不 kill（宁可空等也不误杀有后代的进程）
+        expect(child.killed).toBe(false);
+
+        // watchdog re-arm 到动态超时（computeWatchdogMs(maxTurns)），未到期不 kill
+        await vi.advanceTimersByTimeAsync(expected - 1);
+        expect(child.killed).toBe(false);
+
+        // 动态超时到期：kill。若 error 分支漏了 re-arm（或误用固定超时），此断言失败
+        await vi.advanceTimersByTimeAsync(1);
+        expect(child.killed).toBe(true);
+        expect(child.killSignal).toBe("SIGTERM");
+
+        child.stdout.end();
+        child.stderr.end();
+        child.emit("close", 143);
+
+        const result = await promise;
+        expect(result.success).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("agent_end（willRetry=false，无活跃后代）→ child.kill(SIGTERM) 被调用，close 后 success=true", async () => {
+      mockPending.mockReturnValue({ count: 0 });
       const record = makeRecord();
       const promise = runSpawn(record, "Task: done", makeOpts(), makeCtx());
 
@@ -389,7 +565,38 @@ describe("runSpawn", () => {
       expect(result.success).toBe(true);
     });
 
+    it("agent_end（willRetry=false，有活跃后代）→ 不 kill，进程保持 idle 等 steer 唤醒；后代完成后 kill", async () => {
+      // 第一次 agent_end：有活跃后代（count=1）→ 不 kill
+      mockPending.mockReturnValueOnce({ count: 1 });
+      // 第二次 agent_end：后代已 unregister（count=0）→ kill
+      mockPending.mockReturnValueOnce({ count: 0 });
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: orchestrate", makeOpts(), makeCtx());
+
+      await waitForSpawn();
+      const child = lastSpawnedChild();
+
+      emitStdoutLine(child, sessionHeader());
+      emitStdoutLine(child, { type: "agent_end", messages: [], willRetry: false });
+      // 给事件 pump 一点时间处理 agent_end（判定读 session 文件）
+      await new Promise((r) => setTimeout(r, 20));
+      expect(child.killed).toBe(false);
+
+      // 后代完成（unregister 已写入）后再次 agent_end → 无活跃后代 → kill
+      emitStdoutLine(child, { type: "agent_end", messages: [], willRetry: false });
+      child.stdout.end();
+      child.stderr.end();
+      child.emit("close", 143);
+
+      const result = await promise;
+
+      expect(child.killed).toBe(true);
+      expect(child.killSignal).toBe("SIGTERM");
+      expect(result.success).toBe(true);
+    });
+
     it("agent_end（willRetry=true）→ child.kill 不被调用（agent 会重试，等下一个 agent_end）", async () => {
+      mockPending.mockReturnValue({ count: 0 });
       const record = makeRecord();
       const promise = runSpawn(record, "Task: retry", makeOpts(), makeCtx());
 
@@ -418,6 +625,7 @@ describe("runSpawn", () => {
     });
 
     it("agent_end 后的后续 event 仍被 handleSdkEvent 处理（kill 不阻塞 event pump）", async () => {
+      mockPending.mockReturnValue({ count: 0 });
       const record = makeRecord();
       const promise = runSpawn(record, "Task: flush", makeOpts(), makeCtx());
 

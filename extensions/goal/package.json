@@ -25,7 +25,8 @@
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-tui": "*",
     "@earendil-works/pi-coding-agent": "*",
-    "typebox": "*"
+    "typebox": "*",
+    "@zhushanwen/pi-pending-notifications": "workspace:*"
   },
   "dependencies": {
     "@xyz-agent/extension-protocol": "workspace:^0.3.1"
