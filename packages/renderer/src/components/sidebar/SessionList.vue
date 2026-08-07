@@ -13,12 +13,13 @@
       <div
         v-for="g in visibleGroups"
         :key="g.cwd"
-        class="group/folder group-section flex flex-col gap-0.5"
+        class="group-section flex flex-col gap-0.5"
       >
         <!-- 组标题：cwd 末段（长路径只显末段防溢出，与 SessionItem.dirName 同一信息原子）。
              sticky 贴顶用 bg-bg 不透明（侧边栏底色透明融合 bg，header 同色遮住滚过的 item 文字）。
-             group/folder 命名 group：folder header 的 hover 只触发 folder delete button 显示，
-             不影响子级 SessionItem 的 group-hover（两者独立 scope）。 -->
+             group/folder 命名 group 只放在 header 行上（本容器**不能**带 group/folder——Tailwind
+             命名 group 是「任意层级祖先」匹配，容器带它会令 hover 组内任意 SessionItem 时也触发
+             folder 按钮，破坏单行独立 hover 语义）。 -->
         <div class="group/folder sticky top-0 z-[1] flex items-center gap-1.5 bg-bg px-2 pb-0.5 pt-2">
           <Folder class="size-[11px] shrink-0 text-neutral-dim" />
           <span class="truncate text-[10px] font-medium text-neutral-dim">
