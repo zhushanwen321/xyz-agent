@@ -87,9 +87,15 @@ export function useProviderImport() {
       // wave 4 import-credential-types：分类提示选中 provider 的凭据形态
       // - missing：apiKey 空，需手填；env：$ENV 引用，需确保环境变量已设；oauth：Phase 2 跳过
       const selectedProviders = importPreview.value?.providers.filter((p) => selectedIds.includes(p.id)) ?? []
+      // sa3 F1：组 2 孤儿凭据同样参与凭据形态统计（providerId 是勾选 id）
+      const selectedOrphans = importPreview.value?.orphanCredentials?.filter((o) => selectedIds.includes(o.providerId)) ?? []
       const missingCount = selectedProviders.filter((p) => p.credentialType === 'missing').length
-      const envCount = selectedProviders.filter((p) => p.credentialType === 'env').length
-      const oauthCount = selectedProviders.filter((p) => p.credentialType === 'oauth').length
+      const envCount = selectedProviders.filter((p) => p.credentialType === 'env').length + selectedOrphans.filter((o) => o.credentialType === 'env').length
+      const oauthCount = selectedProviders.filter((p) => p.credentialType === 'oauth').length + selectedOrphans.filter((o) => o.credentialType === 'oauth').length
+      // sa3 F1（B.5/M4）：command 态导入后 toast 命令注入警告；env-bundle 态提示 Phase 1 跳过
+      const commandCount = selectedProviders.filter((p) => p.credentialType === 'command').length + selectedOrphans.filter((o) => o.credentialType === 'command').length
+      const envBundleCount = selectedProviders.filter((p) => p.credentialType === 'env-bundle').length + selectedOrphans.filter((o) => o.credentialType === 'env-bundle').length
+      const orphanImportedCount = selectedOrphans.length
       if (missingCount > 0) {
         toastInfo(t('settings.provider.importToast.partialKeyMissing'))
       }
@@ -98,6 +104,15 @@ export function useProviderImport() {
       }
       if (oauthCount > 0) {
         toastInfo(t('settings.provider.importToast.oauthSkipped', { count: oauthCount }))
+      }
+      if (commandCount > 0) {
+        toastInfo(t('settings.provider.importToast.commandInjection', { count: commandCount }))
+      }
+      if (envBundleCount > 0) {
+        toastInfo(t('settings.provider.importToast.envBundleSkipped', { count: envBundleCount }))
+      }
+      if (orphanImportedCount > 0) {
+        toastInfo(t('settings.provider.importToast.orphanImported', { count: orphanImportedCount }))
       }
       resetImportState()
     } catch (e) {

@@ -19,7 +19,7 @@ import { useI18n } from 'vue-i18n'
 import type { CheckboxCheckedState as CheckedState } from 'reka-ui'
 import { KeyRound, AlertTriangle, Loader2, ChevronRight, ChevronDown } from '@lucide/vue'
 
-import type { ProviderImportPreview } from '@xyz-agent/shared'
+import type { ProviderImportPreview, ProviderPreviewOrphanItem } from '@xyz-agent/shared'
 
 const props = defineProps<{
   /** 受控开关（配合 v-model:open） */
@@ -47,7 +47,8 @@ const selected = ref<Set<string>>(new Set())
 
 /**
  * 初始化 selected：preview 变化时，把 conflict='none' 的项全部加入（默认勾选），
- * 冲突项（duplicate-id）默认不勾。立即触发（preview 由空 → 有数据时初始化默认勾选）。
+ * 冲突项（duplicate-id）默认不勾。组 2 孤儿凭据（sa3 F1）默认全部勾选（无冲突概念）。
+ * 立即触发（preview 由空 → 有数据时初始化默认勾选）。
  */
 watch(
   () => props.preview,
@@ -57,6 +58,8 @@ watch(
       for (const p of pv.providers) {
         if (p.conflict === 'none') next.add(p.id)
       }
+      // sa3 F1：孤儿凭据（auth.json 额外凭据，组 2）默认勾选
+      for (const o of pv.orphanCredentials ?? []) next.add(o.providerId)
     }
     selected.value = next
   },
@@ -82,11 +85,53 @@ function toggleWarnings(id: string): void {
   expandedWarnings.value = next
 }
 
+// ── 组 2 孤儿凭据（sa3 F1 · B.6）──
+// 展开的内置 model 列表（按 providerId 索引，与 warnings 折叠分开，避免与组 1 混淆）
+const expandedOrphans = ref<Set<string>>(new Set())
+
+function toggleOrphanExpand(providerId: string): void {
+  const next = new Set(expandedOrphans.value)
+  if (next.has(providerId)) next.delete(providerId)
+  else next.add(providerId)
+  expandedOrphans.value = next
+}
+
+/** 组 2 凭据类型徽章配置（六态全覆盖：plaintext/env/env-bundle/oauth/command/missing）。 */
+function orphanBadge(o: ProviderPreviewOrphanItem): { label: string; cls: string; testid: string; title?: string } {
+  switch (o.credentialType) {
+    case 'env':
+      return { label: '$ENV', cls: 'bg-info-soft text-info', testid: 'orphan-badge-env', title: t('settings.provider.importPreview.credentialEnvHint', { var: o.envVarName }) }
+    case 'env-bundle':
+      return { label: t('settings.provider.importPreview.credentialEnvBundle'), cls: 'bg-warn-soft text-warn', testid: 'orphan-badge-env-bundle', title: t('settings.provider.importPreview.credentialEnvBundleHint') }
+    case 'oauth':
+      return { label: t('settings.provider.importPreview.credentialOauth'), cls: 'bg-accent-soft text-accent-fg', testid: 'orphan-badge-oauth' }
+    case 'command':
+      return { label: t('settings.provider.importPreview.credentialCommand'), cls: 'bg-danger-soft text-danger', testid: 'orphan-badge-command', title: t('settings.provider.importPreview.credentialCommandHint') }
+    case 'missing':
+      return { label: t('settings.provider.importPreview.credentialMissing'), cls: 'bg-warn-soft text-warn', testid: 'orphan-badge-missing', title: t('settings.provider.importPreview.keyNotExtracted') }
+    default:
+      return { label: t('settings.provider.importPreview.credentialPlaintext'), cls: 'bg-surface text-neutral-mid', testid: 'orphan-badge-plaintext' }
+  }
+}
+
+/** 组 2 凭据形式占位串（$VAR / OAuth token / !Command / API Key），不含 key 明文（B.5）。 */
+function orphanCredentialForm(o: ProviderPreviewOrphanItem): string {
+  switch (o.credentialType) {
+    case 'env': return o.envVarName ? `$${o.envVarName}` : '$ENV'
+    case 'oauth': return t('settings.provider.importPreview.orphanFormOauth')
+    case 'command': return '!Command'
+    case 'env-bundle': return t('settings.provider.importPreview.credentialEnvBundle')
+    case 'missing': return t('settings.provider.importPreview.credentialMissing')
+    default: return t('settings.provider.importPreview.credentialPlaintext')
+  }
+}
+
 // ── 统计（底部摘要）──
 const statImportable = computed(() => props.preview?.providers.filter((p) => p.conflict === 'none').length ?? 0)
 const statConflict = computed(() => props.preview?.providers.filter((p) => p.conflict === 'duplicate-id').length ?? 0)
 const statKeyMissing = computed(() => props.preview?.providers.filter((p) => p.credentialType === 'missing').length ?? 0)
 const statEnvCount = computed(() => props.preview?.providers.filter((p) => p.credentialType === 'env').length ?? 0)
+const statOrphans = computed(() => props.preview?.orphanCredentials?.length ?? 0)
 
 /** 是否有可确认的勾选（≥1 选中且非 applying） */
 const canConfirm = computed(() => selected.value.size > 0 && !props.loading)
@@ -157,8 +202,11 @@ function sourceLabel(source: string): string {
           {{ t('settings.providerEdit.noModels') }}
         </div>
 
-        <!-- provider 列表 -->
+        <!-- provider 列表（组 1：Pi models.json 中的供应商） -->
         <div v-else class="flex flex-col gap-1.5">
+        <div class="flex items-center gap-1.5 pt-1 text-[11px] font-medium text-neutral-fg" data-testid="group-1-title">
+          {{ t('settings.provider.importPreview.groupModels') }}
+        </div>
         <div
           v-for="p in preview.providers"
           :key="p.id"
@@ -204,6 +252,12 @@ function sourceLabel(source: string): string {
               class="rounded-sm bg-danger-soft px-1.5 py-0.5 text-[10px] text-danger"
               :title="t('settings.provider.importPreview.credentialCommandHint')"
             >{{ t('settings.provider.importPreview.credentialCommand') }}</span>
+            <span
+              v-else-if="p.credentialType === 'env-bundle'"
+              data-testid="credential-badge-env-bundle"
+              class="rounded-sm bg-warn-soft px-1.5 py-0.5 text-[10px] text-warn"
+              :title="t('settings.provider.importPreview.credentialEnvBundleHint')"
+            >{{ t('settings.provider.importPreview.credentialEnvBundle') }}</span>
 
             <!-- 冲突标记 -->
             <span
@@ -233,12 +287,99 @@ function sourceLabel(source: string): string {
           </div>
         </div>
 
+        <!-- 组 2（sa3 F1 · B.6）：Pi auth.json 中的额外凭据（孤儿凭据，匹配到内置模板） -->
+        <div v-if="preview.orphanCredentials?.length" data-testid="orphan-group" class="flex flex-col gap-1.5">
+          <div class="flex items-center gap-1.5 pt-2 text-[11px] font-medium text-neutral-fg" data-testid="group-2-title">
+            {{ t('settings.provider.importPreview.groupOrphans') }}
+          </div>
+          <div
+            v-for="o in preview.orphanCredentials"
+            :key="o.providerId"
+            data-testid="preview-orphan-item"
+            class="rounded-card bg-card px-3 py-2 text-[12px]"
+          >
+            <div class="flex items-center gap-2">
+              <Checkbox
+                :model-value="selected.has(o.providerId)"
+                :disabled="loading"
+                :aria-label="o.name ?? o.providerId"
+                @update:model-value="onToggle(o.providerId, $event)"
+              />
+              <span class="font-mono text-neutral-fg">{{ o.name ?? o.providerId }}</span>
+              <!-- 内置模板徽章 -->
+              <span
+                data-testid="orphan-builtin-badge"
+                class="rounded-sm bg-info-soft px-1.5 py-0.5 text-[10px] text-info"
+              >{{ t('settings.provider.importPreview.orphanBuiltinBadge') }}</span>
+              <!-- 凭据类型徽章（六态全覆盖） -->
+              <span
+                v-for="b in [orphanBadge(o)]"
+                :key="b.testid"
+                :data-testid="b.testid"
+                class="rounded-sm px-1.5 py-0.5 text-[10px]"
+                :class="b.cls"
+                :title="b.title"
+              >{{ b.label }}</span>
+              <!-- 凭据形式占位串（$VAR / OAuth token / !Command / API Key，不含 key 明文 B.5） -->
+              <span class="font-mono text-neutral-dim">{{ orphanCredentialForm(o) }}</span>
+              <!-- 展开内置 model 列表 -->
+              <Button
+                variant="ghost"
+                size="dense"
+                data-testid="orphan-expand-toggle"
+                class="ml-auto h-5 px-1 text-[11px] text-neutral-mid hover:text-neutral-fg"
+                @click="toggleOrphanExpand(o.providerId)"
+              >
+                <component :is="expandedOrphans.has(o.providerId) ? ChevronDown : ChevronRight" class="size-3" />
+              </Button>
+            </div>
+
+            <!-- 展开：内置 model 列表 + 模型来源说明（B.6） -->
+            <div v-if="expandedOrphans.has(o.providerId)" data-testid="orphan-models-expand" class="mt-1 pl-6">
+              <div class="text-[11px] text-neutral-mid">{{ t('settings.provider.importPreview.orphanModelsCount', { count: o.modelCount }) }}</div>
+              <div class="mt-1 flex max-h-24 flex-wrap gap-1 overflow-y-auto">
+                <span
+                  v-for="m in o.modelNames"
+                  :key="m"
+                  class="rounded-sm bg-surface px-1.5 py-0.5 font-mono text-[10px] text-neutral-dim"
+                >{{ m }}</span>
+              </div>
+              <div class="mt-1 text-[11px] text-neutral-dim">{{ t('settings.provider.importPreview.orphanModelsHint') }}</div>
+            </div>
+
+            <!-- 孤儿凭据警告（可展开） -->
+            <div v-if="o.warnings.length" class="mt-1 pl-6">
+              <Button
+                variant="ghost"
+                size="dense"
+                data-testid="orphan-warnings-toggle"
+                class="h-5 px-1 text-[11px] text-neutral-mid hover:text-neutral-fg"
+                @click="toggleWarnings(o.providerId)"
+              >
+                <component :is="expandedWarnings.has(o.providerId) ? ChevronDown : ChevronRight" class="size-3" />
+                {{ t('settings.provider.importPreview.warnings') }} ({{ o.warnings.length }})
+              </Button>
+              <ul v-if="expandedWarnings.has(o.providerId)" class="mt-1 list-disc pl-4 text-[11px] text-warn">
+                <li v-for="(w, i) in o.warnings" :key="i">{{ w }}</li>
+              </ul>
+            </div>
+          </div>
+          <!-- 底部常驻提示（B.6）：凭据与定义分离，模型来自内置 catalog -->
+          <div
+            data-testid="orphan-bottom-hint"
+            class="rounded-md border border-info/30 bg-info-soft px-3 py-1.5 text-[11px] text-info"
+          >
+            {{ t('settings.provider.importPreview.orphanModelsHint') }}
+          </div>
+        </div>
+
         <!-- 底部统计 -->
         <div class="flex flex-wrap gap-3 pt-1 text-[11px] text-neutral-mid">
           <span>{{ t('settings.provider.importPreview.statImportable', { count: statImportable }) }}</span>
           <span>{{ t('settings.provider.importPreview.statConflict', { count: statConflict }) }}</span>
           <span>{{ t('settings.provider.importPreview.statKeyMissing', { count: statKeyMissing }) }}</span>
           <span v-if="statEnvCount > 0">{{ t('settings.provider.importPreview.statEnvCount', { count: statEnvCount }) }}</span>
+          <span v-if="statOrphans > 0">{{ t('settings.provider.importPreview.statOrphans', { count: statOrphans }) }}</span>
         </div>
         </div>
       </template>

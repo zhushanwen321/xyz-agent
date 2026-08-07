@@ -41,6 +41,8 @@ vi.mock('@/lib/ipc', () => ({
   testProxy: vi.fn(async () => ({ success: true })),
   // SettingsResourcePage forcedDirs 动态化调用（返回 undefined 走默认值兜底）
   getDataDir: vi.fn(async () => undefined),
+  // 目录选择（SystemPage chooseDirectory 新增导出，2026-08 批次）
+  chooseDirectory: vi.fn(async () => null),
 }))
 
 /** transport stub：setSkillDirs reject（测试核心），其余 resolve/noop。 */
