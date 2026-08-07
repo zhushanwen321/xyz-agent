@@ -499,6 +499,48 @@ describe("runSpawn", () => {
       }
     });
 
+    // [S-9] pending.error 分支（sessionFile 不可读 → 保守 keep-alive + re-arm dynamic watchdog）
+    // 集成行为 guard：session-pending 单测覆盖 error 返回值，但 session-runner 的 no-kill +
+    // re-arm 到 computeWatchdogMs(maxTurns) 行为无集成 guard。若 re-arm 误删/误用固定超时，
+    // 保守 keep-alive 会退化成永久挂起或被固定超时误杀。
+    it("S-9: agent_end（count=0 + error）→ 保守不 kill + watchdog re-arm 到动态超时", async () => {
+      const maxTurns = 20;
+      const expected = computeWatchdogMs(maxTurns);
+      mockPending.mockReturnValue({ count: 0, error: "session file unreadable: EACCES" });
+      const record = makeRecord();
+      const promise = runSpawn(record, "Task: unreadable", makeOpts({ maxTurns }), makeCtx());
+
+      await waitForSpawn();
+      const child = lastSpawnedChild();
+
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      try {
+        emitStdoutLine(child, sessionHeader());
+        emitStdoutLine(child, { type: "agent_end", messages: [], willRetry: false });
+        await new Promise((r) => setImmediate(r));
+        // 保守策略：sessionFile 不可读时不 kill（宁可空等也不误杀有后代的进程）
+        expect(child.killed).toBe(false);
+
+        // watchdog re-arm 到动态超时（computeWatchdogMs(maxTurns)），未到期不 kill
+        await vi.advanceTimersByTimeAsync(expected - 1);
+        expect(child.killed).toBe(false);
+
+        // 动态超时到期：kill。若 error 分支漏了 re-arm（或误用固定超时），此断言失败
+        await vi.advanceTimersByTimeAsync(1);
+        expect(child.killed).toBe(true);
+        expect(child.killSignal).toBe("SIGTERM");
+
+        child.stdout.end();
+        child.stderr.end();
+        child.emit("close", 143);
+
+        const result = await promise;
+        expect(result.success).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("agent_end（willRetry=false，无活跃后代）→ child.kill(SIGTERM) 被调用，close 后 success=true", async () => {
       mockPending.mockReturnValue({ count: 0 });
       const record = makeRecord();

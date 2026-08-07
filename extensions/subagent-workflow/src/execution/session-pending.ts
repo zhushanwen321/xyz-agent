@@ -35,8 +35,11 @@ export interface ActivePendingResult {
 /**
  * 读 session 文件计算活跃 pending 数。
  *
- * 快速路径：JSON 序列化无空格（pi appendFileSync 原样写入），行内包含
- * `"customType":"pending:` 才解析，大文件（fork 继承主 session）只付 includes 扫描。
+ * 快速路径：行内含 pending 值（`"pending:register"` / `"pending:unregister"`）才解析，
+ * 大文件（fork 继承主 session）只付 includes 扫描跳过大量 message 行的 JSON.parse。
+ * [S-4] 按值匹配而非 `"customType":"pending:` 序列化格式——后者耦合 pi 的 JSON 序列化
+ * 空格习惯（冒号后无空格），pi 改 pretty-print 会导致全过滤 → count=0 → keep-alive
+ * 静默失效 → recursive tree 被杀、steer 丢失。值字符串本身不受序列化空格影响。
  *
  * 文件不存在（sessionFile 未回填/首次 assistant 前）→ error（调用方保守不 kill）。
  * 坏行跳过（append 中途崩溃的截断行）。
@@ -61,7 +64,9 @@ export function readActivePendingFromSessionFile(
 	const entries: unknown[] = [];
 	let latestUnregisterMs = 0;
 	for (const line of raw.split("\n")) {
-		if (!line.includes('"customType":"pending:')) continue;
+		// [S-4] 按值匹配：countActiveFromEntries 只消费 register/unregister 两种 customType，
+		// 故只需检测这两个值字符串；冒号前后空格变化不影响（值始终是连续子串）。
+		if (!line.includes('"pending:register"') && !line.includes('"pending:unregister"')) continue;
 		try {
 			const entry = JSON.parse(line) as { customType?: string; timestamp?: string };
 			entries.push(entry);

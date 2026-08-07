@@ -118,4 +118,21 @@ describe("readActivePendingFromSessionFile", () => {
     tmpFiles.push(file);
     expect(readActivePendingFromSessionFile(file)).toEqual({ count: 0, recentUnregister: false });
   });
+
+  // [S-4] fast-path 按值匹配而非序列化格式。旧行 `line.includes('"customType":"pending:')`
+  // 耦合 pi 的 JSON 序列化空格习惯（冒号后无空格）。若 pi 改序列化（单行内冒号后加空格），
+  // 旧实现全过滤 → count=0 → keep-alive 静默失效 → recursive tree 被杀、steer 丢失。
+  // 本用例构造冒号后带空格的单行 JSON，验证值匹配仍命中 + 解析正确。
+  it("S-4: 序列化冒号后带空格 → 仍正确解析（防 fast-path 格式耦合导致 keep-alive 静默失效）", () => {
+    const file = makeTmpSessionFile([
+      `{ "type": "message", "message": { "role": "user", "content": [] } }`,
+      `{ "type": "custom", "customType": "pending:register", "data": { "id": "bg-1", "type": "subagent", "name": "bg-1" } }`,
+      `{ "type": "custom", "customType": "pending:unregister", "data": { "id": "bg-1", "reason": "completed" }, "timestamp": "2020-01-01T00:00:00.000Z" }`,
+      `{ "type": "custom", "customType": "pending:register", "data": { "id": "bg-2", "type": "subagent", "name": "bg-2" } }`,
+    ]);
+    tmpFiles.push(file);
+    // bg-1 register+unregister 抵消，bg-2 仍活跃 → count=1。
+    // 旧 fast-path（`"customType":"pending:` 冒号无空格）会跳过所有行 → count=0（静默失效）。
+    expect(readActivePendingFromSessionFile(file)).toEqual({ count: 1, recentUnregister: false });
+  });
 });
