@@ -27,9 +27,15 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import {
-	discoverResources,
+	dedupeByPriority,
+	discoverAllResources,
 	findWorkspaceRoot,
 } from "../shared/resource-discovery.ts";
+import {
+	detectWorkflowShadows,
+	formatShadowWarning,
+	type WorkflowShadow,
+} from "../shared/workflow-shadow-detector.ts";
 
 const logger = getLogger("injector");
 
@@ -114,19 +120,39 @@ export function parseWorkflowMeta(content: string): WorkflowEntry | null {
  * 用统一资源发现发现所有可用 workflow（includeTmp 覆盖 generate 产物）。
  * 永不抛错——单文件读失败仅记日志。
  */
+/** discoverAllWorkflows 的返回：去重后的 workflow 列表 + 跨源 shadow 检测结果 */
+export interface DiscoveredWorkflows {
+	workflows: WorkflowEntry[];
+	shadows: WorkflowShadow[];
+}
+
+/**
+ * 发现所有可用 workflow + 检测跨源同名 shadow。
+ *
+ * 一次扫描（discoverAllResources，未去重全量）后内存处理：
+ * - shadow 检测在全量数据上做（去重会丢弃被覆盖项，无法检冲突）
+ * - workflow 列表走 dedupeByPriority 去重 + 解析 meta
+ *
+ * 永不抛错——单文件读失败仅记日志。
+ */
 export async function discoverAllWorkflows(
 	workspaceRoot: string,
 	agentDir: string,
-): Promise<WorkflowEntry[]> {
-	const resources = await discoverResources({
+): Promise<DiscoveredWorkflows> {
+	const resources = await discoverAllResources({
 		kind: "workflows",
 		workspaceRoot,
 		agentDir,
 		includeTmp: true,
 	});
 
+	// shadow 检测（全量未去重数据——去重会丢弃被覆盖项，检测不到冲突）
+	const shadows = detectWorkflowShadows(resources);
+
+	// 去重 + 解析 meta
+	const deduped = dedupeByPriority(resources);
 	const map = new Map<string, WorkflowEntry>();
-	for (const resource of resources) {
+	for (const resource of deduped) {
 		if (!resource.available) continue;
 		try {
 			const content = fs.readFileSync(resource.path, "utf8");
@@ -139,7 +165,7 @@ export async function discoverAllWorkflows(
 			);
 		}
 	}
-	return [...map.values()];
+	return { workflows: [...map.values()], shadows };
 }
 
 /** 转义 XML 特殊字符 */
@@ -187,11 +213,24 @@ export function setupWorkflowListInjector(pi: ExtensionAPI): void {
 			ctx: ExtensionContext,
 		): Promise<BeforeAgentStartEventResult | void> => {
 			try {
-				const workflows = await discoverAllWorkflows(
+				const { workflows, shadows } = await discoverAllWorkflows(
 					findWorkspaceRoot(ctx.cwd),
 					getAgentDir(),
 				);
-				const injection = formatWorkflowList(workflows);
+				// shadow 警告双通道：logger.warn 走 appendEntry 持久化审计（每条 shadow 一行），
+				// formatShadowWarning 注入 systemPrompt 让 AI 感知并转告用户（warn 本身 TUI 不可见）
+				for (const s of shadows) {
+					logger.warn(
+						`[workflow-shadow] "${s.name}" 生效源=${s.effective.source}，屏蔽了 [${s.shadowed.map((r) => r.source).join(", ")}]（删除被屏蔽的旧副本可恢复内置版本）`,
+						{
+							name: s.name,
+							effective: s.effective.source,
+							shadowed: s.shadowed.map((r) => ({ source: r.source, path: r.path })),
+						},
+					);
+				}
+				const injection =
+					formatWorkflowList(workflows) + formatShadowWarning(shadows);
 				if (!injection) return;
 				return { systemPrompt: event.systemPrompt + injection };
 			} catch (err) {

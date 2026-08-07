@@ -126,7 +126,7 @@ function isTargetFile(name: string, kind: ResourceKind): boolean {
 }
 
 /** 提取文件名 stem（去目录去扩展名） */
-function stem(filePath: string): string {
+export function stem(filePath: string): string {
   const base = filePath.split("/").pop() ?? filePath;
   const dot = base.lastIndexOf(".");
   return dot > 0 ? base.slice(0, dot) : base;
@@ -341,43 +341,65 @@ function buildScanTargets(config: ScanConfig): ScanTarget[] {
  *
  * @returns 去重后的资源列表（按优先级合并，高优先级覆盖低优先级同名）
  */
-export async function discoverResources(config: ScanConfig): Promise<DiscoveredResource[]> {
-  const targets = buildScanTargets(config);
+/**
+ * 按优先级去重（last-writer-wins）。同名资源（stem 相同）高优先级覆盖低优先级，
+ * available=false 的占位不覆盖已有的 available=true。
+ *
+ * 提取为独立纯函数：discoverResources 与 shadow 检测共用同一套去重语义。
+ */
+export function dedupeByPriority(resources: DiscoveredResource[]): DiscoveredResource[] {
+  const merged = new Map<string, DiscoveredResource>();
+  for (const r of resources) {
+    const key = stem(r.path);
+    if (!r.available && merged.has(key)) continue;
+    merged.set(key, r);
+  }
+  return Array.from(merged.values());
+}
 
-  // 逐源扫描，收集结果（保留 source 标签用于优先级合并）
-  const allBySource: Array<{ source: ResourceSource; resources: DiscoveredResource[] }> = [];
+/**
+ * 扫描所有源，返回**未去重**的全量资源列表（含被优先级覆盖的同名资源，带 source 标签）。
+ *
+ * 供 shadow 检测使用——discoverResources 去重时会丢弃被覆盖的低优先级同名资源，
+ * shadow 检测需要看到全部同名冲突才能告警。调用方按需自行 dedupeByPriority。
+ *
+ * 扫描源顺序 = 优先级低→高（见 buildScanTargets，与 ResourceSource 注释一致）。
+ *
+ * Never throws. 解析失败/不可读的资源以 available=false 返回。
+ */
+export async function discoverAllResources(config: ScanConfig): Promise<DiscoveredResource[]> {
+  const targets = buildScanTargets(config);
+  const all: DiscoveredResource[] = [];
 
   for (const target of targets) {
     if (target.source === "npm" || target.source === "npm-dev") {
       // npm/dev 目录：迭代包，走 manifest 或约定目录
       const resources = await scanNpmDir(target.dir, config.kind);
       // 覆盖 source 标签（scanNpmDir 内部统一标 "npm"，这里修正为实际源）
-      const tagged = resources.map((r) => ({ ...r, source: target.source }));
-      allBySource.push({ source: target.source, resources: tagged });
+      for (const r of resources) all.push({ ...r, source: target.source });
     } else {
       // 普通目录：直接扫
       const files = await scanDirectory(target.dir, config.kind);
-      const resources = files.map((f) => ({ path: f, source: target.source, available: true }));
-      allBySource.push({ source: target.source, resources });
+      for (const f of files) all.push({ path: f, source: target.source, available: true });
     }
   }
 
-  // 按优先级合并：targets 数组顺序即优先级（低→高），高优先级后写覆盖
-  // 用文件名 stem 作为去重 key（与旧逻辑一致：同名资源高优先级覆盖）
-  const merged = new Map<string, DiscoveredResource>();
+  return all;
+}
 
-  for (const { resources } of allBySource) {
-    for (const r of resources) {
-      const key = stem(r.path);
-      // available=false 的占位不覆盖已有的 available=true
-      if (!r.available && merged.has(key)) {
-        continue;
-      }
-      merged.set(key, r);
-    }
-  }
-
-  return Array.from(merged.values());
+/**
+ * 发现所有资源文件（agent .md 或 workflow .js/.mjs），按优先级去重。
+ *
+ * 等价于 dedupeByPriority(await discoverAllResources(config))。
+ * 同名资源靠后覆盖靠前（last-writer-wins）。
+ * npm/dev 包内：有 manifest 只走 manifest（路径不存在则失败），无 manifest 扫约定目录。
+ *
+ * Never throws. 解析失败/不可读的资源以 available=false 返回。
+ *
+ * @returns 去重后的资源列表（按优先级合并，高优先级覆盖低优先级同名）
+ */
+export async function discoverResources(config: ScanConfig): Promise<DiscoveredResource[]> {
+  return dedupeByPriority(await discoverAllResources(config));
 }
 
 /**
