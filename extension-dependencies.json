@@ -22,8 +22,8 @@
         },
         {
           "package": "@zhushanwen/pi-pending-notifications",
-          "type": "runtime",
-          "reason": "T2 通知合并：subagent-workflow 的 subagent-service/lifecycle/error-recovery emit pending:register/pending:unregister 事件，pending-notifications 消费该事件并向用户发送完成通知。缺失时后台操作完成无通知（功能降级，不报错）"
+          "type": "package",
+          "reason": "代码层静态 import countActiveFromEntries（src/execution/session-pending.ts top-level import），缺失时模块加载即抛 Cannot find module，是强依赖。另有 T2 通知合并运行时用途：subagent-workflow 的 subagent-service/lifecycle/error-recovery emit pending:register/pending:unregister 事件，pending-notifications 消费该事件并向用户发送完成通知"
         }
       ]
     },
@@ -62,6 +62,11 @@
           "package": "@zhushanwen/pi-todo",
           "type": "optional",
           "reason": "goal 的 prompt 软建议 AI 使用 todo 工具分解/跟踪任务（见 prompts.ts），无运行时/编译期耦合（不再读 pi.__todoGetList，budget 不接收 todo 进度），缺失时 AI 自行判断任务分解"
+        },
+        {
+          "package": "@zhushanwen/pi-pending-notifications",
+          "type": "package",
+          "reason": "代码层静态 import countActiveFromEntries（src/adapters/event-handlers/agent-end.ts top-level import），缺失时模块加载即抛 Cannot find module，是强依赖"
         }
       ]
     },

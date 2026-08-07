@@ -10,8 +10,8 @@ v4 递归编排方案要求 cw 命令包成 pi 自定义工具（cw-tool），�
 
 | 工具 | 谁用 | 允许的 cw action（白名单） |
 |---|---|---|
-| `cw_planning` | epic/feature/slice 层主 | clarify, plan, execute, replan, retrospect, closeout + 只读(status, handoff, list, tree, frontier) |
-| `cw_wave` | wave 层主 | clarify, plan, replan, retrospect, closeout + 只读(**无 execute/test/design-review/exec-review**) |
+| `cw_planning` | epic/feature/slice 层主 | design, execute, replan, retrospect, closeout + 只读(status, handoff, list, tree, frontier) |
+| `cw_wave` | wave 层主 | design, replan, retrospect, closeout + 只读(**无 execute/test/design-review/exec-review**) |
 | `cw_dev` | wave 内 dev | execute, test + 只读(status, handoff) |
 | `cw_review` | 审 design/exec | design-review, exec-review + 只读(status) |
 
