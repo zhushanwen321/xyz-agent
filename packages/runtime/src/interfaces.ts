@@ -11,6 +11,7 @@ import type {
   SessionGroup,
   Message,
   ProviderInfo,
+  BuiltinProviderTemplate,
   ModelInfo,
   SkillInfo,
   AgentInfo,
@@ -258,6 +259,8 @@ export type { ISessionServiceInternal } from './services/session/session-interna
 /** Provider / Skill / Agent CRUD and tool permissions. */
 export interface IConfigService {
   listProviders(): ProviderInfo[]
+  /** 列出内置 provider 模板（wave 2，import generated JSON，无参只读）。 */
+  listBuiltinProviders(): BuiltinProviderTemplate[]
   getDefaultModel(): { provider: string; modelId: string } | null
   setDefaultModel(provider: string, modelId: string): void
   setProvider(providerId: string, data: {

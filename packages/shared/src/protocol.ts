@@ -1,6 +1,6 @@
 // Client → Runtime message types
 
-import type { ProviderInfo, SkillInfo, AgentInfo, ModelInfo, SkillDirConfig, ScannedSkillInfo, ScannedAgentInfo } from './provider'
+import type { ProviderInfo, SkillInfo, AgentInfo, ModelInfo, SkillDirConfig, ScannedSkillInfo, ScannedAgentInfo, BuiltinProviderTemplate } from './provider'
 import type { SessionGroup, SessionSummary } from './session'
 import type { FileChange, ChangeSetStatus, Message } from './message'
 import type { FileNode } from './file-tree'
@@ -109,6 +109,8 @@ export type ClientMessageType =
   // 迁移：检测本机其他 agent（Claude/Codex/Pi/ZCode）的 skill/agent 配置目录。
   // 只读检测，不读文件内容（安全）。reply config.sourcesDetected。
   | 'config.detectSources'
+  // wave 2：列出内置 provider 模板（import generated JSON，无参只读）。reply config.builtinProviders。
+  | 'config.listBuiltinProviders'
   // 迁移 W2：Provider 导入两步流。Step1 preview（脱敏，apiKey 不进前端）→ Step2 apply（写 models.json）。
   // reply config.providersPreviewed / config.providersImported。
   | 'config.previewImportProviders' | 'config.applyImportProviders'
@@ -492,6 +494,8 @@ export interface ClientMessageMap {
   'preset.import': { json: string }
   /** config.detectSources：检测本机其他 agent 的 skill/agent 配置目录（无参数，只读检测）。 */
   'config.detectSources': Record<string, never>
+  /** config.listBuiltinProviders：列出内置 provider 模板（wave 2，无参只读，import generated JSON）。 */
+  'config.listBuiltinProviders': Record<string, never>
   /**
    * config.previewImportProviders：Step1 预览从其他 agent 源导入的 provider 列表（脱敏，apiKey 不进前端）。
    * source 是迁移源（pi/zcode/codex/claude）。
@@ -633,6 +637,8 @@ export type ServerMessageType =
   | 'preset.getCwdDefault' | 'preset.setCwdDefault' | 'preset.getCwdDefaults'
   | 'preset.export' | 'preset.import'
   | 'config.sourcesDetected'
+  // wave 2：listBuiltinProviders reply（内置 provider 模板数组）。
+  | 'config.builtinProviders'
   // 迁移 W2：Provider 导入 reply（preview 脱敏 / apply 结果含 imported/skipped/failed 三态）。
   | 'config.providersPreviewed' | 'config.providersImported'
 
@@ -997,6 +1003,8 @@ export interface ServerMessageMapBase {
   // config.sourcesDetected：detectSources reply（settings-message-handler.ts reply { sources }）。
   // sources 是本机其他 agent（Claude/Codex/Pi/ZCode）skill/agent 目录的检测结果（只读，不读文件内容）。
   'config.sourcesDetected': { sources: SourceDetectResult[] }
+  // config.builtinProviders：listBuiltinProviders reply（wave 2，内置 provider 模板数组）。
+  'config.builtinProviders': { providers: BuiltinProviderTemplate[] }
   // config.providersPreviewed：previewImportProviders reply（W2 迁移）。
   // 成功 { importId, preview }（preview 脱敏，只含 apiKeyExtracted 布尔，无 apiKey 值）；
   // 失败 { error: { code, message } }（如 SOURCE_NOT_INSTALLED）。
@@ -1122,6 +1130,7 @@ export interface ReplyPayloadMap {
   'config.scanAgents': ServerMessageMap['config.scannedAgents']
   'config.scanSkills': ServerMessageMap['config.scannedSkills']
   'config.detectSources': ServerMessageMap['config.sourcesDetected']
+  'config.listBuiltinProviders': ServerMessageMap['config.builtinProviders']
   // W2 迁移：provider 导入两步流 reply（payload 消费型，前端读 importId/preview/result/error）。
   'config.previewImportProviders': ServerMessageMap['config.providersPreviewed']
   'config.applyImportProviders': ServerMessageMap['config.providersImported']

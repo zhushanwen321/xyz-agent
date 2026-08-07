@@ -160,6 +160,11 @@ export class SettingsMessageHandler {
         this.ctx.reply(ws, msg.id, 'config.sourcesDetected', { sources })
         return true
       }
+      case 'config.listBuiltinProviders': {
+        // wave 2：列出内置 provider 模板（import generated JSON，无参只读）。reply config.builtinProviders。
+        this.ctx.reply(ws, msg.id, 'config.builtinProviders', { providers: this.ctx.configService.listBuiltinProviders() })
+        return true
+      }
       case 'config.previewImportProviders': {
         // W2 迁移：Step1 预览从其他 agent 源导入的 provider 列表（脱敏，apiKey 不进前端）。
         // result 可能是 { importId, preview }（成功）或 { error }（源未安装等），reply 原样转发。

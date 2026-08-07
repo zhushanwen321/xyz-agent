@@ -22,6 +22,7 @@ import type {
   TerminalConfig,
   SourceDetectResult,
   ProviderSource,
+  BuiltinProviderTemplate,
   ProviderImportPreview,
   ProviderImportResult,
   SkillCacheInvalidatedPayload,
@@ -86,6 +87,15 @@ export async function scanAgents(sources: string[]): Promise<ScannedAgentInfo[]>
 export async function detectSources(): Promise<SourceDetectResult[]> {
   const reply = await command('config.detectSources', {})
   return reply.sources
+}
+
+/**
+ * 列出内置 provider 模板（wave 2，无参只读）。reply config.builtinProviders 形状 `{ providers }`。
+ * 数据源为 runtime import 的 generated JSON（37 个内置 provider，含 model 摘要与 auth 元信息）。
+ */
+export async function listBuiltinProviders(): Promise<BuiltinProviderTemplate[]> {
+  const reply = await command('config.listBuiltinProviders', {})
+  return reply.providers
 }
 
 /**

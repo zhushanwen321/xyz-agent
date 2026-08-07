@@ -80,6 +80,7 @@ function mockConfigService(worktreeRootDir = '/home/user/worktrees') {
     setAutoRenameEnabled: vi.fn(),
     // 其他方法 stub
     listProviders: vi.fn(() => []),
+    listBuiltinProviders: vi.fn(() => []),
     getDefaultModel: vi.fn(() => null),
     setDefaultModel: vi.fn(),
     setProvider: vi.fn(),

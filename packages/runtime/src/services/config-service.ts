@@ -10,9 +10,14 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
+// wave 2（WC1）：import inline 方式消费 generated JSON——tsup bundle 把 JSON 打进 index.cjs，
+// 避免运行时 fs/路径解析（打包后 asar 路径问题）。tsc 类型检查需 resolveJsonModule（tsconfig.json 已加）。
+import builtinData from '../generated/builtin-providers.json'
+
 import {
   SYSTEM_PROMPT_MAX_LENGTH,
   type ProviderInfo,
+  type BuiltinProviderTemplate,
   type SkillInfo,
   type AgentInfo,
   type ScannedSkillInfo,
@@ -165,6 +170,14 @@ export class ConfigService implements IConfigService {
       // 供 Settings UI 显示状态 + ContextCapacityPopover 判断是否显示额度区
       quota: config.quota,
     }))
+  }
+
+  /**
+   * 列出内置 provider 模板（wave 2，import generated JSON，无参只读，纯函数）。
+   * builtinData 模块级 import 即缓存，不触 ConfigStore 依赖。wave 1 生成时已排除 radius。
+   */
+  listBuiltinProviders(): BuiltinProviderTemplate[] {
+    return builtinData.providers as unknown as BuiltinProviderTemplate[]
   }
 
   setProvider(providerId: string, data: {

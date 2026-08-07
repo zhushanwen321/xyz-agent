@@ -1,3 +1,36 @@
+/**
+ * 内置 provider 模板中的 model 摘要（DM3/IF2，wave 1 builtin-providers.json schema）。
+ * 与 BuiltinProviderTemplate.models 元素结构严格对齐，前端/runtime/renderer 共用。
+ */
+export interface BuiltinModelSummary {
+  id: string
+  name: string
+  api: string
+  contextWindow: number
+  reasoning: boolean
+  input: string[]
+}
+
+/**
+ * 内置 provider 模板（DM3/IF2，wave 1 builtin-providers.json schema）。
+ * 由 config.listBuiltinProviders RPC 暴露给前端（wave 2）。
+ * 可选字段（api/baseUrl/apiKeyName/oauthName/logoUrl）按 JSON 实际出现情况标注 optional。
+ */
+export interface BuiltinProviderTemplate {
+  id: string
+  name: string
+  api?: string
+  baseUrl?: string
+  authMode: 'api_key' | 'oauth' | 'both' | 'ambient'
+  envVars: string[]
+  oauthSupported: boolean
+  apiKeyName?: string
+  oauthName?: string
+  modelCount: number
+  models: BuiltinModelSummary[]
+  logoUrl?: string
+}
+
 export type ProviderStatus = 'connected' | 'not_configured' | 'error'
 
 export interface ProviderInfo {
