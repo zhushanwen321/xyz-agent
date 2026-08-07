@@ -133,6 +133,17 @@ export default {
       statKeyMissing: '{count} key missing',
       // wave 4 import-credential-types: credential-type badge labels
       statEnvCount: '{count} env var',
+      // sa3 F1: orphan credentials group (group 2) labels
+      statOrphans: '{count} orphan credential(s)',
+      groupModels: 'Providers in Pi models.json',
+      groupOrphans: 'Extra credentials in Pi auth.json',
+      orphanBuiltinBadge: 'Built-in template',
+      orphanModelsCount: '{count} built-in models',
+      orphanModelsHint: 'auth.json contains no model info; models come from the pi-ai built-in catalog',
+      orphanFormOauth: 'OAuth token',
+      credentialPlaintext: 'API Key',
+      credentialEnvBundle: 'Env bundle·skip',
+      credentialEnvBundleHint: 'Credential present but env bundle not supported in Phase 1, apiKey skipped',
       credentialEnvHint: 'Env var reference: ensure ${var} is set after import',
       credentialMissing: 'Manual key',
       credentialOauth: 'OAuth·Phase2',
@@ -151,14 +162,23 @@ export default {
       // wave 4 import-credential-types: credential-type post-import hints
       envVarNeeded: '{count} provider(s) use env vars, ensure they are set',
       oauthSkipped: '{count} OAuth credential(s) unsupported (Phase 2)',
+      // sa3 F1: orphan credential post-import hints (B.5/M4 command injection warning)
+      commandInjection: '{count} credential(s) use !command (pi runs shell command at runtime), review before use',
+      envBundleSkipped: '{count} env bundle credential(s) skipped (Phase 2)',
+      orphanImported: '{count} credential(s) imported with built-in template',
     },
     // ── Built-in provider templates (wave 3 builtin-provider-ui) ──
-    addCustom: '+ Custom',
     builtinTemplate: {
-      trigger: '+ Built-in Template',
+      // F2: aggregated entry menu trigger (items: built-in templates / custom)
+      trigger: 'Add Provider',
+      menuBuiltin: 'From built-in templates',
+      menuRecommended: 'Recommended',
+      menuCustom: 'Custom (manual)',
       searchPlaceholder: 'Search...',
       noResult: 'No matching template',
       modelsSuffix: '{count} models',
+      // F7b: models.length=0 in the row after override-only save is expected; models come from pi built-in catalog
+      modelsAutoHint: '{count} built-in models (available after save)',
       setupTitle: 'Quick Setup · {name}',
       infoApi: 'API',
       infoBaseUrl: 'Base URL',
@@ -167,7 +187,14 @@ export default {
       credentialModePlaintext: 'API Key',
       credentialModeEnv: 'Env Var',
       envVarPlaceholder: 'Select env var',
+      // F4: custom env var entry (§6.4 dropdown: common env vars + custom name)
+      envVarCustom: 'Custom variable…',
+      envVarCustomPlaceholder: 'Enter env var name (e.g. MY_OPENAI_KEY)',
       envUnsupported: 'This template does not support env var',
+      // F1: auth-mode branch copy (§6.3)
+      oauthOnlyHint: 'This template requires OAuth login (Phase 2)',
+      oauthSupportedHint: 'OAuth login supported (Phase 2)',
+      ambientHint: 'Uses cloud credentials (ADC / AWS), no key needed',
       save: 'Save',
       toastSuccess: 'Added {name}',
       fetchFailed: 'Failed to load built-in templates',

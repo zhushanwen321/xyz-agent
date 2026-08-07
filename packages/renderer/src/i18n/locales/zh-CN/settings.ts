@@ -133,6 +133,17 @@ export default {
       statKeyMissing: '{count} 个 key 未提取',
       // wave 4 import-credential-types：凭据形态多态徽章文案
       statEnvCount: '{count} 个 $ENV',
+      // sa3 F1：孤儿凭据（组 2）文案
+      statOrphans: '{count} 个额外凭据',
+      groupModels: 'Pi models.json 中的供应商',
+      groupOrphans: 'Pi auth.json 中的额外凭据',
+      orphanBuiltinBadge: '内置模板',
+      orphanModelsCount: '{count} 个内置模型',
+      orphanModelsHint: 'auth.json 不含模型信息，模型来自 pi-ai 内置 catalog',
+      orphanFormOauth: 'OAuth token',
+      credentialPlaintext: 'API Key',
+      credentialEnvBundle: 'Env 包·跳过',
+      credentialEnvBundleHint: '有凭据但 Phase 1 不支持 env 包落盘，apiKey 跳过',
       credentialEnvHint: '环境变量引用：导入后请确保 ${var} 已设置',
       credentialMissing: '需手填',
       credentialOauth: 'OAuth·Phase2',
@@ -151,14 +162,23 @@ export default {
       // wave 4 import-credential-types：凭据形态分类提示
       envVarNeeded: '{count} 个 provider 使用环境变量，请确保已设置',
       oauthSkipped: '{count} 个 OAuth 凭据暂不支持（Phase 2）',
+      // sa3 F1：孤儿凭据导入后提示（B.5/M4 命令注入警告）
+      commandInjection: '{count} 个凭据使用 !command（pi 运行时执行 shell 命令），请确认安全',
+      envBundleSkipped: '{count} 个 env 包凭据跳过（Phase 2 支持）',
+      orphanImported: '{count} 个凭据已用内置模板补全导入',
     },
     // ── 内置 provider 模板（wave 3 builtin-provider-ui）──
-    addCustom: '+ 自定义',
     builtinTemplate: {
-      trigger: '+ 内置模板',
+      // F2：入口聚合菜单 trigger（含「内置模板 / 自定义」两个条目）
+      trigger: '添加供应商',
+      menuBuiltin: '从内置模板',
+      menuRecommended: '推荐',
+      menuCustom: '自定义（手填）',
       searchPlaceholder: '搜索...',
       noResult: '没有匹配的模板',
       modelsSuffix: '{count} 模型',
+      // F7b：B4 override-only 落盘后行内 models.length=0 是预期的，模型由 pi 内置 catalog 自动加载
+      modelsAutoHint: '{count} 个内置模型（保存后自动可用）',
       setupTitle: '快速配置 {name}',
       infoApi: 'API',
       infoBaseUrl: 'Base URL',
@@ -167,7 +187,14 @@ export default {
       credentialModePlaintext: 'API Key',
       credentialModeEnv: '环境变量',
       envVarPlaceholder: '选择环境变量',
+      // F4：自定义 env var 入口（§6.4 下拉：常见 env var + 自定义变量名）
+      envVarCustom: '自定义变量名…',
+      envVarCustomPlaceholder: '输入环境变量名（如 MY_OPENAI_KEY）',
       envUnsupported: '该模板不支持环境变量方式',
+      // F1：认证方式分支文案（§6.3）
+      oauthOnlyHint: '此模板需 OAuth 登录，Phase 2 支持',
+      oauthSupportedHint: '支持 OAuth 登录（Phase 2）',
+      ambientHint: '使用云凭证（ADC / AWS 凭证），无需填写 Key',
       save: '保存',
       toastSuccess: '已添加 {name}',
       fetchFailed: '加载内置模板失败',

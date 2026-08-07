@@ -90,7 +90,7 @@ describe('ProviderPage 首屏冒烟', () => {
 })
 
 describe('ProviderPage R4 手风琴就地编辑（取代 ProviderEditModal）', () => {
-  it('点击「添加供应商」→ 不弹 Dialog，列表底部新建合成行并展开就地编辑体', async () => {
+  it('点击「添加供应商」→ 菜单选「自定义」→ 列表底部新建合成行并展开就地编辑体', async () => {
     wrapper = mount(ProviderPage, {
       props: { providers: [] },
       attachTo: document.body,
@@ -100,8 +100,13 @@ describe('ProviderPage R4 手风琴就地编辑（取代 ProviderEditModal）', 
     // 初始无展开体
     expect(wrapper.find('[data-testid="provider-expand-body"]').exists()).toBe(false)
 
+    // F2：入口聚合为「+ 添加供应商 ▾」菜单，先点 trigger 打开菜单，再点「自定义」条目
     const addBtn = wrapper.findAll('button').find((b) => b.text().includes('添加供应商'))!
     await addBtn.trigger('click')
+    await flushPromises()
+    const customItem = document.body.querySelector<HTMLElement>('[data-testid="add-menu-custom"]')
+    expect(customItem).toBeTruthy()
+    customItem!.click()
     await flushPromises()
 
     // 合成行渲染 + 展开体渲染（就地编辑，非 Dialog teleport）

@@ -13,14 +13,12 @@
       </div>
       <div class="flex shrink-0 gap-2">
         <ProviderImportMenu :disabled="importState !== 'idle'" @select="onImportSelect" />
-        <ProviderTemplatePicker :providers="builtinProviders" @select="onTemplateSelect" />
-        <Button
-          class="gap-1.5 rounded-sm px-2.5 py-1.5 text-[12px] font-medium [&_svg]:size-3.5"
-          @click="createAndExpand"
-        >
-          <Plus />
-          {{ t('settings.provider.addCustom') }}
-        </Button>
+        <!-- F2：入口聚合为「+ 添加供应商 ▾」菜单（内置模板（推荐）/ 自定义），自定义走 createAndExpand 原流程 -->
+        <ProviderTemplatePicker
+          :providers="builtinProviders"
+          @select="onTemplateSelect"
+          @custom="createAndExpand"
+        />
       </div>
     </header>
 
@@ -172,7 +170,7 @@
 <script setup lang="ts">
 import { computed, ref, provide, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Settings, Plus, Trash2, AlertCircle } from '@lucide/vue'
+import { Settings, Trash2, AlertCircle } from '@lucide/vue'
 import { ConfirmDialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
@@ -223,9 +221,9 @@ const showQuickSetup = ref(false)
 onMounted(async () => {
   try {
     builtinProviders.value = await config.listBuiltinProviders()
-  } catch (e) {
-    // 拉取失败静默降级（Picker 渲染空列表），不阻断页面
-    toast.error(e instanceof Error ? e.message : String(e))
+  } catch {
+    // 拉取失败静默降级（Picker 渲染空列表），不阻断页面。F7a：用 i18n 文案（fetchFailed 键启用）
+    toast.error(t('settings.provider.builtinTemplate.fetchFailed'))
   }
 })
 

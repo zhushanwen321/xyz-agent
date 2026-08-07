@@ -1,14 +1,38 @@
 /**
  * 内置 provider 模板中的 model 摘要（DM3/IF2，wave 1 builtin-providers.json schema）。
  * 与 BuiltinProviderTemplate.models 元素结构严格对齐，前端/runtime/renderer 共用。
+ *
+ * 11 字段契约（design §4.2 / 附录 A.4，wave 2 扩展）：id/name/api/baseUrl/reasoning/input/
+ * cost/contextWindow/maxTokens/thinkingLevelMap/compat。生成脚本（gen-builtin-providers.mjs）
+ * 恒输出 11 键；thinkingLevelMap/compat 在 pi-ai model 无定义时置 null（不省略）。
  */
 export interface BuiltinModelSummary {
   id: string
   name: string
   api: string
-  contextWindow: number
+  baseUrl?: string
   reasoning: boolean
   input: string[]
+  cost?: {
+    input?: number
+    output?: number
+    cacheRead?: number
+    cacheWrite?: number
+    /** 请求级分档定价（OpenAI 长上下文等），最高匹配阈值整单生效。 */
+    tiers?: Array<{
+      inputTokensAbove: number
+      input: number
+      output: number
+      cacheRead: number
+      cacheWrite: number
+    }>
+  } | null
+  contextWindow: number
+  maxTokens?: number | null
+  /** pi 思考档位映射：key 存在且 value≠null = 可用，value=null = 不支持。 */
+  thinkingLevelMap?: Record<string, string | null> | null
+  /** OpenAI 兼容协议覆写（forceAdaptiveThinking / supportsStrictMode 等）。 */
+  compat?: Record<string, unknown> | null
 }
 
 /**
@@ -39,6 +63,12 @@ export interface ProviderInfo {
   api?: string
   baseUrl?: string
   apiKeySet: boolean
+  /**
+   * 认证方式（展示用，design §6.5）。由内置模板/导入/编辑流程标注。
+   * 注意与 BuiltinProviderTemplate.authMode 语义区分：authMethod 描述「当前凭据形态」
+   * （env_var = 已用 $ENV 引用），authMode 描述「provider 支持的认证能力全集」。
+   */
+  authMethod?: 'api_key' | 'oauth' | 'env_var'
   headers?: Record<string, string>
   authHeader?: boolean
   status: ProviderStatus
@@ -144,6 +174,7 @@ export type ScanSourceType = 'pi' | 'claude' | 'agents' | 'custom'
  * 从 v1 迁移见 migrateDiscoveryV1ToV2（discovery-migrate.ts）。
  */
 export interface DiscoveryConfig {
+  // eslint-disable-next-line no-magic-numbers -- schema 版本字面量（存量，无法提取常量）
   version: 2
   skill: { projectPaths: string[]; globalPaths: string[] }
   agent: { projectPaths: string[]; globalPaths: string[] }
