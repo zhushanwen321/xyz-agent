@@ -26,6 +26,7 @@ import type {
   ProviderImportPreview,
   ProviderImportResult,
   SkillCacheInvalidatedPayload,
+  ServerMessage,
 } from '@xyz-agent/shared'
 import { command } from '../request'
 import * as events from '../events'
@@ -289,5 +290,57 @@ export async function setTerminalConfig(config: TerminalConfig): Promise<{ confi
 export function onTerminalConfig(handler: (config: TerminalConfig, corrupted: boolean) => void): () => void {
   return events.onGlobalType('config.terminalConfig', (msg) => {
     handler(msg.payload.config, msg.payload.corrupted ?? false)
+  })
+}
+
+// ── OAuth Login（路径 B · slice design I1/I2/I4）──
+// RPC/事件契约见 shared protocol.ts（config.oauthLogin/oauthCancel reply + auth.* 事件）。
+// 事件 payload 必带 providerId（前端按 providerId 路由，支持并发多 provider）；
+// token 永不出现在 payload（脱敏红线）。payload 类型从 ServerMessage 派生，协议改动自动跟随。
+
+/** auth.deviceCode 事件 payload（device flow 中间态：验证码 + 浏览器验证链接 + 倒计时参数） */
+export type AuthDeviceCodePayload = ServerMessage<'auth.deviceCode'>['payload']
+/** auth.authUrl 事件 payload（callback flow 中间态：授权 URL + 本地回调端口） */
+export type AuthAuthUrlPayload = ServerMessage<'auth.authUrl'>['payload']
+/** auth.success 事件 payload（授权成功，token 已写 auth.json） */
+export type AuthSuccessPayload = ServerMessage<'auth.success'>['payload']
+/** auth.error 事件 payload（授权失败原因） */
+export type AuthErrorPayload = ServerMessage<'auth.error'>['payload']
+
+/** 启动 OAuth flow（device/callback，按 provider 的 oauthConfig）。started=false + error 表示启动失败。 */
+export function oauthLogin(providerId: string): Promise<{ started: boolean; error?: string }> {
+  return command('config.oauthLogin', { providerId })
+}
+
+/** 中止进行中的 OAuth flow（幂等：无进行中 flow 返回 cancelled:false 不报错）。 */
+export function oauthCancel(providerId: string): Promise<{ cancelled: boolean }> {
+  return command('config.oauthCancel', { providerId })
+}
+
+/** 订阅 device flow 中间态（user_code / verification_uri / 倒计时）。返回取消函数。 */
+export function onAuthDeviceCode(handler: (payload: AuthDeviceCodePayload) => void): () => void {
+  return events.onGlobalType('auth.deviceCode', (msg) => {
+    handler(msg.payload)
+  })
+}
+
+/** 订阅 callback flow 中间态（授权 URL + 本地回调端口）。返回取消函数。 */
+export function onAuthAuthUrl(handler: (payload: AuthAuthUrlPayload) => void): () => void {
+  return events.onGlobalType('auth.authUrl', (msg) => {
+    handler(msg.payload)
+  })
+}
+
+/** 订阅授权成功（token 已写 auth.json）。返回取消函数。 */
+export function onAuthSuccess(handler: (payload: AuthSuccessPayload) => void): () => void {
+  return events.onGlobalType('auth.success', (msg) => {
+    handler(msg.payload)
+  })
+}
+
+/** 订阅授权失败（expired_token / access_denied / 端口占用 / 超时 / exchange 失败）。返回取消函数。 */
+export function onAuthError(handler: (payload: AuthErrorPayload) => void): () => void {
+  return events.onGlobalType('auth.error', (msg) => {
+    handler(msg.payload)
   })
 }

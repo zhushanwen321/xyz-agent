@@ -19,6 +19,7 @@ export { default as PresetModeSection } from './coding-plan/PresetModeSection.vu
 export { default as ProviderEditBody } from './provider/ProviderEditBody.vue'
 export { default as ProviderImportMenu } from './provider/ProviderImportMenu.vue'
 export { default as ProviderImportPreviewDialog } from './provider/ProviderImportPreviewDialog.vue'
+export { default as OAuthDialog } from './provider/OAuthDialog.vue'
 export { default as ProviderTemplatePicker } from './provider/ProviderTemplatePicker.vue'
 export { default as ProviderQuickSetup } from './provider/ProviderQuickSetup.vue'
 export { default as SoundPreviewButton } from './common/SoundPreviewButton.vue'
