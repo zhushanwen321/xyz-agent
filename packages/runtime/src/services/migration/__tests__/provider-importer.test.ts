@@ -334,6 +334,7 @@ describe('provider-importer', () => {
       result([
         fp({ _sourceName: 'plain', _credentialType: 'plaintext' }),
         fp({ _sourceName: 'envp', _credentialType: 'env', _envVarName: 'MY_VAR', apiKey: '$MY_VAR' }),
+        fp({ _sourceName: 'envb', _credentialType: 'env-bundle', _apiKeyExtracted: false, apiKey: undefined }),
         fp({ _sourceName: 'miss', _credentialType: 'missing', _apiKeyExtracted: false, apiKey: undefined }),
         fp({ _sourceName: 'oau', _credentialType: 'oauth', _apiKeyExtracted: false, apiKey: undefined }),
         fp({ _sourceName: 'cmd', _credentialType: 'command', apiKey: '!op read xxx' }),
@@ -347,6 +348,7 @@ describe('provider-importer', () => {
     // credentialType 逐态映射
     expect(byId.plain.credentialType).toBe('plaintext')
     expect(byId.envp.credentialType).toBe('env')
+    expect(byId.envb.credentialType).toBe('env-bundle')
     expect(byId.miss.credentialType).toBe('missing')
     expect(byId.oau.credentialType).toBe('oauth')
     expect(byId.cmd.credentialType).toBe('command')
@@ -356,17 +358,186 @@ describe('provider-importer', () => {
     expect(byId.plain.envVarName).toBeUndefined()
     expect(byId.cmd.envVarName).toBeUndefined()
 
-    // apiKeyExtracted computed（parser 已算好，importer 透传）：plaintext/env/command=true，missing/oauth=false
+    // apiKeyExtracted computed（parser 已算好，importer 透传）：plaintext/env/command=true，missing/oauth/env-bundle=false
     expect(byId.plain.apiKeyExtracted).toBe(true)
     expect(byId.envp.apiKeyExtracted).toBe(true)
     expect(byId.cmd.apiKeyExtracted).toBe(true)
     expect(byId.miss.apiKeyExtracted).toBe(false)
     expect(byId.oau.apiKeyExtracted).toBe(false)
+    expect(byId.envb.apiKeyExtracted).toBe(false) // 有凭据但 Phase 1 不支持落盘 → 跳过
 
     // 脱敏红线：apiKey 明文 / !command / $ENV 占位串都不进 preview 序列化
     const serialized = JSON.stringify(out)
     expect(serialized).not.toContain('sk-real-key-123')
     expect(serialized).not.toContain('!op read xxx')
     expect(serialized).not.toContain('$MY_VAR')
+  })
+
+  // ══ sa3 F1：孤儿凭据 → 内置模板匹配（B.3/B.4/B.6）══
+
+  /** 构造孤儿凭据 fixture。apiKey 含明文（验证脱敏红线）。 */
+  function fo(overrides: Partial<import('../provider-parser.js').ParsedOrphanCredential> = {}) {
+    return {
+      providerId: 'openai',
+      credentialType: 'plaintext' as const,
+      apiKey: 'sk-orphan-plain-456',
+      warnings: [],
+      ...overrides,
+    }
+  }
+
+  it('sa3-i1: 孤儿凭据匹配内置模板 → preview 组 2 项（builtinTemplateMatched + modelCount + modelNames + 脱敏）', () => {
+    vi.mocked(parseProviders).mockReturnValue({
+      providers: [],
+      orphanCredentials: [fo()],
+    })
+
+    const out = previewImport('pi')
+    if (!('preview' in out)) throw new Error('preview should succeed')
+
+    // 组 2 存在且字段完整
+    expect(out.preview.orphanCredentials).toHaveLength(1)
+    const item = out.preview.orphanCredentials![0]
+    expect(item.providerId).toBe('openai')
+    expect(item.name).toBe('OpenAI') // 内置模板 name
+    expect(item.credentialType).toBe('plaintext')
+    expect(item.builtinTemplateMatched).toBe(true)
+    expect(item.modelCount).toBeGreaterThan(0) // 真实 builtin JSON：openai 38 个模型
+    expect(item.modelNames!.length).toBeGreaterThan(0)
+    expect(item.modelNames![0]).toBe('gpt-4') // 真实模板第一个 model id
+    expect(item.apiKeyExtracted).toBe(true)
+
+    // 脱敏红线（B.5）：孤儿凭据的明文 key 不进 preview 序列化
+    const serialized = JSON.stringify(out)
+    expect(serialized).not.toContain('sk-orphan-plain-456')
+  })
+
+  it('sa3-i2: 孤儿凭据匹配不到内置模板 → 不进组 2 + preview.warnings 含跳过提示', () => {
+    vi.mocked(parseProviders).mockReturnValue({
+      providers: [],
+      orphanCredentials: [fo({ providerId: 'unknown-provider-xyz' })],
+    })
+
+    const out = previewImport('pi')
+    if (!('preview' in out)) throw new Error('preview should succeed')
+
+    expect(out.preview.orphanCredentials).toBeUndefined() // 不进组 2
+    expect(out.preview.warnings!.some((w) => w.includes('unknown-provider-xyz') && w.includes('no built-in template match'))).toBe(true)
+  })
+
+  it('sa3-i3: 孤儿凭据 env 态 → 组 2 envVarName 透传 + apiKeyExtracted=true', () => {
+    vi.mocked(parseProviders).mockReturnValue({
+      providers: [],
+      orphanCredentials: [fo({ credentialType: 'env', envVarName: 'OPENAI_API_KEY', apiKey: '$OPENAI_API_KEY' })],
+    })
+
+    const out = previewImport('pi')
+    if (!('preview' in out)) throw new Error('preview should succeed')
+    const item = out.preview.orphanCredentials![0]
+    expect(item.credentialType).toBe('env')
+    expect(item.envVarName).toBe('OPENAI_API_KEY')
+    expect(item.apiKeyExtracted).toBe(true)
+    // 脱敏：占位串 $OPENAI_API_KEY 不进序列化（envVarName 是去前缀的变量名）
+    const serialized = JSON.stringify(out)
+    expect(serialized).not.toContain('$OPENAI_API_KEY')
+  })
+
+  it('sa3-i4: 孤儿凭据 env-bundle/oauth 态 → apiKeyExtracted=false（有凭据但 Phase 1 不落盘）', () => {
+    vi.mocked(parseProviders).mockReturnValue({
+      providers: [],
+      orphanCredentials: [
+        fo({ providerId: 'deepseek', credentialType: 'env-bundle', apiKey: undefined }),
+        fo({ providerId: 'github-copilot', credentialType: 'oauth', apiKey: undefined }),
+      ],
+    })
+
+    const out = previewImport('pi')
+    if (!('preview' in out)) throw new Error('preview should succeed')
+    const byId = Object.fromEntries(out.preview.orphanCredentials!.map((o) => [o.providerId, o]))
+    expect(byId.deepseek.apiKeyExtracted).toBe(false)
+    expect(byId['github-copilot'].apiKeyExtracted).toBe(false)
+    expect(byId.deepseek.name).toBe('DeepSeek')
+    expect(byId['github-copilot'].name).toBeDefined()
+  })
+
+  it('sa3-i5: applyImport 勾选孤儿凭据 → 用内置模板补全定义写 models.json（B4 铁律：含 name/api/baseUrl/apiKey，models 数组 undefined）', () => {
+    vi.mocked(parseProviders).mockReturnValue({
+      providers: [],
+      orphanCredentials: [fo({ providerId: 'openai', credentialType: 'plaintext', apiKey: 'sk-orphan-apply-789' })],
+    })
+
+    const prev = previewImport('pi')
+    if (!('importId' in prev)) throw new Error('preview should succeed')
+    const applyOut = applyImport(prev.importId, ['openai'])
+
+    expect('result' in applyOut).toBe(true)
+    if (!('result' in applyOut)) return
+    expect(applyOut.result.imported).toHaveLength(1)
+    expect(applyOut.result.imported[0]).toMatchObject({ id: 'openai', status: 'imported' })
+
+    // B4 铁律：只写 {name, api, baseUrl, apiKey}，不写 models 数组
+    expect(upsertProvider).toHaveBeenCalledTimes(1)
+    const [, config] = vi.mocked(upsertProvider).mock.calls[0]
+    expect(config.name).toBe('OpenAI')
+    expect(config.api).toBe('openai-responses')
+    expect(config.baseUrl).toBe('https://api.openai.com/v1')
+    expect(config.apiKey).toBe('sk-orphan-apply-789')
+    expect(config.models).toBeUndefined() // B4：不复制 models，内置 model 由 pi catalog 自动加载
+  })
+
+  it('sa3-i6: applyImport 孤儿 env-bundle/oauth 态 → provider 定义照常导入但 apiKey 不写（与组 1 一致）', () => {
+    vi.mocked(parseProviders).mockReturnValue({
+      providers: [],
+      orphanCredentials: [
+        fo({ providerId: 'deepseek', credentialType: 'env-bundle', apiKey: undefined }),
+        fo({ providerId: 'github-copilot', credentialType: 'oauth', apiKey: undefined }),
+      ],
+    })
+
+    const prev = previewImport('pi')
+    if (!('importId' in prev)) throw new Error('preview should succeed')
+    const applyOut = applyImport(prev.importId, ['deepseek', 'github-copilot'])
+
+    expect('result' in applyOut).toBe(true)
+    const calls = vi.mocked(upsertProvider).mock.calls
+    expect(calls).toHaveLength(2)
+    const deepseekCfg = calls.find(([id]) => id === 'deepseek')![1]
+    expect(deepseekCfg.name).toBe('DeepSeek')
+    expect(deepseekCfg.apiKey).toBeUndefined() // env-bundle：Phase 1 不落盘 apiKey
+    expect(deepseekCfg.models).toBeUndefined() // B4
+    const copilotCfg = calls.find(([id]) => id === 'github-copilot')![1]
+    expect(copilotCfg.apiKey).toBeUndefined() // oauth：不取 token 作 apiKey
+    expect(copilotCfg.models).toBeUndefined()
+  })
+
+  it('sa3-i7: applyImport 未勾选的孤儿凭据不导入', () => {
+    vi.mocked(parseProviders).mockReturnValue({
+      providers: [],
+      orphanCredentials: [fo({ providerId: 'openai' }), fo({ providerId: 'anthropic' })],
+    })
+
+    const prev = previewImport('pi')
+    if (!('importId' in prev)) throw new Error('preview should succeed')
+    const applyOut = applyImport(prev.importId, ['openai'])
+
+    expect('result' in applyOut).toBe(true)
+    expect(upsertProvider).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(upsertProvider).mock.calls[0][0]).toBe('openai')
+  })
+
+  it('sa3-i8: applyImport 孤儿凭据与 models.json 冲突（preview 后已存在）→ skipped + 不调 upsertProvider', () => {
+    vi.mocked(parseProviders).mockReturnValue({
+      providers: [],
+      orphanCredentials: [fo({ providerId: 'openai' })],
+    })
+    vi.mocked(getProviderNames).mockReturnValue(['openai'])
+
+    const prev = previewImport('pi')
+    if (!('importId' in prev)) throw new Error('preview should succeed')
+    const applyOut = applyImport(prev.importId, ['openai'])
+
+    if (!('result' in applyOut)) throw new Error('apply should succeed')
+    expect(applyOut.result.imported[0]).toMatchObject({ id: 'openai', status: 'skipped' })
+    expect(upsertProvider).not.toHaveBeenCalled()
   })
 })

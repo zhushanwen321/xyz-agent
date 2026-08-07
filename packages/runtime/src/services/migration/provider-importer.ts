@@ -28,12 +28,17 @@ import type {
   ProviderSource,
   ProviderImportPreview,
   ProviderPreviewItem,
+  ProviderPreviewOrphanItem,
   ProviderImportResult,
   ProviderImportedItem,
+  BuiltinProviderTemplate,
 } from '@xyz-agent/shared'
-import { getProviderNames, upsertProvider } from '../../infra/pi/pi-provider-store.js'
+import { getProviderNames, upsertProvider, type PiProviderConfig } from '../../infra/pi/pi-provider-store.js'
 import { createPreview, consumePreview, deletePreview } from './preview-cache.js'
 import { parseProviders } from './provider-parser.js'
+// sa3 F1：内置 provider 模板（B4 铁律——只取 name/api/baseUrl 补全定义，**不复制 models**，
+// 内置 model 由 pi catalog 无条件加载，复制会与内置升级漂移）。
+import builtinData from '../../generated/builtin-providers.json'
 
 /**
  * previewImport 的成功返回（importId 供 Step2 applyImport 用 + 脱敏 preview 供前端渲染）。
@@ -58,6 +63,23 @@ export interface ApplyImportSuccess {
 }
 
 /**
+ * 孤儿凭据 → 内置模板匹配（sa3 F1，B.3）。
+ *
+ * 按 providerId 在 builtin-providers.json 中查找（如 auth.json 的 'openai' → OpenAI 模板）。
+ * 生成物损坏（非数组/缺 id）时返回 undefined（与 config-service listBuiltinProviders 同降级策略）。
+ */
+function matchBuiltinTemplate(providerId: string): BuiltinProviderTemplate | undefined {
+  const raw = builtinData.providers
+  if (!Array.isArray(raw)) return undefined
+  return raw.find((p) => p && typeof p === 'object' && p.id === providerId) as BuiltinProviderTemplate | undefined
+}
+
+/** 孤儿凭据的 apiKeyExtracted 计算（与组 1 的 _apiKeyExtracted 同规则：plaintext/env/command=true）。 */
+function orphanKeyExtracted(credentialType: ProviderPreviewOrphanItem['credentialType']): boolean {
+  return credentialType === 'plaintext' || credentialType === 'env' || credentialType === 'command'
+}
+
+/**
  * Step1：预览导入。
  *
  * 解析源配置 → 存缓存（得 importId）→ 冲突检测 → 返回脱敏 preview。
@@ -66,7 +88,8 @@ export interface ApplyImportSuccess {
  * @param homeDir 用户主目录（默认 process.env.HOME || os.homedir()）。
  * @returns 成功 { importId, preview }；源未安装 { error: { code: 'SOURCE_NOT_INSTALLED' } }。
  *
- * 安全：返回的 preview.providers 只含 apiKeyExtracted 布尔，**不含 apiKey 值**。
+ * 安全：返回的 preview.providers 只含 apiKeyExtracted 布尔，**不含 apiKey 值**；
+ * 组 2（orphanCredentials）同样脱敏，只含 credentialType/envVarName/占位信息（B.5）。
  */
 export function previewImport(
   source: ProviderSource,
@@ -78,18 +101,19 @@ export function previewImport(
   }
 
   // 存完整配置（含 apiKey 明文）到内存缓存，得 importId
-  const importId = createPreview(source, parsed.providers)
+  const importId = createPreview(source, parsed.providers, parsed.orphanCredentials ?? [])
 
   // 冲突检测：读现有 models.json provider ids
   const existingIds = new Set(getProviderNames())
 
-  // 构造脱敏 preview（关键：不含 apiKey 值，只留 apiKeyExtracted 布尔 + credentialType 五态）
+  // 构造脱敏 preview（关键：不含 apiKey 值，只留 apiKeyExtracted 布尔 + credentialType 六态）
   const items: ProviderPreviewItem[] = parsed.providers.map((p) => ({
     id: p._sourceName,
     name: p._sourceName,
     protocol: p.api ?? 'unknown',
     modelCount: p.models?.length ?? 0,
-    // parser 已按 credentialType 计算 _apiKeyExtracted（computed：plaintext/env/command 时 true），直接透传
+    // parser 已按 credentialType 计算 _apiKeyExtracted（computed：plaintext/env/command 时 true；
+    // env-bundle 有凭据但 Phase 1 不支持落盘，为 false——preview 语义「有凭据但跳过」），直接透传
     apiKeyExtracted: p._apiKeyExtracted,
     credentialType: p._credentialType,
     ...(p._envVarName !== undefined ? { envVarName: p._envVarName } : {}),
@@ -97,18 +121,44 @@ export function previewImport(
     warnings: p._warnings,
   }))
 
+  // ══ sa3 F1：孤儿凭据 → 组 2（B.3）══
+  // auth.json 有、models.json 无定义的 providerId（pi 内置 provider 的凭据）：
+  // - 匹配到内置模板 → 组 2 可勾选项（凭据 + 模板补全定义）
+  // - 匹配不到 → 顶层 warning「未识别的凭据，无法匹配内置模板，跳过」（B.6）
+  const orphanItems: ProviderPreviewOrphanItem[] = []
+  const extraWarnings: string[] = []
+  for (const oc of parsed.orphanCredentials ?? []) {
+    const tpl = matchBuiltinTemplate(oc.providerId)
+    if (!tpl) {
+      extraWarnings.push(`credential ${oc.providerId}: no built-in template match, skipped`)
+      continue
+    }
+    orphanItems.push({
+      providerId: oc.providerId,
+      name: tpl.name,
+      credentialType: oc.credentialType,
+      ...(oc.envVarName !== undefined ? { envVarName: oc.envVarName } : {}),
+      builtinTemplateMatched: true,
+      modelCount: tpl.modelCount ?? tpl.models?.length ?? 0,
+      modelNames: (tpl.models ?? []).map((m) => m.id),
+      apiKeyExtracted: orphanKeyExtracted(oc.credentialType),
+      warnings: oc.warnings,
+    })
+  }
+
   // 日志只记 id/source/count（不记 apiKey，DM1）
-  console.log(`[provider-importer] preview source=${source} importId=${importId} providerCount=${items.length}`)
+  console.log(`[provider-importer] preview source=${source} importId=${importId} providerCount=${items.length} orphanCount=${orphanItems.length}`)
 
   return {
     importId,
     preview: {
       source,
       providers: items,
+      ...(orphanItems.length > 0 ? { orphanCredentials: orphanItems } : {}),
       // B2：透出 parseError 和顶层 warnings（即使 providers 非空，parseError 也可能存在——
       // 部分损坏场景）。ProviderImportPreview 的 parseError/warnings 是可选字段（shared SSOT）。
       ...(parsed.parseError ? { parseError: parsed.parseError } : {}),
-      ...(parsed.warnings?.length ? { warnings: parsed.warnings } : {}),
+      ...(parsed.warnings?.length || extraWarnings.length ? { warnings: [...(parsed.warnings ?? []), ...extraWarnings] } : {}),
     },
   }
 }
@@ -148,6 +198,7 @@ export function applyImport(importId: string, selectedIds: string[]): ApplyImpor
   const imported: ProviderImportedItem[] = []
   let failedCount = 0
 
+  // ══ 组 1：models.json 已定义的 provider（现有逻辑）══
   for (const provider of entry.providers) {
     // 只处理用户勾选的 provider
     if (!selectedIds.includes(provider._sourceName)) continue
@@ -167,6 +218,49 @@ export function applyImport(importId: string, selectedIds: string[]): ApplyImpor
       imported.push({
         id: provider._sourceName,
         name: provider._sourceName,
+        status: 'failed',
+        reason: e instanceof Error ? e.message : String(e),
+      })
+      failedCount++
+    }
+  }
+
+  // ══ 组 2：孤儿凭据（sa3 F1，B.3/B.4）══
+  // 勾选的孤儿凭据用内置模板补全定义：只写 {name, api, baseUrl, apiKey}，**不写 models 数组**
+  // （B4 铁律：内置 model 由 pi catalog 无条件加载，复制快照会与 pi-ai 升级漂移）。
+  // apiKey 只在 plaintext/env/command 态落盘（env-bundle/oauth/missing 态不写，避免
+  // resolveConfigValueOrThrow 硬抛错——与组 1 的 parser 行为一致）。
+  for (const oc of entry.orphanCredentials) {
+    if (!selectedIds.includes(oc.providerId)) continue
+
+    // 冲突跳过（preview 后 models.json 可能已有该 id）
+    if (existingIds.has(oc.providerId)) {
+      imported.push({ id: oc.providerId, name: oc.providerId, status: 'skipped', reason: 'duplicate' })
+      continue
+    }
+
+    const tpl = matchBuiltinTemplate(oc.providerId)
+    if (!tpl) {
+      // preview 时未匹配的孤儿凭据已进 warnings（不可勾选），此处防御兜底（缓存期模板变化）
+      imported.push({ id: oc.providerId, name: oc.providerId, status: 'failed', reason: 'no built-in template match' })
+      failedCount++
+      continue
+    }
+
+    try {
+      // B4 铁律：只写模板定义（name/api/baseUrl）+ 凭据，不写 models
+      const config: PiProviderConfig = {
+        name: tpl.name,
+        api: tpl.api,
+        baseUrl: tpl.baseUrl,
+      }
+      if (oc.apiKey !== undefined) config.apiKey = oc.apiKey
+      upsertProvider(oc.providerId, config)
+      imported.push({ id: oc.providerId, name: oc.providerId, status: 'imported' })
+    } catch (e) {
+      imported.push({
+        id: oc.providerId,
+        name: oc.providerId,
         status: 'failed',
         reason: e instanceof Error ? e.message : String(e),
       })

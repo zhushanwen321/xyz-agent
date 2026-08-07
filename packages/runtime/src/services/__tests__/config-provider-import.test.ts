@@ -19,8 +19,11 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { SettingsMessageHandler, type SettingsHandlerContext } from '../../transport/settings-message-handler.js'
-import { previewImport } from '../migration/provider-importer.js'
+import { previewImport, applyImport } from '../migration/provider-importer.js'
 import { _resetCacheForTest } from '../migration/preview-cache.js'
+import { getModelsPath } from '../../infra/pi/pi-paths.js'
+import { setModelsPath } from '../../infra/pi/pi-provider-store.js'
+import { readFileSync } from 'node:fs'
 import type { ClientMessage, ProviderImportPreview, ProviderImportResult } from '@xyz-agent/shared'
 // Pi fixture（真实模型/Key 形状，假 Key），用于 T10 端到端
 import piModelsFixture from '../migration/parsers/__tests__/fixtures/pi-models.json' with { type: 'json' }
@@ -270,5 +273,86 @@ describe('T10: previewImport 端到端（真实 parseProviders + 真实 Pi fixtu
     expect(serialized).not.toContain('sk-fake-deepseek-from-auth')
     expect(serialized).not.toContain('sk-fake-zhipu-from-auth')
     expect(serialized).not.toContain('sk-fake-zhipu-in-models')
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════
+// T11 端到端（sa3 F1）：孤儿凭据 preview 组 2 → apply → 真实 models.json 落盘
+// ══════════════════════════════════════════════════════════════════
+//
+// 完整链路：真实 parsePiProviders（含孤儿凭据扫描）→ previewImport（组 2）→
+// applyImport（内置模板补全）→ 真实 upsertProvider 写临时 models.json。
+// 验收标准：
+//   1. 孤儿凭据（auth.json 有、models.json 无的 openai）→ preview 组 2（builtinTemplateMatched）
+//   2. apply 后临时 models.json 出现 openai：含 name/api/baseUrl/apiKey，**models 数组 undefined**（B4 铁律）
+//   3. 脱敏红线：preview 载荷无明文 key
+
+describe('T11: 孤儿凭据端到端（sa3 F1 · B.3/B.4/B.6）', () => {
+  let prevHome: string | undefined
+  let prevModelsPath: string | undefined
+  let fakeHome: string
+  let fakeModelsPath: string
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    _resetCacheForTest()
+    prevHome = process.env.HOME
+    fakeHome = mkdtempSync(join(tmpdir(), 'pi-orphan-e2e-'))
+    // 写真实 Pi fixture：models.json 只有 zhipu（无 openai）+ auth.json 含 openai 孤儿凭据
+    const piAgentDir = join(fakeHome, '.pi', 'agent')
+    mkdirSync(piAgentDir, { recursive: true })
+    writeFileSync(join(piAgentDir, 'models.json'), JSON.stringify(piModelsFixture))
+    writeFileSync(join(piAgentDir, 'auth.json'), JSON.stringify({
+      ...piAuthFixture,
+      // 孤儿凭据：models.json 未定义的 openai（内置 provider 的 key）
+      openai: { type: 'api_key', key: 'sk-orphan-e2e-openai' },
+    }))
+    process.env.HOME = fakeHome
+    // 真实 upsertProvider 写入路径指向临时 models.json（getProviderNames 同源）
+    prevModelsPath = getModelsPath()
+    fakeModelsPath = join(fakeHome, 'models-target.json')
+    setModelsPath(fakeModelsPath)
+  })
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.HOME
+    else process.env.HOME = prevHome
+    if (prevModelsPath !== undefined) setModelsPath(prevModelsPath)
+    rmSync(fakeHome, { recursive: true, force: true })
+  })
+
+  it('孤儿凭据 auth.json → preview 组 2 → apply → models.json 出现 openai（name/api/baseUrl/apiKey，models undefined）', () => {
+    const out = previewImport('pi')
+    if (!('importId' in out)) throw new Error('preview should succeed')
+
+    // 组 2：孤儿凭据 openai 匹配内置模板
+    expect(out.preview.orphanCredentials).toHaveLength(1)
+    const item = out.preview.orphanCredentials![0]
+    expect(item.providerId).toBe('openai')
+    expect(item.builtinTemplateMatched).toBe(true)
+    expect(item.name).toBe('OpenAI')
+    expect(item.credentialType).toBe('plaintext')
+    expect(item.apiKeyExtracted).toBe(true)
+    // 脱敏红线：组 2 载荷不含明文 key
+    expect(JSON.stringify(out)).not.toContain('sk-orphan-e2e-openai')
+
+    // apply：组 1（zhipu/deepseek-router）+ 组 2（openai）一起导入
+    const applyOut = applyImport(out.importId, ['zhipu', 'deepseek-router', 'openai'])
+    if (!('result' in applyOut)) throw new Error('apply should succeed')
+    const openaiResult = applyOut.result.imported.find((i) => i.id === 'openai')!
+    expect(openaiResult.status).toBe('imported')
+
+    // 真实 models.json 落盘验证（B4 铁律）
+    const written = JSON.parse(readFileSync(fakeModelsPath, 'utf8'))
+    const openaiCfg = written.providers.openai
+    expect(openaiCfg).toBeDefined()
+    expect(openaiCfg.name).toBe('OpenAI')
+    expect(openaiCfg.api).toBe('openai-responses')
+    expect(openaiCfg.baseUrl).toBe('https://api.openai.com/v1')
+    expect(openaiCfg.apiKey).toBe('sk-orphan-e2e-openai')
+    // B4 铁律：models 数组 undefined（内置 model 由 pi catalog 自动加载）
+    expect('models' in openaiCfg).toBe(false)
+    // 组 1 provider 不受影响
+    expect(written.providers.zhipu).toBeDefined()
   })
 })

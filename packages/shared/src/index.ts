@@ -101,6 +101,7 @@ export type {
   AgentSource,
   SourceDetectResult,
   ProviderPreviewItem,
+  ProviderPreviewOrphanItem,
   ProviderImportPreview,
   ProviderImportedItem,
   ProviderImportResult,
@@ -108,5 +109,3 @@ export type {
 // 系统提示音默认映射 SSOT（main + renderer 共享，纯数据/类型无 node 依赖）
 export type { SoundPlatform, SoundKind } from './sound-defaults'
 export { DEFAULT_SUCCESS_PLATFORM, DEFAULT_ERROR_PLATFORM, getDefaultSound } from './sound-defaults'
-// v6 D14 Project 一级导航数据模型（Project/SessionItem 两层，2026-08-04 语义修正：无 Workspace 实体）
-export type { Project, ProjectStoreState } from './project'
