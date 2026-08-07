@@ -9,8 +9,8 @@
 
 import { getBuiltinProviders, getBuiltinModels, builtinProviders } from '@earendil-works/pi-ai/providers/all'
 import { findEnvKeys } from '@earendil-works/pi-ai/compat'
-import { writeFileSync, mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { writeFileSync, mkdirSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 // 镜像 pi-ai 0.82.1 dist/env-api-keys.js 的 getApiKeyEnvVars 映射。
@@ -65,6 +65,194 @@ const PROVIDER_ENV_VARS = {
 // 但它是 oauth-only（走 OAuth 流程），不是云凭证，authMode 应为 'oauth'。
 const AMBIENT_PROVIDERS = new Set(['google-vertex', 'amazon-bedrock'])
 
+// ============ OAuth config 提取（dist/auth/oauth/<id>.js 源码字符串） ============
+//
+// pi-ai 的 provider 元数据（catalog）只含 auth.oauth.name，clientId/flow/endpoints/scopes/callbackPort
+// 硬编码在各 oauth 实现文件的源码里，本脚本用正则从源码提取（pi-ai 升级后靠
+// scripts/gen-builtin-providers.test.ts 回归守卫）。已核实的 6 个 oauth provider 常量名（0.82.1）：
+// - anthropic:      CLIENT_ID(base64 混淆)/AUTHORIZE_URL/TOKEN_URL/CALLBACK_PORT/SCOPES
+// - github-copilot: CLIENT_ID(base64 混淆)；端点在 getUrls() 函数内模板（domain 默认 github.com）
+// - kimi-coding:    CLIENT_ID(明文)/DEFAULT_OAUTH_HOST；端点在函数内模板（oauthHost 默认 DEFAULT_OAUTH_HOST）
+// - xai:            XAI_CLIENT_ID/XAI_SCOPE/XAI_DEVICE_CODE_URL/XAI_TOKEN_URL
+// - openai-codex:   CLIENT_ID(明文)/AUTH_BASE_URL+AUTHORIZE_URL/TOKEN_URL/DEVICE_USER_CODE_URL/
+//                   DEVICE_VERIFICATION_URI 模板字面量；REDIRECT_URI 明文含端口 1455；无 CALLBACK_PORT 常量
+// - openrouter:     无 client_id（公开 PKCE flow，token 交换不发送）；listen(0) 动态端口
+//
+// 定位 dist 目录：package.json 子路径被 exports 封锁（见文件头注释），
+// 但 providers/all 是可导入入口（exports 仅含 import 条件，故用 import.meta.resolve 而非 require.resolve），
+// 从其解析路径回退两级即 dist/。
+export const OAUTH_DIR = join(
+  dirname(dirname(fileURLToPath(import.meta.resolve('@earendil-works/pi-ai/providers/all')))),
+  'auth/oauth',
+)
+
+// 已知无 client_id 的 oauth provider：公开 PKCE flow，token 交换只发 code/verifier，
+// 服务端不校验 client_id。新增此类 provider 必须在此登记，否则缺 clientId 会被 E6 阻断误报。
+const NO_CLIENT_ID_PROVIDERS = new Set(['openrouter'])
+
+function extractClientId(src) {
+  // ① base64 混淆（`const CLIENT_ID = decode("...")`，decode = atob）
+  const b64 = src.match(/const CLIENT_ID = decode\("([^"]+)"\)/)
+  if (b64) return Buffer.from(b64[1], 'base64').toString('utf8')
+  // ② 明文 CLIENT_ID
+  const plain = src.match(/const CLIENT_ID = "([^"]+)"/)
+  if (plain) return plain[1]
+  // ③ xai 常量名特例（XAI_CLIENT_ID 而非 CLIENT_ID）
+  const xai = src.match(/const XAI_CLIENT_ID = "([^"]+)"/)
+  if (xai) return xai[1]
+  return undefined
+}
+
+// 解析模板字面量端点 `${VAR}...`：VAR 的顶层 const 定义优先；
+// oauthHost/domain 是函数内变量，特判默认值（kimi 的 DEFAULT_OAUTH_HOST、copilot 的 github.com）。
+function resolveTemplateVar(src, varName, prefix, suffix) {
+  const def = src.match(new RegExp(`const ${varName} = "([^"]+)"`))
+  if (def) return prefix + def[1] + suffix
+  if (varName === 'oauthHost') {
+    const host = src.match(/const DEFAULT_OAUTH_HOST = "([^"]+)"/)
+    if (host) return prefix + host[1] + suffix
+  }
+  if (varName === 'domain') return prefix + 'https://github.com' + suffix
+  return undefined
+}
+
+// 按常量名列表提取端点：先纯字符串字面量，再模板字面量（`${VAR}/path`）。
+function extractEndpoint(src, constNames) {
+  for (const name of constNames) {
+    const plain = src.match(new RegExp(`const ${name} = "([^"]+)"`))
+    if (plain) return plain[1]
+    const tmpl = src.match(new RegExp(`const ${name} = \`([^\`]*)\\$\{([A-Za-z_][A-Za-z0-9_]*)\}([^\`]*)\``))
+    if (tmpl) {
+      const resolved = resolveTemplateVar(src, tmpl[2], tmpl[1], tmpl[3])
+      if (resolved) return resolved
+    }
+  }
+  return undefined
+}
+
+// token 端点：常量优先；copilot/kimi 的端点在函数内模板（无顶层 const），特判路径模式 + 默认 host。
+function extractTokenUrl(src) {
+  const fromConst = extractEndpoint(src, ['TOKEN_URL', 'XAI_TOKEN_URL'])
+  if (fromConst) return fromConst
+  const copilot = src.match(/`https:\/\/\$\{domain\}\/login\/oauth\/access_token`/)
+  if (copilot) return 'https://github.com/login/oauth/access_token'
+  const kimi = src.match(/`\$\{oauthHost\}\/api\/oauth\/token`/)
+  if (kimi) {
+    const host = src.match(/const DEFAULT_OAUTH_HOST = "([^"]+)"/)
+    if (host) return `${host[1]}/api/oauth/token`
+  }
+  return undefined
+}
+
+// deviceCode 端点：同上，常量优先 + copilot/kimi 函数内模板特判。
+function extractDeviceCode(src) {
+  const fromConst = extractEndpoint(src, ['XAI_DEVICE_CODE_URL', 'DEVICE_USER_CODE_URL', 'DEVICE_CODE_URL'])
+  if (fromConst) return fromConst
+  const copilot = src.match(/`https:\/\/\$\{domain\}\/login\/device\/code`/)
+  if (copilot) return 'https://github.com/login/device/code'
+  const kimi = src.match(/`\$\{oauthHost\}\/api\/oauth\/device_authorization`/)
+  if (kimi) {
+    const host = src.match(/const DEFAULT_OAUTH_HOST = "([^"]+)"/)
+    if (host) return `${host[1]}/api/oauth/device_authorization`
+  }
+  return undefined
+}
+
+function extractEndpoints(src) {
+  const endpoints = {}
+  const authorize = extractEndpoint(src, ['AUTHORIZE_URL'])
+  if (authorize) endpoints.authorize = authorize
+  const token = extractTokenUrl(src)
+  if (token) endpoints.token = token
+  const deviceCode = extractDeviceCode(src)
+  if (deviceCode) endpoints.deviceCode = deviceCode
+  const verify = extractEndpoint(src, ['DEVICE_VERIFICATION_URI', 'VERIFICATION_URL'])
+  if (verify) endpoints.verify = verify
+  return endpoints
+}
+
+// scopes 提取（缺失回退 [] 不阻断）：数组字面量 → 字符串常量 → body 字面量（copilot 的 `scope: "read:user"`）。
+function extractScopes(src) {
+  const arr = src.match(/const (?:SCOPES|SCOPE|XAI_SCOPE) = \[([^\]]*)\]/)
+  if (arr) {
+    const items = [...arr[1].matchAll(/"([^"]+)"/g)].map((m) => m[1])
+    if (items.length > 0) return items
+  }
+  const str = src.match(/const (?:SCOPES|SCOPE|XAI_SCOPE) = "([^"]+)"/)
+  if (str) return str[1].split(/\s+/).filter(Boolean)
+  const body = src.match(/scope: "([^"]+)"/)
+  if (body) return body[1].split(/\s+/).filter(Boolean)
+  return []
+}
+
+// flow 判定：device（import 共享 device-code 流）与 callback（AUTHORIZE_URL 常量）特征组合。
+function detectFlow(src) {
+  const hasDevice = src.includes('pollOAuthDeviceCodeFlow')
+  const hasCallback = src.includes('AUTHORIZE_URL')
+  if (hasDevice && hasCallback) return 'both'
+  if (hasDevice) return 'device'
+  if (hasCallback) return 'callback'
+  return undefined
+}
+
+// callbackPort 三级提取：① CALLBACK_PORT 常量 ② REDIRECT_URI 字面量 localhost:<port> ③ listen(<port>)。
+// ③ 的 0 = 动态端口（openrouter listen(0)），无固定值 → undefined。
+function extractCallbackPort(src) {
+  const constPort = src.match(/CALLBACK_PORT\s*=\s*(\d+)/)
+  if (constPort) return Number(constPort[1])
+  const uriPort = src.match(/REDIRECT_URI[^\n]*localhost:(\d+)/)
+  if (uriPort) return Number(uriPort[1])
+  const listenPort = src.match(/listen\((\d+)\)/)
+  if (listenPort) {
+    const port = Number(listenPort[1])
+    return port === 0 ? undefined : port
+  }
+  return undefined
+}
+
+/**
+ * 从 oauth 实现文件源码提取 oauthConfig。纯函数（src 注入），测试用真实文件内容直接断言。
+ * 关键字段缺失即 throw：oauth provider 无 clientId（未登记无 clientId）或无 flow ——
+ * main() 捕获后 console.error + exit 1（E6 CI 阻断铁律）。
+ * scopes/endpoints 缺失是可降级字段，回退不阻断（由调用方按 flow 记 warning）。
+ */
+export function extractOAuthConfig(id, src) {
+  const clientId = extractClientId(src)
+  const flow = detectFlow(src)
+  if (!clientId && !NO_CLIENT_ID_PROVIDERS.has(id)) {
+    throw new Error(
+      `[extractOAuthConfig] provider '${id}' 是 oauth provider 但源码中提取不到 clientId（dist/auth/oauth/${id}.js）`,
+    )
+  }
+  if (!flow) {
+    throw new Error(
+      `[extractOAuthConfig] provider '${id}' 无法判定 oauth flow：源码既无 device 也无 callback 特征（dist/auth/oauth/${id}.js）`,
+    )
+  }
+  return {
+    clientId: clientId ?? '',
+    noClientId: !clientId,
+    flow,
+    endpoints: extractEndpoints(src),
+    scopes: extractScopes(src),
+    callbackPort: extractCallbackPort(src),
+  }
+}
+
+// 读取实现文件 + 提取；文件缺失同样 throw（oauth provider 必须能提取出配置）。
+function extractOAuthConfigFromFile(id) {
+  const filePath = join(OAUTH_DIR, `${id}.js`)
+  let src
+  try {
+    src = readFileSync(filePath, 'utf-8')
+  } catch (err) {
+    throw new Error(
+      `[extractOAuthConfig] provider '${id}' 是 oauth provider 但实现文件缺失：${filePath}（${err.code}）`,
+    )
+  }
+  return extractOAuthConfig(id, src)
+}
+
 function deriveAuthMode(provider) {
   if (AMBIENT_PROVIDERS.has(provider.id)) return 'ambient'
   const hasApiKey = !!provider.auth?.apiKey
@@ -114,6 +302,22 @@ export function generateBuiltinProviders() {
       )
     }
     const models = getBuiltinModels(id)
+    const oauthConfig = provider.auth?.oauth ? extractOAuthConfigFromFile(provider.id) : undefined
+    if (oauthConfig) {
+      // 端点缺失是可降级字段：warning 不阻断（clientId/flow 缺失已在 extractOAuthConfig throw）
+      const expected =
+        oauthConfig.flow === 'device'
+          ? ['deviceCode', 'token']
+          : oauthConfig.flow === 'callback'
+            ? ['authorize', 'token']
+            : ['authorize', 'token', 'deviceCode']
+      const missing = expected.filter((e) => !oauthConfig.endpoints[e])
+      if (missing.length > 0) {
+        console.warn(
+          `[gen-builtin-providers] provider '${id}' oauthConfig 缺端点 ${missing.join('/')}（flow=${oauthConfig.flow}）—— 需调用方运行时发现`,
+        )
+      }
+    }
     return {
       id: provider.id,
       name: provider.name,
@@ -124,6 +328,7 @@ export function generateBuiltinProviders() {
       oauthSupported: !!provider.auth?.oauth,
       apiKeyName: provider.auth?.apiKey?.name,
       oauthName: provider.auth?.oauth?.name,
+      oauthConfig,
       modelCount: models.length,
       models: models.map(summarizeModel),
       logoUrl: '',
@@ -185,7 +390,13 @@ export function verifyEnvVars() {
 
 function main() {
   verifyEnvVars()
-  const providers = generateBuiltinProviders()
+  let providers
+  try {
+    providers = generateBuiltinProviders()
+  } catch (err) {
+    console.error(`[gen-builtin-providers] 提取失败（E6 阻断）：`, err.message ?? err)
+    process.exit(1)
+  }
   const payload = {
     generatedAt: new Date().toISOString(),
     piAiVersion: '0.82.1',

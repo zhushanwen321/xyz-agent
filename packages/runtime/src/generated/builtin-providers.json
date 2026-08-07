@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-07T08:59:47.339Z",
+  "generatedAt": "2026-08-07T14:55:09.031Z",
   "piAiVersion": "0.82.1",
   "providers": [
     {
@@ -2749,6 +2749,24 @@
       "oauthSupported": true,
       "apiKeyName": "Anthropic API key",
       "oauthName": "Anthropic (Claude Pro/Max)",
+      "oauthConfig": {
+        "clientId": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+        "noClientId": false,
+        "flow": "callback",
+        "endpoints": {
+          "authorize": "https://claude.ai/oauth/authorize",
+          "token": "https://platform.claude.com/v1/oauth/token"
+        },
+        "scopes": [
+          "org:create_api_key",
+          "user:profile",
+          "user:inference",
+          "user:sessions:claude_code",
+          "user:mcp_servers",
+          "user:file_upload"
+        ],
+        "callbackPort": 53692
+      },
       "modelCount": 15,
       "models": [
         {
@@ -6215,6 +6233,18 @@
       "oauthSupported": true,
       "apiKeyName": "GitHub Copilot token",
       "oauthName": "GitHub Copilot",
+      "oauthConfig": {
+        "clientId": "Iv1.b507a08c87ecfe98",
+        "noClientId": false,
+        "flow": "device",
+        "endpoints": {
+          "token": "https://github.com/login/oauth/access_token",
+          "deviceCode": "https://github.com/login/device/code"
+        },
+        "scopes": [
+          "read:user"
+        ]
+      },
       "modelCount": 29,
       "models": [
         {
@@ -9312,6 +9342,16 @@
       "oauthSupported": true,
       "apiKeyName": "Kimi API key",
       "oauthName": "Kimi Code (subscription)",
+      "oauthConfig": {
+        "clientId": "17e5f671-d194-4dfb-9706-5516cb48c098",
+        "noClientId": false,
+        "flow": "device",
+        "endpoints": {
+          "token": "https://auth.kimi.com/api/oauth/token",
+          "deviceCode": "https://auth.kimi.com/api/oauth/device_authorization"
+        },
+        "scopes": []
+      },
       "modelCount": 4,
       "models": [
         {
@@ -12533,6 +12573,24 @@
       "envVars": [],
       "oauthSupported": true,
       "oauthName": "OpenAI (ChatGPT Plus/Pro)",
+      "oauthConfig": {
+        "clientId": "app_EMoamEEZ73f0CkXaXp7hrann",
+        "noClientId": false,
+        "flow": "both",
+        "endpoints": {
+          "authorize": "https://auth.openai.com/oauth/authorize",
+          "token": "https://auth.openai.com/oauth/token",
+          "deviceCode": "https://auth.openai.com/api/accounts/deviceauth/usercode",
+          "verify": "https://auth.openai.com/codex/device"
+        },
+        "scopes": [
+          "openid",
+          "profile",
+          "email",
+          "offline_access"
+        ],
+        "callbackPort": 1455
+      },
       "modelCount": 7,
       "models": [
         {
@@ -14874,6 +14932,16 @@
       "oauthSupported": true,
       "apiKeyName": "OpenRouter API key",
       "oauthName": "OpenRouter OAuth",
+      "oauthConfig": {
+        "clientId": "",
+        "noClientId": true,
+        "flow": "callback",
+        "endpoints": {
+          "authorize": "https://openrouter.ai/auth",
+          "token": "https://openrouter.ai/api/v1/auth/keys"
+        },
+        "scopes": []
+      },
       "modelCount": 276,
       "models": [
         {
@@ -26814,6 +26882,23 @@
       "oauthSupported": true,
       "apiKeyName": "xAI API key",
       "oauthName": "xAI (Grok/X subscription)",
+      "oauthConfig": {
+        "clientId": "b1a00492-073a-47ea-816f-4c329264a828",
+        "noClientId": false,
+        "flow": "device",
+        "endpoints": {
+          "token": "https://auth.x.ai/oauth2/token",
+          "deviceCode": "https://auth.x.ai/oauth2/device/code"
+        },
+        "scopes": [
+          "openid",
+          "profile",
+          "email",
+          "offline_access",
+          "grok-cli:access",
+          "api:access"
+        ]
+      },
       "modelCount": 3,
       "models": [
         {
