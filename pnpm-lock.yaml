@@ -214,9 +214,6 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: '*'
         version: 0.82.1(ws@8.21.0)(zod@3.25.76)
-      '@zhushanwen/pi-statusline':
-        specifier: '*'
-        version: 0.6.0(@earendil-works/pi-ai@0.82.1(ws@8.21.0)(zod@3.25.76))(@earendil-works/pi-coding-agent@0.82.1(ws@8.21.0)(zod@3.25.76))(@earendil-works/pi-tui@0.82.1)
       tree-sitter-bash:
         specifier: ^0.25.1
         version: 0.25.1
@@ -287,25 +284,6 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: '*'
         version: 0.82.1(ws@8.21.0)(zod@3.25.76)
-    devDependencies:
-      vitest:
-        specifier: ^4.1.8
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
-
-  extensions/statusline:
-    dependencies:
-      '@earendil-works/pi-ai':
-        specifier: '*'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
-      '@earendil-works/pi-coding-agent':
-        specifier: '*'
-        version: 0.82.1(ws@8.21.0)(zod@3.25.76)
-      '@earendil-works/pi-tui':
-        specifier: '*'
-        version: 0.82.1
-      '@zhushanwen/pi-quota-providers':
-        specifier: workspace:*
-        version: link:../shared/quota-providers
     devDependencies:
       vitest:
         specifier: ^4.1.8
@@ -804,6 +782,9 @@ packages:
   '@aws-sdk/core@3.977.3':
     resolution: {integrity: sha512-6YZTpF5Zzl0KdSrztM0l6ErKdnXrnnodIDYfayHE9SFfZU8Ubxls7H2XnfWT121jgwiG+WP1z5kyfVDsH5V4qA==}
     engines: {node: '>=20.0.0'}
+    deprecated: |-
+      Deprecated due to Document number parsing bug in JSON, see
+        https://github.com/aws/aws-sdk-js-v3/issues/8246. Newer version available.
 
   '@aws-sdk/credential-provider-env@3.972.64':
     resolution: {integrity: sha512-14kkR5aj1c7D+cYCrEcG2W3xw87wMYAEUeB/tMiQ2j0RVKzzdewd4mJw1+Q0JVLr4IFU1JHGDCyj0WqLrtIixg==}
@@ -2305,23 +2286,6 @@ packages:
 
   '@xyz-agent/extension-protocol@0.2.0':
     resolution: {integrity: sha512-O0rLEljva7Vn61HfuZNRDBEkSb8v5stBnYposEDYF4n/9lF8p3gdiSh+vEF6NZzCFA6VI/QSqwdFZ8xhCKoK3A==}
-
-  '@zhushanwen/pi-quota-providers@0.6.0':
-    resolution: {integrity: sha512-S99q8LneoTCqEHELl8TOPn4aE6l3yFBCWba3m86WueviIidFSVX/udGj65FOD3EpmU3eXJxAmWTYpKw+XhYIeA==}
-    peerDependencies:
-      '@earendil-works/pi-coding-agent': '*'
-
-  '@zhushanwen/pi-statusline@0.6.0':
-    resolution: {integrity: sha512-ISXQIgVtMc2BTf9sue5GLkQeB4bVcfmtWg2BrFxXIQ5eHyfqPSkDL1z3gdzMYQk+Zl+MMsyFw1aFBJtPPLCmMg==}
-    peerDependencies:
-      '@earendil-works/pi-ai': '*'
-      '@earendil-works/pi-coding-agent': '*'
-      '@earendil-works/pi-tui': '*'
-    peerDependenciesMeta:
-      '@earendil-works/pi-ai':
-        optional: true
-      '@earendil-works/pi-tui':
-        optional: true
 
   abbrev@2.0.0:
     resolution: {integrity: sha512-6/mh1E2u2YgEsCHdY0Yx5oW+61gZU+1vXaoiHHrpKeuRNNgFvS+/jrwHiQhB5apAf5oB7UB7E19ol2R2LKH8hQ==}
@@ -7097,18 +7061,6 @@ snapshots:
   '@xterm/xterm@5.5.0': {}
 
   '@xyz-agent/extension-protocol@0.2.0': {}
-
-  '@zhushanwen/pi-quota-providers@0.6.0(@earendil-works/pi-coding-agent@0.82.1(ws@8.21.0)(zod@3.25.76))':
-    dependencies:
-      '@earendil-works/pi-coding-agent': 0.82.1(ws@8.21.0)(zod@3.25.76)
-
-  '@zhushanwen/pi-statusline@0.6.0(@earendil-works/pi-ai@0.82.1(ws@8.21.0)(zod@3.25.76))(@earendil-works/pi-coding-agent@0.82.1(ws@8.21.0)(zod@3.25.76))(@earendil-works/pi-tui@0.82.1)':
-    dependencies:
-      '@earendil-works/pi-coding-agent': 0.82.1(ws@8.21.0)(zod@3.25.76)
-      '@zhushanwen/pi-quota-providers': 0.6.0(@earendil-works/pi-coding-agent@0.82.1(ws@8.21.0)(zod@3.25.76))
-    optionalDependencies:
-      '@earendil-works/pi-ai': 0.82.1(ws@8.21.0)(zod@3.25.76)
-      '@earendil-works/pi-tui': 0.82.1
 
   abbrev@2.0.0: {}
 
