@@ -104,6 +104,14 @@ jobs:
           chmod +x scripts/prepare-pi-resources.sh
           ./scripts/prepare-pi-resources.sh "$PI_VERSION"
 
+      # 内置 provider catalog 由构建期脚本从 pi-ai 提取（git 跟踪的 JSON 是构建快照）。
+      # 根 package.json 的 prebuild 只在根 `pnpm run build` 时触发；本 workflow 直接
+      # --filter @xyz-agent/electron run build 会绕过它——必须显式执行，否则 pi-ai 升级后
+      # CI 静默用仓库里的旧 JSON（生成物与 pi-ai 版本漂移，verifyEnvVars 守卫只在本地生效）。
+      - name: Generate builtin providers catalog
+        shell: bash
+        run: node packages/runtime/scripts/gen-builtin-providers.mjs
+
       - name: Build
         env:
           # 跳过 macOS 代码签名（未配置 Apple Developer 证书）
