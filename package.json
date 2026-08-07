@@ -23,7 +23,9 @@
     "extensions:lint": "npx eslint extensions/",
     "extensions:test": "pnpm -r --filter '@zhushanwen/pi-*' test",
     "verify:coexistence-flag": "node scripts/verify-coexistence-flag.mjs",
-    "verify:dual-entry": "node scripts/verify-dual-entry.mjs"
+    "verify:dual-entry": "node scripts/verify-dual-entry.mjs",
+    "gen:builtin-providers": "node packages/runtime/scripts/gen-builtin-providers.mjs",
+    "prebuild": "node packages/runtime/scripts/gen-builtin-providers.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.0",
