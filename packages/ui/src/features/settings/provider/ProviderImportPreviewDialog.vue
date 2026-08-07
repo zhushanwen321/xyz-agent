@@ -197,13 +197,15 @@ function sourceLabel(source: string): string {
           </ul>
         </div>
 
-        <!-- 空列表（无 parseError 也无 providers） -->
-        <div v-if="!preview.providers.length" class="py-8 text-center text-[12px] text-neutral-mid">
+        <!-- 空列表（组 1 与组 2 均为空才显示空态；任一组有数据则渲染对应组） -->
+        <div v-if="!preview.providers.length && !preview.orphanCredentials?.length" class="py-8 text-center text-[12px] text-neutral-mid">
           {{ t('settings.providerEdit.noModels') }}
         </div>
 
-        <!-- provider 列表（组 1：Pi models.json 中的供应商） -->
+        <!-- 列表容器：组 1 与组 2 并列独立渲染，避免组 1 为空时连带隐藏组 2 -->
         <div v-else class="flex flex-col gap-1.5">
+        <!-- 组 1：Pi models.json 中的供应商（为空整组跳过，不影响组 2 渲染） -->
+        <template v-if="preview.providers.length">
         <div class="flex items-center gap-1.5 pt-1 text-[11px] font-medium text-neutral-fg" data-testid="group-1-title">
           {{ t('settings.provider.importPreview.groupModels') }}
         </div>
@@ -286,6 +288,7 @@ function sourceLabel(source: string): string {
             </ul>
           </div>
         </div>
+        </template>
 
         <!-- 组 2（sa3 F1 · B.6）：Pi auth.json 中的额外凭据（孤儿凭据，匹配到内置模板） -->
         <div v-if="preview.orphanCredentials?.length" data-testid="orphan-group" class="flex flex-col gap-1.5">
