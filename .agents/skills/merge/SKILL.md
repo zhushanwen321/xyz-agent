@@ -11,9 +11,9 @@ description: >-
 
 > **双发布线**：本项目同时维护两条独立的发布线：
 > - **Electron 发布线**（`v*` tag → `release.yml` → DMG/EXE/AppImage）—— 阶段 4
-> - **npm 发布线**（`npm-v*` tag → `release-npm.yml` → @xyz-agent/* + @zhushanwen/pi-* npm 包）—— 阶段 4N（可选）
+> - **npm 发布线**（`npm-*` tag → `release-npm.yml` → @xyz-agent/* + @zhushanwen/pi-* npm 包）—— 阶段 4N（可选）
 >
-> 两套 tag 前缀（`v*` vs `npm-v*`）互不干扰，CI concurrency group 隔离。阶段 4N 仅在本次 PR 含 `extensions/` 改动且有 changeset 时执行。
+> 两套 tag 前缀（`v*` vs `npm-*`）互不干扰，CI concurrency group 隔离。阶段 4N 仅在本次 PR 含 `extensions/` 改动时执行（人工版本判定机制，详见阶段 4N）。
 
 ## 前置条件
 
@@ -151,99 +151,115 @@ bash scripts/verify-ci-release.sh "v$(node -p "require('./package.json').version
 
 ### 阶段 4N: npm Extension 发布（可选）
 
-> **仅在本次 PR 含 extension 改动（`extensions/` 有变更）且有对应 `.changeset/*.md` 时执行。**
-> 纯 Electron 改动（如只改 packages/ 或 apps/）跳过本阶段。
+> **仅在本次 PR 含 extension 改动（`extensions/` 有变更）时执行。** 纯 Electron 改动（如只改 packages/ 或 apps/）跳过本阶段。
 >
 > npm 发布线与 Electron 发布线**完全独立**：
 > - Electron 走 `v*` tag（阶段 4）→ `release.yml` → DMG/EXE/AppImage
-> - npm 走 `npm-v*` tag（本阶段）→ `release-npm.yml` → npm registry（@xyz-agent/* + @zhushanwen/pi-*）
+> - npm 走 `npm-*` tag（本阶段，格式 `npm-<slug>-<date>-<time>`）→ `release-npm.yml` → npm registry（@xyz-agent/* + @zhushanwen/pi-*）
+>
+> **本阶段采用人工版本判定机制**（不再用 `changeset version` 自动推算 type，避免 shouldBumpMajor/applyLinks 把声明的 minor 误放大成 major）。完整设计见 docs（版本号人工判定机制）。脚本：`scripts/check-version-changes.sh` + `scripts/apply-version.sh`。
+>
+> **dev-npm 预发布线不受本阶段影响**：预发布（`dev-npm-*` 分支 → `release-npm-dev.yml`）仍走 `changeset version` + `changeset pre` 全流程，两条机制并存。
 
-#### 4N.1 检查 changeset 文件
+#### 4N.1 检查需要版本处理的包
 
 ```bash
 cd $WS_ROOT/main
 git fetch github
 git reset --hard github/main   # 确保本地 main 已同步（阶段 4 的 Electron bump 已合并进 main）
 
-# 列出待消费的 changeset
-find .changeset -name '*.md' ! -name 'README.md'
+bash scripts/check-version-changes.sh main..HEAD
 ```
 
-确认 changeset 文件列表。每个 changeset 的 key 必须是 `package.json` 的 `name` 全名（如 `@zhushanwen/pi-goal`），不是目录名。
+脚本输出：
+- `NEEDS_VERSION=true|false`（false = 本次无源码改动，跳过 4N）
+- `CHANGED_PACKAGES`：已声明 changeset 的包 + 声明的 type（只显示不采纳）
+- `UNDECLARED_PACKAGES`：改了 src 但无 changeset（PR 漏声明警告）—— 非空则补写 `.changeset/<slug>.md` 后重跑
+- `DEPENDENTS_OF_CHANGED`：**传递闭包**，自己没改 src 但通过 workspace: 直接/间接引用了已 bump 包、须 patch 重发刷新 tarball 范围的包（标注层数与触发链路）
+- `LINKED_GROUPS_AFFECTED`：linked 组受影响参考（不强制对齐）
 
-⚠️ **如果无 changeset 文件** → extension 不会 bump → `changeset publish` 无新包可发。补救：用 `pnpm changeset`（交互式）或手写 `.changeset/<slug>.md` 创建：
+**决策面 = `CHANGED_PACKAGES` ∪ `DEPENDENTS_OF_CHANGED`**，两者都要进 4N.2/4N.3。
 
-```
----
-"@zhushanwen/pi-<name>": patch   # 或 minor/major
----
+#### 4N.2 人工定 type [MANDATORY 人工决策]
 
-<变更描述>
-```
+**人工只需对 `CHANGED_PACKAGES` 定 type**（自己 src 改了的包）。`DEPENDENTS_OF_CHANGED` 的 patch 由 4N.3 脚本自动执行（规则一确定性，无需人工传参）。
 
-写错包名 key 会**静默不 bump** —— 创建后务必用 `pnpm changeset version` 验证目标包版本号确实变化。
+对 `CHANGED_PACKAGES` 的每个包，按准则定 major/minor/patch：
 
-#### 4N.2 消费 changeset（bump 版本）
+| type | 准则 |
+|------|------|
+| major | 多个重要功能，或架构升级 |
+| minor | 少量功能，或单一功能新增 |
+| patch | 纯问题修复 |
+
+**dep 传播（两条规则）**：
+- **规则一（机械，自动）**：`DEPENDENTS_OF_CHANGED` 的包由 apply-version.sh 自动 patch bump（刷新 tarball 里 workspace:* 解析后的范围，避免消费者 ERESOLVE 或被钉旧版本）
+- **规则二（语义，人工）**：`CHANGED_PACKAGES` 里某包自身代码受 breaking 影响 → 在其 type 里直接体现（人工定 minor/major）
+- linked 组不强制版本对齐；fixed 组（当前空）若启用则整组同步（apply-version.sh 兜底）
+
+> 参考 `.changeset/*.md` 的 type 初判，但不绑死。可能出现「声明 minor 但实际该 patch」——以人工判断为准。
+
+#### 4N.3 改 version + 生成 CHANGELOG
 
 ```bash
 cd $WS_ROOT/main
-pnpm changeset version
-
-# 验证：检查变更的 extension 版本号
-git diff --name-only | grep 'package.json'
-git diff -- extensions/*/package.json extensions/shared/*/package.json packages/extension-protocol/package.json | grep '^[+-]  "version"'
+# 人工只传 CHANGED_PACKAGES 的 type；DEPENDENTS_OF_CHANGED 由脚本自动 patch
+bash scripts/apply-version.sh \
+  --changed @zhushanwen/pi-<pkg-a>=minor @zhushanwen/pi-<pkg-b>=patch \
+  --dependents-from <(bash scripts/check-version-changes.sh main..HEAD)
 ```
 
-#### 4N.3 commit + 打 tag + push
+脚本：CHANGED_PACKAGES 按 type semver bump + DEPENDENTS_OF_CHANGED 自动 patch（规则一）+ 生成 CHANGELOG（CHANGED 用 changeset body，DEPENDENTS 用自动 `chore: refresh dependency range` 条目）+ 消费（删除）.changeset/*.md + fixed 组一致性校验。
+
+验证：
+```bash
+git diff -- extensions/*/package.json extensions/shared/*/package.json packages/*/package.json | grep '^[+-]  "version"'
+git diff --name-only | grep CHANGELOG
+ls .changeset/*.md 2>/dev/null | grep -v README.md && echo "⚠️ 未消费的 changeset 残留" || echo "✓ changeset 全消费"
+```
+
+> **不确定时可先 --dry-run**：`bash scripts/apply-version.sh --changed ... --dependents-from <(...) --dry-run` 预览将做的改动，不写文件。
+
+#### 4N.4 commit + tag + push
 
 ```bash
 cd $WS_ROOT/main
+SLUG="<本次发布主题-kebab>"   # 人工定，来自 PR 标题
+STAMP=$(date +%Y%m%d-%H%M)
 
-# changeset version 生成 .changeset/*.md 消费记录 + CHANGELOG.md + 版本 bump
-# 按需 git add（只 add changeset 消费的产物，不要 add 认知外的改动）
-git add .changeset extensions/*/package.json extensions/shared/*/package.json packages/extension-protocol/package.json CHANGELOG.md
+git add extensions/*/package.json extensions/shared/*/package.json packages/*/package.json \
+        '**/CHANGELOG.md'
+git commit -m "chore: version bump — <包与版本摘要>"
 
-# commit 版本变更
-pnpm changeset version  # 再跑一次确认无遗漏（幂等：已消费的不再变）
-git status --short       # 确认 working tree 干净（无未暂存的版本改动）
+# npm-* tag（不绑单一版本号，多包不同步时不误导；release-npm.yml 不从 tag 解析版本）
+git tag "npm-${SLUG}-${STAMP}"
 
-# 取 npm 版本号（用任意已 bump 的包，这里用 extension-protocol 代表）
-NPM_VERSION=$(node -p "require('./packages/extension-protocol/package.json').version")
-# 或如果只发 extension，取某个 extension 的版本
-# NPM_VERSION=$(node -p "require('./extensions/<name>/package.json').version")
-
-git commit -m "chore: pnpm version ${NPM_VERSION}"
-
-# 打 npm-v* tag（注意前缀 npm-，与 Electron 的 v* 区分）
-git tag "npm-v${NPM_VERSION}"
-
-# 推送 commit + tag
 git push github HEAD
-git push github "npm-v${NPM_VERSION}"
+git push github "npm-${SLUG}-${STAMP}"
 ```
 
-#### 4N.4 验证 npm 发布
+#### 4N.5 验证 npm 发布
 
-`npm-v*` tag push 后，`release-npm.yml` CI 自动执行：
+`npm-*` tag push 触发 `release-npm.yml` CI：
 1. `pnpm install --frozen-lockfile`
-2. `pnpm --filter @xyz-agent/extension-protocol build`（有构建的包单独 build）
-3. `pnpm changeset publish`（发布 extension-protocol + @zhushanwen/pi-* extensions + quota-providers，extensions 无构建直接发 .ts 源码）
+2. **Verify NOT in prerelease mode**（检查 `.changeset/pre.json` 不存在；若残留会整批误发 dev tag，CI hard fail）
+3. `pnpm --filter @xyz-agent/extension-protocol build` + `pnpm extensions:typecheck`
+4. `pnpm changeset publish`（预查 registry，只发未发布版本；extensions 直接发 .ts 源码）
 
-验证 CI 完成：
-
+验证 CI 完成 + npm 上线：
 ```bash
 cd $WS_ROOT/main
-# 轮询 CI（复用 wait-for-ci.sh，但监听 npm-v* tag 对应的 workflow）
+# 轮询 CI
 gh run list --workflow=release-npm.yml --repo zhushanwen321/xyz-agent --limit 3
 gh run watch <run-id> --repo zhushanwen321/xyz-agent
-```
 
-CI 成功后验证 npm 版本上线：
-
-```bash
-# 用 curl 查官方 registry（npm view 受镜像影响，新包有同步延迟）
-curl -s -o /dev/null -w "%{http_code}" "https://registry.npmjs.org/@zhushanwen%2fpi-<name>/<version>"
-# 200 = 已上线
+# 必须带具体版本号查（packument 任何版本都返回 200，验不出新版本发布）
+for entry in "@zhushanwen/pi-<pkg> <version>"; do
+  pkg=${entry% *}; ver=${entry##* }
+  scoped=$(echo "$pkg" | sed 's|/|%2f|')
+  code=$(curl -s -o /dev/null -w "%{http_code}" "https://registry.npmjs.org/${scoped}/${ver}")
+  [ "$code" = "200" ] && echo "✓ ${pkg}@${ver} 已发布" || echo "✗ ${pkg}@${ver} 未发布 (${code})"
+done
 ```
 
 **[MANDATORY] 禁止本地 `pnpm changeset publish` / `npm publish`**：npm 发布由 CI 完成（NPM_TOKEN 认证）。本地只做 version bump + tag push。
@@ -369,7 +385,7 @@ bash .agents/skills/merge/scripts/remove-worktree.sh <branch-name> --force --ski
 | 4 | Post-merge CI（阶段 3） | |
 | 5 | ⚠️ 版本校验（阶段 3.5） | `bash scripts/check-version-bump.sh` |
 | 6 | Electron 版本 bump + 发布（阶段 4） | `bash scripts/verify-ci-release.sh ...` (在 push 后调用) |
-| 6N | ⚠️ npm 发布（阶段 4N，可选） | 仅含 extensions/ 改动时执行：changeset version + npm-v* tag |
+| 6N | ⚠️ npm 发布（阶段 4N，可选） | 仅含 extensions/ 改动时执行：人工定 type（check + apply 脚本）+ npm-* tag |
 | 7 | 创建 Release（阶段 5） | |
 | 8 | ⚠️ 确认交付物（阶段 6） | `bash scripts/verify-ci-release.sh ...` |
 | 9 | 清理 worktree（阶段 7，终结步骤） | 删除后直接输出总结，不再调 bash |
