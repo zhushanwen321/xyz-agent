@@ -155,13 +155,28 @@
       @confirm="onImportConfirm"
     />
 
-    <!-- 内置模板快速配置（wave 3） -->
+    <!-- 内置模板快速配置（wave-quick-setup-c：radio 四选一 + OAuth + env 检测态） -->
     <ProviderQuickSetup
       v-if="selectedTemplate"
       :template="selectedTemplate"
       :open="showQuickSetup"
+      :env-check="oauth.envCheck.value"
+      :oauth-authorized="selectedTemplate ? oauth.authorized.value.has(selectedTemplate.id) : false"
       @save="onQuickSetupSave"
       @cancel="onQuickSetupCancel"
+      @oauth-login="onQuickSetupOAuthLogin"
+    />
+    <!-- OAuth 授权对话框（wave-oauth-infra T7 产出，四态） -->
+    <OAuthDialog
+      v-if="selectedTemplate"
+      :open="oauth.state.value.open"
+      :provider="{ id: selectedTemplate.id, name: selectedTemplate.name, oauthName: selectedTemplate.oauthName }"
+      :status="oauth.state.value.status"
+      :device-info="oauth.state.value.deviceInfo"
+      :auth-url="oauth.state.value.authUrl"
+      :error-message="oauth.state.value.errorMessage"
+      @cancel="oauth.cancel"
+      @retry="oauth.retry"
     />
     <!-- R4 手风琴就地编辑 -->
   </div>
@@ -187,9 +202,11 @@ import {
   ProviderImportPreviewDialog,
   ProviderTemplatePicker,
   ProviderQuickSetup,
+  OAuthDialog,
   SETTINGS_TOAST_KEY,
   USE_QUOTA_CONFIGURE_KEY,
 } from '@xyz-agent/ui/features/settings'
+import { useProviderOAuth } from '@/composables/features/settings/useProviderOAuth'
 
 // ProviderEditBody 迁入 ui 包，其 renderer 侧依赖（useQuotaConfigure/useToast）经
 // provide/inject 注入（ui 零 renderer import 铁律）。ProviderEditBody 内部调用工厂。
@@ -218,6 +235,16 @@ const selectedTemplate = ref<BuiltinProviderTemplate | null>(null)
 /** QuickSetup 开关（与 selectedTemplate 配合控制 Dialog） */
 const showQuickSetup = ref(false)
 
+/** OAuth 授权状态机（composable：OAuthDialog 驱动 + auth.* 事件订阅） */
+const oauth = useProviderOAuth((providerId) => {
+  // auth.success 后：关 QuickSetup（已授权态经 oauthAuthorized prop 回写）；
+  // 列表刷新由 settingsStore onProviders 广播驱动（broadcastProviderList）
+  void providerId
+  showQuickSetup.value = false
+  selectedTemplate.value = null
+  oauth.envCheck.value = undefined
+})
+
 onMounted(async () => {
   try {
     builtinProviders.value = await config.listBuiltinProviders()
@@ -227,10 +254,11 @@ onMounted(async () => {
   }
 })
 
-/** 选中内置模板 → 打开 QuickSetup */
-function onTemplateSelect(tpl: BuiltinProviderTemplate): void {
+/** 选中内置模板 → 打开 QuickSetup + env 检测（I3） */
+async function onTemplateSelect(tpl: BuiltinProviderTemplate): Promise<void> {
   selectedTemplate.value = tpl
   showQuickSetup.value = true
+  await oauth.checkEnv(tpl)
 }
 
 /** QuickSetup 保存 → config.setProvider（方案 B 占位 data），成功后关闭 + toast */
@@ -255,6 +283,13 @@ async function onQuickSetupSave({
 function onQuickSetupCancel(): void {
   showQuickSetup.value = false
   selectedTemplate.value = null
+  oauth.envCheck.value = undefined
+}
+
+/** QuickSetup 的 OAuth 登录按钮 → 启动 OAuth flow（composable 驱动 OAuthDialog + config.oauthLogin） */
+function onQuickSetupOAuthLogin(): void {
+  if (!selectedTemplate.value) return
+  void oauth.login(selectedTemplate.value.id)
 }
 
 /** toggle 中的 provider id 集合（防双击：API 期间 disable Switch） */

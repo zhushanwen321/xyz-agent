@@ -160,3 +160,38 @@ describe('ConfigService.checkEnvVars（I3，wave-env-check TC2）', () => {
     expect(service.checkEnvVars([])).toEqual({})
   })
 })
+
+describe('ConfigService authMethod 透传与推断（I6，wave-quick-setup-c TC7）', () => {
+  it('setProvider 透传 authMethod 到 models.json', () => {
+    const mockStore = {
+      getProviderConfig: vi.fn(() => ({ name: 'openai' })),
+      upsertProvider: vi.fn((_id: string, merged: Record<string, unknown>) => {
+        expect(merged.authMethod).toBe('api_key')
+        return {}
+      }),
+    } as unknown as IConfigStore
+    const svc = new ConfigService('/tmp/project', mockStore)
+    svc.setProvider('openai', { apiKey: 'sk-x', authMethod: 'api_key' })
+    expect(mockStore.upsertProvider).toHaveBeenCalled()
+  })
+
+  it('listProviders 回填 authMethod：标注值优先；旧数据 $开头→env_var，非空→api_key，空→undefined', () => {
+    const mockStore = {
+      readModels: vi.fn(() => ({
+        providers: {
+          'with-mark': { name: 'A', apiKey: 'sk-x', authMethod: 'oauth' },
+          'env-legacy': { name: 'B', apiKey: '$OPENAI_API_KEY' },
+          'plain-legacy': { name: 'C', apiKey: 'sk-y' },
+          'empty-legacy': { name: 'D' },
+        },
+      })),
+    } as unknown as IConfigStore
+    const svc = new ConfigService('/tmp/project', mockStore)
+    const providers = svc.listProviders()
+    const byId = Object.fromEntries(providers.map(p => [p.id, p]))
+    expect(byId['with-mark'].authMethod).toBe('oauth')
+    expect(byId['env-legacy'].authMethod).toBe('env_var')
+    expect(byId['plain-legacy'].authMethod).toBe('api_key')
+    expect(byId['empty-legacy'].authMethod).toBeUndefined()
+  })
+})

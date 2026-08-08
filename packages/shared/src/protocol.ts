@@ -115,6 +115,8 @@ export type ClientMessageType =
   // OAuth Login（路径 B 自实现，slice design I1/I2）：启动/中止 OAuth flow。
   // 中间态经 server→client 事件推送（auth.deviceCode / auth.authUrl / auth.success / auth.error）。
   | 'config.oauthLogin' | 'config.oauthCancel'
+  // 环境变量检测（I3，wave-env-check）：只返回布尔不返回值（env 值可能含凭证）。
+  | 'config.checkEnvVars'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -125,6 +127,12 @@ export interface SetProviderData {
   name?: string
   type?: string
   apiKey?: string
+  /**
+   * 认证方式（I6，wave-quick-setup-c）：ProviderQuickSetup.onSave 按所选认证方式填充，
+   * runtime 写入 models.json 该 provider 条目旁。兼容旧数据：未设置时按 apiKey 格式推断
+   * （$开头→env_var，非空→api_key）。
+   */
+  authMethod?: 'api_key' | 'oauth' | 'env_var'
   baseUrl?: string
   /** 自定义请求头（provider 级，与 ProviderInfo.headers 对齐）。 */
   headers?: Record<string, string>
@@ -500,6 +508,8 @@ export interface ClientMessageMap {
   'config.applyImportProviders': { importId: string; selectedIds: string[] }
   /** config.oauthLogin：启动 OAuth flow（device/callback，按 provider 的 oauthConfig）。reply config.oauthLoginReply。 */
   'config.oauthLogin': { providerId: string }
+  /** config.checkEnvVars：批量检测环境变量是否已设置。reply config.envVarsChecked。 */
+  'config.checkEnvVars': { names: string[] }
   /** config.oauthCancel：中止进行中的 OAuth flow（停轮询/关 server/清 state）。reply config.oauthCancelReply。 */
   'config.oauthCancel': { providerId: string }
 }
@@ -641,6 +651,8 @@ export type ServerMessageType =
   | 'auth.deviceCode' | 'auth.authUrl' | 'auth.success' | 'auth.error'
   // OAuth Login RPC reply（config.oauthLogin/oauthCancel 的回复，消费型）。
   | 'config.oauthLoginReply' | 'config.oauthCancelReply'
+  // 环境变量检测 reply（I3）。
+  | 'config.envVarsChecked'
 
 /** skill 缓存失效广播的作用域：global=全局 skill 变动，project=某项目 cwd 的 skill 变动。 */
 export type SkillCacheScope = 'global' | 'project'
@@ -1027,6 +1039,8 @@ export interface ServerMessageMapBase {
   'config.oauthLoginReply': { started: boolean; error?: string }
   /** config.oauthCancel reply（幂等：无进行中 flow 返回 cancelled:false 不报错）。 */
   'config.oauthCancelReply': { cancelled: boolean }
+  /** config.checkEnvVars reply：只含布尔（安全红线：env 值不进前端）。 */
+  'config.envVarsChecked': { results: Record<string, boolean> }
   // config.discoveredModels：discoverModels reply（settings-message-handler.ts:178/180）。
   // 成功 { models, success: true }；失败 { models: [], success: false, error }（D10 降级响应，非 error envelope）。
   // models 元素形状对齐前端 config.ts:49 DiscoveredModelsResult（id + 可选 name/contextWindow）。
@@ -1146,6 +1160,7 @@ export interface ReplyPayloadMap {
   // OAuth Login（路径 B）：reply 消费型（started/cancelled 布尔）。
   'config.oauthLogin': ServerMessageMap['config.oauthLoginReply']
   'config.oauthCancel': ServerMessageMap['config.oauthCancelReply']
+  'config.checkEnvVars': ServerMessageMap['config.envVarsChecked']
   'config.scanSessionSkills': ServerMessageMap['config.sessionSkills']
   'config.getGlobalSkills': ServerMessageMap['config.globalSkills']
   'config.getProjectSkills': ServerMessageMap['config.projectSkills']

@@ -160,6 +160,12 @@ export class ConfigService implements IConfigService {
       api: config.api,
       baseUrl: config.baseUrl,
       apiKeySet: !!config.apiKey,
+      // I6：authMethod 回填——优先取 models.json 标注值；旧数据未标注时按 apiKey 格式推断
+      // （$开头→env_var，非空→api_key；pi resolveConfigValue 语义一致）
+      authMethod: config.authMethod
+        ?? (typeof config.apiKey === 'string' && config.apiKey.startsWith('$')
+          ? 'env_var' as const
+          : config.apiKey ? 'api_key' as const : undefined),
       status: config.apiKey ? 'connected' as const : 'not_configured' as const,
       models: (config.models ?? []).map(m => ({
         id: m.id,
@@ -217,6 +223,7 @@ export class ConfigService implements IConfigService {
     name?: string
     type?: string
     apiKey?: string
+    authMethod?: 'api_key' | 'oauth' | 'env_var'
     baseUrl?: string
     models?: Array<string | { id: string; name?: string; api?: string; baseUrl?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null>; enabled?: boolean; compat?: Record<string, unknown> }>
     enabled?: boolean
@@ -236,6 +243,8 @@ export class ConfigService implements IConfigService {
     // TODO: 当 pi models.json 支持 schema 后收窄类型（现有 Record<string, unknown> 是架构限制）
     const merged: Record<string, unknown> = { ...existing }
     if (data.apiKey !== undefined) merged.apiKey = data.apiKey as string
+    // I6：authMethod 透传（ProviderQuickSetup.onSave 按所选认证方式填充）
+    if (data.authMethod !== undefined) merged.authMethod = data.authMethod
     if (data.baseUrl !== undefined) merged.baseUrl = data.baseUrl as string
     if (data.type !== undefined) merged.api = this.configStore.applyTypeTranslation(data.type as string)
     if (data.name !== undefined) merged.name = data.name as string

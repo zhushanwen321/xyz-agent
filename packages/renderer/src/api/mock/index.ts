@@ -707,6 +707,31 @@ export const config = {
     await sleep(TIMING.ack)
     return []
   },
+  // wave-env-check：env 检测。mock 读 process.env 同构（浏览器 mock 下多为未设置）。
+  async checkEnvVars(names: string[]): Promise<Record<string, boolean>> {
+    await sleep(TIMING.ack)
+    const results: Record<string, boolean> = {}
+    for (const name of names) {
+      const proc = (globalThis as Record<string, unknown>).process as { env?: Record<string, string | undefined> } | undefined
+      const v = proc?.env?.[name]
+      results[name] = v !== undefined && v !== ''
+    }
+    return results
+  },
+  // wave-oauth-infra：OAuth RPC。mock 模式无 runtime flow（无真实授权），返回 started 失败提示签名同构。
+  async oauthLogin(_providerId: string): Promise<{ started: boolean; error?: string }> {
+    await sleep(TIMING.ack)
+    return { started: false, error: 'mock 模式不支持 OAuth 授权' }
+  },
+  async oauthCancel(_providerId: string): Promise<{ cancelled: boolean }> {
+    await sleep(TIMING.ack)
+    return { cancelled: false }
+  },
+  // OAuth 事件订阅：mock 不推送，返回 no-op unsubscribe 保持签名同构。
+  onAuthDeviceCode: (_h: (payload: { providerId: string; userCode: string; verificationUri: string; verificationUriComplete?: string; expiresIn?: number; interval?: number }) => void) => () => {},
+  onAuthAuthUrl: (_h: (payload: { providerId: string; url: string; callbackPort?: number }) => void) => () => {},
+  onAuthSuccess: (_h: (payload: { providerId: string }) => void) => () => {},
+  onAuthError: (_h: (payload: { providerId: string; message: string }) => void) => () => {},
   async discoverModels(req: { baseUrl: string; apiKey?: string; providerType?: string; providerId?: string }) {
     await sleep(TIMING.ack)
     void req
