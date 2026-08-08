@@ -446,6 +446,49 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
     RUN_TIMEOUT_MS,
   );
 
+  it("TC4: actionRun 顺序——not_found 优先（平铺 + 不存在名）；slug 护栏保留；chain 平铺 Correct 文案", async () => {
+    const deps = makeDeps();
+    // 平铺 + 不存在 name → not_found 优先（m6：registry.get 先于平铺检测）
+    const notFound = await actionRun(
+      { action: "run", name: "nope", task: "x" },
+      deps,
+      undefined,
+    );
+    expect(notFound.isError).toBe(true);
+    expect(notFound.content![0]!.text).toContain("not found"); // DoD 用户可见断言
+    // chain 平铺 task → isError Correct 正例（动态集来自 registry）
+    const flat = await actionRun(
+      { action: "run", name: "chain", task: "x" },
+      deps,
+      undefined,
+    );
+    expect(flat.isError).toBe(true);
+    expect(flat.content![0]!.text).toContain("Detected task at top level");
+    expect(flat.content![0]!.text).toContain("Correct:");
+    // slug 护栏保留（m6 顺序调整后仍在 runWorkflow 前）
+    const slug = await actionRun(
+      { action: "run", name: "chain", args: { task: "x" }, slug: "a".repeat(40) },
+      deps,
+      undefined,
+    );
+    expect(slug.isError).toBe(true);
+    expect(slug.content![0]!.text).toContain("slug exceeds");
+  });
+
+  it("TC6: 跨 workflow 平铺语义——review-fix-loop 平铺 task（非其参数）走 args-validator", async () => {
+    const deps = makeDeps();
+    // task 是 chain 参数非 review-fix-loop 参数 → 不报平铺 → args 缺 targetType
+    // → m3 chokepoint invalid_args（错误更准——评审 m-5 语义锁定）
+    const result = await actionRun(
+      { action: "run", name: "review-fix-loop", task: "x" },
+      deps,
+      undefined,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content![0]!.text).toContain("Invalid args for workflow 'review-fix-loop'");
+    expect(result.content![0]!.text).toContain("targetType");
+  });
+
   it("TC9: actionRun 参数校验失败 → isError ToolResult + §5.3 指引", async () => {
     const deps = makeDeps();
     const result = await actionRun(

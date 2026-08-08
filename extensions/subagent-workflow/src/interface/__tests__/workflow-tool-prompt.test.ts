@@ -88,11 +88,14 @@ describe("U1: workflow tool prompt mentions built-in workflows", () => {
     expect(TOOL_WORKFLOW_SRC).toContain("top level");
   });
 
-  it("runtime handler 错误文案含 Correct 纠正正例 + 平铺检测", () => {
+  it("runtime handler 错误文案含 Correct 纠正正例 + 平铺检测（m6：动态参数集）", () => {
     // 读源码文本断言 actionRun/必填校验的错误文案含 Correct 正例，
-    // 让弱模型撞错后第二次能直接照抄正确形态。KNOWN_ARG_KEYS 证明平铺检测存在。
+    // 让弱模型撞错后第二次能直接照抄正确形态。m6 后平铺检测数据源为动态
+    // argKeysFromMeta（schema 即 SSOT）——断言新机制存在（KNOWN_ARG_KEYS 已删）。
     expect(TOOL_WORKFLOW_SRC).toContain("Correct:");
-    expect(TOOL_WORKFLOW_SRC).toContain("KNOWN_ARG_KEYS");
+    expect(TOOL_WORKFLOW_SRC).toContain("findFlattenedArgKeys");
+    expect(TOOL_WORKFLOW_SRC).toContain("argKeysFromMeta");
+    expect(TOOL_WORKFLOW_SRC).not.toMatch(/const\s+KNOWN_ARG_KEYS/);
   });
 
   it("tool-workflow-script.ts list action 的 promptGuidelines 含 workflow run 交叉引用", () => {
