@@ -268,9 +268,9 @@ describe('ProviderPage 认证徽章（wave-list-badge TC3）', () => {
 
     const badges = document.body.querySelectorAll('[data-testid="provider-auth-badge"]')
     expect(badges.length).toBe(2)
-    // i18n mock 返回 key（renderer vitest.setup），断言 key 存在即徽章渲染
-    expect(badges[0]!.textContent).toContain('authBadge.env')
-    expect(badges[1]!.textContent).toContain('authBadge.oauth')
+    // renderer vitest.setup 的 t 是真实翻译实例（返回翻译值），断言真实文案
+    expect(badges[0]!.textContent).toBe('$ENV')
+    expect(badges[1]!.textContent).toBe('OAuth')
     // env info 色 / oauth warn 色
     expect(badges[0]!.className).toContain('bg-info-soft')
     expect(badges[1]!.className).toContain('bg-warn-soft')
@@ -288,8 +288,8 @@ describe('ProviderPage 认证徽章（wave-list-badge TC3）', () => {
     await flushPromises()
 
     const badges = document.body.querySelectorAll('[data-testid="provider-auth-badge"]')
-    expect(badges[0]!.textContent).toContain('authBadge.apiKey')
-    expect(badges[1]!.textContent).toContain('authBadge.apiKeyUnset')
+    expect(badges[0]!.textContent).toBe('API Key')
+    expect(badges[1]!.textContent).toBe('API Key（未设置）')
     // 中性色
     expect(badges[0]!.className).toContain('bg-surface-hover')
   })
