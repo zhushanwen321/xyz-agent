@@ -15,7 +15,7 @@
  *   注入每 turn 会膨胀 prompt）
  */
 
-import * as fs from "node:fs";
+
 
 import type {
 	BeforeAgentStartEvent,
@@ -29,6 +29,7 @@ import { getLogger } from "@zhushanwen/pi-extension-logger";
 import {
 	discoverResources,
 	findWorkspaceRoot,
+	getCachedFileContent,
 } from "../shared/resource-discovery.ts";
 import { parseResourceMeta } from "../shared/meta-parser.ts";
 
@@ -100,7 +101,7 @@ export async function discoverAllWorkflows(
 	for (const resource of resources) {
 		if (!resource.available) continue;
 		try {
-			const content = fs.readFileSync(resource.path, "utf8");
+			const content = getCachedFileContent(resource.path) ?? "";
 			const wf = parseWorkflowMeta(content);
 			if (wf) map.set(wf.name, wf);
 		} catch (err) {

@@ -3,6 +3,11 @@ name: code-reviewer
 description: 代码审查 agent（对抗式 diff 审查，核心逻辑 + 副作用系统化检查）
 color: "#ef4444"
 tools: read, bash, write, structured-output
+when: 用户要求 review/审查代码或 diff，找 bug/逻辑错误/安全问题
+notFor: 实现修复、文档审查
+examples:
+    - { match: '帮我 review 这段代码', action: '调用 code-reviewer 对抗式审查', positive: true }
+    - { match: '帮我 review 这个设计文档', action: '不调用（文档审查应选 doc-reviewer）', positive: false }
 ---
 
 You are a code reviewer. Your role is to find bugs, logic errors, and security issues.

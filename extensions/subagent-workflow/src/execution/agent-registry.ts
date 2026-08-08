@@ -7,18 +7,22 @@
 //
 // builtin agent（包内 agents/*.md）走 pi.agents manifest（与 npm 包内发现规则一致）。
 
-import * as fs from "node:fs";
+
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import {
-  type DiscoveredResource,
   discoverResourcesSync,
+  getCachedFile,
+  getCachedFileContent,
+  type DiscoveredResource,
   type ScanConfig,
 } from "../shared/resource-discovery.ts";
 import { parseResourceMeta } from "../shared/meta-parser.ts";
+import { lintAgentMeta } from "../orchestration/script-lint.ts";
+import type { AgentMeta } from "../shared/resource-meta.ts";
 import type { AgentConfig } from "./model-resolver.ts";
 
 const logger = getLogger("subagents");
@@ -51,8 +55,14 @@ export function createPackageBuiltinRegistry(): BuiltinAgentRegistry {
     for (const resource of config) {
       if (!resource.available) continue;
       try {
-        const raw = fs.readFileSync(resource.path, "utf-8");
-        const agentConfig = parseAgentFrontmatter(resource.path, raw);
+        const raw = getCachedFileContent(resource.path) ?? "";
+        const { config: agentConfig, meta } = parseAgentWithMeta(resource.path, raw);
+        // m5 W4：builtin fallback 路径同样挂 lint（评审 m3：覆盖缺口）
+        if (meta) {
+          for (const finding of lintAgentMeta(meta)) {
+            logger.warn(`[agent-registry] ${resource.path}: ${finding.message}`);
+          }
+        }
         if (agentConfig) cache.set(agentConfig.name, agentConfig);
       } catch (err) {
         // 单个 builtin agent 文件损坏不影响其他——降级跳过该文件。
@@ -79,6 +89,8 @@ export function createPackageBuiltinRegistry(): BuiltinAgentRegistry {
 interface FileCacheEntry {
   mtimeMs: number;
   config: AgentConfig;
+  /** AgentMeta（W4 lint 用——cache-miss 时 lint 一次，warn 随 mtime 变化刷）。 */
+  meta: AgentMeta | null;
 }
 
 // ============================================================
@@ -93,11 +105,22 @@ const FM_DELIM = "---";
  * 兼容简单 YAML（key: value 单行格式）。body 作为 systemPrompt。
  */
 export function parseAgentFrontmatter(filePath: string, content: string): AgentConfig {
+  return parseAgentWithMeta(filePath, content).config;
+}
+
+/**
+ * 解析 agent .md → { config, meta } 二元组（m5 T2：W4 lint 需要 AgentMeta——
+ * AgentConfig 投影时 examples 被丢弃，meta 供 lintAgentMeta 使用）。
+ */
+export function parseAgentWithMeta(
+  filePath: string,
+  content: string,
+): { config: AgentConfig; meta: AgentMeta | null } {
   const name = path.basename(filePath, ".md");
 
   // 无 frontmatter → 整个内容作为 systemPrompt
   if (!content.startsWith(FM_DELIM)) {
-    return { name, systemPrompt: content.trim() };
+    return { config: { name, systemPrompt: content.trim() }, meta: null };
   }
 
   const closeIdx = content.indexOf(FM_DELIM, FM_DELIM.length);
@@ -105,8 +128,11 @@ export function parseAgentFrontmatter(filePath: string, content: string): AgentC
     // 未闭合 frontmatter：提取 name，其余作为 systemPrompt
     const yamlBlock = content.slice(FM_DELIM.length);
     return {
-      name: extractYamlField(yamlBlock, "name") ?? name,
-      systemPrompt: content.trim(),
+      config: {
+        name: extractYamlField(yamlBlock, "name") ?? name,
+        systemPrompt: content.trim(),
+      },
+      meta: null,
     };
   }
 
@@ -129,12 +155,15 @@ export function parseAgentFrontmatter(filePath: string, content: string): AgentC
   const defaultBackgroundRaw = extractYamlField(yamlBlock, "defaultBackground");
 
   return {
-    name: agentMeta?.name ?? name,
-    systemPrompt: body,
-    model: agentMeta?.model ?? undefined,
-    thinkingLevel: extractYamlField(yamlBlock, "thinkingLevel") ?? undefined,
-    tools: agentMeta?.tools && agentMeta.tools.length > 0 ? agentMeta.tools : undefined,
-    defaultBackground: defaultBackgroundRaw === "true" ? true : undefined,
+    config: {
+      name: agentMeta?.name ?? name,
+      systemPrompt: body,
+      model: agentMeta?.model ?? undefined,
+      thinkingLevel: extractYamlField(yamlBlock, "thinkingLevel") ?? undefined,
+      tools: agentMeta?.tools && agentMeta.tools.length > 0 ? agentMeta.tools : undefined,
+      defaultBackground: defaultBackgroundRaw === "true" ? true : undefined,
+    },
+    meta: agentMeta,
   };
 }
 
@@ -241,15 +270,26 @@ export class AgentRegistry {
 
   /** 带 mtime 缓存的单文件加载。mtime 未变复用缓存，否则 read+parse。 */
   private loadWithMtimeCache(filePath: string): AgentConfig | undefined {
-    const stat = fs.statSync(filePath);
-    const mtimeMs = stat.mtimeMs;
+    // m5：统一 mtime 缓存层（stat + content 共享）——mtime 判定走统一层，
+    // config 级缓存（parse 结果）保留（parse 占 read+parse 成本 33%）。
+    const file = getCachedFile(filePath);
+    if (file === null) {
+      // ENOENT/不可读 → 驱逐（m5：mtime 缓存下文件删除不自愈的修复）
+      this.fileCache.delete(filePath);
+      return undefined;
+    }
     const cached = this.fileCache.get(filePath);
-    if (cached && cached.mtimeMs === mtimeMs) {
+    if (cached && cached.mtimeMs === file.mtimeMs) {
       return cached.config;
     }
-    const content = fs.readFileSync(filePath, "utf-8");
-    const config = parseAgentFrontmatter(filePath, content);
-    this.fileCache.set(filePath, { mtimeMs, config });
+    const { config, meta } = parseAgentWithMeta(filePath, file.content);
+    // m5 W4 挂载：cache-miss（parse 时一次）lint——warn 只随 mtime 变化刷，
+    // 不挂 discoverAll 循环（防每 session 刷屏）。
+    const lintFindings = meta ? lintAgentMeta(meta) : [];
+    for (const finding of lintFindings) {
+      logger.warn(`[agent-registry] ${filePath}: ${finding.message}`);
+    }
+    this.fileCache.set(filePath, { mtimeMs: file.mtimeMs, config, meta });
     return config;
   }
 }

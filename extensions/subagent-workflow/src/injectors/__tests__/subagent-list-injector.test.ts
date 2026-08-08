@@ -54,6 +54,38 @@ describe("formatAgentList", () => {
 		expect(formatAgentList([])).toBe("");
 	});
 
+	it("TC1: when + examples 注入（原样渲染 + escapeXml + 缺省兼容）", () => {
+		const out = formatAgentList([
+			{
+				name: "reviewer",
+				description: "代码审查",
+				when: "用户要求 review 代码",
+				examples: [
+					{ match: "帮我 review 这段代码", action: "调用 reviewer 对抗式审查", positive: true },
+					{ match: "帮我 review 设计文档", action: "不调用（文档审查应选 doc-reviewer）", positive: false },
+				],
+			},
+			{ name: "legacy", description: "未迁移 agent" },
+		]);
+		expect(out).toContain("<when>用户要求 review 代码</when>");
+		// 正反原样渲染——negative action 含原因文本（评审 M5：渲染器不硬编码）
+		expect(out).toContain('"帮我 review 这段代码" → 调用 reviewer 对抗式审查');
+		expect(out).toContain('"帮我 review 设计文档" → 不调用（文档审查应选 doc-reviewer）（不调用）');
+		// escapeXml：match 含 < > 被转义
+		const xmlOut = formatAgentList([
+			{
+				name: "x",
+				description: "d",
+				examples: [{ match: "处理 <task> 的 diff", action: "调用 x", positive: true }],
+			},
+		]);
+		expect(xmlOut).toContain("&lt;task&gt;");
+		// 缺省兼容：无 when/examples 的 agent 不渲染该段
+		const legacyOut = formatAgentList([{ name: "legacy", description: "未迁移 agent" }]);
+		expect(legacyOut).not.toContain("<when>");
+		expect(legacyOut).not.toContain("<examples>");
+	});
+
 	it("包含 P3 正向触发引导语（何时该 delegate）", () => {
 		const out = formatAgentList([{ name: "worker", description: "d" }]);
 		expect(out).toContain("PRIORITY");

@@ -11,12 +11,13 @@
  * Failed imports are marked available=false — the loader never throws.
  */
 
-import { readFile } from "node:fs/promises";
+
 import { resolve } from "node:path";
 
 // WorkflowMeta 规范来源是 shared/resource-meta.ts（m1 DM1）；WorkflowSource 来自 workflow-script
 import type { WorkflowSource } from "./models/workflow-script.ts";
 import type { WorkflowMeta } from "../shared/resource-meta.ts";
+import { getCachedFile, getCachedFileContent, clearFileCache } from "../shared/resource-discovery.ts";
 import { parseResourceMeta } from "../shared/meta-parser.ts";
 export type { WorkflowMeta, WorkflowSource };
 
@@ -47,12 +48,13 @@ export interface CachedWorkflowMeta extends WorkflowMeta {
 
 interface CacheEntry {
   meta: CachedWorkflowMeta;
-  cachedAt: number;
+  /** 文件 mtime（m5：mtime 键控判失效——删 60s TTL，mtime 未变即命中）。 */
+  mtimeMs: number;
 }
 
 // ── Constants ─────────────────────────────────────────────────
 
-const CACHE_TTL_MS = 60_000;
+// m5：删 60s TTL——mtime 键控判失效（TTL 只服务 getWorkflow 且造成 60s 陈旧窗口）。
 
 // ── Cache ─────────────────────────────────────────────────────
 
@@ -69,7 +71,9 @@ function getCacheBucket(workspaceRoot: string): Map<string, CacheEntry> {
 }
 
 function isCacheValid(entry: CacheEntry): boolean {
-  return Date.now() - entry.cachedAt < CACHE_TTL_MS;
+  // m5：mtime 判变——文件 mtime 未变即命中（删 TTL 后文件变更立即反映）
+  const file = getCachedFile(entry.meta.path);
+  return file !== null && file.mtimeMs === entry.mtimeMs;
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -103,7 +107,8 @@ async function toCachedMeta(
   const fallbackName = stem(filePath);
   const wfSource = toWorkflowSource(source);
   try {
-    const content = await readFile(filePath, "utf-8");
+    const content = getCachedFileContent(filePath); // m5：统一 mtime 缓存层
+    if (content === null) throw new Error("file not readable");
     const meta = parseResourceMeta(content, "workflow");
     if (meta && meta.kind === "workflow") {
       return { ...meta, path: filePath, available: true, source: wfSource };
@@ -216,9 +221,9 @@ export async function discoverWorkflows(
 
   // Update cache (scoped to current workspace root)
   const bucket = getCacheBucket(workspaceRoot);
-  const now = Date.now();
   for (const wf of merged) {
-    bucket.set(wf.name, { meta: wf, cachedAt: now });
+    const file = getCachedFile(wf.path);
+    bucket.set(wf.name, { meta: wf, mtimeMs: file?.mtimeMs ?? 0 });
   }
 
   return merged;
@@ -257,5 +262,7 @@ export async function getWorkflow(name: string): Promise<CachedWorkflowMeta | un
  * The next call to loadWorkflows or getWorkflow will re-scan directories.
  */
 export function invalidateCache(): void {
+  // m5：清统一 mtime 缓存层 + bucket（测试隔离 + mtime 漏判场景手动刷新兜底）
+  clearFileCache();
   cache.clear();
 }

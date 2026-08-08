@@ -14,6 +14,8 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { lintAgentMeta } from "../../orchestration/script-lint.ts";
+import { parseResourceMeta } from "../../shared/meta-parser.ts";
 import type { BuiltinAgentRegistry } from "../agent-registry.ts";
 import { AgentRegistry, createPackageBuiltinRegistry, parseAgentFrontmatter } from "../agent-registry.ts";
 
@@ -179,5 +181,39 @@ describe("createPackageBuiltinRegistry", () => {
     expect(builtin.get("planner")?.tools).toEqual(["read", "write", "structured-output"]);
     expect(builtin.get("oracle")?.tools).toEqual(["read", "write", "structured-output"]);
     expect(builtin.get("context-builder")?.tools).toEqual(["read", "write", "structured-output"]);
+  });
+});
+
+// ── m5 TC3: 9 个核心 agent 数据合规（显式字段断言——lint 无 finding 不验收数据存在） ──
+
+describe("m5 TC3: builtin agents 数据合规", () => {
+  const AGENTS_DIR = path.resolve(__dirname, "../../../agents");
+  const CORE = ["explorer", "worker", "code-reviewer", "oracle", "planner", "researcher", "context-builder", "orchestrator", "general-purpose"];
+
+  it("agents/*.md 全部 IF1 解析成功", () => {
+    for (const f of fs.readdirSync(AGENTS_DIR).filter((x) => x.endsWith(".md"))) {
+      const meta = parseResourceMeta(fs.readFileSync(path.join(AGENTS_DIR, f), "utf-8"), "agent");
+      expect(meta?.kind, `${f} parse 失败`).toBe("agent");
+    }
+  });
+
+  it("9 个核心 agent 均含 when/notFor/examples 且正反各一（lintAgentMeta 无 finding）", () => {
+    for (const name of CORE) {
+      const meta = parseResourceMeta(fs.readFileSync(path.join(AGENTS_DIR, `${name}.md`), "utf-8"), "agent");
+      expect(meta, `${name} 解析失败`).not.toBeNull();
+      if (meta?.kind !== "agent") continue;
+      expect(meta.when, `${name} 缺 when`).toBeDefined();
+      expect(meta.notFor, `${name} 缺 notFor`).toBeDefined();
+      expect(meta.examples?.length, `${name} 缺 examples`).toBeGreaterThanOrEqual(2);
+      expect(meta.examples?.some((e) => e.positive), `${name} 缺正向样本`).toBe(true);
+      expect(meta.examples?.some((e) => !e.positive), `${name} 缺反向样本`).toBe(true);
+      expect(lintAgentMeta(meta), `${name} examples 不合规`).toEqual([]);
+    }
+  });
+
+  it("doc-reviewer（未迁移）parse 成功且 lint 无 finding（WQ1 兼容）", () => {
+    const meta = parseResourceMeta(fs.readFileSync(path.join(AGENTS_DIR, "doc-reviewer.md"), "utf-8"), "agent");
+    expect(meta?.kind).toBe("agent");
+    if (meta?.kind === "agent") expect(lintAgentMeta(meta)).toEqual([]);
   });
 });

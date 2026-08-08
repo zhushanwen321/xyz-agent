@@ -6,13 +6,15 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   discoverResources,
   discoverResourcesSync,
   findWorkspaceRoot,
   processPackageSync,
+  getCachedFile,
+  getCachedFileContent,
 } from "../resource-discovery.ts";
 
 // ============================================================
@@ -313,5 +315,54 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     const result = await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
     expect(result.map((r) => path.basename(r.path))).toEqual(["async.md"]);
     expect(result[0]?.source).toBe("user-extension-paths");
+  });
+});
+
+// ── m5 TC4/TC5: 统一 mtime 缓存层（P-cache / P-cache-invalidation） ──
+
+describe("m5: 统一 mtime 缓存层", () => {
+  it("TC4a: P-cache——文件未变时二次读取命中同一缓存条目（对象引用）", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "m5-cache-"));
+    const f = path.join(dir, "a.md");
+    fs.writeFileSync(f, "---\nname: x\ndescription: y\n---\nbody", "utf-8");
+    try {
+      // ESM 下 node:fs 不可 spy（vitest 限制）——命中断言用对象引用：
+      // getCachedFile 命中时返回缓存条目对象本身（非新建）
+      const first = getCachedFile(f);
+      const second = getCachedFile(f);
+      expect(first?.content).toBe("---\nname: x\ndescription: y\n---\nbody");
+      expect(second).toBe(first); // 同引用 = 命中缓存（未重 read）
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("TC4b: P-cache——两处消费方（getCachedFile/getCachedFileContent）共享同一缓存条目", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "m5-cache2-"));
+    const f = path.join(dir, "a.md");
+    fs.writeFileSync(f, "---\nname: x\ndescription: y\n---\nbody", "utf-8");
+    try {
+      const a = getCachedFile(f);
+      const b = getCachedFileContent(f);
+      expect(a?.content).toBe(b); // 两消费方同一条目（评审 D2）
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("TC5: P-cache-invalidation——改内容（mtime 变）后重读新内容；删文件后驱逐", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "m5-cache3-"));
+    const f = path.join(dir, "a.md");
+    fs.writeFileSync(f, "v1", "utf-8");
+    try {
+      expect(getCachedFileContent(f)).toBe("v1");
+      fs.writeFileSync(f, "v2", "utf-8");
+      expect(getCachedFileContent(f)).toBe("v2"); // mtime 变 → 重读
+      // 删除 → 驱逐（不再返回旧内容）
+      fs.rmSync(f);
+      expect(getCachedFileContent(f)).toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

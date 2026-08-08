@@ -748,6 +748,21 @@ describe("m4 W1-W5: meta 质量 lint", () => {
     expect(lintAgentMeta(meta(undefined)).length).toBe(0);
   });
 
+  it("TC8b: W4 EXAMPLES_MAX——examples 超上限（5 条）→ finding", () => {
+    const meta = (examples: unknown) =>
+      ({ kind: "agent", name: "a", description: "d", examples }) as never;
+    const five = [
+      { match: "a", action: "x", positive: true },
+      { match: "b", action: "x", positive: false },
+      { match: "c", action: "x", positive: true },
+      { match: "d", action: "x", positive: false },
+      { match: "e", action: "x", positive: true },
+    ];
+    const findings = lintAgentMeta(meta(five));
+    expect(findings.length).toBe(1);
+    expect(findings[0]!.message).toContain("上限");
+  });
+
   it("TC9: 5 内置真实 workflow 过 W1-W5（lintScript valid 无 meta 质量 error）", () => {
     const files = ["chain", "parallel", "scatter-gather", "map-reduce", "review-fix-loop"];
     for (const f of files) {

@@ -226,7 +226,7 @@ describe("缓存 — invalidateCache 与 TTL", () => {
     mockedFindWorkspaceRoot.mockReturnValue(ws.root);
   });
 
-  it("invalidateCache 后 getWorkflow 重新读取文件（反映最新内容）", async () => {
+  it("TC6: mtime 判变——文件修改后 getWorkflow 立即反映新内容（删 60s TTL）", async () => {
     const scriptPath = await writeScript(
       ws.projectDir,
       "foo.js",
@@ -237,23 +237,21 @@ describe("缓存 — invalidateCache 与 TTL", () => {
     let foo = await getWorkflow("foo");
     expect(foo!.description).toBe("v1");
 
-    // 修改文件内容；未失效缓存前 getWorkflow 仍返回旧值
+    // 修改文件内容（mtime 变）→ getWorkflow 立即反映（不再有 60s 陈旧窗口）
     await writeFile(
       scriptPath,
       validScript("foo", { description: "v2" }),
       "utf-8",
     );
     foo = await getWorkflow("foo");
-    expect(foo!.description).toBe("v1");
+    expect(foo!.description).toBe("v2");
 
-    // 失效缓存后重新加载
-    invalidateCache();
+    // 文件未变 → 再次调用命中缓存（同内容）
     foo = await getWorkflow("foo");
     expect(foo!.description).toBe("v2");
   });
 
-  it("缓存 TTL 过期后触发重新加载", async () => {
-    vi.useFakeTimers({ now: 1_000_000 });
+  it("invalidateCache 清统一缓存层后 getWorkflow 强制重读（mtime 漏判场景兜底）", async () => {
     const scriptPath = await writeScript(
       ws.projectDir,
       "foo.js",
@@ -263,17 +261,16 @@ describe("缓存 — invalidateCache 与 TTL", () => {
     await discoverWorkflows({ projectDir: ws.projectDir });
     expect((await getWorkflow("foo"))!.description).toBe("v1");
 
-    // 在 TTL（60s）内修改文件 → 缓存命中，仍是旧值
+    // 修改文件 → mtime 判变立即反映（不等 invalidateCache）
     await writeFile(
       scriptPath,
       validScript("foo", { description: "v2" }),
       "utf-8",
     );
-    vi.advanceTimersByTime(30_000);
-    expect((await getWorkflow("foo"))!.description).toBe("v1");
+    expect((await getWorkflow("foo"))!.description).toBe("v2");
 
-    // 超过 TTL → 缓存失效 → 重新加载
-    vi.advanceTimersByTime(31_000);
+    // invalidateCache 后仍强制重读（内容变 mtime 未变场景的兜底——cp -p 类）
+    invalidateCache();
     expect((await getWorkflow("foo"))!.description).toBe("v2");
   });
 });

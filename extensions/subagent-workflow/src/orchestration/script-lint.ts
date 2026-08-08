@@ -29,6 +29,8 @@
 const DESC_MAX_LENGTH = 200;
 /** m4 W4：agent examples 最少条数（正反各一需 ≥2）。 */
 const EXAMPLES_MIN_COUNT = 2;
+/** m5：examples 上限（注入是每 turn 常驻成本——防数据无界膨胀）。 */
+const EXAMPLES_MAX_COUNT = 4;
 
 /** Lint 检查发现项。 */
 export interface LintFinding {
@@ -680,6 +682,16 @@ export function lintAgentMeta(meta: AgentMeta): LintFinding[] {
         line: 1,
         message: `agent '${meta.name}' 的 examples 需 ≥2 条且正反各一（positive:true 触发路由 + positive:false 反例）`,
         suggestion: "补正向样本（何时调用）+ 反向样本（何时不调用）",
+      },
+    ];
+  }
+  if (examples.length > EXAMPLES_MAX_COUNT) {
+    return [
+      {
+        severity: "error",
+        line: 1,
+        message: `agent '${meta.name}' 的 examples ${examples.length} 条超过上限 ${EXAMPLES_MAX_COUNT}（注入段是每 turn 常驻成本）`,
+        suggestion: "精简到 2-4 条：正反各一 + 最多 2 条冗余",
       },
     ];
   }

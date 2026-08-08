@@ -16,9 +16,8 @@
  * - get(name) 精确匹配；fuzzy 匹配由 Interface 层 tool 负责。
  */
 
-import { readFileSync } from "node:fs";
-
 import { WorkflowScript } from "./models/workflow-script.ts";
+import { getCachedFileContent } from "../shared/resource-discovery.ts";
 import type { WorkflowScriptRegistry } from "./models/workflow-script-registry.ts";
 import {
   type CachedWorkflowMeta,
@@ -92,7 +91,7 @@ export class WorkflowScriptRegistryImpl implements WorkflowScriptRegistry {
     let available = m.available;
     if (available) {
       try {
-        sourceCode = readFileSync(m.path, "utf-8");
+        sourceCode = getCachedFileContent(m.path) ?? ""; // m5：统一 mtime 缓存层
       } catch {
  // 文件不可读（race condition 删除、权限等）——标 available=false，
  // 与 meta 提取失败的现有语义一致（loader "never throws"）。

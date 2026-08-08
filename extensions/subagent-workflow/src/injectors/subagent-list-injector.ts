@@ -18,7 +18,7 @@
  * 与同包 resource-discovery 同包后可直接 import，消除跨包依赖。
  */
 
-import * as fs from "node:fs";
+
 
 import type {
 	BeforeAgentStartEvent,
@@ -32,15 +32,18 @@ import { getLogger } from "@zhushanwen/pi-extension-logger";
 import {
 	discoverResources,
 	findWorkspaceRoot,
+	getCachedFileContent,
 } from "../shared/resource-discovery.ts";
 import { parseResourceMeta } from "../shared/meta-parser.ts";
 
 const logger = getLogger("injector");
 
-/** 从 .md frontmatter 提取的最小 agent 信息 */
+/** 从 .md frontmatter 提取的最小 agent 信息（m5：+ when/examples 路由样本） */
 export interface AgentEntry {
 	name: string;
 	description: string;
+	when?: string;
+	examples?: Array<{ match: string; action: string; positive: boolean }>;
 }
 
 /**
@@ -53,7 +56,12 @@ export interface AgentEntry {
 export function parseAgentFrontmatter(content: string): AgentEntry | null {
 	const meta = parseResourceMeta(content, "agent");
 	if (!meta || meta.kind !== "agent") return null;
-	return { name: meta.name, description: meta.description };
+	return {
+		name: meta.name,
+		description: meta.description,
+		when: meta.when,
+		examples: meta.examples,
+	};
 }
 
 /**
@@ -80,10 +88,16 @@ export async function discoverAllAgents(
 	for (const resource of resources) {
 		if (!resource.available) continue;
 		try {
-			const content = fs.readFileSync(resource.path, "utf8");
+			const content = getCachedFileContent(resource.path) ?? "";
 			const agent = parseAgentFrontmatter(content);
 			if (agent) {
 				agentMap.set(agent.name, agent);
+			} else {
+				// m5（评审 M3/F2）：IF1 解析失败（缺 name/description/examples 单条非法
+				// 致整体 reject）→ agent 不注入——显式 warn 带文件路径，不静默消失。
+				logger.warn(
+					`[subagent-list-injector] ${resource.path}: agent frontmatter 解析失败（IF1 校验不通过）——agent 未注入`,
+				);
 			}
 		} catch (err) {
 			// 单个文件读失败不阻断整条 agent 列表注入
@@ -120,9 +134,21 @@ export function formatAgentList(agents: AgentEntry[]): string {
 		"The following subagents are available. PRIORITY: when a task involves reading 3+ files, writing 100+ lines, parallel research, or specialized review, delegate to a matching subagent FIRST instead of doing it yourself — this keeps your context focused on orchestration. Do NOT call list to discover available subagents; use list only for running state. When using the subagent tool, ONLY use agent names from this list. If no agent matches your task, pass systemPrompt alongside the agent name to create a dynamic agent.",
 	];
 	for (const agent of agents) {
-		lines.push(
-			`  <agent><name>${escapeXml(agent.name)}</name><description>${escapeXml(agent.description)}</description></agent>`,
-		);
+		let block = `  <agent><name>${escapeXml(agent.name)}</name><description>${escapeXml(agent.description)}</description>`;
+		// m5：路由样本（when + examples 正反原样渲染——negative 的 action 由作者写
+		// 「不调用（原因）」，渲染器不硬编码；全部内容 escapeXml 防 XML 注入段破坏）
+		if (agent.when) {
+			block += `<when>${escapeXml(agent.when)}</when>`;
+		}
+		if (agent.examples && agent.examples.length > 0) {
+			const exampleLines = agent.examples.map(
+				(e) =>
+					`      - "${escapeXml(e.match)}" → ${escapeXml(e.action)}${e.positive ? "" : "（不调用）"}`,
+			);
+			block += `\n    <examples>\n${exampleLines.join("\n")}\n    </examples>`;
+		}
+		block += "</agent>";
+		lines.push(block);
 	}
 	lines.push("</available_subagents>");
 	return lines.join("\n");
