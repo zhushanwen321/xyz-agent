@@ -296,6 +296,32 @@ describe("handleGoalCommand — update (FR-8.4 G-002)", () => {
 		expect(notifyText(h).some((t) => t.includes("Usage"))).toBe(true);
 	});
 
+	it("带 --criteria → 替换 successCriteria", async () => {
+		const h = makeHarness();
+		const session = createGoalSession();
+		session.state = makeActiveState({
+			objective: "old objective",
+			successCriteria: "old criteria",
+		});
+		await handleGoalCommand(h.pi, session, "update new obj --criteria new criteria text", h.ctx);
+
+		expect(session.state!.objective).toBe("new obj");
+		expect(session.state!.successCriteria).toBe("new criteria text");
+	});
+
+	it("不带 --criteria → 保留旧 successCriteria（不静默丢失验证标准）", async () => {
+		const h = makeHarness();
+		const session = createGoalSession();
+		session.state = makeActiveState({
+			objective: "old objective",
+			successCriteria: "old criteria",
+		});
+		await handleGoalCommand(h.pi, session, "update new obj", h.ctx);
+
+		expect(session.state!.objective).toBe("new obj");
+		expect(session.state!.successCriteria).toBe("old criteria");
+	});
+
 	it("active 状态重塑 → 注入 objectiveUpdated steering", async () => {
 		const h = makeHarness();
 		const session = createGoalSession();

@@ -242,3 +242,53 @@ describe("contextInjectionPrompt", () => {
 		expect(out).toContain("Complex tasks");
 	});
 });
+
+// ── successCriteria 注入（完成验证基准，与 objective 成对）──
+
+describe("successCriteria 注入（<successCriteria> 段 + 条件文案）", () => {
+	it("continuationPrompt：有 successCriteria → 含 <successCriteria> 段 + 条件文案", () => {
+		const state = makeState({ successCriteria: "pnpm test passes; tsc clean" });
+		const out = continuationPrompt(state, 0);
+		expect(out).toContain("<successCriteria>");
+		expect(out).toContain("</successCriteria>");
+		expect(out).toContain("pnpm test passes; tsc clean");
+		// 条件文案（continuationPrompt 专属）
+		expect(out).toContain("every condition there must be met");
+	});
+
+	it("budgetLimitPrompt：有 successCriteria → 含 <successCriteria> 段 + 条件文案", () => {
+		const state = makeState({
+			successCriteria: "all tests green",
+			budget: { tokenBudget: 1000 },
+		});
+		const out = budgetLimitPrompt(state, "token", 0);
+		expect(out).toContain("<successCriteria>");
+		expect(out).toContain("all tests green");
+		// 条件文案（budgetLimitPrompt 专属）
+		expect(out).toContain("every successCriteria condition is met");
+	});
+
+	it("contextInjectionPrompt：有 successCriteria → 含 <successCriteria> 段 + 条件文案", () => {
+		const state = makeState({ successCriteria: "file X exists" });
+		const out = contextInjectionPrompt(state, 0);
+		expect(out).toContain("<successCriteria>");
+		expect(out).toContain("file X exists");
+		// 条件文案（contextInjectionPrompt 专属）
+		expect(out).toContain("every successCriteria condition above must be met");
+	});
+
+	it("无 successCriteria → 不含 <successCriteria> 段（锁定 fallback）", () => {
+		const state = makeState(); // createGoalState 不带 successCriteria
+		const out = continuationPrompt(state, 0);
+		expect(out).not.toContain("<successCriteria>");
+		expect(out).not.toContain("every condition there must be met");
+	});
+
+	it("successCriteria 中的 <>& 被转义（防注入）", () => {
+		const state = makeState({ successCriteria: "<x> & y" });
+		const out = continuationPrompt(state, 0);
+		expect(out).toContain("&lt;x&gt;");
+		expect(out).toContain("&amp; y");
+		expect(out).not.toContain("<x>");
+	});
+});

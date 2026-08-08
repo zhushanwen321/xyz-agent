@@ -135,15 +135,16 @@ export function persistAndUpdate(
 
 /**
  * 唯一创建入口。两个调用源都走它：
- * - goal_control create（toolcall，AI 提供 slug + objective）
+ * - goal_control create（toolcall，AI 提供 slug + objective + successCriteria）
  * - __goalInit（index.ts，isExternalInit=true）
  *
  * 注：/goal <objective> 命令路径已改为提示词触发器——不直接调本函数，
- * 而是 sendUserMessage 让 AI 调 goal_control create（slug 由 AI 生成）。
+ * 而是 sendUserMessage 让 AI 调 goal_control create（slug + successCriteria 由 AI 生成）。
  *
  * isExternalInit=true 时不触发 sendUserMessage（__goalInit 不触发 AI）。
  *
  * @param slug AI 生成的短标识（optional，仅 widget 标题 + history 用）
+ * @param successCriteria 成功标准（optional，由 AI 推导或外部传入；注入 prompt 指导完成验证）
  * @returns true 如果创建成功，false 如果已有 active goal（拒绝创建）
  */
 export function createGoal(
@@ -153,6 +154,7 @@ export function createGoal(
 	ports: ServicePorts,
 	isExternalInit: boolean,
 	slug?: string,
+	successCriteria?: string,
 ): boolean {
 	// 已有 active goal → 拒绝
 	if (session.state && isActiveStatus(session.state.status)) {
@@ -160,7 +162,7 @@ export function createGoal(
 	}
 
 	void isExternalInit; // 保留参数位以备 future use（外部 init 的差异化行为）
-	session.state = createGoalState(objective, budget, slug);
+	session.state = createGoalState(objective, budget, slug, successCriteria);
 
 	persistState(session, ports);
 	return true;
@@ -219,6 +221,42 @@ export function finalizeGoal(
 
 // ── 路径 B：applyEvent ────────────────────────────────
 
+/** message_end 事件数据形状（运行时解析后的可信形状） */
+interface MessageEndEventData {
+	message?: {
+		role?: string;
+		usage?: { input?: number; output?: number; cacheRead?: number; totalTokens?: number };
+	};
+}
+
+/**
+ * message_end 事件数据运行时解析（unknown → 可信形状）。
+ * 替代全可选结构断言（taste/no-unsafe-cast）：逐字段校验类型后构造，非法输入返回 null。
+ */
+function toMessageEndData(eventData: unknown): MessageEndEventData | null {
+	if (typeof eventData !== "object" || eventData === null) return null;
+	const message = (eventData as Record<string, unknown>).message;
+	if (typeof message !== "object" || message === null) return null;
+	const raw = message as Record<string, unknown>;
+	const rawUsage = raw.usage;
+	let usage: NonNullable<MessageEndEventData["message"]>["usage"];
+	if (typeof rawUsage === "object" && rawUsage !== null) {
+		const u = rawUsage as Record<string, unknown>;
+		usage = {
+			input: typeof u.input === "number" ? u.input : undefined,
+			output: typeof u.output === "number" ? u.output : undefined,
+			cacheRead: typeof u.cacheRead === "number" ? u.cacheRead : undefined,
+			totalTokens: typeof u.totalTokens === "number" ? u.totalTokens : undefined,
+		};
+	}
+	return {
+		message: {
+			role: typeof raw.role === "string" ? raw.role : undefined,
+			usage,
+		},
+	};
+}
+
 /**
  * 路径 B 入口。异步事件，返回 EventEffect[]。
  * 并发保护（isProcessing / stale-check）在 event-adapter，不在此层。
@@ -243,12 +281,8 @@ export function applyEvent(
 			// token 累加（FR-8.6 G-R2-001）—— 仅 active 时累加（回归修复：原缺 isActiveStatus 守卫，
 			// blocked 等 non-active 状态会错误累加 token）。复用 engine 纯函数。
 			if (!isActiveStatus(session.state.status)) break;
-			const data = eventData as {
-				message?: {
-					role?: string;
-					usage?: { input?: number; output?: number; cacheRead?: number; totalTokens?: number };
-				};
-			};
+			// 运行时守卫解析事件数据（未知形状 → 可选字段），替代全可选结构断言
+			const data = toMessageEndData(eventData);
 			if (data?.message?.role !== "assistant") break;
 			const usage = data.message.usage;
 			if (!usage) break;

@@ -78,6 +78,8 @@ describe("handlePlanComplete", () => {
       expect.any(String),
       undefined,
       ctx,
+      "plan",
+      "All 2 steps of plan.md executed and verified: Step one; Step two",
     );
   });
 
@@ -108,6 +110,8 @@ describe("handlePlanComplete", () => {
       expect.any(String),
       undefined,
       ctx,
+      "plan",
+      "All 2 steps of plan.md executed and verified: Step one; Step two",
     );
   });
 });
