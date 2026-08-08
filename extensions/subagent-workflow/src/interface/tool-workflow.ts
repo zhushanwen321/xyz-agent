@@ -146,7 +146,11 @@ export function argKeysFromMeta(
   if (pp !== null && typeof pp === "object") {
     for (const p of Object.keys(pp as Record<string, unknown>)) {
       try {
-        patterns.push(new RegExp(p)); // schema pattern 已是正则源码
+        const re = new RegExp(p); // schema pattern 已是正则源码
+        // S1（m6 exec-review）：跳过能命中 tool 顶层键的 pattern——否则
+        // ^run.*$ 类 pattern 会匹配 runId/name 等 tool 键，合法调用恒误报
+        if ([...TOOL_TOP_LEVEL].some((tk) => re.test(tk))) continue;
+        patterns.push(re);
       } catch (err) {
         // 非法 pattern（schema 校验 m3 已保证合法，双保险）——跳过并记录
         logger.warn(`[tool-workflow] patternProperties 非法正则跳过: ${p}`, {
@@ -178,7 +182,12 @@ export function findFlattenedArgKeys(
   const args = typeof p.args === "object" && p.args !== null ? p.args : undefined;
   const isKnownKey = (k: string) =>
     knownKeys.has(k) || knownPatterns.some((re) => re.test(k));
-  return Object.keys(p).filter((k) => isKnownKey(k) && !(args !== undefined && k in args));
+  // hasOwnProperty.call 而非 in（原型链——constructor/toString 类参数名不被继承键掩盖）
+  return Object.keys(p).filter(
+    (k) =>
+      isKnownKey(k) &&
+      !(args !== undefined && Object.prototype.hasOwnProperty.call(args, k)),
+  );
 }
 
 // ── Types ────────────────────────────────────────────────────
@@ -452,9 +461,11 @@ export async function actionRun(
   // m6：动态参数集（schema 即 SSOT）→ 平铺检测；无 parameters → 单次 warn + 跳过
   // （legacy const-meta 类永久无检测——D1 无 adapter 声明）
   const { exact: knownKeys, patterns: knownPatterns } = argKeysFromMeta(script.meta.parameters);
-  if (knownKeys.size === 0 && knownPatterns.length === 0 && script.meta.parameters !== undefined) {
+  if (knownKeys.size === 0 && knownPatterns.length === 0) {
+    // M-2 显式信号：无参数契约（未声明/解析空）→ 单次 warn——静默退化变显式
+    // （m6 exec-review M1：原实现排除 undefined 与设计相反）
     logger.warn(
-      `[tool-workflow] ${script.name}: 参数契约解析为空（schema 无 properties/patternProperties）——平铺检测跳过`,
+      `[tool-workflow] ${script.name}: 未声明参数契约（或解析为空）——平铺检测跳过，args 不校验`,
     );
   }
   const flattened = findFlattenedArgKeys(params, knownKeys, knownPatterns);

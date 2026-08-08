@@ -86,7 +86,11 @@ describe("AgentRegistry.discoverAll", () => {
     writeAgent(piAgents, "scout", "explore");
     const reg = newRegistry(ws);
     reg.discoverAll(emptyBuiltin);
-    expect(reg.list().sort()).toEqual(["scout", "worker"]);
+    // 包含性断言——用户全局目录（~/.agents/agents/）可能有真实 agent 文件，
+    // 不假设环境为空（2026-08：tech-design-review.md 暴露此脆弱性）
+    const list = reg.list().sort();
+    expect(list).toContain("scout");
+    expect(list).toContain("worker");
   });
 
   it("project .agents/agents overrides project .pi/agents on name clash (priority)", () => {

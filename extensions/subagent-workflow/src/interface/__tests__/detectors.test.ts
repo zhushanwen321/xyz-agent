@@ -127,11 +127,24 @@ describe("findFlattenedArgKeys (workflow args flatten detector — P0)", () => {
     expect(findFlattenedArgKeys(undefined, new Set(), [])).toEqual([]);
   });
 
-  it("TC3i: tool 顶层键不误报（M-3 回归——workflow 声明 name 参数时顶层 name 是 tool 参数）", () => {
-    // argKeysFromMeta 已排除 TOOL_TOP_LEVEL——name 不在 exact
-    expect(RFL.exact.has("name")).toBe(false);
+  it("TC3i: tool 顶层键不误报（M-3 回归——合成 parameters 直测 argKeysFromMeta 排除）", () => {
+    // 合成 parameters：workflow 声明参数 name（tool 键撞名）——argKeysFromMeta 必须排除
+    const keys = argKeysFromMeta({
+      type: "object",
+      properties: { name: { type: "string" }, task: { type: "string" } },
+      required: ["name"],
+    });
+    expect(keys.exact.has("task")).toBe(true);
+    expect(keys.exact.has("name")).toBe(false); // TOOL_TOP_LEVEL 排除（M-3 真回归锁定）
+    // 合法调用不误报
     expect(
-      findFlattenedArgKeys({ action: "run", name: "review-fix-loop" }, RFL.exact, RFL.patterns),
+      findFlattenedArgKeys(
+        { action: "run", name: "mywf", args: { name: "x" } },
+        keys.exact,
+        keys.patterns,
+      ),
     ).toEqual([]);
+    // 真实 meta 不含 name（探针实测 16 键）——附加验证
+    expect(RFL.exact.has("name")).toBe(false);
   });
 });

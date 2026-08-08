@@ -81,8 +81,11 @@ describe("discoverResourcesSync", () => {
   it("discovers agents from project .pi/agents/", () => {
     writeFile(path.join(ws, ".pi", "agents"), "worker.md", "body");
     const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
-    expect(result.map((r) => path.basename(r.path))).toEqual(["worker.md"]);
-    expect(result[0]?.available).toBe(true);
+    // 按 source 过滤断言——用户全局目录（~/.agents/agents/）可能有真实 agent 文件，
+    // 测试不假设环境为空（2026-08：环境新增 tech-design-review.md 暴露此脆弱性）
+    const project = result.filter((r) => r.source === "project-pi");
+    expect(project.map((r) => path.basename(r.path))).toEqual(["worker.md"]);
+    expect(project[0]?.available).toBe(true);
   });
 
   it("discovers workflows from project .pi/workflows/", () => {
@@ -95,8 +98,9 @@ describe("discoverResourcesSync", () => {
     writeFile(path.join(ws, ".pi", "agents"), "worker.md", "pi-body");
     writeFile(path.join(ws, ".agents", "agents"), "worker.md", "agents-body");
     const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
-    expect(result).toHaveLength(1);
-    expect(result[0]?.source).toBe("project-agents");
+    const project = result.filter((r) => r.source === "project-agents");
+    expect(project).toHaveLength(1);
+    expect(project[0]?.source).toBe("project-agents");
   });
 
   it("includes tmp source for workflows when includeTmp=true", () => {
@@ -123,12 +127,14 @@ describe("discoverResourcesSync", () => {
     writeFile(dir, "_skip.md", "ignored");
     writeFile(dir, "trace.chain.md", "ignored");
     const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
-    expect(result.map((r) => path.basename(r.path))).toEqual(["real.md"]);
+    const project = result.filter((r) => r.source === "project-pi");
+    expect(project.map((r) => path.basename(r.path))).toEqual(["real.md"]);
   });
 
   it("nonexistent directories are silently skipped", () => {
     const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
-    expect(result).toEqual([]);
+    // 用户全局目录可能有真实文件——只断言 project 源为空
+    expect(result.filter((r) => r.source === "project-pi" || r.source === "project-agents")).toEqual([]);
   });
 });
 
@@ -253,8 +259,9 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     writeFile(path.join(pkgDir, "agents"), "custom.md", "body");
     process.env.XYZ_EXTENSION_PATHS = pkgDir;
     const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
-    expect(result.map((r) => path.basename(r.path))).toEqual(["custom.md"]);
-    expect(result[0]?.source).toBe("user-extension-paths");
+    const ext = result.filter((r) => r.source === "user-extension-paths");
+    expect(ext.map((r) => path.basename(r.path))).toEqual(["custom.md"]);
+    expect(ext[0]?.source).toBe("user-extension-paths");
   });
 
   it("discovers agents via convention dir (no manifest)", () => {
@@ -262,8 +269,9 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     writeFile(path.join(pkgDir, "agents"), "conv.md", "body");
     process.env.XYZ_EXTENSION_PATHS = pkgDir;
     const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
-    expect(result.map((r) => path.basename(r.path))).toEqual(["conv.md"]);
-    expect(result[0]?.source).toBe("user-extension-paths");
+    const ext = result.filter((r) => r.source === "user-extension-paths");
+    expect(ext.map((r) => path.basename(r.path))).toEqual(["conv.md"]);
+    expect(ext[0]?.source).toBe("user-extension-paths");
   });
 
   it("multiple paths separated by delimiter", () => {
@@ -273,8 +281,8 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     writeFile(path.join(pkg2, "agents"), "a2.md", "body");
     process.env.XYZ_EXTENSION_PATHS = `${pkg1}${path.delimiter}${pkg2}`;
     const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
-    expect(result.map((r) => path.basename(r.path)).sort()).toEqual(["a1.md", "a2.md"]);
-    expect(result.every((r) => r.source === "user-extension-paths")).toBe(true);
+    const ext = result.filter((r) => r.source === "user-extension-paths");
+    expect(ext.map((r) => path.basename(r.path)).sort()).toEqual(["a1.md", "a2.md"]);
   });
 
   it("overrides npm on name clash (priority: user-extension-paths > npm)", () => {
@@ -313,8 +321,9 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     writeFile(path.join(pkgDir, "agents"), "async.md", "body");
     process.env.XYZ_EXTENSION_PATHS = pkgDir;
     const result = await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
-    expect(result.map((r) => path.basename(r.path))).toEqual(["async.md"]);
-    expect(result[0]?.source).toBe("user-extension-paths");
+    const ext = result.filter((r) => r.source === "user-extension-paths");
+    expect(ext.map((r) => path.basename(r.path))).toEqual(["async.md"]);
+    expect(ext[0]?.source).toBe("user-extension-paths");
   });
 });
 
