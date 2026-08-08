@@ -117,9 +117,10 @@ mac:
   category: public.app-category.developer-tools
   icon: build/icon.icns
   minimumSystemVersion: 12.0.0
-  # 固定文件名（去 ${version}）支持自动升级 + releases/latest/download 静态 URL。
+  # release asset 文件名带版本号（preflight 检查强制；release-checker 用平台后缀 pattern
+  # 如 -mac-arm64.zip 定位 asset，不依赖固定文件名——ad0bcf86a 起自动升级改走版本化 asset）。
   # zip 和 dmg 共用此 pattern，${ext} 由 electron-builder 按 target 解析为 .zip / .dmg。
-  artifactName: TaiJi-mac-arm64.${ext}
+  artifactName: TaiJi-${version}-mac-arm64.${ext}
 
 win:
   target:
@@ -130,14 +131,14 @@ win:
       arch:
         - x64
   icon: build/icon.ico
-  # 固定文件名（去 ${version}）支持自动升级 + releases/latest/download 静态 URL。
+  # release asset 文件名带版本号（同 mac 注释，release-checker pattern 匹配）。
   # nsis target 的 ${ext} 解析为 exe，zip target 的 ${ext} 解析为 zip。
-  artifactName: TaiJi-setup-${arch}.${ext}
+  artifactName: TaiJi-setup-${version}-${arch}.${ext}
 
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-  artifactName: TaiJi-setup-${arch}.${ext}
+  artifactName: TaiJi-setup-${version}-${arch}.${ext}
 
 linux:
   target:
@@ -149,11 +150,11 @@ linux:
         - x64
   category: Development
   icon: build/icon-512.png
-  # 固定文件名（去 ${version}）支持自动升级 + releases/latest/download 静态 URL。
+  # release asset 文件名带版本号（同 mac 注释，release-checker pattern 匹配）。
   # ${arch} 由 electron-builder 按 target ext 解析（getArtifactArchName）：
   # AppImage(x64) -> x86_64，deb(x64) -> amd64，${ext} 解析为 AppImage / deb。
-  # 产物：TaiJi-x86_64.AppImage 和 TaiJi-amd64.deb。
-  artifactName: TaiJi-${arch}.${ext}
+  # 产物：TaiJi-${version}-x86_64.AppImage 和 TaiJi-${version}-amd64.deb。
+  artifactName: TaiJi-${version}-${arch}.${ext}
 
 # 本地构建时 electron-builder 需要至少一个 publish provider
 # 否则 updateInfoBuilder 会因 channel === null 崩溃
