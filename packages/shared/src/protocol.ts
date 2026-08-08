@@ -112,6 +112,9 @@ export type ClientMessageType =
   // 迁移 W2：Provider 导入两步流。Step1 preview（脱敏，apiKey 不进前端）→ Step2 apply（写 models.json）。
   // reply config.providersPreviewed / config.providersImported。
   | 'config.previewImportProviders' | 'config.applyImportProviders'
+  // OAuth Login（路径 B 自实现，slice design I1/I2）：启动/中止 OAuth flow。
+  // 中间态经 server→client 事件推送（auth.deviceCode / auth.authUrl / auth.success / auth.error）。
+  | 'config.oauthLogin' | 'config.oauthCancel'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -495,6 +498,10 @@ export interface ClientMessageMap {
    * importId 来自 Step1 preview 的 reply；selectedIds 是用户勾选的 provider id 列表。
    */
   'config.applyImportProviders': { importId: string; selectedIds: string[] }
+  /** config.oauthLogin：启动 OAuth flow（device/callback，按 provider 的 oauthConfig）。reply config.oauthLoginReply。 */
+  'config.oauthLogin': { providerId: string }
+  /** config.oauthCancel：中止进行中的 OAuth flow（停轮询/关 server/清 state）。reply config.oauthCancelReply。 */
+  'config.oauthCancel': { providerId: string }
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -629,6 +636,9 @@ export type ServerMessageType =
   | 'config.builtinProviders'
   // 迁移 W2：Provider 导入 reply（preview 脱敏 / apply 结果含 imported/skipped/failed 三态）。
   | 'config.providersPreviewed' | 'config.providersImported'
+  // OAuth Login 事件（路径 B，slice design I4）：payload 必带 providerId（前端按 providerId 路由，支持并发多 provider）。
+  // token 永不出现在事件 payload（脱敏红线）。
+  | 'auth.deviceCode' | 'auth.authUrl' | 'auth.success' | 'auth.error'
 
 /** skill 缓存失效广播的作用域：global=全局 skill 变动，project=某项目 cwd 的 skill 变动。 */
 export type SkillCacheScope = 'global' | 'project'
@@ -1002,6 +1012,19 @@ export interface ServerMessageMapBase {
   'config.providersImported':
     | { result: ProviderImportResult }
     | { error: { code: string; message: string } }
+  // ── OAuth Login 事件（路径 B，slice design I4）──
+  /** device flow 中间态：user_code 大字号展示 + verification_uri 打开浏览器 + 轮询倒计时。 */
+  'auth.deviceCode': { providerId: string; userCode: string; verificationUri: string; verificationUriComplete?: string; expiresIn?: number; interval?: number }
+  /** callback flow 中间态：授权 URL（前端打开浏览器）+ 固定端口提示。 */
+  'auth.authUrl': { providerId: string; url: string; callbackPort?: number }
+  /** 授权成功：token 已写 auth.json。 */
+  'auth.success': { providerId: string; oauthName?: string }
+  /** 授权失败（expired_token / access_denied / 端口占用 / 超时 / exchange 失败）。 */
+  'auth.error': { providerId: string; message: string }
+  /** config.oauthLogin reply（成功/失败布尔 + 错误原因）。 */
+  'config.oauthLoginReply': { started: boolean; error?: string }
+  /** config.oauthCancel reply（幂等：无进行中 flow 返回 cancelled:false 不报错）。 */
+  'config.oauthCancelReply': { cancelled: boolean }
   // config.discoveredModels：discoverModels reply（settings-message-handler.ts:178/180）。
   // 成功 { models, success: true }；失败 { models: [], success: false, error }（D10 降级响应，非 error envelope）。
   // models 元素形状对齐前端 config.ts:49 DiscoveredModelsResult（id + 可选 name/contextWindow）。
@@ -1118,6 +1141,9 @@ export interface ReplyPayloadMap {
   // W2 迁移：provider 导入两步流 reply（payload 消费型，前端读 importId/preview/result/error）。
   'config.previewImportProviders': ServerMessageMap['config.providersPreviewed']
   'config.applyImportProviders': ServerMessageMap['config.providersImported']
+  // OAuth Login（路径 B）：reply 消费型（started/cancelled 布尔）。
+  'config.oauthLogin': ServerMessageMap['config.oauthLoginReply']
+  'config.oauthCancel': ServerMessageMap['config.oauthCancelReply']
   'config.scanSessionSkills': ServerMessageMap['config.sessionSkills']
   'config.getGlobalSkills': ServerMessageMap['config.globalSkills']
   'config.getProjectSkills': ServerMessageMap['config.projectSkills']

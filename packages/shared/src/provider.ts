@@ -53,6 +53,26 @@ export interface BuiltinProviderTemplate {
   modelCount: number
   models: BuiltinModelSummary[]
   logoUrl?: string
+  /** OAuth flow 配置（prebuild 从 pi-ai dist/auth/oauth/*.js 提取，仅 oauthSupported provider 有值）。 */
+  oauthConfig?: BuiltinOAuthConfig
+}
+
+/**
+ * OAuth 流程配置（slice design I7/C1）。
+ * openrouter 为公开 PKCE flow：无 clientId（noClientId=true）+ 动态端口（callbackPort 缺省）。
+ */
+export interface BuiltinOAuthConfig {
+  clientId: string
+  noClientId?: boolean
+  flow: 'device' | 'callback' | 'both'
+  endpoints: {
+    authorize?: string
+    token?: string
+    deviceCode?: string
+    verify?: string
+  }
+  scopes: string[]
+  callbackPort?: number
 }
 
 export type ProviderStatus = 'connected' | 'not_configured' | 'error'
