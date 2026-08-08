@@ -8,6 +8,14 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// 隔离真实用户全局目录：resource-discovery 用 homedir() 推导 user-agents 源
+// （~/.agents/agents/），测试环境可能存在真实 agent 文件（如 tech-design-review.md），
+// 不 mock 会导致「期望空列表/精确列表」用例被环境污染（2026-08 实测 4 个失败）。
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  return { ...actual, homedir: () => "/nonexistent-home-for-tests" };
+});
+
 import {
   discoverResources,
   discoverResourcesSync,

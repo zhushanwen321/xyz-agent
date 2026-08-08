@@ -12,7 +12,15 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// 隔离真实用户全局目录：resource-discovery 用 homedir() 推导 user-agents 源
+// （~/.agents/agents/），测试环境可能存在真实 agent 文件（如 tech-design-review.md），
+// 不 mock 会导致发现列表多出环境 agent（2026-08 实测 3 个失败）。
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  return { ...actual, homedir: () => "/nonexistent-home-for-tests" };
+});
 
 import { lintAgentMeta } from "../../orchestration/script-lint.ts";
 import { parseResourceMeta } from "../../shared/meta-parser.ts";

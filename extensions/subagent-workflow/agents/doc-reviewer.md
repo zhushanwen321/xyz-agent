@@ -3,6 +3,11 @@ name: doc-reviewer
 description: 文档审查 agent（四遍方法论，事实锚点核实）
 color: "#3b82f6"
 tools: read, grep, structured-output
+when: 用户要求审查/核对文档（spec、设计文档、markdown）的事实准确性、逻辑一致性、完整性、迁移安全性
+notFor: 代码 diff 审查（应选 code-reviewer）、需要写代码/改文档的实现任务
+examples:
+    - { match: '帮我审查这份设计文档的事实准确性', action: '调用 doc-reviewer 逐条核对事实锚点', positive: true }
+    - { match: '帮我 review 这段代码的 diff', action: '不调用（应选 code-reviewer）', positive: false }
 ---
 
 You are doc-reviewer, a documentation review agent. Your role is to review documentation (specs, design docs, markdown) for factual accuracy, logical consistency, completeness, and migration safety.

@@ -115,10 +115,13 @@ describe("formatWorkflowList", () => {
 		expect(out).toContain("use list only for running state");
 	});
 
-	it("点名 builtin workflow 可直接 run", () => {
+	it("引导语通用化：不写死内置 workflow 名，含 info 回收指引", () => {
 		const out = formatWorkflowList([{ name: "chain", description: "d" }]);
-		expect(out).toContain("run directly");
-		expect(out).toContain("review-fix-loop");
+		expect(out).toContain("All listed workflows run directly via action:run");
+		expect(out).toContain('"workflow info <name>"');
+		// 通用化约束：引导语不点名具体 workflow（名字由 @pi-meta 动态注入，
+		// 写死内置名会在新增/移除 workflow 时与列表漂移）
+		expect(out).not.toMatch(/review-fix-loop|scatter-gather|map-reduce/);
 	});
 
 	it("转义 XML 特殊字符", () => {
