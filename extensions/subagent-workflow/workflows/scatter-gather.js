@@ -12,11 +12,11 @@
 //
 // ⚠️ lintScript 约束（本脚本已遵守）：含 parallel() 入口（兼 agent 嵌套），禁止 bare IIFE
 
-const meta = {
-  name: "scatter-gather",
-  description: "通用编排：scatter 拆分 → parallel 处理 → gather 合并 三段",
-  phases: ["scatter", "process", "gather"],
-};
+/* @pi-meta
+name: scatter-gather
+description: 通用编排：scatter 拆分 → parallel 处理 → gather 合并 三段
+phases: [scatter, process, gather]
+*/
 
 // ── 入参（$ARGS）──────────────────────────────────────────────────
 const task = $ARGS.task;

@@ -11,11 +11,11 @@
 //   - 禁止 bare IIFE（用 top-level await）
 //   - 禁止用 result 作变量名
 
-const meta = {
-  name: "chain",
-  description: "通用编排：analyze → transform → synthesize 顺序三步链",
-  phases: ["analyze", "transform", "synthesize"],
-};
+/* @pi-meta
+name: chain
+description: 通用编排：analyze → transform → synthesize 顺序三步链
+phases: [analyze, transform, synthesize]
+*/
 
 // ── 入参（$ARGS）──────────────────────────────────────────────────
 const task = $ARGS.task;

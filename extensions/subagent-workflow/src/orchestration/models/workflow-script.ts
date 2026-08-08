@@ -18,18 +18,13 @@
 import { type LintResult,lintScript } from "../script-lint.ts";
 // LintFinding/LintResult 类型规范归属 engine/script-lint.ts（canonical 源）。
 
+// WorkflowMeta 规范来源是 shared/resource-meta.ts（m1 DM1，含 parameters/usage/when/notFor）。
+// m2：删本地封闭 3 字段 interface，re-export m1 的判别联合。
+import type { WorkflowMeta } from "../../shared/resource-meta.ts";
+export type { WorkflowMeta };
+
 /** 脚本来源：saved（.pi/workflows/ 固定）或 tmp（.pi/workflows/.tmp/ 临时）。 */
 export type WorkflowSource = "saved" | "tmp";
-
-/** 脚本元信息（regex 提取，不执行用户代码）。 */
-export interface WorkflowMeta {
-  name: string;
-  description: string;
-  phases: (string | { title: string; detail?: string })[];
-}
-
-/** strip `export const meta` → `const meta`（lifecycle.ts:66 逻辑迁移）。 */
-const EXPORT_META_PATTERN = /\bexport\s+const\s+meta\b/g;
 
 /**
  * WorkflowScript 实体。
@@ -79,12 +74,13 @@ export class WorkflowScript {
   }
 
  /**
- * 返回可执行源（strip `export const meta` → `const meta`）。
+ * 返回可执行源。
  *
- * 脚本格式不变（AC-4）。Worker 线程 wrap（注入 globals）由 infra
- * infra/worker-script-builder.ts buildWorkerScript 完成——本方法只做纯文本变换。
+ * m2：不再 strip `export const meta`——meta 现为 @pi-meta 块注释（合法 JS，
+ * worker 天然忽略），无 const meta 变量。toExecutable 返回原文（含块注释）。
+ * Worker 线程 wrap（注入 globals）由 infra/worker-script-builder.ts buildWorkerScript 完成。
  */
   toExecutable(): string {
-    return this.sourceCode.replace(EXPORT_META_PATTERN, "const meta");
+    return this.sourceCode;
   }
 }

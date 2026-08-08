@@ -54,6 +54,8 @@ describe("parseAgentFrontmatter", () => {
   });
   it("extracts model/thinkingLevel/tools from frontmatter", () => {
     const cfg = parseAgentFrontmatter("/x/coder.md", `---
+name: coder
+description: coder agent
 model: anthropic/claude-sonnet-4-5
 thinkingLevel: high
 tools: bash, read, edit

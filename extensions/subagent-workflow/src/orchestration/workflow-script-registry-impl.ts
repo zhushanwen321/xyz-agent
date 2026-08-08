@@ -18,13 +18,10 @@
 
 import { readFileSync } from "node:fs";
 
-import {
-  type WorkflowMeta,
-  WorkflowScript,
-  type WorkflowSource,
-} from "./models/workflow-script.ts";
+import { WorkflowScript } from "./models/workflow-script.ts";
 import type { WorkflowScriptRegistry } from "./models/workflow-script-registry.ts";
 import {
+  type CachedWorkflowMeta,
   discoverWorkflows,
   getWorkflow,
   invalidateCache,
@@ -81,27 +78,14 @@ export class WorkflowScriptRegistryImpl implements WorkflowScriptRegistry {
  /**
  * 把 CachedWorkflowMeta 转换为 WorkflowScript 实体。
  *
- * 字段映射：
- * - name/path/source 直接传
- * - meta 拆为 WorkflowMeta（name/description/phases）
- * - sourceCode 在此 readFile 填充（FR-2：registry 是唯一读文件处，扫描+缓存+去重；
- * 60s TTL 缓存避免重复读）。caller（launcher.runAndWait / tool-workflow.actionRun）
- * 直接用 script.validate / script.toExecutable，不再各自 readFile。
- * - available：meta 提取失败（config-loader 标 available=false）或文件不可读时为 false
+ * m2：整对象透传——m 已是 WorkflowMeta（CachedWorkflowMeta extends WorkflowMeta），
+ * 直接传 meta: m，不再 {name,description,phases} 重建。消灭第 3 处重映射，
+ * parameters/usage/when/notFor 一路流到 script.meta。
+ *
+ * sourceCode 在此 readFile 填充（FR-2：registry 是唯一读文件处）。
+ * available：meta 提取失败或文件不可读时为 false。
  */
-  private toScript(m: {
-    name: string;
-    description: string;
-    phases: (string | { title: string; detail?: string })[];
-    path: string;
-    available: boolean;
-    source: WorkflowSource;
-  }): WorkflowScript {
-    const meta: WorkflowMeta = {
-      name: m.name,
-      description: m.description,
-      phases: m.phases,
-    };
+  private toScript(m: CachedWorkflowMeta): WorkflowScript {
  // FR-2: registry 是唯一读文件处。readFileSync 填 sourceCode —— 这样 launcher/tool
  // 直接调 toExecutable/validate 即可，无需各自 readFile（避免重复读，60s TTL 缓存生效）。
     let sourceCode = "";
@@ -121,7 +105,7 @@ export class WorkflowScriptRegistryImpl implements WorkflowScriptRegistry {
       source: m.source,
       path: m.path,
       sourceCode,
-      meta,
+      meta: m,
       available,
     });
   }

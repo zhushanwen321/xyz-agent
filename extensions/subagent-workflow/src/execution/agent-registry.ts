@@ -18,6 +18,7 @@ import {
   discoverResourcesSync,
   type ScanConfig,
 } from "../shared/resource-discovery.ts";
+import { parseResourceMeta } from "../shared/meta-parser.ts";
 import type { AgentConfig } from "./model-resolver.ts";
 
 const logger = getLogger("subagents");
@@ -112,19 +113,19 @@ export function parseAgentFrontmatter(filePath: string, content: string): AgentC
   const yamlBlock = content.slice(FM_DELIM.length, closeIdx);
   const body = content.slice(closeIdx + FM_DELIM.length).trim();
 
-  const toolsRaw = extractYamlField(yamlBlock, "tools");
-  const tools = toolsRaw
-    ? toolsRaw.split(",").map((s) => s.trim()).filter(Boolean)
-    : undefined;
-
+  // m2：结构化路由字段（name/model/tools）经 IF1 parseResourceMeta（统一 parser），
+  // 消灭本地 frontmatter parser 与 subagent-list-injector 的重复。thinkingLevel/defaultBackground
+  // 是执行配置（非 AgentMeta 路由字段），仍用 extractYamlField 取。
+  const meta = parseResourceMeta(content, "agent");
+  const agentMeta = meta?.kind === "agent" ? meta : null;
   const defaultBackgroundRaw = extractYamlField(yamlBlock, "defaultBackground");
 
   return {
-    name: extractYamlField(yamlBlock, "name") ?? name,
+    name: agentMeta?.name ?? name,
     systemPrompt: body,
-    model: extractYamlField(yamlBlock, "model") ?? undefined,
+    model: agentMeta?.model ?? undefined,
     thinkingLevel: extractYamlField(yamlBlock, "thinkingLevel") ?? undefined,
-    tools: tools && tools.length > 0 ? tools : undefined,
+    tools: agentMeta?.tools && agentMeta.tools.length > 0 ? agentMeta.tools : undefined,
     defaultBackground: defaultBackgroundRaw === "true" ? true : undefined,
   };
 }

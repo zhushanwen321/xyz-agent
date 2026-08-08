@@ -33,6 +33,7 @@ import {
 	discoverResources,
 	findWorkspaceRoot,
 } from "../shared/resource-discovery.ts";
+import { parseResourceMeta } from "../shared/meta-parser.ts";
 
 const logger = getLogger("injector");
 
@@ -43,43 +44,16 @@ export interface AgentEntry {
 }
 
 /**
- * 解析 markdown 文件的 YAML frontmatter。
- * 无有效 frontmatter 或缺 name/description 时返回 null。
+ * 解析 markdown 文件的 YAML frontmatter（name + description）。
  *
- * 沿用 unified-hooks 原实现：仅支持单行 key:value（builtin pi-subagents 用单行带引号
- * description）。block scalar（`>-` / `|`）不在支持范围——保持与原行为一致。
+ * m2 收敛：删本地单行 key:value parser，改调 shared/meta-parser.ts parseResourceMeta
+ * （IF1 统一 parser，支持 block scalar）。无有效 frontmatter 或缺 name/description 返 null。
+ * 投影 {name, description} 注入用（examples 注入留 m5）。
  */
 export function parseAgentFrontmatter(content: string): AgentEntry | null {
-	if (!content.startsWith("---")) return null;
-
-	const FRONTMATTER_OPEN_LEN = 3;
-	const endIndex = content.indexOf("\n---", FRONTMATTER_OPEN_LEN);
-	if (endIndex === -1) return null;
-
-	const block = content.slice(FRONTMATTER_OPEN_LEN, endIndex);
-	let name = "";
-	let description = "";
-
-	for (const line of block.split("\n")) {
-		const match = line.match(/^([\w-]+):\s*(.*)$/);
-		if (!match) continue;
-
-		const key = match[1]!;
-		let value = match[2]!.trim();
-		// 去除包裹引号
-		if (
-			(value.startsWith('"') && value.endsWith('"')) ||
-			(value.startsWith("'") && value.endsWith("'"))
-		) {
-			value = value.slice(1, -1);
-		}
-
-		if (key === "name") name = value;
-		if (key === "description") description = value;
-	}
-
-	if (!name || !description) return null;
-	return { name, description };
+	const meta = parseResourceMeta(content, "agent");
+	if (!meta || meta.kind !== "agent") return null;
+	return { name: meta.name, description: meta.description };
 }
 
 /**

@@ -144,8 +144,16 @@ function typecheckMeta(raw: unknown, kind: ResourceKind): ResourceMeta | null {
   }
   let tools: string[] | undefined;
   if (o.tools !== undefined) {
-    if (!Array.isArray(o.tools) || !o.tools.every(isString)) return null;
-    tools = o.tools as string[];
+    if (Array.isArray(o.tools)) {
+      if (!o.tools.every(isString)) return null;
+      tools = o.tools as string[];
+    } else if (isString(o.tools)) {
+      // 兼容 agent .md 的逗号分隔字符串约定（如 `tools: read, bash, grep`）
+      const parts = o.tools.split(",").map((s) => s.trim()).filter(Boolean);
+      tools = parts.length > 0 ? parts : undefined;
+    } else {
+      return null;
+    }
   }
   const model = isString(o.model) ? o.model : undefined;
 
@@ -183,6 +191,24 @@ export function parseResourceMeta(
   }
 }
 
+/** 从 eemeli/yaml 拋错提取 linePos 起点（类型守卫，避免 unsafe cast）。[P-yaml] 实测 e.linePos = [{line,col},{line,col}]。*/
+function getYamlLinePos(e: unknown): { line: number; col: number } | undefined {
+  if (e !== null && typeof e === "object" && "linePos" in e) {
+    const lp = (e as Record<string, unknown>).linePos;
+    if (Array.isArray(lp) && lp.length > 0) {
+      const first = lp[0];
+      if (first !== null && first !== undefined && typeof first === "object"
+          && "line" in first && "col" in first) {
+        const f = first as Record<string, unknown>;
+        if (typeof f["line"] === "number" && typeof f["col"] === "number") {
+          return { line: f["line"], col: f["col"] };
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
 // ── IF2: parseResourceMetaDetailed（generate 闭环，返 linePos）─────────
 
 export type DetailedResult =
@@ -212,10 +238,7 @@ export function parseResourceMetaDetailed(
     raw = parseYaml(block);
   } catch (e) {
     // eemeli/yaml YAMLParseError：e.linePos = [{line,col},{line,col}]（[P-yaml] 实测）
-    const err = e as { linePos?: Array<{ line: number; col: number }> };
-    const linePos = Array.isArray(err.linePos) && err.linePos.length > 0
-      ? { line: err.linePos[0]!.line, col: err.linePos[0]!.col }
-      : undefined;
+    const linePos = getYamlLinePos(e);
     return {
       ok: false,
       error: e instanceof Error ? e.message.split("\n")[0] : String(e),

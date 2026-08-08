@@ -1,6 +1,6 @@
 // review-fix-loop-utils.cjs 行为测试（MF-5）
 //
-// 覆盖 review-fix-loop.js 的可测纯函数：参数校验（normalizeBool/normalizeInt）、
+// 覆盖 review-fix-loop.js 的可测纯函数：批次解析/聚合结果解析/审查指令构建
 // 批次解析（缺号/重复/agents 冲突/batchNames 数量）、fallow-scan 类型限制、
 // 审查指令构建、结果解析（parseResult/normalizeAggregatorResult/parseAggregatedMd 回退）。
 // 这些逻辑原本全部内联在 workflow 脚本里零测试，抽到 utils 模块后与 worker 运行时共用
@@ -13,8 +13,6 @@ import { join } from "path";
 import {
   TARGET_TYPES,
   VALID_ARG_KEYS,
-  normalizeBool,
-  normalizeInt,
   parseBatches,
   resolveBatchNames,
   validateFallowScan,
@@ -102,49 +100,6 @@ describe("VALID_ARG_KEYS（未知参数 fail-fast 白名单）", () => {
   it("batchN 动态键不在白名单（由 /^batch\\d+$/ 正则单独放行），拼错 batchl 会被拒", () => {
     expect(VALID_ARG_KEYS.has("batch1")).toBe(false);
     expect(VALID_ARG_KEYS.has("batchl")).toBe(false);
-  });
-});
-
-// ── 参数校验：normalizeBool / normalizeInt ──────────────────────────
-
-describe("normalizeBool", () => {
-  it("缺省值（undefined/null/空串）→ 返回默认值", () => {
-    expect(normalizeBool(undefined, "autoCommit", false, fail)).toBe(false);
-    expect(normalizeBool(null, "autoCommit", true, fail)).toBe(true);
-    expect(normalizeBool("", "autoCommit", false, fail)).toBe(false);
-  });
-
-  it("合法布尔值透传", () => {
-    expect(normalizeBool(true, "autoCommit", false, fail)).toBe(true);
-    expect(normalizeBool(false, "autoCommit", true, fail)).toBe(false);
-    expect(normalizeBool("true", "autoCommit", false, fail)).toBe(true);
-    expect(normalizeBool("false", "autoCommit", true, fail)).toBe(false);
-  });
-
-  it("非法布尔值 → fail（参数校验 fail-fast）", () => {
-    expect(() => normalizeBool("yes", "autoCommit", false, fail)).toThrow("必须是布尔值");
-    expect(() => normalizeBool(1, "autoCommit", false, fail)).toThrow("必须是布尔值");
-    expect(() => normalizeBool("on", "skipCleanAgents", true, fail)).toThrow("skipCleanAgents");
-  });
-});
-
-describe("normalizeInt", () => {
-  it("缺省值 → 返回默认值", () => {
-    expect(normalizeInt(undefined, "maxRounds", 10, fail)).toBe(10);
-    expect(normalizeInt("", "stuckThreshold", 3, fail)).toBe(3);
-  });
-
-  it("合法正整数（number 与数字字符串）", () => {
-    expect(normalizeInt(5, "maxRounds", 10, fail)).toBe(5);
-    expect(normalizeInt("7", "maxRounds", 10, fail)).toBe(7);
-    expect(normalizeInt(" 12 ", "maxRounds", 10, fail)).toBe(12);
-  });
-
-  it("非正整数（0/负数/小数/非数字）→ fail", () => {
-    expect(() => normalizeInt(0, "maxRounds", 10, fail)).toThrow("必须是正整数");
-    expect(() => normalizeInt(-1, "maxRounds", 10, fail)).toThrow("必须是正整数");
-    expect(() => normalizeInt(1.5, "maxRounds", 10, fail)).toThrow("必须是正整数");
-    expect(() => normalizeInt("abc", "stuckThreshold", 3, fail)).toThrow("stuckThreshold");
   });
 });
 

@@ -20,11 +20,42 @@
 //    main 4.0.0 版自包含 677 行、缺批次参数时默认单批 ["reviewer"]、recheckAfterFix 默认 false。
 //    merge 时保留本版（功能更全），详见 .changeset/tidy-waves-description-phase-lint.md。
 
-const meta = {
-  name: "review-fix-loop",
-  description: "审查-修复循环：多批串行（批内并行 review → aggregate → fix → 重审直到 clean）。必填 targetType（git-diff/file/dir/text）+ target。批次由必填参数 batch1..batchN 控制（无默认，至少传一个；agents 为单批简写；如 batch1=fallow-scan batch2=code-reviewer），用于前置检查先行的场景。注意：唯一带写操作/commit 副作用的内置 workflow，autoCommit 默认 false；skipCleanAgents 默认 true + recheckAfterFix 默认 false（clean agent 下轮跳过，与字面语义一致）；传 recheckAfterFix=true 启用可选强回归模式（fix 后重派全批，clean agent 走限定 prompt 只审改动文件）。可选 fixAgent/maxFixAttempts/convergeNewIssues/convergeRounds 控制修复 agent 与收敛终止（详见 workflows/README.md）。",
-  phases: ["Review", "Fix"],
-};
+/* @pi-meta
+name: review-fix-loop
+description: >-
+  审查-修复循环：多批串行（批内并行 review → aggregate → fix → 重审直到 clean）。
+  Use when 需迭代修复至无 must-fix。Not for 单纯审查不改代码。
+  唯一带写操作/commit 副作用的内置 workflow（autoCommit 默认 false）。
+when: 用户要 review 并迭代修复至 clean
+notFor: 单纯审查不改代码
+phases: [Review, Fix]
+parameters:
+  type: object
+  properties:
+    targetType: { type: string, enum: [git-diff, file, dir, text] }
+    target: { type: string }
+    autoCommit: { type: boolean, default: false }
+    maxRounds: { type: integer, default: 10, minimum: 1 }
+    stuckThreshold: { type: integer, default: 3, minimum: 1 }
+    skipCleanAgents: { type: boolean, default: true }
+    recheckAfterFix: { type: boolean, default: false }
+    fixAgent: { type: string }
+    maxFixAttempts: { type: integer, default: 2, minimum: 1 }
+    convergeNewIssues: { type: integer, default: 1, minimum: 1 }
+    convergeRounds: { type: integer, default: 2, minimum: 1 }
+    model: { type: string }
+    reviewPrompt: { type: string }
+    fixPrompt: { type: string }
+    agents: { type: string }
+  patternProperties:
+    "^batch\\d+$": { type: string }
+  required: [targetType, target]
+usage: |
+  ## 使用说明
+  - batch1..batchN 与 agents 互斥（至少传一个 batchN）
+  - fallow-scan 仅 targetType=git-diff 合法（前置静态分析批次）
+  - 示例：workflow run review-fix-loop --args targetType=git-diff target=main batch1=fallow-scan batch2=code-reviewer autoCommit=true
+*/
 
 // ── 参数解析 + 白名单校验（fail-fast） ────────────────────────────
 
@@ -33,7 +64,7 @@ function fail(msg) {
 }
 
 // ── 可测纯函数模块 ────────────────────────────────────────────────
-// 参数校验（normalizeBool/normalizeInt/白名单）/批次解析/聚合结果解析/审查指令构建
+// 参数校验（白名单，类型校验由 m3 args-validator schema 接管）/批次解析/聚合结果解析/审查指令构建
 // 的纯函数在 review-fix-loop-utils.cjs，
 // vitest 单测见 src/__tests__/review-fix-loop-utils.test.ts。
 // worker 运行时经 workerData.scriptPath 定位自身目录——内置 workflow 在 npm 包内，
@@ -41,8 +72,6 @@ function fail(msg) {
 const {
   TARGET_TYPES,
   VALID_ARG_KEYS,
-  normalizeBool,
-  normalizeInt,
   parseBatches,
   resolveBatchNames,
   validateFallowScan,
@@ -98,14 +127,14 @@ const reviewPrompt = typeof $ARGS.reviewPrompt === "string" && $ARGS.reviewPromp
 const fixPrompt = typeof $ARGS.fixPrompt === "string" && $ARGS.fixPrompt.trim()
   ? $ARGS.fixPrompt.trim()
   : "修复全部 must-fix 问题（critical/major）。最小正确修复，不做重构、不做风格改动。";
-const autoCommit = normalizeBool($ARGS.autoCommit, "autoCommit", false, fail);
-const maxRounds = normalizeInt($ARGS.maxRounds, "maxRounds", 10, fail);
-const stuckThreshold = normalizeInt($ARGS.stuckThreshold, "stuckThreshold", 3, fail);
-const skipCleanAgents = normalizeBool($ARGS.skipCleanAgents, "skipCleanAgents", true, fail);
+const autoCommit = $ARGS.autoCommit ?? false;
+const maxRounds = $ARGS.maxRounds ?? 10;
+const stuckThreshold = $ARGS.stuckThreshold ?? 3;
+const skipCleanAgents = $ARGS.skipCleanAgents ?? true;
 // 默认 recheckAfterFix=false：clean agent 下轮跳过（与 skipCleanAgents=true 字面语义一致），
 // RC-5（fix 后全批全量重审放大 token）在默认场景消失。传 true 启用可选强回归模式：fix 后重派
 // 全批，clean agent 走限定 prompt（buildScopedRecheckPrompt，只审 modifiedFiles，5.5）。
-const recheckAfterFix = normalizeBool($ARGS.recheckAfterFix, "recheckAfterFix", false, fail);
+const recheckAfterFix = $ARGS.recheckAfterFix ?? false;
 // fixAgent（5.3）：值语义同 batchN 的 agent 项（内置名 / agent.md 路径），解析复用
 // resolveAgentDefs 白名单与加载逻辑。传入时 fix 阶段用 agent({agent: ...}) 派发（代码场景
 // 的 verify 命令写在该 agent.md 内）；未传保持现状（通用 subagent + 内联 prompt）。
@@ -114,9 +143,9 @@ const FIX_AGENT_RAW = typeof $ARGS.fixAgent === "string" && $ARGS.fixAgent.trim(
 const FIX_DEF = FIX_AGENT_RAW ? resolveAgentDefs([FIX_AGENT_RAW])[0] : null;
 // 5.7 收敛终止参数：maxFixAttempts（needs-redesign 阈值，RC-7）/ convergeNewIssues +
 // convergeRounds（新发现率收敛阈值）
-const maxFixAttempts = normalizeInt($ARGS.maxFixAttempts, "maxFixAttempts", 2, fail);
-const convergeNewIssues = normalizeInt($ARGS.convergeNewIssues, "convergeNewIssues", 1, fail);
-const convergeRounds = normalizeInt($ARGS.convergeRounds, "convergeRounds", 2, fail);
+const maxFixAttempts = $ARGS.maxFixAttempts ?? 2;
+const convergeNewIssues = $ARGS.convergeNewIssues ?? 1;
+const convergeRounds = $ARGS.convergeRounds ?? 2;
 const MODEL = typeof $ARGS.model === "string" && $ARGS.model.trim() ? $ARGS.model.trim() : undefined;
 
 // base 锁定（RC-6，5.6）：git-diff 场景 run 启动时锁定 base commit，全程用锁定 hash 构造

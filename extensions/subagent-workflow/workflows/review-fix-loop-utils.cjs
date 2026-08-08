@@ -18,20 +18,6 @@ const VALID_ARG_KEYS = new Set([
   "recheckAfterFix", "fixAgent", "maxFixAttempts", "convergeNewIssues", "convergeRounds", "_runId",
 ]);
 
-function normalizeBool(v, name, def, fail) {
-  if (v === undefined || v === null || v === "") return def;
-  if (v === true || v === "true") return true;
-  if (v === false || v === "false") return false;
-  fail("参数 " + name + " 必须是布尔值（true/false），实际: " + JSON.stringify(v));
-}
-
-function normalizeInt(v, name, def, fail) {
-  if (v === undefined || v === null || v === "") return def;
-  const n = typeof v === "number" ? v : Number(String(v).trim());
-  if (!Number.isInteger(n) || n <= 0) fail("参数 " + name + " 必须是正整数，实际: " + JSON.stringify(v));
-  return n;
-}
-
 /**
  * 批次解析：batch1..batchN（缺号报错）/ agents 简写。两者必传其一，缺省直接报错（无默认 agent）。
  * @param args $ARGS 形状的对象（batchN 键、agents 键）
@@ -840,8 +826,6 @@ function resolveBatchTerminated(batchClean, terminated) {
 module.exports = {
   TARGET_TYPES,
   VALID_ARG_KEYS,
-  normalizeBool,
-  normalizeInt,
   parseBatches,
   resolveBatchNames,
   validateFallowScan,

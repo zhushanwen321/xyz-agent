@@ -77,7 +77,7 @@ function validScript(
 ): string {
   const description = opts.description ?? `${name} desc`;
   const phases = JSON.stringify(opts.phases ?? []);
-  return `const meta = { name: "${name}", description: "${description}", phases: ${phases} };\nagent({ prompt: "x" });\n`;
+  return `/* @pi-meta\nname: ${name}\ndescription: ${description}\nphases: ${phases}\n*/\nagent({ prompt: "x" });\n`;
 }
 
 // ── Setup / Teardown ──────────────────────────────────────────
@@ -116,32 +116,16 @@ describe("discoverWorkflows — 加载合法配置", () => {
     expect(foo!.path).toBe(join(ws.projectDir, "foo.js"));
   });
 
-  it("支持 export const meta 形式", async () => {
-    await writeScript(
-      ws.projectDir,
-      "bar.mjs",
-      `export const meta = { name: "bar", description: "d", phases: ["p1"] };\nagent({ prompt: "x" });\n`,
-    );
-
-    const result = inTemp(await discoverWorkflows({ projectDir: ws.projectDir }));
-    const bar = result.find((w) => w.name === "bar");
-
-    expect(bar).toBeDefined();
-    expect(bar!.available).toBe(true);
-    expect(bar!.description).toBe("d");
-    expect(bar!.phases).toEqual(["p1"]);
-  });
-
-  it("多行 meta 对象正确解析", async () => {
+  it("多行 @pi-meta YAML 正确解析", async () => {
     await writeScript(
       ws.projectDir,
       "multi.js",
       [
-        "const meta = {",
-        '  name: "multi",',
-        '  description: "multi-line",',
-        '  phases: ["a", "b"],',
-        "};",
+        "/* @pi-meta",
+        "name: multi",
+        "description: multi-line",
+        "phases: [a, b]",
+        "*/",
         'agent({ prompt: "x" });',
         "",
       ].join("\n"),
@@ -156,11 +140,11 @@ describe("discoverWorkflows — 加载合法配置", () => {
     expect(multi!.phases).toEqual(["a", "b"]);
   });
 
-  it("未声明 phases 时默认为空数组", async () => {
+  it("phases 为空数组合法", async () => {
     await writeScript(
       ws.projectDir,
       "nophase.js",
-      `const meta = { name: "nophase", description: "x" };\n`,
+      `/* @pi-meta\nname: nophase\ndescription: x\nphases: []\n*/\n`,
     );
 
     const result = inTemp(await discoverWorkflows({ projectDir: ws.projectDir }));
@@ -256,7 +240,7 @@ describe("缓存 — invalidateCache 与 TTL", () => {
 });
 
 describe("坏配置容错 — 不 crash，标记 available=false", () => {
-  it("缺少 const meta 声明的脚本被标记不可用", async () => {
+  it("缺少 @pi-meta 声明的脚本被标记不可用", async () => {
     await writeScript(
       ws.projectDir,
       "broken.js",
@@ -277,7 +261,7 @@ describe("坏配置容错 — 不 crash，标记 available=false", () => {
     await writeScript(
       ws.projectDir,
       "badname.js",
-      `const meta = { name: 123, description: "x" };\n`,
+      `/* @pi-meta\nname: 123\ndescription: x\nphases: []\n*/\n`,
     );
 
     const result = inTemp(await discoverWorkflows({ projectDir: ws.projectDir }));
@@ -292,7 +276,7 @@ describe("坏配置容错 — 不 crash，标记 available=false", () => {
     await writeScript(
       ws.projectDir,
       "garbage.js",
-      `const meta = { name: "oops", description: ;;;; };\n`,
+      `/* @pi-meta\nname: oops\ndescription: d\nphases: [a\n*/\n`,
     );
 
     const result = inTemp(await discoverWorkflows({ projectDir: ws.projectDir }));

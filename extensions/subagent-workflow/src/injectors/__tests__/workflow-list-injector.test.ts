@@ -34,13 +34,13 @@ describe("summarizeDescription", () => {
 });
 
 describe("parseWorkflowMeta", () => {
-	it("从 meta 块解析 name + description", () => {
+	it("从 @pi-meta 块解析 name + description", () => {
 		const src = `// header comment
-const meta = {
-  name: "chain",
-  description: "通用编排：三步链",
-  phases: ["a", "b"],
-};
+/* @pi-meta
+name: chain
+description: 通用编排：三步链
+phases: [a, b]
+*/
 rest of code`;
 		expect(parseWorkflowMeta(src)).toEqual({
 			name: "chain",
@@ -48,11 +48,12 @@ rest of code`;
 		});
 	});
 
-	it("单引号包裹的值也能解析", () => {
-		const src = `const meta = {
-  name: 'parallel',
-  description: '多视角并行',
-};`;
+	it("双引号包裹的值也能解析", () => {
+		const src = `/* @pi-meta
+name: "parallel"
+description: "多视角并行"
+phases: []
+*/`;
 		expect(parseWorkflowMeta(src)).toEqual({
 			name: "parallel",
 			description: "多视角并行",
@@ -63,14 +64,14 @@ rest of code`;
 		expect(parseWorkflowMeta("// no meta here")).toBeNull();
 	});
 
-	it("meta 块缺 name 或 description 返回 null", () => {
-		expect(parseWorkflowMeta('const meta = { name: "x" };')).toBeNull();
-		expect(parseWorkflowMeta('const meta = { description: "x" };')).toBeNull();
+	it("@pi-meta 缺 name 或 description 返回 null", () => {
+		expect(parseWorkflowMeta("/* @pi-meta\ndescription: x\nphases: []\n*/")).toBeNull();
+		expect(parseWorkflowMeta("/* @pi-meta\nname: x\nphases: []\n*/")).toBeNull();
 	});
 
 	it("超长 description 被截断为摘要", () => {
 		const longDesc = "详".repeat(300);
-		const src = `const meta = {\n  name: "rfl",\n  description: "${longDesc}",\n};`;
+		const src = `/* @pi-meta\nname: rfl\ndescription: ${longDesc}\nphases: []\n*/`;
 		const r = parseWorkflowMeta(src);
 		expect(r).not.toBeNull();
 		expect(r!.name).toBe("rfl");
@@ -78,14 +79,14 @@ rest of code`;
 	});
 
 	it("review-fix-loop 风格的 meta（长 description 含关键 args）被合理截断", () => {
-		const src = `const meta = {
-  name: "review-fix-loop",
-  description: "审查-修复循环：多批串行（批内并行 review → aggregate → fix → 重审直到 clean）。必填 targetType（git-diff/file/dir/text）+ target。批次由必填参数 batch1..batchN 控制（无默认，至少传一个；agents 为单批简写；如 batch1=fallow-scan batch2=reviewer）。更多细节省略。",
-};`;
+		const src = `/* @pi-meta
+name: review-fix-loop
+description: 审查-修复循环：多批串行（批内并行 review → aggregate → fix → 重审直到 clean）。必填 targetType（git-diff/file/dir/text）+ target。批次由必填参数 batch1..batchN 控制（无默认，至少传一个；agents 为单批简写；如 batch1=fallow-scan batch2=reviewer）。更多细节省略。
+phases: [Review, Fix]
+*/`;
 		const r = parseWorkflowMeta(src);
 		expect(r).not.toBeNull();
 		expect(r!.name).toBe("review-fix-loop");
-		// 截断后仍含关键 args 信息（targetType）
 		expect(r!.description).toContain("targetType");
 		expect(r!.description.length).toBeLessThanOrEqual(161);
 	});

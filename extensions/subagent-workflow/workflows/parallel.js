@@ -14,11 +14,11 @@
 //
 // ⚠️ lintScript 约束（本脚本已遵守）：含 parallel() 入口，禁止 bare IIFE
 
-const meta = {
-  name: "parallel",
-  description: "通用编排：多视角并行分析同一目标，再聚合汇总",
-  phases: ["parallel-analyze", "aggregate"],
-};
+/* @pi-meta
+name: parallel
+description: 通用编排：多视角并行分析同一目标，再聚合汇总
+phases: [parallel-analyze, aggregate]
+*/
 
 // ── 入参（$ARGS）──────────────────────────────────────────────────
 const target = $ARGS.target;

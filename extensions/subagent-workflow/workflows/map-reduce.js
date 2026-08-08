@@ -13,11 +13,11 @@
 //
 // ⚠️ lintScript 约束（本脚本已遵守）：含 parallel() 入口（兼 agent 嵌套），禁止 bare IIFE
 
-const meta = {
-  name: "map-reduce",
-  description: "通用编排：parallel map → reduce 两段，处理已知 items 数组",
-  phases: ["map", "reduce"],
-};
+/* @pi-meta
+name: map-reduce
+description: 通用编排：parallel map → reduce 两段，处理已知 items 数组
+phases: [map, reduce]
+*/
 
 const fs = require("fs");
 

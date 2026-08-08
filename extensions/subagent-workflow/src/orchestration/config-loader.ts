@@ -2,7 +2,11 @@
  * Workflow Config Loader — 统一资源发现版（ADR-031）
  *
  * 扫描逻辑委托给 shared/resource-discovery（与 agent 发现共享同一套扫描源）。
- * 本文件只保留 workflow 专属的 meta 提取（regex）+ 60s TTL 缓存。
+ * 本文件只保留 workflow 专属的 meta 提取（经 shared/meta-parser.ts IF1 统一 parser）+ 60s TTL 缓存。
+ *
+ * m2 收敛：删 extractMetaViaRegex + safeEvalObject(new Function)，改调 parseResourceMeta
+ * （真实 YAML 解析 @pi-meta 块注释，发现期不执行作者代码，v5 原则 6 no-eval）。
+ * toCachedMeta 整对象透传（...meta），不再 {name,description,phases} 解构——消灭第 1 处重映射。
  *
  * Failed imports are marked available=false — the loader never throws.
  */
@@ -10,11 +14,16 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
-// WorkflowMeta / WorkflowSource 的规范来源是 engine/models/workflow-script.ts
-import type { WorkflowMeta, WorkflowSource } from "./models/workflow-script.ts";
+// WorkflowMeta 规范来源是 shared/resource-meta.ts（m1 DM1）；WorkflowSource 来自 workflow-script
+import type { WorkflowSource } from "./models/workflow-script.ts";
+import type { WorkflowMeta } from "../shared/resource-meta.ts";
+import { parseResourceMeta } from "../shared/meta-parser.ts";
 export type { WorkflowMeta, WorkflowSource };
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
+const logger = getLogger("config-loader");
 
 import {
   discoverResources,
@@ -35,12 +44,6 @@ export interface CachedWorkflowMeta extends WorkflowMeta {
 }
 
 // ── Internal types ────────────────────────────────────────────
-
-interface WorkerResult {
-  success: boolean;
-  meta?: WorkflowMeta;
-  error?: string;
-}
 
 interface CacheEntry {
   meta: CachedWorkflowMeta;
@@ -78,71 +81,6 @@ function stem(filePath: string): string {
   return dot > 0 ? base.slice(0, dot) : base;
 }
 
-// ── Regex-based meta extraction ─────────────────────────────
-
-/**
- * Extract the `meta` object from a workflow script using regex.
- *
- * This avoids executing user code (no Worker/import/require), so it works
- * regardless of whether the script uses CJS, ESM, top-level await, or
- * references runtime globals like `agent` or `$ARGS`.
- *
- * Supports both `const meta = { ... }` and `export const meta = { ... }`.
- */
-async function extractMetaViaRegex(scriptPath: string): Promise<WorkerResult> {
-  try {
-    const content = await readFile(scriptPath, "utf-8");
-
-    const metaPattern = /(?:export\s+)?const\s+meta\s*=\s*(\{[^]*?\});?\s*$/m;
-    const match = metaPattern.exec(content);
-    if (!match) {
-      return { success: false, error: "No 'const meta = { ... }' declaration found" };
-    }
-
-    const metaObj = safeEvalObject(match[1]);
-    if (!metaObj || typeof metaObj !== "object") {
-      return { success: false, error: "Failed to parse meta object" };
-    }
-
-    if (typeof metaObj.name !== "string") {
-      return { success: false, error: "meta.name must be a string" };
-    }
-
-    return {
-      success: true,
-      meta: {
-        name: metaObj.name,
-        description: typeof metaObj.description === "string" ? metaObj.description : "",
-        phases: Array.isArray(metaObj.phases)
-          ? metaObj.phases.filter(
-              (p: unknown) => typeof p === "string" || (typeof p === "object" && p !== null && "title" in p),
-            ) as (string | { title: string; detail?: string })[]
-          : [],
-      },
-    };
-  } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-/**
- * Safely evaluate a simple object literal string.
- * Uses `new Function` to avoid eval while still supporting basic JS
- * literal syntax (strings, numbers, arrays, nested objects).
- */
-function safeEvalObject(literal: string): Record<string, unknown> | undefined {
-  try {
-    const fn = new Function(`return (${literal});`);
-    const result = fn();
-    if (typeof result === "object" && result !== null && !Array.isArray(result)) {
-      return result as Record<string, unknown>;
-    }
-    return undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 // ── ResourceSource → WorkflowSource 映射 ─────────────────────
 
 /** 统一模块的 ResourceSource 映射为 workflow 的 saved/tmp 语义 */
@@ -150,29 +88,34 @@ function toWorkflowSource(source: ResourceSource): WorkflowSource {
   return source === "project-pi-tmp" ? "tmp" : "saved";
 }
 
-// ── 单文件 → CachedWorkflowMeta ───────────────────────────────
+// ── 单文件 → CachedWorkflowMeta（IF1 parseResourceMeta + 整对象透传）──
 
-/** 提取单个文件的 meta，失败时标 available=false（与原行为一致） */
+/**
+ * 提取单个文件的 meta（经 IF1 parseResourceMeta），失败时标 available=false（fail-safe 不抛）。
+ *
+ * m2：整对象透传（...meta），不再 {name,description,phases} 解构——消灭第 1 处重映射，
+ * parameters/usage/when/notFor 一路流到 script.meta。仅认 @pi-meta 新格式（D1 无 adapter）。
+ */
 async function toCachedMeta(
   filePath: string,
   source: ResourceSource,
 ): Promise<CachedWorkflowMeta> {
   const fallbackName = stem(filePath);
-  const result = await extractMetaViaRegex(filePath);
   const wfSource = toWorkflowSource(source);
-
-  if (result.success && result.meta) {
-    return {
-      name: result.meta.name,
-      description: result.meta.description,
-      phases: result.meta.phases,
-      path: filePath,
-      available: true,
-      source: wfSource,
-    };
+  try {
+    const content = await readFile(filePath, "utf-8");
+    const meta = parseResourceMeta(content, "workflow");
+    if (meta && meta.kind === "workflow") {
+      return { ...meta, path: filePath, available: true, source: wfSource };
+    }
+  } catch (err) {
+    // 读失败 → available=false（fail-safe 不抛，与原行为一致）
+    logger.debug(`[config-loader] skip unreadable workflow file ${filePath}`, {
+      reason: err instanceof Error ? err.message : String(err),
+    });
   }
-
   return {
+    kind: "workflow",
     name: fallbackName,
     description: "",
     phases: [],

@@ -30,6 +30,7 @@ import {
 	discoverResources,
 	findWorkspaceRoot,
 } from "../shared/resource-discovery.ts";
+import { parseResourceMeta } from "../shared/meta-parser.ts";
 
 const logger = getLogger("injector");
 
@@ -68,46 +69,16 @@ export function summarizeDescription(
 }
 
 /**
- * 从源码中提取 `const meta = { ... }` 块（花括号配平）。
- * 无 meta 块返回 null。
- */
-function extractMetaBlock(src: string): string | null {
-	const startMatch = src.match(/const\s+meta\s*=\s*\{/);
-	if (!startMatch || startMatch.index === undefined) return null;
-	const afterOpen = startMatch.index + startMatch[0].length;
-	let depth = 1;
-	let i = afterOpen;
-	while (i < src.length && depth > 0) {
-		const ch = src[i];
-		if (ch === "{") depth++;
-		else if (ch === "}") depth--;
-		i++;
-	}
-	if (depth !== 0) return null;
-	return src.slice(startMatch.index, i);
-}
-
-/** 从 meta 块中提取单行字符串字段值（双引号或单引号包裹）。 */
-function extractMetaField(block: string, field: string): string | null {
-	const re = new RegExp(`^[ \\t]*${field}:\\s*("([^"]*)"|'([^']*)')`, "m");
-	const m = block.match(re);
-	if (!m) return null;
-	return m[2] ?? m[3] ?? null;
-}
-
-/**
- * 解析 workflow .js/.mjs 文件的 meta 对象（name + description）。
+ * 解析 workflow .js 文件的 meta（name + description），经 IF1 parseResourceMeta。
  *
- * 所有 builtin workflow 均声明 `const meta = { name, description, phases }`，
- * description 为单行字符串。缺 name 或 description 返回 null。
+ * m2 收敛：删 extractMetaBlock/extractMetaField（本地 brace-match parser），
+ * 改调 shared/meta-parser.ts parseResourceMeta（统一 parser）。仅认 @pi-meta 新格式。
+ * 投影到 WorkflowEntry {name, description(summarized)} 注入用。
  */
 export function parseWorkflowMeta(content: string): WorkflowEntry | null {
-	const block = extractMetaBlock(content);
-	if (!block) return null;
-	const name = extractMetaField(block, "name");
-	const description = extractMetaField(block, "description");
-	if (!name || !description) return null;
-	return { name, description: summarizeDescription(description) };
+	const meta = parseResourceMeta(content, "workflow");
+	if (!meta || meta.kind !== "workflow") return null;
+	return { name: meta.name, description: summarizeDescription(meta.description) };
 }
 
 /**
