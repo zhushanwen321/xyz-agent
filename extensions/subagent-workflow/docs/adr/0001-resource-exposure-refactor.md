@@ -2,7 +2,7 @@
 
 **状态**: Proposed
 **日期**: 2026-08-08
-**关联**: 竞品调研（opencode / codex / claude-code）、ADR-030（分层配额）、ADR-031（统一资源发现）、AGENTS.md「派发提示词三段式」、实施设计文档 `/tmp/resource-exposure-redesign-design.md`（临时，待归档到 `docs/design/`）
+**关联**: 竞品调研（opencode / codex / claude-code）、ADR-030（分层配额）、ADR-031（统一资源发现）、AGENTS.md「派发提示词三段式」
 
 ## 背景
 
@@ -48,7 +48,7 @@
 
 这三点不是三个独立决策，是同一根因的三个必然推论。**workflow 的方案不借鉴任何竞品**——竞品没有 workflow 这种带 per-workflow 结构化参数的东西。方案与 skill 同构，是两者面对相同经济学问题（结构化契约 + 稀缺 context）得出相同解，**非借鉴**。
 
-**方案**（详见实施设计文档）：
+**方案**：
 - 发现层瘦身：`available_workflows` 只保留 name + 一句话职责，参数移出
 - meta 声明 `parameters`（JSON Schema draft-07）+ `usage`（markdown 语义说明）
 - 引擎层 ajv 校验 `$ARGS`，fail-fast，错误回带 schema
@@ -92,7 +92,7 @@ workflow 的核心约束力在**执行层**：发现层引导「先 info」是�
 
 ## 影响
 
-详细实施设计见 `/tmp/resource-exposure-redesign-design.md`（数据结构、接口签名、文件改动清单、迁移路径、测试策略）。要点：
+要点：
 
 - **workflow**：meta 扩展 parameters+usage、`workflow info` action、引擎 ajv 校验、review-fix-loop 首个迁移示范、`findFlattenedArgKeys` 补丁下线
 - **subagent**：frontmatter 支持触发样本、放宽单行限制、`deny_unknown_fields`。无加载层改动
