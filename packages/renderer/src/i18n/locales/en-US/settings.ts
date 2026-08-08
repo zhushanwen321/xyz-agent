@@ -175,6 +175,17 @@ export default {
       menuRecommended: 'Recommended',
       menuCustom: 'Custom (manual)',
       searchPlaceholder: 'Search...',
+      dialogTitle: 'Select Built-in Provider',
+      dialogSubtitle: 'pi ships {count} built-in providers with baseUrl, protocol and models — just configure credentials',
+      tabAll: 'All',
+      tabApiKey: 'API Key',
+      tabOAuth: 'OAuth',
+      tabAmbient: 'Cloud Credentials',
+      authChip: {
+        api_key: 'API Key',
+        oauth: 'OAuth',
+        ambient: 'Cloud',
+      },
       noResult: 'No matching template',
       modelsSuffix: '{count} models',
       // F7b: models.length=0 in the row after override-only save is expected; models come from pi built-in catalog

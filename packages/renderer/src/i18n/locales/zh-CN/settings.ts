@@ -175,6 +175,17 @@ export default {
       menuRecommended: '推荐',
       menuCustom: '自定义（手填）',
       searchPlaceholder: '搜索...',
+      dialogTitle: '选择内置供应商',
+      dialogSubtitle: 'pi 内置 {count} 个供应商，自带 baseUrl、协议和模型，只需配置凭据',
+      tabAll: '全部',
+      tabApiKey: 'API Key',
+      tabOAuth: '支持 OAuth',
+      tabAmbient: '云凭证',
+      authChip: {
+        api_key: 'API Key',
+        oauth: 'OAuth',
+        ambient: '云凭证',
+      },
       noResult: '没有匹配的模板',
       modelsSuffix: '{count} 模型',
       // F7b：B4 override-only 落盘后行内 models.length=0 是预期的，模型由 pi 内置 catalog 自动加载
