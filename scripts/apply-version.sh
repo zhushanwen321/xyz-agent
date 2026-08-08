@@ -254,19 +254,32 @@ for (const name of dependentNames) {
 for (const group of (config.fixed || [])) {
   const bumpedInGroup = group.filter(m => allBumped.has(m));
   if (bumpedInGroup.length === 0) continue;
-  const versions = new Set(bumpedInGroup.map(m => plan[m].newVer));
-  if (versions.size > 1) {
-    console.error(`错误：fixed 组 [${group.join(', ')}] 内被 bump 的包版本不一致：${[...versions].join(', ')}。fixed 契约要求整组对齐到同一版本。`);
+  // bumped 成员新版本若分歧（人工给同组不同 type）→ fixed 契约无法满足，报错
+  const bumpedVersions = new Set(bumpedInGroup.map(m => plan[m].newVer));
+  if (bumpedVersions.size > 1) {
+    console.error(`错误：fixed 组 [${group.join(', ')}] 内被 bump 的包版本不一致：${[...bumpedVersions].join(', ')}。fixed 契约要求整组同版本，请给同组包一致的 type。`);
     process.exit(1);
   }
-  const target = [...versions][0];
-  const missing = group.filter(m => !allBumped.has(m));
-  if (missing.length > 0) {
-    // fixed 契约：组内任一 bump → 整组必须同步。未 bump 的成员强制对齐到 target（patch 级）
-    for (const m of missing) {
-      if (!packages[m]) continue;
-      plan[m] = { oldVer: packages[m].version, newVer: target, kind: 'fixed-align', type: 'patch' };
-      allBumped.add(m);
+  // 目标 = max(bumped 成员新版本, 全组成员当前版本)。绝不降级（fixed 版本单调非降，设计 §4.2 step 6「最高版本」）
+  const allCandidates = [];
+  for (const m of group) {
+    if (!packages[m]) continue;
+    allCandidates.push(allBumped.has(m) ? plan[m].newVer : packages[m].version);
+  }
+  const target = allCandidates.reduce((a, b) => (semver.gt(b, a) ? b : a));
+  // 全组对齐到 target：任何成员最终版本 < target 都升上去（保留 bumped 成员的 kind/type 语义）
+  for (const m of group) {
+    if (!packages[m]) continue;
+    const finalVer = allBumped.has(m) ? plan[m].newVer : packages[m].version;
+    if (semver.lt(finalVer, target)) {
+      if (!allBumped.has(m)) {
+        // 未 bump 成员 → fixed-align（patch，仅对齐+刷范围）
+        plan[m] = { oldVer: packages[m].version, newVer: target, kind: 'fixed-align', type: 'patch' };
+        allBumped.add(m);
+      } else {
+        // 已 bump 成员因组内 drift 被拉高 → 保留其 kind/type，只升版本（CHANGELOG 语义不变）
+        plan[m].newVer = target;
+      }
       verMap[m] = { old: packages[m].version, new: target };
     }
   }
