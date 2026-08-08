@@ -81,7 +81,7 @@
           data-testid="provider-auth-badge"
           class="shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] font-medium"
           :class="authBadgeClass(p)"
-        >{{ t(`settings.provider.authBadge.${authBadgeTextKey(p)}`) }}</span>
+        >{{ t(`settings.provider.builtinTemplate.authBadge.${authBadgeTextKey(p)}`) }}</span>
 
         <!-- 默认供应商 pill -->
         <Button
