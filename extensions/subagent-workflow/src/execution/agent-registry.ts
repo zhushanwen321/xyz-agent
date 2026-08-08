@@ -15,6 +15,7 @@ import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import {
   discoverResourcesSync,
+  evictCachedFile,
   getCachedFile,
   getCachedFileContent,
   type DiscoveredResource,
@@ -55,7 +56,12 @@ export function createPackageBuiltinRegistry(): BuiltinAgentRegistry {
     for (const resource of config) {
       if (!resource.available) continue;
       try {
-        const raw = getCachedFileContent(resource.path) ?? "";
+        const raw = getCachedFileContent(resource.path);
+        if (raw === null) {
+          // ENOENT/不可读竞态 → 跳过（m5 minor-2：?? '' 会注册空 prompt agent）
+          logger.warn(`[agent-registry] ${resource.path}: 文件不可读，builtin agent 跳过`);
+          continue;
+        }
         const { config: agentConfig, meta } = parseAgentWithMeta(resource.path, raw);
         // m5 W4：builtin fallback 路径同样挂 lint（评审 m3：覆盖缺口）
         if (meta) {
@@ -246,6 +252,7 @@ export class AgentRegistry {
     for (const cachedPath of this.fileCache.keys()) {
       if (!this.currentScanPaths.has(cachedPath)) {
         this.fileCache.delete(cachedPath);
+        evictCachedFile(cachedPath); // m5 minor-1：统一缓存层同步驱逐（原为死代码）
       }
     }
   }

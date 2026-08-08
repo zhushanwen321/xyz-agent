@@ -748,6 +748,20 @@ describe("m4 W1-W5: meta 质量 lint", () => {
     expect(lintAgentMeta(meta(undefined)).length).toBe(0);
   });
 
+  it("TC8a: W4 EXAMPLES_MAX 边界——3/4 条合法，5 条 → finding", () => {
+    const meta = (examples: unknown) =>
+      ({ kind: "agent", name: "a", description: "d", examples }) as never;
+    const mk = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        match: `m${i}`,
+        action: "x",
+        positive: i % 2 === 0,
+      }));
+    expect(lintAgentMeta(meta(mk(3))).length).toBe(0); // 3 条合法
+    expect(lintAgentMeta(meta(mk(4))).length).toBe(0); // 4 条合法（上限）
+    expect(lintAgentMeta(meta(mk(5))).length).toBe(1); // 5 条超上限
+  });
+
   it("TC8b: W4 EXAMPLES_MAX——examples 超上限（5 条）→ finding", () => {
     const meta = (examples: unknown) =>
       ({ kind: "agent", name: "a", description: "d", examples }) as never;

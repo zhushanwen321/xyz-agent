@@ -70,7 +70,7 @@ describe("formatAgentList", () => {
 		expect(out).toContain("<when>用户要求 review 代码</when>");
 		// 正反原样渲染——negative action 含原因文本（评审 M5：渲染器不硬编码）
 		expect(out).toContain('"帮我 review 这段代码" → 调用 reviewer 对抗式审查');
-		expect(out).toContain('"帮我 review 设计文档" → 不调用（文档审查应选 doc-reviewer）（不调用）');
+		expect(out).toContain('"帮我 review 设计文档" → 不调用（文档审查应选 doc-reviewer）');
 		// escapeXml：match 含 < > 被转义
 		const xmlOut = formatAgentList([
 			{

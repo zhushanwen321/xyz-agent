@@ -98,7 +98,15 @@ export function getCachedFile(filePath: string): { mtimeMs: number; content: str
   }
   const entry = mtimeCache.get(filePath);
   if (entry && entry.mtimeMs === mtimeMs) return entry;
-  const content = fsSync.readFileSync(filePath, "utf-8");
+  let content: string;
+  try {
+    content = fsSync.readFileSync(filePath, "utf-8");
+  } catch {
+    // stat 与 read 之间的删除/EACCES 竞态 → 驱逐并返回 null（exec-review major-2：
+    // docstring 承诺「不可读 → null」——readFileSync 也必须入守卫）
+    mtimeCache.delete(filePath);
+    return null;
+  }
   const cached = { mtimeMs, content };
   mtimeCache.set(filePath, cached);
   return cached;

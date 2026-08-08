@@ -92,9 +92,10 @@ export async function discoverAllAgents(
 			const agent = parseAgentFrontmatter(content);
 			if (agent) {
 				agentMap.set(agent.name, agent);
-			} else {
-				// m5（评审 M3/F2）：IF1 解析失败（缺 name/description/examples 单条非法
-				// 致整体 reject）→ agent 不注入——显式 warn 带文件路径，不静默消失。
+			} else if (content.trimStart().startsWith("---")) {
+				// m5（评审 M3/F2 + minor-5）：仅「有 frontmatter 但解析失败」才 warn
+				// （缺 name/description/examples 单条非法致整体 reject）——README 等
+				// 无 frontmatter 的 .md 不刷 warn（每 turn 扫描）。
 				logger.warn(
 					`[subagent-list-injector] ${resource.path}: agent frontmatter 解析失败（IF1 校验不通过）——agent 未注入`,
 				);
@@ -141,9 +142,10 @@ export function formatAgentList(agents: AgentEntry[]): string {
 			block += `<when>${escapeXml(agent.when)}</when>`;
 		}
 		if (agent.examples && agent.examples.length > 0) {
+			// 两极性原样渲染——negative 的 action 由作者写「不调用（原因）」，
+			// 渲染器不硬编码后缀（exec-review major-1：曾追加「（不调用）」致双后缀）
 			const exampleLines = agent.examples.map(
-				(e) =>
-					`      - "${escapeXml(e.match)}" → ${escapeXml(e.action)}${e.positive ? "" : "（不调用）"}`,
+				(e) => `      - "${escapeXml(e.match)}" → ${escapeXml(e.action)}`,
 			);
 			block += `\n    <examples>\n${exampleLines.join("\n")}\n    </examples>`;
 		}

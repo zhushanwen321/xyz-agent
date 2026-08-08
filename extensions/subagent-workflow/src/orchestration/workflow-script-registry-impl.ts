@@ -91,7 +91,15 @@ export class WorkflowScriptRegistryImpl implements WorkflowScriptRegistry {
     let available = m.available;
     if (available) {
       try {
-        sourceCode = getCachedFileContent(m.path) ?? ""; // m5：统一 mtime 缓存层
+        const cachedContent = getCachedFileContent(m.path); // m5：统一 mtime 缓存层
+        if (cachedContent === null) {
+          // ENOENT/不可读竞态 → available=false（exec-review major-3：?? '' 会静默
+          // 返回空源码 workflow——恢复旧 readFileSync throw → catch → available=false 语义）
+          sourceCode = "";
+          available = false;
+        } else {
+          sourceCode = cachedContent;
+        }
       } catch {
  // 文件不可读（race condition 删除、权限等）——标 available=false，
  // 与 meta 提取失败的现有语义一致（loader "never throws"）。

@@ -344,7 +344,8 @@ describe("m5: 统一 mtime 缓存层", () => {
     try {
       const a = getCachedFile(f);
       const b = getCachedFileContent(f);
-      expect(a?.content).toBe(b); // 两消费方同一条目（评审 D2）
+      // 内容一致性（命中语义由 TC4a 的对象引用断言覆盖——此处验证两 API 一致）
+      expect(a?.content).toBe(b);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
