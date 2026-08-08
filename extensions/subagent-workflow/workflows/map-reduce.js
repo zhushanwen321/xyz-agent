@@ -24,6 +24,9 @@ parameters:
     itemsJson: { type: string }
     operation: { type: string }
   required: [operation]
+  oneOf:
+    - required: [items]
+    - required: [itemsJson]
 usage: |
   ## 使用说明
   - items 与 itemsJson 至少一个：items 直接传字符串数组，itemsJson 传文件路径（内容为 JSON 数组）

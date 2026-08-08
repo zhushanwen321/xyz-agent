@@ -474,6 +474,11 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
     expect((params.properties as Record<string, unknown>).targetType).toBeDefined();
     expect((params.patternProperties as Record<string, unknown>)["^batch\\d+$"]).toBeDefined();
     expect(info.parametersFriendly).toBeDefined();
+    // TC10 折叠断言（exec-review F1 回归：真实 patternProperties key 折叠为 batch1, batch2, ...）
+    const friendlyNames = info.parametersFriendly!.map((e) => e.name);
+    expect(friendlyNames).toContain("batch1, batch2, ...");
+    const batchEntry = info.parametersFriendly!.find((e) => e.name === "batch1, batch2, ...");
+    expect(batchEntry!.note).toContain("值语义同 batchN"); // note 派生（MAJ-3）
     expect(info.usage).toContain("workflow run review-fix-loop"); // 手写示例原样
   });
 

@@ -23,11 +23,27 @@ const TOOL_WORKFLOW_SCRIPT_SRC = readFileSync(
   "utf-8",
 );
 
-/** 截取 promptGuidelines 数组文本——防 KNOWN_ARG_KEYS 等注释/代码中的裸词污染断言。 */
+/** 截取 promptGuidelines 数组文本——防 KNOWN_ARG_KEYS 等注释/代码中的裸词污染断言。
+ * 数到数组闭合（跳过字符串字面量内的括号，exec-review F9：'],' 序列静默截断）。 */
 function promptGuidelinesText(src: string): string {
   const start = src.indexOf("promptGuidelines: [");
-  const end = src.indexOf("],", start);
-  return src.slice(start, end);
+  let depth = 0;
+  let inStr = false;
+  for (let i = start; i < src.length; i++) {
+    const ch = src[i];
+    if (inStr) {
+      if (ch === "\\") { i++; continue; }
+      if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "[") depth++;
+    else if (ch === "]") {
+      depth--;
+      if (depth === 0) return src.slice(start, i + 1);
+    }
+  }
+  return src.slice(start);
 }
 
 describe("U1: workflow tool prompt mentions built-in workflows", () => {

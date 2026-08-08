@@ -18,7 +18,7 @@ phases: [analyze, transform, synthesize]
 parameters:
   type: object
   properties:
-    task: { type: string }
+    task: { type: string, minLength: 1 }
   required: [task]
 usage: |
   ## 使用说明

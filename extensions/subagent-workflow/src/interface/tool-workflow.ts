@@ -265,8 +265,9 @@ export function registerWorkflowTool(
     promptSnippet: "Run, pause, resume, abort, or check workflow status",
     promptGuidelines: [
       "PRIORITY: When user says 'workflow', 'run workflow', try run action FIRST.",
-      "Built-in workflows run DIRECTLY with action:run — names/descriptions/when come from " +
-      "<available_workflows> (injected each turn); call \"workflow info <name>\" to see the " +
+      "Built-in workflows run DIRECTLY with action:run — names/descriptions come from " +
+      "<available_workflows> (injected each turn); call \"workflow info <name>\" for " +
+      "parameters/usage/when (when/notFor routing hints live in info, not the injection list). " +
       "parameter schema and usage before running. Do NOT use workflow-script generate for " +
       "patterns already covered by available workflows.",
       "run: discover by name/description, then start in background (no user confirmation needed).",
@@ -516,7 +517,7 @@ export function renderParamTable(parameters: Record<string, unknown>): WorkflowI
   if (pp !== null && typeof pp === "object") {
     for (const [pattern, rawProp] of Object.entries(pp as Record<string, unknown>)) {
       const prop = rawProp !== null && typeof rawProp === "object" ? (rawProp as Record<string, unknown>) : {};
-      const fold = pattern.match(/^\\^([a-zA-Z]+)\\d\\+\\$$/);
+      const fold = pattern.match(/^\^([a-zA-Z]+)\\d\+\$$/);
       const entry: NonNullable<WorkflowInfo["parametersFriendly"]>[number] = {
         name: fold ? `${fold[1]}1, ${fold[1]}2, ...` : pattern,
         required: false,

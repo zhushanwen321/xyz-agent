@@ -180,7 +180,7 @@ export function registerWorkflowScriptTool(
       "and user-generated scripts before starting a run. After listing, start a script via " +
       "the workflow tool with action:run and the script name.",
       "CRITICAL ANTI-PATTERN: NEVER generate scripts for patterns already covered by available " +
-      "These are BUILT-IN — use the workflow tool with action:run directly. " +
+      "workflows. These are BUILT-IN — use the workflow tool with action:run directly. " +
       "generate is for NOVEL orchestration patterns ONLY. When in doubt, action:list first, " +
       "then action:run — not action:generate.",
     ],

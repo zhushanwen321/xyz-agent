@@ -16,6 +16,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { lintAgentMeta, lintScript } from "../script-lint.ts";
+import { parseResourceMeta } from "../../shared/meta-parser.ts";
 
 const WORKFLOWS_DIR = join(__dirname, "../../../workflows");
 
@@ -751,9 +752,51 @@ describe("m4 W1-W5: meta 质量 lint", () => {
     const files = ["chain", "parallel", "scatter-gather", "map-reduce", "review-fix-loop"];
     for (const f of files) {
       const src = readFileSync(join(WORKFLOWS_DIR, `${f}.js`), "utf-8");
+      // F11：先断言 meta 真实解析成功——防 parse 失败时 W1-W3 整体跳过真空通过
+      const meta = parseResourceMeta(src, "workflow");
+      expect(meta, `${f} meta 解析`).not.toBeNull();
       const result = lintScript(src);
       const qualityErrors = errors(result.findings).filter((x) => x.message.includes("meta."));
       expect(qualityErrors, `${f} meta 质量`).toEqual([]);
     }
+  });
+
+  it("F2 回归: 参数名含未配对 [ 不崩溃（RegExp 注入）", () => {
+    const src = wf(
+      'name: w\ndescription: "x[ 参数说明"\nphases: [a]\nparameters:\n  type: object\n  properties:\n    "x[": { type: string }\n  required: ["x["]',
+    );
+    expect(() => lintScript(src)).not.toThrow();
+  });
+
+  it("F6 回归: 子串词缀不误报（task 不命中 subtask:）", () => {
+    const src = wf(
+      'name: w\ndescription: "subtask: 需要分解"\nphases: [a]\nparameters:\n  type: object\n  properties:\n    task: { type: string }\n  required: [task]',
+    );
+    const metaErrors = errors(lintScript(src).findings).filter((x) => x.message.includes("meta."));
+    expect(metaErrors).toEqual([]);
+  });
+
+  it("F6b 回归: 元字符参数名不误报（a.b 不命中 aXb:）", () => {
+    const src = wf(
+      'name: w\ndescription: "aXb: 任意字符"\nphases: [a]\nparameters:\n  type: object\n  properties:\n    "a.b": { type: string }\n  required: ["a.b"]',
+    );
+    const metaErrors = errors(lintScript(src).findings).filter((x) => x.message.includes("meta."));
+    expect(metaErrors).toEqual([]);
+  });
+
+  it("F7 回归: description 空串时 when/notFor 仍受检查", () => {
+    const src = wf(
+      'name: w\ndescription: ""\nwhen: "第一句。第二句"\nphases: [a]',
+    );
+    const metaErrors = errors(lintScript(src).findings).filter((x) => x.message.includes("meta."));
+    expect(metaErrors.length).toBeGreaterThan(0); // when 非单句被拦
+  });
+
+  it("F8 回归: 括号外 e.g. 缩写不误报", () => {
+    const src = wf(
+      'name: w\ndescription: "Run when user wants review, e.g. iterative fix loop"\nphases: [a]',
+    );
+    const metaErrors = errors(lintScript(src).findings).filter((x) => x.message.includes("meta."));
+    expect(metaErrors).toEqual([]);
   });
 });

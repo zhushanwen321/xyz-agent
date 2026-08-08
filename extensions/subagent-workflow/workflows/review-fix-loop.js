@@ -46,8 +46,11 @@ parameters:
     reviewPrompt: { type: string }
     fixPrompt: { type: string }
     agents: { type: string }
+    batchNames: { type: string }
   patternProperties:
-    "^batch\\d+$": { type: string }
+    "^batch\\d+$":
+      type: string
+      description: 任意 batchN 编号，至少一个；值语义同 batchNames（agent 名或 agent.md 路径）
   required: [targetType, target]
 usage: |
   ## 使用说明

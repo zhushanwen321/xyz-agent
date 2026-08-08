@@ -590,7 +590,6 @@ function checkPhaseConsistency(source: string): LintFinding[] {
 function checkMetaQuality(meta: { description?: string; when?: string; notFor?: string; parameters?: Record<string, unknown> }): LintFinding[] {
   const findings: LintFinding[] = [];
   const description = meta.description ?? "";
-  if (description.length === 0) return findings;
 
   // W1 参数名集合
   const paramNames = new Set<string>();
@@ -615,9 +614,11 @@ function checkMetaQuality(meta: { description?: string; when?: string; notFor?: 
   ];
   for (const [field, value] of fields) {
     if (value.length === 0) continue;
-    // W1：已声明参数名的 ':'/'=' 形态
+    // W1：已声明参数名的 ':'/'=' 形态（参数名转义防 RegExp 注入崩溃——exec-review F2；
+    // ':' 形态加 \\b 前缀防子串误报（subtask: 不命中 task——exec-review F6））
     for (const name of paramNames) {
-      if (new RegExp(`${name}:\\s`).test(value) || new RegExp(`\\b${name}=\\S`).test(value)) {
+      const nameEsc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (new RegExp(`\\b${nameEsc}:\\s`).test(value) || new RegExp(`\\b${nameEsc}=\\S`).test(value)) {
         findings.push({
           severity: "error",
           line: 1,
@@ -636,7 +637,10 @@ function checkMetaQuality(meta: { description?: string; when?: string; notFor?: 
       });
     }
     // W3：括号剥离后分句判定
-    const stripped = value.replace(/（[^）]*）/g, "").replace(/\([^)]*\)/g, "");
+    const stripped = value
+      .replace(/（[^）]*）/g, "")
+      .replace(/\([^)]*\)/g, "")
+      .replace(/\b(?:e\.g|i\.e)\.\s/g, ""); // 缩写剔除（exec-review F8：括号外 e.g. 不误报）
     if (/[\n。；]|\.\s/.test(stripped)) {
       findings.push({
         severity: "error",
