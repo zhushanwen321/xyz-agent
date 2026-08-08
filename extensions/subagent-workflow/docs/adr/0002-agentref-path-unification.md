@@ -49,3 +49,7 @@ workflow 同理：内置 workflow 按名注册，任意路径 .js 无执行通�
 - **新增**：`shared/agent-ref.ts`（normalizeRef）、`workflows/_shared/agent-refs.cjs`（worker 侧解析）、`WorkflowScriptRegistry.getPath`
 - **语义变更**：subagent/workflow 工具参数值域从名字变为路径；注入段加 `<location>`
 - **破坏性**：存量以名字调用的模型会话需改用注入段 location（用户明确不考虑兼容）
+
+---
+
+**实施完善**：见 [ADR-0003](0003-discovery-session-level-m2-fix-simplification.md)（发现对齐 skill 节奏 + M2 传递链修复 + 临时文件机制精简 + info 减法）。ADR-0002 确立的「路径统一」决策不变，ADR-0003 补强其实现质量并做减法精简。
