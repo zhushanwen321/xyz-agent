@@ -32,6 +32,7 @@ import {
 } from '@xyz-agent/shared'
 import type { IConfigService } from '../interfaces.js'
 import type { IConfigStore, ConfigModelDefinition } from './ports/config.js'
+import type { AuthStorage } from './auth/auth-storage.js'
 import type { DirScopes } from './skill-dir-config.js'
 import { atomicWrite } from '../utils/fs-utils.js'
 import { extractFrontmatter, extractDescription } from '../utils/frontmatter.js'
@@ -130,6 +131,13 @@ export class ConfigService implements IConfigService {
   constructor(
     private projectRoot: string,
     private configStore: IConfigStore,
+    /**
+     * auth.json 存储（OAuth 路径 B）。
+     * I9 清理①：setProvider 保存 apiKey 时清 auth.json oauth 凭据（both provider 切换凭据源）；
+     * I8：deleteProvider 时同步清 auth.json（防 OAuth token 永久残留）。
+     * 可选注入：未注入时两处清理 no-op（测试/无 OAuth 场景）。
+     */
+    private authStorage?: Pick<AuthStorage, 'remove' | 'hasOAuth'>,
   ) {}
 
   // ── Provider CRUD ──────────────────────────────────────────────
@@ -206,6 +214,12 @@ export class ConfigService implements IConfigService {
     quota?: { fetcher?: string; enabled: boolean; cookieSet?: boolean }
   }): { newDefault?: { provider: string; modelId: string } } {
     const existing = this.configStore.getProviderConfig(providerId) ?? {}
+    // I9 清理①：保存 API Key（明文/env）时清 auth.json oauth 凭据——both provider（anthropic/
+    // github-copilot/kimi/openrouter/xai）切到 API Key 认证必须清 OAuth，防凭据冲突 + pi 优先级困惑。
+    // 幂等：auth.json 无该 provider 时 no-op。fire-and-forget（setProvider 同步契约，写盘由 mutex 串行化）。
+    if (data.apiKey !== undefined) {
+      void this.authStorage?.remove(providerId)
+    }
     // TODO: 当 pi models.json 支持 schema 后收窄类型（现有 Record<string, unknown> 是架构限制）
     const merged: Record<string, unknown> = { ...existing }
     if (data.apiKey !== undefined) merged.apiKey = data.apiKey as string
@@ -271,6 +285,9 @@ export class ConfigService implements IConfigService {
   }
 
   deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } } {
+    // I8：删 provider 同步清 auth.json 凭据（OAuth token 是强绑定凭据，不能残留）。
+    // 幂等：auth.json 无该 provider 时 no-op。
+    void this.authStorage?.remove(providerId)
     return this.configStore.removeProvider(providerId)
   }
 

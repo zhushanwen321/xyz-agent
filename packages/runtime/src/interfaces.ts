@@ -409,9 +409,21 @@ export interface IExtensionService {
 
 // ── IModelService ─────────────────────────────────────────────────
 
+/**
+ * OAuth Login 编排服务（slice design I1/T5）。
+ * 实现：services/auth/auth-service.ts（路径 B 自实现：device/callback flow 拿 token 写 auth.json）。
+ */
+export interface IAuthService {
+  /** 启动 OAuth login（异步执行）。无 oauthConfig / 已有进行中 flow → started:false + error。 */
+  login(providerId: string): { started: boolean; error?: string }
+  /** 中止进行中 flow。幂等：无 flow 返回 cancelled:false。 */
+  cancel(providerId: string): { cancelled: boolean }
+  /** 读 auth.json：该 provider 是否有 oauth 凭据。 */
+  hasOAuth(providerId: string): Promise<boolean>
+}
+
 /** Model aggregation, API discovery, and model/thinking-level orchestration. */
-export interface IModelService {
-  aggregateModels(providers: ProviderInfo[]): ModelInfo[]
+export interface IModelService {  aggregateModels(providers: ProviderInfo[]): ModelInfo[]
   discoverModelsFromApi(
     baseUrl: string,
     apiKey?: string,

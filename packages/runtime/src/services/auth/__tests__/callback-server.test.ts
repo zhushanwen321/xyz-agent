@@ -45,13 +45,25 @@ describe('startCallbackServer', () => {
     }
   })
 
-  it('缺 code 或 state：400 + reject', async () => {
+  it('缺 code：400 + reject', async () => {
+    const server = await startCallbackServer({ port: 0, path: '/callback' })
+    try {
+      const p = server.waitForCallback()
+      const res = await fetch(`${server.url}?state=s1`)
+      expect(res.status).toBe(400)
+      await expect(p).rejects.toMatchObject({ code: 'missing_params' })
+    } finally {
+      server.close()
+    }
+  })
+
+  it('expectedState 未传：code-only 回调（无 state）放行 200（openrouter 场景）', async () => {
     const server = await startCallbackServer({ port: 0, path: '/callback' })
     try {
       const p = server.waitForCallback()
       const res = await fetch(`${server.url}?code=ONLY_CODE`)
-      expect(res.status).toBe(400)
-      await expect(p).rejects.toMatchObject({ code: 'missing_params' })
+      expect(res.status).toBe(200)
+      await expect(p).resolves.toEqual({ code: 'ONLY_CODE', state: undefined })
     } finally {
       server.close()
     }

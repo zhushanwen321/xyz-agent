@@ -1,6 +1,8 @@
 import { RuntimeServer } from './transport/server.js'
 import { SessionService } from './services/session/session-service.js'
 import { ConfigService } from './services/config-service.js'
+import { AuthService } from './services/auth/auth-service.js'
+import { AuthStorage } from './services/auth/auth-storage.js'
 import { ensureAutoRenameDefault } from './services/worktree-config-helper.js'
 import { PresetService } from './services/preset-service.js'
 import { ModelService } from './services/model-service.js'
@@ -10,7 +12,7 @@ import { getDataDir } from '@xyz-agent/shared/paths'
 import { initLogger, closeLogger } from './infra/logger.js'
 
 import { ProcessManager } from './infra/pi/process-manager.js'
-import { migrateToPiSubdir, getProviderConfig, cleanLeakedPackages, sanitizeInvalidProviders } from './infra/pi/pi-provider-store.js'
+import { migrateToPiSubdir, getProviderConfig, upsertProvider, cleanLeakedPackages, sanitizeInvalidProviders } from './infra/pi/pi-provider-store.js'
 import { getExtensionsDir, getNpmDir, getTmpDir } from './infra/pi/pi-paths.js'
 import { PiConfigStore } from './infra/pi/pi-config-store.js'
 import { PiSessionStore } from './infra/pi/session-store.js'
@@ -143,11 +145,13 @@ async function main(): Promise<void> {
     npmDir: getNpmDir(),
     tmpDir: getTmpDir(),
   })
-  const configService = new ConfigService(effectiveRoot, configStore)
+  // AuthStorage（OAuth 路径 B）：auth.json 在 pi agent 目录（与 models.json 同路径，与 pi 读取侧一致）。
+  // ConfigService 用它做 I9 清理①（setProvider 保存 apiKey 时清 auth.json oauth）+ I8（deleteProvider 清 auth.json）。
+  const authStorage = new AuthStorage(join(configStore.getPiAgentDir(), 'auth.json'))
+  const configService = new ConfigService(effectiveRoot, configStore, authStorage)
   // ADR-0021 §1 一次性迁移：旧版本 skill 路径存在 settings.json.skills，
   // 首启用时提升为 discovery.json SSOT。幂等：discovery 已有数据则 no-op。
   configService.migrateSettingsSkillsToDiscovery()
-
   // 一次性迁移：清理旧版 mandatory npm install 遗留的 9 个 builtin 包记录。
   // 新版改为打包内置，不再需要 boot 时 npm install；从 settings.json packages[] /
   // auto-upgrade-packages.json / disabled-packages.json 清除遗留（幂等）。
@@ -301,6 +305,23 @@ async function main(): Promise<void> {
   //   从 configService 算出传入（FileService 不直接依赖 configService，保持单一职责）。
   const piAgentDir = configService.getPiAgentDir()
   const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? ''
+
+  // AuthService（OAuth 路径 B）：编排 device/callback flow 拿 token 写 auth.json。
+  // 依赖 authStorage + builtin oauthConfig（configService.listBuiltinProviders）+ broadcast/nextPushId
+  // （server/broker）+ clearApiKey（I9 清理②：OAuth 成功清 models.json apiKey，防 both provider 凭据冲突）。
+  // 经 server.setServices 注入到 handler（settings-message-handler 的 config.oauthLogin/oauthCancel）。
+  const authService = new AuthService({
+    authStorage,
+    getOAuthConfig: (providerId) => configService.listBuiltinProviders().find(p => p.id === providerId)?.oauthConfig,
+    broadcast: (msg) => server.broadcast(msg),
+    nextPushId: () => server.nextPushId(),
+    clearApiKey: (providerId) => {
+      const existing = getProviderConfig(providerId)
+      if (!existing || !('apiKey' in existing)) return
+      const { apiKey: _removed, ...rest } = existing
+      upsertProvider(providerId, rest)
+    },
+  })
   const fileService = new FileService({
     sessionService,
     executor: new FsExecutor(),
@@ -406,7 +427,7 @@ async function main(): Promise<void> {
     },
   })
 
-  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, terminalService, quotaService, handoffService, presetService)
+  server.setServices(sessionService, configService, modelService, extensionService, pluginService, gitService, fileService, workspaceService, appInfo, skillRegistry, worktreeService, terminalService, quotaService, handoffService, presetService, authService)
 
   // Graceful shutdown on signals
   let shuttingDown = false

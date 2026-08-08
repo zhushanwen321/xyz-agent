@@ -145,13 +145,15 @@ export async function startCallbackServer(opts: CallbackServerOptions): Promise<
         fail(makeError('provider_error', `Provider error: ${error}`), false)
         return
       }
-      if (!code || !state) {
+      if (!code) {
         claimed = true
         res.writeHead(HTTP_BAD_REQUEST, { 'Content-Type': 'text/html; charset=utf-8' })
         res.end(ERROR_HTML)
-        fail(makeError('missing_params', 'Missing code or state parameter'), false)
+        fail(makeError('missing_params', 'Missing code parameter'), false)
         return
       }
+      // state 校验与 expectedState 绑定：传了 expectedState 才要求 state 存在且匹配
+      // （openrouter 回调只有 code，无 state——authorize 端不生成 state）
       if (opts.expectedState !== undefined && state !== opts.expectedState) {
         claimed = true
         res.writeHead(HTTP_BAD_REQUEST, { 'Content-Type': 'text/html; charset=utf-8' })
@@ -162,7 +164,7 @@ export async function startCallbackServer(opts: CallbackServerOptions): Promise<
       claimed = true
       res.writeHead(HTTP_OK, { 'Content-Type': 'text/html; charset=utf-8' })
       res.end(SUCCESS_HTML)
-      succeed({ code, state })
+      succeed({ code, state: state ?? undefined })
     } catch {
       res.writeHead(HTTP_INTERNAL_ERROR, { 'Content-Type': 'text/plain; charset=utf-8' })
       res.end('Internal error')

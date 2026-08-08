@@ -11,7 +11,14 @@
  */
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ClientMessageType, ServerMessage, SkillCacheScope } from '@xyz-agent/shared'
-import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService } from '../interfaces.js'
+import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService, IAuthService } from '../interfaces.js'
+
+/** authService 未注入时的兜底（组合根必传；防御性空实现防 handler 空指针） */
+const noopAuthService: IAuthService = {
+  login: () => ({ started: false, error: 'OAuth 不可用（authService 未装配）' }),
+  cancel: () => ({ cancelled: false }),
+  hasOAuth: async () => false,
+}
 import type { GitService } from '../services/git-service.js'
 import type { FileService } from '../services/file-service.js'
 import type { SkillRegistry } from '../services/skill-registry.js'
@@ -113,7 +120,7 @@ export class RuntimeServer implements IMessageBroker {
     this.messageBus = bus
   }
 
-  setServices(session: ISessionService, config: IConfigService, model: IModelService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService, workspace?: WorkspaceService, appInfo?: { appVersion: string; piVersion: string }, skillRegistry?: SkillRegistry, worktree?: IWorktreeService, terminal?: ITerminalService, quota?: QuotaService, handoff?: HandoffService, preset?: PresetService): void {
+  setServices(session: ISessionService, config: IConfigService, model: IModelService, extension?: IExtensionService, plugin?: IPluginService, git?: GitService, file?: FileService, workspace?: WorkspaceService, appInfo?: { appVersion: string; piVersion: string }, skillRegistry?: SkillRegistry, worktree?: IWorktreeService, terminal?: ITerminalService, quota?: QuotaService, handoff?: HandoffService, preset?: PresetService, auth?: IAuthService): void {
     this.gitService = git
     this.fileService = file
     this.handoffService = handoff
@@ -154,6 +161,7 @@ export class RuntimeServer implements IMessageBroker {
       configService: this.configService,
       sessionService: this.sessionService,
       modelService: this.modelService,
+      authService: auth ?? noopAuthService,
       // W4：skillRegistry 必须注入（settings-handler 的 config.getGlobalSkills/getProjectSkills 依赖）。
       // 组合根 index.ts 保证传入；此处断言非空（setServices 编排保证）。若未来 skillRegistry 可选，handler 需守卫。
       skillRegistry: this.skillRegistry!,

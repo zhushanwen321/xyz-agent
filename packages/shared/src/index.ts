@@ -26,7 +26,7 @@ export type {
   SessionStatus, SessionSummary, SessionGroup,
 } from './session'
 export type {
-  ProviderStatus, ProviderInfo, BuiltinProviderTemplate, ModelInfo,
+  ProviderStatus, ProviderInfo, BuiltinProviderTemplate, BuiltinOAuthConfig, ModelInfo,
   SkillInfo, AgentInfo,
   ScanSourceType, ScannedSkillInfo, ScannedAgentInfo,
   DiscoveryConfig, DiscoveryConfigV1, SkillDirConfig,

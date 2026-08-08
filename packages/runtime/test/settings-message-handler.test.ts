@@ -12,7 +12,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { SettingsMessageHandler } from '../src/transport/settings-message-handler.js'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 
-function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; deleteProvider?: ReturnType<typeof vi.fn>; discover?: ReturnType<typeof vi.fn>; aggregate?: ReturnType<typeof vi.fn> } = {}) {
+function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; deleteProvider?: ReturnType<typeof vi.fn>; discover?: ReturnType<typeof vi.fn>; aggregate?: ReturnType<typeof vi.fn>; oauthLogin?: ReturnType<typeof vi.fn>; oauthCancel?: ReturnType<typeof vi.fn> } = {}) {
   const broadcasts: ServerMessage[] = []
   const replies: { id: string; type: string; payload: Record<string, unknown> }[] = []
   const configService = {
@@ -55,6 +55,11 @@ function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; delete
     configService,
     sessionService: {},
     modelService,
+    authService: {
+      login: overrides.oauthLogin ?? vi.fn().mockReturnValue({ started: true }),
+      cancel: overrides.oauthCancel ?? vi.fn().mockReturnValue({ cancelled: false }),
+      hasOAuth: vi.fn().mockResolvedValue(false),
+    },
     skillRegistry,
     projectRoot: '/proj',
     nextPushId: vi.fn().mockReturnValue('p1'),
@@ -253,6 +258,29 @@ describe('SettingsMessageHandler', () => {
       // settings 弹窗链路保留：broadcastSkillDirs + broadcastSkillList（服务 settingsStore）
       expect(ctx.broadcastSkillDirs).toHaveBeenCalledOnce()
       expect(ctx.broadcastSkillList).toHaveBeenCalledOnce()
+    })
+  })
+
+  // ── OAuth Login（路径 B，T6）：config.oauthLogin / config.oauthCancel 路由 ──
+  describe('config.oauthLogin / config.oauthCancel（OAuth 路径 B RPC）', () => {
+    it('oauthLogin 成功 → reply config.oauthLoginReply { started: true }', async () => {
+      const { replies, handler } = makeHandler()
+      const handled = await handler.handleSettingsMessage(msg('config.oauthLogin', { providerId: 'anthropic' }), WS)
+      expect(handled).toBe(true)
+      expect(replies[0]).toMatchObject({ type: 'config.oauthLoginReply', payload: { started: true } })
+    })
+
+    it('oauthLogin 失败（无 oauthConfig / 已有 flow）→ reply { started: false, error }', async () => {
+      const { replies, handler } = makeHandler({ oauthLogin: vi.fn().mockReturnValue({ started: false, error: 'provider "openai" 不支持 OAuth' }) })
+      await handler.handleSettingsMessage(msg('config.oauthLogin', { providerId: 'openai' }), WS)
+      expect(replies[0]).toMatchObject({ type: 'config.oauthLoginReply', payload: { started: false, error: 'provider "openai" 不支持 OAuth' } })
+    })
+
+    it('oauthCancel → reply config.oauthCancelReply，幂等（无 flow 返回 cancelled:false 不报错）', async () => {
+      const { replies, handler } = makeHandler({ oauthCancel: vi.fn().mockReturnValue({ cancelled: false }) })
+      const handled = await handler.handleSettingsMessage(msg('config.oauthCancel', { providerId: 'xai' }), WS)
+      expect(handled).toBe(true)
+      expect(replies[0]).toMatchObject({ type: 'config.oauthCancelReply', payload: { cancelled: false } })
     })
   })
 })

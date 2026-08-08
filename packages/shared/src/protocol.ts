@@ -639,6 +639,8 @@ export type ServerMessageType =
   // OAuth Login 事件（路径 B，slice design I4）：payload 必带 providerId（前端按 providerId 路由，支持并发多 provider）。
   // token 永不出现在事件 payload（脱敏红线）。
   | 'auth.deviceCode' | 'auth.authUrl' | 'auth.success' | 'auth.error'
+  // OAuth Login RPC reply（config.oauthLogin/oauthCancel 的回复，消费型）。
+  | 'config.oauthLoginReply' | 'config.oauthCancelReply'
 
 /** skill 缓存失效广播的作用域：global=全局 skill 变动，project=某项目 cwd 的 skill 变动。 */
 export type SkillCacheScope = 'global' | 'project'

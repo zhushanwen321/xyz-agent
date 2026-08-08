@@ -4,7 +4,7 @@
  */
 import type { WebSocket as WsType } from 'ws'
 import type { ClientMessage, ProviderSource, SkillCacheScope } from '@xyz-agent/shared'
-import type { IConfigService, ISessionService, IModelService } from '../interfaces.js'
+import type { IConfigService, ISessionService, IModelService, IAuthService } from '../interfaces.js'
 import type { SkillRegistry } from '../services/skill-registry.js'
 import { toErrorMessage } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
@@ -14,6 +14,8 @@ export interface SettingsHandlerContext extends MessageHandlerContext {
   configService: IConfigService
   sessionService: ISessionService
   modelService: IModelService
+  /** OAuth Login（路径 B）：config.oauthLogin/oauthCancel RPC 路由 + auth.* 事件由 AuthService 推 broadcast */
+  authService: IAuthService
   /** W4：skillRegistry（全局 + 项目级 skill 缓存，带 watcher）。landing 全局 skill 经此拿 globalCache（FR-5）。 */
   skillRegistry: SkillRegistry
   projectRoot: string
@@ -63,6 +65,18 @@ export class SettingsMessageHandler {
             payload: { defaultModel: `${delResult.newDefault.provider}/${delResult.newDefault.modelId}`, source: 'provider-deleted' },
           })
         }
+        return true
+      }
+      case 'config.oauthLogin': {
+        const result = this.ctx.authService.login(msg.payload.providerId)
+        this.ctx.reply(ws, msg.id, 'config.oauthLoginReply', result.started
+          ? { started: true }
+          : { started: false, error: result.error })
+        return true
+      }
+      case 'config.oauthCancel': {
+        const result = this.ctx.authService.cancel(msg.payload.providerId)
+        this.ctx.reply(ws, msg.id, 'config.oauthCancelReply', result)
         return true
       }
       case 'config.setToolPermissions':

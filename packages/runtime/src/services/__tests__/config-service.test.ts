@@ -8,10 +8,11 @@
  * listBuiltinProviders 是纯函数（模块级 import builtinData，不触 ConfigStore），
  * 故构造 ConfigService 时 configStore 传最小 mock（{} 即可，方法不被调用）。
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { ConfigService } from '../config-service.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { BuiltinProviderTemplate } from '@xyz-agent/shared'
+import type { AuthStorage } from '../auth/auth-storage.js'
 
 // listBuiltinProviders 不触 ConfigStore（纯函数 import JSON），传空对象即可实例化（构造只存引用）。
 const service = new ConfigService('/tmp/project', {} as unknown as IConfigStore)
@@ -84,5 +85,44 @@ describe('ConfigService.listBuiltinProviders', () => {
     const gv = providers.find(p => p.id === 'google-vertex')
     expect(gv).toBeDefined()
     expect(gv!.envVars).toContain('GOOGLE_CLOUD_API_KEY')
+  })
+})
+
+describe('ConfigService auth 清理（I9 清理① + I8，T6）', () => {
+  function makeSvc(authStorage?: Pick<AuthStorage, 'remove' | 'hasOAuth'>) {
+    const mockStore = {
+      getProviderConfig: vi.fn(() => ({ name: 'anthropic' })),
+      upsertProvider: vi.fn(() => ({})),
+      removeProvider: vi.fn(() => ({ removed: true })),
+    } as unknown as IConfigStore
+    const svc = new ConfigService('/tmp/project', mockStore, authStorage)
+    return { svc, mockStore, authStorage }
+  }
+
+  it('setProvider 保存 apiKey → 清 auth.json oauth（both provider 切凭据源，幂等）', async () => {
+    const authStorage = { remove: vi.fn(async () => undefined), hasOAuth: vi.fn(async () => false) }
+    const { svc } = makeSvc(authStorage)
+    svc.setProvider('anthropic', { apiKey: 'sk-test' })
+    expect(authStorage.remove).toHaveBeenCalledWith('anthropic')
+  })
+
+  it('setProvider 未传 apiKey（只改 baseUrl）→ 不清 auth.json', () => {
+    const authStorage = { remove: vi.fn(async () => undefined), hasOAuth: vi.fn(async () => false) }
+    const { svc } = makeSvc(authStorage)
+    svc.setProvider('anthropic', { baseUrl: 'https://proxy.example.com' })
+    expect(authStorage.remove).not.toHaveBeenCalled()
+  })
+
+  it('deleteProvider → 清 auth.json（I8：OAuth token 强绑定凭据，删除时同步清）', async () => {
+    const authStorage = { remove: vi.fn(async () => undefined), hasOAuth: vi.fn(async () => false) }
+    const { svc } = makeSvc(authStorage)
+    svc.deleteProvider('anthropic')
+    expect(authStorage.remove).toHaveBeenCalledWith('anthropic')
+  })
+
+  it('未注入 authStorage（测试/无 OAuth 场景）→ 两处清理 no-op 不抛错', () => {
+    const { svc } = makeSvc()
+    expect(() => svc.setProvider('anthropic', { apiKey: 'sk-x' })).not.toThrow()
+    expect(() => svc.deleteProvider('anthropic')).not.toThrow()
   })
 })
