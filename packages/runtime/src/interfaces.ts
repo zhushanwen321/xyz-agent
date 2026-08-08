@@ -257,6 +257,11 @@ export interface IConfigService {
   listProviders(): ProviderInfo[]
   /** 列出内置 provider 模板（wave 2，import generated JSON，无参只读）。 */
   listBuiltinProviders(): BuiltinProviderTemplate[]
+  /**
+   * 环境变量检测（I3，wave-env-check）：检查 runtime process.env 中指定变量是否已设置。
+   * 安全红线：只返回布尔不返回值（env 值可能含凭证，不能泄露到前端）。names 去重。
+   */
+  checkEnvVars(names: string[]): Record<string, boolean>
   getDefaultModel(): { provider: string; modelId: string } | null
   setDefaultModel(provider: string, modelId: string): void
   setProvider(providerId: string, data: {

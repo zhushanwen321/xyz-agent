@@ -44,6 +44,21 @@ export const ENV_WHITELIST_PREFIXES: readonly string[] = [
   'PATH', 'HOME', 'USER', 'LANG', 'TERM',
   'NODE_', 'NVM_', 'XYZ_', 'XDG_',
   'APPDATA', 'LOCALAPPDATA', 'PROGRAMFILES', 'SYSTEMROOT', 'TEMP', 'TMP',
+  // ambient 云凭证具体变量名（spec §7）：只加具体名不整前缀（AWS_/GOOGLE_ 整前缀会
+  // 把用户生产 AWS 凭证暴露给所有 pi 子进程，最小暴露面）。GOOGLE_APPLICATION_CREDENTIALS
+  // 是文件型自定义 ADC 路径（spec §7 点名，漏掉则自定义路径检测不到）。
+  'GOOGLE_APPLICATION_CREDENTIALS', 'AWS_PROFILE',
+  'GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION', 'GCLOUD_PROJECT', 'CLOUDSDK_REGION',
+]
+
+/**
+ * ambient 云凭证相关环境变量名（spec §7 / wave-env-check）。
+ * 与 ENV_WHITELIST_PREFIXES 的追加名单一致，供 shell-env.ts 回写复用（避免两处维护漂移）：
+ * GUI 启动时 LaunchServices 最小环境缺这些变量，登录 shell 有值时补齐。
+ */
+export const AMBIENT_ENV_NAMES: readonly string[] = [
+  'GOOGLE_APPLICATION_CREDENTIALS', 'AWS_PROFILE',
+  'GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION', 'GCLOUD_PROJECT', 'CLOUDSDK_REGION',
 ]
 
 /** 系统提示词 replace.prompt 最大字符长度（argv 安全边界）。

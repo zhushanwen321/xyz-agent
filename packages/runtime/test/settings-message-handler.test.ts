@@ -15,8 +15,10 @@ import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; deleteProvider?: ReturnType<typeof vi.fn>; discover?: ReturnType<typeof vi.fn>; aggregate?: ReturnType<typeof vi.fn>; oauthLogin?: ReturnType<typeof vi.fn>; oauthCancel?: ReturnType<typeof vi.fn> } = {}) {
   const broadcasts: ServerMessage[] = []
   const replies: { id: string; type: string; payload: Record<string, unknown> }[] = []
+  const sendErrorCalls: { code: string; message: string }[] = []
   const configService = {
     listProviders: vi.fn().mockReturnValue([{ id: 'p1' }]),
+    checkEnvVars: vi.fn().mockReturnValue({}),
     setProvider: overrides.setProvider ?? vi.fn().mockReturnValue({}),
     deleteProvider: overrides.deleteProvider ?? vi.fn().mockReturnValue({}),
     setDefaultModel: vi.fn(),
@@ -51,7 +53,7 @@ function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; delete
   const ctx = {
     send: vi.fn(),
     reply: vi.fn((_ws: unknown, id: string, type: string, payload: Record<string, unknown>) => replies.push({ id, type, payload })),
-    sendError: vi.fn(),
+    sendError: vi.fn((_ws: unknown, code: string, message: string) => sendErrorCalls.push({ code, message })),
     configService,
     sessionService: {},
     modelService,
@@ -73,7 +75,7 @@ function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; delete
     broadcastExtensionDirs: vi.fn(),
   }
   const handler = new SettingsMessageHandler(ctx as unknown as ConstructorParameters<typeof SettingsMessageHandler>[0])
-  return { ctx, replies, broadcasts, handler }
+  return { ctx, replies, broadcasts, handler, sendErrorCalls }
 }
 
 function msg(type: string, payload: Record<string, unknown>, id = 'm1'): ClientMessage {
@@ -262,8 +264,7 @@ describe('SettingsMessageHandler', () => {
   })
 
   // ── OAuth Login（路径 B，T6）：config.oauthLogin / config.oauthCancel 路由 ──
-  describe('config.oauthLogin / config.oauthCancel（OAuth 路径 B RPC）', () => {
-    it('oauthLogin 成功 → reply config.oauthLoginReply { started: true }', async () => {
+  describe('config.oauthLogin / config.oauthCancel（OAuth 路径 B RPC）', () => {    it('oauthLogin 成功 → reply config.oauthLoginReply { started: true }', async () => {
       const { replies, handler } = makeHandler()
       const handled = await handler.handleSettingsMessage(msg('config.oauthLogin', { providerId: 'anthropic' }), WS)
       expect(handled).toBe(true)
@@ -281,6 +282,26 @@ describe('SettingsMessageHandler', () => {
       const handled = await handler.handleSettingsMessage(msg('config.oauthCancel', { providerId: 'xai' }), WS)
       expect(handled).toBe(true)
       expect(replies[0]).toMatchObject({ type: 'config.oauthCancelReply', payload: { cancelled: false } })
+    })
+  })
+
+  // ── 环境变量检测（I3，wave-env-check TC3）：config.checkEnvVars 路由 ──
+  describe('config.checkEnvVars（I3 RPC）', () => {
+    it('合法 payload → reply config.envVarsChecked { results }', async () => {
+      const { replies, ctx, handler } = makeHandler()
+      ctx.configService.checkEnvVars = vi.fn().mockReturnValue({ OPENAI_API_KEY: true, AWS_PROFILE: false })
+      const handled = await handler.handleSettingsMessage(msg('config.checkEnvVars', { names: ['OPENAI_API_KEY', 'AWS_PROFILE'] }), WS)
+      expect(handled).toBe(true)
+      expect(ctx.configService.checkEnvVars).toHaveBeenCalledWith(['OPENAI_API_KEY', 'AWS_PROFILE'])
+      expect(replies[0]).toMatchObject({ type: 'config.envVarsChecked', payload: { results: { OPENAI_API_KEY: true, AWS_PROFILE: false } } })
+    })
+
+    it('非法 payload（names 非字符串数组）→ sendError invalid_payload，不调 configService', async () => {
+      const { ctx, handler, sendErrorCalls } = makeHandler()
+      const handled = await handler.handleSettingsMessage(msg('config.checkEnvVars', { names: ['ok', 42] }), WS)
+      expect(handled).toBe(true)
+      expect(ctx.configService.checkEnvVars).not.toHaveBeenCalled()
+      expect(sendErrorCalls[0]).toMatchObject({ code: 'invalid_payload' })
     })
   })
 })

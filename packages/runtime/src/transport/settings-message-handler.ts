@@ -79,6 +79,17 @@ export class SettingsMessageHandler {
         this.ctx.reply(ws, msg.id, 'config.oauthCancelReply', result)
         return true
       }
+      case 'config.checkEnvVars': {
+        // I3 契约：names 必须是字符串数组，非法 payload → sendError invalid_payload（对齐 D10 错误 envelope）
+        const names = msg.payload.names
+        if (!Array.isArray(names) || names.some(n => typeof n !== 'string')) {
+          this.ctx.sendError(ws, 'invalid_payload', 'names 必须是字符串数组')
+          return true
+        }
+        const results = this.ctx.configService.checkEnvVars(names)
+        this.ctx.reply(ws, msg.id, 'config.envVarsChecked', { results })
+        return true
+      }
       case 'config.setToolPermissions':
         this.ctx.configService.updateToolPermissions(msg.payload.permissions)
         this.ctx.reply(ws, msg.id, 'config.providerUpdated', { saved: true })

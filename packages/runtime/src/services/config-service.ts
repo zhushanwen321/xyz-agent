@@ -203,6 +203,16 @@ export class ConfigService implements IConfigService {
     return raw as unknown as BuiltinProviderTemplate[]
   }
 
+  checkEnvVars(names: string[]): Record<string, boolean> {
+    // 去重（I3 契约）+ 空串不算已设置（env 值为空串时 pi resolveConfigValue 同样视为未配置）
+    const results: Record<string, boolean> = {}
+    for (const name of new Set(names)) {
+      const value = process.env[name]
+      results[name] = value !== undefined && value !== ''
+    }
+    return results
+  }
+
   setProvider(providerId: string, data: {
     name?: string
     type?: string

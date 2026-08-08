@@ -317,6 +317,12 @@ export function oauthCancel(providerId: string): Promise<{ cancelled: boolean }>
   return command('config.oauthCancel', { providerId })
 }
 
+/** 批量检测环境变量是否已设置（I3，只返回布尔不返回值——env 值可能含凭证）。 */
+export async function checkEnvVars(names: string[]): Promise<Record<string, boolean>> {
+  const reply = await command('config.checkEnvVars', { names })
+  return reply.results
+}
+
 /** 订阅 device flow 中间态（user_code / verification_uri / 倒计时）。返回取消函数。 */
 export function onAuthDeviceCode(handler: (payload: AuthDeviceCodePayload) => void): () => void {
   return events.onGlobalType('auth.deviceCode', (msg) => {

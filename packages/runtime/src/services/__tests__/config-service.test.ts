@@ -8,7 +8,7 @@
  * listBuiltinProviders 是纯函数（模块级 import builtinData，不触 ConfigStore），
  * 故构造 ConfigService 时 configStore 传最小 mock（{} 即可，方法不被调用）。
  */
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { ConfigService } from '../config-service.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { BuiltinProviderTemplate } from '@xyz-agent/shared'
@@ -124,5 +124,39 @@ describe('ConfigService auth 清理（I9 清理① + I8，T6）', () => {
     const { svc } = makeSvc()
     expect(() => svc.setProvider('anthropic', { apiKey: 'sk-x' })).not.toThrow()
     expect(() => svc.deleteProvider('anthropic')).not.toThrow()
+  })
+})
+
+describe('ConfigService.checkEnvVars（I3，wave-env-check TC2）', () => {
+  const KEEP: Record<string, string | undefined> = {}
+  for (const name of ['CHECK_ENV_A', 'CHECK_ENV_EMPTY', 'CHECK_ENV_B']) {
+    KEEP[name] = process.env[name]
+  }
+
+  afterEach(() => {
+    for (const [name, value] of Object.entries(KEEP)) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+  })
+
+  it('已设置（非空）→ true；未设置 / 空串 → false', () => {
+    process.env.CHECK_ENV_A = 'sk-abc'
+    process.env.CHECK_ENV_EMPTY = ''
+    delete process.env.CHECK_ENV_B
+
+    const result = service.checkEnvVars(['CHECK_ENV_A', 'CHECK_ENV_EMPTY', 'CHECK_ENV_B'])
+    expect(result).toEqual({ CHECK_ENV_A: true, CHECK_ENV_EMPTY: false, CHECK_ENV_B: false })
+  })
+
+  it('names 去重（重复名字只查一次，结果一致）', () => {
+    process.env.CHECK_ENV_A = 'x'
+    const result = service.checkEnvVars(['CHECK_ENV_A', 'CHECK_ENV_A'])
+    expect(Object.keys(result)).toEqual(['CHECK_ENV_A'])
+    expect(result.CHECK_ENV_A).toBe(true)
+  })
+
+  it('空数组 → 空结果（不抛错）', () => {
+    expect(service.checkEnvVars([])).toEqual({})
   })
 })

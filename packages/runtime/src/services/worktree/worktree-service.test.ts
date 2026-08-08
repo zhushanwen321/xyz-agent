@@ -65,6 +65,7 @@ function mockGitInfoReader(branch?: string) {
 /** 创建 mock IConfigService。 */
 function mockConfigService(worktreeRootDir = '/home/user/worktrees') {
   return {
+    checkEnvVars: vi.fn(() => ({})),
     getWorktreeRootDir: vi.fn(() => worktreeRootDir),
     setWorktreeRootDir: vi.fn(),
     getSetupScript: vi.fn(() => 'custom-hooks/setup-worktree.sh'),

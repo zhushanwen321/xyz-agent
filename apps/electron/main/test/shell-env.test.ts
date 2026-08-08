@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { fixPathEnv } from '../supervisor/shell-env.js'
+import { fixPathEnv, fixShellEnv } from '../supervisor/shell-env.js'
+import { AMBIENT_ENV_NAMES } from '@xyz-agent/shared'
 
 vi.mock('node:child_process', () => ({
   spawnSync: vi.fn(),
@@ -156,5 +157,111 @@ describe('fixPathEnv', () => {
     fixPathEnv()
 
     expect(process.env.PATH).toBe(before)
+  })
+})
+
+describe('fixShellEnv ambient env 回写（wave-env-check T4）', () => {
+  const ORIG_AMBIENT: Record<string, string | undefined> = {}
+  for (const name of AMBIENT_ENV_NAMES) {
+    ORIG_AMBIENT[name] = process.env[name]
+  }
+
+  beforeEach(() => {
+    mockedSpawnSync.mockReset()
+    process.env.SHELL = '/bin/zsh'
+    process.env.PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
+    // 清空 ambient 变量（模拟 GUI 启动最小环境）
+    for (const name of AMBIENT_ENV_NAMES) {
+      delete process.env[name]
+    }
+  })
+
+  afterEach(() => {
+    for (const name of AMBIENT_ENV_NAMES) {
+      const v = ORIG_AMBIENT[name]
+      if (v === undefined) delete process.env[name]
+      else process.env[name] = v
+    }
+  })
+
+  it('shell 有值且当前未设置 → 补齐 ambient 变量', () => {
+    mockedSpawnSync.mockReturnValue({
+      status: 0,
+      stdout: 'PATH=/usr/bin:/bin\nGOOGLE_APPLICATION_CREDENTIALS=/Users/test/.config/gcloud/adc.json\nAWS_PROFILE=prod\n',
+      stderr: '',
+      pid: 12345,
+      output: [null, '', ''],
+      signal: null,
+    } as any)
+
+    fixShellEnv()
+
+    expect(process.env.GOOGLE_APPLICATION_CREDENTIALS).toBe('/Users/test/.config/gcloud/adc.json')
+    expect(process.env.AWS_PROFILE).toBe('prod')
+  })
+
+  it('当前已有值 → 保留不覆盖（blind overwrite 防护）', () => {
+    process.env.AWS_PROFILE = 'dev' // 用户显式配置
+    mockedSpawnSync.mockReturnValue({
+      status: 0,
+      stdout: 'PATH=/usr/bin:/bin\nAWS_PROFILE=prod\n',
+      stderr: '',
+      pid: 12345,
+      output: [null, '', ''],
+      signal: null,
+    } as any)
+
+    fixShellEnv()
+
+    expect(process.env.AWS_PROFILE).toBe('dev')
+  })
+
+  it('当前值为空串 → 视为未设置，补齐', () => {
+    process.env.GCLOUD_PROJECT = ''
+    mockedSpawnSync.mockReturnValue({
+      status: 0,
+      stdout: 'PATH=/usr/bin:/bin\nGCLOUD_PROJECT=my-project\n',
+      stderr: '',
+      pid: 12345,
+      output: [null, '', ''],
+      signal: null,
+    } as any)
+
+    fixShellEnv()
+
+    expect(process.env.GCLOUD_PROJECT).toBe('my-project')
+  })
+
+  it('shell 无 ambient 值 / spawnSync 失败 → 不修改（fail-safe）', () => {
+    mockedSpawnSync.mockReturnValue({
+      status: 1,
+      stdout: '',
+      stderr: 'shell error',
+      pid: 12345,
+      output: [null, '', 'shell error'],
+      signal: null,
+    } as any)
+
+    fixShellEnv()
+
+    for (const name of AMBIENT_ENV_NAMES) {
+      expect(process.env[name]).toBeUndefined()
+    }
+  })
+
+  it('fixPathEnv 别名兼容：仍修复 PATH（转发 fixShellEnv）', () => {
+    const longPath = '/Users/test/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin'
+    mockedSpawnSync.mockReturnValue({
+      status: 0,
+      stdout: `PATH=${longPath}\n`,
+      stderr: '',
+      pid: 12345,
+      output: [null, `PATH=${longPath}\n`, ''],
+      signal: null,
+    } as any)
+
+    fixPathEnv()
+
+    expect(process.env.PATH).toBe(longPath)
   })
 })
