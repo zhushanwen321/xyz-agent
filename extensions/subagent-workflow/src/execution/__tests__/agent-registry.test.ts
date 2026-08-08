@@ -1,22 +1,19 @@
-// src/__tests__/agent-registry.test.ts
+// src/execution/__tests__/agent-registry.test.ts
 //
-// AgentRegistry 测试（ADR-031 统一资源发现版）。
+// AgentRegistry 测试（S2 路径统一版）。
 //
-// agent 发现走 shared/resource-discovery，扫描路径由 workspaceRoot + agentDir 推导：
-// - project 级：workspaceRoot/.pi/agents/ + workspaceRoot/.agents/agents/
-// - user 级：agentDir/agents/ + ~/.agents/agents/
-// - npm/dev：agentDir/npm/node_modules/*/ + agentDir/extensions/*/
-//
-// 测试用 tmp 目录作 workspaceRoot，在约定路径下放 agent 文件验证发现 + 优先级。
+// S2 重构：AgentRegistry 从「按名查找（discoverAll + cache Map<name>）」收敛为
+// 「按绝对路径加载（loadByPath）」——agentRef 唯一形态 = .md 绝对路径（注入段
+// <location>），内置 agent 即包内物理路径，无 builtin 合并、无名字查找。
+// 发现（注入段数据源）职责由 shared/resource-discovery + injector 承担，
+// 本文件不再测发现层（见 resource-discovery.test.ts）。
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// 隔离真实用户全局目录：resource-discovery 用 homedir() 推导 user-agents 源
-// （~/.agents/agents/），测试环境可能存在真实 agent 文件（如 tech-design-review.md），
-// 不 mock 会导致发现列表多出环境 agent（2026-08 实测 3 个失败）。
+// 隔离真实用户全局目录（~/.agents/agents/ 可能有真实 agent 文件）
 vi.mock("node:os", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:os")>();
   return { ...actual, homedir: () => "/nonexistent-home-for-tests" };
@@ -24,8 +21,7 @@ vi.mock("node:os", async (importOriginal) => {
 
 import { lintAgentMeta } from "../../orchestration/script-lint.ts";
 import { parseResourceMeta } from "../../shared/meta-parser.ts";
-import type { BuiltinAgentRegistry } from "../agent-registry.ts";
-import { AgentRegistry, createPackageBuiltinRegistry, parseAgentFrontmatter } from "../agent-registry.ts";
+import { AgentRegistry, parseAgentFrontmatter } from "../agent-registry.ts";
 
 // ============================================================
 // helpers
@@ -42,16 +38,6 @@ function writeAgent(dir: string, name: string, body: string): string {
   return filePath;
 }
 
-const emptyBuiltin: BuiltinAgentRegistry = { get: () => undefined, list: () => [] };
-
-/** 构造 AgentRegistry，workspaceRoot=ws，agentDir=ws/.fake-agent（隔离 user 级） */
-function newRegistry(ws: string): AgentRegistry {
-  return new AgentRegistry({
-    workspaceRoot: ws,
-    agentDir: path.join(ws, ".fake-agent"),
-  });
-}
-
 // ============================================================
 // parseAgentFrontmatter
 // ============================================================
@@ -65,142 +51,94 @@ describe("parseAgentFrontmatter", () => {
   it("extracts model/thinkingLevel/tools from frontmatter", () => {
     const cfg = parseAgentFrontmatter("/x/coder.md", `---
 name: coder
-description: coder agent
-model: anthropic/claude-sonnet-4-5
+description: coding agent
+model: anthropic/claude-3.5-sonnet
 thinkingLevel: high
-tools: bash, read, edit
+tools: [read, bash]
 ---
-You write code.`);
+body text`);
     expect(cfg.name).toBe("coder");
-    expect(cfg.model).toBe("anthropic/claude-sonnet-4-5");
+    expect(cfg.model).toBe("anthropic/claude-3.5-sonnet");
     expect(cfg.thinkingLevel).toBe("high");
-    expect(cfg.tools).toEqual(["bash", "read", "edit"]);
-    expect(cfg.systemPrompt).toBe("You write code.");
+    expect(cfg.tools).toEqual(["read", "bash"]);
+    expect(cfg.systemPrompt).toBe("body text");
   });
 });
 
 // ============================================================
-// AgentRegistry.discoverAll — 统一资源发现
+// AgentRegistry.loadByPath（S2：agentRef = .md 绝对路径）
 // ============================================================
 
-describe("AgentRegistry.discoverAll", () => {
+describe("AgentRegistry.loadByPath", () => {
   let ws: string;
   beforeEach(() => { ws = tmpWorkspace(); });
   afterEach(() => { fs.rmSync(ws, { recursive: true, force: true }); });
 
-  it("discovers all .md agents in project .pi/agents/", () => {
-    const piAgents = path.join(ws, ".pi", "agents");
-    writeAgent(piAgents, "worker", "do work");
-    writeAgent(piAgents, "scout", "explore");
-    const reg = newRegistry(ws);
-    reg.discoverAll(emptyBuiltin);
-    // 包含性断言——用户全局目录（~/.agents/agents/）可能有真实 agent 文件，
-    // 不假设环境为空（2026-08：tech-design-review.md 暴露此脆弱性）
-    const list = reg.list().sort();
-    expect(list).toContain("scout");
-    expect(list).toContain("worker");
+  it("按绝对路径加载 agent：frontmatter + body → AgentConfig", () => {
+    const file = writeAgent(path.join(ws, ".pi", "agents"), "worker", `---
+name: worker
+description: 通用执行 agent
+tools: [read, bash]
+---
+You are a worker.`);
+    const reg = new AgentRegistry();
+    const cfg = reg.loadByPath(file);
+    expect(cfg?.name).toBe("worker");
+    expect(cfg?.systemPrompt).toBe("You are a worker.");
+    expect(cfg?.tools).toEqual(["read", "bash"]);
   });
 
-  it("project .agents/agents overrides project .pi/agents on name clash (priority)", () => {
-    writeAgent(path.join(ws, ".pi", "agents"), "worker", "pi-body");
-    writeAgent(path.join(ws, ".agents", "agents"), "worker", "agents-body");
-    const reg = newRegistry(ws);
-    reg.discoverAll(emptyBuiltin);
-    // .agents 优先级高于 .pi（buildScanTargets 顺序：project-pi 先于 project-agents）
-    expect(reg.get("worker")?.systemPrompt).toBe("agents-body");
+  it("无 frontmatter 文件：整个内容作为 systemPrompt", () => {
+    const file = writeAgent(ws, "plain", "Just a prompt body.");
+    const cfg = new AgentRegistry().loadByPath(file);
+    expect(cfg?.name).toBe("plain");
+    expect(cfg?.systemPrompt).toBe("Just a prompt body.");
   });
 
-  it("file agents override builtin on name clash", () => {
-    writeAgent(path.join(ws, ".pi", "agents"), "worker", "file-worker");
-    const builtin: BuiltinAgentRegistry = {
-      get: (n) => (n === "worker" ? { name: "worker", systemPrompt: "builtin-worker" } : undefined),
-      list: () => ["worker"],
-    };
-    const reg = newRegistry(ws);
-    reg.discoverAll(builtin);
-    expect(reg.get("worker")?.systemPrompt).toBe("file-worker");
+  it("mtime 缓存：未变文件不重读（config 引用稳定）", () => {
+    const file = writeAgent(ws, "cached", "v1");
+    const reg = new AgentRegistry();
+    const first = reg.loadByPath(file);
+    const second = reg.loadByPath(file);
+    expect(second).toBe(first);
+    // 修改后 mtime 变化 → 新 config
+    fs.writeFileSync(file, "v2", "utf-8");
+    const third = reg.loadByPath(file);
+    expect(third?.systemPrompt).toBe("v2");
   });
 
-  it("builtin fills in when no file agent exists", () => {
-    const builtin: BuiltinAgentRegistry = {
-      get: (n) => (n === "oracle" ? { name: "oracle", systemPrompt: "builtin-oracle" } : undefined),
-      list: () => ["oracle"],
-    };
-    const reg = newRegistry(ws);
-    reg.discoverAll(builtin);
-    expect(reg.get("oracle")?.systemPrompt).toBe("builtin-oracle");
+  it("相对路径引用返回 undefined（引用唯一形态 = 绝对路径）", () => {
+    const reg = new AgentRegistry();
+    expect(reg.loadByPath("worker")).toBeUndefined();
+    expect(reg.loadByPath("./agents/worker.md")).toBeUndefined();
   });
 
-  it("get with require=true throws listing discovered agents", () => {
-    writeAgent(path.join(ws, ".pi", "agents"), "worker", "x");
-    const reg = newRegistry(ws);
-    reg.discoverAll(emptyBuiltin);
-    expect(() => reg.get("nonexistent", true)).toThrow(/Agent "nonexistent" not found.*Discovered: worker/);
+  it("非 .md 引用返回 undefined", () => {
+    const reg = new AgentRegistry();
+    expect(reg.loadByPath("/tmp/worker.txt")).toBeUndefined();
   });
 
-  it("ignores files not ending in .md, starting with _, or .chain.md", () => {
-    const piAgents = path.join(ws, ".pi", "agents");
-    writeAgent(piAgents, "real", "body");
-    writeAgent(piAgents, "_skip", "ignored");
-    writeAgent(piAgents, "trace", "ignored"); // trace.chain.md → 被跳过
-    fs.renameSync(path.join(piAgents, "trace.md"), path.join(piAgents, "trace.chain.md"));
-    fs.writeFileSync(path.join(piAgents, "readme.txt"), "not an agent");
-    const reg = newRegistry(ws);
-    reg.discoverAll(emptyBuiltin);
-    expect(reg.list()).toEqual(["real"]);
+  it("文件不存在返回 undefined，require=true 抛错带指引", () => {
+    const reg = new AgentRegistry();
+    expect(reg.loadByPath("/nonexistent/x.md")).toBeUndefined();
+    expect(() => reg.loadByPath("/nonexistent/x.md", true)).toThrow(/not found or unreadable/);
+    expect(() => reg.loadByPath("relative", true)).toThrow(/Invalid agent ref/);
   });
 
-  it("nonexistent directory is silently skipped", () => {
-    // workspaceRoot 下无任何 agents 目录 → 空结果，不抛错
-    const reg = newRegistry(ws);
-    expect(() => reg.discoverAll(emptyBuiltin)).not.toThrow();
-    expect(reg.list()).toEqual([]);
+  it("~/ 前缀展开", () => {
+    const reg = new AgentRegistry();
+    // homedir 被 mock 为 /nonexistent-home-for-tests → 文件必然不存在，验证展开逻辑
+    expect(reg.loadByPath("~/agent.md")).toBeUndefined();
   });
 });
 
 // ============================================================
-// createPackageBuiltinRegistry — 包内 agents/ 扫描（走 pi.agents manifest）
+// 包内 agents/*.md 数据合规（S2：内置 agent = 包内路径文件）
 // ============================================================
 
-describe("createPackageBuiltinRegistry", () => {
-  it("discovers packaged agents/*.md (worker, code-reviewer, explorer, etc.)", () => {
-    // [HISTORICAL] S6: 包内 agents/ 此前未被接通——discoverAll 从未调用，
-    // 导致 pi install 后包内 agent 定义开箱不可用。
-    const builtin = createPackageBuiltinRegistry();
-    const names = builtin.list();
-    // 包内 9 个 agent 必须全部被发现
-    expect(names).toEqual(expect.arrayContaining([
-      "worker", "general-purpose", "orchestrator",
-      "code-reviewer", "explorer", "researcher",
-      "planner", "oracle", "context-builder",
-    ]));
-    // 每个 agent 都有 systemPrompt
-    for (const name of names) {
-      const cfg = builtin.get(name);
-      expect(cfg).toBeDefined();
-      expect(cfg?.systemPrompt.length).toBeGreaterThan(0);
-    }
-    // tools 字段精确匹配：未声明的为 undefined，声明的为具体数组。
-    // 改 frontmatter 时这里会立即报错，拦住拼写错误或字段遗漏。
-    expect(builtin.get("worker")?.tools).toBeUndefined();
-    expect(builtin.get("general-purpose")?.tools).toBeUndefined();
-    expect(builtin.get("explorer")?.tools).toEqual(["read", "bash", "grep", "find", "ls", "structured-output"]);
-    expect(builtin.get("researcher")?.tools).toEqual(["read", "bash", "structured-output"]);
-    expect(builtin.get("orchestrator")?.tools).toEqual([
-      "todo", "goal_control", "workflow", "subagent", "ask_user", "structured-output",
-    ]);
-    expect(builtin.get("code-reviewer")?.tools).toEqual(["read", "bash", "write", "structured-output"]);
-    expect(builtin.get("planner")?.tools).toEqual(["read", "write", "structured-output"]);
-    expect(builtin.get("oracle")?.tools).toEqual(["read", "write", "structured-output"]);
-    expect(builtin.get("context-builder")?.tools).toEqual(["read", "write", "structured-output"]);
-  });
-});
-
-// ── m5 TC3: 9 个核心 agent 数据合规（显式字段断言——lint 无 finding 不验收数据存在） ──
-
-describe("m5 TC3: builtin agents 数据合规", () => {
+describe("builtin agents 数据合规", () => {
   const AGENTS_DIR = path.resolve(__dirname, "../../../agents");
-  const CORE = ["explorer", "worker", "code-reviewer", "oracle", "planner", "researcher", "context-builder", "orchestrator", "general-purpose"];
+  const CORE = ["explorer", "worker", "code-reviewer", "oracle", "planner", "researcher", "context-builder", "orchestrator", "general-purpose", "doc-reviewer"];
 
   it("agents/*.md 全部 IF1 解析成功", () => {
     for (const f of fs.readdirSync(AGENTS_DIR).filter((x) => x.endsWith(".md"))) {
@@ -209,7 +147,7 @@ describe("m5 TC3: builtin agents 数据合规", () => {
     }
   });
 
-  it("9 个核心 agent 均含 when/notFor/examples 且正反各一（lintAgentMeta 无 finding）", () => {
+  it("核心 agent 均含 when/notFor/examples 且正反各一（lintAgentMeta 无 finding）", () => {
     for (const name of CORE) {
       const meta = parseResourceMeta(fs.readFileSync(path.join(AGENTS_DIR, `${name}.md`), "utf-8"), "agent");
       expect(meta, `${name} 解析失败`).not.toBeNull();
@@ -223,9 +161,23 @@ describe("m5 TC3: builtin agents 数据合规", () => {
     }
   });
 
-  it("doc-reviewer（未迁移）parse 成功且 lint 无 finding（WQ1 兼容）", () => {
-    const meta = parseResourceMeta(fs.readFileSync(path.join(AGENTS_DIR, "doc-reviewer.md"), "utf-8"), "agent");
-    expect(meta?.kind).toBe("agent");
-    if (meta?.kind === "agent") expect(lintAgentMeta(meta)).toEqual([]);
+  it("loadByPath 直接加载包内 agent（内置 = 路径文件，无名字查找）", () => {
+    const reg = new AgentRegistry();
+    const worker = reg.loadByPath(path.join(AGENTS_DIR, "worker.md"));
+    expect(worker?.name).toBe("worker");
+    expect(worker?.systemPrompt.length).toBeGreaterThan(0);
+    // tools 字段精确匹配：未声明的为 undefined，声明的为具体数组。
+    // 改 frontmatter 时这里会立即报错，拦住拼写错误或字段遗漏。
+    expect(reg.loadByPath(path.join(AGENTS_DIR, "explorer.md"))?.tools).toEqual(
+      ["read", "bash", "grep", "find", "ls", "structured-output"],
+    );
+    expect(reg.loadByPath(path.join(AGENTS_DIR, "researcher.md"))?.tools).toEqual(["read", "bash", "structured-output"]);
+    expect(reg.loadByPath(path.join(AGENTS_DIR, "orchestrator.md"))?.tools).toEqual([
+      "todo", "goal_control", "workflow", "subagent", "ask_user", "structured-output",
+    ]);
+    expect(reg.loadByPath(path.join(AGENTS_DIR, "code-reviewer.md"))?.tools).toEqual(["read", "bash", "write", "structured-output"]);
+    expect(reg.loadByPath(path.join(AGENTS_DIR, "planner.md"))?.tools).toEqual(["read", "write", "structured-output"]);
+    expect(reg.loadByPath(path.join(AGENTS_DIR, "oracle.md"))?.tools).toEqual(["read", "write", "structured-output"]);
+    expect(reg.loadByPath(path.join(AGENTS_DIR, "context-builder.md"))?.tools).toEqual(["read", "write", "structured-output"]);
   });
 });

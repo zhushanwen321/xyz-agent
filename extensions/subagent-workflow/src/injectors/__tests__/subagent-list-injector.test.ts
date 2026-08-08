@@ -21,6 +21,7 @@ body`;
 		expect(parseAgentFrontmatter(md)).toEqual({
 			name: "worker",
 			description: "编码执行者",
+			path: "",
 		});
 	});
 
@@ -32,6 +33,7 @@ description: '代码审查'
 		expect(parseAgentFrontmatter(md)).toEqual({
 			name: "reviewer",
 			description: "代码审查",
+			path: "",
 		});
 	});
 
@@ -59,13 +61,14 @@ describe("formatAgentList", () => {
 			{
 				name: "reviewer",
 				description: "代码审查",
+				path: "/agents/reviewer.md",
 				when: "用户要求 review 代码",
 				examples: [
 					{ match: "帮我 review 这段代码", action: "调用 reviewer 对抗式审查", positive: true },
 					{ match: "帮我 review 设计文档", action: "不调用（文档审查应选 doc-reviewer）", positive: false },
 				],
 			},
-			{ name: "legacy", description: "未迁移 agent" },
+			{ name: "legacy", description: "未迁移 agent", path: "/agents/legacy.md" },
 		]);
 		expect(out).toContain("<when>用户要求 review 代码</when>");
 		// 正反原样渲染——negative action 含原因文本（评审 M5：渲染器不硬编码）
@@ -76,18 +79,19 @@ describe("formatAgentList", () => {
 			{
 				name: "x",
 				description: "d",
+				path: "/agents/x.md",
 				examples: [{ match: "处理 <task> 的 diff", action: "调用 x", positive: true }],
 			},
 		]);
 		expect(xmlOut).toContain("&lt;task&gt;");
 		// 缺省兼容：无 when/examples 的 agent 不渲染该段
-		const legacyOut = formatAgentList([{ name: "legacy", description: "未迁移 agent" }]);
+		const legacyOut = formatAgentList([{ name: "legacy", description: "未迁移 agent", path: "/agents/legacy.md" }]);
 		expect(legacyOut).not.toContain("<when>");
 		expect(legacyOut).not.toContain("<examples>");
 	});
 
 	it("包含 P3 正向触发引导语（何时该 delegate）", () => {
-		const out = formatAgentList([{ name: "worker", description: "d" }]);
+		const out = formatAgentList([{ name: "worker", description: "d", path: "/agents/worker.md" }]);
 		expect(out).toContain("PRIORITY");
 		expect(out).toContain("3+ files");
 		expect(out).toContain("delegate");
@@ -95,20 +99,20 @@ describe("formatAgentList", () => {
 	});
 
 	it("保留原 'ONLY use agent names from this list' 名字约束", () => {
-		const out = formatAgentList([{ name: "worker", description: "d" }]);
+		const out = formatAgentList([{ name: "worker", description: "d", path: "/agents/worker.md" }]);
 		expect(out).toContain("ONLY use agent names from this list");
 	});
 
 	it("包含 'Do NOT call list to discover' 引导语", () => {
-		const out = formatAgentList([{ name: "worker", description: "d" }]);
+		const out = formatAgentList([{ name: "worker", description: "d", path: "/agents/worker.md" }]);
 		expect(out).toContain("Do NOT call list to discover");
 		expect(out).toContain("use list only for running state");
 	});
 
 	it("用 <available_subagents> 标签包裹并列出每个 agent", () => {
 		const out = formatAgentList([
-			{ name: "worker", description: "does work" },
-			{ name: "reviewer", description: "reviews code" },
+			{ name: "worker", description: "does work", path: "/agents/worker.md" },
+			{ name: "reviewer", description: "reviews code", path: "/agents/reviewer.md" },
 		]);
 		expect(out).toContain("<available_subagents>");
 		expect(out).toContain("</available_subagents>");
@@ -116,10 +120,13 @@ describe("formatAgentList", () => {
 		expect(out).toContain("<description>does work</description>");
 		expect(out).toContain("<name>reviewer</name>");
 		expect(out).toContain("<description>reviews code</description>");
+		// S1：每项含 <location> 完整路径（agentRef，模型直接引用）
+		expect(out).toContain("<location>/agents/worker.md</location>");
+		expect(out).toContain("<location>/agents/reviewer.md</location>");
 	});
 
 	it("转义 XML 特殊字符", () => {
-		const out = formatAgentList([{ name: "a&b<c>", description: "\"q\"" }]);
+		const out = formatAgentList([{ name: "a&b<c>", description: "\"q\"", path: "/agents/a&b<c>.md" }]);
 		expect(out).toContain("<name>a&amp;b&lt;c&gt;</name>");
 		expect(out).toContain("&quot;q&quot;");
 	});

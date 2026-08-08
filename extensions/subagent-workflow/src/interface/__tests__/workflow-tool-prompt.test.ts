@@ -59,7 +59,8 @@ describe("U1: workflow tool prompt mentions built-in workflows", () => {
 
   it("TC4b: promptGuidelines 含 workflow info 指引（info 回收闭环）", () => {
     const guidelines = promptGuidelinesText(TOOL_WORKFLOW_SRC);
-    expect(guidelines).toContain("workflow info <name>");
+    expect(guidelines).toContain("workflow info <ref>");
+    expect(guidelines).toContain("absolute .js path");
   });
 
   it("tool-workflow.ts promptGuidelines 含 workflow-script list 交叉引用", () => {

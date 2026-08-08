@@ -47,12 +47,16 @@ export function resolveAgentOpts(
 ): ResolveResult {
   const systemPromptFiles: string[] = [];
 
- // Resolve agent system prompt
+ // Resolve agent system prompt（agentRef = .md 绝对路径，S2 路径统一）
   if (opts.agent) {
-    const discovered = agentRegistry.get(opts.agent);  // 新 API: get() 替代 resolve()，返回 AgentConfig（含 systemPrompt+model）
+    const discovered = agentRegistry.loadByPath(opts.agent);
     if (!discovered) {
-      const available = agentRegistry.list().join(", ");
-      return { opts, error: `Agent not found: ${opts.agent}. Available: ${available || "(none)"}` };
+      return {
+        opts,
+        error:
+          `Agent ref invalid or file unreadable: ${opts.agent}. ` +
+          `Use an absolute .md path from <available_subagents> <location> (relative names are not supported).`,
+      };
     }
 
     const hasSystemPrompt = discovered.systemPrompt.trim().length > 0;

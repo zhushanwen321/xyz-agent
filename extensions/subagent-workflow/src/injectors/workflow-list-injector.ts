@@ -41,10 +41,12 @@ const MAX_DESC_LEN = 160;
 /** 断句阈值比例：句末标点位置须 >= maxLen 的 40% 才采用，否则硬截断保留更多信息 */
 const DESC_BOUNDARY_MIN_RATIO = 0.4;
 
-/** 解析后的 workflow 条目（name + 截断后的 description） */
+/** 解析后的 workflow 条目（name + 截断后的 description + agentRef 路径） */
 export interface WorkflowEntry {
 	name: string;
 	description: string;
+	/** workflowRef：脚本 .js 文件的绝对路径（注入段 <location>，模型直接引用） */
+	path: string;
 }
 
 /**
@@ -79,7 +81,8 @@ export function summarizeDescription(
 export function parseWorkflowMeta(content: string): WorkflowEntry | null {
 	const meta = parseResourceMeta(content, "workflow");
 	if (!meta || meta.kind !== "workflow") return null;
-	return { name: meta.name, description: summarizeDescription(meta.description) };
+	// path 由 discoverAllWorkflows 从 DiscoveredResource.path 填充
+	return { name: meta.name, description: summarizeDescription(meta.description), path: "" };
 }
 
 /**
@@ -103,7 +106,7 @@ export async function discoverAllWorkflows(
 		try {
 			const content = getCachedFileContent(resource.path) ?? "";
 			const wf = parseWorkflowMeta(content);
-			if (wf) map.set(wf.name, wf);
+			if (wf) map.set(wf.name, { ...wf, path: resource.path });
 		} catch (err) {
 			logger.error(
 				`[workflow-list-injector] skip unreadable workflow file ${resource.path}`,
@@ -142,7 +145,7 @@ export function formatWorkflowList(workflows: WorkflowEntry[]): string {
 	];
 	for (const wf of workflows) {
 		lines.push(
-			`  <workflow><name>${escapeXml(wf.name)}</name><description>${escapeXml(wf.description)}</description></workflow>`,
+			`  <workflow><name>${escapeXml(wf.name)}</name><description>${escapeXml(wf.description)}</description><location>${escapeXml(wf.path)}</location></workflow>`,
 		);
 	}
 	lines.push("</available_workflows>");

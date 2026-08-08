@@ -8,7 +8,6 @@
 // 通过 fail(msg) 回调注入（调用方抛 "review-fix-loop: <msg>"，与 workflow 内 fail() 一致）。
 "use strict";
 
-const fs = require("fs");
 const path = require("path");
 
 const TARGET_TYPES = ["git-diff", "file", "dir", "text"];
@@ -22,7 +21,7 @@ const VALID_ARG_KEYS = new Set([
  * 批次解析：batch1..batchN（缺号报错）/ agents 简写。两者必传其一，缺省直接报错（无默认 agent）。
  * @param args $ARGS 形状的对象（batchN 键、agents 键）
  * @param fail 报错回调（抛错终止）
- * @returns string[][] 每批的 agent 名/文件路径数组
+ * @returns string[][] 每批的 agentRef 路径数组
  */
 function parseBatches(args, fail) {
   const batchKeys = Object.keys(args)
@@ -48,7 +47,7 @@ function parseBatches(args, fail) {
   return rawBatches.map((raw, idx) => {
     if (typeof raw !== "string" || !raw.trim()) fail("batch" + (idx + 1) + " 不能为空");
     const names = raw.split(",").map((s) => s.trim()).filter(Boolean);
-    if (names.length === 0) fail("batch" + (idx + 1) + " 为空（逗号分隔 agent 名/文件路径）");
+    if (names.length === 0) fail("batch" + (idx + 1) + " 为空（逗号分隔 agent .md 绝对路径）");
     if (new Set(names).size !== names.length) fail("batch" + (idx + 1) + " 内存在重复 agent: " + names);
     return names;
   });
@@ -60,15 +59,6 @@ function resolveBatchNames(rawBatchNames, batches, fail) {
     fail("batchNames 数量（" + rawBatchNames.length + "）必须与批数（" + batches.length + "）一致");
   }
   return rawBatchNames.length ? rawBatchNames : batches.map((_, i) => "batch-" + (i + 1));
-}
-
-/** fallow-scan 只在 git-diff 类型下有意义。 */
-function validateFallowScan(batches, targetType, fail) {
-  for (let i = 0; i < batches.length; i++) {
-    if (batches[i].includes("fallow-scan") && targetType !== "git-diff") {
-      fail("fallow-scan 只支持 targetType=git-diff（它审查 git 变更的静态分析），实际 targetType=" + targetType);
-    }
-  }
 }
 
 /** 审查指令模板（按 targetType 生成，注入每个 review agent 的 prompt）。 */
@@ -680,17 +670,6 @@ function normalizeAggregatorResult(raw) {
   };
 }
 
-/** review- 前缀兜底判定：agent-registry.ts 的报错文案是 `Agent "${name}" not found. ...`
- * （名字夹在 "Agent" 与 "not found" 之间），不能用连续子串 "Agent not found" 匹配。
- * 已带 review- 前缀的 agent 不再重试（防死循环）。 */
-function shouldRetryWithReviewPrefix(error, agentName) {
-  return typeof error === "string"
-    && error.includes("not found")
-    && typeof agentName === "string"
-    && agentName.length > 0
-    && !agentName.startsWith("review-");
-}
-
 /** 从 aggregated.md 内容回退解析（JSON 无效时的兜底，依赖 "- Must-fix: N" 固定格式）。 */
 function parseAggregatedMd(content) {
   const mustFixMatch = content.match(/[-*]\s*Must[-_]fix\s*[:：]\s*(\d+)/i);
@@ -702,69 +681,29 @@ function parseAggregatedMd(content) {
   };
 }
 
-/**
- * 自定义 .md agent frontmatter 解析（纯函数，不碰 fs）。
- * 边界：无 `---` 头时 basename 兜底、frontmatter 未闭合（closeIdx === -1）截断、
- * 引号包裹的值剥引号、空值（`value || undefined`）回退。
- * @param content 文件原文
- * @param fallbackName 无 name 字段时的兜底（通常为 basename）
- * @returns {name, model, description, systemPrompt, report, title, isCustom}
- */
-function parseAgentMd(content, fallbackName) {
-  let name = fallbackName;
-  let model, description;
-  let body = content.trim();
-  if (content.startsWith("---")) {
-    const closeIdx = content.indexOf("---", 3);
-    if (closeIdx !== -1) {
-      const yaml = content.slice(3, closeIdx);
-      body = content.slice(closeIdx + 3).trim();
-      const extract = (key) => {
-        // 分隔符用 [ \t]* 而非 \s*：\s 含换行，空值 key（如 `name:`）后紧跟的下一行内容
-        // 会被 \s* 吞掉换行后捕获成该 key 的值。仅匹配空格/制表符则空值 → .+ 不匹配 → undefined。
-        const m = yaml.match(new RegExp("^" + key + ":[ \t]*(.+)$", "m"));
-        if (!m) return undefined;
-        let v = m[1].trim();
-        if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-        return v || undefined;
-      };
-      name = extract("name") || name;
-      model = extract("model");
-      description = extract("description");
-    }
-  }
-  return { name, model, description, systemPrompt: body, report: name, title: description || name, isCustom: true };
-}
-
-/** 自定义 .md agent 加载：fs 读取 + parseAgentMd。读取失败经 fail 回调（缺省时直接抛错）。 */
-function loadAgentMd(filePath, fail) {
-  let content;
-  try {
-    content = fs.readFileSync(filePath, "utf-8");
-  } catch (e) {
-    const msg = "agent 文件读取失败: " + filePath + " (" + e.message + ")";
-    if (typeof fail === "function") fail(msg);
-    throw new Error("review-fix-loop: " + msg);
-  }
-  return parseAgentMd(content, path.basename(filePath, ".md"));
-}
-
-/** fallow-scan：内置工具型 def（无 .md，跑 fallow audit 静态分析）。 */
+/** fallow-scan：内置工具型 def（无 .md，跑 fallow audit 静态分析）。
+ * 不由 batchN 触发（batchN 值域 = agent .md 路径）——由独立参数 fallowScan=true 在脚本层
+ * 前置插入为首批。 */
 const FALLOW_DEF = { name: "fallow-scan", title: "FALLOW STATIC ANALYSIS", report: "fallow-scan", isFallow: true };
 
 /**
- * Agent defs 解析：fallow-scan 常量 / 路径（含 `/` 或 `.md` 后缀）走 loader / 内置 agent 名。
- * 内置名做 `review-` 前缀剥离（与 runReviewAgent 的 review- 前缀兜底重试配对：
- * report 文件名用剥离后的名字，兜底重试才落到同一文件）。
- * @param batchNames 批内 agent 名/文件路径数组
- * @param loader 自定义 loader（测试注入 stub；缺省用 loadAgentMd）
+ * Agent defs 解析（S4 路径统一版）：batchN/fixAgent 值全部是 agentRef（.md 绝对路径）。
+ *
+ * - def 只含标识（path/name/report/title），**不读文件**——agent 内容的加载与 systemPrompt
+ *   注入由主线程 resolveAgentOpts（agent-call 按 path 加载）统一完成
+ * - `fallow-scan` 是脚本内部保留字（fallowScan 参数前置插入的首批），非用户参数值域
+ * @param batchNames 批内 agentRef 路径数组
  */
-function resolveAgentDefs(batchNames, loader) {
-  const loadFn = loader || loadAgentMd;
+function resolveAgentDefs(batchNames) {
   return batchNames.map((item) => {
     if (item === "fallow-scan") return FALLOW_DEF;
-    if (item.includes("/") || item.endsWith(".md")) return loadFn(item);
-    return { name: item, report: item.replace(/^review-/, ""), title: item.toUpperCase() };
+    if (!/^\/|^~\//.test(item) || !item.endsWith(".md")) {
+      throw new Error(
+        "review-fix-loop: 无效 agent 引用: " + item + "——必须是 .md 绝对路径（<available_subagents> 的 <location>）",
+      );
+    }
+    const name = item.split("/").pop().replace(/\.md$/, "");
+    return { path: item, name, report: name, title: name.toUpperCase() };
   });
 }
 
@@ -828,7 +767,6 @@ module.exports = {
   VALID_ARG_KEYS,
   parseBatches,
   resolveBatchNames,
-  validateFallowScan,
   buildReviewInstruction,
   lockReviewBase,
   buildScopedRecheckPrompt,
@@ -849,9 +787,6 @@ module.exports = {
   parseResult,
   normalizeAggregatorResult,
   parseAggregatedMd,
-  shouldRetryWithReviewPrefix,
-  parseAgentMd,
-  loadAgentMd,
   resolveAgentDefs,
   recordAgentClean,
   recordAgentDirty,

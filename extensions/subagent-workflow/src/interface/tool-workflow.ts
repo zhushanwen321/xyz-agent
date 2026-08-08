@@ -70,7 +70,7 @@ const WORKFLOW_ACTIONS: readonly WorkflowAction[] = [
 const WorkflowParams = Type.Object({
   action: StringEnum(WORKFLOW_ACTIONS, { description: "Workflow action to execute" }),
   name: Type.Optional(
-    Type.String({ description: "Workflow name (run/info action)" }),
+    Type.String({ description: "Workflow ref: absolute path to the .js script (use <location> from <available_workflows>; run/info action)" }),
   ),
   slug: Type.Optional(
     Type.String({
@@ -325,12 +325,12 @@ export function registerWorkflowTool(
     promptSnippet: "Run, pause, resume, abort, or check workflow status",
     promptGuidelines: [
       "PRIORITY: When user says 'workflow', 'run workflow', try run action FIRST.",
-      "Built-in workflows run DIRECTLY with action:run — names/descriptions come from " +
-      "<available_workflows> (injected each turn); call \"workflow info <name>\" for " +
+      "All listed workflows run DIRECTLY with action:run — refs/descriptions come from " +
+      "<available_workflows> (injected each turn); call \"workflow info <ref>\" for " +
       "parameters/usage/when (when/notFor routing hints live in info, not the injection list). " +
       "parameter schema and usage before running. Do NOT use workflow-script generate for " +
       "patterns already covered by available workflows.",
-      "run: discover by name/description, then start in background (no user confirmation needed).",
+      "run: pass the absolute .js path from <available_workflows> <location> as name, then start in background (no user confirmation needed).",
       "Do NOT poll status after starting — results appear automatically via notifyDone.",
       "Call shapes (JSON): " +
       "- run: {\"action\":\"run\",\"name\":\"<script>\",\"args\":{...},\"tokens\":N,\"time\":N}. " +
@@ -433,13 +433,13 @@ export async function actionRun(
 ): Promise<ToolResult> {
   const name = params.name;
   if (!name) {
-    return textResult("run requires 'name' parameter. Correct: {\"action\":\"run\",\"name\":\"<script>\",\"args\":{...}}", true);
+    return textResult("run requires 'name' parameter (absolute .js path from <available_workflows> <location>). Correct: {\"action\":\"run\",\"name\":\"<ref>\",\"args\":{...}}", true);
   }
   // 弱模型常见误用（P0 静默失败）：把 task/items 等 args 子字段平铺到 workflow params
   // 顶层（缺 args 嵌套）。args ?? {} 会静默 args={}，启动缺参 run 不报错——比 subagent
-  // 平铺事故更严重。m6：先 registry.get（动态参数集来源——schema 即 SSOT），
+  // 平铺事故更严重。m6：先 registry.getPath（动态参数集来源——schema 即 SSOT），
   // not_found 优先返回；平铺检测报错带 Correct 正例纠正。
-  const script = await deps.registry.get(name);
+  const script = await deps.registry.getPath(name);
   if (!script) {
  // 模糊匹配建议
     const all = await deps.registry.loadAll();
@@ -614,11 +614,11 @@ export async function actionInfo(
   const name = params.name;
   if (!name) {
     return textResult(
-      "info requires 'name' parameter. Correct: {\"action\":\"info\",\"name\":\"<script>\"}",
+      "info requires 'name' parameter (absolute .js path from <available_workflows> <location>). Correct: {\"action\":\"info\",\"name\":\"<ref>\"}",
       true,
     );
   }
-  const script = await deps.registry.get(name);
+  const script = await deps.registry.getPath(name);
   if (!script) {
     const all = await deps.registry.loadAll();
     const available = all.filter((wf) => wf.available);

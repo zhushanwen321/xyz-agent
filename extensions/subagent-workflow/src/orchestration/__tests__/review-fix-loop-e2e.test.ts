@@ -28,6 +28,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { JsonlRunStore } from "../jsonl-run-store.ts";
 import { parseResourceMeta } from "../../shared/meta-parser.ts";
+import { normalizeRef } from "../../shared/agent-ref.ts";
 import { type LauncherDeps, runAndWait } from "../launcher.ts";
 import type { LifecycleDeps } from "../models/ports.ts";
 import type { AgentRunner } from "../models/ports.ts";
@@ -42,6 +43,9 @@ import { WorkerHostImpl } from "../worker-host.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WORKFLOWS_DIR = join(__dirname, "..", "..", "..", "workflows");
+const AGENTS_DIR = join(__dirname, "..", "..", "..", "agents");
+const wf = (name: string): string => join(WORKFLOWS_DIR, name + ".js");
+const agentMd = (name: string): string => join(AGENTS_DIR, name + ".md");
 
 let sessionDir: string;
 let createdStores: JsonlRunStore[] = [];
@@ -232,6 +236,29 @@ function loadWorkflowsFromDir(dir: string): Map<string, WorkflowScript> {
 function makeRegistry(scripts: Map<string, WorkflowScript>): WorkflowScriptRegistry {
   return {
     get: async (name: string) => scripts.get(name),
+    // S2：按路径加载（任意路径 .js）——路径未预扫则直接读文件
+    getPath: async (ref: string) => {
+      const normalized = normalizeRef(ref, ".js");
+      if (normalized === null) return undefined;
+      for (const script of scripts.values()) {
+        if (script.path === normalized) return script;
+      }
+      try {
+        const sourceCode = readFileSync(normalized, "utf-8");
+        const stem = basename(normalized, ".js");
+        const meta = extractMeta(sourceCode, stem);
+        return new WorkflowScript({
+          name: meta.name,
+          source: "saved",
+          path: normalized,
+          sourceCode,
+          meta,
+          available: true,
+        });
+      } catch {
+        return undefined;
+      }
+    },
     loadAll: async () => Array.from(scripts.values()),
     invalidate: () => {},
   };
@@ -279,7 +306,7 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
       fix: () => ({}),
     });
     const deps = makeDeps(runner);
-    const result = await runAndWait("chain", { task: "x" }, deps, undefined, RUN_TIMEOUT_MS);
+    const result = await runAndWait(wf("chain"), { task: "x" }, deps, undefined, RUN_TIMEOUT_MS);
     expect(result.reason).toBe("completed");
   });
   it(
@@ -314,8 +341,8 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
       const deps = makeDeps(runner);
 
       const result = await runAndWait(
-        "review-fix-loop",
-        { targetType: "file", target: "README.md", agents: "reviewer", _runId: RUN_ID() },
+        wf("review-fix-loop"),
+        { targetType: "file", target: "README.md", agents: agentMd("reviewer"), _runId: RUN_ID() },
         deps,
         undefined,
         RUN_TIMEOUT_MS,
@@ -388,8 +415,8 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
       const deps = makeDeps(runner);
 
       const result = await runAndWait(
-        "review-fix-loop",
-        { targetType: "file", target: "README.md", agents: "reviewer,doc-reviewer", fixAgent: "reviewer", _runId: RUN_ID() },
+        wf("review-fix-loop"),
+        { targetType: "file", target: "README.md", agents: agentMd("reviewer") + "," + agentMd("doc-reviewer"), fixAgent: agentMd("reviewer"), _runId: RUN_ID() },
         deps,
         undefined,
         RUN_TIMEOUT_MS,
@@ -406,13 +433,12 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
       expect(reviewCalls.length).toBe(3);
       expect(kinds.filter((k) => k === "fix").length).toBe(1);
       expect(kinds.filter((k) => k === "aggregate").length).toBe(1);
-      // m5：fixAgent 派发验证——fix 调用带 agent: "reviewer"（review 调用只记录不断言：
-      // 内置名走 def.name，自定义 .md agent 为 undefined）
+      // S4：fixAgent 派发验证——fix 调用带 agentRef 路径（<available_subagents> location 语义）
       const fixIdx = kinds.indexOf("fix");
-      expect(agents[fixIdx]).toBe("reviewer");
+      expect(agents[fixIdx]).toBe(agentMd("reviewer"));
       // M3 直接证据：doc-reviewer（schema-only，report_file=""）报告经 report_content
-      // 落盘到 <runDir>/batch-1/round-1/doc-reviewer.md（def.report 文件名 = 内置名剥离
-      // review- 前缀，resolveAgentDefs 默认分支）。修复前 normalizeReviewResult 丢弃
+      // 落盘到 <runDir>/batch-1/round-1/doc-reviewer.md（def.report 文件名 = 路径 basename，
+      // resolveAgentDefs 路径解析）。修复前 normalizeReviewResult 丢弃
       // report_content → 落盘内容为空文件，本断言失败。
       const docReportPath = join(outcome.runDir, "batch-1", "round-1", "doc-reviewer.md");
       expect(existsSync(docReportPath)).toBe(true);
@@ -442,8 +468,8 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
       const deps = makeDeps(runner);
 
       const result = await runAndWait(
-        "review-fix-loop",
-        { targetType: "file", target: "README.md", agents: "reviewer", _runId: RUN_ID() },
+        wf("review-fix-loop"),
+        { targetType: "file", target: "README.md", agents: agentMd("reviewer"), _runId: RUN_ID() },
         deps,
         undefined,
         RUN_TIMEOUT_MS,
@@ -512,8 +538,8 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
       const deps = makeDeps(runner);
 
       const result = await runAndWait(
-        "review-fix-loop",
-        { targetType: "file", target: "README.md", agents: "reviewer", maxRounds: 2, _runId: RUN_ID() },
+        wf("review-fix-loop"),
+        { targetType: "file", target: "README.md", agents: agentMd("reviewer"), maxRounds: 2, _runId: RUN_ID() },
         deps,
         undefined,
         RUN_TIMEOUT_MS,
@@ -575,8 +601,8 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
       const deps = makeDeps(runner);
 
       const result = await runAndWait(
-        "review-fix-loop",
-        { targetType: "file", target: "README.md", agents: "reviewer,doc-reviewer", recheckAfterFix: true, _runId: RUN_ID() },
+        wf("review-fix-loop"),
+        { targetType: "file", target: "README.md", agents: agentMd("reviewer") + "," + agentMd("doc-reviewer"), recheckAfterFix: true, _runId: RUN_ID() },
         deps,
         undefined,
         RUN_TIMEOUT_MS,
@@ -644,8 +670,8 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
       const deps = makeDeps(runner);
 
       const result = await runAndWait(
-        "review-fix-loop",
-        { targetType: "file", target: "README.md", agents: "doc-reviewer", _runId: RUN_ID() },
+        wf("review-fix-loop"),
+        { targetType: "file", target: "README.md", agents: agentMd("doc-reviewer"), _runId: RUN_ID() },
         deps,
         undefined,
         RUN_TIMEOUT_MS,
@@ -720,8 +746,8 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
       const deps = makeDeps(runner);
 
       const result = await runAndWait(
-        "review-fix-loop",
-        { targetType: "file", target: "README.md", agents: "reviewer", maxRounds: 4, _runId: RUN_ID() },
+        wf("review-fix-loop"),
+        { targetType: "file", target: "README.md", agents: agentMd("reviewer"), maxRounds: 4, _runId: RUN_ID() },
         deps,
         undefined,
         RUN_TIMEOUT_MS,
@@ -753,8 +779,8 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
       const deps = makeDeps(runner);
 
       const result = await runAndWait(
-        "review-fix-loop",
-        { targetType: "file", target: "README.md", agents: "reviewer", batchl: "fallow-scan", _runId: RUN_ID() },
+        wf("review-fix-loop"),
+        { targetType: "file", target: "README.md", agents: agentMd("reviewer"), batchl: "fallow-scan", _runId: RUN_ID() },
         deps,
         undefined,
         RUN_TIMEOUT_MS,
@@ -780,8 +806,8 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
 
       // targetType 非法枚举（m3 TC14：chokepoint 先拦 → invalid_args + ajv 文案 + info 指引）
       const r1 = await runAndWait(
-        "review-fix-loop",
-        { targetType: "nope", target: "README.md", agents: "reviewer", _runId: RUN_ID() },
+        wf("review-fix-loop"),
+        { targetType: "nope", target: "README.md", agents: agentMd("reviewer"), _runId: RUN_ID() },
         deps,
         undefined,
         RUN_TIMEOUT_MS,
@@ -793,8 +819,8 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
 
       // target 空串（m3 required 空串复查先拦 → invalid_args；脚本 !target 成不可达死代码）
       const r2 = await runAndWait(
-        "review-fix-loop",
-        { targetType: "file", target: "   ", agents: "reviewer", _runId: RUN_ID() },
+        wf("review-fix-loop"),
+        { targetType: "file", target: "   ", agents: agentMd("reviewer"), _runId: RUN_ID() },
         deps,
         undefined,
         RUN_TIMEOUT_MS,

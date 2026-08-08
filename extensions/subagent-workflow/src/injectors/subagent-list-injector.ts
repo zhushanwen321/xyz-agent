@@ -38,12 +38,14 @@ import { parseResourceMeta } from "../shared/meta-parser.ts";
 
 const logger = getLogger("injector");
 
-/** 从 .md frontmatter 提取的最小 agent 信息（m5：+ when/examples 路由样本） */
+/** 从 .md frontmatter 提取的最小 agent 信息（m5：+ when/examples 路由样本；S1：+ path） */
 export interface AgentEntry {
 	name: string;
 	description: string;
 	when?: string;
 	examples?: Array<{ match: string; action: string; positive: boolean }>;
+	/** agentRef：agent .md 文件的绝对路径（注入段 <location>，模型直接引用） */
+	path: string;
 }
 
 /**
@@ -61,6 +63,7 @@ export function parseAgentFrontmatter(content: string): AgentEntry | null {
 		description: meta.description,
 		when: meta.when,
 		examples: meta.examples,
+		path: "", // 由 discoverAllAgents 从 DiscoveredResource.path 填充
 	};
 }
 
@@ -91,7 +94,7 @@ export async function discoverAllAgents(
 			const content = getCachedFileContent(resource.path) ?? "";
 			const agent = parseAgentFrontmatter(content);
 			if (agent) {
-				agentMap.set(agent.name, agent);
+				agentMap.set(agent.name, { ...agent, path: resource.path });
 			} else if (content.trimStart().startsWith("---")) {
 				// m5（评审 M3/F2 + minor-5）：仅「有 frontmatter 但解析失败」才 warn
 				// （缺 name/description/examples 单条非法致整体 reject）——README 等
@@ -149,7 +152,7 @@ export function formatAgentList(agents: AgentEntry[]): string {
 			);
 			block += `\n    <examples>\n${exampleLines.join("\n")}\n    </examples>`;
 		}
-		block += "</agent>";
+		block += `<location>${escapeXml(agent.path)}</location></agent>`;
 		lines.push(block);
 	}
 	lines.push("</available_subagents>");

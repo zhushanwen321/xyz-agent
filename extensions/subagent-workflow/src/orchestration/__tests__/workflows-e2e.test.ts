@@ -43,6 +43,7 @@ import {
   type WorkflowSource,
 } from "../models/workflow-script.ts";
 import { parseResourceMeta } from "../../shared/meta-parser.ts";
+import { normalizeRef } from "../../shared/agent-ref.ts";
 import type { WorkflowScriptRegistry } from "../models/workflow-script-registry.ts";
 import { WorkerHostImpl } from "../worker-host.ts";
 
@@ -51,6 +52,10 @@ import { WorkerHostImpl } from "../worker-host.ts";
 // 即 __dirname → ..  (orchestration) → ..  (src) → ..  (subagent-workflow) → workflows
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WORKFLOWS_DIR = join(__dirname, "..", "..", "..", "workflows");
+const AGENTS_DIR = join(__dirname, "..", "..", "..", "agents");
+// S2：workflowRef/agentRef = 绝对路径（注入段 <location> 同源）
+const wf = (name: string): string => join(WORKFLOWS_DIR, name + ".js");
+const agentMd = (name: string): string => join(AGENTS_DIR, name + ".md");
 
 // ── 临时 session 目录（RunStore 持久化根），每用例重建 ──────────────────
 let sessionDir: string;
@@ -197,6 +202,29 @@ function loadWorkflowsFromDir(dir: string): Map<string, WorkflowScript> {
 function makeRegistry(scripts: Map<string, WorkflowScript>): WorkflowScriptRegistry {
   return {
     get: async (name: string) => scripts.get(name),
+    // S2：按路径加载（任意路径 .js，不限扫描目录）——路径未预扫则直接读文件
+    getPath: async (ref: string) => {
+      const normalized = normalizeRef(ref, ".js");
+      if (normalized === null) return undefined;
+      for (const script of scripts.values()) {
+        if (script.path === normalized) return script;
+      }
+      try {
+        const sourceCode = readFileSync(normalized, "utf-8");
+        const stem = basename(normalized, ".js");
+        const meta = extractMeta(sourceCode, stem);
+        return new WorkflowScript({
+          name: meta.name,
+          source: "saved",
+          path: normalized,
+          sourceCode,
+          meta,
+          available: true,
+        });
+      } catch {
+        return undefined;
+      }
+    },
     loadAll: async () => Array.from(scripts.values()),
     invalidate: () => {},
   };
@@ -281,7 +309,7 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
     async () => {
       const deps = makeDeps();
       const result = await runAndWait(
-        "parallel",
+        wf("parallel"),
         { target: "src/auth/login.ts" },
         deps,
         undefined,
@@ -304,7 +332,7 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
     async () => {
       const deps = makeDeps();
       const result = await runAndWait(
-        "chain",
+        wf("chain"),
         { task: "把这段需求文档拆成技术任务" },
         deps,
         undefined,
@@ -327,7 +355,7 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
     async () => {
       const deps = makeDeps();
       const result = await runAndWait(
-        "map-reduce",
+        wf("map-reduce"),
         { operation: "审查代码风格", items: ["file1.ts", "file2.ts"] },
         deps,
         undefined,
@@ -352,7 +380,7 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
     async () => {
       const deps = makeDeps();
       const result = await runAndWait(
-        "scatter-gather",
+        wf("scatter-gather"),
         { task: "重构认证模块，涉及 session/jwt/oauth 三块" },
         deps,
         undefined,
@@ -380,8 +408,8 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
       // 缺 required targetType/target → chokepoint 在 worker 启动前拦截。
       const deps = makeDeps();
       const result = await runAndWait(
-        "review-fix-loop",
-        { batch1: "code-reviewer" },
+        wf("review-fix-loop"),
+        { batch1: agentMd("code-reviewer") },
         deps,
         undefined,
         RUN_TIMEOUT_MS,
@@ -428,7 +456,7 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
         const deps = { ...makeDeps(), registry: makeRegistry(scripts) };
 
         const result = await runAndWait(
-          "args-probe",
+          join(fixtureDir, "args-probe.js"),
           { autoCommit: "false" },
           deps,
           undefined,
@@ -450,7 +478,7 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
     const deps = makeDeps();
     // 平铺 + 不存在 name → not_found 优先（m6：registry.get 先于平铺检测）
     const notFound = await actionRun(
-      { action: "run", name: "nope", task: "x" },
+      { action: "run", name: wf("nope"), task: "x" },
       deps,
       undefined,
     );
@@ -458,7 +486,7 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
     expect(notFound.content![0]!.text).toContain("not found"); // DoD 用户可见断言
     // chain 平铺 task → isError Correct 正例（动态集来自 registry）
     const flat = await actionRun(
-      { action: "run", name: "chain", task: "x" },
+      { action: "run", name: wf("chain"), task: "x" },
       deps,
       undefined,
     );
@@ -467,7 +495,7 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
     expect(flat.content![0]!.text).toContain("Correct:");
     // slug 护栏保留（m6 顺序调整后仍在 runWorkflow 前）
     const slug = await actionRun(
-      { action: "run", name: "chain", args: { task: "x" }, slug: "a".repeat(40) },
+      { action: "run", name: wf("chain"), args: { task: "x" }, slug: "a".repeat(40) },
       deps,
       undefined,
     );
@@ -480,7 +508,7 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
     // task 是 chain 参数非 review-fix-loop 参数 → 不报平铺 → args 缺 targetType
     // → m3 chokepoint invalid_args（错误更准——评审 m-5 语义锁定）
     const result = await actionRun(
-      { action: "run", name: "review-fix-loop", task: "x" },
+      { action: "run", name: wf("review-fix-loop"), task: "x" },
       deps,
       undefined,
     );
@@ -492,7 +520,7 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
   it("TC9: actionRun 参数校验失败 → isError ToolResult + §5.3 指引", async () => {
     const deps = makeDeps();
     const result = await actionRun(
-      { action: "run", name: "review-fix-loop", args: { batch1: "code-reviewer" } },
+      { action: "run", name: wf("review-fix-loop"), args: { batch1: agentMd("code-reviewer") } },
       deps,
       undefined,
     );
@@ -506,7 +534,7 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
 
   it("TC1: info action 返回 raw schema + friendly + usage，content 可 JSON.parse", async () => {
     const deps = makeDeps();
-    const result = await actionInfo({ action: "info", name: "review-fix-loop" }, deps);
+    const result = await actionInfo({ action: "info", name: wf("review-fix-loop") }, deps);
 
     expect(result.isError).toBeUndefined();
     expect(result.details).toMatchObject({ action: "info", name: "review-fix-loop", status: "ok" });
@@ -521,13 +549,13 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
     const friendlyNames = info.parametersFriendly!.map((e) => e.name);
     expect(friendlyNames).toContain("batch1, batch2, ...");
     const batchEntry = info.parametersFriendly!.find((e) => e.name === "batch1, batch2, ...");
-    expect(batchEntry!.note).toContain("值语义同 batchN"); // note 派生（MAJ-3）
+    expect(batchEntry!.note).toContain("agent .md 绝对路径"); // note 派生（MAJ-3）
     expect(info.usage).toContain("workflow run review-fix-loop"); // 手写示例原样
   });
 
   it("TC2: info 结构精确七字段 + 无自动 exampleArgs", async () => {
     const deps = makeDeps();
-    const result = await actionInfo({ action: "info", name: "review-fix-loop" }, deps);
+    const result = await actionInfo({ action: "info", name: wf("review-fix-loop") }, deps);
     const info = JSON.parse(result.content![0]!.text) as WorkflowInfo;
     expect(Object.keys(info).sort()).toEqual([
       "description",
@@ -543,7 +571,7 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
 
   it("TC3: info not_found 与缺 name → isError（镜像 run 行为）", async () => {
     const deps = makeDeps();
-    const missing = await actionInfo({ action: "info", name: "nope" }, deps);
+    const missing = await actionInfo({ action: "info", name: wf("nope") }, deps);
     expect(missing.isError).toBe(true);
     expect(missing.details).toMatchObject({ action: "info", status: "not_found" });
     expect(missing.content![0]!.text).toContain("Available");
@@ -555,10 +583,10 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
   it("TC11: 4 内置 workflow info 返回 parameters/usage（参数知识不真空）", async () => {
     const deps = makeDeps();
     const cases: Array<[string, string[]]> = [
-      ["chain", ["task"]],
-      ["parallel", ["target", "perspectives"]],
-      ["scatter-gather", ["task"]],
-      ["map-reduce", ["items", "itemsJson", "operation"]],
+      [wf("chain"), ["task", "agents"]],
+      [wf("parallel"), ["target", "perspectives", "agents"]],
+      [wf("scatter-gather"), ["task", "agents"]],
+      [wf("map-reduce"), ["items", "itemsJson", "operation", "agents"]],
     ];
     for (const [name, expectedParams] of cases) {
       const result = await actionInfo({ action: "info", name }, deps);
@@ -570,7 +598,7 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
       );
       expect(props.sort()).toEqual([...expectedParams].sort());
       expect(info.usage).toBeDefined();
-      expect(info.usage).toContain("workflow run " + name);
+      expect(info.usage).toContain("workflow run " + name.replace(/.*\//, "").replace(/\.js$/, ""));
     }
   });
 });

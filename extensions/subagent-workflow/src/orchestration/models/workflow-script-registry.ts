@@ -27,6 +27,9 @@ export interface WorkflowScriptRegistry {
  /** 按名查单个脚本（含缓存）。返回 undefined 当 name 不存在。 */
   get(name: string): Promise<WorkflowScript | undefined>;
 
+ /** 按绝对路径加载单个脚本（workflowRef 统一解析入口——S2 路径统一）。 */
+  getPath(ref: string): Promise<WorkflowScript | undefined>;
+
  /** 失效缓存——下次 loadAll/get 重新扫描文件系统。 */
   invalidate(): void;
 }

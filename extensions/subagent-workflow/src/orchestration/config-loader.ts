@@ -19,6 +19,7 @@ import type { WorkflowSource } from "./models/workflow-script.ts";
 import type { WorkflowMeta } from "../shared/resource-meta.ts";
 import { getCachedFile, getCachedFileContent, clearFileCache } from "../shared/resource-discovery.ts";
 import { parseResourceMeta } from "../shared/meta-parser.ts";
+import { normalizeRef, WORKFLOW_REF_EXT } from "../shared/agent-ref.ts";
 export type { WorkflowMeta, WorkflowSource };
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -255,6 +256,19 @@ export async function getWorkflow(name: string): Promise<CachedWorkflowMeta | un
 
   const workflows = await loadWorkflows();
   return workflows.find((wf) => wf.name === name);
+}
+
+/**
+ * 按绝对路径加载单个 workflow（workflowRef 统一解析入口——S2 路径统一）。
+ *
+ * - ~/ 前缀展开；相对路径/非 .js 引用返回 undefined（引用唯一形态 = 绝对路径）
+ * - 任意路径（不限扫描源）：内置包内脚本、用户任意位置脚本均可执行
+ * - meta 提取失败/文件不可读 → available=false（fail-safe，不抛）
+ */
+export async function getWorkflowByPath(ref: string): Promise<CachedWorkflowMeta | undefined> {
+  const filePath = normalizeRef(ref, WORKFLOW_REF_EXT);
+  if (filePath === null) return undefined;
+  return toCachedMeta(filePath, "user-pi");
 }
 
 /**

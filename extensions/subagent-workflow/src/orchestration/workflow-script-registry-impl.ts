@@ -23,6 +23,7 @@ import {
   type CachedWorkflowMeta,
   discoverWorkflows,
   getWorkflow,
+  getWorkflowByPath,
   invalidateCache,
   loadWorkflows,
   type WorkflowScanConfig,
@@ -66,6 +67,15 @@ export class WorkflowScriptRegistryImpl implements WorkflowScriptRegistry {
     const meta = this.config
       ? (await discoverWorkflows(this.config)).find((w) => w.name === name)
       : await getWorkflow(name);
+    return meta ? this.toScript(meta) : undefined;
+  }
+
+ /**
+  * 按绝对路径加载单个脚本（S2 路径统一）。任意路径（不限扫描源）。
+  * 供 workflow tool 的 run/info（name 参数 = workflowRef）。
+  */
+  async getPath(ref: string): Promise<WorkflowScript | undefined> {
+    const meta = await getWorkflowByPath(ref);
     return meta ? this.toScript(meta) : undefined;
   }
 

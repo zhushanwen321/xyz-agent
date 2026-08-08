@@ -86,7 +86,7 @@ const SubagentParams = Type.Object({
     maxLength: SLUG_MAX_LENGTH,
   })),
   agent: Type.Optional(Type.String({
-    description: 'Agent name (system prompt + tools). If omitted, defaults to "general-purpose" — a generic agent that inherits the main agent\'s model and project context. Available agents are listed in <available_subagents> (injected each turn) — use names from that list, do not invent names. Custom agents configurable.',
+    description: 'Agent ref: absolute path to the agent .md file (use <location> from <available_subagents>). If omitted, defaults to "general-purpose" — a generic agent that inherits the main agent\'s model and project context. Do not invent names — only use paths from the injected list.',
   })),
   model: Type.Optional(Type.String({
     description: 'Model override in "provider/modelId" format. Resolution order (top wins): (1) this param, (2) agent .md frontmatter model, (3) the main agent\'s current model (zero-config default). An explicit model (param or frontmatter) that is missing or unauthorized THROWS — there is no silent fallback to the main model. Omit this param to inherit the main model.',
@@ -172,7 +172,7 @@ export function registerSubagentTool(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "subagent",
     label: "Subagent",
-    promptSnippet: "Delegate to specialized subagents (see <available_subagents> for the list)",
+    promptSnippet: "Delegate to specialized subagents (agentRef = absolute .md path from <available_subagents>)",
     description: `Delegate a task to a specialized subagent — when to delegate rather than do it yourself.
 
 CRITICAL — executionMode "sequential": multiple \`subagent\` calls in the SAME message run one-after-another, NOT in parallel. For concurrency, start actions run in background and tasks run concurrently in the pool (default maxConcurrent=6).

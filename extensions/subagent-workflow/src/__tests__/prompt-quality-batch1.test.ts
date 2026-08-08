@@ -84,9 +84,10 @@ describe("U3: not-found 错误含退路指引", () => {
     expect(subagentActionsSrc).toContain("includeFinished");
   });
 
-  it("agent-opts-resolver.ts: agent not found 含可用列表", () => {
-    expect(agentOptsResolverSrc).toContain("Available:");
-    expect(agentOptsResolverSrc).toContain("agentRegistry.list()");
+  it("agent-opts-resolver.ts: agent ref 无效含退路指引", () => {
+    expect(agentOptsResolverSrc).toContain("<available_subagents>");
+    expect(agentOptsResolverSrc).toContain("absolute .md path");
+    expect(agentOptsResolverSrc).toContain("relative names are not supported");
   });
 });
 

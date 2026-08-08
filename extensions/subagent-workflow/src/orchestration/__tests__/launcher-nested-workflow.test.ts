@@ -115,12 +115,12 @@ function makeDoneChildRun(opts: {
 function makeDeps(opts: {
   script?: WorkflowScript;
   childRun?: WorkflowRun;
-  registry?: { get: ReturnType<typeof vi.fn> };
+  registry?: { getPath: ReturnType<typeof vi.fn> };
 } = {}): LauncherDeps {
   const runs = new Map<string, WorkflowRun>();
   if (opts.childRun) runs.set(MOCK_RUN_ID, opts.childRun);
   const registry = opts.registry ?? {
-    get: vi.fn(async () => opts.script),
+    getPath: vi.fn(async () => opts.script),
   };
   return {
     registry,

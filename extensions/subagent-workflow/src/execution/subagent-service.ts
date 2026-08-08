@@ -626,13 +626,14 @@ export class SubagentService {
 
   /** 步骤 1：身份解析。agentConfig → resolveModel（三层：override → agentConfig → 主 agent model）。 */
   private async resolveIdentity(opts: ExecuteOptions): Promise<ResolvedIdentity> {
-    // 未显式指定 agent 时兜底为 DEFAULT_AGENT_NAME（与 TUI 层 extractAgentName 共用同一常量，
-    // 保证 block 标题显示的名与实际加载的 agent.md 一致）。见 types.ts 常量注释。
+    // agentRef 语义（S2）：agent 参数 = .md 绝对路径；不传 = 不加载 agentConfig，
+    // 直接用 override → 主 agent model。DEFAULT_AGENT_NAME 仅作 record 显示名
+    // （TUI 层 extractAgentName 共用，保证显示一致）。
     const agent = opts.agent ?? DEFAULT_AGENT_NAME;
-    const agentConfig = this.modelService.getAgentConfig(agent);
+    const agentConfig = opts.agent ? this.modelService.getAgentConfig(opts.agent) : undefined;
 
     const resolved = this.modelService.resolveModel(
-      agent,
+      opts.agent ?? "",
       { model: opts.model, thinkingLevel: opts.thinkingLevel },
       opts.ctxModel,
     );

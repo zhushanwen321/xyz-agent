@@ -45,6 +45,7 @@ rest of code`;
 		expect(parseWorkflowMeta(src)).toEqual({
 			name: "chain",
 			description: "通用编排：三步链",
+			path: "",
 		});
 	});
 
@@ -57,6 +58,7 @@ phases: []
 		expect(parseWorkflowMeta(src)).toEqual({
 			name: "parallel",
 			description: "多视角并行",
+			path: "",
 		});
 	});
 
@@ -99,24 +101,27 @@ describe("formatWorkflowList", () => {
 
 	it("用 <available_workflows> 标签包裹并列出每个 workflow", () => {
 		const out = formatWorkflowList([
-			{ name: "chain", description: "三步链" },
-			{ name: "parallel", description: "并行分析" },
+			{ name: "chain", description: "三步链", path: "/workflows/chain.js" },
+			{ name: "parallel", description: "并行分析", path: "/workflows/parallel.js" },
 		]);
 		expect(out).toContain("<available_workflows>");
 		expect(out).toContain("</available_workflows>");
 		expect(out).toContain("<name>chain</name>");
 		expect(out).toContain("<description>三步链</description>");
 		expect(out).toContain("<name>parallel</name>");
+		// S1：每项含 <location> 完整路径（agentRef，模型直接引用）
+		expect(out).toContain("<location>/workflows/chain.js</location>");
+		expect(out).toContain("<location>/workflows/parallel.js</location>");
 	});
 
 	it("包含 'Do NOT call list to discover available workflows' 引导语", () => {
-		const out = formatWorkflowList([{ name: "chain", description: "d" }]);
+		const out = formatWorkflowList([{ name: "chain", description: "d", path: "/workflows/chain.js" }]);
 		expect(out).toContain("Do NOT call list to discover available workflows");
 		expect(out).toContain("use list only for running state");
 	});
 
 	it("引导语通用化：不写死内置 workflow 名，含 info 回收指引", () => {
-		const out = formatWorkflowList([{ name: "chain", description: "d" }]);
+		const out = formatWorkflowList([{ name: "chain", description: "d", path: "/workflows/chain.js" }]);
 		expect(out).toContain("All listed workflows run directly via action:run");
 		expect(out).toContain('"workflow info <name>"');
 		// 通用化约束：引导语不点名具体 workflow（名字由 @pi-meta 动态注入，
@@ -125,7 +130,7 @@ describe("formatWorkflowList", () => {
 	});
 
 	it("转义 XML 特殊字符", () => {
-		const out = formatWorkflowList([{ name: "a&b", description: "<x>" }]);
+		const out = formatWorkflowList([{ name: "a&b", description: "<x>", path: "/workflows/a&b.js" }]);
 		expect(out).toContain("<name>a&amp;b</name>");
 		expect(out).toContain("&lt;x&gt;");
 	});

@@ -178,8 +178,8 @@ export async function runAndWait(
   signal?: AbortSignal,
   timeoutMs: number = DEFAULT_RUNANDWAIT_TIMEOUT_MS,
 ): Promise<WorkflowRunResult> {
- // 1. registry 查找脚本
-  const script = await deps.registry.get(name);
+ // 1. registry 查找脚本（workflowRef = 绝对路径，S2 路径统一）
+  const script = await deps.registry.getPath(name);
   if (!script) {
     return {
       status: "done",
@@ -319,7 +319,7 @@ export async function executeNestedWorkflow(
  // parentSignal listener——修复原 try 外 runWorkflow 的泄漏路径）。
   try {
     // Step 3: registry 查找 + lint（失败返回 error result，不抛错）
-    const script = await deps.registry.get(name);
+    const script = await deps.registry.getPath(name);
     if (!script) {
       return { content: "", error: `Workflow '${name}' not found` };
     }

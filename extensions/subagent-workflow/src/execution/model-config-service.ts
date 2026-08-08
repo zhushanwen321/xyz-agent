@@ -6,8 +6,7 @@
 // 上游：SubagentService.execute 内部调 resolveModel。
 // session_start 时经 initModel 注入 modelRegistry。
 
-import { findWorkspaceRoot } from "../shared/resource-discovery.ts";
-import { AgentRegistry, createPackageBuiltinRegistry } from "./agent-registry.ts";
+import { AgentRegistry } from "./agent-registry.ts";
 import {
   loadGlobalConfig,
 } from "./config.ts";
@@ -69,25 +68,15 @@ export class ModelConfigService {
   private globalConfig: SubagentsGlobalConfig;
   private readonly agentRegistry: AgentRegistry;
   private readonly agentRegistryDir: string;
-  private readonly workspaceRoot: string;
   private modelRegistry: ModelRegistryLike | null = null;
   private _sessionId: string | undefined;
   /** 主 agent 当前 model 缓存（session_start 注入，model_select 刷新）。 */
   private _ctxModel: ModelInfo | undefined;
 
-  /** 包内 builtin agent（agents/*.md，优先级最低，被用户覆盖）。 */
-  private readonly builtinRegistry = createPackageBuiltinRegistry();
-
   constructor(init: ModelConfigServiceInit) {
     this.agentRegistryDir = init.agentDir;
-    this.workspaceRoot = findWorkspaceRoot(init.cwd);
     this.globalConfig = loadGlobalConfig(init.agentDir);
-    // 统一资源发现（ADR-031）：扫描源由 workspaceRoot + agentDir 推导
-    this.agentRegistry = new AgentRegistry({
-      workspaceRoot: this.workspaceRoot,
-      agentDir: this.agentRegistryDir,
-    });
-    this.agentRegistry.discoverAll(this.builtinRegistry);
+    this.agentRegistry = new AgentRegistry();
   }
 
   // ── 生命周期（index.ts 调）──────────────────────────────
@@ -99,9 +88,8 @@ export class ModelConfigService {
    *   3. setSessionId
    */
   initModel(init: ModelServiceSessionInit): void {
-    // 1. 重载配置 + 重扫 agent（hot-reload：用户可能新增/修改 agent .md）
+    // 1. 重载配置（agent 按需 loadByPath，无预热扫描）
     this.globalConfig = loadGlobalConfig(this.agentRegistryDir);
-    this.agentRegistry.discoverAll(this.builtinRegistry);
 
     // 2. modelRegistry（fail-fast）
     if (init.modelRegistry === null) {
@@ -127,24 +115,24 @@ export class ModelConfigService {
   /**
    * 解析 agent 的模型（三层：override → agentConfig → 主 agent model）。
    *
-   * @param agentName     agent 名（查 agentConfig.model override）
-   * @param override      调用方显式 override（最高优先级）
-   * @param ctxModel      主 agent 当前模型（兜底，直接透传）
+   * @param agentRef   agent 引用（.md 绝对路径；查 agentConfig 的 model override）
+   * @param override   调用方显式 override（最高优先级）
+   * @param ctxModel   主 agent 当前模型（兜底，直接透传）
    */
   resolveModel(
-    agentName: string,
+    agentRef: string,
     override?: { model?: string; thinkingLevel?: string },
     ctxModel?: ModelInfo,
   ): ResolvedModel {
     this.assertReady();
-    const agentConfig = this.agentRegistry.get(agentName);
+    const agentConfig = agentRef ? this.agentRegistry.loadByPath(agentRef) : undefined;
     // ctxModel 优先用显式传入（execute 路径），其次用 session 缓存（renderCall 路径）
     return resolveModel(agentConfig, this.modelRegistry!, override, ctxModel ?? this._ctxModel);
   }
 
   /** 查询 agent 配置（SubagentService 内部判定 defaultBackground 用）。 */
-  getAgentConfig(name?: string): AgentConfig | undefined {
-    return name ? this.agentRegistry.get(name) : undefined;
+  getAgentConfig(agentRef?: string): AgentConfig | undefined {
+    return agentRef ? this.agentRegistry.loadByPath(agentRef) : undefined;
   }
 
   // ── 配置读取（subagent-service 调）────────────────────────
