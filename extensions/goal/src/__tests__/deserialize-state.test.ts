@@ -77,4 +77,15 @@ describe("deserializeState — 新格式严格解析", () => {
 		const data = { ...FULL_DATA, slug: "refactor-auth" };
 		expect(deserializeState(data).slug).toBe("refactor-auth");
 	});
+
+	// successCriteria 向后兼容——与 slug 同模式（GAP-4），旧持久化数据无此字段不 throw
+	it("缺 successCriteria → 不 throw，值为 undefined", () => {
+		const state = deserializeState(FULL_DATA); // FULL_DATA 无 successCriteria
+		expect(state.successCriteria).toBeUndefined();
+	});
+
+	it("有 successCriteria → 正确还原", () => {
+		const data = { ...FULL_DATA, successCriteria: "pnpm test green; tsc clean" };
+		expect(deserializeState(data).successCriteria).toBe("pnpm test green; tsc clean");
+	});
 });

@@ -108,7 +108,7 @@ function createViaHandler(
 ): Promise<ExecuteResult> {
 	return tool.execute(
 		"call-1",
-		{ action: "create", ...params },
+		{ action: "create", successCriteria: "tests pass", ...params },
 		undefined,
 		undefined,
 		ctx,

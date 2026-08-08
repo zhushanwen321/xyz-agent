@@ -178,6 +178,16 @@ export function renderWidgetLines(state: GoalRuntimeState, th: ThemeLike): strin
 	const header = renderStatusLine(state, th);
 	const lines: string[] = [header];
 
+	// successCriteria 摘要行（与 objective 成对展示；截断避免挤占 widget）
+	if (state.successCriteria) {
+		const criteria = toSingleLine(state.successCriteria);
+		const trimmed =
+			criteria.length > OBJECTIVE_DISPLAY_LIMIT
+				? `${criteria.slice(0, OBJECTIVE_TRUNCATE_KEEP)}...`
+				: criteria;
+		lines.push(th.fg("dim", `  ✓ ${trimmed}`));
+	}
+
 	// GAP-8: 精简——移除 Objective 全文行（slug 已作标题；完整 objective 注入 prompt，用户看全文用 /goal status）
 
 	// Token 行：配预算显示 used/budget 进度条；没配显示已消耗绝对值
@@ -211,6 +221,10 @@ export function renderWidgetLines(state: GoalRuntimeState, th: ThemeLike): strin
  * 使该实现同时满足 UiPort 与 ThemeLike 形状。projection 层通过此单步断言取出。
  */
 function asTheme(uiPort: UiPort): ThemeLike {
+	// UiPort 刻意不声明 fg/bold（D-22：只声明机器可检查的能力边界），与 ThemeLike 无类型重叠，
+	// 必须 unknown 中转——这是架构契约断言：ports.ts 构造 UiPort 实现时已把 ctx.ui.theme 的
+	// fg/bold 挂到对象上（buildPorts 的 uiPort 对象含全部字段），运行时必然存在。
+	// eslint-disable-next-line taste/no-unsafe-cast
 	return uiPort as unknown as ThemeLike;
 }
 

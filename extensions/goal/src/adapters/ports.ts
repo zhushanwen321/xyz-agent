@@ -9,7 +9,7 @@
  * - session: ctx.sessionManager.getEntries + ctx.getContextUsage + ctx.signal
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ThemeColor } from "@earendil-works/pi-coding-agent";
 
 import { ENTRY_TYPE, HISTORY_ENTRY_TYPE } from "../persistence";
 import type { MessagingPort, PersistencePort, SessionPort, UiPort } from "../ports";
@@ -52,9 +52,10 @@ export function buildPorts(pi: ExtensionAPI, ctx: ExtensionContext): ServicePort
 			return Boolean(ctx.hasUI);
 		},
 		// ThemeLike 形状：透传 ctx.ui.theme 的 fg/bold。
-		// `as never` 是合法的单步断言（ThemeColor 是 string 子集，运行时安全）。
+		// Theme.fg 只接受 ThemeColor 字面量 union（SDK 契约）；projection 层保证传入 union 内字面量，
+		// string → ThemeColor 是宽到窄单步断言（无需 unknown 中转）。
 		fg(color: string, text: string): string {
-			return ctx.ui.theme.fg(color as never, text);
+			return ctx.ui.theme.fg(color as ThemeColor, text);
 		},
 		bold(text: string): string {
 			return ctx.ui.theme.bold(text);

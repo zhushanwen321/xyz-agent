@@ -16,6 +16,7 @@ import { createGoalState } from "../../engine/goal";
 import type { GoalRuntimeState } from "../../engine/types";
 import type { UiPort } from "../../ports";
 import { createGoalSession } from "../../session";
+import { OBJECTIVE_DISPLAY_LIMIT, OBJECTIVE_TRUNCATE_KEEP } from "../../constants";
 import {
 	renderStatusLine,
 	renderTerminalStatusLine,
@@ -183,6 +184,32 @@ describe("renderWidgetLines", () => {
 		);
 		expect(lines.some((l) => l.includes("5k used (no budget)"))).toBe(true);
 		expect(lines.some((l) => l.includes("2m elapsed (no budget)"))).toBe(true);
+	});
+
+	it("有 successCriteria → 含 ✓ 摘要行", () => {
+		const lines = renderWidgetLines(
+			makeState({ status: "active", successCriteria: "all tests green" }),
+			theme,
+		);
+		expect(lines.some((l) => l.includes("✓") && l.includes("all tests green"))).toBe(true);
+	});
+
+	it("successCriteria 超长 → 截断为 ...（OBJECTIVE_TRUNCATE_KEEP）", () => {
+		const long = "x".repeat(OBJECTIVE_DISPLAY_LIMIT + 10); // > 80 字符触发截断
+		const lines = renderWidgetLines(
+			makeState({ status: "active", successCriteria: long }),
+			theme,
+		);
+		const criteriaLine = lines.find((l) => l.includes("✓"))!;
+		expect(criteriaLine).toContain("...");
+		// 截断后保留前 OBJECTIVE_TRUNCATE_KEEP(77) 字符
+		expect(criteriaLine).toContain("x".repeat(OBJECTIVE_TRUNCATE_KEEP));
+	});
+
+	it("无 successCriteria → 不出现 ✓ 摘要行", () => {
+		const lines = renderWidgetLines(makeState({ status: "active" }), theme);
+		// active 状态行无 ✓（✓ Completed 仅出现在 complete 终态行）
+		expect(lines.some((l) => l.includes("✓"))).toBe(false);
 	});
 });
 

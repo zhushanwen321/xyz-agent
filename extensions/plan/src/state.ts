@@ -67,8 +67,13 @@ export function resetPlanState(
 }
 
 function isPlanStateEntry(entry: SessionEntry): entry is CustomEntry<Partial<PlanState>> & { customType: "plan-state" } {
-  const e = entry as unknown as Record<string, unknown>;
-  return e.type === "custom" && e.customType === "plan-state" && typeof e.data === "object" && e.data !== null;
+  // 判别式收窄（type === "custom"）后可直接访问 customType/data，无需 cast
+  return (
+    entry.type === "custom" &&
+    entry.customType === "plan-state" &&
+    typeof entry.data === "object" &&
+    entry.data !== null
+  );
 }
 
 export function reconstructPlanState(ctx: ExtensionContext): PlanState {
@@ -76,15 +81,16 @@ export function reconstructPlanState(ctx: ExtensionContext): PlanState {
   const entries = ctx.sessionManager.getEntries();
 
   for (let i = entries.length - 1; i >= 0; i--) {
-    if (isPlanStateEntry(entries[i])) {
-      const data = (entries[i] as unknown as { data: Partial<PlanState> }).data;
-      state.isActive = data.isActive ?? false;
-      state.phase = data.phase ?? "idle";
-      state.planFilePath = data.planFilePath ?? "";
-      state.requirement = data.requirement ?? "";
-      state.templateName = data.templateName ?? "";
-      break;
-    }
+    // entries[i] 是复杂表达式（TS 不收窄），守卫移到 const 变量上
+    const entry = entries[i];
+    if (!isPlanStateEntry(entry)) continue;
+    const data = entry.data;
+    state.isActive = data?.isActive ?? false;
+    state.phase = data?.phase ?? "idle";
+    state.planFilePath = data?.planFilePath ?? "";
+    state.requirement = data?.requirement ?? "";
+    state.templateName = data?.templateName ?? "";
+    break;
   }
 
   return state;
