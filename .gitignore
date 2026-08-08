@@ -126,3 +126,4 @@ package-lock.json.*
 
 # === v6 Vue demo 工作区（从 docs/page-design/ 迁出）===
 /.tmp/
+.review-reports/
