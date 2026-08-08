@@ -221,6 +221,42 @@ export function finalizeGoal(
 
 // ── 路径 B：applyEvent ────────────────────────────────
 
+/** message_end 事件数据形状（运行时解析后的可信形状） */
+interface MessageEndEventData {
+	message?: {
+		role?: string;
+		usage?: { input?: number; output?: number; cacheRead?: number; totalTokens?: number };
+	};
+}
+
+/**
+ * message_end 事件数据运行时解析（unknown → 可信形状）。
+ * 替代全可选结构断言（taste/no-unsafe-cast）：逐字段校验类型后构造，非法输入返回 null。
+ */
+function toMessageEndData(eventData: unknown): MessageEndEventData | null {
+	if (typeof eventData !== "object" || eventData === null) return null;
+	const message = (eventData as Record<string, unknown>).message;
+	if (typeof message !== "object" || message === null) return null;
+	const raw = message as Record<string, unknown>;
+	const rawUsage = raw.usage;
+	let usage: NonNullable<MessageEndEventData["message"]>["usage"];
+	if (typeof rawUsage === "object" && rawUsage !== null) {
+		const u = rawUsage as Record<string, unknown>;
+		usage = {
+			input: typeof u.input === "number" ? u.input : undefined,
+			output: typeof u.output === "number" ? u.output : undefined,
+			cacheRead: typeof u.cacheRead === "number" ? u.cacheRead : undefined,
+			totalTokens: typeof u.totalTokens === "number" ? u.totalTokens : undefined,
+		};
+	}
+	return {
+		message: {
+			role: typeof raw.role === "string" ? raw.role : undefined,
+			usage,
+		},
+	};
+}
+
 /**
  * 路径 B 入口。异步事件，返回 EventEffect[]。
  * 并发保护（isProcessing / stale-check）在 event-adapter，不在此层。
@@ -245,12 +281,8 @@ export function applyEvent(
 			// token 累加（FR-8.6 G-R2-001）—— 仅 active 时累加（回归修复：原缺 isActiveStatus 守卫，
 			// blocked 等 non-active 状态会错误累加 token）。复用 engine 纯函数。
 			if (!isActiveStatus(session.state.status)) break;
-			const data = eventData as {
-				message?: {
-					role?: string;
-					usage?: { input?: number; output?: number; cacheRead?: number; totalTokens?: number };
-				};
-			};
+			// 运行时守卫解析事件数据（未知形状 → 可选字段），替代全可选结构断言
+			const data = toMessageEndData(eventData);
 			if (data?.message?.role !== "assistant") break;
 			const usage = data.message.usage;
 			if (!usage) break;

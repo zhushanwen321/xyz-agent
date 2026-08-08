@@ -83,7 +83,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 
 	pi.registerCommand("goal", {
 		description:
-			"Goal-driven mode: /goal <objective> [--tokens N] [--timeout N] | /goal resume | /goal clear | /goal update <new-objective> | /goal status | /goal history",
+			"Goal-driven mode: /goal <objective> [--tokens N] [--timeout N] | /goal resume | /goal clear | /goal update <new-objective> [--criteria <text>] | /goal status | /goal history",
 		handler: async (args: string | undefined, ctx: ExtensionCommandContext) => {
 			await handleGoalCommand(pi, session, args, ctx);
 		},
@@ -167,7 +167,9 @@ export default function goalExtension(pi: ExtensionAPI) {
 	 * @param slug 可选短标识（仅 widget 标题 + history 用，不注入 prompt）
 	 * @returns true 创建成功；false 已有 active goal 或 ctx 缺失
 	 */
-	const api = pi as unknown as Record<string, unknown>;
+	// 交叉类型单步断言（ExtensionAPI 可赋给 ExtensionAPI & { __goalInit? }，无需 unknown 中转）：
+	// __goalInit 字段获得 GoalInitFn 类型（见下方导出），挂载与消费两侧签名强一致。
+	const api = pi as ExtensionAPI & { __goalInit?: GoalInitFn };
 	api.__goalInit = (
 		objective: string,
 		budget: GoalInitBudget | undefined,

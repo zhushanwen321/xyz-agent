@@ -14,7 +14,8 @@ export default function planExtension(pi: ExtensionAPI) {
   registerPlanCommand(pi, sessions);
 
   // External API: __planStart（allow other extensions to start plan mode programmatically, #9）
-  const api = pi as unknown as Record<string, unknown>;
+  // 交叉类型单步断言（ExtensionAPI 可赋给 ExtensionAPI & { __planStart? }，无需 unknown 中转）
+  const api = pi as ExtensionAPI & { __planStart?: (requirement: string, ctx: ExtensionContext) => boolean };
   api.__planStart = (requirement: string, ctx: ExtensionContext): boolean => {
     return startPlanMode(pi, sessions, ctx, requirement);
   };

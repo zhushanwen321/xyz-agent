@@ -221,6 +221,10 @@ export function renderWidgetLines(state: GoalRuntimeState, th: ThemeLike): strin
  * 使该实现同时满足 UiPort 与 ThemeLike 形状。projection 层通过此单步断言取出。
  */
 function asTheme(uiPort: UiPort): ThemeLike {
+	// UiPort 刻意不声明 fg/bold（D-22：只声明机器可检查的能力边界），与 ThemeLike 无类型重叠，
+	// 必须 unknown 中转——这是架构契约断言：ports.ts 构造 UiPort 实现时已把 ctx.ui.theme 的
+	// fg/bold 挂到对象上（buildPorts 的 uiPort 对象含全部字段），运行时必然存在。
+	// eslint-disable-next-line taste/no-unsafe-cast
 	return uiPort as unknown as ThemeLike;
 }
 

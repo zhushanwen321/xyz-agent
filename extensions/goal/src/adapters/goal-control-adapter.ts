@@ -388,7 +388,7 @@ export function registerGoalControlTool(pi: ExtensionAPI, session: GoalSession):
 
 Actions:
 - create: proactively start a goal for COMPLEX, multi-step work (3+ steps, multi-file changes, or work that needs completion verification). Restate the real objective and define checkable successCriteria. Skip for trivial single-step tasks, ordinary questions, or lookups. Fails if a goal is already active/paused/blocked (use /goal resume or /goal clear first).
-- complete: mark the active goal complete. Requires 'evidence' with concrete proof (files/tests/commands) that meets EVERY success_criteria condition.
+- complete: mark the active goal complete. Requires 'evidence' with concrete proof (files/tests/commands) that meets EVERY successCriteria condition.
 - report_blocked: mark the active goal blocked by a real blocker. Requires 'reason' describing the block and what was tried. Only after genuine exhaustion of alternatives.
 
 Examples:
@@ -399,10 +399,10 @@ Examples:
 Don't:
 - create for trivial/ordinary tasks — reserve goals for complex multi-step work worth tracking.
 - create without 'successCriteria': {"action":"create","objective":"..."} — you must define how completion is verified.
-- complete without 'evidence': {"action":"complete"} — must provide concrete proof meeting every success_criteria condition.
+- complete without 'evidence': {"action":"complete"} — must provide concrete proof meeting every successCriteria condition.
 - complete when no goal is active — create or resume one first (fails with 'Goal mode not active').`,
 		promptSnippet:
-			"Use goal_control to manage the thread goal: proactively create (with slug + objective + successCriteria) for complex multi-step work, complete (with evidence meeting every success_criteria), or report_blocked (with reason, after trying alternatives).",
+			"Use goal_control to manage the thread goal: proactively create (with slug + objective + successCriteria) for complex multi-step work, complete (with evidence meeting every successCriteria), or report_blocked (with reason, after trying alternatives).",
 		// promptGuidelines：进 system prompt guidelines 段（强信号位）。
 		// 三个 action 的正向触发引导——create（复杂任务主动启动）、complete（对照 successCriteria 验证达成）、
 		// report_blocked（穷尽替代方案后）。措辞主动，给 system prompt 层常驻强信号。
@@ -411,7 +411,7 @@ Don't:
 			// 门槛：3+ 步骤 / 多文件 / 需完成验证，避免对琐碎任务滥建 goal 变噪音。
 			"create: proactively start a goal for complex, multi-step work (3+ steps, multi-file, or needs completion verification) — restate the real objective and define checkable successCriteria. Do NOT create for trivial single-step tasks, ordinary lookups, or when a goal is already active. Test: 'is this worth tracking to completion with verification?' — if yes, create a goal.",
 			// 全解耦下 todo 非硬前置——objective 实际达成才算（与 handleComplete「todo 由 AI 自判」一致）
-			"complete: proactively call when the active goal's objective is actually achieved, not merely in progress. Evidence must be concrete artifacts (files changed, tests green, commands run) meeting every success_criteria condition. Finishing all todos (incl. verification todos) is the usual readiness signal, but the real bar is the objective being met — you decide.",
+			"complete: proactively call when the active goal's objective is actually achieved, not merely in progress. Evidence must be concrete artifacts (files changed, tests green, commands run) meeting every successCriteria condition. Finishing all todos (incl. verification todos) is the usual readiness signal, but the real bar is the objective being met — you decide.",
 			// P3 数字阈值 ≥3，与 params.reason description 的 "at least 3 approaches" 双重冗余
 			"report_blocked: proactively call when genuinely blocked after ≥3 distinct alternative approaches — not for hard/slow work or uncertainty. State the blocker and what you tried. Do NOT silently stop or leave the goal hanging.",
 		],

@@ -1,6 +1,8 @@
 import * as fs from "node:fs";
+import { basename } from "node:path";
 
 import type { ExtensionAPI, ExtensionContext, SessionBeforeCompactEvent, SessionBeforeTreeEvent } from "@earendil-works/pi-coding-agent";
+import type { GoalInitFn } from "@zhushanwen/pi-goal";
 
 import type { PlanSessionMap, PlanState } from "./state.js";
 import { getPlanState } from "./state.js";
@@ -67,26 +69,45 @@ function readPlanFileSafe(planFilePath: string): string {
 /** Detect whether goal extension is available via its programming interface */
 export function detectGoalCapability(pi: ExtensionAPI): boolean {
   try {
-    const api = pi as unknown as Record<string, unknown>;
+    // 交叉类型单步断言（ExtensionAPI 可赋给 ExtensionAPI & { __goalInit? }）
+    const api = pi as ExtensionAPI & { __goalInit?: GoalInitFn };
     return typeof api.__goalInit === "function";
   } catch {
     return false;
   }
 }
 
+/**
+ * 从 plan 文件路径推导 goal slug（kebab-case；无有效字符时 fallback）。
+ * 仅 widget 标题 + history 展示用，不注入 prompt。
+ */
+function buildPlanSlug(planFilePath: string): string {
+  const stem = basename(planFilePath)
+    .replace(/\.md$/i, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return stem || "plan-execution";
+}
+
+/** successCriteria 步骤预览条数上限 */
+const STEP_PREVIEW_LIMIT = 3;
+
+/**
+ * 从 plan 步骤构造可检查的 successCriteria（plan 完成 = 所有步骤执行并验证）。
+ * goal 的 complete 判定会对照本字段做证据审计。
+ */
+function buildPlanSuccessCriteria(planFilePath: string, tasks: string[]): string {
+  const preview = tasks.slice(0, STEP_PREVIEW_LIMIT).join("; ");
+  const ellipsis = tasks.length > STEP_PREVIEW_LIMIT ? "; …" : "";
+  return `All ${tasks.length} steps of ${basename(planFilePath)} executed and verified: ${preview}${ellipsis}`;
+}
+
 /** Try to initialize goal via programming interface */
 function tryGoalInit(pi: ExtensionAPI, planFilePath: string, ctx: ExtensionContext): boolean {
-  // Inline alias mirrors @zhushanwen/pi-goal's GoalInitFn (exported from goal/src/index.ts).
-  // Kept inline due to optional duck-typed coupling (pi.__goalInit) — update both if signature changes.
-  type GoalInitFn = (
-    objective: string,
-    budget: { tokenBudget?: number; timeBudgetMinutes?: number } | undefined,
-    ctx: ExtensionContext,
-  ) => boolean;
-
   try {
-    const api = pi as unknown as Record<string, unknown>;
-    const goalInit = api.__goalInit as GoalInitFn | undefined;
+    const api = pi as ExtensionAPI & { __goalInit?: GoalInitFn };
+    const goalInit = api.__goalInit;
     if (typeof goalInit !== "function") return false;
 
     const planContent = readPlanFileSafe(planFilePath);
@@ -96,7 +117,13 @@ function tryGoalInit(pi: ExtensionAPI, planFilePath: string, ctx: ExtensionConte
     const tasks = extractPlanSteps(planContent);
     if (tasks.length === 0) return false;
 
-    return goalInit(objective, undefined, ctx);
+    return goalInit(
+      objective,
+      undefined,
+      ctx,
+      buildPlanSlug(planFilePath),
+      buildPlanSuccessCriteria(planFilePath, tasks),
+    );
   } catch {
     return false;
   }

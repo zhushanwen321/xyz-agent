@@ -59,7 +59,7 @@ export async function handleGoalCommand(
 		case "clear":
 			return handleClear(pi, session, ctx);
 		case "update":
-			return handleUpdate(pi, session, parsed.objective, ctx);
+			return handleUpdate(pi, session, parsed.objective, parsed.criteria, ctx);
 		case "set":
 			return handleSet(pi, session, parsed.objective ?? "", parsed.budget, ctx);
 	}
@@ -262,6 +262,7 @@ function handleUpdate(
 	pi: ExtensionAPI,
 	session: GoalSession,
 	newObjective: string | undefined,
+	criteria: string | undefined,
 	ctx: ExtensionContext,
 ): void {
 	if (!session.state) {
@@ -269,7 +270,7 @@ function handleUpdate(
 		return;
 	}
 	if (!newObjective) {
-		ctx.ui.notify("Usage: /goal update <new-objective>", "warning");
+		ctx.ui.notify("Usage: /goal update <new-objective> [--criteria <text>]", "warning");
 		return;
 	}
 	const state = session.state;
@@ -286,8 +287,12 @@ function handleUpdate(
 	state.timeWarning90Sent = false;
 	// GAP-6: update 是重塑，旧 slug 已不匹配新 objective → 置空（widget fallback objective 截断）
 	state.slug = undefined;
-	// update 重塑后旧 successCriteria 也不再匹配新 objective → 置空（让 AI 后续需要时重新定义）
-	state.successCriteria = undefined;
+	// update 重塑后旧 successCriteria 可能不再完全匹配新 objective，但语义内容仍可部分适用。
+	// 显式传 --criteria 则替换；未传则保留旧值（修复：此前静默清空导致验证标准永久丢失，
+	// 无恢复机制）。objectiveUpdatedPrompt 注入保留的 criteria 并声明按新 objective 判断完成。
+	if (criteria !== undefined && criteria.trim()) {
+		state.successCriteria = criteria.trim();
+	}
 	// FR-6.5: 持久化重塑后的状态（persistState 按当前 status tick 累加）+ FR-6.1 widget 刷新
 	const updatePorts = buildPorts(pi, ctx);
 	persistState(session, updatePorts);
