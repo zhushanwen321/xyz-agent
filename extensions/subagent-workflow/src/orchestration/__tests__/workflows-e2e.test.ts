@@ -24,7 +24,7 @@
  *   内容 + 手动构造 WorkflowScript 对象，包装为一个满足 WorkflowScriptRegistry 接口
  *   的自定义 registry（loadWorkflowsFromDir）。
  */
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +33,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { JsonlRunStore } from "../jsonl-run-store.ts";
 import { type LauncherDeps,runAndWait } from "../launcher.ts";
+import { actionRun } from "../../interface/tool-workflow.ts";
 import type { LifecycleDeps } from "../models/ports.ts";
 import type { AgentRunner } from "../models/ports.ts";
 import type { AgentResult, AgentUsage } from "../models/types.ts";
@@ -371,4 +372,92 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
     },
     RUN_TIMEOUT_MS,
   );
+
+  it(
+    "TC10: runAndWait 参数校验失败 → reason=invalid_args + runId='' + info 指引（chokepoint 先拦）",
+    async () => {
+      // review-fix-loop 有 parameters schema（唯一带 schema 的内置 workflow）——
+      // 缺 required targetType/target → chokepoint 在 worker 启动前拦截。
+      const deps = makeDeps();
+      const result = await runAndWait(
+        "review-fix-loop",
+        { batch1: "code-reviewer" },
+        deps,
+        undefined,
+        RUN_TIMEOUT_MS,
+      );
+
+      expect(result.status).toBe("done");
+      expect(result.reason).toBe("invalid_args");
+      expect(result.runId).toBe("");
+      expect(result.error).toContain("Invalid args for workflow 'review-fix-loop'");
+      expect(result.error).toContain("targetType");
+      expect(result.error).toContain("workflow info review-fix-loop");
+    },
+    RUN_TIMEOUT_MS,
+  );
+
+  it(
+    "TC12: coerce 结果到达 worker（chokepoint 原地 coerce → $ARGS 收到 boolean false）",
+    async () => {
+      // fixture 必须过 lint 入口检查（含 agent( 调用）+ typecheckMeta（name/description/phases）
+      const fixtureDir = mkdtempSync(join(tmpdir(), "wf-tc12-"));
+      try {
+        writeFileSync(
+          join(fixtureDir, "args-probe.js"),
+          [
+            "/* @pi-meta",
+            "name: args-probe",
+            "description: TC12 coerce probe fixture",
+            "phases: [a]",
+            "parameters:",
+            "  type: object",
+            "  properties:",
+            "    autoCommit: { type: boolean }",
+            "  required: [autoCommit]",
+            "*/",
+            'module.exports.execute = async ({ agent, $ARGS }) => {',
+            '  await agent({ prompt: "x" });',
+            "  return { t: typeof $ARGS.autoCommit, v: $ARGS.autoCommit };",
+            "};",
+            "",
+          ].join("\n"),
+          "utf-8",
+        );
+        const scripts = loadWorkflowsFromDir(fixtureDir);
+        const deps = { ...makeDeps(), registry: makeRegistry(scripts) };
+
+        const result = await runAndWait(
+          "args-probe",
+          { autoCommit: "false" },
+          deps,
+          undefined,
+          RUN_TIMEOUT_MS,
+        );
+
+        expect(result.reason).toBe("completed");
+        const outcome = result.scriptResult as { t: string; v: unknown };
+        expect(outcome.t).toBe("boolean");
+        expect(outcome.v).toBe(false);
+      } finally {
+        rmSync(fixtureDir, { recursive: true, force: true });
+      }
+    },
+    RUN_TIMEOUT_MS,
+  );
+
+  it("TC9: actionRun 参数校验失败 → isError ToolResult + §5.3 指引", async () => {
+    const deps = makeDeps();
+    const result = await actionRun(
+      { action: "run", name: "review-fix-loop", args: { batch1: "code-reviewer" } },
+      deps,
+      undefined,
+    );
+
+    expect(result.isError).toBe(true);
+    const text = result.content?.[0]?.text ?? "";
+    expect(text).toContain("Invalid args for workflow 'review-fix-loop'");
+    expect(text).toContain("targetType");
+    expect(text).toContain("workflow info review-fix-loop");
+  });
 });

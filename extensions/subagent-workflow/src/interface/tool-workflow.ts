@@ -31,6 +31,7 @@ import { type Static, Type } from "typebox";
 
 import { SLUG_MAX_LENGTH } from "../execution/execute-options-mapper.ts";
 import type { LauncherDeps } from "../orchestration/launcher.ts";
+import { ArgsValidationError } from "../orchestration/args-validator.ts";
 import { abortRun, pauseRun, resumeRun, runWorkflow } from "../orchestration/lifecycle.ts";
 import type { RunStore } from "../orchestration/models/ports.ts";
 import type { WorkflowRun } from "../orchestration/models/workflow-run.ts";
@@ -153,7 +154,7 @@ interface RunSummary {
  * without unsafe casts.
  */
 export type WorkflowToolDetails =
-  | { action: "run"; runId: string; status: "running" | "not_found"; name: string; slug?: string; stateFile?: string; __gui__?: GuiRenderResult }
+  | { action: "run"; runId: string; status: "running" | "not_found" | "invalid_args"; name: string; slug?: string; stateFile?: string; __gui__?: GuiRenderResult }
   | { action: "status"; runs: RunSummary[]; __gui__?: GuiRenderResult }
   | { action: "pause" | "resume" | "abort"; runId: string; status: string; reason?: string; __gui__?: GuiRenderResult };
 
@@ -356,7 +357,7 @@ export function registerWorkflowTool(
 
 // ── run action ───────────────────────────────────────────────
 
-async function actionRun(
+export async function actionRun(
   params: WorkflowToolParams,
   deps: LauncherDeps,
   signal: AbortSignal | undefined,
@@ -407,21 +408,35 @@ async function actionRun(
     };
   }
 
- // 构建 RunSpec + 启动
-  const runId = await runWorkflow(
-    {
-      scriptSource: script.toExecutable(),
-      args,
-      budgetTokens: tokens,
-      budgetTimeMs: time,
-      scriptName: script.name,
-      slug: params.slug,
-      scriptPath: script.path,
-      description: script.meta.description,
-    },
-    deps,
-    signal,
-  );
+ // 构建 RunSpec + 启动（m3：parameters 从 script.meta 拷贝——chokepoint 校验用；
+ // 校验失败 → isError ToolResult 带 §5.3 指引，非 ArgsValidationError 保持传播）
+  let runId: string;
+  try {
+    runId = await runWorkflow(
+      {
+        scriptSource: script.toExecutable(),
+        args,
+        budgetTokens: tokens,
+        budgetTimeMs: time,
+        scriptName: script.name,
+        slug: params.slug,
+        scriptPath: script.path,
+        description: script.meta.description,
+        parameters: script.meta.parameters,
+      },
+      deps,
+      signal,
+    );
+  } catch (err) {
+    if (err instanceof ArgsValidationError) {
+      return {
+        content: [{ type: "text", text: err.message }],
+        details: { action: "run", runId: "", status: "invalid_args", name: script.name },
+        isError: true,
+      };
+    }
+    throw err;
+  }
 
   return {
     content: [

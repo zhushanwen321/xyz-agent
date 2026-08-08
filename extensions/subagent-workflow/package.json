@@ -47,15 +47,16 @@
   "dependencies": {
     "@xyz-agent/extension-protocol": "workspace:^0.3.1",
     "@zhushanwen/pi-extension-logger": "workspace:*",
+    "ajv": "^8.20.0",
     "yaml": "^2.9.0"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
-    "typebox": "*",
+    "@zhushanwen/pi-pending-notifications": "workspace:*",
     "@zhushanwen/pi-structured-output": "workspace:*",
-    "@zhushanwen/pi-pending-notifications": "workspace:*"
+    "typebox": "*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-coding-agent": {

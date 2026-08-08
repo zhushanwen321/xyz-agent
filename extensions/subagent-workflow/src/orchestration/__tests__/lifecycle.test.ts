@@ -22,6 +22,7 @@ import {
   runWorkflow,
   scheduleTimeBudget,
 } from "../lifecycle.ts";
+import { ArgsValidationError } from "../args-validator.ts";
 import { Budget } from "../models/budget.ts";
 import { RunRuntime } from "../models/run-runtime.ts";
 import { Trace } from "../models/trace.ts";
@@ -32,10 +33,16 @@ import { WorkflowRun } from "../models/workflow-run.ts";
 // ── helpers ──────────────────────────────────────────────────
 
 /** 构造一个最小 RunSpec（满足 WorkflowRun 构造的字段需求）。 */
-function makeSpec(opts: { budgetTimeMs?: number; budgetTokens?: number } = {}): RunSpec {
+function makeSpec(opts: {
+  budgetTimeMs?: number;
+  budgetTokens?: number;
+  parameters?: Record<string, unknown>;
+  args?: Record<string, unknown>;
+} = {}): RunSpec {
   return {
     scriptSource: "execute() {}",
-    args: {},
+    args: opts.args ?? {},
+    parameters: opts.parameters,
     scriptName: "test-wf",
     scriptPath: "/fake/test.js",
     budgetTimeMs: opts.budgetTimeMs,
@@ -199,6 +206,34 @@ describe("resumeRun", () => {
     expect(deps.store.save).toHaveBeenCalledTimes(1);
   });
 
+  it("TC13: resume 重建 worker 收到 coerce 后 args（WQ2 一致性不变式）", async () => {
+    // runWorkflow 首行校验 + coerceTypes 原地规范化 spec.args → pause → resume 重建
+    // worker 用同一 args 对象（run.spec === spec）→ start 收到 boolean false。
+    const deps = makeDeps();
+    const spec = makeSpec({
+      parameters: {
+        type: "object",
+        properties: { autoCommit: { type: "boolean" } },
+        required: [],
+      },
+      args: { autoCommit: "false" },
+    });
+    const runId = await runWorkflow(spec, deps);
+    expect(spec.args.autoCommit).toBe(false); // 原地 coerce 生效
+    const run = deps.runs.get(runId)!;
+    run.transition("paused");
+    deps.runs.set(runId, run);
+    deps.workerHost.start.mockClear();
+
+    await resumeRun(runId, deps);
+
+    const startArgs = deps.workerHost.start.mock.calls[0]?.[1] as
+      | Record<string, unknown>
+      | undefined;
+    expect(startArgs).toBeDefined();
+    expect(startArgs!.autoCommit).toBe(false);
+  });
+
   it("无 budgetTimeMs 时 resume 不调度时间预算计时器", async () => {
     const { run } = makeRunningRealRun("wf-resume-no-budget");
     run.transition("paused");
@@ -330,6 +365,27 @@ describe("runWorkflow", () => {
     );
     expect(deps.runs.size).toBe(0);
     expect(deps.workerHost.start).not.toHaveBeenCalled();
+  });
+
+  it("TC8: 参数校验失败 → throw ArgsValidationError + zero side effects（E9）", async () => {
+    const deps = makeDeps();
+    const controller = new AbortController();
+    const addSpy = vi.spyOn(controller.signal, "addEventListener");
+    const spec = makeSpec({
+      parameters: {
+        type: "object",
+        properties: { target: { type: "string" } },
+        required: ["target"],
+      },
+      args: {},
+    });
+
+    await expect(runWorkflow(spec, deps, controller.signal)).rejects.toThrow(ArgsValidationError);
+    expect(deps.runs.size).toBe(0);
+    expect(deps.workerHost.start).not.toHaveBeenCalled();
+    expect(deps.store.save).not.toHaveBeenCalled();
+    expect(deps.eventBus.emit).not.toHaveBeenCalled();
+    expect(addSpy).not.toHaveBeenCalled();
   });
 });
 

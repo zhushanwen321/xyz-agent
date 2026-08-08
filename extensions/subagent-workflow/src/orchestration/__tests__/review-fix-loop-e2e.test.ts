@@ -778,7 +778,7 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
         fix: () => ({ fixed_count: 0, fixes: [], deferred: [] }),
       }));
 
-      // targetType 非法枚举
+      // targetType 非法枚举（m3 TC14：chokepoint 先拦 → invalid_args + ajv 文案 + info 指引）
       const r1 = await runAndWait(
         "review-fix-loop",
         { targetType: "nope", target: "README.md", agents: "reviewer", _runId: RUN_ID() },
@@ -786,10 +786,12 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
         undefined,
         RUN_TIMEOUT_MS,
       );
-      expect(r1.reason).toBe("failed");
-      expect(r1.error).toContain("targetType 必填且必须是枚举之一");
+      expect(r1.reason).toBe("invalid_args");
+      expect(r1.error).toContain("Invalid args for workflow 'review-fix-loop'");
+      expect(r1.error).toContain("targetType");
+      expect(r1.error).toContain("workflow info review-fix-loop");
 
-      // target 空串（trim 后为空 → fail）
+      // target 空串（m3 required 空串复查先拦 → invalid_args；脚本 !target 成不可达死代码）
       const r2 = await runAndWait(
         "review-fix-loop",
         { targetType: "file", target: "   ", agents: "reviewer", _runId: RUN_ID() },
@@ -797,8 +799,8 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
         undefined,
         RUN_TIMEOUT_MS,
       );
-      expect(r2.reason).toBe("failed");
-      expect(r2.error).toContain("target 必填");
+      expect(r2.reason).toBe("invalid_args");
+      expect(r2.error).toContain("must be a non-empty string");
     },
     RUN_TIMEOUT_MS,
   );

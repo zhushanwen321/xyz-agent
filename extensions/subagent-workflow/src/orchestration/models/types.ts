@@ -32,7 +32,9 @@ export type DoneReason =
   | "failed"
   | "aborted"
   | "budget_limited"
-  | "time_limited";
+  | "time_limited"
+  // m3：runAndWait 合成返回值专用——参数校验失败（run 从未创建，不进入 run.state.reason）
+  | "invalid_args";
 
 /** 合法的状态转换。空数组 = 无出边（done 终态）。 */
 export const VALID_RUN_TRANSITIONS: Record<RunStatus, readonly RunStatus[]> = {
@@ -47,6 +49,7 @@ export const ALL_DONE_REASONS: readonly DoneReason[] = [
   "completed",
   "failed",
   "aborted",
+  "invalid_args",
   "budget_limited",
   "time_limited",
 ] as const;
