@@ -23,13 +23,27 @@ const TOOL_WORKFLOW_SCRIPT_SRC = readFileSync(
   "utf-8",
 );
 
+/** 截取 promptGuidelines 数组文本——防 KNOWN_ARG_KEYS 等注释/代码中的裸词污染断言。 */
+function promptGuidelinesText(src: string): string {
+  const start = src.indexOf("promptGuidelines: [");
+  const end = src.indexOf("],", start);
+  return src.slice(start, end);
+}
+
 describe("U1: workflow tool prompt mentions built-in workflows", () => {
-  it("tool-workflow.ts description 或 promptGuidelines 含 4 个内置 workflow 名称", () => {
-    // 4 个内置通用编排 workflow 必须在提示词里出现，LLM 才能发现并使用。
-    expect(TOOL_WORKFLOW_SRC).toContain("chain");
-    expect(TOOL_WORKFLOW_SRC).toContain("parallel");
-    expect(TOOL_WORKFLOW_SRC).toContain("scatter-gather");
-    expect(TOOL_WORKFLOW_SRC).toContain("map-reduce");
+  it("TC4a: promptGuidelines 不含具体内置 args 枚举（m4 瘦身——参数知识在 info）", () => {
+    // m4：BUILT-IN 枚举删除，发现职责转移给 <available_workflows> 注入段 + workflow info。
+    // 截取 promptGuidelines 段断言（"batch1..batchN" 等在 KNOWN_ARG_KEYS 注释中出现）。
+    const guidelines = promptGuidelinesText(TOOL_WORKFLOW_SRC);
+    expect(guidelines).not.toContain("chain (sequential");
+    expect(guidelines).not.toContain("args: task");
+    expect(guidelines).not.toContain("batch1..batchN");
+    expect(guidelines).not.toContain("chain/parallel/scatter-gather/map-reduce");
+  });
+
+  it("TC4b: promptGuidelines 含 workflow info 指引（info 回收闭环）", () => {
+    const guidelines = promptGuidelinesText(TOOL_WORKFLOW_SRC);
+    expect(guidelines).toContain("workflow info <name>");
   });
 
   it("tool-workflow.ts promptGuidelines 含 workflow-script list 交叉引用", () => {

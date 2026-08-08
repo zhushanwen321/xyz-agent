@@ -16,6 +16,15 @@
 name: scatter-gather
 description: 通用编排：scatter 拆分 → parallel 处理 → gather 合并 三段
 phases: [scatter, process, gather]
+parameters:
+  type: object
+  properties:
+    task: { type: string }
+  required: [task]
+usage: |
+  ## 使用说明
+  - scatter 拆解大任务 → process 并行处理 → gather 聚合结果
+  - 示例：workflow run scatter-gather --args task="<大任务描述>"
 */
 
 // ── 入参（$ARGS）──────────────────────────────────────────────────

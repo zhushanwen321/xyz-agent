@@ -17,6 +17,17 @@
 name: map-reduce
 description: 通用编排：parallel map → reduce 两段，处理已知 items 数组
 phases: [map, reduce]
+parameters:
+  type: object
+  properties:
+    items: { type: array, items: { type: string } }
+    itemsJson: { type: string }
+    operation: { type: string }
+  required: [operation]
+usage: |
+  ## 使用说明
+  - items 与 itemsJson 至少一个：items 直接传字符串数组，itemsJson 传文件路径（内容为 JSON 数组）
+  - 示例：workflow run map-reduce --args operation="<对每个 item 做什么>" itemsJson="/path/items.json"
 */
 
 const fs = require("fs");

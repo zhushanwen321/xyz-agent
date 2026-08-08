@@ -167,7 +167,7 @@ export function registerWorkflowScriptTool(
     description:
       "Manage workflow scripts: generate (AI creates tmp script), lint (static check), " +
       "save (tmp→permanent), delete, list. Before generating a new script, use action:list " +
-      "to check if a built-in workflow (chain/parallel/scatter-gather/map-reduce) already " +
+      "to check if an available workflow already " +
       "covers the use case. Replaces workflow-generate + workflow-lint tools.",
     promptSnippet: "Generate, lint, save, delete, or list workflow scripts",
     promptGuidelines: [
@@ -176,10 +176,10 @@ export function registerWorkflowScriptTool(
       "save: Promote a tmp script to permanent (.pi/workflows/).",
       "delete: Remove a script (blocked if a run is active).",
       "list: Show all available workflow scripts with source tags. " +
-      "Use this to discover built-in workflows (chain/parallel/scatter-gather/map-reduce) " +
+      "Use this to discover available workflows (see <available_workflows> injection) " +
       "and user-generated scripts before starting a run. After listing, start a script via " +
       "the workflow tool with action:run and the script name.",
-      "CRITICAL ANTI-PATTERN: NEVER generate scripts for chain/parallel/scatter-gather/map-reduce. " +
+      "CRITICAL ANTI-PATTERN: NEVER generate scripts for patterns already covered by available " +
       "These are BUILT-IN — use the workflow tool with action:run directly. " +
       "generate is for NOVEL orchestration patterns ONLY. When in doubt, action:list first, " +
       "then action:run — not action:generate.",

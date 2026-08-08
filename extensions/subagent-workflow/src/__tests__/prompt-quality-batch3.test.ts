@@ -113,8 +113,10 @@ describe("E1: workflow-script tool description + anti-pattern", () => {
     expect(src).toContain("ANTI-PATTERN");
   });
 
-  it("anti-pattern 引用内置 workflow 名称（chain 非 sequential）", () => {
-    expect(src).toContain("chain/parallel/scatter-gather/map-reduce");
+  it("anti-pattern 保留字样但不点名内置 workflow（m4：发现靠注入段，防硬编码）", () => {
+    expect(src).toContain("ANTI-PATTERN");
+    expect(src).toContain("NEVER generate");
+    expect(src).not.toContain("chain/parallel/scatter-gather/map-reduce");
   });
 });
 

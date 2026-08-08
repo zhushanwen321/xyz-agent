@@ -18,6 +18,16 @@
 name: parallel
 description: 通用编排：多视角并行分析同一目标，再聚合汇总
 phases: [parallel-analyze, aggregate]
+parameters:
+  type: object
+  properties:
+    target: { type: string }
+    perspectives: { type: array, items: { type: string } }
+  required: [target]
+usage: |
+  ## 使用说明
+  - 多视角并行分析后聚合；perspectives 缺省用 3 个默认视角
+  - 示例：workflow run parallel --args target="<分析目标>"
 */
 
 // ── 入参（$ARGS）──────────────────────────────────────────────────

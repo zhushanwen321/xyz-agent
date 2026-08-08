@@ -23,9 +23,8 @@
 /* @pi-meta
 name: review-fix-loop
 description: >-
-  审查-修复循环：多批串行（批内并行 review → aggregate → fix → 重审直到 clean）。
-  Use when 需迭代修复至无 must-fix。Not for 单纯审查不改代码。
-  唯一带写操作/commit 副作用的内置 workflow（autoCommit 默认 false）。
+  多批串行审查-修复循环：批内并行 review 聚合 must-fix 后迭代修复直到 clean
+  （唯一带写操作与 commit 副作用的内置 workflow，autoCommit 默认 false）
 when: 用户要 review 并迭代修复至 clean
 notFor: 单纯审查不改代码
 phases: [Review, Fix]

@@ -33,7 +33,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { JsonlRunStore } from "../jsonl-run-store.ts";
 import { type LauncherDeps,runAndWait } from "../launcher.ts";
-import { actionRun } from "../../interface/tool-workflow.ts";
+import { actionInfo, actionRun, type WorkflowInfo } from "../../interface/tool-workflow.ts";
 import type { LifecycleDeps } from "../models/ports.ts";
 import type { AgentRunner } from "../models/ports.ts";
 import type { AgentResult, AgentUsage } from "../models/types.ts";
@@ -459,5 +459,70 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
     expect(text).toContain("Invalid args for workflow 'review-fix-loop'");
     expect(text).toContain("targetType");
     expect(text).toContain("workflow info review-fix-loop");
+  });
+
+  it("TC1: info action 返回 raw schema + friendly + usage，content 可 JSON.parse", async () => {
+    const deps = makeDeps();
+    const result = await actionInfo({ action: "info", name: "review-fix-loop" }, deps);
+
+    expect(result.isError).toBeUndefined();
+    expect(result.details).toMatchObject({ action: "info", name: "review-fix-loop", status: "ok" });
+    const info = JSON.parse(result.content![0]!.text) as WorkflowInfo;
+    expect(info.name).toBe("review-fix-loop");
+    expect(info.parameters).toBeDefined();
+    const params = info.parameters as Record<string, unknown>;
+    expect((params.properties as Record<string, unknown>).targetType).toBeDefined();
+    expect((params.patternProperties as Record<string, unknown>)["^batch\\d+$"]).toBeDefined();
+    expect(info.parametersFriendly).toBeDefined();
+    expect(info.usage).toContain("workflow run review-fix-loop"); // 手写示例原样
+  });
+
+  it("TC2: info 结构精确七字段 + 无自动 exampleArgs", async () => {
+    const deps = makeDeps();
+    const result = await actionInfo({ action: "info", name: "review-fix-loop" }, deps);
+    const info = JSON.parse(result.content![0]!.text) as WorkflowInfo;
+    expect(Object.keys(info).sort()).toEqual([
+      "description",
+      "name",
+      "notFor",
+      "parameters",
+      "parametersFriendly",
+      "usage",
+      "when",
+    ]);
+    expect(JSON.stringify(info)).not.toContain("exampleArgs");
+  });
+
+  it("TC3: info not_found 与缺 name → isError（镜像 run 行为）", async () => {
+    const deps = makeDeps();
+    const missing = await actionInfo({ action: "info", name: "nope" }, deps);
+    expect(missing.isError).toBe(true);
+    expect(missing.details).toMatchObject({ action: "info", status: "not_found" });
+    expect(missing.content![0]!.text).toContain("Available");
+    const noName = await actionInfo({ action: "info" }, deps);
+    expect(noName.isError).toBe(true);
+    expect(noName.content![0]!.text).toContain("info requires 'name' parameter");
+  });
+
+  it("TC11: 4 内置 workflow info 返回 parameters/usage（参数知识不真空）", async () => {
+    const deps = makeDeps();
+    const cases: Array<[string, string[]]> = [
+      ["chain", ["task"]],
+      ["parallel", ["target", "perspectives"]],
+      ["scatter-gather", ["task"]],
+      ["map-reduce", ["items", "itemsJson", "operation"]],
+    ];
+    for (const [name, expectedParams] of cases) {
+      const result = await actionInfo({ action: "info", name }, deps);
+      const info = JSON.parse(result.content![0]!.text) as WorkflowInfo;
+      expect(result.isError).toBeUndefined();
+      expect(info.parameters).toBeDefined();
+      const props = Object.keys(
+        ((info.parameters as Record<string, unknown>).properties ?? {}) as Record<string, unknown>,
+      );
+      expect(props.sort()).toEqual([...expectedParams].sort());
+      expect(info.usage).toBeDefined();
+      expect(info.usage).toContain("workflow run " + name);
+    }
   });
 });

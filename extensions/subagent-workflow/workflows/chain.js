@@ -15,6 +15,15 @@
 name: chain
 description: 通用编排：analyze → transform → synthesize 顺序三步链
 phases: [analyze, transform, synthesize]
+parameters:
+  type: object
+  properties:
+    task: { type: string }
+  required: [task]
+usage: |
+  ## 使用说明
+  - 顺序三步链：analyze（提取要点）→ transform（产出方案）→ synthesize（合成结论）
+  - 示例：workflow run chain --args task="<任务描述>"
 */
 
 // ── 入参（$ARGS）──────────────────────────────────────────────────
