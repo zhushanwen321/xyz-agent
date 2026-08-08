@@ -498,11 +498,16 @@ async function runCallbackFlow(providerId: string, config: BuiltinOAuthConfig, h
     expectedState: state,
     signal,
   })
+  // redirect_uri 用 localhost（与 pi-ai 参考实现预注册值 http://localhost:53692/callback 一致）：
+  // anthropic 授权端点按注册值校验 redirect_uri（RFC 6749 §3.1.2.3），127.0.0.1 未注册会被拒。
+  // 监听地址保持 127.0.0.1（不暴露局域网），浏览器 localhost → 127.0.0.1 回环等价可达。
+  const redirectUri = new URL(server.url)
+  redirectUri.hostname = 'localhost'
   const authParams = new URLSearchParams({
     code: 'true',
     client_id: config.clientId,
     response_type: 'code',
-    redirect_uri: server.url,
+    redirect_uri: redirectUri.toString(),
     scope: config.scopes.join(' '),
     code_challenge: challenge,
     code_challenge_method: 'S256',
@@ -516,7 +521,7 @@ async function runCallbackFlow(providerId: string, config: BuiltinOAuthConfig, h
       client_id: config.clientId,
       code: callback.code,
       state: callback.state,
-      redirect_uri: server.url,
+      redirect_uri: redirectUri.toString(),
       code_verifier: verifier,
     }, signal)
     if (!exchange.ok) {

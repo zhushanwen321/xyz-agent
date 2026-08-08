@@ -147,4 +147,60 @@ describe('sanitizeInvalidProviders', () => {
     expect(result.removed.sort()).toEqual(['concurrency-verify-A', 'p-null'])
     expect(readModelsProviders()).toEqual({ legal1: { baseUrl: 'x' } })
   })
+
+  it('WTC17: catalog 已知内置 provider 的空壳被修复而非删除（models 合并，apiKey 保留）', () => {
+    // MF-5 回归：QuickSetup 保存 baseUrl 为空串模板（opencode 等 7 个）后条目五字段全缺，
+    // 旧实现重启即删除（apiKey 静默丢失）。修复：catalog 已知空壳合并 builtin models。
+    writeModelsFixture({
+      opencode: { apiKey: 'sk-opencode', name: 'OpenCode Zen', authMethod: 'api_key' },
+      'concurrency-verify-A': { apiKey: 'sk-x', name: 'Verify A' },
+    })
+    const result = sanitizeInvalidProviders()
+    // 非 catalog 空壳仍删除，catalog 已知空壳修复
+    expect(result.removed).toEqual(['concurrency-verify-A'])
+    expect(result.repaired).toEqual(['opencode'])
+    const remaining = readModelsProviders()
+    expect(Object.keys(remaining).sort()).toEqual(['opencode'])
+    const repaired = remaining.opencode as Record<string, unknown>
+    // apiKey/authMethod 保留（不丢用户刚保存的配置）
+    expect(repaired.apiKey).toBe('sk-opencode')
+    expect(repaired.authMethod).toBe('api_key')
+    // models 从 catalog 合并（模型级 baseUrl 由 catalog 提供）
+    expect(Array.isArray(repaired.models)).toBe(true)
+    const models = repaired.models as Array<{ id: string; baseUrl?: string }>
+    expect(models.length).toBeGreaterThan(0)
+    expect(models[0].id).toBe('claude-fable-5')
+    expect(models[0].baseUrl).toBe('https://opencode.ai/zen')
+    // 修复后不再无效（bundled pi 0.80.3 严格校验可通过）
+    expect(isInvalidProvider(repaired as PiProviderConfig)).toBe(false)
+    // 幂等：第二次调用不再修复/删除（修复结果已是合法条目）
+    const second = sanitizeInvalidProviders()
+    expect(second.removed).toEqual([])
+    expect(second.repaired).toEqual([])
+  })
+
+  it('WTC18: catalog models 全空 baseUrl 的 provider（azure-openai-responses）维持删除而非修复', () => {
+    // MF-6 回归：azure-openai-responses 的 38 个 catalog models 全为空串 baseUrl 且无
+    // provider 级 baseUrl——合并后 pi modelFromJson 对每个自定义模型强制非空 baseUrl
+    // （空串非 nullish）直接 throw，pi 回退 builtin base，QuickSetup 保存的 apiKey 静默失效，
+    // 且毒化条目 isInvalidProvider===false 无自愈路径。此类 provider 排除出修复名单（删除）。
+    writeModelsFixture({
+      'azure-openai-responses': { apiKey: 'sk-azure', name: 'Azure OpenAI', authMethod: 'api_key' },
+      opencode: { apiKey: 'sk-opencode', name: 'OpenCode Zen', authMethod: 'api_key' },
+    })
+    const result = sanitizeInvalidProviders()
+    // azure 删除（catalog 无可用 baseUrl 数据），opencode 仍修复（模型级 baseUrl 齐全）
+    expect(result.removed).toEqual(['azure-openai-responses'])
+    expect(result.repaired).toEqual(['opencode'])
+    const remaining = readModelsProviders()
+    expect(Object.keys(remaining).sort()).toEqual(['opencode'])
+    // 修复条目不存在任何空 baseUrl 模型（pi 组合层不抛错）
+    const models = (remaining.opencode as { models: Array<{ baseUrl?: string }> }).models
+    expect(models.length).toBeGreaterThan(0)
+    expect(models.every(m => !!m.baseUrl)).toBe(true)
+    // 幂等：第二次调用不再修复/删除
+    const second = sanitizeInvalidProviders()
+    expect(second.removed).toEqual([])
+    expect(second.repaired).toEqual([])
+  })
 })

@@ -23,6 +23,7 @@ import {
   findValidDefaultModel,
   refreshModels,
   setModelsPath,
+  readSettings,
   type PiModelsConfig,
   type PiProviderConfig,
 } from '../src/infra/pi/pi-provider-store.js'
@@ -166,6 +167,46 @@ describe('pi-provider-store — models.json', () => {
       // defaultModel 失效应被修复
       const def = getDefaultModel()
       expect(def).toBeNull() // 无其他有 model 的 provider
+    })
+
+    it('partial upsert（无 models 键）保留 defaultProvider/defaultModel（spec §8 OAuth 守卫）', () => {
+      // builtin override-only provider：models.json 条目本无 models 数组（models undefined），
+      // 模拟 clearApiKey 剥离 apiKey / quota 覆写 / QuickSetup 保存不携带 models 的真实场景。
+      writeModels({
+        providers: {
+          anthropic: { apiKey: 'sk-test' }, // 无 models 键
+          openai: { models: [{ id: 'gpt-4' }] }, // 有 models 的 provider（fallback 候选）
+        },
+      })
+      refreshModels()
+      setDefaultModel('anthropic', 'claude-sonnet')
+
+      const outcome = upsertProvider('anthropic', { name: 'Anthropic', apiKey: 'sk-test-2' })
+
+      // 守卫契约：models 未参与本次更新 → 不触碰 settings 的 default，无 newDefault 回退
+      expect(outcome).toEqual({})
+      const settings = readSettings()
+      expect(settings.defaultProvider).toBe('anthropic')
+      expect(settings.defaultModel).toBe('claude-sonnet')
+    })
+
+    it('显式 models: [] 删除默认并回退到第一个有 models 的 provider', () => {
+      writeModels({
+        providers: {
+          anthropic: { apiKey: 'sk-test' },
+          openai: { models: [{ id: 'gpt-4' }] },
+        },
+      })
+      refreshModels()
+      setDefaultModel('anthropic', 'claude-sonnet')
+
+      const outcome = upsertProvider('anthropic', { name: 'Anthropic', apiKey: 'sk-test-2', models: [] })
+
+      // 显式空数组 ≠ undefined：仍走默认校验 → 删除失效默认 → 回退第一个有 models 的 provider
+      expect(outcome).toEqual({ newDefault: { provider: 'openai', modelId: 'gpt-4' } })
+      const settings = readSettings()
+      expect(settings.defaultProvider).toBe('openai')
+      expect(settings.defaultModel).toBe('gpt-4')
     })
   })
 

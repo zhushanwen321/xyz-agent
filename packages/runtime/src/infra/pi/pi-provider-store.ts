@@ -11,6 +11,9 @@ import { existsSync, readdirSync, mkdirSync, renameSync, rmdirSync, cpSync, stat
 import { join, resolve as pathResolve, sep } from 'node:path'
 import { toErrorMessage } from '../../utils/errors.js'
 import { isPackaged } from '../../utils/runtime-env.js'
+// builtin provider catalog（QuickSetup 模板源）：sanitizeInvalidProviders 对 catalog 已知的
+// 空壳 provider 合并 models 修复而非删除（对齐 config-service 的 builtinModelsById 先例）。
+import builtinData from '../../generated/builtin-providers.json'
 import { JsonStore } from '../../utils/json-store.js'
 import { normalizeToHome } from '../../utils/path-utils.js'
 import { getConfigDir, getModelsPath, getSettingsPath, getPiAgentDir, getSessionsDir, getAgentsDir, getExtensionsDir, getNpmDir, getTmpDir } from './pi-paths.js'
@@ -176,7 +179,14 @@ export function upsertProvider(providerId: string, config: PiProviderConfig): {
   updateSettingsSync(s => {
     if (s.defaultProvider !== providerId) { outcome = {}; return }
 
-    const newModelList = config.models ?? []
+    // models 未参与本次更新（partial upsert：clearApiKey 剥离 apiKey / quota 覆写 /
+    // QuickSetup 保存不携带 models）时跳过 default 校验——builtin override-only provider
+    // 的 models.json 条目本无 models 数组，把 undefined 视作「模型被清空」会把
+    // defaultProvider/defaultModel 静默删除并回退到别的 provider（用户默认模型在 OAuth
+    // 授权成功瞬间被改写，spec §8 未授权该副作用）。显式传 models（含空数组）仍走校验。
+    if (config.models === undefined) { outcome = {}; return }
+
+    const newModelList = config.models
     if (newModelList.length === 0) {
       delete s.defaultProvider
       delete s.defaultModel
@@ -647,6 +657,24 @@ export function cleanLeakedPackages(): { removed: string[] } {
 // 导致所有 model not found。系统 pi 0.83 对此容错，但重装后切换 bundled pi 必现。
 // 典型脏数据：外部脚本写入的测试 fixture provider（如 concurrency-verify-A）。
 // 启动时一次性剔除这类空壳 provider，让 xyz-agent 自愈。
+//
+// MF-5（R3 review）：catalog 已知内置 provider 的空壳不删除——QuickSetup 保存 baseUrl
+// 为空串模板（amazon-bedrock/azure-openai-responses/cloudflare-*/google-vertex/opencode* 等
+// 7 个）时条目五字段全缺，旧实现重启即删除（用户刚保存的 apiKey/authMethod 静默丢失）。
+// 这类空壳从 catalog 合并 models 修复（模型级 baseUrl 由 catalog 提供），保留用户数据且
+// 仍满足 bundled pi 严格校验；非 catalog 的空壳（外部脚本 fixture）维持删除语义。
+// MF-6（R4 review）：修复前提是 catalog models 每个模型都有可用 baseUrl（见下）。
+// azure-openai-responses 的 38 个 catalog models 全为空串 baseUrl，合并即毒化 pi 组合，
+// 排除出修复名单（维持删除语义）——目录中不存在任何可用 baseUrl 数据。
+
+/**
+ * builtin provider id → catalog models 索引（MF-5 修复空壳用）。
+ * JSON import 推断类型与 PiModelDefinition 有 input 等字段差异，构造时断言（对齐
+ * config-service builtinModelsById 的 `as [string, ...]` 处理）。
+ */
+const builtinModelsById = new Map<string, PiModelDefinition[]>(
+  (builtinData.providers ?? []).map(p => [p.id, p.models] as [string, PiModelDefinition[]]),
+)
 
 /**
  * 判定 provider 是否无效（pi 会拒绝加载）。
@@ -679,37 +707,63 @@ export function isInvalidProvider(provider: PiProviderConfig): boolean {
 }
 
 /**
- * 启动时剔除 models.json 里的无效 provider（五字段全缺的空壳）。
+ * 启动时清理 models.json 里的无效 provider（五字段全缺的空壳）。
  *
  * 修复根因：空壳 provider（如 {apiKey, name} 无五字段任一）导致 bundled pi 0.80.3
  * 严格校验时整个 models.json 加载失败。系统 pi 0.83 对此容错但 bundled 0.80.3 不容错，
  * 重装后切换 bundled pi 必现 "Model not found"。本函数让 xyz-agent 自愈这种脏数据。
  *
+ * MF-5：catalog 已知内置 provider 的空壳（QuickSetup 保存空 baseUrl 模板产生，含用户
+ * 刚保存的 apiKey）不删除，合并 catalog models 修复（条目合法化，apiKey/authMethod 保留，
+ * 模型级 baseUrl 由 catalog 提供）。非 catalog 空壳维持删除语义（外部 fixture 不留存）。
+ * MF-6：修复前提是 catalog models 每个模型均有非空 baseUrl（pi modelFromJson 对空 baseUrl
+ * 直接 throw，毒化整个 provider 组合且无自愈路径）。catalog models 含空 baseUrl 的 provider
+ * （azure-openai-responses）排除出修复名单，维持删除语义；catalog 未来补全 baseUrl 后自动恢复修复。
+ *
  * 启动时一次性调用（index.ts cleanLeakedPackages 之后）。幂等：无无效 provider 时不触发写。
  * 永不抛错：失败仅 warn 不阻塞启动（对齐 cleanLeakedPackages ES1 风格）。
  *
- * @returns { removed: string[] } 被剔除的 provider id 列表
+ * @returns { removed: string[]; repaired: string[] } 被剔除 / 被修复（合并 models）的 provider id 列表
  */
-export function sanitizeInvalidProviders(): { removed: string[] } {
+export function sanitizeInvalidProviders(): { removed: string[]; repaired: string[] } {
   try {
     modelsStore.invalidate()
     const draft: PiModelsConfig = JSON.parse(JSON.stringify(readModels()))
     const removed: string[] = []
+    const repaired: string[] = []
     for (const [id, cfg] of Object.entries(draft.providers)) {
       if (isInvalidProvider(cfg)) {
-        delete draft.providers[id]
-        removed.push(id)
+        // catalog 已知内置 provider 的空壳 → 合并 catalog models 修复（保留 apiKey/authMethod）。
+        // MF-6（R4 review）：catalog models 含空 baseUrl 的 provider 不可修复——pi modelFromJson
+        // 对每个自定义模型强制非空 baseUrl（空串非 nullish，`??` 不跳过 → 直接 throw），任一空
+        // baseUrl 模型即毒化整个 provider 组合（composeModelProvider 抛错 → pi 回退 builtin base，
+        // 用户 apiKey 静默失效且条目 isInvalidProvider===false 无自愈路径）。这类 provider
+        // （azure-openai-responses 38/38 模型空 baseUrl）维持删除语义；过滤空 baseUrl 模型会退回
+        // models:[] 五字段全缺态再次被删（transient 非法态），合成 baseUrl 不可接受（catalog 无数据）。
+        const catalogModels = builtinModelsById.get(id)
+        if (catalogModels && catalogModels.length > 0 && catalogModels.every(m => !!m.baseUrl)) {
+          draft.providers[id] = { ...cfg, models: catalogModels }
+          repaired.push(id)
+        } else {
+          delete draft.providers[id]
+          removed.push(id)
+        }
       }
     }
-    if (removed.length > 0) {
+    if (removed.length > 0 || repaired.length > 0) {
       writeModels(draft)
-      console.log('[provider-store] sanitized invalid providers:', removed)
+      if (removed.length > 0) {
+        console.log('[provider-store] sanitized invalid providers:', removed)
+      }
+      if (repaired.length > 0) {
+        console.log('[provider-store] repaired catalog-known invalid providers (merged builtin models):', repaired)
+      }
     }
-    return { removed }
+    return { removed, repaired }
   } catch (e) {
     // best-effort 降级：models.json 异常不阻塞启动（pi 自身加载时也会容错或报错）
     console.warn('[provider-store] sanitizeInvalidProviders failed:', e)
-    return { removed: [] }
+    return { removed: [], repaired: [] }
   }
 }
 

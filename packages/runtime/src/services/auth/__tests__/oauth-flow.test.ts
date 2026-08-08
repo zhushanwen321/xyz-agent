@@ -331,7 +331,7 @@ describe('runOAuthLogin — callback flow', () => {
         // state 独立随机（不复用 PKCE verifier——code+verifier 同现于明文 loopback URL 有泄露风险）
         expect(body.state).not.toBe(body.code_verifier)
         expect(typeof body.state).toBe('string')
-        expect(body.redirect_uri).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/callback$/)
+        expect(body.redirect_uri).toMatch(/^http:\/\/localhost:\d+\/callback$/)
         return jsonResponse({ access_token: 'at-an', refresh_token: 'rt-an', expires_in: 7200 })
       }
       return realFetch(url, init)

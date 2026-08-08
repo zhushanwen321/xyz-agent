@@ -186,9 +186,65 @@ describe('AuthService.cancel', () => {
     expect(svc.login('xai')).toEqual({ started: true })
     expect(svc.cancel('xai')).toEqual({ cancelled: true })
   })
-})
 
-describe('AuthService.hasOAuth', () => {
+  it('S-7: cancel 落在「token 获取完成 → 写盘」窗口时不落盘、不发 auth.success', async () => {
+    const deps = makeDeps()
+    const svc = new AuthService(deps)
+    let signal: AbortSignal | undefined
+    vi.mocked(runOAuthLogin).mockImplementation(async (_id, _cfg, _hooks, sig) => {
+      signal = sig
+      // 挂起模拟：token exchange 已完成（拿到 credential），但 cancel 的 abort 信号先到
+      return new Promise<OAuthCredential>((resolve) => {
+        sig?.addEventListener('abort', () => resolve(oauthCred()))
+      })
+    })
+
+    svc.login('xai')
+    await vi.waitFor(() => expect(signal).toBeDefined())
+    expect(svc.cancel('xai')).toEqual({ cancelled: true })
+
+    // flow 在 abort 后带着已获取的 token 返回：不得写 auth.json / 清 apiKey / 广播 success
+    await vi.waitFor(() => {
+      expect(deps.authStorage.set).not.toHaveBeenCalled()
+      expect(deps.clearApiKey).not.toHaveBeenCalled()
+      expect(deps.events.some((e) => e.type === 'auth.success')).toBe(false)
+    })
+    // 结束后 activeFlows 已清空：再次 cancel 幂等返回 false
+    await vi.waitFor(() => {
+      expect(svc.cancel('xai')).toEqual({ cancelled: false })
+    })
+  })
+
+  it('S-8: cancel 落在 set() 锁等待期间（凭据已写盘）时不广播 auth.success，且移除刚写入的凭据', async () => {
+    const deps = makeDeps()
+    const svc = new AuthService(deps)
+    // 模拟 proper-lockfile 锁等待：set() 挂起直到测试主动释放（cancel 期间凭据已写盘）
+    let releaseSet: (() => void) | undefined
+    vi.mocked(deps.authStorage.set as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      await new Promise<void>((resolve) => {
+        releaseSet = resolve
+      })
+    })
+    vi.mocked(runOAuthLogin).mockImplementation(async () => oauthCred())
+
+    svc.login('xai')
+    // flow 已进入 set() 锁等待（凭据已写盘，broadcast 前）
+    await vi.waitFor(() => {
+      expect(deps.authStorage.set).toHaveBeenCalledWith('xai', expect.objectContaining({ type: 'oauth' }))
+    })
+    expect(svc.cancel('xai')).toEqual({ cancelled: true })
+    // 释放锁：set() 返回后必须复查 abort——不得清 apiKey / 广播 success，且移除刚写入的凭据
+    releaseSet?.()
+    await vi.waitFor(() => {
+      expect(deps.authStorage.remove).toHaveBeenCalledWith('xai')
+      expect(deps.clearApiKey).not.toHaveBeenCalled()
+      expect(deps.events.some((e) => e.type === 'auth.success')).toBe(false)
+    })
+    // 结束后 activeFlows 已清空：再次 cancel 幂等返回 false
+    await vi.waitFor(() => {
+      expect(svc.cancel('xai')).toEqual({ cancelled: false })
+    })
+  })
   it('委托 authStorage.hasOAuth', async () => {
     const deps = makeDeps()
     const svc = new AuthService(deps)

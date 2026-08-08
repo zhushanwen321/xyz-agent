@@ -2,9 +2,11 @@
  * auth.json 凭据存储（OAuth 路径 B 自实现）。
  *
  * 镜像 pi FileAuthStorageBackend 的 RMW 语义（写前重读最新文件，防丢更新），
- * 差异：跨进程锁（proper-lockfile）改为进程内 per-file promise-chain mutex——
- * 本模块只服务单一 runtime 进程，跨进程并发写不是真实场景，进程内串行化
- * 已消除 RMW 竞态（slice M1 修复目标）。
+ * 跨进程锁用 proper-lockfile（与 pi 同一把锁、同一路径语义：<auth.json>.lock）——
+ * pi 侧 resolveStoredOAuth 在 token 过期时持锁刷新并写回 auth.json，与 xyz-agent
+ * login 写入是真实跨进程并发写场景；进程内 mutex 只能串行化本进程写入，无跨进程锁时
+ * RMW 后写者基于陈旧读覆盖先写者，轮换后的 refresh_token 会丢失（anthropic 等
+ * 轮换 refresh token 的 provider 掉登录）。
  *
  * 安全约束：文件内容是 OAuth token，权限 0600；任何路径不得打印 credential。
  */
@@ -18,6 +20,7 @@ import {
   renameSync,
   writeFileSync,
 } from 'node:fs'
+import lockfile from 'proper-lockfile'
 
 export interface OAuthCredential {
   type: 'oauth'
@@ -27,21 +30,49 @@ export interface OAuthCredential {
   [k: string]: unknown
 }
 
-/** per-file 写互斥链：同一文件的所有写操作串行执行（RMW 全程持锁） */
-const fileMutexes = new Map<string, Promise<unknown>>()
-
 /**
- * 进程内 per-file mutex：把 fn 排到该文件已有链尾。
- * Map 里存的是永不复用的吞错链（catch 后继续），返回给调用方的是带错误的原始链。
+ * 跨进程写锁：proper-lockfile 锁 auth.json，参数对齐 pi FileAuthStorageBackend.withLockAsync
+ * （retries 10/factor 2/minTimeout 100/maxTimeout 10s/randomize + stale 30s），与 pi 侧
+ * 刷新写回互斥同一把锁（<auth.json>.lock）。
+ * proper-lockfile realpath 默认 true，目标文件不存在时 realpath ENOENT 拿不到锁——
+ * 先按 pi 同款 ensureFileExists 建空文件（0600）再锁。
  */
-function withFileMutex<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
-  const prev = fileMutexes.get(filePath) ?? Promise.resolve()
-  const next = prev.then(fn, fn)
-  fileMutexes.set(filePath, next.then(
-    () => undefined,
-    () => undefined,
-  ))
-  return next
+async function withFileLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
+  ensureFileExists(filePath)
+  // onCompromised：锁被判定 stale 抢占（进程卡死超时等）时标记，fn 执行前抛错，
+  // 防止在失去互斥保证的锁下写盘（对齐 pi throwIfCompromised 语义）。
+  let compromised: Error | undefined
+  const release = await lockfile.lock(filePath, {
+    retries: {
+      retries: 10,
+      factor: 2,
+      minTimeout: 100,
+      maxTimeout: 10_000,
+      randomize: true,
+    },
+    // eslint-disable-next-line no-magic-numbers -- stale 30s 与 pi 一致（进程卡死超时视为锁失效）
+    stale: 30_000,
+    onCompromised: (err) => { compromised = err },
+  })
+  try {
+    if (compromised) throw compromised
+    return await fn()
+  } finally {
+    try {
+      await release()
+    } catch {
+      // 锁已 compromised 时 unlock 失败可忽略（对齐 pi finally 的 catch 语义）
+    }
+  }
+}
+
+/** 与 pi FileAuthStorageBackend.ensureFileExists 同款：锁前保证文件存在（proper-lockfile realpath 需要） */
+function ensureFileExists(filePath: string): void {
+  if (!existsSync(filePath)) {
+    // eslint-disable-next-line no-magic-numbers -- 0o600：仅 owner 可读写（文件含 token）
+    writeFileSync(filePath, '{}', { encoding: 'utf-8', mode: 0o600 })
+    chmodSync(filePath, 0o600)
+  }
 }
 
 /**
@@ -93,7 +124,7 @@ export class AuthStorage {
 
   /** RMW：锁内重读最新文件 → merge 单 provider → 原子写回 */
   async set(providerId: string, credential: OAuthCredential): Promise<void> {
-    await withFileMutex(this.filePath, async () => {
+    await withFileLock(this.filePath, async () => {
       const data = readAuthFile(this.filePath)
       data[providerId] = credential
       // eslint-disable-next-line no-magic-numbers -- 缩进 2 空格，与 pi FileAuthStorageBackend 输出格式一致
@@ -101,9 +132,13 @@ export class AuthStorage {
     })
   }
 
-  /** 幂等：provider 不存在时跳过写（避免无谓的磁盘 IO） */
+  /** 幂等：provider 不存在时跳过写（避免无谓的磁盘 IO）。文件不存在时直接返回——
+   * 没有可读可删的内容，且避免 withFileLock 的 ensureFileExists 在 remove 路径物化空
+   * auth.json（从未使用过 OAuth 的用户目录每次保存 API Key 都会走 remove，不该产生文件）。
+   * 注意：set()/getAll() 等其余路径仍需 ensureFileExists（proper-lockfile realpath 需要文件存在）。 */
   async remove(providerId: string): Promise<void> {
-    await withFileMutex(this.filePath, async () => {
+    if (!existsSync(this.filePath)) return
+    await withFileLock(this.filePath, async () => {
       const data = readAuthFile(this.filePath)
       if (!(providerId in data)) return
       delete data[providerId]

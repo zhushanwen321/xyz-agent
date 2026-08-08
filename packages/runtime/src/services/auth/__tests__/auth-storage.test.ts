@@ -2,11 +2,11 @@
  * auth.json 凭据存储单测（tmp 目录真实文件）。
  *
  * 覆盖：set 后 get / merge 不丢其他 provider / 并发 set 多个 provider 最终全在
- * （per-file promise-chain mutex 防 RMW 丢更新）/ 0600 权限位 / remove 幂等 /
+ * （proper-lockfile 跨进程锁串行化 RMW）/ 0600 权限位 / remove 幂等 /
  * 文件不存在 get 返回 undefined / 损坏 JSON 抛错 / hasOAuth。
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, statSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AuthStorage, type OAuthCredential } from '../auth-storage.js'
@@ -74,6 +74,11 @@ describe('AuthStorage', () => {
     await storage.remove('a')
     await storage.remove('never-existed')
     expect(await storage.get('a')).toBeUndefined()
+  })
+
+  it('remove 在文件不存在时不物化 auth.json（从未使用 OAuth 不产生文件）', async () => {
+    await storage.remove('never-existed')
+    expect(existsSync(file)).toBe(false)
   })
 
   it('文件不存在时 get 返回 undefined、getAll 返回空对象', async () => {

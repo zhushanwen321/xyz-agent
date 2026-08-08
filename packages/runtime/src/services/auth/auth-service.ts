@@ -95,8 +95,24 @@ export class AuthService implements IAuthService {
           callbackPort: info.callbackPort,
         }),
       }, signal)
+      // S-7（R3 review）：cancel 落在「token 获取完成 → 写盘」窗口时，不落盘、不广播——
+      // cancel() 已返回 {cancelled:true}，迟到 success 会让前端状态机 cancelled/authorized 并存。
+      // abort 检查只在 catch 块不够：token 正常返回不代表用户没取消。
+      if (signal.aborted) return
       // token 写 auth.json（0600 + per-file mutex + 原子写），pi 侧 resolveStoredOAuth 自动 refresh
       await this.deps.authStorage.set(providerId, credential)
+      // S-8（R4 review）：S-7 早退只挡 set() 之前的窗口——cancel 落在 set() 的锁等待期间
+      // （proper-lockfile，pi 侧 refresh 持锁时重试可达秒级）凭据已写盘，迟到的 auth.success
+      // 仍会造成 cancelled/authorized 并存。broadcast 前再查一次 abort，且 best-effort 移除
+      // 刚写入的凭据（用户已取消，不留盘）；失败仅 warn 不改变早退语义。
+      if (signal.aborted) {
+        try {
+          await this.deps.authStorage.remove(providerId)
+        } catch (error) {
+          console.warn(`[auth-service] remove cancelled OAuth credential failed for ${providerId}:`, error)
+        }
+        return
+      }
       // I9 清理②：OAuth 授权成功 → 清 models.json apiKey（both provider 切换凭据源，防冲突）。
       // 清理是次要副作用：失败降级为警告日志，不改变 auth.success（凭据已写入，pi 侧可正常使用）。
       try {
