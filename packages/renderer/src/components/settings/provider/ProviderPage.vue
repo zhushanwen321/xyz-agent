@@ -245,13 +245,11 @@ const selectedTemplate = ref<BuiltinProviderTemplate | null>(null)
 const showQuickSetup = ref(false)
 
 /** OAuth 授权状态机（composable：OAuthDialog 驱动 + auth.* 事件订阅） */
-const oauth = useProviderOAuth((providerId) => {
-  // auth.success 后：关 QuickSetup（已授权态经 oauthAuthorized prop 回写）；
-  // 列表刷新由 settingsStore onProviders 广播驱动（broadcastProviderList）
-  void providerId
-  showQuickSetup.value = false
-  selectedTemplate.value = null
-  oauth.envCheck.value = undefined
+const oauth = useProviderOAuth(() => {
+  // auth.success 后：保持 QuickSetup 打开（demo §8.3「回配置面板已授权」）——
+  // 用户完成「保存并启用」→ setProvider 落 models.json（含 authMethod='oauth'）→
+  // broadcastProviderList 触发列表刷新。已授权态经 oauthAuthorized prop 回写。
+  void 0
 })
 
 onMounted(async () => {
