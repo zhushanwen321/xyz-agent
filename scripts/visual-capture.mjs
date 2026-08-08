@@ -150,7 +150,7 @@ async function capturePage({ browser, url, rootSelector, selector, readyTimeout,
 // ---------------------------------------------------------------------------
 // demo target：spawn .tmp/v6 vite → chromium.launch → 截图
 // ---------------------------------------------------------------------------
-async function captureDemo({ page: pageName, port, outDir, url, selector, readyTimeout }) {
+async function captureDemo({ port, url, selector }) {
   const chosenPort = port || DEMO_DEFAULT_PORT
   const targetUrl = url || `http://localhost:${chosenPort}`
   let child
@@ -184,7 +184,7 @@ async function captureDemo({ page: pageName, port, outDir, url, selector, readyT
 // ---------------------------------------------------------------------------
 // devapp target：connectOverCDP 连已运行 dev Electron renderer（不 spawn）
 // ---------------------------------------------------------------------------
-async function captureDevapp({ page: pageName, cdpUrl, outDir, selector, readyTimeout }) {
+async function captureDevapp({ cdpUrl, selector }) {
   const endpoint = cdpUrl || 'http://localhost:9222'
   let browser
   try {
@@ -223,7 +223,7 @@ async function captureDevapp({ page: pageName, cdpUrl, outDir, selector, readyTi
 // ---------------------------------------------------------------------------
 // mock target：spawn renderer vite + VITE_MOCK=true（复用 W1 token-consume-check 范式）
 // ---------------------------------------------------------------------------
-async function captureMock({ page: pageName, port, outDir, url, selector, readyTimeout }) {
+async function captureMock({ port, url, selector }) {
   const chosenPort = port || (await findFreePort(MOCK_DEFAULT_PORT_START))
   const targetUrl = url || `http://localhost:${chosenPort}`
   let child

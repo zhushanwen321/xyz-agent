@@ -50,6 +50,6 @@ vi.mock('vue-i18n', () => ({
       return result
     },
     locale: { value: 'zh-CN' },
-    tExists: (k: string) => true,
+    tExists: (_k: string) => true,
   }),
 }))

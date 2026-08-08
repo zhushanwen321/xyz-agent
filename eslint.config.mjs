@@ -10,12 +10,16 @@ export default [
       'tools/*.cjs',
       'vendor/**',
       '.pi/**',
+      // 临时/历史 demo 目录（.tmp 已 gitignore，v6 是重构前的遗留 demo）
+      '.tmp/**',
       // 构建产物（目录重构后：apps/electron + packages/*）
       'apps/electron/dist/**',
       'apps/electron/renderer/dist/**',
+      'apps/electron/renderer/dist-new/**',
       'packages/*/dist/**',
       'apps/electron/preload/preload.js',
       'apps/electron/resources/pi/**',
+      'apps/electron/resources/extensions/**',
       // .xyz-harness 是设计文档/骨架代码（spec/plan/code-skeleton），非项目源码，不参与 lint
       '.xyz-harness/**',
       // playwright 测试产物（trace/报告是工具生成的压缩 JS，非项目源码，已被 .gitignore）

@@ -34,8 +34,7 @@ export interface AuthServiceDeps {
   clearApiKey(providerId: string): void
 }
 
-const AUTH_EVENT_TYPES = ['auth.deviceCode', 'auth.authUrl', 'auth.success', 'auth.error'] as const
-type AuthEventType = (typeof AUTH_EVENT_TYPES)[number]
+type AuthEventType = 'auth.deviceCode' | 'auth.authUrl' | 'auth.success' | 'auth.error'
 
 export class AuthService implements IAuthService {
   /** 进行中的 flow：providerId → abort controller（并发多 provider 互不干扰） */

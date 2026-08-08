@@ -111,7 +111,7 @@ async function killProcess(child: ChildProcess): Promise<void> {
  * worker 启动时 spawn vite，所有 visual spec 共享；worker 结束自动 cleanup kill。
  * 失败（vite 未 ready）抛错，visual spec 全部 error（不影响 electron project）。
  */
-export const test = base.extend<{}, { visualBaseURL: string }>({
+export const test = base.extend<Record<never, never>, { visualBaseURL: string }>({
   visualBaseURL: [
     async ({}, use) => {
       const port = await findFreePort()

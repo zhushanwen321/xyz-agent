@@ -97,13 +97,6 @@ async function killProcess(child, graceMs) {
   }
 }
 
-/** hex(#1a1b1f) → rgb(26, 27, 31)，对齐 chromium getComputedStyle 的 rgb 规范化输出 */
-function hexToRgb(hex) {
-  const m = /^#([0-9a-fA-F]{6})$/.exec((hex || '').trim())
-  if (!m) return null
-  const n = parseInt(m[1], 16)
-  return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`
-}
 
 // ---------------------------------------------------------------------------
 // 主流程

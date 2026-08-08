@@ -24,9 +24,7 @@ export const MOBILE_MOUNT_POINTS: readonly MobileMountPointName[] = [
 // MountPointHost —— 挂载点宿主占位类型。
 // TODO(P4): 替换为 core ExtensionHost 的 MountPointHost 类型（P4 s2 ExtensionHost
 // core 落地后）。pre-P4 用空接口占位，注册时传 {} 即可。
-export interface MountPointHost {
-  // 占位：P4 落地后填充实际 host 协议（render container / view list 等）。
-}
+export type MountPointHost = unknown
 
 // 模块级注册表（pre-P4 本地存储）。
 const registry = new Map<MobileMountPointName, MountPointHost>()
