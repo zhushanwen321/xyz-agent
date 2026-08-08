@@ -14,7 +14,7 @@
 import * as fsSync from "node:fs";
 import { access, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join,resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 
 // ── 类型 ─────────────────────────────────────────────────────
 
@@ -32,7 +32,7 @@ export interface DiscoveredResource {
 }
 
 /** 资源来源层级 */
-export type ResourceSource = "user-pi" | "user-agents" | "npm" | "npm-dev" | "project-pi" | "project-pi-tmp" | "project-agents";
+export type ResourceSource = "user-pi" | "user-agents" | "npm" | "npm-dev" | "user-extension-paths" | "project-pi" | "project-pi-tmp" | "project-agents";
 
 /** 扫描配置 */
 export interface ScanConfig {
@@ -289,6 +289,24 @@ interface ScanTarget {
 }
 
 /**
+ * 读取 XYZ_EXTENSION_PATHS 环境变量（dev-link 写入的扩展源码路径）。
+ *
+ * delimiter 分隔（POSIX ':' / Windows ';'），trim + 过滤空 + ~ 展开。
+ * 每个路径是一个 extension 包目录（dev-link 指向源码），走 processPackage 发现其
+ * agents/workflows。解析逻辑与 extension-service.getUserExtensionPaths() 一致。
+ */
+function readExtensionPaths(): string[] {
+  const raw = process.env.XYZ_EXTENSION_PATHS;
+  if (!raw) return [];
+  const paths = raw
+    .split(delimiter)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .map((p) => (p.startsWith("~") ? join(homedir(), p.slice(1)) : p));
+  return [...new Set(paths)];
+}
+
+/**
  * 构建所有扫描源（按优先级低→高排列）。
  *
  * agent 和 workflow 共享相同的前缀体系，末级目录名由 kind 决定。
@@ -306,6 +324,10 @@ function buildScanTargets(config: ScanConfig): ScanTarget[] {
     { dir: join(agentDir, "npm", "node_modules"), source: "npm", enabled: true },
     // 4. npm dev symlink: agentDir/extensions/*/<pkg>/
     { dir: join(agentDir, "extensions"), source: "npm-dev", enabled: true },
+    // user extension paths (XYZ_EXTENSION_PATHS, dev-link): each path is a package dir,
+    // 走 processPackage 读 pi.{kind} manifest 或扫 {kind}/ 目录。优先级高于 npm/npm-dev
+    // （dev-link 是开发版 override），低于 project（项目正式资源优先）。
+    ...readExtensionPaths().map((dir) => ({ dir, source: "user-extension-paths" as const, enabled: true })),
     // 5. project .pi/{kind}/
     { dir: join(workspaceRoot, ".pi", kind), source: "project-pi", enabled: true },
   ];
@@ -352,6 +374,11 @@ export async function discoverResources(config: ScanConfig): Promise<DiscoveredR
       // npm/dev 目录：迭代包，走 manifest 或约定目录
       const resources = await scanNpmDir(target.dir, config.kind);
       // 覆盖 source 标签（scanNpmDir 内部统一标 "npm"，这里修正为实际源）
+      const tagged = resources.map((r) => ({ ...r, source: target.source }));
+      allBySource.push({ source: target.source, resources: tagged });
+    } else if (target.source === "user-extension-paths") {
+      // XYZ_EXTENSION_PATHS（dev-link）：每个 dir 是单个包目录，走 processPackage
+      const resources = await processPackage(target.dir, config.kind);
       const tagged = resources.map((r) => ({ ...r, source: target.source }));
       allBySource.push({ source: target.source, resources: tagged });
     } else {
@@ -516,6 +543,10 @@ export function discoverResourcesSync(config: ScanConfig): DiscoveredResource[] 
   for (const target of targets) {
     if (target.source === "npm" || target.source === "npm-dev") {
       const resources = scanNpmDirSync(target.dir, config.kind);
+      all.push(...resources.map((r) => ({ ...r, source: target.source })));
+    } else if (target.source === "user-extension-paths") {
+      // XYZ_EXTENSION_PATHS（dev-link）：每个 dir 是单个包目录
+      const resources = processPackageSync(target.dir, config.kind);
       all.push(...resources.map((r) => ({ ...r, source: target.source })));
     } else {
       const files = scanDirectorySync(target.dir, config.kind);
