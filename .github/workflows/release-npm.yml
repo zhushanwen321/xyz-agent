@@ -3,15 +3,16 @@ name: Release NPM
 # npm 包发布（与 Electron 打包 release.yml 解耦）
 #
 # 触发方式：
-#   1. push tag `npm-v*` — 正式发布
+#   1. push tag `npm-*` — 正式发布（main 稳定发布线，tag 格式 `npm-<slug>-<date>-<time>`，见 docs/...）
 #   2. workflow_dispatch — 手动触发
 #
-# 注意：Electron 打包走 `v*` tag 前缀（release.yml），npm 走 `npm-v*`，两套互不干扰。
+# 注意：Electron 打包走 `v*` tag 前缀（release.yml），npm 走 `npm-*`，两套互不干扰。
+# dev-npm 预发布走另一条线（release-npm-dev.yml + changeset pre），与本 workflow 独立。
 
 on:
   push:
     tags:
-      - 'npm-v*'
+      - 'npm-*'
   workflow_dispatch:
 
 concurrency:
@@ -26,7 +27,7 @@ jobs:
     name: Publish to npm
     runs-on: ubuntu-latest
     # 只在 tag 推送或手动触发时运行（不在 PR 中运行）
-    if: startsWith(github.ref, 'refs/tags/npm-v') || github.event_name == 'workflow_dispatch'
+    if: startsWith(github.ref, 'refs/tags/npm-') || github.event_name == 'workflow_dispatch'
 
     steps:
       - uses: actions/checkout@v4
@@ -42,6 +43,20 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - run: pnpm install --frozen-lockfile
+
+      # 防御：main 稳定发布线绝不能在 prerelease 模式下跑。
+      # changeset publish() 首行 readPreState() 读 .changeset/pre.json，存在则把整批发到 dev dist-tag。
+      # 若 npm-prerelease.sh 还原失败（阶段 6 未执行）致 pre.json 残留 main，这里必须拦住。
+      # 与 release-npm-dev.yml 的“检查 pre.json 存在才发”对称（那条线检查存在，本线检查不存在）。
+      - name: Verify NOT in prerelease mode
+        run: |
+          if [ -f ".changeset/pre.json" ]; then
+            echo "::error::.changeset/pre.json 存在 — main 稳定发布不能在 prerelease 模式下运行。"
+            echo "这通常是 npm-prerelease.sh 还原失败（阶段 6 未执行）导致 pre.json 残留 main。"
+            echo "本地执行 \`pnpm changeset pre exit\` 并提交删除，或删掉 .changeset/pre.json 后重新触发。"
+            exit 1
+          fi
+          echo "No .changeset/pre.json — stable release mode confirmed."
 
       - name: Build extension-protocol
         run: pnpm --filter @xyz-agent/extension-protocol build
