@@ -113,4 +113,14 @@ describe("U1: workflow tool prompt mentions built-in workflows", () => {
     expect(TOOL_WORKFLOW_SCRIPT_SRC).toContain("CRITICAL ANTI-PATTERN");
     expect(TOOL_WORKFLOW_SCRIPT_SRC).toContain("NEVER generate");
   });
+
+  it("promptGuidelines + parameter description 标注 budget 默认不限制（B/C：除非用户要求否则别设）", () => {
+    // budget 是 run 级参数，运行时 maxTokens===undefined → 不限制（budget.ts isExceeded 守卫）。
+    // 但 call shape 示例展示了 tokens/time 字段，LLM 会误以为每次都该填。
+    // promptGuidelines 必须明确 "Do NOT set ... unless user explicitly requests",
+    // parameter description 同步标 "omit = unlimited"，双重约束压过示例的反引导。
+    const guidelines = promptGuidelinesText(TOOL_WORKFLOW_SRC);
+    expect(guidelines).toContain("Do NOT set tokens/time unless the user explicitly requests");
+    expect(TOOL_WORKFLOW_SRC).toContain("omit = unlimited (default)");
+  });
 });

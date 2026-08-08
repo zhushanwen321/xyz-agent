@@ -88,8 +88,8 @@ const WorkflowParams = Type.Object({
       description: "Arguments passed to workflow as key-value pairs (run action)",
     }),
   ),
-  tokens: Type.Optional(Type.Number({ description: "Maximum token budget (run action)" })),
-  time: Type.Optional(Type.Number({ description: "Maximum time budget in ms (run action)" })),
+  tokens: Type.Optional(Type.Number({ description: "Max token budget — ONLY set when user explicitly requests a limit; omit = unlimited (default)" })),
+  time: Type.Optional(Type.Number({ description: "Max time budget in ms — ONLY set when user explicitly requests a limit; omit = unlimited (default)" })),
   error: Type.Optional(
     Type.String({ description: "Error/reason message (optional, used with abort)" }),
   ),
@@ -336,6 +336,7 @@ export function registerWorkflowTool(
       "- run: {\"action\":\"run\",\"name\":\"<script>\",\"args\":{...},\"tokens\":N,\"time\":N}. " +
       "- status: {\"action\":\"status\"}. " +
       "- pause/resume/abort: {\"action\":\"pause\",\"runId\":\"<id>\"} (abort optional: ,\"error\":\"<reason>\"}).",
+      "Budget: Do NOT set tokens/time unless the user explicitly requests a limit. Built-in workflows run unlimited by default.",
       "Anti-patterns: Flattening args sub-fields (task/items/...) to the top level — they belong inside args. Calling {\"action\":\"run\"} without name.",
       "CRITICAL: For orchestration patterns, ALWAYS use action:run with an existing built-in " +
       "name — NEVER use workflow-script action:generate to recreate patterns already covered " +
