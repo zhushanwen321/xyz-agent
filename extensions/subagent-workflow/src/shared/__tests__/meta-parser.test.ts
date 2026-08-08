@@ -1,8 +1,11 @@
 /**
- * meta-parser 测试（v5 §11.1 / TC1-TC10 + 边界）
+ * meta-parser 测试（v5 §11.1 / TC1-TC10 + 边界 + exec-review 回归）
  *
  * [P-yaml] 探针由 TC5/TC10 承载：验证 eemeli/yaml 真实抛错对象有 linePos 字段且结构为
  * {line,col}（取自 linePos[0]）。不 mock parseYaml——必须用真实库验证此运行时断言。
+ *
+ * exec-review 回归：major-1（星斜杠截断）+ minor-2（kind 串类）+ minor-3（description 必填）
+ * + minor-4（detail 非字符串）+ minor-5（parameters 非对象）+ minor-6（空块 vs 缺块）+ minor-7（CRLF）。
  *
  * 框架：vitest（项目规范：禁 node:test，import from "vitest"）。
  */
@@ -54,6 +57,7 @@ model: claude-3.5
 
 const MALFORMED_INDENT = `/* @pi-meta
 name: x
+description: bad
   description: bad indent
 phases: [a]
 */`;
@@ -81,6 +85,7 @@ const NO_META_BLOCK = `const agent = require("./agent");
 `;
 
 const EMPTY_PI_META = `/* @pi-meta
+
 */
 const x = 1;
 `;
@@ -97,12 +102,13 @@ describe("parseResourceMeta (discovery, fail-safe null)", () => {
   it("TC1: 合法 workflow @pi-meta 返 WorkflowMeta", () => {
     const meta = parseResourceMeta(VALID_WORKFLOW, "workflow");
     expect(meta).not.toBeNull();
-    expect((meta as WorkflowMeta).kind).toBe("workflow");
-    expect((meta as WorkflowMeta).name).toBe("chain");
-    expect((meta as WorkflowMeta).phases).toEqual(["analyze", "transform", "synthesize"]);
-    expect((meta as WorkflowMeta).when).toBe("用户要顺序编排");
-    expect((meta as WorkflowMeta).parameters).toBeDefined();
-    expect((meta as WorkflowMeta).usage).toContain("task 必填");
+    const wf = meta as WorkflowMeta;
+    expect(wf.kind).toBe("workflow");
+    expect(wf.name).toBe("chain");
+    expect(wf.phases).toEqual(["analyze", "transform", "synthesize"]);
+    expect(wf.when).toBe("用户要顺序编排");
+    expect(wf.parameters).toBeDefined();
+    expect(wf.usage).toContain("task 必填");
   });
 
   it("TC2: 合法 agent frontmatter 返 AgentMeta", () => {
@@ -128,9 +134,30 @@ describe("parseResourceMeta (discovery, fail-safe null)", () => {
     expect(parseResourceMeta(NO_META_BLOCK, "workflow")).toBeNull();
   });
 
-  it("TC8: typecheck kind 不匹配（workflow 块用 agent kind 解析）返 null", () => {
-    // VALID_WORKFLOW 是 workflow meta（有 phases），用 'agent' kind 解析应失败（agent 无 phases）
-    expect(parseResourceMeta(VALID_WORKFLOW, "agent")).toBeNull();
+  it("TC8（修正）: workflow 字段（phases）当 agent kind 解析，typecheckMeta 串类 reject [minor-2]", () => {
+    // 用 frontmatter 包裹 workflow 字段，确保 FRONTMATTER_RE 匹配、typecheckMeta 真正被触达
+    const content = `---
+name: chainlike
+description: has phases but parsed as agent
+phases: [analyze, transform]
+parameters:
+  type: object
+---
+# agent body`;
+    expect(parseResourceMeta(content, "agent")).toBeNull();
+  });
+
+  it("TC8b: agent 字段（examples）当 workflow kind 解析，串类 reject [minor-2]", () => {
+    const content = `/* @pi-meta
+name: x
+description: has examples but workflow
+phases: [A]
+examples:
+  - match: m
+    action: a
+    positive: true
+*/`;
+    expect(parseResourceMeta(content, "workflow")).toBeNull();
   });
 
   it("TC9: legacy const meta（无 @pi-meta 块）返 null（无 adapter）[D1]", () => {
@@ -149,6 +176,80 @@ describe("parseResourceMeta (discovery, fail-safe null)", () => {
     const meta = parseResourceMeta(EMPTY_PHASES, "workflow");
     expect(meta).not.toBeNull();
     expect((meta as WorkflowMeta).phases).toEqual([]);
+  });
+
+  // ── exec-review 回归 ──────────────────────────────────────
+
+  it("major-1: usage 块标量含 */ 不再截断，parameters 不丢失", () => {
+    const content = `/* @pi-meta
+name: x
+description: d
+phases: [A]
+when: present
+usage: |
+  see */ for details
+parameters:
+  type: object
+  properties:
+    task: { type: string }
+*/`;
+    const meta = parseResourceMeta(content, "workflow");
+    expect(meta).not.toBeNull();
+    const wf = meta as WorkflowMeta;
+    expect(wf.parameters).toBeDefined(); // major-1：此前被 */ 截断静默丢失
+    expect(wf.when).toBe("present");     // 此前同样丢失
+    expect(wf.usage).toContain("see */ for details");
+  });
+
+  it("major-1b: patternProperties 正则含 * 后接 / 不再误截断", () => {
+    const content = `/* @pi-meta
+name: re
+description: regex
+phases: [A]
+parameters:
+  type: object
+  patternProperties:
+    "^\\\\d*/\\\\w+$": { type: string }
+*/`;
+    const meta = parseResourceMeta(content, "workflow");
+    expect(meta).not.toBeNull();
+    expect((meta as WorkflowMeta).parameters).toBeDefined();
+  });
+
+  it("minor-3: 缺 description 返 null（必填，不再静默空串）", () => {
+    const content = `/* @pi-meta
+name: nodesc
+phases: [A]
+*/`;
+    expect(parseResourceMeta(content, "workflow")).toBeNull();
+  });
+
+  it("minor-4: phase detail 非字符串返 null（不再静默丢弃）", () => {
+    const content = `/* @pi-meta
+name: x
+description: d
+phases:
+  - title: A
+    detail: 123
+*/`;
+    expect(parseResourceMeta(content, "workflow")).toBeNull();
+  });
+
+  it("minor-5: parameters 是数组返 null（不再静默当 undefined）", () => {
+    const content = `/* @pi-meta
+name: x
+description: d
+phases: [A]
+parameters: [a, b]
+*/`;
+    expect(parseResourceMeta(content, "workflow")).toBeNull();
+  });
+
+  it("minor-7: CRLF 行尾 frontmatter 正确提取", () => {
+    const content = "---\r\nname: a\r\ndescription: d\r\n---\r\n# body";
+    const meta = parseResourceMeta(content, "agent");
+    expect(meta).not.toBeNull();
+    expect((meta as AgentMeta).name).toBe("a");
   });
 });
 
@@ -179,7 +280,7 @@ describe("parseResourceMetaDetailed (generate, linePos)", () => {
     if (!r.ok) expect(r.linePos).toBeUndefined();
   });
 
-  it("TC10: 单反斜杠正则返 {ok:false, error 含 Invalid escape, linePos} [P-yaml]", () => {
+  it("TC10: 单反斜杠正则返 {ok:false, error 含 escape, linePos} [P-yaml]", () => {
     const r = parseResourceMetaDetailed(REGEX_SINGLE_BACKSLASH, "workflow");
     expect(r.ok).toBe(false);
     if (!r.ok) {
@@ -189,8 +290,15 @@ describe("parseResourceMetaDetailed (generate, linePos)", () => {
     }
   });
 
-  it("边界：空 @pi-meta 块返 {ok:false}（parseYaml 空串→ null→ typecheck 失败）", () => {
-    const r = parseResourceMetaDetailed(EMPTY_PI_META, "workflow");
-    expect(r.ok).toBe(false);
+  it("minor-6: 空块与缺块错误消息区分（空块不报「未找到」）", () => {
+    const empty = parseResourceMetaDetailed(EMPTY_PI_META, "workflow");
+    const missing = parseResourceMetaDetailed(NO_META_BLOCK, "workflow");
+    expect(empty.ok).toBe(false);
+    expect(missing.ok).toBe(false);
+    if (!empty.ok && !missing.ok) {
+      // 缺块报「未找到 meta 块」；空块报类型校验失败（块在但内容空/非法）
+      expect(missing.error).toContain("未找到");
+      expect(empty.error).not.toContain("未找到");
+    }
   });
 });

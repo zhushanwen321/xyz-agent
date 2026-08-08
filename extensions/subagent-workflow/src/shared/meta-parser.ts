@@ -16,6 +16,14 @@
  *
  * [P-yaml] 探针已验证：eemeli/yaml 2.9.0 的 YAMLParseError.linePos = [{line,col},{line,col}]。
  *
+ * exec-review 修复（major-1 + minor-2..8）：
+ * - 正则闭合符（星斜杠）必须独占行首，防止 YAML 正文里中途出现的星斜杠（如 usage 块标量
+ *   或 patternProperties 正则）截断块致 parameters 等字段静默丢失（§2.3 failure-A 同形态）。
+ * - typecheckMeta 严格化：kind 专属字段不可串类（workflow 不许 examples、agent 不许 phases），
+ *   description 必填，phase detail 非字符串/parameters 非对象均 reject（消除「静默丢弃非法字段」）。
+ * - 区分「未找到块」(undefined) 与「块为空」("")，IF2 给可操作错误。
+ * - FRONTMATTER_RE 兼容 CRLF。
+ *
  * 层归属：shared（L2 统一解析器）。
  */
 
@@ -31,13 +39,21 @@ import type {
 
 // ── 格式提取正则 ──────────────────────────────────────────────
 
-/** workflow @pi-meta 块注释：单星块注释（非 JSDoc `/**`），内容为 YAML。 */
-const WORKFLOW_META_RE = /\/\*\s*@pi-meta\s*\n([\s\S]*?)\*\//;
+/**
+ * workflow @pi-meta 块注释：单星块注释（非 JSDoc `/**`），内容为 YAML。
+ * 闭合符（星斜杠）必须独占行首、列 0——防止 YAML 正文里中途出现的星斜杠（如 usage 块标量
+ * 内的 see-星斜杠-for、或 patternProperties 正则含星后接斜杠）截断块致后续字段静默丢失（major-1）。
+ * 格式规范要求闭合符在列 0（v5 §7），故列 0 闭合不损失合法用例。
+ */
+const WORKFLOW_META_RE = /\/\*\s*@pi-meta\s*\n([\s\S]*?)\n\*\//;
 
-/** agent frontmatter：标准 YAML frontmatter。 */
-const FRONTMATTER_RE = /---\n([\s\S]*?)\n---/;
+/** agent frontmatter：标准 YAML frontmatter，兼容 CRLF（minor-7）。 */
+const FRONTMATTER_RE = /---\r?\n([\s\S]*?)\r?\n---/;
 
-/** 按资源种类取 meta 块文本（YAML 体）。取不到返 undefined。 */
+/**
+ * 按资源种类取 meta 块文本（YAML 体）。
+ * @returns 未匹配返 undefined；匹配返字符串（可能为空 ""）——调用方据 undefined 区分「未找到」。
+ */
 function extractBlock(content: string, kind: ResourceKind): string | undefined {
   const re = kind === "workflow" ? WORKFLOW_META_RE : FRONTMATTER_RE;
   return re.exec(content)?.[1];
@@ -51,52 +67,53 @@ function isNonEmptyString(v: unknown): v is string {
 function isString(v: unknown): v is string {
   return typeof v === "string";
 }
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
 
-/** 把 parseYaml 结果（unknown）校验为类型化 ResourceMeta，失败返 null（语义非法，非语法错）。 */
+/**
+ * 把 parseYaml 结果（unknown）校验为类型化 ResourceMeta，失败返 null（语义非法，非语法错）。
+ * 严格化（exec-review minor-2..5）：kind 专属字段不可串类、description 必填、
+ * phase detail 非字符串/parameters 非对象均 reject（消除「静默丢弃非法字段」）。
+ */
 function typecheckMeta(raw: unknown, kind: ResourceKind): ResourceMeta | null {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
-  const o = raw as Record<string, unknown>;
+  if (!isPlainObject(raw)) return null;
+  const o = raw;
 
-  // 公共必填：name 非空字符串
+  // 公共必填：name 非空字符串、description 必须是字符串（minor-3：缺 description reject）
   if (!isNonEmptyString(o.name)) return null;
-  // description 字符串（缺省允许空串，路由降级）
-  const description = isString(o.description) ? o.description : "";
-  // 可选公共字段
+  if (!isString(o.description)) return null;
   const when = isString(o.when) ? o.when : undefined;
   const notFor = isString(o.notFor) ? o.notFor : undefined;
 
   if (kind === "workflow") {
-    // phases 必填数组，元素为 string | {title:string}
+    // minor-2：agent 专属字段不可出现在 workflow（串类 reject）
+    if (o.examples !== undefined || o.tools !== undefined || o.model !== undefined) return null;
+    // phases 必填数组，元素为 string | {title:string, detail?:string}
     if (!Array.isArray(o.phases)) return null;
     const phases: WorkflowMeta["phases"] = [];
     for (const p of o.phases) {
       if (isString(p)) {
         phases.push(p);
-      } else if (
-        typeof p === "object" && p !== null && isNonEmptyString((p as Record<string, unknown>).title)
-      ) {
-        const detail = (p as Record<string, unknown>).detail;
-        phases.push({
-          title: (p as Record<string, unknown>).title as string,
-          ...(isString(detail) ? { detail } : {}),
-        });
+      } else if (isPlainObject(p) && isNonEmptyString(p.title)) {
+        // minor-4：detail 存在但非字符串 → reject（不再静默丢弃）
+        if (p.detail !== undefined && !isString(p.detail)) return null;
+        phases.push(isString(p.detail) ? { title: p.title, detail: p.detail } : { title: p.title });
       } else {
         return null;
       }
     }
-    // parameters 可选对象（JSON Schema）；usage 可选字符串
-    const parameters =
-      typeof o.parameters === "object" && o.parameters !== null && !Array.isArray(o.parameters)
-        ? (o.parameters as Record<string, unknown>)
-        : undefined;
+    // minor-5：parameters 存在但非 plain object → reject（不再静默当 undefined）
+    const parameters = o.parameters;
+    if (parameters !== undefined && !isPlainObject(parameters)) return null;
     const usage = isString(o.usage) ? o.usage : undefined;
 
     const meta: WorkflowMeta = {
       kind: "workflow",
       name: o.name,
-      description,
+      description: o.description,
       phases,
-      ...(parameters !== undefined ? { parameters } : {}),
+      ...(parameters !== undefined ? { parameters: parameters as Record<string, unknown> } : {}),
       ...(usage !== undefined ? { usage } : {}),
       ...(when !== undefined ? { when } : {}),
       ...(notFor !== undefined ? { notFor } : {}),
@@ -105,29 +122,26 @@ function typecheckMeta(raw: unknown, kind: ResourceKind): ResourceMeta | null {
   }
 
   // kind === "agent"
+  // minor-2：workflow 专属字段不可出现在 agent（串类 reject）
+  if (o.phases !== undefined || o.parameters !== undefined || o.usage !== undefined) return null;
   let examples: RoutingExample[] | undefined;
   if (o.examples !== undefined) {
     if (!Array.isArray(o.examples)) return null;
     const exs: RoutingExample[] = [];
     for (const e of o.examples) {
       if (
-        typeof e === "object" && e !== null &&
-        isString((e as Record<string, unknown>).match) &&
-        isString((e as Record<string, unknown>).action) &&
-        typeof (e as Record<string, unknown>).positive === "boolean"
+        isPlainObject(e) &&
+        isString(e.match) &&
+        isString(e.action) &&
+        typeof e.positive === "boolean"
       ) {
-        exs.push({
-          match: (e as Record<string, unknown>).match as string,
-          action: (e as Record<string, unknown>).action as string,
-          positive: (e as Record<string, unknown>).positive as boolean,
-        });
+        exs.push({ match: e.match, action: e.action, positive: e.positive });
       } else {
         return null;
       }
     }
     examples = exs;
   }
-  // tools 可选字符串数组；model 可选字符串
   let tools: string[] | undefined;
   if (o.tools !== undefined) {
     if (!Array.isArray(o.tools) || !o.tools.every(isString)) return null;
@@ -138,7 +152,7 @@ function typecheckMeta(raw: unknown, kind: ResourceKind): ResourceMeta | null {
   const meta: AgentMeta = {
     kind: "agent",
     name: o.name,
-    description,
+    description: o.description,
     ...(examples !== undefined ? { examples } : {}),
     ...(tools !== undefined ? { tools } : {}),
     ...(model !== undefined ? { model } : {}),
@@ -160,7 +174,7 @@ export function parseResourceMeta(
   kind: ResourceKind,
 ): ResourceMeta | null {
   const block = extractBlock(content, kind);
-  if (!block) return null;
+  if (block === undefined) return null;
   try {
     const raw = parseYaml(block);
     return typecheckMeta(raw, kind);
@@ -181,13 +195,18 @@ export type DetailedResult =
  * discovery 不用此（保持 fail-safe null）。
  *
  * [P-yaml] 探针实测：e.linePos 是 [{line,col},{line,col}]（start+end），取 [0] 作起点。
+ *
+ * minor-6：区分「未找到块」(undefined) 与「块为空/非法」("")，给可操作错误。
+ * minor-8：typecheckMeta 包进 try（与 IF1 对称，防御 typecheck 未来抛错）。
  */
 export function parseResourceMetaDetailed(
   content: string,
   kind: ResourceKind,
 ): DetailedResult {
   const block = extractBlock(content, kind);
-  if (!block) return { ok: false, error: "未找到 meta 块（缺少 /* @pi-meta */ 或 frontmatter）" };
+  if (block === undefined) {
+    return { ok: false, error: "未找到 meta 块（缺少 /* @pi-meta */ 或 frontmatter，或闭合 */ 不在行首）" };
+  }
   let raw: unknown;
   try {
     raw = parseYaml(block);
@@ -203,7 +222,13 @@ export function parseResourceMetaDetailed(
       ...(linePos !== undefined ? { linePos } : {}),
     };
   }
-  const meta = typecheckMeta(raw, kind);
-  if (!meta) return { ok: false, error: "meta 类型校验失败（缺 name、phases 非法或 kind 字段不匹配）" };
-  return { ok: true, meta };
+  try {
+    const meta = typecheckMeta(raw, kind);
+    if (!meta) {
+      return { ok: false, error: "meta 类型校验失败（缺 name/description、phases 非法、kind 字段串类或可选字段类型错）" };
+    }
+    return { ok: true, meta };
+  } catch (e) {
+    return { ok: false, error: `meta 类型校验异常: ${e instanceof Error ? e.message : String(e)}` };
+  }
 }
