@@ -37,11 +37,13 @@ export function createGoalState(
 	objective: string,
 	budgetOverrides?: Partial<BudgetConfig>,
 	slug?: string,
+	successCriteria?: string,
 ): GoalRuntimeState {
 	const now = Date.now();
 	return {
 		goalId: crypto.randomUUID(),
 		objective,
+		successCriteria,
 		slug,
 		status: "active",
 		tokensUsed: 0,

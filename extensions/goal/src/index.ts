@@ -173,9 +173,10 @@ export default function goalExtension(pi: ExtensionAPI) {
 		budget: GoalInitBudget | undefined,
 		ctx: ExtensionContext,
 		slug?: string,
+		successCriteria?: string,
 	): boolean => {
 		if (!ctx) return false;
-		return createGoal(session, objective, budget ?? {}, buildPorts(pi, ctx), true, slug);
+		return createGoal(session, objective, budget ?? {}, buildPorts(pi, ctx), true, slug, successCriteria);
 	};
 }
 
@@ -212,4 +213,5 @@ export type GoalInitFn = (
 	budget: GoalInitBudget | undefined,
 	ctx: ExtensionContext,
 	slug?: string,
+	successCriteria?: string,
 ) => boolean;

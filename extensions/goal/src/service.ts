@@ -135,15 +135,16 @@ export function persistAndUpdate(
 
 /**
  * 唯一创建入口。两个调用源都走它：
- * - goal_control create（toolcall，AI 提供 slug + objective）
+ * - goal_control create（toolcall，AI 提供 slug + objective + successCriteria）
  * - __goalInit（index.ts，isExternalInit=true）
  *
  * 注：/goal <objective> 命令路径已改为提示词触发器——不直接调本函数，
- * 而是 sendUserMessage 让 AI 调 goal_control create（slug 由 AI 生成）。
+ * 而是 sendUserMessage 让 AI 调 goal_control create（slug + successCriteria 由 AI 生成）。
  *
  * isExternalInit=true 时不触发 sendUserMessage（__goalInit 不触发 AI）。
  *
  * @param slug AI 生成的短标识（optional，仅 widget 标题 + history 用）
+ * @param successCriteria 成功标准（optional，由 AI 推导或外部传入；注入 prompt 指导完成验证）
  * @returns true 如果创建成功，false 如果已有 active goal（拒绝创建）
  */
 export function createGoal(
@@ -153,6 +154,7 @@ export function createGoal(
 	ports: ServicePorts,
 	isExternalInit: boolean,
 	slug?: string,
+	successCriteria?: string,
 ): boolean {
 	// 已有 active goal → 拒绝
 	if (session.state && isActiveStatus(session.state.status)) {
@@ -160,7 +162,7 @@ export function createGoal(
 	}
 
 	void isExternalInit; // 保留参数位以备 future use（外部 init 的差异化行为）
-	session.state = createGoalState(objective, budget, slug);
+	session.state = createGoalState(objective, budget, slug, successCriteria);
 
 	persistState(session, ports);
 	return true;

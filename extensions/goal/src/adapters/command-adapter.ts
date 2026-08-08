@@ -82,6 +82,7 @@ function handleStatus(session: GoalSession, ctx: ExtensionContext): void {
 	const lines: Array<string | null> = [
 		state.slug ? `Slug: ${state.slug}` : null,
 		`Objective: ${state.objective}`,
+		state.successCriteria ? `Success criteria: ${state.successCriteria}` : null,
 		`Status: ${state.status}`,
 		`Turn: ${state.currentTurnIndex}`,
 		`Time elapsed: ${timeMins}m${timeSecs}s`,
@@ -285,6 +286,8 @@ function handleUpdate(
 	state.timeWarning90Sent = false;
 	// GAP-6: update 是重塑，旧 slug 已不匹配新 objective → 置空（widget fallback objective 截断）
 	state.slug = undefined;
+	// update 重塑后旧 successCriteria 也不再匹配新 objective → 置空（让 AI 后续需要时重新定义）
+	state.successCriteria = undefined;
 	// FR-6.5: 持久化重塑后的状态（persistState 按当前 status tick 累加）+ FR-6.1 widget 刷新
 	const updatePorts = buildPorts(pi, ctx);
 	persistState(session, updatePorts);
@@ -350,11 +353,12 @@ function handleSet(
 	const budgetLine = budgetHints.length > 0 ? `\nBudget: ${budgetHints.join(", ")}` : "";
 
 	const message =
-		`Start a new goal with the objective below. Call goal_control(action="create") with:\n` +
+		`Start a new goal. Call goal_control(action="create") with:\n` +
 		`- slug: a short kebab-case identifier you generate for this goal\n` +
-		`- objective: the full objective text\n` +
+		`- objective: restate the REAL objective in your own words — what actually needs to be achieved (think about the true intent, don't just echo the text below)\n` +
+		`- successCriteria: concrete, checkable conditions that prove the objective is achieved (e.g. 'tests pass', 'file X exists', 'command Y outputs Z')\n` +
 		(budgetHints.length > 0 ? `- pass through the budget values below as-is\n` : "") +
-		`\nObjective: ${objective.trim()}${budgetLine}`;
+		`\nRaw objective from user: ${objective.trim()}${budgetLine}`;
 
 	ctx.ui.notify(`Requesting goal start: ${objective.trim()}`, "info");
 	// FR-8.12: 触发 AI（followUp）—— AI 消化后调 goal_control create

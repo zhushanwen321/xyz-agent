@@ -178,6 +178,16 @@ export function renderWidgetLines(state: GoalRuntimeState, th: ThemeLike): strin
 	const header = renderStatusLine(state, th);
 	const lines: string[] = [header];
 
+	// successCriteria 摘要行（与 objective 成对展示；截断避免挤占 widget）
+	if (state.successCriteria) {
+		const criteria = toSingleLine(state.successCriteria);
+		const trimmed =
+			criteria.length > OBJECTIVE_DISPLAY_LIMIT
+				? `${criteria.slice(0, OBJECTIVE_TRUNCATE_KEEP)}...`
+				: criteria;
+		lines.push(th.fg("dim", `  ✓ ${trimmed}`));
+	}
+
 	// GAP-8: 精简——移除 Objective 全文行（slug 已作标题；完整 objective 注入 prompt，用户看全文用 /goal status）
 
 	// Token 行：配预算显示 used/budget 进度条；没配显示已消耗绝对值
