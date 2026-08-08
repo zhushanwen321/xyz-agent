@@ -1,6 +1,0 @@
-{
-  "testRunner": {
-    "command": "npx vitest run --dangerouslyIgnoreUnhandledErrors",
-    "cwd": "packages/renderer"
-  }
-}
