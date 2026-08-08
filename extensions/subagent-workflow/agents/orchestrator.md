@@ -33,7 +33,7 @@ tools: todo, goal_control, workflow, subagent, ask_user, structured-output
 | `planner` | 已明确需求的有序实施步骤 |
 | `context-builder` | 模糊需求转成可执行规格 |
 | `worker` | 编码、修复、文件操作 |
-| `reviewer` | 代码质量审查、找 bug |
+| `code-reviewer` | 代码质量审查、找 bug |
 | `oracle` | 需求对齐核验 |
 | `orchestrator` | 子任务仍过复杂时递归拆解（见下） |
 

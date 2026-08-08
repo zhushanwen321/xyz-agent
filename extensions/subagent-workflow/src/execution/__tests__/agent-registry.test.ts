@@ -147,7 +147,7 @@ describe("AgentRegistry.discoverAll", () => {
 // ============================================================
 
 describe("createPackageBuiltinRegistry", () => {
-  it("discovers packaged agents/*.md (worker, reviewer, explorer, etc.)", () => {
+  it("discovers packaged agents/*.md (worker, code-reviewer, explorer, etc.)", () => {
     // [HISTORICAL] S6: 包内 agents/ 此前未被接通——discoverAll 从未调用，
     // 导致 pi install 后包内 agent 定义开箱不可用。
     const builtin = createPackageBuiltinRegistry();
@@ -155,7 +155,7 @@ describe("createPackageBuiltinRegistry", () => {
     // 包内 9 个 agent 必须全部被发现
     expect(names).toEqual(expect.arrayContaining([
       "worker", "general-purpose", "orchestrator",
-      "reviewer", "explorer", "researcher",
+      "code-reviewer", "explorer", "researcher",
       "planner", "oracle", "context-builder",
     ]));
     // 每个 agent 都有 systemPrompt
@@ -173,7 +173,7 @@ describe("createPackageBuiltinRegistry", () => {
     expect(builtin.get("orchestrator")?.tools).toEqual([
       "todo", "goal_control", "workflow", "subagent", "ask_user", "structured-output",
     ]);
-    expect(builtin.get("reviewer")?.tools).toEqual(["read", "bash", "write", "structured-output"]);
+    expect(builtin.get("code-reviewer")?.tools).toEqual(["read", "bash", "write", "structured-output"]);
     expect(builtin.get("planner")?.tools).toEqual(["read", "write", "structured-output"]);
     expect(builtin.get("oracle")?.tools).toEqual(["read", "write", "structured-output"]);
     expect(builtin.get("context-builder")?.tools).toEqual(["read", "write", "structured-output"]);

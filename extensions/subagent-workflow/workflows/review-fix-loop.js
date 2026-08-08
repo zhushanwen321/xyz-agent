@@ -6,9 +6,9 @@
 //
 // 用法：
 //   workflow run review-fix-loop --args targetType=git-diff target=main \
-//     batch1=fallow-scan batch2=reviewer autoCommit=true
+//     batch1=fallow-scan batch2=code-reviewer autoCommit=true
 //   workflow run review-fix-loop --args targetType=file target=/path/to/doc.md \
-//     batch1=reviewer autoCommit=false
+//     batch1=code-reviewer autoCommit=false
 //
 // ⚠️ 唯一带写操作的内置 workflow：fix 阶段会修改文件（autoCommit=true 时 commit）。
 // ⚠️ lintScript 约束（本脚本已遵守）：含 parallel() 入口，禁止 bare IIFE；
@@ -22,7 +22,7 @@
 
 const meta = {
   name: "review-fix-loop",
-  description: "审查-修复循环：多批串行（批内并行 review → aggregate → fix → 重审直到 clean）。必填 targetType（git-diff/file/dir/text）+ target。批次由必填参数 batch1..batchN 控制（无默认，至少传一个；agents 为单批简写；如 batch1=fallow-scan batch2=reviewer），用于前置检查先行的场景。注意：唯一带写操作/commit 副作用的内置 workflow，autoCommit 默认 false；skipCleanAgents 默认 true + recheckAfterFix 默认 false（clean agent 下轮跳过，与字面语义一致）；传 recheckAfterFix=true 启用可选强回归模式（fix 后重派全批，clean agent 走限定 prompt 只审改动文件）。可选 fixAgent/maxFixAttempts/convergeNewIssues/convergeRounds 控制修复 agent 与收敛终止（详见 workflows/README.md）。",
+  description: "审查-修复循环：多批串行（批内并行 review → aggregate → fix → 重审直到 clean）。必填 targetType（git-diff/file/dir/text）+ target。批次由必填参数 batch1..batchN 控制（无默认，至少传一个；agents 为单批简写；如 batch1=fallow-scan batch2=code-reviewer），用于前置检查先行的场景。注意：唯一带写操作/commit 副作用的内置 workflow，autoCommit 默认 false；skipCleanAgents 默认 true + recheckAfterFix 默认 false（clean agent 下轮跳过，与字面语义一致）；传 recheckAfterFix=true 启用可选强回归模式（fix 后重派全批，clean agent 走限定 prompt 只审改动文件）。可选 fixAgent/maxFixAttempts/convergeNewIssues/convergeRounds 控制修复 agent 与收敛终止（详见 workflows/README.md）。",
   phases: ["Review", "Fix"],
 };
 

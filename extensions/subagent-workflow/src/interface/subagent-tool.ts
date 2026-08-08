@@ -86,7 +86,7 @@ const SubagentParams = Type.Object({
     maxLength: SLUG_MAX_LENGTH,
   })),
   agent: Type.Optional(Type.String({
-    description: 'Agent name (system prompt + tools). If omitted, defaults to "general-purpose" — a generic agent that inherits the main agent\'s model and project context. Available: general-purpose (default fallback), worker, researcher, explorer, planner, reviewer, oracle, context-builder, orchestrator. Custom agents configurable.',
+    description: 'Agent name (system prompt + tools). If omitted, defaults to "general-purpose" — a generic agent that inherits the main agent\'s model and project context. Available: general-purpose (default fallback), worker, researcher, explorer, planner, code-reviewer, oracle, context-builder, orchestrator. Custom agents configurable.',
   })),
   model: Type.Optional(Type.String({
     description: 'Model override in "provider/modelId" format. Resolution order (top wins): (1) this param, (2) agent .md frontmatter model, (3) the main agent\'s current model (zero-config default). An explicit model (param or frontmatter) that is missing or unauthorized THROWS — there is no silent fallback to the main model. Omit this param to inherit the main model.',
@@ -172,14 +172,14 @@ export function registerSubagentTool(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "subagent",
     label: "Subagent",
-    promptSnippet: "Delegate to specialized subagents (explorer/worker/reviewer/oracle)",
+    promptSnippet: "Delegate to specialized subagents (explorer/worker/code-reviewer/oracle)",
     description: `Delegate a task to a specialized subagent — when to delegate rather than do it yourself.
 
 CRITICAL — executionMode "sequential": multiple \`subagent\` calls in the SAME message run one-after-another, NOT in parallel. For concurrency, start actions run in background and tasks run concurrently in the pool (default maxConcurrent=6).
 
 ## When to delegate
 
-Delegate when the task needs a distinct role (researcher/worker), context isolation (fork/worktree), or parallelism while you do other work. Delegate FIRST when the task involves any of: reading 3+ files, writing 100+ lines of implementation, parallel research, or specialized review (reviewer/oracle) — doing these yourself floods your context with implementation detail and loses the orchestration view.
+Delegate when the task needs a distinct role (researcher/worker), context isolation (fork/worktree), or parallelism while you do other work. Delegate FIRST when the task involves any of: reading 3+ files, writing 100+ lines of implementation, parallel research, or specialized review (code-reviewer/oracle) — doing these yourself floods your context with implementation detail and loses the orchestration view.
 
 ## Actions
 
