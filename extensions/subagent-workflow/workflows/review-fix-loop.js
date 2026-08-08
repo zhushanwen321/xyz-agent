@@ -34,8 +34,8 @@ function fail(msg) {
 
 // ── 可测纯函数模块 ────────────────────────────────────────────────
 // 参数校验（normalizeBool/normalizeInt/白名单）/批次解析/聚合结果解析/审查指令构建
-// 的纯函数在 review-fix-loop-utils.cjs（与 recursive-split-utils.cjs 同款模式，
-// vitest 单测见 src/__tests__/review-fix-loop-utils.test.ts）。
+// 的纯函数在 review-fix-loop-utils.cjs，
+// vitest 单测见 src/__tests__/review-fix-loop-utils.test.ts。
 // worker 运行时经 workerData.scriptPath 定位自身目录——内置 workflow 在 npm 包内，
 // process.cwd() 是用户项目目录，不能作为锚点；其他引擎无 workerData 时回退 cwd。
 const {
@@ -314,7 +314,7 @@ function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
     schema: reviewerSchema,
     description: def.name,
     timeoutMs: 3_600_000, // 1h（只读审查 + retry 退避余量）
-    // returnMeta: true — 与 recursive-split 脚本的 executeActionAgent 对齐：失败时 resolve
+    // returnMeta: true — 失败时 resolve
     // {value, error}，raw.error 可检测（review- 前缀兜底/结构化终止可达）；成功时
     // value = parsedOutput ?? content，parseResult 作用于 raw.value（MF-1）。
     returnMeta: true,

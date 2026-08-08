@@ -4,6 +4,7 @@
 > 日期:2026-08-06
 > 依据:pi 源码(explorer sa-4bf20c0a / sa-60edc8ef)+ cw 源码(explorer sa-ca0f0a92)
 > 适用:cw 引擎 v2(本项目假设 cw 现状,不依赖 E1-E6)+ recursive-split 重写
+> 注:本设计中编排 skill 原名 recursive-split,后更名为 pi-cw(随 @zhushanwen/pi-cw-tool 发布)。文中 recursive-split 多指编排方案代号或已删除的 workflow 脚本(recursive-split.js),skill 实体即 pi-cw。
 
 ---
 
@@ -217,7 +218,7 @@ agent 不记流程,每 turn 调 cw 拿 guidance 照做。cw guidance 是流程�
 ## 11. 本项目改动清单
 
 - **删除** `.pi/workflows/recursive-split.js` + `recursive-split-utils.cjs` + 3 个测试文件(编排宿主脚本层蒸发)
-- **新增** skill `recursive-split`(教主 agent:cw create epic + 派 epic-agent + 等唤醒)
+- **新增** skill `pi-cw`(教主 agent:cw create epic + 派 epic-agent + 等唤醒)
 - **新增** 6 个 agent 模板:planning-agent / wave-agent(层主) / dev-agent / review-agent / merge-agent(+ 主 agent 用现有)
 - **新增** cw-tool(pi 自定义工具,registerTool):包装 cw 命令,**按 role 限制可调 action**(层主不含审查命令),堵 bash 洞 + 硬保证独立 review。分配给 planning-agent / wave-agent(层主) / dev-agent(execute/test) / review-agent(审查) / 主 agent
 - **cw guidance 增强**:每 action 返回四段(位置/下一步+派发指导/恢复指导/续turn指导),让接收 guidance 的 agent 按派发指导分情况派子(详见 §7)
