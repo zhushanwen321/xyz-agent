@@ -41,6 +41,7 @@ import {
   WorkflowScript,
   type WorkflowSource,
 } from "../models/workflow-script.ts";
+import { parseResourceMeta } from "../../shared/meta-parser.ts";
 import type { WorkflowScriptRegistry } from "../models/workflow-script-registry.ts";
 import { WorkerHostImpl } from "../worker-host.ts";
 
@@ -147,25 +148,12 @@ function makeMockRunner(): AgentRunner & { run: ReturnType<typeof vi.fn> } {
  * 同语义，避免执行用户代码）。失败时回落到 name=文件名 stem 的空 meta。
  */
 function extractMeta(source: string, fallbackName: string): WorkflowMeta {
-  const metaPattern = /(?:export\s+)?const\s+meta\s*=\s*(\{[^]*?\});?\s*$/m;
-  const match = metaPattern.exec(source);
-  if (match) {
-    try {
-      const fn = new Function(`return (${match[1]});`);
-      const obj = fn();
-      if (obj && typeof obj === "object" && typeof obj.name === "string") {
-        return {
-          name: obj.name,
-          description: typeof obj.description === "string" ? obj.description : "",
-          phases: Array.isArray(obj.phases) ? obj.phases : [],
-        };
-      }
-    } catch (e) {
-      // meta 提取失败（非法 JS / regex 不匹配）→ 回落 fallback name，非测试关注点
-      void e;
-    }
-  }
-  return { name: fallbackName, description: "", phases: [] };
+  // m2 exec-review MINOR-1：旧 const meta regex + new Function 随 m2 迁移已失效（恒走空
+  // fallback，不再验证真实 meta 提取），改调 IF1 parseResourceMeta（与
+  // builtin-workflows-structure.test 一致）。失败时回落到 name=文件名 stem 的空 meta。
+  const meta = parseResourceMeta(source, "workflow");
+  if (meta && meta.kind === "workflow") return meta;
+  return { kind: "workflow", name: fallbackName, description: "", phases: [] };
 }
 
 /**

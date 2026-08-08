@@ -153,6 +153,45 @@ describe("discoverWorkflows — 加载合法配置", () => {
     expect(noPhase).toBeDefined();
     expect(noPhase!.phases).toEqual([]);
   });
+
+  it("parameters/usage 整对象透传不丢（m2 exec-review MAJOR-2 回归护栏）", async () => {
+    await writeScript(
+      ws.projectDir,
+      "params.js",
+      [
+        "/* @pi-meta",
+        "name: params",
+        "description: x",
+        "phases: [a]",
+        "parameters:",
+        "  type: object",
+        "  properties:",
+        "    autoCommit: { type: boolean, default: false }",
+        "  required: [autoCommit]",
+        "usage: |",
+        "  ## 使用说明",
+        "  - 示例：workflow run params --args autoCommit=true",
+        "*/",
+        'agent({ prompt: "x" });',
+        "",
+      ].join("\n"),
+    );
+
+    const result = inTemp(await discoverWorkflows({ projectDir: ws.projectDir }));
+    const p = result.find((w) => w.name === "params");
+
+    expect(p).toBeDefined();
+    expect(p!.available).toBe(true);
+    // 若未来有人重引入 {name,description,phases} 解构重映射（m2 消灭的反模式），
+    // 此断言会失败——parameters/usage 是 m3 args-validator 与 m4 meta 消费的依赖。
+    const params = p!.parameters as
+      | { type: string; properties: { autoCommit: { type: string } }; required: string[] }
+      | undefined;
+    expect(params?.type).toBe("object");
+    expect(params?.properties?.autoCommit?.type).toBe("boolean");
+    expect(params?.required).toEqual(["autoCommit"]);
+    expect(p!.usage).toContain("autoCommit=true");
+  });
 });
 
 describe("getWorkflow — 按名查找", () => {

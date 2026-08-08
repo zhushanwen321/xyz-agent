@@ -108,6 +108,11 @@ async function toCachedMeta(
     if (meta && meta.kind === "workflow") {
       return { ...meta, path: filePath, available: true, source: wfSource };
     }
+    // m2 exec-review MINOR-4：文件可读但 meta=null → 旧 const meta 格式或格式错误，
+    // 静默 available=false（D1 无 adapter）。warn 帮助用户定位需迁移到 @pi-meta 的存量 workflow。
+    logger.warn(
+      `[config-loader] ${filePath}: 未解析到 @pi-meta 元数据（旧 const meta 格式需迁移）→ available=false`,
+    );
   } catch (err) {
     // 读失败 → available=false（fail-safe 不抛，与原行为一致）
     logger.debug(`[config-loader] skip unreadable workflow file ${filePath}`, {

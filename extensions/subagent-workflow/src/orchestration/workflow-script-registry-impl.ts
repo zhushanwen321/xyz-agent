@@ -105,6 +105,10 @@ export class WorkflowScriptRegistryImpl implements WorkflowScriptRegistry {
       source: m.source,
       path: m.path,
       sourceCode,
+      // meta: m 整对象透传（m2 决策）：故意不做显式投影——投影会重引入
+      // {name,description,phases} 解构重映射反模式（m2 消灭的丢字段 bug）。
+      // CachedWorkflowMeta 多带的 path/available/source 是良性泄漏（无消费者
+      // 序列化 script.meta）；若未来有消费者，改为组合式 { meta, path, ... } 而非投影。
       meta: m,
       available,
     });

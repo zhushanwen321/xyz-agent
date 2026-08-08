@@ -118,6 +118,14 @@ export function parseAgentFrontmatter(filePath: string, content: string): AgentC
   // 是执行配置（非 AgentMeta 路由字段），仍用 extractYamlField 取。
   const meta = parseResourceMeta(content, "agent");
   const agentMeta = meta?.kind === "agent" ? meta : null;
+  if (!agentMeta && /^model:|^tools:/m.test(yamlBlock)) {
+    // m2 exec-review MINOR-2：IF1 要求 name/description 必填；缺 description 时 agent
+    // 被整体拒绝 → model/tools 路由字段静默失效。显式 warn 替代静默丢配置。
+    logger.warn(
+      `[agent-registry] ${filePath}: agent frontmatter 缺 name/description（IF1 必填），` +
+        "model/tools 路由字段不生效——请补充 description",
+    );
+  }
   const defaultBackgroundRaw = extractYamlField(yamlBlock, "defaultBackground");
 
   return {

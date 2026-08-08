@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { JsonlRunStore } from "../jsonl-run-store.ts";
+import { parseResourceMeta } from "../../shared/meta-parser.ts";
 import { type LauncherDeps, runAndWait } from "../launcher.ts";
 import type { LifecycleDeps } from "../models/ports.ts";
 import type { AgentRunner } from "../models/ports.ts";
@@ -197,24 +198,11 @@ function makeScenarioRunner(scenario: Scenario) {
 // ── registry（与 workflows-e2e.test.ts 同模式：读文件构造 WorkflowScript） ──
 
 function extractMeta(source: string, fallbackName: string): WorkflowMeta {
-  const metaPattern = /(?:export\s+)?const\s+meta\s*=\s*(\{[^]*?\});?\s*$/m;
-  const match = metaPattern.exec(source);
-  if (match) {
-    try {
-      const fn = new Function(`return (${match[1]});`);
-      const obj = fn();
-      if (obj && typeof obj === "object" && typeof obj.name === "string") {
-        return {
-          name: obj.name,
-          description: typeof obj.description === "string" ? obj.description : "",
-          phases: Array.isArray(obj.phases) ? obj.phases : [],
-        };
-      }
-    } catch {
-      // 提取失败 → fallback name（非测试关注点）
-    }
-  }
-  return { name: fallbackName, description: "", phases: [] };
+  // m2 exec-review MINOR-1：旧 const meta regex + new Function 随 m2 迁移已失效，
+  // 改调 IF1 parseResourceMeta（与 workflows-e2e.test 一致）。
+  const meta = parseResourceMeta(source, "workflow");
+  if (meta && meta.kind === "workflow") return meta;
+  return { kind: "workflow", name: fallbackName, description: "", phases: [] };
 }
 
 function loadWorkflowsFromDir(dir: string): Map<string, WorkflowScript> {

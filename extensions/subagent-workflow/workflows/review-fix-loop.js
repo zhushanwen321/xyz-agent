@@ -127,14 +127,26 @@ const reviewPrompt = typeof $ARGS.reviewPrompt === "string" && $ARGS.reviewPromp
 const fixPrompt = typeof $ARGS.fixPrompt === "string" && $ARGS.fixPrompt.trim()
   ? $ARGS.fixPrompt.trim()
   : "修复全部 must-fix 问题（critical/major）。最小正确修复，不做重构、不做风格改动。";
-const autoCommit = $ARGS.autoCommit ?? false;
-const maxRounds = $ARGS.maxRounds ?? 10;
-const stuckThreshold = $ARGS.stuckThreshold ?? 3;
-const skipCleanAgents = $ARGS.skipCleanAgents ?? true;
+// 字符串强制转换（m2 exec-review MAJOR-1）：LLM 可能以字符串传布尔/整数（旧 normalizeBool
+// 正是为此防御——"false" ?? false 是 truthy 会误触发 commit）。m3 args-validator
+// （chokepoint + coerceTypes）上线后此处为双保险，直接执行路径仍受保护。
+const coerceBool = (v, fallback) =>
+  typeof v === "boolean" ? v : v === "true" ? true : v === "false" ? false : fallback;
+const coerceInt = (v, fallback) =>
+  typeof v === "number" && Number.isInteger(v)
+    ? v
+    : typeof v === "string" && /^\d+$/.test(v.trim())
+      ? parseInt(v, 10)
+      : fallback;
+
+const autoCommit = coerceBool($ARGS.autoCommit, false);
+const maxRounds = coerceInt($ARGS.maxRounds, 10);
+const stuckThreshold = coerceInt($ARGS.stuckThreshold, 3);
+const skipCleanAgents = coerceBool($ARGS.skipCleanAgents, true);
 // 默认 recheckAfterFix=false：clean agent 下轮跳过（与 skipCleanAgents=true 字面语义一致），
 // RC-5（fix 后全批全量重审放大 token）在默认场景消失。传 true 启用可选强回归模式：fix 后重派
 // 全批，clean agent 走限定 prompt（buildScopedRecheckPrompt，只审 modifiedFiles，5.5）。
-const recheckAfterFix = $ARGS.recheckAfterFix ?? false;
+const recheckAfterFix = coerceBool($ARGS.recheckAfterFix, false);
 // fixAgent（5.3）：值语义同 batchN 的 agent 项（内置名 / agent.md 路径），解析复用
 // resolveAgentDefs 白名单与加载逻辑。传入时 fix 阶段用 agent({agent: ...}) 派发（代码场景
 // 的 verify 命令写在该 agent.md 内）；未传保持现状（通用 subagent + 内联 prompt）。
@@ -143,9 +155,9 @@ const FIX_AGENT_RAW = typeof $ARGS.fixAgent === "string" && $ARGS.fixAgent.trim(
 const FIX_DEF = FIX_AGENT_RAW ? resolveAgentDefs([FIX_AGENT_RAW])[0] : null;
 // 5.7 收敛终止参数：maxFixAttempts（needs-redesign 阈值，RC-7）/ convergeNewIssues +
 // convergeRounds（新发现率收敛阈值）
-const maxFixAttempts = $ARGS.maxFixAttempts ?? 2;
-const convergeNewIssues = $ARGS.convergeNewIssues ?? 1;
-const convergeRounds = $ARGS.convergeRounds ?? 2;
+const maxFixAttempts = coerceInt($ARGS.maxFixAttempts, 2);
+const convergeNewIssues = coerceInt($ARGS.convergeNewIssues, 1);
+const convergeRounds = coerceInt($ARGS.convergeRounds, 2);
 const MODEL = typeof $ARGS.model === "string" && $ARGS.model.trim() ? $ARGS.model.trim() : undefined;
 
 // base 锁定（RC-6，5.6）：git-diff 场景 run 启动时锁定 base commit，全程用锁定 hash 构造
