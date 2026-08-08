@@ -471,11 +471,13 @@ async function runCallbackFlow(providerId: string, config: BuiltinOAuthConfig, h
     hooks.onAuthUrl?.({ url: authorizeUrl.toString() })
     try {
       const callback = await server.waitForCallback()
+      // token exchange 带 30s 超时（pi-ai openrouter TOKEN_EXCHANGE_TIMEOUT_MS 同款）：
+      // 回调已到达但远端 API 挂起时不能无限转圈（本地 loopback 无兜底超时）
       const exchange = await postJson(config.endpoints.token!, {
         code: callback.code,
         code_verifier: verifier,
         code_challenge_method: 'S256',
-      }, signal)
+      }, AbortSignal.any([signal, AbortSignal.timeout(30_000)]))
       if (!exchange.ok) {
         throw new Error(`OAuth key exchange failed (HTTP ${exchange.status})`)
       }
@@ -486,11 +488,14 @@ async function runCallbackFlow(providerId: string, config: BuiltinOAuthConfig, h
     }
   }
 
-  // anthropic（及默认 callback provider）：固定端口（callbackPort，provider 后台预注册 redirect_uri）
+  // anthropic（及默认 callback provider）：固定端口（callbackPort，provider 后台预注册 redirect_uri）。
+  // state 用独立随机值（不复用 PKCE verifier）：避免 code+verifier 同现于明文 loopback 回调 URL
+  //（浏览器历史/本地代理可记录，泄露 code+verifier 即可兑换 token）。服务端只回显 state，不校验其值。
+  const state = randomUUID()
   const server = await startCallbackServer({
     port: config.callbackPort ?? 0,
     path: '/callback',
-    expectedState: verifier,
+    expectedState: state,
     signal,
   })
   const authParams = new URLSearchParams({
@@ -501,7 +506,7 @@ async function runCallbackFlow(providerId: string, config: BuiltinOAuthConfig, h
     scope: config.scopes.join(' '),
     code_challenge: challenge,
     code_challenge_method: 'S256',
-    state: verifier,
+    state,
   })
   hooks.onAuthUrl?.({ url: `${config.endpoints.authorize!}?${authParams.toString()}`, callbackPort: server.port })
   try {

@@ -328,7 +328,9 @@ describe('runOAuthLogin — callback flow', () => {
         expect(body.client_id).toBe('anthropic-client')
         expect(body.code).toBe('authz-123')
         expect(typeof body.code_verifier).toBe('string')
-        expect(body.state).toBe(body.code_verifier) // anthropic: state = verifier
+        // state 独立随机（不复用 PKCE verifier——code+verifier 同现于明文 loopback URL 有泄露风险）
+        expect(body.state).not.toBe(body.code_verifier)
+        expect(typeof body.state).toBe('string')
         expect(body.redirect_uri).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/callback$/)
         return jsonResponse({ access_token: 'at-an', refresh_token: 'rt-an', expires_in: 7200 })
       }

@@ -423,7 +423,8 @@ export interface IAuthService {
 }
 
 /** Model aggregation, API discovery, and model/thinking-level orchestration. */
-export interface IModelService {  aggregateModels(providers: ProviderInfo[]): ModelInfo[]
+export interface IModelService {
+  aggregateModels(providers: ProviderInfo[]): ModelInfo[]
   discoverModelsFromApi(
     baseUrl: string,
     apiKey?: string,

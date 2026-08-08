@@ -165,6 +165,27 @@ describe('AuthService.cancel', () => {
       expect(svc.cancel('xai')).toEqual({ cancelled: false })
     })
   })
+
+  it('cancel 后立即重新 login 不被拒（activeFlows 同步清理，exec-review must-fix #1 回归）', async () => {
+    const deps = makeDeps()
+    const svc = new AuthService(deps)
+    let signal: AbortSignal | undefined
+    vi.mocked(runOAuthLogin).mockImplementation(async (_id, _cfg, _hooks, sig) => {
+      signal = sig
+      return new Promise<OAuthCredential>(() => {
+        sig?.addEventListener('abort', () => {
+          // 挂起模拟：abort 后 runFlow 的 finally 尚未执行（真实场景 abort 沿异步链传播有延迟）
+        })
+      })
+    })
+
+    svc.login('xai')
+    await vi.waitFor(() => expect(signal).toBeDefined())
+    expect(svc.cancel('xai')).toEqual({ cancelled: true })
+    // 立即重新 login：必须成功（cancel 已同步清理 activeFlows）
+    expect(svc.login('xai')).toEqual({ started: true })
+    expect(svc.cancel('xai')).toEqual({ cancelled: true })
+  })
 })
 
 describe('AuthService.hasOAuth', () => {

@@ -218,7 +218,10 @@ export class ConfigService implements IConfigService {
     // github-copilot/kimi/openrouter/xai）切到 API Key 认证必须清 OAuth，防凭据冲突 + pi 优先级困惑。
     // 幂等：auth.json 无该 provider 时 no-op。fire-and-forget（setProvider 同步契约，写盘由 mutex 串行化）。
     if (data.apiKey !== undefined) {
-      void this.authStorage?.remove(providerId)
+      // 清理失败不能静默（双凭据并存正是要防的状态）：写盘失败记 warn（fire-and-forget，不阻塞 setProvider 同步契约）
+      void this.authStorage?.remove(providerId).catch(err => {
+        console.warn(`[config-service] auth.json oauth cleanup failed for ${providerId} (I9 清理①):`, err)
+      })
     }
     // TODO: 当 pi models.json 支持 schema 后收窄类型（现有 Record<string, unknown> 是架构限制）
     const merged: Record<string, unknown> = { ...existing }
@@ -286,8 +289,10 @@ export class ConfigService implements IConfigService {
 
   deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } } {
     // I8：删 provider 同步清 auth.json 凭据（OAuth token 是强绑定凭据，不能残留）。
-    // 幂等：auth.json 无该 provider 时 no-op。
-    void this.authStorage?.remove(providerId)
+    // 幂等：auth.json 无该 provider 时 no-op。清理失败记 warn（fire-and-forget，不阻塞删除主流程）。
+    void this.authStorage?.remove(providerId).catch(err => {
+      console.warn(`[config-service] auth.json cleanup failed for ${providerId} (I8):`, err)
+    })
     return this.configStore.removeProvider(providerId)
   }
 

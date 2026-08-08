@@ -62,11 +62,14 @@ export class AuthService implements IAuthService {
 
   /**
    * 中止进行中的 OAuth flow。幂等：无进行中 flow 返回 cancelled:false（不报错）。
+   * 同步清 activeFlows（不等 abort 异步链走完）——cancel 后立即重新 login 不被拒。
+   * finally 的 delete 幂等兼容（Map.delete 不存在时 no-op）。
    */
   cancel(providerId: string): { cancelled: boolean } {
     const controller = this.activeFlows.get(providerId)
     if (!controller) return { cancelled: false }
     controller.abort()
+    this.activeFlows.delete(providerId)
     return { cancelled: true }
   }
 
@@ -94,8 +97,13 @@ export class AuthService implements IAuthService {
       }, signal)
       // token 写 auth.json（0600 + per-file mutex + 原子写），pi 侧 resolveStoredOAuth 自动 refresh
       await this.deps.authStorage.set(providerId, credential)
-      // I9 清理②：OAuth 授权成功 → 清 models.json apiKey（both provider 切换凭据源，防冲突）
-      this.deps.clearApiKey(providerId)
+      // I9 清理②：OAuth 授权成功 → 清 models.json apiKey（both provider 切换凭据源，防冲突）。
+      // 清理是次要副作用：失败降级为警告日志，不改变 auth.success（凭据已写入，pi 侧可正常使用）。
+      try {
+        this.deps.clearApiKey(providerId)
+      } catch (error) {
+        console.warn(`[auth-service] clearApiKey failed for ${providerId} (models.json apiKey 残留):`, error)
+      }
       this.broadcastAuth('auth.success', { providerId })
     } catch (error) {
       if (signal.aborted) {
