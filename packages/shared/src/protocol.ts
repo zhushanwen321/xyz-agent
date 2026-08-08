@@ -117,6 +117,8 @@ export type ClientMessageType =
   | 'config.oauthLogin' | 'config.oauthCancel'
   // 环境变量检测（I3，wave-env-check）：只返回布尔不返回值（env 值可能含凭证）。
   | 'config.checkEnvVars'
+  // OAuth 凭据查询（MF-1）：auth.json 是否已有该 provider 的 oauth 凭据（只返回布尔，token 不出协议）。reply config.hasOAuthReply。
+  | 'config.hasOAuth'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -512,6 +514,8 @@ export interface ClientMessageMap {
   'config.checkEnvVars': { names: string[] }
   /** config.oauthCancel：中止进行中的 OAuth flow（停轮询/关 server/清 state）。reply config.oauthCancelReply。 */
   'config.oauthCancel': { providerId: string }
+  /** config.hasOAuth：查询 auth.json 是否已有该 provider 的 oauth 凭据（只返回布尔）。reply config.hasOAuthReply。 */
+  'config.hasOAuth': { providerId: string }
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -651,6 +655,8 @@ export type ServerMessageType =
   | 'auth.deviceCode' | 'auth.authUrl' | 'auth.success' | 'auth.error'
   // OAuth Login RPC reply（config.oauthLogin/oauthCancel 的回复，消费型）。
   | 'config.oauthLoginReply' | 'config.oauthCancelReply'
+  // OAuth 凭据查询 reply（MF-1）。
+  | 'config.hasOAuthReply'
   // 环境变量检测 reply（I3）。
   | 'config.envVarsChecked'
 
@@ -1039,6 +1045,8 @@ export interface ServerMessageMapBase {
   'config.oauthLoginReply': { started: boolean; error?: string }
   /** config.oauthCancel reply（幂等：无进行中 flow 返回 cancelled:false 不报错）。 */
   'config.oauthCancelReply': { cancelled: boolean }
+  /** config.hasOAuth reply：auth.json 是否已有该 provider 的 oauth 凭据（布尔，无 token）。 */
+  'config.hasOAuthReply': { hasOAuth: boolean }
   /** config.checkEnvVars reply：只含布尔（安全红线：env 值不进前端）。 */
   'config.envVarsChecked': { results: Record<string, boolean> }
   // config.discoveredModels：discoverModels reply（settings-message-handler.ts:178/180）。
@@ -1160,6 +1168,7 @@ export interface ReplyPayloadMap {
   // OAuth Login（路径 B）：reply 消费型（started/cancelled 布尔）。
   'config.oauthLogin': ServerMessageMap['config.oauthLoginReply']
   'config.oauthCancel': ServerMessageMap['config.oauthCancelReply']
+  'config.hasOAuth': ServerMessageMap['config.hasOAuthReply']
   'config.checkEnvVars': ServerMessageMap['config.envVarsChecked']
   'config.scanSessionSkills': ServerMessageMap['config.sessionSkills']
   'config.getGlobalSkills': ServerMessageMap['config.globalSkills']

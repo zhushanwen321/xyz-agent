@@ -150,7 +150,7 @@ function onSelect(tpl: BuiltinProviderTemplate): void {
 
   <!-- 二级：模板选择器 Dialog（对齐 demo pickerOverlay 720px） -->
   <Dialog v-model:open="dialogOpen">
-    <DialogContent data-testid="provider-template-dialog" class="max-w-3xl">
+    <DialogContent data-testid="provider-template-dialog" class="max-w-[720px]">
       <DialogHeader>
         <DialogTitle>{{ t('settings.provider.builtinTemplate.dialogTitle') }}</DialogTitle>
         <p class="text-[12px] text-neutral-mid">{{ t('settings.provider.builtinTemplate.dialogSubtitle', { count: props.providers.length }) }}</p>

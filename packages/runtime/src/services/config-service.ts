@@ -275,8 +275,10 @@ export class ConfigService implements IConfigService {
     const existing = this.configStore.getProviderConfig(providerId) ?? {}
     // I9 清理①：保存 API Key（明文/env）时清 auth.json oauth 凭据——both provider（anthropic/
     // github-copilot/kimi/openrouter/xai）切到 API Key 认证必须清 OAuth，防凭据冲突 + pi 优先级困惑。
+    // 收紧条件（MF-1）：仅非空 apiKey 触发清理——env 空自定义变量此前上送 apiKey:'' 成立 `!== undefined`
+    // 会误删 OAuth 凭据；显式清 key（ProviderEditBody __CLEAR__ 哨兵）同样保留 OAuth（provider 可继续走 OAuth）。
     // 幂等：auth.json 无该 provider 时 no-op。fire-and-forget（setProvider 同步契约，写盘由 mutex 串行化）。
-    if (data.apiKey !== undefined) {
+    if (data.apiKey !== undefined && data.apiKey !== '') {
       // 清理失败不能静默（双凭据并存正是要防的状态）：写盘失败记 warn（fire-and-forget，不阻塞 setProvider 同步契约）
       void this.authStorage?.remove(providerId).catch(err => {
         console.warn(`[config-service] auth.json oauth cleanup failed for ${providerId} (I9 清理①):`, err)

@@ -51,6 +51,15 @@ export function useProviderOAuth(onAuthorized: (providerId: string) => void) {
   /** 已授权 provider 集合（auth.success 后回写，QuickSetup 显示「已授权」态） */
   const authorized = ref<Set<string>>(new Set())
 
+  /**
+   * auth.json 已有 OAuth 凭据的 provider 集合（QuickSetup 打开前查 config.hasOAuth 回填）。
+   * 覆盖「未保存即关闭的 OAuth 授权」（auth.json 有 token、models.json 无条目）与
+   * 「旧数据无 authMethod 标注」两类场景——供默认 oauth radio + 已授权态。
+   * MF-3：has ? add : delete——必须与 auth.json 真实状态同步（只增不减会在删除
+   * provider 后残留，重开 QuickSetup 误默认 oauth + 假「已授权」态）。
+   */
+  const oauthPresent = ref<Set<string>>(new Set())
+
   let activeProviderId = ''
   const disposers: Array<() => void> = []
 
@@ -135,5 +144,27 @@ export function useProviderOAuth(onAuthorized: (providerId: string) => void) {
     }
   }
 
-  return { state, authorized, envCheck, login, cancel, retry, checkEnv }
+  /** 刷新单 provider 的 OAuth presence（打开 QuickSetup 前调用；has ? add : delete） */
+  async function refreshOAuthPresence(providerId: string): Promise<void> {
+    let present = false
+    try {
+      present = await config.hasOAuth(providerId)
+    } catch {
+      // 查询失败不阻断：调用方回退 stored authMethod / 默认 env（existingAuthMethod 逻辑）
+      console.warn(`[provider-oauth] config.hasOAuth query failed for ${providerId}`)
+    }
+    oauthPresent.value = new Set(oauthPresent.value)
+    if (present) oauthPresent.value.add(providerId)
+    else oauthPresent.value.delete(providerId)
+  }
+
+  /** 删除 provider 后清理 presence + authorized（MF-3：避免重开 QuickSetup 假已授权态） */
+  function clearOAuthPresence(providerId: string): void {
+    oauthPresent.value = new Set(oauthPresent.value)
+    oauthPresent.value.delete(providerId)
+    authorized.value = new Set(authorized.value)
+    authorized.value.delete(providerId)
+  }
+
+  return { state, authorized, oauthPresent, envCheck, login, cancel, retry, checkEnv, refreshOAuthPresence, clearOAuthPresence }
 }

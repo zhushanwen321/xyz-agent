@@ -42,6 +42,11 @@ const configMock = vi.hoisted(() => ({
   listProviders: vi.fn(() => Promise.resolve([])),
   setSkillDirs: vi.fn(() => Promise.resolve()),
   setAgentDirs: vi.fn(() => Promise.resolve()),
+  // wave-oauth：SettingsModal → ProviderPage → useProviderOAuth onMounted 订阅 4 个 auth.* 事件（缺则 TypeError 崩 mount）
+  onAuthDeviceCode: vi.fn(() => () => {}),
+  onAuthAuthUrl: vi.fn(() => () => {}),
+  onAuthSuccess: vi.fn(() => () => {}),
+  onAuthError: vi.fn(() => () => {}),
 }))
 
 const settingsMock = vi.hoisted(() => ({

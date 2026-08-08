@@ -317,6 +317,13 @@ export function oauthCancel(providerId: string): Promise<{ cancelled: boolean }>
   return command('config.oauthCancel', { providerId })
 }
 
+/** 查询 auth.json 是否已有该 provider 的 OAuth 凭据（MF-1：QuickSetup 重开时默认 oauth radio，
+ *  防 env 盲保存触发 I9 清理静默删凭据）。只返回布尔——token 永不出现在协议中。 */
+export async function hasOAuth(providerId: string): Promise<boolean> {
+  const reply = await command('config.hasOAuth', { providerId })
+  return reply.hasOAuth
+}
+
 /** 批量检测环境变量是否已设置（I3，只返回布尔不返回值——env 值可能含凭证）。 */
 export async function checkEnvVars(names: string[]): Promise<Record<string, boolean>> {
   const reply = await command('config.checkEnvVars', { names })

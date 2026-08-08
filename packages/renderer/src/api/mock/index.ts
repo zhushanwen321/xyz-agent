@@ -727,6 +727,10 @@ export const config = {
     await sleep(TIMING.ack)
     return { cancelled: false }
   },
+  // MF-1：mock 模式无真实 auth.json，恒 false（不默认 oauth radio）。
+  async hasOAuth(_providerId: string): Promise<boolean> {
+    return false
+  },
   // OAuth 事件订阅：mock 不推送，返回 no-op unsubscribe 保持签名同构。
   onAuthDeviceCode: (_h: (payload: { providerId: string; userCode: string; verificationUri: string; verificationUriComplete?: string; expiresIn?: number; interval?: number }) => void) => () => {},
   onAuthAuthUrl: (_h: (payload: { providerId: string; url: string; callbackPort?: number }) => void) => () => {},

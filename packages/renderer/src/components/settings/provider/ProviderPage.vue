@@ -169,7 +169,8 @@
       :template="selectedTemplate"
       :open="showQuickSetup"
       :env-check="oauth.envCheck.value"
-      :oauth-authorized="selectedTemplate ? oauth.authorized.value.has(selectedTemplate.id) : false"
+      :oauth-authorized="selectedTemplate ? oauth.authorized.value.has(selectedTemplate.id) || oauth.oauthPresent.value.has(selectedTemplate.id) : false"
+      :existing-auth-method="existingAuthMethod"
       @save="onQuickSetupSave"
       @cancel="onQuickSetupCancel"
       @oauth-login="onQuickSetupOAuthLogin"
@@ -193,7 +194,7 @@
 <script setup lang="ts">
 import { computed, ref, provide, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Settings, Trash2, AlertCircle } from '@lucide/vue'
+import { AlertCircle, Settings, Trash2 } from '@lucide/vue'
 import { ConfirmDialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
@@ -215,10 +216,9 @@ import {
   USE_QUOTA_CONFIGURE_KEY,
 } from '@xyz-agent/ui/features/settings'
 import { useProviderOAuth } from '@/composables/features/settings/useProviderOAuth'
-import { authBadgeTextKey, authBadgeClass } from './provider-badge'
+import { authBadgeClass, authBadgeTextKey } from './provider-badge'
 
-// ProviderEditBody 迁入 ui 包，其 renderer 侧依赖（useQuotaConfigure/useToast）经
-// provide/inject 注入（ui 零 renderer import 铁律）。ProviderEditBody 内部调用工厂。
+// ui 包组件 renderer 侧依赖经 provide/inject 注入（ui 零 renderer import 铁律）
 provide(USE_QUOTA_CONFIGURE_KEY, useQuotaConfigure)
 const toast = useToast()
 provide(SETTINGS_TOAST_KEY, toast)
@@ -237,36 +237,46 @@ const {
 } = useProviderImport()
 
 // ── 内置 provider 模板（wave 3 builtin-provider-ui）──
-/** 内置 provider 模板列表（onMounted 拉取，传给 ProviderTemplatePicker） */
 const builtinProviders = ref<BuiltinProviderTemplate[]>([])
-/** 当前选中的模板（非 null 时渲染 ProviderQuickSetup） */
 const selectedTemplate = ref<BuiltinProviderTemplate | null>(null)
-/** QuickSetup 开关（与 selectedTemplate 配合控制 Dialog） */
 const showQuickSetup = ref(false)
 
-/** OAuth 授权状态机（composable：OAuthDialog 驱动 + auth.* 事件订阅） */
-const oauth = useProviderOAuth(() => {
-  // auth.success 后：保持 QuickSetup 打开（demo §8.3「回配置面板已授权」）——
-  // 用户完成「保存并启用」→ setProvider 落 models.json（含 authMethod='oauth'）→
-  // broadcastProviderList 触发列表刷新。已授权态经 oauthAuthorized prop 回写。
-  void 0
-})
+/** OAuth 授权状态机（composable：OAuthDialog 驱动 + auth.* 事件订阅）。
+ *  auth.success 后保持 QuickSetup 打开（demo §8.3）——用户完成「保存并启用」落
+ *  models.json（authMethod='oauth'）→ broadcastProviderList 刷新列表。 */
+const oauth = useProviderOAuth(() => { void 0 })
 
 onMounted(async () => {
   try {
     builtinProviders.value = await config.listBuiltinProviders()
   } catch {
-    // 拉取失败静默降级（Picker 渲染空列表），不阻断页面。F7a：用 i18n 文案（fetchFailed 键启用）
+    // 拉取失败静默降级（Picker 渲染空列表），不阻断页面
     toast.error(t('settings.provider.builtinTemplate.fetchFailed'))
   }
 })
 
-/** 选中内置模板 → 打开 QuickSetup + env 检测（I3） */
+/** 选中内置模板 → 打开 QuickSetup（先刷新 OAuth presence + env 检测） */
 async function onTemplateSelect(tpl: BuiltinProviderTemplate): Promise<void> {
+  // MF-1 残余路径：打开前刷新 auth.json OAuth presence（has ? add : delete，MF-3）。
+  // 必须在 selectedTemplate 设置之前完成——QuickSetup 表单 init 时（watch immediate）
+  // existingAuthMethod/oauthAuthorized 需已就绪，否则已授权场景仍默认 env radio + 盲保存清凭据。
+  await oauth.refreshOAuthPresence(tpl.id)
   selectedTemplate.value = tpl
   showQuickSetup.value = true
   await oauth.checkEnv(tpl)
 }
+
+/**
+ * 已存配置的认证方式（MF-1 根治）：优先级 ① models.json 已存/推断 authMethod
+ * ② auth.json 有 OAuth 凭据且无标注 → 'oauth'（未保存即关闭的授权/旧数据）
+ * ③ undefined 走默认（env 推荐）。避免重开默认 env radio 盲保存误删 OAuth 凭据。
+ */
+const existingAuthMethod = computed(() => {
+  const tpl = selectedTemplate.value
+  if (!tpl) return undefined
+  return props.providers.find(p => p.id === tpl.id)?.authMethod
+    ?? (oauth.oauthPresent.value.has(tpl.id) ? ('oauth' as const) : undefined)
+})
 
 /** QuickSetup 保存 → config.setProvider（方案 B 占位 data），成功后关闭 + toast */
 async function onQuickSetupSave({
@@ -286,29 +296,25 @@ async function onQuickSetupSave({
   }
 }
 
-/** QuickSetup 取消/关闭 → 清空选中态 */
+/** QuickSetup 取消/关闭 → 清空选中态；OAuth 登录按钮 → 启动 flow */
 function onQuickSetupCancel(): void {
   showQuickSetup.value = false
   selectedTemplate.value = null
   oauth.envCheck.value = undefined
 }
 
-/** QuickSetup 的 OAuth 登录按钮 → 启动 OAuth flow（composable 驱动 OAuthDialog + config.oauthLogin） */
 function onQuickSetupOAuthLogin(): void {
   if (!selectedTemplate.value) return
   void oauth.login(selectedTemplate.value.id)
 }
 
-/** toggle 中的 provider id 集合（防双击：API 期间 disable Switch） */
+/** toggle 中的 provider id 集合（防双击） */
 const toggling = ref<Set<string>>(new Set())
 
 const settingsStore = getSettingsStore()
-const defaultProviderId = computed(() => {
-  const dm = settingsStore.defaultModel.value
-  return dm ? dm.split('/')[0] : ''
-})
+const defaultProviderId = computed(() => settingsStore.defaultModel.value?.split('/')[0] ?? '')
 
-/** 新建态 sentinel id（与真实 provider id 区分，渲染合成行 + null provider 进 ProviderEditBody） */
+/** 新建态 sentinel id（渲染合成行 + null provider 进 ProviderEditBody） */
 const NEW_ID = '__new__'
 
 /** 当前展开的 provider id（单展开：null=无，NEW_ID=新建态，其它=编辑该 provider） */
@@ -466,6 +472,9 @@ async function confirmDelete() {
   actionError.value = ''
   try {
     await config.deleteProvider(target.id)
+    // MF-3：删除 provider（I8 已清 auth.json 凭据）后同步清理内存态——
+    // oauthPresent/authorized 只增不减会让重开 QuickSetup 误默认 oauth + 假「已授权」徽章。
+    oauth.clearOAuthPresence(target.id)
     if (settingsStore.defaultModel.value.startsWith(`${target.id}/`)) {
       settingsStore.defaultModel.value = ''
     }
@@ -482,6 +491,5 @@ function statusDot(status: ProviderStatus): string {
   const map = { connected: 'bg-success', not_configured: 'bg-neutral-dim', error: 'bg-danger' }
   return map[status]
 }
-
 </script>
 

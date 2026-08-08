@@ -29,7 +29,7 @@ import {
   Label,
 } from '@xyz-agent/ui'
 import type { BuiltinProviderTemplate, SetProviderData } from '@xyz-agent/shared'
-import { useQuickSetupForm, CUSTOM_ENV_VALUE } from './use-quick-setup-form.js'
+import { useQuickSetupForm, CUSTOM_ENV_VALUE, type ExistingAuthMethod } from './use-quick-setup-form.js'
 
 const props = defineProps<{
   template: BuiltinProviderTemplate
@@ -38,6 +38,8 @@ const props = defineProps<{
   envCheck?: Record<string, boolean>
   /** OAuth 已授权（auth.success 后父回写） */
   oauthAuthorized?: boolean
+  /** 该 provider 已存配置的认证方式（MF-1：重开 QuickSetup 恢复上次方式，防 env 默认盲保存清 OAuth） */
+  existingAuthMethod?: ExistingAuthMethod
 }>()
 
 const emit = defineEmits<{
@@ -52,6 +54,7 @@ const { t } = useI18n()
 const templateRef = computed(() => props.template)
 const envCheckRef = computed(() => props.envCheck)
 const oauthAuthorizedRef = computed(() => props.oauthAuthorized)
+const existingAuthMethodRef = computed(() => props.existingAuthMethod)
 
 // 解构到顶层：模板访问嵌套对象里的 ref 不解包，必须显式解构
 const {
@@ -71,6 +74,7 @@ const {
   envCheckRef,
   oauthAuthorizedRef,
   (payload) => emit('save', payload),
+  existingAuthMethodRef,
 )
 
 /** 关闭（X/ESC/遮罩）即上抛 cancel（受控代理） */

@@ -113,6 +113,13 @@ describe('ConfigService auth 清理（I9 清理① + I8，T6）', () => {
     expect(authStorage.remove).not.toHaveBeenCalled()
   })
 
+  it('setProvider apiKey 为空串（env 空自定义变量）→ 不清 auth.json（MF-1：防误删 OAuth 凭据）', () => {
+    const authStorage = { remove: vi.fn(async () => undefined), hasOAuth: vi.fn(async () => false) }
+    const { svc } = makeSvc(authStorage as unknown as Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync'>)
+    svc.setProvider('anthropic', { apiKey: '', authMethod: 'env_var' })
+    expect(authStorage.remove).not.toHaveBeenCalled()
+  })
+
   it('deleteProvider → 清 auth.json（I8：OAuth token 强绑定凭据，删除时同步清）', async () => {
     const authStorage = { remove: vi.fn(async () => undefined), hasOAuth: vi.fn(async () => false) }
     const { svc } = makeSvc(authStorage as unknown as Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync'>)

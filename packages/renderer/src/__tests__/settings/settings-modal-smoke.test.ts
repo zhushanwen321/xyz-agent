@@ -49,6 +49,11 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
     onSystemPrompt: vi.fn(() => () => {}),
     onTerminalConfig: vi.fn(() => () => {}),
     detectSources: vi.fn(async () => []),
+    // wave-oauth：SettingsModal → ProviderPage → useProviderOAuth onMounted 订阅 4 个 auth.* 事件（缺则 TypeError 崩 mount）
+    onAuthDeviceCode: vi.fn(() => () => {}),
+    onAuthAuthUrl: vi.fn(() => () => {}),
+    onAuthSuccess: vi.fn(() => () => {}),
+    onAuthError: vi.fn(() => () => {}),
   },
   model: { onModels: vi.fn(() => () => {}) },
   extension: { onExtensions: vi.fn(() => () => {}) },

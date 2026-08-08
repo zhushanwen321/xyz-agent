@@ -30,6 +30,7 @@ const configMock = vi.hoisted(() => ({
   checkEnvVars: vi.fn(async () => ({})),
   oauthLogin: vi.fn(async () => ({ started: false, error: 'mock' })),
   oauthCancel: vi.fn(async () => ({ cancelled: false })),
+  hasOAuth: vi.fn(async () => false),
   onAuthDeviceCode: vi.fn(() => () => {}),
   onAuthAuthUrl: vi.fn(() => () => {}),
   onAuthSuccess: vi.fn(() => () => {}),

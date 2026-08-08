@@ -12,6 +12,9 @@ export type AuthMethod = 'plaintext' | 'env' | 'oauth' | 'ambient'
 /** 「自定义变量名」Select sentinel value（F4 · §6.4：下拉含常见 env var + 自定义入口） */
 export const CUSTOM_ENV_VALUE = '__custom__'
 
+/** 已存配置的认证方式（ProviderInfo.authMethod；QuickSetup 重开时恢复上次方式） */
+export type ExistingAuthMethod = 'api_key' | 'oauth' | 'env_var' | 'ambient'
+
 export interface UseQuickSetupForm {
   authMethod: Ref<AuthMethod>
   apiKeyInput: Ref<string>
@@ -39,6 +42,7 @@ export function useQuickSetupForm(
   envCheck: Ref<Record<string, boolean> | undefined>,
   oauthAuthorized: Ref<boolean | undefined>,
   emitSave: (payload: { providerId: string; data: SetProviderData }) => void,
+  existingAuthMethod?: Ref<ExistingAuthMethod | undefined>,
 ): UseQuickSetupForm {
   /** 当前认证方式 */
   const authMethod = ref<AuthMethod>('plaintext')
@@ -76,20 +80,33 @@ export function useQuickSetupForm(
     return options
   })
 
-  /** template 切换时重置表单（默认选 env（推荐）或 plaintext） */
+  /** template 切换时重置表单：已存配置标注过 authMethod 则恢复上次方式（MF-1：both provider 已 OAuth 授权后重开，不默认 env 盲保存清凭据），否则默认 env（推荐）或 plaintext */
   watch(template, (tpl) => {
     envVar.value = tpl.envVars[0] ?? ''
     customEnvVar.value = ''
     apiKeyInput.value = ''
     showKey.value = false
-    const mode = tpl.authMode
-    authMethod.value =
-      (mode === 'api_key' || mode === 'both') && tpl.envVars.length > 0 ? 'env' : mode === 'oauth' ? 'oauth' : mode === 'ambient' ? 'ambient' : 'plaintext'
+    authMethod.value = resolveInitialAuthMethod(tpl)
   }, { immediate: true })
 
-  /** 保存禁用：明文模式空 key 禁用；OAuth 未授权且非已有授权时禁用 */
+  /** 初始认证方式：existingAuthMethod 优先（恢复上次选择），不适用时回退默认 */
+  function resolveInitialAuthMethod(tpl: BuiltinProviderTemplate): AuthMethod {
+    const existing = existingAuthMethod?.value
+    const mode = tpl.authMode
+    if (existing === 'oauth' && (mode === 'oauth' || mode === 'both')) return 'oauth'
+    if (existing === 'env_var' && (mode === 'api_key' || mode === 'both') && tpl.envVars.length > 0) return 'env'
+    if (existing === 'api_key' && (mode === 'api_key' || mode === 'both')) return 'plaintext'
+    if (existing === 'ambient' && mode === 'ambient') return 'ambient'
+    if ((mode === 'api_key' || mode === 'both') && tpl.envVars.length > 0) return 'env'
+    if (mode === 'oauth') return 'oauth'
+    if (mode === 'ambient') return 'ambient'
+    return 'plaintext'
+  }
+
+  /** 保存禁用：明文模式空 key 禁用；env 模式空变量名禁用（MF-1：空自定义变量不产生无意义 env_var 配置）；OAuth 未授权且非已有授权时禁用 */
   const saveDisabled = computed(() => {
     if (authMethod.value === 'plaintext' && !apiKeyInput.value.trim()) return true
+    if (authMethod.value === 'env' && !resolvedEnvVar.value) return true
     if (authMethod.value === 'oauth' && !oauthAuthorized.value) return true
     return false
   })
@@ -104,11 +121,12 @@ export function useQuickSetupForm(
     }[authMethod.value]
   })
 
-  /** env 检测态：当前 env var 是否已设置（envCheck 未拉取时不显示） */
+  /** env 检测态：当前 env var 是否已设置。envCheck 未拉取时不显示（undefined）；
+   *  自定义变量名不在 envCheck 结果里 → 视为未设置（S-C：demo 显示 ⚠「未设置」，不隐藏检测态） */
   const envDetected = computed<boolean | undefined>(() => {
     if (!envCheck.value) return undefined
     const name = resolvedEnvVar.value
-    return name ? envCheck.value[name] : undefined
+    return name ? (envCheck.value[name] ?? false) : undefined
   })
 
   /** 保存：构造 SetProviderData（I6 填 authMethod；oauth 不塞 apiKey——凭据在 auth.json） */
@@ -122,7 +140,12 @@ export function useQuickSetupForm(
       data.apiKey = apiKeyInput.value
       data.authMethod = 'api_key'
     } else if (authMethod.value === 'env') {
-      data.apiKey = resolvedEnvVar.value ? `$${resolvedEnvVar.value}` : ''
+      // MF-1：空自定义变量不上送 apiKey——apiKey:'' 会触发 config-service I9 清理①
+      // （`!== undefined` 成立）静默删除 auth.json OAuth 凭据。空变量名已被 saveDisabled 挡住，
+      // 此处再守卫一层（防未来调用方绕过 disabled 直调 onSave）。
+      if (resolvedEnvVar.value) {
+        data.apiKey = `$${resolvedEnvVar.value}`
+      }
       data.authMethod = 'env_var'
     } else if (authMethod.value === 'oauth') {
       data.authMethod = 'oauth'

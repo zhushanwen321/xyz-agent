@@ -33,6 +33,7 @@ export interface SettingsHandlerContext extends MessageHandlerContext {
 export class SettingsMessageHandler {
   constructor(private ctx: SettingsHandlerContext) {}
 
+  // eslint-disable-next-line max-lines-per-function -- config.* 路由 switch，case 数随业务增长天然偏长，拆分收益低于可读性损失（同 session-message-handler 先例）
   async handleSettingsMessage(msg: ClientMessage, ws: WsType): Promise<boolean> {
     switch (msg.type) {
       case 'config.getProviders':
@@ -77,6 +78,13 @@ export class SettingsMessageHandler {
       case 'config.oauthCancel': {
         const result = this.ctx.authService.cancel(msg.payload.providerId)
         this.ctx.reply(ws, msg.id, 'config.oauthCancelReply', result)
+        return true
+      }
+      case 'config.hasOAuth': {
+        // MF-1：查询 auth.json 是否已有该 provider 的 oauth 凭据（QuickSetup 重开时据此默认
+        // oauth radio，防 env 盲保存触发 I9 清理①静默删凭据）。只返回布尔——token 永不出现在协议中。
+        const hasOAuth = await this.ctx.authService.hasOAuth(msg.payload.providerId)
+        this.ctx.reply(ws, msg.id, 'config.hasOAuthReply', { hasOAuth })
         return true
       }
       case 'config.checkEnvVars': {

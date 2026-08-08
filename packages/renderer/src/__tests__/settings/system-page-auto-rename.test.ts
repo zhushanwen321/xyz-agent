@@ -58,6 +58,10 @@ vi.mock('@/composables/features/command/useCommandStore', () => {
 
 vi.mock('@/lib/ipc', () => ({
   listSystemSounds: vi.fn(() => Promise.resolve({ sounds: [] })),
+  // UpdateCheckCard → useAppUpdate 订阅 onUpdateProgress/onUpdateError（useAppUpdate refactor 18c67d16f 后新增；
+  // 缺此导出 vitest 抛 No export is defined on the mock → 容器用例崩 mount）
+  onUpdateProgress: vi.fn(() => () => {}),
+  onUpdateError: vi.fn(() => () => {}),
 }))
 
 /** 最小 SystemSettings fixture。 */
