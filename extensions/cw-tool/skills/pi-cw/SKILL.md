@@ -1,13 +1,13 @@
 ---
-name: recursive-split
-description: "递归编排大型多 agent 并行开发任务,适用于需多层拆解(epic/feature/slice/wave)的大树任务。触发词:递归编排、recursive split、多 agent 并行开发、大任务拆解、大树拆分。仅用于 xyz-agent 项目。"
+name: pi-cw
+description: "cw 递归编排大型多 agent 并行开发任务,适用于需多层拆解(epic/feature/slice/wave)的大树任务。触发词:递归编排、多 agent 并行开发、大任务拆解、大树拆分。配套 @zhushanwen/pi-cw-tool。"
 ---
 
-# recursive-split
+# pi-cw
 
 主 agent 发起递归编排:用 cw 建一棵 epic->feature->slice->wave 的任务树,派第一个 planning-agent 自递归展开整棵树,主 agent 空闲等 steer 唤醒,全树完成后报告用户。
 
-> **编排机制**:子 agent 完成时 pi 自动 steer 唤醒父 agent(事件驱动,无轮询)。主 agent 只派第一个 epic planning-agent,**不自己 descend 到子层**。设计依据见 `design-v4.md`（同目录，随 git 跟踪）。
+> **编排机制**:子 agent 完成时 pi 自动 steer 唤醒父 agent(事件驱动,无轮询)。主 agent 只派第一个 epic planning-agent,**不自己 descend 到子层**。设计依据见 `design-v4.md`（同目录）。
 
 ## 何时用
 
@@ -16,20 +16,24 @@ description: "递归编排大型多 agent 并行开发任务,适用于需多层�
 - 多个 wave 可并行,各自 worktree 隔离开发
 - 单 agent 从头做到尾会撑爆上下文(设计 + 实现 + 审查 + 合并全栈)
 
+> 单 agent 模式或小任务（改 typo / 单文件 / 明确小 bug）走 `cw-cli` skill,不必建树。
+
 ## 何时不该用
 
-- 单文件小改、明确的小 bug:直接 edit,或派单个 worker subagent
+- 单文件小改、明确的小 bug:直接 edit,或派单个 worker subagent;或走 `cw-cli` skill 单 agent 模式
 - 线性任务、无需多 agent 并行:走 cw 单层 wave 即可,不必建树
 - 纯分析 / 调研 / 设计文档:不写代码不该进 cw 编排
 
-## 前置：安装 cw-tool
+## 前置：cw-tool
 
-本 skill 编排依赖 cw_* 工具（`@zhushanwen/pi-cw-tool` extension，含 cw_planning / cw_wave / cw_dev / cw_review 4 个 role-restricted 工具）。cw-tool **不作为内置扩展**，使用前必须安装/注入：
+本 skill 与 5 个编排 agent（planning / wave / dev / review / merge）打包在 `@zhushanwen/pi-cw-tool` 内。cw-tool 同时提供 cw_* 工具（cw_planning / cw_wave / cw_dev / cw_review）。安装确认分两层，不能互相反推：
 
-- **开发环境**：用 dev-link（`.agents/skills/dev-link/`）——`bash .agents/skills/dev-link/link-local.sh cw-tool`，然后 `source .env.dev-extensions` 并重启。
-- **正式环境**：单独安装 npm 包 `@zhushanwen/pi-cw-tool`（发布后）。
+- **skill + 工具层**：能读到本 skill 且 cw_* 工具可用，说明 cw-tool 的 skill + 工具已加载。
+- **agent 层**：5 个编排 agent 走独立发现通路（resource-discovery），**不能由「skill 可读」反推 agent 已发现**。编排 agent 必须通过 npm 把 cw-tool 安装到扫描目录（`<agentDir>/npm/` 或 `<agentDir>/extensions/`）才被发现。
 
-缺工具时 agent 模板的 tools 字段解析为空，编排第一步就失败。
+⚠️ **dev-link 限制**：dev-link（`XYZ_EXTENSION_PATHS`）只发现 skill + 工具，**不发现 agent**。用 dev-link live-edit 测 cw-tool 时，skill 可读、cw_* 工具可用，但 step 2 `subagent agent="planning-agent"` 会因 agent 不可发现而失败——需把 cw-tool npm 安装到扫描目录（或把 agent 软链进 `<agentDir>/extensions/`）才可编排。
+
+若 cw_* 工具缺失，说明 cw-tool 的工具未正确安装/加载，编排第一步就会失败（agent 模板的 tools 字段解析为空）。
 
 ## 流程
 
@@ -43,7 +47,7 @@ cw create epic --slug <kebab-slug> --objective "<一句话目标,含可验收的
 
 ### 2. 派第一个 planning-agent
 
-用 `subagent` 工具**后台**派发(`planning-agent` 是项目 `.agents/agents/` 下的 agent 模板):
+用 `subagent` 工具**后台**派发(`planning-agent` 是 cw-tool 内置的 agent 模板):
 
 ```
 subagent(action="start", agent="planning-agent", model="glm-5.1", slug="<epic-slug>-planning", fork=true,

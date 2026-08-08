@@ -224,3 +224,94 @@ describe("discoverResources (async)", () => {
     expect(result).toHaveLength(2);
   });
 });
+
+// ============================================================
+// user-extension-paths (XYZ_EXTENSION_PATHS) — dev-link 扩展发现
+// ============================================================
+
+describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
+  let ws: string;
+  let agentDir: string;
+  let savedEnv: string | undefined;
+
+  beforeEach(() => {
+    ws = tmpWorkspace();
+    agentDir = path.join(ws, ".fake-agent");
+    savedEnv = process.env.XYZ_EXTENSION_PATHS;
+  });
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env.XYZ_EXTENSION_PATHS;
+    else process.env.XYZ_EXTENSION_PATHS = savedEnv;
+    fs.rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("discovers agents from XYZ_EXTENSION_PATHS via pi.agents manifest", () => {
+    const pkgDir = path.join(ws, "my-ext");
+    writePackageJson(pkgDir, { agents: ["./agents"] });
+    writeFile(path.join(pkgDir, "agents"), "custom.md", "body");
+    process.env.XYZ_EXTENSION_PATHS = pkgDir;
+    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
+    expect(result.map((r) => path.basename(r.path))).toEqual(["custom.md"]);
+    expect(result[0]?.source).toBe("user-extension-paths");
+  });
+
+  it("discovers agents via convention dir (no manifest)", () => {
+    const pkgDir = path.join(ws, "my-ext");
+    writeFile(path.join(pkgDir, "agents"), "conv.md", "body");
+    process.env.XYZ_EXTENSION_PATHS = pkgDir;
+    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
+    expect(result.map((r) => path.basename(r.path))).toEqual(["conv.md"]);
+    expect(result[0]?.source).toBe("user-extension-paths");
+  });
+
+  it("multiple paths separated by delimiter", () => {
+    const pkg1 = path.join(ws, "ext1");
+    const pkg2 = path.join(ws, "ext2");
+    writeFile(path.join(pkg1, "agents"), "a1.md", "body");
+    writeFile(path.join(pkg2, "agents"), "a2.md", "body");
+    process.env.XYZ_EXTENSION_PATHS = `${pkg1}${path.delimiter}${pkg2}`;
+    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
+    expect(result.map((r) => path.basename(r.path)).sort()).toEqual(["a1.md", "a2.md"]);
+    expect(result.every((r) => r.source === "user-extension-paths")).toBe(true);
+  });
+
+  it("overrides npm on name clash (priority: user-extension-paths > npm)", () => {
+    const npmPkg = path.join(agentDir, "npm", "node_modules", "test-pkg");
+    writePackageJson(npmPkg, { agents: ["./agents"] });
+    writeFile(path.join(npmPkg, "agents"), "shared.md", "npm-body");
+    const devPkg = path.join(ws, "dev-ext");
+    writePackageJson(devPkg, { agents: ["./agents"] });
+    writeFile(path.join(devPkg, "agents"), "shared.md", "dev-body");
+    process.env.XYZ_EXTENSION_PATHS = devPkg;
+    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
+    const shared = result.find((r) => path.basename(r.path) === "shared.md");
+    expect(shared?.source).toBe("user-extension-paths");
+  });
+
+  it("project-agents overrides user-extension-paths (project wins)", () => {
+    const devPkg = path.join(ws, "dev-ext");
+    writePackageJson(devPkg, { agents: ["./agents"] });
+    writeFile(path.join(devPkg, "agents"), "x.md", "dev-body");
+    writeFile(path.join(ws, ".agents", "agents"), "x.md", "project-body");
+    process.env.XYZ_EXTENSION_PATHS = devPkg;
+    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
+    const x = result.find((r) => path.basename(r.path) === "x.md");
+    expect(x?.source).toBe("project-agents");
+  });
+
+  it("empty/unset env → no user-extension-paths source", () => {
+    delete process.env.XYZ_EXTENSION_PATHS;
+    const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
+    expect(result.filter((r) => r.source === "user-extension-paths")).toEqual([]);
+  });
+
+  it("async discoverResources also scans user-extension-paths", async () => {
+    const pkgDir = path.join(ws, "my-ext");
+    writePackageJson(pkgDir, { agents: ["./agents"] });
+    writeFile(path.join(pkgDir, "agents"), "async.md", "body");
+    process.env.XYZ_EXTENSION_PATHS = pkgDir;
+    const result = await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
+    expect(result.map((r) => path.basename(r.path))).toEqual(["async.md"]);
+    expect(result[0]?.source).toBe("user-extension-paths");
+  });
+});

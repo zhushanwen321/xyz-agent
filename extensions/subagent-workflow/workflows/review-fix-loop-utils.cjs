@@ -1,6 +1,6 @@
 // review-fix-loop-utils.cjs — review-fix-loop.js 的可测纯函数模块
 //
-// 与 recursive-split-utils.cjs 同款模式：workflow 编排逻辑的纯函数抽到独立 .cjs，
+// workflow 编排逻辑的纯函数抽到独立 .cjs，
 // 供 vitest 单测直接 require（extensions/subagent-workflow/src/__tests__/review-fix-loop-utils.test.ts）
 // 与 worker 运行时共用（review-fix-loop.js 经 workerData.scriptPath 定位本文件）。
 //

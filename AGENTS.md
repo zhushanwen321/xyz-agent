@@ -528,6 +528,33 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 - **Commit 信息**：英文，遵循 conventional commits 风格（`feat:`/`fix:`/`refactor:`/`docs:`/`chore:`/`ci:` 前缀）
 - **提交粒度**：见全局 AGENTS.md「提交策略」——优先提交自己的改动，认知外的改动不碰
 
+## pi 资源放置规范
+
+本项目既开发 pi extension（`extensions/`）又有自己的项目资源（`.agents/`），agent.md / workflow.js 放错地方会不被发现或不可移植。以下约束强制资源归位。
+
+### 资源该放哪
+
+| 资源性质 | 放置位置 | 声明 |
+|---|---|---|
+| 与某个 extension **强相关**的 agent.md / workflow.js | `extensions/<pkg>/agents/`、`extensions/<pkg>/workflows/` | package.json `pi.agents` / `pi.workflows` |
+| 项目本身开发要用的 subagent | `.agents/agents/` | 自动发现（project-agents 源） |
+| 项目本身开发要用的 workflow | `.agents/workflows/` | 自动发现（project 源） |
+| 当前开发环境要用的 agent / workflow（跨项目通用） | 全局 `~/.agents/agents/`、`~/.agents/workflows/` | 自动发现（user-agents 源） |
+
+### 「与 extension 强相关」判据
+
+满足任一即强相关，必须进 extension 目录：
+- agent 的 `tools` frontmatter 受限到某 extension 提供的工具（如 cw review-agent `tools: cw_review` 强相关 cw-tool）
+- 移除该 extension 后 agent / workflow 无法正常工作
+
+反例：`review-arch-boundary`（tools: 通用 read/bash）不强相关 → 留 `.agents/agents/`。
+
+### 发现机制
+
+- agent / workflow：pi-subagent-workflow `resource-discovery` 扫 7 源，同名 last-writer-wins（project-agents 优先级最高）。extension 内置 agent 必须在 package.json 声明 `pi.agents`，且**安装到 npm / npm-dev 扫描目录**才被发现——dev-link（`XYZ_EXTENSION_PATHS`）**不发现 agent**（只发现 skill + 工具）。
+- skill：pi core 经扩展 `pi.skills` 声明发现（first-writer-wins），独立通路。
+- SSOT：`extensions/subagent-workflow/src/shared/resource-discovery.ts`。
+
 ## 架构约定
 
 - **视图切换**: 状态驱动（settingsStore.currentView），不用 vue-router

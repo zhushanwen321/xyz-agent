@@ -599,7 +599,7 @@ export class SubagentService {
     //   - **不可作为后续 agent 的 cwd**——目录已删，复用会 ENOENT。
     //   - wave 内 worktree 复用（spec-w §2 "wave 内 8 action 共享 worktree"）在 pi 当前架构下
     //     不可行：worktree 绑定单次 agent() record，每次 executeAndAwait 结束 finalizeRecord
-    //     无条件 cleanup，worktree 无法跨 action 存活。wave 改用主 cwd（见 recursive-split.js）。
+    //     无条件 cleanup，worktree 无法跨 action 存活。wave 改用主 cwd。
     wfResult.worktreePath = record.worktreeHandle?.path;
     return wfResult;
   }
