@@ -103,6 +103,15 @@ describe("validateRunArgs — 校验语义", () => {
     expect(() => validateRunArgs(spec)).not.toThrow();
   });
 
+  it("M1 回归: nullable schema 的 null 是合法输入（null-scan 不删 nullable 键）", () => {
+    const spec = makeSpec(
+      { type: "object", properties: { model: { type: ["string", "null"] } }, required: ["model"] },
+      { model: null },
+    );
+    expect(() => validateRunArgs(spec)).not.toThrow();
+    expect(spec.args.model).toBeNull(); // 未被删除
+  });
+
   it("TC6a: 真畸形 schema → ArgsValidationError「schema 无效」（不泄漏原始 throw）", () => {
     const spec = makeSpec({ type: "not-a-type" }, { a: 1 });
     try {
@@ -122,7 +131,7 @@ describe("validateRunArgs — 校验语义", () => {
     expect(() => validateRunArgs(spec)).not.toThrow();
   });
 
-  it("TC7: 无缓存——每次 validateRunArgs 均校验（compile 0.006ms 实测，缓存无价值）", () => {
+  it("TC7: 无缓存——每次 validateRunArgs 均校验（compile 0.006ms 实测，缓存无价值；无缓存声明本身靠 [P-compile] 探针实证，本用例是行为冒烟）", () => {
     const params = reviewFixLoopParameters();
     const good = makeSpec(params, { targetType: "git-diff", target: "main" });
     const bad = makeSpec(params, { targetType: "git-diff" });

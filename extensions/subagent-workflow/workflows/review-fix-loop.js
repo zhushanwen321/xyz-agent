@@ -33,7 +33,7 @@ parameters:
   type: object
   properties:
     targetType: { type: string, enum: [git-diff, file, dir, text] }
-    target: { type: string }
+    target: { type: string, minLength: 1, pattern: '\S' }
     autoCommit: { type: boolean, default: false }
     maxRounds: { type: integer, default: 10, minimum: 1 }
     stuckThreshold: { type: integer, default: 3, minimum: 1 }

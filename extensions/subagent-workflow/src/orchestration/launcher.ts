@@ -224,6 +224,9 @@ export async function runAndWait(
     runId = await runWorkflow(spec, deps, signal);
   } catch (err) {
     if (err instanceof ArgsValidationError) {
+      // 注：WorkflowRunResult.reason 是 pi.__workflowRun 的跨扩展公开类型——新增
+      // 'invalid_args' 成员是对外部消费方的契约变更（m3 exec-review m5）；该 reason
+      // 永不进 run.state.reason（run 从未创建），仅存在于本合成返回值。
       return {
         status: "done",
         reason: "invalid_args",

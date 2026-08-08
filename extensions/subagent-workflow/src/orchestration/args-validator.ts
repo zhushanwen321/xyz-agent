@@ -80,9 +80,25 @@ export function validateRunArgs(spec: RunSpec): void {
     );
   }
 
-  // null-scan：null 值视为缺失（coerceTypes 会把 null→"" 放行 required，绕过 fail-fast）
+  // null-scan：null 值视为缺失（coerceTypes 会把 null→"" 放行 required，绕过 fail-fast）。
+  // 只删 schema 未声明 nullable 的键——type 含 "null"（如 ["string","null"]）的合法 null
+  // 输入保留（m3 exec-review M1 探针实证：全键删除会拒掉 nullable required 的合法值）。
+  const schema = parameters as Record<string, unknown>;
+  const properties =
+    schema.properties !== null && typeof schema.properties === "object"
+      ? (schema.properties as Record<string, unknown>)
+      : {};
   for (const key of Object.keys(args)) {
-    if (args[key] === null) delete args[key];
+    if (args[key] !== null) continue;
+    const prop = properties[key];
+    let isNullable = false;
+    if (prop !== null && typeof prop === "object") {
+      const propType = (prop as Record<string, unknown>).type;
+      isNullable = Array.isArray(propType)
+        ? (propType as unknown[]).includes("null")
+        : propType === "null";
+    }
+    if (!isNullable) delete args[key];
   }
 
   let validate: ReturnType<Ajv["compile"]>;
@@ -105,31 +121,9 @@ export function validateRunArgs(spec: RunSpec): void {
       validate.errors ?? undefined,
     );
   }
-
-  // required 空串复查：type:string 必填属性值为 '' 时 ajv 放行（'' 是合法 string），
-  // 但脚本语义（如 review-fix-loop 的 !target）视为缺失——chokepoint 层统一拦截。
-  const schema = parameters as Record<string, unknown>;
-  const required = schema.required;
-  const properties = schema.properties;
-  if (Array.isArray(required) && properties !== null && typeof properties === "object") {
-    for (const key of required) {
-      if (typeof key !== "string") continue;
-      const prop = (properties as Record<string, unknown>)[key];
-      const value = args[key];
-      if (
-        prop !== null &&
-        typeof prop === "object" &&
-        (prop as Record<string, unknown>).type === "string" &&
-        typeof value === "string" &&
-        value.trim() === ""
-      ) {
-        throw new ArgsValidationError(
-          scriptName,
-          formatMessage(scriptName, [
-            { instancePath: `/${key}`, message: "must be a non-empty string (trimmed)" },
-          ]),
-        );
-      }
-    }
-  }
+  // 注：非空约束由 schema 声明（minLength/pattern），chokepoint 不发明约束——
+  // m3 exec-review M2：硬编码 trim 空串复查与 schema 显式语义（enum 含 ''/minLength:0）
+  // 矛盾。review-fix-loop 的 target 用 { minLength: 1, pattern: '\\S' } 表达。
+  // 校验失败时 spec.args 可能已被 null-scan/coerce 部分 mutate（文档化行为：失败后
+  // 调用方不应复用该 args 对象）。
 }

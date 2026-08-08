@@ -800,7 +800,9 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
         RUN_TIMEOUT_MS,
       );
       expect(r2.reason).toBe("invalid_args");
-      expect(r2.error).toContain("must be a non-empty string");
+      // schema 驱动（minLength:1 + pattern '\\S'）：chokepoint 不发明约束
+      expect(r2.error).toContain("target");
+      expect(r2.error).toContain("workflow info review-fix-loop");
     },
     RUN_TIMEOUT_MS,
   );

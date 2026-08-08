@@ -386,6 +386,7 @@ describe("runWorkflow", () => {
     expect(deps.store.save).not.toHaveBeenCalled();
     expect(deps.eventBus.emit).not.toHaveBeenCalled();
     expect(addSpy).not.toHaveBeenCalled();
+    expect(deps.log).not.toHaveBeenCalled(); // 校验在 deps.log 前 throw（无日志痕迹）
   });
 });
 
