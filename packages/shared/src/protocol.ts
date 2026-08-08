@@ -132,7 +132,7 @@ export interface SetProviderData {
    * runtime 写入 models.json 该 provider 条目旁。兼容旧数据：未设置时按 apiKey 格式推断
    * （$开头→env_var，非空→api_key）。
    */
-  authMethod?: 'api_key' | 'oauth' | 'env_var'
+  authMethod?: 'api_key' | 'oauth' | 'env_var' | 'ambient'
   baseUrl?: string
   /** 自定义请求头（provider 级，与 ProviderInfo.headers 对齐）。 */
   headers?: Record<string, string>

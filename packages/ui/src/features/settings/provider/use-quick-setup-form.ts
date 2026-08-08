@@ -126,6 +126,8 @@ export function useQuickSetupForm(
       data.authMethod = 'env_var'
     } else if (authMethod.value === 'oauth') {
       data.authMethod = 'oauth'
+    } else if (authMethod.value === 'ambient') {
+      data.authMethod = 'ambient'
     }
     emitSave({ providerId: template.value.id, data })
   }

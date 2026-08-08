@@ -26,6 +26,15 @@ const configMock = vi.hoisted(() => ({
   testProvider: vi.fn(async () => ({ ok: true })),
   discoverModels: vi.fn(async () => ({ success: true, models: [] })),
   setDefaultModel: vi.fn(async () => {}),
+  // wave-quick-setup-c/wave-list-badge：OAuth + env 检测（useProviderOAuth onMounted 订阅）
+  checkEnvVars: vi.fn(async () => ({})),
+  oauthLogin: vi.fn(async () => ({ started: false, error: 'mock' })),
+  oauthCancel: vi.fn(async () => ({ cancelled: false })),
+  onAuthDeviceCode: vi.fn(() => () => {}),
+  onAuthAuthUrl: vi.fn(() => () => {}),
+  onAuthSuccess: vi.fn(() => () => {}),
+  onAuthError: vi.fn(() => () => {}),
+  listBuiltinProviders: vi.fn(async () => []),
 }))
 
 vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
@@ -242,5 +251,46 @@ describe('ProviderPage W1 robustness', () => {
 
     expect(configMock.deleteProvider).toHaveBeenCalledWith('anthropic')
     expect(store.defaultModel.value).toBe('')
+  })
+})
+
+describe('ProviderPage 认证徽章（wave-list-badge TC3）', () => {
+  it('env_var → $ENV 徽章（info 色）；oauth → OAuth（warn 色）', async () => {
+    const badgeProviders: ProviderInfo[] = [
+      { id: 'a', name: 'A', apiKeySet: true, status: 'connected', authMethod: 'env_var', enabled: true, models: [] },
+      { id: 'b', name: 'B', apiKeySet: false, status: 'connected', authMethod: 'oauth', enabled: true, models: [] },
+    ]
+    wrapper = mount(ProviderPage, {
+      props: { providers: badgeProviders },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    const badges = document.body.querySelectorAll('[data-testid="provider-auth-badge"]')
+    expect(badges.length).toBe(2)
+    // i18n mock 返回 key（renderer vitest.setup），断言 key 存在即徽章渲染
+    expect(badges[0]!.textContent).toContain('authBadge.env')
+    expect(badges[1]!.textContent).toContain('authBadge.oauth')
+    // env info 色 / oauth warn 色
+    expect(badges[0]!.className).toContain('bg-info-soft')
+    expect(badges[1]!.className).toContain('bg-warn-soft')
+  })
+
+  it('api_key 已设置 → API Key（中性色）；无凭据 → API Key（未设置）', async () => {
+    const badgeProviders: ProviderInfo[] = [
+      { id: 'a', name: 'A', apiKeySet: true, status: 'connected', authMethod: 'api_key', enabled: true, models: [] },
+      { id: 'b', name: 'B', apiKeySet: false, status: 'not_configured', enabled: true, models: [] },
+    ]
+    wrapper = mount(ProviderPage, {
+      props: { providers: badgeProviders },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    const badges = document.body.querySelectorAll('[data-testid="provider-auth-badge"]')
+    expect(badges[0]!.textContent).toContain('authBadge.apiKey')
+    expect(badges[1]!.textContent).toContain('authBadge.apiKeyUnset')
+    // 中性色
+    expect(badges[0]!.className).toContain('bg-surface-hover')
   })
 })

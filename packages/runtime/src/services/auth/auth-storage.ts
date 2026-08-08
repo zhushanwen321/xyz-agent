@@ -115,4 +115,12 @@ export class AuthStorage {
   async hasOAuth(providerId: string): Promise<boolean> {
     return readAuthFile(this.filePath)[providerId]?.type === 'oauth'
   }
+
+  /**
+   * 同步版 hasOAuth（listProviders 是同步契约，M6 status 派生用）。
+   * 与异步版读同一 readAuthFile（同步核心）；写是原子 rename，读永远拿到完整文件。
+   */
+  hasOAuthSync(providerId: string): boolean {
+    return readAuthFile(this.filePath)[providerId]?.type === 'oauth'
+  }
 }

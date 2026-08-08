@@ -268,7 +268,7 @@ export interface IConfigService {
     name?: string
     type?: string
     apiKey?: string
-    authMethod?: 'api_key' | 'oauth' | 'env_var'
+    authMethod?: 'api_key' | 'oauth' | 'env_var' | 'ambient'
     baseUrl?: string
     models?: Array<string | { id: string; name?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null> }>
     enabled?: boolean

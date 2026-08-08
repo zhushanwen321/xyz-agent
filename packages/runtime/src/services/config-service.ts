@@ -14,6 +14,35 @@ import { dirname, join } from 'node:path'
 // 避免运行时 fs/路径解析（打包后 asar 路径问题）。tsc 类型检查需 resolveJsonModule（tsconfig.json 已加）。
 import builtinData from '../generated/builtin-providers.json'
 
+/**
+ * builtin provider id → models 索引（T9/M5：listProviders 合并兜底用）。
+ * builtinData 是模块级 JSON import（单例缓存），此索引避免每次 listProviders 线性扫描 37 个 provider。
+ */
+const builtinModelsById = new Map<string, BuiltinProviderTemplate['models']>(
+  // JSON import 推断类型与声明类型有差异（同 listBuiltinProviders 的浅校验后断言处理）
+  (builtinData.providers ?? []).map(p => [p.id, p.models] as [string, BuiltinProviderTemplate['models']]),
+)
+
+/**
+ * BuiltinModelSummary → ProviderInfo.models 元素形状（T9 合并兜底用）。
+ * 差异：BuiltinModelSummary.input 是 string[]（恒输出 11 键），ProviderInfo 元素 input 是
+ * Array<'text' | 'image'>——过滤 + null→undefined 归一。
+ */
+function toProviderModel(m: BuiltinProviderTemplate['models'][number]): ProviderInfo['models'][number] {
+  return {
+    id: m.id,
+    name: m.name,
+    api: m.api,
+    baseUrl: m.baseUrl,
+    reasoning: m.reasoning,
+    input: m.input.filter((v): v is 'text' | 'image' => v === 'text' || v === 'image'),
+    contextWindow: m.contextWindow,
+    maxTokens: m.maxTokens ?? undefined,
+    thinkingLevelMap: m.thinkingLevelMap ?? undefined,
+    compat: m.compat ?? undefined,
+  }
+}
+
 import {
   SYSTEM_PROMPT_MAX_LENGTH,
   type ProviderInfo,
@@ -137,7 +166,7 @@ export class ConfigService implements IConfigService {
      * I8：deleteProvider 时同步清 auth.json（防 OAuth token 永久残留）。
      * 可选注入：未注入时两处清理 no-op（测试/无 OAuth 场景）。
      */
-    private authStorage?: Pick<AuthStorage, 'remove' | 'hasOAuth'>,
+    private authStorage?: Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync'>,
   ) {}
 
   // ── Provider CRUD ──────────────────────────────────────────────
@@ -153,21 +182,8 @@ export class ConfigService implements IConfigService {
   listProviders(): ProviderInfo[] {
     const models = this.configStore.readModels()
     // eslint-disable-next-line taste/no-unsafe-object-entries -- providers is a known schema Record<string, PiProviderConfig>, not arbitrary user input
-    return Object.entries(models.providers).map(([id, config]) => ({
-      id,
-      name: config.name || id,
-      // W2：回填 provider 级 api 字段，修复前端编辑 provider 时 type 下拉丢失（P0-1）
-      api: config.api,
-      baseUrl: config.baseUrl,
-      apiKeySet: !!config.apiKey,
-      // I6：authMethod 回填——优先取 models.json 标注值；旧数据未标注时按 apiKey 格式推断
-      // （$开头→env_var，非空→api_key；pi resolveConfigValue 语义一致）
-      authMethod: config.authMethod
-        ?? (typeof config.apiKey === 'string' && config.apiKey.startsWith('$')
-          ? 'env_var' as const
-          : config.apiKey ? 'api_key' as const : undefined),
-      status: config.apiKey ? 'connected' as const : 'not_configured' as const,
-      models: (config.models ?? []).map(m => ({
+    return Object.entries(models.providers).map(([id, config]) => {
+      const userModels = (config.models ?? []).map(m => ({
         id: m.id,
         name: m.name,
         api: m.api,
@@ -177,13 +193,39 @@ export class ConfigService implements IConfigService {
         // W2：model 级 enabled 透传（默认 true 向上兼容存量无此字段的 model）
         enabled: m.enabled !== false,
         ...pickModelCapabilityFields(m),
-      })),
-      // W2：从 config.enabled 读，undefined/true 视为启用（向上兼容存量无此字段的 provider）
-      enabled: config.enabled !== false,
-      // Coding Plan 额度查询配置：透传 quota（fetcher/enabled/cookieSet）到 ProviderInfo，
-      // 供 Settings UI 显示状态 + ContextCapacityPopover 判断是否显示额度区
-      quota: config.quota,
-    }))
+      }))
+      return {
+        id,
+        name: config.name || id,
+        // W2：回填 provider 级 api 字段，修复前端编辑 provider 时 type 下拉丢失（P0-1）
+        api: config.api,
+        baseUrl: config.baseUrl,
+        apiKeySet: !!config.apiKey,
+        // I6：authMethod 回填——优先取 models.json 标注值；旧数据未标注时按 apiKey 格式推断
+        // （$开头→env_var，非空→api_key；pi resolveConfigValue 语义一致）
+        authMethod: config.authMethod
+          ?? (typeof config.apiKey === 'string' && config.apiKey.startsWith('$')
+            ? 'env_var' as const
+            : config.apiKey ? 'api_key' as const : undefined),
+        // M6 status 派生：apiKey 存在 → connected；否则 auth.json 有 oauth 凭据 → connected
+        // （OAuth 授权后 models.json 无 apiKey，凭据在 auth.json——列表不能显示未配置）
+        status: config.apiKey
+          ? 'connected' as const
+          : this.authStorage?.hasOAuthSync(id)
+            ? 'connected' as const
+            : 'not_configured' as const,
+        // T9/M5 models 合并：用户自定义 models 非空 → 保留；为空 → builtin models 兜底
+        // （仅 models.json 已存在的 provider id 参与；builtinModelsById 模块级缓存防重复解析）
+        models: userModels.length > 0
+          ? userModels
+          : (builtinModelsById.get(id)?.map(toProviderModel) ?? userModels),
+        // W2：从 config.enabled 读，undefined/true 视为启用（向上兼容存量无此字段的 provider）
+        enabled: config.enabled !== false,
+        // Coding Plan 额度查询配置：透传 quota（fetcher/enabled/cookieSet）到 ProviderInfo，
+        // 供 Settings UI 显示状态 + ContextCapacityPopover 判断是否显示额度区
+        quota: config.quota,
+      }
+    })
   }
 
   /**
@@ -223,7 +265,7 @@ export class ConfigService implements IConfigService {
     name?: string
     type?: string
     apiKey?: string
-    authMethod?: 'api_key' | 'oauth' | 'env_var'
+    authMethod?: 'api_key' | 'oauth' | 'env_var' | 'ambient'
     baseUrl?: string
     models?: Array<string | { id: string; name?: string; api?: string; baseUrl?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null>; enabled?: boolean; compat?: Record<string, unknown> }>
     enabled?: boolean

@@ -202,6 +202,14 @@ export default {
       footerHintEnv: 'apiKey = $ENV_VAR, resolved by pi at runtime',
       footerHintOauth: 'OAuth token stored in auth.json, auto-refreshed by pi',
       footerHintAmbient: 'No credential stored; read from cloud environment at runtime',
+      // ── wave-list-badge: provider auth badge (demo provider-auth-badge) ──
+      authBadge: {
+        env: '$ENV',
+        oauth: 'OAuth',
+        apiKey: 'API Key',
+        apiKeyUnset: 'API Key (not set)',
+        ambient: 'Cloud',
+      },
       noResult: 'No matching template',
       modelsSuffix: '{count} models',
       // F7b: models.length=0 in the row after override-only save is expected; models come from pi built-in catalog

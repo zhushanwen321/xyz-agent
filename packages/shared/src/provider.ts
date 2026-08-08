@@ -88,7 +88,7 @@ export interface ProviderInfo {
    * 注意与 BuiltinProviderTemplate.authMode 语义区分：authMethod 描述「当前凭据形态」
    * （env_var = 已用 $ENV 引用），authMode 描述「provider 支持的认证能力全集」。
    */
-  authMethod?: 'api_key' | 'oauth' | 'env_var'
+  authMethod?: 'api_key' | 'oauth' | 'env_var' | 'ambient'
   headers?: Record<string, string>
   authHeader?: boolean
   status: ProviderStatus

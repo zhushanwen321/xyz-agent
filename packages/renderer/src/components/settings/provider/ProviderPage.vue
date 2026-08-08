@@ -75,6 +75,14 @@
           @click="toggleExpand(p.id)"
         >{{ p.id === NEW_ID ? t('settings.provider.newProvider') : p.name }}</span>
 
+        <!-- 认证方式徽章（demo provider-auth-badge 三色，wave-list-badge） -->
+        <span
+          v-if="p.id !== NEW_ID"
+          data-testid="provider-auth-badge"
+          class="shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] font-medium"
+          :class="authBadgeClass(p)"
+        >{{ t(`settings.provider.authBadge.${authBadgeTextKey(p)}`) }}</span>
+
         <!-- 默认供应商 pill -->
         <Button
           v-if="p.id !== NEW_ID && p.id === defaultProviderId"
@@ -207,6 +215,7 @@ import {
   USE_QUOTA_CONFIGURE_KEY,
 } from '@xyz-agent/ui/features/settings'
 import { useProviderOAuth } from '@/composables/features/settings/useProviderOAuth'
+import { authBadgeTextKey, authBadgeClass } from './provider-badge'
 
 // ProviderEditBody 迁入 ui 包，其 renderer 侧依赖（useQuotaConfigure/useToast）经
 // provide/inject 注入（ui 零 renderer import 铁律）。ProviderEditBody 内部调用工厂。
@@ -475,5 +484,6 @@ function statusDot(status: ProviderStatus): string {
   const map = { connected: 'bg-success', not_configured: 'bg-neutral-dim', error: 'bg-danger' }
   return map[status]
 }
+
 </script>
 

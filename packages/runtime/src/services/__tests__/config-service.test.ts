@@ -89,7 +89,7 @@ describe('ConfigService.listBuiltinProviders', () => {
 })
 
 describe('ConfigService auth 清理（I9 清理① + I8，T6）', () => {
-  function makeSvc(authStorage?: Pick<AuthStorage, 'remove' | 'hasOAuth'>) {
+  function makeSvc(authStorage?: Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync'>) {
     const mockStore = {
       getProviderConfig: vi.fn(() => ({ name: 'anthropic' })),
       upsertProvider: vi.fn(() => ({})),
@@ -101,21 +101,21 @@ describe('ConfigService auth 清理（I9 清理① + I8，T6）', () => {
 
   it('setProvider 保存 apiKey → 清 auth.json oauth（both provider 切凭据源，幂等）', async () => {
     const authStorage = { remove: vi.fn(async () => undefined), hasOAuth: vi.fn(async () => false) }
-    const { svc } = makeSvc(authStorage)
+    const { svc } = makeSvc(authStorage as unknown as Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync'>)
     svc.setProvider('anthropic', { apiKey: 'sk-test' })
     expect(authStorage.remove).toHaveBeenCalledWith('anthropic')
   })
 
   it('setProvider 未传 apiKey（只改 baseUrl）→ 不清 auth.json', () => {
     const authStorage = { remove: vi.fn(async () => undefined), hasOAuth: vi.fn(async () => false) }
-    const { svc } = makeSvc(authStorage)
+    const { svc } = makeSvc(authStorage as unknown as Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync'>)
     svc.setProvider('anthropic', { baseUrl: 'https://proxy.example.com' })
     expect(authStorage.remove).not.toHaveBeenCalled()
   })
 
   it('deleteProvider → 清 auth.json（I8：OAuth token 强绑定凭据，删除时同步清）', async () => {
     const authStorage = { remove: vi.fn(async () => undefined), hasOAuth: vi.fn(async () => false) }
-    const { svc } = makeSvc(authStorage)
+    const { svc } = makeSvc(authStorage as unknown as Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync'>)
     svc.deleteProvider('anthropic')
     expect(authStorage.remove).toHaveBeenCalledWith('anthropic')
   })
@@ -193,5 +193,56 @@ describe('ConfigService authMethod 透传与推断（I6，wave-quick-setup-c TC7
     expect(byId['env-legacy'].authMethod).toBe('env_var')
     expect(byId['plain-legacy'].authMethod).toBe('api_key')
     expect(byId['empty-legacy'].authMethod).toBeUndefined()
+  })
+})
+
+describe('ConfigService status 派生与 models 合并（M6/T9，wave-list-badge TC1/TC2）', () => {
+  it('status：models.json 无 apiKey 但 auth.json 有 oauth → connected（M6）', () => {
+    const mockStore = {
+      readModels: vi.fn(() => ({ providers: { anthropic: { name: 'Anthropic' } } })),
+    } as unknown as IConfigStore
+    const authStorage = {
+      remove: vi.fn(async () => undefined),
+      hasOAuth: vi.fn(async () => false),
+      hasOAuthSync: vi.fn(() => true),
+    } as unknown as Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync'>
+    const svc = new ConfigService('/tmp/project', mockStore, authStorage)
+    const providers = svc.listProviders()
+    expect(providers[0].status).toBe('connected')
+  })
+
+  it('status：无 apiKey 且无 oauth 凭据 → not_configured', () => {
+    const mockStore = {
+      readModels: vi.fn(() => ({ providers: { openai: { name: 'OpenAI' } } })),
+    } as unknown as IConfigStore
+    const authStorage = {
+      remove: vi.fn(async () => undefined),
+      hasOAuth: vi.fn(async () => false),
+      hasOAuthSync: vi.fn(() => false),
+    } as unknown as Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync'>
+    const svc = new ConfigService('/tmp/project', mockStore, authStorage)
+    expect(svc.listProviders()[0].status).toBe('not_configured')
+  })
+
+  it('models 合并（T9/M5）：models 空 → builtin 兜底；自定义非空 → 保留；不在 builtin 范围 → 不合并', () => {
+    const mockStore = {
+      readModels: vi.fn(() => ({
+        providers: {
+          openai: { name: 'OpenAI' },
+          anthropic: { name: 'Anthropic', models: [{ id: 'custom-model' }] },
+          'unknown-x': { name: 'X' },
+        },
+      })),
+    } as unknown as IConfigStore
+    const svc = new ConfigService('/tmp/project', mockStore)
+    const providers = svc.listProviders()
+    const byId = Object.fromEntries(providers.map(p => [p.id, p]))
+    // openai 是 builtin provider：models 兜底非空
+    expect(byId['openai'].models.length).toBeGreaterThan(0)
+    expect(byId['openai'].models[0].id).toBeTruthy()
+    // anthropic 自定义 models 保留（builtin 不覆盖）
+    expect(byId['anthropic'].models).toEqual([expect.objectContaining({ id: 'custom-model' })])
+    // unknown-x 不在 builtin 范围：models 仍为空
+    expect(byId['unknown-x'].models).toEqual([])
   })
 })

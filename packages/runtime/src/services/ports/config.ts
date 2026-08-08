@@ -16,7 +16,7 @@ export interface ConfigProviderConfig {
   /** pi 的 api 标识（前端直接发送 pi 终值，runtime 透传，见 applyTypeTranslation）。 */
   api?: string
   /** 认证方式（I6）：ProviderQuickSetup.onSave 标注。与 infra PiProviderConfig.authMethod 同构。 */
-  authMethod?: 'api_key' | 'oauth' | 'env_var'
+  authMethod?: 'api_key' | 'oauth' | 'env_var' | 'ambient'
   /** provider 级启停（W1）。省略时默认 true，与 infra PiProviderConfig 同构。 */
   enabled?: boolean
   models?: ConfigModelDefinition[]

@@ -202,6 +202,14 @@ export default {
       footerHintEnv: 'apiKey = $ENV_VAR，pi 运行时解析（零改动）',
       footerHintOauth: 'OAuth token 存入 auth.json，pi 自动刷新',
       footerHintAmbient: '不存储凭据，运行时读取云环境凭证',
+      // ── wave-list-badge：列表认证徽章（demo provider-auth-badge）──
+      authBadge: {
+        env: '$ENV',
+        oauth: 'OAuth',
+        apiKey: 'API Key',
+        apiKeyUnset: 'API Key（未设置）',
+        ambient: '云凭证',
+      },
       noResult: '没有匹配的模板',
       modelsSuffix: '{count} 模型',
       // F7b：B4 override-only 落盘后行内 models.length=0 是预期的，模型由 pi 内置 catalog 自动加载
