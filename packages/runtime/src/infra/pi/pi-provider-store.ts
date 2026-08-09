@@ -7,7 +7,7 @@
  * 不包含：路径解析（pi-paths）、session 扫描（session-file-utils）、agent 管理（agent-crud）
  */
 
-import { existsSync, readdirSync, mkdirSync, renameSync, rmdirSync, cpSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, mkdirSync, renameSync, rmdirSync, cpSync, statSync } from 'node:fs'
 import { join, resolve as pathResolve, sep } from 'node:path'
 import { toErrorMessage } from '../../utils/errors.js'
 import { isPackaged } from '../../utils/runtime-env.js'
@@ -163,6 +163,25 @@ function pickFirstModelProvider(
 }
 
 /**
+ * 读 auth.json 凭据表（catalog 兜底的凭据校验用）。
+ * 文件不存在返回 {}；JSON 损坏返回 {} + warn（兜底是 best-effort，不因损坏阻断）。
+ * 不依赖 AuthStorage 实例——本模块是纯函数读写层，无注入依赖。
+ */
+function readAuthCredentials(): Record<string, unknown> {
+  const authPath = join(getPiAgentDir(), 'auth.json')
+  if (!existsSync(authPath)) return {}
+  try {
+    const raw = readFileSync(authPath, 'utf-8')
+    if (raw.trim() === '') return {}
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch (cause) {
+    console.warn(`[provider-store] auth.json 损坏: ${authPath}`, cause)
+    return {}
+  }
+}
+
+/**
  * 更新 provider 配置并同步校验 defaultModel。
  * 全程同步（无 await），避免竞态窗口。
  */
@@ -293,16 +312,25 @@ export function findValidDefaultModel(): {
     return { result: { provider: fallback.provider, modelId: fallback.modelId }, wasFixed: true }
   }
 
-  // catalog 兜底：models.json 无可用 provider 时，查 builtin-providers 副本找有定义的
-  // catalog provider 作默认候选（与 MF-5 分工：MF-5 修复数据写 models.json，兜底只查询不写数据）
+  // catalog 兜底：models.json 无可用 provider 时，查 builtin-providers 副本找
+  // 「凭据可解析」的 catalog provider 作默认候选（决策 4：校验 auth.json credential /
+  // models.json apiKey 任一）。遍历而非取排序第一个——amazon-bedrock 等 ambient 认证
+  // provider 无凭据时不可用，不能作为默认。
+  // wasFixed=false：兜底是临时展示，不是配置修复——写回 settings.json 会污染用户配置
+  //（曾踩坑：兜底结果经 updateSettingsSync 覆盖用户默认 provider，见 2026-08-09 回归）。
   if (!fallback) {
-    const builtinProviders = (builtinData.providers ?? []) as Array<{ id: string; models?: Array<{ id: string }> }>
-    if (builtinProviders.length > 0) {
-      const first = builtinProviders[0]
-      if (first.models && first.models.length > 0) {
+    const authCredentials = readAuthCredentials()
+    const builtinProviders = (builtinData.providers ?? []) as Array<{
+      id: string
+      models?: Array<{ id: string }>
+    }>
+    for (const bp of builtinProviders) {
+      const hasCredential =
+        bp.id in authCredentials || !!models.providers[bp.id]?.apiKey
+      if (hasCredential && bp.models && bp.models.length > 0) {
         return {
-          result: { provider: first.id, modelId: first.models[0].id },
-          wasFixed: true,
+          result: { provider: bp.id, modelId: bp.models[0].id },
+          wasFixed: false,
         }
       }
     }
