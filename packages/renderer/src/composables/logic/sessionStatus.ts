@@ -46,7 +46,7 @@ export const STATUS_ICON: Record<
   pending: { icon: 'ArrowUpCircle', color: 'text-accent', animation: 'animate-bounce-small' },
   compacting: { icon: 'Hourglass', color: 'text-accent', animation: 'animate-spin' },
   working: { icon: 'RefreshCw', color: 'text-accent', animation: 'animate-spin' },
-  waiting: { icon: 'Wrench', color: 'text-warn', animation: 'animate-wiggle' },
+  waiting: { icon: 'Wrench', color: 'text-warn', animation: '' },
   retrying: { icon: 'Zap', color: 'text-warn', animation: 'animate-pulse-strong' },
   done: { icon: 'CheckCircle2', color: 'text-success', animation: '' },
   stopped: { icon: 'Ban', color: 'text-neutral-mid', animation: '' },

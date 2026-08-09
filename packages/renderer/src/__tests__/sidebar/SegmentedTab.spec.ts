@@ -75,9 +75,9 @@ describe('SegmentedTab', () => {
     // badge dot 是 absolute 定位的 span（组件 class: absolute right-1 top-1）
     const badge = subagentBtn.find('.absolute.right-1.top-1')
     expect(badge.exists()).toBe(true)
-    // pulse 动画 class（keyframes pulse-dot 在 style.css:375，引用范式同 SessionItem.vue:68）
-    expect(badge.classes()).toContain('animate-[pulse-dot_1.8s_ease-in-out_infinite]')
-    expect(badge.classes()).toContain('motion-reduce:animate-none')
+    // 静态 badge：plan 04 已删 pulse 动画（keyframes pulse-dot 仍在 style.css 供 SystemShortcutSection 使用）
+    expect(badge.classes()).not.toContain('animate-[pulse-dot_1.8s_ease-in-out_infinite]')
+    expect(badge.classes()).not.toContain('motion-reduce:animate-none')
   })
 
   it('subagents count = 0 时不显示 badge dot', () => {

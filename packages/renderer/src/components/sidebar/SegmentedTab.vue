@@ -22,7 +22,7 @@
       <component :is="tab.icon" class="size-[15px] shrink-0" />
       <span
         v-if="tab.badge"
-        class="absolute right-1 top-1 size-[7px] rounded-full bg-accent animate-[pulse-dot_1.8s_ease-in-out_infinite] motion-reduce:animate-none"
+        class="absolute right-1 top-1 size-[7px] rounded-full bg-accent"
       />
     </Button>
   </div>

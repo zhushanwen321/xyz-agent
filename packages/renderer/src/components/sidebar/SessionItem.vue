@@ -65,7 +65,7 @@
         data-testid="session-badge-running"
         class="si-badge inline-flex items-center gap-1 rounded-sm bg-accent-soft px-1 leading-none text-accent"
       >
-        <span class="inline-block h-[9px] w-[3px] rounded-[2px] bg-accent animate-[pulse-dot_1.8s_ease-in-out_infinite] motion-reduce:animate-none" />
+        <span class="inline-block h-[9px] w-[3px] rounded-[2px] bg-accent" />
         <span v-if="timeLabel" class="text-[10px] text-neutral-dim">{{ timeLabel }}</span>
       </span>
       <!-- waiting：… 胶囊（warn）— 需要用户介入 -->

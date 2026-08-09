@@ -282,7 +282,7 @@ export function useComposerShell(params: ComposerShellParams) {
       || (isBashMode.value
         ? 'composer-bash-mode border-[var(--accent)] shadow-[0_0_0_3px_var(--accent-ring,rgba(79,142,247,0.30))]'
         : isActive.value
-          ? 'border-[var(--accent)] shadow-[0_0_0_3px_rgba(79,142,247,0.25)] animate-steer-breathe'
+          ? 'border-[var(--accent)] shadow-[0_0_0_3px_rgba(79,142,247,0.25)]'
           : hasInput.value
             ? 'border-[var(--border-strong)] shadow-[0_0_0_2px_rgba(255,255,255,0.04)]'
             : ''),
