@@ -28,14 +28,20 @@ describe("RetryState transition table (IF-7)", () => {
 		expect(s.hookRetryCount).toBe(1);
 	});
 
-	it("② 未调用 steer：soCallCount=0 时 calledButFailed=false（MUST call 文案分支依据）", () => {
+	it("② 未调用 steer：上一 turn 失败 steer 后 soCallCount=0 → calledButFailed=false（MUST call 文案分支依据）", () => {
 		const s = new RetryState();
+		// 上一 turn 失败并 steer（onToolExecEnd + onTurnEnd）后，本 turn 未调用任何工具。
+		// onTurnEnd 无条件清零 soCallCount——RetryState 层无法观察新 turn 是否调用了工具，
+		// 此序列即 steer 后状态，是 hook 下一 turn_end 判定 calledButFailed=false 走
+		// MUST call 分支（而非 FAILED validation 分支）的前置。
+		s.onToolExecEnd(true, "err");
+		s.onTurnEnd();
 		// workflow-hook 的 calledButFailed = soCallCount > 0；0 次调用 → MUST call 分支
 		expect(s.soCallCount).toBe(0);
 		const calledButFailed = s.soCallCount > 0;
 		expect(calledButFailed).toBe(false);
+		expect(s.hookRetryCount).toBe(1);
 		expect(s.soSucceededEver).toBe(false);
-		expect(s.hookRetryCount).toBe(0);
 		expect(s.lastSchemaError).toBeNull();
 	});
 
@@ -55,18 +61,23 @@ describe("RetryState transition table (IF-7)", () => {
 
 	it("④ 超上限放弃：hookRetryCount≥MAX 时不调 onTurnEnd → lastSchemaError 保留", () => {
 		const s = new RetryState();
-		// 模拟已 steer 两次（MAX_HOOK_RETRIES=2）
+		// 两次「失败 → steer」循环后 hookRetryCount 达到 MAX_HOOK_RETRIES=2
+		//（常量定义见 src/workflow-hook.ts L21）。RetryState 自身不感知上限，
+		// 守卫责任在 hook 层（workflow-hook.ts L132 `hookRetryCount >= MAX_HOOK_RETRIES`
+		// 直接 return，不调 onTurnEnd）。集成层真实验证见 characterization-hook.test.ts
+		// ③「3 轮失败恰 2 次 steer」，本单测只验证 RetryState 自身状态转移契约。
+		s.onToolExecEnd(true, "err1");
 		s.onTurnEnd();
+		s.onToolExecEnd(true, "err2");
 		s.onTurnEnd();
 		expect(s.hookRetryCount).toBe(2);
 
+		// 第 3 轮失败：hook 守卫 return（不调 onTurnEnd）→ turn 自然结束不 steer，
+		// 最近错误与计数保留（超上限放弃路径的状态快照）。
 		s.onToolExecEnd(true, "last error text");
-		// workflow-hook 守卫：hookRetryCount>=2 直接 return（不调 onTurnEnd）
-		const guardHit = s.hookRetryCount >= 2;
-		expect(guardHit).toBe(true);
-		// 超上限时保留最近错误与计数（turn 自然结束，不 steer）
 		expect(s.lastSchemaError).toBe("last error text");
 		expect(s.soCallCount).toBe(1);
+		expect(s.hookRetryCount).toBe(2);
 	});
 
 	it("⑤ toolUse 不干预：守卫不调 onTurnEnd → soCallCount 保留", () => {

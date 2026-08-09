@@ -13,61 +13,26 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// ── mock pi（与 structured-output.test.ts 的 Workflow hook 组同构）──
+// ── mock pi 公共 fixture（M5-T4：与 structured-output.test.ts Workflow hook 组共享）──
 // on() 收集回调，emit() 按注册顺序触发，sendUserMessage spy。
+import {
+  createMockPi,
+  FAILED_TOOL_END,
+  loadExtension,
+  restoreSchemaEnv,
+  SCHEMA,
+  SCHEMA_ENV_NAME,
+  SUCCESS_TOOL_END,
+  turnEndPayload,
+} from "./mock-pi-fixture.js";
 
-const SCHEMA_ENV_NAME = "PI_WORKFLOW_SCHEMA";
 const originalSchemaEnv = process.env[SCHEMA_ENV_NAME];
 
-function createMockPi() {
-  const handlers = new Map<string, ((event: unknown) => Promise<void> | void)[]>();
-  const sendUserMessage = vi.fn();
-  return {
-    sendUserMessage,
-    registerTool: vi.fn(),
-    on: vi.fn((event: string, cb: (event: unknown) => Promise<void> | void) => {
-      if (!handlers.has(event)) handlers.set(event, []);
-      handlers.get(event)!.push(cb);
-    }),
-    // 驱动器：按注册顺序触发某事件的所有回调
-    async emit(event: string, payload: unknown): Promise<void> {
-      for (const cb of handlers.get(event) ?? []) {
-        await cb(payload);
-      }
-    },
-  };
-}
-
-async function loadExtension(mockPi: ReturnType<typeof createMockPi>, schemaJson: string): Promise<void> {
-  process.env[SCHEMA_ENV_NAME] = schemaJson;
-  // 动态 import 确保每次拿到模块级 const（环境变量已设好）。
-  // vitest 默认缓存模块，这里用 vi.resetModules + 动态 import 重置。
-  vi.resetModules();
-  const mod = await import("../src/index.js");
-  mod.default(mockPi);
-}
-
 afterEach(() => {
-  if (originalSchemaEnv === undefined) delete process.env[SCHEMA_ENV_NAME];
-  else process.env[SCHEMA_ENV_NAME] = originalSchemaEnv;
+  // fixture 的 restoreSchemaEnv 只处理 env；vi.restoreAllMocks 必须在消费方保留
+  restoreSchemaEnv(originalSchemaEnv);
   vi.restoreAllMocks();
 });
-
-const SCHEMA = JSON.stringify({ type: "object", properties: { count: { type: "number" } }, required: ["count"] });
-// 校验失败时 Pi 把 execute() 抛出的 error.message 塞进 result.content[0].text。
-const FAILED_TOOL_END = {
-  type: "tool_execution_end",
-  toolName: "structured-output",
-  isError: true,
-  result: { content: [{ type: "text", text: "Schema validation failed: /count must be number" }] },
-};
-const SUCCESS_TOOL_END = {
-  type: "tool_execution_end",
-  toolName: "structured-output",
-  isError: false,
-  result: { details: { count: 5 } },
-};
-const turnEndPayload = (stopReason = "end_turn") => ({ message: { stopReason } });
 
 // ── 时序断言（4 个）：旧 4-closure 实现的行为基线 ──────────────
 

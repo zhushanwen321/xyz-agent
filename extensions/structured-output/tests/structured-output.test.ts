@@ -5,6 +5,18 @@
 // 1. Schema 解析与 Ajv 编译
 // 2. Tool execute 校验（通过/失败）
 // 3. 环境变量检测逻辑
+// 4. 权威模式（workflow）错误消息格式锁定（M5-C1）
+//
+// 权威模式四类错误消息格式（M5 决策：锁定现状，不统一）：
+//   ① validateWithAuthoritative keyword-less → 'no recognized keyword' + 'Received schema='
+//      （'Received schema=' 回显的是 authSchema——validateWithAuthoritative 签名 (data, authSchema)
+//      无 LLM schema 参数）
+//   ② validateWithAuthoritative 编译失败/校验失败 → 'The authoritative schema (PI_WORKFLOW_SCHEMA) is:'
+//      + 'Received data='（无 'Received schema='）
+//   ③ execute 入口 boolean true → 'boolean true' + 'Received schema='（回显 LLM schema）
+//   ④ execute 入口 boolean false → 'Schema validation failed (authoritative)' + 'Received schema='
+// 标签不统一是有意的：'Received schema=' 在 validateWithAuthoritative 内回显 authSchema、
+// 在 execute 入口回显 LLM schema。未来统一走独立源码 wave，届时本契约随测试一并更新。
 
 // 直接使用真实的 Ajv，因为这是核心依赖
 import Ajv from "ajv";
@@ -13,6 +25,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // 被测主入口（src/index.ts 导出 executeStructuredOutput 供直接调用；
 // createToolDefinition 供 env→execute 桥接测试调用）
 import { createToolDefinition, executeStructuredOutput } from "../src/index.js";
+// validateWithAuthoritative 未被 index.ts re-export，格式锁定用例直调 src/execute.js 子模块
+//（M5-C1：不改对外 API）
+import { validateWithAuthoritative } from "../src/execute.js";
+// mock pi 公共 fixture（M5-T4：与 characterization-hook.test.ts 共享）
+import {
+  createMockPi,
+  FAILED_TOOL_END,
+  loadExtension,
+  restoreSchemaEnv,
+  SCHEMA,
+  SCHEMA_ENV_NAME,
+  SUCCESS_TOOL_END,
+  turnEndPayload,
+} from "./mock-pi-fixture.js";
 
 // ── 纯逻辑测试：Schema 解析 + Ajv 校验 ──────────────────────
 
@@ -201,76 +227,6 @@ describe("Tool execute behavior simulation", () => {
   });
 });
 
-// ── Enforcement flag 逻辑 ─────────────────────────────────
-//
-// [HISTORICAL] 假测试段（L206-~261）：
-// 本段 5 个用例是「局部 boolean 模拟」假测试——不 import 被测模块（src/index.ts），
-// 只对测试内部自建的局部变量做 if 分支演练，mutation 100% 存活（把被测代码删光
-// 本段照样绿），不能作为安全网。真回归保护见下方 'Workflow hook' 组（mock pi 驱动
-// 真实扩展入口）与 'Tool execute (real call)' 组（直接调 executeStructuredOutput）。
-// 删除归属 M5/D5（本 wave M4 仅标记，用例本体零改动）。
-
-describe("Enforcement flag logic", () => {
-  it("flag starts false, set to true on structured-output tool_execution_start", () => {
-    let hasStructuredOutputCall = false;
-
-    // Simulate tool_execution_start event
-    const event = { toolName: "structured-output", args: { ok: true } };
-    if (event.toolName === "structured-output") {
-      hasStructuredOutputCall = true;
-    }
-
-    expect(hasStructuredOutputCall).toBe(true);
-  });
-
-  it("flag stays false on non-structured-output tool_execution_start", () => {
-    let hasStructuredOutputCall = false;
-
-    const event = { toolName: "read", args: { path: "/foo" } };
-    if (event.toolName === "structured-output") {
-      hasStructuredOutputCall = true;
-    }
-
-    expect(hasStructuredOutputCall).toBe(false);
-  });
-
-  it("flag stays false across multiple non-structured-output events", () => {
-    let hasStructuredOutputCall = false;
-
-    for (const toolName of ["read", "edit", "bash", "glob"]) {
-      if (toolName === "structured-output") {
-        hasStructuredOutputCall = true;
-      }
-    }
-
-    expect(hasStructuredOutputCall).toBe(false);
-  });
-
-  it("sendUserMessage should be called when flag is false at turn_end", () => {
-    const hasStructuredOutputCall = false;
-    const sendUserMessage = vi.fn();
-
-    // Simulate turn_end without structured-output call
-    if (!hasStructuredOutputCall) {
-      sendUserMessage("你必须调用 structured-output tool 来返回结果。");
-    }
-
-    expect(sendUserMessage).toHaveBeenCalledTimes(1);
-    expect(sendUserMessage).toHaveBeenCalledWith("你必须调用 structured-output tool 来返回结果。");
-  });
-
-  it("sendUserMessage should NOT be called when flag is true at turn_end", () => {
-    const hasStructuredOutputCall = true;
-    const sendUserMessage = vi.fn();
-
-    if (!hasStructuredOutputCall) {
-      sendUserMessage("你必须调用 structured-output tool 来返回结果。");
-    }
-
-    expect(sendUserMessage).not.toHaveBeenCalled();
-  });
-});
-
 // ── Workflow hook: "called but failed" retry (Fix A) ──────
 //
 // 验证 setupWorkflowHook 的核心行为：当模型调用了 structured-output 但校验失败
@@ -278,52 +234,13 @@ describe("Enforcement flag logic", () => {
 // 通过 mock pi API（捕获 on() 回调 + spy sendUserMessage）驱动真实扩展入口点。
 
 describe("Workflow hook: structured-output failure retry", () => {
-  const SCHEMA_ENV_NAME = "PI_WORKFLOW_SCHEMA";
   const originalSchemaEnv = process.env[SCHEMA_ENV_NAME];
 
-  function createMockPi() {
-    const handlers = new Map<string, ((event: unknown) => Promise<void> | void)[]>();
-    const sendUserMessage = vi.fn();
-    return {
-      sendUserMessage,
-      registerTool: vi.fn(),
-      on: vi.fn((event: string, cb: (event: unknown) => Promise<void> | void) => {
-        if (!handlers.has(event)) handlers.set(event, []);
-        handlers.get(event)!.push(cb);
-      }),
-      // 驱动器：按注册顺序触发某事件的所有回调
-      async emit(event: string, payload: unknown): Promise<void> {
-        for (const cb of handlers.get(event) ?? []) {
-          await cb(payload);
-        }
-      },
-    };
-  }
-
-  async function loadExtension(mockPi: ReturnType<typeof createMockPi>, schemaJson: string): Promise<void> {
-    process.env[SCHEMA_ENV_NAME] = schemaJson;
-    // 动态 import 确保每次拿到模块级 const（环境变量已设好）。
-    // vitest 默认缓存模块，这里用 vi.resetModules + 动态 import 重置。
-    vi.resetModules();
-    const mod = await import("../src/index.js");
-    mod.default(mockPi);
-  }
-
   afterEach(() => {
-    if (originalSchemaEnv === undefined) delete process.env[SCHEMA_ENV_NAME];
-    else process.env[SCHEMA_ENV_NAME] = originalSchemaEnv;
+    // fixture 的 restoreSchemaEnv 只处理 env；vi.restoreAllMocks 必须在消费方保留
+    restoreSchemaEnv(originalSchemaEnv);
     vi.restoreAllMocks();
   });
-
-  const SCHEMA = JSON.stringify({ type: "object", properties: { count: { type: "number" } }, required: ["count"] });
-  // 校验失败时 Pi 把 execute() 抛出的 error.message 塞进 result.content[0].text。
-  const FAILED_TOOL_END = {
-    type: "tool_execution_end",
-    toolName: "structured-output",
-    isError: true,
-    result: { content: [{ type: "text", text: "Schema validation failed: /count must be number" }] },
-  };
-  const turnEndPayload = (stopReason = "end_turn") => ({ message: { stopReason } });
 
   it("steers on 'called but failed' with the specific validation error + correct schema", async () => {
     const pi = createMockPi();
@@ -362,12 +279,7 @@ describe("Workflow hook: structured-output failure retry", () => {
     const pi = createMockPi();
     await loadExtension(pi, SCHEMA);
 
-    await pi.emit("tool_execution_end", {
-      type: "tool_execution_end",
-      toolName: "structured-output",
-      isError: false,
-      result: { details: { count: 5 } },
-    });
+    await pi.emit("tool_execution_end", SUCCESS_TOOL_END);
     await pi.emit("turn_end", turnEndPayload());
 
     expect(pi.sendUserMessage).not.toHaveBeenCalled();
@@ -641,23 +553,28 @@ describe("Authoritative schema (workflow mode)", () => {
     // M4 设防：boolean true（accept-all）不提供任何形状约束，workflow 用它等于没校验，
     // 与 keyword-less 对象同等拒绝（ERR-7），恢复指引要求改为 object schema。
     // （draft-07 合法根，但权威模式下必须拒绝——否则声明的约束静默失效。）
-    await expect(
-      executeStructuredOutput({
-        schema: undefined,
-        data: { anything: "goes", n: 42 },
-        authoritativeSchema: true,
-      }),
-    ).rejects.toThrow(/boolean true.*object schema/);
+    // 格式锁定（M5-C1 ③）：execute 入口 boolean 分支回显 LLM schema（'Received schema='）。
+    const err = await executeStructuredOutput({
+      schema: undefined,
+      data: { anything: "goes", n: 42 },
+      authoritativeSchema: true,
+    }).catch((e: unknown) => e as Error);
+    expect(err.message).toContain("boolean true");
+    expect(err.message).toContain("object schema");
+    expect(err.message).toContain("Received schema=");
   });
 
   it("authoritativeSchema = boolean false → rejects all data (draft-07 reject-all root)", async () => {
-    await expect(
-      executeStructuredOutput({
-        schema: undefined,
-        data: { anything: "goes" },
-        authoritativeSchema: false,
-      }),
-    ).rejects.toThrow(/Schema validation failed \(authoritative\)/);
+    // 格式锁定（M5-C1 ④）：'Schema validation failed (authoritative)' + 'Received schema='。
+    // 注意与 ②（validateWithAuthoritative 直调）不同：execute 入口的 boolean 分支
+    // 同时含权威标签与 'Received schema='（LLM schema 回显，此处 schema=undefined 回显 undefined）。
+    const err = await executeStructuredOutput({
+      schema: undefined,
+      data: { anything: "goes" },
+      authoritativeSchema: false,
+    }).catch((e: unknown) => e as Error);
+    expect(err.message).toContain("Schema validation failed (authoritative)");
+    expect(err.message).toContain("Received schema=");
   });
 
   it("authoritativeSchema = non object/boolean (string) → throws clear type error", async () => {
@@ -670,6 +587,43 @@ describe("Authoritative schema (workflow mode)", () => {
         authoritativeSchema: "invalid",
       }),
     ).rejects.toThrow(/Invalid authoritative JSON Schema.*got string/s);
+  });
+
+  // ── 权威模式错误消息格式锁定（M5-C1）──
+  // validateWithAuthoritative 直调子模块（index.ts 未 re-export），断言四种格式快照，
+  // 防未来无意识漂移。格式细节见文件头注释。
+
+  it("validateWithAuthoritative 直调：校验失败 → 权威标签 + data 回显（M5-C1 ②）", () => {
+    const err = (() => {
+      try {
+        validateWithAuthoritative({ channels: "not-an-array" }, authoritativeSchema);
+        return null;
+      } catch (e) {
+        return e as Error;
+      }
+    })();
+    expect(err).not.toBeNull();
+    // 签名 (data, authSchema) 无 LLM schema 参数 → 无 'Received schema='，只有权威 schema 标签 + data 回显
+    expect(err!.message).toContain("Schema validation failed (authoritative)");
+    expect(err!.message).toContain("The authoritative schema (PI_WORKFLOW_SCHEMA) is:");
+    expect(err!.message).toContain("Received data=");
+    expect(err!.message).not.toContain("Received schema=");
+  });
+
+  it("validateWithAuthoritative 直调：keyword-less 权威 schema → 'no recognized keyword' + 'Received schema='（M5-C1 ①）", () => {
+    // 格式锁定：keyword-less 分支的 'Received schema=' 回显的是 authSchema（{a:1}），
+    // 非 LLM schema——validateWithAuthoritative 签名无 LLM schema 参数。
+    const err = (() => {
+      try {
+        validateWithAuthoritative({ name: "Alice" }, { a: 1 });
+        return null;
+      } catch (e) {
+        return e as Error;
+      }
+    })();
+    expect(err).not.toBeNull();
+    expect(err!.message).toContain("no recognized keyword");
+    expect(err!.message).toContain("Received schema=");
   });
 });
 
