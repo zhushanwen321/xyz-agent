@@ -237,7 +237,7 @@ describe("buildWorkerScript — agent() thinkingLevel passthrough (3 branches)",
     const stringBranch = script.match(/typeof firstArg === "string"[\s\S]*?\};/);
     expect(stringBranch).toBeTruthy();
     expect(stringBranch![0]).toContain(
-      "thinkingLevel: (secondArg && typeof secondArg === \"object\" && secondArg.thinkingLevel) || undefined",
+      "thinkingLevel: (secondArg && typeof secondArg === \"object\" && secondArg.thinkingLevel) || $THINKING_LEVEL",
     );
   });
 
@@ -254,6 +254,56 @@ describe("buildWorkerScript — agent() thinkingLevel passthrough (3 branches)",
     // unknown-fields warn（workerLogs 污染）。验证 Set 与 warn 文案均识别 thinkingLevel。
     expect(script).toContain('"thinkingLevel"');
     expect(script).toMatch(/Known fields:.*thinkingLevel/);
+  });
+});
+
+// ── P3/P4: run-level model/thinkingLevel override global injection ──
+// Option B 对称单路径：workflow 顶层 model/thinkingLevel 经 workerData →
+// $MODEL/$THINKING_LEVEL worker global → agent() 三分支 fallback。
+// 验证生成的 worker 源码字符串包含 global 注入与三分支 fallback 逻辑。
+// 运行时真生效需 worker 集成 harness（设计文档 §6 降级为源码字符串断言）。
+
+describe("P3/P4 run-level model/thinkingLevel global injection + agent() fallback", () => {
+  const script = buildWorkerScript("// noop user script");
+
+  it("injects $MODEL global from workerData.model", () => {
+    expect(script).toContain('const $MODEL = (workerData.model && typeof workerData.model === "string") ? workerData.model : undefined;');
+  });
+
+  it("injects $THINKING_LEVEL global from workerData.thinkingLevel", () => {
+    expect(script).toContain('const $THINKING_LEVEL = (workerData.thinkingLevel && typeof workerData.thinkingLevel === "string") ? workerData.thinkingLevel : undefined;');
+  });
+
+  it("string branch falls back to $MODEL when secondArg.model omitted", () => {
+    const stringBranch = script.match(/typeof firstArg === "string"[\s\S]*?\};/);
+    expect(stringBranch).toBeTruthy();
+    expect(stringBranch![0]).toContain('secondArg.model) || $MODEL');
+  });
+
+  it("string branch falls back to $THINKING_LEVEL when secondArg.thinkingLevel omitted", () => {
+    const stringBranch = script.match(/typeof firstArg === "string"[\s\S]*?\};/);
+    expect(stringBranch).toBeTruthy();
+    expect(stringBranch![0]).toContain('secondArg.thinkingLevel) || $THINKING_LEVEL');
+  });
+
+  it("task/agent branch falls back to $MODEL when firstArg.model omitted", () => {
+    const taskAgentBranch = script.match(/firstArg\.task \|\| firstArg\.agent[\s\S]*?\};/);
+    expect(taskAgentBranch).toBeTruthy();
+    expect(taskAgentBranch![0]).toContain('model: firstArg.model || $MODEL');
+  });
+
+  it("task/agent branch falls back to $THINKING_LEVEL when firstArg.thinkingLevel omitted", () => {
+    const taskAgentBranch = script.match(/firstArg\.task \|\| firstArg\.agent[\s\S]*?\};/);
+    expect(taskAgentBranch).toBeTruthy();
+    expect(taskAgentBranch![0]).toContain('thinkingLevel: firstArg.thinkingLevel || $THINKING_LEVEL');
+  });
+
+  it("object branch injects $MODEL when opts.model omitted (guard fallback)", () => {
+    expect(script).toContain('if (!opts.model && $MODEL) opts.model = $MODEL;');
+  });
+
+  it("object branch injects $THINKING_LEVEL when opts.thinkingLevel omitted (guard fallback)", () => {
+    expect(script).toContain('if (!opts.thinkingLevel && $THINKING_LEVEL) opts.thinkingLevel = $THINKING_LEVEL;');
   });
 });
 

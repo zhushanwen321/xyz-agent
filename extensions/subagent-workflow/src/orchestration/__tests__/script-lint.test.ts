@@ -12,7 +12,13 @@
  */
 import { describe, it, expect } from "vitest";
 
-import { lintScript, type LintFinding } from "../script-lint.ts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { lintAgentMeta, lintScript } from "../script-lint.ts";
+import { parseResourceMeta } from "../../shared/meta-parser.ts";
+
+const WORKFLOWS_DIR = join(__dirname, "../../../workflows");
 
 /** 取所有 error 级 finding。 */
 function errors(findings: LintFinding[]): LintFinding[] {
@@ -661,5 +667,165 @@ describe("声明 phases 与 phase() 调用一致性 — warning", () => {
     const result = lintScript(src);
 
     expect(warnings(result.findings)).toHaveLength(0);
+  });
+});
+
+// ── m4 W1-W5：meta 质量（SSOT lint） ─────────────────────────
+
+describe("m4 W1-W5: meta 质量 lint", () => {
+  const wf = (meta: string, body = 'await agent({ prompt: "x" });') =>
+    `/* @pi-meta\n${meta}\n*/\n${body}`;
+
+  it("TC5 W1: 已声明参数名 :/= 形态 → error；非参数 prose 不误报", () => {
+    // 参数名集合 = properties keys + patternProperties word 前缀
+    const bad = lintScript(
+      wf(
+        'name: w\ndescription: "targetType: git-diff 用法"\nphases: [a]\nparameters:\n  type: object\n  properties:\n    targetType: { type: string }\n  required: [targetType]',
+      ),
+    );
+    expect(errors(bad.findings).some((f) => f.message.includes("targetType"))).toBe(true);
+
+    // note:/a=b 非参数 → 不误报（评审探针实测形态匹配误报面）
+    const good = lintScript(
+      wf(
+        'name: w\ndescription: "note: fix agent 与 batchN 互斥，见 a=b 说明"\nphases: [a]\nparameters:\n  type: object\n  properties:\n    targetType: { type: string }\n  required: [targetType]',
+      ),
+    );
+    expect(errors(good.findings).length).toBe(0);
+  });
+
+  it("TC5b W1: patternProperties word 前缀参数名（batch）也检查", () => {
+    const bad = lintScript(
+      wf(
+        'name: w\ndescription: "batch=high 模式"\nphases: [a]\nparameters:\n  type: object\n  patternProperties:\n    "^batch\\\\d+$": { type: string }',
+      ),
+    );
+    expect(errors(bad.findings).some((f) => f.message.includes("batch"))).toBe(true);
+  });
+
+  it("TC6 W2: >200 字符 → error；200 边界通过", () => {
+    const over = lintScript(
+      wf('name: w\ndescription: "' + "x".repeat(201) + '"\nphases: [a]'),
+    );
+    expect(errors(over.findings).some((f) => f.message.includes("200"))).toBe(true);
+    const at = lintScript(
+      wf('name: w\ndescription: "' + "x".repeat(200) + '"\nphases: [a]'),
+    );
+    expect(errors(at.findings).length).toBe(0);
+  });
+
+  it("TC7 W3: 括号内句号/缩写剥离后不报；括号外多句报", () => {
+    // 括号内 e.g. + 句号 → 剥离后单句无 finding
+    const paren = lintScript(
+      wf('name: w\ndescription: "多批串行循环（批内并行 review，e.g. 每批 3 视角）"\nphases: [a]'),
+    );
+    expect(errors(paren.findings).length).toBe(0);
+    // 括号外两个句号 → error
+    const multi = lintScript(
+      wf('name: w\ndescription: "第一句。第二句"\nphases: [a]'),
+    );
+    expect(errors(multi.findings).some((f) => f.message.includes("单句"))).toBe(true);
+  });
+
+  it("TC8 W4: lintAgentMeta positive 四形态", () => {
+    const meta = (examples: unknown) =>
+      ({ kind: "agent", name: "a", description: "d", examples }) as never;
+    // 正反各一 → 无 finding
+    expect(
+      lintAgentMeta(
+        meta([{ match: "review 代码", action: "reviewer", positive: true }, { match: "天气", action: "x", positive: false }]),
+      ).length,
+    ).toBe(0);
+    // 全正向 → error
+    expect(
+      lintAgentMeta(
+        meta([{ match: "a", action: "x", positive: true }, { match: "b", action: "y", positive: true }]),
+      ).length,
+    ).toBe(1);
+    // [] → error
+    expect(lintAgentMeta(meta([])).length).toBe(1);
+    // 缺失 → 无 finding（WQ1：未迁移 agent 不报错）
+    expect(lintAgentMeta(meta(undefined)).length).toBe(0);
+  });
+
+  it("TC8a: W4 EXAMPLES_MAX 边界——3/4 条合法，5 条 → finding", () => {
+    const meta = (examples: unknown) =>
+      ({ kind: "agent", name: "a", description: "d", examples }) as never;
+    const mk = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        match: `m${i}`,
+        action: "x",
+        positive: i % 2 === 0,
+      }));
+    expect(lintAgentMeta(meta(mk(3))).length).toBe(0); // 3 条合法
+    expect(lintAgentMeta(meta(mk(4))).length).toBe(0); // 4 条合法（上限）
+    expect(lintAgentMeta(meta(mk(5))).length).toBe(1); // 5 条超上限
+  });
+
+  it("TC8b: W4 EXAMPLES_MAX——examples 超上限（5 条）→ finding", () => {
+    const meta = (examples: unknown) =>
+      ({ kind: "agent", name: "a", description: "d", examples }) as never;
+    const five = [
+      { match: "a", action: "x", positive: true },
+      { match: "b", action: "x", positive: false },
+      { match: "c", action: "x", positive: true },
+      { match: "d", action: "x", positive: false },
+      { match: "e", action: "x", positive: true },
+    ];
+    const findings = lintAgentMeta(meta(five));
+    expect(findings.length).toBe(1);
+    expect(findings[0]!.message).toContain("上限");
+  });
+
+  it("TC9: 5 内置真实 workflow 过 W1-W5（lintScript valid 无 meta 质量 error）", () => {
+    const files = ["chain", "parallel", "scatter-gather", "map-reduce", "review-fix-loop"];
+    for (const f of files) {
+      const src = readFileSync(join(WORKFLOWS_DIR, `${f}.js`), "utf-8");
+      // F11：先断言 meta 真实解析成功——防 parse 失败时 W1-W3 整体跳过真空通过
+      const meta = parseResourceMeta(src, "workflow");
+      expect(meta, `${f} meta 解析`).not.toBeNull();
+      const result = lintScript(src);
+      const qualityErrors = errors(result.findings).filter((x) => x.message.includes("meta."));
+      expect(qualityErrors, `${f} meta 质量`).toEqual([]);
+    }
+  });
+
+  it("F2 回归: 参数名含未配对 [ 不崩溃（RegExp 注入）", () => {
+    const src = wf(
+      'name: w\ndescription: "x[ 参数说明"\nphases: [a]\nparameters:\n  type: object\n  properties:\n    "x[": { type: string }\n  required: ["x["]',
+    );
+    expect(() => lintScript(src)).not.toThrow();
+  });
+
+  it("F6 回归: 子串词缀不误报（task 不命中 subtask:）", () => {
+    const src = wf(
+      'name: w\ndescription: "subtask: 需要分解"\nphases: [a]\nparameters:\n  type: object\n  properties:\n    task: { type: string }\n  required: [task]',
+    );
+    const metaErrors = errors(lintScript(src).findings).filter((x) => x.message.includes("meta."));
+    expect(metaErrors).toEqual([]);
+  });
+
+  it("F6b 回归: 元字符参数名不误报（a.b 不命中 aXb:）", () => {
+    const src = wf(
+      'name: w\ndescription: "aXb: 任意字符"\nphases: [a]\nparameters:\n  type: object\n  properties:\n    "a.b": { type: string }\n  required: ["a.b"]',
+    );
+    const metaErrors = errors(lintScript(src).findings).filter((x) => x.message.includes("meta."));
+    expect(metaErrors).toEqual([]);
+  });
+
+  it("F7 回归: description 空串时 when/notFor 仍受检查", () => {
+    const src = wf(
+      'name: w\ndescription: ""\nwhen: "第一句。第二句"\nphases: [a]',
+    );
+    const metaErrors = errors(lintScript(src).findings).filter((x) => x.message.includes("meta."));
+    expect(metaErrors.length).toBeGreaterThan(0); // when 非单句被拦
+  });
+
+  it("F8 回归: 括号外 e.g. 缩写不误报", () => {
+    const src = wf(
+      'name: w\ndescription: "Run when user wants review, e.g. iterative fix loop"\nphases: [a]',
+    );
+    const metaErrors = errors(lintScript(src).findings).filter((x) => x.message.includes("meta."));
+    expect(metaErrors).toEqual([]);
   });
 });

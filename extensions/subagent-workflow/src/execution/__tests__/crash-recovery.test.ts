@@ -80,7 +80,6 @@ vi.mock("../session-file-gc.ts", () => ({
 vi.mock("../model-config-service.ts", () => ({
   ModelConfigService: class {
     initModel = vi.fn();
-    getAgentRegistry = () => ({ get: () => undefined, list: () => [] });
   },
   getModelConfigService: () => null,
   setModelConfigService: vi.fn(),

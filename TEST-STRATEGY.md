@@ -10,6 +10,8 @@
 > - [04-file-tree.md](docs/testing/04-file-tree.md) — 文件树（懒加载 + 过滤 + git 角标，11 E2E 用例已落地）
 > - [05-side-drawer.md](docs/testing/05-side-drawer.md) — SideDrawer（文件预览 / diff / git tab）
 > - [06-search-modal.md](docs/testing/06-search-modal.md) — 搜索浮层（⌘K 四类搜索 + recents + 跳转，7 E2E 用例已落地）
+> - [11-real-e2e-specs.md](docs/testing/11-real-e2e-specs.md) — real 轨 E2E 自动化 spec（真 Electron + runtime + pi + LLM，零 mock）
+> - [12-extension-runtime-testing.md](docs/testing/12-extension-runtime-testing.md) — extension 层运行时测试体系（worker harness L1 → real LLM L3，价值层级 + 决策树）
 
 ## 1. 测试框架 [HISTORICAL]
 

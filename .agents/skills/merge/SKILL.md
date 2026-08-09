@@ -52,23 +52,22 @@ bash .agents/skills/merge/scripts/pre-merge-check.sh <worktree-dir>
 ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install
 ```
 
-### 阶段 1.5: Dev-Link 清理 [OPTIONAL]
+### 阶段 1.5: Dev-Link 清理
 
-> **仅当开发期间用过 dev-link skill（`XYZ_EXTENSION_PATHS` 指向本 worktree 的 extensions/）时执行。**
-> 跳过此步骤会导致阶段 7 删除 worktree 后，`.env.dev-extensions` 中的 link 指向已删除目录，下次 `pnpm dev` 时 pi 加载报 ENOENT。
-
-检查并清理指向当前 worktree 的 dev-link：
+> **无条件执行**。跨 worktree 扫描所有 `.env.dev-extensions`，移除 `XYZ_EXTENSION_PATHS` 中指向即将删除的 feature worktree 的路径条目（dev-link 写入的是环境变量路径，不是 symlink）。
 
 ```bash
-cd /Users/zhushanwen/Code/xyz-agent-workspace
-# 查看当前 link 状态
-bash .agents/skills/dev-link/link-list.sh
-
-# 如果有指向当前 worktree 的 link，清理（--all 清除所有，或指定包名清理单个）
-bash .agents/skills/dev-link/link-npm.sh --all
+cd $WS_ROOT
+bash .agents/skills/merge/scripts/prune-dev-link.sh "$WS_ROOT/<worktree-dir>"
 ```
 
-如果没有 `.env.dev-extensions` 文件或其中无 link，直接跳过本阶段。
+`<worktree-dir>` 是阶段 0 传给 init.sh 的 feature worktree 目录名。脚本自己向上查找 `.bare` 定位 workspace root，无需手动算路径。
+
+**为什么要清理**：dev-link 让 pi 通过 `XYZ_EXTENSION_PATHS` 加载本地源码 extension。标准用法下 link 指向当前 worktree 自己的 `extensions/`，删 worktree 时该 worktree 内的 `.env.dev-extensions` 随之删除——不会残留。但存在**跨 worktree 残留**场景（用户在 main worktree 里 link 指向 feature worktree 测改动、手动编辑/复制 `.env.dev-extensions` 跨 worktree）：这些残留 link 在 feature worktree 删除后指向不存在的路径，下次 `pnpm dev` 时 pi 加载报 ENOENT。本阶段在删 worktree 前兜底清理所有这类残留。
+
+**输出语义**：无残留时输出「无残留 link」并 exit 0；有残留时逐个列出被移除的路径并 exit 0。两种情况都不阻塞后续阶段。
+
+> 历史背景：旧版阶段 1.5 标 `[OPTIONAL]` 且让在 workspace root 跑 `link-list.sh`——但 workspace root 不是 git repo，脚本 `git rev-parse --show-toplevel` 直接 exit 2，命令根本无法执行；且 AI 靠「记不记得用过 dev-link」决定是否跳过，残留风险高。现改为无条件执行 + 跨 worktree 精确清理。
 
 ### 阶段 2: PR CI + 合并
 
@@ -381,6 +380,7 @@ bash .agents/skills/merge/scripts/remove-worktree.sh <branch-name> --force --ski
 |---|------|------|
 | 1 | 初始化环境（阶段 0） | |
 | 2 | 本地验证（阶段 1） | |
+| 2.5 | ⚠️ Dev-Link 清理（阶段 1.5） | `bash .agents/skills/merge/scripts/prune-dev-link.sh "$WS_ROOT/<worktree-dir>"` |
 | 3 | PR CI + 合并（阶段 2） | |
 | 4 | Post-merge CI（阶段 3） | |
 | 5 | ⚠️ 版本校验（阶段 3.5） | `bash scripts/check-version-bump.sh` |

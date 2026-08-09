@@ -10,7 +10,6 @@
  *
  * 层归属：Engine。零 infra 依赖（AC-1）。
  */
-import type { AgentRegistry } from "../../execution/agent-registry.ts";
 import type { StreamSink, SubagentStream } from "../../execution/stream-sink.ts";
 import type { AgentEvent } from "../../shared/agent-event.ts";
 import type { WorkerHandle } from "../worker-handle.ts";
@@ -125,19 +124,6 @@ export interface LifecycleDeps {
  * 关键路径记录 run 启动、保存、pending 注册/注销，便于排查异步操作状态。
  */
   log?: (level: "debug" | "info" | "warn" | "error", component: string, message: string, data?: unknown) => void;
- /**
- * BL-1：agent/skill/schema 解析依赖（per-session，可选）。
- *
- * Interface 层 factory 在 session_start 注入：agentRegistry（扫描 .agents/agents 等
- * 7 路径）、sessionDir（临时文件根）、activeTempFiles（session_shutdown 回收集合）。
- * error-recovery.dispatchAgentCall 用这 3 项调 resolveAgentOpts，把
- * `agent({agent,skill,schema})` 的 inline override 解析成 systemPromptFiles /
- * skillPath / schemaEnv，否则 pi 子进程只收到原始 prompt（D-12 重构误删导致回归）。
- * 全部可选——测试 makeDeps 工厂无需改。
- */
-  agentRegistry?: AgentRegistry;
-  sessionDir?: string;
-  activeTempFiles?: Set<string>;
  /**
  * D-12 regression fix (round-2 #2)：rebuildRuntime 重新调度 run 级墙钟预算计时器。
  *

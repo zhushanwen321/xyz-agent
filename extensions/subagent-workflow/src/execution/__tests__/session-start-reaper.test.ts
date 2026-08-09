@@ -72,8 +72,6 @@ const { mockInitModel, mockInitSession, mockSetUiRequestHandler, mockSetModelCon
 vi.mock("../model-config-service.ts", () => ({
   ModelConfigService: class {
     initModel = mockInitModel;
-    // F-4/D-003: index.ts 复用 modelService.getAgentRegistry()，stub 返回最小结构
-    getAgentRegistry = () => ({ get: () => undefined, list: () => [] });
   },
   getModelConfigService: () => null,
   setModelConfigService: mockSetModelConfigService,

@@ -1,7 +1,7 @@
 // Batch 3 prompt quality 验证
 //
 // U1: explorer.md 黑名单格式（替代旧白名单）
-// U2: oracle.md / reviewer.md 交叉 scope defer 声明
+// U2: oracle.md / code-reviewer.md 交叉 scope defer 声明
 // U3: context-builder.md / planner.md 输出载体互斥声明
 // E1: tool-workflow-script.ts description + promptGuidelines discovery 提示 + anti-pattern
 // E2: 5 个 agent .md 改动后仍保留有效 frontmatter
@@ -53,23 +53,23 @@ describe("U1: explorer.md 黑名单替代白名单", () => {
 
 // ── U2: oracle ↔ reviewer scope defer ─────────────────────────
 
-describe("U2: oracle/reviewer 交叉 scope defer", () => {
+describe("U2: oracle/code-reviewer 交叉 scope defer", () => {
   const oracle = readAgent("oracle");
-  const reviewer = readAgent("reviewer");
+  const reviewer = readAgent("code-reviewer");
 
   it("oracle 声明 requirements alignment 职责范围", () => {
-    expect(oracle).toContain("requirements alignment only");
+    expect(oracle).toContain("requirements alignment");
   });
 
-  it("oracle 发现 code bugs 时 defer reviewer", () => {
-    expect(oracle.toLowerCase()).toContain("defer to a reviewer");
+  it("oracle 发现 code bugs 时 defer code-reviewer", () => {
+    expect(oracle.toLowerCase()).toContain("defer to a code-reviewer");
   });
 
-  it("reviewer 声明 code-level issues 职责范围", () => {
+  it("code-reviewer 声明 code-level issues 职责范围", () => {
     expect(reviewer).toContain("code-level issues only");
   });
 
-  it("reviewer 发现 requirements gap 时 defer oracle/planner", () => {
+  it("code-reviewer 发现 requirements gap 时 defer oracle/planner", () => {
     expect(reviewer.toLowerCase()).toContain("defer to an oracle or planner");
   });
 });
@@ -113,15 +113,17 @@ describe("E1: workflow-script tool description + anti-pattern", () => {
     expect(src).toContain("ANTI-PATTERN");
   });
 
-  it("anti-pattern 引用内置 workflow 名称（chain 非 sequential）", () => {
-    expect(src).toContain("chain/parallel/scatter-gather/map-reduce");
+  it("anti-pattern 保留字样但不点名内置 workflow（m4：发现靠注入段，防硬编码）", () => {
+    expect(src).toContain("ANTI-PATTERN");
+    expect(src).toContain("NEVER generate");
+    expect(src).not.toContain("chain/parallel/scatter-gather/map-reduce");
   });
 });
 
 // ── E2: 5 个 agent .md frontmatter 完整性 ─────────────────────
 
 describe("E2: agent .md frontmatter 保留有效格式", () => {
-  const agents = ["explorer", "oracle", "reviewer", "context-builder", "planner"];
+  const agents = ["explorer", "oracle", "code-reviewer", "context-builder", "planner"];
 
   for (const name of agents) {
     it(`${name}.md 以 --- 开头且含 name + description 字段`, () => {

@@ -3,6 +3,11 @@ name: researcher
 description: 网络调研 agent（使用 tavily-web-search skill）
 color: "#10b981"
 tools: read, bash, structured-output
+when: 需要外部资料、竞品、技术调研、联网查证
+notFor: 代码库内探索、改代码
+examples:
+    - { match: '帮我调研一下竞品的最新功能', action: '调用 researcher 联网调研', positive: true }
+    - { match: '帮我找一下项目里这个模块的代码', action: '不调用（代码库内查找应选 explorer）', positive: false }
 ---
 
 You are a web researcher. Your role is to search, evaluate, and synthesize findings.

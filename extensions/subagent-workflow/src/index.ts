@@ -21,7 +21,6 @@ import type { ExtensionAPI, ExtensionContext, SessionShutdownEvent, SessionStart
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger, setPiHandle } from "@zhushanwen/pi-extension-logger";
 
-import type { AgentRegistry } from "./execution/agent-registry.ts";
 import { bestEffort } from "./execution/best-effort.ts";
 // ═══ execution/ 层（subagents 核心 + 运行时） ═══
 import { getOrCreateChannelRegistry } from "./execution/channel-registry-access.ts";
@@ -51,7 +50,6 @@ import { registerSubagentTool } from "./interface/subagent-tool.ts";
 import { registerSubagentsCommand } from "./interface/subagents.ts";
 import { registerWorkflowTool } from "./interface/tool-workflow.ts";
 import { registerWorkflowScriptTool } from "./interface/tool-workflow-script.ts";
-import { cleanupAllTempFiles as cleanupAllFiles } from "./orchestration/agent-opts-resolver.ts";
 import { JsonlRunStore } from "./orchestration/jsonl-run-store.ts";
 // ═══ orchestration/ 层（workflow engine + infra） ═══
 import type { LauncherDeps } from "./orchestration/launcher.ts";
@@ -136,8 +134,6 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     {
       store: JsonlRunStore;
       runs: Map<string, WorkflowRun>;
-      activeTempFiles: Set<string>;
-      agentRegistry: AgentRegistry;
       sessionDir: string;
       /** D-008 per-session SAR（需要 ctxModel + subagentService） */
       runner: SubprocessAgentRunner;
@@ -180,8 +176,6 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     state: {
       store: JsonlRunStore;
       runs: Map<string, WorkflowRun>;
-      activeTempFiles: Set<string>;
-      agentRegistry: AgentRegistry;
       sessionDir: string;
       runner: SubprocessAgentRunner;
     },
@@ -194,9 +188,6 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       runs: state.runs,
       registry,
       onRunDone: (run: WorkflowRun) => notifyDone(pi, run.runId, run, notifiedRunIds, toGuiCtx(sessionCtx)),
-      agentRegistry: state.agentRegistry,
-      sessionDir: state.sessionDir,
-      activeTempFiles: state.activeTempFiles,
       eventBus: pi.events,
       scheduleTimeBudget: (runId: string, budgetTimeMs: number) =>
         scheduleTimeBudget(runId, deps, budgetTimeMs),
@@ -317,10 +308,10 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     });
     const runs = new Map<string, WorkflowRun>();
 
-    // F-4/D-003: 复用 modelService 的 AgentRegistry（统一资源发现 + 包内 builtin），
-    // 取代旧 orchestration/agent-discovery.ts 的 7 路径自爬。agent 发现走
-    // shared/resource-discovery（ADR-031），与 subagents 域共用同一份发现结果。
-    const agentRegistry = modelService.getAgentRegistry();
+    // F-4/D-003: agent 发现走 shared/resource-discovery（ADR-031），modelService
+    // 自持 AgentRegistry（subagents/workflow 两域共用同一发现结果）。
+    // M2 修正：workflow 域 resolveAgentOpts 不再消费 agentRegistry（agent ref 交
+    // resolveIdentity），无需经 state 透传——modelService 是唯一 registry 源。
 
     // MF-1: store 健康度跟踪。loadAll 失败 → storeHealthy=false，workflow 域启动时 fail-fast。
     let storeHealthy = true;
@@ -356,8 +347,6 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     sessionState.set(sessionId, {
       store,
       runs,
-      activeTempFiles: new Set(),
-      agentRegistry,
       sessionDir,
       runner,
       ctx,
@@ -417,7 +406,6 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       await Promise.allSettled(
         running.map((run) => pauseRun(run.runId, makeDeps(state, _ctx))),
       );
-      cleanupAllFiles(state.activeTempFiles);
       sessionState.delete(sessionId);
     }
 
@@ -503,15 +491,6 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     registry,
     get onRunDone() {
       return getDeps().onRunDone;
-    },
-    get agentRegistry() {
-      return getDeps().agentRegistry;
-    },
-    get sessionDir() {
-      return getDeps().sessionDir;
-    },
-    get activeTempFiles() {
-      return getDeps().activeTempFiles;
     },
     get eventBus() {
       return getDeps().eventBus;

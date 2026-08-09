@@ -2,19 +2,30 @@
  * Workflow Config Loader — 统一资源发现版（ADR-031）
  *
  * 扫描逻辑委托给 shared/resource-discovery（与 agent 发现共享同一套扫描源）。
- * 本文件只保留 workflow 专属的 meta 提取（regex）+ 60s TTL 缓存。
+ * 本文件只保留 workflow 专属的 meta 提取（经 shared/meta-parser.ts IF1 统一 parser）+ 60s TTL 缓存。
+ *
+ * m2 收敛：删 extractMetaViaRegex + safeEvalObject(new Function)，改调 parseResourceMeta
+ * （真实 YAML 解析 @pi-meta 块注释，发现期不执行作者代码，v5 原则 6 no-eval）。
+ * toCachedMeta 整对象透传（...meta），不再 {name,description,phases} 解构——消灭第 1 处重映射。
  *
  * Failed imports are marked available=false — the loader never throws.
  */
 
-import { readFile } from "node:fs/promises";
+
 import { resolve } from "node:path";
 
-// WorkflowMeta / WorkflowSource 的规范来源是 engine/models/workflow-script.ts
-import type { WorkflowMeta, WorkflowSource } from "./models/workflow-script.ts";
+// WorkflowMeta 规范来源是 shared/resource-meta.ts（m1 DM1）；WorkflowSource 来自 workflow-script
+import type { WorkflowSource } from "./models/workflow-script.ts";
+import type { WorkflowMeta } from "../shared/resource-meta.ts";
+import { getCachedFile, getCachedFileContent, clearFileCache } from "../shared/resource-discovery.ts";
+import { parseResourceMeta } from "../shared/meta-parser.ts";
+import { normalizeRef, WORKFLOW_REF_EXT } from "../shared/agent-ref.ts";
 export type { WorkflowMeta, WorkflowSource };
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
+const logger = getLogger("config-loader");
 
 import {
   discoverResources,
@@ -36,20 +47,15 @@ export interface CachedWorkflowMeta extends WorkflowMeta {
 
 // ── Internal types ────────────────────────────────────────────
 
-interface WorkerResult {
-  success: boolean;
-  meta?: WorkflowMeta;
-  error?: string;
-}
-
 interface CacheEntry {
   meta: CachedWorkflowMeta;
-  cachedAt: number;
+  /** 文件 mtime（m5：mtime 键控判失效——删 60s TTL，mtime 未变即命中）。 */
+  mtimeMs: number;
 }
 
 // ── Constants ─────────────────────────────────────────────────
 
-const CACHE_TTL_MS = 60_000;
+// m5：删 60s TTL——mtime 键控判失效（TTL 只服务 getWorkflow 且造成 60s 陈旧窗口）。
 
 // ── Cache ─────────────────────────────────────────────────────
 
@@ -66,7 +72,9 @@ function getCacheBucket(workspaceRoot: string): Map<string, CacheEntry> {
 }
 
 function isCacheValid(entry: CacheEntry): boolean {
-  return Date.now() - entry.cachedAt < CACHE_TTL_MS;
+  // m5：mtime 判变——文件 mtime 未变即命中（删 TTL 后文件变更立即反映）
+  const file = getCachedFile(entry.meta.path);
+  return file !== null && file.mtimeMs === entry.mtimeMs;
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -78,71 +86,6 @@ function stem(filePath: string): string {
   return dot > 0 ? base.slice(0, dot) : base;
 }
 
-// ── Regex-based meta extraction ─────────────────────────────
-
-/**
- * Extract the `meta` object from a workflow script using regex.
- *
- * This avoids executing user code (no Worker/import/require), so it works
- * regardless of whether the script uses CJS, ESM, top-level await, or
- * references runtime globals like `agent` or `$ARGS`.
- *
- * Supports both `const meta = { ... }` and `export const meta = { ... }`.
- */
-async function extractMetaViaRegex(scriptPath: string): Promise<WorkerResult> {
-  try {
-    const content = await readFile(scriptPath, "utf-8");
-
-    const metaPattern = /(?:export\s+)?const\s+meta\s*=\s*(\{[^]*?\});?\s*$/m;
-    const match = metaPattern.exec(content);
-    if (!match) {
-      return { success: false, error: "No 'const meta = { ... }' declaration found" };
-    }
-
-    const metaObj = safeEvalObject(match[1]);
-    if (!metaObj || typeof metaObj !== "object") {
-      return { success: false, error: "Failed to parse meta object" };
-    }
-
-    if (typeof metaObj.name !== "string") {
-      return { success: false, error: "meta.name must be a string" };
-    }
-
-    return {
-      success: true,
-      meta: {
-        name: metaObj.name,
-        description: typeof metaObj.description === "string" ? metaObj.description : "",
-        phases: Array.isArray(metaObj.phases)
-          ? metaObj.phases.filter(
-              (p: unknown) => typeof p === "string" || (typeof p === "object" && p !== null && "title" in p),
-            ) as (string | { title: string; detail?: string })[]
-          : [],
-      },
-    };
-  } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-/**
- * Safely evaluate a simple object literal string.
- * Uses `new Function` to avoid eval while still supporting basic JS
- * literal syntax (strings, numbers, arrays, nested objects).
- */
-function safeEvalObject(literal: string): Record<string, unknown> | undefined {
-  try {
-    const fn = new Function(`return (${literal});`);
-    const result = fn();
-    if (typeof result === "object" && result !== null && !Array.isArray(result)) {
-      return result as Record<string, unknown>;
-    }
-    return undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 // ── ResourceSource → WorkflowSource 映射 ─────────────────────
 
 /** 统一模块的 ResourceSource 映射为 workflow 的 saved/tmp 语义 */
@@ -150,29 +93,40 @@ function toWorkflowSource(source: ResourceSource): WorkflowSource {
   return source === "project-pi-tmp" ? "tmp" : "saved";
 }
 
-// ── 单文件 → CachedWorkflowMeta ───────────────────────────────
+// ── 单文件 → CachedWorkflowMeta（IF1 parseResourceMeta + 整对象透传）──
 
-/** 提取单个文件的 meta，失败时标 available=false（与原行为一致） */
+/**
+ * 提取单个文件的 meta（经 IF1 parseResourceMeta），失败时标 available=false（fail-safe 不抛）。
+ *
+ * m2：整对象透传（...meta），不再 {name,description,phases} 解构——消灭第 1 处重映射，
+ * parameters/usage/when/notFor 一路流到 script.meta。仅认 @pi-meta 新格式（D1 无 adapter）。
+ */
 async function toCachedMeta(
   filePath: string,
   source: ResourceSource,
 ): Promise<CachedWorkflowMeta> {
   const fallbackName = stem(filePath);
-  const result = await extractMetaViaRegex(filePath);
   const wfSource = toWorkflowSource(source);
-
-  if (result.success && result.meta) {
-    return {
-      name: result.meta.name,
-      description: result.meta.description,
-      phases: result.meta.phases,
-      path: filePath,
-      available: true,
-      source: wfSource,
-    };
+  try {
+    const content = getCachedFileContent(filePath); // m5：统一 mtime 缓存层
+    if (content === null) throw new Error("file not readable");
+    const meta = parseResourceMeta(content, "workflow");
+    if (meta && meta.kind === "workflow") {
+      return { ...meta, path: filePath, available: true, source: wfSource };
+    }
+    // m2 exec-review MINOR-4：文件可读但 meta=null → 旧 const meta 格式或格式错误，
+    // 静默 available=false（D1 无 adapter）。warn 帮助用户定位需迁移到 @pi-meta 的存量 workflow。
+    logger.warn(
+      `[config-loader] ${filePath}: 未解析到 @pi-meta 元数据（旧 const meta 格式需迁移）→ available=false`,
+    );
+  } catch (err) {
+    // 读失败 → available=false（fail-safe 不抛，与原行为一致）
+    logger.debug(`[config-loader] skip unreadable workflow file ${filePath}`, {
+      reason: err instanceof Error ? err.message : String(err),
+    });
   }
-
   return {
+    kind: "workflow",
     name: fallbackName,
     description: "",
     phases: [],
@@ -268,9 +222,9 @@ export async function discoverWorkflows(
 
   // Update cache (scoped to current workspace root)
   const bucket = getCacheBucket(workspaceRoot);
-  const now = Date.now();
   for (const wf of merged) {
-    bucket.set(wf.name, { meta: wf, cachedAt: now });
+    const file = getCachedFile(wf.path);
+    bucket.set(wf.name, { meta: wf, mtimeMs: file?.mtimeMs ?? 0 });
   }
 
   return merged;
@@ -305,9 +259,24 @@ export async function getWorkflow(name: string): Promise<CachedWorkflowMeta | un
 }
 
 /**
+ * 按绝对路径加载单个 workflow（workflowRef 统一解析入口——S2 路径统一）。
+ *
+ * - ~/ 前缀展开；相对路径/非 .js 引用返回 undefined（引用唯一形态 = 绝对路径）
+ * - 任意路径（不限扫描源）：内置包内脚本、用户任意位置脚本均可执行
+ * - meta 提取失败/文件不可读 → available=false（fail-safe，不抛）
+ */
+export async function getWorkflowByPath(ref: string): Promise<CachedWorkflowMeta | undefined> {
+  const filePath = normalizeRef(ref, WORKFLOW_REF_EXT);
+  if (filePath === null) return undefined;
+  return toCachedMeta(filePath, "user-pi");
+}
+
+/**
  * Invalidate the internal meta cache.
  * The next call to loadWorkflows or getWorkflow will re-scan directories.
  */
 export function invalidateCache(): void {
+  // m5：清统一 mtime 缓存层 + bucket（测试隔离 + mtime 漏判场景手动刷新兜底）
+  clearFileCache();
   cache.clear();
 }

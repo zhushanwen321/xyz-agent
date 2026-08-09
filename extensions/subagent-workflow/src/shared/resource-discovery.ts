@@ -67,6 +67,61 @@ function isDirectChildOfWorkspaceRoot(dir: string, workspaceRoot: string): boole
  * bare+worktree 优先找 .bare；普通 repo 找最顶层 .git；fallback 找 .pi。
  * 与 config-loader 原有逻辑一致（合并后提取为共享函数）。
  */
+// ── 统一 mtime 缓存层（m5 IF10）────────────────────────────────────
+//
+// 模块级 Map<path, { mtimeMs, content }>：mtime 判变缓存文件内容。
+// - sync 实现（statSync/readFileSync）：agent-registry discoverAll 是同步路径，
+//   async 缓存无法被 await（m5 design-review A1 探针实证约束）
+// - stat 失败/ENOENT → 驱逐条目（mtime 缓存下文件删除不自愈——A3 修复）
+// - 已知局限（C3 记录）：内容变 mtime 未变（cp -p/rsync -t 保留源 mtime、
+//   2s 粒度文件系统）→ 漏判，invalidateCache/clearFileCache 兜底；
+//   APFS mtimeMs 微秒级浮点 === 判变可靠（探针 P-mtime-精度）
+
+interface MtimeCacheEntry {
+  mtimeMs: number;
+  content: string;
+}
+
+const mtimeCache = new Map<string, MtimeCacheEntry>();
+
+/**
+ * stat + content 统一缓存。文件不存在/不可读 → null（并驱逐条目）。
+ * mtime 未变 → 返回缓存 content（不重 read）；变 → readFileSync + 缓存。
+ */
+export function getCachedFile(filePath: string): { mtimeMs: number; content: string } | null {
+  let mtimeMs: number;
+  try {
+    mtimeMs = fsSync.statSync(filePath).mtimeMs;
+  } catch {
+    mtimeCache.delete(filePath);
+    return null;
+  }
+  const entry = mtimeCache.get(filePath);
+  if (entry && entry.mtimeMs === mtimeMs) return entry;
+  let content: string;
+  try {
+    content = fsSync.readFileSync(filePath, "utf-8");
+  } catch {
+    // stat 与 read 之间的删除/EACCES 竞态 → 驱逐并返回 null（exec-review major-2：
+    // docstring 承诺「不可读 → null」——readFileSync 也必须入守卫）
+    mtimeCache.delete(filePath);
+    return null;
+  }
+  const cached = { mtimeMs, content };
+  mtimeCache.set(filePath, cached);
+  return cached;
+}
+
+/** 便捷封装：只取 content（不存在 → null）。 */
+export function getCachedFileContent(filePath: string): string | null {
+  return getCachedFile(filePath)?.content ?? null;
+}
+
+/** 清空（invalidateCache 语义——测试隔离 + mtime 漏判场景手动刷新兜底）。 */
+export function clearFileCache(): void {
+  mtimeCache.clear();
+}
+
 export function findWorkspaceRoot(cwd?: string): string {
   const dir = cwd ?? process.cwd();
   const root = resolve("/");

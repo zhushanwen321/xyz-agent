@@ -60,8 +60,10 @@ export interface ResolvedModel {
 // 常量
 // ============================================================
 
-/** thinking level 支持顺序（低→高），用于 clamp 到 model 可用级别。 */
-const THINKING_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+/** thinking level 支持顺序（低→高），用于 clamp 到 model 可用级别。
+ *  SSOT（单一权威源）：新增 thinking 级别只改此处，subagent-tool 的 thinkingLevel 枚举
+ *  从本常量派生，避免两处硬编码不同步。 */
+export const THINKING_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 /** 解析失败时错误信息列出的可用模型上限（防超长错误信息）。 */
 const MODEL_LIST_LIMIT = 20;
@@ -102,7 +104,7 @@ export function resolveModel(
   if (paramOverride?.model) {
     return lookupAndResolve(
       paramOverride.model,
-      paramOverride.thinkingLevel,
+      paramOverride.thinkingLevel ?? agentConfig?.thinkingLevel,
       modelRegistry,
       "paramOverride",
     );

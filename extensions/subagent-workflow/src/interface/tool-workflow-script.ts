@@ -35,6 +35,7 @@ import { lintScript } from "../orchestration/script-lint.ts";
 import { deleteWorkflow, saveWorkflow } from "../orchestration/workflow-files.ts";
 import { toGuiCtx } from "./gui-mappers.ts";
 import { renderTextFallback } from "./views/format.ts";
+import { parseResourceMetaDetailed } from "../shared/meta-parser.ts";
 
 // ── Parameter schema ─────────────────────────────────────────
 
@@ -56,7 +57,7 @@ const WorkflowScriptParams = Type.Object({
   ),
 });
 
-type ScriptParams = Static<typeof WorkflowScriptParams>;
+export type ScriptParams = Static<typeof WorkflowScriptParams>;
 
 // ── Tool result types (S3: typed details, replaces Record<string, unknown>) ──
 
@@ -166,20 +167,20 @@ export function registerWorkflowScriptTool(
     description:
       "Manage workflow scripts: generate (AI creates tmp script), lint (static check), " +
       "save (tmp→permanent), delete, list. Before generating a new script, use action:list " +
-      "to check if a built-in workflow (chain/parallel/scatter-gather/map-reduce) already " +
+      "to check if an available workflow already " +
       "covers the use case. Replaces workflow-generate + workflow-lint tools.",
     promptSnippet: "Generate, lint, save, delete, or list workflow scripts",
     promptGuidelines: [
-      "generate: AI writes a tmp workflow script to .pi/workflows/.tmp/. Script can be run immediately via the workflow tool.",
+      "generate: AI writes a tmp workflow script to .pi/workflows/.tmp/. Declare metadata as a /* @pi-meta */ YAML block comment (name/description/phases required; parameters JSON Schema + usage markdown optional). NOT a const meta variable. Generate round-trip-validates the YAML and reports line/col on error (common pitfall: patternProperties regex must use double backslash \\d, not \d).",
       "lint: Statically check a script for common API misuse (outputSchema, result.output, file state).",
       "save: Promote a tmp script to permanent (.pi/workflows/).",
       "delete: Remove a script (blocked if a run is active).",
       "list: Show all available workflow scripts with source tags. " +
-      "Use this to discover built-in workflows (chain/parallel/scatter-gather/map-reduce) " +
+      "Use this to discover available workflows (see <available_workflows> injection) " +
       "and user-generated scripts before starting a run. After listing, start a script via " +
       "the workflow tool with action:run and the script name.",
-      "CRITICAL ANTI-PATTERN: NEVER generate scripts for chain/parallel/scatter-gather/map-reduce. " +
-      "These are BUILT-IN — use the workflow tool with action:run directly. " +
+      "CRITICAL ANTI-PATTERN: NEVER generate scripts for patterns already covered by available " +
+      "workflows. These are BUILT-IN — use the workflow tool with action:run directly. " +
       "generate is for NOVEL orchestration patterns ONLY. When in doubt, action:list first, " +
       "then action:run — not action:generate.",
     ],
@@ -238,7 +239,7 @@ export function registerWorkflowScriptTool(
 
 // ── generate action ──────────────────────────────────────────
 
-function actionGenerate(params: ScriptParams, signal: AbortSignal | undefined): TextContent {
+export function actionGenerate(params: ScriptParams, signal: AbortSignal | undefined): TextContent {
   if (signal?.aborted) {
     return textResult("Operation aborted before start", true);
   }
@@ -265,10 +266,12 @@ function actionGenerate(params: ScriptParams, signal: AbortSignal | undefined): 
     );
   }
 
- // 2. Validate meta declaration
-  if (!script.includes("const meta") && !script.includes("export const meta")) {
+ // 2. Validate meta declaration (/* @pi-meta */ new format preferred; legacy const meta accepted during transition — m0)
+  const hasPiMeta = /\/\*\s*@pi-meta\s*\n/.test(script);
+  const hasLegacyMeta = script.includes("const meta") || script.includes("export const meta");
+  if (!hasPiMeta && !hasLegacyMeta) {
     return textResult(
-      "Script must contain a meta declaration: const meta = { name, description, phases }",
+      "Script must contain a meta declaration: a /* @pi-meta */ YAML block comment (preferred) or legacy const meta = { ... }. The block has the form: a block comment starting with /* @pi-meta followed by YAML (name/description/phases/parameters?/usage?), closed by */ on its own line.",
       true,
     );
   }
@@ -288,6 +291,20 @@ function actionGenerate(params: ScriptParams, signal: AbortSignal | undefined): 
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return textResult(`Syntax error in script: ${msg}`, true);
+  }
+
+ // 4b. Round-trip: validate /* @pi-meta */ YAML before writing (v5 §4.7 / ERR4 — report linePos, don't write bad files)
+  if (hasPiMeta) {
+    const detailed = parseResourceMetaDetailed(script, "workflow");
+    if (!detailed.ok) {
+      const loc = "linePos" in detailed && detailed.linePos
+        ? ` (line ${detailed.linePos.line}, col ${detailed.linePos.col})`
+        : "";
+      return textResult(
+        `Generated /* @pi-meta */ YAML cannot be parsed${loc}: ${detailed.error}. Common causes: YAML indent errors, patternProperties regex must use double backslash (\\d not \d), or a stray star-slash inside the YAML body. Fix the meta block and retry.`,
+        true,
+      );
+    }
   }
 
  // 5. Write to .tmp directory

@@ -14,80 +14,137 @@
 
 import { describe, expect, it } from "vitest";
 
-import { findFlattenedArgKeys } from "../tool-workflow";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { argKeysFromMeta, findFlattenedArgKeys } from "../tool-workflow";
+import { parseResourceMeta } from "../../shared/meta-parser.ts";
+
+// 真实参数集（argKeysFromMeta 产物——m6 动态数据源，与 TC2 同源防漂移）
+function rflKeys() {
+  const src = readFileSync(join(__dirname, "../../../workflows/review-fix-loop.js"), "utf-8");
+  const meta = parseResourceMeta(src, "workflow");
+  if (!meta || meta.kind !== "workflow" || !meta.parameters) throw new Error("rfl meta");
+  return argKeysFromMeta(meta.parameters);
+}
+function chainKeys() {
+  const src = readFileSync(join(__dirname, "../../../workflows/chain.js"), "utf-8");
+  const meta = parseResourceMeta(src, "workflow");
+  if (!meta || meta.kind !== "workflow" || !meta.parameters) throw new Error("chain meta");
+  return argKeysFromMeta(meta.parameters);
+}
+const RFL = rflKeys();
+const CHAIN = chainKeys();
 
 describe("findFlattenedArgKeys (workflow args flatten detector — P0)", () => {
-  it("triggers when args sub-fields flattened to top level", () => {
-    expect(findFlattenedArgKeys({ action: "run", name: "chain", task: "x" })).toEqual(["task"]);
-    expect(findFlattenedArgKeys({ action: "run", name: "x", items: ["a"] })).toEqual(["items"]);
+  it("TC3a: trigger——chain 参数集平铺 task 被识别；跨 workflow 区分（items 非 chain 参数不触发）", () => {
     expect(
-      findFlattenedArgKeys({ action: "run", name: "x", task: "t", perspectives: ["p"] }),
-    ).toEqual(["task", "perspectives"]);
-  });
-
-  it("does NOT trigger when fields correctly nested in args", () => {
+      findFlattenedArgKeys({ action: "run", name: "chain", task: "x" }, CHAIN.exact, CHAIN.patterns),
+    ).toEqual(["task"]);
+    // 跨 workflow：items 是 map-reduce 参数非 chain 参数 → 不触发（m6 动态集语义）
     expect(
-      findFlattenedArgKeys({ action: "run", name: "x", args: { task: "x", items: ["a"] } }),
+      findFlattenedArgKeys({ action: "run", name: "chain", items: ["a"] }, CHAIN.exact, CHAIN.patterns),
     ).toEqual([]);
   });
 
-  it("edge: key present at BOTH top-level and inside args is NOT flagged", () => {
-    // 同时传 args.task 和顶层 task：args 已提供，顶层冗余被忽略，不算平铺。
-    // 这是 reviewer 点名的 untested edge。
+  it("TC3b: 嵌套 args 不触发", () => {
     expect(
-      findFlattenedArgKeys({ action: "run", name: "x", args: { task: "x" }, task: "y" }),
+      findFlattenedArgKeys({ action: "run", name: "x", args: { task: "x", items: ["a"] } }, CHAIN.exact, CHAIN.patterns),
     ).toEqual([]);
   });
 
-  it("does NOT trigger when no known arg keys present", () => {
-    expect(findFlattenedArgKeys({ action: "run", name: "x", args: {} })).toEqual([]);
-    expect(findFlattenedArgKeys({ action: "status" })).toEqual([]);
-  });
-
-  it("review-fix-loop fixAgent 平铺被识别（TC7）", () => {
-    expect(findFlattenedArgKeys({ action: "run", name: "review-fix-loop", fixAgent: "worker" })).toEqual(["fixAgent"]);
+  it("TC3c: 顶层 + args 内共存不触发（args-排除保留）", () => {
     expect(
-      findFlattenedArgKeys({ action: "run", name: "review-fix-loop", args: { fixAgent: "worker" } }),
+      findFlattenedArgKeys({ action: "run", name: "x", args: { task: "x" }, task: "y" }, CHAIN.exact, CHAIN.patterns),
     ).toEqual([]);
   });
 
-  it("triggers for review-fix-loop args flattened to top level (incl. batchN prefix)", () => {
+  it("TC3d: 无已知键不触发；空集不触发", () => {
     expect(
-      findFlattenedArgKeys({ action: "run", name: "review-fix-loop", targetType: "git-diff", target: "main" }),
+      findFlattenedArgKeys({ action: "run", name: "x", args: {} }, CHAIN.exact, CHAIN.patterns),
+    ).toEqual([]);
+    expect(
+      findFlattenedArgKeys({ action: "status" }, new Set(), []),
+    ).toEqual([]);
+  });
+
+  it("TC3e: review-fix-loop fixAgent 平铺被识别（动态集 exact）", () => {
+    expect(
+      findFlattenedArgKeys({ action: "run", name: "review-fix-loop", fixAgent: "worker" }, RFL.exact, RFL.patterns),
+    ).toEqual(["fixAgent"]);
+    expect(
+      findFlattenedArgKeys({ action: "run", name: "review-fix-loop", args: { fixAgent: "worker" } }, RFL.exact, RFL.patterns),
+    ).toEqual([]);
+  });
+
+  it("TC3f: batchN 经 pattern 触发 + batchl 拼错不触发（数字后缀语义）", () => {
+    expect(
+      findFlattenedArgKeys(
+        { action: "run", name: "review-fix-loop", targetType: "git-diff", target: "main" },
+        RFL.exact,
+        RFL.patterns,
+      ),
     ).toEqual(["targetType", "target"]);
     expect(
-      findFlattenedArgKeys({ action: "run", name: "review-fix-loop", batch1: "reviewer", autoCommit: true }),
+      findFlattenedArgKeys(
+        { action: "run", name: "review-fix-loop", batch1: "reviewer", autoCommit: true },
+        RFL.exact,
+        RFL.patterns,
+      ),
     ).toEqual(["batch1", "autoCommit"]);
     expect(
-      findFlattenedArgKeys({ action: "run", name: "review-fix-loop", args: { targetType: "git-diff", target: "main" } }),
+      findFlattenedArgKeys(
+        { action: "run", name: "review-fix-loop", args: { targetType: "git-diff", target: "main" } },
+        RFL.exact,
+        RFL.patterns,
+      ),
     ).toEqual([]);
-    // 未知键（如 batchl 拼错）不属于白名单，不触发平铺检测（由 workflow 内白名单校验报错）
-    expect(findFlattenedArgKeys({ action: "run", name: "x", batchl: "reviewer" })).toEqual([]);
+    // batchl 拼错（非数字后缀）不触发（m6 评审 C-1：pattern 自带数字后缀校验）
+    expect(
+      findFlattenedArgKeys({ action: "run", name: "x", batchl: "reviewer" }, RFL.exact, RFL.patterns),
+    ).toEqual([]);
   });
 
-  it("review-fix-loop 收敛/模型参数平铺被识别（S-13 补全 4 键）", () => {
+  it("TC3g: 收敛参数平铺被识别（动态集 exact——S-13 3 键，model 升格 TOOL_TOP_LEVEL 后排除）", () => {
     expect(
-      findFlattenedArgKeys({
-        action: "run",
-        name: "review-fix-loop",
-        model: "ds-flash",
-        maxFixAttempts: 3,
-        convergeNewIssues: 2,
-        convergeRounds: 3,
-      }),
-    ).toEqual(["model", "maxFixAttempts", "convergeNewIssues", "convergeRounds"]);
+      findFlattenedArgKeys(
+        { action: "run", name: "review-fix-loop", model: "ds-flash", maxFixAttempts: 3, convergeNewIssues: 2, convergeRounds: 3 },
+        RFL.exact,
+        RFL.patterns,
+      ),
+    ).toEqual(["maxFixAttempts", "convergeNewIssues", "convergeRounds"]);
     expect(
-      findFlattenedArgKeys({
-        action: "run",
-        name: "review-fix-loop",
-        args: { model: "ds-flash", maxFixAttempts: 3 },
-        convergeRounds: 3,
-      }),
+      findFlattenedArgKeys(
+        { action: "run", name: "review-fix-loop", args: { model: "ds-flash", maxFixAttempts: 3 }, convergeRounds: 3 },
+        RFL.exact,
+        RFL.patterns,
+      ),
     ).toEqual(["convergeRounds"]);
   });
 
-  it("returns [] for non-object input", () => {
-    expect(findFlattenedArgKeys(null)).toEqual([]);
-    expect(findFlattenedArgKeys(undefined)).toEqual([]);
+  it("TC3h: non-object 输入返回 []", () => {
+    expect(findFlattenedArgKeys(null, new Set(), [])).toEqual([]);
+    expect(findFlattenedArgKeys(undefined, new Set(), [])).toEqual([]);
+  });
+
+  it("TC3i: tool 顶层键不误报（M-3 回归——合成 parameters 直测 argKeysFromMeta 排除）", () => {
+    // 合成 parameters：workflow 声明参数 name（tool 键撞名）——argKeysFromMeta 必须排除
+    const keys = argKeysFromMeta({
+      type: "object",
+      properties: { name: { type: "string" }, task: { type: "string" } },
+      required: ["name"],
+    });
+    expect(keys.exact.has("task")).toBe(true);
+    expect(keys.exact.has("name")).toBe(false); // TOOL_TOP_LEVEL 排除（M-3 真回归锁定）
+    // 合法调用不误报
+    expect(
+      findFlattenedArgKeys(
+        { action: "run", name: "mywf", args: { name: "x" } },
+        keys.exact,
+        keys.patterns,
+      ),
+    ).toEqual([]);
+    // 真实 meta 不含 name（探针实测 16 键）——附加验证
+    expect(RFL.exact.has("name")).toBe(false);
   });
 });

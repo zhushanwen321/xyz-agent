@@ -16,6 +16,7 @@ import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { type Static, Type } from "typebox";
 
 import { SLUG_MAX_LENGTH } from "../execution/execute-options-mapper.ts";
+import { THINKING_ORDER } from "../execution/model-resolver.ts";
 import { getSubagentService } from "../execution/subagent-service.ts";
 import type { SubagentToolResult } from "../execution/types.ts";
 import { extractAgentName } from "./format.ts";
@@ -86,12 +87,14 @@ const SubagentParams = Type.Object({
     maxLength: SLUG_MAX_LENGTH,
   })),
   agent: Type.Optional(Type.String({
-    description: 'Agent name (system prompt + tools). If omitted, defaults to "general-purpose" — a generic agent that inherits the main agent\'s model and project context. Available: general-purpose (default fallback), worker, researcher, explorer, planner, reviewer, oracle, context-builder, orchestrator. Custom agents configurable.',
+    description: 'Agent ref: absolute path to the agent .md file (use <location> from <available_subagents>). If omitted, defaults to "general-purpose" — a generic agent that inherits the main agent\'s model and project context. Do not invent names — only use paths from the injected list.',
   })),
   model: Type.Optional(Type.String({
     description: 'Model override in "provider/modelId" format. Resolution order (top wins): (1) this param, (2) agent .md frontmatter model, (3) the main agent\'s current model (zero-config default). An explicit model (param or frontmatter) that is missing or unauthorized THROWS — there is no silent fallback to the main model. Omit this param to inherit the main model.',
   })),
-  thinkingLevel: Type.Optional(StringEnum(["off", "minimal", "low", "medium", "high", "xhigh"] as const)),
+  thinkingLevel: Type.Optional(StringEnum(THINKING_ORDER, {
+    description: "Thinking depth override (derived from THINKING_ORDER SSOT, includes 'max'). Omit to inherit the main agent's thinking level.",
+  })),
   skillPath: Type.Optional(Type.String()),
   appendSystemPrompt: Type.Optional(Type.Array(Type.String())),
   schema: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
@@ -172,14 +175,14 @@ export function registerSubagentTool(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "subagent",
     label: "Subagent",
-    promptSnippet: "Delegate to specialized subagents (explorer/worker/reviewer/oracle)",
+    promptSnippet: "Delegate to specialized subagents (agentRef = absolute .md path from <available_subagents>)",
     description: `Delegate a task to a specialized subagent — when to delegate rather than do it yourself.
 
 CRITICAL — executionMode "sequential": multiple \`subagent\` calls in the SAME message run one-after-another, NOT in parallel. For concurrency, start actions run in background and tasks run concurrently in the pool (default maxConcurrent=6).
 
 ## When to delegate
 
-Delegate when the task needs a distinct role (researcher/worker), context isolation (fork/worktree), or parallelism while you do other work. Delegate FIRST when the task involves any of: reading 3+ files, writing 100+ lines of implementation, parallel research, or specialized review (reviewer/oracle) — doing these yourself floods your context with implementation detail and loses the orchestration view.
+Delegate when the task needs a distinct specialized role, context isolation (fork/worktree), or parallelism while you do other work. Delegate FIRST when the task involves any of: reading 3+ files, writing 100+ lines of implementation, parallel research, or specialized review — doing these yourself floods your context with implementation detail and loses the orchestration view.
 
 ## Actions
 

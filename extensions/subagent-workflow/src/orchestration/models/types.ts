@@ -32,7 +32,9 @@ export type DoneReason =
   | "failed"
   | "aborted"
   | "budget_limited"
-  | "time_limited";
+  | "time_limited"
+  // m3：runAndWait 合成返回值专用——参数校验失败（run 从未创建，不进入 run.state.reason）
+  | "invalid_args";
 
 /** 合法的状态转换。空数组 = 无出边（done 终态）。 */
 export const VALID_RUN_TRANSITIONS: Record<RunStatus, readonly RunStatus[]> = {
@@ -47,6 +49,7 @@ export const ALL_DONE_REASONS: readonly DoneReason[] = [
   "completed",
   "failed",
   "aborted",
+  "invalid_args",
   "budget_limited",
   "time_limited",
 ] as const;
@@ -87,7 +90,7 @@ export interface AgentCallOpts {
  /**
  * Thinking level override (e.g. "high", "medium", "low").
  * M2: Added to align with subagent path's ExecuteOptions.thinkingLevel.
- * When omitted, agent .md frontmatter thinkingLevel is used (via resolveAgentOpts).
+ * When omitted, agent .md frontmatter thinkingLevel is used (via resolveIdentity/getAgentConfig).
  */
   thinkingLevel?: string;
  /** Scene name for model-switch advisor recommendation. */
@@ -111,16 +114,20 @@ export interface AgentCallOpts {
  /** Human-readable description for logging and debugging. */
   description?: string;
  /**
- * Agent name to resolve from AgentRegistry. When set, the resolved
- * agent's systemPrompt is injected via --append-system-prompt.
+ * Agent ref (absolute .md path). Resolved by resolveIdentity via getAgentConfig,
+ * which injects the agent's systemPrompt/model/tools/thinkingLevel. Not handled by
+ * resolveAgentOpts (single-responsibility: agent ref ownership belongs to resolveIdentity,
+ * M2 fix — previously overlapped causing double-injection + model-tier confusion).
  */
   agent?: string;
  /**
- * Absolute paths to temp files containing system prompt injections.
- * Set by agent-opts-resolver: agent systemPrompt + schema injection files.
- * buildArgs injects each via --append-system-prompt.
+ * System prompt injection CONTENT (not file paths).
+ * Set by agent-opts-resolver: schema structured-output instruction string.
+ * Agent systemPrompt is NOT included here (handled by resolveIdentity/agentConfig).
+ * mapToExecuteOptions passes this through to ExecuteOptions.appendSystemPrompt
+ * (same name/semantics, transparent passthrough).
  */
-  systemPromptFiles?: string[];
+  appendSystemPrompt?: string[];
  /**
  * Schema JSON for PI_WORKFLOW_SCHEMA env var.
  * Set by agent-opts-resolver when opts.schema is present; passed as env var

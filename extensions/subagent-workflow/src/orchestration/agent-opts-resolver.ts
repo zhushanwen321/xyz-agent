@@ -1,28 +1,26 @@
 /**
- * Agent options resolver — resolves agent name / skill / schema to system
- * prompt files + env vars on every dispatch (BL-1).
+ * Agent options resolver — resolves skill / schema to append-system-prompt
+ * content + env vars on every dispatch (BL-1).
  *
- * BL-1：解析 workflow 脚本里 `agent({agent,skill,schema})` 的 inline override，
- * 否则 pi 子进程只收到原始 prompt，没有 --append-system-prompt / --skill /
- * PI_WORKFLOW_SCHEMA。AgentCallOpts 从 engine/models/types 引入。
+ * BL-1：解析 workflow 脚本里 `agent({skill,schema})` 的 inline override，
+ * 否则 pi 子进程只收到原始 prompt，没有 --append-system-prompt /
+ * --skill / PI_WORKFLOW_SCHEMA。
+ *
+ * 职责范围（M2 修正）：仅处理 schema SO 指令（内容直传 appendSystemPrompt）+ skill。
+ * agent ref 处理（systemPrompt/model/thinkingLevel）已移交 resolveIdentity（execution 层，
+ * 经 getAgentConfig + resolveModel 完整覆盖），消除双重注入与 model 层级混乱。
  *
  * 调用方：engine/error-recovery.ts dispatchAgentCall（每次 agent-call 消息）。
- * - agent → AgentRegistry.resolve → systemPrompt 写临时文件 → systemPromptFiles（--append-system-prompt）
  * - skill → resolveSkillPath → skillPath（--skill）
- * - schema → 结构化输出指令写临时文件 → systemPromptFiles + schemaEnv（PI_WORKFLOW_SCHEMA）
+ * - schema → 结构化输出指令内容直传 appendSystemPrompt（--append-system-prompt）+ schemaEnv（PI_WORKFLOW_SCHEMA）
  *
- * 临时文件在 activeTempFiles 集合注册，session_shutdown 时由 cleanupAllTempFiles 统一回收。
+ * M2 bug 修正：旧实现把 schema 指令写成临时文件、push 文件路径（而非内容）给下游，
+ * 下游 mapper/session-runner 把路径当文本拼进最终 append 文件，导致 schema 指令从未
+ * 进入子进程。改为指令内容直传（不写盘、无临时文件）。
  */
 
-import { randomUUID } from "node:crypto";
-import * as fs from "node:fs";
-import * as path from "node:path";
-
 import type { AgentCallOpts } from "./models/types.ts";
-import type { AgentRegistry } from "../execution/agent-registry.ts";  // type-only（本文件不 new，只接收实例参数）
 import { resolveSkillPath } from "./skill-discovery.ts";
-
-const UUID_SLICE_LEN = 8;
 
 export interface ResolveResult {
   opts: AgentCallOpts;
@@ -30,54 +28,21 @@ export interface ResolveResult {
 }
 
 /**
- * Resolve agent name and schema into systemPromptFiles + skillPath + schemaEnv.
+ * Resolve skill and schema into appendSystemPrompt (content array) + skillPath + schemaEnv.
  *
- * - Agent systemPrompt -> temp file via --append-system-prompt
  * - Skill name -> resolved SKILL.md dir path via --skill
- * - Schema JSON -> temp file with structured-output instruction + PI_WORKFLOW_SCHEMA env
+ * - Schema JSON -> structured-output instruction string pushed into appendSystemPrompt
+ *   (content, not file path) + PI_WORKFLOW_SCHEMA env
  *
- * Returns the enriched opts and any temp files created (registered in activeTempFiles).
- * Caller is responsible for cleaning up files via cleanupAllTempFiles (session-scoped).
+ * Agent ref is intentionally NOT handled here — resolveIdentity (execution layer)
+ * covers it via getAgentConfig + resolveModel. Handling agent here would cause
+ * double-injection (agentConfig.systemPrompt at session-runner + appendSystemPrompt)
+ * and model-tier confusion.
+ *
+ * Returns the enriched opts.
  */
-export function resolveAgentOpts(
-  opts: AgentCallOpts,
-  agentRegistry: AgentRegistry,
-  sessionDir: string,
-  activeTempFiles: Set<string>,
-): ResolveResult {
-  const systemPromptFiles: string[] = [];
-
- // Resolve agent system prompt
-  if (opts.agent) {
-    const discovered = agentRegistry.get(opts.agent);  // 新 API: get() 替代 resolve()，返回 AgentConfig（含 systemPrompt+model）
-    if (!discovered) {
-      const available = agentRegistry.list().join(", ");
-      return { opts, error: `Agent not found: ${opts.agent}. Available: ${available || "(none)"}` };
-    }
-
-    const hasSystemPrompt = discovered.systemPrompt.trim().length > 0;
-    if (hasSystemPrompt) {
-      try {
-        const tmpDir = path.join(sessionDir, "workflow-tmp");
-        fs.mkdirSync(tmpDir, { recursive: true });
-        const tmpFile = path.join(tmpDir, `agent-prompt-${randomUUID()}.md`);
-        fs.writeFileSync(tmpFile, discovered.systemPrompt, "utf-8");
-        activeTempFiles.add(tmpFile);
-        systemPromptFiles.push(tmpFile);
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { opts, error: `Temp file write error: ${msg}` };
-      }
-    }
-
-    // M3: 用 === undefined 而非 ||，避免空串被当 falsy 替换成 frontmatter model
-    opts = {
-      ...opts,
-      model: opts.model === undefined ? discovered.model : opts.model,
-      // M2: 传播 agent .md frontmatter 的 thinkingLevel（之前 AgentCallOpts 无此字段导致丢失）
-      thinkingLevel: opts.thinkingLevel ?? discovered.thinkingLevel,
-    };
-  }
+export function resolveAgentOpts(opts: AgentCallOpts): ResolveResult {
+  const appendSystemPrompt: string[] = [];
 
  // Resolve skill name to SKILL.md path
   if (opts.skill) {
@@ -88,53 +53,38 @@ export function resolveAgentOpts(
     opts = { ...opts, skillPath };
   }
 
- // Inject schema as structured-output instruction via --append-system-prompt
- // and set environment variable for conditional tool + hook activation.
+ // Inject schema as structured-output instruction into appendSystemPrompt (content,
+ // not temp file) and set environment variable for conditional tool + hook activation.
+ // M2 fix: previously wrote the instruction to a temp file and pushed the FILE PATH,
+ // which got concatenated into the final append file as path garbage — the SO instruction
+ // never reached the subprocess. Now the instruction content is pushed directly.
   if (opts.schema) {
-    try {
-      const tmpDir = path.join(sessionDir, "workflow-tmp");
-      fs.mkdirSync(tmpDir, { recursive: true });
-      const tmpFile = path.join(tmpDir, `so-${randomUUID().slice(0, UUID_SLICE_LEN)}.txt`);
-      const schemaJson = JSON.stringify(opts.schema);
-      const content = [
-        "## MANDATORY: Structured Output Requirement",
-        "",
-        "This task requires structured output.",
-        "Your FINAL action must be calling the `structured-output` tool.",
-        "",
-        "The schema is enforced by the system (PI_WORKFLOW_SCHEMA). You only pass `data` — do NOT pass a `schema` parameter.",
-        `Your \`data\` must conform to this schema:`,
-        "```json",
-        schemaJson,
-        "```",
-        "",
-        "Rules:",
-        "- Call structured-output with ONLY the `data` parameter. The system validates it against the schema above automatically.",
-        "- Do NOT output JSON in your text response — use the structured-output tool.",
-        "- Do NOT skip this step. The structured-output call IS your result.",
-        "- Complete all other work FIRST, then call structured-output as the last action.",
-      ].join("\n");
-      fs.writeFileSync(tmpFile, content, "utf-8");
-      activeTempFiles.add(tmpFile);
-      systemPromptFiles.push(tmpFile);
+    const schemaJson = JSON.stringify(opts.schema);
+    const content = [
+      "## MANDATORY: Structured Output Requirement",
+      "",
+      "This task requires structured output.",
+      "Your FINAL action must be calling the `structured-output` tool.",
+      "",
+      "The schema is enforced by the system (PI_WORKFLOW_SCHEMA). You only pass `data` — do NOT pass a `schema` parameter.",
+      `Your \`data\` must conform to this schema:`,
+      "```json",
+      schemaJson,
+      "```",
+      "",
+      "Rules:",
+      "- Call structured-output with ONLY the `data` parameter. The system validates it against the schema above automatically.",
+      "- Do NOT output JSON in your text response — use the structured-output tool.",
+      "- Do NOT skip this step. The structured-output call IS your result.",
+      "- Complete all other work FIRST, then call structured-output as the last action.",
+    ].join("\n");
+    appendSystemPrompt.push(content);
 
  // Set env var for structured-output extension to activate tool + hook
-      opts = { ...opts, schemaEnv: schemaJson };
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return { opts, error: `Schema temp file write error: ${msg}` };
-    }
+    opts = { ...opts, schemaEnv: schemaJson };
   }
 
   return {
-    opts: { ...opts, ...(systemPromptFiles.length > 0 ? { systemPromptFiles } : {}) },
+    opts: { ...opts, ...(appendSystemPrompt.length > 0 ? { appendSystemPrompt } : {}) },
   };
-}
-
-/** Remove all remaining active temp files (called from session_shutdown). */
-export function cleanupAllTempFiles(activeTempFiles: Set<string>): void {
-  for (const fp of activeTempFiles) {
-    try { fs.unlinkSync(fp); } catch { /* already deleted */ void undefined; }
-  }
-  activeTempFiles.clear();
 }

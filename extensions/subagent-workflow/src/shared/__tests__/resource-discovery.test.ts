@@ -6,13 +6,23 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// 隔离真实用户全局目录：resource-discovery 用 homedir() 推导 user-agents 源
+// （~/.agents/agents/），测试环境可能存在真实 agent 文件（如 tech-design-review.md），
+// 不 mock 会导致「期望空列表/精确列表」用例被环境污染（2026-08 实测 4 个失败）。
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  return { ...actual, homedir: () => "/nonexistent-home-for-tests" };
+});
 
 import {
   discoverResources,
   discoverResourcesSync,
   findWorkspaceRoot,
   processPackageSync,
+  getCachedFile,
+  getCachedFileContent,
 } from "../resource-discovery.ts";
 
 // ============================================================
@@ -79,8 +89,11 @@ describe("discoverResourcesSync", () => {
   it("discovers agents from project .pi/agents/", () => {
     writeFile(path.join(ws, ".pi", "agents"), "worker.md", "body");
     const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
-    expect(result.map((r) => path.basename(r.path))).toEqual(["worker.md"]);
-    expect(result[0]?.available).toBe(true);
+    // 按 source 过滤断言——用户全局目录（~/.agents/agents/）可能有真实 agent 文件，
+    // 测试不假设环境为空（2026-08：环境新增 tech-design-review.md 暴露此脆弱性）
+    const project = result.filter((r) => r.source === "project-pi");
+    expect(project.map((r) => path.basename(r.path))).toEqual(["worker.md"]);
+    expect(project[0]?.available).toBe(true);
   });
 
   it("discovers workflows from project .pi/workflows/", () => {
@@ -93,8 +106,9 @@ describe("discoverResourcesSync", () => {
     writeFile(path.join(ws, ".pi", "agents"), "worker.md", "pi-body");
     writeFile(path.join(ws, ".agents", "agents"), "worker.md", "agents-body");
     const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
-    expect(result).toHaveLength(1);
-    expect(result[0]?.source).toBe("project-agents");
+    const project = result.filter((r) => r.source === "project-agents");
+    expect(project).toHaveLength(1);
+    expect(project[0]?.source).toBe("project-agents");
   });
 
   it("includes tmp source for workflows when includeTmp=true", () => {
@@ -121,12 +135,14 @@ describe("discoverResourcesSync", () => {
     writeFile(dir, "_skip.md", "ignored");
     writeFile(dir, "trace.chain.md", "ignored");
     const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
-    expect(result.map((r) => path.basename(r.path))).toEqual(["real.md"]);
+    const project = result.filter((r) => r.source === "project-pi");
+    expect(project.map((r) => path.basename(r.path))).toEqual(["real.md"]);
   });
 
   it("nonexistent directories are silently skipped", () => {
     const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
-    expect(result).toEqual([]);
+    // 用户全局目录可能有真实文件——只断言 project 源为空
+    expect(result.filter((r) => r.source === "project-pi" || r.source === "project-agents")).toEqual([]);
   });
 });
 
@@ -251,8 +267,9 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     writeFile(path.join(pkgDir, "agents"), "custom.md", "body");
     process.env.XYZ_EXTENSION_PATHS = pkgDir;
     const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
-    expect(result.map((r) => path.basename(r.path))).toEqual(["custom.md"]);
-    expect(result[0]?.source).toBe("user-extension-paths");
+    const ext = result.filter((r) => r.source === "user-extension-paths");
+    expect(ext.map((r) => path.basename(r.path))).toEqual(["custom.md"]);
+    expect(ext[0]?.source).toBe("user-extension-paths");
   });
 
   it("discovers agents via convention dir (no manifest)", () => {
@@ -260,8 +277,9 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     writeFile(path.join(pkgDir, "agents"), "conv.md", "body");
     process.env.XYZ_EXTENSION_PATHS = pkgDir;
     const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
-    expect(result.map((r) => path.basename(r.path))).toEqual(["conv.md"]);
-    expect(result[0]?.source).toBe("user-extension-paths");
+    const ext = result.filter((r) => r.source === "user-extension-paths");
+    expect(ext.map((r) => path.basename(r.path))).toEqual(["conv.md"]);
+    expect(ext[0]?.source).toBe("user-extension-paths");
   });
 
   it("multiple paths separated by delimiter", () => {
@@ -271,8 +289,8 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     writeFile(path.join(pkg2, "agents"), "a2.md", "body");
     process.env.XYZ_EXTENSION_PATHS = `${pkg1}${path.delimiter}${pkg2}`;
     const result = discoverResourcesSync({ kind: "agents", workspaceRoot: ws, agentDir });
-    expect(result.map((r) => path.basename(r.path)).sort()).toEqual(["a1.md", "a2.md"]);
-    expect(result.every((r) => r.source === "user-extension-paths")).toBe(true);
+    const ext = result.filter((r) => r.source === "user-extension-paths");
+    expect(ext.map((r) => path.basename(r.path)).sort()).toEqual(["a1.md", "a2.md"]);
   });
 
   it("overrides npm on name clash (priority: user-extension-paths > npm)", () => {
@@ -311,7 +329,58 @@ describe("user-extension-paths (XYZ_EXTENSION_PATHS)", () => {
     writeFile(path.join(pkgDir, "agents"), "async.md", "body");
     process.env.XYZ_EXTENSION_PATHS = pkgDir;
     const result = await discoverResources({ kind: "agents", workspaceRoot: ws, agentDir });
-    expect(result.map((r) => path.basename(r.path))).toEqual(["async.md"]);
-    expect(result[0]?.source).toBe("user-extension-paths");
+    const ext = result.filter((r) => r.source === "user-extension-paths");
+    expect(ext.map((r) => path.basename(r.path))).toEqual(["async.md"]);
+    expect(ext[0]?.source).toBe("user-extension-paths");
+  });
+});
+
+// ── m5 TC4/TC5: 统一 mtime 缓存层（P-cache / P-cache-invalidation） ──
+
+describe("m5: 统一 mtime 缓存层", () => {
+  it("TC4a: P-cache——文件未变时二次读取命中同一缓存条目（对象引用）", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "m5-cache-"));
+    const f = path.join(dir, "a.md");
+    fs.writeFileSync(f, "---\nname: x\ndescription: y\n---\nbody", "utf-8");
+    try {
+      // ESM 下 node:fs 不可 spy（vitest 限制）——命中断言用对象引用：
+      // getCachedFile 命中时返回缓存条目对象本身（非新建）
+      const first = getCachedFile(f);
+      const second = getCachedFile(f);
+      expect(first?.content).toBe("---\nname: x\ndescription: y\n---\nbody");
+      expect(second).toBe(first); // 同引用 = 命中缓存（未重 read）
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("TC4b: P-cache——两处消费方（getCachedFile/getCachedFileContent）共享同一缓存条目", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "m5-cache2-"));
+    const f = path.join(dir, "a.md");
+    fs.writeFileSync(f, "---\nname: x\ndescription: y\n---\nbody", "utf-8");
+    try {
+      const a = getCachedFile(f);
+      const b = getCachedFileContent(f);
+      // 内容一致性（命中语义由 TC4a 的对象引用断言覆盖——此处验证两 API 一致）
+      expect(a?.content).toBe(b);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("TC5: P-cache-invalidation——改内容（mtime 变）后重读新内容；删文件后驱逐", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "m5-cache3-"));
+    const f = path.join(dir, "a.md");
+    fs.writeFileSync(f, "v1", "utf-8");
+    try {
+      expect(getCachedFileContent(f)).toBe("v1");
+      fs.writeFileSync(f, "v2", "utf-8");
+      expect(getCachedFileContent(f)).toBe("v2"); // mtime 变 → 重读
+      // 删除 → 驱逐（不再返回旧内容）
+      fs.rmSync(f);
+      expect(getCachedFileContent(f)).toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

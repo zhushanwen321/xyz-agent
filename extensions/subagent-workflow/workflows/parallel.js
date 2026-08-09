@@ -14,11 +14,23 @@
 //
 // ⚠️ lintScript 约束（本脚本已遵守）：含 parallel() 入口，禁止 bare IIFE
 
-const meta = {
-  name: "parallel",
-  description: "通用编排：多视角并行分析同一目标，再聚合汇总",
-  phases: ["parallel-analyze", "aggregate"],
-};
+/* @pi-meta
+name: parallel
+description: 通用编排：多视角并行分析同一目标，再聚合汇总
+phases: [parallel-analyze, aggregate]
+parameters:
+  type: object
+  properties:
+    target: { type: string }
+    perspectives: { type: array, items: { type: string } }
+    agents: { type: string }
+  required: [target]
+usage: |
+  ## 使用说明
+  - 多视角并行分析后聚合；perspectives 缺省用 3 个默认视角
+  - agents：逗号分隔的 agent .md 绝对路径；1 个应用于所有视角，N 个一一对应视角数
+  - 示例：workflow run parallel --args target="<分析目标>" agents="/path/analyst.md"
+*/
 
 // ── 入参（$ARGS）──────────────────────────────────────────────────
 const target = $ARGS.target;
@@ -32,7 +44,21 @@ if (perspectives.some((p) => typeof p !== "string")) {
   throw new Error("parallel 参数 perspectives 必须是字符串数组，实际含非字符串元素");
 }
 
-log("parallel 开始，target=" + target + " perspectives=" + JSON.stringify(perspectives));
+// S4：agents 参数 = 逗号分隔的 agentRef 路径数组；1 个 = 所有视角，N 个 = 一一对应
+// worker 沙箱为 eval 模式：require 相对路径以 cwd 为基准（非脚本目录），
+// 必须用 workerData.scriptPath 锚定脚本目录（review-fix-loop 同模式）。
+const SCRIPT_DIR = workerData && workerData.scriptPath
+  ? require("path").dirname(workerData.scriptPath)
+  : process.cwd();
+const { parseAgentRefs, agentRefAt } = require(SCRIPT_DIR + "/_shared/agent-refs.cjs");
+const agentRefs = parseAgentRefs($ARGS.agents);
+const agentFor = (i) => {
+  if (agentRefs.length === 1) return { agent: agentRefs[0] };
+  const ref = agentRefAt(agentRefs, i);
+  return ref ? { agent: ref } : {};
+};
+
+log("parallel 开始，target=" + target + " perspectives=" + JSON.stringify(perspectives) + (agentRefs.length ? " agents=" + agentRefs.join(",") : ""));
 
 let currentPhase = "init";
 let outcome;
@@ -44,7 +70,7 @@ try {
 
   // parallel() 接受 Promise 数组；agent() 返回 Promise。allSettled 语义。
   const perPerspectiveRaw = await parallel(
-    perspectives.map((p) =>
+    perspectives.map((p, i) =>
       agent({
         prompt:
           "从「" + p + "」角度分析以下目标，给出评分和发现的问题：\n\n" + target,
@@ -62,6 +88,7 @@ try {
           required: ["perspective", "score", "findings"],
         },
         description: "parallel-" + p,
+        ...agentFor(i),
       })
     ),
   );

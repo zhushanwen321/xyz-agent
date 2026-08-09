@@ -15,13 +15,15 @@
  *   注入每 turn 会膨胀 prompt）
  */
 
-import * as fs from "node:fs";
+
 
 import type {
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
 	ExtensionAPI,
 	ExtensionContext,
+	SessionShutdownEvent,
+	SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
@@ -29,9 +31,17 @@ import { getLogger } from "@zhushanwen/pi-extension-logger";
 import {
 	discoverResources,
 	findWorkspaceRoot,
+	getCachedFileContent,
 } from "../shared/resource-discovery.ts";
+import { parseResourceMeta } from "../shared/meta-parser.ts";
 
 const logger = getLogger("injector");
+
+/**
+ * Session 级 workflow 列表缓存（per-process = per-session），与 agentCache 对称。
+ * 见 subagent-list-injector.ts 的 agentCache 注释。
+ */
+let workflowCache: WorkflowEntry[] | null = null;
 
 /** 注入段中单个 workflow 的最大描述长度（控制每 turn prompt 体积） */
 const MAX_DESC_LEN = 160;
@@ -39,10 +49,12 @@ const MAX_DESC_LEN = 160;
 /** 断句阈值比例：句末标点位置须 >= maxLen 的 40% 才采用，否则硬截断保留更多信息 */
 const DESC_BOUNDARY_MIN_RATIO = 0.4;
 
-/** 解析后的 workflow 条目（name + 截断后的 description） */
+/** 解析后的 workflow 条目（name + 截断后的 description + agentRef 路径） */
 export interface WorkflowEntry {
 	name: string;
 	description: string;
+	/** workflowRef：脚本 .js 文件的绝对路径（注入段 <location>，模型直接引用） */
+	path: string;
 }
 
 /**
@@ -68,46 +80,17 @@ export function summarizeDescription(
 }
 
 /**
- * 从源码中提取 `const meta = { ... }` 块（花括号配平）。
- * 无 meta 块返回 null。
- */
-function extractMetaBlock(src: string): string | null {
-	const startMatch = src.match(/const\s+meta\s*=\s*\{/);
-	if (!startMatch || startMatch.index === undefined) return null;
-	const afterOpen = startMatch.index + startMatch[0].length;
-	let depth = 1;
-	let i = afterOpen;
-	while (i < src.length && depth > 0) {
-		const ch = src[i];
-		if (ch === "{") depth++;
-		else if (ch === "}") depth--;
-		i++;
-	}
-	if (depth !== 0) return null;
-	return src.slice(startMatch.index, i);
-}
-
-/** 从 meta 块中提取单行字符串字段值（双引号或单引号包裹）。 */
-function extractMetaField(block: string, field: string): string | null {
-	const re = new RegExp(`^[ \\t]*${field}:\\s*("([^"]*)"|'([^']*)')`, "m");
-	const m = block.match(re);
-	if (!m) return null;
-	return m[2] ?? m[3] ?? null;
-}
-
-/**
- * 解析 workflow .js/.mjs 文件的 meta 对象（name + description）。
+ * 解析 workflow .js 文件的 meta（name + description），经 IF1 parseResourceMeta。
  *
- * 所有 builtin workflow 均声明 `const meta = { name, description, phases }`，
- * description 为单行字符串。缺 name 或 description 返回 null。
+ * m2 收敛：删 extractMetaBlock/extractMetaField（本地 brace-match parser），
+ * 改调 shared/meta-parser.ts parseResourceMeta（统一 parser）。仅认 @pi-meta 新格式。
+ * 投影到 WorkflowEntry {name, description(summarized)} 注入用。
  */
 export function parseWorkflowMeta(content: string): WorkflowEntry | null {
-	const block = extractMetaBlock(content);
-	if (!block) return null;
-	const name = extractMetaField(block, "name");
-	const description = extractMetaField(block, "description");
-	if (!name || !description) return null;
-	return { name, description: summarizeDescription(description) };
+	const meta = parseResourceMeta(content, "workflow");
+	if (!meta || meta.kind !== "workflow") return null;
+	// path 由 discoverAllWorkflows 从 DiscoveredResource.path 填充
+	return { name: meta.name, description: summarizeDescription(meta.description), path: "" };
 }
 
 /**
@@ -129,9 +112,9 @@ export async function discoverAllWorkflows(
 	for (const resource of resources) {
 		if (!resource.available) continue;
 		try {
-			const content = fs.readFileSync(resource.path, "utf8");
+			const content = getCachedFileContent(resource.path) ?? "";
 			const wf = parseWorkflowMeta(content);
-			if (wf) map.set(wf.name, wf);
+			if (wf) map.set(wf.name, { ...wf, path: resource.path });
 		} catch (err) {
 			logger.error(
 				`[workflow-list-injector] skip unreadable workflow file ${resource.path}`,
@@ -164,11 +147,13 @@ export function formatWorkflowList(workflows: WorkflowEntry[]): string {
 
 	const lines = [
 		"\n\n<available_workflows>",
-		'The following workflows are available. Do NOT call list to discover available workflows — they are listed below; use list only for running state. Built-in workflows (chain/parallel/scatter-gather/map-reduce/review-fix-loop) run directly.',
+		// 引导语与具体 workflow 解耦：不写死内置名（列表本身已含全部 workflow，
+		// 名字/描述每 turn 由 @pi-meta 动态注入），只给通用路由指引 + read location 参数指针。
+		'The following workflows are available. Do NOT call list to discover available workflows — they are listed below; use list only for running state. All listed workflows run directly via action:run — do NOT use workflow-script generate for any listed workflow. For parameter details, read the <location> script file (script header has @pi-meta parameters + usage).',
 	];
 	for (const wf of workflows) {
 		lines.push(
-			`  <workflow><name>${escapeXml(wf.name)}</name><description>${escapeXml(wf.description)}</description></workflow>`,
+			`  <workflow><name>${escapeXml(wf.name)}</name><description>${escapeXml(wf.description)}</description><location>${escapeXml(wf.path)}</location></workflow>`,
 		);
 	}
 	lines.push("</available_workflows>");
@@ -176,10 +161,30 @@ export function formatWorkflowList(workflows: WorkflowEntry[]): string {
 }
 
 /**
- * 注册 before_agent_start handler，注入 `<available_workflows>` 段。
- * 与 setupSubagentListInjector 链式（pi 串联多 handler 的 systemPrompt 返回值）。
+ * 注册 session 生命周期 handler，注入 `<available_workflows>` 段。
+ *
+ * 与 setupSubagentListInjector 对称：session_start 发现+缓存，before_agent_start
+ * 读缓存（miss fallback）渲染注入，session_shutdown 清缓存。与 subagent 注入
+ * handler 链式（pi 串联多 handler 的 systemPrompt 返回值）。
  */
 export function setupWorkflowListInjector(pi: ExtensionAPI): void {
+	pi.on(
+		"session_start",
+		async (_event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
+			try {
+				workflowCache = await discoverAllWorkflows(
+					findWorkspaceRoot(ctx.cwd),
+					getAgentDir(),
+				);
+			} catch (err) {
+				// fail-safe：发现异常不阻断 session，缓存保持 null（before_agent_start 会 fallback）
+				logger.error("[workflow-list-injector] session_start discover failed", {
+					reason: err instanceof Error ? err.message : String(err),
+				});
+			}
+		},
+	);
+
 	pi.on(
 		"before_agent_start",
 		async (
@@ -187,11 +192,14 @@ export function setupWorkflowListInjector(pi: ExtensionAPI): void {
 			ctx: ExtensionContext,
 		): Promise<BeforeAgentStartEventResult | void> => {
 			try {
-				const workflows = await discoverAllWorkflows(
-					findWorkspaceRoot(ctx.cwd),
-					getAgentDir(),
-				);
-				const injection = formatWorkflowList(workflows);
+				// 读缓存；miss（session_start 未触发/缓存被清）则 fallback 重新发现+赋值
+				if (workflowCache === null) {
+					workflowCache = await discoverAllWorkflows(
+						findWorkspaceRoot(ctx.cwd),
+						getAgentDir(),
+					);
+				}
+				const injection = formatWorkflowList(workflowCache);
 				if (!injection) return;
 				return { systemPrompt: event.systemPrompt + injection };
 			} catch (err) {
@@ -199,6 +207,13 @@ export function setupWorkflowListInjector(pi: ExtensionAPI): void {
 					reason: err instanceof Error ? err.message : String(err),
 				});
 			}
+		},
+	);
+
+	pi.on(
+		"session_shutdown",
+		(_event: SessionShutdownEvent, _ctx: ExtensionContext): void => {
+			workflowCache = null;
 		},
 	);
 }

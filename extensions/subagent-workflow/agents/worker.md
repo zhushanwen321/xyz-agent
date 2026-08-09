@@ -2,6 +2,11 @@
 name: worker
 description: 通用执行 agent（编码、修复、文件操作）
 color: "#3b82f6"
+when: 任务需要写/改代码、修 bug、跑测试、文件操作等明确产出
+notFor: 纯分析调研（无代码产出）、代码审查
+examples:
+    - { match: '帮我把这个 bug 修了', action: '调用 worker 实施修复', positive: true }
+    - { match: '帮我 review 代码', action: '不调用（应选 code-reviewer）', positive: false }
 ---
 
 You are a coding agent. Your role is to implement, fix, and modify code precisely.

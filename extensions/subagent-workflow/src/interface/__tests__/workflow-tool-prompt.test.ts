@@ -23,13 +23,46 @@ const TOOL_WORKFLOW_SCRIPT_SRC = readFileSync(
   "utf-8",
 );
 
+/** 截取 promptGuidelines 数组文本——防 KNOWN_ARG_KEYS 等注释/代码中的裸词污染断言。
+ * 数到数组闭合（跳过字符串字面量内的括号，exec-review F9：'],' 序列静默截断）。 */
+function promptGuidelinesText(src: string): string {
+  const start = src.indexOf("promptGuidelines: [");
+  let depth = 0;
+  let inStr = false;
+  for (let i = start; i < src.length; i++) {
+    const ch = src[i];
+    if (inStr) {
+      if (ch === "\\") { i++; continue; }
+      if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "[") depth++;
+    else if (ch === "]") {
+      depth--;
+      if (depth === 0) return src.slice(start, i + 1);
+    }
+  }
+  return src.slice(start);
+}
+
 describe("U1: workflow tool prompt mentions built-in workflows", () => {
-  it("tool-workflow.ts description 或 promptGuidelines 含 4 个内置 workflow 名称", () => {
-    // 4 个内置通用编排 workflow 必须在提示词里出现，LLM 才能发现并使用。
-    expect(TOOL_WORKFLOW_SRC).toContain("chain");
-    expect(TOOL_WORKFLOW_SRC).toContain("parallel");
-    expect(TOOL_WORKFLOW_SRC).toContain("scatter-gather");
-    expect(TOOL_WORKFLOW_SRC).toContain("map-reduce");
+  it("TC4a: promptGuidelines 不含具体内置 args 枚举（m4 瘦身——参数知识在 read location）", () => {
+    // m4：BUILT-IN 枚举删除，发现职责转移给 <available_workflows> 注入段 + read location。
+    // 截取 promptGuidelines 段断言（"batch1..batchN" 等在 KNOWN_ARG_KEYS 注释中出现）。
+    const guidelines = promptGuidelinesText(TOOL_WORKFLOW_SRC);
+    expect(guidelines).not.toContain("chain (sequential");
+    expect(guidelines).not.toContain("args: task");
+    expect(guidelines).not.toContain("batch1..batchN");
+    expect(guidelines).not.toContain("chain/parallel/scatter-gather/map-reduce");
+  });
+
+  it("TC4b: promptGuidelines 引导 read location 获取参数细节（info 已砍，ADR-0003 D5）", () => {
+    const guidelines = promptGuidelinesText(TOOL_WORKFLOW_SRC);
+    expect(guidelines).toContain("read the <location>");
+    expect(guidelines).toContain("script file");
+    // info action 已砍，引导语不再含 workflow info
+    expect(guidelines).not.toContain("workflow info");
   });
 
   it("tool-workflow.ts promptGuidelines 含 workflow-script list 交叉引用", () => {
@@ -58,11 +91,14 @@ describe("U1: workflow tool prompt mentions built-in workflows", () => {
     expect(TOOL_WORKFLOW_SRC).toContain("top level");
   });
 
-  it("runtime handler 错误文案含 Correct 纠正正例 + 平铺检测", () => {
+  it("runtime handler 错误文案含 Correct 纠正正例 + 平铺检测（m6：动态参数集）", () => {
     // 读源码文本断言 actionRun/必填校验的错误文案含 Correct 正例，
-    // 让弱模型撞错后第二次能直接照抄正确形态。KNOWN_ARG_KEYS 证明平铺检测存在。
+    // 让弱模型撞错后第二次能直接照抄正确形态。m6 后平铺检测数据源为动态
+    // argKeysFromMeta（schema 即 SSOT）——断言新机制存在（KNOWN_ARG_KEYS 已删）。
     expect(TOOL_WORKFLOW_SRC).toContain("Correct:");
-    expect(TOOL_WORKFLOW_SRC).toContain("KNOWN_ARG_KEYS");
+    expect(TOOL_WORKFLOW_SRC).toContain("findFlattenedArgKeys");
+    expect(TOOL_WORKFLOW_SRC).toContain("argKeysFromMeta");
+    expect(TOOL_WORKFLOW_SRC).not.toMatch(/const\s+KNOWN_ARG_KEYS/);
   });
 
   it("tool-workflow-script.ts list action 的 promptGuidelines 含 workflow run 交叉引用", () => {
@@ -79,5 +115,15 @@ describe("U1: workflow tool prompt mentions built-in workflows", () => {
   it("tool-workflow-script.ts promptGuidelines 强化 anti-generate（CRITICAL ANTI-PATTERN）", () => {
     expect(TOOL_WORKFLOW_SCRIPT_SRC).toContain("CRITICAL ANTI-PATTERN");
     expect(TOOL_WORKFLOW_SCRIPT_SRC).toContain("NEVER generate");
+  });
+
+  it("promptGuidelines + parameter description 标注 budget 默认不限制（B/C：除非用户要求否则别设）", () => {
+    // budget 是 run 级参数，运行时 maxTokens===undefined → 不限制（budget.ts isExceeded 守卫）。
+    // 但 call shape 示例展示了 tokens/time 字段，LLM 会误以为每次都该填。
+    // promptGuidelines 必须明确 "Do NOT set ... unless user explicitly requests",
+    // parameter description 同步标 "omit = unlimited"，双重约束压过示例的反引导。
+    const guidelines = promptGuidelinesText(TOOL_WORKFLOW_SRC);
+    expect(guidelines).toContain("Do NOT set tokens/time unless the user explicitly requests");
+    expect(TOOL_WORKFLOW_SRC).toContain("omit = unlimited (default)");
   });
 });

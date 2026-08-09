@@ -101,18 +101,14 @@ describe("subagent tool description — 行为约束器（非功能说明书）"
     expect(DESCRIPTION).not.toContain('"sa_');
   });
 
-  it("agent 枚举（schema 字段 description）包含全部 9 个内置 agent（含 orchestrator，防漏）", () => {
-    // 包内有 9 个 agent .md（含 orchestrator）。schema 的 agent 字段 description 必须全部列出，
-    // 否则 LLM 无法选中未列出的 agent（功能回归）。cr-fix 防回归锁定。
-    // 注意：agent 列表在 schema field description 里，不在主 description: 模板字符串里——
-    // 断言源码全文（含 schema field description）而非 DESCRIPTION。
-    const expected = [
-      "general-purpose", "worker", "researcher", "explorer",
-      "planner", "reviewer", "oracle", "context-builder", "orchestrator",
-    ];
-    for (const name of expected) {
-      expect(SUBAGENT_TOOL_SRC).toContain(name);
-    }
+  it("agent 字段 description 不写死枚举，指向 <available_subagents>（通用化防漂移）", () => {
+    // 原实现把 9 个内置 agent 名写死在 schema field description（防漏），
+    // 但枚举与包内 agents/*.md 存在漂移风险（新增/删除 agent 要手改两处）。
+    // 现改为指向每 turn 动态注入的 <available_subagents> 列表——防漏职责由注入段承担，
+    // 工具描述只保留通用指引（2026-08 通用化重构）。
+    expect(SUBAGENT_TOOL_SRC).toContain("available_subagents");
+    // 通用化约束：不写死任何具体 agent 名（名字随 agents/*.md 动态变化）
+    expect(SUBAGENT_TOOL_SRC).not.toMatch(/orchestrator|code-reviewer|context-builder/);
   });
 
   it("Anti-patterns 段明确 list/cancel 仍 nested（防过度泛化 flatten）", () => {

@@ -59,7 +59,7 @@ function makeBaseOpts(): AgentCallOpts {
     timeoutMs: undefined,
     skill: undefined,
     skillPath: undefined,
-    systemPromptFiles: undefined,
+    appendSystemPrompt: undefined,
     schemaEnv: undefined,
   };
 }
