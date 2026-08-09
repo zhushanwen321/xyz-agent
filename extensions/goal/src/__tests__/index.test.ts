@@ -19,6 +19,7 @@ interface FactoryFixture {
 	states: unknown[];
 	history: unknown[];
 	sendUser: unknown[];
+	commands: Record<string, { description?: string }>;
 }
 
 /** 工厂所需的最小 pi：registerCommand/registerTool/on/registerMessageRenderer + appendEntry/sendMessage/sendUserMessage */
@@ -26,8 +27,11 @@ function makeFactoryFixture(): FactoryFixture {
 	const states: unknown[] = [];
 	const history: unknown[] = [];
 	const sendUser: unknown[] = [];
+	const commands: Record<string, { description?: string }> = {};
 	const pi = {
-		registerCommand: () => {},
+		registerCommand: (name: string, opts: { description?: string }) => {
+			commands[name] = { description: opts.description };
+		},
 		registerTool: () => {},
 		on: () => {},
 		registerMessageRenderer: () => {},
@@ -54,7 +58,7 @@ function makeFactoryFixture(): FactoryFixture {
 		sessionManager: { getEntries: () => [], getBranch: () => undefined },
 	} as unknown as ExtensionContext;
 
-	return { pi, ctx, states, history, sendUser };
+	return { pi, ctx, states, history, sendUser, commands };
 }
 
 // ── pi.__goalInit（NFR-AC-8 / T1.8）──────────────────
@@ -115,5 +119,25 @@ describe("pi.__goalInit — tasks 参数废弃（NFR-AC-8 / T1.8）", () => {
 		// 创建的 state 不含 tasks 字段（tasks 被忽略）
 		const persisted = states[states.length - 1] as { tasks?: unknown };
 		expect(persisted.tasks).toBeUndefined();
+	});
+});
+
+// ── /goal 命令 description（TC9）─────────────────
+
+describe("/goal 命令 description（TC9）", () => {
+	it("description 含 | /goal pause", () => {
+		const { pi, commands } = makeFactoryFixture();
+		goalExtension(pi);
+		expect(commands["goal"]?.description).toContain("| /goal pause");
+	});
+
+	it("description 含其他子命令（resume/clear/status/history）", () => {
+		const { pi, commands } = makeFactoryFixture();
+		goalExtension(pi);
+		const desc = commands["goal"]?.description ?? "";
+		expect(desc).toContain("/goal resume");
+		expect(desc).toContain("/goal clear");
+		expect(desc).toContain("/goal status");
+		expect(desc).toContain("/goal history");
 	});
 });

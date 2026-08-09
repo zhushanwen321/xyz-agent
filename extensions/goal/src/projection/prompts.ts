@@ -237,46 +237,32 @@ export function objectiveUpdatedPrompt(
 /**
  * contextInjectionPrompt（before_agent_start 注入 LLM context）。
  *
- * 全解耦后 planAvailable 恒 true（不再运行时探测 pi.__planStart）。
- * plan mode 建议段落恒定注入，AI 自行判断是否使用。
+ * 精简版（≤600 chars）：只保留 turn 初锚定必需信息——objective + successCriteria
+ * + Status/Turn/预算% + 3 条核心铁律（C3：原 4 条合并为 3 条——track remaining work
+ * 与 evidence-based completion 语义重叠，合为一条）。详尽审计（intent≠evidence、
+ * 预算耗尽≠完成、Fidelity、todo/plan 引导）收敛到 continuationPrompt（agent_end 发，
+ * turn 末详述），避免两 prompt 重复。
+ * 删 planAvailable 参数（恒 true 死分支；plan 引导收敛到 continuation）。
  */
 export function contextInjectionPrompt(
 	state: GoalRuntimeState,
 	timeUsedSeconds: number,
-	planAvailable = false,
 ): string {
 	const objective = escapeXmlText(state.objective);
 	const budgetInfo = formatBudget(state, timeUsedSeconds, "percent");
 	const criteria = successCriteriaBlock(state);
-	const planSection = planAvailable
-		? `\nComplex tasks: If the objective is complex (multi-step, unclear architecture), consider using plan mode (/plan or pi.__planStart) to design before executing. Plan produces a structured plan that guides execution.\n`
-		: "";
 
 	return (
 		`<goal_context>\n` +
-		`[GOAL mode activated]\n\n` +
-		`<objective>\n${objective}\n</objective>\n` +
+		`[GOAL mode activated]\n` +
+		`<objective>${objective}</objective>\n` +
 		criteria +
-		`Status: ${state.status}\n` +
-		`Turn: ${state.currentTurnIndex}${budgetInfo}\n\n` +
-		`Strict rules:\n` +
-		`1. Work from evidence: use the current filesystem and external state as authoritative. Inspect current state before relying on prior context.\n` +
-		`2. Track remaining work and only claim completion for work backed by concrete evidence (files changed, tests passed, commands run)` +
-			(criteria
-				? " — every successCriteria condition above must be met\n"
-				: "\n") +
-		`3. Report completion with overall evidence only when the objective is actually achieved\n` +
-		`4. If blocked after trying alternative approaches, report blocked with what you have tried\n` +
-		`\n` +
-		`Track work with todos:\n` +
-		`Before working, create todos for the task breakdown using the todo tool:\n` +
-		`- Each concrete step becomes a todo item\n` +
-		`- Add a separate todo for verification checks (e.g., 'run tests', 'typecheck')\n` +
-		`- Track progress by updating todo status as you complete items\n` +
-		planSection +
-		`\n` +
-		`Fidelity: Optimize for movement toward the requested end state, not the easiest passing change. Do not substitute a narrower or safer solution because it is easier to verify.\n` +
-		`Audit: Verify each requirement against actual current state. Intent and partial progress are not evidence. Do not claim completion due to budget exhaustion.\n` +
+		`Status: ${state.status} | Turn: ${state.currentTurnIndex}${budgetInfo}\n` +
+		`Rules:\n` +
+		`1. Work from evidence — inspect current state (files, command output) before relying on prior context.\n` +
+		`2. Track remaining work; claim completion only with concrete evidence` +
+			(criteria ? " meeting every successCriteria above.\n" : ".\n") +
+		`3. If blocked after trying alternatives, report blocked with what you tried.\n` +
 		`</goal_context>`
 	);
 }

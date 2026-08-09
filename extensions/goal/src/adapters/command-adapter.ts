@@ -333,6 +333,8 @@ function handleSet(
 
 	// #11 / D25: 非终态旧 goal（active/paused/blocked）→ 拒绝（不覆盖、不写 history）
 	if (session.state && !isTerminalStatus(session.state.status)) {
+		// A5 决策（C2）：notify 是给用户的 UI 提示（用户可执行 /goal resume|clear），
+		// 与 goal_control description（给模型看，模型不可执行 slash）语义不同——不改。
 		ctx.ui.notify(
 			"Goal already active. Use /goal resume to continue or /goal clear to reset.",
 			"warning",

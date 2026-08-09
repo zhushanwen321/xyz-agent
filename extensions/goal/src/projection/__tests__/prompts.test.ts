@@ -197,7 +197,7 @@ describe("objectiveUpdatedPrompt", () => {
 // ── contextInjectionPrompt ───────────────────────────
 
 describe("contextInjectionPrompt", () => {
-	it("包含 objective/status/turn + 预算百分比 + 规则", () => {
+	it("包含 objective/status/turn + 预算百分比 + 3 条铁律（TC2 核心段保留）", () => {
 		const state = makeState({
 			status: "active",
 			currentTurnIndex: 2,
@@ -210,13 +210,37 @@ describe("contextInjectionPrompt", () => {
 		expect(out).toContain("Turn: 2");
 		expect(out).toContain("Token: 20%"); // 200/1000
 		expect(out).toContain("test objective");
+		// 3 条铁律（C3：原 4 条合并为 3 条）
+		expect(out).toContain("Work from evidence");
+		expect(out).toContain("Track remaining work");
+		expect(out).toContain("report blocked with what you tried");
 	});
 
-	it("要求建 todo（含 verification todo）", () => {
+	it("完整 state（含 budget+successCriteria）≤600 chars（TC1 硬指标）", () => {
+		const state = makeState({
+			objective: "Refactor the auth module to use JWT and add integration tests",
+			successCriteria: "src/auth.ts uses JWT; pnpm test auth green; tsc --noEmit clean",
+			status: "active",
+			currentTurnIndex: 2,
+			budget: { tokenBudget: 1000, timeBudgetMinutes: 10 },
+			tokensUsed: 200,
+		});
+		const out = contextInjectionPrompt(state, 60);
+		expect(out.length).toBeLessThanOrEqual(600);
+	});
+
+	it("删除冗余段（TC3）：不含 todo 引导/plan 提示/Fidelity/Audit", () => {
 		const state = makeState();
 		const out = contextInjectionPrompt(state, 0);
-		expect(out).toContain("todo tool");
-		expect(out).toContain("separate todo for verification checks");
+		// todo 引导段已删（收敛到 continuation 软建议）
+		expect(out).not.toContain("Track work with todos");
+		expect(out).not.toContain("todo tool");
+		// plan 提示段已删（收敛到 continuation）
+		expect(out).not.toContain("plan mode");
+		expect(out).not.toContain("__planStart");
+		// Fidelity/Audit 段已删（收敛到 continuation）
+		expect(out).not.toContain("Fidelity");
+		expect(out).not.toContain("Audit");
 	});
 
 	it("无 goal_manager 引用（#1 清理后）", () => {
@@ -227,19 +251,12 @@ describe("contextInjectionPrompt", () => {
 		expect(out).not.toContain("add_subtasks");
 	});
 
-	it("planAvailable=false（默认）→ 不建议 plan mode（避免建议不存在的工具，FR-7）", () => {
+	it("无 planAvailable 参数（TC4 签名精简：仅 state + timeUsedSeconds）", () => {
+		// planAvailable 恒 true 死分支已删；签名仅 (state, timeUsedSeconds)
 		const state = makeState();
-		const out = contextInjectionPrompt(state, 0, false);
-		expect(out).not.toContain("plan mode");
-		expect(out).not.toContain("__planStart");
-	});
-
-	it("planAvailable=true → 注入 plan mode 建议段落（FR-7 LLM 自主判断复杂度）", () => {
-		const state = makeState();
-		const out = contextInjectionPrompt(state, 0, true);
-		expect(out).toContain("plan mode");
-		expect(out).toContain("__planStart");
-		expect(out).toContain("Complex tasks");
+		expect(() => contextInjectionPrompt(state, 0)).not.toThrow();
+		const out = contextInjectionPrompt(state, 0);
+		expect(out).toContain("[GOAL mode activated]");
 	});
 });
 
@@ -274,7 +291,7 @@ describe("successCriteria 注入（<successCriteria> 段 + 条件文案）", () 
 		expect(out).toContain("<successCriteria>");
 		expect(out).toContain("file X exists");
 		// 条件文案（contextInjectionPrompt 专属）
-		expect(out).toContain("every successCriteria condition above must be met");
+		expect(out).toContain("meeting every successCriteria above");
 	});
 
 	it("无 successCriteria → 不含 <successCriteria> 段（锁定 fallback）", () => {

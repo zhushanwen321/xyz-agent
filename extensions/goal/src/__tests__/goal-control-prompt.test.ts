@@ -93,3 +93,27 @@ describe("goal_control runtime 错误文案 — 含 'Correct:' 纠正正例（�
 		expect(ADAPTER_SRC).toMatch(/'evidence' is required[\s\S]*?Correct:/);
 	});
 });
+
+describe("goal_control 描述修正（A1/A4/A7/slug optional）", () => {
+	it("A1: 全文不含 'at least 3 approaches'（reason schema desc/throw 已删，C1）", () => {
+		expect(ADAPTER_SRC).not.toMatch(/at least 3 approaches/);
+	});
+
+	it("A1: reason throw 含 'what you tried'", () => {
+		expect(ADAPTER_SRC).toMatch(/'reason' is required[\s\S]*?what you tried/);
+	});
+
+	it("A4: create 行含 'tell the user to run'", () => {
+		expect(DESCRIPTION).toContain("tell the user to run /goal resume or /goal clear first");
+	});
+
+	it("A7: complete 行 'every' 小写（不再 EVERY）", () => {
+		expect(DESCRIPTION).toContain("meets every successCriteria condition");
+		expect(DESCRIPTION).not.toMatch(/meets EVERY/);
+	});
+
+	it("slug 真 optional：schema desc 含 'Optional'，handleCreate 不再 throw slug 必填", () => {
+		expect(ADAPTER_SRC).toContain("Optional. Short kebab-case identifier");
+		expect(ADAPTER_SRC).not.toMatch(/'slug' is required/);
+	});
+});

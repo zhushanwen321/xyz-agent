@@ -45,7 +45,7 @@ const GoalControlParams = Type.Object({
 	slug: Type.Optional(
 		Type.String({
 			description:
-				"Required for 'create'. A short kebab-case identifier you generate to title this goal in the status bar (e.g. 'refactor-auth', 'fix-login-bug'). Keep it concise and descriptive.",
+				"Optional. Short kebab-case identifier for the status bar title.",
 		}),
 	),
 	objective: Type.Optional(
@@ -69,7 +69,7 @@ const GoalControlParams = Type.Object({
 	reason: Type.Optional(
 		Type.String({
 			description:
-				"Required for 'report_blocked'. The specific blocking condition and what was already tried (at least 3 approaches). Do NOT use for uncertainty, slow/hard work, or incomplete progress — keep working.",
+				"Required for 'report_blocked'. The specific blocking condition and what you tried. Do NOT use for uncertainty, slow/hard work, or incomplete progress — keep working.",
 		}),
 	),
 	tokenBudget: Type.Optional(
@@ -128,12 +128,8 @@ export function handleCreate(
 			"'objective' is required for create. Describe the concrete objective to pursue. Correct: {\"action\":\"create\",\"slug\":\"<kebab-case>\",\"objective\":\"<concrete objective>\"}",
 		);
 	}
-	const slug = params.slug?.trim();
-	if (!slug) {
-		throw new Error(
-			"'slug' is required for create. Provide a short kebab-case identifier (e.g. 'refactor-auth'). Correct: {\"action\":\"create\",\"slug\":\"refactor-auth\",\"objective\":\"<concrete objective>\"}",
-		);
-	}
+	// slug 真 optional（TC11）：缺失时 fallback goalId 截断（与 buildGoalGui 口径一致），不强制必填
+	const slugInput = params.slug?.trim();
 
 	const successCriteria = params.successCriteria?.trim();
 	if (!successCriteria) {
@@ -165,7 +161,7 @@ export function handleCreate(
 	}
 
 	// FR-3.1: 唯一创建入口（isExternalInit=false）。终态旧 goal 走覆盖快速路径。
-	const created = createGoal(session, objective, budget, ports, false, slug, successCriteria);
+	const created = createGoal(session, objective, budget, ports, false, slugInput, successCriteria);
 	if (!created) {
 		// createGoal 内部 active 守卫兜底（理论上上面守卫已挡；防御性）
 		throw new Error("Goal already active. Cannot create a new one.");
@@ -173,6 +169,8 @@ export function handleCreate(
 	updateWidget(session, ports.ui);
 
 	const state = session.state!;
+	// slug fallback：未提供时用 goalId 截断作标题（与 buildGoalGui 一致，避免 [undefined]）
+	const slug = state.slug ?? state.goalId.slice(0, SHORT_ID_LENGTH);
 	const budgetNotice: string[] = [];
 	if (budget.tokenBudget) budgetNotice.push(`Token budget: ${budget.tokenBudget}`);
 	if (budget.timeBudgetMinutes) budgetNotice.push(`Time budget: ${budget.timeBudgetMinutes} min`);
@@ -230,7 +228,7 @@ export function handleReportBlocked(
 	const reason = params.reason?.trim();
 	if (!reason) {
 		throw new Error(
-			"'reason' is required for report_blocked. Describe the blocking condition. Correct: {\"action\":\"report_blocked\",\"reason\":\"<blocker + what was tried (at least 3 approaches)>\"}",
+			"'reason' is required for report_blocked. Describe the blocking condition and what you tried. Correct: {\"action\":\"report_blocked\",\"reason\":\"<blocker + what you tried>\"}",
 		);
 	}
 
@@ -387,8 +385,8 @@ export function registerGoalControlTool(pi: ExtensionAPI, session: GoalSession):
 			`Manage the goal for this thread.
 
 Actions:
-- create: proactively start a goal for COMPLEX, multi-step work (3+ steps, multi-file changes, or work that needs completion verification). Restate the real objective and define checkable successCriteria. Skip for trivial single-step tasks, ordinary questions, or lookups. Fails if a goal is already active/paused/blocked (use /goal resume or /goal clear first).
-- complete: mark the active goal complete. Requires 'evidence' with concrete proof (files/tests/commands) that meets EVERY successCriteria condition.
+- create: proactively start a goal for COMPLEX, multi-step work (3+ steps, multi-file changes, or work that needs completion verification). Restate the real objective and define checkable successCriteria. Skip for trivial single-step tasks, ordinary questions, or lookups. Fails if a goal is already active/paused/blocked (tell the user to run /goal resume or /goal clear first).
+- complete: mark the active goal complete. Requires 'evidence' with concrete proof (files/tests/commands) that meets every successCriteria condition.
 - report_blocked: mark the active goal blocked by a real blocker. Requires 'reason' describing the block and what was tried. Only after genuine exhaustion of alternatives.
 
 Examples:
@@ -412,7 +410,7 @@ Don't:
 			"create: proactively start a goal for complex, multi-step work (3+ steps, multi-file, or needs completion verification) — restate the real objective and define checkable successCriteria. Do NOT create for trivial single-step tasks, ordinary lookups, or when a goal is already active. Test: 'is this worth tracking to completion with verification?' — if yes, create a goal.",
 			// 全解耦下 todo 非硬前置——objective 实际达成才算（与 handleComplete「todo 由 AI 自判」一致）
 			"complete: proactively call when the active goal's objective is actually achieved, not merely in progress. Evidence must be concrete artifacts (files changed, tests green, commands run) meeting every successCriteria condition. Finishing all todos (incl. verification todos) is the usual readiness signal, but the real bar is the objective being met — you decide.",
-			// P3 数字阈值 ≥3，与 params.reason description 的 "at least 3 approaches" 双重冗余
+			// ≥3 是 report_blocked 的唯一软指引阈值（reason schema desc/throw 已删强制 ≥3 声明，C1；软指引仅留此处）
 			"report_blocked: proactively call when genuinely blocked after ≥3 distinct alternative approaches — not for hard/slow work or uncertainty. State the blocker and what you tried. Do NOT silently stop or leave the goal hanging.",
 		],
 		executionMode: "sequential",

@@ -396,9 +396,8 @@ describe("handleBeforeAgentStart", () => {
 		expect(result!.message.display).toBe(false);
 	});
 
-	// 全解耦后：planAvailable 恒 true（不再运行时探测 pi.__planStart）。
-	// contextInjectionPrompt 恒定注入 plan mode 建议段落，AI 自行判断是否用。
-	it("恒定注入 plan mode 建议段落（全解耦：不再探测 plan extension）", async () => {
+	// contextInjection 精简（planAvailable 参数已删，plan 提示收敛到 continuationPrompt）
+	it("context injection 不含 plan mode 提示（收敛到 continuation）", async () => {
 		const { pi } = makeFakePi();
 		const { ctx } = makeFakeCtx();
 		const session = createGoalSession();
@@ -408,7 +407,9 @@ describe("handleBeforeAgentStart", () => {
 
 		expect(result).toBeDefined();
 		expect(result!.message.customType).toBe("goal-context");
-		expect(result!.message.content).toContain("plan mode");
+		// plan 引导段已删（收敛到 continuationPrompt，agent_end 发）
+		expect(result!.message.content).not.toContain("plan mode");
+		expect(result!.message.content).not.toContain("__planStart");
 	});
 
 	// FR-8.1 G-007: AUTO_CLEAR_TURNS=2
