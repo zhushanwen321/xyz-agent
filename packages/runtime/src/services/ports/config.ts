@@ -98,6 +98,14 @@ export interface IConfigStore {
   getDefaultModel(): DefaultModelRef | null
   setDefaultModel(provider: string, modelId: string): void
 
+  // ── enabledModels 白名单（wave2 DM3：provider 启用状态派生源）──
+  /**
+   * 读 settings.json.enabledModels（pi 白名单语义：空/undefined = 全可用）。
+   * config-service.listProviders 经 deriveEnabled(id, getEnabledModels()) 派生每个
+   * provider 的启用状态，替代旧实现读 models.json provider.enabled（F2）。
+   */
+  getEnabledModels(): string[]
+
   // ── Provider CRUD ──
   readModels(): ConfigModelsConfig
   getProviderConfig(providerId: string): ConfigProviderConfig | undefined

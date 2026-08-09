@@ -164,6 +164,17 @@ export class AuthStorage {
     return providerId in readAuthFile(this.filePath)
   }
 
+  /**
+   * 同步列出 auth.json 顶层所有 providerId（provider key 列表）。
+   * wave2 listProviders 双源聚合 catalog 源用（C4 推荐方案）：聚合 (auth.json keys ∪
+   * models.json catalog keys) ∩ builtinData，修复 F1（catalog 凭据在 auth.json 但
+   * models.json 无该条目时也能显示）。文件不存在/空 → []，与 hasCredentialSync 同源
+   * （复用 readAuthFile 私有核心，写是原子 rename 读永远拿完整文件）。
+   */
+  listCredentialIds(): string[] {
+    return Object.keys(readAuthFile(this.filePath))
+  }
+
   /** @deprecated 用 hasCredentialSync 替代（支持 api_key + oauth 联合类型） */
   async hasOAuth(providerId: string): Promise<boolean> {
     return readAuthFile(this.filePath)[providerId]?.type === 'oauth'

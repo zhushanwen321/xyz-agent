@@ -13,7 +13,7 @@ import { dirname, join } from 'node:path'
 // wave 2（WC1）：import inline 方式消费 generated JSON——tsup bundle 把 JSON 打进 index.cjs，
 // 避免运行时 fs/路径解析（打包后 asar 路径问题）。tsc 类型检查需 resolveJsonModule（tsconfig.json 已加）。
 import builtinData from '../generated/builtin-providers.json'
-import { isCatalogProvider } from './provider-catalog.js'
+import { isCatalogProvider, deriveEnabled } from './provider-catalog.js'
 
 /**
  * builtin provider id → models 索引（T9/M5：listProviders 合并兜底用）。
@@ -44,6 +44,47 @@ function toProviderModel(m: BuiltinProviderTemplate['models'][number]): Provider
   }
 }
 
+/**
+ * builtin provider id → 完整模板索引（wave2 catalog 源聚合用）。
+ * catalog 源的 name/api/baseUrl/models 优先取 models.json override，否则取 builtin 副本，
+ * 故需按 id 查完整 provider 模板（builtinModelsById 只索引 models，不够）。
+ */
+const builtinProvidersById = new Map<string, BuiltinProviderTemplate>(
+  (builtinData.providers ?? []).map(p => [p.id, p as unknown as BuiltinProviderTemplate]),
+)
+
+/**
+ * ConfigModelDefinition（models.json model）→ ProviderInfo.models 元素（wave2 双源共用）。
+ * catalog override models 与 custom models 都用此映射，提取原 custom 内联逻辑避免重复。
+ * model 级 enabled 透传（默认 true 向上兼容存量无此字段的 model，与 aggregateModels 两层过滤一致）。
+ */
+function toUserInfoModel(m: ConfigModelDefinition): ProviderInfo['models'][number] {
+  return {
+    id: m.id,
+    name: m.name,
+    api: m.api,
+    baseUrl: m.baseUrl,
+    input: m.input,
+    compat: m.compat,
+    // W2：model 级 enabled 透传（默认 true 向上兼容存量无此字段的 model）
+    enabled: m.enabled !== false,
+    ...pickModelCapabilityFields(m),
+  }
+}
+
+/**
+ * 按 models.json config 推断 authMethod（I6：优先标注值，否则按 apiKey 格式推断）。
+ * $开头→env_var，非空→api_key（pi resolveConfigValue 语义一致）。catalog override 与 custom 共用。
+ * config 缺省（catalog 无 override）→ undefined。
+ */
+function deriveAuthMethod(config?: ConfigProviderConfig): ProviderInfo['authMethod'] {
+  if (!config) return undefined
+  return config.authMethod
+    ?? (typeof config.apiKey === 'string' && config.apiKey.startsWith('$')
+      ? 'env_var' as const
+      : config.apiKey ? 'api_key' as const : undefined)
+}
+
 import {
   SYSTEM_PROMPT_MAX_LENGTH,
   type ProviderInfo,
@@ -61,7 +102,7 @@ import {
   type SkillDirConfig,
 } from '@xyz-agent/shared'
 import type { IConfigService } from '../interfaces.js'
-import type { IConfigStore, ConfigModelDefinition } from './ports/config.js'
+import type { IConfigStore, ConfigModelDefinition, ConfigProviderConfig } from './ports/config.js'
 import type { AuthStorage } from './auth/auth-storage.js'
 import type { DirScopes } from './skill-dir-config.js'
 import { atomicWrite } from '../utils/fs-utils.js'
@@ -167,7 +208,7 @@ export class ConfigService implements IConfigService {
      * I8：deleteProvider 时同步清 auth.json（防 OAuth token 永久残留）。
      * 可选注入：未注入时两处清理 no-op（测试/无 OAuth 场景）。
      */
-    private authStorage?: Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'set' | 'hasCredentialSync'>,
+    private authStorage?: Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'set' | 'hasCredentialSync' | 'listCredentialIds'>,
   ) {}
 
   // ── Provider CRUD ──────────────────────────────────────────────
@@ -182,51 +223,87 @@ export class ConfigService implements IConfigService {
 
   listProviders(): ProviderInfo[] {
     const models = this.configStore.readModels()
-    // eslint-disable-next-line taste/no-unsafe-object-entries -- providers is a known schema Record<string, PiProviderConfig>, not arbitrary user input
-    return Object.entries(models.providers).map(([id, config]) => {
-      const userModels = (config.models ?? []).map(m => ({
-        id: m.id,
-        name: m.name,
-        api: m.api,
-        baseUrl: m.baseUrl,
-        input: m.input,
-        compat: m.compat,
-        // W2：model 级 enabled 透传（默认 true 向上兼容存量无此字段的 model）
-        enabled: m.enabled !== false,
-        ...pickModelCapabilityFields(m),
-      }))
-      return {
+    const enabledModels = this.configStore.getEnabledModels()
+    const authIds = this.authStorage?.listCredentialIds() ?? []
+    const authIdSet = new Set(authIds)
+
+    const result: ProviderInfo[] = []
+    // catalog id 去重集合：catalog 源处理过的 id，custom 源跳过（避免 catalog id 重复出现）
+    const catalogIdsHandled = new Set<string>()
+
+    // ── catalog 源：(auth.json keys ∪ models.json catalog keys) ∩ builtinData（F1 修复核心）──
+    // 旧实现只遍历 models.json providers，catalog 凭据在 auth.json（models.json 无条目）时不显示。
+    // 现聚合 auth.json 有凭据的 catalog provider，即使 models.json 无该条目也显示。
+    const catalogCandidateIds = new Set<string>()
+    for (const id of authIds) {
+      if (isCatalogProvider(id)) catalogCandidateIds.add(id)
+    }
+    for (const [id] of Object.entries(models.providers)) {
+      if (isCatalogProvider(id)) catalogCandidateIds.add(id)
+    }
+
+    for (const id of catalogCandidateIds) {
+      const builtinP = builtinProvidersById.get(id)
+      if (!builtinP) continue // 只聚合 builtin 内的 catalog provider（∩ builtinData）
+      catalogIdsHandled.add(id)
+      const override = models.providers[id]
+      const hasOverride = !!override
+      const apiKeySet = authIdSet.has(id) || !!override?.apiKey
+      const overrideModels = override?.models ?? []
+      result.push({
+        id,
+        name: override?.name || builtinP.name || id,
+        api: override?.api ?? builtinP.api,
+        baseUrl: override?.baseUrl ?? builtinP.baseUrl,
+        apiKeySet,
+        authMethod: deriveAuthMethod(override),
+        // catalog 凭据在 auth.json：apiKeySet 已含 auth.json 判定（authIdSet.has(id)），
+        // 与旧 status 逻辑（hasCredentialSync(id)）等价，避免重复读 auth.json。
+        status: apiKeySet ? 'connected' as const : 'not_configured' as const,
+        // models 优先 override，空则 builtin 副本（builtinP.models 经 toProviderModel 映射）
+        models: overrideModels.length > 0
+          ? overrideModels.map(toUserInfoModel)
+          : (builtinP.models?.map(toProviderModel) ?? []),
+        // DM3：enabled 从 enabledModels 派生，不读 models.json provider.enabled（F2）
+        enabled: deriveEnabled(id, enabledModels),
+        kind: 'catalog' as const,
+        hasOverride,
+        quota: override?.quota,
+      })
+    }
+
+    // ── custom 源：models.json providers where !isCatalogProvider(id)（保留旧逻辑，kind='custom'）──
+    // catalogIdsHandled 已收录 models.json 里的 catalog 条目（上面聚合时加入），此处跳过避免重复。
+    for (const [id, config] of Object.entries(models.providers)) {
+      if (catalogIdsHandled.has(id)) continue
+      const userModels = (config.models ?? []).map(toUserInfoModel)
+      const apiKeySet = !!config.apiKey
+      result.push({
         id,
         name: config.name || id,
         // W2：回填 provider 级 api 字段，修复前端编辑 provider 时 type 下拉丢失（P0-1）
         api: config.api,
         baseUrl: config.baseUrl,
-        apiKeySet: !!config.apiKey,
-        // I6：authMethod 回填——优先取 models.json 标注值；旧数据未标注时按 apiKey 格式推断
-        // （$开头→env_var，非空→api_key；pi resolveConfigValue 语义一致）
-        authMethod: config.authMethod
-          ?? (typeof config.apiKey === 'string' && config.apiKey.startsWith('$')
-            ? 'env_var' as const
-            : config.apiKey ? 'api_key' as const : undefined),
-        // M6 status 派生：apiKey 存在 → connected；否则 auth.json 有 oauth 凭据 → connected
-        // （OAuth 授权后 models.json 无 apiKey，凭据在 auth.json——列表不能显示未配置）
+        apiKeySet,
+        authMethod: deriveAuthMethod(config),
+        // M6 status 派生（沿用旧逻辑）：apiKey 存在 → connected；否则 auth.json 有凭据 → connected
         status: config.apiKey
           ? 'connected' as const
           : this.authStorage?.hasCredentialSync(id)
             ? 'connected' as const
             : 'not_configured' as const,
         // T9/M5 models 合并：用户自定义 models 非空 → 保留；为空 → builtin models 兜底
-        // （仅 models.json 已存在的 provider id 参与；builtinModelsById 模块级缓存防重复解析）
         models: userModels.length > 0
           ? userModels
           : (builtinModelsById.get(id)?.map(toProviderModel) ?? userModels),
-        // W2：从 config.enabled 读，undefined/true 视为启用（向上兼容存量无此字段的 provider）
-        enabled: config.enabled !== false,
-        // Coding Plan 额度查询配置：透传 quota（fetcher/enabled/cookieSet）到 ProviderInfo，
-        // 供 Settings UI 显示状态 + ContextCapacityPopover 判断是否显示额度区
+        // DM3：enabled 从 enabledModels 派生，不读 models.json provider.enabled（F2）
+        enabled: deriveEnabled(id, enabledModels),
+        kind: 'custom' as const,
         quota: config.quota,
-      }
-    })
+      })
+    }
+
+    return result
   }
 
   /**

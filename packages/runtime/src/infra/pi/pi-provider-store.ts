@@ -14,6 +14,7 @@ import { isPackaged } from '../../utils/runtime-env.js'
 // builtin provider catalog（QuickSetup 模板源）：sanitizeInvalidProviders 对 catalog 已知的
 // 空壳 provider 合并 models 修复而非删除（对齐 config-service 的 builtinModelsById 先例）。
 import builtinData from '../../generated/builtin-providers.json'
+import { deriveEnabled } from '../../services/provider-catalog.js'
 import { JsonStore } from '../../utils/json-store.js'
 import { normalizeToHome } from '../../utils/path-utils.js'
 import { getConfigDir, getModelsPath, getSettingsPath, getPiAgentDir, getSessionsDir, getAgentsDir, getExtensionsDir, getNpmDir, getTmpDir } from './pi-paths.js'
@@ -327,7 +328,9 @@ export function findValidDefaultModel(): {
     for (const bp of builtinProviders) {
       const hasCredential =
         bp.id in authCredentials || !!models.providers[bp.id]?.apiKey
-      if (hasCredential && bp.models && bp.models.length > 0) {
+      // ES3：被 enabledModels 禁用的 catalog provider 不作 default 候选（避免返回用户已禁用的 provider）。
+      // deriveEnabled 复用 listProviders 的启用判定（DM3），保持「可用 provider」语义一致。
+      if (hasCredential && deriveEnabled(bp.id, getEnabledModels()) && bp.models && bp.models.length > 0) {
         return {
           result: { provider: bp.id, modelId: bp.models[0].id },
           wasFixed: false,

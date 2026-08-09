@@ -23,6 +23,7 @@ import { KNOWN_PI_API_TYPES } from '@xyz-agent/shared'
 import {
   getDefaultModel,
   setDefaultModel,
+  getEnabledModels,
   readModels,
   getProviderConfig,
   upsertProvider,
@@ -56,6 +57,10 @@ export class PiConfigStore implements IConfigStore {
 
   setDefaultModel(provider: string, modelId: string): void {
     setDefaultModel(provider, modelId)
+  }
+
+  getEnabledModels(): string[] {
+    return getEnabledModels()
   }
 
   // ── Provider CRUD ──

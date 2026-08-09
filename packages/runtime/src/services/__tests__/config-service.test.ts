@@ -14,10 +14,12 @@ import type { IConfigStore } from '../ports/config.js'
 import type { BuiltinProviderTemplate } from '@xyz-agent/shared'
 import type { AuthStorage } from '../auth/auth-storage.js'
 
-// mock isCatalogProvider → false: keep existing test behavior (custom provider path)
-vi.mock('../provider-catalog.js', () => ({
-  isCatalogProvider: vi.fn(() => false),
-}))
+// mock isCatalogProvider → false: keep existing test behavior (custom provider path)。
+// wave2：保留 deriveEnabled 真实实现（listProviders 消费），只 override isCatalogProvider。
+vi.mock('../provider-catalog.js', async (importActual) => {
+  const actual = await importActual<typeof import('../provider-catalog.js')>()
+  return { ...actual, isCatalogProvider: vi.fn(() => false) }
+})
 
 // listBuiltinProviders 不触 ConfigStore（纯函数 import JSON），传空对象即可实例化（构造只存引用）。
 const service = new ConfigService('/tmp/project', {} as unknown as IConfigStore)
@@ -100,7 +102,7 @@ describe('ConfigService auth 清理（I9 清理① + I8，T6）', () => {
       upsertProvider: vi.fn(() => ({})),
       removeProvider: vi.fn(() => ({ removed: true })),
     } as unknown as IConfigStore
-    const svc = new ConfigService('/tmp/project', mockStore, authStorage)
+    const svc = new ConfigService('/tmp/project', mockStore, authStorage as unknown as Pick<AuthStorage, 'set' | 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'hasCredentialSync' | 'listCredentialIds'>)
     return { svc, mockStore, authStorage }
   }
 
@@ -197,6 +199,8 @@ describe('ConfigService authMethod 透传与推断（I6，wave-quick-setup-c TC7
           'empty-legacy': { name: 'D' },
         },
       })),
+      // wave2：listProviders 读 enabledModels 派生 enabled（DM3），空数组 = 全启用
+      getEnabledModels: vi.fn(() => []),
     } as unknown as IConfigStore
     const svc = new ConfigService('/tmp/project', mockStore)
     const providers = svc.listProviders()
@@ -212,13 +216,17 @@ describe('ConfigService status 派生与 models 合并（M6/T9，wave-list-badge
   it('status：models.json 无 apiKey 但 auth.json 有 oauth → connected（M6）', () => {
     const mockStore = {
       readModels: vi.fn(() => ({ providers: { anthropic: { name: 'Anthropic' } } })),
+      // wave2：listProviders 读 enabledModels 派生 enabled（DM3），空数组 = 全启用
+      getEnabledModels: vi.fn(() => []),
     } as unknown as IConfigStore
     const authStorage = {
       remove: vi.fn(async () => undefined),
       hasOAuth: vi.fn(async () => false),
       hasOAuthSync: vi.fn(() => true),
       hasCredentialSync: vi.fn(() => true),
-    } as unknown as Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync'>
+      // wave2：listProviders 聚合 catalog 源读 auth.json keys（isCatalogProvider mock 恒 false → 走 custom，此处理论不被调，补齐以防真实调用）
+      listCredentialIds: vi.fn(() => []),
+    } as unknown as Pick<AuthStorage, 'set' | 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'hasCredentialSync' | 'listCredentialIds'>
     const svc = new ConfigService('/tmp/project', mockStore, authStorage)
     const providers = svc.listProviders()
     expect(providers[0].status).toBe('connected')
@@ -227,13 +235,17 @@ describe('ConfigService status 派生与 models 合并（M6/T9，wave-list-badge
   it('status：无 apiKey 且无 oauth 凭据 → not_configured', () => {
     const mockStore = {
       readModels: vi.fn(() => ({ providers: { openai: { name: 'OpenAI' } } })),
+      // wave2：listProviders 读 enabledModels 派生 enabled（DM3），空数组 = 全启用
+      getEnabledModels: vi.fn(() => []),
     } as unknown as IConfigStore
     const authStorage = {
       remove: vi.fn(async () => undefined),
       hasOAuth: vi.fn(async () => false),
       hasOAuthSync: vi.fn(() => false),
       hasCredentialSync: vi.fn(() => false),
-    } as unknown as Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync'>
+      // wave2：补齐 listCredentialIds（isCatalogProvider mock 恒 false → 走 custom，防真实调用崩）
+      listCredentialIds: vi.fn(() => []),
+    } as unknown as Pick<AuthStorage, 'set' | 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'hasCredentialSync' | 'listCredentialIds'>
     const svc = new ConfigService('/tmp/project', mockStore, authStorage)
     expect(svc.listProviders()[0].status).toBe('not_configured')
   })
@@ -247,6 +259,8 @@ describe('ConfigService status 派生与 models 合并（M6/T9，wave-list-badge
           'unknown-x': { name: 'X' },
         },
       })),
+      // wave2：listProviders 读 enabledModels 派生 enabled（DM3），空数组 = 全启用
+      getEnabledModels: vi.fn(() => []),
     } as unknown as IConfigStore
     const svc = new ConfigService('/tmp/project', mockStore)
     const providers = svc.listProviders()
