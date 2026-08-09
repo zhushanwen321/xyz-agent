@@ -1,0 +1,108 @@
+// 测试框架：vitest（从 vitest 导入 describe/it/expect/vi）
+// 运行命令：npx vitest run tests/retry-state.test.ts
+//
+// RetryState 转移表单测（M4-TC-2 / IF-7）——直接构造 export 的类并驱动方法，
+// 断言四字段精确值 + onToolExecEnd 返回值。M5 状态机测试的基座。
+//
+// 与 workflow-hook 的守卫关系：onTurnEnd() 只在「判定要 steer」时被调用
+// （toolUse/超上限/成功短路均不调），本测试在 RetryState 层模拟该契约。
+
+import { describe, expect, it } from "vitest";
+
+import { RetryState } from "../src/workflow-hook.js";
+
+describe("RetryState transition table (IF-7)", () => {
+	it("① 成功短路：onToolExecEnd(false) → soSucceededEver=true，onTurnEnd 不翻转", () => {
+		const s = new RetryState();
+		const r = s.onToolExecEnd(false);
+		expect(r).toEqual({ shouldSteer: false });
+		expect(s.soCallCount).toBe(1);
+		expect(s.soSucceededEver).toBe(true);
+		expect(s.hookRetryCount).toBe(0);
+		expect(s.lastSchemaError).toBeNull();
+
+		// onTurnEnd 只重置计数/累计重试，不翻转成功终态（成功短路是终态）
+		s.onTurnEnd();
+		expect(s.soSucceededEver).toBe(true);
+		expect(s.soCallCount).toBe(0);
+		expect(s.hookRetryCount).toBe(1);
+	});
+
+	it("② 未调用 steer：soCallCount=0 时 calledButFailed=false（MUST call 文案分支依据）", () => {
+		const s = new RetryState();
+		// workflow-hook 的 calledButFailed = soCallCount > 0；0 次调用 → MUST call 分支
+		expect(s.soCallCount).toBe(0);
+		const calledButFailed = s.soCallCount > 0;
+		expect(calledButFailed).toBe(false);
+		expect(s.soSucceededEver).toBe(false);
+		expect(s.hookRetryCount).toBe(0);
+		expect(s.lastSchemaError).toBeNull();
+	});
+
+	it("③ 失败 steer：onToolExecEnd(true, err) → onTurnEnd() → 计数归零/重试++/错误清空", () => {
+		const s = new RetryState();
+		const r = s.onToolExecEnd(true, "Schema validation failed: /count must be number");
+		expect(r).toEqual({ shouldSteer: true });
+		expect(s.lastSchemaError).toBe("Schema validation failed: /count must be number");
+		expect(s.soSucceededEver).toBe(false);
+
+		s.onTurnEnd();
+		expect(s.soCallCount).toBe(0);
+		expect(s.hookRetryCount).toBe(1);
+		expect(s.lastSchemaError).toBeNull();
+		expect(s.soSucceededEver).toBe(false);
+	});
+
+	it("④ 超上限放弃：hookRetryCount≥MAX 时不调 onTurnEnd → lastSchemaError 保留", () => {
+		const s = new RetryState();
+		// 模拟已 steer 两次（MAX_HOOK_RETRIES=2）
+		s.onTurnEnd();
+		s.onTurnEnd();
+		expect(s.hookRetryCount).toBe(2);
+
+		s.onToolExecEnd(true, "last error text");
+		// workflow-hook 守卫：hookRetryCount>=2 直接 return（不调 onTurnEnd）
+		const guardHit = s.hookRetryCount >= 2;
+		expect(guardHit).toBe(true);
+		// 超上限时保留最近错误与计数（turn 自然结束，不 steer）
+		expect(s.lastSchemaError).toBe("last error text");
+		expect(s.soCallCount).toBe(1);
+	});
+
+	it("⑤ toolUse 不干预：守卫不调 onTurnEnd → soCallCount 保留", () => {
+		const s = new RetryState();
+		s.onToolExecEnd(true, "err");
+		// workflow-hook 守卫：stopReason=toolUse 直接 return（不调 onTurnEnd），
+		// 故 soCallCount 累计到下一 turn（characterization ① 的行为基础）
+		expect(s.soCallCount).toBe(1);
+		expect(s.lastSchemaError).toBe("err");
+		expect(s.hookRetryCount).toBe(0);
+	});
+
+	it("⑥ 多 turn 重置：steer 后下一 turn 计数归零，失败再次累计", () => {
+		const s = new RetryState();
+		s.onToolExecEnd(true, "err1");
+		s.onTurnEnd(); // turn 1 steer 后
+		expect(s.soCallCount).toBe(0);
+		expect(s.hookRetryCount).toBe(1);
+
+		s.onToolExecEnd(true, "err2"); // turn 2 再次失败
+		expect(s.soCallCount).toBe(1);
+		expect(s.lastSchemaError).toBe("err2");
+		expect(s.hookRetryCount).toBe(1);
+	});
+
+	it("reset() 四字段归零（IF-7 完整契约）", () => {
+		const s = new RetryState();
+		s.onToolExecEnd(true, "err");
+		s.onTurnEnd();
+		s.onToolExecEnd(false);
+		expect(s.soSucceededEver).toBe(true);
+
+		s.reset();
+		expect(s.soCallCount).toBe(0);
+		expect(s.soSucceededEver).toBe(false);
+		expect(s.hookRetryCount).toBe(0);
+		expect(s.lastSchemaError).toBeNull();
+	});
+});

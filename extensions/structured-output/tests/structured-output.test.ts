@@ -202,6 +202,13 @@ describe("Tool execute behavior simulation", () => {
 });
 
 // ── Enforcement flag 逻辑 ─────────────────────────────────
+//
+// [HISTORICAL] 假测试段（L206-~261）：
+// 本段 5 个用例是「局部 boolean 模拟」假测试——不 import 被测模块（src/index.ts），
+// 只对测试内部自建的局部变量做 if 分支演练，mutation 100% 存活（把被测代码删光
+// 本段照样绿），不能作为安全网。真回归保护见下方 'Workflow hook' 组（mock pi 驱动
+// 真实扩展入口）与 'Tool execute (real call)' 组（直接调 executeStructuredOutput）。
+// 删除归属 M5/D5（本 wave M4 仅标记，用例本体零改动）。
 
 describe("Enforcement flag logic", () => {
   it("flag starts false, set to true on structured-output tool_execution_start", () => {
@@ -630,13 +637,17 @@ describe("Authoritative schema (workflow mode)", () => {
   // ── 权威分支类型边界（draft-07 允许 boolean 根；非 object/boolean 必须拒绝）──
   // 覆盖 src/index.ts assertJsonSchemaRoot 的三个分支：boolean true / boolean false / 非法类型。
 
-  it("authoritativeSchema = boolean true → accepts any data (draft-07 accept-all root)", async () => {
-    const result = await executeStructuredOutput({
-      schema: undefined,
-      data: { anything: "goes", n: 42 },
-      authoritativeSchema: true,
-    });
-    expect(result.details).toEqual({ anything: "goes", n: 42 });
+  it("authoritativeSchema = boolean true → rejected (ERR-7: accept-all provides no shape constraint)", async () => {
+    // M4 设防：boolean true（accept-all）不提供任何形状约束，workflow 用它等于没校验，
+    // 与 keyword-less 对象同等拒绝（ERR-7），恢复指引要求改为 object schema。
+    // （draft-07 合法根，但权威模式下必须拒绝——否则声明的约束静默失效。）
+    await expect(
+      executeStructuredOutput({
+        schema: undefined,
+        data: { anything: "goes", n: 42 },
+        authoritativeSchema: true,
+      }),
+    ).rejects.toThrow(/boolean true.*object schema/);
   });
 
   it("authoritativeSchema = boolean false → rejects all data (draft-07 reject-all root)", async () => {
