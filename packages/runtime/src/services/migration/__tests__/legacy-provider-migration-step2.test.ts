@@ -330,4 +330,27 @@ describe('TC7: 编排 migrateProviderConfig（调 step1 + step2）', () => {
     // settings.json 未写（两步全 no-op）
     expect(existsSync(join(agentDir, 'settings.json'))).toBe(false)
   })
+
+  it('MF1（exec-review must-fix）：catalog+apiKey+enabled+无override → step2 先确保 enabled 不丢', async () => {
+    // G5 核心场景：catalog provider openai 有错位 apiKey + enabled:false + 无 override（用户填 key + 禁用 + 没改 baseUrl）。
+    // 旧编排（step1 先）：step1「写最小条目」丢 enabled → step2 读不到 → openai 启停丢失（变全可用）。
+    // MF1 修复（step2 先）：step2 先读 enabled 迁 enabledModels → step1 后处理 apiKey（不影响 settings.json）。
+    writeModels({
+      openai: { apiKey: 'sk-test', enabled: false, models: [{ id: 'gpt-4' }] },
+      anthropic: { enabled: true, models: [{ id: 'claude-3' }] },
+    })
+    const authStorage = new AuthStorage(join(agentDir, 'auth.json'))
+
+    const report = await migrateProviderConfig(authStorage)
+
+    // step2 先迁：有 disabled（openai）→ enabledModels = ['anthropic/*']
+    expect(report.enabled.migratedEnabled).toBe(true)
+    expect(readSettingsRaw()?.enabledModels).toEqual(['anthropic/*'])
+    // step1 后迁：openai apiKey 迁 auth.json
+    expect(report.catalog.migrated).toContain('openai')
+    // G5 达成：openai 被正确禁用（enabledModels 不含 openai/*），deriveEnabled(openai)=false
+    const whitelist = readSettingsRaw()?.enabledModels as string[]
+    expect(deriveEnabled('openai', whitelist)).toBe(false)
+    expect(deriveEnabled('anthropic', whitelist)).toBe(true)
+  })
 })

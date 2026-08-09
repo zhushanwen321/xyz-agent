@@ -198,13 +198,16 @@ export async function migrateProviderEnabledToWhitelist(): Promise<ProviderEnabl
 /**
  * 启动期编排：step1（catalog 错位 apiKey → auth.json）+ step2（provider.enabled → enabledModels）。
  *
- * 顺序：step1 先跑（step1 可能改 models.json provider 条目，step2 再读处理 enabled 字段）。
- * 两步各自 try/catch，互不阻断。返回合并报告供启动期日志。
+ * 顺序：step2 先跑（MF1 修复，exec-review must-fix）。原因：step1 对无 override 的 catalog provider
+ * 「写最小 {name,api,baseUrl} 条目」（step1 预存变通）会丢弃 enabled 字段，若 step1 先跑则 step2
+ * 读不到 enabled → 启停状态丢失（G5 核心场景：catalog+apiKey+enabled+无override）。step2 先读 enabled
+ * 迁 enabledModels + 删字段，再 step1 处理 apiKey（操作 models.json，settings.json 的 enabledModels
+ * 不受影响），确保 G5 覆盖。两步各自 try/catch，互不阻断。
  *
  * @param authStorage AuthStorage 实例（step1 操作 auth.json）
  */
 export async function migrateProviderConfig(authStorage: AuthStorage): Promise<ProviderConfigMigrationReport> {
-  const catalog = await migrateLegacyProviderConfig(authStorage)
   const enabled = await migrateProviderEnabledToWhitelist()
+  const catalog = await migrateLegacyProviderConfig(authStorage)
   return { catalog, enabled }
 }
