@@ -1,11 +1,52 @@
 // workflow-list-injector 单测
 //
-// 覆盖纯函数：summarizeDescription（截断）+ parseWorkflowMeta（meta 块解析）+
-// formatWorkflowList（B2 注入段格式 + 引导语）。discoverAllWorkflows 依赖文件系统
-// + resource-discovery，属集成层，此处聚焦可快速回归的格式化契约。
+// 两类覆盖（与 subagent-list-injector.test.ts 对称）：
+// 1. 纯函数：summarizeDescription（截断）+ parseWorkflowMeta（meta 块解析）+
+//    formatWorkflowList（B2 注入段格式 + 引导语）。discoverAllWorkflows 依赖文件系统
+//    + resource-discovery，属集成层，此处聚焦可快速回归的格式化契约（TC5 回归保护）。
+// 2. session 级缓存行为（TC1-TC4）：与 subagent 对称，mock shared/resource-discovery
+//    的 discoverResources + getCachedFileContent，mock pi.on 捕获三 handler 手动触发；
+//    模块级缓存靠 vi.resetModules + 动态 import 重置。
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+import type { DiscoveredResource } from "../../shared/resource-discovery.ts";
+
+// ── 稳定 spy（vi.hoisted 保证 resetModules 后引用不变，见 subagent 测试同款注释） ──
+const spies = vi.hoisted(() => ({
+	discoverResources: vi.fn(),
+	getCachedFileContent: vi.fn(),
+}));
+
+vi.mock("../../shared/resource-discovery.ts", () => ({
+	discoverResources: spies.discoverResources,
+	findWorkspaceRoot: () => "/ws",
+	getCachedFileContent: spies.getCachedFileContent,
+}));
+
+vi.mock("@zhushanwen/pi-extension-logger", () => ({
+	getLogger: () => ({
+		debug: () => {
+			/* no-op */
+		},
+		info: () => {
+			/* no-op */
+		},
+		warn: () => {
+			/* no-op */
+		},
+		error: () => {
+			/* no-op */
+		},
+	}),
+	setPiHandle: () => {
+		/* no-op */
+	},
+}));
+
+// ── 纯函数测试：静态 import（模块级缓存状态不影响纯函数） ──
 import {
 	formatWorkflowList,
 	parseWorkflowMeta,
@@ -133,5 +174,159 @@ describe("formatWorkflowList", () => {
 		const out = formatWorkflowList([{ name: "a&b", description: "<x>", path: "/workflows/a&b.js" }]);
 		expect(out).toContain("<name>a&amp;b</name>");
 		expect(out).toContain("&lt;x&gt;");
+	});
+});
+
+// ──────────────────────────────────────────────────────────────
+// session 级缓存行为（TC1-TC4，与 subagent 对称）
+// ──────────────────────────────────────────────────────────────
+
+/** before_agent_start handler 的返回结构（取 systemPrompt 断言）。 */
+interface BeforeAgentResult {
+	systemPrompt: string;
+}
+
+/** 三 handler 捕获引用（setupWorkflowListInjector 注册后填充）。 */
+interface CapturedHandlers {
+	sessionStart?: (event: unknown, ctx: unknown) => Promise<void> | void;
+	beforeAgentStart?: (event: { systemPrompt: string }, ctx: unknown) => Promise<BeforeAgentResult | void> | BeforeAgentResult | void;
+	sessionShutdown?: (event: unknown, ctx: unknown) => void;
+}
+
+/** 构造 mock pi：捕获三 handler 引用，其余 prop 走 noop（仅 on 被调用）。 */
+function createMockPi(handlers: CapturedHandlers): ExtensionAPI {
+	const on = (event: string, handler: (...args: unknown[]) => unknown): void => {
+		if (event === "session_start") {
+			handlers.sessionStart = handler as CapturedHandlers["sessionStart"];
+		} else if (event === "before_agent_start") {
+			handlers.beforeAgentStart = handler as CapturedHandlers["beforeAgentStart"];
+		} else if (event === "session_shutdown") {
+			handlers.sessionShutdown = handler as CapturedHandlers["sessionShutdown"];
+		}
+	};
+	const noop = (): void => {
+		/* mock */
+	};
+	return { on, appendEntry: noop, registerTool: noop, registerCommand: noop, registerMessageRenderer: noop, events: { emit: noop, on: noop } } as unknown as ExtensionAPI;
+}
+
+/** 最小 ctx mock（注入器只读 ctx.cwd）。 */
+function createMockCtx(): Record<string, unknown> {
+	return { cwd: "/ws", mode: "tui" };
+}
+
+/** fixture：单个 workflow 的 DiscoveredResource。 */
+function workflowResource(path: string): DiscoveredResource {
+	return { path, source: "project-pi-tmp", available: true };
+}
+
+/** fixture：workflow .js @pi-meta 内容。 */
+function workflowJs(name: string, description: string): string {
+	return `/* @pi-meta\nname: ${name}\ndescription: ${description}\nphases: [a]\n*/\nrest`;
+}
+
+describe("workflow-list-injector session 级缓存", () => {
+	let setupWorkflowListInjector: typeof import("../workflow-list-injector").setupWorkflowListInjector;
+	let handlers: CapturedHandlers;
+
+	beforeEach(async () => {
+		// resetModules + 动态 import：拿 fresh 模块实例 → 模块级 workflowCache 重置为 null
+		vi.resetModules();
+		spies.discoverResources.mockReset();
+		spies.getCachedFileContent.mockReset();
+		spies.discoverResources.mockResolvedValue([]);
+		spies.getCachedFileContent.mockReturnValue(null);
+		handlers = {};
+		const mod = await import("../workflow-list-injector");
+		setupWorkflowListInjector = mod.setupWorkflowListInjector;
+		setupWorkflowListInjector(createMockPi(handlers));
+	});
+
+	it("TC1: session_start 发现+缓存后，两次 before_agent_start 命中缓存（discoverResources 只调 1 次）", async () => {
+		spies.discoverResources.mockResolvedValue([workflowResource("/ws/.pi/workflows/chain.js")]);
+		spies.getCachedFileContent.mockReturnValue(workflowJs("chain", "三步链"));
+
+		await handlers.sessionStart!({ type: "session_start", reason: "new" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(1);
+
+		const r1 = await handlers.beforeAgentStart!({ systemPrompt: "" }, createMockCtx());
+		const r2 = await handlers.beforeAgentStart!({ systemPrompt: "" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(1);
+
+		expect(r1?.systemPrompt).toContain("<available_workflows>");
+		expect(r1?.systemPrompt).toContain("<name>chain</name>");
+		expect(r2?.systemPrompt).toBe(r1?.systemPrompt);
+	});
+
+	it("TC2: session_shutdown 清缓存后 before_agent_start miss → fallback 重新发现+缓存", async () => {
+		spies.discoverResources.mockResolvedValue([workflowResource("/ws/.pi/workflows/chain.js")]);
+		spies.getCachedFileContent.mockReturnValue(workflowJs("chain", "三步链"));
+
+		await handlers.sessionStart!({ type: "session_start", reason: "new" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(1);
+
+		handlers.sessionShutdown!({ type: "session_shutdown", reason: "quit" }, createMockCtx());
+
+		const r1 = await handlers.beforeAgentStart!({ systemPrompt: "" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(2);
+		expect(r1?.systemPrompt).toContain("<name>chain</name>");
+
+		const r2 = await handlers.beforeAgentStart!({ systemPrompt: "" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(2);
+		expect(r2?.systemPrompt).toBe(r1?.systemPrompt);
+	});
+
+	it("TC3: 无 session_start 直接 before_agent_start（miss fallback）→ 发现+缓存", async () => {
+		spies.discoverResources.mockResolvedValue([workflowResource("/ws/.pi/workflows/chain.js")]);
+		spies.getCachedFileContent.mockReturnValue(workflowJs("chain", "三步链"));
+
+		const r1 = await handlers.beforeAgentStart!({ systemPrompt: "" }, createMockCtx());
+		const r2 = await handlers.beforeAgentStart!({ systemPrompt: "" }, createMockCtx());
+
+		expect(spies.discoverResources).toHaveBeenCalledTimes(1);
+		expect(r1?.systemPrompt).toContain("<name>chain</name>");
+		expect(r2?.systemPrompt).toBe(r1?.systemPrompt);
+	});
+
+	it("TC4: session_start(reload) 覆盖缓存（新资源生效）", async () => {
+		spies.discoverResources.mockResolvedValue([workflowResource("/ws/.pi/workflows/chain.js")]);
+		spies.getCachedFileContent.mockReturnValue(workflowJs("chain", "三步链"));
+		await handlers.sessionStart!({ type: "session_start", reason: "new" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(1);
+
+		// 资源变化：改返回 parallel
+		spies.discoverResources.mockResolvedValue([workflowResource("/ws/.pi/workflows/parallel.js")]);
+		spies.getCachedFileContent.mockReturnValue(workflowJs("parallel", "并行分析"));
+
+		await handlers.sessionStart!({ type: "session_start", reason: "reload" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(2);
+
+		const r = await handlers.beforeAgentStart!({ systemPrompt: "" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(2);
+		expect(r?.systemPrompt).toContain("<name>parallel</name>");
+		expect(r?.systemPrompt).not.toContain("chain");
+	});
+
+	it("session_start 发现空列表缓存后 before_agent_start 命中（不重扫，不注入）", async () => {
+		spies.discoverResources.mockResolvedValue([]);
+		await handlers.sessionStart!({ type: "session_start", reason: "new" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(1);
+
+		const r1 = await handlers.beforeAgentStart!({ systemPrompt: "base" }, createMockCtx());
+		const r2 = await handlers.beforeAgentStart!({ systemPrompt: "base" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(1);
+		expect(r1).toBeUndefined();
+		expect(r2).toBeUndefined();
+	});
+
+	it("session_start 发现异常不阻断（fail-safe，缓存保持 null，before_agent_start fallback）", async () => {
+		spies.discoverResources.mockRejectedValueOnce(new Error("disk io"));
+		await handlers.sessionStart!({ type: "session_start", reason: "new" }, createMockCtx());
+
+		spies.discoverResources.mockResolvedValue([workflowResource("/ws/.pi/workflows/chain.js")]);
+		spies.getCachedFileContent.mockReturnValue(workflowJs("chain", "三步链"));
+		const r = await handlers.beforeAgentStart!({ systemPrompt: "" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(2);
+		expect(r?.systemPrompt).toContain("<name>chain</name>");
 	});
 });

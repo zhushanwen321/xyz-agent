@@ -25,6 +25,8 @@ import type {
 	BeforeAgentStartEventResult,
 	ExtensionAPI,
 	ExtensionContext,
+	SessionShutdownEvent,
+	SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
@@ -37,6 +39,17 @@ import {
 import { parseResourceMeta } from "../shared/meta-parser.ts";
 
 const logger = getLogger("injector");
+
+/**
+ * Session 级 agent 列表缓存（per-process = per-session）。
+ *
+ * xyz-agent session-pool 模型下每 pi 子进程 = 一 session = 独立扩展实例，模块级缓存
+ * 天然 per-session 隔离（split mode 多 session 各自独立进程）。session_start（含
+ * reload）触发发现覆盖缓存（刷新节奏对齐 pi skill）；session_shutdown 清空；
+ * before_agent_start 读缓存，miss（session_start 未触发/缓存被清）则 fallback
+ * 重新发现——保证鲁棒。
+ */
+let agentCache: AgentEntry[] | null = null;
 
 /** 从 .md frontmatter 提取的最小 agent 信息（m5：+ when/examples 路由样本；S1：+ path） */
 export interface AgentEntry {
@@ -160,12 +173,35 @@ export function formatAgentList(agents: AgentEntry[]): string {
 }
 
 /**
- * 注册 before_agent_start handler，注入 `<available_subagents>` 段。
+ * 注册 session 生命周期 handler，注入 `<available_subagents>` 段。
+ *
+ * 三 handler 自管缓存生命周期（不耦合 index.ts session 逻辑）：
+ * - session_start：发现+缓存赋值（fail-safe，异常不阻断，缓存保持 null）
+ * - before_agent_start：读缓存渲染注入；miss 则 fallback 发现+赋值；空列表/空注入不返回
+ *   systemPrompt；任何异常被吞掉（记日志），不阻断 agent turn
+ * - session_shutdown：清缓存
  *
  * pi 支持 async handler，且同一 event 多 handler 链式（前者返回的 systemPrompt 作
- * 后者输入）。本 handler 异步发现 + 注入；任何异常被吞掉（记日志），不阻断 agent turn。
+ * 后者输入）。
  */
 export function setupSubagentListInjector(pi: ExtensionAPI): void {
+	pi.on(
+		"session_start",
+		async (_event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
+			try {
+				agentCache = await discoverAllAgents(
+					findWorkspaceRoot(ctx.cwd),
+					getAgentDir(),
+				);
+			} catch (err) {
+				// fail-safe：发现异常不阻断 session，缓存保持 null（before_agent_start 会 fallback）
+				logger.error("[subagent-list-injector] session_start discover failed", {
+					reason: err instanceof Error ? err.message : String(err),
+				});
+			}
+		},
+	);
+
 	pi.on(
 		"before_agent_start",
 		async (
@@ -173,11 +209,14 @@ export function setupSubagentListInjector(pi: ExtensionAPI): void {
 			ctx: ExtensionContext,
 		): Promise<BeforeAgentStartEventResult | void> => {
 			try {
-				const agents = await discoverAllAgents(
-					findWorkspaceRoot(ctx.cwd),
-					getAgentDir(),
-				);
-				const injection = formatAgentList(agents);
+				// 读缓存；miss（session_start 未触发/缓存被清）则 fallback 重新发现+赋值
+				if (agentCache === null) {
+					agentCache = await discoverAllAgents(
+						findWorkspaceRoot(ctx.cwd),
+						getAgentDir(),
+					);
+				}
+				const injection = formatAgentList(agentCache);
 				if (!injection) return;
 				return { systemPrompt: event.systemPrompt + injection };
 			} catch (err) {
@@ -185,6 +224,13 @@ export function setupSubagentListInjector(pi: ExtensionAPI): void {
 					reason: err instanceof Error ? err.message : String(err),
 				});
 			}
+		},
+	);
+
+	pi.on(
+		"session_shutdown",
+		(_event: SessionShutdownEvent, _ctx: ExtensionContext): void => {
+			agentCache = null;
 		},
 	);
 }

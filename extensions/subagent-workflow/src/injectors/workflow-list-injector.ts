@@ -22,6 +22,8 @@ import type {
 	BeforeAgentStartEventResult,
 	ExtensionAPI,
 	ExtensionContext,
+	SessionShutdownEvent,
+	SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
@@ -34,6 +36,12 @@ import {
 import { parseResourceMeta } from "../shared/meta-parser.ts";
 
 const logger = getLogger("injector");
+
+/**
+ * Session 级 workflow 列表缓存（per-process = per-session），与 agentCache 对称。
+ * 见 subagent-list-injector.ts 的 agentCache 注释。
+ */
+let workflowCache: WorkflowEntry[] | null = null;
 
 /** 注入段中单个 workflow 的最大描述长度（控制每 turn prompt 体积） */
 const MAX_DESC_LEN = 160;
@@ -153,10 +161,30 @@ export function formatWorkflowList(workflows: WorkflowEntry[]): string {
 }
 
 /**
- * 注册 before_agent_start handler，注入 `<available_workflows>` 段。
- * 与 setupSubagentListInjector 链式（pi 串联多 handler 的 systemPrompt 返回值）。
+ * 注册 session 生命周期 handler，注入 `<available_workflows>` 段。
+ *
+ * 与 setupSubagentListInjector 对称：session_start 发现+缓存，before_agent_start
+ * 读缓存（miss fallback）渲染注入，session_shutdown 清缓存。与 subagent 注入
+ * handler 链式（pi 串联多 handler 的 systemPrompt 返回值）。
  */
 export function setupWorkflowListInjector(pi: ExtensionAPI): void {
+	pi.on(
+		"session_start",
+		async (_event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
+			try {
+				workflowCache = await discoverAllWorkflows(
+					findWorkspaceRoot(ctx.cwd),
+					getAgentDir(),
+				);
+			} catch (err) {
+				// fail-safe：发现异常不阻断 session，缓存保持 null（before_agent_start 会 fallback）
+				logger.error("[workflow-list-injector] session_start discover failed", {
+					reason: err instanceof Error ? err.message : String(err),
+				});
+			}
+		},
+	);
+
 	pi.on(
 		"before_agent_start",
 		async (
@@ -164,11 +192,14 @@ export function setupWorkflowListInjector(pi: ExtensionAPI): void {
 			ctx: ExtensionContext,
 		): Promise<BeforeAgentStartEventResult | void> => {
 			try {
-				const workflows = await discoverAllWorkflows(
-					findWorkspaceRoot(ctx.cwd),
-					getAgentDir(),
-				);
-				const injection = formatWorkflowList(workflows);
+				// 读缓存；miss（session_start 未触发/缓存被清）则 fallback 重新发现+赋值
+				if (workflowCache === null) {
+					workflowCache = await discoverAllWorkflows(
+						findWorkspaceRoot(ctx.cwd),
+						getAgentDir(),
+					);
+				}
+				const injection = formatWorkflowList(workflowCache);
 				if (!injection) return;
 				return { systemPrompt: event.systemPrompt + injection };
 			} catch (err) {
@@ -176,6 +207,13 @@ export function setupWorkflowListInjector(pi: ExtensionAPI): void {
 					reason: err instanceof Error ? err.message : String(err),
 				});
 			}
+		},
+	);
+
+	pi.on(
+		"session_shutdown",
+		(_event: SessionShutdownEvent, _ctx: ExtensionContext): void => {
+			workflowCache = null;
 		},
 	);
 }
