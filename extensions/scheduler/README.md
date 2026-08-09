@@ -92,7 +92,7 @@ session_start
 | 选项 | 取值 | 语义 |
 |------|------|------|
 | `kind` | `recurring`（默认）/ `once` | recurring 每次触发后按 schedule 重算下次时间；once 触发一次后自动删除 |
-| `name` | 字符串 | 任务可读名称，缺省从 prompt 自动截取前 30 字 |
+| `name` | 字符串 | 任务可读名称，缺省从 prompt 自动生成（≤30 字原样，超长截前 27 字加省略号） |
 | `expires` | duration 字符串 / `never` | recurring 任务的过期时间：`now + duration`；`never` 永不过期；缺省 7 天。**once 任务不设过期**（触发即删，expires 忽略） |
 | `force` | `true` / `false`（默认） | `true` 时即使 agent 忙（非 idle 或有 pending 消息）也强制 dispatch；`false` 时忙则延迟到下次 tick |
 
@@ -133,7 +133,7 @@ session_start
 | 限制/行为 | 值 | 说明 |
 |-----------|-----|------|
 | 任务上限 | **50**（`MAX_TASKS`） | 超过抛 `Task limit reached (50)`，需先删除任务 |
-| 触发频率上限 | **6 次/分钟**（`RATE_LIMIT_PER_MINUTE`） | 滑动 60s 窗口，超限 dispatch 被跳过（返回 `DISPATCH_SKIPPED`） |
+| 触发频率上限 | **6 次/分钟**（`RATE_LIMIT_PER_MINUTE`） | 滑动 60s 窗口。`/schedule run` 超限返回 `DISPATCH_SKIPPED`；tick 自动 dispatch 超限静默跳过 |
 | tick 间隔 | **30s**（`TICK_INTERVAL_MS`） | 到期任务在下一个 tick 被 dispatch；实际触发时间可能比计划晚最多 30s |
 | 默认过期 | **7 天**（`DEFAULT_EXPIRY_MS`） | recurring 任务缺省 `expires` 时；`expires: 'never'` 关闭 |
 | once 任务 | 触发后自动删除 | 不参与后续调度 |
