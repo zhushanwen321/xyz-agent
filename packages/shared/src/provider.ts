@@ -77,6 +77,14 @@ export interface BuiltinOAuthConfig {
 
 export type ProviderStatus = 'connected' | 'not_configured' | 'error'
 
+/**
+ * Provider 体系来源（DM1，wave1）。聚合层（listProviders）标注，renderer 据此收窄操作。
+ *
+ * - 'catalog'：定义来自 pi 二进制内置 catalog，凭据在 auth.json，models.json 可有 override
+ * - 'custom'：定义全在 models.json（含 apiKey）
+ */
+export type ProviderKind = 'catalog' | 'custom'
+
 export interface ProviderInfo {
   id: string
   name: string
@@ -108,6 +116,10 @@ export interface ProviderInfo {
     enabled?: boolean
   }>
   enabled?: boolean
+  /** 体系来源，聚合层（listProviders）标注。renderer 据此收窄操作（移除文案/编辑限制）。见 DM2。 */
+  kind?: ProviderKind
+  /** catalog provider 是否有 models.json override 条目；custom 恒 undefined。renderer 据此判断「移除」会清掉什么。见 DM2。 */
+  hasOverride?: boolean
   /** Coding Plan 额度查询配置（可选；未配置 = 不查额度）。 */
   quota?: {
     /**
