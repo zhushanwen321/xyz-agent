@@ -109,6 +109,102 @@ export function detectRepoWorkspace(cwd: string): string | undefined {
 	}
 }
 
+/**
+ * cw-cli 支持 store 内部归一化的最低版本（门控阈值）。
+ *
+ * cw-tool 与 cw-cli 是两个独立 npm 包（cw-tool 经 PATH 裸调 cw、零依赖声明），
+ * 两包独立升级。cw-tool 退回纯封装前需探测 cw-cli 是否已落地 store 归一化
+ * （coding-workflow S1：getCwJsonPath 用 git-common-dir），支持则不传 --workspace
+ * （纯封装），不支持则兜底 ADR-0045 的 detectRepoWorkspace + --workspace。
+ *
+ * TODO(S1): 当前 placeholder "99.0.0" 使门控永远判定为「不支持」→ 永远走兜底
+ * （=现状 dirname 行为，不引入回归）。cw-cli S1 落地并发布后，改为实际版本号
+ * （如 "1.7.0"），门控自动激活。详见 docs/architecture/cw-store-workspace-decoupling.md §3 §4。
+ */
+const MIN_CW_CLI_VERSION_FOR_NORMALIZATION = "99.0.0";
+
+/** probe 超时（ms）：cw --version 卡死时 fail-safe 为「不支持」。 */
+const CW_VERSION_PROBE_TIMEOUT_MS = 5000;
+
+/** 版本 parse 失败时 reason 截断长度（避免 stdout 过长污染日志）。 */
+const VERSION_REASON_MAX_LEN = 60;
+
+/** cw-cli 能力探测结果。 */
+export interface CwCliCapability {
+	/** true = cw-cli 支持 store 内部归一化（cw-tool 应纯封装，不传 --workspace）。 */
+	supported: boolean;
+	/** parse 到的 cw 版本号（如 "1.6.1"），parse 失败 = undefined。 */
+	version: string | undefined;
+	/** 不支持/失败的简要原因（日志/调试用）。 */
+	reason?: string;
+}
+
+/** 进程内 memoize 缓存（同进程 cwd 不变结果稳定，不引入跨进程断言）。 */
+let cachedCapability: { cwd: string; result: CwCliCapability } | undefined;
+
+/** 从 cw --version stdout 提取版本号（如 "cw 1.6.1" → [1,6,1]）。失败返回 undefined。 */
+function parseCwVersion(stdout: string): number[] | undefined {
+	const match = stdout.match(/(\d+)\.(\d+)\.(\d+)/);
+	if (!match) return undefined;
+	return [Number.parseInt(match[1], 10), Number.parseInt(match[2], 10), Number.parseInt(match[3], 10)];
+}
+
+/** semver 三段比较：a < b → -1，a === b → 0，a > b → 1。 */
+function compareSemver(a: number[], b: number[]): number {
+	for (let i = 0; i < a.length; i++) {
+		if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+	}
+	return 0;
+}
+
+/**
+ * 探测 cw-cli 是否支持 store 内部归一化（门控）。
+ *
+ * 用 spawner 跑 `cw --version`，parse 版本号与 {@link MIN_CW_CLI_VERSION_FOR_NORMALIZATION}
+ * 比较。失败（spawn 失败/parse 不到/超时）→ supported:false（fail-safe，兜底 ADR-0045 行为）。
+ * 进程内 memoize：同 cwd 首次探测后缓存，消除重复 spawn（同进程 cwd 不变）。
+ */
+export async function probeCwCliNormalization(
+	spawner: CwSpawner,
+	cwd: string,
+): Promise<CwCliCapability> {
+	if (cachedCapability?.cwd === cwd) return cachedCapability.result;
+
+	const minVersion = parseCwVersion(MIN_CW_CLI_VERSION_FOR_NORMALIZATION);
+	if (!minVersion) {
+		// placeholder 本身非法（不应发生）——保守不支持
+		const fallback: CwCliCapability = { supported: false, version: undefined, reason: "MIN_CW_CLI_VERSION_FOR_NORMALIZATION 非法" };
+		cachedCapability = { cwd, result: fallback };
+		return fallback;
+	}
+
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), CW_VERSION_PROBE_TIMEOUT_MS);
+	let result: CwCliCapability;
+	try {
+		const spawnResult = await spawner(["--version"], undefined, cwd, controller.signal);
+		if (spawnResult.exitCode !== 0) {
+			result = { supported: false, version: undefined, reason: `cw --version exit ${spawnResult.exitCode ?? "null"}` };
+		} else {
+			const v = parseCwVersion(spawnResult.stdout);
+			if (!v) {
+				result = { supported: false, version: undefined, reason: `version parse fail: ${spawnResult.stdout.trim().slice(0, VERSION_REASON_MAX_LEN)}` };
+			} else {
+				const supported = compareSemver(v, minVersion) >= 0;
+				result = { supported, version: v.join("."), reason: supported ? undefined : `version ${v.join(".")} < ${MIN_CW_CLI_VERSION_FOR_NORMALIZATION}` };
+			}
+		}
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err);
+		result = { supported: false, version: undefined, reason: `probe failed: ${msg}` };
+	} finally {
+		clearTimeout(timer);
+	}
+
+	cachedCapability = { cwd, result };
+	return result;
+}
+
 /** input / inputFile 互斥校验。 */
 export function rejectConflictingInput(opts: CwToolOptions): string | undefined {
 	if (opts.input !== undefined && opts.inputFile !== undefined) {
@@ -220,9 +316,17 @@ export async function executeCwAction(
 	const unitIdErr = rejectMissingUnitId(action, unitId);
 	if (unitIdErr) return { ok: false, ...base, error: unitIdErr };
 
-	// repo 级 workspace（ADR-0045）：仅写 action 附加（S-3：只读 action 保守不加，避免 cw 子命令
-	// 拒收未知选项导致 readonly 查询失败）；cwd 在 git repo 内才探测，探测失败静默跳过。
-	const workspace = isReadonlyAction(action) ? undefined : detectRepoWorkspace(cwd);
+	// workspace 门控（差异文档 §3 §4 + ADR-0045 Superseded）：cw-cli 支持 store 内部归一化
+	// （probe 版本 >= MIN_CW_CLI_VERSION_FOR_NORMALIZATION）→ 纯封装不传 --workspace；
+	// 不支持 → 兜底 ADR-0045 的 detectRepoWorkspace + --workspace（保持向后兼容）。
+	// 只读 action 始终不传（S-3：保守避免 cw 子命令拒收未知选项导致 readonly 查询失败）。
+	let workspace: string | undefined;
+	if (isReadonlyAction(action)) {
+		workspace = undefined;
+	} else {
+		const capability = await probeCwCliNormalization(spawner, cwd);
+		workspace = capability.supported ? undefined : detectRepoWorkspace(cwd);
+	}
 	const args = buildCwArgs(action, unitId, opts, workspace);
 	const stdinPayload = opts.input !== undefined ? opts.input : undefined;
 
