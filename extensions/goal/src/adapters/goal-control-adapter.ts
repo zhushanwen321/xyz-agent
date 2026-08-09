@@ -69,11 +69,6 @@ const CreateParams = Type.Object(
 				description: "可选。新目标的 token 预算（正数）。除非用户指定，否则省略。",
 			}),
 		),
-		completedTasks: Type.Optional(
-			Type.Number({
-				description: "可选。已完成任务数，写入 goal history。默认 0。",
-			}),
-		),
 	},
 	{ additionalProperties: false },
 );
@@ -85,11 +80,6 @@ const CompleteParams = Type.Object(
 			description:
 				"必填。具体完成证据（改动/新建的文件、通过的测试、运行的命令）。不要基于假设、意图或部分进度标记完成。",
 		}),
-		completedTasks: Type.Optional(
-			Type.Number({
-				description: "可选。已完成任务数，写入 goal history。默认 0。",
-			}),
-		),
 	},
 	{ additionalProperties: false },
 );
@@ -177,8 +167,8 @@ export function handleCreate(
 		budget.tokenBudget = params.tokenBudget;
 	}
 
-	// FR-3.1: 唯一创建入口（isExternalInit=false）。终态旧 goal 走覆盖快速路径。
-	const created = createGoal(session, objective, budget, ports, false, slugInput, successCriteria);
+	// FR-3.1: 唯一创建入口。终态旧 goal 走覆盖快速路径。
+	const created = createGoal(session, objective, budget, ports, slugInput, successCriteria);
 	if (!created) {
 		// createGoal 内部 active 守卫兜底（理论上上面守卫已挡；防御性）
 		throw new Error("Goal already active. Cannot create a new one.");
@@ -218,7 +208,7 @@ export function handleComplete(
 	}
 
 	// FR-3.3: 唯一终态序列入口（内部：tickState → finalizeGoal(transition+history) → persist）
-	finalizeAndPersist(state, "complete", params.completedTasks ?? 0, ports);
+	finalizeAndPersist(state, "complete", ports);
 	updateWidget(session, ports.ui);
 	ports.ui.notify(`Goal completed: ${state.objective}`, "info");
 

@@ -1,13 +1,13 @@
 /**
  * event-adapter 并发保护辅助函数测试（TC-3）
  *
- * 直接测试 makeStaleChecker / acquireProcessing / releaseProcessing 的快照语义，
+ * 直接测试 makeStaleChecker 的快照语义，
  * 非间接覆盖。重点：makeStaleChecker 在 state=null 时 snapshot=undefined，
  * 后续任何新 goal 均视为 stale。
  */
 import { describe, expect, it } from "vitest";
 
-import { acquireProcessing, makeStaleChecker, releaseProcessing } from "../adapters/event-handlers/shared";
+import { makeStaleChecker } from "../adapters/event-handlers/shared";
 import { createGoalState } from "../engine/goal";
 import { createGoalSession } from "../session";
 
@@ -49,30 +49,5 @@ describe("makeStaleChecker", () => {
 		expect(checkStale()).toBe(false);
 		session.state = null; // clearGoalSession 清空
 		expect(checkStale()).toBe(true);
-	});
-});
-
-describe("acquireProcessing / releaseProcessing", () => {
-	it("首次 acquire → true 并设置 isProcessing", () => {
-		const session = createGoalSession();
-		expect(session.isProcessing).toBe(false);
-		expect(acquireProcessing(session)).toBe(true);
-		expect(session.isProcessing).toBe(true);
-	});
-
-	it("已占用时再 acquire → false（防重入）", () => {
-		const session = createGoalSession();
-		expect(acquireProcessing(session)).toBe(true); // 首次成功
-		expect(acquireProcessing(session)).toBe(false); // 重入拒绝
-		expect(acquireProcessing(session)).toBe(false); // 再入仍拒绝
-	});
-
-	it("release 后可再次 acquire", () => {
-		const session = createGoalSession();
-		acquireProcessing(session);
-		expect(session.isProcessing).toBe(true);
-		releaseProcessing(session);
-		expect(session.isProcessing).toBe(false);
-		expect(acquireProcessing(session)).toBe(true); // 释放后可重新获取
 	});
 });

@@ -204,11 +204,10 @@ describe("reconstructGoalState", () => {
 		// 验证辅助函数本身正确（makeHistoryEntry 用于 history entry 构造）
 		const state = createGoalState("roundtrip");
 		state.status = "complete";
-		const hist = makeHistoryEntry(state, 5);
+		const hist = makeHistoryEntry(state);
 		expect(hist.goalId).toBe(state.goalId);
 		expect(hist.objective).toBe("roundtrip");
 		expect(hist.status).toBe("complete");
-		expect(hist.completedTasks).toBe(5);
 		expect(typeof hist.elapsedSeconds).toBe("number");
 		expect(typeof hist.timestamp).toBe("number");
 		// serializeState 返回深拷贝（修改返回值不影响原 state）

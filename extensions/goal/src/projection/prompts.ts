@@ -14,7 +14,7 @@
  * todo 是否完成由 AI 自行判断，prompt 仅做软建议。
  */
 
-import { PERCENT_FACTOR, SECONDS_PER_MINUTE } from "../constants";
+import { PERCENT_FACTOR } from "../constants";
 import type { GoalRuntimeState } from "../engine/types";
 
 // ── XML 转义（防止 objective 中的 XML 标签破坏 prompt 结构）──
@@ -42,19 +42,17 @@ function successCriteriaBlock(state: GoalRuntimeState): string {
 
 // ── FR-3.4：唯一 budget 格式化收敛出口 ─────────────────
 
-export type BudgetFormatStyle = "percent" | "line" | "remaining" | "report";
+export type BudgetFormatStyle = "percent" | "line";
 
 /**
  * FR-3.4 唯一 budget 格式化收敛出口。
  *
- * 4 种输出样式：
- * - "percent"  → `(Token: N%, Time: M%)`（contextInjectionPrompt 用）
- * - "line"     → ` | Tokens: remaining/total Time: Xm/Ym`（continuationPrompt 用）
- * - "remaining"→ `Token: used/total (N remaining) | Time: Xm/Ym (Zm remaining)`（result 拼接用）
- * - "report"   → 多行数组（complete Budget Report 用）
+ * 2 种输出样式：
+ * - "percent"  → ` (Token: N%)`（contextInjectionPrompt 用）
+ * - "line"     → ` | Tokens: remaining/total`（continuationPrompt 用）
  *
  * @param state runtime state（读 budget / tokensUsed）
- * @param timeUsedSeconds 累计耗时秒数（由 adapter/service 通过 tick() 计算后传入）
+ * @param timeUsedSeconds 累计耗时秒数（保留位，FR-3.4 统一签名；percent/line 当前不消费）
  * @param style 输出形式
  */
 export function formatBudget(
@@ -62,16 +60,11 @@ export function formatBudget(
 	timeUsedSeconds: number,
 	style: BudgetFormatStyle,
 ): string {
-	if (style === "report") {
-		return formatBudgetReport(state, timeUsedSeconds);
-	}
+	void timeUsedSeconds; // FR-3.4 统一签名占位（percent/line 不消费，保留以便未来样式扩展）
 	if (style === "percent") {
 		return formatBudgetPercent(state);
 	}
-	if (style === "line") {
-		return formatBudgetLine(state);
-	}
-	return formatBudgetRemaining(state);
+	return formatBudgetLine(state);
 }
 
 function formatBudgetPercent(state: GoalRuntimeState): string {
@@ -88,25 +81,6 @@ function formatBudgetLine(state: GoalRuntimeState): string {
 		return ` | Tokens: ${remaining}/${state.budget.tokenBudget}`;
 	}
 	return "";
-}
-
-function formatBudgetRemaining(state: GoalRuntimeState): string {
-	if (state.budget.tokenBudget) {
-		const remaining = Math.max(state.budget.tokenBudget - state.tokensUsed, 0);
-		return `[Budget] Token: ${state.tokensUsed}/${state.budget.tokenBudget} (${remaining} remaining)`;
-	}
-	return "";
-}
-
-function formatBudgetReport(state: GoalRuntimeState, timeUsedSeconds: number): string {
-	const parts: string[] = [];
-	if (state.budget.tokenBudget) {
-		parts.push(`Token usage: ${state.tokensUsed}/${state.budget.tokenBudget}`);
-	}
-	if (parts.length > 0) {
-		return parts.join("\n") + `\nDuration: ${Math.floor(timeUsedSeconds / SECONDS_PER_MINUTE)}m${Math.floor(timeUsedSeconds % SECONDS_PER_MINUTE)}s`;
-	}
-	return `Duration: ${Math.floor(timeUsedSeconds / SECONDS_PER_MINUTE)}m${Math.floor(timeUsedSeconds % SECONDS_PER_MINUTE)}s`;
 }
 
 // ── Continuation Prompt ───────────────────────────────

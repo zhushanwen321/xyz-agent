@@ -56,7 +56,7 @@ export async function handleBeforeAgentStart(
 	if (!isActiveStatus(session.state.status)) return;
 
 	// Context 使用率检查（ADR-002：保持 active，仅注入提示）
-	const ctxResult = checkContextUsage(session, ctx);
+	const ctxResult = checkContextUsage(ctx);
 	if (ctxResult) return ctxResult;
 
 	// 正常 context injection（精简版，≤600 chars）。
@@ -99,10 +99,9 @@ function handleTerminalStateBeforeAgent(
  * 不做状态变更、不 persist、不 tick（资源保护通过"提示"而非"状态机"实现）。
  */
 function checkContextUsage(
-	_session: GoalSession,
-	_ctx: ExtensionContext,
+	ctx: ExtensionContext,
 ): BeforeAgentStartResult | undefined {
-	const usage = _ctx.getContextUsage();
+	const usage = ctx.getContextUsage();
 	if (
 		usage &&
 		usage.contextWindow > 0 &&

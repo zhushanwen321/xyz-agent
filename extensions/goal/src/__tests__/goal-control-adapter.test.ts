@@ -106,14 +106,6 @@ describe("handleComplete — active 守卫 + evidence + finalizeAndPersist", () 
 			handleComplete({ action: "complete", evidence: "   " }, session, makeFakePorts()),
 		).toThrow(/evidence/);
 	});
-
-	it("completedTasks 写入 history", () => {
-		const session = createGoalSession();
-		session.state = activeState();
-		const ports = makeFakePorts();
-		handleComplete({ action: "complete", evidence: "done", completedTasks: 5 }, session, ports);
-		expect((ports.history[0] as { completedTasks?: number }).completedTasks).toBe(5);
-	});
 });
 
 // ── handleCreate ─────────────────────────────────────

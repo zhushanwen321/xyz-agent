@@ -30,14 +30,13 @@ describe("GoalControlParams — discriminated union（TC6）", () => {
 		).toBe(true);
 	});
 
-	it("create + tokenBudget + completedTasks（optional）→ 通过", () => {
+	it("create + tokenBudget（optional）→ 通过", () => {
 		expect(
 			Value.Check(GoalControlParams, {
 				action: "create",
 				objective: "x",
 				successCriteria: "y",
 				tokenBudget: 8000,
-				completedTasks: 3,
 			}),
 		).toBe(true);
 	});
@@ -76,12 +75,6 @@ describe("GoalControlParams — discriminated union（TC6）", () => {
 
 	it("complete 完整（evidence）→ 通过", () => {
 		expect(Value.Check(GoalControlParams, { action: "complete", evidence: "tests green" })).toBe(true);
-	});
-
-	it("complete + completedTasks（optional）→ 通过", () => {
-		expect(
-			Value.Check(GoalControlParams, { action: "complete", evidence: "x", completedTasks: 5 }),
-		).toBe(true);
 	});
 
 	it("complete 缺 evidence → 拒绝", () => {

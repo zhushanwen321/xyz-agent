@@ -9,13 +9,12 @@
  */
 
 import type { GoalRuntimeState } from "./types";
-
-// ── 常量（engine 内部，保持自洽）──────────────────────
-
-const RATIO_HIGH = 0.9;
-const RATIO_LOW = 0.7;
-const PERCENT_FACTOR = 100;
-const MS_PER_SECOND = 1000;
+import {
+	BUDGET_RATIO_HIGH,
+	BUDGET_RATIO_LOW,
+	MS_PER_SECOND,
+	PERCENT_FACTOR,
+} from "../constants";
 
 // 加权系数（与 @zhushanwen/pi-subagent-workflow Budget.consume 对齐，ADR-030 token 口径统一）
 const INPUT_WEIGHT = 1;
@@ -88,8 +87,8 @@ export function getTokenUsagePercent(state: GoalRuntimeState): number {
 }
 
 export function getBudgetColor(percent: number): "error" | "warning" | "muted" {
-	if (percent >= RATIO_HIGH * PERCENT_FACTOR) return "error";
-	if (percent >= RATIO_LOW * PERCENT_FACTOR) return "warning";
+	if (percent >= BUDGET_RATIO_HIGH * PERCENT_FACTOR) return "error";
+	if (percent >= BUDGET_RATIO_LOW * PERCENT_FACTOR) return "warning";
 	return "muted";
 }
 
@@ -110,11 +109,11 @@ export function checkBudgetOnTurnEnd(state: GoalRuntimeState): BudgetCheckResult
 			result.terminal = { type: "exceeded", dimension: "token" };
 			return result;
 		}
-		if (tokenPct >= RATIO_HIGH && !state.budgetLimitSteeringSent) {
+		if (tokenPct >= BUDGET_RATIO_HIGH && !state.budgetLimitSteeringSent) {
 			result.shouldSendSteering = true;
-		} else if (tokenPct >= RATIO_HIGH && !state.tokenWarning90Sent) {
+		} else if (tokenPct >= BUDGET_RATIO_HIGH && !state.tokenWarning90Sent) {
 			result.warnings.push({ type: "warning90", dimension: "token" });
-		} else if (tokenPct >= RATIO_LOW && !state.tokenWarning70Sent) {
+		} else if (tokenPct >= BUDGET_RATIO_LOW && !state.tokenWarning70Sent) {
 			result.warnings.push({ type: "warning70", dimension: "token" });
 		}
 	}

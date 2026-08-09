@@ -67,18 +67,14 @@ export function deserializeState(data: Record<string, unknown>): GoalRuntimeStat
 
 /**
  * 从 state 构造 GoalHistoryEntry（纯函数）。
- *
- * totalTasks 暂置 0（task CRUD 已删除，#7 注入 todo 进度后可重填）。
  */
-export function makeHistoryEntry(state: GoalRuntimeState, completedTasks: number): GoalHistoryEntry {
+export function makeHistoryEntry(state: GoalRuntimeState): GoalHistoryEntry {
 	return {
 		goalId: state.goalId,
 		objective: state.objective,
 		successCriteria: state.successCriteria,
 		slug: state.slug,
 		status: state.status,
-		completedTasks,
-		totalTasks: 0,
 		elapsedSeconds: Math.floor(state.timeUsedSeconds),
 		timestamp: Date.now(),
 	};

@@ -27,7 +27,7 @@ export async function handleTurnEnd(
 	if (ctx.signal?.aborted) return;
 
 	const ports = buildPorts(pi, ctx);
-	const effects = applyEvent(session, "turn_end", undefined, ports);
+	const effects = applyEvent(session, "turn_end", undefined);
 	// 执行 effects（updateWidget 等）
 	for (const effect of effects) {
 		if (effect.kind === "updateWidget") {

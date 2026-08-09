@@ -29,6 +29,7 @@ import type { BudgetConfig } from "../engine/types";
 import { objectiveUpdatedPrompt } from "../projection/prompts";
 import { updateWidget } from "../projection/widget";
 import { finalizeAndPersist, persistState, tickState } from "../service";
+import type { GoalHistoryEntry } from "../ports";
 import type { GoalSession } from "../session";
 import { clearGoalSession } from "../session";
 import { buildPorts } from "./ports";
@@ -153,7 +154,7 @@ function handleResume(pi: ExtensionAPI, session: GoalSession, ctx: ExtensionCont
 	if (resumeCheck) {
 		// FR-8.7: 走 finalizeAndPersist 写 history（含 tick + transition + history + appendState），
 		// 勿用 transitionStatus + persistState（不写 history，goal 会从 /goal history 凭空消失）
-		finalizeAndPersist(state, "budget_limited", 0, ports);
+		finalizeAndPersist(state, "budget_limited", ports);
 		updateWidget(session, ports.ui);
 		ctx.ui.notify(
 			"Token budget exhausted, cannot resume. Use /goal clear to reset.",
@@ -176,22 +177,10 @@ function handleResume(pi: ExtensionAPI, session: GoalSession, ctx: ExtensionCont
 
 // ── /goal history ─────────────────────────────────────
 
-interface GoalHistoryData {
-	goalId: string;
-	objective: string;
-	/** widget/history 标题用（fallback objective 截断）。旧 entry 无此字段。 */
-	slug?: string;
-	status: string;
-	completedTasks: number;
-	totalTasks: number;
-	elapsedSeconds: number;
-	timestamp: number;
-}
-
 function handleHistory(ctx: ExtensionContext): void {
 	const entries = ctx.sessionManager.getEntries();
 	const historyEntries = entries.filter(
-		(e): e is CustomEntry<GoalHistoryData> =>
+		(e): e is CustomEntry<GoalHistoryEntry> =>
 			e.type === "custom" && (e as CustomEntry).customType === "goal-history",
 	);
 
@@ -241,7 +230,7 @@ function handleClear(pi: ExtensionAPI, session: GoalSession, ctx: ExtensionConte
 	// transitionStatus 查表终态不可转（engine/goal.ts）：已终态 goal 直接 clearSession
 	if (!isTerminalStatus(session.state.status)) {
 		// FR-3.3: 唯一终态序列入口（tick + finalizeGoal + persist）
-		finalizeAndPersist(session.state, "cancelled", 0, ports);
+		finalizeAndPersist(session.state, "cancelled", ports);
 	}
 	// FR-8.7: cancelled → 立即 clearSession
 	clearGoalSession(session, ports.ui);

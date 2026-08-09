@@ -1,8 +1,8 @@
 /**
- * projection/prompts.ts 测试 — prompt 生成函数 + formatBudget 4 样式
+ * projection/prompts.ts 测试 — prompt 生成函数 + formatBudget 2 样式
  *
  * 覆盖：
- * - formatBudget 4 种 style（percent/line/remaining/report）
+ * - formatBudget 2 种 style（percent/line）
  * - escapeXmlText（XML 注入防护）
  * - continuationPrompt / budgetLimitPrompt / objectiveUpdatedPrompt / contextInjectionPrompt
  *
@@ -31,9 +31,9 @@ function makeState(overrides?: Partial<GoalRuntimeState>): GoalRuntimeState {
 	};
 }
 
-// ── formatBudget 4 样式（FR-3.4 唯一收敛出口）────────
+// ── formatBudget 2 样式（FR-3.4 唯一收敛出口）────────
 
-describe("formatBudget — 4 styles (FR-3.4)", () => {
+describe("formatBudget — 2 styles (FR-3.4)", () => {
 	it("percent: Token 百分比", () => {
 		const state = makeState({
 			budget: { tokenBudget: 1000 },
@@ -55,40 +55,6 @@ describe("formatBudget — 4 styles (FR-3.4)", () => {
 		});
 		const out = formatBudget(state, 120, "line");
 		expect(out).toContain("Tokens: 700/1000");
-	});
-
-	it("remaining: used/total (N remaining) 格式", () => {
-		const state = makeState({
-			budget: { tokenBudget: 1000 },
-			tokensUsed: 400,
-		});
-		const out = formatBudget(state, 60, "remaining");
-		expect(out).toContain("Token: 400/1000 (600 remaining)");
-	});
-
-	it("report: 多行 usage + duration", () => {
-		const state = makeState({
-			budget: { tokenBudget: 1000 },
-			tokensUsed: 700,
-		});
-		const out = formatBudget(state, 125, "report"); // 125s = 2m5s
-		expect(out).toContain("Token usage: 700/1000");
-		expect(out).toContain("Duration: 2m5s");
-	});
-
-	it("report: 无 token 预算 → 只有 duration", () => {
-		const state = makeState();
-		const out = formatBudget(state, 65, "report"); // 65s = 1m5s
-		expect(out).toBe("Duration: 1m5s");
-	});
-
-	it("remaining clamp: 超预算不出现负数", () => {
-		const state = makeState({
-			budget: { tokenBudget: 100 },
-			tokensUsed: 150, // 超 tokenBudget
-		});
-		const out = formatBudget(state, 120, "remaining");
-		expect(out).toContain("(0 remaining)"); // 不出现负数
 	});
 });
 

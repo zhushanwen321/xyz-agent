@@ -58,7 +58,7 @@ describe("createGoal — 唯一创建入口", () => {
 	it("成功创建：state 构造 + persist", () => {
 		const session = createGoalSession();
 		const ports = makeFakePorts();
-		const ok = createGoal(session, "my objective", {}, ports, false);
+		const ok = createGoal(session, "my objective", {}, ports);
 		expect(ok).toBe(true);
 		expect(session.state).not.toBeNull();
 		expect(session.state!.objective).toBe("my objective");
@@ -68,8 +68,8 @@ describe("createGoal — 唯一创建入口", () => {
 	it("已有 active goal → 拒绝创建（返回 false）", () => {
 		const session = createGoalSession();
 		const ports = makeFakePorts();
-		createGoal(session, "first", {}, ports, false);
-		const ok = createGoal(session, "second", {}, ports, false);
+		createGoal(session, "first", {}, ports);
+		const ok = createGoal(session, "second", {}, ports);
 		expect(ok).toBe(false);
 		expect(session.state!.objective).toBe("first"); // 保持原 goal
 	});
@@ -79,7 +79,7 @@ describe("createGoal — 唯一创建入口", () => {
 		const ports = makeFakePorts();
 		session.state = makeState();
 		session.state.status = "complete"; // 终态
-		const ok = createGoal(session, "new", {}, ports, false);
+		const ok = createGoal(session, "new", {}, ports);
 		expect(ok).toBe(true);
 		expect(session.state.objective).toBe("new");
 	});
@@ -91,7 +91,7 @@ describe("finalizeGoal — history 写入矩阵", () => {
 	it("complete → 写 history", () => {
 		const ports = makeFakePorts();
 		const state = makeState();
-		finalizeGoal(state, "complete", ports, { completedTasks: 1 });
+		finalizeGoal(state, "complete", ports);
 		expect(ports.history.length).toBe(1);
 		expect((ports.history[0] as { status: string }).status).toBe("complete");
 		expect(state.completedAtTurnIndex).toBe(state.currentTurnIndex);
@@ -100,14 +100,14 @@ describe("finalizeGoal — history 写入矩阵", () => {
 	it("cancelled → 写 history", () => {
 		const ports = makeFakePorts();
 		const state = makeState();
-		finalizeGoal(state, "cancelled", ports, { completedTasks: 0 });
+		finalizeGoal(state, "cancelled", ports);
 		expect(ports.history.length).toBe(1);
 	});
 
 	it("budget_limited → 写 history", () => {
 		const ports = makeFakePorts();
 		const state = makeState();
-		finalizeGoal(state, "budget_limited", ports, { completedTasks: 2 });
+		finalizeGoal(state, "budget_limited", ports);
 		expect(ports.history.length).toBe(1);
 	});
 
@@ -116,7 +116,7 @@ describe("finalizeGoal — history 写入矩阵", () => {
 		const state = makeState();
 		state.status = "complete";
 		// transitionStatus 查表：终态不可转，调用方须先 isTerminalStatus 守卫
-		expect(() => finalizeGoal(state, "cancelled", ports, { completedTasks: 0 })).toThrow();
+		expect(() => finalizeGoal(state, "cancelled", ports)).toThrow();
 		expect(state.status).toBe("complete");
 	});
 });
@@ -133,7 +133,7 @@ describe("applyEvent — 简单事件", () => {
 				role: "assistant",
 				usage: { input: 100, output: 50, cacheRead: 20 },
 			},
-		}, makeFakePorts());
+		});
 		// accumulateTokens: 100×1 + 20×0.02 + 50×2 = 200.4（加权口径，对齐 workflow 包）
 		expect(session.state.tokensUsed).toBe(before + 200.4);
 	});
@@ -144,7 +144,7 @@ describe("applyEvent — 简单事件", () => {
 		const before = session.state.tokensUsed;
 		applyEvent(session, "message_end", {
 			message: { role: "user", usage: { input: 100, output: 50 } },
-		}, makeFakePorts());
+		});
 		expect(session.state.tokensUsed).toBe(before);
 	});
 
@@ -152,7 +152,7 @@ describe("applyEvent — 简单事件", () => {
 		const session = createGoalSession();
 		session.state = makeState();
 		const before = session.state.tokensUsed;
-		applyEvent(session, "message_end", { message: { role: "assistant" } }, makeFakePorts());
+		applyEvent(session, "message_end", { message: { role: "assistant" } });
 		expect(session.state.tokensUsed).toBe(before);
 	});
 
@@ -166,7 +166,7 @@ describe("applyEvent — 简单事件", () => {
 				role: "assistant",
 				usage: { input: 100, output: 50, cacheRead: 20 },
 			},
-		}, makeFakePorts());
+		});
 		// 回归修复：blocked 状态不累加 token（原 bug：缺 isActiveStatus 守卫）
 		expect(session.state.tokensUsed).toBe(before);
 	});
@@ -175,28 +175,21 @@ describe("applyEvent — 简单事件", () => {
 		const session = createGoalSession();
 		session.state = makeState();
 		const before = session.state.currentTurnIndex;
-		const effects = applyEvent(session, "turn_end", {}, makeFakePorts());
+		const effects = applyEvent(session, "turn_end", {});
 		expect(session.state.currentTurnIndex).toBe(before + 1);
 		expect(effects).toContainEqual({ kind: "updateWidget" });
 	});
 
-	it("agent_start → 无副作用（task 已移除）", () => {
-		const session = createGoalSession();
-		session.state = makeState();
-		const effects = applyEvent(session, "agent_start", {}, makeFakePorts());
-		expect(effects).toEqual([]);
-	});
-
 	it("session.state=null → 返回空 effects", () => {
 		const session = createGoalSession();
-		const effects = applyEvent(session, "turn_end", {}, makeFakePorts());
+		const effects = applyEvent(session, "turn_end", {});
 		expect(effects).toEqual([]);
 	});
 
 	it("未知事件 → 返回空 effects（不报错）", () => {
 		const session = createGoalSession();
 		session.state = makeState();
-		const effects = applyEvent(session, "unknown_event", {}, makeFakePorts());
+		const effects = applyEvent(session, "unknown_event", {});
 		expect(effects).toEqual([]);
 	});
 });
