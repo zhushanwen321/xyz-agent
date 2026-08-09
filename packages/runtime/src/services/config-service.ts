@@ -553,11 +553,14 @@ export class ConfigService implements IConfigService {
       })
       // 清 models.json override 条目（若有）。无 override 时 removeProvider 返回 { removed: false }，
       // 不影响后续清残留——catalog 的「移除」语义是清用户侧状态，override 本就可能不存在。
-      this.configStore.removeProvider(providerId)
+      // MF1 修复（exec-review must-fix）：catalog override 承载 defaultModel 时 removeProvider 内部
+      // 重选 default + mutate settings.json，透传 newDefault 让 handler 广播 config.defaults
+      // （与 custom 分支 + deleteProvider 对称，否则 renderer 收不到重选通知）。
+      const overrideResult = this.configStore.removeProvider(providerId)
       this.configStore.cleanEnabledModelsResidue(providerId)
       // catalog 定义不可删（pi 二进制内置），「移除」= 清凭据/override/残留。removed=true 表示
       // 用户侧状态已清，listProviders 双源聚合（凭据 ∪ override）将不再显示该 provider。
-      return { removed: true }
+      return { removed: true, newDefault: overrideResult.newDefault }
     }
     // custom：删 models.json 条目（= 删定义）+ 清残留。removeProvider 内部含 defaultModel 重选。
     const result = this.configStore.removeProvider(providerId)

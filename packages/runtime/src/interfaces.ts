@@ -288,7 +288,7 @@ export interface IConfigService {
    * custom 删 models.json 条目 + 清残留。renderer 传 ProviderInfo.kind（CL1）。
    *
    * @returns custom 分支透传 configStore.removeProvider 的 newDefault（default 承载被删 provider 时重选）；
-   *          catalog 分支恒 { removed: true }（定义不可删，无 default 重选语义）。
+   *          catalog 分支透传 removeProvider 的 newDefault（override 承载 default 时重选 default + mutate settings.json）。
    */
   removeProviderByKind(providerId: string, kind: 'catalog' | 'custom'): { removed: boolean; newDefault?: { provider: string; modelId: string } }
   deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } }

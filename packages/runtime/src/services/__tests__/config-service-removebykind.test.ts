@@ -102,6 +102,19 @@ describe('TC2: removeProviderByKind(catalog) 清 auth.json 凭据 + override + e
     expect(ret).toEqual({ removed: true })
   })
 
+  it('MF1（exec-review must-fix）：catalog override 承载 default 时透传 removeProvider 的 newDefault', () => {
+    // 场景：catalog provider openai 有 override 且承载 defaultModel，removeProvider 删 override 时
+    // 内部重选 default（anthropic/claude-3）+ mutate settings.json。catalog 分支须透传 newDefault，
+    // 否则 handler 不广播 config.defaults → renderer 收不到重选通知（confirmDelete 防御性清空仅缓解显示）。
+    const { svc, store } = makeService({ enabledModels: ['openai/*'] })
+    ;(store.removeProvider as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      removed: true,
+      newDefault: { provider: 'anthropic', modelId: 'claude-3' },
+    })
+    const ret = svc.removeProviderByKind('openai', 'catalog')
+    expect(ret).toEqual({ removed: true, newDefault: { provider: 'anthropic', modelId: 'claude-3' } })
+  })
+
   it('authStorage.remove 失败（reject）不阻塞移除主流程（fire-and-forget warn）', async () => {
     const { svc, store, auth } = makeService({ enabledModels: ['openai/*'] })
     ;(auth.remove as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('disk full'))
