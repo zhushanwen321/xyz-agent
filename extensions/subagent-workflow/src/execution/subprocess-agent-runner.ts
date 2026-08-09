@@ -32,8 +32,9 @@ import type { ExecuteOptions } from "./types.ts";
  *   - subagentService: 进程单例（getSubagentService()），委托目标
  *   - ctxModel: 当前 session 主 agent 模型（D-008 model 填底，opts.model 空时用此）
  *
- * 不含 agentRegistry/sessionDir/activeTempFiles——resolveAgentOpts 在 orchestration 层
- * 完成（D-A3），结果已填进 AgentCallOpts.skillPath/schemaEnv，SAR 收已解析的 opts。
+ * resolveAgentOpts 在 orchestration 层完成（M2 修正后单参数，只处理 schema SO 指令 + skill），
+ * 结果填进 AgentCallOpts.skillPath/schemaEnv/appendSystemPrompt，SAR 收已解析的 opts。
+ * 不含 agent/session 目录/临时文件集合依赖（agent ref 交 resolveIdentity，无临时文件）。
  */
 export interface SubprocessAgentRunnerDeps {
   subagentService: SubagentService;

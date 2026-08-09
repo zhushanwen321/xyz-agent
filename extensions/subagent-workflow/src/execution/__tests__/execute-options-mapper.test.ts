@@ -115,13 +115,13 @@ describe("mapToExecuteOptions (D-A2)", () => {
     expect(result.thinkingLevel).toBeUndefined();
   });
 
-  it("systemPromptFiles → appendSystemPrompt 映射 (M2)", () => {
-    const opts: AgentCallOpts = { ...baseOpts, systemPromptFiles: ["/tmp/a.md"] };
+  it("appendSystemPrompt → appendSystemPrompt 透传", () => {
+    const opts: AgentCallOpts = { ...baseOpts, appendSystemPrompt: ["SO instruction content"] };
     const result = mapToExecuteOptions(opts);
-    expect(result.appendSystemPrompt).toEqual(["/tmp/a.md"]);
+    expect(result.appendSystemPrompt).toEqual(["SO instruction content"]);
   });
 
-  it("systemPromptFiles 不传 → appendSystemPrompt undefined", () => {
+  it("appendSystemPrompt 不传 → appendSystemPrompt undefined", () => {
     const result = mapToExecuteOptions(baseOpts);
     expect(result.appendSystemPrompt).toBeUndefined();
   });
