@@ -222,5 +222,5 @@ agent 不记流程,每 turn 调 cw 拿 guidance 照做。cw guidance 是流程�
 - **新增** 6 个 agent 模板:planning-agent / wave-agent(层主) / dev-agent / review-agent / merge-agent(+ 主 agent 用现有)
 - **新增** cw-tool(pi 自定义工具,registerTool):包装 cw 命令,**按 role 限制可调 action**(层主不含审查命令),堵 bash 洞 + 硬保证独立 review。分配给 planning-agent / wave-agent(层主) / dev-agent(execute/test) / review-agent(审查) / 主 agent
 - **cw guidance 增强**:每 action 返回四段(位置/下一步+派发指导/恢复指导/续turn指导),让接收 guidance 的 agent 按派发指导分情况派子(详见 §7)
-- **cw.config.json**:可能加 perLayer.model(planning 强模型/wave 便宜模型)——但消费者是 agent prompt/派发参数,本项目自定义即可,不依赖 cw 引擎
+- **~~cw.config.json:可能加 perLayer.model(planning 强模型/wave 便宜模型)~~** —— **已否决**:模型在派发点(subagent 工具 `model` 参数)决定,默认不指定 = 继承父 agent 模型(pi 三层解析:override → agent frontmatter → 父 agent 当前模型),递归全树同模型,无需也不应逐层配置;按层差异化只作参考,须用户显式指定才生效
 - **不依赖 cw 引擎 E1-E6**(本项目用 cw 现状 action 名;cw-tool 包装层可屏蔽未来 E1 合并差异)
