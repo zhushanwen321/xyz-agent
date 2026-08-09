@@ -10,8 +10,9 @@
 #      （自己没改 src，但通过 workspace: 直接/间接引用了已 bump 包，须 patch 重发刷新 tarball 范围）
 #   4. 读 .changeset/config.json 的 linked 组，输出受影响组（参考用，不驱动）
 #
-# 触发判定准则（§4.1 step 3，不以 files 字段为准）：
-#   - 纯 *.md 文档 → 不触发
+# 触发判定准则（§4.1 step 3）：
+#   - *.md 文档 → 仅当位于包 npm files 白名单内（SKILL.md / agent.md / README 等
+#     消费者安装可见内容）才触发；包外 md（docs/、根目录、.agents/）不触发
 #   - __tests__/ / fixture / .test. / .spec. → 不触发
 #   - package.json 的 dependencies/peerDependencies/optionalDependencies range 改动 → 强制纳入
 #   - 其他源码改动 → 触发
@@ -171,6 +172,44 @@ function isTestOrFixture(file) {
     || /\.test\.[a-z]+$/.test(file);
 }
 
+// --- npm files 白名单匹配（判断 md 是否随包发布、消费者可见）---
+// 支持 npm files 字段三类条目：精确文件（README.md）、目录（skills/）、glob（src/**/*.ts）
+function globToRegex(pattern) {
+  // ** 匹配零或多层目录（含 /），* 匹配单层非 / 字符，? 匹配单个非 / 字符
+  let re = '';
+  let i = 0;
+  while (i < pattern.length) {
+    const c = pattern[i];
+    if (c === '*' && pattern[i + 1] === '*') {
+      // ** 后跟 / → 匹配零或多层目录前缀；裸 ** → 匹配任意（含 /）
+      if (pattern[i + 2] === '/') { re += '(?:.*/)?'; i += 3; continue; }
+      re += '.*'; i += 2; continue;
+    }
+    if (c === '*') { re += '[^/]*'; i++; continue; }
+    if (c === '?') { re += '[^/]'; i++; continue; }
+    if ('\\^$.|+()[]{}'.includes(c)) { re += '\\' + c; i++; continue; }
+    re += c; i++;
+  }
+  return new RegExp('^' + re + '$');
+}
+function inFilesWhitelist(relFileInPkg, files) {
+  if (!Array.isArray(files)) return false;
+  for (const entry of files) {
+    if (entry.endsWith('/')) {
+      // 目录条目 foo/ → foo/**
+      const dir = entry.slice(0, -1);
+      if (relFileInPkg === dir || relFileInPkg.startsWith(dir + '/')) return true;
+      continue;
+    }
+    if (entry.includes('*')) {
+      if (globToRegex(entry).test(relFileInPkg)) return true;
+      continue;
+    }
+    if (relFileInPkg === entry) return true; // 精确文件
+  }
+  return false;
+}
+
 // --- git diff 改动文件分类 ---
 let changedFiles = [];
 try {
@@ -198,7 +237,12 @@ for (const f of changedFiles) {
     if (depChanged) triggeringPackages.add(pkg.name);
     // package.json 非 dep 改动（version/description 等）不触发运行时行为
   } else if (f.endsWith('.md')) {
-    // 纯文档不触发
+    // md：仅当位于包 npm files 白名单内（消费者安装可见，如 SKILL.md/agent.md/README）才触发
+    // 包外 md（docs/、根目录、.agents/）不触发
+    const pkgFiles = readPkgIfExists(`${pkg.dir}/package.json`);
+    if (pkgFiles && inFilesWhitelist(f.slice(pkg.dir.length + 1), pkgFiles.files)) {
+      triggeringPackages.add(pkg.name);
+    }
   } else if (isTestOrFixture(f)) {
     // 测试/fixture 不触发
   } else {
