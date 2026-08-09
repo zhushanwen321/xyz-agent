@@ -14,6 +14,13 @@ import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+// homedir 只影响 normalizeRef 的 `~/` 展开（getWorkflowByPath 路径），
+// mock 成可写临时目录（测试内动态改），其余 node:os 保持真实。
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  return { ...actual, homedir: vi.fn(() => "/nonexistent-home-for-tests") };
+});
+
 // resource-discovery 位于 src/shared/（从 __tests__/ 看是 ../../shared/）。
 // 只覆盖 findWorkspaceRoot；其余（discoverResources 等）保持真实实现。
 vi.mock("../../shared/resource-discovery.ts", async (importOriginal) => {
@@ -29,12 +36,15 @@ vi.mock("../../shared/resource-discovery.ts", async (importOriginal) => {
 import {
   discoverWorkflows,
   getWorkflow,
+  getWorkflowByPath,
   invalidateCache,
   type WorkflowScanConfig,
 } from "../config-loader.ts";
 import { findWorkspaceRoot } from "../../shared/resource-discovery.ts";
+import { homedir } from "node:os";
 
 const mockedFindWorkspaceRoot = vi.mocked(findWorkspaceRoot);
+const mockedHomedir = vi.mocked(homedir);
 
 // ── 临时工作区工具 ────────────────────────────────────────────
 
@@ -381,6 +391,60 @@ describe("目录优先级 — 同名资源高优先级覆盖", () => {
 
     // 低优先级版本不应出现
     expect(result.find((w) => w.name === "dup-from-pi")).toBeUndefined();
+  });
+});
+
+describe("getWorkflowByPath — 按绝对路径加载（S2 路径统一核心新入口）", () => {
+  it("合法文件：返回完整 CachedWorkflowMeta 结构（available=true）", async () => {
+    const scriptPath = await writeScript(
+      ws.projectDir,
+      "bypath.js",
+      validScript("bypath", { description: "path loaded", phases: ["a"] }),
+    );
+
+    const meta = await getWorkflowByPath(scriptPath);
+
+    expect(meta).toBeDefined();
+    expect(meta!.available).toBe(true);
+    expect(meta!.name).toBe("bypath");
+    expect(meta!.description).toBe("path loaded");
+    expect(meta!.phases).toEqual(["a"]);
+    expect(meta!.path).toBe(scriptPath);
+    // toCachedMeta 的 source 参数 "user-pi" → saved（非 project-pi-tmp）
+    expect(meta!.source).toBe("saved");
+  });
+
+  it("相对路径返回 undefined（引用唯一形态 = 绝对路径）", async () => {
+    await expect(getWorkflowByPath("workflows/foo.js")).resolves.toBeUndefined();
+    await expect(getWorkflowByPath("./foo.js")).resolves.toBeUndefined();
+  });
+
+  it("非 .js 扩展名返回 undefined", async () => {
+    await expect(getWorkflowByPath("/tmp/foo.ts")).resolves.toBeUndefined();
+    await expect(getWorkflowByPath("/tmp/foo.js.txt")).resolves.toBeUndefined();
+  });
+
+  it("~/ 前缀展开为 homedir 下绝对路径后正常加载", async () => {
+    mockedHomedir.mockReturnValue(ws.root);
+    const scriptPath = await writeScript(ws.root, "tilda.js", validScript("tilda"));
+
+    const meta = await getWorkflowByPath("~/tilda.js");
+
+    expect(meta).toBeDefined();
+    expect(meta!.available).toBe(true);
+    expect(meta!.name).toBe("tilda");
+    expect(meta!.path).toBe(scriptPath);
+  });
+
+  it("文件不存在：available=false 不抛（fail-safe），name fallback 到文件 stem", async () => {
+    const meta = await getWorkflowByPath("/nonexistent/ghost.js");
+
+    expect(meta).toBeDefined(); // 不是 undefined——normalizeRef 通过，meta 提取失败标不可用
+    expect(meta!.available).toBe(false);
+    expect(meta!.name).toBe("ghost");
+    expect(meta!.description).toBe("");
+    expect(meta!.phases).toEqual([]);
+    expect(meta!.path).toBe("/nonexistent/ghost.js");
   });
 });
 

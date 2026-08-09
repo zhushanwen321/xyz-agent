@@ -21,7 +21,7 @@ vi.mock("node:os", async (importOriginal) => {
 
 import { lintAgentMeta } from "../../orchestration/script-lint.ts";
 import { parseResourceMeta } from "../../shared/meta-parser.ts";
-import { AgentRegistry, parseAgentFrontmatter } from "../agent-registry.ts";
+import { AgentRegistry, parseAgentFrontmatter, parseAgentWithMeta } from "../agent-registry.ts";
 
 // ============================================================
 // helpers
@@ -62,6 +62,71 @@ body text`);
     expect(cfg.thinkingLevel).toBe("high");
     expect(cfg.tools).toEqual(["read", "bash"]);
     expect(cfg.systemPrompt).toBe("body text");
+  });
+});
+
+// ============================================================
+// parseAgentWithMeta（m5 T2：W4 lint 用 AgentMeta 二元组）
+// ============================================================
+
+describe("parseAgentWithMeta", () => {
+  it("有 frontmatter（IF1 通过）：meta 非 null 且路由字段完整，config 同步正确", () => {
+    const { config, meta } = parseAgentWithMeta("/x/coder.md", `---
+name: coder
+description: 编码 agent
+when: 需要写代码
+notFor: 纯分析
+model: anthropic/claude-3.5-sonnet
+thinkingLevel: high
+tools: [read, bash]
+---
+body text`);
+    expect(meta).not.toBeNull();
+    expect(meta!.kind).toBe("agent");
+    expect(meta!.name).toBe("coder");
+    expect(meta!.description).toBe("编码 agent");
+    expect(meta!.when).toBe("需要写代码");
+    expect(meta!.notFor).toBe("纯分析");
+    expect(config.name).toBe("coder");
+    expect(config.systemPrompt).toBe("body text");
+    expect(config.model).toBe("anthropic/claude-3.5-sonnet");
+    expect(config.thinkingLevel).toBe("high");
+    expect(config.tools).toEqual(["read", "bash"]);
+  });
+
+  it("无 frontmatter：meta = null，整个内容作为 systemPrompt", () => {
+    const { config, meta } = parseAgentWithMeta("/x/plain.md", "Just a prompt body.");
+    expect(meta).toBeNull();
+    expect(config).toEqual({
+      name: "plain",
+      systemPrompt: "Just a prompt body.",
+    });
+  });
+
+  it("MF-3 fallback：缺 description（IF1 返 null）时 model/tools 经 extractYamlField 仍生效", () => {
+    const { config, meta } = parseAgentWithMeta("/x/legacy.md", `---
+name: legacy
+model: anthropic/claude-3.5-sonnet
+tools: read, bash, write
+---
+body text`);
+    // 缺 description → parseResourceMeta 返 null → meta 为 null（结构化路由不可见）
+    expect(meta).toBeNull();
+    // 但 config 的 model/tools 不丢（direct-path loadByPath 与重构前行为一致）
+    expect(config.name).toBe("legacy");
+    expect(config.model).toBe("anthropic/claude-3.5-sonnet");
+    expect(config.tools).toEqual(["read", "bash", "write"]);
+    expect(config.systemPrompt).toBe("body text");
+  });
+
+  it("未闭合 frontmatter：meta = null，name 经 extractYamlField fallback，其余作为 systemPrompt", () => {
+    const { config, meta } = parseAgentWithMeta("/x/broken.md", `---
+name: broken
+model: x/y`);
+    expect(meta).toBeNull();
+    expect(config.name).toBe("broken");
+    // 未闭合分支只取 name（原行为），不解析 model
+    expect(config.systemPrompt).toBe(`---\nname: broken\nmodel: x/y`);
   });
 });
 

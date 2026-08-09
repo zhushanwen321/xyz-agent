@@ -579,15 +579,48 @@ function checkPhaseConsistency(source: string): LintFinding[] {
  * @returns LintResult（valid = 无 error 级 finding）
  */
 /**
+ * W2/W3 共享 helper：meta 描述字段长度上限 + 单句判定（workflow lintScript 与
+ * agent lintAgentMeta 共用同一规则——S-5 对称，避免 agent 长 description 常驻膨胀）。
+ *
+ * W2：>200 字符 → error。
+ * W3：括号内容剥离（（…）/（…）与 (...)）后含换行/。；/'. ' 分句 → error。
+ * 输出格式与 severity 约定与 checkMetaQuality 一致（error / line 1 / meta.<field> 前缀）。
+ */
+function checkMetaFieldQuality(field: string, value: string): LintFinding[] {
+  const findings: LintFinding[] = [];
+  // W2
+  if (value.length > DESC_MAX_LENGTH) {
+    findings.push({
+      severity: "error",
+      line: 1,
+      message: `meta.${field} 长度 ${value.length} 超过 ${DESC_MAX_LENGTH} 字符（§5.1 注入段预算约束）`,
+      suggestion: "精简为单句路由描述，细节移入 usage",
+    });
+  }
+  // W3：括号剥离后分句判定
+  const stripped = value
+    .replace(/（[^）]*）/g, "")
+    .replace(/\([^)]*\)/g, "")
+    .replace(/\b(?:e\.g|i\.e)\.\s/g, ""); // 缩写剔除（exec-review F8：括号外 e.g. 不误报）
+  if (/[\n。；]|\.\s/.test(stripped)) {
+    findings.push({
+      severity: "error",
+      line: 1,
+      message: `meta.${field} 非单句（含换行/分句标点）——§5.1 注入段要求一句话路由描述`,
+      suggestion: "精简为单句，细节移入 when/notFor/usage",
+    });
+  }
+  return findings;
+}
+
+/**
  * W1-W3：SSOT lint（m4）——保 §5.1 注入段 description 短单句、不含已声明参数名。
  * 仅对 parseResourceMeta 解析成功的 meta 执行（旧 const meta 格式不检查）。
  *
  * W1 参数名匹配（非形态匹配）：'note:'/'Example:'/'a=b' 等 prose 不误报（design-review
  * 探针实测形态匹配误报面）；参数名集合 = meta.parameters.properties keys + patternProperties
  * 的 word 前缀（^word\\d+$ 转义形态）。检查面 = description + when + notFor 三字段
- * （同进 §5.1 注入段）。
- * W2：>200 字符 → error。
- * W3：括号内容剥离（（…）/（…）与 (...)）后含换行/。；/'. ' 分句 → error。
+ * （同进 §5.1 注入段）。W2/W3 抽到 checkMetaFieldQuality（lintAgentMeta 共用）。
  */
 function checkMetaQuality(meta: { description?: string; when?: string; notFor?: string; parameters?: Record<string, unknown> }): LintFinding[] {
   const findings: LintFinding[] = [];
@@ -629,73 +662,62 @@ function checkMetaQuality(meta: { description?: string; when?: string; notFor?: 
         });
       }
     }
-    // W2
-    if (value.length > DESC_MAX_LENGTH) {
-      findings.push({
-        severity: "error",
-        line: 1,
-        message: `meta.${field} 长度 ${value.length} 超过 200 字符（§5.1 注入段预算约束）`,
-        suggestion: "精简为单句路由描述，细节移入 usage",
-      });
-    }
-    // W3：括号剥离后分句判定
-    const stripped = value
-      .replace(/（[^）]*）/g, "")
-      .replace(/\([^)]*\)/g, "")
-      .replace(/\b(?:e\.g|i\.e)\.\s/g, ""); // 缩写剔除（exec-review F8：括号外 e.g. 不误报）
-    if (/[\n。；]|\.\s/.test(stripped)) {
-      findings.push({
-        severity: "error",
-        line: 1,
-        message: `meta.${field} 非单句（含换行/分句标点）——§5.1 注入段要求一句话路由描述`,
-        suggestion: "精简为单句，细节移入 when/notFor/usage",
-      });
-    }
+    findings.push(...checkMetaFieldQuality(field, value));
   }
   return findings;
 }
 
 /**
- * W4（m4，m5 挂 agent 加载路径）：agent examples 正反各一。
+ * W2/W3 + W4（m4/m5 挂 agent 加载路径）：description/when/notFor 长度与单句检查
+ * （与 workflow 同规则，S-5 对称）+ examples 正反各一。
  * RoutingExample.positive 判别（action 是 string 非 null）；examples 缺失 → 无 finding
  * （未迁移 agent 不报错——m5 挂载安全根基）。
  */
 export function lintAgentMeta(meta: AgentMeta): LintFinding[] {
+  // W2/W3（S-5 对称）：agent 的 description/when/notFor 与 workflow 同规则
+  // （长度上限 + 单句判定）——formatAgentList 原样注入 systemPrompt，长描述是每 turn 常驻成本。
+  const findings: LintFinding[] = [];
+  const fields: Array<[string, string]> = [
+    ["description", meta.description],
+    ["when", meta.when ?? ""],
+    ["notFor", meta.notFor ?? ""],
+  ];
+  for (const [field, value] of fields) {
+    if (value.length === 0) continue;
+    findings.push(...checkMetaFieldQuality(field, value));
+  }
+
   const examples = meta.examples;
-  if (examples === undefined) return []; // 未迁移 agent（无 examples 字段）不报错
+  if (examples === undefined) return findings; // 未迁移 agent（无 examples 字段）不报错
   if (examples.length === 0) {
-    return [
-      {
-        severity: "error",
-        line: 1,
-        message: `agent '${meta.name}' 声明了 examples 但为空——需 ≥2 条且正反各一`,
-        suggestion: "补正向样本（何时调用）+ 反向样本（何时不调用）",
-      },
-    ];
+    findings.push({
+      severity: "error",
+      line: 1,
+      message: `agent '${meta.name}' 声明了 examples 但为空——需 ≥2 条且正反各一`,
+      suggestion: "补正向样本（何时调用）+ 反向样本（何时不调用）",
+    });
+    return findings;
   }
   const hasPositive = examples.some((e) => e.positive === true);
   const hasNegative = examples.some((e) => e.positive === false);
   if (examples.length < EXAMPLES_MIN_COUNT || !hasPositive || !hasNegative) {
-    return [
-      {
-        severity: "error",
-        line: 1,
-        message: `agent '${meta.name}' 的 examples 需 ≥2 条且正反各一（positive:true 触发路由 + positive:false 反例）`,
-        suggestion: "补正向样本（何时调用）+ 反向样本（何时不调用）",
-      },
-    ];
+    findings.push({
+      severity: "error",
+      line: 1,
+      message: `agent '${meta.name}' 的 examples 需 ≥2 条且正反各一（positive:true 触发路由 + positive:false 反例）`,
+      suggestion: "补正向样本（何时调用）+ 反向样本（何时不调用）",
+    });
+    return findings;
   }
   if (examples.length > EXAMPLES_MAX_COUNT) {
-    return [
-      {
-        severity: "error",
-        line: 1,
-        message: `agent '${meta.name}' 的 examples ${examples.length} 条超过上限 ${EXAMPLES_MAX_COUNT}（注入段是每 turn 常驻成本）`,
-        suggestion: "精简到 2-4 条：正反各一 + 最多 2 条冗余",
-      },
-    ];
+    findings.push({
+      severity: "error",
+      line: 1,
+      message: `agent '${meta.name}' 的 examples ${examples.length} 条超过上限 ${EXAMPLES_MAX_COUNT}（注入段是每 turn 常驻成本）`,
+      suggestion: "精简到 2-4 条：正反各一 + 最多 2 条冗余",
+    });
   }
-  return [];
+  return findings;
 }
 
 export function lintScript(source: string): LintResult {
