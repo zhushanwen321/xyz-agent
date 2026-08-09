@@ -1,5 +1,13 @@
 # @zhushanwen/pi-cw-tool
 
+## 0.3.1
+
+### Patch Changes
+
+- 3863af8f0: pi-cw skill: default subagent model to inherit the main agent, drop per-layer model recommendations.
+
+  Previously the dispatch example hardcoded `model="glm-5.1"` and recommended per-layer model assignment (glm-5.1/ds-flash/ds-pro/glm-turbo), conflicting with the expectation that subagents inherit the parent agent's model. pi's subagent model resolution is three-layer (explicit param → agent frontmatter → parent current model passed through) and frozen at spawn via `--model`, so leaving `model` unset makes the whole cw tree inherit one model recursively with zero config. The skill now documents default-inherit with single-point override; per-layer differences are opt-in reference only.
+
 ## 0.3.0
 
 ### Minor Changes
