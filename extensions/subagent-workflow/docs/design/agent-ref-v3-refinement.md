@@ -15,19 +15,18 @@
 ### 1.1 现状（M2 bug 路径）
 
 ```
-agent-opts-resolver.resolveAgentOpts:
-  agent systemPrompt → fs.writeFileSync(/tmp/.../agent-prompt-xxx.md)   [落盘]
-                       systemPromptFiles.push("/tmp/.../agent-prompt-xxx.md")   [路径!]
-  schema SO 指令     → fs.writeFileSync(/tmp/.../so-xxx.txt)            [落盘]
-                       systemPromptFiles.push("/tmp/.../so-xxx.txt")           [路径!]
-  return { systemPromptFiles: [路径, 路径] }
+agent-opts-resolver.resolveAgentOpts（旧实现，bug）:
+  schema SO 指令 → fs.writeFileSync(/tmp/.../so-xxx.txt)              [落盘]
+                   旧路径数组.push("/tmp/.../so-xxx.txt")             [路径! 非内容]
+  return { 旧路径数组: [路径] }                                       [路径语义，非内容]
+  （agent systemPrompt 不经此函数——经 resolveIdentity → agentConfig.systemPrompt，本就正确）
 
 execute-options-mapper.mapToExecuteOptions:
-  appendSystemPrompt: opts.systemPromptFiles   [路径数组赋给「内容」语义字段]
+  appendSystemPrompt: opts.旧路径数组   [路径数组赋给「内容」语义字段]
 
 session-runner.runSpawn (L642-656):
   appendParts = [buildEnvBlock(...)]                                 [内容]
-  + opts.agentConfig?.systemPrompt                                   [内容, workflow 路径通常空]
+  + opts.agentConfig?.systemPrompt                                   [内容, agent 正文，经 resolveIdentity]
   + ...opts.appendSystemPrompt   ← spread 路径数组当文本! BUG         [路径垃圾]
   + WRAP_UP_HINT                                                     [内容]
   + ASK_USER_RPC_PROMPT                                              [内容]
@@ -36,8 +35,8 @@ session-runner.runSpawn (L642-656):
 
 最终 pi 收到的 append 文件内容:
   [env block 正文]
-  /var/folders/xxx/agent-prompt-yyy.md      ← 路径垃圾，本该是 agent systemPrompt 正文
-  /var/folders/xxx/so-zzz.txt               ← 路径垃圾，本该是 schema SO 指令正文
+  [agent systemPrompt 正文]                  ← 正确（经 agentConfig 通道，不经 resolveAgentOpts）
+  /var/folders/xxx/so-xxx.txt               ← 路径垃圾，本该是 schema SO 指令正文（BUG）
   [wrap-up 正文]
   [ask_user 正文]
 ```
@@ -46,19 +45,23 @@ session-runner.runSpawn (L642-656):
 
 ```
 agent-opts-resolver.resolveAgentOpts:
-  agent systemPrompt → appendSystemPrompt.push(discovered.systemPrompt)   [内容! 不落盘]
-  schema SO 指令     → appendSystemPrompt.push(SO_INSTRUCTION)            [内容! 不落盘]
-  return { appendSystemPrompt: [内容, 内容] }   [与 ExecuteOptions 同名同义]
+  schema SO 指令 → appendSystemPrompt.push(SO_INSTRUCTION)   [内容! 不落盘]
+  （agent systemPrompt 不在此处理——agent ref 整体移交 resolveIdentity）
+  return { appendSystemPrompt: [SO 指令内容] }   [长度恒 1，与 ExecuteOptions 同名同义]
+
+resolveIdentity（execution 层，不经 resolveAgentOpts）:
+  agent ref → getAgentConfig(loadByPath) → agentConfig.{systemPrompt, model, tools, thinkingLevel}
 
 execute-options-mapper.mapToExecuteOptions:
   appendSystemPrompt: opts.appendSystemPrompt   [透传，字段同名]
 
 session-runner.runSpawn:
   appendParts = [envBlock, agentConfig?.systemPrompt, ...appendSystemPrompt, wrapUp, askUser]   [全内容]
+                              ↑ agent 正文（来自 resolveIdentity）        ↑ schema SO 指令（长度 1）
   writePromptToTempFile(join) → --append-system-prompt <文件>   [pi 读，内容正确]
 ```
 
-根治点：不再产生「路径作为中间态」，从源头消除「路径被当内容」的可能。
+根治点：不再产生「路径作为中间态」，从源头消除「路径被当内容」的可能。agent 正文与 schema SO 指令走两条独立通道（agent 经 resolveIdentity → agentConfig.systemPrompt，schema 经 appendSystemPrompt、长度恒 1），消除 R1 design-review 发现的「双重注入 + model 层级混乱」风险。与 ADR-0003 D1「实施修正」段一致——若发现 ADR-0003 D1 描述与本图不符，以代码为准。
 
 ## 2. 阶段拆分
 
@@ -70,18 +73,17 @@ session-runner.runSpawn:
 
 改动：
 - `agent-opts-resolver.ts`：
-  - 删 `fs.writeFileSync` 两处（agent + schema 临时文件）
-  - 删 `activeTempFiles.add` 两处
-  - `systemPromptFiles: string[]` 局部变量 → `appendSystemPrompt: string[]`
-  - agent 内容 push `discovered.systemPrompt`；schema 内容 push SO 指令字符串
-  - 删 `import fs/path/randomUUID`（若不再用）；删 `sessionDir`/`activeTempFiles` 参数
+  - schema SO 指令：删临时文件写入（writeFileSync），改为内容直传 push 进 `appendSystemPrompt`（修 M2）
+  - agent ref 处理整体删除——移交 `resolveIdentity`（execution 层经 getAgentConfig 覆盖 systemPrompt/model/tools/thinkingLevel），消除双重注入与 model 层级混乱（D1 实施修正）
+  - 局部变量从路径数组改为 `appendSystemPrompt: string[]`（内容数组）
+  - 删临时文件相关 import（fs/path/randomUUID）与 `sessionDir`/`activeTempFiles` 参数
   - 删 `cleanupAllTempFiles` 函数
-- `models/types.ts`：`AgentCallOpts.systemPromptFiles?: string[]` → `appendSystemPrompt?: string[]`
-- `execute-options-mapper.ts`：`appendSystemPrompt: opts.systemPromptFiles` → `appendSystemPrompt: opts.appendSystemPrompt`（透传）；更新 L37 注释
+- `models/types.ts`：`AgentCallOpts` 旧路径数组字段（`?: string[]`）→ `appendSystemPrompt?: string[]`（内容语义）
+- `execute-options-mapper.ts`：mapper 从「路径数组→内容字段」改名映射降为透传（`appendSystemPrompt: opts.appendSystemPrompt`）；更新 L37 注释
 - `error-recovery.ts` L284-289：`resolveAgentOpts` 调用删 `sessionDir`/`activeTempFiles` 实参；`hasResolverDeps` 判定收敛（只需 `agentRegistry`）
 - `ports.ts` L132-140：`LifecycleDeps` 删 `activeTempFiles?: Set<string>`；更新注释
 - `index.ts`：删 `import { cleanupAllTempFiles }`；删 `session_shutdown` 里的 `cleanupAllFiles(...)` 调用
-- **探针测试（新增）** `m2-append-content-probe.test.ts`：断言 `resolveAgentOpts` 返回的 `appendSystemPrompt` 数组每项 `isPath=false containsContent=true`（内容含 agent 正文关键词 / SO 指令关键词，无 `/var/folders` / `/tmp/` 路径模式）
+- **探针测试（新增）** `m2-append-content-probe.test.ts`：断言 `resolveAgentOpts` 返回的 `appendSystemPrompt` 长度恒 1、仅含 SO 指令内容（`structured-output` 关键词）、不含路径（无 `/var/folders` / `/tmp/`）、不含 agent 正文（agent ref 原样保留不被消费）
 
 验证检查点：
 - ⛔ 探针测试断言 appendSystemPrompt 全为内容（无路径）
@@ -92,14 +94,15 @@ session-runner.runSpawn:
 
 改动：
 - `injectors/subagent-list-injector.ts` + `workflow-list-injector.ts`：
-  - 拆为「发现」+「渲染」两层。发现层 `discoverAll()` 返回 `DiscoveredResource[]`（agent）/ workflow meta 列表
-  - 渲染层 `renderInjection(resources)` 接收已发现列表，输出 XML（不变）
-- `index.ts`：
-  - `session_start`：调发现层，结果存 per-session 缓存（Map<sessionId, {agents, workflows, mtime}>，sessionState 范围）
-  - `before_agent_start`：从缓存取，调渲染层注入（不调 discoverResources）
-  - `session_shutdown`：清该 session 缓存
-- 缓存 key：sessionId（per-session，支持 split mode 多 session）
-- mtime 失效：开发期 live edit 场景，before_agent_start 可选检查关键文件 mtime（复用 loadByPath 的 mtime 缓存机制），变更则刷新缓存。**默认不做热刷新**（与 skill 一致：新 session 才刷新），避免引入复杂性
+  - 拆为「发现」+「渲染」两层。发现层 `discoverAllAgents` / `discoverAllWorkflows` 返回条目列表（agent / workflow meta）
+  - 渲染层 `formatAgentList` / `formatWorkflowList` 接收已发现列表，输出 XML（不变）
+- 缓存机制：**模块级** `let agentCache` / `let workflowCache`（非按 sessionId 分区的 Map）。设计依据：xyz-agent session-pool 模型——每 pi 子进程 = 一 session = 独立扩展实例，模块级缓存天然 per-session 隔离，无需分区 Map。适用边界：依赖 xyz-agent 部署模型；若未来 pi 支持单进程内多 session 并发，需改为按 sessionId 分区的 Map 并挂入 sessionState
+- 两个 injector 自管缓存生命周期（`session_start` / `before_agent_start` / `session_shutdown` handler 注册在各自 injector 内，不经 `index.ts`）：
+  - `session_start`：调发现层，结果存模块级缓存
+  - `before_agent_start`：**命中缓存**则直接渲染（不调 discoverResources）；**miss**（session_start 漏触发场景）则 fallback 调发现层发现并填充缓存（鲁棒性设计，弱化纯粹性换隔离可靠性）
+  - `session_shutdown`：清模块级缓存
+- `sessionState` 不持有 cache 字段（缓存生命周期由 injector 模块级变量管理）
+- mtime 失效：**默认不做热刷新**（与 skill 一致：新 session / reload 才重新发现），避免引入复杂性
 
 验证检查点：
 - ⛔ 单测：同 session 两次 `before_agent_start`，`discoverResources` 只被调一次
@@ -138,10 +141,12 @@ session-runner.runSpawn:
 ### 阶段 R5：错误规格三态统一（D7）
 
 改动：
-- `agent-opts-resolver.ts`：agent 路径 loadByPath 失败文案 → `Agent file load failed: <path> — ...`
-- `agent-ref.ts` normalizeRef：相对路径拒绝文案 → `must be an absolute path ... Use <location> ...`
-- `config-loader.getWorkflowByPath` / `registry.getPath`：workflow 路径不存在文案 → `Workflow file load failed: <path> — ...`
-- 统一三态（非绝对路径 / agent 不存在 / workflow 不存在）均带 `<location>` 恢复指引
+- agent 路径错误承载于 `agent-registry.ts` 的 `loadByPath`（require 时抛）：
+  - 非绝对路径 →「`Invalid agent ref: <ref>. Agent refs must be absolute paths to .md files (use <location> from <available_subagents>).`」
+  - 路径不存在/不可读 →「`Agent file not found or unreadable: <path>. Use an absolute path from <available_subagents> <location>.`」
+- workflow 路径不存在承载于 `tool-workflow.ts`（run action）：「`Workflow '<name>' not found. Available:\n<suggestions>. Use <location> from <available_workflows> for the absolute .js path.`」
+- 静默返回层（错误文案由上层调用方渲染，不在这些函数内）：`agent-ref.ts` `normalizeRef`（非绝对路径返回 null）、`config-loader.getWorkflowByPath`（不存在返回 undefined）
+- 三态（非绝对路径 / agent 不存在 / workflow 不存在）均带 `<location>` 恢复指引
 
 验证检查点：
 - ⛔ 单测：三态错误消息各一例，断言含 `<location>` 指引关键词
@@ -152,7 +157,7 @@ session-runner.runSpawn:
 - 本文档（/tmp）迁移到项目 docs/（如 `docs/design/agent-ref-v3-refinement.md`）
 - ADR-0002 末尾加指针：「实施完善见 ADR-0003」
 - 零残留 grep（验收红线）：
-  - `grep -rn 'systemPromptFiles' src/` → 0 命中
+  - 旧路径数组字段名在 `src/` 中 0 命中（已统一为 `appendSystemPrompt`）
   - `grep -rn 'cleanupAllTempFiles\|activeTempFiles' src/` → 0 命中
   - `grep -rn '"info"' src/interface/tool-workflow.ts` → 0 命中
   - `grep -rn 'workflow info' src/ docs/ workflows/` → 0 命中
@@ -172,7 +177,7 @@ session-runner.runSpawn:
 | `cleanupAllTempFiles` 函数 | agent-opts-resolver.ts L139-145 | 无临时文件需回收 | index.ts import + session_shutdown 调用 |
 | `activeTempFiles: Set<string>` 参数 | resolveAgentOpts 签名 / ports.ts / error-recovery.ts | 无临时文件需跟踪 | hasResolverDeps 判定简化 |
 | `sessionDir` 参数 | resolveAgentOpts 签名 | 不再写 workflow-tmp 目录 | error-recovery 调用简化 |
-| `AgentCallOpts.systemPromptFiles` 字段 | models/types.ts L126 | D3 字段统一为 appendSystemPrompt | mapper 改名映射降为透传 |
+| `AgentCallOpts` 旧路径数组字段 | models/types.ts L126 | D3 字段统一为 `appendSystemPrompt`（内容语义） | mapper 改名映射降为透传 |
 | `actionInfo` 函数 + info action | tool-workflow.ts | D5 减法：read 覆盖全集 | WORKFLOW_ACTIONS / details / schema / 引导文案 / 测试 |
 | review-fix-loop `loadAgentMd`/`parseAgentMd` | （S4 已删） | 已精简 | — |
 
@@ -214,6 +219,6 @@ R1（M2+精简）→ R2（session 级发现）→ R3（fail-fast）→ R4（info
 
 ## 7. 风险
 
-- **R2 session 级缓存与 split mode**：多 session 并发需 per-session 缓存隔离。复用 sessionState 机制（现有 per-session Map 模式，ADR-036 范式）
-- **R1 精简面边界（已确认）**：M2 bug 与精简只影响 workflow agent-call 路径（resolveAgentOpts 链）。subagent tool 路径经 resolveIdentity → agentConfig.systemPrompt（内容）→ session-runner L646 正确消费，不写临时文件、不经 systemPromptFiles。R1 不动 subagent-service
+- **R2 session 级缓存与 split mode**：缓存为 injector 模块级变量（`agentCache` / `workflowCache`），依赖 xyz-agent session-pool 模型（每 pi 子进程 = 一 session = 独立扩展实例）天然 per-session 隔离，不经 sessionState。若未来 pi 支持单进程内多 session 并发，需改为按 sessionId 分区的 Map 并挂入 sessionState
+- **R1 精简面边界（已确认）**：M2 bug 与精简只影响 workflow agent-call 路径（resolveAgentOpts 链）。subagent tool 路径经 resolveIdentity → agentConfig.systemPrompt（内容）→ session-runner L646 正确消费，不写临时文件、不经（已删的）路径数组字段。R1 不动 subagent-service
 - **R4 模型仍调 info**：存量 session 的模型可能调 info → unknown action 报错。可接受（引导语已改 read，新 session 生效）；不做兼容

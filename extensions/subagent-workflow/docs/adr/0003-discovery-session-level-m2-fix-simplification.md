@@ -65,10 +65,10 @@ review-fix-loop 启动时对每个 batchN/fixAgent 路径做 `fs.stat` 校验，
 
 ### D7: 错误规格三态精确化
 
-统一三类错误文案规格（均带 `<location>` 恢复指引）：
-- 传了非绝对路径（相对名/裸名）→ `Agent/workflow ref must be an absolute path: <value>. Use <location> from <available_*>.`
-- agent 路径不存在 → `Agent file load failed: <path> — no such file or directory. Check against <available_subagents> <location>.`
-- workflow 路径不存在 → `Workflow file load failed: <path> — ...`（review-fix-loop 为启动期 fail-fast 形态）
+统一三类路径错误文案（均带 `<location>` 恢复指引），承载位置与实际文案以代码为准：
+- 非绝对路径（agent）→ 承载于 `agent-registry.ts` `loadByPath`（require 时抛）：「`Invalid agent ref: <ref>. Agent refs must be absolute paths to .md files (use <location> from <available_subagents>).`」；`agent-ref.ts` `normalizeRef` 非绝对路径静默返回 null（文案由上层调用方渲染）
+- agent 路径不存在/不可读 → 承载于 `agent-registry.ts` `loadByPath`（require 时抛）：「`Agent file not found or unreadable: <path>. Use an absolute path from <available_subagents> <location>.`」
+- workflow 路径不存在 → 承载于 `tool-workflow.ts`（run action）：「`Workflow '<name>' not found. Available:\n<suggestions>. Use <location> from <available_workflows> for the absolute .js path.`」；`config-loader.getWorkflowByPath` 不存在静默返回 undefined（文案由上层调用方渲染）
 
 ### D8: 文档工艺
 
