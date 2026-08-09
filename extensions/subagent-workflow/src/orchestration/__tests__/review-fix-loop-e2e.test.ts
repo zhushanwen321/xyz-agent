@@ -19,7 +19,7 @@
  * 已知限制：parallel 的 review 调用顺序不保证——剧本不依赖具体 agent 顺序
  * （E2E-2 只断言调用总数，R1 中先到者 dirty 后到者 clean 均可）。
  */
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,9 +43,16 @@ import { WorkerHostImpl } from "../worker-host.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WORKFLOWS_DIR = join(__dirname, "..", "..", "..", "workflows");
-const AGENTS_DIR = join(__dirname, "..", "..", "..", "agents");
 const wf = (name: string): string => join(WORKFLOWS_DIR, name + ".js");
-const agentMd = (name: string): string => join(AGENTS_DIR, name + ".md");
+
+// agentMd 创建真实临时 fixture .md（e2e 自包含，不依赖包内 agents/ 清单）。
+// R3 启动期 stat 校验要求路径真实存在；fixtureDir 在 beforeEach 创建。
+let fixtureDir: string;
+const agentMd = (name: string): string => {
+  const p = join(fixtureDir, name + ".md");
+  writeFileSync(p, `---\nname: ${name}\ndescription: "${name} fixture"\n---\nbody`, "utf-8");
+  return p;
+};
 
 let sessionDir: string;
 let createdStores: JsonlRunStore[] = [];
@@ -280,16 +287,19 @@ function makeDeps(runner: AgentRunner): LauncherDeps {
 
 beforeEach(() => {
   sessionDir = mkdtempSync(join(tmpdir(), "rfl-e2e-"));
+  fixtureDir = mkdtempSync(join(tmpdir(), "rfl-e2e-agents-"));
   createdStores = [];
 });
 
 afterEach(() => {
   try {
     rmSync(sessionDir, { recursive: true, force: true });
+    rmSync(fixtureDir, { recursive: true, force: true });
   } catch {
     // 临时目录清理失败不影响测试结论
   }
   sessionDir = "";
+  fixtureDir = "";
   createdStores = [];
   vi.restoreAllMocks();
 });
@@ -832,4 +842,41 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
     },
     RUN_TIMEOUT_MS,
   );
+});
+
+describe("startup fail-fast (ADR-0003 D6)", () => {
+  const emptyScenario = {
+    review: [() => ({ issues: [], must_fix: [], stuck: false })],
+    aggregate: () => ({ issues: [], must_fix: [], stuck: false }),
+    fix: () => ({ fixed_count: 0, fixes: [], deferred: [] }),
+  };
+
+  it("TC1: batchN 不存在路径 → 启动期 fail-fast，未调 agent", async () => {
+    const runner = makeScenarioRunner(emptyScenario);
+    const deps = makeDeps(runner);
+    const result = await runAndWait(
+      wf("review-fix-loop"),
+      { targetType: "file", target: "README.md", agents: "/nonexistent/missing.md", _runId: RUN_ID() },
+      deps, undefined, RUN_TIMEOUT_MS,
+    );
+    expect(result.reason).not.toBe("completed");
+    expect(String(result.error ?? "")).toContain("Agent file not found");
+    expect(String(result.error ?? "")).toContain("/nonexistent/missing.md");
+    // fail-fast 在 round 前：agent mock 未被调用
+    expect(runner.stats().kinds.length).toBe(0);
+  }, RUN_TIMEOUT_MS);
+
+  it("TC2: fixAgent 不存在路径 → 启动期 fail-fast", async () => {
+    const runner = makeScenarioRunner(emptyScenario);
+    const deps = makeDeps(runner);
+    const result = await runAndWait(
+      wf("review-fix-loop"),
+      { targetType: "file", target: "README.md", agents: agentMd("reviewer"), fixAgent: "/nonexistent/fix.md", _runId: RUN_ID() },
+      deps, undefined, RUN_TIMEOUT_MS,
+    );
+    expect(result.reason).not.toBe("completed");
+    expect(String(result.error ?? "")).toContain("Agent file not found");
+    expect(String(result.error ?? "")).toContain("/nonexistent/fix.md");
+    expect(runner.stats().kinds.length).toBe(0);
+  }, RUN_TIMEOUT_MS);
 });

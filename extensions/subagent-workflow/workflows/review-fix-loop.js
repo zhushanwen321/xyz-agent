@@ -303,6 +303,27 @@ const STATE_FILE = RUN_ROOT + "/state.json";
 fs.mkdirSync(RUN_ROOT, { recursive: true });
 log("Run directory: " + RUN_ROOT);
 
+// ── Startup fail-fast: validate agent ref paths exist (ADR-0003 D6) ─
+// 启动期校验所有 batchN/fixAgent 路径存在，不存在立即报错（带 location 恢复指引），
+// 避免跑到 round 中段 agent-call 时 loadByPath 失败才暴露。FALLOW_DEF（isFallow，
+// 无 path）跳过——它是内置工具标记非文件路径。
+function validateAgentPaths(defs) {
+  for (const def of defs) {
+    if (def.isFallow || !def.path) continue;
+    try {
+      fs.statSync(def.path);
+    } catch {
+      fail("Agent file not found: " + def.path + ". Check <available_subagents> <location> for valid agent refs (absolute .md path).");
+    }
+  }
+}
+const startupDefs = [];
+for (const batch of BATCHES) {
+  startupDefs.push(...resolveAgentDefs(batch));
+}
+if (FIX_DEF) startupDefs.push(FIX_DEF);
+validateAgentPaths(startupDefs);
+
 // ── State management (persistent, atomic writes) ────────────────────
 
 function loadState() {
