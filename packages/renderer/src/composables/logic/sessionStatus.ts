@@ -43,7 +43,7 @@ export const STATUS_ICON: Record<
   { icon: string; color: string; animation: string }
 > = {
   streaming: { icon: 'RefreshCw', color: 'text-accent', animation: 'animate-spin' },
-  pending: { icon: 'ArrowUpCircle', color: 'text-accent', animation: 'animate-bounce-small' },
+  pending: { icon: 'ArrowUpCircle', color: 'text-accent', animation: 'animate-pulse-strong' },
   compacting: { icon: 'Hourglass', color: 'text-accent', animation: 'animate-spin' },
   working: { icon: 'RefreshCw', color: 'text-accent', animation: 'animate-spin' },
   waiting: { icon: 'Wrench', color: 'text-warn', animation: '' },
