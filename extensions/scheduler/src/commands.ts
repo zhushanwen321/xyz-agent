@@ -71,7 +71,7 @@ export function registerScheduleCommand(
           return result.data.tasks.map(t => ({
             label: t.id,
             value: t.id,
-            description: `${t.name} · ${formatSchedule(t.schedule)}`
+            description: `${t.name} · ${formatSchedule(t.schedule, t.kind)}`
           }))
         }
       }

@@ -135,6 +135,9 @@ describe('/schedule command', () => {
   it('creates once task from /schedule once 10s remind', async () => {
     const result = await executeScheduleCommand(service, 'once 10s remind me')
     expect(result).toContain('remind me')
+    // once 显示为 'once in 10s'（非误导性的 'every 10s'）
+    expect(result).toContain('once in 10s')
+    expect(result).not.toContain('every 10s')
     // once 任务 dispatch 后会被删除，但创建时尚未 dispatch
     expect(service.runtime.listTasks()).toHaveLength(1)
     const task = service.runtime.listTasks()[0]!

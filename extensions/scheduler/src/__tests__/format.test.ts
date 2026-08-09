@@ -9,6 +9,13 @@ describe('formatSchedule', () => {
     expect(formatSchedule({ mode: 'interval', intervalMs: 3_600_000 })).toBe('every 1h')
   })
 
+  it('formats once kind as "once in X" (not misleading "every X")', () => {
+    expect(formatSchedule({ mode: 'interval', intervalMs: 300_000 }, 'once')).toBe('once in 5m')
+    expect(formatSchedule({ mode: 'interval', intervalMs: 3_600_000 }, 'once')).toBe('once in 1h')
+    // recurring/缺省保持 every
+    expect(formatSchedule({ mode: 'interval', intervalMs: 300_000 }, 'recurring')).toBe('every 5m')
+  })
+
   it('formats cron spec', () => {
     expect(formatSchedule({ mode: 'cron', cronExpression: '*/10 * * * *' })).toBe('*/10 * * * *')
   })

@@ -70,7 +70,7 @@ export class SchedulerService {
     const nextRuns = await computeNextRuns(task.schedule, Date.now(), 5)
     const message = [
       `Task "${task.name}" (${task.id}) created.`,
-      `Schedule: ${formatSchedule(task.schedule)}`,
+      `Schedule: ${formatSchedule(task.schedule, task.kind)}`,
       `Kind: ${task.kind}`,
       `Expires: ${task.expiresAt ? formatRelativeTime(task.expiresAt) : 'never'}`,
       `Force: ${task.force ? 'yes' : 'no'}`,
@@ -88,7 +88,7 @@ export class SchedulerService {
       return { success: true, message: 'No scheduled tasks.', data: { tasks: [] } }
     }
     const message = tasks.map(t =>
-      `${t.enabled ? '●' : '○'} ${t.id} ${t.name} · ${formatSchedule(t.schedule)} · ${formatRelativeTime(t.nextRunAt)}`
+      `${t.enabled ? '●' : '○'} ${t.id} ${t.name} · ${formatSchedule(t.schedule, t.kind)} · ${formatRelativeTime(t.nextRunAt)}`
     ).join('\n')
     return { success: true, message, data: { tasks } }
   }
