@@ -105,14 +105,14 @@ describe("findFlattenedArgKeys (workflow args flatten detector — P0)", () => {
     ).toEqual([]);
   });
 
-  it("TC3g: 收敛/模型参数平铺被识别（动态集 exact——S-13 4 键）", () => {
+  it("TC3g: 收敛参数平铺被识别（动态集 exact——S-13 3 键，model 升格 TOOL_TOP_LEVEL 后排除）", () => {
     expect(
       findFlattenedArgKeys(
         { action: "run", name: "review-fix-loop", model: "ds-flash", maxFixAttempts: 3, convergeNewIssues: 2, convergeRounds: 3 },
         RFL.exact,
         RFL.patterns,
       ),
-    ).toEqual(["model", "maxFixAttempts", "convergeNewIssues", "convergeRounds"]);
+    ).toEqual(["maxFixAttempts", "convergeNewIssues", "convergeRounds"]);
     expect(
       findFlattenedArgKeys(
         { action: "run", name: "review-fix-loop", args: { model: "ds-flash", maxFixAttempts: 3 }, convergeRounds: 3 },

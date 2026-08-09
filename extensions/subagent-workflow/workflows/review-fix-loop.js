@@ -44,7 +44,6 @@ parameters:
     maxFixAttempts: { type: integer, default: 2, minimum: 1 }
     convergeNewIssues: { type: integer, default: 1, minimum: 1 }
     convergeRounds: { type: integer, default: 2, minimum: 1 }
-    model: { type: string }
     reviewPrompt: { type: string }
     fixPrompt: { type: string }
     fallowScan: { type: boolean, default: false }
@@ -115,7 +114,7 @@ const {
 for (const key of Object.keys($ARGS)) {
   if (VALID_ARG_KEYS.has(key)) continue;
   if (/^batch\d+$/.test(key)) continue;
-  fail("未知参数: " + key + "（合法参数: targetType/target/batch1..batchN/agents/batchNames/reviewPrompt/fixPrompt/autoCommit/maxRounds/stuckThreshold/model/skipCleanAgents/recheckAfterFix/fixAgent/maxFixAttempts/convergeNewIssues/convergeRounds）");
+  fail("未知参数: " + key + "（合法参数: targetType/target/batch1..batchN/agents/batchNames/reviewPrompt/fixPrompt/autoCommit/maxRounds/stuckThreshold/skipCleanAgents/recheckAfterFix/fixAgent/maxFixAttempts/convergeNewIssues/convergeRounds）");
 }
 
 const targetType = $ARGS.targetType;
@@ -162,7 +161,7 @@ const FIX_DEF = FIX_AGENT_RAW ? resolveAgentDefs([FIX_AGENT_RAW])[0] : null;
 const maxFixAttempts = coerceInt($ARGS.maxFixAttempts, 2);
 const convergeNewIssues = coerceInt($ARGS.convergeNewIssues, 1);
 const convergeRounds = coerceInt($ARGS.convergeRounds, 2);
-const MODEL = typeof $ARGS.model === "string" && $ARGS.model.trim() ? $ARGS.model.trim() : undefined;
+const MODEL = $MODEL;
 
 // base 锁定（RC-6，5.6）：git-diff 场景 run 启动时锁定 base commit，全程用锁定 hash 构造
 // diff 指令，防止 run 期间 base ref 被更新导致各轮 diff 范围不一致。rev-parse 失败（非 git

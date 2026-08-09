@@ -91,6 +91,12 @@ const WorkflowParams = Type.Object({
   error: Type.Optional(
     Type.String({ description: "Error/reason message (optional, used with abort)" }),
   ),
+  model: Type.Optional(Type.String({
+    description: "Run-level model override in 'provider/modelId' format. When set, all agents spawned by this run inherit it by default (unless a per-call agent() opts.model is set). Omit to inherit the main agent's model.",
+  })),
+  thinkingLevel: Type.Optional(Type.String({
+    description: "Run-level thinkingLevel override (off/minimal/low/medium/high/xhigh/max). All agents in this run inherit it by default. Omit to inherit the main agent's thinking level.",
+  })),
 });
 
 type WorkflowToolParams = Static<typeof WorkflowParams>;
@@ -114,6 +120,12 @@ const TOOL_TOP_LEVEL = new Set([
   "tokens",
   "time",
   "error",
+  // Run-level overrides (Option B): excluded from flattening detection so a
+  // workflow that declares its own `model`/`thinkingLevel` parameter does not
+  // trip a false "belongs inside args" warning when the tool's top-level fields
+  // are present. They flow via workerData → $MODEL/$THINKING_LEVEL globals.
+  "model",
+  "thinkingLevel",
 ]);
 
 /**
@@ -317,10 +329,11 @@ export function registerWorkflowTool(
       "run: pass the absolute .js path from <available_workflows> <location> as name, then start in background (no user confirmation needed).",
       "Do NOT poll status after starting — results appear automatically via notifyDone.",
       "Call shapes (JSON): " +
-      "- run: {\"action\":\"run\",\"name\":\"<script>\",\"args\":{...},\"tokens\":N,\"time\":N}. " +
+      "- run: {\"action\":\"run\",\"name\":\"<script>\",\"args\":{...},\"tokens\":N,\"time\":N,\"model\":\"<provider/modelId>\",\"thinkingLevel\":\"<level>\"}. " +
       "- status: {\"action\":\"status\"}. " +
       "- pause/resume/abort: {\"action\":\"pause\",\"runId\":\"<id>\"} (abort optional: ,\"error\":\"<reason>\"}).",
       "Budget: Do NOT set tokens/time unless the user explicitly requests a limit. Built-in workflows run unlimited by default.",
+      "Model/thinkingLevel: omit by default (inherit main agent's model). Only set model/thinkingLevel when the user explicitly requests a specific model or thinking depth for this run.",
       "Anti-patterns: Flattening args sub-fields (task/items/...) to the top level — they belong inside args. Calling {\"action\":\"run\"} without name.",
       "CRITICAL: For orchestration patterns, ALWAYS use action:run with an existing built-in " +
       "name — NEVER use workflow-script action:generate to recreate patterns already covered " +
@@ -484,6 +497,8 @@ export async function actionRun(
         scriptPath: script.path,
         description: script.meta.description,
         parameters: script.meta.parameters,
+        model: params.model,
+        thinkingLevel: params.thinkingLevel,
       },
       deps,
       signal,

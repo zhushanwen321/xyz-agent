@@ -35,6 +35,20 @@ export interface RunSpec {
   readonly parameters?: Record<string, unknown>;
   /** 调用方传入的参数（worker 内通过 $ARGS 访问）。 */
   readonly args: Record<string, unknown>;
+ /**
+ * Run 级 model override（Option B：经 workerData → worker global $MODEL → agent() fallback）。
+ *
+ * undefined = 继承主 agent 模型（零配置默认）。设置时该 run 内所有 agent() 调用默认继承
+ * （除非 per-call 显式指定 model）。注意：不 merge 进 args（对称单路径注入），
+ * 而是经 worker-script-builder 注入为 $MODEL worker global。
+ */
+  readonly model?: string;
+ /**
+ * Run 级 thinkingLevel override（Option B：经 workerData → worker global $THINKING_LEVEL）。
+ *
+ * undefined = 继承主 agent thinkingLevel。取值范围由 THINKING_ORDER SSOT 派生（含 max）。
+ */
+  readonly thinkingLevel?: string;
  /** Token 预算上限（未设或 0 = 不限制，见 Budget 守卫）。 */
   readonly budgetTokens?: number;
  /** 时间预算上限（ms，wall-clock，由 lifecycle.scheduleTimeBudget 调度）。 */

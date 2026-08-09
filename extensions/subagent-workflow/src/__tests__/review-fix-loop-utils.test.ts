@@ -56,7 +56,7 @@ describe("VALID_ARG_KEYS（未知参数 fail-fast 白名单）", () => {
     expect([...VALID_ARG_KEYS].sort()).toEqual([
       "_runId", "agents", "autoCommit", "batchNames", "convergeNewIssues",
       "convergeRounds", "fixAgent", "fixPrompt", "maxFixAttempts", "maxRounds",
-      "model", "recheckAfterFix", "reviewPrompt", "skipCleanAgents",
+      "recheckAfterFix", "reviewPrompt", "skipCleanAgents",
       "stuckThreshold", "target", "targetType",
     ]);
   });

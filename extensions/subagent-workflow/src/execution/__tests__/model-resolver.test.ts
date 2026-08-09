@@ -278,6 +278,20 @@ describe("resolveModel — not-found error suggests similar models (B)", () => {
     expect(msg).toMatch(/models\.json/);
     expect(msg).not.toMatch(/Similar available models/); // auth 错误不列 model
   });
+
+  it("P1: resolves model passed with ':max' suffix (THINKING_ORDER includes 'max')", () => {
+    const m = makeModel({ id: "mock-model", provider: "p1", reasoning: true, thinkingLevelMap: { max: 4 } });
+    const reg = makeRegistry([m]);
+    const r = resolveModel(
+      { name: "worker", systemPrompt: "" },
+      reg,
+      { model: "p1/mock-model:max" },
+      ctxModel,
+    );
+    expect(r.model).toBeTruthy();
+    expect(r.model.id).toBe("mock-model");
+    expect(r.thinkingLevel).toBe("max");
+  });
 });
 
 describe("availableThinkingLevels", () => {
@@ -291,6 +305,12 @@ describe("availableThinkingLevels", () => {
     expect(
       availableThinkingLevels({ reasoning: true, thinkingLevelMap: { off: 0, high: 2, low: 1, xhigh: 3 } }),
     ).toEqual(["off", "low", "high", "xhigh"]);
+  });
+
+  it("P2: includes 'max' as the last level (THINKING_ORDER SSOT derived)", () => {
+    const levels = availableThinkingLevels({ reasoning: true, thinkingLevelMap: { off: 0, low: 1, high: 2, xhigh: 3, max: 4 } });
+    expect(levels).toEqual(["off", "low", "high", "xhigh", "max"]);
+    expect(levels.slice(-3)).toEqual(["high", "xhigh", "max"]);
   });
 });
 

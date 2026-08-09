@@ -13,7 +13,7 @@ const path = require("path");
 const TARGET_TYPES = ["git-diff", "file", "dir", "text"];
 const VALID_ARG_KEYS = new Set([
   "targetType", "target", "agents", "batchNames", "reviewPrompt", "fixPrompt",
-  "autoCommit", "maxRounds", "stuckThreshold", "model", "skipCleanAgents",
+  "autoCommit", "maxRounds", "stuckThreshold", "skipCleanAgents",
   "recheckAfterFix", "fixAgent", "maxFixAttempts", "convergeNewIssues", "convergeRounds", "_runId",
 ]);
 

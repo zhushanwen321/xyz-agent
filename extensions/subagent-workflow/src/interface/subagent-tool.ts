@@ -16,6 +16,7 @@ import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { type Static, Type } from "typebox";
 
 import { SLUG_MAX_LENGTH } from "../execution/execute-options-mapper.ts";
+import { THINKING_ORDER } from "../execution/model-resolver.ts";
 import { getSubagentService } from "../execution/subagent-service.ts";
 import type { SubagentToolResult } from "../execution/types.ts";
 import { extractAgentName } from "./format.ts";
@@ -91,7 +92,9 @@ const SubagentParams = Type.Object({
   model: Type.Optional(Type.String({
     description: 'Model override in "provider/modelId" format. Resolution order (top wins): (1) this param, (2) agent .md frontmatter model, (3) the main agent\'s current model (zero-config default). An explicit model (param or frontmatter) that is missing or unauthorized THROWS — there is no silent fallback to the main model. Omit this param to inherit the main model.',
   })),
-  thinkingLevel: Type.Optional(StringEnum(["off", "minimal", "low", "medium", "high", "xhigh"] as const)),
+  thinkingLevel: Type.Optional(StringEnum(THINKING_ORDER, {
+    description: "Thinking depth override (derived from THINKING_ORDER SSOT, includes 'max'). Omit to inherit the main agent's thinking level.",
+  })),
   skillPath: Type.Optional(Type.String()),
   appendSystemPrompt: Type.Optional(Type.Array(Type.String())),
   schema: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
