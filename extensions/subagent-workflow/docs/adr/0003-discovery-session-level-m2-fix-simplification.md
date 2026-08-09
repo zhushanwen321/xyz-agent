@@ -24,6 +24,12 @@ ADR-0002 删 AgentRegistry 快照（loadByPath 路径直读）已消除 v3 原�
 
 从根上消除「路径被当内容」的可能（不再产生路径中间态），而非在下游加路径检测兜底。
 
+**实施修正（R1 design-review 发现）**：原设计是「agent systemPrompt + schema SO 指令都内容直传」。design-review 查证发现 `resolveIdentity`（execution 层）经 `getAgentConfig`（=loadByPath，返回完整 AgentConfig 含 systemPrompt/model/tools/thinkingLevel）+ `resolveModel` **已完整覆盖 agent ref 处理**。若 agent 正文也直传 appendSystemPrompt，会与 resolveIdentity 的 `agentConfig.systemPrompt`（session-runner L646 注入）**双重注入**，还会把层 2 `agentConfig.model` 错误提升为层 1 显式 override。
+
+正确实现（已落地）：`resolveAgentOpts` **删除整个 agent 处理块**，agent ref 整体移交 `resolveIdentity`；`resolveAgentOpts` 只处理 schema SO 指令（内容直传修 M2）+ skill。这同时消除双重注入 + model 层级混乱，连带删除 `state.agentRegistry` 透传链（回归单一 registry 源）。
+
+**M2 影响面修正**：非原描述的「agent 人设 + SO 指令都丢」（agent 人设经 `agentConfig` 通道本就正常），实际是「**schema SO 指令丢失**」（schema 指令经路径垃圾从未进入子进程）。
+
 ### D2: 临时文件机制精简（M2 修复连带）
 
 M2 修复后，`activeTempFiles` Set / `cleanupAllTempFiles` / `resolveAgentOpts` 的 `sessionDir`+`activeTempFiles` 参数**全部冗余**，删除：
