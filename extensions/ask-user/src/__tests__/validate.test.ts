@@ -172,21 +172,15 @@ describe("validateInput", () => {
 // 目标（任务核心）：弱模型误用 "options":["A","B"] 不能被 schema 层干报错拦死，
 // 必须能进 validateInput 拿到带 Correct 正例的友好文案。Value.Check 是 Pi 运行时
 // TypeCompiler.Check 的等价校验（同一引擎），这里直接断言 schema 行为。
+// 原 3 用例缩减为 2（TC-03）："string options then caught by validateInput..." 与
+// V-17 逐字重复（同 options:["Postgres","SQLite"]、同 3 断言），已删除；
+// 保留的 2 用例是分层增量——V-17 只测 validateInput 层，此 describe 测 schema→validate 链路。
 describe("schema-vs-validate integration (options 字符串下沉)", () => {
 	it("string options PASS the schema layer (reach execute, not raw ajv error)", () => {
 		const malformed = {
 			questions: [{ question: "Which DB?", options: ["Postgres", "SQLite"] }],
 		};
 		expect(Value.Check(InputSchema, malformed)).toBe(true);
-	});
-
-	it("string options then caught by validateInput with a friendly Correct example", () => {
-		const result = validateInput([
-			{ question: "Which DB?", options: ["Postgres", "SQLite"] },
-		]);
-		expect(result).not.toBeNull();
-		expect(result).toContain("objects, not strings");
-		expect(result).toContain('Correct: "options":[{"label"');
 	});
 
 	it("well-formed object options still pass schema AND validateInput", () => {

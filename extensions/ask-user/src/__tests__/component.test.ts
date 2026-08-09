@@ -141,19 +141,28 @@ describe("AskUserComponent — multi question tab nav", () => {
 		expect(result.val!.answers["Q1"]).toEqual({ selected: ["B"], other: null });
 	});
 
-	it("C-15: leaving multi-select tab auto-confirms answered selection", () => {
-		// Use 2 questions: Q1 single, Q2 multi-select
-		const twoQ: Question[] = [
-			{ question: "Q1", header: "First", options: [{ label: "A" }, { label: "B" }] },
-			{ question: "Q2", header: "Second", options: [{ label: "X" }, { label: "Y" }], multiSelect: true },
+	it("C-15/C-S3: leaving multi-select tab auto-confirms answered selection (Submit 直达 + 中间 tab)", () => {
+		// C-15 与 C-S3 合并（TC-04）：两用例同走 handleOptionsInput ←/→ → gotoTab →
+		// autoConfirmIfAnswered()（component.ts:420-421 同一分支），并入后保留双方独有断言：
+		// - C-15：multi-select toggle 后 → 直达 Submit tab → Enter 提交成功（all confirmed）
+		// - C-S3：multi-select toggle 后 → 切到中间 tab（非 Submit）auto-confirm 也生效
+		const threeQ: Question[] = [
+			{ question: "Q1", header: "First", options: [{ label: "A" }, { label: "B" }], multiSelect: true },
+			{ question: "Q2", header: "Second", options: [{ label: "X" }, { label: "Y" }] },
+			{ question: "Q3", header: "Third", options: [{ label: "M" }, { label: "N" }], multiSelect: true },
 		];
-		const { c, result } = make(twoQ);
-		c.handleInput(ENTER); // Q1 select A → Q2
-		c.handleInput(" ");   // Q2 toggle X (no Enter-confirm)
-		c.handleInput(RIGHT); // → Submit, should auto-confirm Q2
-		c.handleInput(ENTER); // Submit (all confirmed)
-		expect(result.val!.answers["Q1"]).toEqual({ selected: ["A"], other: null });
+		const { c, result } = make(threeQ);
+		// C-S3 路径：Q1 multi toggle A（不 Enter-confirm）→ RIGHT 切到中间 tab Q2 → Q1 被 auto-confirm
+		c.handleInput(" ");   // Q1 toggle A
+		c.handleInput(RIGHT); // → Q2（中间 tab），auto-confirm Q1
+		c.handleInput(ENTER); // Q2 select X → Q3
+		// C-15 路径：Q3 multi toggle M（不 Enter-confirm）→ RIGHT 直达 Submit → Q3 被 auto-confirm
+		c.handleInput(" ");   // Q3 toggle M
+		c.handleInput(RIGHT); // → Submit，auto-confirm Q3
+		c.handleInput(ENTER); // Submit（all confirmed：Q1/Q3 由 auto-confirm，Q2 由 Enter-confirm）
+		expect(result.val!.answers["Q1"]).toEqual({ selected: ["A"], other: null }); // auto-confirm 生效（C-S3 断言）
 		expect(result.val!.answers["Q2"]).toEqual({ selected: ["X"], other: null });
+		expect(result.val!.answers["Q3"]).toEqual({ selected: ["M"], other: null }); // auto-confirm 生效（C-15 断言）
 	});
 
 	it("C-S1: multi-select Enter 同时选中光标项再确认（与单选 Enter 对称）", () => {
@@ -166,21 +175,7 @@ describe("AskUserComponent — multi question tab nav", () => {
 		expect(result.val!.answers["Which features?"]).toEqual({ selected: ["Search"], other: null });
 	});
 
-	it("C-S3: auto-confirm（←/→ 切 tab）", () => {
-		// S-3 锁定：多选 toggle 后 ←/→ 切走 auto-confirm
-		const twoQMulti: Question[] = [
-			{ question: "Q1", header: "First", options: [{ label: "A" }, { label: "B" }], multiSelect: true },
-			{ question: "Q2", header: "Second", options: [{ label: "X" }, { label: "Y" }] },
-		];
-		const { c, result } = make(twoQMulti);
-		c.handleInput(" "); // Q1 toggle A
-		c.handleInput(RIGHT); // → Q2，auto-confirm Q1
-		// 验证：当前在 Q2。Q2 选 X → Submit
-		c.handleInput(ENTER); // Q2 select X → Submit
-		c.handleInput(ENTER); // Submit
-		expect(result.val!.answers["Q1"]).toEqual({ selected: ["A"], other: null }); // auto-confirm 生效
-		expect(result.val!.answers["Q2"]).toEqual({ selected: ["X"], other: null });
-	});
+
 
 	it("C-REG-R6: Other 录入→重进清空→Submit 应回到未答（confirmed 不变式）", () => {
 		// 回归 MUST_FIX: freeform 空 Enter 清空 freeTextValue 后须重置 confirmed=false

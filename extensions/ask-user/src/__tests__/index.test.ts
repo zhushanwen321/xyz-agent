@@ -627,7 +627,9 @@ describe("execute — RPC mode (askUserInteract via select channel)", () => {
 		expect(result.details.answers["Which tools?"]).toEqual({ selected: ["A", "C"], other: null });
 	});
 
-	it("R-3: Other free text → appended to answer parts", async () => {
+	// R-3 用例名（TC-03）：旧措辞（parseAnswerParts 时代的拼接语义）残留，
+	// 断言已结构化（{selected, other} 分离），更名为实际契约：AnswerValue.other 独立字段。
+	it("R-3: Other free text → AnswerValue.other 独立字段", async () => {
 		const tool = getTool();
 		// 单选 Postgres + Other "Custom DB"
 		const protoAnswers = JSON.stringify({
