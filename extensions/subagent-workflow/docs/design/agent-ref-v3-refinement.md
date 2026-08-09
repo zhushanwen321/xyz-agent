@@ -87,7 +87,7 @@ session-runner.runSpawn:
   - 删 `cleanupAllTempFiles` 函数
 - `models/types.ts`：`AgentCallOpts` 旧路径数组字段（`?: string[]`）→ `appendSystemPrompt?: string[]`（内容语义）
 - `execute-options-mapper.ts`：mapper 从「路径数组→内容字段」改名映射降为透传（`appendSystemPrompt: opts.appendSystemPrompt`）；更新 L37 注释
-- `error-recovery.ts` L284-289：`resolveAgentOpts` 调用删 `sessionDir`/`activeTempFiles` 实参；`hasResolverDeps` 判定收敛（只需 `agentRegistry`）
+- `error-recovery.ts`：`resolveAgentOpts` 签名收敛为单参数 `(opts)`，删除 `agentRegistry`/`sessionDir`/`activeTempFiles` 全部入参；`hasResolverDeps` 判定整体移除（agent ref 处理移交 resolveIdentity 后，resolver 不再依赖 agentRegistry）
 - `ports.ts` L132-140：`LifecycleDeps` 删 `activeTempFiles?: Set<string>`；更新注释
 - `index.ts`：删 `import { cleanupAllTempFiles }`；删 `session_shutdown` 里的 `cleanupAllFiles(...)` 调用
 - **探针测试（新增）** `m2-append-content-probe.test.ts`：断言 `resolveAgentOpts` 返回的 `appendSystemPrompt` 长度恒 1、仅含 SO 指令内容（`structured-output` 关键词）、不含路径（无 `/var/folders` / `/tmp/`）、不含 agent 正文（agent ref 原样保留不被消费）

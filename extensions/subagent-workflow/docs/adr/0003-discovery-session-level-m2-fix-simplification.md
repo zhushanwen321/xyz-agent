@@ -9,7 +9,7 @@
 
 ADR-0002 实施后，对照 `fix-workflow-input-agent-md` 分支的 v3 设计文档做交叉验证，发现四处实现差距，其中一处是真实运行时 bug：
 
-1. **M2 传递链 bug（真实，继承自 ADR-0002 前）**：`agent-opts-resolver` 把 agent systemPrompt 与 schema SO 指令各写成临时文件，产出 `systemPromptFiles`（**路径数组**）；`execute-options-mapper` 直接赋给 `appendSystemPrompt`；`session-runner.ts:651` `appendParts.push(...opts.appendSystemPrompt)` 把**路径字符串当文本**拼进最终 append 文件。结果：子进程收到的 `--append-system-prompt` 文件含 `/var/folders/.../agent-prompt-xxx.md` 路径垃圾，agent 人设与结构化输出约束**实际从未进入子进程**。`execute-options-mapper.ts:37` 的注释（「M2: ... 需被 session-runner 消费」）承诺了正确行为，但代码未兑现——典型的「读注释就信、没跑探针」。
+1. **M2 传递链 bug（真实，继承自 ADR-0002 前）**：`agent-opts-resolver` 把 agent systemPrompt 与 schema SO 指令各写成临时文件，产出 `systemPromptFiles`（**路径数组**）；`execute-options-mapper` 直接赋给 `appendSystemPrompt`；`session-runner.ts:651` `appendParts.push(...opts.appendSystemPrompt)` 把**路径字符串当文本**拼进最终 append 文件。结果：子进程收到的 `--append-system-prompt` 文件含 `/var/folders/.../agent-prompt-xxx.md` 路径垃圾，schema SO 指令正文从未进入子进程（路径被当文本拼接）；agent 人设经 agentConfig 通道本已正常到达，但伴随路径垃圾冗余（双重注入）。`execute-options-mapper.ts:37` 的注释（「M2: ... 需被 session-runner 消费」）承诺了正确行为，但代码未兑现——典型的「读注释就信、没跑探针」。
 2. **发现注入每 turn 重扫**：注入器挂 `before_agent_start`，每 turn 调 `discoverResources` 扫 7 源 + 读全部文件解析 frontmatter。与 pi skill 的 session 级发现节奏不一致，且每 turn 无谓 IO。
 3. **info action 冗余**：注入段（name/description/location）+ `read <location>` 脚本文件已覆盖全部信息需求，info 是 read 的子集。
 4. **review-fix-loop 路径错误延迟暴露**：`parseAgentRefs` 纯字符串解析，路径错误要到 agent-call 时 `loadByPath` 失败才暴露。
