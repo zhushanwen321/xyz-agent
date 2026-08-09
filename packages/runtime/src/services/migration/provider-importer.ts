@@ -39,6 +39,8 @@ import { parseProviders } from './provider-parser.js'
 // sa3 F1：内置 provider 模板（B4 铁律——只取 name/api/baseUrl 补全定义，**不复制 models**，
 // 内置 model 由 pi catalog 无条件加载，复制会与内置升级漂移）。
 import builtinData from '../../generated/builtin-providers.json'
+import { isCatalogProvider } from '../provider-catalog.js'
+import type { AuthStorage } from '../auth/auth-storage.js'
 
 /**
  * previewImport 的成功返回（importId 供 Step2 applyImport 用 + 脱敏 preview 供前端渲染）。
@@ -179,7 +181,11 @@ export function previewImport(
  *
  * 安全：upsertProvider 写入的 config 不含 _ 前缀元数据（对象解构剥离）；apiKey 明文从缓存透传。
  */
-export function applyImport(importId: string, selectedIds: string[]): ApplyImportSuccess | ImportError {
+export async function applyImport(
+  importId: string,
+  selectedIds: string[],
+  authStorage?: AuthStorage,
+): ApplyImportSuccess | ImportError {
   // W1：输入校验（防 WS 异常 payload 导致 crash）
   if (typeof importId !== 'string' || !importId.trim()) {
     return { error: { code: 'INVALID_REQUEST', message: 'importId is required' } }
@@ -198,7 +204,7 @@ export function applyImport(importId: string, selectedIds: string[]): ApplyImpor
   const imported: ProviderImportedItem[] = []
   let failedCount = 0
 
-  // ══ 组 1：models.json 已定义的 provider（现有逻辑）══
+  // ══ 组 1：models.json 已定义的 provider（分体系处理）══
   for (const provider of entry.providers) {
     // 只处理用户勾选的 provider
     if (!selectedIds.includes(provider._sourceName)) continue
@@ -209,6 +215,28 @@ export function applyImport(importId: string, selectedIds: string[]): ApplyImpor
       continue
     }
 
+    // catalog 分路：pi 内置 provider 定义的秘钥归 auth.json，不建 models.json 条目
+    if (isCatalogProvider(provider._sourceName) && authStorage) {
+      try {
+        if (provider.apiKey && provider.apiKey !== '') {
+          await authStorage.set(provider._sourceName, { type: 'api_key', key: provider.apiKey })
+        }
+        // catalog 提供定义——即使无 apiKey 也标记 imported（catalog 定义即可用）
+        imported.push({ id: provider._sourceName, name: provider._sourceName, status: 'imported' })
+        continue
+      } catch (e) {
+        imported.push({
+          id: provider._sourceName,
+          name: provider._sourceName,
+          status: 'failed',
+          reason: e instanceof Error ? e.message : String(e),
+        })
+        failedCount++
+        continue
+      }
+    }
+
+    // 自定义 provider 或 authStorage 未注入：写 models.json 全配置（现有行为）
     try {
       // 剥离 _ 前缀元数据（对象解构，剩余即干净的 PiProviderConfig）
       const { _sourceName, _apiKeyExtracted, _credentialType, _envVarName, _warnings, ...piConfig } = provider
@@ -225,11 +253,7 @@ export function applyImport(importId: string, selectedIds: string[]): ApplyImpor
     }
   }
 
-  // ══ 组 2：孤儿凭据（sa3 F1，B.3/B.4）══
-  // 勾选的孤儿凭据用内置模板补全定义：只写 {name, api, baseUrl, apiKey}，**不写 models 数组**
-  // （B4 铁律：内置 model 由 pi catalog 无条件加载，复制快照会与 pi-ai 升级漂移）。
-  // apiKey 只在 plaintext/env/command 态落盘（env-bundle/oauth/missing 态不写，避免
-  // resolveConfigValueOrThrow 硬抛错——与组 1 的 parser 行为一致）。
+  // ══ 组 2：孤儿凭据（sa3 F1，分体系处理：catalog → auth.json，否则 → models.json 模板）══
   for (const oc of entry.orphanCredentials) {
     if (!selectedIds.includes(oc.providerId)) continue
 
@@ -241,14 +265,33 @@ export function applyImport(importId: string, selectedIds: string[]): ApplyImpor
 
     const tpl = matchBuiltinTemplate(oc.providerId)
     if (!tpl) {
-      // preview 时未匹配的孤儿凭据已进 warnings（不可勾选），此处防御兜底（缓存期模板变化）
       imported.push({ id: oc.providerId, name: oc.providerId, status: 'failed', reason: 'no built-in template match' })
       failedCount++
       continue
     }
 
+    // catalog 分路：孤儿凭据本质是 pi catalog provider 的 auth.json 凭据
+    if (isCatalogProvider(oc.providerId) && authStorage) {
+      try {
+        if (oc.apiKey !== undefined && oc.apiKey !== '') {
+          await authStorage.set(oc.providerId, { type: 'api_key', key: oc.apiKey })
+        }
+        imported.push({ id: oc.providerId, name: oc.providerId, status: 'imported' })
+        continue
+      } catch (e) {
+        imported.push({
+          id: oc.providerId,
+          name: oc.providerId,
+          status: 'failed',
+          reason: e instanceof Error ? e.message : String(e),
+        })
+        failedCount++
+        continue
+      }
+    }
+
+    // authStorage 未注入时 fallback：写 models.json 模板（现有行为）
     try {
-      // B4 铁律：只写模板定义（name/api/baseUrl）+ 凭据，不写 models
       const config: PiProviderConfig = {
         name: tpl.name,
         api: tpl.api,

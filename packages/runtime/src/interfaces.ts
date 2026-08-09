@@ -337,7 +337,7 @@ export interface IConfigService {
    * @param selectedIds 用户勾选导入的 provider id 列表（对应源里的 provider 名）。
    * @returns 成功 { result }；缓存过期/不存在 { error: { code: 'PREVIEW_EXPIRED', message } }。
    */
-  applyImportProviders(importId: string, selectedIds: string[]): { result: ProviderImportResult } | { error: { code: string; message: string } }
+  applyImportProviders(importId: string, selectedIds: string[]): Promise<{ result: ProviderImportResult } | { error: { code: string; message: string } }>
   /** pi agent 配置目录（settings.json/agents/skills 所在地）。 */
   getPiAgentDir(): string
   /** xyz-agent 配置根目录（~/.xyz-agent/，plugins/session-data 所在地）。 */

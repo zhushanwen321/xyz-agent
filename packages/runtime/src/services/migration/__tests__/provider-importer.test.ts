@@ -30,8 +30,15 @@ vi.mock('../../../infra/pi/pi-provider-store.js', () => ({
   upsertProvider: vi.fn(() => ({})),
 }))
 
+
+// mock provider-catalog：默认 isCatalogProvider 返回 false（保持现有自定义 provider 行为）
+vi.mock('../../provider-catalog.js', () => ({
+  isCatalogProvider: vi.fn(() => false),
+}))
+
 // ── import（在 mock 之后，拿到 mock 版本）──────────────────────────
 import { previewImport, applyImport } from '../provider-importer.js'
+import { isCatalogProvider } from '../../provider-catalog.js'
 import { parseProviders } from '../provider-parser.js'
 import { getProviderNames, upsertProvider } from '../../../infra/pi/pi-provider-store.js'
 import { _resetCacheForTest } from '../preview-cache.js'
@@ -72,7 +79,7 @@ describe('provider-importer', () => {
   })
 
   // ── T3：脱敏红线 —— preview 不含 apiKey 明文 ──────────────────
-  it('T3: previewImport 返回的 JSON 不含 fixture 的 apiKey 值（脱敏）', () => {
+  it('T3: previewImport 返回的 JSON 不含 fixture 的 apiKey 值（脱敏）', async () => {
     const fixture = [fp({ _sourceName: 'leaky' })]
     vi.mocked(parseProviders).mockReturnValue(result(fixture))
 
@@ -90,7 +97,7 @@ describe('provider-importer', () => {
   })
 
   // ── T4：apply 剥离 _ 前缀元数据 ──────────────────────────────
-  it('T4: applyImport 调 upsertProvider 时 config 不含 _ 开头字段', () => {
+  it('T4: applyImport 调 upsertProvider 时 config 不含 _ 开头字段', async () => {
     const fixture = [
       fp({ _sourceName: 'A' }),
       fp({ _sourceName: 'B', apiKey: 'sk-B-key' }),
@@ -99,7 +106,7 @@ describe('provider-importer', () => {
 
     const prev = previewImport('pi')
     if (!('importId' in prev)) throw new Error('preview should succeed')
-    const applyOut = applyImport(prev.importId, ['A', 'B'])
+    const applyOut = await applyImport(prev.importId, ['A', 'B'])
 
     expect('result' in applyOut).toBe(true)
     expect(upsertProvider).toHaveBeenCalledTimes(2)
@@ -114,7 +121,7 @@ describe('provider-importer', () => {
   })
 
   // ── T5：冲突检测（duplicate-id → skipped）────────────────────
-  it('T5: existingIds 含 foo → preview conflict=duplicate-id, apply status=skipped', () => {
+  it('T5: existingIds 含 foo → preview conflict=duplicate-id, apply status=skipped', async () => {
     vi.mocked(parseProviders).mockReturnValue(result([fp({ _sourceName: 'foo' })]))
     vi.mocked(getProviderNames).mockReturnValue(['foo'])
 
@@ -122,7 +129,7 @@ describe('provider-importer', () => {
     if (!('preview' in prev)) throw new Error('preview should succeed')
     expect(prev.preview.providers[0].conflict).toBe('duplicate-id')
 
-    const applyOut = applyImport(prev.importId, ['foo'])
+    const applyOut = await applyImport(prev.importId, ['foo'])
     if (!('result' in applyOut)) throw new Error('apply should succeed')
     expect(applyOut.result.imported).toHaveLength(1)
     expect(applyOut.result.imported[0]).toMatchObject({ id: 'foo', status: 'skipped' })
@@ -131,7 +138,7 @@ describe('provider-importer', () => {
   })
 
   // ── T6：upsertProvider 部分失败（A failed, B/C imported, failedCount=1）──
-  it('T6: upsertProvider 对 A 抛错 → A failed, B/C imported, failedCount=1', () => {
+  it('T6: upsertProvider 对 A 抛错 → A failed, B/C imported, failedCount=1', async () => {
     vi.mocked(parseProviders).mockReturnValue(
       result([
         fp({ _sourceName: 'A' }),
@@ -147,7 +154,7 @@ describe('provider-importer', () => {
 
     const prev = previewImport('pi')
     if (!('importId' in prev)) throw new Error('preview should succeed')
-    const applyOut = applyImport(prev.importId, ['A', 'B', 'C'])
+    const applyOut = await applyImport(prev.importId, ['A', 'B', 'C'])
 
     if (!('result' in applyOut)) throw new Error('apply should succeed')
     const byId = Object.fromEntries(applyOut.result.imported.map((i) => [i.id, i]))
@@ -159,7 +166,7 @@ describe('provider-importer', () => {
   })
 
   // ── T7：源未安装 → SOURCE_NOT_INSTALLED ──────────────────────
-  it('T7: parseProviders 返回 null → previewImport 返回 SOURCE_NOT_INSTALLED', () => {
+  it('T7: parseProviders 返回 null → previewImport 返回 SOURCE_NOT_INSTALLED', async () => {
     vi.mocked(parseProviders).mockReturnValue(null)
 
     const out = previewImport('claude')
@@ -172,8 +179,8 @@ describe('provider-importer', () => {
   })
 
   // ── T7b：applyImport 缓存过期 → PREVIEW_EXPIRED ───────────────
-  it('T7b: importId 不存在（缓存过期）→ applyImport 返回 PREVIEW_EXPIRED', () => {
-    const out = applyImport('nonexistent-import-id', ['A'])
+  it('T7b: importId 不存在（缓存过期）→ applyImport 返回 PREVIEW_EXPIRED', async () => {
+    const out = await applyImport('nonexistent-import-id', ['A'])
 
     expect('error' in out).toBe(true)
     if ('error' in out) {
@@ -183,16 +190,16 @@ describe('provider-importer', () => {
   })
 
   // ── T8：apply 后缓存删除（一次性，防 importId 复用）──────────
-  it('applyImport 成功后删缓存——再次 apply 同 importId 返回 PREVIEW_EXPIRED', () => {
+  it('applyImport 成功后删缓存——再次 apply 同 importId 返回 PREVIEW_EXPIRED', async () => {
     vi.mocked(parseProviders).mockReturnValue(result([fp({ _sourceName: 'A' })]))
 
     const prev = previewImport('pi')
     if (!('importId' in prev)) throw new Error('preview should succeed')
-    const first = applyImport(prev.importId, ['A'])
+    const first = await applyImport(prev.importId, ['A'])
     expect('result' in first).toBe(true)
 
     // 第二次 apply 同 importId → 缓存已被删 → PREVIEW_EXPIRED
-    const second = applyImport(prev.importId, ['A'])
+    const second = await applyImport(prev.importId, ['A'])
     expect('error' in second).toBe(true)
     if ('error' in second) {
       expect(second.error.code).toBe('PREVIEW_EXPIRED')
@@ -200,14 +207,14 @@ describe('provider-importer', () => {
   })
 
   // ── T9：selectedIds 过滤——未勾选的 provider 不写 ─────────────
-  it('applyImport 仅处理 selectedIds 勾选的 provider（未勾选不调 upsertProvider）', () => {
+  it('applyImport 仅处理 selectedIds 勾选的 provider（未勾选不调 upsertProvider）', async () => {
     vi.mocked(parseProviders).mockReturnValue(
       result([fp({ _sourceName: 'A' }), fp({ _sourceName: 'B' })]),
     )
 
     const prev = previewImport('pi')
     if (!('importId' in prev)) throw new Error('preview should succeed')
-    const out = applyImport(prev.importId, ['A']) // 只勾选 A
+    const out = await applyImport(prev.importId, ['A']) // 只勾选 A
 
     if (!('result' in out)) throw new Error('apply should succeed')
     expect(upsertProvider).toHaveBeenCalledTimes(1)
@@ -217,7 +224,7 @@ describe('provider-importer', () => {
   })
 
   // ── B2：parseError 透出到 preview.parseError ───────────────────
-  it('B2: parsed 含 parseError → previewImport 返回的 preview 含 parseError', () => {
+  it('B2: parsed 含 parseError → previewImport 返回的 preview 含 parseError', async () => {
     vi.mocked(parseProviders).mockReturnValue({
       providers: [],
       parseError: 'cannot parse models.json: unexpected token',
@@ -232,7 +239,7 @@ describe('provider-importer', () => {
   })
 
   // ── B2b：parsed 含顶层 warnings → preview.warnings 透出 ─────────
-  it('B2b: parsed 含顶层 warnings → previewImport 返回的 preview.warnings 透出', () => {
+  it('B2b: parsed 含顶层 warnings → previewImport 返回的 preview.warnings 透出', async () => {
     vi.mocked(parseProviders).mockReturnValue({
       providers: [fp({ _sourceName: 'A' })],
       warnings: ['provider X: protocol google-generative-ai not supported, skipped'],
@@ -248,7 +255,7 @@ describe('provider-importer', () => {
   })
 
   // ── W4/W5：部分失败时缓存不被删除（failedCount > 0 仍可重试）─────
-  it('W4/W5: applyImport 部分失败 → 缓存保留，再次 apply 同 importId 仍可取到', () => {
+  it('W4/W5: applyImport 部分失败 → 缓存保留，再次 apply 同 importId 仍可取到', async () => {
     vi.mocked(parseProviders).mockReturnValue(
       result([fp({ _sourceName: 'A' }), fp({ _sourceName: 'B' })]),
     )
@@ -262,7 +269,7 @@ describe('provider-importer', () => {
     if (!('importId' in prev)) throw new Error('preview should succeed')
 
     // 第一次 apply：A 失败 → failedCount=1 → 缓存不删
-    const first = applyImport(prev.importId, ['A', 'B'])
+    const first = await applyImport(prev.importId, ['A', 'B'])
     expect('result' in first).toBe(true)
     if ('result' in first) {
       expect(first.result.failedCount).toBe(1)
@@ -272,18 +279,18 @@ describe('provider-importer', () => {
     // 让 upsertProvider 在第二次都对 A 仍失败（保持 mock），B 现在冲突？不——
     // existingIds 此时含 B（已导入）。设为含 B，第二次 B 应 skipped，A 仍 failed。
     vi.mocked(getProviderNames).mockReturnValue(['B'])
-    const second = applyImport(prev.importId, ['A', 'B'])
+    const second = await applyImport(prev.importId, ['A', 'B'])
     expect('result' in second).toBe(true) // 关键：不是 PREVIEW_EXPIRED，缓存仍在
   })
 
   // ── S6：selectedIds 含不存在 id → 返回 failed 条目 + failedCount 计数 ──
-  it('S6: selectedIds 含 preview 中不存在的 id → 返回 failed 条目 reason=not found in preview', () => {
+  it('S6: selectedIds 含 preview 中不存在的 id → 返回 failed 条目 reason=not found in preview', async () => {
     vi.mocked(parseProviders).mockReturnValue(result([fp({ _sourceName: 'A' })]))
 
     const prev = previewImport('pi')
     if (!('importId' in prev)) throw new Error('preview should succeed')
 
-    const out = applyImport(prev.importId, ['A', 'ghost'])
+    const out = await applyImport(prev.importId, ['A', 'ghost'])
     if (!('result' in out)) throw new Error('apply should succeed')
 
     const byId = Object.fromEntries(out.result.imported.map((i) => [i.id, i]))
@@ -294,8 +301,8 @@ describe('provider-importer', () => {
   })
 
   // ── W1：applyImport 入参非法 → INVALID_REQUEST ─────────────────
-  it('W1: applyImport importId 为空字符串 → INVALID_REQUEST', () => {
-    const out = applyImport('', ['A'])
+  it('W1: applyImport importId 为空字符串 → INVALID_REQUEST', async () => {
+    const out = await applyImport('', ['A'])
     expect('error' in out).toBe(true)
     if ('error' in out) {
       expect(out.error.code).toBe('INVALID_REQUEST')
@@ -303,16 +310,16 @@ describe('provider-importer', () => {
     }
   })
 
-  it('W1: applyImport importId 非字符串 → INVALID_REQUEST', () => {
-    const out = applyImport(123 as unknown as string, ['A'])
+  it('W1: applyImport importId 非字符串 → INVALID_REQUEST', async () => {
+    const out = await applyImport(123 as unknown as string, ['A'])
     expect('error' in out).toBe(true)
     if ('error' in out) {
       expect(out.error.code).toBe('INVALID_REQUEST')
     }
   })
 
-  it('W1: applyImport selectedIds 非数组 → INVALID_REQUEST', () => {
-    const out = applyImport('some-id', 'not-an-array' as unknown as string[])
+  it('W1: applyImport selectedIds 非数组 → INVALID_REQUEST', async () => {
+    const out = await applyImport('some-id', 'not-an-array' as unknown as string[])
     expect('error' in out).toBe(true)
     if ('error' in out) {
       expect(out.error.code).toBe('INVALID_REQUEST')
@@ -320,8 +327,8 @@ describe('provider-importer', () => {
     }
   })
 
-  it('W1: applyImport selectedIds 含非字符串元素 → INVALID_REQUEST', () => {
-    const out = applyImport('some-id', ['A', 123] as unknown as string[])
+  it('W1: applyImport selectedIds 含非字符串元素 → INVALID_REQUEST', async () => {
+    const out = await applyImport('some-id', ['A', 123] as unknown as string[])
     expect('error' in out).toBe(true)
     if ('error' in out) {
       expect(out.error.code).toBe('INVALID_REQUEST')
@@ -442,7 +449,7 @@ describe('provider-importer', () => {
     expect(serialized).not.toContain('$OPENAI_API_KEY')
   })
 
-  it('sa3-i4: 孤儿凭据 env-bundle/oauth 态 → apiKeyExtracted=false（有凭据但 Phase 1 不落盘）', () => {
+  it('sa3-i4: 孤儿凭据 env-bundle/oauth 态 → apiKeyExtracted=false（有凭据但 Phase 1 不落盘）', async () => {
     vi.mocked(parseProviders).mockReturnValue({
       providers: [],
       orphanCredentials: [
@@ -460,7 +467,7 @@ describe('provider-importer', () => {
     expect(byId['github-copilot'].name).toBeDefined()
   })
 
-  it('sa3-i5: applyImport 勾选孤儿凭据 → 用内置模板补全定义写 models.json（B4 铁律：含 name/api/baseUrl/apiKey，models 数组 undefined）', () => {
+  it('sa3-i5: applyImport 勾选孤儿凭据 → 用内置模板补全定义写 models.json（B4 铁律：含 name/api/baseUrl/apiKey，models 数组 undefined）', async () => {
     vi.mocked(parseProviders).mockReturnValue({
       providers: [],
       orphanCredentials: [fo({ providerId: 'openai', credentialType: 'plaintext', apiKey: 'sk-orphan-apply-789' })],
@@ -468,7 +475,7 @@ describe('provider-importer', () => {
 
     const prev = previewImport('pi')
     if (!('importId' in prev)) throw new Error('preview should succeed')
-    const applyOut = applyImport(prev.importId, ['openai'])
+    const applyOut = await applyImport(prev.importId, ['openai'])
 
     expect('result' in applyOut).toBe(true)
     if (!('result' in applyOut)) return
@@ -485,7 +492,7 @@ describe('provider-importer', () => {
     expect(config.models).toBeUndefined() // B4：不复制 models，内置 model 由 pi catalog 自动加载
   })
 
-  it('sa3-i6: applyImport 孤儿 env-bundle/oauth 态 → provider 定义照常导入但 apiKey 不写（与组 1 一致）', () => {
+  it('sa3-i6: applyImport 孤儿 env-bundle/oauth 态 → provider 定义照常导入但 apiKey 不写（与组 1 一致）', async () => {
     vi.mocked(parseProviders).mockReturnValue({
       providers: [],
       orphanCredentials: [
@@ -496,7 +503,7 @@ describe('provider-importer', () => {
 
     const prev = previewImport('pi')
     if (!('importId' in prev)) throw new Error('preview should succeed')
-    const applyOut = applyImport(prev.importId, ['deepseek', 'github-copilot'])
+    const applyOut = await applyImport(prev.importId, ['deepseek', 'github-copilot'])
 
     expect('result' in applyOut).toBe(true)
     const calls = vi.mocked(upsertProvider).mock.calls
@@ -510,7 +517,7 @@ describe('provider-importer', () => {
     expect(copilotCfg.models).toBeUndefined()
   })
 
-  it('sa3-i7: applyImport 未勾选的孤儿凭据不导入', () => {
+  it('sa3-i7: applyImport 未勾选的孤儿凭据不导入', async () => {
     vi.mocked(parseProviders).mockReturnValue({
       providers: [],
       orphanCredentials: [fo({ providerId: 'openai' }), fo({ providerId: 'anthropic' })],
@@ -518,14 +525,14 @@ describe('provider-importer', () => {
 
     const prev = previewImport('pi')
     if (!('importId' in prev)) throw new Error('preview should succeed')
-    const applyOut = applyImport(prev.importId, ['openai'])
+    const applyOut = await applyImport(prev.importId, ['openai'])
 
     expect('result' in applyOut).toBe(true)
     expect(upsertProvider).toHaveBeenCalledTimes(1)
     expect(vi.mocked(upsertProvider).mock.calls[0][0]).toBe('openai')
   })
 
-  it('sa3-i8: applyImport 孤儿凭据与 models.json 冲突（preview 后已存在）→ skipped + 不调 upsertProvider', () => {
+  it('sa3-i8: applyImport 孤儿凭据与 models.json 冲突（preview 后已存在）→ skipped + 不调 upsertProvider', async () => {
     vi.mocked(parseProviders).mockReturnValue({
       providers: [],
       orphanCredentials: [fo({ providerId: 'openai' })],
@@ -534,7 +541,7 @@ describe('provider-importer', () => {
 
     const prev = previewImport('pi')
     if (!('importId' in prev)) throw new Error('preview should succeed')
-    const applyOut = applyImport(prev.importId, ['openai'])
+    const applyOut = await applyImport(prev.importId, ['openai'])
 
     if (!('result' in applyOut)) throw new Error('apply should succeed')
     expect(applyOut.result.imported[0]).toMatchObject({ id: 'openai', status: 'skipped' })

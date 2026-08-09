@@ -224,7 +224,7 @@ export class SettingsMessageHandler {
           this.ctx.sendError(ws, 'invalid_payload', 'config.applyImportProviders requires a non-empty "importId" string and "selectedIds" string array', msg.id)
           return true
         }
-        const result = this.ctx.configService.applyImportProviders(importId, selectedIds as string[])
+        const result = await this.ctx.configService.applyImportProviders(importId, selectedIds as string[])
         this.ctx.reply(ws, msg.id, 'config.providersImported', result)
         // 仅成功时广播（result 有 result 字段 = 成功；有 error 字段 = 失败，不广播）
         if ('result' in result) {

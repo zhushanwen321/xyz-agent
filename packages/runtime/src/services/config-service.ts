@@ -166,7 +166,7 @@ export class ConfigService implements IConfigService {
      * I8：deleteProvider 时同步清 auth.json（防 OAuth token 永久残留）。
      * 可选注入：未注入时两处清理 no-op（测试/无 OAuth 场景）。
      */
-    private authStorage?: Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync'>,
+    private authStorage?: Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'set' | 'hasCredentialSync'>,
   ) {}
 
   // ── Provider CRUD ──────────────────────────────────────────────
@@ -733,8 +733,8 @@ export class ConfigService implements IConfigService {
     return previewImportImpl(source, process.env.HOME || homedir())
   }
 
-  applyImportProviders(importId: string, selectedIds: string[]): { result: ProviderImportResult } | { error: { code: string; message: string } } {
-    return applyImportImpl(importId, selectedIds)
+  async applyImportProviders(importId: string, selectedIds: string[]): Promise<{ result: ProviderImportResult } | { error: { code: string; message: string } }> {
+    return applyImportImpl(importId, selectedIds, this.authStorage)
   }
 
   // ── System prompt config（FR-6/FR-7，ADR-0044）──
