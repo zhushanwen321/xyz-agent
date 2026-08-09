@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
 	addTodos,
 	formatTodoLine,
+	formatTodoList,
 	migrateTodo,
 	type Todo,
 	updateTodos,
@@ -25,8 +26,8 @@ describe("Todo data model", () => {
 		expect(migrated.id).toBe(1);
 	});
 
-	it("should include exactly four valid statuses", () => {
-		expect(VALID_STATUSES).toEqual(["pending", "in_progress", "completed", "cancelled"]);
+	it("VALID_STATUSES 仅三态（pending/in_progress/completed）", () => {
+		expect(VALID_STATUSES).toEqual(["pending", "in_progress", "completed"]);
 	});
 
 	it("should migrate verifying → in_progress", () => {
@@ -53,10 +54,12 @@ describe("Todo data model", () => {
 		expect(migrated.status).toBe("pending");
 	});
 
-	it("should preserve cancelled status (FR-1 four-state)", () => {
+	it("TC1: 历史 cancelled → completed（三态化降级，不丢数据）", () => {
 		const todo = { id: 1, text: "dropped", status: "cancelled" } as unknown as Todo;
 		const migrated = migrateTodo(todo);
-		expect(migrated.status).toBe("cancelled");
+		expect(migrated.status).toBe("completed");
+		expect(migrated.text).toBe("dropped");
+		expect(migrated.id).toBe(1);
 	});
 
 	it("should throw on null/primitive input (dirty data guard)", () => {
@@ -71,7 +74,6 @@ describe("Todo data model", () => {
 describe("todo add", () => {
 	it("should add todos with sequential IDs", () => {
 		const result = addTodos([], 1, ["A", "B"]);
-		expect(result.error).toBeUndefined();
 		expect(result.newTodos).toHaveLength(2);
 		expect(result.newTodos[0].id).toBe(1);
 		expect(result.newTodos[1].id).toBe(2);
@@ -81,26 +83,24 @@ describe("todo add", () => {
 	it("should append to existing todos", () => {
 		const existing: Todo[] = [{ id: 1, text: "existing", status: "pending" }];
 		const result = addTodos(existing, 2, ["new task"]);
-		expect(result.error).toBeUndefined();
 		expect(result.newTodos).toHaveLength(2);
 		expect(result.newTodos[1].id).toBe(2);
 		expect(result.newTodos[1].text).toBe("new task");
 		expect(result.newNextId).toBe(3);
 	});
 
-	it("should return error when texts is empty", () => {
-		const result = addTodos([], 1, []);
-		expect(result.error).toBe("texts required");
+	it("TC6: should throw when texts is empty array", () => {
+		expect(() => addTodos([], 1, [])).toThrow(/requires texts/);
 	});
 
-	it("should return error when all texts are empty after trim", () => {
-		const result = addTodos([], 1, ["  ", " "]);
-		expect(result.error).toBe("all texts empty");
+	it("TC6: should throw when any text is empty after trim (不再静默 filter)", () => {
+		// C1 决策：任一项 trim 后空串 → throw，不再 filter 静默丢弃
+		expect(() => addTodos([], 1, ["  ", "valid"])).toThrow(/empty or whitespace-only/);
+		expect(() => addTodos([], 1, ["  ", " "])).toThrow(/empty or whitespace-only/);
 	});
 
 	it("should trim texts", () => {
 		const result = addTodos([], 1, ["  new task  "]);
-		expect(result.error).toBeUndefined();
 		expect(result.newTodos[0].text).toBe("new task");
 	});
 });
@@ -130,6 +130,18 @@ describe("todo update batch", () => {
 		expect(result.updatedTodos[2].text).toBe("C done");
 	});
 
+	it("TC6: trims text on apply（批量路径）", () => {
+		const todos: Todo[] = [{ id: 1, text: "A", status: "pending" }];
+		const result = updateTodos(todos, [{ id: 1, text: "  B updated  " }]);
+		expect(result.error).toBeUndefined();
+		expect(result.updatedTodos[0].text).toBe("B updated");
+	});
+
+	it("TC6: should throw when any batch text is empty after trim (不再静默跳过)", () => {
+		const todos: Todo[] = [{ id: 1, text: "A", status: "pending" }];
+		expect(() => updateTodos(todos, [{ id: 1, text: "   " }])).toThrow(/empty or whitespace-only/);
+	});
+
 	it("should reject duplicate ids in updates[]", () => {
 		const todos: Todo[] = [{ id: 1, text: "A", status: "pending" }];
 		const result = updateTodos(todos, [
@@ -157,24 +169,31 @@ describe("todo update batch", () => {
 		const result = updateTodos(todos, [{ id: 1, status: "banana" }]);
 		expect(result.error).toContain("invalid status");
 	});
-
-	it("cancelled todo 不可恢复（status 更新拒绝）", () => {
-		const todos: Todo[] = [{ id: 1, text: "dropped", status: "cancelled" }];
-		const result = updateTodos(todos, [{ id: 1, status: "pending" }]);
-		expect(result.error).toBe("id 1 is cancelled");
-		expect(result.resultText).toContain("cannot be restored");
-		expect(result.updatedTodos).toEqual(todos);
-	});
 });
 
 // ── handleSingleUpdate 守卫（tool 单条路径）────
 
 describe("handleSingleUpdate guards (tool single path)", () => {
-	it("cancelled todo + status → cannot restore", () => {
+	it("TC6: text='  ' (纯空格) → throw (trim 后空串拒绝，不只判 ===)", () => {
 		const state = createTodoSessionState();
-		state.todos = [{ id: 1, text: "dropped", status: "cancelled" }];
-		expect(() => handleSingleUpdate(state, { action: "update", id: 1, status: "pending" }))
-			.toThrow("#1 is cancelled (cannot restore)");
+		state.todos = [{ id: 1, text: "x", status: "pending" }];
+		expect(() => handleSingleUpdate(state, { action: "update", id: 1, text: "   " }))
+			.toThrow(/empty or whitespace-only/);
+	});
+
+	it("trims text on apply", () => {
+		const state = createTodoSessionState();
+		state.todos = [{ id: 1, text: "x", status: "pending" }];
+		handleSingleUpdate(state, { action: "update", id: 1, text: "  hello  " });
+		expect(state.todos[0].text).toBe("hello");
+	});
+
+	it("TC11: 最后一个 completed 时无 'All todos completed' 收尾文案", () => {
+		const state = createTodoSessionState();
+		state.todos = [{ id: 1, text: "only", status: "in_progress" }];
+		const out = handleSingleUpdate(state, { action: "update", id: 1, status: "completed" });
+		expect(out).not.toContain("All todos completed");
+		expect(out).toContain("Updated todo #1");
 	});
 });
 
@@ -210,7 +229,7 @@ describe("completed without interception", () => {
 	});
 });
 
-// ── formatTodoLine ──────────────────────────────────
+// ── formatTodoLine / formatTodoList ──────────────────
 
 describe("formatTodoLine", () => {
 	it("should format pending todo", () => {
@@ -227,10 +246,20 @@ describe("formatTodoLine", () => {
 		const todo: Todo = { id: 3, text: "task C", status: "completed" };
 		expect(formatTodoLine(todo)).toBe("[x] #3: task C");
 	});
+});
 
-	it("should format cancelled todo", () => {
-		const todo: Todo = { id: 4, text: "task D", status: "cancelled" };
-		expect(formatTodoLine(todo)).toBe("[-] #4: task D");
+describe("formatTodoList (TC3/TC5)", () => {
+	it("TC5: formats the full list by reusing formatTodoLine, joined by newline", () => {
+		const todos: Todo[] = [
+			{ id: 1, text: "A", status: "pending" },
+			{ id: 2, text: "B", status: "in_progress" },
+			{ id: 3, text: "C", status: "completed" },
+		];
+		expect(formatTodoList(todos)).toBe("[ ] #1: A\n[~] #2: B\n[x] #3: C");
+	});
+
+	it("empty list → empty string", () => {
+		expect(formatTodoList([])).toBe("");
 	});
 });
 
@@ -318,32 +347,6 @@ describe("widget rendering", () => {
 // ── agent_end logic (pure data) ─────────────────────
 
 describe("agent_end logic", () => {
-	it("should detect stall when no todo activity for threshold rounds", () => {
-		const STALL_THRESHOLD = 5;
-		const userMessageCount = 10;
-		const lastTodoCallCount = 3;
-		const todos: Todo[] = [{ id: 1, text: "pending task", status: "pending" }];
-
-		const isStalled =
-			todos.length > 0 &&
-			userMessageCount - lastTodoCallCount >= STALL_THRESHOLD;
-
-		expect(isStalled).toBe(true);
-	});
-
-	it("should detect reminder when interval elapsed", () => {
-		const REMINDER_INTERVAL = 2;
-		const userMessageCount = 5;
-		const lastTodoCallCount = 3;
-		const todos: Todo[] = [{ id: 1, text: "task", status: "pending" }];
-
-		const needsReminder =
-			todos.length > 0 &&
-			userMessageCount - lastTodoCallCount >= REMINDER_INTERVAL;
-
-		expect(needsReminder).toBe(true);
-	});
-
 	it("should auto-clear when all completed and delay rounds elapsed", () => {
 		const AUTO_CLEAR_DELAY_ROUNDS = 2;
 		const userMessageCount = 7;
