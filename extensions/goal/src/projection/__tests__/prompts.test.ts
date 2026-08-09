@@ -34,14 +34,13 @@ function makeState(overrides?: Partial<GoalRuntimeState>): GoalRuntimeState {
 // ── formatBudget 4 样式（FR-3.4 唯一收敛出口）────────
 
 describe("formatBudget — 4 styles (FR-3.4)", () => {
-	it("percent: Token + Time 百分比", () => {
+	it("percent: Token 百分比", () => {
 		const state = makeState({
-			budget: { tokenBudget: 1000, timeBudgetMinutes: 10 },
+			budget: { tokenBudget: 1000 },
 			tokensUsed: 500,
 		});
-		const out = formatBudget(state, 300, "percent"); // 300s = 5min / 10min = 50%
+		const out = formatBudget(state, 300, "percent");
 		expect(out).toContain("Token: 50%");
-		expect(out).toContain("Time: 50%");
 	});
 
 	it("percent: 无预算 → 空字符串", () => {
@@ -51,27 +50,25 @@ describe("formatBudget — 4 styles (FR-3.4)", () => {
 
 	it("line: 剩余/总量格式", () => {
 		const state = makeState({
-			budget: { tokenBudget: 1000, timeBudgetMinutes: 10 },
+			budget: { tokenBudget: 1000 },
 			tokensUsed: 300,
 		});
-		const out = formatBudget(state, 120, "line"); // 120s = 2min used, 8min remaining
+		const out = formatBudget(state, 120, "line");
 		expect(out).toContain("Tokens: 700/1000");
-		expect(out).toContain("Time: 8m/10m");
 	});
 
 	it("remaining: used/total (N remaining) 格式", () => {
 		const state = makeState({
-			budget: { tokenBudget: 1000, timeBudgetMinutes: 10 },
+			budget: { tokenBudget: 1000 },
 			tokensUsed: 400,
 		});
-		const out = formatBudget(state, 60, "remaining"); // 60s=1min used, 9min remaining
+		const out = formatBudget(state, 60, "remaining");
 		expect(out).toContain("Token: 400/1000 (600 remaining)");
-		expect(out).toContain("Time: 1m/10m (9m remaining)");
 	});
 
 	it("report: 多行 usage + duration", () => {
 		const state = makeState({
-			budget: { tokenBudget: 1000, timeBudgetMinutes: 10 },
+			budget: { tokenBudget: 1000 },
 			tokensUsed: 700,
 		});
 		const out = formatBudget(state, 125, "report"); // 125s = 2m5s
@@ -87,10 +84,10 @@ describe("formatBudget — 4 styles (FR-3.4)", () => {
 
 	it("remaining clamp: 超预算不出现负数", () => {
 		const state = makeState({
-			budget: { tokenBudget: 100, timeBudgetMinutes: 1 },
+			budget: { tokenBudget: 100 },
 			tokensUsed: 150, // 超 tokenBudget
 		});
-		const out = formatBudget(state, 120, "remaining"); // 120s 超 1min budget
+		const out = formatBudget(state, 120, "remaining");
 		expect(out).toContain("(0 remaining)"); // 不出现负数
 	});
 });
@@ -160,24 +157,15 @@ describe("continuationPrompt", () => {
 // ── budgetLimitPrompt ────────────────────────────────
 
 describe("budgetLimitPrompt", () => {
-	it("token 维度 → TOKEN budget 提示", () => {
+	it("token 预算 → TOKEN budget 提示", () => {
 		const state = makeState({
-			budget: { tokenBudget: 1000, timeBudgetMinutes: 10 },
+			budget: { tokenBudget: 1000 },
 			tokensUsed: 950,
 		});
-		const out = budgetLimitPrompt(state, "token", 60);
+		const out = budgetLimitPrompt(state);
 		expect(out).toContain("TOKEN budget");
 		expect(out).toContain("Tokens used: 950 / 1000");
 		expect(out).toContain("wrap up immediately");
-	});
-
-	it("time 维度 → time budget 提示", () => {
-		const state = makeState({
-			budget: { tokenBudget: 1000, timeBudgetMinutes: 10 },
-		});
-		const out = budgetLimitPrompt(state, "time", 540); // 540s = 9m
-		expect(out).toContain("time budget");
-		expect(out).toContain("Time elapsed: 9m0s / 10 min");
 	});
 });
 
@@ -201,7 +189,7 @@ describe("contextInjectionPrompt", () => {
 		const state = makeState({
 			status: "active",
 			currentTurnIndex: 2,
-			budget: { tokenBudget: 1000, timeBudgetMinutes: 10 },
+			budget: { tokenBudget: 1000 },
 			tokensUsed: 200,
 		});
 		const out = contextInjectionPrompt(state, 60);
@@ -222,7 +210,7 @@ describe("contextInjectionPrompt", () => {
 			successCriteria: "src/auth.ts uses JWT; pnpm test auth green; tsc --noEmit clean",
 			status: "active",
 			currentTurnIndex: 2,
-			budget: { tokenBudget: 1000, timeBudgetMinutes: 10 },
+			budget: { tokenBudget: 1000 },
 			tokensUsed: 200,
 		});
 		const out = contextInjectionPrompt(state, 60);
@@ -278,7 +266,7 @@ describe("successCriteria 注入（<successCriteria> 段 + 条件文案）", () 
 			successCriteria: "all tests green",
 			budget: { tokenBudget: 1000 },
 		});
-		const out = budgetLimitPrompt(state, "token", 0);
+		const out = budgetLimitPrompt(state);
 		expect(out).toContain("<successCriteria>");
 		expect(out).toContain("all tests green");
 		// 条件文案（budgetLimitPrompt 专属）

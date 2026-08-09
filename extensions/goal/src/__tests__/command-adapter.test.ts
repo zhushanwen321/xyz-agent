@@ -202,33 +202,12 @@ describe("handleGoalCommand — resume (FR-3 paused/blocked→active + G-014)", 
 			status: "blocked",
 			budget: {
 				tokenBudget: 1000,
-				timeBudgetMinutes: 30,
 			},
 			tokensUsed: 1200, // 已超 tokenBudget
 		});
 		await handleGoalCommand(h.pi, session, "resume", h.ctx);
 		expect(session.state!.status).toBe("budget_limited");
 		expect(notifyText(h).some((t) => t.includes("Token budget exhausted"))).toBe(true);
-	});
-
-	it("time 预算耗尽 → resume 转 time_limited（G-014）", async () => {
-		const h = makeHarness();
-		const session = createGoalSession();
-		session.state = makeActiveState({
-			status: "blocked",
-			timeStartedAt: 0,
-			budget: {
-				tokenBudget: 1000,
-				timeBudgetMinutes: 30,
-			},
-			tokensUsed: 100, // token 未超
-			timeUsedSeconds: 30 * 60, // 已超 timeBudgetMinutes*60
-		});
-		await handleGoalCommand(h.pi, session, "resume", h.ctx);
-		expect(session.state!.status).toBe("time_limited");
-		expect(notifyText(h).some((t) => t.includes("Time budget exhausted"))).toBe(true);
-		// 拒绝 resume：不触发 AI
-		expect(h.piCalls.some((c) => c.kind === "sendUser")).toBe(false);
 	});
 
 	it("非 paused/blocked 状态（active）→ 无需 resume", async () => {
@@ -408,14 +387,13 @@ describe("handleGoalCommand — set (提示词触发器 + #11/D25 拒绝非终�
 		expect(sendUserCalls[0]?.content).toContain("obj");
 	});
 
-	it("--tokens N --timeout M → 触发消息含 budget 值", async () => {
+	it("--tokens N → 触发消息含 budget 值", async () => {
 		const h = makeHarness();
 		const session = createGoalSession();
-		await handleGoalCommand(h.pi, session, "obj --tokens 5000 --timeout 30", h.ctx);
+		await handleGoalCommand(h.pi, session, "obj --tokens 5000", h.ctx);
 		const sendUserCalls = h.piCalls.filter((c) => c.kind === "sendUser");
 		expect(sendUserCalls).toHaveLength(1);
 		expect(sendUserCalls[0]?.content).toContain("5000");
-		expect(sendUserCalls[0]?.content).toContain("30");
 	});
 });
 

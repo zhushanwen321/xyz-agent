@@ -111,13 +111,6 @@ describe("finalizeGoal — history 写入矩阵", () => {
 		expect(ports.history.length).toBe(1);
 	});
 
-	it("time_limited → 写 history", () => {
-		const ports = makeFakePorts();
-		const state = makeState();
-		finalizeGoal(state, "time_limited", ports, { completedTasks: 0 });
-		expect(ports.history.length).toBe(1);
-	});
-
 	it("终态 goal 再 finalize → throw（查表非法转换）", () => {
 		const ports = makeFakePorts();
 		const state = makeState();
@@ -244,23 +237,6 @@ describe("persistAndUpdate — #5 budget 终态检查（事件路径单一检查
 		persistAndUpdate(session, ports);
 		// 仅 finalizeAndPersist 内部 1 次 appendState，不再走正常 appendState
 		expect(ports.states.length).toBe(1);
-	});
-
-	it("active + time 超额 → status 转 time_limited + 写 history", () => {
-		const session = createGoalSession();
-		session.state = {
-			...makeState(),
-			status: "active",
-			timeStartedAt: 0,
-			budget: { timeBudgetMinutes: 10 },
-			timeUsedSeconds: 600, // >= 10*60
-		};
-		const ports = makeFakePorts();
-		persistAndUpdate(session, ports);
-
-		expect(session.state!.status).toBe("time_limited");
-		expect(ports.history.length).toBe(1);
-		expect((ports.history[0] as { status: string }).status).toBe("time_limited");
 	});
 
 	it("非 active（blocked）→ 不触发 budget 检查，保持 blocked", () => {

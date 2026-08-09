@@ -108,16 +108,11 @@ describe("renderStatusLine", () => {
 		expect(text).toContain("⊗ Token budget exhausted");
 	});
 
-	it("time_limited → 含 ⏱ Time budget exhausted 后缀", () => {
-		const text = renderStatusLine(makeState({ status: "time_limited" }), theme);
-		expect(text).toContain("⏱ Time budget exhausted");
-	});
-
 	it("tokenBudget > 0 → 显示 token 百分比", () => {
 		const text = renderStatusLine(
 			makeState({
 				status: "active",
-				budget: { tokenBudget: 1000, timeBudgetMinutes: 0 },
+				budget: { tokenBudget: 1000 },
 				tokensUsed: 500,
 			}),
 			theme,
@@ -162,28 +157,27 @@ describe("renderWidgetLines", () => {
 		expect(lines[0]).toContain("◆ test objective");
 	});
 
-	it("tokenBudget + timeBudget → 含进度条行（used/total 格式）", () => {
+	it("tokenBudget → 含 token 进度条行（used/total 格式）", () => {
 		const lines = renderWidgetLines(
 			makeState({
 				status: "active",
-				budget: { tokenBudget: 1000, timeBudgetMinutes: 30 },
+				budget: { tokenBudget: 1000 },
 				tokensUsed: 250,
-				timeUsedSeconds: 540, // 9 min
+				timeUsedSeconds: 540,
 			}),
 			theme,
 		);
-		// 新格式：进度条 + used/total（缩写）
+		// token 进度条 + used/total（缩写）
 		expect(lines.some((l) => l.includes("Token:") && l.includes("250/1k"))).toBe(true);
-		expect(lines.some((l) => l.includes("Time:") && l.includes("9m/30min"))).toBe(true);
 	});
 
-	it("无预算 → 显示已消耗绝对值行（no budget）", () => {
+	it("无预算 → token 显示已消耗绝对值，time 显示纯耗时", () => {
 		const lines = renderWidgetLines(
 			makeState({ status: "active", tokensUsed: 5000, timeUsedSeconds: 120 }),
 			theme,
 		);
 		expect(lines.some((l) => l.includes("5k used (no budget)"))).toBe(true);
-		expect(lines.some((l) => l.includes("2m elapsed (no budget)"))).toBe(true);
+		expect(lines.some((l) => l.includes("2m elapsed"))).toBe(true);
 	});
 
 	it("有 successCriteria → 含 ✓ 摘要行", () => {

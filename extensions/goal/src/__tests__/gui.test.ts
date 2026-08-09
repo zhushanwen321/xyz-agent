@@ -101,18 +101,6 @@ describe("buildGoalGui", () => {
 		expect(gui.component.props.variant).toBe("success");
 	});
 
-	it("time 进度条：≥90% → danger", () => {
-		const gui = buildGoalGui(
-			makeState({
-				timeUsedSeconds: 5 * 60 + 1, // 5.01 min / 5 min budget
-				budget: { timeBudgetMinutes: 5 },
-			}),
-		);
-		const body = gui.component.props.body as { type: string; props: { label?: string; severity?: string } }[];
-		const timeBar = body.find((c) => c.type === "progress-bar" && c.props.label === "time")!;
-		expect(timeBar.props.severity).toBe("danger");
-	});
-
 	it("slug 缺省 → header 用 goalId 前 8 字符", () => {
 		const state = makeState({ slug: undefined, budget: { tokenBudget: 10000 } });
 		const gui = buildGoalGui(state);
@@ -123,14 +111,6 @@ describe("buildGoalGui", () => {
 
 	it("budget_limited 状态 → status severity danger（S#2）", () => {
 		const gui = buildGoalGui(makeState({ status: "budget_limited", budget: { tokenBudget: 10000 } }));
-		const body = gui.component.props.body as { type: string; props: { items: Array<{ label: string; severity: string }> } }[];
-		const stats = body.find((c) => c.type === "stats-line")!;
-		const statusItem = stats.props.items.find((i) => i.label === "status")!;
-		expect(statusItem.severity).toBe("danger");
-	});
-
-	it("time_limited 状态 → status severity danger（S#2）", () => {
-		const gui = buildGoalGui(makeState({ status: "time_limited", budget: { tokenBudget: 10000 } }));
 		const body = gui.component.props.body as { type: string; props: { items: Array<{ label: string; severity: string }> } }[];
 		const stats = body.find((c) => c.type === "stats-line")!;
 		const statusItem = stats.props.items.find((i) => i.label === "status")!;
@@ -167,13 +147,6 @@ describe("buildGoalGui", () => {
 		const body = gui.component.props.body as { type: string; props: { label?: string; severity?: string } }[];
 		const tokenBar = body.find((c) => c.type === "progress-bar" && c.props.label === "tokens")!;
 		expect(tokenBar.props.severity).toBe("warn");
-	});
-
-	it("time 消耗正好 70% → severity warn（边界 ≥，S#14）", () => {
-		const gui = buildGoalGui(makeState({ timeUsedSeconds: 7 * 60, budget: { timeBudgetMinutes: 10 } }));
-		const body = gui.component.props.body as { type: string; props: { label?: string; severity?: string } }[];
-		const timeBar = body.find((c) => c.type === "progress-bar" && c.props.label === "time")!;
-		expect(timeBar.props.severity).toBe("warn");
 	});
 
 	// ── I#1: tokenBudget=0 口径统一 ──

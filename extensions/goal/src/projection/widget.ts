@@ -7,11 +7,12 @@
  * - 工具函数 import 自 engine/budget.ts
  * - 时间计算基于 state.timeUsedSeconds（不含 Date.now() 副作用段）
  * - updateWidget(session, uiPort) 含 FR-6.6 hasUI 守卫
+ * - 仅 token 维度预算（time budget 已移除）；耗时仅作记账显示
  *
  * slug 精简（widget 显示优化）：
  * - 状态栏/侧边栏标题用 slug（AI 生成），无 slug fallback objective 截断。
  * - 完整 objective 仍注入 prompt（不在此显示），用户要看全文用 /goal status。
- * - budget 显示：配了预算显示 used/budget；没配显示已消耗绝对值（D-widget-3）。
+ * - budget 显示：配了 token 预算显示 used/budget；没配显示已消耗绝对值（D-widget-3）。
  */
 
 import {
@@ -22,7 +23,7 @@ import {
 	SECONDS_PER_MINUTE,
 	TOKEN_K_THRESHOLD,
 } from "../constants";
-import { getBudgetColor, getTimeUsagePercent, getTokenUsagePercent } from "../engine/budget";
+import { getBudgetColor, getTokenUsagePercent } from "../engine/budget";
 import { isTerminalStatus } from "../engine/goal";
 import type { GoalRuntimeState } from "../engine/types";
 import type { UiPort } from "../ports";
@@ -100,22 +101,18 @@ export function renderStatusLine(state: GoalRuntimeState, th: ThemeLike): string
 
 	let text = th.fg("accent", `◆ ${getTitle(state)}`) + th.fg("muted", ` Turn ${state.currentTurnIndex}`);
 
-	// Budget indicators：配了预算显示百分比，没配显示已消耗绝对值（D-widget-3）
+	// Budget indicators：配了 token 预算显示百分比，没配显示已消耗绝对值（D-widget-3）
 	if (state.budget.tokenBudget && state.budget.tokenBudget > 0) {
 		const pct = Math.round(getTokenUsagePercent(state));
 		text += th.fg(getBudgetColor(pct), ` | ${pct}% tokens`);
 	} else {
 		text += th.fg("dim", ` | ${formatTokens(state.tokensUsed)} tokens`);
 	}
-	if (state.budget.timeBudgetMinutes && state.budget.timeBudgetMinutes > 0) {
-		const pct = Math.round(getTimeUsagePercent(state, getElapsedSeconds(state)));
-		text += th.fg(getBudgetColor(pct), ` | ${pct}% time`);
-	} else {
-		text += th.fg("dim", ` | ${formatMinutes(getElapsedSeconds(state))}`);
-	}
+	// 耗时记账显示（time budget 已移除，仅显示累计耗时）
+	text += th.fg("dim", ` | ${formatMinutes(getElapsedSeconds(state))}`);
 
 	// Status suffix：非终态（paused = 用户暂停等待 resume / blocked = agent 报告卡住）
-	// + 终态（complete/budget_limited/time_limited）。paused 非终态，走 renderStatusLine。
+	// + 终态（complete/budget_limited）。paused 非终态，走 renderStatusLine。
 	switch (state.status) {
 		case "paused":
 			text += th.fg("warning", " | ⏸ Paused");
@@ -129,9 +126,6 @@ export function renderStatusLine(state: GoalRuntimeState, th: ThemeLike): string
 		case "budget_limited":
 			text += th.fg("error", " | ⊗ Token budget exhausted");
 			break;
-		case "time_limited":
-			text += th.fg("error", " | ⏱ Time budget exhausted");
-			break;
 	}
 
 	return text;
@@ -140,7 +134,7 @@ export function renderStatusLine(state: GoalRuntimeState, th: ThemeLike): string
 export function renderTerminalStatusLine(state: GoalRuntimeState, th: ThemeLike): string {
 	if (state.status === "cancelled") return "";
 
-	// GAP-12: 终态行维持现状——只显示状态后缀 + 有预算的维度百分比。
+	// GAP-12: 终态行维持现状——只显示状态后缀 + 有 token 预算的百分比。
 	// 终态 goal 已结束，显示「used (no budget)」绝对值意义不大。
 	let text = th.fg("accent", "◆ Goal");
 
@@ -152,21 +146,14 @@ export function renderTerminalStatusLine(state: GoalRuntimeState, th: ThemeLike)
 		case "budget_limited":
 			text += th.fg("error", " ⊗ Token budget exhausted");
 			break;
-		case "time_limited":
-			text += th.fg("error", " ⏱ Time budget exhausted");
-			break;
 		default:
 			break;
 	}
 
-	// 预算摘要（仅有预算的维度）
+	// 预算摘要（仅 token 维度）
 	if (state.budget.tokenBudget && state.budget.tokenBudget > 0) {
 		const pct = Math.round(getTokenUsagePercent(state));
 		text += th.fg(getBudgetColor(pct), ` | ${pct}% tokens`);
-	}
-	if (state.budget.timeBudgetMinutes && state.budget.timeBudgetMinutes > 0) {
-		const pct = Math.round(getTimeUsagePercent(state, getElapsedSeconds(state)));
-		text += th.fg(getBudgetColor(pct), ` | ${pct}% time`);
 	}
 
 	return text;
@@ -199,14 +186,8 @@ export function renderWidgetLines(state: GoalRuntimeState, th: ThemeLike): strin
 	} else {
 		lines.push(th.fg("dim", `  Token: ${formatTokens(state.tokensUsed)} used (no budget)`));
 	}
-	// Time 行：配预算显示 Xm/Ymin 进度条；没配显示已耗时绝对值
-	if (state.budget.timeBudgetMinutes && state.budget.timeBudgetMinutes > 0) {
-		const elapsed = getElapsedSeconds(state);
-		const pct = getTimeUsagePercent(state, elapsed) / PERCENT_FACTOR;
-		lines.push(`  Time: ${renderProgressBar(pct)} ${formatMinutes(elapsed)}/${state.budget.timeBudgetMinutes}min`);
-	} else {
-		lines.push(th.fg("dim", `  Time: ${formatMinutes(getElapsedSeconds(state))} elapsed (no budget)`));
-	}
+	// Time 行：累计耗时记账显示（time budget 已移除）
+	lines.push(th.fg("dim", `  Time: ${formatMinutes(getElapsedSeconds(state))} elapsed`));
 
 	return lines;
 }

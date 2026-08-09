@@ -104,7 +104,7 @@ function createViaHandler(
 	tool: CapturedTool,
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
-	params: { slug: string; objective: string; tokenBudget?: number; timeBudgetMinutes?: number },
+	params: { slug: string; objective: string; tokenBudget?: number },
 ): Promise<ExecuteResult> {
 	return tool.execute(
 		"call-1",
@@ -241,20 +241,6 @@ describe("goal_control execute — RPC __gui__ 注入分支", () => {
 		expect(statusItem!.severity).toBe("danger");
 	});
 
-	it("RPC + 有 time budget → __gui__ card 含 time progress-bar", async () => {
-		const { pi, ctx } = makeFixture("rpc");
-		const tool = captureTool(pi);
-		const result = await createViaHandler(tool, pi, ctx, {
-			slug: "time-budget",
-			objective: "time boxed",
-			timeBudgetMinutes: 30,
-		});
-		const gui = result.details.__gui__!;
-		expect(gui.component.type).toBe("card");
-		const body = gui.component.props.body as Array<{ type: string; props: { label?: string } }>;
-		const timeBar = body.find((c) => c.type === "progress-bar" && c.props.label === "time");
-		expect(timeBar).toBeDefined();
-	});
 });
 
 // ── 边界：非 RPC 模式（json/print）也不注入 __gui__ ──

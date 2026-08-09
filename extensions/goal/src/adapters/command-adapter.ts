@@ -148,16 +148,15 @@ function handleResume(pi: ExtensionAPI, session: GoalSession, ctx: ExtensionCont
 
 	const ports = buildPorts(pi, ctx);
 
-	// FR-8.3 G-014: resume 时 budget 重检
+	// FR-8.3 G-014: resume 时 budget 重检（仅 token 维度）
 	const resumeCheck = checkBudgetOnResume(state);
 	if (resumeCheck) {
-		const dim = resumeCheck.dimension;
 		// FR-8.7: 走 finalizeAndPersist 写 history（含 tick + transition + history + appendState），
 		// 勿用 transitionStatus + persistState（不写 history，goal 会从 /goal history 凭空消失）
-		finalizeAndPersist(state, dim === "token" ? "budget_limited" : "time_limited", 0, ports);
+		finalizeAndPersist(state, "budget_limited", 0, ports);
 		updateWidget(session, ports.ui);
 		ctx.ui.notify(
-			`${dim === "token" ? "Token" : "Time"} budget exhausted, cannot resume. Use /goal clear to reset.`,
+			"Token budget exhausted, cannot resume. Use /goal clear to reset.",
 			"warning",
 		);
 		return;
@@ -215,9 +214,7 @@ function handleHistory(ctx: ExtensionContext): void {
 					? "✗"
 					: h.status === "budget_limited"
 						? "⊗"
-						: h.status === "time_limited"
-							? "⏱"
-							: "?";
+						: "?";
 		// GAP-5: 标题优先用 slug（紧凑），无 slug fallback objective 截断（旧 entry 兼容）
 		const title = h.slug ?? (h.objective.length > OBJECTIVE_DISPLAY_LIMIT
 			? `${h.objective.slice(0, OBJECTIVE_TRUNCATE_KEEP)}...`
@@ -283,8 +280,6 @@ function handleUpdate(
 	state.budgetLimitSteeringSent = false;
 	state.tokenWarning70Sent = false;
 	state.tokenWarning90Sent = false;
-	state.timeWarning70Sent = false;
-	state.timeWarning90Sent = false;
 	// GAP-6: update 是重塑，旧 slug 已不匹配新 objective → 置空（widget fallback objective 截断）
 	state.slug = undefined;
 	// update 重塑后旧 successCriteria 可能不再完全匹配新 objective，但语义内容仍可部分适用。
@@ -317,7 +312,7 @@ function handleUpdate(
  * D25 守卫仍在此处预检：非终态旧 goal（active/paused/blocked）→ 拒绝，
  * 提示 /goal resume 或 /goal clear（避免 AI 在已有未完成 goal 时重复创建）。
  *
- * budget flag（--tokens/--timeout）写入消息体，让 AI 原样传给 create。
+ * budget flag（--tokens）写入消息体，让 AI 原样传给 create。
  */
 function handleSet(
 	pi: ExtensionAPI,
@@ -327,7 +322,7 @@ function handleSet(
 	ctx: ExtensionContext,
 ): void {
 	if (!objective || !objective.trim()) {
-		ctx.ui.notify("Usage: /goal <objective> [--tokens N] [--timeout N]", "warning");
+		ctx.ui.notify("Usage: /goal <objective> [--tokens N]", "warning");
 		return;
 	}
 
@@ -347,16 +342,10 @@ function handleSet(
 		ctx.ui.notify("Token budget must be greater than 0.", "warning");
 		return;
 	}
-	if (budgetOverrides?.timeBudgetMinutes !== undefined && budgetOverrides.timeBudgetMinutes <= 0) {
-		ctx.ui.notify("Time budget must be greater than 0.", "warning");
-		return;
-	}
 
 	// 构造引导 AI 创建 goal 的消息（含 objective + 可选 budget）
 	const budgetHints: string[] = [];
 	if (budgetOverrides?.tokenBudget) budgetHints.push(`tokenBudget: ${budgetOverrides.tokenBudget}`);
-	if (budgetOverrides?.timeBudgetMinutes)
-		budgetHints.push(`timeBudgetMinutes: ${budgetOverrides.timeBudgetMinutes}`);
 	const budgetLine = budgetHints.length > 0 ? `\nBudget: ${budgetHints.join(", ")}` : "";
 
 	const message =

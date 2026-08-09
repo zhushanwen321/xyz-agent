@@ -66,61 +66,36 @@ export function formatBudget(
 		return formatBudgetReport(state, timeUsedSeconds);
 	}
 	if (style === "percent") {
-		return formatBudgetPercent(state, timeUsedSeconds);
+		return formatBudgetPercent(state);
 	}
 	if (style === "line") {
-		return formatBudgetLine(state, timeUsedSeconds);
+		return formatBudgetLine(state);
 	}
-	return formatBudgetRemaining(state, timeUsedSeconds);
+	return formatBudgetRemaining(state);
 }
 
-function formatBudgetPercent(state: GoalRuntimeState, timeUsedSeconds: number): string {
-	const parts: string[] = [];
+function formatBudgetPercent(state: GoalRuntimeState): string {
 	if (state.budget.tokenBudget) {
 		const pct = Math.round((state.tokensUsed / state.budget.tokenBudget) * PERCENT_FACTOR);
-		parts.push(`Token: ${pct}%`);
+		return ` (Token: ${pct}%)`;
 	}
-	if (state.budget.timeBudgetMinutes) {
-		const pct = Math.round(
-			(timeUsedSeconds / (state.budget.timeBudgetMinutes * SECONDS_PER_MINUTE)) * PERCENT_FACTOR,
-		);
-		parts.push(`Time: ${pct}%`);
-	}
-	return parts.length > 0 ? ` (${parts.join(", ")})` : "";
+	return "";
 }
 
-function formatBudgetLine(state: GoalRuntimeState, timeUsedSeconds: number): string {
-	const parts: string[] = [];
+function formatBudgetLine(state: GoalRuntimeState): string {
 	if (state.budget.tokenBudget) {
 		const remaining = Math.max(state.budget.tokenBudget - state.tokensUsed, 0);
-		parts.push(`Tokens: ${remaining}/${state.budget.tokenBudget}`);
+		return ` | Tokens: ${remaining}/${state.budget.tokenBudget}`;
 	}
-	if (state.budget.timeBudgetMinutes) {
-		const remaining = Math.max(
-			state.budget.timeBudgetMinutes * SECONDS_PER_MINUTE - timeUsedSeconds,
-			0,
-		);
-		parts.push(`Time: ${Math.floor(remaining / SECONDS_PER_MINUTE)}m/${state.budget.timeBudgetMinutes}m`);
-	}
-	return parts.length > 0 ? ` | ${parts.join(" ")}` : "";
+	return "";
 }
 
-function formatBudgetRemaining(state: GoalRuntimeState, timeUsedSeconds: number): string {
-	const parts: string[] = [];
+function formatBudgetRemaining(state: GoalRuntimeState): string {
 	if (state.budget.tokenBudget) {
 		const remaining = Math.max(state.budget.tokenBudget - state.tokensUsed, 0);
-		parts.push(`Token: ${state.tokensUsed}/${state.budget.tokenBudget} (${remaining} remaining)`);
+		return `[Budget] Token: ${state.tokensUsed}/${state.budget.tokenBudget} (${remaining} remaining)`;
 	}
-	if (state.budget.timeBudgetMinutes) {
-		const remainingSec = Math.max(
-			state.budget.timeBudgetMinutes * SECONDS_PER_MINUTE - timeUsedSeconds,
-			0,
-		);
-		parts.push(
-			`Time: ${Math.floor(timeUsedSeconds / SECONDS_PER_MINUTE)}m/${state.budget.timeBudgetMinutes}m (${Math.floor(remainingSec / SECONDS_PER_MINUTE)}m remaining)`,
-		);
-	}
-	return parts.length > 0 ? `[Budget] ${parts.join(" | ")}` : "";
+	return "";
 }
 
 function formatBudgetReport(state: GoalRuntimeState, timeUsedSeconds: number): string {
@@ -176,20 +151,16 @@ export function continuationPrompt(state: GoalRuntimeState, timeUsedSeconds: num
 
 export function budgetLimitPrompt(
 	state: GoalRuntimeState,
-	limitType: "token" | "time",
-	timeUsedSeconds: number,
 ): string {
 	const objective = escapeXmlText(state.objective);
 	const criteria = successCriteriaBlock(state);
 
 	return (
 		`<goal_context>\n` +
-		`[GOAL — ${limitType === "token" ? "TOKEN budget" : "time budget"} almost exhausted]\n\n` +
+		`[GOAL — TOKEN budget almost exhausted]\n\n` +
 		`<objective>\n${objective}\n</objective>\n\n` +
 		(criteria ? `${criteria}\n` : "") +
-		(limitType === "token"
-			? `Tokens used: ${state.tokensUsed} / ${state.budget.tokenBudget ?? "unknown"}\n`
-			: `Time elapsed: ${Math.floor(timeUsedSeconds / SECONDS_PER_MINUTE)}m${Math.floor(timeUsedSeconds % SECONDS_PER_MINUTE)}s / ${state.budget.timeBudgetMinutes ?? "unknown"} min\n`) +
+		`Tokens used: ${state.tokensUsed} / ${state.budget.tokenBudget ?? "unknown"}\n` +
 		`\nYou must wrap up immediately:\n` +
 		`1. Check what remains and verify what is genuinely completed\n` +
 		`2. Only claim completion for work backed by concrete evidence` +

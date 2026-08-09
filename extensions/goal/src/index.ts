@@ -83,7 +83,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 
 	pi.registerCommand("goal", {
 		description:
-			"Goal-driven mode: /goal <objective> [--tokens N] [--timeout N] | /goal resume | /goal pause | /goal clear | /goal update <new-objective> [--criteria <text>] | /goal status | /goal history",
+			"Goal-driven mode: /goal <objective> [--tokens N] | /goal resume | /goal pause | /goal clear | /goal update <new-objective> [--criteria <text>] | /goal status | /goal history",
 		handler: async (args: string | undefined, ctx: ExtensionCommandContext) => {
 			await handleGoalCommand(pi, session, args, ctx);
 		},
@@ -192,7 +192,6 @@ export default function goalExtension(pi: ExtensionAPI) {
  */
 export interface GoalInitBudget {
 	tokenBudget?: number;
-	timeBudgetMinutes?: number;
 }
 
 /**

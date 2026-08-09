@@ -57,8 +57,6 @@ export function deserializeState(data: Record<string, unknown>): GoalRuntimeStat
 		lastBlockerReason: req("lastBlockerReason"),
 		tokenWarning70Sent: req("tokenWarning70Sent"),
 		tokenWarning90Sent: req("tokenWarning90Sent"),
-		timeWarning70Sent: req("timeWarning70Sent"),
-		timeWarning90Sent: req("timeWarning90Sent"),
 		lastTurnTokensUsed: req("lastTurnTokensUsed"),
 		currentTurnIndex: req("currentTurnIndex"),
 		completedAtTurnIndex: data.completedAtTurnIndex as number | undefined,

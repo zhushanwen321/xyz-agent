@@ -143,25 +143,11 @@ describe("handleCreate — slug+objective 必填 + 非终态守卫 + createGoal"
 		expect(ports.notifications[0]?.text).toContain("ship feature X");
 	});
 
-	it("objective 空 → throw（即使有 slug）", () => {
+	it("objective 空 → throw", () => {
 		const session = createGoalSession();
 		expect(() =>
-			handleCreate({ action: "create", slug: "x", objective: "   " }, session, makeFakePorts()),
+			handleCreate({ action: "create", slug: "x", objective: "   ", successCriteria: "done" }, session, makeFakePorts()),
 		).toThrow(/objective/);
-	});
-
-	it("slug 空 → throw（即使有 objective）", () => {
-		const session = createGoalSession();
-		expect(() =>
-			handleCreate({ action: "create", slug: "   ", objective: "do thing" }, session, makeFakePorts()),
-		).toThrow(/slug/);
-	});
-
-	it("slug 缺省 → throw", () => {
-		const session = createGoalSession();
-		expect(() =>
-			handleCreate({ action: "create", objective: "do thing" }, session, makeFakePorts()),
-		).toThrow(/slug/);
 	});
 
 	it("successCriteria 空 → throw（即使有 slug + objective）", () => {
@@ -240,29 +226,17 @@ describe("handleCreate — slug+objective 必填 + 非终态守卫 + createGoal"
 		).toThrow(/tokenBudget/);
 	});
 
-	it("timeBudgetMinutes <= 0 → throw", () => {
-		const session = createGoalSession();
-		expect(() =>
-			handleCreate(
-				{ action: "create", slug: "x", objective: "x", successCriteria: "done", timeBudgetMinutes: -5 },
-				session,
-				makeFakePorts(),
-			),
-		).toThrow(/timeBudgetMinutes/);
-	});
-
 	it("合法 budget → 合并进新 state", () => {
 		const session = createGoalSession();
 		const ports = makeFakePorts();
 
 		handleCreate(
-			{ action: "create", slug: "x", objective: "x", successCriteria: "done", tokenBudget: 8000, timeBudgetMinutes: 30 },
+			{ action: "create", slug: "x", objective: "x", successCriteria: "done", tokenBudget: 8000 },
 			session,
 			ports,
 		);
 
 		expect(session.state!.budget.tokenBudget).toBe(8000);
-		expect(session.state!.budget.timeBudgetMinutes).toBe(30);
 	});
 });
 

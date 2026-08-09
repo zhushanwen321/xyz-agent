@@ -106,15 +106,15 @@ export function persistAndUpdate(
 	// 避免对 paused/blocked/终态重复触发。checkBudgetOnTurnEnd 是 engine 纯函数，
 	// service 复用它不破坏纯 ports 设计（engine 是零 Pi 依赖纯函数层）。
 	if (session.state.status === "active") {
-		const budgetResult = checkBudgetOnTurnEnd(session.state, session.state.timeUsedSeconds);
+		const budgetResult = checkBudgetOnTurnEnd(session.state);
 		if (budgetResult.terminal) {
-			const dim = budgetResult.terminal.dimension;
 			// FR-3.3: 唯一终态序列入口（finalizeAndPersist 内部 tickState 是 no-op——
 			// 上面已 tick，且状态此时仍 active——+ finalizeGoal + appendState）。
 			// terminal 分支不再单独 appendState：finalizeAndPersist 已含终态 state 持久化。
+			// time budget 已移除，terminal 只可能是 token exceeded → budget_limited。
 			finalizeAndPersist(
 				session.state,
-				dim === "token" ? "budget_limited" : "time_limited",
+				"budget_limited",
 				0,
 				ports,
 			);
@@ -184,7 +184,7 @@ export function createGoal(
  * 3. ports.persistence.appendState(serializeState(state))（持久化终态 state）
  *
  * @param state runtime state（mutate）
- * @param terminalStatus 目标终态（complete / cancelled / budget_limited / time_limited）
+ * @param terminalStatus 目标终态（complete / cancelled / budget_limited）
  * @param completedTasks 已完成任务数（写入 history entry）
  * @param ports ServicePorts（persistence.appendHistory + appendState）
  */
@@ -305,6 +305,6 @@ export function applyEvent(
 
 export function checkResumeBudget(
 	state: GoalRuntimeState,
-): { type: "exceeded"; dimension: "token" | "time" } | null {
+): { type: "exceeded"; dimension: "token" } | null {
 	return checkBudgetOnResume(state);
 }

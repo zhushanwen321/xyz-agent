@@ -11,7 +11,7 @@ import {
 } from "../goal";
 import type { GoalStatus } from "../types";
 
-const TERMINAL: GoalStatus[] = ["complete", "budget_limited", "time_limited", "cancelled"];
+const TERMINAL: GoalStatus[] = ["complete", "budget_limited", "cancelled"];
 const NON_TERMINAL: GoalStatus[] = ["active", "paused", "blocked"]; // paused #2 新增
 const ALL = [...NON_TERMINAL, ...TERMINAL];
 
@@ -42,7 +42,6 @@ describe("transitionStatus — 合法转换返回 next", () => {
 		["active", "blocked"],
 		["active", "complete"],
 		["active", "budget_limited"],
-		["active", "time_limited"],
 		["active", "cancelled"],
 		["paused", "active"],
 		["paused", "cancelled"],
@@ -100,11 +99,9 @@ describe("createGoalState — 初始值", () => {
 	it("completedAtTurnIndex = undefined", () => {
 		expect(createGoalState("obj").completedAtTurnIndex).toBeUndefined();
 	});
-	// FR-6.2: 4 个独立预警 flag
+	// token 70/90 预警 flag（time budget 已移除）
 	it("tokenWarning70Sent = false", () => expect(createGoalState("obj").tokenWarning70Sent).toBe(false));
 	it("tokenWarning90Sent = false", () => expect(createGoalState("obj").tokenWarning90Sent).toBe(false));
-	it("timeWarning70Sent = false", () => expect(createGoalState("obj").timeWarning70Sent).toBe(false));
-	it("timeWarning90Sent = false", () => expect(createGoalState("obj").timeWarning90Sent).toBe(false));
 });
 
 describe("createGoalState — budget 合并", () => {
@@ -114,13 +111,5 @@ describe("createGoalState — budget 合并", () => {
 	});
 	it("tokenBudget override", () => {
 		expect(createGoalState("obj", { tokenBudget: 10000 }).budget.tokenBudget).toBe(10000);
-	});
-	it("timeBudgetMinutes override", () => {
-		expect(createGoalState("obj", { timeBudgetMinutes: 30 }).budget.timeBudgetMinutes).toBe(30);
-	});
-	it("多字段 override", () => {
-		const s = createGoalState("obj", { tokenBudget: 5000, timeBudgetMinutes: 30 });
-		expect(s.budget.tokenBudget).toBe(5000);
-		expect(s.budget.timeBudgetMinutes).toBe(30);
 	});
 });
