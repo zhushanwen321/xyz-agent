@@ -10,4 +10,4 @@ reviewer agent renamed to code-reviewer (BREAKING). Enhanced review agents with 
 - **doc-reviewer**: adversarial stance (verify every claim against source), strengthened Pass 2 mechanism tracing.
 - review-business-logic (project agent, not published): adversarial stance, root-cause category, systematic side-effects checklist.
 
-Note: source version (5.0.2) lags behind published npm (6.0.0). Sync with main before running changeset:version so major bump resolves to 7.0.0, not 6.0.0.
+Linked group (`@zhushanwen/pi-structured-output`, `@zhushanwen/pi-subagent-workflow`, `@zhushanwen/pi-ask-user`): companions are reference-bumped only (`updateInternalDependencies: patch`), no forced major — the major bump is scoped to `@zhushanwen/pi-subagent-workflow` (renames are contained to this package; structured-output / ask-user APIs are untouched).
