@@ -424,6 +424,61 @@ textarea {
 }
 
 /* ============================================================
+   浮层进出场过渡（reka data-state 驱动）
+   替代失效的 tailwindcss-animate utility（插件未安装，类不生成）。
+   用 transition（可中断 retarget）而非 keyframes（restart from zero）。
+   ============================================================ */
+
+/* popover 族：缩放跟随触发点（reka 计算 --reka-popper-transform-origin） */
+.reka-popover-transition {
+  transition: opacity var(--duration-fast) var(--ease), transform var(--duration-fast) var(--ease);
+  transform-origin: var(--reka-popper-transform-origin, center);
+}
+.reka-popover-transition[data-state='open'] {
+  opacity: 1;
+  transform: scale(1);
+}
+.reka-popover-transition[data-state='closed'] {
+  opacity: 0;
+  transform: scale(0.96);
+}
+@starting-style {
+  .reka-popover-transition[data-state='open'] {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+/* dialog：居中缩放（modal 允许 center origin，transform 保留 translate 居中） */
+.reka-dialog-transition {
+  transition: opacity var(--duration) var(--ease), transform var(--duration) var(--ease);
+}
+.reka-dialog-transition[data-state='open'] {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+.reka-dialog-transition[data-state='closed'] {
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.96);
+}
+@starting-style {
+  .reka-dialog-transition[data-state='open'] {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.96);
+  }
+}
+
+/* dialog 遮罩：纯 opacity */
+.reka-overlay-transition {
+  transition: opacity var(--duration) var(--ease);
+}
+.reka-overlay-transition[data-state='open'] { opacity: 1; }
+.reka-overlay-transition[data-state='closed'] { opacity: 0; }
+@starting-style {
+  .reka-overlay-transition[data-state='open'] { opacity: 0; }
+}
+
+/* ============================================================
    Reduced motion（PRODUCT.md Accessibility：prefers-reduced-motion 兜底）
    ============================================================ */
 @media (prefers-reduced-motion: reduce) {
