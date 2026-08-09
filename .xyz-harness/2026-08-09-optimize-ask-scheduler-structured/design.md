@@ -33,6 +33,8 @@
 4. **测试**：纯逻辑（解析、格式化、状态计算）下沉层 1 并用 property-based；集成测试只测模块协作；删除 comment 测试、假测试、凑数断言。
 
 **In-scope**：三个 extension 的 src 重构 + 测试重构 + 删 comment + 补 README（scheduler）。
+**In-scope 补充**：xyz-agent 前端 `AskUserOverlay.vue` 的 comment UI / answers 协同改动——ask-user 有 TUI（extension）+ GUI（前端）双实现共享协议，删 comment 是协议级 breaking，前端必然波及（详见 §3.1、D1、M0-g）。
+
 **Out-of-scope**：三个 extension 与 pi 的集成协议（registerTool/registerCommand 机制不变）；新增功能（不加 multiSelect/is_secret 等 codex/claude-code 才有的字段，留作后续）；版本发布策略（changeset 在实施期定）。
 
 ---
@@ -42,6 +44,8 @@
 ### 3.1 ask-user：答案被字符串化，再费力反解析回来
 
 **ask-user 的答案本该是结构化的，却被降级成字符串，下游再反解析——这是 11 个问题里最贵的一个。**
+
+> **重要事实（双实现）**：ask-user 有**两套并行实现**共享同一套答案协议——pi extension 的 TUI 实现（`extensions/ask-user/`，2140 行）+ xyz-agent 前端的 GUI 实现（`packages/renderer/src/components/extension/ask-user/AskUserOverlay.vue`，459 行）。GUI 实现自己持 `QState{selectedValues, comment}`、emit `submit(JSON.stringify(answers))`、读 `q.allowComment` 渲染 comment 输入区。两者靠 `answers: Record<string,string>` + `${key}__comment` 协议对齐。因此本设计的 D1（答案模型）+ D2（删 comment）是**协议级 breaking**，必然波及前端 AskUserOverlay.vue 及其测试——这不是 scope creep，是 breaking 的必然范围。
 
 答案在交互状态 `QuestionState`（`types.ts:127-158`）里本是结构化的：
 
@@ -250,7 +254,7 @@ extensions/structured-output/src/
 
 | 方案 | 长期架构合理性 | 短期实现成本 | 风险 | 裁决 |
 |---|---|---|---|---|
-| **A（选）单结构化模型 + 协议边界单向序列化** | `Result.answers: Record<string, AnswerValue>`，`AnswerValue={selected:string[], other:string\|null}`。internal 与 proto 合并为单 Question 模型（proto 的 `value` 字段 = `label`，没必要分两套）。`parseAnswerParts` 整体删除。协议边界（出 extension 进 pi）单向 `encodeAnswer(value)→string`，不再反解析。 | 中：改 Result 类型 + 删 answer-format 反解析 + 改 channel-handler/index 直接读结构化值。有测试覆盖兜底。 | 低-中：Result 类型变更是 breaking（但 extension 内部消费，无外部消费者）。 | ✅ |
+| **A（选）单结构化模型 + 协议边界单向序列化** | `Result.answers: Record<string, AnswerValue>`，`AnswerValue={selected:string[], other:string\|null}`。internal 与 proto 合并为单 Question 模型（proto 的 `value` 字段 = `label`，没必要分两套）。`parseAnswerParts` 整体删除。协议边界（出 extension 进 pi）单向 `encodeAnswer(value)→string`，不再反解析。 | 中：改 Result 类型 + 删 answer-format 反解析 + 改 channel-handler/index 直接读结构化值。有测试覆盖兜底。 | 中：Result 类型变更是协议级 breaking——ask-user 有 TUI+GUI 双实现（§3.1），GUI 实现 `AskUserOverlay.vue` 也消费 answers 协议，需同步改造。 | ✅ |
 | B 保留 proto/internal 双模型 + 四向转换，只修 parseAnswerParts 歧义 | 不解决根因，反解析启发式仍存在，只是补 case。adapter 层是冗余 pass-through。 | 低（只补测试 case） | 高：启发式不完备性是持续的 bug 维护负担。 | ❌ |
 
 **被否若用 B**：§5.1 的 agent 调用链里，`Result.answers` 仍是字符串，`renderExpandedOptions` 和 `channel-handler` 仍要调 `parseAnswerParts`，label 含 ` — ` 时仍可能误判选中项——§3.1 的 bug 温床原样保留。
@@ -261,7 +265,7 @@ extensions/structured-output/src/
 
 | 方案 | 长期架构合理性 | 短期实现成本 | 风险 | 裁决 |
 |---|---|---|---|---|
-| **A（选）彻底删除** | 消除 `commentValue` 字段、`QuestionMode:"comment"` 状态、`ANSWER_COMMENT_SEPARATOR`、`formatAnswer`/`parseAnswerParts` 的 comment 分支、component 的 comment mode 状态机、channel 的 `__comment` 协议。同步简化 D1（AnswerValue 无 comment 字段）。 | 中：删 8 处源码 + 大量 comment 测试（component.test.ts C-33~C-39、w2/w3、answer-format comment 用例）。 | breaking：schema 删 `allowComment` 字段，旧调用方传该字段会被 schema 拒（typebox 默认拒绝 unknown 当 additionalProperties:false 时）。 | ✅ |
+| **A（选）彻底删除** | 消除 `commentValue` 字段、`QuestionMode:"comment"` 状态、`ANSWER_COMMENT_SEPARATOR`、`formatAnswer`/`parseAnswerParts` 的 comment 分支、component 的 comment mode 状态机、channel 的 `__comment` 协议。同步简化 D1（AnswerValue 无 comment 字段）。 | 中：删 extension 侧 8 处源码 + 大量 comment 测试；**同步删前端 `AskUserOverlay.vue` 的 comment UI**（QState.comment / `${key}__comment` 拼装 / allowComment 输入区，:65/170-172/229-230/417-422）+ 其测试。 | breaking：schema 删 `allowComment` 字段（TUI+GUI+协议三处协同）；旧调用方传该字段会被 schema 拒。 | ✅ |
 | B 保留 comment，仅把它结构化进 AnswerValue | comment 仍是独立维度，TUI 仍需 comment mode 状态机，协议仍需 `__comment` key。复杂度保留。 | 低-中 | comment 的产品价值不明（codex/claude-code/MCP elicitation 均无独立 comment 概念，竞品报告 §1.1/§1.2）。 | ❌ |
 
 **被否若用 B**：§5.1 的 AnswerValue 变成 `{selected, other, comment}`，comment mode 状态机、comment 渲染、`__comment` 协议编码全部保留，D1 的简化收益打折。
@@ -399,7 +403,7 @@ ask-user 测试从 5118 行降约 30-40%（删 comment + 反解析 + 凑数）�
 
 | 阶段 | 内容 | 交付终态的什么 | 风险 |
 |---|---|---|---|
-| **M0** ask-user 删 comment + 结构化答案 | D1+D2：删 comment 全链路；Result.answers 改 AnswerValue；删 parseAnswerParts；合并 internal/proto 单模型；answer-format→answer-codec | §5.1 终态 | 中（Result 类型变更，有测试兜底） |
+| **M0** ask-user 删 comment + 结构化答案 | D1+D2：删 comment 全链路（extension + 前端 AskUserOverlay.vue）；Result.answers 改 AnswerValue；删 parseAnswerParts；合并 internal/proto 单模型；answer-format→answer-codec | §5.1 终态 | 中（协议级 breaking，TUI+GUI 双实现协同改造，两边都有测试兜底） |
 | **M1** ask-user 测试重构 | D5：删 comment 测试；encodeAnswer property-based；channel 透传改结构化断言 | §8 ask-user 部分 | 低 |
 | **M2** scheduler 去双轨 + 抽 backend | D3：SchedulerBackend 接口 + SchedulerService；tool/command 瘦壳；computeNextRunAt 统一 + 死循环修复；清僵尸类型 | §5.2 终态 | 中 |
 | **M3** scheduler 补 README + 测试 | 补 README；runtime mock 测试；parse/format property-based | §8 scheduler 部分 | 低 |
@@ -420,6 +424,7 @@ ask-user 测试从 5118 行降约 30-40%（删 comment + 反解析 + 凑数）�
 | M0-d 合并 internal/proto 单模型 | 删 toProtoQuestions 的 value≠label 假设（value=label 已确认），Question 单一模型 | AU-3 去协议层 |
 | M0-e channel-handler 直读 AnswerValue | encodeTuiResultToProto 不调 parseAnswerParts，直接读结构化 | AU-1 下游 |
 | M0-f component/question-view/submit-view 删 comment mode | 删 comment 状态机分支与渲染 | D2 |
+| M0-g 前端 AskUserOverlay.vue 删 comment + 改 answers 消费 | 删 QState.comment / `${key}__comment` 拼装 / allowComment 输入区（:65/170-172/229-230/417-422）+ 测试；answers 消费随 D1 协议变更同步 | 协议级 breaking 必然波及前端（§3.1 双实现） |
 | M2-a SchedulerBackend 接口 + PiSchedulerBackend | backend.ts 接口，runtime 构造注入 | D3 依赖反转 |
 | M2-b SchedulerService 共享编排 | service.ts 5 动作单一实现；tool/commands 瘦壳 | SCH-1 去双轨 |
 | M2-c computeNextRunAt 统一 + 死循环修复 | parsing.ts 统一函数；runtime 三处调用；fallback 改停用+failed | SCH-2 + SCH-3 |
@@ -439,6 +444,7 @@ ask-user 测试从 5118 行降约 30-40%（删 comment + 反解析 + 凑数）�
 | P-parse-delete | 删 parseAnswerParts 后无残留调用 | `grep -rn parseAnswerParts extensions/ask-user/src/` 应零命中（M0-c 后） | ⛔ M0-c |
 | P-single-model | proto value 与 label 在所有路径相等 | grep `\.value` 在 ask-user src，确认无 value≠label 的消费 | ⛔ M0-d |
 | P-no-comment-residue | 删 comment 后无残留 comment/allowComment/commentValue 引用 | `grep -rni comment extensions/ask-user/src/` 仅剩 CHANGELOG/历史注释 | ⛔ M0-f |
+| P-frontend-no-comment | 前端 AskUserOverlay.vue 删 comment 后无残留 | `grep -rni comment packages/renderer/src/components/extension/ask-user/` 零命中（M0-g 后） | ⛔ M0-g |
 | P-answer-flow | 结构化 AnswerValue 从 component 一路到 proto 无字符串往返 | 写一个探针测试：mock 用户选 Postgres+Other，断言 Result.answers 是 AnswerValue 对象、channel-handler 收到结构化值 | ⛔ M0-e |
 | P-cron-no-loop | cron 失效不再死循环 | 注入 MockBackend + 构造失效 cron task，跑 3 个 tick，断言 task.enabled===false 且 dispatch 只触发一次 | ⛔ M2-c |
 | P-runtime-mock | SchedulerRuntime 可注入 mock 单测 | `new SchedulerRuntime(mockBackend)` 跑 addTask/dispatch，不碰 pi.sendMessage/文件 IO | ⛔ M2-a |
@@ -451,6 +457,7 @@ ask-user 测试从 5118 行降约 30-40%（删 comment + 反解析 + 凑数）�
 - ✅ scheduler cron fallback 死循环隐患：`runtime.ts:101`/`:217` 均 `?? Date.now()`，`:56` 用 throw（三处不一致）。
 - ✅ structured-output 单文件 457 行、`executeStructuredOutput` 双路径（`:119` 权威分支提前 return）、`setupWorkflowHook` 4 mutable 闭包（`:297-300`）。
 - ✅ scheduler 无 README、structured-output 有测试 816 行（含假测试段）、ask-user description 1829 字符。
+- ✅ **ask-user 双实现**：前端 `AskUserOverlay.vue`（459 行）是 GUI 实现，消费 comment（`QState.comment` :65、`${key}__comment` 拼装 :230、allowComment 输入区 :417-422）+ 字符串化 answers（`Record<string,string>` :210、`JSON.stringify` :233）。D1/D2 是协议级 breaking，前端必然波及。
 
 ---
 
@@ -475,3 +482,4 @@ ask-user 测试从 5118 行降约 30-40%（删 comment + 反解析 + 凑数）�
 ## 附录 B：变更历史
 
 - v1（2026-08-09）：基于架构审查 + 竞品调研两份报告，落地用户三个决策（删 comment、简化 DDD 单模型、测试按 test-quality 精简）的初版设计。待 tech-design-review 对抗审查。
+- v2（2026-08-09）：修正 D1 错误断言「无外部消费者」——核实发现 ask-user 有 TUI（extension）+ GUI（前端 `AskUserOverlay.vue`）双实现共享协议，删 comment / 改 answers 是协议级 breaking，必然波及前端。补 §3.1 双实现说明、D1/D2 风险栏、M0-g 前端子任务、P-frontend-no-comment 探针。
