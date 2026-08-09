@@ -7,7 +7,7 @@ import { resolve } from 'node:path'
  * 源码字符串断言：4 处常驻动画已删除（TC1-TC4）+ 边界保留（TC5：streaming spin、
  * keyframes 定义不动）。
  */
-const rendererSrc = resolve(__dirname, '../..')
+const rendererSrc = resolve(__dirname, '../../..')
 const read = (rel: string) => readFileSync(resolve(rendererSrc, rel), 'utf-8')
 
 const segmentedTab = read('src/components/sidebar/SegmentedTab.vue')
