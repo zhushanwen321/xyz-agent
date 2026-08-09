@@ -80,19 +80,19 @@ describe("renderSubmitView", () => {
 
 // ── S-5 ~ S-10: getAnswerText ────────────────────────────
 describe("getAnswerText", () => {
-	it("S-5: single-select returns label", () => {
+	it("S-5: single-select returns AnswerValue with label", () => {
 		const s = makeState({ confirmed: true, selectedIndex: 0 });
-		expect(getAnswerText(q1, s)).toBe("Postgres");
+		expect(getAnswerText(q1, s)).toEqual({ selected: ["Postgres"], other: null });
 	});
 
-	it("S-6: multi-select returns labels joined in index order", () => {
+	it("S-6: multi-select returns labels sorted in index order", () => {
 		const multiQ: Question = {
 			question: "Features",
 			multiSelect: true,
 			options: [{ label: "A" }, { label: "B" }, { label: "C" }],
 		};
 		const s = makeState({ confirmed: true, selectedIndices: new Set([0, 1]) });
-		expect(getAnswerText(multiQ, s)).toBe("A, B");
+		expect(getAnswerText(multiQ, s)).toEqual({ selected: ["A", "B"], other: null });
 	});
 
 	it("S-7: multi-select out-of-order toggle still sorts by index", () => {
@@ -103,7 +103,7 @@ describe("getAnswerText", () => {
 		};
 		// toggle order: 1, then 0, then 2 → Set may iterate 1,0,2 but output should be A, B, C
 		const s = makeState({ confirmed: true, selectedIndices: new Set([1, 0, 2]) });
-		expect(getAnswerText(multiQ, s)).toBe("A, B, C");
+		expect(getAnswerText(multiQ, s)).toEqual({ selected: ["A", "B", "C"], other: null });
 	});
 
 	it("S-7b: multi-select out-of-range indices are filtered out (defensive branch)", () => {
@@ -116,17 +116,12 @@ describe("getAnswerText", () => {
 		};
 		// index 5 越界（只有 2 个选项），应被过滤；只保留 A
 		const s = makeState({ confirmed: true, selectedIndices: new Set([0, 5]) });
-		expect(getAnswerText(multiQ, s)).toBe("A");
+		expect(getAnswerText(multiQ, s)).toEqual({ selected: ["A"], other: null });
 	});
 
-	it("S-8: Other free-text appended", () => {
+	it("S-8: Other free-text goes to other field", () => {
 		const s = makeState({ confirmed: true, selectedIndex: null, freeTextValue: "custom" });
-		expect(getAnswerText(q1, s)).toBe("custom");
-	});
-
-	it("S-9: comment appended with separator", () => {
-		const s = makeState({ confirmed: true, selectedIndex: 0, commentValue: "fast" });
-		expect(getAnswerText(q1, s)).toBe("Postgres — fast");
+		expect(getAnswerText(q1, s)).toEqual({ selected: [], other: "custom" });
 	});
 
 	it("S-10: unconfirmed returns null", () => {
@@ -149,19 +144,18 @@ describe("getAnswerText", () => {
 		expect(getAnswerText(multiQ, sEmptyMulti)).toBeNull();
 	});
 
-	it("S-9b: multi-select + comment combined", () => {
+	it("S-9: selected + other combined in one AnswerValue", () => {
 		const multiQ: Question = {
 			question: "Features",
 			multiSelect: true,
-			allowComment: true,
 			options: [{ label: "A" }, { label: "B" }],
 		};
 		const s = makeState({
 			confirmed: true,
 			selectedIndices: new Set([0, 1]),
-			commentValue: "nice",
+			freeTextValue: "nice",
 		});
-		expect(getAnswerText(multiQ, s)).toBe("A, B — nice");
+		expect(getAnswerText(multiQ, s)).toEqual({ selected: ["A", "B"], other: "nice" });
 	});
 });
 
@@ -172,7 +166,7 @@ describe("buildResult", () => {
 		const states = [makeState({ confirmed: true, selectedIndex: 1 })];
 		const result = buildResult(questions, states);
 		expect(result.cancelled).toBe(false);
-		expect(result.answers["Which DB?"]).toBe("SQLite");
+		expect(result.answers["Which DB?"]).toEqual({ selected: ["SQLite"], other: null });
 		expect(result.questions).toBe(questions);
 	});
 
@@ -186,7 +180,7 @@ describe("buildResult", () => {
 			makeState({ confirmed: false }),
 		];
 		const result = buildResult(questions, states);
-		expect(result.answers["Q1"]).toBe("A");
+		expect(result.answers["Q1"]).toEqual({ selected: ["A"], other: null });
 		expect(result.answers["Q2"]).toBeUndefined();
 	});
 });

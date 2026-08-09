@@ -3,7 +3,6 @@ import {
   askUserInteract,
   getAskUserAnswer,
   getAskUserOther,
-  getAskUserComment,
   isAskUserQuestion,
   ASK_USER_MARKER,
   type GuiContext,
@@ -25,11 +24,11 @@ function makeRpcCtx(selectImpl: (header: string, options: string[]) => Promise<s
 
 describe('askUserInteract', () => {
   it('U1: RPC 模式 select 返回 JSON string → 解析出 answers', async () => {
-    const mockAnswers = { db: 'postgres', 'db__comment': 'prod 用 pg' }
+    const mockAnswers = { db: 'postgres' }
     const ctx = makeRpcCtx(async (_header, _options) => JSON.stringify(mockAnswers))
 
     const questions: AskUserQuestion[] = [
-      { header: 'db', question: '选哪个数据库?', options: [{ label: 'Postgres', value: 'postgres' }] },
+      { header: 'db', question: '选哪个数据库?', options: [{ label: 'Postgres' }] },
     ]
     const result = await askUserInteract(ctx, questions)
 
@@ -88,9 +87,9 @@ describe('askUserInteract', () => {
   })
 })
 
-describe('getAskUserAnswer / getAskUserOther / getAskUserComment', () => {
+describe('getAskUserAnswer / getAskUserOther', () => {
   it('U5: 单选——返回 string value', () => {
-    const q: AskUserQuestion = { header: 'db', question: 'q', options: [{ label: 'PG', value: 'pg' }] }
+    const q: AskUserQuestion = { header: 'db', question: 'q', options: [{ label: 'PG' }] }
     const answers = { db: 'pg' }
     expect(getAskUserAnswer(answers, q)).toBe('pg')
   })
@@ -124,16 +123,9 @@ describe('getAskUserAnswer / getAskUserOther / getAskUserComment', () => {
     expect(getAskUserOther(answers, q)).toBe('自定义理由')
   })
 
-  it('U5: getAskUserComment 提取评论', () => {
-    const q: AskUserQuestion = { header: 'db', question: 'q' }
-    const answers = { db: 'pg', 'db__comment': 'prod 用 pg' }
-    expect(getAskUserComment(answers, q)).toBe('prod 用 pg')
-  })
-
-  it('U5: Other/Comment 缺失 → undefined', () => {
+  it('U5: Other 缺失 → undefined', () => {
     const q: AskUserQuestion = { header: 'db', question: 'q' }
     expect(getAskUserOther({ db: 'pg' }, q)).toBeUndefined()
-    expect(getAskUserComment({ db: 'pg' }, q)).toBeUndefined()
   })
 
   it('U5: 多选 JSON.parse 成功但非数组 → 降级返回 [raw]', () => {
@@ -149,15 +141,6 @@ describe('isAskUserQuestion 类型守卫', () => {
     expect(isAskUserQuestion({ question: 'q?' })).toBe(true)
     expect(isAskUserQuestion({ header: 'h', question: 'q?', options: [] })).toBe(true)
     expect(isAskUserQuestion({ question: 'q?', multiSelect: true, allowOther: false })).toBe(true)
-  })
-
-  // restore 回归（MF-2）：0.3.0 的删除若在三路合并中胜出，本用例编译即失败——
-  // allowComment 不在 AskUserQuestion 类型上（extensions:typecheck gate 拦截），
-  // 且 getAskUserComment 是 ESM named export，导入缺失在模块加载时即崩溃。
-  it('U6: restore 回归——allowComment 字段存在且 getAskUserComment helper 可调用', () => {
-    const q: AskUserQuestion = { header: 'db', question: 'q?', allowComment: true }
-    expect(q.allowComment).toBe(true)
-    expect(getAskUserComment({ db: 'pg', 'db__comment': 'prod 用 pg' }, q)).toBe('prod 用 pg')
   })
 
   it('缺 question 必填字段 → false', () => {

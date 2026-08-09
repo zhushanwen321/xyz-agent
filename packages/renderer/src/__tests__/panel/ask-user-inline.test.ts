@@ -68,7 +68,7 @@ const askUserReq: ExtensionUIRequest = {
   requestId: 'req-1',
   method: 'select',
   askUser: true,
-  askUserQuestions: [{ header: 'db', question: '选哪个数据库?', options: [{ label: 'Postgres', value: 'pg' }] }],
+  askUserQuestions: [{ header: 'db', question: '选哪个数据库?', options: [{ label: 'Postgres' }] }],
 }
 
 beforeEach(() => {

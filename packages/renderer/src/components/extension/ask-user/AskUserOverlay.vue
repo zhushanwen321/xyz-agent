@@ -10,19 +10,16 @@
  * - tab 切换（多问题来回修改）
  * - 单选 / 多选
  * - Other 自由文本（选项末尾追加输入框）
- * - comment 附加评论
  * - Submit 汇总提交 / Cancel 取消
  *
  * answers 格式（ask-user/types.ts AskUserAnswers）：
- * - 单选：value = 选中项 value string
- * - 多选：value = JSON.stringify(value[])
+ * - 单选：value = 选中项 label string
+ * - 多选：value = JSON.stringify(label[])
  * - Other：独立 key `${header}__other`
- * - comment：独立 key `${header}__comment`
  *
- * 注意：此文件是 4.0.1 comment restore 的一部分（main 已在 4.0.0 删除本文件的 comment UI：
- *    QState.comment / `${key}__comment` 拼装 / allowComment 输入区）。merge 时本分支的
- *    改动必须保留（protocol allowComment 已 restore，GUI 消费方在此），
- *    详见 .changeset/restore-ask-user-comment.md。
+ * 该编码与 @xyz-agent/extension-protocol helpers.ts 解码契约对齐：
+ * getAskUserAnswer 读主 key（label / JSON.stringify(label[])），
+ * getAskUserOther 读 `${header}__other`。
  *
  * 样式对齐 demo v3（docs/page-design/v3/ask-user/inline-ask-user-demo-v3.html）：
  * - 无边框一体化：去掉 border-b/border-t 分层，单容器 bg-input 靠间距分区
@@ -60,9 +57,8 @@ const activeQuestion = computed(() => props.questions[activeIdx.value])
 
 // ── 每个问题的答案状态 ──
 interface QState {
-  selectedValues: string[]     // 选中的 option value（单选长度 0/1，多选任意）
+  selectedValues: string[]     // 选中的 option label（单选长度 0/1，多选任意）
   otherText: string            // Other 自由文本
-  comment: string              // 附加评论
 }
 const states = ref<Record<string, QState>>({})
 
@@ -71,15 +67,15 @@ watch(() => props.questions, (qs) => {
   const next: Record<string, QState> = {}
   for (const q of qs) {
     const key = qKey(q)
-    next[key] = states.value[key] ?? { selectedValues: [], otherText: '', comment: '' }
+    next[key] = states.value[key] ?? { selectedValues: [], otherText: '' }
   }
   states.value = next
   activeIdx.value = 0
 }, { immediate: true })
 
-// ── 选项 value 解析（value 缺失时用 label）──
+// ── 选项 key 解析（AskUserOption 无 value 字段，label 即唯一标识）──
 function optValue(o: AskUserOption): string {
-  return o.value ?? o.label
+  return o.label
 }
 
 /** Other 特殊选项的 value（卡片化，选中后展开输入框）*/
@@ -167,9 +163,6 @@ function isQuestionAnswered(q: AskUserQuestion): boolean {
   if (!st) return false
   // 无选项的纯自由文本问题：otherText 有值即答完
   if (!q.options?.length) return st.otherText.trim().length > 0
-  // allowComment 问题：评论即已回答（「无选项适用但想说明原因」场景——只填评论也能提交，
-  // 与协议 allowComment 设计意图一致；RPC 解码 protoAnswersToResult 保留 comment-only 答案）
-  if (q.allowComment && st.comment.trim().length > 0) return true
   // 有选项：Other 选中必须有文本才算答完
   const otherSelected = st.selectedValues.includes(OTHER_VALUE)
   if (otherSelected && !st.otherText.trim()) {
@@ -204,8 +197,10 @@ function showOther(q: AskUserQuestion): boolean {
   return q.options != null && q.allowOther !== false
 }
 
-// ── Submit：构造 answers JSON ──
-// Other 选中时，otherText 文本替代 OTHER_VALUE 占位符作为实际答案值。
+// ── Submit：构造 answers JSON（与 @xyz-agent/extension-protocol helpers.ts 解码契约对齐）──
+// - 有选项：selectedValues 只含真实选项 label（过滤 OTHER_VALUE 占位符），写 answers[key]
+// - Other 自由文本：独立 key `${key}__other`（不再混进 vals 数组替代占位符）
+// - 无选项的纯自由文本问题：otherText 写 answers[key]
 function onSubmit(): void {
   const answers: Record<string, string> = {}
   for (const q of props.questions) {
@@ -214,20 +209,20 @@ function onSubmit(): void {
     if (!st) continue
 
     if (q.options?.length) {
-      // 有选项的问题：选中项作为主答案（Other 选中时用 otherText 文本替代占位符）
-      const vals = st.selectedValues.map((v) => v === OTHER_VALUE ? (st.otherText || '') : v).filter(Boolean)
+      // selected 只含真实选项 label（过滤 OTHER_VALUE 占位符）
+      const vals = st.selectedValues.filter((v) => v !== OTHER_VALUE)
       if (vals.length > 0) {
         answers[key] = q.multiSelect ? JSON.stringify(vals) : vals[0]
       }
     } else {
-      // 无选项的纯自由文本问题：输入文本作为主答案
+      // 无选项的纯自由文本问题
       if (st.otherText) {
         answers[key] = st.otherText
       }
     }
-    // 评论（独立 key）
-    if (st.comment) {
-      answers[`${key}__comment`] = st.comment
+    // Other 自由文本写独立 key `${key}__other`（不再混进 vals）
+    if (st.otherText) {
+      answers[`${key}__other`] = st.otherText
     }
   }
   emit('submit', JSON.stringify(answers))
@@ -413,15 +408,6 @@ function onSubmit(): void {
           data-testid="ask-user-free-text"
         />
 
-        <!-- 附加评论 -->
-        <div v-if="activeQuestion.allowComment" class="flex flex-col gap-0.5">
-          <span class="pl-0.5 text-[11px] text-neutral-dim">{{ t('extensionUI.additionalComment') }}</span>
-          <Input
-            v-model="states[qKey(activeQuestion)].comment"
-            :placeholder="t('extensionUI.commentPlaceholder')"
-            :data-testid="`ask-user-comment-${qKey(activeQuestion)}`"
-          />
-        </div>
       </template>
     </div>
 
