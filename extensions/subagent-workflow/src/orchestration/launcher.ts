@@ -342,6 +342,10 @@ export async function executeNestedWorkflow(
       scriptSource: script.toExecutable(),
       args,
       budgetRef: parentRun.state.budget,
+      // Run-level override 传播（与父 run 对齐）：子 run 继承父 run 的 model/thinkingLevel，
+      // 否则嵌套 workflow 丢失父 run 的模型指定，回落主 agent 模型。
+      model: parentRun.spec.model,
+      thinkingLevel: parentRun.spec.thinkingLevel,
       scriptName: script.name,
       scriptPath: script.path,
       description: script.meta.description,

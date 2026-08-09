@@ -104,7 +104,7 @@ export function resolveModel(
   if (paramOverride?.model) {
     return lookupAndResolve(
       paramOverride.model,
-      paramOverride.thinkingLevel,
+      paramOverride.thinkingLevel ?? agentConfig?.thinkingLevel,
       modelRegistry,
       "paramOverride",
     );

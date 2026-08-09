@@ -117,11 +117,6 @@ export function getCachedFileContent(filePath: string): string | null {
   return getCachedFile(filePath)?.content ?? null;
 }
 
-/** 驱逐单条（文件删除/改名后由 discoverAll 的 currentScanPaths 语义调用）。 */
-export function evictCachedFile(filePath: string): void {
-  mtimeCache.delete(filePath);
-}
-
 /** 清空（invalidateCache 语义——测试隔离 + mtime 漏判场景手动刷新兜底）。 */
 export function clearFileCache(): void {
   mtimeCache.clear();

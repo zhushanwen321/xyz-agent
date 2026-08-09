@@ -123,11 +123,13 @@ export class ModelConfigService {
     agentRef: string,
     override?: { model?: string; thinkingLevel?: string },
     ctxModel?: ModelInfo,
+    /** 已解析的 agent 配置（调用方已加载时复用，避免同一 agentRef 二次 loadByPath）。 */
+    agentConfig?: AgentConfig,
   ): ResolvedModel {
     this.assertReady();
-    const agentConfig = agentRef ? this.agentRegistry.loadByPath(agentRef) : undefined;
+    const config = agentConfig ?? (agentRef ? this.agentRegistry.loadByPath(agentRef) : undefined);
     // ctxModel 优先用显式传入（execute 路径），其次用 session 缓存（renderCall 路径）
-    return resolveModel(agentConfig, this.modelRegistry!, override, ctxModel ?? this._ctxModel);
+    return resolveModel(config, this.modelRegistry!, override, ctxModel ?? this._ctxModel);
   }
 
   /** 查询 agent 配置（SubagentService 内部判定 defaultBackground 用）。 */
@@ -150,17 +152,6 @@ export class ModelConfigService {
   /** agent 配置目录（SubagentService 构造 store/SessionRunnerContext 时读）。 */
   getAgentDir(): string {
     return this.agentRegistryDir;
-  }
-
-  /**
-   * AgentRegistry 实例（workflow 域复用，F-4/D-003 统一）。
-   *
-   * workflow 域（resolveAgentOpts via LifecycleDeps.agentRegistry）需要与 subagents 域
-   * 完全相同的 agent 名→config 解析，复用本实例避免二次扫描。registry 在 initModel
-   * （每次 session_start）调 discoverAll hot-reload，两域共享同一份发现结果。
-   */
-  getAgentRegistry(): AgentRegistry {
-    return this.agentRegistry;
   }
 
   /** modelRegistry（SubagentService 构造 factoryCtx 时读）。已注入保证非 null。 */

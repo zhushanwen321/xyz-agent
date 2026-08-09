@@ -33,6 +33,7 @@ import {
 import { type Static, Type } from "typebox";
 
 import { SLUG_MAX_LENGTH } from "../execution/execute-options-mapper.ts";
+import { THINKING_ORDER } from "../execution/model-resolver.ts";
 import type { LauncherDeps } from "../orchestration/launcher.ts";
 import { ArgsValidationError } from "../orchestration/args-validator.ts";
 import { abortRun, pauseRun, resumeRun, runWorkflow } from "../orchestration/lifecycle.ts";
@@ -94,7 +95,7 @@ const WorkflowParams = Type.Object({
   model: Type.Optional(Type.String({
     description: "Run-level model override in 'provider/modelId' format. When set, all agents spawned by this run inherit it by default (unless a per-call agent() opts.model is set). Omit to inherit the main agent's model.",
   })),
-  thinkingLevel: Type.Optional(Type.String({
+  thinkingLevel: Type.Optional(StringEnum(THINKING_ORDER, {
     description: "Run-level thinkingLevel override (off/minimal/low/medium/high/xhigh/max). All agents in this run inherit it by default. Omit to inherit the main agent's thinking level.",
   })),
 });

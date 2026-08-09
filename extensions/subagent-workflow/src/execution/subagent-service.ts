@@ -394,8 +394,9 @@ export class SubagentService {
     agent: string,
     override?: { model?: string; thinkingLevel?: string },
     ctxModel?: ModelInfo,
+    agentConfig?: AgentConfig,
   ): ResolvedModel {
-    return this.modelService.resolveModel(agent, override, ctxModel);
+    return this.modelService.resolveModel(agent, override, ctxModel, agentConfig);
   }
 
   /**
@@ -636,6 +637,7 @@ export class SubagentService {
       opts.agent ?? "",
       { model: opts.model, thinkingLevel: opts.thinkingLevel },
       opts.ctxModel,
+      agentConfig,
     );
 
     return { agent, agentConfig, resolved };
