@@ -16,30 +16,37 @@
 
 ```
 agent-opts-resolver.resolveAgentOpts（旧实现，bug）:
-  schema SO 指令 → fs.writeFileSync(/tmp/.../so-xxx.txt)              [落盘]
-                   旧路径数组.push("/tmp/.../so-xxx.txt")             [路径! 非内容]
-  return { 旧路径数组: [路径] }                                       [路径语义，非内容]
-  （agent systemPrompt 不经此函数——经 resolveIdentity → agentConfig.systemPrompt，本就正确）
+  if (opts.agent):
+    agentRegistry.loadByPath(ref) → discovered.systemPrompt
+    fs.writeFileSync(/tmp/.../agent-prompt-xxx.md, discovered.systemPrompt)   [落盘]
+    systemPromptFiles.push("/tmp/.../agent-prompt-xxx.md")                    [路径!]
+  schema SO 指令:
+    fs.writeFileSync(/tmp/.../so-xxx.txt, SO指令)                             [落盘]
+    systemPromptFiles.push("/tmp/.../so-xxx.txt")                             [路径!]
+  return { systemPromptFiles: [agent路径, so路径] }
+
+  （同时，resolveIdentity 独立通道：agent ref → getAgentConfig → agentConfig.systemPrompt [内容]）
 
 execute-options-mapper.mapToExecuteOptions:
-  appendSystemPrompt: opts.旧路径数组   [路径数组赋给「内容」语义字段]
+  appendSystemPrompt: opts.systemPromptFiles   [路径数组赋给「内容」语义字段]
 
 session-runner.runSpawn (L642-656):
   appendParts = [buildEnvBlock(...)]                                 [内容]
-  + opts.agentConfig?.systemPrompt                                   [内容, agent 正文，经 resolveIdentity]
-  + ...opts.appendSystemPrompt   ← spread 路径数组当文本! BUG         [路径垃圾]
-  + WRAP_UP_HINT                                                     [内容]
-  + ASK_USER_RPC_PROMPT                                              [内容]
-  writePromptToTempFile(appendParts.join("\n\n"))                    [拼成最终文件]
-  --append-system-prompt <最终文件路径>                              [pi 读文件]
+  + opts.agentConfig?.systemPrompt                                   [内容, agent 正文经 resolveIdentity]
+  + ...opts.appendSystemPrompt   ← spread [agent路径, so路径] 当文本! BUG
+  + WRAP_UP_HINT + ASK_USER_RPC_PROMPT                               [内容]
+  writePromptToTempFile(appendParts.join("\n\n")) → --append-system-prompt <文件>
 
 最终 pi 收到的 append 文件内容:
   [env block 正文]
-  [agent systemPrompt 正文]                  ← 正确（经 agentConfig 通道，不经 resolveAgentOpts）
-  /var/folders/xxx/so-xxx.txt               ← 路径垃圾，本该是 schema SO 指令正文（BUG）
+  [agent systemPrompt 正文]                  ← 正确（agentConfig 通道）
+  /var/folders/xxx/agent-prompt-yyy.md       ← 路径垃圾（agent 双重注入：正文已到 + 路径垃圾冗余）
+  /var/folders/xxx/so-zzz.txt                ← 路径垃圾（schema SO 正文从未到达 = M2 bug 本质）
   [wrap-up 正文]
   [ask_user 正文]
 ```
+
+> M2 bug 本质：agent systemPrompt 经两条通道（resolveAgentOpts 临时文件 + resolveIdentity agentConfig），正文虽到达但伴随路径垃圾（双重注入）；schema SO 指令只经 resolveAgentOpts 临时文件，正文从未进入子进程（路径被当文本）。R1 修复删除 resolveAgentOpts 的 agent 块消除双重注入，schema 改内容直传修复丢失。
 
 ### 1.2 修复后
 
@@ -160,7 +167,7 @@ session-runner.runSpawn:
   - 旧路径数组字段名在 `src/` 中 0 命中（已统一为 `appendSystemPrompt`）
   - `grep -rn 'cleanupAllTempFiles\|activeTempFiles' src/` → 0 命中
   - `grep -rn '"info"' src/interface/tool-workflow.ts` → 0 命中
-  - `grep -rn 'workflow info' src/ docs/ workflows/` → 0 命中
+  - `grep -rn 'workflow info' src/interface/ src/orchestration/ src/execution/ src/injectors/ src/shared/ | grep -v '__tests__'` → 0 命中（生产代码零残留；测试负面断言、ADR 决策记录、文档自引用不计）
   - 注释/文档中 M2 bug 描述更新为「已修复（ADR-0003）」
 
 验证检查点：
