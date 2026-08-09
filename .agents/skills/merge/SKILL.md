@@ -26,7 +26,13 @@ description: >-
 
 ⚠️ **关键**：第一个参数是 **feature worktree 目录名**（如 `feat-new-feature`），不是 `main`。脚本会自动检测 `$WS_ROOT/main` 用于 bump/tag/push。传 `main` 会导致阶段 7 删除 main worktree。
 
-⚠️ **cwd 隔离**：bash 工具的 cwd 按调用持久，不随脚本内部 `cd` 改变（脚本在子进程 cd，退出回到调用前）。所有阶段脚本必须在 **workspace root** 或 **main worktree** 内执行，不能在 feature worktree 内（阶段 7 会删除它）。每个阶段命令前若不确定 cwd，显式 `cd $WS_ROOT` 或 `cd $WS_ROOT/main`。详见阶段 7 的 [HISTORICAL] 说明。
+⚠️ **cwd 隔离 [MANDATORY]**：bash 工具每次调用都是独立 shell，cwd **不跨调用持久**——每次 reset 到 session 启动目录（通常是 feature worktree，即被合并的分支目录），前序 bash 调用或脚本内部的 `cd` 对后续调用**无效**（与 AGENTS.md §8 一致）。
+
+**强制规则**：所有操作 main worktree 的 bash 调用，必须在**当条命令开头**自包含 `cd $WS_ROOT/main && <cmd>`，不能依赖代码块里前一行的 `cd`，更不能假设"上一步 cd 过了"。操作 workspace root 同理自包含 `cd $WS_ROOT && <cmd>`。受影响阶段：3 / 3.5 / 4 / 4N / 5 / 6（都在 main worktree 操作）。
+
+**为什么不能在 feature worktree 操作**：阶段 2 起 feature 分支已合并，阶段 7 会删除 feature worktree；version bump / commit / tag / push 等写操作落在 feature worktree 会污染已合并分支、导致 main 实际未变更。详见阶段 7 的 [HISTORICAL] 说明。
+
+**事故背景**：阶段 4 `pnpm version patch` 因 bash 调用未自包含 `cd $WS_ROOT/main`，cwd reset 到 feature worktree，把 version bump 写进了 feature worktree 的 package.json（main worktree 未动），直到 `git branch --show-current` 检查才暴露。根因是旧版本文档误称"cwd 按调用持久"，AI 据此以为阶段 3 的 `cd main` 对后续调用仍有效。
 
 ```bash
 cd /Users/zhushanwen/Code/xyz-agent-workspace
@@ -113,6 +119,8 @@ bash scripts/check-version-bump.sh
 ```bash
 cd $WS_ROOT/main
 
+# ⚠️ 本代码块每条 bash 调用必须自包含 `cd $WS_ROOT/main &&`（见阶段 0 cwd 隔离）。
+#    bash 工具 cwd 不跨调用持久，会 reset 到 feature worktree，导致 bump 落错分支。
 # ⚠️ 先确认当前分支是 main（pr-merge.sh 的 sync 会强制 checkout main，
 #    但阶段 4 执行前必须二次确认，防止意外）
 git branch --show-current  # 必须输出 main，否则 git checkout main
@@ -359,11 +367,11 @@ bash .agents/skills/merge/scripts/remove-worktree.sh <branch-name> --force --ski
 
 门禁：阶段 7 启动前**必须**确认阶段 6（`verify-ci-release.sh`）已 exit 0。
 
-⚠️ **cwd 隔离 [HISTORICAL]**：`remove-worktree.sh` 内部有 `cd "$WORKSPACE_ROOT"` 自我保护，但**脚本退出后 bash 工具的 cwd 不变**——bash 工具自身维护的 cwd 是按调用持久、不随脚本内部 `cd` 改变的（脚本在子进程里 cd，退出即回到调用前 cwd）。
+⚠️ **cwd 隔离 [HISTORICAL]**：bash 工具每次调用都是独立 shell，cwd **不跨调用持久**，reset 到 session 启动目录（通常是 feature worktree 内）。`remove-worktree.sh` 内部有 `cd "$WORKSPACE_ROOT"` 自我保护，但那只对脚本当次执行有效——脚本退出后，下次 bash 调用的 cwd 又 reset 回 session 启动目录。
 
-调用前 cwd 默认是 session 启动时的工作目录（通常是 feature worktree 内）。若不显式 `cd $WS_ROOT`，脚本删掉 feature worktree 目录后，后续 bash 命令的 cwd 指向已删除目录 → ENOENT。
+若 session 启动目录就是即将删除的 feature worktree，脚本删掉该目录后，后续 bash 调用的 cwd 指向已删除目录 → ENOENT。
 
-**自动化执行阶段 7 前必须显式 `cd $WS_ROOT`**（手动终端执行则脚本内部的 cd 足够，因为终端 shell 的 cwd 会跟随 cd）。这与 AGENTS.md §8「multi-workspace cwd 不跨调用持久」是同一类陷阱的延伸——bash 工具假设单 cwd 项目，脚本内 cd 对调用方不可见。
+**自动化执行阶段 7 时，调用 remove-worktree.sh 的那条 bash 命令必须自包含 `cd $WS_ROOT &&`**（见阶段 0 cwd 隔离）。即便如此，删除后 session 启动目录已不存在，**后续任何 bash 调用仍可能 ENOENT**——因此阶段 7 必须是流程最后一步，删除后立即收尾，不再调 bash（手动终端执行则脚本内部的 cd 足够，因为终端 shell 的 cwd 会跟随 cd）。这与 AGENTS.md §8「multi-workspace cwd 不跨调用持久」是同一类陷阱。
 
 ```bash
 cd $WS_ROOT  # 必须在调用 remove-worktree.sh 前显式 cd
