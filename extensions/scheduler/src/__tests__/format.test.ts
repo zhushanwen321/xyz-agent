@@ -90,6 +90,34 @@ describe('formatDuration', () => {
     expect(formatDuration(90_000)).toBe('90s')
     expect(formatDuration(1500)).toBe('2s')
   })
+
+  // TC7 边界值：最大单位整除优先（300000 → '5m' 而非 '300s'）
+  it('prefers largest unit when ms is evenly divisible', () => {
+    expect(formatDuration(300_000)).toBe('5m')
+    expect(formatDuration(3_600_000)).toBe('1h')
+    expect(formatDuration(86_400_000)).toBe('1d')
+    expect(formatDuration(60_000)).toBe('1m')
+    expect(formatDuration(1000)).toBe('1s')
+  })
+
+  it('handles zero and negative as 0s', () => {
+    expect(formatDuration(0)).toBe('0s')
+    expect(formatDuration(-1)).toBe('0s')
+    expect(formatDuration(-86_400_000)).toBe('0s')
+  })
+
+  // TC7 修正（design-review R1）：1500000 % 60000 === 0 → '25m'（最大单位优先），
+  // 而非 design 初稿误写的 '1500s'。非整除大单位落秒用例改用 1510000。
+  it('prefers even minute when ms is multiple of 60000 (1500000 → 25m)', () => {
+    expect(formatDuration(1_500_000)).toBe('25m')
+  })
+
+  it('falls back to seconds for large non-divisible values (1510000 → 1510s)', () => {
+    // 1510000 % 60000 = 10000 ≠ 0 → 不整除 m，落秒分支
+    expect(formatDuration(1_510_000)).toBe('1510s')
+    // 1500001 % 1000 ≠ 0 → Math.round 兜底
+    expect(formatDuration(1_500_001)).toBe('1500s')
+  })
 })
 
 describe('generateTaskId', () => {

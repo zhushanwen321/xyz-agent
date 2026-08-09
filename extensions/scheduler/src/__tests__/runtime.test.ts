@@ -306,4 +306,47 @@ describe('SchedulerRuntime', () => {
       warnSpy.mockRestore()
     })
   })
+
+  // ── TC9：expiresAt 三态（addTask 的 expires 分支）──
+  // 源码逻辑：expires==='never' → undefined；kind==='recurring' 且 expires →
+  // now + parseDuration(expires)（解析失败 ?? 默认 7d）；recurring 无 expires →
+  // 默认 7d；kind==='once' 不进分支 → undefined。
+  // MockSchedulerBackend nowValue 固定为 1_000_000，expiresAt 精确可控。
+  describe('expiresAt', () => {
+    beforeEach(() => {
+      backend.nowValue = 1_000_000
+    })
+
+    it("expires: 'never' → expiresAt undefined", async () => {
+      const task = await runtime.addTask(
+        'test',
+        { mode: 'interval', intervalMs: 60000 },
+        { expires: 'never' },
+      )
+      expect(task.expiresAt).toBeUndefined()
+    })
+
+    it('recurring + expires 30m → now + 1_800_000', async () => {
+      const task = await runtime.addTask(
+        'test',
+        { mode: 'interval', intervalMs: 60000 },
+        { expires: '30m' },
+      )
+      expect(task.expiresAt).toBe(2_800_000)
+    })
+
+    it('recurring + 无 expires → 默认 7d（now + 604_800_000）', async () => {
+      const task = await runtime.addTask('test', { mode: 'interval', intervalMs: 60000 })
+      expect(task.expiresAt).toBe(605_800_000)
+    })
+
+    it("kind once + expires '30m' → expiresAt undefined（once 不设过期）", async () => {
+      const task = await runtime.addTask(
+        'test',
+        { mode: 'interval', intervalMs: 60000 },
+        { kind: 'once', expires: '30m' },
+      )
+      expect(task.expiresAt).toBeUndefined()
+    })
+  })
 })

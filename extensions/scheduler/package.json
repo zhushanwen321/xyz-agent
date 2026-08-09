@@ -17,6 +17,7 @@
     "test:watch": "vitest"
   },
   "devDependencies": {
+    "fast-check": "^4.9.0",
     "vitest": "^4.1.8"
   },
   "files": [
@@ -26,8 +27,8 @@
   ],
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
-    "typebox": "*",
-    "croner": "^9.0.0"
+    "croner": "^9.0.0",
+    "typebox": "*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-coding-agent": {

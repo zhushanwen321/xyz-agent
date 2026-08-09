@@ -162,5 +162,24 @@ describe('SchedulerService', () => {
         message: `Task ${id} not dispatched (busy, disabled, or rate-limited).`,
       })
     })
+
+    // TC8：busy 场景（任务 enabled 但 ctx.isIdle() 返回 false）→ dispatch no-op →
+    // DISPATCH_SKIPPED。m2 只覆盖了 disabled 场景，busy 是 dispatchTask 的
+    // `!task.force && (!ctx.isIdle() || ctx.hasPendingMessages())` 独立分支。
+    it('returns DISPATCH_SKIPPED when ctx is busy (isIdle=false)', async () => {
+      const busyCtx = { isIdle: () => false, hasPendingMessages: () => false }
+      const busyBackend = new MockSchedulerBackend()
+      const busyService = new SchedulerService(new SchedulerRuntime(busyBackend, busyCtx))
+
+      const created = await busyService.create('test', '5m')
+      const id = created.data!.task.id
+      const result = await busyService.run(id)
+
+      expect(result.success).toBe(false)
+      expect(result.errorCode).toBe('DISPATCH_SKIPPED')
+      expect(result.message).toContain('busy')
+      // 未发送任何 message（dispatch no-op）
+      expect(busyBackend.sentMessages).toHaveLength(0)
+    })
   })
 })
