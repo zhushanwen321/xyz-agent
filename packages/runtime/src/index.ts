@@ -3,7 +3,7 @@ import { SessionService } from './services/session/session-service.js'
 import { ConfigService } from './services/config-service.js'
 import { AuthService } from './services/auth/auth-service.js'
 import { AuthStorage } from './services/auth/auth-storage.js'
-import { migrateLegacyProviderConfig } from './services/migration/legacy-provider-migration.js'
+import { migrateProviderConfig } from './services/migration/legacy-provider-migration.js'
 import { ensureAutoRenameDefault } from './services/worktree-config-helper.js'
 import { PresetService } from './services/preset-service.js'
 import { ModelService } from './services/model-service.js'
@@ -149,24 +149,31 @@ async function main(): Promise<void> {
   // AuthStorage（OAuth 路径 B）：auth.json 在 pi agent 目录（与 models.json 同路径，与 pi 读取侧一致）。
   // ConfigService 用它做 I9 清理①（setProvider 保存 apiKey 时清 auth.json oauth）+ I8（deleteProvider 清 auth.json）。
   const authStorage = new AuthStorage(join(configStore.getPiAgentDir(), 'auth.json'))
-  // 一次性迁移：catalog provider 错位 apiKey 从 models.json 迁 auth.json（分体系对齐）。
+  // 一次性迁移：catalog provider 错位 apiKey 从 models.json 迁 auth.json（step1）+ 
+  // provider 级 enabled 字段迁 settings.json.enabledModels 白名单（step2，G5 修复）。
   // 必须在首次 session spawn 前完成（pi AuthStorage 无文件监听，旧 session 不感知新 auth.json）。
   // 幂等：已迁移条目不再重复处理。失败不阻断启动（warn + 下次重试）。
   try {
-    const migrationReport = await migrateLegacyProviderConfig(authStorage)
-    if (migrationReport.migrated.length > 0 || migrationReport.errors.length > 0) {
-      console.log('[runtime] legacy provider migration:', JSON.stringify({
-        migrated: migrationReport.migrated.length,
-        kept: migrationReport.kept.length,
-        skipped: migrationReport.skipped.length,
-        failed: migrationReport.failed.length,
+    const migrationReport = await migrateProviderConfig(authStorage)
+    const { catalog, enabled } = migrationReport
+    if (catalog.migrated.length > 0 || catalog.errors.length > 0 || enabled.migratedEnabled || enabled.fullDisabledWarn) {
+      console.log('[runtime] provider config migration:', JSON.stringify({
+        catalogMigrated: catalog.migrated.length,
+        catalogKept: catalog.kept.length,
+        catalogSkipped: catalog.skipped.length,
+        catalogFailed: catalog.failed.length,
+        enabledMigrated: enabled.migratedEnabled,
+        fullDisabledWarn: enabled.fullDisabledWarn ?? false,
       }))
-      if (migrationReport.errors.length > 0) {
-        console.warn('[runtime] legacy provider migration errors:', migrationReport.errors)
+      if (catalog.errors.length > 0) {
+        console.warn('[runtime] legacy provider migration errors:', catalog.errors)
+      }
+      if (enabled.fullDisabledWarn) {
+        console.warn('[runtime] all providers were disabled (enabled===false); pi does not support fully-disabled state. After migration all providers are available — please manually remove unwanted providers.')
       }
     }
   } catch (e) {
-    console.warn('[runtime] legacy provider migration failed:', e)
+    console.warn('[runtime] provider config migration failed:', e)
   }
   const configService = new ConfigService(effectiveRoot, configStore, authStorage)
   // ADR-0021 §1 一次性迁移：旧版本 skill 路径存在 settings.json.skills，
