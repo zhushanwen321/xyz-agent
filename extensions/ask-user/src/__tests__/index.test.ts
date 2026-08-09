@@ -645,6 +645,23 @@ describe("execute — RPC mode (askUserInteract via select channel)", () => {
 		expect(result.details.answers["Which DB?"]).toEqual({ selected: ["Postgres"], other: "Custom DB" });
 	});
 
+	it("R-3b: other-only answer (no main key) → AnswerValue {selected:[], other}", async () => {
+		const tool = getTool();
+		// 修复后前端无选项自由文本问题只写 `${key}__other`（与 encodeAnswer 契约一致），
+		// 不写主 key——解码必须得 {selected:[], other}，不得产生 selected 双持有。
+		const protoAnswers = JSON.stringify({
+			"Which DB?__other": "Custom DB",
+		});
+		const result = await tool.execute(
+			"id",
+			validSingle,
+			undefined,
+			undefined,
+			makeCtx({ mode: "rpc", selectResult: protoAnswers }),
+		);
+		expect(result.details.answers["Which DB?"]).toEqual({ selected: [], other: "Custom DB" });
+	});
+
 	it("R-5: user cancel (select returns undefined) → cancelled details", async () => {
 		const tool = getTool();
 		const result = await tool.execute(

@@ -200,7 +200,8 @@ function showOther(q: AskUserQuestion): boolean {
 // ── Submit：构造 answers JSON（与 @xyz-agent/extension-protocol helpers.ts 解码契约对齐）──
 // - 有选项：selectedValues 只含真实选项 label（过滤 OTHER_VALUE 占位符），写 answers[key]
 // - Other 自由文本：独立 key `${key}__other`（不再混进 vals 数组替代占位符）
-// - 无选项的纯自由文本问题：otherText 写 answers[key]
+// - 无选项的纯自由文本问题：只写 `${key}__other`（与 encodeAnswer 契约一致——纯 other 形态
+//   不写主 key，RPC 解码得 {selected:[], other:text}，避免 selected/other 双持有致展示重复）
 function onSubmit(): void {
   const answers: Record<string, string> = {}
   for (const q of props.questions) {
@@ -213,11 +214,6 @@ function onSubmit(): void {
       const vals = st.selectedValues.filter((v) => v !== OTHER_VALUE)
       if (vals.length > 0) {
         answers[key] = q.multiSelect ? JSON.stringify(vals) : vals[0]
-      }
-    } else {
-      // 无选项的纯自由文本问题
-      if (st.otherText) {
-        answers[key] = st.otherText
       }
     }
     // Other 自由文本写独立 key `${key}__other`（不再混进 vals）
