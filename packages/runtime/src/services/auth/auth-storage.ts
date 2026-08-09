@@ -22,6 +22,12 @@ import {
 } from 'node:fs'
 import lockfile from 'proper-lockfile'
 
+export interface ApiKeyCredential {
+  type: 'api_key'
+  key: string
+  env?: Record<string, string>
+}
+
 export interface OAuthCredential {
   type: 'oauth'
   access: string
@@ -29,6 +35,8 @@ export interface OAuthCredential {
   expires: number
   [k: string]: unknown
 }
+
+export type Credential = ApiKeyCredential | OAuthCredential
 
 /**
  * 跨进程写锁：proper-lockfile 锁 auth.json，参数对齐 pi FileAuthStorageBackend.withLockAsync
@@ -100,7 +108,7 @@ function writeFileAtomic(filePath: string, content: string): void {
  * JSON 损坏抛错（不静默返回空——损坏意味着有外部写坏或磁盘问题，
  * 静默吞掉会让用户以为凭据被删了）。
  */
-function readAuthFile(filePath: string): Record<string, OAuthCredential> {
+function readAuthFile(filePath: string): Record<string, Credential> {
   if (!existsSync(filePath)) return {}
   const raw = readFileSync(filePath, 'utf-8')
   if (raw.trim() === '') return {}
@@ -114,16 +122,16 @@ function readAuthFile(filePath: string): Record<string, OAuthCredential> {
 export class AuthStorage {
   constructor(private readonly filePath: string) {}
 
-  async get(providerId: string): Promise<OAuthCredential | undefined> {
+  async get(providerId: string): Promise<Credential | undefined> {
     return readAuthFile(this.filePath)[providerId]
   }
 
-  async getAll(): Promise<Record<string, OAuthCredential>> {
+  async getAll(): Promise<Record<string, Credential>> {
     return readAuthFile(this.filePath)
   }
 
   /** RMW：锁内重读最新文件 → merge 单 provider → 原子写回 */
-  async set(providerId: string, credential: OAuthCredential): Promise<void> {
+  async set(providerId: string, credential: Credential): Promise<void> {
     await withFileLock(this.filePath, async () => {
       const data = readAuthFile(this.filePath)
       data[providerId] = credential
@@ -147,11 +155,22 @@ export class AuthStorage {
     })
   }
 
+  /**
+   * 同步判 auth.json 内存快照中有该 providerId 的任意 type 条目（api_key 或 oauth）。
+   * 用于 listProviders 替代 hasOAuthSync 的 oauth-only 判定。
+   * 写是原子 rename，读永远拿到完整文件。
+   */
+  hasCredentialSync(providerId: string): boolean {
+    return providerId in readAuthFile(this.filePath)
+  }
+
+  /** @deprecated 用 hasCredentialSync 替代（支持 api_key + oauth 联合类型） */
   async hasOAuth(providerId: string): Promise<boolean> {
     return readAuthFile(this.filePath)[providerId]?.type === 'oauth'
   }
 
   /**
+   * @deprecated 用 hasCredentialSync 替代（支持 api_key + oauth 联合类型）。
    * 同步版 hasOAuth（listProviders 是同步契约，M6 status 派生用）。
    * 与异步版读同一 readAuthFile（同步核心）；写是原子 rename，读永远拿到完整文件。
    */

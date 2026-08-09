@@ -9,14 +9,18 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, statSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { AuthStorage, type OAuthCredential } from '../auth-storage.js'
+import { AuthStorage, type OAuthCredential, type Credential, type ApiKeyCredential } from '../auth-storage.js'
 
 let dir: string
 let file: string
 let storage: AuthStorage
 
-function cred(access: string, expires = 1_000): OAuthCredential {
+function oauthCred(access: string, expires = 1_000): OAuthCredential {
   return { type: 'oauth', access, expires }
+}
+
+function apiKeyCred(key: string, env?: Record<string, string>): ApiKeyCredential {
+  return env ? { type: 'api_key', key, env } : { type: 'api_key', key }
 }
 
 beforeEach(() => {
@@ -31,13 +35,13 @@ afterEach(() => {
 
 describe('AuthStorage', () => {
   it('set 后 get 返回完整 credential', async () => {
-    await storage.set('provider-a', cred('token-1'))
+    await storage.set('provider-a', oauthCred('token-1'))
     expect(await storage.get('provider-a')).toMatchObject({ type: 'oauth', access: 'token-1', expires: 1_000 })
   })
 
   it('set 不同 provider 不互相覆盖（RMW merge）', async () => {
-    await storage.set('a', cred('t1'))
-    await storage.set('b', cred('t2'))
+    await storage.set('a', oauthCred('t1'))
+    await storage.set('b', oauthCred('t2'))
     expect(await storage.get('a')).toMatchObject({ access: 't1' })
     expect(await storage.get('b')).toMatchObject({ access: 't2' })
     expect(await storage.hasOAuth('a')).toBe(true)
@@ -45,14 +49,14 @@ describe('AuthStorage', () => {
   })
 
   it('同 provider 重复 set 覆盖旧值', async () => {
-    await storage.set('a', cred('old'))
-    await storage.set('a', cred('new'))
+    await storage.set('a', oauthCred('old'))
+    await storage.set('a', oauthCred('new'))
     expect(await storage.get('a')).toMatchObject({ access: 'new' })
   })
 
   it('并发 set 多个 provider：全部保留（mutex 串行化 RMW）', async () => {
     await Promise.all(
-      Array.from({ length: 10 }, (_, i) => storage.set(`p${i}`, cred(`t${i}`))),
+      Array.from({ length: 10 }, (_, i) => storage.set(`p${i}`, oauthCred(`t${i}`))),
     )
     const all = await storage.getAll()
     expect(Object.keys(all)).toHaveLength(10)
@@ -62,13 +66,13 @@ describe('AuthStorage', () => {
   })
 
   it('写入后文件权限为 0600', async () => {
-    await storage.set('a', cred('t1'))
+    await storage.set('a', oauthCred('t1'))
     const stat = statSync(file)
     expect(stat.mode & 0o777).toBe(0o600)
   })
 
   it('remove 幂等：不存在时再次 remove 不抛错', async () => {
-    await storage.set('a', cred('t1'))
+    await storage.set('a', oauthCred('t1'))
     await storage.remove('a')
     expect(await storage.get('a')).toBeUndefined()
     await storage.remove('a')
@@ -93,11 +97,64 @@ describe('AuthStorage', () => {
 
   it('损坏 JSON：set 抛错（RMW 重读时发现损坏）', async () => {
     writeFileSync(file, '{ not valid json')
-    await expect(storage.set('a', cred('t1'))).rejects.toThrow()
+    await expect(storage.set('a', oauthCred('t1'))).rejects.toThrow()
   })
 
   it('空文件内容按空对象处理', async () => {
     writeFileSync(file, '')
     expect(await storage.getAll()).toEqual({})
+  })
+
+  // ---- ApiKeyCredential 类型扩展 (TC1-TC7) ----
+
+  it('TC1: set ApiKeyCredential 后 get 返回完整 credential', async () => {
+    await storage.set('zai', apiKeyCred('a275...'))
+    const result = await storage.get('zai')
+    expect(result).toMatchObject({ type: 'api_key', key: 'a275...' })
+  })
+
+  it('TC2: api_key + oauth 不同 provider 不互相覆盖（RMW merge）', async () => {
+    await storage.set('catalog-prov', apiKeyCred('k1'))
+    await storage.set('oauth-prov', oauthCred('t2'))
+    const all = await storage.getAll()
+    expect(Object.keys(all)).toHaveLength(2)
+    expect(all['catalog-prov']).toMatchObject({ type: 'api_key', key: 'k1' })
+    expect(all['oauth-prov']).toMatchObject({ type: 'oauth', access: 't2' })
+  })
+
+  it('TC3: hasCredentialSync 对 api_key 返回 true，缺失返回 false', async () => {
+    await storage.set('zai', apiKeyCred('sk-xxx'))
+    expect(storage.hasCredentialSync('zai')).toBe(true)
+    expect(storage.hasCredentialSync('missing')).toBe(false)
+  })
+
+  it('TC4: hasCredentialSync 对 oauth 返回 true（向后兼容）', async () => {
+    await storage.set('anthropic', oauthCred('tok'))
+    expect(storage.hasCredentialSync('anthropic')).toBe(true)
+  })
+
+  it('TC5: 同 provider api_key 覆盖已有 oauth', async () => {
+    await storage.set('x', oauthCred('old-oauth'))
+    await storage.set('x', apiKeyCred('new-apikey'))
+    const result = await storage.get('x')
+    expect(result).toMatchObject({ type: 'api_key', key: 'new-apikey' })
+  })
+
+  it('TC6: api_key 写入后文件权限为 0600', async () => {
+    await storage.set('zai', apiKeyCred('secret'))
+    const stat = statSync(file)
+    expect(stat.mode & 0o777).toBe(0o600)
+  })
+
+  it('TC7: api_key key 字段保留原形态（$ENV / !cmd）', async () => {
+    await storage.set('zai', apiKeyCred('$ENV:ZAI_API_KEY'))
+    const result = await storage.get('zai')
+    expect(result).toMatchObject({ type: 'api_key', key: '$ENV:ZAI_API_KEY' })
+  })
+
+  it('TC7b: api_key env 字段保留', async () => {
+    await storage.set('zai', apiKeyCred('k1', { FOO: 'bar' }))
+    const result = await storage.get('zai')
+    expect(result).toMatchObject({ type: 'api_key', key: 'k1', env: { FOO: 'bar' } })
   })
 })
