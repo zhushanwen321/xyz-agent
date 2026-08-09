@@ -624,7 +624,7 @@ function checkMetaQuality(meta: { description?: string; when?: string; notFor?: 
         findings.push({
           severity: "error",
           line: 1,
-          message: `meta.${field} 包含已声明参数名 '${name}'（'${name}:' / '${name}=' 形态）——参数契约请用 workflow info 查询，description/when/notFor 只放路由信息`,
+          message: `meta.${field} 包含已声明参数名 '${name}'（'${name}:' / '${name}=' 形态）——参数契约请 read 脚本文件的 @pi-meta parameters 查询，description/when/notFor 只放路由信息`,
           suggestion: `从 meta.${field} 移除 '${name}: ...' / '${name}=...'，改在 parameters/usage 中声明`,
         });
       }

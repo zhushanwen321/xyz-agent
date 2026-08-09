@@ -825,7 +825,7 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
       expect(r1.reason).toBe("invalid_args");
       expect(r1.error).toContain("Invalid args for workflow 'review-fix-loop'");
       expect(r1.error).toContain("targetType");
-      expect(r1.error).toContain("workflow info review-fix-loop");
+      expect(r1.error).toContain("Read the workflow script file");
 
       // target 空串（m3 required 空串复查先拦 → invalid_args；脚本 !target 成不可达死代码）
       const r2 = await runAndWait(
@@ -838,7 +838,7 @@ describe("review-fix-loop E2E（真实 worker + 场景化 mock runner）", () =>
       expect(r2.reason).toBe("invalid_args");
       // schema 驱动（minLength:1 + pattern '\\S'）：chokepoint 不发明约束
       expect(r2.error).toContain("target");
-      expect(r2.error).toContain("workflow info review-fix-loop");
+      expect(r2.error).toContain("Read the workflow script file");
     },
     RUN_TIMEOUT_MS,
   );

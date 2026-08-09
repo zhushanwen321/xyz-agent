@@ -60,7 +60,7 @@ describe("validateRunArgs — 校验语义", () => {
       expect(e.workflowName).toBe("test-wf");
       expect(e.message).toContain("Invalid args for workflow 'test-wf'");
       expect(e.message).toContain("targetType");
-      expect(e.message).toContain("workflow info test-wf");
+      expect(e.message).toContain("Read the workflow script file");
     }
   });
 

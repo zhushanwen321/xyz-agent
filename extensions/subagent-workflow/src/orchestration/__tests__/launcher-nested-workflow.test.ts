@@ -183,7 +183,7 @@ describe("executeNestedWorkflow", () => {
     vi.mocked(runWorkflow).mockRejectedValueOnce(
       new ArgsValidationError(
         "child-wf",
-        "Invalid args for workflow 'child-wf': 1 error(s)\n- /target: is required\nRun `workflow info child-wf` to see the parameter schema and usage.",
+        "Invalid args for workflow 'child-wf': 1 error(s)\n- /target: is required\nRead the workflow script file (location from <available_workflows>) for the parameter schema and usage.",
       ),
     );
     const parent = makeParentRun();

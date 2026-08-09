@@ -461,21 +461,4 @@ describe("buildWorkflowGui", () => {
       expect(props.items[0].severity).toBe("warn");
     });
   });
-
-  describe("buildWorkflowGui info 分支（m4：无 runId 不崩）", () => {
-    it("info ok → stats-line 含 workflow 名", () => {
-      const comp = buildWorkflowGui({ action: "info", name: "review-fix-loop", status: "ok" });
-      expect(comp.type).toBe("stats-line");
-      const props = comp.props as { items: Array<{ value: string; severity: string }> };
-      expect(props.items[0].value).toBe("review-fix-loop");
-      expect(props.items[0].severity).toBe("ok");
-    });
-
-    it("info not_found → danger 与 run not_found 对称", () => {
-      const comp = buildWorkflowGui({ action: "info", name: "nope", status: "not_found" });
-      const props = comp.props as { items: Array<{ value: string; severity: string }> };
-      expect(props.items[0].value).toContain("not found");
-      expect(props.items[0].severity).toBe("danger");
-    });
-  });
 });

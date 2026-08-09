@@ -47,8 +47,8 @@ function promptGuidelinesText(src: string): string {
 }
 
 describe("U1: workflow tool prompt mentions built-in workflows", () => {
-  it("TC4a: promptGuidelines 不含具体内置 args 枚举（m4 瘦身——参数知识在 info）", () => {
-    // m4：BUILT-IN 枚举删除，发现职责转移给 <available_workflows> 注入段 + workflow info。
+  it("TC4a: promptGuidelines 不含具体内置 args 枚举（m4 瘦身——参数知识在 read location）", () => {
+    // m4：BUILT-IN 枚举删除，发现职责转移给 <available_workflows> 注入段 + read location。
     // 截取 promptGuidelines 段断言（"batch1..batchN" 等在 KNOWN_ARG_KEYS 注释中出现）。
     const guidelines = promptGuidelinesText(TOOL_WORKFLOW_SRC);
     expect(guidelines).not.toContain("chain (sequential");
@@ -57,10 +57,12 @@ describe("U1: workflow tool prompt mentions built-in workflows", () => {
     expect(guidelines).not.toContain("chain/parallel/scatter-gather/map-reduce");
   });
 
-  it("TC4b: promptGuidelines 含 workflow info 指引（info 回收闭环）", () => {
+  it("TC4b: promptGuidelines 引导 read location 获取参数细节（info 已砍，ADR-0003 D5）", () => {
     const guidelines = promptGuidelinesText(TOOL_WORKFLOW_SRC);
-    expect(guidelines).toContain("workflow info <ref>");
-    expect(guidelines).toContain("absolute .js path");
+    expect(guidelines).toContain("read the <location>");
+    expect(guidelines).toContain("script file");
+    // info action 已砍，引导语不再含 workflow info
+    expect(guidelines).not.toContain("workflow info");
   });
 
   it("tool-workflow.ts promptGuidelines 含 workflow-script list 交叉引用", () => {

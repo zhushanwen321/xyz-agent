@@ -53,7 +53,6 @@ import { formatElapsed, renderTextFallback } from "./views/format.ts";
 export type WorkflowAction =
   | "run"
   | "status"
-  | "info"
   | "pause"
   | "resume"
   | "abort";
@@ -61,7 +60,6 @@ export type WorkflowAction =
 const WORKFLOW_ACTIONS: readonly WorkflowAction[] = [
   "run",
   "status",
-  "info",
   "pause",
   "resume",
   "abort",
@@ -70,7 +68,7 @@ const WORKFLOW_ACTIONS: readonly WorkflowAction[] = [
 const WorkflowParams = Type.Object({
   action: StringEnum(WORKFLOW_ACTIONS, { description: "Workflow action to execute" }),
   name: Type.Optional(
-    Type.String({ description: "Workflow ref: absolute path to the .js script (use <location> from <available_workflows>; run/info action)" }),
+    Type.String({ description: "Workflow ref: absolute path to the .js script (use <location> from <available_workflows>; run action)" }),
   ),
   slug: Type.Optional(
     Type.String({
@@ -217,7 +215,6 @@ interface RunSummary {
  */
 export type WorkflowToolDetails =
   | { action: "run"; runId: string; status: "running" | "not_found" | "invalid_args"; name: string; slug?: string; stateFile?: string; __gui__?: GuiRenderResult }
-  | { action: "info"; name: string; status: "ok" | "not_found"; __gui__?: GuiRenderResult }
   | { action: "status"; runs: RunSummary[]; __gui__?: GuiRenderResult }
   | { action: "pause" | "resume" | "abort"; runId: string; status: string; reason?: string; __gui__?: GuiRenderResult };
 
@@ -244,18 +241,6 @@ function withGui(
 
 /** 按 WorkflowToolDetails 构造对应的 GuiComponent。 */
 export function buildWorkflowGui(details: WorkflowToolDetails) {
-  if (details.action === "info") {
-    // m4：info 无 runId，不能落入通用 runId 分支（details.runId.slice 会 TypeError）
-    return guiComponent("stats-line", {
-      items: [
-        {
-          label: "info",
-          value: details.status === "not_found" ? `${details.name}: not found` : details.name,
-          severity: details.status === "not_found" ? ("danger" as const) : ("ok" as const),
-        },
-      ],
-    });
-  }
   if (details.action === "run") {
     // not_found 是脚本未找到的逻辑错误（isError:true），不能走通用 mapper 的 done/check 成功映射。
     // 短路为 danger severity 的 stats-line，与 isError 文案一致。
@@ -326,10 +311,9 @@ export function registerWorkflowTool(
     promptGuidelines: [
       "PRIORITY: When user says 'workflow', 'run workflow', try run action FIRST.",
       "All listed workflows run DIRECTLY with action:run — refs/descriptions come from " +
-      "<available_workflows> (injected each turn); call \"workflow info <ref>\" for " +
-      "parameters/usage/when (when/notFor routing hints live in info, not the injection list). " +
-      "parameter schema and usage before running. Do NOT use workflow-script generate for " +
-      "patterns already covered by available workflows.",
+      "<available_workflows> (injected each turn). For parameter details, read the <location> " +
+      "script file (script header has @pi-meta parameters + usage + phases). Do NOT use " +
+      "workflow-script generate for patterns already covered by available workflows.",
       "run: pass the absolute .js path from <available_workflows> <location> as name, then start in background (no user confirmation needed).",
       "Do NOT poll status after starting — results appear automatically via notifyDone.",
       "Call shapes (JSON): " +
@@ -370,9 +354,6 @@ export function registerWorkflowTool(
             break;
           case "status":
             result = actionStatus(deps);
-            break;
-          case "info":
-            result = await actionInfo(params, deps);
             break;
           case "pause":
             result = await actionLifecycle("pause", params, deps);
@@ -531,131 +512,6 @@ export async function actionRun(
   };
 }
 
-// ── info action ─────────────────────────────────────────────
-
-/** JSON 缩进（info 返回文本可读性）。 */
-const INFO_JSON_INDENT = 2;
-
-/** workflow info 返回结构（§5.2：raw schema + friendly + usage，无自动 exampleArgs）。 */
-export interface WorkflowInfo {
-  name: string;
-  description: string;
-  when?: string;
-  notFor?: string;
-  /** raw JSON Schema（机器可校验）。未声明参数契约时显式 null + 提示。 */
-  parameters?: Record<string, unknown> | null;
-  /** 人/LLM 可读参数表（renderParamTable 产物）。 */
-  parametersFriendly?: Array<{
-    name: string;
-    required: boolean;
-    type?: string;
-    enum?: string;
-    default?: unknown;
-    note?: string;
-  }>;
-  /** 作者手写用法说明（markdown，含真实合法示例）。 */
-  usage?: string;
-}
-
-/**
- * renderParamTable（IF7）：schema → friendly 参数表。
- *
- * - properties 条目：{ name, required, type?, enum?（'a | b' 展开）, default?, note? }
- * - patternProperties：/^\\^([a-zA-Z]+)\\d\\+\\$$/（匹配字面 \\d+ 转义——真实 key
- *   是 '^batch\\\\d+$'，design-review CRIT-1 探针实测）→ 折叠 '<word>1, <word>2, ...'，
- *   否则保留正则原文
- * - note 派生：value schema 的 description（design-review MAJ-3：batchN 值域语义不能丢）
- * - 已知边界（接受代价）：^x1$ 字面数字误折叠、^batch\\d{2}$ 语义漂移
- */
-export function renderParamTable(parameters: Record<string, unknown>): WorkflowInfo["parametersFriendly"] {
-  const table: NonNullable<WorkflowInfo["parametersFriendly"]> = [];
-  const props = parameters.properties;
-  const requiredList = Array.isArray(parameters.required) ? (parameters.required as unknown[]) : [];
-  if (props !== null && typeof props === "object") {
-    for (const [name, rawProp] of Object.entries(props as Record<string, unknown>)) {
-      const prop = rawProp !== null && typeof rawProp === "object" ? (rawProp as Record<string, unknown>) : {};
-      const entry: NonNullable<WorkflowInfo["parametersFriendly"]>[number] = {
-        name,
-        required: requiredList.includes(name),
-      };
-      if (typeof prop.type === "string") entry.type = prop.type;
-      if (Array.isArray(prop.enum)) entry.enum = (prop.enum as unknown[]).map(String).join(" | ");
-      if (prop.default !== undefined) entry.default = prop.default;
-      if (typeof prop.description === "string") entry.note = prop.description;
-      table.push(entry);
-    }
-  }
-  const pp = parameters.patternProperties;
-  if (pp !== null && typeof pp === "object") {
-    for (const [pattern, rawProp] of Object.entries(pp as Record<string, unknown>)) {
-      const prop = rawProp !== null && typeof rawProp === "object" ? (rawProp as Record<string, unknown>) : {};
-      const fold = pattern.match(/^\^([a-zA-Z]+)\\d\+\$$/);
-      const entry: NonNullable<WorkflowInfo["parametersFriendly"]>[number] = {
-        name: fold ? `${fold[1]}1, ${fold[1]}2, ...` : pattern,
-        required: false,
-      };
-      if (typeof prop.type === "string") entry.type = prop.type;
-      if (typeof prop.description === "string") entry.note = prop.description;
-      table.push(entry);
-    }
-  }
-  return table;
-}
-
-/**
- * info action（IF6）：返回 workflow 的 raw schema + friendly 参数表 + usage。
- * 无自动 exampleArgs（schema 外语义约束如 review-fix-loop 至少一 batch 是 footgun——
- * 作者手写 usage 是唯一示例来源）。
- */
-export async function actionInfo(
-  params: WorkflowToolParams,
-  deps: LauncherDeps,
-): Promise<ToolResult> {
-  const name = params.name;
-  if (!name) {
-    return textResult(
-      "info requires 'name' parameter (absolute .js path from <available_workflows> <location>). Correct: {\"action\":\"info\",\"name\":\"<ref>\"}",
-      true,
-    );
-  }
-  const script = await deps.registry.getPath(name);
-  if (!script) {
-    const all = await deps.registry.loadAll();
-    const available = all.filter((wf) => wf.available);
-    const suggestions = available
-      .map((wf) => `  - ${wf.name}: ${wf.meta.description || "(no description)"}`)
-      .join("\n");
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Workflow '${name}' not found. Available:\n${suggestions || "  (none)"}`,
-        },
-      ],
-      details: { action: "info", name, status: "not_found" },
-      isError: true,
-    };
-  }
-  const info: WorkflowInfo = {
-    name: script.meta.name,
-    description: script.meta.description,
-  };
-  if (script.meta.when !== undefined) info.when = script.meta.when;
-  if (script.meta.notFor !== undefined) info.notFor = script.meta.notFor;
-  if (script.meta.parameters !== undefined) {
-    info.parameters = script.meta.parameters;
-    info.parametersFriendly = renderParamTable(script.meta.parameters);
-  } else {
-    // 未声明参数契约：显式标记（LLM 无法区分「无参数」与「自由透传」）
-    info.parameters = null;
-    info.parametersFriendly = [];
-  }
-  if (script.meta.usage !== undefined) info.usage = script.meta.usage;
-  return {
-    content: [{ type: "text", text: JSON.stringify(info, null, INFO_JSON_INDENT) }],
-    details: { action: "info", name: script.meta.name, status: "ok" },
-  };
-}
 
 // ── status action ────────────────────────────────────────────
 

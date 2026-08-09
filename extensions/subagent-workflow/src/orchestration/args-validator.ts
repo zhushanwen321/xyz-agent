@@ -2,7 +2,7 @@
 //
 // m3：参数校验单一 chokepoint（IF3 validateRunArgs + IF4 ArgsValidationError）。
 // lifecycle.runWorkflow 首行调用——§5.3 fail-fast：参数错误在 worker 启动前返回，
-// 带「workflow info 重看」指引。
+// 带「read 脚本重看」指引。
 //
 // 设计决策（m3 design-review 探针实证）：
 // - ajv 选项钉死 { coerceTypes:true, strictSchema:false, allErrors:true, useDefaults:false }：
@@ -54,7 +54,7 @@ function formatMessage(name: string, errors: readonly unknown[]): string {
   return (
     `Invalid args for workflow '${name}': ${errors.length} error(s)\n` +
     `${lines.join("\n")}\n` +
-    `Run \`workflow info ${name}\` to see the parameter schema and usage.`
+    `Read the workflow script file (location from <available_workflows>) for the parameter schema and usage.`
   );
 }
 
@@ -75,8 +75,7 @@ export function validateRunArgs(spec: RunSpec): void {
   if (parameters === null || typeof parameters !== "object" || Array.isArray(parameters)) {
     throw new ArgsValidationError(
       scriptName,
-      `Workflow '${scriptName}' has an invalid parameter schema (expected object). ` +
-        `Run \`workflow info ${scriptName}\` to inspect it.`,
+      `Workflow '${scriptName}' has an invalid parameter schema (expected object). Read the workflow script file (location from <available_workflows>) to inspect it.`,
     );
   }
 
@@ -109,8 +108,7 @@ export function validateRunArgs(spec: RunSpec): void {
     const detail = err instanceof Error ? err.message : String(err);
     throw new ArgsValidationError(
       scriptName,
-      `Workflow '${scriptName}' has an invalid parameter schema: ${detail}. ` +
-        `Run \`workflow info ${scriptName}\` to inspect it.`,
+      `Workflow '${scriptName}' has an invalid parameter schema: ${detail}. Read the workflow script file (location from <available_workflows>) to inspect it.`,
     );
   }
 

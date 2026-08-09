@@ -148,8 +148,8 @@ export function formatWorkflowList(workflows: WorkflowEntry[]): string {
 	const lines = [
 		"\n\n<available_workflows>",
 		// 引导语与具体 workflow 解耦：不写死内置名（列表本身已含全部 workflow，
-		// 名字/描述每 turn 由 @pi-meta 动态注入），只给通用路由指引 + info 回收指针。
-		'The following workflows are available. Do NOT call list to discover available workflows — they are listed below; use list only for running state. All listed workflows run directly via action:run — do NOT use workflow-script generate for any listed workflow. Call "workflow info <name>" to see parameters/usage before running.',
+		// 名字/描述每 turn 由 @pi-meta 动态注入），只给通用路由指引 + read location 参数指针。
+		'The following workflows are available. Do NOT call list to discover available workflows — they are listed below; use list only for running state. All listed workflows run directly via action:run — do NOT use workflow-script generate for any listed workflow. For parameter details, read the <location> script file (script header has @pi-meta parameters + usage).',
 	];
 	for (const wf of workflows) {
 		lines.push(

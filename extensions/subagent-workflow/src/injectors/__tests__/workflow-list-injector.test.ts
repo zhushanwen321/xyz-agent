@@ -164,7 +164,7 @@ describe("formatWorkflowList", () => {
 	it("引导语通用化：不写死内置 workflow 名，含 info 回收指引", () => {
 		const out = formatWorkflowList([{ name: "chain", description: "d", path: "/workflows/chain.js" }]);
 		expect(out).toContain("All listed workflows run directly via action:run");
-		expect(out).toContain('"workflow info <name>"');
+		expect(out).toContain("read the <location> script file");
 		// 通用化约束：引导语不点名具体 workflow（名字由 @pi-meta 动态注入，
 		// 写死内置名会在新增/移除 workflow 时与列表漂移）
 		expect(out).not.toMatch(/review-fix-loop|scatter-gather|map-reduce/);
