@@ -171,11 +171,12 @@ bash scripts/verify-ci-release.sh "v$(node -p "require('./package.json').version
 #### 4N.1 检查需要版本处理的包
 
 ```bash
-cd $WS_ROOT/main
-git fetch github
-git reset --hard github/main   # 确保本地 main 已同步（阶段 4 的 Electron bump 已合并进 main）
-
-bash scripts/check-version-changes.sh main..HEAD
+cd $WS_ROOT/main && git fetch github && git reset --hard github/main
+# ⚠️ merge 后本地 main == HEAD，「main..HEAD」range 为空，check-version-changes 会扫不到 PR 改动 →
+# NEEDS_VERSION=false 误跳过 4N。必须用 PR 的 merge commit range（PR 前 main..PR merge commit，
+# 即 merge commit 的 first-parent diff）：
+PR_MERGE=$(gh pr view "$PR_NUMBER" --repo zhushanwen321/xyz-agent --json mergeCommit --jq '.mergeCommit.oid')
+bash scripts/check-version-changes.sh "${PR_MERGE}^1..${PR_MERGE}"
 ```
 
 脚本输出：
@@ -211,9 +212,11 @@ bash scripts/check-version-changes.sh main..HEAD
 ```bash
 cd $WS_ROOT/main
 # 人工只传 CHANGED_PACKAGES 的 type；DEPENDENTS_OF_CHANGED 由脚本自动 patch
+# ⚠️ dependents-from 的 range 同 4N.1：用 PR merge commit range，不是「main..HEAD」（merge 后为空）
+PR_MERGE=$(gh pr view "$PR_NUMBER" --repo zhushanwen321/xyz-agent --json mergeCommit --jq '.mergeCommit.oid')
 bash scripts/apply-version.sh \
   --changed @zhushanwen/pi-<pkg-a>=minor @zhushanwen/pi-<pkg-b>=patch \
-  --dependents-from <(bash scripts/check-version-changes.sh main..HEAD)
+  --dependents-from <(bash scripts/check-version-changes.sh "${PR_MERGE}^1..${PR_MERGE}")
 ```
 
 脚本：CHANGED_PACKAGES 按 type semver bump + DEPENDENTS_OF_CHANGED 自动 patch（规则一）+ 生成 CHANGELOG（CHANGED 用 changeset body，DEPENDENTS 用自动 `chore: refresh dependency range` 条目）+ 消费（删除）.changeset/*.md + fixed 组一致性校验。
@@ -278,6 +281,8 @@ bash .agents/skills/merge/scripts/release.sh
 ```
 
 从 conventional commits 自动生成 Release Notes（feat/fix/perf/breaking 分组）并创建/更新 GitHub Release。也可指定 tag 和 notes 文件：`bash .agents/skills/merge/scripts/release.sh v0.6.5 --notes ./my-notes.md`。
+
+> ⚠️ **release.sh 自动 notes 在 merge 末尾常不准**：脚本用 `git describe HEAD^` 找上一个 tag，但 merge 流程末尾 HEAD 已远超当前 tag（经过 bump + skill 更新 + 4N bump 等 commits），`git describe HEAD^` 会返回**当前 tag**，导致 range = `<当前tag>..HEAD` 几乎为空、自动 notes 退化。实际执行中建议跳过自动生成，直接手写双语 notes 后用 `gh release edit <tag> --notes-file <双语文件>` 覆盖（见下方 [MANDATORY] 双语要求）。
 
 **[MANDATORY] Release Notes 必须中英双语**
 
