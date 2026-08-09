@@ -1,0 +1,144 @@
+import { formatRelativeTime, formatSchedule } from './format.js'
+import { computeNextRuns, parseSchedule } from './parsing.js'
+import type { SchedulerRuntime } from './runtime.js'
+import type { AddOptions, ScheduledTask } from './types.js'
+
+// ── 结构化结果 ──
+
+export type ServiceErrorCode =
+  | 'TASK_NOT_FOUND'
+  | 'INVALID_SCHEDULE'
+  | 'TASK_LIMIT_REACHED'
+  | 'DISPATCH_SKIPPED'
+  | 'INVALID_PARAMS'
+  | 'INTERNAL'
+
+export interface ServiceResult<T = unknown> {
+  success: boolean
+  message: string
+  errorCode?: ServiceErrorCode
+  data?: T
+}
+
+// ── SchedulerService ──
+
+/**
+ * tool 与 command 的唯一业务入口（IF-4 去双轨）：
+ * 5 个动作单一实现，返回结构化 ServiceResult。
+ * - 成功: { success: true, message, data }
+ * - 失败: { success: false, errorCode, message }
+ *
+ * message 为用户可读纯文本（tool 用作 content 文本、command 直接输出），
+ * data 供 tool details（create: {task, nextRuns}；list: {tasks}）。
+ */
+export class SchedulerService {
+  constructor(public readonly runtime: SchedulerRuntime) {}
+
+  /**
+   * 创建任务。
+   * 注意：create 接收原始 schedule 字符串、内部 parseSchedule（而非已解析的
+   * ScheduleSpec）——这是对 IF-4 草案 create(parseResult) 的有意细化：
+   * 解析失败需要结构化 INVALID_SCHEDULE 返回，把解析责任留在 service 内，
+   * tool/command 两层都不需要重复 parseSchedule。
+   */
+  async create(
+    prompt: string,
+    scheduleInput: string,
+    options: AddOptions = {},
+  ): Promise<ServiceResult<{ task: ScheduledTask; nextRuns: number[] }>> {
+    const parsed = await parseSchedule(scheduleInput)
+    if (!parsed) {
+      return {
+        success: false,
+        errorCode: 'INVALID_SCHEDULE',
+        message: `Invalid schedule: "${scheduleInput}". Use duration (5m/2h/1d) or cron expression (*/10 * * * *).`,
+      }
+    }
+
+    let task: ScheduledTask
+    try {
+      task = await this.runtime.addTask(prompt, parsed.spec, options)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      if (message.startsWith('Task limit reached')) {
+        return { success: false, errorCode: 'TASK_LIMIT_REACHED', message }
+      }
+      // 意外错误兜底（正常路径不会到达：parseSchedule 已校验 cron 有效性）
+      return { success: false, errorCode: 'INTERNAL', message }
+    }
+
+    const nextRuns = await computeNextRuns(task.schedule, Date.now(), 5)
+    const message = [
+      `Task "${task.name}" (${task.id}) created.`,
+      `Schedule: ${formatSchedule(task.schedule)}`,
+      `Kind: ${task.kind}`,
+      `Expires: ${task.expiresAt ? formatRelativeTime(task.expiresAt) : 'never'}`,
+      `Force: ${task.force ? 'yes' : 'no'}`,
+      '',
+      'Next 5 runs:',
+      ...nextRuns.map((t, i) => `  ${i + 1}. ${formatRelativeTime(t)}`),
+    ].join('\n')
+
+    return { success: true, message, data: { task, nextRuns } }
+  }
+
+  list(): ServiceResult<{ tasks: ScheduledTask[] }> {
+    const tasks = this.runtime.listTasks()
+    if (tasks.length === 0) {
+      return { success: true, message: 'No scheduled tasks.', data: { tasks: [] } }
+    }
+    const message = tasks.map(t =>
+      `${t.enabled ? '●' : '○'} ${t.id} ${t.name} · ${formatSchedule(t.schedule)} · ${formatRelativeTime(t.nextRunAt)}`
+    ).join('\n')
+    return { success: true, message, data: { tasks } }
+  }
+
+  async toggle(id: string | undefined, enabled: boolean | undefined): Promise<ServiceResult> {
+    if (!id) {
+      return { success: false, errorCode: 'INVALID_PARAMS', message: 'id is required for toggle.' }
+    }
+    if (enabled === undefined) {
+      return { success: false, errorCode: 'INVALID_PARAMS', message: 'enabled is required for toggle.' }
+    }
+    const success = await this.runtime.toggleTask(id, enabled)
+    if (!success) {
+      return { success: false, errorCode: 'TASK_NOT_FOUND', message: `Task ${id} not found.` }
+    }
+    return { success: true, message: `Task ${id} ${enabled ? 'enabled' : 'disabled'}.` }
+  }
+
+  delete(id: string | undefined): ServiceResult {
+    if (!id) {
+      return { success: false, errorCode: 'INVALID_PARAMS', message: 'id is required for delete.' }
+    }
+    const success = this.runtime.deleteTask(id)
+    if (!success) {
+      return { success: false, errorCode: 'TASK_NOT_FOUND', message: `Task ${id} not found.` }
+    }
+    return { success: true, message: `Task ${id} deleted.` }
+  }
+
+  /**
+   * 立即执行任务。语义细分：
+   * 任务不存在 → TASK_NOT_FOUND；任务存在但 dispatch no-op
+   * （disabled / busy / rate-limited）→ DISPATCH_SKIPPED。
+   * 修复了旧实现把 no-op 误报为 not found 的混同。
+   */
+  async run(id: string | undefined): Promise<ServiceResult> {
+    if (!id) {
+      return { success: false, errorCode: 'INVALID_PARAMS', message: 'id is required for run.' }
+    }
+    if (!this.runtime.getTask(id)) {
+      return { success: false, errorCode: 'TASK_NOT_FOUND', message: `Task ${id} not found.` }
+    }
+    const dispatched = await this.runtime.runTaskNow(id)
+    if (!dispatched) {
+      return {
+        success: false,
+        errorCode: 'DISPATCH_SKIPPED',
+        message: `Task ${id} not dispatched (busy, disabled, or rate-limited).`,
+      }
+    }
+    return { success: true, message: `Task ${id} executed.` }
+  }
+}

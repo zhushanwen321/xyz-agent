@@ -38,7 +38,11 @@ import schedulerExtension from '../index.js'
 /** 捕获到的 tool definition：只关心我们要断言的字段。 */
 interface CapturedTool {
   name: string
-  execute: (...args: unknown[]) => Promise<Record<string, unknown>>
+  execute: (...args: unknown[]) => Promise<{
+    content: { type: string; text: string }[]
+    details: unknown
+    isError?: boolean
+  }>
   handler?: unknown
   fn?: unknown
   [key: string]: unknown
@@ -145,29 +149,31 @@ describe('pi-scheduler SDK contract', () => {
     expect(result.isError).toBeFalsy()
   })
 
-  it('handler 抛错被 catch 为 isError（而非 throw）—— standards.md §4.2 契约', async () => {
+  it('handler 返回结构化失败被 isError 标记（而非 throw）—— standards.md §4.2 契约', async () => {
     const { pi, tools, events } = createMockPi()
     schedulerExtension(pi)
     const fakeCtx = createFakeCtx()
     await events.get('session_start')!({ type: 'session_start', reason: 'startup' }, fakeCtx)
 
-    // 非法 cron 表达式：parseSchedule 会 reject，handler 抛 'Invalid schedule'，
-    // execute 应 catch 为 isError 而非让 promise reject。
+    // 非法 cron 表达式：service.create 返回 INVALID_SCHEDULE 结构化失败，
+    // handler 返回 isError result（text 为 service message 本体，无 'Error:' 前缀）。
     const result = await tools[0]!.execute('call-err', { prompt: 'x', schedule: 'invalid-cron-expr-xxx' }, undefined, undefined, fakeCtx)
     expect(result.isError).toBe(true)
-    expect(result.content[0].text).toContain('Error:')
+    expect(result.content[0].text).toContain('Invalid schedule')
+    expect(result.content[0].text).not.toContain('Error:')
   })
 
-  it('schedule_control tool 同样 catch handler 错误', async () => {
+  it('schedule_control tool 同样返回结构化 isError', async () => {
     const { pi, tools, events } = createMockPi()
     schedulerExtension(pi)
     const fakeCtx = createFakeCtx()
     await events.get('session_start')!({ type: 'session_start', reason: 'startup' }, fakeCtx)
 
-    // toggle 不存在的 task id：handler 抛 'Task xxx not found'，应被 catch
+    // toggle 不存在的 task id：service 返回 TASK_NOT_FOUND，handler 返回 isError
     const controlTool = tools.find(t => t.name === 'schedule_control')!
     const result = await controlTool.execute('call-ctrl', { action: 'toggle', id: 'deadbeef', enabled: false }, undefined, undefined, fakeCtx)
     expect(result.isError).toBe(true)
+    expect(result.content[0].text).toBe('Task deadbeef not found.')
   })
 
   it('registerCommand 注册了名为 schedule 的命令', () => {

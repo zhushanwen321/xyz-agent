@@ -1,8 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from '@earendil-works/pi-coding-agent'
 
-import { formatRelativeTime, formatSchedule } from './format.js'
-import { parseSchedule } from './parsing.js'
-import type { SchedulerRuntime } from './runtime.js'
+import { formatSchedule } from './format.js'
+import type { SchedulerService } from './service.js'
 
 /**
  * Shell-style quote-aware tokenizer.
@@ -41,17 +40,17 @@ function tokenizeQuoted(input: string): string[] {
  * 注册 /schedule command。
  * 消歧规则：第一个参数匹配子命令关键词则走对应分支，否则尝试 parseSchedule 创建任务。
  *
- * runtime 通过 getter 获取：registerScheduleCommand 在 factory 顶层调用，此时 session_start
- * 尚未触发、runtime 还是 null。getArgumentCompletions / handler 真正执行时才读 runtime 当前值。
+ * service 通过 getter 获取：registerScheduleCommand 在 factory 顶层调用，此时 session_start
+ * 尚未触发、service 还是 null。getArgumentCompletions / handler 真正执行时才读 service 当前值。
  */
 export function registerScheduleCommand(
   pi: ExtensionAPI,
-  getRuntime: () => SchedulerRuntime | null,
+  getService: () => SchedulerService | null,
 ) {
   pi.registerCommand('schedule', {
     description: 'Manage scheduled tasks. No args opens TUI. /schedule <schedule> <prompt> to create.',
     getArgumentCompletions(prefix: string) {
-      const runtime = getRuntime()
+      const service = getService()
       const trimmed = prefix.trimStart()
       const parts = trimmed.split(/\s+/).filter(Boolean)
       if (parts.length <= 1) {
@@ -66,17 +65,20 @@ export function registerScheduleCommand(
         ].filter(opt => opt.label.startsWith(trimmed.toLowerCase()))
       }
       // on/off/rm/run 后补全任务 id
-      if (['on', 'off', 'rm', 'run'].includes(parts[0]!) && runtime) {
-        return runtime.listTasks().map(t => ({
-          label: t.id,
-          value: t.id,
-          description: `${t.name} · ${formatSchedule(t.schedule)}`
-        }))
+      if (['on', 'off', 'rm', 'run'].includes(parts[0]!) && service) {
+        const result = service.list()
+        if (result.success && result.data) {
+          return result.data.tasks.map(t => ({
+            label: t.id,
+            value: t.id,
+            description: `${t.name} · ${formatSchedule(t.schedule)}`
+          }))
+        }
       }
       return null
     },
     handler: async (args: string, ctx: ExtensionCommandContext) => {
-      const result = await executeScheduleCommand(getRuntime(), args)
+      const result = await executeScheduleCommand(getService(), args)
       ctx.ui.notify(result, 'info')
     },
   })
@@ -85,12 +87,14 @@ export function registerScheduleCommand(
 /**
  * Core logic for /schedule command. Extracted for testability (handler returns
  * void per SDK contract; tests call this function directly to assert output).
+ *
+ * 命令层只保留参数路由与 usage 文案（C6），业务调用全部走 SchedulerService。
  */
 export async function executeScheduleCommand(
-  runtime: SchedulerRuntime | null,
+  service: SchedulerService | null,
   args: string,
 ): Promise<string> {
-  if (!runtime) return 'Scheduler not initialized: session not started.'
+  if (!service) return 'Scheduler not initialized: session not started.'
 
   const trimmed = args.trim()
   if (!trimmed) {
@@ -103,32 +107,27 @@ export async function executeScheduleCommand(
 
   // 子命令路由
   if (first === 'list') {
-    const tasks = runtime.listTasks()
-    if (tasks.length === 0) return 'No scheduled tasks.'
-    return tasks.map(t =>
-      `${t.enabled ? '●' : '○'} ${t.id} ${t.name} · ${formatSchedule(t.schedule)} · ${formatRelativeTime(t.nextRunAt)}`
-    ).join('\n')
+    return service.list().message
   }
 
   if (first === 'on' || first === 'off') {
     const id = parts[1]
     if (!id) return `Usage: /schedule ${first} <id>`
-    const success = await runtime.toggleTask(id, first === 'on')
-    return success ? `Task ${id} ${first === 'on' ? 'enabled' : 'disabled'}.` : `Task ${id} not found.`
+    const result = await service.toggle(id, first === 'on')
+    return result.message
   }
 
   if (first === 'rm') {
     const id = parts[1]
     if (!id) return 'Usage: /schedule rm <id>'
-    const success = runtime.deleteTask(id)
-    return success ? `Task ${id} deleted.` : `Task ${id} not found.`
+    return service.delete(id).message
   }
 
   if (first === 'run') {
     const id = parts[1]
     if (!id) return 'Usage: /schedule run <id>'
-    const success = await runtime.runTaskNow(id)
-    return success ? `Task ${id} executed.` : `Task ${id} not found.`
+    const result = await service.run(id)
+    return result.message
   }
 
   // 创建任务分支
@@ -140,11 +139,6 @@ export async function executeScheduleCommand(
   const prompt = parts.slice(scheduleStart + 1).join(' ')
   if (!prompt) return 'Usage: /schedule <schedule> <prompt>'
 
-  const parsed = await parseSchedule(scheduleInput)
-  if (!parsed) {
-    return `Invalid schedule: "${scheduleInput}". Use duration (5m/2h/1d) or cron expression.`
-  }
-
-  const task = await runtime.addTask(prompt, parsed.spec, { kind })
-  return `Task "${task.name}" (${task.id}) created. Schedule: ${formatSchedule(task.schedule)}`
+  const result = await service.create(prompt, scheduleInput, { kind })
+  return result.message
 }

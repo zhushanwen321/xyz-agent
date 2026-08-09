@@ -1,8 +1,8 @@
-import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
+import type { ExtensionContext } from '@earendil-works/pi-coding-agent'
 
+import type { SchedulerBackend } from './backend.js'
 import { autoName, generateTaskId } from './format.js'
-import { computeNextCronRunAt, parseDuration } from './parsing.js'
-import { createStore } from './store.js'
+import { computeNextRunAt, parseDuration } from './parsing.js'
 import type { AddOptions, ScheduledTask, SchedulerStore, ScheduleSpec } from './types.js'
 
 const MAX_TASKS = 50
@@ -12,19 +12,20 @@ const DEFAULT_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 
 export class SchedulerRuntime {
   private tasks: Map<string, ScheduledTask> = new Map()
-  private store: ReturnType<typeof createStore>
-  private pi: Pick<ExtensionAPI, 'sendMessage'>
+  private backend: SchedulerBackend
   private ctx: Pick<ExtensionContext, 'isIdle' | 'hasPendingMessages'>
   private tickTimer: ReturnType<typeof setInterval> | null = null
   private dispatchTimestamps: number[] = []
 
+  /**
+   * 依赖反转构造：backend 承担 FS/pi/时间源，runtime 只持有内存态。
+   * 不触碰任何 FS（测试可用 MockSchedulerBackend 零副作用注入）。
+   */
   constructor(
-    cwd: string,
-    pi: Pick<ExtensionAPI, 'sendMessage'>,
+    backend: SchedulerBackend,
     ctx: Pick<ExtensionContext, 'isIdle' | 'hasPendingMessages'>,
   ) {
-    this.store = createStore(cwd)
-    this.pi = pi
+    this.backend = backend
     this.ctx = ctx
   }
 
@@ -36,7 +37,7 @@ export class SchedulerRuntime {
     }
 
     const id = generateTaskId()
-    const now = Date.now()
+    const now = this.backend.now()
     const kind = options.kind ?? 'recurring'
     const name = options.name ?? autoName(prompt)
 
@@ -48,16 +49,12 @@ export class SchedulerRuntime {
       expiresAt = now + expiryMs
     }
 
-    // 计算 nextRunAt：interval 模式 now + intervalMs；cron 模式首跑时间
-    let nextRunAt: number
-    if (schedule.mode === 'interval') {
-      nextRunAt = now + schedule.intervalMs
-    } else {
-      const next = await computeNextCronRunAt(schedule.cronExpression, now)
-      if (next === undefined) {
-        throw new Error(`Invalid cron expression: ${schedule.cronExpression}`)
-      }
-      nextRunAt = next
+    // 统一 nextRunAt 计算：interval → now + intervalMs；cron → 下次命中
+    const nextRunAt = await computeNextRunAt(schedule, now)
+    if (nextRunAt === undefined) {
+      // 创建时校验失败报错给用户（仅 cron 可能 undefined，interval 恒有值）
+      const expr = schedule.mode === 'cron' ? schedule.cronExpression : '<unknown>'
+      throw new Error(`Invalid cron expression: ${expr}`)
     }
 
     const task: ScheduledTask = {
@@ -76,7 +73,7 @@ export class SchedulerRuntime {
     }
 
     this.tasks.set(id, task)
-    this.persist()
+    await this.persist()
     return task
   }
 
@@ -93,21 +90,26 @@ export class SchedulerRuntime {
     if (!task) return false
     task.enabled = enabled
     // enable 时若 nextRunAt 已过期，重算，避免 enable 瞬间立即触发
-    if (enabled && task.nextRunAt < Date.now()) {
-      const schedule = task.schedule
-      if (schedule.mode === 'interval') {
-        task.nextRunAt = Date.now() + schedule.intervalMs
+    if (enabled && task.nextRunAt < this.backend.now()) {
+      const next = await computeNextRunAt(task.schedule, this.backend.now())
+      if (next === undefined) {
+        // ERR-2 fallback：cron 表达式失效 → 停用任务并记录失败原因。
+        // 禁止 `?? now()` 类 fallback（会使 nextRunAt=now，下个 tick 立即重算 → 死循环）
+        task.enabled = false
+        task.lastStatus = 'failed'
+        task.lastError = 'cron expression invalid'
+        // nextRunAt 保留原值（enabled=false 后 tick 不再触发）
       } else {
-        task.nextRunAt = (await computeNextCronRunAt(schedule.cronExpression, Date.now())) ?? Date.now()
+        task.nextRunAt = next
       }
     }
-    this.persist()
+    await this.persist()
     return true
   }
 
   deleteTask(id: string): boolean {
     const deleted = this.tasks.delete(id)
-    if (deleted) this.persist()
+    if (deleted) void this.persist()
     return deleted
   }
 
@@ -115,7 +117,7 @@ export class SchedulerRuntime {
     const task = this.tasks.get(id)
     if (!task) return false
     const dispatched = await this.dispatchTask(task)
-    this.persist()
+    await this.persist()
     return dispatched
   }
 
@@ -134,7 +136,7 @@ export class SchedulerRuntime {
   }
 
   async tickScheduler(): Promise<void> {
-    const now = Date.now()
+    const now = this.backend.now()
 
     // 1. 过期清理
     for (const [id, task] of this.tasks) {
@@ -161,7 +163,7 @@ export class SchedulerRuntime {
       }
     }
 
-    this.persist()
+    await this.persist()
   }
 
   // ── dispatch ──
@@ -182,43 +184,48 @@ export class SchedulerRuntime {
     }
 
     // 检查速率限制
-    if (!this.hasDispatchCapacity(Date.now())) return false
+    if (!this.hasDispatchCapacity(this.backend.now())) return false
 
-    // 注入 message
+    // 注入 message（await：async 错误必须被捕获，fire-and-forget 会漏）
     try {
-      this.pi.sendMessage(
+      await this.backend.sendMessage(
         { content: task.prompt, customType: 'pi-scheduler:dispatched', display: true },
         { deliverAs: 'followUp', triggerTurn: true },
       )
     } catch {
       task.lastStatus = 'failed'
       task.pending = false
-      task.history.push({ at: Date.now(), status: 'failed' })
+      task.history.push({ at: this.backend.now(), status: 'failed' })
       if (task.history.length > 20) task.history.shift()
       return false
     }
 
     // 更新状态
     task.runCount++
-    task.lastRunAt = Date.now()
+    task.lastRunAt = this.backend.now()
     task.lastStatus = 'success'
     task.pending = false
-    task.history.push({ at: Date.now(), status: 'success' })
+    task.lastError = undefined // 成功 dispatch 后清除历史错误
+    task.history.push({ at: this.backend.now(), status: 'success' })
     if (task.history.length > 20) task.history.shift()
 
     // 计算下次执行
     if (task.kind === 'once') {
       this.tasks.delete(task.id)
     } else {
-      const schedule = task.schedule
-      if (schedule.mode === 'interval') {
-        task.nextRunAt = Date.now() + schedule.intervalMs
+      const next = await computeNextRunAt(task.schedule, this.backend.now())
+      if (next === undefined) {
+        // ERR-2 fallback：cron 表达式失效 → 停用任务，避免 `?? now()` 死循环
+        task.enabled = false
+        task.lastStatus = 'failed'
+        task.lastError = 'cron expression invalid'
+        // nextRunAt 保留原值（enabled=false 后 tick 不再触发）
       } else {
-        task.nextRunAt = (await computeNextCronRunAt(schedule.cronExpression, Date.now())) ?? Date.now()
+        task.nextRunAt = next
       }
     }
 
-    this.dispatchTimestamps.push(Date.now())
+    this.dispatchTimestamps.push(this.backend.now())
     return true
   }
 
@@ -230,19 +237,42 @@ export class SchedulerRuntime {
 
   // ── 持久化 ──
 
-  loadTasks(): void {
-    const store = this.store.load()
-    this.tasks = new Map(store.tasks.map(t => [t.id, t]))
+  /** 装配点注入初始任务数组（读盘由 backend 完成，runtime 只持有内存态）。 */
+  loadTasks(tasks: ScheduledTask[]): void {
+    this.tasks = new Map(tasks.map(t => [t.id, t]))
   }
 
-  persist(): void {
+  /**
+   * 委托 backend.persist。失败 → console.warn + 内存态不变 + 不 rethrow（ERR-6）。
+   * 失败原因记入任务 lastError（R2：已有更具体错误如 cron-invalid 的不覆盖）。
+   */
+  private async persist(): Promise<void> {
     const store: SchedulerStore = { version: 1, tasks: Array.from(this.tasks.values()) }
-    this.store.persist(store)
+    try {
+      await this.backend.persist(store)
+    } catch (err) {
+      console.warn(`[scheduler] persist failed: ${err instanceof Error ? err.message : String(err)}`)
+      for (const task of this.tasks.values()) {
+        if (!task.lastError) {
+          task.lastError = 'persist failed'
+        }
+      }
+    }
   }
 
-  persistSync(): void {
+  /** 立即写盘（session_shutdown 用）。内部同样捕获，不打断收尾流程。 */
+  async persistSync(): Promise<void> {
     const store: SchedulerStore = { version: 1, tasks: Array.from(this.tasks.values()) }
-    this.store.persistSync(store)
+    try {
+      await this.backend.persist(store, { sync: true })
+    } catch (err) {
+      console.warn(`[scheduler] persist failed: ${err instanceof Error ? err.message : String(err)}`)
+      for (const task of this.tasks.values()) {
+        if (!task.lastError) {
+          task.lastError = 'persist failed'
+        }
+      }
+    }
   }
 
   // ── 工具方法 ──
