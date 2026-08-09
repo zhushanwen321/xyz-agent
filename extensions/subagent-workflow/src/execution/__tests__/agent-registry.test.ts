@@ -121,8 +121,11 @@ You are a worker.`);
   it("文件不存在返回 undefined，require=true 抛错带指引", () => {
     const reg = new AgentRegistry();
     expect(reg.loadByPath("/nonexistent/x.md")).toBeUndefined();
+    // R5（D7）：三态错误文案统一带 <available_subagents> <location> 恢复指引
     expect(() => reg.loadByPath("/nonexistent/x.md", true)).toThrow(/not found or unreadable/);
+    expect(() => reg.loadByPath("/nonexistent/x.md", true)).toThrow(/<available_subagents> <location>/);
     expect(() => reg.loadByPath("relative", true)).toThrow(/Invalid agent ref/);
+    expect(() => reg.loadByPath("relative", true)).toThrow(/<available_subagents>/);
   });
 
   it("~/ 前缀展开", () => {

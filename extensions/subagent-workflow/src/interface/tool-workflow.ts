@@ -432,7 +432,7 @@ export async function actionRun(
       content: [
         {
           type: "text",
-          text: `Workflow '${name}' not found. Available:\n${suggestions || "  (none)"}`,
+          text: `Workflow '${name}' not found. Available:\n${suggestions || "  (none)"}\nUse <location> from <available_workflows> for the absolute .js path.`,
         },
       ],
       details: { action: "run", runId: "", status: "not_found", name },

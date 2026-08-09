@@ -484,6 +484,9 @@ describe("内置 workflow E2E（真实 worker thread + mock LLM runner）", () =
     );
     expect(notFound.isError).toBe(true);
     expect(notFound.content![0]!.text).toContain("not found"); // DoD 用户可见断言
+    // R5（D7）：workflow not_found 文案含 <available_workflows> <location> 恢复指引
+    expect(notFound.content![0]!.text).toContain("<available_workflows>");
+    expect(notFound.content![0]!.text).toContain("<location>");
     // chain 平铺 task → isError Correct 正例（动态集来自 registry）
     const flat = await actionRun(
       { action: "run", name: wf("chain"), task: "x" },
