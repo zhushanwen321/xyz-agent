@@ -231,6 +231,20 @@ export function deleteProvider(providerId: string): Promise<void> {
   return command('config.deleteProvider', { providerId })
 }
 
+// wave4 C1：provider 启用切换（写 enabledModels 白名单）。替代旧 setProvider({enabled}) 路径——
+// wave3 停用 setProvider 的 provider 级 enabled 写入后，toggle 必须走此 RPC 才能持久化启用状态。
+// reply config.providerUpdated；newDefault 经 onDefaults 订阅推回（broadcast 由 handler 发起）。
+export function toggleProviderEnabled(providerId: string, enabled: boolean): Promise<void> {
+  return command('config.toggleProviderEnabled', { providerId, enabled })
+}
+
+// wave4 IF3：按体系移除 provider。kind 来自 ProviderInfo.kind（wave2 聚合层标注）——
+// catalog 清凭据（不删 pi 定义），custom 删条目。与 deleteProvider 区别：后者不分体系直接删条目
+// （向后兼容保留），renderer 按 kind 调对应 RPC。reply config.providerUpdated。
+export function removeProviderByKind(providerId: string, kind: 'catalog' | 'custom'): Promise<void> {
+  return command('config.removeProviderByKind', { providerId, kind })
+}
+
 export function setSkill(skill: SkillInfo): Promise<void> {
   return command('config.setSkill', { skill })
 }

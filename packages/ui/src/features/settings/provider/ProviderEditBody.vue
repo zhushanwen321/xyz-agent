@@ -201,9 +201,29 @@
       <div v-if="discoverResult" class="text-[12px] text-neutral-mid">{{ discoverResult }}</div>
     </div>
 
-    <!-- 模型清单（ModelListSection：复用 ProviderEditModal 右侧子组件） -->
-    <div class="border-t border-border">
+    <!-- 模型清单（wave4 C4：catalog provider 收窄——models 来自 pi builtin 只读展示，隐藏编辑区） -->
+    <div class="border-t border-border" :data-testid="isCatalog ? 'provider-models-readonly' : 'provider-models-editable'">
+      <template v-if="isCatalog">
+        <!-- catalog：只读提示 + 只读模型列表（内置模型由 pi catalog 提供，升级覆盖编辑无意义） -->
+        <div class="px-5 py-4">
+          <Label class="mb-1.5 block text-[11px] font-semibold text-neutral-mid">
+            {{ t('settings.providerEdit.catalogModelsReadonlyLabel') }}
+          </Label>
+          <p class="mb-2 text-[10px] text-neutral-dim">{{ t('settings.providerEdit.catalogModelsHint') }}</p>
+          <ul v-if="provider?.models?.length" class="flex flex-col gap-1">
+            <li
+              v-for="m in provider.models"
+              :key="m.id"
+              class="rounded-sm bg-surface px-2.5 py-1 text-[12px] text-neutral-mid"
+            >
+              <span class="font-medium text-neutral-fg">{{ m.name || m.id }}</span>
+              <span class="ml-1.5 text-[10px] text-neutral-dim">{{ m.id }}</span>
+            </li>
+          </ul>
+        </div>
+      </template>
       <ModelListSection
+        v-else
         v-model:show-add-model="showAddModel"
         @add-model="onAddModel"
       />
@@ -270,6 +290,10 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const { info: toastInfo } = useToast()
+
+// wave4 C4：catalog provider 的 models 来自 pi builtin（升级覆盖），编辑无意义——收窄为只读展示。
+// kind 缺失（NEW_ID 新建态 null / 旧数据）当作 custom，走完整 CRUD（向后兼容）。
+const isCatalog = computed(() => props.provider?.kind === 'catalog')
 
 // ── Coding Plan 额度查询：自动关联 + 配置 ──
 const matchedPreset = computed(() => {

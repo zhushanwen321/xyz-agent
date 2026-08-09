@@ -85,6 +85,9 @@ function mockConfigService(worktreeRootDir = '/home/user/worktrees') {
     getDefaultModel: vi.fn(() => null),
     setDefaultModel: vi.fn(),
     setProvider: vi.fn(),
+    // wave4 补全：toggleProviderEnabled / removeProviderByKind（IConfigService 新增方法 stub）
+    toggleProviderEnabled: vi.fn(() => ({})),
+    removeProviderByKind: vi.fn(() => ({ removed: true })),
     deleteProvider: vi.fn(),
     getProvider: vi.fn(),
     updateToolPermissions: vi.fn(),

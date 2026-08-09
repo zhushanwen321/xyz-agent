@@ -283,6 +283,14 @@ export interface IConfigService {
    * @returns 触发 defaultModel 重选时含 newDefault；否则空对象。
    */
   toggleProviderEnabled(providerId: string, enabled: boolean): { newDefault?: { provider: string; modelId: string } }
+  /**
+   * 按体系移除 provider（wave4 IF3）——catalog 清凭据/override/残留（不删 pi catalog 定义），
+   * custom 删 models.json 条目 + 清残留。renderer 传 ProviderInfo.kind（CL1）。
+   *
+   * @returns custom 分支透传 configStore.removeProvider 的 newDefault（default 承载被删 provider 时重选）；
+   *          catalog 分支恒 { removed: true }（定义不可删，无 default 重选语义）。
+   */
+  removeProviderByKind(providerId: string, kind: 'catalog' | 'custom'): { removed: boolean; newDefault?: { provider: string; modelId: string } }
   deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } }
   getProvider(providerId: string): { apiKey?: string; name?: string; type?: string; baseUrl?: string; models?: unknown[]; enabled?: boolean } | undefined
   updateToolPermissions(permissions: Record<string, string>): void

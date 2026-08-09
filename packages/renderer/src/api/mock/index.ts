@@ -776,6 +776,21 @@ export const config = {
     if (idx >= 0) fixtureProviders.splice(idx, 1)
     broadcastProviders()
   },
+  // wave4：provider 启用切换（写 enabledModels 白名单 mock）。与 runtime toggleProviderEnabled 对齐——
+  // 乐观改本地 provider.enabled + 广播 provider 列表（mock 不模拟 enabledModels 白名单语义，简化处理）。
+  async toggleProviderEnabled(providerId: string, enabled: boolean) {
+    await sleep(TIMING.ack)
+    const p = fixtureProviders.find((p) => p.id === providerId)
+    if (p) p.enabled = enabled
+    broadcastProviders()
+  },
+  // wave4：按体系移除 provider mock。catalog/custom 统一从 fixtureProviders 移除（mock 不区分体系语义）。
+  async removeProviderByKind(providerId: string, _kind: 'catalog' | 'custom') {
+    await sleep(TIMING.ack)
+    const idx = fixtureProviders.findIndex((p) => p.id === providerId)
+    if (idx >= 0) fixtureProviders.splice(idx, 1)
+    broadcastProviders()
+  },
   /**
    * 设默认模型（W3 协议 config.setDefaultModel 的 mock 对齐）。
    * 改 defaultsSub 内部值并广播 "provider/modelId" 复合串，与 runtime 广播 config.defaults 同构。

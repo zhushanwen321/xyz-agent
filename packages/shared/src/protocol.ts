@@ -119,6 +119,10 @@ export type ClientMessageType =
   | 'config.checkEnvVars'
   // OAuth 凭据查询（MF-1）：auth.json 是否已有该 provider 的 oauth 凭据（只返回布尔，token 不出协议）。reply config.hasOAuthReply。
   | 'config.hasOAuth'
+  // wave4：provider 启用切换（写 enabledModels 白名单，reply config.providerUpdated）。替代旧 setProvider({enabled})。
+  | 'config.toggleProviderEnabled'
+  // wave4：按体系移除 provider（catalog 清凭据/custom 删条目，reply config.providerUpdated）。
+  | 'config.removeProviderByKind'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -330,6 +334,11 @@ export interface ClientMessageMap {
   'config.getProviders': Record<string, never>
   'config.setProvider': { providerId: string } & SetProviderData
   'config.deleteProvider': { providerId: string }
+  // wave4：provider 启用切换（wave3 RPC 链路在 wave4 补全）。enabled=false 时 runtime 移除白名单 pattern，
+  // 若 default 承载该 provider 会重选并广播 config.defaults（见 settings-message-handler）。
+  'config.toggleProviderEnabled': { providerId: string; enabled: boolean }
+  // wave4：按体系移除 provider。kind 来自 ProviderInfo.kind（wave2 聚合层标注），catalog 清凭据/custom 删条目。
+  'config.removeProviderByKind': { providerId: string; kind: 'catalog' | 'custom' }
   'config.setToolPermissions': { permissions: Record<string, string> }
   'config.discoverModels': { baseUrl: string; apiKey?: string; providerType?: string; providerId?: string }
   // W3 默认模型持久化：前端设置全局默认模型，runtime 调 configService.setDefaultModel 写 settings.json。
@@ -1281,6 +1290,8 @@ export interface ReplyPayloadMap {
   'config.setDefaultModel': void  // reply config.defaults
   'config.setExtensionDirs': void // reply config.extensionDirs
   'config.setProvider': void      // reply config.providerUpdated
+  'config.toggleProviderEnabled': void  // wave4：reply config.providerUpdated（同 setProvider 模式）
+  'config.removeProviderByKind': void   // wave4：reply config.providerUpdated（同 deleteProvider 模式）
   'config.setSkill': void         // reply config.skillUpdated
   'config.setSkillDirs': void     // reply config.skillDirs
   'config.setToolPermissions': void // reply config.providerUpdated（settings-message-handler.ts:65）

@@ -529,6 +529,42 @@ export class ConfigService implements IConfigService {
     return this.configStore.removeProvider(providerId)
   }
 
+  /**
+   * 按体系移除 provider（wave4 IF3 / C2）——catalog 与 custom 分体系处理。
+   *
+   * 与 deleteProvider 的区别：deleteProvider 不分体系直接 configStore.removeProvider（向后兼容
+   * 保留）；removeProviderByKind 按 ProviderInfo.kind 收窄，避免误删 catalog 定义。
+   *
+   * - catalog：定义来自 pi 二进制内置（不可删），只清用户侧状态——auth.json 凭据
+   *   （authStorage.remove）+ models.json override 条目（configStore.removeProvider 若有 override）
+   *   + enabledModels 残留。清后该 catalog provider 凭据全无，listProviders 双源聚合不再显示。
+   * - custom：定义全在 models.json，删条目即删定义——configStore.removeProvider + 清残留。
+   *
+   * newDefault：configStore.removeProvider 内部在 default 承载被删 provider 时重选并返回
+   * （wave3 既有行为），透传给 transport 层广播 config.defaults。
+   *
+   * @param kind ProviderInfo.kind（renderer 传入，wave2 聚合层权威标注）
+   */
+  removeProviderByKind(providerId: string, kind: 'catalog' | 'custom'): { removed: boolean; newDefault?: { provider: string; modelId: string } } {
+    if (kind === 'catalog') {
+      // 清 auth.json 凭据（api_key / oauth token，强绑定凭据不能残留）。fire-and-forget。
+      void this.authStorage?.remove(providerId).catch(err => {
+        console.warn(`[config-service] auth.json cleanup failed for catalog provider ${providerId}:`, err)
+      })
+      // 清 models.json override 条目（若有）。无 override 时 removeProvider 返回 { removed: false }，
+      // 不影响后续清残留——catalog 的「移除」语义是清用户侧状态，override 本就可能不存在。
+      this.configStore.removeProvider(providerId)
+      this.configStore.cleanEnabledModelsResidue(providerId)
+      // catalog 定义不可删（pi 二进制内置），「移除」= 清凭据/override/残留。removed=true 表示
+      // 用户侧状态已清，listProviders 双源聚合（凭据 ∪ override）将不再显示该 provider。
+      return { removed: true }
+    }
+    // custom：删 models.json 条目（= 删定义）+ 清残留。removeProvider 内部含 defaultModel 重选。
+    const result = this.configStore.removeProvider(providerId)
+    this.configStore.cleanEnabledModelsResidue(providerId)
+    return result
+  }
+
   getProvider(providerId: string): { apiKey?: string; name?: string; type?: string; baseUrl?: string; models?: unknown[]; enabled?: boolean } | undefined {
     return this.configStore.getProviderConfig(providerId)
   }

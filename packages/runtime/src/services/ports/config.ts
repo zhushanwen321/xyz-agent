@@ -122,6 +122,12 @@ export interface IConfigStore {
    * 空/undefined 时 no-op。importer applyImport / setProvider 新建 provider 时调用。
    */
   ensureProviderInWhitelist(providerId: string): void
+  /**
+   * 清除 enabledModels 白名单中某 provider 的残留 pattern（wave4 IF3 / C3）。
+   * removeProviderByKind 两分支共用：filter `<id>/*` 与 `<id>/<model>` pattern；
+   * 边界3(a) 重算空 → clearEnabledModels（delete 字段，CL2）。
+   */
+  cleanEnabledModelsResidue(providerId: string): void
 
   // ── Provider CRUD ──
   readModels(): ConfigModelsConfig

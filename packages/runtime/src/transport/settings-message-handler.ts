@@ -68,6 +68,40 @@ export class SettingsMessageHandler {
         }
         return true
       }
+      case 'config.toggleProviderEnabled': {
+        // wave4 C1：provider 启用切换走 toggleProviderEnabled（写 enabledModels 白名单），
+        // 替代旧 setProvider({enabled})。reply config.providerUpdated + broadcastProviderList
+        // （wave2 双源聚合 + deriveEnabled 派生新启用状态）+ newDefault 广播（边界2 default 重选）。
+        const { providerId, enabled } = msg.payload
+        const toggleResult = this.ctx.configService.toggleProviderEnabled(providerId, enabled)
+        this.ctx.reply(ws, msg.id, 'config.providerUpdated', { providerId })
+        this.ctx.broadcastProviderList()
+        if (toggleResult.newDefault) {
+          this.ctx.broadcast({
+            type: 'config.defaults',
+            id: this.ctx.nextPushId(),
+            payload: { defaultModel: `${toggleResult.newDefault.provider}/${toggleResult.newDefault.modelId}`, source: 'provider-toggled' },
+          })
+        }
+        return true
+      }
+      case 'config.removeProviderByKind': {
+        // wave4 IF3：按体系移除 provider。catalog 清凭据/override/残留（不删 pi 定义），
+        // custom 删条目 + 清残留。reply config.providerUpdated + broadcastProviderList +
+        // newDefault 广播（custom 分支 removeProvider 内 default 重选）。
+        const { providerId, kind } = msg.payload
+        const removeResult = this.ctx.configService.removeProviderByKind(providerId, kind)
+        this.ctx.reply(ws, msg.id, 'config.providerUpdated', { providerId, deleted: true })
+        this.ctx.broadcastProviderList()
+        if (removeResult.newDefault) {
+          this.ctx.broadcast({
+            type: 'config.defaults',
+            id: this.ctx.nextPushId(),
+            payload: { defaultModel: `${removeResult.newDefault.provider}/${removeResult.newDefault.modelId}`, source: 'provider-removed' },
+          })
+        }
+        return true
+      }
       case 'config.oauthLogin': {
         const result = this.ctx.authService.login(msg.payload.providerId)
         this.ctx.reply(ws, msg.id, 'config.oauthLoginReply', result.started

@@ -112,6 +112,11 @@ export default {
     deleteConfirmTitle: '删除 {name}？',
     deleteConfirmDesc: '将移除其下所有模型配置。此操作不可撤销。',
     deleteConfirmBtn: '确认删除',
+    // ── wave4：按体系收窄文案（catalog=移除凭据/custom=删除配置）──
+    removeTitle: '移除供应商',
+    removeConfirmTitle: '移除 {name}？',
+    removeConfirmDesc: '移除将清除已保存的凭据，内置定义保留。可随时重新配置。',
+    removeConfirmBtn: '确认移除',
     // ── 手风琴就地编辑（R4 · 取代 ProviderEditModal）──
     unsavedBadge: '未保存',
     newProvider: '新供应商',
@@ -304,6 +309,9 @@ export default {
     testOk: '连接成功，找到 {count} 个模型',
     testFail: '连接失败，请检查 API Key',
     modelList: '模型清单',
+    // wave4：catalog provider models 只读提示（CL2——内置模型由 pi catalog 提供，升级时刷新）
+    catalogModelsHint: '内置模型由 pi catalog 提供，升级时自动刷新。',
+    catalogModelsReadonlyLabel: '内置模型（只读）',
     collapse: '收起',
     manualAdd: '+ 手动添加',
     modelLabel: '模型',

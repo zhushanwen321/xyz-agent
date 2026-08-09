@@ -104,12 +104,13 @@
 
         <span class="flex-1" />
 
-        <!-- 删除按钮 -->
+        <!-- 删除按钮（wave4 TC5：title 按差异收窄——catalog=移除/custom=删除） -->
         <Button
           v-if="p.id !== NEW_ID"
           variant="ghost"
           class="size-6 shrink-0 rounded-sm p-0 text-neutral-dim hover:bg-danger-soft hover:text-danger [&_svg]:size-[13px]"
-          :title="t('settings.provider.deleteTitle')"
+          :title="p.kind === 'catalog' ? t('settings.provider.removeTitle') : t('settings.provider.deleteTitle')"
+          :data-testid="p.kind === 'catalog' ? 'provider-remove-btn' : 'provider-delete-btn'"
           @click.stop="deleteTarget = p"
         >
           <Trash2 />
@@ -138,13 +139,19 @@
       @confirm="confirmDiscard"
     />
 
-    <!-- 删除确认弹窗 -->
+    <!-- 删除/移除确认弹窗（wave4 TC5：文案按 kind 收窄——catalog=移除凭据/custom=删除配置） -->
     <ConfirmDialog
       v-model:open="deleteDialogOpen"
-      variant="danger"
-      :title="t('settings.provider.deleteConfirmTitle', { name: deleteTarget?.name ?? '' })"
-      :description="t('settings.provider.deleteConfirmDesc')"
-      :confirm-text="t('settings.provider.deleteConfirmBtn')"
+      :variant="deleteTarget?.kind === 'catalog' ? 'default' : 'danger'"
+      :title="deleteTarget?.kind === 'catalog'
+        ? t('settings.provider.removeConfirmTitle', { name: deleteTarget?.name ?? '' })
+        : t('settings.provider.deleteConfirmTitle', { name: deleteTarget?.name ?? '' })"
+      :description="deleteTarget?.kind === 'catalog'
+        ? t('settings.provider.removeConfirmDesc')
+        : t('settings.provider.deleteConfirmDesc')"
+      :confirm-text="deleteTarget?.kind === 'catalog'
+        ? t('settings.provider.removeConfirmBtn')
+        : t('settings.provider.deleteConfirmBtn')"
       :cancel-text="t('settings.providerEdit.cancel')"
       :loading="deleting"
       @confirm="confirmDelete"
@@ -216,6 +223,7 @@ import {
   USE_QUOTA_CONFIGURE_KEY,
 } from '@xyz-agent/ui/features/settings'
 import { useProviderOAuth } from '@/composables/features/settings/useProviderOAuth'
+import { useAccordionGuard } from '@/composables/features/settings/useAccordionGuard'
 import { authBadgeClass, authBadgeTextKey } from './provider-badge'
 
 // ui 包组件 renderer 侧依赖经 provide/inject 注入（ui 零 renderer import 铁律）
@@ -317,10 +325,18 @@ const defaultProviderId = computed(() => settingsStore.defaultModel.value?.split
 /** 新建态 sentinel id（渲染合成行 + null provider 进 ProviderEditBody） */
 const NEW_ID = '__new__'
 
-/** 当前展开的 provider id（单展开：null=无，NEW_ID=新建态，其它=编辑该 provider） */
-const expandedId = ref<string | null>(null)
-/** 当前展开 body 的 dirty 态（经 @dirty-change 上抛，用于切换守卫） */
-const currentBodyDirty = ref(false)
+// 手风琴展开 + dirty 守卫（R4）。wave4 提取为 composable 减轻 script setup 行数压力。
+const {
+  expandedId,
+  currentBodyDirty,
+  guardDialogOpen,
+  toggleExpand,
+  createAndExpand,
+  confirmDiscard,
+  onBodyDirtyChange,
+  onBodySaved,
+  onBodyCancel,
+} = useAccordionGuard(NEW_ID)
 
 /** 删除目标 + 删除中 */
 const deleteTarget = ref<ProviderInfo | null>(null)
@@ -334,94 +350,6 @@ const deleteDialogOpen = computed({
 
 /** 动作错误（删除/启用失败时显示，非静默吞） */
 const actionError = ref('')
-
-// ── dirty 守卫：切换/收起/新建前拦截 ──
-
-/** 待执行的展开动作（confirmDiscard 后执行） */
-type PendingAction =
-  | { kind: 'collapse' }
-  | { kind: 'switch'; id: string }
-  | { kind: 'add' }
-const pendingAction = ref<PendingAction | null>(null)
-const guardDialogOpen = computed({
-  get: () => pendingAction.value !== null,
-  set: (open: boolean) => {
-    if (!open) pendingAction.value = null
-  },
-})
-
-/**
- * 展开切换入口（行头名称点击）：dirty 时拦截 → 确认后丢弃改动并执行目标动作。
- * - 点已展开行 → 收起（dirty 时先确认）
- * - 点未展开行 → 切换到该行（当前展开行 dirty 时先确认）
- */
-function toggleExpand(id: string): void {
-  if (expandedId.value === id) {
-    // 收起
-    if (currentBodyDirty.value) {
-      pendingAction.value = { kind: 'collapse' }
-      return
-    }
-    expandedId.value = null
-    currentBodyDirty.value = false
-    return
-  }
-  // 切换到其它行
-  if (currentBodyDirty.value) {
-    pendingAction.value = { kind: 'switch', id }
-    return
-  }
-  expandedId.value = id
-  currentBodyDirty.value = false
-}
-
-/**
- * 新建并展开（spec §9 旅程 A1：不弹窗；已有未保存改动时先走守卫）。
- * 列表底部追加合成行（id=NEW_ID），ProviderEditBody 收到 null provider → 新增态空表单。
- */
-function createAndExpand(): void {
-  if (expandedId.value !== null) {
-    if (currentBodyDirty.value) {
-      pendingAction.value = { kind: 'add' }
-      return
-    }
-  }
-  expandedId.value = NEW_ID
-  currentBodyDirty.value = false
-}
-
-/** dirty 守卫确认 → 执行待定动作（展开体卸载即丢弃表单态，无需显式 reset） */
-function confirmDiscard(): void {
-  const action = pendingAction.value
-  pendingAction.value = null
-  if (!action) return
-  currentBodyDirty.value = false
-  if (action.kind === 'collapse') {
-    expandedId.value = null
-  } else if (action.kind === 'switch') {
-    expandedId.value = action.id
-  } else if (action.kind === 'add') {
-    expandedId.value = NEW_ID
-  }
-}
-
-// ── ProviderEditBody 事件处理 ──
-
-function onBodyDirtyChange(v: boolean): void {
-  currentBodyDirty.value = v
-}
-
-/** 保存成功 → 收起展开行（store 广播 onProviders 推回最新 provider 列表） */
-function onBodySaved(): void {
-  expandedId.value = null
-  currentBodyDirty.value = false
-}
-
-/** 取消 → 收起（展开体卸载，表单态自然丢弃） */
-function onBodyCancel(): void {
-  expandedId.value = null
-  currentBodyDirty.value = false
-}
 
 // ── 渲染列表：真实 providers + 新建态合成行 ──
 
@@ -439,7 +367,7 @@ const renderList = computed<ProviderInfo[]>(() => {
     : props.providers
 })
 
-// ── 启用开关：乐观更新 store + config.setProvider 持久化 ──
+// ── 启用开关：乐观更新 store + config.toggleProviderEnabled 持久化（wave4 C1） ──
 
 async function onToggleEnabled(p: ProviderInfo, enabled: boolean) {
   if (toggling.value.has(p.id)) return
@@ -449,7 +377,9 @@ async function onToggleEnabled(p: ProviderInfo, enabled: boolean) {
   toggling.value = next
   const old = settingsStore.setProviderEnabled(p.id, enabled)
   try {
-    await config.setProvider(p.id, { enabled })
+    // wave4：走 toggleProviderEnabled（写 enabledModels 白名单）。旧 setProvider({enabled})
+    // 在 wave3 停用 provider 级 enabled 写入后无效。newDefault 经 onDefaults 订阅推回。
+    await config.toggleProviderEnabled(p.id, enabled)
     if (!enabled && settingsStore.defaultModel.value.startsWith(`${p.id}/`)) {
       settingsStore.defaultModel.value = ''
     }
@@ -463,7 +393,7 @@ async function onToggleEnabled(p: ProviderInfo, enabled: boolean) {
   }
 }
 
-// ── 删除 ──
+// ── 删除/移除（wave4 IF3：按 ProviderInfo.kind 走 removeProviderByKind） ──
 
 async function confirmDelete() {
   const target = deleteTarget.value
@@ -471,9 +401,10 @@ async function confirmDelete() {
   deleting.value = true
   actionError.value = ''
   try {
-    await config.deleteProvider(target.id)
-    // MF-3：删除 provider（I8 已清 auth.json 凭据）后同步清理内存态——
-    // oauthPresent/authorized 只增不减会让重开 QuickSetup 误默认 oauth + 假「已授权」徽章。
+    // wave4：按 kind 调 removeProviderByKind（catalog 清凭据/custom 删条目）。
+    // kind 缺失兼容 'custom'（wave2 聚合层保证 listProviders 返回的 ProviderInfo 已标 kind）。
+    await config.removeProviderByKind(target.id, target.kind ?? 'custom')
+    // MF-3：同步清理 oauth 内存态（runtime 已清 auth.json 凭据），防重开 QuickSetup 误默认 oauth。
     oauth.clearOAuthPresence(target.id)
     if (settingsStore.defaultModel.value.startsWith(`${target.id}/`)) {
       settingsStore.defaultModel.value = ''

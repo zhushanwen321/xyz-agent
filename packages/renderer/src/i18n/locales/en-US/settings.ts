@@ -112,6 +112,11 @@ export default {
     deleteConfirmTitle: 'Delete {name}?',
     deleteConfirmDesc: 'All model configurations under it will be removed. This cannot be undone.',
     deleteConfirmBtn: 'Confirm delete',
+    // ── wave4: kind-aware removal copy (catalog=clear credentials/custom=delete config) ──
+    removeTitle: 'Remove provider',
+    removeConfirmTitle: 'Remove {name}?',
+    removeConfirmDesc: 'Removal clears saved credentials; the built-in definition is kept. You can reconfigure anytime.',
+    removeConfirmBtn: 'Confirm removal',
     // ── Accordion inline edit (R4 · replaces ProviderEditModal) ──
     unsavedBadge: 'Unsaved',
     newProvider: 'New provider',
@@ -304,6 +309,9 @@ export default {
     testOk: 'Connection successful, found {count} models',
     testFail: 'Connection failed, please check the API key',
     modelList: 'Models',
+    // wave4: catalog provider models readonly hint (CL2 — built-in models come from pi catalog, refreshed on upgrade)
+    catalogModelsHint: 'Built-in models are provided by the pi catalog and refreshed automatically on upgrade.',
+    catalogModelsReadonlyLabel: 'Built-in models (read-only)',
     collapse: 'Collapse',
     manualAdd: '+ Add manually',
     modelLabel: 'Model',

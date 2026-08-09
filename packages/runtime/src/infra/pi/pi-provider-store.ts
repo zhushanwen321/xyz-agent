@@ -401,6 +401,31 @@ export function ensureProviderInWhitelist(providerId: string): void {
   setEnabledModels([...current, pattern])
 }
 
+/**
+ * 清除 enabledModels 白名单中某 provider 的残留 pattern（wave4 IF3 / C3）。
+ *
+ * removeProviderByKind 两分支共用：删 provider / 清凭据后，白名单里 `<id>/*` 与
+ * `<id>/<model>` pattern 成了死引用，必须一并清掉，否则 pi 仍会尝试匹配已不存在的 provider。
+ *
+ * 语义与 toggleProviderEnabled(false) 的过滤段同构（startsWith('<id>/') 统一匹配 provider 级
+ * 与 model 级 pattern，带斜杠防 openai vs openai-compatible 前缀碰撞）：
+ *   - filter 后非空 → setEnabledModels(remaining)
+ *   - filter 后空 → clearEnabledModels（边界3(a) 空数组守卫，CL2——delete 字段而非写空数组）
+ *   - 无 pattern 被移除（provider 本就不在白名单）→ 幂等 no-op
+ */
+export function cleanEnabledModelsResidue(providerId: string): void {
+  const current = getEnabledModels()
+  if (current.length === 0) return // 全可用语义，本就无残留
+  const prefix = `${providerId}/`
+  const remaining = current.filter(p => !p.startsWith(prefix))
+  if (remaining.length === current.length) return // 幂等：无 pattern 被移除
+  if (remaining.length === 0) {
+    clearEnabledModels()
+  } else {
+    setEnabledModels(remaining)
+  }
+}
+
 export function getDefaultThinkingLevel(): string {
   return readSettings().defaultThinkingLevel ?? 'high'
 }

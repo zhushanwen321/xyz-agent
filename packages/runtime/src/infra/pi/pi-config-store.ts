@@ -27,6 +27,7 @@ import {
   setEnabledModels,
   clearEnabledModels,
   ensureProviderInWhitelist,
+  cleanEnabledModelsResidue,
   readModels,
   getProviderConfig,
   upsertProvider,
@@ -77,6 +78,10 @@ export class PiConfigStore implements IConfigStore {
 
   ensureProviderInWhitelist(providerId: string): void {
     ensureProviderInWhitelist(providerId)
+  }
+
+  cleanEnabledModelsResidue(providerId: string): void {
+    cleanEnabledModelsResidue(providerId)
   }
 
   // ── Provider CRUD ──
