@@ -16,17 +16,14 @@
  * - get(name) 精确匹配；fuzzy 匹配由 Interface 层 tool 负责。
  */
 
-import { readFileSync } from "node:fs";
-
-import {
-  type WorkflowMeta,
-  WorkflowScript,
-  type WorkflowSource,
-} from "./models/workflow-script.ts";
+import { WorkflowScript } from "./models/workflow-script.ts";
+import { getCachedFileContent } from "../shared/resource-discovery.ts";
 import type { WorkflowScriptRegistry } from "./models/workflow-script-registry.ts";
 import {
+  type CachedWorkflowMeta,
   discoverWorkflows,
   getWorkflow,
+  getWorkflowByPath,
   invalidateCache,
   loadWorkflows,
   type WorkflowScanConfig,
@@ -73,6 +70,15 @@ export class WorkflowScriptRegistryImpl implements WorkflowScriptRegistry {
     return meta ? this.toScript(meta) : undefined;
   }
 
+ /**
+  * 按绝对路径加载单个脚本（S2 路径统一）。任意路径（不限扫描源）。
+  * 供 workflow tool 的 run/info（name 参数 = workflowRef）。
+  */
+  async getPath(ref: string): Promise<WorkflowScript | undefined> {
+    const meta = await getWorkflowByPath(ref);
+    return meta ? this.toScript(meta) : undefined;
+  }
+
  /** 失效缓存——下次 loadAll/get 重新扫描文件系统。 */
   invalidate(): void {
     invalidateCache();
@@ -81,34 +87,29 @@ export class WorkflowScriptRegistryImpl implements WorkflowScriptRegistry {
  /**
  * 把 CachedWorkflowMeta 转换为 WorkflowScript 实体。
  *
- * 字段映射：
- * - name/path/source 直接传
- * - meta 拆为 WorkflowMeta（name/description/phases）
- * - sourceCode 在此 readFile 填充（FR-2：registry 是唯一读文件处，扫描+缓存+去重；
- * 60s TTL 缓存避免重复读）。caller（launcher.runAndWait / tool-workflow.actionRun）
- * 直接用 script.validate / script.toExecutable，不再各自 readFile。
- * - available：meta 提取失败（config-loader 标 available=false）或文件不可读时为 false
+ * m2：整对象透传——m 已是 WorkflowMeta（CachedWorkflowMeta extends WorkflowMeta），
+ * 直接传 meta: m，不再 {name,description,phases} 重建。消灭第 3 处重映射，
+ * parameters/usage/when/notFor 一路流到 script.meta。
+ *
+ * sourceCode 在此 readFile 填充（FR-2：registry 是唯一读文件处）。
+ * available：meta 提取失败或文件不可读时为 false。
  */
-  private toScript(m: {
-    name: string;
-    description: string;
-    phases: (string | { title: string; detail?: string })[];
-    path: string;
-    available: boolean;
-    source: WorkflowSource;
-  }): WorkflowScript {
-    const meta: WorkflowMeta = {
-      name: m.name,
-      description: m.description,
-      phases: m.phases,
-    };
+  private toScript(m: CachedWorkflowMeta): WorkflowScript {
  // FR-2: registry 是唯一读文件处。readFileSync 填 sourceCode —— 这样 launcher/tool
  // 直接调 toExecutable/validate 即可，无需各自 readFile（避免重复读，60s TTL 缓存生效）。
     let sourceCode = "";
     let available = m.available;
     if (available) {
       try {
-        sourceCode = readFileSync(m.path, "utf-8");
+        const cachedContent = getCachedFileContent(m.path); // m5：统一 mtime 缓存层
+        if (cachedContent === null) {
+          // ENOENT/不可读竞态 → available=false（exec-review major-3：?? '' 会静默
+          // 返回空源码 workflow——恢复旧 readFileSync throw → catch → available=false 语义）
+          sourceCode = "";
+          available = false;
+        } else {
+          sourceCode = cachedContent;
+        }
       } catch {
  // 文件不可读（race condition 删除、权限等）——标 available=false，
  // 与 meta 提取失败的现有语义一致（loader "never throws"）。
@@ -121,7 +122,11 @@ export class WorkflowScriptRegistryImpl implements WorkflowScriptRegistry {
       source: m.source,
       path: m.path,
       sourceCode,
-      meta,
+      // meta: m 整对象透传（m2 决策）：故意不做显式投影——投影会重引入
+      // {name,description,phases} 解构重映射反模式（m2 消灭的丢字段 bug）。
+      // CachedWorkflowMeta 多带的 path/available/source 是良性泄漏（无消费者
+      // 序列化 script.meta）；若未来有消费者，改为组合式 { meta, path, ... } 而非投影。
+      meta: m,
       available,
     });
   }

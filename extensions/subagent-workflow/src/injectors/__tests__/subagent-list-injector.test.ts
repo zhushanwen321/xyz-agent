@@ -1,15 +1,55 @@
 // subagent-list-injector 单测
 //
-// 覆盖纯函数：parseAgentFrontmatter（frontmatter 解析）+ formatAgentList（P3 正向
-// 触发引导语 + 名字约束 + XML 结构 + 转义）。discoverAllAgents 依赖文件系统 +
-// resource-discovery，属集成层，此处聚焦可快速回归的格式化契约。
+// 两类覆盖：
+// 1. 纯函数（parseAgentFrontmatter / formatAgentList）：P3 正向触发引导语 + 名字约束
+//    + XML 结构 + 转义。discoverAllAgents 依赖文件系统 + resource-discovery，属集成层，
+//    此处聚焦可快速回归的格式化契约（TC5 回归保护）。
+// 2. session 级缓存行为（TC1-TC4）：mock shared/resource-discovery 的 discoverResources
+//    （vi.hoisted 稳定 spy + vi.mock 工厂闭包）+ getCachedFileContent 返回 fixture，
+//    mock pi.on 捕获三 handler 手动触发；模块级缓存靠 vi.resetModules + 动态 import 重置。
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-	formatAgentList,
-	parseAgentFrontmatter,
-} from "../subagent-list-injector";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+import type { DiscoveredResource } from "../../shared/resource-discovery.ts";
+
+// ── 稳定 spy：vi.hoisted 保证 resetModules 后引用不变（vi.mock 工厂闭包捕获同一 fn，
+//    故 fresh import 的注入器拿到的 discoverResources === spies.discoverResources，跨
+//    resetModules 调用计数连续，mockClear 控制每用例重置） ──
+const spies = vi.hoisted(() => ({
+	discoverResources: vi.fn(),
+	getCachedFileContent: vi.fn(),
+}));
+
+vi.mock("../../shared/resource-discovery.ts", () => ({
+	discoverResources: spies.discoverResources,
+	findWorkspaceRoot: () => "/ws",
+	getCachedFileContent: spies.getCachedFileContent,
+}));
+
+vi.mock("@zhushanwen/pi-extension-logger", () => ({
+	getLogger: () => ({
+		debug: () => {
+			/* no-op */
+		},
+		info: () => {
+			/* no-op */
+		},
+		warn: () => {
+			/* no-op */
+		},
+		error: () => {
+			/* no-op */
+		},
+	}),
+	setPiHandle: () => {
+		/* no-op */
+	},
+}));
+
+// ── 纯函数测试：静态 import（模块级缓存状态不影响纯函数；与下方缓存 describe 隔离） ──
+import { formatAgentList, parseAgentFrontmatter } from "../subagent-list-injector";
 
 describe("parseAgentFrontmatter", () => {
 	it("解析双引号包裹的 name + description", () => {
@@ -21,6 +61,7 @@ body`;
 		expect(parseAgentFrontmatter(md)).toEqual({
 			name: "worker",
 			description: "编码执行者",
+			path: "",
 		});
 	});
 
@@ -32,6 +73,7 @@ description: '代码审查'
 		expect(parseAgentFrontmatter(md)).toEqual({
 			name: "reviewer",
 			description: "代码审查",
+			path: "",
 		});
 	});
 
@@ -54,8 +96,42 @@ describe("formatAgentList", () => {
 		expect(formatAgentList([])).toBe("");
 	});
 
+	it("TC1: when + examples 注入（原样渲染 + escapeXml + 缺省兼容）", () => {
+		const out = formatAgentList([
+			{
+				name: "reviewer",
+				description: "代码审查",
+				path: "/agents/reviewer.md",
+				when: "用户要求 review 代码",
+				examples: [
+					{ match: "帮我 review 这段代码", action: "调用 reviewer 对抗式审查", positive: true },
+					{ match: "帮我 review 设计文档", action: "不调用（文档审查应选 doc-reviewer）", positive: false },
+				],
+			},
+			{ name: "legacy", description: "未迁移 agent", path: "/agents/legacy.md" },
+		]);
+		expect(out).toContain("<when>用户要求 review 代码</when>");
+		// 正反原样渲染——negative action 含原因文本（评审 M5：渲染器不硬编码）
+		expect(out).toContain('"帮我 review 这段代码" → 调用 reviewer 对抗式审查');
+		expect(out).toContain('"帮我 review 设计文档" → 不调用（文档审查应选 doc-reviewer）');
+		// escapeXml：match 含 < > 被转义
+		const xmlOut = formatAgentList([
+			{
+				name: "x",
+				description: "d",
+				path: "/agents/x.md",
+				examples: [{ match: "处理 <task> 的 diff", action: "调用 x", positive: true }],
+			},
+		]);
+		expect(xmlOut).toContain("&lt;task&gt;");
+		// 缺省兼容：无 when/examples 的 agent 不渲染该段
+		const legacyOut = formatAgentList([{ name: "legacy", description: "未迁移 agent", path: "/agents/legacy.md" }]);
+		expect(legacyOut).not.toContain("<when>");
+		expect(legacyOut).not.toContain("<examples>");
+	});
+
 	it("包含 P3 正向触发引导语（何时该 delegate）", () => {
-		const out = formatAgentList([{ name: "worker", description: "d" }]);
+		const out = formatAgentList([{ name: "worker", description: "d", path: "/agents/worker.md" }]);
 		expect(out).toContain("PRIORITY");
 		expect(out).toContain("3+ files");
 		expect(out).toContain("delegate");
@@ -63,20 +139,20 @@ describe("formatAgentList", () => {
 	});
 
 	it("保留原 'ONLY use agent names from this list' 名字约束", () => {
-		const out = formatAgentList([{ name: "worker", description: "d" }]);
+		const out = formatAgentList([{ name: "worker", description: "d", path: "/agents/worker.md" }]);
 		expect(out).toContain("ONLY use agent names from this list");
 	});
 
 	it("包含 'Do NOT call list to discover' 引导语", () => {
-		const out = formatAgentList([{ name: "worker", description: "d" }]);
+		const out = formatAgentList([{ name: "worker", description: "d", path: "/agents/worker.md" }]);
 		expect(out).toContain("Do NOT call list to discover");
 		expect(out).toContain("use list only for running state");
 	});
 
 	it("用 <available_subagents> 标签包裹并列出每个 agent", () => {
 		const out = formatAgentList([
-			{ name: "worker", description: "does work" },
-			{ name: "reviewer", description: "reviews code" },
+			{ name: "worker", description: "does work", path: "/agents/worker.md" },
+			{ name: "reviewer", description: "reviews code", path: "/agents/reviewer.md" },
 		]);
 		expect(out).toContain("<available_subagents>");
 		expect(out).toContain("</available_subagents>");
@@ -84,11 +160,187 @@ describe("formatAgentList", () => {
 		expect(out).toContain("<description>does work</description>");
 		expect(out).toContain("<name>reviewer</name>");
 		expect(out).toContain("<description>reviews code</description>");
+		// S1：每项含 <location> 完整路径（agentRef，模型直接引用）
+		expect(out).toContain("<location>/agents/worker.md</location>");
+		expect(out).toContain("<location>/agents/reviewer.md</location>");
 	});
 
 	it("转义 XML 特殊字符", () => {
-		const out = formatAgentList([{ name: "a&b<c>", description: "\"q\"" }]);
+		const out = formatAgentList([{ name: "a&b<c>", description: "\"q\"", path: "/agents/a&b<c>.md" }]);
 		expect(out).toContain("<name>a&amp;b&lt;c&gt;</name>");
 		expect(out).toContain("&quot;q&quot;");
+	});
+});
+
+// ──────────────────────────────────────────────────────────────
+// session 级缓存行为（TC1-TC4）
+// ──────────────────────────────────────────────────────────────
+
+/** before_agent_start handler 的返回结构（取 systemPrompt 断言）。 */
+interface BeforeAgentResult {
+	systemPrompt: string;
+}
+
+/** 三 handler 捕获引用（setupSubagentListInjector 注册后填充）。 */
+interface CapturedHandlers {
+	sessionStart?: (event: unknown, ctx: unknown) => Promise<void> | void;
+	beforeAgentStart?: (event: { systemPrompt: string }, ctx: unknown) => Promise<BeforeAgentResult | void> | BeforeAgentResult | void;
+	sessionShutdown?: (event: unknown, ctx: unknown) => void;
+}
+
+/** 构造 mock pi：捕获三 handler 引用，其余 prop 走 noop（仅 on 被调用）。 */
+function createMockPi(handlers: CapturedHandlers): ExtensionAPI {
+	const on = (event: string, handler: (...args: unknown[]) => unknown): void => {
+		if (event === "session_start") {
+			handlers.sessionStart = handler as CapturedHandlers["sessionStart"];
+		} else if (event === "before_agent_start") {
+			handlers.beforeAgentStart = handler as CapturedHandlers["beforeAgentStart"];
+		} else if (event === "session_shutdown") {
+			handlers.sessionShutdown = handler as CapturedHandlers["sessionShutdown"];
+		}
+	};
+	const noop = (): void => {
+		/* mock */
+	};
+	// setupSubagentListInjector 仅调 pi.on；用最小对象 + 双重断言满足 ExtensionAPI 契约
+	// （测试 mock 约定，见 crash-recovery.test.ts 的 Proxy 模式）
+	return { on, appendEntry: noop, registerTool: noop, registerCommand: noop, registerMessageRenderer: noop, events: { emit: noop, on: noop } } as unknown as ExtensionAPI;
+}
+
+/** 最小 ctx mock（注入器只读 ctx.cwd）。 */
+function createMockCtx(): Record<string, unknown> {
+	return { cwd: "/ws", mode: "tui" };
+}
+
+/** fixture：单个 worker agent 的 DiscoveredResource。 */
+function agentResource(path: string): DiscoveredResource {
+	return { path, source: "project-agents", available: true };
+}
+
+/** fixture：agent .md frontmatter 内容。 */
+function agentMd(name: string, description: string): string {
+	return `---\nname: ${name}\ndescription: "${description}"\n---\nbody`;
+}
+
+describe("subagent-list-injector session 级缓存", () => {
+	let setupSubagentListInjector: typeof import("../subagent-list-injector").setupSubagentListInjector;
+	let handlers: CapturedHandlers;
+
+	beforeEach(async () => {
+		// resetModules + 动态 import：拿 fresh 模块实例 → 模块级 agentCache 重置为 null
+		vi.resetModules();
+		spies.discoverResources.mockReset();
+		spies.getCachedFileContent.mockReset();
+		// 默认空发现（各 TC 按需覆盖）
+		spies.discoverResources.mockResolvedValue([]);
+		spies.getCachedFileContent.mockReturnValue(null);
+		handlers = {};
+		const mod = await import("../subagent-list-injector");
+		setupSubagentListInjector = mod.setupSubagentListInjector;
+		setupSubagentListInjector(createMockPi(handlers));
+	});
+
+	it("TC1: session_start 发现+缓存后，两次 before_agent_start 命中缓存（discoverResources 只调 1 次）", async () => {
+		spies.discoverResources.mockResolvedValue([agentResource("/ws/.agents/agents/worker.md")]);
+		spies.getCachedFileContent.mockReturnValue(agentMd("worker", "编码执行者"));
+
+		// session_start 触发发现+缓存
+		await handlers.sessionStart!({ type: "session_start", reason: "new" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(1);
+
+		// 两次 before_agent_start：均读缓存，不再触发 discoverResources
+		const r1 = await handlers.beforeAgentStart!({ systemPrompt: "" }, createMockCtx());
+		const r2 = await handlers.beforeAgentStart!({ systemPrompt: "" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(1);
+
+		// 两次注入段都含 <available_subagents> 且内容一致（同一缓存）
+		expect(r1?.systemPrompt).toContain("<available_subagents>");
+		expect(r1?.systemPrompt).toContain("<name>worker</name>");
+		expect(r2?.systemPrompt).toBe(r1?.systemPrompt);
+	});
+
+	it("TC2: session_shutdown 清缓存后 before_agent_start miss → fallback 重新发现+缓存", async () => {
+		spies.discoverResources.mockResolvedValue([agentResource("/ws/.agents/agents/worker.md")]);
+		spies.getCachedFileContent.mockReturnValue(agentMd("worker", "编码"));
+
+		// session_start 发现+缓存（discoverResources count=1）
+		await handlers.sessionStart!({ type: "session_start", reason: "new" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(1);
+
+		// session_shutdown 清缓存
+		handlers.sessionShutdown!({ type: "session_shutdown", reason: "quit" }, createMockCtx());
+
+		// before_agent_start 读到空缓存 → fallback 重新发现（count=2）+ 重新缓存
+		const r1 = await handlers.beforeAgentStart!({ systemPrompt: "" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(2);
+		expect(r1?.systemPrompt).toContain("<name>worker</name>");
+
+		// 再次 before_agent_start 命中缓存（不再调 discoverResources，count 仍 2）
+		const r2 = await handlers.beforeAgentStart!({ systemPrompt: "" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(2);
+		expect(r2?.systemPrompt).toBe(r1?.systemPrompt);
+	});
+
+	it("TC3: 无 session_start 直接 before_agent_start（miss fallback）→ 发现+缓存", async () => {
+		spies.discoverResources.mockResolvedValue([agentResource("/ws/.agents/agents/worker.md")]);
+		spies.getCachedFileContent.mockReturnValue(agentMd("worker", "编码"));
+
+		// 未触发 session_start，直接两次 before_agent_start
+		const r1 = await handlers.beforeAgentStart!({ systemPrompt: "" }, createMockCtx());
+		const r2 = await handlers.beforeAgentStart!({ systemPrompt: "" }, createMockCtx());
+
+		// 第一次 fallback 发现+缓存（count=1）；第二次命中缓存（count 仍 1）
+		expect(spies.discoverResources).toHaveBeenCalledTimes(1);
+		expect(r1?.systemPrompt).toContain("<name>worker</name>");
+		expect(r2?.systemPrompt).toBe(r1?.systemPrompt);
+	});
+
+	it("TC4: session_start(reload) 覆盖缓存（新资源生效）", async () => {
+		// 第一次 session_start(new)：发现 worker
+		spies.discoverResources.mockResolvedValue([agentResource("/ws/.agents/agents/worker.md")]);
+		spies.getCachedFileContent.mockReturnValue(agentMd("worker", "编码"));
+		await handlers.sessionStart!({ type: "session_start", reason: "new" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(1);
+
+		// 资源变化：discoverResources 改返回 reviewer，getCachedFileContent 改返回 reviewer 内容
+		spies.discoverResources.mockResolvedValue([agentResource("/ws/.agents/agents/reviewer.md")]);
+		spies.getCachedFileContent.mockReturnValue(agentMd("reviewer", "审查"));
+
+		// session_start(reload) 重新发现覆盖缓存（count=2）
+		await handlers.sessionStart!({ type: "session_start", reason: "reload" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(2);
+
+		// before_agent_start 命中新缓存：注入段反映 reviewer（非旧 worker）
+		const r = await handlers.beforeAgentStart!({ systemPrompt: "" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(2);
+		expect(r?.systemPrompt).toContain("<name>reviewer</name>");
+		expect(r?.systemPrompt).not.toContain("worker");
+	});
+
+	it("session_start 发现空列表缓存后 before_agent_start 命中（不重扫，不注入）", async () => {
+		// 空列表是有效缓存态（非 null）：命中后不重扫，formatAgentList([]) 返空串不注入
+		spies.discoverResources.mockResolvedValue([]);
+		await handlers.sessionStart!({ type: "session_start", reason: "new" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(1);
+
+		const r1 = await handlers.beforeAgentStart!({ systemPrompt: "base" }, createMockCtx());
+		const r2 = await handlers.beforeAgentStart!({ systemPrompt: "base" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(1);
+		// 空注入：handler 返 void（无 systemPrompt 字段）
+		expect(r1).toBeUndefined();
+		expect(r2).toBeUndefined();
+	});
+
+	it("session_start 发现异常不阻断（fail-safe，缓存保持 null，before_agent_start fallback）", async () => {
+		spies.discoverResources.mockRejectedValueOnce(new Error("disk io"));
+		// session_start 发现抛错：记日志不阻断，缓存保持 null
+		await handlers.sessionStart!({ type: "session_start", reason: "new" }, createMockCtx());
+
+		// before_agent_start 读到 null 缓存 → fallback 重新发现（recover）
+		spies.discoverResources.mockResolvedValue([agentResource("/ws/.agents/agents/worker.md")]);
+		spies.getCachedFileContent.mockReturnValue(agentMd("worker", "编码"));
+		const r = await handlers.beforeAgentStart!({ systemPrompt: "" }, createMockCtx());
+		expect(spies.discoverResources).toHaveBeenCalledTimes(2);
+		expect(r?.systemPrompt).toContain("<name>worker</name>");
 	});
 });

@@ -1,13 +1,10 @@
-// Batch 3 prompt quality 验证（v2：新 9-agent 体系）
+// Batch 3 prompt quality 验证
 //
-// 旧体系（context-builder/oracle/worker）已废弃合并。本文件验证新体系的边界声明：
-// U1: explorer.md read-only 黑名单/白名单（保留）
-// U2: reviewer 吸收需求验收（原 oracle 职责并入）
-// U3: planner 合并需求澄清（原 context-builder 职责并入）
-// U4: coder 吸收测试职责（原 worker + tester 合并）
-// U5: debugger 假设驱动 + 临时日志恢复纪律
-// E1: workflow-script tool discovery + anti-pattern（与 agent 无关，保留）
-// E2: 9 个 agent frontmatter 完整性
+// U1: explorer.md 黑名单格式（替代旧白名单）
+// U2: oracle.md / code-reviewer.md 交叉 scope defer 声明
+// U3: context-builder.md / planner.md 输出载体互斥声明
+// E1: tool-workflow-script.ts description + promptGuidelines discovery 提示 + anti-pattern
+// E2: 5 个 agent .md 改动后仍保留有效 frontmatter
 
 import { readFileSync } from "node:fs";
 import { dirname,join } from "node:path";
@@ -26,9 +23,9 @@ function readAgent(name: string): string {
   return readSrc(join("agents", `${name}.md`));
 }
 
-// ── U1: explorer read-only 黑名单/白名单 ─────────────────────
+// ── U1: explorer 黑名单 ──────────────────────────────────────
 
-describe("U1: explorer read-only 黑名单/白名单", () => {
+describe("U1: explorer.md 黑名单替代白名单", () => {
   const explorer = readAgent("explorer");
 
   it("包含 NEVER run 黑名单标题", () => {
@@ -54,87 +51,55 @@ describe("U1: explorer read-only 黑名单/白名单", () => {
   });
 });
 
-// ── U2: reviewer 吸收需求验收（原 oracle 职责） ─────────────
+// ── U2: oracle ↔ reviewer scope defer ─────────────────────────
 
-describe("U2: reviewer 吸收需求验收", () => {
-  const reviewer = readAgent("reviewer");
+describe("U2: oracle/code-reviewer 交叉 scope defer", () => {
+  const oracle = readAgent("oracle");
+  const reviewer = readAgent("code-reviewer");
 
-  it("含 Correctness 需求符合性第一视角", () => {
-    expect(reviewer).toContain("Correctness");
+  it("oracle 声明 requirements alignment 职责范围", () => {
+    expect(oracle).toContain("requirements alignment");
   });
 
-  it("整个需求未实现时记 requirements gap 转 planner", () => {
-    expect(reviewer).toContain("requirements gap");
+  it("oracle 发现 code bugs 时 defer code-reviewer", () => {
+    expect(oracle.toLowerCase()).toContain("defer to a code-reviewer");
   });
 
-  it("severity 三档分级", () => {
-    expect(reviewer).toContain("Critical");
-    expect(reviewer).toContain("Major");
-    expect(reviewer).toContain("Minor");
+  it("code-reviewer 声明 code-level issues 职责范围", () => {
+    expect(reviewer).toContain("code-level issues only");
   });
 
-  it("缺材料返回 Context insufficient 不硬审", () => {
-    expect(reviewer).toContain("Context insufficient");
+  it("code-reviewer 发现 requirements gap 时 defer oracle/planner", () => {
+    expect(reviewer.toLowerCase()).toContain("defer to an oracle or planner");
   });
 });
 
-// ── U3: planner 合并需求澄清（原 context-builder 职责） ─────
+// ── U3: context-builder ↔ planner 输出载体互斥 ────────────────
 
-describe("U3: planner 合并需求澄清", () => {
+describe("U3: context-builder/planner 输出载体互斥", () => {
+  const ctxBuilder = readAgent("context-builder");
   const planner = readAgent("planner");
 
-  it("声明需求澄清职责（吸收 context-builder）", () => {
-    expect(planner).toContain("澄清");
+  it("context-builder 声明 meta-prompt 载体", () => {
+    expect(ctxBuilder).toContain("meta-prompt");
+    expect(ctxBuilder).toContain("task description for another agent");
   });
 
-  it("产出 execution guide for a coder", () => {
-    expect(planner).toContain("execution guide for a coder");
+  it("context-builder 禁止 step-by-step plan", () => {
+    expect(ctxBuilder).toContain("do NOT produce a step-by-step plan");
   });
 
-  it("产出编号有序步骤", () => {
-    expect(planner).toContain("编号");
-  });
-});
-
-// ── U4: coder 吸收测试职责（原 worker + tester 合并） ────────
-
-describe("U4: coder 吸收测试职责", () => {
-  const coder = readAgent("coder");
-
-  it("含测试纪律段", () => {
-    expect(coder).toContain("测试纪律");
+  it("planner 声明 numbered plan 载体", () => {
+    expect(planner).toContain("numbered");
+    expect(planner).toContain("execution guide for a worker");
   });
 
-  it("修 bug 先写复现测试再改", () => {
-    expect(coder).toContain("复现测试");
-  });
-
-  it("外科手术式变更约束", () => {
-    expect(coder).toContain("外科手术式变更");
+  it("planner 禁止 meta-prompt / requirements analysis", () => {
+    expect(planner).toContain("do NOT produce a meta-prompt");
   });
 });
 
-// ── U5: debugger 假设驱动 + 临时日志恢复纪律 ────────────────
-
-describe("U5: debugger 假设驱动 + 临时日志恢复", () => {
-  const dbg = readAgent("debugger");
-
-  it("假设驱动而非线性 5 whys", () => {
-    expect(dbg).toContain("假设驱动");
-  });
-
-  it("临时日志必须恢复", () => {
-    expect(dbg).toContain("临时");
-    expect(dbg).toContain("恢复");
-  });
-
-  it("不改业务代码（修复归 coder）", () => {
-    expect(dbg).toContain("修复动作归 coder");
-  });
-});
-
-// ── E1: workflow-script tool discovery + anti-pattern ────────
-// （与 agent 体系无关，原样保留）
+// ── E1: tool-workflow-script.ts discovery + anti-pattern ───────
 
 describe("E1: workflow-script tool description + anti-pattern", () => {
   const src = readSrc(join("src", "interface", "tool-workflow-script.ts"));
@@ -148,18 +113,17 @@ describe("E1: workflow-script tool description + anti-pattern", () => {
     expect(src).toContain("ANTI-PATTERN");
   });
 
-  it("anti-pattern 引用内置 workflow 名称（chain 非 sequential）", () => {
-    expect(src).toContain("chain/parallel/scatter-gather/map-reduce");
+  it("anti-pattern 保留字样但不点名内置 workflow（m4：发现靠注入段，防硬编码）", () => {
+    expect(src).toContain("ANTI-PATTERN");
+    expect(src).toContain("NEVER generate");
+    expect(src).not.toContain("chain/parallel/scatter-gather/map-reduce");
   });
 });
 
-// ── E2: 9 个 agent frontmatter 完整性 ───────────────────────
+// ── E2: 5 个 agent .md frontmatter 完整性 ─────────────────────
 
 describe("E2: agent .md frontmatter 保留有效格式", () => {
-  const agents = [
-    "explorer", "planner", "coder", "reviewer", "debugger",
-    "analyst", "researcher", "orchestrator", "general-purpose",
-  ];
+  const agents = ["explorer", "oracle", "code-reviewer", "context-builder", "planner"];
 
   for (const name of agents) {
     it(`${name}.md 以 --- 开头且含 name + description 字段`, () => {

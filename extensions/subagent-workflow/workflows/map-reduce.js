@@ -13,11 +13,27 @@
 //
 // ⚠️ lintScript 约束（本脚本已遵守）：含 parallel() 入口（兼 agent 嵌套），禁止 bare IIFE
 
-const meta = {
-  name: "map-reduce",
-  description: "通用编排：parallel map → reduce 两段，处理已知 items 数组",
-  phases: ["map", "reduce"],
-};
+/* @pi-meta
+name: map-reduce
+description: 通用编排：parallel map → reduce 两段，处理已知 items 数组
+phases: [map, reduce]
+parameters:
+  type: object
+  properties:
+    items: { type: array, items: { type: string } }
+    itemsJson: { type: string }
+    operation: { type: string }
+    agents: { type: string }
+  required: [operation]
+  oneOf:
+    - required: [items]
+    - required: [itemsJson]
+usage: |
+  ## 使用说明
+  - items 与 itemsJson 至少一个：items 直接传字符串数组，itemsJson 传文件路径（内容为 JSON 数组）
+  - agents：逗号分隔的 agent .md 绝对路径，按顺序对应 map/reduce 两段
+  - 示例：workflow run map-reduce --args operation="<对每个 item 做什么>" itemsJson="/path/items.json" agents="/path/mapper.md,/path/reducer.md"
+*/
 
 const fs = require("fs");
 
@@ -50,6 +66,16 @@ if (!Array.isArray(items) || items.length === 0) {
 
 log("map-reduce 开始，items=" + items.length + " 个，operation=" + operation);
 
+// S4：agents 参数 = 逗号分隔的 agentRef 路径数组，按顺序对应 map/reduce 两段
+// worker 沙箱为 eval 模式：require 相对路径以 cwd 为基准（非脚本目录），
+// 必须用 workerData.scriptPath 锚定脚本目录（review-fix-loop 同模式）。
+const SCRIPT_DIR = workerData && workerData.scriptPath
+  ? require("path").dirname(workerData.scriptPath)
+  : process.cwd();
+const { parseAgentRefs, agentRefAt } = require(SCRIPT_DIR + "/_shared/agent-refs.cjs");
+const agentRefs = parseAgentRefs($ARGS.agents);
+const stepAgent = (i) => { const ref = agentRefAt(agentRefs, i); return ref ? { agent: ref } : {}; };
+
 let currentPhase = "init";
 let outcome;
 
@@ -74,6 +100,7 @@ try {
           required: ["itemIndex", "mapped"],
         },
         description: "map-reduce-map-" + idx,
+        ...stepAgent(0),
       })
     ),
   );
@@ -121,6 +148,7 @@ try {
       required: ["reduced", "stats"],
     },
     description: "map-reduce-reduce",
+    ...stepAgent(1),
   });
 
   outcome = {

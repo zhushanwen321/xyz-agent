@@ -1,6 +1,6 @@
 // review-fix-loop-utils.cjs 行为测试（MF-5）
 //
-// 覆盖 review-fix-loop.js 的可测纯函数：参数校验（normalizeBool/normalizeInt）、
+// 覆盖 review-fix-loop.js 的可测纯函数：批次解析/聚合结果解析/审查指令构建
 // 批次解析（缺号/重复/agents 冲突/batchNames 数量）、fallow-scan 类型限制、
 // 审查指令构建、结果解析（parseResult/normalizeAggregatorResult/parseAggregatedMd 回退）。
 // 这些逻辑原本全部内联在 workflow 脚本里零测试，抽到 utils 模块后与 worker 运行时共用
@@ -13,11 +13,8 @@ import { join } from "path";
 import {
   TARGET_TYPES,
   VALID_ARG_KEYS,
-  normalizeBool,
-  normalizeInt,
   parseBatches,
   resolveBatchNames,
-  validateFallowScan,
   buildReviewInstruction,
   lockReviewBase,
   buildScopedRecheckPrompt,
@@ -37,9 +34,6 @@ import {
   parseResult,
   normalizeAggregatorResult,
   parseAggregatedMd,
-  shouldRetryWithReviewPrefix,
-  parseAgentMd,
-  loadAgentMd,
   resolveAgentDefs,
   recordAgentClean,
   recordAgentDirty,
@@ -55,46 +49,14 @@ function fail(msg: string): never {
 
 // ── review- 前缀兕底判定（MF-1：registry 报错文案锁定） ────────────────
 //
-// agent-registry.ts 的报错文案是 `Agent "${name}" not found. Discovered: ...`
-// （名字夹在 "Agent" 与 "not found" 之间），故匹配条件必须是松散子串 "not found"，
-// 连续子串 "Agent not found" 永远不命中。下面用例锁定两端：registry 文案 + 匹配逻辑。
-
-describe("shouldRetryWithReviewPrefix", () => {
-  it("registry 文案 `Agent \"X\" not found. Discovered: ...`（名字夹在中间）→ 命中重试", () => {
-    expect(
-      shouldRetryWithReviewPrefix('Agent "business-logic" not found. Discovered: reviewer, worker', "business-logic"),
-    ).toBe(true);
-    // 假设性连续子串也命中（防御未来文案变化）
-    expect(shouldRetryWithReviewPrefix("Agent not found", "business-logic")).toBe(true);
-  });
-
-  it("非 not found 错误 → 不重试", () => {
-    expect(shouldRetryWithReviewPrefix("Agent registry failure", "business-logic")).toBe(false);
-    expect(shouldRetryWithReviewPrefix("timeout", "business-logic")).toBe(false);
-  });
-
-  it("已是 review- 前缀 → 不重试（防死循环）", () => {
-    expect(
-      shouldRetryWithReviewPrefix('Agent "review-business-logic" not found. Discovered: reviewer', "review-business-logic"),
-    ).toBe(false);
-  });
-
-  it("agent 名缺失 / 非字符串 → 不重试", () => {
-    expect(shouldRetryWithReviewPrefix('Agent "x" not found.', undefined)).toBe(false);
-    expect(shouldRetryWithReviewPrefix('Agent "x" not found.', "")).toBe(false);
-    expect(shouldRetryWithReviewPrefix(undefined, "x")).toBe(false);
-    expect(shouldRetryWithReviewPrefix(null, "x")).toBe(false);
-  });
-});
-
 // ── 参数白名单（review-fix-loop.js 顶层未知参数 fail-fast 的 SSOT） ──
 
 describe("VALID_ARG_KEYS（未知参数 fail-fast 白名单）", () => {
   it("覆盖全部合法参数键（与 review-fix-loop.js 头部 fail 消息列出的合法参数一一对应）", () => {
     expect([...VALID_ARG_KEYS].sort()).toEqual([
       "_runId", "agents", "autoCommit", "batchNames", "convergeNewIssues",
-      "convergeRounds", "fixAgent", "fixPrompt", "maxFixAttempts", "maxRounds",
-      "model", "recheckAfterFix", "reviewPrompt", "skipCleanAgents",
+      "convergeRounds", "fallowScan", "fixAgent", "fixPrompt", "maxFixAttempts", "maxRounds",
+      "recheckAfterFix", "reviewPrompt", "skipCleanAgents",
       "stuckThreshold", "target", "targetType",
     ]);
   });
@@ -102,49 +64,6 @@ describe("VALID_ARG_KEYS（未知参数 fail-fast 白名单）", () => {
   it("batchN 动态键不在白名单（由 /^batch\\d+$/ 正则单独放行），拼错 batchl 会被拒", () => {
     expect(VALID_ARG_KEYS.has("batch1")).toBe(false);
     expect(VALID_ARG_KEYS.has("batchl")).toBe(false);
-  });
-});
-
-// ── 参数校验：normalizeBool / normalizeInt ──────────────────────────
-
-describe("normalizeBool", () => {
-  it("缺省值（undefined/null/空串）→ 返回默认值", () => {
-    expect(normalizeBool(undefined, "autoCommit", false, fail)).toBe(false);
-    expect(normalizeBool(null, "autoCommit", true, fail)).toBe(true);
-    expect(normalizeBool("", "autoCommit", false, fail)).toBe(false);
-  });
-
-  it("合法布尔值透传", () => {
-    expect(normalizeBool(true, "autoCommit", false, fail)).toBe(true);
-    expect(normalizeBool(false, "autoCommit", true, fail)).toBe(false);
-    expect(normalizeBool("true", "autoCommit", false, fail)).toBe(true);
-    expect(normalizeBool("false", "autoCommit", true, fail)).toBe(false);
-  });
-
-  it("非法布尔值 → fail（参数校验 fail-fast）", () => {
-    expect(() => normalizeBool("yes", "autoCommit", false, fail)).toThrow("必须是布尔值");
-    expect(() => normalizeBool(1, "autoCommit", false, fail)).toThrow("必须是布尔值");
-    expect(() => normalizeBool("on", "skipCleanAgents", true, fail)).toThrow("skipCleanAgents");
-  });
-});
-
-describe("normalizeInt", () => {
-  it("缺省值 → 返回默认值", () => {
-    expect(normalizeInt(undefined, "maxRounds", 10, fail)).toBe(10);
-    expect(normalizeInt("", "stuckThreshold", 3, fail)).toBe(3);
-  });
-
-  it("合法正整数（number 与数字字符串）", () => {
-    expect(normalizeInt(5, "maxRounds", 10, fail)).toBe(5);
-    expect(normalizeInt("7", "maxRounds", 10, fail)).toBe(7);
-    expect(normalizeInt(" 12 ", "maxRounds", 10, fail)).toBe(12);
-  });
-
-  it("非正整数（0/负数/小数/非数字）→ fail", () => {
-    expect(() => normalizeInt(0, "maxRounds", 10, fail)).toThrow("必须是正整数");
-    expect(() => normalizeInt(-1, "maxRounds", 10, fail)).toThrow("必须是正整数");
-    expect(() => normalizeInt(1.5, "maxRounds", 10, fail)).toThrow("必须是正整数");
-    expect(() => normalizeInt("abc", "stuckThreshold", 3, fail)).toThrow("stuckThreshold");
   });
 });
 
@@ -199,23 +118,6 @@ describe("resolveBatchNames", () => {
   it("batchNames 数量与批数不符 → fail", () => {
     expect(() => resolveBatchNames(["only-one"], [["a"], ["b"]], fail))
       .toThrow("batchNames 数量（1）必须与批数（2）一致");
-  });
-});
-
-// ── fallow-scan 类型限制：validateFallowScan ───────────────────────
-
-describe("validateFallowScan", () => {
-  it("fallow-scan + targetType=git-diff → 放行", () => {
-    expect(() => validateFallowScan([["fallow-scan"]], "git-diff", fail)).not.toThrow();
-  });
-
-  it("fallow-scan + 非 git-diff（file）→ fail", () => {
-    expect(() => validateFallowScan([["fallow-scan"]], "file", fail))
-      .toThrow("fallow-scan 只支持 targetType=git-diff");
-  });
-
-  it("非 fallow-scan 批次不受 targetType 限制", () => {
-    expect(() => validateFallowScan([["reviewer"]], "text", fail)).not.toThrow();
   });
 });
 
@@ -899,102 +801,9 @@ describe("TARGET_TYPES", () => {
   });
 });
 
-// ── 自定义 agent frontmatter 解析：parseAgentMd / loadAgentMd（MF：loadAgentMd 零测试） ──
-
-describe("parseAgentMd", () => {
-  const full = [
-    "---",
-    'name: "custom-reviewer"',
-    "model: glm-5.1",
-    "description: 自定义审查 agent",
-    "---",
-    "",
-    "Review everything carefully.",
-  ].join("\n");
-
-  it("完整 frontmatter → name/model/description + 正文（report/title/isCustom 派生）", () => {
-    const r = parseAgentMd(full, "fallback-name");
-    expect(r.name).toBe("custom-reviewer");
-    expect(r.model).toBe("glm-5.1");
-    expect(r.description).toBe("自定义审查 agent");
-    expect(r.systemPrompt).toBe("Review everything carefully.");
-    expect(r.report).toBe("custom-reviewer");
-    expect(r.title).toBe("自定义审查 agent");
-    expect(r.isCustom).toBe(true);
-  });
-
-  it("无 frontmatter → basename 兜底 + 全文作正文", () => {
-    const r = parseAgentMd("just body text", "my-agent");
-    expect(r.name).toBe("my-agent");
-    expect(r.model).toBeUndefined();
-    expect(r.description).toBeUndefined();
-    expect(r.systemPrompt).toBe("just body text");
-    expect(r.report).toBe("my-agent");
-    expect(r.title).toBe("my-agent");
-  });
-
-  it("frontmatter 未闭合（无第二个 ---）→ 全文当正文，basename 兜底", () => {
-    const r = parseAgentMd("---\nname: x\nbody continues", "fallback");
-    expect(r.name).toBe("fallback");
-    expect(r.model).toBeUndefined();
-    expect(r.systemPrompt).toBe("---\nname: x\nbody continues");
-  });
-
-  it("引号包裹的值 → 剥引号（双引号与单引号）；非成对引号保留", () => {
-    const r = parseAgentMd(
-      ['---', 'name: "quoted-name"', "model: 'x-model'", 'description: mixed"quote', "---", "body"].join("\n"),
-      "fb",
-    );
-    expect(r.name).toBe("quoted-name");
-    expect(r.model).toBe("x-model");
-    // 起止引号不成对 → 不剥
-    expect(r.description).toBe('mixed"quote');
-  });
-
-  it("空值字段（name:/model: 后无内容或仅空串）→ undefined 回退，name 用 basename", () => {
-    // name: 空值且后跟内容行：不能把下一行误当 name 值（\s* 跨行防护）
-    const r = parseAgentMd(['---', "name:", "model: x", 'description: ""', "---", "body"].join("\n"), "empty-fields");
-    expect(r.name).toBe("empty-fields");
-    expect(r.model).toBe("x");
-    expect(r.description).toBeUndefined(); // 引号包裹的空串 → 剥引号后 || undefined
-    expect(r.systemPrompt).toBe("body");
-  });
-});
-
-describe("loadAgentMd", () => {
-  let dir: string;
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "rfl-md-"));
-  });
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it("读取文件 + 无 frontmatter 时 basename 兜底（custom-reviewer.md → custom-reviewer）", () => {
-    const p = join(dir, "custom-reviewer.md");
-    writeFileSync(p, "---\nname: \"X\"\n---\nbody");
-    const r = loadAgentMd(p, fail);
-    expect(r.name).toBe("X");
-    expect(r.systemPrompt).toBe("body");
-    const plain = join(dir, "plain.md");
-    writeFileSync(plain, "no frontmatter body");
-    const noFm = loadAgentMd(plain, fail);
-    expect(noFm.name).toBe("plain");
-    expect(noFm.systemPrompt).toBe("no frontmatter body");
-  });
-
-  it("文件不存在 → fail 回调报错（fail-fast）", () => {
-    expect(() => loadAgentMd(join(dir, "missing.md"), fail)).toThrow("agent 文件读取失败");
-  });
-});
-
-// ── Agent defs 解析：resolveAgentDefs（MF：三分支零测试） ────────────
-
-describe("resolveAgentDefs", () => {
-  const stubLoader = (p: string) => ({ name: "loaded:" + p, isCustom: true });
-
-  it("fallow-scan → 内置 FALLOW_DEF 常量（不进 loader）", () => {
-    expect(resolveAgentDefs(["fallow-scan"], stubLoader)[0]).toEqual({
+describe("resolveAgentDefs（S4 路径统一：agentRef = .md 绝对路径）", () => {
+  it("fallow-scan → 内置 FALLOW_DEF 常量（脚本内部保留字，非用户参数值域）", () => {
+    expect(resolveAgentDefs(["fallow-scan"])[0]).toEqual({
       name: "fallow-scan",
       title: "FALLOW STATIC ANALYSIS",
       report: "fallow-scan",
@@ -1002,31 +811,29 @@ describe("resolveAgentDefs", () => {
     });
   });
 
-  it("含 / 或 .md 后缀 → 走 loader（相对路径与绝对路径）", () => {
-    expect(resolveAgentDefs([".agents/agents/reviewer.md"], stubLoader)[0].name).toBe("loaded:.agents/agents/reviewer.md");
-    expect(resolveAgentDefs(["/tmp/agents/x.md"], stubLoader)[0].name).toBe("loaded:/tmp/agents/x.md");
-    expect(resolveAgentDefs(["custom-reviewer.md"], stubLoader)[0].name).toBe("loaded:custom-reviewer.md");
+  it("绝对路径 → path/name/report/title 派生（basename 去 .md，title 大写）", () => {
+    const r = resolveAgentDefs(["/tmp/agents/custom-reviewer.md"]);
+    expect(r[0]).toEqual({
+      path: "/tmp/agents/custom-reviewer.md",
+      name: "custom-reviewer",
+      report: "custom-reviewer",
+      title: "CUSTOM-REVIEWER",
+    });
   });
 
-  it("内置 agent 名 → review- 前缀剥离（report 名）+ 大写 title", () => {
-    const r = resolveAgentDefs(["reviewer", "review-business-logic"], stubLoader);
-    expect(r[0]).toEqual({ name: "reviewer", report: "reviewer", title: "REVIEWER" });
-    expect(r[1]).toEqual({ name: "review-business-logic", report: "business-logic", title: "REVIEW-BUSINESS-LOGIC" });
+  it("~/ 前缀绝对路径 → 接受", () => {
+    expect(resolveAgentDefs(["~/agents/reviewer.md"])[0].name).toBe("reviewer");
   });
 
-  it("review-reviewer 双重前缀 → 只剥一层（report=reviewer）", () => {
-    expect(resolveAgentDefs(["review-reviewer"], stubLoader)[0].report).toBe("reviewer");
+  it("相对路径 / 非 .md 引用 → throw（引用唯一形态 = 绝对路径）", () => {
+    expect(() => resolveAgentDefs(["reviewer"])).toThrow(/无效 agent 引用/);
+    expect(() => resolveAgentDefs(["./agents/x.md"])).toThrow(/无效 agent 引用/);
+    expect(() => resolveAgentDefs(["/tmp/agents/x.txt"])).toThrow(/无效 agent 引用/);
   });
 
-  it("默认 loader = loadAgentMd（不传 loader 时 .md 项经 fs 读取）", () => {
-    const dir = mkdtempSync(join(tmpdir(), "rfl-resolve-"));
-    try {
-      const p = join(dir, "a.md");
-      writeFileSync(p, "---\nname: \"FromFile\"\n---\nbody");
-      expect(resolveAgentDefs([p])[0].name).toBe("FromFile");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  it("def 不含 systemPrompt（S4：agent 内容由主线程 resolveAgentOpts 按 path 加载，脚本不读文件）", () => {
+    const r = resolveAgentDefs(["/tmp/agents/x.md"]);
+    expect(r[0].systemPrompt).toBeUndefined();
   });
 });
 

@@ -6,10 +6,12 @@
 //
 // 用法：
 //   workflow run review-fix-loop --args targetType=git-diff target=main \
-//     batch1=fallow-scan batch2=reviewer autoCommit=true
+//     batch1="/path/reviewer-a.md,/path/reviewer-b.md" autoCommit=true
 //   workflow run review-fix-loop --args targetType=file target=/path/to/doc.md \
-//     batch1=reviewer autoCommit=false
+//     batch1="/path/doc-reviewer.md" autoCommit=false
 //
+// S4 路径统一：batch1..batchN/fixAgent 值 = agentRef（.md 绝对路径，<available_subagents> 的
+// <location>）；fallowScan=true 独立参数前置插入静态分析批次（不占 batchN）。
 // ⚠️ 唯一带写操作的内置 workflow：fix 阶段会修改文件（autoCommit=true 时 commit）。
 // ⚠️ lintScript 约束（本脚本已遵守）：含 parallel() 入口，禁止 bare IIFE；
 //    agent() 调用顺序确定（批次按配置顺序稳定排序，callId 重放安全）。
@@ -20,11 +22,45 @@
 //    main 4.0.0 版自包含 677 行、缺批次参数时默认单批 ["reviewer"]、recheckAfterFix 默认 false。
 //    merge 时保留本版（功能更全），详见 .changeset/tidy-waves-description-phase-lint.md。
 
-const meta = {
-  name: "review-fix-loop",
-  description: "审查-修复循环：多批串行（批内并行 review → aggregate → fix → 重审直到 clean）。必填 targetType（git-diff/file/dir/text）+ target。批次由必填参数 batch1..batchN 控制（无默认，至少传一个；agents 为单批简写；如 batch1=fallow-scan batch2=reviewer），用于前置检查先行的场景。注意：唯一带写操作/commit 副作用的内置 workflow，autoCommit 默认 false；skipCleanAgents 默认 true + recheckAfterFix 默认 false（clean agent 下轮跳过，与字面语义一致）；传 recheckAfterFix=true 启用可选强回归模式（fix 后重派全批，clean agent 走限定 prompt 只审改动文件）。可选 fixAgent/maxFixAttempts/convergeNewIssues/convergeRounds 控制修复 agent 与收敛终止（详见 workflows/README.md）。",
-  phases: ["Review", "Fix"],
-};
+/* @pi-meta
+name: review-fix-loop
+description: >-
+  多批串行审查-修复循环：批内并行 review 聚合 must-fix 后迭代修复直到 clean
+  （唯一带写操作与 commit 副作用的内置 workflow，autoCommit 默认 false）
+when: 用户要 review 并迭代修复至 clean
+notFor: 单纯审查不改代码
+phases: [Review, Fix]
+parameters:
+  type: object
+  properties:
+    targetType: { type: string, enum: [git-diff, file, dir, text] }
+    target: { type: string, minLength: 1, pattern: '\S' }
+    autoCommit: { type: boolean, default: false }
+    maxRounds: { type: integer, default: 10, minimum: 1 }
+    stuckThreshold: { type: integer, default: 3, minimum: 1 }
+    skipCleanAgents: { type: boolean, default: true }
+    recheckAfterFix: { type: boolean, default: false }
+    fixAgent: { type: string }
+    maxFixAttempts: { type: integer, default: 2, minimum: 1 }
+    convergeNewIssues: { type: integer, default: 1, minimum: 1 }
+    convergeRounds: { type: integer, default: 2, minimum: 1 }
+    reviewPrompt: { type: string }
+    fixPrompt: { type: string }
+    fallowScan: { type: boolean, default: false }
+    agents: { type: string }
+    batchNames: { type: string }
+  patternProperties:
+    "^batch\\d+$":
+      type: string
+      description: 任意 batchN 编号，至少一个；值为 agent .md 绝对路径（逗号分隔多 agent）
+  required: [targetType, target]
+usage: |
+  ## 使用说明
+  - batch1..batchN 与 agents 互斥（至少传一个 batchN）；值 = agentRef（.md 绝对路径，<available_subagents> 的 <location>）
+  - fixAgent：fix 阶段执行者（agentRef），缺省用通用 subagent + 内联 fixPrompt
+  - fallowScan=true 仅 targetType=git-diff 合法（前置静态分析批次，不占 batchN）
+  - 示例：workflow run review-fix-loop --args targetType=git-diff target=main batch1="/path/fallow-agent.md,/path/reviewer.md" autoCommit=true
+*/
 
 // ── 参数解析 + 白名单校验（fail-fast） ────────────────────────────
 
@@ -33,19 +69,16 @@ function fail(msg) {
 }
 
 // ── 可测纯函数模块 ────────────────────────────────────────────────
-// 参数校验（normalizeBool/normalizeInt/白名单）/批次解析/聚合结果解析/审查指令构建
-// 的纯函数在 review-fix-loop-utils.cjs（与 recursive-split-utils.cjs 同款模式，
-// vitest 单测见 src/__tests__/review-fix-loop-utils.test.ts）。
+// 参数校验（白名单，类型校验由 m3 args-validator schema 接管）/批次解析/聚合结果解析/审查指令构建
+// 的纯函数在 review-fix-loop-utils.cjs，
+// vitest 单测见 src/__tests__/review-fix-loop-utils.test.ts。
 // worker 运行时经 workerData.scriptPath 定位自身目录——内置 workflow 在 npm 包内，
 // process.cwd() 是用户项目目录，不能作为锚点；其他引擎无 workerData 时回退 cwd。
 const {
   TARGET_TYPES,
   VALID_ARG_KEYS,
-  normalizeBool,
-  normalizeInt,
   parseBatches,
   resolveBatchNames,
-  validateFallowScan,
   buildReviewInstruction,
   lockReviewBase,
   buildScopedRecheckPrompt,
@@ -65,7 +98,6 @@ const {
   parseResult,
   normalizeAggregatorResult,
   parseAggregatedMd,
-  shouldRetryWithReviewPrefix,
   resolveAgentDefs,
   recordAgentClean,
   recordAgentDirty,
@@ -82,7 +114,7 @@ const {
 for (const key of Object.keys($ARGS)) {
   if (VALID_ARG_KEYS.has(key)) continue;
   if (/^batch\d+$/.test(key)) continue;
-  fail("未知参数: " + key + "（合法参数: targetType/target/batch1..batchN/agents/batchNames/reviewPrompt/fixPrompt/autoCommit/maxRounds/stuckThreshold/model/skipCleanAgents/recheckAfterFix/fixAgent/maxFixAttempts/convergeNewIssues/convergeRounds）");
+  fail("未知参数: " + key + "（合法参数: targetType/target/batch1..batchN/agents/batchNames/reviewPrompt/fixPrompt/autoCommit/maxRounds/stuckThreshold/skipCleanAgents/recheckAfterFix/fallowScan/fixAgent/maxFixAttempts/convergeNewIssues/convergeRounds）");
 }
 
 const targetType = $ARGS.targetType;
@@ -98,14 +130,26 @@ const reviewPrompt = typeof $ARGS.reviewPrompt === "string" && $ARGS.reviewPromp
 const fixPrompt = typeof $ARGS.fixPrompt === "string" && $ARGS.fixPrompt.trim()
   ? $ARGS.fixPrompt.trim()
   : "修复全部 must-fix 问题（critical/major）。最小正确修复，不做重构、不做风格改动。";
-const autoCommit = normalizeBool($ARGS.autoCommit, "autoCommit", false, fail);
-const maxRounds = normalizeInt($ARGS.maxRounds, "maxRounds", 10, fail);
-const stuckThreshold = normalizeInt($ARGS.stuckThreshold, "stuckThreshold", 3, fail);
-const skipCleanAgents = normalizeBool($ARGS.skipCleanAgents, "skipCleanAgents", true, fail);
+// 字符串强制转换（m2 exec-review MAJOR-1）：LLM 可能以字符串传布尔/整数（旧 normalizeBool
+// 正是为此防御——"false" ?? false 是 truthy 会误触发 commit）。m3 args-validator
+// （chokepoint + coerceTypes）上线后此处为双保险，直接执行路径仍受保护。
+const coerceBool = (v, fallback) =>
+  typeof v === "boolean" ? v : v === "true" ? true : v === "false" ? false : fallback;
+const coerceInt = (v, fallback) =>
+  typeof v === "number" && Number.isInteger(v)
+    ? v
+    : typeof v === "string" && /^\d+$/.test(v.trim())
+      ? parseInt(v, 10)
+      : fallback;
+
+const autoCommit = coerceBool($ARGS.autoCommit, false);
+const maxRounds = coerceInt($ARGS.maxRounds, 10);
+const stuckThreshold = coerceInt($ARGS.stuckThreshold, 3);
+const skipCleanAgents = coerceBool($ARGS.skipCleanAgents, true);
 // 默认 recheckAfterFix=false：clean agent 下轮跳过（与 skipCleanAgents=true 字面语义一致），
 // RC-5（fix 后全批全量重审放大 token）在默认场景消失。传 true 启用可选强回归模式：fix 后重派
 // 全批，clean agent 走限定 prompt（buildScopedRecheckPrompt，只审 modifiedFiles，5.5）。
-const recheckAfterFix = normalizeBool($ARGS.recheckAfterFix, "recheckAfterFix", false, fail);
+const recheckAfterFix = coerceBool($ARGS.recheckAfterFix, false);
 // fixAgent（5.3）：值语义同 batchN 的 agent 项（内置名 / agent.md 路径），解析复用
 // resolveAgentDefs 白名单与加载逻辑。传入时 fix 阶段用 agent({agent: ...}) 派发（代码场景
 // 的 verify 命令写在该 agent.md 内）；未传保持现状（通用 subagent + 内联 prompt）。
@@ -114,10 +158,10 @@ const FIX_AGENT_RAW = typeof $ARGS.fixAgent === "string" && $ARGS.fixAgent.trim(
 const FIX_DEF = FIX_AGENT_RAW ? resolveAgentDefs([FIX_AGENT_RAW])[0] : null;
 // 5.7 收敛终止参数：maxFixAttempts（needs-redesign 阈值，RC-7）/ convergeNewIssues +
 // convergeRounds（新发现率收敛阈值）
-const maxFixAttempts = normalizeInt($ARGS.maxFixAttempts, "maxFixAttempts", 2, fail);
-const convergeNewIssues = normalizeInt($ARGS.convergeNewIssues, "convergeNewIssues", 1, fail);
-const convergeRounds = normalizeInt($ARGS.convergeRounds, "convergeRounds", 2, fail);
-const MODEL = typeof $ARGS.model === "string" && $ARGS.model.trim() ? $ARGS.model.trim() : undefined;
+const maxFixAttempts = coerceInt($ARGS.maxFixAttempts, 2);
+const convergeNewIssues = coerceInt($ARGS.convergeNewIssues, 1);
+const convergeRounds = coerceInt($ARGS.convergeRounds, 2);
+const MODEL = $MODEL;
 
 // base 锁定（RC-6，5.6）：git-diff 场景 run 启动时锁定 base commit，全程用锁定 hash 构造
 // diff 指令，防止 run 期间 base ref 被更新导致各轮 diff 范围不一致。rev-parse 失败（非 git
@@ -134,16 +178,21 @@ const reviewInstruction = buildReviewInstruction(targetType, lockedBase.base);
 
 // 批次解析：batch1..batchN（缺号报错）/ agents 简写；无默认批次——缺批次参数时
 // parseBatches 直接 fail-fast（与头注释「batch1..batchN/agents 必传」一致）
-const BATCHES = parseBatches($ARGS, fail);
+const rawBatches = parseBatches($ARGS, fail);
+
+// S4：fallowScan 独立参数（不由 batchN 触发——batchN 值域 = agentRef 路径）。
+// fallow 作为内置首批前置插入（fallow-scan 保留字在 resolveAgentDefs 内解析）。
+const fallowScan = coerceBool($ARGS.fallowScan, false);
+if (fallowScan && targetType !== "git-diff") {
+  fail("fallowScan 只支持 targetType=git-diff（它审查 git 变更的静态分析），实际 targetType=" + targetType);
+}
+const BATCHES = fallowScan ? [["fallow-scan"], ...rawBatches] : rawBatches;
 
 // batchNames（数量校验）
 const rawBatchNames = typeof $ARGS.batchNames === "string" && $ARGS.batchNames.trim()
   ? $ARGS.batchNames.split(",").map((s) => s.trim()).filter(Boolean)
   : [];
 const BATCH_NAMES = resolveBatchNames(rawBatchNames, BATCHES, fail);
-
-// fallow-scan 只在 git-diff 类型下有意义
-validateFallowScan(BATCHES, targetType, fail);
 
 // ── Schemas ─────────────────────────────────────────────────────────
 
@@ -253,6 +302,32 @@ const STATE_FILE = RUN_ROOT + "/state.json";
 fs.mkdirSync(RUN_ROOT, { recursive: true });
 log("Run directory: " + RUN_ROOT);
 
+// ── Startup fail-fast: validate agent ref paths exist (ADR-0003 D6) ─
+// 启动期校验所有 batchN/fixAgent 路径存在，不存在立即报错（带 location 恢复指引），
+// 避免跑到 round 中段 agent-call 时 loadByPath 失败才暴露。FALLOW_DEF（isFallow，
+// 无 path）跳过——它是内置工具标记非文件路径。
+function validateAgentPaths(defs) {
+  for (const def of defs) {
+    if (def.isFallow || !def.path) continue;
+    // MF-2：与 normalizeRef（src/shared/agent-ref.ts）对齐——~/ 前缀展开为 homedir 后再 statSync。
+    // resolveAgentDefs 接受 ~/ 前缀、normalizeRef 运行时也展开，此处不展开会「先接受后拒绝」误报 ENOENT。
+    const expanded = def.path.startsWith("~/")
+      ? path.join(os.homedir(), def.path.slice(2))
+      : def.path;
+    try {
+      fs.statSync(expanded);
+    } catch {
+      fail("Agent file not found: " + def.path + ". Check <available_subagents> <location> for valid agent refs (absolute .md path).");
+    }
+  }
+}
+const startupDefs = [];
+for (const batch of BATCHES) {
+  startupDefs.push(...resolveAgentDefs(batch));
+}
+if (FIX_DEF) startupDefs.push(FIX_DEF);
+validateAgentPaths(startupDefs);
+
 // ── State management (persistent, atomic writes) ────────────────────
 
 function loadState() {
@@ -310,16 +385,18 @@ function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
     ? "\nPrior batch reports (optional context): " + RUN_ROOT + "/batch-*/  (use read)"
     : "";
   const base = {
-    model: MODEL || def.model,
+    model: MODEL,
     schema: reviewerSchema,
     description: def.name,
     timeoutMs: 3_600_000, // 1h（只读审查 + retry 退避余量）
-    // returnMeta: true — 与 recursive-split 脚本的 executeActionAgent 对齐：失败时 resolve
-    // {value, error}，raw.error 可检测（review- 前缀兜底/结构化终止可达）；成功时
+    // returnMeta: true — 失败时 resolve
+    // {value, error}，raw.error 可检测（结构化终止可达）；成功时
     // value = parsedOutput ?? content，parseResult 作用于 raw.value（MF-1）。
     returnMeta: true,
   };
 
+  // S4：agentRef = 路径（非 fallow 的 def 必有 path）——systemPrompt/model 由主线程
+  // resolveAgentOpts 按 path 加载注入，脚本不再拼 md 内容。
   if (def.isFallow) {
     return {
       ...base,
@@ -345,9 +422,6 @@ function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
   // scoped 分支（recheck 限定）在下方单独处理（含对账段）。
   if (round > 1 && !scoped) {
     const prevRoundDir = RUN_ROOT + "/batch-" + batchIndex + "/round-" + (round - 1);
-    const r2Spec = def.isCustom
-      ? "\n\nReviewer specification (from agent file):\n" + def.systemPrompt
-      : "";
     return {
       ...base,
       schema: { ...reviewerSchema, required: [...reviewerSchema.required, "reconciliation"] },
@@ -359,8 +433,8 @@ function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
           ? state.fixResults[state.fixResults.length - 1]
           : null,
         knownRemaining: (state.knownRemaining && Array.isArray(state.knownRemaining)) ? state.knownRemaining : [],
-      }) + r2Spec,
-      agent: def.isCustom ? undefined : def.name,
+      }),
+      agent: def.path,
     };
   }
 
@@ -380,14 +454,11 @@ function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
         fixResult: state.fixResults && state.fixResults.length
           ? state.fixResults[state.fixResults.length - 1]
           : null,
-      }) + (def.isCustom ? "\n\nReviewer specification (from agent file):\n" + def.systemPrompt : ""),
-      agent: def.isCustom ? undefined : def.name,
+      }),
+      agent: def.path,
     };
   }
 
-  const spec = def.isCustom
-    ? "\n\nReviewer specification (from agent file):\n" + def.systemPrompt
-    : "";
   return {
     ...base,
     prompt: [
@@ -396,24 +467,18 @@ function buildReviewCall(def, round, max, batchIndex, roundDir, scoped) {
       reviewInstruction + prevBatchesHint,
       "",
       "Review requirements:",
-      reviewPrompt + spec,
+      reviewPrompt,
       "",
       "output 路径：" + roundDir + "/" + def.report + ".md",
       "Write report to: " + roundDir + "/" + def.report + ".md",
     ].join("\n"),
-    agent: def.isCustom ? undefined : def.name,
+    agent: def.path,
   };
 }
 
-// agent 名解析失败（AgentRegistry not found，报错文案 `Agent "${name}" not found.`）时，尝试 review- 前缀兜底
+// S4：agentRef = 路径，主线程按路径加载（systemPrompt 注入）；无名字查找，无需前缀兜底
 async function runReviewAgent(call) {
-  let raw = await agent(call);
-  if (raw && typeof raw === "object" && raw.error
-      && shouldRetryWithReviewPrefix(raw.error, call.agent)) {
-    log("Agent not found: " + call.agent + " — retrying with review- prefix");
-    raw = await agent({ ...call, agent: "review-" + call.agent });
-  }
-  return raw;
+  return agent(call);
 }
 
 // ── Main loop: batches (serial) × rounds (per-batch) ────────────────
@@ -777,21 +842,19 @@ for (let batchIndex = 1; batchIndex <= BATCHES.length; batchIndex++) {
       prompt: buildFixPrompt({
         header: "Fix round " + round + " (batch " + batchIndex + ")",
         reportContent,
-        fixPrompt: FIX_DEF && FIX_DEF.isCustom
-          ? fixPrompt + "\n\nFixer specification (from agent file):\n" + FIX_DEF.systemPrompt
-          : fixPrompt,
+        fixPrompt,
         commitInstr,
         caution: agg.fixes_caution && agg.fixes_caution.length ? agg.fixes_caution : [],
       }),
       schema: fixSchema,
-      // 与 buildReviewCall 的 model: MODEL || def.model 对齐：custom fixer.md 的
-      // frontmatter model 字段同样生效（之前丢弃了 FIX_DEF.model，只在 review 阶段消费）
-      model: MODEL || (FIX_DEF && FIX_DEF.model),
+      // S4：fixAgent = agentRef 路径（主线程按路径加载 + frontmatter model 传播）；
+      // 未传保持现状（通用 subagent + 内联 fixPrompt）。
+      model: MODEL,
       description: (FIX_DEF && FIX_DEF.name) || "fix",
       // fix 不设 timeoutMs = 不限时（execute-options-mapper: undefined/<=0 → 不设超时）。
       // 带写操作（改项目代码）可能很久（大重构/多文件），不应被墙钟超时打断。
       returnMeta: true,
-      ...(FIX_DEF && !FIX_DEF.isCustom ? { agent: FIX_DEF.name } : {}),
+      ...(FIX_DEF && FIX_DEF.path ? { agent: FIX_DEF.path } : {}),
     });
 
     // returnMeta 下 fxRaw = {value, error}：先查 error（失败分支可达，MF-1），再对 value 做 parseResult

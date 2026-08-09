@@ -19,6 +19,9 @@
 
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
+
+const logger = getLogger("tool-workflow");
 import { Text } from "@earendil-works/pi-tui";
 import {
   guiComponent,
@@ -30,7 +33,9 @@ import {
 import { type Static, Type } from "typebox";
 
 import { SLUG_MAX_LENGTH } from "../execution/execute-options-mapper.ts";
+import { THINKING_ORDER } from "../execution/model-resolver.ts";
 import type { LauncherDeps } from "../orchestration/launcher.ts";
+import { ArgsValidationError } from "../orchestration/args-validator.ts";
 import { abortRun, pauseRun, resumeRun, runWorkflow } from "../orchestration/lifecycle.ts";
 import type { RunStore } from "../orchestration/models/ports.ts";
 import type { WorkflowRun } from "../orchestration/models/workflow-run.ts";
@@ -64,7 +69,7 @@ const WORKFLOW_ACTIONS: readonly WorkflowAction[] = [
 const WorkflowParams = Type.Object({
   action: StringEnum(WORKFLOW_ACTIONS, { description: "Workflow action to execute" }),
   name: Type.Optional(
-    Type.String({ description: "Workflow name (run action)" }),
+    Type.String({ description: "Workflow ref: absolute path to the .js script (use <location> from <available_workflows>; run action)" }),
   ),
   slug: Type.Optional(
     Type.String({
@@ -82,11 +87,17 @@ const WorkflowParams = Type.Object({
       description: "Arguments passed to workflow as key-value pairs (run action)",
     }),
   ),
-  tokens: Type.Optional(Type.Number({ description: "Maximum token budget (run action)" })),
-  time: Type.Optional(Type.Number({ description: "Maximum time budget in ms (run action)" })),
+  tokens: Type.Optional(Type.Number({ description: "Max token budget — ONLY set when user explicitly requests a limit; omit = unlimited (default)" })),
+  time: Type.Optional(Type.Number({ description: "Max time budget in ms — ONLY set when user explicitly requests a limit; omit = unlimited (default)" })),
   error: Type.Optional(
     Type.String({ description: "Error/reason message (optional, used with abort)" }),
   ),
+  model: Type.Optional(Type.String({
+    description: "Run-level model override in 'provider/modelId' format. When set, all agents spawned by this run inherit it by default (unless a per-call agent() opts.model is set). Omit to inherit the main agent's model.",
+  })),
+  thinkingLevel: Type.Optional(StringEnum(THINKING_ORDER, {
+    description: "Run-level thinkingLevel override (off/minimal/low/medium/high/xhigh/max). All agents in this run inherit it by default. Omit to inherit the main agent's thinking level.",
+  })),
 });
 
 type WorkflowToolParams = Static<typeof WorkflowParams>;
@@ -96,35 +107,98 @@ type WorkflowToolParams = Static<typeof WorkflowParams>;
 /** runId 截断长度（显示用）。 */
 const RUNID_SHORT = 8;
 
-/** 已知 workflow args 子字段——run action 的 args 顶层键。弱模型常把 task/items 等
- *  平铺到 workflow params 顶层（缺 args 嵌套），actionRun 静默 args={} 启动缺参 run（P0）。
- *  用此清单检测平铺形态，报错带 Correct 正例纠正。 */
-const KNOWN_ARG_KEYS = [
-  "task", "target", "perspectives", "items", "itemsJson", "operation",
-  // review-fix-loop 参数（内置 workflow，2026-08 新增；与 workflows/review-fix-loop-utils.cjs
-  // 的 VALID_ARG_KEYS 保持同步：model/maxFixAttempts/convergeNewIssues/convergeRounds
-  // 补齐于 review round-1 S-13，避免弱模型平铺时 P0 静默 args={} 漏检。
-  // _runId 为内部注入键不在此列）
-  "targetType", "agents", "batchNames", "reviewPrompt", "fixPrompt",
-  "autoCommit", "maxRounds", "stuckThreshold", "skipCleanAgents", "recheckAfterFix", "fixAgent",
-  "model", "maxFixAttempts", "convergeNewIssues", "convergeRounds",
-];
+/**
+ * tool 自身顶层键（workflow params schema 键）——workflow 参数名与 tool 键撞名时
+ * （如 workflow 声明参数 name），顶层同名键是 tool 参数而非平铺（m6 评审 M-3）。
+ * 未来新增 tool 顶层键需同步此集合。
+ */
+const TOOL_TOP_LEVEL = new Set([
+  "action",
+  "name",
+  "slug",
+  "runId",
+  "args",
+  "tokens",
+  "time",
+  "error",
+  // Run-level overrides (Option B): excluded from flattening detection so a
+  // workflow that declares its own `model`/`thinkingLevel` parameter does not
+  // trip a false "belongs inside args" warning when the tool's top-level fields
+  // are present. They flow via workerData → $MODEL/$THINKING_LEVEL globals.
+  "model",
+  "thinkingLevel",
+]);
 
-/** 前缀式参数（batch1..batchN 动态编号，无法枚举） */
-const KNOWN_ARG_KEY_PREFIXES = [/^batch\d+$/];
+/**
+ * 从 workflow 参数 schema 动态构建平铺检测的已知键集（m6：schema 即 SSOT——
+ * 替代 21 键硬编码 KNOWN_ARG_KEYS，消除与参数定义的漂移面）。
+ *
+ * - exact：properties keys（精确匹配）
+ * - patterns：patternProperties 原样转正则数组（如 /^batch\\d+$/——与旧
+ *   KNOWN_ARG_KEY_PREFIXES 语义一致，自动兼容 \\d{2} 等变体；schema pattern 已是
+ *   正则源码，直接 new RegExp 即可）
+ * - 构建时排除 TOOL_TOP_LEVEL（撞名保护）
+ */
+export function argKeysFromMeta(
+  parameters: Record<string, unknown> | undefined,
+): { exact: ReadonlySet<string>; patterns: readonly RegExp[] } {
+  const exact = new Set<string>();
+  const patterns: RegExp[] = [];
+  if (parameters === undefined || parameters === null || typeof parameters !== "object") {
+    return { exact, patterns };
+  }
+  const props = parameters.properties;
+  if (props !== null && typeof props === "object") {
+    for (const k of Object.keys(props as Record<string, unknown>)) {
+      if (!TOOL_TOP_LEVEL.has(k)) exact.add(k);
+    }
+  }
+  const pp = parameters.patternProperties;
+  if (pp !== null && typeof pp === "object") {
+    for (const p of Object.keys(pp as Record<string, unknown>)) {
+      try {
+        const re = new RegExp(p); // schema pattern 已是正则源码
+        // S1（m6 exec-review）：跳过能命中 tool 顶层键的 pattern——否则
+        // ^run.*$ 类 pattern 会匹配 runId/name 等 tool 键，合法调用恒误报
+        if ([...TOOL_TOP_LEVEL].some((tk) => re.test(tk))) continue;
+        patterns.push(re);
+      } catch (err) {
+        // 非法 pattern（schema 校验 m3 已保证合法，双保险）——跳过并记录
+        logger.warn(`[tool-workflow] patternProperties 非法正则跳过: ${p}`, {
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+  return { exact, patterns };
+}
 
 /**
  * 检测弱模型把 args 子字段平铺到 workflow params 顶层（P0 静默失败防护）。
  * 返回被平铺的键名列表（空 = 未平铺）。export 供 behavioral 测试（trigger/no-trigger/edge）。
  * 参数取 unknown 以便测试构造任意对象、并解耦 WorkflowToolParams 的 index-signature 限制。
+ *
+ * knownKeys/knownPatterns 由 argKeysFromMeta 动态构建（m6）——匹配谓词：
+ * knownKeys.has(k) || knownPatterns.some(re => re.test(k))（pattern 自带数字后缀
+ * 语义——loose startsWith 会误报 batchl/target1）；保留 args-排除（顶层 + args
+ * 内共存不算平铺）。
  */
-export function findFlattenedArgKeys(params: unknown): string[] {
+export function findFlattenedArgKeys(
+  params: unknown,
+  knownKeys: ReadonlySet<string>,
+  knownPatterns: readonly RegExp[],
+): string[] {
   if (typeof params !== "object" || params === null) return [];
   const p = params as Record<string, unknown>;
   const args = typeof p.args === "object" && p.args !== null ? p.args : undefined;
   const isKnownKey = (k: string) =>
-    KNOWN_ARG_KEYS.includes(k) || KNOWN_ARG_KEY_PREFIXES.some((re) => re.test(k));
-  return Object.keys(p).filter((k) => isKnownKey(k) && !(args !== undefined && k in args));
+    knownKeys.has(k) || knownPatterns.some((re) => re.test(k));
+  // hasOwnProperty.call 而非 in（原型链——constructor/toString 类参数名不被继承键掩盖）
+  return Object.keys(p).filter(
+    (k) =>
+      isKnownKey(k) &&
+      !(args !== undefined && Object.prototype.hasOwnProperty.call(args, k)),
+  );
 }
 
 // ── Types ────────────────────────────────────────────────────
@@ -153,7 +227,7 @@ interface RunSummary {
  * without unsafe casts.
  */
 export type WorkflowToolDetails =
-  | { action: "run"; runId: string; status: "running" | "not_found"; name: string; slug?: string; stateFile?: string; __gui__?: GuiRenderResult }
+  | { action: "run"; runId: string; status: "running" | "not_found" | "invalid_args"; name: string; slug?: string; stateFile?: string; __gui__?: GuiRenderResult }
   | { action: "status"; runs: RunSummary[]; __gui__?: GuiRenderResult }
   | { action: "pause" | "resume" | "abort"; runId: string; status: string; reason?: string; __gui__?: GuiRenderResult };
 
@@ -249,31 +323,22 @@ export function registerWorkflowTool(
     promptSnippet: "Run, pause, resume, abort, or check workflow status",
     promptGuidelines: [
       "PRIORITY: When user says 'workflow', 'run workflow', try run action FIRST.",
-      "BUILT-IN workflows — run DIRECTLY with action:run, do NOT use workflow-script generate for these: " +
-      "chain (sequential 3-step: analyze→transform→synthesize; args: task), " +
-      "parallel (multi-perspective analysis; args: target, optional perspectives), " +
-      "scatter-gather (split→parallel→merge; args: task), " +
-      "map-reduce (parallel map→reduce; args: items/itemsJson + operation), " +
-      "review-fix-loop (multi-batch review→fix loop; args: targetType + target required, " +
-      "batch1..batchN required (no default); optional fixAgent (builtin agent name or agent.md " +
-      "path — same value semantics as batchN agents, consumed in fix phase) + " +
-      "maxFixAttempts/convergeNewIssues/convergeRounds for fix convergence control). " +
-      "Example: {\"action\":\"run\",\"name\":\"parallel\",\"args\":{\"target\":\"src/auth.ts\"}}. " +
-      "Use review-fix-loop when the user wants iterative code/doc review with fixes until clean " +
-      "(it is the ONLY built-in workflow that writes files; autoCommit defaults to false). " +
-      "DISCOVERY: Use action:list / workflow-script action:list ONLY to check what's " +
-      "RUNNING (active runs), not to discover what's available — built-in workflows are " +
-      "listed above, run them directly with action:run.",
-      "run: discover by name/description, then start in background (no user confirmation needed).",
+      "All listed workflows run DIRECTLY with action:run — refs/descriptions come from " +
+      "<available_workflows> (injected each turn). For parameter details, read the <location> " +
+      "script file (script header has @pi-meta parameters + usage + phases). Do NOT use " +
+      "workflow-script generate for patterns already covered by available workflows.",
+      "run: pass the absolute .js path from <available_workflows> <location> as name, then start in background (no user confirmation needed).",
       "Do NOT poll status after starting — results appear automatically via notifyDone.",
       "Call shapes (JSON): " +
-      "- run: {\"action\":\"run\",\"name\":\"<script>\",\"args\":{...},\"tokens\":N,\"time\":N}. " +
+      "- run: {\"action\":\"run\",\"name\":\"<script>\",\"args\":{...},\"tokens\":N,\"time\":N,\"model\":\"<provider/modelId>\",\"thinkingLevel\":\"<level>\"}. " +
       "- status: {\"action\":\"status\"}. " +
       "- pause/resume/abort: {\"action\":\"pause\",\"runId\":\"<id>\"} (abort optional: ,\"error\":\"<reason>\"}).",
+      "Budget: Do NOT set tokens/time unless the user explicitly requests a limit. Built-in workflows run unlimited by default.",
+      "Model/thinkingLevel: omit by default (inherit main agent's model). Only set model/thinkingLevel when the user explicitly requests a specific model or thinking depth for this run.",
       "Anti-patterns: Flattening args sub-fields (task/items/...) to the top level — they belong inside args. Calling {\"action\":\"run\"} without name.",
-      "CRITICAL: For chain/parallel/scatter-gather/map-reduce orchestration, ALWAYS use action:run with the built-in name. " +
-      "NEVER use workflow-script action:generate to create these patterns — they already exist. " +
-      "workflow-script generate is ONLY for novel patterns not covered by built-ins.",
+      "CRITICAL: For orchestration patterns, ALWAYS use action:run with an existing built-in " +
+      "name — NEVER use workflow-script action:generate to recreate patterns already covered " +
+      "by available workflows. workflow-script generate is ONLY for novel patterns.",
     ],
     parameters: WorkflowParams,
 
@@ -356,19 +421,50 @@ export function registerWorkflowTool(
 
 // ── run action ───────────────────────────────────────────────
 
-async function actionRun(
+export async function actionRun(
   params: WorkflowToolParams,
   deps: LauncherDeps,
   signal: AbortSignal | undefined,
 ): Promise<ToolResult> {
   const name = params.name;
   if (!name) {
-    return textResult("run requires 'name' parameter. Correct: {\"action\":\"run\",\"name\":\"<script>\",\"args\":{...}}", true);
+    return textResult("run requires 'name' parameter (absolute .js path from <available_workflows> <location>). Correct: {\"action\":\"run\",\"name\":\"<ref>\",\"args\":{...}}", true);
   }
   // 弱模型常见误用（P0 静默失败）：把 task/items 等 args 子字段平铺到 workflow params
-  // 顶层（缺 args 嵌套）。下面 args ?? {} 会静默 args={}，启动缺参 run 不报错——比 subagent
-  // 平铺事故更严重。这里检测顶层平铺，报错带 Correct 正例纠正。
-  const flattened = findFlattenedArgKeys(params);
+  // 顶层（缺 args 嵌套）。args ?? {} 会静默 args={}，启动缺参 run 不报错——比 subagent
+  // 平铺事故更严重。m6：先 registry.getPath（动态参数集来源——schema 即 SSOT），
+  // not_found 优先返回；平铺检测报错带 Correct 正例纠正。
+  const script = await deps.registry.getPath(name);
+  if (!script) {
+ // 模糊匹配建议
+    const all = await deps.registry.loadAll();
+    const available = all.filter((wf) => wf.available);
+    const suggestions = available
+      .map((wf) => `  - ${wf.name}: ${wf.meta.description || "(no description)"}`)
+      .join("\n");
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Workflow '${name}' not found. Available:\n${suggestions || "  (none)"}\nUse <location> from <available_workflows> for the absolute .js path.`,
+        },
+      ],
+      details: { action: "run", runId: "", status: "not_found", name },
+      isError: true,
+    };
+  }
+
+  // m6：动态参数集（schema 即 SSOT）→ 平铺检测；无 parameters → 单次 warn + 跳过
+  // （legacy const-meta 类永久无检测——D1 无 adapter 声明）
+  const { exact: knownKeys, patterns: knownPatterns } = argKeysFromMeta(script.meta.parameters);
+  if (knownKeys.size === 0 && knownPatterns.length === 0) {
+    // M-2 显式信号：无参数契约（未声明/解析空）→ 单次 warn——静默退化变显式
+    // （m6 exec-review M1：原实现排除 undefined 与设计相反）
+    logger.warn(
+      `[tool-workflow] ${script.name}: 未声明参数契约（或解析为空）——平铺检测跳过，args 不校验`,
+    );
+  }
+  const flattened = findFlattenedArgKeys(params, knownKeys, knownPatterns);
   if (flattened.length > 0) {
     return textResult(
       `Detected ${flattened.join(", ")} at top level — they belong inside 'args'. ` +
@@ -387,41 +483,37 @@ async function actionRun(
   const tokens = params.tokens;
   const time = params.time;
 
-  const script = await deps.registry.get(name);
-  if (!script) {
- // 模糊匹配建议
-    const all = await deps.registry.loadAll();
-    const available = all.filter((wf) => wf.available);
-    const suggestions = available
-      .map((wf) => `  - ${wf.name}: ${wf.meta.description || "(no description)"}`)
-      .join("\n");
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Workflow '${name}' not found. Available:\n${suggestions || "  (none)"}`,
-        },
-      ],
-      details: { action: "run", runId: "", status: "not_found", name },
-      isError: true,
-    };
+ // 构建 RunSpec + 启动（m3：parameters 从 script.meta 拷贝——chokepoint 校验用；
+ // 校验失败 → isError ToolResult 带 §5.3 指引，非 ArgsValidationError 保持传播）
+  let runId: string;
+  try {
+    runId = await runWorkflow(
+      {
+        scriptSource: script.toExecutable(),
+        args,
+        budgetTokens: tokens,
+        budgetTimeMs: time,
+        scriptName: script.name,
+        slug: params.slug,
+        scriptPath: script.path,
+        description: script.meta.description,
+        parameters: script.meta.parameters,
+        model: params.model,
+        thinkingLevel: params.thinkingLevel,
+      },
+      deps,
+      signal,
+    );
+  } catch (err) {
+    if (err instanceof ArgsValidationError) {
+      return {
+        content: [{ type: "text", text: err.message }],
+        details: { action: "run", runId: "", status: "invalid_args", name: script.name },
+        isError: true,
+      };
+    }
+    throw err;
   }
-
- // 构建 RunSpec + 启动
-  const runId = await runWorkflow(
-    {
-      scriptSource: script.toExecutable(),
-      args,
-      budgetTokens: tokens,
-      budgetTimeMs: time,
-      scriptName: script.name,
-      slug: params.slug,
-      scriptPath: script.path,
-      description: script.meta.description,
-    },
-    deps,
-    signal,
-  );
 
   return {
     content: [
@@ -435,6 +527,7 @@ async function actionRun(
     details: { action: "run", runId, status: "running", name: script.name, slug: params.slug, stateFile: deps.store.stateFilePath(runId) },
   };
 }
+
 
 // ── status action ────────────────────────────────────────────
 

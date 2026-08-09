@@ -192,4 +192,31 @@ describe("buildGoalGui", () => {
 		const statusItem = items.find((i) => i.label === "status");
 		expect(statusItem!.severity).toBe("ok");
 	});
+
+	// ── successCriteria 渲染（与 objective 成对，让用户看到「怎么算完成」）──
+
+	it("card 分支（有 budget）+ successCriteria → body 含 stats-line {label:'done'}", () => {
+		const gui = buildGoalGui(
+			makeState({
+				successCriteria: "all tests green",
+				budget: { tokenBudget: 10000 },
+			}),
+		);
+		expect(gui.component.type).toBe("card");
+		const body = gui.component.props.body as {
+			type: string;
+			props: { items: Array<{ label: string; value: string }> };
+		}[];
+		const doneStats = body.find(
+			(c) => c.type === "stats-line" && c.props.items.some((i) => i.label === "done"),
+		)!;
+		expect(doneStats.props.items).toContainEqual({ label: "done", value: "all tests green" });
+	});
+
+	it("无 budget 分支 + successCriteria → items 含 {label:'done'}", () => {
+		const gui = buildGoalGui(makeState({ successCriteria: "all tests green" }));
+		expect(gui.component.type).toBe("stats-line");
+		const items = gui.component.props.items as Array<{ label: string; value: string }>;
+		expect(items).toContainEqual({ label: "done", value: "all tests green" });
+	});
 });

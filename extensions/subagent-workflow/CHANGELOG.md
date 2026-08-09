@@ -1,5 +1,29 @@
 # @zhushanwen/pi-subagent-workflow
 
+## 7.0.0
+
+### Major Changes
+
+- 1acbdd2ff: reviewer agent renamed to code-reviewer (BREAKING). Enhanced review agents with adversarial stance, root-cause vs symptom check, and systematic side-effect auditing.
+
+  - **reviewer → code-reviewer** rename (breaking: `batch1=reviewer` / `agent: "reviewer"` no longer resolves). Major bump.
+  - **code-reviewer**: adversarial default-suspicion stance, core-logic-first prioritization over trivia, systematic side-effects & omissions checklist (callers / error-reset / async / blast radius).
+  - **oracle**: upgraded from checklist matcher to root-cause auditor — adversarial stance, root-cause vs symptom judgment (treats-symptom red flags), sibling-requirement drift check.
+  - **doc-reviewer**: adversarial stance (verify every claim against source), strengthened Pass 2 mechanism tracing.
+  - review-business-logic (project agent, not published): adversarial stance, root-cause category, systematic side-effects checklist.
+
+  Linked group (`@zhushanwen/pi-structured-output`, `@zhushanwen/pi-subagent-workflow`, `@zhushanwen/pi-ask-user`): companions are reference-bumped only (`updateInternalDependencies: patch`), no forced major — the major bump is scoped to `@zhushanwen/pi-subagent-workflow` (renames are contained to this package; structured-output / ask-user APIs are untouched).
+
+## 6.0.0
+
+### Minor Changes
+
+- 7e6cddc: resource-discovery scans XYZ_EXTENSION_PATHS (dev-link) for agents/workflows.
+
+  Extension agents/workflows shipped in dev-linked packages (XYZ_EXTENSION_PATHS) are now discovered via the same processPackage path as npm packages. Previously only skills+tools were found via dev-link (pi core resources_discover), while agents/workflows were missed — resource-discovery only scanned agentDir fixed dirs (npm / extensions). New source `user-extension-paths` sits between npm-dev and project-pi in priority (dev-link overrides npm, but project wins). Closes the dev-link asymmetry where a dev-linked cw-tool exposed its pi-cw skill but not its 5 agents.
+
+  resource-discovery 现扫描 XYZ_EXTENSION_PATHS（dev-link 扩展源码路径）发现 agents/workflows，走与 npm 包相同的 processPackage 路径。此前 dev-link 扩展只能被发现 skill+工具（pi core），agents/workflows 丢失（resource-discovery 只扫 agentDir 固定目录）。新增源 `user-extension-paths` 优先级介于 npm-dev 与 project-pi 之间（dev-link 覆盖 npm，但 project 优先）。
+
 ## 5.0.2
 
 ### Patch Changes

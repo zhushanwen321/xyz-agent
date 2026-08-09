@@ -48,7 +48,7 @@ xyz-agent 是基于 Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作
   - TUI 交互: `packages/coding-agent/src/modes/interactive/interactive-mode.ts`
 
 **Pi Extension 源码（本项目维护）**:
-- `extensions/` 目录下 16 个 `@zhushanwen/pi-*` extension 包 + `extensions/shared/quota-providers`，由本项目继续发布到 npm（`npm-v*` tag）
+- `extensions/` 目录下 16 个 `@zhushanwen/pi-*` extension 包 + `extensions/shared/quota-providers`，由本项目继续发布到 npm（main 线走 `npm-*` tag 人工版本判定，dev-npm 预发布走 changeset version）
 - **[HISTORICAL] xyz-pi-extensions-workspace 已废弃**：原独立仓库 `~/Code/xyz-pi-extensions-workspace` 已停止维护，本仓 `extensions/` 是 `@zhushanwen/pi-*` 的**统一开发仓库**。所有 extension 的源码改动、bug 修复、版本发布都在本仓进行，不再回写到旧仓。旧仓的 `main` 分支可能滞后于本仓，排查问题时以本仓为准
 - **structured-output 方案 A（权威 schema 校验）[HISTORICAL]**：workflow 模式下 `PI_WORKFLOW_SCHEMA` env 注入的权威 schema 是唯一校验权威，LLM 传入的 `schema` 参数不参与校验（仅错误回显）。2026-08-01 事故：ds-flash 重写 `add_channels.items` schema 后自洽通过，4 条 channel 修复静默丢失。根因是旧实现校验 LLM 自报 schema 而非权威 schema。修复见 `extensions/structured-output/src/index.ts` 的 `executeStructuredOutput` authoritativeSchema 分支
 - **Extension 开发规范**: [docs/extensions/development-guide.md](docs/extensions/development-guide.md)（完整指南）、[docs/extensions/extension-conventions.md](docs/extensions/extension-conventions.md)（强约束）、[docs/extensions/glossary.md](docs/extensions/glossary.md)（术语表）
@@ -535,6 +535,33 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 - **Commit 信息**：英文，遵循 conventional commits 风格（`feat:`/`fix:`/`refactor:`/`docs:`/`chore:`/`ci:` 前缀）
 - **提交粒度**：见全局 AGENTS.md「提交策略」——优先提交自己的改动，认知外的改动不碰
 
+## pi 资源放置规范
+
+本项目既开发 pi extension（`extensions/`）又有自己的项目资源（`.agents/`），agent.md / workflow.js 放错地方会不被发现或不可移植。以下约束强制资源归位。
+
+### 资源该放哪
+
+| 资源性质 | 放置位置 | 声明 |
+|---|---|---|
+| 与某个 extension **强相关**的 agent.md / workflow.js | `extensions/<pkg>/agents/`、`extensions/<pkg>/workflows/` | package.json `pi.agents` / `pi.workflows` |
+| 项目本身开发要用的 subagent | `.agents/agents/` | 自动发现（project-agents 源） |
+| 项目本身开发要用的 workflow | `.agents/workflows/` | 自动发现（project 源） |
+| 当前开发环境要用的 agent / workflow（跨项目通用） | 全局 `~/.agents/agents/`、`~/.agents/workflows/` | 自动发现（user-agents 源） |
+
+### 「与 extension 强相关」判据
+
+满足任一即强相关，必须进 extension 目录：
+- agent 的 `tools` frontmatter 受限到某 extension 提供的工具（如 cw review-agent `tools: cw_review` 强相关 cw-tool）
+- 移除该 extension 后 agent / workflow 无法正常工作
+
+反例：`review-arch-boundary`（tools: 通用 read/bash）不强相关 → 留 `.agents/agents/`。
+
+### 发现机制
+
+- agent / workflow：pi-subagent-workflow `resource-discovery` 扫 7 源，同名 last-writer-wins（project-agents 优先级最高）。extension 内置 agent 必须在 package.json 声明 `pi.agents`，且**安装到 npm / npm-dev 扫描目录**才被发现——dev-link（`XYZ_EXTENSION_PATHS`）**不发现 agent**（只发现 skill + 工具）。
+- skill：pi core 经扩展 `pi.skills` 声明发现（first-writer-wins），独立通路。
+- SSOT：`extensions/subagent-workflow/src/shared/resource-discovery.ts`。
+
 ## 架构约定
 
 - **视图切换**: 状态驱动（settingsStore.currentView），不用 vue-router
@@ -552,16 +579,29 @@ it('首屏渲染：Landing 态 DOM 含 composer 输入区 + chip 行', () => {
 | 管线 | 产物 | 触发 tag | Workflow | 验证 |
 |------|------|----------|----------|------|
 | **Electron 打包** | DMG/EXE/AppImage 桌面应用 | `v*` | `release.yml` | `scripts/verify-ci-release.sh` |
-| **npm 包发布** | `@xyz-agent/extension-protocol` + `@zhushanwen/pi-*` extensions | `npm-v*` | `release-npm.yml` | changeset publish 输出 + npm registry 核对 |
+| **npm 包发布** | `@xyz-agent/extension-protocol` + `@zhushanwen/pi-*` extensions | `npm-*` | `release-npm.yml` | changeset publish 输出 + npm registry 核对 |
 
-npm 包发布流程（@zhushanwen/pi-* extensions + extension-protocol）：
-1. 用 `pnpm changeset` 创建 changeset（声明改了哪些包、版本 bump 类型）
-2. `pnpm changeset:version` 消费 changeset，bump 版本号
-3. commit + 打 tag `npm-v<根版本>` + push
-4. tag 触发 `release-npm.yml` → `pnpm changeset publish` 实际发 npm
-5. **禁止本地 `pnpm changeset publish` 或 `npm publish`**（曾因 npm registry 最终一致性导致 E403）；预发布走 `dev-npm-*` 分支 → `release-npm-dev.yml` → `@dev` dist-tag（脚本 `scripts/npm-prerelease.sh` 支持指定包名，如 `bash scripts/npm-prerelease.sh @zhushanwen/pi-goal`）
+**npm 发布有两条独立机制**（设计详见 docs「版本号人工判定机制」）：
 
-> **merge skill 集成**：merge skill 阶段 4N 封装了上述 npm 发布流程（changeset version + npm-v* tag + CI 验证）。仅当 PR 含 `extensions/` 改动时执行，与 Electron 发布线（阶段 4，`v*` tag）独立。详见 `.agents/skills/merge/SKILL.md`
+| 机制 | 适用 | 版本判定 | tag |
+|------|------|----------|-----|
+| **main 稳定发布** | merge 后正式发布 | **人工定 type**（不再用 `changeset version` 自动推算，避免 shouldBumpMajor/applyLinks 把声明的 minor 误放大成 major）+ `scripts/check-version-changes.sh` + `scripts/apply-version.sh` | `npm-<slug>-<date>-<time>` |
+| **dev-npm 预发布** | 预发布测试 | 保留 `changeset version` + `changeset pre`（生成 `-dev.*` 版本） | `dev-npm-*` 分支 push |
+
+main 稳定发布流程（merge skill 阶段 4N 封装）：
+1. 开发者在 PR 写 `.changeset/<slug>.md`（声明包 + 描述，type 初判）
+2. merge 时跑 `check-version-changes.sh` 列出待处理包（CHANGED + DEPENDENTS 传递闭包）
+3. 人工对 CHANGED_PACKAGES 定 type，`apply-version.sh` 自动 patch DEPENDENTS 刷新范围
+4. commit + 打 `npm-<slug>-<stamp>` tag + push
+5. tag 触发 `release-npm.yml` → 验证非 prerelease 模式 → `pnpm changeset publish`（预查 registry 只发未发布版本）
+6. **禁止本地 `pnpm changeset publish` 或 `npm publish`**（曾因 npm registry 最终一致性导致 E403）；预发布走 `scripts/npm-prerelease.sh`（指定包名如 `bash scripts/npm-prerelease.sh @zhushanwen/pi-goal`）
+
+**changeset 写作准则**（PR 阶段，写入贡献文档）：
+- changeset 的 type 字段是**初判**，最终由 merge 时人工定（不绑死）
+- changeset 的 **body 要认真写**（会进 CHANGELOG，消费者可见），不只写「fix bug」
+- **dep 传播不在 PR 声明**：linked/peerDep 的连带包不用在 PR 写 changeset，merge 时由 `check-version-changes.sh` 传递闭包 + `apply-version.sh` 自动 patch
+
+> **merge skill 集成**：merge skill 阶段 4N 封装了上述 main 稳定发布流程。仅当 PR 含 `extensions/` 改动时执行，与 Electron 发布线（阶段 4，`v*` tag）独立。dev-npm 预发布不走阶段 4N。详见 `.agents/skills/merge/SKILL.md`
 
 每次 push tag 触发 CI（release workflow）构建 Electron 产物后，**必须等待 CI 完成并验证产物存在**。多次发生 AI push 后直接宣布"已完成"，实际 CI 构建失败或产物缺失而无人察觉。
 

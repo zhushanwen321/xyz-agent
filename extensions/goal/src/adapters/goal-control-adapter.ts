@@ -30,10 +30,10 @@ import { Text } from "@earendil-works/pi-tui";
 import { type GuiComponent, guiComponent, type GuiRenderResult,guiResult } from "@xyz-agent/extension-protocol";
 import { type Static, Type } from "typebox";
 
-import { BUDGET_RATIO_HIGH, BUDGET_RATIO_LOW, SECONDS_PER_MINUTE, SHORT_ID_LENGTH } from "../constants";
+import { BUDGET_RATIO_HIGH, BUDGET_RATIO_LOW, OBJECTIVE_DISPLAY_LIMIT, SECONDS_PER_MINUTE, SHORT_ID_LENGTH } from "../constants";
 import { isActiveStatus, isTerminalStatus, transitionStatus } from "../engine/goal";
 import type { BudgetConfig, GoalRuntimeState, GoalStatus } from "../engine/types";
-import { updateWidget } from "../projection/widget";
+import { toSingleLine, updateWidget } from "../projection/widget";
 import { createGoal, finalizeAndPersist, persistState, type ServicePorts, tickState } from "../service";
 import type { GoalSession } from "../session";
 import { buildPorts } from "./ports";
@@ -51,7 +51,13 @@ const GoalControlParams = Type.Object({
 	objective: Type.Optional(
 		Type.String({
 			description:
-				"Required for 'create'. The concrete objective to start pursuing. Only create a goal when explicitly requested by the user.",
+				"Required for 'create'. Restate the REAL objective in your own words — what the user actually wants achieved, not a literal echo of their request. If ambiguous, infer the most likely intent and state it explicitly.",
+		}),
+	),
+	successCriteria: Type.Optional(
+		Type.String({
+			description:
+				"Required for 'create'. Concrete, checkable conditions that prove the objective is achieved (e.g. 'tests pass', 'file X exists with content Y', 'command Z outputs W'). NOT aspirations or 'it should work'. This is the bar you must clear before calling complete — every condition here must be backed by evidence.",
 		}),
 	),
 	evidence: Type.Optional(
@@ -129,6 +135,13 @@ export function handleCreate(
 		);
 	}
 
+	const successCriteria = params.successCriteria?.trim();
+	if (!successCriteria) {
+		throw new Error(
+			"'successCriteria' is required for create. Define how you will verify the objective is achieved — concrete checkable conditions. Correct: {\"action\":\"create\",\"slug\":\"refactor-auth\",\"objective\":\"...\",\"successCriteria\":\"pnpm test passes; tsc --noEmit clean; src/auth.ts uses JWT\"}",
+		);
+	}
+
 	// D25 严格守卫：非终态旧 goal（active/paused/blocked）→ 拒绝创建（防静默覆盖未完成工作）
 	if (session.state && !isTerminalStatus(session.state.status)) {
 		throw new Error(
@@ -152,7 +165,7 @@ export function handleCreate(
 	}
 
 	// FR-3.1: 唯一创建入口（isExternalInit=false）。终态旧 goal 走覆盖快速路径。
-	const created = createGoal(session, objective, budget, ports, false, slug);
+	const created = createGoal(session, objective, budget, ports, false, slug, successCriteria);
 	if (!created) {
 		// createGoal 内部 active 守卫兜底（理论上上面守卫已挡；防御性）
 		throw new Error("Goal already active. Cannot create a new one.");
@@ -280,6 +293,10 @@ function goalStatusSeverity(status: GoalStatus): "ok" | "warn" | "danger" {
  */
 export function buildGoalGui(state: GoalRuntimeState): GuiRenderResult {
 	const slug = state.slug ?? state.goalId.slice(0, SHORT_ID_LENGTH);
+	// successCriteria 摘要（截断后进 stats-line；与 objective 成对展示）
+	const criteriaSnippet = state.successCriteria
+		? toSingleLine(state.successCriteria).slice(0, OBJECTIVE_DISPLAY_LIMIT)
+		: undefined;
 	// statusSeverity 按 GoalStatus 完整覆盖（S#2）：
 	//   active/complete → ok；blocked → danger；paused → warn；
 	//   budget_limited/time_limited/cancelled → danger（预算耗尽/取消是错误终态）
@@ -329,6 +346,14 @@ export function buildGoalGui(state: GoalRuntimeState): GuiRenderResult {
 				],
 			}),
 		);
+		// successCriteria 摘要（与 objective 成对，让用户看到「怎么算完成」）
+		if (criteriaSnippet) {
+			body.push(
+				guiComponent("stats-line", {
+					items: [{ label: "done", value: criteriaSnippet }],
+				}),
+			);
+		}
 		return guiResult(
 			guiComponent("card", {
 				variant: state.status === "blocked" ? "danger" : state.status === "complete" ? "success" : "default",
@@ -346,6 +371,7 @@ export function buildGoalGui(state: GoalRuntimeState): GuiRenderResult {
 				{ label: "status", value: state.status, severity: statusSeverity },
 				{ label: "turn", value: String(state.currentTurnIndex) },
 				{ label: "tokens", value: String(state.tokensUsed) },
+				...(criteriaSnippet ? [{ label: "done", value: criteriaSnippet }] : []),
 			],
 		}),
 	);
@@ -361,30 +387,31 @@ export function registerGoalControlTool(pi: ExtensionAPI, session: GoalSession):
 			`Manage the goal for this thread.
 
 Actions:
-- create: start a new goal. Requires 'slug' (a short kebab-case identifier you generate) and 'objective' (the full description). Only use when the user explicitly asks to start a goal; do not infer goals from ordinary tasks. Fails if a goal is already active/paused/blocked (use /goal resume or /goal clear first).
-- complete: mark the active goal complete. Requires 'evidence' with concrete proof (files/tests/commands). Recommend finishing all todos (including verification todos) first, but you decide.
+- create: proactively start a goal for COMPLEX, multi-step work (3+ steps, multi-file changes, or work that needs completion verification). Restate the real objective and define checkable successCriteria. Skip for trivial single-step tasks, ordinary questions, or lookups. Fails if a goal is already active/paused/blocked (use /goal resume or /goal clear first).
+- complete: mark the active goal complete. Requires 'evidence' with concrete proof (files/tests/commands) that meets EVERY successCriteria condition.
 - report_blocked: mark the active goal blocked by a real blocker. Requires 'reason' describing the block and what was tried. Only after genuine exhaustion of alternatives.
 
 Examples:
-{"action":"create","slug":"refactor-auth","objective":"Refactor the auth module to use JWT and add integration tests"}
+{"action":"create","slug":"refactor-auth","objective":"Refactor the auth module to use JWT and add integration tests","successCriteria":"src/auth.ts uses JWT; pnpm test auth green; tsc --noEmit clean"}
 {"action":"complete","evidence":"Modified src/auth.ts; pnpm test auth passed (12/12); tsc --noEmit clean."}
 {"action":"report_blocked","reason":"Blocked: DB migration API changed mid-task (tried: regenerate client, pin old version, rewrite queries)."}
 
 Don't:
-- create without 'slug': {"action":"create","objective":"..."} — slug is required, generate a kebab-case id.
-- complete without 'evidence': {"action":"complete"} — must provide concrete completion proof (files/tests/commands).
+- create for trivial/ordinary tasks — reserve goals for complex multi-step work worth tracking.
+- create without 'successCriteria': {"action":"create","objective":"..."} — you must define how completion is verified.
+- complete without 'evidence': {"action":"complete"} — must provide concrete proof meeting every successCriteria condition.
 - complete when no goal is active — create or resume one first (fails with 'Goal mode not active').`,
 		promptSnippet:
-			"Use goal_control to manage the thread goal: create (with slug + objective, only when user asks) or complete (with evidence) or report_blocked (with reason, after trying alternatives).",
+			"Use goal_control to manage the thread goal: proactively create (with slug + objective + successCriteria) for complex multi-step work, complete (with evidence meeting every successCriteria), or report_blocked (with reason, after trying alternatives).",
 		// promptGuidelines：进 system prompt guidelines 段（强信号位）。
-		// 聚焦 complete/report_blocked 的正向触发引导——这两个 action 是「该主动调但实际不调」
-		// 的核心症结（contextInjectionPrompt 规则 3/4 虽引导，但属 goal 活跃时才注入的 steering，
-		// 措辞被动；此处给 system prompt 层的常驻强信号）。
-		// create 不列：其劝退已在 description + promptSnippet 双重覆盖，此处第三重冗余反而稀释
-		// complete/report_blocked 的注意力权重（P14 约束衰减）。
+		// 三个 action 的正向触发引导——create（复杂任务主动启动）、complete（对照 successCriteria 验证达成）、
+		// report_blocked（穷尽替代方案后）。措辞主动，给 system prompt 层常驻强信号。
 		promptGuidelines: [
+			// create：主动用于复杂多步骤任务。翻转原「显式启动」策略——让 goal 真正可用。
+			// 门槛：3+ 步骤 / 多文件 / 需完成验证，避免对琐碎任务滥建 goal 变噪音。
+			"create: proactively start a goal for complex, multi-step work (3+ steps, multi-file, or needs completion verification) — restate the real objective and define checkable successCriteria. Do NOT create for trivial single-step tasks, ordinary lookups, or when a goal is already active. Test: 'is this worth tracking to completion with verification?' — if yes, create a goal.",
 			// 全解耦下 todo 非硬前置——objective 实际达成才算（与 handleComplete「todo 由 AI 自判」一致）
-			"complete: proactively call when the active goal's objective is actually achieved, not merely in progress. Evidence must be concrete artifacts (files changed, tests green, commands run). Finishing all todos (incl. verification todos) is the usual readiness signal, but the real bar is the objective being met — you decide.",
+			"complete: proactively call when the active goal's objective is actually achieved, not merely in progress. Evidence must be concrete artifacts (files changed, tests green, commands run) meeting every successCriteria condition. Finishing all todos (incl. verification todos) is the usual readiness signal, but the real bar is the objective being met — you decide.",
 			// P3 数字阈值 ≥3，与 params.reason description 的 "at least 3 approaches" 双重冗余
 			"report_blocked: proactively call when genuinely blocked after ≥3 distinct alternative approaches — not for hard/slow work or uncertainty. State the blocker and what you tried. Do NOT silently stop or leave the goal hanging.",
 		],

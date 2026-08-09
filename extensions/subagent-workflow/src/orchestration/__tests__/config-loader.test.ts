@@ -14,6 +14,13 @@ import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+// homedir 只影响 normalizeRef 的 `~/` 展开（getWorkflowByPath 路径），
+// mock 成可写临时目录（测试内动态改），其余 node:os 保持真实。
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  return { ...actual, homedir: vi.fn(() => "/nonexistent-home-for-tests") };
+});
+
 // resource-discovery 位于 src/shared/（从 __tests__/ 看是 ../../shared/）。
 // 只覆盖 findWorkspaceRoot；其余（discoverResources 等）保持真实实现。
 vi.mock("../../shared/resource-discovery.ts", async (importOriginal) => {
@@ -29,12 +36,15 @@ vi.mock("../../shared/resource-discovery.ts", async (importOriginal) => {
 import {
   discoverWorkflows,
   getWorkflow,
+  getWorkflowByPath,
   invalidateCache,
   type WorkflowScanConfig,
 } from "../config-loader.ts";
 import { findWorkspaceRoot } from "../../shared/resource-discovery.ts";
+import { homedir } from "node:os";
 
 const mockedFindWorkspaceRoot = vi.mocked(findWorkspaceRoot);
+const mockedHomedir = vi.mocked(homedir);
 
 // ── 临时工作区工具 ────────────────────────────────────────────
 
@@ -77,7 +87,7 @@ function validScript(
 ): string {
   const description = opts.description ?? `${name} desc`;
   const phases = JSON.stringify(opts.phases ?? []);
-  return `const meta = { name: "${name}", description: "${description}", phases: ${phases} };\nagent({ prompt: "x" });\n`;
+  return `/* @pi-meta\nname: ${name}\ndescription: ${description}\nphases: ${phases}\n*/\nagent({ prompt: "x" });\n`;
 }
 
 // ── Setup / Teardown ──────────────────────────────────────────
@@ -116,32 +126,16 @@ describe("discoverWorkflows — 加载合法配置", () => {
     expect(foo!.path).toBe(join(ws.projectDir, "foo.js"));
   });
 
-  it("支持 export const meta 形式", async () => {
-    await writeScript(
-      ws.projectDir,
-      "bar.mjs",
-      `export const meta = { name: "bar", description: "d", phases: ["p1"] };\nagent({ prompt: "x" });\n`,
-    );
-
-    const result = inTemp(await discoverWorkflows({ projectDir: ws.projectDir }));
-    const bar = result.find((w) => w.name === "bar");
-
-    expect(bar).toBeDefined();
-    expect(bar!.available).toBe(true);
-    expect(bar!.description).toBe("d");
-    expect(bar!.phases).toEqual(["p1"]);
-  });
-
-  it("多行 meta 对象正确解析", async () => {
+  it("多行 @pi-meta YAML 正确解析", async () => {
     await writeScript(
       ws.projectDir,
       "multi.js",
       [
-        "const meta = {",
-        '  name: "multi",',
-        '  description: "multi-line",',
-        '  phases: ["a", "b"],',
-        "};",
+        "/* @pi-meta",
+        "name: multi",
+        "description: multi-line",
+        "phases: [a, b]",
+        "*/",
         'agent({ prompt: "x" });',
         "",
       ].join("\n"),
@@ -156,11 +150,11 @@ describe("discoverWorkflows — 加载合法配置", () => {
     expect(multi!.phases).toEqual(["a", "b"]);
   });
 
-  it("未声明 phases 时默认为空数组", async () => {
+  it("phases 为空数组合法", async () => {
     await writeScript(
       ws.projectDir,
       "nophase.js",
-      `const meta = { name: "nophase", description: "x" };\n`,
+      `/* @pi-meta\nname: nophase\ndescription: x\nphases: []\n*/\n`,
     );
 
     const result = inTemp(await discoverWorkflows({ projectDir: ws.projectDir }));
@@ -168,6 +162,45 @@ describe("discoverWorkflows — 加载合法配置", () => {
 
     expect(noPhase).toBeDefined();
     expect(noPhase!.phases).toEqual([]);
+  });
+
+  it("parameters/usage 整对象透传不丢（m2 exec-review MAJOR-2 回归护栏）", async () => {
+    await writeScript(
+      ws.projectDir,
+      "params.js",
+      [
+        "/* @pi-meta",
+        "name: params",
+        "description: x",
+        "phases: [a]",
+        "parameters:",
+        "  type: object",
+        "  properties:",
+        "    autoCommit: { type: boolean, default: false }",
+        "  required: [autoCommit]",
+        "usage: |",
+        "  ## 使用说明",
+        "  - 示例：workflow run params --args autoCommit=true",
+        "*/",
+        'agent({ prompt: "x" });',
+        "",
+      ].join("\n"),
+    );
+
+    const result = inTemp(await discoverWorkflows({ projectDir: ws.projectDir }));
+    const p = result.find((w) => w.name === "params");
+
+    expect(p).toBeDefined();
+    expect(p!.available).toBe(true);
+    // 若未来有人重引入 {name,description,phases} 解构重映射（m2 消灭的反模式），
+    // 此断言会失败——parameters/usage 是 m3 args-validator 与 m4 meta 消费的依赖。
+    const params = p!.parameters as
+      | { type: string; properties: { autoCommit: { type: string } }; required: string[] }
+      | undefined;
+    expect(params?.type).toBe("object");
+    expect(params?.properties?.autoCommit?.type).toBe("boolean");
+    expect(params?.required).toEqual(["autoCommit"]);
+    expect(p!.usage).toContain("autoCommit=true");
   });
 });
 
@@ -203,7 +236,7 @@ describe("缓存 — invalidateCache 与 TTL", () => {
     mockedFindWorkspaceRoot.mockReturnValue(ws.root);
   });
 
-  it("invalidateCache 后 getWorkflow 重新读取文件（反映最新内容）", async () => {
+  it("TC6: mtime 判变——文件修改后 getWorkflow 立即反映新内容（删 60s TTL）", async () => {
     const scriptPath = await writeScript(
       ws.projectDir,
       "foo.js",
@@ -214,23 +247,21 @@ describe("缓存 — invalidateCache 与 TTL", () => {
     let foo = await getWorkflow("foo");
     expect(foo!.description).toBe("v1");
 
-    // 修改文件内容；未失效缓存前 getWorkflow 仍返回旧值
+    // 修改文件内容（mtime 变）→ getWorkflow 立即反映（不再有 60s 陈旧窗口）
     await writeFile(
       scriptPath,
       validScript("foo", { description: "v2" }),
       "utf-8",
     );
     foo = await getWorkflow("foo");
-    expect(foo!.description).toBe("v1");
+    expect(foo!.description).toBe("v2");
 
-    // 失效缓存后重新加载
-    invalidateCache();
+    // 文件未变 → 再次调用命中缓存（同内容）
     foo = await getWorkflow("foo");
     expect(foo!.description).toBe("v2");
   });
 
-  it("缓存 TTL 过期后触发重新加载", async () => {
-    vi.useFakeTimers({ now: 1_000_000 });
+  it("invalidateCache 清统一缓存层后 getWorkflow 强制重读（mtime 漏判场景兜底）", async () => {
     const scriptPath = await writeScript(
       ws.projectDir,
       "foo.js",
@@ -240,23 +271,22 @@ describe("缓存 — invalidateCache 与 TTL", () => {
     await discoverWorkflows({ projectDir: ws.projectDir });
     expect((await getWorkflow("foo"))!.description).toBe("v1");
 
-    // 在 TTL（60s）内修改文件 → 缓存命中，仍是旧值
+    // 修改文件 → mtime 判变立即反映（不等 invalidateCache）
     await writeFile(
       scriptPath,
       validScript("foo", { description: "v2" }),
       "utf-8",
     );
-    vi.advanceTimersByTime(30_000);
-    expect((await getWorkflow("foo"))!.description).toBe("v1");
+    expect((await getWorkflow("foo"))!.description).toBe("v2");
 
-    // 超过 TTL → 缓存失效 → 重新加载
-    vi.advanceTimersByTime(31_000);
+    // invalidateCache 后仍强制重读（内容变 mtime 未变场景的兜底——cp -p 类）
+    invalidateCache();
     expect((await getWorkflow("foo"))!.description).toBe("v2");
   });
 });
 
 describe("坏配置容错 — 不 crash，标记 available=false", () => {
-  it("缺少 const meta 声明的脚本被标记不可用", async () => {
+  it("缺少 @pi-meta 声明的脚本被标记不可用", async () => {
     await writeScript(
       ws.projectDir,
       "broken.js",
@@ -277,7 +307,7 @@ describe("坏配置容错 — 不 crash，标记 available=false", () => {
     await writeScript(
       ws.projectDir,
       "badname.js",
-      `const meta = { name: 123, description: "x" };\n`,
+      `/* @pi-meta\nname: 123\ndescription: x\nphases: []\n*/\n`,
     );
 
     const result = inTemp(await discoverWorkflows({ projectDir: ws.projectDir }));
@@ -292,7 +322,7 @@ describe("坏配置容错 — 不 crash，标记 available=false", () => {
     await writeScript(
       ws.projectDir,
       "garbage.js",
-      `const meta = { name: "oops", description: ;;;; };\n`,
+      `/* @pi-meta\nname: oops\ndescription: d\nphases: [a\n*/\n`,
     );
 
     const result = inTemp(await discoverWorkflows({ projectDir: ws.projectDir }));
@@ -361,6 +391,60 @@ describe("目录优先级 — 同名资源高优先级覆盖", () => {
 
     // 低优先级版本不应出现
     expect(result.find((w) => w.name === "dup-from-pi")).toBeUndefined();
+  });
+});
+
+describe("getWorkflowByPath — 按绝对路径加载（S2 路径统一核心新入口）", () => {
+  it("合法文件：返回完整 CachedWorkflowMeta 结构（available=true）", async () => {
+    const scriptPath = await writeScript(
+      ws.projectDir,
+      "bypath.js",
+      validScript("bypath", { description: "path loaded", phases: ["a"] }),
+    );
+
+    const meta = await getWorkflowByPath(scriptPath);
+
+    expect(meta).toBeDefined();
+    expect(meta!.available).toBe(true);
+    expect(meta!.name).toBe("bypath");
+    expect(meta!.description).toBe("path loaded");
+    expect(meta!.phases).toEqual(["a"]);
+    expect(meta!.path).toBe(scriptPath);
+    // toCachedMeta 的 source 参数 "user-pi" → saved（非 project-pi-tmp）
+    expect(meta!.source).toBe("saved");
+  });
+
+  it("相对路径返回 undefined（引用唯一形态 = 绝对路径）", async () => {
+    await expect(getWorkflowByPath("workflows/foo.js")).resolves.toBeUndefined();
+    await expect(getWorkflowByPath("./foo.js")).resolves.toBeUndefined();
+  });
+
+  it("非 .js 扩展名返回 undefined", async () => {
+    await expect(getWorkflowByPath("/tmp/foo.ts")).resolves.toBeUndefined();
+    await expect(getWorkflowByPath("/tmp/foo.js.txt")).resolves.toBeUndefined();
+  });
+
+  it("~/ 前缀展开为 homedir 下绝对路径后正常加载", async () => {
+    mockedHomedir.mockReturnValue(ws.root);
+    const scriptPath = await writeScript(ws.root, "tilda.js", validScript("tilda"));
+
+    const meta = await getWorkflowByPath("~/tilda.js");
+
+    expect(meta).toBeDefined();
+    expect(meta!.available).toBe(true);
+    expect(meta!.name).toBe("tilda");
+    expect(meta!.path).toBe(scriptPath);
+  });
+
+  it("文件不存在：available=false 不抛（fail-safe），name fallback 到文件 stem", async () => {
+    const meta = await getWorkflowByPath("/nonexistent/ghost.js");
+
+    expect(meta).toBeDefined(); // 不是 undefined——normalizeRef 通过，meta 提取失败标不可用
+    expect(meta!.available).toBe(false);
+    expect(meta!.name).toBe("ghost");
+    expect(meta!.description).toBe("");
+    expect(meta!.phases).toEqual([]);
+    expect(meta!.path).toBe("/nonexistent/ghost.js");
   });
 });
 

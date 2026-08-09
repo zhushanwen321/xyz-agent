@@ -101,7 +101,6 @@ vi.mock("../subagent-service.ts", () => ({
 vi.mock("../model-config-service.ts", () => ({
   ModelConfigService: class {
     initModel = vi.fn();
-    getAgentRegistry = () => ({ get: () => undefined, list: () => [] });
     setCtxModel = vi.fn();
   },
   getModelConfigService: () => null,

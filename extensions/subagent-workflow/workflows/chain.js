@@ -11,11 +11,22 @@
 //   - 禁止 bare IIFE（用 top-level await）
 //   - 禁止用 result 作变量名
 
-const meta = {
-  name: "chain",
-  description: "通用编排：analyze → transform → synthesize 顺序三步链",
-  phases: ["analyze", "transform", "synthesize"],
-};
+/* @pi-meta
+name: chain
+description: 通用编排：analyze → transform → synthesize 顺序三步链
+phases: [analyze, transform, synthesize]
+parameters:
+  type: object
+  properties:
+    task: { type: string, minLength: 1 }
+    agents: { type: string }
+  required: [task]
+usage: |
+  ## 使用说明
+  - 顺序三步链：analyze（提取要点）→ transform（产出方案）→ synthesize（合成结论）
+  - agents：逗号分隔的 agent .md 绝对路径，按顺序对应三步（少于 3 个尾部用默认执行者）
+  - 示例：workflow run chain --args task="<任务描述>" agents="/path/analyzer.md,/path/planner.md"
+*/
 
 // ── 入参（$ARGS）──────────────────────────────────────────────────
 const task = $ARGS.task;
@@ -23,7 +34,17 @@ if (typeof task !== "string" || task.trim() === "") {
   throw new Error("chain 缺少必需参数 task（非空字符串）。用法：workflow run chain --args task=\"<描述>\"");
 }
 
-log("chain 开始，task=" + task);
+// S4：agents 参数 = 逗号分隔的 agentRef 路径数组，按阶段顺序对应三步
+// worker 沙箱为 eval 模式：require 相对路径以 cwd 为基准（非脚本目录），
+// 必须用 workerData.scriptPath 锚定脚本目录（review-fix-loop 同模式）。
+const SCRIPT_DIR = workerData && workerData.scriptPath
+  ? require("path").dirname(workerData.scriptPath)
+  : process.cwd();
+const { parseAgentRefs, agentRefAt } = require(SCRIPT_DIR + "/_shared/agent-refs.cjs");
+const agentRefs = parseAgentRefs($ARGS.agents);
+const stepAgent = (i) => { const ref = agentRefAt(agentRefs, i); return ref ? { agent: ref } : {}; };
+
+log("chain 开始，task=" + task + (agentRefs.length ? "，agents=" + agentRefs.join(",") : ""));
 
 let currentPhase = "init";
 let outcome;
@@ -47,6 +68,7 @@ try {
       required: ["insights", "keyPoints"],
     },
     description: "chain-analyze",
+    ...stepAgent(0),
   });
 
   // ── 段 2：transform（基于分析产出方案）───────────────────────────
@@ -69,6 +91,7 @@ try {
       required: ["plan", "actions"],
     },
     description: "chain-transform",
+    ...stepAgent(1),
   });
 
   // ── 段 3：synthesize（综合方案输出最终结论）─────────────────────
@@ -87,6 +110,7 @@ try {
       required: ["summary", "recommendation"],
     },
     description: "chain-synthesize",
+    ...stepAgent(2),
   });
 
   outcome = {

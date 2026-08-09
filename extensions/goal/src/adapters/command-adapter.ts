@@ -59,7 +59,7 @@ export async function handleGoalCommand(
 		case "clear":
 			return handleClear(pi, session, ctx);
 		case "update":
-			return handleUpdate(pi, session, parsed.objective, ctx);
+			return handleUpdate(pi, session, parsed.objective, parsed.criteria, ctx);
 		case "set":
 			return handleSet(pi, session, parsed.objective ?? "", parsed.budget, ctx);
 	}
@@ -82,6 +82,7 @@ function handleStatus(session: GoalSession, ctx: ExtensionContext): void {
 	const lines: Array<string | null> = [
 		state.slug ? `Slug: ${state.slug}` : null,
 		`Objective: ${state.objective}`,
+		state.successCriteria ? `Success criteria: ${state.successCriteria}` : null,
 		`Status: ${state.status}`,
 		`Turn: ${state.currentTurnIndex}`,
 		`Time elapsed: ${timeMins}m${timeSecs}s`,
@@ -261,6 +262,7 @@ function handleUpdate(
 	pi: ExtensionAPI,
 	session: GoalSession,
 	newObjective: string | undefined,
+	criteria: string | undefined,
 	ctx: ExtensionContext,
 ): void {
 	if (!session.state) {
@@ -268,7 +270,7 @@ function handleUpdate(
 		return;
 	}
 	if (!newObjective) {
-		ctx.ui.notify("Usage: /goal update <new-objective>", "warning");
+		ctx.ui.notify("Usage: /goal update <new-objective> [--criteria <text>]", "warning");
 		return;
 	}
 	const state = session.state;
@@ -285,6 +287,12 @@ function handleUpdate(
 	state.timeWarning90Sent = false;
 	// GAP-6: update 是重塑，旧 slug 已不匹配新 objective → 置空（widget fallback objective 截断）
 	state.slug = undefined;
+	// update 重塑后旧 successCriteria 可能不再完全匹配新 objective，但语义内容仍可部分适用。
+	// 显式传 --criteria 则替换；未传则保留旧值（修复：此前静默清空导致验证标准永久丢失，
+	// 无恢复机制）。objectiveUpdatedPrompt 注入保留的 criteria 并声明按新 objective 判断完成。
+	if (criteria !== undefined && criteria.trim()) {
+		state.successCriteria = criteria.trim();
+	}
 	// FR-6.5: 持久化重塑后的状态（persistState 按当前 status tick 累加）+ FR-6.1 widget 刷新
 	const updatePorts = buildPorts(pi, ctx);
 	persistState(session, updatePorts);
@@ -350,11 +358,12 @@ function handleSet(
 	const budgetLine = budgetHints.length > 0 ? `\nBudget: ${budgetHints.join(", ")}` : "";
 
 	const message =
-		`Start a new goal with the objective below. Call goal_control(action="create") with:\n` +
+		`Start a new goal. Call goal_control(action="create") with:\n` +
 		`- slug: a short kebab-case identifier you generate for this goal\n` +
-		`- objective: the full objective text\n` +
+		`- objective: restate the REAL objective in your own words — what actually needs to be achieved (think about the true intent, don't just echo the text below)\n` +
+		`- successCriteria: concrete, checkable conditions that prove the objective is achieved (e.g. 'tests pass', 'file X exists', 'command Y outputs Z')\n` +
 		(budgetHints.length > 0 ? `- pass through the budget values below as-is\n` : "") +
-		`\nObjective: ${objective.trim()}${budgetLine}`;
+		`\nRaw objective from user: ${objective.trim()}${budgetLine}`;
 
 	ctx.ui.notify(`Requesting goal start: ${objective.trim()}`, "info");
 	// FR-8.12: 触发 AI（followUp）—— AI 消化后调 goal_control create

@@ -54,6 +54,15 @@ export interface GoalRuntimeState {
 	goalId: string;
 	objective: string;
 	/**
+	 * 成功标准——如何验证 objective 已达成。与 objective 成对存储、注入、展示。
+	 *
+	 * 由 goal_control create 时 AI 自行推导（思考真实目标后定义可检查的完成条件），
+	 * 非用户手写。complete 的 evidence 必须对照本字段验证。
+	 *
+	 * optional：旧持久化数据无此字段，向后兼容（deserialize 可选解析，prompt 缺失时省略段）。
+	 */
+	successCriteria?: string;
+	/**
 	 * AI 生成的短标识（kebab-case 风格），仅用于 widget 状态栏标题与 history。
 	 * 不注入 prompt（prompt 仍读 objective，保证方向感）。
 	 * 由 goal_control create 时 AI 提供；/goal 命令路径走提示词触发器由 AI toolcall 生成。

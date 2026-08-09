@@ -32,6 +32,7 @@
 
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
+import { validateRunArgs } from "./args-validator.ts";
 import { ConcurrencyGate, DEFAULT_CONCURRENCY } from "./concurrency-gate.ts";
 import {
   handleWorkerError,
@@ -147,6 +148,12 @@ export async function runWorkflow(
   deps: LifecycleDeps,
   signal?: AbortSignal,
 ): Promise<string> {
+  // m3 E9：参数校验单一 chokepoint，钉在所有副作用前（generateRunId/log/signal
+  // listener/runs.set/workerHost.start/store.save/pending:register）。校验失败时
+  // zero side effects。coerceTypes 原地规范化 spec.args——worker 启动与 pause/resume
+  // 重建共用同一对象（run.spec === spec），恢复路径参数一致。
+  validateRunArgs(spec);
+
   const runId = generateRunId();
   deps.log?.("debug", "workflow:lifecycle", "runWorkflow start", { runId, scriptName: spec.scriptName });
 

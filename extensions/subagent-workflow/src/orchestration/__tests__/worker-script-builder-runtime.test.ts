@@ -111,6 +111,10 @@ interface RunOptions {
   timeoutMs?: number;
   /** workerData.callCache 预填（测缓存命中路径）。 */
   callCache?: Map<number, unknown>;
+  /** Run 级 model override（透传到 workerData.model → $MODEL global）。 */
+  model?: string;
+  /** Run 级 thinkingLevel override（透传到 workerData.thinkingLevel → $THINKING_LEVEL global）。 */
+  thinkingLevel?: string;
 }
 
 /**
@@ -132,6 +136,9 @@ function runWorker(userScript: string, opts: RunOptions = {}): Promise<RunResult
         callCache: opts.callCache instanceof Map
           ? Object.fromEntries(opts.callCache)
           : opts.callCache ?? {},
+        // Option B run-level override：透传到 $MODEL/$THINKING_LEVEL worker global
+        model: opts.model,
+        thinkingLevel: opts.thinkingLevel,
       },
     });
     // S8：创建后立即登记，afterEach 兜底清理（防止 promise 泄漏导致 Worker 未终止）
@@ -446,6 +453,68 @@ describe("buildWorkerScript runtime — W2 agent() returnMeta mode", () => {
       error: "soft-fail-msg",
     });
     expect(res.exitCode).not.toBe(1);
+  });
+});
+
+// ── P3/P4 runtime: run-level model/thinkingLevel override 真实注入（L0→L1 升级）──
+// worker-script-builder.test.ts 的 P3/P4 block 全是源码字符串断言（L0：验证「生成的
+// 源码含 $MODEL 注入行」）。本组起真实 Worker 线程，传 workerData.model/thinkingLevel，
+// 断言 agent() 三分支产出的 agent-call 消息 opts.model/opts.thinkingLevel 真实继承
+// $MODEL/$THINKING_LEVEL global（L1：验证「运行时 agent-call 携带正确 override」）。
+// 对应 docs/testing/ 断言价值层级 L1（真实 Worker 产物，非源码字符串）。
+
+describe("buildWorkerScript runtime — P3/P4 run-level model/thinkingLevel override 真实注入", () => {
+  it("workerData.model 经 $MODEL global 注入到 object 分支 agent() opts.model", async () => {
+    const script = `await agent({ prompt: "hi" }); return { done: true };`;
+    const res = await runWorker(script, { model: "anthropic/claude-sonnet-4-5" });
+    expect(res.agentCalls).toHaveLength(1);
+    expect(res.agentCalls[0]!.opts.model).toBe("anthropic/claude-sonnet-4-5");
+    expect(res.workerError).toBeUndefined();
+    expect(res.exitCode).not.toBe(1);
+  });
+
+  it("workerData.thinkingLevel 经 $THINKING_LEVEL global 注入到 opts.thinkingLevel", async () => {
+    const script = `await agent({ prompt: "hi" }); return { done: true };`;
+    const res = await runWorker(script, { thinkingLevel: "high" });
+    expect(res.agentCalls).toHaveLength(1);
+    expect(res.agentCalls[0]!.opts.thinkingLevel).toBe("high");
+    expect(res.workerError).toBeUndefined();
+  });
+
+  it("per-call model 优先于 $MODEL global（显式传 model 时不被 override 覆盖）", async () => {
+    const script = `await agent({ prompt: "hi", model: "openai/gpt-4o" }); return {};`;
+    const res = await runWorker(script, { model: "anthropic/claude-sonnet-4-5" });
+    expect(res.agentCalls).toHaveLength(1);
+    expect(res.agentCalls[0]!.opts.model).toBe("openai/gpt-4o");
+  });
+
+  it("agent() 三分支一致继承 $MODEL（string / task / object.prompt）", async () => {
+    const script = `
+      await agent("str-branch");
+      await agent({ task: "t" });
+      await agent({ prompt: "obj" });
+      return {};
+    `;
+    const res = await runWorker(script, {
+      model: "X/Y",
+      agentResults: [{}, {}, {}],
+    });
+    expect(res.agentCalls).toHaveLength(3);
+    expect(res.agentCalls.map((c) => c.opts.model)).toEqual(["X/Y", "X/Y", "X/Y"]);
+  });
+
+  it("model+thinkingLevel 同时注入（Option B 对称验证）", async () => {
+    const script = `await agent({ prompt: "hi" }); return {};`;
+    const res = await runWorker(script, { model: "p/m", thinkingLevel: "max" });
+    expect(res.agentCalls[0]!.opts.model).toBe("p/m");
+    expect(res.agentCalls[0]!.opts.thinkingLevel).toBe("max");
+  });
+
+  it("不传 model 时 opts.model 为 undefined（零配置默认继承主 agent，不误注入）", async () => {
+    const script = `await agent({ prompt: "hi" }); return {};`;
+    const res = await runWorker(script);
+    expect(res.agentCalls).toHaveLength(1);
+    expect(res.agentCalls[0]!.opts.model).toBeUndefined();
   });
 });
 

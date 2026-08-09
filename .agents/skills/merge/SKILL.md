@@ -11,9 +11,9 @@ description: >-
 
 > **双发布线**：本项目同时维护两条独立的发布线：
 > - **Electron 发布线**（`v*` tag → `release.yml` → DMG/EXE/AppImage）—— 阶段 4
-> - **npm 发布线**（`npm-v*` tag → `release-npm.yml` → @xyz-agent/* + @zhushanwen/pi-* npm 包）—— 阶段 4N（可选）
+> - **npm 发布线**（`npm-*` tag → `release-npm.yml` → @xyz-agent/* + @zhushanwen/pi-* npm 包）—— 阶段 4N（可选）
 >
-> 两套 tag 前缀（`v*` vs `npm-v*`）互不干扰，CI concurrency group 隔离。阶段 4N 仅在本次 PR 含 `extensions/` 改动且有 changeset 时执行。
+> 两套 tag 前缀（`v*` vs `npm-*`）互不干扰，CI concurrency group 隔离。阶段 4N 仅在本次 PR 含 `extensions/` 改动时执行（人工版本判定机制，详见阶段 4N）。
 
 ## 前置条件
 
@@ -26,7 +26,13 @@ description: >-
 
 ⚠️ **关键**：第一个参数是 **feature worktree 目录名**（如 `feat-new-feature`），不是 `main`。脚本会自动检测 `$WS_ROOT/main` 用于 bump/tag/push。传 `main` 会导致阶段 7 删除 main worktree。
 
-⚠️ **cwd 隔离**：bash 工具的 cwd 按调用持久，不随脚本内部 `cd` 改变（脚本在子进程 cd，退出回到调用前）。所有阶段脚本必须在 **workspace root** 或 **main worktree** 内执行，不能在 feature worktree 内（阶段 7 会删除它）。每个阶段命令前若不确定 cwd，显式 `cd $WS_ROOT` 或 `cd $WS_ROOT/main`。详见阶段 7 的 [HISTORICAL] 说明。
+⚠️ **cwd 隔离 [MANDATORY]**：bash 工具每次调用都是独立 shell，cwd **不跨调用持久**——每次 reset 到 session 启动目录（通常是 feature worktree，即被合并的分支目录），前序 bash 调用或脚本内部的 `cd` 对后续调用**无效**（与 AGENTS.md §8 一致）。
+
+**强制规则**：所有操作 main worktree 的 bash 调用，必须在**当条命令开头**自包含 `cd $WS_ROOT/main && <cmd>`，不能依赖代码块里前一行的 `cd`，更不能假设"上一步 cd 过了"。操作 workspace root 同理自包含 `cd $WS_ROOT && <cmd>`。受影响阶段：3 / 3.5 / 4 / 4N / 5 / 6（都在 main worktree 操作）。
+
+**为什么不能在 feature worktree 操作**：阶段 2 起 feature 分支已合并，阶段 7 会删除 feature worktree；version bump / commit / tag / push 等写操作落在 feature worktree 会污染已合并分支、导致 main 实际未变更。详见阶段 7 的 [HISTORICAL] 说明。
+
+**事故背景**：阶段 4 `pnpm version patch` 因 bash 调用未自包含 `cd $WS_ROOT/main`，cwd reset 到 feature worktree，把 version bump 写进了 feature worktree 的 package.json（main worktree 未动），直到 `git branch --show-current` 检查才暴露。根因是旧版本文档误称"cwd 按调用持久"，AI 据此以为阶段 3 的 `cd main` 对后续调用仍有效。
 
 ```bash
 cd /Users/zhushanwen/Code/xyz-agent-workspace
@@ -52,23 +58,22 @@ bash .agents/skills/merge/scripts/pre-merge-check.sh <worktree-dir>
 ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install
 ```
 
-### 阶段 1.5: Dev-Link 清理 [OPTIONAL]
+### 阶段 1.5: Dev-Link 清理
 
-> **仅当开发期间用过 dev-link skill（`XYZ_EXTENSION_PATHS` 指向本 worktree 的 extensions/）时执行。**
-> 跳过此步骤会导致阶段 7 删除 worktree 后，`.env.dev-extensions` 中的 link 指向已删除目录，下次 `pnpm dev` 时 pi 加载报 ENOENT。
-
-检查并清理指向当前 worktree 的 dev-link：
+> **无条件执行**。跨 worktree 扫描所有 `.env.dev-extensions`，移除 `XYZ_EXTENSION_PATHS` 中指向即将删除的 feature worktree 的路径条目（dev-link 写入的是环境变量路径，不是 symlink）。
 
 ```bash
-cd /Users/zhushanwen/Code/xyz-agent-workspace
-# 查看当前 link 状态
-bash .agents/skills/dev-link/link-list.sh
-
-# 如果有指向当前 worktree 的 link，清理（--all 清除所有，或指定包名清理单个）
-bash .agents/skills/dev-link/link-npm.sh --all
+cd $WS_ROOT
+bash .agents/skills/merge/scripts/prune-dev-link.sh "$WS_ROOT/<worktree-dir>"
 ```
 
-如果没有 `.env.dev-extensions` 文件或其中无 link，直接跳过本阶段。
+`<worktree-dir>` 是阶段 0 传给 init.sh 的 feature worktree 目录名。脚本自己向上查找 `.bare` 定位 workspace root，无需手动算路径。
+
+**为什么要清理**：dev-link 让 pi 通过 `XYZ_EXTENSION_PATHS` 加载本地源码 extension。标准用法下 link 指向当前 worktree 自己的 `extensions/`，删 worktree 时该 worktree 内的 `.env.dev-extensions` 随之删除——不会残留。但存在**跨 worktree 残留**场景（用户在 main worktree 里 link 指向 feature worktree 测改动、手动编辑/复制 `.env.dev-extensions` 跨 worktree）：这些残留 link 在 feature worktree 删除后指向不存在的路径，下次 `pnpm dev` 时 pi 加载报 ENOENT。本阶段在删 worktree 前兜底清理所有这类残留。
+
+**输出语义**：无残留时输出「无残留 link」并 exit 0；有残留时逐个列出被移除的路径并 exit 0。两种情况都不阻塞后续阶段。
+
+> 历史背景：旧版阶段 1.5 标 `[OPTIONAL]` 且让在 workspace root 跑 `link-list.sh`——但 workspace root 不是 git repo，脚本 `git rev-parse --show-toplevel` 直接 exit 2，命令根本无法执行；且 AI 靠「记不记得用过 dev-link」决定是否跳过，残留风险高。现改为无条件执行 + 跨 worktree 精确清理。
 
 ### 阶段 2: PR CI + 合并
 
@@ -114,6 +119,8 @@ bash scripts/check-version-bump.sh
 ```bash
 cd $WS_ROOT/main
 
+# ⚠️ 本代码块每条 bash 调用必须自包含 `cd $WS_ROOT/main &&`（见阶段 0 cwd 隔离）。
+#    bash 工具 cwd 不跨调用持久，会 reset 到 feature worktree，导致 bump 落错分支。
 # ⚠️ 先确认当前分支是 main（pr-merge.sh 的 sync 会强制 checkout main，
 #    但阶段 4 执行前必须二次确认，防止意外）
 git branch --show-current  # 必须输出 main，否则 git checkout main
@@ -151,99 +158,118 @@ bash scripts/verify-ci-release.sh "v$(node -p "require('./package.json').version
 
 ### 阶段 4N: npm Extension 发布（可选）
 
-> **仅在本次 PR 含 extension 改动（`extensions/` 有变更）且有对应 `.changeset/*.md` 时执行。**
-> 纯 Electron 改动（如只改 packages/ 或 apps/）跳过本阶段。
+> **仅在本次 PR 含 extension 改动（`extensions/` 有变更）时执行。** 纯 Electron 改动（如只改 packages/ 或 apps/）跳过本阶段。
 >
 > npm 发布线与 Electron 发布线**完全独立**：
 > - Electron 走 `v*` tag（阶段 4）→ `release.yml` → DMG/EXE/AppImage
-> - npm 走 `npm-v*` tag（本阶段）→ `release-npm.yml` → npm registry（@xyz-agent/* + @zhushanwen/pi-*）
+> - npm 走 `npm-*` tag（本阶段，格式 `npm-<slug>-<date>-<time>`）→ `release-npm.yml` → npm registry（@xyz-agent/* + @zhushanwen/pi-*）
+>
+> **本阶段采用人工版本判定机制**（不再用 `changeset version` 自动推算 type，避免 shouldBumpMajor/applyLinks 把声明的 minor 误放大成 major）。完整设计见 docs（版本号人工判定机制）。脚本：`scripts/check-version-changes.sh` + `scripts/apply-version.sh`。
+>
+> **dev-npm 预发布线不受本阶段影响**：预发布（`dev-npm-*` 分支 → `release-npm-dev.yml`）仍走 `changeset version` + `changeset pre` 全流程，两条机制并存。
 
-#### 4N.1 检查 changeset 文件
+#### 4N.1 检查需要版本处理的包
+
+```bash
+cd $WS_ROOT/main && git fetch github && git reset --hard github/main
+# ⚠️ merge 后本地 main == HEAD，「main..HEAD」range 为空，check-version-changes 会扫不到 PR 改动 →
+# NEEDS_VERSION=false 误跳过 4N。必须用 PR 的 merge commit range（PR 前 main..PR merge commit，
+# 即 merge commit 的 first-parent diff）：
+PR_MERGE=$(gh pr view "$PR_NUMBER" --repo zhushanwen321/xyz-agent --json mergeCommit --jq '.mergeCommit.oid')
+bash scripts/check-version-changes.sh "${PR_MERGE}^1..${PR_MERGE}"
+```
+
+脚本输出：
+- `NEEDS_VERSION=true|false`（false = 本次无源码改动，跳过 4N）
+- `CHANGED_PACKAGES`：已声明 changeset 的包 + 声明的 type（只显示不采纳）
+- `UNDECLARED_PACKAGES`：改了 src 但无 changeset（PR 漏声明警告）—— 非空则补写 `.changeset/<slug>.md` 后重跑
+- `DEPENDENTS_OF_CHANGED`：**传递闭包**，自己没改 src 但通过 workspace: 直接/间接引用了已 bump 包、须 patch 重发刷新 tarball 范围的包（标注层数与触发链路）
+- `LINKED_GROUPS_AFFECTED`：linked 组受影响参考（不强制对齐）
+
+**决策面 = `CHANGED_PACKAGES` ∪ `DEPENDENTS_OF_CHANGED`**，两者都要进 4N.2/4N.3。
+
+#### 4N.2 人工定 type [MANDATORY 人工决策]
+
+**人工只需对 `CHANGED_PACKAGES` 定 type**（自己 src 改了的包）。`DEPENDENTS_OF_CHANGED` 的 patch 由 4N.3 脚本自动执行（规则一确定性，无需人工传参）。
+
+对 `CHANGED_PACKAGES` 的每个包，按准则定 major/minor/patch：
+
+| type | 准则 |
+|------|------|
+| major | 多个重要功能，或架构升级 |
+| minor | 少量功能，或单一功能新增 |
+| patch | 纯问题修复 |
+
+**dep 传播（两条规则）**：
+- **规则一（机械，自动）**：`DEPENDENTS_OF_CHANGED` 的包由 apply-version.sh 自动 patch bump（刷新 tarball 里 workspace:* 解析后的范围，避免消费者 ERESOLVE 或被钉旧版本）
+- **规则二（语义，人工）**：`CHANGED_PACKAGES` 里某包自身代码受 breaking 影响 → 在其 type 里直接体现（人工定 minor/major）
+- linked 组不强制版本对齐；fixed 组（当前空）若启用则整组同步（apply-version.sh 兜底）
+
+> 参考 `.changeset/*.md` 的 type 初判，但不绑死。可能出现「声明 minor 但实际该 patch」——以人工判断为准。
+
+#### 4N.3 改 version + 生成 CHANGELOG
 
 ```bash
 cd $WS_ROOT/main
-git fetch github
-git reset --hard github/main   # 确保本地 main 已同步（阶段 4 的 Electron bump 已合并进 main）
-
-# 列出待消费的 changeset
-find .changeset -name '*.md' ! -name 'README.md'
+# 人工只传 CHANGED_PACKAGES 的 type；DEPENDENTS_OF_CHANGED 由脚本自动 patch
+# ⚠️ dependents-from 的 range 同 4N.1：用 PR merge commit range，不是「main..HEAD」（merge 后为空）
+PR_MERGE=$(gh pr view "$PR_NUMBER" --repo zhushanwen321/xyz-agent --json mergeCommit --jq '.mergeCommit.oid')
+bash scripts/apply-version.sh \
+  --changed @zhushanwen/pi-<pkg-a>=minor @zhushanwen/pi-<pkg-b>=patch \
+  --dependents-from <(bash scripts/check-version-changes.sh "${PR_MERGE}^1..${PR_MERGE}")
 ```
 
-确认 changeset 文件列表。每个 changeset 的 key 必须是 `package.json` 的 `name` 全名（如 `@zhushanwen/pi-goal`），不是目录名。
+脚本：CHANGED_PACKAGES 按 type semver bump + DEPENDENTS_OF_CHANGED 自动 patch（规则一）+ 生成 CHANGELOG（CHANGED 用 changeset body，DEPENDENTS 用自动 `chore: refresh dependency range` 条目）+ 消费（删除）.changeset/*.md + fixed 组一致性校验。
 
-⚠️ **如果无 changeset 文件** → extension 不会 bump → `changeset publish` 无新包可发。补救：用 `pnpm changeset`（交互式）或手写 `.changeset/<slug>.md` 创建：
-
-```
----
-"@zhushanwen/pi-<name>": patch   # 或 minor/major
----
-
-<变更描述>
+验证：
+```bash
+git diff -- extensions/*/package.json extensions/shared/*/package.json packages/*/package.json | grep '^[+-]  "version"'
+git diff --name-only | grep CHANGELOG
+ls .changeset/*.md 2>/dev/null | grep -v README.md && echo "⚠️ 未消费的 changeset 残留" || echo "✓ changeset 全消费"
 ```
 
-写错包名 key 会**静默不 bump** —— 创建后务必用 `pnpm changeset version` 验证目标包版本号确实变化。
+> **不确定时可先 --dry-run**：`bash scripts/apply-version.sh --changed ... --dependents-from <(...) --dry-run` 预览将做的改动，不写文件。
 
-#### 4N.2 消费 changeset（bump 版本）
+#### 4N.4 commit + tag + push
 
 ```bash
 cd $WS_ROOT/main
-pnpm changeset version
+SLUG="<本次发布主题-kebab>"   # 人工定，来自 PR 标题
+STAMP=$(date +%Y%m%d-%H%M)
 
-# 验证：检查变更的 extension 版本号
-git diff --name-only | grep 'package.json'
-git diff -- extensions/*/package.json extensions/shared/*/package.json packages/extension-protocol/package.json | grep '^[+-]  "version"'
-```
+git add extensions/*/package.json extensions/shared/*/package.json packages/*/package.json \
+        '**/CHANGELOG.md'
+git commit -m "chore: version bump — <包与版本摘要>"
 
-#### 4N.3 commit + 打 tag + push
+# npm-* tag（不绑单一版本号，多包不同步时不误导；release-npm.yml 不从 tag 解析版本）
+git tag "npm-${SLUG}-${STAMP}"
 
-```bash
-cd $WS_ROOT/main
-
-# changeset version 生成 .changeset/*.md 消费记录 + CHANGELOG.md + 版本 bump
-# 按需 git add（只 add changeset 消费的产物，不要 add 认知外的改动）
-git add .changeset extensions/*/package.json extensions/shared/*/package.json packages/extension-protocol/package.json CHANGELOG.md
-
-# commit 版本变更
-pnpm changeset version  # 再跑一次确认无遗漏（幂等：已消费的不再变）
-git status --short       # 确认 working tree 干净（无未暂存的版本改动）
-
-# 取 npm 版本号（用任意已 bump 的包，这里用 extension-protocol 代表）
-NPM_VERSION=$(node -p "require('./packages/extension-protocol/package.json').version")
-# 或如果只发 extension，取某个 extension 的版本
-# NPM_VERSION=$(node -p "require('./extensions/<name>/package.json').version")
-
-git commit -m "chore: pnpm version ${NPM_VERSION}"
-
-# 打 npm-v* tag（注意前缀 npm-，与 Electron 的 v* 区分）
-git tag "npm-v${NPM_VERSION}"
-
-# 推送 commit + tag
 git push github HEAD
-git push github "npm-v${NPM_VERSION}"
+git push github "npm-${SLUG}-${STAMP}"
 ```
 
-#### 4N.4 验证 npm 发布
+#### 4N.5 验证 npm 发布
 
-`npm-v*` tag push 后，`release-npm.yml` CI 自动执行：
+`npm-*` tag push 触发 `release-npm.yml` CI：
 1. `pnpm install --frozen-lockfile`
-2. `pnpm --filter @xyz-agent/extension-protocol build`（有构建的包单独 build）
-3. `pnpm changeset publish`（发布 extension-protocol + @zhushanwen/pi-* extensions + quota-providers，extensions 无构建直接发 .ts 源码）
+2. **Verify NOT in prerelease mode**（检查 `.changeset/pre.json` 不存在；若残留会整批误发 dev tag，CI hard fail）
+3. `pnpm --filter @xyz-agent/extension-protocol build` + `pnpm extensions:typecheck`
+4. `pnpm changeset publish`（预查 registry，只发未发布版本；extensions 直接发 .ts 源码）
 
-验证 CI 完成：
-
+验证 CI 完成 + npm 上线：
 ```bash
 cd $WS_ROOT/main
-# 轮询 CI（复用 wait-for-ci.sh，但监听 npm-v* tag 对应的 workflow）
+# 轮询 CI
 gh run list --workflow=release-npm.yml --repo zhushanwen321/xyz-agent --limit 3
 gh run watch <run-id> --repo zhushanwen321/xyz-agent
-```
 
-CI 成功后验证 npm 版本上线：
-
-```bash
-# 用 curl 查官方 registry（npm view 受镜像影响，新包有同步延迟）
-curl -s -o /dev/null -w "%{http_code}" "https://registry.npmjs.org/@zhushanwen%2fpi-<name>/<version>"
-# 200 = 已上线
+# 必须带具体版本号查（packument 任何版本都返回 200，验不出新版本发布）
+for entry in "@zhushanwen/pi-<pkg> <version>"; do
+  pkg=${entry% *}; ver=${entry##* }
+  scoped=$(echo "$pkg" | sed 's|/|%2f|')
+  code=$(curl -s -o /dev/null -w "%{http_code}" "https://registry.npmjs.org/${scoped}/${ver}")
+  [ "$code" = "200" ] && echo "✓ ${pkg}@${ver} 已发布" || echo "✗ ${pkg}@${ver} 未发布 (${code})"
+done
 ```
 
 **[MANDATORY] 禁止本地 `pnpm changeset publish` / `npm publish`**：npm 发布由 CI 完成（NPM_TOKEN 认证）。本地只做 version bump + tag push。
@@ -255,6 +281,8 @@ bash .agents/skills/merge/scripts/release.sh
 ```
 
 从 conventional commits 自动生成 Release Notes（feat/fix/perf/breaking 分组）并创建/更新 GitHub Release。也可指定 tag 和 notes 文件：`bash .agents/skills/merge/scripts/release.sh v0.6.5 --notes ./my-notes.md`。
+
+> ⚠️ **release.sh 自动 notes 在 merge 末尾常不准**：脚本用 `git describe HEAD^` 找上一个 tag，但 merge 流程末尾 HEAD 已远超当前 tag（经过 bump + skill 更新 + 4N bump 等 commits），`git describe HEAD^` 会返回**当前 tag**，导致 range = `<当前tag>..HEAD` 几乎为空、自动 notes 退化。实际执行中建议跳过自动生成，直接手写双语 notes 后用 `gh release edit <tag> --notes-file <双语文件>` 覆盖（见下方 [MANDATORY] 双语要求）。
 
 **[MANDATORY] Release Notes 必须中英双语**
 
@@ -344,11 +372,11 @@ bash .agents/skills/merge/scripts/remove-worktree.sh <branch-name> --force --ski
 
 门禁：阶段 7 启动前**必须**确认阶段 6（`verify-ci-release.sh`）已 exit 0。
 
-⚠️ **cwd 隔离 [HISTORICAL]**：`remove-worktree.sh` 内部有 `cd "$WORKSPACE_ROOT"` 自我保护，但**脚本退出后 bash 工具的 cwd 不变**——bash 工具自身维护的 cwd 是按调用持久、不随脚本内部 `cd` 改变的（脚本在子进程里 cd，退出即回到调用前 cwd）。
+⚠️ **cwd 隔离 [HISTORICAL]**：bash 工具每次调用都是独立 shell，cwd **不跨调用持久**，reset 到 session 启动目录（通常是 feature worktree 内）。`remove-worktree.sh` 内部有 `cd "$WORKSPACE_ROOT"` 自我保护，但那只对脚本当次执行有效——脚本退出后，下次 bash 调用的 cwd 又 reset 回 session 启动目录。
 
-调用前 cwd 默认是 session 启动时的工作目录（通常是 feature worktree 内）。若不显式 `cd $WS_ROOT`，脚本删掉 feature worktree 目录后，后续 bash 命令的 cwd 指向已删除目录 → ENOENT。
+若 session 启动目录就是即将删除的 feature worktree，脚本删掉该目录后，后续 bash 调用的 cwd 指向已删除目录 → ENOENT。
 
-**自动化执行阶段 7 前必须显式 `cd $WS_ROOT`**（手动终端执行则脚本内部的 cd 足够，因为终端 shell 的 cwd 会跟随 cd）。这与 AGENTS.md §8「multi-workspace cwd 不跨调用持久」是同一类陷阱的延伸——bash 工具假设单 cwd 项目，脚本内 cd 对调用方不可见。
+**自动化执行阶段 7 时，调用 remove-worktree.sh 的那条 bash 命令必须自包含 `cd $WS_ROOT &&`**（见阶段 0 cwd 隔离）。即便如此，删除后 session 启动目录已不存在，**后续任何 bash 调用仍可能 ENOENT**——因此阶段 7 必须是流程最后一步，删除后立即收尾，不再调 bash（手动终端执行则脚本内部的 cd 足够，因为终端 shell 的 cwd 会跟随 cd）。这与 AGENTS.md §8「multi-workspace cwd 不跨调用持久」是同一类陷阱。
 
 ```bash
 cd $WS_ROOT  # 必须在调用 remove-worktree.sh 前显式 cd
@@ -365,11 +393,12 @@ bash .agents/skills/merge/scripts/remove-worktree.sh <branch-name> --force --ski
 |---|------|------|
 | 1 | 初始化环境（阶段 0） | |
 | 2 | 本地验证（阶段 1） | |
+| 2.5 | ⚠️ Dev-Link 清理（阶段 1.5） | `bash .agents/skills/merge/scripts/prune-dev-link.sh "$WS_ROOT/<worktree-dir>"` |
 | 3 | PR CI + 合并（阶段 2） | |
 | 4 | Post-merge CI（阶段 3） | |
 | 5 | ⚠️ 版本校验（阶段 3.5） | `bash scripts/check-version-bump.sh` |
 | 6 | Electron 版本 bump + 发布（阶段 4） | `bash scripts/verify-ci-release.sh ...` (在 push 后调用) |
-| 6N | ⚠️ npm 发布（阶段 4N，可选） | 仅含 extensions/ 改动时执行：changeset version + npm-v* tag |
+| 6N | ⚠️ npm 发布（阶段 4N，可选） | 仅含 extensions/ 改动时执行：人工定 type（check + apply 脚本）+ npm-* tag |
 | 7 | 创建 Release（阶段 5） | |
 | 8 | ⚠️ 确认交付物（阶段 6） | `bash scripts/verify-ci-release.sh ...` |
 | 9 | 清理 worktree（阶段 7，终结步骤） | 删除后直接输出总结，不再调 bash |

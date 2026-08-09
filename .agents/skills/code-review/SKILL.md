@@ -262,16 +262,19 @@ fallow scan $(git diff main...HEAD --name-only)
 
 ---
 
-## 与 pr-cr-fix / review agent 的关系
+## 与 pr-cr-fix 的关系
 
-本 skill 是**主会话自查的 checklist**（非 PR 触发），适用于快速 review 当前改动。
+两个 skill 正交分工：
 
-对于完整的 PR 级 review（review→fix→PR 统一编排），使用 `pr-cr-fix` skill，它会调度 `.agents/agents/` 下的 7 个 review agent 并行审查（arch-boundary / business-logic / electron-build / extension-api / monorepo-impact / test-coverage / type-safety）+ 1 个聚合器。
+- **code-review（本 skill）** = review 能力提供者。双路径：pi 环境调 `review-fix-loop` workflow（路径 1）/ 非 pi 手工 2 轮（路径 2）；附 `[OPTIONAL]` 降级 checklist（无 subagent 能力时主 agent 自查）
+- **pr-cr-fix** = PR 生命周期编排（路由 skill）。3 阶段：开 PR → review+fix（**阶段 2 路由回本 skill** 路径 1）→ pre-merge + 推 PR
+
+pr-cr-fix **不自行编排 review**，review 的 SSOT 是本 skill。
 
 | 场景 | 用哪个 |
 |------|--------|
-| 快速自查当前改动（不提 PR） | 本 skill（code-review checklist） |
-| PR 级多维 review + 自动修 must-fix + 推 PR | pr-cr-fix skill |
+| 快速自查当前改动（不提 PR） | 本 skill（路径 1/2 或降级 checklist） |
+| PR 级 review + fix + 推 PR（统一编排） | pr-cr-fix skill（其 review 阶段调本 skill） |
 
 ---
 

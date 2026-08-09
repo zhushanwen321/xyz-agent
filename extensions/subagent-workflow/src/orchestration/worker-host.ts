@@ -67,6 +67,11 @@ export class WorkerHostImpl implements WorkerHost {
           usedTokens: 0,
           usedCost: 0,
         },
+        // Option B symmetric single-path: model/thinkingLevel flow through
+        // workerData → $MODEL/$THINKING_LEVEL worker globals (injected by
+        // worker-script-builder) → agent() fallback. Not merged into args.
+        model: spec.model,
+        thinkingLevel: spec.thinkingLevel,
       },
     });
 

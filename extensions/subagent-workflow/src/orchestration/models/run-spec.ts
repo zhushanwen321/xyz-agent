@@ -24,8 +24,31 @@ import type { Budget } from "./budget.ts";
 export interface RunSpec {
  /** 已 strip export 的可执行源（WorkflowScript.toExecutable 产物）。 */
   readonly scriptSource: string;
- /** 调用方传入的参数（worker 内通过 $ARGS 访问）。 */
+ /**
+ * 参数契约（JSON Schema draft-07，来自 script.meta.parameters 整对象透传，m3 DM2）。
+ *
+ * undefined = 不校验（安全退化——漏拷 parameters 退化是「不校验」非「校验错」）。
+ * 由调用方（actionRun/runAndWait/executeNestedWorkflow）从 script.meta.parameters 拷贝。
+ * lifecycle.runWorkflow 首行经 validateRunArgs 校验 spec.args（coerceTypes 原地规范化
+ * args 对象内容，字段引用不变；worker 启动与 pause/resume 重建共用同一对象）。
+ */
+  readonly parameters?: Record<string, unknown>;
+  /** 调用方传入的参数（worker 内通过 $ARGS 访问）。 */
   readonly args: Record<string, unknown>;
+ /**
+ * Run 级 model override（Option B：经 workerData → worker global $MODEL → agent() fallback）。
+ *
+ * undefined = 继承主 agent 模型（零配置默认）。设置时该 run 内所有 agent() 调用默认继承
+ * （除非 per-call 显式指定 model）。注意：不 merge 进 args（对称单路径注入），
+ * 而是经 worker-script-builder 注入为 $MODEL worker global。
+ */
+  readonly model?: string;
+ /**
+ * Run 级 thinkingLevel override（Option B：经 workerData → worker global $THINKING_LEVEL）。
+ *
+ * undefined = 继承主 agent thinkingLevel。取值范围由 THINKING_ORDER SSOT 派生（含 max）。
+ */
+  readonly thinkingLevel?: string;
  /** Token 预算上限（未设或 0 = 不限制，见 Budget 守卫）。 */
   readonly budgetTokens?: number;
  /** 时间预算上限（ms，wall-clock，由 lifecycle.scheduleTimeBudget 调度）。 */

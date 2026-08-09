@@ -29,6 +29,7 @@ vi.mock("../lifecycle.ts", () => ({
 // import 在 vi.mock 之后（hoisting 保证拿到 mock 版本）。runWorkflow 从被 mock 的
 // lifecycle 模块导入，与 launcher.ts 内部引用的是同一 mock 实例。
 import { runWorkflow } from "../lifecycle.ts";
+import { ArgsValidationError } from "../args-validator.ts";
 import { executeNestedWorkflow } from "../launcher.ts";
 
 const MOCK_RUN_ID = "wf-test-child";
@@ -114,12 +115,12 @@ function makeDoneChildRun(opts: {
 function makeDeps(opts: {
   script?: WorkflowScript;
   childRun?: WorkflowRun;
-  registry?: { get: ReturnType<typeof vi.fn> };
+  registry?: { getPath: ReturnType<typeof vi.fn> };
 } = {}): LauncherDeps {
   const runs = new Map<string, WorkflowRun>();
   if (opts.childRun) runs.set(MOCK_RUN_ID, opts.childRun);
   const registry = opts.registry ?? {
-    get: vi.fn(async () => opts.script),
+    getPath: vi.fn(async () => opts.script),
   };
   return {
     registry,
@@ -149,6 +150,9 @@ beforeEach(() => {
 describe("executeNestedWorkflow", () => {
   it("returns error result when workflow not found", async () => {
     const parent = makeParentRun();
+    const signal = parent.runtime!.controller.signal;
+    const addSpy = vi.spyOn(signal, "addEventListener");
+    const removeSpy = vi.spyOn(signal, "removeEventListener");
     const deps = makeDeps({ script: undefined });
 
     const result = await executeNestedWorkflow("missing", {}, parent, deps);
@@ -156,6 +160,9 @@ describe("executeNestedWorkflow", () => {
     expect(result.error).toBe("Workflow 'missing' not found");
     expect(result.content).toBe("");
     expect(runWorkflow).not.toHaveBeenCalled();
+    // E8：早返回也走 finally——Step 2 注册的 listener 被移除（原实现泄漏）
+    expect(addSpy).toHaveBeenCalledTimes(1);
+    expect(removeSpy).toHaveBeenCalledTimes(1);
   });
 
   it("returns error result on lint failure", async () => {
@@ -168,6 +175,30 @@ describe("executeNestedWorkflow", () => {
     expect(result.error).toContain("no entry point");
     expect(result.content).toBe("");
     expect(runWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("TC11: chokepoint 校验失败 → {error} + parentSignal listener 不泄漏（E8）", async () => {
+    // 模块级 mock lifecycle：runWorkflow reject ArgsValidationError（真实实例——
+    // launcher.ts 未被 mock，instanceof 检查命中同一 class）。
+    vi.mocked(runWorkflow).mockRejectedValueOnce(
+      new ArgsValidationError(
+        "child-wf",
+        "Invalid args for workflow 'child-wf': 1 error(s)\n- /target: is required\nRead the workflow script file (location from <available_workflows>) for the parameter schema and usage.",
+      ),
+    );
+    const parent = makeParentRun();
+    const signal = parent.runtime!.controller.signal;
+    const addSpy = vi.spyOn(signal, "addEventListener");
+    const removeSpy = vi.spyOn(signal, "removeEventListener");
+    const deps = makeDeps({ script: makeScript() });
+
+    const result = await executeNestedWorkflow("child-wf", {}, parent, deps);
+
+    expect(result.content).toBe("");
+    expect(result.error).toContain("Invalid args for workflow 'child-wf'");
+    // Step 2 注册 1 次 + finally 移除 1 次 → 平衡即无泄漏（E8 修复点）
+    expect(addSpy).toHaveBeenCalledTimes(1);
+    expect(removeSpy).toHaveBeenCalledTimes(1);
   });
 
   it("detects circular call chain", async () => {

@@ -10,6 +10,8 @@ import { readdirSync,readFileSync } from "node:fs";
 import { dirname,join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { parseResourceMeta } from "../shared/meta-parser.ts";
+
 import { describe, expect, it } from "vitest";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -21,10 +23,10 @@ function readScript(name: string): string {
   return readFileSync(join(WORKFLOWS_DIR, name), "utf-8");
 }
 
-/** 提取 meta.name 值（从 `name: "xxx"` 模式）。 */
+/** 提取 meta.name 值（经 IF1 parseResourceMeta，m2 收敛）。 */
 function extractMetaName(src: string): string | null {
-  const match = src.match(/name:\s*["']([^"']+)["']/);
-  return match ? match[1] : null;
+  const meta = parseResourceMeta(src, "workflow");
+  return meta && meta.kind === "workflow" ? meta.name : null;
 }
 
 describe("E1: 内置 workflow 文件结构一致性", () => {

@@ -66,7 +66,6 @@ describe("U3: not-found 错误含退路指引", () => {
   const toolWorkflowSrc = readSrc("src/interface/tool-workflow.ts");
   const toolWorkflowScriptSrc = readSrc("src/interface/tool-workflow-script.ts");
   const subagentActionsSrc = readSrc("src/interface/subagent-actions.ts");
-  const agentOptsResolverSrc = readSrc("src/orchestration/agent-opts-resolver.ts");
 
   it("tool-workflow.ts: not-found 错误含 action:status 指引", () => {
     // pause/resume/abort 的 not-found 错误都应有 action:status 指引
@@ -82,11 +81,6 @@ describe("U3: not-found 错误含退路指引", () => {
 
   it("subagent-actions.ts: cancel not-found 含 includeFinished 指引", () => {
     expect(subagentActionsSrc).toContain("includeFinished");
-  });
-
-  it("agent-opts-resolver.ts: agent not found 含可用列表", () => {
-    expect(agentOptsResolverSrc).toContain("Available:");
-    expect(agentOptsResolverSrc).toContain("agentRegistry.list()");
   });
 });
 

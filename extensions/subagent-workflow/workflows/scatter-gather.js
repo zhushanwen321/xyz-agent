@@ -12,11 +12,22 @@
 //
 // ⚠️ lintScript 约束（本脚本已遵守）：含 parallel() 入口（兼 agent 嵌套），禁止 bare IIFE
 
-const meta = {
-  name: "scatter-gather",
-  description: "通用编排：scatter 拆分 → parallel 处理 → gather 合并 三段",
-  phases: ["scatter", "process", "gather"],
-};
+/* @pi-meta
+name: scatter-gather
+description: 通用编排：scatter 拆分 → parallel 处理 → gather 合并 三段
+phases: [scatter, process, gather]
+parameters:
+  type: object
+  properties:
+    task: { type: string }
+    agents: { type: string }
+  required: [task]
+usage: |
+  ## 使用说明
+  - scatter 拆解大任务 → process 并行处理 → gather 聚合结果
+  - agents：逗号分隔的 agent .md 绝对路径，按顺序对应 scatter/process/gather 三段
+  - 示例：workflow run scatter-gather --args task="<大任务描述>" agents="/path/splitter.md,/path/processor.md"
+*/
 
 // ── 入参（$ARGS）──────────────────────────────────────────────────
 const task = $ARGS.task;
@@ -24,7 +35,17 @@ if (!task) {
   throw new Error("scatter-gather 缺少必需参数 task。用法：workflow run scatter-gather --args task=\"<大任务描述>\"");
 }
 
-log("scatter-gather 开始，task=" + task);
+// S4：agents 参数 = 逗号分隔的 agentRef 路径数组，按顺序对应 scatter/process/gather
+// worker 沙箱为 eval 模式：require 相对路径以 cwd 为基准（非脚本目录），
+// 必须用 workerData.scriptPath 锚定脚本目录（review-fix-loop 同模式）。
+const SCRIPT_DIR = workerData && workerData.scriptPath
+  ? require("path").dirname(workerData.scriptPath)
+  : process.cwd();
+const { parseAgentRefs, agentRefAt } = require(SCRIPT_DIR + "/_shared/agent-refs.cjs");
+const agentRefs = parseAgentRefs($ARGS.agents);
+const stepAgent = (i) => { const ref = agentRefAt(agentRefs, i); return ref ? { agent: ref } : {}; };
+
+log("scatter-gather 开始，task=" + task + (agentRefs.length ? "，agents=" + agentRefs.join(",") : ""));
 
 let currentPhase = "init";
 let outcome;
@@ -56,6 +77,7 @@ try {
       required: ["subtasks"],
     },
     description: "scatter-split",
+    ...stepAgent(0),
   });
 
   const subtasks = Array.isArray(split?.subtasks) ? split.subtasks : [];
@@ -84,6 +106,7 @@ try {
           required: ["subtask", "result"],
         },
         description: "scatter-process-" + s.name,
+        ...stepAgent(1),
       })
     ),
   );
@@ -129,6 +152,7 @@ try {
       required: ["mergedResult", "completeness"],
     },
     description: "scatter-gather-merge",
+    ...stepAgent(2),
   });
 
   outcome = {

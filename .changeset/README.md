@@ -19,5 +19,5 @@ pnpm changeset
 
 ## 发布
 
-- 正式版：tag `npm-v*` 触发 `.github/workflows/release-npm.yml`
-- 预发布：push `dev-npm-*` 分支触发 `.github/workflows/release-npm-dev.yml`（`--tag dev`）
+- 正式版：tag `npm-*`（格式 `npm-<slug>-<date>-<time>`）触发 `.github/workflows/release-npm.yml`。main 线采用人工版本判定（`scripts/check-version-changes.sh` + `scripts/apply-version.sh`），不用 `changeset version` 自动推算 type
+- 预发布：push `dev-npm-*` 分支触发 `.github/workflows/release-npm-dev.yml`（`--tag dev`），保留 `changeset version` + `changeset pre` 全流程

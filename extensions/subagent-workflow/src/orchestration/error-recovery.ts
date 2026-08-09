@@ -279,15 +279,12 @@ function dispatchAgentCall(
         : undefined,
   };
 
- // BL-1：解析 agent/skill/schema → systemPromptFiles / skillPath / schemaEnv。
- // D-12 重构误删 resolveAgentOpts，导致 inline override 静默失效。此处从
- // LifecycleDeps 取 agentRegistry/sessionDir/activeTempFiles（per-session，由
- // Interface 层 session_start 注入），调 resolveAgentOpts 解析 inline override。
- // 解析失败（agent/skill 未找到、临时文件写入错）走 error 路径，不发 slot、不 spawn。
-  const hasResolverDeps = deps.agentRegistry && deps.sessionDir && deps.activeTempFiles;
-  const resolved = hasResolverDeps
-    ? resolveAgentOpts(opts, deps.agentRegistry!, deps.sessionDir!, deps.activeTempFiles!)
-    : { opts };
+ // BL-1：解析 skill/schema → skillPath / schemaEnv / appendSystemPrompt。
+ // M2 修正后 resolveAgentOpts 单参数，只处理 schema SO 指令（内容直传）+ skill。
+ // agent ref 处理（systemPrompt/model/thinkingLevel）交 resolveIdentity（经
+ // getAgentConfig + resolveModel 完整覆盖），消除双重注入与 model 层级混乱。
+ // 解析失败（skill 未找到）走 error 路径，不发 slot、不 spawn。
+  const resolved = resolveAgentOpts(opts);
   if (resolved.error) {
     const call = new AgentCall(msg.callId, opts, node);
     call.markRunning();

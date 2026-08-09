@@ -12,9 +12,11 @@
 import type { Component } from "@earendil-works/pi-tui";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { type Static, Type } from "typebox";
 
 import { SLUG_MAX_LENGTH } from "../execution/execute-options-mapper.ts";
+import { THINKING_ORDER } from "../execution/model-resolver.ts";
 import { getSubagentService } from "../execution/subagent-service.ts";
 import type { SubagentToolResult } from "../execution/types.ts";
 import { extractAgentName } from "./format.ts";
@@ -85,12 +87,14 @@ const SubagentParams = Type.Object({
     maxLength: SLUG_MAX_LENGTH,
   })),
   agent: Type.Optional(Type.String({
-    description: 'Agent name (system prompt + tools). If omitted, defaults to "general-purpose". Pick by task nature (改不改代码 × 看代码还是看外部): explorer=理解代码(只读) | coder=写改代码+测试 | reviewer=审查/验收(只读) | debugger=查bug根因(只读) | analyst=深度分析(只读) | planner=复杂任务拆解 | researcher=外部调研 | orchestrator=多agent编排. Available: general-purpose (default fallback), coder, researcher, explorer, planner, reviewer, debugger, analyst, orchestrator. Custom agents configurable.',
+    description: 'Agent ref: absolute path to the agent .md file (use <location> from <available_subagents>). If omitted, defaults to "general-purpose" — a generic agent that inherits the main agent\'s model and project context. Do not invent names — only use paths from the injected list.',
   })),
   model: Type.Optional(Type.String({
     description: 'Model override in "provider/modelId" format. Resolution order (top wins): (1) this param, (2) agent .md frontmatter model, (3) the main agent\'s current model (zero-config default). An explicit model (param or frontmatter) that is missing or unauthorized THROWS — there is no silent fallback to the main model. Omit this param to inherit the main model.',
   })),
-  thinkingLevel: Type.Optional(StringEnum(["off", "minimal", "low", "medium", "high", "xhigh"] as const)),
+  thinkingLevel: Type.Optional(StringEnum(THINKING_ORDER, {
+    description: "Thinking depth override (derived from THINKING_ORDER SSOT, includes 'max'). Omit to inherit the main agent's thinking level.",
+  })),
   skillPath: Type.Optional(Type.String()),
   appendSystemPrompt: Type.Optional(Type.Array(Type.String())),
   schema: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
@@ -171,13 +175,14 @@ export function registerSubagentTool(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "subagent",
     label: "Subagent",
+    promptSnippet: "Delegate to specialized subagents (agentRef = absolute .md path from <available_subagents>)",
     description: `Delegate a task to a specialized subagent — when to delegate rather than do it yourself.
 
 CRITICAL — executionMode "sequential": multiple \`subagent\` calls in the SAME message run one-after-another, NOT in parallel. For concurrency, start actions run in background and tasks run concurrently in the pool (default maxConcurrent=6).
 
 ## When to delegate
 
-Delegate when the task needs a distinct role (researcher/coder), context isolation (fork/worktree), or parallelism while you do other work. Do NOT delegate trivial tasks or one-shot lookups you could do faster yourself.
+Delegate when the task needs a distinct specialized role, context isolation (fork/worktree), or parallelism while you do other work. Delegate FIRST when the task involves any of: reading 3+ files, writing 100+ lines of implementation, parallel research, or specialized review — doing these yourself floods your context with implementation detail and loses the orchestration view.
 
 ## Actions
 
@@ -189,7 +194,7 @@ Delegate when the task needs a distinct role (researcher/coder), context isolati
 
 \`\`\`
 {"action":"start","task":"<your task>","slug":"<kebab-case>"}
-{"action":"start","task":"...","slug":"fix-login","agent":"coder","model":"anthropic/claude-3.5-sonnet","fork":true}
+{"action":"start","task":"...","slug":"fix-login","agent":"worker","model":"anthropic/claude-3.5-sonnet","fork":true}
 {"action":"list","listParam":{"includeFinished":false,"limit":20}}
 {"action":"cancel","cancelParam":{"subagentId":"sa-550e8400"}}
 \`\`\`
@@ -208,7 +213,6 @@ Completion auto-notifies you (steer wakes next turn, even mid-poll). So:
 - Over-generalizing the flatten: ONLY start fields are top-level. list and cancel params stay nested under listParam / cancelParam (e.g. {"action":"list","listParam":{"includeFinished":true}}, NOT {"action":"list","includeFinished":true}).
 - Launching background, then sleeping/polling instead of working or stopping.
 - Treating subagent results as authoritative without verification.
-- Delegating trivial tasks you could do faster yourself.
 - Canceling by guessing a subagentId instead of using action:"list" first.
 
 ## You cannot
@@ -236,9 +240,10 @@ A subagent MAY call the \`subagent\` tool itself (each level spawns its own chil
 // 回调实现（模块级 const）
 // ============================================================
 
-// ponytail: renderCall 每次 TUI invalidate 都触发，同一解析错误会重复刷屏。
-// 按错误消息去重（Set），session 内只报第一次。错误消息含 modelStr，足够区分。
-const reportedRenderErrors = new Set<string>();
+// ponytail: renderCall 每次 TUI invalidate 都触发。streaming 中 args 是 partial JSON
+// 解析结果（如 model="deep" 来自未流完的 "deepseek-router/ds-pro"），解析失败是预期。
+// 不走 appendEntry（非真实错误），只走 logger.debug（默认 no-op，PI_EXT_DEBUG=1 写文件）。
+const renderCallLogger = getLogger("subagents");
 
 const subagentRenderCall: SubagentRenderCallCb = (args, theme, ctx) => {
   // 预解析 model（同步）：让标题行能显示 model/thinking，不必等 execute。
@@ -256,14 +261,11 @@ const subagentRenderCall: SubagentRenderCallCb = (args, theme, ctx) => {
     const r = service?.resolveModel(agent, override);
     if (r) resolved = { model: `${r.model.provider}/${r.model.id}`, thinkingLevel: r.thinkingLevel };
   } catch (err) {
-    // service 未注册 / modelRegistry 未注入 / 无可用 model → 降级不显示 model（renderCall 不应崩）。
-    // 去重：同一 err.message 只 console.debug 一次，避免 TUI invalidate 反复刷屏。
-    const msg = err instanceof Error ? err.message : String(err);
-    if (!reportedRenderErrors.has(msg)) {
-      reportedRenderErrors.add(msg);
-      void err; // 显式确认忽略：renderCall 降级是设计意图，不阻断渲染
-      console.debug("[subagents] renderCall model resolution failed, degrading:", err);
-    }
+    // streaming 中间态（partial JSON）或 service 未就绪 → 降级不显示 model（renderCall 不应崩）。
+    // 不阻断渲染，不污染 TUI。开发期开 PI_EXT_DEBUG=1 可写文件日志排查。
+    renderCallLogger.debug("renderCall model resolution failed, degrading", {
+      reason: err instanceof Error ? err.message : String(err),
+    });
   }
   return renderSubagentCall(args, theme, ctx, resolved);
 };
