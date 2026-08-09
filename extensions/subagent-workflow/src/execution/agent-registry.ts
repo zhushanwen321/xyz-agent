@@ -82,12 +82,21 @@ export function parseAgentWithMeta(
   // 是执行配置（非 AgentMeta 路由字段），仍用 extractYamlField 取。
   const meta = parseResourceMeta(content, "agent");
   const agentMeta = meta?.kind === "agent" ? meta : null;
+  // MF-3 regression fix：agentMeta=null（IF1 要求 name/description 必填，缺则 parseResourceMeta
+  // 返 null）时，model/tools 不能静默丢失——fallback 用 extractYamlField 取（保留重构前行为）。
+  // 注入路由可见性由 discovery/injector 按 available 标志决定，与本处（direct-path loadByPath）无关。
+  const modelFallback = extractYamlField(yamlBlock, "model");
+  const toolsFallbackRaw = extractYamlField(yamlBlock, "tools");
+  const toolsFallback = toolsFallbackRaw
+    ? toolsFallbackRaw.split(",").map((s) => s.trim()).filter(Boolean)
+    : undefined;
   if (!agentMeta && /^model:|^tools:/m.test(yamlBlock)) {
-    // m2 exec-review MINOR-2：IF1 要求 name/description 必填；缺 description 时 agent
-    // 被整体拒绝 → model/tools 路由字段静默失效。显式 warn 替代静默丢配置。
+    // m2 exec-review MINOR-2 + MF-3：IF1 未通过（缺 name/description）→ model/tools 经 legacy
+    // fallback 取（direct-path loadByPath 不丢配置，与重构前一致）；但结构化路由注入不可见，
+    // 建议 agent 作者补 description 以满足 IF1。
     logger.warn(
       `[agent-registry] ${filePath}: agent frontmatter 缺 name/description（IF1 必填），` +
-        "model/tools 路由字段不生效——请补充 description",
+        "model/tools 经 legacy fallback 生效（直接路径不丢配置），但结构化路由不可见——请补充 description",
     );
   }
   const defaultBackgroundRaw = extractYamlField(yamlBlock, "defaultBackground");
@@ -96,9 +105,11 @@ export function parseAgentWithMeta(
     config: {
       name: agentMeta?.name ?? name,
       systemPrompt: body,
-      model: agentMeta?.model ?? undefined,
+      model: agentMeta?.model ?? modelFallback ?? undefined,
       thinkingLevel: extractYamlField(yamlBlock, "thinkingLevel") ?? undefined,
-      tools: agentMeta?.tools && agentMeta.tools.length > 0 ? agentMeta.tools : undefined,
+      tools: agentMeta?.tools && agentMeta.tools.length > 0
+        ? agentMeta.tools
+        : (toolsFallback && toolsFallback.length > 0 ? toolsFallback : undefined),
       defaultBackground: defaultBackgroundRaw === "true" ? true : undefined,
     },
     meta: agentMeta,

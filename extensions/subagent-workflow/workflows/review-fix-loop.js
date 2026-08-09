@@ -114,7 +114,7 @@ const {
 for (const key of Object.keys($ARGS)) {
   if (VALID_ARG_KEYS.has(key)) continue;
   if (/^batch\d+$/.test(key)) continue;
-  fail("未知参数: " + key + "（合法参数: targetType/target/batch1..batchN/agents/batchNames/reviewPrompt/fixPrompt/autoCommit/maxRounds/stuckThreshold/skipCleanAgents/recheckAfterFix/fixAgent/maxFixAttempts/convergeNewIssues/convergeRounds）");
+  fail("未知参数: " + key + "（合法参数: targetType/target/batch1..batchN/agents/batchNames/reviewPrompt/fixPrompt/autoCommit/maxRounds/stuckThreshold/skipCleanAgents/recheckAfterFix/fallowScan/fixAgent/maxFixAttempts/convergeNewIssues/convergeRounds）");
 }
 
 const targetType = $ARGS.targetType;
@@ -309,8 +309,13 @@ log("Run directory: " + RUN_ROOT);
 function validateAgentPaths(defs) {
   for (const def of defs) {
     if (def.isFallow || !def.path) continue;
+    // MF-2：与 normalizeRef（src/shared/agent-ref.ts）对齐——~/ 前缀展开为 homedir 后再 statSync。
+    // resolveAgentDefs 接受 ~/ 前缀、normalizeRef 运行时也展开，此处不展开会「先接受后拒绝」误报 ENOENT。
+    const expanded = def.path.startsWith("~/")
+      ? path.join(os.homedir(), def.path.slice(2))
+      : def.path;
     try {
-      fs.statSync(def.path);
+      fs.statSync(expanded);
     } catch {
       fail("Agent file not found: " + def.path + ". Check <available_subagents> <location> for valid agent refs (absolute .md path).");
     }

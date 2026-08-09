@@ -55,7 +55,7 @@ describe("VALID_ARG_KEYS（未知参数 fail-fast 白名单）", () => {
   it("覆盖全部合法参数键（与 review-fix-loop.js 头部 fail 消息列出的合法参数一一对应）", () => {
     expect([...VALID_ARG_KEYS].sort()).toEqual([
       "_runId", "agents", "autoCommit", "batchNames", "convergeNewIssues",
-      "convergeRounds", "fixAgent", "fixPrompt", "maxFixAttempts", "maxRounds",
+      "convergeRounds", "fallowScan", "fixAgent", "fixPrompt", "maxFixAttempts", "maxRounds",
       "recheckAfterFix", "reviewPrompt", "skipCleanAgents",
       "stuckThreshold", "target", "targetType",
     ]);
