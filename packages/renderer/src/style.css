@@ -482,9 +482,21 @@ textarea {
    Reduced motion（PRODUCT.md Accessibility：prefers-reduced-motion 兜底）
    ============================================================ */
 @media (prefers-reduced-motion: reduce) {
+  /*
+   * Reduced motion = 更少更温和，非零（AUDIT §6）。
+   * - 动画（位移/旋转/脉动类）：duration 归零 + 仅播一次 → 瞬切到终态
+   * - transition：只清零运动属性（transform/位移类），保留 opacity/color 过渡
+   *   （辅助理解类反馈不应被一并砍掉）
+   */
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+  }
+  /* 保留辅助理解的非位移过渡（覆盖上面的 0.01ms） */
+  *, *::before, *::after {
+    transition-property: opacity, color, background-color, border-color, fill, stroke, box-shadow, filter;
+    transition-duration: var(--duration-fast) !important;
   }
 }

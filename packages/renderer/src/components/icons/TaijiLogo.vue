@@ -23,7 +23,8 @@ withDefaults(defineProps<Props>(), {
     viewBox="0 0 1200 1200"
     preserveAspectRatio="xMidYMid meet"
     class="block shrink-0 motion-reduce:animate-none"
-    :style="spin ? { animation: `taiji-spin ${duration}s linear infinite`, transformOrigin: 'center' } : undefined"
+    :class="spin ? `animate-[taiji-spin_${duration}s_linear_infinite]` : ''"
+    :style="{ transformOrigin: 'center' }"
     aria-hidden="true"
   >
     <g fill-rule="evenodd" fill="currentColor" stroke="currentColor" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
