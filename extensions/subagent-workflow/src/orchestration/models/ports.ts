@@ -125,15 +125,6 @@ export interface LifecycleDeps {
  */
   log?: (level: "debug" | "info" | "warn" | "error", component: string, message: string, data?: unknown) => void;
  /**
- * per-session 数据目录（可选）。
- *
- * M2 修正后 resolveAgentOpts 收敛为单参数 (opts)，不再消费 per-session 依赖注入
- * （agent ref 交 resolveIdentity，schema 指令内容直传不写临时文件）。
- * sessionDir 字段保留——index.ts 内部 state.sessionDir 供 JsonlRunStore 定位持久化路径，
- * 此端口字段为向后兼容保留，engine 层无消费者。
- */
-  sessionDir?: string;
- /**
  * D-12 regression fix (round-2 #2)：rebuildRuntime 重新调度 run 级墙钟预算计时器。
  *
  * worker/script 错误重试走 replaceRuntime，旧 RunRuntime 的 release 会 clearTimeout

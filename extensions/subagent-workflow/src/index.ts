@@ -188,7 +188,6 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       runs: state.runs,
       registry,
       onRunDone: (run: WorkflowRun) => notifyDone(pi, run.runId, run, notifiedRunIds, toGuiCtx(sessionCtx)),
-      sessionDir: state.sessionDir,
       eventBus: pi.events,
       scheduleTimeBudget: (runId: string, budgetTimeMs: number) =>
         scheduleTimeBudget(runId, deps, budgetTimeMs),
@@ -492,9 +491,6 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
     registry,
     get onRunDone() {
       return getDeps().onRunDone;
-    },
-    get sessionDir() {
-      return getDeps().sessionDir;
     },
     get eventBus() {
       return getDeps().eventBus;
