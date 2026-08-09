@@ -311,7 +311,7 @@ export default {
     modelList: '模型清单',
     // wave4：catalog provider models 只读提示（CL2——内置模型由 pi catalog 提供，升级时刷新）
     catalogModelsHint: '内置模型由 pi catalog 提供，升级时自动刷新。',
-    catalogModelsReadonlyLabel: '内置模型（只读）',
+    catalogModelsReadonlyLabel: '模型清单（只读）',
     collapse: '收起',
     manualAdd: '+ 手动添加',
     modelLabel: '模型',

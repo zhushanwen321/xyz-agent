@@ -184,8 +184,10 @@ export function previewImport(
 export async function applyImport(
   importId: string,
   selectedIds: string[],
-  authStorage?: AuthStorage,
-): ApplyImportSuccess | ImportError {
+  // A2：收窄为 Pick<'set'>——applyImport 实际只用 authStorage.set（catalog 分路写凭据）。
+  // configService.authStorage 是 Pick<6 方法>，收窄后可赋值（协变），无需完整 AuthStorage。
+  authStorage?: Pick<AuthStorage, 'set'>,
+): Promise<ApplyImportSuccess | ImportError> {
   // W1：输入校验（防 WS 异常 payload 导致 crash）
   if (typeof importId !== 'string' || !importId.trim()) {
     return { error: { code: 'INVALID_REQUEST', message: 'importId is required' } }

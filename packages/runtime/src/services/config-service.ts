@@ -248,6 +248,8 @@ export class ConfigService implements IConfigService {
       catalogIdsHandled.add(id)
       const override = models.providers[id]
       const hasOverride = !!override
+      // C1 契约「catalog 凭据 = id ∈ auth.json keys」；override?.apiKey 是 catalog provider
+      // 手动填 key 的旧数据（迁移前错位）合理扩展，双源判定避免遗漏。
       const apiKeySet = authIdSet.has(id) || !!override?.apiKey
       const overrideModels = override?.models ?? []
       result.push({
@@ -286,12 +288,11 @@ export class ConfigService implements IConfigService {
         baseUrl: config.baseUrl,
         apiKeySet,
         authMethod: deriveAuthMethod(config),
-        // M6 status 派生（沿用旧逻辑）：apiKey 存在 → connected；否则 auth.json 有凭据 → connected
-        status: config.apiKey
+        // M6 status 派生：apiKey 或 auth.json 凭据任一 → connected。
+        // B3：复用 authIdSet（listProviders 开头批量读），消除每次循环 hasCredentialSync 的 N+1 读盘。
+        status: (config.apiKey || authIdSet.has(id))
           ? 'connected' as const
-          : this.authStorage?.hasCredentialSync(id)
-            ? 'connected' as const
-            : 'not_configured' as const,
+          : 'not_configured' as const,
         // T9/M5 models 合并：用户自定义 models 非空 → 保留；为空 → builtin models 兜底
         models: userModels.length > 0
           ? userModels
@@ -353,6 +354,9 @@ export class ConfigService implements IConfigService {
     // wave3：existingConfig===undefined 判定「新建 provider」（边界1 白名单守卫用）
     const existingConfig = this.configStore.getProviderConfig(providerId)
     const existing = existingConfig ?? {}
+    // A1：merged 提前声明——catalog 分支 delete merged.apiKey 需在声明之后（原顺序触发 TDZ TS2448/2454）
+    // TODO: 当 pi models.json 支持 schema 后收窄类型（现有 Record<string, unknown> 是架构限制）
+    const merged: Record<string, unknown> = { ...existing }
     // I9 清理① + catalog 分体系：
     // - catalog provider：apiKey 归 auth.json (api_key overwrites oauth natively)
     // - custom provider：apiKey 写 models.json，清 auth.json oauth (I9 cleanup)
@@ -372,8 +376,6 @@ export class ConfigService implements IConfigService {
         })
       }
     }
-    // TODO: 当 pi models.json 支持 schema 后收窄类型（现有 Record<string, unknown> 是架构限制）
-    const merged: Record<string, unknown> = { ...existing }
     if (data.apiKey !== undefined) merged.apiKey = data.apiKey as string
     // I6：authMethod 透传（ProviderQuickSetup.onSave 按所选认证方式填充）
     if (data.authMethod !== undefined) merged.authMethod = data.authMethod
@@ -509,15 +511,14 @@ export class ConfigService implements IConfigService {
    */
   private pickEnabledDefaultModel(excludedId: string): { provider: string; modelId: string } | undefined {
     const providers = this.listProviders()
-    for (const p of providers) {
-      if (p.id === excludedId) continue
-      if (!p.enabled) continue
-      const firstModel = p.models[0]
-      if (firstModel) {
-        return { provider: p.id, modelId: firstModel.id }
-      }
-    }
-    return undefined
+    // B1：优先选有凭据（apiKeySet）的启用 provider 作 default，
+    // 避免重选到无凭据的 catalog provider（用户禁用某 provider 触发重选时）。
+    // 有凭据优先，找不到再 fallback 到任意启用 provider（含 ambient 认证如 bedrock）。
+    const candidates = providers.filter(p => p.id !== excludedId && p.enabled && p.models[0])
+    const withCred = candidates.find(p => p.apiKeySet)
+    if (withCred) return { provider: withCred.id, modelId: withCred.models[0].id }
+    const any = candidates[0]
+    return any ? { provider: any.id, modelId: any.models[0].id } : undefined
   }
 
   deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } } {

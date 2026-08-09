@@ -131,7 +131,7 @@ describe('config.previewImportProviders / config.applyImportProviders WS round-t
       importId,
       preview: { source: 'pi', providers: [] },
     })
-    vi.mocked(ctx.configService.applyImportProviders).mockReturnValue({ result })
+    vi.mocked(ctx.configService.applyImportProviders).mockResolvedValue({ result })
     const handler = new SettingsMessageHandler(ctx)
 
     // Step1 preview
@@ -180,7 +180,7 @@ describe('config.previewImportProviders / config.applyImportProviders WS round-t
 
   it('T9b: apply 返回 error（缓存过期）→ reply config.providersImported 含 error，不广播', async () => {
     const ctx = mockContext()
-    vi.mocked(ctx.configService.applyImportProviders).mockReturnValue({
+    vi.mocked(ctx.configService.applyImportProviders).mockResolvedValue({
       error: { code: 'PREVIEW_EXPIRED', message: '预览已过期' },
     })
     const handler = new SettingsMessageHandler(ctx)
@@ -321,7 +321,7 @@ describe('T11: 孤儿凭据端到端（sa3 F1 · B.3/B.4/B.6）', () => {
     rmSync(fakeHome, { recursive: true, force: true })
   })
 
-  it('孤儿凭据 auth.json → preview 组 2 → apply → models.json 出现 openai（name/api/baseUrl/apiKey，models undefined）', () => {
+  it('孤儿凭据 auth.json → preview 组 2 → apply → models.json 出现 openai（name/api/baseUrl/apiKey，models undefined）', async () => {
     const out = previewImport('pi')
     if (!('importId' in out)) throw new Error('preview should succeed')
 
@@ -337,7 +337,7 @@ describe('T11: 孤儿凭据端到端（sa3 F1 · B.3/B.4/B.6）', () => {
     expect(JSON.stringify(out)).not.toContain('sk-orphan-e2e-openai')
 
     // apply：组 1（zhipu/deepseek-router）+ 组 2（openai）一起导入
-    const applyOut = applyImport(out.importId, ['zhipu', 'deepseek-router', 'openai'])
+    const applyOut = await applyImport(out.importId, ['zhipu', 'deepseek-router', 'openai'])
     if (!('result' in applyOut)) throw new Error('apply should succeed')
     const openaiResult = applyOut.result.imported.find((i) => i.id === 'openai')!
     expect(openaiResult.status).toBe('imported')

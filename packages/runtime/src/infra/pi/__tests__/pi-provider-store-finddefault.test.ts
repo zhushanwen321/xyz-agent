@@ -130,3 +130,59 @@ describe('TC6: findValidDefaultModel catalog 兜底过滤 enabledModels（ES3）
     expect(r.result).toBeNull()
   })
 })
+
+describe('A8: findValidDefaultModel 主路径 enabledModels 过滤', () => {
+  // 主路径：defaultProvider+defaultModel 在 models.json 有效时直接返回。A8 加 enabledModels 守卫——
+  // 被禁用的 default 不走主路径，fall through 到 fallback（pickFirstModelProvider 同样过滤 enabled）。
+  it('default provider 被 enabledModels 禁用 → 主路径跳过，fallback 重选到启用的 provider', () => {
+    writeModels({
+      'custom-a': { models: [{ id: 'm-a' }] },
+      'custom-b': { models: [{ id: 'm-b' }] },
+    })
+    // default 指向 custom-a，但白名单只启用 custom-b
+    writeSettings({ defaultProvider: 'custom-a', defaultModel: 'm-a', enabledModels: ['custom-b/*'] })
+    writeAuth({})
+    const r = findValidDefaultModel()
+    expect(r.result).not.toBeNull()
+    expect(r.result!.provider).toBe('custom-b')
+    expect(r.result!.modelId).toBe('m-b')
+    // fallback 重选 → wasFixed=true（getDefaultModel 会写回 settings.json）
+    expect(r.wasFixed).toBe(true)
+  })
+
+  it('对照：default provider 启用 → 主路径直接返回（wasFixed=false，不写回）', () => {
+    writeModels({
+      'custom-a': { models: [{ id: 'm-a' }] },
+    })
+    // enabledModels 空 = 全启用
+    writeSettings({ defaultProvider: 'custom-a', defaultModel: 'm-a', enabledModels: [] })
+    writeAuth({})
+    const r = findValidDefaultModel()
+    expect(r.result).toEqual({ provider: 'custom-a', modelId: 'm-a' })
+    expect(r.wasFixed).toBe(false)
+  })
+
+  it('主路径 model 重选不受 A8 守卫影响：default 启用但 defaultModel 无效 → 仍走 provider 内重选', () => {
+    writeModels({
+      'custom-a': { models: [{ id: 'm-a' }, { id: 'm-a2' }] },
+    })
+    // defaultModel='gone' 不在 provider models → 主路径内重选 models[0]
+    writeSettings({ defaultProvider: 'custom-a', defaultModel: 'gone', enabledModels: [] })
+    writeAuth({})
+    const r = findValidDefaultModel()
+    expect(r.result).toEqual({ provider: 'custom-a', modelId: 'm-a' })
+    expect(r.wasFixed).toBe(true)
+  })
+
+  it('default 被禁用 + models.json 无其他启用 provider → fallback 返回 undefined，走 catalog 兜底', () => {
+    // 仅 custom-a（被禁用），无其他启用 provider → pickFirstModelProvider 返回 undefined
+    writeModels({
+      'custom-a': { models: [{ id: 'm-a' }] },
+    })
+    writeSettings({ defaultProvider: 'custom-a', defaultModel: 'm-a', enabledModels: ['custom-x/*'] })
+    // auth.json 无凭据 → catalog 兜底也找不到 → null
+    writeAuth({})
+    const r = findValidDefaultModel()
+    expect(r.result).toBeNull()
+  })
+})

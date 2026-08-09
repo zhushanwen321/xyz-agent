@@ -197,15 +197,13 @@ describe('TC5: step2 defaultModel 重选（迁移后 default 落白名单外 →
     expect(settings?.defaultProvider).toBe('openai')
     expect(settings?.defaultModel).toBe('gpt-4')
 
-    // findValidDefaultModel 兜底：openai 的 gpt-4 仍存在于 models.json（只是 enabledModels 禁用），
-    // 故 result 仍返回 openai/gpt-4（findValidDefaultModel 不过滤 enabledModels，由调用方 getDefaultModel
-    // 在 spawn 时被 pi 拒绝触发下次重选）。验证 findValidDefaultModel 自身契约：
-    //  - result 非空（models.json 有该 model）
-    //  - wasFixed=false（model id 存在于 provider，无需修正）
+    // A8：findValidDefaultModel 主路径 + fallback（pickFirstModelProvider）均过滤 enabledModels——
+    // openai 被禁用，主路径守卫跳过，fallback 选启用的 anthropic/claude-3，wasFixed=true（重选写回）。
     const r = findValidDefaultModel()
     expect(r.result).not.toBeNull()
-    expect(r.result!.provider).toBe('openai')
-    expect(r.result!.modelId).toBe('gpt-4')
+    expect(r.result!.provider).toBe('anthropic')
+    expect(r.result!.modelId).toBe('claude-3')
+    expect(r.wasFixed).toBe(true)
   })
 
   it('default 落在已删除 provider（迁移前 models.json 无该 provider）→ findValidDefaultModel 重选', async () => {

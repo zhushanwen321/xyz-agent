@@ -28,6 +28,8 @@ vi.mock('../provider-parser.js', () => ({
 vi.mock('../../../infra/pi/pi-provider-store.js', () => ({
   getProviderNames: vi.fn(() => []),
   upsertProvider: vi.fn(() => ({})),
+  // wave3 边界1：applyImport 导入成功后调 ensureProviderInWhitelist（白名单守卫），mock 补全避免 No export 报错
+  ensureProviderInWhitelist: vi.fn(),
 }))
 
 

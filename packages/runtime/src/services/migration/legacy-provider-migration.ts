@@ -9,10 +9,9 @@
  * - OAuth 冲突（auth.json 已有 oauth）→ 跳过
  * - 迁移失败不阻断启动，warn + 下次重试
  */
-import { readModels, upsertProvider, getProviderNames, setEnabledModels, clearEnabledModels } from '../../infra/pi/pi-provider-store.js'
+import { readModels, upsertProvider, getProviderNames, setEnabledModels, clearEnabledModels, removeProvider } from '../../infra/pi/pi-provider-store.js'
 import { isCatalogProvider } from '../provider-catalog.js'
 import { AuthStorage } from '../auth/auth-storage.js'
-import { getDataDir } from '@xyz-agent/shared'
 import { join } from 'node:path'
 import type { PiProviderConfig } from '../../infra/pi/pi-provider-store.js'
 
@@ -95,13 +94,12 @@ export async function migrateLegacyProviderConfig(authStorage: AuthStorage): Pro
         if (hasOverride) {
           upsertProvider(providerId, rest as Parameters<typeof upsertProvider>[1])
         } else {
-          // 无 override → 删除整个条目。upsertProvider 不支持 delete，
-          // 需要从 readModels 的副本中移除然后...实际上 pi-provider-store 没有 deleteProvider
-          // 借用已有的 remove 路径。但我们没有直接删除的 API。
-          // 变通：upsertProvider 写一个最小条目（不含 apiKey），或者留空条目。
-          // 留空条目不会覆盖 catalog（§2.3），且 apiKey 已迁走，安全。
-          // 最佳方案：写一个只有 name/api 的条目，让 pi 的 override 逻辑正常工作
-          upsertProvider(providerId, { name: config.name, api: config.api, baseUrl: config.baseUrl } as Parameters<typeof upsertProvider>[1])
+          // 无 override → 删除整个条目，catalog provider 回退 builtin template。
+          // A7：用 removeProvider（功能完整：删条目 + 同步清理 default）替代「写最小条目」变通
+          // （写 {name,api,baseUrl} 会丢失 models/quota 等字段且语义不准）。
+          // removeProvider 若删的是 default 承载 provider 会重选 newDefault 并写回 settings.json，
+          // 运行时 findValidDefaultModel 兜底（catalog provider 仍可用，凭据已正位 auth.json）。
+          removeProvider(providerId)
         }
 
         report.migrated.push(providerId)

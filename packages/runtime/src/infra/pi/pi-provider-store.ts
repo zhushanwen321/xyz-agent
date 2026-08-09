@@ -155,7 +155,13 @@ export function getProviderConfig(providerId: string): PiProviderConfig | undefi
 function pickFirstModelProvider(
   providers: Record<string, PiProviderConfig>,
 ): { provider: string; modelId: string } | undefined {
+  // A8：跳过被 enabledModels 禁用的 provider（与 findValidDefaultModel 主路径守卫一致），
+  // 避免 removeProvider/upsertProvider 重选与 findValidDefaultModel fallback 选到用户已禁用的 provider。
+  // enabledModels 空（全启用）时 deriveEnabled 恒 true，行为不变。重选场景 enabledModels 不变，
+  // 实时读 getEnabledModels 安全（无 updateSettingsSync 回调内 stale 风险）。
+  const enabledModels = getEnabledModels()
   for (const [pid, pcfg] of Object.entries(providers)) {
+    if (!deriveEnabled(pid, enabledModels)) continue
     if (pcfg.models && pcfg.models.length > 0) {
       return { provider: pid, modelId: pcfg.models[0].id }
     }
@@ -297,7 +303,10 @@ export function findValidDefaultModel(): {
 
   if (defaultProvider && defaultModel) {
     const providerConfig = models.providers[defaultProvider]
-    if (providerConfig?.models?.length) {
+    // A8：被 enabledModels 禁用的 default provider 不走主路径，fall through 到 fallback 重选
+    // （主路径原只校验 provider/model 有效，未过滤 enabledModels，被禁用的 default 会直接返回）。
+    const isEnabled = deriveEnabled(defaultProvider, getEnabledModels())
+    if (providerConfig?.models?.length && isEnabled) {
       const found = providerConfig.models.find(m => m.id === defaultModel)
       if (found) {
         return { result: { provider: defaultProvider, modelId: defaultModel }, wasFixed: false }
@@ -305,7 +314,10 @@ export function findValidDefaultModel(): {
       console.warn(`[provider-store] defaultModel "${defaultModel}" not found in provider "${defaultProvider}", falling back to "${providerConfig.models[0].id}"`)
       return { result: { provider: defaultProvider, modelId: providerConfig.models[0].id }, wasFixed: true }
     }
-    console.warn(`[provider-store] defaultProvider "${defaultProvider}" not found in models.json`)
+    if (!providerConfig?.models?.length) {
+      console.warn(`[provider-store] defaultProvider "${defaultProvider}" not found in models.json`)
+    }
+    // isEnabled===false：default provider 被禁用，静默 fall through 到 fallback（不 warn 误导）
   }
 
   const fallback = pickFirstModelProvider(models.providers)

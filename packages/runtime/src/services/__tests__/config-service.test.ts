@@ -224,8 +224,8 @@ describe('ConfigService status 派生与 models 合并（M6/T9，wave-list-badge
       hasOAuth: vi.fn(async () => false),
       hasOAuthSync: vi.fn(() => true),
       hasCredentialSync: vi.fn(() => true),
-      // wave2：listProviders 聚合 catalog 源读 auth.json keys（isCatalogProvider mock 恒 false → 走 custom，此处理论不被调，补齐以防真实调用）
-      listCredentialIds: vi.fn(() => []),
+      // B3：custom status 改用 authIdSet（listCredentialIds），需返回 anthropic 才判 connected
+      listCredentialIds: vi.fn(() => ['anthropic']),
     } as unknown as Pick<AuthStorage, 'set' | 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'hasCredentialSync' | 'listCredentialIds'>
     const svc = new ConfigService('/tmp/project', mockStore, authStorage)
     const providers = svc.listProviders()

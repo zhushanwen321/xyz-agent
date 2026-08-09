@@ -167,6 +167,8 @@ describe('TC7: custom provider 行为兼容（apiKeySet/status/models 兜底，�
   it('custom 无 apiKey 但 auth.json 有凭据 → status=connected（沿用旧 M6 逻辑）', () => {
     const svc = makeService({
       models: { 'my-custom': { models: [{ id: 'm1' }] } },
+      // B3：custom status 改用 authIdSet（listCredentialIds 批量读），不再逐个 hasCredentialSync
+      authIds: ['my-custom'],
       hasCredential: id => id === 'my-custom',
     })
     const p = byId(svc)['my-custom']

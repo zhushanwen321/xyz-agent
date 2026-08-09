@@ -311,7 +311,7 @@ export default {
     modelList: 'Models',
     // wave4: catalog provider models readonly hint (CL2 — built-in models come from pi catalog, refreshed on upgrade)
     catalogModelsHint: 'Built-in models are provided by the pi catalog and refreshed automatically on upgrade.',
-    catalogModelsReadonlyLabel: 'Built-in models (read-only)',
+    catalogModelsReadonlyLabel: 'Model list (read-only)',
     collapse: 'Collapse',
     manualAdd: '+ Add manually',
     modelLabel: 'Model',
