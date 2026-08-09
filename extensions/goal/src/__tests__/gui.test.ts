@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { buildGoalGui } from "../adapters/goal-control-adapter";
+import { buildGoalGui } from "../projection/gui";
 import { createGoalState } from "../engine/goal";
 import type { GoalRuntimeState } from "../engine/types";
 

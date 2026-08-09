@@ -27,6 +27,9 @@ import type { ServicePorts } from "../service";
  */
 export function buildPorts(pi: ExtensionAPI, ctx: ExtensionContext): ServicePorts {
 	const persistence: PersistencePort = {
+		// appendState：每次追加完整 state snapshot（serializeState 输出），无轮转/无上限。
+		// entries 无界增长是已知限制——长期 session 持续累积，根治需 persistence 层
+		// 轮转/delta 存储（独立工作项，超出本架构修正 wave 范围）。
 		appendState: (state): void => {
 			pi.appendEntry(ENTRY_TYPE, state);
 		},

@@ -171,26 +171,25 @@ describe("applyEvent — 简单事件", () => {
 		expect(session.state.tokensUsed).toBe(before);
 	});
 
-	it("turn_end → currentTurnIndex++ + updateWidget effect", () => {
+	it("turn_end → currentTurnIndex++（H3：applyEvent void，updateWidget 由 turn-end handler 直接调用）", () => {
 		const session = createGoalSession();
 		session.state = makeState();
 		const before = session.state.currentTurnIndex;
-		const effects = applyEvent(session, "turn_end", {});
+		applyEvent(session, "turn_end", {});
 		expect(session.state.currentTurnIndex).toBe(before + 1);
-		expect(effects).toContainEqual({ kind: "updateWidget" });
 	});
 
-	it("session.state=null → 返回空 effects", () => {
+	it("session.state=null → no-op（H3：applyEvent void）", () => {
 		const session = createGoalSession();
-		const effects = applyEvent(session, "turn_end", {});
-		expect(effects).toEqual([]);
+		expect(() => applyEvent(session, "turn_end", {})).not.toThrow();
 	});
 
-	it("未知事件 → 返回空 effects（不报错）", () => {
+	it("未知事件 → no-op（H3：applyEvent void，不报错）", () => {
 		const session = createGoalSession();
 		session.state = makeState();
-		const effects = applyEvent(session, "unknown_event", {});
-		expect(effects).toEqual([]);
+		const before = session.state.currentTurnIndex;
+		expect(() => applyEvent(session, "unknown_event", {})).not.toThrow();
+		expect(session.state.currentTurnIndex).toBe(before);
 	});
 });
 

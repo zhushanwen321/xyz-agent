@@ -41,15 +41,6 @@ export interface ServicePorts {
 	session: SessionPort;
 }
 
-// ── Event 效果 ────────────────────────────────────────
-
-export type EventEffect =
-	| { kind: "sendContextMessage"; content: string; deliverAs: "steer" | "followUp"; customType?: string }
-	| { kind: "sendUserMessage"; content: string; deliverAs: "steer" | "followUp" }
-	| { kind: "notify"; text: string; level: "info" | "warning" | "error" }
-	| { kind: "clearSession" }
-	| { kind: "updateWidget" };
-
 // ── 持久化辅助 ────────────────────────────────────────
 
 /**
@@ -251,20 +242,22 @@ function toMessageEndData(eventData: unknown): MessageEndEventData | null {
 }
 
 /**
- * 路径 B 入口。异步事件，返回 EventEffect[]。
+ * 路径 B 入口。异步事件，无返回值（副作用直接 mutate session.state）。
  * 并发保护（isProcessing / stale-check）在 event-adapter，不在此层。
  *
  * 本函数作为简单事件的统一入口（message_end / turn_end）。
  * 复杂事件（before_agent_start / agent_end / session_start）由 event-adapter
  * 直接实现，调 engine 纯函数 + service 辅助函数。
+ *
+ * H3：不再返回 effect 数组。turn_end 的 updateWidget 副作用由调用方
+ *（turn-end.ts）直接调用，消除 effect 中转层。
  */
 export function applyEvent(
 	session: GoalSession,
 	eventType: string,
 	eventData: unknown,
-): EventEffect[] {
-	const effects: EventEffect[] = [];
-	if (!session.state) return effects;
+): void {
+	if (!session.state) return;
 
 	switch (eventType) {
 		case "message_end": {
@@ -281,11 +274,8 @@ export function applyEvent(
 		}
 		case "turn_end":
 			session.state.currentTurnIndex++;
-			effects.push({ kind: "updateWidget" });
 			break;
 	}
-
-	return effects;
 }
 
 // ── resume 预算重检（供 command-adapter 调用）─────────

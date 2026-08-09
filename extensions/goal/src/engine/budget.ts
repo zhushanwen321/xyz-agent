@@ -86,10 +86,34 @@ export function getTokenUsagePercent(state: GoalRuntimeState): number {
 	return (state.tokensUsed / state.budget.tokenBudget) * PERCENT_FACTOR;
 }
 
+export type BudgetSeverity = "ok" | "warn" | "danger";
+
+/**
+ * 按 token 消耗比例（0-1）映射严重度。阈值单源（BUDGET_RATIO_HIGH/LOW），
+ * buildGoalGui（percent→severity）与 getBudgetColor（percent→color）共用，
+ * 消除阈值重复（H4）。
+ *
+ *   ratio >= 0.9 → danger
+ *   ratio >= 0.7 → warn
+ *   else         → ok
+ */
+export function getBudgetSeverity(ratio: number): BudgetSeverity {
+	if (ratio >= BUDGET_RATIO_HIGH) return "danger";
+	if (ratio >= BUDGET_RATIO_LOW) return "warn";
+	return "ok";
+}
+
 export function getBudgetColor(percent: number): "error" | "warning" | "muted" {
-	if (percent >= BUDGET_RATIO_HIGH * PERCENT_FACTOR) return "error";
-	if (percent >= BUDGET_RATIO_LOW * PERCENT_FACTOR) return "warning";
-	return "muted";
+	// 复用 getBudgetSeverity（阈值单源）：percent→ratio→severity→ThemeColor
+	switch (getBudgetSeverity(percent / PERCENT_FACTOR)) {
+		case "danger":
+			return "error";
+		case "warn":
+			return "warning";
+		case "ok":
+		default:
+			return "muted";
+	}
 }
 
 // ── turn end 预算检查（仅 token 维度）───────────────────

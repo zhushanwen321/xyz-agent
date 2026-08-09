@@ -8,6 +8,7 @@ import {
 	checkBudgetOnResume,
 	checkBudgetOnTurnEnd,
 	getBudgetColor,
+	getBudgetSeverity,
 	getTokenUsagePercent,
 	tick,
 } from "../budget";
@@ -134,4 +135,15 @@ describe("getBudgetColor", () => {
 	it(">=90 → error", () => expect(getBudgetColor(90)).toBe("error"));
 	it(">=70 → warning", () => expect(getBudgetColor(70)).toBe("warning"));
 	it("<70 → muted", () => expect(getBudgetColor(69)).toBe("muted"));
+});
+
+// ── getBudgetSeverity（H4：阈值单源，buildGoalGui + getBudgetColor 共用）──
+
+describe("getBudgetSeverity", () => {
+	it("ratio >= 0.9 → danger", () => expect(getBudgetSeverity(0.9)).toBe("danger"));
+	it("ratio = 0.95 → danger", () => expect(getBudgetSeverity(0.95)).toBe("danger"));
+	it("ratio >= 0.7 → warn", () => expect(getBudgetSeverity(0.7)).toBe("warn"));
+	it("ratio = 0.75 → warn", () => expect(getBudgetSeverity(0.75)).toBe("warn"));
+	it("ratio < 0.7 → ok", () => expect(getBudgetSeverity(0.69)).toBe("ok"));
+	it("ratio = 0 → ok", () => expect(getBudgetSeverity(0)).toBe("ok"));
 });

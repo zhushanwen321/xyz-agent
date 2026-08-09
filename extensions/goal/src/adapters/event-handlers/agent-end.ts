@@ -156,12 +156,14 @@ async function handleContinuation(
 	// FR-8.6: continuation 去抖（空 turn 不发）
 	const tokenDelta = state.tokensUsed - state.lastTurnTokensUsed;
 	state.lastTurnTokensUsed = state.tokensUsed;
+	// 单次 persist（H2 合并：原空 turn/非空 turn 两处重复 persistAndUpdate 提到 if 前统一调用）。
+	// budget 终态检查点在 persistAndUpdate 内部（#5 单一检查点），与调用位置无关——
+	// 合并不影响预算终态触发时机（explorer 论证）。
+	persistAndUpdate(session, ports);
 	if (tokenDelta <= 0) {
-		// 空 turn：只 persist，不发 continuation
-		persistAndUpdate(session, ports);
+		// 空 turn：已 persist，不发 continuation
 		return;
 	}
-	persistAndUpdate(session, ports);
 	// 终态守卫：persistAndUpdate 可能把 goal 转为 budget_limited 终态。
 	// 此时不应发 continuation（deliverAs:"followUp" 会触发新 turn，让已耗尽预算的 agent 再跑一轮）。
 	if (isTerminalStatus(state.status)) return;

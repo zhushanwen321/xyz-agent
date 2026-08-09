@@ -4,8 +4,8 @@
  * FR-6.7 ESC 守卫：ctx.signal.aborted 时跳过递增（ESC 不算 goal turn）。
  * 正常路径：currentTurnIndex++ + updateWidget。
  *
- * 委托 service.applyEvent("turn_end")——它递增 currentTurnIndex 并返回
- * EventEffect[{kind:"updateWidget"}]。adapter 执行该 effect。
+ * 委托 service.applyEvent("turn_end") 递增 currentTurnIndex（H3：applyEvent 改 void，
+ * updateWidget 副作用在此直接调用，不再经 effect 数组中转）。
  *
  * 不 persist（与旧 index.ts 行为对齐——turn_end 只内存变更 + widget）。
  */
@@ -27,11 +27,7 @@ export async function handleTurnEnd(
 	if (ctx.signal?.aborted) return;
 
 	const ports = buildPorts(pi, ctx);
-	const effects = applyEvent(session, "turn_end", undefined);
-	// 执行 effects（updateWidget 等）
-	for (const effect of effects) {
-		if (effect.kind === "updateWidget") {
-			updateWidget(session, ports.ui);
-		}
-	}
+	applyEvent(session, "turn_end", undefined);
+	// turn_end 递增 currentTurnIndex 后直接刷新 widget
+	updateWidget(session, ports.ui);
 }
