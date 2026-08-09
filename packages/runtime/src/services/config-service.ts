@@ -350,7 +350,9 @@ export class ConfigService implements IConfigService {
     /** Coding Plan 额度查询配置（手动选择 fetcher + 启用状态）。 */
     quota?: { fetcher?: string; enabled: boolean; cookieSet?: boolean }
   }): { newDefault?: { provider: string; modelId: string } } {
-    const existing = this.configStore.getProviderConfig(providerId) ?? {}
+    // wave3：existingConfig===undefined 判定「新建 provider」（边界1 白名单守卫用）
+    const existingConfig = this.configStore.getProviderConfig(providerId)
+    const existing = existingConfig ?? {}
     // I9 清理① + catalog 分体系：
     // - catalog provider：apiKey 归 auth.json (api_key overwrites oauth natively)
     // - custom provider：apiKey 写 models.json，清 auth.json oauth (I9 cleanup)
@@ -378,8 +380,10 @@ export class ConfigService implements IConfigService {
     if (data.baseUrl !== undefined) merged.baseUrl = data.baseUrl as string
     if (data.type !== undefined) merged.api = this.configStore.applyTypeTranslation(data.type as string)
     if (data.name !== undefined) merged.name = data.name as string
-    // W2：provider 级 enabled 透传到合并结果（data 类型已声明 enabled，原合并逻辑漏处理）
-    if (data.enabled !== undefined) merged.enabled = data.enabled
+    // wave3 C5/TC6：停用 provider 级 enabled 写入——provider 启用改由 enabledModels 白名单承载
+    // （wave2 listProviders 已不读 models.json provider.enabled）。前端 onToggleEnabled 改走
+    // toggleProviderEnabled（wave4），不再传 data.enabled 给 setProvider。data.enabled 参数声明保留
+    // （向后兼容），但不写入 models.json。model 级 enabled（下文 model 合并逻辑）保留。
     // Coding Plan 额度查询：整体覆写 quota（fetcher/enabled/cookieSet 三字段一起持久化）
     if (data.quota !== undefined) merged.quota = data.quota
     if (data.models !== undefined) {
@@ -433,7 +437,87 @@ export class ConfigService implements IConfigService {
         return model as unknown as ConfigModelDefinition
       })
     }
-    return this.configStore.upsertProvider(providerId, merged)
+    const result = this.configStore.upsertProvider(providerId, merged)
+    // 边界1（wave3 TC5 / C2）：新建 provider 时若 enabledModels 非空，加 <id>/* 白名单守卫——
+    // 否则在白名单语义下新 provider 默认不启用。existingConfig===undefined 判定新建（与 importer
+    // applyImport 的 upsertProvider 后守卫对称，共用水台函数 ensureProviderInWhitelist）。
+    if (existingConfig === undefined) {
+      this.configStore.ensureProviderInWhitelist(providerId)
+    }
+    return result
+  }
+
+  /**
+   * 切换 provider 启用状态（wave3 IF2 / C1）——写 enabledModels 白名单。
+   *
+   * enabled=true: 若 enabledModels 非空，加 `<id>/*`；空/undefined 时 no-op（CL1——
+   *   全可用语义下 toggle(true) 无意义，加 pattern 反把其他 provider 隐式禁用）。
+   * enabled=false: 移除所有 `<id>/*` 和 `<id>/<model>` pattern（provider 级 + model 级全清）。
+   *   - 边界3（TC3）：重算后空 → clearEnabledModels（delete 字段，CL2），非 setEnabledModels([])。
+   *   - 边界2（TC4）：若 defaultModel 承载该 provider，重选启用 provider 的 model + setDefaultModel，
+     返回 newDefault 供前端同步。
+   *
+   * @returns 触发 defaultModel 重选时含 newDefault；否则空对象。
+   */
+  toggleProviderEnabled(providerId: string, enabled: boolean): { newDefault?: { provider: string; modelId: string } } {
+    const current = this.configStore.getEnabledModels()
+
+    if (enabled) {
+      // CL1：全可用（空/undefined）时 no-op——此时所有 provider 已启用，加 pattern 反而禁用其他
+      if (current.length === 0) return {}
+      const pattern = `${providerId}/*`
+      if (current.includes(pattern)) return {} // 幂等
+      this.configStore.setEnabledModels([...current, pattern])
+      return {}
+    }
+
+    // enabled === false：移除所有 <id>/* 与 <id>/<model> pattern（startsWith('<id>/') 统一匹配两者）
+    const prefix = `${providerId}/`
+    const remaining = current.filter(p => !p.startsWith(prefix))
+    if (remaining.length === current.length) {
+      // 无 pattern 被移除（provider 不在白名单 / 白名单空）——幂等 no-op
+      return {}
+    }
+    // 边界3（TC3）：重算后空 → delete 字段（CL2），非写空数组（pi 语义空=全可用，写 [] 语义反转）；
+    // 非空 → 写回新白名单
+    if (remaining.length === 0) {
+      this.configStore.clearEnabledModels()
+    } else {
+      this.configStore.setEnabledModels(remaining)
+    }
+
+    // 边界2（TC4）：若 defaultModel 承载被禁用的 provider，重选（否则 pi session scopedModels
+    // 不含该 provider，defaultModel 与 scope 错位）。复用 listProviders（wave2 双源聚合 + deriveEnabled）
+    // 找首个启用且有 model 的 provider——不依赖 findValidDefaultModel（其主路径未过滤 enabledModels）。
+    const oldDefault = this.configStore.getDefaultModel()
+    if (oldDefault && oldDefault.provider === providerId) {
+      const newDefault = this.pickEnabledDefaultModel(providerId)
+      if (newDefault) {
+        this.configStore.setDefaultModel(newDefault.provider, newDefault.modelId)
+        return { newDefault }
+      }
+    }
+    return {}
+  }
+
+  /**
+   * 边界2 重选 defaultModel（wave3 TC4）：从启用 provider 中选首个有 model 的。
+   *
+   * 复用 listProviders（wave2：catalog ∪ custom 双源聚合 + deriveEnabled 派生 enabled），
+   * 避免重复实现聚合/凭据/catalog 兜底逻辑。excludedId 跳过被禁用的 provider 自身。
+   * 返回 undefined 表示无可用启用 provider（UI 层 wave4 拒绝禁用最后一个）。
+   */
+  private pickEnabledDefaultModel(excludedId: string): { provider: string; modelId: string } | undefined {
+    const providers = this.listProviders()
+    for (const p of providers) {
+      if (p.id === excludedId) continue
+      if (!p.enabled) continue
+      const firstModel = p.models[0]
+      if (firstModel) {
+        return { provider: p.id, modelId: firstModel.id }
+      }
+    }
+    return undefined
   }
 
   deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } } {

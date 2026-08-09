@@ -273,6 +273,16 @@ export interface IConfigService {
     models?: Array<string | { id: string; name?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null> }>
     enabled?: boolean
   }): { newDefault?: { provider: string; modelId: string } }
+  /**
+   * 切换 provider 启用状态（wave3 IF2）——写 enabledModels 白名单。
+   *
+   * enabled=true: 若 enabledModels 非空加 `<id>/*`；空时 no-op（CL1）。
+   * enabled=false: 移除所有 `<id>/*`/`<id>/<model>` pattern；边界3 空时 delete 字段（CL2）；
+   *   边界2 若 defaultModel 承载该 provider 重选并返回 newDefault。
+   *
+   * @returns 触发 defaultModel 重选时含 newDefault；否则空对象。
+   */
+  toggleProviderEnabled(providerId: string, enabled: boolean): { newDefault?: { provider: string; modelId: string } }
   deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } }
   getProvider(providerId: string): { apiKey?: string; name?: string; type?: string; baseUrl?: string; models?: unknown[]; enabled?: boolean } | undefined
   updateToolPermissions(permissions: Record<string, string>): void

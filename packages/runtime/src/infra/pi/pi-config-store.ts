@@ -24,6 +24,9 @@ import {
   getDefaultModel,
   setDefaultModel,
   getEnabledModels,
+  setEnabledModels,
+  clearEnabledModels,
+  ensureProviderInWhitelist,
   readModels,
   getProviderConfig,
   upsertProvider,
@@ -61,6 +64,19 @@ export class PiConfigStore implements IConfigStore {
 
   getEnabledModels(): string[] {
     return getEnabledModels()
+  }
+
+  // ── enabledModels 白名单写入（wave3）──
+  setEnabledModels(patterns: string[]): void {
+    setEnabledModels(patterns)
+  }
+
+  clearEnabledModels(): void {
+    clearEnabledModels()
+  }
+
+  ensureProviderInWhitelist(providerId: string): void {
+    ensureProviderInWhitelist(providerId)
   }
 
   // ── Provider CRUD ──

@@ -33,7 +33,7 @@ import type {
   ProviderImportedItem,
   BuiltinProviderTemplate,
 } from '@xyz-agent/shared'
-import { getProviderNames, upsertProvider, type PiProviderConfig } from '../../infra/pi/pi-provider-store.js'
+import { getProviderNames, upsertProvider, ensureProviderInWhitelist, type PiProviderConfig } from '../../infra/pi/pi-provider-store.js'
 import { createPreview, consumePreview, deletePreview } from './preview-cache.js'
 import { parseProviders } from './provider-parser.js'
 // sa3 F1：内置 provider 模板（B4 铁律——只取 name/api/baseUrl 补全定义，**不复制 models**，
@@ -325,6 +325,16 @@ export async function applyImport(
   // （重试时 conflict 检测会让已导入的 skipped，未导入的可继续尝试）
   if (failedCount === 0) {
     deletePreview(importId)
+  }
+
+  // 边界1（wave3 TC5 / C2）：为本次导入的新 provider 加 enabledModels 白名单守卫。
+  // 若 enabledModels 非空（用户已显式启用某些 provider），新 provider 默认不启用——补 <id>/*
+  // 让其可用。ensureProviderInWhitelist 内部判空（全可用时 no-op）+ 幂等。catalog（auth.json）
+  // 与 custom（models.json）两类导入统一处理（listProviders 双源聚合都会派生 enabled）。
+  for (const item of imported) {
+    if (item.status === 'imported') {
+      ensureProviderInWhitelist(item.id)
+    }
   }
 
   // 日志只记 id/source/status/count（不记 apiKey，DM1）

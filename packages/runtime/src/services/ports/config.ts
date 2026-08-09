@@ -106,6 +106,23 @@ export interface IConfigStore {
    */
   getEnabledModels(): string[]
 
+  // ── enabledModels 白名单写入（wave3：toggleProviderEnabled + 边界守卫）──
+  /**
+   * 设置 enabledModels 白名单（非空数组写回 settings.json.enabledModels）。
+   * wave3 toggleProviderEnabled 在「重算后非空」分支调用（TC1/TC2）。
+   */
+  setEnabledModels(patterns: string[]): void
+  /**
+   * 删除 settings.json.enabledModels 字段（wave3 边界3 / CL2）。
+   * pi 白名单语义空=全可用，写空数组语义反转故 delete 字段（belt-and-suspenders）。
+   */
+  clearEnabledModels(): void
+  /**
+   * 边界1（wave3 TC5 / C2）：若 enabledModels 非空，加 `<id>/*` 让新 provider 默认启用；
+   * 空/undefined 时 no-op。importer applyImport / setProvider 新建 provider 时调用。
+   */
+  ensureProviderInWhitelist(providerId: string): void
+
   // ── Provider CRUD ──
   readModels(): ConfigModelsConfig
   getProviderConfig(providerId: string): ConfigProviderConfig | undefined

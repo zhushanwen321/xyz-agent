@@ -372,6 +372,35 @@ export function setEnabledModels(patterns: string[]): void {
   updateSettingsSync(s => { s.enabledModels = patterns })
 }
 
+/**
+ * 删除 settings.json.enabledModels 字段（wave3 边界3 / CL2）。
+ *
+ * pi 白名单语义：空 = 全可用。若用 setEnabledModels([]) 写入空数组，语义不变（readSettings
+ * 仍得 []，deriveEnabled 返回全 true），但「显式空数组」与「未设置」在配置语义上有歧义，
+ * 且 belt-and-suspenders 要求 runtime 层让 settings.json 物理上无此字段——故用 delete 而非写 []。
+ * JSON.stringify 丢弃 undefined 字段，故 updateSettingsSync(delete) 后落盘的 settings.json
+ * 不含 enabledModels key（与从未设置过不可区分）。
+ */
+export function clearEnabledModels(): void {
+  updateSettingsSync(s => { delete s.enabledModels })
+}
+
+/**
+ * 边界1 守卫（wave3 TC5 / C2）：若 enabledModels 已非空（用户显式启用某些 provider），
+ * 加 `${providerId}/*` 让新 provider 默认启用；空/undefined 时 no-op（全可用语义，新 provider 默认可用）。
+ *
+ * 调用点：importer applyImport 新建 provider 后、setProvider 新建 provider（existing 为空）时。
+ * 幂等：pattern 已在白名单时不重复添加。
+ */
+export function ensureProviderInWhitelist(providerId: string): void {
+  const current = getEnabledModels()
+  // 空/undefined = 全可用，不加 pattern（加了反而把其他 provider 隐式禁用）
+  if (current.length === 0) return
+  const pattern = `${providerId}/*`
+  if (current.includes(pattern)) return
+  setEnabledModels([...current, pattern])
+}
+
 export function getDefaultThinkingLevel(): string {
   return readSettings().defaultThinkingLevel ?? 'high'
 }
