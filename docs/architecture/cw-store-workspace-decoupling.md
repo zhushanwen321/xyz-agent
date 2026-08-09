@@ -72,7 +72,6 @@ cw-tool（npm 包 `@zhushanwen/pi-cw-tool`）是 cw-cli 的 pi extension 封装�
 ```ts
 export function getCwJsonPath(cwd: string): string {
   return join(getCwHome(), encodeCwd(cwd), "store.json");
-  // encodeCwd 把路径分隔符替换为 __，如 /repo → __repo
 }
 ```
 
@@ -266,7 +265,7 @@ $ cw status --unitId slice:provider-dual-system-r2
 
 cw-cli 的 `getCwJsonPath` 内部自己探测 `git-common-dir` 做 store 键控（`detectRepoWorkspace` 逻辑从 cw-tool 下沉到 cw-cli）；workspace 改用 `show-toplevel`。cw-tool 删除 `detectRepoWorkspace`，退回纯封装。
 
-**store-key 选型 = `git rev-parse --git-common-dir` 原值**（不加 dirname）：
+**store-key 选型 = `git rev-parse --path-format=absolute --git-common-dir`**（绝对路径原值，不加 dirname；`--path-format=absolute` 是硬约束——裸命令在普通 repo 返回相对 `.git` 会导致全局撞名，见决策 2 + 探针 P-absolute）：
 - 普通 repo worktree-A/B：common-dir = `/repo/.git`（相同）
 - bare repo worktree-A/B：common-dir = `/workspace/.bare`（相同）
 - 父 worktree 与 wave worktree：相同 common-dir → 同一 store ✅
@@ -329,15 +328,17 @@ cw-tool 通过环境变量（如 `CW_STORE_DIR`）直接指定 store 目录，�
 - 被否：cw-tool 探测后传 `--store-key`（方案 B）——bash 不经过 cw-tool 仍 per-cwd，割裂不消除
 - 证据：§2.4 隐藏病灶 + §2.6 根因 2
 
-**决策 2：store-key 用 `git-common-dir` 原值，不加 dirname。**
-- 选择：`store-key = git rev-parse --git-common-dir`（`.git` / `.bare` 原值）
+**决策 2：store-key 用 `--path-format=absolute --git-common-dir` 绝对路径原值，不加 dirname。**
+- 选择：`store-key = git rev-parse --path-format=absolute --git-common-dir`（`.git` / `.bare` 绝对路径原值）
+- **`--path-format=absolute` 是硬约束，不可省**：裸 `git rev-parse --git-common-dir` 在普通 repo（`git init`，.git 是目录）返回**相对 `.git`** → `encodeCwd('.git')='.git'`（无 `/` 不变）→ 所有普通 repo store 全局撞名 `~/.cw/.git/`；子目录返回 `../../.git` → 同 repo 不同深度目录 store 分叉。bare repo worktree 裸命令恰好返回绝对（.bare 的 gitdir 指针所致），但普通 repo 不行——必须 absolute 统一（探针 P-absolute 实测）
 - 被否：`dirname(common-dir)`（ADR-0045 现状）——bare repo 下 dirname 到 workspace 容器，非标识也非工作树
-- 证据：探针 P-object-store ✅（common-dir 是 repo 级共享路径，本身即标识）
+- 证据：探针 P-object-store ✅ + P-absolute ✅；cw-tool 现状 `detectRepoWorkspace` 已用 `--path-format=absolute`（cw-runner.ts:152）——本约束是继承现有可行实现，非新增
 
 **决策 3：workspace 用 `show-toplevel`（当前 worktree 根），不用裸 cwd。**
 - 选择：`workspace = git rev-parse --show-toplevel`
 - 被否：`process.cwd()`——agent 常在 worktree 子目录调 cw（如 `extensions/cw-tool/`），cwd ≠ worktree 根，git/test 漂移到子目录
 - 证据：探针 P-toplevel ✅（见下）
+- **破坏面（相对 testCwd 解析基准变化，审查 MF-2）**：testRunner 的相对 testCwd 解析 `resolve(workspacePath, testCwd)`（cli.ts:668-671）基准从 cwd 变 show-toplevel（repo 根）。monorepo 子包用户在子包目录 `packages/renderer` 跑 cw，若 design 阶段填了相对 testCwd（如 `./` 或 `tests/`），现状 `resolve(packages/renderer, './')`=子包（正确），方案 A `resolve(repo根, './')`=repo 根（漂移，monorepo 测试通常必须 cd 子包）。**对策：design/replan 阶段 testCwd 契约改为必须绝对路径**（相对 repo 根不再支持），迁移期对历史相对 testCwd 按旧 cwd 基准 rebase 到绝对路径或标记需人工确认（见 §4.3 V-workspace）
 
 > **P-toplevel**：`git rev-parse --show-toplevel` 从 worktree 根和子目录都稳定返回 worktree 根。
 > 探针（已跑通 ✅）：
@@ -359,8 +360,14 @@ cw-tool 通过环境变量（如 `CW_STORE_DIR`）直接指定 store 目录，�
 
 **决策 6：store 迁移一次性、自动、幂等、可回滚。**
 - per-cwd store（`encodeCwd(cwd)`）→ per-common-dir store（`encodeCwd(common-dir)`）
-- cw-cli 启动时检测旧路径 store，合并到新路径（unit 按 id 去重），旧 store 归档（`.legacy` 后缀）不立即删
+- cw-cli 启动时检测旧路径 store，合并到新路径，旧 store 归档（`.legacy` 后缀）不立即删
+- **bare repo 是 N→1 合并，非一对一（审查 MF-3）**：bare repo 下 bash 在各 worktree 跑 cw 已建多个 worktree 级 store（实测 `~/.cw` 下 xyz-agent bare repo 有 5 个 worktree store + 1 个 ADR-0045 dirname bug 产物的容器级 store），方案 A 要合并到 1 个 `.bare` 级 store。合并须处理：
+  - **跨 store parentUnitId 外键**：wave 在子 worktree store 建、parent slice 在父 worktree store 建——合并到一个 store 后外键自然可解析，但合并须保证 parent unit 不丢
+  - **同 id 不同状态仲裁**：同一 unit 在多 worktree store 各有副本（状态可能不同），按 `statusHistory` 最后一条时间戳取最新，冲突标记需人工确认
+  - **unit 按 id 去重**：同 id 取仲裁后版本；不同 id 全保留
 - ⛔ 迁移正确性是实施期门槛（见 §4.3 V-migrate）
+
+**附带收益（审查 S-3）：只读 action 跨 worktree 自动统一。** 现状 cw-tool 的 S-3 守卫（cw-runner.ts:225）让只读 action（status/list/tree）不附加 `--workspace` → 走 cw-cli `process.cwd()` per-cwd store，跨 worktree 查父层 unit 会分叉。方案 A 下沉后 cw-cli 内部 `getCwJsonPath` 统一归一化，只读 action 自动也走 common-dir store，跨 worktree 查询不再分叉——这是下沉带来的结构性收益，无需额外机制。
 
 ---
 
@@ -372,7 +379,7 @@ cw-tool 通过环境变量（如 `CW_STORE_DIR`）直接指定 store 目录，�
 |---|---|---|---|
 | **S1** | coding-workflow（cw-cli） | ① `getCwJsonPath` 内部 `detectCommonDir` 归一化（common-dir 优先，fallback workspace）；② `constructCwDeps` 解耦（store 用归一化值，git/test/file 用 workspace）；③ workspace 解析从 `process.cwd()` 改 `show-toplevel`（或保留 cwd 但 constructCwDeps 内 show-toplevel）；④ 探测失败降级 | 单测：common-dir 归一化、4 关注点分别用对的值、降级路径 |
 | **S2** | cw-tool（pi extension） | 删除 `detectRepoWorkspace` + 相关 `--workspace` 透传逻辑；cw-tool 退回纯封装（只透传 action/unitId/input，workspace 由 cw-cli 自己探测） | 单测：cw-tool 不再传 --workspace，cw-cli 内部归一化生效 |
-| **S3** | coding-workflow（cw-cli） | store 迁移：per-cwd → per-common-dir，自动 + 幂等 + 旧 store 归档 | 集成测：迁移前后 unit 可见性、幂等、回滚 |
+| **S3** | coding-workflow（cw-cli） | store 迁移：per-cwd/per-worktree → per-common-dir，**bare repo N→1 合并**（多 worktree store + 容器级 store → 1 repo store），跨 store 外键保持、同 id 状态仲裁；自动 + 幂等 + 旧 store 归档 | 集成测：迁移前后 unit 可见性、幂等、回滚、N→1 合并正确性 |
 
 ### §4.2 文件改动地图
 
@@ -395,9 +402,9 @@ cw-tool 通过环境变量（如 `CW_STORE_DIR`）直接指定 store 目录，�
 
 | ID | 待验证 | 验证方式 | 阶段 |
 |---|---|---|---|
-| V-normalize | cw-cli common-dir 归一化在 bare/普通 repo 都返回稳定 repo 标识 | 构造 bare repo + 普通 repo + linked worktree，对比 getCwJsonPath 输出 | S1 前 |
-| V-workspace | workspace 用 show-toplevel 后，子目录调用 git/test 不漂移 | 在 worktree 子目录跑 cw execute，确认 gitValidator/testRunner cwd = worktree 根 | S1 |
-| V-migrate | per-cwd → per-common-dir 迁移正确性（unit 不丢不重、幂等、可回滚） | 构造含 unit 的旧 store，跑迁移，断言新 store 含全部 unit + 旧 store 归档 + 重跑幂等 | S3 |
+| V-normalize | cw-cli common-dir 归一化在 bare/普通 repo 都返回稳定**绝对** repo 标识；edge case（separate-git-dir / submodule）行为明确（审查 S-1/S-2） | 构造 bare repo + 普通 repo + linked worktree + **普通 repo 从子目录调用** + separate-git-dir + submodule，对比 getCwJsonPath 输出（子目录与 repo 根一致验证 absolute；separate-git-dir 用 common-dir 原值（external.git 绝对）稳定；submodule 按 `.git/modules/<name>` 独立 store） | S1 前 |
+| V-workspace | workspace 用 show-toplevel 后，子目录调用 git/test 不漂移；**含相对 testCwd 的 unit 测试仍跑对地方** | 在 worktree 子目录跑 cw execute，确认 gitValidator/testRunner cwd = worktree 根；构造含相对 testCwd 的 unit（迁移后 rebase 为绝对），断言测试在正确子包目录跑 | S1 |
+| V-migrate | 迁移正确性：unit 不丢不重、幂等、可回滚、**bare repo N→1 合并正确** | 构造同一 repo 3 个 worktree store（含 1 个交叉 unit + 1 个跨 store parentUnitId 外键），跑迁移，断言新 store 含全部 unit、外键不断裂、同 id 仲裁取最新、旧 store 归档 + 重跑幂等 | S3 |
 | V-bash-unified | bash 调 cw 与 cw-tool 调 cw 访问同一 store（G2 达成） | bash `cw create` + cw-tool `cw status`，确认命中同一 store 的 unit | S2 后 |
 | V-bare-e2e | bare repo worktree 端到端：cw-tool 全 4 工具 + 递归编排 wave 跨 worktree | xyz-agent-workspace 两 worktree 实跑 cw_planning create + cw_wave design（子 worktree） | S2 后 |
 
@@ -409,8 +416,9 @@ cw-tool 通过环境变量（如 `CW_STORE_DIR`）直接指定 store 目录，�
 |---|---|---|---|
 | P-object-store | bare repo 所有 worktree 共享 git object store，任意 worktree 能 cat-file 其他 worktree commit | 当前 worktree `git cat-file -e main^{commit}` + bare repo 直接 cat-file | ✅ 已测（§2.4） |
 | P-toplevel | `show-toplevel` 从 worktree 根和子目录都稳定返回 worktree 根 | worktree 根 vs `git -C extensions/cw-tool` 输出对比 | ✅ 已测（§3.3 决策3） |
-| P-common-dir-shared | 同一 repo 所有 worktree 的 git-common-dir 相同（store-key 统一性） | 父 worktree + wave worktree 的 `git rev-parse --git-common-dir` 对比 | ✅ 已测（当前 worktree = `.bare`，与 main worktree 同） |
-| P-no-dirname | git-common-dir 原值作 store-key 不需要 dirname | dirname 仅普通 repo 凑巧=repo根，bare repo dirname=容器（反证 dirname 有害） | ✅ 已推理（§2.6） |
+| P-common-dir-shared | 同一 repo 所有 worktree 的 git-common-dir（absolute）相同（store-key 统一性） | 父 worktree + wave worktree 的 `git rev-parse --path-format=absolute --git-common-dir` 对比 | ✅ 已测（当前 worktree = `.bare`，与 main worktree 同） |
+| P-no-dirname | dirname(common-dir) 对 bare repo 有害 | 实测 dirname(.bare)=workspace 容器（非标识非工作树）；separate-git-dir 下 dirname=external.git 父目录（非 repo 根） | ✅ 已测（审查） |
+| P-absolute | 裸 vs `--path-format=absolute` 在普通 repo 的差异（撞名风险） | 普通 repo 根裸命令返回相对 `.git`，子目录返回 `../../.git`；加 absolute 返回稳定绝对路径 | ✅ 已测（审查） |
 | V-normalize | cw-cli 内部归一化 bare/普通 repo 稳定 | 见 §4.3 | ⛔ S1 前 |
 | V-bash-unified | bash 与 cw-tool store 统一 | 见 §4.3 | ⛔ S2 后 |
 | V-bare-e2e | bare repo 端到端 cw_* 工具 + 递归编排 | 见 §4.3 | ⛔ S2 后 |
