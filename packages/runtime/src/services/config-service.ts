@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path'
 // wave 2（WC1）：import inline 方式消费 generated JSON——tsup bundle 把 JSON 打进 index.cjs，
 // 避免运行时 fs/路径解析（打包后 asar 路径问题）。tsc 类型检查需 resolveJsonModule（tsconfig.json 已加）。
 import builtinData from '../generated/builtin-providers.json'
+import { isCatalogProvider } from './provider-catalog.js'
 
 /**
  * builtin provider id → models 索引（T9/M5：listProviders 合并兜底用）。
@@ -211,7 +212,7 @@ export class ConfigService implements IConfigService {
         // （OAuth 授权后 models.json 无 apiKey，凭据在 auth.json——列表不能显示未配置）
         status: config.apiKey
           ? 'connected' as const
-          : this.authStorage?.hasOAuthSync(id)
+          : this.authStorage?.hasCredentialSync(id)
             ? 'connected' as const
             : 'not_configured' as const,
         // T9/M5 models 合并：用户自定义 models 非空 → 保留；为空 → builtin models 兜底
@@ -273,16 +274,24 @@ export class ConfigService implements IConfigService {
     quota?: { fetcher?: string; enabled: boolean; cookieSet?: boolean }
   }): { newDefault?: { provider: string; modelId: string } } {
     const existing = this.configStore.getProviderConfig(providerId) ?? {}
-    // I9 清理①：保存 API Key（明文/env）时清 auth.json oauth 凭据——both provider（anthropic/
-    // github-copilot/kimi/openrouter/xai）切到 API Key 认证必须清 OAuth，防凭据冲突 + pi 优先级困惑。
-    // 收紧条件（MF-1）：仅非空 apiKey 触发清理——env 空自定义变量此前上送 apiKey:'' 成立 `!== undefined`
-    // 会误删 OAuth 凭据；显式清 key（ProviderEditBody __CLEAR__ 哨兵）同样保留 OAuth（provider 可继续走 OAuth）。
-    // 幂等：auth.json 无该 provider 时 no-op。fire-and-forget（setProvider 同步契约，写盘由 mutex 串行化）。
+    // I9 清理① + catalog 分体系：
+    // - catalog provider：apiKey 归 auth.json (api_key overwrites oauth natively)
+    // - custom provider：apiKey 写 models.json，清 auth.json oauth (I9 cleanup)
     if (data.apiKey !== undefined && data.apiKey !== '') {
-      // 清理失败不能静默（双凭据并存正是要防的状态）：写盘失败记 warn（fire-and-forget，不阻塞 setProvider 同步契约）
-      void this.authStorage?.remove(providerId).catch(err => {
-        console.warn(`[config-service] auth.json oauth cleanup failed for ${providerId} (I9 清理①):`, err)
-      })
+      if (isCatalogProvider(providerId) && this.authStorage) {
+        // catalog provider: apiKey → auth.json (0600), strip from models.json
+        void this.authStorage.set(providerId, { type: 'api_key', key: data.apiKey }).catch(err => {
+          console.warn(`[config-service] auth.json api_key write failed for ${providerId}:`, err)
+        })
+        // Don't write apiKey to models.json for catalog providers
+        delete merged.apiKey
+      } else {
+        // custom provider or no authStorage: keep existing behavior (apiKey in models.json)
+        // I9: clear oauth credential before writing apiKey (fire-and-forget)
+        void this.authStorage?.remove(providerId).catch(err => {
+          console.warn(`[config-service] auth.json oauth cleanup failed for ${providerId} (I9 清理①):`, err)
+        })
+      }
     }
     // TODO: 当 pi models.json 支持 schema 后收窄类型（现有 Record<string, unknown> 是架构限制）
     const merged: Record<string, unknown> = { ...existing }

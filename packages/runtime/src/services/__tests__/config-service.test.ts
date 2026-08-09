@@ -14,6 +14,11 @@ import type { IConfigStore } from '../ports/config.js'
 import type { BuiltinProviderTemplate } from '@xyz-agent/shared'
 import type { AuthStorage } from '../auth/auth-storage.js'
 
+// mock isCatalogProvider → false: keep existing test behavior (custom provider path)
+vi.mock('../provider-catalog.js', () => ({
+  isCatalogProvider: vi.fn(() => false),
+}))
+
 // listBuiltinProviders 不触 ConfigStore（纯函数 import JSON），传空对象即可实例化（构造只存引用）。
 const service = new ConfigService('/tmp/project', {} as unknown as IConfigStore)
 
@@ -212,6 +217,7 @@ describe('ConfigService status 派生与 models 合并（M6/T9，wave-list-badge
       remove: vi.fn(async () => undefined),
       hasOAuth: vi.fn(async () => false),
       hasOAuthSync: vi.fn(() => true),
+      hasCredentialSync: vi.fn(() => true),
     } as unknown as Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync'>
     const svc = new ConfigService('/tmp/project', mockStore, authStorage)
     const providers = svc.listProviders()
@@ -226,6 +232,7 @@ describe('ConfigService status 派生与 models 合并（M6/T9，wave-list-badge
       remove: vi.fn(async () => undefined),
       hasOAuth: vi.fn(async () => false),
       hasOAuthSync: vi.fn(() => false),
+      hasCredentialSync: vi.fn(() => false),
     } as unknown as Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync'>
     const svc = new ConfigService('/tmp/project', mockStore, authStorage)
     expect(svc.listProviders()[0].status).toBe('not_configured')
