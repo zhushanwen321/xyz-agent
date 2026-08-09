@@ -292,6 +292,22 @@ export function findValidDefaultModel(): {
   if (fallback) {
     return { result: { provider: fallback.provider, modelId: fallback.modelId }, wasFixed: true }
   }
+
+  // catalog 兜底：models.json 无可用 provider 时，查 builtin-providers 副本找有定义的
+  // catalog provider 作默认候选（与 MF-5 分工：MF-5 修复数据写 models.json，兜底只查询不写数据）
+  if (!fallback) {
+    const builtinProviders = (builtinData.providers ?? []) as Array<{ id: string; models?: Array<{ id: string }> }>
+    if (builtinProviders.length > 0) {
+      const first = builtinProviders[0]
+      if (first.models && first.models.length > 0) {
+        return {
+          result: { provider: first.id, modelId: first.models[0].id },
+          wasFixed: true,
+        }
+      }
+    }
+  }
+
   return { result: null, wasFixed: false }
 }
 
