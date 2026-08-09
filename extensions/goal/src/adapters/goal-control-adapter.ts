@@ -74,12 +74,14 @@ const GoalControlParams = Type.Object({
 	),
 	tokenBudget: Type.Optional(
 		Type.Number({
-			description: "Optional, for 'create'. Positive token budget for the new goal. Omit unless the user specifies one.",
+			description:
+				"Optional, for 'create'. Positive token budget for the new goal. DEFAULT: omit — only set when the user explicitly requested a budget or explicitly consented to one. Never set a budget on your own initiative.",
 		}),
 	),
 	timeBudgetMinutes: Type.Optional(
 		Type.Number({
-			description: "Optional, for 'create'. Positive time budget in minutes for the new goal. Omit unless the user specifies one.",
+			description:
+				"Optional, for 'create'. Positive time budget in minutes for the new goal. DEFAULT: omit — only set when the user explicitly requested a budget or explicitly consented to one. Never set a budget on your own initiative.",
 		}),
 	),
 	completedTasks: Type.Optional(
@@ -386,6 +388,8 @@ export function registerGoalControlTool(pi: ExtensionAPI, session: GoalSession):
 		description:
 			`Manage the goal for this thread.
 
+Budget policy: never set tokenBudget/timeBudgetMinutes by default. Only set a budget when the user explicitly requests one (e.g. "keep it under 10k tokens", "finish within 30 minutes") or the user's instruction clearly implies a limit. If you believe a budget is warranted but the user never mentioned one, ask the user for explicit consent first — never set a budget on your own initiative.
+
 Actions:
 - create: proactively start a goal for COMPLEX, multi-step work (3+ steps, multi-file changes, or work that needs completion verification). Restate the real objective and define checkable successCriteria. Skip for trivial single-step tasks, ordinary questions, or lookups. Fails if a goal is already active/paused/blocked (use /goal resume or /goal clear first).
 - complete: mark the active goal complete. Requires 'evidence' with concrete proof (files/tests/commands) that meets EVERY successCriteria condition.
@@ -410,6 +414,9 @@ Don't:
 			// create：主动用于复杂多步骤任务。翻转原「显式启动」策略——让 goal 真正可用。
 			// 门槛：3+ 步骤 / 多文件 / 需完成验证，避免对琐碎任务滥建 goal 变噪音。
 			"create: proactively start a goal for complex, multi-step work (3+ steps, multi-file, or needs completion verification) — restate the real objective and define checkable successCriteria. Do NOT create for trivial single-step tasks, ordinary lookups, or when a goal is already active. Test: 'is this worth tracking to completion with verification?' — if yes, create a goal.",
+			// budget：默认不设预算——仅当用户显式要求（或明确同意）时才设。
+			// 对齐 description 的 Budget policy 段 + 两个 budget 参数的 description（三层信号冗余）。
+			"budget: never set tokenBudget/timeBudgetMinutes on your own initiative — the default is no budget. Set a budget only when the user explicitly requested one (e.g. \"keep it under 10k tokens\", \"finish within 30 minutes\") or you obtained explicit user consent first. If you think a budget is warranted but the user never mentioned one, ask the user before creating the goal.",
 			// 全解耦下 todo 非硬前置——objective 实际达成才算（与 handleComplete「todo 由 AI 自判」一致）
 			"complete: proactively call when the active goal's objective is actually achieved, not merely in progress. Evidence must be concrete artifacts (files changed, tests green, commands run) meeting every successCriteria condition. Finishing all todos (incl. verification todos) is the usual readiness signal, but the real bar is the objective being met — you decide.",
 			// P3 数字阈值 ≥3，与 params.reason description 的 "at least 3 approaches" 双重冗余
