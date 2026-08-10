@@ -30,6 +30,7 @@ const mkdtempP = promisify(mkdtemp)
 const rmP = promisify(rm)
 
 let tmpDir: string
+let configStore: PiConfigStore
 let configService: ConfigService
 
 beforeEach(async () => {
@@ -40,7 +41,7 @@ beforeEach(async () => {
   setSettingsPath(join(tmpDir, 'pi', 'agent', 'settings.json'))
   refreshModels()
   // ConfigService 接受 IConfigStore；用真实 PiConfigStore 走完整读写链路
-  const configStore = new PiConfigStore()
+  configStore = new PiConfigStore()
   configService = new ConfigService(tmpDir, configStore)
 })
 
@@ -91,72 +92,76 @@ describe('ConfigService.listProviders · provider 级 api 字段（U1，修复 P
   })
 })
 
-// ── U2: setProvider 写入 enabled 并被 listProviders 读回 ────────────
-// 验证真实读写 models.json：setProvider 落盘 enabled → listProviders 从盘读回。
-// 关键：测的是写盘持久化链路，不是内存硬编码。
-describe('ConfigService.setProvider · provider 级 enabled 读写链路（U2）', () => {
-  it('setProvider({ enabled: false }) 后 listProviders 读回 enabled === false', () => {
-    // 先建一个 enabled:true 的 provider
+// ── U2: provider 级 enabled 读写链路（enabledModels 白名单模型）────────
+// wave3/wave4 演进：provider 级 enabled 从「models.json provider.enabled 字段」迁移到
+// 「settings.json enabledModels 白名单」。setProvider 不再写 provider.enabled（wave3 C5/TC6：
+// 前端 provider 启用切换改走 toggleProviderEnabled），listProviders 的 enabled 从
+// deriveEnabled(id, enabledModels) 派生（DM3/F2，不读 models.json provider.enabled）。
+//
+// 故 U2 的读写链路 = toggleProviderEnabled 写 enabledModels 白名单 → listProviders 经
+// deriveEnabled 读回。白名单空/undefined = 全可用（deriveEnabled 恒 true）；非空 = 白名单匹配才启用。
+// 要测「禁用」语义，须先让白名单非空（模拟用户已显式收窄启用范围）——空白名单下 toggle(false) 幂等 no-op。
+describe('ConfigService · provider 级 enabled 读写链路（U2，enabledModels 白名单模型）', () => {
+  it('toggleProviderEnabled(p1, false) 后 listProviders 读回 enabled === false', () => {
     writeModels({
       providers: {
-        p1: {
-          apiKey: 'sk-x',
-          enabled: true,
-          models: [{ id: 'm1', name: 'M1' }],
-        },
+        p1: { apiKey: 'sk-x', models: [{ id: 'm1', name: 'M1' }] },
+        p2: { apiKey: 'sk-y', models: [{ id: 'm2', name: 'M2' }] },
       },
     })
     refreshModels()
+    // 建立非空白名单（模拟用户已显式启用部分 provider）。空白名单=全可用，toggle(false) 幂等 no-op。
+    configStore.setEnabledModels(['p1/*', 'p2/*'])
 
-    // 写入 enabled:false
-    configService.setProvider('p1', { enabled: false })
+    configService.toggleProviderEnabled('p1', false)
 
     const providers = configService.listProviders()
-    expect(providers[0]!.enabled).toBe(false)
+    // p1 被移出白名单 → deriveEnabled(p1) === false
+    expect(providers.find(p => p.id === 'p1')?.enabled).toBe(false)
+    // 副作用断言：禁用 p1 不误伤 p2（startsWith('p1/') 不匹配 'p2/*'，防 openai vs openai-compatible 前缀碰撞）
+    expect(providers.find(p => p.id === 'p2')?.enabled).toBe(true)
   })
 
-  it('setProvider({ enabled: true }) 后 listProviders 读回 enabled === true', () => {
-    // 先建一个 enabled:false 的 provider
+  it('toggleProviderEnabled(p1, true) 把已禁用的 p1 加回白名单后读回 enabled === true', () => {
     writeModels({
       providers: {
-        p1: {
-          apiKey: 'sk-x',
-          enabled: false,
-          models: [{ id: 'm1', name: 'M1' }],
-        },
+        p1: { apiKey: 'sk-x', models: [{ id: 'm1', name: 'M1' }] },
+        p2: { apiKey: 'sk-y', models: [{ id: 'm2', name: 'M2' }] },
       },
     })
     refreshModels()
+    // p1 不在白名单（已被禁用），p2 在 → 非空白名单下 deriveEnabled(p1) === false
+    configStore.setEnabledModels(['p2/*'])
+    expect(configService.listProviders().find(p => p.id === 'p1')?.enabled).toBe(false)
 
-    // 写入 enabled:true
-    configService.setProvider('p1', { enabled: true })
+    // toggle(true) 在白名单非空时补加 p1/*（空白名单下 no-op，故前置条件必须非空）
+    configService.toggleProviderEnabled('p1', true)
 
-    const providers = configService.listProviders()
-    expect(providers[0]!.enabled).toBe(true)
+    expect(configService.listProviders().find(p => p.id === 'p1')?.enabled).toBe(true)
   })
 
-  it('盘上 models.json 确实持久化了 enabled 字段（端到端非硬编码）', () => {
+  it('toggleProviderEnabled(p1, false) 后盘上 settings.json 持久化移除 p1 pattern（端到端非硬编码）', () => {
     writeModels({
       providers: {
-        p1: {
-          apiKey: 'sk-x',
-          models: [{ id: 'm1' }],
-        },
+        p1: { apiKey: 'sk-x', models: [{ id: 'm1', name: 'M1' }] },
+        p2: { apiKey: 'sk-y', models: [{ id: 'm2', name: 'M2' }] },
       },
     })
     refreshModels()
+    configStore.setEnabledModels(['p1/*', 'p2/*'])
 
-    configService.setProvider('p1', { enabled: false })
-    refreshModels()
+    configService.toggleProviderEnabled('p1', false)
 
-    // 直接读盘验证（绕过 service 缓存）
+    // 直接读盘验证（绕过 service 缓存）：enabledModels 白名单落盘到 settings.json（非 models.json）
     // eslint-disable-next-line @typescript-eslint/no-require-imports -- 动态读盘验证
     const raw = require('node:fs').readFileSync(
-      join(tmpDir, 'pi', 'agent', 'models.json'),
+      join(tmpDir, 'pi', 'agent', 'settings.json'),
       'utf-8',
     )
-    const parsed = JSON.parse(raw) as PiModelsConfig
-    expect(parsed.providers.p1?.enabled).toBe(false)
+    const parsed = JSON.parse(raw) as { enabledModels?: string[] }
+    // p1 的 pattern 被移除，仅剩 p2（startsWith('p1/') 统一匹配 provider 级与 model 级 pattern）
+    expect(parsed.enabledModels).toEqual(['p2/*'])
+    expect(parsed.enabledModels?.some(p => p.startsWith('p1/'))).toBe(false)
   })
 })
 

@@ -1,16 +1,16 @@
 /**
  * Worker crash 重建测试 (vitest)
  *
- * 测试 PluginHost 在 Worker crash 后的自动重建逻辑：
+ * 测试 PluginHost 在 Worker crash 后的自动重建逻辑（trusted 语义）：
  * - trusted Worker crash 后自动重建
- * - sandbox Worker crash 不重建
+ * - sandbox 子进程 crash 不重建（不计数；rebuild 仅 trusted 语义）
  * - crashCounts per-plugin 递增
  * - 超过 3 次后放弃
  *
  * 运行命令: pnpm --filter @xyz-agent/runtime run test -- test/plugin-worker-rebuild.test.ts
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
 import { readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -19,12 +19,17 @@ import { PluginHost } from '../src/services/plugin-service/plugin-host.js'
 import { PluginRpcServer } from '../src/services/plugin-service/plugin-rpc-server.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-// Mock 在源码目录（与 plugin-host.ts 同目录）
-const MOCK_BOOTSTRAP_SOURCE = resolve(
+// trusted Worker 线程的 mock bootstrap（运行时写入 plugin-bootstrap.js）
+const WORKER_MOCK_SOURCE = resolve(
   __dirname,
   '../src/services/plugin-service/plugin-bootstrap.mock.cjs',
 )
-// Worker 从 getPluginHostDir() 加载 bootstrap，即 plugin-host.ts 的目录
+// sandbox fork 子进程的 mock bootstrap（经 bootstrapPathOverride 注入）
+const PROCESS_MOCK_SOURCE = resolve(
+  __dirname,
+  '../src/services/plugin-service/plugin-bootstrap-process.mock.cjs',
+)
+// Worker 从 resolvePluginHostDir() 加载 bootstrap，即 plugin-host.ts 的目录
 const TARGET_BOOTSTRAP = resolve(
   __dirname,
   '../src/services/plugin-service/plugin-bootstrap.js',
@@ -39,7 +44,13 @@ beforeAll(() => {
     targetExisted = true
     originalContent = readFileSync(TARGET_BOOTSTRAP, 'utf-8')
   }
-  const mockCode = readFileSync(MOCK_BOOTSTRAP_SOURCE, 'utf-8')
+})
+
+// beforeEach（而非 beforeAll）重写 mock：与 plugin-host.test.ts 并行运行时，两者共享
+// 此文件，另一文件的 afterAll 恢复可能在本文件测试间隙清空它；每个用例前重新写入，
+// 保证本测试创建的 trusted Worker 总能加载到 mock（修复并行运行时的跨文件干扰）。
+beforeEach(() => {
+  const mockCode = readFileSync(WORKER_MOCK_SOURCE, 'utf-8')
   writeFileSync(TARGET_BOOTSTRAP, mockCode, 'utf-8')
 })
 
@@ -53,8 +64,11 @@ afterAll(() => {
   }
 })
 
-/** Send crash message to worker, triggering process.exit(1) */
-async function crashWorker(host: PluginHost, workerId: string): Promise<void> {
+/**
+ * 触发 trusted Worker 崩溃：经 Worker 实例 postMessage({type:'crash'}) → mock exit(1)。
+ * 仅适用于 trusted（有 Worker 实例）；sandbox 走 fork 子进程，无 Worker 实例。
+ */
+async function crashTrustedWorker(host: PluginHost, workerId: string): Promise<void> {
   const instance = host.getWorkerInstance(workerId)
   expect(instance).toBeDefined()
   instance!.postMessage({ type: 'crash' })
@@ -72,7 +86,7 @@ describe('Worker Crash Rebuild', () => {
     expect(workerId.startsWith('trusted-')).toBe(true)
     expect(host.getAllWorkers()).toHaveLength(1)
 
-    await crashWorker(host, workerId)
+    await crashTrustedWorker(host, workerId)
     await new Promise(resolve => setTimeout(resolve, 50))
 
     // Old worker should be cleaned up
@@ -92,21 +106,30 @@ describe('Worker Crash Rebuild', () => {
 
   it('should NOT rebuild sandbox worker after crash', async () => {
     const rpc = new PluginRpcServer()
-    const host = new PluginHost(rpc)
+    const host = new PluginHost(rpc, { bootstrapPathOverride: PROCESS_MOCK_SOURCE })
     host.setRebuildCooldownMs(50)
+
+    const crashes: Array<{ workerId: string; pluginIds: string[]; error: string }> = []
+    host.setCrashCallback((workerId, pluginIds, error) => {
+      crashes.push({ workerId, pluginIds, error })
+    })
 
     const workerId = await host.assignWorker('sandbox-plugin', 'sandbox')
     expect(workerId.startsWith('sandbox-')).toBe(true)
 
-    await crashWorker(host, workerId)
-    await new Promise(resolve => setTimeout(resolve, 50))
+    // sandbox 走 fork 子进程，无 Worker 实例 → 经 handle.postMessage 触发崩溃
+    const handle = host.getWorkerHandle('sandbox-plugin')!
+    expect(handle).toBeDefined()
+    handle.postMessage({ type: 'crash' })
+    await new Promise(resolve => setTimeout(resolve, 150))
+
+    // sandbox 崩溃被检测（onCrash 转发）但不计数（rebuild 仅 trusted 语义）
+    expect(crashes.length).toBe(1)
+    expect(crashes[0].pluginIds).toContain('sandbox-plugin')
 
     // Wait beyond rebuild cooldown — no rebuild should happen
     await new Promise(resolve => setTimeout(resolve, 100))
 
-    const allWorkers = host.getAllWorkers()
-    const sandboxActive = allWorkers.filter(w => w.trustLevel === 'sandbox' && w.status === 'active')
-    expect(sandboxActive).toHaveLength(0)
     expect(host.getCrashCount('sandbox-plugin')).toBe(0)
 
     await host.shutdown()
@@ -126,7 +149,7 @@ describe('Worker Crash Rebuild', () => {
       expect(trustedActive.length).toBeGreaterThanOrEqual(1)
       const currentWorkerId = trustedActive[0].workerId
 
-      await crashWorker(host, currentWorkerId)
+      await crashTrustedWorker(host, currentWorkerId)
       await new Promise(resolve => setTimeout(resolve, 200))
     }
 
@@ -137,7 +160,7 @@ describe('Worker Crash Rebuild', () => {
     expect(after3).toHaveLength(1)
 
     // Crash the 4th time — count=4, 4 > 3 = true → no more rebuild
-    await crashWorker(host, after3[0].workerId)
+    await crashTrustedWorker(host, after3[0].workerId)
     await new Promise(resolve => setTimeout(resolve, 200))
 
     expect(host.getCrashCount('crashy-plugin')).toBe(4)
@@ -170,7 +193,7 @@ describe('Worker Crash Rebuild', () => {
     const workerId2 = await host.assignWorker('multi-2', 'trusted')
     expect(workerId1).toBe(workerId2)
 
-    await crashWorker(host, workerId1)
+    await crashTrustedWorker(host, workerId1)
     await new Promise(resolve => setTimeout(resolve, 200))
 
     expect(host.getCrashCount('multi-1')).toBe(1)

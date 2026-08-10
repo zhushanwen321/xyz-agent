@@ -91,7 +91,7 @@ describe('SkillRegistry watcher real fs (W5: 新建 skill 子目录触发 rescan
   it('W5a: 全局 watcher 在已扫描目录下新建 skill 子目录时触发 onChange（rescan + 通知）', async () => {
     const { SkillRegistry } = await import('../src/services/skill-registry.js')
     const reg = new SkillRegistry({
-      configStore: { getSkillPaths: () => [skillDir], getPiAgentDir: () => '/pi' } as never,
+      configStore: { getSkillPaths: () => [skillDir], getPiAgentDir: () => '/pi', getSkillPathScopes: () => ({ projectPaths: [], globalPaths: [skillDir] }) } as never,
       configDir: '/cfg',
       sessionService: { getActiveSessionIds: () => ['sid-w5a'] } as never,
       _scanFn: makeScanFn(skillDir),
@@ -137,7 +137,7 @@ describe('SkillRegistry watcher real fs (W5: 新建 skill 子目录触发 rescan
     mkdirSync(projectSkillDir, { recursive: true })
     try {
       const reg = new SkillRegistry({
-        configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi' } as never,
+        configStore: { getSkillPaths: () => [], getPiAgentDir: () => '/pi', getSkillPathScopes: () => ({ projectPaths: [], globalPaths: [] }) } as never,
         configDir: '/cfg',
         sessionService: {
           getActiveSessionIds: () => ['sid-w5b'],
