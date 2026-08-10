@@ -21,7 +21,7 @@
 
       <!-- 主操作 nav：新建任务 ⌘N（primary 主操作）/ 搜索 ⌘K（ghost 次操作）。
            v6-master-spec §6.2 NavItem：primary=accent 实色 / ghost=透明 双层级。 -->
-      <nav class="flex flex-col gap-px px-1">
+      <nav class="flex flex-col gap-1 px-1">
         <Button
           variant="ghost"
           class="group h-8 w-full justify-start gap-2.5 rounded-md bg-accent px-3 text-[12px] font-medium text-accent-fg transition-colors hover:bg-accent-hover hover:text-accent-fg"

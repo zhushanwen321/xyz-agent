@@ -9,7 +9,7 @@
   -->
   <div
     ref="rootEl"
-    class="session-item group/item relative flex cursor-pointer items-start gap-2 rounded-md px-2 py-[7px] transition-colors"
+    class="session-item group/item relative flex cursor-pointer items-start gap-2 rounded-md px-2 py-1 transition-colors"
     :class="[
       active ? 'bg-surface' : 'hover:bg-surface-hover',
       isDead ? 'opacity-50' : '',
