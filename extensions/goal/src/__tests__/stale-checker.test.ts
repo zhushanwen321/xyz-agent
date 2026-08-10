@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import { makeStaleChecker } from "../adapters/event-handlers/shared";
 import { createGoalState } from "../engine/goal";
+import type { GoalRuntimeState } from "../engine/types";
 import { createGoalSession } from "../session";
 
 describe("makeStaleChecker", () => {
@@ -32,22 +33,15 @@ describe("makeStaleChecker", () => {
 		expect(session.state.goalId).toBe(snapshotId); // 确认 goalId 未变
 	});
 
-	it("snapshot 时有 goal → goalId 变更后视为 stale（被新 goal 覆盖）", () => {
+	it.each<[string, () => GoalRuntimeState | null]>([
+		["goalId 变更（被新 goal 覆盖）", () => createGoalState("new goal overwrote")],
+		["state 清空（clearGoalSession）", () => null],
+	])("snapshot 后 state 变化（%s）→ 视为 stale", (_label, nextState) => {
 		const session = createGoalSession();
-		session.state = createGoalState("old goal");
-		const checkStale = makeStaleChecker(session);
-		expect(checkStale()).toBe(false); // 初始未 stale
-		// 模拟新 goal 覆盖（createGoalState 生成新 goalId）
-		session.state = createGoalState("new goal overwrote");
-		expect(checkStale()).toBe(true); // goalId 变了 → stale
-	});
-
-	it("state 被清空（null）后 → 视为 stale", () => {
-		const session = createGoalSession();
-		session.state = createGoalState("then cleared");
+		session.state = createGoalState("snapshot goal");
 		const checkStale = makeStaleChecker(session);
 		expect(checkStale()).toBe(false);
-		session.state = null; // clearGoalSession 清空
+		session.state = nextState();
 		expect(checkStale()).toBe(true);
 	});
 });

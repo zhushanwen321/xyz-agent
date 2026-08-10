@@ -13,7 +13,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createGoalState } from "../../engine/goal";
-import type { GoalRuntimeState } from "../../engine/types";
+import type { GoalRuntimeState, GoalStatus } from "../../engine/types";
 import type { UiPort } from "../../ports";
 import { createGoalSession } from "../../session";
 import { OBJECTIVE_DISPLAY_LIMIT, OBJECTIVE_TRUNCATE_KEEP } from "../../constants";
@@ -88,24 +88,13 @@ describe("renderStatusLine", () => {
 		expect(text).toContain("1m30s"); // formatMinutes
 	});
 
-	it("blocked → 含 ⊘ Blocked 后缀", () => {
-		const text = renderStatusLine(makeState({ status: "blocked" }), theme);
-		expect(text).toContain("⊘ Blocked");
-	});
-
-	it("paused → 含 ⏸ Paused 后缀", () => {
-		const text = renderStatusLine(makeState({ status: "paused" }), theme);
-		expect(text).toContain("⏸ Paused");
-	});
-
-	it("complete → 含 ✓ Completed 后缀", () => {
-		const text = renderStatusLine(makeState({ status: "complete" }), theme);
-		expect(text).toContain("✓ Completed");
-	});
-
-	it("budget_limited → 含 ⊗ Token budget exhausted 后缀", () => {
-		const text = renderStatusLine(makeState({ status: "budget_limited" }), theme);
-		expect(text).toContain("⊗ Token budget exhausted");
+	it.each([
+		["blocked", "⊘ Blocked"],
+		["paused", "⏸ Paused"],
+		["complete", "✓ Completed"],
+		["budget_limited", "⊗ Token budget exhausted"],
+	])("renderStatusLine %s → 含后缀 %s", (status, suffix) => {
+		expect(renderStatusLine(makeState({ status: status as GoalStatus }), theme)).toContain(suffix);
 	});
 
 	it("tokenBudget > 0 → 显示 token 百分比", () => {
@@ -126,16 +115,6 @@ describe("renderStatusLine", () => {
 describe("renderTerminalStatusLine", () => {
 	it("cancelled → 空字符串", () => {
 		expect(renderTerminalStatusLine(makeState({ status: "cancelled" }), theme)).toBe("");
-	});
-
-	it("complete → 含 ✓ Completed", () => {
-		const text = renderTerminalStatusLine(makeState({ status: "complete" }), theme);
-		expect(text).toContain("✓ Completed");
-	});
-
-	it("budget_limited → 含 ⊗ Token budget exhausted", () => {
-		const text = renderTerminalStatusLine(makeState({ status: "budget_limited" }), theme);
-		expect(text).toContain("⊗ Token budget exhausted");
 	});
 });
 
@@ -261,7 +240,9 @@ describe("updateWidget (FR-6.6 hasUI guard)", () => {
 		const session = createGoalSession();
 		session.state = makeState({ status: "complete" });
 		updateWidget(session, ui);
-		expect(calls.some((c) => c.method === "setStatus" && typeof c.args[1] === "string")).toBe(true);
+		const statusCall = calls.find((c) => c.method === "setStatus");
+		expect(statusCall!.args[1]).toEqual(expect.stringContaining("✓ Completed"));
+		expect(statusCall!.args[1]).toEqual(expect.stringContaining("◆ Goal")); // renderTerminalStatusLine 前缀
 		expect(calls.some((c) => c.method === "setWidget" && c.args[1] === undefined)).toBe(true);
 	});
 
@@ -270,7 +251,12 @@ describe("updateWidget (FR-6.6 hasUI guard)", () => {
 		const session = createGoalSession();
 		session.state = makeState({ status: "active" });
 		updateWidget(session, ui);
-		expect(calls.some((c) => c.method === "setStatus" && typeof c.args[1] === "string")).toBe(true);
-		expect(calls.some((c) => c.method === "setWidget" && Array.isArray(c.args[1]))).toBe(true);
+		const statusCall = calls.find((c) => c.method === "setStatus");
+		expect(statusCall!.args[1]).toEqual(expect.stringContaining("◆"));
+		expect(statusCall!.args[1]).toEqual(expect.stringContaining("Turn"));
+		const widgetCall = calls.find((c) => c.method === "setWidget");
+		expect(widgetCall!.args[1]).toEqual(
+			expect.arrayContaining([expect.stringContaining("Token:")]),
+		);
 	});
 });

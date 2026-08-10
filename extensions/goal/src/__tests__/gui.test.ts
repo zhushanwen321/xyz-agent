@@ -11,13 +11,22 @@ import { describe, expect, it } from "vitest";
 
 import { buildGoalGui } from "../projection/gui";
 import { createGoalState } from "../engine/goal";
-import type { GoalRuntimeState } from "../engine/types";
+import type { GoalRuntimeState, GoalStatus } from "../engine/types";
 
 function makeState(overrides: Partial<GoalRuntimeState> = {}): GoalRuntimeState {
 	return {
 		...createGoalState("test"),
 		...overrides,
 	};
+}
+
+/** 从 card 分支的 body 中按 type 取组件（hasBudget 分支只有一个 progress-bar / 一个 stats-line 组合）。 */
+function findBodyComp(
+	gui: ReturnType<typeof buildGoalGui>,
+	type: string,
+): { type: string; props: Record<string, unknown> } {
+	const body = gui.component.props.body as { type: string; props: Record<string, unknown> }[];
+	return body.find((c) => c.type === type)!;
 }
 
 describe("buildGoalGui", () => {
@@ -31,36 +40,21 @@ describe("buildGoalGui", () => {
 		);
 		expect(gui.v).toBe(1);
 		expect(gui.component.type).toBe("card");
-		const body = gui.component.props.body as { type: string; props: Record<string, unknown> }[];
-		// body[0] = progress-bar(tokens), body[1] = stats-line
-		const tokenBar = body.find((c) => c.type === "progress-bar")!;
+		const tokenBar = findBodyComp(gui, "progress-bar");
 		expect(tokenBar.props).toMatchObject({ current: 4200, total: 10000, severity: "ok" });
-		const stats = body.find((c) => c.type === "stats-line")!;
+		const stats = findBodyComp(gui, "stats-line");
 		expect(stats.props.items).toContainEqual(expect.objectContaining({ label: "status", value: "active" }));
 	});
 
-	it("token 消耗 ≥90% → severity danger", () => {
-		const gui = buildGoalGui(
-			makeState({
-				tokensUsed: 9500,
-				budget: { tokenBudget: 10000 },
-			}),
-		);
-		const body = gui.component.props.body as { type: string; props: Record<string, unknown> }[];
-		const tokenBar = body.find((c) => c.type === "progress-bar")!;
-		expect(tokenBar.props.severity).toBe("danger");
-	});
-
-	it("token 消耗 ≥70% → severity warn", () => {
-		const gui = buildGoalGui(
-			makeState({
-				tokensUsed: 7500,
-				budget: { tokenBudget: 10000 },
-			}),
-		);
-		const body = gui.component.props.body as { type: string; props: Record<string, unknown> }[];
-		const tokenBar = body.find((c) => c.type === "progress-bar")!;
-		expect(tokenBar.props.severity).toBe("warn");
+	it.each([
+		["9500/10000 ≥90%", 9500, "danger"],
+		["9000/10000 =90%", 9000, "danger"],
+		["7500/10000 ≥70%", 7500, "warn"],
+		["7000/10000 =70%", 7000, "warn"],
+	])("token 消耗 %s → severity %s（S#14 边界 ≥）", (_label, used, severity) => {
+		const gui = buildGoalGui(makeState({ tokensUsed: used, budget: { tokenBudget: 10000 } }));
+		const tokenBar = findBodyComp(gui, "progress-bar");
+		expect(tokenBar.props.severity).toBe(severity);
 	});
 
 	it("无 budget → stats-line 摘要", () => {
@@ -109,44 +103,16 @@ describe("buildGoalGui", () => {
 
 	// ── S#2: statusSeverity 完整覆盖 ──
 
-	it("budget_limited 状态 → status severity danger（S#2）", () => {
-		const gui = buildGoalGui(makeState({ status: "budget_limited", budget: { tokenBudget: 10000 } }));
-		const body = gui.component.props.body as { type: string; props: { items: Array<{ label: string; severity: string }> } }[];
-		const stats = body.find((c) => c.type === "stats-line")!;
-		const statusItem = stats.props.items.find((i) => i.label === "status")!;
-		expect(statusItem.severity).toBe("danger");
-	});
-
-	it("cancelled 状态 → status severity danger（S#2）", () => {
-		const gui = buildGoalGui(makeState({ status: "cancelled", budget: { tokenBudget: 10000 } }));
-		const body = gui.component.props.body as { type: string; props: { items: Array<{ label: string; severity: string }> } }[];
-		const stats = body.find((c) => c.type === "stats-line")!;
-		const statusItem = stats.props.items.find((i) => i.label === "status")!;
-		expect(statusItem.severity).toBe("danger");
-	});
-
-	it("paused 状态 → status severity warn（S#2）", () => {
-		const gui = buildGoalGui(makeState({ status: "paused", budget: { tokenBudget: 10000 } }));
-		const body = gui.component.props.body as { type: string; props: { items: Array<{ label: string; severity: string }> } }[];
-		const stats = body.find((c) => c.type === "stats-line")!;
-		const statusItem = stats.props.items.find((i) => i.label === "status")!;
-		expect(statusItem.severity).toBe("warn");
-	});
-
-	// ── S#14: 阈值边界精确值 ──
-
-	it("token 消耗正好 90% → severity danger（边界 ≥，S#14）", () => {
-		const gui = buildGoalGui(makeState({ tokensUsed: 9000, budget: { tokenBudget: 10000 } }));
-		const body = gui.component.props.body as { type: string; props: { label?: string; severity?: string } }[];
-		const tokenBar = body.find((c) => c.type === "progress-bar" && c.props.label === "tokens")!;
-		expect(tokenBar.props.severity).toBe("danger");
-	});
-
-	it("token 消耗正好 70% → severity warn（边界 ≥，S#14）", () => {
-		const gui = buildGoalGui(makeState({ tokensUsed: 7000, budget: { tokenBudget: 10000 } }));
-		const body = gui.component.props.body as { type: string; props: { label?: string; severity?: string } }[];
-		const tokenBar = body.find((c) => c.type === "progress-bar" && c.props.label === "tokens")!;
-		expect(tokenBar.props.severity).toBe("warn");
+	it.each([
+		["budget_limited", "danger"],
+		["cancelled", "danger"],
+		["paused", "warn"],
+	])("status %s → stats-line status severity %s（S#2）", (status, severity) => {
+		const gui = buildGoalGui(makeState({ status: status as GoalStatus, budget: { tokenBudget: 10000 } }));
+		const stats = findBodyComp(gui, "stats-line");
+		const items = stats.props.items as Array<{ label: string; severity?: string }>;
+		const statusItem = items.find((i) => i.label === "status")!;
+		expect(statusItem.severity).toBe(severity);
 	});
 
 	// ── I#1: tokenBudget=0 口径统一 ──

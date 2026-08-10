@@ -11,105 +11,28 @@ import { Value } from "typebox/value";
 import { GoalControlParams } from "../adapters/goal-control-adapter";
 
 describe("GoalControlParams — discriminated union（TC6）", () => {
-	// ── create 分支 ──
-
-	it("create 完整（objective + successCriteria）→ 通过", () => {
-		expect(
-			Value.Check(GoalControlParams, { action: "create", objective: "x", successCriteria: "y" }),
-		).toBe(true);
+	// valid：各分支完整 + optional 字段 → 通过
+	it.each([
+		["create 完整", { action: "create", objective: "x", successCriteria: "y" }],
+		["create + slug", { action: "create", slug: "refactor-auth", objective: "x", successCriteria: "y" }],
+		["create + tokenBudget", { action: "create", objective: "x", successCriteria: "y", tokenBudget: 8000 }],
+		["complete 完整", { action: "complete", evidence: "tests green" }],
+		["report_blocked 完整", { action: "report_blocked", reason: "stuck" }],
+	])("valid: %s → 通过", (_name, params) => {
+		expect(Value.Check(GoalControlParams, params)).toBe(true);
 	});
 
-	it("create + slug（optional）→ 通过", () => {
-		expect(
-			Value.Check(GoalControlParams, {
-				action: "create",
-				slug: "refactor-auth",
-				objective: "x",
-				successCriteria: "y",
-			}),
-		).toBe(true);
-	});
-
-	it("create + tokenBudget（optional）→ 通过", () => {
-		expect(
-			Value.Check(GoalControlParams, {
-				action: "create",
-				objective: "x",
-				successCriteria: "y",
-				tokenBudget: 8000,
-			}),
-		).toBe(true);
-	});
-
-	it("create 缺 objective → 拒绝", () => {
-		expect(Value.Check(GoalControlParams, { action: "create", successCriteria: "y" })).toBe(false);
-	});
-
-	it("create 缺 successCriteria → 拒绝", () => {
-		expect(Value.Check(GoalControlParams, { action: "create", objective: "x" })).toBe(false);
-	});
-
-	it("create 含额外字段 → 拒绝（additionalProperties:false）", () => {
-		expect(
-			Value.Check(GoalControlParams, {
-				action: "create",
-				objective: "x",
-				successCriteria: "y",
-				foo: 1,
-			}),
-		).toBe(false);
-	});
-
-	it("create 含 complete 分支字段 evidence → 拒绝（分支隔离）", () => {
-		expect(
-			Value.Check(GoalControlParams, {
-				action: "create",
-				objective: "x",
-				successCriteria: "y",
-				evidence: "leak",
-			}),
-		).toBe(false);
-	});
-
-	// ── complete 分支 ──
-
-	it("complete 完整（evidence）→ 通过", () => {
-		expect(Value.Check(GoalControlParams, { action: "complete", evidence: "tests green" })).toBe(true);
-	});
-
-	it("complete 缺 evidence → 拒绝", () => {
-		expect(Value.Check(GoalControlParams, { action: "complete" })).toBe(false);
-	});
-
-	it("complete 含额外字段 → 拒绝（additionalProperties:false）", () => {
-		expect(
-			Value.Check(GoalControlParams, { action: "complete", evidence: "x", reason: "leak" }),
-		).toBe(false);
-	});
-
-	// ── report_blocked 分支 ──
-
-	it("report_blocked 完整（reason）→ 通过", () => {
-		expect(Value.Check(GoalControlParams, { action: "report_blocked", reason: "stuck" })).toBe(true);
-	});
-
-	it("report_blocked 缺 reason → 拒绝", () => {
-		expect(Value.Check(GoalControlParams, { action: "report_blocked" })).toBe(false);
-	});
-
-	it("report_blocked 含额外字段 → 拒绝（additionalProperties:false）", () => {
-		expect(
-			Value.Check(GoalControlParams, { action: "report_blocked", reason: "x", evidence: "leak" }),
-		).toBe(false);
-	});
-
-	// ── action 隔离 ──
-
-	it("未知 action → 拒绝", () => {
-		expect(Value.Check(GoalControlParams, { action: "unknown" })).toBe(false);
-	});
-
-	it("缺 action → 拒绝", () => {
-		expect(Value.Check(GoalControlParams, { objective: "x" })).toBe(false);
+	// invalid：缺必填 / 额外字段（additionalProperties:false 代表性用例）/ 分支隔离 / 未知 action
+	it.each([
+		["create 缺 objective", { action: "create", successCriteria: "y" }],
+		["create 缺 successCriteria", { action: "create", objective: "x" }],
+		["create 含额外字段（additionalProperties:false）", { action: "create", objective: "x", successCriteria: "y", foo: 1 }],
+		["create 含 complete 分支字段 evidence（分支隔离）", { action: "create", objective: "x", successCriteria: "y", evidence: "leak" }],
+		["complete 缺 evidence", { action: "complete" }],
+		["report_blocked 缺 reason", { action: "report_blocked" }],
+		["未知 action", { action: "unknown" }],
+		["缺 action", { objective: "x" }],
+	])("invalid: %s → 拒绝", (_name, params) => {
+		expect(Value.Check(GoalControlParams, params)).toBe(false);
 	});
 });
