@@ -17,7 +17,7 @@ import {
 	handleCreate,
 	handleReportBlocked,
 } from "../adapters/goal-control-adapter";
-import { createGoalState, transitionStatus } from "../engine/goal";
+import { createGoalState } from "../engine/goal";
 import type { GoalRuntimeState } from "../engine/types";
 import type { UiPort } from "../ports";
 import type { ServicePorts } from "../service";
@@ -153,33 +153,10 @@ describe("handleCreate — slug+objective 必填 + 非终态守卫 + createGoal"
 		).toThrow(/successCriteria/);
 	});
 
-	it("已有 active goal → throw（D25 非终态守卫）", () => {
+	const NON_TERMINAL_STATUSES: GoalRuntimeState["status"][] = ["active", "paused", "blocked"];
+	it.each(NON_TERMINAL_STATUSES)("已有 %s goal → throw（D25 非终态守卫）", (status) => {
 		const session = createGoalSession();
-		session.state = activeState({ status: "active" });
-		expect(() =>
-			handleCreate(
-				{ action: "create", slug: "new", objective: "new obj", successCriteria: "done" },
-				session,
-				makeFakePorts(),
-			),
-		).toThrow(/already active/i);
-	});
-
-	it("已有 paused goal → throw（paused 也是非终态）", () => {
-		const session = createGoalSession();
-		session.state = activeState({ status: "paused" });
-		expect(() =>
-			handleCreate(
-				{ action: "create", slug: "new", objective: "new obj", successCriteria: "done" },
-				session,
-				makeFakePorts(),
-			),
-		).toThrow(/already active/i);
-	});
-
-	it("已有 blocked goal → throw（blocked 也是非终态）", () => {
-		const session = createGoalSession();
-		session.state = activeState({ status: "blocked" });
+		session.state = activeState({ status });
 		expect(() =>
 			handleCreate(
 				{ action: "create", slug: "new", objective: "new obj", successCriteria: "done" },
@@ -272,10 +249,5 @@ describe("handleReportBlocked — active 守卫 + tick + transition + persist", 
 		expect(() =>
 			handleReportBlocked({ action: "report_blocked", reason: "" }, session, makeFakePorts()),
 		).toThrow(/reason/);
-	});
-
-	it("active→blocked 是合法转换", () => {
-		// transitionStatus 自身已由 engine 测试覆盖，此处验证集成不破坏
-		expect(transitionStatus("active", "blocked")).toBe("blocked");
 	});
 });

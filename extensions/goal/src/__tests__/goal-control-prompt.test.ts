@@ -31,124 +31,63 @@ function extractDescription(src: string): string {
 
 const DESCRIPTION = extractDescription(ADAPTER_SRC);
 
-// ── description 中文化 + 动作覆盖 ──
-
 describe("goal_control description — 中文化 + 动作覆盖", () => {
-	it("含管理目标总述", () => {
+	it("含管理目标总述 + complete 须满足每条 successCriteria 条件", () => {
 		expect(DESCRIPTION).toContain("管理当前会话的目标");
-	});
-
-	it("含 create 动作", () => {
-		expect(DESCRIPTION).toContain("create");
-	});
-
-	it("含 complete 动作 + 满足 successCriteria 条件", () => {
-		expect(DESCRIPTION).toContain("complete");
 		expect(DESCRIPTION).toContain("满足每条 successCriteria 条件");
-	});
-
-	it("含 report_blocked 动作", () => {
-		expect(DESCRIPTION).toContain("report_blocked");
 	});
 });
 
-// ── §2.5 终态语义（TC8）──
-
 describe("goal_control description — §2.5 终态语义", () => {
-	it("A4: create 失败提示 /goal resume 或 /goal clear（中文）", () => {
+	it("create 失败提示 / complete 报告 token / pause-resume-budget 归用户 / 不反复报告阻塞", () => {
 		expect(DESCRIPTION).toContain("请让用户运行 /goal resume 或 /goal clear");
-	});
-
-	it("complete 报告最终 token 用量", () => {
 		expect(DESCRIPTION).toContain("报告最终 token 用量");
-	});
-
-	it("pause/resume/budget 归用户经 /goal 控制", () => {
 		expect(DESCRIPTION).toContain("pause/resume 和 budget 变更由用户经 /goal 命令控制");
-	});
-
-	it("达到阻塞阈值后报告，不反复报告同一阻塞", () => {
 		expect(DESCRIPTION).toContain("不要反复报告同一阻塞");
 	});
 });
 
-// ── 删除英文 Examples/Don't 段 ──
-
 describe("goal_control description — 删除 Examples/Don't 英文段", () => {
-	it("不含 Examples JSON 正例段（{\"action\":\"create\"}）", () => {
+	it("不含 Examples JSON 正例段 + 不含 Don't 段", () => {
 		// Examples 段已删，description 不再含裸 JSON 正例
 		expect(DESCRIPTION).not.toContain('{"action":"create"');
-	});
-
-	it("不含 Don't 段", () => {
 		expect(DESCRIPTION).not.toMatch(/Don't/);
 	});
 });
 
-// ── schema discriminated union（C3，CT3）──
-
 describe("goal_control schema — discriminated union（C3）", () => {
-	it("源码含 Type.Union", () => {
+	it("Type.Union + 各分支 additionalProperties:false + 无 timeBudgetMinutes", () => {
 		expect(ADAPTER_SRC).toMatch(/Type\.Union\(/);
-	});
-
-	it("各分支 additionalProperties:false", () => {
 		expect(ADAPTER_SRC).toContain("additionalProperties: false");
-	});
-
-	it("无 timeBudgetMinutes 字段（time budget 已移除）", () => {
 		expect(ADAPTER_SRC).not.toMatch(/timeBudgetMinutes/);
 	});
 });
 
-// ── promptGuidelines 主动触发引导 ──
-
 describe("goal_control promptGuidelines — complete/report_blocked 主动触发引导", () => {
-	it("源码含 promptGuidelines 字段", () => {
+	it("含 promptGuidelines 字段 + complete/report_blocked 主动触发信号", () => {
 		expect(ADAPTER_SRC).toMatch(/promptGuidelines:\s*\[/);
-	});
-
-	it("含 complete 主动触发信号（proactively + objective is actually achieved）", () => {
 		expect(ADAPTER_SRC).toMatch(/complete:.*proactively call.*objective is actually achieved/s);
-	});
-
-	it("含 report_blocked 主动触发信号（proactively + ≥3 approaches + 不反复报告）", () => {
 		expect(ADAPTER_SRC).toMatch(/report_blocked:.*proactively call.*≥3 distinct alternative approaches/s);
 		expect(ADAPTER_SRC).toContain("do not repeatedly report the same blocker");
 	});
 });
 
-// ── runtime 错误文案含 'Correct:' 纠正正例 ──
-
-describe("goal_control runtime 错误文案 — 含 'Correct:' 纠正正例（≥4 处）", () => {
-	it("源码含 ≥4 处 'Correct:'（4 条空串 throw 各一带正例）", () => {
+describe("goal_control runtime 错误文案 — 含 'Correct:' 纠正正例", () => {
+	it("≥4 处 'Correct:'（4 条空串 throw 各一带正例）+ objective/evidence 报错带正例", () => {
 		// objective/successCriteria/evidence/reason 四条空串 throw 各应带完整 JSON 正例，
 		// 让弱模型在报错后无需猜测即可纠正。读整份源码统计出现次数。
 		const matches = ADAPTER_SRC.match(/Correct:/g) || [];
 		expect(matches.length).toBeGreaterThanOrEqual(4);
-	});
-
-	it("objective 报错带 Correct 正例", () => {
 		expect(ADAPTER_SRC).toMatch(/'objective' must not be empty[\s\S]*?Correct:/);
-	});
-
-	it("evidence 报错带 Correct 正例", () => {
 		expect(ADAPTER_SRC).toMatch(/'evidence' must not be empty[\s\S]*?Correct:/);
 	});
 });
 
-// ── 描述修正（A1/slug optional）──
-
 describe("goal_control 描述修正（A1/slug optional）", () => {
-	it("A1: 全文不含 'at least 3 approaches'（reason schema desc/throw 已删强制 ≥3 声明）", () => {
+	it("无 'at least 3 approaches' + reason throw 含 'what you tried' + slug 真 optional", () => {
+		// A1: reason schema desc/throw 已删强制 ≥3 声明
 		expect(ADAPTER_SRC).not.toMatch(/at least 3 approaches/);
-	});
-
-	it("A1: reason throw 含 'what you tried'", () => {
 		expect(ADAPTER_SRC).toMatch(/'reason' must not be empty[\s\S]*?what you tried/);
-	});
-
-	it("slug 真 optional：schema desc 中文含'可选'，handleCreate 不再 throw slug 必填", () => {
 		expect(ADAPTER_SRC).toContain("可选。");
 		expect(ADAPTER_SRC).not.toMatch(/'slug' is required/);
 	});

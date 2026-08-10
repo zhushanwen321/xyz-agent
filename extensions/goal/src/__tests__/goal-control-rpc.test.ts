@@ -127,7 +127,6 @@ describe("goal_control execute — RPC __gui__ 注入分支", () => {
 			objective: "rpc card goal",
 			tokenBudget: 10000,
 		});
-		expect(result.details.__gui__).toBeDefined();
 		const gui = result.details.__gui__!;
 		expect(gui.component.type).toBe("card");
 		// card body 含 progress-bar（tokenBudget）+ stats-line
@@ -145,7 +144,6 @@ describe("goal_control execute — RPC __gui__ 注入分支", () => {
 			slug: "rpc-stats",
 			objective: "rpc stats goal",
 		});
-		expect(result.details.__gui__).toBeDefined();
 		const gui = result.details.__gui__!;
 		expect(gui.component.type).toBe("stats-line");
 		// stats-line items 含 goal/status/turn/tokens
@@ -182,20 +180,6 @@ describe("goal_control execute — RPC __gui__ 注入分支", () => {
 		).rejects.toThrow(/not active/i);
 	});
 
-	it("TUI 模式 → __gui__ 不附加（即使有 state）", async () => {
-		const { pi, ctx } = makeFixture("tui");
-		const tool = captureTool(pi);
-		const result = await createViaHandler(tool, pi, ctx, {
-			slug: "tui-no-gui",
-			objective: "tui goal",
-			tokenBudget: 5000,
-		});
-		// TUI 模式不注入 __gui__
-		expect(result.details.__gui__).toBeUndefined();
-		// 但 content 仍正常
-		expect(result.content[0]!.text).toContain("Goal created");
-	});
-
 	it("RPC + complete 动作 → __gui__ 也附加（用终态 state 渲染）", async () => {
 		// 验证 __gui__ 注入不限于 create：complete 后 session.state 仍非 null（status=complete）
 		const { pi, ctx } = makeFixture("rpc");
@@ -210,7 +194,6 @@ describe("goal_control execute — RPC __gui__ 注入分支", () => {
 			undefined,
 			ctx,
 		);
-		expect(result.details.__gui__).toBeDefined();
 		expect(result.details.status).toBe("complete");
 		const gui = result.details.__gui__!;
 		// 无 budget → stats-line
@@ -231,7 +214,6 @@ describe("goal_control execute — RPC __gui__ 注入分支", () => {
 			undefined,
 			ctx,
 		);
-		expect(result.details.__gui__).toBeDefined();
 		expect(result.details.status).toBe("blocked");
 		// 无 budget → stats-line；blocked status severity=danger
 		const gui = result.details.__gui__!;
@@ -243,28 +225,19 @@ describe("goal_control execute — RPC __gui__ 注入分支", () => {
 
 });
 
-// ── 边界：非 RPC 模式（json/print）也不注入 __gui__ ──
+// ── 边界：非 RPC 模式（tui/json/print）也不注入 __gui__ ──
 
 describe("goal_control execute — 非 RPC 模式不注入 __gui__", () => {
-	it("json 模式 → __gui__ 不附加", async () => {
-		const { pi, ctx } = makeFixture("json");
+	const NON_RPC_MODES: Array<"tui" | "json" | "print"> = ["tui", "json", "print"];
+	it.each(NON_RPC_MODES)("%s 模式 → __gui__ 不附加（content 仍正常）", async (mode) => {
+		const { pi, ctx } = makeFixture(mode);
 		const tool = captureTool(pi);
 		const result = await createViaHandler(tool, pi, ctx, {
-			slug: "json-mode",
-			objective: "json goal",
+			slug: `${mode}-mode`,
+			objective: `${mode} goal`,
 			tokenBudget: 1000,
 		});
 		expect(result.details.__gui__).toBeUndefined();
-	});
-
-	it("print 模式 → __gui__ 不附加", async () => {
-		const { pi, ctx } = makeFixture("print");
-		const tool = captureTool(pi);
-		const result = await createViaHandler(tool, pi, ctx, {
-			slug: "print-mode",
-			objective: "print goal",
-			tokenBudget: 1000,
-		});
-		expect(result.details.__gui__).toBeUndefined();
+		expect(result.content[0]!.text).toContain("Goal created");
 	});
 });
