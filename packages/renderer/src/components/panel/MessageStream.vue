@@ -419,6 +419,6 @@ watch(
    （vue_rules_checker 不允许 scoped CSS 写非动画/伪元素属性，inline style 绕过检查且语义等价）。 */
 
 /* 回到底部浮层过渡 */
-.fade-enter-active, .fade-leave-active { transition: opacity var(--duration-fast, 150ms) ease; }
+.fade-enter-active, .fade-leave-active { transition: opacity var(--duration-fast) ease; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 </style>

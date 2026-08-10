@@ -321,7 +321,7 @@ const { killTerminal } = terminal
 /* escape hatch：Vue Transition 类（Tailwind 无法表达），浮动按钮淡入淡出 */
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.15s ease;
+  transition: opacity var(--duration-fast) var(--ease);
 }
 .fade-enter-from,
 .fade-leave-to {
