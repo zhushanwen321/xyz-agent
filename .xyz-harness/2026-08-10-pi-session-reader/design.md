@@ -318,8 +318,7 @@ handler 内按 action 校验必填项（缺失抛 F5）。
        leafPath.unshift(cur)
        cur = index[cur].parentId          （遇 parentId 不在索引 → root 为孤儿，停）
 4. leafSet = Set(leafPath)
-5. branches：遍历所有 entry，parentId ∈ leafSet 但自身 ∉ leafSet → 旁支
-   按 forkPoint(=parentId) 聚合计数
+5. branches：遍历所有**非主链** entry（id ∉ leafSet），沿祖先链找最近的 leafPath 节点作为 forkPoint，按 forkPoint 聚合**子树大小**（不是直接子节点数）——outline 的 `[旁支 N entries]` 需要 N 是子树大小才有信息价值（如 `A→B→C` 主链 + `A→D→E` 旁支 → `branches={A:2}`，D、E 都算，不是只算 D）
 输出：{ leafPath: id[], branches: Map<forkPointId, count> }
 ```
 outline 默认只渲染 leafPath 上的 turn；`allBranches:true` 时在 forkPoint 处插入 `[旁支 N entries]`。
