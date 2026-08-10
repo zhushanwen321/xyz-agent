@@ -139,45 +139,47 @@ const SLASH_COMMAND_SELECT_LIST_LAYOUT = {
 
 ### 3.1 终态（使用者视角）
 
-**成功路径**——在当前项目键入 `#`（终端 120 列）：
+**成功路径**——在当前项目键入 `#`（终端 120 列，label 满宽无 padding）：
 
 ```
-→ 262 now                         看看 pi-session-reader 这个 extension 在本项目的源码。 现在在pi...
-  243 1h                          <skill name="tech-design" location="/Users/zhushanwen/.agent...
-  6 1h                            <skill name="dev-link" location="/Users/zhushanwen/Code/xyz-...
-  14 1h                           确保全部改动都已经提交。然后 pull origin main 合并最新代码。
-  修复登录bug                      14 51m   ← 有 name 时只显示 name（在 description 位）
-  55 10h                          我现在在设计开发一个 extension tool： 目的是...
+→ now 看看 pi-session-reader 这个 extension 在本项目的源码。 现在在 pi 中 TUI 输入 # 会出现...
+  01h <skill name="tech-design" location="/Users/zhushanwen/.agents/skills/tech-design/SKILL.md...
+  01h <skill name="dev-link" location="/Users/zhushanwen/Code/xyz-agent-workspace/feat-read-...
+  01h 确保全部改动都已经提交。然后 pull origin main 合并最新代码。
+  01h 修复登录bug                                          ← 有 name 时只显示 name（在 label 里）
+  11h 我现在在设计开发一个 extension tool： 目的是...
   (1/10)
 ```
 
-- `label` = `${count} ${age}`（如 `262 now`、`243 1h`）—— 走主列（固定 32 字符宽）左对齐
-- `description` = 预览/name（截到 100 字符）—— 走次列，吃满剩余宽度（~width-36 列）
-- **不显示 uuid 片段**（片段只在 insertText，选中才插入 # 片段）
-- 有 name → description 只显示 name（不显示 firstMessage）
-- 主列固定 32 导致 label 后有 padding（32 − `243 1h` ≈ 24 空格）—— pi-tui 死约束，见 §3.2
+- `label` = `${格式化时间} ${预览/name}`（满宽渲染，见 §3.2）—— 时间最左 + 1 空格 + 预览吃满
+- **不设 description**（触发 SelectList 满宽分支，绕过主列固定 32）
+- 时间等宽 3 字符：`now` / `01m`/`59m` / `01h`/`23h` / `01d` / `02w` / `02M` / `01y`（2 位补零 + 1 位单位，月=M）
+- **不显示 uuid 片段**（只在 insertText）、**不显示 count**（用户反馈）
+- 有 name → label 里显示 name 不显示 firstMessage
 - 选中插入 `#019fec09`（不变，向后兼容）
 
 **失败路径 + 恢复**：
 - 当前目录无 session → 弹窗为空，pi-tui 自动显示 `No matching commands`。恢复：用户继续敲完整 uuid 片段，或用 `/session-pick`，或 `/resume` 切到全目录视图。
 - 用户要引用**别的项目**的 session → `#` 弹窗找不到（已确认 out-of-scope）。恢复：直接让 agent 用 `session_read {action:"find", query:"<片段>"}` 跨目录定位。
 
-### 3.2 关键约束：# 弹窗主列固定 32 字符（实测发现，推翻 §3.3 旧决策）
+### 3.2 关键约束与解法：不传 description 绕过主列固定 32（实测发现）
 
-用户期望「不显示最左片段 + 时间位置可控」。**实现期实测发现 # 弹窗的 SelectList 主列固定 32 字符宽**（探针 ✅）：
+**问题**：pi-tui 的 `createAutocompleteList`（editor.js:1794）对非 `/` 前缀（`#`/`@`）传 `layout=undefined`，SelectList 默认主列固定 32 字符（min=max=32）。若传 description，label 后 padding 到 32 再接 description，`count age` 与预览间隔 ~24 空格（用户反馈「隔太远」）。
 
-`editor.js:1794` 的 `createAutocompleteList`：
+**解法（纯 extension 层，不改 pi）**：**不传 description**。读 SelectList.renderItem 源码（select-list.js）发现：
+
 ```js
-const layout = prefix.startsWith("/") ? SLASH_COMMAND_SELECT_LIST_LAYOUT : undefined;
-return new SelectList(items, this.autocompleteMaxVisible, this.theme.selectList, layout);
+if (descriptionSingleLine && width > 40) { /* 有 description：走主列固定32分列 */ }
+// 无 description：
+const maxWidth = width - prefixWidth - 2;  // 满宽
+return prefix + truncatePrimary(item, ..., maxWidth, maxWidth);  // label 截到满宽
 ```
 
-- `/` 命令补全 → 用 `SLASH_COMMAND_SELECT_LIST_LAYOUT`（min 12, max 32）
-- **`#` / `@` 补全 → `layout = undefined`** → SelectList 默认 `{}` → `getPrimaryColumnBounds` 走 `DEFAULT_PRIMARY_COLUMN_WIDTH = 32` → **min = max = 32，主列固定 32 字符**
+`item.description` 为 undefined 时 `descriptionSingleLine` 为 undefined，跳过主列分列分支，label 被当作整行截到 `width-4` 满宽。**主列固定 32 不生效**。
 
-含义：**无论 label 放什么、多短，主列都占 32 字符**（label 左对齐 + 右侧 padding 到 32）。label 放片段(8 字符)会留 24 空格 padding（用户截图所见）；label 放空也仍占 32 空白。
+故映射改为：**label = `${格式化时间} ${预览/name}`，不设 description**。label 满宽渲染，时间最左 + 1 空格 + 预览吃满，无 padding。无 count（用户反馈「243 是什么」）、无 uuid 片段（仅在 insertText）。
 
-**用户想要的「时间右对齐」在此约束下不可达**（SelectList 只有 label 主列 + description 次列，description 单字段左对齐截断，无法右对齐）。采用用户给的备选方案「时间最左 + 后面 description」：label 放 `${count} ${age}`（短，主列不被截），description 放预览/name（吃满剩余宽度）。代价：label 后有 padding（主列 32 导致），要紧贴需改 pi-tui（提 upstream，out-of-scope）。
+时间格式：`formatAge` 返回固定 3 字符等宽 `XXu`（2 位数字补零 + 1 位单位 m/h/d/w/M/y，月用 M 区分分钟的 m），`now` 也是 3 字符。用户要求「保留2位数字+一位单位」。
 
 ### 3.3 多方案对比
 

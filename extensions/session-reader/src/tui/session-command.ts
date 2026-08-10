@@ -44,7 +44,7 @@ export function createSessionCommand(cwdSessionDir: string): {
       return top.map((s) => {
         const c = toCandidate(s)
         // value 是补全后替换 argumentPrefix 的文本（纯片段，不带 #——命令参数位置）
-        return { value: s.id.slice(0, FRAGMENT_LEN), label: c.label, description: c.description }
+        return { value: s.id.slice(0, FRAGMENT_LEN), label: c.label }
       })
     },
     async handler(args, ctx) {
@@ -70,8 +70,7 @@ export function createSessionCommand(cwdSessionDir: string): {
   }
 }
 
-/** select 列表单行格式：`片段  预览/name  count age`（与 # 弹窗 toCandidate 同信息，全宽行）。 */
+/** select 列表单行格式：直接用 toCandidate 的 label（已含 `时间 预览`，满宽）。 */
 function formatSessionLabel(s: SessionInfo): string {
-  const c = toCandidate(s)
-  return `${c.label}  ${c.description ?? ''}`
+  return toCandidate(s).label
 }

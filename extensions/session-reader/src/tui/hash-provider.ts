@@ -37,11 +37,13 @@ const HOURS_PER_DAY = 24
 const DAYS_PER_WEEK = 7
 const DAYS_PER_MONTH = 30
 const DAYS_PER_YEAR = 365
+/** formatAge 数字部分补零宽度（design G4：固定等宽 XXu） */
+const AGE_NUM_DIGITS = 2
 
 export interface AutocompleteCandidate {
-  /** 显示文本（主列，pi-tui SelectList 固定 32 字符宽）。放 `${count} ${age}`，如 "243 1h" */
+  /** 显示文本（满宽 label）。`${age} ${预览/name}`，如 "01m 看看 pi-session-reader..." */
   label: string
-  /** 副信息（次列，吃满剩余宽度）。放预览/name（name 优先，design G3） */
+  /** 副信息（次列）。本 provider 不设（undefined）——触发 SelectList 满宽 label 分支 */
   description?: string
   /** 插入编辑器，如 "#019e6c96"（design D-3：uuid 片段，非名称；不显示给用户看） */
   insertText: string
@@ -68,27 +70,25 @@ export function extractHashFragment(textBeforeCursor: string): string | null {
 }
 
 /**
- * modified → 单单位相对时间描述（对齐 pi 内置 `/resume` 的 `formatSessionDate`）。
+ * modified → 固定等宽的单单位时间（对齐用，design G4）。
  *
- * 顺序：now → Nm → Nh → Nd → Nw → Nmo → Ny。**只用一个单位**（design G4），
- * 不出现「刚刚/分钟前」混排。now 参数可注入用于确定性单测。
- *
- * 照搬 session-selector.js:21 的 formatSessionDate 逻辑（不 import pi 内部未导出函数，
- * 避免耦合；逻辑简单且稳定）。
+ * 格式：`now`（<1分钟）或 `XXu`（2位数字补零 + 1 位单位）。单位 m/h/d/w/M/y 全单字符，
+ * 总宽 3 字符严格对齐（月用 `M` 区分分钟的 `m`）。对齐 pi `/resume` 的 formatSessionDate
+ * 单单位语义，但补零到 2 位 + 压缩月单位以等宽（用户要求「保留2位数字+一位单位」）。
  */
 export function formatAge(modified: Date | number, now: number = Date.now()): string {
   const ms = typeof modified === 'number' ? modified : modified.getTime()
   const diff = now - ms
   if (diff < MS_PER_MINUTE) return 'now'
   const mins = Math.floor(diff / MS_PER_MINUTE)
-  if (mins < MINUTES_PER_HOUR) return `${mins}m`
+  if (mins < MINUTES_PER_HOUR) return `${String(mins).padStart(AGE_NUM_DIGITS, '0')}m`
   const hours = Math.floor(diff / MS_PER_HOUR)
-  if (hours < HOURS_PER_DAY) return `${hours}h`
+  if (hours < HOURS_PER_DAY) return `${String(hours).padStart(AGE_NUM_DIGITS, '0')}h`
   const days = Math.floor(diff / MS_PER_DAY)
-  if (days < DAYS_PER_WEEK) return `${days}d`
-  if (days < DAYS_PER_MONTH) return `${Math.floor(days / DAYS_PER_WEEK)}w`
-  if (days < DAYS_PER_YEAR) return `${Math.floor(days / DAYS_PER_MONTH)}mo`
-  return `${Math.floor(days / DAYS_PER_YEAR)}y`
+  if (days < DAYS_PER_WEEK) return `${String(days).padStart(AGE_NUM_DIGITS, '0')}d`
+  if (days < DAYS_PER_MONTH) return `${String(Math.floor(days / DAYS_PER_WEEK)).padStart(AGE_NUM_DIGITS, '0')}w`
+  if (days < DAYS_PER_YEAR) return `${String(Math.floor(days / DAYS_PER_MONTH)).padStart(AGE_NUM_DIGITS, '0')}M`
+  return `${String(Math.floor(days / DAYS_PER_YEAR)).padStart(AGE_NUM_DIGITS, '0')}y`
 }
 
 /** 控制字符/换行 → 单空格（避免 description 带换行破坏 SelectList 单行渲染）。 */
@@ -105,28 +105,25 @@ function truncate(s: string, max: number): string {
 /**
  * SessionInfo → AutocompleteCandidate（纯函数，可单测）。
  *
- * pi-tui # 弹窗的 SelectList 主列**固定 32 字符宽**（createAutocompleteList 对非 / 前缀
- * 传 layout=undefined → 默认 min=max=32，editor.js:1794）。无论 label 多短主列都占 32，
- * label 后 padding 到 32 再接 description。在此死约束下的最优映射：
+ * **绕过 pi-tui 主列固定32死约束的关键**：不设 description。SelectList.renderItem 在
+ * description 为 undefined 时走 else 分支，把 label 当整行截到 width-4 满宽，**不应用主列
+ * 固定32的分列逻辑**（select-list.js renderItem：`if (descriptionSingleLine && width>40)`
+ * 分支才进主列逻辑，否则 label 满宽）。
  *
- * - label = `${count} ${age}`（如 "243 1h"）——放主列左对齐。count+时间必现（主列不被截），
- *   **不显示 uuid 片段**（片段只在 insertText，选中才插入；用户反馈：不要最左片段）。
- * - description = 预览/name（截到 PREVIEW_MAX）——放次列，吃满剩余宽度（~width-36 列），
- *   预览最大化（design G2）。name 优先于 firstMessage（design G3）。
+ * 映射：
+ * - label = `${age} ${预览/name}`（如 "01m 看看 pi-session-reader..."）——满宽渲染，
+ *   时间最左 + 1 空格 + 预览吃满，无 padding，不显示 uuid 片段，不含 count（用户反馈）。
+ * - description = undefined（不设）——触发上述满宽分支。
+ * - insertText = `#片段`（选中才插入，design D-3）。
  *
- * 代价：label 后到预览有 padding（主列 32 − "243 1h" ≈ 24 空格）——pi-tui 主列固定 32 导致，
- * extension 层无法消除。要紧贴需改 pi-tui createAutocompleteList（提 upstream）。
- *
- * 不清洗 XML 标签（如 `<skill>`）——对齐 `/resume`（resume 也不清洗）。只清洗控制字符/换行。
+ * name 优先于 firstMessage（design G3）。不清洗 XML 标签（对齐 /resume）。只清洗控制字符/换行。
  */
 export function toCandidate(s: SessionInfo, now: number = Date.now()): AutocompleteCandidate {
   const frag = s.id.slice(0, FRAGMENT_LEN)
-  const count = String(s.messageCount)
   const age = formatAge(s.modified, now)
   const text = truncate(normalizeSingleLine(s.name ?? s.firstMessage), PREVIEW_MAX) || '(无预览)'
   return {
-    label: `${count} ${age}`,
-    description: text,
+    label: `${age} ${text}`,
     insertText: `#${frag}`,
   }
 }

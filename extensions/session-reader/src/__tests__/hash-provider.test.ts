@@ -120,41 +120,49 @@ describe('formatAge', () => {
     expect(formatAge(now - 30_000, now)).toBe('now')
   })
 
-  it('< 1 小时 → Xm', () => {
-    expect(formatAge(now - 5 * 60_000, now)).toBe('5m')
+  it('< 1 小时 → XXm（2位补零）', () => {
+    expect(formatAge(now - 5 * 60_000, now)).toBe('05m')
+    expect(formatAge(now - 59 * 60_000, now)).toBe('59m')
   })
 
-  it('< 1 天 → Xh', () => {
-    expect(formatAge(now - 3 * 3_600_000, now)).toBe('3h')
+  it('< 1 天 → XXh', () => {
+    expect(formatAge(now - 3 * 3_600_000, now)).toBe('03h')
+    expect(formatAge(now - 23 * 3_600_000, now)).toBe('23h')
   })
 
-  it('< 7 天 → Xd', () => {
-    expect(formatAge(now - 2 * 86_400_000, now)).toBe('2d')
+  it('< 7 天 → XXd', () => {
+    expect(formatAge(now - 2 * 86_400_000, now)).toBe('02d')
   })
 
-  it('< 30 天 → Xw', () => {
-    expect(formatAge(now - 14 * 86_400_000, now)).toBe('2w')
+  it('< 30 天 → XXw', () => {
+    expect(formatAge(now - 14 * 86_400_000, now)).toBe('02w')
   })
 
-  it('< 365 天 → Xmo', () => {
-    expect(formatAge(now - 60 * 86_400_000, now)).toBe('2mo')
+  it('< 365 天 → XXM（月单位 M，单字符与分钟 m 区分）', () => {
+    expect(formatAge(now - 60 * 86_400_000, now)).toBe('02M')
   })
 
-  it('≥ 365 天 → Xy', () => {
-    expect(formatAge(now - 400 * 86_400_000, now)).toBe('1y')
+  it('≥ 365 天 → XXy', () => {
+    expect(formatAge(now - 400 * 86_400_000, now)).toBe('01y')
   })
 
   it('接收 Date 对象（SessionInfo.modified 是 Date）', () => {
-    expect(formatAge(new Date(now - 2 * 3_600_000), now)).toBe('2h')
+    expect(formatAge(new Date(now - 2 * 3_600_000), now)).toBe('02h')
   })
 
   it('未来时间（时钟偏移）→ now', () => {
     expect(formatAge(now + 10_000, now)).toBe('now')
   })
 
-  it('只用一个单位，不出现「分钟前/小时前」混排（design G4）', () => {
-    // 90 分钟 = 1h（不是 1h 30m）
-    expect(formatAge(now - 90 * 60_000, now)).toBe('1h')
+  it('固定等宽：除 now 外都是 3 字符（XXu，2位数字+1位单位，design G4 对齐）', () => {
+    // 各档位抽样，都应 3 字符
+    expect(formatAge(now - 90 * 60_000, now)).toBe('01h') // 90分=1h，补零
+    expect(formatAge(now - 5 * 60_000, now).length).toBe(3)
+    expect(formatAge(now - 3 * 3_600_000, now).length).toBe(3)
+    expect(formatAge(now - 2 * 86_400_000, now).length).toBe(3)
+    expect(formatAge(now - 60 * 86_400_000, now).length).toBe(3)
+    expect(formatAge(now - 400 * 86_400_000, now).length).toBe(3)
+    expect(formatAge(now - 30_000, now)).toBe('now') // now 也是 3 字符
   })
 })
 
@@ -167,54 +175,49 @@ describe('toCandidate', () => {
     expect(c.insertText.length).toBe(FRAGMENT_LEN + 1)
   })
 
-  it('label = `${count} ${age}`（主列左对齐，不显示 uuid 片段——用户反馈）', () => {
-    const c = toCandidate(
-      makeSessionInfo({ messageCount: 14 }),
-      new Date('2026-01-01T13:00:00Z').getTime(),
-    )
-    // modified=2026-01-01T00:00, now=13:00 → 13h；label = count + age
-    expect(c.label).toBe('14 13h')
-    // label 不含 uuid 片段（片段只在 insertText）
-    expect(c.label).not.toContain('019e6c96')
-  })
-
-  it('description = firstMessage（无 name 时，吃满次列宽度）', () => {
+  it('label = `${age} ${预览}`（时间最左 + 1 空格 + 预览；不设 description 触发满宽分支）', () => {
     const c = toCandidate(
       makeSessionInfo({ firstMessage: '修复登录 bug', messageCount: 14 }),
       new Date('2026-01-01T13:00:00Z').getTime(),
     )
-    expect(c.description).toBe('修复登录 bug')
+    // modified=2026-01-01T00:00, now=13:00 → 13h
+    expect(c.label).toBe('13h 修复登录 bug')
+    // description 未设（undefined）——触发 SelectList 满宽 label 分支，绕过主列固定32
+    expect(c.description).toBeUndefined()
   })
 
-  it('有 name → description 只放 name，不放 firstMessage（design G3）', () => {
+  it('有 name → label 放 name 不放 firstMessage（design G3）', () => {
     const c = toCandidate(
       makeSessionInfo({ name: 'my-session', firstMessage: '首条消息内容', messageCount: 5 }),
       new Date('2026-01-01T01:00:00Z').getTime(),
     )
-    expect(c.description).toBe('my-session')
-    expect(c.description).not.toContain('首条消息内容')
-    // label 仍是 count+age
-    expect(c.label).toBe('5 1h')
+    expect(c.label).toBe('01h my-session')
+    expect(c.label).not.toContain('首条消息内容')
   })
 
   it('firstMessage 超长 → 截断到 PREVIEW_MAX（避免传超大字符串给 pi-tui）', () => {
     const longText = 'X'.repeat(500)
-    const c = toCandidate(makeSessionInfo({ firstMessage: longText, messageCount: 1 }))
-    // description = 截断text(100 + …)；label = count age（独立不受影响）
-    expect(c.description).toMatch(/^X{100}…$/)
-    expect(c.label).toMatch(/^1 \d+(mo|m|h|d|w|y)$/)
+    const c = toCandidate(makeSessionInfo({ firstMessage: longText }), new Date('2026-01-01T01:00:00Z').getTime())
+    // label = age(3) + 空格(1) + 截断text(100+…)
+    expect(c.label).toMatch(/^01h X{100}…$/)
+  })
+
+  it('label 不含 uuid 片段、不含 count（用户反馈：不显示片段、不显示 count）', () => {
+    const c = toCandidate(makeSessionInfo({ messageCount: 999 }))
+    expect(c.label).not.toContain('019e6c96')
+    expect(c.label).not.toContain('999')
   })
 
   it('firstMessage 含换行/控制符 → 清洗为单空格（避免破坏 SelectList 单行渲染）', () => {
     const c = toCandidate(makeSessionInfo({ firstMessage: '第一行\n第二行\t缩进' }))
-    expect(c.description).not.toContain('\n')
-    expect(c.description).not.toContain('\t')
-    expect(c.description).toContain('第一行 第二行 缩进')
+    expect(c.label).not.toContain('\n')
+    expect(c.label).not.toContain('\t')
+    expect(c.label).toContain('第一行 第二行 缩进')
   })
 
   it('无 name 且无 firstMessage → 标 (无预览)', () => {
     const c = toCandidate(makeSessionInfo({ name: undefined, firstMessage: '' }))
-    expect(c.description).toContain('(无预览)')
+    expect(c.label).toContain('(无预览)')
   })
 })
 
@@ -266,9 +269,10 @@ describe('provideHashCandidates', () => {
     expect(result).not.toBeNull()
     expect(result!).toHaveLength(1)
     expect(result![0].insertText).toBe('#019e6c96')
-    // label = count+age（不含片段），description = firstMessage
+    // label = age+预览（不含片段、不含 count）；description 未设
     expect(result![0].label).not.toContain('019e6c96')
-    expect(result![0].description).toContain('修复登录 bug')
+    expect(result![0].label).toContain('修复登录 bug')
+    expect(result![0].description).toBeUndefined()
   })
 
   it('insertText 格式 #xxxxxxxx（8 字符片段）', async () => {
@@ -311,7 +315,7 @@ describe('provideHashCandidates', () => {
     expect(result![0].insertText).toBe('#019e6c96')
   })
 
-  it('有 name 的 session → description 含 name 不含 firstMessage', async () => {
+  it('有 name 的 session → label 含 name 不含 firstMessage（design G3）', async () => {
     await makeSession(cwdSessionDir, {
       fileName: 'named.jsonl',
       id: '019fffff-cccc-dddd',
@@ -321,7 +325,7 @@ describe('provideHashCandidates', () => {
     })
     const result = await provideHashCandidates('#019f', cwdSessionDir)
     expect(result!).toHaveLength(1)
-    expect(result![0].description).toContain('my-named-session')
-    expect(result![0].description).not.toContain('首条消息内容')
+    expect(result![0].label).toContain('my-named-session')
+    expect(result![0].label).not.toContain('首条消息内容')
   })
 })
