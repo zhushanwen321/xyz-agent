@@ -77,40 +77,34 @@ describe('ExtensionResolver', () => {
     vi.clearAllMocks()
   })
 
-  describe('normalizeExtName', () => {
-    it('removes pi- prefix from unscoped name', () => {
+  describe('readExtName', () => {
+    it('reads package.json name as dedup key', () => {
+      mockedReadFileSync.mockImplementation((p: unknown) => {
+        if (typeof p === 'string' && p === '/dir/package.json') {
+          return JSON.stringify({ name: '@zhushanwen/pi-ask-user', keywords: ['pi-package'] })
+        }
+        throw new Error('not found')
+      })
       // @ts-expect-error — testing private method
-      expect(resolver.normalizeExtName('pi-subagents')).toBe('subagents')
+      expect(resolver.readExtName('/dir')).toBe('@zhushanwen/pi-ask-user')
     })
 
-    it('preserves scope and removes pi- prefix', () => {
+    it('falls back to basename when name missing or non-string', () => {
+      mockedReadFileSync.mockImplementation((p: unknown) => {
+        if (typeof p === 'string' && p === '/dir/package.json') {
+          return JSON.stringify({ keywords: ['pi-package'] })
+        }
+        throw new Error('not found')
+      })
+      // basename 被 mock 为 split('/').pop()，'/dir' → 'dir'
       // @ts-expect-error — testing private method
-      expect(resolver.normalizeExtName('@zhushanwen/pi-goal')).toBe('@zhushanwen/goal')
+      expect(resolver.readExtName('/dir')).toBe('dir')
     })
 
-    it('preserves non-pi scope intact', () => {
+    it('falls back to basename when package.json unreadable', () => {
+      mockedReadFileSync.mockImplementation(() => { throw new Error('not found') })
       // @ts-expect-error — testing private method
-      expect(resolver.normalizeExtName('@scope/subagents')).toBe('@scope/subagents')
-    })
-
-    it('handles scoped name without pi- prefix', () => {
-      // @ts-expect-error — testing private method
-      expect(resolver.normalizeExtName('@scope/my-ext')).toBe('@scope/my-ext')
-    })
-
-    it('handles name without pi- prefix', () => {
-      // @ts-expect-error — testing private method
-      expect(resolver.normalizeExtName('my-ext')).toBe('my-ext')
-    })
-
-    it('prevents dedup collision between different scopes', () => {
-      // @ts-expect-error — testing private method
-      const name1 = resolver.normalizeExtName('@scope1/pi-goal')
-      // @ts-expect-error — testing private method
-      const name2 = resolver.normalizeExtName('@scope2/pi-goal')
-      expect(name1).not.toBe(name2)
-      expect(name1).toBe('@scope1/goal')
-      expect(name2).toBe('@scope2/goal')
+      expect(resolver.readExtName('/dir')).toBe('dir')
     })
   })
 
@@ -180,7 +174,7 @@ describe('ExtensionResolver', () => {
 
       const result = resolver.scanSettingsExtensions()
       expect(result.size).toBe(1)
-      expect(result.get('ask-user')).toBe(pkgDir)
+      expect(result.get('pi-ask-user')).toBe(pkgDir)
     })
 
     it('returns disabled packages (pure discovery, no disabled filtering)', () => {
@@ -215,8 +209,8 @@ describe('ExtensionResolver', () => {
       const result = resolver.scanSettingsExtensions()
       // disabled 过滤已移至 extension-filter.ts，resolver 全量返回
       expect(result.size).toBe(1)
-      // normalizeExtName('pi-ask-user') 去掉 pi- 前缀 → 'ask-user'
-      expect(result.get('ask-user')).toBe(pkgDir)
+      // readExtName 读 package.json.name → 'pi-ask-user'（全链路统一用 package.json.name）
+      expect(result.get('pi-ask-user')).toBe(pkgDir)
     })
 
     it('skips invalid pi extensions', () => {
@@ -256,7 +250,7 @@ describe('ExtensionResolver', () => {
   describe('scanBundledExtensions', () => {
     // dev 模式 projectRoot = apps/electron，bundled 在 repo root 的 resources/pi/agent/extensions/。
     // join 被 mock 为字符串拼接（不解析 ..），路径为 {projectRoot}/../../resources/pi/agent/extensions
-    const bundledMockPath = '/project/../../resources/pi/agent/extensions'
+    const bundledMockPath = '/project/resources/extensions/@zhushanwen'
 
     it('scans bundled directory in dev mode', () => {
       mockDir(bundledMockPath)
@@ -425,7 +419,7 @@ describe('ExtensionResolver', () => {
   describe('resolve', () => {
     it('integrates all 5 sources and deduplicates', () => {
       // dev 模式 bundled 在 repo root（projectRoot/../../resources/...），join mock 不解析 ..
-      const bundledDir = '/project/../../resources/pi/agent/extensions'
+      const bundledDir = '/project/resources/extensions/@zhushanwen'
       const home = process.env.HOME ?? '/home/user'
       const settingsDir = `${home}/.xyz-agent/pi/agent`
       const settingsPath = `${settingsDir}/settings.json`

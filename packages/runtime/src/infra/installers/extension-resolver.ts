@@ -111,7 +111,7 @@ export class ExtensionResolver implements IExtensionResolver {
           const pkgDir = join(bundledNmDir, entry)
           if (!statSync(pkgDir).isDirectory()) continue
           if (!this.isValidPiExtension(pkgDir)) continue
-          result.set(this.normalizeExtName(entry), pkgDir)
+          result.set(this.readExtName(pkgDir), pkgDir)
         }
       } catch (e) {
         log.warn(`[extension-resolver] failed to scan packaged node_modules: ${e}`)
@@ -146,8 +146,7 @@ export class ExtensionResolver implements IExtensionResolver {
 
       if (!this.isValidPiExtension(pkgDir)) continue
 
-      const extName = this.normalizeExtName(pkgName)
-      result.set(extName, pkgDir)
+      result.set(this.readExtName(pkgDir), pkgDir)
     }
 
     return result
@@ -181,8 +180,7 @@ export class ExtensionResolver implements IExtensionResolver {
 
       if (!this.isValidPiExtension(pkgDir)) continue
 
-      const extName = this.normalizeExtName(pkgName)
-      result.set(extName, pkgDir)
+      result.set(this.readExtName(pkgDir), pkgDir)
     }
 
     return result
@@ -246,8 +244,7 @@ export class ExtensionResolver implements IExtensionResolver {
         continue
       }
       if (!this.isValidPiExtension(extPath)) continue
-      const extName = this.normalizeExtName(basename(extPath))
-      result.set(extName, extPath)
+      result.set(this.readExtName(extPath), extPath)
     }
 
     return result
@@ -434,33 +431,25 @@ export class ExtensionResolver implements IExtensionResolver {
   }
 
   /**
-   * 规范化 extension name 用于去重。
-   * 保留 scope，仅去掉 pi- 前缀：
-   * - @zhushanwen/pi-goal → @zhushanwen/goal
-   * - pi-subagents → subagents
-   * - @scope/subagents → @scope/subagents
+   * 从扩展目录读 package.json.name 作为 deduplicate 的去重 key（扩展身份唯一源）。
    *
-   * NOTE: Behavioral change from old version — scope is now preserved.
-   * Old: @zhushanwen/pi-goal → goal (scope stripped)
-   * New: @zhushanwen/pi-goal → @zhushanwen/goal (scope kept)
-   * This allows scoped and unscoped packages with the same base name
-   * to coexist without dedup collision.
-   */
-  /** Normalize extension name: keep scope, strip pi- prefix.
-   *  e.g. "@zhushanwen/pi-goal" → "@zhushanwen/goal", "pi-goal" → "goal"
+   * [HISTORICAL] 此前用 normalizeExtName（保留 scope、去 pi- 前缀）做去重 key，但 bundled 源
+   * 遍历 @zhushanwen 目录子项拿到的是无 scope 目录名（pi-ask-user），而 settings/npm 源用
+   * 完整 scoped 包名（@zhushanwen/pi-ask-user），两者经 normalizeExtName 产生不同 key
+   *（ask-user vs @zhushanwen/ask-user），导致同一扩展跨源去重失败、列表出现重复条目。
    *
-   *  BREAKING CHANGE NOTE: versions prior to this change stripped the scope
-   *  ("@zhushanwen/pi-goal" → "goal"). Existing disabled-packages.json entries
-   *  may use the old format. If users report extensions re-enabling after upgrade,
-   *  check disabled-packages.json for stale keys and run a one-time migration.
+   * 根治：去重 key 统一为 package.json.name，与 disabled key（resolveExtension 的
+   * `npm:${meta.name}`）、ExtensionInfo.name 全链路一致。name 缺失/非 string 时 fallback
+   * basename(dir)，与 resolveExtension 的 typeof 守卫对齐。
    */
-  private normalizeExtName(name: string): string {
-    const parts = name.split('/')
-    const last = parts[parts.length - 1].replace(/^pi-/, '')
-    if (parts.length > 1) {
-      return parts.slice(0, -1).join('/') + '/' + last
+  private readExtName(dir: string): string {
+    try {
+      const raw = readFileSync(join(dir, 'package.json'), 'utf-8')
+      const pkg = JSON.parse(raw) as { name?: unknown }
+      return typeof pkg.name === 'string' ? pkg.name : basename(dir)
+    } catch {
+      return basename(dir)
     }
-    return last
   }
 
   /** 扫描目录下的子目录，跳过 shared/ */
@@ -476,7 +465,7 @@ export class ExtensionResolver implements IExtensionResolver {
           continue
         }
         if (!this.isValidPiExtension(entryPath)) continue
-        result.set(this.normalizeExtName(entry), entryPath)
+        result.set(this.readExtName(entryPath), entryPath)
       }
       log.debug(`[extension-resolver] ${label}: found ${result.size} extensions in ${dir}`)
     } catch (e) {

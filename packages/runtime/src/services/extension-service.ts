@@ -349,9 +349,8 @@ export class ExtensionService {
    * 返回推荐扩展列表，附带当前已安装状态。
    *
    * 匹配逻辑：scanExtensions() 拿到已装列表，按 npm 包名精确匹配。
-   * ExtensionInfo.name 存的是原始 npm 包名（如 @zhushanwen/pi-goal，见 readPackageJson
-   * 的 NOTE 注释——name 故意保留原始值不做 normalize），与 recommended-extensions.json
-   * 的 name 字段一致，无需 normalizeExtName 转换。
+   * ExtensionInfo.name 存的是原始 package.json name（如 @zhushanwen/pi-goal），与
+   * recommended-extensions.json 的 name 字段一致，无需转换（全链路统一用 package.json.name）。
    *
    * SSOT：recommended-extensions.json（shared 包导出，runtime import）。
    * 额外过滤 mandatory 项：即使将来 recommended-extensions.json 误含 mandatory 包，
@@ -485,6 +484,16 @@ export class ExtensionService {
       const pkgName = source.slice(NPM_PREFIX_LENGTH)
       if (!isValidNpmPackageName(pkgName)) {
         throw new ExtensionInstallError('not_found', `Invalid npm package name: ${pkgName}`)
+      }
+      // mandatory/builtin 包已打包内置，禁止用户 npm 安装。
+      // 否则与内置副本产生去重冲突，且 deduplicate（settings 优先级 > bundled）会保留用户装的
+      // 那份、吞掉内置那份，产生 source(user-installed)/tier(mandatory) 矛盾条目（不可卸载却显示为用户安装）。
+      if (isBuiltinExtension(pkgName)) {
+        throw new ExtensionInstallError(
+          'builtin_already_installed',
+          `Extension already built in: ${pkgName}`,
+          '该扩展已随应用打包内置，无需单独安装。如需最新版，更新应用即可。',
+        )
       }
       const npmDir = this.npmDir
 
@@ -1031,14 +1040,10 @@ export class ExtensionService {
   /**
    * Read package.json from a directory and return name/version/description.
    *
-   * NOTE: `name` is intentionally the raw package.json `name` field, NOT
-   * normalized via `this.resolver.normalizeExtName()`. Reasons:
-   * 1. `ExtensionInfo.name` stores raw names throughout the codebase
-   *    (scanNpmExtensions, scanSettingsExtensions, scanDirectory all keep raw).
-   * 2. `finishInstall` uses `name` as a directory path for file operations —
-   *    normalizing would break tempDir → extensions/ copy.
-   * 3. Dedup normalization is handled by ExtensionResolver's internal Maps,
-   *    not by individual scan methods or ExtensionInfo fields.
+   * NOTE: `name` 是原始 package.json `name` 字段（如 @zhushanwen/pi-goal），不做任何转换。
+   * 全链路统一用 package.json.name：去重 key（resolver.readExtName）、disabled key
+   *（resolveExtension 的 `npm:${meta.name}`）、ExtensionInfo.name 都用它，无需 normalize。
+   * finishInstall 用 name 做目录路径操作时也保持原始值。
    */
   private readPackageJson(dir: string): { name: string; version: string; description: string } {
     const pkgJsonPath = join(dir, 'package.json')
