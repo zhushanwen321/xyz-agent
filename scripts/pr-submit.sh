@@ -106,7 +106,20 @@ if git remote get-url github >/dev/null 2>&1; then
 else
     PUSH_REMOTE="origin"
 fi
-log "pushing $BRANCH to $PUSH_REMOTE..."
+
+# 从选定的 remote URL 解析 owner/repo。bare repo workspace 下 origin 是本地 bare repo，
+# gh 无法从 origin 推断 GitHub repo，所有 gh 调用必须显式 --repo（见 AGENTS.md §10）。
+# 兼容 SSH (git@host:owner/repo.git) 与 HTTPS (https://host/owner/repo.git) 两种格式。
+REMOTE_URL="$(git remote get-url "$PUSH_REMOTE")"
+GH_REPO="$(echo "$REMOTE_URL" | sed -E 's#(git@[^:]+:|https?://[^/]+/)##; s#\.git$##')"
+OWNER="${GH_REPO%%/*}"
+if [[ -z "$GH_REPO" || -z "$OWNER" ]]; then
+    log "failed to parse owner/repo from remote $PUSH_REMOTE ($REMOTE_URL)" >&2
+    exit 1
+fi
+HEAD_REF="$OWNER:$BRANCH"
+
+log "pushing $BRANCH to $PUSH_REMOTE (repo=$GH_REPO)..."
 if [[ "$DRY_RUN" == "1" ]]; then
     log "(dry-run) skip push"
 else
@@ -118,7 +131,7 @@ fi
 
 # ── 2. 探测现有 PR
 log "checking existing PR for branch $BRANCH..."
-EXISTING_JSON="$(gh pr list --head "$BRANCH" --base "$BASE" --state open --json number,title,body 2>/dev/null || echo '[]')"
+EXISTING_JSON="$(gh pr list --repo "$GH_REPO" --head "$HEAD_REF" --base "$BASE" --state open --json number,title,body 2>/dev/null || echo '[]')"
 
 PR_NUMBER=""
 EXISTING_TITLE=""
@@ -140,10 +153,10 @@ if [[ -z "$PR_NUMBER" ]]; then
 
     log "creating new PR..."
     if [[ "$DRY_RUN" == "1" ]]; then
-        log "(dry-run) gh pr create --base $BASE --title <title> --body-file $BODY_FILE"
+        log "(dry-run) gh pr create --repo $GH_REPO --head $HEAD_REF --base $BASE --title <title> --body-file $BODY_FILE"
         echo "https://github.com/dry-run/pr/create"
     else
-        PR_URL="$(gh pr create --base "$BASE" --title "$TITLE" --body-file "$BODY_FILE")"
+        PR_URL="$(gh pr create --repo "$GH_REPO" --head "$HEAD_REF" --base "$BASE" --title "$TITLE" --body-file "$BODY_FILE")"
         log "created: $PR_URL"
         echo "$PR_URL"
     fi
@@ -158,11 +171,11 @@ else
 
     if [[ "$DRY_RUN" == "1" ]]; then
         log "(dry-run) needs title=$NEEDS_TITLE body=$NEEDS_BODY"
-        log "(dry-run) gh pr edit $PR_NUMBER [--title --body]"
+        log "(dry-run) gh pr edit $PR_NUMBER --repo $GH_REPO [--title --body]"
         echo "https://github.com/dry-run/pr/$PR_NUMBER"
     else
         if [[ "$NEEDS_TITLE" == "true" || "$NEEDS_BODY" == "true" ]]; then
-            EDIT_ARGS=( "$PR_NUMBER" )
+            EDIT_ARGS=( "$PR_NUMBER" --repo "$GH_REPO" )
             [[ "$NEEDS_TITLE" == "true" ]] && EDIT_ARGS+=( --title "$TITLE" )
             [[ "$NEEDS_BODY" == "true" ]]  && EDIT_ARGS+=( --body-file "$BODY_FILE" )
             gh pr edit "${EDIT_ARGS[@]}" || { log "gh pr edit failed" >&2; exit 3; }
@@ -170,7 +183,7 @@ else
         else
             log "PR #$PR_NUMBER already up to date; no edit needed"
         fi
-        PR_URL="$(gh pr view "$PR_NUMBER" --json url -q .url)"
+        PR_URL="$(gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json url -q .url)"
         log "PR URL: $PR_URL"
         echo "$PR_URL"
     fi
