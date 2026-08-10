@@ -138,16 +138,19 @@ describe('Vue Transition 内容切换淡入（M1：设置页切换）', () => {
     'utf-8',
   )
 
+  // 类定义锚点：SettingsModal.vue 的 <style scoped>（escape hatch，AGENTS.md §3
+  // 明确允许 Vue Transition 类）。style.css 只放 design tokens + base reset，
+  // pre-commit CSS tokens 检查强制组件级样式归位，故不锚定 style.css。
   it('.ui-fade-enter-active/.ui-fade-leave-active 定义 opacity 过渡（--duration/--ease）', () => {
-    expect(styleCss).toContain('.ui-fade-enter-active')
-    expect(styleCss).toContain('.ui-fade-leave-active')
-    expect(styleCss).toContain('transition: opacity var(--duration) var(--ease)')
+    expect(settingsModal).toContain('.ui-fade-enter-active')
+    expect(settingsModal).toContain('.ui-fade-leave-active')
+    expect(settingsModal).toContain('transition: opacity var(--duration) var(--ease)')
   })
 
   it('.ui-fade-enter-from/.ui-fade-leave-to 定义 opacity: 0', () => {
-    expect(styleCss).toContain('.ui-fade-enter-from')
-    expect(styleCss).toContain('.ui-fade-leave-to')
-    expect(styleCss).toContain('opacity: 0')
+    expect(settingsModal).toContain('.ui-fade-enter-from')
+    expect(settingsModal).toContain('.ui-fade-leave-to')
+    expect(settingsModal).toContain('opacity: 0')
   })
 
   it('SettingsModal.vue 的 <Transition> 引用 name="ui-fade"（非死类）', () => {
