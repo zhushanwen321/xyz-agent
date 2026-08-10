@@ -1,0 +1,99 @@
+// 公共 mock pi fixture（M5-T4 / M5-C2）
+//
+// 消除 characterization-hook.test.ts 与 structured-output.test.ts Workflow hook 组的
+// ~40 行×2 同构重复（on 收集回调 / emit 按注册顺序触发 / sendUserMessage+registerTool spy）。
+// 无 .test. 后缀——vitest include 仅匹配 tests/**/*.test.ts，本文件不执行。
+//
+// loadExtension：设 process.env[PI_WORKFLOW_SCHEMA] + vi.resetModules + 动态 import
+// '../src/index.js'（fixture 位于 tests/ 根下，相对路径与消费方一致），再调 mod.default(mockPi)。
+// restoreSchemaEnv(original)：只处理 env——消费方 afterEach 必须保留自己的 vi.restoreAllMocks()。
+
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { vi } from "vitest";
+
+export const SCHEMA_ENV_NAME = "PI_WORKFLOW_SCHEMA";
+
+export function createMockPi() {
+  const handlers = new Map<string, ((...args: unknown[]) => Promise<void> | void)[]>();
+  const sendUserMessage = vi.fn();
+  // on 的类型保持 Mock<Procedure>（vi.fn() 无实现）——Mock 调用签名参数是 any，
+  // 赋给 ExtensionAPI 的 on 重载兼容；收集逻辑经 mockImplementation 注入，规避
+  // 宽签名回调（参数逆变）与重载 handler 的静态类型冲突。
+  const on = vi.fn();
+  on.mockImplementation((event: string, cb: (...args: unknown[]) => Promise<void> | void) => {
+    if (!handlers.has(event)) handlers.set(event, []);
+    handlers.get(event)!.push(cb);
+  });
+  return {
+    sendUserMessage,
+    registerTool: vi.fn(),
+    on,
+    // 驱动器：按注册顺序触发某事件的所有回调
+    async emit(event: string, payload: unknown): Promise<void> {
+      for (const cb of handlers.get(event) ?? []) {
+        await cb(payload);
+      }
+    },
+  };
+}
+
+// 补齐 ExtensionAPI 全部成员——fixture 无 .test. 后缀会被 tsc 检查，而消费方 .test.ts
+// 被 tsconfig exclude（原版同构 mock 定义在 .test.ts 里从不被检查）。补齐方法均为未用
+// spy，行为零变化（现有用例只断言 sendUserMessage / on / emit）。
+function toFullExtensionAPI(partial: ReturnType<typeof createMockPi>): ExtensionAPI {
+  return {
+    ...partial,
+    registerCommand: vi.fn(),
+    registerShortcut: vi.fn(),
+    registerFlag: vi.fn(),
+    getFlag: vi.fn(),
+    registerMessageRenderer: vi.fn(),
+    registerEntryRenderer: vi.fn(),
+    sendMessage: vi.fn(),
+    appendEntry: vi.fn(),
+    setSessionName: vi.fn(),
+    getSessionName: vi.fn(),
+    setLabel: vi.fn(),
+    exec: vi.fn(),
+    getActiveTools: vi.fn(),
+    getAllTools: vi.fn(),
+    setActiveTools: vi.fn(),
+    getCommands: vi.fn(),
+    setModel: vi.fn(),
+    getThinkingLevel: vi.fn(),
+    setThinkingLevel: vi.fn(),
+    registerProvider: vi.fn(),
+    unregisterProvider: vi.fn(),
+    events: { emit: vi.fn(), on: vi.fn(() => () => {}) },
+  };
+}
+
+export async function loadExtension(mockPi: ReturnType<typeof createMockPi>, schemaJson: string): Promise<void> {
+  process.env[SCHEMA_ENV_NAME] = schemaJson;
+  // 动态 import 确保每次拿到模块级 const（环境变量已设好）。
+  // vitest 默认缓存模块，这里用 vi.resetModules + 动态 import 重置。
+  vi.resetModules();
+  const mod = await import("../src/index.js");
+  mod.default(toFullExtensionAPI(mockPi));
+}
+
+export function restoreSchemaEnv(original: string | undefined): void {
+  if (original === undefined) delete process.env[SCHEMA_ENV_NAME];
+  else process.env[SCHEMA_ENV_NAME] = original;
+}
+
+export const SCHEMA = JSON.stringify({ type: "object", properties: { count: { type: "number" } }, required: ["count"] });
+// 校验失败时 Pi 把 execute() 抛出的 error.message 塞进 result.content[0].text。
+export const FAILED_TOOL_END = {
+  type: "tool_execution_end",
+  toolName: "structured-output",
+  isError: true,
+  result: { content: [{ type: "text", text: "Schema validation failed: /count must be number" }] },
+};
+export const SUCCESS_TOOL_END = {
+  type: "tool_execution_end",
+  toolName: "structured-output",
+  isError: false,
+  result: { details: { count: 5 } },
+};
+export const turnEndPayload = (stopReason = "end_turn") => ({ message: { stopReason } });

@@ -1,7 +1,9 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
 
+import { PiSchedulerBackend } from './backend.js'
 import { registerScheduleCommand } from './commands.js'
 import { SchedulerRuntime } from './runtime.js'
+import { SchedulerService } from './service.js'
 import {
   controlGuidelines,
   createScheduleControlHandler,
@@ -21,24 +23,27 @@ const WIDGET_REFRESH_MS = 30_000
  * pi-scheduler extension factory。
  * 注册 schedule + schedule_control 两个 tool、/schedule command、session 事件。
  *
- * runtime 生命周期：在 session_start 中创建（依赖 ctx），factory 顶层只声明为 null。
- * tool/command 的 execute/handler 通过 getRuntime() 延迟读取，避免在 factory 顶层
- * 捕获 null——那时 session_start 尚未触发，runtime! 非空断言会骗过编译器但运行时是 null。
+ * service 生命周期：在 session_start 中创建（依赖 ctx），factory 顶层只声明为 null。
+ * tool/command 的 execute/handler 通过 getService() 延迟读取，避免在 factory 顶层
+ * 捕获 null——那时 session_start 尚未触发，service! 非空断言会骗过编译器但运行时是 null。
  */
 export default function schedulerExtension(pi: ExtensionAPI): void {
-  let runtime: SchedulerRuntime | null = null
-  // widget 刷新计时器：与 runtime 同生命周期，session_shutdown 时清理。
+  let service: SchedulerService | null = null
+  // widget 刷新计时器：与 service 同生命周期，session_shutdown 时清理。
   let widgetTimer: ReturnType<typeof setInterval> | null = null
 
-  const getRuntime = (): SchedulerRuntime => {
-    if (!runtime) throw new Error('Scheduler not initialized: session not started')
-    return runtime
+  const getService = (): SchedulerService => {
+    if (!service) throw new Error('Scheduler not initialized: session not started')
+    return service
   }
 
   pi.on('session_start', (_event, ctx: ExtensionContext) => {
-    runtime = new SchedulerRuntime(ctx.cwd, pi, ctx)
-    runtime.loadTasks()
+    // 装配点：backend（FS/pi/时间源）→ runtime（内存态 + 调度）→ service（业务入口）
+    const backend = new PiSchedulerBackend(ctx.cwd, pi)
+    const runtime = new SchedulerRuntime(backend, ctx)
+    runtime.loadTasks(backend.loadTasks())
     runtime.startScheduler()
+    service = new SchedulerService(runtime)
 
     // 注册 widget（SDK setWidget 第一重载：直接传 string[]）。
     // string[] 只渲染一次，调度器需要随 task 状态/nextRunAt 倒计时刷新，
@@ -48,20 +53,21 @@ export default function schedulerExtension(pi: ExtensionAPI): void {
     widgetTimer = setInterval(() => refreshWidget(ctx), WIDGET_REFRESH_MS)
   })
 
-  pi.on('session_shutdown', () => {
+  pi.on('session_shutdown', async () => {
     if (widgetTimer) {
       clearInterval(widgetTimer)
       widgetTimer = null
     }
-    if (runtime) {
-      runtime.persistSync()
-      runtime.stopScheduler()
+    if (service) {
+      await service.runtime.persistSync()
+      service.runtime.stopScheduler()
     }
   })
 
   // 注册 schedule tool
   // execute 内联闭包：从 SDK 全签名 (toolCallId, params, signal, onUpdate, ctx) 提取 params 转调
-  // handler，并 catch 业务层抛出的错误转为 { isError: true }（standards.md §4.2 禁止抛）。
+  // handler。catch 兜底 INTERNAL + 未初始化异常（R3：handler 不 catch getService()，
+  // 初始化异常穿透到这里，保持 'Error: Scheduler not initialized' 格式）。
   pi.registerTool({
     name: 'schedule',
     label: 'Schedule',
@@ -76,7 +82,7 @@ export default function schedulerExtension(pi: ExtensionAPI): void {
       _ctx: ExtensionContext,
     ) {
       try {
-        return await createScheduleHandler(getRuntime())(params)
+        return await createScheduleHandler(getService())(params)
       } catch (err) {
         return {
           content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
@@ -102,7 +108,7 @@ export default function schedulerExtension(pi: ExtensionAPI): void {
       _ctx: ExtensionContext,
     ) {
       try {
-        return await createScheduleControlHandler(getRuntime())(params)
+        return await createScheduleControlHandler(getService())(params)
       } catch (err) {
         return {
           content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
@@ -113,15 +119,17 @@ export default function schedulerExtension(pi: ExtensionAPI): void {
     },
   })
 
-  // 注册 /schedule command。传 getter 而非 runtime 实例：factory 执行时 runtime 还是 null。
-  registerScheduleCommand(pi, () => runtime)
+  // 注册 /schedule command。传 getter 而非 service 实例：factory 执行时 service 还是 null。
+  registerScheduleCommand(pi, () => service)
 
   /**
    * 重新计算并推送 scheduler widget（string[] 重载）。
-   * 读外层 runtime 变量而非 getRuntime()：session_start 尚未触发时刷新不应报错，直接跳过。
+   * 读外层 service 变量而非 getService()：session_start 尚未触发时刷新不应报错，直接跳过。
    */
   function refreshWidget(ctx: ExtensionContext): void {
-    if (!runtime) return
-    ctx.ui.setWidget('scheduler', renderSchedulerWidget(runtime.listTasks()))
+    if (!service) return
+    const result = service.list()
+    if (!result.success || !result.data) return
+    ctx.ui.setWidget('scheduler', renderSchedulerWidget(result.data.tasks))
   }
 }

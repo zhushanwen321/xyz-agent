@@ -17,7 +17,20 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SRC = readFileSync(join(__dirname, "../src/index.ts"), "utf-8");
+// M4 拆模块后：文本断言横跨 6 个源文件（index+ajv-validator+schema-guards+execute+
+// tool-definition+workflow-hook），按序拼接保证所有断言仍能命中——SCHEMA_KEYWORDS/
+// recognized keyword 在 schema-guards.ts，description 在 tool-definition.ts，
+// Received schema=/echo(data) 在 execute.ts。
+const SRC = [
+  "src/index.ts",
+  "src/ajv-validator.ts",
+  "src/schema-guards.ts",
+  "src/execute.ts",
+  "src/tool-definition.ts",
+  "src/workflow-hook.ts",
+]
+  .map((f) => readFileSync(join(__dirname, "../", f), "utf-8"))
+  .join("\n");
 
 /**
  * 提取 description 赋值的源码片段。

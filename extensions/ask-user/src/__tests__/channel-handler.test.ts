@@ -6,7 +6,8 @@
 //   - RPC 路径（ctx.mode === 'rpc'）：转发器——handler 内部调 askUserInteract（select 通道），
 //     把 proto answers JSON.stringify 成 {value} 返回，子进程 JSON.parse(value) 正确 decode。
 //   - TUI 路径（ctx.mode === 'tui'）：handler 走 ctx.ui.custom（mock 成返回预设 Result），
-//     验证内部 Result → proto AskUserAnswers 重新编码（single/multi/Other/comment 四种答案形态）。
+//     验证内部结构化 Result.answers（AnswerValue）→ proto AskUserAnswers 重新编码
+//     （single/multi/Other 三种答案形态，经 encodeAnswer 序列化）。
 //   - 取消（askUserInteract/custom 返回 null 或 cancelled）→ {cancelled: true}
 //   - 输入校验（channelPayload 缺失/无 questions）→ {cancelled: true}
 import type { AskUserQuestion } from "@xyz-agent/extension-protocol";
@@ -61,24 +62,14 @@ function makeCtx(opts: MockCtxOpts): {
 // ── 样例 proto questions（handler 收到的格式） ──────────
 const singleProto: AskUserQuestion = {
 	question: "Which DB?",
-	options: [{ label: "Postgres", value: "Postgres" }, { label: "SQLite", value: "SQLite" }],
+	options: [{ label: "Postgres" }, { label: "SQLite" }],
 };
 
 const multiProto: AskUserQuestion = {
 	question: "Which tools?",
 	header: "Tools",
 	multiSelect: true,
-	options: [
-		{ label: "A", value: "A" },
-		{ label: "B", value: "B" },
-		{ label: "C", value: "C" },
-	],
-};
-
-const commentProto: AskUserQuestion = {
-	question: "Which DB?",
-	allowComment: true,
-	options: [{ label: "Postgres", value: "Postgres" }, { label: "SQLite", value: "SQLite" }],
+	options: [{ label: "A" }, { label: "B" }, { label: "C" }],
 };
 
 // ── Tests ───────────────────────────────────────────────
@@ -103,16 +94,15 @@ describe("createAskUserChannelHandler", () => {
 		expect(resp).toEqual({ value: JSON.stringify({ Tools: JSON.stringify(["A", "C"]) }) });
 	});
 
-	it("RPC: Other + comment proto answers → 透传", async () => {
+	it("RPC: Other proto answers → 透传", async () => {
 		const protoAnswers = {
 			"Which DB?": "Postgres",
 			"Which DB?__other": "Custom DB",
-			"Which DB?__comment": "prod constraint",
 		};
 		const handler = createAskUserChannelHandler(
 			makeCtx({ mode: "rpc", selectResult: JSON.stringify(protoAnswers) }) as never,
 		);
-		const resp = await handler({ channelPayload: { questions: [commentProto] } });
+		const resp = await handler({ channelPayload: { questions: [singleProto] } });
 		expect(resp).toEqual({ value: JSON.stringify(protoAnswers) });
 	});
 
@@ -124,11 +114,11 @@ describe("createAskUserChannelHandler", () => {
 		expect(resp).toEqual({ cancelled: true });
 	});
 
-	it("TUI: internal Result single-select → 重新编码为 proto answers", async () => {
-		// 内部 Result.answers：key = question 全文，value = 选中 label
+	it("TUI: internal Result single-select AnswerValue → 重新编码为 proto answers", async () => {
+		// 内部 Result.answers：key = question 全文，value = 结构化 AnswerValue
 		const internalResult: Result = {
 			questions: [],
-			answers: { "Which DB?": "Postgres" },
+			answers: { "Which DB?": { selected: ["Postgres"], other: null } },
 			cancelled: false,
 		};
 		const handler = createAskUserChannelHandler(
@@ -142,7 +132,7 @@ describe("createAskUserChannelHandler", () => {
 	it("TUI: multi-select internal Result → proto JSON array value", async () => {
 		const internalResult: Result = {
 			questions: [],
-			answers: { "Which tools?": "A, C" },
+			answers: { "Which tools?": { selected: ["A", "C"], other: null } },
 			cancelled: false,
 		};
 		const handler = createAskUserChannelHandler(
@@ -153,59 +143,11 @@ describe("createAskUserChannelHandler", () => {
 		expect(resp).toEqual({ value: JSON.stringify({ Tools: JSON.stringify(["A", "C"]) }) });
 	});
 
-	it("TUI: value≠label single-select → encodeTuiResultToProto 回查 proto option value（PR #85 #8 回归守护）", async () => {
-		// value≠label 是 #8 修复的核心场景：TUI 渲染用 label，但 proto 期望回传 option.value。
-		// 若 #8 修复回归（直接 push label），此测试会失败：返回 "显示名A" 而非 "val_a"。
-		const valueNeqLabelProto: AskUserQuestion = {
-			question: "选哪个?",
-			options: [
-				{ label: "显示名A", value: "val_a" },
-				{ label: "显示名B", value: "val_b" },
-			],
-		};
-		// 内部 Result.answers：用户在 TUI 选了"显示名A"（label）
-		const internalResult: Result = {
-			questions: [],
-			answers: { "选哪个?": "显示名A" },
-			cancelled: false,
-		};
-		const handler = createAskUserChannelHandler(
-			makeCtx({ mode: "tui", customResult: internalResult }) as never,
-		);
-		const resp = await handler({ channelPayload: { questions: [valueNeqLabelProto] } });
-		// 期望：proto answers 回查 value，返回 "val_a"（不是 label "显示名A"）
-		expect(resp).toEqual({ value: JSON.stringify({ "选哪个?": "val_a" }) });
-	});
-
-	it("TUI: value≠label multi-select → proto JSON 数组元素回查 value（PR #85 #8 回归守护）", async () => {
-		// 多选路径同样依赖 #8 修复：selected.push(opt?.value ?? t)，多选会 JSON.stringify 数组。
-		const valueNeqLabelMultiProto: AskUserQuestion = {
-			question: "选哪些?",
-			header: "Opts",
-			multiSelect: true,
-			options: [
-				{ label: "显示名A", value: "val_a" },
-				{ label: "显示名B", value: "val_b" },
-			],
-		};
-		const internalResult: Result = {
-			questions: [],
-			answers: { "选哪些?": "显示名A, 显示名B" },
-			cancelled: false,
-		};
-		const handler = createAskUserChannelHandler(
-			makeCtx({ mode: "tui", customResult: internalResult }) as never,
-		);
-		const resp = await handler({ channelPayload: { questions: [valueNeqLabelMultiProto] } });
-		// 期望：多选 JSON 数组，每个元素回查 value（["val_a","val_b"]，不是 label）
-		expect(resp).toEqual({ value: JSON.stringify({ Opts: JSON.stringify(["val_a", "val_b"]) }) });
-	});
-
 	it("TUI: Other free text → ${key}__other", async () => {
-		// 内部 Result：selected label + Other 文本逗号拼接（与 getAnswerText 语义一致）
+		// 内部 Result：selected label + Other 文本分离存储（AnswerValue.other）
 		const internalResult: Result = {
 			questions: [],
-			answers: { "Which DB?": "Postgres, Custom DB" },
+			answers: { "Which DB?": { selected: ["Postgres"], other: "Custom DB" } },
 			cancelled: false,
 		};
 		const handler = createAskUserChannelHandler(
@@ -217,43 +159,18 @@ describe("createAskUserChannelHandler", () => {
 		});
 	});
 
-	it("TUI: comment → ${key}__comment", async () => {
+	it("TUI: Other-only answer（selected 空）→ 只写 ${key}__other 不写主 key", async () => {
 		const internalResult: Result = {
 			questions: [],
-			answers: { "Which DB?": "Postgres — prod constraint" },
+			answers: { "Which DB?": { selected: [], other: "custom text" } },
 			cancelled: false,
 		};
 		const handler = createAskUserChannelHandler(
 			makeCtx({ mode: "tui", customResult: internalResult }) as never,
 		);
-		const resp = await handler({ channelPayload: { questions: [commentProto] } });
+		const resp = await handler({ channelPayload: { questions: [singleProto] } });
 		expect(resp).toEqual({
-			value: JSON.stringify({ "Which DB?": "Postgres", "Which DB?__comment": "prod constraint" }),
-		});
-	});
-
-	it("TUI: label containing ' — ' keeps full selection (MF-2)", async () => {
-		// label 含 ANSWER_COMMENT_SEPARATOR（"Postgres — prod"）时，首分隔符切分
-		// 会拦腰截断 label → 无法精确匹配 → 选中值静默丢失；修复后选中保留、comment 完整
-		const sepLabelProto: AskUserQuestion = {
-			question: "Which DB?",
-			allowComment: true,
-			options: [{ label: "Postgres — prod", value: "Postgres — prod" }, { label: "SQLite", value: "SQLite" }],
-		};
-		const internalResult: Result = {
-			questions: [],
-			answers: { "Which DB?": "Postgres — prod — constraint" },
-			cancelled: false,
-		};
-		const handler = createAskUserChannelHandler(
-			makeCtx({ mode: "tui", customResult: internalResult }) as never,
-		);
-		const resp = await handler({ channelPayload: { questions: [sepLabelProto] } });
-		expect(resp).toEqual({
-			value: JSON.stringify({
-				"Which DB?": "Postgres — prod",
-				"Which DB?__comment": "constraint",
-			}),
+			value: JSON.stringify({ "Which DB?__other": "custom text" }),
 		});
 	});
 

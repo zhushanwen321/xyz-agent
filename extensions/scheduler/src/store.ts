@@ -80,6 +80,7 @@ export function createStore(cwd: string) {
           expiresAt: t.expiresAt,
           lastRunAt: t.lastRunAt,
           lastStatus: t.lastStatus,
+          lastError: t.lastError,
         })),
       }
     } catch {

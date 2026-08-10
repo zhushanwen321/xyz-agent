@@ -7,15 +7,15 @@ import {
 	askUserInteract,
 	type AskUserQuestion,
 	getAskUserAnswer,
-	getAskUserComment,
 	getAskUserOther,
 } from "@xyz-agent/extension-protocol";
 
-import { formatAnswer, parseAnswerParts } from "./answer-format";
 import { createAskUserChannelHandler } from "./channel-handler";
 import { registerAskUserChannelHandler } from "./channel-registry-register";
 import { AskUserComponent } from "./component";
+import { answerValueText } from "./submit-view";
 import {
+	type AnswerValue,
 	type AskUserDetails,
 	type ErrorDetails,
 	HEADER_MAX_CHARS,
@@ -79,17 +79,15 @@ async function runTuiInteraction(
 
 /**
  * expanded 渲染辅助：展开某问题的全部选项，用 ●/○ 标记是否被选中（spec FR-9）。
- * 选中判定：用 parseAnswerParts 精确匹配 label（而非子串匹配），避免 "A" 是 "AB" 子串时的误判。
+ * 选中判定：直接读结构化 AnswerValue.selected（Set 精确匹配，无文本解析）。
  * 返回 TruncatedText 数组供 box.addChild 展开。
  */
 function renderExpandedOptions(
 	q: Question,
-	answer: string,
+	answer: AnswerValue | undefined,
 	theme: ThemeLike,
 ): TruncatedText[] {
-	const labels = q.options.map((o: Option) => o.label);
-	const { selected } = parseAnswerParts(answer, labels);
-	const selectedSet = new Set(selected);
+	const selectedSet = new Set(answer?.selected ?? []);
 	const mark = (opt: Option): string =>
 		selectedSet.has(opt.label)
 			? theme.fg("success", "●")
@@ -111,9 +109,8 @@ function renderExpandedOptions(
 /**
  * 把 ask-user 内部 Question[] 映射为协议包 AskUserQuestion[]（RPC 交互声明）。
  *
- * ask-user 的 Question.options 必填且只有 label/description（无 value 字段），
- * 协议的 AskUserOption.value 缺失时前端用 label 做回传值——与 ask-user 语义一致
- * （TUI 版 buildResult 也是用 label 拼 answers）。
+ * ask-user 的 Question.options 只有 label/description（协议 AskUserOption 也无 value
+ * 字段——回传值统一用 label，与 ask-user 语义一致）。
  * allowOther 固定 true：ask-user 无条件自动追加 Other（schema 不暴露此字段）。
  */
 function toProtoQuestions(questions: Question[]): AskUserQuestion[] {
@@ -123,55 +120,55 @@ function toProtoQuestions(questions: Question[]): AskUserQuestion[] {
 		context: q.context,
 		options: q.options.map((o: Option) => ({
 			label: o.label,
-			value: o.label, // ask-user 用 label 做回传值（与 TUI buildResult 语义一致）
 			description: o.description,
 		})),
 		multiSelect: q.multiSelect,
 		allowOther: true,
-		allowComment: q.allowComment ?? false,
 	}));
 }
 
 /**
- * 把协议包 AskUserAnswers 转换为 ask-user 内部 Result.answers。
+ * 把协议包 AskUserAnswers 转换为 ask-user 内部 Result.answers（结构化 AnswerValue）。
  *
- * 协议格式：key=header/question, 单选=string, 多选=JSON数组, Other=__other, comment=__comment（5.0.0-dev.1 restore）
- * ask-user 格式：key=question 全文, value=逗号分隔 label + Other, comment 内联（` — `）
+ * 协议格式：key=header/question, 单选=string, 多选=JSON数组, Other=__other
+ * ask-user 格式：key=question 全文, value=AnswerValue（selected=label 数组、other=自由文本）
  *
- * 拼装逻辑复用 formatAnswer（与 TUI 版 getAnswerText 共享同一格式函数），
- * 确保 RPC 和 TUI 两条路径产出的 Result.answers 格式一致。
+ * 解码走协议包 helper（getAskUserAnswer/getAskUserOther，proto 格式的唯一解码 SSOT）；
+ * selected 空 && other 无 → 该问题未答，跳过不写入。
  */
 function protoAnswersToResult(
 	questions: Question[],
 	protoQuestions: AskUserQuestion[],
 	answers: AskUserAnswers,
-): Result["answers"] {
-	const out: Record<string, string> = {};
+): Record<string, AnswerValue> {
+	const out: Record<string, AnswerValue> = {};
 	for (let i = 0; i < questions.length; i++) {
 		const q = questions[i]!;
 		const iq = protoQuestions[i]!;
 		const selected = getAskUserAnswer(answers, iq);
-		const other = getAskUserOther(answers, iq);
-		const comment = getAskUserComment(answers, iq);
+		const other = getAskUserOther(answers, iq) ?? null;
 
-		const parts: string[] = [];
+		let selectedArr: string[];
 		if (Array.isArray(selected)) {
 			// 多选按 question.options 中的定义顺序排序（S#3），
 			// 与 TUI 版 submit-view.ts 的 selectedIndices.sort() 语义一致，
-			// 确保 RPC 和 TUI 产出相同文本（"A, C" 而非前端回传顺序的 "C, A"）。
+			// 确保 RPC 和 TUI 产出相同顺序（"A, C" 而非前端回传顺序的 "C, A"）。
 			const orderMap = new Map(q.options.map((o: Option, idx: number) => [o.label, idx]));
 			const unknownOrder = q.options.length;
-			parts.push(...[...selected].sort((a, b) => {
+			selectedArr = [...selected].sort((a, b) => {
 				const ai = orderMap.get(a) ?? unknownOrder;
 				const bi = orderMap.get(b) ?? unknownOrder;
 				return ai - bi;
-			}));
+			});
 		} else if (selected) {
-			parts.push(selected);
+			selectedArr = [selected];
+		} else {
+			selectedArr = [];
 		}
-		if (other) parts.push(other);
-		const formatted = formatAnswer(parts, comment);
-		if (formatted !== null) out[q.question] = formatted;
+
+		// selected 空 && other 无 → 该问题未答，跳过不写入（与 TUI buildResult 一致）
+		if (selectedArr.length === 0 && other === null) continue;
+		out[q.question] = { selected: selectedArr, other };
 	}
 	return out;
 }
@@ -329,9 +326,10 @@ Don't:
 			}
 
 			// 6. 正常返回
-			const summary = result.questions.map(
-				(q: Question) => `"${q.question}" = "${result!.answers[q.question] ?? "(no answer)"}"`,
-			);
+			const summary = result.questions.map((q: Question) => {
+				const av = result!.answers[q.question];
+				return `"${q.question}" = "${av ? answerValueText(av) : "(no answer)"}"`;
+			});
 			return {
 				content: [{ type: "text" as const, text: summary.join("\n") }],
 				details: result satisfies Result,
@@ -366,17 +364,18 @@ Don't:
 			const box = new Box(0, 0);
 			for (const q of d.questions) {
 				const header = q.header ?? truncateToWidth(q.question, HEADER_MAX_CHARS);
-				const answer = d.answers[q.question] ?? "(no answer)";
+				const answer = d.answers[q.question];
+				const answerText = answer ? answerValueText(answer) : "(no answer)";
 				box.addChild(
 					new TruncatedText(
 						theme.fg("success", "✓ ") +
 							theme.fg("accent", `${header}: `) +
-							theme.fg("text", answer),
+							theme.fg("text", answerText),
 						0,
 						0,
 					),
 				);
-				// options.expanded：展开显示该问题全部选项 + ●/○ 选中标记 + 评论（spec FR-9）
+				// options.expanded：展开显示该问题全部选项 + ●/○ 选中标记（spec FR-9）
 				if (options?.expanded) {
 					for (const child of renderExpandedOptions(q, answer, theme)) box.addChild(child);
 				}

@@ -144,7 +144,8 @@ check_changeset() {
 
     # 收集 changeset 文件中声明的包名
     local declared_pkgs
-    declared_pkgs=$(grep -rh '"@' .changeset/*.md 2>/dev/null | grep -oE '"@[^"]+"' | tr -d '"' | sort -u || echo "")
+    # 支持单引号和双引号两种 changeset frontmatter 格式（@changesets/cli 默认生成单引号）
+    declared_pkgs=$(grep -rhE "['\"]@" .changeset/*.md 2>/dev/null | grep -oE "['\"]@[^'\"]+['\"]" | tr -d "'\"" | sort -u || echo "")
 
     # 找出改了但没声明 changeset 的包
     local missing=()

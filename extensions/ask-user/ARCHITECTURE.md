@@ -2,7 +2,7 @@
 
 Internals reference for maintainers. For the usage contract (what the tool does, when an agent should call it), see [README.md](./README.md). This document covers how the code is structured, the state machine, the defensive execute flow, and where each design invariant is enforced — so a change does not silently break an invariant.
 
-Source: 6 files in `src/`, ~1320 lines total.
+Source: 10 files in `src/`, ~1970 lines total.
 
 ## File dependency graph
 
@@ -10,32 +10,58 @@ Source: 6 files in `src/`, ~1320 lines total.
                           ┌─────────────┐
                           │  types.ts   │  ← shared leaf; imports only typebox
                           │ Schema +    │     holds QuestionState / ThemeLike /
-                          │ shared      │     createQuestionState here (NOT in
-                          │ state types │     component.ts) to break the cycle
-                          └──────▲──────┘
+                          │ shared      │     AnswerValue / createQuestionState
+                          │ state types │     here (NOT in component.ts) to break
+                          └──────▲──────┘     the cycle
                                  │ imported by all
-              ┌──────────────────┼──────────────────┐
-              │                  │                  │
-       ┌──────┴──────┐    ┌──────┴──────┐    ┌──────┴──────┐
-       │ validate.ts │    │question-view│    │ submit-view │
-       │ pure check  │    │ pure render │    │ pure render │
-       └──────▲──────┘    └──────▲──────┘    └──────▲──────┘
-              │                  │                  │
-              │           ┌──────┴──────────────────┘
-              │           │
-       ┌──────┴───────────┴──┐
-       │   component.ts      │  ← state machine + input routing + race guards
-       │                      │     imports question-view + submit-view
-       └──────────▲──────────┘
-                  │
-           ┌──────┴──────┐
-           │  index.ts   │  ← Tool factory + execute (6-step flow) + renderCall/renderResult
-           └─────────────┘     imports component + validate + types
+              ┌──────────────────┼─────────────────────┬─────────────────┐
+              │                  │                     │                 │
+       ┌──────┴──────┐    ┌──────┴──────┐    ┌─────────┴──────┐  ┌───────┴────────┐
+       │ validate.ts │    │question-view│    │  submit-view   │  │  answer-codec  │
+       │ pure check  │    │ pure render │    │  pure render   │  │ AnswerValue →  │
+       └──────▲──────┘    └──────▲──────┘    │  + buildResult  │  │ proto entries  │
+              │                  │           └──────▲─────────┘  └───────▲────────┘
+              │           ┌──────┴──────────────────┘                    │
+              │           │                                              │
+       ┌──────┴───────────┴──┐    ┌────────────────────┐                 │
+       │   component.ts      │◀───│   editor-ops.ts    │                 │
+       │  state machine +    │    │ editor pure ops    │                 │
+       │  input routing +    │    │ (insert/delete/    │                 │
+       │  race guards        │    │  cursor/paste)     │                 │
+       └──────────▲──────────┘    └────────────────────┘                 │
+                  │                                                      │
+                  │                 ┌────────────────────┐               │
+                  ├────────────────▶│ channel-handler.ts │◀──────────────┘
+                  │  (AskUserComp.) │ subagent passthru  │
+                  │                 └─────────▲──────────┘
+                  │                           │
+                  │                 ┌─────────┴──────────┐
+                  │                 │channel-registry-   │
+                  │                 │register.ts         │
+                  │                 │globalThis Symbol   │
+                  │                 │handshake           │
+                  │                 └────────────────────┘
+           ┌──────┴───────────┐
+           │     index.ts     │  ← Tool factory + execute (6-step flow) + renderCall/renderResult
+           └──────────────────┘     imports component + validate + types + submit-view +
+                                    channel-handler + channel-registry-register
 ```
 
 **No cycles.** All imports flow one direction; `types.ts` is the single leaf depended on by everyone.
 
 **Why `QuestionState` / `ThemeLike` live in `types.ts`, not `component.ts`** (see the comment in `types.ts`): `question-view.ts` and `submit-view.ts` are pure render functions that read/write `QuestionState` and need the `ThemeLike` interface. If those types lived in `component.ts`, the render views would import `component.ts`, and `component.ts` imports the render views — a cycle. Sinking the shared types to the dependency-free leaf keeps every arrow monotone. **Do not move these types back** without reintroducing the cycle.
+
+## Answer model & protocol boundary (D1)
+
+`AnswerValue` (`types.ts`) is the single structured answer model — `{ selected: string[]; other: string | null }`. The old internal/proto double model is gone: proto `AskUserOption.value` equaled `label` (both were the same string), so the proto layer consumes the same single model (`Result.answers: Record<string, AnswerValue>`, key = question text).
+
+Serialization happens **once, at the protocol boundary**: `encodeAnswer(value, { key, multiSelect })` in `answer-codec.ts` converts an `AnswerValue` into proto answers entries, byte-aligned with `@xyz-agent/extension-protocol` helpers' decode contract (`getAskUserAnswer` / `getAskUserOther`):
+
+- 单选：`answers[key] = selected[0]`
+- 多选：`answers[key] = JSON.stringify(selected)`
+- Other：`answers[`${key}__other`] = other`（仅在 other 非空时写入）
+
+Encoding is **one-way** — the old `parseAnswerParts` text reverse-parsing was deleted with the double model; there is no decode counterpart inside the extension. `channel-handler.ts` reads `AnswerValue` directly and calls `encodeAnswer` when forwarding to subagents.
 
 ## `execute` defensive flow (6 steps)
 
@@ -54,33 +80,27 @@ Source: 6 files in `src/`, ~1320 lines total.
 
 ## `QuestionState` machine
 
-Each question has a `QuestionState` (`types.ts`). Its `mode` field is a three-state machine:
+Each question has a `QuestionState` (`types.ts`). Its `mode` field is a two-state machine:
 
 ```
-                       Enter (on Other row)
-            ┌────────────────────────────────────┐
-            ▼                                     │
-     ┌─────────────┐   Enter (normal opt,          ┌──────────────┐
-     │   options   │   allowComment=true) ────────▶│   comment    │
-     │  (default)  │                               │ (note input) │
-     └─────┬───▲───┘◀────────────────── afterConfirm└──────┬───▲───┘
-           │   │                                     Enter │   │ Esc
-   Enter   │   │ Esc (discard)              (save note)    │   │ (AC-17: skip,
-   (Other) │   │                                          │   │  keep old value)
-           ▼   │                                          ▼   │
-     ┌─────────────┐   Enter (text → save)          ┌─────────────┐
-     │  freeform   │───────────────────────────────▶│   options   │
-     │ (Other edit)│                                │ (back to list)│
-     └─────┬───▲───┘                                └─────────────┘
-           │   │
-           ▼   │ Esc (discard)
-     Enter (empty → clear freeTextValue)
-           │
-           ▼
-        options
+                     Enter (on Other row)
+            ┌────────────────────────────────────────┐
+            ▼                                        │
+     ┌─────────────┐   Enter (text → save +          ┌──────────────┐
+     │   options   │   afterConfirm + advance) ────▶ │   freeform   │
+     │  (default)  │ ◀───────────────────────────────│  (editor)    │
+     └─────┬───▲───┘  Esc (save draft → back) /      └──────┬───▲───┘
+           │   │      Enter empty (clear value → back)      │   │
+   Enter   │   │ Esc (back to previous tab;                 │   │
+   (normal     on first tab → confirm-cancel overlay)       │   │
+    option)                                                 │   │
+           ▼                                                 │
+   afterConfirm → advance (next tab / Submit tab)            │
+                                                             │
+           └─────────────────────────────────────────────────┘
 ```
 
-Transitions live in `component.ts`: `options → freeform` (Enter on Other), `freeform → options` (Enter saves / Enter empty clears / Esc discards), `options → comment` (via `afterConfirm` when `allowComment`), `comment → options` (Enter saves / Esc skips per AC-17).
+Transitions live in `component.ts`: `options → freeform` (Enter on the Other row — the last option — prefills `draftText` from `freeTextValue ?? freeDraft`), `freeform → options` (Enter saves trimmed text into `freeTextValue` and calls `afterConfirm`; Enter on empty text clears `freeTextValue`; Esc saves the draft into `freeDraft` and returns to the list, restoring the saved options cursor). There is **no comment mode** — the freeform editor is the only text input; `QuestionMode = "options" | "freeform"`.
 
 ### `confirmed` invariant
 
@@ -95,14 +115,14 @@ Four assignment sites maintain it (`component.ts`):
 |------|------|----------------------|
 | `afterConfirm()` | `true` | Safe: caller has already set `selectedIndex` / `selectedIndices` / `freeTextValue`. |
 | `autoConfirmIfAnswered()` | `true` | Safe: guarded by `if (hasAnswer)` — never sets `true` without an answer. |
-| `toggleIndex()` when multi-select empties | `false` | Necessary: un-checking the last option must drop `confirmed` to preserve the contrapositive. |
-| `handleEditorInput` freeform empty-Enter | `false` | Necessary: clearing `freeTextValue` with no other answer must drop `confirmed`. |
+| `toggleIndex()` when multi-select empties | `false` | Necessary: un-checking the last option (with no free text) must drop `confirmed` to preserve the contrapositive. |
+| `handleEditorEnter` freeform empty-Enter | `false` | Necessary: clearing `freeTextValue` with no other answer must drop `confirmed`. |
 
 If you add a new path that changes the answer set, audit both directions of this invariant.
 
 ### `autoConfirmIfAnswered` trigger
 
-Called only from `gotoTab()` — when the user navigates between tabs via Tab/Shift+Tab without pressing Enter. It promotes an implicitly-answered tab (toggled but not confirmed) to `confirmed`. It deliberately **skips the comment input** (a Tab navigation intent should not force a comment prompt); only the Enter path enters comment mode via `afterConfirm`.
+Called only from `gotoTab()` — when the user navigates between tabs via Tab/Shift+Tab without pressing Enter. It promotes an implicitly-answered tab (toggled but not confirmed) to `confirmed`. A Tab navigation intent should not force a confirm prompt — only the Enter path confirms via `afterConfirm`.
 
 ## Race guards
 
@@ -151,13 +171,12 @@ Design spec: `.xyz-harness/2026-06-15-ask-user/spec.md` (FR = functional require
 | FR-2 (param schema/validation) | `types.ts` schema + `validate.ts` |
 | FR-3 (inline render, no overlay) | `execute` → `ctx.ui.custom` without `options` |
 | FR-4 (question view) | `question-view.ts` `renderQuestionView` |
-| FR-6 (input handling) | `component.ts` `handleInput` / `handleEditorInput` |
+| FR-6 (input handling) | `component.ts` `handleInput` / `handleOptionsInput` / `handleEditorInput` |
 | FR-8 (headless disable) | `execute` step 2 |
 | FR-9 (custom render) | `renderCall` / `renderResult` |
 | FR-10 (signal abort) | `execute` step 3 + step 4 abort listener |
 | FR-12 (re-entry guard) | `_resolved` field + `cancel()` shared by abort listener |
 | FR-13 (error catch-all) | `execute` step 4 try/catch |
-| AC-17 (Esc in comment skips, keeps value) | `handleEditorInput` comment-mode Esc branch |
 
 When you change one of these behaviors, update both the code comment (which cites the FR/AC) and this table.
 
