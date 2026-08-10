@@ -20,13 +20,18 @@ concurrency:
 jobs:
   # ── npm 产物契约 gate（fail-fast，先于三平台构建）─────────
   # 独立 job 提前到 build 之前：若 npm 产物与 renderer 契约不一致（如 ask-user 误删
-  # allowComment），三平台构建（mac/win/linux）不白烧数十分钟。
+  # 字段），三平台构建（mac/win/linux）不白烧数十分钟。
   #
-  # npm 产物契约：renderer AskUserOverlay.vue 消费 activeQuestion.allowComment，
+  # npm 产物契约：renderer AskUserOverlay.vue 消费 activeQuestion.multiSelect，
   # runtime boot 时 ensureMandatoryExtensions() 从 npm 安装 @zhushanwen/pi-ask-user。
-  # 若 Electron 发布（v*）先于 npm 发布（npm-*），产物中 ask_user 评论模式静默降级。
+  # 若 Electron 发布（v*）先于 npm 发布（npm-*），产物中 ask_user 交互静默降级。
   # （2026-08 事故：protocol 0.3.0 误删 allowComment/getAskUserComment，本地 restore 后
   #   npm 仍长期服务删功能旧版，而打包流程无任何环节校验 npm 产物与 renderer 契约一致性）
+  # [HISTORICAL] 2026-08-10：契约字段由 allowComment 改为 multiSelect。PR #161 端到端
+  #   删除 comment feature（protocol/extension/renderer 三端同步删，CHANGELOG 记录），
+  #   renderer 不再消费 allowComment；gate 若仍检查它会导致 v0.8.61 起每次 Electron
+  #   发布必然失败（npm latest=7.0.1 已不含该字段）。字段更新为 renderer 实际消费的
+  #   multiSelect，防线意图不变：npm 产物必须含 renderer 消费的字段。
   #
   # 发布顺序约束（C-3，MANDATORY）：pre 模式期间（.changeset/pre.json 存在），正式
   # Electron 发布（v* tag）必然被本 gate 拦截——prerelease 版本号（如 5.0.0-dev.0）不是
@@ -85,13 +90,13 @@ jobs:
             echo "npm artifact OK: ${pkg}@${version} (contains ${field})"
             rm -rf "${tmpdir}"
           }
-          # ask_user 评论模式契约：协议层与扩展层都必须含 allowComment
+          # ask_user 契约：协议层与扩展层都必须含 renderer 消费的 multiSelect 字段
           # 源码范围限定：ask-user 只查 *.ts（index.ts + src/），protocol 只查 dist/ 的
           # tsup 产物（*.mjs/*.d.mts）——文档（README/ARCHITECTURE）里的字段字样不再放行坏版本
           # （MF-4 防线）。再排除 __tests__ 目录：随包发布的测试文件引用已删字段时也不放行
           # 坏版本（与 typecheck 的 tsconfig 排除 __tests__ 口径一致，stale 测试不参与编译检查）。
-          check_pkg @zhushanwen/pi-ask-user "allowComment" --include="*.ts" --exclude-dir=__tests__
-          check_pkg @xyz-agent/extension-protocol "allowComment" --include="*.mjs" --include="*.d.mts"
+          check_pkg @zhushanwen/pi-ask-user "multiSelect" --include="*.ts" --exclude-dir=__tests__
+          check_pkg @xyz-agent/extension-protocol "multiSelect" --include="*.mjs" --include="*.d.mts"
 
   # ── 三平台并行构建（调用 reusable workflow）──────────────────
   # build 逻辑收敛到 .github/workflows/build.yml，CI 和 release 共用，避免两份漂移。
