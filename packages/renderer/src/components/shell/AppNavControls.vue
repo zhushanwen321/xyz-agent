@@ -3,11 +3,13 @@
     AppNavControls · 三平台统一应用导航按钮（shell spec §二）。
     收起侧栏 / ← 后退 / → 前进，浮在 traffic-light 右侧。
     top-[5px]：按钮高 22，中线 y=5+11=16，对齐红黄绿实测中线（macOS 渲染 trafficLightPosition{8,8} 实际圆点中线 ≈y15.75，比理论 y14 低 ~2pt；实测 nav 原中 13.8 +2 = 15.8 ≈ 红黄绿）。
-    left-[72px]：红黄绿右缘 x=60 + 12px 呼吸。折叠态 header pl-[88px] 让位红黄绿（右缘 60），chrome 按钮起 x≈88。
-    全屏态 isFullscreen=true 时 left→8px（红黄绿 OS 隐藏，按钮左移占红黄绿位 x=8）。
-    !important 必须：left-[8px]（动态）与 left-[72px]（静态）同特异性，
-    Tailwind 源码顺序不保证 8 覆盖 72，不加 ! 全屏态按钮会卡在 72px（gap-0 同款 bug）。
+    left-[8px]：基准定位固定在全屏位（红黄绿 OS 隐藏时的位置 x=8），常态/全屏态都不动 left，避免 layout 重排。
+    transform 方案：常态叠 translate-x-[64px]（红黄绿右缘 x=60 + 12px 呼吸 = 72，减去基准 8 = 平移 64），
+    全屏态无 translate 类即归零（translate-x-0），按钮占红黄绿位 x=8。
+    用 transform 替代 left 动画：left 是 layout 属性，动画时触发整个窗口重排；transform 走 GPU 合成，零重排。
+    条件类单向覆盖（常态显式平移 / 全屏态无类归零），无特异性冲突，不需 !important。
     320ms 平移与 traffic-light opacity 同步。
+    折叠态 header pl-[88px] 让位红黄绿（右缘 60），chrome 按钮起 x≈88。
 
     渲染条件（draft-collapsed-state.html 卡 A/B/C）：
     - 非折叠态（① 展开+非全屏 / ② 展开+全屏）：浮此浮层。展开=chrome 跟随 traffic-light 在 AppShell 层，
@@ -17,8 +19,8 @@
   -->
   <div
     v-if="!sidebar.collapsed"
-    class="app-nav-controls absolute top-[5px] left-[72px] z-10 flex gap-0.5 transition-[left] duration-[var(--duration-slow)] ease-[var(--ease)]"
-    :class="{ '!left-[8px]': isFullscreen }"
+    class="app-nav-controls absolute top-[5px] left-[8px] z-10 flex gap-0.5 transition-transform duration-[var(--duration-slow)] ease-[var(--ease)]"
+    :class="{ 'translate-x-[64px]': !isFullscreen }"
   >
     <Button
       variant="ghost"
