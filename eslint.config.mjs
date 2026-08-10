@@ -79,26 +79,6 @@ export default [
       'max-lines': 'off',
     },
   },
-  // [HISTORICAL] config-service.ts 是 Config 域唯一 facade（Provider/Skill/Agent/Preferences CRUD +
-  // SystemPrompt/Terminal/Worktree 配置），wave2 双源聚合 listProviders + wave3 toggleProviderEnabled +
-  // wave4 removeProviderByKind 都加在此（provider 启停/移除的业务编排归位）。行数在 wave4 后超 500，
-  // 拆分需先理清 Provider/Skill/Agent/Preferences 四块职责边界，属独立重构任务。短期 override 避免阻塞。
-  {
-    files: ['packages/runtime/src/services/config-service.ts'],
-    rules: {
-      'max-lines': 'off',
-    },
-  },
-  // [HISTORICAL] pi-provider-store.ts 是 pi models.json/settings.json 的唯一读写层（provider CRUD +
-  // defaultModel 校验/修复 + enabledModels 白名单 + skill 路径 + 迁移），wave2 ensureProviderInWhitelist +
-  // wave3 setEnabledModels/clearEnabledModels + wave4 cleanEnabledModelsResidue 都加在此（白名单语义的
-  // 唯一所有者）。行数超 500，拆分需先理清 models/settings/skill/migration 四块边界，属独立重构任务。
-  {
-    files: ['packages/runtime/src/infra/pi/pi-provider-store.ts'],
-    rules: {
-      'max-lines': 'off',
-    },
-  },
   // [HISTORICAL] useContenteditableInput.ts 是 composer 富文本输入的唯一聚合点：
   // 视觉行移动（getClientRects+caretRangeFromPoint）+ segments 解析（getSegmentsFromEl）
   // + 草稿/光标/IME/粘贴事件处理 + Cmd+V 双通路图片粘贴。各职责共享 savedRange/preferredX
