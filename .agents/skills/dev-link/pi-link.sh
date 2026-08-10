@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
-# pi-link.sh — pi 模式：切换 extension 到本地源码（原版 pi 直接生效）
+# pi-link.sh — pi 模式：symlink 本地源码到 ~/.pi/agent/extensions/（原版 pi 生效）
 #
-# 做两件事（切换式，避免多源冲突）：
-#   1. pi install <本地源码路径>  — 加本地源到 pi settings
-#   2. pi remove npm:@zhushanwen/pi-<short> — 移除 npm 源，让本地成为唯一源
+# 做两件事：
+#   1. ln -sfn <本地源码> ~/.pi/agent/extensions/pi-<short>（globalExtDir，loader 第2步扫描）
+#   2. 清 settings.json packages 里该 extension 的残留条目（避免 globalExtDir + configuredPaths 两源冲突）
 #
-# 为何 remove npm：pi resolver dedupe by path 不 by extension id，npm + 本地两源并存
-# 会冲突（加载哪个不确定）。切换到唯一本地源最可靠。
+# 为何 symlink 而非 pi install path：symlink 在 globalExtDir（loader 扫描早于 configuredPaths），
+# pi list 不显示（pi list 只列 packages），但 loader 会发现并加载。pi-statusline 即此模式。
 #
 # 用法: ./pi-link.sh <package> [package2 ...]
 #   <package> = 短名 (subagent-workflow) / pi-前缀 / @zhushanwen/pi-全名
 #
-# 生效条件：新建 pi session（当前 session 已加载旧版，不重扫）。
-# 恢复 npm：./pi-unlink.sh <package>
+# 生效：新建 pi session（当前 session 已加载旧版）。恢复：./pi-unlink.sh <package>
 set -euo pipefail
 
 SCOPE="@zhushanwen"
+PI_EXT_DIR="$HOME/.pi/agent/extensions"
+SETTINGS="$HOME/.pi/agent/settings.json"
 GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || { printf "\033[31m✗ 不在 git 仓库\033[0m\n"; exit 2; })"
 
 red()    { printf "\033[31m%s\033[0m\n" "$*"; }
@@ -38,32 +39,43 @@ find_extension_dir() {
 }
 
 [ $# -lt 1 ] && { echo "用法: $0 <package> [package2 ...]"; exit 1; }
+mkdir -p "$PI_EXT_DIR"
 
 for input in "$@"; do
 	short=$(resolve_short_name "$input")
 	ext_dir=$(find_extension_dir "$short") || { red "✗ 找不到 extension 目录: extensions/${short}"; continue; }
-	npm_src="npm:$SCOPE/pi-$short"
+	link_name="$PI_EXT_DIR/pi-$short"
 
-	# 1. pi install 本地源码
-	if pi install "$ext_dir" >/dev/null 2>&1; then
-		green "✓ pi install 本地: ${short} → ${ext_dir}"
+	# 1. symlink 本地源码到 globalExtDir
+	if ln -sfn "$ext_dir" "$link_name" 2>/dev/null; then
+		green "✓ symlink: ${short} → ${link_name}"
 	else
-		red "✗ pi install 失败: ${ext_dir}（跑 'pi install ${ext_dir}' 看错误）"
-		continue
+		red "✗ symlink 失败: ${link_name}"; continue
 	fi
 
-	# 2. pi remove npm 源（如存在，让本地成为唯一源）
-	if pi list 2>/dev/null | grep -q "$npm_src"; then
-		if pi remove "$npm_src" >/dev/null 2>&1; then
-			echo "  · 移除 npm 源 ${npm_src}（避免多源冲突）"
-		else
-			yellow "  ⚠ 移除 npm 源失败（保留两源，跑 'pi remove ${npm_src}' 手动处理）"
-		fi
+	# 2. 清 settings.json packages 里该 extension 的残留条目（npm: 源 + 旧 configuredPaths 本地路径）
+	#    避免 globalExtDir + configuredPaths 两源并存冲突
+	if [ -f "$SETTINGS" ]; then
+		cleaned=$(SHORT="$short" SCOPE="$SCOPE" SETTINGS="$SETTINGS" node -e '
+			const fs = require("fs");
+			const s = JSON.parse(fs.readFileSync(process.env.SETTINGS, "utf8"));
+			const short = process.env.SHORT, scope = process.env.SCOPE;
+			const before = (s.packages || []).length;
+			s.packages = (s.packages || []).filter(x =>
+				x !== `npm:${scope}/pi-${short}`
+				&& !x.includes(`/extensions/${short}`)
+				&& !new RegExp(`pi-${short}$`).test(x)
+			);
+			const removed = before - (s.packages || []).length;
+			if (removed > 0) fs.writeFileSync(process.env.SETTINGS, JSON.stringify(s, null, 2));
+			process.stdout.write(String(removed));
+		' 2>/dev/null || echo "0")
+		[ "$cleaned" != "0" ] && echo "  · 清 packages 残留 ${cleaned} 条（避免两源冲突）"
 	fi
 done
 
 echo ""
-green "✓ pi 模式 link 完成"
+green "✓ pi 模式 symlink 完成"
 echo "  生效：新建 pi session（当前 session 已加载旧版）"
-echo "  验证：pi list（应只剩本地源）；新 session 派 subagent 验证行为"
-echo "  恢复：./pi-unlink.sh $*"
+echo "  注：pi list 只列 packages，不显示 globalExtDir symlink——loader 仍会加载（pi-statusline 同模式）"
+echo "  验证：新 session 派 subagent 测行为；恢复：./pi-unlink.sh $*"

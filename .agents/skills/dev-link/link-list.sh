@@ -16,19 +16,21 @@ ENV_FILE="$GIT_ROOT/$ENV_FILE_NAME"
 echo ""
 cyan "═══ Dev Link 状态 ═══"
 
-# ── pi 模式（pi list 本地源：非 npm: 前缀、指向源码目录）──
+# ── pi 模式（~/.pi/agent/extensions/ symlink，指向 worktree 源码）──
 echo ""
-cyan "─── pi 模式（pi install 本地源；原版 pi 生效，新 session 加载）───"
-if command -v pi >/dev/null 2>&1 && pi list >/dev/null 2>&1; then
-	# 本地源 = pi list 里指向当前 worktree extensions/ 的（路径行含 GIT_ROOT）
-	pi_local_lines=$(pi list 2>/dev/null | grep -A1 "$GIT_ROOT/extensions" | grep -v "^--" || true)
-	if [ -n "$pi_local_lines" ]; then
-		echo "$pi_local_lines" | sed 's/^/  /'
-	else
-		echo "  （无 pi 模式 link）"
-	fi
+cyan "─── pi 模式（~/.pi/agent/extensions/ symlink；原版 pi 生效）───"
+pi_links=""
+for link in "$HOME/.pi/agent/extensions"/pi-*; do
+	[ -L "$link" ] || continue
+	target=$(readlink "$link")
+	case "$target" in
+		*/extensions/*) pi_links="${pi_links}  ✓ $(basename "$link") → ${target}\n" ;;
+	esac
+done
+if [ -n "$pi_links" ]; then
+	printf "%b" "$pi_links"
 else
-	echo "  （pi 命令不可用）"
+	echo "  （无 pi 模式 link）"
 fi
 
 # ── xyz-agent 模式（.env.dev-extensions）──

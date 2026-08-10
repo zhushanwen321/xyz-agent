@@ -14,13 +14,13 @@
 ## pi 模式（原版 pi）
 
 ```bash
-bash .agents/skills/dev-link/pi-link.sh subagent-workflow      # 切换到本地
-bash .agents/skills/dev-link/pi-unlink.sh subagent-workflow    # 恢复 npm
+bash .agents/skills/dev-link/pi-link.sh subagent-workflow      # symlink 本地到 ~/.pi/agent/extensions/
+bash .agents/skills/dev-link/pi-unlink.sh subagent-workflow    # rm symlink
 ```
 
-**机制**：`pi install <本地源码路径>` 把本地源加到 pi settings + `pi remove npm:@zhushanwen/pi-<short>` 移除 npm 源。为何 remove npm：pi resolver dedupe **by path 不 by extension id**，npm + 本地两源并存会冲突（加载哪个不确定），切换到唯一本地源最可靠。
+**机制**：symlink 本地源码 → `~/.pi/agent/extensions/pi-<short>`（globalExtDir，loader 第 2 步扫描，pi-statusline 同模式）。同时清 settings.json `packages` 里该 extension 的残留（`npm:` 源 + 旧 configuredPaths 本地路径），避免 globalExtDir + configuredPaths 两源冲突。
 
-**生效**：新建 pi session（当前 session 已加载旧版，不重扫）。
+**生效**：新建 pi session（当前 session 已加载旧版，不重扫）。**注意 pi list 不显示** globalExtDir symlink——pi list 只列 `packages` 配置的，不列自动发现源，但 loader 会加载（正常现象）。
 
 ## xyz-agent 模式（Electron dev）
 
