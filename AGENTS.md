@@ -748,4 +748,5 @@ SKIP_CODE_RULES_CHECK=1 git commit # 跳过 vue_rules_checker
 SKIP_ENV_WHITELIST_CHECK=1 git commit   # 跳过 ENV 白名单同步检查
 SKIP_PATH_WHITELIST_CHECK=1 git commit   # 跳过路径白名单动态化检查
 SKIP_DIRECTORY_RULES_CHECK=1 git commit  # 跳过目录规范检查（禁止 demos/impeccable + 外部 symlink）
+SKIP_TOOL_SCHEMA_CHECK=1 git commit      # 跳过 Pi extension tool schema 顶层 Object 合规检查
 ```
