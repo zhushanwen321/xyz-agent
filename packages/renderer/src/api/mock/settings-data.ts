@@ -2,13 +2,13 @@
  * Settings mock fixture —— 5 菜单的预制数据。
  * 严格镜像 shared/src 类型（ProviderInfo / SkillInfo / AgentInfo）。
  */
-import type { ProviderInfo, SkillInfo, AgentInfo } from '@xyz-agent/shared'
+import type { ProviderInfo, SkillInfo, AgentInfo, ProviderId } from '@xyz-agent/shared'
 
 /* ── Provider ── */
 
 export const fixtureProviders: ProviderInfo[] = [
   {
-    id: 'anthropic',
+    id: 'anthropic' as ProviderId,
     name: 'Anthropic',
     api: 'anthropic-messages',
     baseUrl: 'https://api.anthropic.com',
@@ -22,7 +22,7 @@ export const fixtureProviders: ProviderInfo[] = [
     ],
   },
   {
-    id: 'openai',
+    id: 'openai' as ProviderId,
     name: 'OpenAI Compatible',
     api: 'openai-completions',
     baseUrl: 'https://api.openai.com/v1',
@@ -35,7 +35,7 @@ export const fixtureProviders: ProviderInfo[] = [
     ],
   },
   {
-    id: 'deepseek',
+    id: 'deepseek' as ProviderId,
     name: 'DeepSeek',
     api: 'openai-completions',
     baseUrl: 'https://api.deepseek.com/v1',
@@ -50,7 +50,7 @@ export const fixtureProviders: ProviderInfo[] = [
   {
     // 本地推理示例（Ollama 等）。pi 不支持 'ollama' 作为 api 标识，
     // 本地模型走 openai-completions + baseUrl 指向本地端点（11434 是 ollama 的 OpenAI 兼容端口）。
-    id: 'ollama-local',
+    id: 'ollama-local' as ProviderId,
     name: 'Ollama (Local)',
     api: 'openai-completions',
     baseUrl: 'http://localhost:11434/v1',

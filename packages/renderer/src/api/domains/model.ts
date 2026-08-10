@@ -8,7 +8,7 @@
  *
  * 依赖方向：events（订阅）+ command（动作）。
  */
-import type { ModelInfo } from '@xyz-agent/shared'
+import type { ModelInfo, ProviderId } from '@xyz-agent/shared'
 export type { ModelInfo }
 import { command } from '../request'
 import * as events from '../events'
@@ -36,7 +36,7 @@ export async function listModels(): Promise<ModelInfo[]> {
 /** 切换当前 session 的模型（动作；确认由 model.switched push，后续消费） */
 export function switchModel(
   sessionId: string,
-  provider: string,
+  provider: ProviderId,
   modelId: string,
 ): Promise<void> {
   return command('model.switch', { sessionId, provider, modelId })

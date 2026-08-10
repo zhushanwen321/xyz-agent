@@ -21,6 +21,7 @@
  * 乐观更新，不破坏该 watch 链。
  */
 import { model as modelApi, session as sessionApi } from '@/api'
+import type { ProviderId } from '@xyz-agent/shared'
 import { useSessionStore } from '@/stores/session'
 
 export function useModel() {
@@ -40,7 +41,7 @@ export function useModel() {
    * @param provider 模型 provider id
    * @param modelId 模型 id（不含 provider 前缀）
    */
-  async function switchModel(sessionId: string, provider: string, modelId: string): Promise<void> {
+  async function switchModel(sessionId: string, provider: ProviderId, modelId: string): Promise<void> {
     await modelApi.switchModel(sessionId, provider, modelId)
     // 乐观更新：立即同步 active.modelId（复合串 "provider/modelId"）
     sessionStore.updateSessionState(sessionId, {

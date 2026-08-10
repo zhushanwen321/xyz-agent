@@ -9,25 +9,30 @@
  * 纯数据：不依赖 vue/runtime，无副作用。全部 named export，无 default export。
  * token 数用原始数值（如 69000），不用字符串。
  */
-import type { ModelInfo } from '@xyz-agent/shared'
+import type { ModelInfo, ProviderId } from '@xyz-agent/shared'
 
 // ── 1. 模型列表（provider 分组，平铺单层） ──────────────────────────────
 export interface MockModel {
   id: string
   name: string
+  /** provider 显示名（与 providerId 区分，模拟 runtime 的 providerName）。 */
   provider: string
+  /** provider 机器标识（小写，模拟 runtime 的 providerId）。 */
+  providerId: string
   providerColor: string
   tag?: string
 }
 
 /** MockModel → shared ModelInfo（runtime aggregateModels 生产的 providerId/providerName 版）。
- *  mock 的 MockModel.provider（展示名）同时作 providerId 与 providerName。
+ *  mock 显式区分 providerId（机器标识，小写）与 provider（显示名），与 runtime 真实数据一致——
+ *  避免旧实现把显示名同时赋给两者，掩盖 id/name 混淆（G4）。
  *  providerColor/tag 是纯 UI 关注点（runtime 不下发），由组件侧本地映射，不进 ModelInfo。 */
 export function mockModelToInfo(m: MockModel): ModelInfo {
   return {
     id: m.id,
     name: m.name,
-    providerId: m.provider,
+    // mock 数据为可信 fixture（类比反序列化边界，design D5）→ as ProviderId
+    providerId: m.providerId as ProviderId,
     providerName: m.provider,
     reasoning: false,
     enabled: true,
@@ -36,14 +41,14 @@ export function mockModelToInfo(m: MockModel): ModelInfo {
 
 export const MOCK_MODELS: MockModel[] = [
   // Anthropic
-  { id: 'claude-sonnet-4.5', name: 'claude-sonnet-4.5', provider: 'Anthropic', providerColor: '#d97757', tag: '推荐' },
-  { id: 'claude-opus-4.1', name: 'claude-opus-4.1', provider: 'Anthropic', providerColor: '#d97757' },
-  { id: 'claude-haiku-4.5', name: 'claude-haiku-4.5', provider: 'Anthropic', providerColor: '#d97757' },
+  { id: 'claude-sonnet-4.5', name: 'claude-sonnet-4.5', provider: 'Anthropic', providerId: 'anthropic', providerColor: '#d97757', tag: '推荐' },
+  { id: 'claude-opus-4.1', name: 'claude-opus-4.1', provider: 'Anthropic', providerId: 'anthropic', providerColor: '#d97757' },
+  { id: 'claude-haiku-4.5', name: 'claude-haiku-4.5', provider: 'Anthropic', providerId: 'anthropic', providerColor: '#d97757' },
   // OpenAI
-  { id: 'gpt-5', name: 'gpt-5', provider: 'OpenAI', providerColor: '#10a37f' },
-  { id: 'gpt-5-mini', name: 'gpt-5-mini', provider: 'OpenAI', providerColor: '#10a37f' },
+  { id: 'gpt-5', name: 'gpt-5', provider: 'OpenAI', providerId: 'openai', providerColor: '#10a37f' },
+  { id: 'gpt-5-mini', name: 'gpt-5-mini', provider: 'OpenAI', providerId: 'openai', providerColor: '#10a37f' },
   // Google
-  { id: 'gemini-2.5-pro', name: 'gemini-2.5-pro', provider: 'Google', providerColor: '#4285f4' },
+  { id: 'gemini-2.5-pro', name: 'gemini-2.5-pro', provider: 'Google', providerId: 'google', providerColor: '#4285f4' },
 ]
 
 // ── 2. 思考等级 6 级 ───────────────────────────────────────────────────

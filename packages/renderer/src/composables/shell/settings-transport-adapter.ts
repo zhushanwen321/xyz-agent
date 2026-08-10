@@ -9,6 +9,7 @@
  * 签名对齐 core SettingsTransport 接口；mock 兼容硬约束（@/api 的 on* 订阅 / listProviders 等已就位）。
  */
 import type { SettingsTransport, DiscoverModelsRequest, DiscoverModelsResponse } from '@xyz-agent/core/domain/settings'
+import type { ProviderId } from '@xyz-agent/shared'
 import * as configApi from '@/api/domains/config'
 import * as modelApi from '@/api/domains/model'
 import * as extensionApi from '@/api/domains/extension'
@@ -22,7 +23,7 @@ export function createSettingsTransport(): SettingsTransport {
     // ── 请求 ──
     listProviders: () => configApi.listProviders(),
     listModels: () => modelApi.listModels(),
-    setProvider: (id, data) => configApi.setProvider(id, data),
+    setProvider: (id, data) => configApi.setProvider(id as ProviderId, data),
     discoverModels: async (req: DiscoverModelsRequest): Promise<DiscoverModelsResponse> => {
       // core DiscoverModelsRequest（baseUrl? / providerType 必）与 @/api config.discoverModels
       // （baseUrl 必 / providerType?）形状互补；实际调用方（use-provider-edit runDiscover）

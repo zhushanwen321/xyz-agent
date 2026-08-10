@@ -5,7 +5,7 @@
  * 包含：tool、hook、storage、notify、session、config、sessionData、ui、agent、workspace。
  */
 
-import type { StatusBarItem } from '@xyz-agent/shared'
+import type { StatusBarItem, ProviderId } from '@xyz-agent/shared'
 import type { PluginRpcServer } from './plugin-rpc-server.js'
 import type { PluginStorage } from './plugin-storage.js'
 import type { StatusBarItemOptions, IPluginServiceDeps } from './plugin-types.js'
@@ -195,7 +195,8 @@ export function registerAllRpcMethods(ctx: RpcSetupContext): void {
       if (!active) return
       const parts = model.split('/')
       if (parts.length < MIN_MODEL_PARTS) return
-      const provider = parts[0]
+      // 复合串切分边界（design D5）：parts[0] 是 provider id，从插件传入的 "providerId/modelId" 切出
+      const provider = parts[0] as ProviderId
       const modelId = parts.slice(1).join('/')
       // Unified entry: persist + broadcast included
       if (deps.modelService) {

@@ -30,6 +30,7 @@ export type {
   SkillInfo, AgentInfo,
   ScanSourceType, ScannedSkillInfo, ScannedAgentInfo,
   DiscoveryConfig, DiscoveryConfigV1, SkillDirConfig,
+  ProviderId, ModelId,
 } from './provider'
 // v1→v2 discovery.json 迁移纯函数（discovery-migrate.ts）
 export { migrateDiscoveryV1ToV2 } from './discovery-migrate'

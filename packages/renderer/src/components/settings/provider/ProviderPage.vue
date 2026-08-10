@@ -205,7 +205,7 @@ import { AlertCircle, Settings, Trash2 } from '@lucide/vue'
 import { ConfirmDialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import type { BuiltinProviderTemplate, ProviderInfo, ProviderStatus, SetProviderData } from '@xyz-agent/shared'
+import type { BuiltinProviderTemplate, ProviderInfo, ProviderStatus, SetProviderData, ProviderId } from '@xyz-agent/shared'
 import { config } from '@/api'
 import { getSettingsStore } from '@xyz-agent/core'
 import { useQuotaStore } from '@/stores/quota'
@@ -295,7 +295,7 @@ async function onQuickSetupSave({
   data: SetProviderData
 }): Promise<void> {
   try {
-    await config.setProvider(providerId, data)
+    await config.setProvider(providerId as ProviderId, data)
     showQuickSetup.value = false
     selectedTemplate.value = null
     toast.info(t('settings.provider.builtinTemplate.toastSuccess', { name: data.name ?? providerId }))
@@ -323,7 +323,7 @@ const settingsStore = getSettingsStore()
 const defaultProviderId = computed(() => settingsStore.defaultModel.value?.split('/')[0] ?? '')
 
 /** 新建态 sentinel id（渲染合成行 + null provider 进 ProviderEditBody） */
-const NEW_ID = '__new__'
+const NEW_ID = '__new__' as ProviderId
 
 // 手风琴展开 + dirty 守卫（R4）。wave4 提取为 composable 减轻 script setup 行数压力。
 const {

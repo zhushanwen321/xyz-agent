@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
 import { getDefaultModel } from './pi-provider-store.js'
-import { ENV_WHITELIST_PREFIXES, type ThinkingLevel } from '@xyz-agent/shared'
+import { ENV_WHITELIST_PREFIXES, type ThinkingLevel, type ProviderId } from '@xyz-agent/shared'
 import type { IPiEngine, PiSessionStats, PiCompactionResult, PiBashResult, PiCommandInfo } from '../../services/ports/pi-engine.js'
 import { createPiSessionLog, type PiSessionLog } from '../logger.js'
 
@@ -500,7 +500,7 @@ export class RpcClient implements IPiEngine {
     return this.sendCommand('follow_up', { message: content })
   }
 
-  setModel(provider: string, modelId: string): Promise<PiMessage> {
+  setModel(provider: ProviderId, modelId: string): Promise<PiMessage> {
     return this.sendCommand('set_model', { provider, modelId })
   }
 

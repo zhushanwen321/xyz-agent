@@ -61,10 +61,11 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTriggerButton } from '@/components/ui/popover'
 import { SELECTED_ITEM_CLASS } from '@/composables/logic/popover-styles'
 import type { ModelInfo } from '@/api'
+import type { ProviderId } from '@xyz-agent/shared'
 import { getSettingsStore } from '@xyz-agent/core'
 
 const emit = defineEmits<{
-  select: [payload: { modelId: string; provider: string }]
+  select: [payload: { modelId: string; provider: ProviderId }]
 }>()
 
 // 接收外部当前选中（Composer 传入），替代写死的 'claude-sonnet-4.5'
@@ -91,7 +92,7 @@ function bareModelId(v: string): string {
 // 旧实现用 onMounted 本地订阅，组件随 Composer v-if 重新挂载时会错过 sendInitialState
 // 一次性推送 → 列表空（2026-07-01 竞态修复）。
 interface ModelGroup {
-  providerId: string
+  providerId: ProviderId
   provider: string
   models: ModelInfo[]
 }
@@ -130,7 +131,7 @@ function isSelected(modelId: string): boolean {
   return bareModelId(selectedValue.value) === modelId
 }
 
-function onSelect(id: string, provider: string): void {
+function onSelect(id: string, provider: ProviderId): void {
   // provider 参数实为 providerId（switch 标识用 id，pi set_model 按 id 查；group.provider 是 name 仅用于分组标题显示）
   open.value = false
   emit('select', { modelId: id, provider })

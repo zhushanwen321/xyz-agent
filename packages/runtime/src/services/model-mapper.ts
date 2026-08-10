@@ -7,7 +7,7 @@
  * 两处输出形状不同：ProviderInfo.models 保留 input/baseUrl/compat；ModelInfo 扁平化 provider
  * 信息 + 派生 enabled。故只抽**共同 capability 字段拷贝**，不强行合并形状差异。
  */
-import type { ModelInfo } from '@xyz-agent/shared'
+import type { ModelInfo, ProviderId } from '@xyz-agent/shared'
 
 /**
  * 一个 model 定义所需的最小 capability 字段集（两处映射共同拷贝的部分）。
@@ -48,7 +48,7 @@ export function pickModelCapabilityFields<T extends ModelCapabilityFields>(m: T)
  * @param m             源 model 定义（ConfigModelDefinition 或 ProviderInfo.models 元素）
  */
 export function toModelInfo<T extends { id: string; name?: string; api?: string; enabled?: boolean } & ModelCapabilityFields>(
-  providerId: string,
+  providerId: ProviderId,
   providerName: string,
   providerApi: string | undefined,
   m: T,

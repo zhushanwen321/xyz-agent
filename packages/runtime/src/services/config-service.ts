@@ -27,6 +27,7 @@ import {
   type ProviderImportPreview,
   type ProviderImportResult,
   type SkillDirConfig,
+  type ProviderId,
 } from '@xyz-agent/shared'
 import type { IConfigService } from '../interfaces.js'
 import type { IConfigStore } from './ports/config.js'
@@ -102,11 +103,11 @@ export class ConfigService implements IConfigService {
 
   // ── Provider CRUD（委托 provider-config-helper）─────────────────
 
-  getDefaultModel(): { provider: string; modelId: string } | null {
+  getDefaultModel(): { provider: ProviderId; modelId: string } | null {
     return getDefaultModelImpl(this.configStore)
   }
 
-  setDefaultModel(provider: string, modelId: string): void {
+  setDefaultModel(provider: ProviderId, modelId: string): void {
     setDefaultModelImpl(this.configStore, provider, modelId)
   }
 

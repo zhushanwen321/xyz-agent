@@ -5,7 +5,7 @@
  * pi 的协议类型（PiProviderConfig/PiModelDefinition）只存在于 infra 实现内部，
  * service 只见本文件定义的 ConfigProviderConfig / ConfigModelDefinition。
  */
-import type { ScanSourceType, SkillDirConfig } from '@xyz-agent/shared'
+import type { ScanSourceType, SkillDirConfig, ProviderId } from '@xyz-agent/shared'
 import type { DirScopes } from '../skill-dir-config.js'
 
 /** service 侧的 provider 配置形状（pi-provider-store 的 PiProviderConfig 的 service 视图）。 */
@@ -60,7 +60,7 @@ export interface ConfigModelsConfig {
 
 /** 默认模型引用。 */
 export interface DefaultModelRef {
-  provider: string
+  provider: ProviderId
   modelId: string
 }
 
@@ -96,7 +96,7 @@ export interface AgentFileEntry {
 export interface IConfigStore {
   // ── 默认模型 ──
   getDefaultModel(): DefaultModelRef | null
-  setDefaultModel(provider: string, modelId: string): void
+  setDefaultModel(provider: ProviderId, modelId: string): void
 
   // ── enabledModels 白名单（wave2 DM3：provider 启用状态派生源）──
   /**

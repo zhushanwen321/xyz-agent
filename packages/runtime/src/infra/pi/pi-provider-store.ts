@@ -28,6 +28,7 @@ import { getEnabledModels } from './pi-enabled-models.js'
 // provider 有效性校验（Phase 1 拆出到 pi-provider-repair）：sanitizeInvalidProviders 启动时
 // 剔除空壳 provider 用。isInvalidProvider 是纯函数，不碰 modelsStore。
 import { isInvalidProvider } from './pi-provider-repair.js'
+import type { ProviderId } from '@xyz-agent/shared'
 
 // ── 类型定义（对齐 pi models.json / settings.json 的 schema）────
 
@@ -148,7 +149,7 @@ export function getProviderConfig(providerId: string): PiProviderConfig | undefi
  */
 function pickFirstModelProvider(
   providers: Record<string, PiProviderConfig>,
-): { provider: string; modelId: string } | undefined {
+): { provider: ProviderId; modelId: string } | undefined {
   // A8：跳过被 enabledModels 禁用的 provider（与 findValidDefaultModel 主路径守卫一致），
   // 避免 removeProvider/upsertProvider 重选与 findValidDefaultModel fallback 选到用户已禁用的 provider。
   // enabledModels 空（全启用）时 deriveEnabled 恒 true，行为不变。重选场景 enabledModels 不变，
@@ -157,7 +158,8 @@ function pickFirstModelProvider(
   for (const [pid, pcfg] of Object.entries(providers)) {
     if (!deriveEnabled(pid, enabledModels)) continue
     if (pcfg.models && pcfg.models.length > 0) {
-      return { provider: pid, modelId: pcfg.models[0].id }
+      // pid 来自 models.json 磁盘 key（反序列化边界，design D5）→ as ProviderId
+      return { provider: pid as ProviderId, modelId: pcfg.models[0].id }
     }
   }
   return undefined
@@ -187,7 +189,7 @@ function readAuthCredentials(): Record<string, unknown> {
  * 全程同步（无 await），避免竞态窗口。
  */
 export function upsertProvider(providerId: string, config: PiProviderConfig): {
-  newDefault?: { provider: string; modelId: string }
+  newDefault?: { provider: ProviderId; modelId: string }
 } {
   const models: PiModelsConfig = JSON.parse(JSON.stringify(readModels()))
   models.providers[providerId] = config
@@ -195,7 +197,7 @@ export function upsertProvider(providerId: string, config: PiProviderConfig): {
 
   // 同步校验 defaultModel：经 updateSettingsSync 单次 RMW。
   // 结果通过外层变量捕获（mutator 不返回值）。
-  let outcome: { newDefault?: { provider: string; modelId: string } } = {}
+  let outcome: { newDefault?: { provider: ProviderId; modelId: string } } = {}
   updateSettingsSync(s => {
     if (s.defaultProvider !== providerId) { outcome = {}; return }
 
@@ -216,7 +218,7 @@ export function upsertProvider(providerId: string, config: PiProviderConfig): {
         s.defaultModel = fallback.modelId
       }
       outcome = s.defaultProvider
-        ? { newDefault: { provider: s.defaultProvider, modelId: s.defaultModel! } }
+        ? { newDefault: { provider: s.defaultProvider as ProviderId, modelId: s.defaultModel! } }
         : {}
       return
     }
@@ -226,7 +228,7 @@ export function upsertProvider(providerId: string, config: PiProviderConfig): {
       s.defaultModel = newModelList[0].id
       console.warn(`[provider-store] defaultModel "${currentModelId}" no longer in provider "${providerId}", falling back to "${newModelList[0].id}"`)
     }
-    outcome = { newDefault: { provider: providerId, modelId: s.defaultModel! } }
+    outcome = { newDefault: { provider: providerId as ProviderId, modelId: s.defaultModel! } }
   })
   return outcome
 }
@@ -237,7 +239,7 @@ export function upsertProvider(providerId: string, config: PiProviderConfig): {
  */
 export function removeProvider(providerId: string): {
   removed: boolean
-  newDefault?: { provider: string; modelId: string }
+  newDefault?: { provider: ProviderId; modelId: string }
 } {
   const models: PiModelsConfig = JSON.parse(JSON.stringify(readModels()))
   if (!(providerId in models.providers)) return { removed: false }
@@ -245,7 +247,7 @@ export function removeProvider(providerId: string): {
   writeModels(models)
 
   // 同步清理 defaultProvider/defaultModel：经 updateSettingsSync 单次 RMW。
-  let outcome: { removed: boolean; newDefault?: { provider: string; modelId: string } } = { removed: true }
+  let outcome: { removed: boolean; newDefault?: { provider: ProviderId; modelId: string } } = { removed: true }
   updateSettingsSync(s => {
     if (s.defaultProvider !== providerId) { outcome = { removed: true }; return }
     delete s.defaultProvider
@@ -256,7 +258,7 @@ export function removeProvider(providerId: string): {
       s.defaultModel = fallback.modelId
     }
     outcome = s.defaultProvider
-      ? { removed: true, newDefault: { provider: s.defaultProvider, modelId: s.defaultModel! } }
+      ? { removed: true, newDefault: { provider: s.defaultProvider as ProviderId, modelId: s.defaultModel! } }
       : { removed: true }
   })
   return outcome
@@ -286,7 +288,7 @@ export { readSettings, writeSettings, updateSettingsSync, setSettingsPath } from
  * 无副作用，不修改任何文件。
  */
 export function findValidDefaultModel(): {
-  result: { provider: string; modelId: string } | null
+  result: { provider: ProviderId; modelId: string } | null
   wasFixed: boolean
 } { // eslint-disable-line indent -- standard TS function signature with multi-line return type
   const settings = readSettings()
@@ -301,10 +303,11 @@ export function findValidDefaultModel(): {
     if (providerConfig?.models?.length && isEnabled) {
       const found = providerConfig.models.find(m => m.id === defaultModel)
       if (found) {
-        return { result: { provider: defaultProvider, modelId: defaultModel }, wasFixed: false }
+        // defaultProvider 来自 settings.json 磁盘读（反序列化边界，design D5）→ as ProviderId
+        return { result: { provider: defaultProvider as ProviderId, modelId: defaultModel }, wasFixed: false }
       }
       console.warn(`[provider-store] defaultModel "${defaultModel}" not found in provider "${defaultProvider}", falling back to "${providerConfig.models[0].id}"`)
-      return { result: { provider: defaultProvider, modelId: providerConfig.models[0].id }, wasFixed: true }
+      return { result: { provider: defaultProvider as ProviderId, modelId: providerConfig.models[0].id }, wasFixed: true }
     }
     if (!providerConfig?.models?.length) {
       console.warn(`[provider-store] defaultProvider "${defaultProvider}" not found in models.json`)
@@ -336,7 +339,8 @@ export function findValidDefaultModel(): {
       // deriveEnabled 复用 listProviders 的启用判定（DM3），保持「可用 provider」语义一致。
       if (hasCredential && deriveEnabled(bp.id, getEnabledModels()) && bp.models && bp.models.length > 0) {
         return {
-          result: { provider: bp.id, modelId: bp.models[0].id },
+          // bp.id 来自 builtin-providers.json 磁盘读（反序列化边界，design D5）→ as ProviderId
+          result: { provider: bp.id as ProviderId, modelId: bp.models[0].id },
           wasFixed: false,
         }
       }
@@ -349,7 +353,7 @@ export function findValidDefaultModel(): {
 /**
  * 获取默认模型，带有效性校验和自动修复。
  */
-export function getDefaultModel(): { provider: string; modelId: string } | null {
+export function getDefaultModel(): { provider: ProviderId; modelId: string } | null {
   const { result, wasFixed } = findValidDefaultModel()
   if (wasFixed && result) {
     updateSettingsSync(s => {
@@ -361,7 +365,7 @@ export function getDefaultModel(): { provider: string; modelId: string } | null 
   return result
 }
 
-export function setDefaultModel(provider: string, modelId: string): void {
+export function setDefaultModel(provider: ProviderId, modelId: string): void {
   updateSettingsSync(s => {
     s.defaultProvider = provider
     s.defaultModel = modelId

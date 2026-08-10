@@ -1,4 +1,22 @@
 /**
+ * Provider 机器标识品牌类型（design provider-arch-hardening §3.3 D2 / Phase 2）。
+ *
+ * 编译期拦截 id（小写机器标识如 `xiaomi-token-plan-cn`）与显示名（`name`，如 "Xiaomi Token Plan CN"）
+ * 的混淆——两者同为 string，靠人工约定区分，曾导致 ModelSelectPopover 把 name 当 id 传给 pi
+ * 致 "Model not found"（commit cd41254ba 局部修一处）。品牌类型编译期擦除，运行时行为零变化。
+ *
+ * 反序列化边界（settings.json `defaultProvider` / auth.json key / builtin-providers.json `id`）
+ * 从磁盘读出是裸 string，用 `as ProviderId` 提升（design D5，先不加运行时 guard，P5 审查清单）。
+ */
+declare const __providerIdBrand: unique symbol
+export type ProviderId = string & { readonly [__providerIdBrand]: true }
+
+/**
+ * Model 机器标识。暂不品牌化（混淆面低，保持 string）。
+ */
+export type ModelId = string
+
+/**
  * 内置 provider 模板中的 model 摘要（DM3/IF2，wave 1 builtin-providers.json schema）。
  * 与 BuiltinProviderTemplate.models 元素结构严格对齐，前端/runtime/renderer 共用。
  *
@@ -86,7 +104,7 @@ export type ProviderStatus = 'connected' | 'not_configured' | 'error'
 export type ProviderKind = 'catalog' | 'custom'
 
 export interface ProviderInfo {
-  id: string
+  id: ProviderId
   name: string
   api?: string
   baseUrl?: string
@@ -143,9 +161,9 @@ export interface ProviderInfo {
 }
 
 export interface ModelInfo {
-  id: string
+  id: ModelId
   name: string
-  providerId: string
+  providerId: ProviderId
   providerName: string
   api?: string
   reasoning?: boolean

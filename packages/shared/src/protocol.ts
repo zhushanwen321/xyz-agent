@@ -1,6 +1,6 @@
 // Client → Runtime message types
 
-import type { ProviderInfo, SkillInfo, AgentInfo, ModelInfo, SkillDirConfig, ScannedSkillInfo, ScannedAgentInfo, BuiltinProviderTemplate } from './provider'
+import type { ProviderInfo, SkillInfo, AgentInfo, ModelInfo, SkillDirConfig, ScannedSkillInfo, ScannedAgentInfo, BuiltinProviderTemplate, ProviderId } from './provider'
 import type { SessionGroup, SessionSummary } from './session'
 import type { FileChange, ChangeSetStatus, Message } from './message'
 import type { FileNode } from './file-tree'
@@ -332,17 +332,17 @@ export interface ClientMessageMap {
   // message.abortBash：取消进行中的 bash 执行（调 pi abort_bash）。
   'message.abortBash': { sessionId: string }
   'config.getProviders': Record<string, never>
-  'config.setProvider': { providerId: string } & SetProviderData
-  'config.deleteProvider': { providerId: string }
+  'config.setProvider': { providerId: ProviderId } & SetProviderData
+  'config.deleteProvider': { providerId: ProviderId }
   // wave4：provider 启用切换（wave3 RPC 链路在 wave4 补全）。enabled=false 时 runtime 移除白名单 pattern，
   // 若 default 承载该 provider 会重选并广播 config.defaults（见 settings-message-handler）。
-  'config.toggleProviderEnabled': { providerId: string; enabled: boolean }
+  'config.toggleProviderEnabled': { providerId: ProviderId; enabled: boolean }
   // wave4：按体系移除 provider。kind 来自 ProviderInfo.kind（wave2 聚合层标注），catalog 清凭据/custom 删条目。
-  'config.removeProviderByKind': { providerId: string; kind: 'catalog' | 'custom' }
+  'config.removeProviderByKind': { providerId: ProviderId; kind: 'catalog' | 'custom' }
   'config.setToolPermissions': { permissions: Record<string, string> }
   'config.discoverModels': { baseUrl: string; apiKey?: string; providerType?: string; providerId?: string }
   // W3 默认模型持久化：前端设置全局默认模型，runtime 调 configService.setDefaultModel 写 settings.json。
-  'config.setDefaultModel': { provider: string; modelId: string }
+  'config.setDefaultModel': { provider: ProviderId; modelId: string }
   'config.scanSkills': { sources: string[] }
   // W2（cw-2026-07-21-scan-project-agents-skills）：按 session cwd 拉 project skill（.agents/skills + .xyz-agent/skills）。
   // 与 config.scanSkills 区分：scanSkills 扫 sources 数组候选加入 discovery；scanSessionSkills 扫某 cwd 已生效目录。
@@ -369,7 +369,7 @@ export interface ClientMessageMap {
   'config.getSystemPrompt': Record<string, never>
   'config.setSystemPrompt': { config: SystemPromptConfig }
   'model.list': Record<string, never>
-  'model.switch': { sessionId: string; provider: string; modelId: string }
+  'model.switch': { sessionId: string; provider: ProviderId; modelId: string }
   'session.setThinkingLevel': { sessionId: string; level: string }
   'tool.approve': { sessionId: string; toolCallId?: string }
   'tool.deny': { sessionId: string; toolCallId?: string; reason?: string }

@@ -18,7 +18,7 @@ import type {
   ConfigProviderConfig,
   ConfigModelsConfig,
 } from '../../services/ports/config.js'
-import type { SkillDirConfig } from '@xyz-agent/shared'
+import type { SkillDirConfig, ProviderId } from '@xyz-agent/shared'
 import { KNOWN_PI_API_TYPES } from '@xyz-agent/shared'
 import {
   getDefaultModel,
@@ -59,7 +59,7 @@ export class PiConfigStore implements IConfigStore {
     return getDefaultModel()
   }
 
-  setDefaultModel(provider: string, modelId: string): void {
+  setDefaultModel(provider: ProviderId, modelId: string): void {
     setDefaultModel(provider, modelId)
   }
 

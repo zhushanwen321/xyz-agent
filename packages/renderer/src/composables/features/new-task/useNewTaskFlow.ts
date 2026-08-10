@@ -27,6 +27,7 @@
  * 与测试 import 路径不变即获得 core 版）。
  */
 import { session as sessionApi, git as gitApi, workspace as workspaceApi } from '@/api'
+import type { ProviderId } from '@xyz-agent/shared'
 import * as events from '@/api/events'
 import { createSessionFlow, useNewTaskFlow as useCoreNewTaskFlow } from '@xyz-agent/core'
 import type { CreateSessionFlowCtx, SessionApiPort } from '@xyz-agent/core'
@@ -109,7 +110,8 @@ export function useNewTaskFlow() {
             applyModel: async (sid, pending) => {
               const slashIdx = pending.indexOf('/')
               if (slashIdx > 0) {
-                await switchModel(sid, pending.slice(0, slashIdx), pending.slice(slashIdx + 1))
+                // pending 是 "providerId/modelId" 复合串；切分出 providerId 段（design D5 复合串切分边界）
+                await switchModel(sid, pending.slice(0, slashIdx) as ProviderId, pending.slice(slashIdx + 1))
               }
             },
           }

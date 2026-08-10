@@ -29,6 +29,7 @@
  * 函数签名 / 逻辑 byte-level 保持。
  */
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
+import type { ProviderId } from '@xyz-agent/shared'
 import { useThinkingLevelSync } from './thinking-level-sync'
 
 /** useComposerModelThinking 的注入依赖（壳层 Composer 从各 store/composable 派生后注入）。 */
@@ -42,7 +43,7 @@ export interface ModelThinkingDeps {
   /** landing 态记 pendingModel（壳层从 useNewTaskFlow().setPendingModel 取） */
   setPendingModel: (model: string) => void
   /** 已建态切模型 RPC + 乐观更新编排（壳层从 useModel().switchModel 取） */
-  switchModel: (sessionId: string, provider: string, modelId: string) => Promise<void>
+  switchModel: (sessionId: string, provider: ProviderId, modelId: string) => Promise<void>
   /** 已建态设思考等级 RPC + 乐观更新（壳层从 useModel().setThinkingLevel 取） */
   setThinkingLevel: (sessionId: string, level: string) => Promise<void>
   /** 按 modelId 派生 thinkingLevelMap（透传给 useThinkingLevelSync，壳层从 settingsStore.providers 解析） */
@@ -57,7 +58,7 @@ export function useComposerModelThinking(
   currentThinkingLevel: ComputedRef<string | undefined>
   currentThinkingLevelMap: ComputedRef<Record<string, string | null> | undefined>
   localThinkingLevel: Ref<string | undefined>
-  onModelSelect: (payload: { modelId: string; provider: string }) => Promise<void>
+  onModelSelect: (payload: { modelId: string; provider: ProviderId }) => Promise<void>
   onThinkingSelect: (level: string) => Promise<void>
   /** Staging Mode：进入暂存态（快照当前模型/thinking） */
   enterStagingMode: () => void
@@ -144,7 +145,7 @@ export function useComposerModelThinking(
    * session 已建走 deps 注入的编排（RPC + 乐观更新）；
    * landing 态（sid=null）session 尚未 create，记 pendingModel 供首发提交后 apply。
    */
-  async function onModelSelect(payload: { modelId: string; provider: string }): Promise<void> {
+  async function onModelSelect(payload: { modelId: string; provider: ProviderId }): Promise<void> {
     // Staging Mode：只写暂存快照，不影响当前源 session
     if (stagingModel.value !== null) {
       stagingModel.value = `${payload.provider}/${payload.modelId}`

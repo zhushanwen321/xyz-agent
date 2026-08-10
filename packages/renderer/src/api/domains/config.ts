@@ -27,6 +27,7 @@ import type {
   ProviderImportResult,
   SkillCacheInvalidatedPayload,
   ServerMessage,
+  ProviderId,
 } from '@xyz-agent/shared'
 import { command } from '../request'
 import * as events from '../events'
@@ -218,30 +219,30 @@ export function setExtensionDirs(dirs: SkillDirConfig[]): Promise<void> {
   return command('config.setExtensionDirs', { dirs })
 }
 
-export function setProvider(providerId: string, data: SetProviderData): Promise<void> {
+export function setProvider(providerId: ProviderId, data: SetProviderData): Promise<void> {
   return command('config.setProvider', { providerId, ...data })
 }
 
 // W3 默认模型持久化：动作-ack，状态变更经 onDefaults 订阅推回（runtime 广播 config.defaults）。
-export function setDefaultModel(provider: string, modelId: string): Promise<void> {
+export function setDefaultModel(provider: ProviderId, modelId: string): Promise<void> {
   return command('config.setDefaultModel', { provider, modelId })
 }
 
-export function deleteProvider(providerId: string): Promise<void> {
+export function deleteProvider(providerId: ProviderId): Promise<void> {
   return command('config.deleteProvider', { providerId })
 }
 
 // wave4 C1：provider 启用切换（写 enabledModels 白名单）。替代旧 setProvider({enabled}) 路径——
 // wave3 停用 setProvider 的 provider 级 enabled 写入后，toggle 必须走此 RPC 才能持久化启用状态。
 // reply config.providerUpdated；newDefault 经 onDefaults 订阅推回（broadcast 由 handler 发起）。
-export function toggleProviderEnabled(providerId: string, enabled: boolean): Promise<void> {
+export function toggleProviderEnabled(providerId: ProviderId, enabled: boolean): Promise<void> {
   return command('config.toggleProviderEnabled', { providerId, enabled })
 }
 
 // wave4 IF3：按体系移除 provider。kind 来自 ProviderInfo.kind（wave2 聚合层标注）——
 // catalog 清凭据（不删 pi 定义），custom 删条目。与 deleteProvider 区别：后者不分体系直接删条目
 // （向后兼容保留），renderer 按 kind 调对应 RPC。reply config.providerUpdated。
-export function removeProviderByKind(providerId: string, kind: 'catalog' | 'custom'): Promise<void> {
+export function removeProviderByKind(providerId: ProviderId, kind: 'catalog' | 'custom'): Promise<void> {
   return command('config.removeProviderByKind', { providerId, kind })
 }
 

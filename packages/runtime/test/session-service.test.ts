@@ -33,7 +33,7 @@ import type {
   IExtensionService,
 } from '../src/interfaces.js'
 import type { IProcessManager, IPiEngine, PiEventListener } from '../src/services/ports/pi-engine.js'
-import type { SessionSummary, SessionGroup, Message, ServerMessage } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup, Message, ServerMessage, ProviderId } from '@xyz-agent/shared'
 
 // ── vi.hoisted：在 vi.mock 工厂执行前就绪的 mock 句柄 ───────────────
 
@@ -736,14 +736,14 @@ describe('SessionService · Facade', () => {
     it('calls client.setModel and updates cached modelId', async () => {
       const { id, client } = await setup.seedSession()
       vi.mocked(client.setModel).mockClear()
-      const returned = await setup.service.switchModel(id, 'anthropic', 'claude-x')
+      const returned = await setup.service.switchModel(id, 'anthropic' as ProviderId, 'claude-x')
       expect(returned).toBe(id)
       expect(client.setModel).toHaveBeenCalledWith('anthropic', 'claude-x')
       expect(setup.service.getSummary(id)?.modelId).toBe('anthropic/claude-x')
     })
 
     it('throws when session not in map (W1/L7: fail-fast，不再静默成功)', async () => {
-      await expect(setup.service.switchModel('ghost', 'p', 'm')).rejects.toThrow('session not active')
+      await expect(setup.service.switchModel('ghost', 'p' as ProviderId, 'm')).rejects.toThrow('session not active')
     })
 
     it('切换后广播 session.state_changed（含按新 contextWindow 重算用量）', async () => {
@@ -758,7 +758,7 @@ describe('SessionService · Facade', () => {
       // W2 收口后用 client.getState()，返回归一后的 state 对象
       vi.mocked(client.getState).mockResolvedValueOnce({ thinkingLevel: 'high' })
 
-      await setup.service.switchModel(id, 'anthropic', 'claude-x')
+      await setup.service.switchModel(id, 'anthropic' as ProviderId, 'claude-x')
 
       const stateChanged = findBroadcast(setup, 'session.state_changed')
       expect(stateChanged).toBeDefined()
@@ -777,7 +777,7 @@ describe('SessionService · Facade', () => {
       // 不注入 resolver
       setup.service.setInputTokens(id, 5000)
 
-      await setup.service.switchModel(id, 'anthropic', 'claude-x')
+      await setup.service.switchModel(id, 'anthropic' as ProviderId, 'claude-x')
 
       const stateChanged = findBroadcast(setup, 'session.state_changed')
       expect(stateChanged).toBeDefined()
@@ -795,7 +795,7 @@ describe('SessionService · Facade', () => {
       // W2 收口后 broadcastSessionState 用 client.getState()，失败时 thinkingLevel 回退缓存值
       vi.mocked(client.getState).mockRejectedValueOnce(new Error('get_state boom'))
 
-      await setup.service.switchModel(id, 'anthropic', 'claude-x')
+      await setup.service.switchModel(id, 'anthropic' as ProviderId, 'claude-x')
 
       const stateChanged = findBroadcast(setup, 'session.state_changed')
       expect(stateChanged).toBeDefined()

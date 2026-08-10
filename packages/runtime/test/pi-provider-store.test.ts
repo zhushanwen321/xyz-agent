@@ -3,6 +3,7 @@ import { mkdtemp, rm, readFileSync, writeFileSync, existsSync, mkdirSync } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import type { ProviderId } from '@xyz-agent/shared'
 
 import {
   readModels,
@@ -162,7 +163,7 @@ describe('pi-provider-store — models.json', () => {
     })
 
     it('fixes defaultModel when provider removed has no models', () => {
-      setDefaultModel('anthropic', 'claude-sonnet')
+      setDefaultModel('anthropic' as ProviderId, 'claude-sonnet')
       upsertProvider('anthropic', { models: [] })
       // defaultModel 失效应被修复
       const def = getDefaultModel()
@@ -179,7 +180,7 @@ describe('pi-provider-store — models.json', () => {
         },
       })
       refreshModels()
-      setDefaultModel('anthropic', 'claude-sonnet')
+      setDefaultModel('anthropic' as ProviderId, 'claude-sonnet')
 
       const outcome = upsertProvider('anthropic', { name: 'Anthropic', apiKey: 'sk-test-2' })
 
@@ -198,7 +199,7 @@ describe('pi-provider-store — models.json', () => {
         },
       })
       refreshModels()
-      setDefaultModel('anthropic', 'claude-sonnet')
+      setDefaultModel('anthropic' as ProviderId, 'claude-sonnet')
 
       const outcome = upsertProvider('anthropic', { name: 'Anthropic', apiKey: 'sk-test-2', models: [] })
 
@@ -233,7 +234,7 @@ describe('pi-provider-store — models.json', () => {
         },
       })
       refreshModels()
-      setDefaultModel('anthropic', 'claude-sonnet')
+      setDefaultModel('anthropic' as ProviderId, 'claude-sonnet')
       const result = removeProvider('anthropic')
       expect(result.removed).toBe(true)
       expect(result.newDefault?.provider).toBe('openai')
@@ -261,12 +262,12 @@ describe('pi-provider-store — models.json', () => {
     })
 
     it('setDefaultModel / getDefaultModel round-trip', () => {
-      setDefaultModel('anthropic', 'claude-opus')
+      setDefaultModel('anthropic' as ProviderId, 'claude-opus')
       expect(getDefaultModel()).toEqual({ provider: 'anthropic', modelId: 'claude-opus' })
     })
 
     it('getDefaultModel auto-fixes invalid default', () => {
-      setDefaultModel('anthropic', 'nonexistent-model')
+      setDefaultModel('anthropic' as ProviderId, 'nonexistent-model')
       const result = getDefaultModel()
       expect(result?.modelId).toBe('claude-sonnet') // 回退到 provider 第一个 model
     })

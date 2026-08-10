@@ -8,7 +8,7 @@
 // wave 2（WC1）：import inline 方式消费 generated JSON——tsup bundle 把 JSON 打进 index.cjs，
 // 避免运行时 fs/路径解析（打包后 asar 路径问题）。tsc 类型检查需 resolveJsonModule（tsconfig.json 已加）。
 import builtinData from '../generated/builtin-providers.json'
-import { type ProviderInfo, type BuiltinProviderTemplate } from '@xyz-agent/shared'
+import { type ProviderInfo, type BuiltinProviderTemplate, type ProviderId } from '@xyz-agent/shared'
 import { isCatalogProvider, deriveEnabled } from './provider-catalog.js'
 import type { IConfigStore, ConfigModelDefinition, ConfigProviderConfig } from './ports/config.js'
 import type { AuthStorage } from './auth/auth-storage.js'
@@ -99,11 +99,11 @@ function isValidThinkingLevelMap(v: unknown): v is Record<string, string | null>
 
 // ── 默认模型 ──
 
-export function getDefaultModel(configStore: IConfigStore): { provider: string; modelId: string } | null {
+export function getDefaultModel(configStore: IConfigStore): { provider: ProviderId; modelId: string } | null {
   return configStore.getDefaultModel()
 }
 
-export function setDefaultModel(configStore: IConfigStore, provider: string, modelId: string): void {
+export function setDefaultModel(configStore: IConfigStore, provider: ProviderId, modelId: string): void {
   configStore.setDefaultModel(provider, modelId)
 }
 
@@ -144,8 +144,9 @@ export function listProviders(configStore: IConfigStore, authStorage?: AuthStora
     // 手动填 key 的旧数据（迁移前错位）合理扩展，双源判定避免遗漏。
     const apiKeySet = authIdSet.has(id) || !!override?.apiKey
     const overrideModels = override?.models ?? []
+    // id 来自 models.json / auth.json 的磁盘 key（反序列化边界，design D5）→ as ProviderId 提升
     result.push({
-      id,
+      id: id as ProviderId,
       name: override?.name || builtinP.name || id,
       api: override?.api ?? builtinP.api,
       baseUrl: override?.baseUrl ?? builtinP.baseUrl,
@@ -172,8 +173,9 @@ export function listProviders(configStore: IConfigStore, authStorage?: AuthStora
     if (catalogIdsHandled.has(id)) continue
     const userModels = (config.models ?? []).map(toUserInfoModel)
     const apiKeySet = !!config.apiKey
+    // id 来自 models.json 的磁盘 key（反序列化边界，design D5）→ as ProviderId 提升
     result.push({
-      id,
+      id: id as ProviderId,
       name: config.name || id,
       // W2：回填 provider 级 api 字段，修复前端编辑 provider 时 type 下拉丢失（P0-1）
       api: config.api,
@@ -364,7 +366,7 @@ export function toggleProviderEnabled(
   authStorage: AuthStorageAccessors | undefined,
   providerId: string,
   enabled: boolean,
-): { newDefault?: { provider: string; modelId: string } } {
+): { newDefault?: { provider: ProviderId; modelId: string } } {
   const current = configStore.getEnabledModels()
 
   if (enabled) {
@@ -416,7 +418,7 @@ function pickEnabledDefaultModel(
   configStore: IConfigStore,
   authStorage: AuthStorageAccessors | undefined,
   excludedId: string,
-): { provider: string; modelId: string } | undefined {
+): { provider: ProviderId; modelId: string } | undefined {
   const providers = listProviders(configStore, authStorage)
   // B1：优先选有凭据（apiKeySet）的启用 provider 作 default，
   // 避免重选到无凭据的 catalog provider（用户禁用某 provider 触发重选时）。
@@ -436,7 +438,7 @@ export function deleteProvider(
   configStore: IConfigStore,
   authStorage: AuthStorageAccessors | undefined,
   providerId: string,
-): { removed: boolean; newDefault?: { provider: string; modelId: string } } {
+): { removed: boolean; newDefault?: { provider: ProviderId; modelId: string } } {
   // I8：删 provider 同步清 auth.json 凭据（OAuth token 是强绑定凭据，不能残留）。
   // 幂等：auth.json 无该 provider 时 no-op。清理失败记 warn（fire-and-forget，不阻塞删除主流程）。
   void authStorage?.remove(providerId).catch(err => {
@@ -467,7 +469,7 @@ export function removeProviderByKind(
   authStorage: AuthStorageAccessors | undefined,
   providerId: string,
   kind: 'catalog' | 'custom',
-): { removed: boolean; newDefault?: { provider: string; modelId: string } } {
+): { removed: boolean; newDefault?: { provider: ProviderId; modelId: string } } {
   if (kind === 'catalog') {
     // 清 auth.json 凭据（api_key / oauth token，强绑定凭据不能残留）。fire-and-forget。
     void authStorage?.remove(providerId).catch(err => {

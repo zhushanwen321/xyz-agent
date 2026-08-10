@@ -6,7 +6,9 @@
     "rootDir": "./src",
     "strict": true,
     "noEmit": true,
-    "declaration": true,
+    // 无 declaration：core 是 source-consumed 内部包（main/types→src/index.ts，无 build/dist/发布），
+    // declaration:true 在 noEmit 下不产出 .d.ts，仅多跑一道可移植性检查。ProviderId 品牌类型
+    // 经 node_modules 跨包推断展开时会误报 TS2742（provider 模块路径不可移植），移除以消除断言型误报。
     "resolveJsonModule": true,
     "outDir": "dist"
   },

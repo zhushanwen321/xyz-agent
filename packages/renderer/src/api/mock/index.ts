@@ -25,6 +25,7 @@ import type {
   BatchDeleteResult,
   ProviderSource, ProviderImportPreview, ProviderImportResult, ProviderImportedItem,
   SkillCacheInvalidatedPayload,
+  ProviderId,
 } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from './data'
@@ -754,7 +755,7 @@ export const config = {
   onAgentDirs: (h: (dirs: SkillDirConfig[]) => void) => agentDirsSub.subscribe(h),
   onExtensionDirs: (h: (dirs: SkillDirConfig[]) => void) => extensionDirsSub.subscribe(h),
   // 动作型：mock 同构——更新 fixture 后经订阅广播推回（与 real sendInitialState/广播一致）
-  async setProvider(providerId: string, data: SetProviderData) {
+  async setProvider(providerId: ProviderId, data: SetProviderData) {
     await sleep(TIMING.ack)
     const target = fixtureProviders.find((p) => p.id === providerId)
     if (target) {
@@ -770,7 +771,7 @@ export const config = {
     }
     broadcastProviders()
   },
-  async deleteProvider(providerId: string) {
+  async deleteProvider(providerId: ProviderId) {
     await sleep(TIMING.ack)
     const idx = fixtureProviders.findIndex((p) => p.id === providerId)
     if (idx >= 0) fixtureProviders.splice(idx, 1)
@@ -778,14 +779,14 @@ export const config = {
   },
   // wave4：provider 启用切换（写 enabledModels 白名单 mock）。与 runtime toggleProviderEnabled 对齐——
   // 乐观改本地 provider.enabled + 广播 provider 列表（mock 不模拟 enabledModels 白名单语义，简化处理）。
-  async toggleProviderEnabled(providerId: string, enabled: boolean) {
+  async toggleProviderEnabled(providerId: ProviderId, enabled: boolean) {
     await sleep(TIMING.ack)
     const p = fixtureProviders.find((p) => p.id === providerId)
     if (p) p.enabled = enabled
     broadcastProviders()
   },
   // wave4：按体系移除 provider mock。catalog/custom 统一从 fixtureProviders 移除（mock 不区分体系语义）。
-  async removeProviderByKind(providerId: string, _kind: 'catalog' | 'custom') {
+  async removeProviderByKind(providerId: ProviderId, _kind: 'catalog' | 'custom') {
     await sleep(TIMING.ack)
     const idx = fixtureProviders.findIndex((p) => p.id === providerId)
     if (idx >= 0) fixtureProviders.splice(idx, 1)
@@ -796,7 +797,7 @@ export const config = {
    * 改 defaultsSub 内部值并广播 "provider/modelId" 复合串，与 runtime 广播 config.defaults 同构。
    * 状态经 onDefaults 订阅推回 settingsStore.defaultModel，前端无需本地乐观更新。
    */
-  async setDefaultModel(provider: string, modelId: string) {
+  async setDefaultModel(provider: ProviderId, modelId: string) {
     await sleep(TIMING.ack)
     defaultsSub.broadcast(`${provider}/${modelId}`)
   },
@@ -949,7 +950,7 @@ const modelsSub = makeMockSubscription(() => MOCK_MODELS.map(mockModelToInfo))
 
 export const model = {
   onModels: (h: (models: ModelInfo[]) => void) => modelsSub.subscribe(h),
-  async switchModel(_sessionId: string, _provider: string, _modelId: string) {
+  async switchModel(_sessionId: string, _provider: ProviderId, _modelId: string) {
     await sleep(TIMING.ack)
   },
 }

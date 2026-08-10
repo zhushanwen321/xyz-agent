@@ -16,7 +16,7 @@ import { join, isAbsolute, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { expandHome, isStrictlyUnder } from '../../utils/path-utils.js'
-import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord, WorkflowRunRecord, BatchDeleteResult, SegmentsMetadataFile, SegmentsMetadataEntry } from '@xyz-agent/shared'
+import type { SessionSummary, SessionGroup, SessionStatus, Message, ServerMessage, SubagentRecord, WorkflowRunRecord, BatchDeleteResult, SegmentsMetadataFile, SegmentsMetadataEntry, ProviderId } from '@xyz-agent/shared'
 import { BUILTIN_PRESET_IDS, IMAGE_LIMITS } from '@xyz-agent/shared'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
 // Node 端从子路径 import
@@ -396,7 +396,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * switchModel 后读取，时序由「缓存写入先于 switchModel 读取」保证。本方法读 inputTokens
    * 必须在 setInputTokens 之后（getInputTokens），不可另起来源。
    */
-  async switchModel(sessionId: string, provider: string, modelId: string): Promise<string> {
+  async switchModel(sessionId: string, provider: ProviderId, modelId: string): Promise<string> {
     const session = this.sessions.get(sessionId)
     if (!session) throw new Error('session not active')
     const newModelId = `${provider}/${modelId}`
@@ -998,7 +998,7 @@ export class SessionService implements ISessionService, ISessionServiceInternal 
    * pi 切模型时若新模型的 thinkingLevel 与当前相同则不 emit 事件，导致缓存恒为 undefined。
    * get_state 是可靠来源。
    */
-  private async broadcastSessionState(sessionId: string, provider: string, modelId: string): Promise<void> {
+  private async broadcastSessionState(sessionId: string, provider: ProviderId, modelId: string): Promise<void> {
     const session = this.sessions.get(sessionId)
     if (!session) return // session 不在活跃 Map（磁盘 session），无法重算
     const client = this.pm.getClient(sessionId)

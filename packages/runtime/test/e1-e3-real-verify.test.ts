@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 
 import { ConfigService } from '../src/services/config-service.js'
+import type { ProviderId } from '@xyz-agent/shared'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
 import {
   setModelsPath,
@@ -83,7 +84,7 @@ describe.skipIf(!existsSync(DEV_MODELS))('E1-E3 real 层持久化验证', () => 
   it('E3: setDefaultModel → settings.json 落盘 defaultProvider/defaultModel', () => {
     if (!firstModelId) return // provider 无 model，跳过
 
-    configService.setDefaultModel(firstProviderId, firstModelId)
+    configService.setDefaultModel(firstProviderId as ProviderId, firstModelId)
 
     const settings = readSettings()
     expect(settings.defaultProvider).toBe(firstProviderId)
