@@ -31,7 +31,7 @@
         <div
           v-for="record in workflows"
           :key="record.runId"
-          class="group relative cursor-pointer rounded-md px-2 py-[7px] transition-colors hover:bg-surface-hover"
+          class="group relative cursor-pointer rounded-md px-2 py-1 transition-colors hover:bg-surface-hover"
           data-testid="workflow-card"
           @click="emit('select', record.runId)"
           @mouseleave="abortingId = null"
