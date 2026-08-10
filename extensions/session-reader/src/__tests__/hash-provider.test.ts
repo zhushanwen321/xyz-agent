@@ -91,7 +91,7 @@ describe('extractHashFragment', () => {
   })
 
   it('/ 命令前缀 → null（委托命令 provider）', () => {
-    expect(extractHashFragment('/session')).toBeNull()
+    expect(extractHashFragment('/session-pick')).toBeNull()
   })
 
   it('@ 文件前缀 → null（委托文件 provider）', () => {
@@ -104,7 +104,7 @@ describe('extractHashFragment', () => {
 
   it('# 后跟非 hex 字符（#hello）→ null（非 uuid 片段，委托下家 provider）', () => {
     // # 只认 uuid 片段（hex/-）。#hello / #bug 这类 hashtag / markdown heading 不触发，
-    // 避免 hash provider 吞掉非引用语义的 #。名称查找走 /session 命令。
+    // 避免 hash provider 吞掉非引用语义的 #。名称查找走 /session-pick 命令。
     expect(extractHashFragment('#hello')).toBeNull()
     expect(extractHashFragment('#bug')).toBeNull()
   })

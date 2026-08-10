@@ -146,7 +146,7 @@ export default function sessionReaderExtension(pi: ExtensionAPI): void {
   })
 
   // ── M4 TUI 层（design §1 + §3.3 D-3/D-4 + 附录 P-hash-trigger）──────────
-  // # 引用补全 provider + /session 命令。仅 ctx.mode === 'tui' 注册：RPC 模式
+  // # 引用补全 provider + /session-pick 命令（命令名避开 pi 内置 /session 冲突）。仅 ctx.mode === 'tui' 注册：RPC 模式
   // （xyz-agent 子进程）不用 pi TUI editor / slash 命令，加载即跳过。
   //
   // addAutocompleteProvider 挂在 ctx.ui（非 ExtensionAPI），setup 入口无 ctx，
@@ -158,7 +158,7 @@ export default function sessionReaderExtension(pi: ExtensionAPI): void {
     if (typeof ctx.ui.addAutocompleteProvider !== 'function') return
     tuiRegistered = true
     const agentDir = getAgentDir()
-    pi.registerCommand('session', createSessionCommand(agentDir))
+    pi.registerCommand('session-pick', createSessionCommand(agentDir))
     ctx.ui.addAutocompleteProvider((current) =>
       createHashAutocompleteProvider(agentDir, current),
     )

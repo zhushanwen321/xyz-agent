@@ -4,17 +4,17 @@ import { findSessions } from '../discovery/find.js'
 import { FRAGMENT_LEN, formatRelativeTime } from './hash-provider.js'
 
 /**
- * M4 TUI 层：/session 命令（design 附录 P-hash-trigger 降级兜底 + 非 # 场景入口）。
+ * M4 TUI 层：/session-pick 命令（design 附录 P-hash-trigger 降级兜底 + 非 # 场景入口）。
  *
  * 两条用途：
  * 1. # autocomplete provider 在真实 TUI 触发失败（⛔ P-hash-trigger）时的降级入口——
- *    用户输入 /session 走列表选择，选中后插入 # 片段
+ *    用户输入 /session-pick 走列表选择，选中后插入 # 片段
  * 2. 非 # 主动查找场景（用户明确想浏览 session 列表）
  *
  * 实现 RegisteredCommand 的三字段（name/sourceInfo 由 pi.registerCommand 补）：
  * - description：命令说明
- * - getArgumentCompletions：/session <Tab> 补全 session 片段
- * - handler：/session [query] → ctx.ui.select 列表选 → setEditorText 插入 # 片段
+ * - getArgumentCompletions：/session-pick <Tab> 补全 session 片段
+ * - handler：/session-pick [query] → ctx.ui.select 列表选 → setEditorText 插入 # 片段
  *
  * agentDir 注入（同 hash-provider，零 pi 依赖核心逻辑，可单测）。
  */
@@ -27,7 +27,7 @@ function truncateForList(s: string | undefined): string {
   return s.length <= LIST_PREVIEW_MAX ? s : s.slice(0, LIST_PREVIEW_MAX) + '…'
 }
 
-/** /session 命令配置（Omit<RegisteredCommand, 'name' | 'sourceInfo'>）。 */
+/** /session-pick 命令配置（Omit<RegisteredCommand, 'name' | 'sourceInfo'>）。 */
 export function createSessionCommand(agentDir: string): {
   description: string
   getArgumentCompletions(argumentPrefix: string): Promise<AutocompleteItem[] | null>
@@ -65,7 +65,7 @@ export function createSessionCommand(agentDir: string): {
       const idx = labels.indexOf(chosen)
       if (idx < 0) return
       const frag = matches[idx].sessionId.slice(0, FRAGMENT_LEN)
-      // /session 提交后编辑器已清空，直接 set # 片段供用户补完指令再发送
+      // /session-pick 提交后编辑器已清空，直接 set # 片段供用户补完指令再发送
       ctx.ui.setEditorText(`#${frag}`)
     },
   }

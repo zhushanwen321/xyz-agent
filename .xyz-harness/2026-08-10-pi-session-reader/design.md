@@ -37,7 +37,7 @@ pi 的 session 持久化机制（本设计的操作对象）：
 |---|---|
 | 只读访问 main session / subagent session / workflow agent session | 编辑、删除、恢复 session（pi 已有 `/resume`、`/fork`） |
 | find / family / outline / expand / detail / search / export | xyz-agent composer 的 `#` 集成（runtime 侧独立项目） |
-| TUI `#` 补全 provider + `/session` 命令 | 跨机器 / 跨 agentDir 聚合 |
+| TUI `#` 补全 provider + `/session-pick` 命令 | 跨机器 / 跨 agentDir 聚合 |
 | pi TUI 与 xyz-agent RPC 两种模式下工具均可用 | 实时 tail 活跃 session（读取是快照语义） |
 
 ---
@@ -361,7 +361,7 @@ M1-M4 全部完成并提交（124 测试绿，tsc/eslint 0 error）。§4 V1-V6 
 
 | V | 状态 | 验证方式 |
 |---|---|---|
-| V1 | 逻辑✅ / 端到端⏳ | hash-provider.test（# 候选生成）+ tool-handler.test（agent 定位阅读）；真实 TUI `#` 弹窗待 `pnpm dev` 手测（⛔ P-hash-trigger，`/session` 降级已就绪）|
+| V1 | 逻辑✅ / 端到端⏳ | hash-provider.test（# 候选生成）+ tool-handler.test（agent 定位阅读）；真实 TUI `#` 弹窗待 `pnpm dev` 手测（⛔ P-hash-trigger，`/session-pick` 降级已就绪）|
 | V2 | ✅ | tool-handler.test #2（outline 32turn/506token）+ #3（detail T001）|
 | V3 | ✅ | outline 506 token vs read 一次 50KB≈2K token = 25%（远优于 <5% 阈值；原阈值基于旧 3MB 基线，真实 506/20000=2.5%）|
 | V4 | ✅ | tool-handler.test #4 + subagents.test 真实数据（019fe620→019fe632→隔代 019fe635）|
@@ -382,12 +382,12 @@ M1-M4 全部完成并提交（124 测试绿，tsc/eslint 0 error）。§4 V1-V6 
 | M1 | **core 纯逻辑核**（零 pi 依赖） | `parser.ts`（jsonl→entries，坏行跳过计数）、`turns.ts`（分段）、`tree.ts`（leaf 路径重建/旁支标注）、`render.ts`（outline/expand/detail 格式化 + token 预算）、`family.ts`（首行扫描/父子链/反查表） | 与本仓 goal extension 的 engine/ports 模式同构：纯函数核心可单测，与 pi API 解耦后改动面最小 | V2/V3 的格式与预算 |
 | M2 | **discovery 发现层** | `roots.ts`（`getAgentDir()` 推导三处根目录）、`find.ts`（片段/名称/日期/recent 匹配）、`subagents.ts`（尾行 identity/manifest；workflow 优先读 link.data.path，fallback 双位置；glob 排除 .finalized） | 定位与解析分离：find/family 只读首行/尾行，不为定位付全文解析成本（D-5） | V1/V4/V4b |
 | M3 | **工具适配层** | `tool-adapter.ts`：`registerTool("session_read")`，TypeBox 参数 schema（7 action），错误文案规格（F1-F4 👉 指引） | pi 交互的唯一适配点，业务代码不碰 pi 类型（本仓规则 5 同构） | V1/V2/V5/V6 |
-| M4 | **TUI 层** | `hash-provider.ts`（`ctx.ui.addAutocompleteProvider` wrapper：`#` 命中返回 session 候选，否则委托下家）、`session-command.ts`（`/session` 命令 + `getArgumentCompletions` + `ctx.ui.select` 兜底） | TUI 专属能力独立成层，RPC 模式加载时自动跳过（⛔ P-hash-trigger 先验证再展开） | V1 |
+| M4 | **TUI 层** | `hash-provider.ts`（`ctx.ui.addAutocompleteProvider` wrapper：`#` 命中返回 session 候选，否则委托下家）、`session-command.ts`（`/session-pick` 命令 + `getArgumentCompletions` + `ctx.ui.select` 兜底） | TUI 专属能力独立成层，RPC 模式加载时自动跳过（⛔ P-hash-trigger 先验证再展开） | V1 |
 | M5 | **export + 验收实跑** | `export.ts` 物化摘要到 `<agentDir>/tmp/`；执行 §4 全部场景 | 独立交付物化出口，避免阻塞主链路 | V3 对照 + 全场景 |
 
 **文件改动地图**：新增 `extensions/session-reader/`（`package.json` 声明 `@zhushanwen/pi-session-reader` + `pi.extensions`），不改任何既有包。发布走 changeset 常规线；是否进 `mandatory-extensions.json` 发布后再定。
 
-**待验证检查点（实施期门）**：附录 A 中全部 ⛔ 项（P-open-active / P-leaf-view[半验证] / P-hash-trigger），在对应里程碑完成前必须实跑通过，失败则回退设计（如 `#` 通道降级为 `/session` 命令 + `ui.select`）。P-workflow-dual 已废弃（workflow-state-link.data.path 实测为绝对路径，无需双位置查，见 P-wf-link ✅）。
+**待验证检查点（实施期门）**：附录 A 中全部 ⛔ 项（P-open-active / P-leaf-view[半验证] / P-hash-trigger），在对应里程碑完成前必须实跑通过，失败则回退设计（如 `#` 通道降级为 `/session-pick` 命令 + `ui.select`）。P-workflow-dual 已废弃（workflow-state-link.data.path 实测为绝对路径，无需双位置查，见 P-wf-link ✅）。
 
 ---
 
@@ -402,7 +402,7 @@ M1-M4 全部完成并提交（124 测试绿，tsc/eslint 0 error）。§4 V1-V6 
 | P-identity | subagent session 尾行存在 `subagent-identity` custom entry（含 rootSessionId） | tail 真实 subagent 文件（019fe635） | ✅ 实测 |
 | P-open-active | `SessionManager.open()` 读取**活跃写入中**的 session 文件安全（无锁、不写） | 实施期：对正在对话的 session 调 open 读 entries，确认主进程 append 不受影响 | ⛔ M3 前 |
 | P-leaf-view | root→最后 entry 重建路径与 pi `/resume` 展示一致 | _buildIndex 语义已验证（leafId=最后 entry.id，`session-manager.js:680` ✅）；剩「对含旁支的真实 session 重建路径，与 pi TUI resume 肉眼比对」 | ⛔ M1 前（半验证） |
-| P-hash-trigger | `ctx.ui.addAutocompleteProvider` 包装后 `#` 在真实 TUI 触发弹窗 | 实施期：最小 provider 注册后 TUI 手测 | ⛔ M4 前，失败降级为 `/session` 命令 |
+| P-hash-trigger | `ctx.ui.addAutocompleteProvider` 包装后 `#` 在真实 TUI 触发弹窗 | 实施期：最小 provider 注册后 TUI 手测 | ⛔ M4 前，失败降级为 `/session-pick` 命令 |
 | P-wf-link | workflow-state-link.data.path 字段含 workflow-state 绝对路径，直读即可（取代双位置扫描） | 已实测 `data = {runId, path, updatedAt}`，path 形如 `.../sessions/<cwdSlug>/workflow-state/wf-<id>.jsonl` | ✅ 2026-08-10 实测（原 P-workflow-dual 废弃） |
 
 *注：P-parse/P-outline 用 python 实测，实施时为 Node 实现，同数据量级结论不变；如有出入以 M1 的 Node 基准复测为准。*
