@@ -41,7 +41,7 @@
       <!-- bar（仅 contextWindow 已知时显示） -->
       <div v-if="hasPercent" class="mx-2.5 mt-2.5 h-1.5 overflow-hidden rounded-full bg-surface-2">
         <div
-          :class="cn('h-full rounded-full transition-all', barClass)"
+          :class="cn('h-full rounded-full transition-[width,background-color]', barClass)"
           :style="{ width: `${stats.percent}%` }"
         />
       </div>
@@ -99,7 +99,7 @@
               <span class="font-sans text-[10.5px] text-neutral-mid">{{ windowLabels[win.idx] }}</span>
               <div class="relative h-1 overflow-hidden rounded-full bg-surface-2">
                 <div
-                  :class="cn('h-full rounded-full transition-all', win.pct >= DANGER_THRESHOLD ? 'bg-danger' : win.pct >= HIGH_THRESHOLD ? 'bg-warn' : 'bg-gradient-to-r from-accent to-accent-hover')"
+                  :class="cn('h-full rounded-full transition-[width,background-color]', win.pct >= DANGER_THRESHOLD ? 'bg-danger' : win.pct >= HIGH_THRESHOLD ? 'bg-warn' : 'bg-gradient-to-r from-accent to-accent-hover')"
                   :style="{ width: `${win.pct}%` }"
                 />
               </div>

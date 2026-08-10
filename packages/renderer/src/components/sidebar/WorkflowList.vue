@@ -60,7 +60,7 @@
           <div class="mt-1 flex items-center gap-1.5 pl-[21px] font-mono text-[10px] text-neutral-dim">
             <div class="h-[3px] min-w-[40px] flex-1 overflow-hidden rounded-full bg-border">
               <div
-                class="h-full rounded-full transition-all"
+                class="h-full rounded-full transition-[width,background-color]"
                 :class="progressBarClass(record)"
                 :style="{ width: `${progressPercent(record)}%` }"
               />

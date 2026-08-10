@@ -55,7 +55,7 @@
         :aria-label="t('sidebar.update.downloading', { percent: state.percent })"
       >
         <span
-          class="block h-full rounded-full bg-accent transition-all"
+          class="block h-full rounded-full bg-accent transition-[width,background-color]"
           :style="{ width: `${state.percent}%` }"
         />
       </span>
