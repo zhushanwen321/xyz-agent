@@ -36,10 +36,10 @@ git diff main...HEAD --stat
 # 在 pi agent 内用 workflow 工具调用（action:"run", name:"review-fix-loop"）；
 # 下方 CLI 形式 pi workflow run ... 仅供识别，实际执行用 workflow 工具
 #
-# ⚠️ batch1 必须传 **.md 文件路径**（相对仓库根），禁止裸名：
-#   review-fix-loop 的 resolveAgentDefs 只对「含 / 或 .md 后缀」的项调 loadAgentMd
-#   加载文件内容；裸名（如 review-arch-boundary）不读 .agents/agents/ 下的定义，
-#   且 pi AgentRegistry 未注册这些 agent（available_subagents 无），裸名会失败。
+# ⚠️ batch1 必须传 **.md 绝对路径**（`/` 或 `~/` 开头），禁止相对路径/裸名：
+#   review-fix-loop 的 resolveAgentDefs 要求每项 `^/` 或 `^~/` 开头 + `.md` 结尾，
+#   否则抛「无效 agent 引用」；相对路径（如 .agents/agents/review-arch-boundary.md）
+#   和裸名（如 review-arch-boundary）都被拒。最可靠：从 <available_subagents> 的 <location> 复制。
 #
 # targetType=git-diff + target=main：审查 git diff main...HEAD（base 启动时锁 hash 防 ref 漂移）
 # batch1 逗号分隔 7 个维度 agent 的 .md 路径，批内全并行 review
@@ -48,7 +48,7 @@ git diff main...HEAD --stat
 pi workflow run review-fix-loop --args '{
   targetType: "git-diff",
   target: "main",
-  batch1: ".agents/agents/review-arch-boundary.md,.agents/agents/review-business-logic.md,.agents/agents/review-extension-api.md,.agents/agents/review-monorepo-impact.md,.agents/agents/review-type-safety.md,.agents/agents/review-electron-build.md,.agents/agents/review-test-coverage.md",
+  batch1: "/path/to/repo/.agents/agents/review-arch-boundary.md,/path/to/repo/.agents/agents/review-business-logic.md,/path/to/repo/.agents/agents/review-extension-api.md,/path/to/repo/.agents/agents/review-monorepo-impact.md,/path/to/repo/.agents/agents/review-type-safety.md,/path/to/repo/.agents/agents/review-electron-build.md,/path/to/repo/.agents/agents/review-test-coverage.md",
   maxRounds: 10,
   autoCommit: true,
   recheckAfterFix: false,
@@ -63,7 +63,7 @@ pi workflow run review-fix-loop --args '{
 
 内置 workflow 行为（参数 → 效果，对照 `~/.pi/agent/npm/node_modules/@zhushanwen/pi-subagent-workflow/workflows/review-fix-loop.js` 核实）：
 - **审查范围**：`targetType=git-diff` + `target=main` → 审查 `git diff main...HEAD`（base 在 run 启动时锁定 hash，防 run 期间 ref 漂移）；同时含未提交工作区改动
-- **维度 agent**：`batch1` 逗号分隔 7 个 **.md 路径**，批内全并行 review。各 agent 审查焦点内置于 `.agents/agents/review-*.md` 正文，workflow 用 loadAgentMd 加载，无需额外注入 focus
+- **维度 agent**：`batch1` 逗号分隔 7 个 **.md 绝对路径**，批内全并行 review。各 agent 审查焦点内置于 `.agents/agents/review-*.md` 正文，workflow 用 loadAgentMd 加载，无需额外注入 focus
 - **聚合**：内置 aggregator prompt 合并去重 7 份报告为 `aggregated.md` + `must_fix` 计数（workflow 自带，不依赖 `review-aggregator.md`）
 - **clean 判定**：某 agent `must_fix === 0` 判该 agent clean；否则 fix agent 批量修复并 `autoCommit` commit，进入下一轮
 - **clean 跳过**（`skipCleanAgents` 默认 true）：单轮 clean 的 agent 下轮跳过；`recheckAfterFix` 默认 false（省 token），传 true 开启强回归模式（fix 后重派全批，clean agent 走限定 prompt 只审 fix 改动文件 ∪ 自检关联点）
