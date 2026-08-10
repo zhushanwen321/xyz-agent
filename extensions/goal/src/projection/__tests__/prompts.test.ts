@@ -1,8 +1,8 @@
 /**
- * projection/prompts.ts 测试 — prompt 生成函数 + formatBudget 4 样式
+ * projection/prompts.ts 测试 — prompt 生成函数 + formatBudget 2 样式
  *
  * 覆盖：
- * - formatBudget 4 种 style（percent/line/remaining/report）
+ * - formatBudget 2 种 style（percent/line）
  * - escapeXmlText（XML 注入防护）
  * - continuationPrompt / budgetLimitPrompt / objectiveUpdatedPrompt / contextInjectionPrompt
  *
@@ -31,17 +31,16 @@ function makeState(overrides?: Partial<GoalRuntimeState>): GoalRuntimeState {
 	};
 }
 
-// ── formatBudget 4 样式（FR-3.4 唯一收敛出口）────────
+// ── formatBudget 2 样式（FR-3.4 唯一收敛出口）────────
 
-describe("formatBudget — 4 styles (FR-3.4)", () => {
-	it("percent: Token + Time 百分比", () => {
+describe("formatBudget — 2 styles (FR-3.4)", () => {
+	it("percent: Token 百分比", () => {
 		const state = makeState({
-			budget: { tokenBudget: 1000, timeBudgetMinutes: 10 },
+			budget: { tokenBudget: 1000 },
 			tokensUsed: 500,
 		});
-		const out = formatBudget(state, 300, "percent"); // 300s = 5min / 10min = 50%
+		const out = formatBudget(state, 300, "percent");
 		expect(out).toContain("Token: 50%");
-		expect(out).toContain("Time: 50%");
 	});
 
 	it("percent: 无预算 → 空字符串", () => {
@@ -51,47 +50,11 @@ describe("formatBudget — 4 styles (FR-3.4)", () => {
 
 	it("line: 剩余/总量格式", () => {
 		const state = makeState({
-			budget: { tokenBudget: 1000, timeBudgetMinutes: 10 },
+			budget: { tokenBudget: 1000 },
 			tokensUsed: 300,
 		});
-		const out = formatBudget(state, 120, "line"); // 120s = 2min used, 8min remaining
+		const out = formatBudget(state, 120, "line");
 		expect(out).toContain("Tokens: 700/1000");
-		expect(out).toContain("Time: 8m/10m");
-	});
-
-	it("remaining: used/total (N remaining) 格式", () => {
-		const state = makeState({
-			budget: { tokenBudget: 1000, timeBudgetMinutes: 10 },
-			tokensUsed: 400,
-		});
-		const out = formatBudget(state, 60, "remaining"); // 60s=1min used, 9min remaining
-		expect(out).toContain("Token: 400/1000 (600 remaining)");
-		expect(out).toContain("Time: 1m/10m (9m remaining)");
-	});
-
-	it("report: 多行 usage + duration", () => {
-		const state = makeState({
-			budget: { tokenBudget: 1000, timeBudgetMinutes: 10 },
-			tokensUsed: 700,
-		});
-		const out = formatBudget(state, 125, "report"); // 125s = 2m5s
-		expect(out).toContain("Token usage: 700/1000");
-		expect(out).toContain("Duration: 2m5s");
-	});
-
-	it("report: 无 token 预算 → 只有 duration", () => {
-		const state = makeState();
-		const out = formatBudget(state, 65, "report"); // 65s = 1m5s
-		expect(out).toBe("Duration: 1m5s");
-	});
-
-	it("remaining clamp: 超预算不出现负数", () => {
-		const state = makeState({
-			budget: { tokenBudget: 100, timeBudgetMinutes: 1 },
-			tokensUsed: 150, // 超 tokenBudget
-		});
-		const out = formatBudget(state, 120, "remaining"); // 120s 超 1min budget
-		expect(out).toContain("(0 remaining)"); // 不出现负数
 	});
 });
 
@@ -160,24 +123,15 @@ describe("continuationPrompt", () => {
 // ── budgetLimitPrompt ────────────────────────────────
 
 describe("budgetLimitPrompt", () => {
-	it("token 维度 → TOKEN budget 提示", () => {
+	it("token 预算 → TOKEN budget 提示", () => {
 		const state = makeState({
-			budget: { tokenBudget: 1000, timeBudgetMinutes: 10 },
+			budget: { tokenBudget: 1000 },
 			tokensUsed: 950,
 		});
-		const out = budgetLimitPrompt(state, "token", 60);
+		const out = budgetLimitPrompt(state);
 		expect(out).toContain("TOKEN budget");
 		expect(out).toContain("Tokens used: 950 / 1000");
 		expect(out).toContain("wrap up immediately");
-	});
-
-	it("time 维度 → time budget 提示", () => {
-		const state = makeState({
-			budget: { tokenBudget: 1000, timeBudgetMinutes: 10 },
-		});
-		const out = budgetLimitPrompt(state, "time", 540); // 540s = 9m
-		expect(out).toContain("time budget");
-		expect(out).toContain("Time elapsed: 9m0s / 10 min");
 	});
 });
 
@@ -197,11 +151,11 @@ describe("objectiveUpdatedPrompt", () => {
 // ── contextInjectionPrompt ───────────────────────────
 
 describe("contextInjectionPrompt", () => {
-	it("包含 objective/status/turn + 预算百分比 + 规则", () => {
+	it("包含 objective/status/turn + 预算百分比 + 3 条铁律（TC2 核心段保留）", () => {
 		const state = makeState({
 			status: "active",
 			currentTurnIndex: 2,
-			budget: { tokenBudget: 1000, timeBudgetMinutes: 10 },
+			budget: { tokenBudget: 1000 },
 			tokensUsed: 200,
 		});
 		const out = contextInjectionPrompt(state, 60);
@@ -210,13 +164,37 @@ describe("contextInjectionPrompt", () => {
 		expect(out).toContain("Turn: 2");
 		expect(out).toContain("Token: 20%"); // 200/1000
 		expect(out).toContain("test objective");
+		// 3 条铁律（C3：原 4 条合并为 3 条）
+		expect(out).toContain("Work from evidence");
+		expect(out).toContain("Track remaining work");
+		expect(out).toContain("report blocked with what you tried");
 	});
 
-	it("要求建 todo（含 verification todo）", () => {
+	it("完整 state（含 budget+successCriteria）≤600 chars（TC1 硬指标）", () => {
+		const state = makeState({
+			objective: "Refactor the auth module to use JWT and add integration tests",
+			successCriteria: "src/auth.ts uses JWT; pnpm test auth green; tsc --noEmit clean",
+			status: "active",
+			currentTurnIndex: 2,
+			budget: { tokenBudget: 1000 },
+			tokensUsed: 200,
+		});
+		const out = contextInjectionPrompt(state, 60);
+		expect(out.length).toBeLessThanOrEqual(600);
+	});
+
+	it("删除冗余段（TC3）：不含 todo 引导/plan 提示/Fidelity/Audit", () => {
 		const state = makeState();
 		const out = contextInjectionPrompt(state, 0);
-		expect(out).toContain("todo tool");
-		expect(out).toContain("separate todo for verification checks");
+		// todo 引导段已删（收敛到 continuation 软建议）
+		expect(out).not.toContain("Track work with todos");
+		expect(out).not.toContain("todo tool");
+		// plan 提示段已删（收敛到 continuation）
+		expect(out).not.toContain("plan mode");
+		expect(out).not.toContain("__planStart");
+		// Fidelity/Audit 段已删（收敛到 continuation）
+		expect(out).not.toContain("Fidelity");
+		expect(out).not.toContain("Audit");
 	});
 
 	it("无 goal_manager 引用（#1 清理后）", () => {
@@ -227,19 +205,12 @@ describe("contextInjectionPrompt", () => {
 		expect(out).not.toContain("add_subtasks");
 	});
 
-	it("planAvailable=false（默认）→ 不建议 plan mode（避免建议不存在的工具，FR-7）", () => {
+	it("无 planAvailable 参数（TC4 签名精简：仅 state + timeUsedSeconds）", () => {
+		// planAvailable 恒 true 死分支已删；签名仅 (state, timeUsedSeconds)
 		const state = makeState();
-		const out = contextInjectionPrompt(state, 0, false);
-		expect(out).not.toContain("plan mode");
-		expect(out).not.toContain("__planStart");
-	});
-
-	it("planAvailable=true → 注入 plan mode 建议段落（FR-7 LLM 自主判断复杂度）", () => {
-		const state = makeState();
-		const out = contextInjectionPrompt(state, 0, true);
-		expect(out).toContain("plan mode");
-		expect(out).toContain("__planStart");
-		expect(out).toContain("Complex tasks");
+		expect(() => contextInjectionPrompt(state, 0)).not.toThrow();
+		const out = contextInjectionPrompt(state, 0);
+		expect(out).toContain("[GOAL mode activated]");
 	});
 });
 
@@ -261,7 +232,7 @@ describe("successCriteria 注入（<successCriteria> 段 + 条件文案）", () 
 			successCriteria: "all tests green",
 			budget: { tokenBudget: 1000 },
 		});
-		const out = budgetLimitPrompt(state, "token", 0);
+		const out = budgetLimitPrompt(state);
 		expect(out).toContain("<successCriteria>");
 		expect(out).toContain("all tests green");
 		// 条件文案（budgetLimitPrompt 专属）
@@ -274,7 +245,7 @@ describe("successCriteria 注入（<successCriteria> 段 + 条件文案）", () 
 		expect(out).toContain("<successCriteria>");
 		expect(out).toContain("file X exists");
 		// 条件文案（contextInjectionPrompt 专属）
-		expect(out).toContain("every successCriteria condition above must be met");
+		expect(out).toContain("meeting every successCriteria above");
 	});
 
 	it("无 successCriteria → 不含 <successCriteria> 段（锁定 fallback）", () => {

@@ -562,6 +562,33 @@ else
 fi
 
 # ============================================================================
+# Pi extension tool schema 顶层 Object 合规检查（OpenAI 兼容性）
+# ============================================================================
+
+TOOL_SCHEMA_CHECKER=".githooks/check_tool_schema.py"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ] && [ "$SKIP_TOOL_SCHEMA_CHECK" != "1" ]; then
+    echo -e "${BLUE}[INFO] 运行 Pi extension tool schema 顶层 Object 合规检查...${NC}"
+
+    if [ ! -f "$TOOL_SCHEMA_CHECKER" ]; then
+        echo -e "${YELLOW}[WARN] 找不到检查脚本 $TOOL_SCHEMA_CHECKER${NC}"
+    else
+        python3 "$TOOL_SCHEMA_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -eq 2 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] Pi extension tool schema 合规检查失败${NC}"
+            echo -e "${YELLOW}[INFO] parameters 顶层必须 Type.Object（OpenAI 兼容），禁止顶层 Type.Union${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+    fi
+else
+    echo -e "${YELLOW}[SKIP] Pi extension tool schema 合规检查已跳过${NC}"
+fi
+
+# ============================================================================
 # 路径白名单动态化检查
 # ============================================================================
 
@@ -850,6 +877,7 @@ echo -e "  ${GREEN}[+]${NC} Vue 组件规范检查（禁止原生 HTML、Emoji�
 echo -e "  ${GREEN}[+]${NC} Sidecar session 隔离检查"
 echo -e "  ${GREEN}[+]${NC} CSS tokens 检查"
 echo -e "  ${GREEN}[+]${NC} ENV_WHITELIST_PREFIXES SSOT 单一性检查"
+echo -e "  ${GREEN}[+]${NC} Pi extension tool schema 顶层 Object 合规检查（OpenAI 兼容性）"
 echo -e "  ${GREEN}[+]${NC} 路径白名单动态化检查"
 echo -e "  ${GREEN}[+]${NC} 目录规范检查（禁止 demos/impeccable + 外部 symlink）"
 echo -e "  ${GREEN}[+]${NC} ws-client send 直调检查（D3 统一门面）"

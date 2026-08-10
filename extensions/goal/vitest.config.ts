@@ -3,7 +3,6 @@ import path from "node:path";
 import { defineConfig } from "vitest/config";
 
 const piStub = path.resolve(__dirname, "src/__tests__/stubs/pi-sdk.ts");
-const typeboxStub = path.resolve(__dirname, "src/__tests__/stubs/typebox.ts");
 
 export default defineConfig({
 	test: {
@@ -14,7 +13,6 @@ export default defineConfig({
 			"@earendil-works/pi-coding-agent": piStub,
 			"@earendil-works/pi-ai": piStub,
 			"@earendil-works/pi-tui": piStub,
-			"typebox": typeboxStub,
 		},
 	},
 });

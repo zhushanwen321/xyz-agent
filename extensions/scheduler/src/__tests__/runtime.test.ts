@@ -1,30 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// M11：mock store 模块，避免 SchedulerRuntime 触发真实 FS 写入。
-// 原实现用 new SchedulerRuntime('/test', ...) → createStore('/test') 会写
-// ~/.pi/agent/scheduler/root/test/scheduler.json（store.test.ts:87 stderr 已证实）。
-// mock 后 load 返回空 store、persist/persistSync 为 no-op，runtime 完全不碰 FS。
-vi.mock('../store.js', () => ({
-  createStore: () => ({
-    load: () => ({ version: 1, tasks: [] }),
-    persist: vi.fn(),
-    persistSync: vi.fn(),
-    storePath: '/mocked/scheduler.json',
-  }),
-}))
-
+import { MockSchedulerBackend } from '../backend.js'
 import { SchedulerRuntime } from '../runtime.js'
 
-// Mock pi 和 ctx
-const mockPi = { sendMessage: vi.fn() }
+// MockSchedulerBackend 零 FS 副作用：runtime 不再触碰 store，无需 mock store.js。
+
 const mockCtx = { isIdle: () => true, hasPendingMessages: () => false }
 
 describe('SchedulerRuntime', () => {
+  let backend: MockSchedulerBackend
   let runtime: SchedulerRuntime
 
   beforeEach(() => {
     vi.clearAllMocks()
-    runtime = new SchedulerRuntime('/test', mockPi as never, mockCtx as never)
+    backend = new MockSchedulerBackend()
+    runtime = new SchedulerRuntime(backend, mockCtx)
   })
 
   describe('addTask', () => {
@@ -41,6 +31,11 @@ describe('SchedulerRuntime', () => {
       }
       await expect(runtime.addTask('one more', { mode: 'interval', intervalMs: 60000 }))
         .rejects.toThrow('Task limit reached')
+    })
+
+    it('throws for invalid cron expression at creation', async () => {
+      await expect(runtime.addTask('bad cron', { mode: 'cron', cronExpression: 'invalid * *' }))
+        .rejects.toThrow('Invalid cron expression: invalid * *')
     })
   })
 
@@ -74,6 +69,22 @@ describe('SchedulerRuntime', () => {
     it('returns false for non-existent task', async () => {
       expect(await runtime.toggleTask('nonexistent', true)).toBe(false)
     })
+
+    it('ERR-2: enable 时 cron 失效 → 停用 + failed + lastError，不落入 ?? now() 死循环', async () => {
+      const task = await runtime.addTask('test', { mode: 'cron', cronExpression: '*/10 * * * *' })
+      await runtime.toggleTask(task.id, false)
+      // 手动破坏 cron 表达式（模拟表达式随环境失效），并让 nextRunAt 过期触发重算
+      task.schedule = { mode: 'cron', cronExpression: 'invalid * *' }
+      task.nextRunAt = 0
+
+      await runtime.toggleTask(task.id, true)
+
+      expect(task.enabled).toBe(false)
+      expect(task.lastStatus).toBe('failed')
+      expect(task.lastError).toBe('cron expression invalid')
+      // nextRunAt 保留原值（0），enabled=false 后 tick 不再触发
+      expect(task.nextRunAt).toBe(0)
+    })
   })
 
   describe('deleteTask', () => {
@@ -91,44 +102,63 @@ describe('SchedulerRuntime', () => {
   describe('dispatchTask', () => {
     it('dispatches task when idle', async () => {
       const task = await runtime.addTask('test', { mode: 'interval', intervalMs: 60000 })
-      runtime.dispatchTask(task)
-      expect(mockPi.sendMessage).toHaveBeenCalledWith(
-        expect.objectContaining({ content: 'test' }),
-        expect.any(Object),
-      )
+      await runtime.dispatchTask(task)
+      expect(backend.sentMessages).toHaveLength(1)
+      expect(backend.sentMessages[0]!.msg).toEqual(expect.objectContaining({ content: 'test' }))
     })
 
     it('skips disabled task', async () => {
       const task = await runtime.addTask('test', { mode: 'interval', intervalMs: 60000 })
       await runtime.toggleTask(task.id, false)
-      runtime.dispatchTask(task)
-      expect(mockPi.sendMessage).not.toHaveBeenCalled()
+      await runtime.dispatchTask(task)
+      expect(backend.sentMessages).toHaveLength(0)
     })
 
     it('skips when not idle and force is false', async () => {
       const busyCtx = { isIdle: () => false, hasPendingMessages: () => false }
-      const busyRuntime = new SchedulerRuntime('/test', mockPi as never, busyCtx as never)
+      const busyBackend = new MockSchedulerBackend()
+      const busyRuntime = new SchedulerRuntime(busyBackend, busyCtx)
       const task = await busyRuntime.addTask('test', { mode: 'interval', intervalMs: 60000 })
-      busyRuntime.dispatchTask(task)
-      expect(mockPi.sendMessage).not.toHaveBeenCalled()
+      await busyRuntime.dispatchTask(task)
+      expect(busyBackend.sentMessages).toHaveLength(0)
     })
 
     it('dispatches when force is true even if busy', async () => {
       const busyCtx = { isIdle: () => false, hasPendingMessages: () => false }
-      const busyRuntime = new SchedulerRuntime('/test', mockPi as never, busyCtx as never)
+      const busyBackend = new MockSchedulerBackend()
+      const busyRuntime = new SchedulerRuntime(busyBackend, busyCtx)
       const task = await busyRuntime.addTask('test', { mode: 'interval', intervalMs: 60000 }, { force: true })
-      busyRuntime.dispatchTask(task)
-      expect(mockPi.sendMessage).toHaveBeenCalled()
+      await busyRuntime.dispatchTask(task)
+      expect(busyBackend.sentMessages).toHaveLength(1)
     })
 
     // OR 组合补全：源码 `!isIdle() || hasPendingMessages()` 任一为真即跳过。
     // idle=true 但有 pending message → dispatch 应被跳过。
     it('skips when idle but has pending messages', async () => {
       const pendingCtx = { isIdle: () => true, hasPendingMessages: () => true }
-      const pendingRuntime = new SchedulerRuntime('/test', mockPi as never, pendingCtx as never)
+      const pendingBackend = new MockSchedulerBackend()
+      const pendingRuntime = new SchedulerRuntime(pendingBackend, pendingCtx)
       const task = await pendingRuntime.addTask('test', { mode: 'interval', intervalMs: 60000 })
-      pendingRuntime.dispatchTask(task)
-      expect(mockPi.sendMessage).not.toHaveBeenCalled()
+      await pendingRuntime.dispatchTask(task)
+      expect(pendingBackend.sentMessages).toHaveLength(0)
+    })
+
+    it('sendMessage 失败 → 记 failed 状态但不 rethrow', async () => {
+      const task = await runtime.addTask('test', { mode: 'interval', intervalMs: 60000 })
+      // backend.sendMessage 抛错模拟注入失败
+      backend.sendMessage = async () => { throw new Error('inject failed') }
+      const dispatched = await runtime.dispatchTask(task)
+      expect(dispatched).toBe(false)
+      expect(task.lastStatus).toBe('failed')
+      expect(task.pending).toBe(false)
+      expect(task.history[task.history.length - 1]!.status).toBe('failed')
+    })
+
+    it('成功 dispatch 后清除 lastError', async () => {
+      const task = await runtime.addTask('test', { mode: 'interval', intervalMs: 60000 })
+      task.lastError = 'cron expression invalid'
+      await runtime.dispatchTask(task)
+      expect(task.lastError).toBeUndefined()
     })
   })
 
@@ -139,6 +169,10 @@ describe('SchedulerRuntime', () => {
     beforeEach(() => {
       vi.useFakeTimers()
       vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
     })
 
     it('rate-limits dispatch to 6 per minute', async () => {
@@ -154,7 +188,7 @@ describe('SchedulerRuntime', () => {
       }
 
       // 前 6 次成功，第 7 次被限流：sendMessage 只被调 6 次
-      expect(mockPi.sendMessage).toHaveBeenCalledTimes(6)
+      expect(backend.sentMessages).toHaveLength(6)
     })
 
     it('allows dispatch again after 1 minute window slides', async () => {
@@ -164,27 +198,28 @@ describe('SchedulerRuntime', () => {
         // 同一 task 反复 dispatch（interval 模式每次重算 nextRunAt，不影响 rate-limit 计数）
         await runtime.dispatchTask(task)
       }
-      expect(mockPi.sendMessage).toHaveBeenCalledTimes(6)
+      expect(backend.sentMessages).toHaveLength(6)
 
       // 时间前进 61 秒：旧 timestamp 滑出窗口，配额恢复
       vi.setSystemTime(new Date('2026-01-01T00:01:01Z'))
       const dispatched = await runtime.dispatchTask(task)
       expect(dispatched).toBe(true)
-      expect(mockPi.sendMessage).toHaveBeenCalledTimes(7)
+      expect(backend.sentMessages).toHaveLength(7)
     })
   })
 
   // ── M10d：tickScheduler ──
   describe('tickScheduler', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    })
+
     afterEach(() => {
       vi.useRealTimers()
     })
 
     it('dispatches due interval tasks and advances nextRunAt', async () => {
-      vi.useFakeTimers()
-      const start = new Date('2026-01-01T00:00:00Z')
-      vi.setSystemTime(start)
-
       const task = await runtime.addTask('tick me', { mode: 'interval', intervalMs: 60000 })
       // 手动让任务过期（nextRunAt 设为过去）
       task.nextRunAt = Date.now() - 1000
@@ -192,7 +227,7 @@ describe('SchedulerRuntime', () => {
       await runtime.tickScheduler()
 
       // 已 dispatch
-      expect(mockPi.sendMessage).toHaveBeenCalledTimes(1)
+      expect(backend.sentMessages).toHaveLength(1)
       const updated = runtime.getTask(task.id)
       expect(updated).toBeDefined()
       expect(updated!.runCount).toBe(1)
@@ -201,9 +236,6 @@ describe('SchedulerRuntime', () => {
     })
 
     it('removes expired tasks (expiresAt in the past)', async () => {
-      vi.useFakeTimers()
-      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
-
       const task = await runtime.addTask('expire me', { mode: 'interval', intervalMs: 60000 })
       // expiresAt 已过：tick 的第 1 步清理会删除
       task.expiresAt = Date.now() - 1000
@@ -212,13 +244,10 @@ describe('SchedulerRuntime', () => {
 
       expect(runtime.getTask(task.id)).toBeUndefined()
       // 过期清理先于 dispatch，不应 dispatch
-      expect(mockPi.sendMessage).not.toHaveBeenCalled()
+      expect(backend.sentMessages).toHaveLength(0)
     })
 
     it('deletes once task after dispatch', async () => {
-      vi.useFakeTimers()
-      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
-
       const task = await runtime.addTask('one-shot', { mode: 'interval', intervalMs: 60000 }, { kind: 'once' })
       task.nextRunAt = Date.now() - 1000
 
@@ -226,7 +255,98 @@ describe('SchedulerRuntime', () => {
 
       // once 任务 dispatch 后自删
       expect(runtime.getTask(task.id)).toBeUndefined()
-      expect(mockPi.sendMessage).toHaveBeenCalledTimes(1)
+      expect(backend.sentMessages).toHaveLength(1)
+    })
+
+    // ── TC1：cron 失效任务不死循环 ──
+    // tick1 dispatch 成功、重算 nextRunAt 失败停用；tick2/3 因 enabled=false 不再 dispatch。
+    // 旧实现 `?? Date.now()` 会把 nextRunAt 设为 now → 每 tick 立即重触发 → 死循环。
+    it('TC1: cron 失效任务不死循环（sendMessage 只触发 1 次）', async () => {
+      const task = await runtime.addTask('tick me', { mode: 'cron', cronExpression: '*/10 * * * *' })
+      // 手动把 cron 表达式改为无效（模拟表达式随环境失效），并使任务到期
+      task.schedule = { mode: 'cron', cronExpression: 'invalid * *' }
+      task.nextRunAt = Date.now() - 1000
+
+      // 连跑 3 次 tick
+      await runtime.tickScheduler()
+      await runtime.tickScheduler()
+      await runtime.tickScheduler()
+
+      expect(backend.sentMessages).toHaveLength(1)
+      const updated = runtime.getTask(task.id)
+      expect(updated).toBeDefined()
+      expect(updated!.enabled).toBe(false)
+      expect(updated!.lastStatus).toBe('failed')
+      expect(updated!.lastError).toBe('cron expression invalid')
+    })
+
+    // ── TC7：persist 失败捕获（ERR-6）──
+    it('TC7: persist 失败不抛、保留内存态、失败任务不停用', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      backend.persistError = new Error('disk full')
+
+      // addTask 内部 persist 抛错 → 被捕获，不 rethrow
+      const task = await runtime.addTask('test', { mode: 'interval', intervalMs: 60000 })
+      expect(runtime.getTask(task.id)).toBeDefined()
+      expect(task.enabled).toBe(true)
+      expect(task.lastError).toBe('persist failed')
+
+      // tickScheduler 同样不抛（persist 异常被捕获，console.warn 记录）
+      task.nextRunAt = Date.now() - 1000
+      await expect(runtime.tickScheduler()).resolves.toBeUndefined()
+
+      expect(warnSpy).toHaveBeenCalled()
+      // 内存态保留：任务仍在、enabled 不变（失败任务未被停用）
+      const updated = runtime.getTask(task.id)
+      expect(updated).toBeDefined()
+      expect(updated!.enabled).toBe(true)
+      expect(updated!.runCount).toBe(1)
+      // dispatch 成功已清除旧 lastError，tick 末尾 persist 再失败又标记
+      expect(updated!.lastError).toBe('persist failed')
+      warnSpy.mockRestore()
+    })
+  })
+
+  // ── TC9：expiresAt 三态（addTask 的 expires 分支）──
+  // 源码逻辑：expires==='never' → undefined；kind==='recurring' 且 expires →
+  // now + parseDuration(expires)（解析失败 ?? 默认 7d）；recurring 无 expires →
+  // 默认 7d；kind==='once' 不进分支 → undefined。
+  // MockSchedulerBackend nowValue 固定为 1_000_000，expiresAt 精确可控。
+  describe('expiresAt', () => {
+    beforeEach(() => {
+      backend.nowValue = 1_000_000
+    })
+
+    it("expires: 'never' → expiresAt undefined", async () => {
+      const task = await runtime.addTask(
+        'test',
+        { mode: 'interval', intervalMs: 60000 },
+        { expires: 'never' },
+      )
+      expect(task.expiresAt).toBeUndefined()
+    })
+
+    it('recurring + expires 30m → now + 1_800_000', async () => {
+      const task = await runtime.addTask(
+        'test',
+        { mode: 'interval', intervalMs: 60000 },
+        { expires: '30m' },
+      )
+      expect(task.expiresAt).toBe(2_800_000)
+    })
+
+    it('recurring + 无 expires → 默认 7d（now + 604_800_000）', async () => {
+      const task = await runtime.addTask('test', { mode: 'interval', intervalMs: 60000 })
+      expect(task.expiresAt).toBe(605_800_000)
+    })
+
+    it("kind once + expires '30m' → expiresAt undefined（once 不设过期）", async () => {
+      const task = await runtime.addTask(
+        'test',
+        { mode: 'interval', intervalMs: 60000 },
+        { kind: 'once', expires: '30m' },
+      )
+      expect(task.expiresAt).toBeUndefined()
     })
   })
 })

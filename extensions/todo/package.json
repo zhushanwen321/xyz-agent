@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-todo",
-  "version": "0.6.0",
+  "version": "0.7.1",
   "description": "AI-driven todo list for Pi — stateful task management with session persistence and /todos command.",
   "type": "module",
   "main": "src/index.ts",
@@ -25,7 +25,7 @@
     "vitest": "^4.1.8"
   },
   "dependencies": {
-    "@xyz-agent/extension-protocol": "workspace:^0.3.1"
+    "@xyz-agent/extension-protocol": "workspace:^0.4.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

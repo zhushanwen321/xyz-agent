@@ -45,6 +45,5 @@ export {
   askUserInteract,
   getAskUserAnswer,
   getAskUserOther,
-  getAskUserComment, // 4.0.1 restore（0.3.0 误删；随分支带入合并，勿随 main 删除胜出）
   isAskUserQuestion,
 } from './extensions/ask-user/helpers'

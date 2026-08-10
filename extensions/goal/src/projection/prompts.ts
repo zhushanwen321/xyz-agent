@@ -14,12 +14,12 @@
  * todo 是否完成由 AI 自行判断，prompt 仅做软建议。
  */
 
-import { PERCENT_FACTOR, SECONDS_PER_MINUTE } from "../constants";
+import { PERCENT_FACTOR } from "../constants";
 import type { GoalRuntimeState } from "../engine/types";
 
 // ── XML 转义（防止 objective 中的 XML 标签破坏 prompt 结构）──
 
-function escapeXmlText(input: string): string {
+export function escapeXmlText(input: string): string {
 	return input
 		.replace(/&/g, "&amp;")
 		.replace(/</g, "&lt;")
@@ -42,19 +42,17 @@ function successCriteriaBlock(state: GoalRuntimeState): string {
 
 // ── FR-3.4：唯一 budget 格式化收敛出口 ─────────────────
 
-export type BudgetFormatStyle = "percent" | "line" | "remaining" | "report";
+export type BudgetFormatStyle = "percent" | "line";
 
 /**
  * FR-3.4 唯一 budget 格式化收敛出口。
  *
- * 4 种输出样式：
- * - "percent"  → `(Token: N%, Time: M%)`（contextInjectionPrompt 用）
- * - "line"     → ` | Tokens: remaining/total Time: Xm/Ym`（continuationPrompt 用）
- * - "remaining"→ `Token: used/total (N remaining) | Time: Xm/Ym (Zm remaining)`（result 拼接用）
- * - "report"   → 多行数组（complete Budget Report 用）
+ * 2 种输出样式：
+ * - "percent"  → ` (Token: N%)`（contextInjectionPrompt 用）
+ * - "line"     → ` | Tokens: remaining/total`（continuationPrompt 用）
  *
  * @param state runtime state（读 budget / tokensUsed）
- * @param timeUsedSeconds 累计耗时秒数（由 adapter/service 通过 tick() 计算后传入）
+ * @param timeUsedSeconds 累计耗时秒数（保留位，FR-3.4 统一签名；percent/line 当前不消费）
  * @param style 输出形式
  */
 export function formatBudget(
@@ -62,76 +60,27 @@ export function formatBudget(
 	timeUsedSeconds: number,
 	style: BudgetFormatStyle,
 ): string {
-	if (style === "report") {
-		return formatBudgetReport(state, timeUsedSeconds);
-	}
+	void timeUsedSeconds; // FR-3.4 统一签名占位（percent/line 不消费，保留以便未来样式扩展）
 	if (style === "percent") {
-		return formatBudgetPercent(state, timeUsedSeconds);
+		return formatBudgetPercent(state);
 	}
-	if (style === "line") {
-		return formatBudgetLine(state, timeUsedSeconds);
-	}
-	return formatBudgetRemaining(state, timeUsedSeconds);
+	return formatBudgetLine(state);
 }
 
-function formatBudgetPercent(state: GoalRuntimeState, timeUsedSeconds: number): string {
-	const parts: string[] = [];
+function formatBudgetPercent(state: GoalRuntimeState): string {
 	if (state.budget.tokenBudget) {
 		const pct = Math.round((state.tokensUsed / state.budget.tokenBudget) * PERCENT_FACTOR);
-		parts.push(`Token: ${pct}%`);
+		return ` (Token: ${pct}%)`;
 	}
-	if (state.budget.timeBudgetMinutes) {
-		const pct = Math.round(
-			(timeUsedSeconds / (state.budget.timeBudgetMinutes * SECONDS_PER_MINUTE)) * PERCENT_FACTOR,
-		);
-		parts.push(`Time: ${pct}%`);
-	}
-	return parts.length > 0 ? ` (${parts.join(", ")})` : "";
+	return "";
 }
 
-function formatBudgetLine(state: GoalRuntimeState, timeUsedSeconds: number): string {
-	const parts: string[] = [];
+function formatBudgetLine(state: GoalRuntimeState): string {
 	if (state.budget.tokenBudget) {
 		const remaining = Math.max(state.budget.tokenBudget - state.tokensUsed, 0);
-		parts.push(`Tokens: ${remaining}/${state.budget.tokenBudget}`);
+		return ` | Tokens: ${remaining}/${state.budget.tokenBudget}`;
 	}
-	if (state.budget.timeBudgetMinutes) {
-		const remaining = Math.max(
-			state.budget.timeBudgetMinutes * SECONDS_PER_MINUTE - timeUsedSeconds,
-			0,
-		);
-		parts.push(`Time: ${Math.floor(remaining / SECONDS_PER_MINUTE)}m/${state.budget.timeBudgetMinutes}m`);
-	}
-	return parts.length > 0 ? ` | ${parts.join(" ")}` : "";
-}
-
-function formatBudgetRemaining(state: GoalRuntimeState, timeUsedSeconds: number): string {
-	const parts: string[] = [];
-	if (state.budget.tokenBudget) {
-		const remaining = Math.max(state.budget.tokenBudget - state.tokensUsed, 0);
-		parts.push(`Token: ${state.tokensUsed}/${state.budget.tokenBudget} (${remaining} remaining)`);
-	}
-	if (state.budget.timeBudgetMinutes) {
-		const remainingSec = Math.max(
-			state.budget.timeBudgetMinutes * SECONDS_PER_MINUTE - timeUsedSeconds,
-			0,
-		);
-		parts.push(
-			`Time: ${Math.floor(timeUsedSeconds / SECONDS_PER_MINUTE)}m/${state.budget.timeBudgetMinutes}m (${Math.floor(remainingSec / SECONDS_PER_MINUTE)}m remaining)`,
-		);
-	}
-	return parts.length > 0 ? `[Budget] ${parts.join(" | ")}` : "";
-}
-
-function formatBudgetReport(state: GoalRuntimeState, timeUsedSeconds: number): string {
-	const parts: string[] = [];
-	if (state.budget.tokenBudget) {
-		parts.push(`Token usage: ${state.tokensUsed}/${state.budget.tokenBudget}`);
-	}
-	if (parts.length > 0) {
-		return parts.join("\n") + `\nDuration: ${Math.floor(timeUsedSeconds / SECONDS_PER_MINUTE)}m${Math.floor(timeUsedSeconds % SECONDS_PER_MINUTE)}s`;
-	}
-	return `Duration: ${Math.floor(timeUsedSeconds / SECONDS_PER_MINUTE)}m${Math.floor(timeUsedSeconds % SECONDS_PER_MINUTE)}s`;
+	return "";
 }
 
 // ── Continuation Prompt ───────────────────────────────
@@ -176,20 +125,16 @@ export function continuationPrompt(state: GoalRuntimeState, timeUsedSeconds: num
 
 export function budgetLimitPrompt(
 	state: GoalRuntimeState,
-	limitType: "token" | "time",
-	timeUsedSeconds: number,
 ): string {
 	const objective = escapeXmlText(state.objective);
 	const criteria = successCriteriaBlock(state);
 
 	return (
 		`<goal_context>\n` +
-		`[GOAL — ${limitType === "token" ? "TOKEN budget" : "time budget"} almost exhausted]\n\n` +
+		`[GOAL — TOKEN budget almost exhausted]\n\n` +
 		`<objective>\n${objective}\n</objective>\n\n` +
 		(criteria ? `${criteria}\n` : "") +
-		(limitType === "token"
-			? `Tokens used: ${state.tokensUsed} / ${state.budget.tokenBudget ?? "unknown"}\n`
-			: `Time elapsed: ${Math.floor(timeUsedSeconds / SECONDS_PER_MINUTE)}m${Math.floor(timeUsedSeconds % SECONDS_PER_MINUTE)}s / ${state.budget.timeBudgetMinutes ?? "unknown"} min\n`) +
+		`Tokens used: ${state.tokensUsed} / ${state.budget.tokenBudget ?? "unknown"}\n` +
 		`\nYou must wrap up immediately:\n` +
 		`1. Check what remains and verify what is genuinely completed\n` +
 		`2. Only claim completion for work backed by concrete evidence` +
@@ -237,46 +182,32 @@ export function objectiveUpdatedPrompt(
 /**
  * contextInjectionPrompt（before_agent_start 注入 LLM context）。
  *
- * 全解耦后 planAvailable 恒 true（不再运行时探测 pi.__planStart）。
- * plan mode 建议段落恒定注入，AI 自行判断是否使用。
+ * 精简版（≤600 chars）：只保留 turn 初锚定必需信息——objective + successCriteria
+ * + Status/Turn/预算% + 3 条核心铁律（C3：原 4 条合并为 3 条——track remaining work
+ * 与 evidence-based completion 语义重叠，合为一条）。详尽审计（intent≠evidence、
+ * 预算耗尽≠完成、Fidelity、todo/plan 引导）收敛到 continuationPrompt（agent_end 发，
+ * turn 末详述），避免两 prompt 重复。
+ * 删 planAvailable 参数（恒 true 死分支；plan 引导收敛到 continuation）。
  */
 export function contextInjectionPrompt(
 	state: GoalRuntimeState,
 	timeUsedSeconds: number,
-	planAvailable = false,
 ): string {
 	const objective = escapeXmlText(state.objective);
 	const budgetInfo = formatBudget(state, timeUsedSeconds, "percent");
 	const criteria = successCriteriaBlock(state);
-	const planSection = planAvailable
-		? `\nComplex tasks: If the objective is complex (multi-step, unclear architecture), consider using plan mode (/plan or pi.__planStart) to design before executing. Plan produces a structured plan that guides execution.\n`
-		: "";
 
 	return (
 		`<goal_context>\n` +
-		`[GOAL mode activated]\n\n` +
-		`<objective>\n${objective}\n</objective>\n` +
+		`[GOAL mode activated]\n` +
+		`<objective>${objective}</objective>\n` +
 		criteria +
-		`Status: ${state.status}\n` +
-		`Turn: ${state.currentTurnIndex}${budgetInfo}\n\n` +
-		`Strict rules:\n` +
-		`1. Work from evidence: use the current filesystem and external state as authoritative. Inspect current state before relying on prior context.\n` +
-		`2. Track remaining work and only claim completion for work backed by concrete evidence (files changed, tests passed, commands run)` +
-			(criteria
-				? " — every successCriteria condition above must be met\n"
-				: "\n") +
-		`3. Report completion with overall evidence only when the objective is actually achieved\n` +
-		`4. If blocked after trying alternative approaches, report blocked with what you have tried\n` +
-		`\n` +
-		`Track work with todos:\n` +
-		`Before working, create todos for the task breakdown using the todo tool:\n` +
-		`- Each concrete step becomes a todo item\n` +
-		`- Add a separate todo for verification checks (e.g., 'run tests', 'typecheck')\n` +
-		`- Track progress by updating todo status as you complete items\n` +
-		planSection +
-		`\n` +
-		`Fidelity: Optimize for movement toward the requested end state, not the easiest passing change. Do not substitute a narrower or safer solution because it is easier to verify.\n` +
-		`Audit: Verify each requirement against actual current state. Intent and partial progress are not evidence. Do not claim completion due to budget exhaustion.\n` +
+		`Status: ${state.status} | Turn: ${state.currentTurnIndex}${budgetInfo}\n` +
+		`Rules:\n` +
+		`1. Work from evidence — inspect current state (files, command output) before relying on prior context.\n` +
+		`2. Track remaining work; claim completion only with concrete evidence` +
+			(criteria ? " meeting every successCriteria above.\n" : ".\n") +
+		`3. If blocked after trying alternatives, report blocked with what you tried.\n` +
 		`</goal_context>`
 	);
 }

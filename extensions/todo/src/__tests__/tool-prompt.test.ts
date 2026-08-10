@@ -1,10 +1,10 @@
 // 提示词质量回归：todo tool 的 description 与 runtime 纠错文案必须是
-// "弱模型友好"的——条件必填字段要给完整 JSON 正例，双形陷阱（text/texts、
-// id/ids）要给消歧反例，失败后 throw 要带 Correct 正例让模型自我纠正。
+// "弱模型友好"的——条件必填字段在 schema 层强约束（见 schema.test.ts），双形陷阱
+// （text/texts、id/ids）的 throw 要带 Correct 纠错正例让模型自我纠正。
 //
-// 本测试用源码文本断言锁定这些约束，防止后续重构把正例/反例/纠错文案删掉或
-// 弱化。读源码而非 import，避免 mock 链（tool.ts 依赖 typebox/ExtensionAPI/
-// Theme 等值导入）。参考 subagent-workflow 的 prompt 回归范式。
+// 本测试用源码文本断言锁定这些约束，防止后续重构把纠错文案删掉或弱化。读源码而非
+// import，避免 mock 链（tool.ts 依赖 typebox/ExtensionAPI/Theme 等值导入）。参考
+// subagent-workflow 的 prompt 回归范式。
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -21,8 +21,6 @@ const TOOL_SRC = readFileSync(join(__dirname, "../tool.ts"), "utf-8");
  */
 function extractDescriptionRegion(src: string): string {
 	// 锚定到 registerTodoTool 内的 tool description，而非 schema 字段的 description:
-	// （Type.String({ description: "..." }) 等 schema 字段会先被 indexOf 命中，导致
-	// 捕获区域含 schema 描述 + tool 描述——虽当前子串唯一能过但 fragile to restructuring）。
 	const regIdx = src.indexOf("registerTodoTool");
 	if (regIdx === -1) throw new Error("registerTodoTool not found in tool.ts");
 	const start = src.indexOf("description:", regIdx);
@@ -34,49 +32,36 @@ function extractDescriptionRegion(src: string): string {
 
 const DESCRIPTION_REGION = extractDescriptionRegion(TOOL_SRC);
 
-// ── description 必须给完整 JSON 正例 ─────────────────
+// ── description 中文版（T7/TC9）──────────────────────
 
-describe("todo description — 给完整 JSON 正例", () => {
-	it("add 正例：含 {\"action\":\"add\",\"texts\"", () => {
-		// 弱模型 add 时易误用单数 text；正例必须显式 texts 数组。
-		expect(DESCRIPTION_REGION).toContain('{"action":"add","texts"');
+describe("todo description — 中文版（动作 + 规则）", () => {
+	it("开篇是中文定位语", () => {
+		expect(DESCRIPTION_REGION).toContain("管理当前会话的 todo 列表");
 	});
 
-	it("update single 正例：含 {\"action\":\"update\",\"id\"", () => {
-		expect(DESCRIPTION_REGION).toContain('{"action":"update","id"');
+	it("含「动作：」清单（list/add/update/delete 四动作）", () => {
+		expect(DESCRIPTION_REGION).toContain("动作：");
+		expect(DESCRIPTION_REGION).toContain("list: 查看全部 todo");
+		expect(DESCRIPTION_REGION).toContain("add: 批量添加 todo");
+		expect(DESCRIPTION_REGION).toContain("update: 按 id 更新 todo");
+		expect(DESCRIPTION_REGION).toContain("delete: 按 id 删除 todo");
 	});
 
-	it("update batch 正例：含 {\"action\":\"update\",\"updates\"", () => {
-		// updates[] 批量路径是 [批量优先] 规范的核心，正例不可缺。
-		expect(DESCRIPTION_REGION).toContain('{"action":"update","updates"');
+	it("不含已删除的 clear 动作", () => {
+		expect(DESCRIPTION_REGION).not.toMatch(/clear/i);
 	});
 
-	it("delete 正例：含 {\"action\":\"delete\",\"ids\"", () => {
-		// 弱模型 delete 时易误用单数 id；正例必须显式 ids 数组。
-		expect(DESCRIPTION_REGION).toContain('{"action":"delete","ids"');
-	});
-});
-
-// ── description 必须给双形陷阱反例（消歧） ──────────
-
-describe("todo description — 双形陷阱反例（消歧单复数）", () => {
-	it("Don't 段存在", () => {
-		expect(DESCRIPTION_REGION).toMatch(/Don't/);
+	it("含「规则：」三条核心行为准则", () => {
+		expect(DESCRIPTION_REGION).toContain("规则：");
+		expect(DESCRIPTION_REGION).toContain("同一时间只有一个 todo 处于 in_progress");
+		expect(DESCRIPTION_REGION).toContain("完成一个 todo 立即标记 completed");
+		expect(DESCRIPTION_REGION).toContain("未真正完成不得标记 completed");
 	});
 
-	it("反例标注：text 属于 update（add 用 texts）", () => {
-		// 反例必须含消歧词，告诉模型 text 属于 update 而非 add。
-		expect(DESCRIPTION_REGION).toContain("text is for update");
-		expect(DESCRIPTION_REGION).toContain("add uses texts");
-	});
-
-	it("反例标注：id 属于 update（delete 用 ids）", () => {
-		expect(DESCRIPTION_REGION).toContain("id is for update");
-		expect(DESCRIPTION_REGION).toContain("delete uses ids");
-	});
-
-	it("反例标注：update 缺 id", () => {
-		expect(DESCRIPTION_REGION).toContain("missing id");
+	it("已删除旧英文 Examples 段与 Don't 段", () => {
+		expect(DESCRIPTION_REGION).not.toContain("Available actions");
+		expect(DESCRIPTION_REGION).not.toContain("Don't");
+		expect(DESCRIPTION_REGION).not.toContain("Examples");
 	});
 });
 
@@ -100,18 +85,13 @@ describe("todo runtime — throw 含 Correct 纠错正例", () => {
 	});
 });
 
-// ── promptSnippet / promptGuidelines 验证引导（verification guidance）──
+// ── promptSnippet / promptGuidelines（verification guidance）──
 // DESCRIPTION_REGION 截取止于 promptSnippet:，不含这两个字段，故对完整 TOOL_SRC 断言。
 
-describe("todo tool prompt — verification guidance", () => {
-	it("promptSnippet 引导验证步骤建 todo", () => {
-		expect(TOOL_SRC).toContain(
-			"Consider adding a separate todo for verification checks like running tests or typecheck.",
-		);
-	});
-
-	it("promptSnippet 声明多步骤工作场景", () => {
-		expect(TOOL_SRC).toContain("Use todo when breaking multi-step work into trackable items.");
+describe("todo tool prompt — snippet & guidelines", () => {
+	it("promptSnippet 为中文精简版（验证步骤引导）", () => {
+		expect(TOOL_SRC).toContain("用 todo 跟踪多步骤工作");
+		expect(TOOL_SRC).toContain("验证步骤");
 	});
 
 	it("promptGuidelines 含 [验证任务] 条目（完成前确保验证通过）", () => {
@@ -119,7 +99,7 @@ describe("todo tool prompt — verification guidance", () => {
 	});
 
 	it("promptGuidelines 含 [自动闭合] / [批量优先] 核心条目", () => {
-		expect(TOOL_SRC).toContain("[自动闭合] 全部完成后工具自动清理，无需手动 clear");
+		expect(TOOL_SRC).toContain("[自动闭合] 全部完成后自动清理");
 		expect(TOOL_SRC).toContain("[批量优先] 完成多项任务时使用 updates[] 批量更新");
 	});
 });

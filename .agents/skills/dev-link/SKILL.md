@@ -1,104 +1,83 @@
 ---
 name: dev-link
 description: >-
-  Manage XYZ_EXTENSION_PATHS for local pi extension development in xyz-agent.
-  Switch between local source (live edit) and npm-published versions of
-  @zhushanwen/pi-* extensions. Triggers: "link local", "dev link", "switch to
-  local", "symlink extension", "unlink extension", "restore npm", "extension
-  link". Not for installing new packages or managing non-pi extensions.
+  管理 @zhushanwen/pi-* extension 在本地源码（live edit）与已发布版本之间切换。
+  两种模式：pi 模式（原版 pi CLI，pi-link.sh/pi-unlink.sh symlink 到
+  ~/.pi/agent/extensions/）与 xyz-agent 模式（Electron dev，XYZ_EXTENSION_PATHS
+  环境变量，link-local.sh/link-npm.sh）。触发词："pi link"、"原版 pi"、
+  "link local"、"dev link"、"切换到本地"、"symlink extension"、"unlink extension"、
+  "restore npm"、"extension link"。不用于安装新包或管理非 pi extension。
 ---
 
 # Dev Link
 
-管理 `XYZ_EXTENSION_PATHS` 环境变量，在本地源码（live edit）和 npm 已发布版本之间切换 `@zhushanwen/pi-*` extension。
+管理 `@zhushanwen/pi-*` extension 在**本地源码（live edit）**与**已发布版本**之间切换。两种模式，按测试目标选——选错模式是常见错误（link 了但不生效）。
 
-> **与源仓 dev-link 的区别**：源仓（xyz-pi-extensions）的 dev-link 操作 pi CLI 的 `~/.pi/agent/extensions/` symlink + `pi install`。xyz-agent 是 Electron 应用，extension 加载机制不同——通过 `XYZ_EXTENSION_PATHS` 环境变量指向源码目录（live link，改源码→新建 session 即生效），不经 `~/.pi/agent/`。本 skill 基于此机制重新设计。
+## 两种模式（关键区别）
 
-## When to Use
+| 模式 | 测试目标 | 机制 | 安装脚本 | 卸载脚本 |
+|---|---|---|---|---|
+| **pi 模式** | **原版 pi**（当前 pi CLI session、`pi` 命令直接跑） | `pi install/remove`（pi 原生，改 `~/.pi/agent/settings.json`） | `pi-link.sh` | `pi-unlink.sh` |
+| **xyz-agent 模式** | **xyz-agent dev**（Electron app，runtime 注入给 pi 子进程） | `XYZ_EXTENSION_PATHS` 环境变量（`.env.dev-extensions`） | `link-local.sh` | `link-npm.sh` |
 
-- 开发 `extensions/` 目录下的 `@zhushanwen/pi-*` 包，想在运行的 xyz-agent 中即时测试源码改动
-- 用户说"link 到本地"、"切换到本地开发"、"用本地版本"
-- 用户说"恢复 npm"、"用 npm 版本"、"unlink extension"
-- 开发结束，清理 link 状态
+**一句话区分**：pi 模式让**你现在跑的这个 pi** 加载本地源码；xyz 模式只影响 **xyz-agent app 的 dev 模式**（它 spawn 的 pi 子进程），当前 pi session 不读这个 env。
 
-## 机制
-
-xyz-agent 通过 `ExtensionResolver` 的 **user 源**（优先级仅次于 npm）扫描 `XYZ_EXTENSION_PATHS` 环境变量指向的 extension 源码目录。设了环境变量后，改源码 → **新建 session** 即加载最新代码（不需要重启 xyz-agent）。
-
-```
-XYZ_EXTENSION_PATHS=~/Code/.../extensions/goal pnpm dev
-         ↓
-ExtensionResolver user 源扫描 → isValidPiExtension 校验 → --extension <path> 注入 pi
-         ↓
-新建 session → pi jiti loader 加载最新 .ts 源码（live link）
-```
-
-环境变量经 `ENV_WHITELIST_PREFIXES`（`XYZ_` 前缀）自动通过 main → runtime → pi 白名单，无需额外配置。
-
-## 两个脚本
+## pi 模式（原版 pi）
 
 ```bash
-# 脚本位置（resolve against skill 目录）
-./link-local.sh <package> [package2 ...]  # 添加到 XYZ_EXTENSION_PATHS（本地源码，live edit）
-./link-npm.sh <package> [package2 ...]     # 从 XYZ_EXTENSION_PATHS 移除（恢复走 npm 或不加载）
-./link-list.sh                              # 查看当前 link 状态
+bash .agents/skills/dev-link/pi-link.sh subagent-workflow      # symlink 本地到 ~/.pi/agent/extensions/
+bash .agents/skills/dev-link/pi-unlink.sh subagent-workflow    # rm symlink
 ```
 
-`<package>` 支持三种格式：
-- 短名：`model-switch`
-- pi-前缀：`pi-model-switch`
-- npm 全名：`@zhushanwen/pi-model-switch`
+**机制**：symlink 本地源码 → `~/.pi/agent/extensions/pi-<short>`（globalExtDir，loader 第 2 步扫描，pi-statusline 同模式）。同时清 settings.json `packages` 里该 extension 的残留（`npm:` 源 + 旧 configuredPaths 本地路径），避免 globalExtDir + configuredPaths 两源冲突。
 
-支持多包一次操作：`./link-local.sh goal todo ask-user`
+**生效**：新建 pi session（当前 session 已加载旧版，不重扫）。**注意 pi list 不显示** globalExtDir symlink——pi list 只列 `packages` 配置的，不列自动发现源，但 loader 会加载（正常现象）。
 
-### link-local.sh — 切换到本地开发
-
-1. 读取 `.env.dev-extensions`（如不存在则创建）
-2. 验证每个包在 `extensions/` 目录下存在且有 `package.json`
-3. 把包的源码绝对路径追加到 `XYZ_EXTENSION_PATHS`（用 `:` 分隔，幂等：已存在则跳过）
-4. 输出启动命令提示
-
-### link-npm.sh — 移除本地 link
-
-1. 读取 `.env.dev-extensions`
-2. 移除指定包的路径（支持 glob 前缀匹配，如 `pi-goal` 匹配含 `/extensions/goal` 的条目）
-3. 如果移除后 `XYZ_EXTENSION_PATHS` 为空，删除整行（避免空值覆盖）
-4. 输出结果
-
-### link-list.sh — 查看当前状态
-
-显示 `.env.dev-extensions` 中已 link 的包列表 + 对应源码路径，以及每个包是否已被改动（`git status` 检测）。
-
-## 用法示例
+## xyz-agent 模式（Electron dev）
 
 ```bash
-# 1. link 一个 extension 到本地源码
-bash .agents/skills/dev-link/link-local.sh goal
-
-# 2. 启动带 link 的 dev（source .env.dev-extensions 注入环境变量）
+bash .agents/skills/dev-link/link-local.sh cw-tool             # 加到 XYZ_EXTENSION_PATHS
+bash .agents/skills/dev-link/link-npm.sh cw-tool               # 移除
+# 启动带 link 的 dev：
 set -a && source .env.dev-extensions && set +a && pnpm dev
-
-# 3. 改 extensions/goal/src/index.ts 源码
-
-# 4. 在 xyz-agent 中新建 session → 即时生效（无需重启）
-
-# 5. 开发完，移除 link
-bash .agents/skills/dev-link/link-npm.sh goal
 ```
 
-## 关键约束
+**机制**：`XYZ_EXTENSION_PATHS` 经 `ENV_WHITELIST_PREFIXES`（`XYZ_` 前缀）注入 xyz-agent runtime → pi 子进程。改源码后 xyz-agent 内新建 session 即生效（无需重启 app）。
 
-- **`.env.dev-extensions` 不进 git**（已覆盖在 `.gitignore` 的 `.env.*` 规则下）
-- **link 后必须新建 session 才生效**（运行中的 session 不重扫 extension 路径）
-- **多 worktree 注意**：脚本用 `$(git rev-parse --show-toplevel)` 定位 extensions/ 目录，确保在正确 worktree 根目录执行。worktree 切换后路径会变，需重新 link
-- **dev vs prod 数据目录**：`pnpm dev` 自动用 `~/.xyz-agent-dev/`，与生产的 `~/.xyz-agent/` 隔离。link 操作只影响 dev 模式
-- **与 merge skill 的关系**：merge 阶段 7 删除 worktree 前，如果有 active link 指向该 worktree 的 extensions/，需先 `link-npm.sh` 清理（否则 link 指向已删除目录，pi 加载报 ENOENT）
+**生效**：xyz-agent dev 模式 + 新建 session。**当前 pi CLI session 不受影响**（不读这个 env）。
+
+## 何时用哪个
+
+- 改了 extension 源码，想**在当前 pi 直接验证**（派 subagent、调工具、跑 `pi` 命令）→ **pi 模式**
+- 改了 extension 源码，想**在 xyz-agent app 里端到端验证**（UI、Electron 流程）→ **xyz-agent 模式**
+- 不确定 → **pi 模式**（更直接，当前环境就是 pi）
+
+## 查看状态
+
+```bash
+bash .agents/skills/dev-link/link-list.sh
+# 显示 pi 模式（pi list 本地源）+ xyz-agent 模式（.env.dev-extensions）两者的当前 link
+```
+
+## 包名格式
+
+三种都支持：短名 `subagent-workflow` / pi-前缀 `pi-subagent-workflow` / npm 全名 `@zhushanwen/pi-subagent-workflow`。多包一次：`pi-link.sh goal todo ask-user`。
+
+## 约束
+
+- `.env.dev-extensions` 不进 git（xyz 模式，`.gitignore` 的 `.env.*` 覆盖）；pi 模式改 `~/.pi/agent/settings.json`（pi 自己管理）
+- **两模式都需新建 session 生效**（运行中的 session 不重扫 extension 源）
+- **pi 模式 `pi-unlink` 需联网**（`pi install npm:` 恢复要 npm install）；离线恢复会失败
+- **merge/删 worktree 前清理**：两模式 link 都指向 worktree 的 `extensions/` 源码，worktree 删了 pi 加载报 ENOENT。pi 模式 `pi-unlink.sh <pkg>`、xyz 模式 `link-npm.sh <pkg>` 清理
+- **quota-providers 是库包不是 extension**，脚本自动跳过
+- 多 worktree：脚本用 `git rev-parse --show-toplevel` 定位 `extensions/`，worktree 切换后路径变，需在该 worktree 重新 link
 
 ## 常见错误
 
 | 错误 | 原因 |
 |------|------|
-| link 后 xyz-agent 看不到 extension | 没新建 session；或 `.env.dev-extensions` 没 source 进环境 |
-| source 报 `command not found` | 路径含空格未加引号；或 `.env.dev-extensions` 格式错误 |
-| pi 启动报 ENOENT extension path | worktree 已删除但 link 未清理；跑 `link-npm.sh <pkg>` 或 `link-npm.sh --all` 清理 |
-| quota-providers 不应 link | 它是库包（shared lib），不是 pi extension，不进 `XYZ_EXTENSION_PATHS`。脚本会自动跳过 |
+| pi 模式 link 后 pi 仍用旧版 | 当前 session 已加载旧版，**需新 session**；或没 remove npm（两源冲突，pi resolver 不知选谁）|
+| xyz 模式 link 后 xyz-agent 看不到 extension | 没 `source .env.dev-extensions`；或没新建 session |
+| pi 启动报 ENOENT extension path | worktree 删了但 link 未清理 → 对应模式 unlink |
+| **link 了但不生效（最常见）** | **模式选错**：想测当前 pi 却用 xyz 模式（`XYZ_EXTENSION_PATHS` 当前 pi 不读）；想测 xyz-agent 却用 pi 模式。按"何时用哪个"选 |
+| source 报 command not found | 路径含空格未加引号；或 `.env.dev-extensions` 格式错 |

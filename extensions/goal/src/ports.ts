@@ -18,8 +18,6 @@ export interface GoalHistoryEntry {
 	/** widget/history 标题用（fallback objective 截断）。旧 entry 无此字段。 */
 	slug?: string;
 	status: string;
-	completedTasks: number;
-	totalTasks: number;
 	elapsedSeconds: number;
 	timestamp: number;
 }

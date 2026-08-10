@@ -1,7 +1,6 @@
 /**
  * Todo 数据模型 — 纯函数，不依赖 Pi 运行时。
- * 四态: pending → in_progress → completed；任一状态 → cancelled
- * （cancelled 不可恢复）
+ * 三态: pending → in_progress → completed
  */
 
 import { guiComponent, type GuiRenderResult, guiResult, type TreeItem } from "@xyz-agent/extension-protocol";
@@ -11,24 +10,24 @@ import { guiComponent, type GuiRenderResult, guiResult, type TreeItem } from "@x
 export interface Todo {
 	id: number;
 	text: string;
-	status: "pending" | "in_progress" | "completed" | "cancelled";
+	status: "pending" | "in_progress" | "completed";
 }
 
 export interface TodoDetails {
-	action: "list" | "add" | "update" | "delete" | "clear";
+	action: "list" | "add" | "update" | "delete";
 	todos: Todo[];
 	nextId: number;
 	/** GUI 渲染结果（仅 RPC 模式填充，前端 list-tree 渲染）。对齐 extension-protocol@0.2.0。 */
 	__gui__?: GuiRenderResult;
 }
 
-export const VALID_STATUSES = ["pending", "in_progress", "completed", "cancelled"] as const;
+export const VALID_STATUSES = ["pending", "in_progress", "completed"] as const;
 
 export type ValidStatus = (typeof VALID_STATUSES)[number];
 
 // ── 迁移/兼容 ───────────────────────────────────────
 
-/** 旧格式迁移：verifying → in_progress，failed → pending，done:boolean → status */
+/** 旧格式迁移：verifying → in_progress，failed → pending，cancelled → completed（历史三态化降级），done:boolean → status */
 export function migrateTodo(raw: unknown): Todo {
 	// raw 是任意旧格式数据（兼容 done:boolean 等历史结构），以 Record 方式安全访问字段
 	// 守卫：null/原始类型（typeof null === 'object'，必须显式排除 null）→ 明确报错而非混淆的 TypeError
@@ -51,10 +50,12 @@ export function migrateTodo(raw: unknown): Todo {
 		status = done === true ? "completed" : "pending";
 	}
 
-	// 旧版五态映射（先转 string 避免类型收窄后无法比较）
+	// 历史状态映射（先转 string 避免类型收窄后无法比较）
 	const rawStatus = record.status as string | undefined;
 	if (rawStatus === "verifying") status = "in_progress";
 	if (rawStatus === "failed") status = "pending";
+	// 三态化降级：历史 cancelled 项映射为 completed（不丢数据，且解除 every(completed) 死锁）
+	if (rawStatus === "cancelled") status = "completed";
 
 	return {
 		id: record.id as number,
@@ -71,7 +72,6 @@ export function migrateTodo(raw: unknown): Todo {
  *   pending      → dot      / 无 status
  *   in_progress  → circle   / running
  *   completed    → check    / done
- *   cancelled    → cross    / failed
  */
 export function buildGui(todos: Todo[]): GuiRenderResult {
 	const items: TreeItem[] = todos.map((t) => {
@@ -80,17 +80,13 @@ export function buildGui(todos: Todo[]): GuiRenderResult {
 				? "check"
 				: t.status === "in_progress"
 					? "circle"
-					: t.status === "cancelled"
-						? "cross"
-						: "dot"; // pending
+					: "dot"; // pending
 		const status =
 			t.status === "in_progress"
 				? "running"
 				: t.status === "completed"
 					? "done"
-					: t.status === "cancelled"
-						? "failed"
-						: undefined; // pending 无 status
+					: undefined; // pending 无 status
 		return {
 			icon,
 			label: `#${t.id}: ${t.text}`,
@@ -110,32 +106,27 @@ export function getDisplayStatus(t: Todo): string {
 export interface AddResult {
 	newTodos: Todo[];
 	newNextId: number;
-	error?: string;
-	resultText?: string;
+	resultText: string;
 }
 
+/**
+ * 批量新增 todo。
+ * texts 整体 trim；任一项 trim 后为空串则 throw（不再静默 filter 丢弃——
+ * 模型应学到传有效项，C1 决策）。
+ */
 export function addTodos(
 	currentTodos: Todo[],
 	currentNextId: number,
 	texts: string[],
 ): AddResult {
 	if (!texts || texts.length === 0) {
-		return {
-			newTodos: currentTodos,
-			newNextId: currentNextId,
-			error: "texts required",
-			resultText: "Error: add requires texts parameter (non-empty array)",
-		};
+		throw new Error("add requires texts parameter (non-empty array)");
 	}
 
-	const trimmed = texts.map((t) => t.trim()).filter((t) => t.length > 0);
-	if (trimmed.length === 0) {
-		return {
-			newTodos: currentTodos,
-			newNextId: currentNextId,
-			error: "all texts empty",
-			resultText: "Error: texts must contain at least one non-empty string",
-		};
+	const trimmed = texts.map((t) => t.trim());
+	// 任一项 trim 后空串 → throw（不静默 filter）
+	if (trimmed.some((t) => t.length === 0)) {
+		throw new Error("texts must not contain empty or whitespace-only items");
 	}
 
 	const startId = currentNextId;
@@ -169,6 +160,13 @@ export function updateTodos(
 	currentTodos: Todo[],
 	updates: Array<{ id: number; status?: string; text?: string }>,
 ): UpdateResult {
+	// text 校验统一（CT5）：text 存在则 trim，空串 throw（不静默跳过）
+	for (const u of updates) {
+		if (u.text !== undefined && u.text.trim().length === 0) {
+			throw new Error(`update item id ${u.id}: text cannot be empty or whitespace-only`);
+		}
+	}
+
 	const ids = updates.map((u) => u.id);
 	if (new Set(ids).size !== ids.length) {
 		return {
@@ -200,14 +198,6 @@ export function updateTodos(
 				resultText: `Error: invalid status '${u.status}' for update item id ${u.id}`,
 			};
 		}
-		// cancelled 不可恢复
-		if (todo.status === "cancelled" && u.status !== undefined) {
-			return {
-				updatedTodos: currentTodos,
-				error: `id ${u.id} is cancelled`,
-				resultText: `Error: Todo #${u.id} is cancelled and cannot be restored`,
-			};
-		}
 	}
 
 	const updated = currentTodos.map((t) => {
@@ -215,7 +205,7 @@ export function updateTodos(
 		if (!u) return t;
 		const patch: Partial<Todo> = {};
 		if (u.status) patch.status = u.status as Todo["status"];
-		if (u.text) patch.text = u.text;
+		if (u.text !== undefined) patch.text = u.text.trim();
 		return { ...t, ...patch };
 	});
 	return {
@@ -232,8 +222,11 @@ export function formatTodoLine(t: Todo): string {
 			? "x"
 			: t.status === "in_progress"
 				? "~"
-				: t.status === "cancelled"
-					? "-"
-					: " ";
+				: " "; // pending
 	return `[${mark}] #${t.id}: ${t.text}`;
+}
+
+/** 把整张列表格式化为多行文本，每行复用 formatTodoLine（T3）。 */
+export function formatTodoList(todos: Todo[]): string {
+	return todos.map((t) => formatTodoLine(t)).join("\n");
 }

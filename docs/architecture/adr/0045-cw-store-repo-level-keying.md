@@ -1,7 +1,17 @@
 # ADR-0045: cw store 键控基准改为 repo 级（git common dir）
 
-**状态**: Accepted
-**日期**: 2026-08-06
+> **⚠️ Superseded** —— 本 ADR 的「调用层先行」方案（cw-tool 探测 common-dir + dirname + `--workspace` 透传）已被**引擎层方案 A**取代：
+> - 引擎层 SSOT：`coding-workflow` 仓库 `fix-cw-cwd-worktree/docs/cw-store-workspace-decoupling.md`（commit `aa4949b`，含自身对抗审查）
+> - 本仓差异文档：`docs/architecture/cw-store-workspace-decoupling.md`（cw-tool 协调需求 + 版本门控 + `~/.cw` 实测数据）
+>
+> **继承成立的核心洞察**：store 应 repo 级共享（所有 worktree 一份）、用 `git-common-dir` 做 repo 标识——本 ADR 方向正确。
+>
+> **修正的实现错误**：① 多余的 `dirname`（common-dir 本身即标识；bare repo 下 `dirname(.bare)` = workspace 容器非任何 worktree，separate-git-dir 下到非 repo 根）；② 单一 `--workspace` 兼任 repo 标识 + 工作树两角色（bare repo 结构性不可能）；③ 归一化放 cw-tool 调用层而非 cw-cli 引擎层（导致 bash/cw-tool 割裂无法消除——bash 不经 cw-tool，永远 per-cwd）。
+>
+> 本 ADR 的「本分支调用层先行」临时方案随引擎层 S1（`getCwJsonPath` 归一化）+ S2（cw-tool 删 `detectRepoWorkspace`、退回纯封装）落地而拆除。下文为历史原文，保留作决策追溯。
+
+**状态**: Superseded（by 引擎层方案 A）
+**日期**: 2026-08-06（Accepted）→ 2026-09 Superseded
 **关联**: v4 递归编排方案（`/tmp/cw-recursive-orchestration-design-v4.md`）、feat-rethink-recursive-split 分支
 
 ## 背景

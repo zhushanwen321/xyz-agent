@@ -56,8 +56,6 @@ export function createGoalState(
 		lastBlockerReason: null,
 		tokenWarning70Sent: false,
 		tokenWarning90Sent: false,
-		timeWarning70Sent: false,
-		timeWarning90Sent: false,
 		lastTurnTokensUsed: 0,
 		currentTurnIndex: 0,
 	};

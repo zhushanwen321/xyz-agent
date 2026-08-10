@@ -1,7 +1,5 @@
 // ── 调度规格 ──
 
-export type ScheduleMode = 'cron' | 'interval'
-
 export type ScheduleSpec =
   | { mode: 'cron'; cronExpression: string }
   | { mode: 'interval'; intervalMs: number }
@@ -9,7 +7,7 @@ export type ScheduleSpec =
 // ── 任务 ──
 
 export type TaskKind = 'once' | 'recurring'
-export type TaskStatus = 'pending' | 'running' | 'success' | 'failed'
+export type TaskStatus = 'success' | 'failed'
 
 export interface ScheduledTask {
   id: string                        // 8 位 hex，自动生成
@@ -25,8 +23,9 @@ export interface ScheduledTask {
   runCount: number
   lastRunAt?: number
   lastStatus?: TaskStatus
+  lastError?: string                // 最近一次失败原因（cron 失效 / persist 失败）
   history: ExecutionRecord[]        // 最近 20 条
-  pending?: boolean                 // 标记到期待 dispatch
+  pending?: boolean                 // 运行时标记：到期待 dispatch（非持久化语义，勿与 TaskStatus 混淆）
 }
 
 export interface ExecutionRecord {
@@ -46,7 +45,6 @@ export interface SchedulerStore {
 
 export interface ParseScheduleResult {
   spec: ScheduleSpec
-  note?: string
 }
 
 // ── 添加选项 ──

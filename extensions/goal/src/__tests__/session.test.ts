@@ -10,10 +10,9 @@
 import { describe, expect, it } from "vitest";
 
 import { createGoalState } from "../engine/goal";
-import type { GoalRuntimeState } from "../engine/types";
+import type { GoalRuntimeState, GoalStatus } from "../engine/types";
 import {
 	ENTRY_TYPE,
-	HISTORY_ENTRY_TYPE,
 	makeHistoryEntry,
 	serializeState,
 } from "../persistence";
@@ -38,10 +37,6 @@ function makeFakeSessionPort(entries: SessionEntryLike[]): SessionPort {
 
 function makeGoalStateEntry(state: GoalRuntimeState): SessionEntryLike {
 	return { type: "custom", customType: ENTRY_TYPE, data: serializeState(state) };
-}
-
-function makeHistoryEntryWrapper(entry: unknown): SessionEntryLike {
-	return { type: "custom", customType: HISTORY_ENTRY_TYPE, data: entry };
 }
 
 // ── isStaleContextError（MF-8, FR-8.2 G-010）──────────
@@ -111,46 +106,19 @@ describe("reconstructGoalState", () => {
 		expect(remaining).toHaveLength(2);
 	});
 
-	it("G-006: goal-history 超出 20 条仍正确恢复 state（append-only，不 splice）", () => {
+	it.each([
+		["blocked", 1000],
+		["paused", 2000],
+		["complete", 3000],
+	])("FR-3/G-015: 非 active 状态 %s → 保持原状（status + timeStartedAt 不变）", (status, oldTime) => {
 		const session = createGoalSession();
-		const state = createGoalState("active goal");
-		// 插入 25 个 history entry + 1 个 goal-state
-		const entries: SessionEntryLike[] = [];
-		for (let i = 0; i < 25; i++) {
-			entries.push(makeHistoryEntryWrapper({ goalId: `g-${i}`, timestamp: i }));
-		}
-		entries.push(makeGoalStateEntry(state));
-		const port = makeFakeSessionPort(entries);
-		reconstructGoalState(session, port);
-		// append-only：history 不被删除（显示侧截断，splice GC 在生产不生效）
-		const historyRemaining = entries.filter((e) => e.customType === HISTORY_ENTRY_TYPE);
-		expect(historyRemaining).toHaveLength(25);
-		// state 仍正确恢复
-		expect(session.state!.objective).toBe("active goal");
-	});
-
-	it("FR-3: blocked 非终态 → 保持 blocked（崩溃不抹除 agent 叫停状态）", () => {
-		const session = createGoalSession();
-		const state = createGoalState("blocked goal");
-		state.status = "blocked";
-		state.timeStartedAt = 1000; // 旧值
+		const state = createGoalState(`${status} goal`);
+		state.status = status as GoalStatus;
+		state.timeStartedAt = oldTime;
 		const port = makeFakeSessionPort([makeGoalStateEntry(state)]);
 		reconstructGoalState(session, port);
-		// blocked 保持 blocked（不强制 active）
-		expect(session.state!.status).toBe("blocked");
-		// timeStartedAt 不重置（非 active 不重启计时）
-		expect(session.state!.timeStartedAt).toBe(1000);
-	});
-
-	it("FR-3: paused 非终态 → 保持 paused（崩溃不抹除用户叫停状态）", () => {
-		const session = createGoalSession();
-		const state = createGoalState("paused goal");
-		state.status = "paused";
-		state.timeStartedAt = 2000;
-		const port = makeFakeSessionPort([makeGoalStateEntry(state)]);
-		reconstructGoalState(session, port);
-		expect(session.state!.status).toBe("paused");
-		expect(session.state!.timeStartedAt).toBe(2000);
+		expect(session.state!.status).toBe(status);
+		expect(session.state!.timeStartedAt).toBe(oldTime);
 	});
 
 	it("FR-3: active → 保持 active + 重启计时（timeStartedAt = now）", () => {
@@ -164,15 +132,6 @@ describe("reconstructGoalState", () => {
 		expect(session.state!.status).toBe("active");
 		expect(session.state!.timeStartedAt).toBeGreaterThanOrEqual(before);
 		expect(session.state!.timeStartedAt).toBeLessThanOrEqual(after);
-	});
-
-	it("G-015: 终态保持终态（不强制激活）", () => {
-		const session = createGoalSession();
-		const state = createGoalState("completed goal");
-		state.status = "complete";
-		const port = makeFakeSessionPort([makeGoalStateEntry(state)]);
-		reconstructGoalState(session, port);
-		expect(session.state!.status).toBe("complete");
 	});
 
 	it("G-024: deserialize throw（损坏 data）→ state=null", () => {
@@ -204,13 +163,15 @@ describe("reconstructGoalState", () => {
 		// 验证辅助函数本身正确（makeHistoryEntry 用于 history entry 构造）
 		const state = createGoalState("roundtrip");
 		state.status = "complete";
-		const hist = makeHistoryEntry(state, 5);
+		const before = Date.now();
+		const hist = makeHistoryEntry(state);
+		const after = Date.now();
 		expect(hist.goalId).toBe(state.goalId);
 		expect(hist.objective).toBe("roundtrip");
 		expect(hist.status).toBe("complete");
-		expect(hist.completedTasks).toBe(5);
-		expect(typeof hist.elapsedSeconds).toBe("number");
-		expect(typeof hist.timestamp).toBe("number");
+		expect(hist.elapsedSeconds).toBe(Math.floor(state.timeUsedSeconds)); // = Math.floor(0) = 0
+		expect(hist.timestamp).toBeGreaterThanOrEqual(before);
+		expect(hist.timestamp).toBeLessThanOrEqual(after);
 		// serializeState 返回深拷贝（修改返回值不影响原 state）
 		const serialized = serializeState(state);
 		expect(serialized.objective).toBe("roundtrip");

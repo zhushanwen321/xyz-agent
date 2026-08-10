@@ -267,7 +267,7 @@ describe("executeTodoAction — state isolation & snapshot", () => {
 
 	it("S-2: details.todos is a shallow array copy (splice-safe, element-shared)", async () => {
 		// executeTodoAction 用 [...state.todos] 做浅拷贝：数组独立、元素共享。
-		// add/clear 改数组长度时旧 details.todos 不受影响；但原地改元素会共享。
+		// add/delete 改数组长度时旧 details.todos 不受影响；但原地改元素会共享。
 		const { tool } = setup();
 		await tool.execute("id", { action: "add", texts: ["a", "b"] }, undefined, undefined, makeRpcCtx());
 		const before = (await tool.execute(
@@ -278,8 +278,8 @@ describe("executeTodoAction — state isolation & snapshot", () => {
 			makeRpcCtx(),
 		)).details.todos;
 		expect(before).toHaveLength(2);
-		// clear 改 state.todos 数组，已发出的 before 快照仍为 2 项
-		await tool.execute("id", { action: "clear" }, undefined, undefined, makeRpcCtx());
+		// delete 改 state.todos 数组，已发出的 before 快照仍为 2 项
+		await tool.execute("id", { action: "delete", ids: [1, 2] }, undefined, undefined, makeRpcCtx());
 		expect(before).toHaveLength(2);
 	});
 });

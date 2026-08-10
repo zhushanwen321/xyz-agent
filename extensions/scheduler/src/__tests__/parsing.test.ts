@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  computeNextCronRunAt,
+  computeNextCronRuns,
+  computeNextRunAt,
   computeNextRuns,
   formatDuration,
   normalizeCronExpression,
@@ -127,6 +130,32 @@ describe('parseSchedule', () => {
   it('returns undefined for invalid cron with spaces', async () => {
     const result = await parseSchedule('not a valid cron')
     expect(result).toBeUndefined()
+  })
+})
+
+describe('computeNextRunAt', () => {
+  it('interval 模式 → from + intervalMs（精确相等）', async () => {
+    const from = Date.now()
+    const next = await computeNextRunAt({ mode: 'interval', intervalMs: 60_000 }, from)
+    expect(next).toBe(from + 60_000)
+  })
+
+  it('interval 模式 from 缺省用当前时间', async () => {
+    const before = Date.now()
+    const next = await computeNextRunAt({ mode: 'interval', intervalMs: 60_000 })
+    expect(next!).toBeGreaterThanOrEqual(before + 60_000)
+  })
+
+  it('cron 有效 → 返回未来时间戳（> from）', async () => {
+    const from = Date.now()
+    const next = await computeNextRunAt({ mode: 'cron', cronExpression: '*/10 * * * *' }, from)
+    expect(next).not.toBeUndefined()
+    expect(next!).toBeGreaterThan(from)
+  })
+
+  it('cron 无效 → undefined', async () => {
+    const next = await computeNextRunAt({ mode: 'cron', cronExpression: 'invalid * *' }, Date.now())
+    expect(next).toBeUndefined()
   })
 })
 

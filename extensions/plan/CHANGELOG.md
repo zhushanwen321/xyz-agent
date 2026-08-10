@@ -1,5 +1,23 @@
 # @zhushanwen/pi-plan
 
+## 0.3.4
+
+### Patch Changes
+
+- 571277c62: chore: refresh dependency range (triggered by @zhushanwen/pi-goal@0.8.0 → @zhushanwen/pi-goal@0.8.1)
+
+## 0.3.3
+
+### Patch Changes
+
+- 90fe9401d: chore: refresh dependency range (triggered by @zhushanwen/pi-goal@0.7.1 → @zhushanwen/pi-goal@0.8.0)
+
+## 0.3.2
+
+### Patch Changes
+
+- 246cd5e72: chore: refresh dependency range (triggered by @zhushanwen/pi-goal@0.7.0 → @zhushanwen/pi-goal@0.7.1)
+
 ## 0.3.1
 
 ### Patch Changes

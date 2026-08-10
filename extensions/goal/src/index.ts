@@ -23,11 +23,11 @@ import { Text } from "@earendil-works/pi-tui";
 import { handleGoalCommand } from "./adapters/command-adapter";
 import {
 	handleAgentEnd,
-	handleAgentStart,
 	handleBeforeAgentStart,
 	handleMessageEnd,
 	handleSessionStart,
 	handleTurnEnd,
+	type MessageEndLikeEvent,
 } from "./adapters/event-adapter";
 import { registerGoalControlTool } from "./adapters/goal-control-adapter";
 import { buildPorts } from "./adapters/ports";
@@ -45,14 +45,6 @@ interface BeforeAgentStartLikeEvent {
 interface TurnEndLikeEvent {
 	type: "turn_end";
 	turnIndex: number;
-}
-
-interface MessageEndLikeEvent {
-	type: "message_end";
-	message: {
-		role: string;
-		usage?: { input?: number; output?: number; cacheRead?: number; totalTokens?: number };
-	};
 }
 
 interface AgentEndLikeEvent {
@@ -83,7 +75,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 
 	pi.registerCommand("goal", {
 		description:
-			"Goal-driven mode: /goal <objective> [--tokens N] [--timeout N] | /goal resume | /goal clear | /goal update <new-objective> [--criteria <text>] | /goal status | /goal history",
+			"Goal-driven mode: /goal <objective> [--tokens N] | /goal resume | /goal pause | /goal clear | /goal update <new-objective> [--criteria <text>] | /goal status | /goal history",
 		handler: async (args: string | undefined, ctx: ExtensionCommandContext) => {
 			await handleGoalCommand(pi, session, args, ctx);
 		},
@@ -112,10 +104,6 @@ export default function goalExtension(pi: ExtensionAPI) {
 
 	pi.on("before_agent_start", async (_event: BeforeAgentStartLikeEvent, ctx: ExtensionContext) => {
 		return handleBeforeAgentStart(pi, session, ctx);
-	});
-
-	pi.on("agent_start", async () => {
-		await handleAgentStart(session);
 	});
 
 	pi.on("turn_end", async (_event: TurnEndLikeEvent, ctx: ExtensionContext) => {
@@ -178,7 +166,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 		successCriteria?: string,
 	): boolean => {
 		if (!ctx) return false;
-		return createGoal(session, objective, budget ?? {}, buildPorts(pi, ctx), true, slug, successCriteria);
+		return createGoal(session, objective, budget ?? {}, buildPorts(pi, ctx), slug, successCriteria);
 	};
 }
 
@@ -192,7 +180,6 @@ export default function goalExtension(pi: ExtensionAPI) {
  */
 export interface GoalInitBudget {
 	tokenBudget?: number;
-	timeBudgetMinutes?: number;
 }
 
 /**

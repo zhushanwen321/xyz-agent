@@ -1,5 +1,11 @@
 # @zhushanwen/pi-structured-output
 
+## 5.0.1
+
+### Patch Changes
+
+- 246cd5e72: Split the monolith entry into six modules, harden the authoritative-schema validation path, and make `RetryState` explicit.
+
 ## 5.0.0
 
 ### Patch Changes

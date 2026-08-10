@@ -1,25 +1,20 @@
 /**
- * detectRepoWorkspace 真实 git 测试 + executeCwAction 集成（真实 cwd）。
+ * detectRepoWorkspace 真实 git 探测测试 + buildCwArgs 纯函数构造测试。
  *
- * 与 cw-tool.test.ts 分开：该文件 mock 了 node:child_process（spawnSync 被替换），
- * 而本文件需要真实 git 探测，故不 mock，直接对临时 git repo 验证。
+ * executeCwAction 的 workspace 门控行为测试已移到 workspace-gate.test.ts
+ * （门控后 spawner 被调两次：probe `cw --version` + action，calls[0] 语义变化，
+ * 集成测试在那里用区分 probe/action 的 gateSpawner 覆盖）。本文件只测两个纯函数。
  *
- * 测试框架：vitest（从 vitest 导入 describe/it/expect/vi）。
+ * 测试框架：vitest（从 vitest 导入 describe/it/expect）。
  */
 import { execSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import {
-	buildCwArgs,
-	detectRepoWorkspace,
-	executeCwAction,
-} from "../cw-runner.ts";
-import { type CwSpawner } from "../cw-spawn.ts";
-import { DEV_ALLOWED } from "../index.ts";
+import { buildCwArgs, detectRepoWorkspace } from "../cw-runner.ts";
 
 // ── 临时目录管理 ────────────────────────────────────────────────
 
@@ -95,70 +90,6 @@ describe("detectRepoWorkspace（真实 git）", () => {
 	it("不存在的路径 → undefined（不抛）", () => {
 		const base = makeTempDir("cw-detect-");
 		expect(detectRepoWorkspace(path.join(base, "does-not-exist"))).toBeUndefined();
-	});
-});
-
-// ── executeCwAction 集成（真实 cwd，fake spawner 记录 args）─────
-
-describe("executeCwAction 集成（真实 git cwd）", () => {
-	/** 记录 args 的 fake spawner（不真调 cw）。 */
-	function recordingSpawner(): { spawner: CwSpawner; calls: Array<{ args: string[] }> } {
-		const calls: Array<{ args: string[] }> = [];
-		const spawner: CwSpawner = vi.fn(async (args: string[]) => {
-			calls.push({ args });
-			return { stdout: "{}", stderr: "", exitCode: 0 };
-		}) as unknown as CwSpawner;
-		return { spawner, calls };
-	}
-
-	it("cwd 在 git repo 内 → write action args 含 --workspace <repo 根>", async () => {
-		const base = makeTempDir("cw-int-");
-		const repo = createGitRepo(base, "repo");
-		const { spawner, calls } = recordingSpawner();
-		await executeCwAction("execute", DEV_ALLOWED, "cw_dev", "u1", {}, spawner, repo);
-		expect(calls[0].args).toContain("--workspace");
-		expect(calls[0].args[calls[0].args.indexOf("--workspace") + 1]).toBe(repo);
-	});
-
-	it("cwd 在 linked worktree 内 → write action --workspace 指向 repo 主目录", async () => {
-		const base = makeTempDir("cw-int-");
-		const repo = createGitRepo(base, "repo");
-		const wtDir = path.join(base, "wt1");
-		execSync(`git worktree add -q ${wtDir}`, { cwd: repo });
-		const { spawner, calls } = recordingSpawner();
-		await executeCwAction("execute", DEV_ALLOWED, "cw_dev", "u1", {}, spawner, wtDir);
-		expect(calls[0].args).toContain("--workspace");
-		expect(calls[0].args[calls[0].args.indexOf("--workspace") + 1]).toBe(repo);
-	});
-
-	it("read-only action（status）即使在 git repo 内也不附加 --workspace（S-3）", async () => {
-		const base = makeTempDir("cw-int-");
-		const repo = createGitRepo(base, "repo");
-		const { spawner, calls } = recordingSpawner();
-		await executeCwAction("status", DEV_ALLOWED, "cw_dev", "u1", {}, spawner, repo);
-		expect(calls[0].args).not.toContain("--workspace");
-	});
-
-	it("cwd 为非 git 目录 → write action 不含 --workspace", async () => {
-		const plain = makeTempDir("cw-int-plain-");
-		const { spawner, calls } = recordingSpawner();
-		await executeCwAction("execute", DEV_ALLOWED, "cw_dev", "u1", {}, spawner, plain);
-		expect(calls[0].args).not.toContain("--workspace");
-	});
-
-	it("cwd 不存在 → write action 不含 --workspace（探测失败不抛）", async () => {
-		const base = makeTempDir("cw-int-");
-		const { spawner, calls } = recordingSpawner();
-		await executeCwAction(
-			"execute",
-			DEV_ALLOWED,
-			"cw_dev",
-			"u1",
-			{},
-			spawner,
-			path.join(base, "missing"),
-		);
-		expect(calls[0].args).not.toContain("--workspace");
 	});
 });
 

@@ -17,7 +17,7 @@ import {
 	handleCreate,
 	handleReportBlocked,
 } from "../adapters/goal-control-adapter";
-import { createGoalState, transitionStatus } from "../engine/goal";
+import { createGoalState } from "../engine/goal";
 import type { GoalRuntimeState } from "../engine/types";
 import type { UiPort } from "../ports";
 import type { ServicePorts } from "../service";
@@ -107,12 +107,12 @@ describe("handleComplete — active 守卫 + evidence + finalizeAndPersist", () 
 		).toThrow(/evidence/);
 	});
 
-	it("completedTasks 写入 history", () => {
+	it("evidence undefined → throw（schema 降级后 handler 唯一兜底：'required' 错误）", () => {
 		const session = createGoalSession();
 		session.state = activeState();
-		const ports = makeFakePorts();
-		handleComplete({ action: "complete", evidence: "done", completedTasks: 5 }, session, ports);
-		expect((ports.history[0] as { completedTasks?: number }).completedTasks).toBe(5);
+		expect(() => handleComplete({ action: "complete" }, session, makeFakePorts())).toThrow(
+			/evidence.*required/,
+		);
 	});
 });
 
@@ -143,25 +143,18 @@ describe("handleCreate — slug+objective 必填 + 非终态守卫 + createGoal"
 		expect(ports.notifications[0]?.text).toContain("ship feature X");
 	});
 
-	it("objective 空 → throw（即使有 slug）", () => {
+	it("objective 空 → throw", () => {
 		const session = createGoalSession();
 		expect(() =>
-			handleCreate({ action: "create", slug: "x", objective: "   " }, session, makeFakePorts()),
+			handleCreate({ action: "create", slug: "x", objective: "   ", successCriteria: "done" }, session, makeFakePorts()),
 		).toThrow(/objective/);
 	});
 
-	it("slug 空 → throw（即使有 objective）", () => {
+	it("objective undefined → throw（schema 降级后 handler 唯一兜底：'required' 错误）", () => {
 		const session = createGoalSession();
-		expect(() =>
-			handleCreate({ action: "create", slug: "   ", objective: "do thing" }, session, makeFakePorts()),
-		).toThrow(/slug/);
-	});
-
-	it("slug 缺省 → throw", () => {
-		const session = createGoalSession();
-		expect(() =>
-			handleCreate({ action: "create", objective: "do thing" }, session, makeFakePorts()),
-		).toThrow(/slug/);
+		expect(() => handleCreate({ action: "create", successCriteria: "y" }, session, makeFakePorts())).toThrow(
+			/objective.*required/,
+		);
 	});
 
 	it("successCriteria 空 → throw（即使有 slug + objective）", () => {
@@ -175,33 +168,17 @@ describe("handleCreate — slug+objective 必填 + 非终态守卫 + createGoal"
 		).toThrow(/successCriteria/);
 	});
 
-	it("已有 active goal → throw（D25 非终态守卫）", () => {
+	it("successCriteria undefined → throw（schema 降级后 handler 唯一兜底：'required' 错误）", () => {
 		const session = createGoalSession();
-		session.state = activeState({ status: "active" });
-		expect(() =>
-			handleCreate(
-				{ action: "create", slug: "new", objective: "new obj", successCriteria: "done" },
-				session,
-				makeFakePorts(),
-			),
-		).toThrow(/already active/i);
+		expect(() => handleCreate({ action: "create", objective: "x" }, session, makeFakePorts())).toThrow(
+			/successCriteria.*required/,
+		);
 	});
 
-	it("已有 paused goal → throw（paused 也是非终态）", () => {
+	const NON_TERMINAL_STATUSES: GoalRuntimeState["status"][] = ["active", "paused", "blocked"];
+	it.each(NON_TERMINAL_STATUSES)("已有 %s goal → throw（D25 非终态守卫）", (status) => {
 		const session = createGoalSession();
-		session.state = activeState({ status: "paused" });
-		expect(() =>
-			handleCreate(
-				{ action: "create", slug: "new", objective: "new obj", successCriteria: "done" },
-				session,
-				makeFakePorts(),
-			),
-		).toThrow(/already active/i);
-	});
-
-	it("已有 blocked goal → throw（blocked 也是非终态）", () => {
-		const session = createGoalSession();
-		session.state = activeState({ status: "blocked" });
+		session.state = activeState({ status });
 		expect(() =>
 			handleCreate(
 				{ action: "create", slug: "new", objective: "new obj", successCriteria: "done" },
@@ -240,29 +217,17 @@ describe("handleCreate — slug+objective 必填 + 非终态守卫 + createGoal"
 		).toThrow(/tokenBudget/);
 	});
 
-	it("timeBudgetMinutes <= 0 → throw", () => {
-		const session = createGoalSession();
-		expect(() =>
-			handleCreate(
-				{ action: "create", slug: "x", objective: "x", successCriteria: "done", timeBudgetMinutes: -5 },
-				session,
-				makeFakePorts(),
-			),
-		).toThrow(/timeBudgetMinutes/);
-	});
-
 	it("合法 budget → 合并进新 state", () => {
 		const session = createGoalSession();
 		const ports = makeFakePorts();
 
 		handleCreate(
-			{ action: "create", slug: "x", objective: "x", successCriteria: "done", tokenBudget: 8000, timeBudgetMinutes: 30 },
+			{ action: "create", slug: "x", objective: "x", successCriteria: "done", tokenBudget: 8000 },
 			session,
 			ports,
 		);
 
 		expect(session.state!.budget.tokenBudget).toBe(8000);
-		expect(session.state!.budget.timeBudgetMinutes).toBe(30);
 	});
 });
 
@@ -308,8 +273,11 @@ describe("handleReportBlocked — active 守卫 + tick + transition + persist", 
 		).toThrow(/reason/);
 	});
 
-	it("active→blocked 是合法转换", () => {
-		// transitionStatus 自身已由 engine 测试覆盖，此处验证集成不破坏
-		expect(transitionStatus("active", "blocked")).toBe("blocked");
+	it("reason undefined → throw（schema 降级后 handler 唯一兜底：'required' 错误）", () => {
+		const session = createGoalSession();
+		session.state = activeState();
+		expect(() => handleReportBlocked({ action: "report_blocked" }, session, makeFakePorts())).toThrow(
+			/reason.*required/,
+		);
 	});
 });
