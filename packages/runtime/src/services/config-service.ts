@@ -5,88 +5,15 @@
  * models.json), Skill/Agent discovery to discovery.json SSOT + scanners
  * (ADR-0021 §1：强制目录 ∪ discovery 目录，按优先级合并去重).
  * Tool permissions are persisted to ~/.xyz-agent/config.json (xyz-agent own config).
+ *
+ * 重构说明（Phase 1 拆分）：本文件曾是 Config 域唯一 facade（1059 行，超 ESLint max-lines）。
+ * 现已按职责拆到多个 config helper（provider / skill / agent / system-prompt / terminal /
+ * app-config-store / worktree-config-helper），本文件退化为构造 + appConfig IO + 单行委托桩，
+ * 行为 / 签名 / import 路径零变化（复用 worktree-config-helper 验证的 accessors 注入模式）。
+ * IConfigService 接口不动，现有测试不改动即全绿（行为零变化的证据）。
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
-
-// wave 2（WC1）：import inline 方式消费 generated JSON——tsup bundle 把 JSON 打进 index.cjs，
-// 避免运行时 fs/路径解析（打包后 asar 路径问题）。tsc 类型检查需 resolveJsonModule（tsconfig.json 已加）。
-import builtinData from '../generated/builtin-providers.json'
-import { isCatalogProvider, deriveEnabled } from './provider-catalog.js'
-
-/**
- * builtin provider id → models 索引（T9/M5：listProviders 合并兜底用）。
- * builtinData 是模块级 JSON import（单例缓存），此索引避免每次 listProviders 线性扫描 37 个 provider。
- */
-const builtinModelsById = new Map<string, BuiltinProviderTemplate['models']>(
-  // JSON import 推断类型与声明类型有差异（同 listBuiltinProviders 的浅校验后断言处理）
-  (builtinData.providers ?? []).map(p => [p.id, p.models] as [string, BuiltinProviderTemplate['models']]),
-)
-
-/**
- * BuiltinModelSummary → ProviderInfo.models 元素形状（T9 合并兜底用）。
- * 差异：BuiltinModelSummary.input 是 string[]（恒输出 11 键），ProviderInfo 元素 input 是
- * Array<'text' | 'image'>——过滤 + null→undefined 归一。
- */
-function toProviderModel(m: BuiltinProviderTemplate['models'][number]): ProviderInfo['models'][number] {
-  return {
-    id: m.id,
-    name: m.name,
-    api: m.api,
-    baseUrl: m.baseUrl,
-    reasoning: m.reasoning,
-    input: m.input.filter((v): v is 'text' | 'image' => v === 'text' || v === 'image'),
-    contextWindow: m.contextWindow,
-    maxTokens: m.maxTokens ?? undefined,
-    thinkingLevelMap: m.thinkingLevelMap ?? undefined,
-    compat: m.compat ?? undefined,
-  }
-}
-
-/**
- * builtin provider id → 完整模板索引（wave2 catalog 源聚合用）。
- * catalog 源的 name/api/baseUrl/models 优先取 models.json override，否则取 builtin 副本，
- * 故需按 id 查完整 provider 模板（builtinModelsById 只索引 models，不够）。
- */
-const builtinProvidersById = new Map<string, BuiltinProviderTemplate>(
-  (builtinData.providers ?? []).map(p => [p.id, p as unknown as BuiltinProviderTemplate]),
-)
-
-/**
- * ConfigModelDefinition（models.json model）→ ProviderInfo.models 元素（wave2 双源共用）。
- * catalog override models 与 custom models 都用此映射，提取原 custom 内联逻辑避免重复。
- * model 级 enabled 透传（默认 true 向上兼容存量无此字段的 model，与 aggregateModels 两层过滤一致）。
- */
-function toUserInfoModel(m: ConfigModelDefinition): ProviderInfo['models'][number] {
-  return {
-    id: m.id,
-    name: m.name,
-    api: m.api,
-    baseUrl: m.baseUrl,
-    input: m.input,
-    compat: m.compat,
-    // W2：model 级 enabled 透传（默认 true 向上兼容存量无此字段的 model）
-    enabled: m.enabled !== false,
-    ...pickModelCapabilityFields(m),
-  }
-}
-
-/**
- * 按 models.json config 推断 authMethod（I6：优先标注值，否则按 apiKey 格式推断）。
- * $开头→env_var，非空→api_key（pi resolveConfigValue 语义一致）。catalog override 与 custom 共用。
- * config 缺省（catalog 无 override）→ undefined。
- */
-function deriveAuthMethod(config?: ConfigProviderConfig): ProviderInfo['authMethod'] {
-  if (!config) return undefined
-  return config.authMethod
-    ?? (typeof config.apiKey === 'string' && config.apiKey.startsWith('$')
-      ? 'env_var' as const
-      : config.apiKey ? 'api_key' as const : undefined)
-}
-
 import {
-  SYSTEM_PROMPT_MAX_LENGTH,
   type ProviderInfo,
   type BuiltinProviderTemplate,
   type SkillInfo,
@@ -102,22 +29,10 @@ import {
   type SkillDirConfig,
 } from '@xyz-agent/shared'
 import type { IConfigService } from '../interfaces.js'
-import type { IConfigStore, ConfigModelDefinition, ConfigProviderConfig } from './ports/config.js'
+import type { IConfigStore } from './ports/config.js'
 import type { AuthStorage } from './auth/auth-storage.js'
 import type { DirScopes } from './skill-dir-config.js'
-import { atomicWrite } from '../utils/fs-utils.js'
-import { extractFrontmatter, extractDescription } from '../utils/frontmatter.js'
-import { expandHome } from '../utils/path-utils.js'
-import { scanSkills, loadSkillFromDir } from './scanners/skill-scanner.js'
-import {
-  resolveGlobalSkillDirs,
-  resolveProjectSkillDirs,
-} from './skill-dirs.js'
-import { scanAgents } from './scanners/agent-scanner.js'
-import { pickModelCapabilityFields } from './model-mapper.js'
-import { getConfigDir } from '../infra/pi/pi-paths.js'
-import { detectSources as detectSourcesImpl } from './migration/index.js'
-import { previewImport as previewImportImpl, applyImport as applyImportImpl } from './migration/index.js'
+import { detectSources as detectSourcesImpl, previewImport as previewImportImpl, applyImport as applyImportImpl } from './migration/index.js'
 import {
   getWorktreeRootDir as getWorktreeRootDirImpl,
   setWorktreeRootDir as setWorktreeRootDirImpl,
@@ -132,69 +47,43 @@ import {
   getAutoRenameEnabled as getAutoRenameEnabledImpl,
   setAutoRenameEnabled as setAutoRenameEnabledImpl,
 } from './worktree-config-helper.js'
+import { loadAppConfig as loadAppConfigImpl, saveAppConfig as saveAppConfigImpl } from './app-config-store.js'
 import {
-  defaultSystemPromptConfig,
-  mergeSystemPromptConfig,
-  defaultTerminalConfig,
-  mergeTerminalConfig,
-} from './config-merge-helpers.js'
-
-// ── ADR-0021 §1.1 强制目录（桥接层硬编码注入，不进 discovery.json）──
-// 强制·项目（最高优先）> 强制·全局 > 可选（discovery 数组顺序）。
-//
-// ⚠️ 路径修正：ADR 文档写的逻辑路径是 ~/.xyz-agent/skills 等，但 pi 桥接层把 agentDir
-// 重定向到 ~/.xyz-agent/pi/agent/，pi 实际扫的是 <piAgentDir>/skills 与 <piAgentDir>/agents。
-// 故强制目录用 pi 实际路径（getPiAgentDir 拼出），而非 ADR 文档的逻辑路径——后者不存在，
-// 会导致强制目录扫描落空（agent 页扫不到任何 agent）。
-// 项目级强制目录（.xyz-agent/skills 等）保留 ADR 逻辑路径（项目相对路径，存在则扫）。
-//
-// W1：全局强制目录从硬编码 '~/.xyz-agent/skills' 改为动态 getConfigDir()。
-// 必须用函数在 loadSkills/loadAgents 调用时求值——不能是模块加载时的常量：
-// 测试在 beforeEach 设 XYZ_AGENT_DATA_DIR，模块导入早于 beforeEach，模块加载时求值
-// 会捕获到缺省 ~/.xyz-agent（env 未设）。getConfigDir 委托 getDataDir 读 env，调用时求值
-// 才能跟随实例隔离 / 自定义数据目录切换。
-// 注：FORCED_PROJECT_SKILL_DIR / forcedGlobalSkillDir 已迁移至 skill-dirs.ts（scanner + watcher SSOT）。
-// 此处仅保留 agent 的对应常量（agent 目录发现尚未统一到 SSOT，未来若统一再迁）。
-const FORCED_PROJECT_AGENT_DIR = '.xyz-agent/agents'
-/** 全局强制 agent 目录：<configDir>/agents（configDir = getConfigDir()，读 env）。 */
-const forcedGlobalAgentDir = (): string => join(getConfigDir(), 'agents')
-
-/** JSON 序列化缩进（saveAppConfig / setSystemPromptConfig 的 atomicWrite 共用）。 */
-const JSON_INDENT = 2
-
-/** Terminal config 校验范围（setTerminalConfig 写入期校验，与 TerminalPage 前端一致） */
-const FONT_SIZE_MIN = 6
-const FONT_SIZE_MAX = 72
-const SCROLLBACK_MAX = 100000
-
-/**
- * 生成 atomicWrite 的唯一 tmp 后缀（时间戳 + 随机串），避免并发写入撞固定 .tmp 文件。
- * saveAppConfig / setSystemPromptConfig 共用。
- */
-function uniqueTmpSuffix(): string {
-  // eslint-disable-next-line no-magic-numbers -- base36 radix + slice 掉 "0." 前缀（惯用唯一串生成）
-  return `${Date.now()}_${Math.random().toString(36).slice(2)}`
-}
-
-// ── Helpers ─────────────────────────────────────────────────────
-
-/** Extract name and description from agent markdown frontmatter. */
-function parseAgentMd(content: string): { name: string; description: string } {
-  const { frontmatter } = extractFrontmatter(content)
-  // name 是简单单行键值，inline 提取（不进通用 helper——name 是 agent 专属字段）
-  let name = ''
-  for (const fl of frontmatter.split('\n')) {
-    if (fl.startsWith('name:')) name = fl.slice('name:'.length).trim()
-  }
-  const description = extractDescription(frontmatter)
-  return { name, description }
-}
-
-/** Runtime type guard for thinkingLevelMap values. */
-function isValidThinkingLevelMap(v: unknown): v is Record<string, string | null> {
-  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false
-  return Object.values(v as Record<string, unknown>).every(val => val === null || typeof val === 'string')
-}
+  getDefaultModel as getDefaultModelImpl,
+  setDefaultModel as setDefaultModelImpl,
+  listProviders as listProvidersImpl,
+  listBuiltinProviders as listBuiltinProvidersImpl,
+  checkEnvVars as checkEnvVarsImpl,
+  getProvider as getProviderImpl,
+  setProvider as setProviderImpl,
+  toggleProviderEnabled as toggleProviderEnabledImpl,
+  deleteProvider as deleteProviderImpl,
+  removeProviderByKind as removeProviderByKindImpl,
+  type SetProviderInput,
+} from './provider-config-helper.js'
+import {
+  loadSkills as loadSkillsImpl,
+  saveSkills as saveSkillsImpl,
+  upsertSkill as upsertSkillImpl,
+  deleteSkill as deleteSkillImpl,
+  scanSkills as scanSkillsImpl,
+} from './skill-config-helper.js'
+import {
+  loadAgents as loadAgentsImpl,
+  saveAgents as saveAgentsImpl,
+  upsertAgent as upsertAgentImpl,
+  deleteAgent as deleteAgentImpl,
+  scanAgents as scanAgentsImpl,
+} from './agent-config-helper.js'
+import {
+  getSystemPromptConfig as getSystemPromptConfigImpl,
+  setSystemPromptConfig as setSystemPromptConfigImpl,
+  getReplaceSystemPrompt as getReplaceSystemPromptImpl,
+} from './system-prompt-config-helper.js'
+import {
+  getTerminalConfig as getTerminalConfigImpl,
+  setTerminalConfig as setTerminalConfigImpl,
+} from './terminal-config-helper.js'
 
 // ── Service ─────────────────────────────────────────────────────
 
@@ -211,366 +100,46 @@ export class ConfigService implements IConfigService {
     private authStorage?: Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'set' | 'hasCredentialSync' | 'listCredentialIds'>,
   ) {}
 
-  // ── Provider CRUD ──────────────────────────────────────────────
+  // ── Provider CRUD（委托 provider-config-helper）─────────────────
 
   getDefaultModel(): { provider: string; modelId: string } | null {
-    return this.configStore.getDefaultModel()
+    return getDefaultModelImpl(this.configStore)
   }
 
   setDefaultModel(provider: string, modelId: string): void {
-    this.configStore.setDefaultModel(provider, modelId)
+    setDefaultModelImpl(this.configStore, provider, modelId)
   }
 
   listProviders(): ProviderInfo[] {
-    const models = this.configStore.readModels()
-    const enabledModels = this.configStore.getEnabledModels()
-    const authIds = this.authStorage?.listCredentialIds() ?? []
-    const authIdSet = new Set(authIds)
-
-    const result: ProviderInfo[] = []
-    // catalog id 去重集合：catalog 源处理过的 id，custom 源跳过（避免 catalog id 重复出现）
-    const catalogIdsHandled = new Set<string>()
-
-    // ── catalog 源：(auth.json keys ∪ models.json catalog keys) ∩ builtinData（F1 修复核心）──
-    // 旧实现只遍历 models.json providers，catalog 凭据在 auth.json（models.json 无条目）时不显示。
-    // 现聚合 auth.json 有凭据的 catalog provider，即使 models.json 无该条目也显示。
-    const catalogCandidateIds = new Set<string>()
-    for (const id of authIds) {
-      if (isCatalogProvider(id)) catalogCandidateIds.add(id)
-    }
-    for (const [id] of Object.entries(models.providers)) {
-      if (isCatalogProvider(id)) catalogCandidateIds.add(id)
-    }
-
-    for (const id of catalogCandidateIds) {
-      const builtinP = builtinProvidersById.get(id)
-      if (!builtinP) continue // 只聚合 builtin 内的 catalog provider（∩ builtinData）
-      catalogIdsHandled.add(id)
-      const override = models.providers[id]
-      const hasOverride = !!override
-      // C1 契约「catalog 凭据 = id ∈ auth.json keys」；override?.apiKey 是 catalog provider
-      // 手动填 key 的旧数据（迁移前错位）合理扩展，双源判定避免遗漏。
-      const apiKeySet = authIdSet.has(id) || !!override?.apiKey
-      const overrideModels = override?.models ?? []
-      result.push({
-        id,
-        name: override?.name || builtinP.name || id,
-        api: override?.api ?? builtinP.api,
-        baseUrl: override?.baseUrl ?? builtinP.baseUrl,
-        apiKeySet,
-        authMethod: deriveAuthMethod(override),
-        // catalog 凭据在 auth.json：apiKeySet 已含 auth.json 判定（authIdSet.has(id)），
-        // 与旧 status 逻辑（hasCredentialSync(id)）等价，避免重复读 auth.json。
-        status: apiKeySet ? 'connected' as const : 'not_configured' as const,
-        // models 优先 override，空则 builtin 副本（builtinP.models 经 toProviderModel 映射）
-        models: overrideModels.length > 0
-          ? overrideModels.map(toUserInfoModel)
-          : (builtinP.models?.map(toProviderModel) ?? []),
-        // DM3：enabled 从 enabledModels 派生，不读 models.json provider.enabled（F2）
-        enabled: deriveEnabled(id, enabledModels),
-        kind: 'catalog' as const,
-        hasOverride,
-        quota: override?.quota,
-      })
-    }
-
-    // ── custom 源：models.json providers where !isCatalogProvider(id)（保留旧逻辑，kind='custom'）──
-    // catalogIdsHandled 已收录 models.json 里的 catalog 条目（上面聚合时加入），此处跳过避免重复。
-    for (const [id, config] of Object.entries(models.providers)) {
-      if (catalogIdsHandled.has(id)) continue
-      const userModels = (config.models ?? []).map(toUserInfoModel)
-      const apiKeySet = !!config.apiKey
-      result.push({
-        id,
-        name: config.name || id,
-        // W2：回填 provider 级 api 字段，修复前端编辑 provider 时 type 下拉丢失（P0-1）
-        api: config.api,
-        baseUrl: config.baseUrl,
-        apiKeySet,
-        authMethod: deriveAuthMethod(config),
-        // M6 status 派生：apiKey 或 auth.json 凭据任一 → connected。
-        // B3：复用 authIdSet（listProviders 开头批量读），消除每次循环 hasCredentialSync 的 N+1 读盘。
-        status: (config.apiKey || authIdSet.has(id))
-          ? 'connected' as const
-          : 'not_configured' as const,
-        // T9/M5 models 合并：用户自定义 models 非空 → 保留；为空 → builtin models 兜底
-        models: userModels.length > 0
-          ? userModels
-          : (builtinModelsById.get(id)?.map(toProviderModel) ?? userModels),
-        // DM3：enabled 从 enabledModels 派生，不读 models.json provider.enabled（F2）
-        enabled: deriveEnabled(id, enabledModels),
-        kind: 'custom' as const,
-        quota: config.quota,
-      })
-    }
-
-    return result
+    return listProvidersImpl(this.configStore, this.authStorage)
   }
 
-  /**
-   * 列出内置 provider 模板（wave 2，import generated JSON，无参只读，纯函数）。
-   * builtinData 模块级 import 即缓存，不触 ConfigStore 依赖。wave 1 生成时已排除 radius。
-   *
-   * 浅校验 guard（review M-9 修复）：生成物损坏/格式不符（非数组、条目缺 id/name）时
-   * 返回空列表（前端隐藏内置入口），不抛错——内置模板是增强能力，坏了不能拖垮 Settings。
-   */
   listBuiltinProviders(): BuiltinProviderTemplate[] {
-    const raw = builtinData.providers
-    if (!Array.isArray(raw)) {
-      console.warn('[config-service] builtin-providers.json malformed (providers is not an array), falling back to empty list')
-      return []
-    }
-    for (const p of raw) {
-      if (typeof p !== 'object' || p === null || typeof p.id !== 'string' || typeof p.name !== 'string') {
-        console.warn('[config-service] builtin-providers.json malformed (provider missing id/name), falling back to empty list')
-        return []
-      }
-    }
-    // JSON import 的推断类型与 BuiltinProviderTemplate 有 optional 字段差异，浅校验后断言
-    return raw as unknown as BuiltinProviderTemplate[]
+    return listBuiltinProvidersImpl()
   }
 
   checkEnvVars(names: string[]): Record<string, boolean> {
-    // 去重（I3 契约）+ 空串不算已设置（env 值为空串时 pi resolveConfigValue 同样视为未配置）
-    const results: Record<string, boolean> = {}
-    for (const name of new Set(names)) {
-      const value = process.env[name]
-      results[name] = value !== undefined && value !== ''
-    }
-    return results
+    return checkEnvVarsImpl(names)
   }
 
-  setProvider(providerId: string, data: {
-    name?: string
-    type?: string
-    apiKey?: string
-    authMethod?: 'api_key' | 'oauth' | 'env_var' | 'ambient'
-    baseUrl?: string
-    models?: Array<string | { id: string; name?: string; api?: string; baseUrl?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null>; enabled?: boolean; compat?: Record<string, unknown> }>
-    enabled?: boolean
-    /** Coding Plan 额度查询配置（手动选择 fetcher + 启用状态）。 */
-    quota?: { fetcher?: string; enabled: boolean; cookieSet?: boolean }
-  }): { newDefault?: { provider: string; modelId: string } } {
-    // wave3：existingConfig===undefined 判定「新建 provider」（边界1 白名单守卫用）
-    const existingConfig = this.configStore.getProviderConfig(providerId)
-    const existing = existingConfig ?? {}
-    // A1：merged 提前声明——catalog 分支 delete merged.apiKey 需在声明之后（原顺序触发 TDZ TS2448/2454）
-    // TODO: 当 pi models.json 支持 schema 后收窄类型（现有 Record<string, unknown> 是架构限制）
-    const merged: Record<string, unknown> = { ...existing }
-    // I9 清理① + catalog 分体系：
-    // - catalog provider：apiKey 归 auth.json (api_key overwrites oauth natively)
-    // - custom provider：apiKey 写 models.json，清 auth.json oauth (I9 cleanup)
-    if (data.apiKey !== undefined && data.apiKey !== '') {
-      if (isCatalogProvider(providerId) && this.authStorage) {
-        // catalog provider: apiKey → auth.json (0600), strip from models.json
-        void this.authStorage.set(providerId, { type: 'api_key', key: data.apiKey }).catch(err => {
-          console.warn(`[config-service] auth.json api_key write failed for ${providerId}:`, err)
-        })
-        // Don't write apiKey to models.json for catalog providers
-        delete merged.apiKey
-      } else {
-        // custom provider or no authStorage: keep existing behavior (apiKey in models.json)
-        // I9: clear oauth credential before writing apiKey (fire-and-forget)
-        void this.authStorage?.remove(providerId).catch(err => {
-          console.warn(`[config-service] auth.json oauth cleanup failed for ${providerId} (I9 清理①):`, err)
-        })
-      }
-    }
-    if (data.apiKey !== undefined) merged.apiKey = data.apiKey as string
-    // I6：authMethod 透传（ProviderQuickSetup.onSave 按所选认证方式填充）
-    if (data.authMethod !== undefined) merged.authMethod = data.authMethod
-    if (data.baseUrl !== undefined) merged.baseUrl = data.baseUrl as string
-    if (data.type !== undefined) merged.api = this.configStore.applyTypeTranslation(data.type as string)
-    if (data.name !== undefined) merged.name = data.name as string
-    // wave3 C5/TC6：停用 provider 级 enabled 写入——provider 启用改由 enabledModels 白名单承载
-    // （wave2 listProviders 已不读 models.json provider.enabled）。前端 onToggleEnabled 改走
-    // toggleProviderEnabled（wave4），不再传 data.enabled 给 setProvider。data.enabled 参数声明保留
-    // （向后兼容），但不写入 models.json。model 级 enabled（下文 model 合并逻辑）保留。
-    // Coding Plan 额度查询：整体覆写 quota（fetcher/enabled/cookieSet 三字段一起持久化）
-    if (data.quota !== undefined) merged.quota = data.quota
-    if (data.models !== undefined) {
-      const rawModels = data.models as Array<Record<string, unknown>>
-      const existingModels = (existing.models ?? []) as ConfigModelDefinition[]
-      merged.models = rawModels.map(m => {
-        const id = String(m.id ?? '')
-        const base = existingModels.find(em => em.id === id) ?? {} as Partial<ConfigModelDefinition>
-        const model: Record<string, unknown> = { ...base, id }
-        if (m.name) model.name = String(m.name)
-        if (typeof m.contextWindow === 'number') model.contextWindow = m.contextWindow
-        if (Array.isArray(m.input)) {
-          model.input = (m.input as unknown[]).filter(
-            (v): v is 'text' | 'image' => v === 'text' || v === 'image',
-          )
-        }
-        if (isValidThinkingLevelMap(m.thinkingLevelMap)) {
-          model.thinkingLevelMap = m.thinkingLevelMap
-        } else if (m.thinkingLevelMap === undefined && base.thinkingLevelMap) {
-          // buildMap() returned undefined (all passthrough) → remove from model
-          delete model.thinkingLevelMap
-        }
-        // review must_fix #1：前端回传的 model 级 api/baseUrl/enabled 必须写回，
-        // 否则编辑保存即丢失（新模型 base={} 全丢，编辑现有模型被 base 旧值覆盖）。
-        // 对齐 provider 级的「if (m.X !== undefined) model.X = ...」模式。
-        if (typeof m.api === 'string') model.api = m.api
-        if (typeof m.baseUrl === 'string') model.baseUrl = m.baseUrl
-        if (typeof m.enabled === 'boolean') model.enabled = m.enabled
-        // compat 透传：前端 compat 编辑器回传的兼容性覆盖必须写回，
-        // 否则编辑保存即丢失用户手动配置的 compat（隐性数据丢失 bug）。
-        // 类型守卫对齐 isValidThinkingLevelMap：必须排除 null（typeof null === 'object'）
-        // 与数组（typeof [] === 'object'），否则下游遍历 null 会崩或把数组当对象写入。
-        if (m.compat != null && typeof m.compat === 'object' && !Array.isArray(m.compat)) {
-          // sanitize compat（守卫通过后、赋值前）：
-          // - 剔除 __proto__/prototype/constructor 防 prototype pollution（compat 类型是
-          //   Record<string, unknown> 前向兼容扩展点，不能假定 key 安全）
-          // - 剔除 undefined value（避免 JSON 序列化丢 key 造成困惑）
-          // 不做 key 白名单：compat schema 未稳定，白名单会限制前向扩展。
-          const sanitized: Record<string, unknown> = {}
-          for (const [k, v] of Object.entries(m.compat)) {
-            if (k === '__proto__' || k === 'prototype' || k === 'constructor') continue
-            if (v === undefined) continue
-            sanitized[k] = v
-          }
-          model.compat = sanitized
-        } else if (m.compat === undefined && base.compat) {
-          // 前端 clearAll 发 undefined → 删除盘上已有的 compat（对齐 thinkingLevelMap undefined 分支），
-          // 否则 base spread 会保留旧 compat，导致「清除所有 compat」按钮失效。
-          delete model.compat
-        }
-        return model as unknown as ConfigModelDefinition
-      })
-    }
-    const result = this.configStore.upsertProvider(providerId, merged)
-    // 边界1（wave3 TC5 / C2）：新建 provider 时若 enabledModels 非空，加 <id>/* 白名单守卫——
-    // 否则在白名单语义下新 provider 默认不启用。existingConfig===undefined 判定新建（与 importer
-    // applyImport 的 upsertProvider 后守卫对称，共用水台函数 ensureProviderInWhitelist）。
-    if (existingConfig === undefined) {
-      this.configStore.ensureProviderInWhitelist(providerId)
-    }
-    return result
+  setProvider(providerId: string, data: SetProviderInput): { newDefault?: { provider: string; modelId: string } } {
+    return setProviderImpl(this.configStore, this.authStorage, providerId, data)
   }
 
-  /**
-   * 切换 provider 启用状态（wave3 IF2 / C1）——写 enabledModels 白名单。
-   *
-   * enabled=true: 若 enabledModels 非空，加 `<id>/*`；空/undefined 时 no-op（CL1——
-   *   全可用语义下 toggle(true) 无意义，加 pattern 反把其他 provider 隐式禁用）。
-   * enabled=false: 移除所有 `<id>/*` 和 `<id>/<model>` pattern（provider 级 + model 级全清）。
-   *   - 边界3（TC3）：重算后空 → clearEnabledModels（delete 字段，CL2），非 setEnabledModels([])。
-   *   - 边界2（TC4）：若 defaultModel 承载该 provider，重选启用 provider 的 model + setDefaultModel，
-     返回 newDefault 供前端同步。
-   *
-   * @returns 触发 defaultModel 重选时含 newDefault；否则空对象。
-   */
   toggleProviderEnabled(providerId: string, enabled: boolean): { newDefault?: { provider: string; modelId: string } } {
-    const current = this.configStore.getEnabledModels()
-
-    if (enabled) {
-      // CL1：全可用（空/undefined）时 no-op——此时所有 provider 已启用，加 pattern 反而禁用其他
-      if (current.length === 0) return {}
-      const pattern = `${providerId}/*`
-      if (current.includes(pattern)) return {} // 幂等
-      this.configStore.setEnabledModels([...current, pattern])
-      return {}
-    }
-
-    // enabled === false：移除所有 <id>/* 与 <id>/<model> pattern（startsWith('<id>/') 统一匹配两者）
-    const prefix = `${providerId}/`
-    const remaining = current.filter(p => !p.startsWith(prefix))
-    if (remaining.length === current.length) {
-      // 无 pattern 被移除（provider 不在白名单 / 白名单空）——幂等 no-op
-      return {}
-    }
-    // 边界3（TC3）：重算后空 → delete 字段（CL2），非写空数组（pi 语义空=全可用，写 [] 语义反转）；
-    // 非空 → 写回新白名单
-    if (remaining.length === 0) {
-      this.configStore.clearEnabledModels()
-    } else {
-      this.configStore.setEnabledModels(remaining)
-    }
-
-    // 边界2（TC4）：若 defaultModel 承载被禁用的 provider，重选（否则 pi session scopedModels
-    // 不含该 provider，defaultModel 与 scope 错位）。复用 listProviders（wave2 双源聚合 + deriveEnabled）
-    // 找首个启用且有 model 的 provider——不依赖 findValidDefaultModel（其主路径未过滤 enabledModels）。
-    const oldDefault = this.configStore.getDefaultModel()
-    if (oldDefault && oldDefault.provider === providerId) {
-      const newDefault = this.pickEnabledDefaultModel(providerId)
-      if (newDefault) {
-        this.configStore.setDefaultModel(newDefault.provider, newDefault.modelId)
-        return { newDefault }
-      }
-    }
-    return {}
-  }
-
-  /**
-   * 边界2 重选 defaultModel（wave3 TC4）：从启用 provider 中选首个有 model 的。
-   *
-   * 复用 listProviders（wave2：catalog ∪ custom 双源聚合 + deriveEnabled 派生 enabled），
-   * 避免重复实现聚合/凭据/catalog 兜底逻辑。excludedId 跳过被禁用的 provider 自身。
-   * 返回 undefined 表示无可用启用 provider（UI 层 wave4 拒绝禁用最后一个）。
-   */
-  private pickEnabledDefaultModel(excludedId: string): { provider: string; modelId: string } | undefined {
-    const providers = this.listProviders()
-    // B1：优先选有凭据（apiKeySet）的启用 provider 作 default，
-    // 避免重选到无凭据的 catalog provider（用户禁用某 provider 触发重选时）。
-    // 有凭据优先，找不到再 fallback 到任意启用 provider（含 ambient 认证如 bedrock）。
-    const candidates = providers.filter(p => p.id !== excludedId && p.enabled && p.models[0])
-    const withCred = candidates.find(p => p.apiKeySet)
-    if (withCred) return { provider: withCred.id, modelId: withCred.models[0].id }
-    const any = candidates[0]
-    return any ? { provider: any.id, modelId: any.models[0].id } : undefined
+    return toggleProviderEnabledImpl(this.configStore, this.authStorage, providerId, enabled)
   }
 
   deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } } {
-    // I8：删 provider 同步清 auth.json 凭据（OAuth token 是强绑定凭据，不能残留）。
-    // 幂等：auth.json 无该 provider 时 no-op。清理失败记 warn（fire-and-forget，不阻塞删除主流程）。
-    void this.authStorage?.remove(providerId).catch(err => {
-      console.warn(`[config-service] auth.json cleanup failed for ${providerId} (I8):`, err)
-    })
-    return this.configStore.removeProvider(providerId)
+    return deleteProviderImpl(this.configStore, this.authStorage, providerId)
   }
 
-  /**
-   * 按体系移除 provider（wave4 IF3 / C2）——catalog 与 custom 分体系处理。
-   *
-   * 与 deleteProvider 的区别：deleteProvider 不分体系直接 configStore.removeProvider（向后兼容
-   * 保留）；removeProviderByKind 按 ProviderInfo.kind 收窄，避免误删 catalog 定义。
-   *
-   * - catalog：定义来自 pi 二进制内置（不可删），只清用户侧状态——auth.json 凭据
-   *   （authStorage.remove）+ models.json override 条目（configStore.removeProvider 若有 override）
-   *   + enabledModels 残留。清后该 catalog provider 凭据全无，listProviders 双源聚合不再显示。
-   * - custom：定义全在 models.json，删条目即删定义——configStore.removeProvider + 清残留。
-   *
-   * newDefault：configStore.removeProvider 内部在 default 承载被删 provider 时重选并返回
-   * （wave3 既有行为），透传给 transport 层广播 config.defaults。
-   *
-   * @param kind ProviderInfo.kind（renderer 传入，wave2 聚合层权威标注）
-   */
   removeProviderByKind(providerId: string, kind: 'catalog' | 'custom'): { removed: boolean; newDefault?: { provider: string; modelId: string } } {
-    if (kind === 'catalog') {
-      // 清 auth.json 凭据（api_key / oauth token，强绑定凭据不能残留）。fire-and-forget。
-      void this.authStorage?.remove(providerId).catch(err => {
-        console.warn(`[config-service] auth.json cleanup failed for catalog provider ${providerId}:`, err)
-      })
-      // 清 models.json override 条目（若有）。无 override 时 removeProvider 返回 { removed: false }，
-      // 不影响后续清残留——catalog 的「移除」语义是清用户侧状态，override 本就可能不存在。
-      // MF1 修复（exec-review must-fix）：catalog override 承载 defaultModel 时 removeProvider 内部
-      // 重选 default + mutate settings.json，透传 newDefault 让 handler 广播 config.defaults
-      // （与 custom 分支 + deleteProvider 对称，否则 renderer 收不到重选通知）。
-      const overrideResult = this.configStore.removeProvider(providerId)
-      this.configStore.cleanEnabledModelsResidue(providerId)
-      // catalog 定义不可删（pi 二进制内置），「移除」= 清凭据/override/残留。removed=true 表示
-      // 用户侧状态已清，listProviders 双源聚合（凭据 ∪ override）将不再显示该 provider。
-      return { removed: true, newDefault: overrideResult.newDefault }
-    }
-    // custom：删 models.json 条目（= 删定义）+ 清残留。removeProvider 内部含 defaultModel 重选。
-    const result = this.configStore.removeProvider(providerId)
-    this.configStore.cleanEnabledModelsResidue(providerId)
-    return result
+    return removeProviderByKindImpl(this.configStore, this.authStorage, providerId, kind)
   }
 
   getProvider(providerId: string): { apiKey?: string; name?: string; type?: string; baseUrl?: string; models?: unknown[]; enabled?: boolean } | undefined {
-    return this.configStore.getProviderConfig(providerId)
+    return getProviderImpl(this.configStore, providerId)
   }
 
   // ── Tool permissions (persisted to ~/.xyz-agent/config.json) ───
@@ -583,42 +152,12 @@ export class ConfigService implements IConfigService {
     return this.configStore.getConfigDir()
   }
 
-  private appConfigPath(): string {
-    return join(this.configStore.getConfigDir(), 'config.json')
-  }
-
   private loadAppConfig(): Record<string, unknown> {
-    try {
-      const cp = this.appConfigPath()
-      if (existsSync(cp)) {
-        const raw = readFileSync(cp, 'utf-8')
-        const parsed = JSON.parse(raw)
-        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-          return parsed as Record<string, unknown>
-        }
-        console.error('[config-service] config.json is not a valid object, ignoring')
-      }
-    // eslint-disable-next-line taste/no-silent-catch -- intentional: config file missing/corrupt is handled by fallback
-    } catch (e) {
-      console.error('[config-service] load config.json error:', e)
-    }
-    return {}
+    return loadAppConfigImpl(this.configStore.getConfigDir())
   }
 
   private saveAppConfig(config: Record<string, unknown>): void {
-    try {
-      const cd = this.configStore.getConfigDir()
-      if (!existsSync(cd)) mkdirSync(cd, { recursive: true })
-      // 用唯一 tmp 后缀避免并发 saveAppConfig 撞固定 .tmp 文件（同 setSystemPromptConfig）。
-      atomicWrite(
-        this.appConfigPath(),
-        JSON.stringify(config, null, JSON_INDENT),
-        uniqueTmpSuffix(),
-      )
-    // eslint-disable-next-line taste/no-silent-catch -- intentional: save failure is best-effort
-    } catch (e) {
-      console.error('[config-service] save config.json error:', e)
-    }
+    saveAppConfigImpl(this.configStore.getConfigDir(), config)
   }
 
   updateToolPermissions(permissions: Record<string, string>): void {
@@ -627,8 +166,7 @@ export class ConfigService implements IConfigService {
     this.saveAppConfig(config)
   }
 
-  // ── Worktree config（git-cwt-anywhere）──
-  // 委托 worktree-config-helper（控 max-lines 500；签名 / 行为不变，对外零感知）。
+  // ── Worktree config（git-cwt-anywhere，委托 worktree-config-helper）──
   // loadAppConfig / saveAppConfig 仍为 private，通过 appConfig() 暴露 accessors 注入。
 
   private appConfig(): { load(): Record<string, unknown>; save(config: Record<string, unknown>): void } {
@@ -688,131 +226,28 @@ export class ConfigService implements IConfigService {
     setAutoRenameEnabledImpl(enabled)
   }
 
-  // ── Skill CRUD ─────────────────────────────────────────────────
+  // ── Skill CRUD（委托 skill-config-helper）─────────────────────────
 
-  /**
-   * 扫描已加载 skill：强制目录（§1.1 层 1-2）∪ discovery.json.skillDirs（层 3）。
-   * 按 ADR §1.1 优先级合并去重，填 effective（最高优先那条）+ sources（多来源 badge 链）。
-   * 强制目录靠桥接层重定向注入 pi 原生扫描；可选目录靠 discovery→settings 投影 + argv 注入。
-   */
-   
   loadSkills(projectRoot: string): SkillInfo[] {
-    // 目录发现 SSOT（skill-dirs.ts）：scanner 与 watcher 共用同一份逻辑，
-    // 从结构上保证 watch 范围 = scan 范围（修复 EMFILE 事故的 watch 整个 cwd 问题）。
-    // 相对路径（.xyz-agent/skills + discovery 相对路径）按 projectRoot resolve 成绝对路径。
-    const orderedDirs = [
-      ...resolveGlobalSkillDirs(this.configStore, getConfigDir()),
-      ...resolveProjectSkillDirs(projectRoot, this.configStore),
-    ]
-
-    // name → 按 priority 收集的所有来源（用于合并去重 + sources badge 链）
-    const byName = new Map<string, Array<{ dir: string; scanned: ScannedSkillInfo }>>()
-
-    for (const dir of orderedDirs) {
-      const expanded = expandHome(dir)
-      if (!existsSync(expanded)) continue
-      // discovery 目录可能含多个 skill 子目录，强制目录同理——用 loadSkillFromDir 处理单目录（含 SKILL.md），
-      // 但外部目录（~/.agents/skills 等）是「含多个 skill 子目录的容器」，需遍历子目录。
-      // 复用 skill-scanner 的 forEachScannedDir 语义：对容器目录遍历子目录找 SKILL.md。
-      this.collectSkillsFromDir(dir, byName)
-    }
-
-    // 合并去重：每个 name 取最高优先来源为 effective，其余进 sources badge 链
-    const results: SkillInfo[] = []
-    for (const [, entries] of byName) {
-      const primary = entries[0] // 数组按优先级顺序，第一个为最高优先
-      const scanned = primary.scanned
-      const sources = entries.length > 1
-        ? entries.map(e => ({ source: e.scanned.sourceType, sourcePath: e.scanned.sourcePath }))
-        : undefined
-      results.push({
-        id: scanned.id,
-        name: scanned.name,
-        description: scanned.description,
-        enabled: true, // ADR §5：目录在 = 启用，恒 true
-        source: scanned.sourceType,
-        triggers: scanned.triggers,
-        argumentHint: scanned.argumentHint,
-        sourcePath: scanned.sourcePath,
-        content: scanned.content,
-        fileSize: scanned.fileSize,
-        tools: scanned.tools,
-        effective: true, // 最高优先来源标生效
-        sources,
-      })
-    }
-    return results
-  }
-
-  /**
-   * 从单个目录收集 skill。dir 可能是：
-   * - 含 SKILL.md 的单 skill 目录（强制目录的典型）→ loadSkillFromDir
-   * - 含多个 skill 子目录的容器（~/.agents/skills 等）→ 遍历子目录
-   */
-  private collectSkillsFromDir(dir: string, byName: Map<string, Array<{ dir: string; scanned: ScannedSkillInfo }>>): void {
-    const expanded = expandHome(dir)
-    // 先尝试 dir 本身含 SKILL.md（单 skill 目录）
-    const direct = loadSkillFromDir(dir)
-    if (direct) {
-      this.pushSkillSource(byName, dir, direct)
-      return
-    }
-    // 否则当作容器，遍历子目录
-    if (!existsSync(expanded)) return
-    try {
-      const names = readdirSync(expanded)
-      for (const name of names) {
-        const childDir = join(expanded, name)
-        try {
-          if (!statSync(childDir).isDirectory()) continue
-        } catch { continue }
-        const childScanned = loadSkillFromDir(join(dir, name))
-        if (childScanned) this.pushSkillSource(byName, join(dir, name), childScanned)
-      }
-    // eslint-disable-next-line taste/no-silent-catch -- 容器不可读则跳过
-    } catch {
-      // dir 不可读，跳过
-    }
-  }
-
-  /** 把一个 skill 来源按优先级顺序追加进 byName（靠前目录 = 高优先，先入为主）。 */
-  private pushSkillSource(
-    byName: Map<string, Array<{ dir: string; scanned: ScannedSkillInfo }>>,
-    dir: string,
-    scanned: ScannedSkillInfo,
-  ): void {
-    const list = byName.get(scanned.name) ?? []
-    list.push({ dir, scanned })
-    byName.set(scanned.name, list)
+    return loadSkillsImpl(this.configStore, projectRoot)
   }
 
   /** No-op: skills are discovered from discovery.json + forced dirs, not independently persisted. */
-   
-  saveSkills(_projectRoot: string, _skills: SkillInfo[]): void {
-    // no-op — skill persistence is managed by discovery.json SSOT (ADR-0021 §1)
+  saveSkills(projectRoot: string, skills: SkillInfo[]): void {
+    saveSkillsImpl(projectRoot, skills)
   }
 
   /** @deprecated ADR-0021 §5 目录级管道：文件级注册已废弃，保留兼容期。新代码用 setSkillDirs。 */
   upsertSkill(skill: SkillInfo): void {
-    console.warn('[config-service] upsertSkill is deprecated (ADR-0021 §5). Use setSkillDirs for directory-level config.')
-    if (skill.sourcePath) {
-      const dir = dirname(skill.sourcePath)
-      this.configStore.addSkillPath(dir)
-    }
+    upsertSkillImpl(this.configStore, skill)
   }
 
   /** @deprecated ADR-0021 §5 目录级管道：文件级删除已废弃，保留兼容期。新代码用 setSkillDirs。 */
   deleteSkill(skillId: string): void {
-    console.warn('[config-service] deleteSkill is deprecated (ADR-0021 §5). Use setSkillDirs for directory-level config.')
-    const skills = this.loadSkills(this.projectRoot)
-    const skill = skills.find(s => s.id === skillId)
-    if (skill?.sourcePath) {
-      const dir = dirname(skill.sourcePath)
-      this.configStore.removeSkillPath(dir)
-    }
+    deleteSkillImpl(this.configStore, this.projectRoot, skillId)
   }
 
-  // ── Skill 加载路径（ADR-0021 §1 discovery.json v2 SSOT）──
+  // ── Skill 加载路径（ADR-0021 §1 discovery.json v2 SSOT，单行委托 configStore）──
 
   setSkillDirs(dirs: SkillDirConfig[]): void {
     this.configStore.setSkillPaths(dirs)
@@ -854,76 +289,35 @@ export class ConfigService implements IConfigService {
     this.configStore.migrateSettingsSkillsToDiscovery()
   }
 
-  // ── Agent CRUD ─────────────────────────────────────────────────
+  // ── Agent CRUD（委托 agent-config-helper）────────────────────────
 
-  /**
-   * 扫描已加载 agent：强制目录（§1.1 层 1-2）∪ discovery.json.agentDirs（层 3）。
-   * 多目录扫描经 IConfigStore.listAgentFiles(dirs)（同名按数组顺序去重），
-   * 转 AgentInfo（目录在 = 启用，ADR §5）。
-   *
-   * 强制目录含 pi 实际路径 <piAgentDir>/agents（pi 重定向后的真实扫描位置，
-   * 旧 listAgentFiles() 默认扫此）+ ADR 项目/全局逻辑路径（存在则扫）。
-   */
-   
-  loadAgents(_projectRoot: string): AgentInfo[] {
-    const orderedDirs = [
-      join(this.configStore.getPiAgentDir(), 'agents'), // pi 实际路径（最高优先，真实 agent 落点）
-      FORCED_PROJECT_AGENT_DIR,
-      forcedGlobalAgentDir(),
-      ...this.configStore.getAgentDirs(),
-    ].map(expandHome).filter(d => existsSync(d))
-
-    // listAgentFiles(dirs) 已按数组顺序去重（靠前胜出），单来源即生效无需额外 sources
-    const files = this.configStore.listAgentFiles(orderedDirs)
-    return files.map(f => {
-      const { name, description } = parseAgentMd(f.content)
-      // W1：sourceType 从 agent-crud 推断结果读（按 discovered 目录推断，如 ~/.claude/agents → 'claude'），
-      // 不再恒 'pi'——否则 Settings Agent 页按 Claude/Agents tab 过滤永远空。
-      // ?? 'pi' 兜底：向上兼容旧 entry 无 sourceType 字段。
-      const sourceType = f.sourceType ?? 'pi'
-      return {
-        id: f.name,
-        name: name || f.name,
-        description: description || '',
-        enabled: true, // ADR §5：目录在 = 启用，恒 true
-        modelStrategy: 'auto',
-        source: sourceType,
-        sourceType,
-        content: f.content,
-        tools: [],
-        effective: true,
-      }
-    })
+  loadAgents(projectRoot: string): AgentInfo[] {
+    return loadAgentsImpl(this.configStore, projectRoot)
   }
 
   /** No-op: agents are discovered from discovery.json + forced dirs, not independently persisted. */
-   
-  saveAgents(_projectRoot: string, _agents: AgentInfo[]): void {
-    // no-op — agent persistence is managed as .md files + discovery.json SSOT (ADR-0021 §1)
+  saveAgents(projectRoot: string, agents: AgentInfo[]): void {
+    saveAgentsImpl(projectRoot, agents)
   }
 
   /** @deprecated ADR-0021 §5 目录级管道：文件级写入已废弃，保留兼容期。新代码用 setAgentDirs。 */
   upsertAgent(agent: AgentInfo): void {
-    console.warn('[config-service] upsertAgent is deprecated (ADR-0021 §5). Use setAgentDirs for directory-level config.')
-    if (agent.content) {
-      this.configStore.writeAgentFile(agent.name || agent.id, agent.content)
-    }
+    upsertAgentImpl(this.configStore, agent)
   }
 
   /** @deprecated ADR-0021 §5 目录级管道：文件级删除已废弃，保留兼容期。新代码用 setAgentDirs。 */
   deleteAgent(agentId: string): void {
-    console.warn('[config-service] deleteAgent is deprecated (ADR-0021 §5). Use setAgentDirs for directory-level config.')
-    this.configStore.deleteAgentFile(agentId)
+    deleteAgentImpl(this.configStore, agentId)
   }
 
-  // ── Scanning ───────────────────────────────────────────────────
+  // ── Scanning（委托 scanner）──────────────────────────────────────
 
   scanSkills(sources: string[], existingIds: Set<string>): ScannedSkillInfo[] {
-    return scanSkills(sources, existingIds)
+    return scanSkillsImpl(sources, existingIds)
   }
 
   scanAgents(sources: string[], existingIds: Set<string>): ScannedAgentInfo[] {
-    return scanAgents(sources, existingIds)
+    return scanAgentsImpl(sources, existingIds)
   }
 
   // ── 迁移源检测（W1，cw-2026-07-26-migration-other-agents）──
@@ -947,117 +341,31 @@ export class ConfigService implements IConfigService {
     return applyImportImpl(importId, selectedIds, this.authStorage)
   }
 
-  // ── System prompt config（FR-6/FR-7，ADR-0044）──
+  // ── System prompt config（FR-6/FR-7，ADR-0044，委托 system-prompt-config-helper）──
   // 独立文件 system-prompt.json（不复用 config.json）：replace/append 两段提示词配置，
   // 插件读此文件热生效（replace 启动期注入、append 每轮 before_agent_start 注入）。
-  // 默认值 / 合并纯逻辑见 config-merge-helpers.ts。
-
-  private systemPromptPath(): string {
-    return join(this.configStore.getConfigDir(), 'system-prompt.json')
-  }
 
   getSystemPromptConfig(): { config: SystemPromptConfig; corrupted: boolean } {
-    const cp = this.systemPromptPath()
-    if (!existsSync(cp)) {
-      return { config: defaultSystemPromptConfig(), corrupted: false }
-    }
-    let raw: unknown
-    try {
-      raw = JSON.parse(readFileSync(cp, 'utf-8'))
-    } catch {
-      return { config: defaultSystemPromptConfig(), corrupted: true }
-    }
-    return { config: mergeSystemPromptConfig(raw), corrupted: false }
+    return getSystemPromptConfigImpl(this.configStore.getConfigDir())
   }
 
   setSystemPromptConfig(config: SystemPromptConfig): { ok: boolean; error?: string } {
-    if (config.replace.prompt.length > SYSTEM_PROMPT_MAX_LENGTH) {
-      return {
-        ok: false,
-        error: `replace prompt exceeds max length (${SYSTEM_PROMPT_MAX_LENGTH})`,
-      }
-    }
-    // append 同样校验长度：append 虽不走 argv（无 Windows 32k 限制），但无上限会导致
-    // 每轮拼进 systemPrompt 的 token 失控。复用同一上限保持双卡 UX 一致。
-    if (config.append.prompt.length > SYSTEM_PROMPT_MAX_LENGTH) {
-      return {
-        ok: false,
-        error: `append prompt exceeds max length (${SYSTEM_PROMPT_MAX_LENGTH})`,
-      }
-    }
-    const cd = this.configStore.getConfigDir()
-    if (!existsSync(cd)) mkdirSync(cd, { recursive: true })
-    // 用唯一 tmp 后缀避免并发 setSystemPromptConfig 撞固定 .tmp 文件
-    // （两次并发写入会共用同一 system-prompt.json.tmp，后写的 writeFileSync 覆盖前者数据）。
-    atomicWrite(
-      this.systemPromptPath(),
-      JSON.stringify(config, null, JSON_INDENT),
-      uniqueTmpSuffix(),
-    )
-    return { ok: true }
+    return setSystemPromptConfigImpl(this.configStore.getConfigDir(), config)
   }
 
   getReplaceSystemPrompt(): string | undefined {
-    const { config } = this.getSystemPromptConfig()
-    if (config.replace.enabled && config.replace.prompt.trim() !== '') {
-      // 防御性长度兜底：setSystemPromptConfig 写入期已校验上限，但 replace/append 启用态切换
-      // 或外部直接篡改 system-prompt.json 可能写入超长 prompt。原样返回会让超长 prompt 进
-      // pi spawn argv，触发 Windows 32k 命令行截断。降级为不注入（返回 undefined）比注入
-      // 残缺内容更安全。错误信息风格与 setSystemPromptConfig 一致。
-      if (config.replace.prompt.length > SYSTEM_PROMPT_MAX_LENGTH) {
-        console.warn(
-          `[config-service] replace prompt exceeds max length (${SYSTEM_PROMPT_MAX_LENGTH}), falling back to undefined (replace disabled this run)`,
-        )
-        return undefined
-      }
-      return config.replace.prompt
-    }
-    return undefined
+    return getReplaceSystemPromptImpl(this.configStore.getConfigDir())
   }
 
-  // ── Terminal config（Phase 6 settings）──
+  // ── Terminal config（Phase 6 settings，委托 terminal-config-helper）──
   // 独立文件 terminal.json（不复用 config.json）：shell/字体/scrollback 等终端偏好。
   // 仅对新 spawn 的 PTY 生效（已启动的 PTY 不动态切换 shell），由 TerminalService.resolveShell 读取。
-  // 默认值 / 合并纯逻辑见 config-merge-helpers.ts。
-
-  private terminalPath(): string {
-    return join(this.configStore.getConfigDir(), 'terminal.json')
-  }
 
   getTerminalConfig(): { config: TerminalConfig; corrupted: boolean } {
-    const tp = this.terminalPath()
-    if (!existsSync(tp)) {
-      return { config: defaultTerminalConfig(), corrupted: false }
-    }
-    let raw: unknown
-    try {
-      raw = JSON.parse(readFileSync(tp, 'utf-8'))
-    } catch {
-      return { config: defaultTerminalConfig(), corrupted: true }
-    }
-    return { config: mergeTerminalConfig(raw), corrupted: false }
+    return getTerminalConfigImpl(this.configStore.getConfigDir())
   }
 
   setTerminalConfig(config: TerminalConfig): { ok: boolean; error?: string } {
-    // 校验数值字段的合理范围（防异常值写盘后破坏 xterm 渲染或终端启动）
-    if (!Number.isFinite(config.fontSize) || config.fontSize < FONT_SIZE_MIN || config.fontSize > FONT_SIZE_MAX) {
-      return { ok: false, error: `fontSize out of range (${FONT_SIZE_MIN}-${FONT_SIZE_MAX}): ${config.fontSize}` }
-    }
-    if (!Number.isFinite(config.scrollback) || config.scrollback < 0 || config.scrollback > SCROLLBACK_MAX) {
-      return { ok: false, error: `scrollback out of range (0-${SCROLLBACK_MAX}): ${config.scrollback}` }
-    }
-    const validCursorStyles: TerminalConfig['cursorStyle'][] = ['block', 'underline', 'bar']
-    if (!validCursorStyles.includes(config.cursorStyle)) {
-      return { ok: false, error: `invalid cursorStyle: ${config.cursorStyle}` }
-    }
-    const cd = this.configStore.getConfigDir()
-    if (!existsSync(cd)) mkdirSync(cd, { recursive: true })
-    // 用唯一 tmp 后缀避免并发 setTerminalConfig 撞固定 .tmp 文件（同 setSystemPromptConfig）
-    atomicWrite(
-      this.terminalPath(),
-      JSON.stringify(config, null, JSON_INDENT),
-      uniqueTmpSuffix(),
-    )
-    return { ok: true }
+    return setTerminalConfigImpl(this.configStore.getConfigDir(), config)
   }
 }
