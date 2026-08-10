@@ -26,10 +26,12 @@ description: >-
 
 ```bash
 bash .agents/skills/dev-link/pi-link.sh subagent-workflow      # symlink 本地到 ~/.pi/agent/extensions/
-bash .agents/skills/dev-link/pi-unlink.sh subagent-workflow    # rm symlink
+bash .agents/skills/dev-link/pi-unlink.sh subagent-workflow    # rm symlink + 自动恢复 npm 版本
 ```
 
-**机制**：symlink 本地源码 → `~/.pi/agent/extensions/pi-<short>`（globalExtDir，loader 第 2 步扫描，pi-statusline 同模式）。同时清 settings.json `packages` 里该 extension 的残留（`npm:` 源 + 旧 configuredPaths 本地路径），避免 globalExtDir + configuredPaths 两源冲突。
+**机制**：
+- **link**：symlink 本地源码 → `~/.pi/agent/extensions/pi-<short>`（globalExtDir，loader 第 2 步扫描，pi-statusline 同模式）。同时清 settings.json `packages` 里该 extension 的残留（`npm:` 源 + 旧 configuredPaths 本地路径），避免 globalExtDir + configuredPaths 两源冲突。
+- **unlink**：rm symlink + 自动 `pi install npm:@zhushanwen/pi-<short>` 恢复 npm 版本（需联网；失败提示手动命令）。
 
 **生效**：新建 pi session（当前 session 已加载旧版，不重扫）。**注意 pi list 不显示** globalExtDir symlink——pi list 只列 `packages` 配置的，不列自动发现源，但 loader 会加载（正常现象）。
 
@@ -43,6 +45,8 @@ set -a && source .env.dev-extensions && set +a && pnpm dev
 ```
 
 **机制**：`XYZ_EXTENSION_PATHS` 经 `ENV_WHITELIST_PREFIXES`（`XYZ_` 前缀）注入 xyz-agent runtime → pi 子进程。改源码后 xyz-agent 内新建 session 即生效（无需重启 app）。
+- **link**：追加源码路径前，先检查并清理 dev 数据目录（`~/.xyz-agent-dev/npm/node_modules/@zhushanwen/pi-<short>`）下已有的 npm 安装，避免与本地源码并存（user 源优先级高于 settings 源，本地源码本就生效；清理为显式归位）。
+- **unlink**：从 `XYZ_EXTENSION_PATHS` 移除路径，extension 回归 npm 版本（settings 源）。mandatory 包会在 xyz-agent 重启时由 mandatory 机制自动重装。
 
 **生效**：xyz-agent dev 模式 + 新建 session。**当前 pi CLI session 不受影响**（不读这个 env）。
 
@@ -67,7 +71,7 @@ bash .agents/skills/dev-link/link-list.sh
 
 - `.env.dev-extensions` 不进 git（xyz 模式，`.gitignore` 的 `.env.*` 覆盖）；pi 模式改 `~/.pi/agent/settings.json`（pi 自己管理）
 - **两模式都需新建 session 生效**（运行中的 session 不重扫 extension 源）
-- **pi 模式 `pi-unlink` 需联网**（`pi install npm:` 恢复要 npm install）；离线恢复会失败
+- **pi 模式 `pi-unlink` 自动恢复 npm 版本需联网**（`pi install npm:`）；离线时恢复失败会提示手动命令，symlink 已删除不影响
 - **merge/删 worktree 前清理**：两模式 link 都指向 worktree 的 `extensions/` 源码，worktree 删了 pi 加载报 ENOENT。pi 模式 `pi-unlink.sh <pkg>`、xyz 模式 `link-npm.sh <pkg>` 清理
 - **quota-providers 是库包不是 extension**，脚本自动跳过
 - 多 worktree：脚本用 `git rev-parse --show-toplevel` 定位 `extensions/`，worktree 切换后路径变，需在该 worktree 重新 link

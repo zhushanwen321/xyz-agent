@@ -113,6 +113,16 @@ main() {
 			continue
 		fi
 
+		# 检查并清理已有 npm 安装（dev 数据目录），避免与本地源码并存。
+		# 注：user 源（XYZ_EXTENSION_PATHS，优先级 2）高于 settings 源（npm 安装，优先级 4），
+		#     本地源码本就优先；此清理为显式归位 + 避免 mandatory 重装前的歧义窗口。
+		local data_dir="${XYZ_AGENT_DATA_DIR:-$HOME/.xyz-agent-dev}"
+		local npm_pkg_dir="$data_dir/npm/node_modules/$SCOPE/pi-$short"
+		if [ -d "$npm_pkg_dir" ]; then
+			rm -rf "$npm_pkg_dir"
+			echo "  · 清理已有 npm 安装：$npm_pkg_dir"
+		fi
+
 		# 追加到 XYZ_EXTENSION_PATHS
 		# 读取当前值（从 ENV_FILE 解析，格式：XYZ_EXTENSION_PATHS=path1:path2）
 		local current=""
