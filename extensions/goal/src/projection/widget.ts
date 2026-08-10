@@ -90,7 +90,7 @@ function getElapsedSeconds(state: GoalRuntimeState): number {
 	return state.timeUsedSeconds;
 }
 
-function formatMinutes(seconds: number): string {
+export function formatMinutes(seconds: number): string {
 	const mins = Math.floor(seconds / SECONDS_PER_MINUTE);
 	const secs = Math.floor(seconds % SECONDS_PER_MINUTE);
 	return secs > 0 ? `${mins}m${secs}s` : `${mins}m`;

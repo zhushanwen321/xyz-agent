@@ -78,15 +78,13 @@ function handleStatus(session: GoalSession, ctx: ExtensionContext): void {
 	if (isActiveStatus(state.status)) {
 		tickState(state);
 	}
-	const timeMins = Math.floor(state.timeUsedSeconds / SECONDS_PER_MINUTE);
-	const timeSecs = Math.floor(state.timeUsedSeconds % SECONDS_PER_MINUTE);
 	const lines: Array<string | null> = [
 		state.slug ? `Slug: ${state.slug}` : null,
 		`Objective: ${state.objective}`,
 		state.successCriteria ? `Success criteria: ${state.successCriteria}` : null,
 		`Status: ${state.status}`,
 		`Turn: ${state.currentTurnIndex}`,
-		`Time elapsed: ${timeMins}m${timeSecs}s`,
+		`Time elapsed: ${formatDuration(state.timeUsedSeconds)}`,
 		state.budget.tokenBudget ? `Token: ${state.tokensUsed}/${state.budget.tokenBudget}` : null,
 		`Goal ID: ${state.goalId}`,
 	];
@@ -177,6 +175,39 @@ function handleResume(pi: ExtensionAPI, session: GoalSession, ctx: ExtensionCont
 
 // ── /goal history ─────────────────────────────────────
 
+/**
+ * 把秒数格式化为 `${mins}m${secs}s`（始终带秒，与 widget formatMinutes 区分——
+ * 后者 secs=0 时省略秒）。history/status 行用此格式保持时间精度。
+ */
+export function formatDuration(seconds: number): string {
+	const mins = Math.floor(seconds / SECONDS_PER_MINUTE);
+	const secs = Math.floor(seconds % SECONDS_PER_MINUTE);
+	return `${mins}m${secs}s`;
+}
+
+/**
+ * 渲染单条 goal-history entry 为 2 行（标题行 + 详情行）。纯函数：
+ * icon 映射（complete→✓/cancelled→✗/budget_limited→⊗/else→?）+
+ * title（slug 优先，fallback objective 截断到 OBJECTIVE_DISPLAY_LIMIT）+ 耗时。
+ */
+export function formatHistoryEntry(entry: GoalHistoryEntry, index: number): string[] {
+	const icon =
+		entry.status === "complete"
+			? "✓"
+			: entry.status === "cancelled"
+				? "✗"
+				: entry.status === "budget_limited"
+					? "⊗"
+					: "?";
+	const title = entry.slug ?? (entry.objective.length > OBJECTIVE_DISPLAY_LIMIT
+		? `${entry.objective.slice(0, OBJECTIVE_TRUNCATE_KEEP)}...`
+		: entry.objective);
+	return [
+		`${index + 1}. ${icon} ${title}`,
+		`   ${formatDuration(entry.elapsedSeconds)} | ${entry.status}`,
+	];
+}
+
 function handleHistory(ctx: ExtensionContext): void {
 	const entries = ctx.sessionManager.getEntries();
 	const historyEntries = entries.filter(
@@ -196,22 +227,7 @@ function handleHistory(ctx: ExtensionContext): void {
 	sorted.forEach((entry, i) => {
 		const h = entry.data;
 		if (!h) return;
-		const icon =
-			h.status === "complete"
-				? "✓"
-				: h.status === "cancelled"
-					? "✗"
-					: h.status === "budget_limited"
-						? "⊗"
-						: "?";
-		// GAP-5: 标题优先用 slug（紧凑），无 slug fallback objective 截断（旧 entry 兼容）
-		const title = h.slug ?? (h.objective.length > OBJECTIVE_DISPLAY_LIMIT
-			? `${h.objective.slice(0, OBJECTIVE_TRUNCATE_KEEP)}...`
-			: h.objective);
-		const mins = Math.floor(h.elapsedSeconds / SECONDS_PER_MINUTE);
-		const secs = Math.floor(h.elapsedSeconds % SECONDS_PER_MINUTE);
-		lines.push(`${i + 1}. ${icon} ${title}`);
-		lines.push(`   ${mins}m${secs}s | ${h.status}`);
+		lines.push(...formatHistoryEntry(h, i));
 	});
 	ctx.ui.notify(lines.join("\n"), "info");
 }

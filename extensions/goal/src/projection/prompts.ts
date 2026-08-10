@@ -19,7 +19,7 @@ import type { GoalRuntimeState } from "../engine/types";
 
 // ── XML 转义（防止 objective 中的 XML 标签破坏 prompt 结构）──
 
-function escapeXmlText(input: string): string {
+export function escapeXmlText(input: string): string {
 	return input
 		.replace(/&/g, "&amp;")
 		.replace(/</g, "&lt;")
