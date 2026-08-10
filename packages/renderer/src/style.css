@@ -494,9 +494,13 @@ textarea {
     transition-duration: 0.01ms !important;
     transition-delay: 0ms !important;
   }
-  /* 保留辅助理解的非位移过渡（覆盖上面的 0.01ms） */
+  /* 保留辅助理解的非位移过渡（覆盖上面的 0.01ms）。
+   * transition-property 必须 !important：组件级 transition-* 类特异性 (0,1,0)
+   * 高于元素选择器 (0,0,0)，无 !important 时白名单被组件原属性（含 transform）覆盖，
+   * 位移过渡不瞬切（Plan 05 F2 修复）。transform 移出过渡属性 → 位移瞬切；
+   * opacity/color 等保留 120ms 温和过渡。 */
   *, *::before, *::after {
-    transition-property: opacity, color, background-color, border-color, fill, stroke, box-shadow, filter;
+    transition-property: opacity, color, background-color, border-color, fill, stroke, box-shadow, filter !important;
     transition-duration: var(--duration-fast) !important;
   }
 }

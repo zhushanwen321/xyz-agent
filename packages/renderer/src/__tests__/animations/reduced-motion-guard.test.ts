@@ -13,6 +13,7 @@ const read = (rel: string) => readFileSync(resolve(rendererSrc, rel), 'utf-8')
 
 const taijiLogo = read('src/components/icons/TaijiLogo.vue')
 const styleCss = read('src/style.css')
+const tailwindConfig = read('tailwind.config.ts')
 
 /** 递归收集 src/components 下所有 .vue 文件（TC3 局部守卫扫描用） */
 function collectVueFiles(dir: string, acc: string[] = []): string[] {
@@ -25,19 +26,25 @@ function collectVueFiles(dir: string, acc: string[] = []): string[] {
 }
 
 describe('plan 05 reduced-motion 兜底 + TaijiLogo 守卫', () => {
-  it('TC1: logo spin 由 :class 注入而非内联 style（motion-reduce:animate-none 可覆盖）', () => {
-    // animation 移到动态 class（Tailwind arbitrary animate-[taiji-spin_...]）
-    expect(taijiLogo).toContain(':class="spin ? `animate-[taiji-spin_${duration}s_linear_infinite]` : \'\'"')
-    // :style 只留 transformOrigin，不再含 animation 键
-    expect(taijiLogo).toContain(':style="{ transformOrigin: \'center\' }"')
+  it('TC1: logo spin 由静态类注入（Tailwind JIT 可生成）+ inline 覆盖时长', () => {
+    // 静态类 animate-taiji-spin（config animation map 注册，非模板字面量——
+    // 模板字面量 arbitrary 类 JIT 不生成，F1 修复前 logo 旋转整体失效）
+    expect(taijiLogo).toContain(":class=\"spin ? 'animate-taiji-spin' : ''\"")
+    // :style 用 inline animation-duration 覆盖时长（默认 8s 可变），transformOrigin 保留
+    expect(taijiLogo).toContain(":style=\"spin ? { animationDuration: `${duration}s`, transformOrigin: 'center' } : undefined\"")
+    expect(taijiLogo).not.toContain('animate-[taiji-spin_${duration}')
     expect(taijiLogo).not.toContain('animation: `taiji-spin')
+    // config 注册静态简写，确保 Tailwind 构建产物含 .animate-taiji-spin
+    expect(tailwindConfig).toContain("'taiji-spin': 'taiji-spin 8s linear infinite'")
     // 静态 class 保留（局部守卫 + 布局类）
     expect(taijiLogo).toContain('class="block shrink-0 motion-reduce:animate-none"')
   })
 
   it('TC2: style.css reduced-motion 块白名单保留 opacity/color 等辅助过渡', () => {
+    // transition-property 必须 !important（组件级类特异性 (0,1,0) > 元素选择器 (0,0,0)，
+    // 无 !important 时 transform 仍在过渡属性 → 位移不瞬切，F2 修复）
     expect(styleCss).toContain(
-      'transition-property: opacity, color, background-color, border-color, fill, stroke, box-shadow, filter',
+      'transition-property: opacity, color, background-color, border-color, fill, stroke, box-shadow, filter !important',
     )
     expect(styleCss).toContain('transition-duration: var(--duration-fast) !important')
     // 瞬切兜底仍在（动画 + 位移过渡清零）
@@ -62,7 +69,7 @@ describe('plan 05 reduced-motion 兜底 + TaijiLogo 守卫', () => {
     expect(otherGuards.length).toBeGreaterThan(0)
   })
 
-  it('TC4: @keyframes taiji-spin 定义存在（arbitrary animation 引用有效）', () => {
+  it('TC4: @keyframes taiji-spin 定义存在（animate-taiji-spin 引用有效）', () => {
     expect(styleCss).toContain('@keyframes taiji-spin')
   })
 })

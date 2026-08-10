@@ -74,7 +74,7 @@ class="block shrink-0 motion-reduce:animate-none"
   }
   /* 保留辅助理解的非位移过渡（覆盖上面的 0.01ms） */
   *, *::before, *::after {
-    transition-property: opacity, color, background-color, border-color, fill, stroke, box-shadow, filter;
+    transition-property: opacity, color, background-color, border-color, fill, stroke, box-shadow, filter !important;
     transition-duration: var(--duration-fast) !important;
   }
 }
@@ -83,6 +83,7 @@ class="block shrink-0 motion-reduce:animate-none"
 要点：
 - 第一组规则把所有 transition 压到瞬切（运动属性 transform/left/width 等瞬切 = 无位移动画，符合 reduce 语义）。
 - 第二组规则用 `transition-property` 白名单覆盖回 opacity/color/bg/border/fill/stroke/box-shadow/filter，时长恢复 120ms——这些是 AUDIT §6 要保留的「aid comprehension」过渡。
+  - **[HISTORICAL] transition-property 必须带 `!important`**（F2 修复）：组件级 transition-* 类特异性 (0,1,0) 高于元素选择器 (0,0,0)，无 !important 时白名单被组件原属性（含 transform）覆盖，位移过渡在 reduce 下仍以 120ms 动画（比修复前 0.01ms 瞬切反而更慢），白名单机制失效。
 - transform / translate / top / left / width / height / margin / padding 等运动属性不在白名单 → 保持瞬切。
 
 ## Repo conventions to follow

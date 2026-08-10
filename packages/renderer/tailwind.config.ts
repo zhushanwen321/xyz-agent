@@ -107,6 +107,10 @@ export default {
         wiggle: 'wiggle 1.2s ease-in-out infinite',
         'pulse-strong': 'pulse-strong 1.4s ease-in-out infinite',
         'notice-in': 'notice-in 200ms var(--ease)',
+        // 品牌旋转（太极「周而复始」）：静态简写注册供 JIT 生成；TaijiLogo 用 inline
+        // animation-duration 覆盖时长（default 8s，可传 prop）。motion-reduce:animate-none
+        // 在 class 层覆盖 animation 简写（name 置 none），inline duration 不影响 name。
+        'taiji-spin': 'taiji-spin 8s linear infinite',
       },
     },
   },
