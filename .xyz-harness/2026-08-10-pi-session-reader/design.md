@@ -298,12 +298,8 @@ handler 内按 action 校验必填项（缺失抛 F5）。
 **算法 1：token 预算渲染（render.ts）——目标：固定预算内最大化信息密度，而非先到先截。**
 
 1. 先扫一遍 entry 建 turn 列表（算法 3），得 `expectedTurns`；`perTurnBudget = budget / expectedTurns`（默认 `budget = 2000` token，对应 V2 的 ≤2K）
-2. 每行 TurnBrief 按固定结构渲染，各字段独立截断：
-   - `userBrief`：user message text 截 60 字符，超出 `…`
-   - `toolSummary`：聚合该 turn 内所有 toolCall.name 计数 → `bash×2,read×2`（无 toolCall 则空）
-   - `assistantBrief`：assistant text 截 80 字符
-   - `omittedBytes`：该 turn 省略的 toolResult + thinking 字节数 → `[48KB omitted]`
-3. 单行超 `perTurnBudget` → 降级序（保骨架，砍细节）：先砍 `assistantBrief` → 再砍 `toolSummary` → 保留 `T### HH:MM userBrief [N KB omitted]`
+2. 每行 L1 文本行 = `T### HH:MM userBrief toolSummary [N KB omitted]`（**不含 assistantBrief**）。各字段独立截断：`userBrief`（user text 截 60 字符）、`toolSummary`（toolCall.name 计数 → `bash×2,read×2`）、`omittedBytes`（toolResult+thinking 字节 → `[48KB omitted]`）。`TurnBrief.assistantBrief`（assistant text 截 80 字符）**仍计算并存入字段**供 details 编程消费，但不进 L1 文本行——L1 是「定位目录」，userBrief（问什么）+ toolSummary（用什么工具）+ omitted（多大量）足以定位，assistant 内容走 L2 expand / L3 detail。此口径匹配 P-outline 实测基线（~500 token，不含 assistant）；含 assistant 会到 ~979 token 超 V3 的 600。
+3. 单行超 `perTurnBudget` → 降级序（保骨架，砍细节）：砍 `toolSummary` → 保留骨架 `T### HH:MM userBrief [N KB omitted]`
 4. 总行数仍超预算 → 截断并追加 `[还有 N 轮未显示，用 detail 或调大 budget]`
 5. `granularity:"entry"` 时不做 turn 聚合，每 entry 一行（D-1 兜底，用于坏 session 调试等场景）
 
