@@ -13,8 +13,14 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { describe, expect, it } from "vitest";
 
 import { handleGoalCommand } from "../adapters/command-adapter";
+import {
+	MAX_HISTORY_ENTRIES,
+	OBJECTIVE_DISPLAY_LIMIT,
+	OBJECTIVE_TRUNCATE_KEEP,
+} from "../constants";
 import { createGoalState } from "../engine/goal";
 import type { GoalRuntimeState } from "../engine/types";
+import type { GoalHistoryEntry, SessionEntryLike } from "../ports";
 import { createGoalSession } from "../session";
 
 // ── Fake pi / ctx ────────────────────────────────────
@@ -38,7 +44,7 @@ interface FakeHarness {
 	ctxCalls: RecordedCall[];
 }
 
-function makeHarness(): FakeHarness {
+function makeHarness(entries: SessionEntryLike[] = []): FakeHarness {
 	const piCalls: RecordedCall[] = [];
 	const ctxCalls: RecordedCall[] = [];
 	const states: unknown[] = [];
@@ -72,7 +78,7 @@ function makeHarness(): FakeHarness {
 			setWidget: () => {},
 			theme: { fg: (_c: string, t: string) => t, bold: (t: string) => t },
 		},
-		sessionManager: { getEntries: () => [], getBranch: () => undefined },
+		sessionManager: { getEntries: () => entries, getBranch: () => undefined },
 	} as unknown as ExtensionContext;
 
 	return { pi, ctx, states, history, piCalls, ctxCalls };
@@ -87,6 +93,21 @@ function makeActiveState(overrides?: Partial<GoalRuntimeState>): GoalRuntimeStat
 		timeStartedAt: 0, // 默认关闭时间累计
 		...overrides,
 	};
+}
+
+// 构造 goal-history custom entry（模拟 Pi sessionManager.getEntries 返回的 append-only 历史）
+function makeHistoryEntries(...overrides: Partial<GoalHistoryEntry>[]): SessionEntryLike[] {
+	return overrides.map((o, i) => {
+		const data: GoalHistoryEntry = {
+			goalId: `g${i}`,
+			objective: `objective ${i}`,
+			status: "complete",
+			elapsedSeconds: 60,
+			timestamp: 1000 + i,
+			...o,
+		};
+		return { type: "custom", customType: "goal-history", data };
+	});
 }
 
 function allCalls(h: FakeHarness): RecordedCall[] {
@@ -384,9 +405,75 @@ describe("handleGoalCommand — set (提示词触发器 + #11/D25 拒绝非终�
 // ── /goal history ────────────────────────────────────
 
 describe("handleGoalCommand — history", () => {
-	it("无 history → 提示", async () => {
+	it("无 history → 提示 No goal history", async () => {
 		const h = makeHarness();
 		await handleGoalCommand(h.pi, createGoalSession(), "history", h.ctx);
 		expect(notifyText(h).some((t) => t.includes("No goal history"))).toBe(true);
+	});
+
+	// icon 映射 + duration + status 三件套（核心渲染分支，原零覆盖）
+	it.each([
+		["complete → ✓", "complete", "✓"],
+		["cancelled → ✗", "cancelled", "✗"],
+		["budget_limited → ⊗", "budget_limited", "⊗"],
+		["未知 status → ?", "active", "?"],
+	])("有 history → notify 含 icon + duration + status（%s）", async (_name, status, icon) => {
+		const entries = makeHistoryEntries({
+			status,
+			objective: `${status} goal`,
+			elapsedSeconds: 90,
+		});
+		const h = makeHarness(entries);
+		await handleGoalCommand(h.pi, createGoalSession(), "history", h.ctx);
+		const text = notifyText(h).join("\n");
+		expect(text).toContain(icon);
+		expect(text).toContain(`| ${status}`);
+		expect(text).toContain("1m30s"); // formatDuration(90) = 始终带秒
+	});
+
+	it("有 slug → 标题用 slug（不显示 objective）", async () => {
+		const entries = makeHistoryEntries({
+			slug: "my-slug",
+			objective: "ignored long objective text",
+		});
+		const h = makeHarness(entries);
+		await handleGoalCommand(h.pi, createGoalSession(), "history", h.ctx);
+		const text = notifyText(h).join("\n");
+		expect(text).toContain("my-slug");
+		expect(text).not.toContain("ignored long objective text");
+	});
+
+	it("无 slug + 长 objective → 截断到 OBJECTIVE_TRUNCATE_KEEP + ...", async () => {
+		const long = "x".repeat(OBJECTIVE_DISPLAY_LIMIT + 10);
+		const entries = makeHistoryEntries({ objective: long, slug: undefined });
+		const h = makeHarness(entries);
+		await handleGoalCommand(h.pi, createGoalSession(), "history", h.ctx);
+		const text = notifyText(h).join("\n");
+		expect(text).toContain(`${"x".repeat(OBJECTIVE_TRUNCATE_KEEP)}...`);
+	});
+
+	it("多条 history → 倒序渲染（最近在前）+ 序号 1..N", async () => {
+		const entries = makeHistoryEntries({ slug: "first" }, { slug: "second" }, { slug: "third" });
+		const h = makeHarness(entries);
+		await handleGoalCommand(h.pi, createGoalSession(), "history", h.ctx);
+		const text = notifyText(h).join("\n");
+		// reverse: third（最后插入=最近）排第一
+		expect(text.indexOf("third")).toBeLessThan(text.indexOf("first"));
+		expect(text).toContain("1. "); // 序号格式
+	});
+
+	it("超过 MAX_HISTORY_ENTRIES → 只显示最近 N 条（最旧被截断）", async () => {
+		const entries = makeHistoryEntries(
+			...Array.from({ length: MAX_HISTORY_ENTRIES + 5 }, (_, i) => ({ slug: `slug-${i}` })),
+		);
+		const h = makeHarness(entries);
+		await handleGoalCommand(h.pi, createGoalSession(), "history", h.ctx);
+		const text = notifyText(h).join("\n");
+		// slice(-MAX) 后 reverse：最近一条（slug-24）排第一，第 5 条（slug-5）是保留的最旧一条
+		expect(text).toContain("slug-24");
+		expect(text).toContain("slug-5");
+		// 最旧 5 条（slug-0..slug-4）被截断
+		expect(text).not.toContain("slug-0");
+		expect(text).not.toContain("slug-4");
 	});
 });

@@ -79,13 +79,15 @@ describe("renderStatusLine", () => {
 		expect(text).not.toContain("test objective"); // slug 优先，objective 不显示
 	});
 
-	it("无预算 → 显示已消耗绝对值（token + time）", () => {
+	it("无预算 → 显示已消耗绝对值 token 段（非百分比分支）", () => {
 		const text = renderStatusLine(
 			makeState({ status: "active", tokensUsed: 12000, timeUsedSeconds: 90 }),
 			theme,
 		);
-		expect(text).toContain("12k tokens"); // formatTokens 缩写
-		expect(text).toContain("1m30s"); // formatMinutes
+		// 无预算走绝对值分支：含 "tokens" 不含 "% tokens"。
+		// 缩写(12k)/时间格式(1m30s)的正确性已下沉到 format.test.ts 直接测。
+		expect(text).toContain("tokens");
+		expect(text).not.toContain("% tokens");
 	});
 
 	it.each([
@@ -146,8 +148,9 @@ describe("renderWidgetLines", () => {
 			}),
 			theme,
 		);
-		// token 进度条 + used/total（缩写）
-		expect(lines.some((l) => l.includes("Token:") && l.includes("250/1k"))).toBe(true);
+		// token 进度条行渲染（缩写 250/1k 的正确性下沉到 format.test.ts）
+		expect(lines.some((l) => l.includes("Token:"))).toBe(true);
+		expect(lines.some((l) => /[█░]/.test(l))).toBe(true);
 	});
 
 	it("无预算 → token 显示已消耗绝对值，time 显示纯耗时", () => {
@@ -155,8 +158,9 @@ describe("renderWidgetLines", () => {
 			makeState({ status: "active", tokensUsed: 5000, timeUsedSeconds: 120 }),
 			theme,
 		);
-		expect(lines.some((l) => l.includes("5k used (no budget)"))).toBe(true);
-		expect(lines.some((l) => l.includes("2m elapsed"))).toBe(true);
+		// 无预算绝对值分支结构（缩写 5k / 2m 的正确性下沉到 format.test.ts）
+		expect(lines.some((l) => l.includes("used (no budget)"))).toBe(true);
+		expect(lines.some((l) => l.includes("Time:") && l.includes("elapsed"))).toBe(true);
 	});
 
 	it("有 successCriteria → 含 ✓ 摘要行", () => {
