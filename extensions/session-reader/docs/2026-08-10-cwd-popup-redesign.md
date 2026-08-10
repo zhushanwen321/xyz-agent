@@ -142,35 +142,42 @@ const SLASH_COMMAND_SELECT_LIST_LAYOUT = {
 **成功路径**——在当前项目键入 `#`（终端 120 列）：
 
 ```
-→ 019fe56b  看看 pi-session-reader 这个 extension 在本项目的源码  130 12m
-  019fdfc4  阅读：docs/retrospect                                 243 32m
-  019febdf  <skill name="dev-link" location="...                  6 50m
-  修复登录bug                                                      14 51m   ← 有 name 时只显示 name
-  我现在在设计开发一个 extension tool：目的...                     55 10h
+→ 262 now                         看看 pi-session-reader 这个 extension 在本项目的源码。 现在在pi...
+  243 1h                          <skill name="tech-design" location="/Users/zhushanwen/.agent...
+  6 1h                            <skill name="dev-link" location="/Users/zhushanwen/Code/xyz-...
+  14 1h                           确保全部改动都已经提交。然后 pull origin main 合并最新代码。
+  修复登录bug                      14 51m   ← 有 name 时只显示 name（在 description 位）
+  55 10h                          我现在在设计开发一个 extension tool： 目的是...
   (1/10)
 ```
 
-- `label` = 8 字符 uuid 片段（短，远小于 32 上限）
-- `description` = `预览或name` + ` count` + ` 时间`（吃满主列之外的宽度，预览从 23 字符涨到 ~80 字符）
-- 有 name → 只显示 name（与 firstMessage 同色——`#` 弹窗的通用 SelectList 对整段 description 统一上色，无法像 `/resume` 那样只给 name 单独上色，靠文本本身区分），不显示 firstMessage
-- 时间单单位：`12m` / `10h` / `2d`
-- 选中插入 `#019fe56b`（不变，向后兼容）
+- `label` = `${count} ${age}`（如 `262 now`、`243 1h`）—— 走主列（固定 32 字符宽）左对齐
+- `description` = 预览/name（截到 100 字符）—— 走次列，吃满剩余宽度（~width-36 列）
+- **不显示 uuid 片段**（片段只在 insertText，选中才插入 # 片段）
+- 有 name → description 只显示 name（不显示 firstMessage）
+- 主列固定 32 导致 label 后有 padding（32 − `243 1h` ≈ 24 空格）—— pi-tui 死约束，见 §3.2
+- 选中插入 `#019fec09`（不变，向后兼容）
 
 **失败路径 + 恢复**：
 - 当前目录无 session → 弹窗为空，pi-tui 自动显示 `No matching commands`。恢复：用户继续敲完整 uuid 片段，或用 `/session-pick`，或 `/resume` 切到全目录视图。
 - 用户要引用**别的项目**的 session → `#` 弹窗找不到（已确认 out-of-scope）。恢复：直接让 agent 用 `session_read {action:"find", query:"<片段>"}` 跨目录定位。
 
-### 3.2 关键约束：`#` 弹窗无法做到时间右对齐（必须诚实声明）
+### 3.2 关键约束：# 弹窗主列固定 32 字符（实测发现，推翻 §3.3 旧决策）
 
-用户期望「description 左对齐 + 时间右对齐」（像 `/resume` 那样）。**这在 `#` 弹窗里结构性地做不到**，原因（探针 ✅）：
+用户期望「不显示最左片段 + 时间位置可控」。**实现期实测发现 # 弹窗的 SelectList 主列固定 32 字符宽**（探针 ✅）：
 
-- `#` 弹窗用通用 `SelectList`，只有 `label`（主列，≤32）+ `description`（次列，左对齐截断）两个字段。
-- `/resume` 用**自定义组件** `SessionSelectorComponent`，自己拿 `width` 算 `spacing` 把右侧 `count age` 推到行尾——这是 pi 内部组件，不对外暴露复用。
-- `AutocompleteProvider.getSuggestions` 的签名不传终端宽度，provider 侧无法自行右对齐。
+`editor.js:1794` 的 `createAutocompleteList`：
+```js
+const layout = prefix.startsWith("/") ? SLASH_COMMAND_SELECT_LIST_LAYOUT : undefined;
+return new SelectList(items, this.autocompleteMaxVisible, this.theme.selectList, layout);
+```
 
-因此 `#` 弹窗的可达上限是：**预览占满宽（放 description）+ 时间追加在预览后**（不在行尾右对齐，而是紧贴预览末尾）。这是「最大化预览」与「右对齐时间」二选一时的取舍——选前者，因为预览信息量是用户的核心诉求（G2），右对齐是审美。
+- `/` 命令补全 → 用 `SLASH_COMMAND_SELECT_LIST_LAYOUT`（min 12, max 32）
+- **`#` / `@` 补全 → `layout = undefined`** → SelectList 默认 `{}` → `getPrimaryColumnBounds` 走 `DEFAULT_PRIMARY_COLUMN_WIDTH = 32` → **min = max = 32，主列固定 32 字符**
 
-> 若用户坚持要 `/resume` 那样的右对齐 + 全宽，唯一出路是改 `#` 触发为开模态（`ctx.ui.select` 或 `setWidget` 自定义组件），代价是失去「内联补全」体验。本设计不采用，列为被否方案（见 3.3）。
+含义：**无论 label 放什么、多短，主列都占 32 字符**（label 左对齐 + 右侧 padding 到 32）。label 放片段(8 字符)会留 24 空格 padding（用户截图所见）；label 放空也仍占 32 空白。
+
+**用户想要的「时间右对齐」在此约束下不可达**（SelectList 只有 label 主列 + description 次列，description 单字段左对齐截断，无法右对齐）。采用用户给的备选方案「时间最左 + 后面 description」：label 放 `${count} ${age}`（短，主列不被截），description 放预览/name（吃满剩余宽度）。代价：label 后有 padding（主列 32 导致），要紧贴需改 pi-tui（提 upstream，out-of-scope）。
 
 ### 3.3 多方案对比
 
@@ -183,15 +190,16 @@ const SLASH_COMMAND_SELECT_LIST_LAYOUT = {
 
 **推荐 A**。一致性 > 品味：pi 已有官方 API 且性能达标，不重写。
 
-#### 决策 2：`#` 弹窗字段映射（在 SelectList 32 字符约束下）
+#### 决策 2：`#` 弹窗字段映射（在主列固定 32 字符约束下）
 
-| 方案 | label（≤32） | description（剩余宽） | 预览可见量 | 裁决 |
+| 方案 | label（主列固定32） | description（次列，剩余宽） | 预览可见量 | 裁决 |
 |---|---|---|---|---|
-| **C. label=片段，description=`预览/name  count 时间`**（选） | `019fe56b`（8 字符） | `看看 pi-session-reader...  130 12m` | ~80 字符（满宽） | ✅ |
-| D. label=`片段 预览`，description=时间（现状） | 截到 32 | `刚刚` | ~23 字符 | ❌ 现状，G2 不达标 |
-| E. label=`预览/name`，description=`count 时间` | 预览截到 32 | `130 12m` 右对齐 | ~30 字符 | ❌ 预览又被夹 |
+| **C2. label=`${count} ${age}`，description=预览/name**（选，迭代自原 C） | `243 1h`（6字符+padding到32） | 预览/name 吃满 ~width-36 列 | ~84 字符（满宽） | ✅ |
+| D. label=`片段 预览`，description=时间（初版现状） | 截到 32 | `刚刚` | ~23 字符 | ❌ G2 不达标 |
+| E. label=预览，description=`count age` | 预览截到 32 | `130 12m` | ~30 字符 | ❌ 预览仍被 32 夹 |
+| C1（原 C）. label=片段，description=`预览 count age` | 片段+padding到32 | 预览+count+age，末尾 age 易被左截 | 不稳定 | ❌ 时间被截 |
 
-**推荐 C**。唯一能在 32 字符约束下同时满足 G2（宽预览）+ G3（name）+ G4（单单位时间）的映射。代价：时间不右对齐（3.2 已述）。
+**推荐 C2**。主列固定 32 是死约束（§3.2），把短而必现的 `count age` 放主列（不被截），把要满宽的预览放次列（吃满）。不显示 uuid 片段（用户反馈「不要最左片段」）。代价：label 后 padding（~24 空格）。
 
 #### 决策 3：是否加进程内缓存
 

@@ -167,20 +167,23 @@ describe('toCandidate', () => {
     expect(c.insertText.length).toBe(FRAGMENT_LEN + 1)
   })
 
-  it('label 只是片段（走主列 ≤32，不放预览——design 决策 2 方案 C）', () => {
-    const c = toCandidate(makeSessionInfo({ firstMessage: '修复登录 bug' }))
-    expect(c.label).toBe('019e6c96')
-    // label 不含预览文本（预览在 description）
-    expect(c.label).not.toContain('修复')
+  it('label = `${count} ${age}`（主列左对齐，不显示 uuid 片段——用户反馈）', () => {
+    const c = toCandidate(
+      makeSessionInfo({ messageCount: 14 }),
+      new Date('2026-01-01T13:00:00Z').getTime(),
+    )
+    // modified=2026-01-01T00:00, now=13:00 → 13h；label = count + age
+    expect(c.label).toBe('14 13h')
+    // label 不含 uuid 片段（片段只在 insertText）
+    expect(c.label).not.toContain('019e6c96')
   })
 
-  it('description = firstMessage + count + age（无 name 时）', () => {
+  it('description = firstMessage（无 name 时，吃满次列宽度）', () => {
     const c = toCandidate(
       makeSessionInfo({ firstMessage: '修复登录 bug', messageCount: 14 }),
       new Date('2026-01-01T13:00:00Z').getTime(),
     )
-    // modified=2026-01-01T00:00, now=13:00 → 13h
-    expect(c.description).toBe('修复登录 bug  14 13h')
+    expect(c.description).toBe('修复登录 bug')
   })
 
   it('有 name → description 只放 name，不放 firstMessage（design G3）', () => {
@@ -188,18 +191,18 @@ describe('toCandidate', () => {
       makeSessionInfo({ name: 'my-session', firstMessage: '首条消息内容', messageCount: 5 }),
       new Date('2026-01-01T01:00:00Z').getTime(),
     )
-    expect(c.description).toContain('my-session')
+    expect(c.description).toBe('my-session')
     expect(c.description).not.toContain('首条消息内容')
-    expect(c.description).toBe('my-session  5 1h')
+    // label 仍是 count+age
+    expect(c.label).toBe('5 1h')
   })
 
-  it('firstMessage 超长 → 截断到 PREVIEW_MAX（保证 count/age 不被 pi-tui 从左截掉）', () => {
+  it('firstMessage 超长 → 截断到 PREVIEW_MAX（避免传超大字符串给 pi-tui）', () => {
     const longText = 'X'.repeat(500)
     const c = toCandidate(makeSessionInfo({ firstMessage: longText, messageCount: 1 }))
-    // description = 截断text(含…)  count age —— 末尾必须是 count+age（不能被截掉）
-    expect(c.description).toMatch(/^X+…  1 \d+(mo|m|h|d|w|y)$/)
-    // 截断后 text 部分 = 50 + … = 51 字符
-    expect(c.description!.split('  ')[0]!.length).toBe(51)
+    // description = 截断text(100 + …)；label = count age（独立不受影响）
+    expect(c.description).toMatch(/^X{100}…$/)
+    expect(c.label).toMatch(/^1 \d+(mo|m|h|d|w|y)$/)
   })
 
   it('firstMessage 含换行/控制符 → 清洗为单空格（避免破坏 SelectList 单行渲染）', () => {
@@ -263,8 +266,8 @@ describe('provideHashCandidates', () => {
     expect(result).not.toBeNull()
     expect(result!).toHaveLength(1)
     expect(result![0].insertText).toBe('#019e6c96')
-    // label 只是片段，description 含 firstMessage
-    expect(result![0].label).toBe('019e6c96')
+    // label = count+age（不含片段），description = firstMessage
+    expect(result![0].label).not.toContain('019e6c96')
     expect(result![0].description).toContain('修复登录 bug')
   })
 

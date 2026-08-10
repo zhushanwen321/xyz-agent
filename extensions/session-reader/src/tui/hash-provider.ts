@@ -22,12 +22,11 @@ export const FRAGMENT_LEN = 8
 /** # 补全默认返回上限（TUI 弹窗可读上限，design G6）。 */
 const DEFAULT_LIMIT = 10
 /**
- * description 里预览文本最大字符数。SessionInfo.firstMessage 是首消息全文（可能含
- * `<skill>` 注入全文，上千字符），必须预截断——否则拼 `${text}  count age` 后，
- * pi-tui SelectList 从左截断会把末尾的 count/age 截掉。50 字符在 ≥80 列终端
- *（description 区约 64 列）下留足余量给 `count age`（≤9 字符）。（design G2：远超现状 23 字符）
+ * description（预览/name）最大字符数。SessionInfo.firstMessage 是首消息全文（可能含
+ * `<skill>` 注入全文，上千字符），预截断避免传超大字符串给 pi-tui。100 覆盖到 ~140 列
+ * 终端的 description 区（= width − 主列固定32 − prefix2 − safety2）。
  */
-const PREVIEW_MAX = 50
+const PREVIEW_MAX = 100
 
 // formatAge 时间换算常数（design G4：对齐 /resume formatSessionDate 的单单位语义）
 const MS_PER_MINUTE = 60_000
@@ -40,11 +39,11 @@ const DAYS_PER_MONTH = 30
 const DAYS_PER_YEAR = 365
 
 export interface AutocompleteCandidate {
-  /** 显示文本（主列），如 "019e6c96"。label 走 pi-tui SelectList 主列（≤32 字符），只放短片段 */
+  /** 显示文本（主列，pi-tui SelectList 固定 32 字符宽）。放 `${count} ${age}`，如 "243 1h" */
   label: string
-  /** 副信息（次列，占剩余宽度），如 "修复登录 bug  130 12m"。预览/name + count + 单位时间 */
+  /** 副信息（次列，吃满剩余宽度）。放预览/name（name 优先，design G3） */
   description?: string
-  /** 插入编辑器，如 "#019e6c96"（design D-3：uuid 片段，非名称） */
+  /** 插入编辑器，如 "#019e6c96"（design D-3：uuid 片段，非名称；不显示给用户看） */
   insertText: string
 }
 
@@ -106,24 +105,28 @@ function truncate(s: string, max: number): string {
 /**
  * SessionInfo → AutocompleteCandidate（纯函数，可单测）。
  *
- - insertText = `#` + sessionId 前 8 字符（design D-3）。
- - label = 片段（8 字符，走主列，远小于 32 上限）。
- - description = `预览或name  count age`（走次列吃满剩余宽度，design 决策 2 方案 C）：
-   name 优先于 firstMessage（design G3）；count = messageCount；age = formatAge。
+ * pi-tui # 弹窗的 SelectList 主列**固定 32 字符宽**（createAutocompleteList 对非 / 前缀
+ * 传 layout=undefined → 默认 min=max=32，editor.js:1794）。无论 label 多短主列都占 32，
+ * label 后 padding 到 32 再接 description。在此死约束下的最优映射：
  *
- * 不清洗 XML 标签（如 `<skill>`）——对齐 `/resume` 行为（resume 也不清洗，原样显示
- * firstMessage）。只清洗控制字符/换行避免渲染异常。
+ * - label = `${count} ${age}`（如 "243 1h"）——放主列左对齐。count+时间必现（主列不被截），
+ *   **不显示 uuid 片段**（片段只在 insertText，选中才插入；用户反馈：不要最左片段）。
+ * - description = 预览/name（截到 PREVIEW_MAX）——放次列，吃满剩余宽度（~width-36 列），
+ *   预览最大化（design G2）。name 优先于 firstMessage（design G3）。
+ *
+ * 代价：label 后到预览有 padding（主列 32 − "243 1h" ≈ 24 空格）——pi-tui 主列固定 32 导致，
+ * extension 层无法消除。要紧贴需改 pi-tui createAutocompleteList（提 upstream）。
+ *
+ * 不清洗 XML 标签（如 `<skill>`）——对齐 `/resume`（resume 也不清洗）。只清洗控制字符/换行。
  */
 export function toCandidate(s: SessionInfo, now: number = Date.now()): AutocompleteCandidate {
   const frag = s.id.slice(0, FRAGMENT_LEN)
-  // SessionInfo.firstMessage 是首消息全文（可能上千字符），必须截断——否则拼后的 description
-  // 被 pi-tui 从左截断会吃掉末尾的 count/age。name 同理可能长，一并截断。
-  const text = truncate(normalizeSingleLine(s.name ?? s.firstMessage), PREVIEW_MAX) || '(无预览)'
   const count = String(s.messageCount)
   const age = formatAge(s.modified, now)
+  const text = truncate(normalizeSingleLine(s.name ?? s.firstMessage), PREVIEW_MAX) || '(无预览)'
   return {
-    label: frag,
-    description: `${text}  ${count} ${age}`,
+    label: `${count} ${age}`,
+    description: text,
     insertText: `#${frag}`,
   }
 }
