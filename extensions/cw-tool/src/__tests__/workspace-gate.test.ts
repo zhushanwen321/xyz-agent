@@ -15,10 +15,10 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { executeCwAction, probeCwCliNormalization } from "../cw-runner.ts";
-import { type CwSpawner } from "../cw-spawn.ts";
+import { _resetCapabilityCacheForTest, executeCwAction, probeCwCliNormalization } from "../cw-runner.ts";
+import { type CwSpawner, type CwSpawnResult } from "../cw-spawn.ts";
 import { DEV_ALLOWED } from "../index.ts";
 
 // ── 临时目录管理（同 detect-repo-workspace.test.ts 风格）─────────
@@ -48,6 +48,11 @@ afterEach(() => {
 	}
 });
 
+// capability 缓存是进程内全局单值（S-1），测试间必须重置避免串台。
+beforeEach(() => {
+	_resetCapabilityCacheForTest();
+});
+
 // ── mock spawner：对 ['--version'] 可控，对 action 默认成功 ───────
 
 interface GateSpawnerOpts {
@@ -68,7 +73,8 @@ function gateSpawner(opts: GateSpawnerOpts = {}): {
 	calls: Array<{ args: string[] }>;
 } {
 	const calls: Array<{ args: string[] }> = [];
-	const spawner: CwSpawner = vi.fn(async (args: string[]) => {
+	// contextual typing：变量类型 CwSpawner 提供 4 参数完整签名，回调签名漂移会编译失败（消除假绿，S-5）。
+	const spawner: CwSpawner = vi.fn(async (args, _input, _cwd, _signal): Promise<CwSpawnResult> => {
 		calls.push({ args });
 		if (args[0] === "--version") {
 			if (opts.versionThrow) throw new Error("cw not in PATH (spawn error)");
@@ -79,7 +85,7 @@ function gateSpawner(opts: GateSpawnerOpts = {}): {
 			};
 		}
 		return { stdout: "{}", stderr: "", exitCode: 0 };
-	}) as unknown as CwSpawner;
+	});
 	return { spawner, calls };
 }
 
@@ -99,6 +105,14 @@ describe("probeCwCliNormalization", () => {
 		const cap = await probeCwCliNormalization(spawner, cwd);
 		expect(cap.supported).toBe(true);
 		expect(cap.version).toBe("99.9.9");
+	});
+
+	it("版本 === MIN（等号边界）→ supported:true（门控用 >=，锁定等号语义，S-7）", async () => {
+		const cwd = makeTempDir("probe-eq-");
+		const { spawner } = gateSpawner({ versionStdout: "cw 99.0.0" });
+		const cap = await probeCwCliNormalization(spawner, cwd);
+		expect(cap.supported).toBe(true);
+		expect(cap.version).toBe("99.0.0");
 	});
 
 	it("版本 < MIN → supported:false（当前 placeholder 99.0.0，真实 cw 1.6.1 不支持）", async () => {
@@ -132,6 +146,27 @@ describe("probeCwCliNormalization", () => {
 		expect(cap.supported).toBe(false);
 	});
 
+	it("probe 5s 超时 → supported:false（fail-safe，防御 cw --version 卡死，S-6）", async () => {
+		vi.useFakeTimers();
+		try {
+			const cwd = makeTempDir("probe-timeout-");
+			// spawner 模拟 cw --version 卡死：永不 resolve，signal abort 时 reject（走 probe catch 路径）。
+			const spawner: CwSpawner = vi.fn((_args, _input, _cwd, signal): Promise<CwSpawnResult> =>
+				new Promise<CwSpawnResult>((_resolve, reject) => {
+					signal?.addEventListener("abort", () => reject(new Error("aborted by timeout")), {
+						once: true,
+					});
+				}),
+			);
+			const probePromise = probeCwCliNormalization(spawner, cwd);
+			await vi.advanceTimersByTimeAsync(5001);
+			const cap = await probePromise;
+			expect(cap.supported).toBe(false);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("memoize：同 cwd 第二次不调 spawner（进程内缓存）", async () => {
 		const cwd = makeTempDir("probe-memo-");
 		const { spawner, calls } = gateSpawner({ versionStdout: "cw 99.9.9" });
@@ -140,13 +175,13 @@ describe("probeCwCliNormalization", () => {
 		expect(calls.length).toBe(1);
 	});
 
-	it("memoize：不同 cwd 不命中缓存（各自探测）", async () => {
+	it("memoize：全局单值缓存，不同 cwd 也命中（cw 版本 cwd 无关，S-1）", async () => {
 		const cwdA = makeTempDir("probe-memo-a-");
 		const cwdB = makeTempDir("probe-memo-b-");
 		const { spawner, calls } = gateSpawner({ versionStdout: "cw 99.9.9" });
 		await probeCwCliNormalization(spawner, cwdA);
 		await probeCwCliNormalization(spawner, cwdB);
-		expect(calls.length).toBe(2);
+		expect(calls.length).toBe(1);
 	});
 });
 

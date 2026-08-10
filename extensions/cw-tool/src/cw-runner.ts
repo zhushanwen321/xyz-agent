@@ -139,8 +139,17 @@ export interface CwCliCapability {
 	reason?: string;
 }
 
-/** 进程内 memoize 缓存（同进程 cwd 不变结果稳定，不引入跨进程断言）。 */
-let cachedCapability: { cwd: string; result: CwCliCapability } | undefined;
+/**
+ * 进程内 memoize 缓存：全局单值（cw --version 输出与 cwd 无关，cw-cli 安装版本在进程
+ * 生命周期内不变，按 cwd 做 key 多余）。首次探测后整个进程复用；测试用
+ * {@link _resetCapabilityCacheForTest} 在 beforeEach 隔离。
+ */
+let cachedCapability: CwCliCapability | undefined;
+
+/** 测试用：重置 capability 缓存（全局单值，测试 beforeEach 隔离避免串台）。 */
+export function _resetCapabilityCacheForTest(): void {
+	cachedCapability = undefined;
+}
 
 /** 从 cw --version stdout 提取版本号（如 "cw 1.6.1" → [1,6,1]）。失败返回 undefined。 */
 function parseCwVersion(stdout: string): number[] | undefined {
@@ -162,24 +171,34 @@ function compareSemver(a: number[], b: number[]): number {
  *
  * 用 spawner 跑 `cw --version`，parse 版本号与 {@link MIN_CW_CLI_VERSION_FOR_NORMALIZATION}
  * 比较。失败（spawn 失败/parse 不到/超时）→ supported:false（fail-safe，兜底 ADR-0045 行为）。
- * 进程内 memoize：同 cwd 首次探测后缓存，消除重复 spawn（同进程 cwd 不变）。
+ * 进程内 memoize（全局单值，cw 版本 cwd 无关）：首次探测后缓存，消除重复 spawn。
+ *
+ * @param parentSignal 调用方 SDK abort signal，与内部 5s 超时合并转发给 spawner（S-4）：
+ *   任一 abort 即 abort，让卡死的 `cw --version` 尽快收尾。
  */
 export async function probeCwCliNormalization(
 	spawner: CwSpawner,
 	cwd: string,
+	parentSignal?: AbortSignal,
 ): Promise<CwCliCapability> {
-	if (cachedCapability?.cwd === cwd) return cachedCapability.result;
+	if (cachedCapability) return cachedCapability;
 
 	const minVersion = parseCwVersion(MIN_CW_CLI_VERSION_FOR_NORMALIZATION);
 	if (!minVersion) {
 		// placeholder 本身非法（不应发生）——保守不支持
 		const fallback: CwCliCapability = { supported: false, version: undefined, reason: "MIN_CW_CLI_VERSION_FOR_NORMALIZATION 非法" };
-		cachedCapability = { cwd, result: fallback };
+		cachedCapability = fallback;
 		return fallback;
 	}
 
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), CW_VERSION_PROBE_TIMEOUT_MS);
+	// 合并调用方 SDK signal：任一 abort（5s 超时 fail-safe 或调用方主动 abort）即 abort（S-4）。
+	const onParentAbort = (): void => controller.abort();
+	if (parentSignal) {
+		if (parentSignal.aborted) controller.abort();
+		else parentSignal.addEventListener("abort", onParentAbort, { once: true });
+	}
 	let result: CwCliCapability;
 	try {
 		const spawnResult = await spawner(["--version"], undefined, cwd, controller.signal);
@@ -199,9 +218,10 @@ export async function probeCwCliNormalization(
 		result = { supported: false, version: undefined, reason: `probe failed: ${msg}` };
 	} finally {
 		clearTimeout(timer);
+		if (parentSignal) parentSignal.removeEventListener("abort", onParentAbort);
 	}
 
-	cachedCapability = { cwd, result };
+	cachedCapability = result;
 	return result;
 }
 
@@ -324,7 +344,7 @@ export async function executeCwAction(
 	if (isReadonlyAction(action)) {
 		workspace = undefined;
 	} else {
-		const capability = await probeCwCliNormalization(spawner, cwd);
+		const capability = await probeCwCliNormalization(spawner, cwd, signal);
 		workspace = capability.supported ? undefined : detectRepoWorkspace(cwd);
 	}
 	const args = buildCwArgs(action, unitId, opts, workspace);
