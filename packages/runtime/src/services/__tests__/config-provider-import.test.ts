@@ -46,6 +46,8 @@ function mockContext(): SettingsHandlerContext {
     sendError: vi.fn(),
     configService: {
       previewImportProviders: vi.fn(),
+      // applyImportProviders 后 handler 调 getDefaultModel（重选 default + 广播 config.defaults），mock 补全
+      getDefaultModel: vi.fn(() => null),
       applyImportProviders: vi.fn(),
     } as unknown as SettingsHandlerContext['configService'],
     sessionService: {} as SettingsHandlerContext['sessionService'],

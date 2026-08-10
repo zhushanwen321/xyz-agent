@@ -263,6 +263,17 @@ export class SettingsMessageHandler {
         // 仅成功时广播（result 有 result 字段 = 成功；有 error 字段 = 失败，不广播）
         if ('result' in result) {
           this.ctx.broadcastProviderList()
+          // 导入后重选 defaultModel（首个 provider 导入 / 原 default 失效场景）。
+          // getDefaultModel 内部调 findValidDefaultModel，wasFixed 时写回 settings.json（设 defaultProvider/defaultModel）。
+          // 广播 config.defaults 让 landing 页/全局默认同步——否则从无 provider 导入后 defaultModel 仍空，landing 不自动选模型。
+          const defaultModel = this.ctx.configService.getDefaultModel()
+          if (defaultModel) {
+            this.ctx.broadcast({
+              type: 'config.defaults',
+              id: this.ctx.nextPushId(),
+              payload: { defaultModel: `${defaultModel.provider}/${defaultModel.modelId}`, source: 'providers-imported' },
+            })
+          }
         }
         return true
       }

@@ -31,7 +31,7 @@
             variant="ghost"
             class="flex w-full items-center gap-2 rounded-none px-2.5 py-[7px] text-[13px] text-neutral-mid hover:bg-surface-hover hover:text-neutral-fg"
             :class="isSelected(model.id) && SELECTED_ITEM_CLASS"
-            @click="onSelect(model.id, group.provider)"
+            @click="onSelect(model.id, group.providerId)"
           >
             <span class="flex-1 text-left">{{ model.name }}</span>
             <Check
@@ -131,6 +131,7 @@ function isSelected(modelId: string): boolean {
 }
 
 function onSelect(id: string, provider: string): void {
+  // provider 参数实为 providerId（switch 标识用 id，pi set_model 按 id 查；group.provider 是 name 仅用于分组标题显示）
   open.value = false
   emit('select', { modelId: id, provider })
 }
