@@ -41,7 +41,7 @@
          区分度：bg-bg-elevated（浮起面板语义，与画布 bg 亮度差 Δ17）+ ring 硬边界（不依赖阴影方向）。
          去掉 backdrop-blur（不透明底上零效果）。 -->
     <div
-      class="rail-panel absolute bottom-0 left-3 right-0 top-0 translate-x-2 rounded-lg bg-bg-elevated p-2 opacity-0 shadow-2 ring-1 ring-border-strong pointer-events-none transition-all group-hover:translate-x-0 group-hover:opacity-100 group-hover:pointer-events-auto"
+      class="rail-panel absolute bottom-0 left-3 right-0 top-0 translate-x-2 rounded-lg bg-bg-elevated p-2 opacity-0 shadow-2 ring-1 ring-border-strong pointer-events-none transition-[transform,opacity] group-hover:translate-x-0 group-hover:opacity-100 group-hover:pointer-events-auto"
     >
       <!-- 节点列表（铺满 rail 浮层，超出靠浮层自身高度滚动） -->
       <div class="rail-list flex max-h-full flex-col gap-0.5 overflow-y-auto">

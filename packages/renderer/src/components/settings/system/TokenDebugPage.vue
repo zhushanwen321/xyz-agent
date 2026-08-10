@@ -161,7 +161,7 @@ onUnmounted(() => {
           :key="f.name"
           type="button"
           variant="ghost"
-          class="h-auto flex flex-col items-start gap-0.5 px-3 py-2.5 rounded-md border border-border text-neutral-fg transition-all"
+          class="h-auto flex flex-col items-start gap-0.5 px-3 py-2.5 rounded-md border border-border text-neutral-fg transition-colors"
           :class="{ 'border-accent bg-accent-soft': fontScale === f.value }"
           :aria-pressed="fontScale === f.value"
           @click="applyFontScale(f.value)"

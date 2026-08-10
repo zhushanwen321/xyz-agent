@@ -29,7 +29,7 @@
             :key="item.id"
             type="button"
             variant="ghost"
-            class="nav-item group h-auto w-full flex items-center gap-[8px] py-[8px] px-[10px] rounded-[var(--radius-sm)] text-[length:var(--text-base)] font-normal leading-[1.5] text-left text-neutral-mid whitespace-normal transition-all duration-[var(--duration-fast)] ease-[var(--ease)] [&:hover:not(.active)]:bg-surface-hover [&:hover:not(.active)]:text-neutral-fg [&.active]:!bg-surface [&.active]:text-accent"
+            class="nav-item group h-auto w-full flex items-center gap-[8px] py-[8px] px-[10px] rounded-[var(--radius-sm)] text-[length:var(--text-base)] font-normal leading-[1.5] text-left text-neutral-mid whitespace-normal transition-colors duration-[var(--duration-fast)] ease-[var(--ease)] [&:hover:not(.active)]:bg-surface-hover [&:hover:not(.active)]:text-neutral-fg [&.active]:!bg-surface [&.active]:text-accent"
             :class="{ active: item.id === activeMenu }"
             :data-testid="`settings-nav-${item.id}`"
             :aria-current="item.id === activeMenu ? 'page' : undefined"
@@ -49,7 +49,7 @@
           <Button
             type="button"
             variant="ghost"
-            class="xbtn flex h-[28px] w-[28px] p-0 items-center justify-center rounded-[var(--radius-sm)] text-[length:var(--text-base)] font-normal leading-[1.5] text-neutral-mid whitespace-normal transition-all duration-[var(--duration-fast)] ease-[var(--ease)] hover:bg-surface-hover hover:text-neutral-fg"
+            class="xbtn flex h-[28px] w-[28px] p-0 items-center justify-center rounded-[var(--radius-sm)] text-[length:var(--text-base)] font-normal leading-[1.5] text-neutral-mid whitespace-normal transition-colors duration-[var(--duration-fast)] ease-[var(--ease)] hover:bg-surface-hover hover:text-neutral-fg"
             :title="t('settings.closeEsc')"
             :aria-label="t('settings.close')"
             data-testid="settings-close-btn"
