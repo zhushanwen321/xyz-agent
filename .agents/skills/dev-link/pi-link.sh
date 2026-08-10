@@ -64,7 +64,7 @@ for input in "$@"; do
 			s.packages = (s.packages || []).filter(x =>
 				x !== `npm:${scope}/pi-${short}`
 				&& !x.includes(`/extensions/${short}`)
-				&& !new RegExp(`pi-${short}$`).test(x)
+				&& !new RegExp(`^npm:[^/]+/pi-${short}$`).test(x)
 			);
 			const removed = before - (s.packages || []).length;
 			if (removed > 0) fs.writeFileSync(process.env.SETTINGS, JSON.stringify(s, null, 2));

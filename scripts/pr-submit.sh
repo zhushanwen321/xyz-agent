@@ -109,14 +109,14 @@ fi
 
 # 从选定的 remote URL 解析 owner/repo。bare repo workspace 下 origin 是本地 bare repo，
 # gh 无法从 origin 推断 GitHub repo，所有 gh 调用必须显式 --repo（见 AGENTS.md §10）。
-# 兼容 SSH (git@host:owner/repo.git) 与 HTTPS (https://host/owner/repo.git) 两种格式。
+# 兼容 SSH scp-like (git@host:owner/repo.git)、HTTPS (https://host/owner/repo.git)、ssh:// (ssh://git@host[:port]/owner/repo.git) 三种格式。
 REMOTE_URL="$(git remote get-url "$PUSH_REMOTE")"
-GH_REPO="$(echo "$REMOTE_URL" | sed -E 's#(git@[^:]+:|https?://[^/]+/)##; s#\.git$##')"
-OWNER="${GH_REPO%%/*}"
-if [[ -z "$GH_REPO" || -z "$OWNER" ]]; then
-    log "failed to parse owner/repo from remote $PUSH_REMOTE ($REMOTE_URL)" >&2
+GH_REPO="$(echo "$REMOTE_URL" | sed -E 's#(git@[^:]+:|https?://[^/]+/|ssh://[^/]+/)##; s#\.git$##')"
+if [[ ! "$GH_REPO" =~ ^[^/]+/[^/]+$ ]]; then
+    log "failed to parse owner/repo from remote $PUSH_REMOTE ($REMOTE_URL) → got '$GH_REPO'" >&2
     exit 1
 fi
+OWNER="${GH_REPO%%/*}"
 HEAD_REF="$OWNER:$BRANCH"
 
 log "pushing $BRANCH to $PUSH_REMOTE (repo=$GH_REPO)..."
