@@ -131,7 +131,9 @@ fi
 
 # ── 2. 探测现有 PR
 log "checking existing PR for branch $BRANCH..."
-EXISTING_JSON="$(gh pr list --repo "$GH_REPO" --head "$HEAD_REF" --base "$BASE" --state open --json number,title,body 2>/dev/null || echo '[]')"
+# pr list --head 对同 repo 分支必须用分支名（owner:branch 是 fork 语义，同 repo 匹配为空）；
+# pr create --head 用 owner:branch（兼容 fork，同 repo 也接受）。
+EXISTING_JSON="$(gh pr list --repo "$GH_REPO" --head "$BRANCH" --base "$BASE" --state open --json number,title,body 2>/dev/null || echo '[]')"
 
 PR_NUMBER=""
 EXISTING_TITLE=""
