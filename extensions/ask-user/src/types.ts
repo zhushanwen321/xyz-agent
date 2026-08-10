@@ -10,7 +10,6 @@ export const SPLIT_PANE_MIN_WIDTH = 84;
 export const SPLIT_PANE_SEPARATOR = " │ ";
 export const SPLIT_PANE_LEFT_MIN = 32;
 export const SPLIT_PANE_RIGHT_MIN = 28;
-export const ANSWER_COMMENT_SEPARATOR = " — "; // 答案内联评论分隔符（4.0.1 restore，见 .changeset/restore-ask-user-comment.md）
 
 // ── Input schema（LLM 调用参数） ─────────────────────
 // description 用英文：这些字符串会进 LLM 的 tool schema，英文更利于模型理解。
@@ -46,9 +45,6 @@ export const QuestionSchema = Type.Object({
 	}),
 	multiSelect: Type.Optional(
 		Type.Boolean({ description: "Default false. Set true only when more than one option can validly apply simultaneously; otherwise leave false for a single best answer." }),
-	),
-	allowComment: Type.Optional(
-		Type.Boolean({ description: "Default false. Set true to let the user append a short free-text comment after selecting (e.g. to note a constraint). Restored in 4.0.1." }),
 	),
 });
 
@@ -94,10 +90,20 @@ export type Question = Static<typeof QuestionSchema>;
 /** LLM 入参 question 形状：options 可能含 string 误用，validateInput 负责友好拦截。 */
 export type InputQuestion = Static<typeof InputSchema>["questions"][number];
 
+// ── 结构化答案模型（details.answers 的值形态） ─────────
+// selected = 选中的 option label 数组（单选长度 0/1，多选任意；不含 Other 文本）；
+// other = Other 自由文本（null=未输入）。answers 的 key = question 全文。
+export const AnswerValueSchema = Type.Object({
+	selected: Type.Array(Type.String()),
+	other: Type.Union([Type.String(), Type.Null()]),
+});
+
+export type AnswerValue = Static<typeof AnswerValueSchema>;
+
 // ── Result schema（details，renderResult 数据源） ─────
 export const ResultSchema = Type.Object({
 	questions: Type.Array(QuestionSchema),
-	answers: Type.Record(Type.String(), Type.String()),
+	answers: Type.Record(Type.String(), AnswerValueSchema),
 	cancelled: Type.Boolean(),
 });
 
@@ -123,7 +129,7 @@ export interface ThemeLike {
 }
 
 /** 单问题的交互模式 */
-export type QuestionMode = "options" | "freeform" | "comment";
+export type QuestionMode = "options" | "freeform";
 
 /** 单问题的交互状态（每问题一个实例） */
 export interface QuestionState {
@@ -140,8 +146,6 @@ export interface QuestionState {
 	/** freeform Esc 保存的未提交草稿；null=无草稿。
 	 *  与 freeTextValue（已提交答案）分离，避免放弃的草稿污染答案、触发 auto-confirm。 */
 	freeDraft: string | null;
-	/** 可选评论；null=未输入 */
-	commentValue: string | null;
 	/** 当前交互模式 */
 	mode: QuestionMode;
 	/** 编辑器草稿文本（每问题独立持有，进编辑器时预填、退出时清空） */
@@ -159,7 +163,6 @@ export function createQuestionState(): QuestionState {
 		confirmed: false,
 		freeTextValue: null,
 		freeDraft: null,
-		commentValue: null,
 		mode: "options",
 		draftText: "",
 		savedOptionsCursorIndex: 0,

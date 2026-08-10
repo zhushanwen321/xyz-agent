@@ -18,6 +18,7 @@ import {
 	checkBudgetOnTurnEnd,
 	tick,
 } from "./engine/budget";
+import type { BudgetDimension } from "./engine/budget";
 import { createGoalState, isActiveStatus, transitionStatus } from "./engine/goal";
 import type { BudgetConfig, GoalRuntimeState, GoalStatus } from "./engine/types";
 import { makeHistoryEntry, serializeState } from "./persistence";
@@ -39,15 +40,6 @@ export interface ServicePorts {
 	messaging: MessagingPort;
 	session: SessionPort;
 }
-
-// ── Event 效果 ────────────────────────────────────────
-
-export type EventEffect =
-	| { kind: "sendContextMessage"; content: string; deliverAs: "steer" | "followUp"; customType?: string }
-	| { kind: "sendUserMessage"; content: string; deliverAs: "steer" | "followUp" }
-	| { kind: "notify"; text: string; level: "info" | "warning" | "error" }
-	| { kind: "clearSession" }
-	| { kind: "updateWidget" };
 
 // ── 持久化辅助 ────────────────────────────────────────
 
@@ -106,16 +98,15 @@ export function persistAndUpdate(
 	// 避免对 paused/blocked/终态重复触发。checkBudgetOnTurnEnd 是 engine 纯函数，
 	// service 复用它不破坏纯 ports 设计（engine 是零 Pi 依赖纯函数层）。
 	if (session.state.status === "active") {
-		const budgetResult = checkBudgetOnTurnEnd(session.state, session.state.timeUsedSeconds);
+		const budgetResult = checkBudgetOnTurnEnd(session.state);
 		if (budgetResult.terminal) {
-			const dim = budgetResult.terminal.dimension;
 			// FR-3.3: 唯一终态序列入口（finalizeAndPersist 内部 tickState 是 no-op——
 			// 上面已 tick，且状态此时仍 active——+ finalizeGoal + appendState）。
 			// terminal 分支不再单独 appendState：finalizeAndPersist 已含终态 state 持久化。
+			// time budget 已移除，terminal 只可能是 token exceeded → budget_limited。
 			finalizeAndPersist(
 				session.state,
-				dim === "token" ? "budget_limited" : "time_limited",
-				0,
+				"budget_limited",
 				ports,
 			);
 			if (checkStale?.()) return true;
@@ -136,12 +127,10 @@ export function persistAndUpdate(
 /**
  * 唯一创建入口。两个调用源都走它：
  * - goal_control create（toolcall，AI 提供 slug + objective + successCriteria）
- * - __goalInit（index.ts，isExternalInit=true）
+ * - __goalInit（index.ts）
  *
  * 注：/goal <objective> 命令路径已改为提示词触发器——不直接调本函数，
  * 而是 sendUserMessage 让 AI 调 goal_control create（slug + successCriteria 由 AI 生成）。
- *
- * isExternalInit=true 时不触发 sendUserMessage（__goalInit 不触发 AI）。
  *
  * @param slug AI 生成的短标识（optional，仅 widget 标题 + history 用）
  * @param successCriteria 成功标准（optional，由 AI 推导或外部传入；注入 prompt 指导完成验证）
@@ -152,7 +141,6 @@ export function createGoal(
 	objective: string,
 	budget: Partial<BudgetConfig>,
 	ports: ServicePorts,
-	isExternalInit: boolean,
 	slug?: string,
 	successCriteria?: string,
 ): boolean {
@@ -161,7 +149,6 @@ export function createGoal(
 		return false;
 	}
 
-	void isExternalInit; // 保留参数位以备 future use（外部 init 的差异化行为）
 	session.state = createGoalState(objective, budget, slug, successCriteria);
 
 	persistState(session, ports);
@@ -179,23 +166,21 @@ export function createGoal(
  *
  * 序列（严格顺序）：
  * 1. tickState(state)（FR-6.5：转 terminal 前累加当前运行段——此时 status 仍为 active）
- * 2. finalizeGoal(state, terminalStatus, ports, { completedTasks })
+ * 2. finalizeGoal(state, terminalStatus, ports)
  *    — transitionStatus(终态守卫) + completedAtTurnIndex= + appendHistory（FR-8.7 矩阵）
  * 3. ports.persistence.appendState(serializeState(state))（持久化终态 state）
  *
  * @param state runtime state（mutate）
- * @param terminalStatus 目标终态（complete / cancelled / budget_limited / time_limited）
- * @param completedTasks 已完成任务数（写入 history entry）
+ * @param terminalStatus 目标终态（complete / cancelled / budget_limited）
  * @param ports ServicePorts（persistence.appendHistory + appendState）
  */
 export function finalizeAndPersist(
 	state: GoalRuntimeState,
 	terminalStatus: GoalStatus,
-	completedTasks: number,
 	ports: ServicePorts,
 ): void {
 	tickState(state);
-	finalizeGoal(state, terminalStatus, ports, { completedTasks });
+	finalizeGoal(state, terminalStatus, ports);
 	ports.persistence.appendState(serializeState(state));
 }
 
@@ -209,13 +194,12 @@ export function finalizeGoal(
 	state: GoalRuntimeState,
 	terminalStatus: GoalStatus,
 	ports: ServicePorts,
-	options: { completedTasks: number },
 ): void {
 	state.status = transitionStatus(state.status, terminalStatus);
 	state.completedAtTurnIndex = state.currentTurnIndex;
 
 	// FR-8.7: 所有终态都写 history（blocked 是中间态，不走此入口）
-	const entry: GoalHistoryEntry = makeHistoryEntry(state, options.completedTasks);
+	const entry: GoalHistoryEntry = makeHistoryEntry(state);
 	ports.persistence.appendHistory(entry);
 }
 
@@ -258,23 +242,22 @@ function toMessageEndData(eventData: unknown): MessageEndEventData | null {
 }
 
 /**
- * 路径 B 入口。异步事件，返回 EventEffect[]。
+ * 路径 B 入口。异步事件，无返回值（副作用直接 mutate session.state）。
  * 并发保护（isProcessing / stale-check）在 event-adapter，不在此层。
  *
- * 本函数作为简单事件的统一入口（message_end / turn_end / agent_start）。
+ * 本函数作为简单事件的统一入口（message_end / turn_end）。
  * 复杂事件（before_agent_start / agent_end / session_start）由 event-adapter
  * 直接实现，调 engine 纯函数 + service 辅助函数。
+ *
+ * H3：不再返回 effect 数组。turn_end 的 updateWidget 副作用由调用方
+ *（turn-end.ts）直接调用，消除 effect 中转层。
  */
 export function applyEvent(
 	session: GoalSession,
 	eventType: string,
 	eventData: unknown,
-	// TS-2: 参数未使用，放宽为 undefined 以消除调用方 `undefined as never` 断言。
-	// 保留参数位以备未来 event 类型需要 ports（applyEvent 是统一事件入口）。
-	_ports?: ServicePorts,
-): EventEffect[] {
-	const effects: EventEffect[] = [];
-	if (!session.state) return effects;
+): void {
+	if (!session.state) return;
 
 	switch (eventType) {
 		case "message_end": {
@@ -291,20 +274,14 @@ export function applyEvent(
 		}
 		case "turn_end":
 			session.state.currentTurnIndex++;
-			effects.push({ kind: "updateWidget" });
-			break;
-		case "agent_start":
-			// task 已移除，agent_start 暂无副作用（#7 注入 todo 进度后可能重填）
 			break;
 	}
-
-	return effects;
 }
 
 // ── resume 预算重检（供 command-adapter 调用）─────────
 
 export function checkResumeBudget(
 	state: GoalRuntimeState,
-): { type: "exceeded"; dimension: "token" | "time" } | null {
+): { type: "exceeded"; dimension: BudgetDimension } | null {
 	return checkBudgetOnResume(state);
 }

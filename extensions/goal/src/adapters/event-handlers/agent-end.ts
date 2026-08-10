@@ -29,6 +29,7 @@ import {
 } from "../../projection/prompts";
 import { persistAndUpdate, tickState } from "../../service";
 import type { GoalSession } from "../../session";
+import type { ServicePorts } from "../../service";
 import { buildPorts } from "../ports";
 import { makeStaleChecker } from "./shared";
 
@@ -42,10 +43,11 @@ export async function handleAgentEnd(
 	try {
 		const checkStale = makeStaleChecker(session);
 		if (checkStale()) return;
+		const ports = buildPorts(pi, ctx);
 
 		// 终态处理（complete / blocked）
 		if (session.state.status === "complete" || session.state.status === "blocked") {
-			await handleTerminalStateAgentEnd(pi, session, ctx, checkStale);
+			await handleTerminalStateAgentEnd(session, ports, ctx, checkStale);
 			return;
 		}
 		if (!isActiveStatus(session.state.status)) return;
@@ -55,15 +57,15 @@ export async function handleAgentEnd(
 			return;
 		}
 
-		// 预算检查（FR-6.2 维度独立）——先 tick 把当前运行段计入 timeUsedSeconds，
-		// 否则时间预算检测会比实际晚一轮（回归修复）
+		// 预算检查（仅 token 维度）——先 tick 把当前运行段计入 timeUsedSeconds，
+		// 否则累计耗时（timeUsedSeconds）记账会比实际晚一轮（回归修复）
 		tickState(session.state);
-		const budgetResult = checkBudgetOnTurnEnd(session.state, session.state.timeUsedSeconds);
-		const budgetAction = await handleBudgetChecks(pi, session, ctx, budgetResult, checkStale);
+		const budgetResult = checkBudgetOnTurnEnd(session.state);
+		const budgetAction = await handleBudgetChecks(ports, session, ctx, budgetResult, checkStale);
 		if (budgetAction !== "continue") return;
 
 		// continuation 去抖（budget 预警未拦截时）
-		await handleContinuation(pi, session, ctx, checkStale);
+		await handleContinuation(pi, ports, session, ctx, checkStale);
 	} finally {
 		session.isProcessing = false;
 	}
@@ -71,13 +73,13 @@ export async function handleAgentEnd(
 
 /** 终态 agent_end：persist + notify（complete/blocked 各一条消息）。 */
 async function handleTerminalStateAgentEnd(
-	pi: ExtensionAPI,
 	session: GoalSession,
+	ports: ServicePorts,
 	ctx: ExtensionContext,
 	checkStale: () => boolean,
 ): Promise<void> {
 	const state = session.state!;
-	if (persistAndUpdate(session, buildPorts(pi, ctx), checkStale)) return;
+	if (persistAndUpdate(session, ports, checkStale)) return;
 	if (state.status === "complete") {
 		ctx.ui.notify(`Objective completed ✓ (${state.currentTurnIndex} turns)`, "info");
 	} else {
@@ -91,14 +93,14 @@ async function handleTerminalStateAgentEnd(
 type BudgetAction = "continue" | "stop";
 
 /**
- * FR-6.2 维度独立预算检查（#8 后只做提醒，不做终态）：
+ * 仅 token 维度预算检查（#8 后只做提醒，不做终态）：
  * - 预警（warning70/warning90）：set flag + notify（不阻塞 continuation）
  * - 90% steering（shouldSendSteering）：set flag + 发 budgetLimitPrompt（收尾），返回 "stop" 中断 continuation
  *
  * 终态转换（budget 耗尽）不在 agent_end，由 persistAndUpdate 兜底（#5 范围，单一检查点）。
  */
 async function handleBudgetChecks(
-	pi: ExtensionAPI,
+	ports: ServicePorts,
 	session: GoalSession,
 	ctx: ExtensionContext,
 	budgetResult: ReturnType<typeof checkBudgetOnTurnEnd>,
@@ -106,31 +108,23 @@ async function handleBudgetChecks(
 ): Promise<BudgetAction> {
 	const state = session.state!;
 
-	// 发送预警（FR-6.2 维度独立：token/time 各有 70/90 flag）
+	// 发送预警（仅 token 维度）
 	for (const w of budgetResult.warnings) {
 		if (w.type === "warning90") {
-			if (w.dimension === "token") state.tokenWarning90Sent = true;
-			else state.timeWarning90Sent = true;
-			ctx.ui.notify(
-				`${w.dimension === "token" ? "Token" : "Time"} budget 90% used — start wrapping up.`,
-				"warning",
-			);
+			state.tokenWarning90Sent = true;
+			ctx.ui.notify("Token budget 90% used — start wrapping up.", "warning");
 		} else if (w.type === "warning70") {
-			if (w.dimension === "token") state.tokenWarning70Sent = true;
-			else state.timeWarning70Sent = true;
-			ctx.ui.notify(
-				`${w.dimension === "token" ? "Token" : "Time"} budget 70% used — keep scope in check.`,
-				"info",
-			);
+			state.tokenWarning70Sent = true;
+			ctx.ui.notify("Token budget 70% used — keep scope in check.", "info");
 		}
 	}
 
 	// 90% steering → 收尾
 	if (budgetResult.shouldSendSteering) {
 		state.budgetLimitSteeringSent = true;
-		if (persistAndUpdate(session, buildPorts(pi, ctx), checkStale)) return "stop";
-		buildPorts(pi, ctx).messaging.sendContextMessage(
-			budgetLimitPrompt(state, "token", state.timeUsedSeconds),
+		if (persistAndUpdate(session, ports, checkStale)) return "stop";
+		ports.messaging.sendContextMessage(
+			budgetLimitPrompt(state),
 			"steer",
 		);
 		return "stop";
@@ -151,6 +145,7 @@ async function handleBudgetChecks(
  */
 async function handleContinuation(
 	pi: ExtensionAPI,
+	ports: ServicePorts,
 	session: GoalSession,
 	ctx: ExtensionContext,
 	checkStale: () => boolean,
@@ -161,13 +156,15 @@ async function handleContinuation(
 	// FR-8.6: continuation 去抖（空 turn 不发）
 	const tokenDelta = state.tokensUsed - state.lastTurnTokensUsed;
 	state.lastTurnTokensUsed = state.tokensUsed;
+	// 单次 persist（H2 合并：原空 turn/非空 turn 两处重复 persistAndUpdate 提到 if 前统一调用）。
+	// budget 终态检查点在 persistAndUpdate 内部（#5 单一检查点），与调用位置无关——
+	// 合并不影响预算终态触发时机（explorer 论证）。
+	persistAndUpdate(session, ports);
 	if (tokenDelta <= 0) {
-		// 空 turn：只 persist，不发 continuation
-		persistAndUpdate(session, buildPorts(pi, ctx));
+		// 空 turn：已 persist，不发 continuation
 		return;
 	}
-	persistAndUpdate(session, buildPorts(pi, ctx));
-	// 终态守卫：persistAndUpdate 可能把 goal 转为 budget_limited/time_limited 终态。
+	// 终态守卫：persistAndUpdate 可能把 goal 转为 budget_limited 终态。
 	// 此时不应发 continuation（deliverAs:"followUp" 会触发新 turn，让已耗尽预算的 agent 再跑一轮）。
 	if (isTerminalStatus(state.status)) return;
 	// pending 守卫：有活跃 background subagent/workflow 时不发 continuation。
@@ -195,7 +192,7 @@ async function handleContinuation(
 		return;
 	}
 	// 发 continuation（FR-8.7: 去 debounce 后才发）
-	buildPorts(pi, ctx).messaging.sendContextMessage(
+	ports.messaging.sendContextMessage(
 		continuationPrompt(state, state.timeUsedSeconds),
 		"followUp",
 	);

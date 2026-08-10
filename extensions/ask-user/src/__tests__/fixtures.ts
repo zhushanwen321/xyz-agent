@@ -40,19 +40,9 @@ export const singleQ: Question = {
 	],
 };
 
-export const singleQWithComment: Question = {
-	question: "Which DB? (with comment)",
-	allowComment: true,
-	options: [
-		{ label: "Postgres", description: "Battle-tested" },
-		{ label: "SQLite", description: "Embedded" },
-	],
-};
-
 export const singleQMulti: Question = {
 	question: "Which features?",
 	multiSelect: true,
-	allowComment: true,
 	options: [
 		{ label: "Auth", description: "OAuth + session" },
 		{ label: "Search", description: "Full-text" },
@@ -68,11 +58,6 @@ export const multiQ: Question[] = [
 		multiSelect: true,
 	},
 	{ question: "Q3", header: "Third", options: [{ label: "M" }, { label: "N" }] },
-];
-
-export const multiQWithComment: Question[] = [
-	{ question: "Q1", header: "First", allowComment: true, options: [{ label: "A" }, { label: "B" }] },
-	{ question: "Q2", header: "Second", options: [{ label: "X" }, { label: "Y" }] },
 ];
 
 // ── Aliases (PAGE_UP/PAGE_DOWN for W1 tests, PGUP/PGDN for W3 tests) ──

@@ -47,7 +47,21 @@
 
 ## Tool 设计
 
-- 参数用 typebox `Type.Object()` + `StringEnum()` 定义 schema
+### `parameters` 顶层必须是 `Type.Object`（OpenAI 兼容性）[MANDATORY]
+
+`pi.registerTool({ parameters, ... })` 的 `parameters` 序列化后顶层必须含 `type:"object"`。OpenAI function calling 规范要求 parameters 顶层是 object，**禁止**顶层 `Type.Union`/`Type.Intersect`/`Type.Composite`（序列化为 `anyOf`/`allOf`，无 type）、`Type.Array`（序列化为 `type:"array"`）。违反会导致严格 OpenAI 兼容网关 400 拒绝整个会话启动。
+
+参数用 typebox `Type.Object()` + `StringEnum()` 定义 schema。
+
+**多 action tool 标准范式**（参考 `extensions/scheduler/src/tool.ts` 的 `ScheduleControlParams`）：
+
+1. **运行时 schema**：扁平 `Type.Object`，`action` 字段用 `Type.Union([Type.Literal(...)])`（字段级，等价 enum，序列化为嵌套 anyOf 合规），各分支字段全部 `Type.Optional`；
+2. **类型层**：用 `Static<typeof Schema>` 派生扁平类型（单一来源，禁止手工另写 discriminated union——会导致类型与 schema 两处同步漂移，且双形陷阱检测需跨分支访问字段，严格 union 下编译报错）；
+3. **运行时校验**：handler 按 `action` 分枝校验必填字段存在 + 非空串（错误消息内嵌正确调用示例）；
+4. `additionalProperties: false` 保留。
+
+分支语义隔离从 schema 层降级为运行时 handler 校验——这是兼容 OpenAI 规范的必要代价。pre-commit 脚本 `.githooks/check_tool_schema.py` 强制拦截顶层非 Object schema（`SKIP_TOOL_SCHEMA_CHECK=1` 可跳过，仅限紧急）。设计背景见 [tool-schema-openai-compat.md](./tool-schema-openai-compat.md)。
+
 - `execute` 返回 `{ content: [...], details: {...} }` 结构
 - `details` 是 renderResult 的数据来源，不要依赖 content 文本解析
 - 错误用 `throw new Error()`，不要返回 `{ content: [{ text: "错误: ..." }] }` 的**错误成功模式**（调用方无法区分成功与失败）

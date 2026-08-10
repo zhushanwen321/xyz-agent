@@ -385,24 +385,22 @@ describe("SubagentService", () => {
   });
 
   // ============================================================
-  // execute() worktree fail-fast 校验 [MF#7]（commit 8e8e75966）
+  // execute() worktree 路径（worktree 与 fork 解耦后）
   // ============================================================
   //
-  // [MF#7] execute 入口校验 `worktree:true && !fork` → fail-fast 抛错。
-  // 否则下面三个 worktree 分支都不命中，worktreeHandle 恒 undefined → 子 agent
-  // 零文件隔离且零报错（静默 no-op）。此组验证该校验的三种 fork/worktree 组合：
-  //   1. worktree:true + fork:false → 抛 "requires fork"（fail-fast 命中）
-  //   2. worktree:true + fork:true  → 不命中校验（执行越过 guard，后续因副作用失败）
-  //   3. worktree:false + fork:false → 不命中校验（默认路径，执行越过 guard）
+  // worktree（文件隔离）与 fork（上下文继承）已解耦：worktree:true 可独立于 fork 工作
+  // （worktreeManager.create 只看 opts.worktree，不读 fork）。此组验证三种 fork/worktree
+  // 组合下 worktree 路径的行为（均不应抛 'requires fork'——该 guard 已移除）：
+  //   1. worktree:true + fork:false → 解耦后正常（创建 worktree 路径，不抛 requires fork）
+  //   2. worktree:true + fork:true  → 创建 worktree 路径（测试环境 git 失败，抛非 requires fork 错）
+  //   3. worktree:false + fork:false → 默认路径（不创建 worktree）
   //
-  // 被测点是 execute() 入口的 guard（subagent-service.ts L277-282），在任何副作用
-  // （record 创建 / worktree 创建 / spawn）之前。本文件不 mock spawn（保持与文件头
-  // 声明一致——execute 集成测试在 execute-nesting / run-spawn-integration），
-  // 因此 case 2/3 验证「guard 放行」而非「执行完成」：执行越过 guard 后在后续步骤
-  // （worktreeManager.create 调 git / runSpawn 调 spawn）抛与 fork/worktree 无关的错。
-  // 用 try/catch 断言抛出的不是 guard 错误，精确锁住 guard 的触发条件。
+  // 本文件不 mock spawn（保持与文件头声明一致——execute 集成测试在 execute-nesting /
+  // run-spawn-integration），因此 case 验证「不抛 requires fork」而非「执行完成」：
+  // 执行越过 worktree 创建后在后续步骤（worktreeManager.create 调 git / runSpawn 调
+  // spawn）抛与 fork/worktree 无关的错。用 try/catch 断言抛出的不是 requires fork。
 
-  describe("execute() worktree fail-fast 校验 [MF#7]", () => {
+  describe("execute() worktree 路径（worktree 与 fork 解耦）", () => {
     /** 构造已就绪的 service（initSession + initModel 注入 ctxModel，使 resolveIdentity 不因 model 拗错）。 */
     function makeReadyService(): SubagentService {
       const service = new SubagentService({ cwd: agentDir, modelService });
@@ -422,24 +420,25 @@ describe("SubagentService", () => {
       return service;
     }
 
-    it("worktree:true + fork:false → fail-fast 抛错含 'requires fork'（guard 命中）", async () => {
+    it("worktree:true + fork:false → 解耦后不抛 'requires fork'（worktree 独立于 fork）", async () => {
       const service = makeReadyService();
-      // guard 在所有副作用之前：无 record 创建、无 spawn
-      await expect(
-        service.execute({
-          task: "worktree without fork",
+      // 解耦后 worktree:true+fork:false 不再 throw requires fork（worktreeManager.create 只看 worktree）
+      try {
+        await service.execute({
+          task: "worktree without fork (decoupled)",
           worktree: true,
           fork: false,
           ctxModel: { id: "ctx-model", name: "Ctx", provider: "p", reasoning: false },
-        }),
-      ).rejects.toThrow(/requires fork/);
-      // 无副作用：record 未创建（guard 在 createRecordForMode 之前）
-      expect(service.collectRecords(10)).toHaveLength(0);
+        });
+      } catch (err) {
+        // 解耦后绝不抛 requires fork（执行继续到 worktreeManager.create/spawn 才可能抛其他错）
+        expect((err as Error).message).not.toMatch(/requires fork/);
+      }
     });
 
-    it("worktree:true + fork:true → 不命中 guard（执行越过 guard，不抛 'requires fork'）", async () => {
+    it("worktree:true + fork:true → 创建 worktree 路径（不抛 'requires fork'）", async () => {
       const service = makeReadyService();
-      // guard 放行 → 执行继续：先创建 record，然后 worktreeManager.create 调 git（测试环境无 repo → 抛与 fork 无关的错）
+      // 执行继续：先创建 record，然后 worktreeManager.create 调 git（测试环境无 repo → 抛与 fork 无关的错）
       try {
         await service.execute({
           task: "worktree with fork",
@@ -454,9 +453,9 @@ describe("SubagentService", () => {
       }
     });
 
-    it("worktree:false + fork:false → 不命中 guard（默认路径越过 guard，不抛 'requires fork'）", async () => {
+    it("worktree:false + fork:false → 默认路径（不创建 worktree，不抛 'requires fork'）", async () => {
       const service = makeReadyService();
-      // guard 放行 → 执行继续：runSpawn 调 child_process.spawn（测试环境无真实 pi → 抛与 fork 无关的错）
+      // 默认路径：runSpawn 调 child_process.spawn（测试环境无真实 pi → 抛与 fork 无关的错）
       try {
         await service.execute({
           task: "default path",

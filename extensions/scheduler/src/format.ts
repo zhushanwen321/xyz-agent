@@ -1,10 +1,12 @@
 import { formatDuration } from './parsing.js'
-import type { ScheduleSpec } from './types.js'
+import type { ScheduleSpec, TaskKind } from './types.js'
 
-/** Format ScheduleSpec to readable string */
-export function formatSchedule(spec: ScheduleSpec): string {
+/** Format ScheduleSpec to readable string. kind 区分 once/recurring（once 显示 'once in X' 而非误导性的 'every X'）。 */
+export function formatSchedule(spec: ScheduleSpec, kind?: TaskKind): string {
   if (spec.mode === 'interval') {
-    return `every ${formatDuration(spec.intervalMs)}`
+    return kind === 'once'
+      ? `once in ${formatDuration(spec.intervalMs)}`
+      : `every ${formatDuration(spec.intervalMs)}`
   }
   return spec.cronExpression
 }

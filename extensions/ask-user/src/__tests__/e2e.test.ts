@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { makeE2E } from "./e2e-harness";
 
 // ── E2E-1: 单问题无评论 — 选第二项提交 ─────────────────
-describe("E2E-1: single question, no comment — pick 2nd option", () => {
+describe("E2E-1: single question — pick 2nd option", () => {
 	const questions = [
 		{
 			question: "Which DB?",
@@ -27,55 +27,8 @@ describe("E2E-1: single question, no comment — pick 2nd option", () => {
 		expect(result.content[0].text).toContain("SQLite");
 		// Data contract
 		expect(details.cancelled).toBe(false);
-		expect(details.answers["Which DB?"]).toBe("SQLite");
+		expect(details.answers["Which DB?"]).toEqual({ selected: ["SQLite"], other: null });
 		expect(details.questions.length).toBe(1);
-	});
-});
-
-// ── E2E-2: 单问题 + allowComment — 选项 + 评论拼接 ─────
-describe("E2E-2: single question + allowComment — option + comment joined", () => {
-	const questions = [
-		{
-			question: "Which DB?",
-			allowComment: true,
-			options: [{ label: "Postgres" }, { label: "SQLite" }],
-		},
-	];
-
-	it("joins selected option with comment via ' — '", async () => {
-		const e = makeE2E(questions);
-		// Enter 选 Postgres → 进评论模式 → 输 "fast" → Enter 保存（allowComment 分支）
-		e.keys(["\r", "f", "a", "s", "t", "\r"]);
-		const result = await e.getExecuted();
-		const details = result.details;
-
-		expect(details.cancelled).toBe(false);
-		expect(details.answers["Which DB?"]).toBe("Postgres — fast");
-		expect(result.content[0].text).toContain("Postgres — fast");
-	});
-});
-
-// ── E2E-3: 单问题 + allowComment — Enter 空评论跳过 ─────
-describe("E2E-3: single question + allowComment — Enter in comment skips", () => {
-	const questions = [
-		{
-			question: "Which DB?",
-			allowComment: true,
-			options: [{ label: "Postgres" }, { label: "SQLite" }],
-		},
-	];
-
-	it("empty Enter in comment mode keeps option without ' — ' suffix", async () => {
-		const e = makeE2E(questions);
-		// Enter 选 Postgres → 直接 Enter 评论模式跳过（AC-12）
-		e.keys(["\r", "\r"]);
-		const result = await e.getExecuted();
-		const details = result.details;
-
-		expect(details.cancelled).toBe(false);
-		// 不含 " — " 分隔符
-		expect(details.answers["Which DB?"]).toBe("Postgres");
-		expect(details.answers["Which DB?"]).not.toContain("—");
 	});
 });
 
@@ -96,8 +49,8 @@ describe("E2E-4: multi-question submit — answer each then Submit tab", () => {
 		const details = result.details;
 
 		expect(details.cancelled).toBe(false);
-		expect(details.answers["Q1"]).toBe("A");
-		expect(details.answers["Q2"]).toBe("X");
+		expect(details.answers["Q1"]).toEqual({ selected: ["A"], other: null });
+		expect(details.answers["Q2"]).toEqual({ selected: ["X"], other: null });
 		expect(result.content[0].text).toContain("Q1");
 		expect(result.content[0].text).toContain("Q2");
 	});
@@ -121,7 +74,7 @@ describe("E2E-5: multi-select — Space toggle two options then Enter", () => {
 		const details = result.details;
 
 		expect(details.cancelled).toBe(false);
-		expect(details.answers["Which features?"]).toBe("Auth, Search");
+		expect(details.answers["Which features?"]).toEqual({ selected: ["Auth", "Search"], other: null });
 	});
 });
 
@@ -140,7 +93,7 @@ describe("E2E-6: Other free-text — type custom answer", () => {
 		const details = result.details;
 
 		expect(details.cancelled).toBe(false);
-		expect(details.answers["Which DB?"]).toBe("redis");
+		expect(details.answers["Which DB?"]).toEqual({ selected: [], other: "redis" });
 	});
 });
 

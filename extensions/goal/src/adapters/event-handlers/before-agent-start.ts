@@ -12,7 +12,7 @@
  *
  * 全解耦：不再做 staleness 检测（原依赖 pi.__todoGetList，跨 ext 失效），
  * 不再探测 plan extension（原 typeof pi.__planStart，跨 ext 失效）。
- * contextInjectionPrompt 恒定建议 plan mode（AI 自行决定是否用）。
+ * contextInjectionPrompt 精简版（详尽审计收敛到 continuationPrompt，agent_end 发）。
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -56,17 +56,17 @@ export async function handleBeforeAgentStart(
 	if (!isActiveStatus(session.state.status)) return;
 
 	// Context 使用率检查（ADR-002：保持 active，仅注入提示）
-	const ctxResult = checkContextUsage(session, ctx);
+	const ctxResult = checkContextUsage(ctx);
 	if (ctxResult) return ctxResult;
 
-	// 正常 context injection。
-	// 全解耦：planAvailable 恒 true（contextInjectionPrompt 恒定建议 plan mode，AI 自行决定）。
+	// 正常 context injection（精简版，≤600 chars）。
+	// plan 引导 / 详尽审计（intent≠evidence、预算耗尽≠完成、Fidelity）收敛到 continuationPrompt。
 	// pending 感知由 LLM 自行调 pending_notifications tool（mandatory）查询当前活跃异步操作，
 	// goal 不在此注入——避免与 tool 查询结果形成双信息源不一致（tool 是 EventBus+entries 维护的权威源）。
 	return {
 		message: {
 			customType: "goal-context",
-			content: contextInjectionPrompt(session.state, session.state.timeUsedSeconds, true),
+			content: contextInjectionPrompt(session.state, session.state.timeUsedSeconds),
 			display: false,
 		},
 	};
@@ -99,10 +99,9 @@ function handleTerminalStateBeforeAgent(
  * 不做状态变更、不 persist、不 tick（资源保护通过"提示"而非"状态机"实现）。
  */
 function checkContextUsage(
-	_session: GoalSession,
-	_ctx: ExtensionContext,
+	ctx: ExtensionContext,
 ): BeforeAgentStartResult | undefined {
-	const usage = _ctx.getContextUsage();
+	const usage = ctx.getContextUsage();
 	if (
 		usage &&
 		usage.contextWindow > 0 &&

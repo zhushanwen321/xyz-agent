@@ -1,17 +1,14 @@
 // 提示词质量回归：goal_control tool description + runtime 错误文案必须是
 // "可纠正的行为约束器"，而非干巴巴的错误。
 //
-// agent（LLM）唯一能看到的 tool 元信息就是 description + 报错文案。弱模型
-// （如 step-3.7-flash）会在首次调用时省略条件必填字段（create 漏 slug、
-// complete 漏 evidence——complete 需模型主动生成内容，省略动因最强）。
-// description 补完整 JSON 正例 + 结构反例，runtime throw 补 "Correct:" 纠正
-// 正例，能让弱模型在首轮或报错后无需猜测即可对齐。
+// agent（LLM）唯一能看到的 tool 元信息就是 description + 报错文案。description 用中文
+// 重写（动作 create/complete/report_blocked + 规则 + §2.5 终态语义），删除英文 Examples/Don't
+// 段；runtime throw 保留 .trim() 空串校验 + 'Correct:' 纠正正例（缺失必填已前移到 schema
+// discriminated union 层拒绝，C3）。
 //
-// 本测试用源码断言（读 .ts 文件文本）锁定这些约束，防止后续重构把正例/反例
-// 或纠错文案删掉。读源码而非 import，避免 mock 链（goal-control-adapter.ts
-// 依赖 pi-ai/typebox/pi-tui/ExtensionAPI 等值导入）。
-//
-// 模式参考：subagent-workflow/src/interface/__tests__/subagent-tool-prompt.test.ts。
+// 本测试用源码断言（读 .ts 文件文本）锁定这些约束，防止后续重构把中文语义/纠错文案/
+// union 结构删掉。读源码而非 import，避免 mock 链（goal-control-adapter.ts 依赖
+// pi-ai/typebox/pi-tui/ExtensionAPI 等值导入）。
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -34,62 +31,81 @@ function extractDescription(src: string): string {
 
 const DESCRIPTION = extractDescription(ADAPTER_SRC);
 
-describe("goal_control description — 含完整 JSON 正例（弱模型首轮误用防御）", () => {
-	it("含 create 正例子串", () => {
-		// create 是弱模型最易漏 slug 的 action；完整 JSON 正例给出可直接复用的形态。
-		expect(DESCRIPTION).toContain('{"action":"create"');
-	});
-
-	it("含 complete 正例子串", () => {
-		// complete 需模型主动生成 evidence，省略动因最强；正例锁定必填字段。
-		expect(DESCRIPTION).toContain('{"action":"complete"');
-	});
-
-	it("含 report_blocked 正例子串", () => {
-		expect(DESCRIPTION).toContain('{"action":"report_blocked"');
+describe("goal_control description — 中文化 + 动作覆盖", () => {
+	it("含管理目标总述 + complete 须满足每条 successCriteria 条件", () => {
+		expect(DESCRIPTION).toContain("管理当前会话的目标");
+		expect(DESCRIPTION).toContain("满足每条 successCriteria 条件");
 	});
 });
 
-describe("goal_control description — 含参数结构反例（Don't 段）", () => {
-	it("含 Don't 段", () => {
-		expect(DESCRIPTION).toMatch(/Don't/);
-	});
-
-	it("Don't 段含 evidence 结构反例关键词（complete 漏 evidence）", () => {
-		// complete 漏 evidence 是核心失败模式之一；反例文案必须提及 evidence。
-		expect(DESCRIPTION).toMatch(/evidence/);
+describe("goal_control description — §2.5 终态语义", () => {
+	it("create 失败提示 / complete 报告 token / pause-resume-budget 归用户 / 不反复报告阻塞", () => {
+		expect(DESCRIPTION).toContain("请让用户运行 /goal resume 或 /goal clear");
+		expect(DESCRIPTION).toContain("报告最终 token 用量");
+		expect(DESCRIPTION).toContain("pause/resume 和 budget 变更由用户经 /goal 命令控制");
+		expect(DESCRIPTION).toContain("不要反复报告同一阻塞");
 	});
 });
 
-describe("goal_control promptGuidelines — complete/report_blocked 主动触发引导（防不主动收尾）", () => {
-	// promptGuidelines 进 system prompt guidelines 段（强信号），是修复 complete/report_blocked
-	// 「该主动调但不调」的核心载体。用源码断言锁定两条正向触发引导，防止后续重构删掉。
-	it("源码含 promptGuidelines 字段", () => {
+describe("goal_control description — 删除 Examples/Don't 英文段", () => {
+	it("不含 Examples JSON 正例段 + 不含 Don't 段", () => {
+		// Examples 段已删，description 不再含裸 JSON 正例
+		expect(DESCRIPTION).not.toContain('{"action":"create"');
+		expect(DESCRIPTION).not.toMatch(/Don't/);
+	});
+});
+
+describe("goal_control schema — discriminated union（C3）", () => {
+	it("Type.Union + 各分支 additionalProperties:false + 无 timeBudgetMinutes", () => {
+		expect(ADAPTER_SRC).toMatch(/Type\.Union\(/);
+		expect(ADAPTER_SRC).toContain("additionalProperties: false");
+		expect(ADAPTER_SRC).not.toMatch(/timeBudgetMinutes/);
+	});
+});
+
+describe("goal_control promptGuidelines — complete/report_blocked 主动触发引导", () => {
+	it("含 promptGuidelines 字段 + complete/report_blocked 主动触发信号", () => {
 		expect(ADAPTER_SRC).toMatch(/promptGuidelines:\s*\[/);
-	});
-
-	it("promptGuidelines 含 complete 主动触发信号（proactively + objective is actually achieved）", () => {
 		expect(ADAPTER_SRC).toMatch(/complete:.*proactively call.*objective is actually achieved/s);
-	});
-
-	it("promptGuidelines 含 report_blocked 主动触发信号（proactively + ≥3 approaches）", () => {
 		expect(ADAPTER_SRC).toMatch(/report_blocked:.*proactively call.*≥3 distinct alternative approaches/s);
+		expect(ADAPTER_SRC).toContain("do not repeatedly report the same blocker");
 	});
 });
 
-describe("goal_control runtime 错误文案 — 含 'Correct:' 纠正正例（≥4 处）", () => {
-	it("源码含 ≥4 处 'Correct:' 纠错文案（4 条 required throw 各一带正例）", () => {
-		// objective/slug/evidence/reason 四条必填 throw 各应带完整 JSON 正例，
+describe("goal_control runtime 错误文案 — 含 'Correct:' 纠正正例", () => {
+	it("≥4 处 'Correct:'（4 条空串 throw 各一带正例）+ objective/evidence 报错带正例", () => {
+		// objective/successCriteria/evidence/reason 四条空串 throw 各应带完整 JSON 正例，
 		// 让弱模型在报错后无需猜测即可纠正。读整份源码统计出现次数。
 		const matches = ADAPTER_SRC.match(/Correct:/g) || [];
 		expect(matches.length).toBeGreaterThanOrEqual(4);
+		expect(ADAPTER_SRC).toMatch(/'objective' must not be empty[\s\S]*?Correct:/);
+		expect(ADAPTER_SRC).toMatch(/'evidence' must not be empty[\s\S]*?Correct:/);
+	});
+});
+
+describe("goal_control 描述修正（A1/slug optional）", () => {
+	it("无 'at least 3 approaches' + reason throw 含 'what you tried' + slug 真 optional", () => {
+		// A1: reason schema desc/throw 已删强制 ≥3 声明
+		expect(ADAPTER_SRC).not.toMatch(/at least 3 approaches/);
+		expect(ADAPTER_SRC).toMatch(/'reason' must not be empty[\s\S]*?what you tried/);
+		expect(ADAPTER_SRC).toContain("可选。");
+		expect(ADAPTER_SRC).not.toMatch(/'slug' is required/);
+	});
+});
+
+describe("goal_control budget 默认策略锁定（S-8：三层信号冗余，防回滚无声）", () => {
+	// 新增的 budget-policy prompt 文本散落在三处（description 段 / promptGuidelines 项 /
+	// tokenBudget 参数 description），任一处被回滚都应触发测试失败——这是 prompt-lock 的核心诉求。
+	it("description 模板含中文 '默认不设 tokenBudget' 预算策略段", () => {
+		expect(DESCRIPTION).toContain("默认不设 tokenBudget");
 	});
 
-	it("objective 报错带 Correct 正例", () => {
-		expect(ADAPTER_SRC).toMatch(/'objective' is required[\s\S]*?Correct:/);
+	it("promptGuidelines budget 项含英文 'never set tokenBudget on your own initiative'", () => {
+		expect(ADAPTER_SRC).toContain("never set tokenBudget on your own initiative");
 	});
 
-	it("evidence 报错带 Correct 正例", () => {
-		expect(ADAPTER_SRC).toMatch(/'evidence' is required[\s\S]*?Correct:/);
+	it("tokenBudget 参数 description 含 '默认不设' + '切勿自行决定设置预算'", () => {
+		// 参数 schema description 是第三层信号（与上面两层对齐，三层冗余，见 adapter 源码注释）
+		expect(ADAPTER_SRC).toMatch(/tokenBudget:[\s\S]*?默认不设[\s\S]*?切勿自行决定设置预算/);
 	});
 });

@@ -29,6 +29,7 @@ import type { BudgetConfig } from "../engine/types";
 import { objectiveUpdatedPrompt } from "../projection/prompts";
 import { updateWidget } from "../projection/widget";
 import { finalizeAndPersist, persistState, tickState } from "../service";
+import type { GoalHistoryEntry } from "../ports";
 import type { GoalSession } from "../session";
 import { clearGoalSession } from "../session";
 import { buildPorts } from "./ports";
@@ -77,15 +78,13 @@ function handleStatus(session: GoalSession, ctx: ExtensionContext): void {
 	if (isActiveStatus(state.status)) {
 		tickState(state);
 	}
-	const timeMins = Math.floor(state.timeUsedSeconds / SECONDS_PER_MINUTE);
-	const timeSecs = Math.floor(state.timeUsedSeconds % SECONDS_PER_MINUTE);
 	const lines: Array<string | null> = [
 		state.slug ? `Slug: ${state.slug}` : null,
 		`Objective: ${state.objective}`,
 		state.successCriteria ? `Success criteria: ${state.successCriteria}` : null,
 		`Status: ${state.status}`,
 		`Turn: ${state.currentTurnIndex}`,
-		`Time elapsed: ${timeMins}m${timeSecs}s`,
+		`Time elapsed: ${formatDuration(state.timeUsedSeconds)}`,
 		state.budget.tokenBudget ? `Token: ${state.tokensUsed}/${state.budget.tokenBudget}` : null,
 		`Goal ID: ${state.goalId}`,
 	];
@@ -148,16 +147,15 @@ function handleResume(pi: ExtensionAPI, session: GoalSession, ctx: ExtensionCont
 
 	const ports = buildPorts(pi, ctx);
 
-	// FR-8.3 G-014: resume 时 budget 重检
+	// FR-8.3 G-014: resume 时 budget 重检（仅 token 维度）
 	const resumeCheck = checkBudgetOnResume(state);
 	if (resumeCheck) {
-		const dim = resumeCheck.dimension;
 		// FR-8.7: 走 finalizeAndPersist 写 history（含 tick + transition + history + appendState），
 		// 勿用 transitionStatus + persistState（不写 history，goal 会从 /goal history 凭空消失）
-		finalizeAndPersist(state, dim === "token" ? "budget_limited" : "time_limited", 0, ports);
+		finalizeAndPersist(state, "budget_limited", ports);
 		updateWidget(session, ports.ui);
 		ctx.ui.notify(
-			`${dim === "token" ? "Token" : "Time"} budget exhausted, cannot resume. Use /goal clear to reset.`,
+			"Token budget exhausted, cannot resume. Use /goal clear to reset.",
 			"warning",
 		);
 		return;
@@ -177,22 +175,46 @@ function handleResume(pi: ExtensionAPI, session: GoalSession, ctx: ExtensionCont
 
 // ── /goal history ─────────────────────────────────────
 
-interface GoalHistoryData {
-	goalId: string;
-	objective: string;
-	/** widget/history 标题用（fallback objective 截断）。旧 entry 无此字段。 */
-	slug?: string;
-	status: string;
-	completedTasks: number;
-	totalTasks: number;
-	elapsedSeconds: number;
-	timestamp: number;
+/**
+ * 把秒数格式化为 `${mins}m${secs}s`（始终带秒，与 widget formatMinutes 区分——
+ * 后者 secs=0 时省略秒）。history/status 行用此格式保持时间精度。
+ */
+export function formatDuration(seconds: number): string {
+	const mins = Math.floor(seconds / SECONDS_PER_MINUTE);
+	const secs = Math.floor(seconds % SECONDS_PER_MINUTE);
+	return `${mins}m${secs}s`;
+}
+
+/**
+ * 渲染单条 goal-history entry 为 2 行（标题行 + 详情行）。纯函数：
+ * icon 映射（complete→✓/cancelled→✗/budget_limited→⊗/else→?）+
+ * title（slug 优先，fallback objective 截断到 OBJECTIVE_DISPLAY_LIMIT）+ 耗时。
+ */
+export function formatHistoryEntry(entry: GoalHistoryEntry, index: number): string[] {
+	const icon =
+		entry.status === "complete"
+			? "✓"
+			: entry.status === "cancelled"
+				? "✗"
+				: entry.status === "budget_limited"
+					? "⊗"
+					// 旧 history entry（npm 0.7.x 时间预算格式）状态展示回归：保留 ⏱ 图标
+					: entry.status === "time_limited"
+						? "⏱"
+						: "?";
+	const title = entry.slug ?? (entry.objective.length > OBJECTIVE_DISPLAY_LIMIT
+		? `${entry.objective.slice(0, OBJECTIVE_TRUNCATE_KEEP)}...`
+		: entry.objective);
+	return [
+		`${index + 1}. ${icon} ${title}`,
+		`   ${formatDuration(entry.elapsedSeconds)} | ${entry.status}`,
+	];
 }
 
 function handleHistory(ctx: ExtensionContext): void {
 	const entries = ctx.sessionManager.getEntries();
 	const historyEntries = entries.filter(
-		(e): e is CustomEntry<GoalHistoryData> =>
+		(e): e is CustomEntry<GoalHistoryEntry> =>
 			e.type === "custom" && (e as CustomEntry).customType === "goal-history",
 	);
 
@@ -208,24 +230,7 @@ function handleHistory(ctx: ExtensionContext): void {
 	sorted.forEach((entry, i) => {
 		const h = entry.data;
 		if (!h) return;
-		const icon =
-			h.status === "complete"
-				? "✓"
-				: h.status === "cancelled"
-					? "✗"
-					: h.status === "budget_limited"
-						? "⊗"
-						: h.status === "time_limited"
-							? "⏱"
-							: "?";
-		// GAP-5: 标题优先用 slug（紧凑），无 slug fallback objective 截断（旧 entry 兼容）
-		const title = h.slug ?? (h.objective.length > OBJECTIVE_DISPLAY_LIMIT
-			? `${h.objective.slice(0, OBJECTIVE_TRUNCATE_KEEP)}...`
-			: h.objective);
-		const mins = Math.floor(h.elapsedSeconds / SECONDS_PER_MINUTE);
-		const secs = Math.floor(h.elapsedSeconds % SECONDS_PER_MINUTE);
-		lines.push(`${i + 1}. ${icon} ${title}`);
-		lines.push(`   ${mins}m${secs}s | ${h.status}`);
+		lines.push(...formatHistoryEntry(h, i));
 	});
 	ctx.ui.notify(lines.join("\n"), "info");
 }
@@ -244,7 +249,7 @@ function handleClear(pi: ExtensionAPI, session: GoalSession, ctx: ExtensionConte
 	// transitionStatus 查表终态不可转（engine/goal.ts）：已终态 goal 直接 clearSession
 	if (!isTerminalStatus(session.state.status)) {
 		// FR-3.3: 唯一终态序列入口（tick + finalizeGoal + persist）
-		finalizeAndPersist(session.state, "cancelled", 0, ports);
+		finalizeAndPersist(session.state, "cancelled", ports);
 	}
 	// FR-8.7: cancelled → 立即 clearSession
 	clearGoalSession(session, ports.ui);
@@ -283,8 +288,6 @@ function handleUpdate(
 	state.budgetLimitSteeringSent = false;
 	state.tokenWarning70Sent = false;
 	state.tokenWarning90Sent = false;
-	state.timeWarning70Sent = false;
-	state.timeWarning90Sent = false;
 	// GAP-6: update 是重塑，旧 slug 已不匹配新 objective → 置空（widget fallback objective 截断）
 	state.slug = undefined;
 	// update 重塑后旧 successCriteria 可能不再完全匹配新 objective，但语义内容仍可部分适用。
@@ -317,7 +320,7 @@ function handleUpdate(
  * D25 守卫仍在此处预检：非终态旧 goal（active/paused/blocked）→ 拒绝，
  * 提示 /goal resume 或 /goal clear（避免 AI 在已有未完成 goal 时重复创建）。
  *
- * budget flag（--tokens/--timeout）写入消息体，让 AI 原样传给 create。
+ * budget flag（--tokens）写入消息体，让 AI 原样传给 create。
  */
 function handleSet(
 	pi: ExtensionAPI,
@@ -327,12 +330,14 @@ function handleSet(
 	ctx: ExtensionContext,
 ): void {
 	if (!objective || !objective.trim()) {
-		ctx.ui.notify("Usage: /goal <objective> [--tokens N] [--timeout N]", "warning");
+		ctx.ui.notify("Usage: /goal <objective> [--tokens N]", "warning");
 		return;
 	}
 
 	// #11 / D25: 非终态旧 goal（active/paused/blocked）→ 拒绝（不覆盖、不写 history）
 	if (session.state && !isTerminalStatus(session.state.status)) {
+		// A5 决策（C2）：notify 是给用户的 UI 提示（用户可执行 /goal resume|clear），
+		// 与 goal_control description（给模型看，模型不可执行 slash）语义不同——不改。
 		ctx.ui.notify(
 			"Goal already active. Use /goal resume to continue or /goal clear to reset.",
 			"warning",
@@ -345,16 +350,10 @@ function handleSet(
 		ctx.ui.notify("Token budget must be greater than 0.", "warning");
 		return;
 	}
-	if (budgetOverrides?.timeBudgetMinutes !== undefined && budgetOverrides.timeBudgetMinutes <= 0) {
-		ctx.ui.notify("Time budget must be greater than 0.", "warning");
-		return;
-	}
 
 	// 构造引导 AI 创建 goal 的消息（含 objective + 可选 budget）
 	const budgetHints: string[] = [];
 	if (budgetOverrides?.tokenBudget) budgetHints.push(`tokenBudget: ${budgetOverrides.tokenBudget}`);
-	if (budgetOverrides?.timeBudgetMinutes)
-		budgetHints.push(`timeBudgetMinutes: ${budgetOverrides.timeBudgetMinutes}`);
 	const budgetLine = budgetHints.length > 0 ? `\nBudget: ${budgetHints.join(", ")}` : "";
 
 	const message =

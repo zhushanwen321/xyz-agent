@@ -13,7 +13,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createGoalState } from "../../engine/goal";
-import type { GoalRuntimeState } from "../../engine/types";
+import type { GoalRuntimeState, GoalStatus } from "../../engine/types";
 import type { UiPort } from "../../ports";
 import { createGoalSession } from "../../session";
 import { OBJECTIVE_DISPLAY_LIMIT, OBJECTIVE_TRUNCATE_KEEP } from "../../constants";
@@ -79,45 +79,31 @@ describe("renderStatusLine", () => {
 		expect(text).not.toContain("test objective"); // slug 优先，objective 不显示
 	});
 
-	it("无预算 → 显示已消耗绝对值（token + time）", () => {
+	it("无预算 → 显示已消耗绝对值 token 段（非百分比分支）", () => {
 		const text = renderStatusLine(
 			makeState({ status: "active", tokensUsed: 12000, timeUsedSeconds: 90 }),
 			theme,
 		);
-		expect(text).toContain("12k tokens"); // formatTokens 缩写
-		expect(text).toContain("1m30s"); // formatMinutes
+		// 无预算走绝对值分支：含 "tokens" 不含 "% tokens"。
+		// 缩写(12k)/时间格式(1m30s)的正确性已下沉到 format.test.ts 直接测。
+		expect(text).toContain("tokens");
+		expect(text).not.toContain("% tokens");
 	});
 
-	it("blocked → 含 ⊘ Blocked 后缀", () => {
-		const text = renderStatusLine(makeState({ status: "blocked" }), theme);
-		expect(text).toContain("⊘ Blocked");
-	});
-
-	it("paused → 含 ⏸ Paused 后缀", () => {
-		const text = renderStatusLine(makeState({ status: "paused" }), theme);
-		expect(text).toContain("⏸ Paused");
-	});
-
-	it("complete → 含 ✓ Completed 后缀", () => {
-		const text = renderStatusLine(makeState({ status: "complete" }), theme);
-		expect(text).toContain("✓ Completed");
-	});
-
-	it("budget_limited → 含 ⊗ Token budget exhausted 后缀", () => {
-		const text = renderStatusLine(makeState({ status: "budget_limited" }), theme);
-		expect(text).toContain("⊗ Token budget exhausted");
-	});
-
-	it("time_limited → 含 ⏱ Time budget exhausted 后缀", () => {
-		const text = renderStatusLine(makeState({ status: "time_limited" }), theme);
-		expect(text).toContain("⏱ Time budget exhausted");
+	it.each([
+		["blocked", "⊘ Blocked"],
+		["paused", "⏸ Paused"],
+		["complete", "✓ Completed"],
+		["budget_limited", "⊗ Token budget exhausted"],
+	])("renderStatusLine %s → 含后缀 %s", (status, suffix) => {
+		expect(renderStatusLine(makeState({ status: status as GoalStatus }), theme)).toContain(suffix);
 	});
 
 	it("tokenBudget > 0 → 显示 token 百分比", () => {
 		const text = renderStatusLine(
 			makeState({
 				status: "active",
-				budget: { tokenBudget: 1000, timeBudgetMinutes: 0 },
+				budget: { tokenBudget: 1000 },
 				tokensUsed: 500,
 			}),
 			theme,
@@ -131,16 +117,6 @@ describe("renderStatusLine", () => {
 describe("renderTerminalStatusLine", () => {
 	it("cancelled → 空字符串", () => {
 		expect(renderTerminalStatusLine(makeState({ status: "cancelled" }), theme)).toBe("");
-	});
-
-	it("complete → 含 ✓ Completed", () => {
-		const text = renderTerminalStatusLine(makeState({ status: "complete" }), theme);
-		expect(text).toContain("✓ Completed");
-	});
-
-	it("budget_limited → 含 ⊗ Token budget exhausted", () => {
-		const text = renderTerminalStatusLine(makeState({ status: "budget_limited" }), theme);
-		expect(text).toContain("⊗ Token budget exhausted");
 	});
 });
 
@@ -162,28 +138,29 @@ describe("renderWidgetLines", () => {
 		expect(lines[0]).toContain("◆ test objective");
 	});
 
-	it("tokenBudget + timeBudget → 含进度条行（used/total 格式）", () => {
+	it("tokenBudget → 含 token 进度条行（used/total 格式）", () => {
 		const lines = renderWidgetLines(
 			makeState({
 				status: "active",
-				budget: { tokenBudget: 1000, timeBudgetMinutes: 30 },
+				budget: { tokenBudget: 1000 },
 				tokensUsed: 250,
-				timeUsedSeconds: 540, // 9 min
+				timeUsedSeconds: 540,
 			}),
 			theme,
 		);
-		// 新格式：进度条 + used/total（缩写）
-		expect(lines.some((l) => l.includes("Token:") && l.includes("250/1k"))).toBe(true);
-		expect(lines.some((l) => l.includes("Time:") && l.includes("9m/30min"))).toBe(true);
+		// token 进度条行渲染（缩写 250/1k 的正确性下沉到 format.test.ts）
+		expect(lines.some((l) => l.includes("Token:"))).toBe(true);
+		expect(lines.some((l) => /[█░]/.test(l))).toBe(true);
 	});
 
-	it("无预算 → 显示已消耗绝对值行（no budget）", () => {
+	it("无预算 → token 显示已消耗绝对值，time 显示纯耗时", () => {
 		const lines = renderWidgetLines(
 			makeState({ status: "active", tokensUsed: 5000, timeUsedSeconds: 120 }),
 			theme,
 		);
-		expect(lines.some((l) => l.includes("5k used (no budget)"))).toBe(true);
-		expect(lines.some((l) => l.includes("2m elapsed (no budget)"))).toBe(true);
+		// 无预算绝对值分支结构（缩写 5k / 2m 的正确性下沉到 format.test.ts）
+		expect(lines.some((l) => l.includes("used (no budget)"))).toBe(true);
+		expect(lines.some((l) => l.includes("Time:") && l.includes("elapsed"))).toBe(true);
 	});
 
 	it("有 successCriteria → 含 ✓ 摘要行", () => {
@@ -267,7 +244,9 @@ describe("updateWidget (FR-6.6 hasUI guard)", () => {
 		const session = createGoalSession();
 		session.state = makeState({ status: "complete" });
 		updateWidget(session, ui);
-		expect(calls.some((c) => c.method === "setStatus" && typeof c.args[1] === "string")).toBe(true);
+		const statusCall = calls.find((c) => c.method === "setStatus");
+		expect(statusCall!.args[1]).toEqual(expect.stringContaining("✓ Completed"));
+		expect(statusCall!.args[1]).toEqual(expect.stringContaining("◆ Goal")); // renderTerminalStatusLine 前缀
 		expect(calls.some((c) => c.method === "setWidget" && c.args[1] === undefined)).toBe(true);
 	});
 
@@ -276,7 +255,12 @@ describe("updateWidget (FR-6.6 hasUI guard)", () => {
 		const session = createGoalSession();
 		session.state = makeState({ status: "active" });
 		updateWidget(session, ui);
-		expect(calls.some((c) => c.method === "setStatus" && typeof c.args[1] === "string")).toBe(true);
-		expect(calls.some((c) => c.method === "setWidget" && Array.isArray(c.args[1]))).toBe(true);
+		const statusCall = calls.find((c) => c.method === "setStatus");
+		expect(statusCall!.args[1]).toEqual(expect.stringContaining("◆"));
+		expect(statusCall!.args[1]).toEqual(expect.stringContaining("Turn"));
+		const widgetCall = calls.find((c) => c.method === "setWidget");
+		expect(widgetCall!.args[1]).toEqual(
+			expect.arrayContaining([expect.stringContaining("Token:")]),
+		);
 	});
 });

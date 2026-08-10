@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-scheduler",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "main": "index.ts",
   "pi": {
@@ -16,10 +16,8 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "dependencies": {
-    "croner": "^9.0.0"
-  },
   "devDependencies": {
+    "fast-check": "^4.9.0",
     "vitest": "^4.1.8"
   },
   "files": [
@@ -29,6 +27,7 @@
   ],
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
+    "croner": "^9.0.0",
     "typebox": "*"
   },
   "peerDependenciesMeta": {
@@ -36,6 +35,9 @@
       "optional": true
     },
     "typebox": {
+      "optional": true
+    },
+    "croner": {
       "optional": true
     }
   }
