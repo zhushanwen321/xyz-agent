@@ -57,6 +57,11 @@ function fakeSpawner(responses: CwSpawnResult[]): { spawner: CwSpawner; calls: C
 	const calls: CapturedCall[] = [];
 	let i = 0;
 	const spawner: CwSpawner = vi.fn(async (args, input, cwd, _signal): Promise<CwSpawnResult> => {
+		// 门控 probe（['--version']）是内部细节：返回低版本（不支持归一化）让 write action
+		// 走兜底路径，且不入 calls（测试断言的是 action 调用，probe 透明）。
+		if (args[0] === "--version") {
+			return { stdout: "cw 1.0.0", stderr: "", exitCode: 0 };
+		}
 		calls.push({ args, input, cwd });
 		const r = responses[i] ?? { stdout: "", stderr: "", exitCode: 0 };
 		i += 1;

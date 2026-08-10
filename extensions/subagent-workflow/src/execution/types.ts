@@ -231,7 +231,7 @@ export interface AgentResult {
  */
 /**
  * worktree handle 值对象。仅 worktree:true 时持有——worktree 是独立维度，
- * 需显式开启（且要求 fork:true），fork alone 不创建 worktree。
+ * 需显式开启，fork alone 不创建 worktree。
  * Object.freeze 守卫保证不可变。
  */
 export interface WorktreeHandle {
@@ -339,7 +339,7 @@ export interface ExecutionRecord {
   /** session jsonl 文件名。session 创建成功后由 session-runner.run() 回填（窗口期内 undefined）。 */
   sessionFile?: string;
 
-  /** [MF#3] fork+worktree 模式下子 agent 改动的 patch 文件路径（worktree 外，供调用方应用）。 */
+  /** [MF#3] worktree 模式下子 agent 改动的 patch 文件路径（worktree 外，供调用方应用）。 */
   patchFile?: string;
 
   /** worktree 隔离时的 handle（仅 worktree:true 时存在；fork alone 无此字段）。 */
@@ -383,7 +383,7 @@ export interface SubagentToolDetails {
   parsedOutput?: unknown;
   /** session jsonl 文件名（不含目录）。窗口期内可能 undefined（session 尚未创建成功）。 */
   sessionFile?: string;
-  /** [MF#3] fork+worktree 模式下子 agent 改动的 patch 文件路径（worktree 外，供调用方应用）。 */
+  /** [MF#3] worktree 模式下子 agent 改动的 patch 文件路径（worktree 外，供调用方应用）。 */
   patchFile?: string;
 }
 
@@ -419,7 +419,7 @@ export interface ExecuteOptions {
   onComplete?: (record: RecordSnapshot) => void;
   /** 是否继承父会话上下文（fork 模式，只继承上下文）。 */
   fork?: boolean;
-  /** 文件系统隔离：true=创建新 git worktree（要求 fork:true），WorktreeHandle=复用外部已创建的；undefined=不隔离（parent cwd）。 */
+  /** 文件系统隔离：true=创建新 git worktree，WorktreeHandle=复用外部已创建的；undefined=不隔离（parent cwd）。 */
   worktree?: boolean | WorktreeHandle;
   /** 覆盖执行 cwd（默认 mainCwd）。 */
   cwd?: string;
@@ -527,7 +527,7 @@ export interface SubagentRecord {
   result?: string;
   error?: string;
   sessionFile?: string;
-  /** [MF#3] fork+worktree 模式下子 agent 改动的 patch 文件路径（worktree 外，供调用方应用）。 */
+  /** [MF#3] worktree 模式下子 agent 改动的 patch 文件路径（worktree 外，供调用方应用）。 */
   patchFile?: string;
   /** 外部 Pi 实例（进程隔离模式下由外部启动的子进程）。 */
   externalInstance?: AliveMarker;

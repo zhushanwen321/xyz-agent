@@ -19,7 +19,7 @@ export interface BgNotifyRecord {
   error?: string;
   startedAt: number;
   endedAt: number | undefined;
-  /** [MF#1] fork+worktree 模式下子 agent 改动的 patch 路径（worktree 外，cleanup 后留存）。
+  /** [MF#1] worktree 模式下子 agent 改动的 patch 路径（worktree 外，cleanup 后留存）。
    *  done 时通知文本显式提示 `git apply`，否则 background 子 agent 在隔离 worktree 的改动
    *  会静默丢失——父 LLM 不知 patch 路径，无法应用。 */
   patchFile?: string;

@@ -92,3 +92,20 @@ describe("goal_control 描述修正（A1/slug optional）", () => {
 		expect(ADAPTER_SRC).not.toMatch(/'slug' is required/);
 	});
 });
+
+describe("goal_control budget 默认策略锁定（S-8：三层信号冗余，防回滚无声）", () => {
+	// 新增的 budget-policy prompt 文本散落在三处（description 段 / promptGuidelines 项 /
+	// tokenBudget 参数 description），任一处被回滚都应触发测试失败——这是 prompt-lock 的核心诉求。
+	it("description 模板含中文 '默认不设 tokenBudget' 预算策略段", () => {
+		expect(DESCRIPTION).toContain("默认不设 tokenBudget");
+	});
+
+	it("promptGuidelines budget 项含英文 'never set tokenBudget on your own initiative'", () => {
+		expect(ADAPTER_SRC).toContain("never set tokenBudget on your own initiative");
+	});
+
+	it("tokenBudget 参数 description 含 '默认不设' + '切勿自行决定设置预算'", () => {
+		// 参数 schema description 是第三层信号（与上面两层对齐，三层冗余，见 adapter 源码注释）
+		expect(ADAPTER_SRC).toMatch(/tokenBudget:[\s\S]*?默认不设[\s\S]*?切勿自行决定设置预算/);
+	});
+});

@@ -82,7 +82,8 @@ export const GoalControlParams = Type.Object(
 		),
 		tokenBudget: Type.Optional(
 			Type.Number({
-				description: "可选。新目标的 token 预算（正数）。除非用户指定，否则省略。",
+				description:
+					"可选。新目标的 token 预算（正数）。默认不设——仅在用户明确要求（如「控制在 1 万 token 内」）或你已获得用户明确同意时才设。切勿自行决定设置预算。",
 			}),
 		),
 		evidence: Type.Optional(
@@ -280,6 +281,8 @@ export function registerGoalControlTool(pi: ExtensionAPI, session: GoalSession):
 		label: "Goal Control",
 		description: `管理当前会话的目标（goal）。目标用于追踪需要完成验证的复杂工作。
 
+预算策略：默认不设 tokenBudget。仅在用户明确要求（如「控制在 1 万 token 内」）或用户的指令明确暗示了一个限制时才设。若你认为应该设预算但用户从未提及，先询问用户获得明确同意，切勿自行决定。
+
 动作：
 - create：为复杂的多步骤工作（3+ 步骤、多文件改动、或需要完成验证的工作）主动创建目标。用自己的话重述真实目标，定义可检查的 successCriteria（完成条件）。琐碎的单步任务、普通提问、查找类任务不要创建目标。若已有 active/paused/blocked 目标会失败——请让用户运行 /goal resume 或 /goal clear 后再创建。
 - complete：标记当前 active 目标完成。需要 evidence（具体证据：改动的文件、通过的测试、运行的命令），且必须满足每条 successCriteria 条件。若有预算，在总结里报告最终 token 用量。不要基于假设、意图或部分进度标记完成。
@@ -299,6 +302,9 @@ export function registerGoalControlTool(pi: ExtensionAPI, session: GoalSession):
 			// create：主动用于复杂多步骤任务。翻转原「显式启动」策略——让 goal 真正可用。
 			// 门槛：3+ 步骤 / 多文件 / 需完成验证，避免对琐碎任务滥建 goal 变噪音。
 			"create: proactively start a goal for complex, multi-step work (3+ steps, multi-file, or needs completion verification) — restate the real objective and define checkable successCriteria. Do NOT create for trivial single-step tasks, ordinary lookups, or when a goal is already active. Test: 'is this worth tracking to completion with verification?' — if yes, create a goal.",
+			// budget：默认不设预算——仅当用户显式要求（或明确同意）时才设。
+			// 对齐 description 的预算策略段 + tokenBudget 参数的 description（三层信号冗余）。
+			"budget: never set tokenBudget on your own initiative — the default is no budget. Set a budget only when the user explicitly requested one (e.g. \"keep it under 10k tokens\") or you obtained explicit user consent first. If you think a budget is warranted but the user never mentioned one, ask the user before creating the goal.",
 			// 全解耦下 todo 非硬前置——objective 实际达成才算（与 handleComplete「todo 由 AI 自判」一致）
 			"complete: proactively call when the active goal's objective is actually achieved, not merely in progress. Evidence must be concrete artifacts (files changed, tests green, commands run) meeting every successCriteria condition. Finishing all todos (incl. verification todos) is the usual readiness signal, but the real bar is the objective being met — you decide.",
 			// ≥3 distinct approaches 或同一 blocker 跨连续 turns（T7）；达到阈值后报告，不反复报告同一 blocker

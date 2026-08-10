@@ -106,7 +106,7 @@ worktree: false
 agent: wave-agent
 task: 你是 <子 waveId> 的 wave 层主。unitId=<子 waveId>。按 wave-agent 流程执行。
 worktree: true
-fork: true
+fork: false
 ```
 
 ## 续 turn 指导（被 steer 唤醒）

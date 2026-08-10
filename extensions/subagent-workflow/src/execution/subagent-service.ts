@@ -421,16 +421,6 @@ export class SubagentService {
       );
     }
 
-    // [MF#7] worktree:true 需要 fork:true——否则下面三个 worktree 分支都不命中，
-    // worktreeHandle 恒 undefined → 子 agent 零文件隔离且零报错（静默 no-op）。此处在
-    // 任何副作用（record 创建 / worktree 创建）之前 fail-fast，不吞误用。
-    if (opts.worktree === true && !opts.fork) {
-      throw new Error(
-        "worktree:true requires fork:true (worktree isolation only applies to forked sessions). " +
-          "Set fork:true together with worktree:true.",
-      );
-    }
-
     // mode 固定 background（sync 模式已删除）
     const mode: ExecutionMode = "background";
     const ctx = this.buildSessionRunnerContext(opts.cwd);
@@ -451,7 +441,7 @@ export class SubagentService {
       // 传入的是已创建的 WorktreeHandle
       worktreeHandle = opts.worktree;
     } else if (opts.worktree === true) {
-      // worktree===true（显式要求）——创建新 worktree。MF#7 已保证此处 fork 必为 true。
+      // worktree===true（显式要求）——创建新 worktree。与 fork 正交（worktree 文件隔离不依赖 fork 上下文继承）。
       try {
         worktreeHandle = this.worktreeManager.create(this.cwd, record.id);
         record.worktreeHandle = worktreeHandle;
@@ -524,15 +514,6 @@ export class SubagentService {
       );
     }
 
-    // [MF#7] worktree:true requires fork:true — symmetric with execute() guard.
-    // Fails fast before any side effect (record creation / worktree creation).
-    if (opts.worktree === true && !opts.fork) {
-      throw new Error(
-        "worktree:true requires fork:true (worktree isolation only applies to forked sessions). " +
-          "Set fork:true together with worktree:true.",
-      );
-    }
-
     // ── 步骤 1: IDENTITY 解析 ──
     const identity = await this.resolveIdentity(opts);
 
@@ -543,8 +524,8 @@ export class SubagentService {
     // ── 步骤 2.5: worktree creation (only worktree===true; handle injection is execute()'s path) ──
     // Workflow path receives boolean only (AgentCallOpts.worktree: boolean) — WorktreeHandle is a
     // main-thread non-serializable object that cannot cross worker postMessage, so no object branch
-    // here (unlike execute() :445-447 which serves the subagent-tool path). MF#7 guard above ensures
-    // fork===true when worktree===true. On create failure, finalizeFailed cleans up the record, then
+    // here (unlike execute() :445-447 which serves the subagent-tool path).
+    // On create failure, finalizeFailed cleans up the record, then
     // throw lets SAR.run() convert it to an AgentResult.error (not return-handle like execute()).
     let worktreeHandle: WorktreeHandle | undefined;
     if (opts.worktree === true) {

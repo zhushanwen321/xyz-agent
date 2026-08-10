@@ -57,7 +57,7 @@ interface BgNotifyRecord {
   model?: string;
   result?: string;
   error?: string;
-  /** [MF#1] fork+worktree background 完成通知携带的 patch 文件路径。 */
+  /** [MF#1] worktree background 完成通知携带的 patch 文件路径。 */
   patchFile?: string;
 }
 
@@ -275,7 +275,7 @@ function extractBgNotifyRecord(details: unknown): BgNotifyRecord | undefined {
     model: typeof d.model === "string" ? d.model : undefined,
     result: typeof d.result === "string" ? d.result : undefined,
     error: typeof d.error === "string" ? d.error : undefined,
-    // [MF#1] 提取 patchFile（fork+worktree background 完成通知携带）。
+    // [MF#1] 提取 patchFile（worktree background 完成通知携带）。
     patchFile: typeof d.patchFile === "string" ? d.patchFile : undefined,
   };
 }

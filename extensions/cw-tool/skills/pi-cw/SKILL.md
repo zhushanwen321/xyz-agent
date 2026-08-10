@@ -50,7 +50,7 @@ cw create epic --slug <kebab-slug> --objective "<一句话目标,含可验收的
 用 `subagent` 工具**后台**派发(`planning-agent` 是 cw-tool 内置的 agent 模板):
 
 ```
-subagent(action="start", agent="planning-agent", slug="<epic-slug>-planning", fork=true,
+subagent(action="start", agent="planning-agent", slug="<epic-slug>-planning", fork=false,
   task="<背景>这是 cw epic <epicId> 的层主 agent,目标:<原 objective>。这是递归编排,你会自递归派 feature/slice/wave 层 planning-agent。<目标>先调 cw handoff --unitId <epicId> 拿上下文与 guidance,按 guidance 的派发指导自递归展开并合并子树。<验收>cw status --unitId <epicId> 显示该 epic 子树全部 closed。")
 # 不传 model 参数——默认继承主 agent 模型,递归传给所有下层(见「模型派发」)。
 # 用户特别指定时才传 model="provider/modelId",单个 subagent 生效或作为全树根模型。
@@ -86,7 +86,7 @@ cw frontier --root <epicId>   # 看 epic 子树 frontier
 
 - **只派第一个 planning-agent**:主 agent 不自己 descend 到 feature / slice / wave 层。下层派发是 planning-agent 的职责(它调 cw execute 自动建子 unit,并按 guidance 派子 planning-agent / wave-agent)。
 - **靠 cw 查进度,不信自报**:agent 汇报"我做完了"不等于 cw 状态 closed。以 `cw status` / `cw frontier` 为唯一真相。
-- **worktree 隔离**:wave 层用 `worktree: true, fork: true` 派出(`worktree: true` 强制要求同时 `fork: true`,否则 subagent 工具运行时 throw「worktree:true requires fork:true」,派发即失败;各 wave 独立工作目录,并行不冲突);主 agent 派的 epic planning-agent 不需 worktree(它只编排不写码)。worktree 的合并与清理由 slice 层 planning-agent 派 chain workflow(merge-agent)处理,细节见 planning-agent 模板。
+- **worktree 隔离**:wave 层用 `worktree: true` 派出(各 wave 独立工作目录,并行不冲突;worktree 与 fork 正交,fork 默认 false);主 agent 派的 epic planning-agent 不需 worktree(它只编排不写码)。worktree 的合并与清理由 slice 层 planning-agent 派 chain workflow(merge-agent)处理,细节见 planning-agent 模板。
 - **失败恢复靠 L0-L3**:cw gate fail / 审查 must-fix / 方案缺陷 / 父层拆错,各有恢复路径(L0 就地改重审 / L1 cw replan / L2 父 replan 级联 / L3 上报人),定义在 planning-agent 模板与 cw guidance,本 skill 不重复。
 
 ## 模型派发
