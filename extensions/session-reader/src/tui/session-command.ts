@@ -26,7 +26,7 @@ import { FRAGMENT_LEN, toCandidate } from './hash-provider.js'
 const PICK_LIMIT = 10
 
 /** /session-pick 命令配置（Omit<RegisteredCommand, 'name' | 'sourceInfo'>）。 */
-export function createSessionCommand(cwdSessionDir: string): {
+export function createSessionCommand(getCwdSessionDir: () => string): {
   description: string
   getArgumentCompletions(argumentPrefix: string): Promise<AutocompleteItem[] | null>
   handler(args: string, ctx: ExtensionCommandContext): Promise<void>
@@ -35,7 +35,7 @@ export function createSessionCommand(cwdSessionDir: string): {
     description: 'Pick a session and insert a #uuid-fragment reference into the editor.',
     async getArgumentCompletions(argumentPrefix) {
       const trimmed = argumentPrefix.trim()
-      const all = await SessionManager.listAll(cwdSessionDir)
+      const all = await SessionManager.listAll(getCwdSessionDir())
       // uuid 片段过滤（与 # 弹窗一致）；空 prefix → recent（listAll 已按 modified 倒序）
       const filtered =
         trimmed === '' ? all : all.filter((s) => s.id.includes(trimmed))
@@ -49,7 +49,7 @@ export function createSessionCommand(cwdSessionDir: string): {
     },
     async handler(args, ctx) {
       const trimmed = args.trim()
-      const all = await SessionManager.listAll(cwdSessionDir)
+      const all = await SessionManager.listAll(getCwdSessionDir())
       const filtered =
         trimmed === '' ? all : all.filter((s) => s.id.includes(trimmed))
       const top = filtered.slice(0, PICK_LIMIT)

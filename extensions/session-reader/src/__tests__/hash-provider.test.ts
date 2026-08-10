@@ -304,6 +304,11 @@ describe('provideHashCandidates', () => {
     expect(result!).toHaveLength(2)
   })
 
+  it('空 cwdSessionDir → 返回空数组，不调 listAll（避免全盘扫描卡死）', async () => {
+    const result = await provideHashCandidates('#abc', '')
+    expect(result).toEqual([])
+  })
+
   it('只扫当前目录，不扫其他目录（design G1 当前目录化）', async () => {
     // 当前目录有 1 个
     await makeSession(cwdSessionDir, { fileName: 'a.jsonl', id: '019e6c96-aaaa-bbbb', cwd: '/demo' })

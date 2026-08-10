@@ -117,6 +117,13 @@ const description = `Read pi session files (conversation history) by semantic st
  * session 触发，无 guard 会无限堆叠 provider。once-guard 确保整个进程生命周期只注册一次。
  */
 let tuiRegistered = false
+/**
+ * 当前 session 的目录。**每次 session_start（含 resume/fork/new）动态更新**——
+ * provider/command 通过 getter 读取，不用闭包固定值。固定首个 session 的目录会导致
+ * resume 到别的 cwd 后查错目录、# 弹窗空（agent-session-runtime switchSession 会换
+ * sessionManager 实例并 emit session_start，ctx.sessionManager 指向新 session）。
+ */
+let currentCwdSessionDir: string | null = null
 
 export default function sessionReaderExtension(pi: ExtensionAPI): void {
   pi.registerTool({
@@ -158,13 +165,16 @@ export default function sessionReaderExtension(pi: ExtensionAPI): void {
   // 当前 cwd 化（G1）+ 白送 name/count/firstMessage（G3）+ 19ms vs 1500ms（G5）。
   pi.on('session_start', (_event, ctx) => {
     if (ctx.mode !== 'tui') return
+    // 每次 session_start（resume/fork/new 都触发）更新当前 session 目录；
+    // provider/command 通过 getter 动态读取，避免首个 session 闭包固定 → resume 后查错目录
+    currentCwdSessionDir = ctx.sessionManager.getSessionDir()
     if (tuiRegistered) return
     if (typeof ctx.ui.addAutocompleteProvider !== 'function') return
     tuiRegistered = true
-    const cwdSessionDir = ctx.sessionManager.getSessionDir()
-    pi.registerCommand('session-pick', createSessionCommand(cwdSessionDir))
+    const getCwdSessionDir = (): string => currentCwdSessionDir ?? ''
+    pi.registerCommand('session-pick', createSessionCommand(getCwdSessionDir))
     ctx.ui.addAutocompleteProvider((current) =>
-      createHashAutocompleteProvider(cwdSessionDir, current),
+      createHashAutocompleteProvider(getCwdSessionDir, current),
     )
   })
 }

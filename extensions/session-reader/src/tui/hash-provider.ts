@@ -146,6 +146,9 @@ export async function provideHashCandidates(
 ): Promise<AutocompleteCandidate[] | null> {
   const fragment = extractHashFragment(input)
   if (fragment === null) return null
+  // 目录未就绪（session_start 前的异常窗口）→ 返回空，绝不调 listAll('')——
+  // pi 的 listAll 对空字符串 falsy 走默认全盘分支（3488 项 / ~8s），会让 # 弹窗卡死
+  if (!cwdSessionDir) return []
   const limit = opts?.limit ?? DEFAULT_LIMIT
   const all = await SessionManager.listAll(cwdSessionDir)
   // uuid 片段非空 → id 子串过滤；空片段（刚输入 #）→ recent（listAll 已按 modified 倒序）
@@ -166,7 +169,7 @@ export async function provideHashCandidates(
  * applyCompletion 把 `#fragment`（光标前已输入的片段）替换为完整 `#xxxxxxxx`（选中项的片段）。
  */
 export function createHashAutocompleteProvider(
-  cwdSessionDir: string,
+  getCwdSessionDir: () => string,
   current: AutocompleteProvider,
 ): AutocompleteProvider {
   return {
@@ -181,8 +184,8 @@ export function createHashAutocompleteProvider(
       if (fragment === null) {
         return current.getSuggestions(lines, cursorLine, cursorCol, options)
       }
-      // # 前缀：查 session
-      const candidates = await provideHashCandidates(textBeforeCursor, cwdSessionDir)
+      // # 前缀：查 session（getter 动态读当前 session 目录，resume 后自动跟随）
+      const candidates = await provideHashCandidates(textBeforeCursor, getCwdSessionDir())
       if (options.signal.aborted) return null
       // provideHashCandidates 返回 null 仅在非 # 前缀（fragment===null），上面已拦截；
       // 此处 null 是 TS 收窄的防御性检查，逻辑上不触发
