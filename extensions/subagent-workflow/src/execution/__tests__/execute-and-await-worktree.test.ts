@@ -1,10 +1,9 @@
 // src/__tests__/execute-and-await-worktree.test.ts
 //
-// executeAndAwait 的 worktree 前置守卫 + 失败收尾测试（W1 code review 修复回归锁）。
+// executeAndAwait 的 worktree 失败收尾测试（W1 code review 修复回归锁）。
 //
-// 覆盖两点：
-//   1. [MF#7] worktree:true && !fork 在任何副作用之前 fail-fast 抛错
-//   2. worktreeManager.create 抛错时 record 被 finalizeFailed（status→failed）且原错外抛
+// 覆盖：worktreeManager.create 抛错时 record 被 finalizeFailed（status→failed）且原错外抛。
+// （worktree 与 fork 解耦后，worktree:true+fork:false 的解耦验证见 subagent-service.test.ts。）
 //
 // ── mock 策略 ──
 //
@@ -153,31 +152,9 @@ function getStore(service: SubagentService): RecordStore {
   return Reflect.get(service, "store") as RecordStore;
 }
 
-describe("executeAndAwait worktree 前置守卫 + 失败收尾", () => {
+describe("executeAndAwait worktree 失败收尾", () => {
   afterEach(() => {
     vi.restoreAllMocks();
-  });
-
-  // ============================================================
-  // [MF#7] worktree:true && !fork → fail-fast 抛错（任何副作用之前）
-  // ============================================================
-  it("[MF#7] worktree:true 且 fork 未设时抛 'worktree:true requires fork:true'", async () => {
-    const { service } = setup();
-
-    // guard 在 BC-12 深度检查之后、步骤 1 之前——无需 fork:true，worktree:true 即触发。
-    // 传入完整 ExecuteOptions（补全 slug 必填字段），不再用 `as` 掩盖缺失字段——让缺字段在类型层可见。
-    await expect(
-      service.executeAndAwait({
-        task: "needs worktree without fork",
-        slug: "mf7-worktree-without-fork",
-        worktree: true,
-        fork: undefined,
-        ctxModel,
-      }),
-    ).rejects.toThrow(/worktree:true requires fork:true/);
-
-    // 无副作用：guard 在 createRecordForMode 之前 → store 无 running record。
-    expect(getStore(service).listRunning()).toHaveLength(0);
   });
 
   // ============================================================

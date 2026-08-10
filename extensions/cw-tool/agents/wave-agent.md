@@ -30,7 +30,7 @@ tools: cw_wave, subagent
 
 ## 生命周期（v4 §6）
 
-你被父（slice/feature 层主）用 subagent 工具带 `worktree: true` + `fork: true` 后台派出（worktree:true 强制要求 fork:true，缺 fork 派发即失败），在专属 worktree 工作。
+你被父（slice/feature 层主）用 subagent 工具带 `worktree: true` 后台派出，在专属 worktree 工作。
 
 ### turn 1
 
