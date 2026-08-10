@@ -1,10 +1,13 @@
 /**
- * useMessageStreamNotices —— MessageStream 末尾瞬时提示块的状态聚合（compacting/dispatching）。
+ * useMessageStreamNotices —— MessageStream 末尾瞬时提示块的状态聚合（compacting）。
+ *
+ * [方案 D] dispatching 占位已迁入对话流末尾空 turn 的 TurnMeta（不再独立浮层）。本 composable
+ * 现仅聚合 compacting 浮层状态 + fork notice 基线定位；isDispatching/hasWorkingTurn 仍返回供
+ * useForkNoticeStream 兜底（生产路径用 forkNoticeBaseTop 短路，兜底不触发）。
  *
  * 从 MessageStream.vue 拆出（vue_rules_checker.py 的 script setup ≤300 行规范 + 单一变化轴复用）。
- * 聚合瞬时块的「状态 computed + 垂直堆叠定位」：
- * - 状态：isCompacting / isDispatching / hasWorkingTurn（驱动 v-if 显隐）。
- * - 定位：dispatchingTop（绝对定位 top，委托 useNoticeStack 统一计算）。
+ * - 状态：isCompacting（驱动 compacting 浮层显隐）。
+ * - 定位：forkNoticeBaseTop（委托 useNoticeStack 统一计算）。
  *
  * 不含：DOM 渲染（容器模板） / fork notice 定位（useForkNoticeStream）。
  * 定位顺序与占位高度见 useNoticeStack。
@@ -47,14 +50,13 @@ export interface MessageStreamNoticesDeps {
  * 返回值供 MessageStream.vue 模板 v-if / :style / @click 直接使用。
  */
 export function useMessageStreamNotices(deps: MessageStreamNoticesDeps): {
-  /** 是否正在压缩（驱动「--- 压缩中 ---」瞬时提示显隐） */
+  /** 是否正在压缩（驱动 compacting 浮层显隐） */
   isCompacting: ComputedRef<boolean>
-  /** dispatching 空窗期（已发送 prompt 但 message_start 未到，占位行「思考中…」） */
+  /** dispatching 空窗期（已发送 prompt 但 message_start 未到）。
+   *  [方案 D] 不再驱动独立浮层——占位已迁入末尾空 turn 的 TurnMeta；此值仅供 useForkNoticeStream 兜底。 */
   isDispatching: ComputedRef<boolean>
-  /** 最后一个 turn 是否正在流式生成（dispatching 占位显隐条件，模板 v-if 用） */
+  /** 最后一个 turn 是否正在流式生成。供 useForkNoticeStream 兜底用。 */
   hasWorkingTurn: ComputedRef<boolean>
-  /** dispatching 块 absolute top：列表末尾 + topOffset + compacting 占位 */
-  dispatchingTop: ComputedRef<number>
   /** fork notice 首行基线（自其起按 FORK_NOTICE_HEIGHT 垂直堆叠，供 useForkNoticeStream 注入） */
   forkNoticeBaseTop: ComputedRef<number>
   } {
@@ -69,26 +71,23 @@ export function useMessageStreamNotices(deps: MessageStreamNoticesDeps): {
     () => chat.isActive(deps.sessionId.value) && !chat.isGenerating(deps.sessionId.value),
   )
 
-  /** 容器传入的 hasWorkingTurn getter 包成 ComputedRef（useNoticeStack 需要 ComputedRef 依赖）。 */
+  /** 容器传入的 hasWorkingTurn getter 包成 ComputedRef（[方案 D] useForkNoticeStream 兜底用）。 */
   const hasWorkingTurn = computed(() => deps.hasWorkingTurn())
 
   /** 末尾瞬时块的垂直堆叠定位（M2，委托 useNoticeStack）：消除占位叠加的重复计算。
-   *  [cw wave w4] vlistBottom 必填（virtua 单一滚动 owner，末项底部统一由 vlistBottom 提供）。 */
-  const { dispatchingTop, forkNoticeBaseTop } = useNoticeStack({
+   *  [cw wave w4] vlistBottom 必填（virtua 单一滚动 owner，末项底部统一由 vlistBottom 提供）。
+   *  [方案 D] dispatching 占位迁入对话流文档流，useNoticeStack 只算 compacting 浮层 + fork 基线。 */
+  const { forkNoticeBaseTop } = useNoticeStack({
     vlistBottom: deps.vlistBottom,
     topOffset: deps.topOffset,
     isCompacting,
-    isDispatching,
-    hasWorkingTurn,
     compactNoticeHeight: COMPACTING_NOTICE_HEIGHT,
-    dispatchingNoticeHeight: COMPACTING_NOTICE_HEIGHT,
   })
 
   return {
     isCompacting,
     isDispatching,
     hasWorkingTurn,
-    dispatchingTop,
     forkNoticeBaseTop,
   }
 }

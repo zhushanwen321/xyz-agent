@@ -99,15 +99,10 @@
       <span class="h-px flex-1 bg-border" />
     </div>
 
-    <!-- dispatching 空窗期占位（非虚拟化，absolute 定位到列表末尾 + compacting 占位高度）。 -->
-    <div
-      v-if="isDispatching && !hasWorkingTurn"
-      class="absolute left-5 right-5 z-10 flex items-center gap-2 rounded-md bg-surface px-2 py-2 shadow-sm text-[length:var(--text-sm)] text-neutral-mid"
-      :style="{ top: dispatchingTop + 'px' }"
-    >
-      <Loader2 class="size-3 animate-spin text-accent" />
-      <span>{{ t('panel.message.dispatching') }}</span>
-    </div>
+    <!-- [方案 D] dispatching 空窗期占位已移除：原 absolute 浮层改为末尾空 turn 的 TurnMeta 占位。
+         message_start 前末尾空 turn（user 已发、assistants=[]）经 TurnMeta 的 isPendingPlaceholder
+         渲染「思考中」+ spinner，message_start 后 assistant 填入同一 turn，原地变为 working 态。
+         dispatching 占位现在是对话流文档流的一部分（已计入 vlistBottom），不再是独立浮层。 -->
 
     <!-- ForkNotice 反馈行（transient，非虚拟化，RV1）。
          绝对定位到列表末尾 + compacting/dispatching 占位高度；多条通知垂直堆叠。 -->
@@ -279,7 +274,6 @@ const {
   isCompacting,
   isDispatching,
   hasWorkingTurn,
-  dispatchingTop,
   forkNoticeBaseTop,
 } = useMessageStreamNotices({
   sessionId,

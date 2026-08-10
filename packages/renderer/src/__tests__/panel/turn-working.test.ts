@@ -187,6 +187,30 @@ describe('Turn working 态 · 完成复位 + elapsed live', () => {
     expect(wrapper.find('.chev').exists()).toBe(false)
     expect(wrapper.find('.trace').exists()).toBe(true)
   })
+
+  // U15:[方案 D] dispatching 空窗期占位——空 turn（user 已发、assistants 未到）+ session 进行中，
+  // 渲染 TurnMeta 占位「思考中」+ spinner，替代原 absolute dispatching 浮层。
+  // message_start 到达后 assistant 填入同一 turn，TurnMeta 原地变为 working 态（DOM 延续）。
+  it('U15: dispatching 占位（空 turn + sessionActive）→ TurnMeta 渲染「思考中」+ spinner，无 elapsed', () => {
+    const wrapper = mountTurn({
+      turn: makeTurn({
+        isStreaming: false,
+        hasFoldable: false,
+        assistants: [], // dispatching 空窗期：user 已发、message_start 未到
+      }),
+      isSessionActive: true, // session 进行中（derivedStatus=pending）
+    })
+    // 占位 TurnMeta 渲染（v-if 放宽：assistants 空 + sessionActive）
+    expect(wrapper.find('.turn-meta').exists()).toBe(true)
+    // 占位态显示「思考中」（sessionActive）
+    expect(wrapper.find('.lbl').text()).toBe('思考中')
+    // 占位态强制转 spinner（isPendingPlaceholder，区别于 ask-user 不转）
+    expect(wrapper.find('.turn-meta .animate-spin').exists()).toBe(true)
+    // 占位态隐藏 elapsed（尚未开始计时，避免 0s）
+    expect(wrapper.find('.elapsed').exists()).toBe(false)
+    // 无 chevron（hasFoldable=false）
+    expect(wrapper.find('.chev').exists()).toBe(false)
+  })
 })
 
 /**

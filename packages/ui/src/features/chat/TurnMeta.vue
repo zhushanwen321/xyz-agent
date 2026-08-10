@@ -6,7 +6,7 @@
   <!-- turn-meta + hr 包在同一 sticky wrapper：working 态贴顶时两者一起固定。
        底色用 --panel-bg（Panel 注入，随 panel 状态变化）不透明遮挡滚动文字。 -->
   <div
-    v-if="turn.assistants.length > 0"
+    v-if="turn.assistants.length > 0 || sessionActive"
     :class="sessionActive ? 'sticky top-0 z-[1] bg-[var(--panel-bg,var(--surface))]' : ''"
     :data-testid="`turn-meta-${turnIndex}`"
   >
@@ -23,10 +23,12 @@
       @click="toggle(turnIndex)"
     >
       <!-- streaming 态：spinner（更显眼的流式生成指示），替代原脉冲点。仅文本流式生成时转（A 类） -->
-      <Loader2 v-if="isStreaming" class="size-3 shrink-0 animate-spin text-accent" />
+      <!-- streaming 或 dispatching 占位（isPendingPlaceholder）时转 spinner；ask-user 等待态不转 -->
+      <Loader2 v-if="isStreaming || isPendingPlaceholder" class="size-3 shrink-0 animate-spin text-accent" />
       <span class="text-[length:var(--text-sm)] font-medium">
         <span class="lbl" :class="sessionActive ? 'text-accent' : 'text-neutral-mid'">{{ sessionActive ? t('panel.message.thinking') : t('panel.message.worked') }}</span>
-        <span class="elapsed font-mono font-medium tracking-[0.01em] text-neutral-fg">{{ elapsed }}</span>
+        <!-- dispatching 占位态尚未开始计时，隐藏 elapsed（避免显示 0s） -->
+        <span v-if="!isPendingPlaceholder" class="elapsed font-mono font-medium tracking-[0.01em] text-neutral-fg">{{ elapsed }}</span>
       </span>
       <!-- chevron 紧跟耗时（展开/收起 trace 入口），在 badge 之前 -->
       <ChevronRight
@@ -47,13 +49,14 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Brain, ChevronRight, Loader2, SquareFunction } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@xyz-agent/ui'
 import type { MessageTurn } from '@xyz-agent/core/domain/chat'
 import { useChatViewDeps } from './chat-view-deps'
 
-defineProps<{
+const props = defineProps<{
   turn: MessageTurn
   sessionActive: boolean
   isStreaming: boolean
@@ -70,4 +73,16 @@ defineProps<{
 const { isExpanded, toggleExpand: toggle } = useChatViewDeps()
 
 const { t } = useI18n()
+
+/**
+ * dispatching 空窗期占位（方案 D）：user 已发、assistant 未到（message_start 前）的末尾空 turn。
+ * session 进行中（derivedStatus=pending）但 assistants 为空 → 渲染 TurnMeta 占位「思考中」，
+ * message_start 到达后 assistant 填入同一 turn，TurnMeta 原地变为 working 态（DOM 延续）。
+ * 与 ask-user（assistants 非空、isStreaming=false）区分：占位态强制转 spinner（表示正在处理），
+ * 隐藏 elapsed（尚未开始计时，避免显示 0s）。区别于原 absolute dispatching 浮层——占位现在是对话流
+ * 末尾 turn 的一部分，不再独立浮层。
+ */
+const isPendingPlaceholder = computed(
+  () => props.sessionActive && props.turn.assistants.length === 0,
+)
 </script>
