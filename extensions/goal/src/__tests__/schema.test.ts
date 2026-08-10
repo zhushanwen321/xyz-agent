@@ -1,17 +1,30 @@
 /**
- * goal_control schema — discriminated union 校验测试（TC6 / CT3）
+ * goal_control schema — 扁平 Object 校验测试（OpenAI 兼容）
  *
- * schema 为 Type.Union（无 discriminator keyword）+ 各分支 additionalProperties:false，
- * 以 action literal 区分分支。pi 生产校验器为 typebox/compile 的 Compile(schema).Check(args)，
- * 与此处 Value.Check 同源（同一 typebox schema 语义），故用 Value.Check 验证拒绝行为。
+ * schema 为扁平 Type.Object + action 字段级 Type.Union（等价 enum）+ 各字段 Optional +
+ * additionalProperties:false。OpenAI function calling 要求 parameters 顶层 type:"object"，
+ * 顶层 Type.Union 序列化后只有 anyOf 无 type 字段，会被严格 OpenAI 兼容网关 400 拒绝
+ * 整个会话——故采用扁平结构（范式对齐 scheduler ScheduleControlParams）。
+ *
+ * typebox schema 对象即序列化形态：GoalControlParams.type 就是发往 provider 的 JSON 顶层 type。
+ * pi 生产校验器为 typebox/compile 的 Compile(schema).Check(args)，与此处 Value.Check 同源，
+ * 故用 Value.Check 验证。
+ *
+ * 分支隔离从 schema 层降级为运行时 handler 字段存在性校验（见 goal-control-adapter.test.ts）。
  */
 import { describe, expect, it } from "vitest";
 import { Value } from "typebox/value";
 
 import { GoalControlParams } from "../adapters/goal-control-adapter";
 
-describe("GoalControlParams — discriminated union（TC6）", () => {
-	// valid：各分支完整 + optional 字段 → 通过
+describe("GoalControlParams — 扁平 Object（OpenAI 兼容）", () => {
+	// 顶层合规：序列化形态顶层必须有 type:"object"，不得有 anyOf（否则被严格网关 400 拒绝）
+	it("顶层 type === 'object' 且无 anyOf（OpenAI function calling 合规）", () => {
+		expect(GoalControlParams.type).toBe("object");
+		expect(GoalControlParams.anyOf).toBeUndefined();
+	});
+
+	// valid：各 action 完整 + optional 字段 → 通过
 	it.each([
 		["create 完整", { action: "create", objective: "x", successCriteria: "y" }],
 		["create + slug", { action: "create", slug: "refactor-auth", objective: "x", successCriteria: "y" }],
@@ -22,16 +35,19 @@ describe("GoalControlParams — discriminated union（TC6）", () => {
 		expect(Value.Check(GoalControlParams, params)).toBe(true);
 	});
 
-	// invalid：缺必填 / 额外字段（additionalProperties:false 代表性用例）/ 分支隔离 / 未知 action
+	// 关键语义变更：扁平化后所有声明的字段（含跨 action 的）均为 Optional，
+	// schema 不再做分支隔离。{action:"complete", evidence, objective} 放行
+	// （objective 是声明的 Optional 字段，schema 层无法区分它属于哪个 action）。
+	// 分支隔离降级为运行时 handler 字段存在性校验，见 goal-control-adapter.test.ts。
+	it("跨 action 字段（complete + objective）现在通过（分支隔离降级为运行时校验）", () => {
+		expect(Value.Check(GoalControlParams, { action: "complete", evidence: "x", objective: "leak" })).toBe(true);
+	});
+
+	// invalid：缺 action / 未知 action / 额外字段（additionalProperties:false）
 	it.each([
-		["create 缺 objective", { action: "create", successCriteria: "y" }],
-		["create 缺 successCriteria", { action: "create", objective: "x" }],
+		["缺 action", { objective: "x", successCriteria: "y" }],
+		["未知 action（不在 union 内）", { action: "unknown" }],
 		["create 含额外字段（additionalProperties:false）", { action: "create", objective: "x", successCriteria: "y", foo: 1 }],
-		["create 含 complete 分支字段 evidence（分支隔离）", { action: "create", objective: "x", successCriteria: "y", evidence: "leak" }],
-		["complete 缺 evidence", { action: "complete" }],
-		["report_blocked 缺 reason", { action: "report_blocked" }],
-		["未知 action", { action: "unknown" }],
-		["缺 action", { objective: "x" }],
 	])("invalid: %s → 拒绝", (_name, params) => {
 		expect(Value.Check(GoalControlParams, params)).toBe(false);
 	});

@@ -14,7 +14,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createTodoSessionState } from "../state";
-import { handleAdd, handleDelete } from "../tool";
+import { handleAdd, handleDelete, handleSingleUpdate } from "../tool";
 
 describe("handleAdd — text/texts dual-form detection", () => {
   it("triggers dual-form error when singular 'text' used instead of 'texts'", () => {
@@ -64,5 +64,19 @@ describe("handleDelete — id/ids dual-form detection", () => {
     const state = createTodoSessionState();
     handleAdd(state, { action: "add", texts: ["temp"] }); // seed todo #1
     expect(() => handleDelete(state, { action: "delete", ids: [1] })).not.toThrow();
+  });
+});
+
+describe("handleSingleUpdate — id/status/text required guards", () => {
+  it("throws 'requires id' when id missing", () => {
+    const state = createTodoSessionState();
+    expect(() => handleSingleUpdate(state, { action: "update" })).toThrow(/requires id/);
+  });
+
+  it("throws 'at least status or text' when id given but status+text missing", () => {
+    const state = createTodoSessionState();
+    expect(() => handleSingleUpdate(state, { action: "update", id: 1 })).toThrow(
+      /at least status or text/,
+    );
   });
 });

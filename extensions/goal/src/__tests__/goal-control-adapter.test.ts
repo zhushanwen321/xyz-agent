@@ -106,6 +106,14 @@ describe("handleComplete — active 守卫 + evidence + finalizeAndPersist", () 
 			handleComplete({ action: "complete", evidence: "   " }, session, makeFakePorts()),
 		).toThrow(/evidence/);
 	});
+
+	it("evidence undefined → throw（schema 降级后 handler 唯一兜底：'required' 错误）", () => {
+		const session = createGoalSession();
+		session.state = activeState();
+		expect(() => handleComplete({ action: "complete" }, session, makeFakePorts())).toThrow(
+			/evidence.*required/,
+		);
+	});
 });
 
 // ── handleCreate ─────────────────────────────────────
@@ -142,6 +150,13 @@ describe("handleCreate — slug+objective 必填 + 非终态守卫 + createGoal"
 		).toThrow(/objective/);
 	});
 
+	it("objective undefined → throw（schema 降级后 handler 唯一兜底：'required' 错误）", () => {
+		const session = createGoalSession();
+		expect(() => handleCreate({ action: "create", successCriteria: "y" }, session, makeFakePorts())).toThrow(
+			/objective.*required/,
+		);
+	});
+
 	it("successCriteria 空 → throw（即使有 slug + objective）", () => {
 		const session = createGoalSession();
 		expect(() =>
@@ -151,6 +166,13 @@ describe("handleCreate — slug+objective 必填 + 非终态守卫 + createGoal"
 				makeFakePorts(),
 			),
 		).toThrow(/successCriteria/);
+	});
+
+	it("successCriteria undefined → throw（schema 降级后 handler 唯一兜底：'required' 错误）", () => {
+		const session = createGoalSession();
+		expect(() => handleCreate({ action: "create", objective: "x" }, session, makeFakePorts())).toThrow(
+			/successCriteria.*required/,
+		);
 	});
 
 	const NON_TERMINAL_STATUSES: GoalRuntimeState["status"][] = ["active", "paused", "blocked"];
@@ -249,5 +271,13 @@ describe("handleReportBlocked — active 守卫 + tick + transition + persist", 
 		expect(() =>
 			handleReportBlocked({ action: "report_blocked", reason: "" }, session, makeFakePorts()),
 		).toThrow(/reason/);
+	});
+
+	it("reason undefined → throw（schema 降级后 handler 唯一兜底：'required' 错误）", () => {
+		const session = createGoalSession();
+		session.state = activeState();
+		expect(() => handleReportBlocked({ action: "report_blocked" }, session, makeFakePorts())).toThrow(
+			/reason.*required/,
+		);
 	});
 });
