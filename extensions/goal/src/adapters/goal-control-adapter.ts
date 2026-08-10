@@ -19,10 +19,12 @@
  * create 不调 sendUserMessage：toolcall 时 AI 已在 turn 中，返回结果后自行续跑
  * （与 /goal set 的 followUp 触发区分；对齐 Codex create_goal 不自动续跑）。
  *
- * schema：discriminated union（C3）——Type.Union 无 discriminator keyword，各分支以
- * action literal 区分 + additionalProperties:false。pi 生产校验器为 typebox/compile
- * 的 Compile(schema).Check(args)，缺失必填字段在 schema 层即被拒绝；execute 内仅保留
- * .trim() 空字符串校验（LLM 可能传空串穿透 schema）。
+ * schema：扁平 Type.Object（OpenAI 兼容，C3）——parameters 顶层必须是 type:"object"，
+ * 顶层 Type.Union 序列化后只有 anyOf 无 type，会被严格 OpenAI 兼容网关 400 拒绝。故采用
+ * 扁平 Object + action 字段级 Type.Union（等价 enum）+ 各字段 Optional + additionalProperties:false。
+ * 分支隔离从 schema 层降级为运行时 handler 字段存在性校验（见各 handler 开头）；
+ * pi 生产校验器为 typebox/compile 的 Compile(schema).Check(args)，缺失/错误 action、额外字段
+ * 在 schema 层拒绝，缺必填字段由 handler 校验兜底。
  *
  * executionMode: "sequential"——状态变更 tool，不可与同批其他 tool 并行执行。
  *
@@ -46,62 +48,60 @@ import { buildPorts } from "./ports";
 // ── Params schema（discriminated union，C3）────────────
 
 /**
- * goal_control 参数 schema。三分支以 action literal 区分（无 discriminator keyword），
- * 各分支 additionalProperties:false，缺失必填在 schema 层拒绝。
+ * goal_control 参数 schema。扁平 Type.Object + action 字段级 Type.Union（等价 enum）。
+ *
+ * OpenAI function calling 规范要求 parameters 顶层必须是 type:"object"；顶层 Type.Union
+ * 序列化后只有 anyOf 无 type 字段，会被严格的 OpenAI 兼容网关 400 拒绝整个会话。故采用
+ * 扁平 Object + action enum，分支隔离从 schema 层降级为运行时 handler 字段存在性校验
+ * （见各 handler 开头）。范式对齐 scheduler ScheduleControlParams。
+ *
+ * additionalProperties:false 阻挡未知字段；缺失/错误 action 仍由 schema 层拒绝。
  */
-const CreateParams = Type.Object(
+export const GoalControlParams = Type.Object(
 	{
-		action: Type.Literal("create"),
+		action: Type.Union(
+			[Type.Literal("create"), Type.Literal("complete"), Type.Literal("report_blocked")],
+			{ description: "create | complete | report_blocked" },
+		),
 		slug: Type.Optional(
 			Type.String({
 				description: "可选。状态栏标题用的短 kebab-case 标识，仅用于显示，不注入 prompt。",
 			}),
 		),
-		objective: Type.String({
-			description:
+		objective: Type.Optional(
+			Type.String({
+				description:
 				"必填。用你自己的话重述真实目标——用户实际想要达成什么，而非字面复述请求。模糊时推断最可能的意图并明确陈述。",
-		}),
-		successCriteria: Type.String({
-			description:
+			}),
+		),
+		successCriteria: Type.Optional(
+			Type.String({
+				description:
 				"必填。可检查的完成条件（如「测试通过」「文件 X 存在且含内容 Y」「命令 Z 输出 W」），不是愿景或「能用就行」。这是 complete 前必须逐条满足的门槛。",
-		}),
+			}),
+		),
 		tokenBudget: Type.Optional(
 			Type.Number({
 				description: "可选。新目标的 token 预算（正数）。除非用户指定，否则省略。",
+			}),
+		),
+		evidence: Type.Optional(
+			Type.String({
+				description:
+				"必填。具体完成证据（改动/新建的文件、通过的测试、运行的命令）。不要基于假设、意图或部分进度标记完成。",
+			}),
+		),
+		reason: Type.Optional(
+			Type.String({
+				description:
+				"必填。具体阻塞条件及已尝试的方案。不要用于不确定、困难、缓慢或未完成的工作——继续做。",
 			}),
 		),
 	},
 	{ additionalProperties: false },
 );
 
-const CompleteParams = Type.Object(
-	{
-		action: Type.Literal("complete"),
-		evidence: Type.String({
-			description:
-				"必填。具体完成证据（改动/新建的文件、通过的测试、运行的命令）。不要基于假设、意图或部分进度标记完成。",
-		}),
-	},
-	{ additionalProperties: false },
-);
-
-const ReportBlockedParams = Type.Object(
-	{
-		action: Type.Literal("report_blocked"),
-		reason: Type.String({
-			description:
-				"必填。具体阻塞条件及已尝试的方案。不要用于不确定、困难、缓慢或未完成的工作——继续做。",
-		}),
-	},
-	{ additionalProperties: false },
-);
-
-export const GoalControlParams = Type.Union([CreateParams, CompleteParams, ReportBlockedParams]);
-
-export type CreateActionParams = Static<typeof CreateParams>;
-export type CompleteActionParams = Static<typeof CompleteParams>;
-export type ReportBlockedActionParams = Static<typeof ReportBlockedParams>;
-export type GoalControlActionParams = Static<typeof GoalControlParams>;
+export type GoalControlParamsT = Static<typeof GoalControlParams>;
 
 // ── Details（renderResult 数据来源）──────────────────
 
@@ -131,13 +131,16 @@ export interface GoalControlDetails {
  * 终态旧 goal 走 createGoal 快速路径覆盖（createGoal 内部 active 守卫，终态可覆盖）。
  */
 export function handleCreate(
-	params: CreateActionParams,
+	params: GoalControlParamsT,
 	session: GoalSession,
 	ports: ServicePorts,
 ): GoalControlDetails {
+	if (params.objective === undefined) {
+		throw new Error("'objective' required for create. Correct: {\"action\":\"create\",\"objective\":\"...\",\"successCriteria\":\"...\"}");
+	}
 	const objective = params.objective.trim();
 	if (!objective) {
-		// schema 已挡缺失，此处仅挡空串（LLM 可能传空串穿透 schema）
+		// schema 已放行（扁平化后 optional），此处挡空串（LLM 可能传空串）
 		throw new Error(
 			"'objective' must not be empty. Describe the concrete objective to pursue. Correct: {\"action\":\"create\",\"slug\":\"<kebab-case>\",\"objective\":\"<concrete objective>\",\"successCriteria\":\"<checkable conditions>\"}",
 		);
@@ -145,6 +148,9 @@ export function handleCreate(
 	// slug 真 optional（TC11）：缺失时 fallback goalId 截断（与 buildGoalGui 口径一致），不强制必填
 	const slugInput = params.slug?.trim();
 
+	if (params.successCriteria === undefined) {
+		throw new Error("'successCriteria' required for create. Correct: {\"action\":\"create\",\"objective\":\"...\",\"successCriteria\":\"...\"}");
+	}
 	const successCriteria = params.successCriteria.trim();
 	if (!successCriteria) {
 		throw new Error(
@@ -192,7 +198,7 @@ export function handleCreate(
  * 全解耦后不再做 todo 完成前置检查——todo 是否全完成由 AI 自行判断（prompt 软建议）。
  */
 export function handleComplete(
-	params: CompleteActionParams,
+	params: GoalControlParamsT,
 	session: GoalSession,
 	ports: ServicePorts,
 ): GoalControlDetails {
@@ -200,6 +206,9 @@ export function handleComplete(
 	if (!state) throw new Error("Goal mode not active.");
 	if (!isActiveStatus(state.status)) {
 		throw new Error(`Goal is not active (status: ${state.status}). Only an active goal can be completed.`);
+	}
+	if (params.evidence === undefined) {
+		throw new Error("'evidence' required for complete. Correct: {\"action\":\"complete\",\"evidence\":\"...\"}");
 	}
 	const evidence = params.evidence.trim();
 	if (!evidence) {
@@ -223,7 +232,7 @@ export function handleComplete(
  * 否则转 blocked 后 persistState 内部的 tick 因 status≠active 不累加，丢失最后一段运行时间。
  */
 export function handleReportBlocked(
-	params: ReportBlockedActionParams,
+	params: GoalControlParamsT,
 	session: GoalSession,
 	ports: ServicePorts,
 ): GoalControlDetails {
@@ -231,6 +240,9 @@ export function handleReportBlocked(
 	if (!state) throw new Error("Goal mode not active.");
 	if (state.status !== "active") {
 		throw new Error(`Goal is not active (status: ${state.status}). Only an active goal can report_blocked.`);
+	}
+	if (params.reason === undefined) {
+		throw new Error("'reason' required for report_blocked. Correct: {\"action\":\"report_blocked\",\"reason\":\"...\"}");
 	}
 	const reason = params.reason.trim();
 	if (!reason) {
@@ -297,7 +309,7 @@ export function registerGoalControlTool(pi: ExtensionAPI, session: GoalSession):
 
 		async execute(
 			_toolCallId: string,
-			params: GoalControlActionParams,
+			params: GoalControlParamsT,
 			signal: AbortSignal | undefined,
 			_onUpdate: unknown,
 			ctx: ExtensionContext,
@@ -317,13 +329,14 @@ export function registerGoalControlTool(pi: ExtensionAPI, session: GoalSession):
 				details = handleReportBlocked(params, session, ports);
 			}
 
-			// 用 params.action 判断（TS 据此收窄 params 到对应分支，安全访问 objective/reason）
+			// 扁平化后 params.objective/reason 为 string|undefined（schema 不再按 action 收窄）；
+			// handler 已对必填字段做存在性校验，此处用 ?. 兜底，未定义时空串
 			const text =
 				params.action === "create"
-					? `Goal created.\nGoal ID: ${details.goalId}\nSlug: ${details.slug ?? ""}\nObjective: ${params.objective.trim()}`
+					? `Goal created.\nGoal ID: ${details.goalId}\nSlug: ${details.slug ?? ""}\nObjective: ${params.objective?.trim() ?? ""}`
 					: params.action === "complete"
 						? `Goal completed.\nGoal ID: ${details.goalId}`
-						: `Goal reported blocked.\nGoal ID: ${details.goalId}\nReason: ${params.reason.trim()}`;
+						: `Goal reported blocked.\nGoal ID: ${details.goalId}\nReason: ${params.reason?.trim() ?? ""}`;
 
 			// RPC 模式下附加 __gui__（用展开避免 details 来自 frozen 对象时加字段失败）
 			if (ctx.mode === "rpc" && session.state) {
