@@ -94,17 +94,13 @@ export default {
         glow: 'var(--shadow-glow)',
       },
       // keyframes SSOT 已迁移至 style.css 全局（v6 §5.9：只在全局定义一次；
-      // pulse-accent/warn/steer-breathe/working-pulse 改用 CSS 变量派生，跟随主题，
-      // 不再硬编码 rgba）。此处仅保留 animation 简写，引用全局 @keyframes 名。
+      // pulse-accent 改用 CSS 变量派生，跟随主题，不再硬编码 rgba）。
+      // 此处仅保留 animation 简写，引用全局 @keyframes 名。
       animation: {
         'pulse-accent': 'pulse-accent 2s var(--ease) infinite',
-        'pulse-warn': 'pulse-warn 2s var(--ease) infinite',
-        'steer-breathe': 'steer-breathe 2.6s ease-in-out infinite',
-        'working-pulse': 'working-pulse 1.4s ease-in-out infinite',
         blink: 'blink 1s step-end infinite',
         'loader-spin': 'loader-spin 1.4s linear infinite',
         'ask-user-slide-up': 'ask-user-slide-up var(--duration-slow) var(--ease)',
-        wiggle: 'wiggle 1.2s ease-in-out infinite',
         'pulse-strong': 'pulse-strong 1.4s ease-in-out infinite',
         'notice-in': 'notice-in 200ms var(--ease)',
         // 品牌旋转（太极「周而复始」）：静态简写注册供 JIT 生成；TaijiLogo 用 inline

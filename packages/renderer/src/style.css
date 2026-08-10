@@ -367,16 +367,11 @@ textarea {
 /* ============================================================
    动画 keyframes SSOT（v6 §5.9：只在全局定义一次）
    消费方用 animation-name 引用（Tailwind animate-* 工具类 / 内联 animation）。
-   pulse-accent / pulse-warn 等用 CSS 变量派生，跟随主题（不再硬编码 rgba）。
+   pulse-accent 用 CSS 变量派生，跟随主题（不再硬编码 rgba）。
    ============================================================ */
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse-accent {
   0% { box-shadow: 0 0 0 0 var(--accent-ring); }
-  70% { box-shadow: 0 0 0 5px transparent; }
-  100% { box-shadow: 0 0 0 0 transparent; }
-}
-@keyframes pulse-warn {
-  0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--warn) 50%, transparent); }
   70% { box-shadow: 0 0 0 5px transparent; }
   100% { box-shadow: 0 0 0 0 transparent; }
 }
@@ -388,24 +383,8 @@ textarea {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.65; transform: scale(0.92); }
 }
-@keyframes working-pulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 var(--accent-ring); }
-  50% { opacity: 0.55; box-shadow: 0 0 0 5px transparent; }
-}
-@keyframes steer-breathe {
-  0%, 100% { box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 22%, transparent); }
-  50% { box-shadow: 0 0 0 4px color-mix(in oklch, var(--accent) 40%, transparent); }
-}
 @keyframes blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
-}
 @keyframes loader-spin { to { transform: rotate(360deg); } }
-@keyframes wiggle {
-  0%, 100% { transform: rotate(-6deg); }
-  50% { transform: rotate(6deg); }
-}
 @keyframes ask-user-slide-up {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
@@ -413,10 +392,6 @@ textarea {
 @keyframes notice-in {
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: translateY(0); }
-}
-@keyframes imp-fill {
-  from { transform: scaleX(0); }
-  to { transform: scaleX(1); }
 }
 @keyframes taiji-spin {
   from { transform: rotate(0deg); }

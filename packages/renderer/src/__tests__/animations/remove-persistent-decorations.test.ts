@@ -4,8 +4,7 @@ import { resolve } from 'node:path'
 
 /**
  * Plan 04 — 删除常驻装饰性动画（pulse-dot / steer-breathe / wiggle）回归测试。
- * 源码字符串断言：4 处常驻动画已删除（TC1-TC4）+ 边界保留（TC5：streaming spin、
- * keyframes 定义不动）。
+ * 源码字符串断言：4 处常驻动画已删除（TC1-TC4）+ 边界保留（TC5：streaming spin、pulse-dot keyframes 保留）。
  */
 const rendererSrc = resolve(__dirname, '../../..')
 const read = (rel: string) => readFileSync(resolve(rendererSrc, rel), 'utf-8')
@@ -41,14 +40,13 @@ describe('plan 04 删除常驻装饰性动画', () => {
     expect(sessionStatus).not.toContain('animate-wiggle')
   })
 
-  it('TC5 边界: streaming/compacting/working 的 spin 保留，keyframes 定义不动', () => {
+  it('TC5 边界: streaming/compacting/working 的 spin 保留，pulse-dot keyframes 保留', () => {
     // 有「正在产出」语义的动画保留
     expect(sessionStatus).toContain("streaming: { icon: 'RefreshCw', color: 'text-accent', animation: 'animate-spin' }")
     expect(sessionStatus).toContain("compacting: { icon: 'Hourglass', color: 'text-accent', animation: 'animate-spin' }")
     expect(sessionStatus).toContain("working: { icon: 'RefreshCw', color: 'text-accent', animation: 'animate-spin' }")
-    // keyframes 定义保留（pulse-dot 仍被 SystemShortcutSection 消费；wiggle/steer-breathe 暂留待后续清理）
+    // pulse-dot keyframes 仍被 SystemShortcutSection 消费
+    // （wiggle/steer-breathe/working-pulse/pulse-warn/shimmer/imp-fill 已在死定义清理中删除）
     expect(styleCss).toContain('@keyframes pulse-dot')
-    expect(styleCss).toContain('@keyframes wiggle')
-    expect(styleCss).toContain('@keyframes steer-breathe')
   })
 })
