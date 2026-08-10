@@ -1,8 +1,6 @@
 import { Static, Type } from 'typebox'
 
-import { formatRelativeTime, formatSchedule } from './format.js'
-import { computeNextRuns, parseSchedule } from './parsing.js'
-import type { SchedulerRuntime } from './runtime.js'
+import type { SchedulerService, ServiceResult } from './service.js'
 
 // TODO: add renderResult/renderCall to registerTool calls (standards.md §4.3)
 
@@ -27,33 +25,16 @@ export const scheduleGuidelines = [
   'Default expiry is 7 days. Use expires="never" for long-term tasks.',
 ]
 
-export function createScheduleHandler(runtime: SchedulerRuntime) {
+/**
+ * schedule tool handler（SchedulerService 瘦壳，无独立业务逻辑）。
+ * 业务失败 → 结构化 isError result（不 throw）；service 未初始化等初始化异常
+ * 不在此 catch——穿透到 index.ts execute 的 catch 兜底（R3）。
+ */
+export function createScheduleHandler(service: SchedulerService) {
   return async (params: ScheduleParamsT) => {
     const { prompt, schedule: scheduleInput, kind, name, expires, force } = params
-
-    const parsed = await parseSchedule(scheduleInput)
-    if (!parsed) {
-      throw new Error(`Invalid schedule: "${scheduleInput}". Use duration (5m/2h/1d) or cron expression (*/10 * * * *).`)
-    }
-
-    const task = await runtime.addTask(prompt, parsed.spec, { kind, name, expires, force })
-
-    const nextRuns = await computeNextRuns(task.schedule, Date.now(), 5)
-    const summary = [
-      `Task "${task.name}" (${task.id}) created.`,
-      `Schedule: ${formatSchedule(task.schedule)}`,
-      `Kind: ${task.kind}`,
-      `Expires: ${task.expiresAt ? formatRelativeTime(task.expiresAt) : 'never'}`,
-      `Force: ${task.force ? 'yes' : 'no'}`,
-      '',
-      'Next 5 runs:',
-      ...nextRuns.map((t, i) => `  ${i + 1}. ${formatRelativeTime(t)}`),
-    ].join('\n')
-
-    return {
-      content: [{ type: 'text' as const, text: summary }],
-      details: { task, nextRuns },
-    }
+    const result = await service.create(prompt, scheduleInput, { kind, name, expires, force })
+    return toToolResult(result)
   }
 }
 
@@ -74,58 +55,53 @@ export const controlGuidelines = [
   'action="run" fires the task immediately.',
 ]
 
-export function createScheduleControlHandler(runtime: SchedulerRuntime) {
+export function createScheduleControlHandler(service: SchedulerService) {
   return async (params: ScheduleControlParamsT) => {
     const { action, id, enabled } = params
 
+    let result: ServiceResult
     switch (action) {
-      case 'list': {
-        const tasks = runtime.listTasks()
-        if (tasks.length === 0) {
-          return { content: [{ type: 'text' as const, text: 'No scheduled tasks.' }], details: { tasks: [] } }
-        }
-        const lines = tasks.map(t =>
-          `${t.enabled ? '●' : '○'} ${t.id} ${t.name} · ${formatSchedule(t.schedule)} · ${formatRelativeTime(t.nextRunAt)}`
-        )
-        return {
-          content: [{ type: 'text' as const, text: lines.join('\n') }],
-          details: { tasks },
-        }
-      }
-
-      case 'toggle': {
-        if (!id) throw new Error('id is required for toggle.')
-        if (enabled === undefined) throw new Error('enabled is required for toggle.')
-        const success = await runtime.toggleTask(id, enabled)
-        if (!success) throw new Error(`Task ${id} not found.`)
-        return {
-          content: [{ type: 'text' as const, text: `Task ${id} ${enabled ? 'enabled' : 'disabled'}.` }],
-          details: { success },
-        }
-      }
-
-      case 'delete': {
-        if (!id) throw new Error('id is required for delete.')
-        const success = runtime.deleteTask(id)
-        if (!success) throw new Error(`Task ${id} not found.`)
-        return {
-          content: [{ type: 'text' as const, text: `Task ${id} deleted.` }],
-          details: { success },
-        }
-      }
-
-      case 'run': {
-        if (!id) throw new Error('id is required for run.')
-        const success = await runtime.runTaskNow(id)
-        if (!success) throw new Error(`Task ${id} not found.`)
-        return {
-          content: [{ type: 'text' as const, text: `Task ${id} executed.` }],
-          details: { success },
-        }
-      }
-
+      case 'list':
+        result = service.list()
+        break
+      case 'toggle':
+        result = await service.toggle(id, enabled)
+        break
+      case 'delete':
+        result = service.delete(id)
+        break
+      case 'run':
+        result = await service.run(id)
+        break
       default:
-        throw new Error(`Unknown action: ${action}`)
+        result = {
+          success: false,
+          errorCode: 'INVALID_PARAMS',
+          message: `Unknown action: ${action}`,
+        }
     }
+    return toToolResult(result)
+  }
+}
+
+/**
+ * ServiceResult → tool execute 返回。
+ * 成功 → {content: [message], details: data}；失败 → isError + details.errorCode。
+ */
+function toToolResult(result: ServiceResult): {
+  content: { type: 'text'; text: string }[]
+  details: unknown
+  isError?: boolean
+} {
+  if (!result.success) {
+    return {
+      content: [{ type: 'text' as const, text: result.message }],
+      details: { errorCode: result.errorCode },
+      isError: true,
+    }
+  }
+  return {
+    content: [{ type: 'text' as const, text: result.message }],
+    details: result.data ?? {},
   }
 }

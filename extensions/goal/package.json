@@ -29,7 +29,7 @@
     "@zhushanwen/pi-pending-notifications": "workspace:*"
   },
   "dependencies": {
-    "@xyz-agent/extension-protocol": "workspace:^0.3.1"
+    "@xyz-agent/extension-protocol": "workspace:^0.4.0"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-tui": {

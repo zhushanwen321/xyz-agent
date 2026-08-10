@@ -329,7 +329,7 @@ describe("execute — result handling (FR-7)", () => {
 		const tool = getTool();
 		const fakeResult = {
 			questions: [{ question: "Which DB?", options: [{ label: "Postgres" }] }],
-			answers: { "Which DB?": "Postgres" },
+			answers: { "Which DB?": { selected: ["Postgres"], other: null } },
 			cancelled: false,
 		};
 		const result = await tool.execute(
@@ -347,7 +347,7 @@ describe("execute — result handling (FR-7)", () => {
 		const tool = getTool();
 		const fakeResult = {
 			questions: [{ question: "Which DB?", options: [{ label: "Postgres" }] }],
-			answers: { "Which DB?": "Postgres" },
+			answers: { "Which DB?": { selected: ["Postgres"], other: null } },
 			cancelled: false,
 		};
 		const result = await tool.execute(
@@ -358,7 +358,7 @@ describe("execute — result handling (FR-7)", () => {
 			makeCtx({ customResult: fakeResult }),
 		);
 		expect(result.details.questions).toEqual(fakeResult.questions);
-		expect(result.details.answers["Which DB?"]).toBe("Postgres");
+		expect(result.details.answers["Which DB?"]).toEqual({ selected: ["Postgres"], other: null });
 	});
 
 	it("I-14: cancelled (null) → 'User cancelled'", async () => {
@@ -442,7 +442,7 @@ describe("renderCall / renderResult (FR-9)", () => {
 			{
 				details: {
 					questions: [{ question: "Q", header: "H", options: [{ label: "A" }] }],
-					answers: { Q: "A" },
+					answers: { Q: { selected: ["A"], other: null } },
 					cancelled: false,
 				},
 			},
@@ -506,7 +506,7 @@ describe("renderCall / renderResult (FR-9)", () => {
 							options: [{ label: "Postgres" }, { label: "SQLite" }],
 						},
 					],
-					answers: { "Which DB?": "Postgres" },
+					answers: { "Which DB?": { selected: ["Postgres"], other: null } },
 					cancelled: false,
 				},
 			},
@@ -575,11 +575,11 @@ describe("execute — RPC mode (askUserInteract via select channel)", () => {
 			makeCtx({ mode: "rpc", selectResult: protoAnswers }),
 		);
 		expect(result.details.cancelled).toBe(false);
-		expect(result.details.answers["Which DB?"]).toBe("Postgres");
+		expect(result.details.answers["Which DB?"]).toEqual({ selected: ["Postgres"], other: null });
 		expect(result.content[0].text).toContain("Postgres");
 	});
 
-	it("R-2: multi-select answer (JSON array) → comma-joined labels", async () => {
+	it("R-2: multi-select answer (JSON array) → AnswerValue.selected", async () => {
 		const tool = getTool();
 		const multi = {
 			questions: [
@@ -600,7 +600,7 @@ describe("execute — RPC mode (askUserInteract via select channel)", () => {
 			undefined,
 			makeCtx({ mode: "rpc", selectResult: protoAnswers }),
 		);
-		expect(result.details.answers["Which tools?"]).toBe("A, C");
+		expect(result.details.answers["Which tools?"]).toEqual({ selected: ["A", "C"], other: null });
 	});
 
 	it("R-2b: multi-select 乱序回传 → 按 options 定义顺序排序（S#3）", async () => {
@@ -624,10 +624,12 @@ describe("execute — RPC mode (askUserInteract via select channel)", () => {
 			undefined,
 			makeCtx({ mode: "rpc", selectResult: protoAnswers }),
 		);
-		expect(result.details.answers["Which tools?"]).toBe("A, C");
+		expect(result.details.answers["Which tools?"]).toEqual({ selected: ["A", "C"], other: null });
 	});
 
-	it("R-3: Other free text → appended to answer parts", async () => {
+	// R-3 用例名（TC-03）：旧措辞（parseAnswerParts 时代的拼接语义）残留，
+	// 断言已结构化（{selected, other} 分离），更名为实际契约：AnswerValue.other 独立字段。
+	it("R-3: Other free text → AnswerValue.other 独立字段", async () => {
 		const tool = getTool();
 		// 单选 Postgres + Other "Custom DB"
 		const protoAnswers = JSON.stringify({
@@ -641,59 +643,25 @@ describe("execute — RPC mode (askUserInteract via select channel)", () => {
 			undefined,
 			makeCtx({ mode: "rpc", selectResult: protoAnswers }),
 		);
-		// TUI 语义：parts = [selected, other].join(", ")
-		expect(result.details.answers["Which DB?"]).toBe("Postgres, Custom DB");
+		// 结构化：selected + other 分离
+		expect(result.details.answers["Which DB?"]).toEqual({ selected: ["Postgres"], other: "Custom DB" });
 	});
 
-	it("R-4: comment → inlined with ' — ' separator", async () => {
+	it("R-3b: other-only answer (no main key) → AnswerValue {selected:[], other}", async () => {
 		const tool = getTool();
-		const withComment = {
-			questions: [
-				{
-					question: "Which DB?",
-					options: [{ label: "Postgres" }, { label: "SQLite" }],
-					allowComment: true,
-				},
-			],
-		};
+		// 修复后前端无选项自由文本问题只写 `${key}__other`（与 encodeAnswer 契约一致），
+		// 不写主 key——解码必须得 {selected:[], other}，不得产生 selected 双持有。
 		const protoAnswers = JSON.stringify({
-			"Which DB?": "Postgres",
-			"Which DB?__comment": "prod constraint",
+			"Which DB?__other": "Custom DB",
 		});
 		const result = await tool.execute(
 			"id",
-			withComment,
+			validSingle,
 			undefined,
 			undefined,
 			makeCtx({ mode: "rpc", selectResult: protoAnswers }),
 		);
-		expect(result.details.answers["Which DB?"]).toBe("Postgres — prod constraint");
-	});
-
-	it("R-4b: comment-only answer → 保留（MF-1 回归：无选中 + comment 不静默丢失）", async () => {
-		const tool = getTool();
-		const withComment = {
-			questions: [
-				{
-					question: "Which DB?",
-					options: [{ label: "Postgres" }, { label: "SQLite" }],
-					allowComment: true,
-				},
-			],
-		};
-		// GUI 只填评论提交（无选中）：answers 只有 __comment key、无主 key
-		const protoAnswers = JSON.stringify({
-			"Which DB?__comment": "生产环境都不能用，需评估新方案",
-		});
-		const result = await tool.execute(
-			"id",
-			withComment,
-			undefined,
-			undefined,
-			makeCtx({ mode: "rpc", selectResult: protoAnswers }),
-		);
-		// formatAnswer 空 parts 不再返回 null——comment-only 以 " — comment" 形式保留
-		expect(result.details.answers["Which DB?"]).toBe(" — 生产环境都不能用，需评估新方案");
+		expect(result.details.answers["Which DB?"]).toEqual({ selected: [], other: "Custom DB" });
 	});
 
 	it("R-5: user cancel (select returns undefined) → cancelled details", async () => {
@@ -744,10 +712,10 @@ describe("execute — RPC mode (askUserInteract via select channel)", () => {
 			makeCtx({ mode: "rpc", selectResult: protoAnswers }),
 		);
 		// 转换后 key 必须是 question 全文（与 TUI 版 buildResult 一致）
-		expect(result.details.answers["Which database?"]).toBe("Postgres");
+		expect(result.details.answers["Which database?"]).toEqual({ selected: ["Postgres"], other: null });
 	});
 
-	it("R-8: multi-question mixed (single-select + multi-select + Other + comment)", async () => {
+	it("R-8: multi-question mixed (single-select + multi-select + Other)", async () => {
 		const tool = getTool();
 		const mixed = {
 			questions: [
@@ -766,7 +734,6 @@ describe("execute — RPC mode (askUserInteract via select channel)", () => {
 					question: "Which region?",
 					header: "Region",
 					options: [{ label: "US" }, { label: "EU" }],
-					allowComment: true,
 				},
 			],
 		};
@@ -789,46 +756,11 @@ describe("execute — RPC mode (askUserInteract via select channel)", () => {
 
 		expect(result.details.cancelled).toBe(false);
 		// Q1: single-select
-		expect(result.details.answers["Which database?"]).toBe("Postgres");
+		expect(result.details.answers["Which database?"]).toEqual({ selected: ["Postgres"], other: null });
 		// Q2: multi-select 重排 + Other
-		expect(result.details.answers["Which tools?"]).toBe("A, C, Custom");
+		expect(result.details.answers["Which tools?"]).toEqual({ selected: ["A", "C"], other: "Custom" });
 		// Q3: 无选中 → 跳过（不在 answers map 中）
 		expect(result.details.answers["Which region?"]).toBeUndefined();
 	});
 
-	it("R-9: multi-question with comment on one question", async () => {
-		const tool = getTool();
-		const multiQ = {
-			questions: [
-				{
-					question: "Which DB?",
-					header: "DB",
-					options: [{ label: "Postgres" }],
-				},
-				{
-					question: "Why?",
-					header: "Reason",
-					options: [{ label: "Performance" }],
-					allowComment: true,
-				},
-			],
-		};
-		const protoAnswers = JSON.stringify({
-			DB: "Postgres",
-			Reason: "Performance",
-			"Reason__comment": "benchmarked",
-		});
-		const result = await tool.execute(
-			"id",
-			multiQ,
-			undefined,
-			undefined,
-			makeCtx({ mode: "rpc", selectResult: protoAnswers }),
-		);
-
-		// Q1: 无 comment
-		expect(result.details.answers["Which DB?"]).toBe("Postgres");
-		// Q2: 有 comment → 内联
-		expect(result.details.answers["Why?"]).toBe("Performance — benchmarked");
-	});
 });

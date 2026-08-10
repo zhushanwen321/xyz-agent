@@ -180,12 +180,30 @@ export async function parseSchedule(
     if (nextRun !== undefined) {
       return {
         spec: { mode: 'cron', cronExpression: normalized.expression },
-        note: normalized.note,
       }
     }
   }
 
   return undefined
+}
+
+/**
+ * 统一计算 schedule 的下次执行时间（IF-5：runtime 内唯一 nextRunAt 计算入口）。
+ * interval → from + intervalMs（from 缺省 Date.now()）；
+ * cron → 下次命中时间戳（> from）；cron 无效或 croner 不可用 → undefined。
+ * undefined 语义按调用方决策：addTask → 创建即抛错；
+ * toggleTask/dispatchTask 重算 → ERR-2 fallback（停用 + failed）。
+ */
+export async function computeNextRunAt(
+  spec: ScheduleSpec,
+  from?: number,
+): Promise<number | undefined> {
+  if (spec.mode === 'interval') {
+    const start = from ?? Date.now()
+    return start + spec.intervalMs
+  }
+
+  return computeNextCronRunAt(spec.cronExpression, from)
 }
 
 // ── Next Runs 计算 ──

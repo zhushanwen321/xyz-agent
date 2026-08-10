@@ -58,11 +58,10 @@ describe('computeNextCronRuns', () => {
 })
 
 describe('parseSchedule (cron 分支)', () => {
-  it('5 字段 cron 表达式补秒字段并附带 note', async () => {
+  it('5 字段 cron 表达式补秒字段（note 不再透传到 parseSchedule 结果）', async () => {
     const result = await parseSchedule('*/10 * * * *')
     expect(result).toEqual({
       spec: { mode: 'cron', cronExpression: '0 */10 * * * *' },
-      note: 'Auto-prepended seconds field (0)',
     })
   })
 

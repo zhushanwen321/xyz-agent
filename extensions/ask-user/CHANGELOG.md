@@ -1,5 +1,21 @@
 # @zhushanwen/pi-ask-user
 
+## 7.0.1
+
+### Major Changes
+
+- 1c0ae0624: Remove the comment feature and adopt the structured `AnswerValue` model across the protocol, extension, and renderer.
+
+  Breaking changes in this version:
+
+  - `allowComment` option removed — the inline comment interaction is deleted end-to-end (paired with the `@xyz-agent/extension-protocol@0.4.0` removal).
+  - Options no longer carry a separate `value` field; the selected label is the value (D1 model merge).
+  - `getAskUserComment` helper removed; answers decode via `getAskUserAnswer` / `getAskUserOther` only.
+
+### Patch Changes
+
+- 76a0f8d45: Align no-option freeform encoding with the shared `encodeAnswer` contract.
+
 ## 6.0.1
 
 ### Patch Changes

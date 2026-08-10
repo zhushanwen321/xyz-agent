@@ -1,8 +1,8 @@
 // src/submit-view.ts
 import { truncateToWidth } from "@earendil-works/pi-tui";
 
-import { formatAnswer } from "./answer-format";
 import {
+	type AnswerValue,
 	HEADER_MAX_CHARS,
 	type Question,
 	type QuestionState,
@@ -27,24 +27,35 @@ export function renderButtonBar(theme: ThemeLike, allDone: boolean, focus: "subm
 }
 
 /**
- * 获取单问题的答案文本（供 Submit tab 显示）。
+ * 把结构化 AnswerValue 格式化为展示文本（TUI Submit tab / index.ts renderResult 共用）。
+ * 规则：selected join(", ")；other 非空时追加 ", ${other}"。
+ */
+export function answerValueText(v: AnswerValue): string {
+	const parts = [...v.selected];
+	if (v.other !== null && v.other !== "") parts.push(v.other);
+	return parts.join(", ");
+}
+
+/**
+ * 获取单问题的结构化答案（供 Submit tab 显示）。
  * 返回 null 表示未答。
  */
-export function getAnswerText(q: Question, s: QuestionState): string | null {
+export function getAnswerText(q: Question, s: QuestionState): AnswerValue | null {
 	if (!s.confirmed) return null;
-	const parts: string[] = [];
+	const selected: string[] = [];
 	if (q.multiSelect) {
 		const labels = [...s.selectedIndices]
 			.sort((a, b) => a - b)
 			.map((idx) => q.options[idx]?.label)
 			.filter((l): l is string => !!l);
-		parts.push(...labels);
+		selected.push(...labels);
 	} else if (s.selectedIndex !== null) {
 		const label = q.options[s.selectedIndex]?.label;
-		if (label) parts.push(label);
+		if (label) selected.push(label);
 	}
-	if (s.freeTextValue !== null) parts.push(s.freeTextValue);
-	return formatAnswer(parts, s.commentValue);
+	// confirmed 但无任何答案内容（selected 空 && other 空）→ null（未答，buildResult 不写入）
+	if (selected.length === 0 && (s.freeTextValue === null || s.freeTextValue === "")) return null;
+	return { selected, other: s.freeTextValue };
 }
 
 /**
@@ -79,7 +90,7 @@ export function renderSubmitView(
 		const answer = getAnswerText(q, states[i]!);
 		const headerLabel = truncateToWidth(q.header ?? "", HEADER_MAX_CHARS);
 		if (answer !== null) {
-			add(` ${t.fg("muted", `${headerLabel}: `)}${t.fg("text", answer)}`);
+			add(` ${t.fg("muted", `${headerLabel}: `)}${t.fg("text", answerValueText(answer))}`);
 		} else {
 			add(` ${t.fg("dim", `${headerLabel}: `)}${t.fg("warning", "—")}`);
 		}
@@ -111,12 +122,12 @@ export function renderSubmitView(
  * 从 states 构建 Result（供组件 buildResult 调用）。
  */
 export function buildResult(questions: Question[], states: QuestionState[]): Result {
-	const answers: Record<string, string> = {};
+	const answers: Record<string, AnswerValue> = {};
 	for (let i = 0; i < questions.length; i++) {
 		const q = questions[i]!;
 		const s = states[i]!;
-		const text = getAnswerText(q, s);
-		if (text !== null) answers[q.question] = text;
+		const answer = getAnswerText(q, s);
+		if (answer !== null) answers[q.question] = answer;
 	}
 	return { questions, answers, cancelled: false };
 }

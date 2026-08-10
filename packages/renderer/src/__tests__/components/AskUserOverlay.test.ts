@@ -1,15 +1,21 @@
 /**
- * AskUserOverlay 测试（W3: U9-U13）。
+ * AskUserOverlay 测试（W3: U9-U13 + D1 编码契约）。
  *
  * 验证 ask-user 富交互组件的渲染和交互：
  * - U9: 首屏渲染（问题文本 + 选项列表存在于 DOM）
- * - U10: 单选交互（点击 → Submit → answers 包含 value）
- * - U11: 多选交互（点击多个 → Submit → answers 含 JSON 数组）
- * - U12: Other 输入 + comment
+ * - U10: 单选交互（点击 → Submit → answers 包含 label）
+ * - U11: 多选交互（点击多个 → Submit → answers 含 JSON.stringify(label[])）
+ * - U12: 纯自由文本（无 options → Textarea → 答案写 `${key}__other`）
  * - U13: Cancel 取消
+ * - D1 编码契约 5 形态：单选 label / 多选 JSON / Other+selected / 纯自由文本仅 __other / 全部未答 {}
  *
- * 注意：4.0.1 comment restore 的一部分（main 已在 4.0.0 把 U12 的 comment 断言删除）：
- *    U12 验证 `${key}__comment` 拼装必须保留，与 AskUserOverlay.vue 的 comment UI 一致。
+ * answers 编码契约（对齐 @xyz-agent/extension-protocol types.ts + AskUserOverlay.vue onSubmit）：
+ * - 单选：value = 选中项 label（proto 无独立 value 字段，D1 后 label 即选中值）
+ * - 多选：value = JSON.stringify(label[])
+ * - Other 自由文本：独立 key `${key}__other`（不混进选中值数组）
+ * - 无选项纯自由文本：只写 `${key}__other`，不写主 key
+ * - 未答的问题：不写 key；全部未答（空表单）→ `{}`
+ * - comment 已随 D2 删除：无 `${key}__comment`，无 comment UI
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/components/AskUserOverlay.test.ts
  */
@@ -24,8 +30,8 @@ const optWithDescQ: AskUserQuestion = {
   header: 'db',
   question: '使用哪种数据库?',
   options: [
-    { label: 'PostgreSQL', value: 'pg', description: '生产环境主流' },
-    { label: 'MySQL', value: 'mysql', description: '兼容性广' },
+    { label: 'PostgreSQL', description: '生产环境主流' },
+    { label: 'MySQL', description: '兼容性广' },
   ],
 }
 
@@ -34,8 +40,8 @@ const singleSelectQ: AskUserQuestion = {
   header: 'db',
   question: '选哪个数据库?',
   options: [
-    { label: 'Postgres', value: 'pg' },
-    { label: 'MySQL', value: 'mysql' },
+    { label: 'Postgres' },
+    { label: 'MySQL' },
   ],
 }
 
@@ -44,27 +50,15 @@ const multiSelectQ: AskUserQuestion = {
   question: '选哪些语言?',
   multiSelect: true,
   options: [
-    { label: 'TypeScript', value: 'ts' },
-    { label: 'Python', value: 'py' },
-    { label: 'Rust', value: 'rs' },
+    { label: 'TypeScript' },
+    { label: 'Python' },
+    { label: 'Rust' },
   ],
 }
 
 const freeTextQ: AskUserQuestion = {
   header: 'note',
   question: '补充说明',
-  allowComment: true,
-}
-
-// allowComment + 有选项：评论可作为「无选项适用但想说明原因」的唯一答案（MF-1）
-const optionCommentQ: AskUserQuestion = {
-  header: 'db',
-  question: '选哪个数据库?',
-  allowComment: true,
-  options: [
-    { label: 'Postgres', value: 'pg' },
-    { label: 'MySQL', value: 'mysql' },
-  ],
 }
 
 function mountOverlay(questions: AskUserQuestion[], allowCancel = true) {
@@ -80,18 +74,18 @@ describe('AskUserOverlay', () => {
 
     // 问题文本存在
     expect(wrapper.find('[data-testid="ask-user-question-text"]').text()).toContain('选哪个数据库?')
-    // 选项存在
-    expect(wrapper.find('[data-testid="ask-user-option-pg"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="ask-user-option-mysql"]').exists()).toBe(true)
+    // 选项存在（testid 由 label 派生，proto 无独立 value 字段）
+    expect(wrapper.find('[data-testid="ask-user-option-Postgres"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ask-user-option-MySQL"]').exists()).toBe(true)
     // Submit 按钮存在
     expect(wrapper.find('[data-testid="ask-user-submit"]').exists()).toBe(true)
   })
 
-  it('U10: 单选——点击选项 → Submit → answers 包含 value', async () => {
+  it('U10: 单选——点击选项 → Submit → answers 包含 label', async () => {
     const wrapper = mountOverlay([singleSelectQ])
 
     // 点击 Postgres 选项
-    await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
+    await wrapper.find('[data-testid="ask-user-option-Postgres"]').trigger('click')
     // Submit
     await wrapper.find('[data-testid="ask-user-submit"]').trigger('click')
 
@@ -99,62 +93,41 @@ describe('AskUserOverlay', () => {
     const submitEvents = wrapper.emitted('submit')
     expect(submitEvents).toHaveLength(1)
     const answers = JSON.parse(submitEvents![0][0] as string)
-    expect(answers.db).toBe('pg')
+    expect(answers.db).toBe('Postgres')
   })
 
-  it('U11: 多选——点击多个 → Submit → answers 含 JSON 数组', async () => {
+  it('U11: 多选——点击多个 → Submit → answers 含 JSON.stringify(label[])', async () => {
     const wrapper = mountOverlay([multiSelectQ])
 
     // 点击 TS 和 Python
-    await wrapper.find('[data-testid="ask-user-option-ts"]').trigger('click')
-    await wrapper.find('[data-testid="ask-user-option-py"]').trigger('click')
+    await wrapper.find('[data-testid="ask-user-option-TypeScript"]').trigger('click')
+    await wrapper.find('[data-testid="ask-user-option-Python"]').trigger('click')
     // Submit
     await wrapper.find('[data-testid="ask-user-submit"]').trigger('click')
 
     const submitEvents = wrapper.emitted('submit')
     expect(submitEvents).toHaveLength(1)
     const answers = JSON.parse(submitEvents![0][0] as string)
-    // 多选 → JSON.stringify(value[])
-    expect(JSON.parse(answers.lang)).toEqual(['ts', 'py'])
+    // 多选 → JSON.stringify(label[])
+    expect(JSON.parse(answers.lang)).toEqual(['TypeScript', 'Python'])
   })
 
-  it('U12: Other 自由文本 + comment', async () => {
+  it('U12: 纯自由文本——无 options → Textarea → 答案写 `${key}__other`', async () => {
     const wrapper = mountOverlay([freeTextQ])
 
     // 无 options → 渲染自由文本 Textarea
     expect(wrapper.find('[data-testid="ask-user-free-text"]').exists()).toBe(true)
     // 填入自由文本
     await wrapper.find('[data-testid="ask-user-free-text"]').setValue('需要加索引')
-    // 填入评论
-    await wrapper.find('[data-testid="ask-user-comment-note"]').setValue('prod 环境注意')
     // Submit
     await wrapper.find('[data-testid="ask-user-submit"]').trigger('click')
 
     const submitEvents = wrapper.emitted('submit')
     expect(submitEvents).toHaveLength(1)
     const answers = JSON.parse(submitEvents![0][0] as string)
-    // 无 options 的纯自由文本问题：输入文本作为主答案（key=header）
-    expect(answers.note).toBe('需要加索引')
-    // 评论存到独立 key
-    expect(answers['note__comment']).toBe('prod 环境注意')
-  })
-
-  it('U30: comment-only 提交——allowComment 问题只填评论也能答完并提交（MF-1）', async () => {
-    const wrapper = mountOverlay([optionCommentQ])
-
-    // 未选任何选项时 Submit disabled（未答）
-    const submit = wrapper.find('[data-testid="ask-user-submit"]')
-    expect(submit.attributes('disabled')).toBeDefined()
-    // 只填评论 → 视为已答（「无选项适用但想说明原因」场景）
-    await wrapper.find('[data-testid="ask-user-comment-db"]').setValue('生产环境都不能用，需评估新方案')
-    expect(submit.attributes('disabled')).toBeUndefined()
-    // 提交：主答案 key 不写，评论进独立 key（RPC 解码侧保留 comment-only，不静默丢失）
-    await submit.trigger('click')
-    const submitEvents = wrapper.emitted('submit')
-    expect(submitEvents).toHaveLength(1)
-    const answers = JSON.parse(submitEvents![0][0] as string)
-    expect(answers.db).toBeUndefined()
-    expect(answers['db__comment']).toBe('生产环境都不能用，需评估新方案')
+    // 无选项的纯自由文本问题：只写独立 key（不写主 key，与 encodeAnswer 契约一致）
+    expect(answers['note__other']).toBe('需要加索引')
+    expect(answers.note).toBeUndefined()
   })
 
   it('U13: Cancel → emit cancel 事件', async () => {
@@ -182,7 +155,7 @@ describe('AskUserOverlay', () => {
     // 初始显示第一题
     expect(wrapper.find('[data-testid="ask-user-question-text-multi"]').text()).toContain('选哪个数据库?')
     // 选中第一题的 Postgres（单选）
-    await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
+    await wrapper.find('[data-testid="ask-user-option-Postgres"]').trigger('click')
     // 应自动前进到第二题
     expect(wrapper.find('[data-testid="ask-user-question-text-multi"]').text()).toContain('选哪些语言?')
   })
@@ -191,7 +164,7 @@ describe('AskUserOverlay', () => {
     const wrapper = mountOverlay([singleSelectQ])
 
     // 只有一题，选中后不应前进（无处可去）
-    await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
+    await wrapper.find('[data-testid="ask-user-option-Postgres"]').trigger('click')
     // 仍然显示同一题
     expect(wrapper.find('[data-testid="ask-user-question-text"]').text()).toContain('选哪个数据库?')
   })
@@ -206,7 +179,7 @@ describe('AskUserOverlay', () => {
     expect(wrapper.find('[data-testid="ask-user-submit"]').exists()).toBe(false)
 
     // 答第一题后 auto-advance 到第二题（最后一题）→ 显示"提交"
-    await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
+    await wrapper.find('[data-testid="ask-user-option-Postgres"]').trigger('click')
     const submit = wrapper.find('[data-testid="ask-user-submit"]')
     expect(submit.exists()).toBe(true)
     // 第二题还没答 → 提交 disabled
@@ -218,9 +191,9 @@ describe('AskUserOverlay', () => {
     const wrapper = mountOverlay([singleSelectQ, multiSelectQ])
 
     // 答第一题（单选，auto-advance 到第二题）
-    await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
+    await wrapper.find('[data-testid="ask-user-option-Postgres"]').trigger('click')
     // 答第二题（多选）
-    await wrapper.find('[data-testid="ask-user-option-ts"]').trigger('click')
+    await wrapper.find('[data-testid="ask-user-option-TypeScript"]').trigger('click')
 
     const submit = wrapper.find('[data-testid="ask-user-submit"]')
     expect(submit.attributes('disabled')).toBeUndefined()
@@ -232,7 +205,7 @@ describe('AskUserOverlay', () => {
     // 初始无绿点
     expect(wrapper.find('[data-testid="ask-user-tab-answered"]').exists()).toBe(false)
     // 答第一题（单选 auto-advance）
-    await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
+    await wrapper.find('[data-testid="ask-user-option-Postgres"]').trigger('click')
     // tab-0 应有已答绿点
     const tab0 = wrapper.find('[data-testid="ask-user-tab-0"]')
     expect(tab0.find('[data-testid="ask-user-tab-answered"]').exists()).toBe(true)
@@ -253,8 +226,9 @@ describe('AskUserOverlay', () => {
     // 提交
     await wrapper.find('[data-testid="ask-user-submit"]').trigger('click')
     const answers = JSON.parse(wrapper.emitted('submit')![0][0] as string)
-    // Other 文本作为主答案值
-    expect(answers.db).toBe('自定义数据库')
+    // Other 文本写独立 key `${key}__other`，不写主 key
+    expect(answers['db__other']).toBe('自定义数据库')
+    expect(answers.db).toBeUndefined()
   })
 
   it('U20: Other/选项互斥——选普通选项取消 Other 选中', async () => {
@@ -267,7 +241,7 @@ describe('AskUserOverlay', () => {
     // Other input 存在
     expect(wrapper.find('[data-testid="ask-user-other-db"]').exists()).toBe(true)
     // 选 Postgres（单选互斥）→ Other 取消选中，input 消失
-    await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
+    await wrapper.find('[data-testid="ask-user-option-Postgres"]').trigger('click')
     expect(wrapper.find('[data-testid="ask-user-other-db"]').exists()).toBe(false)
   })
 
@@ -316,7 +290,7 @@ describe('AskUserOverlay', () => {
     const wrapper = mountOverlay([singleSelectQ, multiSelectQ])
 
     // 答第一题（单选 auto-advance 到第二题），但手动测"下一题"按钮——先回到第一题
-    await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
+    await wrapper.find('[data-testid="ask-user-option-Postgres"]').trigger('click')
     // auto-advance 到第二题了，手动切回第一题
     await wrapper.find('[data-testid="ask-user-tab-0"]').trigger('click')
     // 此时在第一题（已答），显示"下一题"按钮
@@ -338,7 +312,7 @@ describe('AskUserOverlay', () => {
     // Enter 直接提交（最后一题 + allAnswered）
     await otherInput.trigger('keydown', { key: 'Enter' })
     const answers = JSON.parse(wrapper.emitted('submit')![0][0] as string)
-    expect(answers.db).toBe('自定义数据库')
+    expect(answers['db__other']).toBe('自定义数据库')
   })
 
   it('U26: IME 组合输入中的 Enter 不提交也不前进（中文输入法拼音未确认）', async () => {
@@ -370,7 +344,7 @@ describe('AskUserOverlay', () => {
     expect(qText.exists()).toBe(true)
     expect(qText.text()).toBe('')
     // 无选项（activeQuestion 为 undefined，v-if 阻止渲染）
-    expect(wrapper.find('[data-testid="ask-user-option-pg"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="ask-user-option-Postgres"]').exists()).toBe(false)
     // 无 Other 输入框
     expect(wrapper.find('[data-testid="ask-user-free-text"]').exists()).toBe(false)
   })
@@ -393,7 +367,7 @@ describe('AskUserOverlay', () => {
     const submitEvents = wrapper.emitted('submit')
     expect(submitEvents).toHaveLength(1)
     const answers = JSON.parse(submitEvents![0][0] as string)
-    expect(answers.db).toBe('自定义答案')
+    expect(answers['db__other']).toBe('自定义答案')
   })
 
   it('U27: IME 组合输入中的 Enter 不前进到下一题（多问题场景）', async () => {
@@ -407,6 +381,73 @@ describe('AskUserOverlay', () => {
     // 仍在第一题（第二题的 Other 输入框 testid 是 lang，不应出现）
     expect(wrapper.find('[data-testid="ask-user-other-db"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="ask-user-other-lang"]').exists()).toBe(false)
+  })
+})
+
+describe('AskUserOverlay · D1 编码契约——submit payload 5 形态', () => {
+  it('形态 1: 单选——answers[key] = 选中项 label', async () => {
+    const wrapper = mountOverlay([singleSelectQ])
+
+    await wrapper.find('[data-testid="ask-user-option-Postgres"]').trigger('click')
+    await wrapper.find('[data-testid="ask-user-submit"]').trigger('click')
+
+    const answers = JSON.parse(wrapper.emitted('submit')![0][0] as string)
+    expect(answers.db).toBe('Postgres')
+    // Other 未输入 → 无 __other key
+    expect(answers['db__other']).toBeUndefined()
+  })
+
+  it('形态 2: 多选——answers[key] = JSON.stringify(label[])', async () => {
+    const wrapper = mountOverlay([multiSelectQ])
+
+    await wrapper.find('[data-testid="ask-user-option-TypeScript"]').trigger('click')
+    await wrapper.find('[data-testid="ask-user-option-Python"]').trigger('click')
+    await wrapper.find('[data-testid="ask-user-submit"]').trigger('click')
+
+    const answers = JSON.parse(wrapper.emitted('submit')![0][0] as string)
+    expect(answers.lang).toBe('["TypeScript","Python"]')
+    expect(JSON.parse(answers.lang)).toEqual(['TypeScript', 'Python'])
+  })
+
+  it('形态 3: Other + 已选选项（多选组合）——主 key 写选中项，`${key}__other` 写自由文本', async () => {
+    const wrapper = mountOverlay([multiSelectQ])
+
+    // 选 TypeScript + Other，填自由文本
+    await wrapper.find('[data-testid="ask-user-option-TypeScript"]').trigger('click')
+    await wrapper.find('[data-testid="ask-user-option-__other__"]').trigger('click')
+    await wrapper.find('[data-testid="ask-user-other-lang"]').setValue('自定义语言')
+    await wrapper.find('[data-testid="ask-user-submit"]').trigger('click')
+
+    const answers = JSON.parse(wrapper.emitted('submit')![0][0] as string)
+    // 主 key 只含真实选项 label（过滤 __other__ 占位符）
+    expect(JSON.parse(answers.lang)).toEqual(['TypeScript'])
+    // Other 文本独立 key
+    expect(answers['lang__other']).toBe('自定义语言')
+  })
+
+  it('形态 4: 纯自由文本（无 options）——只写 `${key}__other`，不写主 key', async () => {
+    const wrapper = mountOverlay([freeTextQ])
+
+    await wrapper.find('[data-testid="ask-user-free-text"]').setValue('需要加索引')
+    await wrapper.find('[data-testid="ask-user-submit"]').trigger('click')
+
+    const answers = JSON.parse(wrapper.emitted('submit')![0][0] as string)
+    expect(answers['note__other']).toBe('需要加索引')
+    expect(answers.note).toBeUndefined()
+  })
+
+  it('形态 5: 全部未答（空表单）——payload 为 {}', async () => {
+    const wrapper = mountOverlay([])
+
+    // 空 questions：allAnswered 恒真 → Submit enabled
+    const submit = wrapper.find('[data-testid="ask-user-submit"]')
+    expect(submit.attributes('disabled')).toBeUndefined()
+    await submit.trigger('click')
+
+    // 无问题可答 → 空 answers 对象
+    expect(wrapper.emitted('submit')).toHaveLength(1)
+    const answers = JSON.parse(wrapper.emitted('submit')![0][0] as string)
+    expect(answers).toEqual({})
   })
 })
 
@@ -424,8 +465,8 @@ describe('AskUserOverlay · v3 样式对齐 demo v3', () => {
     const qText = wrapper.find('[data-testid="ask-user-question-text-multi"]')
     expect(qText.attributes('class')).toContain('text-[13px]')
 
-    // 选项 label 含 text-[13px]
-    const optPg = wrapper.find('[data-testid="ask-user-option-pg"]')
+    // 选项 label 含 text-[13px]（当前题是 optWithDescQ，首选项 label 为 PostgreSQL）
+    const optPg = wrapper.find('[data-testid="ask-user-option-PostgreSQL"]')
     expect(optPg.exists()).toBe(true)
     const optLabel = optPg.find('[data-testid="ask-user-option-label"]')
     expect(optLabel.exists()).toBe(true)
@@ -434,7 +475,7 @@ describe('AskUserOverlay · v3 样式对齐 demo v3', () => {
 
   it('U7 补充: opt-desc 字号 12px（subtle 色弱化）', () => {
     const wrapper = mountOverlay([optWithDescQ])
-    const optPg = wrapper.find('[data-testid="ask-user-option-pg"]')
+    const optPg = wrapper.find('[data-testid="ask-user-option-PostgreSQL"]')
     const optDesc = optPg.find('[data-testid="ask-user-option-desc"]')
     expect(optDesc.exists()).toBe(true)
     expect(optDesc.attributes('class')).toContain('text-[12px]')
