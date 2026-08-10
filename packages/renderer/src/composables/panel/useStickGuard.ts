@@ -53,8 +53,29 @@ export function useStickGuard(): StickGuard | null {
   return inject(STICK_GUARD_KEY, null)
 }
 
-/** trace 块 CSS height 过渡时长（ms）——与 hooks 内 setTimeout 兜底时长一致 */
-const TRACE_TRANSITION_MS = 200
+/**
+ * 读取 motion token（design-tokens SSOT：style.css :root）。
+ * 读不到（CSS 未加载 / SSR / 测试环境）时返回 fallback，保持现状行为。
+ */
+function readMotionToken(name: string, fallback: string): string {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return fallback
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
+}
+
+/** --duration token 缺失时的兜底时长（与 design-tokens SSOT 的 --duration 值一致） */
+const DEFAULT_TRACE_TRANSITION_MS = 200
+
+/**
+ * trace 块 CSS height 过渡时长（ms）——动态读取 --duration token（200ms），读不到 fallback 200。
+ * 与 hooks 内 setTimeout 兜底时长强绑定（同一模块级变量驱动两处，禁止分开硬编码）。
+ */
+const TRACE_TRANSITION_MS = (() => {
+  const parsed = parseFloat(readMotionToken('--duration', '200ms'))
+  return Number.isNaN(parsed) ? DEFAULT_TRACE_TRANSITION_MS : parsed
+})()
+
+/** trace 过渡 easing——读取 --ease token（cubic-bezier(0.4,0,0.2,1)），读不到 fallback 'ease-out'（保持现状行为） */
+const TRACE_EASING = readMotionToken('--ease', 'ease-out')
 
 /**
  * trace 折叠/展开的 height 过渡 JS hooks（Vue `<Transition :css="false">`）。
@@ -82,7 +103,7 @@ export function useTraceTransition(stickGuard: StickGuard | null) {
     const node = el as HTMLElement
     // force reflow：让浏览器先承认 beforeLeave 设的 height，再过渡到 0
     void node.offsetHeight
-    node.style.transition = `height ${TRACE_TRANSITION_MS}ms ease-out`
+    node.style.transition = `height ${TRACE_TRANSITION_MS}ms ${TRACE_EASING}`
     node.style.height = '0'
     // 兜底 done：happy-dom / 测试环境不真实执行 CSS transition，transitionend 永不触发。
     // 用与 transition 时长一致的 setTimeout 保证 done 必被调用（否则 Vue 永不卸载 leave 元素）。
@@ -99,7 +120,7 @@ export function useTraceTransition(stickGuard: StickGuard | null) {
     node.style.height = '0'
     node.style.overflow = 'hidden'
     void node.offsetHeight
-    node.style.transition = `height ${TRACE_TRANSITION_MS}ms ease-out`
+    node.style.transition = `height ${TRACE_TRANSITION_MS}ms ${TRACE_EASING}`
     node.style.height = node.scrollHeight + 'px'
     const timer = window.setTimeout(() => {
       window.clearTimeout(timer)
