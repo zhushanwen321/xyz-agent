@@ -48,11 +48,22 @@ function isMessageRole(v: unknown): v is 'user' | 'assistant' | 'toolResult' {
 function toEntry(raw: unknown): Entry | undefined {
   if (typeof raw !== 'object' || raw === null) return undefined
   const obj = raw as Record<string, unknown>
-  if (typeof obj.type !== 'string' || typeof obj.id !== 'string') return undefined
+  if (typeof obj.type !== 'string') return undefined
+
+  // id 解析：顶层 id 优先；custom entry 无顶层 id 时 fallback 到 data.id
+  //（pi 的 subagent-identity 等 custom entry 把 id 放在 data.id，非顶层——真实样本确认）
+  let id: unknown = obj.id
+  if (typeof id !== 'string' && obj.type === 'custom') {
+    const data = obj.data
+    if (typeof data === 'object' && data !== null && typeof (data as Record<string, unknown>).id === 'string') {
+      id = (data as Record<string, unknown>).id
+    }
+  }
+  if (typeof id !== 'string') return undefined
 
   const entry: Entry = {
     type: obj.type,
-    id: obj.id,
+    id: id as string,
     parentId: typeof obj.parentId === 'string' ? obj.parentId : null,
   }
   if (typeof obj.timestamp === 'string') entry.timestamp = obj.timestamp

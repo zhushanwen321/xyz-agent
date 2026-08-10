@@ -119,6 +119,20 @@ describe('parseSessionContent', () => {
     expect(result.lastLinePartial).toBe(true)
   })
 
+  it('custom entry 无顶层 id 时 fallback 到 data.id（pi subagent-identity 等格式）', () => {
+    const content = line({
+      type: 'custom',
+      customType: 'subagent-identity',
+      data: { id: 'sa-abc123', rootSessionId: 'sess-1', slug: 'fix' },
+    })
+    const result = parseSessionContent(content)
+
+    expect(result.entries).toHaveLength(1)
+    expect(result.entries[0].id).toBe('sa-abc123')
+    expect(result.entries[0].customType).toBe('subagent-identity')
+    expect(result.skippedLines).toBe(0)
+  })
+
   it('session header 无 parentId → 归一化为 null（root 判定）', () => {
     const content = '{"type":"session","id":"root","timestamp":"t"}'
     const result = parseSessionContent(content)
