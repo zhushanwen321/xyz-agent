@@ -32,6 +32,12 @@ SYMLINK_ALLOWED_PREFIXES = ("../", "./")
 # 被 git add -f 误提交。workflows/ 是编排源码，extension 相关内容是 npm 包不在 .pi/ 下。
 PI_ALLOWED_SUBDIRS = {"workflows"}
 
+# extensions/ 目录 md 白名单（防止临时文件/杂散文档污染包根）。
+# [HISTORICAL] .tmp-architecture-review.md / .tmp-competitive-research.md 曾散落
+# extensions/ 根目录（认知外临时研究文档）。规范：extensions/ 根禁止任何 md；
+# extensions/<pkg>/ 根只允许标准文档，其他 md 应放 docs/ 子目录或项目 docs/。
+EXTENSIONS_PKG_ALLOWED_MD = {"README.md", "CHANGELOG.md", "ARCHITECTURE.md", "AGENTS.md"}
+
 # 根目录禁止的 cw v1 工作流临时产物文件名模式（正则，对根目录相对路径匹配）。
 # 这些是 cw 跑完的运行时/归档产物，应放 .xyz-harness/，不是源码。
 # 注意：.cw/（带尾斜杠）是 tracked 测试脚本目录，不在此列。
@@ -198,6 +204,49 @@ def check_pi_whitelist(staged_files):
     return errors
 
 
+def check_extensions_md_whitelist(staged_files):
+    """检查 extensions/ 目录下的 md 文件白名单。
+
+    extensions/ 根目录禁止任何 md（.tmp-* 等临时研究文档曾污染）。
+    extensions/<pkg>/ 根目录只允许标准/必要文档（README/CHANGELOG/ARCHITECTURE/AGENTS），
+    其他 md 应统一放 extensions/<pkg>/docs/ 子目录或项目 docs/。
+    子目录（docs/src 等）内的 md 不受此约束（如 extensions/<pkg>/docs/*.md 允许）。
+    """
+    errors = []
+    root_violations = []
+    pkg_violations = []
+    for filepath in staged_files:
+        if not filepath.endswith(".md"):
+            continue
+        if not filepath.startswith("extensions/"):
+            continue
+        # git 输出的路径恒用正斜杠（跨平台一致），不能用 os.sep
+        parts = filepath.split("/")
+        # extensions/foo.md → 根 md（2 段）：禁止
+        if len(parts) == 2:
+            root_violations.append(filepath)
+        # extensions/<pkg>/foo.md → 子包根 md（3 段）：白名单校验
+        elif len(parts) == 3:
+            if parts[2] not in EXTENSIONS_PKG_ALLOWED_MD:
+                pkg_violations.append(filepath)
+        # extensions/<pkg>/<subdir>/... → 子目录 md（docs/ 等），不检查
+    if root_violations:
+        sample = ", ".join(sorted(root_violations)[:5])
+        suffix = f" 等 {len(root_violations)} 个" if len(root_violations) > 5 else ""
+        errors.append(
+            f"extensions/ 根目录禁止 md 文件: {sample}{suffix}\n"
+            f"  临时文件/杂散文档应放 docs/ 子目录或删除（.tmp-* 类研究文档不应散落包根）"
+        )
+    if pkg_violations:
+        sample = ", ".join(sorted(pkg_violations)[:5])
+        suffix = f" 等 {len(pkg_violations)} 个" if len(pkg_violations) > 5 else ""
+        errors.append(
+            f"extensions/<pkg>/ 根目录 md 白名单违规: {sample}{suffix}\n"
+            f"  只允许 {sorted(EXTENSIONS_PKG_ALLOWED_MD)}；其他 md 应放 extensions/<pkg>/docs/ 或项目 docs/"
+        )
+    return errors
+
+
 def check_symlinks(staged_files):
     """检查项目中的 symlink 是否指向外部绝对路径。
 
@@ -272,6 +321,7 @@ def main():
     errors.extend(check_backup_suffixes(staged_files))
     errors.extend(check_ascii_paths(staged_files))
     errors.extend(check_pi_whitelist(staged_files))
+    errors.extend(check_extensions_md_whitelist(staged_files))
     errors.extend(check_symlinks(staged_files))
 
     if errors:
