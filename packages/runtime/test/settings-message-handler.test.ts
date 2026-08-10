@@ -8,11 +8,25 @@
  *
  * 运行：pnpm --filter @xyz-agent/runtime run test -- test/settings-message-handler.test.ts
  */
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mkdtemp, rm, mkdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
 import { SettingsMessageHandler } from '../src/transport/settings-message-handler.js'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
+import {
+  writeModels,
+  refreshModels,
+  setModelsPath,
+  getDefaultModel as piProviderGetDefaultModel,
+} from '../src/infra/pi/pi-provider-store.js'
+import { setSettingsPath, readSettings } from '../src/infra/pi/pi-settings-store.js'
 
-function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; deleteProvider?: ReturnType<typeof vi.fn>; discover?: ReturnType<typeof vi.fn>; aggregate?: ReturnType<typeof vi.fn>; oauthLogin?: ReturnType<typeof vi.fn>; oauthCancel?: ReturnType<typeof vi.fn> } = {}) {
+const mkdtempP = promisify(mkdtemp)
+const rmP = promisify(rm)
+
+function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; deleteProvider?: ReturnType<typeof vi.fn>; toggleProviderEnabled?: ReturnType<typeof vi.fn>; removeProviderByKind?: ReturnType<typeof vi.fn>; getDefaultModel?: ReturnType<typeof vi.fn>; applyImportProviders?: ReturnType<typeof vi.fn>; discover?: ReturnType<typeof vi.fn>; aggregate?: ReturnType<typeof vi.fn>; oauthLogin?: ReturnType<typeof vi.fn>; oauthCancel?: ReturnType<typeof vi.fn> } = {}) {
   const broadcasts: ServerMessage[] = []
   const replies: { id: string; type: string; payload: Record<string, unknown> }[] = []
   const sendErrorCalls: { code: string; message: string }[] = []
@@ -21,7 +35,11 @@ function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; delete
     checkEnvVars: vi.fn().mockReturnValue({}),
     setProvider: overrides.setProvider ?? vi.fn().mockReturnValue({}),
     deleteProvider: overrides.deleteProvider ?? vi.fn().mockReturnValue({}),
+    toggleProviderEnabled: overrides.toggleProviderEnabled ?? vi.fn().mockReturnValue({}),
+    removeProviderByKind: overrides.removeProviderByKind ?? vi.fn().mockReturnValue({}),
     setDefaultModel: vi.fn(),
+    getDefaultModel: overrides.getDefaultModel ?? vi.fn().mockReturnValue(null),
+    applyImportProviders: overrides.applyImportProviders ?? vi.fn().mockResolvedValue({ result: {} }),
     getProvider: vi.fn().mockReturnValue(undefined),
     updateToolPermissions: vi.fn(),
     loadSkills: vi.fn().mockReturnValue([]),
@@ -99,7 +117,7 @@ describe('SettingsMessageHandler', () => {
       await handler.handleSettingsMessage(msg('config.setProvider', { providerId: 'p1', name: 'x' }), WS)
       const d = broadcasts.find(b => b.type === 'config.defaults')
       expect(d).toBeDefined()
-      expect(d?.payload).toMatchObject({ defaultModel: 'p1/m1', source: 'provider-updated' })
+      expect(d?.payload).toMatchObject({ defaultModel: 'p1/m1', source: 'provider-change' })
     })
 
     it('deleteProvider 有 newDefault → 广播 config.defaults (source=provider-deleted)', async () => {
@@ -108,7 +126,7 @@ describe('SettingsMessageHandler', () => {
       })
       await handler.handleSettingsMessage(msg('config.deleteProvider', { providerId: 'p1' }), WS)
       const d = broadcasts.find(b => b.type === 'config.defaults')
-      expect(d?.payload).toMatchObject({ defaultModel: 'p2/m2', source: 'provider-deleted' })
+      expect(d?.payload).toMatchObject({ defaultModel: 'p2/m2', source: 'provider-change' })
     })
   })
 
@@ -302,6 +320,174 @@ describe('SettingsMessageHandler', () => {
       expect(handled).toBe(true)
       expect(ctx.configService.checkEnvVars).not.toHaveBeenCalled()
       expect(sendErrorCalls[0]).toMatchObject({ code: 'invalid_payload' })
+    })
+  })
+
+  // ── Phase 3 reconcile：defaultModel 维护统一收口（P1 无双重广播 + source 统一）──
+  // 设计 provider-arch-hardening §3.3 D3 / §5 Phase 3：5 handler 的 config.defaults 广播
+  // 收口到 reconcileDefaultModelAfterProviderChange，消除分散编排的遗漏根因。
+  describe('Phase 3 reconcile：defaultModel 维护统一收口（P1 无双重广播）', () => {
+    it('setProvider 有 newDefault → 广播恰好 1 次，有 newDefault 时 ?? 短路不调 getDefaultModel', async () => {
+      const { ctx, broadcasts, handler } = makeHandler({
+        setProvider: vi.fn().mockReturnValue({ newDefault: { provider: 'p1', modelId: 'm1' } }),
+      })
+      await handler.handleSettingsMessage(msg('config.setProvider', { providerId: 'p1', name: 'x' }), WS)
+      expect(broadcasts.filter(b => b.type === 'config.defaults')).toHaveLength(1)
+      // 有 newDefault 时 ?? 短路，不读盘 getDefaultModel（避免二次写回）
+      expect(ctx.configService.getDefaultModel).not.toHaveBeenCalled()
+    })
+
+    it('setProvider 无 newDefault + getDefaultModel 有值 → 兜底广播 1 次', async () => {
+      const { ctx, broadcasts, handler } = makeHandler({
+        setProvider: vi.fn().mockReturnValue({}),
+        getDefaultModel: vi.fn().mockReturnValue({ provider: 'p1', modelId: 'm1' }),
+      })
+      await handler.handleSettingsMessage(msg('config.setProvider', { providerId: 'p1', name: 'x' }), WS)
+      expect(ctx.configService.getDefaultModel).toHaveBeenCalledOnce()
+      expect(broadcasts.filter(b => b.type === 'config.defaults')).toHaveLength(1)
+    })
+
+    it('setProvider 无 newDefault + getDefaultModel 无值 → 不广播', async () => {
+      const { broadcasts, handler } = makeHandler({
+        setProvider: vi.fn().mockReturnValue({}),
+        getDefaultModel: vi.fn().mockReturnValue(null),
+      })
+      await handler.handleSettingsMessage(msg('config.setProvider', { providerId: 'p1', name: 'x' }), WS)
+      expect(broadcasts.filter(b => b.type === 'config.defaults')).toHaveLength(0)
+    })
+
+    it('deleteProvider 有 newDefault → 广播 1 次', async () => {
+      const { broadcasts, handler } = makeHandler({
+        deleteProvider: vi.fn().mockReturnValue({ removed: true, newDefault: { provider: 'p2', modelId: 'm2' } }),
+      })
+      await handler.handleSettingsMessage(msg('config.deleteProvider', { providerId: 'p1' }), WS)
+      expect(broadcasts.filter(b => b.type === 'config.defaults')).toHaveLength(1)
+    })
+
+    it('deleteProvider 无 newDefault + getDefaultModel 无值 → 不广播', async () => {
+      const { broadcasts, handler } = makeHandler({
+        deleteProvider: vi.fn().mockReturnValue({ removed: true }),
+        getDefaultModel: vi.fn().mockReturnValue(null),
+      })
+      await handler.handleSettingsMessage(msg('config.deleteProvider', { providerId: 'p1' }), WS)
+      expect(broadcasts.filter(b => b.type === 'config.defaults')).toHaveLength(0)
+    })
+
+    it('toggleProviderEnabled 有 newDefault → 广播 1 次', async () => {
+      const { broadcasts, handler } = makeHandler({
+        toggleProviderEnabled: vi.fn().mockReturnValue({ newDefault: { provider: 'p1', modelId: 'm1' } }),
+      })
+      await handler.handleSettingsMessage(msg('config.toggleProviderEnabled', { providerId: 'p1', enabled: true }), WS)
+      expect(broadcasts.filter(b => b.type === 'config.defaults')).toHaveLength(1)
+    })
+
+    it('toggleProviderEnabled 无 newDefault + getDefaultModel 兜底 → 广播 1 次', async () => {
+      const { broadcasts, handler } = makeHandler({
+        toggleProviderEnabled: vi.fn().mockReturnValue({}),
+        getDefaultModel: vi.fn().mockReturnValue({ provider: 'p2', modelId: 'm2' }),
+      })
+      await handler.handleSettingsMessage(msg('config.toggleProviderEnabled', { providerId: 'p1', enabled: false }), WS)
+      expect(broadcasts.filter(b => b.type === 'config.defaults')).toHaveLength(1)
+    })
+
+    it('removeProviderByKind 有 newDefault → 广播 1 次', async () => {
+      const { broadcasts, handler } = makeHandler({
+        removeProviderByKind: vi.fn().mockReturnValue({ removed: true, newDefault: { provider: 'p2', modelId: 'm2' } }),
+      })
+      await handler.handleSettingsMessage(msg('config.removeProviderByKind', { providerId: 'p1', kind: 'custom' }), WS)
+      expect(broadcasts.filter(b => b.type === 'config.defaults')).toHaveLength(1)
+    })
+
+    it('removeProviderByKind 无 newDefault + getDefaultModel 无值 → 不广播', async () => {
+      const { broadcasts, handler } = makeHandler({
+        removeProviderByKind: vi.fn().mockReturnValue({ removed: true }),
+        getDefaultModel: vi.fn().mockReturnValue(null),
+      })
+      await handler.handleSettingsMessage(msg('config.removeProviderByKind', { providerId: 'p1', kind: 'custom' }), WS)
+      expect(broadcasts.filter(b => b.type === 'config.defaults')).toHaveLength(0)
+    })
+
+    it('applyImportProviders 成功 → 不传 newDefault，getDefaultModel 兜底广播 1 次', async () => {
+      const { ctx, broadcasts, handler } = makeHandler({
+        applyImportProviders: vi.fn().mockResolvedValue({ result: { imported: ['p1'] } }),
+        getDefaultModel: vi.fn().mockReturnValue({ provider: 'p1', modelId: 'm1' }),
+      })
+      await handler.handleSettingsMessage(msg('config.applyImportProviders', { importId: 'imp1', selectedIds: ['p1'] }), WS)
+      expect(ctx.configService.getDefaultModel).toHaveBeenCalledOnce()
+      expect(broadcasts.filter(b => b.type === 'config.defaults')).toHaveLength(1)
+    })
+
+    it('applyImportProviders 成功 + getDefaultModel 无值 → 不广播', async () => {
+      const { broadcasts, handler } = makeHandler({
+        applyImportProviders: vi.fn().mockResolvedValue({ result: {} }),
+        getDefaultModel: vi.fn().mockReturnValue(null),
+      })
+      await handler.handleSettingsMessage(msg('config.applyImportProviders', { importId: 'imp1', selectedIds: ['p1'] }), WS)
+      expect(broadcasts.filter(b => b.type === 'config.defaults')).toHaveLength(0)
+    })
+
+    it('applyImportProviders 失败（error）→ 不广播 provider 列表也不 reconcile', async () => {
+      const { ctx, broadcasts, handler } = makeHandler({
+        applyImportProviders: vi.fn().mockResolvedValue({ error: { code: 'PREVIEW_EXPIRED', message: 'expired' } }),
+      })
+      await handler.handleSettingsMessage(msg('config.applyImportProviders', { importId: 'imp1', selectedIds: ['p1'] }), WS)
+      expect(ctx.broadcastProviderList).not.toHaveBeenCalled()
+      expect(broadcasts.filter(b => b.type === 'config.defaults')).toHaveLength(0)
+    })
+
+    it('广播内容：source 统一为 provider-change，defaultModel 复合串 provider/modelId', async () => {
+      const { broadcasts, handler } = makeHandler({
+        setProvider: vi.fn().mockReturnValue({ newDefault: { provider: 'anthropic', modelId: 'claude-opus' } }),
+      })
+      await handler.handleSettingsMessage(msg('config.setProvider', { providerId: 'anthropic', name: 'x' }), WS)
+      const d = broadcasts.find(b => b.type === 'config.defaults')
+      expect(d?.payload).toMatchObject({ defaultModel: 'anthropic/claude-opus', source: 'provider-change' })
+    })
+  })
+
+  // ── Phase 3 P4：applyImportProviders 后 defaultModel 写盘 ──
+  // reconcile 兜底分支调 getDefaultModel，后者 wasFixed:true 时写回 settings.json。
+  // 用真实 pi-provider-store.getDefaultModel（tmpdir 隔离）验证端到端写盘。
+  describe('Phase 3 P4：applyImportProviders 后 defaultModel 写盘（reconcile 兜底 + getDefaultModel wasFixed）', () => {
+    let p4TmpDir: string
+    beforeEach(async () => {
+      p4TmpDir = await mkdtempP(join(tmpdir(), 'p4-reconcile-'))
+      mkdirSync(join(p4TmpDir, 'pi', 'agent'), { recursive: true })
+      setSettingsPath(join(p4TmpDir, 'pi', 'agent', 'settings.json'))
+      setModelsPath(join(p4TmpDir, 'pi', 'agent', 'models.json'))
+      refreshModels()
+    })
+    afterEach(async () => {
+      await rmP(p4TmpDir, { recursive: true, force: true })
+    })
+
+    it('applyImportProviders 成功 → reconcile 调 getDefaultModel → wasFixed 写回 settings.json.defaultProvider', async () => {
+      // 场景：models.json 有 provider，settings.json 无 defaultProvider
+      // → findValidDefaultModel 走 pickFirstModelProvider fallback，wasFixed:true
+      // → getDefaultModel 写回 settings.json（设 defaultProvider/defaultModel）
+      writeModels({
+        providers: {
+          'p1': { apiKey: 'sk-x', enabled: true, models: [{ id: 'm1', name: 'M1' }] },
+        },
+      })
+      refreshModels()
+
+      // getDefaultModel 走真实 pi-provider-store.getDefaultModel（tmpdir 隔离）
+      const { broadcasts, handler } = makeHandler({
+        applyImportProviders: vi.fn().mockResolvedValue({ result: { imported: ['p1'] } }),
+        getDefaultModel: vi.fn(() => piProviderGetDefaultModel()),
+      })
+      await handler.handleSettingsMessage(
+        msg('config.applyImportProviders', { importId: 'imp1', selectedIds: ['p1'] }),
+        WS,
+      )
+
+      // P4 核心：settings.json.defaultProvider 被写入（getDefaultModel wasFixed 写回生效）
+      const settings = readSettings()
+      expect(settings.defaultProvider).toBe('p1')
+      expect(settings.defaultModel).toBe('m1')
+      // 且 reconcile 广播了 config.defaults（收口后统一入口）
+      expect(broadcasts.filter(b => b.type === 'config.defaults')).toHaveLength(1)
     })
   })
 })

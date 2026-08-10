@@ -123,19 +123,19 @@ export class ConfigService implements IConfigService {
     return checkEnvVarsImpl(names)
   }
 
-  setProvider(providerId: string, data: SetProviderInput): { newDefault?: { provider: string; modelId: string } } {
+  setProvider(providerId: string, data: SetProviderInput): { newDefault?: { provider: ProviderId; modelId: string } } {
     return setProviderImpl(this.configStore, this.authStorage, providerId, data)
   }
 
-  toggleProviderEnabled(providerId: string, enabled: boolean): { newDefault?: { provider: string; modelId: string } } {
+  toggleProviderEnabled(providerId: string, enabled: boolean): { newDefault?: { provider: ProviderId; modelId: string } } {
     return toggleProviderEnabledImpl(this.configStore, this.authStorage, providerId, enabled)
   }
 
-  deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } } {
+  deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: ProviderId; modelId: string } } {
     return deleteProviderImpl(this.configStore, this.authStorage, providerId)
   }
 
-  removeProviderByKind(providerId: string, kind: 'catalog' | 'custom'): { removed: boolean; newDefault?: { provider: string; modelId: string } } {
+  removeProviderByKind(providerId: string, kind: 'catalog' | 'custom'): { removed: boolean; newDefault?: { provider: ProviderId; modelId: string } } {
     return removeProviderByKindImpl(this.configStore, this.authStorage, providerId, kind)
   }
 

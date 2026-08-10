@@ -3,7 +3,7 @@
  * Extracted from RuntimeServer to reduce file size.
  */
 import type { WebSocket as WsType } from 'ws'
-import type { ClientMessage, ProviderSource, SkillCacheScope } from '@xyz-agent/shared'
+import type { ClientMessage, ProviderSource, SkillCacheScope, ProviderId } from '@xyz-agent/shared'
 import type { IConfigService, ISessionService, IModelService, IAuthService } from '../interfaces.js'
 import type { SkillRegistry } from '../services/skill-registry.js'
 import { toErrorMessage } from '../utils/errors.js'
@@ -30,6 +30,29 @@ export interface SettingsHandlerContext extends MessageHandlerContext {
   broadcastExtensionDirs(): void
 }
 
+/**
+ * provider 增删后统一维护 defaultModel（design provider-arch-hardening §3.3 D3 / Phase 3）。
+ *
+ * 二选一：有 newDefault 直接用（不读盘）；无则 getDefaultModel 兜底（内部 findValidDefaultModel +
+ * wasFixed:true 时写回 settings.json）。config.defaults 广播收敛在本 helper 内一次，消除 5 handler
+ * 各自编排的遗漏根因（applyImportProviders 曾漏维护，commit cd41254ba 局部补）。
+ *
+ * broadcastProviderList 不在此收口（决策 D3：语义正交——provider 列表变更 vs defaultModel 对账；
+ * 且 applyImport 只成功时广播、其它总广播，留各 handler 更清晰）。
+ */
+function reconcileDefaultModelAfterProviderChange(
+  ctx: SettingsHandlerContext,
+  existingNewDefault?: { provider: ProviderId; modelId: string },
+): void {
+  const dm = existingNewDefault ?? ctx.configService.getDefaultModel()
+  if (!dm) return
+  ctx.broadcast({
+    type: 'config.defaults',
+    id: ctx.nextPushId(),
+    payload: { defaultModel: `${dm.provider}/${dm.modelId}`, source: 'provider-change' },
+  })
+}
+
 export class SettingsMessageHandler {
   constructor(private ctx: SettingsHandlerContext) {}
 
@@ -44,28 +67,14 @@ export class SettingsMessageHandler {
         const setResult = this.ctx.configService.setProvider(providerId, data as Parameters<IConfigService['setProvider']>[1])
         this.ctx.reply(ws, msg.id, 'config.providerUpdated', { providerId })
         this.ctx.broadcastProviderList()
-        // 如果 fallback 修正了 defaultModel，广播到所有 panel
-        if (setResult.newDefault) {
-          this.ctx.broadcast({
-            type: 'config.defaults',
-            id: this.ctx.nextPushId(),
-            payload: { defaultModel: `${setResult.newDefault.provider}/${setResult.newDefault.modelId}`, source: 'provider-updated' },
-          })
-        }
+        reconcileDefaultModelAfterProviderChange(this.ctx, setResult.newDefault)
         return true
       }
       case 'config.deleteProvider': {
         const delResult = this.ctx.configService.deleteProvider(msg.payload.providerId)
         this.ctx.reply(ws, msg.id, 'config.providerUpdated', { providerId: msg.payload.providerId, deleted: true })
         this.ctx.broadcastProviderList()
-        // 如果 fallback 修正了 defaultModel，广播到所有 panel
-        if (delResult.newDefault) {
-          this.ctx.broadcast({
-            type: 'config.defaults',
-            id: this.ctx.nextPushId(),
-            payload: { defaultModel: `${delResult.newDefault.provider}/${delResult.newDefault.modelId}`, source: 'provider-deleted' },
-          })
-        }
+        reconcileDefaultModelAfterProviderChange(this.ctx, delResult.newDefault)
         return true
       }
       case 'config.toggleProviderEnabled': {
@@ -76,13 +85,7 @@ export class SettingsMessageHandler {
         const toggleResult = this.ctx.configService.toggleProviderEnabled(providerId, enabled)
         this.ctx.reply(ws, msg.id, 'config.providerUpdated', { providerId })
         this.ctx.broadcastProviderList()
-        if (toggleResult.newDefault) {
-          this.ctx.broadcast({
-            type: 'config.defaults',
-            id: this.ctx.nextPushId(),
-            payload: { defaultModel: `${toggleResult.newDefault.provider}/${toggleResult.newDefault.modelId}`, source: 'provider-toggled' },
-          })
-        }
+        reconcileDefaultModelAfterProviderChange(this.ctx, toggleResult.newDefault)
         return true
       }
       case 'config.removeProviderByKind': {
@@ -93,13 +96,7 @@ export class SettingsMessageHandler {
         const removeResult = this.ctx.configService.removeProviderByKind(providerId, kind)
         this.ctx.reply(ws, msg.id, 'config.providerUpdated', { providerId, deleted: true })
         this.ctx.broadcastProviderList()
-        if (removeResult.newDefault) {
-          this.ctx.broadcast({
-            type: 'config.defaults',
-            id: this.ctx.nextPushId(),
-            payload: { defaultModel: `${removeResult.newDefault.provider}/${removeResult.newDefault.modelId}`, source: 'provider-removed' },
-          })
-        }
+        reconcileDefaultModelAfterProviderChange(this.ctx, removeResult.newDefault)
         return true
       }
       case 'config.oauthLogin': {
@@ -263,17 +260,9 @@ export class SettingsMessageHandler {
         // 仅成功时广播（result 有 result 字段 = 成功；有 error 字段 = 失败，不广播）
         if ('result' in result) {
           this.ctx.broadcastProviderList()
-          // 导入后重选 defaultModel（首个 provider 导入 / 原 default 失效场景）。
-          // getDefaultModel 内部调 findValidDefaultModel，wasFixed 时写回 settings.json（设 defaultProvider/defaultModel）。
-          // 广播 config.defaults 让 landing 页/全局默认同步——否则从无 provider 导入后 defaultModel 仍空，landing 不自动选模型。
-          const defaultModel = this.ctx.configService.getDefaultModel()
-          if (defaultModel) {
-            this.ctx.broadcast({
-              type: 'config.defaults',
-              id: this.ctx.nextPushId(),
-              payload: { defaultModel: `${defaultModel.provider}/${defaultModel.modelId}`, source: 'providers-imported' },
-            })
-          }
+          // 导入后重选 defaultModel：不传 newDefault → reconcile 自动走 getDefaultModel 兜底
+          //（内部 findValidDefaultModel + wasFixed:true 时写回 settings.json）。
+          reconcileDefaultModelAfterProviderChange(this.ctx)
         }
         return true
       }

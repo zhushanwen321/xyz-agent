@@ -31,6 +31,7 @@ import type {
   BatchDeleteResult,
   SegmentsMetadataEntry,
   SkillDirConfig,
+  ProviderId,
 } from '@xyz-agent/shared'
 import type { DirScopes } from './services/skill-dir-config.js'
 import type { IPiEngine, PiEventListener } from './services/ports/pi-engine.js'
@@ -262,7 +263,7 @@ export interface IConfigService {
    * 安全红线：只返回布尔不返回值（env 值可能含凭证，不能泄露到前端）。names 去重。
    */
   checkEnvVars(names: string[]): Record<string, boolean>
-  getDefaultModel(): { provider: string; modelId: string } | null
+  getDefaultModel(): { provider: ProviderId; modelId: string } | null
   setDefaultModel(provider: string, modelId: string): void
   setProvider(providerId: string, data: {
     name?: string
@@ -272,7 +273,7 @@ export interface IConfigService {
     baseUrl?: string
     models?: Array<string | { id: string; name?: string; contextWindow?: number; input?: Array<'text' | 'image'>; thinkingLevelMap?: Record<string, string | null> }>
     enabled?: boolean
-  }): { newDefault?: { provider: string; modelId: string } }
+  }): { newDefault?: { provider: ProviderId; modelId: string } }
   /**
    * 切换 provider 启用状态（wave3 IF2）——写 enabledModels 白名单。
    *
@@ -282,7 +283,7 @@ export interface IConfigService {
    *
    * @returns 触发 defaultModel 重选时含 newDefault；否则空对象。
    */
-  toggleProviderEnabled(providerId: string, enabled: boolean): { newDefault?: { provider: string; modelId: string } }
+  toggleProviderEnabled(providerId: string, enabled: boolean): { newDefault?: { provider: ProviderId; modelId: string } }
   /**
    * 按体系移除 provider（wave4 IF3）——catalog 清凭据/override/残留（不删 pi catalog 定义），
    * custom 删 models.json 条目 + 清残留。renderer 传 ProviderInfo.kind（CL1）。
@@ -290,8 +291,8 @@ export interface IConfigService {
    * @returns custom 分支透传 configStore.removeProvider 的 newDefault（default 承载被删 provider 时重选）；
    *          catalog 分支透传 removeProvider 的 newDefault（override 承载 default 时重选 default + mutate settings.json）。
    */
-  removeProviderByKind(providerId: string, kind: 'catalog' | 'custom'): { removed: boolean; newDefault?: { provider: string; modelId: string } }
-  deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: string; modelId: string } }
+  removeProviderByKind(providerId: string, kind: 'catalog' | 'custom'): { removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }
+  deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }
   getProvider(providerId: string): { apiKey?: string; name?: string; type?: string; baseUrl?: string; models?: unknown[]; enabled?: boolean } | undefined
   updateToolPermissions(permissions: Record<string, string>): void
   // ── Skill/Agent 加载路径（ADR-0021 §1 discovery.json v2 SSOT）──

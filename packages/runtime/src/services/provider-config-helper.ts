@@ -249,7 +249,7 @@ export function setProvider(
   authStorage: AuthStorageAccessors | undefined,
   providerId: string,
   data: SetProviderInput,
-): { newDefault?: { provider: string; modelId: string } } {
+): { newDefault?: { provider: ProviderId; modelId: string } } {
   // wave3：existingConfig===undefined 判定「新建 provider」（边界1 白名单守卫用）
   const existingConfig = configStore.getProviderConfig(providerId)
   const existing = existingConfig ?? {}
