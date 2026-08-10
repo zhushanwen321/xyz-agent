@@ -83,11 +83,6 @@ function mountTurn(turn: MessageTurn, sessionId = 's1') {
         Block: true,
         ChangeSetCard: true,
         MarkdownRenderer: true,
-        // HoverCard 子组件 stub 成内联渲染（绕开 reka-ui HoverCardPortal 在 happy-dom 不渲染）；
-        // fork-ask-btn 现作为 fork split-button 的 hover 第二选项住在 HoverCardContent 内。
-        HoverCard: { template: '<div><slot /></div>' },
-        HoverCardTrigger: { template: '<div><slot /></div>' },
-        HoverCardContent: { template: '<div><slot /></div>' },
       },
     },
   })
@@ -102,9 +97,9 @@ beforeEach(() => {
   toasts.value = []
 })
 
-// ── U7：首屏冒烟 —— summary action 行恒有 fork 后台 + fork 提问按钮（W2 门控已放宽，ui 版无条件渲染） ────────
-describe('U7 首屏冒烟：fork 后台 + fork 提问按钮恒渲染（门控已放宽）', () => {
-  it('每条 assistant 的 summary action 行有 fork 后台 + fork 提问按钮（ui TurnSummary 无 isSessionActive 门控）', () => {
+// ── U7：首屏冒烟 —— summary action 行恒有 fork 按钮（W2 门控已放宽，ui 版无条件渲染） ────────
+describe('U7 首屏冒烟：fork 按钮恒渲染（门控已放宽）', () => {
+  it('每条 assistant 的 summary action 行有 fork 按钮（ui TurnSummary 无 isSessionActive 门控）', () => {
     const turn = makeTurn([makeAssistant({ id: 'a1', status: 'streaming' })])
     const wrapper = mountTurn(turn, 's-stream')
     // W2 放宽门控后 streaming 态也应有 fork 按钮（ui 版 fork 按钮恒在 summary action 行）
@@ -112,7 +107,8 @@ describe('U7 首屏冒烟：fork 后台 + fork 提问按钮恒渲染（门控已
       b.attributes('title')?.includes('分叉') || b.attributes('title')?.includes('fork'),
     )
     expect(forkBtns.length).toBeGreaterThan(0)
-    expect(wrapper.find('[data-testid="fork-background-btn"]').exists()).toBe(true)
+    // fork 统一为 fork-ask-btn（进 composer 模式），不再有独立的 fork-background-btn
+    expect(wrapper.find('[data-testid="fork-background-btn"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="fork-ask-btn"]').exists()).toBe(true)
   })
 
@@ -122,19 +118,14 @@ describe('U7 首屏冒烟：fork 后台 + fork 提问按钮恒渲染（门控已
       makeAssistant({ id: 'a2', content: '第二条回复' }),
     ])
     const wrapper = mountTurn(turn, 's-idle')
-    // fork 按钮在 summary action 行（与复制/复制MD 同行），末条 assistant 位 1 组
-    const forkBackgroundBtns = wrapper.findAll('[data-testid="fork-background-btn"]')
-    expect(forkBackgroundBtns.length).toBe(1)
-
-    const forkAskBtns = wrapper.findAll('[data-testid="fork-ask-btn"]')
-    expect(forkAskBtns.length).toBe(1)
-    // fork 按钮与复制按钮在同一容器（action 行）。重构后 fork-bg 是 fork split-button 的 trigger，
-    // trigger Button 被多层 HoverCard stub div 包裹，需向上找到承载 3 个 split-button 的 action 行。
+    // fork 统一为 fork-ask-btn（与复制/复制MD/handoff 并列同行）
+    expect(wrapper.findAll('[data-testid="fork-background-btn"]').length).toBe(0)
+    expect(wrapper.findAll('[data-testid="fork-ask-btn"]').length).toBe(1)
+    // fork 按钮与复制按钮在同一容器（action 行，4 个并列按钮）
     const actionRow = wrapper.find('.turn-summary .mt-1\\.5')
     expect(actionRow.exists()).toBe(true)
     expect(actionRow.find('[data-testid="fork-ask-btn"]').exists()).toBe(true)
-    // 同行还应有复制按钮（Copy icon button）
-    expect(actionRow.findAll('button').length).toBeGreaterThanOrEqual(4)
+    expect(actionRow.findAll('button').length).toBe(4)
   })
 })
 
@@ -268,24 +259,13 @@ describe('U11：ForkConfirmModal 已删除（文件不存在 + Turn.vue 无 impo
 })
 
 // ── 盲区 2（renderer）：fork 触发回调契约（编排 + toast 反馈已迁 renderer 壳 useChatViewDeps） ──────────────────
-describe('盲区 2：fork 按钮点击 → deps.onFork/onForkAsk 回调（编排在 renderer 壳）', () => {
-  it('点 fork 后台按钮 → deps.onFork(sessionId, message) 被调', async () => {
-    onForkMock.mockClear()
-    const turn = makeTurn([makeAssistant({ id: 'a1', piEntryId: 'pi-a1' })])
-    const wrapper = mountTurn(turn, 's-fork-fail')
-
-    // 点 fork 后台按钮（ui TurnSummary onFork → deps.onFork）
-    await wrapper.find('[data-testid="fork-background-btn"]').trigger('click')
-
-    // 回调契约：sessionId + 完整 message 透传（编排/失败 toast 在 renderer 壳 useChatViewDeps.onFork）
-    expect(onForkMock).toHaveBeenCalledWith('s-fork-fail', expect.objectContaining({ id: 'a1' }))
-  })
-
-  it('点 fork 提问按钮 → deps.onForkAsk(sessionId, message) 被调', async () => {
+describe('盲区 2：fork 按钮点击 → deps.onForkAsk 回调（编排在 renderer 壳）', () => {
+  it('点 fork 按钮 → deps.onForkAsk(sessionId, message) 被调（统一进 composer 模式）', async () => {
     onForkAskMock.mockClear()
     const turn = makeTurn([makeAssistant({ id: 'a1', piEntryId: 'pi-a1' })])
     const wrapper = mountTurn(turn, 's-fork-ask')
 
+    // fork 按钮统一为 fork-ask（进 composer 模式，可输入或空提交；空提交=后台 fork）
     await wrapper.find('[data-testid="fork-ask-btn"]').trigger('click')
 
     expect(onForkAskMock).toHaveBeenCalledWith('s-fork-ask', expect.objectContaining({ id: 'a1' }))

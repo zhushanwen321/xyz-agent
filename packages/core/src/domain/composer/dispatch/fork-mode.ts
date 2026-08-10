@@ -211,7 +211,9 @@ export function useComposerForkMode(
        * 故不复用 staging 参数（避免 fork/handoff 在 useComposerStaging.send 处重复透传）。
        */
       send: async (text) => { await handleForkSend(text) },
-      allowsEmptySend: false,
+      // fork 允许空提交：点 fork 按钮进 composer 模式后可不输入直接提交（≈ 原后台 fork）。
+      // forkSessionAsk 的空 content 守卫会退化为纯 fork（不发送首条 user）。
+      allowsEmptySend: true,
       handleEsc: handleForkEsc,
       // fork-ask 是前端编排的 fork+send，无独立 inflight 可取消 → 恒 false
       isInProgress: computed(() => false),

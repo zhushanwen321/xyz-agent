@@ -117,8 +117,8 @@
           variant="default"
           size="icon"
           class="ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-accent text-accent-fg transition-colors enabled:hover:bg-accent-hover disabled:bg-transparent disabled:text-[var(--neutral-dim)]"
-          :disabled="!canSend"
-          :title="canSend ? t('panel.composer.queueSend') : t('panel.composer.sendHint')"
+          :disabled="!canSubmit"
+          :title="canSubmit ? t('panel.composer.queueSend') : t('panel.composer.sendHint')"
           @click="onSend"
         >
           <ArrowUp class="size-[15px]" />
@@ -135,8 +135,8 @@
           variant="default"
           size="icon"
           class="ml-1.5 size-[var(--composer-btn-size)] rounded-md bg-accent text-accent-fg transition-colors enabled:hover:bg-accent-hover disabled:bg-transparent disabled:text-[var(--neutral-dim)]"
-          :disabled="!canSend"
-          :title="canSend ? `${staging.activeStaging.value ? (staging.activeStaging.value.type === 'fork' ? t('panel.composer.forkSend') : t('panel.composer.handoffSend')) : t('panel.composer.send')} · ⏎` : t('panel.composer.sendHint')"
+          :disabled="!canSubmit"
+          :title="canSubmit ? `${staging.activeStaging.value ? (staging.activeStaging.value.type === 'fork' ? t('panel.composer.forkSend') : t('panel.composer.handoffSend')) : t('panel.composer.send')} · ⏎` : t('panel.composer.sendHint')"
           @click="onSend"
         >
           <ArrowUp class="size-[15px]" />
@@ -300,7 +300,7 @@ const {
   onFollowUp,
   onAbort,
   onSend,
-  canSend,
+  canSubmit,
   boxClass,
   placeholder,
 } = shell

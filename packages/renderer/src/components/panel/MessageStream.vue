@@ -85,13 +85,12 @@
     </div>
 
     <!-- 压缩中提示（瞬时态：isCompacting=true 时显示，完成后由 message.compactionSummary 持久化记录取代）。
-         非虚拟化，absolute 定位到列表末尾。virta 路径下 top 改读 vlistBottom（design §4.7）。
+         文档流 block（Virtualizer 之后），样式对齐 SystemNotice 横线分隔行；宽度随对话流自动对齐。
          ref 供 dev-only 断言：实测高度 vs COMPACTING_NOTICE_HEIGHT 常量漂移检测。 -->
     <div
       v-if="isCompacting"
       ref="compactingNoticeEl"
-      class="system-notice absolute left-5 right-5 z-10 flex min-w-0 items-center gap-2 rounded-md bg-surface px-2 pt-2.5 pb-5 shadow-sm"
-      :style="{ top: vlistBottom + 'px' }"
+      class="system-notice flex min-w-0 items-center gap-2 py-1"
     >
       <span class="h-px flex-1 bg-border" />
       <Loader2 class="size-3 shrink-0 animate-spin text-neutral-mid" />
@@ -104,25 +103,22 @@
          渲染「思考中」+ spinner，message_start 后 assistant 填入同一 turn，原地变为 working 态。
          dispatching 占位现在是对话流文档流的一部分（已计入 vlistBottom），不再是独立浮层。 -->
 
-    <!-- ForkNotice 反馈行（transient，非虚拟化，RV1）。
-         绝对定位到列表末尾 + compacting/dispatching 占位高度；多条通知垂直堆叠。 -->
-    <template v-if="forkNotices.length > 0">
-      <div
-        v-for="(notice, idx) in forkNotices"
-        :key="notice.id"
-        class="absolute left-5 right-5 py-1"
-        :style="{ top: forkNoticeTop(idx) + 'px' }"
-      >
-        <ForkNotice
-          :branch-name="notice.branchName"
-          :preview="notice.preview"
-          :kind="notice.kind"
-          :session-deleted="notice.sessionDeleted ?? false"
-          @view="onForkNoticeView(notice.newSessionId)"
-          @dismiss="onForkNoticeDismiss(notice.id)"
-        />
-      </div>
-    </template>
+    <!-- ForkNotice 反馈行（transient，RV1）。文档流 block（Virtualizer 之后），多条通知垂直堆叠；
+         宽度随对话流自动对齐。 -->
+    <div
+      v-for="notice in forkNotices"
+      :key="notice.id"
+      class="py-1"
+    >
+      <ForkNotice
+        :branch-name="notice.branchName"
+        :preview="notice.preview"
+        :kind="notice.kind"
+        :session-deleted="notice.sessionDeleted ?? false"
+        @view="onForkNoticeView(notice.newSessionId)"
+        @dismiss="onForkNoticeDismiss(notice.id)"
+      />
+    </div>
     </div>
 
     <!-- 回到底部浮层：非贴底且有未读新内容时显示（showJumpButton），点之平滑滚回并恢复锚定 -->
@@ -284,7 +280,7 @@ const {
 
 /** ForkNotice 反馈行（transient，RV1）：feed 消费 + 定位 + 交互封装在 useForkNoticeStream。
  *  [M2] 注入 forkNoticeBaseTop 消除占位叠加重复计算。 */
-const { forkNotices, forkNoticeTop, onView: onForkNoticeView, onDismiss: onForkNoticeDismiss } =
+const { forkNotices, onView: onForkNoticeView, onDismiss: onForkNoticeDismiss } =
   useForkNoticeStream(() => props.sessionId, {
     vlistBottom,
     topOffset,

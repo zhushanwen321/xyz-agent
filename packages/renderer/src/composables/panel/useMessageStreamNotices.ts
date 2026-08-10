@@ -20,17 +20,14 @@ import { useNoticeStack } from '@/composables/panel/useNoticeStack'
 
 /**
  * compaction notice 占位高度。
- * 强绑定 DOM：模板 isCompacting 块（`flex items-center gap-2 pt-2.5 pb-5`，含 `size-3` spinner
- *   + `text-[11px] leading-snug` 文本 + 两条 `h-px` 分隔线）。
- *   实际高度 = pt-2.5(10px) + 内容 max(spinner 12px, text≈16px) + pb-5(20px) = 46px。
- *   pb-5 撑出到 composer 的间距（notice 是 absolute 子元素参与 scrollEl scrollHeight，
- *   底部 padding 让块变高 → scrollHeight 增大 → 滚到底时 notice 内容到视口底部的距离
- *   = 到 composer 的间距，对齐末条 turn 的 pb-5 视觉）。
+ * 强绑定 DOM：模板 isCompacting 块（`system-notice flex items-center gap-2 py-1`，含 `size-3` spinner
+ *   + `text-[length:var(--text-xs)] leading-snug` 文本 + 两条 `h-px` 分隔线）。
+ *   实际高度 = py-1(4px×2) + 内容 max(spinner 12px, text≈16px) ≈ 24px。
+ *   notice 已从 absolute 浮层改为文档流 block（Virtualizer 之后），宽度随对话流对齐；
+ *   此常量现仅供 useNoticeStack 的 forkNoticeBaseTop 兜底计算，dev 断言仍监测高度漂移。
  *   改 padding/字号/icon 必须重测并同步此常量（dev 断言会提醒）。
- *
- * dispatching 占位高度也复用此值（dispatching 文本块尺寸同量级）。
  */
-export const COMPACTING_NOTICE_HEIGHT = 46
+export const COMPACTING_NOTICE_HEIGHT = 24
 
 /** 容器侧响应式依赖（getter/ComputedRef 注入，避免本 composable 反向依赖虚拟滚动/状态计算） */
 export interface MessageStreamNoticesDeps {

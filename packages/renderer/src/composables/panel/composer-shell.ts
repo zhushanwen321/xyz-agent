@@ -272,6 +272,11 @@ export function useComposerShell(params: ComposerShellParams) {
   /** 忙时（流式/派发/发送中）—— canSend 共用守卫（不含 isCompacting：压缩期允许排队） */
   const isBusy = computed(() => isActive.value || isSending.value)
   const canSend = computed(() => hasInput.value && !isBusy.value)
+  /** 可提交：有输入，或当前 staging 允许空发送（fork/handoff 空 composer 直接提交 ≈ 后台操作）。
+   *  canSend 只看 hasInput；staging allowsEmptySend=true 时即使 draft 为空也放行发送按钮。 */
+  const canSubmit = computed(() =>
+    canSend.value || (!!staging.activeStaging.value?.allowsEmptySend && !isBusy.value),
+  )
 
   // ── 视觉派生（原 useComposerBoxClass + useComposerModeVisual 合并，D1 留壳）──
   const stagingBoxClass = computed(() => staging.activeStaging.value?.visual.boxClass.value ?? '')
@@ -368,6 +373,7 @@ export function useComposerShell(params: ComposerShellParams) {
     hasInput,
     isBusy,
     canSend,
+    canSubmit,
     // 视觉
     boxClass,
     placeholder,

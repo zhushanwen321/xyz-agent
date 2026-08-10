@@ -105,6 +105,9 @@ export function useForkActions(focusedSessionId: Ref<string | null>) {
     })
     session.appendSession(created)
     const newId = created.id
+    // 空 content 守卫：不输入直接提交时退化为纯 fork（不发送首条 user），等价原 fork-background
+    // （onFork）。新 session 留空放后台，由 runtime session.forkNotice 广播反馈行。
+    if (!content.trim()) return
     const segments = textToSegments(content)
     const prompt = segmentsToPrompt(segments)
     // [fast-fork] 建立新 session 的流式订阅 + 写入用户消息 + 标记 pending（对齐正常 send 的前置编排，
