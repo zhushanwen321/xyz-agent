@@ -227,6 +227,121 @@ agent 看到的：find 候选列表 / family 家族树 / outline turn TOC / deta
 - 选择：大 session 深度挖掘时一次物化完整摘要文件，agent 随后用 read/grep 自由组合；被否：每次深挖都 inline 调 detail。
 - 证据：inline 三步（outline→expand→detail）覆盖 80% 场景；剩余 20%（如跨 50 轮全文检索工具输出）用 grep 比逐轮 detail 省一个数量级调用。路径用 `getAgentDir()` 动态推导，禁止硬编码 `~/.pi`。
 
+### 3.4 接口规格（session_read 工具）
+
+**结论：与 scheduler/cw-tool 等本仓 extension 同构——单工具 + 扁平 `action` 字段 + TypeBox schema + guidelines 数组 + `{content, details}` 返回。** 不拆成 7 个工具（避免工具表臃肿、降低 LLM 选择成本）；不用 discriminated union（本仓既定模式是扁平 action + Optional 参数 + handler 内按 action 校验必填）。
+
+**工具 description**（决定 LLM 何时调用，遵守 meta-prompt-creator 原则：说场景不说机制）：
+
+> Read pi session files (conversation history) by semantic structure instead of raw bytes. Use when you need to review another session, trace a fork/subagent/workflow family, or locate a past decision. Seven actions: **find** (locate by name/uuid fragment), **family** (fork/subagent/workflow relations), **outline** (turn-level overview, ~500 token), **expand** (single-turn entry list), **detail** (full text of turns), **search** (full-text grep across a session), **export** (materialize to file). Progressive reading: outline → expand → detail. Do NOT use for the current session (use get_messages) or to edit sessions (pi has /resume /fork).
+
+**schema**（TypeBox `Type.Object`，下表为字段定义，实现时逐字段转 `Type.X({description})`）：
+
+| 字段 | 类型 | 必填于 | 说明 |
+|---|---|---|---|
+| `action` | `"find"\|"family"\|"outline"\|"expand"\|"detail"\|"search"\|"export"` | 全部 | 执行的动作 |
+| `session` | string | family/outline/expand/detail/search/export | session id 或 uuid 片段（如 `e6c96`）；自动剥 `#` 前缀 |
+| `query` | string | find | uuid 片段 / 文件名 / 名称关键词 / `"recent"`（特殊值，返回最近 N 个） |
+| `turns` | string | detail | turn 范围，`"T013-T015"` 或 `"T013"` |
+| `turn` | string | expand | 单 turn，`"T013"` |
+| `pattern` | string | search | 子串或正则 |
+| `scope` | `"all"\|"user"\|"assistant"\|"toolResult"` | search（默认 all） | 检索范围 |
+| `format` | `"outline"\|"full"\|"family"` | export（默认 outline） | 物化内容形态 |
+| `includeToolResult` | boolean | detail/export（默认 false） | 含 toolResult 原文 |
+| `includeThinking` | boolean | detail（默认 false） | 含 thinking 块 |
+| `allBranches` | boolean | outline/family（默认 false） | 含被放弃的旁支（D-2） |
+| `granularity` | `"turn"\|"entry"` | outline（默认 turn） | turn 级或 entry 平铺（D-1 兜底） |
+| `cwd` | string | find（可选） | 按 cwd 过滤 |
+| `limit` | number | find/search（默认 20） | 最大结果数 |
+
+handler 内按 action 校验必填项（缺失抛 F5）。
+
+**guidelines**（`string[]`，注入 LLM 的使用教学）：
+
+```
+- Progressive reading: outline (~500 token overview) → expand (one turn) → detail (full text). Default omits toolResult/thinking noise.
+- find first to locate a session by uuid fragment or name. TUI #references are uuid fragments.
+- outline before detail. Never read raw .jsonl files—use this tool.
+- family traces fork parents/children, subagent sessions, and workflow runs.
+- Errors carry a 👉 recovery hint—follow it to retry in one step.
+```
+
+**返回结构**：`{ content: [{type:'text', text: <人类可读摘要>}], details: <action 结构化数据> }`。content 给 LLM 读，details 供程序化消费/测试断言。
+
+各 action 的 `details` 结构：
+
+| action | details 形状 |
+|---|---|
+| find | `{ matches: Array<SessionRef & {name?, firstMessagePreview?}>, truncated }` |
+| family | `{ root: SessionRef, parents: SessionRef[], forks: SessionRef[], subagents: Array<SubagentRef & {cleanedUp?}>, workflows: Array<{runId, stateFile, calls: SessionRef[]}> }` |
+| outline | `{ turns: TurnBrief[], stats: {totalTurns, totalEntries, totalBytes, parsedBytes}, tokenEstimate }` |
+| expand | `{ turn: string, entries: EntryBrief[] }` |
+| detail | `{ turns: string, entries: Entry[] }` |
+| search | `{ hits: Array<{turnIndex, entryIndex, role, matchSnippet}>, truncated }` |
+| export | `{ path: string, sizeBytes: number }` |
+
+公共类型：`SessionRef = {sessionId, fileName, mtime, sizeBytes, cwd}`；`TurnBrief = {index, startTime, userBrief, toolSummary, assistantBrief, omittedBytes, branch?}`；`EntryBrief = {index, type, role?, brief, omittedBytes}`。
+
+**错误规格**（抛 `Error`，message 含 👉 恢复指引；F1-F6 覆盖 §3.1 失败路径 + 实施期补充）：
+
+| code | 触发 | message 模板（含 👉 指引） |
+|---|---|---|
+| F1 no_match | find/resolve 片段零匹配 | `无匹配 session："Q"。最近：[top 10]。👉 find query:"recent" 看全量，或换片段。` |
+| F2 multi_match | 片段多匹配（不视为错误，返回 candidates） | `N 个匹配 "Q"：[list]。👉 用更长片段或 find 加 cwd/日期过滤。` |
+| F3 gc_cleaned | subagent 文件被 30 天 TTL GC | `subagent 已清理（>30d TTL）：<path>。manifest 在 records/<id>。👉 family 看存活成员。` |
+| F4 out_of_range | turn/entry 索引越界 | `turn T99 越界，共 N 轮（T000-T{N-1}）。👉 outline 重看有效范围。` |
+| F5 missing_param | action 必填参数缺失 | `action:"X" 需要参数 "Y"。👉 补上重试。` |
+| F6 read_error | 文件读失败/严重损坏 | `读取失败：<path>（跳过 N 坏行）。👉 检查文件或换 session。` |
+
+### 3.5 核心算法
+
+**算法 1：token 预算渲染（render.ts）——目标：固定预算内最大化信息密度，而非先到先截。**
+
+1. 先扫一遍 entry 建 turn 列表（算法 3），得 `expectedTurns`；`perTurnBudget = budget / expectedTurns`（默认 `budget = 2000` token，对应 V2 的 ≤2K）
+2. 每行 TurnBrief 按固定结构渲染，各字段独立截断：
+   - `userBrief`：user message text 截 60 字符，超出 `…`
+   - `toolSummary`：聚合该 turn 内所有 toolCall.name 计数 → `bash×2,read×2`（无 toolCall 则空）
+   - `assistantBrief`：assistant text 截 80 字符
+   - `omittedBytes`：该 turn 省略的 toolResult + thinking 字节数 → `[48KB omitted]`
+3. 单行超 `perTurnBudget` → 降级序（保骨架，砍细节）：先砍 `assistantBrief` → 再砍 `toolSummary` → 保留 `T### HH:MM userBrief [N KB omitted]`
+4. 总行数仍超预算 → 截断并追加 `[还有 N 轮未显示，用 detail 或调大 budget]`
+5. `granularity:"entry"` 时不做 turn 聚合，每 entry 一行（D-1 兜底，用于坏 session 调试等场景）
+
+**算法 2：leaf 路径重建（tree.ts）**
+
+```
+输入：entries（带 id / parentId）
+1. id→entry 索引
+2. leafId = entries 最后一条的 id          （pi 重开语义，D-2）
+3. leafPath = []；cur = leafId
+   while cur != null 且 cur 在索引中:
+       leafPath.unshift(cur)
+       cur = index[cur].parentId          （遇 parentId 不在索引 → root 为孤儿，停）
+4. leafSet = Set(leafPath)
+5. branches：遍历所有 entry，parentId ∈ leafSet 但自身 ∉ leafSet → 旁支
+   按 forkPoint(=parentId) 聚合计数
+输出：{ leafPath: id[], branches: Map<forkPointId, count> }
+```
+outline 默认只渲染 leafPath 上的 turn；`allBranches:true` 时在 forkPoint 处插入 `[旁支 N entries]`。
+
+**算法 3：turn 分段（turns.ts）——含 compaction/branch 边界（§2 turn 定义未覆盖处）。**
+
+按优先级：
+1. `session` header（首行）→ 忽略，不计 turn
+2. `compaction` entry → **关闭当前 turn，开新 turn**；compaction 作为新 turn 首条，brief 显示 `[compaction] 摘要…`。理由：compaction 是语义断点，后续对话是压缩后的新阶段，单独成 turn 让 outline 能看到「压缩发生过」
+3. `message` role=user → 关闭当前 turn，开新 turn（user 是 turn 起点）
+4. `message` role=assistant/toolResult、`custom`、`model_change`、`thinking_level_change` → 并入当前 turn
+5. **branch 边界**：entry ∉ leafSet（算法 2）→ 不计入 leaf 视图 turn，归旁支
+
+孤儿处理：user 之前的 assistant（无前置 user）→ 并入 turn 0 或单独「前置」段。
+
+**缓存作用域澄清（D-5 与 D-6 不矛盾）**：
+
+| 层 | 是否缓存 | 理由 |
+|---|---|---|
+| 全文解析（entries/turns/tree） | **不缓存**（D-6） | 单文件 17ms，重读零成本；缓存引入「活跃 session 写入后失效」的新断言面 |
+| 家族索引（首行扫描的 parentSession→children 反查表） | **缓存**（D-5） | 遍历全部 .jsonl（可能数百文件）远贵于单文件解析；按 `(mtime, size)` 缓存，文件变更才失效 |
+
 ---
 
 ## §4 验收（真实场景，非单测非 mock）
