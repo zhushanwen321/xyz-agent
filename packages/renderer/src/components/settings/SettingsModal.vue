@@ -59,12 +59,15 @@
           </Button>
         </div>
         <div class="content-col-inner w-full max-w-[var(--content-max-w)] m-0 pt-[var(--space-6)] px-[24px] pb-[var(--space-8)]">
-          <!-- 页面切换淡入（M1）：mode="out-in" 先离场后入场，避免两个页面同时叠加闪烁。
-               11 个分支页面均为单根元素，Transition 直接包裹 v-if/else-if 链。 -->
-          <Transition mode="out-in" name="ui-fade">
-          <ProviderPage v-if="activeMenu === 'provider'" :providers="providers" />
+          <!-- 设置页切换保持瞬时（不加过渡动画）：
+               Vue <Transition mode="out-in"> + v-if/else-if 链在 Vue 3.5.39 下 leave
+               完成后 enter 不触发（调度 bug，内容区永久空白）；concurrent 模式（无 mode）
+               两个 block 页面同时 in-flow 会垂直堆叠、容器高度翻倍。设置页是低频操作，
+               瞬时切换是 Linear/Raycast 的标准行为，符合太极克制风格。 -->
+          <ProviderPage v-if="activeMenu === 'provider'" :key="activeMenu" :providers="providers" />
           <SettingsResourcePage
             v-else-if="activeMenu === 'skill'"
+            :key="activeMenu"
             kind="skill"
             :items="skills"
             :dirs="skillDirs"
@@ -72,20 +75,20 @@
           />
           <SettingsResourcePage
             v-else-if="activeMenu === 'agent'"
+            :key="activeMenu"
             kind="agent"
             :items="agents"
             :dirs="agentDirs"
             @update-dirs="onUpdateAgentDirs"
           />
-          <ExtensionPage v-else-if="activeMenu === 'extension'" :extensions="extensions" />
-          <SystemPage v-else-if="activeMenu === 'system'" :system="system" @update="onSystemUpdate" />
-          <SystemPromptPage v-else-if="activeMenu === 'system-prompt'" />
-          <TerminalPage v-else-if="activeMenu === 'terminal'" />
-          <PiPresetsPage v-else-if="activeMenu === 'preset'" />
-          <WorktreePage v-else-if="activeMenu === 'worktree'" />
-          <UpdatePage v-else-if="activeMenu === 'update'" />
-          <TokenDebugPage v-else-if="activeMenu === 'token-debug'" />
-          </Transition>
+          <ExtensionPage v-else-if="activeMenu === 'extension'" :key="activeMenu" :extensions="extensions" />
+          <SystemPage v-else-if="activeMenu === 'system'" :key="activeMenu" :system="system" @update="onSystemUpdate" />
+          <SystemPromptPage v-else-if="activeMenu === 'system-prompt'" :key="activeMenu" />
+          <TerminalPage v-else-if="activeMenu === 'terminal'" :key="activeMenu" />
+          <PiPresetsPage v-else-if="activeMenu === 'preset'" :key="activeMenu" />
+          <WorktreePage v-else-if="activeMenu === 'worktree'" :key="activeMenu" />
+          <UpdatePage v-else-if="activeMenu === 'update'" :key="activeMenu" />
+          <TokenDebugPage v-else-if="activeMenu === 'token-debug'" :key="activeMenu" />
         </div>
       </div>
     </div>
@@ -340,17 +343,5 @@ onBeforeUnmount(() => {
 .xbtn:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(0, 0, 0, 0.4);
-}
-
-/* Vue <Transition> 设置页切换淡入（M1）：Transition 类属 AGENTS.md §3 escape hatch
-   允许范围（.xxx-enter-from 明确列举），不入 style.css（组件级样式归位 scoped）。
-   元素由本组件模板渲染，带 scopeId，scoped 选择器可命中 Transition 钩子类。 */
-.ui-fade-enter-active,
-.ui-fade-leave-active {
-  transition: opacity var(--duration) var(--ease);
-}
-.ui-fade-enter-from,
-.ui-fade-leave-to {
-  opacity: 0;
 }
 </style>
