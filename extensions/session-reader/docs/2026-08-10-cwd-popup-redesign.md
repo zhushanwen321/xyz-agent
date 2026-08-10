@@ -216,6 +216,8 @@ const SLASH_COMMAND_SELECT_LIST_LAYOUT = {
 
 2. **name 优先级**：`SessionInfo.name ?? firstMessage`。有 name 时 description 只放 name（+count+时间），不拼 firstMessage——对齐用户点 3「有 name 仅展示 name」。无 name 时 description 放 firstMessage。注：name 与 firstMessage 在 `#` 弹窗里同色（SelectList 对整段 description 统一上色，`theme.description(spacing+truncatedDesc)`，select-list.js:106），不像 `/resume` 能给 name 单独上 warning 色——后者是 pi 内部自定义组件 `SessionSelectorComponent` 的能力，通用 SelectList 不具备。若未来要 name 视觉区分需改 pi-tui，列 out-of-scope。
 
+   **实现期发现（firstMessage 是全文，非预览）**：`SessionInfo.firstMessage` 是首条 user message 的**完整全文**（可能含 `<skill>` 注入全文，上千字符），不是截断预览。直接拼 `${text}  count age` 会让 pi-tui SelectList 从左截断时吃掉末尾的 `count age`。故 `toCandidate` 先把 text 截断到 `PREVIEW_MAX=50` 字符再拼 count+age——保证 ≥80 列终端（description 区 ~64 列）下 `count age`（≤9 字符）完整可见，预览 50 字符仍远超现状的 23 字符（G2 达标）。
+
 3. **limit 统一 10**：`#` 弹窗已是 10（`DEFAULT_LIMIT`）；`/session-pick` handler 现为 20，改为 10（用户点 4）。
 
 4. **uuid 片段匹配仍在，keyword fallback 移除（行为变更，显式声明）**：用户键入 `#019` 时，对 listAll 结果按 `id.includes('019')` 过滤。旧 `findSessions` 在 uuid 零匹配且 query 非十六进制时会深读 firstMessage 做关键词匹配——**此 keyword fallback 在 # 弹窗路径移除**（合理收窄：# 弹窗是 uuid 引用入口，关键词查找走 `session_read {action:"find", query:"<词>"}` 工具）。`session_read` 工具侧的 `findSessions` 保留全量三路匹配不变。
@@ -298,7 +300,7 @@ const SLASH_COMMAND_SELECT_LIST_LAYOUT = {
 
 ### 待验证检查点（实施期）
 
-- **⚠️ listAll 的 `SessionInfo.firstMessage` 是否含 `<skill>` 等纯文本**：实测当前 cwd 第一条 firstMessage = `看看 pi-session-reader...`（纯文本 ✅）。但需确认 skill 注入的首消息 firstMessage 是否含 XML 标签（如截图里的 `<skill name="...`）——若是，预览会带标签。实施时抽查 5 条，若标签噪声大则加 `firstMessage.replace(/<[^>]+>/g,'').trim()` 清洗。
+- **⚠️ listAll 的 `SessionInfo.firstMessage` 是否含 `<skill>` 等纯文本**：实测当前 cwd firstMessage 确含 `<skill>` 标签（如 `<skill name="tech-design"...`）。**决策：不清洗标签**——对齐 `/resume`（resume 截图同样原样显示 `<skill name="emil-ani`，不清洗），是减法。firstMessage 是首消息全文（上千字符），`toCandidate` 截断到 `PREVIEW_MAX=50` 字符（见 §3.4-2 实现期发现），末尾拼 count+age。
 - **⚠️ listAll 在 RPC 模式（xyz-agent 子进程）下是否可用**：`session_start` 的 once-guard 已限定 `ctx.mode==='tui'` 才注册，RPC 模式不触发。但需确认 xyz-agent 环境下 `ctx.sessionManager.getSessionDir()` 返回值正确（应指 xyz-agent 隔离数据目录下的当前 cwd 目录）。
 - **P2 缓存的失效边界**：readdir 拿文件名+mtime 集合做 cache key；新 session 创建后下次 `#` 触发会因目录 mtime 变化失效重读。实施时验证「刚创建的 session 能在 `#` 弹窗出现」。
 

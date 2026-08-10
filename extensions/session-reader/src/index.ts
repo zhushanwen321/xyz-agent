@@ -152,15 +152,19 @@ export default function sessionReaderExtension(pi: ExtensionAPI): void {
   // addAutocompleteProvider 挂在 ctx.ui（非 ExtensionAPI），setup 入口无 ctx，
   // 只能在 event handler 里拿——session_start 是最早且每 session 触发的 event。
   // once-guard + ctx.mode 守卫 + typeof 运行时守卫三重防护。
+  //
+  // 2026-08-10 重构：数据源从全盘 findSessions(agentDir) 换为 SessionManager.listAll(ctx.sessionManager.getSessionDir())。
+  // getSessionDir() 返回当前 session 的目录（encoded cwd），listAll 只扫该目录 →
+  // 当前 cwd 化（G1）+ 白送 name/count/firstMessage（G3）+ 19ms vs 1500ms（G5）。
   pi.on('session_start', (_event, ctx) => {
     if (ctx.mode !== 'tui') return
     if (tuiRegistered) return
     if (typeof ctx.ui.addAutocompleteProvider !== 'function') return
     tuiRegistered = true
-    const agentDir = getAgentDir()
-    pi.registerCommand('session-pick', createSessionCommand(agentDir))
+    const cwdSessionDir = ctx.sessionManager.getSessionDir()
+    pi.registerCommand('session-pick', createSessionCommand(cwdSessionDir))
     ctx.ui.addAutocompleteProvider((current) =>
-      createHashAutocompleteProvider(agentDir, current),
+      createHashAutocompleteProvider(cwdSessionDir, current),
     )
   })
 }

@@ -4,65 +4,68 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   extractHashFragment,
-  formatRelativeTime,
+  formatAge,
   toCandidate,
   provideHashCandidates,
   FRAGMENT_LEN,
   type AutocompleteCandidate,
 } from '../tui/hash-provider.js'
-import type { MatchedSession } from '../discovery/find.js'
+import type { SessionInfo } from '@earendil-works/pi-coding-agent'
 
 /**
- * M4 TUI 层纯逻辑单测（design §3.3 D-3/D-4）。
+ * TUI 层纯逻辑单测（design §3.3 D-3/D-4 + 2026-08-10 重构）。
  *
  * 测三层：
  * 1. extractHashFragment：# 片段提取 + token 边界
- * 2. toCandidate / formatRelativeTime：MatchedSession → 候选转换
- * 3. provideHashCandidates：端到端（真实 tmpdir 造 session，不 mock findSessions——
- *    同 find.test.ts 风格，覆盖 findSessions + toCandidate）
+ * 2. toCandidate / formatAge：SessionInfo → 候选转换 + 单单位时间
+ * 3. provideHashCandidates：端到端（真实 tmpdir 造 session 文件，SessionManager.listAll 真跑，不 mock）
  */
 
-// ---- fixture helper（同 find.test.ts，造真实 session 文件）----
+// ---- fixture helper（造真实 pi session 文件，让 listAll 真实解析）----
 
 async function makeSession(
   dir: string,
   opts: {
-    name: string
+    fileName: string
     id: string
     cwd?: string
+    name?: string
     firstUserText?: string
   },
-): Promise<string> {
+): Promise<void> {
   const header: Record<string, unknown> = {
     type: 'session',
+    version: 3,
     id: opts.id,
     timestamp: '2026-01-01T00:00:00.000Z',
   }
   if (opts.cwd) header.cwd = opts.cwd
-  const lines = [JSON.stringify(header)]
+  const lines: unknown[] = [header]
+  if (opts.name) {
+    lines.push({ type: 'session_info', id: opts.id + '-info', name: opts.name })
+  }
   if (opts.firstUserText) {
-    lines.push(
-      JSON.stringify({
-        type: 'message',
-        id: opts.id + '-m1',
-        message: { role: 'user', content: [{ type: 'text', text: opts.firstUserText }] },
-      }),
-    )
+    lines.push({
+      type: 'message',
+      id: opts.id + '-m1',
+      message: { role: 'user', content: [{ type: 'text', text: opts.firstUserText }] },
+    })
   }
   await mkdir(dir, { recursive: true })
-  const path = join(dir, opts.name)
-  await writeFile(path, lines.join('\n') + '\n')
-  return path
+  await writeFile(join(dir, opts.fileName), lines.map((o) => JSON.stringify(o)).join('\n') + '\n')
 }
 
-function makeMatchedSession(overrides: Partial<MatchedSession> = {}): MatchedSession {
+/** 造 SessionInfo 对象（toCandidate 纯函数测试用，不经 listAll）。 */
+function makeSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
   return {
-    sessionId: '019e6c96-aaaa-bbbb-cccc-dddddddddddd',
-    fileName: '/fake/019e6c96.jsonl',
-    mtime: Date.now() - 3_600_000, // 1 小时前
-    sizeBytes: 1024,
+    path: '/fake/019e6c96.jsonl',
+    id: '019e6c96-aaaa-bbbb-cccc-dddddddddddd',
     cwd: '/demo',
-    firstMessagePreview: '修复登录 bug',
+    created: new Date('2026-01-01T00:00:00.000Z'),
+    modified: new Date('2026-01-01T00:00:00.000Z'),
+    messageCount: 14,
+    firstMessage: '修复登录 bug',
+    allMessagesText: '',
     ...overrides,
   }
 }
@@ -103,124 +106,171 @@ describe('extractHashFragment', () => {
   })
 
   it('# 后跟非 hex 字符（#hello）→ null（非 uuid 片段，委托下家 provider）', () => {
-    // # 只认 uuid 片段（hex/-）。#hello / #bug 这类 hashtag / markdown heading 不触发，
-    // 避免 hash provider 吞掉非引用语义的 #。名称查找走 /session-pick 命令。
     expect(extractHashFragment('#hello')).toBeNull()
     expect(extractHashFragment('#bug')).toBeNull()
   })
 })
 
-// ---- formatRelativeTime ----
+// ---- formatAge（单单位，对齐 /resume formatSessionDate）----
 
-describe('formatRelativeTime', () => {
+describe('formatAge', () => {
   const now = new Date('2026-01-15T12:00:00Z').getTime()
 
-  it('刚刚（< 1 分钟）', () => {
-    expect(formatRelativeTime(now - 30_000, now)).toBe('刚刚')
+  it('< 1 分钟 → now', () => {
+    expect(formatAge(now - 30_000, now)).toBe('now')
   })
 
-  it('分钟前', () => {
-    expect(formatRelativeTime(now - 5 * 60_000, now)).toBe('5 分钟前')
+  it('< 1 小时 → Xm', () => {
+    expect(formatAge(now - 5 * 60_000, now)).toBe('5m')
   })
 
-  it('小时前', () => {
-    expect(formatRelativeTime(now - 3 * 3_600_000, now)).toBe('3 小时前')
+  it('< 1 天 → Xh', () => {
+    expect(formatAge(now - 3 * 3_600_000, now)).toBe('3h')
   })
 
-  it('天前', () => {
-    expect(formatRelativeTime(now - 2 * 86_400_000, now)).toBe('2 天前')
+  it('< 7 天 → Xd', () => {
+    expect(formatAge(now - 2 * 86_400_000, now)).toBe('2d')
   })
 
-  it('未来时间（时钟偏移）→ 刚刚', () => {
-    expect(formatRelativeTime(now + 10_000, now)).toBe('刚刚')
+  it('< 30 天 → Xw', () => {
+    expect(formatAge(now - 14 * 86_400_000, now)).toBe('2w')
+  })
+
+  it('< 365 天 → Xmo', () => {
+    expect(formatAge(now - 60 * 86_400_000, now)).toBe('2mo')
+  })
+
+  it('≥ 365 天 → Xy', () => {
+    expect(formatAge(now - 400 * 86_400_000, now)).toBe('1y')
+  })
+
+  it('接收 Date 对象（SessionInfo.modified 是 Date）', () => {
+    expect(formatAge(new Date(now - 2 * 3_600_000), now)).toBe('2h')
+  })
+
+  it('未来时间（时钟偏移）→ now', () => {
+    expect(formatAge(now + 10_000, now)).toBe('now')
+  })
+
+  it('只用一个单位，不出现「分钟前/小时前」混排（design G4）', () => {
+    // 90 分钟 = 1h（不是 1h 30m）
+    expect(formatAge(now - 90 * 60_000, now)).toBe('1h')
   })
 })
 
-// ---- toCandidate ----
+// ---- toCandidate（SessionInfo → AutocompleteCandidate）----
 
 describe('toCandidate', () => {
   it('insertText = # + sessionId 前 8 字符（design D-3）', () => {
-    const c = toCandidate(makeMatchedSession())
+    const c = toCandidate(makeSessionInfo())
     expect(c.insertText).toBe('#019e6c96')
-    expect(c.insertText.length).toBe(FRAGMENT_LEN + 1) // # + 8 字符
+    expect(c.insertText.length).toBe(FRAGMENT_LEN + 1)
   })
 
-  it('label 含片段 + 首消息预览', () => {
-    const c = toCandidate(makeMatchedSession({ firstMessagePreview: '修复登录 bug' }))
-    expect(c.label).toContain('019e6c96')
-    expect(c.label).toContain('修复登录 bug')
+  it('label 只是片段（走主列 ≤32，不放预览——design 决策 2 方案 C）', () => {
+    const c = toCandidate(makeSessionInfo({ firstMessage: '修复登录 bug' }))
+    expect(c.label).toBe('019e6c96')
+    // label 不含预览文本（预览在 description）
+    expect(c.label).not.toContain('修复')
   })
 
-  it('无 firstMessagePreview → label 标 (无预览)', () => {
-    const c = toCandidate(makeMatchedSession({ firstMessagePreview: undefined }))
-    expect(c.label).toContain('(无预览)')
+  it('description = firstMessage + count + age（无 name 时）', () => {
+    const c = toCandidate(
+      makeSessionInfo({ firstMessage: '修复登录 bug', messageCount: 14 }),
+      new Date('2026-01-01T13:00:00Z').getTime(),
+    )
+    // modified=2026-01-01T00:00, now=13:00 → 13h
+    expect(c.description).toBe('修复登录 bug  14 13h')
   })
 
-  it('label 预览超长截断', () => {
-    const c = toCandidate(makeMatchedSession({ firstMessagePreview: 'X'.repeat(200) }))
-    // label = "frag " + 截断预览；截断预览 ≤ 40 + …
-    expect(c.label.length).toBeLessThan(60)
-    expect(c.label).toContain('…')
+  it('有 name → description 只放 name，不放 firstMessage（design G3）', () => {
+    const c = toCandidate(
+      makeSessionInfo({ name: 'my-session', firstMessage: '首条消息内容', messageCount: 5 }),
+      new Date('2026-01-01T01:00:00Z').getTime(),
+    )
+    expect(c.description).toContain('my-session')
+    expect(c.description).not.toContain('首条消息内容')
+    expect(c.description).toBe('my-session  5 1h')
   })
 
-  it('description 是相对时间', () => {
-    const c = toCandidate(makeMatchedSession({ mtime: Date.now() - 7_200_000 }))
-    expect(c.description).toBe('2 小时前')
+  it('firstMessage 超长 → 截断到 PREVIEW_MAX（保证 count/age 不被 pi-tui 从左截掉）', () => {
+    const longText = 'X'.repeat(500)
+    const c = toCandidate(makeSessionInfo({ firstMessage: longText, messageCount: 1 }))
+    // description = 截断text(含…)  count age —— 末尾必须是 count+age（不能被截掉）
+    expect(c.description).toMatch(/^X+…  1 \d+(mo|m|h|d|w|y)$/)
+    // 截断后 text 部分 = 50 + … = 51 字符
+    expect(c.description!.split('  ')[0]!.length).toBe(51)
+  })
+
+  it('firstMessage 含换行/控制符 → 清洗为单空格（避免破坏 SelectList 单行渲染）', () => {
+    const c = toCandidate(makeSessionInfo({ firstMessage: '第一行\n第二行\t缩进' }))
+    expect(c.description).not.toContain('\n')
+    expect(c.description).not.toContain('\t')
+    expect(c.description).toContain('第一行 第二行 缩进')
+  })
+
+  it('无 name 且无 firstMessage → 标 (无预览)', () => {
+    const c = toCandidate(makeSessionInfo({ name: undefined, firstMessage: '' }))
+    expect(c.description).toContain('(无预览)')
   })
 })
 
-// ---- provideHashCandidates（端到端，真实 tmpdir）----
+// ---- provideHashCandidates（端到端，真实 tmpdir，listAll 真跑不 mock）----
 
 describe('provideHashCandidates', () => {
-  let agentDir: string
-  let slugDir: string
+  let baseDir: string
+  let cwdSessionDir: string
 
   beforeEach(async () => {
-    agentDir = await mkdtemp(join(tmpdir(), 'hash-test-'))
-    slugDir = join(agentDir, 'sessions', '--Users-demo--')
+    baseDir = await mkdtemp(join(tmpdir(), 'hash-test-'))
+    // provideHashCandidates 把第二参当 sessionDir 直接传给 listAll；
+    // listAll(customDir) 扫该目录的 .jsonl。直接用目录路径，不经 sessions/ 层级。
+    cwdSessionDir = await mkdtemp(join(tmpdir(), 'cwd-'))
   })
   afterEach(async () => {
-    await rm(agentDir, { recursive: true, force: true })
+    await rm(baseDir, { recursive: true, force: true })
+    await rm(cwdSessionDir, { recursive: true, force: true })
   })
 
   it('非 # 输入 → null（委托下家 provider）', async () => {
-    await makeSession(slugDir, { name: 'a.jsonl', id: '019e6c96-aaaa-bbbb', cwd: '/demo' })
-    const result = await provideHashCandidates('hello world', agentDir)
+    await makeSession(cwdSessionDir, { fileName: 'a.jsonl', id: '019e6c96-aaaa-bbbb', cwd: '/demo' })
+    const result = await provideHashCandidates('hello world', cwdSessionDir)
     expect(result).toBeNull()
   })
 
-  it('# 空片段 → recent 候选（最近 session）', async () => {
-    await makeSession(slugDir, { name: 'a.jsonl', id: '019e6c96-aaaa-bbbb', cwd: '/demo' })
-    await makeSession(slugDir, { name: 'b.jsonl', id: '019fffff-cccc-dddd', cwd: '/demo' })
-    const result = await provideHashCandidates('#', agentDir)
+  it('# 空片段 → recent 候选（当前目录全部 session）', async () => {
+    await makeSession(cwdSessionDir, { fileName: 'a.jsonl', id: '019e6c96-aaaa-bbbb', cwd: '/demo' })
+    await makeSession(cwdSessionDir, { fileName: 'b.jsonl', id: '019fffff-cccc-dddd', cwd: '/demo' })
+    const result = await provideHashCandidates('#', cwdSessionDir)
     expect(result).not.toBeNull()
     expect(result!.length).toBe(2)
   })
 
-  it('#e6c9 片段 → findSessions("e6c9") 候选', async () => {
-    await makeSession(slugDir, {
-      name: 'a.jsonl',
+  it('#e6c9 片段 → id 子串过滤', async () => {
+    await makeSession(cwdSessionDir, {
+      fileName: 'a.jsonl',
       id: '019e6c96-aaaa-bbbb',
       cwd: '/demo',
       firstUserText: '修复登录 bug',
     })
-    await makeSession(slugDir, {
-      name: 'b.jsonl',
+    await makeSession(cwdSessionDir, {
+      fileName: 'b.jsonl',
       id: '019fffff-cccc-dddd',
       cwd: '/demo',
       firstUserText: '无关内容',
     })
-    const result = await provideHashCandidates('#e6c9', agentDir)
+    const result = await provideHashCandidates('#e6c9', cwdSessionDir)
     expect(result).not.toBeNull()
     expect(result!).toHaveLength(1)
-    // 命中的是 sessionId 含 e6c9 的那个
     expect(result![0].insertText).toBe('#019e6c96')
-    expect(result![0].label).toContain('修复登录 bug')
+    // label 只是片段，description 含 firstMessage
+    expect(result![0].label).toBe('019e6c96')
+    expect(result![0].description).toContain('修复登录 bug')
   })
 
   it('insertText 格式 #xxxxxxxx（8 字符片段）', async () => {
-    await makeSession(slugDir, { name: 'a.jsonl', id: '019e6c96-aaaa-bbbb', cwd: '/demo' })
-    const result = await provideHashCandidates('#019e', agentDir)
+    await makeSession(cwdSessionDir, { fileName: 'a.jsonl', id: '019e6c96-aaaa-bbbb', cwd: '/demo' })
+    const result = await provideHashCandidates('#019e', cwdSessionDir)
     expect(result).not.toBeNull()
     const c = result![0] as AutocompleteCandidate
     expect(c.insertText).toMatch(/^#[0-9a-f]{8}$/i)
@@ -228,20 +278,47 @@ describe('provideHashCandidates', () => {
   })
 
   it('# 片段无匹配 → 空数组（不抛）', async () => {
-    await makeSession(slugDir, { name: 'a.jsonl', id: '019e6c96-aaaa-bbbb', cwd: '/demo' })
-    // deadbeef 全十六进制但无匹配 → uuid 特征短路，返回空（findSessions 语义）
-    const result = await provideHashCandidates('#deadbeef', agentDir)
+    await makeSession(cwdSessionDir, { fileName: 'a.jsonl', id: '019e6c96-aaaa-bbbb', cwd: '/demo' })
+    const result = await provideHashCandidates('#deadbeef', cwdSessionDir)
     expect(result).not.toBeNull()
     expect(result).toEqual([])
   })
 
   it('limit 限制返回数量', async () => {
-    // 5 个 session id 都含 hex 片段 '019e6c9'（# 只认 uuid 片段，id 用 hex）
     for (let i = 0; i < 5; i++) {
-      await makeSession(slugDir, { name: `f${i}.jsonl`, id: `019e6c9${i}-aaaa-bbbb`, cwd: '/demo' })
+      await makeSession(cwdSessionDir, {
+        fileName: `f${i}.jsonl`,
+        id: `019e6c9${i}-aaaa-bbbb`,
+        cwd: '/demo',
+      })
     }
-    const result = await provideHashCandidates('#019e6c9', agentDir, { limit: 2 })
+    const result = await provideHashCandidates('#019e6c9', cwdSessionDir, { limit: 2 })
     expect(result).not.toBeNull()
     expect(result!).toHaveLength(2)
+  })
+
+  it('只扫当前目录，不扫其他目录（design G1 当前目录化）', async () => {
+    // 当前目录有 1 个
+    await makeSession(cwdSessionDir, { fileName: 'a.jsonl', id: '019e6c96-aaaa-bbbb', cwd: '/demo' })
+    // baseDir（其他目录）放一个，不应被扫到
+    await makeSession(baseDir, { fileName: 'other.jsonl', id: '019fffff-cccc-dddd', cwd: '/other' })
+    const result = await provideHashCandidates('#', cwdSessionDir)
+    expect(result).not.toBeNull()
+    expect(result!).toHaveLength(1)
+    expect(result![0].insertText).toBe('#019e6c96')
+  })
+
+  it('有 name 的 session → description 含 name 不含 firstMessage', async () => {
+    await makeSession(cwdSessionDir, {
+      fileName: 'named.jsonl',
+      id: '019fffff-cccc-dddd',
+      cwd: '/demo',
+      name: 'my-named-session',
+      firstUserText: '首条消息内容',
+    })
+    const result = await provideHashCandidates('#019f', cwdSessionDir)
+    expect(result!).toHaveLength(1)
+    expect(result![0].description).toContain('my-named-session')
+    expect(result![0].description).not.toContain('首条消息内容')
   })
 })
