@@ -164,6 +164,11 @@
       "name": "@zhushanwen/pi-cw-tool",
       "directory": "extensions/cw-tool",
       "dependsOn": []
+    },
+    {
+      "name": "@zhushanwen/pi-session-reader",
+      "directory": "extensions/session-reader",
+      "dependsOn": []
     }
   ]
 }
