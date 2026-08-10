@@ -13,7 +13,6 @@ export const MS_PER_SECOND = 1000;
 
 export const BUDGET_RATIO_HIGH = 0.9;            // 90% — 触发预警/收尾 steering
 export const BUDGET_RATIO_LOW = 0.7;             // 70% — 触发提醒
-export const BUDGET_RATIO_TIGHT = 0.8;           // 80% — 预算紧张，优先 steer
 export const CONTEXT_USAGE_RATIO_LIMIT = 0.85;   // 85% — 上下文空间不足阈值
 
 // ── 预算百分比阈值 (0-100) ──────────────────────────

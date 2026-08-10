@@ -6,7 +6,7 @@
  * 职责分层：
  * - execute 层（adapter 职责）：signal 守卫
  * - handler 层（goal 业务，契约对齐 code-architecture §3 handleCreate/handleComplete/handleReportBlocked）：
- *   active 守卫 + evidence/reason 必填 + 状态转换
+ *   active 守卫 + evidence/reason 空串校验 + 状态转换
  *
  * 全解耦：goal 不再读 todo/plan 状态。complete 不做 todo 完成前置硬检查——
  * todo 是否全完成由 AI 自行判断，goal 仅通过 prompt 软建议（见 prompts.ts）。
@@ -19,76 +19,88 @@
  * create 不调 sendUserMessage：toolcall 时 AI 已在 turn 中，返回结果后自行续跑
  * （与 /goal set 的 followUp 触发区分；对齐 Codex create_goal 不自动续跑）。
  *
+ * schema：discriminated union（C3）——Type.Union 无 discriminator keyword，各分支以
+ * action literal 区分 + additionalProperties:false。pi 生产校验器为 typebox/compile
+ * 的 Compile(schema).Check(args)，缺失必填字段在 schema 层即被拒绝；execute 内仅保留
+ * .trim() 空字符串校验（LLM 可能传空串穿透 schema）。
+ *
  * executionMode: "sequential"——状态变更 tool，不可与同批其他 tool 并行执行。
  *
  * 错误处理：用 throw new Error（CLAUDE.md Tool 设计规范），不返回错误成功模式。
  */
 
-import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { type GuiComponent, guiComponent, type GuiRenderResult,guiResult } from "@xyz-agent/extension-protocol";
+import { type GuiRenderResult } from "@xyz-agent/extension-protocol";
 import { type Static, Type } from "typebox";
 
-import { BUDGET_RATIO_HIGH, BUDGET_RATIO_LOW, OBJECTIVE_DISPLAY_LIMIT, SECONDS_PER_MINUTE, SHORT_ID_LENGTH } from "../constants";
+import { SHORT_ID_LENGTH } from "../constants";
 import { isActiveStatus, isTerminalStatus, transitionStatus } from "../engine/goal";
-import type { BudgetConfig, GoalRuntimeState, GoalStatus } from "../engine/types";
-import { toSingleLine, updateWidget } from "../projection/widget";
+import type { BudgetConfig, GoalStatus } from "../engine/types";
+import { buildGoalGui } from "../projection/gui";
+import { updateWidget } from "../projection/widget";
 import { createGoal, finalizeAndPersist, persistState, type ServicePorts, tickState } from "../service";
 import type { GoalSession } from "../session";
 import { buildPorts } from "./ports";
 
-// ── Params schema ────────────────────────────────────
+// ── Params schema（discriminated union，C3）────────────
 
-const GoalControlParams = Type.Object({
-	action: StringEnum(["create", "complete", "report_blocked"] as const),
-	slug: Type.Optional(
-		Type.String({
+/**
+ * goal_control 参数 schema。三分支以 action literal 区分（无 discriminator keyword），
+ * 各分支 additionalProperties:false，缺失必填在 schema 层拒绝。
+ */
+const CreateParams = Type.Object(
+	{
+		action: Type.Literal("create"),
+		slug: Type.Optional(
+			Type.String({
+				description: "可选。状态栏标题用的短 kebab-case 标识，仅用于显示，不注入 prompt。",
+			}),
+		),
+		objective: Type.String({
 			description:
-				"Required for 'create'. A short kebab-case identifier you generate to title this goal in the status bar (e.g. 'refactor-auth', 'fix-login-bug'). Keep it concise and descriptive.",
+				"必填。用你自己的话重述真实目标——用户实际想要达成什么，而非字面复述请求。模糊时推断最可能的意图并明确陈述。",
 		}),
-	),
-	objective: Type.Optional(
-		Type.String({
+		successCriteria: Type.String({
 			description:
-				"Required for 'create'. Restate the REAL objective in your own words — what the user actually wants achieved, not a literal echo of their request. If ambiguous, infer the most likely intent and state it explicitly.",
+				"必填。可检查的完成条件（如「测试通过」「文件 X 存在且含内容 Y」「命令 Z 输出 W」），不是愿景或「能用就行」。这是 complete 前必须逐条满足的门槛。",
 		}),
-	),
-	successCriteria: Type.Optional(
-		Type.String({
-			description:
-				"Required for 'create'. Concrete, checkable conditions that prove the objective is achieved (e.g. 'tests pass', 'file X exists with content Y', 'command Z outputs W'). NOT aspirations or 'it should work'. This is the bar you must clear before calling complete — every condition here must be backed by evidence.",
-		}),
-	),
-	evidence: Type.Optional(
-		Type.String({
-			description:
-				"Required for 'complete'. Concrete completion evidence (files created/modified, tests passed, commands run). Do not mark complete on assumption, intent, or partial progress.",
-		}),
-	),
-	reason: Type.Optional(
-		Type.String({
-			description:
-				"Required for 'report_blocked'. The specific blocking condition and what was already tried (at least 3 approaches). Do NOT use for uncertainty, slow/hard work, or incomplete progress — keep working.",
-		}),
-	),
-	tokenBudget: Type.Optional(
-		Type.Number({
-			description: "Optional, for 'create'. Positive token budget for the new goal. Omit unless the user specifies one.",
-		}),
-	),
-	timeBudgetMinutes: Type.Optional(
-		Type.Number({
-			description: "Optional, for 'create'. Positive time budget in minutes for the new goal. Omit unless the user specifies one.",
-		}),
-	),
-	completedTasks: Type.Optional(
-		Type.Number({
-			description: "Optional. Number of completed tasks, written into goal history on 'complete'. Defaults to 0.",
-		}),
-	),
-});
+		tokenBudget: Type.Optional(
+			Type.Number({
+				description: "可选。新目标的 token 预算（正数）。除非用户指定，否则省略。",
+			}),
+		),
+	},
+	{ additionalProperties: false },
+);
 
+const CompleteParams = Type.Object(
+	{
+		action: Type.Literal("complete"),
+		evidence: Type.String({
+			description:
+				"必填。具体完成证据（改动/新建的文件、通过的测试、运行的命令）。不要基于假设、意图或部分进度标记完成。",
+		}),
+	},
+	{ additionalProperties: false },
+);
+
+const ReportBlockedParams = Type.Object(
+	{
+		action: Type.Literal("report_blocked"),
+		reason: Type.String({
+			description:
+				"必填。具体阻塞条件及已尝试的方案。不要用于不确定、困难、缓慢或未完成的工作——继续做。",
+		}),
+	},
+	{ additionalProperties: false },
+);
+
+export const GoalControlParams = Type.Union([CreateParams, CompleteParams, ReportBlockedParams]);
+
+export type CreateActionParams = Static<typeof CreateParams>;
+export type CompleteActionParams = Static<typeof CompleteParams>;
+export type ReportBlockedActionParams = Static<typeof ReportBlockedParams>;
 export type GoalControlActionParams = Static<typeof GoalControlParams>;
 
 // ── Details（renderResult 数据来源）──────────────────
@@ -105,9 +117,10 @@ export interface GoalControlDetails {
 // ── 业务 handler（契约对齐 §3，可测：fake ports）──────
 
 /**
- * create 业务逻辑：slug + objective 均必填 + 非终态旧 goal 守卫 + service.createGoal。
+ * create 业务逻辑：objective + successCriteria 必填（schema 层已强制，此处仅校验空串）
+ * + 非终态旧 goal 守卫 + service.createGoal。
  *
- * slug：AI 生成的短标识，仅 widget 标题 + history 用，不注入 prompt。
+ * slug：AI 生成的短标识，仅 widget 标题 + history 用，不注入 prompt。真 optional。
  * objective：完整描述，注入每轮 context prompt（保证方向感）。
  *
  * 全解耦：不读 todo/plan。toolcall 时 AI 已在 turn 中，**不**调 sendUserMessage
@@ -118,27 +131,24 @@ export interface GoalControlDetails {
  * 终态旧 goal 走 createGoal 快速路径覆盖（createGoal 内部 active 守卫，终态可覆盖）。
  */
 export function handleCreate(
-	params: GoalControlActionParams,
+	params: CreateActionParams,
 	session: GoalSession,
 	ports: ServicePorts,
 ): GoalControlDetails {
-	const objective = params.objective?.trim();
+	const objective = params.objective.trim();
 	if (!objective) {
+		// schema 已挡缺失，此处仅挡空串（LLM 可能传空串穿透 schema）
 		throw new Error(
-			"'objective' is required for create. Describe the concrete objective to pursue. Correct: {\"action\":\"create\",\"slug\":\"<kebab-case>\",\"objective\":\"<concrete objective>\"}",
+			"'objective' must not be empty. Describe the concrete objective to pursue. Correct: {\"action\":\"create\",\"slug\":\"<kebab-case>\",\"objective\":\"<concrete objective>\",\"successCriteria\":\"<checkable conditions>\"}",
 		);
 	}
-	const slug = params.slug?.trim();
-	if (!slug) {
-		throw new Error(
-			"'slug' is required for create. Provide a short kebab-case identifier (e.g. 'refactor-auth'). Correct: {\"action\":\"create\",\"slug\":\"refactor-auth\",\"objective\":\"<concrete objective>\"}",
-		);
-	}
+	// slug 真 optional（TC11）：缺失时 fallback goalId 截断（与 buildGoalGui 口径一致），不强制必填
+	const slugInput = params.slug?.trim();
 
-	const successCriteria = params.successCriteria?.trim();
+	const successCriteria = params.successCriteria.trim();
 	if (!successCriteria) {
 		throw new Error(
-			"'successCriteria' is required for create. Define how you will verify the objective is achieved — concrete checkable conditions. Correct: {\"action\":\"create\",\"slug\":\"refactor-auth\",\"objective\":\"...\",\"successCriteria\":\"pnpm test passes; tsc --noEmit clean; src/auth.ts uses JWT\"}",
+			"'successCriteria' must not be empty. Define how you will verify the objective is achieved — concrete checkable conditions. Correct: {\"action\":\"create\",\"slug\":\"refactor-auth\",\"objective\":\"...\",\"successCriteria\":\"pnpm test passes; tsc --noEmit clean; src/auth.ts uses JWT\"}",
 		);
 	}
 
@@ -157,15 +167,9 @@ export function handleCreate(
 		}
 		budget.tokenBudget = params.tokenBudget;
 	}
-	if (params.timeBudgetMinutes !== undefined) {
-		if (params.timeBudgetMinutes <= 0) {
-			throw new Error("'timeBudgetMinutes' must be greater than 0.");
-		}
-		budget.timeBudgetMinutes = params.timeBudgetMinutes;
-	}
 
-	// FR-3.1: 唯一创建入口（isExternalInit=false）。终态旧 goal 走覆盖快速路径。
-	const created = createGoal(session, objective, budget, ports, false, slug, successCriteria);
+	// FR-3.1: 唯一创建入口。终态旧 goal 走覆盖快速路径。
+	const created = createGoal(session, objective, budget, ports, slugInput, successCriteria);
 	if (!created) {
 		// createGoal 内部 active 守卫兜底（理论上上面守卫已挡；防御性）
 		throw new Error("Goal already active. Cannot create a new one.");
@@ -173,21 +177,22 @@ export function handleCreate(
 	updateWidget(session, ports.ui);
 
 	const state = session.state!;
+	// slug fallback：未提供时用 goalId 截断作标题（与 buildGoalGui 一致，避免 [undefined]）
+	const slug = state.slug ?? state.goalId.slice(0, SHORT_ID_LENGTH);
 	const budgetNotice: string[] = [];
 	if (budget.tokenBudget) budgetNotice.push(`Token budget: ${budget.tokenBudget}`);
-	if (budget.timeBudgetMinutes) budgetNotice.push(`Time budget: ${budget.timeBudgetMinutes} min`);
 	ports.ui.notify([`Goal created [${slug}]: ${objective}`, ...budgetNotice].join("\n"), "info");
 
 	return { action: "create", goalId: state.goalId, status: state.status, slug };
 }
 
 /**
- * complete 业务逻辑：active 守卫 + evidence 必填 + finalizeAndPersist。
+ * complete 业务逻辑：active 守卫 + evidence 空串校验 + finalizeAndPersist。
  *
  * 全解耦后不再做 todo 完成前置检查——todo 是否全完成由 AI 自行判断（prompt 软建议）。
  */
 export function handleComplete(
-	params: GoalControlActionParams,
+	params: CompleteActionParams,
 	session: GoalSession,
 	ports: ServicePorts,
 ): GoalControlDetails {
@@ -196,15 +201,15 @@ export function handleComplete(
 	if (!isActiveStatus(state.status)) {
 		throw new Error(`Goal is not active (status: ${state.status}). Only an active goal can be completed.`);
 	}
-	const evidence = params.evidence?.trim();
+	const evidence = params.evidence.trim();
 	if (!evidence) {
 		throw new Error(
-			"'evidence' is required for complete. Provide concrete completion evidence. Correct: {\"action\":\"complete\",\"evidence\":\"Modified src/auth.ts; pnpm test auth passed (12/12); tsc --noEmit clean.\"}",
+			"'evidence' must not be empty. Provide concrete completion evidence. Correct: {\"action\":\"complete\",\"evidence\":\"Modified src/auth.ts; pnpm test auth passed (12/12); tsc --noEmit clean.\"}",
 		);
 	}
 
 	// FR-3.3: 唯一终态序列入口（内部：tickState → finalizeGoal(transition+history) → persist）
-	finalizeAndPersist(state, "complete", params.completedTasks ?? 0, ports);
+	finalizeAndPersist(state, "complete", ports);
 	updateWidget(session, ports.ui);
 	ports.ui.notify(`Goal completed: ${state.objective}`, "info");
 
@@ -212,13 +217,13 @@ export function handleComplete(
 }
 
 /**
- * report_blocked 业务逻辑：active 守卫 + reason 必填 + tickState + transitionStatus + persistState。
+ * report_blocked 业务逻辑：active 守卫 + reason 空串校验 + tickState + transitionStatus + persistState。
  *
  * 必须在 transitionStatus **之前** tickState，使 tick 看到 active 状态并累加当前运行段；
  * 否则转 blocked 后 persistState 内部的 tick 因 status≠active 不累加，丢失最后一段运行时间。
  */
 export function handleReportBlocked(
-	params: GoalControlActionParams,
+	params: ReportBlockedActionParams,
 	session: GoalSession,
 	ports: ServicePorts,
 ): GoalControlDetails {
@@ -227,10 +232,10 @@ export function handleReportBlocked(
 	if (state.status !== "active") {
 		throw new Error(`Goal is not active (status: ${state.status}). Only an active goal can report_blocked.`);
 	}
-	const reason = params.reason?.trim();
+	const reason = params.reason.trim();
 	if (!reason) {
 		throw new Error(
-			"'reason' is required for report_blocked. Describe the blocking condition. Correct: {\"action\":\"report_blocked\",\"reason\":\"<blocker + what was tried (at least 3 approaches)>\"}",
+			"'reason' must not be empty. Describe the blocking condition and what you tried. Correct: {\"action\":\"report_blocked\",\"reason\":\"<blocker + what you tried>\"}",
 		);
 	}
 
@@ -246,18 +251,6 @@ export function handleReportBlocked(
 	return { action: "report_blocked", goalId: state.goalId, status: state.status };
 }
 
-// ── GUI 渲染描述符构造 ───────────────────────────────
-
-/**
- * 按 GoalStatus 映射 stats-line severity（S#2）。
- *
- *   active/complete → ok（正常运行/成功完成）
- *   paused          → warn（暂停可恢复）
- *   blocked         → danger（阻塞需干预）
- *   budget_limited/time_limited/cancelled → danger（预算耗尽/取消，错误终态）
- *
- * 对齐 projection/widget.ts 的 getBudgetColor 语义——终态预算耗尽渲染为 error。
- */
 /** renderResult 的 result 是否含 details 字段（类型守卫，替代全可选结构断言 as {details?}）。
  * 收紧：除检查 "details" in r 外，还验证其值为 object 或 undefined（防 details 是 string/number
  * 时下游读 d.status 得到 undefined 却被类型系统当作 GoalControlDetails）。 */
@@ -267,142 +260,26 @@ function hasGoalDetails(r: unknown): r is { details?: GoalControlDetails } {
 	return d === undefined || typeof d === "object";
 }
 
-function goalStatusSeverity(status: GoalStatus): "ok" | "warn" | "danger" {
-	switch (status) {
-		case "active":
-		case "complete":
-			return "ok";
-		case "paused":
-			return "warn";
-		case "blocked":
-		case "budget_limited":
-		case "time_limited":
-		case "cancelled":
-			return "danger";
-	}
-}
-
-/**
- * 构造 goal 的 GUI 渲染描述符（RPC 模式下放进 details.__gui__）。
- *
- * 逻辑参考 projection/widget.ts 的 renderWidgetLines 预算计算，但此处只构造
- * 结构化数据（GuiComponent），不做 ANSI 渲染。
- *
- * - 有 tokenBudget 或 timeBudgetMinutes → card(progress-bar + stats-line) 展示预算消耗
- * - 无 budget → stats-line 展示状态摘要
- */
-export function buildGoalGui(state: GoalRuntimeState): GuiRenderResult {
-	const slug = state.slug ?? state.goalId.slice(0, SHORT_ID_LENGTH);
-	// successCriteria 摘要（截断后进 stats-line；与 objective 成对展示）
-	const criteriaSnippet = state.successCriteria
-		? toSingleLine(state.successCriteria).slice(0, OBJECTIVE_DISPLAY_LIMIT)
-		: undefined;
-	// statusSeverity 按 GoalStatus 完整覆盖（S#2）：
-	//   active/complete → ok；blocked → danger；paused → warn；
-	//   budget_limited/time_limited/cancelled → danger（预算耗尽/取消是错误终态）
-	const statusSeverity = goalStatusSeverity(state.status);
-
-	// hasBudget 与进度条判定统一口径：用 > 0 而非 truthy（I#1：tokenBudget=0 不应触发 card 容器）
-	const hasBudget = (state.budget.tokenBudget ?? 0) > 0 || (state.budget.timeBudgetMinutes ?? 0) > 0;
-
-	if (hasBudget) {
-		const body: GuiComponent[] = [];
-		// token 进度条（>0 判定，与 hasBudget 口径一致）
-		const tokenBudget = state.budget.tokenBudget;
-		if ((tokenBudget ?? 0) > 0) {
-			const tb = tokenBudget!;
-			const tokenPct = state.tokensUsed / tb;
-			body.push(
-				guiComponent("progress-bar", {
-					label: "tokens",
-					current: state.tokensUsed,
-					total: tb,
-					unit: "tok",
-					severity: tokenPct >= BUDGET_RATIO_HIGH ? "danger" : tokenPct >= BUDGET_RATIO_LOW ? "warn" : "ok",
-				}),
-			);
-		}
-		// time 进度条（>0 判定，与 hasBudget 口径一致）
-		const timeBudgetMinutes = state.budget.timeBudgetMinutes;
-		if ((timeBudgetMinutes ?? 0) > 0) {
-			const timeBudgetSec = timeBudgetMinutes! * SECONDS_PER_MINUTE;
-			const timePct = state.timeUsedSeconds / timeBudgetSec;
-			body.push(
-				guiComponent("progress-bar", {
-					label: "time",
-					current: state.timeUsedSeconds,
-					total: timeBudgetSec,
-					unit: "s",
-					severity: timePct >= BUDGET_RATIO_HIGH ? "danger" : timePct >= BUDGET_RATIO_LOW ? "warn" : "ok",
-				}),
-			);
-		}
-		// 状态 + turn 统计行
-		body.push(
-			guiComponent("stats-line", {
-				items: [
-					{ label: "status", value: state.status, severity: statusSeverity },
-					{ label: "turn", value: String(state.currentTurnIndex) },
-				],
-			}),
-		);
-		// successCriteria 摘要（与 objective 成对，让用户看到「怎么算完成」）
-		if (criteriaSnippet) {
-			body.push(
-				guiComponent("stats-line", {
-					items: [{ label: "done", value: criteriaSnippet }],
-				}),
-			);
-		}
-		return guiResult(
-			guiComponent("card", {
-				variant: state.status === "blocked" ? "danger" : state.status === "complete" ? "success" : "default",
-				header: slug,
-				body,
-			}),
-		);
-	}
-
-	// 无 budget：stats-line 摘要
-	return guiResult(
-		guiComponent("stats-line", {
-			items: [
-				{ label: "goal", value: slug },
-				{ label: "status", value: state.status, severity: statusSeverity },
-				{ label: "turn", value: String(state.currentTurnIndex) },
-				{ label: "tokens", value: String(state.tokensUsed) },
-				...(criteriaSnippet ? [{ label: "done", value: criteriaSnippet }] : []),
-			],
-		}),
-	);
-}
-
 // ── Tool 注册 ────────────────────────────────────────
 
 export function registerGoalControlTool(pi: ExtensionAPI, session: GoalSession): void {
 	pi.registerTool({
 		name: "goal_control",
 		label: "Goal Control",
-		description:
-			`Manage the goal for this thread.
+		description: `管理当前会话的目标（goal）。目标用于追踪需要完成验证的复杂工作。
 
-Actions:
-- create: proactively start a goal for COMPLEX, multi-step work (3+ steps, multi-file changes, or work that needs completion verification). Restate the real objective and define checkable successCriteria. Skip for trivial single-step tasks, ordinary questions, or lookups. Fails if a goal is already active/paused/blocked (use /goal resume or /goal clear first).
-- complete: mark the active goal complete. Requires 'evidence' with concrete proof (files/tests/commands) that meets EVERY successCriteria condition.
-- report_blocked: mark the active goal blocked by a real blocker. Requires 'reason' describing the block and what was tried. Only after genuine exhaustion of alternatives.
+动作：
+- create：为复杂的多步骤工作（3+ 步骤、多文件改动、或需要完成验证的工作）主动创建目标。用自己的话重述真实目标，定义可检查的 successCriteria（完成条件）。琐碎的单步任务、普通提问、查找类任务不要创建目标。若已有 active/paused/blocked 目标会失败——请让用户运行 /goal resume 或 /goal clear 后再创建。
+- complete：标记当前 active 目标完成。需要 evidence（具体证据：改动的文件、通过的测试、运行的命令），且必须满足每条 successCriteria 条件。若有预算，在总结里报告最终 token 用量。不要基于假设、意图或部分进度标记完成。
+- report_blocked：标记当前 active 目标被真实阻碍阻塞。需要 reason 描述阻塞条件和已尝试的方案。仅在穷尽替代方案后使用——不要用于困难、缓慢或不确定的工作。
 
-Examples:
-{"action":"create","slug":"refactor-auth","objective":"Refactor the auth module to use JWT and add integration tests","successCriteria":"src/auth.ts uses JWT; pnpm test auth green; tsc --noEmit clean"}
-{"action":"complete","evidence":"Modified src/auth.ts; pnpm test auth passed (12/12); tsc --noEmit clean."}
-{"action":"report_blocked","reason":"Blocked: DB migration API changed mid-task (tried: regenerate client, pin old version, rewrite queries)."}
+控制权归属：
+- pause/resume 和 budget 变更由用户经 /goal 命令控制，你不能修改。
+- 达到阻塞阈值后报告，不要反复报告同一阻塞。
 
-Don't:
-- create for trivial/ordinary tasks — reserve goals for complex multi-step work worth tracking.
-- create without 'successCriteria': {"action":"create","objective":"..."} — you must define how completion is verified.
-- complete without 'evidence': {"action":"complete"} — must provide concrete proof meeting every successCriteria condition.
-- complete when no goal is active — create or resume one first (fails with 'Goal mode not active').`,
+完成验证标准由你在 create 时定义的 successCriteria 决定——complete 时必须逐条满足。`,
 		promptSnippet:
-			"Use goal_control to manage the thread goal: proactively create (with slug + objective + successCriteria) for complex multi-step work, complete (with evidence meeting every successCriteria), or report_blocked (with reason, after trying alternatives).",
+			"用 goal_control 管理会话目标：为复杂多步骤工作主动 create（含 slug + objective + successCriteria），达成时 complete（含满足每条 successCriteria 的 evidence），穷尽方案后 report_blocked（含 reason）。",
 		// promptGuidelines：进 system prompt guidelines 段（强信号位）。
 		// 三个 action 的正向触发引导——create（复杂任务主动启动）、complete（对照 successCriteria 验证达成）、
 		// report_blocked（穷尽替代方案后）。措辞主动，给 system prompt 层常驻强信号。
@@ -412,8 +289,8 @@ Don't:
 			"create: proactively start a goal for complex, multi-step work (3+ steps, multi-file, or needs completion verification) — restate the real objective and define checkable successCriteria. Do NOT create for trivial single-step tasks, ordinary lookups, or when a goal is already active. Test: 'is this worth tracking to completion with verification?' — if yes, create a goal.",
 			// 全解耦下 todo 非硬前置——objective 实际达成才算（与 handleComplete「todo 由 AI 自判」一致）
 			"complete: proactively call when the active goal's objective is actually achieved, not merely in progress. Evidence must be concrete artifacts (files changed, tests green, commands run) meeting every successCriteria condition. Finishing all todos (incl. verification todos) is the usual readiness signal, but the real bar is the objective being met — you decide.",
-			// P3 数字阈值 ≥3，与 params.reason description 的 "at least 3 approaches" 双重冗余
-			"report_blocked: proactively call when genuinely blocked after ≥3 distinct alternative approaches — not for hard/slow work or uncertainty. State the blocker and what you tried. Do NOT silently stop or leave the goal hanging.",
+			// ≥3 distinct approaches 或同一 blocker 跨连续 turns（T7）；达到阈值后报告，不反复报告同一 blocker
+			"report_blocked: proactively call when genuinely blocked after ≥3 distinct alternative approaches or when the same blocker persists across consecutive turns — not for hard/slow work or uncertainty. State the blocker and what you tried. Once the threshold is met, report — do not repeatedly report the same blocker. Do NOT silently stop or leave the goal hanging.",
 		],
 		executionMode: "sequential",
 		parameters: GoalControlParams,
@@ -440,12 +317,13 @@ Don't:
 				details = handleReportBlocked(params, session, ports);
 			}
 
+			// 用 params.action 判断（TS 据此收窄 params 到对应分支，安全访问 objective/reason）
 			const text =
-				details.action === "create"
-					? `Goal created.\nGoal ID: ${details.goalId}\nSlug: ${details.slug ?? ""}\nObjective: ${params.objective?.trim() ?? ""}`
-					: details.action === "complete"
+				params.action === "create"
+					? `Goal created.\nGoal ID: ${details.goalId}\nSlug: ${details.slug ?? ""}\nObjective: ${params.objective.trim()}`
+					: params.action === "complete"
 						? `Goal completed.\nGoal ID: ${details.goalId}`
-						: `Goal reported blocked.\nGoal ID: ${details.goalId}\nReason: ${params.reason?.trim() ?? ""}`;
+						: `Goal reported blocked.\nGoal ID: ${details.goalId}\nReason: ${params.reason.trim()}`;
 
 			// RPC 模式下附加 __gui__（用展开避免 details 来自 frozen 对象时加字段失败）
 			if (ctx.mode === "rpc" && session.state) {

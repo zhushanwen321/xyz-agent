@@ -15,27 +15,14 @@ import type { TodoSessionState } from "./state";
 
 /** 全部完成后保留的轮数，之后再自动 clear */
 const AUTO_CLEAR_DELAY_ROUNDS = 2;
-/** Stall 检测阈值（无 todo 活动轮数 → stall 提醒） */
-const STALL_THRESHOLD = 5;
-/** 提醒间隔（上次 todo 调用后轮数 → 提醒） */
-const REMINDER_INTERVAL = 2;
 
 // ── 辅助函数 ────────────────────────────────────────
 
 export type RefreshDisplayFn = (ctx: ExtensionContext) => void;
 
-/** 未完成任务判定：pending / in_progress（cancelled 不可恢复，从提醒排除） */
+/** 未完成任务判定：pending / in_progress */
 function isPending(t: TodoDetails["todos"][number]): boolean {
 	return t.status === "pending" || t.status === "in_progress";
-}
-
-/** 构建极简提醒：只含下一个推荐任务 + 行动指令 */
-export function buildMinimalReminder(state: TodoSessionState): string {
-	const pendingTodos = state.todos.filter(isPending);
-	if (pendingTodos.length === 0) return "";
-
-	const next = pendingTodos[0];
-	return `<todo_context>\n[TODO] 你有 ${pendingTodos.length} 个未完成任务已搁置。下一个必须处理：#${next.id} ${next.text}。完成后用 todo update 标记 completed，不要继续搁置。\n</todo_context>`;
 }
 
 export function buildBeforeAgentStartMessage(state: TodoSessionState): { message: { customType: string; content: string; display: boolean } } | undefined {
@@ -59,18 +46,22 @@ export function buildBeforeAgentStartMessage(state: TodoSessionState): { message
 
 // ── 状态重建 ────────────────────────────────────────
 
+/**
+ * 回放最后一条 todo toolResult 重建 state（纯读，不修改 entries）。
+ *
+ * H1（C2 决策）：pi 的 SessionManager.getEntries() 返回的是 filter-copy，原先的
+ * splice GC 段对副本操作无效，且修改传入 entries 是反模式。删除整段 splice，只保留
+ * 回放逻辑——找到最后一条有效 todo 快照，迁移脏数据后载入 state。
+ */
 export function reconstructState(state: TodoSessionState, ctx: ExtensionContext): void {
 	state.todos = [];
 	state.nextId = 1;
 	state.userMessageCount = 0;
-	state.lastTodoCallCount = 0;
-	state.stallNotified = false;
 	state.allCompletedAtCount = null;
 	state.completionSteered = false;
 	state.pendingSteerMessage = null;
 
 	const entries = ctx.sessionManager.getEntries();
-	let latestIdx = -1;
 
 	for (let i = 0; i < entries.length; i++) {
 		const entry = entries[i];
@@ -93,23 +84,7 @@ export function reconstructState(state: TodoSessionState, ctx: ExtensionContext)
 			if (migrated.length > 0) {
 				state.todos = migrated;
 				state.nextId = details.nextId ?? Math.max(...migrated.map((t) => t.id)) + 1;
-				latestIdx = i;
 			}
-		}
-	}
-
-	if (latestIdx >= 0) {
-		const staleIndices: number[] = [];
-		for (let i = 0; i < latestIdx; i++) {
-			const entry = entries[i];
-			if (entry.type !== "message") continue;
-			const msg = entry.message;
-			if (msg.role === "toolResult" && msg.toolName === "todo") {
-				staleIndices.push(i);
-			}
-		}
-		for (let j = staleIndices.length - 1; j >= 0; j--) {
-			entries.splice(staleIndices[j], 1);
 		}
 	}
 }
@@ -143,32 +118,6 @@ export function handleCompletionSteer(state: TodoSessionState): boolean {
 	state.completionSteered = true;
 	state.pendingSteerMessage = `<todo_context>\n[TODO] 所有任务已标记完成。请逐项核对交付质量（不要凭印象，检查实际产出），确认无误后向用户汇报结果。\n</todo_context>`;
 	return true;
-}
-
-export function handleStallDetection(state: TodoSessionState): boolean {
-	if (
-		!state.stallNotified &&
-		state.userMessageCount - state.lastTodoCallCount >= STALL_THRESHOLD
-	) {
-		state.stallNotified = true;
-		const reminder = buildMinimalReminder(state);
-		if (reminder) {
-			state.pendingSteerMessage = reminder;
-		}
-		return true;
-	}
-	return false;
-}
-
-export function handleReminder(state: TodoSessionState): boolean {
-	if (state.userMessageCount - state.lastTodoCallCount >= REMINDER_INTERVAL) {
-		const reminder = buildMinimalReminder(state);
-		if (reminder) {
-			state.pendingSteerMessage = reminder;
-		}
-		return true;
-	}
-	return false;
 }
 
 // ── Event handler 注册入口 ──────────────────────────
@@ -218,12 +167,12 @@ export function registerTodoEventHandlers(
 			// 全部 completed → 总检查 steer（仅一次）
 			handleCompletionSteer(state);
 
-			// auto-clear
+			// auto-clear（全部完成后延迟清理）
 			const ac = handleAutoClear(state);
-			if (ac.handled) { if (ac.cleared) refreshDisplay(ctx); return; }
-
-			if (handleStallDetection(state)) return;
-			handleReminder(state);
+			if (ac.handled) {
+				if (ac.cleared) refreshDisplay(ctx);
+				return;
+			}
 		} catch (e) {
 			// best-effort：agent_end 事件处理器出错不阻断会话主流程，仅记录调试日志
 			console.debug("[todo] agent_end error:", e);

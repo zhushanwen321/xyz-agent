@@ -1,126 +1,86 @@
 /**
- * engine/goal.ts 测试 — Goal 7 态状态机 + createGoalState
+ * engine/goal.ts 测试 — Goal 状态机 + createGoalState
+ *
+ * transitionStatus 完备性用 fast-check 覆盖 GoalStatus×GoalStatus 全 36 组合
+ * （不 throw ⟺ to ∈ VALID_TRANSITIONS[from]），替代手写合法 9 + 非法 25 = 34 条枚举。
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
+import { it, fc } from "@fast-check/vitest";
 
-import {
-	createGoalState,
-	isActiveStatus,
-	isTerminalStatus,
-	transitionStatus,
-} from "../goal";
+import { createGoalState, isActiveStatus, isTerminalStatus, transitionStatus } from "../goal";
+import { VALID_TRANSITIONS } from "../types";
 import type { GoalStatus } from "../types";
 
-const TERMINAL: GoalStatus[] = ["complete", "budget_limited", "time_limited", "cancelled"];
-const NON_TERMINAL: GoalStatus[] = ["active", "paused", "blocked"]; // paused #2 新增
-const ALL = [...NON_TERMINAL, ...TERMINAL];
-
-// ── isTerminalStatus / isActiveStatus ─────────────────
+const STATUS_VALUES: GoalStatus[] = ["active", "paused", "blocked", "complete", "budget_limited", "cancelled"];
+const statusArb = fc.constantFrom(...STATUS_VALUES);
+// 独立于实现的终态集合（交叉校验，非循环）
+const TERMINAL: ReadonlySet<GoalStatus> = new Set(["complete", "budget_limited", "cancelled"]);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 describe("isTerminalStatus", () => {
-	for (const s of TERMINAL) {
-		it(`${s} → terminal`, () => expect(isTerminalStatus(s)).toBe(true));
-	}
-	for (const s of NON_TERMINAL) {
-		it(`${s} → NOT terminal`, () => expect(isTerminalStatus(s)).toBe(false));
-	}
+	it.prop([statusArb])("⟺ 在 {complete, budget_limited, cancelled} 内", (s) => isTerminalStatus(s) === TERMINAL.has(s));
 });
 
 describe("isActiveStatus", () => {
-	it("active → true", () => expect(isActiveStatus("active")).toBe(true));
-	for (const s of ALL) {
-		if (s === "active") continue;
-		it(`${s} → false`, () => expect(isActiveStatus(s)).toBe(false));
-	}
+	it.prop([statusArb])("⟺ status === active", (s) => isActiveStatus(s) === (s === "active"));
 });
 
-// ── transitionStatus（查表，非法转换 throw）──────────────
-
-describe("transitionStatus — 合法转换返回 next", () => {
-	const legalCases: Array<[GoalStatus, GoalStatus]> = [
-		["active", "paused"],
-		["active", "blocked"],
-		["active", "complete"],
-		["active", "budget_limited"],
-		["active", "time_limited"],
-		["active", "cancelled"],
-		["paused", "active"],
-		["paused", "cancelled"],
-		["blocked", "active"],
-		["blocked", "cancelled"],
-	];
-	for (const [from, to] of legalCases) {
-		it(`${from} → ${to} 返回 ${to}`, () => {
-			expect(transitionStatus(from, to)).toBe(to);
-		});
-	}
-});
-
-describe("transitionStatus — 非法转换 throw", () => {
-	// 终态不可转任何状态（VALID_TRANSITIONS 表为空）
-	for (const terminal of TERMINAL) {
-		for (const target of ALL) {
-			it(`terminal ${terminal} → ${target} throw`, () => {
-				expect(() => transitionStatus(terminal, target)).toThrow();
-			});
+describe("transitionStatus", () => {
+	// ⭐ 完备性：自动枚举全 36 组合，不 throw ⟺ to ∈ VALID_TRANSITIONS[from]
+	it.prop([statusArb, statusArb])("完备性：不 throw ⟺ to ∈ VALID_TRANSITIONS[from]", (from, to) => {
+		const inTable = VALID_TRANSITIONS[from].includes(to);
+		let threw = false;
+		try {
+			transitionStatus(from, to);
+		} catch {
+			threw = true;
 		}
-	}
-	// 非终态的非法路径（不在 VALID_TRANSITIONS 表内）
-	const illegalNonTerminal: Array<[GoalStatus, GoalStatus]> = [
-		["active", "active"], // 自转不在表内
-		["paused", "paused"],
-		["paused", "blocked"],
-		["paused", "complete"],
-		["blocked", "blocked"],
-		["blocked", "paused"],
-		["blocked", "complete"],
-	];
-	for (const [from, to] of illegalNonTerminal) {
-		it(`${from} → ${to} throw`, () => {
-			expect(() => transitionStatus(from, to)).toThrow();
-		});
-	}
+		return threw === !inTable;
+	});
+
+	it("smoke：active → paused 合法，返回 to", () => {
+		expect(transitionStatus("active", "paused")).toBe("paused");
+	});
+	it("smoke：终态 complete → active 非法 throw（不可逆）", () => {
+		expect(() => transitionStatus("complete", "active")).toThrow();
+	});
 });
 
-// ── createGoalState 初始值 ───────────────────────────
-
-describe("createGoalState — 初始值", () => {
-	it("status = active", () => expect(createGoalState("obj").status).toBe("active"));
-	it("objective 透传", () => expect(createGoalState("my obj").objective).toBe("my obj"));
-	it("tokensUsed = 0", () => expect(createGoalState("obj").tokensUsed).toBe(0));
-	it("timeUsedSeconds = 0", () => expect(createGoalState("obj").timeUsedSeconds).toBe(0));
-	it("goalId 非空", () => {
-		expect(createGoalState("obj").goalId).toBeTruthy();
-		expect(typeof createGoalState("obj").goalId).toBe("string");
+describe("createGoalState", () => {
+	it("默认值：status active + 计数器清零 + 预警 flag false", () => {
+		expect(createGoalState("my obj")).toMatchObject({
+			status: "active",
+			tokensUsed: 0,
+			timeUsedSeconds: 0,
+			currentTurnIndex: 0,
+			lastProgressTurn: 0,
+			lastTurnTokensUsed: 0,
+			budgetLimitSteeringSent: false,
+			tokenWarning70Sent: false,
+			tokenWarning90Sent: false,
+		});
+		// completedAtTurnIndex 是 optional：createGoalState 省略该键（访问得 undefined）
+		expect(createGoalState("my obj").completedAtTurnIndex).toBeUndefined();
 	});
-	it("两个 createGoalState 生成不同 goalId", () => {
+
+	it("objective 透传", () => {
+		expect(createGoalState("my obj").objective).toBe("my obj");
+	});
+
+	it("goalId 符合 UUID v4 格式", () => {
+		expect(createGoalState("obj").goalId).toMatch(UUID_RE);
+	});
+
+	it("两次调用生成不同 goalId（唯一性）", () => {
 		expect(createGoalState("obj").goalId).not.toBe(createGoalState("obj").goalId);
 	});
-	it("currentTurnIndex = 0", () => expect(createGoalState("obj").currentTurnIndex).toBe(0));
-	it("completedAtTurnIndex = undefined", () => {
-		expect(createGoalState("obj").completedAtTurnIndex).toBeUndefined();
-	});
-	// FR-6.2: 4 个独立预警 flag
-	it("tokenWarning70Sent = false", () => expect(createGoalState("obj").tokenWarning70Sent).toBe(false));
-	it("tokenWarning90Sent = false", () => expect(createGoalState("obj").tokenWarning90Sent).toBe(false));
-	it("timeWarning70Sent = false", () => expect(createGoalState("obj").timeWarning70Sent).toBe(false));
-	it("timeWarning90Sent = false", () => expect(createGoalState("obj").timeWarning90Sent).toBe(false));
-});
 
-describe("createGoalState — budget 合并", () => {
-	it("无 overrides 用 DEFAULT_BUDGET", () => {
-		const s = createGoalState("obj");
-		expect(s.budget).toEqual({});
-	});
-	it("tokenBudget override", () => {
-		expect(createGoalState("obj", { tokenBudget: 10000 }).budget.tokenBudget).toBe(10000);
-	});
-	it("timeBudgetMinutes override", () => {
-		expect(createGoalState("obj", { timeBudgetMinutes: 30 }).budget.timeBudgetMinutes).toBe(30);
-	});
-	it("多字段 override", () => {
-		const s = createGoalState("obj", { tokenBudget: 5000, timeBudgetMinutes: 30 });
-		expect(s.budget.tokenBudget).toBe(5000);
-		expect(s.budget.timeBudgetMinutes).toBe(30);
+	describe("budget 合并", () => {
+		it("无 overrides → DEFAULT_BUDGET（{}）", () => {
+			expect(createGoalState("obj").budget).toEqual({});
+		});
+		it("tokenBudget override 生效", () => {
+			expect(createGoalState("obj", { tokenBudget: 10000 }).budget.tokenBudget).toBe(10000);
+		});
 	});
 });

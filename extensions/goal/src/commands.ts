@@ -52,9 +52,9 @@ export function parseGoalArgs(raw: string): GoalCommandArgs {
 		return { action: "update" };
 	}
 
-	// /goal <objective> [--tokens N] [--timeout N]
+	// /goal <objective> [--tokens N]
 	// 只匹配已知 flag，避免误删 objective 中的 -- 文本
-	const knownFlags = /--(?:tokens|timeout)\s+\d+/g;
+	const knownFlags = /--tokens\s+\d+/g;
 	const objective = fullRaw.replace(knownFlags, "").trim();
 	const budget: Partial<BudgetConfig> = {};
 
@@ -62,12 +62,6 @@ export function parseGoalArgs(raw: string): GoalCommandArgs {
 	if (tokenMatch) {
 		const val = parseInt(tokenMatch[1]!, 10);
 		if (!isNaN(val) && val > 0) budget.tokenBudget = val;
-	}
-
-	const timeMatch = fullRaw.match(/--timeout\s+(\d+)/);
-	if (timeMatch) {
-		const val = parseInt(timeMatch[1]!, 10);
-		if (!isNaN(val) && val > 0) budget.timeBudgetMinutes = val;
 	}
 
 	if (!objective) {

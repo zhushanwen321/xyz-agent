@@ -12,10 +12,8 @@ import type { Todo } from "./model";
 export interface TodoSessionState {
 	todos: Todo[];
 	nextId: number;
-	// 用户消息轮数与提醒追踪
+	// 用户消息轮数追踪（auto-clear 锚定用）
 	userMessageCount: number;
-	lastTodoCallCount: number;
-	stallNotified: boolean;
 	allCompletedAtCount: number | null;
 	/** 全部 completed 时已注入 steer，防止重复 */
 	completionSteered: boolean;
@@ -28,8 +26,6 @@ export function createTodoSessionState(): TodoSessionState {
 		todos: [],
 		nextId: 1,
 		userMessageCount: 0,
-		lastTodoCallCount: 0,
-		stallNotified: false,
 		allCompletedAtCount: null,
 		completionSteered: false,
 		pendingSteerMessage: null,

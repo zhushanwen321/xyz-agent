@@ -9,7 +9,6 @@
  */
 
 export { handleAgentEnd } from "./event-handlers/agent-end";
-export { handleAgentStart } from "./event-handlers/agent-start";
 export { handleBeforeAgentStart } from "./event-handlers/before-agent-start";
 export type { MessageEndLikeEvent } from "./event-handlers/message-end";
 export { handleMessageEnd } from "./event-handlers/message-end";

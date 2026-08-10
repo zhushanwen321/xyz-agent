@@ -23,10 +23,10 @@
   ],
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-tui": "*",
     "@earendil-works/pi-coding-agent": "*",
-    "typebox": "*",
-    "@zhushanwen/pi-pending-notifications": "workspace:*"
+    "@earendil-works/pi-tui": "*",
+    "@zhushanwen/pi-pending-notifications": "workspace:*",
+    "typebox": "*"
   },
   "dependencies": {
     "@xyz-agent/extension-protocol": "workspace:^0.4.0"
@@ -44,6 +44,8 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@fast-check/vitest": "^0.4.1",
+    "fast-check": "^4.9.0",
     "vitest": "^4.1.8"
   }
 }

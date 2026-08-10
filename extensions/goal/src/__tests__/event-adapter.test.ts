@@ -260,7 +260,6 @@ describe("handleAgentEnd — continuation", () => {
 				(s as { component?: string } | undefined)?.component === "goal:agent-end" &&
 				/continuation deferred/.test(String((s as { message?: string } | undefined)?.message ?? "")),
 		);
-		expect(deferredLog).toBeDefined();
 		const data = (deferredLog as { data?: { activePending?: number; ids?: string[] } } | undefined)?.data;
 		expect(data?.activePending).toBe(2); // 多元素计数（替代原 >=1 弱断言）
 		expect(data?.ids).toEqual(["bg-1", "bg-2"]); // ids 透出
@@ -390,15 +389,13 @@ describe("handleBeforeAgentStart", () => {
 
 		const result = await handleBeforeAgentStart(pi, session, ctx);
 
-		expect(result).toBeDefined();
 		expect(result!.message.customType).toBe("goal-context");
 		expect(result!.message.content).toContain("[GOAL mode activated]");
 		expect(result!.message.display).toBe(false);
 	});
 
-	// 全解耦后：planAvailable 恒 true（不再运行时探测 pi.__planStart）。
-	// contextInjectionPrompt 恒定注入 plan mode 建议段落，AI 自行判断是否用。
-	it("恒定注入 plan mode 建议段落（全解耦：不再探测 plan extension）", async () => {
+	// contextInjection 精简（planAvailable 参数已删，plan 提示收敛到 continuationPrompt）
+	it("context injection 不含 plan mode 提示（收敛到 continuation）", async () => {
 		const { pi } = makeFakePi();
 		const { ctx } = makeFakeCtx();
 		const session = createGoalSession();
@@ -406,9 +403,10 @@ describe("handleBeforeAgentStart", () => {
 
 		const result = await handleBeforeAgentStart(pi, session, ctx);
 
-		expect(result).toBeDefined();
 		expect(result!.message.customType).toBe("goal-context");
-		expect(result!.message.content).toContain("plan mode");
+		// plan 引导段已删（收敛到 continuationPrompt，agent_end 发）
+		expect(result!.message.content).not.toContain("plan mode");
+		expect(result!.message.content).not.toContain("__planStart");
 	});
 
 	// FR-8.1 G-007: AUTO_CLEAR_TURNS=2
@@ -444,7 +442,7 @@ describe("handleBeforeAgentStart", () => {
 		expect(result).toBeUndefined();
 		expect(session.state).not.toBeNull(); // 未清理
 		// setStatus 触发（折叠为终态单行）
-		expect(all.filter((c) => c.kind === "setStatus" && c.key === "goal").length).toBeGreaterThan(0);
+		expect(all.filter((c) => c.kind === "setStatus" && c.key === "goal")).toHaveLength(1);
 	});
 
 	// ADR-002 context usage 提示（CONTEXT_USAGE_RATIO_LIMIT=0.85，保持 active）
@@ -456,7 +454,6 @@ describe("handleBeforeAgentStart", () => {
 
 		const result = await handleBeforeAgentStart(pi, session, ctx);
 
-		expect(result).toBeDefined();
 		expect(result!.message.customType).toBe("goal-context-exceeded");
 		// ADR-002：goal 保持 active（不转 paused）
 		expect(session.state!.status).toBe("active");
@@ -487,34 +484,24 @@ describe("handleBeforeAgentStart", () => {
 
 	// ── pending-notifications（W2 跨扩展集成）───────────────────
 
-	it("有活跃 pending entries → 注入 content 不含 pending 提示（pendingHint 已移除）", async () => {
-		const { pi } = makeFakePi();
-		const { ctx } = makeFakeCtx({
-			entries: [
-				{ type: "custom", customType: "pending:register", data: { id: "wf-1", type: "workflow", name: "test-wf" } },
-				{ type: "custom", customType: "pending:register", data: { id: "bg-1", type: "subagent", name: "worker" } },
-			],
-		});
-		const session = createGoalSession();
-		session.state = makeRunningState();
+	// pendingHint 已删除（pending 感知交给 LLM 调 pending_notifications tool），
+	// 无论是否有活跃 pending entries，content 都不含 pending 提示——轻量回归保护。
+	const PENDING_HINT_CASES: Array<[string, unknown[]]> = [
+		["有活跃 pending", [{ type: "custom", customType: "pending:register", data: { id: "wf-1" } }]],
+		["无 pending", []],
+	];
+	it.each(PENDING_HINT_CASES)(
+		"pendingHint 已移除：%s → content 不含 pending 提示",
+		async (_label, entries) => {
+			const { pi } = makeFakePi();
+			const { ctx } = makeFakeCtx({ entries });
+			const session = createGoalSession();
+			session.state = makeRunningState();
 
-		const result = await handleBeforeAgentStart(pi, session, ctx);
+			const result = await handleBeforeAgentStart(pi, session, ctx);
 
-		expect(result).toBeDefined();
-		expect(result!.message.customType).toBe("goal-context");
-		// pendingHint 已删除：pending 感知交给 LLM 调 pending_notifications tool（mandatory）
-		expect(result!.message.content).not.toContain("pending async operation");
-	});
-
-	it("无 pending entries → 正常注入（不含 pending 提示）", async () => {
-		const { pi } = makeFakePi();
-		const { ctx } = makeFakeCtx(); // 默认 getEntries: () => []
-		const session = createGoalSession();
-		session.state = makeRunningState();
-
-		const result = await handleBeforeAgentStart(pi, session, ctx);
-
-		expect(result).toBeDefined();
-		expect(result!.message.content).not.toContain("pending async operation");
-	});
+			expect(result!.message.customType).toBe("goal-context");
+			expect(result!.message.content).not.toContain("pending async operation");
+		},
+	);
 });
