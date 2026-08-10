@@ -75,11 +75,13 @@
            用 hasDesktopPanelContent() 而非 `<slot>` fallback：父组件提供 slot 函数但运行时为空时，
            Vue 的 slot fallback 不生效，需显式判断渲染结果。 -->
       <div class="min-h-0 flex-1 overflow-auto" data-testid="drawer-content">
-        <slot v-if="hasDesktopPanelContent()" />
-        <!-- active tab 有结构化 GUI widget（extension:widgetGui）→ 优先 GuiComponentRenderer 渲染 -->
-        <template v-else>
+        <!-- 内容区四支（slot 面板 / gui / lines / 空态）tab 切换瞬时互切 → out-in 淡入淡出。
+             条件链分支包在 Transition 内（非外层恒存 div）：同一时刻仅单根渲染，满足 Transition 单根约束。 -->
+        <Transition name="drawer-content-fade" mode="out-in">
+          <slot v-if="hasDesktopPanelContent()" />
+          <!-- active tab 有结构化 GUI widget（extension:widgetGui）→ 优先 GuiComponentRenderer 渲染 -->
           <div
-            v-if="activeGuiComponent"
+            v-else-if="activeGuiComponent"
             class="flex h-full flex-col gap-0 overflow-auto p-2"
             data-testid="drawer-widget-gui"
           >
@@ -87,6 +89,7 @@
           </div>
           <!-- active tab 有 widget 内容 → 渲染等宽文本输出（每行一个 div，font-mono + pre-wrap） -->
           <div
+            key="widget-lines"
             v-else-if="activeLines.length"
             class="flex h-full flex-col gap-0 overflow-auto p-2"
             :class="activeLinesMeta.unknown ? 'opacity-80' : ''"
@@ -108,6 +111,7 @@
           </div>
           <!-- active tab 无 widget 内容 → 空态占位 -->
           <div
+            key="widget-empty"
             v-else
             class="flex h-full flex-col items-center justify-center gap-2 p-4 text-center"
             data-testid="drawer-widget-empty"
@@ -116,7 +120,7 @@
             <p class="text-[12px] text-neutral-dim opacity-70">{{ activeTabMeta.emptyText }}</p>
             <p class="text-[11px] text-neutral-dim opacity-50">{{ activeTabMeta.emptyHint }}</p>
           </div>
-        </template>
+        </Transition>
       </div>
 
       <!-- extension status 底栏（按 statusKey 聚合最新 text）。
@@ -268,5 +272,15 @@ const activeTabMeta = computed<TabMeta>(() => tabs.value.find((tab) => tab.key =
 .drawer-slide-right-enter-active,
 .drawer-slide-right-leave-active {
   transition: opacity var(--duration-slow) var(--ease);
+}
+/* 内容区四支互切（slot 面板 / gui / lines / 空态）淡入淡出。
+   mode="out-in"：旧支 leave 完成才 enter 新支，避免双渲染重叠。 */
+.drawer-content-fade-enter-active,
+.drawer-content-fade-leave-active {
+  transition: opacity var(--duration-fast) var(--ease);
+}
+.drawer-content-fade-enter-from,
+.drawer-content-fade-leave-to {
+  opacity: 0;
 }
 </style>
