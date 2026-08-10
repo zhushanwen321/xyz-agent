@@ -1,11 +1,12 @@
 /**
  * Todo tool 注册 + execute dispatcher + 4 个 action handler。
  *
- * Schema 设计（T4）：TodoParams 为 discriminated union（按 action 区分），每个分支
- * 只声明自己的参数且 additionalProperties:false。这样缺失必填（如 {action:'add'} 缺
- * texts）在 schema 层就被拒绝，不依赖运行时 handler throw。实测 typebox Value.Check
- * 与 ajv（plain，不开 discriminator 选项）均正确拒绝；故不使用 discriminator keyword
- * （typebox 输出 anyOf，ajv discriminator 选项要求 oneOf 会编译失败）。
+ * Schema 设计（OpenAI 兼容）：TodoParams 为扁平 Type.Object（顶层 type:"object"，
+ * 满足 OpenAI function calling 规范——顶层 union 会被严格网关 400 拒绝整个会话启动）。
+ * action 字段是字面量 union（list/add/update/delete），其余字段全 Optional；必填校验
+ * （add 缺 texts、delete 缺 ids、双形陷阱 text/texts、id/ids）由 handler 运行时承担
+ * （见 tool-detectors.test.ts）。范式参考 scheduler 的 ScheduleControlParams；设计
+ * 文档见 docs/extensions/tool-schema-openai-compat.md。
  */
 
 import { StringEnum } from "@earendil-works/pi-ai";
@@ -25,75 +26,43 @@ import {
 import { renderTodoResult } from "./render";
 import type { TodoSessionState } from "./state";
 
-// ── Action 参数类型（运行时）──────────────────────────
-// 刻意保持为宽松 interface（全部字段可选）而非 strict discriminated union：
-// handler 需要检测「双形陷阱」（add 同时传 text+texts 等错误输入），schema 层虽已用
-// additionalProperties:false 拒绝，但 handler 作为 defense-in-depth 仍需能访问/判断
-// 这些字段。类型严格性由 TodoParams schema（discriminated union）承担。
-
-export interface TodoActionParams {
-	action: string;
-	text?: string;
-	id?: number;
-	texts?: string[];
-	ids?: number[];
-	status?: string;
-	updates?: Array<{ id: number; status?: string; text?: string }>;
-}
-
-// ── TodoParams schema（discriminated union by action）──────────
+// ── TodoParams schema（扁平 Type.Object，OpenAI 兼容）──────────
+// 顶层必须是 type:"object"（OpenAI function calling 规范——顶层 union 会被严格
+// 网关 400 拒绝）。action 字段是字面量 union；其余字段全 Optional，必填校验交给
+// handler（见 tool-detectors.test.ts）。TodoParamsT 由 schema 派生，handler 签名
+// 统一用它——双形陷阱检测在全 optional 类型上语义不变，且能消除 execute 里的 cast。
 
 const StatusSchema = StringEnum(VALID_STATUSES);
 
-const ListParams = Type.Object(
-	{ action: Type.Literal("list") },
-	{ additionalProperties: false },
-);
-const AddParams = Type.Object(
+export const TodoParams = Type.Object(
 	{
-		action: Type.Literal("add"),
-		texts: Type.Array(Type.String(), { description: "待添加的 todo 文本数组" }),
-	},
-	{ additionalProperties: false },
-);
-const UpdateSingleParams = Type.Object(
-	{
-		action: Type.Literal("update"),
-		id: Type.Number({ description: "要更新的 todo id" }),
-		status: Type.Optional(StatusSchema),
+		action: Type.Union(
+			[Type.Literal("list"), Type.Literal("add"), Type.Literal("update"), Type.Literal("delete")],
+			{ description: "list | add | update | delete" },
+		),
 		text: Type.Optional(Type.String({ description: "新文本（trim 后不可为空）" })),
-	},
-	{ additionalProperties: false },
-);
-const UpdateBatchParams = Type.Object(
-	{
-		action: Type.Literal("update"),
-		updates: Type.Array(
-			Type.Object({
-				id: Type.Number({ description: "要更新的 todo id" }),
-				status: Type.Optional(StatusSchema),
-				text: Type.Optional(Type.String({ description: "新文本（trim 后不可为空）" })),
-			}),
-			{ description: "批量更新数组（优先于单条 id/status/text）" },
+		texts: Type.Optional(Type.Array(Type.String(), { description: "待添加的 todo 文本数组" })),
+		id: Type.Optional(Type.Number({ description: "要更新的 todo id" })),
+		ids: Type.Optional(Type.Array(Type.Number(), { description: "要删除的 todo id 数组" })),
+		status: Type.Optional(StatusSchema),
+		updates: Type.Optional(
+			Type.Array(
+				Type.Object(
+					{
+						id: Type.Number({ description: "要更新的 todo id" }),
+						status: Type.Optional(StatusSchema),
+						text: Type.Optional(Type.String({ description: "新文本（trim 后不可为空）" })),
+					},
+					{ additionalProperties: false },
+				),
+				{ description: "批量更新数组（优先于单条 id/status/text）" },
+			),
 		),
 	},
 	{ additionalProperties: false },
 );
-const DeleteParams = Type.Object(
-	{
-		action: Type.Literal("delete"),
-		ids: Type.Array(Type.Number(), { description: "要删除的 todo id 数组" }),
-	},
-	{ additionalProperties: false },
-);
 
-export const TodoParams = Type.Union([
-	ListParams,
-	AddParams,
-	UpdateSingleParams,
-	UpdateBatchParams,
-	DeleteParams,
-]);
+export type TodoParamsT = Static<typeof TodoParams>;
 
 // ── 4 个 action handler ──────────────────────────────
 // 错误处理约定（见 CLAUDE.md「Tool 设计」）：handler 失败直接 throw，
@@ -107,7 +76,7 @@ function handleList(state: TodoSessionState): string {
 }
 
 /** add action — 失败抛错。export 供 behavioral 测试（text/texts 双形陷阱检测）。 */
-export function handleAdd(state: TodoSessionState, params: TodoActionParams): string {
+export function handleAdd(state: TodoSessionState, params: TodoParamsT): string {
 	// 双形陷阱：同时传 text 和 texts → throw（TC7）
 	if (params.text !== undefined && params.texts !== undefined) {
 		throw new Error('add only accepts texts array; do not also pass singular "text"');
@@ -131,7 +100,7 @@ export function handleAdd(state: TodoSessionState, params: TodoActionParams): st
 }
 
 /** update action: batch — 失败抛错 */
-function handleBatchUpdate(state: TodoSessionState, params: TodoActionParams): string {
+function handleBatchUpdate(state: TodoSessionState, params: TodoParamsT): string {
 	const r = updateTodos(state.todos, params.updates ?? []);
 	if (r.error) throw new Error(r.resultText);
 	state.todos = r.updatedTodos;
@@ -139,7 +108,7 @@ function handleBatchUpdate(state: TodoSessionState, params: TodoActionParams): s
 }
 
 /** update action: single — 失败抛错 */
-export function handleSingleUpdate(state: TodoSessionState, params: TodoActionParams): string {
+export function handleSingleUpdate(state: TodoSessionState, params: TodoParamsT): string {
 	if (params.id === undefined)
 		throw new Error(
 			'update requires id parameter. Correct: {"action":"update","id":<n>,"status":"in_progress"}',
@@ -171,14 +140,14 @@ export function handleSingleUpdate(state: TodoSessionState, params: TodoActionPa
 }
 
 /** update action: dispatcher — batch 优先于 single */
-function handleUpdate(state: TodoSessionState, params: TodoActionParams): string {
+function handleUpdate(state: TodoSessionState, params: TodoParamsT): string {
 	if (params.updates && params.updates.length > 0) return handleBatchUpdate(state, params);
 	return handleSingleUpdate(state, params);
 }
 
 /** delete action — 失败抛错；部分 id 缺失则整体拒绝（原子性）。
  * export 供 behavioral 测试（id/ids 双形陷阱检测）。 */
-export function handleDelete(state: TodoSessionState, params: TodoActionParams): string {
+export function handleDelete(state: TodoSessionState, params: TodoParamsT): string {
 	if (!params.ids || params.ids.length === 0) {
 		// 双形陷阱：弱模型 delete 时误用单数 id（那是 update 的字段）
 		if (params.id !== undefined) {
@@ -209,7 +178,7 @@ export function handleDelete(state: TodoSessionState, params: TodoActionParams):
 // ── Dispatcher ───────────────────────────────────────
 
 function executeTodoAction(
-	params: TodoActionParams,
+	params: TodoParamsT,
 	state: TodoSessionState,
 	ctx: ExtensionContext,
 	refreshDisplay: (ctx: ExtensionContext) => void,
@@ -296,9 +265,9 @@ export function registerTodoTool(
 		executionMode: "sequential",
 		parameters: TodoParams,
 
-		async execute(_toolCallId: string, params: Static<typeof TodoParams>, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+		async execute(_toolCallId: string, params: TodoParamsT, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
 			if (signal?.aborted) throw new Error("Todo call aborted by signal.");
-			return executeTodoAction(params as TodoActionParams, state, ctx, refreshDisplay);
+			return executeTodoAction(params, state, ctx, refreshDisplay);
 		},
 
 		renderCall(args: Record<string, unknown>, theme: Theme, _context?: unknown) {
