@@ -21,6 +21,7 @@
 ## @zhushanwen/pi-goal（breaking）
 
 - **去时间预算**：删除 `time_limited` 状态 + `timeBudgetMinutes` 参数 + `/goal set --timeout` + 时间预算检查 + 时间进度条；保留 `timeUsedSeconds` 记账显示（对齐 Codex：time 仅记账不设限）
+- **旧数据迁移**：升级时若历史持久化 entry 含已删除的 `time_limited` 状态（npm 0.7.x 时间预算格式），deserialize 自动归一化为 `budget_limited`（预算耗尽终态），避免僵尸 goal 功能死锁（`/goal clear` 抛 invalid transition / `goal_control create` 误报 already active / resume 拒绝）；遗留 `timeWarning70Sent`/`timeWarning90Sent` 字段被忽略。旧 goal-history entry 的 `time_limited` 仅影响历史列表图标展示，不参与状态机
 - **schema discriminated union**：`goal_control` 按 create/complete/report_blocked 分支，各分支 `additionalProperties:false`
 - **prompt 双通道合并**：`contextInjectionPrompt` 精简到 ≤600 chars（每轮锚定），`continuationPrompt` 保留审计细节（续跑详尽），去重收敛
 - **description 中文重写** + §2.5 终态语义（complete 报 token / pause-resume 归用户 / blocked 时间维度 + 不反复报告）

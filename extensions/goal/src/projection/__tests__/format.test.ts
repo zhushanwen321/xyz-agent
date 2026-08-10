@@ -79,6 +79,7 @@ describe("formatHistoryEntry", () => {
 		["complete → ✓", "complete", "✓"],
 		["cancelled → ✗", "cancelled", "✗"],
 		["budget_limited → ⊗", "budget_limited", "⊗"],
+		["time_limited → ⏱（旧数据兼容）", "time_limited", "⏱"],
 		["未知 status → ?", "active", "?"],
 	])("%s", (_name, status, icon) => {
 		const lines = formatHistoryEntry(makeHistoryEntry({ status, elapsedSeconds: 0 }), 0);

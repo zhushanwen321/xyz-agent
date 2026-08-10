@@ -8,6 +8,7 @@ import { describe, expect } from "vitest";
 import { it, fc } from "@fast-check/vitest";
 
 import { deserializeState, serializeState } from "../persistence";
+import { isTerminalStatus } from "../engine/goal";
 import type { GoalRuntimeState, GoalStatus } from "../engine/types";
 
 const STATUS_VALUES: GoalStatus[] = ["active", "paused", "blocked", "complete", "budget_limited", "cancelled"];
@@ -90,5 +91,35 @@ describe("deserializeState — optional 字段向后兼容（GAP-4 旧数据）"
 	});
 	it("缺 successCriteria → undefined", () => {
 		expect(deserializeState(FULL_DATA).successCriteria).toBeUndefined();
+	});
+});
+
+describe("deserializeState — 旧数据迁移（time_limited → budget_limited，MF-1）", () => {
+	// npm pi-goal 0.7.x 持久化格式：status=time_limited + timeWarning* 遗留字段（时间预算维度已移除）
+	const LEGACY_DATA: Record<string, unknown> = {
+		...FULL_DATA,
+		status: "time_limited",
+		timeWarning70Sent: true,
+		timeWarning90Sent: true,
+	};
+
+	it("旧 entry status=time_limited → 归一化 budget_limited，遗留字段被忽略", () => {
+		const state = deserializeState(LEGACY_DATA);
+		expect(state.status).toBe("budget_limited");
+		expect((state as unknown as { timeWarning70Sent?: unknown }).timeWarning70Sent).toBeUndefined();
+		expect((state as unknown as { timeWarning90Sent?: unknown }).timeWarning90Sent).toBeUndefined();
+	});
+
+	it("归一化后是合法终态：/goal clear 守卫（!isTerminalStatus）跳过 transitionStatus，不 throw", () => {
+		const state = deserializeState(LEGACY_DATA);
+		// handleClear（command-adapter.ts）的守卫：!isTerminalStatus 为 false → 直接 clearSession，
+		// 不再走 finalizeAndPersist("cancelled") 的 transitionStatus 查表（旧值会 throw）。
+		expect(isTerminalStatus(state.status)).toBe(true);
+	});
+
+	it("新格式 status 不受影响（time_limited 之外的六态原样透传）", () => {
+		for (const status of STATUS_VALUES) {
+			expect(deserializeState({ ...FULL_DATA, status }).status).toBe(status);
+		}
 	});
 });

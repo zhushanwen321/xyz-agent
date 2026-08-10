@@ -5,7 +5,7 @@
  * 零 Pi 依赖。
  */
 
-import type { GoalRuntimeState } from "./engine/types";
+import type { GoalRuntimeState, GoalStatus } from "./engine/types";
 import type { GoalHistoryEntry } from "./ports";
 
 // ── 常量 ──────────────────────────────────────────────
@@ -23,6 +23,20 @@ export function serializeState(state: GoalRuntimeState): GoalRuntimeState {
 }
 
 // ── deserialize（FR-5 严格解析，缺字段 throw）──────────
+
+/**
+ * 旧持久化状态归一化（唯一迁移点）。
+ *
+ * npm pi-goal 0.7.x（base 968b9d76）经 finalizeAndPersist 真实写入过 `time_limited`（时间预算
+ * 维度，新状态机已删除该状态）。若不归一化，升级用户持有该状态的 goal 会功能死锁：
+ * /goal clear 的 transitionStatus 查表 throw、goal_control create 误报 already active、
+ * resume/update 被 isActiveStatus 守卫拒绝——唯一出口是手动删 session 文件。
+ * 归一化为语义最接近的 `budget_limited`（预算耗尽终态），clear 走 isTerminalStatus 快速路径。
+ * 其余值原样透传（不做值域校验，保持现状）。
+ */
+function normalizeStatus(status: string): GoalStatus {
+	return status === "time_limited" ? "budget_limited" : (status as GoalStatus);
+}
 
 /**
  * 反序列化持久化 state。
@@ -46,7 +60,8 @@ export function deserializeState(data: Record<string, unknown>): GoalRuntimeStat
 		successCriteria: data.successCriteria as string | undefined,
 		// slug 用可选解析：旧持久化数据无此字段，不能误用 req()（否则旧数据 throw → state 全丢，GAP-4）
 		slug: data.slug as string | undefined,
-		status: req("status"),
+		// 旧数据迁移：0.7.x 的 time_limited → budget_limited（见 normalizeStatus）
+		status: normalizeStatus(req<string>("status")),
 		tokensUsed: req("tokensUsed"),
 		timeStartedAt: req("timeStartedAt"),
 		timeUsedSeconds: req("timeUsedSeconds"),

@@ -198,7 +198,10 @@ export function formatHistoryEntry(entry: GoalHistoryEntry, index: number): stri
 				? "✗"
 				: entry.status === "budget_limited"
 					? "⊗"
-					: "?";
+					// 旧 history entry（npm 0.7.x 时间预算格式）状态展示回归：保留 ⏱ 图标
+					: entry.status === "time_limited"
+						? "⏱"
+						: "?";
 	const title = entry.slug ?? (entry.objective.length > OBJECTIVE_DISPLAY_LIMIT
 		? `${entry.objective.slice(0, OBJECTIVE_TRUNCATE_KEEP)}...`
 		: entry.objective);
