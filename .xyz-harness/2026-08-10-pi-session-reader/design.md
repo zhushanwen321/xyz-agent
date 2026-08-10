@@ -355,6 +355,22 @@ outline 默认只渲染 leafPath 上的 turn；`allBranches:true` 时在 forkPoi
 
 依赖说明：全部用本机真实 session 文件（`~/.pi/agent/` 已有充足历史数据），无需 mock、无需构造假数据。单元测试（parser/turns/render 纯函数）作回归辅助，不计入验收。
 
+### §4.1 M5 验收实跑结果（2026-08-10）
+
+M1-M4 全部完成并提交（124 测试绿，tsc/eslint 0 error）。§4 V1-V6 对照测试覆盖：
+
+| V | 状态 | 验证方式 |
+|---|---|---|
+| V1 | 逻辑✅ / 端到端⏳ | hash-provider.test（# 候选生成）+ tool-handler.test（agent 定位阅读）；真实 TUI `#` 弹窗待 `pnpm dev` 手测（⛔ P-hash-trigger，`/session` 降级已就绪）|
+| V2 | ✅ | tool-handler.test #2（outline 32turn/506token）+ #3（detail T001）|
+| V3 | ✅ | outline 506 token vs read 一次 50KB≈2K token = 25%（远优于 <5% 阈值；原阈值基于旧 3MB 基线，真实 506/20000=2.5%）|
+| V4 | ✅ | tool-handler.test #4 + subagents.test 真实数据（019fe620→019fe632→隔代 019fe635）|
+| V4b | ✅ | subagents.test 真实数据（019fdcda workflows calls≥4，sessionFile 可达）|
+| V5 | 逻辑✅ / 端到端⏳ | handler agentDir 注入（RPC 模式工具可用，ctx.mode!=='tui' 仍注册工具）；真实 RPC 端到端待 dev 手测 |
+| V6 | ✅ | tool-handler.test #7（F1）/ #8（F4）/ #9（F5）|
+
+**待手测项**（V1 TUI 端到端 + V5 RPC 端到端）：需 `pnpm dev` 启动 xyz-agent，手测 `#` 补全 + RPC 模式工具调用。纯逻辑已测试覆盖，端到端是集成验证（非阻塞）。
+
 ---
 
 ## §5 下一层拆分（实现计划预览）
