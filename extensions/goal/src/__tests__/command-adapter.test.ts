@@ -13,8 +13,14 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { describe, expect, it } from "vitest";
 
 import { handleGoalCommand } from "../adapters/command-adapter";
+import {
+	MAX_HISTORY_ENTRIES,
+	OBJECTIVE_DISPLAY_LIMIT,
+	OBJECTIVE_TRUNCATE_KEEP,
+} from "../constants";
 import { createGoalState } from "../engine/goal";
 import type { GoalRuntimeState } from "../engine/types";
+import type { GoalHistoryEntry, SessionEntryLike } from "../ports";
 import { createGoalSession } from "../session";
 
 // ── Fake pi / ctx ────────────────────────────────────
@@ -38,7 +44,7 @@ interface FakeHarness {
 	ctxCalls: RecordedCall[];
 }
 
-function makeHarness(): FakeHarness {
+function makeHarness(entries: SessionEntryLike[] = []): FakeHarness {
 	const piCalls: RecordedCall[] = [];
 	const ctxCalls: RecordedCall[] = [];
 	const states: unknown[] = [];
@@ -72,7 +78,7 @@ function makeHarness(): FakeHarness {
 			setWidget: () => {},
 			theme: { fg: (_c: string, t: string) => t, bold: (t: string) => t },
 		},
-		sessionManager: { getEntries: () => [], getBranch: () => undefined },
+		sessionManager: { getEntries: () => entries, getBranch: () => undefined },
 	} as unknown as ExtensionContext;
 
 	return { pi, ctx, states, history, piCalls, ctxCalls };
@@ -87,6 +93,21 @@ function makeActiveState(overrides?: Partial<GoalRuntimeState>): GoalRuntimeStat
 		timeStartedAt: 0, // 默认关闭时间累计
 		...overrides,
 	};
+}
+
+// 构造 goal-history custom entry（模拟 Pi sessionManager.getEntries 返回的 append-only 历史）
+function makeHistoryEntries(...overrides: Partial<GoalHistoryEntry>[]): SessionEntryLike[] {
+	return overrides.map((o, i) => {
+		const data: GoalHistoryEntry = {
+			goalId: `g${i}`,
+			objective: `objective ${i}`,
+			status: "complete",
+			elapsedSeconds: 60,
+			timestamp: 1000 + i,
+			...o,
+		};
+		return { type: "custom", customType: "goal-history", data };
+	});
 }
 
 function allCalls(h: FakeHarness): RecordedCall[] {
@@ -106,7 +127,7 @@ describe("handleGoalCommand — status", () => {
 		const h = makeHarness();
 		const session = createGoalSession();
 		await handleGoalCommand(h.pi, session, "status", h.ctx);
-		expect(notifyText(h).some((t) => t.includes("not active"))).toBe(true);
+		expect(notifyText(h)[0]).toContain("not active");
 	});
 
 	it("有 active goal → 显示 status 面板", async () => {
@@ -132,9 +153,9 @@ describe("handleGoalCommand — pause (FR-3 active→paused)", () => {
 		expect(session.state!.status).toBe("paused");
 		// tick 前置：转 paused 前累加当前运行段（6 + ~4s）
 		expect(session.state!.timeUsedSeconds).toBeGreaterThanOrEqual(9);
-		expect(h.states.length).toBeGreaterThanOrEqual(1); // persist 调用
-		expect(notifyText(h).some((t) => t.includes("paused"))).toBe(true);
-		expect(notifyText(h).some((t) => t.includes("resume"))).toBe(true);
+		expect(h.states).toHaveLength(1); // persist 恰好 1 次
+		expect(notifyText(h).join("\n")).toContain("paused");
+		expect(notifyText(h).join("\n")).toContain("resume");
 	});
 
 	it("非 active（blocked）→ 拒绝 pause", async () => {
@@ -143,40 +164,30 @@ describe("handleGoalCommand — pause (FR-3 active→paused)", () => {
 		session.state = makeActiveState({ status: "blocked" });
 		await handleGoalCommand(h.pi, session, "pause", h.ctx);
 		expect(session.state!.status).toBe("blocked"); // 未变
-		expect(notifyText(h).some((t) => t.includes("not active"))).toBe(true);
+		expect(notifyText(h)[0]).toContain("not active");
 	});
 
 	it("无 active goal → 提示未激活", async () => {
 		const h = makeHarness();
 		const session = createGoalSession();
 		await handleGoalCommand(h.pi, session, "pause", h.ctx);
-		expect(notifyText(h).some((t) => t.includes("not active"))).toBe(true);
+		expect(notifyText(h)[0]).toContain("not active");
 	});
 });
 
 // ── /goal resume（FR-3：paused/blocked→active 对称 + G-014 预算重检）──
 
 describe("handleGoalCommand — resume (FR-3 paused/blocked→active + G-014)", () => {
-	it("blocked → active：resume 成功 + persist + 触发 AI", async () => {
+	const RESUME_STATUSES: GoalRuntimeState["status"][] = ["blocked", "paused"];
+	it.each(RESUME_STATUSES)("resume %s → active：成功 + persist + 触发 AI（FR-3 对称）", async (status) => {
 		const h = makeHarness();
 		const session = createGoalSession();
-		session.state = makeActiveState({ status: "blocked" });
+		session.state = makeActiveState({ status });
 		await handleGoalCommand(h.pi, session, "resume", h.ctx);
 		expect(session.state!.status).toBe("active");
-		expect(h.states.length).toBeGreaterThanOrEqual(1); // persist 调用
+		expect(h.states).toHaveLength(1); // persist 恰好 1 次
 		// FR-8.12: resume 后触发 AI
-		expect(h.piCalls.some((c) => c.kind === "sendUser")).toBe(true);
-	});
-
-	it("paused → active：resume 成功 + persist + 触发 AI（FR-3 对称）", async () => {
-		const h = makeHarness();
-		const session = createGoalSession();
-		session.state = makeActiveState({ status: "paused" });
-		await handleGoalCommand(h.pi, session, "resume", h.ctx);
-		expect(session.state!.status).toBe("active");
-		expect(h.states.length).toBeGreaterThanOrEqual(1); // persist 调用
-		// FR-8.12: resume 后触发 AI
-		expect(h.piCalls.some((c) => c.kind === "sendUser")).toBe(true);
+		expect(h.piCalls.filter((c) => c.kind === "sendUser")).toHaveLength(1);
 	});
 
 	it("resume 重置 timeStartedAt=now（FR-3.2 重启计时器）", async () => {
@@ -202,33 +213,12 @@ describe("handleGoalCommand — resume (FR-3 paused/blocked→active + G-014)", 
 			status: "blocked",
 			budget: {
 				tokenBudget: 1000,
-				timeBudgetMinutes: 30,
 			},
 			tokensUsed: 1200, // 已超 tokenBudget
 		});
 		await handleGoalCommand(h.pi, session, "resume", h.ctx);
 		expect(session.state!.status).toBe("budget_limited");
-		expect(notifyText(h).some((t) => t.includes("Token budget exhausted"))).toBe(true);
-	});
-
-	it("time 预算耗尽 → resume 转 time_limited（G-014）", async () => {
-		const h = makeHarness();
-		const session = createGoalSession();
-		session.state = makeActiveState({
-			status: "blocked",
-			timeStartedAt: 0,
-			budget: {
-				tokenBudget: 1000,
-				timeBudgetMinutes: 30,
-			},
-			tokensUsed: 100, // token 未超
-			timeUsedSeconds: 30 * 60, // 已超 timeBudgetMinutes*60
-		});
-		await handleGoalCommand(h.pi, session, "resume", h.ctx);
-		expect(session.state!.status).toBe("time_limited");
-		expect(notifyText(h).some((t) => t.includes("Time budget exhausted"))).toBe(true);
-		// 拒绝 resume：不触发 AI
-		expect(h.piCalls.some((c) => c.kind === "sendUser")).toBe(false);
+		expect(notifyText(h)[0]).toContain("Token budget exhausted");
 	});
 
 	it("非 paused/blocked 状态（active）→ 无需 resume", async () => {
@@ -236,7 +226,7 @@ describe("handleGoalCommand — resume (FR-3 paused/blocked→active + G-014)", 
 		const session = createGoalSession();
 		session.state = makeActiveState({ status: "active" });
 		await handleGoalCommand(h.pi, session, "resume", h.ctx);
-		expect(notifyText(h).some((t) => t.includes("not paused or blocked"))).toBe(true);
+		expect(notifyText(h)[0]).toContain("not paused or blocked");
 	});
 });
 
@@ -250,7 +240,7 @@ describe("handleGoalCommand — clear (FR-6.3)", () => {
 		await handleGoalCommand(h.pi, session, "clear", h.ctx);
 		expect(session.state).toBeNull(); // clearGoalSession 清空
 		expect(h.history.length).toBe(1); // 写 cancelled history
-		expect(notifyText(h).some((t) => t.includes("cleared"))).toBe(true);
+		expect(notifyText(h)[0]).toContain("cleared");
 	});
 
 	it("clear：MF-3 tick — active goal 转 cancelled 前累加时间", async () => {
@@ -285,7 +275,7 @@ describe("handleGoalCommand — update (FR-8.4 G-002)", () => {
 		expect(session.state!.currentTurnIndex).toBe(0);
 		expect(session.state!.budgetLimitSteeringSent).toBe(false);
 		expect(session.state!.slug).toBeUndefined(); // GAP-6: update 重置 slug
-		expect(h.states.length).toBeGreaterThanOrEqual(1); // persist
+		expect(h.states).toHaveLength(1); // persist
 	});
 
 	it("无参数 → usage 提示", async () => {
@@ -293,7 +283,7 @@ describe("handleGoalCommand — update (FR-8.4 G-002)", () => {
 		const session = createGoalSession();
 		session.state = makeActiveState();
 		await handleGoalCommand(h.pi, session, "update", h.ctx);
-		expect(notifyText(h).some((t) => t.includes("Usage"))).toBe(true);
+		expect(notifyText(h)[0]).toContain("Usage");
 	});
 
 	it("带 --criteria → 替换 successCriteria", async () => {
@@ -328,7 +318,7 @@ describe("handleGoalCommand — update (FR-8.4 G-002)", () => {
 		session.state = makeActiveState({ objective: "old" });
 		await handleGoalCommand(h.pi, session, "update new obj", h.ctx);
 		// FR-8.4: active 时发送 steering
-		expect(h.piCalls.some((c) => c.kind === "sendContext")).toBe(true);
+		expect(h.piCalls.filter((c) => c.kind === "sendContext")).toHaveLength(1);
 	});
 });
 
@@ -349,31 +339,25 @@ describe("handleGoalCommand — set (提示词触发器 + #11/D25 拒绝非终�
 		expect(sendUserCalls[0]?.content).toContain("goal_control");
 	});
 
-	it("非终态旧 goal（active）→ 拒绝 + 提示（#11/D25），不发触发消息", async () => {
-		const h = makeHarness();
-		const session = createGoalSession();
-		session.state = makeActiveState({ objective: "old active goal" });
-		const historyBefore = h.history.length;
-		await handleGoalCommand(h.pi, session, "new objective", h.ctx);
-		// #11: 拒绝，不写 history，不覆盖旧 goal，不发触发消息
-		expect(h.history.length).toBe(historyBefore); // 不写 history
-		expect(notifyText(h).some((t) => t.includes("Goal already active"))).toBe(true);
-		expect(notifyText(h).some((t) => t.includes("resume"))).toBe(true);
-		expect(notifyText(h).some((t) => t.includes("clear"))).toBe(true);
-		expect(session.state!.objective).toBe("old active goal"); // 旧 goal 保留，未覆盖
-		expect(h.piCalls.some((c) => c.kind === "sendUser")).toBe(false); // 不触发 AI
-	});
-
-	it("非终态旧 goal（paused）→ 拒绝创建（#11/D25）", async () => {
-		const h = makeHarness();
-		const session = createGoalSession();
-		session.state = makeActiveState({ status: "paused", objective: "old paused goal" });
-		await handleGoalCommand(h.pi, session, "new objective", h.ctx);
-		expect(notifyText(h).some((t) => t.includes("Goal already active"))).toBe(true);
-		expect(session.state!.status).toBe("paused"); // 状态不变
-		expect(session.state!.objective).toBe("old paused goal"); // 旧 goal 保留
-		expect(h.piCalls.some((c) => c.kind === "sendUser")).toBe(false); // 不触发 AI
-	});
+	const SET_REJECT_STATUSES: GoalRuntimeState["status"][] = ["active", "paused"];
+	it.each(SET_REJECT_STATUSES)(
+		"非终态旧 goal（%s）→ 拒绝 + 提示，不发触发消息（#11/D25）",
+		async (status) => {
+			const h = makeHarness();
+			const session = createGoalSession();
+			session.state = makeActiveState({ status, objective: `old ${status} goal` });
+			const historyBefore = h.history.length;
+			await handleGoalCommand(h.pi, session, "new objective", h.ctx);
+			// #11: 拒绝，不写 history，不覆盖旧 goal，不发触发消息
+			expect(h.history.length).toBe(historyBefore); // 不写 history
+			expect(notifyText(h).join("\n")).toContain("Goal already active");
+			expect(notifyText(h).join("\n")).toContain("resume");
+			expect(notifyText(h).join("\n")).toContain("clear");
+			expect(session.state!.status).toBe(status); // 状态不变
+			expect(session.state!.objective).toBe(`old ${status} goal`); // 旧 goal 保留
+			expect(h.piCalls.filter((c) => c.kind === "sendUser")).toHaveLength(0); // 不触发 AI
+		},
+	);
 
 	it("终态旧 goal → 发触发消息（AI 会覆盖终态 goal）", async () => {
 		const h = makeHarness();
@@ -383,7 +367,7 @@ describe("handleGoalCommand — set (提示词触发器 + #11/D25 拒绝非终�
 		await handleGoalCommand(h.pi, session, "new objective", h.ctx);
 		expect(h.history.length).toBe(historyBefore); // 不写 history（触发器不直接创建）
 		// 终态旧 goal 不挡触发器，发消息让 AI 创建
-		expect(h.piCalls.some((c) => c.kind === "sendUser")).toBe(true);
+		expect(h.piCalls.filter((c) => c.kind === "sendUser")).toHaveLength(1);
 	});
 
 	it("空 objective → usage 提示", async () => {
@@ -392,7 +376,7 @@ describe("handleGoalCommand — set (提示词触发器 + #11/D25 拒绝非终�
 		// parseGoalArgs("") → { action: "status" }，空字符串走 status 路径
 		await handleGoalCommand(h.pi, session, "", h.ctx);
 		// 空字符串在 parseGoalArgs 里被识别为 status，不是 set；status 路径提示 "not active"
-		expect(notifyText(h).some((t) => t.includes("not active"))).toBe(true);
+		expect(notifyText(h)[0]).toContain("not active");
 	});
 
 	it("--tokens 0 → parseGoalArgs 过滤（val > 0 校验），发触发消息", async () => {
@@ -408,23 +392,88 @@ describe("handleGoalCommand — set (提示词触发器 + #11/D25 拒绝非终�
 		expect(sendUserCalls[0]?.content).toContain("obj");
 	});
 
-	it("--tokens N --timeout M → 触发消息含 budget 值", async () => {
+	it("--tokens N → 触发消息含 budget 值", async () => {
 		const h = makeHarness();
 		const session = createGoalSession();
-		await handleGoalCommand(h.pi, session, "obj --tokens 5000 --timeout 30", h.ctx);
+		await handleGoalCommand(h.pi, session, "obj --tokens 5000", h.ctx);
 		const sendUserCalls = h.piCalls.filter((c) => c.kind === "sendUser");
 		expect(sendUserCalls).toHaveLength(1);
 		expect(sendUserCalls[0]?.content).toContain("5000");
-		expect(sendUserCalls[0]?.content).toContain("30");
 	});
 });
 
 // ── /goal history ────────────────────────────────────
 
 describe("handleGoalCommand — history", () => {
-	it("无 history → 提示", async () => {
+	it("无 history → 提示 No goal history", async () => {
 		const h = makeHarness();
 		await handleGoalCommand(h.pi, createGoalSession(), "history", h.ctx);
 		expect(notifyText(h).some((t) => t.includes("No goal history"))).toBe(true);
+	});
+
+	// icon 映射 + duration + status 三件套（核心渲染分支，原零覆盖）
+	it.each([
+		["complete → ✓", "complete", "✓"],
+		["cancelled → ✗", "cancelled", "✗"],
+		["budget_limited → ⊗", "budget_limited", "⊗"],
+		["未知 status → ?", "active", "?"],
+	])("有 history → notify 含 icon + duration + status（%s）", async (_name, status, icon) => {
+		const entries = makeHistoryEntries({
+			status,
+			objective: `${status} goal`,
+			elapsedSeconds: 90,
+		});
+		const h = makeHarness(entries);
+		await handleGoalCommand(h.pi, createGoalSession(), "history", h.ctx);
+		const text = notifyText(h).join("\n");
+		expect(text).toContain(icon);
+		expect(text).toContain(`| ${status}`);
+		expect(text).toContain("1m30s"); // formatDuration(90) = 始终带秒
+	});
+
+	it("有 slug → 标题用 slug（不显示 objective）", async () => {
+		const entries = makeHistoryEntries({
+			slug: "my-slug",
+			objective: "ignored long objective text",
+		});
+		const h = makeHarness(entries);
+		await handleGoalCommand(h.pi, createGoalSession(), "history", h.ctx);
+		const text = notifyText(h).join("\n");
+		expect(text).toContain("my-slug");
+		expect(text).not.toContain("ignored long objective text");
+	});
+
+	it("无 slug + 长 objective → 截断到 OBJECTIVE_TRUNCATE_KEEP + ...", async () => {
+		const long = "x".repeat(OBJECTIVE_DISPLAY_LIMIT + 10);
+		const entries = makeHistoryEntries({ objective: long, slug: undefined });
+		const h = makeHarness(entries);
+		await handleGoalCommand(h.pi, createGoalSession(), "history", h.ctx);
+		const text = notifyText(h).join("\n");
+		expect(text).toContain(`${"x".repeat(OBJECTIVE_TRUNCATE_KEEP)}...`);
+	});
+
+	it("多条 history → 倒序渲染（最近在前）+ 序号 1..N", async () => {
+		const entries = makeHistoryEntries({ slug: "first" }, { slug: "second" }, { slug: "third" });
+		const h = makeHarness(entries);
+		await handleGoalCommand(h.pi, createGoalSession(), "history", h.ctx);
+		const text = notifyText(h).join("\n");
+		// reverse: third（最后插入=最近）排第一
+		expect(text.indexOf("third")).toBeLessThan(text.indexOf("first"));
+		expect(text).toContain("1. "); // 序号格式
+	});
+
+	it("超过 MAX_HISTORY_ENTRIES → 只显示最近 N 条（最旧被截断）", async () => {
+		const entries = makeHistoryEntries(
+			...Array.from({ length: MAX_HISTORY_ENTRIES + 5 }, (_, i) => ({ slug: `slug-${i}` })),
+		);
+		const h = makeHarness(entries);
+		await handleGoalCommand(h.pi, createGoalSession(), "history", h.ctx);
+		const text = notifyText(h).join("\n");
+		// slice(-MAX) 后 reverse：最近一条（slug-24）排第一，第 5 条（slug-5）是保留的最旧一条
+		expect(text).toContain("slug-24");
+		expect(text).toContain("slug-5");
+		// 最旧 5 条（slug-0..slug-4）被截断
+		expect(text).not.toContain("slug-0");
+		expect(text).not.toContain("slug-4");
 	});
 });

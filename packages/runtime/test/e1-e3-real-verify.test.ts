@@ -4,7 +4,7 @@
  * 跑完即清理，不污染 dev 数据。
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { existsSync, mkdtempSync, mkdirSync, copyFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, copyFileSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
@@ -21,14 +21,28 @@ import { setSettingsPath, readSettings } from '../src/infra/pi/pi-settings-store
 const DEV_MODELS = join(homedir(), '.xyz-agent-dev/pi/agent/models.json')
 const DEV_SETTINGS = join(homedir(), '.xyz-agent-dev/pi/agent/settings.json')
 
+// 跳过条件：dev 无 models.json 或 providers 空。CI 无 dev 文件 → 跳过；
+// 本地 dev providers 空（如未配置 provider）→ 也跳过，否则 listProviders()
+// 返回 [] 会让 E1 的 find() 落空抛 TypeError（测试设计缺陷修复）。
+function devHasProviders(): boolean {
+  if (!existsSync(DEV_MODELS)) return false
+  try {
+    const raw = JSON.parse(readFileSync(DEV_MODELS, 'utf8'))
+    return Object.keys(raw?.providers ?? {}).length > 0
+  } catch {
+    return false
+  }
+}
+const HAS_DEV_PROVIDERS = devHasProviders()
+
 let tmpDir: string
 let configService: ConfigService
 let firstProviderId: string
 let firstModelId: string | undefined
 
 beforeAll(() => {
-  // 跳过条件：dev 无数据
-  if (!existsSync(DEV_MODELS)) return
+  // 跳过条件：dev 无可用 provider 数据（providers 空）
+  if (!HAS_DEV_PROVIDERS) return
 
   tmpDir = mkdtempSync(join(tmpdir(), 'e1-e3-real-'))
   const piAgentDir = join(tmpDir, 'pi', 'agent')
@@ -52,7 +66,7 @@ afterAll(() => {
   if (tmpDir && existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true })
 })
 
-describe.skipIf(!existsSync(DEV_MODELS))('E1-E3 real 层持久化验证', () => {
+describe.skipIf(!HAS_DEV_PROVIDERS)('E1-E3 real 层持久化验证', () => {
   it('E1: setProvider 改 api 类型 → models.json 落盘 pi 终值', () => {
     const before = configService.listProviders().find(p => p.id === firstProviderId)!
     const newApi = before.api === 'anthropic-messages' ? 'openai-completions' : 'anthropic-messages'

@@ -1,5 +1,19 @@
 # @xyz-agent/extension-protocol
 
+## 0.4.0
+
+### Minor Changes
+
+- Remove the ask-user comment feature end-to-end and drop `AskUserOption.value`.
+
+  Breaking changes in this version:
+
+  - `AskUserQuestion.allowComment` field removed — the comment interaction is deleted from all three consumers (protocol, pi-ask-user extension, renderer `AskUserOverlay`) in one atomic delivery. This is the corrective counterpart of 6e2e453 (which restored the field after a one-sided 0.3.0 deletion broke the contract); this time the extension and renderer are changed in the same wave, so no consumer is left depending on the removed API.
+  - `AskUserOption.value` removed — proto options no longer carry a separate return value; the selected label is the value (D1 model merge).
+  - `getAskUserComment` helper removed — the `${key}__comment` protocol key no longer exists. Answers are decoded with `getAskUserAnswer` / `getAskUserOther` only.
+
+  Per semver convention for 0.x packages, this breaking change ships as a minor bump (0.3.1 → 0.4.0).
+
 ## 0.3.1
 
 ### Patch Changes

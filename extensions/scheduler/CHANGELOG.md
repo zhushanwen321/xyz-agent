@@ -1,5 +1,11 @@
 # @zhushanwen/pi-scheduler
 
+## 0.1.1
+
+### Patch Changes
+
+- 246cd5e72: Extract `SchedulerBackend` and unify tool/command dispatch through `SchedulerService`. Fix the cron fallback loop and correct the misleading "every X" display for once tasks (now shown as "once in X").
+
 ## 0.1.0
 
 ### Minor Changes

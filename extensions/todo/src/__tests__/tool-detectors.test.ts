@@ -4,6 +4,11 @@
 // verify the Correct/error STRINGS exist; these exercise the actual throw logic of
 // handleAdd/handleDelete, so a refactor cannot silently drop the dual-form detection.
 //
+// Note: the schema layer (TodoParams, additionalProperties:false) already rejects
+// dual-form payloads before they reach the handler in production. These handler-level
+// tests are defense-in-depth — they ensure the handler ALSO throws clearly if called
+// directly (e.g. by another extension bypassing schema validation).
+//
 // handleAdd/handleDelete were exported specifically to enable these tests.
 
 import { describe, expect, it } from "vitest";
@@ -27,6 +32,13 @@ describe("handleAdd — text/texts dual-form detection", () => {
   it("throws 'requires texts' on empty array (missing, not dual-form)", () => {
     const state = createTodoSessionState();
     expect(() => handleAdd(state, { action: "add", texts: [] })).toThrow(/requires texts/);
+  });
+
+  it("TC7: 同时传 text 和 texts → throw（明确提示 add 只接受 texts）", () => {
+    const state = createTodoSessionState();
+    expect(() => handleAdd(state, { action: "add", text: "x", texts: ["y"] })).toThrow(
+      /only accepts texts array/,
+    );
   });
 
   it("does NOT throw when correct 'texts' array provided", () => {

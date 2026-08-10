@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-goal",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Codex-style /goal command for Pi — persistent goal-driven autonomous loop with evidence-based completion, token/time budgets, blocked detection, and steering templates.",
   "type": "module",
   "main": "src/index.ts",
@@ -23,13 +23,13 @@
   ],
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-tui": "*",
     "@earendil-works/pi-coding-agent": "*",
-    "typebox": "*",
-    "@zhushanwen/pi-pending-notifications": "workspace:*"
+    "@earendil-works/pi-tui": "*",
+    "@zhushanwen/pi-pending-notifications": "workspace:*",
+    "typebox": "*"
   },
   "dependencies": {
-    "@xyz-agent/extension-protocol": "workspace:^0.3.1"
+    "@xyz-agent/extension-protocol": "workspace:^0.4.0"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-tui": {
@@ -44,6 +44,8 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@fast-check/vitest": "^0.4.1",
+    "fast-check": "^4.9.0",
     "vitest": "^4.1.8"
   }
 }

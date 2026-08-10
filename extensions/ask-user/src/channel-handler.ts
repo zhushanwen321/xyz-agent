@@ -9,8 +9,8 @@
 //     不循环）。返回 {value: JSON.stringify(answers)} 让子进程 JSON.parse(value) decode。
 //   - TUI：走 ctx.ui.custom + AskUserComponent。三步：(1) protoQuestions → 内部 Question[]，
 //     (2) ctx.ui.custom 渲染拿内部 Result，(3) 内部 Result.answers（key=question 全文，
-//     value="label1, label2 — comment"）→ 重新编码为 proto AskUserAnswers（key=header/question，
-//     单选=value，多选=JSON 数组，Other→__other，comment→__comment），让子进程 decode 一致。
+//     value=结构化 AnswerValue）→ 用 encodeAnswer 重新编码为 proto AskUserAnswers
+//     （key=header/question，单选=string，多选=JSON 数组，Other→__other），让子进程 decode 一致。
 //
 // handler 收到的 req.channelPayload = {questions: AskUserQuestion[], allowCancel}（proto 格式，
 // 由子进程 askUserInteract 编码、subagent-workflow parseChannel 解析 options[0] JSON 得到）。
@@ -23,8 +23,8 @@ import {
 } from "@xyz-agent/extension-protocol";
 
 import { AskUserComponent } from "./component";
-import { parseAnswerParts } from "./answer-format";
-import { type Option, type Question, type Result, type ThemeLike } from "./types";
+import { encodeAnswer } from "./answer-codec";
+import { type AnswerValue, type Option, type Question, type Result, type ThemeLike } from "./types";
 
 /**
  * channel handler 签名——与 subagent-workflow 的 UiChannelRegistry.ChannelHandler 一致
@@ -60,7 +60,6 @@ function protoToInternalQuestions(protoQuestions: AskUserQuestion[]): Question[]
 			...(pq.context !== undefined ? { context: pq.context } : {}),
 			options: opts,
 			...(pq.multiSelect !== undefined ? { multiSelect: pq.multiSelect } : {}),
-			...(pq.allowComment !== undefined ? { allowComment: pq.allowComment } : {}),
 		};
 	});
 }
@@ -68,18 +67,16 @@ function protoToInternalQuestions(protoQuestions: AskUserQuestion[]): Question[]
 /**
  * 把 TUI 路径产出的内部 Result.answers 重新编码为 proto AskUserAnswers。
  *
- * 内部 Result.answers：key = question 全文，value = "label1, label2 — comment"
- * （Other 自由文本与 selected 标签逗号拼接，comment 用 ANSWER_COMMENT_SEPARATOR 分隔）。
+ * 内部 Result.answers：key = question 全文，value = 结构化 AnswerValue
+ * （selected = option label 数组，other = Other 自由文本）。
  *
  * proto AskUserAnswers 契约（@xyz-agent/extension-protocol）：
  *   - key = question.header ?? question 全文
- *   - 单选：value = 选中项 value string
- *   - 多选：value = JSON.stringify(选中项 value 数组)
+ *   - 单选：value = 选中项 label string
+ *   - 多选：value = JSON.stringify(选中项 label 数组)
  *   - Other 自由文本：单独 key `${header}__other`
- *   - comment：单独 key `${header}__comment`
  *
- * 解码（无信息丢失）：用 protoQuestion.options 的 label 集合精确匹配 selected；
- * 不匹配的 token = Other 自由文本；comment 由 ANSWER_COMMENT_SEPARATOR 切出。
+ * 序列化走 encodeAnswer（answer-codec.ts 是唯一 encode 实现，与协议包解码 helper 对齐）。
  */
 function encodeTuiResultToProto(
 	protoQuestions: AskUserQuestion[],
@@ -87,43 +84,15 @@ function encodeTuiResultToProto(
 ): AskUserAnswers {
 	const answers: AskUserAnswers = {};
 	for (const pq of protoQuestions) {
-		const key = pq.header ?? pq.question;
-		const internalText = result.answers[pq.question];
-		if (internalText === undefined) continue; // 该问题未答（protoAnswersToResult 也跳过未答）
-
-		// 已知选项 label 集合（protoQuestion.options 的 label/value 都作候选——value 缺失时用 label）
-		const knownLabels = new Set<string>();
-		for (const o of pq.options ?? []) {
-			knownLabels.add(o.label);
-			if (o.value !== undefined) knownLabels.add(o.value);
-		}
-
-		// body/comment 切分 + 选中/Other 识别：复用 parseAnswerParts（answer-format.ts 是
-		// 唯一权威切分实现——label 含 ANSWER_COMMENT_SEPARATOR 时首分隔符切分会把 label
-		// 拦腰截断导致选中丢失，两处各自实现必然漂移；复用保证 TUI/RPC 解码行为一致，
-		// comment 自身含分隔符也正确往返）。knownLabels 传 label+value 并集（value 缺失时
-		// 用 label）。
-		const { selected: matchedLabels, comment, otherTokens } = parseAnswerParts(internalText, [...knownLabels]);
-
-		// matched label 回查 proto option 的 value（PR #85 #8）：TUI 渲染用 label，但 RPC 路径
-		// （askUserInteract）回传的是 option.value。value≠label 时若直接 push label，
-		// TUI/RPC 两条路径产出分裂。value 缺失时 fallback label（保持 ask-user 自身
-		// toProtoQuestions 的 value=label 语义，以及历史行为）。
-		const selected = matchedLabels.map((t: string) => {
-			const opt = pq.options?.find(o => o.label === t || o.value === t);
-			return opt?.value ?? t;
-		});
-		const otherText = otherTokens.join(", ") || undefined;
-
-		// 主 key：单选 = 首个选中 value；多选 = JSON 数组（即便为空也写入，与 RPC 契约一致）
-		if (pq.multiSelect) {
-			answers[key] = JSON.stringify(selected);
-		} else if (selected.length > 0) {
-			answers[key] = selected[0]!;
-		}
-
-		if (otherText) answers[`${key}__other`] = otherText;
-		if (comment) answers[`${key}__comment`] = comment;
+		const av: AnswerValue | undefined = result.answers[pq.question];
+		if (av === undefined) continue; // 该问题未答（buildResult 跳过未答）
+		Object.assign(
+			answers,
+			encodeAnswer(av, {
+				key: pq.header ?? pq.question,
+				multiSelect: pq.multiSelect === true,
+			}),
+		);
 	}
 	return answers;
 }

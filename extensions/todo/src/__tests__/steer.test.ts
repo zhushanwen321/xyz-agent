@@ -2,11 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
 	buildBeforeAgentStartMessage,
-	buildMinimalReminder,
 	handleAutoClear,
 	handleCompletionSteer,
-	handleReminder,
-	handleStallDetection,
 	reconstructState,
 } from "../handlers";
 import type { Todo } from "../model";
@@ -101,95 +98,7 @@ describe("handleAutoClear", () => {
 	});
 });
 
-// ── stall detection ─────────────────────────────────
-
-describe("handleStallDetection", () => {
-	it("fires once when idle exceeds STALL_THRESHOLD (5)", () => {
-		const s = makeState([{ id: 1, text: "task", status: "pending" }], {
-			userMessageCount: 10, lastTodoCallCount: 5,
-		});
-		expect(handleStallDetection(s)).toBe(true);
-		expect(s.stallNotified).toBe(true);
-		expect(s.pendingSteerMessage).toContain("#1");
-	});
-
-	it("does not fire twice (single-shot lock)", () => {
-		const s = makeState([{ id: 1, text: "task", status: "pending" }], {
-			userMessageCount: 10, lastTodoCallCount: 5, stallNotified: true,
-		});
-		expect(handleStallDetection(s)).toBe(false);
-		expect(s.pendingSteerMessage).toBeNull();
-	});
-
-	it("does not fire below threshold", () => {
-		const s = makeState([{ id: 1, text: "task", status: "pending" }], {
-			userMessageCount: 8, lastTodoCallCount: 5,
-		});
-		expect(handleStallDetection(s)).toBe(false);
-	});
-});
-
-// ── reminder ────────────────────────────────────────
-
-describe("handleReminder", () => {
-	it("fires when idle exceeds REMINDER_INTERVAL (2)", () => {
-		const s = makeState([{ id: 1, text: "task", status: "pending" }], {
-			userMessageCount: 5, lastTodoCallCount: 3,
-		});
-		expect(handleReminder(s)).toBe(true);
-		expect(s.pendingSteerMessage).toContain("#1");
-	});
-
-	it("does not fire within interval", () => {
-		const s = makeState([{ id: 1, text: "task", status: "pending" }], {
-			userMessageCount: 4, lastTodoCallCount: 3,
-		});
-		expect(handleReminder(s)).toBe(false);
-	});
-});
-
-// ── reminder / context builders ─────────────────────
-
-	describe("buildMinimalReminder", () => {
-	it("mentions the next pending task with action directive", () => {
-		const s = makeState([
-			{ id: 1, text: "done", status: "completed" },
-			{ id: 2, text: "next", status: "pending" },
-		]);
-		const out = buildMinimalReminder(s);
-		expect(out).toContain("#2 next");
-		expect(out).toContain("必须处理");
-		expect(out).toContain("todo update");
-	});
-
-	it("includes in_progress todos as pending", () => {
-		const s = makeState([
-			{ id: 1, text: "working", status: "in_progress" },
-			{ id: 2, text: "next", status: "pending" },
-		]);
-		expect(buildMinimalReminder(s)).toContain("#1 working");
-	});
-
-	it("excludes cancelled todos from reminder", () => {
-		const s = makeState([
-			{ id: 1, text: "cancelled task", status: "cancelled" },
-			{ id: 2, text: "active", status: "in_progress" },
-		]);
-		const out = buildMinimalReminder(s);
-		expect(out).toContain("#2 active");
-		expect(out).not.toContain("#1");
-	});
-
-	it("returns empty string when only cancelled remain", () => {
-		expect(
-			buildMinimalReminder(makeState([{ id: 1, text: "x", status: "cancelled" }])),
-		).toBe("");
-	});
-
-	it("returns empty string when no pending", () => {
-		expect(buildMinimalReminder(makeState([{ id: 1, text: "done", status: "completed" }]))).toBe("");
-	});
-});
+// ── before_agent_start context injection ────────────
 
 describe("buildBeforeAgentStartMessage", () => {
 	it("injects hidden context for pending tasks only", () => {
@@ -213,21 +122,12 @@ describe("buildBeforeAgentStartMessage", () => {
 		expect(m!.message.content).toContain("搁置不等于完成");
 	});
 
-	it("excludes cancelled todos from context injection", () => {
+	it("includes in_progress todos as pending", () => {
 		const s = makeState([
-			{ id: 1, text: "cancelled", status: "cancelled" },
-			{ id: 2, text: "active", status: "pending" },
+			{ id: 1, text: "working", status: "in_progress" },
+			{ id: 2, text: "next", status: "pending" },
 		]);
-		const m = buildBeforeAgentStartMessage(s);
-		expect(m).toBeDefined();
-		expect(m!.message.content).toContain("#2: active");
-		expect(m!.message.content).not.toContain("#1");
-	});
-
-	it("returns undefined when only cancelled remain", () => {
-		expect(
-			buildBeforeAgentStartMessage(makeState([{ id: 1, text: "x", status: "cancelled" }])),
-		).toBeUndefined();
+		expect(buildBeforeAgentStartMessage(s)!.message.content).toContain("#1: working");
 	});
 
 	it("returns undefined when list empty", () => {
@@ -260,7 +160,7 @@ describe("reconstructState", () => {
 		expect(s.nextId).toBe(2);
 	});
 
-	it("uses the last todo entry and GCs older ones (splice from tail)", () => {
+	it("uses the last todo entry (不再 splice GC 旧条目)", () => {
 		const entries = [
 			todoEntry([{ id: 1, text: "old", status: "pending" }], 2),
 			todoEntry([{ id: 5, text: "new", status: "completed" }], 6),
@@ -269,7 +169,19 @@ describe("reconstructState", () => {
 		reconstructState(s, makeCtx(entries));
 		expect(s.todos[0].id).toBe(5);
 		expect(s.nextId).toBe(6);
-		expect(entries).toHaveLength(1);
+	});
+
+	it("TC10: 不修改传入的 entries（纯读，不再 splice）", () => {
+		const entries = [
+			todoEntry([{ id: 1, text: "old", status: "pending" }], 2),
+			todoEntry([{ id: 5, text: "new", status: "completed" }], 6),
+		];
+		const ctx = makeCtx(entries);
+		const seen = ctx.sessionManager.getEntries();
+		const lenBefore = seen.length;
+		const s = createTodoSessionState();
+		reconstructState(s, ctx);
+		expect(seen).toHaveLength(lenBefore); // reconstructState 未 splice 任何条目
 	});
 
 	it("migrates legacy status on replay", () => {
@@ -278,6 +190,14 @@ describe("reconstructState", () => {
 		const s = createTodoSessionState();
 		reconstructState(s, makeCtx(entries));
 		expect(s.todos[0].status).toBe("pending");
+	});
+
+	it("migrates legacy cancelled → completed on replay (TC1)", () => {
+		const legacy = [{ id: 1, text: "a", status: "cancelled" }] as unknown as Todo[];
+		const entries = [todoEntry(legacy, 2)];
+		const s = createTodoSessionState();
+		reconstructState(s, makeCtx(entries));
+		expect(s.todos[0].status).toBe("completed");
 	});
 
 	it("skips dirty (null/primitive) elements without throwing", () => {
