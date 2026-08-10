@@ -122,7 +122,7 @@ agent 看到的：find 候选列表 / family 家族树 / outline turn TOC / deta
 ### 关键术语（首次定义，后文反复使用）
 
 - **entry**：JSONL 的一行，带 `{type, id, parentId, timestamp}` 的结构化对象。就是 §2 现状里那条 12KB toolResult 所在的 JSON 行。
-- **turn（轮）**：分段单位 = 1 条 user message entry + 其后所有 assistant/toolResult/custom entry，直到下一条 user entry。1204 个 entry 的 session 实测只有 26 个 turn（附录 A P-outline）。
+- **turn（轮）**：分段单位 = 1 条 user/compaction entry + 其后非分段起始的 entry，直到下一条 user/compaction（compaction 是语义断点，独立成 turn，见 §3.5 算法 3）。1204 个 entry 的 session 实测有 32 个 turn（26 user + 5 compaction + 1 前置，附录 A P-outline）。
 - **leaf 路径**：从 root 沿 parentId 走到某叶子的单条路径。pi 重开 session 文件时把 leafId 重置为**文件最后一条 entry**（`session-manager.ts:894-897`），所以「root → 最后 entry」就是用户 resume 时看到的对话线——本设计的默认读取视图。
 - **家族（family）**：一个 session 的全部关联 session 集合 = fork 父链 + fork 子代（经首行 `parentSession` 文件路径指针双向建立）+ subagent session（经尾行 `subagent-identity.rootSessionId`）+ workflow run（经主 session 的 `workflow-state-link` entry）。
 
@@ -193,7 +193,7 @@ agent 看到的：find 候选列表 / family 家族树 / outline turn TOC / deta
 
 **D-1：分段单位用 turn，不用 entry 平铺。**
 - 选择：L1 outline 每 turn 一行；被否：entry 平铺 outline（每条 entry 一行）。
-- 证据：实测 019e6c96（1204 entry）只有 26 turn。entry 平铺 outline ≈ 1204 行 ~50K token，turn 级 26 行 **~500 token**（附录 A P-outline ✅）。需要 entry 粒度时走 `expand`（L2），平铺模式保留为 `granularity:"entry"` 参数兜底。
+- 证据：实测 019e6c96（1204 entry）有 32 turn（26 user + 5 compaction + 1 前置）。entry 平铺 outline ≈ 1204 行 ~50K token，turn 级 32 行 **~506 token**（附录 A P-outline ✅）。需要 entry 粒度时走 `expand`（L2），平铺模式保留为 `granularity:"entry"` 参数兜底。
 
 **D-2：默认视图 = root → 文件最后 entry 的单条 leaf 路径。**
 - 选择：默认只呈现当前对话线，分叉处标注 `[旁支 N entries]`；被否：默认全树平铺。
@@ -346,7 +346,7 @@ outline 默认只渲染 leafPath 上的 turn；`allBranches:true` 时在 forkPoi
 | # | 回溯目标 | 验证场景（谁/上下文/操作/预期） | 通过标准 |
 |---|---|---|---|
 | V1 | 目标 1 秒定位 + 目标 4 `#` 通道 | 真实 pi TUI 里输入 `#`，下方弹出当前目录 session 列表；选中一项插入 `#<片段>`，补一句「总结这个 session 做了什么」发给 agent | agent 调 `session_read` 完成定位+阅读并给出与该 session 实际内容一致的总结；全程未 `read` 原始 JSONL |
-| V2 | 目标 3 渐进精读 | 对本机 `019e6c96`（5.4MB / 26 turn / 1204 entry，feat-plugin-arch-3 目录）真实 session：`outline` → 据 TOC 选 2 轮 `detail` | outline 输出 ≤2K token 且 26 行齐全；两步内定位到指定历史事件（如某次 bash 命令的发起轮）；toolResult 默认不出现，`includeToolResult:true` 可取回 |
+| V2 | 目标 3 渐进精读 | 对本机 `019e6c96`（5.4MB / 32 turn / 1204 entry，feat-plugin-arch-3 目录）真实 session：`outline` → 据 TOC 选 2 轮 `detail` | outline 输出 ≤2K token 且 32 行齐全；两步内定位到指定历史事件（如某次 bash 命令的发起轮）；toolResult 默认不出现，`includeToolResult:true` 可取回 |
 | V3 | 目标 3 token 对比 | 同一 `019e6c96` session，对照组：agent 用内置 read 直接读原文（一次最多 50KB ≈ 12K token） | 实验组（outline+detail 完成 V2 任务）总 token < 对照组 read 一次的 5%（即 < 600 token） |
 | V4 | 目标 2 家族追溯（fork + subagent 腿） | 对本机真实 fork 对（`019fe632` fork 自 `019fe620`）+ 真实 subagent session（`019fe635`，rootSessionId=019fe632）跑 `family` | 父链、fork 子代、subagent 列表全部列出且与实际文件属实一致；从家族根 019fe620 出发能关联到隔代 subagent 019fe635（验证 D-7 隔代规则）；已 GC 的 subagent（若存在）标注 `[已清理]` |
 | V4b | 目标 2 家族追溯（workflow 腿） | 对本机 `019fdcda`（含 12 个 workflow-state-link entry 的真实 session）跑 `family`，再读 workflow-state 文件的 `calls[].sessionFile` | workflow run 列出；workflow-state-link.data.path 指向的文件存在且可读；calls[].sessionFile 对应的子代理 session 路径可达、内容可读 |
@@ -381,7 +381,7 @@ outline 默认只渲染 leafPath 上的 turn；`allBranches:true` 时在 forkPoi
 |---|---|---|---|
 | P-noise | toolResult 占 72.2%、对话内容（user+assistant text）<6% | python 统计本机 019e6c96（5.4MB）各 block 体积 | ✅ 2026-08-10 实测 |
 | P-parse | 5.4MB 全文解析 ~17ms，「不做缓存」成立 | python 逐行 json.loads 计时（Node 同量级或更快） | ✅ 实测 17ms（019e6c96） |
-| P-outline | turn 级 outline ≈ 500 token（26 行/2.0KB） | python 对 019e6c96 生成 turn brief 并计字符 | ✅ 实测 2010 chars |
+| P-outline | turn 级 outline ≈ 506 token（32 行/~2K chars，L1 不含 assistantBrief） | vitest 对 019e6c96 跑 renderOutline(budget:2000) | ✅ 实测 506 token |
 | P-header | 首行恒为 session header；fork 文件含 `parentSession` 路径指针 | 遍历本机 40 个 session 文件首行，找到真实 fork 对 019fe632→019fe620 | ✅ 实测 |
 | P-identity | subagent session 尾行存在 `subagent-identity` custom entry（含 rootSessionId） | tail 真实 subagent 文件（019fe635） | ✅ 实测 |
 | P-open-active | `SessionManager.open()` 读取**活跃写入中**的 session 文件安全（无锁、不写） | 实施期：对正在对话的 session 调 open 读 entries，确认主进程 append 不受影响 | ⛔ M3 前 |
