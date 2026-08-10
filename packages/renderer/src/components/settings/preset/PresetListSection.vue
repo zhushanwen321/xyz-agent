@@ -31,7 +31,7 @@
             :title="isExpanded(p.id) ? t('settings.preset.collapse') : t('settings.preset.expand')"
           >
             <ChevronDown
-              class="size-3.5 shrink-0 text-neutral-dim transition-transform duration-200"
+              class="size-3.5 shrink-0 text-neutral-dim transition-transform duration-[var(--duration)] ease-[var(--ease)]"
               :class="isExpanded(p.id) ? 'rotate-180' : ''"
             />
             <div class="min-w-0 flex-1 flex flex-col gap-0.5">

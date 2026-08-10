@@ -74,7 +74,7 @@
             class="h-auto w-full justify-start gap-1 px-0 py-0 text-[11px] font-normal text-accent hover:bg-transparent hover:text-accent [&_svg]:size-3"
             @click="showDefaultPrompt = !showDefaultPrompt"
           >
-            <ChevronRight class="transition-transform" :class="{ 'rotate-90': showDefaultPrompt }" />
+            <ChevronRight class="transition-transform duration-[var(--duration)] ease-[var(--ease)]" :class="{ 'rotate-90': showDefaultPrompt }" />
             {{ t('settings.systemPrompt.defaultToggle') }}
           </Button>
           <div v-if="showDefaultPrompt" class="mt-2">

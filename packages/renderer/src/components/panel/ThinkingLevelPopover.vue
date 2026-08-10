@@ -14,7 +14,7 @@
         <Brain class="size-3 shrink-0" />
         <span>{{ currentLabel }}</span>
         <ChevronDown
-          class="ml-px size-[9px] transition-transform duration-200"
+          class="ml-px size-[9px] transition-transform duration-[var(--duration)] ease-[var(--ease)]"
           :class="open && 'rotate-180'"
         />
       </Button>

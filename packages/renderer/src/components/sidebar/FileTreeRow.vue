@@ -23,7 +23,7 @@
       >
         <span :class="chevronSlotClass" data-testid="chevron-slot">
           <ChevronRight
-            class="size-3 text-neutral-dim transition-transform"
+            class="size-3 text-neutral-dim transition-transform duration-[var(--duration)] ease-[var(--ease)]"
             :class="{ 'rotate-90': isExpanded }"
           />
         </span>
