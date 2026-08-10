@@ -1,5 +1,11 @@
 # @zhushanwen/pi-subagent-workflow
 
+## 7.0.1
+
+### Patch Changes
+
+- 246cd5e72: Align the `@xyz-agent/extension-protocol` dependency specifier to `^0.4.0`. The previous `^0.3.1` range does not satisfy the 0.4.0 breaking bump, so consumers installing these packages would fail to resolve protocol 0.4.0 (ERESOLVE).
+
 ## 7.0.0
 
 ### Major Changes
