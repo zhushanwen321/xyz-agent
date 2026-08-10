@@ -222,13 +222,14 @@ const isSending = ref(false)
  *  用 ! 前缀压过 hasInput 的 2px 微环 Tailwind 内联工具类。 */
 const isFocused = ref(false)
 /** focus ring class：staging/bash/steer 活跃时不叠加（它们已含 accent border + ring），
- *  否则聚焦时输出 3px accent 外环（覆盖 hasInput 的 2px 微环）。 */
+ *  否则聚焦时输出 3px accent 外环（覆盖 hasInput 的 2px 微环）。
+ *  排除条件用 steer/bash 共享视觉特征 `border-[var(--accent)]`（Plan 04 删
+ *  animate-steer-breathe 后原字符串条件变死代码，F3 修复）。 */
 const focusRingClass = computed<Array<string>>(() => {
   if (!isFocused.value) return ['']
   const exclusive = String(boxClass.value[0] ?? '')
   if (
-    exclusive.includes('animate-steer-breathe')
-    || exclusive.includes('composer-bash-mode')
+    exclusive.includes('border-[var(--accent)]')
     || staging.activeStaging.value
   ) {
     return ['']
