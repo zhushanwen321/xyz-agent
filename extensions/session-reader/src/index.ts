@@ -2,6 +2,8 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
 import { getAgentDir } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { handleSessionRead, type SessionReadParams } from './tool-handler.js'
+import { createHashAutocompleteProvider } from './tui/hash-provider.js'
+import { createSessionCommand } from './tui/session-command.js'
 
 /**
  * pi-session-reader extension 入口（M3 工具适配层）。
@@ -109,6 +111,13 @@ const guidelines = [
 
 const description = `Read pi session files (conversation history) by semantic structure instead of raw bytes. Use when you need to review another session, trace a fork/subagent/workflow family, or locate a past decision. Seven actions: find (locate by name/uuid fragment), family (fork/subagent/workflow relations), outline (turn-level overview, ~500 token), expand (single-turn entry list), detail (full text of turns), search (full-text grep across a session), export (materialize to file). Progressive reading: outline → expand → detail. Do NOT use for the current session (use get_messages) or to edit sessions (pi has /resume /fork).`
 
+/**
+ * TUI provider/command 一次性注册标记。
+ * addAutocompleteProvider 是 stack 模式（wrap on top of built-in），session_start 每个
+ * session 触发，无 guard 会无限堆叠 provider。once-guard 确保整个进程生命周期只注册一次。
+ */
+let tuiRegistered = false
+
 export default function sessionReaderExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: 'session_read',
@@ -134,5 +143,24 @@ export default function sessionReaderExtension(pi: ExtensionAPI): void {
         }
       }
     },
+  })
+
+  // ── M4 TUI 层（design §1 + §3.3 D-3/D-4 + 附录 P-hash-trigger）──────────
+  // # 引用补全 provider + /session 命令。仅 ctx.mode === 'tui' 注册：RPC 模式
+  // （xyz-agent 子进程）不用 pi TUI editor / slash 命令，加载即跳过。
+  //
+  // addAutocompleteProvider 挂在 ctx.ui（非 ExtensionAPI），setup 入口无 ctx，
+  // 只能在 event handler 里拿——session_start 是最早且每 session 触发的 event。
+  // once-guard + ctx.mode 守卫 + typeof 运行时守卫三重防护。
+  pi.on('session_start', (_event, ctx) => {
+    if (ctx.mode !== 'tui') return
+    if (tuiRegistered) return
+    if (typeof ctx.ui.addAutocompleteProvider !== 'function') return
+    tuiRegistered = true
+    const agentDir = getAgentDir()
+    pi.registerCommand('session', createSessionCommand(agentDir))
+    ctx.ui.addAutocompleteProvider((current) =>
+      createHashAutocompleteProvider(agentDir, current),
+    )
   })
 }
