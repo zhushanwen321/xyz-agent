@@ -131,3 +131,26 @@ describe('浮层进出场过渡原语（Plan 01）', () => {
     })
   })
 })
+
+describe('Vue Transition 内容切换淡入（M1：设置页切换）', () => {
+  const settingsModal = readFileSync(
+    resolve(__dirname, '../../components/settings/SettingsModal.vue'),
+    'utf-8',
+  )
+
+  it('.ui-fade-enter-active/.ui-fade-leave-active 定义 opacity 过渡（--duration/--ease）', () => {
+    expect(styleCss).toContain('.ui-fade-enter-active')
+    expect(styleCss).toContain('.ui-fade-leave-active')
+    expect(styleCss).toContain('transition: opacity var(--duration) var(--ease)')
+  })
+
+  it('.ui-fade-enter-from/.ui-fade-leave-to 定义 opacity: 0', () => {
+    expect(styleCss).toContain('.ui-fade-enter-from')
+    expect(styleCss).toContain('.ui-fade-leave-to')
+    expect(styleCss).toContain('opacity: 0')
+  })
+
+  it('SettingsModal.vue 的 <Transition> 引用 name="ui-fade"（非死类）', () => {
+    expect(settingsModal).toContain('<Transition mode="out-in" name="ui-fade">')
+  })
+})
