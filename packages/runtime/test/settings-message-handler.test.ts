@@ -34,9 +34,9 @@ function makeHandler(overrides: { setProvider?: ReturnType<typeof vi.fn>; delete
     listProviders: vi.fn().mockReturnValue([{ id: 'p1' }]),
     checkEnvVars: vi.fn().mockReturnValue({}),
     setProvider: overrides.setProvider ?? vi.fn().mockReturnValue({}),
-    deleteProvider: overrides.deleteProvider ?? vi.fn().mockReturnValue({}),
+    deleteProvider: overrides.deleteProvider ?? vi.fn().mockResolvedValue({}),
     toggleProviderEnabled: overrides.toggleProviderEnabled ?? vi.fn().mockReturnValue({}),
-    removeProviderByKind: overrides.removeProviderByKind ?? vi.fn().mockReturnValue({}),
+    removeProviderByKind: overrides.removeProviderByKind ?? vi.fn().mockResolvedValue({}),
     setDefaultModel: vi.fn(),
     getDefaultModel: overrides.getDefaultModel ?? vi.fn().mockReturnValue(null),
     applyImportProviders: overrides.applyImportProviders ?? vi.fn().mockResolvedValue({ result: {} }),
@@ -122,7 +122,7 @@ describe('SettingsMessageHandler', () => {
 
     it('deleteProvider 有 newDefault → 广播 config.defaults (source=provider-deleted)', async () => {
       const { broadcasts, handler } = makeHandler({
-        deleteProvider: vi.fn().mockReturnValue({ newDefault: { provider: 'p2', modelId: 'm2' } }),
+        deleteProvider: vi.fn().mockResolvedValue({ newDefault: { provider: 'p2', modelId: 'm2' } }),
       })
       await handler.handleSettingsMessage(msg('config.deleteProvider', { providerId: 'p1' }), WS)
       const d = broadcasts.find(b => b.type === 'config.defaults')
@@ -358,7 +358,7 @@ describe('SettingsMessageHandler', () => {
 
     it('deleteProvider 有 newDefault → 广播 1 次', async () => {
       const { broadcasts, handler } = makeHandler({
-        deleteProvider: vi.fn().mockReturnValue({ removed: true, newDefault: { provider: 'p2', modelId: 'm2' } }),
+        deleteProvider: vi.fn().mockResolvedValue({ removed: true, newDefault: { provider: 'p2', modelId: 'm2' } }),
       })
       await handler.handleSettingsMessage(msg('config.deleteProvider', { providerId: 'p1' }), WS)
       expect(broadcasts.filter(b => b.type === 'config.defaults')).toHaveLength(1)
@@ -366,7 +366,7 @@ describe('SettingsMessageHandler', () => {
 
     it('deleteProvider 无 newDefault + getDefaultModel 无值 → 不广播', async () => {
       const { broadcasts, handler } = makeHandler({
-        deleteProvider: vi.fn().mockReturnValue({ removed: true }),
+        deleteProvider: vi.fn().mockResolvedValue({ removed: true }),
         getDefaultModel: vi.fn().mockReturnValue(null),
       })
       await handler.handleSettingsMessage(msg('config.deleteProvider', { providerId: 'p1' }), WS)
@@ -392,7 +392,7 @@ describe('SettingsMessageHandler', () => {
 
     it('removeProviderByKind 有 newDefault → 广播 1 次', async () => {
       const { broadcasts, handler } = makeHandler({
-        removeProviderByKind: vi.fn().mockReturnValue({ removed: true, newDefault: { provider: 'p2', modelId: 'm2' } }),
+        removeProviderByKind: vi.fn().mockResolvedValue({ removed: true, newDefault: { provider: 'p2', modelId: 'm2' } }),
       })
       await handler.handleSettingsMessage(msg('config.removeProviderByKind', { providerId: 'p1', kind: 'custom' }), WS)
       expect(broadcasts.filter(b => b.type === 'config.defaults')).toHaveLength(1)
@@ -400,7 +400,7 @@ describe('SettingsMessageHandler', () => {
 
     it('removeProviderByKind 无 newDefault + getDefaultModel 无值 → 不广播', async () => {
       const { broadcasts, handler } = makeHandler({
-        removeProviderByKind: vi.fn().mockReturnValue({ removed: true }),
+        removeProviderByKind: vi.fn().mockResolvedValue({ removed: true }),
         getDefaultModel: vi.fn().mockReturnValue(null),
       })
       await handler.handleSettingsMessage(msg('config.removeProviderByKind', { providerId: 'p1', kind: 'custom' }), WS)

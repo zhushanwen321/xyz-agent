@@ -71,7 +71,7 @@ export class SettingsMessageHandler {
         return true
       }
       case 'config.deleteProvider': {
-        const delResult = this.ctx.configService.deleteProvider(msg.payload.providerId)
+        const delResult = await this.ctx.configService.deleteProvider(msg.payload.providerId)
         this.ctx.reply(ws, msg.id, 'config.providerUpdated', { providerId: msg.payload.providerId, deleted: true })
         this.ctx.broadcastProviderList()
         reconcileDefaultModelAfterProviderChange(this.ctx, delResult.newDefault)
@@ -93,7 +93,7 @@ export class SettingsMessageHandler {
         // custom 删条目 + 清残留。reply config.providerUpdated + broadcastProviderList +
         // newDefault 广播（custom 分支 removeProvider 内 default 重选）。
         const { providerId, kind } = msg.payload
-        const removeResult = this.ctx.configService.removeProviderByKind(providerId, kind)
+        const removeResult = await this.ctx.configService.removeProviderByKind(providerId, kind)
         this.ctx.reply(ws, msg.id, 'config.providerUpdated', { providerId, deleted: true })
         this.ctx.broadcastProviderList()
         reconcileDefaultModelAfterProviderChange(this.ctx, removeResult.newDefault)

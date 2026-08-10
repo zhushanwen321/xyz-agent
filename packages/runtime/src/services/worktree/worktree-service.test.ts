@@ -87,8 +87,8 @@ function mockConfigService(worktreeRootDir = '/home/user/worktrees') {
     setProvider: vi.fn(),
     // wave4 补全：toggleProviderEnabled / removeProviderByKind（IConfigService 新增方法 stub）
     toggleProviderEnabled: vi.fn(() => ({})),
-    removeProviderByKind: vi.fn(() => ({ removed: true })),
-    deleteProvider: vi.fn(),
+    removeProviderByKind: vi.fn(async () => ({ removed: true })),
+    deleteProvider: vi.fn().mockResolvedValue(undefined),
     getProvider: vi.fn(),
     updateToolPermissions: vi.fn(),
     setSkillDirs: vi.fn(),

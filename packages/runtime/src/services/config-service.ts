@@ -131,11 +131,11 @@ export class ConfigService implements IConfigService {
     return toggleProviderEnabledImpl(this.configStore, this.authStorage, providerId, enabled)
   }
 
-  deleteProvider(providerId: string): { removed: boolean; newDefault?: { provider: ProviderId; modelId: string } } {
+  async deleteProvider(providerId: string): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
     return deleteProviderImpl(this.configStore, this.authStorage, providerId)
   }
 
-  removeProviderByKind(providerId: string, kind: 'catalog' | 'custom'): { removed: boolean; newDefault?: { provider: ProviderId; modelId: string } } {
+  async removeProviderByKind(providerId: string, kind: 'catalog' | 'custom'): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
     return removeProviderByKindImpl(this.configStore, this.authStorage, providerId, kind)
   }
 

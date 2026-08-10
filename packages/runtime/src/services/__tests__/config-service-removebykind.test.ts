@@ -78,31 +78,31 @@ function makeService(opts: StoreOpts = {}): { svc: ConfigService; store: ReturnT
 describe('TC2: removeProviderByKind(catalog) 清 auth.json 凭据 + override + enabledModels 残留', () => {
   beforeEach(() => { vi.clearAllMocks() })
 
-  it('调 authStorage.remove（清 catalog 凭据）', () => {
+  it('调 authStorage.remove（清 catalog 凭据）', async () => {
     const { svc, auth } = makeService({ enabledModels: ['openai/*'] })
-    svc.removeProviderByKind('openai', 'catalog')
+    await svc.removeProviderByKind('openai', 'catalog')
     expect(auth.remove).toHaveBeenCalledWith('openai')
   })
 
-  it('调 configStore.removeProvider（清 models.json override 条目，若有）', () => {
+  it('调 configStore.removeProvider（清 models.json override 条目，若有）', async () => {
     const { svc, store } = makeService({ enabledModels: ['openai/*'] })
-    svc.removeProviderByKind('openai', 'catalog')
+    await svc.removeProviderByKind('openai', 'catalog')
     expect(store.removeProvider).toHaveBeenCalledWith('openai')
   })
 
-  it('调 configStore.cleanEnabledModelsResidue（清 enabledModels 残留 <id>/* 与 <id>/model）', () => {
+  it('调 configStore.cleanEnabledModelsResidue（清 enabledModels 残留 <id>/* 与 <id>/model）', async () => {
     const { svc, store } = makeService({ enabledModels: ['openai/*', 'openai/gpt-4', 'anthropic/*'] })
-    svc.removeProviderByKind('openai', 'catalog')
+    await svc.removeProviderByKind('openai', 'catalog')
     expect(store.cleanEnabledModelsResidue).toHaveBeenCalledWith('openai')
   })
 
-  it('返回 removed:true（catalog 定义不可删，用户侧状态已清即视为移除成功）', () => {
+  it('返回 removed:true（catalog 定义不可删，用户侧状态已清即视为移除成功）', async () => {
     const { svc } = makeService({ enabledModels: ['openai/*'] })
-    const ret = svc.removeProviderByKind('openai', 'catalog')
+    const ret = await svc.removeProviderByKind('openai', 'catalog')
     expect(ret).toEqual({ removed: true })
   })
 
-  it('MF1（exec-review must-fix）：catalog override 承载 default 时透传 removeProvider 的 newDefault', () => {
+  it('MF1（exec-review must-fix）：catalog override 承载 default 时透传 removeProvider 的 newDefault', async () => {
     // 场景：catalog provider openai 有 override 且承载 defaultModel，removeProvider 删 override 时
     // 内部重选 default（anthropic/claude-3）+ mutate settings.json。catalog 分支须透传 newDefault，
     // 否则 handler 不广播 config.defaults → renderer 收不到重选通知（confirmDelete 防御性清空仅缓解显示）。
@@ -111,19 +111,46 @@ describe('TC2: removeProviderByKind(catalog) 清 auth.json 凭据 + override + e
       removed: true,
       newDefault: { provider: 'anthropic', modelId: 'claude-3' },
     })
-    const ret = svc.removeProviderByKind('openai', 'catalog')
+    const ret = await svc.removeProviderByKind('openai', 'catalog')
     expect(ret).toEqual({ removed: true, newDefault: { provider: 'anthropic', modelId: 'claude-3' } })
   })
 
-  it('authStorage.remove 失败（reject）不阻塞移除主流程（fire-and-forget warn）', async () => {
+  it('authStorage.remove 失败（reject）不阻塞移除主流程（cleanAuthCredential try-catch warn）', async () => {
     const { svc, store, auth } = makeService({ enabledModels: ['openai/*'] })
     ;(auth.remove as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('disk full'))
-    // 同步调用不抛（remove 是 fire-and-forget void Promise）
-    const ret = svc.removeProviderByKind('openai', 'catalog')
+    // await 完成：cleanAuthCredential try-catch 吞掉凭据清理异常，删除主流程不阻断
+    const ret = await svc.removeProviderByKind('openai', 'catalog')
     expect(ret).toEqual({ removed: true })
     expect(store.cleanEnabledModelsResidue).toHaveBeenCalledWith('openai')
-    // 等微任务跑完 reject（避免 unhandledRejection 警告）
-    await new Promise(r => setTimeout(r, 0))
+  })
+
+  it('回归：catalog 删除 await 凭据清理完成，返回后 listProviders 即不含该 provider（修复广播 stale）', async () => {
+    // 模拟真实 AuthStorage.remove 的异步性：withFileLock（proper-lockfile）获锁有延迟，
+    // fire-and-forget 时凭据未即时落盘。本测试构造带延迟的 remove，验证 removeProviderByKind
+    // await 其完成才返回 → 返回后 listProviders 立即反映凭据已清（广播拿到的就是干净列表）。
+    const credentialIds = new Set<string>(['openai'])
+    const auth = {
+      listCredentialIds: vi.fn(() => [...credentialIds]),
+      hasCredentialSync: vi.fn((id: string) => credentialIds.has(id)),
+      remove: vi.fn(async (id: string) => {
+        await new Promise(r => setTimeout(r, 5))
+        credentialIds.delete(id)
+      }),
+      set: vi.fn().mockResolvedValue(undefined),
+      hasOAuth: vi.fn(() => false),
+      hasOAuthSync: vi.fn(() => false),
+    } as unknown as FullAuthPick
+    const store = makeStore({})
+    const svc = new ConfigService('/tmp/project', store, auth)
+
+    // 删除前：openai 凭据在 auth.json → listProviders catalog 聚合显示
+    expect(svc.listProviders().some(p => p.id === 'openai')).toBe(true)
+
+    await svc.removeProviderByKind('openai', 'catalog')
+
+    // 关键回归断言：await 返回时凭据已清，listProviders 不再显示 openai。
+    // 若改回 fire-and-forget，此断言失败（凭据 5ms 后才删，返回后立即查仍在）。
+    expect(svc.listProviders().some(p => p.id === 'openai')).toBe(false)
   })
 })
 
@@ -132,31 +159,31 @@ describe('TC2: removeProviderByKind(catalog) 清 auth.json 凭据 + override + e
 describe('TC3: removeProviderByKind(custom) 删 models.json 条目 + 清 enabledModels 残留', () => {
   beforeEach(() => { vi.clearAllMocks() })
 
-  it('调 configStore.removeProvider（删 custom 定义条目）', () => {
+  it('调 configStore.removeProvider（删 custom 定义条目）', async () => {
     const { svc, store } = makeService({ enabledModels: ['my-custom/*'] })
-    svc.removeProviderByKind('my-custom', 'custom')
+    await svc.removeProviderByKind('my-custom', 'custom')
     expect(store.removeProvider).toHaveBeenCalledWith('my-custom')
   })
 
-  it('调 configStore.cleanEnabledModelsResidue（清残留）', () => {
+  it('调 configStore.cleanEnabledModelsResidue（清残留）', async () => {
     const { svc, store } = makeService({ enabledModels: ['my-custom/*', 'openai/*'] })
-    svc.removeProviderByKind('my-custom', 'custom')
+    await svc.removeProviderByKind('my-custom', 'custom')
     expect(store.cleanEnabledModelsResidue).toHaveBeenCalledWith('my-custom')
   })
 
-  it('不调 authStorage.remove（custom 凭据在 models.json，删条目即清，不走 auth.json）', () => {
+  it('不调 authStorage.remove（custom 凭据在 models.json，删条目即清，不走 auth.json）', async () => {
     const { svc, auth } = makeService({ enabledModels: ['my-custom/*'] })
-    svc.removeProviderByKind('my-custom', 'custom')
+    await svc.removeProviderByKind('my-custom', 'custom')
     expect(auth.remove).not.toHaveBeenCalled()
   })
 
-  it('透传 removeProvider 返回值（含 default 重选 newDefault）', () => {
+  it('透传 removeProvider 返回值（含 default 重选 newDefault）', async () => {
     const { svc, store } = makeService({ enabledModels: ['my-custom/*'] })
     ;(store.removeProvider as ReturnType<typeof vi.fn>).mockReturnValueOnce({
       removed: true,
       newDefault: { provider: 'openai', modelId: 'gpt-4' },
     })
-    const ret = svc.removeProviderByKind('my-custom', 'custom')
+    const ret = await svc.removeProviderByKind('my-custom', 'custom')
     expect(ret).toEqual({ removed: true, newDefault: { provider: 'openai', modelId: 'gpt-4' } })
   })
 })

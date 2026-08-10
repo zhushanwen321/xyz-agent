@@ -31,7 +31,7 @@ function makeHandler() {
   const configService = {
     listProviders: vi.fn().mockReturnValue([]),
     setProvider: vi.fn().mockReturnValue({}),
-    deleteProvider: vi.fn().mockReturnValue({ removed: false }),
+    deleteProvider: vi.fn().mockResolvedValue({ removed: false }),
     setDefaultModel: vi.fn(),
     getProvider: vi.fn().mockReturnValue(undefined),
     updateToolPermissions: vi.fn(),

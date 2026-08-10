@@ -431,20 +431,44 @@ function pickEnabledDefaultModel(
 }
 
 /**
- * 删除 provider（I8：同步清 auth.json 凭据）。
+ * 清 auth.json 凭据（api_key / oauth token），失败仅 console.warn 不抛出。
+ *
+ * 设计约束：auth.json 清理是 provider 删除的「附带卫生操作」（主语义是 models.json
+ * 条目/override 删除），凭据清理失败不应阻断删除主流程，故 try-catch 吞错只记 warn。
+ *
+ * 必须 await（而非 fire-and-forget）：AuthStorage.remove 内部 withFileLock（proper-lockfile）
+ * 是真异步，fire-and-forget 时锁尚未获取、auth.json 未改写，紧随其后的 broadcastProviderList
+ * → listProviders 会读到旧凭据，导致 catalog provider 删除后首次广播仍含该 provider。
+ */
+async function cleanAuthCredential(
+  authStorage: AuthStorageAccessors | undefined,
+  providerId: string,
+  ctx: string,
+): Promise<void> {
+  if (!authStorage) return
+  try {
+    await authStorage.remove(providerId)
+  // eslint-disable-next-line taste/no-silent-catch -- 凭据清理失败不阻断删除主流程（条目删除是主语义），warn 记录便于诊断
+  } catch (err) {
+    console.warn(`[config-service] auth.json cleanup failed ${ctx}:`, err)
+  }
+}
+
+/**
+ * 删除 provider（I8：await 清 auth.json 凭据）。
  * 纯函数：configStore / authStorage 经参数注入（原 ConfigService.deleteProvider 逐字搬迁）。
  */
-export function deleteProvider(
+export async function deleteProvider(
   configStore: IConfigStore,
   authStorage: AuthStorageAccessors | undefined,
   providerId: string,
-): { removed: boolean; newDefault?: { provider: ProviderId; modelId: string } } {
-  // I8：删 provider 同步清 auth.json 凭据（OAuth token 是强绑定凭据，不能残留）。
-  // 幂等：auth.json 无该 provider 时 no-op。清理失败记 warn（fire-and-forget，不阻塞删除主流程）。
-  void authStorage?.remove(providerId).catch(err => {
-    console.warn(`[config-service] auth.json cleanup failed for ${providerId} (I8):`, err)
-  })
-  return configStore.removeProvider(providerId)
+): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
+  // I8：删 provider 后 await 清 auth.json 凭据（OAuth token 强绑定，不能残留）。
+  // 幂等：auth.json 无该 provider 时 no-op。顺序：先删条目（同步生效）→ 再 await 清凭据，
+  // 保证 handler await 返回时条目+凭据都已清，broadcastProviderList 拿到干净列表。
+  const result = configStore.removeProvider(providerId)
+  await cleanAuthCredential(authStorage, providerId, `(I8) ${providerId}`)
+  return result
 }
 
 /**
@@ -464,17 +488,13 @@ export function deleteProvider(
  *
  * @param kind ProviderInfo.kind（renderer 传入，wave2 聚合层权威标注）
  */
-export function removeProviderByKind(
+export async function removeProviderByKind(
   configStore: IConfigStore,
   authStorage: AuthStorageAccessors | undefined,
   providerId: string,
   kind: 'catalog' | 'custom',
-): { removed: boolean; newDefault?: { provider: ProviderId; modelId: string } } {
+): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
   if (kind === 'catalog') {
-    // 清 auth.json 凭据（api_key / oauth token，强绑定凭据不能残留）。fire-and-forget。
-    void authStorage?.remove(providerId).catch(err => {
-      console.warn(`[config-service] auth.json cleanup failed for catalog provider ${providerId}:`, err)
-    })
     // 清 models.json override 条目（若有）。无 override 时 removeProvider 返回 { removed: false }，
     // 不影响后续清残留——catalog 的「移除」语义是清用户侧状态，override 本就可能不存在。
     // MF1 修复（exec-review must-fix）：catalog override 承载 defaultModel 时 removeProvider 内部
@@ -482,11 +502,16 @@ export function removeProviderByKind(
     // （与 custom 分支 + deleteProvider 对称，否则 renderer 收不到重选通知）。
     const overrideResult = configStore.removeProvider(providerId)
     configStore.cleanEnabledModelsResidue(providerId)
+    // 清 auth.json 凭据（api_key / oauth token，强绑定凭据不能残留）。await：remove 内部
+    // withFileLock 是真异步，fire-and-forget 会导致 broadcastProviderList 读到旧凭据 → 广播
+    // stale 列表（catalog provider 删除后首次广播仍含该 provider 的根因）。失败仅 warn 不阻断。
+    await cleanAuthCredential(authStorage, providerId, `for catalog provider ${providerId}`)
     // catalog 定义不可删（pi 二进制内置），「移除」= 清凭据/override/残留。removed=true 表示
     // 用户侧状态已清，listProviders 双源聚合（凭据 ∪ override）将不再显示该 provider。
     return { removed: true, newDefault: overrideResult.newDefault }
   }
   // custom：删 models.json 条目（= 删定义）+ 清残留。removeProvider 内部含 defaultModel 重选。
+  // custom 凭据随条目存在 models.json（apiKey 字段），删条目即清；auth.json 无需单独清理。
   const result = configStore.removeProvider(providerId)
   configStore.cleanEnabledModelsResidue(providerId)
   return result
