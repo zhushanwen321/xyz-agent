@@ -22,6 +22,7 @@ vi.mock('node:child_process', { spy: true })
 
 const PROCESS_MOCK_SOURCE = resolve(__dirname, 'fixtures/plugin-bootstrap-process.mock.cjs')
 const WORKER_MOCK = resolve(__dirname, 'fixtures/mock-bootstrap.cjs')
+const NOOP_ESM_LOADER = resolve(__dirname, 'fixtures/noop-esm-loader.cjs')
 const FAKE_PLUGIN_PATH = '/fake/plugin.js'
 
 describe('PluginHost sandbox wiring', () => {
@@ -31,7 +32,12 @@ describe('PluginHost sandbox wiring', () => {
   beforeEach(() => {
     vi.mocked(childProcess.fork).mockClear()
     rpcServer = new PluginRpcServer()
-    host = new PluginHost(rpcServer, { bootstrapPathOverride: PROCESS_MOCK_SOURCE, workerBootstrapOverride: WORKER_MOCK })
+    // MF-1：sandbox fork 边界断言 execArgv 含 --import；测试用 noop loader 满足契约
+    host = new PluginHost(rpcServer, {
+      bootstrapPathOverride: PROCESS_MOCK_SOURCE,
+      workerBootstrapOverride: WORKER_MOCK,
+      execArgv: ['--import', NOOP_ESM_LOADER],
+    })
   })
 
   afterEach(async () => {
@@ -124,5 +130,31 @@ describe('PluginHost sandbox wiring', () => {
     const opts = forkCall?.[2] as { env?: NodeJS.ProcessEnv } | undefined
     // env 缺失时 ESM loader initialize() throw（子进程启动即崩溃）——fail-closed 安全语义
     expect(opts?.env?.XYZ_PLUGIN_SANDBOX_DIR).toBeUndefined()
+  })
+
+  // ── MF-4：ESM loader execArgv 注入 wiring 集成测试 ───────────
+  it('TC10 (MF-4): sandbox fork 第 3 参 options.execArgv 含 --import <loader 绝对路径>', async () => {
+    await host.assignWorker('p1', 'sandbox', '/fake/plugin-dir')
+    expect(vi.mocked(childProcess.fork)).toHaveBeenCalledTimes(1)
+    const forkCall = vi.mocked(childProcess.fork).mock.calls[0]
+    const opts = forkCall?.[2] as { execArgv?: string[]; env?: NodeJS.ProcessEnv } | undefined
+    // resolveEsmLoaderExecArgv → PluginHost({execArgv}) → PluginHostProcess.execArgv → fork options.execArgv
+    // 这条安全命门在 fork 边界必须断言 execArgv === ['--import', <loader 绝对路径>]
+    expect(opts?.execArgv).toEqual(['--import', NOOP_ESM_LOADER])
+    // 同步校验 env 仍注入（TC8 的回归保护，与 execArgv 共同构成 sandbox fork 完整 wiring）
+    expect(opts?.env?.XYZ_PLUGIN_SANDBOX_DIR).toBe('/fake/plugin-dir')
+  })
+
+  it('TC11 (MF-4+MF-1): loader 缺失（execArgv 无 --import）时 sandbox fork fail-closed', async () => {
+    // 模拟 resolveEsmLoaderExecArgv 返回 undefined（loader 文件缺失）：构造时不传 execArgv
+    const bareHost = new PluginHost(new PluginRpcServer(), {
+      bootstrapPathOverride: PROCESS_MOCK_SOURCE,
+    })
+    // sandbox fork 边界断言拒绝创建无 ESM 防护的进程（MF-1 fail-closed）
+    await expect(bareHost.assignWorker('p1', 'sandbox', '/fake/plugin-dir')).rejects.toThrow(/SANDBOX_LOADER_MISSING|--import/)
+    // trusted 不受影响（走 Worker 线程，不需要 ESM loader）
+    const trustedId = await bareHost.assignWorker('p2', 'trusted')
+    expect(trustedId).toBe('trusted-1')
+    await bareHost.shutdown()
   })
 })

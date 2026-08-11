@@ -21,12 +21,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const WORKER_MOCK = resolve(__dirname, 'fixtures/mock-bootstrap.cjs')
 /** sandbox fork 子进程的 mock bootstrap（经 bootstrapPathOverride 注入） */
 const PROCESS_MOCK_SOURCE = resolve(__dirname, 'fixtures/plugin-bootstrap-process.mock.cjs')
+/** MF-1：sandbox fork 边界断言 execArgv 含 --import；测试用 noop loader 满足契约 */
+const NOOP_ESM_LOADER = resolve(__dirname, 'fixtures/noop-esm-loader.cjs')
 
 describe('PluginHost', () => {
   // ── TC-2-01: sandbox 分配独立 fork 子进程 ─────────────────────
   it('TC-2-01: assignWorker for sandbox creates unique fork process per plugin', async () => {
     const rpc = new PluginRpcServer()
-    const host = new PluginHost(rpc, { bootstrapPathOverride: PROCESS_MOCK_SOURCE })
+    const host = new PluginHost(rpc, { bootstrapPathOverride: PROCESS_MOCK_SOURCE, execArgv: ['--import', NOOP_ESM_LOADER] })
 
     const workerId1 = await host.assignWorker('plugin-a', 'sandbox')
     const workerId2 = await host.assignWorker('plugin-b', 'sandbox')
@@ -75,7 +77,7 @@ describe('PluginHost', () => {
   // ── TC-2-03: terminateWorker 清理 sandbox 子进程 ──────────────
   it('TC-2-03: terminateWorker removes worker', async () => {
     const rpc = new PluginRpcServer()
-    const host = new PluginHost(rpc, { bootstrapPathOverride: PROCESS_MOCK_SOURCE })
+    const host = new PluginHost(rpc, { bootstrapPathOverride: PROCESS_MOCK_SOURCE, execArgv: ['--import', NOOP_ESM_LOADER] })
 
     const workerId = await host.assignWorker('term-test', 'sandbox')
 
@@ -113,7 +115,7 @@ describe('PluginHost', () => {
   // ── 补充：shutdown 清理所有 sandbox 子进程 ────────────────────
   it('shutdown terminates all workers', async () => {
     const rpc = new PluginRpcServer()
-    const host = new PluginHost(rpc, { bootstrapPathOverride: PROCESS_MOCK_SOURCE })
+    const host = new PluginHost(rpc, { bootstrapPathOverride: PROCESS_MOCK_SOURCE, execArgv: ['--import', NOOP_ESM_LOADER] })
 
     await host.assignWorker('s-1', 'sandbox')
     await host.assignWorker('s-2', 'sandbox')
@@ -128,7 +130,7 @@ describe('PluginHost', () => {
   // ── 补充：sandbox 子进程崩溃转发 crash callback ────────────────
   it('crash callback is invoked when worker errors', async () => {
     const rpc = new PluginRpcServer()
-    const host = new PluginHost(rpc, { bootstrapPathOverride: PROCESS_MOCK_SOURCE })
+    const host = new PluginHost(rpc, { bootstrapPathOverride: PROCESS_MOCK_SOURCE, execArgv: ['--import', NOOP_ESM_LOADER] })
 
     const crashes: Array<{ workerId: string; pluginIds: string[]; error: string }> = []
     host.setCrashCallback((workerId, pluginIds, error) => {

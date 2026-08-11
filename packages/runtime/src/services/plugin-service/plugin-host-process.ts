@@ -172,8 +172,10 @@ export class PluginHostProcess implements PluginHostProcessContract {
 
   /**
    * 终止子进程并清理注册。
-   * 先置 status='terminated' 再 kill——kill 后 exit/disconnect 事件到达时被幂等守卫拦截，
-   * 不会误触发 crash 回调（R3）。
+   * 先置 status='terminated' 再 graceful kill（SIGTERM→SHUTDOWN_KILL_TIMEOUT_MS→SIGKILL），
+   * 与 shutdown() 升级链对称——避免恶意/卡死子进程抵抗 SIGTERM 导致 orphan 泄漏
+   *（MF-3：hot-reload/deactivate 路径的旧版子进程残留）。kill 后 exit/disconnect 事件
+   * 到达时被幂等守卫拦截，不会误触发 crash 回调（R3）。
    */
   async terminateProcess(processId: string): Promise<void> {
     const child = this.processInstances.get(processId)
@@ -186,12 +188,7 @@ export class PluginHostProcess implements PluginHostProcessContract {
     this.processInstances.delete(processId)
     this.processes.delete(processId)
 
-    try {
-      child.kill()
-    } catch (e: unknown) {
-      // kill 失败（进程已死/权限）不阻塞清理
-      console.debug(`[plugin-host-process] kill failed for ${processId}:`, e)
-    }
+    await this.killChildGracefully(child)
   }
 
   /** 满足 PluginHostProcessContract：按 pluginId 查找子进程，返回带 postMessage 的句柄 */
@@ -228,35 +225,46 @@ export class PluginHostProcess implements PluginHostProcessContract {
   async shutdown(): Promise<void> {
     const children = [...this.processInstances.values()]
     await Promise.allSettled(
-      children.map((child) => {
-        if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
-        return new Promise<void>((resolve) => {
-          const timer = setTimeout(() => {
-            try {
-              child.kill('SIGKILL')
-            } catch (e: unknown) {
-              // best-effort：进程可能刚退出，kill 抛错不阻塞 shutdown
-              console.debug(`[plugin-host-process] SIGKILL failed for shutdown:`, e)
-            }
-            resolve()
-          }, SHUTDOWN_KILL_TIMEOUT_MS)
-          timer.unref?.()
-          child.once('exit', () => {
-            clearTimeout(timer)
-            resolve()
-          })
-          try {
-            child.kill()
-          } catch (e: unknown) {
-            // best-effort：进程可能已退出，kill 抛错不阻塞 shutdown
-            console.debug(`[plugin-host-process] kill failed during shutdown:`, e)
-          }
-        })
-      }),
+      children.map((child) => this.killChildGracefully(child)),
     )
     this.processInstances.clear()
     this.processes.clear()
     this.rpcServer.dispose()
+  }
+
+  /**
+   * 优雅终止子进程：SIGTERM → 等待 exit（最多 SHUTDOWN_KILL_TIMEOUT_MS）→ SIGKILL 兜底。
+   *
+   * terminateProcess 与 shutdown 共用此升级链（MF-3：消除不对称，防 SIGTERM 抵抗导致 orphan）。
+   * timer.unref() 避免兜底定时器阻塞 runtime 退出。
+   */
+  private killChildGracefully(child: ChildProcess): Promise<void> {
+    return new Promise<void>((resolve) => {
+      if (child.exitCode !== null || child.signalCode !== null) {
+        resolve()
+        return
+      }
+      const timer = setTimeout(() => {
+        try {
+          child.kill('SIGKILL')
+        } catch (e: unknown) {
+          // best-effort：进程可能刚退出，kill 抛错不阻塞清理
+          console.debug(`[plugin-host-process] SIGKILL escalation failed:`, e)
+        }
+        resolve()
+      }, SHUTDOWN_KILL_TIMEOUT_MS)
+      timer.unref?.()
+      child.once('exit', () => {
+        clearTimeout(timer)
+        resolve()
+      })
+      try {
+        child.kill()
+      } catch (e: unknown) {
+        // best-effort：进程可能已退出，kill 抛错不阻塞清理
+        console.debug(`[plugin-host-process] kill failed:`, e)
+      }
+    })
   }
 
   // ── Private ──────────────────────────────────────────────────────
@@ -308,6 +316,18 @@ export class PluginHostProcess implements PluginHostProcessContract {
           bootstrapPath = resolveAndValidateFile('plugin-bootstrap-process.ts')
         }
       }
+    }
+
+    // MF-1：sandbox fork 前断言 execArgv 含 --import（ESM loader 注入口）。loader 缺失时
+    // resolveEsmLoaderExecArgv 返回 undefined → execArgv 为空 → 此处 fail-closed throw，
+    // 拒绝创建无 ESM 防护的 sandbox 进程（否则外部插件 await import('node:fs') 即 RCE）。
+    // trusted 不受影响（走 Worker 线程不经此路径，不需要 ESM loader）。
+    if (trustLevel === 'sandbox' && !this.execArgv.includes('--import')) {
+      throw new Error(
+        `[plugin-host-process] SANDBOX_LOADER_MISSING: cannot fork sandbox process without ESM loader ` +
+        `(execArgv missing --import; resolveEsmLoaderExecArgv returned no loader). ` +
+        `Refusing to create sandbox process without ESM import guard (RCE risk).`,
+      )
     }
 
     // sandbox 子进程 env：注入 XYZ_PLUGIN_SANDBOX_DIR（ESM loader initialize() 读此 env

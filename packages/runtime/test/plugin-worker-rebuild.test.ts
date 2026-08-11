@@ -33,6 +33,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const WORKER_MOCK = resolve(__dirname, 'fixtures/mock-bootstrap.cjs')
 /** sandbox fork 子进程的 mock bootstrap（经 bootstrapPathOverride 注入） */
 const PROCESS_MOCK_SOURCE = resolve(__dirname, 'fixtures/plugin-bootstrap-process.mock.cjs')
+/** MF-1：sandbox fork 边界断言 execArgv 含 --import；测试用 noop loader 满足契约 */
+const NOOP_ESM_LOADER = resolve(__dirname, 'fixtures/noop-esm-loader.cjs')
 
 /** rebuild cooldown（与 setRebuildCooldownMs 一致）；「确认不 rebuild」等待 = cooldown + 余量 */
 const NO_REBUILD_WAIT_MS = 200
@@ -90,7 +92,7 @@ describe('Worker Crash Rebuild', () => {
 
   it('should NOT rebuild sandbox worker after crash', async () => {
     const rpc = new PluginRpcServer()
-    const host = new PluginHost(rpc, { bootstrapPathOverride: PROCESS_MOCK_SOURCE })
+    const host = new PluginHost(rpc, { bootstrapPathOverride: PROCESS_MOCK_SOURCE, execArgv: ['--import', NOOP_ESM_LOADER] })
     host.setRebuildCooldownMs(50)
 
     const crashes: Array<{ workerId: string; pluginIds: string[]; error: string }> = []

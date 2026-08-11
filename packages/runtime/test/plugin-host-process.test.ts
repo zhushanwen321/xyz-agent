@@ -16,6 +16,7 @@ import { PluginRpcServer } from '../src/services/plugin-service/plugin-rpc-serve
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const MOCK_BOOTSTRAP = resolve(__dirname, 'fixtures/plugin-bootstrap-process.mock.cjs')
+const NOOP_ESM_LOADER = resolve(__dirname, 'fixtures/noop-esm-loader.cjs')
 
 const DEFAULT_LOAD_TIMEOUT_MS = 10_000
 
@@ -26,6 +27,8 @@ function createHost(options?: { loadTimeoutMs?: number }): {
   const rpc = new PluginRpcServer()
   const host = new PluginHostProcess(rpc, {
     bootstrapPathOverride: MOCK_BOOTSTRAP,
+    // MF-1：sandbox fork 边界断言 execArgv 含 --import；测试用 noop loader 满足契约
+    execArgv: ['--import', NOOP_ESM_LOADER],
     loadTimeoutMs: options?.loadTimeoutMs ?? DEFAULT_LOAD_TIMEOUT_MS,
   })
   return { host, rpc }

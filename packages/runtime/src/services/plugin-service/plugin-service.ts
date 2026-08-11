@@ -37,18 +37,20 @@ const COMMAND_EXECUTE_TIMEOUT_MS = 10_000
  * （AGENTS.md #12：打包后 __dirname → app.asar.unpacked/dist/runtime/，
  * dev → src/services/plugin-service/）。
  *
- * fail-open：loader 缺失时不阻塞 runtime 启动（sandbox 子进程启动时 loader initialize()
- * 读不到 XYZ_PLUGIN_SANDBOX_DIR 也会 fail-closed throw，双重保险）；loader 存在性由
- * postbuild-validate.sh（macOS + Windows）+ validate-runtime-bundle.sh 步骤 1 在 CI 强制校验。
+ * MF-1（fail-closed 分层）：loader 缺失时本函数返回 undefined（不阻塞 runtime 启动），
+ * 真正的 fail-closed 在 PluginHostProcess.createProcess 的 fork 边界——sandbox fork 前
+ * 断言 execArgv 含 --import，缺失即 throw（拒绝创建无 ESM 防护的 sandbox 进程）。
+ * 故 loader 缺失时 runtime 仍能启动（trusted 插件正常），仅 sandbox（external）插件激活
+ * 会被拒。loader 存在性另由 postbuild-validate.sh + validate-runtime-bundle.sh CI 强制校验。
  */
-function resolveEsmLoaderExecArgv(): string[] | undefined {
+export function resolveEsmLoaderExecArgv(): string[] | undefined {
   try {
     const loaderPath = resolveAndValidateFile('plugin-esm-loader.cjs')
     return ['--import', loaderPath]
   } catch (e: unknown) {
     console.error(
       '[plugin-service] plugin-esm-loader.cjs not found; sandbox ESM guard inactive ' +
-      '(sandbox plugins will fail-closed on process start; fix loader packaging before shipping):',
+      '(sandbox plugin activation will be refused at fork boundary; fix loader packaging before shipping):',
       e,
     )
     return undefined
@@ -120,7 +122,9 @@ export class PluginService implements IPluginService {
     this.storage = new PluginStorage()
     this.rpcServer = new PluginRpcServer()
     // sandbox 子进程 ESM loader 经 execArgv --import 注入（重构 3：消除 ESM 绕过）。
-    // loader 缺失时降级为 undefined（fail-open，见 resolveEsmLoaderExecArgv 注释）。
+    // MF-1：loader 缺失时 resolveEsmLoaderExecArgv 返回 undefined → 不传 execArgv 选项 →
+    // PluginHostProcess.execArgv 默认 [] → sandbox fork 边界 fail-closed throw（见
+    // plugin-host-process.ts createProcess 的 SANDBOX_LOADER_MISSING 断言）。runtime 不崩。
     const esmExecArgv = resolveEsmLoaderExecArgv()
     this.host = new PluginHost(
       this.rpcServer,

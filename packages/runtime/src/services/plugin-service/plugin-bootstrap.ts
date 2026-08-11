@@ -24,6 +24,7 @@ import type {
 import { PluginRpcErrorCodes } from './plugin-types.js'
 import { PluginRpcClient } from './plugin-rpc-client.js'
 import { createRequireInterceptor, createEnvProxy } from './plugin-sandbox.js'
+import { errorWithCode } from '../../utils/errors.js'
 import { createToolApi } from './tool-api.js'
 import { createHookApi } from './hook-api.js'
 import { createSessionApi } from './api/session-api.js'
@@ -287,4 +288,28 @@ export function initSandbox(pluginDir: string): void {
 
   // 替换 process.env 为空 Proxy
   process.env = createEnvProxy()
+
+  // MF-2：封堵 process 上的父进程 DoS 向量。sandbox 仅 V8/模块级隔离，子进程仍可经全局
+  // process 对象向宿主发信号（process.kill(process.ppid, 'SIGKILL') 即崩溃整个 runtime）。
+  // CJS/ESM blocklist 只拦 require/import 通道，拦不住全局 process。sandbox 插件已被
+  // BLOCKED_BUILTINS 禁用 child_process，无合法子进程需要管理，故封堵 process.kill 不影响
+  // 合法用途。同时屏蔽 process.ppid（防止定位父进程 PID）。
+  try {
+    ;(process as { kill?: unknown }).kill = function sandboxBlockedKill() {
+      throw errorWithCode('Sandbox: process.kill is blocked', 'PERMISSION_DENIED')
+    }
+  } catch (e: unknown) {
+    // best-effort：process.kill 不可写时跳过（不影响其它 sandbox 防护）
+    console.debug('[plugin-bootstrap] failed to override process.kill in sandbox:', e)
+  }
+  try {
+    Object.defineProperty(process, 'ppid', {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    })
+  } catch (e: unknown) {
+    // best-effort：ppid 不可重定义时跳过（process.kill 已封堵，ppid 泄露无法独立造成 DoS）
+    console.debug('[plugin-bootstrap] failed to mask process.ppid in sandbox:', e)
+  }
 }
