@@ -91,7 +91,7 @@ vi.mock("node:fs", async () => {
 // （finalizeRecord 收尾删 .alive）。其余导出（readAliveMarker/isProcessAlive）保留真实实现
 // （worktree-manager/record-store 用，本组用例不涉及但保留以避免间接报错）。
 vi.mock("../alive-store.ts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../runtime/execution/alive-store.ts")>();
+  const actual = await importOriginal<typeof import("../alive-store.ts")>();
   return {
     ...actual,
     writeAliveMarker: vi.fn(),

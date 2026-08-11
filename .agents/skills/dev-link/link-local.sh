@@ -5,67 +5,23 @@
 #
 # 幂等安全：重复添加不会产生重复条目，已是目标状态时直接跳过。
 # 写入项目根目录的 .env.dev-extensions 文件（已 gitignore）。
+#
+# 映射查 dev-link-lib.sh（SSOT = extensions/<short>/package.json）：源码目录、npm 包名、
+# 是否真 extension 均来自 package.json 事实，不按命名约定推导。库包（无 pi.extensions，
+# 如 quota-providers）自动跳过。
 set -euo pipefail
 
-SCOPE="@zhushanwen"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=dev-link-lib.sh
+source "$SCRIPT_DIR/dev-link-lib.sh"
+
 ENV_FILE_NAME=".env.dev-extensions"
 ENV_VAR="XYZ_EXTENSION_PATHS"
 
-# ── 颜色输出 ────────────────────────────────────────────
-red()    { printf "\033[31m%s\033[0m\n" "$*"; }
-green()  { printf "\033[32m%s\033[0m\n" "$*"; }
-yellow() { printf "\033[33m%s\033[0m\n" "$*"; }
-
 # ── 定位项目根目录 ──────────────────────────────────────
 # 用 git rev-parse 定位 worktree 根（多 worktree 友好）
-GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || { red "✗ 不在 git 仓库中"; exit 2; })"
-EXTENSIONS_BASE="$GIT_ROOT/extensions"
-ENV_FILE="$GIT_ROOT/$ENV_FILE_NAME"
-
-# ── 包名解析：支持三种格式 → 统一为短名 ─────────────────
-resolve_short_name() {
-	local input="$1"
-	if [[ "$input" == "$SCOPE/"* ]]; then
-		# @zhushanwen/pi-model-switch → model-switch
-		# @zhushanwen/pi-quota-providers → 特殊：在 shared/ 下
-		local stripped="${input#$SCOPE/pi-}"
-		echo "$stripped"
-	elif [[ "$input" == pi-* ]]; then
-		# pi-model-switch → model-switch
-		echo "${input#pi-}"
-	else
-		# model-switch → model-switch
-		echo "$input"
-	fi
-}
-
-# ── 定位 extension 源码目录 ─────────────────────────────
-# quota-providers 在 extensions/shared/ 下，其余在 extensions/ 下
-find_extension_dir() {
-	local short="$1"
-	local candidates=(
-		"$EXTENSIONS_BASE/$short"
-		"$EXTENSIONS_BASE/shared/$short"
-	)
-	for dir in "${candidates[@]}"; do
-		if [ -d "$dir" ] && [ -f "$dir/package.json" ]; then
-			echo "$dir"
-			return 0
-		fi
-	done
-	return 1
-}
-
-# ── 检查是否是真正的 pi extension（非库包）──────────────
-# 通过 PKG_DIR 环境变量传参（避免 set -u 下 $1 unbound）
-is_pi_extension() {
-	# 库包（如 quota-providers）不是 pi extension，不进 XYZ_EXTENSION_PATHS
-	# 判定：package.json 有 pi.extensions 字段
-	node -e "
-		const pkg = require(process.env.PKG_DIR + '/package.json');
-		process.exit(pkg.pi && pkg.pi.extensions ? 0 : 1);
-	" 2>/dev/null
-}
+dl_git_root || { red "✗ 不在 git 仓库中"; exit 2; }
+ENV_FILE="$DL_GIT_ROOT/$ENV_FILE_NAME"
 
 # ── 检查是否 mandatory 包（SSOT: packages/shared/src/mandatory-extensions.json）──
 # mandatory 包删 npm 安装安全：unlink 后 xyz-agent 重启时 ensureMandatoryExtensions 自动重装。
@@ -100,22 +56,23 @@ main() {
 
 	for input in "$@"; do
 		local short
-		short=$(resolve_short_name "$input")
+		short=$(dl_resolve_short_name "$input")
 
-		local ext_dir
-		if ! ext_dir=$(find_extension_dir "$short"); then
-			red "✗ 找不到 extension 目录: extensions/${short}（或 extensions/shared/${short}）"
-			echo "   确保在 xyz-agent 的正确 worktree 根目录执行"
+		# 查映射（源码目录 + npm 包名 + 是否真 extension，均来自 package.json）
+		if ! dl_lookup "$short"; then
+			red "✗ 找不到 extension: ${short}（extensions/${short} 或 extensions/shared/${short} 需有 package.json）"
 			((skipped++)) || true
 			continue
 		fi
 
-		# 检查是否是 pi extension（跳过库包）
-		if ! PKG_DIR="$ext_dir" is_pi_extension; then
-			yellow "↷ 跳过 ${short}：是库包（shared lib），不是 pi extension，不进 ${ENV_VAR}"
+		# 库包检查（package.json 无 pi.extensions → 跳过）
+		if [ "$DL_IS_EXT" != "yes" ]; then
+			yellow "↷ 跳过 ${short}：是库包（shared lib，${DL_NPM_NAME}），不是 pi extension，不进 ${ENV_VAR}"
 			((skipped++)) || true
 			continue
 		fi
+
+		local ext_dir="$DL_SRC_DIR"
 
 		# 检查是否已在 ENV_FILE 中
 		if grep -qF "$ext_dir" "$ENV_FILE" 2>/dev/null; then

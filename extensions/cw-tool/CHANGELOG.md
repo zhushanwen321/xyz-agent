@@ -1,5 +1,27 @@
 # @zhushanwen/pi-cw-tool
 
+## 0.4.2
+
+### Patch Changes
+
+- bc336c3b5: Fix workspace gate activation and bare-repo detection in cw-tool
+
+  - Activate gate threshold 99.0.0 -> 1.6.2 (first cw-cli tag with store-key normalization); cw-tool no longer passes --workspace to cw-cli >= 1.6.2
+  - Harden detectRepoWorkspace: bare repo (.bare) git-common-dir returns undefined so old cw-cli falls back to per-cwd store (no "unit not found" on every write)
+  - Append upgrade guidance to write-action errors in degraded modes
+
+## 0.4.1
+
+### Patch Changes
+
+- 43a4ae5e6: Fix pi-cw skill internal inconsistency: the flow hardcoded `cw create epic` while description and "when to use" listed all four layers (epic/feature/slice/wave), blocking legitimate "feature as root" recursive orchestration.
+
+  - Flow step 1 now uses `cw create <顶层>` with layer-selection guidance reused from cw-cli (the "scale × nature" table), plus an explicit gate: the root must split into ≥2 parallelizable child units, else use cw-cli's single-agent linear mode.
+  - Generalize the planning-agent task template and frontier examples (`<epicId>` → `<根Id>`, "cw epic" → "cw <根层>").
+  - Sharpen the pi-cw vs cw-cli boundary in "when to use / when not to use" from "tree depth" to "concurrency + context-isolation need" — an epic tree can be walked linearly by a single agent (cw-cli); pi-cw's value is isolation/parallelism.
+
+  No engine or agent change required: planning-agent already supports epic/feature/slice as root, and cw-tool's `create` only forwards to the cw CLI.
+
 ## 0.4.0
 
 ### Minor Changes

@@ -7,33 +7,20 @@
 #   <package> = 短名 (model-switch) / pi-前缀 (pi-model-switch) / npm全名 (@zhushanwen/pi-model-switch)
 #
 # 幂等安全：link 不存在时直接跳过。
+# 路径匹配用映射的完整源码目录（dev-link-lib.sh 查表），不用 "extensions/<short>" 子串
+# —— 避免前缀同名包（如 goal vs goal-extra）误删。
 set -euo pipefail
 
-SCOPE="@zhushanwen"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=dev-link-lib.sh
+source "$SCRIPT_DIR/dev-link-lib.sh"
+
 ENV_FILE_NAME=".env.dev-extensions"
 ENV_VAR="XYZ_EXTENSION_PATHS"
 
-# ── 颜色输出 ────────────────────────────────────────────
-red()    { printf "\033[31m%s\033[0m\n" "$*"; }
-green()  { printf "\033[32m%s\033[0m\n" "$*"; }
-yellow() { printf "\033[33m%s\033[0m\n" "$*"; }
-
 # ── 定位项目根目录 ──────────────────────────────────────
-GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || { red "✗ 不在 git 仓库中"; exit 2; })"
-EXTENSIONS_BASE="$GIT_ROOT/extensions"
-ENV_FILE="$GIT_ROOT/$ENV_FILE_NAME"
-
-# ── 包名解析 ────────────────────────────────────────────
-resolve_short_name() {
-	local input="$1"
-	if [[ "$input" == "$SCOPE/"* ]]; then
-		echo "${input#$SCOPE/pi-}"
-	elif [[ "$input" == pi-* ]]; then
-		echo "${input#pi-}"
-	else
-		echo "$input"
-	fi
-}
+dl_git_root || { red "✗ 不在 git 仓库中"; exit 2; }
+ENV_FILE="$DL_GIT_ROOT/$ENV_FILE_NAME"
 
 # ── 从 XYZ_EXTENSION_PATHS 值中移除路径（node 处理，避免 sed 转义问题）──
 remove_path_from_value() {
@@ -43,7 +30,7 @@ remove_path_from_value() {
 	RM_PATH="$path_to_remove" node -e "
 		const input = require('fs').readFileSync(0, 'utf-8').trim();
 		const paths = input ? input.split(':') : [];
-		const filtered = paths.filter(p => !p.includes(process.env.RM_PATH));
+		const filtered = paths.filter(p => p !== process.env.RM_PATH);
 		process.stdout.write(filtered.join(':'));
 	" <<< "$value"
 }
@@ -88,10 +75,15 @@ main() {
 
 	for input in "$@"; do
 		local short
-		short=$(resolve_short_name "$input")
+		short=$(dl_resolve_short_name "$input")
 
-		# 匹配包含 extensions/<short> 的路径（支持 extensions/goal 和 extensions/shared/goal）
-		local pattern="extensions/$short"
+		# 精确匹配完整源码目录路径；查不到映射时（外部包等）fallback 旧约定子串
+		local pattern
+		if dl_lookup "$short"; then
+			pattern="$DL_SRC_DIR"
+		else
+			pattern="extensions/$short"
+		fi
 
 		if echo "$new_value" | grep -qF "$pattern"; then
 			new_value=$(remove_path_from_value "$new_value" "$pattern")

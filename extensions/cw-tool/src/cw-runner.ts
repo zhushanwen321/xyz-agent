@@ -84,12 +84,18 @@ export function rejectDisallowedAction(
 const GIT_PROBE_TIMEOUT_MS = 5000;
 
 /**
- * 探测 cwd 所属 repo 的主目录（repo 级 workspace）。
+ * 探测 cwd 所属 repo 的主目录（repo 级 workspace），供老 cw-cli（<1.6.2，无 store 归一化）兜底。
  *
  * 用 `git rev-parse --path-format=absolute --git-common-dir` 取 git common dir：
  * 同一 repo 的所有 worktree 返回相同路径，dirname 即 repo 主目录。cw store 键控
- * 从 per-cwd 升级为 repo 级（ADR-0045）后，spawn cw 时附带 --workspace 让 cw
+ * 从 per-cwd 升级为 repo 级（cw-cli ADR-0014）后，spawn cw 时附带 --workspace 让 cw
  * 在 repo 主目录解析/共享状态，避免同一 repo 的 worktree 间状态各自为政。
+ *
+ * **bare repo + worktree 模式（.bare）**：common-dir basename 是 `.bare` 而非 `.git`，
+ * dirname 指向 workspace 容器根（非 git 目录）——传给 cw 会让它 fallback 到错误的 store-key
+ * （unit not found）。检测到 basename 非 `.git` 时返回 undefined（不传 --workspace），让老 cw-cli
+ * 退回 per-cwd store（读写一致但无 repo 级共享）。新 cw-cli（≥1.6.2）自己归一化，门控支持→不调本函数。
+ * 不可用 `--is-bare-repository` 判据——worktree 内它永远返回 false（bare 是 .bare 目录本身）。
  *
  * 任何失败（非 git 目录、git 不在 PATH、路径不存在、超时）→ undefined（不抛）。
  */
@@ -103,6 +109,11 @@ export function detectRepoWorkspace(cwd: string): string | undefined {
 		if (result.status !== 0) return undefined;
 		const gitCommonDir = result.stdout.trim();
 		if (gitCommonDir.length === 0) return undefined;
+		// 非标准 git-dir 一律退回 per-cwd（fail-safe）：bare repo worktree（basename=.bare，
+		// dirname 指向容器根，非 git 目录）、submodule（common-dir=.git/modules/<name>）、
+		// --separate-git-dir / GIT_DIR 等。把 dirname 传给 cw 会导致 store-key fallback 错误
+		// → unit not found。返回 undefined 退回 per-cwd（读写一致）。
+		if (path.basename(gitCommonDir) !== ".git") return undefined;
 		return path.dirname(gitCommonDir);
 	} catch {
 		return undefined;
@@ -114,14 +125,16 @@ export function detectRepoWorkspace(cwd: string): string | undefined {
  *
  * cw-tool 与 cw-cli 是两个独立 npm 包（cw-tool 经 PATH 裸调 cw、零依赖声明），
  * 两包独立升级。cw-tool 退回纯封装前需探测 cw-cli 是否已落地 store 归一化
- * （coding-workflow S1：getCwJsonPath 用 git-common-dir），支持则不传 --workspace
- * （纯封装），不支持则兜底 ADR-0045 的 detectRepoWorkspace + --workspace。
+ * （cw-cli commit a90e8e8 / 首个 tag v1.6.2：getCwJsonPath 改用 detectCommonDir 归一化
+ * 到 git-common-dir），支持则不传 --workspace（纯封装），不支持则兜底 cw-cli ADR-0014
+ * 的 detectRepoWorkspace + --workspace。
  *
- * TODO(S1): 当前 placeholder "99.0.0" 使门控永远判定为「不支持」→ 永远走兜底
- * （=现状 dirname 行为，不引入回归）。cw-cli S1 落地并发布后，改为实际版本号
- * （如 "1.7.0"），门控自动激活。详见 docs/architecture/cw-store-workspace-decoupling.md §3 §4。
+ * 门控激活（1.6.2）：cw-cli ≥1.6.2 自我用 detectCommonDir 归一化 store-key，同一 repo 的
+ * 所有 worktree（含 bare repo）共享 store，cw-tool 无需传 --workspace。旧值 "99.0.0"（placeholder）
+ * 使门控永远判定「不支持」→ 永远走兜底，在 bare repo worktree 下 detectRepoWorkspace 返回容器根
+ * → cw 定位到不存在的 store → unit not found。
  */
-const MIN_CW_CLI_VERSION_FOR_NORMALIZATION = "99.0.0";
+const MIN_CW_CLI_VERSION_FOR_NORMALIZATION = "1.6.2";
 
 /** probe 超时（ms）：cw --version 卡死时 fail-safe 为「不支持」。 */
 const CW_VERSION_PROBE_TIMEOUT_MS = 5000;
@@ -170,7 +183,7 @@ function compareSemver(a: number[], b: number[]): number {
  * 探测 cw-cli 是否支持 store 内部归一化（门控）。
  *
  * 用 spawner 跑 `cw --version`，parse 版本号与 {@link MIN_CW_CLI_VERSION_FOR_NORMALIZATION}
- * 比较。失败（spawn 失败/parse 不到/超时）→ supported:false（fail-safe，兜底 ADR-0045 行为）。
+ * 比较。失败（spawn 失败/parse 不到/超时）→ supported:false（fail-safe，兜底 cw-cli ADR-0014 行为）。
  * 进程内 memoize（全局单值，cw 版本 cwd 无关）：首次探测后缓存，消除重复 spawn。
  *
  * @param parentSignal 调用方 SDK abort signal，与内部 5s 超时合并转发给 spawner（S-4）：
@@ -185,7 +198,7 @@ export async function probeCwCliNormalization(
 
 	const minVersion = parseCwVersion(MIN_CW_CLI_VERSION_FOR_NORMALIZATION);
 	if (!minVersion) {
-		// placeholder 本身非法（不应发生）——保守不支持
+		// MIN_CW_CLI_VERSION_FOR_NORMALIZATION 本身非法（不应发生）——保守不支持
 		const fallback: CwCliCapability = { supported: false, version: undefined, reason: "MIN_CW_CLI_VERSION_FOR_NORMALIZATION 非法" };
 		cachedCapability = fallback;
 		return fallback;
@@ -336,16 +349,24 @@ export async function executeCwAction(
 	const unitIdErr = rejectMissingUnitId(action, unitId);
 	if (unitIdErr) return { ok: false, ...base, error: unitIdErr };
 
-	// workspace 门控（差异文档 §3 §4 + ADR-0045 Superseded）：cw-cli 支持 store 内部归一化
+	// workspace 门控（cw-cli ADR-0014 store-workspace decoupling）：cw-cli 支持 store 内部归一化
 	// （probe 版本 >= MIN_CW_CLI_VERSION_FOR_NORMALIZATION）→ 纯封装不传 --workspace；
-	// 不支持 → 兜底 ADR-0045 的 detectRepoWorkspace + --workspace（保持向后兼容）。
+	// 不支持 → 兜底 cw-cli ADR-0014 的 detectRepoWorkspace + --workspace（保持向后兼容）。
 	// 只读 action 始终不传（S-3：保守避免 cw 子命令拒收未知选项导致 readonly 查询失败）。
 	let workspace: string | undefined;
+	// 降级标记：老 cw-cli（不支持归一化）+ bare repo / 非 git（detectRepoWorkspace 返回 undefined）。
+	// 写动作若失败，错误消息追加升级指引（准则 6：错误指向恢复动作）。
+	let degradedNoWorkspace = false;
 	if (isReadonlyAction(action)) {
 		workspace = undefined;
 	} else {
 		const capability = await probeCwCliNormalization(spawner, cwd, signal);
-		workspace = capability.supported ? undefined : detectRepoWorkspace(cwd);
+		if (capability.supported) {
+			workspace = undefined;
+		} else {
+			workspace = detectRepoWorkspace(cwd);
+			degradedNoWorkspace = workspace === undefined;
+		}
 	}
 	const args = buildCwArgs(action, unitId, opts, workspace);
 	const stdinPayload = opts.input !== undefined ? opts.input : undefined;
@@ -388,7 +409,15 @@ export async function executeCwAction(
 	if (exitCode !== 0) {
 		const parts: string[] = [`exit code ${exitCode ?? "null"}`];
 		if (stderr.trim()) parts.push(stderr.trim());
-		return { ok: false, ...base, error: parts.join(" | ") };
+		let error = parts.join(" | ");
+		// 老 cw-cli（<1.6.2）+ 探测不到 repo 级 workspace（非 git 目录 / bare repo worktree /
+		// git 不可用）：写动作退回 per-cwd store（读写一致但无 repo 级共享），多数情况能跑通；
+		// 若仍失败，追加升级指引帮用户切到归一化 cw-cli（准则 6：错误指向恢复动作）。
+		// 措辞同时覆盖两种降级原因（非 git 场景不误导为 bare repo 问题）。
+		if (degradedNoWorkspace) {
+			error += "\n👉 cw-cli 版本过低（<1.6.2 不支持 store-key 归一化），且当前目录未探测到 repo 级 workspace（非 git 目录 / bare repo worktree / git 不可用），写动作退回 per-cwd store（读写一致但无 repo 级共享）。建议升级：npm i -g @zhushanwen/coding-workflow@latest";
+		}
+		return { ok: false, ...base, error };
 	}
 
 	const data = tryParseJson(stdout);
