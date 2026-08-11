@@ -1,5 +1,27 @@
 # @zhushanwen/pi-cw-tool
 
+## 0.4.1
+
+### Patch Changes
+
+- 43a4ae5e6: Fix pi-cw skill internal inconsistency: the flow hardcoded `cw create epic` while description and "when to use" listed all four layers (epic/feature/slice/wave), blocking legitimate "feature as root" recursive orchestration.
+
+  - Flow step 1 now uses `cw create <顶层>` with layer-selection guidance reused from cw-cli (the "scale × nature" table), plus an explicit gate: the root must split into ≥2 parallelizable child units, else use cw-cli's single-agent linear mode.
+  - Generalize the planning-agent task template and frontier examples (`<epicId>` → `<根Id>`, "cw epic" → "cw <根层>").
+  - Sharpen the pi-cw vs cw-cli boundary in "when to use / when not to use" from "tree depth" to "concurrency + context-isolation need" — an epic tree can be walked linearly by a single agent (cw-cli); pi-cw's value is isolation/parallelism.
+
+  No engine or agent change required: planning-agent already supports epic/feature/slice as root, and cw-tool's `create` only forwards to the cw CLI.
+
+## 0.4.0
+
+### Minor Changes
+
+- a0d700161: cw 生态改进：worktree-fork 解耦、cw-tool workspace gate、goal budget 默认策略
+
+  - **pi-cw-tool**: 新增 workspace gate——探测 cw-cli store-normalization 能力，支持时作为纯 wrapper（不传 `--workspace`），不支持时回退 detectRepoWorkspace + `--workspace`。placeholder 版本号（99.0.0）保持当前行为不变，待 coding-workflow S1 落地后激活。同时把 planning-agent / wave-agent / pi-cw skill 的 `fork` 默认值改为 false。
+  - **pi-subagent-workflow**: worktree（文件隔离）与 fork（上下文继承）解耦——移除 "worktree 必须配 fork" 的强约束，`worktree:true + fork:false` 现在可用。subagent-tool / types / notifier / bg-notify-render 同步去掉 fork+worktree 耦合描述。
+  - **pi-goal**: 强化 budget 默认策略——tokenBudget 参数 description、tool description、promptGuideline 三处一致声明「默认不设预算；仅在用户显式要求或明确同意时才设；切勿自行决定」（timeBudget 已在上游 main 移除，本 PR 适配到 main 的新 schema 结构）。
+
 ## 0.3.1
 
 ### Patch Changes
