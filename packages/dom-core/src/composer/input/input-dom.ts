@@ -254,10 +254,13 @@ export function moveCaretVerticalOf(
   if (targetLine >= lineRects.length) return noop
   if (targetLine < 0) {
     const firstText = document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode()
-    const isAtTextStart = firstText != null && before.startContainer === firstText && before.startOffset === 0
+    // 无文本节点（空输入框 <br><br> 等）无行可移：与「无文本内容无行可移」语义一致直接 noop，
+    // 避免 setStart(null, 0) 抛 TypeError（空输入框首行再按 ↑ 可达：两 <br> 产生两个零宽行 rect）
+    if (firstText == null) return noop
+    const isAtTextStart = before.startContainer === firstText && before.startOffset === 0
     if (isAtTextStart) return noop
     const range = document.createRange()
-    range.setStart(firstText!, 0)
+    range.setStart(firstText, 0)
     range.collapse(true)
     sel.removeAllRanges()
     sel.addRange(range)
