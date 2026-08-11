@@ -86,7 +86,7 @@ export interface EventInterpreterOptions {
   onExtensionUIRequest?: (requestId: string, sessionId: string, method: string, payload: Record<string, unknown>) => void
   /** bridge:* 前缀请求（直接路由不经前端超时）。组合根注入 server.handleBridgeRequest。 */
   onBridgeUIRequest?: (requestId: string, sessionId: string, method: string, data: Record<string, unknown>) => void
-  /** extension setStatus（路由到 statusline 插件）。组合根注入 server.handleStatusSetUpdate。 */
+  /** extension setStatus（路由到 statusline builtin 插件，status-bar-registry 广播）。组合根注入 server.handleStatusSetUpdate。 */
   onStatusSetUpdate?: (payload: { sessionId: string; key: string; text: string; textRaw?: string }) => void
   /**
    * pi 卡死 abort 回调（ADR-0047 ping 探测机制）。

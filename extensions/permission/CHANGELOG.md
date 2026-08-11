@@ -1,5 +1,11 @@
 # @zhushanwen/pi-permission
 
+## Unreleased
+
+### Breaking Changes
+
+- **移除 statusline peerDependency（breaking）**：`@zhushanwen/pi-statusline` 已废弃删除（commit 53a2eb8c2），permission 的 peerDependencies 不再声明该包，footer 不再显示 permission mode 标签。footer-provider 握手代码保留但 statusline 缺失时静默 no-op，权限功能不受影响；查看/切换 mode 用 `/permission status`。
+
 ## 1.0.0
 
 ### Minor Changes
