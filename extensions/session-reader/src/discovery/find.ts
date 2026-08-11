@@ -1,8 +1,10 @@
 import { createReadStream, type ReadStream } from 'node:fs'
 import { open, type FileHandle } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
+import { basename } from 'node:path'
 import type { SessionRef } from '../core/family.js'
 import { listMainSessions, listSubagentSessions, type SessionFileMeta } from './roots.js'
+import { listRecordManifests, extractSessionIdFromFilename, type RecordManifest } from './subagents.js'
 
 /**
  * M2 discovery 发现层：按 query 定位 session（design §3.3 D-3 + §3.4 find action）。
@@ -167,6 +169,115 @@ interface Matched extends Candidate {
   preview?: string
 }
 
+// ============================================================
+// U5：subagent task/slug/agentName 匹配（manifest 索引 + P-fallback identity 回退）
+// ============================================================
+
+/** P-fallback 尾行 identity 读取窗口（同 subagents.ts，task 文本可达数 KB）。 */
+const TAIL_READ_BYTES = 65536
+
+/**
+ * 读 subagent 文件尾部（最后 64KB）找 subagent-identity entry，返回 task/slug/agent。
+ *
+ * find 的 P-fallback 路径（场景 A：subagent 无 manifest，本机 11.5%）：manifest 索引未命中时
+ * 读尾行 identity 取 task/slug/agent 做 query 子串匹配。与 subagents.ts 的 readTailIdentity
+ * 同源（64KB 窗口 + lastIndexOf 定位），但是 find 专用最小版（只取 task/slug/agent，不要
+ * rootSessionId——find 候选已有 header.id）。不导出，不碰 subagents.ts（w3 冻结）。
+ */
+async function readTailIdentityForMatch(
+  path: string,
+  size: number,
+): Promise<{ task?: string; slug?: string; agent?: string } | undefined> {
+  if (size === 0) return undefined
+  let fh: FileHandle | undefined
+  try {
+    fh = await open(path, 'r')
+    const len = Math.min(TAIL_READ_BYTES, size)
+    const buf = Buffer.alloc(len)
+    await fh.read(buf, 0, len, Math.max(0, size - len))
+    const text = buf.toString('utf8')
+    const idx = text.lastIndexOf('subagent-identity')
+    if (idx < 0) return undefined
+    const lineStartSearch = text.lastIndexOf('\n', idx)
+    if (lineStartSearch < 0 && size > len) return undefined
+    const start = lineStartSearch < 0 ? 0 : lineStartSearch + 1
+    let end = text.indexOf('\n', idx)
+    if (end < 0) end = text.length
+    const line = text.slice(start, end)
+    let raw: unknown
+    try {
+      raw = JSON.parse(line)
+    } catch {
+      return undefined
+    }
+    const data = (raw as Record<string, unknown> | undefined)?.data as
+      | Record<string, unknown>
+      | undefined
+    if (!data) return undefined
+    return {
+      task: typeof data.task === 'string' ? data.task : undefined,
+      slug: typeof data.slug === 'string' ? data.slug : undefined,
+      agent: typeof data.agent === 'string' ? data.agent : undefined,
+    }
+  } catch {
+    return undefined
+  } finally {
+    await fh?.close().catch(() => {})
+  }
+}
+
+/**
+ * 建 sessionId→RecordManifest 索引（U5：subagent task/slug/agentName 匹配用）。
+ *
+ * listRecordManifests 一次性读全部 manifest（json 小，几百字节），用 extractSessionIdFromFilename
+ * 从 manifest.sessionFile 文件名提取 sessionId 作 key（与候选 header.id 同源真实 id）。无 subagent
+ * 候选时跳过（避免无谓 IO——TC-find-manifest-index 的 O(1) 查表前提）。
+ */
+async function buildManifestIndex(
+  agentDir: string,
+  hasSubagentCandidates: boolean,
+): Promise<Map<string, RecordManifest>> {
+  if (!hasSubagentCandidates) return new Map()
+  const manifests = await listRecordManifests(agentDir)
+  const index = new Map<string, RecordManifest>()
+  for (const m of manifests) {
+    const sid = extractSessionIdFromFilename(basename(m.sessionFile))
+    if (sid) index.set(sid, m)
+  }
+  return index
+}
+
+/**
+ * subagent 候选元数据匹配（U5）：manifest 命中走 task/slug/agentName 子串；索引未命中（P-fallback，
+ * 场景 A）读尾行 identity 回退匹配 task/slug/agent。
+ *
+ * manifest 命中但不匹配时不再回退 identity——manifest 是权威主表，task/slug/agentName 即其提供，
+ * identity 同源数据回退无新信息（探针 manifest 20/20 全有 task/slug）。manifest 缺某字段（旧 manifest）
+ * 时该字段 undefined，includes 自然 false，不影响其他字段。
+ */
+async function matchSubagentMetadata(
+  candidate: Candidate,
+  query: string,
+  manifestIndex: Map<string, RecordManifest>,
+): Promise<boolean> {
+  const manifest = manifestIndex.get(candidate.ref.sessionId)
+  if (manifest) {
+    return (
+      (manifest.task?.includes(query) ?? false) ||
+      (manifest.slug?.includes(query) ?? false) ||
+      (manifest.agentName?.includes(query) ?? false)
+    )
+  }
+  // P-fallback：manifest 索引未命中 → 读尾行 identity 回退
+  const ident = await readTailIdentityForMatch(candidate.meta.path, candidate.meta.size)
+  if (!ident) return false
+  return (
+    (ident.task?.includes(query) ?? false) ||
+    (ident.slug?.includes(query) ?? false) ||
+    (ident.agent?.includes(query) ?? false)
+  )
+}
+
 /**
  * 按 query 找 session（接口冻结，design §3.4 find action）。
  *
@@ -235,9 +346,21 @@ export async function findSessions(
       // query 像 uuid 片段但无匹配 → uuid 写错的可能性高，不对全部候选深读首消息
       matched = []
     } else {
-      // 名称关键词 fallback：读所有候选首消息，预览含 query 入选
+      // 关键词层（U5 扩展）：subagent manifest 元数据 task/slug/agentName（+ P-fallback identity
+      // 回退）与 main/subagent 首消息预览并列匹配，命中任一即入选（TC-find-match-priority）。
+      // - subagent 候选：先查 manifest 索引（命中走元数据子串，未命中 P-fallback 读尾行 identity）；
+      //   元数据命中即入选（preview 留空，第 5 步补读首消息），未命中仍可走首消息 fallback
+      // - main / subagent 元数据未命中：首消息预览 query 子串匹配（m0 现状路径不变）
+      const manifestIndex = await buildManifestIndex(
+        agentDir,
+        candidates.some((c) => c.source === 'subagent'),
+      )
       const keywordHits: Matched[] = []
       for (const c of candidates) {
+        if (c.source === 'subagent' && (await matchSubagentMetadata(c, query, manifestIndex))) {
+          keywordHits.push({ ...c })
+          continue
+        }
         const text = await readFirstUserMessageText(c.meta.path)
         if (text && text.includes(query)) {
           keywordHits.push({ ...c, preview: text.slice(0, PREVIEW_MAX) })

@@ -42,16 +42,107 @@ async function makeSession(
   return path
 }
 
+/**
+ * 建 records manifest（U5 fixture）。manifest 在 subagent 创建时写入 records/<sa-id>.json，
+ * sessionFile 指向 alive subagent session 的绝对路径（find 用 extractSessionIdFromFilename
+ * 从该路径提取 sessionId 建索引）。
+ */
+async function makeRecordManifest(
+  recordsDir: string,
+  opts: {
+    id: string
+    rootSessionId: string
+    sessionFile: string
+    agentName?: string
+    task?: string
+    slug?: string
+    model?: string
+    status?: string
+  },
+): Promise<void> {
+  const m: Record<string, unknown> = {
+    id: opts.id,
+    rootSessionId: opts.rootSessionId,
+    sessionFile: opts.sessionFile,
+  }
+  if (opts.agentName !== undefined) m.agentName = opts.agentName
+  if (opts.task !== undefined) m.task = opts.task
+  if (opts.slug !== undefined) m.slug = opts.slug
+  if (opts.model !== undefined) m.model = opts.model
+  if (opts.status !== undefined) m.status = opts.status
+  await mkdir(recordsDir, { recursive: true })
+  await writeFile(join(recordsDir, `${opts.id}.json`), JSON.stringify(m))
+}
+
+/**
+ * 建 subagent session 文件（header + 可选首消息 + 可选尾行 identity）。返回绝对路径。
+ *
+ * 文件名用 `<ts>_<sessionId>.jsonl` 格式（满足 extractSessionIdFromFilename）。传 rootSessionId
+ * 时追加尾行 subagent-identity custom entry（P-fallback fixture 用）；不传则只有 header（manifest 主 fixture 用）。
+ */
+async function makeSubagentSession(
+  dir: string,
+  opts: {
+    name: string
+    id: string
+    cwd?: string
+    rootSessionId?: string
+    slug?: string
+    task?: string
+    agent?: string
+    firstUserText?: string
+  },
+): Promise<string> {
+  const header: Record<string, unknown> = {
+    type: 'session',
+    id: opts.id,
+    timestamp: '2026-01-01T00:00:00.000Z',
+  }
+  if (opts.cwd) header.cwd = opts.cwd
+  const lines: string[] = [JSON.stringify(header)]
+  if (opts.firstUserText) {
+    lines.push(
+      JSON.stringify({
+        type: 'message',
+        id: opts.id + '-m1',
+        message: { role: 'user', content: [{ type: 'text', text: opts.firstUserText }] },
+      }),
+    )
+  }
+  if (opts.rootSessionId !== undefined) {
+    const data: Record<string, unknown> = {
+      id: 'sa-' + opts.id,
+      agent: opts.agent ?? 'worker',
+      mode: 'background',
+      task: opts.task ?? '',
+      slug: opts.slug ?? '',
+      startedAt: Date.now(),
+      rootSessionId: opts.rootSessionId,
+      depth: 1,
+    }
+    lines.push(
+      JSON.stringify({ type: 'custom', id: opts.id, customType: 'subagent-identity', data }),
+    )
+  }
+  await mkdir(dir, { recursive: true })
+  const path = join(dir, opts.name)
+  await writeFile(path, lines.join('\n') + '\n')
+  return path
+}
+
 describe('findSessions', () => {
   let agentDir: string
   let slugDir: string
   /** subagent fixture 目录（模拟 subagents/<cwd编码>/sessions/ 结构，roots.listSubagentSessions 扫描路径） */
   let saDir: string
 
+  let recordsDir: string
+
   beforeEach(async () => {
     agentDir = await mkdtemp(join(tmpdir(), 'find-test-'))
     slugDir = join(agentDir, 'sessions', '--Users-demo--')
     saDir = join(agentDir, 'subagents', '--Users-demo--', 'sessions')
+    recordsDir = join(agentDir, 'subagents', '--Users-demo--', 'records')
   })
   afterEach(async () => {
     await rm(agentDir, { recursive: true, force: true })
@@ -252,6 +343,174 @@ describe('findSessions', () => {
     expect(merged.matches[0].source).toBe('subagent')
     expect(merged.matches[1].sessionId).toBe('r-main')
     expect(merged.matches[1].source).toBe('main')
+  })
+
+  // ============================================================
+  // U5：subagent task/slug/agentName 匹配（manifest 索引 + P-fallback identity 回退）
+  // ============================================================
+  describe('U5 task/slug/agentName 匹配', () => {
+    it('TC-u5-find-task：manifest.task 含 query 入选（main 首消息不含 query 不入选）', async () => {
+      const subId = '0aaaaaaa-bbbb-cccc-dddd-000000000001'
+      const subPath = await makeSubagentSession(saDir, {
+        name: `1234567890_${subId}.jsonl`,
+        id: subId,
+        cwd: '/demo',
+      })
+      await makeRecordManifest(recordsDir, {
+        id: `sa-${subId}`,
+        rootSessionId: 'root-1',
+        sessionFile: subPath,
+        task: '调研 codex CLI 的功能',
+      })
+      // main 首消息不含 codex → 关键词层不命中
+      await makeSession(slugDir, {
+        name: 'main.jsonl',
+        id: 'main-no-task-match',
+        cwd: '/demo',
+        firstUserText: '完全无关的对话内容',
+      })
+
+      const { matches } = await findSessions('codex', agentDir)
+      expect(matches).toHaveLength(1)
+      expect(matches[0].source).toBe('subagent')
+      expect(matches[0].sessionId).toBe(subId)
+    })
+
+    it('TC-u5-find-slug：manifest.slug 子串命中入选', async () => {
+      const subId = '0aaaaaaa-bbbb-cccc-dddd-000000000002'
+      const subPath = await makeSubagentSession(saDir, {
+        name: `1234567890_${subId}.jsonl`,
+        id: subId,
+        cwd: '/demo',
+      })
+      await makeRecordManifest(recordsDir, {
+        id: `sa-${subId}`,
+        rootSessionId: 'root-2',
+        sessionFile: subPath,
+        slug: 'codex-ask-user-research',
+        task: '其他不含 ask-user 的任务文本',
+      })
+
+      const { matches } = await findSessions('ask-user', agentDir)
+      expect(matches).toHaveLength(1)
+      expect(matches[0].source).toBe('subagent')
+      expect(matches[0].sessionId).toBe(subId)
+    })
+
+    it('TC-u5-find-agentname：manifest.agentName 命中入选', async () => {
+      const subId = '0aaaaaaa-bbbb-cccc-dddd-000000000003'
+      const subPath = await makeSubagentSession(saDir, {
+        name: `1234567890_${subId}.jsonl`,
+        id: subId,
+        cwd: '/demo',
+      })
+      await makeRecordManifest(recordsDir, {
+        id: `sa-${subId}`,
+        rootSessionId: 'root-3',
+        sessionFile: subPath,
+        agentName: 'explorer',
+        task: '不含 explorer 的任务',
+        slug: '不含-explorer-的-slug',
+      })
+
+      const { matches } = await findSessions('explorer', agentDir)
+      expect(matches).toHaveLength(1)
+      expect(matches[0].source).toBe('subagent')
+      expect(matches[0].sessionId).toBe(subId)
+    })
+
+    it('TC-u5-find-source-task-combo：source:subagent 过滤 + task 匹配正交（与 m0 U1 source 过滤组合）', async () => {
+      // main：首消息含 codex，但 source:'subagent' 在文件列表层排除 sessions/ 目录（不扫 main）
+      await makeSession(slugDir, {
+        name: 'main.jsonl',
+        id: 'main-with-codex',
+        cwd: '/demo',
+        firstUserText: '讨论 codex 工具的使用',
+      })
+      // subagent：task 含 codex
+      const subId = '0aaaaaaa-bbbb-cccc-dddd-000000000004'
+      const subPath = await makeSubagentSession(saDir, {
+        name: `1234567890_${subId}.jsonl`,
+        id: subId,
+        cwd: '/demo',
+      })
+      await makeRecordManifest(recordsDir, {
+        id: `sa-${subId}`,
+        rootSessionId: 'root-4',
+        sessionFile: subPath,
+        task: '用 codex 完成任务',
+      })
+
+      const { matches } = await findSessions('codex', agentDir, { source: 'subagent' })
+      expect(matches.length).toBeGreaterThanOrEqual(1)
+      expect(matches.every((m) => m.source === 'subagent')).toBe(true)
+      expect(matches.some((m) => m.sessionId === subId)).toBe(true)
+      // main 被 source 过滤排除（文件列表层不扫 sessions/）
+      expect(matches.some((m) => m.source === 'main')).toBe(false)
+    })
+
+    it('TC-u5-find-pfallback：无 manifest，读尾行 identity.task 回退匹配（场景 A）', async () => {
+      // subagent：无 manifest（P-fallback），但 session 文件尾行 identity.task 含 'resolve-bug'
+      const subId = '0aaaaaaa-bbbb-cccc-dddd-000000000005'
+      await makeSubagentSession(saDir, {
+        name: `1234567890_${subId}.jsonl`,
+        id: subId,
+        cwd: '/demo',
+        rootSessionId: 'root-5',
+        task: '修复 resolve-bug 这个问题',
+        slug: 'fix',
+        agent: 'worker',
+      })
+
+      const { matches } = await findSessions('resolve', agentDir)
+      expect(matches).toHaveLength(1)
+      expect(matches[0].source).toBe('subagent')
+      expect(matches[0].sessionId).toBe(subId)
+    })
+
+    it('TC-u5-find-uuid-priority：uuid 片段命中后短路，不走 task 匹配（TC-find-match-priority）', async () => {
+      // subagent A：sessionId 含 'abc123'（uuid 片段命中）
+      const idA = 'aabc123e-0000-0000-0000-000000000001'
+      await makeSubagentSession(saDir, {
+        name: `1111111111_${idA}.jsonl`,
+        id: idA,
+        cwd: '/demo',
+      })
+      // subagent B：sessionId 不含 abc123，但 manifest.task 含 abc123
+      const idB = '0aaaaaaa-bbbb-cccc-dddd-000000000006'
+      const subPathB = await makeSubagentSession(saDir, {
+        name: `2222222222_${idB}.jsonl`,
+        id: idB,
+        cwd: '/demo',
+      })
+      await makeRecordManifest(recordsDir, {
+        id: `sa-${idB}`,
+        rootSessionId: 'root-6',
+        sessionFile: subPathB,
+        task: '任务包含 abc123 关键词',
+      })
+
+      // 'abc123' 全十六进制 → uuid 特征；A 的 sessionId 含 abc123 → uuid 片段命中 → 短路
+      const { matches } = await findSessions('abc123', agentDir)
+      expect(matches).toHaveLength(1)
+      expect(matches[0].sessionId).toBe(idA)
+      // B 不入选（uuid 命中短路，不走 task 匹配）
+      expect(matches.some((m) => m.sessionId === idB)).toBe(false)
+    })
+
+    it.skipIf(!HAS_REAL_SUBAGENTS_DIR)(
+      'TC-u5-real-data-guard：find codex source:subagent 命中（本机有 codex 相关 subagent task）',
+      async () => {
+        const { matches, truncated } = await findSessions('codex', REAL_AGENT_DIR, {
+          source: 'subagent',
+          limit: 50,
+        })
+        expect(matches.length).toBeGreaterThan(0)
+        expect(matches.every((m) => m.source === 'subagent')).toBe(true)
+        expect(typeof truncated).toBe('boolean')
+      },
+      30000,
+    )
   })
 
   it.skipIf(!HAS_E6)('真实数据：e6c96 匹配 019e6c96 开头的 session', async () => {
