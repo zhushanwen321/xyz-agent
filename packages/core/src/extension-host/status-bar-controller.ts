@@ -3,15 +3,17 @@
  *
  * 两 scope 状态栏聚合器：订阅 InternalEventBus 的 plugin-status-bar-update /
  * plugin-status-set-update / extension-status / session-destroyed，按 scope 分流聚合。
- * per-session 分区用 createSessionScopedMap（ADR-0049 范式，DM2），global 聚合在模块私有
- * globalState。信息流向单向：runtime 广播 → bridge → bus → controller（feature D5，
+ * per-session 分区用 createSessionScopedMap（ADR-0049 范式，DM2），global 聚合经同一
+ * sessionScoped 的保留分区（GLOBAL_SCOPE_KEY，MF-2 R2——壳注入 reactive 容器时 in-place
+ * mutate 可被 Vue 追踪）。信息流向单向：runtime 广播 → bridge → bus → controller（feature D5，
  * 不反向读 domain）。
  *
  * AC7：绝不 import domain store（静态 import 检查由 scripts/verify-extension-host-boundaries.mjs
  * 强制——本文件只依赖 types + internal-event-bus + utils/session-scoped-map）。
  *
  * 聚合规则（clarify Q3 裁决 + ERR5 替换语义）：
- * - plugin-status-bar-update items 逐项按 scope 分流：scope==='global'（或缺失）→ globalState.items；
+ * - plugin-status-bar-update items 逐项按 scope 分流：scope==='global'（或缺失）→
+ *   GLOBAL_SCOPE_KEY 保留分区 items；
  *   scope==='per-session' → sessionScoped 分区（分区键优先级 item.sessionId > event.sessionId
  *   > '__global__' 兜底）
  *   **替换语义（ERR5）**：runtime 每次任一 item 变化都广播**当前全量** items（status-bar-registry
@@ -28,6 +30,17 @@ import type { StatusBarEntry, StatusSetEntry, ExtensionStatusEntry } from './typ
 /** 无 sessionId 时的分区兜底键（与 overlay-lifecycle 的 GLOBAL_OVERLAY_KEY 语义一致）。 */
 export const GLOBAL_STATUS_KEY = '__global__'
 
+/**
+ * global scope 聚合的 sessionScoped 保留分区键（MF-2 R2）。
+ *
+ * global scope 条目不再存 controller 私有 raw 数组，改经注入的 sessionScoped 保留分区存储：
+ * 壳注入 reactive 分区容器时，replaceAllWith 的 in-place mutate 走 proxy set trap → 前端
+ * computed 追踪有效（core 保持零 Vue 依赖，只依赖注入容器；旧实现 reactive() 包装私有数组
+ * 不拦截 raw 原地 mutate，global 状态栏永不更新）。与 GLOBAL_STATUS_KEY（per-session 项无
+ * sessionId 的兜底分区）语义不同，二者分离。
+ */
+export const GLOBAL_SCOPE_KEY = '__global_scope__'
+
 /** per-session 分区状态容器（IF8 契约）。 */
 export interface StatusBarSessionState {
   items: StatusBarEntry[]
@@ -41,8 +54,6 @@ export interface StatusBarControllerDeps {
 }
 
 export class StatusBarController {
-  /** global scope 聚合（模块私有字段，IF8 契约）。 */
-  private globalState: { items: StatusBarEntry[] } = { items: [] }
   private unsubscribe: (() => void)[] = []
 
   constructor(private deps: StatusBarControllerDeps) {}
@@ -61,7 +72,10 @@ export class StatusBarController {
   getItems(scope: 'global'): StatusBarEntry[]
   getItems(scope: 'per-session', sessionId: string): StatusBarEntry[]
   getItems(scope: 'per-session' | 'global', sessionId?: string): StatusBarEntry[] {
-    if (scope === 'global') return this.globalState.items
+    // global scope 存 sessionScoped 保留分区（GLOBAL_SCOPE_KEY，MF-2 R2）：
+    // 壳注入 reactive 容器时读路径被 Vue 追踪，in-place mutate 触发重算。
+    // 用 get 而非 getOrDefault——渲染期只读，不产生建分区副作用。
+    if (scope === 'global') return this.deps.sessionScoped.get(GLOBAL_SCOPE_KEY)?.items ?? []
     const sid = sessionId ?? GLOBAL_STATUS_KEY
     return this.deps.sessionScoped.get(sid)?.items ?? []
   }
@@ -102,8 +116,11 @@ export class StatusBarController {
   }
 
   private handleStatusBarUpdate(e: { sessionId?: string; items: StatusBarEntry[] }): void {
-    // 广播是全量快照：global 分区同步为「非 per-session 子集」
-    this.replaceAllWith(this.globalState.items, e.items.filter((i) => i.scope !== 'per-session'))
+    // 广播是全量快照：global 分区同步为「非 per-session 子集」。经 sessionScoped 保留分区
+    // （GLOBAL_SCOPE_KEY）存储——壳注入 reactive 容器时 in-place mutate 走 proxy set trap
+    this.deps.sessionScoped.update(GLOBAL_SCOPE_KEY, (s) =>
+      this.replaceAllWith(s.items, e.items.filter((i) => i.scope !== 'per-session')),
+    )
 
     // per-session 项按分区键分组（item.sessionId > event.sessionId > '__global__'）
     const groups = new Map<string, StatusBarEntry[]>()
@@ -117,10 +134,11 @@ export class StatusBarController {
     for (const [key, incoming] of groups) {
       this.deps.sessionScoped.update(key, (s) => this.replaceAllWith(s.items, incoming))
     }
-    // 未提及分区：快照中无其条目 = runtime 已全部删除 → 清空分区（防「删除不消失」+ Map 增长）
+    // 未提及分区：快照中无其条目 = runtime 已全部删除 → 清空分区（防「删除不消失」+ Map 增长）。
+    // GLOBAL_SCOPE_KEY 是 global scope 保留分区，不在 per-session 快照语义内，跳过
     const mentioned = new Set(groups.keys())
     for (const key of this.deps.sessionScoped.keys()) {
-      if (!mentioned.has(key)) this.deps.sessionScoped.cleanup(key)
+      if (!mentioned.has(key) && key !== GLOBAL_SCOPE_KEY) this.deps.sessionScoped.cleanup(key)
     }
   }
 

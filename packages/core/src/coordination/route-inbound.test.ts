@@ -353,4 +353,27 @@ describe('configureRouteInbound — crossSession 通道（ADR-0060）', () => {
     expect(ports.events.dispatchGlobal).toHaveBeenCalledTimes(1)
     expect(ports.events.dispatchCrossSession).not.toHaveBeenCalled()
   })
+
+  it('⑩f 全量 CROSS_SESSION_TYPES 字面量逐项命中（防拼写回归）', () => {
+    // 与 route-inbound.ts CROSS_SESSION_TYPES 集合字面量同步（集合未导出，逐项行为断言代替）。
+    // 任一成员拼写漂移（如 extension.ui_request 误写成冒号）→ dispatchCrossSession 不再被调
+    const literals = [
+      'extension:widget',
+      'extension:widgetGui',
+      'extension:status',
+      'extension:notify',
+      'extension.ui_request',
+      'extension.ui_timeout',
+      'plugin:uiRequest',
+      'plugin:viewUpdate',
+    ]
+    for (const type of literals) {
+      const ports = makePorts()
+      const dispatcher = configureRouteInbound(ports)
+      dispatcher(sessionMsg(type, { requestId: 'r', method: 'input' }))
+      expect(ports.events.dispatchCrossSession).toHaveBeenCalledWith(
+        expect.objectContaining({ type }),
+      )
+    }
+  })
 })

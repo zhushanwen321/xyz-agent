@@ -23,7 +23,7 @@
  * 适配（见 extension-host-dialog.ts）经 DIALOG_REQUEST_SOURCE_KEY/UI_RESPONSE_TRANSPORT_KEY 注入。
  */
 import type { App } from 'vue'
-import { reactive } from 'vue'
+import { reactive, shallowReactive, watch } from 'vue'
 import {
   ContributionRegistry,
   createSessionScopedMap,
@@ -40,9 +40,11 @@ import {
   type OverlayState,
   type IncomingPluginMessage,
   type PluginMessageSource,
+  type SessionScopedMap,
   type ViewCacheEntry,
   type StatusBarSessionState,
 } from '@xyz-agent/core'
+import { getState as getWsState } from '@/lib/ws-client'
 import {
   DIALOG_REQUEST_SOURCE_KEY,
   STATUS_BAR_SOURCE_KEY,
@@ -76,8 +78,9 @@ export const EXTENSION_BRIDGE_TYPES: readonly string[] = [
  *
  * ADR-0060：数据源从 raw-message-tap 旁路改为 events 正规双订阅（route-inbound 单一真相源）：
  * - onGlobal：收无 sid 的 plugin:*（statusBarUpdate/notification/uiRequest 等走 global 通道）
- * - onCrossSession：收带 sid 的 extension:*（widget/widgetGui/status/notify/ui_request，
- *   route-inbound CROSS_SESSION_TYPES 白名单分发，全局单例消费者 ExtensionHost 接收）
+ * - onCrossSession：收带 sid 的 extension:*（widget/widgetGui/status/notify/ui_request/ui_timeout
+ *   + plugin:uiRequest/plugin:viewUpdate，route-inbound CROSS_SESSION_TYPES 白名单分发，
+ *   全局单例消费者 ExtensionHost 接收）
  * 经 source filter 后消息集合与旧 raw-tap 全量订阅等价（plugin:* 无 sid + extension.* 带 sid）。
  */
 export function createWsPluginMessageSource(): PluginMessageSource {
@@ -121,6 +124,71 @@ export function getExtensionBus(): InternalEventBus {
 }
 
 /**
+ * 壳层响应式 SessionScopedMap（MF-2 R2 修复，ADR-0049 范式的响应式版）。
+ *
+ * core 的 createSessionScopedMap 是 headless 纯 Map（刻意零 Vue 依赖）：外层 partitions 是
+ * 普通 Map，computed 读路径 `get(sid)?.get(vid)` 在分区尚不存在时短路 undefined、零依赖建立，
+ * 之后首个 viewUpdate 惰性建分区 + set 不触发 → 值永久 stale（panel.header 常挂组件时序直接命中）。
+ * 本实现保持 SessionScopedMap 接口契约（core 零改动），外层 shallowReactive Map 的 get/set 被 Vue
+ * 追踪：分区后建 → SET/ITERATE trigger → computed 重算。分区值仍由 init 工厂返回 reactive
+ * 容器（in-place mutate 走 proxy set trap）——故外层用 shallowReactive（值已是 reactive，
+ * 避免 reactive(Map) 的 deep unwrap 类型噪音与二次包装）。
+ */
+function createReactiveSessionScopedMap<T>(init: () => T): SessionScopedMap<T> {
+  const partitions = shallowReactive(new Map<string, T>())
+
+  return {
+    get(sessionId: string): T | undefined {
+      return partitions.get(sessionId)
+    },
+    getOrDefault(sessionId: string): T {
+      let partition = partitions.get(sessionId)
+      if (!partition) {
+        partition = init()
+        partitions.set(sessionId, partition)
+      }
+      return partition
+    },
+    update(sessionId: string, fn: (t: T) => void): void {
+      const partition = this.getOrDefault(sessionId)
+      fn(partition)
+    },
+    cleanup(sessionId: string): void {
+      partitions.delete(sessionId)
+    },
+    has(sessionId: string): boolean {
+      return partitions.has(sessionId)
+    },
+    keys(): Iterable<string> {
+      return partitions.keys()
+    },
+  }
+}
+
+/**
+ * mountPoints.sync 上报的模块级单例注册（MF-1 R2 修复）。
+ *
+ * 不能在 initExtensionHostBridge 时立即 send：main.ts 模块体同步执行先于 app.mount，WS 唯一
+ * 连接入口在 App.vue onMounted（异步建连），send 时 readyState 必非 OPEN → core ws-client
+ * 非 OPEN 时 return false 静默丢弃（W4 fast-fail 契约，无缓冲队列）→ runtime mountPoints 恒 []。
+ * 改为 watch connectionState：每次进入 connected（首次建连 + runtime 重启重连）补发；
+ * runtime syncMountPoints 为 overwrite 语义（DM3），重复发送幂等。模块级守卫防重复注册
+ * （HMR / 测试多次 init 只挂一个 watcher，避免重复发送）。
+ */
+let mountPointsSyncWatchRegistered = false
+function ensureMountPointsSync(mountPoints: MountPointRegistry): void {
+  if (mountPointsSyncWatchRegistered) return
+  mountPointsSyncWatchRegistered = true
+  const sendSync = (): void => {
+    transport.send({ type: 'plugin.mountPoints.sync', payload: { mountPoints: mountPoints.list() } })
+  }
+  // immediate：init 时若已 connected（防御）立即发送；否则等待首次建连 / 重连进入 connected
+  watch(getWsState(), (s) => {
+    if (s === 'connected') sendSync()
+  }, { immediate: true })
+}
+
+/**
  * 装配 ExtensionHost bridge（main.ts 挂载前调用一次，app.provide 全局注入）。
  *
  * 返回 stores/registries 供调试与后续接线（§12.3 dialog 闭环复用同一 bus）。
@@ -138,19 +206,21 @@ export function initExtensionHostBridge(app: App): {
   const source = createWsPluginMessageSource()
   // bridge 构造即订阅 source（source.subscribe → handleMessage → bus.emit）
   const bridge = new MessageBusBridge({ source, bus })
-  // MF-4 响应式桥：core store 是 headless 纯 Map 容器（刻意零 Vue 依赖），事件到达 mutate
-  // 纯 Map 不被 Vue computed 追踪 → ViewHost/StatusBar 永不重渲染。壳层用 reactive 包装分区值
-  // （init 工厂返回 reactive 容器，get/set 走 reactive proxy），ViewHost.vue computed 的
-  // getView/getItems 调用面即被追踪（core 代码零改动）。
+  // MF-4 响应式桥（R2 补齐）：core store 是 headless 纯 Map 容器（刻意零 Vue 依赖），事件到达
+  // mutate 纯 Map 不被 Vue computed 追踪 → ViewHost/StatusBar 永不重渲染。壳层两层 reactive 化：
+  // ①外层 partitions 容器 reactive（createReactiveSessionScopedMap——分区后建也触发重算，
+  //   修复「computed 首次求值短路 → 永久 stale」）；②分区值由 init 工厂返回 reactive 容器
+  // （get/set 走 reactive proxy）。ViewHost.vue computed 的 getView/getItems 调用面即被追踪
+  // （core 代码零改动）。
   const viewHostStore = new ViewHostStore({
     bus,
-    sessionScoped: createSessionScopedMap(() => reactive(new Map<string, ViewCacheEntry>())),
+    sessionScoped: createReactiveSessionScopedMap(() => reactive(new Map<string, ViewCacheEntry>())),
   })
   viewHostStore.subscribe()
   const statusBarController = new StatusBarController({
     bus,
     // 分区值须满足 StatusBarSessionState 全字段（setEntries 必填，items/setEntries 后续 update push）
-    sessionScoped: createSessionScopedMap(() => reactive<StatusBarSessionState>({ items: [], setEntries: [] })),
+    sessionScoped: createReactiveSessionScopedMap(() => reactive<StatusBarSessionState>({ items: [], setEntries: [] })),
   })
   statusBarController.subscribe()
   const mountPoints = new MountPointRegistry()
@@ -160,8 +230,9 @@ export function initExtensionHostBridge(app: App): {
   void registerMountPoints()
   void scanContributions()
   // MF-3：把挂载点整表上报 runtime（AC10）——插件 views.listMountPoints() 依赖此中继查询，
-  // 不上报则恒返回 []（registerMountPoints 内部同步注册，此处 list() 已含全部挂载点）。
-  transport.send({ type: 'plugin.mountPoints.sync', payload: { mountPoints: mountPoints.list() } })
+  // 不上报则恒返回 []（registerMountPoints 内部同步注册，list() 已含全部挂载点）。
+  // MF-1（R2）：发送时点见 ensureMountPointsSync——init 时 WS 未建连，send 必被静默丢弃。
+  ensureMountPointsSync(mountPoints)
 
   // ui 组件数据源（ViewHost/StatusBar 经 inject 取，壳 provide 真实实现；形状对齐 IF10/IF5）
   app.provide(VIEW_HOST_SOURCE_KEY, {
@@ -169,10 +240,12 @@ export function initExtensionHostBridge(app: App): {
   })
   app.provide(STATUS_BAR_SOURCE_KEY, {
     // 两 scope 重载（ui 契约）：直接委托 StatusBarController（签名对齐 IF8）。
-    // MF-4：global scope 分区是 controller 内部普通数组（非 reactive），provide 时 reactive 包装——
-    // reactive() 按原始对象缓存同一 proxy（replaceAllWith in-place 保持引用稳定），computed 追踪有效。
+    // MF-2（R2）：global scope 经 controller 的 sessionScoped 保留分区（GLOBAL_SCOPE_KEY）存储，
+    // 壳注入 reactive 分区容器 → getItems 返回的 items 数组本身 reactive，computed 追踪有效
+    // （旧实现 reactive() 包装 controller 私有 raw 数组，replaceAllWith 原地 mutate 不经 proxy
+    // set trap → global 状态栏永不更新）。
     getItems: (scope: 'global' | 'per-session', sessionId?: string) => {
-      if (scope === 'global') return reactive(statusBarController.getItems('global'))
+      if (scope === 'global') return statusBarController.getItems('global')
       // sessionId 可能 undefined：controller 实现签名内部 `sessionId ?? GLOBAL_STATUS_KEY` 兜底
       // （重载签名要求 string，受控断言仅类型擦除，运行时 undefined 走兜底分区）
       return statusBarController.getItems('per-session', sessionId as string)

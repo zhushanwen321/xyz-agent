@@ -8,7 +8,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { PluginService } from '../src/services/plugin-service/plugin-service.js'
 import { PluginRegistry } from '../src/services/plugin-service/plugin-registry.js'
-import type { IMessageBroker } from '../src/interfaces.js'
+import type { IMessageBroker, ISessionService } from '../src/interfaces.js'
 import type { IPluginServiceDeps } from '../src/services/plugin-service/plugin-types.js'
 
 // ── Fixtures ──────────────────────────────────────────────────
@@ -25,7 +25,7 @@ function createMockBroker(): IMessageBroker & { messages: Array<{ type: string; 
   }
 }
 
-function createService(broker?: ReturnType<typeof createMockBroker>): {
+function createService(broker?: ReturnType<typeof createMockBroker>, depsOverrides?: Partial<IPluginServiceDeps>): {
   service: PluginService
   broker: ReturnType<typeof createMockBroker>
 } {
@@ -33,9 +33,20 @@ function createService(broker?: ReturnType<typeof createMockBroker>): {
   const registry = new PluginRegistry('/tmp/fake-project', '/tmp/fake-project')
   const deps: IPluginServiceDeps = {
     broadcastFn: (type, payload) => b.broadcast({ type, payload } as never),
+    ...depsOverrides,
   }
   const service = new PluginService(registry, b, deps)
   return { service, broker: b }
+}
+
+/** 活跃 session 桩：listPersistedSessions 返回 status==='active' 的 session（ActiveSessionResolver 全盘扫描依据）。 */
+function createActiveSessionStub(sessionId: string): ISessionService {
+  return {
+    listPersistedSessions: () => [{
+      cwd: '/tmp',
+      sessions: [{ id: sessionId, label: sessionId, cwd: '/tmp', status: 'active', lastActiveAt: 1, modelId: 'test-model' }],
+    }],
+  } as unknown as ISessionService
 }
 
 function getUiHandlers(service: PluginService) {
@@ -89,10 +100,36 @@ describe('UI Dialog RPC — showConfirm WS往返', () => {
     const payload = broadcastCall!.payload as Record<string, unknown>
     const requestId = payload.requestId as string
     expect(requestId).toBeTruthy()
+    // MF-3（R2 回归）：无活跃 session（deps.sessionService 未注入）→ sessionId 为 undefined
+    // （前端 C2 守卫按 sessionId 分区消费，无 sid 会丢弃——此断言锁住「注入缺失」回归）
+    expect(payload.sessionId).toBeUndefined()
 
     // Simulate frontend response（走公共接口，行为不变）
     service.handleUiResponse(requestId, true)
 
+    const result = await confirmPromise
+    expect(result).toBe(true)
+  })
+
+  it('showConfirm broadcasts active sessionId in payload (MF-2 R2 regression)', async () => {
+    // 活跃 session 注入：ActiveSessionResolver 经 deps.sessionService.listPersistedSessions
+    // 找 status==='active' 的 session，resolve 时点注入 broadcast payload（与 views.update 同源）
+    const { service, broker } = createService(undefined, { sessionService: createActiveSessionStub('s1') })
+    const methods = getUiHandlers(service)
+
+    const confirmPromise = methods.get('plugin.ui.showConfirm')!({
+      pluginId: 'test-plugin',
+      title: 'Confirm?',
+      message: 'Are you sure?',
+    })
+
+    const broadcastCall = broker.messages.find(m => m.type === 'plugin:uiRequest' || (m.payload as Record<string, unknown>)?.requestId)
+    expect(broadcastCall).toBeDefined()
+    const payload = broadcastCall!.payload as Record<string, unknown>
+    // MF-3（R2）：核心注入断言——无 sid 的 uiRequest 会被前端 C2 守卫丢弃，plugin dialog 永不弹出
+    expect(payload.sessionId).toBe('s1')
+
+    service.handleUiResponse(payload.requestId as string, true)
     const result = await confirmPromise
     expect(result).toBe(true)
   })

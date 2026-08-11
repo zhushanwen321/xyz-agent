@@ -10,11 +10,30 @@
  * TC5 白名单 5 项字面量 + 行为级验证（防与 core EXTENSION_HANDLERS 漂移）。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { InternalEventBus, MessageBusBridge } from '@xyz-agent/core'
+import { computed, nextTick } from 'vue'
+import { InternalEventBus, MessageBusBridge, providePlatform } from '@xyz-agent/core'
 import type { InternalEvent } from '@xyz-agent/core'
-import { dispatchCrossSession } from '@/api/events'
+import { dispatchCrossSession, dispatchGlobal } from '@/api/events'
 import { createWsPluginMessageSource, EXTENSION_BRIDGE_TYPES, initExtensionHostBridge } from '../useExtensionHostBridge'
-import { DIALOG_REQUEST_SOURCE_KEY, UI_RESPONSE_TRANSPORT_KEY } from '@xyz-agent/ui/extension-host'
+import {
+  DIALOG_REQUEST_SOURCE_KEY,
+  UI_RESPONSE_TRANSPORT_KEY,
+  VIEW_HOST_SOURCE_KEY,
+  STATUS_BAR_SOURCE_KEY,
+  type ViewHostSource,
+  type StatusBarSource,
+} from '@xyz-agent/ui/extension-host'
+import { connect, disconnect } from '@/lib/ws-client'
+import { createMockPlatform } from '@/mock/mock-ws'
+
+// mock transport：MF-4 断言 mountPoints.sync 发送（真实 transport.send 在单测环境不可观测、
+// 且会裸调 ws-client）。模式对齐 usePermissionRequest.test.ts（顶层 vi.fn + 工厂转发）。
+const transportSendSpy = vi.fn()
+vi.mock('@/api/transport', () => ({
+  send: (...args: unknown[]) => transportSendSpy(...args),
+  connect: vi.fn(),
+  on: vi.fn(),
+}))
 
 function makeBridge() {
   const bus = new InternalEventBus()
@@ -185,5 +204,135 @@ describe('initExtensionHostBridge provide CompanionBand 契约（FR2/FR7，TC10�
     const transport = transportProvided?.value as { sendPiResponse: unknown; sendPluginResponse: unknown }
     expect(typeof transport.sendPiResponse).toBe('function')
     expect(typeof transport.sendPluginResponse).toBe('function')
+  })
+})
+
+describe('MF-2 响应式桥（分区后建时序 + global scope）', () => {
+  let bridge: MessageBusBridge | null = null
+
+  afterEach(() => {
+    bridge?.dispose()
+    bridge = null
+  })
+
+  /** 装配真实 bridge 链（events → source → bus → store → provide），返回注入的数据源。 */
+  function initBridgeSources(): { viewHostSource: ViewHostSource; statusBarSource: StatusBarSource } {
+    const provided: Array<{ key: unknown; value: unknown }> = []
+    const app = {
+      provide(key: unknown, value: unknown) {
+        provided.push({ key, value })
+        return app
+      },
+    }
+    const result = initExtensionHostBridge(app as never)
+    bridge = result.bridge
+    const viewHostSource = provided.find((p) => p.key === VIEW_HOST_SOURCE_KEY)?.value as ViewHostSource
+    const statusBarSource = provided.find((p) => p.key === STATUS_BAR_SOURCE_KEY)?.value as StatusBarSource
+    return { viewHostSource, statusBarSource }
+  }
+
+  it('case B: 分区后建时序——computed 首次求值无分区，首个 viewUpdate 到达后重算命中', async () => {
+    const { viewHostSource } = initBridgeSources()
+    // 模拟 ViewHost.vue 的 computed 读路径：先于任何事件求值（分区尚不存在 → 短路 undefined）
+    const view = computed(() => viewHostSource.getView('s1', 'sidebar.tab'))
+    expect(view.value).toBeUndefined()
+
+    // 首个 viewUpdate 到达 → ViewHostStore 惰性建分区 + setView（R1 修复前外层普通 Map，
+    // set 不触发 → 此 computed 永久 stale，panel.header 常挂组件时序直接命中）
+    dispatchCrossSession({
+      type: 'plugin:viewUpdate',
+      payload: {
+        sessionId: 's1',
+        viewId: 'sidebar.tab',
+        pluginId: 'p1',
+        guiTree: [{ type: 'ansi-text', props: { lines: ['hello'] } }],
+        updatedAt: 1,
+      },
+    })
+    await nextTick()
+    expect(view.value).toMatchObject({ viewId: 'sidebar.tab', pluginId: 'p1' })
+  })
+
+  it('global scope: statusBarUpdate 广播 → getItems("global") computed 重算（不再 stale）', async () => {
+    const { statusBarSource } = initBridgeSources()
+    // 模拟 StatusBar.vue 的 visibleItems computed：global 项读路径
+    const items = computed(() => statusBarSource.getItems('global'))
+    expect(items.value).toHaveLength(0)
+
+    dispatchGlobal({
+      type: 'plugin:statusBarUpdate',
+      payload: {
+        items: [{ id: 'g1', pluginId: 'statusline', text: '3 tasks', alignment: 'left', priority: 100, scope: 'global' }],
+      },
+    })
+    await nextTick()
+    // R1 前：controller 私有 raw 数组 replaceAllWith 原地 mutate 不经 proxy → 永不更新
+    expect(items.value.map((i) => i.id)).toEqual(['g1'])
+  })
+})
+
+describe('MF-1 挂载点上报时序（mountPoints.sync 连接就绪后发送）', () => {
+  let bridge: MessageBusBridge | null = null
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    transportSendSpy.mockClear()
+    providePlatform(createMockPlatform())
+  })
+
+  afterEach(() => {
+    bridge?.dispose()
+    bridge = null
+    disconnect() // 复位 ws-client 状态（防泄漏到后续用例）
+    vi.useRealTimers()
+  })
+
+  function initBridge() {
+    const provided: Array<{ key: unknown; value: unknown }> = []
+    const app = {
+      provide(key: unknown, value: unknown) {
+        provided.push({ key, value })
+        return app
+      },
+    }
+    const result = initExtensionHostBridge(app as never)
+    bridge = result.bridge
+  }
+
+  it('TC11: 初始未连接不发送；首次建连进入 connected 后补发全量挂载点', async () => {
+    initBridge()
+
+    // init 时 WS 未建连（main.ts 模块体同步执行先于 App.vue onMounted 建连）：不得发送
+    // （旧实现此处 send 被 ws-client 非 OPEN return false 静默丢弃）
+    expect(transportSendSpy).not.toHaveBeenCalled()
+
+    connect('mock://extension-host-test')
+    await vi.advanceTimersByTimeAsync(200) // mock WS connecting→connected（200ms）
+
+    expect(transportSendSpy).toHaveBeenCalledTimes(1)
+    expect(transportSendSpy).toHaveBeenCalledWith({
+      type: 'plugin.mountPoints.sync',
+      payload: { mountPoints: ['sidebar.tab', 'panel.header', 'composer.toolbar', 'statusbar'] },
+    })
+  })
+
+  it('TC12: runtime 重启重连（断开→重连）→ connected 再次补发（overwrite 幂等）', async () => {
+    initBridge()
+
+    connect('mock://extension-host-test')
+    await vi.advanceTimersByTimeAsync(200)
+    expect(transportSendSpy).toHaveBeenCalledTimes(1)
+
+    // runtime 重启：旧 WS 断开 → 重连 → 再次 connected → 补发（syncMountPoints overwrite 幂等）
+    disconnect()
+    expect(transportSendSpy).toHaveBeenCalledTimes(1)
+    connect('mock://extension-host-test')
+    await vi.advanceTimersByTimeAsync(200)
+
+    expect(transportSendSpy).toHaveBeenCalledTimes(2)
+    expect(transportSendSpy).toHaveBeenLastCalledWith({
+      type: 'plugin.mountPoints.sync',
+      payload: { mountPoints: ['sidebar.tab', 'panel.header', 'composer.toolbar', 'statusbar'] },
+    })
   })
 })
