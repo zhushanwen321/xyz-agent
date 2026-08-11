@@ -5,7 +5,8 @@
  * 运行：cd packages/ui && npx vitest run src/rendering-protocol/__tests__/AnsiText.test.ts
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
+import { h, ref } from 'vue'
 import { AnsiUp } from 'ansi_up'
 import AnsiText from '../primitives/AnsiText.vue'
 
@@ -82,5 +83,39 @@ describe('AnsiText', () => {
     expect(html).toContain('hello world')
     // 纯文本无 ANSI 着色 span（ansi_up 不生成 class="ansi-* 着色 span）
     expect(html).not.toContain('class="ansi-')
+  })
+
+  // MF-2 回归：AnsiUp 实例不可跨重算复用（有状态流式解析器，复用会串色）
+  it('状态隔离：content 增量更新不复用上次的颜色状态（无串色）', async () => {
+    // 用本地 ref 驱动 AnsiText（模拟流式 tool result 增量更新），避免 setProps 的 .vue shim 类型问题
+    const content = ref(`${ESC}[31mred${ESC}`)
+    const wrapper = mount({
+      setup() {
+        return () => h(AnsiText, { content: content.value })
+      },
+    })
+    // 第一次：红色无 reset，旧实现会把 fg=red 状态留在复用实例上
+    expect(wrapper.find('[data-testid="ansi-text"]').html()).toContain('ansi-red-fg')
+    // 第二次：纯文本，不应被上次的 red 状态污染（复用实例会包成 ansi-red-fg span）
+    content.value = 'plain'
+    await flushPromises()
+    const html2 = wrapper.find('[data-testid="ansi-text"]').html()
+    expect(html2, '增量纯文本不应串色为 red').not.toContain('ansi-red-fg')
+    expect(html2).toContain('plain')
+  })
+
+  // MF-1 回归：catch 降级路径经 v-html 渲染，含 HTML payload 时必须转义防 XSS
+  it('catch 降级路径 XSS 防护：ansi_to_html 抛错且 content 含 <script> 时转义', () => {
+    const spy = vi.spyOn(AnsiUp.prototype, 'ansi_to_html').mockImplementation(() => {
+      throw new Error('parse fail')
+    })
+    const wrapper = mount(AnsiText, {
+      props: { content: '<script>alert(1)</scr' + 'ipt>' },
+    })
+    const html = wrapper.find('[data-testid="ansi-text"]').html()
+    // 转义后注入，不含可执行的 <script> 标签
+    expect(html).toContain('&lt;script&gt;')
+    expect(html).not.toContain('<script>')
+    spy.mockRestore()
   })
 })

@@ -22,23 +22,36 @@ const props = defineProps<{
   content: string
 }>()
 
-const ansi = new AnsiUp()
-// v6：输出 class 而非内联 rgb，由 CSS 层映射 v6 token（双主题可 CSS 变量化）
-ansi.use_classes = true
-// ansi_up 默认转义 HTML（escape_html=true），安全
+/** HTML 转义：catch 降级回退路径经 v-html 注入，必须转义防 XSS */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
 
 const html = computed(() => {
+  // 每次重算新建 AnsiUp 实例：ansi_up 是有状态流式解析器（fg/bg/bold 跨调用持久、
+  // 无公开 reset API），复用实例会导致 ANSI 状态泄漏——上次未 reset 的颜色状态污染
+  // 下次纯文本输出（实测复用实例时 "plain" 被包进 ansi-red-fg span，串色）。
+  const ansi = new AnsiUp()
+  // v6：输出 class 而非内联 rgb，由 CSS 层映射 v6 token（双主题可 CSS 变量化）
+  ansi.use_classes = true
+  // 钉死 XSS 安全属性，不依赖 ansi_up 默认值（纵深防御）
+  ansi.escape_html = true
   try {
     return ansi.ansi_to_html(props.content)
   } catch {
-    // 解析失败回退纯文本（ES2 降级）
-    return props.content
+    // 解析失败回退纯文本（ES2 降级）：v-html 渲染前转义，防 XSS 注入
+    return escapeHtml(props.content)
   }
 })
 </script>
 
 <template>
-  <!-- eslint-disable-next-line vue/no-v-html -- ansi_up 默认 escape_html=true，输出 XSS 安全。use_classes 模式输出 ansi-* class，样式由下方非 scoped <style> 提供。受控注入点。 -->
+  <!-- eslint-disable-next-line vue/no-v-html -- escape_html 显式 pin=true，正常路径 XSS 安全；catch 降级路径经 escapeHtml 转义。use_classes 模式输出 ansi-* class，样式由下方非 scoped <style> 提供。受控注入点。 -->
   <span class="whitespace-pre-wrap font-mono" data-testid="ansi-text" v-html="html" />
 </template>
 
