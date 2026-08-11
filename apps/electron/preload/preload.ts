@@ -1,6 +1,6 @@
 // apps/electron/preload/preload.ts
 import { contextBridge, ipcRenderer } from 'electron'
-import type { LatestReleaseInfo, SegmentsMetadataEntry, UpdateStage, UpdateSettings } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateStage, UpdateSettings } from '@xyz-agent/shared'
 
 export interface ElectronAPI {
   /** 监听 runtime 端口事件 */
@@ -51,31 +51,6 @@ export interface ElectronAPI {
    * - displayName：用户可读名（badge/alt 显示，无 uuid 前缀）；粘贴截图无原文件名时为 截图-时间戳.ext
    * - persisted：sessionId 非空 true（落 attachments 已持久化）；空 false（落 tmpdir，session 创建后需迁移）
    */
-  writeSessionImage(payload: {
-    sessionId: string
-    base64: string
-    mimeType: string
-    name: string
-  }): Promise<{ path: string; fileName: string; displayName: string; id: string; persisted: boolean }>
-  /**
-   * 把 landing 态落在 tmpdir 的图片 move 到 <dataDir>/attachments/<sessionId>/（持久化）。
-   * session 创建后调用，解决 landing 粘图 path 仍指 tmpdir 的缺口（OS 会清理 tmpdir 导致丢图）。
-   * fromPath 不存在（OS 已清理）或 move 失败会 throw，调用方 catch 后降级。
-   */
-  migrateSessionImage(payload: {
-    fromPath: string
-    sessionId: string
-    fileName: string
-  }): Promise<{ path: string }>
-  /**
-   * 追加/覆盖一条 segments 元数据到 sidecar（<dataDir>/attachments/<sessionId>/segments.json）。
-   * 发送 user message 时调用，把完整 Segment[]（含 image/file 私有元信息）落盘，重开 session 时回填。
-   * 同 clientUuid 重发（editAndResend）→ 后者覆盖前者。主进程 atomic 写（tmp + rename）。
-   */
-  writeSegmentsMetadata(payload: {
-    sessionId: string
-    entry: SegmentsMetadataEntry
-  }): Promise<void>
   /** 在默认浏览器中打开外部链接 */
   openExternal(url: string): Promise<void>
   /** 监听 macOS 全屏状态变化 */
@@ -249,12 +224,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     defaultPath?: string
     filters?: Array<{ name: string; extensions: string[] }>
   }) => ipcRenderer.invoke('pick-file', options),
-  writeSessionImage: (payload: { sessionId: string; base64: string; mimeType: string; name: string }) =>
-    ipcRenderer.invoke('write-session-image', payload),
-  migrateSessionImage: (payload: { fromPath: string; sessionId: string; fileName: string }) =>
-    ipcRenderer.invoke('migrate-session-image', payload),
-  writeSegmentsMetadata: (payload: { sessionId: string; entry: SegmentsMetadataEntry }) =>
-    ipcRenderer.invoke('write-segments-metadata', payload),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   onFullscreenChanged: (callback: (payload: { isFullscreen: boolean }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: { isFullscreen: boolean }) => callback(payload)

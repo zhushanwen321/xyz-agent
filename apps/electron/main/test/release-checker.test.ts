@@ -392,4 +392,59 @@ describe('W2: ReleaseChecker 自动升级检测', () => {
       expect(result!.version).toBe('0.8.15')
     })
   })
+
+  // ── W2TC8：win 产物名后缀匹配（M7-01 P0 回归防护）────────────────
+  //
+  // electron-builder.yml nsis artifactName 必须产出 TaiJi-<version>-setup-<arch>.exe
+  // （setup 在 version 之后），与 ASSET_PATTERNS.winX64Exe 的 '-setup-x64.exe' 后缀匹配。
+  // 曾出现 setup/version 对调（TaiJi-setup-<version>-<arch>.exe）导致 win 自动升级
+  // 检测永远匹配不到 asset（实际产物恒带 ${version}，fixture 用不带版本号的形态掩盖了）。
+  describe('W2TC8: win asset 后缀匹配（带版本号形态）', () => {
+    it('TaiJi-<version>-setup-x64.exe（正确形态）→ winX64Exe 匹配', async () => {
+      globalThis.fetch = vi.fn(async () =>
+        jsonResponse(
+          makeReleaseJson({
+            assets: [
+              {
+                name: 'TaiJi-0.8.44-setup-x64.exe',
+                browser_download_url: 'https://example.com/TaiJi-0.8.44-setup-x64.exe',
+                size: 2000,
+                digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+              },
+            ],
+          }),
+        ),
+      ) as typeof globalThis.fetch
+
+      const checker = new ReleaseChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+      expect(result).not.toBeNull()
+      expect(result!.assets.winX64Exe?.downloadUrl).toBe(
+        'https://example.com/TaiJi-0.8.44-setup-x64.exe',
+      )
+    })
+
+    it('TaiJi-setup-<version>-x64.exe（setup/version 对调的错误形态）→ winX64Exe 不匹配', async () => {
+      // 锁死修复：对调形态必须匹配不到，否则回归时 win 自动升级静默失效
+      globalThis.fetch = vi.fn(async () =>
+        jsonResponse(
+          makeReleaseJson({
+            assets: [
+              {
+                name: 'TaiJi-setup-0.8.44-x64.exe',
+                browser_download_url: 'https://example.com/TaiJi-setup-0.8.44-x64.exe',
+                size: 2000,
+                digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+              },
+            ],
+          }),
+        ),
+      ) as typeof globalThis.fetch
+
+      const checker = new ReleaseChecker()
+      const result = await checker.checkForLatestRelease('0.8.14')
+      expect(result).not.toBeNull()
+      expect(result!.assets.winX64Exe).toBeUndefined()
+    })
+  })
 })
