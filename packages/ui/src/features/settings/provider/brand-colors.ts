@@ -30,13 +30,15 @@ export const BRAND_COLORS: Record<string, string> = {
   cerebras: '#e63329',
 }
 
-/** fallback 语义色集合（与 ProviderTemplatePicker AVATAR_CLASSES 同构，5 色循环） */
+/** fallback 语义色集合（与 ProviderTemplatePicker AVATAR_CLASSES 同构，5 色循环）
+ *  引用 design-tokens CSS 变量（var(--success) 等）：palette/主题切换时自动跟随，
+ *  避免与 style.css :root 的 token 值逐字复制漂移（inline style 可用 var()）。 */
 const FALLBACK_COLORS = [
-  '#8b93a3',
-  '#78a87e',
-  '#b79c54',
-  '#bf6b6b',
-  '#6d99a5',
+  'var(--neutral-ico)',
+  'var(--success)',
+  'var(--warn)',
+  'var(--danger)',
+  'var(--info)',
 ] as const
 
 /** 字符串 hash 乘数（稳定映射用） */

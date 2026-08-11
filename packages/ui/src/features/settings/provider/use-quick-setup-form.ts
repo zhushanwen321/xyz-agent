@@ -103,7 +103,7 @@ export function useQuickSetupForm(
     return 'plaintext'
   }
 
-  /** 保存禁用：明文模式空 key 禁用；env 模式空变量名禁用（MF-1：空自定义变量不产生无意义 env_var 配置）；OAuth 未授权且非已有授权时禁用 */
+  /** 保存禁用：明文模式空 key 禁用；env 模式空变量名禁用（MF-1：空自定义变量不产生无意义 env_var 配置）；OAuth 模式未授权时禁用 */
   const saveDisabled = computed(() => {
     if (authMethod.value === 'plaintext' && !apiKeyInput.value.trim()) return true
     if (authMethod.value === 'env' && !resolvedEnvVar.value) return true

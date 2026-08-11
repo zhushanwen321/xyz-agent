@@ -166,8 +166,8 @@ describe('brandColor 纯函数（TC5）', () => {
     expect(brandColor('anthropic')).toBe('#d97757')
   })
 
-  it('色板外 hash fallback（在 5 语义色集合内）', () => {
-    const FALLBACKS = ['#8b93a3', '#78a87e', '#b79c54', '#bf6b6b', '#6d99a5']
+  it('色板外 hash fallback（在 5 语义色集合内，值为 design-tokens CSS 变量）', () => {
+    const FALLBACKS = ['var(--neutral-ico)', 'var(--success)', 'var(--warn)', 'var(--danger)', 'var(--info)']
     expect(FALLBACKS).toContain(brandColor('unknown-provider-xyz'))
   })
 
