@@ -1,19 +1,21 @@
 # 对话流 Block 渲染顺序重构
 
-> **一句话结论**：对话流里每个 block（text/thinking/toolCall）的显示位置应由 `contentBlocks` 数组的稳定顺序决定，而不是由"是否末位 assistant"这个会随 streaming 翻转的派生量决定；本次取消"末位 filter"，让 text 始终可见（不进折叠区）、thinking/toolCall 受折叠控制，从结构上消除 block 跳变，同时不破坏"回答常驻、执行细节可折叠"的现有契约。
+> **一句话结论**：对话流里每个 block（text/thinking/toolCall）的显示位置应由 `contentBlocks` 数组的稳定顺序决定，而不是由"是否末位 assistant"这个会随 streaming 翻转的派生量决定；本次取消"末位 filter"，所有 text 全 inline 就地渲染、统一正文样式、始终可见（不进折叠区），thinking/toolCall 受折叠控制——这是一次明确的产品设计语义变更（从"最终回答突出、过程文字折进执行流程"转为"全 inline 统一"，对齐 ChatGPT/Claude 业界范式），需同步更新 v6 spec。
 
 ## 开篇（SCQA）
 
-- **S（情境）**：xyz-agent 对话流把一条 AI 回答渲染成若干 block（文字 / thinking / 工具调用），按回合（turn）分组展示。
-- **C（冲突）**：streaming 时 block 会在屏幕上突然跳位——先出现的文字块，会在工具块出现后瞬间被挪到别处，或工具块突然跳到文字上方。
-- **Q（问题）**：怎么让每个 block 一旦出现就待在它该在的位置，整个 streaming 过程零跳变，且不破坏"回答常驻可见、执行细节可折叠"的现有契约？
-- **A（答案）**：block 的渲染位置只认 `contentBlocks` 数组顺序这一个稳定来源；text 作为"回答内容"始终可见（不随 trace 折叠），thinking/toolCall 作为"执行细节"受折叠控制；砍掉所有"按末位推断位置"的派生逻辑。本文展开这个答案。
+- **S（情境）**：xyz-agent 对话流把一条 AI 回答渲染成若干 block（文字 / thinking / 工具调用），按回合（turn）分组展示。v6 spec（`v6-spec-content.html`）是 UI 验收 SSOT。
+- **C（冲突）**：① streaming 时 block 会在屏幕上突然跳位——先出现的文字块，会在工具块出现后瞬间被挪到别处；② 现状用"末位 assistant"区分"最终回答"（正文样式突出）与"过程文字"（暗色小字折进执行流程），但"末位"是个会随 streaming 翻转的派生量，正是跳变根因。
+- **Q（问题）**：怎么让每个 block 一旦出现就待在它该在的位置，整个 streaming 过程零跳变，且给出一个不依赖"末位推断"的文字呈现模型？
+- **A（答案）**：block 位置只认 `contentBlocks` 顺序这一个稳定来源；所有 text 全 inline 就地、统一正文样式、始终可见（不进折叠区）；thinking/toolCall 作为执行细节受折叠控制；TurnSummary 退化为操作栏。这是一次产品设计语义变更，同步更新 v6 spec §12.6。本文展开。
 
 ---
 
-> **层性质声明**（准则 10）：本次设计的**当前层 = 渲染架构方案**，**下一层 = 组件接口 + 代码改动清单**。不跨到"逐函数实现"层。
+> **层性质声明**（准则 10）：本次设计的**当前层 = 渲染架构方案 + 产品语义变更**，**下一层 = 组件接口 + 代码改动 + spec 更新清单**。不跨到"逐函数实现"层。
 >
 > **层敏感准则**（准则 5/6/7）：本次涉及 streaming 数据流与运行时渲染行为，三条全部 P0 适用。
+>
+> **产品语义变更声明**：本设计推翻 v6 spec §12.6 与 `Block.vue` 注释确立的"中间文字折进执行流程、最终回答在底部突出"意图，转为"全 inline 统一"（对齐 ChatGPT/Claude/Cursor 范式）。变更理由与 spec 同步计划见 §6.3。
 
 ---
 
@@ -21,7 +23,7 @@
 
 **对话流渲染管线负责把 pi（AI 后端）吐出的事件流变成屏幕上可见的 block 序列。** 一个使用者在 panel 里看到的一轮 AI 回答，背后经历：pi 推送事件 → runtime 转译 → 前端 store 累积 → 组件渲染。
 
-涉及的核心数据结构（`packages/shared/src/message.ts`）：
+核心数据结构（`packages/shared/src/message.ts`）：
 
 ```ts
 export interface Message {
@@ -30,22 +32,19 @@ export interface Message {
   status: 'streaming' | 'complete' | 'error'
   toolCalls?: ToolCall[]               // 工具调用
   thinking?: ThinkingBlock[]           // 思考块
-  contentBlocks?: ContentBlock[]       // 有序内容块，记录到达顺序 ← 设计上的 SSOT
-}
-
-export interface ContentBlock {
-  type: 'thinking' | 'toolCall' | 'text'
-  refId: string   // thinking/toolCall 指向对应数组元素 id；text 恒为 'text'
+  contentBlocks?: ContentBlock[]       // 有序内容块，记录到达顺序 ← 设计上的顺序 SSOT
 }
 ```
 
-> **术语：turn（回合）**。一轮对话 = 一个 user 提问 + 其后连续的 AI 回答。`toRenderItems()`（`packages/core/src/domain/chat/message-turns.ts`）把扁平 `Message[]` 按 user 切分成 `MessageTurn`，一个 turn 的 `assistants` 数组可能含**多条** assistant message（原因见 §3.3）。
+> **术语：turn（回合）**。一轮对话 = 一个 user 提问 + 其后连续的 AI 回答。`toRenderItems()`（`message-turns.ts`）把扁平 `Message[]` 按 user 切分成 `MessageTurn`，一个 turn 的 `assistants` 数组可能含**多条** assistant message（原因见 §3.3）。
 
-> **术语：block（内容块）**。一条 assistant message 内部，按产出顺序的原子展示单元：text / thinking / toolCall。`contentBlocks` 数组记录它们的顺序，`expandAssistantBlocks()`（`message-turns.ts:158`）据此解成 `OrderedBlock[]` 渲染列表。
+> **术语：block（内容块）**。一条 assistant message 内部，按产出顺序的原子展示单元：text / thinking / toolCall。`contentBlocks` 数组记录顺序，`expandAssistantBlocks()`（`message-turns.ts:158`）据此解成 `OrderedBlock[]` 渲染列表。
 
-> **术语：trace 折叠 / showTrace**。`Turn.vue` 把"执行细节"（thinking/toolCall）放在一个可折叠的 trace 区，由 `showTrace = sessionActive || isExpanded(turn.index)` 控制显隐。对话进行中（`sessionActive`）或手动展开时显示，完成后默认折叠。这是现有契约：**回答文字常驻可见，执行细节可折叠**。
+> **术语：trace 折叠 / showTrace**。`Turn.vue` 把"执行细节"（thinking/toolCall）放在可折叠 trace 区，由 `showTrace = sessionActive || isExpanded(turn.index)` 控制显隐。对话进行中或手动展开时显示，完成后默认折叠。
 
-本次设计聚焦：**一条 assistant message 内部 block 的渲染位置决策**，以及 text 与 trace 折叠的正确关系。
+> **术语：v6 spec（UI SSOT）**。`docs/page-design/v6-spec-*.html` 是项目逐组件 UI 验收基准。其中 `v6-spec-content.html §12.6` 定义 TurnSummary。本次设计变更需同步更新该 spec（§6.3）。
+
+本次设计聚焦：**一条 assistant message 内部 block 的渲染位置决策、文字呈现模型、与 trace 折叠/v6 spec 的关系**。
 
 ---
 
@@ -54,21 +53,24 @@ export interface ContentBlock {
 **改造后，使用者在对话流里：**
 
 1. **block 零跳变**：任何 block 一旦出现，在它所属 message 的整个生命周期里位置不变（streaming 中、完成后、重连后都不变）。
-2. **顺序符合直觉**：block 按真实产出顺序自上而下排列（先说的在前，后调的工具在后），与"读对话"的自然阅读顺序一致。
+2. **顺序符合直觉**：block 按真实产出顺序自上而下排列，与"读对话"的自然阅读顺序一致。
 3. **重连前后一致**：streaming 中途断线重连、或关闭重开 session，看到的 block 顺序与文字可见性与不断线时完全相同。
-4. **不破坏现有契约**：回答文字始终可见（不论 trace 折叠与否）；执行细节（thinking/toolCall）保持可折叠。
+4. **文字呈现统一稳定**：所有 text 全 inline 统一正文样式（消除"最终回答 vs 过程文字"的两级视觉层级与"末位"概念），样式变化只跟随稳定的 assistant 生命周期状态（streaming→complete），不随兄弟 message 到达翻转。
+5. **回答始终可见**：text 作为回答内容始终可见（不论 trace 折叠与否）；执行细节（thinking/toolCall）保持可折叠。
 
 **In-scope**：
-- `Turn.vue` 的 block 渲染顺序决策（"末位 filter"）与 text 的可见性边界
-- `TurnSummary.vue` 的职责收窄（去内容化）
-- streaming 光标的归位
-- `Message.content` 在渲染层的角色澄清
+- `Turn.vue` 的 block 渲染顺序决策（"末位 filter"）与 text 可见性边界
+- 文字样式统一（全 inline 正文样式，§6.2）
+- `TurnSummary.vue` 职责收窄（去内容化，仅操作栏）
+- streaming 光标归位
+- **v6 spec §12.6 同步更新**（§6.3）
 
 **Out-of-scope**（显式声明不做，防 scope creep）：
-- 不改 pi 事件协议（`event-adapter.ts` 的 noop 策略保留，见 §6.5）
-- 不合并"一个 turn 多条 assistant message"（§6 决策 D，留作后续评估）
-- 不改 `contentBlocks` 的数据结构本身（它已经是正确的 SSOT，问题在消费端）
-- 不改 compact / fork / handoff 逻辑（它们读 `Message.content`，本次保留该字段与数据角色）
+- 不改 pi 事件协议（`event-adapter.ts` noop 策略保留，见 §6.6）
+- 不合并"一个 turn 多条 assistant message"（§6 决策 D，A 落地后评估）
+- 不改 `contentBlocks` 数据结构本身（它已是正确 SSOT，问题在消费端）
+- 不改 compact / fork / handoff（读 `Message.content`，本次保留该字段与数据角色）
+- **不解决"闪烁"问题**（`[DEBUG finalize]` 追的是另一病灶，§3.3 澄清同根不同病）
 
 ---
 
@@ -81,81 +83,63 @@ export interface ContentBlock {
 ```
 ┌─ turn ─────────────────────────────────────┐
 │ [user] 读一下 a.ts 然后告诉我内容            │
-│                                              │
-│ ┌─ TurnMeta（回合头，始终可见）──────────┐  │
-│ │                                          │  │
-│ │ ┌─ trace 区（v-if="showTrace"，折叠/展开）┐│
-│ │ │ <a1 的 block 在这里>                  │ │ │
-│ │ │ <a2 的 block 在这里>                  │ │ │
-│ │ └──────────────────────────────────────┘ │ │
-│ │                                          │ │
-│ │ ┌─ TurnSummary（始终可见）──────────────┐ │ │
-│ │ │ <最后一条 assistant 的文字> + 操作栏   │ │ │
-│ │ └──────────────────────────────────────┘ │ │
-│ └──────────────────────────────────────────┘ │
+│ ┌─ TurnMeta（始终可见）──────────────────┐  │
+│ │ ┌─ trace 区（v-if="showTrace"，折叠）──┐ │  │
+│ │ │ <a1 block> <a2 block>               │ │  │
+│ │ └────────────────────────────────────┘ │  │
+│ │ ┌─ TurnSummary（始终可见）──────────────┐│  │
+│ │ │ <最后一条 assistant 文字·正文样式> +操作栏││  │
+│ │ └────────────────────────────────────┘ │  │
+│ └────────────────────────────────────────┘  │
 └──────────────────────────────────────────────┘
 ```
 
-决定 block 去向的核心代码（`packages/ui/src/features/chat/Turn.vue`，main 与 feat 一致）：
+**现状有两级文字样式 + 两处文字渲染位**（本次变更的核心对象）：
+
+| 文字角色 | 渲染位置 | 样式（核实自代码） | 来源 |
+|---|---|---|---|
+| **最终回答**（末位 assistant） | TurnSummary（始终可见） | `text-base` / `leading-7` / streaming `neutral-mid`→完成 `neutral-fg` | `TurnSummary.vue:8-9` |
+| **过程文字**（非末位 assistant） | Block.vue text 分支（受 showTrace 折叠） | `text-sm` / `leading-relaxed` / 恒暗色 `neutral-mid` | `Block.vue:47` |
+
+决定文字去向的核心逻辑（`Turn.vue`）：
 
 ```js
-// Turn.vue:129 — showTrace 控制整个 trace 区显隐
+// Turn.vue:129
 const showTrace = computed(() => sessionActive.value || isExpanded(props.turn.index))
-
-// Turn.vue:167-171 — 末位 filter：末位 assistant 的 text 被挪出 trace
+// Turn.vue:167-171 — 末位 filter：末位 text 挪出 trace（去 TurnSummary），非末位 text 留 trace
 const traceBlocksByAssistant = computed(() => {
   return props.turn.assistants.map((a, i) => {
     const blocks = expandAssistantBlocks(a)
     return i === lastAssistantIdx.value
-      ? blocks.filter((b) => b.kind !== 'text')  // ← 末位 text 被挪走
-      : blocks                                    // ← 非末位 text 留在 trace（受 showTrace 控制）
+      ? blocks.filter((b) => b.kind !== 'text')
+      : blocks
   })
 })
 ```
 
-```js
-// TurnSummary.vue:122-128 — 始终渲染最后一条 assistant 的文字
-const summaryText = computed(() => {
-  const last = props.turn.assistants[props.turn.assistants.length - 1]
-  if (!last?.content) return ''
-  const text = normalizeContent(last.content)
-  return text.trim() ? text : ''
-})
-// 根节点 <div v-if="summaryText"> 包裹了文字 + 操作栏（TurnSummary.vue:7）
-```
-
-> **术语：末位 filter**。就是上面 `.filter((b) => b.kind !== 'text')` 这一行——把"最后一条 assistant"的 text 块从 trace 区剔除，改由底部的 TurnSummary 渲染。设计意图是"末位的文字是最终回答，放底部 summary 常驻；非末位的文字是过程性说明，折叠进 trace"。
+> **术语：末位 filter**。上面 `.filter((b) => b.kind !== 'text')`——把"末位 assistant"的 text 从 trace 剔除交 TurnSummary 渲染（正文样式），非末位 text 留 trace（过程样式、受折叠）。设计意图："末位=最终回答要突出，非末位=过程说明要折叠"。**这个意图本身是 v6 spec 与 Block.vue 注释确立的刻意设计，不是事故**（`Block.vue:45` 注释"draft §4 Output Text 中间：折进执行流程"；`v6-spec-content.html §12.6` 定义 TurnSummary 为"对话流最核心交互入口"、容器含正文文字）。
 
 ### 3.2 怎么出错：block 跳变的根因时刻
 
 **失败模式 A（主症）：新 message_start 到达，末位翻转，text 在 trace↔summary 间跳变。**
 
-按时间展开"说话 → 调工具 → 总结"的 streaming 过程：
-
 | 时刻 | pi 事件 | turn.assistants | a1 是末位? | trace 区 | TurnSummary | 使用者看到 |
 |---|---|---|---|---|---|---|
 | T1 | a1 流文字 "我先读文件" | `[a1]` | 是 | `[]`（a1 text 被 filter） | "我先读文件" | 底部出现文字 |
-| T2 | a1 收到工具块 | `[a1]` | 是 | `[工具]`（text 仍被 filter） | "我先读文件" | 工具在 trace、文字在底部 |
-| T3 | `message_start(a2)` 到达 | `[a1,a2]` | **否** | `[a1 文字, 工具]` + `[]` | a2 文字 | **a1 的文字瞬间从底部跳进 trace，落到工具上方** |
+| T2 | a1 收到工具块 | `[a1]` | 是 | `[工具]` | "我先读文件" | 工具在 trace、文字在底部 |
+| T3 | `message_start(a2)` | `[a1,a2]` | **否** | `[a1 文字, 工具]`+`[]` | a2 文字 | **a1 文字瞬间从底部跳进 trace，落到工具上方，且样式从正文突变为暗色小字** |
 
-T2→T3 的瞬间，a1 的文字块从 TurnSummary（底部）跳进 trace（上方），与工具块的相对位置突变——这就是使用者感知的"block 突然跳位 / 顺序错乱"。
+T2→T3 瞬间，a1 文字块**位置跳变 + 样式跳变**双重突变。
 
-**失败模式 B：重连后顺序与 streaming 中不一致。** streaming 时 `contentBlocks` 按"前端事件到达顺序"填充；若某条路径走 `expandAssistantBlocks` 的 fallback 分支（`contentBlocks` 为空时，顺序固定为 `[text, thinking, tool]`，`message-turns.ts:178`），与 streaming 累积顺序可能不同。常见场景一致，但边界态（异常 / 手工数据 / 部分填充）会错位。
+**失败模式 B：重连后顺序可能不一致。** streaming 按"前端事件到达顺序"填 `contentBlocks`；持久化（`message-converter.ts`）按"pi content array 顺序"填。两者常见场景一致，但**顺序语义不同源**——深层风险在此（§11 待验证登记统一方案，不只依赖"实践一致"）。若走 `expandAssistantBlocks` fallback（`contentBlocks` 为空，固定顺序 `[text,thinking,tool]`），边界态会错位。
 
-> **失败模式 C（filter 的派生症状，非独立病灶）**：block 的 v-for key 含数组下标 `bIdx`（`Turn.vue:39` `` `${assistant.id}-${blk.kind}-${bIdx}` ``）。末位翻转时 text 被重新插回数组首部，推高后续 `bIdx`，Vue 视为新元素重建 DOM，视觉跳动加剧。**根因仍是 filter**：`contentBlocks` 三个填充点（registry.ts / message-converter.ts / streaming-state-machine.ts，见 §7.1）全部 append 到尾部、从不前插，若没有 filter 把 text 抽走再插回，`bIdx` 本就稳定。移除 filter 即同时消除此症状，无需独立修复（见 §6.4）。
+> **失败模式 C（filter 的派生症状，非独立病灶）**：v-for key 含数组下标 `bIdx`（`Turn.vue:39`）。末位翻转时 text 被插回数组首部推高 `bIdx`，Vue 重建 DOM 加剧跳动。**根因仍是 filter**：三个 contentBlocks 填充点均 append-only 不前插（§7.1），无 filter 则 `bIdx` 本就稳定，移除 filter 即消除，无需独立修复（§6.5）。
 
-### 3.3 为什么一个 turn 会有多条 assistant message
+### 3.3 为什么一个 turn 会有多条 assistant message + 闪烁是另一个问题
 
-这是 pi 的事件模型决定的，不是前端选择：
+**多 assistant**：pi 一个 agent 循环 = N 个 turn，每个 assistant turn 开始 emit `message_start` → 前端建新 streaming assistant（`registry.ts:116`）；pi 的 `message_end` 在 `event-adapter.ts:652` 是 `NULL_EVENTS` 不转发 → 每条 assistant 持续 streaming 到 `agent_end` 的 `message.complete` 一次性收口。所以"说话→调工具→总结"必然 ≥2 条 assistant 并存。这是失败模式 A 的触发前提。
 
-- pi 一个 agent 循环 = N 个 turn。每个 turn 若含工具调用，pi 会先 emit 当前 turn 的内容，执行工具，再开下一个 turn。
-- pi 在每个 assistant turn 开始时 emit `message_start`。
-- `event-adapter.ts` 把 assistant 的 `message_start` 转成前端 `message.message_start`，前端 store 的 handler（`registry.ts:116`）**每次都新建一条 streaming assistant message**。
-- pi 的 `message_end` 在 `event-adapter.ts:652` 是 `NULL_EVENTS`（不转发），所以每条 assistant message 保持 streaming，直到整个 agent 循环结束的 `agent_end` → `message.complete` 一次性收口。
-
-**结论**：一次"说话 → 调工具 → 总结"必然产生 ≥2 条 assistant message 并存于同一 turn。这是失败模式 A 的触发前提。
-
-> 旁证：`registry.ts` 的 `message_start` / `message.complete` handler 里埋了 `[DEBUG finalize] 场景A诊断` 日志（main 与 feat 都有），注释明确写"复现『同一回合中间闪烁已完成』"——开发者已知此场景存在闪烁，正在排查。本设计与该排查同源。
+> **澄清"同根不同病"**：`registry.ts` 的 `[DEBUG finalize] 场景A诊断` 日志追的是**另一个问题——"同一回合中间闪烁已完成"**，根因是 `message_end` noop 抹平了每条 assistant 的真实完成时刻（谁提前收口丢失）。它与本文的"text 去哪"**同根**（多 assistant 并存 + `message_end` 抹平状态）但**不同病**：移除末位 filter 不解决闪烁，闪烁需独立方案。本设计不声称解决闪烁。
 
 ---
 
@@ -163,151 +147,138 @@ T2→T3 的瞬间，a1 的文字块从 TurnSummary（底部）跳进 trace（上
 
 ### 4.1 根因
 
-**两个病灶共同导致 block 跳变（v1 曾列三个，审查核实 C 是 A 的派生症状，已降级）：**
+**病灶 1（主因）：block 的显示位置依赖"兄弟元素是否存在"，而非自身稳定属性。** "末位 filter" 用 `i === lastAssistantIdx` 决定 text 去哪，而 `lastAssistantIdx` 随 `message_start` 翻转。一个 block 的位置不应因另一个 message 的出现而突变——违反 UI 元素位置契约。
 
-**病灶 1（主因）：block 的显示位置依赖"兄弟元素是否存在"，而非自身稳定属性。** "末位 filter" 用 `i === lastAssistantIdx` 决定 text 去哪，而 `lastAssistantIdx` 随 `message_start` 翻转。一个 block 的位置不应因另一个 message 的出现而突变——这违反 UI 元素位置契约。
+**病灶 2：同一份文字的双重表示 + 视图靠 filter 协调。** `Message.content`（字符串）与 `contentBlocks`（结构化数组）是同一份文字的两种表示；两个渲染位（TurnSummary 读 content / trace 读 contentBlocks）靠 filter 避免重复。filter 一旦失效（末位翻转）就跳变。
+> **长期终点形态**（本次不实现，仅明示方向）：终点是 `contentBlocks` 成为内容+顺序双 SSOT，`content` 降为派生视图（compact/fork/handoff 可由 contentBlocks 派生）。本次保守保留 `content` 数据角色不变（§7.1），只消除"双重渲染"这个**症状**；双表示本身保留。不讲终点会误导后来者以为双表示已解决。
 
-**病灶 2：同一份文字的双重表示 + 视图靠 filter 协调。** `Message.content`（字符串）和 `contentBlocks`（结构化数组）是同一份文字的两种表示。summary 渲染读 `content`、trace 渲染读 `contentBlocks`，靠"末位 filter"避免重复。数据冗余 + 视图协调 hack，filter 一旦失效（末位翻转）就重复或跳变。
-
-> **contentBlocks 本身不是病灶**：它的字段注释（`message.ts:231`）明说"记录到达顺序"，本就是为顺序渲染设计的正确 SSOT。问题在消费端 `Turn.vue` 没有直接信任它，反而叠加了"末位推断"这层不可靠逻辑。
+> **contentBlocks 本身不是病灶**：它本就是为顺序渲染设计的正确 SSOT。问题在消费端 `Turn.vue` 没直接信任它，叠加了"末位推断"。
 
 ### 4.2 物理数据流图（pi 事件 → 屏幕像素）
 
 ```
 pi SSE 事件流
-  │
-  │  message_update{text_delta}        ──┐
-  │  tool_execution_start              ──┤  (注：pi 的 content block 级事件
-  │  message_start{assistant}          ──┤   text_start/toolcall_start 在
-  │                                       │   event-adapter.ts:106 全是 noop)
-  ▼                                       │
-event-adapter.ts (runtime)                │
-  │ 转译成前端 message.* 事件             │
-  ▼                                       │
-chat store contentBlocks (SSOT)           │
-  │ 按"前端事件到达顺序"append 到尾部 ◄────┘
-  │ (三个填充点均 append-only、均带 text 幂等守卫)
+  │ message_update{text_delta} / tool_execution_start / message_start{assistant}
+  │ (注：pi content block 级事件 text_start/toolcall_start 在 event-adapter.ts:106 全 noop)
   ▼
-expandAssistantBlocks() (message-turns.ts:158)  ← 信任 contentBlocks 原序解出 OrderedBlock[]
-  │
+event-adapter.ts → 前端 message.* 事件
   ▼
-Turn.vue traceBlocksByAssistant  ← ★病灶 1：叠加"末位 filter"，破坏稳定顺序
-  │
-  ├──→ trace 区 (v-if="showTrace")：thinking + toolCall（末位 text 被剔除）
-  └──→ TurnSummary (始终可见)：最后一条 assistant.content + streaming 光标
+chat store contentBlocks (顺序 SSOT，三个填充点均 append-only + text 幂等守卫)
+  ▼
+expandAssistantBlocks() (message-turns.ts:158) ← 信任 contentBlocks 原序解出 OrderedBlock[]
+  ▼
+Turn.vue traceBlocksByAssistant ← ★病灶 1：叠加"末位 filter"，破坏稳定顺序
+  ├──→ trace 区 (v-if=showTrace)：thinking + toolCall（末位 text 被剔除）
+  └──→ TurnSummary (始终可见)：末位 assistant.content（正文样式）+ 过程文字在 trace（暗色样式）
 ```
 
-**关键论断**：从 `contentBlocks` 到 `expandAssistantBlocks` 这一段，顺序是**稳定且正确**的（✅ 已读代码确认，见 §7.4 探针 P-stable）。跳变 solely 发生在 `Turn.vue` 的"末位 filter"这一步——它把稳定的输入变成了不稳定的输出。
+**关键论断**：`contentBlocks → expandAssistantBlocks` 这段顺序稳定正确（✅ 探针 P-stable）。跳变 solely 发生在 `Turn.vue` 末位 filter 这一步。
 
 ---
 
 ## 5. 终态：使用者眼里将是什么样的
 
-### 5.1 成功路径（block 零跳变 + 回答始终可见）
+### 5.1 成功路径（全 inline 统一 · block 零跳变 · 回答始终可见）
 
-**核心设计：重新明确 text 与 trace 折叠的关系——text 是"回答内容"始终可见，thinking/toolCall 是"执行细节"受折叠控制。** 这兑现了 §1 末尾的现有契约（回答常驻、执行细节可折叠），而不是破坏它。
+**核心设计（方向 Y，已裁决）**：所有 text 全 inline 就地渲染、**统一正文样式**（`text-base`/`leading-7`）、始终可见（不进折叠区）；thinking/toolCall 作为执行细节受 showTrace 折叠。彻底消除"末位"概念与两级视觉层级。
 
-同样的"读 a.ts 然后总结"场景，改造后。先看 **trace 展开态**（对话进行中 / 手动展开）：
-
-```
-T1: a1 流文字 "我先读文件"
-    [始终可见区] a1: 文字"我先读文件"█        ← 文字就地出现，带 streaming 光标
-T2: a1 收到工具块
-    [始终可见区] a1: 文字"我先读文件"
-    [折叠区]     a1: 工具(read)                ← 工具追加在文字下方，文字不动
-T3: message_start(a2) 到达
-    [始终可见区] a1: 文字"我先读文件"
-    [折叠区]     a1: 工具(read)
-    [始终可见区] a2: 文字"内容是..."█          ← a2 在 a1 下方继续，a1 文字没动
-```
-
-**全程没有任何 block 改变位置。** 文字一直在它出现的地方，工具一直在文字下方，a2 的总结在 a1 下方。block 的位置 = 它在 `contentBlocks` 里的位置，从出现到终态不变。
-
-再看 **trace 折叠态**（对话完成后 / 重开历史 session）：
+trace **展开态**（对话进行中 / 手动展开）：
 
 ```
-[始终可见区] a1: 文字"我先读文件"
-[始终可见区] a2: 文字"内容是..."
-（thinking/toolCall 隐藏，文字完整保留）
-[操作栏] 复制 / 复制MD / fork / handoff
+T1: a1 流文字 "我先读文件"（正文样式·streaming 暗色）█
+T2: a1 收到工具块 → 工具追加在文字下方，文字不动
+    [始终可见] a1: "我先读文件"（正文）
+    [折叠区]   a1: 工具(read)
+T3: message_start(a2) → a2 在 a1 下方继续，a1 文字位置/样式都不动
+    [始终可见] a1: "我先读文件"（正文）
+    [折叠区]   a1: 工具(read)
+    [始终可见] a2: "内容是..."（正文·streaming 暗色）█
 ```
 
-**折叠只隐藏执行细节，回答文字完整可见。** 重开历史 session 的每一轮回答都不会丢失文字。
+trace **折叠态**（完成后 / 重开历史）：
 
-> **与现状的关键区别**：现状把"末位 text"放 TurnSummary 常驻、"非末位 text"放折叠 trace（折叠后非末位文字也消失）。改造后**所有 text 都常驻**，不受折叠影响——这比现状更完整地兑现了"回答常驻"契约（现状折叠后只剩末位文字，中间过程性文字丢失）。
+```
+[始终可见] a1: "我先读文件"（正文·完成全色）
+[始终可见] a2: "内容是..."（正文·完成全色）
+（thinking/toolCall 隐藏）
+[操作栏] 复制/复制MD/fork/handoff
+```
+
+**全程零跳变**：text 位置 = 它在 `contentBlocks` 里的位置；样式 = 正文级，颜色只跟随**所属 assistant 的生命周期状态**（streaming→`neutral-mid`，complete→`neutral-fg`，单调不翻转）。a1 从不会被重新插到别处，也不会从正文突变为暗色小字。
+
+> **样式稳定性关键**：颜色绑定"assistant status"（`streaming`/`complete`），而非"是否末位"。assistant status 单调变化（streaming→complete，在 `agent_end` 收口），不随兄弟 message 到达翻转。因此 a2 出现不会改变 a1 颜色——只有 `agent_end` 时全 turn 一起 complete 才整体由暗转亮，是全局一致的语义反馈。
 
 ### 5.2 失败路径（带恢复指引）
 
-**F1：某条 assistant message 的 `contentBlocks` 异常缺失（手工数据 / 旧版本持久化）。**
-`expandAssistantBlocks` 走 fallback（`message-turns.ts:178`，固定顺序 `[text, thinking, tool]`），block 仍能渲染，只是顺序可能与流式时不一致。
-👉 恢复：该消息下次流式产出或重新加载会重建 `contentBlocks`；持久化路径（`message-converter.ts`）已保证历史消息也填 `contentBlocks`，此场景仅限异常数据。
+**F1：某条 assistant 的 `contentBlocks` 异常缺失（手工数据 / 旧持久化）。** `expandAssistantBlocks` 走 fallback（`message-turns.ts:178` 固定顺序 `[text,thinking,tool]`），仍能渲染，顺序可能与流式时不同。👉 重新加载会重建。
 
-**F2：markdown 跨块断裂？**
-👉 **由幂等守卫保证不会发生**：单条 message 最多 1 个 text 块（`ContentBlock.text.refId` 恒为 `'text'`，三个填充点——`registry.ts:263` / `message-converter.ts:100` / `streaming-state-machine.ts:56`——均有 `.some(b=>b.type==='text')` 幂等守卫）。**注意这是 by guard（守卫保证），非 by construction（类型结构保证）**：`ContentBlock[]` 类型本身允许多个 text 条目，单 text 靠三个填充点的守卫维持。若未来新增第四个填充点漏了守卫，会出现多 text 块 → `expandAssistantBlocks:163` 对每个 text 条目都 push 一次完整 `msg.content` → 文字重复。新增 contentBlocks 填充点必须带同款 text 守卫（见 §7.1）。
+**F2：markdown 跨块断裂？** 👉 **由幂等守卫保证不会发生**（by guard 非 by construction）：单 message 最多 1 个 text 块（`ContentBlock.text.refId` 恒 `'text'`，三个填充点 `registry.ts:263` / `message-converter.ts:100` / `streaming-state-machine.ts:56` 均有 `.some(b=>b.type==='text')` 守卫）。`ContentBlock[]` 类型本身允许多 text，单 text 靠守卫维持——**新增第四个填充点必须带同款守卫**，否则多 text 块会导致 `expandAssistantBlocks` 重复 push 完整 content。
 
 ---
 
 ## 6. 关键决策与权衡
 
-### 6.1 决策一：text 块的渲染位置与可见性（主决策）
+### 6.1 决策一：text 块的渲染位置（主决策）
 
-| 方案 | 长期架构合理性 | 短期实现成本 | 风险 | 裁决 |
+| 方案 | 长期架构合理性 | 短期成本 | 风险 | 裁决 |
 |---|---|---|---|---|
-| **A. text 始终可见的就地渲染** | ✅ 位置只认 `contentBlocks` 顺序，by construction 稳定；消除病灶 1/2；text 不进折叠区，不破坏"回答常驻"契约 | 低：去掉 filter + 调整 v-if 让 text 不受 showTrace 控制 + 光标归位 | 极低（见 §7.3 副作用） | **✅ 选** |
-| B. text 进折叠区（v1 方案） | ❌ turn 完成后 showTrace=false → **所有回答文字消失**（致命回归） | 低 | **致命**：重开历史 session / turn 折叠后文字不可见 | ❌（审查否决） |
-| C. filter 条件改为 message 级稳定态 | ❌ 仍依赖派生判断，只是把翻转点挪到 status 变化 | 低 | 中：streaming→complete 仍翻转一次；治标 | ❌ |
-| D. 前端合并多 assistant 为单 message | ✅ 彻底消除"末位"概念 | 高：改数据模型，影响 compact/fork/retry/虚拟列表 | 高：大范围回归 | ❌（留作 A 落地后评估） |
+| **A. text 全 inline 就地、始终可见（不进折叠区）** | ✅ 位置只认 contentBlocks，by construction 稳定；消除病灶 1/2；回答常驻 | 低 | 极低 | **✅ 选** |
+| B. text 进折叠区（v1 方案） | ❌ showTrace=false 时所有文字消失（致命回归） | 低 | **致命** | ❌（审查否决） |
+| C. filter 条件改 message 级稳定态 | ❌ 仍依赖派生判断，streaming→complete 仍翻转一次 | 低 | 中 | ❌ |
+| D. 前端合并多 assistant 为单 message | ✅ 消除"末位"概念 | 高（改数据模型，影响 compact/fork/retry） | 高 | ❌（A 落地后评估） |
 
-**被否若用**：
-- 用 B（v1 原方案）：§5.1 折叠态会变成"所有文字消失，只剩 turn 头"——这是把"block 跳变"换成"回答消失"的致命回归，比原问题严重得多。
-- 用 C：§5.1 的 T2→T3 不再跳，但每条 assistant 从 streaming→complete 时仍会跳一次（filter 条件翻转），使用者仍能看到一次跳变。
-- 用 D：能根治但代价是重写 message 数据模型的消费方，scope 失控；且 A 落地后"多 assistant"是否仍是问题需重新评估。
+**被否若用**：B → 回答消失；C → 仍跳一次；D → scope 失控，且 A 落地后 D 价值降低（A 让渲染对 message 数量免疫，D 要解决的问题已被 A 化解）。
 
-**推荐 A 的理由**（准则 8 减法优先）：A 是**减法**（砍掉 filter 这层不可靠逻辑 + 把 text 移出折叠区），不是加新机制。砍掉后正确性 by construction——`contentBlocks` 本就是为顺序渲染设计的 SSOT，直接信任它即可。A 同时比现状更完整地兑现"回答常驻"契约（现状折叠后只剩末位文字）。
+**减法优先**（准则 8）：A 是砍掉 filter + 把 text 移出折叠区，不加新机制。
 
-### 6.2 决策二：TurnSummary 的职责
+### 6.2 决策二：文字样式模型（产品语义变更）
 
-| 方案 | 长期合理性 | 短期成本 | 风险 | 裁决 |
+| 方案 | 长期架构合理性 | 短期成本 | 风险 | 裁决 |
 |---|---|---|---|---|
-| **A. 去内容化，只留操作栏** | ✅ 消除"content/contentBlocks 双重渲染"（病灶 2），单一数据源 | 低 | 低（操作栏门控需调整，见下） | **✅ 选** |
-| B. 完全删除 TurnSummary | 视觉上失去 turn 底部的操作锚点 | 中（操作按钮要重新挂载） | 中 | ❌ |
+| **Y. 全 inline 统一正文样式**（已裁决） | ✅ 彻底消除"末位"概念；对齐 ChatGPT/Claude/Cursor 范式；最干净 | 低（Block.vue text 分支升级样式 + spec 更新） | 低 | **✅ 选** |
+| X. 保留视觉层级（末位正文 / 过程暗色） | ⚠️ 样式层仍依赖"末位"判断（虽不影响位置），保留派生状态；a1 末位翻转时样式渐变 | 中 | 中 | ❌ |
 
-**操作栏门控调整**（审查 MF4 指出的副作用）：现状 `TurnSummary` 根节点 `v-if="summaryText"`（`TurnSummary.vue:7`）隐式门控了操作栏——纯工具 turn（无 text）整块不渲染，连操作栏都没有。去内容化后 `summaryText` 不再存在，根节点 `v-if` 改为 `v-if="lastAssistant"`（只要有 assistant 就显示操作栏）。**这是预期行为变更**：纯工具 turn 将新出现操作栏（其 `lastAssistant` 仍可复制/fork/handoff），属合理改善而非回归。
+**选 Y 的理由**：① 彻底消除"末位"概念（位置、样式都不再依赖它），by construction 稳定；② 业界范式；③ 减法优先（砍掉"视觉层级区分"这个 clever 机制，少一处派生状态 = 少一处失败面）；④ "最终回答突出"在多 assistant turn 里语义模糊（哪个算"最终"本身就是猜）。
 
-### 6.3 决策三：streaming 光标的位置与显隐
+**样式统一细节**：
+- 所有 text 统一到正文级：`text-base` / `leading-7`（现 TurnSummary 正文样式）。
+- 颜色跟随**所属 assistant status**：streaming→`neutral-mid`，complete→`neutral-fg`（单调，不翻转）。
+- `Block.vue` text 分支样式从 `text-sm/leading-relaxed/neutral-mid` 升级为正文级；需接收所属 assistant 的 streaming 状态以决定切色（稳定属性，非末位判断）。
 
-现状：光标在 `TurnSummary.vue:13`（末位文字末尾），`v-if="isStreaming"`。改造后末位文字进始终可见区，光标需跟随，且显隐条件必须与"工具运行时不应显示文字光标"一致。
+### 6.3 决策三：TurnSummary 去内容化 + v6 spec 同步（产品变更落地）
 
-**光标位置**：
+**产品语义变更**：本设计推翻 v6 spec §12.6 与 Block.vue 注释确立的"中间文字折进执行流程、最终回答底部突出"意图，转为"全 inline 统一"。理由：工程稳定性（消除跳变根因）+ 业界范式 + 减法。
 
-| 方案 | 长期合理性 | 短期成本 | 风险 | 裁决 |
-|---|---|---|---|---|
-| **A. turn 内容区末尾独立 `streaming-tail` 元素** | ✅ 一个元素跟在所有 block 后，不受 block 增删影响；`Block.vue:46` 注释本就声称此设计但从未落地 | 低 | 低 | **✅ 选** |
-| B. 塞进 Block.vue 的 text 分支 | 语义化但要判断"是否最后一个 streaming block" | 中 | 中（判断逻辑是派生状态） | ❌ |
+**TurnSummary 改动**：
 
-**光标显隐条件**（审查 MF6 指出，单一 `v-if="isStreaming"` 不够）：
+| 项 | 现状 | 改造后 |
+|---|---|---|
+| 文字渲染 | MarkdownRenderer（末位正文） | **删除**（文字全 inline 到 turn 内容区） |
+| streaming 光标 | TurnSummary 内 | 移到 turn 内容区末尾 `streaming-tail`（§6.4） |
+| 操作栏（copy/fork/handoff） | 保留 | **保留**，根 `v-if` 从 `summaryText` 改 `lastAssistant`（纯工具 turn 将新出现操作栏，预期行为变更） |
 
-`turn.isStreaming`（`message-turns.ts:104`）在整个 agent 循环结束前恒为 true，**包括工具运行期间**。若光标只看 `isStreaming`，工具运行时会出现"工具 loader + 文字光标"并存。正确条件：
+**v6 spec §12.6 同步更新**（纳入改动清单）：
+- 容器定义：从"TurnSummary 含正文文字 + streaming 切色"更新为"TurnSummary 仅 hover actions 操作栏；文字全 inline 在 turn 内容区，统一正文样式"。
+- 新增说明：text 全 inline 模型（位置认 contentBlocks、样式统一正文、颜色跟 assistant status）。
+- §12.6 的 streaming cursor 描述迁移到 turn 内容区 `streaming-tail`。
 
+### 6.4 决策四：streaming 光标位置与显隐
+
+**位置**：turn 内容区末尾独立 `streaming-tail` 元素（一个元素跟在所有 block 后，不受 block 增删影响；兑现 `Block.vue:46` 注释声称却从未落地的设计）。
+
+**显隐条件**（审查 MF6）：单一 `v-if="isStreaming"` 不够（工具运行时 `isStreaming` 仍 true，会与工具 loader 并存）。正确条件：
 ```
-showStreamingCursor = isStreaming && 最后一个可见 block 是 text（而非 running tool）
+showStreamingCursor = isStreaming && 最后一个可见 block 不是 running tool
 ```
+基于 contentBlocks 末项类型，稳定，不随 message_start 翻转。工具运行时光标隐藏（工具自带 loader）。
 
-实现：Turn.vue computed，取 `expandAssistantBlocks(lastStreamingAssistant)` 最后一项的 kind；若为 `tool` 且该 tool 状态为 `running`，则不显示光标（tool 自带 loader）。此条件**稳定**——基于 contentBlocks 末项，不随 `message_start` 翻转。
+### 6.5 不做：独立的 v-for key 稳定化
 
-> **现状澄清（准则 7）**：`Block.vue:46` 注释声称"streaming 光标已移到 Turn.vue trace 末尾独立元素"，但实测 `Turn.vue` 无此元素，光标实际在 `TurnSummary.vue:13`（✅ 探针 P-cursor 已 grep 确认）。该注释是过时注释——本决策 A 是把注释声称的设计**真正落地**（审查 S5 指出：这不是新设计，而是兑现一个写进代码注释却从未实现的设计契约）。
+v1 曾列此项。审查 MF2/MF3 否决：① 提议的 key 用了 `OrderedBlock` 不存在的 `refId` 字段；② contentBlocks 三处均 append-only 不前插，移除 filter 后 `bIdx` 本就稳定。失败模式 C 是 filter 派生症状，移除 filter 即消除，无需独立修复。本次不改 key。
 
-### 6.4 不做：独立的 key 稳定化（审查 MF2/MF3 否决）
+### 6.6 不改 event-adapter 的 content block 级 noop 策略
 
-v1 曾把"v-for key 稳定化"列为独立改动（M1）。审查核实：
-1. v1 提议的 key 用了 `OrderedBlock` 上不存在的字段 `refId`（实际类型只有 `kind` + `ref`，`message-turns.ts:144`）——要么无效要么 tsc 报错。
-2. contentBlocks 三个填充点全部 append-only、不前插，移除 filter 后已存在 block 的 `bIdx` 永不变，key 本就稳定。
-
-**结论**：失败模式 C 是 filter 的派生症状，移除 filter（决策一 A）即消除，无需独立修复。本次不改 v-for key（保持原样即可）。
-
-### 6.5 不改 event-adapter 的 content block 级 noop 策略
-
-pi 的 `text_start/toolcall_start` 等事件在 `event-adapter.ts:106` 是 noop。有人可能想"让前端感知 pi 的 content block 逻辑 index 来排序"——但没必要：当前 `contentBlocks` 按"前端事件到达顺序"填充，而到达顺序 = pi content array 顺序（工具执行必在 LLM 输出完整 tool_use 之后，文字必在工具之前到达）。两者在常见场景一致（✅ 探针 P-order）。改 noop 策略会牵动 runtime 协议层，scope 远超本次问题，且无收益。
+pi `text_start/toolcall_start` 在 `event-adapter.ts:106` 是 noop。无需改：前端"事件到达顺序" = pi content array 顺序（工具执行必在 LLM 输出完整 tool_use 之后）。改 noop 牵动 runtime 协议层，scope 远超本次，无收益。
 
 ---
 
@@ -315,89 +286,80 @@ pi 的 `text_start/toolcall_start` 等事件在 `event-adapter.ts:106` 是 noop�
 
 ### 7.1 数据层（基本不变）
 
-- `Message.contentBlocks`：保持现状，仍是顺序 SSOT。**三个填充点**均 append-only + 带 text 幂等守卫：
-  - `registry.ts:263`（主流式 text_delta）
-  - `message-converter.ts:100`（持久化/重连路径）
-  - `streaming-state-machine.ts:56`（subagent 虚拟 session streaming）
-  - **新增第四个填充点必须带同款 text 守卫**（F2 防护）。
-- `Message.content`：**数据角色不变**——它仍是 text block 的内容来源（`expandAssistantBlocks:163` `if (msg.content) result.push({kind:'text', ref: normalizeContent(msg.content)})`）。本次只改变其**渲染位置**（summary → turn 内容区），不改其数据角色。**streaming 期间必须继续填充 content**，否则 text block 会被 `if (msg.content)` 守卫丢弃（审查 MF5）。
-- `expandAssistantBlocks()`：**不动**。它已经正确地信任 `contentBlocks` 顺序。
+- `Message.contentBlocks`：保持顺序 SSOT。**三个填充点**均 append-only + text 幂等守卫：`registry.ts:263` / `message-converter.ts:100` / `streaming-state-machine.ts:56`。**新增第四填充点必须带同款守卫**（F2 防护）。
+- `Message.content`：**数据角色不变**——仍是 text block 内容来源（`expandAssistantBlocks:163` `if (msg.content) push text`）。本次只改渲染位置（summary→inline）与样式（统一正文），不改数据角色。**streaming 必须继续填充 content**，否则 text block 被守卫丢弃。
+- `expandAssistantBlocks()`：**不动**（已正确信任 contentBlocks 顺序）。
 
-### 7.2 渲染层改动清单
+### 7.2 渲染层 + spec 改动清单
 
-| 文件 | 改动 | 产出终态的什么 |
+| 文件 | 改动 | 产出 |
 |---|---|---|
-| `packages/ui/src/features/chat/Turn.vue` | ① `traceBlocksByAssistant` 去掉 `.filter(b => b.kind !== 'text')`；② 把 trace 区的 `v-if="showTrace"` 从外层 div 下沉到**单个 Block 级**——text 块始终渲染，thinking/toolCall 块受 `showTrace` 控制（`v-if="blk.kind === 'text' || showTrace"`）；③ 末尾加 `streaming-tail` 光标元素，显隐条件见 §6.3 | §5.1 的"block 零跳变 + text 始终可见"+ 光标归位 |
-| `packages/ui/src/features/chat/TurnSummary.vue` | ① 删除 `<MarkdownRenderer>` 与 streaming 光标；② 根节点 `v-if` 从 `summaryText` 改为 `lastAssistant`；③ 保留操作栏（复制/fork/handoff） | §6.2 单一数据源 + 操作栏门控修正 |
-| `packages/ui/src/features/chat/Block.vue` | text 分支无功能改动；清理过时的 `streaming` prop 注释与"光标已移走"注释（兑现设计契约，审查 S5） | 消除过时注释造成的认知噪音 |
-| v-for key | **不改**（§6.4 已论证移除 filter 后 key 本就稳定） | — |
-
-**Turn.vue 渲染结构调整示意**（决策一 A 的落地）：
-
-```vue
-<!-- turn 内容区：所有 block 按时序，text 始终可见，thinking/tool 受 showTrace 控制 -->
-<template v-for="(assistant, aIdx) in turn.assistants" :key="assistant.id">
-  <template v-for="(blk, bIdx) in traceBlocksByAssistant[aIdx]" :key="`${assistant.id}-${blk.kind}-${bIdx}`">
-    <Block
-      v-if="blk.kind === 'text' || showTrace"
-      :type="blk.kind" ...
-    />
-  </template>
-</template>
-<!-- streaming 光标（显隐条件见 §6.3） -->
-<span v-if="showStreamingCursor" class="streaming-cursor ..." />
-```
+| `Turn.vue` | ① 去 `.filter(b=>b.kind!=='text')`；② `v-if="showTrace"` 下沉到 Block 级（text 始终渲染，thinking/tool 受 showTrace：`v-if="blk.kind==='text' \|\| showTrace"`）；③ 末尾加 `streaming-tail` 光标（显隐 §6.4） | 位置稳定 + text 始终可见 + 光标归位 |
+| `Block.vue` | text 分支样式从 `text-sm/leading-relaxed/neutral-mid` **升级为正文级** `text-base/leading-7` + 颜色跟所属 assistant status（需接收 streaming 状态 prop）；清理过时 `streaming` prop 注释 | 样式统一（决策二 Y） |
+| `TurnSummary.vue` | 删 MarkdownRenderer + 光标；根 `v-if` 从 `summaryText` 改 `lastAssistant`；保留操作栏 | 去内容化（决策三） |
+| `v6-spec-content.html §12.6` | 容器定义更新为"仅操作栏"；文字模型更新为全 inline 统一正文；cursor 描述迁移 | spec 同步（决策三） |
+| v-for key | **不改**（§6.5） | — |
 
 ### 7.3 副作用与边界分析
 
 | 关注点 | 影响 | 结论 |
 |---|---|---|
-| **折叠态文字可见性**（审查 MF1 核心） | text 不进折叠区 | **解决**：折叠只隐藏 thinking/toolCall，所有 text 始终可见（比现状更完整） |
-| Markdown 跨块断裂 | 多 text 块各自渲染 | **不会**：单 message 最多 1 个 text 块（三处幂等守卫，F2） |
-| MarkdownRenderer 实例数 | 末位 text 从 summary 挪到内容区 | **不变**：仍 1 次渲染 |
-| 视觉重心（底部回答） | text 不再固定 TurnSummary | **不变**：最后一条 assistant 的 text 仍是 turn 最后内容，重心天然在底部 |
-| **操作栏门控**（审查 MF4） | 根 `v-if` 从 `summaryText` 改 `lastAssistant` | **预期行为变更**：纯工具 turn 新出现操作栏（合理改善） |
-| virtua 虚拟列表高度 | block 不再跳进跳出 | **更友好**：高度更稳定 |
-| streaming 光标与工具 loader 共存（审查 MF6） | 光标显隐加"最后块非 running tool"条件 | **解决**：工具运行时光标隐藏，工具自带 loader |
-| 历史消息（重连/重开） | `message-converter.ts` 已填 `contentBlocks` | **一致**：就地渲染顺序与历史路径一致；text 始终可见 |
-| compact/fork/handoff | 读 `Message.content` | **不影响**：content 数据角色不变 |
-| content 填充（审查 MF5） | content 仍是 text block 来源 | **必须继续填充**：否则 text block 被守卫丢弃 |
-| 既有测试 | `chat-chunk-content-blocks.test.ts` 验 contentBlocks 填充 | **不影响**：数据层未动；`Turn.vue` 渲染测试需更新断言 |
+| **折叠态文字可见性** | text 不进折叠区 | **解决**：折叠只隐藏 thinking/toolCall，所有 text 始终可见 |
+| **最终回答视觉层级**（产品变更） | 取消"末位正文/过程暗色"两级 | **预期变更**：全 inline 统一正文（决策二 Y，已裁决）；失去"最终回答突出"层次，对齐业界范式 |
+| **streaming 切色** | 从 TurnSummary 末位文字 → 所有 text 跟 assistant status | 稳定（status 单调），全局一致反馈 |
+| Markdown 跨块断裂 | 单 message 最多 1 text 块 | **不会**（三处幂等守卫，F2） |
+| MarkdownRenderer 实例数 | 末位 text 从 summary 挪 inline | **不变**（仍 1 次） |
+| 操作栏门控 | 根 `v-if` `summaryText`→`lastAssistant` | **预期变更**：纯工具 turn 新出现操作栏 |
+| streaming 光标与工具 loader | 光标显隐加"末项非 running tool"条件 | **解决**（决策四） |
+| 历史消息（重连/重开） | message-converter 已填 contentBlocks | **一致**；text 始终可见 |
+| compact/fork/handoff | 读 content | **不影响**（content 角色不变） |
+| **v6 spec §12.6** | 容器/文字/cursor 定义变更 | **必须同步更新**（纳入清单） |
+| 既有测试 | contentBlocks 填充测试不变 | Turn.vue 渲染断言需更新 + **新增零跳变回归测试**（§8） |
 
 ### 7.4 运行时行为断言与探针
 
 | ID | 验证的行为 | 探针 | 状态 |
 |---|---|---|---|
-| P-single-text | 单 message 最多 1 个 text 块（三处守卫） | grep registry.ts:263 / message-converter.ts:100 / streaming-state-machine.ts:56 的 text push 均有 `.some(b=>b.type==='text')` 守卫 | ✅ 已确认（by guard） |
-| P-stable | `expandAssistantBlocks` 输出顺序 = `contentBlocks` 顺序（无重排） | 读 message-turns.ts:158-176，遍历 contentBlocks 原序 push | ✅ 已确认 |
-| P-order | 前端事件到达顺序 = pi content array 顺序 | 工具执行（`tool_execution_start`）必在 LLM 输出完整 tool_use 之后；文字 delta 在工具之前 | ✅ 已确认（常见场景） |
-| P-cursor | streaming 光标现状在 TurnSummary 而非 Turn.vue | grep `streaming-cursor` 仅命中 TurnSummary.vue:13；Turn.vue 无 `streaming-tail` | ✅ 已确认 |
-| P-append-only | contentBlocks 三处填充点均 append、不前插 | 读三个填充点均为 `[...prev, newBlock]` 尾追加 | ✅ 已确认（支撑 §6.4 key 稳定结论） |
-| P-no-jump | 改造后 T2→T3 block 零跳变 | 实施后跑 §8 场景 1 录屏，逐帧对比 block 位置 | ⛔ 实施期 |
-| P-fold-visible | 折叠态/重开后 text 始终可见 | 实施后跑 §8 场景 3/4，折叠 turn 确认文字不丢失 | ⛔ 实施期 |
+| P-single-text | 单 message 最多 1 text 块（三处守卫） | grep 三填充点 text push 均 `.some(b=>b.type==='text')` | ✅ by guard |
+| P-stable | expandAssistantBlocks 输出 = contentBlocks 顺序 | 读 message-turns.ts:158-176 原序 push | ✅ |
+| P-order | 前端到达顺序 = pi content array 顺序 | 工具执行在 LLM 输出完整 tool_use 后 | ✅（常见场景） |
+| P-cursor | 光标现状在 TurnSummary 非 Turn.vue | grep `streaming-cursor` 仅 TurnSummary.vue:13 | ✅ |
+| P-append-only | contentBlocks 三处 append 不前插 | 读三处均 `[...prev, new]` 尾追加 | ✅（支撑 §6.5） |
+| P-no-jump | 改造后 T2→T3 零跳变（位置+样式） | §8 场景 1 录屏逐帧 + 组件测试 DOM 断言 | ⛔ 实施期 |
+| P-fold-visible | 折叠态/重开 text 始终可见 | §8 场景 3 | ⛔ |
+| P-style-stable | a2 出现不改 a1 样式 | §8 场景 1（颜色跟 status 不跟末位） | ⛔ |
 
 ---
 
-## 8. 验收（真实场景，非单测非 mock）
+## 8. 验收（真实场景 + 组件级回归护栏）
 
 ### 8.1 改动规模
 
-**中等**：行为变更（block 渲染位置 + text 可见性边界）+ 数据消费边界澄清，涉及 3 个组件。按准则 11，需多个真实场景验收。
+**中等偏大**：行为变更（block 位置 + 文字呈现模型 + 样式统一）+ 产品语义变更 + spec 同步，涉及 3 组件 + 1 spec。需多个真实场景 + 组件级回归护栏。
 
-### 8.2 验收场景
+### 8.2 真实场景验收（真实 pi，非单测非 mock）
 
 | 场景 | 回溯 §2 目标 | 真实流程 / 数据 / 路径 | 通过标准 |
 |---|---|---|---|
-| **1. 说话→调工具→总结（主症回归）** | 目标 1 + 2 | 真实 pi session（`xiaomi-token-plan-cn/mimo-v2.5-pro`，禁用 kimi）：发"读 src/index.ts 然后总结"。全程录屏，逐帧看 block 位置。重点看工具块出现瞬间、第二条 assistant 出现瞬间 | 全程无 block 改变位置；文字始终在工具上方，工具始终在文字下方 |
-| **2. 多工具连续调用** | 目标 1 + 2 | 真实 session：发"读 a.ts 和 b.ts"。产生 a1(文字+工具1) → a2(文字+工具2) → a3(总结) | 工具块按调用顺序自上而下稳定排列，文字穿插其间位置不变 |
-| **3. 折叠态与重开文字可见性（审查 MF1 回归）** | 目标 3 + 4 | 场景 1 完成后①手动折叠 turn ②关闭 session 重开 ③断线重连 | 三种情况下所有 text 块均完整可见，不丢失任何回答文字；thinking/toolCall 在折叠态隐藏、展开态可见 |
-| **4. thinking + 文字混合** | 目标 1 + 2 + 4 | 真实 session 用支持 thinking 的模型，发需推理的问题。产生 [thinking, 文字]，完成后折叠 turn | thinking 与文字按产出顺序排列；折叠后文字可见、thinking 隐藏；thinking 展开/折叠不引起文字跳位 |
-| **5. streaming 光标显隐正确** | 目标 1（含光标） | 场景 1 streaming 中看光标 | 文字流式时光标在文字末尾；工具运行时光标隐藏（工具自带 loader），不出现"光标+loader"并存 |
-| **6. 操作栏功能与门控** | Out-of-scope 边界守护 | 场景 1 完成后点操作栏的复制/复制MD/fork/handoff；另测一个纯工具 turn（无文字）是否出现操作栏 | 四个操作正常工作；纯工具 turn 出现操作栏（预期行为变更，§6.2） |
+| **1. 说话→调工具→总结（主症）** | 1+2+4 | 真实 pi（`xiaomi-token-plan-cn/mimo-v2.5-pro`，禁 kimi）：发"读 src/index.ts 然后总结"。全程录屏逐帧看 block 位置+样式 | 全程无 block 改变位置；a2 出现不改 a1 位置/样式；文字统一正文级 |
+| **2. 多工具连续调用** | 1+2 | 发"读 a.ts 和 b.ts"。a1(文字+工具1)→a2(文字+工具2)→a3(总结) | 工具按序稳定排列，文字穿插位置不变 |
+| **3. 折叠态与重开文字可见性** | 3+5 | 场景1完成后①折叠 turn ②关闭重开 ③断线重连 | 三种情况所有 text 完整可见；thinking/toolCall 折叠态隐藏、展开态可见 |
+| **4. thinking + 文字** | 1+2+5 | thinking 模型，发需推理问题。完成后折叠 | thinking 与文字按序；折叠后文字可见、thinking 隐藏；不跳位 |
+| **5. streaming 光标显隐** | 1（含光标） | 场景1 streaming 中看光标 | 文字流式时光标在末尾；工具运行时隐藏，不出现"光标+loader"并存 |
+| **6. 操作栏功能与门控** | 边界守护 | 场景1完成后点操作栏；测纯工具 turn | 四操作正常；纯工具 turn 出现操作栏（预期变更） |
+| **7. 样式统一** | 4 | 场景1对比改造前后 | 所有 text 同正文级；无"正文/暗色小字"两级；streaming 暗→完成亮跟 assistant status |
 
-> 单元测试（`chat-chunk-content-blocks.test.ts` 等）仅作回归辅助，不计入验收。验收回答的是"真实对话里 block 还跳不跳、文字丢不丢"，不是"代码逻辑对不对"。
->
-> 依赖说明：pi 是真实运行（RPC mode + 真实模型），无需 mock。测试模型用 `xiaomi-token-plan-cn/mimo-v2.5-pro`。
+> 依赖说明：pi 真实运行（RPC mode + 真实模型），无需 mock。
+
+### 8.3 组件级回归护栏（DOM 断言，长期护栏）
+
+录屏是一时证据，需 DOM 级回归测试长期锁定（项目测试规范要求"渲染 gate + 用户可见断言"）：
+
+| 测试 | 验证 | DOM 断言 |
+|---|---|---|
+| **零跳变回归** | message_start 序列下 text 位置稳定 | mount Turn，模拟 a1→text→tool→message_start(a2)→text 序列，断言 a1 的 text DOM 节点**全程存在且位置不变**（appendChild-only，无重排） |
+| **折叠态文字可见** | showTrace=false 时 text 不丢 | mount Turn（折叠态），断言所有 text block 的 DOM 节点存在；thinking/toolCall 节点不存在 |
+| **样式统一** | 无两级样式 | 断言所有 text block 的 class 含正文样式（`text-base`），不含过程样式（`text-sm`） |
 
 ---
 
@@ -405,43 +367,45 @@ pi 的 `text_start/toolcall_start` 等事件在 `event-adapter.ts:106` 是 noop�
 
 ### 9.1 迁移路径
 
-| 阶段 | 内容 | 交付终态的什么 |
+| 阶段 | 内容 | 交付 |
 |---|---|---|
-| **M0** | `Turn.vue`：去末位 filter + v-if 下沉到 Block 级（text 始终可见）+ `streaming-tail` 光标（含 §6.3 显隐条件）；`TurnSummary.vue`：去内容化 + 根 `v-if` 改 `lastAssistant` | §5.1 主路径（block 零跳变 + 文字始终可见）+ 光标归位 |
-| **M1** | 清理 `Block.vue` 过时注释；更新 `Turn.vue` 渲染相关测试断言；跑 §8 全部验收场景 | 验收通过 |
+| **M0** | Turn.vue（去 filter + v-if 下沉 + streaming-tail）；Block.vue（text 分支样式升级 + streaming prop）；TurnSummary.vue（去内容化 + v-if 改 lastAssistant） | §5.1 主路径 + 样式统一 |
+| **M1** | v6 spec §12.6 更新；组件级回归测试（§8.3）；清理 Block.vue 过时注释；跑 §8 全部验收 | spec 同步 + 长期护栏 + 验收通过 |
 
-纯前端改动，无数据迁移（`contentBlocks` / `content` 数据层不变）。改动可逆（git revert 即恢复）。
-
-> **说明**：v1 曾有 M1"key 稳定化"独立阶段，审查 MF2/MF3 否决后删除（§6.4）。本次 M0/M1 两阶段足够。
+纯前端 + spec 文档改动，无数据迁移。可逆（git revert 恢复）。
 
 ### 9.2 回填 main
 
-本设计与 main 共享同一套病灶（§3.1 代码一致）。**注意**：本次审查在 feat worktree 内进行，main 分支代码未独立打开核实，"逐字相同"基于设计者此前的 main/feat 对比（审查 S3）。**建议本设计在 feat 验收通过后，作为独立改动回填 main**——main 同样存在 block 跳变（开发者已埋 `[DEBUG finalize]` 日志在追）。**回填前必须在 main 实跑 §8 场景 1 录屏确证**（升级为 Must-do，非可选）。
+本设计与 main 共享病灶（§3.1 代码一致）。注意：审查在 feat worktree 内，main 未独立核实（"逐字相同"基于设计者此前对比）。**回填前必须在 main 实跑 §8 场景 1 录屏确证**（Must-do）。建议 feat 验收通过后作为独立改动回填 main（main 开发者已埋 `[DEBUG finalize]` 日志在追相关闪烁）。
 
 ---
 
 ## 10. 下一层拆分
 
-| 单元 | 说明 | justification（为什么这么拆） |
+| 单元 | 说明 | justification |
 |---|---|---|
-| unit-1：Turn.vue 渲染决策 | 去 filter + v-if 下沉 + streaming-tail 光标 | 主症根因所在，独立可验收（§8 场景 1/2/5） |
-| unit-2：TurnSummary 去内容化 | 删 MarkdownRenderer + 光标，根 `v-if` 改 `lastAssistant`，留操作栏 | 与 unit-1 强耦合（光标与末位文字迁移需同步），但职责清晰可独立 review |
-| unit-3：注释清理 + 测试更新 | 清 Block.vue 过时注释；更新 Turn.vue 渲染断言 | 独立小改进，降低 unit-1/2 认知噪音 |
-| unit-4：验收 | 跑 §8 全部场景 | 验收是 DoR 门槛（准则 11），单独成单元确保不被挤掉 |
+| unit-1：Turn.vue 渲染决策 | 去 filter + v-if 下沉 + streaming-tail | 主症根因，独立可验收（§8 场景 1/2/5） |
+| unit-2：Block.vue 样式统一 | text 分支正文级 + streaming prop | 样式决策落地，独立可验收（§8 场景 7） |
+| unit-3：TurnSummary 去内容化 | 删 MarkdownRenderer/光标 + v-if 改 lastAssistant | 与 unit-1 光标迁移同步 |
+| unit-4：v6 spec §12.6 更新 | 容器/文字/cursor 定义 | 产品变更的 SSOT 同步，防 spec 失效 |
+| unit-5：组件级回归测试 | 零跳变 + 折叠可见 + 样式统一 DOM 断言 | 长期护栏（§8.3） |
+| unit-6：验收 | 跑 §8 全部场景 | DoR 门槛 |
 
-unit-1 和 unit-2 建议同一 PR（光标与文字迁移需同步）。
+unit-1/2/3 建议同一 PR（位置/样式/光标迁移需同步）。
 
 ---
 
 ## 11. 待验证检查点
 
-1. **光标显隐的"最后块判断"边界**：当最后一块是已完成（非 running）的 tool 时，光标是否显示？倾向"不显示"（已完成 tool 无 loader，但此时若有新 text 在流，新 text 会成为最后块）。⛔ 实施期场景 5 顺带验证。
-2. **pi content array 是否可能单 message 内多 text part**：当前前端按"单 text 块"设计，靠三处守卫维持。若 pi 实际发多 text part，守卫会拦住、content 仍合并为单块——但需实测确认 pi 不会绕过守卫。⛔ 实施期场景 2/4 顺带验证。
-3. **回填 main 的时机与确证**：取决于 main 实跑 §8 场景 1 的录屏结果（§9.2 Must-do）。
+1. **光标显隐的"最后块判断"边界**：最后一块是已完成（非 running）tool 时光标是否显示？倾向不显示（此时若有新 text 在流，新 text 成末块）。⛔ 实施期场景 5。
+2. **pi content array 是否可能单 message 内多 text part**：靠三处守卫维持单 text，若 pi 发多 text part 守卫会拦住、content 合并单块。需实测确认 pi 不绕过守卫。⛔ 场景 2/4。
+3. **两条 contentBlocks 填充路径顺序语义统一**（失败模式 B 深层）：streaming 按"事件到达顺序"、持久化按"pi content array 顺序"，两者常见场景一致但**不同源**。本次依赖"实践一致"，**未给统一方案**。建议后续：让持久化路径也按到达顺序重建（或让 streaming 路径对齐 content array index），消除边界态错位。⛔ 单独追踪。
+4. **回填 main 时机与确证**：取决于 main 实跑 §8 场景 1 录屏（§9.2 Must-do）。
 
 ---
 
 ## 附录：变更历史
 
 - v1：初稿。确立"取消末位 filter + 就地渲染 + TurnSummary 去内容化"方向。
-- v2：经 tech-design-review 对抗式审查（7 Must-fix + 5 Suggestion），修正致命漏洞：① text 移出 `showTrace` 折叠区、始终可见（MF1，否则 turn 折叠/重开后文字消失）；② 删除无效的 key 稳定化阶段、失败模式 C 降级为 filter 派生症状（MF2/MF3）；③ 操作栏门控条件明确化（MF4）；④ 澄清 content 仍是 text block 来源、数据角色不变（MF5）；⑤ 光标显隐补"最后块非 running tool"条件（MF6）；⑥ "结构不可能多 text"降级为"守卫保证"、纳入第三填充点（MF7/S2）；⑦ 核准代码引用与行号（S1/S4）、补充设计契约来源（S5）。
+- v2：经第一轮对抗式审查（7 Must-fix + 5 Suggestion），修正致命漏洞 MF1（text 移出 showTrace 折叠区始终可见，否则折叠/重开文字消失）、MF2/3（删无效 key 稳定化）、MF4（操作栏门控）、MF5（content 角色）、MF6（光标显隐）、MF7（多 text 改 by-guard + 纳入第三填充点）。
+- v3：经第二轮审查（2 Must-fix + 3 Suggestion），补产品语义层：① 明示"全 inline 统一"是推翻 v6 spec §12.6/Block.vue 注释"中间文字折进执行流程"意图的设计变更，纳入 spec 同步（决策三）；② 文字样式统一到正文级、颜色跟 assistant status 不跟末位（决策二 Y，已裁决）；③ 病灶 2 补长期终点形态；④ "同源"改"同根不同病"、声明不解决闪烁；⑤ 新增组件级零跳变回归测试（§8.3）；⑥ 失败模式 B 深层（两路径顺序语义不同源）登记待验证。
