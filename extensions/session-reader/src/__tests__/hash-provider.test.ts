@@ -308,34 +308,39 @@ describe('toCandidate（O5 唯一前缀）', () => {
 })
 
 // ---- provideHashCandidates（端到端，真实 tmpdir，listAll 真跑不 mock）----
+// O5 修复后 fixture：agentDir/sessions/<cwdA|cwdB>/ 结构（模拟真实 pi 布局）。
+// listAll(cwdSessionDir) 扫单 cwd；listGlobalSessionIds(agentDir) 扫全局（cwdA+cwdB）。
 
 describe('provideHashCandidates', () => {
-  let baseDir: string
+  let agentDir: string
   let cwdSessionDir: string
+  let otherCwdDir: string
 
   beforeEach(async () => {
-    baseDir = await mkdtemp(join(tmpdir(), 'hash-test-'))
-    // provideHashCandidates 把第二参当 sessionDir 直接传给 listAll；
-    // listAll(customDir) 扫该目录的 .jsonl。直接用目录路径，不经 sessions/ 层级。
-    cwdSessionDir = await mkdtemp(join(tmpdir(), 'cwd-'))
+    agentDir = await mkdtemp(join(tmpdir(), 'hash-test-'))
+    cwdSessionDir = join(agentDir, 'sessions', 'cwdA')
+    otherCwdDir = join(agentDir, 'sessions', 'cwdB')
+    await mkdir(cwdSessionDir, { recursive: true })
+    await mkdir(otherCwdDir, { recursive: true })
   })
   afterEach(async () => {
-    await rm(baseDir, { recursive: true, force: true })
-    await rm(cwdSessionDir, { recursive: true, force: true })
+    await rm(agentDir, { recursive: true, force: true })
   })
 
   it('非 # 输入 → null（委托下家 provider）', async () => {
     await makeSession(cwdSessionDir, { fileName: 'a.jsonl', id: '019e6c96-aaaa-bbbb', cwd: '/demo' })
-    const result = await provideHashCandidates('hello world', cwdSessionDir)
+    const result = await provideHashCandidates('hello world', cwdSessionDir, agentDir)
     expect(result).toBeNull()
   })
 
-  it('# 空片段 → recent 候选（当前目录全部 session）', async () => {
+  it('# 空片段 → recent 候选（当前目录全部 session，退化为 8 字符浏览态）', async () => {
     await makeSession(cwdSessionDir, { fileName: 'a.jsonl', id: '019e6c96-aaaa-bbbb', cwd: '/demo' })
     await makeSession(cwdSessionDir, { fileName: 'b.jsonl', id: '019fffff-cccc-dddd', cwd: '/demo' })
-    const result = await provideHashCandidates('#', cwdSessionDir)
+    const result = await provideHashCandidates('#', cwdSessionDir, agentDir)
     expect(result).not.toBeNull()
     expect(result!.length).toBe(2)
+    // 空 fragment = recent 浏览态 → 8 字符（有意设计，非全局唯一）
+    expect(result!.every((c) => c.insertText.length === FRAGMENT_LEN + 1)).toBe(true)
   })
 
   it('#e6c9 片段 → id 子串过滤', async () => {
@@ -351,7 +356,7 @@ describe('provideHashCandidates', () => {
       cwd: '/demo',
       firstUserText: '无关内容',
     })
-    const result = await provideHashCandidates('#e6c9', cwdSessionDir)
+    const result = await provideHashCandidates('#e6c9', cwdSessionDir, agentDir)
     expect(result).not.toBeNull()
     expect(result!).toHaveLength(1)
     expect(result![0].insertText).toBe('#019e6c96')
@@ -361,9 +366,9 @@ describe('provideHashCandidates', () => {
     expect(result![0].description).toBeUndefined()
   })
 
-  it('insertText 格式 #xxxxxxxx（8 字符片段）', async () => {
+  it('insertText 格式 #xxxxxxxx（单候选全局唯一 → 8 字符）', async () => {
     await makeSession(cwdSessionDir, { fileName: 'a.jsonl', id: '019e6c96-aaaa-bbbb', cwd: '/demo' })
-    const result = await provideHashCandidates('#019e', cwdSessionDir)
+    const result = await provideHashCandidates('#019e', cwdSessionDir, agentDir)
     expect(result).not.toBeNull()
     const c = result![0] as AutocompleteCandidate
     expect(c.insertText).toMatch(/^#[0-9a-f]{8}$/i)
@@ -372,7 +377,7 @@ describe('provideHashCandidates', () => {
 
   it('# 片段无匹配 → 空数组（不抛）', async () => {
     await makeSession(cwdSessionDir, { fileName: 'a.jsonl', id: '019e6c96-aaaa-bbbb', cwd: '/demo' })
-    const result = await provideHashCandidates('#deadbeef', cwdSessionDir)
+    const result = await provideHashCandidates('#deadbeef', cwdSessionDir, agentDir)
     expect(result).not.toBeNull()
     expect(result).toEqual([])
   })
@@ -385,22 +390,22 @@ describe('provideHashCandidates', () => {
         cwd: '/demo',
       })
     }
-    const result = await provideHashCandidates('#019e6c9', cwdSessionDir, { limit: 2 })
+    const result = await provideHashCandidates('#019e6c9', cwdSessionDir, agentDir, { limit: 2 })
     expect(result).not.toBeNull()
     expect(result!).toHaveLength(2)
   })
 
   it('空 cwdSessionDir → 返回空数组，不调 listAll（避免全盘扫描卡死）', async () => {
-    const result = await provideHashCandidates('#abc', '')
+    const result = await provideHashCandidates('#abc', '', agentDir)
     expect(result).toEqual([])
   })
 
-  it('只扫当前目录，不扫其他目录（design G1 当前目录化）', async () => {
-    // 当前目录有 1 个
+  it('visible 只扫当前 cwd 目录（design G1）；globalIds 扫全局但不影响 visible 长度', async () => {
+    // cwdA（当前）有 1 个
     await makeSession(cwdSessionDir, { fileName: 'a.jsonl', id: '019e6c96-aaaa-bbbb', cwd: '/demo' })
-    // baseDir（其他目录）放一个，不应被扫到
-    await makeSession(baseDir, { fileName: 'other.jsonl', id: '019fffff-cccc-dddd', cwd: '/other' })
-    const result = await provideHashCandidates('#', cwdSessionDir)
+    // otherCwdDir（其他 cwd）放一个不同前缀的，listAll(cwdA) 不扫它
+    await makeSession(otherCwdDir, { fileName: 'other.jsonl', id: '019fffff-cccc-dddd', cwd: '/other' })
+    const result = await provideHashCandidates('#', cwdSessionDir, agentDir)
     expect(result).not.toBeNull()
     expect(result!).toHaveLength(1)
     expect(result![0].insertText).toBe('#019e6c96')
@@ -414,14 +419,14 @@ describe('provideHashCandidates', () => {
       name: 'my-named-session',
       firstUserText: '首条消息内容',
     })
-    const result = await provideHashCandidates('#019f', cwdSessionDir)
+    const result = await provideHashCandidates('#019f', cwdSessionDir, agentDir)
     expect(result!).toHaveLength(1)
     expect(result![0].label).toContain('my-named-session')
     expect(result![0].label).not.toContain('首条消息内容')
   })
 
-  it('O5 碰撞桶：多匹配 → insertText 两两不同且为唯一 sid 子串（findSessions 子串命中）', async () => {
-    // 2 元桶 019fea0e：-c0cb（feat-optimize-ui）/ -378e（当前 worktree），LCP=9，第 10 位区分
+  it('O5 单 cwd 碰撞桶：多匹配 → insertText 用全局唯一前缀（此处全局=单 cwd）', async () => {
+    // 2 元桶 019fea0e：-c0cb / -378e，LCP=9，第 10 位区分。都在 cwdA → 全局=单 cwd
     const sids = [
       '019fea0e-c0cb-aaaa-bbbb-ccccdddddddd',
       '019fea0e-378e-eeee-ffff-000000000000',
@@ -438,22 +443,20 @@ describe('provideHashCandidates', () => {
       cwd: '/demo',
       firstUserText: 'settings provider 删除 bug 排查',
     })
-    const result = await provideHashCandidates('#019fea0e', cwdSessionDir)
+    const result = await provideHashCandidates('#019fea0e', cwdSessionDir, agentDir)
     expect(result).not.toBeNull()
     expect(result!).toHaveLength(2)
     const inserts = result!.map((c) => c.insertText)
-    // 两两不同
     expect(new Set(inserts).size).toBe(2)
     expect(inserts).toContain('#019fea0e-c')
     expect(inserts).toContain('#019fea0e-3')
-    // 每个 insertText 去 # 后唯一命中一个 sid（保证 findSessions includes 不多匹配）
     for (const ins of inserts) {
       const frag = ins.slice(1)
       expect(sids.filter((sid) => sid.includes(frag))).toHaveLength(1)
     }
   })
 
-  it('O5 大桶（5 元同 8 字符前缀）：5 候选 insertText 两两不同（拦截 min 方向退化）', async () => {
+  it('O5 单 cwd 大桶（5 元同 8 字符前缀）：insertText 两两不同（拦截 min 方向退化）', async () => {
     const sids = [
       '019e9680-1111-aaaa-bbbb-cccccccccccc',
       '019e9680-2222-aaaa-bbbb-cccccccccccc',
@@ -469,16 +472,86 @@ describe('provideHashCandidates', () => {
         firstUserText: `session ${i}`,
       })
     }
-    const result = await provideHashCandidates('#019e9680', cwdSessionDir)
+    const result = await provideHashCandidates('#019e9680', cwdSessionDir, agentDir)
     expect(result).not.toBeNull()
     expect(result!).toHaveLength(5)
     const inserts = result!.map((c) => c.insertText)
-    // 两两不同（min 方向错误会让 5 个全变成 #019e9680 → Set.size=1）
     expect(new Set(inserts).size).toBe(5)
-    // 每个唯一命中一个 sid
     for (const ins of inserts) {
       const frag = ins.slice(1)
       expect(sids.filter((sid) => sid.includes(frag))).toHaveLength(1)
+    }
+  })
+
+  // ── O5 核心修复：跨 cwd 碰撞 + >limit（旧测试漏覆盖，bug 根因）──
+
+  it('O5 跨 cwd 碰撞：cwdA 候选 insertText 延长到全局唯一（cwdB 有碰撞对手）', async () => {
+    // cwdA 有 019fea0e-c0cb（visible 候选），cwdB 有 019fea0e-378e（碰撞对手）。
+    // 修复前（per-cwd siblings=visible 1 个）→ 8 字符 #019fea0e → 全局 find 命中 cwdA+cwdB 2 个（bug）
+    // 修复后（globalIds=2 个）→ 唯一前缀 #019fea0e-c → 全局命中 1 个
+    const idA = '019fea0e-c0cb-aaaa-bbbb-ccccdddddddd'
+    const idB = '019fea0e-378e-eeee-ffff-000000000000'
+    await makeSession(cwdSessionDir, {
+      fileName: `2026-01-01T00-00-00-000Z_${idA}.jsonl`,
+      id: idA,
+      cwd: '/demo',
+      firstUserText: 'cwdA session',
+    })
+    await makeSession(otherCwdDir, {
+      fileName: `2026-01-01T00-00-00-000Z_${idB}.jsonl`,
+      id: idB,
+      cwd: '/other',
+      firstUserText: 'cwdB session',
+    })
+    const result = await provideHashCandidates('#019fea0e', cwdSessionDir, agentDir)
+    expect(result).not.toBeNull()
+    // visible 只含 cwdA（listAll(cwdSessionDir) 不扫 otherCwdDir）
+    expect(result!).toHaveLength(1)
+    // insertText 全局唯一：#019fea0e-c（LCP with 378e=9 → slice 10），非 per-cwd 的 #019fea0e
+    expect(result![0].insertText).toBe('#019fea0e-c')
+    expect(result![0].insertText.length).toBeGreaterThan(FRAGMENT_LEN + 1)
+    // 关键验收：insertText 去#后在全局（cwdA+cwdB）只命中 1 个
+    const frag = result![0].insertText.slice(1)
+    const globalIds = [idA, idB]
+    expect(globalIds.filter((id) => id.includes(frag))).toHaveLength(1)
+  })
+
+  it('O5 >limit：单 cwd 12 个同前缀（含长前缀邻居），limit=10，visible 的 insertText 在全局唯一', async () => {
+    // 12 个同 8 字符前缀 019e9680。设计两对长前缀邻居（LCP=14）：
+    //   1111-aaaa 与 1111-eeee；2222-aaaa 与 2222-eeee
+    // limit=10 → visible=10（listAll 倒序截断），globalIds=12（全量）。
+    // 修复前（per-cwd siblings=visible 10）：若长前缀邻居的一个在 visible 外，visible 内的算出
+    //   短前缀（LCP=9 → 019e9680-1）→ 全局 find 命中 visible 内+外共 2 个（bug）
+    // 修复后（globalIds=12）：长前缀邻居都在 globalIds → 算出唯一前缀 → 全局命中 1 个
+    const sids = [
+      '019e9680-1111-aaaa-bbbb-cccccccccccc',
+      '019e9680-1111-eeee-ffff-000000000000', // 与 [0] LCP=14
+      '019e9680-2222-aaaa-bbbb-cccccccccccc',
+      '019e9680-2222-eeee-ffff-000000000001', // 与 [2] LCP=14
+      '019e9680-3333-aaaa-bbbb-cccccccccccc',
+      '019e9680-4444-aaaa-bbbb-cccccccccccc',
+      '019e9680-5555-aaaa-bbbb-cccccccccccc',
+      '019e9680-6666-aaaa-bbbb-cccccccccccc',
+      '019e9680-7777-aaaa-bbbb-cccccccccccc',
+      '019e9680-8888-aaaa-bbbb-cccccccccccc',
+      '019e9680-9999-aaaa-bbbb-cccccccccccc',
+      '019e9680-aaaa-aaaa-bbbb-cccccccccccc',
+    ]
+    for (let i = 0; i < sids.length; i++) {
+      await makeSession(cwdSessionDir, {
+        fileName: `2026-01-0${(i % 9) + 1}T00-00-00-00${i}Z_${sids[i]}.jsonl`,
+        id: sids[i],
+        cwd: '/demo',
+        firstUserText: `session ${i}`,
+      })
+    }
+    const result = await provideHashCandidates('#019e9680', cwdSessionDir, agentDir, { limit: 10 })
+    expect(result).not.toBeNull()
+    expect(result!).toHaveLength(10) // visible 被 limit 截到 10
+    // 修复核心：visible 的 insertText 用全局 12 个算唯一前缀，每个去#后在 12 个中唯一命中 1 个
+    for (const c of result!) {
+      const frag = c.insertText.slice(1)
+      expect(sids.filter((id) => id.includes(frag))).toHaveLength(1)
     }
   })
 })

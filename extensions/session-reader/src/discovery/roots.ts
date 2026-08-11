@@ -1,4 +1,4 @@
-import { readdir, stat } from 'node:fs/promises'
+import { readdir, stat, open, type FileHandle } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
 import { join } from 'node:path'
 
@@ -88,4 +88,106 @@ export async function listMainSessions(agentDir: string): Promise<SessionFileMet
  */
 export async function listSubagentSessions(agentDir: string): Promise<SessionFileMeta[]> {
   return scanJsonlRecursive(join(agentDir, 'subagents'), new Set())
+}
+
+// ── 全局 session id 提取（O5 修复：# 补全唯一前缀的全局作用域）──────────────────
+
+/**
+ * session 文件名内的标准 uuid v7（**5 组 4 连字符**：8-4-4-4-12）。
+ * 文件名形如 `<ISO-timestamp>_<uuid>.jsonl`
+ *（如 2026-05-28T03-17-12-844Z_019e6c96-0a0c-74b8-a73f-d1854d88e2a7.jsonl）。
+ *
+ * 注意：uuid 是 8-4-4-4-12（5 组），非 8-4-4-4-4-12（6 组）。
+ */
+const SESSION_UUID_IN_NAME = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/i
+
+/** orphan 首行读取上限（与 find.ts HEADER_READ_BYTES 同值；session header < 300B，8KB 余量足）。 */
+const HEADER_READ_BYTES = 8192
+
+/**
+ * 读文件首行（session header）的 id 字段（orphan 回退用）。
+ *
+ * 与 find.ts 的 readFirstLine + parseHeader 同构——roots 不 import find（find 依赖 roots，
+ * 反向 import 会循环），故 roots 内独立实现。坏文件/非 session header → undefined。
+ */
+async function readHeaderId(filePath: string): Promise<string | undefined> {
+  let fh: FileHandle | undefined
+  try {
+    fh = await open(filePath, 'r')
+    const buf = Buffer.alloc(HEADER_READ_BYTES)
+    const { bytesRead } = await fh.read(buf, 0, HEADER_READ_BYTES, 0)
+    if (bytesRead === 0) return undefined
+    const line = buf.subarray(0, bytesRead).toString('utf8').split('\n')[0]
+    let raw: unknown
+    try {
+      raw = JSON.parse(line)
+    } catch {
+      return undefined
+    }
+    if (typeof raw !== 'object' || raw === null) return undefined
+    const obj = raw as Record<string, unknown>
+    if (obj.type !== 'session' || typeof obj.id !== 'string') return undefined
+    return obj.id
+  } catch {
+    return undefined
+  } finally {
+    await fh?.close().catch(() => {})
+  }
+}
+
+/**
+ * 列出 agentDir/sessions/ 下所有主 session 的 id（全局，跨 cwd）。
+ *
+ * **用途**：# 补全 insertText 唯一前缀的全局作用域（hash-provider / session-command）。
+ * findSessions 全局扫 agentDir，故唯一前缀也须对全局 id 集计算——否则跨 cwd 碰撞时
+ * #→find 多匹配（O5 must-fix：per-cwd 唯一在全局 find 时失效）。
+ *
+ * **两阶段提取**（实测 ~/.pi/agent 4039 文件：冷启动 ~82ms / 热缓存 ~50ms，均 < 100ms）：
+ * 1. 文件名匹配 `<timestamp>_<uuid>.jsonl`（86%）→ 纯文件名 regex 提取，零文件 IO
+ * 2. 文件名不含 uuid（14% orphan，如 `session.jsonl`）→ Promise.all 并发读首行 header.id
+ *
+ * **orphan 必须纳入**：实测 50/549 orphan 的 id 前 8 字符与 timestamp 文件碰撞，漏掉会
+ * 破坏全局唯一性保证（碰撞桶缺成员 → 唯一前缀算短 → find 仍多匹配）。
+ *
+ * 不 stat（只需 id，不需 mtime/size）。排除 .finalized + workflow-state（同 listMainSessions）。
+ * 目录不存在/无权限 → 空数组（同 listMainSessions 容错契约）。
+ */
+export async function listGlobalSessionIds(agentDir: string): Promise<string[]> {
+  const ids: string[] = []
+  const orphans: string[] = []
+  const sessionsDir = join(agentDir, 'sessions')
+
+  async function walk(currentDir: string): Promise<void> {
+    let entries: Dirent[]
+    try {
+      entries = await readdir(currentDir, { withFileTypes: true })
+    } catch {
+      return // 目录不存在/无权限 → 静默返回（容错，同 listMainSessions 契约）
+    }
+    for (const entry of entries) {
+      const full = join(currentDir, entry.name)
+      if (entry.isDirectory()) {
+        if (SKIP_DIRS_MAIN.has(entry.name)) continue
+        await walk(full)
+      } else if (entry.isFile() && isSessionJsonl(entry.name)) {
+        const m = entry.name.match(SESSION_UUID_IN_NAME)
+        if (m) {
+          // m[0] 含末尾 .jsonl，剥 6 字符得纯 uuid
+          ids.push(m[0].slice(0, -'.jsonl'.length))
+        } else {
+          orphans.push(full)
+        }
+      }
+    }
+  }
+
+  await walk(sessionsDir)
+
+  if (orphans.length > 0) {
+    const orphanIds = await Promise.all(orphans.map((p) => readHeaderId(p)))
+    for (const id of orphanIds) {
+      if (id) ids.push(id)
+    }
+  }
+  return ids
 }

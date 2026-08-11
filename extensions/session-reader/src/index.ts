@@ -194,9 +194,11 @@ export default function sessionReaderExtension(pi: ExtensionAPI): void {
     if (typeof ctx.ui.addAutocompleteProvider !== 'function') return
     registeredPis.add(pi)
     const getCwdSessionDir = (): string => currentCwdSessionDir ?? ''
-    pi.registerCommand('session-pick', createSessionCommand(getCwdSessionDir))
+    // getAgentDir 作 getter 注入纯逻辑层（O5：全局唯一前缀需全局 session id 集；
+    // hash-provider/session-command 零 pi 依赖，不在内部调 getAgentDir）
+    pi.registerCommand('session-pick', createSessionCommand(getCwdSessionDir, getAgentDir))
     ctx.ui.addAutocompleteProvider((current) =>
-      createHashAutocompleteProvider(getCwdSessionDir, current),
+      createHashAutocompleteProvider(getCwdSessionDir, getAgentDir, current),
     )
   })
 }
