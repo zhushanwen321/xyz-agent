@@ -182,18 +182,51 @@ describe('CompanionBand', () => {
       sessionId: 'A',
       requestId: 'r4',
       method: 'askUser',
-      askUserQuestions: [{ header: 'db', question: '选库?', options: [{ label: 'PG', value: 'pg' }] }],
+      askUserQuestions: [{ header: 'db', question: '选库?', options: [{ label: 'PG' }] }],
     })
     await nextTick()
 
     // AskUserForm DOM
     expect(wrapper.find('[data-testid="ask-user-form"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="ask-user-option-pg"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ask-user-option-PG"]').exists()).toBe(true)
 
     // 单选 → 提交 → respond(answersJson)
-    await wrapper.find('[data-testid="ask-user-option-pg"]').trigger('click')
+    await wrapper.find('[data-testid="ask-user-option-PG"]').trigger('click')
     await wrapper.find('[data-testid="ask-user-submit"]').trigger('click')
-    expect(transport.sendPiResponse).toHaveBeenCalledWith('A', 'r4', 'askUser', '{"db":"pg"}')
+    expect(transport.sendPiResponse).toHaveBeenCalledWith('A', 'r4', 'askUser', '{"db":"PG"}')
+  })
+
+  it('TC-4b askUser Other 编码：主 key 过滤 OTHER_VALUE + 独立 __other key（对齐 answer-codec）', async () => {
+    const { wrapper, source, transport } = mountBand()
+    source.triggerUiRequest({
+      sessionId: 'A',
+      requestId: 'r4b',
+      method: 'askUser',
+      askUserQuestions: [
+        {
+          header: 'db',
+          question: '选库?',
+          multiSelect: true,
+          allowOther: true,
+          options: [{ label: 'PG' }, { label: 'MySQL' }],
+        },
+      ],
+    })
+    await nextTick()
+
+    // 选中 PG + Other → Other 输入框展开
+    await wrapper.find('[data-testid="ask-user-option-PG"]').trigger('click')
+    await wrapper.find('[data-testid="ask-user-option-__other__"]').trigger('click')
+    await nextTick()
+    const otherInput = wrapper.find('[data-testid="ask-user-other-db"]')
+    expect(otherInput.exists()).toBe(true)
+
+    // 输入 Other 文本 → 提交
+    await otherInput.setValue('自研库')
+    await wrapper.find('[data-testid="ask-user-submit"]').trigger('click')
+
+    // 主 key = JSON.stringify(['PG'])（不含 OTHER_VALUE 占位符）；Other 文本进独立 `db__other` key
+    expect(transport.sendPiResponse).toHaveBeenCalledWith('A', 'r4b', 'askUser', '{"db":"[\\"PG\\"]","db__other":"自研库"}')
   })
 
   it('TC-5 无请求自隐藏（根元素 v-if 隐藏，不占位）（IF3）', async () => {

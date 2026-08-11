@@ -199,7 +199,8 @@ function showOther(q: AskUserQuestion): boolean {
 }
 
 // ── Submit：构造 answers JSON ──
-// Other 选中时，otherText 文本替代 OTHER_VALUE 占位符作为实际答案值。
+// 编码对齐 answer-codec.ts encodeAnswer（协议 SSOT）：主 key 写选中项 label（过滤 OTHER_VALUE），
+// Other 自由文本写独立 key `${key}__other`，不混进主 key（AskUserAnswers 契约 + getAskUserOther 解码依据）。
 function onSubmit(): void {
   const answers: Record<string, string> = {}
   for (const q of props.questions) {
@@ -208,10 +209,14 @@ function onSubmit(): void {
     if (!st) continue
 
     if (q.options?.length) {
-      // 有选项的问题：选中项作为主答案（Other 选中时用 otherText 文本替代占位符）
-      const vals = st.selectedValues.map((v) => (v === OTHER_VALUE ? (st.otherText || '') : v)).filter(Boolean)
+      // 有选项的问题：主 key = 过滤 OTHER_VALUE 后的选中项（单选首个 label / 多选 JSON 数组）
+      const vals = st.selectedValues.filter((v) => v !== OTHER_VALUE)
       if (vals.length > 0) {
         answers[key] = q.multiSelect ? JSON.stringify(vals) : vals[0]
+      }
+      // Other 自由文本：独立 key `${key}__other`，即使同时选中普通选项也互不覆盖
+      if (st.otherText) {
+        answers[`${key}__other`] = st.otherText
       }
     } else {
       // 无选项的纯自由文本问题：输入文本作为主答案
