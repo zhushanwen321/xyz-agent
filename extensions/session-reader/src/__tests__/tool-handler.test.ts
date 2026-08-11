@@ -5,7 +5,15 @@ import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
 import { handleSessionRead, renderExtractItems, type SessionReadParams } from '../tool-handler.js'
 import { listRecordManifests } from '../discovery/subagents.js'
-import { REAL_AGENT_DIR as REAL, E6, FAM, HAS_E6, HAS_REAL, HAS_REAL_SUBAGENTS_DIR } from './real-data.js'
+import {
+  REAL_AGENT_DIR as REAL,
+  E6,
+  FAM,
+  HAS_E6,
+  HAS_REAL,
+  HAS_REAL_SUBAGENTS_DIR,
+  hasRealSession,
+} from './real-data.js'
 
 /**
  * M3 tool-handler 集成测试。
@@ -916,4 +924,336 @@ describe.skipIf(!HAS_REAL_SUBAGENTS_DIR)('真实数据：subagent sa-id（w2 TC1
       handleSessionRead({ action: 'outline', session: fakeId }, REAL),
     ).rejects.toThrow('无匹配 record')
   })
+})
+
+// ============================================================
+// w6: doWorkflow action（TC-w6-single-run/multi-run/runid-filter/runid-not-found/no-runs/snapshot-skip/call-jump）
+// ============================================================
+
+// ---- workflow fixture 常量（uuid 特征，互不为子串）----
+const WF_ROOT = '019w6aaa-0000-7000-b000-000000000001' // 发起 workflow 的 main session
+const WF_CALL = '019w6bbb-0000-7000-b000-000000000002' // workflow call 的目标 session（call-jump）
+
+/** 写 main session（header + 1 条 user message，让 outline 有 turn）。返回绝对路径。 */
+async function wfMainSession(
+  dir: string,
+  slug: string,
+  id: string,
+  opts?: { cwd?: string },
+): Promise<string> {
+  const sessionDir = join(dir, 'sessions', slug)
+  await mkdir(sessionDir, { recursive: true })
+  const path = join(sessionDir, `${id}.jsonl`)
+  const lines = [
+    JSON.stringify({ type: 'session', id, cwd: opts?.cwd ?? `/proj/${slug}` }),
+    JSON.stringify({
+      type: 'message',
+      id: `${id}-m1`,
+      parentId: id,
+      message: { role: 'user', content: [{ type: 'text', text: 'run workflow' }] },
+    }),
+  ]
+  await writeFile(path, lines.join('\n') + '\n')
+  return path
+}
+
+/** 写 wf-state 文件（每行一个快照 JSON）。返回绝对路径。 */
+async function wfStateFile(
+  dir: string,
+  slug: string,
+  fileName: string,
+  lines: string[],
+): Promise<string> {
+  const wfDir = join(dir, 'sessions', slug, 'workflow-state')
+  await mkdir(wfDir, { recursive: true })
+  const path = join(wfDir, fileName)
+  await writeFile(path, lines.join('\n') + '\n')
+  return path
+}
+
+/** 向 main session 追加 workflow-state-link custom entry（resolveWorkflows 的输入）。 */
+async function wfLink(
+  dir: string,
+  slug: string,
+  id: string,
+  link: { runId: string; path: string },
+): Promise<void> {
+  const sessionPath = join(dir, 'sessions', slug, `${id}.jsonl`)
+  const line = JSON.stringify({
+    type: 'custom',
+    id: `wf-link-${link.runId}`,
+    parentId: id,
+    customType: 'workflow-state-link',
+    data: { runId: link.runId, path: link.path, updatedAt: '2026-08-12T00:00:00Z' },
+    timestamp: '2026-08-12T00:00:00Z',
+  })
+  await writeFile(sessionPath, line + '\n', { flag: 'a' })
+}
+
+/** 构造 NEW 格式 wf-state 快照 JSON 行（calls 含 sessionId/sessionFile，parseRunSnapshot 透传）。 */
+function wfSnapshotNew(
+  runId: string,
+  calls: Array<{ sessionId: string; sessionFile: string; description?: string }>,
+): string {
+  return JSON.stringify({
+    v: 'wf-run-v1',
+    runId,
+    spec: { scriptName: 'test-wf', name: 'Test' },
+    state: {
+      status: 'done',
+      reason: 'completed',
+      budget: {
+        usedTokens: 100,
+        usedCost: 0,
+        totalCallCount: calls.length,
+        maxTokens: 10000,
+      },
+      calls: calls.map((c, i) => ({
+        id: i,
+        opts: {
+          prompt: 'do work',
+          model: 'test-model',
+          description: c.description ?? `step-${i}`,
+        },
+        status: 'done',
+        attempts: 1,
+        result: {
+          content: 'ok',
+          durationMs: 100,
+          sessionId: c.sessionId,
+          sessionFile: c.sessionFile,
+        },
+        sessionId: c.sessionId,
+        sessionFile: c.sessionFile,
+      })),
+    },
+    meta: { startedAt: '2026-01-01T00:00:00Z', completedAt: '2026-01-01T00:01:00Z' },
+  })
+}
+
+describe('doWorkflow（w6，fixture）', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'tool-handler-wf-'))
+  })
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('TC-w6-single-run：单 run 概览，content 含 run 头行/budget/step，details.runs/runIds 非空', async () => {
+    const slug = '--wf-single--'
+    await wfMainSession(dir, slug, WF_ROOT)
+    const callSession = join(dir, 'sessions', slug, `${WF_CALL}.jsonl`)
+    const wfPath = await wfStateFile(dir, slug, 'wf-single.jsonl', [
+      wfSnapshotNew('wf-single-1', [
+        { sessionId: WF_CALL, sessionFile: callSession, description: 'probe-step' },
+      ]),
+    ])
+    await wfLink(dir, slug, WF_ROOT, { runId: 'wf-single-1', path: wfPath })
+
+    const r = await handleSessionRead({ action: 'workflow', session: WF_ROOT }, dir)
+    const d = r.details as {
+      runs: Array<{
+        runId: string
+        status: string
+        steps: Array<{ sessionId: string; sessionFile: string }>
+      }>
+      runIds: string[]
+    }
+    expect(d.runs).toHaveLength(1)
+    expect(d.runs[0].runId).toBe('wf-single-1')
+    expect(d.runs[0].status).toBe('done')
+    expect(d.runs[0].steps).toHaveLength(1)
+    expect(d.runs[0].steps[0].sessionId).toBe(WF_CALL)
+    expect(d.runs[0].steps[0].sessionFile).toBe(callSession)
+    expect(d.runIds).toEqual(['wf-single-1'])
+    // content 含 renderWorkflowOverview 输出
+    const text = r.content[0].text
+    expect(text).toContain('run: wf-single-1')
+    expect(text).toContain('[done]')
+    expect(text).toContain('budget:')
+    expect(text).toContain('#0')
+    expect(text).toContain('call=' + WF_CALL.slice(0, 12))
+    expect(text).toContain(callSession)
+  })
+
+  it('TC-w6-multi-run：多 run 拼接，content 含两段 overview，runs.length===2', async () => {
+    const slug = '--wf-multi--'
+    await wfMainSession(dir, slug, WF_ROOT)
+    const wf1 = await wfStateFile(dir, slug, 'wf-1.jsonl', [
+      wfSnapshotNew('wf-multi-1', [{ sessionId: WF_CALL, sessionFile: '/abs/a.jsonl' }]),
+    ])
+    const wf2 = await wfStateFile(dir, slug, 'wf-2.jsonl', [
+      wfSnapshotNew('wf-multi-2', [{ sessionId: WF_CALL, sessionFile: '/abs/b.jsonl' }]),
+    ])
+    await wfLink(dir, slug, WF_ROOT, { runId: 'wf-multi-1', path: wf1 })
+    await wfLink(dir, slug, WF_ROOT, { runId: 'wf-multi-2', path: wf2 })
+
+    const r = await handleSessionRead({ action: 'workflow', session: WF_ROOT }, dir)
+    const d = r.details as { runs: Array<{ runId: string }>; runIds: string[] }
+    expect(d.runs).toHaveLength(2)
+    expect(d.runIds).toHaveLength(2)
+    expect(d.runIds).toContain('wf-multi-1')
+    expect(d.runIds).toContain('wf-multi-2')
+    const text = r.content[0].text
+    expect(text).toContain('run: wf-multi-1')
+    expect(text).toContain('run: wf-multi-2')
+  })
+
+  it('TC-w6-runid-filter：runId 过滤命中单 run', async () => {
+    const slug = '--wf-filter--'
+    await wfMainSession(dir, slug, WF_ROOT)
+    const wf1 = await wfStateFile(dir, slug, 'wf-1.jsonl', [
+      wfSnapshotNew('wf-filter-1', [{ sessionId: WF_CALL, sessionFile: '/abs/a.jsonl' }]),
+    ])
+    const wf2 = await wfStateFile(dir, slug, 'wf-2.jsonl', [
+      wfSnapshotNew('wf-filter-2', [{ sessionId: WF_CALL, sessionFile: '/abs/b.jsonl' }]),
+    ])
+    await wfLink(dir, slug, WF_ROOT, { runId: 'wf-filter-1', path: wf1 })
+    await wfLink(dir, slug, WF_ROOT, { runId: 'wf-filter-2', path: wf2 })
+
+    const r = await handleSessionRead(
+      { action: 'workflow', session: WF_ROOT, runId: 'wf-filter-1' },
+      dir,
+    )
+    const d = r.details as {
+      runs: Array<{ runId: string }>
+      runIds: string[]
+      requestedRunId?: string
+    }
+    expect(d.runs).toHaveLength(1)
+    expect(d.runIds).toEqual(['wf-filter-1'])
+    expect(d.requestedRunId).toBe('wf-filter-1')
+    const text = r.content[0].text
+    expect(text).toContain('run: wf-filter-1')
+    expect(text).not.toContain('run: wf-filter-2')
+  })
+
+  it('TC-w6-runid-not-found：runId 无匹配→ES-wf-runid-not-found（列候选+👉，不抛错）', async () => {
+    const slug = '--wf-notfound--'
+    await wfMainSession(dir, slug, WF_ROOT)
+    const wf1 = await wfStateFile(dir, slug, 'wf-1.jsonl', [
+      wfSnapshotNew('wf-nf-1', [{ sessionId: WF_CALL, sessionFile: '/abs/a.jsonl' }]),
+    ])
+    const wf2 = await wfStateFile(dir, slug, 'wf-2.jsonl', [
+      wfSnapshotNew('wf-nf-2', [{ sessionId: WF_CALL, sessionFile: '/abs/b.jsonl' }]),
+    ])
+    await wfLink(dir, slug, WF_ROOT, { runId: 'wf-nf-1', path: wf1 })
+    await wfLink(dir, slug, WF_ROOT, { runId: 'wf-nf-2', path: wf2 })
+
+    const r = await handleSessionRead(
+      { action: 'workflow', session: WF_ROOT, runId: 'wf-nonexist' },
+      dir,
+    )
+    const d = r.details as { runs: unknown[]; runIds: string[]; requestedRunId?: string }
+    expect(d.runs).toEqual([])
+    expect(d.runIds).toContain('wf-nf-1')
+    expect(d.runIds).toContain('wf-nf-2')
+    expect(d.requestedRunId).toBe('wf-nonexist')
+    const text = r.content[0].text
+    expect(text).toContain('wf-nonexist')
+    expect(text).toContain('wf-nf-1')
+    expect(text).toContain('wf-nf-2')
+    expect(text).toContain('👉')
+  })
+
+  it('TC-w6-no-runs：无 workflow run→ES-wf-no-runs（提示+👉family，不抛错）', async () => {
+    const slug = '--wf-noruns--'
+    await wfMainSession(dir, slug, WF_ROOT)
+    // 无 wf-link（session 存在但未发起 workflow）
+
+    const r = await handleSessionRead({ action: 'workflow', session: WF_ROOT }, dir)
+    const d = r.details as { runs: unknown[]; runIds: unknown[]; sessionId?: string }
+    expect(d.runs).toEqual([])
+    expect(d.runIds).toEqual([])
+    expect(d.sessionId).toBe(WF_ROOT)
+    const text = r.content[0].text
+    expect(text).toContain('无 workflow run')
+    expect(text).toContain('👉')
+    expect(text).toContain('family')
+  })
+
+  it('TC-w6-snapshot-skip：run1 wf-state 不存在→跳过，run2 正常（ES-wf-snapshot-read-fail）', async () => {
+    const slug = '--wf-skip--'
+    await wfMainSession(dir, slug, WF_ROOT)
+    // run1 的 wf-state 文件不存在（link 指向不存在路径，模拟 GC）
+    const ghostPath = join(dir, 'sessions', slug, 'workflow-state', 'wf-ghost.jsonl')
+    const wf2 = await wfStateFile(dir, slug, 'wf-2.jsonl', [
+      wfSnapshotNew('wf-skip-2', [{ sessionId: WF_CALL, sessionFile: '/abs/b.jsonl' }]),
+    ])
+    await wfLink(dir, slug, WF_ROOT, { runId: 'wf-skip-1', path: ghostPath })
+    await wfLink(dir, slug, WF_ROOT, { runId: 'wf-skip-2', path: wf2 })
+
+    const r = await handleSessionRead({ action: 'workflow', session: WF_ROOT }, dir)
+    const d = r.details as {
+      runs: Array<{ runId: string }>
+      runIds: string[]
+      skippedRuns?: Array<{ runId: string; stateFile: string; reason: string }>
+    }
+    expect(d.runs).toHaveLength(1)
+    expect(d.runs[0].runId).toBe('wf-skip-2')
+    expect(d.runIds).toEqual(['wf-skip-2'])
+    expect(d.skippedRuns).toBeDefined()
+    expect(d.skippedRuns).toHaveLength(1)
+    expect(d.skippedRuns![0].runId).toBe('wf-skip-1')
+    expect(d.skippedRuns![0].reason).toBe('snapshot-unreadable')
+    const text = r.content[0].text
+    expect(text).toContain('wf-skip-1')
+    expect(text).toContain('已跳过')
+    expect(text).toContain('run: wf-skip-2')
+  })
+
+  it('TC-w6-call-jump：workflow 概览 call sessionId 可被 resolveSessionId 深读（outline 跳转，§7 场景 2）', async () => {
+    const slug = '--wf-jump--'
+    await wfMainSession(dir, slug, WF_ROOT)
+    // 真实存在的 call session（main session 形态，findSessions 可匹配）
+    const callPath = await wfMainSession(dir, slug, WF_CALL, { cwd: '/proj/call' })
+    const wfPath = await wfStateFile(dir, slug, 'wf-jump.jsonl', [
+      wfSnapshotNew('wf-jump-1', [{ sessionId: WF_CALL, sessionFile: callPath }]),
+    ])
+    await wfLink(dir, slug, WF_ROOT, { runId: 'wf-jump-1', path: wfPath })
+
+    // 第一次：workflow 概览，拿 call sessionId
+    const rWf = await handleSessionRead({ action: 'workflow', session: WF_ROOT }, dir)
+    const dWf = rWf.details as {
+      runs: Array<{ steps: Array<{ sessionId: string; sessionFile: string }> }>
+    }
+    expect(dWf.runs).toHaveLength(1)
+    const callSessionId = dWf.runs[0].steps[0].sessionId
+    expect(callSessionId).toBe(WF_CALL)
+
+    // 第二次：用 call sessionId 调 outline（m0 resolveSessionId 三形态复用）
+    const rOutline = await handleSessionRead(
+      { action: 'outline', session: callSessionId },
+      dir,
+    )
+    const dOutline = rOutline.details as { turns: unknown[] }
+    expect(dOutline.turns.length).toBeGreaterThan(0)
+  })
+})
+
+// ============================================================
+// 真实数据守卫：doWorkflow（CI 无本机数据时 skipIf 跳过）
+// ============================================================
+
+const REAL_WF_SESSION = '019fdcda-75c7-74b7-a160-f67f6bf88384'
+const HAS_REAL_WF_SESSION = HAS_REAL && hasRealSession(REAL_WF_SESSION)
+
+describe.skipIf(!HAS_REAL_WF_SESSION)('doWorkflow - 真实数据守卫', () => {
+  it('TC-w6-real-data-guard：真实 workflow session doWorkflow 返回 run 概览', async () => {
+    const r = await handleSessionRead(
+      { action: 'workflow', session: REAL_WF_SESSION },
+      REAL,
+    )
+    const d = r.details as {
+      runs: Array<{ runId: string; status: string; steps: unknown[] }>
+      runIds: string[]
+    }
+    expect(d.runs.length).toBeGreaterThan(0)
+    expect(d.runIds.length).toBe(d.runs.length)
+    // content 含 run 头行 + budget 行
+    expect(r.content[0].text).toContain('run:')
+    expect(r.content[0].text).toContain('budget:')
+  }, 30000)
 })

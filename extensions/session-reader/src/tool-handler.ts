@@ -17,7 +17,9 @@ import { join, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
 import { findSessions, type MatchedSession } from './discovery/find.js'
 import { buildFamilyFromFs, listRecordManifests, type RecordManifest } from './discovery/subagents.js'
+import { readRunSnapshot } from './discovery/workflows.js'
 import { parseSessionFile, type Entry, type ParseResult } from './core/parser.js'
+import { parseRunSnapshot, renderWorkflowOverview, type WorkflowOverview } from './core/workflow.js'
 import { buildTreeView } from './core/tree.js'
 import { segmentTurns, type Turn } from './core/turns.js'
 import { extractToolCalls, formatToolCallSummary, basename } from './core/toolcall.js'
@@ -30,7 +32,7 @@ import {
   type EntryBrief,
   type ToolResultSummaryEntry,
 } from './core/render.js'
-import type { Family } from './core/family.js'
+import type { Family, WorkflowRef } from './core/family.js'
 
 // ---------------------------------------------------------------------------
 // 公共类型（与 index.ts 的 TypeBox schema 对齐）
@@ -45,6 +47,7 @@ export type SessionReadAction =
   | 'search'
   | 'export'
   | 'extract'
+  | 'workflow'
 
 export interface SessionReadParams {
   action: SessionReadAction
@@ -62,6 +65,8 @@ export interface SessionReadParams {
   cwd?: string
   /** find/resolveSessionId: 按来源过滤。"main" = sessions/、"subagent" = subagents/。默认两者合并。 */
   source?: 'main' | 'subagent'
+  /** workflow action: 可选，聚焦单个 runId（多 run 消歧）。不传 → 全部 run 概览。 */
+  runId?: string
   limit?: number
   /** extract action: 素材类型（必填）。其他 action 忽略。 */
   what?: 'user-messages' | 'commands' | 'files' | 'commits' | 'tool-results'
@@ -1259,6 +1264,124 @@ async function doExtract(params: SessionReadParams, agentDir: string): Promise<T
 }
 
 // ===========================================================================
+// workflow action（w6：消费 w5 的 readRunSnapshot/parseRunSnapshot/renderWorkflowOverview）
+// ===========================================================================
+
+/** doWorkflow 的 details 结构（ES-wf-no-runs/runid-not-found/snapshot-* 错误契约的具体类型）。 */
+interface WorkflowDetails {
+  runs: WorkflowOverview[]
+  runIds: string[]
+  skippedRuns?: Array<{ runId: string; stateFile: string; reason: string }>
+  requestedRunId?: string
+  sessionId?: string
+}
+
+/** 单个被跳过的 run 记录（snapshot 不可读/不可解析）。 */
+interface SkippedRun {
+  runId: string
+  stateFile: string
+  reason: string
+}
+
+/**
+ * workflow：workflow run 概览（design §3.4 workflow，m2 IF-doWorkflow）。
+ *
+ * 流程：① resolveSessionId（multi 走 disambiguate）→ ② buildFamilyFromFs 拿 family.workflows
+ * → ③ 无 run → ES-wf-no-runs（提示+👉family，不抛错）→ ④ runId 过滤，无匹配 →
+ * ES-wf-runid-not-found（列候选+👉，不抛错）→ ⑤ 逐 run readRunSnapshot+parseRunSnapshot，
+ * 不可读/不可解析 → skippedRuns（不中断其他 run，ES-wf-snapshot-read-fail/unparseable）
+ * → ⑥ renderWorkflowOverview 拼接。
+ *
+ * 错误契约（C2）：workflow 概览探索语义，三类错误均返回 ToolResult 不抛错。
+ * step 的 call sessionId/sessionFile 是 LLM 跳 outline/detail 的入口（m0 resolveSessionId
+ * 三形态复用：sessionId/绝对路径/sa-id 均可深读，TC-wf-step-sessionfile-link）。
+ */
+async function doWorkflow(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
+  const resolved = await resolveSessionId(params.session, 'workflow', agentDir, params.source)
+  if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
+
+  let family: Family
+  try {
+    family = await buildFamilyFromFs(resolved.sessionId, agentDir)
+  } catch (e) {
+    throw err(
+      `读取家族失败：${resolved.sessionId}（${e instanceof Error ? e.message : String(e)}）。👉 检查 session 或用 find 重新定位。`,
+    )
+  }
+
+  const workflows: WorkflowRef[] = family.workflows
+  const allRunIds = workflows.map((w) => w.runId)
+
+  // ③ ES-wf-no-runs：session 未发起任何 workflow run（不抛错，返提示+👉family）
+  if (workflows.length === 0) {
+    const text =
+      `session ${resolved.sessionId} 无 workflow run。\n` +
+      `👉 用 session_read { action:'family' } 查该 session 的 subagent 后代，或确认 session 是否发起过 workflow。`
+    const details: WorkflowDetails = { runs: [], runIds: [], sessionId: resolved.sessionId }
+    return { content: [{ type: 'text', text }], details }
+  }
+
+  // ④ runId 过滤（可选，多 run 消歧）
+  const requestedRunId =
+    params.runId !== undefined && params.runId.trim() !== '' ? params.runId.trim() : undefined
+  let selected: WorkflowRef[] = workflows
+  if (requestedRunId !== undefined) {
+    selected = workflows.filter((w) => w.runId === requestedRunId)
+    if (selected.length === 0) {
+      // ES-wf-runid-not-found：列出可用 runId + 👉（不抛错，与 F2 多匹配消歧同构）
+      const lines = allRunIds.map((rid) => `  ${rid}`).join('\n')
+      const text =
+        `runId "${requestedRunId}" 无匹配。可用 runId：\n${lines}\n` +
+        `👉 用上述完整 runId 重试，或不传 runId 看全部 run 概览。`
+      const details: WorkflowDetails = { runs: [], runIds: allRunIds, requestedRunId }
+      return { content: [{ type: 'text', text }], details }
+    }
+  }
+
+  // ⑤⑥ 逐 run 读 snapshot → parse → render
+  const runs: WorkflowOverview[] = []
+  const runIds: string[] = []
+  const skippedRuns: SkippedRun[] = []
+  const contentParts: string[] = []
+
+  for (const wf of selected) {
+    const snap = await readRunSnapshot(wf.stateFile)
+    if (snap === undefined) {
+      // ES-wf-snapshot-read-fail：文件不存在/读失败/全行不可解析 → 跳过，不中断其他 run
+      skippedRuns.push({ runId: wf.runId, stateFile: wf.stateFile, reason: 'snapshot-unreadable' })
+      contentParts.push(`run ${wf.runId}: 快照不可读（stateFile=${wf.stateFile}）已跳过`)
+      continue
+    }
+    const overview = parseRunSnapshot(snap, wf.runId, wf.stateFile)
+    if (overview === null) {
+      // ES-wf-snapshot-unparseable：对象既非 NEW 也非 OLD → 跳过
+      skippedRuns.push({ runId: wf.runId, stateFile: wf.stateFile, reason: 'snapshot-unparseable' })
+      contentParts.push(`run ${wf.runId}: 快照格式不可识别（stateFile=${wf.stateFile}）已跳过`)
+      continue
+    }
+    runs.push(overview)
+    runIds.push(wf.runId)
+    contentParts.push(renderWorkflowOverview(overview))
+  }
+
+  const details: WorkflowDetails = { runs, runIds }
+  if (requestedRunId !== undefined) details.requestedRunId = requestedRunId
+  if (skippedRuns.length > 0) details.skippedRuns = skippedRuns
+
+  // 全部 run 都跳过的兑底提示（ES-wf-snapshot-read-fail 末段）
+  let text: string
+  if (runs.length === 0) {
+    text =
+      contentParts.join('\n') +
+      `\n👉 检查 stateFile 或用 session_read { action:'family' } 看 call session 直接深读。`
+  } else {
+    text = contentParts.join('\n\n')
+  }
+
+  return { content: [{ type: 'text', text }], details }
+}
+
+// ===========================================================================
 // 入口：按 action 分发
 // ===========================================================================
 
@@ -1292,12 +1415,14 @@ export async function handleSessionRead(
       return doExport(params, agentDir)
     case 'extract':
       return doExtract(params, agentDir)
+    case 'workflow':
+      return doWorkflow(params, agentDir)
     default: {
-      // exhaustive guard：switch 覆盖全部 8 action，此处 params.action 收窄为 never；
+      // exhaustive guard：switch 覆盖全部 9 action，此处 params.action 收窄为 never；
       // 仅防御运行时非法 action（schema 正常校验下不可达）
       const exhaustive: never = params.action
       throw err(
-        `未知 action "${JSON.stringify(exhaustive)}"。👉 合法 action: find/family/outline/expand/detail/search/export/extract。`,
+        `未知 action "${JSON.stringify(exhaustive)}"。👉 合法 action: find/family/outline/expand/detail/search/export/extract/workflow。`,
       )
     }
   }
