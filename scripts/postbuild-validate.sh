@@ -208,25 +208,21 @@ if [ -d "$OUTPUT_DIR/mac-arm64" ]; then
             echo -e "  ${RED}✗${NC} bin/xyz-settings 缺失（检查 electron-builder.yml from 路径 dist/runtime/cli.cjs）"
             FAILED=1
         fi
-        # builtin pi extensions（9 个 @zhushanwen/pi-* 包，打包内置）
+        # builtin pi extensions 完整性校验（index.js 存在 / 无 .ts 残留 R3 / permission wasm / dry-run import）
         # prepare-builtin-extensions.sh 部署 + electron-builder extraResources 拷贝。
-        # 校验关键包目录 + permission 的 wasm 文件（运行时必需）。
+        # 复用 verify-staged-extensions.mjs：文件级校验 + import dry-run（external 缺失降级，
+        # prod 环境无 node_modules 属预期，pi runtime 提供）。
         BUILTIN_EXT_DIR="$APP_PATH/Contents/Resources/extensions/@zhushanwen"
-        for pkg in pi-ask-user pi-goal pi-todo pi-pending-notifications pi-subagent-workflow \
-                   pi-structured-output pi-permission pi-scheduler pi-rename-session; do
-            if [ -d "$BUILTIN_EXT_DIR/$pkg" ]; then
-                echo -e "  ${GREEN}✓${NC} builtin ext: $pkg"
+        if [ -d "$BUILTIN_EXT_DIR" ]; then
+            if node "$PROJECT_ROOT/scripts/verify-staged-extensions.mjs" --staged-dir "$BUILTIN_EXT_DIR" > /tmp/ext-verify-mac.log 2>&1; then
+                echo -e "  ${GREEN}✓${NC} builtin ext 完整性校验通过（verify-staged）"
             else
-                echo -e "  ${RED}✗${NC} builtin ext 缺失: $pkg（检查 prepare-builtin-extensions.sh + electron-builder.yml）"
+                echo -e "  ${RED}✗${NC} builtin ext 完整性校验失败（缺 index.js / 残留 .ts / 缺 wasm）:"
+                sed 's/^/    /' /tmp/ext-verify-mac.log
                 FAILED=1
             fi
-        done
-        # permission 的 tree-sitter wasm（运行时 bash 解析必需）
-        PERM_WASM="$BUILTIN_EXT_DIR/pi-permission/node_modules/tree-sitter-bash/tree-sitter-bash.wasm"
-        if [ -f "$PERM_WASM" ]; then
-            echo -e "  ${GREEN}✓${NC} permission tree-sitter-bash.wasm"
         else
-            echo -e "  ${RED}✗${NC} permission tree-sitter-bash.wasm 缺失（permission 扩展将无法解析 bash）"
+            echo -e "  ${RED}✗${NC} builtin ext 目录缺失: $BUILTIN_EXT_DIR（检查 prepare-builtin-extensions.sh + electron-builder.yml）"
             FAILED=1
         fi
     else
@@ -263,17 +259,20 @@ if [ -d "$OUTPUT_DIR/win-unpacked" ]; then
             FAILED=1
         fi
     done
-    # builtin pi extensions（Windows 同 mac 校验）
+    # builtin pi extensions（Windows 同 mac 校验，复用 verify-staged）
     WIN_BUILTIN="$WIN_RESOURCES/extensions/@zhushanwen"
-    for pkg in pi-ask-user pi-goal pi-todo pi-pending-notifications pi-subagent-workflow \
-               pi-structured-output pi-permission pi-scheduler pi-rename-session; do
-        if [ -d "$WIN_BUILTIN/$pkg" ]; then
-            echo -e "  ${GREEN}✓${NC} builtin ext: $pkg"
+    if [ -d "$WIN_BUILTIN" ]; then
+        if node "$PROJECT_ROOT/scripts/verify-staged-extensions.mjs" --staged-dir "$WIN_BUILTIN" > /tmp/ext-verify-win.log 2>&1; then
+            echo -e "  ${GREEN}✓${NC} builtin ext 完整性校验通过（verify-staged）"
         else
-            echo -e "  ${RED}✗${NC} builtin ext 缺失: $pkg"
+            echo -e "  ${RED}✗${NC} builtin ext 完整性校验失败:"
+            sed 's/^/    /' /tmp/ext-verify-win.log
             FAILED=1
         fi
-    done
+    else
+        echo -e "  ${RED}✗${NC} builtin ext 目录缺失: $WIN_BUILTIN"
+        FAILED=1
+    fi
 
     WINDOWS_PTY_PREBUILDS="$WIN_UNPACKED/node_modules/node-pty/prebuilds/win32-x64"
     WINDOWS_PTY_MISSING=0
