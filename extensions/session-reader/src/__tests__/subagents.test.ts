@@ -90,6 +90,34 @@ async function writeSubagentSession(
   return path
 }
 
+/** 写 wf-state 文件（每行一个快照；字符串按原样写入，可注入坏行）。返回绝对路径。 */
+async function writeWfState(dir: string, slug: string, lines: string[]): Promise<string> {
+  const wfDir = join(dir, 'sessions', slug, 'workflow-state')
+  await mkdir(wfDir, { recursive: true })
+  const path = join(wfDir, 'wf-test.jsonl')
+  await writeFile(path, lines.join('\n') + '\n')
+  return path
+}
+
+/** 向主 session 文件追加 workflow-state-link custom entry（resolveWorkflows 的输入）。 */
+async function writeWfLink(
+  dir: string,
+  slug: string,
+  id: string,
+  link: { runId: string; path: string },
+): Promise<void> {
+  const sessionPath = join(dir, 'sessions', slug, `${id}.jsonl`)
+  const line = JSON.stringify({
+    type: 'custom',
+    id: `wf-link-${link.runId}`,
+    parentId: id,
+    customType: 'workflow-state-link',
+    data: { runId: link.runId, path: link.path, updatedAt: '2026-08-07T16:48:24.933Z' },
+    timestamp: '2026-08-07T16:48:24.933Z',
+  })
+  await writeFile(sessionPath, line + '\n', { flag: 'a' })
+}
+
 /** 写 records manifest（孤儿源）。 */
 async function writeRecordManifest(
   dir: string,
@@ -204,6 +232,134 @@ describe('buildFamilyFromFs - fixture', () => {
   it('sessionId 不在任意 main header → 抛 Error', async () => {
     await writeMainSession(dir, '--root-cwd--', ROOT, { cwd: '/proj/root' })
     await expect(buildFamilyFromFs('nonexistent-session-id', dir)).rejects.toThrow(/not found/)
+  })
+
+  it('workflows：NEW 格式（v=wf-run-v1）state.calls 解析；命中 pathToRef 取完整 ref，GC\'d 路径回退最小 ref', async () => {
+    await writeMainSession(dir, '--root-cwd--', ROOT, { cwd: '/proj/root' })
+    // 真实存在的 subagent（步骤 2 扫到 → pathToRef 命中 → 完整 SessionRef）
+    const subPath = await writeSubagentSession(dir, '--root-cwd--', SUB_REAL, {
+      rootSessionId: ROOT,
+      slug: 'wf-sub',
+    })
+    // GC\'d 路径（文件不存在 → pathToRef 未命中 → sessionRefFromPath 最小 ref）
+    const gced = join(
+      dir,
+      'subagents',
+      '--root-cwd--',
+      'sessions',
+      '2026-08-07T16-49-48-393Z_019fdd21-8169-7a02-8f11-eef6c9ca11cc.jsonl',
+    )
+    const wfPath = await writeWfState(dir, '--root-cwd--', [
+      JSON.stringify({
+        v: 'wf-run-v1',
+        runId: 'wf-1786121304924-r7vgov',
+        state: {
+          status: 'done',
+          calls: [
+            { id: 0, status: 'done', sessionFile: subPath, sessionId: 'sa-x' },
+            { id: 1, status: 'done', result: { sessionFile: gced, durationMs: 1 } },
+          ],
+        },
+      }),
+    ])
+    await writeWfLink(dir, '--root-cwd--', ROOT, { runId: 'wf-1786121304924-r7vgov', path: wfPath })
+
+    const family = await buildFamilyFromFs(ROOT, dir)
+
+    expect(family.workflows).toHaveLength(1)
+    const wf = family.workflows[0]
+    expect(wf.runId).toBe('wf-1786121304924-r7vgov')
+    expect(wf.stateFile).toBe(wfPath)
+    expect(wf.calls).toHaveLength(2)
+    // 命中 pathToRef：完整 ref（真实 id / mtime / size / cwd）
+    expect(wf.calls[0].fileName).toBe(subPath)
+    expect(wf.calls[0].sessionId).toBe(SUB_REAL)
+    expect(wf.calls[0].mtime).toBeGreaterThan(0)
+    expect(wf.calls[0].sizeBytes).toBeGreaterThan(0)
+    expect(wf.calls[0].cwd).toBe('/proj/--root-cwd--')
+    // GC\'d 未命中：fileName-only 最小 ref（sessionId 从文件名提取，mtime/size/cwd 占位）
+    expect(wf.calls[1].fileName).toBe(gced)
+    expect(wf.calls[1].sessionId).toBe('019fdd21-8169-7a02-8f11-eef6c9ca11cc')
+    expect(wf.calls[1].mtime).toBe(0)
+    expect(wf.calls[1].sizeBytes).toBe(0)
+    expect(wf.calls[1].cwd).toBe('')
+  })
+
+  it('workflows：NEW 格式坏尾行回退上一快照；顶层 sessionFile 优先于 result.sessionFile', async () => {
+    await writeMainSession(dir, '--root-cwd--', ROOT, { cwd: '/proj/root' })
+    const topLevel = join(
+      dir,
+      'subagents',
+      '--root-cwd--',
+      'sessions',
+      '2026-08-01T00-00-00-000Z_019fdd11-1111-1111-1111-111111111111.jsonl',
+    )
+    const inResult = join(
+      dir,
+      'subagents',
+      '--root-cwd--',
+      'sessions',
+      '2026-08-02T00-00-00-000Z_019fdd22-2222-2222-2222-222222222222.jsonl',
+    )
+    const snap = JSON.stringify({
+      v: 'wf-run-v1',
+      runId: 'wf-x',
+      state: { calls: [{ id: 0, sessionFile: topLevel, result: { sessionFile: inResult } }] },
+    })
+    // 尾行坏 JSON → readWorkflowCallSessionFiles 从尾向头回退到上一有效快照
+    const wfPath = await writeWfState(dir, '--root-cwd--', [snap, '{broken json'])
+    await writeWfLink(dir, '--root-cwd--', ROOT, { runId: 'wf-x', path: wfPath })
+
+    const family = await buildFamilyFromFs(ROOT, dir)
+
+    expect(family.workflows).toHaveLength(1)
+    expect(family.workflows[0].calls).toHaveLength(1)
+    // 顶层 sessionFile 优先（result.sessionFile 不覆盖）
+    expect(family.workflows[0].calls[0].fileName).toBe(topLevel)
+  })
+
+  it('workflows：OLD 格式（无 v）callCache [{key,value}] → value.sessionFile + value.result.sessionFile 回退；无 sessionFile 的 call 不产出', async () => {
+    await writeMainSession(dir, '--root-cwd--', ROOT, { cwd: '/proj/root' })
+    const viaValue = join(
+      dir,
+      'subagents',
+      '--root-cwd--',
+      'sessions',
+      '2026-08-03T00-00-00-000Z_019fdd33-3333-3333-3333-333333333333.jsonl',
+    )
+    const viaResult = join(
+      dir,
+      'subagents',
+      '--root-cwd--',
+      'sessions',
+      '2026-08-04T00-00-00-000Z_019fdd44-4444-4444-4444-444444444444.jsonl',
+    )
+    const wfPath = await writeWfState(dir, '--root-cwd--', [
+      JSON.stringify({
+        runId: 'wf-old-1',
+        name: 'old-wf',
+        status: 'done',
+        callCache: [
+          // 真实 OLD 数据形态：value 无 sessionFile（旧 pi 不持久化）→ 不产出
+          { key: 1, value: { content: 'PASS', durationMs: 100 } },
+          // value.sessionFile（源码注释 OLD 分支读取点）
+          { key: 2, value: { sessionFile: viaValue, content: 'ok' } },
+          // value.result.sessionFile 回退
+          { key: 3, value: { result: { sessionFile: viaResult, durationMs: 1 } } },
+          // value 非对象 → 整项兜底（无 sessionFile → 不产出）
+          { key: 4, value: 'str' },
+        ],
+      }),
+    ])
+    await writeWfLink(dir, '--root-cwd--', ROOT, { runId: 'wf-old-1', path: wfPath })
+
+    const family = await buildFamilyFromFs(ROOT, dir)
+
+    expect(family.workflows).toHaveLength(1)
+    expect(family.workflows[0].calls.map((c) => c.fileName)).toEqual([viaValue, viaResult])
+    // 未命中 pathToRef → 最小 ref：sessionId 从文件名提取，mtime 占位 0
+    expect(family.workflows[0].calls[0].sessionId).toBe('019fdd33-3333-3333-3333-333333333333')
+    expect(family.workflows[0].calls[0].mtime).toBe(0)
   })
 
   it('MF-3 回归：alive 但无 identity 的 subagent 文件（运行中）不被 manifest 收编为 cleanedUp', async () => {
