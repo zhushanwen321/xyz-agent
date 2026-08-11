@@ -346,9 +346,12 @@ describe('TC7: 编排 migrateProviderConfig（调 step1 + step2）', () => {
     expect(readSettingsRaw()?.enabledModels).toEqual(['anthropic/*'])
     // step1 后迁：openai apiKey 迁 auth.json
     expect(report.catalog.migrated).toContain('openai')
-    // A7：step1 hasOverride=false（openai 无 baseUrl/compat/headers）走 removeProvider，
-    // models.json openai 条目删除（catalog 回退 builtin），不再「写最小条目」残留字段。
-    expect((readModelsRaw().providers as Record<string, unknown>).openai).toBeUndefined()
+    // M5-04：openai 条目含 models（model 级配置）→ hasOverride=true，保留条目仅删 apiKey
+    //（旧 A7 语义只认 baseUrl/compat/headers，含 models 条目整条删除会丢 model 级配置）。
+    const openaiCfg = (readModelsRaw().providers as Record<string, Record<string, unknown>>).openai
+    expect(openaiCfg).toBeDefined()
+    expect(openaiCfg.apiKey).toBeUndefined()
+    expect((openaiCfg.models as unknown[]).length).toBe(1)
     // G5 达成：openai 被正确禁用（enabledModels 不含 openai/*），deriveEnabled(openai)=false
     const whitelist = readSettingsRaw()?.enabledModels as string[]
     expect(deriveEnabled('openai', whitelist)).toBe(false)

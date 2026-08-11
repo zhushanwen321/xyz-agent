@@ -101,6 +101,8 @@ describe('ConfigService auth 清理（I9 清理① + I8，T6）', () => {
       getProviderConfig: vi.fn(() => ({ name: 'anthropic' })),
       upsertProvider: vi.fn(() => ({})),
       removeProvider: vi.fn(() => ({ removed: true })),
+      // M5-05：deleteProvider 现调 cleanEnabledModelsResidue（决策 4 不变式），mock 必须提供
+      cleanEnabledModelsResidue: vi.fn(),
     } as unknown as IConfigStore
     const svc = new ConfigService('/tmp/project', mockStore, authStorage as unknown as Pick<AuthStorage, 'set' | 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'hasCredentialSync' | 'listCredentialIds'>)
     return { svc, mockStore, authStorage }
@@ -132,6 +134,13 @@ describe('ConfigService auth 清理（I9 清理① + I8，T6）', () => {
     const { svc } = makeSvc(authStorage as unknown as Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync'>)
     svc.deleteProvider('anthropic')
     expect(authStorage.remove).toHaveBeenCalledWith('anthropic')
+  })
+
+  it('deleteProvider → 清 enabledModels 残留（M5-05，决策 4 不变式，对齐 removeProviderByKind）', async () => {
+    const authStorage = { remove: vi.fn(async () => undefined), hasOAuth: vi.fn(async () => false) }
+    const { svc, mockStore } = makeSvc(authStorage as unknown as Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync'>)
+    await svc.deleteProvider('anthropic')
+    expect(mockStore.cleanEnabledModelsResidue).toHaveBeenCalledWith('anthropic')
   })
 
   it('未注入 authStorage（测试/无 OAuth 场景）→ 两处清理 no-op 不抛错', () => {

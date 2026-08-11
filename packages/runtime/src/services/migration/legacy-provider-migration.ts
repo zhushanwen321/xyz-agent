@@ -88,8 +88,13 @@ export async function migrateLegacyProviderConfig(authStorage: AuthStorage): Pro
         const { apiKey, ...rest } = config as Record<string, unknown>
         // 如果只剩下默认字段（name/api/baseUrl 来自 builtin template），直接删条目
         // 如果有额外 override 字段 → 保留 override-only 条目
+        // M5-04：hasOverride 判定必须覆盖 models/quota——catalog 条目含 model 级配置
+        //（如 model.enabled 编辑）或 Coding Plan quota 时整条删除会丢用户配置，与 step2
+        //「model 级 enabled 保留不动」承诺冲突。含 models/quota 的条目保留 override-only
+        // 形态（仅删 apiKey），models 级 enabled 由 pi 原生消费。
         const hasOverride = Object.keys(rest).length > 0 && (
           rest.baseUrl !== undefined || rest.compat !== undefined || rest.headers !== undefined
+          || rest.models !== undefined || rest.quota !== undefined
         )
         if (hasOverride) {
           upsertProvider(providerId, rest as Parameters<typeof upsertProvider>[1])

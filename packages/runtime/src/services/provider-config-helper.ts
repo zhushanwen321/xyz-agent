@@ -478,6 +478,10 @@ export async function deleteProvider(
   // 幂等：auth.json 无该 provider 时 no-op。顺序：先删条目（同步生效）→ 再 await 清凭据，
   // 保证 handler await 返回时条目+凭据都已清，broadcastProviderList 拿到干净列表。
   const result = configStore.removeProvider(providerId)
+  // M5-05（决策 4「清残留」不变式）：与 removeProviderByKind 两分支对齐——删 provider 后清
+  // enabledModels 残留 <id>/* 与 <id>/<model> pattern，否则列表/白名单残留已删 provider 的
+  // 死引用（legacy RPC config.deleteProvider 路径）。
+  configStore.cleanEnabledModelsResidue(providerId)
   await cleanAuthCredential(authStorage, providerId, `(I8) ${providerId}`)
   return result
 }
