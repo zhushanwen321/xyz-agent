@@ -2,7 +2,7 @@ import { createReadStream, type ReadStream } from 'node:fs'
 import { open, type FileHandle } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import type { SessionRef } from '../core/family.js'
-import { listMainSessions, type SessionFileMeta } from './roots.js'
+import { listMainSessions, listSubagentSessions, type SessionFileMeta } from './roots.js'
 
 /**
  * M2 discovery 发现层：按 query 定位 session（design §3.3 D-3 + §3.4 find action）。
@@ -19,7 +19,12 @@ import { listMainSessions, type SessionFileMeta } from './roots.js'
  * agentDir 注入：同 roots.ts，零 pi 依赖（仅 node:fs + 相对 import M1 core）。
  */
 
+/** 候选来源标记（DM1 必填）：main = agentDir/sessions/、subagent = agentDir/subagents/。 */
+export type SessionSource = 'main' | 'subagent'
+
 export interface MatchedSession extends SessionRef {
+  /** 候选来源（DM1 必填标记）：main 或 subagent，按文件所在目录标记 */
+  source: SessionSource
   /** 首条 user message text 截 80 字符（从全文读，不只首行） */
   firstMessagePreview?: string
 }
@@ -153,6 +158,8 @@ function looksLikeUuidFragment(query: string): boolean {
 interface Candidate {
   meta: SessionFileMeta
   ref: SessionRef
+  /** 候选来源（透传到 MatchedSession.source，DM1） */
+  source: SessionSource
 }
 
 interface Matched extends Candidate {
@@ -170,29 +177,46 @@ interface Matched extends Candidate {
 export async function findSessions(
   query: string,
   agentDir: string,
-  opts?: { cwd?: string; limit?: number },
+  opts?: { cwd?: string; limit?: number; source?: SessionSource },
 ): Promise<{ matches: MatchedSession[]; truncated: boolean }> {
   const limit = opts?.limit ?? DEFAULT_LIMIT
   const cwdFilter = opts?.cwd
-  const files = await listMainSessions(agentDir)
+  const sourceFilter = opts?.source
 
-  // 1. 首行扫描所有文件拿 header，建候选 SessionRef（cwd 过滤在此应用）
+  // 0. 按来源收集文件列表（source 过滤在文件列表层：source==='main' 只扫 sessions/、
+  //    'subagent' 只扫 subagents/、undefined 两者合并——决策二性能意图：不扫被过滤目录）。
+  //    两路目录扫描相互独立 → Promise.allSettled（AGENTS.md：独立请求用 allSettled），
+  //    任一目录不存在（roots.ts 静默返回空数组）不影响另一路。
+  const sources: SessionSource[] =
+    sourceFilter === undefined ? ['main', 'subagent'] : [sourceFilter]
+  const listResults = await Promise.allSettled(
+    sources.map(async (src) => ({
+      src,
+      files: await (src === 'main' ? listMainSessions(agentDir) : listSubagentSessions(agentDir)),
+    })),
+  )
+
+  // 1. 首行扫描建候选 SessionRef（cwd 过滤在此应用；按来源打 source 标记）
   const candidates: Candidate[] = []
-  for (const meta of files) {
-    const headerLine = await readFirstLine(meta.path)
-    const header = parseHeader(headerLine)
-    if (!header) continue // 非 session 文件/坏 header → 跳过
-    if (cwdFilter !== undefined && (header.cwd ?? '') !== cwdFilter) continue
-    const ref: SessionRef = {
-      sessionId: header.id,
-      // 完整绝对路径（与 parentSession 同构，便于 family 按 includes(sid) 反查）
-      fileName: meta.path,
-      mtime: meta.mtime,
-      sizeBytes: meta.size,
-      cwd: header.cwd ?? '',
+  for (const r of listResults) {
+    if (r.status !== 'fulfilled') continue
+    const { src, files } = r.value
+    for (const meta of files) {
+      const headerLine = await readFirstLine(meta.path)
+      const header = parseHeader(headerLine)
+      if (!header) continue // 非 session 文件/坏 header → 跳过
+      if (cwdFilter !== undefined && (header.cwd ?? '') !== cwdFilter) continue
+      const ref: SessionRef = {
+        sessionId: header.id,
+        // 完整绝对路径（与 parentSession 同构，便于 family 按 includes(sid) 反查）
+        fileName: meta.path,
+        mtime: meta.mtime,
+        sizeBytes: meta.size,
+        cwd: header.cwd ?? '',
+      }
+      if (header.parentSession) ref.parentSession = header.parentSession
+      candidates.push({ meta, ref, source: src })
     }
-    if (header.parentSession) ref.parentSession = header.parentSession
-    candidates.push({ meta, ref })
   }
 
   // 2. 匹配
@@ -233,7 +257,7 @@ export async function findSessions(
   // 5. 填 firstMessagePreview（recent/uuid 路径未读，这里对最终 limit 个补读——最多 limit 个 IO）
   const result: MatchedSession[] = []
   for (const m of sliced) {
-    const out: MatchedSession = { ...m.ref }
+    const out: MatchedSession = { ...m.ref, source: m.source }
     if (m.preview !== undefined) {
       out.firstMessagePreview = m.preview
     } else {

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { mkdtemp, mkdir, writeFile, rm, utimes } from 'node:fs/promises'
 import { join } from 'node:path'
 import { findSessions } from '../discovery/find.js'
-import { REAL_AGENT_DIR, HAS_E6 } from './real-data.js'
+import { REAL_AGENT_DIR, HAS_E6, HAS_REAL_SUBAGENTS_DIR } from './real-data.js'
 
 /**
  * 建一个假 session 文件：首行 header（type=session，含 id/cwd/parentSession），
@@ -45,10 +45,13 @@ async function makeSession(
 describe('findSessions', () => {
   let agentDir: string
   let slugDir: string
+  /** subagent fixture 目录（模拟 subagents/<cwd编码>/sessions/ 结构，roots.listSubagentSessions 扫描路径） */
+  let saDir: string
 
   beforeEach(async () => {
     agentDir = await mkdtemp(join(tmpdir(), 'find-test-'))
     slugDir = join(agentDir, 'sessions', '--Users-demo--')
+    saDir = join(agentDir, 'subagents', '--Users-demo--', 'sessions')
   })
   afterEach(async () => {
     await rm(agentDir, { recursive: true, force: true })
@@ -189,6 +192,68 @@ describe('findSessions', () => {
     expect(result.truncated).toBe(false)
   })
 
+  it('缺省合并：main + subagent 候选都返回，source 标记正确（DM1）', async () => {
+    await makeSession(slugDir, { name: 'm.jsonl', id: 'main-shared', cwd: '/demo' })
+    await makeSession(saDir, { name: 's.jsonl', id: 'sub-shared', cwd: '/demo' })
+
+    const { matches } = await findSessions('shared', agentDir)
+    expect(matches).toHaveLength(2)
+    // source 必填标记（DM1）+ 集合为 {main, subagent}
+    const sources = matches.map((m) => m.source).sort()
+    expect(sources).toEqual(['main', 'subagent'])
+    // fileName 指向各自目录
+    const mainHit = matches.find((m) => m.source === 'main')!
+    const subHit = matches.find((m) => m.source === 'subagent')!
+    expect(mainHit.sessionId).toBe('main-shared')
+    expect(mainHit.fileName).not.toContain('subagents')
+    expect(subHit.sessionId).toBe('sub-shared')
+    expect(subHit.fileName).toContain('subagents')
+  })
+
+  it("source:'main' 只含 main 候选（subagent 被过滤）", async () => {
+    await makeSession(slugDir, { name: 'm.jsonl', id: 'main-shared', cwd: '/demo' })
+    await makeSession(saDir, { name: 's.jsonl', id: 'sub-shared', cwd: '/demo' })
+
+    const { matches } = await findSessions('shared', agentDir, { source: 'main' })
+    expect(matches).toHaveLength(1)
+    expect(matches[0].source).toBe('main')
+    expect(matches[0].sessionId).toBe('main-shared')
+  })
+
+  it("source:'subagent' 只含 subagent 候选（main 被过滤）", async () => {
+    await makeSession(slugDir, { name: 'm.jsonl', id: 'main-shared', cwd: '/demo' })
+    await makeSession(saDir, { name: 's.jsonl', id: 'sub-shared', cwd: '/demo' })
+
+    const { matches } = await findSessions('shared', agentDir, { source: 'subagent' })
+    expect(matches).toHaveLength(1)
+    expect(matches[0].source).toBe('subagent')
+    expect(matches[0].sessionId).toBe('sub-shared')
+    expect(matches[0].fileName).toContain('subagents')
+  })
+
+  it("recent 也尊重 source 过滤（含不传 source 时两侧按 mtime 混合倒序）", async () => {
+    const mainPath = await makeSession(slugDir, { name: 'm.jsonl', id: 'r-main', cwd: '/demo' })
+    const subPath = await makeSession(saDir, { name: 's.jsonl', id: 'r-sub', cwd: '/demo' })
+    // subagent mtime 更新
+    const base = Math.floor(Date.now() / 1000)
+    await utimes(mainPath, base, base)
+    await utimes(subPath, base + 100, base + 100)
+
+    // source:'main' → 只 main 侧，subagent 被过滤
+    const mainOnly = await findSessions('recent', agentDir, { source: 'main' })
+    expect(mainOnly.matches).toHaveLength(1)
+    expect(mainOnly.matches[0].source).toBe('main')
+    expect(mainOnly.matches[0].sessionId).toBe('r-main')
+
+    // 不传 source → 两侧合并按 mtime 倒序（subagent 更新排前）
+    const merged = await findSessions('recent', agentDir)
+    expect(merged.matches).toHaveLength(2)
+    expect(merged.matches[0].sessionId).toBe('r-sub')
+    expect(merged.matches[0].source).toBe('subagent')
+    expect(merged.matches[1].sessionId).toBe('r-main')
+    expect(merged.matches[1].source).toBe('main')
+  })
+
   it.skipIf(!HAS_E6)('真实数据：e6c96 匹配 019e6c96 开头的 session', async () => {
     const { matches } = await findSessions('e6c96', REAL_AGENT_DIR)
     expect(matches.length).toBeGreaterThan(0)
@@ -211,4 +276,21 @@ describe('findSessions', () => {
     // 真实 session 文件远多于 5 → 截断
     expect(truncated).toBe(true)
   }, 30000)
+
+  it.skipIf(!HAS_REAL_SUBAGENTS_DIR)(
+    "真实数据：source:'subagent' 能找到 completed subagent（§7 场景 1 find 部分）",
+    async () => {
+      const { matches } = await findSessions('recent', REAL_AGENT_DIR, {
+        source: 'subagent',
+        limit: 5,
+      })
+      expect(matches.length).toBeGreaterThan(0)
+      // 全部 source==='subagent'，fileName 在 subagents/ 目录下
+      for (const m of matches) {
+        expect(m.source).toBe('subagent')
+        expect(m.fileName).toContain('subagents')
+      }
+    },
+    30000,
+  )
 })

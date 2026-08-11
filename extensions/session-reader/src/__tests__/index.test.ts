@@ -190,4 +190,19 @@ describe('sessionReaderExtension - TypeBox schema 与 SessionReadParams 对齐',
     expect(Check(schema, { action: 42 })).toBe(false)
     expect(Check(schema, {})).toBe(false) // 缺必填 action
   })
+
+  it('source 字段：合法值（main/subagent）通过、非法值拒绝；不传 source 向后兼容', () => {
+    const fake = makeFakePi()
+    sessionReaderExtension(fake.pi as unknown as ExtensionAPI)
+    const toolDef = fake.registerTool.mock.calls[0][0] as { parameters: unknown }
+    const schema = toolDef.parameters
+
+    // 合法值通过（enum 约束）
+    expect(Check(schema, { action: 'find', query: 'x', source: 'main' })).toBe(true)
+    expect(Check(schema, { action: 'find', query: 'x', source: 'subagent' })).toBe(true)
+    // 非法值被拒
+    expect(Check(schema, { action: 'find', query: 'x', source: 'bogus' })).toBe(false)
+    // 不传 source 向后兼容（既有合法形态仍 true）
+    expect(Check(schema, { action: 'find', query: 'x' })).toBe(true)
+  })
 })

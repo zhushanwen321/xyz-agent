@@ -83,6 +83,11 @@ const SessionReadSchema = Type.Object({
   cwd: Type.Optional(
     Type.String({ description: 'find: filter by cwd. Optional.' }),
   ),
+  source: Type.Optional(
+    StringEnum(['main', 'subagent'], {
+      description: 'find action: filter by source. "main" = sessions/, "subagent" = subagents/. Default both (merged).',
+    }),
+  ),
   limit: Type.Optional(
     Type.Number({ description: 'find/search: max results. Default 20.' }),
   ),

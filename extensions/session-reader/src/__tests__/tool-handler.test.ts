@@ -73,13 +73,17 @@ describe.skipIf(!HAS_REAL)('handleSessionRead', () => {
     expect(d.sizeBytes).toBeGreaterThan(0)
   })
 
+  // w1 合并 subagent 候选后两处影响（design R2 盲点连带修复）：
+  // 1) query：'zzz999' 在本机某 subagent 首消息命中 → 换确定零匹配串
+  // 2) timeout：缺省 find 全扫 main+subagent 真实数据 ~8s，默认 5s 卡边界 → 放宽到 30s
+  //    （w2 实现 handler source 透传后可改 source:'main' 收窄到 main 侧，届时恢复默认 timeout）
   it('7. F1 find zero match returns empty matches + 👉 hint (no throw)', async () => {
-    const r = await handleSessionRead({ action: 'find', query: 'zzz999' }, REAL)
+    const r = await handleSessionRead({ action: 'find', query: 'zzz-nonexistent-session-9q8x2' }, REAL)
     const d = r.details as { matches: unknown[]; truncated: boolean }
     expect(d.matches).toEqual([])
     expect(d.truncated).toBe(false)
     expect(r.content[0].text).toContain('👉')
-  })
+  }, 30000)
 
   it('8. F4 detail turn out of range throws with 越界', async () => {
     await expect(
