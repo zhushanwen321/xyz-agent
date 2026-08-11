@@ -277,6 +277,10 @@ export interface SessionRunnerContext {
   /** 所属根 session ID（跨进程身份贯穿用）。子进程的 record.rootSessionId 全指向真 ROOT，
    *  使主进程 /subagents 能看到完整递归树。runSpawn 无条件注入为子进程 env（设计 recursive-subagent-visibility.md）。 */
   sessionRootId: string;
+  /** [MF-3] 所属根进程 cwd（跨进程落盘目录编码键）。根进程=自身 cwd；worktree 模式下子进程
+   *  mainCwd=checkout 路径，rootCwd 贯穿真 ROOT——session 文件落盘统一用 ROOT cwd 编码，
+   *  主进程磁盘重建才能看到全树（设计 recursive-subagent-visibility.md）。 */
+  rootCwd: string;
 }
 
 /** SessionRunner.run 的入参。 */
@@ -625,7 +629,11 @@ export async function runSpawn(
   };
 
   // d. session 目录（与 in-process 一致：list/恢复可发现同一目录）
-  const sessionDir = getSubagentSessionDir(ctx.agentDir, ctx.mainCwd);
+  // [MF-3] 用 ctx.rootCwd（贯穿真 ROOT）而非 ctx.mainCwd 编码：worktree 模式下 mainCwd 是
+  // 子进程的 checkout 路径，按它编码会让深层 record 落到 enc(worktree) 段，ROOT 磁盘重建
+  // 扫不到 → 全树可见性深度 ≥ 2 断裂。rootCwd 与 store 构造同源（subagent-service 同键），
+  // 保证 runSpawn 写入的 session 文件就在本进程/ROOT store 扫描的目录里。
+  const sessionDir = getSubagentSessionDir(ctx.agentDir, ctx.rootCwd);
   fs.mkdirSync(sessionDir, { recursive: true });
 
   // e. worktree 模式：checkout 路径作为 spawn cwd（隔离文件系统）
@@ -668,10 +676,15 @@ export async function runSpawn(
   //   - ROOT_SESSION_ID：所属根 session（贯穿真 ROOT，子进程 sessionRootId 读它）
   //   - SELF_RECORD_ID：子进程自己的 record id（子进程 execCtxAls 基线 = 孙的直接父）
   //   - DEPTH：子进程的嵌套深度（子进程 execCtxAls 基线 depth）
-  // 子进程 initSession 读这 3 个 env 建立基线 → createRecordForMode 读 execCtxAls 自动正确。
+  //   - ROOT_CWD：真 ROOT 的 cwd（[MF-3] 落盘目录编码键，worktree 下与自身 spawn cwd 不同）
+  // 子进程 initSession 读这 4 个 env 建立基线 → createRecordForMode 读 execCtxAls 自动正确。
   childEnv.PI_SUBAGENT_ROOT_SESSION_ID = ctx.sessionRootId;
   childEnv.PI_SUBAGENT_SELF_RECORD_ID = record.id;
   childEnv.PI_SUBAGENT_DEPTH = String(record.depth);
+  // [MF-3] 第 4 个贯穿 env：真 ROOT 的 cwd。worktree 模式下子进程 spawn cwd = checkout 路径，
+  // 子进程的 store/runSpawn 落盘目录须统一编码在 enc(ROOT cwd) 段（与身份贯穿同构），
+  // 否则 ROOT 磁盘重建扫不到深层 record（见 subagent-service ENV_ROOT_CWD 注释）。
+  childEnv.PI_SUBAGENT_ROOT_CWD = ctx.rootCwd;
   // D-A6 bridge: schema 激活 structured-output 扩展注册 tool（workflow 编排层需要）
   applySchemaEnvToChildEnv(childEnv, opts.schemaEnv);
 

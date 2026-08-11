@@ -205,6 +205,7 @@ export function makeCtx(overrides: Partial<SessionRunnerContext> = {}): SessionR
     mainCwd: "/tmp/test",
     mainSessionFile: undefined,
     sessionRootId: "root-session-test",
+    rootCwd: "/tmp/test",
     ...overrides,
   };
 }

@@ -13,13 +13,14 @@
 - **Situation**：subagent 在独立 pi 子进程运行，每个 subagent 的身份（record id、嵌套深度、所属根 session）写入各自 session.jsonl 的 `subagent-identity` custom entry。`/subagents` 命令从磁盘重建这些 record 并展示，展示层（depth 标签、parent/children）已实现。
 - **Complication**：身份字段在跨进程时丢失——子进程不知道"自己的根 session 是谁、自己的父 record 是谁、自己的深度是多少"。导致深层 record 被 `rootSessionId` 过滤掉、且即使保留也因 `parentRecordId` 为空无法建树。
 - **Question**：如何让身份信息正确跨进程传递，使主进程 `/subagents` 看到完整递归树？
-- **Answer**：仿照已验证的 `PI_SUBAGENT_FORK_DEPTH` 环境变量机制，补传 3 个身份字段（根 session id、自身 record id、嵌套深度），子进程启动时建立执行上下文基线。
+- **Answer**：仿照已验证的 `PI_SUBAGENT_FORK_DEPTH` 环境变量机制，补传 3 个身份字段（根 session id、自身 record id、嵌套深度）+ 1 个树根 cwd（[MF-3] worktree 落盘目录统一用），子进程启动时建立执行上下文基线与统一落盘目录。
 
 ### 系统认知（受众假设：会用 subagent 但不懂内部机制的开发者）
 
 - **subagent = 独立 pi 子进程**：主 agent 通过 `subagent` 工具派发任务时，扩展 spawn 一个全新 pi 进程跑该任务。这个子进程加载同一套 extension，**拥有自己独立的 `SubagentService` 实例**。
 - **递归嵌套**：subagent A 在执行任务时，同样可以调用 `subagent` 工具 spawn subagent B，B 又可 spawn C。pi 允许嵌套（受深度护栏限制，默认上限见 `nestingDepth` 检查）。
 - **session.jsonl 是唯一持久化源**：每个 subagent 的 session 文件写到同一个 `sessionsDir`（按 cwd 分目录）。record 终态后从内存淘汰，`/subagents` 读时从 jsonl 重建。
+  - **[MF-3] worktree 模式下也按 ROOT cwd 分目录**：子进程 spawn cwd = checkout 路径，若按各自 cwd 编码目录，深层 record 落到 `enc(checkout)` 段、ROOT 扫描不到 → 全树可见性深度 ≥ 2 断裂。第 4 个贯穿 env `PI_SUBAGENT_ROOT_CWD`（真 ROOT 的 mainCwd）让所有层级的 sessions 与 records 两套目录统一编码在 `enc(ROOT cwd)` 段。
 - **`subagent-identity` custom entry**：subagent 退出后，父进程向其 session.jsonl 追写一条 identity entry（`session-runner.ts:955-983`），携带 `{id, agent, mode, task, rootSessionId, parentRecordId, depth, ...}`。重建器（`session-reconstructor.ts`）靠它恢复身份。
 
 ### 设计目标
@@ -160,12 +161,13 @@ B 子进程(B_sess) → C 同样错位 …
 
 - **record 详情 `parent: (root)` 但预期有父**：identity entry 缺 `parentRecordId`。查 `PI_EXT_DEBUG=1` 的 `[subagents] execCtxAls initialized: recordId=X` 日志，确认 `PI_SUBAGENT_SELF_RECORD_ID` env 是否贯穿到该子进程。
 - **B/C 等 record 根本不出现**（更常见失败）：identity entry 的 `rootSessionId` 不等于主 session id、被过滤丢弃。排查链：`cat <session>.jsonl | grep subagent-identity` 看 `rootSessionId` 值 → 若不等于主 session id，查 `[subagents] execCtxAls initialized: rootSessionId=Z` 日志确认 env 是否贯穿 → 指向注入点（`runSpawn` 的 childEnv）或读取点（`initSession`）。
+- **[MF-3] 全树可见但 worktree 分支的深层 record 缺失**：identity entry 的 `rootSessionId` 正确仍找不到时，查 session 文件落盘位置——`subagent-identity` 所在文件是否在 `subagents/<enc(ROOT cwd)>/sessions/` 下。若在 `enc(<checkout 路径>)` 段（旧版 worktree 布局），是落盘目录未统一（`PI_SUBAGENT_ROOT_CWD` 未贯穿）；恢复指引：确认 `runSpawn` 注入点与 `subagent-service` 构造读取点均使用 `ENV_ROOT_CWD`（旧文件本身不可迁移，会被 GC 按 TTL 清理）。
 
 ### 3.2 多方案对比
 
 #### 方案 A：env 变量贯穿（推荐）
 
-仿照已验证的 `PI_SUBAGENT_FORK_DEPTH`，spawn 时注入 3 个 env，子进程 `initSession` 读取建立基线。
+仿照已验证的 `PI_SUBAGENT_FORK_DEPTH`，spawn 时注入 4 个 env，子进程 `initSession` 读取建立基线（[MF-3] 第 4 个 `PI_SUBAGENT_ROOT_CWD` 供落盘目录统一编码）。
 
 | 维度 | 评价 |
 |---|---|
@@ -208,14 +210,15 @@ env 是父进程写给即将启动的子进程的，描述**子进程（这个 s
 | `PI_SUBAGENT_ROOT_SESSION_ID` | 子进程的根 session id | `ctx.sessionRootId`（贯穿，子进程不覆盖） |
 | `PI_SUBAGENT_SELF_RECORD_ID` | 子进程自己的 record id | `record.id`（父刚 `createRecordForMode` 创建的） |
 | `PI_SUBAGENT_DEPTH` | 子进程的嵌套深度 | `record.depth` |
+| `PI_SUBAGENT_ROOT_CWD` | **[MF-3]** 子进程所属树根的 cwd（sessions/records 落盘目录编码键） | `ctx.rootCwd`（worktree 模式下子进程的 mainCwd=checkout 路径，rootCwd 贯穿真 ROOT） |
 
-子进程 `initSession` 读这 3 个 env 建立基线后，`createRecordForMode` 读 `execCtxAls` 时，孙 subagent 的 `parentRecordId` 自然 = 子进程自己的 record id（即孙的直接父）。
+子进程 `initSession` 读这 4 个 env 建立基线后，`createRecordForMode` 读 `execCtxAls` 时，孙 subagent 的 `parentRecordId` 自然 = 子进程自己的 record id（即孙的直接父）。
 
 **被否**：用 `PI_SUBAGENT_PARENT_RECORD_ID`（描述父）。语义混乱——env 的接受方是子进程，子进程读 `PARENT_RECORD_ID` 后还要再映射"我的父是 X"，不如 `SELF_RECORD_ID` 直接建立"我是 X"的执行上下文。`SELF` 与 `execCtxAls.enterWith({recordId: SELF})` 一一对应，零映射。
 
 #### 决策 2：无条件注入（含 fork subagent，顺带改善 fork 可见性）
 
-`PI_SUBAGENT_FORK_DEPTH` 仅 `fork=true` 时注入（fork 是可选行为）。本设计的 3 个 env **无条件注入每个 subagent**——身份贯穿是所有 subagent 的基础需求，不依赖 fork。
+`PI_SUBAGENT_FORK_DEPTH` 仅 `fork=true` 时注入（fork 是可选行为）。本设计的 4 个 env **无条件注入每个 subagent**——身份贯穿与落盘目录统一是所有 subagent 的基础需求，不依赖 fork。
 
 **fork subagent 的归属变化（顺带改善）**：`execute(opts.fork=true)` 同样走 `runSpawn`（`subagent-service.ts:715-718` 透传 `opts.fork`），childEnv 无条件构造，故 fork subagent 的子进程也收到 `PI_SUBAGENT_ROOT_SESSION_ID`。现状下 fork session 内 spawn 的 subagent 其 `rootSessionId` = fork session 自身 id，主进程（filter=ROOT）不可见；本设计后归顶层 ROOT、主进程可见。这是**改善**（消除 fork 可见性割裂，符合「看到全部」诉求），非破坏——多个**独立**主 session（非 fork 关系）仍按各自 rootSessionId 隔离（场景 3 覆盖）。
 
@@ -266,9 +269,9 @@ this.sessionRootId = envRoot ?? init.sessionId;  // 有 env = 子进程（贯穿
 
 场景 1 依赖 LLM 配合验端到端可见性；本场景用单元测**确定性**验证 env 传递机制本身（不依赖 LLM）。
 
-**步骤**：单元测断言 `runSpawn` 构造的 `childEnv` 含 3 个 `PI_SUBAGENT_*` 键，值 = `ctx.sessionRootId` / `record.id` / `String(record.depth)`（mock `spawn` 捕获传入 env）。
+**步骤**：单元测断言 `runSpawn` 构造的 `childEnv` 含 4 个 `PI_SUBAGENT_*` 键，值 = `ctx.sessionRootId` / `record.id` / `String(record.depth)` / `ctx.rootCwd`（mock `spawn` 捕获传入 env）。
 
-**通过标准**：3 个 env 键存在且值正确；覆盖 `opts.fork=true` 与 `opts.fork=false` 两种（决策 2 无条件注入，两者都应有）。
+**通过标准**：4 个 env 键存在且值正确；覆盖 `opts.fork=true` 与 `opts.fork=false` 两种（决策 2 无条件注入，两者都应有）。
 
 ### 场景 2：identity entry 字段持久化正确（回溯目标 2）
 
@@ -308,7 +311,7 @@ this.sessionRootId = envRoot ?? init.sessionId;  // 有 env = 子进程（贯穿
 
 ### 数据模型 + env 契约（单元 1）
 
-- **改 `subagent-service.ts`**：`SubagentService` 加 `private sessionRootId: string` 字段；定义 3 个 env 常量名（`PI_SUBAGENT_ROOT_SESSION_ID` / `PI_SUBAGENT_SELF_RECORD_ID` / `PI_SUBAGENT_DEPTH`）。
+- **改 `subagent-service.ts`**：`SubagentService` 加 `private sessionRootId: string` 字段；定义 4 个 env 常量名（`PI_SUBAGENT_ROOT_SESSION_ID` / `PI_SUBAGENT_SELF_RECORD_ID` / `PI_SUBAGENT_DEPTH` / `PI_SUBAGENT_ROOT_CWD`）。
 - **justification**：契约先行，后续单元引用同一常量。
 
 ### initSession 读 env 建立基线（单元 2）
@@ -349,8 +352,9 @@ this.sessionRootId = envRoot ?? init.sessionId;  // 有 env = 子进程（贯穿
   childEnv.PI_SUBAGENT_ROOT_SESSION_ID = ctx.sessionRootId;  // 贯穿真 ROOT
   childEnv.PI_SUBAGENT_SELF_RECORD_ID = record.id;            // 子进程自己的 record
   childEnv.PI_SUBAGENT_DEPTH = String(record.depth);          // 子进程的深度
+  childEnv.PI_SUBAGENT_ROOT_CWD = ctx.rootCwd;                // [MF-3] 真 ROOT 的 cwd（落盘目录编码键）
   ```
-- **justification**：跨进程传递的唯一注入点。无条件注入（决策 2）。
+- **justification**：跨进程传递的唯一注入点。无条件注入（决策 2）。第 4 个 env（ROOT cwd）与身份贯穿同构，子进程 store/runSpawn 落盘目录统一编码在 `enc(ROOT cwd)` 段（sessions 与 records 两套目录必须同源，见 path-encoding.ts）。
 - **验收**：场景 1/2/4 全量联动。
 
 ### 文件改动地图

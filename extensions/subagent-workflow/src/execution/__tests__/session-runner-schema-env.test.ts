@@ -155,13 +155,15 @@ function makeRunOpts(overrides: Partial<RunOptions> = {}): RunOptions {
   };
 }
 
-function makeCtx(): SessionRunnerContext {
+function makeCtx(overrides: Partial<SessionRunnerContext> = {}): SessionRunnerContext {
   return {
     cwd: "/fake/cwd",
     agentDir: "/fake/agent",
     skillDirs: [],
     mainCwd: "/fake/cwd",
     sessionRootId: "root-session-test",
+    rootCwd: "/fake/cwd",
+    ...overrides,
   };
 }
 

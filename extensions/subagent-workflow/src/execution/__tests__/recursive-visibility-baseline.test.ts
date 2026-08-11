@@ -88,7 +88,9 @@ vi.mock("../manifest-store.ts", () => {
     listAllSync = vi.fn(() => []);
     recoverTmpFiles = vi.fn(async () => []);
   }
-  return { ManifestStore: FakeManifestStore };
+  // vi.fn 包裹：构造参数（recordsDir）可从 mock.calls 断言（[MF-3] 目录统一验证）。
+  // 注意用普通 function（箭头函数不能被 new 调用）。
+  return { ManifestStore: vi.fn(function (_recordsDir: string) { return new FakeManifestStore(); }) };
 });
 
 vi.mock("../temp-prompt.ts", () => ({
@@ -103,6 +105,8 @@ import { spawn } from "node:child_process";
 
 import { ModelConfigService } from "../model-config-service.ts";
 import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
+import { ManifestStore } from "../manifest-store.ts";
+import { getSubagentRecordsDir, getSubagentSessionDir } from "../path-encoding.ts";
 import type { RecordStore } from "../record-store.ts";
 import { SubagentService } from "../subagent-service.ts";
 
@@ -112,6 +116,7 @@ const mockSpawn = vi.mocked(spawn);
 const ENV_ROOT_SESSION_ID = "PI_SUBAGENT_ROOT_SESSION_ID";
 const ENV_SELF_RECORD_ID = "PI_SUBAGENT_SELF_RECORD_ID";
 const ENV_DEPTH = "PI_SUBAGENT_DEPTH";
+const ENV_ROOT_CWD = "PI_SUBAGENT_ROOT_CWD";
 const ENV_FORK_DEPTH = "PI_SUBAGENT_FORK_DEPTH";
 
 interface FakeChild {
@@ -202,13 +207,13 @@ describe("进程级基线兜底（ALS 断裂修复，pi 事件回调模型）", 
   beforeEach(() => {
     vi.clearAllMocks();
     // 清理身份 env，防用例间泄漏
-    for (const k of [ENV_ROOT_SESSION_ID, ENV_SELF_RECORD_ID, ENV_DEPTH, ENV_FORK_DEPTH]) {
+    for (const k of [ENV_ROOT_SESSION_ID, ENV_SELF_RECORD_ID, ENV_DEPTH, ENV_FORK_DEPTH, ENV_ROOT_CWD]) {
       delete process.env[k];
     }
   });
 
   afterEach(() => {
-    for (const k of [ENV_ROOT_SESSION_ID, ENV_SELF_RECORD_ID, ENV_DEPTH, ENV_FORK_DEPTH]) {
+    for (const k of [ENV_ROOT_SESSION_ID, ENV_SELF_RECORD_ID, ENV_DEPTH, ENV_FORK_DEPTH, ENV_ROOT_CWD]) {
       delete process.env[k];
     }
     vi.restoreAllMocks();
@@ -300,5 +305,36 @@ describe("进程级基线兜底（ALS 断裂修复，pi 事件回调模型）", 
     // 用直接深度断言——execute 不抛错说明 nestingDepth=6 未超限，护栏不误伤。
     // （MAX_FORK_DEPTH 具体值由 session-context-resolver 定义，这里不硬编码。）
     await expect(service.execute({ task: "deep but allowed", ctxModel })).resolves.toBeDefined();
+  });
+
+  it("[MF-3 回归] 有 ENV_ROOT_CWD（worktree 子进程）：sessions 与 records 两套目录统一编码在 ROOT cwd 段", () => {
+    // 模拟 B（worktree 子进程，自身 cwd=checkout 路径）经 env 拿到真 ROOT cwd。
+    // 旧实现按 init.cwd 编码 → enc(checkout) 段，ROOT 磁盘重建扫不到（MF-3）。
+    const rootCwd = "/root/project";
+    process.env[ENV_ROOT_CWD] = rootCwd;
+
+    const agentDir = "/tmp/baseline-it";
+    const checkoutPath = "/var/folders/worktree/pi-subagents/--root-project--/branch";
+    const modelService = new ModelConfigService({ agentDir });
+    modelService.initModel({
+      modelRegistry: makeEmptyRegistry(),
+      sessionId: "baseline-it",
+      ctxModel: { id: "m", name: "M", provider: "p", reasoning: false },
+    });
+    // service cwd = checkout 路径（worktree 子进程的 spawn cwd）
+    const service = new SubagentService({
+      cwd: checkoutPath,
+      modelService,
+      getMainSessionFile: () => "/mock/main-session.jsonl",
+    });
+
+    const store = Reflect.get(service, "store") as RecordStore;
+    const sessionsDir = Reflect.get(store, "sessionsDir") as string;
+    // ManifestStore 在本文件被 mock：recordsDir 从构造调用参数取（vi.fn 包裹）
+    const recordsDir = vi.mocked(ManifestStore).mock.calls.at(-1)?.[0] as string | undefined;
+
+    // 两套目录都编码在 enc(ROOT cwd) 段（不是 enc(checkout)）
+    expect(sessionsDir).toBe(getSubagentSessionDir(agentDir, rootCwd));
+    expect(recordsDir).toBe(getSubagentRecordsDir(agentDir, rootCwd));
   });
 });

@@ -247,6 +247,32 @@ describe("cancelHandler", () => {
     await expect(cancelHandler(svc, { subagentId: "nope" })).rejects.toThrow(/No subagent record with id "nope"/);
   });
 
+  it("[S-19] id 属树内其他进程的 running record（磁盘可见、本进程内存无）→ throw 跨进程专属消息", async () => {
+    // MF-1 全树可见后：子进程 list 能看到父/兄弟进程的 running record，但 cancel 只作用于
+    // 本进程内存。旧消息「may have finished」误导（该 record 未 finished、正被列出）。
+    const foreign: SubagentRecord = {
+      id: "bg-foreign", agent: "w", status: "running", mode: "background", startedAt: 1,
+      endedAt: undefined, turns: 0, totalTokens: 0, model: "m", thinkingLevel: undefined, eventLog: [],
+    };
+    const svc = makeService({
+      findRecord: vi.fn(() => undefined),
+      collectRecords: vi.fn(() => [foreign] as SubagentRecord[]),
+    });
+    await expect(cancelHandler(svc, { subagentId: "bg-foreign" })).rejects.toThrow(/owned by another process in the tree/);
+  });
+
+  it("[S-19] id 在树内但已终态（磁盘可见 done）→ 仍用 may have finished 消息", async () => {
+    const done: SubagentRecord = {
+      id: "bg-done", agent: "w", status: "done", mode: "background", startedAt: 1,
+      endedAt: 2, turns: 0, totalTokens: 0, model: "m", thinkingLevel: undefined, eventLog: [],
+    };
+    const svc = makeService({
+      findRecord: vi.fn(() => undefined),
+      collectRecords: vi.fn(() => [done] as SubagentRecord[]),
+    });
+    await expect(cancelHandler(svc, { subagentId: "bg-done" })).rejects.toThrow(/may have finished/);
+  });
+
   it("已终态（cancel 返回 false）→ throw could not be cancelled", async () => {
     const svc = makeService({
       findRecord: vi.fn(() => makeSnapshot({ id: "bg-1", mode: "background", status: "done" })),

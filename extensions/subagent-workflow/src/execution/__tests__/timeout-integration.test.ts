@@ -180,6 +180,7 @@ function makeCtx(overrides: Partial<SessionRunnerContext> = {}): SessionRunnerCo
     mainCwd: "/tmp/test",
     mainSessionFile: undefined,
     sessionRootId: "root-session-test",
+    rootCwd: "/tmp/test",
     ...overrides,
   };
 }

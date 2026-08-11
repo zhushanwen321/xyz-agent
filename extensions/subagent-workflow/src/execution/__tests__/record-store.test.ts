@@ -20,7 +20,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { writeAliveMarker } from "../alive-store.ts";
 import { createRecord } from "../execution-record.ts";
 import { writeFinalized } from "../finalized-marker.ts";
-import type { ManifestRecord, ManifestStore } from "../manifest-store.ts";
+import type { ManifestRecord } from "../manifest-store.ts";
+import { ManifestStore } from "../manifest-store.ts";
+import { getSubagentRecordsDir, getSubagentSessionDir } from "../path-encoding.ts";
 import type { StatusFilter } from "../record-store.ts";
 import { RecordStore } from "../record-store.ts";
 import { writeCancelledTombstone } from "../tombstone-store.ts";
@@ -45,7 +47,7 @@ function makeRecord(over: Partial<ExecutionRecord> = {}): ExecutionRecord {
  */
 function writeSessionJsonl(
   filePath: string,
-  identity: { id: string; agent: string; mode: "sync" | "background"; task: string; startedAt: number; rootSessionId?: string; lastTs?: number },
+  identity: { id: string; agent: string; mode: "sync" | "background"; task: string; startedAt: number; rootSessionId?: string; parentRecordId?: string; depth?: number; lastTs?: number },
   assistantText = "result text",
 ): void {
   const lastTs = identity.lastTs ?? identity.startedAt + 1000;
@@ -60,6 +62,8 @@ function writeSessionJsonl(
     startedAt: identity.startedAt,
   };
   if (identity.rootSessionId !== undefined) identityData.rootSessionId = identity.rootSessionId;
+  if (identity.parentRecordId !== undefined) identityData.parentRecordId = identity.parentRecordId;
+  if (identity.depth !== undefined) identityData.depth = identity.depth;
   const identityEntry = JSON.stringify({
     type: "custom",
     id: "id-1",
@@ -188,6 +192,42 @@ describe("RecordStore", () => {
       store.register(makeRecord({ id: "dup-1", mode: "background", status: "running", startedAt: 5000 }));
       const found = store.collectRecords(100).find((r) => r.id === "dup-1");
       expect(found?.status).toBe("running"); // 内存 running 覆盖磁盘 crashed
+    });
+
+    it("[MF-3/S-20] 跨进程组合：子进程（worktree）写入 enc(ROOT) 的深层 record 被 ROOT store 重建，同 rootSessionId 全树可见、他树被排除", () => {
+      // MF-3 修复后：worktree 子进程把其子 record 的 session 文件写到统一 enc(ROOT cwd) 段，
+      // ROOT 进程的 store 扫同一目录重建（旧实现子进程写到 enc(checkout) 段，此处为空）。
+      const rootCwd = "/Users/x/root-proj";
+      const sessionsDir = getSubagentSessionDir(tmpDir, rootCwd);
+      const recordsDir = getSubagentRecordsDir(tmpDir, rootCwd);
+
+      // 父 record A（ROOT 自己 spawn，parentRecordId 缺省=顶层）+ 孙 record C（B 子进程写入，
+      // 同 rootSessionId、parentRecordId=A、depth=2）+ 他树 record X（rootSessionId 不同）
+      fs.mkdirSync(sessionsDir, { recursive: true });
+      writeSessionJsonl(path.join(sessionsDir, "2026-01-01-uuid-a.jsonl"), {
+        id: "sa-A", agent: "worker", mode: "background", task: "level1", startedAt: 1000, rootSessionId: "root-main",
+      });
+      writeSessionJsonl(path.join(sessionsDir, "2026-01-01-uuid-c.jsonl"), {
+        id: "sa-C", agent: "worker", mode: "background", task: "level3", startedAt: 3000,
+        rootSessionId: "root-main", parentRecordId: "sa-A", depth: 2,
+      });
+      writeSessionJsonl(path.join(sessionsDir, "2026-01-01-uuid-x.jsonl"), {
+        id: "sa-X", agent: "worker", mode: "background", task: "other root", startedAt: 4000, rootSessionId: "root-other",
+      });
+
+      // ROOT 进程的 store：sessionsDir/recordsDir 与子进程写盘目录同段（getSubagentSessionDir 同源）
+      const store = new RecordStore(sessionsDir, new ManifestStore(recordsDir), undefined);
+      const recs = store.collectRecords(10, "all", "root-main");
+      const ids = recs.map((r) => r.id);
+
+      // 全树可见：A（顶层）与 C（深度 2，跨进程写入）都在列表，身份字段正确
+      expect(ids).toContain("sa-A");
+      expect(ids).toContain("sa-C");
+      const c = recs.find((r) => r.id === "sa-C");
+      expect(c?.parentRecordId).toBe("sa-A");
+      expect(c?.depth).toBe(2);
+      // 他树 record 被 rootSessionFilter 排除（隔离不破坏）
+      expect(ids).not.toContain("sa-X");
     });
   });
 

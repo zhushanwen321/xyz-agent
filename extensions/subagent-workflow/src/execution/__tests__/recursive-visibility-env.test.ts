@@ -2,8 +2,8 @@
 //
 // 递归 subagent 跨层可见性：env 身份贯穿验证（设计 docs/design/recursive-subagent-visibility.md 场景 1b）。
 //
-// 验证 runSpawn 构造的 childEnv 含 3 个 PI_SUBAGENT_* 身份 env，值 = ctx.sessionRootId /
-// record.id / String(record.depth)。覆盖 opts.fork=true 与 opts.fork=false 两种（决策 2 无条件注入）。
+// 验证 runSpawn 构造的 childEnv 含 4 个 PI_SUBAGENT_* 身份 env，值 = ctx.sessionRootId /
+// record.id / String(record.depth) / ctx.rootCwd（[MF-3] 第 4 个：ROOT cwd，落盘目录编码键）。覆盖 opts.fork=true 与 opts.fork=false 两种（决策 2 无条件注入）。
 //
 // 这是场景 1（端到端三层嵌套全树可见）的「env 传递机制」确定性验证——不依赖 LLM 配合，
 // mock spawn 拦截 childEnv 直接断言。端到端可见性由场景 1（真实 pi CLI + recursive-worker agent）覆盖。
@@ -11,6 +11,8 @@
 import type { PassThrough } from "node:stream";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { getSubagentSessionDir } from "../path-encoding.ts";
 
 // ── mock modules（同 session-runner-schema-env.test.ts 模式）──
 
@@ -147,6 +149,7 @@ function makeCtx(overrides: Partial<SessionRunnerContext> = {}): SessionRunnerCo
     skillDirs: [],
     mainCwd: "/fake/cwd",
     sessionRootId: "root-main-session",
+    rootCwd: "/fake/cwd",
     ...overrides,
   };
 }
@@ -164,7 +167,7 @@ describe("runSpawn 跨进程身份 env 注入（递归可见性场景 1b）", ()
     vi.restoreAllMocks();
   });
 
-  it("非 fork（fork=false/undefined）：无条件注入 3 个身份 env（决策 2）", async () => {
+  it("非 fork（fork=false/undefined）：无条件注入 4 个身份 env（决策 2）", async () => {
     const record = makeRecord({ id: "sa-aaa", depth: 0 });
     const ctx = makeCtx({ sessionRootId: "root-main" });
     const opts = makeRunOpts({ fork: false });
@@ -176,6 +179,8 @@ describe("runSpawn 跨进程身份 env 注入（递归可见性场景 1b）", ()
     expect(childEnv.PI_SUBAGENT_ROOT_SESSION_ID).toBe("root-main");
     expect(childEnv.PI_SUBAGENT_SELF_RECORD_ID).toBe("sa-aaa");
     expect(childEnv.PI_SUBAGENT_DEPTH).toBe("0");
+    // [MF-3] 第 4 个贯穿 env：ROOT cwd（子进程落盘目录编码键）
+    expect(childEnv.PI_SUBAGENT_ROOT_CWD).toBe("/fake/cwd");
     // fork=false 不注入 fork depth env（与既有行为一致，本测试不改变它）
     expect(childEnv.PI_SUBAGENT_FORK_DEPTH).toBeUndefined();
 
@@ -184,7 +189,7 @@ describe("runSpawn 跨进程身份 env 注入（递归可见性场景 1b）", ()
     await resultPromise;
   });
 
-  it("fork=true：3 个身份 env 与 fork depth env 共存（决策 2 无条件注入不依赖 fork）", async () => {
+  it("fork=true：4 个身份 env 与 fork depth env 共存（决策 2 无条件注入不依赖 fork）", async () => {
     const record = makeRecord({ id: "sa-bbb", depth: 2 });
     const ctx = makeCtx({ sessionRootId: "root-main" });
     const opts = makeRunOpts({ fork: true, parentForkDepth: 1 });
@@ -197,6 +202,7 @@ describe("runSpawn 跨进程身份 env 注入（递归可见性场景 1b）", ()
     expect(childEnv.PI_SUBAGENT_ROOT_SESSION_ID).toBe("root-main");
     expect(childEnv.PI_SUBAGENT_SELF_RECORD_ID).toBe("sa-bbb");
     expect(childEnv.PI_SUBAGENT_DEPTH).toBe("2");
+    expect(childEnv.PI_SUBAGENT_ROOT_CWD).toBe("/fake/cwd");
     // fork depth env 同时存在（fork=true + parentForkDepth=1 → 2）
     expect(childEnv.PI_SUBAGENT_FORK_DEPTH).toBe("2");
 
@@ -236,6 +242,31 @@ describe("runSpawn 跨进程身份 env 注入（递归可见性场景 1b）", ()
     // env 用 ctx.sessionRootId，不是 record.rootSessionId
     expect(childEnv.PI_SUBAGENT_ROOT_SESSION_ID).toBe("real-root-session");
     expect(childEnv.PI_SUBAGENT_ROOT_SESSION_ID).not.toBe(record.rootSessionId);
+
+    const child = getLastSpawnedChild();
+    child.emit("close", 0);
+    await resultPromise;
+  });
+
+  it("[MF-3 回归] worktree 模式（mainCwd=checkout ≠ rootCwd）：sessionDir 用 ROOT cwd 编码，深层 record 落盘到 ROOT 可扫描段", async () => {
+    // 模拟 B（worktree 子进程）spawn C：ctx.cwd/mainCwd = checkout 路径，rootCwd = 真 ROOT cwd。
+    // 旧实现 sessionDir 用 ctx.mainCwd 编码 → enc(checkout) 段，ROOT 磁盘重建扫不到（MF-3）。
+    const rootCwd = "/root/project";
+    const checkoutPath = "/var/folders/worktree/pi-subagents/--root-project--/branch";
+    const agentDir = "/fake/agent";
+    const record = makeRecord({ id: "sa-deep", depth: 2 });
+    const ctx = makeCtx({ cwd: checkoutPath, mainCwd: checkoutPath, rootCwd, agentDir });
+
+    const resultPromise = runSpawn(record, "test task", makeRunOpts(), ctx);
+    await waitForSpawn();
+    const childEnv = getLastSpawnEnv();
+    const spawnArgs = mockSpawn.mock.calls.at(-1)?.[1] as string[];
+
+    // 第 4 个 env 贯穿 ROOT cwd
+    expect(childEnv.PI_SUBAGENT_ROOT_CWD).toBe(rootCwd);
+    // spawn --session-dir 指向 enc(ROOT cwd)（非 enc(checkout)）
+    expect(spawnArgs).toContain(getSubagentSessionDir(agentDir, rootCwd));
+    expect(spawnArgs).not.toContain(getSubagentSessionDir(agentDir, checkoutPath));
 
     const child = getLastSpawnedChild();
     child.emit("close", 0);

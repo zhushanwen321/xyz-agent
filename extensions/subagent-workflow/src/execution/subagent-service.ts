@@ -148,10 +148,15 @@ const PRIORITY_BACKGROUND = 1000;
 /** 跨进程身份贯穿的 env 名（父进程 spawn 子进程时注入，子进程 initSession 读取）。
  *  仿照 PI_SUBAGENT_FORK_DEPTH 机制，让递归 subagent 的身份（rootSessionId / parentRecordId / depth）
  *  跨进程传递，使主进程 /subagents 能看到完整递归树（设计见 docs/design/recursive-subagent-visibility.md）。
- *  语义：env 描述「子进程自己的身份」，不是父的身份（决策 1）。 */
+ *  语义：env 描述「子进程自己的身份」，不是父的身份（决策 1）。
+ *  [MF-3] 第 4 个 env：真 ROOT 的 cwd（PI_SUBAGENT_ROOT_CWD）。worktree 模式下子进程 spawn cwd =
+ *  checkout 路径，若按各自 cwd 编码落盘目录，深层 record 写到 enc(worktree) 段、ROOT 磁盘重建
+ *  扫不到 → 全树可见性深度 ≥ 2 断裂。子进程经本 env 拿 ROOT cwd，sessions 与 records 两套目录
+ *  统一编码在 enc(ROOT cwd) 段（与身份贯穿同构，见 session-runner 注入点）。 */
 const ENV_ROOT_SESSION_ID = "PI_SUBAGENT_ROOT_SESSION_ID";
 const ENV_SELF_RECORD_ID = "PI_SUBAGENT_SELF_RECORD_ID";
 const ENV_DEPTH = "PI_SUBAGENT_DEPTH";
+const ENV_ROOT_CWD = "PI_SUBAGENT_ROOT_CWD";
 
 /** 触发 onUpdate 的事件类型（streaming delta 不触发，避免每 token 刷新）。 */
 const TRIGGERING_EVENT_TYPES = new Set<AgentEvent["type"]>([
@@ -224,6 +229,11 @@ export class SubagentService {
   private execCtxBaseline: { recordId: string | undefined; depth: number } | null = null;
   /** fork 深度基线（同 ALS 断裂问题：forkDepthAls.getStore() 兜底用）。根进程=0。 */
   private forkDepthBaseline = 0;
+  /** [MF-3] 所属根进程 cwd（sessions/records 落盘目录编码键）。
+   *  根进程=自身 cwd（构造时 init.cwd）；子进程=env PI_SUBAGENT_ROOT_CWD 贯穿的真 ROOT cwd。
+   *  worktree 模式下子进程 this.cwd 是 checkout 路径，若按它编码目录，深层 record 落到
+   *  enc(worktree) 段、ROOT 扫描不到 → 全树可见性深度 ≥ 2 断裂（与 sessionRootId 同构）。 */
+  private rootCwd: string;
   /** UI streaming sink（ctx.ui.setWidget）。workflow 域经 getStreamSink() 取用。 */
   private streamSink: StreamSink | null = null;
   /** [竞态修复] 主 agent isIdle 查询（ctx.isIdle）。notifier flush gate 用。
@@ -255,8 +265,15 @@ export class SubagentService {
     this.uiRequestHandler = init.uiRequestHandler;
     this.pool = new DefaultConcurrencyPool(this.modelService.getGlobalConfig().maxConcurrent);
     this.worktreeManager = new WorktreeManager(this.modelService.getAgentDir());
-    const sessionsDir = getSubagentSessionDir(this.modelService.getAgentDir(), init.cwd);
-    const recordsDir = getSubagentRecordsDir(this.modelService.getAgentDir(), init.cwd);
+    // [MF-3] worktree 隔离下全树落盘目录统一到 ROOT cwd：子进程（spawn cwd = worktree checkout 路径）
+    // 若按自身 cwd 编码目录，深层 record 写到 enc(worktree) 段，ROOT 磁盘重建扫不到。
+    // 读 env PI_SUBAGENT_ROOT_CWD（根进程无 env → init.cwd）。sessions 与 records 两套目录
+    // 必须同源（同一 rootCwd），否则 enc 段不变量断裂（只改其一会让同 record 的
+    // session 文件与 manifest 分落两段，GC/重建互相找不到）。
+    const envRootCwd = process.env[ENV_ROOT_CWD];
+    this.rootCwd = envRootCwd && envRootCwd !== "" ? envRootCwd : init.cwd;
+    const sessionsDir = getSubagentSessionDir(this.modelService.getAgentDir(), this.rootCwd);
+    const recordsDir = getSubagentRecordsDir(this.modelService.getAgentDir(), this.rootCwd);
     this.manifestStore = new ManifestStore(recordsDir);
     this.store = new RecordStore(sessionsDir, this.manifestStore, this.pi ?? undefined);
     this.notifier = new BgNotifier(this.piAdapter());
@@ -316,10 +333,11 @@ export class SubagentService {
       }
     }
     // [递归可见性] 跨进程身份贯穿（设计 recursive-subagent-visibility.md）。
-    // 父进程 spawn 时注入这 3 个 env 描述「子进程自己的身份」：
+    // 父进程 spawn 时注入这 4 个 env 描述「子进程自己的身份」：
     //   - rootSessionId：所属根 session（贯穿真 ROOT，子进程不覆盖）
     //   - selfRecordId：子进程自己的 record id（孙 subagent 的直接父）
     //   - depth：子进程的嵌套深度
+    //   - rootCwd：真 ROOT 的 cwd（[MF-3] 落盘目录编码键，worktree 下与自身 cwd 不同）
     // 子进程读 env 建立基线后，createRecordForMode 读 execCtxAls 自动正确（孙挂到子名下）。
     // 根进程无 env → sessionRootId = init.sessionId（自己是 root），execCtxAls 不 enterWith（顶层）。
     // enterWith 贯穿整个 session 生命周期（与 forkDepthAls 同构，决策 4）。
@@ -1043,6 +1061,10 @@ export class SubagentService {
       // execute/executeAndAwait 调本方法前必经 initSession，此时 sessionRootId 已非空；
       // ?? 兑底防类型漂移（运行时不可达）。
       sessionRootId: this.sessionRootId ?? this.sessionId ?? "",
+      // [MF-3] 透传 ROOT cwd（runSpawn 落盘目录编码键 + 注入子进程 env PI_SUBAGENT_ROOT_CWD）。
+      // worktree 模式下 mainCwd = 本进程 checkout 路径，rootCwd 才是真 ROOT——session 文件
+      // 落盘统一用 rootCwd 编码，ROOT 磁盘重建才扫得到深层 record（与 sessionRootId 同构）。
+      rootCwd: this.rootCwd,
     };
   }
 }
