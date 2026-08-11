@@ -6,6 +6,7 @@ import type { Entry } from '../core/parser.js'
 const ROOT = '019fe620' // 家族根（无 parentSession）
 const FORK = '019fe632' // fork 子代（parentSession 指向 ROOT 的文件）
 const SUB = '019fe635' // subagent（rootSessionId=FORK，挂在 fork 子代下，非家族根）
+const SUB2 = '019fe636' // U4 第二个 subagent（多 subagent 场景）
 
 // ---- fixture helpers ----
 
@@ -30,6 +31,31 @@ function subagentIdentity(id: string, rootSessionId: string, slug: string): Entr
     customType: 'subagent-identity',
     data: { rootSessionId, slug },
   }
+}
+
+/** U4 富字段（可选，模拟 manifest 主/P-fallback identity 回退组装的 data） */
+interface SubagentRichFields {
+  task?: string
+  agent?: string
+  model?: string
+  status?: string
+  sessionFile?: string
+}
+
+/** 构造带 U4 富字段的 subagent-identity custom entry（manifest 主/P-fallback 两种 data 形态） */
+function subagentIdentityRich(
+  id: string,
+  rootSessionId: string,
+  slug: string,
+  rich?: SubagentRichFields,
+): Entry {
+  const data: Record<string, unknown> = { rootSessionId, slug }
+  if (rich?.task !== undefined) data.task = rich.task
+  if (rich?.agent !== undefined) data.agent = rich.agent
+  if (rich?.model !== undefined) data.model = rich.model
+  if (rich?.status !== undefined) data.status = rich.status
+  if (rich?.sessionFile !== undefined) data.sessionFile = rich.sessionFile
+  return { type: 'custom', id, parentId: null, customType: 'subagent-identity', data }
 }
 
 /** 构造 fileStats Map（M1 key=sessionId） */
@@ -203,5 +229,129 @@ describe('resolveFamily - 错误', () => {
     const index = buildFamilyIndex(headers, identities, fileStats)
 
     expect(() => resolveFamily('unknown-session', index)).toThrow(/not found in family index/)
+  })
+})
+
+// ============================================================
+// U4: SubagentRef 富字段（manifest 主 / P-fallback identity 回退）
+// 验证 buildFamilyIndex 从 identity entry.data 读 task/agent/model/status/sessionFile
+// 填 SubagentRef，异名映射（data.agent → agentName），守卫放宽（只校验 rootSessionId+slug）。
+// ============================================================
+
+describe('U4: SubagentRef 富字段（buildFamilyIndex 透传）', () => {
+  it('TC-u4-manifest-enrich: manifest 主路径，富字段全透传到 SubagentRef', () => {
+    const identities = [
+      subagentIdentityRich(SUB, ROOT, 'codex-research', {
+        task: '调研 codex',
+        agent: 'explorer',
+        model: 'glm-5.2',
+        status: 'completed',
+        sessionFile: '/path/to/sub.jsonl',
+      }),
+    ]
+    const index = buildFamilyIndex([header(ROOT)], identities, makeStats([ROOT, SUB]))
+
+    const sub = resolveFamily(ROOT, index).subagents.find((s) => s.sessionId === SUB)
+    expect(sub?.task).toBe('调研 codex')
+    expect(sub?.slug).toBe('codex-research')
+    // 异名映射核心断言：identity.data.agent → SubagentRef.agentName
+    expect(sub?.agentName).toBe('explorer')
+    expect(sub?.model).toBe('glm-5.2')
+    expect(sub?.status).toBe('completed')
+    expect(sub?.sessionFile).toBe('/path/to/sub.jsonl')
+    expect(sub?.cleanedUp).toBe(false)
+  })
+
+  it('TC-u4-pfallback-identity: P-fallback（有 identity 无 model/status），task/agent/sessionFile 透传', () => {
+    const identities = [
+      subagentIdentityRich(SUB, ROOT, 'fix', {
+        task: 'fix bug',
+        agent: 'worker',
+        sessionFile: '/alive/sub.jsonl',
+        // 无 model/status（P-fallback identity 不含这两项，探针 15/15 确认）
+      }),
+    ]
+    const index = buildFamilyIndex([header(ROOT)], identities, makeStats([ROOT, SUB]))
+
+    const sub = resolveFamily(ROOT, index).subagents.find((s) => s.sessionId === SUB)
+    expect(sub?.task).toBe('fix bug')
+    expect(sub?.slug).toBe('fix')
+    expect(sub?.agentName).toBe('worker')
+    expect(sub?.sessionFile).toBe('/alive/sub.jsonl')
+    // P-fallback 核心断言：model/status 必 undefined（identity 不可回退）
+    expect(sub?.model).toBeUndefined()
+    expect(sub?.status).toBeUndefined()
+  })
+
+  it('TC-u4-pfallback-no-identity: data 缺 rootSessionId → 守卫拒掉，不入 subagentsByRoot，不抛错', () => {
+    // 模拟无 identity（运行中/异常，尾行是 message 非 identity）：data 只有 slug 无 rootSessionId
+    const noRoot: Entry = {
+      type: 'custom',
+      id: 'no-root',
+      parentId: null,
+      customType: 'subagent-identity',
+      data: { slug: 'dangling', task: 't' }, // 缺 rootSessionId
+    }
+    const index = buildFamilyIndex([header(ROOT)], [noRoot], makeStats([ROOT]))
+
+    // 守卫拒掉 → 不入 subagentsByRoot
+    expect(index.subagentsByRoot.size).toBe(0)
+    // resolveFamily 不抛错，subagents 空
+    const family = resolveFamily(ROOT, index)
+    expect(family.subagents).toHaveLength(0)
+  })
+
+  it('TC-u4-orphan-manifest: fileStats 不含 id → cleanedUp=true，富字段仍透传（GC 路径保留）', () => {
+    const identities = [
+      subagentIdentityRich('sa-ghost', ROOT, 'ghost-slug', {
+        task: 'ghost task',
+        agent: 'worker',
+        model: 'gpt-4',
+        status: 'completed',
+        sessionFile: '/gc/ghost.jsonl',
+      }),
+    ]
+    // fileStats 不含 'sa-ghost'（模拟 .jsonl 被 GC，manifest 残留）→ cleanedUp=true
+    const index = buildFamilyIndex([header(ROOT)], identities, makeStats([ROOT]))
+
+    const sub = resolveFamily(ROOT, index).subagents.find((s) => s.sessionId === 'sa-ghost')
+    expect(sub?.cleanedUp).toBe(true)
+    expect(sub?.task).toBe('ghost task')
+    expect(sub?.agentName).toBe('worker')
+    expect(sub?.model).toBe('gpt-4')
+    expect(sub?.status).toBe('completed')
+    expect(sub?.sessionFile).toBe('/gc/ghost.jsonl') // GC 路径保留（不置空）
+  })
+
+  it('TC-u4-recordmanifest-compat: 最小 identity（仅 rootSessionId+slug）→ 富字段全 undefined，不抛错', () => {
+    // 模拟旧 manifest（无 task/slug/model/status/agentName）经 buildFamilyFromFs 转成的最小 identity
+    const identities = [subagentIdentity(SUB, ROOT, 'legacy')]
+    const index = buildFamilyIndex([header(ROOT)], identities, makeStats([ROOT, SUB]))
+
+    const sub = resolveFamily(ROOT, index).subagents.find((s) => s.sessionId === SUB)
+    expect(sub?.slug).toBe('legacy')
+    expect(sub?.rootSessionId).toBe(ROOT)
+    expect(sub?.task).toBeUndefined()
+    expect(sub?.agentName).toBeUndefined()
+    expect(sub?.model).toBeUndefined()
+    expect(sub?.status).toBeUndefined()
+    expect(sub?.sessionFile).toBeUndefined()
+  })
+
+  it('isSubagentIdentityData 守卫放宽：富字段部分缺失/全缺都通过（只校验 rootSessionId+slug）', () => {
+    const identities = [
+      subagentIdentityRich(SUB, ROOT, 's1', { task: 'only-task' }), // 部分富字段
+      subagentIdentity(SUB2, ROOT, 's2'), // 完全无富字段（旧 manifest 形态）
+    ]
+    const index = buildFamilyIndex([header(ROOT)], identities, makeStats([ROOT, SUB, SUB2]))
+
+    const family = resolveFamily(ROOT, index)
+    expect(family.subagents).toHaveLength(2)
+    const s1 = family.subagents.find((s) => s.sessionId === SUB)
+    expect(s1?.task).toBe('only-task')
+    expect(s1?.model).toBeUndefined()
+    const s2 = family.subagents.find((s) => s.sessionId === SUB2)
+    expect(s2?.task).toBeUndefined()
+    expect(s2?.agentName).toBeUndefined()
   })
 })
