@@ -3,9 +3,7 @@ import { tmpdir } from 'node:os'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { listMainSessions, listSubagentSessions } from '../discovery/roots.js'
-
-/** 真实 pi agent 目录（本机），用于集成测试。 */
-const REAL_AGENT_DIR = '/Users/zhushanwen/.pi/agent'
+import { REAL_AGENT_DIR, HAS_E6, HAS_REAL_SUBAGENTS_DIR } from './real-data.js'
 
 describe('listMainSessions', () => {
   let dir: string
@@ -69,7 +67,7 @@ describe('listMainSessions', () => {
     await expect(listMainSessions(join(dir, 'no-such-dir'))).resolves.toEqual([])
   })
 
-  it('真实数据：扫描 ~/.pi/agent，含 019e6c96，不含 .finalized 与 wf-', async () => {
+  it.skipIf(!HAS_E6)('真实数据：扫描 ~/.pi/agent，含 019e6c96，不含 .finalized 与 wf-', async () => {
     const result = await listMainSessions(REAL_AGENT_DIR)
     expect(result.length).toBeGreaterThan(0)
     // 含目标 session
@@ -126,7 +124,7 @@ describe('listSubagentSessions', () => {
     await expect(listSubagentSessions(dir)).resolves.toEqual([])
   })
 
-  it('真实数据：扫描 ~/.pi/agent/subagents 返回非空', async () => {
+  it.skipIf(!HAS_REAL_SUBAGENTS_DIR)('真实数据：扫描 ~/.pi/agent/subagents 返回非空', async () => {
     const result = await listSubagentSessions(REAL_AGENT_DIR)
     expect(result.length).toBeGreaterThan(0)
     expect(result.every((m) => !m.path.endsWith('.finalized'))).toBe(true)

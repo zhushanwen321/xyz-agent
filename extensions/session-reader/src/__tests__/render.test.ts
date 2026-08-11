@@ -6,6 +6,7 @@ import type { TreeView } from '../core/tree.js'
 import { parseSessionFile } from '../core/parser.js'
 import { buildTreeView } from '../core/tree.js'
 import { segmentTurns } from '../core/turns.js'
+import { REAL_SESSION, HAS_REAL_SESSION } from './real-data.js'
 
 // ---- 构造助手 ----
 
@@ -71,9 +72,6 @@ function turn(
 function emptyTree(): TreeView {
   return { leafPath: [], branches: new Map(), orphans: [] }
 }
-
-const REAL_SESSION =
-  '/Users/zhushanwen/.pi/agent/sessions/--Users-zhushanwen-Code-xyz-agent-workspace-feat-plugin-arch-3--/2026-05-28T03-17-12-844Z_019e6c96-0a0c-74b8-a73f-d1854d88e2a7.jsonl'
 
 describe('renderOutline', () => {
   it('1. 预算充足 → 全部字段完整渲染（userBrief 截断 / toolSummary 聚合 / omittedBytes 正确）', () => {
@@ -170,7 +168,7 @@ describe('renderOutline', () => {
     expect(withoutBranches.turns[0].branch).toBeUndefined()
   })
 
-  it('8. 真实 019e6c96：outline tokenEstimate <= 1500 + assistantBrief/toolSummary 非空（v2 O1）', async () => {
+  it.skipIf(!HAS_REAL_SESSION)('8. 真实 019e6c96：outline tokenEstimate <= 1500 + assistantBrief/toolSummary 非空（v2 O1）', async () => {
     // v2 O1：加 assistantBrief + 修 toolSummary bug 后 outline 变长，阈值 600→1500（design §3.3 D4）
     const parsed = await parseSessionFile(REAL_SESSION)
     const tree = buildTreeView(parsed.entries)

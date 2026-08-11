@@ -1,6 +1,10 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { existsSync } from 'node:fs'
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { handleSessionRead, renderExtractItems, type SessionReadParams } from '../tool-handler.js'
+import { REAL_AGENT_DIR as REAL, E6, FAM, HAS_E6, HAS_REAL } from './real-data.js'
 
 /**
  * M3 tool-handler 集成测试。
@@ -9,16 +13,12 @@ import { handleSessionRead, renderExtractItems, type SessionReadParams } from '.
  * 传真实 `/Users/zhushanwen/.pi/agent` 作 agentDir——用本机真实历史 session 数据，无需 mock。
  *
  * 覆盖 7 action 主路径 + F1(find 零匹配)/F4(turn 越界)/F5(缺参)/resolveSessionId 片段等价。
+ *
+ * 真实数据用例全部带 skipIf 守卫（CI 无本机 ~/.pi/agent → skip，不硬失败）；
+ * renderExtractItems F9 截断是纯 fixture，无条件跑。
  */
 
-/** 真实 pi agent 目录（本机），含充足历史 session。 */
-const REAL = '/Users/zhushanwen/.pi/agent'
-/** 5.4MB / 32 turn / 1204 entry 的真实 session（feat-plugin-arch-3 目录）。 */
-const E6 = '019e6c96-0a0c-74b8-a73f-d1854d88e2a7'
-/** 真实 fork 家族根（fork 子代 019fe632，隔代 subagent 019fe635 挂在 019fe632 下）。 */
-const FAM = '019fe620-8ae1-78a7-b76a-43a1ba4cc3c7'
-
-describe('handleSessionRead', () => {
+describe.skipIf(!HAS_REAL)('handleSessionRead', () => {
   it('1. find by uuid fragment returns matching session', async () => {
     const r = await handleSessionRead({ action: 'find', query: 'e6c96' }, REAL)
     const d = r.details as { matches: Array<{ sessionId: string }> }
@@ -100,7 +100,7 @@ describe('handleSessionRead', () => {
   })
 })
 
-describe('extract (v2 O4)', () => {
+describe.skipIf(!HAS_E6)('extract (v2 O4)', () => {
   it('user-messages returns 26 user entries with turn + full text', async () => {
     const r = await handleSessionRead(
       { action: 'extract', session: E6, what: 'user-messages' },
@@ -275,6 +275,110 @@ describe('extract (v2 O4)', () => {
     expect(msg).toContain('extract 的 turn 范围与 outline 不同')
     expect(msg).not.toContain('用 outline 重看有效范围')
     expect(msg).toContain('该 session extract 共')
+  })
+})
+
+// ---- fixture 工具（tmpdir 造最小 session 文件，供 F2/MF-5 用例）----
+
+async function makeFixtureSession(
+  dir: string,
+  id: string,
+  firstUserText: string,
+): Promise<void> {
+  const slug = '--demo-cwd--'
+  await mkdir(join(dir, 'sessions', slug), { recursive: true })
+  const lines = [
+    JSON.stringify({ type: 'session', id, cwd: '/demo' }),
+    JSON.stringify({
+      type: 'message',
+      id: id + '-m1',
+      parentId: id,
+      message: { role: 'user', content: [{ type: 'text', text: firstUserText }] },
+    }),
+  ]
+  await writeFile(join(dir, 'sessions', slug, id + '.jsonl'), lines.join('\n') + '\n')
+}
+
+describe('F2 多匹配消歧（fixture，MF-9）', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'tool-handler-f2-'))
+  })
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('共享 uuid 片段 → 不抛错，content 含两候选 + 👉，details.ambiguous=true', async () => {
+    const ID1 = '019e6c96-aaaa-bbbb-cccc-000000000001'
+    const ID2 = '019e6c96-aaaa-bbbb-cccc-000000000002'
+    await makeFixtureSession(dir, ID1, '第一段内容')
+    await makeFixtureSession(dir, ID2, '第二段内容')
+
+    // outline 走 resolveSessionId → 2 匹配 → F2 消歧（不抛错）
+    const r = await handleSessionRead({ action: 'outline', session: '019e6c96-aaaa' }, dir)
+    const d = r.details as { ambiguous: boolean; candidates: Array<{ sessionId: string }> }
+    expect(d.ambiguous).toBe(true)
+    expect(d.candidates).toHaveLength(2)
+    expect(d.candidates.some((c) => c.sessionId === ID1)).toBe(true)
+    expect(d.candidates.some((c) => c.sessionId === ID2)).toBe(true)
+    const text = r.content[0].text
+    expect(text).toContain(ID1)
+    expect(text).toContain(ID2)
+    expect(text).toContain('👉')
+  })
+
+  it('search/detail/expand/extract 同样走 F2 消歧（不抛错）', async () => {
+    const ID1 = '019e6c96-aaaa-bbbb-cccc-000000000001'
+    const ID2 = '019e6c96-aaaa-bbbb-cccc-000000000002'
+    await makeFixtureSession(dir, ID1, '第一段内容')
+    await makeFixtureSession(dir, ID2, '第二段内容')
+
+    for (const action of ['detail', 'expand', 'search', 'export', 'extract'] as const) {
+      const params: SessionReadParams = { action, session: '019e6c96-aaaa' }
+      if (action === 'detail') params.turns = 'T001'
+      if (action === 'expand') params.turn = 'T001'
+      if (action === 'search') params.pattern = 'x'
+      if (action === 'extract') params.what = 'user-messages'
+      const r = await handleSessionRead(params, dir)
+      const d = r.details as { ambiguous: boolean }
+      expect(d.ambiguous, `action=${action}`).toBe(true)
+      expect(r.content[0].text).toContain('👉')
+    }
+  })
+})
+
+describe('search 灾难性正则降级 + abort（fixture，MF-5 回归）', () => {
+  let dir: string
+  const SID = '019e6c96-bbbb-cccc-dddd-00000000000a'
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'tool-handler-search-'))
+    await makeFixtureSession(dir, SID, 'aaa plugin 内容')
+  })
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  it('嵌套量词 pattern (a+)+ → 降级字面子串（不挂死，零命中）', async () => {
+    const r = await handleSessionRead({ action: 'search', session: SID, pattern: '(a+)+' }, dir)
+    const d = r.details as { hits: unknown[] }
+    // 字面量 '(a+)+' 不在内容里 → 0 命中（若按正则执行会命中 'aaa' 且可能指数回溯）
+    expect(d.hits).toHaveLength(0)
+  })
+
+  it('普通正则仍按正则匹配', async () => {
+    const r = await handleSessionRead({ action: 'search', session: SID, pattern: 'a+' }, dir)
+    const d = r.details as { hits: unknown[] }
+    expect(d.hits.length).toBeGreaterThan(0)
+  })
+
+  it('aborted signal → search 抛中断错误（不继续扫描）', async () => {
+    const ac = new AbortController()
+    ac.abort()
+    await expect(
+      handleSessionRead({ action: 'search', session: SID, pattern: 'x' }, dir, ac.signal),
+    ).rejects.toThrow(/中断/)
   })
 })
 

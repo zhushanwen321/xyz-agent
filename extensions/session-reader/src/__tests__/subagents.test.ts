@@ -205,6 +205,32 @@ describe('buildFamilyFromFs - fixture', () => {
     await writeMainSession(dir, '--root-cwd--', ROOT, { cwd: '/proj/root' })
     await expect(buildFamilyFromFs('nonexistent-session-id', dir)).rejects.toThrow(/not found/)
   })
+
+  it('MF-3 回归：alive 但无 identity 的 subagent 文件（运行中）不被 manifest 收编为 cleanedUp', async () => {
+    await writeMainSession(dir, '--root-cwd--', ROOT, { cwd: '/proj/root' })
+    // 运行中 subagent：有效 header、无 identity 尾行（identity 完成时才写入），manifest 已存在
+    const subDir = join(dir, 'subagents', '--root-cwd--', 'sessions')
+    await mkdir(subDir, { recursive: true })
+    const subPath = join(subDir, SUB_REAL + '.jsonl')
+    await writeFile(
+      subPath,
+      JSON.stringify({ type: 'session', id: SUB_REAL, cwd: '/proj/root' }) + '\n',
+    )
+    await writeRecordManifest(dir, '--root-cwd--', `sa-${SUB_REAL}`, {
+      rootSessionId: ROOT,
+      agentName: 'explorer',
+      sessionFile: subPath,
+    })
+
+    const family = await buildFamilyFromFs(ROOT, dir)
+    // 旧实现：无 identity → 步骤 2 跳过 → 步骤 3 按孤儿收编 → 活 subagent 显示 [已清理]
+    // 新实现：header 有效即 alive → manifest 跳过 → 无 identity 无法关联 rootSessionId，不入列表
+    const subs = family.subagents.filter(
+      (s) => s.sessionId === SUB_REAL || s.sessionId.startsWith('sa-'),
+    )
+    expect(subs).toHaveLength(0)
+    expect(family.subagents.every((s) => s.cleanedUp === false)).toBe(true)
+  })
 })
 
 // ============================================================

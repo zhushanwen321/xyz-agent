@@ -3,9 +3,7 @@ import { tmpdir } from 'node:os'
 import { mkdtemp, mkdir, writeFile, rm, utimes } from 'node:fs/promises'
 import { join } from 'node:path'
 import { findSessions } from '../discovery/find.js'
-
-/** 真实 pi agent 目录（本机），用于集成测试。 */
-const REAL_AGENT_DIR = '/Users/zhushanwen/.pi/agent'
+import { REAL_AGENT_DIR, HAS_E6 } from './real-data.js'
 
 /**
  * 建一个假 session 文件：首行 header（type=session，含 id/cwd/parentSession），
@@ -191,7 +189,7 @@ describe('findSessions', () => {
     expect(result.truncated).toBe(false)
   })
 
-  it('真实数据：e6c96 匹配 019e6c96 开头的 session', async () => {
+  it.skipIf(!HAS_E6)('真实数据：e6c96 匹配 019e6c96 开头的 session', async () => {
     const { matches } = await findSessions('e6c96', REAL_AGENT_DIR)
     expect(matches.length).toBeGreaterThan(0)
     expect(matches.some((m) => m.sessionId.startsWith('019e6c96'))).toBe(true)
@@ -202,7 +200,7 @@ describe('findSessions', () => {
     expect(hit.sizeBytes).toBeGreaterThan(0)
   }, 30000)
 
-  it("真实数据：recent 返回最近 N 个，mtime 倒序，truncated=true", async () => {
+  it.skipIf(!HAS_E6)("真实数据：recent 返回最近 N 个，mtime 倒序，truncated=true", async () => {
     const { matches, truncated } = await findSessions('recent', REAL_AGENT_DIR, { limit: 5 })
     expect(matches.length).toBeGreaterThan(0)
     expect(matches.length).toBeLessThanOrEqual(5)

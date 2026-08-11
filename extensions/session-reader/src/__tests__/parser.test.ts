@@ -1,14 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { parseSessionContent, parseSessionFile } from '../core/parser.js'
 import type { Entry } from '../core/parser.js'
+import { REAL_SESSION, HAS_REAL_SESSION } from './real-data.js'
 
 /** 构造单行 JSONL entry 字符串 */
 function line(obj: Record<string, unknown>): string {
   return JSON.stringify(obj)
 }
-
-const REAL_SESSION =
-  '/Users/zhushanwen/.pi/agent/sessions/--Users-zhushanwen-Code-xyz-agent-workspace-feat-plugin-arch-3--/2026-05-28T03-17-12-844Z_019e6c96-0a0c-74b8-a73f-d1854d88e2a7.jsonl'
 
 describe('parseSessionContent', () => {
   it('正常多类型 entry 全解析，字段完整保留', () => {
@@ -156,7 +154,7 @@ describe('parseSessionContent', () => {
 })
 
 describe('parseSessionFile', () => {
-  it('真实 session 019e6c96：1204 entries / 0 skipped / 非 partial', async () => {
+  it.skipIf(!HAS_REAL_SESSION)('真实 session 019e6c96：1204 entries / 0 skipped / 非 partial', async () => {
     const result = await parseSessionFile(REAL_SESSION)
 
     expect(result.entries).toHaveLength(1204)

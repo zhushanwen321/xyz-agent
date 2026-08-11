@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
 import { getAgentDir } from '@earendil-works/pi-coding-agent'
+import { StringEnum } from '@earendil-works/pi-ai'
 import { Type } from 'typebox'
 import { handleSessionRead, type SessionReadParams } from './tool-handler.js'
 import { createHashAutocompleteProvider } from './tui/hash-provider.js'
@@ -19,17 +20,8 @@ import { createSessionCommand } from './tui/session-command.js'
 // ---- TypeBox 参数 schema（design §3.4 14 字段）----
 
 const SessionReadSchema = Type.Object({
-  action: Type.Union(
-    [
-      Type.Literal('find'),
-      Type.Literal('family'),
-      Type.Literal('outline'),
-      Type.Literal('expand'),
-      Type.Literal('detail'),
-      Type.Literal('search'),
-      Type.Literal('export'),
-      Type.Literal('extract'),
-    ],
+  action: StringEnum(
+    ['find', 'family', 'outline', 'expand', 'detail', 'search', 'export', 'extract'],
     {
       description:
         'Action to perform: find (locate session), family (fork/subagent/workflow relations), outline (turn-level overview), expand (single-turn entries), detail (full text of turns), search (full-text grep), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type).',
@@ -59,16 +51,14 @@ const SessionReadSchema = Type.Object({
     Type.String({ description: 'search action: substring or regex.' }),
   ),
   scope: Type.Optional(
-    Type.Union(
-      [Type.Literal('all'), Type.Literal('user'), Type.Literal('assistant'), Type.Literal('toolResult')],
-      { description: 'search action: scope filter. Default all.' },
-    ),
+    StringEnum(['all', 'user', 'assistant', 'toolResult'], {
+      description: 'search action: scope filter. Default all.',
+    }),
   ),
   format: Type.Optional(
-    Type.Union(
-      [Type.Literal('outline'), Type.Literal('full'), Type.Literal('family')],
-      { description: 'export action: materialized form. Default outline.' },
-    ),
+    StringEnum(['outline', 'full', 'family'], {
+      description: 'export action: materialized form. Default outline.',
+    }),
   ),
   includeToolResult: Type.Optional(
     Type.Boolean({
@@ -86,7 +76,7 @@ const SessionReadSchema = Type.Object({
     }),
   ),
   granularity: Type.Optional(
-    Type.Union([Type.Literal('turn'), Type.Literal('entry')], {
+    StringEnum(['turn', 'entry'], {
       description: 'outline: turn-level or entry-flat. Default turn.',
     }),
   ),
@@ -97,15 +87,11 @@ const SessionReadSchema = Type.Object({
     Type.Number({ description: 'find/search: max results. Default 20.' }),
   ),
   what: Type.Optional(
-    Type.Union(
-      [
-        Type.Literal('user-messages'),
-        Type.Literal('commands'),
-        Type.Literal('files'),
-        Type.Literal('commits'),
-        Type.Literal('tool-results'),
-      ],
-      { description: 'extract action: what to extract (required for extract).' },
+    StringEnum(
+      ['user-messages', 'commands', 'files', 'commits', 'tool-results'],
+      {
+        description: 'extract action: what to extract (required for extract).',
+      },
     ),
   ),
   tool: Type.Optional(
@@ -156,12 +142,13 @@ export default function sessionReaderExtension(pi: ExtensionAPI): void {
     async execute(
       _toolCallId: string,
       params: SessionReadParams,
-      _signal: AbortSignal | undefined,
+      signal: AbortSignal | undefined,
       _onUpdate: unknown,
       _ctx: ExtensionContext,
     ) {
       try {
-        return await handleSessionRead(params, getAgentDir())
+        // signal 仅 search 消费（MF-5：长扫描可中断，Esc 不再挂死）；其余 action 有界不接
+        return await handleSessionRead(params, getAgentDir(), signal)
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
         return {

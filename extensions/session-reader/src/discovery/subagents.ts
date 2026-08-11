@@ -66,6 +66,11 @@ export async function buildFamilyFromFs(sessionId: string, agentDir: string): Pr
     const h = parseHeaderLine(await readFirstLine(meta.path))
     if (!h) continue // 非 session/坏 header → 无真实 session id，无法 id 修正，跳过
     const realId = h.id
+    // header 可解析即视为 alive（MF-3）：identity 在文件尾行、完成时才写入，运行中的 subagent
+    // 无 identity。若此处跳过，步骤 3 会把活文件（含其 manifest）当孤儿收编 → cleanedUp=true，
+    // family 把活着的 subagent 显示成 [已清理]，真实 sessionId 永远无法关联。
+    // 注意：sessionIdToPath/pathToRef 仍需 identity（依赖 realId 的 rootSessionId/slug）。
+    aliveSubPaths.add(meta.path)
     const ident = await readTailIdentity(meta.path, meta.size)
     if (!ident) continue // 无 identity → 无法确定 rootSessionId（不完整/坏 session），跳过
     // id 修正：entry.id 用真实 header.id 替换 sa-xxx 占位。data.rootSessionId/slug 原样保留。
@@ -77,7 +82,6 @@ export async function buildFamilyFromFs(sessionId: string, agentDir: string): Pr
       data: { rootSessionId: ident.rootSessionId, slug: ident.slug },
     })
     fileStats.set(realId, { mtime: meta.mtime, size: meta.size })
-    aliveSubPaths.add(meta.path)
     sessionIdToPath.set(realId, meta.path)
     pathToRef.set(meta.path, {
       sessionId: realId,

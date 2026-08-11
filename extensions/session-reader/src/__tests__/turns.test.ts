@@ -3,6 +3,7 @@ import { segmentTurns } from '../core/turns.js'
 import type { Entry } from '../core/parser.js'
 import { parseSessionFile } from '../core/parser.js'
 import { buildTreeView } from '../core/tree.js'
+import { REAL_SESSION, HAS_REAL_SESSION } from './real-data.js'
 
 // ---- Entry 构造助手（turns.ts 只消费 type/id/parentId/message.role） ----
 
@@ -17,9 +18,6 @@ function msg(
 function entry(id: string, parentId: string | null, type: string): Entry {
   return { type, id, parentId }
 }
-
-const REAL_SESSION =
-  '/Users/zhushanwen/.pi/agent/sessions/--Users-zhushanwen-Code-xyz-agent-workspace-feat-plugin-arch-3--/2026-05-28T03-17-12-844Z_019e6c96-0a0c-74b8-a73f-d1854d88e2a7.jsonl'
 
 describe('segmentTurns', () => {
   it('1. user 开 turn，后续 assistant/toolResult 并入同一 turn', () => {
@@ -123,7 +121,7 @@ describe('segmentTurns', () => {
     expect(turns[0].startTime).toBe('2026-05-28T03:17:12.844Z')
   })
 
-  it('真实 019e6c96：leaf 视图分段（26 user + 5 compaction + 1 前置 = 32 turn）', async () => {
+  it.skipIf(!HAS_REAL_SESSION)('真实 019e6c96：leaf 视图分段（26 user + 5 compaction + 1 前置 = 32 turn）', async () => {
     // 注：design P-outline / plan T1.3 基线为 26（仅数 user 的旧定义）。
     // 本实现按冻结接口 Turn.isCompaction + design §3.5 算法 3 规则 2（compaction 独立成 turn）
     // + 规则 4（首 user 前的 model_change/thinking_level_change 成 preface turn），

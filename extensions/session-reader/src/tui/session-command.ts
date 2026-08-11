@@ -24,6 +24,9 @@ import { toCandidate } from './hash-provider.js'
 /** /session-pick 列表上限（对齐 # 弹窗 DEFAULT_LIMIT，design G6）。 */
 const PICK_LIMIT = 10
 
+/** label 追加的短 uuid 长度（uuid v7 时间前缀，同目录同毫秒创建概率可忽略，消歧足够）。 */
+const SHORT_UUID_LEN = 8
+
 /** /session-pick 命令配置（Omit<RegisteredCommand, 'name' | 'sourceInfo'>）。 */
 export function createSessionCommand(
   getCwdSessionDir: () => string,
@@ -72,7 +75,10 @@ export function createSessionCommand(
   }
 }
 
-/** select 列表单行格式：直接用 toCandidate 的 label（已含 `时间 预览`，满宽，不含 uuid）。 */
+/** select 列表单行格式：toCandidate label + 尾部短 uuid（消歧）。
+ * 原始 label = `{age桶}{预览截100字}`，不含 uuid：同 cwd 下两 session 首条消息相同且落同一
+ * age 桶时 label 完全相同 → ctx.ui.select 返回的字符串经 labels.indexOf 反查会错插 uuid（MF-2）。
+ * 追加 uuid 前缀（slice(0, SHORT_UUID_LEN)，uuid v7 时间前缀，同目录同毫秒创建概率可忽略）保证唯一。 */
 function formatSessionLabel(s: SessionInfo): string {
-  return toCandidate(s).label
+  return `${toCandidate(s).label}  ${s.id.slice(0, SHORT_UUID_LEN)}`
 }

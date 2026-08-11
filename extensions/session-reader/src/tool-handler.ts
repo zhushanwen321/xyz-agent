@@ -386,8 +386,24 @@ function formatFamilyText(f: Family): string {
 // search 辅助
 // ---------------------------------------------------------------------------
 
-/** 编译检索 pattern：先当正则，非法则转义为字面子串（design §3.4 pattern 子串或正则）。 */
+/**
+ * 灾难性正则形态探测（MF-5）：组内含量词/`|` 且组本身又被量词修饰的 pattern
+ *（`(a+)+`、`(a*)*`、`(a|aa)+` 等）对长文本指数级回溯，可挂死整个 turn（5.4MB session
+ * 全文逐 entry 匹配）。命中则降级为字面子串匹配（与非法正则同一兜底路径）。
+ * 保守拒绝（把合法但形似的 pattern 降级为子串）比挂死可接受。
+ */
+function isCatastrophicPattern(pattern: string): boolean {
+  return (
+    /\((?:[^()\\]|\\.)*[+*?](?:[^()\\]|\\.)*\)[+*?{]/.test(pattern) ||
+    /\((?:[^()\\]|\\.)*\|(?:[^()\\]|\\.)*\)[+*?{]/.test(pattern)
+  )
+}
+
+/** 编译检索 pattern：先当正则，非法/灾难性则转义为字面子串（design §3.4 pattern 子串或正则）。 */
 function compilePattern(pattern: string): RegExp {
+  if (isCatastrophicPattern(pattern)) {
+    return new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
+  }
   try {
     return new RegExp(pattern, 'i')
   } catch {
@@ -541,7 +557,11 @@ async function doDetail(params: SessionReadParams, agentDir: string): Promise<To
 }
 
 /** search：session 内全文检索（design §3.4 search，M3 新实现）。 */
-async function doSearch(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
+async function doSearch(
+  params: SessionReadParams,
+  agentDir: string,
+  signal?: AbortSignal,
+): Promise<ToolResult> {
   const resolved = await resolveSessionId(params.session, 'search', agentDir)
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const pattern = requireStr(params.pattern, 'pattern', 'search')
@@ -558,6 +578,10 @@ async function doSearch(params: SessionReadParams, agentDir: string): Promise<To
     matchSnippet: string
   }> = []
   for (const t of turns) {
+    // MF-5：Esc/abort 后 pi 已丢弃本 turn 结果，尽早退出避免继续扫描长 session
+    if (signal?.aborted) {
+      throw err('搜索已中断（信号 aborted）。👉 重试或换更精确的 pattern。')
+    }
     for (let i = 0; i < t.entries.length; i++) {
       const msg = t.entries[i].message
       if (msg === undefined) continue
@@ -1096,10 +1120,13 @@ async function doExtract(params: SessionReadParams, agentDir: string): Promise<T
  *
  * 按 params.action 分发到 doFind/doFamily/doOutline/doExpand/doDetail/doSearch/doExport。
  * F1(resolve)/F4/F5/F6 抛 Error（含 👉）；F2 多匹配与 find 零匹配返回结果不抛。
+ *
+ * @param signal 可选 AbortSignal（MF-5）：仅 search 消费（长扫描可中断）；其余 action 有界，不接。
  */
 export async function handleSessionRead(
   params: SessionReadParams,
   agentDir: string,
+  signal?: AbortSignal,
 ): Promise<ToolResult> {
   switch (params.action) {
     case 'find':
@@ -1113,7 +1140,7 @@ export async function handleSessionRead(
     case 'detail':
       return doDetail(params, agentDir)
     case 'search':
-      return doSearch(params, agentDir)
+      return doSearch(params, agentDir, signal)
     case 'export':
       return doExport(params, agentDir)
     case 'extract':
