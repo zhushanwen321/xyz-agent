@@ -141,8 +141,13 @@ export default [
   // 承载 form/localModels/headerRows 状态 + test/discover/save 编排 + 模型/headers CRUD +
   // compat 编辑器展开态 + isDirty 快照 + 过期刷新 watch。职责内聚但函数体超 300 行。
   // 与 chat.ts setup 同理：唯一聚合中心，max-lines-per-function 规则不适用，override 避免误报。
+  // [HISTORICAL] arch-fix-v2 归位：useProviderEdit 迁至 packages/core/src/domain/settings/（M1a 新包），
+  // files 模式补新路径（旧 renderer 路径文件已删，仅保留作迁移记录）。
   {
-    files: ['packages/renderer/src/composables/features/useProviderEdit.ts'],
+    files: [
+      'packages/renderer/src/composables/features/useProviderEdit.ts',
+      'packages/core/src/domain/settings/use-provider-edit.ts',
+    ],
     rules: {
       'max-lines-per-function': 'off',
     },

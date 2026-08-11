@@ -331,7 +331,8 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
     try {
       const res = await getSettingsTransport().discoverModels({
         baseUrl: form.baseUrl,
-        apiKey: form.apiKey || undefined,
+        // D18：探活与 save 同路径解析——哨兵（清除标记）→ undefined，不把哨兵串当真 key 发出
+        apiKey: resolveApiKeyForSave(form.apiKey),
         providerType: form.api,
         providerId: providerRef.value?.id,
       })
