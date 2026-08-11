@@ -121,7 +121,7 @@
 --shadow-1: 0 0 0 1px rgba(0,0,0,0.2);           /* C 原始，描边 */
 --shadow-2: 0 8px 24px rgba(0,0,0,0.4);          /* 补全，浮层 */
 --shadow-drawer: -12px 0 24px rgba(0,0,0,0.16); /* 2026-08-02 太极·玄新增：弱投影（D2 一体化分隔） */
---shadow-glow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);  /* 补全，聚焦环；2026-08-02 V3 改 color-mix 派生跟随 --accent */
+--shadow-glow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);  /* steer/活跃环（composer-shell isActive 分支；focus 聚焦环用 --accent-ring）；2026-08-02 V3 改 color-mix 派生跟随 --accent */
 ```
 
 ## 动效

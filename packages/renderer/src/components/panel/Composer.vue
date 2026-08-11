@@ -216,7 +216,7 @@ const {
 } = useCommandPopoverTrigger(inputRef, sessionIdRef)
 
 const isSending = ref(false)
-/** composer-box 聚焦态（v6 §6.1 .focused：border-accent + 3px accent 外环 --shadow-glow）。
+/** composer-box 聚焦态（v6 §6.1 .focused：border-accent + 3px accent 外环 --accent-ring）。
  *  boxClass（composer-shell）三级链 staging>bash>steer>hasInput 无 focus 分支，故在壳层补：
  *  focus 优先级低于 staging/steer（二者有独立视觉：staging bg-accent-soft / steer 呼吸），
  *  用 ! 前缀压过 hasInput 的 2px 微环 Tailwind 内联工具类。 */
@@ -234,7 +234,8 @@ const focusRingClass = computed<Array<string>>(() => {
   ) {
     return ['']
   }
-  return ['!border-[var(--accent)] ![box-shadow:var(--shadow-glow)]']
+  // 3px accent-ring 外环（v6 §6.1 .focused 真值；与 staging/bash 分支的 shadow-[0_0_0_3px_var(--accent-ring)] 同视觉语言）
+  return ['!border-[var(--accent)] ![box-shadow:0_0_0_3px_var(--accent-ring)]']
 })
 /** composer-box focusin/focusout：子元素（ComposerInput）聚焦算 box 聚焦（v6 .focused 态）。
  *  focusout 时 relatedTarget 仍在 box 内则保持（composer-box 内子元素切换不退出聚焦）。 */
