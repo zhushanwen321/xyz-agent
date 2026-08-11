@@ -96,15 +96,29 @@ describe('Turn working 态 · 完成复位 + elapsed live', () => {
     vi.useRealTimers()
   })
 
-  it('U9: 完成态（isStreaming + isSessionActive 同步 false）复位 expanded，trace 从 DOM 消失', async () => {
+  it('U9: 完成态（isStreaming + isSessionActive 同步 false）复位 expanded，trace 内容隐藏', async () => {
+    // [block-rendering M0] trace 容器恒渲染（v-if 下沉 Block 级），完成收起从「容器消失」改「内容隐藏」
+    const thinkingTurn = (status: Message['status']) =>
+      makeTurn({
+        isStreaming: status === 'streaming',
+        assistants: [
+          msg({
+            status,
+            thinking: [{ id: 'th1', content: 'thinking', collapsed: true }],
+            contentBlocks: [{ type: 'thinking', refId: 'th1' }],
+          }),
+        ],
+      })
     // 不传 isSessionActive → 回退到 turn.isStreaming（旧调用方/简单场景，streaming=false 即对话结束）
-    const wrapper = mountTurn({ turn: makeTurn({ isStreaming: true }) })
-    // streaming 态 trace 展开
+    const wrapper = mountTurn({ turn: thinkingTurn('streaming') })
+    // streaming 态 trace 展开（thinking 块渲染）
     expect(wrapper.find('.trace').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'Block' }).length).toBe(1)
     // 切换到完成态（isStreaming false，无 prop 回退 → sessionActive 也 false）
-    await wrapper.setProps({ turn: makeTurn({ isStreaming: false }) })
-    // trace 区消失（expanded 复位，showTrace=false）
-    expect(wrapper.find('.trace').exists()).toBe(false)
+    await wrapper.setProps({ turn: thinkingTurn('complete') })
+    // trace 容器仍在（恒渲染），thinking 内容隐藏（expanded 复位，showTrace=false）
+    expect(wrapper.find('.trace').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'Block' }).length).toBe(0)
   })
 
   it('U10: working 态 elapsed 随 setInterval 实时增长', async () => {
@@ -167,8 +181,11 @@ describe('Turn working 态 · 完成复位 + elapsed live', () => {
     expect(elapsedText(wrapper)).not.toBe('')
     // 无 chevron（无可折叠内容 → 不渲染展开按钮，用户说的「展开按钮没渲染」即此场景）
     expect(wrapper.find('.chev').exists()).toBe(false)
-    // 无 trace（无内容可折）
-    expect(wrapper.find('.trace').exists()).toBe(false)
+    // [block-rendering M0] trace 容器恒渲染；text 块恒渲染（inline，不受折叠影响），无 thinking/tool 内容
+    expect(wrapper.find('.trace').exists()).toBe(true)
+    const blocks = wrapper.findAllComponents({ name: 'Block' })
+    expect(blocks.length).toBe(1)
+    expect(blocks[0].props('type')).toBe('text')
   })
 
   // U14:纯文本回合 working 态（pi 流式纯文本，无 thinking）也须显示「思考中」+ spinner
@@ -249,8 +266,8 @@ describe('Turn · T4 isWorking 拆分（isStreaming vs isSessionActive）', () =
     expect(wrapper.find('.lbl').text()).toBe('思考中')
     // A 类流式关闭：Loader 不转（isStreaming=false）
     expect(wrapper.find('.turn-meta .animate-spin').exists()).toBe(false)
-    // A 类流式关闭：streaming 光标不闪
-    expect(wrapper.find('.streaming-cursor').exists()).toBe(false)
+    // A 类流式关闭：streaming 光标不闪（TurnSummary 去光标后改断言 Turn 尾部 streaming-tail）
+    expect(wrapper.find('.streaming-tail').exists()).toBe(false)
   })
 
   // TC5：ask-user 等待期间 trace 持续展开（不收起）——切走切回 isSessionActive 恒 true 期间 trace 不消失。
@@ -289,27 +306,49 @@ describe('Turn · T4 isWorking 拆分（isStreaming vs isSessionActive）', () =
   // TC8：subagent 后台跑——isSessionActive=true（derivedStatus 为 working 态，主 turn 已结束但有
   // background subagent 仍在 running）。期望对话流不收起（trace 保留）。验证 working 态也算进行中。
   it('TC8: subagent 后台跑（isSessionActive=true）→ 对话流不收起（isStreaming 已 false）', async () => {
-    // 主 turn complete（isStreaming false），但有 background subagent 跑（isSessionActive true = working 态）
-    const wrapper = mountTurn({
-      turn: makeTurn({ isStreaming: false, assistants: [msg({ status: 'complete' })] }),
-      isSessionActive: true,
+    // [block-rendering M0] 完成收起从「容器消失」改「内容隐藏」：带 thinking 块断言内容显隐
+    const thinkingTurn = makeTurn({
+      isStreaming: false,
+      assistants: [
+        msg({
+          status: 'complete',
+          thinking: [{ id: 'th1', content: 'thinking', collapsed: true }],
+          contentBlocks: [{ type: 'thinking', refId: 'th1' }],
+        }),
+      ],
     })
+    // 主 turn complete（isStreaming false），但有 background subagent 跑（isSessionActive true = working 态）
+    const wrapper = mountTurn({ turn: thinkingTurn, isSessionActive: true })
     expect(wrapper.find('.trace').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'Block' }).length).toBe(1)
     // subagent 跑完（isSessionActive 转 false）→ 此刻才收起
     await wrapper.setProps({ isSessionActive: false })
-    expect(wrapper.find('.trace').exists()).toBe(false)
+    // trace 容器仍在（恒渲染），thinking 内容隐藏
+    expect(wrapper.find('.trace').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'Block' }).length).toBe(0)
   })
 
   // 补充：真正完成（isSessionActive true→false）才收起——M3 修复核心断言。
   it('完成自动收起：ask-user respond 后（isSessionActive true→false）才收起', async () => {
-    const wrapper = mountTurn({
-      turn: makeTurn({ isStreaming: false, assistants: [msg({ status: 'complete' })] }),
-      isSessionActive: true,
+    // [block-rendering M0] 完成收起从「容器消失」改「内容隐藏」
+    const thinkingTurn = makeTurn({
+      isStreaming: false,
+      assistants: [
+        msg({
+          status: 'complete',
+          thinking: [{ id: 'th1', content: 'thinking', collapsed: true }],
+          contentBlocks: [{ type: 'thinking', refId: 'th1' }],
+        }),
+      ],
     })
+    const wrapper = mountTurn({ turn: thinkingTurn, isSessionActive: true })
     expect(wrapper.find('.trace').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'Block' }).length).toBe(1)
     // ask-user respond：对话真正结束 → 收起
     await wrapper.setProps({ isSessionActive: false })
-    expect(wrapper.find('.trace').exists()).toBe(false)
+    // trace 容器仍在（恒渲染），thinking 内容隐藏
+    expect(wrapper.find('.trace').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'Block' }).length).toBe(0)
   })
 })
 
@@ -344,8 +383,8 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
   }
 
   /** 构造 contentBlocks=[thinking, toolCall] 的 assistant（先 think 后 tool 的时序对比）。
-   *  用 thinking+tool 而非 text+tool：末位 text 始终在 summary 位渲染（不在 trace），
-   *  thinking/tool 不受末位跳过影响，能稳定验证 contentBlocks 时序。 */
+   *  用 thinking+tool 而非 text+tool：[block-rendering M0] text 全 inline 就地渲染（不再进 summary 位），
+   *  thinking/tool 不受影响，能稳定验证 contentBlocks 时序。 */
   function thinkToolAssistant(thinkFirst: boolean, over: Partial<Message> = {}): Message {
     const thinking = { id: 'th1', content: '让我想想', collapsed: true }
     const toolCall = { id: 'tc1', toolName: 'grep', input: { command: 'foo' }, status: 'completed', startTime: 0 }
@@ -361,7 +400,7 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
     })
   }
 
-  it('U15: streaming 态 trace 块顺序 = contentBlocks 顺序（think 在 tool 之前），末位 text 在 summary 位', () => {
+  it('U15: streaming 态 trace 块顺序 = contentBlocks 顺序（think 在 tool 之前）', () => {
     const wrapper = mountTurnWithRealBlock({
       turn: makeTurn({
         isStreaming: true,
@@ -371,14 +410,14 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
     })
     // trace 存在
     expect(wrapper.find('.trace').exists()).toBe(true)
-    // trace 内所有 Block 根（.trace-blk）。末位 text 始终跳过，trace 只剩 thinking + tool
+    // trace 内所有 Block 根（.trace-blk）。thinkToolAssistant 无 text 块，trace 仍 2 块
     const blocks = wrapper.findAll('.trace .trace-blk')
     expect(blocks.length).toBe(2)
     // 第一个块是 thinking（.trace-think 存在）
     expect(blocks[0].find('.trace-think').exists()).toBe(true)
     // 第二个块是 tool（.trace-tool 存在）
     expect(blocks[1].find('.trace-tool').exists()).toBe(true)
-    // summary 也存在（末位 text 在 summary 位，streaming 态也渲染）
+    // 操作栏也存在（lastAssistant 非 null，去内容化后仅 hover actions）
     expect(wrapper.find('.turn-summary').exists()).toBe(true)
   })
 
@@ -396,11 +435,11 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
     expect(blocks[0].find('.trace-tool').exists()).toBe(true)
     // 第二个块是 thinking
     expect(blocks[1].find('.trace-think').exists()).toBe(true)
-    // summary 也存在（末位 text 在 summary 位）
+    // 操作栏存在（lastAssistant 非 null）
     expect(wrapper.find('.turn-summary').exists()).toBe(true)
   })
 
-  it('U17: streaming 态末位 text 在 summary 位渲染（不在 trace 内重复），summary 带 streaming 光标', () => {
+  it('U17: streaming 态 text 全 inline 在 trace 内（不再跳 summary），末位 running tool 时尾部光标隐藏', () => {
     const wrapper = mountTurnWithRealBlock({
       turn: makeTurn({
         isStreaming: true,
@@ -408,44 +447,53 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
         assistants: [textFirstAssistant()],
       }),
     })
-    // streaming 态：turn-summary 存在（末位 text 在 summary 位渲染，消除停止时样式跳变）
+    // 操作栏存在（lastAssistant 非 null；去内容化后不再承载文字）
     expect(wrapper.find('.turn-summary').exists()).toBe(true)
-    // streaming 光标在 summary 内（streaming-cursor span）
-    expect(wrapper.find('.turn-summary .streaming-cursor').exists()).toBe(true)
-    // trace 内无 text 块（末位 text 跳过，只剩 tool）
+    // [block-rendering M0] streaming 光标迁移到 Turn 尾部 streaming-tail；
+    // 末位可见 block 是 running tool（textFirstAssistant: text→tool running）→ 隐藏（工具自带 loader）
+    expect(wrapper.find('.streaming-tail').exists()).toBe(false)
+    // trace 内 text + tool 两个块（末位 text 不再被 filter，全 inline 就地渲染）
     const blocks = wrapper.findAll('.trace .trace-blk')
-    expect(blocks.length).toBe(1)
-    expect(blocks[0].find('.trace-tool').exists()).toBe(true)
+    expect(blocks.length).toBe(2)
+    expect(blocks[0].findComponent({ name: 'MarkdownRenderer' }).exists()).toBe(true)
+    expect(blocks[1].find('.trace-tool').exists()).toBe(true)
   })
 
-  it('U18: streaming→complete 切换后，summary 仍在（text 位置不变），光标消失', async () => {
-    // streaming 态：summary 已存在（text 在 summary 位），带光标
+  it('U18: streaming→complete 切换后，Turn 尾部 streaming-tail 光标消失', async () => {
+    // tool completed：streaming 态光标显示（末位非 running tool），complete 后消失
+    const completedTool = {
+      id: 'tc1',
+      toolName: 'grep',
+      input: { command: 'foo' },
+      status: 'completed',
+      startTime: 0,
+    }
+    // streaming 态：text + completed tool，光标在 turn 尾部
     const wrapper = mountTurnWithRealBlock({
       turn: makeTurn({
         isStreaming: true,
         hasFoldable: true,
-        assistants: [textFirstAssistant()],
+        assistants: [textFirstAssistant({ toolCalls: [completedTool] })],
       }),
     })
     expect(wrapper.find('.turn-summary').exists()).toBe(true)
-    expect(wrapper.find('.turn-summary .streaming-cursor').exists()).toBe(true)
+    expect(wrapper.find('.streaming-tail').exists()).toBe(true)
 
     // 切到 complete 态
     await wrapper.setProps({
       turn: makeTurn({
         isStreaming: false,
         hasFoldable: true,
-        assistants: [textFirstAssistant({ status: 'complete' })],
+        assistants: [textFirstAssistant({ status: 'complete', toolCalls: [completedTool] })],
       }),
     })
-    // summary 仍存在（text 位置未变，这正是消除跳变的核心）
+    // 操作栏仍存在（text 位置未变，这正是消除跳变的核心）
     expect(wrapper.find('.turn-summary').exists()).toBe(true)
     // 光标消失（isStreaming=false）
-    expect(wrapper.find('.turn-summary .streaming-cursor').exists()).toBe(false)
-    // 注意：MarkdownRenderer 被 stub，summary 文本可能不渲染，但 .turn-summary div 存在即可
+    expect(wrapper.find('.streaming-tail').exists()).toBe(false)
   })
 
-  it('U19: complete 态展开 trace，末位 assistant 的 text 块被跳过（仅显 tool 过程）', async () => {
+  it('U19: complete 态展开 trace，末位 assistant 的 text 块在 trace 内（不再跳过）', async () => {
     const wrapper = mountTurnWithRealBlock({
       turn: makeTurn({
         isStreaming: false,
@@ -456,9 +504,117 @@ describe('Turn · trace 块按 contentBlocks 真实时序渲染', () => {
     // complete 态默认收起，手动展开 trace（点击 turn-meta）
     await wrapper.find('.turn-meta').trigger('click')
     expect(wrapper.find('.trace').exists()).toBe(true)
-    // trace 内只剩 tool 块（text 被跳过，因已在底部 summary）
+    // [block-rendering M0] text 全 inline：trace 内 text + tool 两块（末位 text 不再被跳过）
+    const blocks = wrapper.findAll('.trace .trace-blk')
+    expect(blocks.length).toBe(2)
+    expect(blocks[0].findComponent({ name: 'MarkdownRenderer' }).exists()).toBe(true)
+    expect(blocks[1].find('.trace-tool').exists()).toBe(true)
+  })
+
+  // [block-rendering M0] TC-M0-1：末位 text 不再被 filter，全 inline 就地渲染（多 assistant 跨 message 顺序）
+  it('TC-M0-1: 末位 text 不再被 filter（a1 text+tool + a2 text 全 inline，顺序按 contentBlocks）', async () => {
+    const a1 = msg({
+      id: 'a1',
+      status: 'complete',
+      content: '我先查一下',
+      toolCalls: [{ id: 'tc1', toolName: 'grep', input: { command: 'foo' }, status: 'completed', startTime: 0 }],
+      contentBlocks: [
+        { type: 'text', refId: 'text' },
+        { type: 'toolCall', refId: 'tc1' },
+      ],
+    })
+    const a2 = msg({ id: 'a2', status: 'complete', content: '内容是...' })
+    const wrapper = mountTurnWithRealBlock({
+      turn: makeTurn({ isStreaming: false, hasFoldable: true, assistants: [a1, a2] }),
+    })
+    // complete 态默认折叠，手动展开 trace
+    await wrapper.find('.turn-meta').trigger('click')
+    // a1 text 在 trace 内（不再被 filter 掉）、在 tool 之前（contentBlocks 顺序）；a2 text 正常渲染
+    const blocks = wrapper.findAll('.trace .trace-blk')
+    expect(blocks.length).toBe(3)
+    expect(blocks[0].findComponent({ name: 'MarkdownRenderer' }).exists()).toBe(true)
+    expect(blocks[1].find('.trace-tool').exists()).toBe(true)
+    expect(blocks[2].findComponent({ name: 'MarkdownRenderer' }).exists()).toBe(true)
+    // 操作栏存在但不再承载文字内容（MarkdownRenderer stub 不在 .turn-summary 内）
+    expect(wrapper.find('.turn-summary').exists()).toBe(true)
+    expect(wrapper.find('.turn-summary').findComponent({ name: 'MarkdownRenderer' }).exists()).toBe(false)
+  })
+
+  // [block-rendering M0] TC-M0-2：streaming-tail 光标位置与显隐（C2 全分支 + ES1 兜底）
+  it('TC-M0-2a: 末位 text 流式 → streaming-tail 存在（turn 内容区末尾）', () => {
+    const wrapper = mountTurnWithRealBlock({
+      turn: makeTurn({ isStreaming: true, hasFoldable: false, assistants: [msg({ status: 'streaming', content: '流式中' })] }),
+    })
+    expect(wrapper.find('.streaming-tail').exists()).toBe(true)
+  })
+
+  it('TC-M0-2b: 末位 running tool → streaming-tail 隐藏；tool completed → 存在', async () => {
+    const runningTool = { id: 'tc1', toolName: 'grep', input: { command: 'foo' }, status: 'running', startTime: 0 }
+    const wrapper = mountTurnWithRealBlock({
+      turn: makeTurn({
+        isStreaming: true,
+        hasFoldable: true,
+        assistants: [textFirstAssistant({ toolCalls: [runningTool] })],
+      }),
+    })
+    // 末位 running tool：光标隐藏（工具自带 loader，避免光标+loader 并存）
+    expect(wrapper.find('.streaming-tail').exists()).toBe(false)
+    // tool 完成（completed）：光标恢复
+    await wrapper.setProps({
+      turn: makeTurn({
+        isStreaming: true,
+        hasFoldable: true,
+        assistants: [textFirstAssistant({ toolCalls: [{ ...runningTool, status: 'completed' }] })],
+      }),
+    })
+    expect(wrapper.find('.streaming-tail').exists()).toBe(true)
+  })
+
+  it('TC-M0-2c: ES1 空块兜底（assistants 为空）→ streaming-tail 存在', () => {
+    const wrapper = mountTurnWithRealBlock({ turn: makeTurn({ isStreaming: true, assistants: [] }) })
+    expect(wrapper.find('.streaming-tail').exists()).toBe(true)
+  })
+
+  it('TC-M0-2d: complete 后 streaming-tail 消失', async () => {
+    const wrapper = mountTurnWithRealBlock({
+      turn: makeTurn({ isStreaming: true, hasFoldable: false, assistants: [msg({ status: 'streaming', content: '流式中' })] }),
+    })
+    expect(wrapper.find('.streaming-tail').exists()).toBe(true)
+    await wrapper.setProps({
+      turn: makeTurn({ isStreaming: false, hasFoldable: false, assistants: [msg({ status: 'complete', content: '完成' })] }),
+    })
+    expect(wrapper.find('.streaming-tail').exists()).toBe(false)
+  })
+
+  // [block-rendering M0] TC-M0-3：折叠态（showTrace=false）text 恒渲染，thinking/tool 隐藏
+  it('TC-M0-3: 折叠态 text 可见（thinking/tool 隐藏）', () => {
+    const wrapper = mountTurnWithRealBlock({
+      turn: makeTurn({
+        isStreaming: false,
+        hasFoldable: true,
+        assistants: [
+          msg({
+            status: 'complete',
+            content: '正文',
+            thinking: [{ id: 'th1', content: 'thinking', collapsed: true }],
+            toolCalls: [{ id: 'tc1', toolName: 'grep', input: { command: 'foo' }, status: 'completed', startTime: 0 }],
+            contentBlocks: [
+              { type: 'thinking', refId: 'th1' },
+              { type: 'text', refId: 'text' },
+              { type: 'toolCall', refId: 'tc1' },
+            ],
+          }),
+        ],
+      }),
+    })
+    // complete + 未展开 → showTrace=false；trace 容器恒渲染
+    expect(wrapper.find('.trace').exists()).toBe(true)
+    // text 块 DOM 存在（trace 内唯一块 = text；MarkdownRenderer stub 在 UserBubble 也有，须限定 trace 范围）
     const blocks = wrapper.findAll('.trace .trace-blk')
     expect(blocks.length).toBe(1)
-    expect(blocks[0].find('.trace-tool').exists()).toBe(true)
+    expect(blocks[0].findComponent({ name: 'MarkdownRenderer' }).exists()).toBe(true)
+    // thinking/tool 块 DOM 不存在
+    expect(wrapper.find('.trace-think').exists()).toBe(false)
+    expect(wrapper.find('.trace-tool').exists()).toBe(false)
   })
 })

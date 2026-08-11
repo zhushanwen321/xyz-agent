@@ -3,6 +3,9 @@
  *
  * 覆盖：
  * - W4TC4: TurnSummary 拆分后渲染一致（summary + streaming cursor + hover actions 复制/MD/fork/handoff）
+ * - [block-rendering M0] 去内容化：根 v-if 从 summaryText 改 lastAssistant（纯工具 turn 出现操作栏，
+ *   预期行为变更）；streaming 光标迁移到 Turn.vue streaming-tail（TC-M0-2 在 turn-working 覆盖）；
+ *   text-neutral-* 切色迁移到 Block.vue text 分支（TC-M0-4）
  *
  * 运行：cd packages/renderer && npx vitest run src/components/panel/message-stream/__tests__/TurnSummary.test.ts
  */
@@ -29,7 +32,6 @@ function makeTurn(over: Partial<MessageTurn> = {}): MessageTurn {
 function mountSummary(props: {
   turn?: MessageTurn
   sessionId?: string
-  isStreaming?: boolean
   lastAssistant?: Message | null
 } = {}) {
   const turn = props.turn ?? makeTurn()
@@ -37,7 +39,6 @@ function mountSummary(props: {
     props: {
       turn,
       sessionId: props.sessionId ?? 's1',
-      isStreaming: props.isStreaming ?? false,
       lastAssistant: 'lastAssistant' in props ? (props.lastAssistant ?? null) : (turn.assistants[turn.assistants.length - 1] ?? null),
     },
     global: {
@@ -50,39 +51,19 @@ function mountSummary(props: {
 }
 
 describe('W4TC4: TurnSummary 基本渲染', () => {
-  it('summary 文本存在（turn-summary div）', () => {
+  it('有 lastAssistant 时 turn-summary 操作栏存在', () => {
     const wrapper = mountSummary()
     expect(wrapper.find('.turn-summary').exists()).toBe(true)
   })
 
-  it('isStreaming=false 时 summary 文字染 text-neutral-fg', () => {
-    const wrapper = mountSummary({ isStreaming: false })
-    expect(wrapper.find('.turn-summary').classes()).toContain('text-neutral-fg')
-  })
-
-  it('isStreaming=true 时 summary 文字染 text-neutral-mid', () => {
-    const wrapper = mountSummary({ isStreaming: true })
-    expect(wrapper.find('.turn-summary').classes()).toContain('text-neutral-mid')
-  })
-
-  it('空 content 不渲染 turn-summary', () => {
+  // [block-rendering M0] 空 content（纯工具 turn）：根 v-if 从 summaryText 改 lastAssistant 后
+  // 操作栏仍渲染（预期行为变更，原 summaryText 门控下不渲染）
+  it('空 content（纯工具 turn）也渲染 turn-summary + 操作栏（根 v-if 改 lastAssistant）', () => {
     const wrapper = mountSummary({
       turn: makeTurn({ assistants: [{ id: 'a1', role: 'assistant', content: '', status: 'complete', timestamp: NOW }] }),
-      lastAssistant: null,
     })
-    expect(wrapper.find('.turn-summary').exists()).toBe(false)
-  })
-})
-
-describe('W4TC4: TurnSummary streaming cursor', () => {
-  it('isStreaming=true 时 streaming-cursor 存在', () => {
-    const wrapper = mountSummary({ isStreaming: true })
-    expect(wrapper.find('.streaming-cursor').exists()).toBe(true)
-  })
-
-  it('isStreaming=false 时 streaming-cursor 消失', () => {
-    const wrapper = mountSummary({ isStreaming: false })
-    expect(wrapper.find('.streaming-cursor').exists()).toBe(false)
+    expect(wrapper.find('.turn-summary').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="copy-btn"]').exists()).toBe(true)
   })
 })
 
@@ -142,5 +123,27 @@ describe('W4TC4: TurnSummary hover actions', () => {
     // subagent session 仅复制类按钮，无 fork/handoff
     expect(wrapper.find('[data-testid="fork-ask-btn"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="handoff-ask-btn"]').exists()).toBe(false)
+  })
+})
+
+// [block-rendering M0] TC-M0-5：TurnSummary 去内容化门控（streaming-tail 是 Turn.vue 元素，由 turn-working 覆盖）
+describe('block-rendering M0: TurnSummary 去内容化', () => {
+  it('TC-M0-5a: 有 content 时 .turn-summary 存在但不含 MarkdownRenderer 渲染与 .streaming-cursor', () => {
+    const wrapper = mountSummary()
+    expect(wrapper.find('.turn-summary').exists()).toBe(true)
+    // 文字渲染已移除（MarkdownRenderer stub 不出现）
+    expect(wrapper.findComponent({ name: 'MarkdownRenderer' }).exists()).toBe(false)
+    // 光标已迁移到 Turn.vue streaming-tail，TurnSummary 内无光标
+    expect(wrapper.find('.streaming-cursor').exists()).toBe(false)
+  })
+
+  it('TC-M0-5b: 纯工具 turn（lastAssistant 无 content）出现完整操作栏（预期行为变更）', () => {
+    const wrapper = mountSummary({
+      turn: makeTurn({ assistants: [{ id: 'a1', role: 'assistant', content: '', status: 'complete', timestamp: NOW }] }),
+    })
+    expect(wrapper.find('.turn-summary').exists()).toBe(true)
+    // 4 操作按钮：复制 / 复制MD / fork / handoff
+    const actionsDiv = wrapper.find('.turn-summary .mt-1\\.5')
+    expect(actionsDiv.findAll('button').length).toBe(4)
   })
 })

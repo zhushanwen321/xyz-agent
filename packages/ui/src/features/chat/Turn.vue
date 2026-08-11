@@ -32,33 +32,36 @@
         :session-id="sessionId"
       />
 
-      <!-- 折叠 trace：working 或 expanded 时展开 -->
-      <Transition :css="false" @before-leave="onTraceBeforeLeave" @leave="onTraceLeave" @enter="onTraceEnter">
-        <div v-if="showTrace" class="trace mt-1 mb-1 flex flex-col">
-            <template v-for="(assistant, aIdx) in turn.assistants" :key="assistant.id">
-            <template v-for="(blk, bIdx) in traceBlocksByAssistant[aIdx]" :key="`${assistant.id}-${blk.kind}-${bIdx}`">
-              <!-- 单块独立渲染：每个 block 直接输出（不再合并同类块）。
-                   agentgraph（subagent/workflow）数据结构同 tool（ref 是 ToolCall），按 tool 提取 ref；
-                   type 透传 'agentgraph'，Block.vue 内部靠 toolName 路由 subagent/workflow 分支。 -->
-              <Block
-                :type="blk.kind"
-                :content="blk.kind === 'text' ? (blk.ref as string) : blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).content : undefined"
-                :tool="blk.kind === 'tool' || blk.kind === 'agentgraph' ? (blk.ref as ToolCall) : undefined"
-                :thinking-id="blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).id : undefined"
-                :collapsed="blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).collapsed : undefined"
-                :working="sessionActive"
-                :session-id="sessionId"
-              />
-            </template>
+      <!-- trace 容器：恒渲染（v-if 下沉 Block 级——text 恒渲染、thinking/tool/agentgraph 受 showTrace）。
+           容器不再进出 DOM，容器级 height 过渡动画随之移除（TC1，折叠动画消失为接受的产品行为变化）。 -->
+      <div class="trace mt-1 mb-1 flex flex-col">
+        <template v-for="(assistant, aIdx) in turn.assistants" :key="assistant.id">
+          <template v-for="(blk, bIdx) in traceBlocksByAssistant[aIdx]" :key="`${assistant.id}-${blk.kind}-${bIdx}`">
+            <!-- 单块独立渲染：每个 block 直接输出（不再合并同类块）。
+                 agentgraph（subagent/workflow）数据结构同 tool（ref 是 ToolCall），按 tool 提取 ref；
+                 type 透传 'agentgraph'，Block.vue 内部靠 toolName 路由 subagent/workflow 分支。 -->
+            <Block
+              v-if="blk.kind === 'text' || showTrace"
+              :type="blk.kind"
+              :content="blk.kind === 'text' ? (blk.ref as string) : blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).content : undefined"
+              :tool="blk.kind === 'tool' || blk.kind === 'agentgraph' ? (blk.ref as ToolCall) : undefined"
+              :thinking-id="blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).id : undefined"
+              :collapsed="blk.kind === 'thinking' ? (blk.ref as ThinkingBlock).collapsed : undefined"
+              :working="sessionActive"
+              :streaming="assistant.status === 'streaming'"
+              :session-id="sessionId"
+            />
           </template>
-        </div>
-      </Transition>
+        </template>
+        <!-- streaming 光标：turn 内容区末尾独立元素（跟在所有 block 后，位置稳定不受 block 增删/折叠态影响）。
+             末位可见 block 为 running tool 时隐藏（工具自带 loader，避免光标+loader 并存）。 -->
+        <span v-if="showStreamingCursor" class="streaming-tail ml-0.5 inline-block h-3.5 w-[7px] rounded-[1px] bg-accent align-middle animate-blink" />
+      </div>
 
-      <!-- 收尾 summary：TurnSummary 子组件 -->
+      <!-- 操作栏：TurnSummary 子组件（去内容化后仅 hover actions） -->
       <TurnSummary
         :turn="turn"
         :session-id="sessionId"
-        :is-streaming="isStreaming"
         :last-assistant="lastAssistant"
       />
 
@@ -86,7 +89,6 @@ import TurnSummary from './TurnSummary.vue'
 import Block from './Block.vue'
 import { useTurnElapsed } from './composables/useTurnElapsed'
 import { useChatViewDeps } from './chat-view-deps'
-import { useStickGuardDeps } from './stick-guard-deps'
 
 const props = withDefaults(
   defineProps<{
@@ -140,9 +142,6 @@ const { elapsed } = useTurnElapsed(
   },
 )
 
-/** trace 折叠 transition hooks */
-const { onTraceBeforeLeave, onTraceLeave, onTraceEnter } = useStickGuardDeps()
-
 /** 变更集卡（W10） */
 const changeSetFileChanges = computed(() => lastAssistant.value?.fileChanges ?? [])
 const changeSetStatus = computed(() => {
@@ -154,22 +153,35 @@ const changeSetStatus = computed(() => {
 /** 本 session 是否可编辑 */
 const isSessionEditable = computed(() => isActive(props.sessionId))
 
-/** 最后一条 assistant 的索引 */
-const lastAssistantIdx = computed(() => props.turn.assistants.length - 1)
-
 /**
  * trace 内每个 assistant 的有序块（缓存，避免 v-for 内每次 render 重算）。
- * - 末位 assistant：filter 掉 text 块（text 在底部 summary 位渲染，避免重复输出）。
- * - 非末位 assistant：全部块按时序（中间 text 作为过程性信息保留）。
+ * 全量返回 blocks（不再 filter 末位 text——text 全 inline 就地渲染，位置只认 contentBlocks 顺序，
+ * 消除「末位 filter」随 message_start 翻转导致的跳变根因）。
  * 每个 block 独立渲染（不再合并连续同类块）。
  * streaming 时每 token 触发 re-render，computed 缓存避免对每个 assistant 重跑 expandAssistantBlocks。
  */
 const traceBlocksByAssistant = computed<OrderedBlock[][]>(() => {
-  return props.turn.assistants.map((a, i) => {
-    const blocks = expandAssistantBlocks(a)
-    return i === lastAssistantIdx.value
-      ? blocks.filter((b) => b.kind !== 'text')
-      : blocks
-  })
+  return props.turn.assistants.map((a) => expandAssistantBlocks(a))
+})
+
+/**
+ * streaming-tail 光标显隐（IF2/ES1）：isStreaming && 最后一个可见 block 不是 running tool。
+ * 可见性同 Block v-if（text 恒可见，thinking/tool/agentgraph 仅 showTrace 时可见）。
+ * 末项 kind 为 tool/agentgraph 且 ref.status === 'running' → 隐藏（工具自带 loader，避免光标+loader 并存）；
+ * 其余（含无可见 block 的防御性兜底 ES1）→ 显示。
+ */
+const showStreamingCursor = computed(() => {
+  if (!isStreaming.value) return false
+  let lastVisible: OrderedBlock | null = null
+  for (const a of props.turn.assistants) {
+    for (const b of expandAssistantBlocks(a)) {
+      if (b.kind === 'text' || showTrace.value) lastVisible = b
+    }
+  }
+  if (lastVisible && (lastVisible.kind === 'tool' || lastVisible.kind === 'agentgraph')) {
+    const ref = lastVisible.ref as ToolCall
+    if (ref.status === 'running') return false
+  }
+  return true
 })
 </script>
