@@ -23,7 +23,7 @@
  *   node scripts/verify-staged-extensions.mjs --staged-dir <path>  # 自定义（如 postbuild Resources/extensions/@zhushanwen）
  */
 import { readdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -45,6 +45,59 @@ const STAGED = STAGED_DIR || join(REPO_ROOT, "apps/electron/resources/extensions
 
 /** pi 运行时 virtualModules（external）—— 缺失时降级，不视为 bundle 缺陷 */
 const EXTERNAL_PREFIXES = ["@earendil-works/", "@mariozechner/", "typebox", "@sinclair/typebox"];
+
+/** pi manifest 资源字段：声明引用非 JS bundle 内容，bundle 时须已整体拷贝（M6a-04） */
+const MANIFEST_RESOURCE_FIELDS = ["agents", "skills", "workflows"];
+
+/**
+ * 校验 staged package.json 的 pi manifest 引用（M6a-09 + M6a-04）。
+ * 返回失败原因数组（空 = 通过）。
+ *  - pi.extensions：resolver 发现入口，缺失/指向不存在的文件 = pi 静默不加载该扩展
+ *  - pi.agents / pi.skills / pi.workflows：bundle 应已拷贝引用文件，缺失 = bundle 拷贝逻辑回归
+ */
+function checkManifest(pkgDir) {
+	const failures = [];
+	const pkgJsonPath = join(pkgDir, "package.json");
+	if (!existsSync(pkgJsonPath)) {
+		return [`缺 package.json（bundle 未生成 manifest）`];
+	}
+	let pkgJson;
+	try {
+		pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf8"));
+	} catch {
+		return [`package.json 解析失败（JSON 损坏）`];
+	}
+	const pi = pkgJson.pi;
+	if (!pi || !Array.isArray(pi.extensions) || pi.extensions.length === 0) {
+		failures.push(`缺 pi.extensions 声明（resolver 无法发现该扩展）`);
+	} else {
+		for (const ref of pi.extensions) {
+			if (typeof ref !== "string") {
+				failures.push(`pi.extensions 含非字符串项: ${JSON.stringify(ref)}`);
+				continue;
+			}
+			const rel = ref.replace(/^\.\//, "");
+			if (!existsSync(join(pkgDir, rel))) {
+				failures.push(`pi.extensions 引用文件缺失: ${ref}`);
+			}
+		}
+	}
+	for (const field of MANIFEST_RESOURCE_FIELDS) {
+		const refs = pi?.[field];
+		if (!Array.isArray(refs)) continue;
+		for (const ref of refs) {
+			if (typeof ref !== "string") {
+				failures.push(`pi.${field} 含非字符串项: ${JSON.stringify(ref)}`);
+				continue;
+			}
+			const rel = ref.replace(/^\.\//, "");
+			if (!existsSync(join(pkgDir, rel))) {
+				failures.push(`pi.${field} 引用缺失: ${ref}（bundle 未拷贝该资源）`);
+			}
+		}
+	}
+	return failures;
+}
 
 /**
  * 分类 import 错误：判断是否为 pi runtime 差异导致的 dev 环境假阳性。
@@ -119,6 +172,14 @@ async function main() {
 				pkg,
 				reason: `残留 .ts 文件 [${tsResidue.join(", ")}]，resolver fallback 会旁路 bundle（R3）`,
 			});
+			continue;
+		}
+
+		// manifest 校验（M6a-09 + M6a-04）：pi.extensions 指向存在的入口；
+		// pi.{agents,skills,workflows} 引用文件存在（bundle 已拷贝，缺失 = 拷贝逻辑回归）
+		const manifestFailures = checkManifest(pkgDir);
+		if (manifestFailures.length > 0) {
+			failed.push({ pkg, reason: manifestFailures.join("; ") });
 			continue;
 		}
 

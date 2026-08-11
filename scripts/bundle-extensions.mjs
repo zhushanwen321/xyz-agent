@@ -28,9 +28,9 @@
  * Usage: node scripts/bundle-extensions.mjs
  */
 import { build } from "esbuild";
-import { readFile, writeFile, copyFile, mkdir, stat, rm } from "node:fs/promises";
+import { readFile, writeFile, copyFile, cp, mkdir, stat, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -67,6 +67,14 @@ function fmtSize(bytes) {
 	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}kb`;
 	return `${(bytes / (1024 * 1024)).toFixed(2)}mb`;
 }
+
+/**
+ * pi manifest 资源字段（agents/skills/workflows）：声明引用非 JS bundle 内容
+ * （agent .md / skill / workflow .js），必须随 bundle 整体拷贝。
+ * 缺失后果（M6a-04）：staged 目录不是 resource-discovery 扫描源，migrate 移除 npm 记录后
+ * 新装用户不再有 npm 副本——不拷则 subagent-workflow 的内置 agents/skills 对新装用户整体消失。
+ */
+const MANIFEST_RESOURCE_FIELDS = ["agents", "skills", "workflows"];
 
 /**
  * permission 的 2 个 wasm：从 node_modules 拷到 staged 与 index.js 同目录。
@@ -130,6 +138,31 @@ async function bundleOne(pkgName) {
 	}
 	await writeFile(join(outDir, "package.json"), JSON.stringify(pkg, null, 2) + "\n", "utf8");
 
+	// M6a-04：pi.{agents,skills,workflows} 引用的资源目录随 bundle 拷贝。
+	// 引用值是相对路径（如 "./agents"），解析到源码目录后整目录拷贝（filter 排除
+	// node_modules）。缺失即 fail-fast（manifest 声明了但源码缺 = 打包配置回归）。
+	const copiedManifestDirs = [];
+	for (const field of MANIFEST_RESOURCE_FIELDS) {
+		const refs = pkg.pi?.[field];
+		if (!Array.isArray(refs)) continue;
+		for (const ref of refs) {
+			if (typeof ref !== "string") continue;
+			const rel = ref.replace(/^\.\//, "");
+			const src = join(srcDir, rel);
+			const dest = join(outDir, rel);
+			if (!existsSync(src)) {
+				throw new Error(
+					`pi.${field} 引用缺失: ${src}（源码目录 ${srcDir} 缺 ${rel}）`,
+				);
+			}
+			await cp(src, dest, {
+				recursive: true,
+				filter: (s) => !s.includes(`${sep}node_modules${sep}`),
+			});
+			copiedManifestDirs.push(`${field}:${rel}`);
+		}
+	}
+
 	const jsStat = await stat(join(outDir, "index.js"));
 	return {
 		pkgName,
@@ -137,6 +170,7 @@ async function bundleOne(pkgName) {
 		size: jsStat.size,
 		warnings: result.warnings || [],
 		extraAssets,
+		manifestDirs: copiedManifestDirs,
 	};
 }
 
@@ -161,7 +195,8 @@ async function main() {
 			results.push(r);
 			const warn = r.warnings.length ? ` (${r.warnings.length} warnings)` : "";
 			const assets = r.extraAssets.length ? ` + ${r.extraAssets.join(", ")}` : "";
-			console.log(` ${fmtSize(r.size)}${assets}${warn}`);
+			const dirs = r.manifestDirs.length ? ` + manifest[${r.manifestDirs.join(", ")}]` : "";
+			console.log(` ${fmtSize(r.size)}${assets}${dirs}${warn}`);
 		} catch (err) {
 			console.log(" FAILED");
 			console.error(`\n[bundle-extensions] ${name} 打包失败:`);
@@ -174,7 +209,8 @@ async function main() {
 	console.log("=== bundle complete ===");
 	for (const r of results) {
 		const assets = r.extraAssets.length ? ` + ${r.extraAssets.join(", ")}` : "";
-		console.log(`  ${r.pkgName}: index.js ${fmtSize(r.size)}${assets}`);
+		const dirs = r.manifestDirs.length ? ` + manifest[${r.manifestDirs.join(", ")}]` : "";
+		console.log(`  ${r.pkgName}: index.js ${fmtSize(r.size)}${assets}${dirs}`);
 	}
 	const total = results.reduce((s, r) => s + r.size, 0);
 	console.log(`  ────────────`);
