@@ -106,7 +106,7 @@ agent 目标: 看懂 019e6c96 干了什么
 |---|---|
 | 总 session | 3486 |
 | 8 字符前缀碰撞 | **329 个前缀 / 926 个 session（26.5%）** |
-| 最严重 | `019fa865` 6 个、`019fa867` 4 个、`019fa84e` 5 个 |
+| 最严重 | `019e9680` 19 个、`019e970f` 16 个、`019eb527` 9 个 |
 | `019fea0e` | 2 个：`-c0cb...`（feat-optimize-ui）+ `-378e...`（当前 worktree）|
 
 **根因**：uuid v7 前 32 位是毫秒时间戳，8 字符 hex = 完整时间戳。密集开发期同秒创建的 session 前缀重合。FRAGMENT_LEN=8 的唯一性假设失败。
@@ -259,18 +259,20 @@ T010 (16 entries)
 - **多花 ~700 token outline** vs **省 3 次 expand/detail 调用**（每次重复输出 user+assistant 文本，单次 detail T010 全文就远超 700 token）。
 - outline 单独 token 效率相对 v1 退化（506→~1200，翻倍），但**整体调用链 token 大幅下降**（v1 的重复消费省掉）。v2 验收保留 v1 的"vs read"对比口径（V-callcount），outline 单独退化在 D4 显式披露。
 
-**D5：`#` 唯一前缀算法**
+**D5：`#` 唯一前缀算法**（provideHashCandidates 补全层，非工具层 findSessions）
 
-findSessions 多匹配时，对每个 match 计算 `insertText`：
+provideHashCandidates 多匹配时，对每个候选的 sessionId 计算 `insertText`：
 
 ```
 同组 sessionId 列表 S
-对当前 sid，与 S 中其他每个 sid 求字符级 LCP，取最小值 minLCP
-唯一前缀 = sid.slice(0, minLCP + 1)   // 保留连字符
+对当前 sid，与 S 中其他每个 sid 求字符级 LCP，取【最大值】 maxLCP（最像的兄弟）
+唯一前缀 = sid.slice(0, maxLCP + 1)   // 保留连字符
 insertText = "#" + 唯一前缀
 ```
 
-例：`019fea0e-c0cb...` 与 `019fea0e-378e...`，LCP = `019fea0e-`（9 字符），唯一前缀 = `slice(0,10)` = `019fea0e-c`。findSessions 子串匹配 `019fea0e-c` 唯一命中。正常情况（无碰撞）insertText 仍 8 字符。
+**算法正确性**（✅ 全量 3486 session / 329 碰撞桶验证通过）：要唯一区分一个 sid，须比"与它最像的兄弟"（共享前缀最长者）多一位——取 LCP **最大值** +1。取最小值会被远房邻居把前缀拖短导致碰撞（初版错误，见附录）。insertText 最长 16 字符（分布：10 字 415 / 12 字 270 / 13 字 158 / 16 字 40），远短于完整 uuid（36）。
+
+例：2 元桶 `019fea0e-c0cb...` 与 `019fea0e-378e...`，LCP=9，唯一前缀=`019fea0e-c`；19 元桶 `019e9680` 每个 sid 的 insertText 两两不同（max LCP+1 全量验证唯一）。findSessions 子串匹配（`sessionId.includes(query)`）成立。正常情况（无碰撞）insertText 仍 8 字符。
 
 **D6：extract commits 的 uuid 误匹配处理**
 
@@ -308,7 +310,7 @@ insertText = "#" + 唯一前缀
 | V-o2 | 目标 3 | expand toolResult 类型化摘要 | toolResult 行显示 `bash: <cmd> (N行)` / `read: <path>`（非纯文本）；用 toolName+toolCallId 关联，无顺序错位 |
 | V-o3 | 目标 1 | detail 默认 toolResult 摘要态 | ① 条目数 = 16（不再变 9）② toolResult 有摘要 ③ includeToolResult:true 仍全文 |
 | V-o4-* | 目标 4 | extract 5 预设 | user-messages 返 26 条 / commands+bash 返命令带 turn / files 返去重路径 / commits 返 hash（P-extract-commits 误匹配率可接受）/ tool-results 返文本带 toolName |
-| V-o5 | 目标 5 | `#` 碰撞延长 | `#019fea0e` 列 2 候选，选中 insertText 为 `#019fea0e-c`/`#019fea0e-3`（唯一），agent find 不 F2 |
+| V-o5 | 目标 5 | `#` 碰撞延长 | ① 2 元桶 `#019fea0e` 列 2 候选，insertText `#019fea0e-c`/`#019fea0e-3` 唯一 ② **大桶 `019e9680`（19 元）**：19 候选 insertText 两两不同，每个 `findSessions(insertText去#)` 唯一命中（拦截算法方向错误——2 元桶退化无法暴露） |
 | V-callcount | 目标 2 | 固定任务"总结 019e6c96 的 plugin 架构决策" | v1 实测调用链（锚定基线）vs v2 ≤2 次 |
 | V-regress | 回归 | v1 既有功能 | find/family/outline(旧字段)/expand/detail(含 includeToolResult)/search/export 行为一致 |
 
@@ -344,3 +346,5 @@ insertText = "#" + 唯一前缀
 **教训**（准则 7）：probe 要覆盖所有可能字段层级。初版 probe 只看 content block 就下"无 id"全局结论，导致 O2 选了更脆弱的"顺序关联"方案 + 凭空造出 P-o2-order（fork/branch 错位）伪风险。修正后用 toolName + toolCallId 精确关联，by construction 零风险。
 
 本版已修正：D2 重写、P-no-tr-id 删除（替换为 P-tr-has-id-and-name ✅）、P-o2-order 删除（伪风险）、§2.1 expand 现状改真实输出、D1 工具表补全 + fallback、新增 O5（碰撞）。
+
+**第二轮审查修正（D5 算法方向错误）**：初版 D5 写"取最小值 minLCP+1"，直觉错误——要唯一区分 sid 应取"与最像的兄弟"（LCP 最大）+1。取最小值会被远房邻居把前缀拖短，导致大碰撞桶（如 19 元的 019e9680）的 insertText 仍碰撞（文档算法 90 桶失败、19 元桶只产生 4 个去重 insertText）。第二轮审查用全量数据验证推翻，修正为 max LCP+1（全量 329 桶通过）。**教训**（准则 7）：碰撞率（26.5%）验证了≠算法验证了；V-o5 用 2 元退化桶验收无法暴露算法方向错误（2 元 min=max LCP），验收必须覆盖 ≥5 元含子簇的真实大桶。本版 V-o5 已补 19 元桶场景。
