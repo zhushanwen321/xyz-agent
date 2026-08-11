@@ -1041,6 +1041,7 @@ export async function runSpawn(
           parentRecordId: record.parentRecordId,
           depth: record.depth,
           forkDepth: opts.fork ? (opts.parentForkDepth ?? 0) + 1 : undefined,
+          chatMode: record.chatMode,
         };
         try {
           fs.appendFileSync(

@@ -156,6 +156,8 @@ export function createRecord(
     parentRecordId?: string;
     /** subagent 递归深度。顶层=0。 */
     depth?: number;
+    /** 对话模式标志（true = 可持续对话，轮次完成进 idle）。默认 undefined/false = 一次性。 */
+    chatMode?: boolean;
     controller?: AbortController;
   },
 ): ExecutionRecord {
@@ -171,6 +173,7 @@ export function createRecord(
     rootSessionId: identity.rootSessionId,
     parentRecordId: identity.parentRecordId,
     depth: identity.depth ?? 0,
+    chatMode: identity.chatMode,
 
     // 状态（实时更新）
     status: "running",
@@ -180,6 +183,8 @@ export function createRecord(
     turnCount: 0,
     totalTokens: 0,
     lastError: undefined,
+    // 对话轮次计数（首轮 = 0，每完成一轮 finalizeRoundToIdle +1）。非 chatMode 不自增。
+    round: 0,
 
     // 完成（completeRecord 唯一写点）
     endedAt: undefined,

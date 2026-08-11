@@ -282,6 +282,44 @@ describe("RecordStore", () => {
   });
 
   // ============================================================
+  // idle 态 record（M2-A：chatMode 轮次完成进 idle）
+  // ============================================================
+  describe("idle 态 record (M2-A)", () => {
+    it("getMutable 能查到 idle record（不筛 status，idle record 留内存不 archive）", () => {
+      const store = new RecordStore(tmpDir);
+      const r = makeRecord({ id: "idle-1", status: "idle" });
+      store.register(r);
+      // idle record 不 archive → getMutable 仍可查（续聊定位依赖此）
+      expect(store.getMutable("idle-1")).toBe(r);
+    });
+
+    it("STATUS_PRIORITY 含 idle：idle 排在 failed 之后、done 之前（waiting 语义）", () => {
+      const store = new RecordStore(tmpDir);
+      // 三个内存 record，startedAt 相同 → 纯按 STATUS_PRIORITY 排序
+      store.register(makeRecord({ id: "failed-1", status: "failed", startedAt: 5000 }));
+      store.register(makeRecord({ id: "idle-1", status: "idle", startedAt: 5000 }));
+      store.register(makeRecord({ id: "done-1", status: "done", startedAt: 5000 }));
+      const ids = store.collectRecords(100).map((r) => r.id);
+      // STATUS_PRIORITY: failed=1 < idle=2 < done=3
+      expect(ids).toEqual(["failed-1", "idle-1", "done-1"]);
+    });
+
+    it("idle record 经 collectRecords(statusFilter=all) 可见", () => {
+      const store = new RecordStore(tmpDir);
+      store.register(makeRecord({ id: "idle-2", status: "idle" }));
+      const ids = store.collectRecords(100, "all").map((r) => r.id);
+      expect(ids).toContain("idle-2");
+    });
+
+    it("idle record 经 collectRecords(statusFilter=running) 不可见（idle ≠ running）", () => {
+      const store = new RecordStore(tmpDir);
+      store.register(makeRecord({ id: "idle-3", status: "idle" }));
+      const ids = store.collectRecords(100, "running").map((r) => r.id);
+      expect(ids).not.toContain("idle-3");
+    });
+  });
+
+  // ============================================================
   // 重建缓存
   // ============================================================
   describe("重建缓存", () => {

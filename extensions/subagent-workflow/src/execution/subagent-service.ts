@@ -22,7 +22,7 @@ import {
   snapshot,
   tryTransition,
 } from "./execution-record.ts";
-import { doFinalizeRecord } from "./finalize-record.ts";
+import { doFinalizeRecord, doFinalizeRoundToIdle } from "./finalize-record.ts";
 import { ManifestStore } from "./manifest-store.ts";
 import type { ModelConfigService } from "./model-config-service.ts";
 import type { AgentConfig, ModelInfo, ResolvedModel } from "./model-resolver.ts";
@@ -827,7 +827,14 @@ export class SubagentService {
 
     // CAS 抢锁：抢到则完整收尾；没抢到（cancel 已先设 cancelled）则跳过
     if (tryTransition(record, status)) {
-      await this.finalizeRecord(record, result, status);
+      if (record.chatMode && status === "done") {
+        // 对话模式轮次成功完成 → idle（保留 record 内存 + worktree，等待续聊）。
+        // tryTransition 已把 status 设为 done，finalizeRoundToIdle 覆盖为 idle（chatMode 专属语义）。
+        // chatMode + failed/cancelled 仍走终态化（对话模式失败/取消不进 idle）。
+        await this.finalizeRoundToIdle(record, result);
+      } else {
+        await this.finalizeRecord(record, result, status);
+      }
     }
     return result;
   }
@@ -934,6 +941,28 @@ export class SubagentService {
       record,
       result,
       status,
+    );
+  }
+
+  /**
+   * 对话模式轮次完成收尾：委托 doFinalizeRoundToIdle（record 进 idle，保留内存 + worktree）。
+   * 与 finalizeRecord 对称的委托方法，deps 同源注入。chatMode + done 时由 runAndFinalize 调用。 */
+  private async finalizeRoundToIdle(
+    record: ExecutionRecord,
+    result: AgentResult,
+  ): Promise<void> {
+    await doFinalizeRoundToIdle(
+      {
+        manifestStore: this.manifestStore,
+        worktreeManager: this.worktreeManager,
+        store: this.store,
+        modelService: this.modelService,
+        pi: this.pi,
+        clearThrottle: (id) => this.clearThrottle(id),
+        emitUnregister: (id, st) => emitPendingUnregister(this.pi, id, st),
+      },
+      record,
+      result,
     );
   }
 

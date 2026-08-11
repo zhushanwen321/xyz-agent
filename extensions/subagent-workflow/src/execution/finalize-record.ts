@@ -19,6 +19,7 @@ import * as path from "node:path";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { removeAliveMarker } from "./alive-store.ts";
+import { writeIdleMarker } from "./idle-marker.ts";
 import { bestEffort } from "./best-effort.ts";
 import { completeRecord } from "./execution-record.ts";
 import { writeFinalized } from "./finalized-marker.ts";
@@ -161,4 +162,61 @@ export async function doFinalizeRecord(
       error: msg,
     });
   }
+}
+
+/**
+ * 对话模式轮次完成收尾：record 进 idle 态（非终态化，等待续聊）。
+ *
+ * 与 doFinalizeRecord 的关键区别（M2-A idle 语义）：
+ *   - 不调 completeRecord（record 不冻结，保留 turns[] 等运行时状态供续聊累积）
+ *   - 不调 store.archive（record 留内存，getMutable 可查、list 可见）
+ *   - 不 cleanup worktree（保留对话模式工作目录）
+ *   - 不写 manifest（idle 非终态，manifest 是终态诊断辅助）
+ *   - 写 .idle sidecar（含轮次计数，M3 重建矩阵命中 idle 分支用）
+ *   - 删 .alive marker（进程已 SIGTERM 回收，不再是活进程）
+ *   - emitUnregister（进程已死，从 pending 活跃后代差集移除；record 留内存不 archive）
+ *
+ * 状态：record.status = "idle"（覆盖 tryTransition 设的 done），record.round += 1。
+ * 各步骤 best-effort 互不阻断（参照 doFinalizeRecord 的 bestEffort 用法）。
+ *
+ * @param deps 与 doFinalizeRecord 同源（从 SubagentService 注入）
+ * @param _result 本轮 AgentResult（当前未使用——record 保留运行时 turns[]，不冻结汇总；
+ *                保留参数位置与 doFinalizeRecord 委托签名对称，M2-B close 合并轮次时可用）
+ */
+export async function doFinalizeRoundToIdle(
+  deps: FinalizeDeps,
+  record: ExecutionRecord,
+  _result: AgentResult,
+): Promise<void> {
+  // 清节流状态：防 trailing timer 在 record idle 后误发陈旧 onUpdate。
+  deps.clearThrottle(record.id);
+
+  // 写 .idle sidecar + 删 .alive marker（进程已 SIGTERM 回收）。
+  // sessionFile 窗口期可能 undefined（极少——对话模式轮次完成意味着 session 已跑过），
+  // 缺失时跳过 sidecar 但仍设内存 idle（重启后磁盘重建会落到 crashed，边界可接受）。
+  if (record.sessionFile) {
+    try {
+      writeIdleMarker(record.sessionFile, {
+        id: record.id,
+        sessionFile: record.sessionFile,
+        rootSessionId: record.rootSessionId,
+        round: (record.round ?? 0) + 1,
+      });
+    } catch (err) {
+      bestEffort(err, "writeIdleMarker (doFinalizeRoundToIdle)");
+    }
+    try {
+      removeAliveMarker(record.sessionFile);
+    } catch (err) {
+      bestEffort(err, "removeAliveMarker (doFinalizeRoundToIdle)");
+    }
+  }
+
+  // pending-notifications：进程已死，从活跃后代差集移除（record 留内存不 archive，
+  // 但 pending 注册的是进程活跃性，进程死了需注销）。
+  deps.emitUnregister(record.id, "idle");
+
+  // 状态机：record 进 idle（覆盖 tryTransition 设的 done），轮次计数 +1。
+  record.status = "idle";
+  record.round = (record.round ?? 0) + 1;
 }

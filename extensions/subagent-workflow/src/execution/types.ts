@@ -32,8 +32,13 @@ export const DEFAULT_AGENT_NAME = "general-purpose";
 // 执行状态机
 // ============================================================
 
-/** 唯一执行状态。所有路径共用。crashed 为进程崩溃终态（重建推断）。 */
-export type ExecutionStatus = "running" | "done" | "failed" | "cancelled" | "crashed";
+/**
+ * 唯一执行状态。所有路径共用。crashed 为进程崩溃终态（重建推断）。
+ *
+ * idle = 对话模式（chatMode）轮次完成、子进程已回收、record 保留在内存、
+ * 等待下一轮 message 续聊（非终态，close 后才进 done 等终态）。
+ */
+export type ExecutionStatus = "running" | "done" | "failed" | "cancelled" | "crashed" | "idle";
 
 /** 执行模式。background = 调用方立即拿 handle 返回，子 agent 在 detached promise 里跑。 */
 export type ExecutionMode = "background";
@@ -318,6 +323,13 @@ export interface ExecutionRecord {
   readonly parentRecordId: string | undefined;
   /** subagent 递归深度。顶层（主 session 直接创建）=0，每层嵌套 +1。 */
   readonly depth: number;
+  /**
+   * 对话模式标志（可持续对话 subagent）。true = 轮次完成进 idle 态（保留 record +
+   * worktree + 写 .idle sidecar）等待续聊，而非一次性终态化。
+   * undefined/false = 一次性模式（默认，行为完全不变）。
+   * 向后兼容：旧 record / 旧 session 文件无此字段，按一次性模式处理。
+   */
+  readonly chatMode?: boolean;
 
   // ── 状态（实时更新）──
   status: ExecutionStatus;
@@ -328,6 +340,11 @@ export interface ExecutionRecord {
   totalTokens: number;
   /** 运行期最近一次 error 事件的消息（getEventLog 派生 error 条目用）。 */
   lastError: string | undefined;
+  /**
+   * 对话轮次计数（仅 chatMode 有意义）。首轮运行时 = 0；每完成一轮（finalizeRoundToIdle
+   * 进 idle）+1。undefined 时视为 0。非 chatMode 不自增。
+   */
+  round?: number;
 
   // ── 完成 ──
   endedAt: number | undefined;

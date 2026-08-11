@@ -98,6 +98,11 @@ export interface SubagentIdentityData {
   depth?: number;
   /** [MF#4] 本 session 的 fork 深度（session-runner 写入 parentForkDepth+1）。旧文件可能缺失。 */
   forkDepth?: number;
+  /**
+   * 对话模式标志（可持续对话 subagent）。旧文件缺失 → undefined（按一次性模式处理）。
+   * session-runner 写入；reconstructFromFile 经 ...identity 展开自动透传到 ReconstructedRecord。
+   */
+  chatMode?: boolean;
   /** @deprecated 兼容旧文件：旧 identity entry 写的是 parentSessionId，读取时 fallback 到 rootSessionId。 */
   parentSessionId?: string;
 }
@@ -142,6 +147,8 @@ export interface ReconstructedRecord {
   depth: number;
   /** [MF#4] 本 session 的 fork 深度（来自 identity custom entry；旧文件为 undefined）。 */
   forkDepth: number | undefined;
+  /** 对话模式标志（来自 identity custom entry；旧文件为 undefined）。 */
+  chatMode?: boolean;
   sessionFile: string;
   // ── 可变状态（来自 message entries）──
   status: ExecutionStatus;

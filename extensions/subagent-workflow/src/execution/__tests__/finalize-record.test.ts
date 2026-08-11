@@ -25,7 +25,8 @@ vi.mock("@zhushanwen/pi-extension-logger", () => ({
   getLogger: () => loggerMock,
 }));
 
-import { doFinalizeRecord } from "../finalize-record.ts";
+import { doFinalizeRecord, doFinalizeRoundToIdle } from "../finalize-record.ts";
+import { readIdleMarker } from "../idle-marker.ts";
 import { ManifestStore } from "../manifest-store.ts";
 import type { AgentResult, ExecutionRecord } from "../types.ts";
 
@@ -182,5 +183,123 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
 
     // 清理 mock 调用记录防污染
     loggerMock.error.mockClear();
+  });
+});
+
+// ============================================================
+// doFinalizeRoundToIdle — chatMode 轮次完成进 idle（M2-A）
+// ============================================================
+
+describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () => {
+  let tmpDir: string;
+  let manifestStore: ManifestStore;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "finalize-idle-test-"));
+    manifestStore = new ManifestStore(tmpDir);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /** 构造 FinalizeDeps：worktreeManager.cleanup / store.archive 为 vi.fn 以断言「不调」。 */
+  function makeDeps() {
+    return {
+      manifestStore,
+      worktreeManager: { cleanup: vi.fn(), collectPatch: vi.fn() } as never,
+      store: { archive: vi.fn() } as never,
+      modelService: {} as never,
+      pi: { appendEntry: vi.fn() } as never,
+      clearThrottle: vi.fn(),
+      emitUnregister: vi.fn(),
+    };
+  }
+
+  it("record 带 sessionFile → 写 .idle sidecar + 删 .alive + record.status=idle + round 0→1", async () => {
+    const sessionFile = path.join(tmpDir, "session.jsonl");
+    // 预写 .alive marker（验证 doFinalizeRoundToIdle 删除它——进程已回收）
+    fs.writeFileSync(
+      `${sessionFile}.alive`,
+      `${JSON.stringify({ pid: 99999, id: "rec-idle", startedAt: 1000 })}\n`,
+      "utf-8",
+    );
+    const record = makeMinimalRecord({ id: "rec-idle", sessionFile, chatMode: true, round: 0 });
+    // tryTransition 已把 status 设为 done，模拟 runAndFinalize 调用前的状态
+    record.status = "done";
+
+    await doFinalizeRoundToIdle(makeDeps(), record, makeMinimalResult());
+
+    // 状态机
+    expect(record.status).toBe("idle");
+    expect(record.round).toBe(1);
+    // .idle sidecar 写入且字段正确
+    expect(fs.existsSync(`${sessionFile}.idle`)).toBe(true);
+    const marker = readIdleMarker(sessionFile);
+    expect(marker?.id).toBe("rec-idle");
+    expect(marker?.sessionFile).toBe(sessionFile);
+    expect(marker?.round).toBe(1);
+    expect(marker?.rootSessionId).toBe("session-main");
+    // .alive marker 被删（进程已 SIGTERM 回收）
+    expect(fs.existsSync(`${sessionFile}.alive`)).toBe(false);
+  });
+
+  it("record.round 已为 N → round 变 N+1", async () => {
+    const record = makeMinimalRecord({ id: "rec-round", round: 3 });
+    record.status = "done";
+    await doFinalizeRoundToIdle(makeDeps(), record, makeMinimalResult());
+    expect(record.round).toBe(4);
+    expect(record.status).toBe("idle");
+  });
+
+  it("不调 store.archive（record 留内存，getMutable 仍可查）", async () => {
+    const deps = makeDeps();
+    const record = makeMinimalRecord({ id: "rec-noarchive" });
+    record.status = "done";
+    await doFinalizeRoundToIdle(deps, record, makeMinimalResult());
+    expect(deps.store.archive).not.toHaveBeenCalled();
+  });
+
+  it("不 cleanup worktree（即使 record 带 worktreeHandle——保留对话模式工作目录）", async () => {
+    const deps = makeDeps();
+    const record = makeMinimalRecord({
+      id: "rec-noworktree",
+      worktreeHandle: { path: "/tmp/x", branch: "b", baseCommit: "c", mainCwd: "/tmp" } as never,
+    });
+    record.status = "done";
+    await doFinalizeRoundToIdle(deps, record, makeMinimalResult());
+    expect(deps.worktreeManager.cleanup).not.toHaveBeenCalled();
+  });
+
+  it("emitUnregister 被调（status=idle，进程已死从 pending 活跃差集移除）", async () => {
+    const deps = makeDeps();
+    const record = makeMinimalRecord({ id: "rec-emit" });
+    record.status = "done";
+    await doFinalizeRoundToIdle(deps, record, makeMinimalResult());
+    expect(deps.emitUnregister).toHaveBeenCalledWith("rec-emit", "idle");
+  });
+
+  it("clearThrottle 被调（防 trailing onUpdate）", async () => {
+    const deps = makeDeps();
+    const record = makeMinimalRecord({ id: "rec-throttle" });
+    record.status = "done";
+    await doFinalizeRoundToIdle(deps, record, makeMinimalResult());
+    expect(deps.clearThrottle).toHaveBeenCalledWith("rec-throttle");
+  });
+
+  it("不调 completeRecord：record 不冻结（endedAt / agentResult 仍 undefined）", async () => {
+    const record = makeMinimalRecord({ id: "rec-nofreeze" });
+    record.status = "done";
+    await doFinalizeRoundToIdle(makeDeps(), record, makeMinimalResult());
+    expect(record.endedAt).toBeUndefined();
+    expect(record.agentResult).toBeUndefined();
+  });
+
+  it("不写 manifest（idle 非终态，manifest 是终态诊断辅助）", async () => {
+    const record = makeMinimalRecord({ id: "rec-nomanifest" });
+    record.status = "done";
+    await doFinalizeRoundToIdle(makeDeps(), record, makeMinimalResult());
+    const manifest = await manifestStore.readManifest("rec-nomanifest");
+    expect(manifest).toBeNull();
   });
 });

@@ -32,11 +32,13 @@ const logger = getLogger("subagents");
 // 常量
 // ============================================================
 
-/** status → 排序优先级（值小排前）：running < failed < crashed < cancelled < done。 */
+/** status → 排序优先级（值小排前）：running < failed/crashed < idle/cancelled < done。
+ *  idle = 对话模式等待续聊（waiting 语义），介于失败态与 done 之间。 */
 const STATUS_PRIORITY: Record<ExecutionStatus, number> = {
   running: 0,
   failed: 1,
   crashed: 1,
+  idle: 2,
   cancelled: 2,
   done: 3,
 };
