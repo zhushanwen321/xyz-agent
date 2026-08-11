@@ -241,7 +241,26 @@ export class JsonlRunStore {
  */
   async save(run: WorkflowRun): Promise<void> {
     const filePath = this.filePathFor(run.runId);
-    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    // 兜底容错：run 工作目录（sessionDir）已被清理时，mkdir 抛 ENOENT，save 放弃。
+    // 竞态场景（review-fix-loop-e2e 等 runAndWait 测试）：handleReturn 内
+    // run.transition("done") 同步改 status 后，runAndWait 轮询发现 done 并 resolve，
+    // 测试 afterEach 随即 rmSync 删除 sessionDir；此时本方法 in-flight 的 mkdir
+    // 遇到目录链已删除 → ENOENT（{recursive:true} 在并发 rmSync 下仍可抛 ENOENT）。
+    // run 既已终态（状态不再变化），持久化无意义也无法完成 → silent return。
+    // 仅容错 ENOENT，重新抛出其他错误（EACCES/ENOSPC 等真实磁盘问题不掩盖）。
+    try {
+      await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    } catch (err) {
+      if (
+        typeof err === "object" &&
+        err !== null &&
+        "code" in err &&
+        (err as { code: unknown }).code === "ENOENT"
+      ) {
+        return;
+      }
+      throw err;
+    }
     const snapshot = serializeRun(run);
     await fs.promises.writeFile(filePath, JSON.stringify(snapshot) + "\n", "utf8");
     if (this.pi) {
