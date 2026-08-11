@@ -744,7 +744,9 @@ cw v1 的 testRunner 硬编码 `cwd: workspacePath`（仓库根）跑 `npx vites
 2. 确认失败的测试是否在本次 wave 范围（看 plan.files）——范围外的预存失败需单独修，但不阻塞本 wave
 3. 若本 wave 范围内测试全绿，人工判定 test 阶段通过，推进 exec-review
 
-**根治方向**（待提 PR 到 coding-workflow）：testRunner 检测 monorepo（workspacePath 下有 `packages/*/vitest.config.ts`）时定位到含配置的子包跑；或读 `unit.plan.files` 推断测试范围。
+**已修复（2026-08 验证）**：当前 cw 版本（@zhushanwen/coding-workflow）已支持 `plan.testCwd` 字段——wave design/replan 阶段填 `testCwd: "<子包目录>"`（相对仓库根，如 `packages/runtime`），testRunner 即在该子包目录跑 testCommand，gate 数字与本地 `npx vitest run` 一致。monorepo 项目在 wave design 填 testCwd 即生效，上述「临时对策」的人工判定不再需要。验证来源：plugin-mock-isolation wave 填 `testCwd: "packages/runtime"`，cw test gate 33/0 与本地一致（R3 风险未 materialize）。
+
+**原根治方向（已由 testCwd 超额实现，保留作记录）**：testRunner 检测 monorepo（workspacePath 下有 `packages/*/vitest.config.ts`）时定位到含配置的子包跑；或读 `unit.plan.files` 推断测试范围。
 
 > **默认禁止跳过**（见上文「Lint / Git Hooks 问题处理原则 [MANDATORY]」）。以下变量仅供线上热修复等紧急场景，使用时必须在 commit message 说明原因。
 
