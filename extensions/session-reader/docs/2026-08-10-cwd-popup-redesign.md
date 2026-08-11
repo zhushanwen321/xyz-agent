@@ -236,6 +236,8 @@ return prefix + truncatePrimary(item, ..., maxWidth, maxWidth);  // label 截到
 
 6. **适用前提：# 弹窗面向典型项目 cwd**：`listAll(当前目录)` 的耗时与该目录 session 数线性相关。典型项目 cwd 6-50 文件 = 19-~60ms（G5 达标）。超大 cwd（如 Stock 目录 530 文件）首次加载 667ms——这是已知边界，由 P2 缓存缓解（缓存命中后 < 10ms）。不为此给 listAll 加 limit（pi API 不支持），避免重造分页轮子。
 
+7. **TUI provider 注册：按 pi 实例去重（`WeakSet<ExtensionAPI>`），不用模块级布尔**（实测发现，design 原写法是 bug 源头）：`/resume` 会**重新加载 extension 并再次调用 factory**（新 session = 新 pi/runner 实例，非进程级一次）。模块级 `let tuiRegistered` 跨 factory 持久 → resume 的新 session 跳过 `addAutocompleteProvider` → 新 editor 没挂 # provider → # 不弹。改用 `WeakSet<ExtensionAPI>` 按 pi 实例去重：resume 新 pi 实例不命中 → 正常注册；同一 pi 内多次 session_start 仍去重防堆叠。同理 cwdSessionDir 不能闭包固定，用 getter 读模块级 `currentCwdSessionDir`（每次 session_start 更新）。
+
 ---
 
 ## §4 验收

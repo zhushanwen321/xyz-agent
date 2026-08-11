@@ -112,16 +112,18 @@ const guidelines = [
 const description = `Read pi session files (conversation history) by semantic structure instead of raw bytes. Use when you need to review another session, trace a fork/subagent/workflow family, or locate a past decision. Seven actions: find (locate by name/uuid fragment), family (fork/subagent/workflow relations), outline (turn-level overview, ~500 token), expand (single-turn entry list), detail (full text of turns), search (full-text grep across a session), export (materialize to file). Progressive reading: outline → expand → detail. Do NOT use for the current session (use get_messages) or to edit sessions (pi has /resume /fork).`
 
 /**
- * TUI provider/command 一次性注册标记。
- * addAutocompleteProvider 是 stack 模式（wrap on top of built-in），session_start 每个
- * session 触发，无 guard 会无限堆叠 provider。once-guard 确保整个进程生命周期只注册一次。
+ * 已注册过 TUI provider/command 的 pi 实例集合。
+ *
+ * **为什么用 WeakSet<ExtensionAPI> 而非模块级布尔**：resume 会重新加载 extension 并
+ * 再次调用 factory（新 session = 新 pi/runner 实例）。模块级布尔跨 factory 持久，会误杀
+ * resume 的新 session（跳过 addAutocompleteProvider → 新 editor 没挂 # provider → # 不弹）。
+ * WeakSet 按 pi 实例去重：同一 pi 内多次 session_start 不重复注册（防 provider 堆叠），
+ * 但 resume 的新 pi 实例能正常注册。
  */
-let tuiRegistered = false
+const registeredPis = new WeakSet<ExtensionAPI>()
 /**
- * 当前 session 的目录。**每次 session_start（含 resume/fork/new）动态更新**——
- * provider/command 通过 getter 读取，不用闭包固定值。固定首个 session 的目录会导致
- * resume 到别的 cwd 后查错目录、# 弹窗空（agent-session-runtime switchSession 会换
- * sessionManager 实例并 emit session_start，ctx.sessionManager 指向新 session）。
+ * 当前 session 的目录。每次 session_start（含 resume/fork/new）动态更新，provider/command
+ * 通过 getter 读取。
  */
 let currentCwdSessionDir: string | null = null
 
@@ -168,9 +170,10 @@ export default function sessionReaderExtension(pi: ExtensionAPI): void {
     // 每次 session_start（resume/fork/new 都触发）更新当前 session 目录；
     // provider/command 通过 getter 动态读取，避免首个 session 闭包固定 → resume 后查错目录
     currentCwdSessionDir = ctx.sessionManager.getSessionDir()
-    if (tuiRegistered) return
+    // 按 pi 实例去重：同一 pi 内不重复注册（防 provider 堆叠），resume 新 pi 实例可注册
+    if (registeredPis.has(pi)) return
     if (typeof ctx.ui.addAutocompleteProvider !== 'function') return
-    tuiRegistered = true
+    registeredPis.add(pi)
     const getCwdSessionDir = (): string => currentCwdSessionDir ?? ''
     pi.registerCommand('session-pick', createSessionCommand(getCwdSessionDir))
     ctx.ui.addAutocompleteProvider((current) =>
