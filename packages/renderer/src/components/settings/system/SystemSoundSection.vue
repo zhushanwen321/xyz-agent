@@ -43,7 +43,7 @@
             :aria-label="t('settings.system.soundPreview')"
             @click="previewSound('success', system.successSound || getDefaultSound(currentPlatform, 'success'), system.successSound || 'default')"
           >
-            <Volume2 v-if="previewingKey !== 'success:default' && previewingKey !== `success:${system.successSound}`" class="size-3.5" />
+            <Volume2 v-if="previewingKey === null" class="size-3.5" />
             <Loader2 v-else class="size-3.5 animate-spin" />
             {{ previewingKey?.startsWith('success:') ? t('settings.system.soundPreviewing') : t('settings.system.soundPreview') }}
           </Button>
@@ -91,7 +91,7 @@
             :aria-label="t('settings.system.soundPreview')"
             @click="previewSound('error', system.errorSound || getDefaultSound(currentPlatform, 'error'), system.errorSound || 'default')"
           >
-            <Volume2 v-if="previewingKey !== 'error:default' && previewingKey !== `error:${system.errorSound}`" class="size-3.5" />
+            <Volume2 v-if="previewingKey === null" class="size-3.5" />
             <Loader2 v-else class="size-3.5 animate-spin" />
             {{ previewingKey?.startsWith('error:') ? t('settings.system.soundPreviewing') : t('settings.system.soundPreview') }}
           </Button>

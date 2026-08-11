@@ -1,8 +1,8 @@
 <template>
   <!--
     容器组件 · L1 Sidebar（sidebar/spec.md 四态）。
-    分层（自上而下）：Brand → 主操作 nav（新建 ⌘N / 搜索 ⌘K）→ Overview 入口按钮 →
-    segmented tab（会话|文件）→ 子视图区 → 用户区。
+    分层（自上而下）：Brand → 主操作 nav（新建 ⌘N / 搜索 ⌘K）→ segmented tab（会话|文件|Agents|Flows|Plugins）→ 子视图区 → 用户区。
+    注：v6 D14 nav 重构移除 Overview 入口按钮，go-overview 仅经 SearchModal 命令面板可达（useAppCommands 注册）。
     折叠态 C：整体隐藏（width:0 + opacity:0），spec §收起态。
     File View 内容 G2-003 defer。
   -->
@@ -44,7 +44,7 @@
 
       <div class="my-2 mx-2.5 h-px bg-border" />
 
-      <!-- segmented tab（会话 | 文件 | Agents | Flows） -->
+      <!-- segmented tab（会话 | 文件 | Agents | Flows | Plugins） -->
       <SegmentedTab
         v-model="sidebar.activeTab"
         :session-count="session.list.length"

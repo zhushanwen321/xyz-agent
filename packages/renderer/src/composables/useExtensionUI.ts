@@ -27,8 +27,7 @@ import { computed, watch, onScopeDispose, type Ref } from 'vue'
 import type { InternalEvent, DialogRequest } from '@xyz-agent/core'
 import type { ExtensionInteractMethod } from '@xyz-agent/shared'
 import { getExtensionBus } from '@/composables/shell/useExtensionHostBridge'
-import { onUITimeout, onNotify, sendExtensionUIResponse, getPendingRequests, type ExtensionUIRequest } from '@/api/domains/extension'
-import { useToast } from '@/composables/useToast'
+import { onUITimeout, sendExtensionUIResponse, getPendingRequests, type ExtensionUIRequest } from '@/api/domains/extension'
 import { useExtensionUIStore } from '@/stores/extension-ui'
 
 /** 入队过滤谓词：返回 true 的请求才入队 */
@@ -201,48 +200,4 @@ export function useExtensionUI(
     respond,
     cancel,
   }
-}
-
-/**
- * Extension notify composable——订阅 fire-and-forget 的 extension.notify 推送，渲染为 toast。
- *
- * pi notify 是 fire-and-forget（pi rpc-mode.ts notify 发后不等回复），不走 dialog 模态。
- * 按 sessionId 订阅，level 映射到 toast 类型：
- * - error → error toast
- * - warning/warn → warning toast
- * - info → info toast
- *
- * 全局单例（Workspace 层单次调用，跟 focusedSessionId）。notify 是非阻塞 toast，
- * 不需要 per-panel 隔离（toast 本就是全局浮层）。
- *
- * [新旧线] 新 bus 线已覆盖：NotificationHostController（core）订阅 bus 'extension-notify'
- * → toast（经 useExtensionHostBridge 装配注入 useToast），是全局统一消费点，功能上覆盖本旧线
- * （甚至更完整——不限于 focused session）。本旧线走 WS session 通道 onNotify(sid) 直连，
- * 与新线（bus global 通道）数据源关系取决于 routeInbound 对 extension:notify 的路由判定
- * （events.ts 注释「按 payload.sessionId 有无」与 useExtensionHostBridge 注释「无顶层 sid → global」
- * 存在措辞张力，彻底确认需 trace routeInbound 实现）。保留本旧线不删（避免破坏 Workspace.vue:57
- * 现有调用），后续 P5 统一清理时移除，统一走 NotificationHostController。
- */
-export function useExtensionNotify(focusedSessionId: Ref<string | null>) {
-  const { error, info, warning } = useToast()
-  let unsubFn: (() => void) | null = null
-
-  function subscribe(sid: string | null) {
-    if (unsubFn) {
-      unsubFn()
-      unsubFn = null
-    }
-    if (!sid) return
-    unsubFn = onNotify(sid, ({ message, level }) => {
-      if (level === 'error') error(message)
-      else if (level === 'warn') warning(message)
-      else info(message)
-    })
-  }
-
-  watch(focusedSessionId, (sid) => subscribe(sid), { immediate: true })
-
-  onScopeDispose(() => {
-    if (unsubFn) unsubFn()
-  })
 }

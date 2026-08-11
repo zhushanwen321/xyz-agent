@@ -17,7 +17,6 @@ import type { Ref } from 'vue'
 import type { NormalizedQuotaRow } from '@xyz-agent/shared'
 import { matchQuotaPreset, QUOTA_PRESETS } from '@xyz-agent/shared'
 import { getSettingsStore } from '@xyz-agent/core'
-import { useQuotaStore } from '@/stores/quota'
 import { useQuotaQuery } from './useQuotaQuery'
 
 /** 分档阈值（复用现有规则）。 */
@@ -67,7 +66,6 @@ export interface UseQuotaDisplayReturn {
 export function useQuotaDisplay(modelIdRef: Ref<string | undefined>): UseQuotaDisplayReturn {
   const { t } = useI18n()
   const settingsStore = getSettingsStore()
-  const quotaStore = useQuotaStore()
 
   /** 从受控 modelId 派生 providerId，命中 quota preset 且 enabled 才启用 coding-plan 区。 */
   const matchedProviderId = computed<string | null>(() => {
@@ -146,9 +144,6 @@ export function useQuotaDisplay(modelIdRef: Ref<string | undefined>): UseQuotaDi
       void queryOnHoverEnter()
     }
   }
-
-  // 暴露 quotaStore 供组件判断 pending（ContextCapacityPopover 的刷新按钮）
-  void quotaStore
 
   return {
     matchedProviderId,

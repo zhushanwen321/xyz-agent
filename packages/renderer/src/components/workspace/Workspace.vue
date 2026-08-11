@@ -42,7 +42,6 @@ import { Plus, Sparkles } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { useSidebarNew } from '@/composables/features/sidebar/useSidebarNew'
 import { useNewTaskFlow } from '@/composables/features/new-task/useNewTaskFlow'
-import { useExtensionNotify } from '@/composables/useExtensionUI'
 import { useBrowserFocusSync } from '@/composables/features/browser/useBrowserFocusSync'
 import { useCloseShortcut } from '@/composables/features/app/useCloseShortcut'
 import { usePlatformShortcut } from '@/composables/usePlatformShortcut'
@@ -53,8 +52,6 @@ const { t } = useI18n()
 const { newSession, focusedSessionId } = useSidebarNew()
 const { formatKbd } = usePlatformShortcut()
 const flow = useNewTaskFlow()
-// Extension notify → toast（fire-and-forget，非阻塞通知）
-useExtensionNotify(focusedSessionId)
 // Browser drawer view swap：切 session 时通知主进程切换可见 WebContentsView（Wave 4 per-session 隔离）
 useBrowserFocusSync()
 // Cmd/Ctrl+W：drawer 打开时优先关 drawer，drawer 关时关窗口（before-input-event 拦截转发）
