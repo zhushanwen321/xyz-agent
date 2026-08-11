@@ -203,6 +203,8 @@ agent 看到的：find 候选列表 / family 家族树 / outline turn TOC / deta
 - 选择：`#e6c96`；被否：`#"session name"`。
 - 证据：uuid 片段最短无歧义、可键盘手敲、与用户已有的「文件名里的 `019e6c96-...`」心智一致；名称含空格需引号且可重名。工具 find 剥 `#` 前缀后按片段子串匹配（不限定位置），匹配规则对 uuid 片段 / 完整文件名 / 名称关键词三路兼容。
 
+**D-3a（v2 O5 补充）：8 字符片段碰撞时，TUI 补全自动延长到唯一前缀。** 8 字符片段在密集开发期（uuid v7 同秒创建）实测碰撞率 26.5%（扫 3486 session，329 个前缀桶碰撞）。TUI 补全 `provideHashCandidates` 在多匹配时，对每个候选的 sessionId 计算 `insertText`：与同组最像的兄弟（共享前缀最长者）求字符级 LCP，取【最大值】+1 作唯一前缀（保留连字符，如 `#019fea0e-c`，区别于同桶的 `#019fea0e-3`），保证 find 永不触发 F2 多匹配。正常唯一候选仍 8 字符。全量 329 碰撞桶验证算法正确（取 max 而非 min——min 会被远房邻居拖短前缀致大桶仍碰撞）。实测数据与算法详见 optimization-v2.md §2.5 + §3.3 D5。
+
 **D-4：`#` 引用提交时不展开，由工具侧剥前缀。**
 - 选择：插入纯文本 `#e6c96`，LLM 见到后自行调 `session_read`；被否：`pi.on("input")` transform 把引用展开成路径明文注入。
 - 证据：pi 的 `@` 引用同构——插入 `@path` 纯文本，read 工具经 `normalizePath(p, { stripAtPrefix: true })` 剥 `@`（`core/tools/path-utils.js:36`，stripAtPrefix 是选项名非独立函数），提交时不展开。跟随平台先例，不发明第二套引用语义（一致性 > 品味）。
@@ -233,13 +235,13 @@ agent 看到的：find 候选列表 / family 家族树 / outline turn TOC / deta
 
 **工具 description**（决定 LLM 何时调用，遵守 meta-prompt-creator 原则：说场景不说机制）：
 
-> Read pi session files (conversation history) by semantic structure instead of raw bytes. Use when you need to review another session, trace a fork/subagent/workflow family, or locate a past decision. Seven actions: **find** (locate by name/uuid fragment), **family** (fork/subagent/workflow relations), **outline** (turn-level overview, ~500 token), **expand** (single-turn entry list), **detail** (full text of turns), **search** (full-text grep across a session), **export** (materialize to file). Progressive reading: outline → expand → detail. Do NOT use for the current session (use get_messages) or to edit sessions (pi has /resume /fork).
+> Read pi session files (conversation history) by semantic structure instead of raw bytes. Use when you need to review another session, trace a fork/subagent/workflow family, or locate a past decision. Eight actions: **find** (locate by name/uuid fragment), **family** (fork/subagent/workflow relations), **outline** (turn-level overview, ~500 token), **expand** (single-turn entry list), **detail** (full text of turns), **search** (full-text grep across a session), **export** (materialize to file), **extract** (pull user messages / commands / files / commits / tool results by type). Progressive reading: outline → expand → detail. Do NOT use for the current session (use get_messages) or to edit sessions (pi has /resume /fork).
 
 **schema**（TypeBox `Type.Object`，下表为字段定义，实现时逐字段转 `Type.X({description})`）：
 
 | 字段 | 类型 | 必填于 | 说明 |
 |---|---|---|---|
-| `action` | `"find"\|"family"\|"outline"\|"expand"\|"detail"\|"search"\|"export"` | 全部 | 执行的动作 |
+| `action` | `"find"\|"family"\|"outline"\|"expand"\|"detail"\|"search"\|"export"\|"extract"` | 全部 | 执行的动作 |
 | `session` | string | family/outline/expand/detail/search/export | session id 或 uuid 片段（如 `e6c96`）；自动剥 `#` 前缀 |
 | `query` | string | find | uuid 片段 / 文件名 / 名称关键词 / `"recent"`（特殊值，返回最近 N 个） |
 | `turns` | string | detail | turn 范围，`"T013-T015"` 或 `"T013"` |
@@ -253,6 +255,8 @@ agent 看到的：find 候选列表 / family 家族树 / outline turn TOC / deta
 | `granularity` | `"turn"\|"entry"` | outline（默认 turn） | turn 级或 entry 平铺（D-1 兜底） |
 | `cwd` | string | find（可选） | 按 cwd 过滤 |
 | `limit` | number | find/search（默认 20） | 最大结果数 |
+| `what` | `"user-messages"\|"commands"\|"files"\|"commits"\|"tool-results"` | extract（必填） | 提取的素材类型 |
+| `tool` | string | extract（可选） | 过滤 commands/tool-results 的工具名 |
 
 handler 内按 action 校验必填项（缺失抛 F5）。
 
@@ -263,6 +267,7 @@ handler 内按 action 校验必填项（缺失抛 F5）。
 - find first to locate a session by uuid fragment or name. TUI #references are uuid fragments.
 - outline before detail. Never read raw .jsonl files—use this tool.
 - family traces fork parents/children, subagent sessions, and workflow runs.
+- extract what=<type> to pull user messages / commands / files / commits / tool results across turns (optional tool= filter for commands/tool-results).
 - Errors carry a 👉 recovery hint—follow it to retry in one step.
 ```
 
@@ -276,13 +281,14 @@ handler 内按 action 校验必填项（缺失抛 F5）。
 | family | `{ root: SessionRef, parents: SessionRef[], forks: SessionRef[], subagents: Array<SubagentRef & {cleanedUp?}>, workflows: Array<{runId, stateFile, calls: SessionRef[]}> }` |
 | outline | `{ turns: TurnBrief[], stats: {totalTurns, totalEntries, totalBytes, parsedBytes}, tokenEstimate }` |
 | expand | `{ turn: string, entries: EntryBrief[] }` |
-| detail | `{ turns: string, entries: Entry[] }` |
+| detail | `{ turns: string, entries: Array<Entry \| ToolResultSummaryEntry> }`（默认 toolResult 摘要态，includeToolResult:true 全文） |
 | search | `{ hits: Array<{turnIndex, entryIndex, role, matchSnippet}>, truncated }` |
 | export | `{ path: string, sizeBytes: number }` |
+| extract | `{ what, count, shown, truncated, items }`（items 按 what 呈对应结构数组；F8 时 details 含 `toolDistribution`） |
 
 公共类型：`SessionRef = {sessionId, fileName, mtime, sizeBytes, cwd}`；`TurnBrief = {index, startTime, userBrief, toolSummary, assistantBrief, omittedBytes, branch?}`；`EntryBrief = {index, type, role?, brief, omittedBytes}`。
 
-**错误规格**（抛 `Error`，message 含 👉 恢复指引；F1-F6 覆盖 §3.1 失败路径 + 实施期补充）：
+**错误规格**（抛 `Error`，message 含 👉 恢复指引；F1-F6 覆盖 §3.1 失败路径，F7-F9 覆盖 v2 extract action）：
 
 | code | 触发 | message 模板（含 👉 指引） |
 |---|---|---|
@@ -292,16 +298,20 @@ handler 内按 action 校验必填项（缺失抛 F5）。
 | F4 out_of_range | turn/entry 索引越界 | `turn T99 越界，共 N 轮（T000-T{N-1}）。👉 outline 重看有效范围。` |
 | F5 missing_param | action 必填参数缺失 | `action:"X" 需要参数 "Y"。👉 补上重试。` |
 | F6 read_error | 文件读失败/严重损坏 | `读取失败：<path>（跳过 N 坏行）。👉 检查文件或换 session。` |
+| F7 invalid_what | extract 的 `what` 非法 | `what "X" 无效，应为 user-messages/commands/files/commits/tool-results。👉 用合法 what 重试。` |
+| F8 tool_no_match（不抛错） | extract 的 `tool` 过滤零匹配 | `what=X tool="Y" 无匹配。该 session 工具：bash×309,read×64,...。👉 用存在的工具名重试。`（返回工具分布，details 含 `toolDistribution`） |
+| F9 over_budget（不抛错） | extract 结果超 8000 字节（≈2000 token）预算 | `[what=X 结果超预算（≈2000 token），已截断到 K/T。👉 缩小 turns 或换 what 重试。]`（截断后返回，details.truncated=true） |
 
 ### 3.5 核心算法
 
 **算法 1：token 预算渲染（render.ts）——目标：固定预算内最大化信息密度，而非先到先截。**
 
 1. 先扫一遍 entry 建 turn 列表（算法 3），得 `expectedTurns`；`perTurnBudget = budget / expectedTurns`（默认 `budget = 2000` token，对应 V2 的 ≤2K）
-2. 每行 L1 文本行 = `T### HH:MM userBrief toolSummary [N KB omitted]`（**不含 assistantBrief**）。各字段独立截断：`userBrief`（user text 截 60 字符）、`toolSummary`（toolCall.name 计数 → `bash×2,read×2`）、`omittedBytes`（toolResult+thinking 字节 → `[48KB omitted]`）。`TurnBrief.assistantBrief`（assistant text 截 80 字符）**仍计算并存入字段**供 details 编程消费，但不进 L1 文本行——L1 是「定位目录」，userBrief（问什么）+ toolSummary（用什么工具）+ omitted（多大量）足以定位，assistant 内容走 L2 expand / L3 detail。此口径匹配 P-outline 实测基线（~500 token，不含 assistant）；含 assistant 会到 ~979 token 超 V3 的 600。
-3. 单行超 `perTurnBudget` → 降级序（保骨架，砍细节）：砍 `toolSummary` → 保留骨架 `T### HH:MM userBrief [N KB omitted]`
-4. 总行数仍超预算 → 截断并追加 `[还有 N 轮未显示，用 detail 或调大 budget]`
-5. `granularity:"entry"` 时不做 turn 聚合，每 entry 一行（D-1 兜底，用于坏 session 调试等场景）
+2. 每行 L1 文本行 = `T### HH:MM userBrief toolSummary → assistantBrief [N KB omitted]`（**v2 含 assistantBrief**，补 outline 单独可决策，不再逼反复 expand）。各字段独立截断：`userBrief`（user text 截 60 字符）、`toolSummary`（见下，v2 修了数据源 bug）、`assistantBrief`（assistant text 截 80 字符，格式 `→ <结论>`，排在 toolSummary 后、omitted 前）、`omittedBytes`（toolResult+thinking 字节 → `[48KB omitted]`）。`toolSummary` 数据源**v2 修正**：从 assistant message.content 的 `{type:"toolCall",name}` block 提取（v1 读 `message.toolCalls` 顶层字段是 bug——该字段从未存在，probe 实测 519 个 toolCall 全在 content blocks，v1 全程没工作过）。
+3. 降级序两级（保骨架，砍细节）：单行超 `perTurnBudget` 先砍 `assistantBrief`（level 1），仍超再砍 `toolSummary`（level 2，骨架 = `T### HH:MM userBrief [N KB omitted]`）。`userBrief` + `omittedBytes` 永保。
+4. （v2 O2/O3）L2 expand 的 toolResult brief 改类型化摘要（toolName + toolCallId 关联取 args + 结果规模，如 `bash: <cmd> (N行)`、`read: <path> (NKB)`）；L3 detail 默认不再 `continue` 跳过 toolResult，返回 `ToolResultSummaryEntry` 摘要态（summary + 结果前 3 行 + 总行数），`includeToolResult:true` 仍全文。
+5. 总行数仍超预算 → 截断并追加 `[还有 N 轮未显示，用 detail 或调大 budget]`
+6. `granularity:"entry"` 时不做 turn 聚合，每 entry 一行（D-1 兜底，用于坏 session 调试等场景）
 
 **算法 2：leaf 路径重建（tree.ts）**
 
@@ -347,7 +357,7 @@ outline 默认只渲染 leafPath 上的 turn；`allBranches:true` 时在 forkPoi
 |---|---|---|---|
 | V1 | 目标 1 秒定位 + 目标 4 `#` 通道 | 真实 pi TUI 里输入 `#`，下方弹出当前目录 session 列表；选中一项插入 `#<片段>`，补一句「总结这个 session 做了什么」发给 agent | agent 调 `session_read` 完成定位+阅读并给出与该 session 实际内容一致的总结；全程未 `read` 原始 JSONL |
 | V2 | 目标 3 渐进精读 | 对本机 `019e6c96`（5.4MB / 32 turn / 1204 entry，feat-plugin-arch-3 目录）真实 session：`outline` → 据 TOC 选 2 轮 `detail` | outline 输出 ≤2K token 且 32 行齐全；两步内定位到指定历史事件（如某次 bash 命令的发起轮）；toolResult 默认不出现，`includeToolResult:true` 可取回 |
-| V3 | 目标 3 token 对比 | 同一 `019e6c96` session，对照组：agent 用内置 read 直接读原文（一次最多 50KB ≈ 12K token） | 实验组（outline+detail 完成 V2 任务）总 token < 对照组 read 一次的 5%（即 < 600 token） |
+| V3 | 目标 3 token 对比 | 同一 `019e6c96` session，对照组：agent 用内置 read 直接读原文（一次最多 50KB ≈ 12K token） | 实验组（outline+detail 完成 V2 任务）总 token < 对照组 read 一次的 5%（v2 含 assistantBrief 后阈值上调到 < 1500 token，口径仍 vs read 对比；多花 ~700 token outline 换省 3 次 expand/detail 重复调用，见 optimization-v2 §3.3 D4） |
 | V4 | 目标 2 家族追溯（fork + subagent 腿） | 对本机真实 fork 对（`019fe632` fork 自 `019fe620`）+ 真实 subagent session（`019fe635`，rootSessionId=019fe632）跑 `family` | 父链、fork 子代、subagent 列表全部列出且与实际文件属实一致；从家族根 019fe620 出发能关联到隔代 subagent 019fe635（验证 D-7 隔代规则）；已 GC 的 subagent（若存在）标注 `[已清理]` |
 | V4b | 目标 2 家族追溯（workflow 腿） | 对本机 `019fdcda`（含 12 个 workflow-state-link entry 的真实 session）跑 `family`，再读 workflow-state 文件的 `calls[].sessionFile` | workflow run 列出；workflow-state-link.data.path 指向的文件存在且可读；calls[].sessionFile 对应的子代理 session 路径可达、内容可读 |
 | V5 | 目标 1 xyz-agent 模式 | dev 实例（RPC 模式，无 `#` 弹窗属预期）让 agent「读一下 e6c96 这个 session」 | agent 用工具完成 find→outline→detail 三步；outline 输出的 turn 行数与 V2 同 session 一致（可证伪等价点，取代「与 TUI 模式一致」的模糊断言） |
@@ -370,6 +380,8 @@ M1-M4 全部完成并提交（124 测试绿，tsc/eslint 0 error）。§4 V1-V6 
 | V6 | ✅ | tool-handler.test #7（F1）/ #8（F4）/ #9（F5）|
 
 **待手测项**（V1 TUI 端到端 + V5 RPC 端到端）：需 `pnpm dev` 启动 xyz-agent，手测 `#` 补全 + RPC 模式工具调用。纯逻辑已测试覆盖，端到端是集成验证（非阻塞）。
+
+**v2 优化验收（2026-08-11，O1-O5 已实现并提交）**：基于 optimization-v2.md 的 5 项优化（outline 加 assistantBrief + 修 toolSummary 数据源 bug / expand-detail toolResult 类型化摘要 / detail 默认摘要态 / 新增 extract action / `#` 碰撞延长唯一前缀）全部落地。commit 460d26988 probe 数据：outline `tokenEstimate=1177`（v1 506 → v2 ~1177，D4 tradeoff 量化）；019e6c96 全量 24/32 leaf turn 有 assistantBrief（8 个无 assistant text 的 turn 合理缺省）；extract 实测 commands 519 / user-messages 26 / tool-results 515（与 §2.3 probe 全量计数一致）；`#` 唯一性全量 3486 session / 329 碰撞桶 max LCP+1 算法逐桶验证通过（V-o5 含 19 元大桶 `019e9680`）。对照 optimization-v2.md §4 的 V-o1~V-o5 + V-callcount 要点逐条核对。
 
 ---
 
